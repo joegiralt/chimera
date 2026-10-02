@@ -167,3 +167,32 @@ fn the_table_is_the_one_list() {
         assert!(c.name().len() <= 7, "help's column is 8 wide");
     }
 }
+
+#[test]
+fn word_length_boundary() {
+    let exact = [b'a'; WORD_MAX];
+    assert_eq!(Word::new(&exact).as_str().len(), WORD_MAX);
+    let over = [b'a'; WORD_MAX + 1];
+    assert_eq!(Word::new(&over).as_str().len(), WORD_MAX);
+    assert_eq!(Word::new(&over), Word::new(&exact));
+}
+
+#[test]
+fn every_byte_value_is_safe() {
+    let printable = |s: &str| s.bytes().all(|b| (0x20..=0x7e).contains(&b));
+    for b in 0..=255u8 {
+        assert!(printable(Word::new(&[b]).as_str()), "{b}");
+        for line in [
+            vec![b, b'\n'],
+            vec![b'x', b' ', b, b'\n'],
+            vec![b'h', b' ', b, b'\r'],
+        ] {
+            let mut c = Console::new();
+            for got in feed(&mut c, &line) {
+                if let Err(Refusal::Unknown(w)) = got {
+                    assert!(printable(w.as_str()), "{b}");
+                }
+            }
+        }
+    }
+}

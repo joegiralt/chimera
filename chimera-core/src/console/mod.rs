@@ -6,6 +6,8 @@ pub const MAX_LINE: usize = 64;
 pub const PROTOCOL: u8 = 1;
 pub const STALL_MS: u32 = 250;
 pub const WORD_MAX: usize = 16;
+const _: () = assert!(MAX_LINE <= u8::MAX as usize);
+const _: () = assert!(WORD_MAX <= u8::MAX as usize);
 
 /// The words after the command, split on one or more spaces.
 #[derive(Clone, Copy, Debug)]
