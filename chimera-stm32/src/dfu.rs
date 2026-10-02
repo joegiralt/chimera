@@ -2,9 +2,10 @@
 //! BOOT0 jumper (USB console spec § Enter DFU from the firmware). `enter`
 //! leaves a marker in RTC_BKP0R and resets; `after_reset`, the top of
 //! `main`, reads and clears it, and jumps only when `boot::after_reset`
-//! says so and the clear read back.
+//! says so: the clear read back, after a software reset.
 
 use chimera_core::boot::{self, BootAction, ROM_DFU_BASE};
+use chimera_core::reset::ResetCause;
 #[cfg(not(feature = "sd-probe"))]
 use chimera_core::boot::{DFU_MAGIC, RomDfu};
 #[cfg(not(feature = "sd-probe"))]
@@ -14,10 +15,18 @@ use stm32h7xx_hal::pac;
 /// DBP read-backs before giving up: it lands in a few cycles.
 const DBP_TRIES: u32 = 1_000;
 
-/// `after_reset` ran: RTCAPBEN is set and the marker is clear (or stuck,
-/// and ignored). Only `after_reset` makes one, and `boot` takes it.
+/// `after_reset` ran: RTCAPBEN is set, the marker is clear (or stuck, and
+/// ignored) and RCC_RSR is read and cleared. Only `after_reset` makes one,
+/// and `boot` takes it.
 #[must_use]
-pub struct Checked(());
+pub struct Checked(ResetCause);
+
+impl Checked {
+    /// The reset `after_reset` read from RCC_RSR.
+    pub fn cause(&self) -> ResetCause {
+        self.0
+    }
+}
 
 /// The marker's register, writable: what `enter` needs.
 #[cfg(not(feature = "sd-probe"))]
@@ -54,22 +63,29 @@ fn clear(pwr: &pac::PWR, rtc: &pac::RTC) -> u32 {
 }
 
 /// The top of `main`, before `boot()` touches a clock or a peripheral:
-/// RTCAPBEN, read BKP0R, clear it, then jump if `boot::after_reset` says so.
-/// The marker is cleared whatever it held, so the next reset always plays.
+/// RCC_RSR read and cleared, RTCAPBEN, read BKP0R, clear it, then jump if
+/// `boot::after_reset` says so. The marker is cleared whatever it held, so
+/// the next reset always plays, and a power-on never jumps.
 pub fn after_reset(
     cp: &mut cortex_m::Peripherals,
     rcc: &pac::RCC,
     pwr: &pac::PWR,
     rtc: &pac::RTC,
 ) -> Checked {
+    // RCC_RSR survives the reset it records: cleared here, before the jump
+    // too, so the next boot reads only its own reset. RMVF holds the flags
+    // at 0 while set, so it is set and then cleared again.
+    let cause = ResetCause::from_rsr(rcc.rsr.read().bits());
+    rcc.rsr.modify(|_, w| w.rmvf().set_bit());
+    rcc.rsr.modify(|_, w| w.rmvf().clear_bit());
     rcc.apb4enr.modify(|_, w| w.rtcapben().set_bit());
     // The enable lands before the first RTC access (RM0433 § RCC).
     let _ = rcc.apb4enr.read();
     cortex_m::asm::dsb();
     let m = rtc.bkpr[0].read().bits();
-    match boot::after_reset(m, clear(pwr, rtc)) {
+    match boot::after_reset(m, clear(pwr, rtc), cause) {
         BootAction::RomDfu => jump(cp),
-        BootAction::Synth => Checked(()),
+        BootAction::Synth => Checked(cause),
     }
 }
 

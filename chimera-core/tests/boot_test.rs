@@ -1,8 +1,11 @@
 use chimera_core::boot::{BootAction, DFU_MAGIC, ROM_DFU_BASE, after_reset};
+use chimera_core::reset::ResetCause;
+
+const SOFT: ResetCause = ResetCause::Software;
 
 #[test]
 fn only_the_magic_enters_dfu() {
-    assert_eq!(after_reset(DFU_MAGIC, 0), BootAction::RomDfu);
+    assert_eq!(after_reset(DFU_MAGIC, 0, SOFT), BootAction::RomDfu);
     for m in [
         0,
         u32::MAX,
@@ -10,7 +13,7 @@ fn only_the_magic_enters_dfu() {
         DFU_MAGIC.swap_bytes(),
         DFU_MAGIC.rotate_left(8),
     ] {
-        assert_eq!(after_reset(m, 0), BootAction::Synth, "{m:#010x}");
+        assert_eq!(after_reset(m, 0, SOFT), BootAction::Synth, "{m:#010x}");
     }
 }
 
@@ -22,7 +25,7 @@ fn a_random_marker_boots_the_synth() {
         x ^= x >> 17;
         x ^= x << 5;
         if x != DFU_MAGIC {
-            assert_eq!(after_reset(x, 0), BootAction::Synth, "{x:#010x}");
+            assert_eq!(after_reset(x, 0, SOFT), BootAction::Synth, "{x:#010x}");
         }
     }
 }
@@ -36,9 +39,41 @@ fn the_rom_loader_is_an2606s() {
 fn a_marker_that_would_not_clear_boots_the_synth() {
     for readback in [DFU_MAGIC, 1, u32::MAX] {
         assert_eq!(
-            after_reset(DFU_MAGIC, readback),
+            after_reset(DFU_MAGIC, readback, SOFT),
             BootAction::Synth,
             "{readback:#010x}"
         );
     }
+}
+
+/// A marker that outlived a power-off (VBAT) never traps a cold boot.
+#[test]
+fn only_a_software_reset_honours_the_marker() {
+    for cause in [
+        ResetCause::PowerOn,
+        ResetCause::Brownout,
+        ResetCause::Pin,
+        ResetCause::Watchdog,
+        ResetCause::Unknown,
+    ] {
+        assert_eq!(after_reset(DFU_MAGIC, 0, cause), BootAction::Synth, "{cause:?}");
+    }
+}
+
+/// RCC_RSR as the shell reads it: a power-on's flags never enter DFU, a
+/// `sys_reset`'s do, and a watchdog's outrank a software reset's.
+#[test]
+fn the_reset_flags_decide() {
+    const PIN: u32 = 1 << 22;
+    const BOR: u32 = 1 << 21;
+    const POR: u32 = 1 << 23;
+    const SFT: u32 = 1 << 24;
+    const IWDG1: u32 = 1 << 26;
+    let act = |rsr| after_reset(DFU_MAGIC, 0, ResetCause::from_rsr(rsr));
+    assert_eq!(act(POR | BOR | PIN), BootAction::Synth);
+    assert_eq!(act(BOR | PIN), BootAction::Synth);
+    assert_eq!(act(PIN), BootAction::Synth);
+    assert_eq!(act(0), BootAction::Synth);
+    assert_eq!(act(IWDG1 | SFT | PIN), BootAction::Synth);
+    assert_eq!(act(SFT | PIN), BootAction::RomDfu);
 }
