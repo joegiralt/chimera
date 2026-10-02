@@ -82,6 +82,9 @@ pub enum RegionData {
         /// A pending prime-status message drawn on the viz — BigViz pages
         /// only, which have no focus band to carry it (issue #21).
         status: Option<PrimeStatus>,
+        /// What an ORBIT viz draws of the scene and the runner
+        /// (`orbit::draw::viz_key`).
+        orbit: u32,
     },
     Cells {
         page: PageKey,
@@ -206,7 +209,16 @@ impl RegionData {
             values,
             live,
             status,
+            orbit: 0,
         }
+    }
+
+    /// A viz keyed on what it draws of ORBIT too.
+    pub fn with_orbit(mut self, key: u32) -> Self {
+        if let Self::Viz { orbit, .. } = &mut self {
+            *orbit = key;
+        }
+        self
     }
 
     pub fn cells(
@@ -268,6 +280,7 @@ impl RegionData {
             values: [SENTINEL; 6],
             live: u32::MAX,
             status: None,
+            orbit: u32::MAX,
         }
     }
 

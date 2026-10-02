@@ -208,3 +208,73 @@ fn the_dirty_path_follows_orbit() {
     feed(&mut ui, Input::turn(B, 1));
     frame(&mut ui, &mut fb, "a note set");
 }
+
+/// DEGREE turns from what plays: a degree past a smaller set (left over
+/// from a larger one) steps down from the set's last, never stays stuck
+/// past it.
+#[test]
+fn degree_turns_from_the_sets_last() {
+    use chimera_core::orbit::chords::ScaleKind;
+    use chimera_hal::EncoderId::E;
+    use chimera_theory::Degree;
+    let mut ui = Box::new(UiState::new());
+    hold(&mut ui, Seq);
+    feed(&mut ui, Input::press(Plus));
+    feed(&mut ui, Input::press(Plus));
+    assert_eq!(ui.page_def().id, ORBIT_CHRD.id);
+    let c = &mut ui.project_mut().orbit_mut().live.chords;
+    c.scale = ScaleKind::PentatonicMinor;
+    c.degrees[0] = Degree::ALL[11];
+    feed(&mut ui, Input::turn(E, -1));
+    assert_eq!(ui.project().orbit().live.chords.degrees[0], Degree::IV);
+    let c = &mut ui.project_mut().orbit_mut().live.chords;
+    c.degrees[0] = Degree::ALL[11];
+    feed(&mut ui, Input::turn(E, 1));
+    assert_eq!(ui.project().orbit().live.chords.degrees[0], Degree::V);
+}
+
+/// EDIT on CUSTOM returns to CHRD even when SCALE is named under it (a
+/// load or a scene switch changed it), so the page is never a dead end.
+#[test]
+fn custom_edit_returns_with_scale_named() {
+    let mut ui = Box::new(UiState::new());
+    hold(&mut ui, Seq);
+    feed(&mut ui, Input::press(Plus));
+    feed(&mut ui, Input::press(Plus));
+    feed(&mut ui, Input::turn(B, 9));
+    assert_eq!(ui.page_def().id, ORBIT_CUSTOM.id);
+    ui.project_mut().orbit_mut().live.chords.scale = ScaleKind::Dorian;
+    tap(&mut ui, Edit);
+    assert_eq!(ui.page_def().id, ORBIT_CHRD.id);
+    tap(&mut ui, Edit);
+    assert_eq!(ui.page_def().id, ORBIT_CHRD.id, "named: no CUSTOM");
+}
+
+/// CUSTOM's cursor eases the short way: across 11 and 0 it moves one
+/// note, not round the circle.
+#[test]
+fn the_cursor_eases_the_short_way() {
+    use chimera_core::ui::orbit::draw::nearest_turn;
+    assert_eq!(nearest_turn(0.0, 11), -1.0);
+    assert_eq!(nearest_turn(11.0, 0), 12.0);
+    assert_eq!(nearest_turn(-1.0, 11), -1.0);
+    assert_eq!(nearest_turn(12.0, 1), 13.0);
+    assert_eq!(nearest_turn(3.0, 5), 5.0);
+    assert_eq!(nearest_turn(2.5, 8), 8.0);
+    assert_eq!(nearest_turn(2.0, 9), -3.0);
+    // Mid-ease, the circle draws between the two notes, near the top.
+    let mut ui = Box::new(screen::ui_for("orbit_custom"));
+    feed(&mut ui, Input::turn(A, -6)); // 6 → 0
+    screen::settle(&mut ui);
+    feed(&mut ui, Input::turn(A, -1)); // 0 → 11
+    let mid = screen::render_ui(&ui).px;
+    ui.update(chimera_core::ui::animation::UiTick::for_test());
+    let moving = screen::render_ui(&ui).px;
+    screen::settle(&mut ui);
+    let rest = screen::render_ui(&ui).px;
+    assert!(mid != moving && moving != rest, "it eases");
+    assert_eq!(ui.orbit().cursor, 11);
+    // The circle's lower half (y 112..180) never sees the cursor pass.
+    let low = |px: &[u16]| px[112 * screen::W..180 * screen::W].to_vec();
+    assert!(low(&moving) == low(&rest), "not round the bottom");
+}

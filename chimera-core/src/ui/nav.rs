@@ -380,9 +380,13 @@ impl OrbitAt {
                 let n = ORBIT_CHAIN.blocks[RING_NODE].sub_page_count().max(1);
                 page(ORBIT_CHAIN.page(RING_NODE, (sub + 1) % n))
             }
+            // CUSTOM always returns to CHRD, even with SCALE named under
+            // it (a load, a scene switch); CHRD opens CUSTOM while SCALE is.
+            OrbitKey::Edit if self.on(CHRD_NODE) && sub == 1 => {
+                page(ORBIT_CHAIN.page(CHRD_NODE, 0))
+            }
             OrbitKey::Edit if self.on(CHRD_NODE) && cx.orbit.custom => {
-                // CHRD ↔ CUSTOM.
-                page(ORBIT_CHAIN.page(CHRD_NODE, if sub == 0 { 1 } else { 0 }))
+                page(ORBIT_CHAIN.page(CHRD_NODE, 1))
             }
             OrbitKey::Edit => Step::Stay,
             OrbitKey::MenuTap => Step::Go(r.resolve(r.orbit_from, cx)),

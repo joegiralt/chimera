@@ -211,9 +211,24 @@ fn round(at: f32, r: f32) -> (i32, i32) {
     )
 }
 
+/// The note `to` (0..12) nearest `from` round the circle, in unwrapped
+/// twelfths: what CUSTOM's cursor eases toward, the short way.
+pub fn nearest_turn(from: f32, to: u8) -> f32 {
+    let d = libm::fmodf(to as f32 - from, 12.0);
+    let d = if d < -6.0 {
+        d + 12.0
+    } else if d >= 6.0 {
+        d - 12.0
+    } else {
+        d
+    };
+    from + d
+}
+
 /// CHRD › CUSTOM: the twelve notes from the tonic round a circle, named;
 /// the set's lit and joined into its shape, the root locked on; the cursor
-/// ringed at `cursor` (0..1, eased); the set's name and size in the middle.
+/// ringed at `cursor` (twelfths from the root, eased, any turn); the set's
+/// name and size in the middle.
 pub fn circle<D>(d: &mut D, f: &OrbitFrame, cursor: f32)
 where
     D: DrawTarget<Color = Rgb565>,
@@ -245,7 +260,7 @@ where
         let ink = if on { theme::INK2 } else { theme::MID };
         draw::text_center(d, &theme::FONT_LABEL, name.as_str(), lx, ly + 4, ink, 0);
     }
-    let (x, y) = round(cursor.clamp(0.0, 1.0) * 11.0, CIRCLE_R);
+    let (x, y) = round(cursor, CIRCLE_R);
     draw::ring(d, x, y, 9, theme::INK, 1);
     let mut name = FmtBuf::new();
     let _ = write!(name, "{set}");
@@ -395,9 +410,9 @@ pub fn focus(
     Some(Focus { label, text, gauge })
 }
 
-/// What `def`'s viz draws of ORBIT, on ring `r`: its region redraws when
-/// this moves. 0 on any other viz.
-pub fn viz_key(def: &BlockDef, f: &OrbitFrame, r: RingIdx) -> u32 {
+/// What `def`'s viz draws of ORBIT, on ring `r` with CUSTOM's eased
+/// `cursor`: its region redraws when this moves. 0 on any other viz.
+pub fn viz_key(def: &BlockDef, f: &OrbitFrame, r: RingIdx, cursor: f32) -> u32 {
     let mut h = Fnv::new();
     let st = &f.ui.status;
     match def.viz {
@@ -412,7 +427,12 @@ pub fn viz_key(def: &BlockDef, f: &OrbitFrame, r: RingIdx) -> u32 {
             st.running.then_some(st.seg).hash(&mut h);
             loop_x(f).hash(&mut h);
         }
-        VizType::OrbitCircle => f.chords().hash(&mut h),
+        VizType::OrbitCircle => {
+            f.chords().hash(&mut h);
+            h.write_u16(crate::ui::region::quantize(
+                libm::fmodf(cursor, 12.0) + 12.0,
+            ));
+        }
         _ => return 0,
     }
     h.finish() as u32

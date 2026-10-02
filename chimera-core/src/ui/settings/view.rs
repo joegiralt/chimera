@@ -427,17 +427,12 @@ fn draw_row<D: DrawTarget<Color = Rgb565>>(d: &mut D, c: &Col, r: &ListRow<'_>, 
     };
     let below = c.note_below && note.is_some();
     let base = y + if below { UPPER_BASELINE } else { ROW_BASELINE };
-    let t = theme::LABEL_TRACKING;
     let beside = match note {
         Some(n) if !below => draw::text_width(&theme::FONT_LABEL, n, theme::LABEL_TRACKING) + 4,
         _ => 0,
     };
     let shown = fit(c, r.label, c.right - c.text - beside);
-    if t == 0 {
-        draw::text(d, c.font, shown, c.text, base, label);
-    } else {
-        draw::text_tracked(d, c.font, shown, c.text, base, label, t);
-    }
+    draw::text_tracked(d, c.font, shown, c.text, base, label, theme::LABEL_TRACKING);
     let small = |d: &mut D, s: &str, x, y, color| {
         draw::text_right(d, &theme::FONT_LABEL, s, x, y, color, theme::LABEL_TRACKING);
     };

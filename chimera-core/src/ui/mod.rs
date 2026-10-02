@@ -730,6 +730,7 @@ impl UiState {
         self.page = PageKey::from_location(self.loc, self.page_def(), self.sel_op);
         let values = self.display_values();
         self.renderer.snap_to_current(values);
+        self.renderer.orbit_cursor.snap(self.orbit.cursor as f32);
     }
 
     /// The six values the display animates toward: the page's slots, and on
@@ -1815,6 +1816,15 @@ impl UiState {
         };
         self.renderer.branch_scroll.set_target(target_scroll);
         self.renderer.branch_scroll.update();
+
+        // CUSTOM's cursor eases the short way round, and comes back into
+        // one turn once it rests.
+        let c = &mut self.renderer.orbit_cursor;
+        c.set_target(orbit::draw::nearest_turn(c.target(), self.orbit.cursor));
+        c.update();
+        if c.is_settled() {
+            c.snap((libm::roundf(c.target()) as i32).rem_euclid(12) as f32);
+        }
     }
 
     /// Render full screen with `scope` as the live output (tests pass a
@@ -1997,6 +2007,7 @@ impl UiState {
                     .prime_status
                     .filter(|_| f.def.layout == PageLayout::BigViz);
                 RegionData::viz_with_status(self.page, values, live, status)
+                    .with_orbit(self.renderer.orbit_viz_key(f))
             }
             RegionKind::Cells => {
                 let looks = (0..6).fold(0u16, |k, i| k | (renderer::look(f, i) as u16) << (2 * i));

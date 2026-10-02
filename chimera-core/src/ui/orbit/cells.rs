@@ -57,7 +57,8 @@ impl OrbitCell {
             OrbitCell::Degree => {
                 let seg = ui.seg_of(c);
                 let n = c.key().degree_count();
-                c.degrees[seg] = Degree::ALL[by(c.degrees[seg].index(), n)];
+                // A degree past a smaller set turns from the set's last.
+                c.degrees[seg] = Degree::ALL[by(c.degrees[seg].index().min(n - 1), n)];
             }
             OrbitCell::Cursor => ui.cursor = (ui.cursor as i32 + delta as i32).rem_euclid(12) as u8,
             // Right sets, left clears, however far; `toggle` keeps the root.

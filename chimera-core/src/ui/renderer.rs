@@ -22,7 +22,6 @@ use crate::ui::glyph::{
 };
 use crate::ui::mod_grid::MatrixState;
 use crate::ui::nav::PageAt;
-use crate::ui::orbit::OrbitCell;
 use crate::ui::orbit::draw::{self as orbit, OrbitFrame};
 use crate::ui::page::PageLayout;
 use crate::ui::perf::PerfStats;
@@ -87,6 +86,9 @@ pub struct Renderer {
     pub set: [AnimatedValue; 6],
     /// Animated scroll offset for dungeon map sub-page branches (in pixels).
     pub branch_scroll: AnimatedValue,
+    /// CUSTOM's cursor in twelfths round the circle, unwrapped, so it eases
+    /// the short way across 11 and 0 (`orbit::nearest_turn`).
+    pub orbit_cursor: AnimatedValue,
 }
 
 impl Default for Renderer {
@@ -101,6 +103,7 @@ impl Renderer {
             anim: [AnimatedValue::new(0.5); 6],
             set: [AnimatedValue::new(0.5); 6],
             branch_scroll: AnimatedValue::new(0.0).with_speed(0.25),
+            orbit_cursor: AnimatedValue::new(0.0),
         }
     }
 
@@ -210,12 +213,7 @@ impl Renderer {
                 viz::compressor(display, -40.0 + 40.0 * a(0), ratio, f.master_gr_db);
             }
             VizType::About => crate::ui::about_page::draw_viz(display),
-            VizType::OrbitCircle => {
-                let cursor = (0..f.def.params.len())
-                    .find(|&i| view::view(f.def, i, &f.ctx) == View::Orbit(OrbitCell::Cursor))
-                    .map_or(0.0, a);
-                orbit::circle(display, &f.orbit, cursor);
-            }
+            VizType::OrbitCircle => orbit::circle(display, &f.orbit, self.orbit_cursor.current()),
             VizType::EnvSpeed => {
                 let e = &f.parts[f.active_part.index()].sound.params.envelopes;
                 viz::env_speed(
@@ -357,9 +355,8 @@ impl Renderer {
                         (algo.alg_a as u32) << 8 | algo.alg_b as u32,
                     )
                 }
-                VizType::OrbitRhythm | VizType::OrbitChords => {
-                    ([0; 6], orbit::viz_key(f.def, &f.orbit, f.ctx.ring))
-                }
+                // ORBIT's own key: `orbit_viz_key`.
+                VizType::OrbitRhythm | VizType::OrbitChords => ([0; 6], 0),
                 _ => ([0; 6], viz::live_key(f.scope)),
             },
             PageLayout::BigViz => {
@@ -370,10 +367,9 @@ impl Renderer {
                     }
                     _ => 0,
                 };
-                let orbit = orbit::viz_key(f.def, &f.orbit, f.ctx.ring);
                 (
                     region::quantize_values(&self.anim),
-                    (f.focus as u32 | gr << 8) ^ orbit,
+                    f.focus as u32 | gr << 8,
                 )
             }
             PageLayout::Matrix => ([0; 6], 0),
@@ -476,6 +472,11 @@ impl Renderer {
             look(f, f.focus),
             f.prime_status,
         );
+    }
+
+    /// What an ORBIT viz draws, for its region's key; 0 on any other.
+    pub fn orbit_viz_key(&self, f: &Frame) -> u32 {
+        orbit::viz_key(f.def, &f.orbit, f.ctx.ring, self.orbit_cursor.current())
     }
 
     /// ORBIT's reading of the focused slot, if it has its own.

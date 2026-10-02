@@ -258,7 +258,9 @@ fn edit_cycles_only_inside() {
     shown.dedup();
     assert_eq!(shown.len(), subs, "each sub-page once");
 
-    // CHRD: only while SCALE is CUSTOM, to CUSTOM and back.
+    // CHRD opens CUSTOM only while SCALE is CUSTOM; CUSTOM always returns
+    // to CHRD (spec § 7.2), even with SCALE named under it (a load, a
+    // scene switch).
     let mut l = home;
     while l.orbit().unwrap().page().node() as usize != CHRD_NODE {
         okey(&mut l, OrbitKey::Plus, &plain, &mut r);
@@ -267,7 +269,11 @@ fn edit_cycles_only_inside() {
     assert_eq!(chrd.step_orbit(OrbitKey::Edit, &plain, &mut r), Step::Stay);
     okey(&mut l, OrbitKey::Edit, &custom, &mut r);
     assert_eq!(l, orbit(chrd.orbit().unwrap().custom()));
-    assert_eq!(l.step_orbit(OrbitKey::Edit, &plain, &mut r), Step::Stay);
+    assert_eq!(
+        l.step_orbit(OrbitKey::Edit, &plain, &mut r),
+        Step::Go(chrd),
+        "SCALE named"
+    );
     okey(&mut l, OrbitKey::Edit, &custom, &mut r);
     assert_eq!(l, chrd);
 }
