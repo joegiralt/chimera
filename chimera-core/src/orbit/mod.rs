@@ -2,6 +2,8 @@
 //! UI live in the shell. A step costs a mask lookup, and on a hit a draw,
 //! a walk and a snap; a Bjorklund pass runs only when a fill is re-laid.
 
+pub mod chords;
+pub mod clock;
 pub mod euclid;
 pub mod mutate;
 pub mod ring;
@@ -13,6 +15,7 @@ use core::mem::size_of;
 pub const RINGS: usize = 5;
 pub const MAX_STEPS: u8 = 32;
 pub const MAX_POOL: usize = 8;
+pub const MAX_SEGS: usize = 8;
 
 /// A ring's index, 0..5.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
