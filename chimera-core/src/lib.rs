@@ -13,6 +13,7 @@ pub mod addr;
 pub mod audio_out;
 pub mod block;
 pub mod clock_plan;
+pub mod console;
 pub mod dsp;
 pub mod factory;
 pub mod hw;
