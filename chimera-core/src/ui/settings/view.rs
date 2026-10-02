@@ -427,7 +427,7 @@ fn draw_row<D: DrawTarget<Color = Rgb565>>(d: &mut D, c: &Col, r: &ListRow<'_>, 
     };
     let below = c.note_below && note.is_some();
     let base = y + if below { UPPER_BASELINE } else { ROW_BASELINE };
-    let t = c.tracking();
+    let t = theme::LABEL_TRACKING;
     let beside = match note {
         Some(n) if !below => draw::text_width(&theme::FONT_LABEL, n, theme::LABEL_TRACKING) + 4,
         _ => 0,
@@ -458,24 +458,13 @@ fn draw_row<D: DrawTarget<Color = Rgb565>>(d: &mut D, c: &Col, r: &ListRow<'_>, 
     }
 }
 
-impl Col {
-    /// The small face is tracked, like every label; the list face isn't.
-    fn tracking(&self) -> i32 {
-        if core::ptr::eq(self.font, &theme::FONT_VALUE) {
-            0
-        } else {
-            theme::LABEL_TRACKING
-        }
-    }
-}
-
 /// `s` cut to `w` px at a character; short enough, it isn't measured.
 fn fit<'s>(c: &Col, s: &'s str, w: i32) -> &'s str {
     if s.len() as i32 * c.max_glyph <= w {
         return s;
     }
     let mut end = s.len();
-    while end > 0 && draw::text_width(c.font, &s[..end], c.tracking()) > w {
+    while end > 0 && draw::text_width(c.font, &s[..end], theme::LABEL_TRACKING) > w {
         end -= 1;
         while !s.is_char_boundary(end) {
             end -= 1;
@@ -1031,7 +1020,7 @@ mod tests {
             for b in 32u8..127 {
                 let s = [b];
                 let ch = core::str::from_utf8(&s).unwrap();
-                let w = draw::text_width(c.font, ch, c.tracking());
+                let w = draw::text_width(c.font, ch, theme::LABEL_TRACKING);
                 assert!(w <= c.max_glyph, "{ch:?}: {w} px");
             }
         }
