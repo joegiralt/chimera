@@ -116,6 +116,7 @@ commands! {
     Stats  (NoArg)   => "stats",  "AUDIO LOAD and the UI loop's time",
     Bench  (NoArg)   => "bench",  "the bench's numbers (bench builds)",
     Shot   (Colours) => "shot",   "the screen in THEME's colours; shot raw: canonical",
+    Dfu    (NoArg)   => "dfu",    "restart into the ROM loader for just flash",
 }
 
 /// Printable ASCII only (anything else is stored as `?`), at most `WORD_MAX`.

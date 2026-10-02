@@ -51,6 +51,11 @@ pub struct UsbParts {
     pub crs_rec: rec::Crs,
 }
 
+/// `dfu` answered and its `OK` flushed: only `Usb::service` makes one, and
+/// only `dfu::enter` takes one.
+#[must_use]
+pub struct DfuAsked(());
+
 /// The port, the half-read request line, and the loop's time between tops.
 pub struct Usb {
     dev: Dev,
@@ -126,14 +131,15 @@ impl Usb {
     /// The UI loop's first line, its snapshot point: the last iteration has
     /// flushed, so `frame` is what the panel shows. Times the last lap (an
     /// answered one is not counted), polls, reads into the line, and
-    /// answers at most one request.
+    /// answers at most one request: `Some` for a `dfu` the host was told
+    /// `OK` to.
     pub fn service(
         &mut self,
         ui: &UiState,
         stats: Option<&mut Reader<AudioStats>>,
         bench: Option<&str>,
         frame: Frame<'_>,
-    ) {
+    ) -> Option<DfuAsked> {
         let now = DWT::cycle_count();
         let us = now.wrapping_sub(self.top) / self.cycles_per_us;
         self.top = now;
@@ -151,7 +157,7 @@ impl Usb {
         // host reads it, so a host that writes but never reads NAKs itself
         // instead of costing a stall every lap.
         if let Err(UsbError::WouldBlock) = serial.flush() {
-            return;
+            return None;
         }
         // Read whatever poll said or not: bytes left from the last request
         // already wait in the port's buffer.
@@ -169,6 +175,7 @@ impl Usb {
                 timer,
                 bench,
                 frame,
+                dfu: false,
             };
             let out = &mut UsbOut {
                 dev,
@@ -176,10 +183,11 @@ impl Usb {
                 clock: AnswerClock::start(crate::controls::now_ms()),
             };
             // A stalled answer just stops: the host tool resyncs on its next request.
-            let _ = answer(req, unit, out).and_then(|()| out.flush());
+            let sent = answer(req, unit, out).and_then(|()| out.flush());
             self.last = Served::Answered;
-            break;
+            return (unit.dfu && sent.is_ok()).then_some(DfuAsked(()));
         }
+        None
     }
 }
 
@@ -190,6 +198,8 @@ struct ChipUnit<'a> {
     timer: &'a mut LoopTimer,
     bench: Option<&'a str>,
     frame: Frame<'a>,
+    /// `dfu` asked: the restart waits for the `OK` to be out.
+    dfu: bool,
 }
 
 impl Unit for ChipUnit<'_> {
@@ -214,6 +224,11 @@ impl Unit for ChipUnit<'_> {
 
     fn frame(&self) -> Frame<'_> {
         self.frame
+    }
+
+    fn dfu(&mut self) -> Option<()> {
+        self.dfu = true;
+        Some(())
     }
 }
 

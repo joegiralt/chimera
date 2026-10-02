@@ -108,6 +108,9 @@ impl Unit for DeskUnit<'_> {
     fn frame(&self) -> Frame<'_> {
         self.frame
     }
+    fn dfu(&mut self) -> Option<()> {
+        None
+    }
 }
 
 /// A non-blocking stream as `Out`, for one answer: `WouldBlock` retries
@@ -306,6 +309,26 @@ mod tests {
                 format!("ERR {cmd} is not in this build\n")
             );
         }
+    }
+
+    #[test]
+    fn dfu_on_the_sim_is_not_in_this_build() {
+        let (ui, fb, pal) = fb_unit();
+        let mut con = SocketConsole::bind("127.0.0.1:0").unwrap();
+        let mut c = client(&con);
+        c.write_all(b"dfu\n").unwrap();
+        let mut unit = DeskUnit {
+            ui: &ui,
+            frame: Frame {
+                fb: &fb,
+                palette: pal,
+            },
+        };
+        assert!(serve_until_answered(&mut con, &mut unit));
+        assert_eq!(
+            read_until_terminal(&mut c),
+            "ERR dfu is not in this build\n"
+        );
     }
 
     #[test]

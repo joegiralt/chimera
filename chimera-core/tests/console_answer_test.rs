@@ -23,6 +23,8 @@ struct Fake {
     stats: Option<Stats>,
     bench: Option<String>,
     stats_reads: usize,
+    dfu: Option<()>,
+    dfu_calls: usize,
 }
 
 impl Fake {
@@ -33,6 +35,8 @@ impl Fake {
             stats: None,
             bench: None,
             stats_reads: 0,
+            dfu: None,
+            dfu_calls: 0,
         }
     }
 }
@@ -53,6 +57,10 @@ impl Unit for Fake {
             fb: &self.fb,
             palette: ThemeSettings::DEFAULT.palette(),
         }
+    }
+    fn dfu(&mut self) -> Option<()> {
+        self.dfu_calls += 1;
+        self.dfu
     }
 }
 
@@ -94,6 +102,7 @@ fn help_is_the_specs_text() {
          stats   AUDIO LOAD and the UI loop's time\n\
          bench   the bench's numbers (bench builds)\n\
          shot    the screen in THEME's colours; shot raw: canonical\n\
+         dfu     restart into the ROM loader for just flash\n\
          OK\n"
     );
 }
@@ -167,12 +176,28 @@ fn stats_reads_audio_load_and_the_loop() {
 #[test]
 fn only_stats_reads_the_stats() {
     let mut u = Fake::new();
-    for l in ["help\n", "status\n", "bench\n", "shot\n", "nope\n"] {
+    for l in ["help\n", "status\n", "bench\n", "shot\n", "dfu\n", "nope\n"] {
         ask(&mut u, l);
     }
     assert_eq!(u.stats_reads, 0);
     ask(&mut u, "stats\n");
     assert_eq!(u.stats_reads, 1);
+}
+
+#[test]
+fn dfu_is_ok_then_the_unit_is_told_once() {
+    let mut u = Fake::new();
+    u.dfu = Some(());
+    assert_eq!(ask(&mut u, "dfu\n"), "OK\n");
+    assert_eq!(u.dfu_calls, 1);
+    assert_eq!(ask(&mut u, "DFU now\n"), "ERR dfu takes no arguments\n");
+    assert_eq!(u.dfu_calls, 1, "a refusal arms nothing");
+}
+
+#[test]
+fn dfu_without_the_chip_is_one_err_line() {
+    let mut u = Fake::new(); // dfu None
+    assert_eq!(ask(&mut u, "dfu\n"), "ERR dfu is not in this build\n");
 }
 
 #[test]
@@ -300,8 +325,9 @@ impl Rng {
 
     /// Up to 200 bytes: 70 % command words, `raw`, spaces, CR and LF; 30 % any byte.
     fn stream(&mut self) -> Vec<u8> {
-        const PIECES: [&[u8]; 10] = [
-            b"help", b"status", b"stats", b"bench", b"shot", b"raw", b" ", b"\r", b"\n", b"\n",
+        const PIECES: [&[u8]; 11] = [
+            b"help", b"status", b"stats", b"bench", b"shot", b"dfu", b"raw", b" ", b"\r", b"\n",
+            b"\n",
         ];
         let len = self.below(201);
         let mut v = Vec::with_capacity(len + 8);

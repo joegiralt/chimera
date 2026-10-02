@@ -463,6 +463,10 @@ fn prompt(k: AskKind, ui: &mut UiState) {
             manage_command(ui, BETA, Command::SaveTo, true);
             tap(ui, ButtonId::Seq);
         }
+        AskKind::EnterDfu => {
+            to_leaf(ui, &["SYSTEM"]);
+            tap(ui, ButtonId::Seq);
+        }
     }
     assert_eq!(ui.prompt_kind_for_test(), Some(k));
 }

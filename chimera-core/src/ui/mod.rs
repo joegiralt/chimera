@@ -40,6 +40,7 @@ use chimera_hal::{
 
 use crate::addr::{BlockRead, BlockRef, Blocks, Op, ParamAddr};
 use crate::block::Block;
+use crate::boot::RomDfu;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
 use crate::in_place::{by_value, uninit_at};
@@ -76,6 +77,7 @@ use settings::naming::Naming;
 use settings::part::{Offer, PartCmd, SAVE_ROWS, slot_of};
 use settings::prompt;
 use settings::prompt::ReplaceTo;
+use settings::replace::said::Said;
 use settings::replace::{Asked, Guarded, PartAsk, ProjectAsk, Reply, said};
 use settings::view::PartBand;
 use settings::{
@@ -208,6 +210,8 @@ pub struct UiState {
     job: Option<Job>,
     /// The card as `sync_system` last saw it, for ABOUT.
     card: Card,
+    /// OS UPGRADE's yes, until the shell takes it.
+    dfu: Option<Said<RomDfu>>,
 }
 
 crate::in_place::field_list!(UiState => UiState {
@@ -235,6 +239,7 @@ crate::in_place::field_list!(UiState => UiState {
     listing,
     job,
     card,
+    dfu,
 });
 
 impl Default for UiState {
@@ -294,10 +299,16 @@ impl UiState {
             addr_of_mut!((*p).listing).write(Listing::new());
             addr_of_mut!((*p).job).write(None);
             addr_of_mut!((*p).card).write(Card::new());
+            addr_of_mut!((*p).dfu).write(None);
             let ui = slot.assume_init_mut();
             ui.load_matrix(PartId::ALL[0]);
             ui
         }
+    }
+
+    /// The DFU prompt's yes, once.
+    pub fn take_dfu(&mut self) -> Option<Said<RomDfu>> {
+        self.dfu.take()
     }
 
     /// The last MIX+PLUS outcome, shown in the focus band until the next
@@ -952,6 +963,7 @@ impl UiState {
             Act::PartClear => self.clear_part(),
             // `part_cmd`'s.
             Act::PartReload => {}
+            Act::EnterDfu => self.ask(Ask::EnterDfu(prompt::Choice::new())),
         }
     }
 
@@ -1279,6 +1291,7 @@ impl UiState {
                     }
                 }
             }
+            Answered::EnterDfu(a) => self.dfu = said(a),
         }
     }
 

@@ -32,8 +32,9 @@ use listing::Chosen;
 use naming::{NAME_MAX, Naming, NamingOut};
 use prompt::{
     AlsoUses, AlsoUsesAnswer, Answer, CardChanged, CardChangedAnswer, Choice, Clear, ClearAnswer,
-    ClearSlot, Delete, DeleteAnswer, Load, LoadAnswer, NameExists, NameExistsAnswer, PromptView,
-    Reload, ReloadAnswer, Replace, ReplaceAnswer, ReplaceTo, SaveOver, SaveOverAnswer, with_view,
+    ClearSlot, Delete, DeleteAnswer, DfuAnswer, EnterDfu, Load, LoadAnswer, NameExists,
+    NameExistsAnswer, PromptView, Reload, ReloadAnswer, Replace, ReplaceAnswer, ReplaceTo,
+    SaveOver, SaveOverAnswer, with_view,
 };
 use replace::{PartAsk, ProjectAsk, ReloadAsk, Reply};
 
@@ -86,6 +87,8 @@ pub(crate) enum Ask {
     Clear(Chosen, Choice<ClearAnswer>),
     /// MANAGE's SAVE TO.
     SaveOver(Chosen, Choice<SaveOverAnswer>),
+    /// SYSTEM's OS UPGRADE.
+    EnterDfu(Choice<DfuAnswer>),
 }
 
 /// `AskKind` and its `ALL`, from one list: no kind can miss `ALL`.
@@ -123,6 +126,7 @@ ask_kinds! {
     Delete => "delete",
     Clear => "clear",
     SaveOver => "save_over",
+    EnterDfu => "enter_dfu",
 }
 
 /// A listed project as its prompt names it.
@@ -148,6 +152,7 @@ pub(crate) enum Answered {
     Delete(Chosen, Answer<DeleteAnswer>),
     Clear(Chosen, Answer<ClearAnswer>),
     SaveOver(Chosen, Answer<SaveOverAnswer>),
+    EnterDfu(Answer<DfuAnswer>),
 }
 
 /// Each named Part's `Revert`, by Part, as offered when the prompt opened:
@@ -230,6 +235,7 @@ impl Ask {
             Ask::Delete(e, c) => with_view(&Delete { name: subject(e) }, c, f),
             Ask::Clear(e, c) => with_view(&Clear { name: subject(e) }, c, f),
             Ask::SaveOver(e, c) => with_view(&SaveOver { name: subject(e) }, c, f),
+            Ask::EnterDfu(c) => with_view(&EnterDfu, c, f),
         }
     }
 
@@ -246,6 +252,7 @@ impl Ask {
             Ask::Delete(..) => AskKind::Delete,
             Ask::Clear(..) => AskKind::Clear,
             Ask::SaveOver(..) => AskKind::SaveOver,
+            Ask::EnterDfu(_) => AskKind::EnterDfu,
         }
     }
 
@@ -340,6 +347,10 @@ impl Ask {
             Ask::SaveOver(e, mut choice) => match choice.input(c, p) {
                 Some(a) => Got(Answered::SaveOver(e, a)),
                 None => Open(Ask::SaveOver(e, choice)),
+            },
+            Ask::EnterDfu(mut choice) => match choice.input(c, p) {
+                Some(a) => Got(Answered::EnterDfu(a)),
+                None => Open(Ask::EnterDfu(choice)),
             },
         }
     }

@@ -23,6 +23,8 @@ pub trait Unit {
     fn stats(&mut self) -> Option<Stats>;
     fn bench(&self) -> Option<&str>;
     fn frame(&self) -> Frame<'_>;
+    /// Arms the restart, made once `OK` is out. `None`: not in this build.
+    fn dfu(&mut self) -> Option<()>;
 }
 
 /// Why an answer is a single `ERR` line.
@@ -72,6 +74,7 @@ pub fn answer(
             .map(|b| bench(b, &mut t))
             .ok_or(Why::Absent(r.command())),
         Ok(Request::Shot(c)) => return write_shot(unit.frame(), c, t.0),
+        Ok(r @ Request::Dfu(NoArg)) => unit.dfu().map(Ok).ok_or(Why::Absent(r.command())),
     };
     match body {
         Ok(wrote) => wrote.and_then(|()| t.write_str("OK\n")),

@@ -182,7 +182,7 @@ in-memory card.
 | ![](settings_midi.png) | MIDI | SYNC and PORT later, CHANNELS |
 | ![](settings_audio.png) | AUDIO | OUTPUTS, SENDS later, TUNING |
 | ![](settings_personal.png) | PERSONAL | THEME |
-| ![](settings_system.png) | SYSTEM | OS, DIAGNOSTICS, ABOUT; the rest later |
+| ![](settings_system.png) | SYSTEM | OS UPGRADE (an action), DIAGNOSTICS, ABOUT; the rest later |
 | ![](settings_system_diag.png) | SYSTEM › DIAG | AUDIO LOAD, TEST TONE and INPUT TEST later, DEMO (debug builds) |
 | ![](settings_system_diag_demo.png) | DIAG › DEMO | A row per storyboard page |
 
@@ -204,6 +204,7 @@ everything between the header and the map blanks.
 | ![](settings_prompt_reload_part.png) | PART › RELOAD | RELOAD an edited Part from its slot |
 | ![](settings_prompt_update_stale.png) | PART › SAVE TO | P4 also plays the slot saved over |
 | ![](settings_prompt_clear_slot.png) | Sound rung, MIX + MINUS | CLEAR a slot no Part plays |
+| ![](settings_prompt_enter_dfu.png) | SYSTEM › OS UPGRADE | Restart into the ROM loader for `just flash` |
 
 ### Leaves
 
@@ -215,7 +216,6 @@ A leaf is one page (ADR 0066): no key steps it.
 | ![](settings_audio_outputs.png) | AUDIO › OUTPUTS | Each Part's OUT: the mixer's own value |
 | ![](settings_audio_tuning.png) | AUDIO › TUNING | TUNE and SCALE |
 | ![](settings_personal_theme.png) | PERSONAL › THEME | BRIGHT, GAMMA, ACCENT (AMBER, focused), BLACK |
-| ![](settings_system_os.png) | SYSTEM › OS | Updates: no controls yet |
 | ![](settings_system_about.png) | SYSTEM › ABOUT | Version, build, chip REV, clock, reset cause, the card |
 | ![](settings_system_diag_aud_load.png) | DIAG › AUD LOAD | Audio load, peak, overruns, drops, desyncs, stack |
 

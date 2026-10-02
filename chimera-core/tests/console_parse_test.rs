@@ -55,6 +55,7 @@ fn commands_without_arguments_refuse_one() {
         Command::Status,
         Command::Stats,
         Command::Bench,
+        Command::Dfu,
     ] {
         let got = feed(
             &mut Console::new(),
@@ -161,7 +162,7 @@ fn a_line_split_anywhere_parses_once() {
 #[test]
 fn the_table_is_the_one_list() {
     let names: Vec<_> = Command::ALL.iter().map(|c| c.name()).collect();
-    assert_eq!(names, ["help", "status", "stats", "bench", "shot"]);
+    assert_eq!(names, ["help", "status", "stats", "bench", "shot", "dfu"]);
     for c in Command::ALL {
         assert!(!c.about().is_empty() && c.about().len() <= 60, "{c:?}");
         assert!(c.name().len() <= 7, "help's column is 8 wide");
