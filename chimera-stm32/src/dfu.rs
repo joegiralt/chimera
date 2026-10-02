@@ -8,7 +8,7 @@
 
 #[cfg(all(not(feature = "sd-probe"), feature = "usb-console"))]
 use chimera_core::boot::FROM_CONSOLE;
-use chimera_core::boot::{self, BootAction, BootSeen, ROM_DFU_BASE};
+use chimera_core::boot::{self, BootAction, BootSeen, BootStage, ROM_DFU_BASE};
 #[cfg(not(feature = "sd-probe"))]
 use chimera_core::boot::{DFU_MAGIC, FROM_MENU, RomDfu};
 use chimera_core::reset::ResetCause;
@@ -24,6 +24,7 @@ const MARKER: usize = 0;
 const BOOTS: usize = 1;
 const FROM: usize = 2;
 const JUMP_RSR: usize = 3;
+const STAGE: usize = 4;
 
 /// `after_reset` ran: RTCAPBEN is set, the marker is clear (or stuck, and
 /// ignored) and RCC_RSR is read and cleared. Only `after_reset` makes one,
@@ -46,6 +47,11 @@ pub struct Marker(pac::RTC);
 impl Marker {
     pub fn new(_: Checked, rtc: pac::RTC) -> Marker {
         Marker(rtc)
+    }
+
+    /// How far start-up got, for the next boot's `last_stage`.
+    pub fn stage(&self, s: BootStage) {
+        self.0.bkpr[STAGE].write(|w| w.bkp().bits(s.code()));
     }
 }
 
@@ -97,6 +103,8 @@ pub fn after_reset(
     let readback = clear(pwr, rtc);
     let boots = rtc.bkpr[BOOTS].read().bits().wrapping_add(1);
     rtc.bkpr[BOOTS].write(|w| w.bkp().bits(boots));
+    let last_stage = rtc.bkpr[STAGE].read().bits();
+    rtc.bkpr[STAGE].write(|w| w.bkp().bits(BootStage::Entry.code()));
     let action = boot::after_reset(marker, readback, ResetCause::from_rsr(rsr));
     match action {
         BootAction::RomDfu => {
@@ -112,6 +120,7 @@ pub fn after_reset(
             boots,
             from: rtc.bkpr[FROM].read().bits(),
             jump_rsr: rtc.bkpr[JUMP_RSR].read().bits(),
+            last_stage,
         }),
     }
 }

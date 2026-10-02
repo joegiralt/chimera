@@ -37,6 +37,51 @@ pub const fn after_reset(marker: u32, readback: u32, cause: ResetCause) -> BootA
 pub const FROM_MENU: u32 = u32::from_be_bytes(*b"MENU");
 pub const FROM_CONSOLE: u32 = u32::from_be_bytes(*b"CONS");
 
+/// How far a start-up got, kept in RTC_BKP4R as it goes: after a reset,
+/// the last one written says where the boot before it stopped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum BootStage {
+    /// The top of `main`.
+    Entry = 1,
+    /// SYSTEM and the project read from the card.
+    Card = 2,
+    /// The audio and the controls tick started.
+    Audio = 3,
+    /// PART 1 drawn, the USB core enabled and on the bus.
+    Usb = 4,
+    /// The watchdog armed, its kicks live: the UI loop runs.
+    Running = 5,
+}
+
+impl BootStage {
+    pub const ALL: [BootStage; 5] = [
+        BootStage::Entry,
+        BootStage::Card,
+        BootStage::Audio,
+        BootStage::Usb,
+        BootStage::Running,
+    ];
+
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+
+    pub fn from_code(code: u32) -> Option<BootStage> {
+        BootStage::ALL.into_iter().find(|s| s.code() == code)
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            BootStage::Entry => "entry",
+            BootStage::Card => "card",
+            BootStage::Audio => "audio",
+            BootStage::Usb => "usb",
+            BootStage::Running => "running",
+        }
+    }
+}
+
 /// What the shell saw at the top of `main`, for `status`'s `boot` line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BootSeen {
@@ -56,10 +101,13 @@ pub struct BootSeen {
     pub from: u32,
     /// RTC_BKP3R: RCC_RSR at the last jump to the ROM loader, 0 if none.
     pub jump_rsr: u32,
+    /// RTC_BKP4R on entry: the `BootStage` the boot before this one
+    /// reached, 0 after the backup domain reset.
+    pub last_stage: u32,
 }
 
 impl fmt::Display for BootSeen {
-    /// `boot marker=… readback=… action=Synth rsr=… dbp=0 boots=… from=… jump_rsr=…`
+    /// `boot marker=… readback=… action=Synth rsr=… dbp=0 boots=… from=… jump_rsr=… last_stage=…`
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let action = match self.action {
             BootAction::Synth => "Synth",
@@ -80,7 +128,12 @@ impl fmt::Display for BootSeen {
             FROM_CONSOLE => f.write_str("console")?,
             x => write!(f, "{x:08x}")?,
         }
-        write!(f, " jump_rsr={:08x}", self.jump_rsr)
+        write!(f, " jump_rsr={:08x} last_stage=", self.jump_rsr)?;
+        match (self.last_stage, BootStage::from_code(self.last_stage)) {
+            (_, Some(s)) => f.write_str(s.label()),
+            (0, None) => f.write_str("none"),
+            (x, None) => write!(f, "{x:08x}"),
+        }
     }
 }
 

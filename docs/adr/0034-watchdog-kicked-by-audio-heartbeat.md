@@ -10,8 +10,14 @@ fault while stacking, e.g. a stack overflow) or a spin inside the audio
 interrupt never reaches that code, and the unit buzzes until power is cycled.
 
 ## Decision
-IWDG1 starts after the ring pre-fill and before the DMA interrupt is
-unmasked, so no kick can interleave with its setup. The SysTick controls
+IWDG1 is armed last in start-up, just before the UI loop: after the audio,
+the first frame and the USB core's enable (which spins with interrupts
+masked), and only once `audio_out::LiveCheck` sees the block count and the
+controls tick both moving (`watchdog::Live`, else a reset after
+`LIVE_WAIT_MS`). Arming it before the audio, as first decided, put the
+start-up's own gaps on its clock: a cold boot reset twice under it
+(2026-10-02). The tick kicks only once arming has returned, so no kick can
+interleave with its setup. The SysTick controls
 tick (500 Hz, lowest priority) kicks it only when the DMA interrupt's block
 count has moved since the previous tick (`audio_out::Heartbeat`).
 

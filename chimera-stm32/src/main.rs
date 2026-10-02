@@ -47,11 +47,6 @@ use stm32h7xx_hal::gpio::{Output, PD8, PD9, PD10, PushPull, Speed};
 use stm32h7xx_hal::rcc::CoreClocks;
 use stm32h7xx_hal::{pac, prelude::*, spi};
 
-/// How long the boot splash stays up from first light; SYSTEM and the
-/// last project load behind it.
-#[cfg(not(feature = "sd-probe"))]
-const SPLASH_US: u32 = 1_000_000;
-
 /// Flush-to-zero and default NaN, in this context (FPSCR) and in every
 /// exception's (FPDSCR, which the audio ISR starts from; it resets to
 /// 0). Tails decaying toward silence then never go denormal, whose
@@ -266,6 +261,7 @@ const _: () = assert!(LOAD_ACK_TICKS >= 1, "the ack timeout is under a tick");
 
 #[cfg(not(feature = "sd-probe"))]
 fn synth(board: Board) -> ! {
+    use chimera_core::boot::BootStage;
     use chimera_core::clock_plan::pll3_for;
     use chimera_core::hw::SampleBudget;
     use chimera_core::storage::{Card, SystemSync};
@@ -299,10 +295,16 @@ fn synth(board: Board) -> ! {
     let mut controls = Stm32Controls::new();
     let ui = shared::take_ui().expect("UI state taken once");
 
-    // Boot step 1: SYSTEM behind the splash, then its theme. Card work runs
-    // only here and in the UI loop, never on the audio path, and every card
-    // path is bounded, so it can run before the watchdog starts.
-    let first_light = cortex_m::peripheral::DWT::cycle_count();
+    // Start-up, in order, behind the splash until PART 1 can be drawn:
+    // 1. SYSTEM and the last project from the card, however slow;
+    // 2. the controls tick, the audio and MIDI DIN;
+    // 3. PART 1 drawn, and USB set up and on the bus;
+    // 4. the watchdog, armed last, once its kicks are live (`await_live`),
+    //    so no start-up step can run on its clock;
+    // 5. the UI loop.
+    // `last_stage` on the next boot says how far this one got.
+    // Step 1: SYSTEM behind the splash, then its theme. Card work runs only
+    // here and in the UI loop, never on the audio path.
     let _ = chimera_core::ui::splash::draw(&mut display);
     display.flush();
     let sd = sd::init(sd, &mut cp.DCB, &mut cp.DWT, &clocks, clk.cpu_hz);
@@ -314,16 +316,13 @@ fn synth(board: Board) -> ! {
     let (mut sync, mut settings, _) = SystemSync::boot(&mut card, store);
     ui.set_theme(settings.theme);
     apply_theme(settings.theme, &mut theme, &mut backlight, &mut display);
-    // Boot step 2, still behind BUSY, before the audio and the watchdog
-    // start: the last project (about 130 KB read), or NEW and why.
+    // Still behind the splash: the last project (about 130 KB read), or
+    // NEW and why.
     ui.boot_project(&mut card, store, settings.last_project);
-    // The splash again in the card's theme, held to SPLASH_US from first
-    // light: the boot's card work hides inside it rather than adding to it.
+    // The splash again in the card's theme; it stays up until PART 1.
     let _ = chimera_core::ui::splash::draw(&mut display);
     display.flush();
-    let held_us = cortex_m::peripheral::DWT::cycle_count().wrapping_sub(first_light)
-        / (clk.cpu_hz / 1_000_000);
-    clocks::delay_us(clk.cpu_hz, SPLASH_US.saturating_sub(held_us));
+    marker.stage(BootStage::Card);
     let perf = PerfTracker::new();
     // The bench's screens as text, kept for the console's `bench`.
     #[cfg(feature = "bench")]
@@ -337,6 +336,7 @@ fn synth(board: Board) -> ! {
     #[cfg(all(feature = "usb-console", not(feature = "bench")))]
     let bench_text: Option<&str> = None;
 
+    // Step 2.
     controls::start_systick(cp.SYST, &mut cp.SCB, clk.cpu_hz);
     controls::enable();
 
@@ -355,7 +355,6 @@ fn synth(board: Board) -> ! {
     audio::sai::init(clk.rev.new_sai(), pll3.mckdiv);
     audio::dma::clear();
     audio::prefill();
-    watchdog::start(iwdg, &dbgmcu);
     audio::dma::init(&mut cp.NVIC);
     audio::dma::start();
     audio::sai::start();
@@ -369,7 +368,9 @@ fn synth(board: Board) -> ! {
             .expect("DIN producer taken once"),
     );
 
-    // After the audio and MIDI DIN start: set up, not yet on the bus.
+    marker.stage(BootStage::Audio);
+
+    // Step 3. USB set up, not yet on the bus.
     #[cfg(feature = "usb-console")]
     let usb = usb::init(usb_parts, &clocks, clk.cpu_hz);
 
@@ -380,10 +381,17 @@ fn synth(board: Board) -> ! {
     ui.prime_regions(&perf.stats, None, scope_r.read());
     led.set_low();
 
-    let mut last_tick = controls::ticks();
     // On the bus only now: the loop below polls it from this point on.
+    // Its core reset spins with interrupts masked, so before the watchdog.
     #[cfg(feature = "usb-console")]
     let mut usb = usb.connect();
+    marker.stage(BootStage::Usb);
+
+    // Step 4.
+    watchdog::start(iwdg, &dbgmcu, watchdog::await_live(clk.cpu_hz));
+    marker.stage(BootStage::Running);
+
+    let mut last_tick = controls::ticks();
     loop {
         // The snapshot point: every path through the last iteration flushed.
         #[cfg(feature = "usb-console")]

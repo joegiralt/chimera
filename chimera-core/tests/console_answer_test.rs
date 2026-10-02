@@ -239,6 +239,7 @@ fn the_chips_status_ends_with_its_boot_line() {
         boots: 1,
         from: 0,
         jump_rsr: 0,
+        last_stage: 0,
     };
     u.boot = Some(seen);
     let mut want = String::new();

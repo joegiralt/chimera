@@ -1,5 +1,5 @@
 use chimera_core::boot::{
-    BootAction, BootSeen, DFU_MAGIC, FROM_CONSOLE, FROM_MENU, ROM_DFU_BASE, after_reset,
+    BootAction, BootSeen, BootStage, DFU_MAGIC, FROM_CONSOLE, FROM_MENU, ROM_DFU_BASE, after_reset,
 };
 use chimera_core::reset::ResetCause;
 
@@ -95,11 +95,12 @@ fn the_boot_line() {
         boots: 7,
         from: FROM_CONSOLE,
         jump_rsr: 0x0140_0000,
+        last_stage: BootStage::Audio.code(),
     };
     assert_eq!(
         seen.to_string(),
         "boot marker=44465521 readback=00000000 action=Synth rsr=00e60000 dbp=0 boots=7 \
-         from=console jump_rsr=01400000"
+         from=console jump_rsr=01400000 last_stage=audio"
     );
     let words = |from| BootSeen { from, ..seen }.to_string();
     assert!(words(FROM_MENU).contains(" from=menu "));
@@ -112,4 +113,26 @@ fn the_boot_line() {
     }
     .to_string();
     assert!(jumped.contains(" action=RomDfu ") && jumped.contains(" dbp=1 "));
+}
+
+#[test]
+fn every_stage_reads_back_from_its_code() {
+    for s in BootStage::ALL {
+        assert_eq!(BootStage::from_code(s.code()), Some(s));
+    }
+    assert_eq!(BootStage::from_code(0), None);
+    let seen = |last_stage| BootSeen {
+        marker: 0,
+        readback: 0,
+        action: BootAction::Synth,
+        rsr: 0,
+        dbp: false,
+        boots: 1,
+        from: 0,
+        jump_rsr: 0,
+        last_stage,
+    };
+    assert!(seen(0).to_string().ends_with(" last_stage=none"));
+    assert!(seen(99).to_string().ends_with(" last_stage=00000063"));
+    assert!(seen(5).to_string().ends_with(" last_stage=running"));
 }
