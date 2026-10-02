@@ -29,7 +29,7 @@ impl LoopTimer {
         if served == Served::Answered {
             return;
         }
-        self.sum_us += u64::from(us);
+        self.sum_us = self.sum_us.saturating_add(u64::from(us));
         self.laps = self.laps.saturating_add(1);
         self.peak_us = self.peak_us.max(us);
     }
@@ -80,7 +80,7 @@ impl<const N: usize> Report<N> {
         self.put("", text);
     }
 
-    /// Draws `text` with `draw` and records it: the two can't drift apart.
+    /// Records `text` and draws it with `draw`: the two can't drift apart.
     pub fn drawn<R>(&mut self, text: &str, draw: impl FnOnce(&str) -> R) -> R {
         self.line(text);
         draw(text)
