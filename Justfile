@@ -19,8 +19,9 @@ build:
 # with the SD probe, clippy on host
 # and firmware (every feature set), rustfmt and the stack check. The desktop needs ALSA's
 # pkg-config file; point PKG_CONFIG_PATH at it if it is not installed
-# system-wide.
+# system-wide. The host tool's tests run first, against a fake unit.
 check:
+    python3 -m unittest discover -s tools -p 'test_*.py'
     cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit
     cargo test -p chimera-core --features master-tape
     just test-fat-tools
@@ -97,17 +98,47 @@ screens:
     SCREEN_DUMP="$(pwd)/target/screens" cargo test -p chimera-core --test screen_golden_test --test screen_atlas_test -q
     for f in target/screens/*.ppm; do magick "$f" -filter point -resize 200% "docs/screens/$(basename "$f" .ppm).png"; done
 
-# Flash firmware to PreenFM3 via DFU
+# Read the unit over USB (CHIMERA_USB=sim for the desktop sim)
+usb +cmd:
+    python3 tools/chimera-usb.py {{cmd}}
+shot *args:
+    python3 tools/chimera-usb.py shot {{args}}
+stats:
+    python3 tools/chimera-usb.py stats
+status:
+    python3 tools/chimera-usb.py status
+
+# Flash firmware to PreenFM3 via DFU. With the console up, `to-dfu` sends
+# `dfu` and waits for the ROM loader; without it, bridge BOOT0 and re-plug.
 flash:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf
     rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera.bin
+    python3 tools/chimera-usb.py to-dfu
     dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera.bin -s 0x8020000:leave
 
 # Flash the bench build (--features bench) to PreenFM3 via DFU
 flash-bench:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features bench
     rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-bench.bin
+    python3 tools/chimera-usb.py to-dfu
     dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-bench.bin -s 0x8020000:leave
+
+# Copy the stock bootloader (0x08000000, 128 KB) to ~/chimera-backups with a
+# .sha256, never over an existing file. Upload only: it never writes the
+# unit. Needs DFU (the console's `dfu` or the BOOT0 jumper). Never commit the
+# copy; docs/recovery.md has the restore.
+backup-bootloader:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=~/chimera-backups/preenfm3-bootloader-$(date +%F).bin
+    if [ -e "$out" ]; then echo "backup-bootloader: $out exists, not overwriting" >&2; exit 1; fi
+    mkdir -p ~/chimera-backups
+    trap 'rm -f "$out"' ERR  # a failed read leaves no partial backup behind
+    python3 tools/chimera-usb.py to-dfu
+    dfu-util -a0 -d 0483:df11 -s 0x08000000:131072 -U "$out"
+    test "$(stat -c %s "$out")" -eq 131072
+    cd ~/chimera-backups && sha256sum "$(basename "$out")" > "$(basename "$out").sha256"
+    echo "$out"
 
 # Flash the SD bring-up probe (--no-default-features --features sd-probe) to PreenFM3 via DFU
 flash-sd-probe:

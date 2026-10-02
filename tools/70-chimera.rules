@@ -1,0 +1,6 @@
+# Chimera's USB console (0483:5740, the stock PreenFM3 identity). Install once:
+#   sudo cp tools/70-chimera.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger
+# ID_MM_DEVICE_IGNORE keeps ModemManager's AT probe off the port; uaccess
+# gives the logged-in user the port without dialout; /dev/chimera is the
+# host tool's default target.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", ENV{ID_MM_DEVICE_IGNORE}="1", TAG+="uaccess", SYMLINK+="chimera"
