@@ -1088,6 +1088,20 @@ impl UiState {
             .map(|a| a.with_view(|v| (Line::new(v.question), Line::new(v.reason))))
     }
 
+    /// Which prompt is open.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn prompt_kind_for_test(&self) -> Option<settings::AskKind> {
+        self.prompt().map(Ask::kind)
+    }
+
+    /// SETTINGS' footer legend as drawn.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn legend_for_test(&self) -> Option<&'static str> {
+        self.bands().map(|b| b.legend())
+    }
+
     /// A replace from `src` that asks opens its prompt; whether it did.
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]

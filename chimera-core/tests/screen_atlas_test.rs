@@ -7,9 +7,12 @@
 //! picture; the atlas adds the rest, named `<chain>_<map label>`:
 //! `algo_crs`, `modal_bank_exc` (Modal pages that follow MODEL carry it),
 //! `algo_pit_cut` (a choice that changes the page, at its other values).
-//! A SETTINGS leaf is `settings_<crumbs joined by _>`, its later pages
-//! with their name: `settings_personal_theme`, `settings_system_about_audio`,
-//! `settings_system_demo_<map label>`.
+//! A SETTINGS list or leaf is `settings_<crumbs joined by _>` (the top,
+//! `settings_top`), a leaf's later pages with their name:
+//! `settings_personal_theme`, `settings_system_about_audio`,
+//! `settings_system_demo_<map label>`. A screen in some state adds it:
+//! `settings_project_load_no_card`, `settings_footer_saved`, and each
+//! prompt, `settings_prompt_<kind>`.
 
 mod screen;
 
@@ -18,17 +21,27 @@ use std::collections::HashSet;
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::filter::KIND_NAMES;
 use chimera_core::dsp::modal::{MODEL_NAMES, ModalParams};
+use chimera_core::name::ProjectName;
 use chimera_core::params::{EngineType, FilterParams, ParamSnapshot, PitchParams, STEAL_NAMES};
-use chimera_core::project::{Differ, PartId, ProjectNote, SlotId, Subject};
+use chimera_core::project::{Differ, PartId, ProjectFile, ProjectNote, SlotId, Subject};
 use chimera_core::storage::{FileError, ProjectId};
 use chimera_core::ui::block_def::{BlockDef, ChainDef2, SlotBinding};
 use chimera_core::ui::block_registry::{DEMO_CHAIN, MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART};
 use chimera_core::ui::busy::{ToastStep, draw_toast};
 use chimera_core::ui::nav::{Location, chain_def_for};
+use chimera_core::ui::settings::manage::Command;
+use chimera_core::ui::settings::part::{PartCmd, SAVE_ROWS};
+use chimera_core::ui::settings::view::{Footer, draw_footer};
+use chimera_core::ui::settings::{AskKind, Kind};
+use chimera_core::ui::theme;
 use chimera_core::ui::{UiState, splash};
 use chimera_hal::store::{StoreError, VolumeId};
+use chimera_hal::testkit::MemStore;
 use chimera_hal::{ButtonId, EncoderId};
+use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
 use screen::*;
+
+const MAP_TOP: usize = chimera_core::ui::theme::MAP_TOP as usize;
 
 const ENCODERS: [EncoderId; 6] = [
     EncoderId::A,
@@ -105,7 +118,7 @@ impl Ctx {
         let leaves = leaves();
         all.extend(
             (0..leaves.len())
-                .filter(|&i| !core::ptr::eq(leaves[i].chain, &DEMO_CHAIN))
+                .filter(|&i| !core::ptr::eq(leaves[i].of, &DEMO_CHAIN))
                 .map(Ctx::Settings),
         );
         if cfg!(debug_assertions) {
@@ -128,7 +141,7 @@ impl Ctx {
         match self {
             Ctx::Part(e) => chain_def_for(e),
             Ctx::Mixer => &MIXER_CHANNEL_CHAIN,
-            Ctx::Settings(i) => leaves()[i].chain,
+            Ctx::Settings(i) => leaves()[i].of,
             Ctx::Demo => &DEMO_CHAIN,
         }
     }
@@ -346,6 +359,192 @@ fn notes() -> Vec<(&'static str, ProjectNote)> {
     ]
 }
 
+/// A SETTINGS screen in some state: its name and how to get there.
+type Setup = Box<dyn Fn(&mut UiState)>;
+
+const P1: PartId = PartId::ALL[0];
+const P4: PartId = PartId::ALL[3];
+/// SLOT 03.
+const S3: SlotId = SlotId::ALL[2];
+
+/// Part `p`'s Sound rung, the cursor on slot `s`.
+fn rung(ui: &mut UiState, p: PartId, s: SlotId) {
+    let b = [ButtonId::B1, ButtonId::B2, ButtonId::B3, ButtonId::B4];
+    feed(ui, Input::chord(ButtonId::Edit, b[p.index()]));
+    feed(ui, Input::turn(EncoderId::A, s.index() as i8));
+}
+
+/// Slot `s` into Part `p`, unedited, through the Sound rung.
+fn load_slot(ui: &mut UiState, p: PartId, s: SlotId) {
+    rung(ui, p, s);
+    feed(ui, Input::press(ButtonId::Edit));
+    assert!(!ui.prompt_open());
+}
+
+fn edit(ui: &mut UiState, p: PartId) {
+    ui.project_mut().edit_part(p).sound.params.filter.cutoff *= 0.5;
+}
+
+/// SETTINGS › PART for Part 1, the bar on `row`.
+fn part_row(ui: &mut UiState, row: usize) {
+    to_leaf(ui, &["PART"]);
+    plus(ui, row);
+}
+
+/// ALPHA, BETA, GAMMA on the card, ALPHA loaded, MANAGE open.
+fn manage(ui: &mut UiState, f: impl FnOnce(&mut Rig, [ProjectFile; 3])) {
+    let (s, files) = three();
+    let mut r = Rig::new(ui, s);
+    r.load(files[0]);
+    r.to(&["PROJECT", "MANAGE PROJECTS"]);
+    f(&mut r, files);
+}
+
+/// MANAGE's command `c` on BETA.
+fn manage_command(ui: &mut UiState, c: Command, modified: bool) {
+    manage(ui, |r, _| {
+        if modified {
+            modify(r.ui);
+        }
+        r.bar_to(1);
+        r.feed(Input::press(ButtonId::Edit));
+        for _ in 0..c as usize {
+            r.feed(Input::press(ButtonId::Plus));
+        }
+    });
+}
+
+/// Prompt `k`, opened by the keys that open it.
+fn prompt(k: AskKind, ui: &mut UiState) {
+    match k {
+        AskKind::ReplacePart => {
+            edit(ui, P1);
+            part_row(ui, 1); // CLEAR
+            tap(ui, ButtonId::Seq);
+        }
+        AskKind::ReloadPart => {
+            load_slot(ui, P1, S3);
+            edit(ui, P1);
+            part_row(ui, 3); // RELOAD FROM PROJ
+            tap(ui, ButtonId::Seq);
+        }
+        AskKind::UpdateStale => {
+            load_slot(ui, P1, S3);
+            load_slot(ui, P4, S3);
+            feed(ui, Input::press(ButtonId::B1));
+            edit(ui, P1);
+            part_row(ui, 2); // SAVE TO PROJ
+            feed(ui, Input::press(ButtonId::Edit));
+            let over = SAVE_ROWS.iter().position(|&c| c == PartCmd::OverSlot);
+            plus(ui, over.unwrap());
+            tap(ui, ButtonId::Seq);
+        }
+        AskKind::ClearSlot => {
+            rung(ui, P1, S3);
+            feed(ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
+        }
+        AskKind::LoadProject => prompt_load(ui),
+        AskKind::NameExists => {
+            // The name SAVE AS proposes, taken.
+            let mut s = MemStore::new(1);
+            put(&mut s, "drift-002");
+            let mut r = Rig::new(ui, s);
+            r.ui.project_mut()
+                .set_name(ProjectName::new("SKETCH").unwrap());
+            r.to(&["PROJECT"]);
+            r.bar_to(1);
+            r.tap(ButtonId::Seq);
+            r.tap(ButtonId::Seq);
+        }
+        AskKind::CardChanged => {
+            let mut s = MemStore::new(1);
+            let a = put(&mut s, "ALPHA");
+            let mut r = Rig::new(ui, s);
+            r.load(a);
+            r.s.swap(2);
+            r.hold(ButtonId::Menu);
+        }
+        AskKind::Delete => {
+            manage_command(ui, Command::Delete, false);
+            tap(ui, ButtonId::Seq);
+        }
+        AskKind::Clear => {
+            manage_command(ui, Command::Clear, false);
+            tap(ui, ButtonId::Seq);
+        }
+        AskKind::SaveOver => {
+            manage_command(ui, Command::SaveTo, true);
+            tap(ui, ButtonId::Seq);
+        }
+    }
+    assert_eq!(ui.prompt_kind_for_test(), Some(k));
+}
+
+/// SETTINGS past its leaves: every list, LOAD and MANAGE, PART's screens,
+/// NAMING, each prompt, and the footer in each status (NEW is
+/// `settings_top`).
+fn settings_shots() -> Vec<(String, Setup)> {
+    let mut v: Vec<(String, Setup)> = Vec::new();
+    for n in tree() {
+        if let Kind::List(_) = n.of {
+            let labels = n.labels.clone();
+            v.push((n.name(), Box::new(move |ui| to_leaf(ui, &labels))));
+        }
+    }
+    let states: [ScreenCase; 8] = [
+        ("settings_project_load_no_card", |ui| {
+            let mut s = MemStore::new(1);
+            put(&mut s, "ALPHA");
+            s.eject();
+            Rig::new(ui, s).to(&["PROJECT", "LOAD PROJECT"]);
+        }),
+        ("settings_project_manage", |ui| {
+            manage(ui, |r, _| r.bar_to(1))
+        }),
+        ("settings_project_manage_commands", |ui| {
+            manage_command(ui, Command::Rename, false)
+        }),
+        ("settings_part_save_to", |ui| {
+            load_slot(ui, P1, S3);
+            edit(ui, P1);
+            part_row(ui, 2);
+            feed(ui, Input::press(ButtonId::Edit));
+        }),
+        ("settings_part_rename", |ui| {
+            part_row(ui, 0);
+            tap(ui, ButtonId::Seq);
+            assert!(ui.naming().is_some());
+        }),
+        ("settings_naming", naming_save_as),
+        ("settings_footer_saved", |ui| {
+            let (s, [a, ..]) = three();
+            Rig::new(ui, s).load(a);
+            tap(ui, ButtonId::Menu);
+        }),
+        ("settings_footer_modified", |ui| {
+            let (s, [a, ..]) = three();
+            Rig::new(ui, s).load(a);
+            modify(ui);
+            tap(ui, ButtonId::Menu);
+        }),
+    ];
+    for (name, go) in states {
+        v.push((name.into(), Box::new(go)));
+    }
+    for k in AskKind::ALL {
+        let name = format!("settings_prompt_{}", k.slug());
+        v.push((name, Box::new(move |ui| prompt(k, ui))));
+    }
+    v
+}
+
+fn settled(go: &dyn Fn(&mut UiState)) -> UiState {
+    let mut ui = UiState::new();
+    go(&mut ui);
+    settle(&mut ui);
+    ui
+}
+
 #[test]
 fn every_screen_renders() {
     let covered: Vec<Key> = CASES.iter().map(|c| key(&ui_for(c.0))).collect();
@@ -365,6 +564,16 @@ fn every_screen_renders() {
     }
     assert!(shown > 0);
 
+    for (name, go) in settings_shots() {
+        if CASES.iter().any(|c| c.0 == name) {
+            continue;
+        }
+        assert!(names.insert(name.clone()), "{name} twice");
+        let fb = render_ui(&settled(&go));
+        assert_eq!(fb.oob, 0, "{name} draws off screen");
+        fb.dump(&name);
+    }
+
     let mut fb = Fb::new();
     splash::draw(&mut fb).unwrap();
     assert_eq!(fb.oob, 0);
@@ -382,4 +591,48 @@ fn every_screen_renders() {
         assert!(names.insert(name.into()), "{name} twice");
         fb.dump(name);
     }
+}
+
+/// Every SETTINGS frame's map band is its footer, drawn alone.
+#[test]
+fn atlas_settings_never_shows_the_map() {
+    let leaves = atlas()
+        .into_iter()
+        .filter(|s| matches!(s.ctx, Ctx::Settings(_) | Ctx::Demo))
+        .map(|s| (s.name.clone(), s.ui()));
+    let goldens = CASES
+        .iter()
+        .filter(|c| c.0.starts_with("settings_"))
+        .map(|c| (c.0.to_string(), ui_for(c.0)));
+    let rest = settings_shots()
+        .into_iter()
+        .map(|(n, go)| (n, settled(&go)));
+    let mut seen = 0;
+    for (name, ui) in leaves.chain(goldens).chain(rest) {
+        if !ui.in_settings() {
+            continue;
+        }
+        let name_up = chimera_core::ui::components::upper(ui.project().meta().name().as_str());
+        let mut want = Fb::new();
+        want.px.fill(RawU16::from(theme::BG).into_inner());
+        draw_footer(
+            &mut want,
+            &Footer {
+                name: name_up.as_str(),
+                status: ui.project_status(),
+                legend: ui.legend_for_test().unwrap(),
+            },
+        );
+        let band = MAP_TOP * W..H * W;
+        let got = render_ui(&ui);
+        let rows: Vec<usize> = (MAP_TOP..H)
+            .filter(|y| got.px[y * W..(y + 1) * W] != want.px[y * W..(y + 1) * W])
+            .collect();
+        assert!(
+            got.px[band.clone()] == want.px[band],
+            "{name}: rows {rows:?}"
+        );
+        seen += 1;
+    }
+    assert!(seen > 30, "{seen}");
 }

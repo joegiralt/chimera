@@ -7,17 +7,24 @@
 #![allow(dead_code)]
 
 use chimera_core::clock_plan::SiliconRev;
+use chimera_core::name::ProjectName;
 use chimera_core::params::EngineType;
 use chimera_core::perf::load::AudioStats;
 use chimera_core::preset::{POOL_SIZE, Sound};
 use chimera_core::project::SlotId;
+use chimera_core::project::{
+    LoadLink, Project, ProjectFile, ProjectNote, SaveTo, new_project_id, save_project,
+};
 use chimera_core::reset::ResetCause;
 use chimera_core::scope::SCOPE_LEN;
+use chimera_core::storage::{Card, SystemSettings, SystemSync};
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::busy::{draw_busy, draw_toast};
 use chimera_core::ui::hold::HOLD_MS;
 use chimera_core::ui::perf::PerfStats;
+use chimera_core::ui::settings::CardCx;
+use chimera_hal::testkit::MemStore;
 use chimera_hal::{ButtonId, ButtonState, ChimeraDisplay, Controls, Edges, EncoderId, Ms};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
@@ -262,16 +269,22 @@ pub fn settle(ui: &mut UiState) {
     }
 }
 
-/// A SETTINGS leaf: its row labels and crumbs from the top, and its chain.
-pub struct Leaf {
+/// A SETTINGS list or leaf: its row labels and crumbs from the top.
+pub struct Node<T> {
     pub labels: Vec<&'static str>,
     pub crumbs: Vec<&'static str>,
-    pub chain: &'static chimera_core::ui::block_def::ChainDef2,
+    pub of: T,
 }
 
-impl Leaf {
-    /// `settings_<crumbs>`, lowercased: the atlas's name for its first page.
+/// A leaf, and its chain.
+pub type Leaf = Node<&'static chimera_core::ui::block_def::ChainDef2>;
+
+impl<T> Node<T> {
+    /// `settings_<crumbs>`, lowercased; the top list is `settings_top`.
     pub fn name(&self) -> String {
+        if self.crumbs.is_empty() {
+            return "settings_top".into();
+        }
         let mut n = String::from("settings");
         for c in &self.crumbs {
             n.push('_');
@@ -281,36 +294,55 @@ impl Leaf {
     }
 }
 
-/// Every leaf of the SETTINGS tree, depth first.
-pub fn leaves() -> Vec<Leaf> {
-    use chimera_core::ui::settings::{Kind, rows};
+/// Every list and leaf of the SETTINGS tree, depth first from `ROOT`.
+pub fn tree() -> Vec<Node<chimera_core::ui::settings::Kind>> {
+    use chimera_core::ui::settings::{Kind, ROOT, rows};
     fn walk(
         path: &mut Vec<u8>,
         labels: &mut Vec<&'static str>,
         crumbs: &mut Vec<&'static str>,
-        out: &mut Vec<Leaf>,
+        out: &mut Vec<Node<Kind>>,
     ) {
         for (i, r) in rows(path).iter().enumerate() {
             path.push(i as u8);
             labels.push(r.label);
             crumbs.push(r.crumb);
-            match r.kind {
-                Kind::Leaf(chain) => out.push(Leaf {
+            if matches!(r.kind, Kind::Leaf(_) | Kind::List(_)) {
+                out.push(Node {
                     labels: labels.clone(),
                     crumbs: crumbs.clone(),
-                    chain,
-                }),
-                Kind::List(_) => walk(path, labels, crumbs, out),
-                _ => {}
+                    of: r.kind,
+                });
             }
+            walk(path, labels, crumbs, out);
             path.pop();
             labels.pop();
             crumbs.pop();
         }
     }
-    let mut out = Vec::new();
+    let mut out = vec![Node {
+        labels: vec![],
+        crumbs: vec![],
+        of: ROOT.kind,
+    }];
     walk(&mut Vec::new(), &mut Vec::new(), &mut Vec::new(), &mut out);
     out
+}
+
+/// Every leaf of the SETTINGS tree, depth first.
+pub fn leaves() -> Vec<Leaf> {
+    use chimera_core::ui::settings::Kind;
+    tree()
+        .into_iter()
+        .filter_map(|n| match n.of {
+            Kind::Leaf(chain) => Some(Node {
+                labels: n.labels,
+                crumbs: n.crumbs,
+                of: chain,
+            }),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The def id of the page shown.
@@ -348,6 +380,162 @@ pub fn to_leaf(ui: &mut UiState, labels: &[&str]) {
         chimera_core::ui::nav::Location::settings_at(&path, 0),
         "{labels:?}"
     );
+}
+
+/// A UI with a card in the slot: `MemStore` behind the shell's
+/// `card_work`, run after every frame of input.
+pub struct Rig<'u> {
+    pub ui: &'u mut UiState,
+    pub s: MemStore,
+    card: Card,
+    sync: SystemSync,
+    set: SystemSettings,
+    link: LoadLink,
+}
+
+impl<'u> Rig<'u> {
+    pub fn new(ui: &'u mut UiState, mut s: MemStore) -> Self {
+        let mut card = Card::new();
+        let (sync, set, _) = SystemSync::boot(&mut card, &mut s);
+        Rig {
+            ui,
+            s,
+            card,
+            sync,
+            set,
+            link: LoadLink::new(),
+        }
+    }
+
+    fn work(&mut self) {
+        let link = &self.link;
+        let cx = CardCx {
+            card: &mut self.card,
+            store: &mut self.s,
+            sync: &mut self.sync,
+            settings: &mut self.set,
+        };
+        let _ = self.ui.card_work(cx, link, |swap, _| {
+            let _ = swap.settle(link, || false);
+        });
+    }
+
+    pub fn tap(&mut self, b: ButtonId) {
+        tap(self.ui, b);
+        self.work();
+    }
+
+    pub fn hold(&mut self, b: ButtonId) {
+        hold(self.ui, b);
+        self.work();
+    }
+
+    pub fn feed(&mut self, i: Input) {
+        feed(self.ui, i);
+        self.work();
+    }
+
+    /// Out of SETTINGS, MENU, then down the tree by row label.
+    pub fn to(&mut self, labels: &[&str]) {
+        use chimera_core::ui::settings::rows;
+        while self.ui.in_settings() {
+            self.tap(ButtonId::Menu);
+        }
+        self.tap(ButtonId::Menu);
+        let mut path = Vec::new();
+        for l in labels {
+            let i = rows(&path).iter().position(|r| r.label == *l).unwrap();
+            for _ in 0..i {
+                self.feed(Input::press(ButtonId::Plus));
+            }
+            self.feed(Input::press(ButtonId::Edit));
+            path.push(i as u8);
+        }
+    }
+
+    /// The bar to row `i`.
+    pub fn bar_to(&mut self, i: usize) {
+        let row = |r: &Rig| r.ui.location().settings().unwrap().row() as usize;
+        while row(self) != i {
+            let k = if row(self) < i {
+                ButtonId::Plus
+            } else {
+                ButtonId::Minus
+            };
+            self.feed(Input::press(k));
+        }
+    }
+
+    /// `f` loaded through LOAD, then out of SETTINGS.
+    pub fn load(&mut self, f: ProjectFile) {
+        self.to(&["PROJECT", "LOAD PROJECT"]);
+        let l = self.ui.listing();
+        let i = (0..l.len())
+            .find(|&i| l.entry(i).unwrap().file() == f)
+            .expect("listed");
+        self.bar_to(i);
+        self.tap(ButtonId::Seq);
+        assert_eq!(self.ui.project().meta().file(), Some(f));
+        while self.ui.in_settings() {
+            self.tap(ButtonId::Menu);
+        }
+        self.ui.update();
+    }
+}
+
+/// A project named `n` saved to the card at its next id.
+pub fn put(s: &mut MemStore, n: &str) -> ProjectFile {
+    let mut card = Card::new();
+    let (mut p, _) = Project::boxed();
+    p.set_name(ProjectName::new(n).unwrap());
+    let fresh = new_project_id(&mut card, s).out.unwrap();
+    let f = fresh.file();
+    assert!(matches!(
+        save_project(&mut card, s, &mut p, SaveTo::Fresh(fresh)).out,
+        ProjectNote::Saved(_)
+    ));
+    f
+}
+
+/// A card with three projects.
+pub fn three() -> (MemStore, [ProjectFile; 3]) {
+    let mut s = MemStore::new(1);
+    let f = ["ALPHA", "BETA", "GAMMA"].map(|n| put(&mut s, n));
+    (s, f)
+}
+
+/// An edit that leaves the project Modified, its name kept.
+pub fn modify(ui: &mut UiState) {
+    let p = chimera_core::project::PartId::ALL[0];
+    ui.project_mut().edit_part(p).sound.params.filter.cutoff *= 0.5;
+    ui.update();
+    assert_eq!(
+        ui.project_status(),
+        chimera_core::project::ProjectStatus::Modified
+    );
+}
+
+/// ALPHA loaded and edited, then LOAD on BETA: LOAD BETA?
+pub fn prompt_load(ui: &mut UiState) {
+    let (s, [a, b, _]) = three();
+    let mut r = Rig::new(ui, s);
+    r.load(a);
+    modify(r.ui);
+    r.to(&["PROJECT", "LOAD PROJECT"]);
+    let l = r.ui.listing();
+    let i = (0..l.len()).find(|&i| l.entry(i).unwrap().file() == b);
+    r.bar_to(i.unwrap());
+    r.tap(ButtonId::Seq);
+    assert!(r.ui.prompt_open());
+}
+
+/// SETTINGS › PROJECT › SAVE PROJECT AS on a fresh project: NAMING.
+pub fn naming_save_as(ui: &mut UiState) {
+    let mut r = Rig::new(ui, MemStore::new(1));
+    r.to(&["PROJECT"]);
+    r.bar_to(1);
+    r.tap(ButtonId::Seq);
+    assert!(r.ui.naming().is_some());
 }
 
 /// The shared FX page `node` of the mixer chain, through real presses:
@@ -805,6 +993,17 @@ pub const CASES: &[ScreenCase] = &[
         to_leaf(ui, &["SYSTEM", "ABOUT"]);
         feed(ui, Input::press(ButtonId::Edit));
     }),
+    ("settings_top", |ui| tap(ui, ButtonId::Menu)),
+    // ALPHA loaded, the bar on BETA.
+    ("settings_load", |ui| {
+        let (s, [a, ..]) = three();
+        let mut r = Rig::new(ui, s);
+        r.load(a);
+        r.to(&["PROJECT", "LOAD PROJECT"]);
+        r.bar_to(1);
+    }),
+    ("settings_prompt_load", prompt_load),
+    ("settings_naming", naming_save_as),
 ];
 
 /// `AudioStats` fixture for the AUDIO sub-page's goldens and tests.

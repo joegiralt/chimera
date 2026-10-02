@@ -46,7 +46,7 @@ const _: () = assert!(
         <= FOOTER_TOP
 );
 
-/// SETTINGS, one part per level of the tree, and NAMING's.
+/// SETTINGS, one part per level of the tree, and a leaf's page or NAMING's.
 const MAX_CRUMBS: usize = 6;
 const DOTS: &str = "..";
 /// Space either side of a breadcrumb's `›`.
@@ -163,7 +163,7 @@ impl Crumbs {
         c
     }
 
-    /// One more part; past five, ignored.
+    /// One more part; past `MAX_CRUMBS`, ignored.
     pub fn push(&mut self, c: Crumb) {
         debug_assert!((self.len as usize) < MAX_CRUMBS);
         if let Some(p) = self.parts.get_mut(self.len as usize) {
@@ -621,12 +621,13 @@ pub struct Footer<'a> {
     pub legend: &'static str,
 }
 
-/// `NEW`, `SAVED`, or `* MODIFIED` in the warning colour.
-pub fn status_text(s: ProjectStatus) -> (&'static str, Rgb565) {
+/// `SAVED`, or `* MODIFIED` in the warning colour. NEW has none: its
+/// CRC holds the name, so the name already reads NEW PROJECT (#286).
+pub fn status_text(s: ProjectStatus) -> Option<(&'static str, Rgb565)> {
     match s {
-        ProjectStatus::Pristine => ("NEW", theme::MID),
-        ProjectStatus::Saved => ("SAVED", theme::MID),
-        ProjectStatus::Modified => ("* MODIFIED", theme::WARN),
+        ProjectStatus::Pristine => None,
+        ProjectStatus::Saved => Some(("SAVED", theme::MID)),
+        ProjectStatus::Modified => Some(("* MODIFIED", theme::WARN)),
     }
 }
 
@@ -648,16 +649,17 @@ pub fn draw_footer<D: DrawTarget<Color = Rgb565>>(d: &mut D, f: &Footer<'_>) {
         theme::INK,
         theme::LABEL_TRACKING,
     );
-    let (s, c) = status_text(f.status);
-    draw::text_tracked(
-        d,
-        &theme::FONT_LABEL,
-        s,
-        theme::MARGIN_X + w + 6,
-        theme::FOOTER_NAME_Y,
-        c,
-        theme::LABEL_TRACKING,
-    );
+    if let Some((s, c)) = status_text(f.status) {
+        draw::text_tracked(
+            d,
+            &theme::FONT_LABEL,
+            s,
+            theme::MARGIN_X + w + 6,
+            theme::FOOTER_NAME_Y,
+            c,
+            theme::LABEL_TRACKING,
+        );
+    }
     draw::text_tracked(
         d,
         &theme::FONT_LABEL,
@@ -800,10 +802,13 @@ impl Bands<'_> {
     }
 
     pub fn crumbs_key(&self, sounding: bool) -> u32 {
+        let page = self.at.page().map_or([0xff; 2], |p| [p.node(), p.sub()]);
         let head = [
             self.at.path().len() as u8,
             self.active.index() as u8,
             sounding as u8,
+            page[0],
+            page[1],
         ];
         settings_key(&[self.at.path(), &head, self.naming_crumb().as_bytes()])
     }
@@ -815,9 +820,13 @@ impl Bands<'_> {
         }
     }
 
-    /// As drawn: NAMING's crumb ends it.
+    /// As drawn: a multi-page leaf's page, or NAMING's crumb, ends it.
     pub fn crumbs(&self) -> Crumbs {
         let mut c = Crumbs::of(self.at.path(), self.active);
+        let leaf = self.at.at_leaf().filter(|ch| ch.page_count() > 1);
+        if let Some(def) = leaf.zip(self.at.page()).and_then(|(ch, p)| ch.def_at(p)) {
+            c.push(Crumb::Name(def.short));
+        }
         if let Some(BandsModal::Naming { of, .. }) = self.modal {
             c.push(Crumb::Name(of.crumb()));
         }

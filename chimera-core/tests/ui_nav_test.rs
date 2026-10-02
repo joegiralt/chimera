@@ -312,7 +312,7 @@ fn every_first_landing_is_the_chains_home() {
         to_leaf(&mut ui, &leaf.labels);
         assert_eq!(
             ui.location().settings().unwrap().page(),
-            Some(leaf.chain.home()),
+            Some(leaf.of.home()),
             "{}",
             leaf.name()
         );

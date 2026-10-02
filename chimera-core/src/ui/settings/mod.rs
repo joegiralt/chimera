@@ -88,6 +88,65 @@ pub(crate) enum Ask {
     SaveOver(Chosen, Choice<SaveOverAnswer>),
 }
 
+/// Which `Ask` is open, for tests that must cover each.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AskKind {
+    ReplacePart,
+    ReloadPart,
+    UpdateStale,
+    ClearSlot,
+    LoadProject,
+    NameExists,
+    CardChanged,
+    Delete,
+    Clear,
+    SaveOver,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl AskKind {
+    pub const ALL: [AskKind; 10] = [
+        AskKind::ReplacePart,
+        AskKind::ReloadPart,
+        AskKind::UpdateStale,
+        AskKind::ClearSlot,
+        AskKind::LoadProject,
+        AskKind::NameExists,
+        AskKind::CardChanged,
+        AskKind::Delete,
+        AskKind::Clear,
+        AskKind::SaveOver,
+    ];
+
+    /// `snake_case`, for file names.
+    pub fn slug(self) -> &'static str {
+        match self {
+            AskKind::ReplacePart => "replace_part",
+            AskKind::ReloadPart => "reload_part",
+            AskKind::UpdateStale => "update_stale",
+            AskKind::ClearSlot => "clear_slot",
+            AskKind::LoadProject => "load",
+            AskKind::NameExists => "name_exists",
+            AskKind::CardChanged => "card_changed",
+            AskKind::Delete => "delete",
+            AskKind::Clear => "clear",
+            AskKind::SaveOver => "save_over",
+        }
+    }
+}
+
+// `ALL` is every kind, in declaration order.
+#[cfg(any(test, feature = "test-support"))]
+const _: () = {
+    let mut i = 0;
+    while i < AskKind::ALL.len() {
+        assert!(AskKind::ALL[i] as usize == i);
+        i += 1;
+    }
+    assert!(AskKind::SaveOver as usize + 1 == AskKind::ALL.len());
+};
+
 /// A listed project as its prompt names it.
 fn subject(c: &Chosen) -> Subject {
     let e = c.entry();
@@ -193,6 +252,22 @@ impl Ask {
             Ask::Delete(e, c) => with_view(&Delete { name: subject(e) }, c, f),
             Ask::Clear(e, c) => with_view(&Clear { name: subject(e) }, c, f),
             Ask::SaveOver(e, c) => with_view(&SaveOver { name: subject(e) }, c, f),
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn kind(&self) -> AskKind {
+        match self {
+            Ask::ReplacePart(..) => AskKind::ReplacePart,
+            Ask::ReloadPart(..) => AskKind::ReloadPart,
+            Ask::UpdateStale { .. } => AskKind::UpdateStale,
+            Ask::ClearSlot(..) => AskKind::ClearSlot,
+            Ask::LoadProject { .. } => AskKind::LoadProject,
+            Ask::NameExists { .. } => AskKind::NameExists,
+            Ask::CardChanged(..) => AskKind::CardChanged,
+            Ask::Delete(..) => AskKind::Delete,
+            Ask::Clear(..) => AskKind::Clear,
+            Ask::SaveOver(..) => AskKind::SaveOver,
         }
     }
 

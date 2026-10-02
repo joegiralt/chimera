@@ -410,6 +410,11 @@ impl ChainDef2 {
         self.blocks.len()
     }
 
+    /// Every page: each node's sub-pages, or the node alone.
+    pub fn page_count(&self) -> usize {
+        self.blocks.iter().map(|b| b.sub_page_count().max(1)).sum()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.blocks.is_empty()
     }

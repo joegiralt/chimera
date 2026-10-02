@@ -154,10 +154,55 @@ PART 6 · MIX.
 | ![](mixer_master.png) | MST | Compressor curve, RATIO 4:1 |
 | ![](mixer_master_level.png) | MST › LVL | Master VOL and PAN |
 
-## SETTINGS leaves (MENU)
+## SETTINGS (MENU)
 
-A leaf is the page it was on the old System chain, under a breadcrumb and
-above the project footer. The lists aren't in the atlas yet.
+A breadcrumb for the header, a list with a bar, and the project footer in
+the map's band: the project's name, its status (none while NEW, `SAVED`,
+`* MODIFIED`), and what the keys do. The atlas walks the tree depth first
+through the real keys; LOAD, MANAGE and the project prompts run against an
+in-memory card.
+
+| Screen | Where | What it shows |
+|---|---|---|
+| ![](settings_top.png) | SETTINGS | The top list on a fresh project: the footer is the name alone |
+| ![](settings_footer_saved.png) | SETTINGS | ALPHA loaded: SAVED |
+| ![](settings_footer_modified.png) | SETTINGS | ALPHA edited since: `* MODIFIED` |
+| ![](settings_project.png) | PROJECT | LOAD, SAVE AS, MANAGE |
+| ![](settings_load.png) | PROJECT › LOAD | Three projects, ALPHA `● LOADED`, the bar on BETA |
+| ![](settings_project_load_no_card.png) | PROJECT › LOAD | No card in the slot |
+| ![](settings_naming.png) | PROJECT › SAVE AS | NAMING, the proposed name |
+| ![](settings_project_manage.png) | PROJECT › MANAGE | The projects, and the commands of the one under the bar |
+| ![](settings_project_manage_commands.png) | PROJECT › MANAGE | The bar in the commands, on RENAME: dimmed, LOAD TO RENAME |
+| ![](settings_part.png) | PART | The active Part's strip and its actions |
+| ![](settings_part_save_to.png) | PART › SAVE TO | Part 1 edited from SLOT 03: OVER SLOT 03, TO NEW SLOT |
+| ![](settings_part_rename.png) | PART › RENAME | NAMING the Part's Sound |
+| ![](settings_midi.png) | MIDI | SYNC and PORT later, CHANNELS |
+| ![](settings_audio.png) | AUDIO | OUTPUTS, SENDS later, TUNING |
+| ![](settings_personal.png) | PERSONAL | THEME |
+| ![](settings_system.png) | SYSTEM | OS, ABOUT, DEMO; the rest later |
+
+### Prompts
+
+One per kind; the list beneath blanks. Outside SETTINGS the panel lands on
+the frozen screen.
+
+| Screen | Where | What it shows |
+|---|---|---|
+| ![](settings_prompt_load.png) | PROJECT › LOAD | LOAD BETA over an edited ALPHA |
+| ![](settings_prompt_name_exists.png) | PROJECT › SAVE AS | The proposed name is on the card |
+| ![](settings_prompt_card_changed.png) | MENU hold | Quick save refused: another card |
+| ![](settings_prompt_delete.png) | MANAGE › DELETE | DELETE BETA |
+| ![](settings_prompt_clear.png) | MANAGE › CLEAR | CLEAR BETA |
+| ![](settings_prompt_save_over.png) | MANAGE › SAVE TO | SAVE OVER BETA |
+| ![](settings_prompt_replace_part.png) | PART › CLEAR | CLEAR an edited Part to INIT |
+| ![](settings_prompt_reload_part.png) | PART › RELOAD | RELOAD an edited Part from its slot |
+| ![](settings_prompt_update_stale.png) | PART › SAVE TO | P4 also plays the slot saved over |
+| ![](settings_prompt_clear_slot.png) | Sound rung, MIX + MINUS | CLEAR a slot no Part plays |
+
+### Leaves
+
+A leaf is the page it was on the old System chain. On a leaf with several
+pages, the breadcrumb ends on the page.
 
 | Screen | Where | What it shows |
 |---|---|---|
@@ -166,8 +211,8 @@ above the project footer. The lists aren't in the atlas yet.
 | ![](settings_audio_tuning.png) | AUDIO › TUNING | TUNE and SCALE |
 | ![](settings_personal_theme.png) | PERSONAL › THEME | BRIGHT, GAMMA, ACCENT (AMBER, focused), BLACK |
 | ![](settings_system_os.png) | SYSTEM › OS | Updates: no controls yet |
-| ![](settings_system_about.png) | SYSTEM › ABOUT | About: no content yet |
-| ![](settings_system_about_audio.png) | ABOUT › AUDIO | Audio load, peak, overruns, drops, desyncs, stack |
+| ![](settings_system_about.png) | ABOUT › ABT | About: no content yet |
+| ![](settings_system_about_audio.png) | ABOUT › AUD | Audio load, peak, overruns, drops, desyncs, stack |
 
 ## DEMO (SETTINGS › SYSTEM › DEMO, debug builds)
 

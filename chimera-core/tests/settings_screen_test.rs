@@ -1,13 +1,21 @@
 //! SETTINGS screens: the leaf's bands, the legends, the breadcrumb, the
 //! marks and the list's scroll.
 
-use chimera_core::project::PartId;
+mod screen;
+
+use chimera_core::project::{PartId, ProjectStatus};
+use chimera_core::ui::UiState;
 use chimera_core::ui::page::PageLayout;
+use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::region::{RegionKind, settings_regions};
 use chimera_core::ui::settings::PART_ROW;
 use chimera_core::ui::settings::manage::Note;
-use chimera_core::ui::settings::view::{Crumbs, LegendFor, VISIBLE_ROWS, first_visible, legend};
+use chimera_core::ui::settings::view::{
+    Crumbs, LegendFor, VISIBLE_ROWS, first_visible, legend, status_text,
+};
 use chimera_core::ui::{draw, theme};
+use chimera_hal::ButtonId;
+use screen::{Fb, Input, audio_fixture, feed, scope_fixture, to_leaf};
 
 const ALL_LEGENDS: [LegendFor; 11] = [
     LegendFor::Opens,
@@ -121,4 +129,41 @@ fn first_visible_keeps_the_bar_on_screen() {
             }
         }
     }
+}
+
+/// The crumbs as drawn, and their region's key after a dirty render.
+fn crumbs(ui: &mut UiState) -> (String, Option<chimera_core::ui::region::RegionData>) {
+    let mut fb = Fb::new();
+    let _ = ui.render_dirty_with_audio(
+        &mut fb,
+        &PerfStats::zero(),
+        Some(&audio_fixture()),
+        &scope_fixture(),
+    );
+    (
+        ui.crumbs().unwrap().to_string(),
+        ui.drawn_key(RegionKind::Crumbs),
+    )
+}
+
+#[test]
+fn a_multi_page_leaf_ends_the_breadcrumb_on_its_page() {
+    let mut ui = UiState::new();
+    to_leaf(&mut ui, &["SYSTEM", "ABOUT"]);
+    let (about, k0) = crumbs(&mut ui);
+    assert_eq!(about, ".. › SYSTEM › ABOUT › ABT");
+    feed(&mut ui, Input::press(ButtonId::Edit));
+    let (audio, k1) = crumbs(&mut ui);
+    assert_eq!(audio, ".. › SYSTEM › ABOUT › AUD");
+    assert_ne!(k0, k1, "the page moves the crumbs' key");
+
+    to_leaf(&mut ui, &["PERSONALIZE", "THEME"]);
+    assert_eq!(crumbs(&mut ui).0, "SETTINGS › PERSONAL › THEME");
+}
+
+#[test]
+fn a_new_project_shows_no_status_beside_its_name() {
+    assert_eq!(status_text(ProjectStatus::Pristine), None);
+    assert!(status_text(ProjectStatus::Saved).is_some());
+    assert!(status_text(ProjectStatus::Modified).is_some());
 }

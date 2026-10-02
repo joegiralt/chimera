@@ -64,7 +64,7 @@ impl Context {
             Context::Part(e) => chain_def_for(e),
             Context::Mixer(_) | Context::Fx => &MIXER_CHANNEL_CHAIN,
             Context::Demo => &DEMO_CHAIN,
-            Context::Leaf(i) => leaves()[i].chain,
+            Context::Leaf(i) => leaves()[i].of,
         }
     }
 
@@ -262,7 +262,7 @@ fn every_context() -> Vec<Context> {
     let leaves = leaves();
     all.extend(
         (0..leaves.len())
-            .filter(|&i| !core::ptr::eq(leaves[i].chain, &DEMO_CHAIN))
+            .filter(|&i| !core::ptr::eq(leaves[i].of, &DEMO_CHAIN))
             .map(Context::Leaf),
     );
     all

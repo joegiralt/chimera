@@ -98,8 +98,14 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mod_matrix", 0xa6cf67e584e06c56),
     ("mod_matrix_wide", 0xca78c74fca4ac959),
     ("sound_browser", 0x1d1ac95bdfaca72b),
-    ("settings_personal_theme", 0x814d5c879e087768),
-    ("settings_system_about_audio", 0x232ea2dd7cab4693),
+    // Re-recorded: a fresh project's footer drops NEW (#286).
+    ("settings_personal_theme", 0x2158e1935828c468),
+    // Re-recorded: the breadcrumb ends on the page, AUD (#285).
+    ("settings_system_about_audio", 0x295a11f890f3be62),
+    ("settings_top", 0xb8200119c8d8b837),
+    ("settings_load", 0xbee3b127e748ef17),
+    ("settings_prompt_load", 0xc47d45b862dea1e3),
+    ("settings_naming", 0xe963e855baf239a6),
     ("busy", 0x198544cd36863145),
     ("toast_saved", 0xe344dd99a47d0dad),
     ("toast_exfat", 0xfc0cb3b4feb1a1b5),
