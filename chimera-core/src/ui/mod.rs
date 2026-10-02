@@ -67,8 +67,8 @@ use components::Head;
 use hold::{HoldGates, Press};
 use mod_grid::MatrixState;
 use nav::{
-    Browse, Column, ListAt, Location, NavCtx, NavKey, OrbitAct, OrbitCx, OrbitKey, Recall,
-    SettingsAt, Step, chain_def_for,
+    Browse, Column, ListAt, Location, NavCtx, NavKey, OrbitCx, OrbitKey, Recall, SettingsAt, Step,
+    chain_def_for,
 };
 use page::{PageKey, PageLayout};
 use perf::PerfStats;
@@ -1447,8 +1447,7 @@ impl UiState {
     }
 
     /// ORBIT's frame: its keys, stepped as `OrbitKey`s, then its encoders
-    /// on the page's param cells. B6 plays and stops; the other acts wait
-    /// for Task 8.
+    /// on the page's param cells. Its acts run in `OrbitUi::act`.
     fn orbit_input(&mut self, c: &impl Controls, p: hold::Presses) {
         for k in self.orbit_keys(c, p).into_iter().flatten() {
             if self.job.is_some() || self.modal.is_some() {
@@ -1457,7 +1456,7 @@ impl UiState {
             let cx = self.cx();
             match self.loc.step_orbit(k, &cx, &mut self.recall) {
                 Step::Go(to) => self.go(to),
-                Step::Orbit(OrbitAct::PlayStop) => self.orbit.play_stop(),
+                Step::Orbit(a) => self.orbit.act(a, &mut self.project),
                 _ => {}
             }
         }

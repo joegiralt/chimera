@@ -109,15 +109,16 @@ impl HoldGates {
     }
 
     /// MENU and B1–B5 are muted while MIX is down (MIX + B*n* is a mute in
-    /// ORBIT); MIX is read as a level at frame end, so a chord inside one
+    /// ORBIT), and B1–B5 while EDIT is: EDIT + B*n* is no ring key. MIX is read as a level at frame end, so a chord inside one
     /// frame is not muted. The B gates run everywhere, so they are in step
     /// when ORBIT opens.
     pub fn step(&mut self, c: &impl Controls) -> Presses {
         let now = c.now_ms();
         let mix = c.edges(ButtonId::Mix).down;
+        let edit = c.edges(ButtonId::Edit).down;
         let mut ring = [None; RINGS];
         for ((g, out), &b) in self.rings.iter_mut().zip(&mut ring).zip(&PART_BUTTONS) {
-            *out = g.step(c.edges(b), now, mix);
+            *out = g.step(c.edges(b), now, mix || edit);
         }
         Presses {
             menu: self.menu.step(c.edges(ButtonId::Menu), now, mix),

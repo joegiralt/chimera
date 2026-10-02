@@ -558,6 +558,129 @@ mod quick_save {
     }
 }
 
+/// ORBIT's buttons through `UiState`: scripted frames, stamped.
+#[cfg(feature = "orbit")]
+#[test]
+fn orbit_buttons() {
+    use chimera_core::addr::Op;
+    use chimera_core::orbit::runner::OrbitShared;
+    use chimera_core::ui::UiState;
+    use chimera_core::ui::hold::HOLD_MS;
+    use chimera_core::ui::part_page;
+    use chimera_hal::ButtonId::{B1, B2, B3, B4, B6, Edit, Menu, Mix, Seq};
+    use screen::{Input, feed, hold, tap};
+
+    fn muted(ui: &UiState) -> [bool; 5] {
+        let mut out = OrbitShared::default();
+        ui.publish_orbit(&mut out);
+        std::array::from_fn(|i| out.settings.rings[i].ring.mute)
+    }
+    fn first_cell(ui: &UiState) -> f32 {
+        part_page::read_values(ui.page_def(), ui.params(), Op::A)[0]
+    }
+
+    let mut ui = Box::new(UiState::new());
+    // Enter from Part 2's FILTER, to see MENU come back to it.
+    ui.go_for_test(filter(P[1]));
+    let entry = ui.location();
+    hold(&mut ui, Seq);
+    let orb = ui.location();
+    assert_eq!(orb.orbit(), Some(OrbitAt::HOME));
+
+    // B3 tapped opens RING 3, and never leaves ORBIT.
+    tap(&mut ui, B3);
+    let at = ui.location().orbit().expect("still ORBIT");
+    assert_eq!(at.ring(), R[2]);
+    let ring3 = ui.location();
+
+    // MIX + B4: a mute on the press, no select, no cross after 600 ms.
+    // The init scene mutes ring 4 only.
+    let init = [false, false, false, true, false];
+    assert_eq!(muted(&ui), init);
+    let rev = ui.project().rev();
+    feed(&mut ui, Input::chord(Mix, B4).at(0));
+    assert_eq!(muted(&ui), [false; 5]);
+    assert_ne!(ui.project().rev(), rev, "the project is marked");
+    feed(&mut ui, Input::held(B4).and_held(Mix).at(600));
+    feed(&mut ui, Input::release(B4).and_held(Mix).at(633));
+    feed(&mut ui, Input::release(Mix).at(666));
+    assert_eq!(ui.location(), ring3, "no select, no cross");
+    assert_eq!(muted(&ui), [false; 5], "once");
+    // Again: back on.
+    feed(&mut ui, Input::chord(Mix, B4).at(1000));
+    feed(&mut ui, Input::release(B4).and_held(Mix).at(1100));
+    feed(&mut ui, Input::release(Mix).at(1133));
+    assert_eq!(muted(&ui), init);
+
+    // EDIT + B2 changes nothing.
+    feed(&mut ui, Input::chord(Edit, B2).at(2010));
+    feed(&mut ui, Input::release(B2).and_held(Edit).at(2110));
+    feed(&mut ui, Input::release(Edit).at(2143));
+    assert_eq!(ui.location(), ring3);
+
+    // B6 toggles run.
+    assert!(!ui.orbit().run);
+    tap(&mut ui, B6);
+    assert!(ui.orbit().run);
+    let mut out = OrbitShared::default();
+    ui.publish_orbit(&mut out);
+    assert!(out.run);
+
+    // Hold B3: Part 3's pages; the first cell is Part 3's.
+    hold(&mut ui, B1);
+    assert_eq!(ui.active_part, P[0]);
+    let one = first_cell(&ui);
+    hold(&mut ui, Seq);
+    assert_eq!(ui.location(), ring3, "SEQ hold returns to RING");
+    // Make Part 3 differ from Part 1, then cross to it.
+    hold(&mut ui, B3);
+    assert_eq!(ui.active_part, P[2]);
+    assert_eq!(ui.location().part(), Some(P[2]));
+    feed(&mut ui, Input::turn(chimera_hal::EncoderId::A, 5));
+    let three = first_cell(&ui);
+    assert_ne!(three, one);
+    hold(&mut ui, Seq);
+    hold(&mut ui, B3);
+    assert_eq!(ui.active_part, P[2]);
+    assert_eq!(first_cell(&ui), three, "Part 3's own value");
+    hold(&mut ui, Seq);
+    assert_eq!(ui.location(), ring3);
+
+    // EDIT on ORB does nothing; on RING it cycles RING's sub-pages
+    // (ADR 0044) and stays on the ring.
+    ui.go_for_test(orb);
+    tap(&mut ui, Edit);
+    assert_eq!(ui.location(), orb);
+    ui.go_for_test(ring3);
+    tap(&mut ui, Edit);
+    let o = ui.location().orbit().unwrap();
+    assert_eq!((o.page().node() as usize, o.ring()), (RING_NODE, R[2]));
+    ui.go_for_test(ring3);
+
+    // A SEQ tap moves no page.
+    tap(&mut ui, Seq);
+    assert_eq!(ui.location(), ring3);
+
+    // MENU tap goes back to where ORBIT was entered, Part and all.
+    ui.go_for_test(entry);
+    hold(&mut ui, Seq);
+    assert!(ui.location().orbit().is_some());
+    tap(&mut ui, Menu);
+    assert_eq!(ui.location(), entry);
+    assert_eq!(ui.active_part, P[1]);
+    assert!(ui.orbit().run);
+
+    // MENU hold queues the quick save and stays.
+    hold(&mut ui, Seq);
+    let at = ui.location();
+    assert!(at.orbit().is_some());
+    feed(&mut ui, Input::press(Menu).at(0));
+    feed(&mut ui, Input::held(Menu).at(HOLD_MS));
+    feed(&mut ui, Input::release(Menu).at(HOLD_MS + 33));
+    assert_eq!(ui.location(), at);
+    assert!(ui.orbit().run);
+}
+
 /// Every ORBIT page draws on screen, inside 240×320.
 #[test]
 fn every_orbit_page_renders() {

@@ -7,12 +7,15 @@ pub mod cells;
 
 pub use cells::OrbitCell;
 
+use crate::block::Block;
 use crate::orbit::RINGS;
 use crate::orbit::clock::{Bpm, Phase, Position, step_at};
 use crate::orbit::euclid::HitMask;
 use crate::orbit::runner::{OrbitShared, OrbitView, beats_at};
 use crate::orbit::scene::{OrbitSong, Scene, SceneRing};
+use crate::project::Project;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot};
+use crate::ui::nav::OrbitAct;
 use crate::ui::page::PageLayout;
 use chimera_theory::Chord;
 
@@ -223,9 +226,20 @@ impl OrbitUi {
         due
     }
 
-    /// B6: PLAY when stopped, STOP when playing.
-    pub fn play_stop(&mut self) {
-        self.run = !self.status.running;
+    /// What an ORBIT key asks. Only a mute touches the project (and so
+    /// marks it); the transport is the UI's.
+    pub fn act(&mut self, a: OrbitAct, project: &mut Project) {
+        match a {
+            // B6: PLAY when stopped, STOP when playing.
+            OrbitAct::PlayStop => self.run = !self.status.running,
+            OrbitAct::Mute(r) => {
+                let ring = &mut project.orbit_mut().live.rings[r.get() as usize];
+                let was = ring.get(SceneRing::MUTE) != 0.0;
+                ring.set(SceneRing::MUTE, f32::from(!was));
+            }
+            // Task 16.
+            OrbitAct::SaveScene => {}
+        }
     }
 }
 
