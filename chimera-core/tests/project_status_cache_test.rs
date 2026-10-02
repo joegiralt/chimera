@@ -17,7 +17,7 @@ use chimera_core::ui::perf::PerfStats;
 use chimera_hal::testkit::MemStore;
 use chimera_hal::{ButtonId, EncoderId};
 use core::cell::Cell;
-use screen::{Fb, Input, feed};
+use screen::{Fb, Input, feed, tap};
 
 const P1: PartId = PartId::ALL[0];
 
@@ -166,15 +166,53 @@ fn a_whole_project_assigned_is_hashed_afresh() {
     assert_eq!(ui.project_status(), ProjectStatus::Saved);
 }
 
+fn frame(ui: &mut chimera_core::ui::UiState, fb: &mut Fb, input: Input) {
+    feed(ui, input);
+    ui.update();
+    let _ = ui.render_dirty_with_scope(fb, &PerfStats::zero(), &screen::scope_fixture());
+}
+
+/// MENU from a sound page: SETTINGS' first frame.
+fn open_settings(ui: &mut chimera_core::ui::UiState, fb: &mut Fb) {
+    feed(ui, Input::press(ButtonId::Menu).at(0));
+    frame(ui, fb, Input::release(ButtonId::Menu).at(100));
+    assert!(ui.in_settings());
+}
+
 #[test]
-fn the_ui_hashes_once_per_revision() {
+fn a_knob_on_a_sound_page_never_hashes() {
     let mut ui = Box::new(chimera_core::ui::UiState::new());
     let mut fb = Fb::new();
-    let frame = |ui: &mut chimera_core::ui::UiState, fb: &mut Fb, input: Input| {
-        feed(ui, input);
-        ui.update();
-        let _ = ui.render_dirty_with_scope(fb, &PerfStats::zero(), &screen::scope_fixture());
-    };
+    frame(&mut ui, &mut fb, Input::press(ButtonId::Plus));
+    let r = ui.project().rev();
+    for i in 0..50 {
+        let d = if i % 2 == 0 { 1 } else { -1 };
+        frame(&mut ui, &mut fb, Input::turn(EncoderId::A, d));
+    }
+    assert_ne!(ui.project().rev(), r, "the knob edited");
+    assert_eq!(ui.status_hashes_for_test(), 0);
+}
+
+#[test]
+fn settings_first_frame_shows_an_edit_made_outside() {
+    let mut ui = Box::new(chimera_core::ui::UiState::new());
+    let mut fb = Fb::new();
+    open_settings(&mut ui, &mut fb);
+    assert_eq!(ui.footer_status(), Some(ProjectStatus::Pristine));
+    while ui.in_settings() {
+        tap(&mut ui, ButtonId::Menu);
+    }
+    frame(&mut ui, &mut fb, Input::press(ButtonId::Plus));
+    frame(&mut ui, &mut fb, Input::turn(EncoderId::A, 1));
+    open_settings(&mut ui, &mut fb);
+    assert_eq!(ui.footer_status(), Some(ProjectStatus::Modified));
+}
+
+#[test]
+fn settings_hashes_once_per_revision() {
+    let mut ui = Box::new(chimera_core::ui::UiState::new());
+    let mut fb = Fb::new();
+    open_settings(&mut ui, &mut fb);
     for _ in 0..50 {
         frame(&mut ui, &mut fb, Input::default());
     }
@@ -183,8 +221,12 @@ fn the_ui_hashes_once_per_revision() {
         1,
         "one hash for 50 idle frames"
     );
+    while ui.in_settings() {
+        tap(&mut ui, ButtonId::Menu);
+    }
     frame(&mut ui, &mut fb, Input::press(ButtonId::Plus));
     frame(&mut ui, &mut fb, Input::turn(EncoderId::A, 1));
+    open_settings(&mut ui, &mut fb);
     for _ in 0..50 {
         frame(&mut ui, &mut fb, Input::default());
     }

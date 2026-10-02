@@ -128,6 +128,15 @@ impl StatusCache {
         self.get_with(p, t, project_crc)
     }
 
+    /// The last result while it is current; otherwise a hash, not kept.
+    pub fn peek(&self, p: &Project, t: TemplateCrc) -> ProjectStatus {
+        if self.rev == Some(p.rev()) {
+            self.status
+        } else {
+            project_status(p, t)
+        }
+    }
+
     /// The last result; `Pristine` before any.
     pub fn cached(&self) -> ProjectStatus {
         self.status

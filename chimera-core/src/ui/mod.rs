@@ -193,8 +193,8 @@ pub struct UiState {
     theme: ThemeSettings,
     /// What the last card operation said, for a moment.
     toast: busy::ToastTimer,
-    /// `project_status`, refreshed by `handle_input` and `update`; render
-    /// only reads it.
+    /// `project_status`, refreshed by `handle_input` and `update` inside
+    /// SETTINGS; render only reads it.
     status: StatusCache,
     /// Animation phase for the renderer.
     clock: animation::UiClock,
@@ -622,10 +622,10 @@ impl UiState {
         self.template
     }
 
-    /// The project's status as `update` last found it:
-    /// render reads this, and never hashes.
+    /// The project's status now: hashes when the cache is behind (outside
+    /// SETTINGS). Render reads the cache instead.
     pub fn project_status(&self) -> ProjectStatus {
-        self.status.cached()
+        self.status.peek(&self.project, self.template)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -634,9 +634,19 @@ impl UiState {
         self.status.hashes_for_test()
     }
 
-    /// Hashes only when the project's revision moved.
+    /// The status SETTINGS' footer draws; `None` outside SETTINGS.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn footer_status(&self) -> Option<ProjectStatus> {
+        self.bands().map(|b| b.status)
+    }
+
+    /// Only SETTINGS draws the status, so only SETTINGS hashes, and only
+    /// when the revision moved: `update` catches up on its first frame.
     fn refresh_status(&mut self) {
-        self.status.get(&self.project, self.template);
+        if self.in_settings() {
+            self.status.get(&self.project, self.template);
+        }
     }
 
     /// Part `part`'s blocks and SETTINGS › THEME, read only: reading leaves
@@ -1039,7 +1049,7 @@ impl UiState {
             active: self.active_part,
             first: self.list_first as usize,
             name: self.project.meta().name(),
-            status: self.project_status(),
+            status: self.status.cached(),
             modal: self.modal.as_ref().map(|m| match m {
                 Modal::Prompt(_) => BandsModal::Prompt,
                 Modal::Naming(f, n) => BandsModal::Naming { naming: n, of: f },
