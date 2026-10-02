@@ -18,7 +18,7 @@
 **Spec:** `docs/superpowers/specs/2026-10-02-usb-console-design.md` (owner-reviewed 2026-10-02, binding, § The owner's answers included). Also binding:
 - ADR 0068 (Proposed). Task 11 moves it to Accepted after the flash; it is not otherwise edited once accepted.
 - ADRs 0019 (note sources) and 0066 (SETTINGS; USB CONFIG stays `Later`, #269).
-- Issues: https://github.com/joegiralt/chimera/issues/299 (a pid.codes PID of our own), #203 (USB MIDI), #204 (USB audio), #269 (USB CONFIG).
+- Issues: #203 (USB MIDI), #204 (USB audio), #269 (USB CONFIG).
 
 **Branch:** `usb-console`, cut from `nav-core` at `4653c3a`. It lands after `nav-core` (Pre-flight 1).
 
@@ -40,7 +40,7 @@
 - **`shot`** sends `SHOT 240 320 rgb565be 153600`, then 153 600 bytes (rows from the top, left to right, big-endian RGB565), then `OK`. `shot` maps each pixel through THEME's `Palette::map_raw`; `shot raw` sends the framebuffer as drawn (canonical palette). The header is the same for both.
 - **One table:** a `commands!` row per command gives its name, help line and argument type. The `Command` and `Request` enums come from it, and `answer` matches `Request` exhaustively.
 - **Polled, never an interrupt:** the console runs at the top of the UI loop (sim: of the frame), answers at most one request per iteration, and stops an answer after `STALL_MS` = 250 ms with no byte taken. The OTG interrupt stays masked.
-- **Identity:** `1209:0001`, manufacturer `Chimera`, product `Chimera console`, serial number the chip's 96-bit UID as 24 uppercase hex digits, self-powered, 100 mA. Never `0483:DF11`.
+- **Identity:** `0483:5740` (the stock PreenFM3 identity, github.com/Ixox/preenfm3 `firmware/Src/usbd_desc.c` (`USBD_VID 1155`, `USBD_PID_FS 22336`)), manufacturer `Chimera`, product `Chimera console`, serial number the chip's 96-bit UID as 24 uppercase hex digits, self-powered, 100 mA. Never `0483:DF11`.
 - **The port appears** once the UI loop starts, after the splash.
 - **Feature `usb-console`** is in the firmware's `default` by the end (Task 8). `--no-default-features` builds without it. The sd-probe build has no console.
 - **Desktop:** `127.0.0.1:7341`, one client; a busy port prints `console: 127.0.0.1:7341 busy, console off` and the sim runs on.
@@ -152,7 +152,7 @@ One row per pair of tasks that touch the same file or the same interface, and ho
 | 5 · 8 | `Unit`, `Stats`, `answer` | `ChipUnit` implements `Unit`. |
 | 6 · 8 | `LoopTimer`, `Report`, `serial_hex` | Consumed unchanged. `BENCH_TEXT_LEN` (6 144) is defined in `bench.rs`, not in the core. |
 | 7 · 9 | the sim's address `127.0.0.1:7341`; `CHIMERA_USB=sim` | `ADDR` in `console.rs` and `SIM` in the tool are the same literal. Task 9's test `sim_target_is_the_desktop_console_address` reads `console.rs` and checks it. |
-| 8 · 9 | the identity `1209:0001` (builder) and the udev rule | Both are written from the spec's § Identity. Task 9's test `udev_rule_matches_the_firmware_identity` reads `usb.rs` and the rule and checks they agree. |
+| 8 · 9 | the identity `0483:5740` (builder) and the udev rule | Both are written from the spec's § Identity. Task 9's test `udev_rule_matches_the_firmware_identity` reads `usb.rs` and the rule and checks they agree. |
 | 9 · 10 | `Justfile` (`usb`, `shot`, `stats`, `status`, `check`) | Task 10 runs the recipes and edits no recipe. |
 | 10 · 11 | this plan's `## Measured` | Task 11 fills the ship checklist's empty slots and edits nothing Task 10 wrote. |
 | 3 · `nav-core` (outside) | `chimera-core/src/ui/{mod,nav,renderer,components}.rs`, `ui/settings/view.rs` | Pre-flight 1: keep `nav-core`'s side and re-apply Task 3's additions. |
@@ -175,7 +175,7 @@ One row per pair of tasks that touch the same file or the same interface, and ho
 //                usbd-serial = { version = "0.2.2", optional = true }
 
 // chimera-stm32/src/usb.rs, #[cfg(all(feature = "usb-console", not(feature = "sd-probe")))]
-pub const VID_PID: (u16, u16) = (0x1209, 0x0001);   // pid.codes test ID; #299 replaces it
+pub const VID_PID: (u16, u16) = (0x0483, 0x5740);   // stock PreenFM3 ID: Ixox/preenfm3 firmware/Src/usbd_desc.c
 pub struct UsbParts {                               // moved out of boot(), nothing enabled
     pub dm: PA11<Alternate<10>>, pub dp: PA12<Alternate<10>>,
     pub global: pac::OTG2_HS_GLOBAL, pub device: pac::OTG2_HS_DEVICE, pub pwrclk: pac::OTG2_HS_PWRCLK,
@@ -1230,8 +1230,8 @@ class Tool(unittest.TestCase):
     def test_udev_rule_matches_the_firmware_identity(self):
         rule = (ROOT / "tools/70-chimera.rules").read_text()
         usb = (ROOT / "chimera-stm32/src/usb.rs").read_text()
-        self.assertIn("VID_PID: (u16, u16) = (0x1209, 0x0001)", usb)
-        for want in ('ATTRS{idVendor}=="1209"', 'ATTRS{idProduct}=="0001"', 'ENV{ID_MM_DEVICE_IGNORE}="1"', 'TAG+="uaccess"', 'SYMLINK+="chimera"'):
+        self.assertIn("VID_PID: (u16, u16) = (0x0483, 0x5740)", usb)
+        for want in ('ATTRS{idVendor}=="0483"', 'ATTRS{idProduct}=="5740"', 'ENV{ID_MM_DEVICE_IGNORE}="1"', 'TAG+="uaccess"', 'SYMLINK+="chimera"'):
             self.assertIn(want, rule)
 ```
 
@@ -1311,7 +1311,7 @@ git commit -m "USB console ship flash recorded; ADR 0068 accepted"
 | `shot`: header, body, `OK`, THEME palette; `shot raw` canonical | Tasks 4, 7; U3 |
 | § Functional core: `commands!`, `Console`, `Unit`, `Out`, `Stalled`, `answer`; total parsing; no buffers; 480-byte rows | Tasks 2, 4, 5 |
 | § USB shell: bring-up order, take-once statics, OTG interrupt masked | Tasks 1, 8 |
-| § Identity: `1209:0001`, strings, UID serial, self-powered 100 mA | Tasks 1, 6, 8; issue #299 |
+| § Identity: `0483:5740` (stock PreenFM3, Ixox/preenfm3 `firmware/Src/usbd_desc.c`), strings, UID serial, self-powered 100 mA | Tasks 1, 6, 8 |
 | § Polling: one request per iteration, `UsbOut` pumps, 250 ms stall | Task 8; Review Focus 2–3 |
 | § Snapshot point | Task 8 Step 4; Review Focus 6; U3 |
 | § The unit's `Unit` | Task 8 Step 3 |
@@ -1323,7 +1323,7 @@ git commit -m "USB console ship flash recorded; ADR 0068 accepted"
 | § Tests: desktop QA | Tasks 7, 10 |
 | § Tests: ship U1–U7 | Task 11 |
 | § Later | Not built. `Request`'s typed arguments are the hook for write commands; `Rung` for ORBIT. |
-| § The owner's answers 1–5 | 1: Tasks 1, 8, 9 and #299. 2: Tasks 2, 4. 3: Task 4 (no copy). 4: Task 9. 5: Task 1 Step 4 (`init` before the first frame). |
+| § The owner's answers 1–5 | 1: Tasks 1, 8, 9. 2: Tasks 2, 4. 3: Task 4 (no copy). 4: Task 9. 5: Task 1 Step 4 (`init` before the first frame). |
 
 Gaps found and closed in this pass:
 - The spec's `at` example used row labels; the screen draws short crumbs. The spec now matches what is drawn (Pre-flight 3).
@@ -1356,7 +1356,7 @@ Flash `just flash` first. Leave a chord playing where a check says so.
 
 | # | Check | Result |
 |---|---|---|
-| U1 | The unit enumerates as `/dev/ttyACM0` (`ls /dev/ttyACM*`; `lsusb` shows `1209:0001 Chimera Chimera console`) about 1 s after power-on, after the splash. With the udev rule installed (`sudo cp tools/70-chimera.rules /etc/udev/rules.d/ && sudo udevadm control --reload`), `/dev/chimera` appears too. `just usb help` answers. | ____ |
+| U1 | The unit enumerates as `/dev/ttyACM0` (`ls /dev/ttyACM*`; `lsusb` shows `0483:5740`, the stock PreenFM3 ID, with strings `Chimera` / `Chimera console`) about 1 s after power-on, after the splash. With the udev rule installed (`sudo cp tools/70-chimera.rules /etc/udev/rules.d/ && sudo udevadm control --reload`), `/dev/chimera` appears too. `just usb help` answers. | ____ |
 | U2 | `just status` matches the screen on a Part page, on a mixer page and in SETTINGS › SYSTEM › DIAGNOSTICS › AUDIO LOAD. | ____ |
 | U3 | `just shot` matches the panel, THEME accent included (set a non-TEAL accent first). `just shot raw` is in the canonical teal on black. | ____ |
 | U4 | `just stats` answers with live numbers. With a chord playing: `overruns` is the same before and after ten `just shot`s in a row, and each shot holds the screen still for about 0.15–0.3 s while the sound goes on. | ____ |

@@ -49,9 +49,11 @@ is `docs/superpowers/specs/2026-10-02-usb-console-design.md`.
   no dependencies; the owner, 2026-10-02),
   run by `just usb <cmd>`, `just shot`, `just stats` and `just status`. A
   udev rule keeps ModemManager off the port.
-- **Identity:** the pid.codes test ID `1209:0001` for now (the owner,
-  2026-10-02); a PID of Chimera's own is
-  https://github.com/joegiralt/chimera/issues/299. Never ST's `0483:DF11`,
+- **Identity:** `0483:5740`, the identity the stock PreenFM3 firmware uses
+  (the owner, 2026-10-02; github.com/Ixox/preenfm3
+  `firmware/Src/usbd_desc.c`: `USBD_VID 1155`, `USBD_PID_FS 22336`).
+  Chimera is software on someone else's hardware. 0x5740 is ST's example
+  VCP PID. Strings stay `Chimera` / `Chimera console`. Never ST's `0483:DF11`,
   so `dfu-util` for `just flash` never matches the running synth.
 - **When:** the port appears once the UI loop starts, after the splash
   (the owner, 2026-10-02).
@@ -104,4 +106,4 @@ is `docs/superpowers/specs/2026-10-02-usb-console-design.md`.
 - ST RM0433 (CRS, OTG, unique device ID); ST AN2606 (STM32H74x/75x
   system-memory DFU on PA11/PA12).
 - ADRs 0019 (note sources), 0066 (SETTINGS, USB CONFIG later); issues
-  #203, #204, #269, #299.
+  #203, #204, #269.

@@ -237,7 +237,7 @@ The OTG interrupt is never unmasked in the NVIC (`pac::Interrupt::OTG_FS` stays 
 
 | Field | Value |
 |---|---|
-| VID:PID | `1209:0001`, the pid.codes test PID (the owner, 2026-10-02). Applying for a free pid.codes PID is https://github.com/joegiralt/chimera/issues/299. It is never `0483:DF11`, so `dfu-util -d 0x0483:0xdf11` cannot match the running synth. |
+| VID:PID | `0483:5740`, the identity the stock PreenFM3 firmware uses (the owner, 2026-10-02; github.com/Ixox/preenfm3 `firmware/Src/usbd_desc.c` (`USBD_VID 1155`, `USBD_PID_FS 22336`)). 0x5740 is ST's example PID for a virtual COM port, which suits CDC-ACM. The stock strings were "STMicroelectronics" / "STM32 Audio Class"; ours stay below. It is never `0483:DF11`, so `dfu-util -d 0x0483:0xdf11` cannot match the running synth. |
 | Manufacturer | `Chimera` |
 | Product | `Chimera console` |
 | Serial number | the chip's 96-bit unique ID (the unique device ID registers at `0x1FF1_E800`, RM0433) as 24 uppercase hex digits, formatted once at `init` into a static. `/dev/serial/by-id/usb-Chimera_Chimera_console_<uid>-if00` is then stable per unit. |
@@ -324,7 +324,7 @@ status:
 `tools/70-chimera.rules`. The owner installs it once, into `/etc/udev/rules.d/`:
 
 ```
-SUBSYSTEM=="tty", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0001", ENV{ID_MM_DEVICE_IGNORE}="1", TAG+="uaccess", SYMLINK+="chimera"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", ENV{ID_MM_DEVICE_IGNORE}="1", TAG+="uaccess", SYMLINK+="chimera"
 ```
 
 - `ID_MM_DEVICE_IGNORE` keeps ModemManager from probing the port with AT commands when it appears. The console would only answer them with `ERR unknown command`, but the probe holds the port for seconds.
@@ -389,7 +389,7 @@ The plan's first task measures the real flash cost with `llvm-size`. Over 24 KB,
 
 The five open questions are resolved; the design above already reads this way.
 
-1. **USB identity:** the pid.codes test ID `1209:0001` for now. Applying for a free pid.codes PID is https://github.com/joegiralt/chimera/issues/299. The shared V-USB ID `16C0:27DD` is not used.
+1. **USB identity:** `0483:5740`, the stock PreenFM3 identity (github.com/Ixox/preenfm3 `firmware/Src/usbd_desc.c` (`USBD_VID 1155`, `USBD_PID_FS 22336`)). The shared V-USB ID `16C0:27DD` is not used.
 2. **What `shot` shows:** both. `shot` is THEME's colours, as the panel shows them. `shot raw` is the canonical palette, matching `docs/screens` and the goldens. So `shot` takes one optional argument (§ Requests, § Answers).
 3. **The screen during a shot:** the UI holds still for the 0.15 to 0.3 s the shot streams. No 150 KB copy, no compression.
 4. **Host tool language:** Python 3, standard library only, no dependencies.
