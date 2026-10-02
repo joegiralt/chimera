@@ -405,6 +405,21 @@ fn quick_save_on_new_opens_save_as() {
     assert!(listed(&mut r.s).is_empty());
 }
 
+/// A file saved under NAMING takes its id: the save goes to the id the
+/// re-list gives, not the one NAMING opened with.
+#[test]
+fn save_as_takes_the_id_free_when_named() {
+    let mut r = Rig::new(MemStore::new(1));
+    r.hold(ButtonId::Menu);
+    assert_eq!(r.ui.naming().unwrap().text(), "ACID-001");
+    let taken = put(&mut r.s, "BETA");
+    r.tap(ButtonId::Seq);
+    assert_eq!(r.toast(), "SAVED");
+    let f = r.ui.project().meta().file().unwrap();
+    assert_eq!(f.id().get(), taken.id().get() + 1);
+    assert_eq!(listed(&mut r.s).len(), 2);
+}
+
 #[test]
 fn quick_save_stalled_release_saves_once() {
     let mut s = MemStore::new(1);

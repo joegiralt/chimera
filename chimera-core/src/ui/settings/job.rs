@@ -218,17 +218,22 @@ impl UiState {
     }
 
     /// NAME EXISTS against the card in the slot: the listing, then any ids
-    /// past it. On another card the save goes ahead, to be refused there.
-    fn check_name<S: Store>(&mut self, cx: &mut CardCx<'_, S>, save: SaveAs) -> Option<Job> {
+    /// past it. There, the save takes the id free now; on another card it
+    /// goes ahead, to be refused there.
+    fn check_name<S: Store>(&mut self, cx: &mut CardCx<'_, S>, mut save: SaveAs) -> Option<Job> {
         // A card that can't be read drops the save, and any load it is in.
-        match self.relist(cx.card, cx.store) {
-            Err(n) if n != ProjectNote::NoIds => {
+        let fresh = match self.relist(cx.card, cx.store) {
+            Ok(f) => Some(f),
+            Err(ProjectNote::NoIds) => None,
+            Err(n) => {
                 self.show_note(n);
                 return None;
             }
-            _ => {}
-        }
+        };
         let here = self.listing.vol() == Some(save.fresh.file().vol());
+        if here && let Some(f) = fresh {
+            save.fresh = f;
+        }
         let mut taken = self.listing.named(&save.name).filter(|_| here);
         if here && taken.is_none() && self.listing.more() {
             let after = self
