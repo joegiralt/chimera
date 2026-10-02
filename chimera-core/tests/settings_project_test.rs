@@ -676,3 +676,29 @@ fn save_then_load_failed_save_loads_nothing() {
     assert_eq!(project_crc(r.ui.project()), crc);
     assert_eq!(r.ui.project().meta().file(), Some(a));
 }
+
+/// The card gone while NAMING was open: SAVE AS stops on it, and the load
+/// it was inside goes with it.
+#[test]
+fn a_card_error_after_naming_drops_the_save_and_its_load() {
+    let mut s = MemStore::new(1);
+    put(&mut s, "ALPHA");
+    let mut r = Rig::new(s);
+    modify(&mut r, "SKETCH");
+    let crc = project_crc(r.ui.project());
+    r.open_load();
+    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Seq);
+    assert!(r.ui.naming().is_some());
+    r.s.eject();
+    r.tap(ButtonId::Seq);
+    assert_eq!(r.toast(), "NO CARD");
+    assert!(!r.ui.prompt_open());
+    assert!(r.ui.naming().is_none());
+    r.s.insert();
+    r.work();
+    assert_eq!(r.swaps, 0);
+    assert_eq!(project_crc(r.ui.project()), crc);
+    assert_eq!(r.ui.project().meta().name(), name("SKETCH"));
+    assert_eq!(listed(&mut r.s).len(), 1);
+}

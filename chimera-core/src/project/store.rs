@@ -590,15 +590,15 @@ fn peek_entry<S: Store>(
 
 /// What one directory pass found: the lowest ids, sorted, and the top.
 struct Ids {
-    low: [u32; MAX_LISTED],
+    low: [ProjectId; MAX_LISTED],
     len: usize,
     more: bool,
     top: u32,
 }
 
 impl Ids {
-    fn see(&mut self, id: u32) {
-        self.top = self.top.max(id);
+    fn see(&mut self, id: ProjectId) {
+        self.top = self.top.max(id.get());
         let at = match self.low[..self.len].binary_search(&id) {
             Ok(_) => return,
             Err(at) => at,
@@ -617,17 +617,20 @@ impl Ids {
     }
 }
 
-/// One pass over `PROJECTS`: an empty card has no directory.
-fn scan<S: Store>(s: &mut S, vol: VolumeId) -> Result<Ids, StoreError> {
+/// One pass over `PROJECTS` for the ids past `after`: an empty card has no
+/// directory.
+fn scan<S: Store>(s: &mut S, vol: VolumeId, after: u32) -> Result<Ids, StoreError> {
     let mut ids = Ids {
-        low: [0; MAX_LISTED],
+        low: [ProjectId::MIN; MAX_LISTED],
         len: 0,
         more: false,
         top: 0,
     };
     match s.list(vol, Dir::Projects, &mut |name, _| {
-        if let Some(id) = file_id(name) {
-            ids.see(id.get());
+        if let Some(id) = file_id(name)
+            && id.get() > after
+        {
+            ids.see(id);
         }
     }) {
         Ok(()) | Err(StoreError::NotFound) => Ok(ids),
@@ -644,13 +647,10 @@ pub fn list_projects<S: Store>(
 ) -> ListOutcome {
     let run = card.run(store, |s, r| {
         let vol = r.volume();
-        let ids = scan(s, vol)?;
-        for &n in &ids.low[..ids.len] {
-            if let Some(e) = ProjectId::new(n)
-                .map(|id| peek_entry(s, vol, id))
-                .transpose()?
-            {
-                e.into_iter().for_each(&mut *f);
+        let ids = scan(s, vol, 0)?;
+        for &id in &ids.low[..ids.len] {
+            if let Some(e) = peek_entry(s, vol, id)? {
+                f(e);
             }
         }
         Ok((
@@ -687,7 +687,7 @@ pub fn list_projects<S: Store>(
 }
 
 /// The lowest id past `after` whose name is `n`, ignoring case: one
-/// directory scan per id, stopping at the first match.
+/// directory pass per `MAX_LISTED` ids, stopping at the first match.
 pub fn find_named<S: Store>(
     card: &mut Card,
     store: &mut S,
@@ -698,26 +698,18 @@ pub fn find_named<S: Store>(
         let vol = r.volume();
         let mut after = after;
         loop {
-            let mut next: Option<ProjectId> = None;
-            match s.list(vol, Dir::Projects, &mut |name, _| {
-                if let Some(id) = file_id(name)
-                    && id.get() > after
-                    && next.is_none_or(|m| id < m)
+            let ids = scan(s, vol, after)?;
+            for &id in &ids.low[..ids.len] {
+                if let Some(e) = peek_entry(s, vol, id)?
+                    && e.name
+                        .is_some_and(|m| m.as_str().eq_ignore_ascii_case(n.as_str()))
                 {
-                    next = Some(id);
+                    return Ok(Some(e));
                 }
-            }) {
-                Ok(()) => {}
-                Err(StoreError::NotFound) => return Ok(None),
-                Err(e) => return Err(e),
             }
-            let Some(id) = next else { return Ok(None) };
-            after = id.get();
-            if let Some(e) = peek_entry(s, vol, id)?
-                && e.name
-                    .is_some_and(|m| m.as_str().eq_ignore_ascii_case(n.as_str()))
-            {
-                return Ok(Some(e));
+            match ids.low[..ids.len].last() {
+                Some(last) if ids.more => after = last.get(),
+                _ => return Ok(None),
             }
         }
     });
