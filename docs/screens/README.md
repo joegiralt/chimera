@@ -238,6 +238,7 @@ The UI component storyboard.
 | ![](settings_system_diag_demo_lvl.png) | LVL | Glyph: LEVEL BAR; a drives VOLUME (8 ticks), b operator A's FDBK (a tick per step) |
 | ![](settings_system_diag_demo_xf.png) | XF | Glyph: CROSSFADER; a slides ALG A to B (MORPH), b dry to wet (DRV MIX); set values only |
 | ![](settings_system_diag_demo_stf.png) | STF | Glyph: STAFF; a moves a note on a three-line staff by TRANSPOSE semitones (♯ up, ♭ down, wraps past an octave); set values only |
+| ![](settings_system_diag_demo_scp.png) | SCP | Glyph: WAVE; a steps operator A's WAVE, a scope tracing one period of its own table (mip 0); static |
 | ![](settings_system_diag_demo_brd.png) | BRD | Glyph: chorus BRAID; a MODE (strands), b RATE (twist speed), c DEPTH (swing), d MIX (strand weight); animated on the UI clock |
 | ![](settings_system_diag_demo_rng.png) | RNG | Glyph: delay RINGS; a TIME (spacing), b FDBK (survivors), c TONE (crisp or blurred), d MIX (ring weight), e MECHANICS (wobble), f SAT (the newest ring's weight); REV dots the edge |
 | ![](settings_system_diag_demo_cub.png) | CUB | Glyph: reverb CUBE; a SIZE (the room), b TIME (afterimage trails), c DAMP (far edges dim, then dot), d MIX (edge weight), e GRIT (crackle) |

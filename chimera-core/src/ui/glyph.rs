@@ -3,6 +3,7 @@
 
 use crate::addr::{BlockRef, ParamAddr};
 use crate::block::ValFmt;
+use crate::dsp::algo::waves::{WAVE_LEN, WaveId};
 use crate::dsp::chorus::{ChorusMode, ChorusParams};
 use crate::dsp::delay::DelayParams;
 use crate::dsp::reverb::ReverbParams;
@@ -23,6 +24,8 @@ pub enum FocusGlyph {
     Crossfader,
     /// A note on a three-line staff, by semitones (`StaffNote`).
     Staff,
+    /// A small scope tracing one period of the chosen wave's table.
+    Wave,
     /// One animated glyph for all of an effect's params (`CompositeId::
     /// params`: the braid's 4, the rings' 7, the cube's 5), drawn from
     /// their set values, never the modulated ones.
@@ -70,6 +73,8 @@ pub enum Gauge {
     /// A notehead `step` diatonic steps above the staff's middle line
     /// (fractional while it eases), with its `accidental`.
     Staff { step: f32, accidental: Accidental },
+    /// The scope, tracing `wave_trace` of this wave.
+    Wave(WaveId),
     /// The chorus braid (`CompositeId::ChorusBraid`).
     Braid(Braid),
     /// The delay's rings (`CompositeId::DelayRings`).
@@ -131,6 +136,17 @@ fn staff(semis: f32) -> Gauge {
         step: a.step as f32 + (b.step - a.step) as f32 * t,
         accidental: StaffNote::of(libm::roundf(semis) as i8).accidental,
     }
+}
+
+/// One period of `wave`'s mip-0 table across `N` points, the last the
+/// table's guard (its first sample again): each the nearest sample, scaled
+/// so full scale is `half` px, up positive.
+pub fn wave_trace<const N: usize>(wave: WaveId, half: i32) -> [i32; N] {
+    let table = wave.table(0);
+    core::array::from_fn(|i| {
+        let s = table[i * WAVE_LEN / (N - 1).max(1)];
+        libm::roundf(s as f32 * half as f32 / i16::MAX as f32) as i32
+    })
 }
 
 /// The reverb params the cube reads, in `Cube::from_set`'s order.
@@ -430,13 +446,14 @@ impl Braid {
 }
 
 impl FocusGlyph {
-    pub const ALL: [FocusGlyph; 9] = [
+    pub const ALL: [FocusGlyph; 10] = [
         FocusGlyph::Arc,
         FocusGlyph::None,
         FocusGlyph::Switch,
         FocusGlyph::LevelBar,
         FocusGlyph::Crossfader,
         FocusGlyph::Staff,
+        FocusGlyph::Wave,
         FocusGlyph::Composite(CompositeId::ReverbCube),
         FocusGlyph::Composite(CompositeId::DelayRings),
         FocusGlyph::Composite(CompositeId::ChorusBraid),
@@ -452,9 +469,10 @@ impl FocusGlyph {
             FocusGlyph::LevelBar => 3,
             FocusGlyph::Crossfader => 4,
             FocusGlyph::Staff => 5,
-            FocusGlyph::Composite(CompositeId::ReverbCube) => 6,
-            FocusGlyph::Composite(CompositeId::DelayRings) => 7,
-            FocusGlyph::Composite(CompositeId::ChorusBraid) => 8,
+            FocusGlyph::Wave => 6,
+            FocusGlyph::Composite(CompositeId::ReverbCube) => 7,
+            FocusGlyph::Composite(CompositeId::DelayRings) => 8,
+            FocusGlyph::Composite(CompositeId::ChorusBraid) => 9,
         }
     }
 
@@ -480,6 +498,9 @@ impl FocusGlyph {
                 let n = fmt.max_int() as f32 / 2.0;
                 staff(value * 2.0 * n - n)
             }
+            FocusGlyph::Wave => Gauge::Wave(WaveId::clamped(libm::roundf(
+                value.clamp(0.0, 1.0) * fmt.max_int() as f32,
+            ) as u8)),
             FocusGlyph::Composite(CompositeId::ChorusBraid) => composite(CompositeId::ChorusBraid),
             FocusGlyph::Composite(CompositeId::DelayRings) => composite(CompositeId::DelayRings),
             FocusGlyph::Composite(CompositeId::ReverbCube) => composite(CompositeId::ReverbCube),
@@ -505,7 +526,8 @@ impl Gauge {
             | Gauge::Switch { .. }
             | Gauge::LevelBar { .. }
             | Gauge::Crossfader { .. }
-            | Gauge::Staff { .. } => false,
+            | Gauge::Staff { .. }
+            | Gauge::Wave(_) => false,
             Gauge::Braid(_) | Gauge::Rings(_) | Gauge::Cube(_) => true,
         }
     }

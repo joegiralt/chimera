@@ -78,7 +78,7 @@ impl AlgoOpParams {
 pub static ALGO_OP_SPECS: [ParamSpec; 13] = [
     ParamSpec::choice(0, "WAVE", ValFmt::Names(&WAVE_NAMES), 15.0, 0.0)
         .ident("WAVE")
-        .glyph(crate::ui::glyph::FocusGlyph::None),
+        .glyph(crate::ui::glyph::FocusGlyph::Wave),
     ParamSpec::stepped(
         1,
         "CRSE",

@@ -6,6 +6,7 @@ use core::fmt::Write;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
+use crate::dsp::algo::waves::WaveId;
 use crate::dsp::modal::{EXCITER_NAMES, ModalPage, ResonatorMode};
 use crate::part::DacPair;
 use crate::project::PartId;
@@ -360,7 +361,8 @@ pub fn gauge_rect(gauge: &Gauge) -> Option<(i32, i32, i32, i32)> {
         | Gauge::Switch { .. }
         | Gauge::LevelBar { .. }
         | Gauge::Crossfader { .. }
-        | Gauge::Staff { .. } => None,
+        | Gauge::Staff { .. }
+        | Gauge::Wave(_) => None,
     }
 }
 
@@ -378,6 +380,7 @@ where
         Gauge::LevelBar { value, ticks } => level_bar(d, value, ticks),
         Gauge::Crossfader { value } => crossfader(d, value),
         Gauge::Staff { step, accidental } => staff(d, step, accidental),
+        Gauge::Wave(w) => wave_scope(d, w),
         Gauge::Arc { value, bipolar } => draw::arc_gauge(
             d,
             theme::ARC_CX,
@@ -460,6 +463,34 @@ where
         theme::ACCENT,
     );
     draw::fill_rect(d, cx - cap_w / 2 + 2, cy - 1, cap_w - 4, 2, theme::BG);
+}
+
+/// The WAVE glyph at the band's right: a FAINT frame, a dotted FAINT
+/// centre line and one period of `wave`'s own table traced in the accent.
+fn wave_scope<D>(d: &mut D, wave: WaveId)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    const N: usize = (theme::WAVE_W - 2 * theme::WAVE_PAD) as usize + 1;
+    let (x0, y0, w, h) = (theme::WAVE_X, theme::WAVE_Y, theme::WAVE_W, theme::WAVE_H);
+    let cy = y0 + h / 2;
+    draw::round_outline(d, x0, y0, w, h, 4, theme::FAINT);
+    for x in (x0 + 3..x0 + w - 3).step_by(2) {
+        draw::fill_rect(d, x, cy, 1, 1, theme::FAINT);
+    }
+    let trace = crate::ui::glyph::wave_trace::<N>(wave, h / 2 - theme::WAVE_PAD);
+    let px = |i: usize| x0 + theme::WAVE_PAD + i as i32;
+    for i in 1..N {
+        draw::line(
+            d,
+            px(i - 1),
+            cy - trace[i - 1],
+            px(i),
+            cy - trace[i],
+            theme::ACCENT,
+            2,
+        );
+    }
 }
 
 /// The STAFF glyph at the band's right: three MID lines and an accent

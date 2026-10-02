@@ -100,6 +100,13 @@ pub const STAFF_W: i32 = 60;
 pub const STAFF_X: i32 = SCREEN_W - MARGIN_X - STAFF_W;
 pub const STAFF_GAP: i32 = 8;
 pub const STAFF_NOTE_X: i32 = STAFF_X + STAFF_W / 2 + 8;
+/// The WAVE glyph's scope: a frame flush with the right margin on the
+/// arc's centre line; the trace keeps `WAVE_PAD` px inside it.
+pub const WAVE_W: i32 = 64;
+pub const WAVE_H: i32 = 48;
+pub const WAVE_X: i32 = SCREEN_W - MARGIN_X - WAVE_W;
+pub const WAVE_Y: i32 = ARC_CY - WAVE_H / 2;
+pub const WAVE_PAD: i32 = 5;
 /// The chorus braid's box, flush with the right margin, as tall as the
 /// arc: the only pixels it redraws each frame.
 pub const BRAID_W: i32 = 80;

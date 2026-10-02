@@ -888,8 +888,26 @@ pub static DEMO_GLYPH_STAFF: BlockDef = BlockDef {
     ],
 };
 
+/// GLYPH: WAVE (SCP: WAV is the WAVES demo). a: operator A's WAVE, a scope
+/// tracing its table.
+pub static DEMO_GLYPH_WAVE: BlockDef = BlockDef {
+    id: 79,
+    name: "Glyph: Wave",
+    short: "SCP",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::AlgoOp(Op::A), AlgoOpParams::WAVE),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
 /// The DEMO pages, one SETTINGS leaf each (`leaves::DEMO_LEAVES`).
-pub static DEMO_BLOCKS: [ChainBlock; 14] = [
+pub static DEMO_BLOCKS: [ChainBlock; 15] = [
     ChainBlock::page(&DEMO_WAVES),
     ChainBlock::page(&DEMO_SHAPES),
     ChainBlock::page(&DEMO_MOTION),
@@ -901,6 +919,7 @@ pub static DEMO_BLOCKS: [ChainBlock; 14] = [
     ChainBlock::page(&DEMO_GLYPH_LEVEL),
     ChainBlock::page(&DEMO_GLYPH_XF),
     ChainBlock::page(&DEMO_GLYPH_STAFF),
+    ChainBlock::page(&DEMO_GLYPH_WAVE),
     ChainBlock::page(&DEMO_GLYPH_BRAID),
     ChainBlock::page(&DEMO_GLYPH_RINGS),
     ChainBlock::page(&DEMO_GLYPH_CUBE),
