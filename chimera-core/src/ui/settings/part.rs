@@ -7,6 +7,7 @@ use crate::project::{
     Line, Origin, PartAction, PartActionKind, PartId, Project, SlotId, part_actions,
 };
 
+use super::prompt::Slot;
 use super::tree::Act;
 use super::view::RowLook;
 
@@ -120,7 +121,7 @@ impl Offer {
 /// `SLOT 03`, or `SLOT --`.
 fn write_slot(l: &mut Line, s: Option<SlotId>) -> core::fmt::Result {
     match s {
-        Some(s) => write!(l, "SLOT {:02}", s.index() + 1),
+        Some(s) => write!(l, "{}", Slot(s)),
         None => l.write_str("SLOT --"),
     }
 }

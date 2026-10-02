@@ -211,7 +211,8 @@ fn part(p: PartId) -> usize {
     p.index() + 1
 }
 
-struct Slot(SlotId);
+/// `SLOT 03`.
+pub(super) struct Slot(pub(super) SlotId);
 
 impl core::fmt::Display for Slot {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

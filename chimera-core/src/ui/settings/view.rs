@@ -13,6 +13,7 @@ use super::listing::{LOADED, Listing};
 use super::manage::{Command, Note, Off, Whose, command_rows};
 use super::naming::{Naming, draw_naming};
 use super::part::{Offer, SAVE_ROWS};
+use super::prompt::Slot;
 use super::tree::{Kind, PART, ROOT, Row, Screen, row_at, rows};
 use crate::name::{ProjectName, SoundName};
 use crate::project::{
@@ -536,9 +537,9 @@ impl fmt::Display for PartMark {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             PartMark::Clean => f.write_str("CLEAN"),
-            PartMark::Edited(Some(s)) => write!(f, "* EDITED · FROM SLOT {:02}", s.index() + 1),
+            PartMark::Edited(Some(s)) => write!(f, "* EDITED · FROM {}", Slot(*s)),
             PartMark::Edited(None) => f.write_str("* EDITED · FROM INIT"),
-            PartMark::SlotMoved(s) => write!(f, "◦ SLOT {:02} MOVED", s.index() + 1),
+            PartMark::SlotMoved(s) => write!(f, "◦ {} MOVED", Slot(*s)),
         }
     }
 }

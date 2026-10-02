@@ -67,7 +67,7 @@ use nav::{
 use page::{PageKey, PageLayout};
 use perf::PerfStats;
 use renderer::Renderer;
-use settings::job::{CardCx, Job, LoadAfter, SAVE_AS_LIST, ThenClear, load_job};
+use settings::job::{CardCx, Job, LoadAfter, ThenClear, load_job};
 use settings::listing::{Listing, LoadRow, Pick, refusal};
 use settings::manage::{Command, Run, Whose};
 use settings::naming::Naming;
@@ -1135,14 +1135,16 @@ impl UiState {
 
     /// A frame for the prompt or NAMING.
     fn modal_input(&mut self, m: Modal, c: &impl Controls, p: &hold::Presses) {
+        // Only the Sound rung's browser redraws for a prompt's change.
+        let sound = self.loc.browse().is_some();
         let key = |m: &Modal| match m {
-            Modal::Prompt(a) => Some(a.key()),
-            Modal::Naming(..) => None,
+            Modal::Prompt(a) if sound => Some(a.key()),
+            _ => None,
         };
         let was = key(&m);
         match m.input(c, p, &self.project) {
             ModalStep::Open(m) => {
-                self.browser_dirty |= self.loc.browse().is_some() && key(&m) != was;
+                self.browser_dirty |= key(&m) != was;
                 self.modal = Some(m);
             }
             ModalStep::Refused(f, n) => {
@@ -1285,13 +1287,7 @@ impl UiState {
 
     /// MENU hold: SAVE over the project's own file; NEW goes to SAVE AS.
     fn quick_save(&mut self) {
-        match self.project.meta().file() {
-            Some(_) => self.queue(Job::QuickSave(None)),
-            None => {
-                self.go(SAVE_AS_LIST.location());
-                self.queue(Job::Fresh(None));
-            }
-        }
+        self.queue(Job::QuickSave(None));
     }
 
     /// SEQ on LOAD PROJECT's row `row`.

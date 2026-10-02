@@ -492,6 +492,12 @@ impl ProjectEntry {
     pub fn file(&self) -> ProjectFile {
         ProjectFile::new(self.id, self.vol)
     }
+
+    /// Named `n`, ignoring case: NAME EXISTS' test.
+    pub fn is_named(&self, n: &ProjectName) -> bool {
+        self.name
+            .is_some_and(|m| m.as_str().eq_ignore_ascii_case(n.as_str()))
+    }
 }
 
 /// The most entries one listing holds (SETTINGS' LOAD and MANAGE).
@@ -723,8 +729,7 @@ pub fn find_named<S: Store>(
             let ids = scan(s, vol, after)?;
             for &id in &ids.low[..ids.len] {
                 if let Some(e) = peek_entry(s, vol, id)?
-                    && e.name
-                        .is_some_and(|m| m.as_str().eq_ignore_ascii_case(n.as_str()))
+                    && e.is_named(n)
                 {
                     return Ok(Some(e));
                 }

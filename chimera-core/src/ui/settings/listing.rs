@@ -225,10 +225,9 @@ impl Listing {
 
     /// The listed entry named `n`, ignoring case; the lowest id of several.
     pub fn named(&self, n: &ProjectName) -> Option<ProjectEntry> {
-        let n = n.as_str();
         (0..self.len())
             .filter_map(|i| self.entry(i))
-            .find(|e| e.name.is_some_and(|m| m.as_str().eq_ignore_ascii_case(n)))
+            .find(|e| e.is_named(n))
     }
 
     /// Starts a re-list: empty on `vol`.

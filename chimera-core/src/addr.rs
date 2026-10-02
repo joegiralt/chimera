@@ -72,7 +72,8 @@ pub enum BlockRef {
     /// A Part's mix settings (`PartParams`): channel, mode, output, level,
     /// pan, sends.
     Part,
-    /// System › Theme (`ThemeSettings`): held by the UI, not a Sound.
+    /// SETTINGS › PERSONALIZE › THEME (`ThemeSettings`): held by the UI,
+    /// not a Sound.
     Theme,
     /// Part n's `PartParams` from any page: the SETTINGS mirrors. UI-only,
     /// so not in `ALL` and never stored.
