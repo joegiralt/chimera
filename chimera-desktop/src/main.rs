@@ -3,6 +3,8 @@ mod controls;
 mod display;
 #[cfg(feature = "midi")]
 mod midi;
+#[cfg(test)]
+mod qa;
 mod store;
 
 use chimera_core::project::{LOAD_ACK_TIMEOUT_MS, LOAD_LINK};

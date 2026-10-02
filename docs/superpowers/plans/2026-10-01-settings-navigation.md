@@ -1339,4 +1339,112 @@ git commit -m "Ship flash measured; ADRs 0043, 0044, 0046 and 0066 accepted"
 
 ## Measured
 
-(Task 15 fills this in.)
+Task 15, 2026-10-02, on the host at `b47cdd8` plus this commit; nothing
+flashed, no ADR moved.
+
+### Desktop QA (Steps 1–2)
+
+1. **`just check` passes**: 3 473 tests passed, 0 failed, 17 ignored over
+   every run, then every firmware build, `just clippy`, `cargo fmt --check`
+   and `just stack-check`. **`param_sweep_test` passes** on the
+   `Location`-driven `UiState`: 14 passed, 1 ignored (`sweep_thorough`).
+2. **The hand list, by key script.** The window can't be driven here (a
+   Wayland session, no xdotool or ydotool), so each item runs as a test.
+   The new desktop tests drive the sim's own `DesktopControls` from
+   minifb keys, at `main`'s 33 ms frames and in `main`'s order (`qa::Desk`:
+   keys, `handle_input`, `card_work`, `sync_system`, `update`), on a
+   `DirStore`.
+
+   | Item | Test |
+   |---|---|
+   | SAVE AS | `settings_project_test::save_as_names_and_saves`; desktop `qa::save_relaunch_and_swap_cards` |
+   | quick save | `quick_save_saves_over_own_file`, `quick_save_on_new_opens_save_as`, `quick_save_stalled_release_saves_once`; desktop `qa::save_relaunch_and_swap_cards` |
+   | LOAD with an edit pending, each answer | `load_over_modified_asks_and_each_answer`, `save_then_load_on_new_names_first_and_cancel_aborts`, `save_then_load_refused_save_keeps_the_project` |
+   | MANAGE: SAVE TO, CLEAR, DELETE | `settings_manage_test`: `save_to_overwrites_after_confirm`, `clear_other_and_clear_own`, `clear_own_when_saved`, `delete_another_after_confirm`, `delete_the_project_system_names_clears_last_project` |
+   | PART: SAVE TO, UPDATE, CLEAR, RENAME | `settings_part_test`: `save_over_then_update_stale`, `update_applies_only_what_it_showed`, `reload_over_edits_asks_and_save_first_goes_to_a_new_slot`, `clear_edited_part_asks_and_each_answer`, `rename_marks_the_part_edited` |
+   | quit and relaunch: the same project, `SAVED` | desktop `qa::save_relaunch_and_swap_cards` (new): SAVE AS and a quick save by keys, then a second launch on the same root boots with no toast, `same()` project, status `Saved` |
+3. **Swapping `CHIMERA_CARD`.** `qa::save_relaunch_and_swap_cards` boots
+   `main`'s `boot()` on three roots: a fresh directory says `NEW PROJECT`,
+   one that doesn't exist says `NO CARD`, and back on the first card there
+   is no toast and its project. **CARD CHANGED on `DirStore`**:
+   `store::tests::card_changed_then_save_as` (new, beside
+   `project_store_suite_on_dir_store`) runs settings_project_test's script
+   by keys. ALPHA is loaded through LOAD, `VOLUME` is rewritten and
+   `CHIMERA/` removed, then MENU held asks `CARD CHANGED`, SEQ names
+   `ACID-001`, and SEQ saves on the new volume: one project listed, `SAVED`.
+   It passes.
+4. **The binary boots.** `target/release/chimera-desktop` under
+   `timeout`, with `CHIMERA_CARD` on an empty scratch directory (6 s) and on
+   one that doesn't exist (4 s), ran until the timeout killed it (exit 124)
+   with no panic. It wrote `VOLUME` to the empty card. No one read the window.
+
+**Frame time, MIDI › CHANNELS** (host, release, x86). Beside `PROJ CRC`:
+
+| | host | chip |
+|---|---|---|
+| `PROJ CRC`, `project_crc(full())` | 88–104 µs (projects-core) | ≈ 1.1–2.1 ms estimated; the bench row at the flash |
+| frame turning a CHANNELS cell, `full()` booted | median 175 µs, max 0.49–1.18 ms | at the flash |
+| frame turning a CHANNELS cell, NEW | median 130 µs, max 0.18–0.77 ms | at the flash |
+
+How: `qa::tests::channels_frame_time` (`#[ignore]`;
+`cargo test -p chimera-desktop --no-default-features --release -- --ignored --nocapture channels_frame_time`).
+It boots a `DirStore` card holding `full()` (then a fresh card), goes
+MENU › MIDI CONFIG › CHANNELS by keys, then for 2 000 frames turns
+encoder C up and down (CHANNEL 3 ↔ 4) and times one whole frame: `Desk`'s
+frame plus `render_with_scope` into a 240×320 buffer. It asserts the
+footer's status hashed exactly once per edited frame (2 000 rehashes).
+Three runs gave the same medians; the max is the host scheduler's. The
+p99 was 0.26–0.46 ms (`full()`) and 0.15–0.21 ms (NEW). Every edited
+frame includes one project hash, so on the chip a CHANNELS turn costs at
+least one `PROJ CRC` (B1 below) per frame; B5 gives the whole frame.
+
+**Window-only (owner UAT on `CHIMERA_CARD=$(mktemp -d) just desktop`).**
+The tests above check state, toasts and prompts, not pixels:
+- each prompt, BUSY and the toast as drawn (`SAVED`, `CARD CHANGED`,
+  `NEW PROJECT`, `NO CARD`);
+- the footer's `SAVED` / modified mark after a relaunch;
+- MENU's hold feel at 500 ms with a real key, and a tap at the edge of it;
+- the SETTINGS screens: legible, and "obviously the settings world".
+
+### Ship flash checklist (Steps 3–5, the owner)
+
+Flash `just flash-bench` first (`bench::run` falls through to the synth),
+then `just flash`. Fill each slot as read out.
+
+**Bench build**
+
+| # | Check | Result |
+|---|---|---|
+| B1 | `PROJ CRC` row (MEMORY screen, last line), µs | ____ |
+| B2 | BUS rows | ____ |
+| B3 | the gate's cost | ____ |
+| B4 | no audio overrun during a load (`AudioStats`) | ____ |
+| B5 | frame time while turning a MIDI › CHANNELS cell (footer recomputes once per edit) | ____ |
+| B6 | no audio overrun while turning it (`AudioStats`) | ____ |
+
+**This plan** (release build)
+
+| # | Check | Result |
+|---|---|---|
+| N1 | MENU tap opens SETTINGS on release | ____ |
+| N2 | MENU held 500 ms quick-saves (`SAVED`); its release does nothing more | ____ |
+| N3 | SEQ tap moves a sub-page up, on release | ____ |
+| N4 | hold MENU to save, tap B3 during BUSY: Part 3 after the save (no press lost) | ____ |
+| N5 | every built SETTINGS screen on the panel. UAT: legible, "obviously the settings world" | ____ |
+| N6 | swap the card, hold MENU: `CARD CHANGED` → SAVE AS saves on the new card | ____ |
+| N7 | no SYSTEM › DEMO; MIX+B6 is Part 6's mixer | ____ |
+
+**projects-core's checklist** (its Task 9)
+
+| # | Check | Result |
+|---|---|---|
+| P1 | boot with no project: `NEW PROJECT` | ____ |
+| P2 | boot with the last project | ____ |
+| P3 | save, power off, power on: the same project | ____ |
+| P4 | a load with held notes: no click, the tails ring on | ____ |
+| P5 | pull the card mid-save: the previous generation loads | ____ |
+| P6 | the project list's cost for tens of projects (LOAD PROJECT's first draw) | ____ |
+
+On all passing: ADRs 0043, 0044, 0046 and 0066 → `Accepted (<date>)` in
+their files and `docs/adr/README.md` (Step 4). On any failure: an issue,
+and no ADR moves.
