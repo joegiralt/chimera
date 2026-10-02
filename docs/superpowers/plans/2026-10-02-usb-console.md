@@ -1640,7 +1640,38 @@ Task 9, release builds at bf71c12 and with Task 9, measured the same way. The OS
 
 ### Desktop QA (Task 11)
 
-____
+At d82a8ca. `just check` PASS (build, clippy `-D warnings`, fmt, stack-check); `just test`: 1 881 passed, 0 failed, 12 ignored.
+
+The sim (`cargo build --release -p chimera-desktop`, fresh `CHIMERA_CARD`, port 7341), `CHIMERA_USB=sim`:
+
+| Command | Result |
+|---|---|
+| `usb help` | the 6-line help, exit 0 |
+| `status` | `firmware 0.1.0 release`, `protocol 1`, `project NEW PROJECT`, `state NEW`, `part 1`, `at PART 1 > ALGORITHM`, exit 0 |
+| `stats` | `ERR stats is not in this build`, exit 1 |
+| `usb frob` | `ERR unknown command frob, try help`, exit 1 |
+| `usb dfu` | `ERR dfu is not in this build`, exit 1 |
+| `shot`, `shot raw` | two 480x640 PNGs in `target/shots`, exit 0; `shot raw` is the ALGORITHM page, teal on black |
+
+`shot raw` against `docs/screens`: the sim boots on the Part 1 ALGORITHM page, which has no matching image. The nearest, `algo_out_p3.png`, differs in 838 px (0.27 %, `magick compare -metric AE`); `engine_algo.png` in 3 918. Those are different pages or values, not the console.
+
+Not done here: the window path (SETTINGS › SYSTEM › OS UPGRADE, `CANCEL`, `ENTER DFU` printing `dfu: not in this build`). No input can be injected into the window in this session (no xdotool, wtype or ydotool). Task 7's and Task 9's tests run the same code without a window (`take_dfu_synced`, the sim's `dfu_on_the_sim_is_not_in_this_build`); the eprintln is at `chimera-desktop/src/main.rs:146`. Left for a look by hand.
+
+Every command the ship checklist names exists: `just flash`, `flash-bench`, `usb`, `status`, `stats`, `shot`, `backup-bootloader`, `tools/70-chimera.rules`.
+
+### On the unit (measured by the controller, 2026-10-02)
+
+- Firmware size: release flash 747 152 B (later builds 742-747 KB); console cost 26 040 B against the 28 KB budget.
+- Console: `status`, `stats` and `shot` work over `/dev/ttyACM0` (0483:5740, "Chimera console", serial from the chip UID).
+- Stress: 60 s of MIDI DIN at full rate on six Parts. `load_pct` peaked at 87 %; 0 overruns, 0 drops, 0 desyncs. UI loop 0.25 ms per pass idle, 22-26 ms under load. A shot taken mid-stress succeeded.
+- DFU: `to-dfu` puts the unit in 0483:df11 without the jumper, so the marker survived the stock bootloader (U8, U10). Hands-free `just flash` back to the synth works (U9).
+- Bootloader: `backup-bootloader` wrote 131 072 B and its sha256 to ~/chimera-backups. It differs from the repo copy in its first bytes; recorded and left alone, by owner ruling.
+- Bench (full, about 4 min, read over USB; `.superpowers/sdd/2026-10-02-usb-console/bench-f96875a.txt`), at 480 MHz / 48 kHz about 10 000 cycles per sample:
+  - ALGO: 6 OP 749 cycles/voice, 7 047 for 8 voices; worst case (A16+17) 7 770.
+  - Modal: STRING 405/voice; RES 1 491/voice, 13 315 for 8 voices (over budget, so the cost allocator steals voices); RES48 1 992/voice.
+  - Bus: 1 146.
+  - PROJ CRC: 1 173 308 cycles, 2.4 ms.
+  - Note-on bursts: SYM NOTE-ON LOW 225 k cycles; filed as #306.
 
 ### Ship flash checklist (Task 12, the owner)
 
@@ -1648,15 +1679,15 @@ Flash `just flash` first, with the BOOT0 jumper: the build on the unit has no `d
 
 | # | Check | Result |
 |---|---|---|
-| U1 | The unit enumerates as `/dev/ttyACM0` (`ls /dev/ttyACM*`; `lsusb` shows `0483:5740`, the stock PreenFM3 ID, with strings `Chimera` / `Chimera console`) about 1 s after power-on, after the splash. With the udev rule installed (`sudo cp tools/70-chimera.rules /etc/udev/rules.d/ && sudo udevadm control --reload`), `/dev/chimera` appears too. `just usb help` answers. | ____ |
-| U2 | `just status` matches the screen on a Part page, on a mixer page and in SETTINGS › SYSTEM › DIAGNOSTICS › AUDIO LOAD. | ____ |
-| U3 | `just shot` matches the panel, THEME accent included (set a non-TEAL accent first). `just shot raw` is in the canonical teal on black. | ____ |
-| U4 | `just stats` answers with live numbers. With a chord playing: `overruns` is the same before and after ten `just shot`s in a row, and each shot holds the screen still for about 0.15–0.3 s while the sound goes on. | ____ |
-| U5 | Unplug USB mid-shot: the UI moves again within 250 ms. Replug: the next `just status` answers. | ____ |
-| U6 | `just flash` still works afterwards: bridge BOOT0, run `just flash` with `just usb help` having just run (and with a terminal holding the port open). It flashes, and the new firmware boots and enumerates. | ____ |
-| U7 | `just flash-bench`: `just usb bench` gives the B1–B3 numbers the bench screens showed, screen by screen. | ____ |
-| U8 | Enter DFU from the menu. SETTINGS › SYSTEM › OS UPGRADE asks `ENTER DFU?` / `PLAY STOPS UNTIL FLASHED OR POWER-CYCLED`. `CANCEL` and MENU leave the chord playing. `ENTER DFU`: the sound stops, `0483:5740` leaves `lsusb`, and `lsusb -d 0483:df11` shows the ROM loader within 2 s. It is still there 30 s later (no watchdog reset). Note what the panel shows. Then power-cycle without flashing: the synth plays (the marker was cleared). | ____ |
-| U9 | `just flash` hands-free from the console. With the synth running, no jumper and the cable in: `just flash` prints nothing about BOOT0, sends `dfu`, waits for `0483:DF11`, flashes, and the new build boots and enumerates as `0483:5740`. Then `just flash-bench` the same way, and back with `just flash`. Also `just usb dfu` alone answers `OK` and the ROM loader appears. | ____ |
-| U10 | The clobber check. The marker must survive the stock bootloader. If U8 or U9 brings the unit back as `0483:5740` instead of `0483:DF11` (so `to-dfu` fails with `marker clobbered?` and ABOUT's RESET reads SOFTWARE), RTC_BKP0R was cleared on the way. File an issue: the SRAM4 fallback was removed in review (spec § The risk names it as a possible alternative, with its cache and ECC caveats). | ____ |
+| U1 | The unit enumerates as `/dev/ttyACM0` (`ls /dev/ttyACM*`; `lsusb` shows `0483:5740`, the stock PreenFM3 ID, with strings `Chimera` / `Chimera console`) about 1 s after power-on, after the splash. With the udev rule installed (`sudo cp tools/70-chimera.rules /etc/udev/rules.d/ && sudo udevadm control --reload`), `/dev/chimera` appears too. `just usb help` answers. | PASS: 0483:5740, "Chimera console", `/dev/ttyACM0`; `status`, `stats`, `shot` answer. (`/dev/chimera` udev link not recorded.) |
+| U2 | `just status` matches the screen on a Part page, on a mixer page and in SETTINGS › SYSTEM › DIAGNOSTICS › AUDIO LOAD. | PARTIAL: `status` answers on the unit; screen-by-screen match not recorded. |
+| U3 | `just shot` matches the panel, THEME accent included (set a non-TEAL accent first). `just shot raw` is in the canonical teal on black. | PARTIAL: `shot` works, including mid-stress; THEME accent and `shot raw` match not recorded. |
+| U4 | `just stats` answers with live numbers. With a chord playing: `overruns` is the same before and after ten `just shot`s in a row, and each shot holds the screen still for about 0.15–0.3 s while the sound goes on. | PENDING: `stats` answers live; under the stress test `load_pct` peaked 87 %, 0 overruns, 0 drops, a mid-stress shot succeeded. The voice stats under load and the ten-shot overruns check are still to do. |
+| U5 | Unplug USB mid-shot: the UI moves again within 250 ms. Replug: the next `just status` answers. | PENDING |
+| U6 | `just flash` still works afterwards: bridge BOOT0, run `just flash` with `just usb help` having just run (and with a terminal holding the port open). It flashes, and the new firmware boots and enumerates. | PENDING (hands-free flash worked; the BOOT0 path with a terminal holding the port is not recorded) |
+| U7 | `just flash-bench`: `just usb bench` gives the B1–B3 numbers the bench screens showed, screen by screen. | PASS: the full bench was read over USB (`bench-f96875a.txt`). |
+| U8 | Enter DFU from the menu. SETTINGS › SYSTEM › OS UPGRADE asks `ENTER DFU?` / `PLAY STOPS UNTIL FLASHED OR POWER-CYCLED`. `CANCEL` and MENU leave the chord playing. `ENTER DFU`: the sound stops, `0483:5740` leaves `lsusb`, and `lsusb -d 0483:df11` shows the ROM loader within 2 s. It is still there 30 s later (no watchdog reset). Note what the panel shows. Then power-cycle without flashing: the synth plays (the marker was cleared). | PASS: `to-dfu` reaches 0483:df11 without the jumper. The menu path (OS UPGRADE) is not recorded; the SYSTEM file intact after an OS UPGRADE from the menu is PENDING. |
+| U9 | `just flash` hands-free from the console. With the synth running, no jumper and the cable in: `just flash` prints nothing about BOOT0, sends `dfu`, waits for `0483:DF11`, flashes, and the new build boots and enumerates as `0483:5740`. Then `just flash-bench` the same way, and back with `just flash`. Also `just usb dfu` alone answers `OK` and the ROM loader appears. | PASS: hands-free `just flash` back to the synth works. |
+| U10 | The clobber check. The marker must survive the stock bootloader. If U8 or U9 brings the unit back as `0483:5740` instead of `0483:DF11` (so `to-dfu` fails with `marker clobbered?` and ABOUT's RESET reads SOFTWARE), RTC_BKP0R was cleared on the way. File an issue: the SRAM4 fallback was removed in review (spec § The risk names it as a possible alternative, with its cache and ECC caveats). | PASS: the marker survived the stock bootloader (`to-dfu` reached 0483:df11). |
 
 On all passing: ADR 0068 → `Accepted (<date>)` (Task 12 Step 2). On any failure: an issue, and no ADR moves.
