@@ -46,6 +46,11 @@ impl AudioStats {
         }
     }
 
+    /// One drop count per note source: `drops[..sources]`, `sources` clamped to the array.
+    pub fn active_drops(&self) -> &[u32] {
+        &self.drops[..usize::from(self.sources).min(MAX_NOTE_SOURCES)]
+    }
+
     pub fn record(&mut self, cycles: u32, budget: BlockBudget) {
         let pct = load_percent(cycles, budget);
         self.load_peak = self.load_peak.max(pct);
