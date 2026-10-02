@@ -33,7 +33,7 @@ impl Segs {
     pub const ONE: Segs = Segs(1);
 
     pub const fn new(n: u8) -> Option<Segs> {
-        if matches!(n, 1..=8) {
+        if n >= 1 && n as usize <= MAX_SEGS {
             Some(Segs(n))
         } else {
             None
@@ -118,11 +118,11 @@ impl ChordRing {
 }
 
 /// The segment holding bar `bar_in_loop` at `phase`:
-/// ⌊(bar + phase)/bars · segs⌋, exact in integers.
+/// ⌊(bar + phase)/bars · segs⌋, exact in integers; a bar past the loop wraps.
 pub fn segment_at(bar_in_loop: u32, phase: Phase, bars: Bars, segs: Segs) -> usize {
     let into_loop = ((bar_in_loop as u64) << 32) | phase.get() as u64;
     let loop_len = (bars.get() as u64) << 32;
-    (into_loop * segs.get() as u64 / loop_len) as usize
+    (into_loop % loop_len * segs.get() as u64 / loop_len) as usize
 }
 
 pub fn harmony(c: &ChordRing, seg: usize) -> Harmony {

@@ -70,3 +70,20 @@ fn a_degree_past_a_small_set_wraps() {
     let h = harmony(&c, 0);
     assert_eq!(h.chord, h.key.triad(Degree::I));
 }
+
+#[test]
+fn bars_and_segs_reject_zero_and_nine() {
+    for n in [0, 9] {
+        assert_eq!(Bars::new(n), None);
+        assert_eq!(Segs::new(n), None);
+    }
+    assert_eq!(Bars::new(8).map(Bars::get), Some(8));
+    assert_eq!(Segs::new(8).map(Segs::get), Some(8));
+}
+
+#[test]
+fn a_bar_past_the_loop_still_lands_in_a_segment() {
+    let (b, s) = (bars(2), segs(4));
+    assert_eq!(segment_at(2, Phase::ZERO, b, s), 0);
+    assert_eq!(segment_at(u32::MAX, Phase::new(u32::MAX), b, s), 3);
+}
