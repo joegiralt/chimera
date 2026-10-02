@@ -681,6 +681,8 @@ pub enum LegendFor {
     Dimmed,
     Later,
     Leaf,
+    /// A leaf with nothing to edit.
+    ReadOnly,
     Prompt,
     Naming,
     ManageList,
@@ -716,6 +718,7 @@ pub fn legend(on: LegendFor, at_top: bool) -> &'static str {
         (L::Later, false) => "LATER · MENU BACK",
         (L::Later, true) => "LATER · MENU CLOSE",
         (L::Leaf, _) => "A-F EDIT · MENU BACK",
+        (L::ReadOnly, _) => "MENU BACK",
         (L::Prompt, _) => "A PICK · SEQ OK · MENU CANCEL",
         (L::Naming, _) => "SEQ SAVE · MENU CANCEL",
         (L::ManageList, _) => "EDIT COMMANDS · MENU BACK",
@@ -773,8 +776,12 @@ impl Bands<'_> {
             Some(BandsModal::Naming { .. }) => return legend(LegendFor::Naming, false),
             None => {}
         }
-        if self.at.at_leaf().is_some() {
-            return legend(LegendFor::Leaf, false);
+        if let Some(leaf) = self.at.at_leaf() {
+            let on = match leaf.read_only() {
+                true => LegendFor::ReadOnly,
+                false => LegendFor::Leaf,
+            };
+            return legend(on, false);
         }
         match (self.at.screen(), self.at.column()) {
             (Some(Screen::LoadProject), _) => return legend(LegendFor::Load, false),

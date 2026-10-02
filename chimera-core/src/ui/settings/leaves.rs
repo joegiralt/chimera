@@ -7,7 +7,7 @@ use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot, VizType};
 use crate::ui::block_registry::{
     DEMO_BLOCKS, SYS_ABOUT, SYS_AUDIO, SYS_THEME, SYS_TUNING, SYS_UPDATES,
 };
-use crate::ui::page::PageLayout;
+use crate::ui::page::{PageId, PageLayout};
 
 /// One cell per Part, `P1`–`P6`, each Part's `param`: the mixer's own
 /// value, so editing either edits both.
@@ -70,6 +70,15 @@ impl OnePage {
 
     pub const fn def(&self) -> &'static BlockDef {
         self.0.blocks[0].def
+    }
+
+    /// Nothing to edit: no bound param, no legacy page table entry, and
+    /// no matrix (its encoders edit the grid).
+    pub fn read_only(&self) -> bool {
+        let def = self.def();
+        def.layout != PageLayout::Matrix
+            && PageId::of_leaf(def)
+                .is_some_and(|p| (0..def.params.len()).all(|i| p.binding(i).is_none()))
     }
 }
 

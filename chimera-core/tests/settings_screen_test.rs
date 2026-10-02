@@ -170,3 +170,29 @@ fn a_new_project_shows_no_status_beside_its_name() {
     assert!(status_text(ProjectStatus::Saved).is_some());
     assert!(status_text(ProjectStatus::Modified).is_some());
 }
+
+/// A leaf with nothing to edit names only MENU; one with cells keeps A-F.
+#[test]
+fn a_read_only_leaf_says_only_menu_back() {
+    for (labels, want) in [
+        (&["SYSTEM", "ABOUT"][..], "MENU BACK"),
+        (&["SYSTEM", "DIAGNOSTICS", "AUDIO LOAD"][..], "MENU BACK"),
+        (&["PERSONALIZE", "THEME"][..], "A-F EDIT · MENU BACK"),
+        (&["MIDI CONFIG", "CHANNELS"][..], "A-F EDIT · MENU BACK"),
+    ] {
+        let mut ui = UiState::new();
+        to_leaf(&mut ui, labels);
+        assert_eq!(ui.legend_for_test(), Some(want), "{labels:?}");
+    }
+    #[cfg(debug_assertions)]
+    {
+        // DEMO's WAV edits through its page table.
+        let mut ui = UiState::new();
+        to_leaf(&mut ui, &["SYSTEM", "DIAGNOSTICS", "DEMO", "WAV"]);
+        assert_eq!(ui.legend_for_test(), Some("A-F EDIT · MENU BACK"));
+        // MTX's encoders edit its grid.
+        let mut ui = UiState::new();
+        to_leaf(&mut ui, &["SYSTEM", "DIAGNOSTICS", "DEMO", "MTX"]);
+        assert_eq!(ui.legend_for_test(), Some("A-F EDIT · MENU BACK"));
+    }
+}

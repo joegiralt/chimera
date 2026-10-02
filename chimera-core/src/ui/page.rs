@@ -60,6 +60,11 @@ impl PageId {
     /// whose slots are bound (THEME, CHANNELS, the glyph pages).
     pub fn from_location(at: Location, def: &BlockDef) -> Option<Self> {
         at.settings()?.at_leaf()?;
+        Self::of_leaf(def)
+    }
+
+    /// The legacy page leaf page `def` is; `None` when its slots are bound.
+    pub fn of_leaf(def: &BlockDef) -> Option<Self> {
         if def
             .params
             .iter()
