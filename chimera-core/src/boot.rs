@@ -87,8 +87,6 @@ impl BootStage {
 pub enum UsbOff {
     /// RCC_CR.HSI48RDY: the USB kernel clock.
     Hsi48,
-    /// PWR_CR3.USB33RDY: VDD33USB, the FS PHY's supply.
-    Usb33,
     /// OTG GRSTCTL.AHBIDL after the RCC reset.
     AhbIdle,
     /// OTG GRSTCTL.CSRST, the core soft reset, never cleared.
@@ -102,11 +100,30 @@ pub enum UsbState {
     Off(UsbOff),
 }
 
+impl UsbOff {
+    /// The register field, as the boot toast and line name it.
+    pub const fn label(self) -> &'static str {
+        match self {
+            UsbOff::Hsi48 => "hsi48",
+            UsbOff::AhbIdle => "ahbidl",
+            UsbOff::CoreReset => "csrst",
+        }
+    }
+
+    /// The toast after PART 1 comes up.
+    pub const fn toast(self) -> &'static str {
+        match self {
+            UsbOff::Hsi48 => "USB OFF: hsi48",
+            UsbOff::AhbIdle => "USB OFF: ahbidl",
+            UsbOff::CoreReset => "USB OFF: csrst",
+        }
+    }
+}
+
 impl UsbState {
-    pub const ALL: [UsbState; 5] = [
+    pub const ALL: [UsbState; 4] = [
         UsbState::On,
         UsbState::Off(UsbOff::Hsi48),
-        UsbState::Off(UsbOff::Usb33),
         UsbState::Off(UsbOff::AhbIdle),
         UsbState::Off(UsbOff::CoreReset),
     ];
@@ -116,9 +133,8 @@ impl UsbState {
         match self {
             UsbState::On => 1,
             UsbState::Off(UsbOff::Hsi48) => 2,
-            UsbState::Off(UsbOff::Usb33) => 3,
-            UsbState::Off(UsbOff::AhbIdle) => 4,
-            UsbState::Off(UsbOff::CoreReset) => 5,
+            UsbState::Off(UsbOff::AhbIdle) => 3,
+            UsbState::Off(UsbOff::CoreReset) => 4,
         }
     }
 
@@ -130,7 +146,6 @@ impl UsbState {
         match self {
             UsbState::On => "on",
             UsbState::Off(UsbOff::Hsi48) => "off(hsi48)",
-            UsbState::Off(UsbOff::Usb33) => "off(usb33)",
             UsbState::Off(UsbOff::AhbIdle) => "off(ahbidl)",
             UsbState::Off(UsbOff::CoreReset) => "off(csrst)",
         }

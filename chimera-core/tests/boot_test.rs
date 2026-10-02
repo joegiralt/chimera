@@ -97,12 +97,12 @@ fn the_boot_line() {
         from: FROM_CONSOLE,
         jump_rsr: 0x0140_0000,
         last_stage: BootStage::Audio.code(),
-        last_usb: UsbState::Off(UsbOff::Usb33).code(),
+        last_usb: UsbState::Off(UsbOff::CoreReset).code(),
     };
     assert_eq!(
         seen.to_string(),
         "boot marker=44465521 readback=00000000 action=Synth rsr=00e60000 dbp=0 boots=7 \
-         from=console jump_rsr=01400000 last_stage=audio last_usb=off(usb33)"
+         from=console jump_rsr=01400000 last_stage=audio last_usb=off(csrst)"
     );
     let words = |from| BootSeen { from, ..seen }.to_string();
     assert!(words(FROM_MENU).contains(" from=menu "));
@@ -172,4 +172,14 @@ fn a_bounded_wait_gives_up_after_its_limit() {
     };
     assert!(wait_until(1_000, tick, ready_on_third));
     assert!(wait_until(0, || 0, || true), "ready at once needs no time");
+}
+
+#[test]
+fn the_usb_toast_names_the_field() {
+    for s in UsbState::ALL {
+        if let UsbState::Off(why) = s {
+            assert_eq!(why.toast(), format!("USB OFF: {}", why.label()));
+            assert_eq!(s.label(), format!("off({})", why.label()));
+        }
+    }
 }

@@ -389,6 +389,14 @@ impl UiState {
         }
     }
 
+    /// A start-up fault as a toast, held `Toast::BOOT_MS`.
+    pub fn show_boot_fault(&mut self, text: &str) {
+        self.toast.show(busy::Toast {
+            text: Line::new(text),
+            ms: busy::Toast::BOOT_MS,
+        });
+    }
+
     /// A project note as a toast: a save's time for SAVED, else an error's.
     pub fn show_note(&mut self, n: ProjectNote) {
         let ms = match n {

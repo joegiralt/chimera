@@ -100,15 +100,19 @@ pub struct Ready(UsbParts);
 
 /// What `connect`'s enable (synopsys-usb-otg `UsbBus::enable`) spins on
 /// with interrupts masked and no timeout, checked first with interrupts
-/// on and a timeout: HSI48RDY, then VDD33USB (USB33DEN set, USB33RDY;
-/// the HAL's enable sets USB33DEN but never waits), then the OTG core's
-/// AHBIDL and a core soft reset (CSRST) on the FS PHY. `Err` names the
-/// first that never came true, and the boot goes on without USB.
+/// on and a timeout: HSI48RDY, then the OTG core's AHBIDL and a core soft
+/// reset (CSRST) on the FS PHY. `Err` names the first that never came
+/// true: `connect` would spin on it forever with interrupts masked, so the
+/// boot goes on without USB, and the shell toasts why.
 pub fn preflight(parts: UsbParts, cpu_hz: u32) -> Result<Ready, UsbOff> {
+    check(&parts, cpu_hz).map(|()| Ready(parts))
+}
+
+fn check(parts: &UsbParts, cpu_hz: u32) -> Result<(), UsbOff> {
     let limit = READY_WAIT_MS * (cpu_hz / 1000);
     let wait = |ready: &mut dyn FnMut() -> bool| wait_until(limit, DWT::cycle_count, ready);
     // SAFETY: RCC and PWR are owned by the HAL after `freeze`; this touches
-    // only HSI48RDY (read), PWR_CR3.USB33DEN, the bit the HAL's own
+    // only HSI48RDY (read), PWR_CR3.USB33DEN (set), the bit the HAL's own
     // `USB2::enable` sets the same way (stm32h7xx-hal 0.16 usb_hs.rs), and
     // RCC's OTG2 enable and reset bits, which `UsbBus::enable` writes too.
     // Nothing else writes these after `freeze`, and no interrupt does.
@@ -116,10 +120,13 @@ pub fn preflight(parts: UsbParts, cpu_hz: u32) -> Result<Ready, UsbOff> {
     if !wait(&mut || rcc.cr.read().hsi48rdy().is_ready()) {
         return Err(UsbOff::Hsi48);
     }
+    // The VDD33USB detector, as the HAL's enable sets it. USB33RDY is not
+    // waited for: ST's HAL waits for it only after USBREGEN (the internal
+    // regulator, `HAL_PWREx_EnableUSBReg`), never after USB33DEN alone
+    // (`HAL_PWREx_EnableUSBVoltageDetector`); with VDD33USB supplied from
+    // outside and USBREGEN clear, it failed on every boot (861bedb) while
+    // the port works.
     pwr.cr3.modify(|_, w| w.usb33den().set_bit());
-    if !wait(&mut || pwr.cr3.read().usb33rdy().bit_is_set()) {
-        return Err(UsbOff::Usb33);
-    }
     let global = &parts.global;
     // AHB1ENR/AHB1RSTR's OTG2 bits belong to this port alone, and
     // `UsbBus::enable` repeats this enable and reset itself.
@@ -135,7 +142,7 @@ pub fn preflight(parts: UsbParts, cpu_hz: u32) -> Result<Ready, UsbOff> {
     if !wait(&mut || global.grstctl.read().csrst().bit_is_clear()) {
         return Err(UsbOff::CoreReset);
     }
-    Ok(Ready(parts))
+    Ok(())
 }
 
 /// Sets the port up, once: the CRS trimming HSI48 from the host's SOF, the

@@ -303,8 +303,8 @@ fn synth(board: Board) -> ! {
     // 3. PART 1 drawn, then the watchdog, armed once its kicks are live
     //    (`await_live`), so no earlier step runs on its clock;
     // 4. USB under the watchdog: `preflight` checks with bounded waits what
-    //    `connect` spins on with interrupts masked, and a port that isn't
-    //    ready is left off for this boot (`last_usb` says why);
+    //    `connect` spins on with interrupts masked; a port that isn't
+    //    ready stays off this boot, toasted and kept for `last_usb`;
     // 5. the UI loop.
     // `last_stage` on the next boot says how far this one got.
     // Step 1: SYSTEM behind the splash, then its theme. Card work runs only
@@ -396,6 +396,7 @@ fn synth(board: Board) -> ! {
         }
         Err(why) => {
             marker.usb(UsbState::Off(why));
+            ui.show_boot_fault(why.toast());
             None
         }
     };
