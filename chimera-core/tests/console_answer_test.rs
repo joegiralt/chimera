@@ -149,6 +149,8 @@ fn stats_reads_audio_load_and_the_loop() {
         a.stack_used,
     ) = (23, 41, 0, 2, 2, 12_288);
     a.drops = [5, 7];
+    a.record_voices(5, 60, false);
+    a.record_voices(3, 47, false);
     u.stats = Some(Stats {
         audio: a,
         loop_avg_us: 812,
@@ -156,7 +158,7 @@ fn stats_reads_audio_load_and_the_loop() {
     });
     assert_eq!(
         ask(&mut u, "stats\n"),
-        "load_pct 23\npeak_pct 41\noverruns 0\ndrops 5 7\ndesyncs 2\nstack_bytes 12288\nloop_avg_us 812\nloop_peak_us 4210\nOK\n"
+        "load_pct 23\npeak_pct 41\noverruns 0\ndrops 5 7\ndesyncs 2\nstack_bytes 12288\nvoices 3 5 of 8\ncost_pct 47\nloop_avg_us 812\nloop_peak_us 4210\nOK\n"
     );
     for (sources, want) in [
         (1, "\ndrops 5\n"),
@@ -386,4 +388,41 @@ fn random_streams_never_panic_and_end_each_answer_once() {
         }
     }
     assert!(answers > 5_000, "{answers} answers");
+}
+
+/// The spec's example block for `cmd`: the lines between its heading's
+/// fences.
+fn spec_block(cmd: &str) -> Vec<&'static str> {
+    const SPEC: &str =
+        include_str!("../../docs/superpowers/specs/2026-10-02-usb-console-design.md");
+    let head = format!("**`{cmd}`**\n\n```\n");
+    let at = SPEC.find(&head).unwrap_or_else(|| panic!("no {cmd} block")) + head.len();
+    let end = at + SPEC[at..].find("```").unwrap();
+    SPEC[at..end].lines().collect()
+}
+
+#[test]
+fn the_specs_stats_has_every_line_stats_writes() {
+    let mut u = Fake::new();
+    u.stats = Some(Stats {
+        audio: audio(),
+        loop_avg_us: 0,
+        loop_peak_us: 0,
+    });
+    let key = |l: &str| l.split(' ').next().unwrap().to_owned();
+    let got: Vec<_> = ask(&mut u, "stats\n").lines().map(key).collect();
+    let spec: Vec<_> = spec_block("stats").into_iter().map(key).collect();
+    assert_eq!(got, spec);
+    let voices = spec_block("stats")
+        .into_iter()
+        .find(|l| l.starts_with("voices "));
+    let words: Vec<_> = voices.unwrap().split(' ').collect();
+    assert_eq!(words[3..], ["of", "8"], "voices <now> <peak> of MAX_VOICES");
+}
+
+#[test]
+fn the_specs_help_is_what_help_writes() {
+    let mut u = Fake::new();
+    let spec = spec_block("help").join("\n") + "\n";
+    assert_eq!(ask(&mut u, "help\n"), spec);
 }

@@ -119,14 +119,18 @@ overruns 0
 drops 0
 desyncs 0
 stack_bytes 12288
+voices 3 5 of 8
+cost_pct 47
 loop_avg_us 812
 loop_peak_us 4210
 OK
 ```
 
-- The first six lines are `AudioStats` as the AUDIO LOAD page reads them.
+- The first eight lines are `AudioStats` as the AUDIO LOAD page reads them.
 - `drops` holds one count per note source (`sources` of them), separated by spaces; `-` when `sources` is 0.
 - `stack_bytes` is `stack_used` (the page rounds it to K; this does not).
+- `voices <now> <peak> of 8`: the voices sounding after the last audio block (`Instrument::sounding`), the most since the last `stats`, and `MAX_VOICES`. Reading starts the peak over, as it does `loop_peak_us`. The audio side keeps both in `AudioStats` with plain stores; the console's read asks for the restart through one atomic flag the next block takes.
+- `cost_pct` is the voice budget booked after the last block, the FX bus included (`Allocator::cost_pct`): the share the allocator steals and sheds against (ADR 0027). Over 100 means voices are fading to fit; it saturates at 255.
 - `loop_avg_us` and `loop_peak_us` time the UI loop: the DWT time from one loop top to the next. The shell keeps them since the last `stats`, and reading resets both. An iteration that answered a request is left out, so a `shot` never shows up as a slow frame. These two lines are new: they read rows B5 and B7 of the ship checklist (frame time while turning a cell) without a camera. B4 and B6 (overruns) are `overruns`.
 
 **`bench`**

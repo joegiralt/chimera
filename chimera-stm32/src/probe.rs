@@ -28,6 +28,15 @@ mod imp {
     static mut BUDGET: BlockBudget = BlockBudget::for_cpu(chimera_core::hw::CPU_HZ_REV_Y);
     static READY: AtomicBool = AtomicBool::new(false);
     static TAKEN: AtomicBool = AtomicBool::new(false);
+    /// The console read the voice peak: the next block starts it over.
+    static VOICE_PEAK_READ: AtomicBool = AtomicBool::new(false);
+
+    /// After the console's `stats`: the voice peak starts over, as the
+    /// loop's does.
+    #[cfg(feature = "usb-console")]
+    pub fn restart_voice_peak() {
+        VOICE_PEAK_READ.store(true, Ordering::Relaxed);
+    }
 
     // Linker symbols: only their addresses mean anything. The stack between
     // them is not one Rust allocation (only the live frames in it are), so
@@ -114,6 +123,11 @@ mod imp {
             *din = din.saturating_add(crate::midi_din::ERRORS.load(Ordering::Relaxed));
         }
         stats.sources = drops.len() as u8;
+        stats.record_voices(
+            engine::VOICES.load(Ordering::Relaxed),
+            engine::COST_PCT.load(Ordering::Relaxed),
+            VOICE_PEAK_READ.swap(false, Ordering::Relaxed),
+        );
         if let Some(w) = writer {
             let s = *stats;
             w.publish(|out| *out = s);
@@ -143,4 +157,7 @@ mod stub {
     pub fn measure(render: impl FnOnce()) {
         render()
     }
+
+    #[cfg(feature = "usb-console")]
+    pub fn restart_voice_peak() {}
 }

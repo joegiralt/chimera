@@ -421,6 +421,11 @@ impl Instrument {
         self.voices.iter().filter(|v| v.is_active()).count()
     }
 
+    /// The voice budget booked, FX bus included, in percent: for `stats`.
+    pub fn cost_pct(&self) -> u8 {
+        self.alloc.cost_pct(FxBus::COST)
+    }
+
     /// Voices that ring a pool set, at most `SYM_SLOTS`: for the bench,
     /// whose Sympathetic figures bill a ringing voice, not a bare one.
     pub fn ringing(&self) -> usize {

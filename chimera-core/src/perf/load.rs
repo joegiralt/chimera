@@ -24,6 +24,13 @@ pub struct AudioStats {
     /// Why the chip last reset: a watchdog reset is otherwise a silent
     /// reboot.
     pub reset: ResetCause,
+    /// Voices sounding after the last block.
+    pub voices: u8,
+    /// The most `voices` since the console last read them.
+    pub voices_peak: u8,
+    /// The voice budget booked after the last block, FX bus included: the
+    /// share the allocator steals and sheds against (ADR 0027).
+    pub cost_pct: u8,
     window_sum: u32,
     window_len: u32,
 }
@@ -41,6 +48,9 @@ impl AudioStats {
             rev,
             cpu_hz,
             reset,
+            voices: 0,
+            voices_peak: 0,
+            cost_pct: 0,
             window_sum: 0,
             window_len: 0,
         }
@@ -49,6 +59,18 @@ impl AudioStats {
     /// One drop count per note source: `drops[..sources]`, `sources` clamped to the array.
     pub fn active_drops(&self) -> &[u32] {
         &self.drops[..usize::from(self.sources).min(MAX_NOTE_SOURCES)]
+    }
+
+    /// One block's voices: `now` sounding, `cost_pct` of the budget
+    /// booked. `restart`: the console read the peak, so it starts over.
+    pub fn record_voices(&mut self, now: u8, cost_pct: u8, restart: bool) {
+        self.voices = now;
+        self.voices_peak = if restart {
+            now
+        } else {
+            self.voices_peak.max(now)
+        };
+        self.cost_pct = cost_pct;
     }
 
     pub fn record(&mut self, cycles: u32, budget: BlockBudget) {

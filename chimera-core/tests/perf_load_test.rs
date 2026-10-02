@@ -64,3 +64,20 @@ fn untouched_words_counts_the_paint_from_the_bottom() {
     assert_eq!(untouched_words([p; 8]), 8);
     assert_eq!(untouched_words([1, p, p]), 0);
 }
+
+#[test]
+fn the_voice_peak_holds_until_restarted() {
+    let mut s = AudioStats::new(SiliconRev::V, 480_000_000, ResetCause::PowerOn);
+    assert_eq!((s.voices, s.voices_peak, s.cost_pct), (0, 0, 0));
+    s.record_voices(5, 60, false);
+    s.record_voices(2, 25, false);
+    assert_eq!((s.voices, s.voices_peak, s.cost_pct), (2, 5, 25));
+    s.record_voices(3, 30, true);
+    assert_eq!(
+        (s.voices, s.voices_peak),
+        (3, 3),
+        "the console read it: the peak starts over"
+    );
+    s.record_voices(1, 10, false);
+    assert_eq!(s.voices_peak, 3);
+}

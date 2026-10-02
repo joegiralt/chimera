@@ -6,6 +6,7 @@ use super::{
     Command, Frame, MAX_LINE, NoArg, Out, PROTOCOL, Refusal, Request, Stalled, write_shot,
     write_status,
 };
+use crate::hw::MAX_VOICES;
 use crate::perf::load::AudioStats;
 use crate::ui::UiState;
 
@@ -102,6 +103,8 @@ fn stats(s: &Stats, t: &mut impl Write) -> fmt::Result {
     }
     writeln!(t, "\ndesyncs {}", a.desyncs)?;
     writeln!(t, "stack_bytes {}", a.stack_used)?;
+    writeln!(t, "voices {} {} of {MAX_VOICES}", a.voices, a.voices_peak)?;
+    writeln!(t, "cost_pct {}", a.cost_pct)?;
     writeln!(t, "loop_avg_us {}", s.loop_avg_us)?;
     writeln!(t, "loop_peak_us {}", s.loop_peak_us)
 }
