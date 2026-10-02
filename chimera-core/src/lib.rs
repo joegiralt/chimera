@@ -1,5 +1,8 @@
 #![no_std]
 
+#[cfg(all(feature = "test-support", target_os = "none"))]
+compile_error!("test-support is for host tests: it forges confirmations and fresh files");
+
 // `SymPool::boxed`, for tests.
 #[cfg(any(test, feature = "test-support"))]
 extern crate alloc;

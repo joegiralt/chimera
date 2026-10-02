@@ -7,17 +7,26 @@
 #![allow(dead_code)]
 
 use chimera_core::clock_plan::SiliconRev;
+use chimera_core::name::ProjectName;
 use chimera_core::params::EngineType;
 use chimera_core::perf::load::AudioStats;
 use chimera_core::preset::{POOL_SIZE, Sound};
 use chimera_core::project::SlotId;
+use chimera_core::project::{
+    LoadLink, Project, ProjectFile, ProjectNote, SaveTo, new_project_id, save_project,
+};
 use chimera_core::reset::ResetCause;
 use chimera_core::scope::SCOPE_LEN;
+use chimera_core::storage::{Card, SystemSettings, SystemSync};
 use chimera_core::ui::UiState;
+use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::busy::{draw_busy, draw_toast};
+use chimera_core::ui::hold::HOLD_MS;
 use chimera_core::ui::perf::PerfStats;
-use chimera_hal::{ButtonId, ButtonState, ChimeraDisplay, Controls, EncoderId};
+use chimera_core::ui::settings::CardCx;
+use chimera_hal::testkit::MemStore;
+use chimera_hal::{ButtonId, ButtonState, ChimeraDisplay, Controls, Edges, EncoderId, Ms};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
 use embedded_graphics::prelude::*;
@@ -115,11 +124,32 @@ impl ChimeraDisplay for Fb {
 /// One frame of input.
 #[derive(Default)]
 pub struct Input {
+    at_ms: u32,
     buttons: Vec<(ButtonId, ButtonState)>,
+    /// Latched edges that a `ButtonState` can't say (a tap inside one frame).
+    edges: Vec<(ButtonId, Edges)>,
     encoders: Vec<(EncoderId, i8)>,
 }
 
 impl Input {
+    /// The frame's clock; press and release edges are stamped with it.
+    pub fn at(mut self, ms: u32) -> Self {
+        self.at_ms = ms;
+        self
+    }
+    pub fn release(b: ButtonId) -> Self {
+        Self {
+            buttons: vec![(b, ButtonState::Released)],
+            ..Self::default()
+        }
+    }
+    /// A frame with `b` still down.
+    pub fn held(b: ButtonId) -> Self {
+        Self {
+            buttons: vec![(b, ButtonState::Held)],
+            ..Self::default()
+        }
+    }
     pub fn press(b: ButtonId) -> Self {
         Self {
             buttons: vec![(b, ButtonState::Pressed)],
@@ -133,6 +163,41 @@ impl Input {
             ..Self::default()
         }
     }
+    /// `b` pressed and released inside this one frame (a stalled frame).
+    pub fn tap_in_frame(b: ButtonId) -> Self {
+        Self {
+            edges: vec![(
+                b,
+                Edges {
+                    down: false,
+                    pressed_at: Some(Ms(0)),
+                    released_at: Some(Ms(50)),
+                },
+            )],
+            ..Self::default()
+        }
+    }
+    /// `b` released inside this frame, at `ms`: the release a stalled
+    /// frame latched.
+    pub fn released_at(b: ButtonId, ms: u32) -> Self {
+        Self {
+            at_ms: ms,
+            edges: vec![(
+                b,
+                Edges {
+                    down: false,
+                    pressed_at: None,
+                    released_at: Some(Ms(ms)),
+                },
+            )],
+            ..Self::default()
+        }
+    }
+    /// This frame with `b` held down too.
+    pub fn and_held(mut self, b: ButtonId) -> Self {
+        self.buttons.push((b, ButtonState::Held));
+        self
+    }
     pub fn turn(e: EncoderId, delta: i8) -> Self {
         Self {
             encoders: vec![(e, delta)],
@@ -142,14 +207,42 @@ impl Input {
 }
 
 impl Controls for Input {
+    fn now_ms(&self) -> Ms {
+        Ms(self.at_ms)
+    }
     fn encoder_delta(&self, id: EncoderId) -> i8 {
         self.encoders.iter().find(|e| e.0 == id).map_or(0, |e| e.1)
     }
     fn button_state(&self, id: ButtonId) -> ButtonState {
+        if let Some(e) = self.edges.iter().find(|e| e.0 == id) {
+            return ButtonState::from_edges(e.1);
+        }
         self.buttons
             .iter()
             .find(|b| b.0 == id)
             .map_or(ButtonState::Up, |b| b.1)
+    }
+    fn edges(&self, id: ButtonId) -> Edges {
+        if let Some(e) = self.edges.iter().find(|e| e.0 == id) {
+            return e.1;
+        }
+        let now = Some(self.now_ms());
+        match self.button_state(id) {
+            ButtonState::Up => Edges::default(),
+            ButtonState::Pressed => Edges {
+                down: true,
+                pressed_at: now,
+                released_at: None,
+            },
+            ButtonState::Held => Edges {
+                down: true,
+                ..Edges::default()
+            },
+            ButtonState::Released => Edges {
+                released_at: now,
+                ..Edges::default()
+            },
+        }
     }
 }
 
@@ -157,11 +250,328 @@ pub fn feed(ui: &mut UiState, input: Input) {
     ui.handle_input(&input);
 }
 
+/// Press, then release 100 ms later.
+pub fn tap(ui: &mut UiState, b: ButtonId) {
+    feed(ui, Input::press(b).at(0));
+    feed(ui, Input::release(b).at(100));
+}
+
+/// Press, a frame at `HOLD_MS`, then release.
+pub fn hold(ui: &mut UiState, b: ButtonId) {
+    feed(ui, Input::press(b).at(0));
+    feed(ui, Input::held(b).at(HOLD_MS));
+    feed(ui, Input::release(b).at(HOLD_MS + 33));
+}
+
 /// Let every lerp settle (the goldens lock the resting screen).
 pub fn settle(ui: &mut UiState) {
     for _ in 0..120 {
-        ui.update();
+        ui.update(UiTick::for_test());
     }
+}
+
+/// A SETTINGS list or leaf: its row labels and crumbs from the top.
+pub struct Node<T> {
+    pub labels: Vec<&'static str>,
+    pub crumbs: Vec<&'static str>,
+    pub of: T,
+}
+
+/// A leaf, and its page.
+pub type Leaf = Node<&'static chimera_core::ui::settings::leaves::OnePage>;
+
+impl<T> Node<T> {
+    /// `settings_<crumbs>`, lowercased; the top list is `settings_top`.
+    pub fn name(&self) -> String {
+        if self.crumbs.is_empty() {
+            return "settings_top".into();
+        }
+        let mut n = String::from("settings");
+        for c in &self.crumbs {
+            n.push('_');
+            n.push_str(&c.to_lowercase().replace(' ', "_"));
+        }
+        n
+    }
+}
+
+/// Every list and leaf of the SETTINGS tree, depth first from `ROOT`.
+pub fn tree() -> Vec<Node<chimera_core::ui::settings::Kind>> {
+    use chimera_core::ui::settings::{Kind, ROOT, rows};
+    fn walk(
+        path: &mut Vec<u8>,
+        labels: &mut Vec<&'static str>,
+        crumbs: &mut Vec<&'static str>,
+        out: &mut Vec<Node<Kind>>,
+    ) {
+        for (i, r) in rows(path).iter().enumerate() {
+            path.push(i as u8);
+            labels.push(r.label);
+            crumbs.push(r.crumb);
+            if matches!(r.kind, Kind::Leaf(_) | Kind::List(_)) {
+                out.push(Node {
+                    labels: labels.clone(),
+                    crumbs: crumbs.clone(),
+                    of: r.kind,
+                });
+            }
+            walk(path, labels, crumbs, out);
+            path.pop();
+            labels.pop();
+            crumbs.pop();
+        }
+    }
+    let mut out = vec![Node {
+        labels: vec![],
+        crumbs: vec![],
+        of: ROOT.kind,
+    }];
+    walk(&mut Vec::new(), &mut Vec::new(), &mut Vec::new(), &mut out);
+    out
+}
+
+/// Every leaf of the SETTINGS tree, depth first.
+pub fn leaves() -> Vec<Leaf> {
+    use chimera_core::ui::settings::Kind;
+    tree()
+        .into_iter()
+        .filter_map(|n| match n.of {
+            Kind::Leaf(chain) => Some(Node {
+                labels: n.labels,
+                crumbs: n.crumbs,
+                of: chain,
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The def id of the page shown.
+pub fn page_def_id(ui: &UiState) -> u16 {
+    use chimera_core::ui::page::{PageId, PageKey};
+    match ui.page() {
+        PageKey::Part { def, .. } => def,
+        PageKey::Legacy(PageId::System(id) | PageId::Demo(id)) => id,
+    }
+}
+
+/// Out of SETTINGS, MENU, then down the tree by row label: PLUS to each
+/// row, EDIT.
+pub fn to_leaf(ui: &mut UiState, labels: &[&str]) {
+    use chimera_core::ui::settings::rows;
+    for _ in 0..8 {
+        if !ui.in_settings() {
+            break;
+        }
+        tap(ui, ButtonId::Menu);
+    }
+    tap(ui, ButtonId::Menu);
+    let mut path = Vec::new();
+    for l in labels {
+        let i = rows(&path)
+            .iter()
+            .position(|r| r.label == *l)
+            .unwrap_or_else(|| panic!("no row {l} under {path:?}"));
+        plus(ui, i);
+        feed(ui, Input::press(ButtonId::Edit));
+        path.push(i as u8);
+    }
+    assert_eq!(
+        ui.location(),
+        chimera_core::ui::nav::Location::settings_at(&path, 0),
+        "{labels:?}"
+    );
+}
+
+/// A UI with a card in the slot: `MemStore` behind the shell's
+/// `card_work`, run after every frame of input.
+pub struct Rig<'u> {
+    pub ui: &'u mut UiState,
+    pub s: MemStore,
+    card: Card,
+    sync: SystemSync,
+    set: SystemSettings,
+    link: LoadLink,
+}
+
+impl<'u> Rig<'u> {
+    pub fn new(ui: &'u mut UiState, mut s: MemStore) -> Self {
+        let mut card = Card::new();
+        let (sync, set, _) = SystemSync::boot(&mut card, &mut s);
+        Rig {
+            ui,
+            s,
+            card,
+            sync,
+            set,
+            link: LoadLink::new(),
+        }
+    }
+
+    fn work(&mut self) {
+        let link = &self.link;
+        let cx = CardCx {
+            card: &mut self.card,
+            store: &mut self.s,
+            sync: &mut self.sync,
+            settings: &mut self.set,
+        };
+        let _ = self.ui.card_work(cx, link, |swap, _| {
+            let _ = swap.settle(link, || false);
+        });
+    }
+
+    pub fn tap(&mut self, b: ButtonId) {
+        tap(self.ui, b);
+        self.work();
+    }
+
+    pub fn hold(&mut self, b: ButtonId) {
+        hold(self.ui, b);
+        self.work();
+    }
+
+    pub fn feed(&mut self, i: Input) {
+        feed(self.ui, i);
+        self.work();
+    }
+
+    /// Out of SETTINGS, MENU, then down the tree by row label.
+    pub fn to(&mut self, labels: &[&str]) {
+        use chimera_core::ui::settings::rows;
+        while self.ui.in_settings() {
+            self.tap(ButtonId::Menu);
+        }
+        self.tap(ButtonId::Menu);
+        let mut path = Vec::new();
+        for l in labels {
+            let i = rows(&path).iter().position(|r| r.label == *l).unwrap();
+            for _ in 0..i {
+                self.feed(Input::press(ButtonId::Plus));
+            }
+            self.feed(Input::press(ButtonId::Edit));
+            path.push(i as u8);
+        }
+    }
+
+    /// The bar to row `i`.
+    pub fn bar_to(&mut self, i: usize) {
+        let row = |r: &Rig| r.ui.location().settings().unwrap().row() as usize;
+        while row(self) != i {
+            let k = if row(self) < i {
+                ButtonId::Plus
+            } else {
+                ButtonId::Minus
+            };
+            self.feed(Input::press(k));
+        }
+    }
+
+    /// `f` loaded through LOAD, then out of SETTINGS.
+    pub fn load(&mut self, f: ProjectFile) {
+        self.to(&["PROJECT", "LOAD PROJECT"]);
+        let l = self.ui.listing();
+        let i = (0..l.len())
+            .find(|&i| l.entry(i).unwrap().file() == f)
+            .expect("listed");
+        self.bar_to(i);
+        self.tap(ButtonId::Seq);
+        assert_eq!(self.ui.project().meta().file(), Some(f));
+        while self.ui.in_settings() {
+            self.tap(ButtonId::Menu);
+        }
+        self.ui.update(UiTick::for_test());
+    }
+}
+
+/// A project named `n` saved to the card at its next id.
+pub fn put(s: &mut MemStore, n: &str) -> ProjectFile {
+    let mut card = Card::new();
+    let (mut p, _) = Project::boxed();
+    p.set_name(ProjectName::new(n).unwrap());
+    let fresh = new_project_id(&mut card, s).out.unwrap();
+    let f = fresh.file();
+    assert!(matches!(
+        save_project(&mut card, s, &mut p, SaveTo::Fresh(fresh)).out,
+        ProjectNote::Saved(_)
+    ));
+    f
+}
+
+/// A card with three projects.
+pub fn three() -> (MemStore, [ProjectFile; 3]) {
+    let mut s = MemStore::new(1);
+    let f = ["ALPHA", "BETA", "GAMMA"].map(|n| put(&mut s, n));
+    (s, f)
+}
+
+/// An edit that leaves the project Modified, its name kept.
+pub fn modify(ui: &mut UiState) {
+    let p = chimera_core::project::PartId::ALL[0];
+    ui.project_mut().edit_part(p).sound.params.filter.cutoff *= 0.5;
+    ui.update(UiTick::for_test());
+    assert_eq!(
+        ui.project_status(),
+        chimera_core::project::ProjectStatus::Modified
+    );
+}
+
+/// ALPHA loaded and edited, then LOAD on BETA: LOAD BETA?
+pub fn prompt_load(ui: &mut UiState) {
+    let (s, [a, b, _]) = three();
+    let mut r = Rig::new(ui, s);
+    r.load(a);
+    modify(r.ui);
+    r.to(&["PROJECT", "LOAD PROJECT"]);
+    let l = r.ui.listing();
+    let i = (0..l.len()).find(|&i| l.entry(i).unwrap().file() == b);
+    r.bar_to(i.unwrap());
+    r.tap(ButtonId::Seq);
+    assert!(r.ui.prompt_open());
+}
+
+/// SETTINGS › PROJECT › SAVE PROJECT AS on a fresh project: NAMING.
+pub fn naming_save_as(ui: &mut UiState) {
+    let mut r = Rig::new(ui, MemStore::new(1));
+    r.to(&["PROJECT"]);
+    r.bar_to(1);
+    r.tap(ButtonId::Seq);
+    assert!(r.ui.naming().is_some());
+}
+
+/// The shared FX page `node` of the mixer chain, through real presses:
+/// MIX+B6 (Part 6's SENDS), then PLUS past it into Part 6's FX.
+pub fn to_fx(ui: &mut UiState, node: usize) {
+    use chimera_core::ui::nav::{Location, MixPage};
+    assert!(node > reg::MIXER_HOME, "{node} is not an FX node");
+    feed(ui, Input::chord(ButtonId::Mix, ButtonId::B6));
+    // The mixer reopens on the FX page last left: MINUS back to SENDS.
+    let sends = Location::mixer(chimera_core::project::PartId::ALL[5], MixPage::Sends);
+    for _ in 0..reg::MIXER_CHANNEL_CHAIN.len() {
+        if ui.location() == sends {
+            break;
+        }
+        feed(ui, Input::press(ButtonId::Minus));
+    }
+    assert_eq!(ui.location(), sends);
+    plus(ui, node - reg::MIXER_HOME);
+    let def = reg::MIXER_CHANNEL_CHAIN.blocks[node].def;
+    assert_eq!(
+        ui.page(),
+        chimera_core::ui::page::PageKey::Part {
+            def: def.id,
+            op: chimera_core::addr::Op::A
+        },
+        "{}",
+        def.name
+    );
+}
+
+/// SETTINGS › SYSTEM › DIAGNOSTICS › DEMO's row `node` (debug builds: a
+/// release build has no DEMO row).
+pub fn to_demo(ui: &mut UiState, node: usize) {
+    let row = reg::DEMO_BLOCKS[node].def.short;
+    to_leaf(ui, &["SYSTEM", "DIAGNOSTICS", "DEMO", row]);
 }
 
 /// Live output the goldens draw: two periods of a lopsided triangle, peak 0.5.
@@ -178,12 +588,22 @@ pub fn scope_fixture() -> [f32; SCOPE_LEN] {
 }
 
 /// Load `engine`'s init Sound into Part 1 through the sound browser (EDIT + B1,
-/// scroll to the init row, EDIT).
+/// scroll to the init row, EDIT), then MINUS from the engine's home to its
+/// first node.
 pub fn load_init(ui: &mut UiState, engine: EngineType) {
     let row = POOL_SIZE + EngineType::ALL.iter().position(|&c| c == engine).unwrap();
     feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
     feed(ui, Input::turn(EncoderId::A, row as i8));
     feed(ui, Input::press(ButtonId::Edit));
+    let home = chimera_core::ui::nav::chain_def_for(engine).home();
+    assert_eq!(
+        ui.location(),
+        chimera_core::ui::nav::Location::pages(chimera_core::project::PartId::ALL[0], home),
+        "a load lands on the engine's home"
+    );
+    for _ in 0..home.node() {
+        feed(ui, Input::press(ButtonId::Minus));
+    }
 }
 
 /// The OSC node's index on the Algo chain.
@@ -314,8 +734,13 @@ pub type ScreenCase = (&'static str, fn(&mut UiState));
 
 /// Every screen the goldens lock, one or more per page type (spec § Testing).
 /// MST's place on the Mix chain: after TAPE only with `master-tape`
-/// (ADR 0055). The mixer opens on SENDS, node 1 (ADR 0057).
+/// (ADR 0055). The mixer opens on SENDS, node 1 (ADR 0057); the FX come
+/// after the Part's SENDS.
 const MST: usize = if cfg!(feature = "master-tape") { 6 } else { 5 };
+const DLY: usize = 3;
+const REV: usize = 4;
+#[cfg(feature = "master-tape")]
+const TAPE: usize = 5;
 
 pub const CASES: &[ScreenCase] = &[
     ("engine_algo", |ui| feed(ui, Input::turn(EncoderId::A, 2))),
@@ -471,35 +896,27 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
         feed(ui, Input::turn(EncoderId::C, 40));
     }),
-    ("mixer_fx_delay", |ui| {
-        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
-        plus(ui, 2);
-    }),
+    ("mixer_fx_delay", |ui| to_fx(ui, DLY)),
     ("mixer_fx_reverb", |ui| {
-        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
-        plus(ui, 3);
+        to_fx(ui, REV);
         feed(ui, Input::turn(EncoderId::A, 20)); // GRIT
     }),
     ("mixer_fx_delay_char", |ui| {
-        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
-        plus(ui, 2);
+        to_fx(ui, DLY);
         feed(ui, Input::press(ButtonId::Edit)); // DLY › CHAR
         feed(ui, Input::turn(EncoderId::A, 20)); // WOW
     }),
     #[cfg(feature = "master-tape")]
     ("mixer_tape", |ui| {
-        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
-        plus(ui, 4);
+        to_fx(ui, TAPE);
         feed(ui, Input::turn(EncoderId::A, 40)); // DRIVE
     }),
     ("mixer_master", |ui| {
-        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
-        plus(ui, MST - 1);
+        to_fx(ui, MST);
         feed(ui, Input::turn(EncoderId::B, 4)); // RATIO 4:1: the curve bends
     }),
     ("mixer_master_level", |ui| {
-        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
-        plus(ui, MST - 1);
+        to_fx(ui, MST);
         feed(ui, Input::press(ButtonId::Edit)); // MST › LEVEL
     }),
     // Part 1 on P2: the OUT warning on its mixer (ADR 0057).
@@ -569,20 +986,27 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
         feed(ui, Input::turn(EncoderId::A, 1));
     }),
-    ("system", |ui| feed(ui, Input::press(ButtonId::Menu))),
-    ("system_theme", |ui| {
-        feed(ui, Input::press(ButtonId::Menu));
-        plus(ui, 1);
+    ("settings_personal_theme", |ui| {
+        to_leaf(ui, &["PERSONALIZE", "THEME"]);
         feed(ui, Input::turn(EncoderId::C, 1)); // ACCENT AMBER, focused
     }),
-    ("system_audio", |ui| {
-        feed(ui, Input::press(ButtonId::Menu));
-        plus(ui, 3);
-        feed(ui, Input::press(ButtonId::Edit));
+    ("settings_system_diag_aud_load", |ui| {
+        to_leaf(ui, &["SYSTEM", "DIAGNOSTICS", "AUDIO LOAD"])
     }),
+    ("settings_top", |ui| tap(ui, ButtonId::Menu)),
+    // ALPHA loaded, the bar on BETA.
+    ("settings_load", |ui| {
+        let (s, [a, ..]) = three();
+        let mut r = Rig::new(ui, s);
+        r.load(a);
+        r.to(&["PROJECT", "LOAD PROJECT"]);
+        r.bar_to(1);
+    }),
+    ("settings_prompt_load", prompt_load),
+    ("settings_naming", naming_save_as),
 ];
 
-/// `AudioStats` fixture for the AUDIO sub-page's goldens and tests.
+/// `AudioStats` fixture for AUDIO LOAD's and ABOUT's goldens and tests.
 pub fn audio_fixture() -> AudioStats {
     let mut s = AudioStats::new(SiliconRev::V, 480_000_000, ResetCause::Watchdog);
     s.load_avg = 23;

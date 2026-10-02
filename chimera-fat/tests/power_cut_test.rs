@@ -19,10 +19,10 @@ use chimera_core::mod_path::MAX_REGISTRY_DESTS;
 use chimera_core::params::EngineType;
 use chimera_core::part::PartParams;
 use chimera_core::preset::Sound;
-use chimera_core::project::test_support::{full, same};
+use chimera_core::project::test_support::{confirm_overwrite, full, same, save_at};
 use chimera_core::project::{
-    PartId, Project, ProjectDecoder, ProjectFile, ProjectNote, project_crc, project_file,
-    save_project,
+    PartId, Project, ProjectDecoder, ProjectNote, clear_project, list_projects, project_crc,
+    project_file,
 };
 use chimera_core::storage::{
     Card, CardError, CardEvent, FileKind, Generation, Header, InPlaceError, ProjectId, RecordTag,
@@ -443,9 +443,19 @@ fn project_id() -> ProjectId {
     ProjectId::new(1).unwrap()
 }
 
+/// Save `n` over the pair, as listed (a SAVE OVER), or to it fresh.
 fn save_project_on(s: &mut Probed<CutDisk>, n: u32) -> ProjectNote {
-    let to = ProjectFile::for_test(project_id(), s.mount().unwrap());
-    save_project(&mut Card::new(), s, &mut project_gen(n), to)
+    save_at(&mut Card::new(), s, &mut project_gen(n), project_id().get())
+}
+
+/// CLEAR of the pair as listed now, from a project not loaded from it.
+fn clear_project_on(s: &mut Probed<CutDisk>) -> Result<(), ProjectNote> {
+    let mut card = Card::new();
+    let mut listed = None;
+    let out = list_projects(&mut card, s, &mut |e| listed = Some(e));
+    assert_eq!(out.note, None);
+    let c = confirm_overwrite(&listed.expect("listed"));
+    clear_project(&mut card, s, &Project::boxed().0, c).out
 }
 
 fn load_project_in_place(slot: &Slot) -> Result<Box<Project>, InPlaceError> {
@@ -513,6 +523,58 @@ fn project_cut_keeps_a_generation() {
     }
     println!(
         "project cuts: {} writes; save 2 loads at {}, save 3 at {}",
+        blocks.len(),
+        loaded[0],
+        loaded[1]
+    );
+}
+
+/// CLEAR cut at every block write: the load gets save 2 or NEW whole,
+/// never an error, and a CLEAR run again lands and loads Pristine.
+#[test]
+fn project_clear_cut_keeps_a_generation() {
+    let base = slot(with_clusters(CLUSTERS, 0xC0DE));
+    for n in 1..=2 {
+        let note = save_project_on(&mut probed(&base), n);
+        assert!(matches!(note, ProjectNote::Saved(_)), "save {n}: {note:?}");
+    }
+    let before = copy(&base.inner);
+    let blocks = {
+        let dry = slot(copy(&before));
+        let mut s = probed(&dry);
+        assert_eq!(clear_project_on(&mut s), Ok(()));
+        let blocks: Vec<u32> = log(&s).writes.borrow().iter().map(|&(b, _)| b).collect();
+        blocks
+    };
+    assert!(blocks.len() > 20, "{} writes", blocks.len());
+    let (new, t) = Project::boxed();
+    let two = project_gen(2);
+    let mut loaded = [0; 2];
+    for k in 0..blocks.len() {
+        let what = format!("clear cut at write {k} of {}", blocks.len());
+        let cut = slot(copy(&before));
+        cut.cut.set(Cut::After(k as u32));
+        assert!(clear_project_on(&mut probed(&cut)).is_err(), "{what}");
+        cut.cut.set(Cut::Never);
+        let r = fat_check(&cut.inner);
+        assert!(
+            r.cross_linked.is_empty() && r.short.is_empty(),
+            "{what}: {r:?}"
+        );
+        let got = load_project_in_place(&cut).unwrap_or_else(|e| panic!("{what}: {e:?}"));
+        if project_crc(&got) == t.get() {
+            same(&new, &got);
+            loaded[1] += 1;
+        } else {
+            same(&two, &got);
+            loaded[0] += 1;
+        }
+        assert_eq!(clear_project_on(&mut probed(&cut)), Ok(()), "{what}: again");
+        let got = load_project_in_place(&cut).unwrap();
+        assert_eq!(project_crc(&got), t.get(), "{what}: Pristine");
+    }
+    println!(
+        "clear cuts: {} writes; save 2 loads at {}, NEW at {}",
         blocks.len(),
         loaded[0],
         loaded[1]

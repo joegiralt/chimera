@@ -2,7 +2,7 @@
 
 mod screen;
 
-use chimera_core::addr::{BlockRef, Blocks};
+use chimera_core::addr::{BlockRead, BlockRef};
 use chimera_core::block::Block;
 use chimera_core::project::PartId;
 use chimera_core::ui::block_registry::SYS_THEME;
@@ -244,13 +244,12 @@ fn each_black_step_moves_only_the_ground() {
     }
 }
 
-/// MENU, PLUS reaches THEME; its four encoders edit the UI's settings.
+/// SETTINGS › PERSONALIZE › THEME; its four encoders edit the UI's settings.
 #[test]
 fn theme_page_is_reachable_and_edits_the_settings() {
     let mut ui = chimera_core::ui::UiState::new();
-    feed(&mut ui, Input::press(ButtonId::Menu));
-    feed(&mut ui, Input::press(ButtonId::Plus));
-    assert_eq!(ui.nav.active_block_def().id, SYS_THEME.id);
+    to_leaf(&mut ui, &["PERSONALIZE", "THEME"]);
+    assert_eq!(ui.page_def().id, SYS_THEME.id);
     assert_eq!(ui.theme(), ThemeSettings::DEFAULT);
 
     feed(&mut ui, Input::turn(EncoderId::A, 1));
@@ -277,16 +276,16 @@ fn theme_page_is_reachable_and_edits_the_settings() {
     assert_eq!(ui.theme(), t);
 }
 
-/// SYSTEM's hooks: `in_system` follows MENU and the Part buttons, and
+/// SYSTEM's hooks: `in_settings` follows MENU and the Part buttons, and
 /// `set_theme` is what `theme` then reports.
 #[test]
-fn in_system_and_set_theme() {
+fn in_settings_and_set_theme() {
     let mut ui = chimera_core::ui::UiState::new();
-    assert!(!ui.in_system());
-    feed(&mut ui, Input::press(ButtonId::Menu));
-    assert!(ui.in_system());
+    assert!(!ui.in_settings());
+    tap(&mut ui, ButtonId::Menu);
+    assert!(ui.in_settings());
     feed(&mut ui, Input::press(ButtonId::B1));
-    assert!(!ui.in_system());
+    assert!(!ui.in_settings());
 
     let t = ThemeSettings {
         bright: Bright::new(40),
@@ -298,7 +297,7 @@ fn in_system_and_set_theme() {
     assert_eq!(ui.theme(), t);
 }
 
-/// A press after leaving System takes the toast down before its time.
+/// A press after leaving SETTINGS takes the toast down before its time.
 #[test]
 fn input_dismisses_the_toast() {
     use chimera_core::project::Line;
@@ -308,7 +307,7 @@ fn input_dismisses_the_toast() {
     let mut card = Card::new();
     let (mut sync, mut cur, _) = SystemSync::boot(&mut card, &mut s);
     let mut ui = chimera_core::ui::UiState::new();
-    feed(&mut ui, Input::press(ButtonId::Menu));
+    tap(&mut ui, ButtonId::Menu);
     ui.sync_system(&mut sync, &mut card, &mut s, &mut cur);
     feed(&mut ui, Input::press(ButtonId::B1));
     ui.sync_system(&mut sync, &mut card, &mut s, &mut cur);

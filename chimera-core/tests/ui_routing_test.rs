@@ -167,7 +167,9 @@ fn priming_on_legacy_page_registers_nothing() {
     ); // Mixer chain
     prime_slot_0(&mut ui);
     assert_eq!(primed(&ui), [CUTOFF]);
-    press(&mut ui, ButtonId::Menu); // System chain
+    press(&mut ui, ButtonId::Menu); // a tap: SETTINGS
+    ui.handle_input(&MockControls::new().button(ButtonId::Menu, ButtonState::Released));
+    assert!(ui.in_settings());
     prime_slot_0(&mut ui);
     assert_eq!(primed(&ui), [CUTOFF]);
 }

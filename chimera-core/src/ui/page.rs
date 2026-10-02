@@ -1,9 +1,10 @@
-use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
+use crate::addr::{BlockRead, BlockRef, Blocks, Op, ParamAddr};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::modulator::EnvSlot;
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams};
-use crate::ui::block_def::SlotBinding;
-use crate::ui::chain::ChainNav;
+use crate::ui::block_def::{BlockDef, SlotBinding};
+use crate::ui::block_registry::{self as reg, DEMO_BLOCKS};
+use crate::ui::nav::Location;
 
 pub use crate::block::ValFmt;
 
@@ -18,38 +19,36 @@ pub enum PageLayout {
     Matrix,
 }
 
-/// Pages still driven by `PageId`: System and Demo (spec §5). Part- and
-/// Mixer-chain pages are identified by `PageKey::Part` and driven by their
-/// `BlockDef` slot bindings (`ui::part_page`).
+/// Pages still driven by `PageId`: SETTINGS leaves and DEMO pages whose
+/// slots bind nothing (spec §5). Every other page is a `PageKey::Part`,
+/// driven by its `BlockDef` slot bindings (`ui::part_page`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PageId {
-    /// A System chain page with no bound slots, by `BlockDef::id`: the
-    /// pages read no values, so only the def tells them apart.
+    /// A leaf page with no bound slots, by `BlockDef::id`: the pages read
+    /// no values, so only the def tells them apart.
     System(u16),
-    DemoWaves,
-    DemoShapes,
-    DemoMotion,
-    DemoFm,
-    DemoMatrix,
+    /// A DEMO page, by `BlockDef::id`.
+    Demo(u16),
 }
 
 /// Page identity for the renderer and dirty-region tracking (spec §5).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PageKey {
-    /// A slot-bound page (Part or Mixer chain) by `BlockDef::id` (defs like
-    /// FILTER are shared across chains), with the operator selection so a
-    /// selection change redraws the page.
+    /// A slot-bound page by `BlockDef::id` (defs like FILTER are shared
+    /// across chains), with the operator selection so a selection change
+    /// redraws the page.
     Part { def: u16, op: Op },
-    /// System/Demo pages.
+    /// Leaf and DEMO pages with no bound slots.
     Legacy(PageId),
 }
 
 impl PageKey {
-    pub fn from_nav(nav: &ChainNav, sel_op: Op) -> Self {
-        match PageId::from_nav(nav) {
+    /// `def` is the page shown at `at`.
+    pub fn from_location(at: Location, def: &BlockDef, sel_op: Op) -> Self {
+        match PageId::from_location(at, def) {
             Some(page) => PageKey::Legacy(page),
             None => PageKey::Part {
-                def: nav.active_block_def().id,
+                def: def.id,
                 op: sel_op,
             },
         }
@@ -57,50 +56,43 @@ impl PageKey {
 }
 
 impl PageId {
-    /// The legacy page at the current navigation position; `None` on a
-    /// slot-bound page: the Part and Mixer chains, and a System or Demo
-    /// page whose slots are bound (THEME, the glyph pages) (see
-    /// `PageKey::from_nav`).
-    pub fn from_nav(nav: &ChainNav) -> Option<Self> {
-        use crate::ui::chain::ChainId;
-        Some(match nav.chain_id {
-            ChainId::Part(_) | ChainId::Mixer(_) => return None,
-            ChainId::System | ChainId::Demo
-                if nav.active_block_def().params.iter().any(|s| {
-                    !matches!(s.binding, SlotBinding::Legacy { .. } | SlotBinding::Empty)
-                }) =>
-            {
-                return None;
-            }
-            ChainId::System => PageId::System(nav.active_block_def().id),
-            ChainId::Demo => match nav.node {
-                0 => PageId::DemoWaves,
-                1 => PageId::DemoShapes,
-                2 => PageId::DemoMotion,
-                3 => PageId::DemoFm,
-                4 => PageId::DemoMatrix,
-                // Pages past MTX bind their slots (the glyph pages).
-                n => {
-                    debug_assert!(false, "Demo node {n} has no bound slots");
-                    PageId::System(nav.active_block_def().id)
-                }
-            },
+    /// The legacy page `def` at `at`; `None` off SETTINGS and on a page
+    /// whose slots are bound (THEME, CHANNELS, the glyph pages).
+    pub fn from_location(at: Location, def: &BlockDef) -> Option<Self> {
+        at.settings()?.at_leaf()?;
+        Self::of_leaf(def)
+    }
+
+    /// The legacy page leaf page `def` is; `None` when its slots are bound.
+    pub fn of_leaf(def: &BlockDef) -> Option<Self> {
+        if def
+            .params
+            .iter()
+            .any(|s| !matches!(s.binding, SlotBinding::Legacy { .. } | SlotBinding::Empty))
+        {
+            return None;
+        }
+        Some(if DEMO_BLOCKS.iter().any(|b| core::ptr::eq(b.def, def)) {
+            PageId::Demo(def.id)
+        } else {
+            PageId::System(def.id)
         })
     }
 
     /// The parameter bound to encoder `idx` on this page, if any.
     pub fn binding(&self, idx: usize) -> Option<ParamAddr> {
-        match self {
-            PageId::DemoWaves => DEMO_WAVES.get(idx).copied(),
-            PageId::DemoShapes => DEMO_SHAPES.get(idx).copied(),
-            PageId::DemoMotion => DEMO_MOTION.get(idx).copied(),
-            PageId::DemoFm => DEMO_FM.get(idx).copied(),
-            PageId::DemoMatrix | PageId::System(_) => None,
-        }
+        let table: &[ParamAddr] = match *self {
+            PageId::Demo(id) if id == reg::DEMO_WAVES.id => &DEMO_WAVES,
+            PageId::Demo(id) if id == reg::DEMO_SHAPES.id => &DEMO_SHAPES,
+            PageId::Demo(id) if id == reg::DEMO_MOTION.id => &DEMO_MOTION,
+            PageId::Demo(id) if id == reg::DEMO_FM.id => &DEMO_FM,
+            _ => &[],
+        };
+        table.get(idx).copied()
     }
 
     /// Read 6 normalized (0..1) encoder values from params for this page.
-    pub fn read_values(&self, params: &impl Blocks) -> [f32; 6] {
+    pub fn read_values(&self, params: &impl BlockRead) -> [f32; 6] {
         core::array::from_fn(|i| {
             self.binding(i)
                 .and_then(|a| Some(params.block(a.block)?.normalized(a.param)))

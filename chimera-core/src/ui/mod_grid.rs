@@ -342,7 +342,7 @@ pub fn block_tag(b: BlockRef) -> &'static str {
         BlockRef::Reverb => "REV",
         BlockRef::Tape => "TPE",
         BlockRef::Comp => "CMP",
-        BlockRef::Part => "PRT",
+        BlockRef::Part | BlockRef::PartMix(_) => "PRT",
         BlockRef::Theme => "THM",
     }
 }
@@ -401,7 +401,7 @@ pub fn block_name(b: BlockRef) -> &'static str {
         BlockRef::Reverb => "REVERB",
         BlockRef::Tape => "TAPE",
         BlockRef::Comp => "COMP",
-        BlockRef::Part => "PART",
+        BlockRef::Part | BlockRef::PartMix(_) => "PART",
         BlockRef::Theme => "THEME",
     }
 }

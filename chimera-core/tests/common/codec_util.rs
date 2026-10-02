@@ -4,7 +4,7 @@
 //! keep, and the SYSTEM fixture.
 #![allow(dead_code)]
 
-use chimera_core::addr::{BlockRef, Blocks};
+use chimera_core::addr::{BlockRead, BlockRef};
 use chimera_core::block::{Block, ParamKind};
 use chimera_core::mod_path::MAX_REGISTRY_DESTS;
 use chimera_core::modulation::{MAX_MOD_DESTS, MAX_MOD_SOURCES, amount_scale};

@@ -13,8 +13,9 @@ pub struct DesktopDisplay {
     window: Window,
     fb: Box<[u16; FB_SIZE]>,
     window_buf: Vec<u32>,
-    /// System › Theme: the palette swap, and BRIGHT as a dimming of the
-    /// window. GAMMA has no desktop equivalent and is ignored here.
+    /// SETTINGS › PERSONALIZE › THEME: the palette swap, and BRIGHT as a
+    /// dimming of the window. GAMMA has no desktop equivalent and is
+    /// ignored here.
     palette: Palette,
     bright_pct: u32,
 }

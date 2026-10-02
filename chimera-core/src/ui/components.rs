@@ -8,9 +8,9 @@ use embedded_graphics::pixelcolor::Rgb565;
 
 use crate::dsp::modal::{EXCITER_NAMES, ModalPage, ResonatorMode};
 use crate::part::DacPair;
+use crate::project::PartId;
 use crate::ui::PrimeStatus;
 use crate::ui::block_def::{BlockDef, SlotBinding};
-use crate::ui::chain::{ChainId, ChainNav};
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
 use crate::ui::glyph::{Braid, BraidPart, Cube, CubePart, Gauge, Rings, RingsPart};
@@ -32,6 +32,16 @@ fn is_exciter(def: &BlockDef) -> bool {
         .any(|s| matches!(s.binding, SlotBinding::ModalPanel(ModalPage::Exciter, _)))
 }
 
+/// Whose page a header names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Head {
+    Sound(PartId),
+    /// A Part's mixer, or the FX entered from it.
+    Mix(PartId),
+    /// SETTINGS: its leaves draw a breadcrumb instead.
+    Settings,
+}
+
 /// A header's text: context, page name, and the OUT warning.
 pub struct HeaderText {
     pub context: FmtBuf,
@@ -40,26 +50,25 @@ pub struct HeaderText {
 }
 
 /// `PART 2 · SOUND` or `PART 2 · MIX` and the page (`FILTER`, `SENDS`),
-/// `SYSTEM`, `DEMO`; `suffix` follows the name (`/ B`). A page of the
+/// or `SETTINGS`; `suffix` follows the name (`/ B`). A page of the
 /// exciter's cells is named after `model`'s exciter (PLUCK, STRIKE, BOW).
 /// `OUT P2`/`OUT P3` warns on a Part's pages when `out` isn't P1 (ADR
 /// 0057). A name too long for the line falls back to the page's short one.
 pub fn header_text(
-    nav: &ChainNav,
+    head: Head,
     def: &BlockDef,
     model: ResonatorMode,
     suffix: &str,
     out: DacPair,
 ) -> HeaderText {
     let mut context = FmtBuf::new();
-    let _ = match nav.chain_id {
-        ChainId::Part(n) => write!(context, "PART {} · SOUND", n + 1),
-        ChainId::Mixer(n) => write!(context, "PART {} · MIX", n + 1),
-        ChainId::System => context.write_str("SYSTEM"),
-        ChainId::Demo => context.write_str("DEMO"),
+    let _ = match head {
+        Head::Sound(p) => write!(context, "PART {} · SOUND", p.index() + 1),
+        Head::Mix(p) => write!(context, "PART {} · MIX", p.index() + 1),
+        Head::Settings => context.write_str("SETTINGS"),
     };
-    let warn = match (nav.chain_id, out) {
-        (ChainId::System | ChainId::Demo, _) | (_, DacPair::P1) => None,
+    let warn = match (head, out) {
+        (Head::Settings, _) | (_, DacPair::P1) => None,
         (_, DacPair::P2) => Some("OUT P2"),
         (_, DacPair::P3) => Some("OUT P3"),
     };

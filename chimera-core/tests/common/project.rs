@@ -24,3 +24,17 @@ pub fn load_anyway(p: &mut Project, t: TemplateCrc, src: PartSource) -> Result<(
         .anyway(p);
     p.replace_part(c)
 }
+
+/// A file load confirmed, REPLACE answered if it asks.
+#[allow(dead_code)]
+pub fn confirm_load(
+    p: &Project,
+    t: TemplateCrc,
+    f: chimera_core::project::ProjectFile,
+) -> chimera_core::project::Confirmed<chimera_core::project::ProjectSource> {
+    let src = chimera_core::project::ProjectSource::File {
+        id: f.id(),
+        vol: f.vol(),
+    };
+    ReplaceGuard::check(p, t, src).unwrap_or_else(|n| n.into_pending().anyway(p))
+}

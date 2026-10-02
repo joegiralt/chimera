@@ -22,6 +22,10 @@ pub const FAINT: Rgb565 = Rgb565::new(5, 10, 5);
 pub const ACCENT: Rgb565 = Rgb565::new(15, 53, 25);
 /// Accent at 12 % over the ground: fill under a viz line.
 pub const ACCENT_SOFT: Rgb565 = Rgb565::new(3, 8, 4);
+/// A prompt's panel `#0d1514`.
+pub const PANEL: Rgb565 = Rgb565::new(1, 5, 2);
+/// An unpicked option's outline `#3a3937`.
+pub const PILL_EDGE: Rgb565 = Rgb565::new(7, 14, 6);
 /// Audio load above 60 % / 80 %.
 pub const WARN: Rgb565 = Rgb565::new(31, 32, 0);
 pub const ALERT: Rgb565 = Rgb565::new(31, 0, 0);
@@ -147,3 +151,18 @@ pub const NODE_LABEL_Y: i32 = 306;
 /// Sub-page branch rows under the pill.
 pub const BRANCH_START_Y: i32 = 300;
 pub const BRANCH_LINE_HEIGHT: i32 = 10;
+
+/// SETTINGS (spec § Screens): breadcrumb, list and footer, in its own look.
+/// The breadcrumb's width before it drops leading parts: it clears the
+/// sounding dot.
+pub const CRUMBS_W: i32 = HEADER_DOT_X - HEADER_DOT_R - 4 - MARGIN_X;
+/// A list row's label, and the right edge of its note or `›`.
+pub const LIST_TEXT_X: i32 = 18;
+pub const LIST_RIGHT: i32 = 222;
+/// The list's scrollbar.
+pub const SCROLL_X: i32 = 236;
+/// Footer, in the map's band: a rule, the project line, the key legend.
+pub const FOOTER_RULE_Y: i32 = 280;
+pub const FOOTER_RULE_W: i32 = VIZ_RIGHT - MARGIN_X;
+pub const FOOTER_NAME_Y: i32 = 296;
+pub const FOOTER_LEGEND_Y: i32 = 312;

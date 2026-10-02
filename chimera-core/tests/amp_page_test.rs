@@ -8,7 +8,7 @@ use chimera_core::params::{EngineType, OutParams};
 use chimera_core::preset::Sound;
 use chimera_core::project::PartId;
 use chimera_core::ui::block_registry::FOLDER;
-use chimera_core::ui::chain::chain_def_for;
+use chimera_core::ui::nav::chain_def_for;
 use chimera_core::ui::{PrimeStatus, UiState, view};
 use chimera_hal::{ButtonId, EncoderId};
 use screen::*;

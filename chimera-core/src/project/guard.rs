@@ -43,16 +43,20 @@
 //! }
 //! ```
 
+use core::fmt::Debug;
+
 use chimera_hal::store::VolumeId;
 
 use crate::block::DiskCode;
-use crate::storage::{Crc32, ProjectId, sound_crc};
+use crate::name::ProjectName;
+use crate::storage::{Crc32, Generation, ProjectId, sound_crc};
 
 use super::marks::status_at;
 use super::{
-    Origin, PartSource, PartStatus, Project, ProjectStatus, TemplateCrc, part_status, project_crc,
-    project_status,
+    Origin, PartSource, PartStatus, Project, ProjectEntry, ProjectFile, ProjectStatus, TemplateCrc,
+    part_status, project_crc, project_status,
 };
+use crate::ui::settings::replace::said::Said;
 
 /// The question asked before a replace that would lose work.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,10 +71,17 @@ mod sealed {
     pub trait Sealed {}
     impl Sealed for super::PartSource {}
     impl Sealed for super::ProjectSource {}
+    impl Sealed for super::OverwriteTarget {}
+    impl Sealed for super::DeleteTarget {}
+}
+
+/// What a `Confirmed` can confirm, and what it keeps of the target then.
+pub trait Witnessed: Copy + sealed::Sealed {
+    type Witness: Copy + PartialEq + Debug;
 }
 
 /// What a replace overwrites. Implemented for the two targets only.
-pub trait Target: Copy + sealed::Sealed {
+pub trait Target: Witnessed<Witness = u32> {
     /// The prompt the replace needs now, if any.
     fn at_risk(&self, p: &Project, t: TemplateCrc) -> Option<Prompt>;
     /// The target's state, as a confirmation saw it: every input to
@@ -83,6 +94,10 @@ pub trait Target: Copy + sealed::Sealed {
             None => Ok(self.witness(p)),
         }
     }
+}
+
+impl Witnessed for PartSource {
+    type Witness = u32;
 }
 
 /// An `Edited` Part asks; a `Clean` or `Stale` one doesn't.
@@ -127,6 +142,10 @@ pub enum ProjectSource {
     New,
 }
 
+impl Witnessed for ProjectSource {
+    type Witness = u32;
+}
+
 /// A `Modified` project asks; a `Pristine` or `Saved` one doesn't.
 impl Target for ProjectSource {
     fn at_risk(&self, p: &Project, t: TemplateCrc) -> Option<Prompt> {
@@ -151,9 +170,19 @@ impl Target for ProjectSource {
 /// A replace the guard let through, and the state of its target then.
 #[must_use]
 #[derive(Debug)]
-pub struct Confirmed<R> {
+pub struct Confirmed<R: Witnessed> {
     target: R,
-    witness: u32,
+    witness: R::Witness,
+}
+
+impl<R: Witnessed> Confirmed<R> {
+    pub fn target(&self) -> R {
+        self.target
+    }
+
+    pub(crate) fn witness(&self) -> R::Witness {
+        self.witness
+    }
 }
 
 impl<R: Target> Confirmed<R> {
@@ -162,10 +191,6 @@ impl<R: Target> Confirmed<R> {
             target,
             witness: target.witness(p),
         }
-    }
-
-    pub fn target(&self) -> R {
-        self.target
     }
 
     /// The target's state still what was confirmed.
@@ -202,14 +227,23 @@ impl<R: Target> Pending<R> {
         self.0
     }
 
-    /// REPLACE / LOAD ANYWAY: the target as it is now is what's confirmed.
-    pub fn anyway(self, p: &Project) -> Confirmed<R> {
-        Confirmed::now(self.0, p)
-    }
-
     /// After the caller's save: asks again if it was cancelled or failed.
     pub fn save_then(self, p: &Project, t: TemplateCrc) -> Result<Confirmed<R>, NeedsConfirm<R>> {
         ReplaceGuard::check(p, t, self.0)
+    }
+}
+
+impl<R: Target> Pending<R> {
+    /// REPLACE / LOAD ANYWAY, answered: the target as it is now is what's
+    /// confirmed. Only a prompt's confirming pill holds a `Said` (#258).
+    pub fn confirm(self, p: &Project, _: Said<R>) -> Confirmed<R> {
+        Confirmed::now(self.0, p)
+    }
+
+    /// Confirmed without a prompt: tests only.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn anyway(self, p: &Project) -> Confirmed<R> {
+        Confirmed::now(self.0, p)
     }
 }
 
@@ -230,3 +264,116 @@ impl ReplaceGuard {
         }
     }
 }
+
+/// A file a save writes over: SAVE OVER, or CLEAR. Only `answered`
+/// makes one, from a listing:
+///
+/// ```compile_fail,E0451
+/// use chimera_core::project::{OverwriteTarget, ProjectFile};
+/// fn forge(file: ProjectFile) -> OverwriteTarget {
+///     OverwriteTarget { file }
+/// }
+/// ```
+///
+/// and only a prompt's yes confirms one:
+///
+/// ```compile_fail,E0061
+/// use chimera_core::project::{Confirmed, OverwriteTarget, ProjectEntry};
+/// fn forge(e: &ProjectEntry) -> Confirmed<OverwriteTarget> {
+///     Confirmed::<OverwriteTarget>::answered(e)
+/// }
+/// ```
+///
+/// and a DELETE's yes is no overwrite's:
+///
+/// ```compile_fail,E0308
+/// use chimera_core::project::{Confirmed, DeleteTarget, OverwriteTarget, ProjectEntry};
+/// use chimera_core::ui::settings::replace::said::Said;
+/// fn forge(e: &ProjectEntry, yes: Said<DeleteTarget>) -> Confirmed<OverwriteTarget> {
+///     Confirmed::<OverwriteTarget>::answered(e, yes)
+/// }
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OverwriteTarget {
+    file: ProjectFile,
+}
+
+/// A file DELETE removes. Only `answered` confirms one, with a prompt's
+/// yes:
+///
+/// ```compile_fail,E0061
+/// use chimera_core::project::{Confirmed, DeleteTarget, ProjectEntry};
+/// fn forge(e: &ProjectEntry) -> Confirmed<DeleteTarget> {
+///     Confirmed::<DeleteTarget>::answered(e)
+/// }
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeleteTarget {
+    file: ProjectFile,
+}
+
+impl OverwriteTarget {
+    pub fn file(self) -> ProjectFile {
+        self.file
+    }
+}
+
+impl DeleteTarget {
+    pub fn file(self) -> ProjectFile {
+        self.file
+    }
+}
+
+/// A file's newest readable header as listed, from its header alone. The
+/// name as well as the generation: a pair deleted and made again at the
+/// same id starts its generations over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Seen {
+    generation: Option<Generation>,
+    name: Option<ProjectName>,
+}
+
+impl Seen {
+    pub(crate) fn of(e: &ProjectEntry) -> Self {
+        Seen {
+            generation: e.generation,
+            name: e.name,
+        }
+    }
+}
+
+/// A file saved, cleared, deleted or made again since refuses it.
+impl Witnessed for OverwriteTarget {
+    type Witness = Seen;
+}
+
+impl Witnessed for DeleteTarget {
+    type Witness = Seen;
+}
+
+macro_rules! answered {
+    ($($t:ident: $what:literal),+) => {
+        $(impl Confirmed<$t> {
+            #[doc = concat!($what, " answered on the listed `e`: only a prompt's")]
+            /// confirming pill holds a `Said`.
+            pub fn answered(e: &ProjectEntry, _: Said<$t>) -> Self {
+                Self::listed(e)
+            }
+
+            /// Confirmed without a prompt: tests only.
+            #[cfg(any(test, feature = "test-support"))]
+            pub(crate) fn unasked(e: &ProjectEntry) -> Self {
+                Self::listed(e)
+            }
+
+            fn listed(e: &ProjectEntry) -> Self {
+                Confirmed {
+                    target: $t { file: e.file() },
+                    witness: Seen::of(e),
+                }
+            }
+        })+
+    };
+}
+
+answered!(OverwriteTarget: "SAVE OVER, CLEAR or OVERWRITE THAT ONE", DeleteTarget: "DELETE");

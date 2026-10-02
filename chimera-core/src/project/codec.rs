@@ -5,7 +5,7 @@
 
 use chimera_hal::store::StoreError;
 
-use crate::addr::{BlockRef, Blocks};
+use crate::addr::{BlockRead, BlockRef, Blocks};
 use crate::block::{Block, DiskCode};
 use crate::dsp::fx_bus::FxParams;
 use crate::hw::MAX_PARTS;
@@ -19,7 +19,9 @@ use crate::storage::{
     sound_crc,
 };
 
-use super::{Origin, PartId, PartSet, Project, SlotId};
+use super::parts::new_part;
+use super::template::new_slot;
+use super::{Origin, Part, PartId, PartSet, Project, SlotId};
 
 const FX_BLOCKS: [BlockRef; 5] = [
     BlockRef::Chorus,
@@ -54,11 +56,13 @@ fn fx_block(fx: &FxParams, b: BlockRef) -> Option<&dyn Block> {
 /// The FX as the blocks a `Block` record can reach in the `Fx` context.
 struct FxBlocks<'a>(&'a mut FxParams);
 
-impl Blocks for FxBlocks<'_> {
+impl BlockRead for FxBlocks<'_> {
     fn block(&self, b: BlockRef) -> Option<&dyn Block> {
         fx_block(self.0, b)
     }
+}
 
+impl Blocks for FxBlocks<'_> {
     fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
         let fx = &mut *self.0;
         Some(match b {
@@ -75,11 +79,13 @@ impl Blocks for FxBlocks<'_> {
 /// A Part's mix as the one block `Block(Part)` reaches.
 struct MixBlocks<'a>(&'a mut PartParams);
 
-impl Blocks for MixBlocks<'_> {
+impl BlockRead for MixBlocks<'_> {
     fn block(&self, b: BlockRef) -> Option<&dyn Block> {
         (b == BlockRef::Part).then_some(&*self.0 as &dyn Block)
     }
+}
 
+impl Blocks for MixBlocks<'_> {
     fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
         (b == BlockRef::Part).then_some(&mut *self.0 as &mut dyn Block)
     }
@@ -103,29 +109,57 @@ fn put_context(
     w.put(tag, &p)
 }
 
-/// Streams `p` from live state: no copy, no buffer past one record.
-pub fn encode_project(p: &Project, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
+fn put_fx(w: &mut RecordWriter<'_>, fx: &FxParams) -> Result<(), StoreError> {
     w.put(RecordTag::Fx, &[])?;
     for b in FX_BLOCKS {
-        if let Some(blk) = fx_block(&p.perf.fx, b) {
+        if let Some(blk) = fx_block(fx, b) {
             put_block(w, b, blk)?;
         }
     }
+    Ok(())
+}
+
+fn put_slot(w: &mut RecordWriter<'_>, s: SlotId, sound: &Sound) -> Result<(), StoreError> {
+    put_context(w, RecordTag::Slot, s.index(), sound.name)?;
+    encode_sound(sound, w)
+}
+
+fn put_part(w: &mut RecordWriter<'_>, i: usize, part: &Part) -> Result<(), StoreError> {
+    put_context(w, RecordTag::Part, i, part.sound.name)?;
+    encode_sound(&part.sound, w)?;
+    put_block(w, BlockRef::Part, &part.mix)?;
+    let origin = match part.origin {
+        Origin::Slot { slot, .. } => [ORIGIN_SLOT, slot.index() as u8],
+        Origin::Init(e) => [ORIGIN_INIT, e.disk_code()],
+    };
+    w.put(RecordTag::Origin, &origin)
+}
+
+/// Streams `p` from live state: no copy, no buffer past one record.
+pub fn encode_project(p: &Project, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
+    put_fx(w, &p.perf.fx)?;
     for s in SlotId::ALL {
         if let Some(sound) = p.pool.get(s) {
-            put_context(w, RecordTag::Slot, s.index(), sound.name)?;
-            encode_sound(sound, w)?;
+            put_slot(w, s, sound)?;
         }
     }
     for (i, part) in p.perf.parts.iter().enumerate() {
-        put_context(w, RecordTag::Part, i, part.sound.name)?;
-        encode_sound(&part.sound, w)?;
-        put_block(w, BlockRef::Part, &part.mix)?;
-        let origin = match part.origin {
-            Origin::Slot { slot, .. } => [ORIGIN_SLOT, slot.index() as u8],
-            Origin::Init(e) => [ORIGIN_INIT, e.disk_code()],
-        };
-        w.put(RecordTag::Origin, &origin)?;
+        put_part(w, i, part)?;
+    }
+    Ok(())
+}
+
+/// NEW's records, as `encode_project` of NEW puts them, built a Sound at a
+/// time: no second project in RAM (CLEAR of a file not loaded).
+pub fn encode_new_project(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
+    put_fx(w, &FxParams::default())?;
+    for s in SlotId::ALL {
+        if let Some(sound) = new_slot(s) {
+            put_slot(w, s, &sound)?;
+        }
+    }
+    for i in 0..MAX_PARTS {
+        put_part(w, i, &new_part(i))?;
     }
     Ok(())
 }
@@ -416,6 +450,7 @@ pub struct ProjectDecoder<'a> {
 
 impl<'a> ProjectDecoder<'a> {
     pub(crate) fn new(target: &'a mut Project) -> Self {
+        target.bump();
         ProjectDecoder {
             check: ProjectCheck::new(),
             target,

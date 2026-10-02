@@ -33,8 +33,8 @@ pub struct Stm32Display<SPI, DC, RST, CS> {
     reset: RST,
     cs: CS,
     fb: &'static mut [u16; FB_SIZE],
-    /// System › Theme's colours, swapped in as pixels go out; the
-    /// framebuffer keeps the canonical palette.
+    /// SETTINGS › PERSONALIZE › THEME's colours, swapped in as pixels go
+    /// out; the framebuffer keeps the canonical palette.
     palette: Palette,
 }
 

@@ -3,20 +3,24 @@ mod controls;
 mod display;
 #[cfg(feature = "midi")]
 mod midi;
+#[cfg(test)]
+mod qa;
 mod store;
 
-use chimera_core::project::LOAD_LINK;
+use chimera_core::project::{LOAD_ACK_TIMEOUT_MS, LOAD_LINK};
 use chimera_core::scope::scope_buffer;
 use chimera_core::storage::{Card, SystemSettings, SystemSync};
 use chimera_core::ui::UiState;
-use chimera_core::ui::busy::{ToastStep, draw_toast};
+use chimera_core::ui::animation::Pacer;
+use chimera_core::ui::busy::{ToastStep, draw_busy, draw_toast};
 use chimera_core::ui::perf::PerfTracker;
+use chimera_core::ui::settings::CardCx;
 use chimera_hal::store::Store;
-use chimera_hal::{ChimeraDisplay, MidiChannel, MidiNote, Velocity};
+use chimera_hal::{ChimeraDisplay, MidiChannel, MidiNote, Ms, Velocity};
 use controls::DesktopControls;
 use display::DesktopDisplay;
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use store::DirStore;
 
 /// The card: `CHIMERA_CARD`, or `chimera-card` made on first run. A
@@ -75,6 +79,8 @@ fn main() {
     let mut current_note: Option<(MidiChannel, MidiNote)> = None;
     let mut octave: i8 = 0; // -2 to +2
     let mut frame_start = Instant::now();
+    // The loop runs near 30 Hz; animation at UI_FPS.
+    let (mut pacer, _) = Pacer::start(Ms(first_light.elapsed().as_millis() as u32));
     // The toast's clock, read after the card work, as the firmware's is.
     let mut toast_at = Instant::now();
 
@@ -84,7 +90,7 @@ fn main() {
         frame_start = now;
 
         let keys = display.get_keys();
-        controls.update(&keys);
+        controls.update_events(&keys, Ms(first_light.elapsed().as_millis() as u32));
 
         // Octave shift: [ and ]
         if keys.contains(&minifb::Key::LeftBracket) {
@@ -121,10 +127,29 @@ fn main() {
 
         // UI framework handles navigation + encoder -> param binding
         ui.handle_input(&controls);
-        // Leaving System syncs SYSTEM; a toast says how it went.
+        // Card work the keys asked for, under BUSY; a load publishes
+        // once the audio acks, or the timeout passes.
+        if ui.card_pending() {
+            let (y0, y1) = draw_busy(&mut display);
+            display.flush_region(y0, y1);
+        }
+        let cx = CardCx {
+            card: &mut card,
+            store: &mut store,
+            sync: &mut sync,
+            settings: &mut settings,
+        };
+        ui.card_work(cx, &LOAD_LINK, |swap, p| {
+            let deadline = Instant::now() + Duration::from_millis(LOAD_ACK_TIMEOUT_MS.into());
+            let _ = swap.settle(&LOAD_LINK, || Instant::now() < deadline);
+            audio.update(p.perf(), LOAD_LINK.epoch());
+        });
+        // Leaving SETTINGS syncs SYSTEM; a toast says how it went.
         ui.sync_system(&mut sync, &mut card, &mut store, &mut settings);
         display.set_theme(&ui.theme());
-        ui.update();
+        if let Some(t) = pacer.due(Ms(first_light.elapsed().as_millis() as u32)) {
+            ui.update(t);
+        }
 
         // Push every Part and the FX to the audio thread.
         audio.update(ui.project().perf(), LOAD_LINK.epoch());

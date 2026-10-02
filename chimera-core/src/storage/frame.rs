@@ -132,6 +132,8 @@ pub struct ProjectId(u32);
 
 impl ProjectId {
     pub const MAX: u32 = 9_999_999;
+    /// The lowest id.
+    pub const MIN: Self = ProjectId(1);
 
     pub fn new(n: u32) -> Option<Self> {
         (1..=Self::MAX).contains(&n).then_some(ProjectId(n))

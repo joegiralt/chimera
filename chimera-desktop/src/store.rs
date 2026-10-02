@@ -190,12 +190,12 @@ impl Store for DirStore {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use chimera_hal::testkit::store_suite;
     use std::sync::atomic::{AtomicU32, Ordering};
 
-    fn unique_root() -> PathBuf {
+    pub(crate) fn unique_root() -> PathBuf {
         // Tests run on their own threads: one counter for the process.
         static N: AtomicU32 = AtomicU32::new(0);
         let n = N.fetch_add(1, Ordering::Relaxed) + 1;
@@ -265,6 +265,64 @@ mod tests {
         }
     }
 
+    /// settings_project_test's `card_changed_then_save_as`, by key script
+    /// on the sim's card: ALPHA loaded through LOAD, the card swapped, then
+    /// MENU held asks CARD CHANGED, and SAVE AS saves on the new card.
+    #[test]
+    fn card_changed_then_save_as() {
+        use crate::qa::Desk;
+        use chimera_core::name::ProjectName;
+        use chimera_core::project::{
+            Project, ProjectNote, SaveTo, list_projects, new_project_id, save_project,
+        };
+        use chimera_core::storage::Card;
+        use chimera_core::ui::nav::Location;
+        use minifb::Key;
+        let root = unique_root();
+        let a = {
+            let (mut card, mut s) = (Card::new(), DirStore::new(root.clone()));
+            let (mut p, _) = Project::boxed();
+            p.set_name(ProjectName::new("ALPHA").unwrap());
+            let fresh = new_project_id(&mut card, &mut s).out.unwrap();
+            let f = fresh.file();
+            let out = save_project(&mut card, &mut s, &mut p, SaveTo::Fresh(fresh)).out;
+            assert!(matches!(out, ProjectNote::Saved(_)), "{out:?}");
+            f
+        };
+        let mut d = Desk::launch(root.clone());
+        // SETTINGS › PROJECT › LOAD, row 01, SEQ.
+        d.tap(Key::M);
+        d.tap(Key::Down);
+        d.tap(Key::Down);
+        assert_eq!(d.ui.location(), Location::settings_at(&[0, 0], 0));
+        assert!(d.ui.load_row(0).unwrap().label.as_str().starts_with("01"));
+        d.tap(Key::Up);
+        assert_eq!(d.ui.project().meta().file(), Some(a));
+        while d.ui.in_settings() {
+            d.tap(Key::M);
+        }
+
+        let old = d.store.mount().unwrap();
+        d.store
+            .write_volume(old.serial.wrapping_add(1), *b"SWAPPED    ")
+            .unwrap();
+        let _ = fs::remove_dir_all(root.join("CHIMERA"));
+        d.hold(Key::M);
+        let (q, _) = d.ui.prompt_words_for_test().expect("a prompt");
+        assert_eq!(q.as_str(), "CARD CHANGED");
+        d.tap(Key::Up);
+        assert_eq!(d.ui.naming().unwrap().text(), "ACID-001");
+        d.tap(Key::Up);
+        let vol = d.store.mount().unwrap();
+        assert_ne!(vol, old);
+        assert_eq!(d.ui.project().meta().file().unwrap().vol(), vol);
+        let mut n = 0;
+        let _ = list_projects(&mut Card::new(), &mut d.store, &mut |_| n += 1);
+        assert_eq!(n, 1);
+        assert_eq!(d.toast().as_deref(), Some("SAVED"));
+        let _ = fs::remove_dir_all(root);
+    }
+
     /// The sim's boot: a project saved, then the next launch loads it from
     /// the files alone.
     #[test]
@@ -275,7 +333,7 @@ mod tests {
         use chimera_core::preset::Sound;
         use chimera_core::project::test_support::same;
         use chimera_core::project::{
-            PartId, ProjectStatus, SlotId, new_project_id, project_status,
+            PartId, ProjectStatus, SaveTo, SlotId, new_project_id, project_status,
         };
         use chimera_core::storage::{Card, SystemSync};
         use chimera_core::ui::UiState;
@@ -293,8 +351,14 @@ mod tests {
         p.pool_store(SlotId::ALL[20], Sound::init(EngineType::Modal));
         p.edit_fx().reverb.mix = 0.6;
         p.set_name(ProjectName::new("RELAUNCH").unwrap());
-        let file = new_project_id(&mut card, &mut store).unwrap();
-        ui.save_project(&mut card, &mut store, &mut sync, &mut s, file);
+        let file = new_project_id(&mut card, &mut store).out.unwrap();
+        ui.save_project(
+            &mut card,
+            &mut store,
+            &mut sync,
+            &mut s,
+            SaveTo::Fresh(file),
+        );
 
         let mut store = DirStore::new(root.clone());
         let mut card = Card::new();

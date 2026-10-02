@@ -38,7 +38,7 @@ whatever the last frame left.
 | ![](toast_file_damaged.png) | Project › toast | A load error: the file's CRC fails |
 | ![](toast_load_failed.png) | Project › toast | Load failed partway: the project is NEW |
 | ![](toast_not_found.png) | Project › toast | The project's file is gone |
-| ![](toast_saved.png) | Project › toast | Leaving System after a write: SAVED |
+| ![](toast_saved.png) | Project › toast | Leaving SETTINGS after a write: SAVED |
 | ![](toast_saved_differs.png) | Project › toast | SAVED, with a Part differing from its slot |
 
 ## Sound browser
@@ -138,7 +138,9 @@ per model.
 
 ## Mixer (MIX + B1)
 
-Part 1's mixer; the other Parts' differ only in the header.
+Part 1's PART and SENDS; the other Parts' differ only in the header. The
+shared FX come after a Part's SENDS (PLUS from there); the goldens reach
+them from MIX+B6, so they read PART 6 · MIX.
 
 | Screen | Where | What it shows |
 |---|---|---|
@@ -152,32 +154,89 @@ Part 1's mixer; the other Parts' differ only in the header.
 | ![](mixer_master.png) | MST | Compressor curve, RATIO 4:1 |
 | ![](mixer_master_level.png) | MST › LVL | Master VOL and PAN |
 
-## System (MENU)
+## SETTINGS (MENU)
+
+A breadcrumb for the header, a list with a bar, and the project footer in
+the map's band: the project's name, its status (none while NEW, `SAVED`,
+`* MODIFIED`), and what the keys do. The atlas walks the tree depth first
+through the real keys; LOAD, MANAGE and the project prompts run against an
+in-memory card.
 
 | Screen | Where | What it shows |
 |---|---|---|
-| ![](system.png) | TUN | Home: TUNE and SCALE |
-| ![](system_theme.png) | THM | BRIGHT, GAMMA, ACCENT (AMBER, focused), BLACK |
-| ![](system_upd.png) | UPD | Updates: no controls yet |
-| ![](system_abt.png) | ABT | About: no content yet |
-| ![](system_audio.png) | ABT › AUD | Audio load, peak, overruns, drops, desyncs, stack |
+| ![](settings_top.png) | SETTINGS | The top list on a fresh project: the footer is the name alone |
+| ![](settings_footer_saved.png) | SETTINGS | ALPHA loaded: SAVED |
+| ![](settings_footer_modified.png) | SETTINGS | ALPHA edited since: `* MODIFIED` |
+| ![](settings_project.png) | PROJECT | LOAD, SAVE AS, MANAGE |
+| ![](settings_load.png) | PROJECT › LOAD | Three projects, ALPHA `● LOADED`, the bar on BETA |
+| ![](settings_project_load_no_card.png) | PROJECT › LOAD | No card in the slot |
+| ![](settings_naming.png) | PROJECT › SAVE AS | NAMING, the proposed name |
+| ![](settings_naming_save_then_load.png) | LOAD › SAVE AS | SAVE THEN LOAD on an edited NEW project: NAMING inside the load |
+| ![](settings_project_manage.png) | PROJECT › MANAGE | The projects, and the commands of the one under the bar |
+| ![](settings_project_manage_commands.png) | PROJECT › MANAGE | The bar in the commands, on RENAME: dimmed, LOAD TO RENAME |
+| ![](settings_project_manage_delete_loaded.png) | PROJECT › MANAGE | DELETE on the loaded project: dimmed |
+| ![](settings_project_manage_rename.png) | MANAGE › RENAME | NAMING the loaded project |
+| ![](settings_part.png) | PART | The active Part's strip and its actions |
+| ![](settings_part_save_to.png) | PART › SAVE TO | Part 1 edited from SLOT 03: OVER SLOT 03, TO NEW SLOT |
+| ![](settings_part_rename.png) | PART › RENAME | NAMING the Part's Sound |
+| ![](settings_midi.png) | MIDI | SYNC and PORT later, CHANNELS |
+| ![](settings_audio.png) | AUDIO | OUTPUTS, SENDS later, TUNING |
+| ![](settings_personal.png) | PERSONAL | THEME |
+| ![](settings_system.png) | SYSTEM | OS, DIAGNOSTICS, ABOUT; the rest later |
+| ![](settings_system_diag.png) | SYSTEM › DIAG | AUDIO LOAD, TEST TONE and INPUT TEST later, DEMO (debug builds) |
+| ![](settings_system_diag_demo.png) | DIAG › DEMO | A row per storyboard page |
 
-## Demo (MIX + B6)
+### Prompts
+
+One per kind; the list beneath blanks. Over a page or the Sound rung,
+everything between the header and the map blanks.
+
+| Screen | Where | What it shows |
+|---|---|---|
+| ![](settings_prompt_load.png) | PROJECT › LOAD | LOAD BETA over an edited ALPHA |
+| ![](settings_prompt_name_exists.png) | PROJECT › SAVE AS | The proposed name is on the card |
+| ![](settings_prompt_card_changed.png) | MENU hold | Quick save refused: another card |
+| ![](settings_prompt_delete.png) | MANAGE › DELETE | DELETE BETA |
+| ![](settings_prompt_clear.png) | MANAGE › CLEAR | CLEAR BETA, another's file |
+| ![](settings_prompt_clear_loaded.png) | MANAGE › CLEAR | CLEAR ALPHA, the loaded project's own file |
+| ![](settings_prompt_save_over.png) | MANAGE › SAVE TO | SAVE OVER BETA |
+| ![](settings_prompt_replace_part.png) | PART › CLEAR | CLEAR an edited Part to INIT |
+| ![](settings_prompt_reload_part.png) | PART › RELOAD | RELOAD an edited Part from its slot |
+| ![](settings_prompt_update_stale.png) | PART › SAVE TO | P4 also plays the slot saved over |
+| ![](settings_prompt_clear_slot.png) | Sound rung, MIX + MINUS | CLEAR a slot no Part plays |
+
+### Leaves
+
+A leaf is one page (ADR 0066): no key steps it.
+
+| Screen | Where | What it shows |
+|---|---|---|
+| ![](settings_midi_channels.png) | MIDI › CHANNELS | Each Part's MIDI channel: the mixer's own value |
+| ![](settings_audio_outputs.png) | AUDIO › OUTPUTS | Each Part's OUT: the mixer's own value |
+| ![](settings_audio_tuning.png) | AUDIO › TUNING | TUNE and SCALE |
+| ![](settings_personal_theme.png) | PERSONAL › THEME | BRIGHT, GAMMA, ACCENT (AMBER, focused), BLACK |
+| ![](settings_system_os.png) | SYSTEM › OS | Updates: no controls yet |
+| ![](settings_system_about.png) | SYSTEM › ABOUT | Version, build, chip REV, clock, reset cause, the card |
+| ![](settings_system_diag_aud_load.png) | DIAG › AUD LOAD | Audio load, peak, overruns, drops, desyncs, stack |
+
+## DEMO (SETTINGS › SYSTEM › DIAGNOSTICS › DEMO, debug builds)
+
+A leaf per page, its row named by the page's short name.
 
 The UI component storyboard.
 
 | Screen | Where | What it shows |
 |---|---|---|
-| ![](demo_wav.png) | WAV | Wave icons |
-| ![](demo_shp.png) | SHP | Shape icons |
-| ![](demo_mot.png) | MOT | Motion icons |
-| ![](demo_fm.png) | FM | FM icons |
-| ![](demo_mtx.png) | MTX | A matrix |
-| ![](demo_arc.png) | ARC | Glyph: ARC; a drives it unipolar, b bipolar |
-| ![](demo_none.png) | NONE | Glyph: NONE; a steps MODEL, its word has the whole band |
-| ![](demo_sw.png) | SW | Glyph: SWITCH; a flips LFO 1's SYNC, FREE / RETRIG |
-| ![](demo_lvl.png) | LVL | Glyph: LEVEL BAR; a drives VOLUME (8 ticks), b operator A's FDBK (a tick per step) |
-| ![](demo_xf.png) | XF | Glyph: CROSSFADER; a slides ALG A to B (MORPH), b dry to wet (DRV MIX); set values only |
-| ![](demo_brd.png) | BRD | Glyph: chorus BRAID; a MODE (strands), b RATE (twist speed), c DEPTH (swing), d MIX (strand weight); animated on the UI clock |
-| ![](demo_rng.png) | RNG | Glyph: delay RINGS; a TIME (spacing), b FDBK (survivors), c TONE (crisp or blurred), d MIX (ring weight), e MECHANICS (wobble), f SAT (the newest ring's weight); REV dots the edge |
-| ![](demo_cub.png) | CUB | Glyph: reverb CUBE; a SIZE (the room), b TIME (afterimage trails), c DAMP (far edges dim, then dot), d MIX (edge weight), e GRIT (crackle) |
+| ![](settings_system_diag_demo_wav.png) | WAV | Wave icons |
+| ![](settings_system_diag_demo_shp.png) | SHP | Shape icons |
+| ![](settings_system_diag_demo_mot.png) | MOT | Motion icons |
+| ![](settings_system_diag_demo_fm.png) | FM | FM icons |
+| ![](settings_system_diag_demo_mtx.png) | MTX | A matrix |
+| ![](settings_system_diag_demo_arc.png) | ARC | Glyph: ARC; a drives it unipolar, b bipolar |
+| ![](settings_system_diag_demo_none.png) | NONE | Glyph: NONE; a steps MODEL, its word has the whole band |
+| ![](settings_system_diag_demo_sw.png) | SW | Glyph: SWITCH; a flips LFO 1's SYNC, FREE / RETRIG |
+| ![](settings_system_diag_demo_lvl.png) | LVL | Glyph: LEVEL BAR; a drives VOLUME (8 ticks), b operator A's FDBK (a tick per step) |
+| ![](settings_system_diag_demo_xf.png) | XF | Glyph: CROSSFADER; a slides ALG A to B (MORPH), b dry to wet (DRV MIX); set values only |
+| ![](settings_system_diag_demo_brd.png) | BRD | Glyph: chorus BRAID; a MODE (strands), b RATE (twist speed), c DEPTH (swing), d MIX (strand weight); animated on the UI clock |
+| ![](settings_system_diag_demo_rng.png) | RNG | Glyph: delay RINGS; a TIME (spacing), b FDBK (survivors), c TONE (crisp or blurred), d MIX (ring weight), e MECHANICS (wobble), f SAT (the newest ring's weight); REV dots the edge |
+| ![](settings_system_diag_demo_cub.png) | CUB | Glyph: reverb CUBE; a SIZE (the room), b TIME (afterimage trails), c DAMP (far edges dim, then dot), d MIX (edge weight), e GRIT (crackle) |

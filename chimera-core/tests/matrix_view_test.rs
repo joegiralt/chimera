@@ -4,6 +4,7 @@
 mod screen;
 
 use chimera_core::project::PartId;
+use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::draw;
 use chimera_core::ui::mod_grid::{AMOUNT_Y, CELL_H, CELL_W, GRID_BOTTOM, READOUT_Y, cell_origin};
 use chimera_core::ui::perf::PerfStats;
@@ -240,7 +241,7 @@ fn the_amount_lerps() {
     let mut ui = ui_for("mod_matrix");
     let before = ui.renderer.anim[MATRIX_AMOUNT_SLOT].current();
     feed(&mut ui, Input::turn(EncoderId::E, 40));
-    ui.update();
+    ui.update(UiTick::for_test());
     let (now, target) = (
         ui.renderer.anim[MATRIX_AMOUNT_SLOT].current(),
         ui.renderer.anim[MATRIX_AMOUNT_SLOT].target(),
@@ -546,7 +547,7 @@ fn the_selected_amount_lerps() {
     feed(&mut ui, Input::turn(EncoderId::E, 85)); // +42 → +127
     let mut shown = vec![];
     for frame in 0..60 {
-        ui.update();
+        ui.update(UiTick::for_test());
         ui.render_dirty_with_scope(&mut dirty, &PerfStats::zero(), &scope_fixture());
         let fb = full(&ui);
         assert!(
@@ -596,7 +597,7 @@ fn matrix_edits_redraw_through_the_region_keys() {
     feed(&mut ui, Input::turn(EncoderId::E, 12));
     let set = check(&mut ui, &mut dirty, "amount");
     feed(&mut ui, Input::turn(EncoderId::E, 30));
-    ui.update(); // mid-lerp: the readout's amount alone moves
+    ui.update(UiTick::for_test()); // mid-lerp: the readout's amount alone moves
     ui.render_dirty_with_scope(&mut dirty, &PerfStats::zero(), &scope_fixture());
     let mut fb = Fb::new();
     ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());

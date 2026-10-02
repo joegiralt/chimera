@@ -4,6 +4,7 @@
 mod screen;
 
 use chimera_core::ui::UiState;
+use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::focus::{FocusMemory, MAX_PAGES};
 use chimera_hal::{ButtonId, EncoderId};
@@ -23,7 +24,7 @@ fn the_first_tick_of_another_slot_moves_focus_and_it_stays() {
     feed(&mut ui, Input::turn(EncoderId::C, 1));
     assert_eq!(ui.focused_slot(), 2);
     for _ in 0..50 {
-        ui.update(); // no timer: focus does not fall back
+        ui.update(UiTick::for_test()); // no timer: focus does not fall back
     }
     assert_eq!(ui.focused_slot(), 2);
     feed(&mut ui, Input::turn(EncoderId::B, -1));

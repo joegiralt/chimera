@@ -41,6 +41,7 @@ impl BlockRef {
             BlockRef::Comp => 24,
             BlockRef::Part => 25,
             BlockRef::Theme => 26,
+            BlockRef::PartMix(_) => return None,
         })
     }
 
@@ -74,6 +75,7 @@ impl BlockRef {
             BlockRef::Comp => "COMP",
             BlockRef::Part => "PART",
             BlockRef::Theme => "THEME",
+            BlockRef::PartMix(_) => return None,
         })
     }
 

@@ -30,7 +30,7 @@ mod shared;
 mod watchdog;
 
 #[cfg(not(feature = "sd-probe"))]
-use chimera_core::project::LOAD_LINK;
+use chimera_core::project::{LOAD_ACK_TIMEOUT_MS, LOAD_LINK};
 #[cfg(not(feature = "sd-probe"))]
 use chimera_core::reset::ResetCause;
 use chimera_core::ui::theme_settings::ThemeSettings;
@@ -148,7 +148,7 @@ fn boot() -> Board {
 
     let mut led = gpioe.pe1.into_push_pull_output();
     // TIM1 CH2 PWM, above hearing so the backlight driver cannot whine.
-    // Full brightness lifts a TN panel's blacks; System › Theme's BRIGHT
+    // Full brightness lifts a TN panel's blacks; SETTINGS › THEME's BRIGHT
     // sets the duty: the default until SYSTEM is read.
     let mut backlight = dp.TIM1.pwm(
         gpioe.pe11.into_alternate::<1>(),
@@ -225,13 +225,20 @@ fn boot() -> Board {
     }
 }
 
+/// The load ack's timeout in control ticks.
+#[cfg(not(feature = "sd-probe"))]
+const LOAD_ACK_TICKS: u32 = LOAD_ACK_TIMEOUT_MS * controls::CONTROLS_HZ / 1000;
+#[cfg(not(feature = "sd-probe"))]
+const _: () = assert!(LOAD_ACK_TICKS >= 1, "the ack timeout is under a tick");
+
 #[cfg(not(feature = "sd-probe"))]
 fn synth(board: Board) -> ! {
     use chimera_core::clock_plan::pll3_for;
     use chimera_core::hw::SampleBudget;
     use chimera_core::storage::{Card, SystemSync};
-    use chimera_core::ui::busy::{ToastStep, draw_toast};
+    use chimera_core::ui::busy::{ToastStep, draw_busy, draw_toast};
     use chimera_core::ui::perf::PerfTracker;
+    use chimera_core::ui::settings::CardCx;
     use chimera_hal::ChimeraDisplay;
     use controls::Stm32Controls;
 
@@ -317,7 +324,8 @@ fn synth(board: Board) -> ! {
             .expect("DIN producer taken once"),
     );
 
-    ui.update();
+    let (mut pacer, first) = chimera_core::ui::animation::Pacer::start(controls::now_ms());
+    ui.update(first);
     ui.render_with_audio(&mut display, &perf.stats, None, scope_r.read());
     display.flush();
     ui.prime_regions(&perf.stats, None, scope_r.read());
@@ -326,15 +334,37 @@ fn synth(board: Board) -> ! {
     let mut last_tick = controls::ticks();
     loop {
         controls.snapshot();
-        if controls.has_activity() {
-            ui.handle_input(&controls);
+        // Every frame, even idle: a held key must age.
+        ui.handle_input(&controls);
+        // Card work the keys asked for, under BUSY. A load settles before
+        // it publishes: the ack, or `LOAD_ACK_TICKS`.
+        let busy = ui.card_pending();
+        if busy {
+            let (y0, y1) = draw_busy(&mut display);
+            display.flush_region(y0, y1);
         }
-        // Leaving System syncs SYSTEM, with no overlay first: a save is
+        let cx = CardCx {
+            card: &mut card,
+            store: &mut *store,
+            sync: &mut sync,
+            settings: &mut settings,
+        };
+        ui.card_work(cx, &LOAD_LINK, |swap, p| {
+            let t0 = controls::ticks();
+            let _ = swap.settle(&LOAD_LINK, || {
+                controls::ticks().wrapping_sub(t0) < LOAD_ACK_TICKS
+            });
+            shared_w.publish(|b| b.update_from(p.perf(), LOAD_LINK.epoch()));
+        });
+        // Leaving SETTINGS syncs SYSTEM, with no overlay first: a save is
         // quicker than BUSY can be read. A toast says how it went.
         ui.sync_system(&mut sync, &mut card, store, &mut settings);
-        // System › Theme: the UI loop owns the display and the backlight.
+        // SETTINGS › THEME: the UI loop owns the display and the backlight.
         let recolour = apply_theme(ui.theme(), &mut theme, &mut backlight, &mut display);
-        ui.update();
+        // The loop spins as fast as it can; animation runs at UI_FPS.
+        if let Some(t) = pacer.due(controls::now_ms()) {
+            ui.update(t);
+        }
         shared_w.publish(|b| b.update_from(ui.project().perf(), LOAD_LINK.epoch()));
         let stats = stats_r.as_mut().map(|r| {
             let mut s = *r.read();
@@ -346,11 +376,14 @@ fn synth(board: Board) -> ! {
         let elapsed_ms = now.wrapping_sub(last_tick) * 1_000 / controls::CONTROLS_HZ;
         last_tick = now;
         let toast = ui.step_toast(elapsed_ms);
-        if toast == ToastStep::Ended {
-            // The toast covered rows the dirty regions don't know about.
+        if toast == ToastStep::Ended || busy {
+            // The toast or BUSY covered rows the dirty regions don't know about.
             ui.render_with_audio(&mut display, &perf.stats, stats.as_ref(), scope_r.read());
-            display.flush();
             ui.prime_regions(&perf.stats, stats.as_ref(), scope_r.read());
+            if let ToastStep::Show(text) = toast {
+                draw_toast(&mut display, text.as_str());
+            }
+            display.flush();
             continue;
         }
         let flush_list =

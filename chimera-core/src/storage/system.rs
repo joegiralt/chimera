@@ -3,7 +3,7 @@
 
 use chimera_hal::store::{Dir, Store, StoreError, VolumeId};
 
-use crate::addr::{BlockRef, Blocks};
+use crate::addr::{BlockRead, BlockRef, Blocks};
 use crate::block::Block;
 use crate::ui::theme_settings::ThemeSettings;
 
@@ -56,11 +56,13 @@ pub fn body_crc(s: &SystemSettings) -> u32 {
 /// The theme as the one block a `Block` record can reach.
 struct ThemeBlocks<'a>(&'a mut ThemeSettings);
 
-impl Blocks for ThemeBlocks<'_> {
+impl BlockRead for ThemeBlocks<'_> {
     fn block(&self, b: BlockRef) -> Option<&dyn Block> {
         (b == BlockRef::Theme).then_some(&*self.0 as &dyn Block)
     }
+}
 
+impl Blocks for ThemeBlocks<'_> {
     fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
         (b == BlockRef::Theme).then_some(&mut *self.0 as &mut dyn Block)
     }

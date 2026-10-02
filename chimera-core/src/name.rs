@@ -1,17 +1,20 @@
 //! Display names stored in file headers.
 
+use core::num::NonZeroU8;
+
 /// A display name: 1..=N bytes of A-Z a-z 0-9, space and '-', with no
 /// leading or trailing space. Only `new` and `from_padded` make one.
 ///
 /// ```compile_fail,E0451
 /// use chimera_core::name::Name;
-/// let _ = Name::<16> { bytes: [b'A'; 16], len: 16 };
+/// let _ = Name::<16> { bytes: [b'A'; 16], len: core::num::NonZeroU8::MIN };
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Name<const N: usize> {
     /// NUL past `len`, so the derived equality is the text's.
     bytes: [u8; N],
-    len: u8,
+    /// Never 0, so `Option<Name>` costs no tag.
+    len: NonZeroU8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,19 +35,17 @@ impl<const N: usize> Name<N> {
     pub const fn new(s: &str) -> Result<Self, NameError> {
         let () = Self::FITS_U8;
         let b = s.as_bytes();
-        if let Err(e) = check(b, N) {
-            return Err(e);
-        }
+        let len = match check(b, N) {
+            Ok(n) => n,
+            Err(e) => return Err(e),
+        };
         let mut bytes = [0; N];
         let mut i = 0;
         while i < b.len() {
             bytes[i] = b[i];
             i += 1;
         }
-        Ok(Name {
-            bytes,
-            len: b.len() as u8,
-        })
+        Ok(Name { bytes, len })
     }
 
     /// The disk form: the name, then NULs to N bytes.
@@ -54,16 +55,13 @@ impl<const N: usize> Name<N> {
         if b[len..].iter().any(|&c| c != 0) {
             return Err(NameError::BadChar(0));
         }
-        check(&b[..len], N)?;
-        Ok(Name {
-            bytes: *b,
-            len: len as u8,
-        })
+        let len = check(&b[..len], N)?;
+        Ok(Name { bytes: *b, len })
     }
 
     pub fn as_str(&self) -> &str {
         // ASCII by construction, so this never falls back.
-        core::str::from_utf8(&self.bytes[..self.len as usize]).unwrap_or("")
+        core::str::from_utf8(&self.bytes[..self.len.get() as usize]).unwrap_or("")
     }
 
     pub fn padded(&self) -> [u8; N] {
@@ -71,17 +69,23 @@ impl<const N: usize> Name<N> {
     }
 }
 
-const fn check(b: &[u8], max: usize) -> Result<(), NameError> {
-    if b.is_empty() {
-        return Err(NameError::Empty);
-    }
+/// A-Z a-z 0-9, space or '-'.
+pub const fn is_name_byte(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b' ' || c == b'-'
+}
+
+/// The length of a valid name: 1..=`max`, `max` within a byte.
+const fn check(b: &[u8], max: usize) -> Result<NonZeroU8, NameError> {
     if b.len() > max {
         return Err(NameError::TooLong);
     }
+    let Some(len) = NonZeroU8::new(b.len() as u8) else {
+        return Err(NameError::Empty);
+    };
     let mut i = 0;
     while i < b.len() {
         let c = b[i];
-        if !(c.is_ascii_alphanumeric() || c == b' ' || c == b'-') {
+        if !is_name_byte(c) {
             return Err(NameError::BadChar(c));
         }
         i += 1;
@@ -89,5 +93,5 @@ const fn check(b: &[u8], max: usize) -> Result<(), NameError> {
     if b[0] == b' ' || b[b.len() - 1] == b' ' {
         return Err(NameError::EdgeSpace);
     }
-    Ok(())
+    Ok(len)
 }

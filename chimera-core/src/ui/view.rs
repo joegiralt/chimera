@@ -2,7 +2,7 @@
 //! filter kind's panel and route views resolve here against the
 //! Sound, so pages, vizzes and encoders all read by address.
 
-use crate::addr::{BlockRef, Blocks, Op, ParamAddr};
+use crate::addr::{BlockRead, BlockRef, Op, ParamAddr};
 use crate::block::ValFmt;
 use crate::dsp::algo::params::AlgoParams;
 use crate::dsp::filter::FilterKind;
@@ -56,8 +56,8 @@ pub struct SlotCtx {
 }
 
 impl SlotCtx {
-    /// Read from any `Blocks`: a Sound's params or a Part view.
-    pub fn read(params: &impl Blocks, sel_op: Op) -> Self {
+    /// Read from any `BlockRead`: a Sound's params or a Part view.
+    pub fn read(params: &impl BlockRead, sel_op: Op) -> Self {
         let get = |b: BlockRef, id| params.block(b).map_or(0.0, |blk| blk.get(id));
         Self {
             sel_op,

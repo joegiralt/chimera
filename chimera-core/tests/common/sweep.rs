@@ -3,7 +3,7 @@
 //! registry lists set through `Block::set` as the UI sets it, and each DAC
 //! pair measured apart, not summed as the desktop's speakers hear them.
 
-use chimera_core::addr::{BlockRef, Blocks, ParamAddr};
+use chimera_core::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use chimera_core::block::{ParamId, ParamKind, ParamSpec};
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::chorus::ChorusParams;

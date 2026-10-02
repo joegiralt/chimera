@@ -99,9 +99,110 @@ impl ButtonState {
     }
 }
 
+impl ButtonState {
+    /// From a frame's latched edges: a press this frame is `Pressed` even if
+    /// it was already released, so a tap inside a stalled frame is kept.
+    pub const fn from_edges(e: Edges) -> Self {
+        if e.pressed_at.is_some() {
+            ButtonState::Pressed
+        } else if e.released_at.is_some() {
+            ButtonState::Released
+        } else if e.down {
+            ButtonState::Held
+        } else {
+            ButtonState::Up
+        }
+    }
+}
+
+/// A millisecond timestamp. It wraps, so compare with `since`, never `<`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Ms(pub u32);
+
+impl Ms {
+    /// Ms elapsed since `earlier`, across a wrap.
+    pub fn since(self, earlier: Ms) -> u32 {
+        self.0.wrapping_sub(earlier.0)
+    }
+}
+
+/// A button's level now and the edges since the last frame, in ms.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct Edges {
+    pub down: bool,
+    pub pressed_at: Option<Ms>,
+    pub released_at: Option<Ms>,
+}
+
+/// Latches a button's edges between frames: the control tick feeds it
+/// levels, the frame takes the edges. Several of one edge in a frame keep
+/// the last.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Latch(Edges);
+
+impl Latch {
+    pub const fn new() -> Self {
+        Self(Edges {
+            down: false,
+            pressed_at: None,
+            released_at: None,
+        })
+    }
+
+    /// Records a press or release when `down` differs from the last level.
+    pub fn level(&mut self, down: bool, now_ms: Ms) {
+        if down == self.0.down {
+            return;
+        }
+        self.0.down = down;
+        if down {
+            self.0.pressed_at = Some(now_ms);
+        } else {
+            self.0.released_at = Some(now_ms);
+        }
+    }
+
+    /// The frame's edges; clears them and keeps the level.
+    pub fn take(&mut self) -> Edges {
+        let e = self.0;
+        self.0 = Edges {
+            down: e.down,
+            ..Edges::default()
+        };
+        e
+    }
+}
+
 pub trait Controls {
     fn encoder_delta(&self, id: EncoderId) -> i8;
     fn button_state(&self, id: ButtonId) -> ButtonState;
+
+    /// The button's edges this frame. Shells that latch override it; this
+    /// one stamps `button_state`'s edge at `now_ms`.
+    fn edges(&self, id: ButtonId) -> Edges {
+        let now = Some(self.now_ms());
+        match self.button_state(id) {
+            ButtonState::Up => Edges::default(),
+            ButtonState::Pressed => Edges {
+                down: true,
+                pressed_at: now,
+                released_at: None,
+            },
+            ButtonState::Held => Edges {
+                down: true,
+                ..Edges::default()
+            },
+            ButtonState::Released => Edges {
+                released_at: now,
+                ..Edges::default()
+            },
+        }
+    }
+
+    /// The controls' clock, in ms.
+    fn now_ms(&self) -> Ms {
+        Ms(0)
+    }
 }
 
 /// MIDI note number, 0..=127. Built at the MIDI trust boundary (the parser,
@@ -224,4 +325,121 @@ pub trait ChimeraDisplay: DrawTarget<Color = Rgb565> {
 
     /// Raw pixel access for custom rendering
     fn pixel_buffer(&mut self) -> &mut [u16];
+}
+
+#[cfg(test)]
+mod latch_tests {
+    use super::*;
+
+    #[test]
+    fn latch_keeps_a_tap_between_takes() {
+        let mut l = Latch::new();
+        l.level(true, Ms(10));
+        l.level(false, Ms(40));
+        let e = l.take();
+        assert_eq!(
+            e,
+            Edges {
+                down: false,
+                pressed_at: Some(Ms(10)),
+                released_at: Some(Ms(40))
+            }
+        );
+        assert_eq!(ButtonState::from_edges(e), ButtonState::Pressed);
+        let e = l.take();
+        assert_eq!(e, Edges::default());
+        assert_eq!(ButtonState::from_edges(e), ButtonState::Up);
+    }
+
+    #[test]
+    fn latch_held_across_takes() {
+        let mut l = Latch::new();
+        l.level(true, Ms(3));
+        assert_eq!(ButtonState::from_edges(l.take()), ButtonState::Pressed);
+        l.level(true, Ms(5)); // no change: no edge
+        let e = l.take();
+        assert_eq!(
+            e,
+            Edges {
+                down: true,
+                pressed_at: None,
+                released_at: None
+            }
+        );
+        assert_eq!(ButtonState::from_edges(e), ButtonState::Held);
+    }
+
+    #[test]
+    fn latch_release_then_press() {
+        let mut l = Latch::new();
+        l.level(true, Ms(0));
+        l.take();
+        l.level(false, Ms(5));
+        l.level(true, Ms(9));
+        let e = l.take();
+        assert_eq!(
+            e,
+            Edges {
+                down: true,
+                pressed_at: Some(Ms(9)),
+                released_at: Some(Ms(5))
+            }
+        );
+        assert_eq!(ButtonState::from_edges(e), ButtonState::Pressed);
+    }
+
+    #[test]
+    fn a_lone_release_is_released() {
+        let mut l = Latch::new();
+        l.level(true, Ms(0));
+        l.take();
+        l.level(false, Ms(7));
+        assert_eq!(ButtonState::from_edges(l.take()), ButtonState::Released);
+    }
+
+    struct Fixed(ButtonState);
+
+    impl Controls for Fixed {
+        fn encoder_delta(&self, _: EncoderId) -> i8 {
+            0
+        }
+        fn button_state(&self, _: ButtonId) -> ButtonState {
+            self.0
+        }
+        fn now_ms(&self) -> Ms {
+            Ms(77)
+        }
+    }
+
+    #[test]
+    fn default_edges_follow_button_state() {
+        for s in [
+            ButtonState::Up,
+            ButtonState::Pressed,
+            ButtonState::Held,
+            ButtonState::Released,
+        ] {
+            let e = Fixed(s).edges(ButtonId::Menu);
+            assert_eq!(ButtonState::from_edges(e), s, "{s:?}");
+        }
+        assert_eq!(
+            Fixed(ButtonState::Pressed).edges(ButtonId::Menu).pressed_at,
+            Some(Ms(77))
+        );
+        assert_eq!(
+            Fixed(ButtonState::Released)
+                .edges(ButtonId::Menu)
+                .released_at,
+            Some(Ms(77))
+        );
+        assert_eq!(
+            Fixed(ButtonState::Held).edges(ButtonId::Menu).pressed_at,
+            None
+        );
+    }
+
+    #[test]
+    fn ms_since_wraps() {
+        assert_eq!(Ms(5).since(Ms(u32::MAX - 4)), 10);
+    }
 }

@@ -33,12 +33,13 @@ impl Project {
     /// template: a project equal to it is `Pristine`.
     pub fn init_in_place(slot: &mut MaybeUninit<Project>) -> TemplateCrc {
         let p = slot.as_mut_ptr();
-        // SAFETY: `p` is valid and unaliased; `meta`, `pool` (in place) and
-        // `perf` are each written once before `assume_init_mut`.
+        // SAFETY: `p` is valid and unaliased; `meta`, `pool` (in place),
+        // `perf` and `rev` are each written once before `assume_init_mut`.
         let project = unsafe {
             addr_of_mut!((*p).meta).write(ProjectMeta::new_project());
             Pool::init_in_place(uninit_at(addr_of_mut!((*p).pool)));
             addr_of_mut!((*p).perf).write(Performance::new());
+            addr_of_mut!((*p).rev).write(0);
             slot.assume_init_mut()
         };
         project.fill_new_pool();
@@ -57,6 +58,7 @@ impl Project {
     /// CRC: the template was taken once, at `init_in_place`, and a hash
     /// here is a whole project's (about 0.5–0.9 ms on the chip).
     pub(crate) fn reset_new(&mut self) {
+        self.bump();
         self.meta = ProjectMeta::new_project();
         self.perf.reset();
         self.fill_new_pool();
@@ -66,16 +68,20 @@ impl Project {
     /// a slot at a time, and every generation moves.
     fn fill_new_pool(&mut self) {
         for s in SlotId::ALL {
-            let i = s.index();
-            let sound = match i.checked_sub(FACTORY_LEN) {
-                None => factory_sound(i),
-                Some(j) => EngineType::ALL.get(j).map(|&e| Sound::init(e)),
-            };
-            match sound {
+            match new_slot(s) {
                 Some(sound) => self.pool.store(s, sound),
                 None => self.pool.clear(s),
             }
         }
+    }
+}
+
+/// NEW's Sound in slot `s`.
+pub(super) fn new_slot(s: SlotId) -> Option<Sound> {
+    let i = s.index();
+    match i.checked_sub(FACTORY_LEN) {
+        None => factory_sound(i),
+        Some(j) => EngineType::ALL.get(j).map(|&e| Sound::init(e)),
     }
 }
 

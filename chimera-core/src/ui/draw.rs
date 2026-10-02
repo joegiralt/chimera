@@ -42,9 +42,9 @@ where
 {
     let mut cx = x;
     for ch in s.chars() {
-        if ch == MIDDOT {
-            fill_rect(d, cx, y - 4, 2, 2, color);
-            cx += MIDDOT_ADV + tracking;
+        if let Some(adv) = mark_adv(ch) {
+            draw_mark(d, ch, cx, y, color);
+            cx += adv + tracking;
             continue;
         }
         let adv = font
@@ -61,17 +61,48 @@ where
     cx - x
 }
 
-/// `·`, which the u8g2 faces lack: `text_tracked` draws it as a 2×2 dot.
+/// Marks: characters the ASCII u8g2 faces lack, drawn as primitives by
+/// `text_tracked` and counted by `text_width`. `·` is a 2×2 dot.
 pub const MIDDOT: char = '·';
-const MIDDOT_ADV: i32 = 3;
+/// A 3×5 chevron: a row that opens more.
+pub const CHEVRON: char = '›';
+/// A filled dot, r = 2: the loaded one.
+pub const BULLET: char = '●';
+/// A hollow dot, r = 2.
+pub const RING: char = '◦';
+
+fn mark_adv(ch: char) -> Option<i32> {
+    match ch {
+        MIDDOT => Some(3),
+        CHEVRON => Some(5),
+        BULLET | RING => Some(6),
+        _ => None,
+    }
+}
+
+fn draw_mark<D>(d: &mut D, ch: char, x: i32, y: i32, color: Rgb565)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    match ch {
+        MIDDOT => fill_rect(d, x, y - 4, 2, 2, color),
+        CHEVRON => {
+            line(d, x, y - 6, x + 2, y - 4, color, 1);
+            line(d, x + 2, y - 4, x, y - 2, color, 1);
+        }
+        BULLET => dot(d, x + 2, y - 4, 2, color),
+        RING => ring(d, x + 2, y - 4, 2, color, 1),
+        _ => debug_assert!(false, "{ch:?} is not a mark"),
+    }
+}
 
 /// Advance of `s` in `font` (with `tracking` after each glyph).
 pub fn text_width(font: &FontRenderer, s: &str, tracking: i32) -> i32 {
     let adv = font
         .get_rendered_dimensions(s, Point::zero(), VerticalPosition::Baseline)
         .map_or(0, |dims| dims.advance.x);
-    let dots = s.chars().filter(|&c| c == MIDDOT).count() as i32;
-    adv + dots * MIDDOT_ADV + tracking * s.chars().count() as i32
+    let marks: i32 = s.chars().filter_map(mark_adv).sum();
+    adv + marks + tracking * s.chars().count() as i32
 }
 
 /// Draw `s` ending at `right` (exclusive).

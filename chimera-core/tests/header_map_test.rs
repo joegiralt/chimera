@@ -4,37 +4,87 @@ mod screen;
 
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::part::DacPair::{self, P1};
+use chimera_core::project::PartId;
 use chimera_core::ui::UiState;
+use chimera_core::ui::block_def::{BlockDef, ChainDef2};
 use chimera_core::ui::block_registry::ALGO_CHAIN;
-use chimera_core::ui::chain::{ChainId, ChainNav};
-use chimera_core::ui::components::{header, header_fits, header_text};
+use chimera_core::ui::block_registry::MIXER_CHANNEL_CHAIN;
+use chimera_core::ui::components::{Head, header, header_fits, header_text};
 use chimera_core::ui::dungeon_map::{self, node_x};
+use chimera_core::ui::nav::{Location, PageAt};
 use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::theme;
 use chimera_hal::ButtonId;
 use screen::{Fb, Input, feed, osc_node, scope_fixture, settle, to_osc};
 
-fn texts(nav: &ChainNav) -> (String, String) {
-    let h = header_text(nav, nav.active_block_def(), ResonatorMode::String, "", P1);
+/// A page: whose, on which chain, where.
+#[derive(Clone, Copy)]
+struct At {
+    head: Head,
+    chain: &'static ChainDef2,
+    node: usize,
+    sub: usize,
+}
+
+impl At {
+    fn new(head: Head, chain: &'static ChainDef2) -> Self {
+        At {
+            head,
+            chain,
+            node: 0,
+            sub: 0,
+        }
+    }
+
+    fn sound(n: usize) -> Self {
+        Self::new(Head::Sound(PartId::ALL[n]), &ALGO_CHAIN)
+    }
+
+    fn mix(n: usize) -> Self {
+        Self::new(Head::Mix(PartId::ALL[n]), &MIXER_CHANNEL_CHAIN)
+    }
+
+    fn at(self, node: usize, sub: usize) -> Self {
+        At { node, sub, ..self }
+    }
+
+    fn def(&self) -> &'static BlockDef {
+        self.chain.active_def(self.node, self.sub).unwrap()
+    }
+
+    fn subs(&self) -> usize {
+        self.chain
+            .block_at(self.node)
+            .map_or(0, |b| b.sub_page_count())
+    }
+
+    fn page(&self) -> PageAt {
+        self.chain.page(self.node, self.sub).unwrap()
+    }
+}
+
+fn texts(at: At) -> (String, String) {
+    let h = header_text(at.head, at.def(), ResonatorMode::String, "", P1);
     (h.context.as_str().to_string(), h.name.as_str().to_string())
 }
 
 #[test]
 fn header_names_context_and_page() {
-    let mut nav = ChainNav::new();
-    assert_eq!(texts(&nav), ("PART 1 · SOUND".into(), "ALGORITHM".into()));
-    nav.node = 3;
-    assert_eq!(texts(&nav), ("PART 1 · SOUND".into(), "FILTER".into()));
-    nav.chain_id = ChainId::Mixer(1);
-    nav.node = 0;
-    assert_eq!(texts(&nav), ("PART 2 · MIX".into(), "PART".into()));
-    nav.node = 1;
-    assert_eq!(texts(&nav), ("PART 2 · MIX".into(), "SENDS".into()));
-    nav.node = 2;
-    assert_eq!(texts(&nav), ("PART 2 · MIX".into(), "CHORUS".into()));
-    nav.chain_id = ChainId::System;
-    nav.node = 0;
-    assert_eq!(texts(&nav), ("SYSTEM".into(), "TUNING".into()));
+    let p1 = At::sound(0);
+    assert_eq!(texts(p1), ("PART 1 · SOUND".into(), "ALGORITHM".into()));
+    assert_eq!(
+        texts(p1.at(3, 0)),
+        ("PART 1 · SOUND".into(), "FILTER".into())
+    );
+    let m2 = At::mix(1);
+    assert_eq!(texts(m2), ("PART 2 · MIX".into(), "PART".into()));
+    assert_eq!(texts(m2.at(1, 0)), ("PART 2 · MIX".into(), "SENDS".into()));
+    assert_eq!(texts(m2.at(2, 0)), ("PART 2 · MIX".into(), "CHORUS".into()));
+    let tuning = At::new(
+        Head::Settings,
+        chimera_core::ui::settings::leaves::TUNING_LEAF.chain(),
+    );
+    assert_eq!(texts(tuning), ("SETTINGS".into(), "TUNING".into()));
 }
 
 #[test]
@@ -74,25 +124,25 @@ fn every_header_fits() {
     use chimera_core::dsp::modal::{EXCITER_NAMES, ResonatorMode as M};
     use chimera_core::params::EngineType;
     use chimera_core::ui::block_registry::MODAL_EXC;
+    use chimera_core::ui::nav::chain_def_for;
     let models = [M::String, M::Modal, M::Bowed, M::Sympathetic];
-    for (chain_id, engine) in [
-        (ChainId::Part(5), EngineType::Algo),
-        (ChainId::Part(5), EngineType::Modal),
-        (ChainId::Mixer(5), EngineType::Algo),
-        (ChainId::System, EngineType::Algo),
-        (ChainId::Demo, EngineType::Algo),
-    ] {
-        let mut nav = ChainNav::new();
-        (nav.chain_id, nav.engine) = (chain_id, engine);
-        for node in 0..nav.active_chain().len() {
-            nav.node = node;
-            let subs = nav
-                .active_chain_block()
-                .map_or(0, |b| b.sub_page_count())
-                .max(1);
+    let p6 = PartId::ALL[5];
+    let mut places = vec![
+        At::new(Head::Sound(p6), chain_def_for(EngineType::Algo)),
+        At::new(Head::Sound(p6), chain_def_for(EngineType::Modal)),
+        At::mix(5),
+    ];
+    places.extend(
+        chimera_core::ui::block_registry::ALL_CHAINS[3..]
+            .iter()
+            .map(|&c| At::new(Head::Settings, c)),
+    );
+    for place in places {
+        for node in 0..place.chain.len() {
+            let subs = place.at(node, 0).subs().max(1);
             for sub in 0..subs {
-                nav.sub_page = sub;
-                let def = nav.active_block_def();
+                let at = place.at(node, sub);
+                let def = at.def();
                 // Only the ENV pages take a TYPE suffix.
                 let suffixes: &[&str] = if def.name.starts_with("Env") {
                     &["", " / A", " / B"]
@@ -104,7 +154,7 @@ fn every_header_fits() {
                         [DacPair::P1, DacPair::P2, DacPair::P3].map(|o| (m, s, o))
                     })
                 }) {
-                    let h = header_text(&nav, def, model, suffix, out);
+                    let h = header_text(at.head, def, model, suffix, out);
                     let what = format!("{} / {}{:?}", h.context.as_str(), h.name.as_str(), h.warn);
                     assert!(header_fits(&h), "{what}");
                     if h.warn.is_none() {
@@ -124,26 +174,17 @@ fn every_header_fits() {
 /// The OUT warning's page names: whole where they fit, short where not.
 #[test]
 fn the_out_warning_keeps_short_names_whole() {
-    let mut nav = ChainNav::new();
-    nav.chain_id = ChainId::Mixer(1);
-    nav.node = 1;
+    let sends = At::mix(1).at(1, 0);
     let h = header_text(
-        &nav,
-        nav.active_block_def(),
+        sends.head,
+        sends.def(),
         ResonatorMode::String,
         "",
         DacPair::P3,
     );
     assert_eq!((h.name.as_str(), h.warn), ("SENDS", Some("OUT P3")));
-    nav.chain_id = ChainId::Part(1);
-    nav.node = 0;
-    let h = header_text(
-        &nav,
-        nav.active_block_def(),
-        ResonatorMode::String,
-        "",
-        DacPair::P2,
-    );
+    let alg = At::sound(1);
+    let h = header_text(alg.head, alg.def(), ResonatorMode::String, "", DacPair::P2);
     assert_eq!((h.name.as_str(), h.warn), ("ALG", Some("OUT P2")));
 }
 
@@ -188,10 +229,9 @@ fn nodes_spread_over_the_line_and_a_single_node_is_centred() {
 
 #[test]
 fn current_block_is_an_accent_pill_others_are_rings() {
-    let mut nav = ChainNav::new();
-    nav.node = 3; // FLT of OSC ALG DRV FLT FLD MOD
+    let flt = At::sound(0).at(3, 0); // FLT of OSC ALG DRV FLT FLD MOD
     let mut fb = Fb::new();
-    dungeon_map::draw(&mut fb, &nav, ResonatorMode::String, 0);
+    dungeon_map::draw(&mut fb, flt.chain, flt.page(), ResonatorMode::String, 0);
     let (pill, other) = (node_x(3, 6), node_x(0, 6));
     assert_eq!(
         fb.at(pill - 14, theme::MAP_LINE_Y),
@@ -211,11 +251,9 @@ fn current_block_is_an_accent_pill_others_are_rings() {
 
 #[test]
 fn sub_pages_hang_under_the_pill_with_the_current_one_lit() {
-    let mut nav = ChainNav::new();
-    nav.node = 5; // MOD: MOD, ENV, LFO
-    nav.sub_page = 1;
+    let env = At::sound(0).at(5, 1); // MOD: MOD, ENV, LFO
     let mut fb = Fb::new();
-    dungeon_map::draw(&mut fb, &nav, ResonatorMode::String, 0);
+    dungeon_map::draw(&mut fb, env.chain, env.page(), ResonatorMode::String, 0);
     let x = node_x(5, 6) - 8;
     let lit_row = theme::BRANCH_START_Y + theme::BRANCH_LINE_HEIGHT + theme::BRANCH_LINE_HEIGHT / 2;
     assert_eq!(fb.at(x, lit_row), theme::ACCENT, "ENV lit");
@@ -225,26 +263,14 @@ fn sub_pages_hang_under_the_pill_with_the_current_one_lit() {
 
 #[test]
 fn the_map_draws_only_in_its_band_on_every_chain() {
-    for chain_id in [
-        ChainId::Part(0),
-        ChainId::Mixer(0),
-        ChainId::System,
-        ChainId::Demo,
-    ] {
-        let n = {
-            let mut nav = ChainNav::new();
-            nav.chain_id = chain_id;
-            nav.active_chain().len()
-        };
-        for node in 0..n {
-            let mut nav = ChainNav::new();
-            nav.chain_id = chain_id;
-            nav.node = node;
-            let subs = nav.active_chain_block().map_or(0, |b| b.sub_page_count());
+    for place in [At::sound(0), At::mix(0)] {
+        let chain_id = place.chain.name;
+        for node in 0..place.chain.len() {
+            let subs = place.at(node, 0).subs();
             for sub in 0..subs.max(1) {
-                nav.sub_page = sub;
+                let at = place.at(node, sub);
                 let mut fb = Fb::new();
-                dungeon_map::draw(&mut fb, &nav, ResonatorMode::String, 0);
+                dungeon_map::draw(&mut fb, at.chain, at.page(), ResonatorMode::String, 0);
                 assert!(
                     fb.px[..theme::MAP_TOP as usize * 240]
                         .iter()
@@ -265,16 +291,20 @@ fn a_fresh_algo_part_lands_on_the_algo_page() {
     use chimera_core::params::EngineType;
     use chimera_core::ui::block_registry::ALGO_ALG;
     let mut ui = UiState::new();
-    assert_eq!(ui.nav.engine, EngineType::Algo);
-    assert_eq!(ui.nav.active_block_def().id, ALGO_ALG.id);
+    assert_eq!(
+        ui.project().part(PartId::ALL[0]).sound.engine(),
+        EngineType::Algo
+    );
+    assert_eq!(ui.page_def().id, ALGO_ALG.id);
     feed(&mut ui, Input::press(ButtonId::Plus));
     feed(&mut ui, Input::press(ButtonId::B2));
-    assert_eq!(ui.nav.chain_id, ChainId::Part(1));
-    assert_eq!(ui.nav.active_block_def().id, ALGO_ALG.id);
+    let home = |p: usize| Location::pages(PartId::ALL[p], ALGO_CHAIN.home());
+    assert_eq!(ui.location(), home(1));
+    assert_eq!(ui.page_def().id, ALGO_ALG.id);
     feed(&mut ui, Input::press(ButtonId::Plus));
     feed(&mut ui, Input::press(ButtonId::B1));
-    assert_eq!(ui.nav.chain_id, ChainId::Part(0));
-    assert_eq!(ui.nav.active_block_def().id, ALGO_ALG.id);
+    assert_eq!(ui.location(), home(0));
+    assert_eq!(ui.page_def().id, ALGO_ALG.id);
 }
 
 /// Spec § UI: whichever node is current, the Algo chain's map pill and
@@ -329,7 +359,7 @@ fn every_osc_sub_page_is_reachable_and_lit_on_the_map() {
         if sub > 0 {
             feed(&mut ui, Input::press(ButtonId::Edit));
         }
-        assert_eq!(ui.nav.active_block_def().id, block.active_def(sub).id);
+        assert_eq!(ui.page_def().id, block.active_def(sub).id);
         settle(&mut ui);
         let mut fb = Fb::new();
         ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
@@ -348,8 +378,8 @@ fn every_osc_sub_page_is_reachable_and_lit_on_the_map() {
     }
     feed(&mut ui, Input::press(ButtonId::Edit));
     assert_eq!(
-        ui.nav.sub_page,
-        block.sub_page_count() - 1,
+        ui.page_def().id,
+        block.active_def(block.sub_page_count() - 1).id,
         "EDIT stops at the last"
     );
 }
@@ -393,10 +423,8 @@ fn a_model_change_redraws_the_map() {
 fn the_exciter_page_is_named_after_the_exciter() {
     use chimera_core::dsp::modal::{EXCITER_NAMES, ResonatorMode as M};
     use chimera_core::ui::block_registry::{MODAL_EXC, MODAL_PLUCK_CHAIN};
-    let mut nav = ChainNav::new();
-    nav.chain_id = ChainId::Part(0);
     for m in [M::String, M::Modal, M::Bowed, M::Sympathetic] {
-        let h = header_text(&nav, &MODAL_EXC, m, "", P1);
+        let h = header_text(Head::Sound(PartId::ALL[0]), &MODAL_EXC, m, "", P1);
         assert_eq!(h.name.as_str(), EXCITER_NAMES[m as usize], "{m:?}");
         assert_eq!(dungeon_map::page_label(&MODAL_EXC, m), "EXC");
     }

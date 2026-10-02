@@ -3,7 +3,7 @@ use embedded_graphics::geometry::{Point, Size};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, StyledDrawable};
 
-use crate::addr::{Blocks, Op, ParamAddr};
+use crate::addr::{BlockRead, Op, ParamAddr};
 use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::modulator::{EnvType, HoldPos};
 use crate::part::DacPair;
@@ -12,9 +12,8 @@ use crate::project::PartId;
 use crate::ui::PrimeStatus;
 use crate::ui::animation::AnimatedValue;
 use crate::ui::audio_page;
-use crate::ui::block_def::{BlockDef, FxFlow, SlotBinding, VizType, slot_addr};
-use crate::ui::chain::{ChainId, ChainNav};
-use crate::ui::components;
+use crate::ui::block_def::{BlockDef, ChainDef2, FxFlow, SlotBinding, VizType, slot_addr};
+use crate::ui::components::{self, Head};
 use crate::ui::dungeon_map;
 use crate::ui::fmt::{self, FmtBuf};
 use crate::ui::glyph::{
@@ -22,16 +21,28 @@ use crate::ui::glyph::{
     RINGS_PARAMS, Rings, RingsPart,
 };
 use crate::ui::mod_grid::MatrixState;
+use crate::ui::nav::PageAt;
 use crate::ui::page::PageLayout;
 use crate::ui::perf::PerfStats;
-use crate::ui::region::{self, RegionKind};
+use crate::ui::region::{self, Layout, RegionKind};
+use crate::ui::settings::Ask;
+use crate::ui::settings::prompt::{Beneath, blank_beneath, draw_prompt};
+use crate::ui::settings::view::Bands;
 use crate::ui::theme;
 use crate::ui::view::{self, EnvKind, SlotCtx, View};
 use crate::ui::viz;
 
 /// Everything one frame draws from, besides the renderer's own animation.
 pub struct Frame<'a> {
-    pub nav: &'a ChainNav,
+    /// Whose page this is, for the header and its OUT warning.
+    pub head: Head,
+    /// The chain the map shows, and where on it; `None` in SETTINGS.
+    pub map: Option<(&'static ChainDef2, PageAt)>,
+    pub layout: Layout,
+    /// SETTINGS' breadcrumb, list and footer.
+    pub settings: Option<Bands<'a>>,
+    /// A prompt over the screen.
+    pub(crate) prompt: Option<&'a Ask>,
     pub def: &'static BlockDef,
     pub perf: &'a PerfStats,
     pub matrix: &'a MatrixState,
@@ -50,8 +61,10 @@ pub struct Frame<'a> {
     /// The last MIX+PLUS outcome, shown in the focus band in place of the
     /// value readout (issue #21).
     pub prime_status: Option<PrimeStatus>,
-    /// The AUDIO sub-page's measured stats, `None` where it is not shown.
+    /// The measured stats AUDIO LOAD and ABOUT show; `None` where not had.
     pub audio: Option<&'a AudioStats>,
+    /// The card as last seen, for ABOUT.
+    pub card: crate::storage::Card,
     /// The master compressor's gain reduction, dB (MST's GR meter).
     pub master_gr_db: f32,
     /// Animation phase: what an animated glyph draws from.
@@ -192,6 +205,7 @@ impl Renderer {
                 let ratio = RATIOS[((a(1) * 7.0 + 0.5) as usize).min(RATIOS.len() - 1)];
                 viz::compressor(display, -40.0 + 40.0 * a(0), ratio, f.master_gr_db);
             }
+            VizType::About => crate::ui::about_page::draw_viz(display),
             VizType::EnvSpeed => {
                 let e = &f.parts[f.active_part.index()].sound.params.envelopes;
                 viz::env_speed(
@@ -290,8 +304,25 @@ impl Renderer {
             Size::new(theme::SCREEN_W as u32, theme::SCREEN_H as u32),
         )
         .draw_styled(&PrimitiveStyle::with_fill(theme::BG), display);
-        for &(kind, _, _) in region::layout_regions(f.def.layout) {
+        for &(kind, _, _) in f.layout.regions() {
             self.draw_region_with_def(display, kind, f);
+        }
+        Self::blank_beneath_prompt(display, f);
+        self.draw_region_with_def(display, RegionKind::Prompt, f);
+    }
+
+    /// Under an opening prompt: the panel's band over a SETTINGS list,
+    /// all but the header and map over a page.
+    pub fn blank_beneath_prompt<D>(display: &mut D, f: &Frame)
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        if f.prompt.is_some() {
+            let on = match f.settings {
+                Some(_) => Beneath::List,
+                None => Beneath::Page,
+            };
+            blank_beneath(display, on);
         }
     }
 
@@ -338,7 +369,7 @@ impl Renderer {
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        let (nav, def, matrix_state) = (f.nav, f.def, f.matrix);
+        let (def, matrix_state) = (f.def, f.matrix);
         match kind {
             RegionKind::Header => self.draw_header(display, f),
             RegionKind::Focus => self.draw_focus(display, f),
@@ -355,12 +386,35 @@ impl Renderer {
                 inert(f),
             ),
             RegionKind::Nav => {
-                dungeon_map::draw(
-                    display,
-                    nav,
-                    f.ctx.model,
-                    (self.branch_scroll.current() * theme::BRANCH_LINE_HEIGHT as f32) as i32,
-                );
+                if let Some((chain, at)) = f.map {
+                    dungeon_map::draw(
+                        display,
+                        chain,
+                        at,
+                        f.ctx.model,
+                        (self.branch_scroll.current() * theme::BRANCH_LINE_HEIGHT as f32) as i32,
+                    );
+                }
+            }
+            RegionKind::Crumbs => {
+                if let Some(b) = &f.settings {
+                    b.draw_crumbs(display, f.sounding)
+                }
+            }
+            RegionKind::List => {
+                if let Some(b) = &f.settings {
+                    b.draw_list(display)
+                }
+            }
+            RegionKind::Footer => {
+                if let Some(b) = &f.settings {
+                    b.draw_footer(display)
+                }
+            }
+            RegionKind::Prompt => {
+                if let Some(a) = f.prompt {
+                    a.with_view(|v| draw_prompt(display, v))
+                }
             }
         }
     }
@@ -474,8 +528,12 @@ impl Renderer {
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        if f.def.viz == VizType::AudioStats {
-            return audio_page::draw_cells(display, f.def, f.audio, top);
+        match f.def.viz {
+            VizType::AudioStats => return audio_page::draw_cells(display, f.def, f.audio, top),
+            VizType::About => {
+                return crate::ui::about_page::draw_cells(display, f.def, f.audio, f.card, top);
+            }
+            _ => {}
         }
         for (i, anim) in self.anim.iter().enumerate() {
             let v = view::view(f.def, i, &f.ctx);
@@ -510,7 +568,7 @@ impl Renderer {
         D: DrawTarget<Color = Rgb565>,
     {
         let suffix = ["", " / A", " / B"][title_type(f) as usize % 3];
-        let h = components::header_text(f.nav, f.def, f.ctx.model, suffix, header_out(f));
+        let h = components::header_text(f.head, f.def, f.ctx.model, suffix, header_out(f));
         components::header(
             display,
             h.context.as_str(),
@@ -546,32 +604,25 @@ impl Renderer {
 
 /// `addrs`' stored values, normalized: `eased_set`'s fallback for a param
 /// the page has no slot for.
-fn stored_set<const N: usize>(stored: &impl Blocks, addrs: [ParamAddr; N]) -> [f32; N] {
+fn stored_set<const N: usize>(stored: &impl BlockRead, addrs: [ParamAddr; N]) -> [f32; N] {
     addrs.map(|a| stored.block(a.block).map_or(0.0, |b| b.normalized(a.param)))
 }
 
 /// The edited Part's stored blocks and the FX's, read-only.
 struct Stored<'f, 'a>(&'f Frame<'a>);
 
-impl Blocks for Stored<'_, '_> {
+impl BlockRead for Stored<'_, '_> {
     fn block(&self, b: crate::addr::BlockRef) -> Option<&dyn crate::block::Block> {
         let p = &self.0.parts[self.0.active_part.index()];
         crate::project::part_block(&p.sound, &p.mix, self.0.fx, b)
     }
-
-    fn block_mut(&mut self, _: crate::addr::BlockRef) -> Option<&mut dyn crate::block::Block> {
-        None
-    }
 }
 
-/// The OUT of the Part whose pages these are; P1 off the Part chains.
+/// The OUT of the Part whose pages these are; P1 in SETTINGS.
 pub fn header_out(f: &Frame) -> DacPair {
-    match f.nav.chain_id {
-        ChainId::Part(n) | ChainId::Mixer(n) => u8::try_from(n)
-            .ok()
-            .and_then(PartId::new)
-            .map_or(DacPair::P1, |p| f.parts[p.index()].mix.output),
-        ChainId::System | ChainId::Demo => DacPair::P1,
+    match f.head {
+        Head::Sound(p) | Head::Mix(p) => f.parts[p.index()].mix.output,
+        Head::Settings => DacPair::P1,
     }
 }
 

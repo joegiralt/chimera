@@ -6,6 +6,7 @@ use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::name::SoundName;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
+use chimera_core::project::test_support::save_part_to;
 use chimera_core::project::{
     InUse, Origin, PartFrom, PartId, PartSet, PartSource, Project, ReplaceError, ReplaceGuard,
     SlotId, TemplateCrc,
@@ -184,7 +185,7 @@ fn save_part_to_returns_only_the_parts_now_stale() {
     }
     p.edit_part(c).sound.params.filter.cutoff *= 0.5; // c is Edited
     p.edit_part(a).sound.params.filter.cutoff *= 0.25;
-    assert_eq!(p.save_part_to(a, s), PartSet::EMPTY.with(b)); // c, edited, isn't Stale
+    assert_eq!(save_part_to(&mut p, a, s), PartSet::EMPTY.with(b)); // c, edited, isn't Stale
     let crc = sound_crc(p.pool().get(s).unwrap());
     assert_eq!(
         p.part(a).origin(),
@@ -201,7 +202,7 @@ fn save_part_to_returns_only_the_parts_now_stale() {
 fn save_part_to_an_empty_slot_has_no_other_users() {
     let mut p = Project::boxed().0;
     let (a, s) = (PartId::ALL[5], SlotId::ALL[17]);
-    assert_eq!(p.save_part_to(a, s), PartSet::EMPTY);
+    assert_eq!(save_part_to(&mut p, a, s), PartSet::EMPTY);
     assert_eq!(p.users(s), PartSet::EMPTY.with(a));
     assert!(p.pool().get(s).unwrap().bits_eq(&p.part(a).sound));
 }

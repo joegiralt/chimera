@@ -9,15 +9,17 @@ use chimera_hal::store::{Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 
 use crate::name::ProjectName;
 use crate::storage::{
-    AbFile, Card, CardEvent, CardFault, FileError, FileKind, HEADER_LEN, Header, InPlaceError,
-    LoadError, Outcome, ProjectId, Ready, SaveError, Side, delete_ab, load_ab_in_place,
-    peek_header, save_ab,
+    AbFile, Card, CardEvent, CardFault, FileError, FileKind, Generation, HEADER_LEN, Header,
+    InPlaceError, LoadError, Outcome, ProjectId, Ready, RecordWriter, SaveError, Side, delete_ab,
+    load_ab_in_place, peek_header, save_ab,
 };
 
+use super::codec::encode_new_project;
 use super::note::{Differ, ProjectNote, Subject};
 use super::{
-    Confirmed, LoadLink, Origin, PartId, PartStatus, Project, ProjectCheck, ProjectDecoder,
-    ProjectFile, ProjectSource, Swap, encode_project, part_status, project_crc,
+    Confirmed, DeleteTarget, LoadLink, NEW_PROJECT_NAME, Origin, OverwriteTarget, PartId,
+    PartStatus, Project, ProjectCheck, ProjectDecoder, ProjectFile, ProjectSource, Seen, Swap,
+    encode_project, part_status, project_crc,
 };
 
 pub fn project_file(id: ProjectId) -> AbFile {
@@ -68,13 +70,73 @@ fn load_note(e: LoadError, subject: Subject) -> ProjectNote {
     }
 }
 
+/// A file no pair had when `new_project_id` read the card. Nothing else
+/// makes one, and a save takes it by value:
+///
+/// ```compile_fail,E0423
+/// use chimera_core::project::{FreshFile, ProjectFile};
+/// fn forge(f: ProjectFile) -> FreshFile {
+///     FreshFile(f)
+/// }
+/// ```
+#[derive(Debug, PartialEq, Eq)]
+pub struct FreshFile(ProjectFile);
+
+impl FreshFile {
+    pub fn file(&self) -> ProjectFile {
+        self.0
+    }
+
+    /// For tests that save to an id by hand; the save still refuses a
+    /// pair already there.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn for_test(f: ProjectFile) -> Self {
+        FreshFile(f)
+    }
+}
+
+/// Where a save goes.
+#[derive(Debug)]
+pub enum SaveTo {
+    /// SAVE: the project's own file.
+    Own,
+    /// A first save or SAVE AS.
+    Fresh(FreshFile),
+    /// SAVE OVER another file, as listed.
+    Over(Confirmed<OverwriteTarget>),
+}
+
+/// A card operation's result, and what its mount found (`None` when it
+/// failed or nothing mounted): the caller drops what was another card's.
+#[must_use]
+#[derive(Debug, PartialEq)]
+pub struct CardOut<T> {
+    pub out: T,
+    pub event: Option<CardEvent>,
+}
+
+impl<T> CardOut<T> {
+    fn none(out: T) -> Self {
+        CardOut { out, event: None }
+    }
+}
+
+/// The event of a `Card::run`, and its result flattened.
+fn split<R, E>(run: Result<Outcome<R, E>, E>) -> (Result<R, E>, Option<CardEvent>) {
+    match run {
+        Ok(o) => (o.result, Some(o.event)),
+        Err(e) => (Err(e), None),
+    }
+}
+
 /// A new file on the card in the slot: the highest id there + 1; 1 with
 /// no `PROJECTS` directory.
 pub fn new_project_id<S: Store>(
     card: &mut Card,
     store: &mut S,
-) -> Result<ProjectFile, ProjectNote> {
-    let out = card.run(store, |s, r| {
+) -> CardOut<Result<FreshFile, ProjectNote>> {
+    let run = card.run(store, |s, r| {
         let vol = r.volume();
         let mut top = 0;
         match s.list(r.volume(), Dir::Projects, &mut |f, _| {
@@ -86,12 +148,14 @@ pub fn new_project_id<S: Store>(
             Err(e) => Err(e),
         }
     });
-    match out.and_then(|o| o.result) {
+    let (result, event) = split(run);
+    let out = match result {
         Ok((top, vol)) => ProjectId::new(top + 1)
-            .map(|id| ProjectFile::new(id, vol))
+            .map(|id| FreshFile(ProjectFile::new(id, vol)))
             .ok_or(ProjectNote::NoIds),
         Err(e) => Err(card_note(e, None)),
-    }
+    };
+    CardOut { out, event }
 }
 
 /// The Parts saved `Edited` from a slot.
@@ -112,43 +176,178 @@ fn differ(p: &Project) -> Differ {
     }
 }
 
-/// Streams `p` to `to`'s pair, making the directories first: SAVE passes
-/// `meta().file()`, a first save or SAVE AS `new_project_id`'s. Only on
-/// `to.vol`: another card is `CARD CHANGED` with nothing written. On
-/// success the project is `Saved` as `to`; on any error its meta is
-/// untouched.
-pub fn save_project<S: Store>(
+/// What a file must still be on the card for a write to it.
+#[derive(Clone, Copy)]
+enum Expect {
+    /// The project's own file: nothing to check.
+    Own,
+    /// No pair: a `FreshFile`.
+    Absent,
+    /// The newest header a confirmation saw.
+    Newest(Seen),
+}
+
+/// `Err` with the file's subject when it moved from `e`.
+fn still<S: Store>(
+    s: &mut S,
+    vol: VolumeId,
+    id: ProjectId,
+    e: Expect,
+) -> Result<Result<(), Subject>, StoreError> {
+    if let Expect::Own = e {
+        return Ok(Ok(()));
+    }
+    let now = peek_entry(s, vol, id)?;
+    let held = match (e, now) {
+        (Expect::Absent, None) => true,
+        (Expect::Newest(seen), Some(n)) => Seen::of(&n) == seen,
+        _ => false,
+    };
+    let subject = now
+        .and_then(|n| n.name)
+        .map_or(Subject::File(id), Subject::Name);
+    Ok(if held { Ok(()) } else { Err(subject) })
+}
+
+/// `body` to `file`'s write side, named `name`, making the directories
+/// first; only on `file.vol` and only if it still is as `e` says. A card
+/// or file error names `subject`.
+fn write_project<S: Store>(
     card: &mut Card,
     store: &mut S,
-    p: &mut Project,
-    to: ProjectFile,
-) -> ProjectNote {
-    let name = p.meta.name;
-    let subject = Subject::Name(name);
-    let live = &*p;
-    let id = to.id();
-    let out = run_on(card, store, to.vol(), |s, r| {
+    (file, e): (ProjectFile, Expect),
+    name: ProjectName,
+    subject: Subject,
+    body: &mut dyn FnMut(&mut RecordWriter<'_>) -> Result<(), StoreError>,
+) -> CardOut<Result<(), ProjectNote>> {
+    let run = run_on(card, store, file.vol(), |s, r| {
+        if let Err(moved) = still(s, r.volume(), file.id(), e)? {
+            return Ok(Err(moved));
+        }
         s.make_dir(r.volume(), Dir::Chimera)?;
         s.make_dir(r.volume(), Dir::Projects)?;
         save_ab(
             s,
             r,
-            project_file(id),
+            project_file(file.id()),
             &mut ProjectCheck::new(),
             Some(name),
-            &mut |w| encode_project(live, w),
+            body,
         )
+        .map(Ok)
     });
-    match out.and_then(|o| o.result) {
-        Ok(Ok(_)) => {
-            p.meta.file = Some(to);
+    let (result, event) = split(run);
+    let out = match result {
+        Ok(Ok(Ok(_))) => Ok(()),
+        Ok(Ok(Err(moved))) => Err(ProjectNote::FileChanged(moved)),
+        Ok(Err(now)) => Err(changed(now, subject)),
+        Err(SaveError::Store(err)) => Err(card_note(err, Some(subject))),
+        Err(SaveError::File(err)) => Err(ProjectNote::File { err, subject }),
+    };
+    CardOut { out, event }
+}
+
+/// Streams `p` to its pair, on that file's card only: another card is
+/// `CARD CHANGED`, and a fresh or confirmed file that moved since is
+/// `FileChanged`, with nothing written. On success the project is
+/// `Saved` as that file; on any error its meta is untouched.
+pub fn save_project<S: Store>(
+    card: &mut Card,
+    store: &mut S,
+    p: &mut Project,
+    to: SaveTo,
+) -> CardOut<ProjectNote> {
+    let name = p.meta.name;
+    save_project_as(card, store, p, to, name)
+}
+
+/// `save_project` under `name`: the project takes it only once saved, so
+/// a refused save leaves it as it was.
+pub fn save_project_as<S: Store>(
+    card: &mut Card,
+    store: &mut S,
+    p: &mut Project,
+    to: SaveTo,
+    name: ProjectName,
+) -> CardOut<ProjectNote> {
+    let (file, e) = match to {
+        SaveTo::Own => match p.meta.file {
+            Some(f) => (f, Expect::Own),
+            None => return CardOut::none(ProjectNote::NoFile),
+        },
+        SaveTo::Fresh(f) => (f.0, Expect::Absent),
+        SaveTo::Over(c) => (c.target().file(), Expect::Newest(c.witness())),
+    };
+    let live = &*p;
+    let out = write_project(
+        card,
+        store,
+        (file, e),
+        name,
+        Subject::Name(name),
+        &mut |w| encode_project(live, w),
+    );
+    let note = match out.out {
+        Ok(()) => {
+            p.bump();
+            p.meta.name = name;
+            p.meta.file = Some(file);
             p.meta.saved_crc = Some(project_crc(p));
             ProjectNote::Saved(differ(p))
         }
-        Ok(Err(now)) => changed(now, subject),
-        Err(SaveError::Store(err)) => card_note(err, Some(subject)),
-        Err(SaveError::File(err)) => ProjectNote::File { err, subject },
+        Err(n) => n,
+    };
+    CardOut {
+        out: note,
+        event: out.event,
     }
+}
+
+/// Whether a save over `c` would pass `write_project`'s checks, writing
+/// nothing: CLEAR of the loaded file asks before NEW replaces RAM.
+pub(crate) fn still_over<S: Store>(
+    card: &mut Card,
+    store: &mut S,
+    c: &Confirmed<OverwriteTarget>,
+) -> CardOut<Result<(), ProjectNote>> {
+    let file = c.target().file();
+    let subject = Subject::File(file.id());
+    let run = run_on(card, store, file.vol(), |s, r| {
+        still(s, r.volume(), file.id(), Expect::Newest(c.witness()))
+    });
+    let (result, event) = split(run);
+    let out = match result {
+        Ok(Ok(Ok(()))) => Ok(()),
+        Ok(Ok(Err(moved))) => Err(ProjectNote::FileChanged(moved)),
+        Ok(Err(now)) => Err(changed(now, subject)),
+        Err(err) => Err(card_note(err, Some(subject))),
+    };
+    CardOut { out, event }
+}
+
+/// CLEAR: the confirmed file becomes NEW, streamed by
+/// `encode_new_project`, on its card only; `FileChanged` if it moved
+/// since it was listed. The loaded project's own file is refused
+/// (`ClearLoaded`), as RAM would still read `Saved`: clearing your own is
+/// a guarded load of NEW, then `SaveTo::Over`.
+pub fn clear_project<S: Store>(
+    card: &mut Card,
+    store: &mut S,
+    loaded: &Project,
+    c: Confirmed<OverwriteTarget>,
+) -> CardOut<Result<(), ProjectNote>> {
+    let file = c.target().file();
+    if loaded.meta().file() == Some(file) {
+        return CardOut::none(Err(ProjectNote::ClearLoaded));
+    }
+    write_project(
+        card,
+        store,
+        (file, Expect::Newest(c.witness())),
+        NEW_PROJECT_NAME,
+        Subject::File(file.id()),
+        &mut |w| encode_new_project(w),
+    )
 }
 
 /// A load's result: `swap` when the project was replaced (loaded, or
@@ -208,6 +407,7 @@ pub fn load_project<S: Store>(
     };
     match result {
         Ok(Ok(_)) => {
+            p.bump();
             p.meta.file = Some(ProjectFile::new(id, vol));
             p.meta.saved_crc = Some(project_crc(p));
             out.swap = Some(link.bump());
@@ -254,6 +454,7 @@ pub fn boot_project<S: Store>(
             match run {
                 Ok(o) => match o.result {
                     Ok(vol) => {
+                        p.bump();
                         p.meta.file = Some(ProjectFile::new(id, vol));
                         p.meta.saved_crc = Some(project_crc(p));
                         return None;
@@ -282,6 +483,8 @@ pub struct ProjectEntry {
     pub name: Option<ProjectName>,
     /// What a load would refuse it for, when the headers already say.
     pub err: Option<FileError>,
+    /// The newer readable side's: what a confirmation of it holds.
+    pub generation: Option<Generation>,
 }
 
 impl ProjectEntry {
@@ -289,14 +492,27 @@ impl ProjectEntry {
     pub fn file(&self) -> ProjectFile {
         ProjectFile::new(self.id, self.vol)
     }
+
+    /// Named `n`, ignoring case: NAME EXISTS' test.
+    pub fn is_named(&self, n: &ProjectName) -> bool {
+        self.name
+            .is_some_and(|m| m.as_str().eq_ignore_ascii_case(n.as_str()))
+    }
 }
 
-/// `list_projects`' result: `event` when the card mounted.
+/// The most entries one listing holds (SETTINGS' LOAD and MANAGE).
+pub const MAX_LISTED: usize = 48;
+
+/// `list_projects`' result: `event` when the card mounted; `more` when
+/// ids past the `MAX_LISTED` lowest were left out; `fresh`, the id a save
+/// as would take, from the same pass (`None` with no note: no ids left).
 #[must_use]
 #[derive(Debug, PartialEq)]
 pub struct ListOutcome {
     pub event: Option<CardEvent>,
     pub note: Option<ProjectNote>,
+    pub more: bool,
+    pub fresh: Option<FreshFile>,
 }
 
 /// The first `HEADER_LEN` bytes of a file, then a break.
@@ -378,6 +594,7 @@ fn entry(
         id,
         vol,
         name: newest.and_then(|h| h.name),
+        generation: newest.map(|h| h.generation),
         err: nnf.or(match newest {
             Some(_) => None,
             None => errs.clone().next(),
@@ -385,8 +602,72 @@ fn entry(
     }
 }
 
-/// Each project on the card, in id order, from its headers alone (one
-/// block a side). Each id costs a directory scan to find: O(n²) sectors.
+/// `id`'s entry from its headers; `None` when neither side exists.
+fn peek_entry<S: Store>(
+    s: &mut S,
+    vol: VolumeId,
+    id: ProjectId,
+) -> Result<Option<ProjectEntry>, StoreError> {
+    let file = project_file(id);
+    let sides = [
+        peek_side(s, vol, file.side(Side::A))?,
+        peek_side(s, vol, file.side(Side::B))?,
+    ];
+    Ok((sides != [None, None]).then(|| entry(id, vol, sides)))
+}
+
+/// What one directory pass found: the lowest ids, sorted, and the top.
+struct Ids {
+    low: [ProjectId; MAX_LISTED],
+    len: usize,
+    more: bool,
+    top: u32,
+}
+
+impl Ids {
+    fn see(&mut self, id: ProjectId) {
+        self.top = self.top.max(id.get());
+        let at = match self.low[..self.len].binary_search(&id) {
+            Ok(_) => return,
+            Err(at) => at,
+        };
+        if at == MAX_LISTED {
+            self.more = true;
+            return;
+        }
+        if self.len == MAX_LISTED {
+            self.more = true;
+        } else {
+            self.len += 1;
+        }
+        self.low.copy_within(at..self.len - 1, at + 1);
+        self.low[at] = id;
+    }
+}
+
+/// One pass over `PROJECTS` for the ids past `after`: an empty card has no
+/// directory.
+fn scan<S: Store>(s: &mut S, vol: VolumeId, after: u32) -> Result<Ids, StoreError> {
+    let mut ids = Ids {
+        low: [ProjectId::MIN; MAX_LISTED],
+        len: 0,
+        more: false,
+        top: 0,
+    };
+    match s.list(vol, Dir::Projects, &mut |name, _| {
+        if let Some(id) = file_id(name)
+            && id.get() > after
+        {
+            ids.see(id);
+        }
+    }) {
+        Ok(()) | Err(StoreError::NotFound) => Ok(ids),
+        Err(e) => Err(e),
+    }
+}
+
+/// The `MAX_LISTED` lowest projects on the card, in id order, from their
+/// headers alone (one block a side), after one directory pass.
 pub fn list_projects<S: Store>(
     card: &mut Card,
     store: &mut S,
@@ -394,64 +675,105 @@ pub fn list_projects<S: Store>(
 ) -> ListOutcome {
     let run = card.run(store, |s, r| {
         let vol = r.volume();
-        let mut after = 0;
-        loop {
-            let mut next: Option<ProjectId> = None;
-            match s.list(vol, Dir::Projects, &mut |name, _| {
-                if let Some(id) = file_id(name)
-                    && id.get() > after
-                    && next.is_none_or(|n| id < n)
-                {
-                    next = Some(id);
-                }
-            }) {
-                Ok(()) => {}
-                Err(StoreError::NotFound) => return Ok(()),
-                Err(e) => return Err(e),
-            }
-            let Some(id) = next else { return Ok(()) };
-            after = id.get();
-            let file = project_file(id);
-            let sides = [
-                peek_side(s, vol, file.side(Side::A))?,
-                peek_side(s, vol, file.side(Side::B))?,
-            ];
-            if sides != [None, None] {
-                f(entry(id, vol, sides));
+        let ids = scan(s, vol, 0)?;
+        for &id in &ids.low[..ids.len] {
+            if let Some(e) = peek_entry(s, vol, id)? {
+                f(e);
             }
         }
+        Ok((
+            ids.more,
+            ProjectId::new(ids.top + 1).map(|id| FreshFile(ProjectFile::new(id, vol))),
+        ))
     });
     match run {
-        Ok(o) => ListOutcome {
-            event: Some(o.event),
-            note: o.result.err().map(|e| card_note(e, None)),
+        Ok(Outcome {
+            event,
+            result: Ok((more, fresh)),
+        }) => ListOutcome {
+            event: Some(event),
+            note: None,
+            more,
+            fresh,
+        },
+        Ok(Outcome {
+            event,
+            result: Err(e),
+        }) => ListOutcome {
+            event: Some(event),
+            note: Some(card_note(e, None)),
+            more: false,
+            fresh: None,
         },
         Err(e) => ListOutcome {
             event: None,
             note: Some(card_note(e, None)),
+            more: false,
+            fresh: None,
         },
     }
 }
 
-/// Deletes `file`'s pair, the side a load wouldn't keep first, on
-/// `file.vol` only (another card is `CARD CHANGED`). The loaded project's
-/// own file is refused. A pair already gone is Ok.
+/// The lowest id past `after` whose name is `n`, ignoring case: one
+/// directory pass per `MAX_LISTED` ids, stopping at the first match.
+pub fn find_named<S: Store>(
+    card: &mut Card,
+    store: &mut S,
+    n: &ProjectName,
+    after: u32,
+) -> CardOut<Result<Option<ProjectEntry>, ProjectNote>> {
+    let run = card.run(store, |s, r| {
+        let vol = r.volume();
+        let mut after = after;
+        loop {
+            let ids = scan(s, vol, after)?;
+            for &id in &ids.low[..ids.len] {
+                if let Some(e) = peek_entry(s, vol, id)?
+                    && e.is_named(n)
+                {
+                    return Ok(Some(e));
+                }
+            }
+            match ids.low[..ids.len].last() {
+                Some(last) if ids.more => after = last.get(),
+                _ => return Ok(None),
+            }
+        }
+    });
+    let (result, event) = split(run);
+    CardOut {
+        out: result.map_err(|e| card_note(e, None)),
+        event,
+    }
+}
+
+/// Deletes the confirmed file's pair, the side a load wouldn't keep
+/// first, on its card only (another card is `CARD CHANGED`). The loaded
+/// project's own file is refused, and so is a file that moved since it
+/// was listed (`FileChanged`, gone included): nothing is deleted.
 pub fn delete_project<S: Store>(
     card: &mut Card,
     store: &mut S,
     loaded: &Project,
-    file: ProjectFile,
-) -> Result<(), ProjectNote> {
+    c: Confirmed<DeleteTarget>,
+) -> CardOut<Result<(), ProjectNote>> {
+    let file = c.target().file();
     if loaded.meta().file() == Some(file) {
-        return Err(ProjectNote::IsLoaded);
+        return CardOut::none(Err(ProjectNote::IsLoaded));
     }
-    let subject = Subject::File(file.id());
-    let out = run_on(card, store, file.vol(), |s, r| {
-        delete_ab(s, r, project_file(file.id()), &mut ProjectCheck::new())
+    let run = run_on(card, store, file.vol(), |s, r| {
+        if let Err(moved) = still(s, r.volume(), file.id(), Expect::Newest(c.witness()))? {
+            return Ok(Err(moved));
+        }
+        delete_ab(s, r, project_file(file.id()), &mut ProjectCheck::new()).map(Ok)
     });
-    match out.and_then(|o| o.result) {
-        Ok(Ok(())) => Ok(()),
+    let subject = Subject::File(file.id());
+    let (result, event) = split(run);
+    let out = match result {
+        Ok(Ok(Ok(()))) => Ok(()),
+        Ok(Ok(Err(moved))) => Err(ProjectNote::FileChanged(moved)),
         Ok(Err(now)) => Err(changed(now, subject)),
         Err(e) => Err(card_note(e, Some(subject))),
-    }
+    };
+    CardOut { out, event }
 }

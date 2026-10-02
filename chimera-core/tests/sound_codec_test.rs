@@ -1,7 +1,7 @@
 //! The Sound codec (ADR 0045): a Sound encodes to card records and decodes
 //! back bit-equal; bad values fall back to the frozen neutral base.
 
-use chimera_core::addr::{BlockRef, Blocks, ParamAddr};
+use chimera_core::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use chimera_core::block::{Block, ParamId};
 use chimera_core::dsp::filter::FilterMode;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};

@@ -3,7 +3,7 @@
 
 use chimera_hal::store::StoreError;
 
-use crate::addr::{BlockRef, Blocks, ParamAddr};
+use crate::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use crate::block::{DiskCode, ParamId};
 use crate::mod_path::{LABEL_LEN, MAX_REGISTRY_DESTS, ModDestRegistry};
 use crate::modulation::{MAX_MOD_DESTS, MAX_MOD_SOURCES, ModSource, ModState};

@@ -1,4 +1,4 @@
-use crate::addr::{BlockRef, Blocks};
+use crate::addr::{BlockRead, BlockRef};
 use crate::mod_path::ModDestRegistry;
 use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::SoundName;
