@@ -57,7 +57,7 @@ where
     }
 
     /// The framebuffer and the palette it is flushed through, for the console.
-    #[cfg(all(feature = "usb-console", not(feature = "sd-probe")))]
+    #[cfg(feature = "usb-console")]
     pub fn frame(&self) -> chimera_core::console::Frame<'_> {
         chimera_core::console::Frame {
             fb: self.fb,

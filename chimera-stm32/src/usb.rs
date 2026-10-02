@@ -146,10 +146,16 @@ impl Usb {
             ..
         } = self;
         dev.poll(&mut [&mut *serial]);
+        self.last = Served::Idle;
+        // A stalled answer's tail still waiting: no new request until the
+        // host reads it, so a host that writes but never reads NAKs itself
+        // instead of costing a stall every lap.
+        if let Err(UsbError::WouldBlock) = serial.flush() {
+            return;
+        }
         // Read whatever poll said or not: bytes left from the last request
         // already wait in the port's buffer.
         let mut byte = [0u8; 1];
-        self.last = Served::Idle;
         for _ in 0..READ_BUDGET {
             if !matches!(serial.read(&mut byte), Ok(1)) {
                 break;

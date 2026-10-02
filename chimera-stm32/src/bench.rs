@@ -45,6 +45,7 @@ use chimera_core::voice_alloc::VoiceIdx;
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::ChimeraDisplay;
 use cortex_m::peripheral::DWT;
+use embedded_graphics_core::pixelcolor::Rgb565;
 
 use crate::audio::engine;
 use crate::clocks::Clocks;
@@ -53,6 +54,8 @@ use crate::clocks::Clocks;
 pub const BENCH_TEXT_LEN: usize = 6144;
 type Text = Report<BENCH_TEXT_LEN>;
 
+// A `static mut`, not a `singleton!`: that builds its value on the caller's
+// stack before moving it in, 6 KB on `synth`'s frame.
 static mut REPORT: Text = Report::new();
 static REPORT_TAKEN: AtomicBool = AtomicBool::new(false);
 
@@ -566,6 +569,7 @@ pub fn run(
     report: &mut Text,
 ) {
     let proj_crc = time_project_crc(project);
+    let rec = &mut Recorder { display, report };
     // SAFETY: the bench runs once from `main`, before `engine::init` and
     // before any interrupt is unmasked, so it is the only user of the
     // engine's slots and of its own statics; its references are gone when it
@@ -592,7 +596,7 @@ pub fn run(
     }
     let fx: [u32; FX_ROWS] = core::array::from_fn(|i| rig.time_bus(FX[i].1));
     let kernel = time_kernel();
-    show(display, report, clocks, &rows, kernel, &fx);
+    show(rec, clocks, &rows, kernel, &fx);
     hold(clocks);
     let mut routing = [Counts::default(); ROUTING_ROWS];
     for (row, &(_, part, each)) in routing.iter_mut().zip(&ROUTING) {
@@ -614,7 +618,7 @@ pub fn run(
         .chunks(ROUTING_PAGE)
         .zip(routing.chunks(ROUTING_PAGE));
     for (page, (labels, counts)) in pages.enumerate() {
-        show_routing(display, report, page, labels, counts);
+        show_routing(rec, page, labels, counts);
         hold(clocks);
     }
     let rebuild = time_rebuild();
@@ -629,13 +633,7 @@ pub fn run(
     let g1 = MidiNote::new(31).unwrap_or(MidiNote::A4);
     let dark = rig.time_note_on(g1, dark_pluck, (true, silent));
     let light = rig.time_note_on(g1, short_string, (true, silent));
-    show_memory(
-        display,
-        report,
-        (rebuild, proj_crc),
-        note_on,
-        (lowest, dark, light),
-    );
+    show_memory(rec, (rebuild, proj_crc), note_on, (lowest, dark, light));
     hold(clocks);
 }
 
@@ -971,21 +969,60 @@ const ROW_H: i32 = 25;
 /// One count per voice across the screen: 29 px holds five digits at eight.
 const CELL_W: i32 = (theme::SCREEN_W - 8) / MAX_VOICES as i32;
 
-/// A screen's title, drawn and recorded as the report's heading.
-fn title(display: &mut impl ChimeraDisplay, report: &mut Text, text: &str) {
-    report.heading(text);
-    draw::text(display, &theme::FONT_VALUE, text, 4, 16, theme::INK);
+/// A bench line's font: a value in INK, or a label in its colour.
+#[derive(Clone, Copy)]
+enum Face {
+    Value,
+    Label(Rgb565),
+}
+
+/// The bench's screen and its report together: text can only be drawn by
+/// recording it, so `bench` reads exactly what the screens showed.
+struct Recorder<'a, D> {
+    display: &'a mut D,
+    report: &'a mut Text,
+}
+
+impl<D: ChimeraDisplay> Recorder<'_, D> {
+    /// A new screen.
+    fn clear(&mut self) {
+        draw::fill_rect(
+            self.display,
+            0,
+            0,
+            theme::SCREEN_W,
+            theme::SCREEN_H,
+            theme::BG,
+        );
+    }
+
+    /// The screen's title, recorded as the report's heading.
+    fn heading(&mut self, text: &str) {
+        self.report.heading(text);
+        draw::text(self.display, &theme::FONT_VALUE, text, 4, 16, theme::INK);
+    }
+
+    fn line(&mut self, face: Face, text: &str, (x, y): (i32, i32)) {
+        let display = &mut *self.display;
+        self.report.drawn(text, |t| match face {
+            Face::Value => draw::text(display, &theme::FONT_VALUE, t, x, y, theme::INK),
+            Face::Label(c) => draw::text(display, &theme::FONT_LABEL, t, x, y, c),
+        });
+    }
+
+    fn flush(&mut self) {
+        self.display.flush();
+    }
 }
 
 fn show(
-    display: &mut impl ChimeraDisplay,
-    report: &mut Text,
+    rec: &mut Recorder<'_, impl ChimeraDisplay>,
     clocks: Clocks,
     rows: &[Counts; ROWS],
     kernel: u32,
     fx: &[u32; FX_ROWS],
 ) {
-    draw::fill_rect(display, 0, 0, theme::SCREEN_W, theme::SCREEN_H, theme::BG);
+    rec.clear();
     let mut line = FmtBuf::new();
     let _ = write!(
         line,
@@ -993,22 +1030,18 @@ fn show(
         clocks.rev.label(),
         clocks.cpu_hz / 1_000_000
     );
-    title(display, report, line.as_str());
+    rec.heading(line.as_str());
     line.clear();
     let _ = write!(line, "CYCLES/SAMPLE, 1..{MAX_VOICES} VOICES");
-    report.drawn(line.as_str(), |t| {
-        draw::text(display, &theme::FONT_LABEL, t, 4, 30, theme::MID)
-    });
+    rec.line(Face::Label(theme::MID), line.as_str(), (4, 30));
     let mut y = 46;
     for (&(label, ..), counts) in PATCHES.iter().zip(rows) {
-        voice_row(display, report, &mut line, y, label, counts);
+        voice_row(rec, &mut line, y, label, counts);
         y += ROW_H;
     }
     line.clear();
     let _ = write!(line, "KERNEL /VOICE {kernel} (350)");
-    report.drawn(line.as_str(), |t| {
-        draw::text(display, &theme::FONT_VALUE, t, 4, y, theme::INK)
-    });
+    rec.line(Face::Value, line.as_str(), (4, y));
     // Seven rows, three to a line: with FX_ROWS at 7 the old 18/14 spacing
     // put the third line at y 317; 16/10 keeps it at 307, under 310.
     y += 16;
@@ -1022,51 +1055,44 @@ fn show(
         line.clear();
         let _ = write!(line, "{label} {c}");
         let (col, row) = ((i % 3) as i32, (i / 3) as i32);
-        report.drawn(line.as_str(), |t| {
-            draw::text(
-                display,
-                &theme::FONT_LABEL,
-                t,
-                4 + col * 78,
-                y + row * 10,
-                theme::INK2,
-            )
-        });
+        rec.line(
+            Face::Label(theme::INK2),
+            line.as_str(),
+            (4 + col * 78, y + row * 10),
+        );
     }
-    display.flush();
+    rec.flush();
 }
 
 /// ROUTING screen `page` (from 0): `rows`' labels and their counts.
 fn show_routing(
-    display: &mut impl ChimeraDisplay,
-    report: &mut Text,
+    rec: &mut Recorder<'_, impl ChimeraDisplay>,
     page: usize,
     rows: &[RoutingRow],
     counts: &[Counts],
 ) {
-    draw::fill_rect(display, 0, 0, theme::SCREEN_W, theme::SCREEN_H, theme::BG);
+    rec.clear();
     let mut line = FmtBuf::new();
     let pages = ROUTING_ROWS.div_ceil(ROUTING_PAGE);
     let _ = write!(line, "ROUTING {}/{pages}", page + 1);
-    title(display, report, line.as_str());
+    rec.heading(line.as_str());
     for (i, (&(label, ..), c)) in rows.iter().zip(counts).enumerate() {
-        voice_row(display, report, &mut line, 46 + i as i32 * ROW_H, label, c);
+        voice_row(rec, &mut line, 46 + i as i32 * ROW_H, label, c);
     }
-    display.flush();
+    rec.flush();
 }
 
 /// The sizes behind the D2 budget, the exclusive state's two timings and
 /// the project CRC's.
 fn show_memory(
-    display: &mut impl ChimeraDisplay,
-    report: &mut Text,
+    rec: &mut Recorder<'_, impl ChimeraDisplay>,
     (rebuild, proj_crc): (u32, u32),
     note_on: u32,
     (lowest, dark, light): (u32, u32, u32),
 ) {
     use core::mem::size_of;
-    draw::fill_rect(display, 0, 0, theme::SCREEN_W, theme::SCREEN_H, theme::BG);
-    title(display, report, "MEMORY");
+    rec.clear();
+    rec.heading("MEMORY");
     let lines = [
         format_args!("VOICE {}", size_of::<Voice>()),
         format_args!("SLOT {}", size_of::<EngineSlot>()),
@@ -1088,18 +1114,15 @@ fn show_memory(
         line.clear();
         let _ = line.write_fmt(args);
         let y = 46 + i as i32 * ROW_H;
-        report.drawn(line.as_str(), |t| {
-            draw::text(display, &theme::FONT_VALUE, t, 4, y, theme::INK)
-        });
+        rec.line(Face::Value, line.as_str(), (4, y));
     }
-    display.flush();
+    rec.flush();
 }
 
 /// `label`'s per-voice cost (`Counts::per_voice`), with the voices that
 /// sounded when fewer than all, and its count at each voice count.
 fn voice_row(
-    display: &mut impl ChimeraDisplay,
-    report: &mut Text,
+    rec: &mut Recorder<'_, impl ChimeraDisplay>,
     line: &mut FmtBuf,
     y: i32,
     label: &str,
@@ -1110,22 +1133,15 @@ fn voice_row(
     if counts.spans < MAX_VOICES {
         let _ = write!(line, " ({} V)", counts.spans);
     }
-    report.drawn(line.as_str(), |t| {
-        draw::text(display, &theme::FONT_VALUE, t, 4, y, theme::INK)
-    });
+    rec.line(Face::Value, line.as_str(), (4, y));
     // One cell per count: the counts together overflow a `FmtBuf`.
     for (i, c) in counts.cycles.iter().enumerate() {
         line.clear();
         let _ = write!(line, "{c}");
-        report.drawn(line.as_str(), |t| {
-            draw::text(
-                display,
-                &theme::FONT_LABEL,
-                t,
-                4 + i as i32 * CELL_W,
-                y + 12,
-                theme::INK2,
-            )
-        });
+        rec.line(
+            Face::Label(theme::INK2),
+            line.as_str(),
+            (4 + i as i32 * CELL_W, y + 12),
+        );
     }
 }

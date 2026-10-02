@@ -30,7 +30,7 @@ check:
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features bench
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features bench,master-tape
-    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features sd-probe
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features sd-probe
     cargo build -p chimera-bootloader --target thumbv7em-none-eabihf
     cargo build -p chimera-theory --target thumbv7em-none-eabihf
     just clippy
@@ -49,7 +49,7 @@ stack-check:
     objdump="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/llvm-objdump"
     test -x "$objdump"
     elf=target/thumbv7em-none-eabihf/release/chimera-stm32
-    for features in "" "--no-default-features" "--features bench" "--features sd-probe"; do
+    for features in "" "--no-default-features" "--features bench" "--no-default-features --features sd-probe"; do
         cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf $features
         test -r "$elf"
         if "$objdump" -d --no-show-raw-insn -C "$elf" \
@@ -82,7 +82,9 @@ clippy:
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features bench -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features bench,master-tape -- -D warnings
-    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features sd-probe -- -D warnings
+    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features sd-probe -- -D warnings
+    # usb-console alone: `stats` answers from no reader
+    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features usb-console -- -D warnings
     cargo clippy -p chimera-bootloader --target thumbv7em-none-eabihf -- -D warnings
 
 # Render every screen (the golden cases and the atlas) with the real renderer
@@ -107,9 +109,9 @@ flash-bench:
     rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-bench.bin
     dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-bench.bin -s 0x8020000:leave
 
-# Flash the SD bring-up probe (--features sd-probe) to PreenFM3 via DFU
+# Flash the SD bring-up probe (--no-default-features --features sd-probe) to PreenFM3 via DFU
 flash-sd-probe:
-    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features sd-probe
+    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features sd-probe
     rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe.bin
     dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-sd-probe.bin -s 0x8020000:leave
 

@@ -241,8 +241,8 @@ pub fn answer(req: Result<Request, Refusal>, unit: &mut impl Unit, out: &mut imp
 1. `ccdr.peripheral.kernel_usb_clk_mux(UsbClkSel::Hsi48)`, which asserts `ccdr.clocks.hsi48_ck()` is `Some`.
 2. CRS: `RCC_APB1HENR.CRSEN = 1`, `CRS_CFGR.SYNCSRC = 0b11` (USB2 SOF), `CRS_CR.AUTOTRIMEN = 1, CEN = 1`, through the PAC, each write with a `// SAFETY:` note. The CRS trims HSI48 from the host's 1 kHz SOF from the first frame on.
 3. `pin_dm = gpioa.pa11.into_alternate::<10>()` and `pin_dp = gpioa.pa12.into_alternate::<10>()`, then `USB2::new(dp.OTG2_HS_GLOBAL, dp.OTG2_HS_DEVICE, dp.OTG2_HS_PWRCLK, pin_dm, pin_dp, ccdr.peripheral.USB2OTG, &ccdr.clocks)` (`USB2OTG` is the HAL's `rec::Usb2Otg`). The HAL sets `PWR_CR3.USB33DEN`. `synopsys-usb-otg` turns off VBUS sensing and forces the B-session valid, as the stock firmware does.
-4. `UsbBus::new(usb, EP_MEMORY)`. `EP_MEMORY` is a static `[u32; 256]` (1 KB), handed out once through an `AtomicBool` take, like `take_framebuffer`. It holds the OUT packets only (EP0 and CDC's bulk OUT, 64 bytes each). The TX FIFOs live in the core's own 4 KB RAM.
-5. The `UsbBusAllocator` goes in a take-once static, so the device and the class can borrow it for `'static`.
+4. `UsbBus::new(usb, EP_MEMORY)`. `EP_MEMORY` is a `[u32; 256]` (1 KB) from `cortex_m::singleton!`, so it is handed out once. It holds the OUT packets only (EP0 and CDC's bulk OUT, 64 bytes each). The TX FIFOs live in the core's own 4 KB RAM.
+5. The `UsbBusAllocator` goes in a `singleton!` too, so the device and the class can borrow it for `'static`.
 6. `SerialPort::new(&bus)`, then the `UsbDeviceBuilder` with § Identity's values and `device_class(USB_CLASS_CDC)`.
 
 The OTG interrupt is never unmasked in the NVIC (`pac::Interrupt::OTG_FS` stays disabled): nothing runs outside the UI loop.
@@ -288,13 +288,13 @@ The console runs at the top of the UI loop. Only the UI loop writes the framebuf
 
 ### The unit's `Unit`
 
-`ChipUnit { ui: &UiState, stats: Option<&mut Reader<AudioStats>>, loop_timer: &mut LoopTimer, display: &Display }`:
+`Usb::service(&mut self, ui: &UiState, stats: Option<&mut Reader<AudioStats>>, bench: Option<&str>, frame: Frame<'_>)` builds a private `ChipUnit { ui, stats, timer, bench, frame }` for the one answer, borrowing the `LoopTimer` from `Usb`'s own fields:
 
-- `stats()` returns `None` without `perf-probe`. Otherwise it gives the latest `AudioStats` with `stack_used` filled, as the loop does for the page, and takes and resets the loop timer.
+- `stats()` returns `None` without `perf-probe` (no reader). Otherwise it gives `main.rs`'s `audio_stats` (the latest `AudioStats` with `stack_used` filled, the same read the AUDIO LOAD page uses) and takes and resets the loop timer.
 - `bench()` returns the bench text in bench builds, and `None` otherwise.
-- `frame()` returns `Stm32Display::frame()`, a new `&self` method returning `(&fb, palette)`.
+- `frame()` returns `Stm32Display::frame()`, a `&self` method returning `Frame { fb, palette }`.
 
-`LoopTimer` is in the shell: a DWT stamp at each loop top, a sum, a count and a peak. It costs nothing when the console is cut, because it is cut with it.
+`LoopTimer` is the core's (`console::shell`), owned by `Usb`. `service` stamps DWT at each loop top and laps the time since the last one, passing the last iteration's `Served`, which `Usb` keeps, so an answered iteration is not counted. It costs nothing when the console is cut, because it is cut with it.
 
 ## The desktop shell: `chimera-desktop/src/console.rs`
 
@@ -431,14 +431,14 @@ The unit cannot be bricked by this. The ROM loader is in system memory and canno
 
 | | Estimate | Basis |
 |---|---|---|
-| Flash | **about 20 KB**: `usb-device` 6–8, `synopsys-usb-otg` 4–6, `usbd-serial` 2, the console core 3, the shell and CRS 1–2 | Typical sizes of these crates in Cortex-M CDC builds at `opt-level = 2`. `core::fmt` is already linked. |
-| Flash headroom | The brief puts flash at about 79 % of 896 KB (708 KB). With this, it is about 81 %. The last local release ELF (2026-10-01) measured 615,104 bytes (`.vector_table + .text + .rodata + .data`, 67 %). Either way the console is about 2.2 points. | `llvm-size -A`. |
-| AXI SRAM | **about 2.5 KB**: `EP_MEMORY` 1 KB, `UsbBusAllocator` + `UsbDevice` + `SerialPort` (two 128-byte buffers) about 1 KB, `Console` 66 bytes, serial string 24 bytes, `LoopTimer` 16 bytes. 6 KB more for `BENCH_TEXT` in bench builds only. | `.data + .bss` is 372 KB of 512 KB today, so about 140 KB is free. |
+| Flash | **26,040 B measured** (Task 8): `synopsys-usb-otg` 12,886, the console core 7,342, `usb-device` 1,952, the shell 1,820, `usbd-serial` 154, the rest about 1,900 | `llvm-size -A`, release, default build against `midi-din,perf-probe`. |
+| Flash headroom | The brief puts flash at about 79 % of 896 KB (708 KB). With this, it is about 81 %. The last local release ELF (2026-10-01) measured 615,104 bytes (`.vector_table + .text + .rodata + .data`, 67 %). The console is about 2.8 points: 747,144 bytes with it. | `llvm-size -A`. |
+| AXI SRAM | **+1,484 B measured** (Task 8): `EP_MEMORY` 1 KB, the bus allocator, the serial string. `Usb` (device, port, `Console`, `LoopTimer`) lives on `synth`'s stack. 6,152 B more for the bench report in bench builds only. | `.data + .bss` is 372 KB of 512 KB today, so about 140 KB is free. |
 | Stack | The 480-byte row buffer and the pump frames, under 1 KB at the deepest. `just stack-check`'s 8 KB step rule holds. | |
 | CPU, idle | One `poll` per loop iteration, which reads `GINTSTS`: around a microsecond. | |
 | DFU entry | **well under 1 KB of flash**: `after_reset` and the early check (tens of instructions), the prompt's words and pills (about 70 bytes), the `dfu` table row (about 50 bytes), `enter`. No RAM: the marker is a backup register. The empty UPDATES page's block and leaf go. Boot time: one register read and one write before `boot()`. | The plan's DFU task measures it and stops above 1 024 bytes. |
 
-The plan's first task measures the real flash cost with `llvm-size`. Over 24 KB, it stops and reports before going on. Task 8 measured the whole console at 26,040 B: budget raised to 28 KB by the owner, 2026-10-02; measured 26,040 B.
+The plan's first task measures the real flash cost with `llvm-size`. Over 24 KB, it stops and reports before going on. Task 8 measured the whole console at 26,040 B; budget raised to 28 KB by the owner, 2026-10-02.
 
 ## Tests
 

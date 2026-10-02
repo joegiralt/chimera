@@ -3,6 +3,10 @@
 
 #[cfg(all(feature = "bench", feature = "sd-probe"))]
 compile_error!("bench and sd-probe both take over after boot: pick one");
+#[cfg(all(feature = "usb-console", feature = "sd-probe"))]
+compile_error!(
+    "the SD probe halts after boot, so nothing would poll USB: build it with --no-default-features"
+);
 
 // The SD probe build halts after `boot`: nothing of the synth is built.
 #[cfg(not(feature = "sd-probe"))]
@@ -26,7 +30,7 @@ mod sd;
 mod sd_probe;
 #[cfg(not(feature = "sd-probe"))]
 mod shared;
-#[cfg(all(feature = "usb-console", not(feature = "sd-probe")))]
+#[cfg(feature = "usb-console")]
 mod usb;
 #[cfg(not(feature = "sd-probe"))]
 mod watchdog;
@@ -100,7 +104,7 @@ struct SynthParts {
     theme: ThemeSettings,
     iwdg: pac::IWDG,
     dbgmcu: pac::DBGMCU,
-    #[cfg(all(feature = "usb-console", not(feature = "sd-probe")))]
+    #[cfg(feature = "usb-console")]
     usb: usb::UsbParts,
 }
 
@@ -135,7 +139,7 @@ fn boot() -> Board {
     cache::enable_d2_sram();
     let rev = clocks::read_rev(&dp.DBGMCU);
     let (ccdr, clk) = clocks::freeze(dp.PWR, dp.RCC, &dp.SYSCFG, rev);
-    #[cfg(all(feature = "usb-console", not(feature = "sd-probe")))]
+    #[cfg(feature = "usb-console")]
     let ccdr = usb::route_kernel_clock(ccdr);
     cache::init(&mut cp.MPU, &mut cp.SCB, &mut cp.CPUID);
     #[cfg(not(feature = "sd-probe"))]
@@ -219,7 +223,7 @@ fn boot() -> Board {
             theme,
             iwdg: dp.IWDG,
             dbgmcu: dp.DBGMCU,
-            #[cfg(all(feature = "usb-console", not(feature = "sd-probe")))]
+            #[cfg(feature = "usb-console")]
             usb: usb::UsbParts {
                 dm: gpioa.pa11.into_alternate(),
                 dp: gpioa.pa12.into_alternate(),
@@ -272,7 +276,7 @@ fn synth(board: Board) -> ! {
                 mut theme,
                 iwdg,
                 dbgmcu,
-                #[cfg(all(feature = "usb-console", not(feature = "sd-probe")))]
+                #[cfg(feature = "usb-console")]
                     usb: usb_parts,
             },
         sd,
@@ -354,7 +358,7 @@ fn synth(board: Board) -> ! {
 
     // After the audio and MIDI DIN start, before the first frame: the loop
     // polls from its first iteration, so enumeration never waits.
-    #[cfg(all(feature = "usb-console", not(feature = "sd-probe")))]
+    #[cfg(feature = "usb-console")]
     let mut usb = usb::init(usb_parts, &clocks, clk.cpu_hz);
 
     let (mut pacer, first) = chimera_core::ui::animation::Pacer::start(controls::now_ms());
@@ -367,7 +371,7 @@ fn synth(board: Board) -> ! {
     let mut last_tick = controls::ticks();
     loop {
         // The snapshot point: every path through the last iteration flushed.
-        #[cfg(all(feature = "usb-console", not(feature = "sd-probe")))]
+        #[cfg(feature = "usb-console")]
         usb.service(ui, stats_r.as_mut(), bench_text, display.frame());
         controls.snapshot();
         // Every frame, even idle: a held key must age.
