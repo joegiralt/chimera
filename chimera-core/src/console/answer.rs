@@ -42,7 +42,8 @@ impl fmt::Display for Why {
     }
 }
 
-/// Text straight to `out`: no response buffer. Its only error is a stall.
+/// Text straight to `out`: no response buffer. The only `fmt::Error` source is `put`,
+/// so a `fmt::Error` here always means `Stalled`.
 struct Text<'a, O: Out>(&'a mut O);
 
 impl<O: Out> Write for Text<'_, O> {
@@ -62,14 +63,14 @@ pub fn answer(
         Err(r) => Err(Why::Refused(r)),
         Ok(Request::Help(NoArg)) => Ok(help(&mut t)),
         Ok(Request::Status(NoArg)) => Ok(write_status(unit.ui(), &mut t)),
-        Ok(Request::Stats(NoArg)) => unit
+        Ok(r @ Request::Stats(NoArg)) => unit
             .stats()
             .map(|s| stats(&s, &mut t))
-            .ok_or(Why::Absent(Command::Stats)),
-        Ok(Request::Bench(NoArg)) => unit
+            .ok_or(Why::Absent(r.command())),
+        Ok(r @ Request::Bench(NoArg)) => unit
             .bench()
             .map(|b| bench(b, &mut t))
-            .ok_or(Why::Absent(Command::Bench)),
+            .ok_or(Why::Absent(r.command())),
         Ok(Request::Shot(c)) => return write_shot(unit.frame(), c, t.0),
     };
     match body {

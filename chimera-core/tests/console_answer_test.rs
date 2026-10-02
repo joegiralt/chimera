@@ -1,6 +1,7 @@
 use chimera_core::clock_plan::SiliconRev;
 use chimera_core::console::{
-    Colours, Command, Console, Frame, Out, Request, SHOT_HEADER, Stalled, Stats, Unit, answer,
+    Colours, Command, Console, Frame, NoArg, Out, Request, SHOT_HEADER, Stalled, Stats, Unit,
+    answer,
 };
 use chimera_core::perf::load::AudioStats;
 use chimera_core::reset::ResetCause;
@@ -80,6 +81,21 @@ fn help_lists_the_table_in_order() {
     }
     want += "OK\n";
     assert_eq!(ask(&mut u, "help\n"), want);
+}
+
+#[test]
+fn help_is_the_specs_text() {
+    let mut u = Fake::new();
+    assert_eq!(
+        ask(&mut u, "help\n"),
+        "chimera console 1\n\
+         help    this list\n\
+         status  firmware, project, Part and where the UI is\n\
+         stats   AUDIO LOAD and the UI loop's time\n\
+         bench   the bench's numbers (bench builds)\n\
+         shot    the screen in THEME's colours; shot raw: canonical\n\
+         OK\n"
+    );
 }
 
 #[test]
@@ -166,6 +182,8 @@ fn bench_is_its_text_then_ok() {
     assert_eq!(ask(&mut u, "bench\n"), "# VOICES\nALG 1  12 24 36\nOK\n");
     u.bench = Some("# VOICES\nALG 1".into());
     assert_eq!(ask(&mut u, "bench\n"), "# VOICES\nALG 1\nOK\n");
+    u.bench = Some(String::new());
+    assert_eq!(ask(&mut u, "bench\n"), "OK\n");
 }
 
 #[test]
@@ -208,6 +226,61 @@ fn a_stall_is_returned_from_every_answer() {
         if let Some(r) = c.push(b) {
             assert_eq!(answer(r, &mut u, &mut Wall), Err(Stalled));
         }
+    }
+}
+
+/// Takes the first `left` puts whole, then stalls; counts puts made after the stall.
+struct Stalls {
+    got: Vec<u8>,
+    left: usize,
+    stalled: bool,
+    after: usize,
+}
+impl Out for Stalls {
+    fn put(&mut self, b: &[u8]) -> Result<(), Stalled> {
+        if self.stalled {
+            self.after += 1;
+            return Err(Stalled);
+        }
+        if self.left == 0 {
+            self.stalled = true;
+            return Err(Stalled);
+        }
+        self.left -= 1;
+        self.got.extend_from_slice(b);
+        Ok(())
+    }
+}
+
+#[test]
+fn a_stall_mid_text_ends_the_answer_there() {
+    let mut u = Fake::new();
+    u.bench = Some("# VOICES\nALG 1\n".into());
+    u.stats = Some(Stats {
+        audio: audio(),
+        loop_avg_us: 1,
+        loop_peak_us: 2,
+    });
+    for req in [
+        Request::Help(NoArg),
+        Request::Status(NoArg),
+        Request::Stats(NoArg),
+        Request::Bench(NoArg),
+    ] {
+        let mut s = Stalls {
+            got: Vec::new(),
+            left: 1,
+            stalled: false,
+            after: 0,
+        };
+        assert_eq!(answer(Ok(req), &mut u, &mut s), Err(Stalled), "{req:?}");
+        assert!(s.stalled, "{req:?} stalled");
+        assert_eq!(s.after, 0, "{req:?} put after the stall");
+        let got = String::from_utf8(s.got).unwrap();
+        assert!(
+            !got.contains("OK") && !got.contains("ERR"),
+            "{req:?}: {got:?}"
+        );
     }
 }
 

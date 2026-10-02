@@ -125,7 +125,7 @@ OK
 ```
 
 - The first six lines are `AudioStats` as the AUDIO LOAD page reads them.
-- `drops` holds one count per note source (`sources` of them), separated by spaces.
+- `drops` holds one count per note source (`sources` of them), separated by spaces; `-` when `sources` is 0.
 - `stack_bytes` is `stack_used` (the page rounds it to K; this does not).
 - `loop_avg_us` and `loop_peak_us` time the UI loop: the DWT time from one loop top to the next. The shell keeps them since the last `stats`, and reading resets both. An iteration that answered a request is left out, so a `shot` never shows up as a slow frame. These two lines are new: they read rows B5 and B7 of the ship checklist (frame time while turning a cell) without a camera. B4 and B6 (overruns) are `overruns`.
 
