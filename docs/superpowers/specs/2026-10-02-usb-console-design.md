@@ -1,6 +1,6 @@
 # USB console: read the unit over USB instead of photographing it
 
-Status: draft for owner review (2026-10-02). ADR 0068 (Proposed) records the decision.
+Status: owner-reviewed (2026-10-02); the open questions are settled (§ The owner's answers). ADR 0068 (Proposed until the ship flash) records the decision. Plan: `docs/superpowers/plans/2026-10-02-usb-console.md`.
 
 ## Intent
 
@@ -11,7 +11,7 @@ Plug the unit into the computer and it shows up as a serial port (`/dev/ttyACM0`
 - `stats`: the AUDIO LOAD numbers;
 - `bench`: the bench numbers;
 - `status`: where the unit is;
-- `shot`: the screen as a PNG.
+- `shot`: the screen as a PNG, in THEME's colours as the panel shows it; `shot raw` in the canonical palette, as `docs/screens` shows it.
 
 The `just` recipes wrap it. The desktop simulator answers the same requests over a local socket, so the protocol is tested on the host before the chip sees it.
 
@@ -44,7 +44,7 @@ ASCII lines, newline-terminated. The unit never speaks first: no banner, no unso
 - One request per line, at most `MAX_LINE` = 64 bytes before the terminator.
 - The terminator is LF or CR, so a terminal's Enter works. An empty line is ignored and gets no answer, so CRLF is one request.
 - Leading and trailing spaces are trimmed. The command word matches case-insensitively.
-- Grammar: `<command> [<arg> …]`, separated by single or repeated spaces. No command takes arguments in this version.
+- Grammar: `<command> [<arg>]`, separated by single or repeated spaces. A command takes at most one argument. In this version only `shot` takes one, `raw`, which also matches case-insensitively. Every other command takes none.
 
 ### Answers
 
@@ -58,7 +58,8 @@ A text body is lines of `<key> <value>`: a lowercase key, one space, then the va
 | Error line | When |
 |---|---|
 | `ERR unknown command <word>, try help` | The word is not in the table. `<word>` is cut to 16 bytes. |
-| `ERR <command> takes no arguments` | Anything follows the command word. |
+| `ERR <command> takes no arguments` | Anything follows `help`, `status`, `stats` or `bench`. |
+| `ERR shot takes raw or nothing` | `shot` is followed by a word other than `raw`, or by more than one word. |
 | `ERR line too long, 64 max` | The line ran past `MAX_LINE`; everything up to the next terminator is dropped. |
 | `ERR <command> is not in this build` | The shell has no data for it: `stats` without `perf-probe` or on the desktop, `bench` outside a bench build. |
 
@@ -72,7 +73,7 @@ help    this list
 status  firmware, project, Part and where the UI is
 stats   AUDIO LOAD and the UI loop's time
 bench   the bench's numbers (bench builds)
-shot    the screen, RGB565 after a SHOT line
+shot    the screen in THEME's colours; shot raw: canonical
 OK
 ```
 
@@ -86,7 +87,7 @@ protocol 1
 project LATE SET
 state MODIFIED
 part 3
-at SETTINGS > SYSTEM > DIAGNOSTICS > AUDIO LOAD
+at SETTINGS > SYSTEM > DIAG > AUD LOAD
 OK
 ```
 
@@ -100,10 +101,10 @@ OK
   |---|---|
   | `Pages(p, page)` | `PART <n> > <page title>` |
   | `Part(p, MixPage)` | `MIXER <n> > PART` or `MIXER <n> > SENDS` |
-  | `Sound(p)` | `SOUND <n>` |
-  | `Fx(page)` | `FX > <page title>` |
-  | `Settings(at)` | `SETTINGS > ` then the breadcrumbs as drawn (`SettingsView::crumbs()`), NAMING's crumb included |
-  | `Orbit(_)` | `ORBIT` |
+  | `Sound(p, _)` | `SOUND <n>` |
+  | `Fx(p, page)` | `FX > <page title>` |
+  | `Settings(at)` | the breadcrumbs as drawn (`UiState::crumbs()`, which starts at `SETTINGS`), with the rows' short crumbs (`DIAG`, `AUD LOAD`) and NAMING's crumb included, but never shortened behind `..` |
+  | `Orbit(_)` | `ORBIT`, once the ORBIT plan adds `Location::Orbit` (it is not on `nav-core`) |
 
   A page title is the text that page's header draws.
 
@@ -142,7 +143,8 @@ OK
 
 - The header line gives the width, height, pixel format and body length. The body follows at once.
 - Pixels go row by row from the top, left to right in each row. Each pixel is two bytes, big-endian RGB565: the bytes the panel is sent.
-- The image is the screen as THEME shows it: each pixel goes through the display's `Palette::map_raw`, the same map `write_pixels` applies. Panel gamma and backlight are analog and are not in it.
+- `shot` is the screen as THEME shows it: each pixel goes through the display's `Palette::map_raw`, the same map `write_pixels` applies. Panel gamma and backlight are analog and are not in it.
+- `shot raw` is the framebuffer as drawn, in the canonical palette (`Palette::IDENTITY`): the colours of `docs/screens` and the goldens, whatever THEME is set to. The header line is the same; the host knows which it asked for.
 - A host checks `width × height × 2 = length` and reads exactly `length` bytes, then the `OK` line.
 
 ## The functional core: `chimera_core::console`
@@ -154,22 +156,35 @@ No I/O, no allocation, no `unsafe`; the module is unit-tested on the host.
 /// row here; the enum, `ALL`, `name` and `about` all come from it, and
 /// `answer`'s exhaustive match fails the build until the new variant is
 /// answered.
+/// A row's argument type says what may follow the word: `NoArg` takes
+/// nothing, `Colours` takes `raw` or nothing. `answer` gets the parsed
+/// value, never the word.
 commands! {
-    Help   => "help",   "this list",
-    Status => "status", "firmware, project, Part and where the UI is",
-    Stats  => "stats",  "AUDIO LOAD and the UI loop's time",
-    Bench  => "bench",  "the bench's numbers (bench builds)",
-    Shot   => "shot",   "the screen, RGB565 after a SHOT line",
+    Help   (NoArg)   => "help",   "this list",
+    Status (NoArg)   => "status", "firmware, project, Part and where the UI is",
+    Stats  (NoArg)   => "stats",  "AUDIO LOAD and the UI loop's time",
+    Bench  (NoArg)   => "bench",  "the bench's numbers (bench builds)",
+    Shot   (Colours) => "shot",   "the screen in THEME's colours; shot raw: canonical",
 }
 // expands to:
 // #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub enum Command { Help, Status, Stats, Bench, Shot }
 // impl Command { pub const ALL: [Command; 5]; pub const fn name(self) -> &'static str;
-//                pub const fn about(self) -> &'static str; }
+//                pub const fn about(self) -> &'static str; pub const fn usage(self) -> &'static str; }
+// #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+// pub enum Request { Help(NoArg), Status(NoArg), Stats(NoArg), Bench(NoArg), Shot(Colours) }
+// impl Request { pub const fn command(self) -> Command; }
+
+pub trait Arg: Sized {
+    const USAGE: &'static str;                       // "no arguments", "raw or nothing"
+    fn parse(words: Words<'_>) -> Option<Self>;      // None: refused
+}
+pub struct NoArg;                                    // only an empty `Words` parses
+pub enum Colours { Theme, Raw }                      // nothing, or `raw`
 
 pub const MAX_LINE: usize = 64;
 pub const PROTOCOL: u8 = 1;
 
-pub enum Refusal { Unknown(Word), Arguments(Command), TooLong }
+pub enum Refusal { Unknown(Word), Arguments(Command), TooLong }   // Arguments: `ERR <name> takes <usage>`
 pub struct Word { bytes: [u8; 16], len: u8 }        // the unknown word, cut to 16
 
 /// Bytes in, one request out per complete line.
@@ -177,7 +192,7 @@ pub struct Console { line: [u8; MAX_LINE], len: u8, overflowed: bool }
 impl Console {
     pub const fn new() -> Self;
     /// One received byte. `Some` when it ends a non-empty line.
-    pub fn push(&mut self, byte: u8) -> Option<Result<Command, Refusal>>;
+    pub fn push(&mut self, byte: u8) -> Option<Result<Request, Refusal>>;
 }
 
 /// What a shell can tell. `None` means "not in this build".
@@ -188,20 +203,20 @@ pub trait Unit {
     fn frame(&self) -> Frame<'_>;
 }
 pub struct Stats { pub audio: AudioStats, pub loop_avg_us: u32, pub loop_peak_us: u32 }
-pub struct Frame<'a> { pub fb: &'a [u16; FB_SIZE], pub palette: Palette }
+pub struct Frame<'a> { pub fb: &'a [u16; FB_SIZE], pub palette: Palette }   // `shot raw` ignores `palette`
 
 /// Where answers go. `Stalled`: the host stopped taking bytes.
 pub trait Out { fn put(&mut self, bytes: &[u8]) -> Result<(), Stalled>; }
 pub struct Stalled;
 
 /// The whole answer, terminal line included.
-pub fn answer(req: Result<Command, Refusal>, unit: &mut impl Unit, out: &mut impl Out)
+pub fn answer(req: Result<Request, Refusal>, unit: &mut impl Unit, out: &mut impl Out)
     -> Result<(), Stalled>;
 ```
 
-- **Parsing is total.** Every byte sequence becomes a `Command` or a `Refusal`. Nothing panics, and no byte is an error except as part of a line.
+- **Parsing is total.** Every byte sequence becomes a `Request` or a `Refusal`. Nothing panics, and no byte is an error except as part of a line.
 - **Text goes straight out.** `answer` formats through a `core::fmt::Write` adapter over `Out`, so there are no response buffers. `shot` fills one 480-byte row at a time, on the stack (well under the stack check's 8 KB step), and puts it.
-- **`commands!`** is one `macro_rules!` in the module. It is the only place a command's name lives.
+- **`commands!`** is one `macro_rules!` in the module. It is the only place a command's name, help line and argument type live.
 
 ## The USB shell: `chimera-stm32/src/usb.rs`
 
@@ -222,7 +237,7 @@ The OTG interrupt is never unmasked in the NVIC (`pac::Interrupt::OTG_FS` stays 
 
 | Field | Value |
 |---|---|
-| VID:PID | `1209:0001` (pid.codes test PID) until the owner picks (§ Open questions). It is never `0483:DF11`, so `dfu-util -d 0x0483:0xdf11` cannot match the running synth. |
+| VID:PID | `1209:0001`, the pid.codes test PID (the owner, 2026-10-02). Applying for a free pid.codes PID is https://github.com/joegiralt/chimera/issues/299. It is never `0483:DF11`, so `dfu-util -d 0x0483:0xdf11` cannot match the running synth. |
 | Manufacturer | `Chimera` |
 | Product | `Chimera console` |
 | Serial number | the chip's 96-bit unique ID (the unique device ID registers at `0x1FF1_E800`, RM0433) as 24 uppercase hex digits, formatted once at `init` into a static. `/dev/serial/by-id/usb-Chimera_Chimera_console_<uid>-if00` is then stable per unit. |
@@ -290,7 +305,7 @@ The console runs at the top of the UI loop. Only the UI loop writes the framebuf
   3. read until the terminal line.
 
   If nothing arrives for 2 s, it fails with `no answer from <target>`. The exit status is 0 on `OK` and 1 on `ERR` or a timeout. The body goes to stdout, and the `ERR` line to stderr.
-- **`shot`:** checks the header, reads exactly `length` bytes, and writes a PNG at 2× nearest-neighbour, as `just screens` does. RGB565 widens to RGB888 by bit replication (`r8 = r5 << 3 | r5 >> 2`), so white stays 255. The file is `target/shots/shot-<YYYYmmdd-HHMMSS>.png`, and the tool prints the path.
+- **`shot` and `shot raw`:** checks the header, reads exactly `length` bytes, and writes a PNG at 2× nearest-neighbour, as `just screens` does. RGB565 widens to RGB888 by bit replication (`r8 = r5 << 3 | r5 >> 2`), so white stays 255. The file is `target/shots/shot-<YYYYmmdd-HHMMSS>.png`, or `shot-raw-…` for `shot raw`, and the tool prints the path.
 
 `Justfile`:
 
@@ -298,8 +313,8 @@ The console runs at the top of the UI loop. Only the UI loop writes the framebuf
 # Read the unit over USB (CHIMERA_USB=sim for the desktop sim)
 usb +cmd:
     python3 tools/chimera-usb.py {{cmd}}
-shot:
-    python3 tools/chimera-usb.py shot
+shot *args:
+    python3 tools/chimera-usb.py shot {{args}}
 stats:
     python3 tools/chimera-usb.py stats
 status:
@@ -341,10 +356,10 @@ The plan's first task measures the real flash cost with `llvm-size`. Over 24 KB,
 ## Tests
 
 - **Core unit tests** (`chimera-core`, host), with a fake `Unit` and a `Vec<u8>`-backed `Out` in the test:
-  - **parsing:** every `Command::ALL` name parses, in any case. `help` lists `ALL` in order and nothing else. LF, CR and CRLF each give one request. Empty lines give none. Leading and trailing spaces are trimmed. A 64-byte command line parses; a 65-byte one gives `TooLong`, and the next line parses cleanly. An unknown word is cut to 16 bytes in its error. Arguments give `Arguments`.
+  - **parsing:** every `Command::ALL` name parses, in any case. `shot` gives `Colours::Theme` and `shot raw` (any case) `Colours::Raw`; `shot x` and `shot raw raw` give `Arguments(Shot)`. `help` lists `ALL` in order and nothing else. LF, CR and CRLF each give one request. Empty lines give none. Leading and trailing spaces are trimmed. A 64-byte command line parses; a 65-byte one gives `TooLong`, and the next line parses cleanly. An unknown word is cut to 16 bytes in its error. Arguments give `Arguments`.
   - **every refusal and every `None`** gives exactly one `ERR` line and nothing before it.
   - **`status`:** each `Loc` variant's `at` line, with SETTINGS' breadcrumbs from a walked path, and each `ProjectStatus` word.
-  - **`shot`:** the header, a body of exactly 153,600 bytes, then `OK`. A framebuffer with known pixels comes back big-endian through a non-identity palette.
+  - **`shot`:** the header, a body of exactly 153,600 bytes, then `OK`. A framebuffer with known pixels comes back big-endian through a non-identity palette, and through no palette for `shot raw`.
   - **`Stalled` mid-shot** stops the answer at that point.
   - **a property test:** random byte streams never panic, and every answer ends in exactly one `OK` or `ERR` line.
 - **Desktop QA** (`qa.rs` harness): the sim answers `status` after a scripted key walk with the expected `at` line. `CHIMERA_USB=sim just shot` writes a PNG equal, pixel for pixel, to the window's frame.
@@ -354,7 +369,7 @@ The plan's first task measures the real flash cost with `llvm-size`. Over 24 KB,
   |---|---|
   | U1 | The unit enumerates: `/dev/chimera` (or `/dev/ttyACM0`) appears, and `just usb help` answers. |
   | U2 | `just status` matches the screen, in SETTINGS and on a Part page. |
-  | U3 | `just shot` matches the panel, THEME accent included. |
+  | U3 | `just shot` matches the panel, THEME accent included; `just shot raw` is in teal on black whatever THEME is set to. |
   | U4 | `just stats` while a chord plays: `overruns` the same before and after ten `just shot`s in a row. |
   | U5 | Unplug USB mid-shot: the UI resumes within 250 ms, and the next `just status` answers after replugging. |
   | U6 | `just flash` still works, with BOOT0 bridged and the console port open in another terminal. |
@@ -370,23 +385,12 @@ The plan's first task measures the real flash cost with `llvm-size`. Over 24 KB,
 - **Write commands** take arguments under the same grammar. Each becomes a `commands!` row with a typed argument parser (an enum per argument kind, never a raw string past the parser), e.g. a key press by name, a cell value, or `dfu` to restart into the ROM loader (system memory, AN2606) so `just flash` needs no BOOT0 bridge. A write acts through the same input path the keys use, so it obeys the lerp rule and the prompts.
 - **SYSTEM › USB CONFIG (#269)** could later turn the console off or choose the composite's parts.
 
-## Open questions for the owner
+## The owner's answers (2026-10-02)
 
-1. **USB identity.**
-   - (a) pid.codes test PID `1209:0001` for now (chosen above);
-   - (b) apply for a free pid.codes PID (it needs an open-source licence, and Chimera's code is MIT);
-   - (c) the shared V-USB CDC-ACM ID `16C0:27DD`.
-2. **What `shot` shows.**
-   - (a) the screen through THEME's palette, as the panel shows it (chosen above);
-   - (b) the canonical colours, matching `docs/screens` and the goldens;
-   - (c) both, with `shot raw` for (b).
-3. **The screen during a shot.**
-   - (a) the UI holds still for 0.15 to 0.3 s while it streams (chosen above);
-   - (b) stream it a slice per frame from a 150 KB copy in D2 SRAM, so the UI keeps moving and 150 KB of RAM goes;
-   - (c) RLE-compress it, so it takes about a tenth of the time and the host decodes it.
-4. **Host tool language.**
-   - (a) Python 3, standard library only (chosen above);
-   - (b) a Rust bin in the workspace, which adds a serial-port crate and a PNG crate.
-5. **When the port appears.**
-   - (a) once the UI loop starts, about 1 s after power-on, after the splash (chosen above);
-   - (b) at the very start of boot, so a hang during boot can be read. That needs the console polled from the boot steps too.
+The five open questions are resolved; the design above already reads this way.
+
+1. **USB identity:** the pid.codes test ID `1209:0001` for now. Applying for a free pid.codes PID is https://github.com/joegiralt/chimera/issues/299. The shared V-USB ID `16C0:27DD` is not used.
+2. **What `shot` shows:** both. `shot` is THEME's colours, as the panel shows them. `shot raw` is the canonical palette, matching `docs/screens` and the goldens. So `shot` takes one optional argument (§ Requests, § Answers).
+3. **The screen during a shot:** the UI holds still for the 0.15 to 0.3 s the shot streams. No 150 KB copy, no compression.
+4. **Host tool language:** Python 3, standard library only, no dependencies.
+5. **When the port appears:** once the UI loop starts, after the splash. A hang during boot is not readable over it.
