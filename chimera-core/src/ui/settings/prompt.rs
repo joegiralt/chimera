@@ -473,6 +473,8 @@ pub fn fits(v: &PromptView<'_>) -> bool {
 /// The panel, opaque over its own last frame: it never needs a clear.
 pub fn draw_prompt<D: DrawTarget<Color = Rgb565>>(d: &mut D, v: &PromptView<'_>) {
     let (top, h) = (PROMPT.1 as i32, (PROMPT.2 - PROMPT.1) as i32);
+    // The whole band: no cut glyph of the screen beneath beside the panel.
+    draw::fill_rect(d, 0, top, theme::SCREEN_W, h, theme::BG);
     draw::round_rect(d, PANEL_X, top, PANEL_W, h, PANEL_R, theme::PANEL);
     draw::round_outline(d, PANEL_X, top, PANEL_W, h, PANEL_R, theme::ACCENT);
     let mut y = top + TEXT_DY;

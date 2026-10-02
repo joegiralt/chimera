@@ -183,8 +183,8 @@ in-memory card.
 
 ### Prompts
 
-One per kind; the list beneath blanks. Outside SETTINGS the panel lands on
-the frozen screen.
+One per kind; the list beneath blanks. Outside SETTINGS the panel clears
+its band over the frozen screen.
 
 | Screen | Where | What it shows |
 |---|---|---|
@@ -202,7 +202,7 @@ the frozen screen.
 ### Leaves
 
 A leaf is the page it was on the old System chain. On a leaf with several
-pages, the breadcrumb ends on the page.
+pages, the breadcrumb ends on the page past the first.
 
 | Screen | Where | What it shows |
 |---|---|---|
@@ -211,7 +211,7 @@ pages, the breadcrumb ends on the page.
 | ![](settings_audio_tuning.png) | AUDIO › TUNING | TUNE and SCALE |
 | ![](settings_personal_theme.png) | PERSONAL › THEME | BRIGHT, GAMMA, ACCENT (AMBER, focused), BLACK |
 | ![](settings_system_os.png) | SYSTEM › OS | Updates: no controls yet |
-| ![](settings_system_about.png) | ABOUT › ABT | About: no content yet |
+| ![](settings_system_about.png) | SYSTEM › ABOUT | About: no content yet |
 | ![](settings_system_about_audio.png) | ABOUT › AUD | Audio load, peak, overruns, drops, desyncs, stack |
 
 ## DEMO (SETTINGS › SYSTEM › DEMO, debug builds)

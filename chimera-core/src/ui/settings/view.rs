@@ -18,6 +18,7 @@ use crate::name::{ProjectName, SoundName};
 use crate::project::{
     Line, Origin, PartId, PartStatus, Project, ProjectFile, ProjectStatus, SlotId, part_status,
 };
+use crate::ui::block_def::{ChainDef2, PageAt};
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
 use crate::ui::nav::{Column, SettingsAt};
@@ -820,11 +821,17 @@ impl Bands<'_> {
         }
     }
 
-    /// As drawn: a multi-page leaf's page, or NAMING's crumb, ends it.
+    /// As drawn: a leaf's page past its first, or NAMING's crumb, ends it.
     pub fn crumbs(&self) -> Crumbs {
         let mut c = Crumbs::of(self.at.path(), self.active);
-        let leaf = self.at.at_leaf().filter(|ch| ch.page_count() > 1);
-        if let Some(def) = leaf.zip(self.at.page()).and_then(|(ch, p)| ch.def_at(p)) {
+        let later =
+            |ch: &ChainDef2, p: PageAt| (Some(p) != ch.page(0, 0)).then(|| ch.def_at(p)).flatten();
+        if let Some(def) = self
+            .at
+            .at_leaf()
+            .zip(self.at.page())
+            .and_then(|(ch, p)| later(ch, p))
+        {
             c.push(Crumb::Name(def.short));
         }
         if let Some(BandsModal::Naming { of, .. }) = self.modal {

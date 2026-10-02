@@ -151,7 +151,7 @@ fn a_multi_page_leaf_ends_the_breadcrumb_on_its_page() {
     let mut ui = UiState::new();
     to_leaf(&mut ui, &["SYSTEM", "ABOUT"]);
     let (about, k0) = crumbs(&mut ui);
-    assert_eq!(about, ".. › SYSTEM › ABOUT › ABT");
+    assert_eq!(about, "SETTINGS › SYSTEM › ABOUT");
     feed(&mut ui, Input::press(ButtonId::Edit));
     let (audio, k1) = crumbs(&mut ui);
     assert_eq!(audio, ".. › SYSTEM › ABOUT › AUD");
