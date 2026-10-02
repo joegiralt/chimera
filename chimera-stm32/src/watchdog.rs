@@ -8,6 +8,7 @@ use chimera_core::audio_out::{
     Heartbeat, LIVE_WAIT_MS, LSI_MAX_HZ, LSI_NOMINAL_HZ, LiveCheck, WATCHDOG_TIMEOUT_MS,
     iwdg_reload_at_div4, kick_gap_us,
 };
+use chimera_core::boot::wait_until;
 use chimera_core::hw::{BLOCK_SIZE, SAMPLE_RATE};
 use cortex_m::peripheral::{DWT, SCB};
 use stm32h7xx_hal::independent_watchdog::IndependentWatchdog;
@@ -41,16 +42,13 @@ pub struct Live(());
 /// After `LIVE_WAIT_MS` without, it resets, as the watchdog would.
 pub fn await_live(cpu_hz: u32) -> Live {
     let check = LiveCheck::start(BLOCKS.load(Ordering::Relaxed), crate::controls::ticks());
-    let start = DWT::cycle_count();
-    let limit = LIVE_WAIT_MS * (cpu_hz / 1000);
-    loop {
-        if check.live(BLOCKS.load(Ordering::Relaxed), crate::controls::ticks()) {
-            return Live(());
-        }
-        if DWT::cycle_count().wrapping_sub(start) > limit {
-            SCB::sys_reset();
-        }
+    let live = wait_until(LIVE_WAIT_MS * (cpu_hz / 1000), DWT::cycle_count, || {
+        check.live(BLOCKS.load(Ordering::Relaxed), crate::controls::ticks())
+    });
+    if !live {
+        SCB::sys_reset();
     }
+    Live(())
 }
 
 /// The last start-up step: the IWDG cannot be stopped again (a reset

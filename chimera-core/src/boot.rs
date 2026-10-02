@@ -48,9 +48,9 @@ pub enum BootStage {
     Card = 2,
     /// The audio and the controls tick started.
     Audio = 3,
-    /// PART 1 drawn, the USB core enabled and on the bus.
-    Usb = 4,
-    /// The watchdog armed, its kicks live: the UI loop runs.
+    /// PART 1 drawn and the watchdog armed, its kicks live.
+    Armed = 4,
+    /// USB up or skipped: the UI loop runs.
     Running = 5,
 }
 
@@ -59,7 +59,7 @@ impl BootStage {
         BootStage::Entry,
         BootStage::Card,
         BootStage::Audio,
-        BootStage::Usb,
+        BootStage::Armed,
         BootStage::Running,
     ];
 
@@ -76,8 +76,81 @@ impl BootStage {
             BootStage::Entry => "entry",
             BootStage::Card => "card",
             BootStage::Audio => "audio",
-            BootStage::Usb => "usb",
+            BootStage::Armed => "armed",
             BootStage::Running => "running",
+        }
+    }
+}
+
+/// Which USB precondition never came true, so the boot left USB off.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UsbOff {
+    /// RCC_CR.HSI48RDY: the USB kernel clock.
+    Hsi48,
+    /// PWR_CR3.USB33RDY: VDD33USB, the FS PHY's supply.
+    Usb33,
+    /// OTG GRSTCTL.AHBIDL after the RCC reset.
+    AhbIdle,
+    /// OTG GRSTCTL.CSRST, the core soft reset, never cleared.
+    CoreReset,
+}
+
+/// How the last boot's USB step ended, kept in RTC_BKP5R.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UsbState {
+    On,
+    Off(UsbOff),
+}
+
+impl UsbState {
+    pub const ALL: [UsbState; 5] = [
+        UsbState::On,
+        UsbState::Off(UsbOff::Hsi48),
+        UsbState::Off(UsbOff::Usb33),
+        UsbState::Off(UsbOff::AhbIdle),
+        UsbState::Off(UsbOff::CoreReset),
+    ];
+
+    /// Never 0, which is "not reached".
+    pub const fn code(self) -> u32 {
+        match self {
+            UsbState::On => 1,
+            UsbState::Off(UsbOff::Hsi48) => 2,
+            UsbState::Off(UsbOff::Usb33) => 3,
+            UsbState::Off(UsbOff::AhbIdle) => 4,
+            UsbState::Off(UsbOff::CoreReset) => 5,
+        }
+    }
+
+    pub fn from_code(code: u32) -> Option<UsbState> {
+        UsbState::ALL.into_iter().find(|s| s.code() == code)
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            UsbState::On => "on",
+            UsbState::Off(UsbOff::Hsi48) => "off(hsi48)",
+            UsbState::Off(UsbOff::Usb33) => "off(usb33)",
+            UsbState::Off(UsbOff::AhbIdle) => "off(ahbidl)",
+            UsbState::Off(UsbOff::CoreReset) => "off(csrst)",
+        }
+    }
+}
+
+/// Polls `ready` until it is true or `limit` has passed on `now`'s clock
+/// (a wrapping counter, DWT cycles on the chip). True if it came ready.
+pub fn wait_until(
+    limit: u32,
+    mut now: impl FnMut() -> u32,
+    mut ready: impl FnMut() -> bool,
+) -> bool {
+    let start = now();
+    loop {
+        if ready() {
+            return true;
+        }
+        if now().wrapping_sub(start) > limit {
+            return ready();
         }
     }
 }
@@ -104,10 +177,13 @@ pub struct BootSeen {
     /// RTC_BKP4R on entry: the `BootStage` the boot before this one
     /// reached, 0 after the backup domain reset.
     pub last_stage: u32,
+    /// RTC_BKP5R on entry: the boot before this one's `UsbState`, 0 if it
+    /// never got that far.
+    pub last_usb: u32,
 }
 
 impl fmt::Display for BootSeen {
-    /// `boot marker=… readback=… action=Synth rsr=… dbp=0 boots=… from=… jump_rsr=… last_stage=…`
+    /// `boot marker=… readback=… action=Synth rsr=… dbp=0 boots=… from=… jump_rsr=… last_stage=… last_usb=…`
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let action = match self.action {
             BootAction::Synth => "Synth",
@@ -130,6 +206,12 @@ impl fmt::Display for BootSeen {
         }
         write!(f, " jump_rsr={:08x} last_stage=", self.jump_rsr)?;
         match (self.last_stage, BootStage::from_code(self.last_stage)) {
+            (_, Some(s)) => f.write_str(s.label())?,
+            (0, None) => f.write_str("none")?,
+            (x, None) => write!(f, "{x:08x}")?,
+        }
+        f.write_str(" last_usb=")?;
+        match (self.last_usb, UsbState::from_code(self.last_usb)) {
             (_, Some(s)) => f.write_str(s.label()),
             (0, None) => f.write_str("none"),
             (x, None) => write!(f, "{x:08x}"),

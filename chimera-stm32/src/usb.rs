@@ -2,7 +2,7 @@
 //! polled from the UI loop. `pac::Interrupt::OTG_FS` is never unmasked, so
 //! USB can never preempt audio.
 
-use chimera_core::boot::BootSeen;
+use chimera_core::boot::{BootSeen, UsbOff, wait_until};
 use chimera_core::console::{
     AnswerClock, Console, Frame, LoopTimer, Out, Served, Stalled, Stats, Unit, answer, serial_hex,
 };
@@ -31,6 +31,12 @@ const _: () = assert!(!(VID_PID.0 == 0x0483 && VID_PID.1 == 0xDF11));
 /// host collects it before the reset. Full speed polls bulk IN every 1 ms
 /// frame; 20 frames covers a busy host.
 const DRAIN_MS: u32 = 20;
+
+/// Each USB precondition's wait at most. VDD33USB and the core reset
+/// settle in well under a millisecond once powered; this leaves a cold
+/// supply room. The waits keep interrupts on, so the armed watchdog is
+/// kicked through them.
+const READY_WAIT_MS: u32 = 50;
 
 /// Bytes read per loop top at most: a flood without a newline can't hold the UI.
 const READ_BUDGET: usize = 256;
@@ -87,9 +93,55 @@ pub struct Unconnected {
     boot: BootSeen,
 }
 
+/// The port's preconditions held, each checked with a bounded wait: only
+/// `preflight` makes one, and `init` takes it with the parts.
+#[must_use]
+pub struct Ready(UsbParts);
+
+/// What `connect`'s enable (synopsys-usb-otg `UsbBus::enable`) spins on
+/// with interrupts masked and no timeout, checked first with interrupts
+/// on and a timeout: HSI48RDY, then VDD33USB (USB33DEN set, USB33RDY;
+/// the HAL's enable sets USB33DEN but never waits), then the OTG core's
+/// AHBIDL and a core soft reset (CSRST) on the FS PHY. `Err` names the
+/// first that never came true, and the boot goes on without USB.
+pub fn preflight(parts: UsbParts, cpu_hz: u32) -> Result<Ready, UsbOff> {
+    let limit = READY_WAIT_MS * (cpu_hz / 1000);
+    let wait = |ready: &mut dyn FnMut() -> bool| wait_until(limit, DWT::cycle_count, ready);
+    // SAFETY: RCC and PWR are owned by the HAL after `freeze`; this touches
+    // only HSI48RDY (read), PWR_CR3.USB33DEN, the bit the HAL's own
+    // `USB2::enable` sets the same way (stm32h7xx-hal 0.16 usb_hs.rs), and
+    // RCC's OTG2 enable and reset bits, which `UsbBus::enable` writes too.
+    // Nothing else writes these after `freeze`, and no interrupt does.
+    let (rcc, pwr) = unsafe { (&*pac::RCC::ptr(), &*pac::PWR::ptr()) };
+    if !wait(&mut || rcc.cr.read().hsi48rdy().is_ready()) {
+        return Err(UsbOff::Hsi48);
+    }
+    pwr.cr3.modify(|_, w| w.usb33den().set_bit());
+    if !wait(&mut || pwr.cr3.read().usb33rdy().bit_is_set()) {
+        return Err(UsbOff::Usb33);
+    }
+    let global = &parts.global;
+    // AHB1ENR/AHB1RSTR's OTG2 bits belong to this port alone, and
+    // `UsbBus::enable` repeats this enable and reset itself.
+    rcc.ahb1enr.modify(|_, w| w.usb2otgen().set_bit());
+    rcc.ahb1rstr.modify(|_, w| w.usb2otgrst().set_bit());
+    rcc.ahb1rstr.modify(|_, w| w.usb2otgrst().clear_bit());
+    if !wait(&mut || global.grstctl.read().ahbidl().bit_is_set()) {
+        return Err(UsbOff::AhbIdle);
+    }
+    // The FS PHY, as `UsbBus::enable` selects it before its reset.
+    global.gusbcfg.modify(|_, w| w.physel().set_bit());
+    global.grstctl.modify(|_, w| w.csrst().set_bit());
+    if !wait(&mut || global.grstctl.read().csrst().bit_is_clear()) {
+        return Err(UsbOff::CoreReset);
+    }
+    Ok(Ready(parts))
+}
+
 /// Sets the port up, once: the CRS trimming HSI48 from the host's SOF, the
 /// OTG core and the CDC-ACM class. Nothing connects yet (`connect`).
-pub fn init(parts: UsbParts, clocks: &CoreClocks, cpu_hz: u32) -> Unconnected {
+pub fn init(ready: Ready, clocks: &CoreClocks, cpu_hz: u32) -> Unconnected {
+    let Ready(parts) = ready;
     let UsbParts {
         dm,
         dp,

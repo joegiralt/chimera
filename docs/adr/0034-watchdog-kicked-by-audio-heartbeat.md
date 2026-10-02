@@ -10,9 +10,10 @@ fault while stacking, e.g. a stack overflow) or a spin inside the audio
 interrupt never reaches that code, and the unit buzzes until power is cycled.
 
 ## Decision
-IWDG1 is armed last in start-up, just before the UI loop: after the audio,
-the first frame and the USB core's enable (which spins with interrupts
-masked), and only once `audio_out::LiveCheck` sees the block count and the
+IWDG1 is armed late in start-up: after the audio and the first frame, and
+before USB, whose core enable spins with interrupts masked (a hang there
+must reset, not freeze; `usb::preflight` bounds its preconditions first),
+and only once `audio_out::LiveCheck` sees the block count and the
 controls tick both moving (`watchdog::Live`, else a reset after
 `LIVE_WAIT_MS`). Arming it before the audio, as first decided, put the
 start-up's own gaps on its clock: a cold boot reset twice under it

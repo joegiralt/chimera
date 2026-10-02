@@ -1,5 +1,6 @@
 use chimera_core::boot::{
-    BootAction, BootSeen, BootStage, DFU_MAGIC, FROM_CONSOLE, FROM_MENU, ROM_DFU_BASE, after_reset,
+    BootAction, BootSeen, BootStage, DFU_MAGIC, FROM_CONSOLE, FROM_MENU, ROM_DFU_BASE, UsbOff,
+    UsbState, after_reset, wait_until,
 };
 use chimera_core::reset::ResetCause;
 
@@ -96,11 +97,12 @@ fn the_boot_line() {
         from: FROM_CONSOLE,
         jump_rsr: 0x0140_0000,
         last_stage: BootStage::Audio.code(),
+        last_usb: UsbState::Off(UsbOff::Usb33).code(),
     };
     assert_eq!(
         seen.to_string(),
         "boot marker=44465521 readback=00000000 action=Synth rsr=00e60000 dbp=0 boots=7 \
-         from=console jump_rsr=01400000 last_stage=audio"
+         from=console jump_rsr=01400000 last_stage=audio last_usb=off(usb33)"
     );
     let words = |from| BootSeen { from, ..seen }.to_string();
     assert!(words(FROM_MENU).contains(" from=menu "));
@@ -131,8 +133,43 @@ fn every_stage_reads_back_from_its_code() {
         from: 0,
         jump_rsr: 0,
         last_stage,
+        last_usb: 0,
     };
-    assert!(seen(0).to_string().ends_with(" last_stage=none"));
-    assert!(seen(99).to_string().ends_with(" last_stage=00000063"));
-    assert!(seen(5).to_string().ends_with(" last_stage=running"));
+    assert!(
+        seen(0)
+            .to_string()
+            .ends_with(" last_stage=none last_usb=none")
+    );
+    assert!(seen(99).to_string().contains(" last_stage=00000063 "));
+    assert!(seen(5).to_string().contains(" last_stage=running "));
+}
+
+#[test]
+fn every_usb_state_reads_back_from_its_code() {
+    for s in UsbState::ALL {
+        assert_ne!(s.code(), 0, "0 is not reached");
+        assert_eq!(UsbState::from_code(s.code()), Some(s));
+    }
+    assert_eq!(UsbState::from_code(0), None);
+}
+
+#[test]
+fn a_bounded_wait_gives_up_after_its_limit() {
+    use std::cell::Cell;
+    let t = Cell::new(0u32);
+    let tick = || {
+        t.set(t.get().wrapping_add(10));
+        t.get()
+    };
+    assert!(!wait_until(100, tick, || false));
+    assert!(t.get() <= 130, "stopped near the limit: {}", t.get());
+    t.set(u32::MAX - 50); // the counter wraps mid-wait
+    assert!(!wait_until(100, tick, || false));
+    let polls = Cell::new(0);
+    let ready_on_third = || {
+        polls.set(polls.get() + 1);
+        polls.get() >= 3
+    };
+    assert!(wait_until(1_000, tick, ready_on_third));
+    assert!(wait_until(0, || 0, || true), "ready at once needs no time");
 }
