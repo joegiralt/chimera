@@ -251,32 +251,32 @@ fn bn_lands_on_the_engine_home_modal() {
     assert_eq!(h.sub(), 0);
 }
 
+/// PLUS stays in the Part's mixer: PART, SENDS, then its FX, clamped at
+/// both ends (owner, 2026-10-02).
 #[test]
 fn mixer_walk_reaches_the_fx() {
     let cx = cx();
     let mut r = Recall::new();
-    let mut l = Location::mixer(P[0], MixPage::Part);
-    for _ in 0..11 {
+    for p in [P[0], P[3]] {
+        let mut l = Location::mixer(p, MixPage::Part);
+        assert_eq!(l.step(NavKey::Minus, &cx, &mut r), Step::Stay);
         key(&mut l, NavKey::Plus, &cx, &mut r);
-    }
-    assert_eq!(l, Location::mixer(P[5], MixPage::Sends));
-    key(&mut l, NavKey::Plus, &cx, &mut r);
-    assert_eq!(fx_node(l, &cx), Some((P[5], at(2, 0))), "CHORUS");
-    key(&mut l, NavKey::Minus, &cx, &mut r);
-    assert_eq!(l, Location::mixer(P[5], MixPage::Sends));
-    for _ in 0..11 {
+        assert_eq!(l, Location::mixer(p, MixPage::Sends));
+        key(&mut l, NavKey::Plus, &cx, &mut r);
+        assert_eq!(fx_node(l, &cx), Some((p, at(2, 0))), "CHORUS");
         key(&mut l, NavKey::Minus, &cx, &mut r);
-    }
-    assert_eq!(l, Location::mixer(P[0], MixPage::Part));
-    assert_eq!(l.step(NavKey::Minus, &cx, &mut r), Step::Stay);
+        assert_eq!(l, Location::mixer(p, MixPage::Sends));
+        key(&mut l, NavKey::Minus, &cx, &mut r);
+        assert_eq!(l, Location::mixer(p, MixPage::Part));
 
-    let last = MIXER_CHANNEL_CHAIN.len() as u8 - 1;
-    l = Location::mixer(P[5], MixPage::Sends);
-    for _ in 0..last - 1 {
-        key(&mut l, NavKey::Plus, &cx, &mut r);
+        let last = MIXER_CHANNEL_CHAIN.len() as u8 - 1;
+        l = Location::mixer(p, MixPage::Sends);
+        for _ in 0..last - 1 {
+            key(&mut l, NavKey::Plus, &cx, &mut r);
+        }
+        assert_eq!(fx_node(l, &cx), Some((p, at(last, 0))), "MASTER");
+        assert_eq!(l.step(NavKey::Plus, &cx, &mut r), Step::Stay);
     }
-    assert_eq!(fx_node(l, &cx), Some((P[5], at(last, 0))), "MASTER");
-    assert_eq!(l.step(NavKey::Plus, &cx, &mut r), Step::Stay);
 }
 
 /// A leaf is one page: no key steps it, and it shows its chain's home.
@@ -440,7 +440,7 @@ fn bar_wraps_any_delta_on_any_list() {
 /// Walks from Part 1's SENDS into the FX, to `fx_steps` past CHORUS.
 fn into_fx(l: &mut Location, fx_steps: u8, cx: &NavCtx, r: &mut Recall) {
     *l = Location::mixer(P[0], MixPage::Sends);
-    for _ in 0..11 + fx_steps {
+    for _ in 0..1 + fx_steps {
         key(l, NavKey::Plus, cx, r);
     }
 }
@@ -451,7 +451,7 @@ fn the_fx_page_is_remembered() {
     let mut r = Recall::new();
     let mut l = Location::home(&cx);
     key(&mut l, NavKey::Part(P[0]), &cx, &mut r);
-    for _ in 0..12 {
+    for _ in 0..2 {
         key(&mut l, NavKey::Plus, &cx, &mut r);
     }
     key(&mut l, NavKey::Edit, &cx, &mut r); // DELAY's sub-page
@@ -461,7 +461,7 @@ fn the_fx_page_is_remembered() {
     assert_eq!(
         l,
         Location::pages(P[0], at(0, 0)),
-        "Part 6's FX: not B1's mixer"
+        "B1 from Part 1's FX: its pages"
     );
     l = Location::pages(P[0], at(3, 0));
     key(&mut l, NavKey::Part(P[0]), &cx, &mut r);
@@ -506,7 +506,7 @@ fn leaving_by_part_or_sends_resets_to_sends() {
         }
         assert_eq!(
             l,
-            Location::mixer(P[5], [MixPage::Sends, MixPage::Part][minus - 1])
+            Location::mixer(P[0], [MixPage::Sends, MixPage::Part][minus - 1])
         );
         key(&mut l, NavKey::Part(P[0]), &cx, &mut r);
         key(&mut l, NavKey::Part(P[0]), &cx, &mut r);

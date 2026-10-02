@@ -540,7 +540,7 @@ pub fn naming_save_as(ui: &mut UiState) {
 }
 
 /// The shared FX page `node` of the mixer chain, through real presses:
-/// MIX+B6 (Part 6's SENDS), then PLUS past it.
+/// MIX+B6 (Part 6's SENDS), then PLUS past it into Part 6's FX.
 pub fn to_fx(ui: &mut UiState, node: usize) {
     use chimera_core::ui::nav::{Location, MixPage};
     assert!(node > reg::MIXER_HOME, "{node} is not an FX node");
@@ -735,7 +735,7 @@ pub type ScreenCase = (&'static str, fn(&mut UiState));
 /// Every screen the goldens lock, one or more per page type (spec § Testing).
 /// MST's place on the Mix chain: after TAPE only with `master-tape`
 /// (ADR 0055). The mixer opens on SENDS, node 1 (ADR 0057); the FX come
-/// after Part 6's SENDS.
+/// after the Part's SENDS.
 const MST: usize = if cfg!(feature = "master-tape") { 6 } else { 5 };
 const DLY: usize = 3;
 const REV: usize = 4;

@@ -112,7 +112,7 @@ fn the_mixer_reopens_on_the_page_last_used() {
         .iter()
         .position(|b| b.def.id == CHORUS.id)
         .unwrap();
-    screen::to_fx(&mut ui, chorus); // past Part 6's SENDS
+    screen::to_fx(&mut ui, chorus); // Part 6's FX
     assert_eq!(at(&ui), (On::Mix(5), CHORUS.id));
     press(&mut ui, ButtonId::B6);
     press(&mut ui, ButtonId::B6);

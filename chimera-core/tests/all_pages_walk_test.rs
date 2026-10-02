@@ -51,7 +51,7 @@ enum Context {
     Part(EngineType),
     /// MIX + B<n> (0-based): its PART and SENDS.
     Mixer(usize),
-    /// The shared FX, after Part 6's SENDS.
+    /// The shared FX, from Part 6's SENDS.
     Fx,
     /// A SETTINGS leaf, DEMO's among them, by its index in `leaves()`.
     Leaf(usize),

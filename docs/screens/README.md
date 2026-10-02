@@ -139,8 +139,8 @@ per model.
 ## Mixer (MIX + B1)
 
 Part 1's PART and SENDS; the other Parts' differ only in the header. The
-shared FX come after Part 6's SENDS (PLUS from there), so they read
-PART 6 · MIX.
+shared FX come after a Part's SENDS (PLUS from there); the goldens reach
+them from MIX+B6, so they read PART 6 · MIX.
 
 | Screen | Where | What it shows |
 |---|---|---|

@@ -108,7 +108,7 @@ These five failure modes are the ones the spec implies but no spec test exercise
    - **Block ids:** 68 and 69 are reserved for the CHANNELS and OUTPUTS leaf defs (Task 5). `glyphs` takes 70 and up, raising `focus::MAX_PAGES` (72 today) if it needs to.
    - **Demo pages are keyed by def id:** `PageId::Demo(u16)` replaces `DemoWaves` … `DemoMatrix`, so Task 8's `from_nav` rewrite has no per-demo arm. If `glyphs` already made that change, Task 8 keeps it.
    - **`docs/screens` is never merged by hand.** On a conflict there, take either side, then rerun `just screens`. Task 8 is the big rewrite and `glyphs` is small, so this happens once, in Task 8.
-2. **How FX pages are reached.** The spec keeps `Fx(PageAt)` but drops the Project rung's `FX ›`. The mixer walk now runs `P1 PART → P1 SENDS → … → P6 SENDS → CHORUS → DELAY → EFX → (TAPE) → MASTER`. PLUS on MASTER stays, and MINUS walks back. **Owner ruling (2026-10-01): the FX pages come after P6 SENDS**, as written.
+2. **How FX pages are reached.** The spec keeps `Fx(PageAt)` but drops the Project rung's `FX ›`. The mixer walk runs `Pn PART → Pn SENDS → CHORUS → DELAY → EFX → (TAPE) → MASTER` inside Part *n*'s mixer. PLUS on MASTER and MINUS on PART stay. **Owner ruling (2026-10-02): PLUS stays in Part n's mixer and reaches its FX after SENDS; other Parts by MIX+B*n*** (it reverses the 2026-10-01 ruling, FX after P6 SENDS).
 3. **`Location::Orbit` is not added here.** There is no `OrbitAt` on this branch, so the ORBIT plan adds the variant and `Recall`'s `orbit` and `from`. SEQ hold does nothing until then.
 4. **DEMO.** SYSTEM › DEMO exists under `cfg(debug_assertions)` only. With that row in place, MIX+B6 is Part 6's mixer in every build. A release firmware has no demo.
 5. **Leaves are small chains**, declared in `chimera-core/src/ui/settings/leaves.rs` (not beside `SYSTEM_CHAIN`). A leaf row points at a `&'static ChainDef2`:
@@ -178,7 +178,7 @@ These five failure modes are the ones the spec implies but no spec test exercise
 
 ## Owner rulings (2026-10-01)
 
-1. **FX reach** (Pre-flight 2): the shared FX pages come after Part 6's SENDS in the PLUS walk. No key or SETTINGS row of their own.
+1. **FX reach** (Pre-flight 2): the shared FX pages come after the Part's own SENDS in the PLUS walk (owner, 2026-10-02). No key or SETTINGS row of their own.
 2. **RENAME of another project** (Pre-flight 9): dimmed with `LOAD TO RENAME` for this ship, with an issue. The streaming copy that lifts it is a later, new ADR superseding the relevant part of ADR 0045 (Accepted, so never amended).
 
 ## Issue map
@@ -665,7 +665,7 @@ SYSTEM › OS UPGRADE [OS] Leaf(UPDATES) · STORAGE Later · FORMAT CARD [FORMAT
     - the Projects/Project rungs (0044 as first written);
     - a System chain of pages;
     - MENU hold opening SETTINGS.
-  - **Consequences:** amends 0044, supersedes 0057 (through 0044), and supersedes the storage spec's rungs 0 and 1. Records the owner's rulings of 2026-10-01: the shared FX pages come after P6 SENDS in the mixer walk; RENAME of a project that isn't loaded is dimmed `LOAD TO RENAME` (with its issue) until `Store` gains a streaming copy, which will need a new ADR superseding the relevant part of ADR 0045 (Accepted, so never amended).
+  - **Consequences:** amends 0044, supersedes 0057 (through 0044), and supersedes the storage spec's rungs 0 and 1. Records the owner's rulings of 2026-10-01: the shared FX pages come after P6 SENDS in the mixer walk (reversed 2026-10-02: after the Part's own SENDS); RENAME of a project that isn't loaded is dimmed `LOAD TO RENAME` (with its issue) until `Store` gains a streaming copy, which will need a new ADR superseding the relevant part of ADR 0045 (Accepted, so never amended).
   - **Sources:** the spec, this plan, #257, #258.
   - Add its row to `docs/adr/README.md`.
 - [ ] **Step 5: Run** → PASS; `just check` → PASS.
@@ -763,7 +763,7 @@ pub fn chain_def_for(e: EngineType) -> &'static ChainDef2;  // moved from chain.
   - The `up` table goes; MENU tap opens SETTINGS, backs out, or closes.
   - MENU hold is quick save, ORBIT included (orbit spec lines 370 and 570: "MENU hold: save the project").
   - SEQ tap on the mixer and the Sound rung opens SETTINGS › PART.
-  - The mixer walk reaches the FX after Part 6's SENDS (owner ruling, 2026-10-01).
+  - The mixer walk reaches the FX after the Part's own SENDS (owner ruling, 2026-10-02).
   - RENAME of a project that isn't loaded is dimmed `LOAD TO RENAME`, with its issue (owner ruling, 2026-10-01). Lifting it is a new ADR superseding the relevant part of ADR 0045, never an amendment of 0045.
   - MIX+B6 is Part 6's mixer once SYSTEM › DEMO exists.
 - [ ] **Step 5: ADR 0057:** set its Status to `Superseded by [0044](0044-one-ladder-one-button-map.md)`, and update the README rows for 0057 and 0044.

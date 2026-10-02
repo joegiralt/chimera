@@ -555,9 +555,7 @@ impl Location {
             (Part(..) | Fx(..) | Sound(..), NavKey::SeqTap) => {
                 Step::Go(Location::settings_at(&PART_SETTINGS, 0))
             }
-            (Fx(_, at), NavKey::Minus) if at.node() == FX_FIRST => {
-                go(Part(PartId::ALL[MAX_PARTS - 1], MixPage::Sends))
-            }
+            (Fx(p, at), NavKey::Minus) if at.node() == FX_FIRST => go(Part(p, MixPage::Sends)),
             (Fx(p, at), k) => {
                 page_step(&MIXER_CHANNEL_CHAIN, at, k).map_or(Step::Stay, |at| go(Fx(p, at)))
             }
@@ -601,21 +599,13 @@ impl Location {
     }
 }
 
-/// PLUS and MINUS on a Part's rung: PART, SENDS, the next Part's PART… and
-/// after Part 6's SENDS, the FX (owner, 2026-10-01).
+/// PLUS and MINUS in Part `p`'s mixer: PART, SENDS, then its FX, clamped;
+/// other Parts' by MIX+B*n* (owner, 2026-10-02).
 fn mix_walk(p: PartId, m: MixPage, d: i8) -> Loc {
-    let i = (p.index() * 2 + (m == MixPage::Sends) as usize) as i32 + d as i32;
-    match u8::try_from(i / 2).ok().and_then(PartId::new) {
-        _ if i < 0 => Loc::Part(p, m),
-        Some(q) => Loc::Part(
-            q,
-            if i % 2 == 0 {
-                MixPage::Part
-            } else {
-                MixPage::Sends
-            },
-        ),
-        None => Loc::Fx(p, FX_FIRST_PAGE),
+    match (m, d > 0) {
+        (MixPage::Part, true) => Loc::Part(p, MixPage::Sends),
+        (MixPage::Sends, true) => Loc::Fx(p, FX_FIRST_PAGE),
+        (_, false) => Loc::Part(p, MixPage::Part),
     }
 }
 

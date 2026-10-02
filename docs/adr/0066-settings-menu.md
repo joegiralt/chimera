@@ -82,8 +82,9 @@ settings world of the synth. The spec is
   absorbs it). Supersedes rungs 0 and 1, the `up` table, and the MENU,
   SEQ and MIX+MINUS key rows of the storage spec (2026-09-28).
 - Owner rulings of 2026-10-01:
-  - **The shared FX pages come after P6 SENDS in the mixer walk.** They
-    have no key or SETTINGS row of their own.
+  - **owner, 2026-10-02: PLUS stays in Part n's mixer and reaches its FX
+    after SENDS; other Parts by MIX+B*n*.** The FX have no key or
+    SETTINGS row of their own.
   - **RENAME of a project that isn't loaded is dimmed `LOAD TO RENAME`**
     until `Store` gains a streaming copy (#273). That needs a new ADR
     superseding the relevant part of ADR 0045, which is Accepted and

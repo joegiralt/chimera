@@ -38,7 +38,7 @@ on 2026-09-30.
 | **SEQ tap** | ~~Save what this rung is about.~~ On the mixer and the Sound rung, open SETTINGS › PART for that Part; in a SETTINGS list, run the highlighted action (amended 2026-10-01, owner: ADR 0066). On pages and leaf pages it keeps today's sub-page up. In ORBIT it always saves the scene, on every ORBIT page, since EDIT cycles the RING sub-pages and no sub-page-up is needed there (amended 2026-09-30, owner). Acts on release, before `HOLD_MS`. |
 | **SEQ hold** | ORBIT, from anywhere, including from the pages a hold B*n* opened. |
 | **MENU tap in ORBIT** | Leave ORBIT, back to where you were before; ORBIT keeps playing. |
-| **PLUS / MINUS** | Sideways: the next or previous page or node. On a Part's rung (the mixer), PLUS steps PART → SENDS → the next Part's mixer, and MINUS goes the other way, so one key walks every Part's mixer (amended 2026-09-30, owner); after Part 6's SENDS it goes on into the shared FX, CHORUS to MASTER, and MINUS from CHORUS returns to Part 6's SENDS (owner ruling 2026-10-01) (amended 2026-10-01, owner: ADR 0066). On the Sound rung, the next or previous Part, wrapping. In a SETTINGS list, the bar; on a leaf page, the node (amended 2026-10-01, owner: ADR 0066). |
+| **PLUS / MINUS** | Sideways: the next or previous page or node. On a Part's rung (the mixer), PLUS steps PART → SENDS → the shared FX, CHORUS to MASTER, inside Part *n*'s mixer, clamped at both ends, and MINUS goes the other way; other Parts' mixers are MIX+B*n* (owner, 2026-10-02: ADR 0066). On the Sound rung, the next or previous Part, wrapping. In a SETTINGS list, the bar; on a leaf page, the node (amended 2026-10-01, owner: ADR 0066). |
 | **MIX+MINUS** | Remove, behind a confirm (storage spec § The keys). |
 | **MIX+PLUS** | Prime a route on pages (ADR 0017); rename and retag on a library entry. |
 | **MIX+MENU** | Reserved for the chain editor. |
@@ -208,8 +208,9 @@ in the variant, so no box and no heap.
     `ChainDef2::with_home_def`, checked at compile time, and
     `Location::part_home` reads it: node 0 for Algo and RES for Modal. A
     new or INIT Modal Part lands on RES, not EXC.
-  - **The mixer walk reaches the FX** after Part 6's SENDS; the FX have no
-    key or SETTINGS row of their own.
+  - **The mixer walk reaches the FX** after the Part's own SENDS, and
+    other Parts by MIX+B*n* (owner, 2026-10-02); the FX have no key or
+    SETTINGS row of their own.
   - **RENAME of a project that isn't loaded is dimmed `LOAD TO RENAME`**
     until `Store` gains a streaming copy
     ([#273](https://github.com/joegiralt/chimera/issues/273)). Lifting it

@@ -99,7 +99,7 @@ fn follows_model(def: &BlockDef) -> bool {
 enum Ctx {
     /// Part 1 on the engine's init Sound.
     Part(EngineType),
-    /// MIX + B1's PART and SENDS, then the FX past Part 6's SENDS. The
+    /// MIX + B1's PART and SENDS, then the FX from Part 6's SENDS. The
     /// other Parts' mixers differ only in the header.
     Mixer,
     /// A SETTINGS leaf, by its index in `leaves()`.
