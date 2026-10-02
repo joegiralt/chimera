@@ -1,3 +1,4 @@
+pub mod about_page;
 pub mod alg_layout;
 pub mod animation;
 pub mod audio_page;
@@ -204,6 +205,8 @@ pub struct UiState {
     listing: Listing,
     /// Card work for `card_work`, at most one a frame.
     job: Option<Job>,
+    /// The card as `sync_system` last saw it, for ABOUT.
+    card: Card,
 }
 
 crate::in_place::field_list!(UiState => UiState {
@@ -230,6 +233,7 @@ crate::in_place::field_list!(UiState => UiState {
     modal,
     listing,
     job,
+    card,
 });
 
 impl Default for UiState {
@@ -288,6 +292,7 @@ impl UiState {
             addr_of_mut!((*p).modal).write(None);
             addr_of_mut!((*p).listing).write(Listing::new());
             addr_of_mut!((*p).job).write(None);
+            addr_of_mut!((*p).card).write(Card::new());
             let ui = slot.assume_init_mut();
             ui.load_matrix(PartId::ALL[0]);
             ui
@@ -332,10 +337,12 @@ impl UiState {
         s: &mut SystemSettings,
     ) {
         s.theme = self.theme;
+        self.card = *card;
         if !sync.left_system(self.in_settings(), s) {
             return;
         }
         let r = sync.on_exit(card, store, s, self.project.meta().file());
+        self.card = *card;
         if r == Ok(Exit::Loaded) {
             self.theme = s.theme;
         }
@@ -1668,7 +1675,7 @@ impl UiState {
     }
 
     /// Render full screen with `scope` as the live output and `audio` behind
-    /// SETTINGS › SYSTEM › ABOUT's AUDIO sub-page.
+    /// SYSTEM › ABOUT and DIAGNOSTICS › AUDIO LOAD.
     pub fn render_with_audio<D>(
         &self,
         display: &mut D,
@@ -1737,6 +1744,7 @@ impl UiState {
             active_part: self.active_part,
             prime_status: self.prime_status,
             audio,
+            card: self.card,
             master_gr_db: crate::meter::MASTER_GR.read(),
             clock: self.clock,
             fx: &self.project.perf().fx,
@@ -1826,10 +1834,10 @@ impl UiState {
                 let looks = (0..6).fold(0u16, |k, i| k | (renderer::look(f, i) as u16) << (2 * i));
                 RegionData::cells(
                     self.page,
-                    if audio_page {
-                        audio_page::cells_key(f.audio)
-                    } else {
-                        qvalues
+                    match f.def.viz {
+                        VizType::AudioStats => audio_page::cells_key(f.audio),
+                        VizType::About => about_page::cells_key(f.audio, f.card),
+                        _ => qvalues,
                     },
                     f.focus as u8,
                     self.matrix_state.num_dests as u16,
@@ -1899,7 +1907,7 @@ impl UiState {
     }
 
     /// Render only dirty regions, with `scope` as the live output and
-    /// `audio` behind the AUDIO sub-page. Returns list of (y_start, y_end)
+    /// `audio` behind ABOUT and AUDIO LOAD. Returns list of (y_start, y_end)
     /// pairs to flush. Slots with (0, 0) are unused.
     pub fn render_dirty_with_audio<D>(
         &mut self,

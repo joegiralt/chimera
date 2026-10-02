@@ -7,7 +7,8 @@ pub enum VizType {
     None,
     FilterResponse,
     Adsr,
-    Logo,
+    /// SYSTEM › ABOUT: the name and firmware; its cells are `about_page`'s.
+    About,
     /// IN → CHR → DLY → REV → OUT, lighting this page's part of it.
     EffectsFlow(FxFlow),
     MixerLevels,

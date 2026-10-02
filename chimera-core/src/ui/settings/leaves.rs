@@ -4,7 +4,9 @@ use crate::addr::BlockRef;
 use crate::part::PartParams;
 use crate::project::PartId;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot, VizType};
-use crate::ui::block_registry::{SYS_ABOUT, SYS_AUDIO, SYS_THEME, SYS_TUNING, SYS_UPDATES};
+use crate::ui::block_registry::{
+    DEMO_BLOCKS, SYS_ABOUT, SYS_AUDIO, SYS_THEME, SYS_TUNING, SYS_UPDATES,
+};
 use crate::ui::page::PageLayout;
 
 /// One cell per Part, `P1`–`P6`, each Part's `param`: the mixer's own
@@ -40,20 +42,64 @@ pub static OUTPUTS: BlockDef = BlockDef {
     params: per_part(PartParams::OUTPUT),
 };
 
+/// A SETTINGS leaf: one page, no sub-pages, so no key in it steps a page.
+/// A leaf with sub-pages fails the build:
+///
+/// ```compile_fail,E0080
+/// use chimera_core::ui::block_def::ChainBlock;
+/// use chimera_core::ui::block_registry::{SYS_ABOUT, SYS_AUDIO};
+/// use chimera_core::ui::settings::leaves::OnePage;
+/// static B: [ChainBlock; 1] = [ChainBlock::with_subs(&SYS_ABOUT, &[&SYS_AUDIO])];
+/// static BAD: OnePage = OnePage::new("About", &B);
+/// ```
+#[derive(Debug)]
+pub struct OnePage(ChainDef2);
+
+impl OnePage {
+    pub const fn new(name: &'static str, block: &'static [ChainBlock; 1]) -> OnePage {
+        assert!(
+            block[0].sub_pages.is_empty(),
+            "a SETTINGS leaf has one page"
+        );
+        OnePage(ChainDef2::new(name, block, &[]))
+    }
+
+    pub const fn chain(&'static self) -> &'static ChainDef2 {
+        &self.0
+    }
+
+    pub const fn def(&self) -> &'static BlockDef {
+        self.0.blocks[0].def
+    }
+}
+
 static CHANNELS_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&CHANNELS)];
 static OUTPUTS_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&OUTPUTS)];
 static TUNING_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_TUNING)];
 static THEME_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_THEME)];
 static UPDATES_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_UPDATES)];
-static ABOUT_BLOCKS: [ChainBlock; 1] = [ChainBlock::with_subs(&SYS_ABOUT, &[&SYS_AUDIO])];
+static ABOUT_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_ABOUT)];
+static AUDIO_LOAD_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_AUDIO)];
 
-const fn leaf(name: &'static str, blocks: &'static [ChainBlock]) -> ChainDef2 {
-    ChainDef2::new(name, blocks, &[])
-}
+pub static CHANNELS_LEAF: OnePage = OnePage::new("Channels", &CHANNELS_BLOCKS);
+pub static OUTPUTS_LEAF: OnePage = OnePage::new("Outputs", &OUTPUTS_BLOCKS);
+pub static TUNING_LEAF: OnePage = OnePage::new("Tuning", &TUNING_BLOCKS);
+pub static THEME_LEAF: OnePage = OnePage::new("Theme", &THEME_BLOCKS);
+pub static UPDATES_LEAF: OnePage = OnePage::new("Updates", &UPDATES_BLOCKS);
+pub static ABOUT_LEAF: OnePage = OnePage::new("About", &ABOUT_BLOCKS);
+pub static AUDIO_LOAD_LEAF: OnePage = OnePage::new("Audio Load", &AUDIO_LOAD_BLOCKS);
 
-pub static CHANNELS_LEAF: ChainDef2 = leaf("Channels", &CHANNELS_BLOCKS);
-pub static OUTPUTS_LEAF: ChainDef2 = leaf("Outputs", &OUTPUTS_BLOCKS);
-pub static TUNING_LEAF: ChainDef2 = leaf("Tuning", &TUNING_BLOCKS);
-pub static THEME_LEAF: ChainDef2 = leaf("Theme", &THEME_BLOCKS);
-pub static UPDATES_LEAF: ChainDef2 = leaf("Updates", &UPDATES_BLOCKS);
-pub static ABOUT_LEAF: ChainDef2 = leaf("About", &ABOUT_BLOCKS);
+/// One leaf per DEMO page, in `DEMO_BLOCKS`' order.
+pub static DEMO_LEAVES: [OnePage; DEMO_BLOCKS.len()] = {
+    const NO: OnePage = OnePage::new("Demo", &ABOUT_BLOCKS);
+    let mut l = [NO; DEMO_BLOCKS.len()];
+    let mut i = 0;
+    while i < l.len() {
+        l[i] = OnePage::new(
+            DEMO_BLOCKS[i].def.name,
+            core::array::from_ref(&DEMO_BLOCKS[i]),
+        );
+        i += 1;
+    }
+    l
+};

@@ -219,14 +219,14 @@ fn test_page_from_location_part_chain() {
 #[test]
 #[cfg(debug_assertions)]
 fn test_page_from_location_demo() {
-    let demo = leaf(&["SYSTEM", "DEMO"]);
+    let shapes = leaf(&["SYSTEM", "DIAGNOSTICS", "DEMO", "SHP"]);
     assert_eq!(
-        PageKey::from_location(demo, &reg::DEMO_SHAPES, Op::A),
+        key(shapes, Op::A),
         PageKey::Legacy(PageId::Demo(reg::DEMO_SHAPES.id))
     );
     assert_eq!(
-        key(demo, Op::A),
-        PageKey::Legacy(PageId::Demo(reg::DEMO_WAVES.id))
+        key(leaf(&["SYSTEM", "DIAGNOSTICS", "AUDIO LOAD"]), Op::A),
+        PageKey::Legacy(PageId::System(reg::SYS_AUDIO.id))
     );
 }
 

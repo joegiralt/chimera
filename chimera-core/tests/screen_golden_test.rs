@@ -100,8 +100,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("sound_browser", 0x1d1ac95bdfaca72b),
     // Re-recorded: a fresh project's footer drops NEW (#286).
     ("settings_personal_theme", 0x2158e1935828c468),
-    // Re-recorded: the breadcrumb ends on the page, AUD (#285).
-    ("settings_system_about_audio", 0x295a11f890f3be62),
+    ("settings_system_diag_aud_load", 0x66d7d24ccea2e606),
     ("settings_top", 0xb8200119c8d8b837),
     ("settings_load", 0xbee3b127e748ef17),
     ("settings_prompt_load", 0xc47d45b862dea1e3),

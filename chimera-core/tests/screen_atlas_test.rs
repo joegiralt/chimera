@@ -8,9 +8,9 @@
 //! `algo_crs`, `modal_bank_exc` (Modal pages that follow MODEL carry it),
 //! `algo_pit_cut` (a choice that changes the page, at its other values).
 //! A SETTINGS list or leaf is `settings_<crumbs joined by _>` (the top,
-//! `settings_top`), a leaf's later pages with their name:
-//! `settings_personal_theme`, `settings_system_about_audio`,
-//! `settings_system_demo_<map label>`. A screen in some state adds it:
+//! `settings_top`): `settings_personal_theme`,
+//! `settings_system_diag_aud_load`, `settings_system_diag_demo_<short>`.
+//! A screen in some state adds it:
 //! `settings_project_load_no_card`, `settings_footer_saved`, and each
 //! prompt, `settings_prompt_<kind>`.
 
@@ -26,7 +26,7 @@ use chimera_core::params::{EngineType, FilterParams, ParamSnapshot, PitchParams,
 use chimera_core::project::{Differ, PartId, ProjectFile, ProjectNote, SlotId, Subject};
 use chimera_core::storage::{FileError, ProjectId};
 use chimera_core::ui::block_def::{BlockDef, ChainDef2, SlotBinding};
-use chimera_core::ui::block_registry::{DEMO_CHAIN, MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART};
+use chimera_core::ui::block_registry::{MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART};
 use chimera_core::ui::busy::{ToastStep, draw_toast};
 use chimera_core::ui::nav::{Location, chain_def_for};
 use chimera_core::ui::settings::manage::Command;
@@ -104,8 +104,6 @@ enum Ctx {
     Mixer,
     /// A SETTINGS leaf, by its index in `leaves()`.
     Settings(usize),
-    /// SETTINGS › SYSTEM › DEMO (debug builds).
-    Demo,
 }
 
 impl Ctx {
@@ -115,15 +113,7 @@ impl Ctx {
             Ctx::Part(EngineType::Modal),
             Ctx::Mixer,
         ];
-        let leaves = leaves();
-        all.extend(
-            (0..leaves.len())
-                .filter(|&i| !core::ptr::eq(leaves[i].of, &DEMO_CHAIN))
-                .map(Ctx::Settings),
-        );
-        if cfg!(debug_assertions) {
-            all.push(Ctx::Demo);
-        }
+        all.extend((0..leaves().len()).map(Ctx::Settings));
         all
     }
 
@@ -133,7 +123,6 @@ impl Ctx {
             Ctx::Part(EngineType::Modal) => "modal".into(),
             Ctx::Mixer => "mixer".into(),
             Ctx::Settings(i) => leaves()[i].name(),
-            Ctx::Demo => "settings_system_demo".into(),
         }
     }
 
@@ -141,17 +130,15 @@ impl Ctx {
         match self {
             Ctx::Part(e) => chain_def_for(e),
             Ctx::Mixer => &MIXER_CHANNEL_CHAIN,
-            Ctx::Settings(i) => leaves()[i].of,
-            Ctx::Demo => &DEMO_CHAIN,
+            Ctx::Settings(i) => leaves()[i].of.chain(),
         }
     }
 
-    /// The name of `def` at `node`, `sub`: a leaf's first page is the leaf.
-    fn name(self, def: &BlockDef, node: usize, sub: usize) -> String {
+    /// The name of `def`: a leaf's page is the leaf.
+    fn name(self, def: &BlockDef) -> String {
         let mut n = self.prefix();
         let tail = match self {
-            Ctx::Settings(_) if (node, sub) == (0, 0) => return n,
-            Ctx::Settings(_) => def.name.to_lowercase().replace(' ', "_"),
+            Ctx::Settings(_) => return n,
             _ => def.short.to_lowercase(),
         };
         n += "_";
@@ -185,11 +172,7 @@ impl Ctx {
                     feed(ui, Input::press(ButtonId::Minus));
                 }
             }
-            Ctx::Settings(i) => {
-                to_leaf(ui, &leaves()[i].labels);
-                plus(ui, node);
-            }
-            Ctx::Demo => to_demo(ui, node),
+            Ctx::Settings(i) => to_leaf(ui, &leaves()[i].labels),
         }
         for _ in 0..sub {
             feed(ui, Input::press(ButtonId::Edit));
@@ -271,11 +254,11 @@ fn atlas() -> Vec<Shot> {
                 for model in model_list {
                     let base = match model {
                         Some(m) => {
-                            let named = ctx.name(def, node, sub);
+                            let named = ctx.name(def);
                             let tail = &named[ctx.prefix().len()..];
                             format!("{}_{}{tail}", ctx.prefix(), MODEL.names[m].to_lowercase())
                         }
-                        None => ctx.name(def, node, sub),
+                        None => ctx.name(def),
                     };
                     let shot = |name: String, choice| Shot {
                         name,
@@ -626,7 +609,7 @@ fn every_screen_renders() {
 fn atlas_settings_never_shows_the_map() {
     let leaves = atlas()
         .into_iter()
-        .filter(|s| matches!(s.ctx, Ctx::Settings(_) | Ctx::Demo))
+        .filter(|s| matches!(s.ctx, Ctx::Settings(_)))
         .map(|s| (s.name.clone(), s.ui()));
     let goldens = CASES
         .iter()

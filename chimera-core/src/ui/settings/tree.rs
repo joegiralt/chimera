@@ -3,9 +3,9 @@
 //! kind and navigation stays as it is.
 
 use super::leaves::{
-    ABOUT_LEAF, CHANNELS_LEAF, OUTPUTS_LEAF, THEME_LEAF, TUNING_LEAF, UPDATES_LEAF,
+    ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, OUTPUTS_LEAF, OnePage, THEME_LEAF, TUNING_LEAF,
+    UPDATES_LEAF,
 };
-use crate::ui::block_def::ChainDef2;
 use core::num::NonZeroU16;
 
 #[derive(Clone, Copy, Debug)]
@@ -19,7 +19,8 @@ pub struct Row {
 #[derive(Clone, Copy, Debug)]
 pub enum Kind {
     List(&'static [Row]),
-    Leaf(&'static ChainDef2),
+    /// One page: `OnePage` holds no more.
+    Leaf(&'static OnePage),
     /// A screen whose rows are built at run time.
     Screen(Screen),
     Act(Act),
@@ -106,14 +107,34 @@ static AUDIO: [Row; 3] = [
 
 static PERSONALIZE: [Row; 1] = [row("THEME", Leaf(&THEME_LEAF))];
 
-static SYSTEM: &[Row] = &[
+/// A row per DEMO page, by its short name.
+#[cfg(debug_assertions)]
+static DEMO: [Row; super::leaves::DEMO_LEAVES.len()] = {
+    use super::leaves::DEMO_LEAVES;
+    let mut r = [row("", Leaf(&DEMO_LEAVES[0])); DEMO_LEAVES.len()];
+    let mut i = 0;
+    while i < r.len() {
+        r[i] = row(DEMO_LEAVES[i].def().short, Leaf(&DEMO_LEAVES[i]));
+        i += 1;
+    }
+    r
+};
+
+static DIAGNOSTICS: &[Row] = &[
+    crumb("AUDIO LOAD", "AUD LOAD", Leaf(&AUDIO_LOAD_LEAF)),
+    crumb("TEST TONE", "TONE", Later(issue(295))),
+    crumb("INPUT TEST", "INPUT", Later(issue(296))),
+    #[cfg(debug_assertions)]
+    row("DEMO", List(&DEMO)),
+];
+
+static SYSTEM: [Row; 6] = [
     crumb("OS UPGRADE", "OS", Leaf(&UPDATES_LEAF)),
     row("STORAGE", Later(issue(267))),
     crumb("FORMAT CARD", "FORMAT", Later(issue(268))),
     crumb("USB CONFIG", "USB", Later(issue(269))),
+    crumb("DIAGNOSTICS", "DIAG", List(DIAGNOSTICS)),
     row("ABOUT", Leaf(&ABOUT_LEAF)),
-    #[cfg(debug_assertions)]
-    row("DEMO", Leaf(&crate::ui::block_registry::DEMO_CHAIN)),
 ];
 
 static TOP: [Row; 8] = [
@@ -124,7 +145,7 @@ static TOP: [Row; 8] = [
     crumb("SYSEX DUMP", "SYSEX", Later(issue(263))),
     crumb("AUDIO ROUTING", "AUDIO", List(&AUDIO)),
     crumb("PERSONALIZE", "PERSONAL", List(&PERSONALIZE)),
-    row("SYSTEM", List(SYSTEM)),
+    row("SYSTEM", List(&SYSTEM)),
 ];
 
 pub static ROOT: Row = row("SETTINGS", List(&TOP));

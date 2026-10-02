@@ -8,7 +8,7 @@ use chimera_core::project::PartId;
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_def::{BlockDef, ChainDef2};
 use chimera_core::ui::block_registry::ALGO_CHAIN;
-use chimera_core::ui::block_registry::{DEMO_CHAIN, MIXER_CHANNEL_CHAIN};
+use chimera_core::ui::block_registry::MIXER_CHANNEL_CHAIN;
 use chimera_core::ui::components::{Head, header, header_fits, header_text};
 use chimera_core::ui::dungeon_map::{self, node_x};
 use chimera_core::ui::nav::{Location, PageAt};
@@ -82,7 +82,7 @@ fn header_names_context_and_page() {
     assert_eq!(texts(m2.at(2, 0)), ("PART 2 · MIX".into(), "CHORUS".into()));
     let tuning = At::new(
         Head::Settings,
-        &chimera_core::ui::settings::leaves::TUNING_LEAF,
+        chimera_core::ui::settings::leaves::TUNING_LEAF.chain(),
     );
     assert_eq!(texts(tuning), ("SETTINGS".into(), "TUNING".into()));
 }
@@ -263,11 +263,7 @@ fn sub_pages_hang_under_the_pill_with_the_current_one_lit() {
 
 #[test]
 fn the_map_draws_only_in_its_band_on_every_chain() {
-    for place in [
-        At::sound(0),
-        At::mix(0),
-        At::new(Head::Settings, &DEMO_CHAIN),
-    ] {
+    for place in [At::sound(0), At::mix(0)] {
         let chain_id = place.chain.name;
         for node in 0..place.chain.len() {
             let subs = place.at(node, 0).subs();

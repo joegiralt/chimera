@@ -1,5 +1,5 @@
 //! Focus glyphs: each param's hand-assigned gauge, the focus band's
-//! dispatch, the UI clock and the Demo chain's glyph pages.
+//! dispatch, the UI clock and DEMO's glyph pages.
 
 mod screen;
 
@@ -372,20 +372,19 @@ fn an_arc_focus_band_does_not_redraw_on_the_clock() {
 }
 
 fn to_demo(ui: &mut UiState, def: &'static BlockDef) {
-    let node = reg::DEMO_CHAIN
-        .blocks
+    let node = reg::DEMO_BLOCKS
         .iter()
         .position(|b| core::ptr::eq(b.def, def))
-        .expect("on the Demo chain");
+        .expect("a DEMO page");
     screen::to_demo(ui, node);
     assert!(core::ptr::eq(ui.page_def(), def));
 }
 
 #[test]
-fn only_the_matrix_demo_node_is_the_matrix() {
-    let mut ui = UiState::new();
-    screen::to_demo(&mut ui, 0);
-    for (n, b) in reg::DEMO_CHAIN.blocks.iter().enumerate() {
+fn only_the_matrix_demo_page_is_the_matrix() {
+    for (n, b) in reg::DEMO_BLOCKS.iter().enumerate() {
+        let mut ui = UiState::new();
+        screen::to_demo(&mut ui, n);
         assert!(core::ptr::eq(ui.page_def(), b.def), "node {n}");
         let matrix = ui.page_def().layout == PageLayout::Matrix;
         assert_eq!(
@@ -393,7 +392,6 @@ fn only_the_matrix_demo_node_is_the_matrix() {
             matrix,
             "node {n}"
         );
-        feed(&mut ui, Input::press(ButtonId::Plus));
     }
 }
 

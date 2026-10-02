@@ -276,8 +276,8 @@ pub struct Node<T> {
     pub of: T,
 }
 
-/// A leaf, and its chain.
-pub type Leaf = Node<&'static chimera_core::ui::block_def::ChainDef2>;
+/// A leaf, and its page.
+pub type Leaf = Node<&'static chimera_core::ui::settings::leaves::OnePage>;
 
 impl<T> Node<T> {
     /// `settings_<crumbs>`, lowercased; the top list is `settings_top`.
@@ -566,11 +566,11 @@ pub fn to_fx(ui: &mut UiState, node: usize) {
     );
 }
 
-/// SETTINGS › SYSTEM › DEMO, then PLUS × `node` (debug builds: a release
-/// build has no DEMO row).
+/// SETTINGS › SYSTEM › DIAGNOSTICS › DEMO's row `node` (debug builds: a
+/// release build has no DEMO row).
 pub fn to_demo(ui: &mut UiState, node: usize) {
-    to_leaf(ui, &["SYSTEM", "DEMO"]);
-    plus(ui, node);
+    let row = reg::DEMO_BLOCKS[node].def.short;
+    to_leaf(ui, &["SYSTEM", "DIAGNOSTICS", "DEMO", row]);
 }
 
 /// Live output the goldens draw: two periods of a lopsided triangle, peak 0.5.
@@ -989,9 +989,8 @@ pub const CASES: &[ScreenCase] = &[
         to_leaf(ui, &["PERSONALIZE", "THEME"]);
         feed(ui, Input::turn(EncoderId::C, 1)); // ACCENT AMBER, focused
     }),
-    ("settings_system_about_audio", |ui| {
-        to_leaf(ui, &["SYSTEM", "ABOUT"]);
-        feed(ui, Input::press(ButtonId::Edit));
+    ("settings_system_diag_aud_load", |ui| {
+        to_leaf(ui, &["SYSTEM", "DIAGNOSTICS", "AUDIO LOAD"])
     }),
     ("settings_top", |ui| tap(ui, ButtonId::Menu)),
     // ALPHA loaded, the bar on BETA.
@@ -1006,7 +1005,7 @@ pub const CASES: &[ScreenCase] = &[
     ("settings_naming", naming_save_as),
 ];
 
-/// `AudioStats` fixture for the AUDIO sub-page's goldens and tests.
+/// `AudioStats` fixture for AUDIO LOAD's and ABOUT's goldens and tests.
 pub fn audio_fixture() -> AudioStats {
     let mut s = AudioStats::new(SiliconRev::V, 480_000_000, ResetCause::Watchdog);
     s.load_avg = 23;

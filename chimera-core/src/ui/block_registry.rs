@@ -16,7 +16,8 @@ use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, ParamSlot, VizType};
 use crate::ui::page::{PageLayout, ValFmt};
 use crate::ui::settings::leaves::{
-    ABOUT_LEAF, CHANNELS_LEAF, OUTPUTS_LEAF, THEME_LEAF, TUNING_LEAF, UPDATES_LEAF,
+    ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, DEMO_LEAVES, OUTPUTS_LEAF, THEME_LEAF, TUNING_LEAF,
+    UPDATES_LEAF,
 };
 use crate::ui::theme_settings::ThemeSettings;
 
@@ -628,8 +629,16 @@ pub static SYS_ABOUT: BlockDef = BlockDef {
     name: "About",
     short: "ABT",
     layout: PageLayout::BigViz,
-    viz: VizType::Logo,
-    params: [EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY],
+    viz: VizType::About,
+    // Read-only: `about_page` fills them.
+    params: [
+        ParamSlot::legacy("VERSION", ValFmt::Int(0)),
+        ParamSlot::legacy("BUILD", ValFmt::Int(0)),
+        ParamSlot::legacy("REV", ValFmt::Int(0)),
+        ParamSlot::legacy("CLOCK", ValFmt::Int(0)),
+        ParamSlot::legacy("RESET", ValFmt::Int(0)),
+        ParamSlot::legacy("CARD", ValFmt::Int(0)),
+    ],
 };
 
 pub static SYS_AUDIO: BlockDef = BlockDef {
@@ -649,7 +658,7 @@ pub static SYS_AUDIO: BlockDef = BlockDef {
 };
 
 // ---------------------------------------------------------------------------
-// Demo chain (UI component storyboard)
+// DEMO pages (UI component storyboard)
 // ---------------------------------------------------------------------------
 
 pub static DEMO_WAVES: BlockDef = BlockDef {
@@ -872,7 +881,8 @@ pub static DEMO_GLYPH_CUBE: BlockDef = BlockDef {
     ],
 };
 
-static DEMO_BLOCKS: [ChainBlock; 13] = [
+/// The DEMO pages, one SETTINGS leaf each (`leaves::DEMO_LEAVES`).
+pub static DEMO_BLOCKS: [ChainBlock; 13] = [
     ChainBlock::page(&DEMO_WAVES),
     ChainBlock::page(&DEMO_SHAPES),
     ChainBlock::page(&DEMO_MOTION),
@@ -888,18 +898,32 @@ static DEMO_BLOCKS: [ChainBlock; 13] = [
     ChainBlock::page(&DEMO_GLYPH_CUBE),
 ];
 
-pub static DEMO_CHAIN: ChainDef2 = ChainDef2::new("Demo", &DEMO_BLOCKS, &[]);
-
-/// Every chain, for whole-registry checks (unique ids, the focus table).
-pub static ALL_CHAINS: [&ChainDef2; 10] = [
+/// The chains besides DEMO's leaves.
+const FIXED: [&ChainDef2; 10] = [
     &ALGO_CHAIN,
     &MODAL_PLUCK_CHAIN,
     &MIXER_CHANNEL_CHAIN,
-    &DEMO_CHAIN,
-    &CHANNELS_LEAF,
-    &OUTPUTS_LEAF,
-    &TUNING_LEAF,
-    &THEME_LEAF,
-    &UPDATES_LEAF,
-    &ABOUT_LEAF,
+    CHANNELS_LEAF.chain(),
+    OUTPUTS_LEAF.chain(),
+    TUNING_LEAF.chain(),
+    THEME_LEAF.chain(),
+    UPDATES_LEAF.chain(),
+    ABOUT_LEAF.chain(),
+    AUDIO_LOAD_LEAF.chain(),
 ];
+
+/// Every chain, for whole-registry checks (unique ids, the focus table):
+/// `FIXED`, then DEMO's leaves.
+pub static ALL_CHAINS: [&ChainDef2; FIXED.len() + DEMO_LEAVES.len()] = {
+    let mut a = [FIXED[0]; FIXED.len() + DEMO_LEAVES.len()];
+    let mut i = 0;
+    while i < a.len() {
+        a[i] = if i < FIXED.len() {
+            FIXED[i]
+        } else {
+            DEMO_LEAVES[i - FIXED.len()].chain()
+        };
+        i += 1;
+    }
+    a
+};

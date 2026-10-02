@@ -8,6 +8,7 @@ use crate::ui::block_def::{ChainDef2, Move};
 use crate::ui::block_registry::{
     self, ALGO_CHAIN, CHORUS, MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART, MODAL_PLUCK_CHAIN,
 };
+use crate::ui::settings::leaves::OnePage;
 use crate::ui::settings::{Act, Kind, MANAGE_COMMANDS, PART_ROW, Row, Screen, row_at};
 
 pub use crate::ui::block_def::PageAt;
@@ -68,7 +69,7 @@ impl MixPage {
 pub enum At {
     /// A list, or a Screen's rows.
     List,
-    Leaf(PageAt),
+    Leaf,
     /// MANAGE PROJECTS: which column has the bar.
     Manage(Column),
 }
@@ -133,14 +134,6 @@ impl SettingsAt {
         self.row
     }
 
-    /// A leaf's page.
-    pub fn page(&self) -> Option<PageAt> {
-        match self.at {
-            At::Leaf(p) => Some(p),
-            _ => None,
-        }
-    }
-
     /// On MANAGE PROJECTS, the column with the bar.
     pub fn column(&self) -> Option<Column> {
         match self.at {
@@ -164,17 +157,17 @@ impl SettingsAt {
         }
     }
 
-    pub fn at_leaf(&self) -> Option<&'static ChainDef2> {
+    pub fn at_leaf(&self) -> Option<&'static OnePage> {
         match self.kind()? {
             Kind::Leaf(c) => Some(c),
             _ => None,
         }
     }
 
-    /// Arrived: a leaf on its chain's home, MANAGE on its projects.
+    /// Arrived: a leaf on its page, MANAGE on its projects.
     fn landed(self) -> SettingsAt {
         let at = match self.kind() {
-            Some(Kind::Leaf(c)) => At::Leaf(c.home()),
+            Some(Kind::Leaf(_)) => At::Leaf,
             Some(Kind::Screen(Screen::ManageProjects)) => At::Manage(Column::Projects),
             _ => At::List,
         };
@@ -255,15 +248,8 @@ impl SettingsAt {
         };
         let under_bar = |rs: &'static [Row]| rs.get(self.row as usize).map(|r| r.kind);
         match (self.kind(), k, delta) {
-            (Some(Kind::Leaf(c)), k, _) => match self.at {
-                At::Leaf(p) => page_step(c, p, k).map_or(Step::Stay, |p| {
-                    go(SettingsAt {
-                        at: At::Leaf(p),
-                        ..self
-                    })
-                }),
-                _ => Step::Stay,
-            },
+            // One page: no key steps it.
+            (Some(Kind::Leaf(_)), _, _) => Step::Stay,
             (Some(Kind::List(rs)), _, Some(d)) => row(rs.len(), d),
             (_, _, Some(d)) if matches!(self.at, At::Manage(Column::Command(_))) => {
                 let At::Manage(Column::Command(n)) = self.at else {
@@ -587,7 +573,7 @@ impl Location {
             Loc::Pages(p, at) => Some((chain_def_for(cx.engine(p)), at)),
             Loc::Part(_, m) => Some((&MIXER_CHANNEL_CHAIN, m.page())),
             Loc::Fx(_, at) => Some((&MIXER_CHANNEL_CHAIN, at)),
-            Loc::Settings(s) => s.at_leaf().zip(s.page()),
+            Loc::Settings(s) => s.at_leaf().map(|l| (l.chain(), l.chain().home())),
             Loc::Sound(..) => None,
         }
     }

@@ -92,9 +92,15 @@ SETTINGS
    ├─ STORAGE             later: card use, projects, Sounds
    ├─ FORMAT CARD         later
    ├─ USB CONFIG          later
-   ├─ ABOUT               mirror (with AUDIO below it, as today)
-   └─ DEMO                debug builds only (replaces MIX+B6 there)
+   ├─ DIAGNOSTICS
+   │  ├─ AUDIO LOAD       LOAD, PEAK, OVER, DROPS, DESYNC, STACK (was ABOUT's hidden AUD page)
+   │  ├─ TEST TONE        later (#295)
+   │  ├─ INPUT TEST       later (#296)
+   │  └─ DEMO             debug builds only (replaces MIX+B6 there): a row per storyboard page
+   └─ ABOUT               VERSION, BUILD, REV, CLOCK, RESET, CARD: read-only, one page
 ```
+
+A leaf is exactly one page (owner, 2026-10-02): nothing hides behind EDIT or PLUS, and a leaf with sub-pages fails the build (`OnePage`, ADR 0066). A screen with more to show becomes a list of leaves.
 
 The tree is one static table: rows with a label, a kind (list, leaf page, action) and a status. A later row is in the table, so adding a feature means flipping its status, not changing navigation.
 

@@ -3,7 +3,7 @@ use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::modulator::EnvSlot;
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams};
 use crate::ui::block_def::{BlockDef, SlotBinding};
-use crate::ui::block_registry::{self as reg, DEMO_CHAIN};
+use crate::ui::block_registry::{self as reg, DEMO_BLOCKS};
 use crate::ui::nav::Location;
 
 pub use crate::block::ValFmt;
@@ -59,7 +59,7 @@ impl PageId {
     /// The legacy page `def` at `at`; `None` off SETTINGS and on a page
     /// whose slots are bound (THEME, CHANNELS, the glyph pages).
     pub fn from_location(at: Location, def: &BlockDef) -> Option<Self> {
-        let leaf = at.settings()?.at_leaf()?;
+        at.settings()?.at_leaf()?;
         if def
             .params
             .iter()
@@ -67,7 +67,7 @@ impl PageId {
         {
             return None;
         }
-        Some(if core::ptr::eq(leaf, &DEMO_CHAIN) {
+        Some(if DEMO_BLOCKS.iter().any(|b| core::ptr::eq(b.def, def)) {
             PageId::Demo(def.id)
         } else {
             PageId::System(def.id)

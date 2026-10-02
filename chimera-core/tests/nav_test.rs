@@ -279,41 +279,42 @@ fn mixer_walk_reaches_the_fx() {
     assert_eq!(l.step(NavKey::Plus, &cx, &mut r), Step::Stay);
 }
 
+/// A leaf is one page: no key steps it, and it shows its chain's home.
 #[test]
 fn leaf_keys() {
+    fn leaves(path: &mut Vec<u8>, out: &mut Vec<Vec<u8>>) {
+        for (i, r) in rows(path).iter().enumerate() {
+            path.push(i as u8);
+            match r.kind {
+                Kind::Leaf(_) => out.push(path.clone()),
+                Kind::List(_) => leaves(path, out),
+                _ => {}
+            }
+            path.pop();
+        }
+    }
     let cx = cx();
     let mut r = Recall::new();
-
-    #[cfg(debug_assertions)]
-    {
-        let mut l = Location::settings_at(&path_of(&["SYSTEM", "DEMO"]), 0);
-        let last = chimera_core::ui::block_registry::DEMO_CHAIN.len() as u8 - 1;
-        for n in 1..=last {
-            key(&mut l, NavKey::Plus, &cx, &mut r);
-            assert_eq!(l.settings().unwrap().page(), Some(at(n, 0)));
+    let mut all = Vec::new();
+    leaves(&mut Vec::new(), &mut all);
+    assert!(all.contains(&path_of(&["SYSTEM", "ABOUT"])));
+    assert!(all.contains(&path_of(&["SYSTEM", "DIAGNOSTICS", "AUDIO LOAD"])));
+    for path in all {
+        let l = Location::settings_at(&path, 0);
+        let Some(Kind::Leaf(leaf)) = row_at(&path).map(|r| r.kind) else {
+            unreachable!()
+        };
+        let (c, at) = l.page(&cx).unwrap();
+        assert!(core::ptr::eq(c, leaf.chain()) && at == c.home(), "{path:?}");
+        for k in [
+            NavKey::Plus,
+            NavKey::Minus,
+            NavKey::Edit,
+            NavKey::SeqTap,
+            NavKey::Bar(3),
+        ] {
+            assert_eq!(l.step(k, &cx, &mut r), Step::Stay, "{path:?} {k:?}");
         }
-        assert_eq!(l.step(NavKey::Plus, &cx, &mut r), Step::Stay);
-        key(&mut l, NavKey::Minus, &cx, &mut r);
-        assert_eq!(l.settings().unwrap().page(), Some(at(last - 1, 0)));
-    }
-
-    let mut l = Location::settings_at(&path_of(&["SYSTEM", "ABOUT"]), 0);
-    key(&mut l, NavKey::Edit, &cx, &mut r);
-    assert_eq!(l.settings().unwrap().page(), Some(at(0, 1)), "AUDIO");
-    assert_eq!(l.step(NavKey::Edit, &cx, &mut r), Step::Stay);
-    key(&mut l, NavKey::SeqTap, &cx, &mut r);
-    assert_eq!(l.settings().unwrap().page(), Some(at(0, 0)), "ABOUT");
-    assert!(l.page(&cx).is_some());
-
-    let l = Location::settings_at(&path_of(&["PERSONALIZE", "THEME"]), 0);
-    for k in [
-        NavKey::Plus,
-        NavKey::Minus,
-        NavKey::Edit,
-        NavKey::SeqTap,
-        NavKey::Bar(3),
-    ] {
-        assert_eq!(l.step(k, &cx, &mut r), Step::Stay, "{k:?}");
     }
 }
 

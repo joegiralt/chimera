@@ -14,11 +14,22 @@ settings world of the synth. The spec is
 
 ## Decision
 - **The tree is one static table** (`ui::settings::tree`): a `Row` has a
-  label, a crumb of at most 8 characters, a `Kind` (List, Leaf chain,
-  Screen, Act, or Later with its nonzero GitHub issue). A later row is in the table,
+  label, a crumb of at most 8 characters, a `Kind` (List, Leaf, Screen,
+  Act, or Later with its nonzero GitHub issue). A later row is in the table,
   so shipping it replaces its kind and leaves navigation alone. Paths are row indices, at most 4
-  deep. SYSTEM's DEMO row exists in debug builds only; MIX+B6 becomes
-  Part 6's mixer.
+  deep. SYSTEM › DIAGNOSTICS' DEMO row exists in debug builds only;
+  MIX+B6 becomes Part 6's mixer.
+- **A leaf is one page** (owner, 2026-10-02): a `Leaf` holds a
+  `OnePage`, whose constructor fails the build on a sub-page, so no key
+  inside SETTINGS steps a page and nothing hides behind EDIT or PLUS. A
+  screen with more to show is a List of leaves.
+- **SYSTEM is OS UPGRADE, STORAGE, FORMAT CARD, USB CONFIG (later),
+  DIAGNOSTICS and ABOUT.** ABOUT is one read-only page: firmware
+  version and build, chip revision and clock, last reset cause, and the
+  card as last seen (its label or serial, or NO CARD), with no card I/O
+  of its own. DIAGNOSTICS is AUDIO LOAD (the stats ABOUT's hidden AUD
+  page held), TEST TONE (#295) and INPUT TEST (#296), later, and in
+  debug builds DEMO, a List with a leaf per storyboard page.
 - **Keys inside SETTINGS:** MENU tap backs one level, and at the top
   closes to where MENU was pressed. EDIT opens the row. PLUS, MINUS and
   encoder 1 move the bar. SEQ runs the highlighted action. B1-B6 leave

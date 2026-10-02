@@ -20,7 +20,7 @@ use chimera_core::params::EngineType;
 use chimera_core::scope::SCOPE_LEN;
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_def::ChainDef2;
-use chimera_core::ui::block_registry::{DEMO_CHAIN, MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART};
+use chimera_core::ui::block_registry::{MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART};
 use chimera_core::ui::nav::chain_def_for;
 use chimera_core::ui::perf::PerfStats;
 use chimera_hal::{ButtonId, EncoderId};
@@ -52,9 +52,7 @@ enum Context {
     Mixer(usize),
     /// The shared FX, after Part 6's SENDS.
     Fx,
-    /// SETTINGS › SYSTEM › DEMO (debug builds).
-    Demo,
-    /// Every other SETTINGS leaf, by its index in `leaves()`.
+    /// A SETTINGS leaf, DEMO's among them, by its index in `leaves()`.
     Leaf(usize),
 }
 
@@ -63,8 +61,7 @@ impl Context {
         match self {
             Context::Part(e) => chain_def_for(e),
             Context::Mixer(_) | Context::Fx => &MIXER_CHANNEL_CHAIN,
-            Context::Demo => &DEMO_CHAIN,
-            Context::Leaf(i) => leaves()[i].of,
+            Context::Leaf(i) => leaves()[i].of.chain(),
         }
     }
 
@@ -97,11 +94,7 @@ impl Context {
                 }
             }
             Context::Fx => to_fx(ui, node),
-            Context::Demo => to_demo(ui, node),
-            Context::Leaf(i) => {
-                to_leaf(ui, &leaves()[i].labels);
-                plus(ui, node);
-            }
+            Context::Leaf(i) => to_leaf(ui, &leaves()[i].labels),
         }
         for _ in 0..sub {
             feed(ui, Input::press(ButtonId::Edit));
@@ -256,15 +249,7 @@ fn every_context() -> Vec<Context> {
         .collect();
     all.extend((0..6).map(Context::Mixer));
     all.push(Context::Fx);
-    if cfg!(debug_assertions) {
-        all.push(Context::Demo);
-    }
-    let leaves = leaves();
-    all.extend(
-        (0..leaves.len())
-            .filter(|&i| !core::ptr::eq(leaves[i].of, &DEMO_CHAIN))
-            .map(Context::Leaf),
-    );
+    all.extend((0..leaves().len()).map(Context::Leaf));
     all
 }
 
@@ -292,13 +277,17 @@ fn representative_pages_walk() {
     walk(Context::Part(EngineType::Algo), 2, &enc, |_, sub| sub <= 1);
     walk(Context::Mixer(0), 2, &enc, |_, _| true);
     walk(Context::Fx, 2, &enc, |_, sub| sub == 0);
+    let leaf =
+        |labels: &[&str]| Context::Leaf(leaves().iter().position(|l| l.labels == labels).unwrap());
     if cfg!(debug_assertions) {
-        walk(Context::Demo, 2, &enc, |node, _| node == 0);
+        walk(
+            leaf(&["SYSTEM", "DIAGNOSTICS", "DEMO", "WAV"]),
+            2,
+            &enc,
+            |_, _| true,
+        );
     }
-    let theme = leaves()
-        .iter()
-        .position(|l| l.labels == ["PERSONALIZE", "THEME"]);
-    walk(Context::Leaf(theme.unwrap()), 2, &enc, |_, _| true);
+    walk(leaf(&["PERSONALIZE", "THEME"]), 2, &enc, |_, _| true);
     for ctx in every_context() {
         arrive_untouched(ctx, 1);
     }

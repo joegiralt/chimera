@@ -306,15 +306,10 @@ fn every_first_landing_is_the_chains_home() {
         MIXER_CHANNEL_CHAIN.def_at(home).unwrap().id
     );
 
-    // Every SETTINGS leaf, DEMO among them.
+    // Every SETTINGS leaf, DEMO's among them.
     for leaf in leaves() {
         let mut ui = UiState::new();
         to_leaf(&mut ui, &leaf.labels);
-        assert_eq!(
-            ui.location().settings().unwrap().page(),
-            Some(leaf.of.home()),
-            "{}",
-            leaf.name()
-        );
+        assert_eq!(ui.page_def().id, leaf.of.def().id, "{}", leaf.name());
     }
 }

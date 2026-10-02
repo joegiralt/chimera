@@ -38,10 +38,14 @@ fn every_later_row_names_its_issue() {
             "SENDS",
             "STORAGE",
             "FORMAT CARD",
-            "USB CONFIG"
+            "USB CONFIG",
+            "TEST TONE",
+            "INPUT TEST"
         ]
     );
     assert!(labels.contains(&("SENDS", 259)));
+    assert!(labels.contains(&("TEST TONE", 295)));
+    assert!(labels.contains(&("INPUT TEST", 296)));
 }
 
 #[test]
@@ -64,7 +68,7 @@ fn leaf_chains_are_in_all_chains() {
     for (r, _) in all() {
         if let Kind::Leaf(c) = r.kind {
             assert!(
-                ALL_CHAINS.iter().any(|a| core::ptr::eq(*a, c)),
+                ALL_CHAINS.iter().any(|a| core::ptr::eq(*a, c.chain())),
                 "{}",
                 r.label
             );
@@ -107,10 +111,48 @@ fn depth_fits_settings_at() {
     }
 }
 
+fn path_of(labels: &[&str]) -> Vec<u8> {
+    let mut path = Vec::new();
+    for l in labels {
+        path.push(rows(&path).iter().position(|r| r.label == *l).unwrap() as u8);
+    }
+    path
+}
+
+#[test]
+fn system_is_the_spec_order() {
+    let labels: Vec<_> = rows(&path_of(&["SYSTEM"]))
+        .iter()
+        .map(|r| r.label)
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "OS UPGRADE",
+            "STORAGE",
+            "FORMAT CARD",
+            "USB CONFIG",
+            "DIAGNOSTICS",
+            "ABOUT"
+        ]
+    );
+}
+
+/// DIAGNOSTICS holds DEMO in debug builds only (`--release` checks the
+/// other side); DEMO has a row per page.
 #[test]
 fn demo_only_in_debug() {
-    let has = rows(&[7]).iter().any(|r| r.label == "DEMO");
-    assert_eq!(has, cfg!(debug_assertions));
+    let diag = path_of(&["SYSTEM", "DIAGNOSTICS"]);
+    let labels: Vec<_> = rows(&diag).iter().map(|r| r.label).collect();
+    let mut want = vec!["AUDIO LOAD", "TEST TONE", "INPUT TEST"];
+    if cfg!(debug_assertions) {
+        want.push("DEMO");
+        let demo = rows(&path_of(&["SYSTEM", "DIAGNOSTICS", "DEMO"]));
+        let n = chimera_core::ui::block_registry::DEMO_BLOCKS.len();
+        assert_eq!(demo.len(), n);
+        assert!(demo.iter().all(|r| matches!(r.kind, Kind::Leaf(_))));
+    }
+    assert_eq!(labels, want);
 }
 
 #[test]

@@ -147,15 +147,18 @@ fn crumbs(ui: &mut UiState) -> (String, Option<chimera_core::ui::region::RegionD
 }
 
 #[test]
-fn a_multi_page_leaf_ends_the_breadcrumb_on_its_page() {
+fn a_leaf_ends_the_breadcrumb() {
     let mut ui = UiState::new();
     to_leaf(&mut ui, &["SYSTEM", "ABOUT"]);
     let (about, k0) = crumbs(&mut ui);
     assert_eq!(about, "SETTINGS › SYSTEM › ABOUT");
-    feed(&mut ui, Input::press(ButtonId::Edit));
+    to_leaf(&mut ui, &["SYSTEM", "DIAGNOSTICS", "AUDIO LOAD"]);
     let (audio, k1) = crumbs(&mut ui);
-    assert_eq!(audio, ".. › SYSTEM › ABOUT › AUD");
-    assert_ne!(k0, k1, "the page moves the crumbs' key");
+    assert_eq!(audio, ".. › SYSTEM › DIAG › AUD LOAD");
+    assert_ne!(k0, k1);
+    // EDIT on a leaf steps nothing: the crumbs stay.
+    feed(&mut ui, Input::press(ButtonId::Edit));
+    assert_eq!(crumbs(&mut ui), (audio, k1));
 
     to_leaf(&mut ui, &["PERSONALIZE", "THEME"]);
     assert_eq!(crumbs(&mut ui).0, "SETTINGS › PERSONAL › THEME");

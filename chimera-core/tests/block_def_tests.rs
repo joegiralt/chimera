@@ -49,28 +49,23 @@ fn mixer_channel_strip_chain() {
 }
 
 #[test]
-fn demo_chain_has_5_blocks_then_the_glyph_pages() {
-    let chain = &block_registry::DEMO_CHAIN;
-    assert!(
-        chain.blocks[5..]
-            .iter()
-            .all(|b| b.def.name.starts_with("Glyph: "))
-    );
-    assert_eq!(chain.blocks[5].def.name, "Glyph: Arc");
-    assert_eq!(chain.blocks[0].def.name, "Waves");
-    assert_eq!(chain.blocks[2].def.name, "Motion");
-    assert_eq!(chain.blocks[3].def.name, "FM Icons");
-    assert_eq!(chain.blocks[4].def.name, "Matrix");
-    assert_eq!(chain.blocks[4].def.layout, PageLayout::Matrix);
+fn demo_has_5_pages_then_the_glyph_pages() {
+    let pages = &block_registry::DEMO_BLOCKS;
+    assert!(pages[5..].iter().all(|b| b.def.name.starts_with("Glyph: ")));
+    assert_eq!(pages[5].def.name, "Glyph: Arc");
+    assert_eq!(pages[0].def.name, "Waves");
+    assert_eq!(pages[2].def.name, "Motion");
+    assert_eq!(pages[3].def.name, "FM Icons");
+    assert_eq!(pages[4].def.name, "Matrix");
+    assert_eq!(pages[4].def.layout, PageLayout::Matrix);
 }
 
 #[test]
-fn about_has_the_audio_sub_page() {
-    let about = &chimera_core::ui::settings::leaves::ABOUT_LEAF.blocks[0];
-    assert_eq!(about.def.name, "About");
-    assert_eq!(about.sub_pages.len(), 1);
-    assert_eq!(about.sub_pages[0].name, "Audio");
-    assert_eq!(about.sub_pages[0].id, 41);
+fn about_and_audio_load_are_their_own_leaves() {
+    use chimera_core::ui::settings::leaves::{ABOUT_LEAF, AUDIO_LOAD_LEAF};
+    assert_eq!(ABOUT_LEAF.def().name, "About");
+    assert_eq!(AUDIO_LOAD_LEAF.def().name, "Audio");
+    assert_eq!(AUDIO_LOAD_LEAF.def().id, 41);
 }
 
 #[test]

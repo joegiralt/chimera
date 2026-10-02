@@ -61,8 +61,10 @@ pub struct Frame<'a> {
     /// The last MIX+PLUS outcome, shown in the focus band in place of the
     /// value readout (issue #21).
     pub prime_status: Option<PrimeStatus>,
-    /// The AUDIO sub-page's measured stats, `None` where it is not shown.
+    /// The measured stats AUDIO LOAD and ABOUT show; `None` where not had.
     pub audio: Option<&'a AudioStats>,
+    /// The card as last seen, for ABOUT.
+    pub card: crate::storage::Card,
     /// The master compressor's gain reduction, dB (MST's GR meter).
     pub master_gr_db: f32,
     /// Animation phase: what an animated glyph draws from.
@@ -203,6 +205,7 @@ impl Renderer {
                 let ratio = RATIOS[((a(1) * 7.0 + 0.5) as usize).min(RATIOS.len() - 1)];
                 viz::compressor(display, -40.0 + 40.0 * a(0), ratio, f.master_gr_db);
             }
+            VizType::About => crate::ui::about_page::draw_viz(display),
             VizType::EnvSpeed => {
                 let e = &f.parts[f.active_part.index()].sound.params.envelopes;
                 viz::env_speed(
@@ -525,8 +528,12 @@ impl Renderer {
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        if f.def.viz == VizType::AudioStats {
-            return audio_page::draw_cells(display, f.def, f.audio, top);
+        match f.def.viz {
+            VizType::AudioStats => return audio_page::draw_cells(display, f.def, f.audio, top),
+            VizType::About => {
+                return crate::ui::about_page::draw_cells(display, f.def, f.audio, f.card, top);
+            }
+            _ => {}
         }
         for (i, anim) in self.anim.iter().enumerate() {
             let v = view::view(f.def, i, &f.ctx);

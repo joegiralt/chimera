@@ -1319,7 +1319,8 @@ git commit -m "Desktop QA for SETTINGS recorded"
   - The `PROJ CRC` row, and the frame time while turning a CHANNELS cell (the footer recomputes once per edit). No audio overrun (`AudioStats`).
   - Every built SETTINGS screen on the panel. UAT (owner): legible, and "obviously the settings world".
   - Swap the card, then hold MENU: CARD CHANGED → SAVE AS saves on the new card.
-  - Release firmware: there is no SYSTEM › DEMO, and MIX+B6 is Part 6's mixer.
+  - Release firmware: there is no SYSTEM › DIAGNOSTICS › DEMO, and MIX+B6 is Part 6's mixer.
+  - SYSTEM › ABOUT shows the version, the build, REV, 480 MHZ, the reset cause and the card in the slot; SYSTEM › DIAGNOSTICS › AUDIO LOAD shows live LOAD, PEAK, OVER, DROPS, DESYNC and STACK.
 
   **projects-core's checklist** (its Task 9):
   - the `PROJ CRC` and BUS rows, the gate's cost, and no audio overrun during a load (`AudioStats`);
