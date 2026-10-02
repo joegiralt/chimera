@@ -1,6 +1,6 @@
-use core::num::NonZeroU32;
-use chimera_core::orbit::clock::{step_at, step_start, Bpm, InternalClock, Phase, Position};
+use chimera_core::orbit::clock::{Bpm, InternalClock, Phase, Position, step_at, step_start};
 use chimera_core::orbit::euclid::Steps;
+use core::num::NonZeroU32;
 
 const SR: NonZeroU32 = match NonZeroU32::new(48_000) {
     Some(n) => n,
@@ -15,7 +15,11 @@ fn step_index_is_exact_for_any_count() {
             let s = step_start(k, steps);
             assert_eq!(step_at(s, steps), k, "n={n} k={k}");
             if k > 0 {
-                assert_eq!(step_at(Phase::new(s.get() - 1), steps), k - 1, "n={n} k={k}");
+                assert_eq!(
+                    step_at(Phase::new(s.get() - 1), steps),
+                    k - 1,
+                    "n={n} k={k}"
+                );
             }
         }
         assert_eq!(step_at(Phase::new(u32::MAX), steps), n - 1);
@@ -28,7 +32,10 @@ fn internal_clock_never_drifts() {
     let bars = 97 * 60 / 4 + 1; // one hour
     for n in 0..bars as u64 {
         let want = (n * 48_000 * 240 * 2 + 97) / (97 * 2);
-        let at = Position { bar: n as u32, phase: Phase::ZERO };
+        let at = Position {
+            bar: n as u32,
+            phase: Phase::ZERO,
+        };
         assert_eq!(clock.sample_of(at), want, "bar {n}");
         assert_eq!(clock.position(want), at, "bar {n}");
     }
@@ -71,14 +78,21 @@ fn position_is_monotonic_across_bar_lines() {
     let clock = InternalClock::start(0, Bpm::new(97).unwrap(), SR);
     // bars 1..=3 and 100..=102: both rounding directions
     for line in [1u32, 2, 3, 100, 101, 102] {
-        let at = clock.sample_of(Position { bar: line, phase: Phase::ZERO });
+        let at = clock.sample_of(Position {
+            bar: line,
+            phase: Phase::ZERO,
+        });
         let mut prev = clock.position(at - 400);
         for s in at - 399..=at + 400 {
             let p = clock.position(s);
             assert!(p >= prev, "backwards at {s}");
             // one sample is ~2^32 / 23.7k = ~181k phase; allow a rounding sample
             assert!(key(p) - key(prev) < 400_000, "jump at {s}");
-            assert_eq!(p.phase == Phase::ZERO, s == at, "phase 0 only on the line, {s}");
+            assert_eq!(
+                p.phase == Phase::ZERO,
+                s == at,
+                "phase 0 only on the line, {s}"
+            );
             prev = p;
         }
     }
@@ -92,7 +106,10 @@ fn mid_bar_bpm_change_round_trips() {
     clock.set_bpm(300_001, p, Bpm::new(143).unwrap());
     assert_eq!(clock.position(300_001), p);
     assert_eq!(clock.sample_of(p), 300_001);
-    let next = Position { bar: p.bar + 1, phase: Phase::ZERO };
+    let next = Position {
+        bar: p.bar + 1,
+        phase: Phase::ZERO,
+    };
     let line = clock.sample_of(next);
     assert_eq!(clock.position(line), next);
     assert!(clock.position(line - 1) < next);

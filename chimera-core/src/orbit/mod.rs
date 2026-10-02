@@ -4,10 +4,12 @@
 
 pub mod chords;
 pub mod clock;
+pub mod engine;
 pub mod euclid;
 pub mod mutate;
 pub mod ring;
 pub mod rng;
+pub mod scene;
 pub mod walk;
 
 use core::mem::size_of;

@@ -103,7 +103,7 @@ pub const ACCENT_BOOST: u8 = 30;
 
 impl Ring {
     /// `fill` laid out; the rest as the init scene's defaults.
-    pub fn new(fill: Fill, octave: Octave) -> Ring {
+    pub const fn new(fill: Fill, octave: Octave) -> Ring {
         let c = octave.low();
         Ring {
             fill,
@@ -138,6 +138,16 @@ impl Ring {
         self.fill = fill;
         self.hits_mask = fill.mask();
         self
+    }
+
+    /// `m` as the hits, if it keeps STEPS and the hit count: a nudge.
+    pub fn with_mask(mut self, m: HitMask) -> Option<Ring> {
+        let cur = self.hits_mask;
+        if m.steps() != cur.steps() || m.hits() != cur.hits() {
+            return None;
+        }
+        self.hits_mask = m;
+        Some(self)
     }
 
     /// Step `i` of the loop (wrapping each bar). A hit draws CHANCE and

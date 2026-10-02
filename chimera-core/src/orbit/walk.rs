@@ -20,14 +20,22 @@ impl Pool {
         }
     }
 
-    pub fn new(notes: &[Note]) -> Option<Pool> {
-        let first = *notes.first()?;
-        if notes.len() > MAX_POOL {
+    pub const fn new(notes: &[Note]) -> Option<Pool> {
+        if notes.is_empty() || notes.len() > MAX_POOL {
             return None;
         }
-        let mut all = [first; MAX_POOL];
-        all[..notes.len()].copy_from_slice(notes);
-        all[..notes.len()].sort_unstable();
+        let mut all = [notes[0]; MAX_POOL];
+        let mut i = 0;
+        while i < notes.len() {
+            // Insertion sort: `sort_unstable` is not const.
+            let mut j = i;
+            while j > 0 && all[j - 1].get() > notes[i].get() {
+                all[j] = all[j - 1];
+                j -= 1;
+            }
+            all[j] = notes[i];
+            i += 1;
+        }
         Some(Pool {
             notes: all,
             len: notes.len() as u8,

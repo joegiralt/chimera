@@ -59,7 +59,10 @@ pub struct Position {
 }
 
 impl Position {
-    pub const ZERO: Position = Position { bar: 0, phase: Phase::ZERO };
+    pub const ZERO: Position = Position {
+        bar: 0,
+        phase: Phase::ZERO,
+    };
 }
 
 /// Half a block (§ 6.2).
@@ -98,7 +101,12 @@ pub struct InternalClock {
 
 impl InternalClock {
     pub const fn start(at_sample: u64, bpm: Bpm, sample_rate: NonZeroU32) -> Self {
-        InternalClock { at: at_sample, pos: Position::ZERO, bpm, sample_rate }
+        InternalClock {
+            at: at_sample,
+            pos: Position::ZERO,
+            bpm,
+            sample_rate,
+        }
     }
 
     pub fn anchor(&self) -> u64 {
@@ -133,14 +141,20 @@ impl InternalClock {
         let phase = self.pos.phase.0 as u64 + (e % n * BAR) / n;
         let mut bar = (self.pos.bar as u64 + e / n + (phase >> 32)).min(u32::MAX as u64) as u32;
         let mut phase = phase as u32;
-        let line = |bar: u32| Position { bar, phase: Phase::ZERO };
+        let line = |bar: u32| Position {
+            bar,
+            phase: Phase::ZERO,
+        };
         if bar < u32::MAX && self.sample_of(line(bar + 1)) <= sample {
             bar += 1;
             phase = 0;
         } else if bar > self.pos.bar && self.sample_of(line(bar)) == sample {
             phase = 0;
         }
-        Position { bar, phase: Phase(phase) }
+        Position {
+            bar,
+            phase: Phase(phase),
+        }
     }
 
     /// The sample `pos` falls on, rounded to nearest; saturates at the anchor.
