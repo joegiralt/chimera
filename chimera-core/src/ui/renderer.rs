@@ -567,8 +567,7 @@ impl Renderer {
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        let suffix = ["", " / A", " / B"][title_type(f) as usize % 3];
-        let h = components::header_text(f.head, f.def, f.ctx.model, suffix, header_out(f));
+        let h = page_header(f.head, f.def, &f.ctx, f.parts);
         components::header(
             display,
             h.context.as_str(),
@@ -618,18 +617,34 @@ impl BlockRead for Stored<'_, '_> {
     }
 }
 
+/// The header a page draws: the one place its name is decided, for the
+/// screen and for the console's `status`.
+pub fn page_header(
+    head: Head,
+    def: &BlockDef,
+    ctx: &SlotCtx,
+    parts: &[crate::preset::Part; crate::hw::MAX_PARTS],
+) -> components::HeaderText {
+    let suffix = ["", " / A", " / B"][title_type(def, &ctx.envs) as usize % 3];
+    components::header_text(head, def, ctx.model, suffix, out_of(head, parts))
+}
+
 /// The OUT of the Part whose pages these are; P1 in SETTINGS.
 pub fn header_out(f: &Frame) -> DacPair {
-    match f.head {
-        Head::Sound(p) | Head::Mix(p) => f.parts[p.index()].mix.output,
+    out_of(f.head, f.parts)
+}
+
+fn out_of(head: Head, parts: &[crate::preset::Part; crate::hw::MAX_PARTS]) -> DacPair {
+    match head {
+        Head::Sound(p) | Head::Mix(p) => parts[p.index()].mix.output,
         Head::Settings => DacPair::P1,
     }
 }
 
 /// The ENV page title's TYPE suffix: 0 none, 1 A, 2 B.
-pub fn title_type(f: &Frame) -> u8 {
-    match f.def.params.first().map(|p| p.binding) {
-        Some(SlotBinding::EnvPanel(s, _)) => match f.ctx.envs[s.index()] {
+pub fn title_type(def: &BlockDef, envs: &[EnvKind; 3]) -> u8 {
+    match def.params.first().map(|p| p.binding) {
+        Some(SlotBinding::EnvPanel(s, _)) => match envs[s.index()] {
             EnvKind::A(_) => 1,
             EnvKind::B(_) => 2,
         },

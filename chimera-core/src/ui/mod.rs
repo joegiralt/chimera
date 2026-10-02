@@ -60,10 +60,11 @@ use block_def::BlockDef;
 use block_def::VizType;
 use block_def::slot_addr;
 use components::Head;
+use fmt::FmtBuf;
 use hold::{HoldGates, Press};
 use mod_grid::MatrixState;
 use nav::{
-    Browse, Column, ListAt, Location, NavCtx, NavKey, Recall, SettingsAt, Step, chain_def_for,
+    Browse, Column, ListAt, Location, NavCtx, NavKey, Recall, Rung, SettingsAt, Step, chain_def_for,
 };
 use page::{PageKey, PageLayout};
 use perf::PerfStats;
@@ -1710,6 +1711,33 @@ impl UiState {
         }
     }
 
+    /// Whose page the header names.
+    fn head(&self) -> Head {
+        match self.loc.rung() {
+            Rung::Pages(p, _) | Rung::Sound(p) => Head::Sound(p),
+            Rung::Mixer(p, _) | Rung::Fx(p, _) => Head::Mix(p),
+            Rung::Settings(_) => Head::Settings,
+        }
+    }
+
+    /// The page name the header draws (`FILTER`, `SENDS`, the exciter's
+    /// name, ` / A` or ` / B` on an ENV page), short when the line is full;
+    /// `None` where no header is drawn: SETTINGS and the Sound rung.
+    pub fn page_name(&self) -> Option<FmtBuf> {
+        match self.loc.rung() {
+            Rung::Pages(..) | Rung::Mixer(..) | Rung::Fx(..) => Some(
+                renderer::page_header(
+                    self.head(),
+                    self.page_def(),
+                    &self.ctx(),
+                    self.project.perf().parts(),
+                )
+                .name,
+            ),
+            Rung::Sound(_) | Rung::Settings(_) => None,
+        }
+    }
+
     /// What one frame draws from.
     fn frame<'a>(
         &'a self,
@@ -1720,13 +1748,8 @@ impl UiState {
         let cx = self.cx();
         let def = self.page_def();
         let settings = self.loc.settings();
-        let head = match (settings, self.loc.part()) {
-            (None, Some(p)) if self.loc.on_mixer() => Head::Mix(p),
-            (None, Some(p)) => Head::Sound(p),
-            _ => Head::Settings,
-        };
         renderer::Frame {
-            head,
+            head: self.head(),
             map: self.loc.page(&cx).filter(|_| settings.is_none()),
             layout: self.layout(),
             settings: self.bands(),
@@ -1794,7 +1817,7 @@ impl UiState {
                 sub,
                 f.perf.audio_load_pct,
                 f.sounding,
-                renderer::title_type(f),
+                renderer::title_type(f.def, &f.ctx.envs),
                 renderer::header_out(f) as u8,
             ),
             RegionKind::Focus if f.def.layout == PageLayout::Matrix => RegionData::route(
