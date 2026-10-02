@@ -73,9 +73,18 @@ pub struct Usb {
     cycles_per_us: u32,
 }
 
-/// Brings the port up, once: the CRS trimming HSI48 from the host's SOF,
-/// the OTG core, then the CDC-ACM device.
-pub fn init(parts: UsbParts, clocks: &CoreClocks, cpu_hz: u32) -> Usb {
+/// The port set up but not on the bus: no pull-up, so the host sees
+/// nothing until `connect`. Only `init` makes one.
+pub struct Unconnected {
+    bus: &'static UsbBusAllocator<UsbBus<USB2>>,
+    serial: Port,
+    uid: &'static str,
+    cpu_hz: u32,
+}
+
+/// Sets the port up, once: the CRS trimming HSI48 from the host's SOF, the
+/// OTG core and the CDC-ACM class. Nothing connects yet (`connect`).
+pub fn init(parts: UsbParts, clocks: &CoreClocks, cpu_hz: u32) -> Unconnected {
     let UsbParts {
         dm,
         dp,
@@ -109,26 +118,42 @@ pub fn init(parts: UsbParts, clocks: &CoreClocks, cpu_hz: u32) -> Usb {
     // The chip's 96-bit UID: a stable /dev/serial/by-id name per unit.
     let uid = cortex_m::singleton!(: chimera_core::console::SerialNumber = serial_hex(Uid::read()))
         .expect("serial number taken once");
-    let strings = StringDescriptors::default()
-        .manufacturer("Chimera")
-        .product("Chimera console")
-        .serial_number(uid.as_str());
-    let dev = UsbDeviceBuilder::new(bus, UsbVidPid(VID_PID.0, VID_PID.1))
-        .strings(&[strings])
-        .expect("one language")
-        .self_powered(true)
-        .max_power(100)
-        .expect("100 mA is within 500")
-        .device_class(USB_CLASS_CDC)
-        .build();
-    Usb {
-        dev,
+    Unconnected {
+        bus,
         serial,
-        line: Console::new(),
-        timer: LoopTimer::new(),
-        top: DWT::cycle_count(),
-        last: Served::Idle,
-        cycles_per_us: (cpu_hz / 1_000_000).max(1),
+        uid: uid.as_str(),
+        cpu_hz,
+    }
+}
+
+impl Unconnected {
+    /// Builds the device, which enables the core and its D+ pull-up: the
+    /// host starts enumerating now, so only the UI loop that polls it may
+    /// call this, at its top (the spec: the port appears once the UI loop
+    /// starts). A bench build's screens hold for minutes before that, and
+    /// an unpolled device that long is one the host gives up on.
+    pub fn connect(self) -> Usb {
+        let strings = StringDescriptors::default()
+            .manufacturer("Chimera")
+            .product("Chimera console")
+            .serial_number(self.uid);
+        let dev = UsbDeviceBuilder::new(self.bus, UsbVidPid(VID_PID.0, VID_PID.1))
+            .strings(&[strings])
+            .expect("one language")
+            .self_powered(true)
+            .max_power(100)
+            .expect("100 mA is within 500")
+            .device_class(USB_CLASS_CDC)
+            .build();
+        Usb {
+            dev,
+            serial: self.serial,
+            line: Console::new(),
+            timer: LoopTimer::new(),
+            top: DWT::cycle_count(),
+            last: Served::Idle,
+            cycles_per_us: (self.cpu_hz / 1_000_000).max(1),
+        }
     }
 }
 

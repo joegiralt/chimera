@@ -367,10 +367,9 @@ fn synth(board: Board) -> ! {
             .expect("DIN producer taken once"),
     );
 
-    // After the audio and MIDI DIN start, before the first frame: the loop
-    // polls from its first iteration, so enumeration never waits.
+    // After the audio and MIDI DIN start: set up, not yet on the bus.
     #[cfg(feature = "usb-console")]
-    let mut usb = usb::init(usb_parts, &clocks, clk.cpu_hz);
+    let usb = usb::init(usb_parts, &clocks, clk.cpu_hz);
 
     let (mut pacer, first) = chimera_core::ui::animation::Pacer::start(controls::now_ms());
     ui.update(first);
@@ -380,6 +379,9 @@ fn synth(board: Board) -> ! {
     led.set_low();
 
     let mut last_tick = controls::ticks();
+    // On the bus only now: the loop below polls it from this point on.
+    #[cfg(feature = "usb-console")]
+    let mut usb = usb.connect();
     loop {
         // The snapshot point: every path through the last iteration flushed.
         #[cfg(feature = "usb-console")]
