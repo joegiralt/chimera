@@ -272,6 +272,30 @@ pub fn bar<D>(
     }
 }
 
+/// An arc of radius `r`, `width` wide, from `start` degrees (0 at 3:00,
+/// clockwise) through `sweep` degrees.
+#[allow(clippy::too_many_arguments)]
+pub fn arc<D>(
+    d: &mut D,
+    cx: i32,
+    cy: i32,
+    r: i32,
+    width: u32,
+    start: f32,
+    sweep: f32,
+    color: Rgb565,
+) where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let _ = Arc::with_center(
+        Point::new(cx, cy),
+        (2 * r + 1) as u32,
+        start.deg(),
+        sweep.deg(),
+    )
+    .draw_styled(&PrimitiveStyle::with_stroke(color, width), d);
+}
+
 /// 270° gauge from 7:30 clockwise to 4:30 (the mockup's 0.75π..2.25π).
 /// Track in `track`; the value arc in `fill` from the start (unipolar) or
 /// from 12:00 (bipolar). Round caps.

@@ -234,6 +234,13 @@ const _: () = assert!(SNAP_NAMES.len() == SnapTo::ALL.len());
 const _: () = assert!(MODE_NAMES.len() == NoteMode::ALL.len());
 const _: () = assert!(WALK_NAMES.len() == Walk::ALL.len());
 
+impl ScaleKind {
+    /// As SCALE shows it: `MINOR`, `HARM MIN`.
+    pub const fn name(self) -> &'static str {
+        SCALE_NAMES[self as usize]
+    }
+}
+
 const PCT: ValFmt = ValFmt::Law(Law::Pct);
 
 /// ORBIT's params are the project's, never a voice's: none modulatable.

@@ -1,10 +1,11 @@
 //! ORBIT's pages: ORB, RING (RHYTHM, with VOICE and NOTES) and CHRD (with
-//! CUSTOM), a chain of its own that `Loc::Orbit` walks (ADR 0044). ORB,
-//! VOICE and NOTES are placeholders until Tasks 10 and 13.
+//! CUSTOM), a chain of its own that `Loc::Orbit` walks (ADR 0044). VOICE
+//! and NOTES are placeholders until Task 13.
 
 use super::OrbitCell;
 use crate::addr::BlockRef;
 use crate::orbit::chords::ChordRing;
+use crate::orbit::clock::Bpm;
 use crate::orbit::scene::SceneRing;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot, VizType};
 use crate::ui::page::PageLayout;
@@ -24,7 +25,22 @@ const fn chords(id: crate::block::ParamId) -> ParamSlot {
     ParamSlot::param(BlockRef::OrbitChords, id)
 }
 
-pub static ORBIT_ORB: BlockDef = placeholder(78, "Orbit", "ORB");
+/// ORBIT's home: every ring at once. A picks the ring, F the tempo.
+pub static ORBIT_ORB: BlockDef = BlockDef {
+    id: 78,
+    name: "Orbit",
+    short: "ORB",
+    layout: PageLayout::BigViz,
+    viz: VizType::Orbit,
+    params: [
+        ParamSlot::orbit(OrbitCell::Ring),
+        ParamSlot::EMPTY,
+        ParamSlot::EMPTY,
+        ParamSlot::EMPTY,
+        ParamSlot::EMPTY,
+        ParamSlot::param(BlockRef::Tempo, Bpm::BPM),
+    ],
+};
 
 /// The selected ring's Euclidean fill and its odds.
 pub static ORBIT_RHYTHM: BlockDef = BlockDef {

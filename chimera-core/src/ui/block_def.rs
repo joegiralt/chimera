@@ -19,6 +19,9 @@ pub enum VizType {
     AlgoDiagram,
     /// SPD: each slot's SPEED and HOLD POSITION.
     EnvSpeed,
+    /// ORB: the rings round their circles inside the progression, swept
+    /// by the clock.
+    Orbit,
     /// RING · RHYTHM: the ring's pattern unrolled, its step lit.
     OrbitRhythm,
     /// CHRD: the progression's segments as chips over the loop's bars.

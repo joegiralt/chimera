@@ -56,6 +56,8 @@ pub struct Frame<'a> {
     pub scope: &'a [f32; crate::scope::SCOPE_LEN],
     /// The live output is above silence (header dot).
     pub sounding: bool,
+    /// ORBIT's beat dot: its fill while ORBIT runs (`OrbitAnim::dot`).
+    pub orbit_dot: Option<u8>,
     /// Every Part (Mixer overview) and the one being edited.
     pub parts: &'a [crate::preset::Part; crate::hw::MAX_PARTS],
     pub active_part: PartId,
@@ -213,6 +215,7 @@ impl Renderer {
                 viz::compressor(display, -40.0 + 40.0 * a(0), ratio, f.master_gr_db);
             }
             VizType::About => crate::ui::about_page::draw_viz(display),
+            VizType::Orbit => orbit::orb(display, &f.orbit, f.ctx.ring),
             VizType::OrbitCircle => orbit::circle(display, &f.orbit, self.orbit_cursor.current()),
             VizType::EnvSpeed => {
                 let e = &f.parts[f.active_part.index()].sound.params.envelopes;
@@ -410,7 +413,7 @@ impl Renderer {
             }
             RegionKind::Crumbs => {
                 if let Some(b) = &f.settings {
-                    b.draw_crumbs(display, f.sounding)
+                    b.draw_crumbs(display, f.sounding, f.orbit_dot)
                 }
             }
             RegionKind::List => {
@@ -584,7 +587,7 @@ impl Renderer {
                 View::Text { text, .. } => {
                     let _ = core::fmt::Write::write_str(&mut buf, text);
                 }
-                View::Orbit(cell) => buf = orbit::cell_text(cell, &f.orbit),
+                View::Orbit(cell) => buf = orbit::cell_text(cell, &f.orbit, f.ctx.ring),
                 _ => fmt::fmt_val(&mut buf, value, v.fmt()),
             }
             let c = components::Cell {
@@ -614,6 +617,7 @@ impl Renderer {
             h.warn,
             f.sounding,
             f.perf.audio_load_pct,
+            f.orbit_dot,
         );
     }
 
@@ -660,7 +664,7 @@ impl BlockRead for Stored<'_, '_> {
 pub fn header_out(f: &Frame) -> DacPair {
     match f.head {
         Head::Sound(p) | Head::Mix(p) => f.parts[p.index()].mix.output,
-        Head::Settings | Head::Ring(_) | Head::Orbit => DacPair::P1,
+        Head::Settings | Head::Ring(_) | Head::Orbit(_) => DacPair::P1,
     }
 }
 

@@ -42,8 +42,8 @@ pub enum Head {
     Settings,
     /// ORBIT's RING pages, on the ring they edit.
     Ring(crate::orbit::RingIdx),
-    /// ORBIT's other pages.
-    Orbit,
+    /// ORBIT's other pages, on the scene they play.
+    Orbit(crate::orbit::scene::SceneIdx),
 }
 
 /// A header's text: context, page name, and the OUT warning.
@@ -71,10 +71,10 @@ pub fn header_text(
         Head::Mix(p) => write!(context, "PART {} · MIX", p.index() + 1),
         Head::Settings => context.write_str("SETTINGS"),
         Head::Ring(r) => write!(context, "RING {}", r.get() + 1),
-        Head::Orbit => context.write_str("ORBIT"),
+        Head::Orbit(n) => write!(context, "SCENE {}", n.get() + 1),
     };
     let warn = match (head, out) {
-        (Head::Settings | Head::Ring(_) | Head::Orbit, _) | (_, DacPair::P1) => None,
+        (Head::Settings | Head::Ring(_) | Head::Orbit(_), _) | (_, DacPair::P1) => None,
         (_, DacPair::P2) => Some("OUT P2"),
         (_, DacPair::P3) => Some("OUT P3"),
     };
@@ -100,6 +100,8 @@ pub fn header_text(
 
 /// Right edge of the CPU readout and of the OUT warning.
 const HEADER_RIGHT: i32 = theme::HEADER_DOT_X - 8;
+/// How far the CPU readout moves left for ORBIT's beat dot: one dot.
+const ORBIT_DOT_SHIFT: i32 = theme::HEADER_DOT_X - theme::ORBIT_DOT_X;
 
 /// Gap between the context and the name.
 const HEADER_GAP: i32 = 7;
@@ -115,20 +117,21 @@ fn header_end(context: &str, name: &str) -> i32 {
 }
 
 /// Whether the context and name end `RIGHT_GAP` short of the OUT warning,
-/// or of the sounding dot.
+/// or of ORBIT's beat dot, which may show on any page.
 pub fn header_fits(h: &HeaderText) -> bool {
     let right = match h.warn {
         Some(warn) => {
             HEADER_RIGHT - draw::text_width(&theme::FONT_LABEL, warn, theme::LABEL_TRACKING)
         }
-        None => theme::HEADER_DOT_X - theme::HEADER_DOT_R,
+        None => theme::ORBIT_DOT_X - theme::HEADER_DOT_R,
     };
     header_end(h.context.as_str(), h.name.as_str()) + RIGHT_GAP <= right
 }
 
 /// Header band (y 0..28): grey context label, bold name, the OUT warning
-/// or else the audio load when measured, and an accent dot while the
-/// instrument is sounding.
+/// or else the audio load when measured, and the dots (`header_dots`).
+/// The load moves left by one dot while ORBIT's shows.
+#[allow(clippy::too_many_arguments)]
 pub fn header<D>(
     d: &mut D,
     context: &str,
@@ -136,6 +139,7 @@ pub fn header<D>(
     warn: Option<&str>,
     sounding: bool,
     load_pct: u8,
+    orbit_dot: Option<u8>,
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -178,27 +182,39 @@ pub fn header<D>(
             _ => theme::MID,
         };
         // The bench readout yields to a long page name.
+        let right = HEADER_RIGHT
+            - if orbit_dot.is_some() {
+                ORBIT_DOT_SHIFT
+            } else {
+                0
+            };
         let w = draw::text_width(&theme::FONT_LABEL, buf.as_str(), 0);
-        if header_end(context, name) + RIGHT_GAP <= HEADER_RIGHT - w {
-            draw::text_right(
-                d,
-                &theme::FONT_LABEL,
-                buf.as_str(),
-                HEADER_RIGHT,
-                y,
-                color,
-                0,
-            );
+        if header_end(context, name) + RIGHT_GAP <= right - w {
+            draw::text_right(d, &theme::FONT_LABEL, buf.as_str(), right, y, color, 0);
         }
     }
+    header_dots(d, sounding, orbit_dot);
+}
+
+/// The header's dots: the sounding dot, accent while the instrument
+/// sounds; left of it while ORBIT runs, its beat dot, an outline filled
+/// as far as `orbit_dot` (255 full, 0 an outline). Palette colours only,
+/// so the fill is a radius, not a shade.
+pub fn header_dots<D>(d: &mut D, sounding: bool, orbit_dot: Option<u8>)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let (y, r) = (theme::HEADER_DOT_Y, theme::HEADER_DOT_R);
     if sounding {
-        draw::dot(
-            d,
-            theme::HEADER_DOT_X,
-            theme::HEADER_DOT_Y,
-            theme::HEADER_DOT_R,
-            theme::ACCENT,
-        );
+        draw::dot(d, theme::HEADER_DOT_X, y, r, theme::ACCENT);
+    }
+    if let Some(fill) = orbit_dot {
+        let x = theme::ORBIT_DOT_X;
+        draw::ring(d, x, y, r, theme::ACCENT, 1);
+        let filled = (r * fill as i32 + 127) / 255;
+        if filled > 0 {
+            draw::dot(d, x, y, filled, theme::ACCENT);
+        }
     }
 }
 

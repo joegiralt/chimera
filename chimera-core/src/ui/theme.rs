@@ -64,6 +64,8 @@ pub const HEADER_BASELINE: i32 = 20;
 pub const HEADER_DOT_X: i32 = 225;
 pub const HEADER_DOT_Y: i32 = 16;
 pub const HEADER_DOT_R: i32 = 3;
+/// ORBIT's beat dot, one dot left of the sounding dot.
+pub const ORBIT_DOT_X: i32 = HEADER_DOT_X - 10;
 
 /// Focus band 28..118: label, big value, arc gauge.
 pub const FOCUS_BOTTOM: i32 = 118;
@@ -154,8 +156,9 @@ pub const BRANCH_LINE_HEIGHT: i32 = 10;
 
 /// SETTINGS (spec § Screens): breadcrumb, list and footer, in its own look.
 /// The breadcrumb's width before it drops leading parts: it clears the
-/// sounding dot.
+/// sounding dot, and while ORBIT runs its beat dot too.
 pub const CRUMBS_W: i32 = HEADER_DOT_X - HEADER_DOT_R - 4 - MARGIN_X;
+pub const CRUMBS_ORBIT_W: i32 = ORBIT_DOT_X - HEADER_DOT_R - 4 - MARGIN_X;
 /// A list row's label, and the right edge of its note or `›`.
 pub const LIST_TEXT_X: i32 = 18;
 pub const LIST_RIGHT: i32 = 222;

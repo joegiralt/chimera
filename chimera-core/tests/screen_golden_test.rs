@@ -105,10 +105,13 @@ const GOLDENS: &[(&str, u64)] = &[
     ("settings_load", 0xbee3b127e748ef17),
     ("settings_prompt_load", 0xc47d45b862dea1e3),
     ("settings_naming", 0xe963e855baf239a6),
-    // ORBIT's RHYTHM, CHRD and CUSTOM (plan Task 9).
-    ("orbit_rhythm", 0x94e7f6914bf84e04),
-    ("orbit_chrd", 0x3926d21997677f52),
-    ("orbit_custom", 0xdbe09f01114200ae),
+    // ORBIT's RHYTHM, CHRD and CUSTOM (plan Task 9); Task 10's header,
+    // `SCENE n`, and the beat dot on the playing ones.
+    ("orbit_rhythm", 0xd4f227344f76861c),
+    ("orbit_chrd", 0x5af71afc00c4d81e),
+    // ORB (plan Task 10).
+    ("orbit_orb", 0x3b9577550b1c211c),
+    ("orbit_custom", 0xf89d2ed7662b5f8e),
     ("busy", 0x198544cd36863145),
     ("toast_saved", 0xe344dd99a47d0dad),
     ("toast_exfat", 0xfc0cb3b4feb1a1b5),

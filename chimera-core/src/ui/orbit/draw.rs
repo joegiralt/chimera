@@ -14,6 +14,7 @@ use super::{OrbitCell, OrbitUi};
 use crate::addr::{BlockRef, ParamAddr};
 use crate::orbit::RingIdx;
 use crate::orbit::chords::{ChordRing, harmony};
+use crate::orbit::clock::Bpm;
 use crate::orbit::euclid::{HitMask, accents};
 use crate::orbit::scene::{Scene, SceneRing};
 use crate::ui::block_def::{BlockDef, VizType};
@@ -29,6 +30,8 @@ use chimera_theory::{Interval, Stack};
 #[derive(Clone, Copy)]
 pub struct OrbitFrame<'a> {
     pub scene: &'a Scene,
+    /// The song's tempo, as BPM sets it.
+    pub bpm: Bpm,
     pub ui: &'a OrbitUi,
 }
 
@@ -119,6 +122,125 @@ where
         }
     }
     draw::fill_rect(d, x(0.5), MID + 12, 1, 4, theme::MID);
+}
+
+/// ORB's centre.
+pub const ORB_CX: i32 = theme::SCREEN_W / 2;
+pub const ORB_CY: i32 = 116;
+/// The progression band's middle radius, and its width.
+pub const BAND_R: i32 = 66;
+/// Ring 1's radius, and the step in from one ring to the next.
+const RING1_R: i32 = 56;
+const RING_STEP: i32 = 9;
+
+/// Ring `r`'s radius on ORB: ring 1 outermost.
+pub const fn ring_r(r: RingIdx) -> i32 {
+    RING1_R - RING_STEP * r.get() as i32
+}
+
+/// The point `turn` (0..1, clockwise from the top) round ORB, `radius` out.
+pub fn orb_xy(turn: f32, radius: f32) -> (i32, i32) {
+    let a = turn * TAU - TAU / 4.0;
+    (
+        ORB_CX + libm::roundf(radius * libm::cosf(a)) as i32,
+        ORB_CY + libm::roundf(radius * libm::sinf(a)) as i32,
+    )
+}
+
+/// The progression band's width and the gap between its segments.
+const BAND_W_PX: u32 = 5;
+const BAND_GAP_DEG: f32 = 4.0;
+/// The sweep runs from here out to inside the band.
+const HAND_IN: f32 = 10.0;
+
+/// ORB: the key, the loop and the tempo over everything; the progression
+/// round the outside, the segment playing lit; the selected ring's track;
+/// the sweep at the bar's phase; inside, each ring's steps round its own
+/// circle (ring 1 outermost), a hit filled, an accent ringed, the step
+/// under the clock lit and flashing as it fires; a muted ring dark.
+pub fn orb<D>(d: &mut D, f: &OrbitFrame, sel: RingIdx)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let c = f.chords();
+    let st = &f.ui.status;
+    let bars = c.bars.get();
+    let mut line = FmtBuf::new();
+    let plural = if bars == 1 { "" } else { "S" };
+    let _ = write!(
+        line,
+        "{} {} · {bars} BAR{plural} · {} INT",
+        c.tonic,
+        c.scale.name(),
+        f.bpm.get()
+    );
+    draw::text_tracked(
+        d,
+        &theme::FONT_LABEL,
+        line.as_str(),
+        theme::MARGIN_X,
+        theme::BIGVIZ_STATUS_Y,
+        theme::MID,
+        theme::LABEL_TRACKING,
+    );
+
+    let segs = c.segs.get() as usize;
+    let each = 360.0 / segs as f32;
+    let gap = if segs > 1 { BAND_GAP_DEG } else { 0.0 };
+    let playing = st.running.then_some(st.seg as usize);
+    for s in 0..segs {
+        let lit = if playing == Some(s) {
+            theme::ACCENT
+        } else {
+            theme::ACCENT_SOFT
+        };
+        let start = -90.0 + each * s as f32 + gap / 2.0;
+        draw::arc(d, ORB_CX, ORB_CY, BAND_R, BAND_W_PX, start, each - gap, lit);
+    }
+
+    draw::ring(d, ORB_CX, ORB_CY, ring_r(sel), theme::FAINT, 1);
+    let turn = f.ui.anim.sweep();
+    let (x0, y0) = orb_xy(turn, HAND_IN);
+    let (x1, y1) = orb_xy(turn, (BAND_R - BAND_W_PX as i32) as f32);
+    draw::line(d, x0, y0, x1, y1, theme::MID, 1);
+
+    for r in RingIdx::ALL {
+        orb_ring(d, f, r);
+    }
+}
+
+/// One ring's steps round its circle on ORB.
+fn orb_ring<D>(d: &mut D, f: &OrbitFrame, r: RingIdx)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let ring = &f.scene.rings[r.get() as usize].ring;
+    let mask = f.hits(r);
+    let n = mask.steps().get() as usize;
+    let now = f.now(r);
+    let accented = accents(mask, ring.accent);
+    let flash = f.ui.anim.flash(r) as i32;
+    let (hit, rest, accent) = if ring.mute {
+        (theme::PILL_EDGE, theme::FAINT, theme::PILL_EDGE)
+    } else {
+        (theme::ACCENT, theme::BAR_REST, theme::INK2)
+    };
+    let radius = ring_r(r) as f32;
+    for i in 0..n {
+        let (x, y) = orb_xy(i as f32 / n as f32, radius);
+        if !mask.is_hit(i) {
+            draw::dot(d, x, y, 1, rest);
+            continue;
+        }
+        let under = now == Some(i) && !ring.mute;
+        // A flash grows the dot by up to 2 px, fading with it.
+        let grow = if under { (2 * flash + 127) / 255 } else { 0 };
+        let c = if under { theme::INK } else { hit };
+        draw::dot(d, x, y, 2 + grow, c);
+        if accented.is_hit(i) {
+            draw::ring(d, x, y, 4, accent, 1);
+        }
+    }
 }
 
 /// The chips' top and height, and the gap between them.
@@ -214,11 +336,24 @@ fn round(at: f32, r: f32) -> (i32, i32) {
 /// The note `to` (0..12) nearest `from` round the circle, in unwrapped
 /// twelfths: what CUSTOM's cursor eases toward, the short way.
 pub fn nearest_turn(from: f32, to: u8) -> f32 {
-    let d = libm::fmodf(to as f32 - from, 12.0);
-    let d = if d < -6.0 {
-        d + 12.0
-    } else if d >= 6.0 {
-        d - 12.0
+    nearest(from, to as f32, 12.0)
+}
+
+/// `x` into 0..period.
+pub fn wrap(x: f32, period: f32) -> f32 {
+    let r = libm::fmodf(x, period);
+    if r < 0.0 { r + period } else { r }
+}
+
+/// `to`, or `to` some whole `period`s away, whichever is nearest `from`:
+/// a value round a circle, unwrapped so it eases the short way.
+pub fn nearest(from: f32, to: f32, period: f32) -> f32 {
+    let half = period / 2.0;
+    let d = libm::fmodf(to - from, period);
+    let d = if d < -half {
+        d + period
+    } else if d >= half {
+        d - period
     } else {
         d
     };
@@ -307,10 +442,15 @@ fn cursor_note(f: &OrbitFrame) -> FmtBuf {
     b
 }
 
-/// An ORBIT cell's value as its cell shows it.
-pub fn cell_text(cell: OrbitCell, f: &OrbitFrame) -> FmtBuf {
+/// An ORBIT cell's value as its cell shows it, on ring `ring`.
+pub fn cell_text(cell: OrbitCell, f: &OrbitFrame, ring: RingIdx) -> FmtBuf {
     let c = f.chords();
     match cell {
+        OrbitCell::Ring => {
+            let mut b = FmtBuf::new();
+            let _ = write!(b, "{}", ring.get() + 1);
+            b
+        }
         OrbitCell::Degree => {
             let seg = f.ui.seg_of(c);
             let mut b = numeral(c, seg);
@@ -385,7 +525,7 @@ pub fn focus(
         }
         View::Orbit(OrbitCell::Set) => {
             let _ = label.write_str(OrbitCell::Set.label());
-            text = cell_text(OrbitCell::Set, f);
+            text = cell_text(OrbitCell::Set, f, ctx.ring);
             Gauge::Switch { on: values(slot) }
         }
         View::Param { addr, label: l, .. }
@@ -426,6 +566,19 @@ pub fn viz_key(def: &BlockDef, f: &OrbitFrame, r: RingIdx, cursor: f32) -> u32 {
             f.ui.seg_of(f.chords()).hash(&mut h);
             st.running.then_some(st.seg).hash(&mut h);
             loop_x(f).hash(&mut h);
+        }
+        VizType::Orbit => {
+            for ring in RingIdx::ALL {
+                f.scene.rings[ring.get() as usize].ring.hash(&mut h);
+                f.hits(ring).hash(&mut h);
+                f.now(ring).hash(&mut h);
+                f.ui.anim.flash(ring).hash(&mut h);
+            }
+            f.chords().hash(&mut h);
+            f.bpm.hash(&mut h);
+            st.running.then_some(st.seg).hash(&mut h);
+            r.hash(&mut h);
+            h.write_u16(crate::ui::region::quantize(f.ui.anim.sweep() * 64.0));
         }
         VizType::OrbitCircle => {
             f.chords().hash(&mut h);

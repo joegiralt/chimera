@@ -793,11 +793,13 @@ impl Bands<'_> {
         legend(on, self.at.path().is_empty())
     }
 
-    pub fn crumbs_key(&self, sounding: bool) -> u32 {
+    pub fn crumbs_key(&self, sounding: bool, orbit_dot: Option<u8>) -> u32 {
         let head = [
             self.at.path().len() as u8,
             self.active.index() as u8,
             sounding as u8,
+            orbit_dot.is_some() as u8,
+            orbit_dot.unwrap_or(0),
         ];
         settings_key(&[self.at.path(), &head, self.naming_crumb().as_bytes()])
     }
@@ -871,18 +873,21 @@ impl Bands<'_> {
         ])
     }
 
-    /// The breadcrumb, and the sounding dot where the header has it.
-    pub fn draw_crumbs<D: DrawTarget<Color = Rgb565>>(&self, d: &mut D, sounding: bool) {
-        draw_crumbs(d, &self.crumbs());
-        if sounding {
-            draw::dot(
-                d,
-                theme::HEADER_DOT_X,
-                theme::HEADER_DOT_Y,
-                theme::HEADER_DOT_R,
-                theme::ACCENT,
-            );
-        }
+    /// The breadcrumb, and the dots where the header has them: it makes
+    /// room for ORBIT's while it shows.
+    pub fn draw_crumbs<D: DrawTarget<Color = Rgb565>>(
+        &self,
+        d: &mut D,
+        sounding: bool,
+        orbit_dot: Option<u8>,
+    ) {
+        let c = self.crumbs();
+        let c = match orbit_dot {
+            Some(_) => c.within(theme::CRUMBS_ORBIT_W),
+            None => c,
+        };
+        draw_crumbs(d, &c);
+        crate::ui::components::header_dots(d, sounding, orbit_dot);
     }
 
     pub fn draw_list<D: DrawTarget<Color = Rgb565>>(&self, d: &mut D) {

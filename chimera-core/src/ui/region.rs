@@ -45,6 +45,8 @@ pub enum RegionData {
         title_type: u8,
         /// The Part's OUT, for its warning (`renderer::header_out`).
         out: u8,
+        /// ORBIT's beat dot: its fill while it runs.
+        orbit_dot: Option<u8>,
     },
     /// The focus band: which slot, its animated value, and any pending
     /// prime-status message (issue #21) shown in the value's place.
@@ -124,6 +126,7 @@ pub enum RegionData {
 }
 
 impl RegionData {
+    #[allow(clippy::too_many_arguments)]
     pub fn header(
         chain_idx: u8,
         node_idx: u8,
@@ -132,6 +135,7 @@ impl RegionData {
         sounding: bool,
         title_type: u8,
         out: u8,
+        orbit_dot: Option<u8>,
     ) -> Self {
         Self::Header {
             chain_idx,
@@ -141,6 +145,7 @@ impl RegionData {
             sounding,
             title_type,
             out,
+            orbit_dot,
         }
     }
 
@@ -258,6 +263,7 @@ impl RegionData {
             sounding: false,
             title_type: u8::MAX,
             out: u8::MAX,
+            orbit_dot: None,
         }
     }
 

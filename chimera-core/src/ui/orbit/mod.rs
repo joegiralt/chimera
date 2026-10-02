@@ -12,12 +12,13 @@ pub use pages::{
 };
 
 use crate::block::Block;
-use crate::orbit::RINGS;
 use crate::orbit::clock::{Bpm, Phase, Position, step_at};
 use crate::orbit::euclid::HitMask;
 use crate::orbit::runner::{OrbitShared, OrbitView, beats_at};
 use crate::orbit::scene::{OrbitSong, Scene, SceneRing};
+use crate::orbit::{RINGS, RingIdx};
 use crate::project::Project;
+use crate::ui::animation::AnimatedValue;
 use crate::ui::nav::OrbitAct;
 use chimera_theory::Chord;
 
@@ -110,9 +111,87 @@ impl OrbitStatus {
     }
 }
 
+/// A pulse's fill: full on its first tick, gone by its third.
+const PULSE_FULL: u8 = 255;
+/// What a pulse loses each tick after its first: 255, 127, 0.
+const PULSE_FADE: u8 = 128;
+
+/// What ORB and the header animate from the runner's view, stepped once a
+/// `UiTick`: the sweep, the beat dot and each ring's flash.
+#[derive(Clone, Copy, Debug)]
+pub struct OrbitAnim {
+    /// The bar's phase, 0..1 turns, unwrapped so it eases the short way.
+    sweep: AnimatedValue,
+    /// The beat last pulsed; `None` while stopped.
+    beat: Option<u32>,
+    dot: u8,
+    /// Each ring's `fired` last seen, and its flash.
+    fired: [u8; RINGS],
+    flash: [u8; RINGS],
+}
+
+impl OrbitAnim {
+    const fn new() -> OrbitAnim {
+        OrbitAnim {
+            sweep: AnimatedValue::new(0.0).with_speed(0.6),
+            beat: None,
+            dot: 0,
+            fired: [0; RINGS],
+            flash: [0; RINGS],
+        }
+    }
+
+    /// One `UiTick`: a new beat fills the dot, a ring that fired flashes,
+    /// and what was lit fades; the sweep eases toward the phase.
+    fn tick(&mut self, st: &OrbitStatus) {
+        let fade = |v: &mut u8| *v = v.saturating_sub(PULSE_FADE);
+        fade(&mut self.dot);
+        self.flash.iter_mut().for_each(fade);
+        let turn = st.pos.phase.get() as f32 / 4_294_967_296.0;
+        self.sweep
+            .set_target(draw::nearest(self.sweep.target(), turn, 1.0));
+        self.sweep.update();
+        if self.sweep.is_settled() {
+            self.sweep.snap(draw::wrap(self.sweep.target(), 1.0));
+        }
+        if !st.running {
+            self.beat = None;
+            self.dot = 0;
+            self.flash = [0; RINGS];
+            self.fired = st.rings.map(|r| r.fired);
+            return;
+        }
+        if self.beat != Some(st.beats()) {
+            self.beat = Some(st.beats());
+            self.dot = PULSE_FULL;
+        }
+        for (i, r) in st.rings.iter().enumerate() {
+            if r.fired != self.fired[i] {
+                self.fired[i] = r.fired;
+                self.flash[i] = PULSE_FULL;
+            }
+        }
+    }
+
+    /// The sweep's turn, 0..1 from the top, eased.
+    pub fn sweep(&self) -> f32 {
+        draw::wrap(self.sweep.current(), 1.0)
+    }
+
+    /// Ring `r`'s flash, 0..=255.
+    pub fn flash(&self, r: RingIdx) -> u8 {
+        self.flash[r.get() as usize]
+    }
+
+    /// The beat dot's fill while running, 0..=255; `None` stopped.
+    pub fn dot(&self) -> Option<u8> {
+        self.beat.map(|_| self.dot)
+    }
+}
+
 /// ORBIT's UI state beside the project: the transport, the CHRD and CUSTOM
-/// selections, and the last view.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// selections, the last view, and what ORB and the header animate of it.
+#[derive(Clone, Copy, Debug)]
 pub struct OrbitUi {
     /// CHRD's selected segment.
     pub seg: u8,
@@ -126,6 +205,7 @@ pub struct OrbitUi {
     /// The project's load: only a view on it brings drift.
     pub epoch: u32,
     pub status: OrbitStatus,
+    pub anim: OrbitAnim,
 }
 
 impl OrbitUi {
@@ -138,6 +218,7 @@ impl OrbitUi {
             loops_seen: 0,
             epoch: 0,
             status: OrbitStatus::IDLE,
+            anim: OrbitAnim::new(),
         }
     }
 
@@ -180,6 +261,11 @@ impl OrbitUi {
             self.loops_seen = v.loops;
         }
         due
+    }
+
+    /// One `UiTick` of ORB's and the header's animation.
+    pub fn tick(&mut self) {
+        self.anim.tick(&self.status);
     }
 
     /// What an ORBIT key asks. Only a mute touches the project (and so

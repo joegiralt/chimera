@@ -50,6 +50,7 @@ use crate::name::ProjectName;
 use crate::orbit::RingIdx;
 use crate::orbit::chords::ScaleKind;
 use crate::orbit::runner::{OrbitShared, OrbitView};
+use crate::orbit::scene::SceneIdx;
 use crate::params::{EngineType, ParamSnapshot};
 use crate::perf::load::AudioStats;
 use crate::preset::POOL_SIZE;
@@ -749,7 +750,7 @@ impl UiState {
         let chords = &self.project.orbit().live.chords;
         for (i, value) in values.iter_mut().enumerate() {
             if let View::Orbit(c) = view::view(def, i, &ctx) {
-                *value = c.value(chords, &self.orbit);
+                *value = c.value(chords, &self.orbit, ctx.ring);
             }
         }
         if def.layout == PageLayout::Matrix {
@@ -1480,7 +1481,14 @@ impl UiState {
             self.focus.touch(def.id, i);
             if let View::Orbit(cell) = v {
                 let chords = &mut self.project.orbit_mut().live.chords;
-                cell.turn(delta, shift, chords, &mut self.orbit);
+                let mut ring = ctx.ring;
+                cell.turn(delta, shift, chords, &mut self.orbit, &mut ring);
+                // RING picks another ring: a move, on the same page.
+                if ring != ctx.ring
+                    && let Some(o) = self.loc.orbit()
+                {
+                    self.go(o.with_ring(ring).into());
+                }
                 continue;
             }
             let params = &mut UiBlocks {
@@ -1817,6 +1825,8 @@ impl UiState {
         self.renderer.branch_scroll.set_target(target_scroll);
         self.renderer.branch_scroll.update();
 
+        self.orbit.tick();
+
         // CUSTOM's cursor eases the short way round, and comes back into
         // one turn once it rests.
         let c = &mut self.renderer.orbit_cursor;
@@ -1887,7 +1897,8 @@ impl UiState {
         let settings = self.loc.settings();
         let head = match (settings, self.loc.part(), self.loc.orbit()) {
             (_, _, Some(o)) if o.page().node() as usize == orbit::RING_NODE => Head::Ring(o.ring()),
-            (_, _, Some(_)) => Head::Orbit,
+            // Task 16: the playing scene.
+            (_, _, Some(_)) => Head::Orbit(SceneIdx::ALL[0]),
             (None, Some(p), _) if self.loc.on_mixer() => Head::Mix(p),
             (None, Some(p), _) => Head::Sound(p),
             _ => Head::Settings,
@@ -1906,6 +1917,7 @@ impl UiState {
             focus: self.focused_slot(),
             scope,
             sounding: crate::scope::peak(scope) > crate::scope::SOUNDING_PEAK,
+            orbit_dot: self.orbit.anim.dot(),
             parts: self.project.perf().parts(),
             active_part: self.active_part,
             prime_status: self.prime_status,
@@ -1922,6 +1934,7 @@ impl UiState {
     fn orbit_frame(&self) -> orbit::draw::OrbitFrame<'_> {
         orbit::draw::OrbitFrame {
             scene: &self.project.orbit().live,
+            bpm: self.project.orbit().bpm,
             ui: &self.orbit,
         }
     }
@@ -1974,6 +1987,7 @@ impl UiState {
                 f.sounding,
                 renderer::title_type(f),
                 renderer::header_out(f) as u8,
+                f.orbit_dot,
             ),
             RegionKind::Focus if f.def.layout == PageLayout::Matrix => RegionData::route(
                 self.matrix_state.sel_row as u8,
@@ -2040,7 +2054,7 @@ impl UiState {
             .keyed(self.matrix_state.rev, renderer::inert(f)),
             RegionKind::Crumbs | RegionKind::List | RegionKind::Footer => {
                 let key = f.settings.map_or(0, |b| match kind {
-                    RegionKind::Crumbs => b.crumbs_key(f.sounding),
+                    RegionKind::Crumbs => b.crumbs_key(f.sounding, f.orbit_dot),
                     RegionKind::List => b.list_key(),
                     _ => b.footer_key(),
                 });

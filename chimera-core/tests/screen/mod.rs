@@ -607,6 +607,13 @@ pub fn orbit_view(f: f64) -> chimera_core::orbit::runner::OrbitView {
     v
 }
 
+/// `orbit_view(f)` with ring 2 just fired: what ORB's golden draws.
+pub fn orb_view(f: f64) -> chimera_core::orbit::runner::OrbitView {
+    let mut v = orbit_view(f);
+    v.rings[1].fired = 1;
+    v
+}
+
 /// Hold SEQ into ORBIT, then B`n`'s tap: RING `n`'s RHYTHM.
 pub fn to_ring(ui: &mut UiState, n: usize) {
     hold(ui, ButtonId::Seq);
@@ -1051,6 +1058,12 @@ pub const CASES: &[ScreenCase] = &[
         plus(ui, 1);
         feed(ui, Input::turn(EncoderId::E, 2).and_held(ButtonId::Mix));
         ui.set_orbit_view(&orbit_view(0.3));
+    }),
+    // ORB on ring 3 at a third of the bar, ring 2 just fired.
+    ("orbit_orb", |ui| {
+        to_ring(ui, 3);
+        feed(ui, Input::press(ButtonId::Minus));
+        ui.set_orbit_view(&orb_view(0.3));
     }),
     // CUSTOM from MINOR, the tritone set under the cursor.
     ("orbit_custom", |ui| {

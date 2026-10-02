@@ -29,7 +29,8 @@ use chimera_core::ui::block_def::{BlockDef, ChainDef2, SlotBinding};
 use chimera_core::ui::block_registry::{MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART};
 use chimera_core::ui::busy::{ToastStep, draw_toast};
 use chimera_core::ui::nav::{Location, chain_def_for};
-use chimera_core::ui::orbit::{CHRD_NODE, ORBIT_CHAIN};
+use chimera_core::ui::orbit::{CHRD_NODE, ORBIT_CHAIN, ORBIT_ORB};
+use chimera_core::ui::page::PageLayout;
 use chimera_core::ui::settings::manage::Command;
 use chimera_core::ui::settings::part::{PartCmd, SAVE_ROWS};
 use chimera_core::ui::settings::view::{Footer, draw_footer};
@@ -627,6 +628,25 @@ fn every_screen_renders() {
 }
 
 /// Every SETTINGS frame's map band is its footer, drawn alone.
+/// The atlas writes ORB as its golden, `orbit_orb`: the ring 3 the atlas
+/// stands on, so the golden covers it and nothing is written twice.
+#[test]
+fn orb_page_in_the_atlas() {
+    let shot = atlas()
+        .into_iter()
+        .find(|s| {
+            matches!(s.ctx, Ctx::Orbit)
+                && s.ctx.chain().active_def(s.node, s.sub).unwrap().id == ORBIT_ORB.id
+        })
+        .expect("ORB is in the atlas");
+    assert_eq!(shot.name, "orbit_orb");
+    assert!(
+        key(&shot.ui()) == key(&ui_for("orbit_orb")),
+        "the golden covers it"
+    );
+    assert_eq!(shot.ui().page_def().layout, PageLayout::BigViz);
+}
+
 #[test]
 fn atlas_settings_never_shows_the_map() {
     let leaves = atlas()

@@ -278,3 +278,209 @@ fn the_cursor_eases_the_short_way() {
     let low = |px: &[u16]| px[112 * screen::W..180 * screen::W].to_vec();
     assert!(low(&moving) == low(&rest), "not round the bottom");
 }
+
+/// ORB at phase 0.3, ring 2 just fired: every ring's steps round its
+/// circle, a hit filled, an accent ringed in INK2, the step under the
+/// clock lit, ring 4 dark (muted); the progression's first segment lit;
+/// the sweep at 0.3 of the turn. One tick after ring 2 fires again its
+/// step flashes, and is back by the third.
+#[test]
+fn orb_page_golden() {
+    use chimera_core::orbit::RingIdx;
+    use chimera_core::orbit::euclid::accents;
+    use chimera_core::ui::animation::UiTick;
+    use chimera_core::ui::orbit::ORBIT_ORB;
+    use chimera_core::ui::orbit::draw::{BAND_R, orb_xy, ring_r};
+    let ui = screen::ui_for("orbit_orb");
+    assert_eq!(ui.page_def().id, ORBIT_ORB.id);
+    let fb = render("orbit_orb");
+    let scene = Scene::init();
+    let phase = screen::phase(0.3);
+    let step_xy = |r: RingIdx, i: usize, n: usize| orb_xy(i as f32 / n as f32, ring_r(r) as f32);
+    for r in RingIdx::ALL {
+        let ring = &scene.rings[r.get() as usize].ring;
+        let mask = ring.hits_mask();
+        let steps = ring.fill().steps();
+        let n = steps.get() as usize;
+        let now = step_at(phase, steps) as usize;
+        let accented = accents(mask, ring.accent);
+        for i in 0..n {
+            let (x, y) = step_xy(r, i, n);
+            let want = match (ring.mute, mask.is_hit(i), i == now) {
+                (true, true, _) => theme::PILL_EDGE,
+                (true, false, _) => theme::FAINT,
+                (false, true, true) => theme::INK,
+                (false, true, false) => theme::ACCENT,
+                (false, false, _) => theme::BAR_REST,
+            };
+            assert_eq!(fb.at(x, y), want, "ring {} step {i}", r.get() + 1);
+            if accented.is_hit(i) && !ring.mute {
+                assert_eq!(
+                    fb.at(x + 4, y),
+                    theme::INK2,
+                    "ring {} accent {i}",
+                    r.get() + 1
+                );
+            }
+        }
+    }
+    assert!(scene.rings[3].ring.mute, "ring 4 is the muted one");
+
+    // The progression: four segments, the first lit while it plays.
+    let segs = scene.chords.segs.get() as usize;
+    assert_eq!(segs, 4);
+    for s in 0..segs {
+        let (x, y) = orb_xy((s as f32 + 0.5) / segs as f32, BAND_R as f32);
+        let want = if s == 0 {
+            theme::ACCENT
+        } else {
+            theme::ACCENT_SOFT
+        };
+        assert_eq!(fb.at(x, y), want, "segment {s}");
+    }
+
+    // The sweep: a line at 0.3 of the turn, between the outer rings.
+    let mid = (ring_r(RingIdx::ALL[0]) + ring_r(RingIdx::ALL[1])) as f32 / 2.0;
+    let (x, y) = orb_xy(0.3, mid);
+    let near = (-1..=1).flat_map(|dx| (-1..=1).map(move |dy| (x + dx, y + dy)));
+    assert!(
+        near.clone().any(|(x, y)| fb.at(x, y) == theme::MID),
+        "the hand at 0.3"
+    );
+    let (x, y) = orb_xy(0.8, mid);
+    assert_eq!(fb.at(x, y), theme::BG, "no hand across");
+
+    // Ring 2 fires again: its step flashes, larger, and fades by the third tick.
+    let mut ui = Box::new(ui);
+    let r2 = RingIdx::ALL[1];
+    let steps = scene.rings[1].ring.fill().steps();
+    let (x, y) = step_xy(r2, step_at(phase, steps) as usize, steps.get() as usize);
+    let at_rest = screen::render_ui(&ui);
+    assert_eq!(at_rest.at(x + 3, y), theme::BG, "at rest, a small dot");
+    let mut v = screen::orb_view(0.3);
+    v.rings[1].fired = 2;
+    ui.set_orbit_view(&v);
+    ui.update(UiTick::for_test());
+    let lit = screen::render_ui(&ui);
+    assert_eq!(lit.at(x + 3, y), theme::INK, "the flash");
+    ui.update(UiTick::for_test());
+    ui.update(UiTick::for_test());
+    assert!(
+        screen::render_ui(&ui).px == at_rest.px,
+        "back by the third tick"
+    );
+}
+
+/// The beat dot, left of the sounding dot on every kind of page: absent
+/// while ORBIT is stopped; running, filled on a beat's first tick, part
+/// filled on the next, an outline by the third, and filled again on the
+/// next beat. The CPU label moves left by one dot. The dirty path
+/// redraws each step as a full render would.
+#[test]
+fn header_dot_pulses() {
+    use chimera_core::orbit::runner::OrbitView;
+    use chimera_core::ui::animation::UiTick;
+    use chimera_core::ui::perf::PerfStats;
+    use screen::{Fb, audio_fixture, orbit_view, scope_fixture};
+    const LOAD: PerfStats = PerfStats {
+        frame_us: 0,
+        audio_us: 0,
+        audio_load_pct: 42,
+    };
+    let full = |ui: &UiState| {
+        let mut fb = Fb::new();
+        ui.render_with_audio(&mut fb, &LOAD, Some(&audio_fixture()), &scope_fixture());
+        fb
+    };
+    // The CPU label's right edge: the header's rightmost MID pixel.
+    let cpu_right = |fb: &Fb| {
+        (0..theme::SCREEN_W)
+            .rev()
+            .find(|&x| (0..theme::HEADER_BOTTOM).any(|y| fb.at(x, y) == theme::MID))
+    };
+    let (x, y) = (theme::ORBIT_DOT_X, theme::HEADER_DOT_Y);
+    let r = theme::HEADER_DOT_R;
+    for (name, cpu) in [
+        ("algo_level", true),
+        ("mixer_part", true),
+        ("settings_top", false),
+        ("settings_personal_theme", false),
+        ("orbit_orb", true),
+    ] {
+        let mut ui = Box::new(screen::ui_for(name));
+        ui.set_orbit_view(&OrbitView::default());
+        screen::settle(&mut ui);
+        let mut dirty = Fb::new();
+        let mut step = |ui: &mut UiState, what: &str| {
+            ui.update(UiTick::for_test());
+            ui.render_dirty_with_audio(&mut dirty, &LOAD, Some(&audio_fixture()), &scope_fixture());
+            let fb = full(ui);
+            assert!(dirty.px == fb.px, "{name}: {what}, dirty");
+            fb
+        };
+        let stopped = step(&mut ui, "stopped");
+        for dx in -r..=r {
+            assert_eq!(stopped.at(x + dx, y), theme::BG, "{name}: stopped, no dot");
+        }
+
+        ui.set_orbit_view(&orbit_view(0.0));
+        let first = step(&mut ui, "the beat");
+        assert_eq!(first.at(x, y), theme::ACCENT, "{name}: filled");
+        assert_eq!(first.at(x + 2, y), theme::ACCENT, "{name}: filled");
+        let second = step(&mut ui, "fading");
+        assert_eq!(second.at(x, y), theme::ACCENT, "{name}: part filled");
+        assert_eq!(second.at(x + 2, y), theme::BG, "{name}: part filled");
+        let third = step(&mut ui, "faded");
+        assert_eq!(third.at(x, y), theme::BG, "{name}: an outline");
+        assert_eq!(third.at(x + r, y), theme::ACCENT, "{name}: an outline");
+        let still = step(&mut ui, "between beats");
+        assert!(still.px == third.px, "{name}: still between beats");
+
+        ui.set_orbit_view(&orbit_view(0.25));
+        let next = step(&mut ui, "the next beat");
+        assert_eq!(next.at(x + 2, y), theme::ACCENT, "{name}: the next beat");
+
+        if cpu {
+            let (s, run) = (cpu_right(&stopped), cpu_right(&third));
+            assert_eq!(
+                s.zip(run).map(|(s, run)| s - run),
+                Some(theme::HEADER_DOT_X - theme::ORBIT_DOT_X),
+                "{name}: the CPU label moves left by one dot"
+            );
+        }
+    }
+}
+
+/// ORB's encoders: A picks the ring, one to five; F sets the BPM.
+#[test]
+fn orb_encoders() {
+    use chimera_core::ui::orbit::ORBIT_ORB;
+    use chimera_hal::EncoderId::F;
+    let mut ui = Box::new(UiState::new());
+    hold(&mut ui, Seq);
+    assert_eq!(ui.page_def().id, ORBIT_ORB.id);
+    let ring = |ui: &UiState| ui.location().orbit().unwrap().ring().get();
+    assert_eq!(ring(&ui), 0);
+    feed(&mut ui, Input::turn(A, 2));
+    assert_eq!(ring(&ui), 2);
+    assert_eq!(ui.page_def().id, ORBIT_ORB.id);
+    feed(&mut ui, Input::turn(A, 9));
+    assert_eq!(ring(&ui), 4);
+    feed(&mut ui, Input::turn(A, -9));
+    assert_eq!(ring(&ui), 0);
+    let bpm = |ui: &UiState| ui.project().orbit().bpm.get();
+    assert_eq!(bpm(&ui), 120);
+    feed(&mut ui, Input::turn(F, 5));
+    assert_eq!(bpm(&ui), 125);
+    feed(&mut ui, Input::turn(F, -10));
+    assert_eq!(bpm(&ui), 115);
+}
+
+/// `OrbitStatus::IDLE` is what `of` makes of the runner's first view:
+/// the two derivations can't drift.
+#[test]
+fn idle_is_the_first_view() {
+    use chimera_core::orbit::runner::OrbitView;
+    use chimera_core::ui::orbit::OrbitStatus;
+    assert_eq!(OrbitStatus::IDLE, OrbitStatus::of(&OrbitView::default()));
+}
