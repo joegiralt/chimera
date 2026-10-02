@@ -11,7 +11,7 @@ use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{CPU_HZ_REV_V, MAX_PARTS, MAX_VOICES, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacOut};
 use chimera_core::note_queue::{
-    NoteDrain, NoteEvent, NoteKind, NoteProducer, NoteSources, SourceId,
+    InEvent, NoteDrain, NoteEvent, NoteKind, NoteProducer, NoteSources, SourceId,
 };
 use chimera_core::params::{EngineType, ParamSnapshot, Steal};
 use chimera_core::part::DacPair;
@@ -334,7 +334,11 @@ impl Load {
         let drain = gate.before_block(link, &mut r.inst, &r.shared);
         if drain {
             let (inst, shared) = (&mut r.inst, &r.shared);
-            self.drain.drain(|ev| inst.handle(ev, shared));
+            self.drain.drain(|_, ev| {
+                if let InEvent::Note(n) = ev {
+                    inst.handle(n, shared);
+                }
+            });
         }
         r.render(1);
         (drain, *r.out())
@@ -559,7 +563,11 @@ mod e2e {
             let shared = reader.read();
             let open = gate.before_block(link, &mut r.inst, shared);
             if open {
-                drain.drain(|ev| r.inst.handle(ev, shared));
+                drain.drain(|_, ev| {
+                    if let InEvent::Note(n) = ev {
+                        r.inst.handle(n, shared);
+                    }
+                });
             }
             r.inst.render(&mut r.fx, &mut r.dac, shared, &mut r.scope);
             pair1.extend_from_slice(&r.dac.out()[0]);

@@ -123,7 +123,7 @@ pub struct Events {
 }
 
 impl Events {
-    fn new() -> Events {
+    pub(super) fn new() -> Events {
         Events {
             ev: [None; EVENTS_PER_RING * RINGS],
             n: 0,
@@ -143,6 +143,21 @@ impl Events {
                 kind,
             });
             self.n += 1;
+        }
+    }
+
+    /// These, then `later`'s, with `later`'s flags: a block's STOP offs
+    /// before its window. A ring's off is in one or the other, so a ring
+    /// still sends at most `EVENTS_PER_RING`.
+    pub(super) fn then(mut self, later: &Events) -> Events {
+        for e in later.ev[..later.n].iter().flatten() {
+            self.push(e.ring, e.channel, e.note, e.kind);
+        }
+        Events {
+            boundary: later.boundary,
+            adopted: later.adopted,
+            seg_changed: later.seg_changed,
+            ..self
         }
     }
 

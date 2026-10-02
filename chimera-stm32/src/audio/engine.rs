@@ -8,7 +8,7 @@ use chimera_core::hw::{SAMPLE_RATE, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 #[cfg(feature = "midi-din")]
 use chimera_core::note_queue::SourceId;
-use chimera_core::note_queue::{NoteDrain, NoteSources};
+use chimera_core::note_queue::{InEvent, NoteDrain, NoteSources};
 use chimera_core::part::DacPair;
 use chimera_core::project::{LOAD_LINK, LoadGate};
 use chimera_core::scope::{ScopeFrame, ScopeWriter};
@@ -95,7 +95,12 @@ pub fn render_half(half: Half) {
     let e = unsafe { (*addr_of_mut!(ENGINE)).assume_init_mut() };
     let shared = e.shared.read();
     if e.gate.before_block(&LOAD_LINK, e.inst, shared) {
-        e.notes.drain(|ev| e.inst.handle(ev, shared));
+        // Real-time waits for ORBIT's runner (Task 19).
+        e.notes.drain(|_, ev| {
+            if let InEvent::Note(n) = ev {
+                e.inst.handle(n, shared);
+            }
+        });
     }
     e.inst.render(e.fx, &mut e.dac, shared, &mut e.scope);
     for pair in DacPair::ALL {

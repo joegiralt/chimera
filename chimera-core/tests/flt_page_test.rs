@@ -448,7 +448,8 @@ fn kind_is_fixed_and_never_edits_the_matrix() {
     let ctx = SlotCtx::read(&s.params, chimera_core::addr::Op::A);
     assert!(view::is_dimmed(
         &view::view(&chimera_core::ui::block_registry::FILTER, 0, &ctx),
-        &s
+        &s,
+        &ctx
     ));
     let mut ui = on_flt(EngineType::Algo);
     let before = format!("{:?}", ui.mod_state());

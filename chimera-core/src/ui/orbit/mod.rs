@@ -12,7 +12,7 @@ pub use pages::{
 };
 
 use crate::block::Block;
-use crate::orbit::clock::{Bpm, Phase, Position, step_at};
+use crate::orbit::clock::{Bpm, ClockSource, Phase, Position, step_at};
 use crate::orbit::euclid::HitMask;
 use crate::orbit::runner::{OrbitShared, OrbitView, beats_at};
 use crate::orbit::scene::{OrbitSong, Scene, SceneRing};
@@ -40,6 +40,8 @@ pub struct OrbitStatus {
     pub running: bool,
     /// The load the view's runner is on.
     pub epoch: u32,
+    pub source: ClockSource,
+    /// The internal BPM, or the MIDI clock's measured one.
     pub bpm: Bpm,
     pub pos: Position,
     pub loops: u32,
@@ -76,6 +78,7 @@ impl OrbitStatus {
         OrbitStatus {
             running: false,
             epoch: 0,
+            source: ClockSource::Internal,
             bpm: Bpm::DEFAULT,
             pos: Position::ZERO,
             loops: 0,
@@ -90,6 +93,7 @@ impl OrbitStatus {
         OrbitStatus {
             running: v.running,
             epoch: v.epoch,
+            source: v.source,
             bpm: v.bpm,
             pos: v.pos,
             loops: v.loops,

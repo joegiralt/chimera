@@ -291,6 +291,11 @@ pub enum MidiMessage {
         channel: MidiChannel,
         value: i16,
     },
+    /// System real-time: 24 a quarter note.
+    Clock,
+    Start,
+    Continue,
+    Stop,
 }
 
 /// RGB565 framebuffer pixel type

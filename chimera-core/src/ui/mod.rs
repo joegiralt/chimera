@@ -714,12 +714,13 @@ impl UiState {
     }
 
     /// What the edited Part's page slots resolve against, on the ORBIT
-    /// ring the location selects.
+    /// ring the location selects and under ORBIT's clock.
     fn ctx(&self) -> SlotCtx {
         let ctx = SlotCtx::read(
             &self.project.part(self.active_part).sound.params,
             self.sel_op,
-        );
+        )
+        .on_clock(self.orbit.status.source);
         match self.loc.orbit() {
             Some(o) => ctx.on_ring(o.ring()),
             None => ctx,
@@ -1491,6 +1492,10 @@ impl UiState {
                 }
                 continue;
             }
+            // Dimmed: BPM under a MIDI clock.
+            if view::is_dimmed(&v, &self.project.part(self.active_part).sound, &ctx) {
+                continue;
+            }
             let params = &mut UiBlocks {
                 project: &mut self.project,
                 part: self.active_part,
@@ -1662,7 +1667,7 @@ impl UiState {
                     });
                     continue;
                 }
-                if view::is_dimmed(&v, &self.project.part(at).sound) {
+                if view::is_dimmed(&v, &self.project.part(at).sound, &self.ctx()) {
                     continue; // dimmed: the encoder is ignored
                 }
                 let params = &mut UiBlocks {
@@ -1704,7 +1709,7 @@ impl UiState {
                     let sound = &self.project.part(at).sound;
                     if let Some(a) = v.addr()
                         && prime_target(a) == a
-                        && view::is_dimmed(&v, sound)
+                        && view::is_dimmed(&v, sound, &self.ctx())
                     {
                         self.prime_status = Some(PrimeStatus::NotModulatable);
                     } else if let Some(addr) = self.current_param_addr() {

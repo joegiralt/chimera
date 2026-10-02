@@ -486,6 +486,23 @@ fn orb_encoders() {
     assert_eq!(bpm(&ui), 115);
 }
 
+/// Under a MIDI clock F is inert: the internal BPM waits for the fallback.
+/// Back on the internal clock it turns again.
+#[test]
+fn orb_bpm_is_inert_under_midi() {
+    use chimera_core::orbit::runner::OrbitView;
+    use chimera_hal::EncoderId::F;
+    let mut ui = Box::new(UiState::new());
+    hold(&mut ui, Seq);
+    let bpm = |ui: &UiState| ui.project().orbit().bpm.get();
+    ui.set_orbit_view(&screen::midi_view(0.0));
+    feed(&mut ui, Input::turn(F, 5));
+    assert_eq!(bpm(&ui), 120, "dimmed under MIDI");
+    ui.set_orbit_view(&OrbitView::default());
+    feed(&mut ui, Input::turn(F, 5));
+    assert_eq!(bpm(&ui), 125);
+}
+
 /// `OrbitStatus::IDLE` is what `of` makes of the runner's first view:
 /// the two derivations can't drift.
 #[test]

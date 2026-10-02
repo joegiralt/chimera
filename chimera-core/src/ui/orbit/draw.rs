@@ -14,7 +14,7 @@ use super::{OrbitCell, OrbitUi};
 use crate::addr::{BlockRef, ParamAddr};
 use crate::orbit::RingIdx;
 use crate::orbit::chords::{ChordRing, harmony};
-use crate::orbit::clock::Bpm;
+use crate::orbit::clock::{Bpm, ClockSource};
 use crate::orbit::euclid::{HitMask, accents};
 use crate::orbit::scene::{Scene, SceneRing};
 use crate::ui::block_def::{BlockDef, VizType};
@@ -58,6 +58,15 @@ impl OrbitFrame<'_> {
 
     fn chords(&self) -> &ChordRing {
         &self.scene.chords
+    }
+
+    /// The tempo the header reads and its source: BPM's own, or the MIDI
+    /// clock's measured one.
+    pub fn tempo(&self) -> (Bpm, &'static str) {
+        match self.ui.status.source {
+            ClockSource::Internal => (self.bpm, "INT"),
+            ClockSource::Midi => (self.ui.status.bpm, "MIDI"),
+        }
     }
 }
 
@@ -167,13 +176,13 @@ where
     let bars = c.bars.get();
     let mut line = FmtBuf::new();
     let plural = if bars == 1 { "" } else { "S" };
-    // Task 12: the clock's source, INT or MIDI, from the view.
+    let (bpm, source) = f.tempo();
     let _ = write!(
         line,
-        "{} {} · {bars} BAR{plural} · {} INT",
+        "{} {} · {bars} BAR{plural} · {} {source}",
         c.tonic,
         c.scale.name(),
-        f.bpm.get()
+        bpm.get()
     );
     draw::text_tracked(
         d,
@@ -576,7 +585,7 @@ pub fn viz_key(def: &BlockDef, f: &OrbitFrame, r: RingIdx, cursor: f32) -> u32 {
                 f.ui.anim.flash(ring).hash(&mut h);
             }
             f.chords().hash(&mut h);
-            f.bpm.hash(&mut h);
+            f.tempo().hash(&mut h);
             st.running.then_some(st.seg).hash(&mut h);
             r.hash(&mut h);
             h.write_u16(crate::ui::region::quantize(f.ui.anim.sweep() * 64.0));

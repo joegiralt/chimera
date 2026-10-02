@@ -8,7 +8,7 @@ use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::hw::{BLOCK_SIZE, CPU_HZ_REV_V, DAC_PAIRS, SAMPLE_RATE, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, DacOut, Instrument};
 use chimera_core::note_queue::{
-    NoteDrain, NoteEvent, NoteKind, NoteProducer, NoteSources, SourceId,
+    InEvent, NoteDrain, NoteEvent, NoteKind, NoteProducer, NoteSources, SourceId,
 };
 use chimera_core::orbit::runner::{OrbitRunner, OrbitShared, OrbitView};
 use chimera_core::preset::Performance;
@@ -197,8 +197,8 @@ impl Engine {
     }
 
     /// One block, as the firmware renders each half: the gate, then only
-    /// when it opens the drain (live notes) and ORBIT, then the render and
-    /// ORBIT's report.
+    /// when it opens the drain (live notes to the Parts, real-time to
+    /// ORBIT's clock) and ORBIT, then the render and ORBIT's report.
     fn block<const N: usize>(
         &mut self,
         link: &LoadLink,
@@ -215,7 +215,11 @@ impl Engine {
             view,
         } = self;
         if gate.before_block(link, inst, shared) {
-            drain.drain(|ev| inst.handle(ev, shared));
+            let now = runner.now();
+            drain.drain(|src, ev| match ev {
+                InEvent::Note(n) => inst.handle(n, shared),
+                InEvent::Rt(rt) => runner.realtime(src.index(), rt, now),
+            });
             runner.block(inst, shared);
         }
         inst.render(fx, dac, shared, scope);
@@ -306,7 +310,7 @@ fn connect_midi(mut notes: NoteProducer<'static>) -> Option<midir::MidiInputConn
             "chimera-in",
             move |_stamp, bytes, _| {
                 for &b in bytes {
-                    if let Some(ev) = parser.feed(b).and_then(NoteEvent::from_midi) {
+                    if let Some(ev) = parser.feed(b).and_then(InEvent::from_midi) {
                         notes.push(ev);
                     }
                 }

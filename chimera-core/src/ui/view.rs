@@ -13,6 +13,7 @@ use crate::dsp::modulator::{
 };
 use crate::modulation::{ModSource, VCA};
 use crate::orbit::RingIdx;
+use crate::orbit::clock::ClockSource;
 use crate::params::{EnvParams, FilterParams, OutParams};
 use crate::preset::Sound;
 use crate::ui::block_def::{BlockDef, SlotBinding};
@@ -57,6 +58,8 @@ pub struct SlotCtx {
     pub model: ResonatorMode,
     /// The ORBIT ring the location selects: what `SelectedRing` edits.
     pub ring: RingIdx,
+    /// ORBIT's clock: BPM is inert while MIDI leads.
+    pub clock: ClockSource,
 }
 
 impl SlotCtx {
@@ -82,12 +85,18 @@ impl SlotCtx {
             }),
             model: ResonatorMode::from_u8(get(BlockRef::Modal, ModalParams::MODE) as u8),
             ring: RingIdx::ALL[0],
+            clock: ClockSource::Internal,
         }
     }
 
     /// This context on ORBIT ring `ring`.
     pub fn on_ring(self, ring: RingIdx) -> Self {
         Self { ring, ..self }
+    }
+
+    /// This context under ORBIT's `clock`.
+    pub fn on_clock(self, clock: ClockSource) -> Self {
+        Self { clock, ..self }
     }
 }
 
@@ -267,11 +276,20 @@ pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
     }
 }
 
-/// The view is drawn dimmed and inert: a fixed readout, or a param
-/// `dimmed` rules inapplicable.
-pub fn is_dimmed(v: &View, sound: &Sound) -> bool {
+/// The view is drawn dimmed and inert: a fixed readout, a param `dimmed`
+/// rules inapplicable, or BPM while a MIDI clock leads (spec § Design
+/// choices: F sets the internal BPM, dimmed under an external clock).
+pub fn is_dimmed(v: &View, sound: &Sound, ctx: &SlotCtx) -> bool {
     match *v {
         View::Text { .. } => true,
+        View::Param {
+            addr:
+                ParamAddr {
+                    block: BlockRef::Tempo,
+                    ..
+                },
+            ..
+        } => ctx.clock == ClockSource::Midi,
         View::Param { addr, .. } => dimmed(addr, sound),
         _ => false,
     }

@@ -614,6 +614,16 @@ pub fn orb_view(f: f64) -> chimera_core::orbit::runner::OrbitView {
     v
 }
 
+/// `orb_view(f)` with a MIDI clock leading at 133 BPM.
+pub fn midi_view(f: f64) -> chimera_core::orbit::runner::OrbitView {
+    use chimera_core::orbit::clock::{Bpm, ClockSource};
+    chimera_core::orbit::runner::OrbitView {
+        source: ClockSource::Midi,
+        bpm: Bpm::new(133).unwrap(),
+        ..orb_view(f)
+    }
+}
+
 /// Hold SEQ into ORBIT, then B`n`'s tap: RING `n`'s RHYTHM.
 pub fn to_ring(ui: &mut UiState, n: usize) {
     hold(ui, ButtonId::Seq);
@@ -1064,6 +1074,13 @@ pub const CASES: &[ScreenCase] = &[
         to_ring(ui, 3);
         feed(ui, Input::press(ButtonId::Minus));
         ui.set_orbit_view(&orb_view(0.3));
+    }),
+    // ORB under a MIDI clock at 133 BPM: the header reads the source, and
+    // F, the internal BPM, is dimmed.
+    ("orbit_orb_midi", |ui| {
+        to_ring(ui, 3);
+        feed(ui, Input::press(ButtonId::Minus));
+        ui.set_orbit_view(&midi_view(0.3));
     }),
     // CUSTOM from MINOR, the tritone set under the cursor.
     ("orbit_custom", |ui| {

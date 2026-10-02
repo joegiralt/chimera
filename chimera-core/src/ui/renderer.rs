@@ -700,7 +700,7 @@ pub fn look(f: &Frame, i: usize) -> components::Look {
         {
             components::Look::Absent
         }
-        v if view::is_dimmed(&v, sound) => components::Look::Dimmed,
+        v if view::is_dimmed(&v, sound, &f.ctx) => components::Look::Dimmed,
         _ => components::Look::Live,
     }
 }

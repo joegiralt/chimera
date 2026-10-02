@@ -113,6 +113,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("orbit_chrd", 0x5af71afc00c4d81e),
     // ORB (plan Task 10).
     ("orbit_orb", 0x3b9577550b1c211c),
+    ("orbit_orb_midi", 0xdc5c2d45a40ded6f),
     ("orbit_custom", 0xf89d2ed7662b5f8e),
     ("busy", 0x198544cd36863145),
     ("toast_saved", 0xe344dd99a47d0dad),

@@ -3,8 +3,10 @@
 //! turns them into note events for the `Instrument` (spec § 4).
 
 use super::chords::harmony;
-use super::clock::{Bpm, InternalClock, Position, step_at};
-use super::engine::{OrbitKind, OrbitState, PendingOff, Span, block};
+use super::clock::{
+    Bpm, ClockSource, InternalClock, MidiClock, Position, WINDOW, advance_cap, step_at,
+};
+use super::engine::{Events, OrbitKind, OrbitState, PendingOff, Span, block};
 use super::euclid::HitMask;
 use super::scene::Scene;
 use super::walk::Pool;
@@ -12,7 +14,7 @@ use super::{MAX_STEPS, RINGS};
 use crate::MidiNote;
 use crate::hw::{BLOCK_SIZE, MAX_PARTS};
 use crate::instrument::{AudioShared, Instrument, NoteOrigin};
-use crate::note_queue::{NoteEvent, NoteKind};
+use crate::note_queue::{NoteEvent, NoteKind, RealTime};
 use crate::triple::TripleBuffer;
 use chimera_theory::{Chord, Note};
 use core::mem::size_of;
@@ -60,6 +62,8 @@ pub struct OrbitView {
     pub running: bool,
     /// The project load the runner is on (`AudioShared.epoch`).
     pub epoch: u32,
+    pub source: ClockSource,
+    /// The internal BPM, or the MIDI clock's measured one.
     pub bpm: Bpm,
     pub pos: Position,
     pub beats: u32,
@@ -87,6 +91,7 @@ impl OrbitView {
         OrbitView {
             running: false,
             epoch: 0,
+            source: ClockSource::Internal,
             bpm: Bpm::DEFAULT,
             pos,
             beats: beats_at(pos),
@@ -131,6 +136,16 @@ type Revs = (u8, u8);
 
 pub struct OrbitRunner {
     clock: InternalClock,
+    midi: MidiClock,
+    /// The clock that moved the last block.
+    source: ClockSource,
+    /// The external transport: true under the internal clock, set by MIDI
+    /// Start or Continue, cleared by Stop; the fallback keeps it.
+    ext_playing: bool,
+    /// A MIDI Start to act on next block: offs, then bar 0.
+    ext_start: bool,
+    /// A MIDI Stop to act on next block: offs, and the transport down.
+    ext_stop: bool,
     /// The previous window's end: the next one starts here.
     edge: Position,
     state: OrbitState,
@@ -160,6 +175,11 @@ impl OrbitRunner {
         let working = Scene::init();
         OrbitRunner {
             clock: InternalClock::start(0, Bpm::DEFAULT, sample_rate),
+            midi: MidiClock::new(sample_rate),
+            source: ClockSource::Internal,
+            ext_playing: true,
+            ext_start: false,
+            ext_stop: false,
             edge: Position::ZERO,
             state: OrbitState::start(&working),
             revs: revs_of(&working),
@@ -207,13 +227,8 @@ impl OrbitRunner {
         }
     }
 
-    fn send(
-        inst: &mut Instrument,
-        shared: &AudioShared,
-        ev: impl Iterator<Item = super::engine::OrbitEvent>,
-        fired: &mut [u8; RINGS],
-    ) {
-        for e in ev {
+    fn send(inst: &mut Instrument, shared: &AudioShared, ev: &Events, fired: &mut [u8; RINGS]) {
+        for e in ev.iter() {
             let Some(note) = MidiNote::new(e.note.get()) else {
                 continue;
             };
@@ -234,8 +249,51 @@ impl OrbitRunner {
         }
     }
 
-    /// Spec § 4 steps 2-5 for one block.
-    pub fn block(&mut self, inst: &mut Instrument, shared: &AudioShared) {
+    /// The sample the next block starts at: the `now` of the real-time
+    /// messages drained before it.
+    pub fn now(&self) -> u64 {
+        self.sample
+    }
+
+    /// A MIDI real-time message from source `src`, drained at `now` (§ 6.1).
+    /// Only the leading clock's are taken. Start and Stop act at the next
+    /// block, which sends their offs.
+    pub fn realtime(&mut self, src: usize, rt: RealTime, now: u64) {
+        // It came during the block before its drain: half a block, on average.
+        let now = now.saturating_sub(WINDOW);
+        let led = self.midi.position(now).is_some();
+        match rt {
+            // A clock taken up with no Start carries on from where ORBIT is.
+            RealTime::Clock => {
+                if self.midi.tick(src, now) && !led {
+                    self.midi.rebase(self.edge);
+                }
+            }
+            RealTime::Start => {
+                if self.midi.start(src, now) {
+                    self.ext_playing = true;
+                    self.ext_start = true;
+                }
+            }
+            RealTime::Continue => self.ext_playing |= self.midi.resume(src, now),
+            RealTime::Stop => {
+                if self.midi.stop(src, now) {
+                    self.ext_playing = false;
+                    self.ext_stop = true;
+                }
+            }
+        }
+    }
+
+    /// Spec § 4 steps 2-5 for one block: what it sent the `Instrument`.
+    pub fn block(&mut self, inst: &mut Instrument, shared: &AudioShared) -> Events {
+        let sent = self.advance(shared);
+        Self::send(inst, shared, &sent, &mut self.fired);
+        sent
+    }
+
+    /// One block's transport, clock and steps.
+    fn advance(&mut self, shared: &AudioShared) -> Events {
         let o = &shared.orbit;
         let t = self.sample;
         self.sample += BLOCK_SIZE as u64;
@@ -247,21 +305,42 @@ impl OrbitRunner {
             self.transport = false;
             self.run_seen = o.run;
             self.adopt(shared);
-            return;
+            return Events::new();
         }
 
+        // A MIDI Start or Stop first ends what ORBIT holds. Stop drops the
+        // transport with no edge (Decisions); Start goes back to bar 0.
+        let mut sent = Events::new();
+        if self.ext_start || self.ext_stop {
+            sent = self.state.stop();
+        }
+        if core::mem::take(&mut self.ext_stop) {
+            self.transport = false;
+        }
+        if core::mem::take(&mut self.ext_start) {
+            self.edge = Position::ZERO;
+            self.state = OrbitState::start(&self.working);
+            self.loops = 0;
+        }
+
+        let midi = self.midi.position(t + WINDOW);
         let (up, down) = (o.run && !self.run_seen, !o.run && self.run_seen);
         self.run_seen = o.run;
         if up && !self.transport {
             self.adopt(shared);
-            self.clock = InternalClock::start(t, o.bpm, self.sample_rate);
-            self.edge = Position::ZERO;
-            self.state = OrbitState::start(&self.working);
+            if midi.is_some() {
+                // Joins the external clock in phase: the dice from the
+                // seed, the position kept (§ 6.3).
+                self.state.restart_dice(&self.working);
+            } else {
+                self.clock = InternalClock::start(t, o.bpm, self.sample_rate);
+                self.edge = Position::ZERO;
+                self.state = OrbitState::start(&self.working);
+                self.loops = 0;
+            }
             self.transport = true;
-            self.loops = 0;
         } else if down && self.transport {
-            let off = self.state.stop();
-            Self::send(inst, shared, off.iter(), &mut self.fired);
+            sent = sent.then(&self.state.stop());
             self.transport = false;
         }
 
@@ -274,21 +353,49 @@ impl OrbitRunner {
         if !self.cue_pending {
             self.copy_knobs(&o.settings);
         }
-        if !self.transport {
-            return;
+
+        let sounding = self.transport && self.ext_playing;
+        let (to, from_sample, bar_len) = match midi {
+            Some(at) => {
+                self.source = ClockSource::Midi;
+                (at, t.saturating_sub(WINDOW), self.midi.bar_len())
+            }
+            None => {
+                if !sounding {
+                    // Held where ORBIT is, to go on from the next edge.
+                    self.clock.set_bpm(t + WINDOW, self.edge, o.bpm);
+                    self.source = ClockSource::Internal;
+                    return sent;
+                }
+                let from_sample = t.saturating_sub(WINDOW).max(self.clock.anchor());
+                // The fallback, or a tempo change: on from the edge.
+                if self.source == ClockSource::Midi || o.bpm != self.clock.bpm() {
+                    self.clock.set_bpm(from_sample, self.edge, o.bpm);
+                }
+                self.source = ClockSource::Internal;
+                let to = self.clock.position(t + WINDOW);
+                (to, from_sample, self.clock.bar_len())
+            }
+        };
+        // Never back, and never more than the cap ahead: a jump is caught
+        // up over the next blocks, a step boundary per ring per window.
+        let cap = self
+            .edge
+            .units()
+            .saturating_add(advance_cap(self.sample_rate));
+        let to = to.clamp(self.edge, Position::from_units(cap));
+        if !sounding {
+            // The external clock moves on without ORBIT, so B6 joins in phase.
+            self.edge = to;
+            return sent;
         }
 
-        let from_sample = t.saturating_sub(32).max(self.clock.anchor());
-        if o.bpm != self.clock.bpm() {
-            self.clock.set_bpm(from_sample, self.edge, o.bpm);
-        }
-        let to = self.clock.position(t + 32);
         let span = Span {
             from: self.edge,
             to,
             from_sample,
-            to_sample: t + 32,
-            bar_len: self.clock.bar_len(),
+            to_sample: t + WINDOW,
+            bar_len,
         };
         let channels = core::array::from_fn::<_, MAX_PARTS, _>(|i| shared.parts[i].mix.channel);
         let cue = self.cue_pending.then_some(&o.settings);
@@ -300,7 +407,7 @@ impl OrbitRunner {
         }
         self.loops += ev.boundary() as u32;
         self.edge = to;
-        Self::send(inst, shared, ev.iter(), &mut self.fired);
+        sent.then(&ev)
     }
 
     /// Each ring's off still to send, a held ORBIT voice's: for the tests.
@@ -312,7 +419,11 @@ impl OrbitRunner {
         let mut v = OrbitView::of(&self.working, self.edge);
         v.running = self.transport;
         v.epoch = self.epoch;
-        v.bpm = self.clock.bpm();
+        v.source = self.source;
+        v.bpm = match self.source {
+            ClockSource::Internal => self.clock.bpm(),
+            ClockSource::Midi => self.midi.bpm(),
+        };
         v.loops = self.loops;
         v.cued = self.cue_pending;
         v.seg = self.state.seg();

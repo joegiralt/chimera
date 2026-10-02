@@ -73,3 +73,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0066](0066-settings-menu.md) | MENU opens a SETTINGS menu (amends 0044, supersedes 0057 through it) | Proposed |
 | [0067](0067-focus-glyphs.md) | Focus glyphs: hand-assigned per parameter, ARC by default; composites draw from set values only | Proposed |
 | [0071](0071-orbit-runs-on-the-audio-thread.md) | ORBIT runs on the audio thread, block-accurate; the engine owns the drift, transport acts on edges | Proposed |
+| [0072](0072-orbit-follows-one-midi-clock.md) | ORBIT follows one MIDI clock through the note queues: ticks are places, the time between a guess, never back, never skipped | Proposed |

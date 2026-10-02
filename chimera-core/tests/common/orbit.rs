@@ -15,8 +15,8 @@ use chimera_core::block::Block;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::hw::{CPU_HZ_REV_V, DAC_PAIRS, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument, NoteOrigin};
-use chimera_core::note_queue::{NoteEvent, NoteKind};
-use chimera_core::orbit::engine::PendingOff;
+use chimera_core::note_queue::{InEvent, NoteEvent, NoteKind, RealTime};
+use chimera_core::orbit::engine::{OrbitEvent, PendingOff};
 use chimera_core::orbit::runner::{OrbitRunner, OrbitView};
 use chimera_core::orbit::scene::OrbitSong;
 use chimera_core::orbit::{RINGS, RingIdx};
@@ -109,8 +109,10 @@ pub struct OrbitRig {
     /// Live keys held, by note; once released, no Live voice may stay held.
     live_released: bool,
     live: Vec<u8>,
-    /// Live keys for the next block's drain, as the MIDI queue holds them.
-    keys: Vec<NoteEvent>,
+    /// The next block's drain, as the MIDI queues hold it: `(source, event)`.
+    keys: Vec<(usize, InEvent)>,
+    /// What the runner sent the last block.
+    pub sent: Vec<OrbitEvent>,
     slots: Vec<VoiceSlot>,
     last_view: OrbitView,
 }
@@ -147,6 +149,7 @@ impl OrbitRig {
             live_released: false,
             live: Vec::new(),
             keys: Vec::new(),
+            sent: Vec::new(),
             slots,
             last_view,
         }
@@ -197,7 +200,7 @@ impl OrbitRig {
                 NoteKind::Off
             },
         };
-        self.keys.push(ev);
+        self.keys.push((0, InEvent::Note(ev)));
         if on {
             self.live.push(note);
             self.live_released = false;
@@ -205,6 +208,22 @@ impl OrbitRig {
             self.live.retain(|&n| n != note);
             self.live_released = self.live.is_empty();
         }
+    }
+
+    /// A MIDI real-time message from source `src`, for the next block's
+    /// drain.
+    pub fn rt(&mut self, src: usize, rt: RealTime) {
+        self.keys.push((src, InEvent::Rt(rt)));
+    }
+
+    /// Each ring's off still to send.
+    pub fn runner_pending(&self) -> [Option<PendingOff>; RINGS] {
+        self.runner.pending()
+    }
+
+    /// Stuck-note invariants broken so far.
+    pub fn stuck_notes(&self) -> &[(usize, String)] {
+        &self.stuck
     }
 
     /// One block: the publish, `Engine::block`, the view absorbed, the
@@ -222,13 +241,23 @@ impl OrbitRig {
             .gate
             .before_block(&self.link, &mut self.inst, &self.shared)
         {
-            for ev in self.keys.drain(..) {
-                if matches!(ev.kind, NoteKind::On(_)) {
-                    self.ons.push(b);
+            let now = self.runner.now();
+            for (src, ev) in self.keys.drain(..) {
+                match ev {
+                    InEvent::Note(n) => {
+                        if matches!(n.kind, NoteKind::On(_)) {
+                            self.ons.push(b);
+                        }
+                        self.inst.handle(n, &self.shared);
+                    }
+                    InEvent::Rt(rt) => self.runner.realtime(src, rt, now),
                 }
-                self.inst.handle(ev, &self.shared);
             }
-            self.runner.block(&mut self.inst, &self.shared);
+            let sent = self.runner.block(&mut self.inst, &self.shared);
+            self.sent.clear();
+            self.sent.extend(sent.iter());
+        } else {
+            self.sent.clear();
         }
         self.inst
             .render(&mut self.fx, &mut self.dac, &self.shared, &mut self.scope);
