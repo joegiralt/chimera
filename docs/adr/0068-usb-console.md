@@ -24,7 +24,8 @@ is `docs/superpowers/specs/2026-10-02-usb-console-design.md`.
   SOF (`SYNCSRC = 0b11`).
 - **Polled, never interrupt-driven:** `usb_dev.poll` runs at the top of the
   UI loop, and the OTG interrupt stays masked. Answers pump `poll` and
-  `write` until done, or give up after 250 ms with no progress. The loop
+  `write` until done, or give up after 250 ms with no progress or 1000 ms
+  for the whole answer, so a host that dribbles can't hold the UI. The loop
   answers at most one request per iteration.
 - **Snapshot point:** the top of the UI loop, after the last flush. `shot`
   streams the framebuffer through the THEME palette from there with no copy;

@@ -1,4 +1,7 @@
-use chimera_core::console::{LoopTimer, Report, Served, serial_hex};
+use chimera_core::console::{
+    ANSWER_MS, AnswerClock, LoopTimer, Report, STALL_MS, Served, serial_hex,
+};
+use chimera_hal::Ms;
 
 #[test]
 fn the_timer_averages_and_peaks_then_resets() {
@@ -71,4 +74,39 @@ fn a_drawn_line_is_recorded_and_drawn() {
 fn serial_is_24_uppercase_hex_digits() {
     let uid = [0x00, 0x12, 0x00, 0xAB, 0xDE, 0xAD, 0xBE, 0xEF, 0, 0, 0, 1];
     assert_eq!(serial_hex(&uid).as_str(), "001200ABDEADBEEF00000001");
+}
+
+#[test]
+fn an_answer_stalls_after_250_ms_without_progress() {
+    let mut c = AnswerClock::start(Ms(100));
+    assert!(!c.expired(Ms(100 + STALL_MS - 1)));
+    assert!(c.expired(Ms(100 + STALL_MS)));
+    c.progress(Ms(300));
+    assert!(
+        !c.expired(Ms(300 + STALL_MS - 1)),
+        "progress restarts the stall"
+    );
+    assert!(c.expired(Ms(300 + STALL_MS)));
+}
+
+#[test]
+fn a_slow_dribble_still_ends_at_the_answer_deadline() {
+    let mut c = AnswerClock::start(Ms(0));
+    let mut now = 0;
+    while !c.expired(Ms(now)) {
+        now += 10;
+        if now % 240 == 0 {
+            c.progress(Ms(now));
+        }
+    }
+    assert_eq!(now, ANSWER_MS);
+}
+
+#[test]
+fn the_answer_clock_reads_across_a_wrap() {
+    let start = u32::MAX - 100;
+    let mut c = AnswerClock::start(Ms(start));
+    c.progress(Ms(start.wrapping_add(200)));
+    assert!(!c.expired(Ms(start.wrapping_add(400))));
+    assert!(c.expired(Ms(start.wrapping_add(ANSWER_MS))));
 }

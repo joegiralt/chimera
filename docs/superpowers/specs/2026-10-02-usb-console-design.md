@@ -265,7 +265,7 @@ The UI loop calls `usb::service(&mut usb_parts, &mut unit)` at its top, before `
 2. Read bytes one at a time with `serial.read(&mut [u8; 1])` into `Console::push`, until it yields a request or the port is empty. Unread bytes wait in usbd-serial's 128-byte buffer, and past that the hardware NAKs the host. So a pasted burst is never lost, only slowed.
 3. With a request: `answer` it into a `UsbOut`, then drop the iteration from the loop timer. **At most one request per iteration**, so a burst of `shot`s cannot hold the UI for longer than one shot at a time.
 
-`UsbOut::put` pumps: it alternates `usb_dev.poll` and `serial.write` until every byte is taken. If no byte is taken for `STALL_MS` = 250 ms (DWT), it returns `Stalled`; the answer stops there and the loop goes on. That covers a host that stopped reading, a pulled cable and a suspended bus. The host tool resynchronises (§ Host tool).
+`UsbOut::put` pumps: it alternates `usb_dev.poll` and `serial.write` until every byte is taken. If no byte is taken for `STALL_MS` = 250 ms, or the whole answer passes `ANSWER_MS` = 1000 ms (both read by one `AnswerClock` per answer, on DWT), it returns `Stalled`; the answer stops there and the loop goes on. That covers a host that stopped reading, a pulled cable and a suspended bus. The host tool resynchronises (§ Host tool).
 
 ### Why polling and not an interrupt
 
@@ -300,7 +300,7 @@ The console runs at the top of the UI loop. Only the UI loop writes the framebuf
 
 - **One socket, one client.** A `std::net::TcpListener` on `127.0.0.1:7341`, non-blocking, created at launch. If the port is taken, the sim prints `console: 127.0.0.1:7341 busy, console off` and runs without it.
 - **Polled like the chip.** At the top of each frame, the shell accepts a waiting client, which replaces any old one, and reads what is there into `Console::push`. It answers at most one request per frame, at the same snapshot point: before the frame's input and draw.
-- **The same stall rule.** The stream is non-blocking. `Out::put` retries `WouldBlock` with no progress until the same 250 ms stall, measured with `Instant`.
+- **The same stall rule.** The stream is non-blocking. `Out::put` retries `WouldBlock` until the same `AnswerClock` expires: 250 ms with no progress, or 1000 ms for the whole answer, measured with `Instant`.
 - **Its `Unit`:**
   - `stats()` is `None` (the desktop has no AUDIO LOAD) and `bench()` is `None`;
   - `ui()` and `frame()` are real, with `frame()` added to `chimera-desktop/src/display.rs`;

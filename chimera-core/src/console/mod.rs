@@ -4,7 +4,10 @@ use core::fmt;
 
 pub const MAX_LINE: usize = 64;
 pub const PROTOCOL: u8 = 1;
+/// An answer gives up after this long with no byte taken…
 pub const STALL_MS: u32 = 250;
+/// …or after this long in all, however the bytes dribble out.
+pub const ANSWER_MS: u32 = 1000;
 pub const WORD_MAX: usize = 16;
 const _: () = assert!(MAX_LINE <= u8::MAX as usize);
 const _: () = assert!(WORD_MAX <= u8::MAX as usize);

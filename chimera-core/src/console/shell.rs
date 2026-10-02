@@ -1,10 +1,40 @@
-//! The shells' pure helpers: loop timing, the bench report, the serial number.
+//! The shells' pure helpers: loop timing, an answer's deadlines, the bench
+//! report, the serial number.
+
+use super::{ANSWER_MS, STALL_MS};
+use chimera_hal::Ms;
 
 /// Whether a loop iteration answered a console request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Served {
     Idle,
     Answered,
+}
+
+/// One answer's deadlines on the shell's own clock: STALL_MS without
+/// progress, or ANSWER_MS in all. An `Out` takes one per answer.
+#[derive(Clone, Copy, Debug)]
+pub struct AnswerClock {
+    start: Ms,
+    last_progress: Ms,
+}
+
+impl AnswerClock {
+    pub const fn start(now: Ms) -> Self {
+        AnswerClock {
+            start: now,
+            last_progress: now,
+        }
+    }
+
+    /// The host took a byte.
+    pub fn progress(&mut self, now: Ms) {
+        self.last_progress = now;
+    }
+
+    pub fn expired(&self, now: Ms) -> bool {
+        now.since(self.last_progress) >= STALL_MS || now.since(self.start) >= ANSWER_MS
+    }
 }
 
 /// The UI loop's time between loop tops, since the last `take`.
