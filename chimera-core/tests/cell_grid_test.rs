@@ -25,6 +25,7 @@ fn dirty_render_from_scratch_equals_full_render() {
         "engine_algo",
         "algo_alg",
         "algo_level",
+        "algo_d2r",
         "settings_personal_theme",
     ] {
         assert!(render(name).px == render_dirty(name).px, "{name}");
@@ -222,4 +223,57 @@ fn part_switch_redraws_mod_bars_that_differ() {
     let mut full = Fb::new();
     ui.render_with_scope(&mut full, &perf, &scope);
     assert!(fb.px == full.px);
+}
+
+fn op_env(ar: u8, d1r: u8, d1l: u8, d2r: u8) -> ([f32; 4], [f32; 5]) {
+    use chimera_core::dsp::algo::env::EnvRates;
+    viz::op_env(EnvRates {
+        ar,
+        d1r,
+        d1l,
+        d2r,
+        rr: 5,
+        rs: 0,
+    })
+}
+
+/// The operator envelope's widths fill the plot and its stages follow the
+/// rates: AR 31 all but vertical, D1L 15 a flat D1, D2R 0 a flat D2.
+#[test]
+fn op_env_follows_the_rates() {
+    let (w, h) = op_env(31, 12, 15, 0);
+    assert!((w.iter().sum::<f32>() - 1.0).abs() < 1e-5, "{w:?}");
+    assert!(w[0] < 0.05, "AR 31 attacks at once: {w:?}");
+    assert_eq!(h[1], h[2], "D1L 15: D1 stays at full");
+    assert_eq!(h[2], h[3], "D2R 0 holds: {h:?}");
+    assert_eq!((h[0], h[1], h[4]), (0.0, 1.0, 0.0));
+
+    let (slow, _) = op_env(8, 12, 15, 0);
+    assert!(slow[0] > 4.0 * w[0], "a slower attack is wider");
+    let (_, knee) = op_env(31, 12, 8, 0);
+    assert!(
+        knee[2] > 0.0 && knee[2] < 1.0,
+        "D1L sets the knee: {knee:?}"
+    );
+    let (_, sinking) = op_env(31, 12, 8, 10);
+    assert!(sinking[3] < knee[3], "D2R sinks D2");
+    let (d1, _) = op_env(31, 12, 8, 0);
+    let (d1_fast, _) = op_env(31, 24, 8, 0);
+    assert!(d1_fast[1] < d1[1], "a faster D1R is shorter");
+}
+
+/// Every stage but A has room for its label, however fast the rates.
+#[test]
+fn op_env_stages_have_room_for_labels() {
+    let plot = (theme::VIZ_RIGHT - theme::VIZ_LEFT) as f32;
+    let label = |s: &str| {
+        chimera_core::ui::draw::text_width(&theme::FONT_LABEL, s, theme::LABEL_TRACKING) as f32
+    };
+    for r in [1, 16, 31] {
+        let (widths, _) = op_env(31, r, 15, r);
+        for (w, s) in widths.iter().zip(viz::OP_ENV_LABELS).skip(1) {
+            let room = w * plot;
+            assert!(room >= label(s), "rate {r}: {s} is {room} px");
+        }
+    }
 }

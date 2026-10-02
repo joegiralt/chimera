@@ -262,8 +262,39 @@ impl Renderer {
                     self.anim[slot].current(),
                 );
             }
+            VizType::OpEnv => {
+                if let Some((rates, lit)) = self.op_env(f) {
+                    let (widths, heights) = viz::op_env(rates);
+                    let top = viz::BAND_PLOT_TOP;
+                    viz::envelope_from(display, top, &widths, &heights, &viz::OP_ENV_LABELS, lit);
+                }
+            }
             _ => viz::live_output(display, f.scope),
         }
+    }
+
+    /// The focused operator's envelope rates, this page's from its animated
+    /// slot (to the nearest step), and the stage that rate edits.
+    fn op_env(&self, f: &Frame) -> Option<(crate::dsp::algo::env::EnvRates, Option<usize>)> {
+        use crate::dsp::algo::params::AlgoOpParams as P;
+        let addr = slot_addr(f.def, f.focus, &f.ctx)?;
+        let crate::addr::BlockRef::AlgoOp(op) = addr.block else {
+            return None;
+        };
+        let spec = crate::block::find_spec(addr.block.specs(), addr.param)?;
+        let v =
+            spec.quantize(spec.min + self.anim[f.focus].current() * (spec.max - spec.min)) as u8;
+        let mut r = f.parts[f.active_part.index()].sound.params.algo.ops[op.index()].rates();
+        let (field, lit) = match addr.param {
+            P::AR => (&mut r.ar, 0),
+            P::D1R => (&mut r.d1r, 1),
+            P::D1L => (&mut r.d1l, 1),
+            P::D2R => (&mut r.d2r, 2),
+            P::RR => (&mut r.rr, 3),
+            _ => return Some((r, None)),
+        };
+        *field = v;
+        Some((r, Some(lit)))
     }
 
     /// Level and pan of every Part; the edited one from its animated LEVEL
@@ -347,6 +378,16 @@ impl Renderer {
                         [0, 0, q[2], 0, 0, 0],
                         (algo.alg_a as u32) << 8 | algo.alg_b as u32,
                     )
+                }
+                VizType::OpEnv => {
+                    let key = self.op_env(f).map_or(0, |(r, lit)| {
+                        [r.ar, r.d1r, r.d1l, r.d2r, r.rr, lit.map_or(9, |l| l as u8)]
+                            .iter()
+                            .fold(0x811c_9dc5u32, |h, &b| {
+                                (h ^ b as u32).wrapping_mul(0x0100_0193)
+                            })
+                    });
+                    ([0; 6], key)
                 }
                 _ => ([0; 6], viz::live_key(f.scope)),
             },

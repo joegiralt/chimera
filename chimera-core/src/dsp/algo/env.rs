@@ -8,7 +8,7 @@ use crate::dsp::algo::tx::d1l_level;
 const ATTACK_SECONDS: f32 = 11.6;
 /// Time a decay takes to fall 96 dB (16 octaves) at effective rate 0.
 const DECAY_SECONDS: f32 = 92.8;
-const DECAY_OCTAVES: f32 = 16.0;
+pub const DECAY_OCTAVES: f32 = 16.0;
 /// -80 dB: a decay or release below this is over.
 pub const ENV_FLOOR: f32 = 1.0e-4;
 
@@ -41,11 +41,21 @@ pub fn effective_release(rr: u8, ks: u8) -> u8 {
     (4 * rr.clamp(1, 15) + 2 + ks).min(63)
 }
 
+/// Seconds a full attack (0 to 1) takes at effective rate `r`.
+pub fn attack_seconds(r: u8) -> f32 {
+    ATTACK_SECONDS * exp2(-(r as f32) / 4.0)
+}
+
+/// Seconds a decay at effective rate `r` takes to fall `DECAY_OCTAVES`.
+pub fn decay_seconds(r: u8) -> f32 {
+    DECAY_SECONDS * exp2(-(r as f32) / 4.0)
+}
+
 pub fn attack_add(r: u8, sample_rate: f32) -> f32 {
     if r == 0 {
         return 0.0;
     }
-    1.0 / (ATTACK_SECONDS * exp2(-(r as f32) / 4.0) * sample_rate)
+    1.0 / (attack_seconds(r) * sample_rate)
 }
 
 /// `log2` of the per-sample decay factor (0: holds). Kept as a log so a
@@ -54,7 +64,7 @@ pub fn decay_log2(r: u8, sample_rate: f32) -> f32 {
     if r == 0 {
         return 0.0;
     }
-    -DECAY_OCTAVES / (DECAY_SECONDS * exp2(-(r as f32) / 4.0) * sample_rate)
+    -DECAY_OCTAVES / (decay_seconds(r) * sample_rate)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

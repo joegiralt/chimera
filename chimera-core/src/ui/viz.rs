@@ -250,12 +250,31 @@ pub fn envelope<D>(d: &mut D, widths: &[f32], heights: &[f32], labels: &[&str], 
 where
     D: DrawTarget<Color = Rgb565>,
 {
+    envelope_from(d, PLOT_TOP, widths, heights, labels, lit);
+}
+
+/// Top of `envelope` in the viz band (`op_env`'s graph): clear of the band's
+/// edge by a breakpoint dot.
+pub const BAND_PLOT_TOP: i32 = theme::VIZ_BAND_TOP + 4;
+
+/// `envelope` with its full level at `top`; the base line and labels stay
+/// where they are, which fits the viz band too.
+pub fn envelope_from<D>(
+    d: &mut D,
+    top: i32,
+    widths: &[f32],
+    heights: &[f32],
+    labels: &[&str],
+    lit: Option<usize>,
+) where
+    D: DrawTarget<Color = Rgb565>,
+{
     let n = widths.len().min(MAX_STAGES);
     let base = PLOT_BASE - 8;
     let (x0, w, h) = (
         theme::VIZ_LEFT,
         (theme::VIZ_RIGHT - theme::VIZ_LEFT) as f32,
-        (base - PLOT_TOP) as f32,
+        (base - top) as f32,
     );
     let mut pts = [(0i32, 0i32); MAX_STAGES + 1];
     let mut cx = x0 as f32;
@@ -327,6 +346,65 @@ pub fn label_floor(label: &str, rest: f32) -> f32 {
         + 2 * STAGE_LABEL_GAP
         + 2) as f32;
     m * rest / ((theme::VIZ_RIGHT - theme::VIZ_LEFT) as f32 - m)
+}
+
+/// The operator envelope's stage labels, one per `op_env` width.
+pub const OP_ENV_LABELS: [&str; 4] = ["A", "D1", "D2", "R"];
+
+/// D2 runs while the key is held, so like the amp's sustain it gets a fixed
+/// width; how far D2R sinks it is read over `OP_D2_SECONDS`.
+const OP_D2_WIDTH: f32 = 0.3;
+const OP_D2_SECONDS: f32 = 1.0;
+/// The graph's level axis: 48 dB, D1L's own range (3 dB a step), so D1L 1
+/// sits near the floor.
+const OP_LEVEL_OCTAVES: f32 = 8.0;
+
+/// An operator envelope (key scaling aside) as `envelope`'s widths and
+/// heights: A · D1 · D2 · R. Stage times are the DSP's own (`env`), placed
+/// on a log axis from the fastest attack to the slowest full decay; a rate
+/// 0 holds, so its stage is full width. Levels are in dB
+/// (`OP_LEVEL_OCTAVES`), the axis the decays fall straight along. A keeps
+/// the amp's least width; D1 and R widen to fit their labels.
+pub fn op_env(r: crate::dsp::algo::env::EnvRates) -> ([f32; 4], [f32; 5]) {
+    use crate::dsp::algo::env::{
+        DECAY_OCTAVES, attack_seconds, decay_seconds, effective, effective_release,
+    };
+    use crate::dsp::algo::tx::d1l_level;
+    let (fast, slow) = (attack_seconds(63), decay_seconds(1));
+    let span = |t: f32| (libm::log2f(t / fast) / libm::log2f(slow / fast)).clamp(0.0, 1.0);
+    // Seconds a decay at `rate` takes to fall one height unit.
+    let unit = |rate: u8| decay_seconds(rate) * OP_LEVEL_OCTAVES / DECAY_OCTAVES;
+    let fall = |rate: u8, by: f32| span(by * unit(rate));
+    let (ar, d1r, d2r) = (effective(r.ar, 0), effective(r.d1r, 0), effective(r.d2r, 0));
+    let peak = if ar == 0 { 0.0 } else { 1.0 };
+    let knee = match (d1r, d1l_level(r.d1l)) {
+        (0, _) => peak,
+        (_, l) if l > 0.0 => (1.0 + libm::log2f(l) / OP_LEVEL_OCTAVES).clamp(0.0, peak),
+        _ => 0.0,
+    };
+    let end = match (d1r, d2r) {
+        (0, _) | (_, 0) => knee,
+        _ => (knee - OP_D2_SECONDS / unit(d2r)).max(0.0),
+    };
+    let a = if ar == 0 {
+        1.0
+    } else {
+        span(attack_seconds(ar))
+    }
+    .max(0.02);
+    let d1 = if d1r == 0 {
+        1.0
+    } else {
+        fall(d1r, peak - knee)
+    };
+    let rel = fall(effective_release(r.rr, 0), end).max(0.02);
+    let d1 = d1.max(label_floor("D1", a + OP_D2_WIDTH + rel));
+    let rel = rel.max(label_floor("R", a + d1 + OP_D2_WIDTH));
+    let total = a + d1 + OP_D2_WIDTH + rel;
+    (
+        [a / total, d1 / total, OP_D2_WIDTH / total, rel / total],
+        [0.0, peak, knee, end, 0.0],
+    )
 }
 
 /// Where each stage label of `envelope` goes, as `(left, right)` columns

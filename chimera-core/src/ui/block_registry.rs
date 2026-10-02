@@ -415,6 +415,14 @@ const fn group(id: u16, name: &'static str, short: &'static str, param: ParamId)
     }
 }
 
+/// An envelope stage's group: the band draws the focused operator's envelope.
+const fn env_group(id: u16, name: &'static str, short: &'static str, param: ParamId) -> BlockDef {
+    BlockDef {
+        viz: VizType::OpEnv,
+        ..group(id, name, short, param)
+    }
+}
+
 /// The OSC node's home page; its short name labels the node on the map.
 pub static ALGO_WAVE: BlockDef = group(42, "Wave", "OSC", AlgoOpParams::WAVE);
 pub static ALGO_LEVEL: BlockDef = group(44, "Level", "LVL", AlgoOpParams::LEVEL);
@@ -422,11 +430,11 @@ pub static ALGO_COARSE: BlockDef = group(45, "Coarse", "CRS", AlgoOpParams::COAR
 pub static ALGO_FINE: BlockDef = group(46, "Fine", "FIN", AlgoOpParams::FINE);
 pub static ALGO_DETUNE: BlockDef = group(47, "Detune", "DET", AlgoOpParams::DETUNE);
 pub static ALGO_VELOCITY: BlockDef = group(48, "Velocity", "VEL", AlgoOpParams::VELOCITY);
-pub static ALGO_AR: BlockDef = group(49, "Env AR", "AR", AlgoOpParams::AR);
-pub static ALGO_D1R: BlockDef = group(50, "Env D1R", "D1R", AlgoOpParams::D1R);
-pub static ALGO_D1L: BlockDef = group(51, "Env D1L", "D1L", AlgoOpParams::D1L);
-pub static ALGO_D2R: BlockDef = group(52, "Env D2R", "D2R", AlgoOpParams::D2R);
-pub static ALGO_RR: BlockDef = group(53, "Env RR", "RR", AlgoOpParams::RR);
+pub static ALGO_AR: BlockDef = env_group(49, "Env AR", "AR", AlgoOpParams::AR);
+pub static ALGO_D1R: BlockDef = env_group(50, "Env D1R", "D1R", AlgoOpParams::D1R);
+pub static ALGO_D1L: BlockDef = env_group(51, "Env D1L", "D1L", AlgoOpParams::D1L);
+pub static ALGO_D2R: BlockDef = env_group(52, "Env D2R", "D2R", AlgoOpParams::D2R);
+pub static ALGO_RR: BlockDef = env_group(53, "Env RR", "RR", AlgoOpParams::RR);
 pub static ALGO_RATE_SCALE: BlockDef = group(54, "Rate Scale", "RS", AlgoOpParams::RATE_SCALE);
 pub static ALGO_FEEDBACK: BlockDef = group(55, "Feedback", "FBK", AlgoOpParams::FEEDBACK);
 
