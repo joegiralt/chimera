@@ -350,6 +350,18 @@ impl Prompt for ClearSlot {
     }
 }
 
+/// SAVE PART FIRST with no slot free.
+pub const POOL_FULL: &str = "POOL FULL";
+
+/// MIX+MINUS on a slot `parts` play: `SLOT IN USE: P1 P3`.
+pub fn in_use(parts: PartSet) -> Line {
+    let mut l = Line::new("SLOT IN USE:");
+    for p in parts.iter() {
+        let _ = write!(l, " P{}", part(p));
+    }
+    l
+}
+
 const PANEL_X: i32 = 14;
 const PANEL_W: i32 = 212;
 const PANEL_R: u32 = 10;

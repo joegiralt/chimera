@@ -6,10 +6,9 @@ mod screen;
 use chimera_core::block::Block;
 use chimera_core::params::EngineType;
 use chimera_core::part::PartParams;
-use chimera_core::project::{Line, PartId};
+use chimera_core::project::PartId;
 use chimera_core::storage::{Card, SystemSync};
 use chimera_core::ui::block_registry::{FILTER, MIXER_CHANNEL_CHAIN, MIXER_PART};
-use chimera_core::ui::busy::ToastStep;
 use chimera_core::ui::nav::{Location, MixPage, PageAt, chain_def_for};
 use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::region::RegionKind;
@@ -224,28 +223,18 @@ fn settings_keys_follow_the_bar_and_the_status() {
     assert_ne!(key(&ui, RegionKind::Footer), footer, "status");
 }
 
-fn not_yet() -> ToastStep {
-    ToastStep::Show(Line::new("NOT YET"))
-}
-
 #[test]
-fn seq_on_a_part_action_says_not_yet() {
-    let mut ui = UiState::new();
-    to_leaf(&mut ui, &["PART"]); // the bar on RENAME, an action
-    tap(&mut ui, ButtonId::Seq);
-    assert_eq!(ui.step_toast(0), not_yet());
-    assert_eq!(ui.location(), Location::settings_at(&[PART_ROW], 0));
-}
-
-#[test]
-fn edit_on_save_to_proj_says_not_yet() {
+fn edit_on_save_to_proj_opens_it() {
+    use chimera_core::ui::settings::{Screen, screen_path};
     let mut ui = UiState::new();
     to_leaf(&mut ui, &["PART"]);
     feed(&mut ui, Input::press(ButtonId::Plus));
-    feed(&mut ui, Input::press(ButtonId::Plus)); // SAVE TO PROJ, a Screen (Task 13)
+    feed(&mut ui, Input::press(ButtonId::Plus)); // SAVE TO PROJ, a Screen
     feed(&mut ui, Input::press(ButtonId::Edit));
-    assert_eq!(ui.step_toast(0), not_yet());
-    assert_eq!(ui.location(), Location::settings_at(&[PART_ROW], 2));
+    assert_eq!(
+        ui.location(),
+        Location::settings_at(screen_path(Screen::SaveToProj), 0)
+    );
 }
 
 /// Part `p` onto `e`'s INIT, behind the UI's back.

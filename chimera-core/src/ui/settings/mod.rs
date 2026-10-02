@@ -5,7 +5,9 @@ pub mod leaves;
 pub mod listing;
 pub mod manage;
 pub mod naming;
+pub mod part;
 pub mod prompt;
+pub mod replace;
 pub mod tree;
 pub mod view;
 
@@ -20,7 +22,8 @@ use chimera_hal::Controls;
 
 use crate::name::{Name, ProjectName};
 use crate::project::{
-    FreshFile, PartFrom, PartId, PartSource, Pending, ProjectEntry, ProjectSource, Subject,
+    FreshFile, PartFrom, PartId, PartSet, PartSource, Pending, Project, ProjectEntry,
+    ProjectSource, SlotId, Subject,
 };
 use crate::ui::hold::Presses;
 use crate::ui::region::settings_key;
@@ -28,10 +31,11 @@ use job::{Then, ThenClear};
 use listing::Chosen;
 use naming::{NAME_MAX, Naming, NamingOut};
 use prompt::{
-    Answer, CardChanged, CardChangedAnswer, Choice, Clear, ClearAnswer, Delete, DeleteAnswer, Load,
-    LoadAnswer, NameExists, NameExistsAnswer, PromptView, Replace, ReplaceAnswer, SaveOver,
-    SaveOverAnswer, with_view,
+    AlsoUses, AlsoUsesAnswer, Answer, CardChanged, CardChangedAnswer, Choice, Clear, ClearAnswer,
+    ClearSlot, Delete, DeleteAnswer, Load, LoadAnswer, NameExists, NameExistsAnswer, PromptView,
+    Replace, ReplaceAnswer, SaveOver, SaveOverAnswer, with_view,
 };
+use replace::{PartAsk, PartReply};
 
 /// SAVE PROJECT AS, named: the file it goes to and the load it is inside.
 #[derive(Debug)]
@@ -44,11 +48,17 @@ pub(crate) struct SaveAs {
 /// An open prompt and what it holds until answered; dropping it is CANCEL.
 #[derive(Debug)]
 pub(crate) enum Ask {
-    #[cfg_attr(
-        not(any(test, feature = "test-support")),
-        expect(dead_code, reason = "the PART branch, Task 13")
-    )]
-    ReplacePart(Pending<PartSource>, Choice<ReplaceAnswer>),
+    /// A Sound into an Edited Part: a slot, or CLEAR's INIT.
+    ReplacePart(PartAsk, Choice<ReplaceAnswer>),
+    /// A save over a slot `first` and `more` also play.
+    UpdateStale {
+        first: PartId,
+        more: PartSet,
+        slot: SlotId,
+        choice: Choice<AlsoUsesAnswer>,
+    },
+    /// MIX+MINUS on the Sound rung, on a slot no Part plays.
+    ClearSlot(SlotId, Choice<ClearAnswer>),
     /// LOAD over a Modified project; `to` names the file, `None` is NEW,
     /// and `clear` is CLEAR's save of NEW over the project's own file.
     LoadProject {
@@ -84,7 +94,10 @@ fn subject(c: &Chosen) -> Subject {
 /// A prompt's answer, with what it held.
 #[derive(Debug)]
 pub(crate) enum Answered {
-    ReplacePart(Pending<PartSource>, Answer<ReplaceAnswer>),
+    ReplacePart(PartReply),
+    /// The Parts the prompt named.
+    UpdateStale(PartSet, Answer<AlsoUsesAnswer>),
+    ClearSlot(SlotId, Answer<ClearAnswer>),
     LoadProject {
         pending: Pending<ProjectSource>,
         to: Option<ProjectName>,
@@ -105,12 +118,20 @@ pub(crate) enum AskStep {
 }
 
 impl Ask {
-    #[cfg_attr(
-        not(any(test, feature = "test-support")),
-        expect(dead_code, reason = "the PART branch, Task 13")
-    )]
-    pub(crate) fn replace_part(p: Pending<PartSource>) -> Ask {
+    pub(crate) fn replace_part(p: PartAsk) -> Ask {
         Ask::ReplacePart(p, Choice::new())
+    }
+
+    /// `parts`, now Stale on `slot`; none asks nothing.
+    pub(crate) fn update_stale(parts: PartSet, slot: SlotId) -> Option<Ask> {
+        let first = parts.iter().next()?;
+        let more = parts.iter().skip(1).fold(PartSet::EMPTY, PartSet::with);
+        Some(Ask::UpdateStale {
+            first,
+            more,
+            slot,
+            choice: Choice::new(),
+        })
     }
 
     pub(crate) fn with_view<R>(&self, f: impl FnOnce(&PromptView<'_>) -> R) -> R {
@@ -120,6 +141,21 @@ impl Ask {
                 let to_init = matches!(from, PartFrom::Init(_));
                 with_view(&Replace { part, to_init }, c, f)
             }
+            Ask::UpdateStale {
+                first,
+                more,
+                slot,
+                choice,
+            } => with_view(
+                &AlsoUses {
+                    first: *first,
+                    more: *more,
+                    slot: *slot,
+                },
+                choice,
+                f,
+            ),
+            Ask::ClearSlot(slot, c) => with_view(&ClearSlot { slot: *slot }, c, f),
             Ask::LoadProject {
                 to,
                 current,
@@ -171,12 +207,30 @@ impl Ask {
         })
     }
 
-    fn input(self, c: &impl Controls, p: &Presses) -> AskStep {
+    fn input(self, c: &impl Controls, p: &Presses, project: &Project) -> AskStep {
         use AskStep::{Answered as Got, Open};
         match self {
-            Ask::ReplacePart(pending, mut choice) => match choice.input(c, p) {
-                Some(a) => Got(Answered::ReplacePart(pending, a)),
-                None => Open(Ask::ReplacePart(pending, choice)),
+            Ask::ReplacePart(ask, mut choice) => match choice.input(c, p) {
+                Some(a) => Got(Answered::ReplacePart(ask.answer(a, project))),
+                None => Open(Ask::ReplacePart(ask, choice)),
+            },
+            Ask::UpdateStale {
+                first,
+                more,
+                slot,
+                mut choice,
+            } => match choice.input(c, p) {
+                Some(a) => Got(Answered::UpdateStale(more.with(first), a)),
+                None => Open(Ask::UpdateStale {
+                    first,
+                    more,
+                    slot,
+                    choice,
+                }),
+            },
+            Ask::ClearSlot(slot, mut choice) => match choice.input(c, p) {
+                Some(a) => Got(Answered::ClearSlot(slot, a)),
+                None => Open(Ask::ClearSlot(slot, choice)),
             },
             Ask::LoadProject {
                 pending,
@@ -235,10 +289,6 @@ impl Ask {
 #[derive(Debug)]
 pub(crate) enum NamingFor {
     RenameLoaded,
-    #[cfg_attr(
-        not(any(test, feature = "test-support")),
-        expect(dead_code, reason = "RENAME, Task 13")
-    )]
     RenamePart(PartId),
     /// SAVE PROJECT AS to a file no pair had, inside a load or not.
     SaveAs(FreshFile, Then),
@@ -283,9 +333,9 @@ pub(crate) enum Done {
 }
 
 impl Modal {
-    pub(crate) fn input(self, c: &impl Controls, p: &Presses) -> ModalStep {
+    pub(crate) fn input(self, c: &impl Controls, p: &Presses, project: &Project) -> ModalStep {
         match self {
-            Modal::Prompt(a) => match a.input(c, p) {
+            Modal::Prompt(a) => match a.input(c, p, project) {
                 AskStep::Answered(x) => ModalStep::Done(Done::Answered(x)),
                 AskStep::Open(a) => ModalStep::Open(Modal::Prompt(a)),
             },

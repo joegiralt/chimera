@@ -97,7 +97,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("algo_out_p3", 0x3e91d6b588f4ebfa),
     ("mod_matrix", 0xa6cf67e584e06c56),
     ("mod_matrix_wide", 0xca78c74fca4ac959),
-    ("sound_browser", 0xc1a53459edabbb6b),
+    ("sound_browser", 0x1d1ac95bdfaca72b),
     ("settings_personal_theme", 0x814d5c879e087768),
     ("settings_system_about_audio", 0x232ea2dd7cab4693),
     ("busy", 0x198544cd36863145),

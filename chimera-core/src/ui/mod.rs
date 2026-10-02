@@ -71,8 +71,13 @@ use settings::job::{CardCx, Job, LoadAfter, SAVE_AS_LIST, ThenClear, load_job};
 use settings::listing::{Listing, LoadRow, Pick, refusal};
 use settings::manage::{Command, Run, Whose};
 use settings::naming::Naming;
+use settings::part::{Offer, PartCmd, SAVE_ROWS, slot_of};
 use settings::prompt::{self, Answer};
-use settings::{Act, Answered, Ask, Done, Modal, ModalStep, NamingFor, SaveAs, Screen};
+use settings::replace::{PartAsk, PartReply};
+use settings::view::PartBand;
+use settings::{
+    Act, Answered, Ask, Done, Modal, ModalStep, NamingFor, PART_ROW, SaveAs, Screen, screen_path,
+};
 use theme_settings::ThemeSettings;
 use view::{SlotCtx, View};
 
@@ -112,9 +117,6 @@ pub static NO_PAGE: BlockDef = BlockDef {
 };
 /// No page has it: `focus` keeps no slot for it.
 pub const NO_PAGE_ID: u16 = u16::MAX;
-
-/// The SETTINGS rows and keys not wired yet (Task 13).
-const NOT_YET: &str = "NOT YET";
 
 /// The outcome of the last MIX+PLUS attempt on a parameter page, shown in
 /// the focus band in place of the value readout (on BigViz pages, which
@@ -559,7 +561,7 @@ impl UiState {
         match s {
             Screen::LoadProject => self.listing.load_rows(),
             Screen::ManageProjects => self.listing.len(),
-            Screen::SaveToProj => 0,
+            Screen::SaveToProj => SAVE_ROWS.len(),
         }
     }
 
@@ -813,16 +815,104 @@ impl UiState {
                 .and_then(|j| browser::INIT_TYPES.get(j))
                 .map(|&e| PartFrom::Init(e))
         });
-        if let Some(from) = from {
-            // No prompt screen yet: https://github.com/joegiralt/chimera/issues/258.
-            let src = PartSource { part, from };
-            let c = ReplaceGuard::check(&self.project, self.template, src)
-                .unwrap_or_else(|n| n.into_pending().anyway(&self.project));
-            // An empty slot loads nothing.
-            let _ = self.project.replace_part(c);
+        let Some(from) = from else { return };
+        // An empty slot has nothing to ask about.
+        if let PartFrom::Slot(s) = from
+            && self.project.pool().get(s).is_none()
+        {
+            let engine = self.project.part(part).sound.engine();
+            return self.go(Location::part_home(part, engine));
         }
-        let to = Location::part_home(part, self.project.part(part).sound.engine());
-        self.go(to);
+        match ReplaceGuard::check(&self.project, self.template, PartSource { part, from }) {
+            Ok(c) => self.replace(c),
+            Err(n) => self.ask(Ask::replace_part(PartAsk::new(n))),
+        }
+    }
+
+    /// A confirmed replace; on the Sound rung, then the Part's pages.
+    fn replace(&mut self, c: Confirmed<PartSource>) {
+        let part = c.target().part;
+        let was = self.active_engine();
+        let _ = self.project.replace_part(c);
+        match self.loc.browse() {
+            Some(_) => self.go(Location::part_home(
+                part,
+                self.project.part(part).sound.engine(),
+            )),
+            None => self.project_replaced(was),
+        }
+    }
+
+    /// SAVE PART FIRST: the Part's first save, then the replace it was
+    /// asked for. With no slot free, the prompt stays.
+    fn save_first(&mut self, ask: PartAsk) {
+        let Some(a) = Offer::of(&self.project, ask.source().part).first_save() else {
+            self.error(Line::new(prompt::POOL_FULL));
+            return self.ask(Ask::replace_part(ask));
+        };
+        let stale = self.project.apply_part_action(a);
+        match ask.save_then(&self.project, self.template) {
+            Ok(c) => {
+                self.replace(c);
+                self.ask_stale(stale, a);
+            }
+            Err(again) => self.ask(Ask::replace_part(again)),
+        }
+    }
+
+    /// A save of the active Part; any Part it leaves Stale is asked about.
+    fn save_part(&mut self, a: project::PartAction) {
+        let stale = self.project.apply_part_action(a);
+        self.ask_stale(stale, a);
+    }
+
+    fn ask_stale(
+        &mut self,
+        stale: Result<project::PartSet, project::ActionGone>,
+        a: project::PartAction,
+    ) {
+        if let Some(x) = stale
+            .ok()
+            .and_then(|s| Ask::update_stale(s, slot_of(a.kind())))
+        {
+            self.ask(x);
+        }
+    }
+
+    /// The active Part's `c`, if `part_actions` offers it.
+    fn part_action(&self, c: PartCmd) -> Option<project::PartAction> {
+        Offer::of(&self.project, self.active_part).get(c)
+    }
+
+    /// CLEAR: the active Part to its engine's INIT, through the guard.
+    fn clear_part(&mut self) {
+        let part = self.active_part;
+        let from = PartFrom::Init(self.active_engine());
+        match ReplaceGuard::check(&self.project, self.template, PartSource { part, from }) {
+            Ok(c) => self.replace(c),
+            Err(n) => self.ask(Ask::replace_part(PartAsk::new(n))),
+        }
+    }
+
+    /// MIX+MINUS on the Sound rung: a filled slot no Part plays, asked.
+    fn ask_clear_slot(&mut self, b: Browse) {
+        let Some(s) = browser::slot_at(b.cursor()) else {
+            return;
+        };
+        if self.project.pool().get(s).is_none() {
+            return;
+        }
+        match self.project.users(s) {
+            u if u.is_empty() => self.ask(Ask::ClearSlot(s, prompt::Choice::new())),
+            u => self.error(prompt::in_use(u)),
+        }
+    }
+
+    fn error(&mut self, text: Line) {
+        self.toast.show(busy::Toast {
+            text,
+            ms: busy::Toast::ERROR_MS,
+        });
     }
 
     /// The keys this frame, in order: MENU, B*n*, PLUS and MINUS, SEQ, EDIT,
@@ -904,6 +994,8 @@ impl UiState {
             }),
             listing: &self.listing,
             loaded: self.project.meta().file(),
+            part: (at.path().first() == Some(&PART_ROW))
+                .then(|| PartBand::of(&self.project, self.active_part)),
         })
     }
 
@@ -951,7 +1043,7 @@ impl UiState {
         match ReplaceGuard::check(&self.project, self.template, src) {
             Ok(_) => false,
             Err(n) => {
-                self.ask(Ask::replace_part(n.into_pending()));
+                self.ask(Ask::replace_part(PartAsk::new(n)));
                 true
             }
         }
@@ -972,7 +1064,7 @@ impl UiState {
             Modal::Naming(..) => None,
         };
         let was = key(&m);
-        match m.input(c, p) {
+        match m.input(c, p, &self.project) {
             ModalStep::Open(m) => {
                 self.browser_dirty |= self.loc.browse().is_some() && key(&m) != was;
                 self.modal = Some(m);
@@ -993,21 +1085,29 @@ impl UiState {
 
     /// A cancel drops what the prompt held.
     fn done(&mut self, d: Done) {
-        use prompt::ReplaceAnswer as R;
         match d {
-            Done::Answered(Answered::ReplacePart(p, Answer::Pick(R::Replace))) => {
-                let was = self.active_engine();
-                let _ = self.project.replace_part(p.anyway(&self.project));
-                self.project_replaced(was);
+            Done::Answered(Answered::ReplacePart(r)) => match r {
+                PartReply::Replace(c) => self.replace(c),
+                PartReply::SaveFirst(ask) => self.save_first(ask),
+                PartReply::Cancel => {}
+            },
+            Done::Answered(Answered::UpdateStale(
+                parts,
+                Answer::Pick(prompt::AlsoUsesAnswer::Update),
+            )) => {
+                for q in parts.iter() {
+                    if let Some(a) = Offer::of(&self.project, q).get(PartCmd::Reload) {
+                        let _ = self.project.apply_part_action(a);
+                    }
+                }
             }
-            // Task 13 (Pre-flight 15).
-            Done::Answered(Answered::ReplacePart(_, Answer::Pick(R::SavePartFirst))) => {
-                self.toast.show(busy::Toast {
-                    text: Line::new(NOT_YET),
-                    ms: busy::Toast::ERROR_MS,
-                })
+            Done::Answered(Answered::UpdateStale(..)) => {}
+            Done::Answered(Answered::ClearSlot(s, Answer::Pick(prompt::ClearAnswer::Clear))) => {
+                if let Err(project::InUse(u)) = self.project.pool_clear(s) {
+                    self.error(prompt::in_use(u));
+                }
             }
-            Done::Answered(Answered::ReplacePart(_, Answer::Pick(R::Cancel) | Answer::Cancel)) => {}
+            Done::Answered(Answered::ClearSlot(..)) => {}
             Done::Answered(Answered::LoadProject {
                 pending: p,
                 to,
@@ -1214,26 +1314,50 @@ impl UiState {
             match self.loc.step(k, &cx, &mut self.recall) {
                 Step::Go(to) => self.go(to),
                 Step::Act(Act::SaveProjectAs) => self.queue(Job::Fresh(None)),
+                Step::Act(Act::PartRename) => {
+                    if let Some(at) = at.and_then(|s| s.list()) {
+                        let p = self.active_part;
+                        let n = self.project.part(p).sound.name;
+                        self.name(at, NamingFor::RenamePart(p), n.as_str());
+                    }
+                }
+                Step::Act(Act::PartClear) => self.clear_part(),
+                Step::Act(Act::PartReload) => {
+                    if let Some(a) = self.part_action(PartCmd::Reload) {
+                        let was = self.active_engine();
+                        let _ = self.project.apply_part_action(a);
+                        self.project_replaced(was);
+                    }
+                }
                 Step::Screen(s @ (Screen::LoadProject | Screen::ManageProjects)) => {
                     self.queue(Job::List(s))
                 }
-                Step::Run if self.screen() == Some(Screen::LoadProject) => {
-                    self.run_load(at.map_or(0, |s| s.row()))
+                Step::Screen(Screen::SaveToProj) => {
+                    self.go(Location::settings_at(screen_path(Screen::SaveToProj), 0))
                 }
-                Step::Run if self.screen() == Some(Screen::ManageProjects) => {
-                    if let Some(s) = at {
-                        self.run_manage(s)
+                Step::Run => match (self.screen(), at) {
+                    (Some(Screen::LoadProject), Some(s)) => self.run_load(s.row()),
+                    (Some(Screen::ManageProjects), Some(s)) => self.run_manage(s),
+                    (Some(Screen::SaveToProj), Some(s)) => {
+                        let c = SAVE_ROWS.get(s.row() as usize);
+                        if let Some(a) = c.and_then(|&c| self.part_action(c)) {
+                            self.save_part(a);
+                        }
                     }
-                }
-                Step::Act(_) | Step::Screen(_) | Step::Run => self.toast.show(busy::Toast {
-                    text: Line::new(NOT_YET),
-                    ms: busy::Toast::ERROR_MS,
-                }),
+                    _ => {}
+                },
                 Step::Stay => {}
             }
         }
 
         if let Some((p, b)) = self.loc.browse() {
+            let mix = controls.edges(ButtonId::Mix).down;
+            if mix && controls.button_state(ButtonId::Minus) == ButtonState::Pressed {
+                self.ask_clear_slot(b);
+            }
+            if self.modal.is_some() {
+                return;
+            }
             let moved = browser::input(controls, b);
             if moved != b {
                 self.loc = Location::sound_at(p, moved);

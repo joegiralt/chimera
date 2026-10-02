@@ -12,9 +12,12 @@ use super::NamingFor;
 use super::listing::{LOADED, Listing};
 use super::manage::{Command, Note, Off, Whose, command_rows};
 use super::naming::{Naming, draw_naming};
-use super::tree::{Kind, PART, ROOT, Row, Screen, row_at, rows};
-use crate::name::ProjectName;
-use crate::project::{PartId, ProjectFile, ProjectStatus};
+use super::part::{Offer, PartCmd, SAVE_ROWS};
+use super::tree::{Act, Kind, PART, ROOT, Row, Screen, row_at, rows};
+use crate::name::{ProjectName, SoundName};
+use crate::project::{
+    Line, Origin, PartId, PartStatus, Project, ProjectFile, ProjectStatus, SlotId, part_status,
+};
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
 use crate::ui::nav::{Column, SettingsAt};
@@ -26,6 +29,22 @@ pub const ROW_H: i32 = 28;
 pub const VISIBLE_ROWS: usize = 8;
 /// The footer takes the map's band.
 pub const FOOTER_TOP: i32 = theme::MAP_TOP;
+/// The PART strip, under the breadcrumb; PART's lists start below it.
+pub const STRIP_TOP: i32 = theme::HEADER_BOTTOM;
+pub const STRIP_H: i32 = 20;
+const STRIP_BASELINE: i32 = STRIP_TOP + 14;
+const PART_LIST_TOP: i32 = LIST_TOP + STRIP_H;
+// PART's lists fit beneath the strip without scrolling.
+const _: () = assert!(
+    PART_LIST_TOP
+        + (if PART.len() > SAVE_ROWS.len() {
+            PART.len()
+        } else {
+            SAVE_ROWS.len()
+        }) as i32
+            * ROW_H
+        <= FOOTER_TOP
+);
 
 /// SETTINGS, one part per level of the tree, and NAMING's.
 const MAX_CRUMBS: usize = 6;
@@ -298,6 +317,16 @@ pub fn draw_list<D: DrawTarget<Color = Rgb565>>(
     draw_rows(d, rows.len(), bar, first, |i, f| f(rows[i]));
 }
 
+/// `draw_list` under the PART strip.
+fn draw_part_list<D: DrawTarget<Color = Rgb565>>(
+    d: &mut D,
+    len: usize,
+    bar: usize,
+    row: impl FnMut(usize, &mut dyn FnMut(ListRow<'_>)),
+) {
+    draw_col(d, &FULL, PART_LIST_TOP, len, bar, 0, Bar::Keyed, row);
+}
+
 /// MANAGE PROJECTS: `rows` on the left from `first`, the bar on `bar`;
 /// the bar's project's commands on the right, `cmd` keyed when they have
 /// the keys.
@@ -322,13 +351,20 @@ fn draw_manage_rows<D: DrawTarget<Color = Rgb565>>(
     cmd: Option<u8>,
 ) {
     let held = if cmd.is_some() { Bar::Held } else { Bar::Keyed };
-    draw_col(d, &MANAGE_LIST, len, bar, first, held, row);
+    draw_col(d, &MANAGE_LIST, LIST_TOP, len, bar, first, held, row);
     let h = VISIBLE_ROWS as i32 * ROW_H - 4;
     draw::fill_rect(d, MANAGE_RULE_X, LIST_TOP, 1, h, theme::FAINT);
     let on = cmd.map_or(usize::MAX, usize::from);
-    draw_col(d, &MANAGE_CMDS, cmds.len(), on, 0, Bar::Keyed, |i, f| {
-        f(cmds[i])
-    });
+    draw_col(
+        d,
+        &MANAGE_CMDS,
+        LIST_TOP,
+        cmds.len(),
+        on,
+        0,
+        Bar::Keyed,
+        |i, f| f(cmds[i]),
+    );
 }
 
 /// `len` rows, each lent by `row` to the draw, from `first`.
@@ -339,12 +375,14 @@ pub fn draw_rows<D: DrawTarget<Color = Rgb565>>(
     first: usize,
     row: impl FnMut(usize, &mut dyn FnMut(ListRow<'_>)),
 ) {
-    draw_col(d, &FULL, len, bar, first, Bar::Keyed, row);
+    draw_col(d, &FULL, LIST_TOP, len, bar, first, Bar::Keyed, row);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_col<D: DrawTarget<Color = Rgb565>>(
     d: &mut D,
     c: &Col,
+    top: i32,
     len: usize,
     bar: usize,
     first: usize,
@@ -352,16 +390,16 @@ fn draw_col<D: DrawTarget<Color = Rgb565>>(
     mut row: impl FnMut(usize, &mut dyn FnMut(ListRow<'_>)),
 ) {
     for i in (first..len).take(VISIBLE_ROWS) {
-        let y = LIST_TOP + (i - first) as i32 * ROW_H;
+        let y = top + (i - first) as i32 * ROW_H;
         let b = if i == bar { on } else { Bar::Off };
         row(i, &mut |r| draw_row(d, c, &r, y, b));
     }
     if len > VISIBLE_ROWS {
         let h = VISIBLE_ROWS as i32 * ROW_H - 4;
-        draw::fill_rect(d, c.scroll, LIST_TOP, 2, h, theme::FAINT);
+        draw::fill_rect(d, c.scroll, top, 2, h, theme::FAINT);
         let thumb = (h * VISIBLE_ROWS as i32 / len as i32).max(8);
         let max_first = len - VISIBLE_ROWS;
-        let y = LIST_TOP + (h - thumb) * first.min(max_first) as i32 / max_first as i32;
+        let y = top + (h - thumb) * first.min(max_first) as i32 / max_first as i32;
         draw::fill_rect(d, c.scroll, y, 2, thumb, theme::MID);
     }
 }
@@ -454,6 +492,128 @@ pub fn first_visible(bar: usize, len: usize, prev_first: usize) -> usize {
         .max((bar + 1).saturating_sub(VISIBLE_ROWS))
 }
 
+/// A Part against its slot, as the PART strip says it (Pre-flight 19).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PartMark {
+    Clean,
+    /// From its slot, or INIT (`None`).
+    Edited(Option<SlotId>),
+    SlotMoved,
+}
+
+impl PartMark {
+    pub fn of(p: &Project, part: PartId) -> Self {
+        let x = p.part(part);
+        match part_status(x, p.pool()) {
+            PartStatus::Clean => PartMark::Clean,
+            PartStatus::Stale(_) => PartMark::SlotMoved,
+            PartStatus::Edited => PartMark::Edited(match x.origin() {
+                Origin::Slot { slot, .. } => Some(slot),
+                Origin::Init(_) => None,
+            }),
+        }
+    }
+
+    fn color(self) -> Rgb565 {
+        match self {
+            PartMark::Clean => theme::MID,
+            PartMark::Edited(_) | PartMark::SlotMoved => theme::WARN,
+        }
+    }
+
+    fn key(self) -> [u8; 2] {
+        match self {
+            PartMark::Clean => [0, 0],
+            PartMark::Edited(s) => [1, s.map_or(0, |s| s.index() as u8 + 1)],
+            PartMark::SlotMoved => [2, 0],
+        }
+    }
+}
+
+impl fmt::Display for PartMark {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PartMark::Clean => f.write_str("CLEAN"),
+            PartMark::Edited(Some(s)) => write!(f, "* EDITED · FROM SLOT {:02}", s.index() + 1),
+            PartMark::Edited(None) => f.write_str("* EDITED · FROM INIT"),
+            PartMark::SlotMoved => f.write_str("◦ SLOT MOVED"),
+        }
+    }
+}
+
+/// `P2 · NAME` on the left, the mark on the right; the name gives way.
+pub fn draw_part_strip<D: DrawTarget<Color = Rgb565>>(
+    d: &mut D,
+    part: PartId,
+    name: &str,
+    mark: PartMark,
+) {
+    // Untracked: the longest mark and a name share 216 px.
+    let (mf, nf) = (&theme::FONT_LABEL, &theme::FONT_LABEL_BOLD);
+    let mut m = Line::new("");
+    let _ = write!(m, "{mark}");
+    let right = theme::VIZ_RIGHT;
+    let mw = draw::text_width(mf, m.as_str(), 0);
+    draw::text_right(d, mf, m.as_str(), right, STRIP_BASELINE, mark.color(), 0);
+    let mut l = Line::new("");
+    let _ = write!(
+        l,
+        "P{} · {}",
+        part.index() + 1,
+        crate::ui::components::upper(name).as_str()
+    );
+    let room = right - mw - 8 - theme::MARGIN_X;
+    let x = theme::MARGIN_X;
+    let full = l.as_str();
+    if draw::text_width(nf, full, 0) <= room {
+        draw::text_tracked(d, nf, full, x, STRIP_BASELINE, theme::INK, 0);
+    } else {
+        let room = room - draw::text_width(nf, DOTS, 0);
+        let cut = full
+            .char_indices()
+            .map(|(i, _)| &full[..i])
+            .take_while(|c| draw::text_width(nf, c, 0) <= room)
+            .last()
+            .unwrap_or("");
+        let w = draw::text_tracked(d, nf, cut, x, STRIP_BASELINE, theme::INK, 0);
+        draw::text_tracked(d, nf, DOTS, x + w, STRIP_BASELINE, theme::MID, 0);
+    }
+    draw::fill_rect(
+        d,
+        theme::MARGIN_X,
+        STRIP_TOP + STRIP_H - 1,
+        theme::FOOTER_RULE_W,
+        1,
+        theme::FAINT,
+    );
+}
+
+/// What the PART branch's bands show of the active Part.
+#[derive(Clone, Copy, Debug)]
+pub struct PartBand {
+    pub name: SoundName,
+    pub mark: PartMark,
+    pub offer: Offer,
+}
+
+impl PartBand {
+    pub fn of(p: &Project, part: PartId) -> Self {
+        PartBand {
+            name: p.part(part).sound.name,
+            mark: PartMark::of(p, part),
+            offer: Offer::of(p, part),
+        }
+    }
+
+    /// A PART row's look: RELOAD from the offer, the rest from the tree.
+    fn look(&self, kind: Kind) -> RowLook {
+        match kind {
+            Kind::Act(Act::PartReload) => self.offer.look(PartCmd::Reload),
+            k => RowLook::of(k),
+        }
+    }
+}
+
 pub struct Footer<'a> {
     pub name: &'a str,
     pub status: ProjectStatus,
@@ -513,6 +673,8 @@ pub fn draw_footer<D: DrawTarget<Color = Rgb565>>(d: &mut D, f: &Footer<'_>) {
 pub enum LegendFor {
     Opens,
     Action,
+    /// An action that doesn't apply now.
+    Dimmed,
     Later,
     Leaf,
     Prompt,
@@ -545,6 +707,8 @@ pub fn legend(on: LegendFor, at_top: bool) -> &'static str {
         (L::Opens, true) => "EDIT OPEN · MENU CLOSE",
         (L::Action, false) => "SEQ RUN · MENU BACK",
         (L::Action, true) => "SEQ RUN · MENU CLOSE",
+        (L::Dimmed, false) => "MENU BACK",
+        (L::Dimmed, true) => "MENU CLOSE",
         (L::Later, false) => "LATER · MENU BACK",
         (L::Later, true) => "LATER · MENU CLOSE",
         (L::Leaf, _) => "A-F EDIT · MENU BACK",
@@ -577,6 +741,8 @@ pub struct Bands<'a> {
     pub listing: &'a Listing,
     /// What `● LOADED` marks.
     pub loaded: Option<ProjectFile>,
+    /// In the PART branch, the active Part.
+    pub part: Option<PartBand>,
 }
 
 /// What is over SETTINGS' bands.
@@ -608,6 +774,14 @@ impl Bands<'_> {
         }
         match (self.at.screen(), self.at.column()) {
             (Some(Screen::LoadProject), _) => return legend(LegendFor::Load, false),
+            (Some(Screen::SaveToProj), _) => {
+                let live = self.part.zip(SAVE_ROWS.get(self.at.row() as usize));
+                let on = match live.map(|(b, &c)| b.offer.look(c)) {
+                    Some(RowLook::Normal) => LegendFor::Action,
+                    _ => LegendFor::Dimmed,
+                };
+                return legend(on, false);
+            }
             (_, Some(Column::Projects)) => return legend(LegendFor::ManageList, false),
             (_, Some(Column::Command(n))) => return legend(self.command_legend(n), false),
             _ => {}
@@ -615,7 +789,12 @@ impl Bands<'_> {
         let on = self
             .rows()
             .get(self.at.row() as usize)
-            .map_or(LegendFor::Opens, |r| LegendFor::of(r.kind));
+            .map_or(LegendFor::Opens, |r| {
+                match self.part.map(|b| b.look(r.kind)) {
+                    Some(RowLook::Dimmed) => LegendFor::Dimmed,
+                    _ => LegendFor::of(r.kind),
+                }
+            });
         legend(on, self.at.path().is_empty())
     }
 
@@ -665,7 +844,20 @@ impl Bands<'_> {
         };
         let rev = self.listing.revision().to_le_bytes();
         let loaded = self.loaded.map_or(0, |f| f.id().get()).to_le_bytes();
+        let (pname, pkey) = match &self.part {
+            Some(b) => {
+                let [m0, m1] = b.mark.key();
+                let [o0, o1, o2] = b.offer.key();
+                (
+                    b.name.as_str(),
+                    [1, self.active.index() as u8, m0, m1, o0, o1, o2],
+                )
+            }
+            None => ("", [0; 7]),
+        };
         settings_key(&[
+            pname.as_bytes(),
+            &pkey,
             self.at.path(),
             &list,
             text.as_bytes(),
@@ -728,6 +920,9 @@ impl Bands<'_> {
         if let Some(col) = self.at.column() {
             return self.draw_manage(d, col);
         }
+        if let Some(b) = &self.part {
+            return self.draw_part(d, b);
+        }
         let rows = self.rows();
         debug_assert!(rows.len() <= MAX_ROWS);
         let mut shown = [ListRow::of(&ROOT); MAX_ROWS];
@@ -736,6 +931,32 @@ impl Bands<'_> {
             *s = ListRow::of(r);
         }
         draw_list(d, &shown[..n], self.at.row() as usize, self.first);
+    }
+
+    /// The PART strip, then PART's rows or SAVE TO PROJ's.
+    fn draw_part<D: DrawTarget<Color = Rgb565>>(&self, d: &mut D, b: &PartBand) {
+        draw_part_strip(d, self.active, b.name.as_str(), b.mark);
+        let bar = self.at.row() as usize;
+        if self.at.screen() == Some(Screen::SaveToProj) {
+            return draw_part_list(d, SAVE_ROWS.len(), bar, |i, f| {
+                let c = SAVE_ROWS[i];
+                f(ListRow {
+                    label: b.offer.label(c).as_str(),
+                    opens: false,
+                    note: None,
+                    look: b.offer.look(c),
+                })
+            });
+        }
+        let rows = self.rows();
+        // RELOAD's slot is in the strip: beside the label, it would cut it.
+        draw_part_list(d, rows.len(), bar, |i, f| {
+            let r = &rows[i];
+            f(ListRow {
+                look: b.look(r.kind),
+                ..ListRow::of(r)
+            })
+        });
     }
 
     /// The keyed command's legend: what stops it, if anything.

@@ -160,9 +160,13 @@ fn each_answer_does_what_it_says() {
     assert!(kept(&ui, &before), "the CANCEL pill keeps the Part");
 
     let (mut ui, before) = asking();
+    let free = ui.project().pool().first_free().unwrap();
     answer(&mut ui, 0);
-    assert!(kept(&ui, &before), "SAVE PART FIRST is Task 13's");
-    assert_eq!(ui.step_toast(0), ToastStep::Show(Line::new("NOT YET")));
+    assert!(
+        ui.project().pool().get(free).unwrap().bits_eq(&before),
+        "SAVE PART FIRST saves the edit"
+    );
+    assert!(!kept(&ui, &before), "then replaces");
 
     let (mut ui, before) = asking();
     answer(&mut ui, 1);
