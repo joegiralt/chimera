@@ -100,7 +100,7 @@ struct SynthParts {
     theme: ThemeSettings,
     iwdg: pac::IWDG,
     dbgmcu: pac::DBGMCU,
-    #[cfg(feature = "usb-console")]
+    #[cfg(all(feature = "usb-console", not(feature = "sd-probe")))]
     usb: usb::UsbParts,
 }
 
@@ -134,19 +134,10 @@ fn boot() -> Board {
 
     cache::enable_d2_sram();
     let rev = clocks::read_rev(&dp.DBGMCU);
-    #[cfg_attr(
-        not(all(feature = "usb-console", not(feature = "sd-probe"))),
-        allow(unused_mut)
-    )]
-    let (mut ccdr, clk) = clocks::freeze(dp.PWR, dp.RCC, &dp.SYSCFG, rev);
-    cache::init(&mut cp.MPU, &mut cp.SCB, &mut cp.CPUID);
-    // The USB kernel clock, HSI48, which the CRS trims once the port is up.
+    let (ccdr, clk) = clocks::freeze(dp.PWR, dp.RCC, &dp.SYSCFG, rev);
     #[cfg(all(feature = "usb-console", not(feature = "sd-probe")))]
-    {
-        use stm32h7xx_hal::rcc::rec::UsbClkSel;
-        ccdr.peripheral.kernel_usb_clk_mux(UsbClkSel::Hsi48);
-        assert!(ccdr.clocks.hsi48_ck().is_some());
-    }
+    let ccdr = usb::route_kernel_clock(ccdr);
+    cache::init(&mut cp.MPU, &mut cp.SCB, &mut cp.CPUID);
     #[cfg(not(feature = "sd-probe"))]
     shared::copy_waves();
 
@@ -228,7 +219,7 @@ fn boot() -> Board {
             theme,
             iwdg: dp.IWDG,
             dbgmcu: dp.DBGMCU,
-            #[cfg(feature = "usb-console")]
+            #[cfg(all(feature = "usb-console", not(feature = "sd-probe")))]
             usb: usb::UsbParts {
                 dm: gpioa.pa11.into_alternate(),
                 dp: gpioa.pa12.into_alternate(),
@@ -281,7 +272,7 @@ fn synth(board: Board) -> ! {
                 mut theme,
                 iwdg,
                 dbgmcu,
-                #[cfg(feature = "usb-console")]
+                #[cfg(all(feature = "usb-console", not(feature = "sd-probe")))]
                     usb: usb_parts,
             },
         sd,
@@ -354,7 +345,7 @@ fn synth(board: Board) -> ! {
 
     // After the audio and MIDI DIN start, before the first frame: the loop
     // polls from its first iteration, so enumeration never waits.
-    #[cfg(feature = "usb-console")]
+    #[cfg(all(feature = "usb-console", not(feature = "sd-probe")))]
     let mut usb = usb::init(usb_parts, &clocks);
 
     let (mut pacer, first) = chimera_core::ui::animation::Pacer::start(controls::now_ms());
@@ -366,7 +357,7 @@ fn synth(board: Board) -> ! {
 
     let mut last_tick = controls::ticks();
     loop {
-        #[cfg(feature = "usb-console")]
+        #[cfg(all(feature = "usb-console", not(feature = "sd-probe")))]
         usb.poll();
         controls.snapshot();
         // Every frame, even idle: a held key must age.

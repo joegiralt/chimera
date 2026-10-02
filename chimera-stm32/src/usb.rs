@@ -4,7 +4,8 @@
 
 use stm32h7xx_hal::gpio::{Alternate, PA11, PA12};
 use stm32h7xx_hal::pac;
-use stm32h7xx_hal::rcc::{CoreClocks, ResetEnable, rec};
+use stm32h7xx_hal::rcc::rec::{self, UsbClkSel, UsbClkSelGetter};
+use stm32h7xx_hal::rcc::{Ccdr, CoreClocks, ResetEnable};
 use stm32h7xx_hal::usb_hs::{USB2, UsbBus};
 use usb_device::bus::UsbBusAllocator;
 use usb_device::device::{StringDescriptors, UsbDevice, UsbDeviceBuilder, UsbVidPid};
@@ -12,6 +13,16 @@ use usbd_serial::{SerialPort, USB_CLASS_CDC};
 
 /// The stock PreenFM3's ID: Ixox/preenfm3 firmware/Src/usbd_desc.c.
 pub const VID_PID: (u16, u16) = (0x0483, 0x5740);
+// Never the ROM's DFU ID, so `dfu-util -d 0x0483:0xdf11` cannot match the
+// running synth.
+const _: () = assert!(!(VID_PID.0 == 0x0483 && VID_PID.1 == 0xDF11));
+
+/// Routes HSI48, which the CRS trims once the port is up, to the USB
+/// kernel clock. At boot, before `ccdr.peripheral` is split up.
+pub fn route_kernel_clock(mut ccdr: Ccdr) -> Ccdr {
+    ccdr.peripheral.kernel_usb_clk_mux(UsbClkSel::Hsi48);
+    ccdr
+}
 
 /// What `boot()` hands over, nothing enabled yet.
 pub struct UsbParts {
@@ -50,6 +61,9 @@ pub fn init(parts: UsbParts, clocks: &CoreClocks) -> Usb {
     crs.cr
         .modify(|_, w| w.autotrimen().set_bit().cen().set_bit());
 
+    // Without its 48 MHz the core never leaves CSRST and `USB2::new` spins
+    // there, interrupts off.
+    assert_eq!(rec.get_kernel_clk_mux(), UsbClkSel::Hsi48);
     let usb = USB2::new(global, device, pwrclk, dm, dp, rec, clocks);
     // EP OUT packets only (EP0 and the bulk OUT, 64 bytes each); the TX
     // FIFOs live in the core's own RAM.
