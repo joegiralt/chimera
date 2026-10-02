@@ -1,5 +1,8 @@
 //! ORBIT's clock types.
 
+use super::euclid::Steps;
+use core::num::NonZeroU32;
+
 /// A position within a bar, in 2³² ths.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Phase(u32);
@@ -16,17 +19,17 @@ impl Phase {
     }
 }
 
-use super::euclid::Steps;
-
 /// A tempo in whole BPM, 30..=300.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Bpm(u16);
 
 impl Bpm {
+    pub const MIN: u16 = 30;
+    pub const MAX: u16 = 300;
     pub const DEFAULT: Bpm = Bpm(120);
 
     pub const fn new(b: u16) -> Option<Bpm> {
-        if b >= 30 && b <= 300 {
+        if b >= Self::MIN && b <= Self::MAX {
             Some(Bpm(b))
         } else {
             None
@@ -34,10 +37,10 @@ impl Bpm {
     }
 
     pub const fn clamped(b: u16) -> Bpm {
-        Bpm(if b < 30 {
-            30
-        } else if b > 300 {
-            300
+        Bpm(if b < Self::MIN {
+            Self::MIN
+        } else if b > Self::MAX {
+            Self::MAX
         } else {
             b
         })
@@ -90,11 +93,11 @@ pub struct InternalClock {
     at: u64,
     pos: Position,
     bpm: Bpm,
-    sample_rate: u32,
+    sample_rate: NonZeroU32,
 }
 
 impl InternalClock {
-    pub const fn start(at_sample: u64, bpm: Bpm, sample_rate: u32) -> Self {
+    pub const fn start(at_sample: u64, bpm: Bpm, sample_rate: NonZeroU32) -> Self {
         InternalClock { at: at_sample, pos: Position::ZERO, bpm, sample_rate }
     }
 
@@ -107,7 +110,7 @@ impl InternalClock {
     }
 
     fn per_bar(&self) -> u64 {
-        self.sample_rate as u64 * 240
+        self.sample_rate.get() as u64 * 240
     }
 
     pub fn bar_len(&self) -> u32 {

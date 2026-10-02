@@ -1,7 +1,11 @@
+use core::num::NonZeroU32;
 use chimera_core::orbit::clock::{step_at, step_start, Bpm, InternalClock, Phase, Position};
 use chimera_core::orbit::euclid::Steps;
 
-const SR: u32 = 48_000;
+const SR: NonZeroU32 = match NonZeroU32::new(48_000) {
+    Some(n) => n,
+    None => panic!(),
+};
 
 #[test]
 fn step_index_is_exact_for_any_count() {
@@ -56,4 +60,43 @@ fn bpm_is_bounded() {
     assert!(Bpm::new(29).is_none() && Bpm::new(301).is_none());
     assert_eq!(Bpm::clamped(5).get(), 30);
     assert_eq!(Bpm::clamped(999).get(), 300);
+}
+
+fn key(p: Position) -> u64 {
+    (p.bar as u64) << 32 | p.phase.get() as u64
+}
+
+#[test]
+fn position_is_monotonic_across_bar_lines() {
+    let clock = InternalClock::start(0, Bpm::new(97).unwrap(), SR);
+    // bars 1..=3 and 100..=102: both rounding directions
+    for line in [1u32, 2, 3, 100, 101, 102] {
+        let at = clock.sample_of(Position { bar: line, phase: Phase::ZERO });
+        let mut prev = clock.position(at - 400);
+        for s in at - 399..=at + 400 {
+            let p = clock.position(s);
+            assert!(p >= prev, "backwards at {s}");
+            // one sample is ~2^32 / 23.7k = ~181k phase; allow a rounding sample
+            assert!(key(p) - key(prev) < 400_000, "jump at {s}");
+            assert_eq!(p.phase == Phase::ZERO, s == at, "phase 0 only on the line, {s}");
+            prev = p;
+        }
+    }
+}
+
+#[test]
+fn mid_bar_bpm_change_round_trips() {
+    let mut clock = InternalClock::start(0, Bpm::new(97).unwrap(), SR);
+    let p = clock.position(300_001);
+    assert!(p.phase != Phase::ZERO && p.bar > 0);
+    clock.set_bpm(300_001, p, Bpm::new(143).unwrap());
+    assert_eq!(clock.position(300_001), p);
+    assert_eq!(clock.sample_of(p), 300_001);
+    let next = Position { bar: p.bar + 1, phase: Phase::ZERO };
+    let line = clock.sample_of(next);
+    assert_eq!(clock.position(line), next);
+    assert!(clock.position(line - 1) < next);
+    // the rest of the bar takes (1 - phase) of a bar at 143 BPM
+    let want = (1.0 - p.phase.get() as f64 / 4294967296.0) * 48_000.0 * 240.0 / 143.0;
+    assert!(((line - 300_001) as f64 - want).abs() <= 1.0);
 }
