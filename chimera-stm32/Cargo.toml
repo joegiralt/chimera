@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["midi-din", "perf-probe"]
+default = ["midi-din", "perf-probe", "usb-console"]
 midi-din = []
 perf-probe = []
 bench = ["perf-probe"]

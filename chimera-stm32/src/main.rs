@@ -308,8 +308,17 @@ fn synth(board: Board) -> ! {
         / (clk.cpu_hz / 1_000_000);
     clocks::delay_us(clk.cpu_hz, SPLASH_US.saturating_sub(held_us));
     let perf = PerfTracker::new();
+    // The bench's screens as text, kept for the console's `bench`.
     #[cfg(feature = "bench")]
-    bench::run(&mut display, clk, ui.project_mut());
+    #[cfg_attr(not(feature = "usb-console"), allow(unused_variables))]
+    let bench_text = {
+        let report = bench::take_report().expect("bench report taken once");
+        bench::run(&mut display, clk, ui.project_mut(), report);
+        let report: &'static chimera_core::console::Report<{ bench::BENCH_TEXT_LEN }> = report;
+        Some(report.as_str())
+    };
+    #[cfg(all(feature = "usb-console", not(feature = "bench")))]
+    let bench_text: Option<&str> = None;
 
     controls::start_systick(cp.SYST, &mut cp.SCB, clk.cpu_hz);
     controls::enable();
@@ -346,7 +355,7 @@ fn synth(board: Board) -> ! {
     // After the audio and MIDI DIN start, before the first frame: the loop
     // polls from its first iteration, so enumeration never waits.
     #[cfg(all(feature = "usb-console", not(feature = "sd-probe")))]
-    let mut usb = usb::init(usb_parts, &clocks);
+    let mut usb = usb::init(usb_parts, &clocks, clk.cpu_hz);
 
     let (mut pacer, first) = chimera_core::ui::animation::Pacer::start(controls::now_ms());
     ui.update(first);
@@ -357,8 +366,9 @@ fn synth(board: Board) -> ! {
 
     let mut last_tick = controls::ticks();
     loop {
+        // The snapshot point: every path through the last iteration flushed.
         #[cfg(all(feature = "usb-console", not(feature = "sd-probe")))]
-        usb.poll();
+        usb.service(ui, stats_r.as_mut(), bench_text, display.frame());
         controls.snapshot();
         // Every frame, even idle: a held key must age.
         ui.handle_input(&controls);
@@ -392,11 +402,7 @@ fn synth(board: Board) -> ! {
             ui.update(t);
         }
         shared_w.publish(|b| b.update_from(ui.project().perf(), LOAD_LINK.epoch()));
-        let stats = stats_r.as_mut().map(|r| {
-            let mut s = *r.read();
-            s.stack_used = probe::stack_used();
-            s
-        });
+        let stats = audio_stats(stats_r.as_mut());
         // Read after the card work; the toast's first step ignores it.
         let now = controls::ticks();
         let elapsed_ms = now.wrapping_sub(last_tick) * 1_000 / controls::CONTROLS_HZ;
@@ -430,6 +436,19 @@ fn synth(board: Board) -> ! {
             }
         }
     }
+}
+
+/// The audio's latest stats with the stack's high-water mark, as the
+/// AUDIO LOAD page and the console's `stats` both read them.
+#[cfg(not(feature = "sd-probe"))]
+fn audio_stats(
+    r: Option<&mut chimera_core::triple::Reader<chimera_core::perf::load::AudioStats>>,
+) -> Option<chimera_core::perf::load::AudioStats> {
+    r.map(|r| {
+        let mut s = *r.read();
+        s.stack_used = probe::stack_used();
+        s
+    })
 }
 
 /// Pushes `new` to the backlight and the panel. True when the palette

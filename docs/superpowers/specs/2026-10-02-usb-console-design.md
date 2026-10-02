@@ -259,13 +259,13 @@ The OTG interrupt is never unmasked in the NVIC (`pac::Interrupt::OTG_FS` stays 
 
 ### Polling, once per UI loop iteration
 
-The UI loop calls `usb::service(&mut usb_parts, &mut unit)` at its top, before `controls.snapshot()`:
+The UI loop calls `usb.service(ui, stats, bench, display.frame())` at its top, before `controls.snapshot()`:
 
 1. `usb_dev.poll(&mut [&mut serial])`.
-2. Read bytes one at a time with `serial.read(&mut [u8; 1])` into `Console::push`, until it yields a request or the port is empty. Unread bytes wait in usbd-serial's 128-byte buffer, and past that the hardware NAKs the host. So a pasted burst is never lost, only slowed.
-3. With a request: `answer` it into a `UsbOut`, then drop the iteration from the loop timer. **At most one request per iteration**, so a burst of `shot`s cannot hold the UI for longer than one shot at a time.
+2. Read bytes one at a time with `serial.read(&mut [u8; 1])` into `Console::push`, until it yields a request, the port is empty, or 256 bytes have been read this iteration (so a flood without a newline can't hold the UI). Unread bytes wait in usbd-serial's 128-byte buffer, and past that the hardware NAKs the host. So a pasted burst is never lost, only slowed.
+3. With a request: `answer` it into a `UsbOut`, then drop the iteration from the loop timer (`Usb` keeps the iteration's `Served` and hands it to the next `LoopTimer::lap`; `service` returns nothing). **At most one request per iteration**, so a burst of `shot`s cannot hold the UI for longer than one shot at a time.
 
-`UsbOut::put` pumps: it alternates `usb_dev.poll` and `serial.write` until every byte is taken. If no byte is taken for `STALL_MS` = 250 ms, or the whole answer passes `ANSWER_MS` = 1000 ms (both read by one `AnswerClock` per answer, on DWT), it returns `Stalled`; the answer stops there and the loop goes on. That covers a host that stopped reading, a pulled cable and a suspended bus. The host tool resynchronises (§ Host tool).
+`UsbOut::put` pumps: it alternates `usb_dev.poll` and `serial.write` until every byte is taken. If no byte is taken for `STALL_MS` = 250 ms, or the whole answer passes `ANSWER_MS` = 1000 ms (both read by one `AnswerClock` per answer, on `controls::now_ms()`: SysTick always runs, while the DWT counter can fail to start), it returns `Stalled`; the answer stops there and the loop goes on. That covers a host that stopped reading, a pulled cable and a suspended bus. The host tool resynchronises (§ Host tool).
 
 ### Why polling and not an interrupt
 
@@ -438,7 +438,7 @@ The unit cannot be bricked by this. The ROM loader is in system memory and canno
 | CPU, idle | One `poll` per loop iteration, which reads `GINTSTS`: around a microsecond. | |
 | DFU entry | **well under 1 KB of flash**: `after_reset` and the early check (tens of instructions), the prompt's words and pills (about 70 bytes), the `dfu` table row (about 50 bytes), `enter`. No RAM: the marker is a backup register. The empty UPDATES page's block and leaf go. Boot time: one register read and one write before `boot()`. | The plan's DFU task measures it and stops above 1 024 bytes. |
 
-The plan's first task measures the real flash cost with `llvm-size`. Over 24 KB, it stops and reports before going on.
+The plan's first task measures the real flash cost with `llvm-size`. Over 24 KB, it stops and reports before going on. Task 8 measured the whole console at 26,040 B: budget raised to 28 KB by the owner, 2026-10-02; measured 26,040 B.
 
 ## Tests
 

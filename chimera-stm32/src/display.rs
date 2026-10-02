@@ -56,6 +56,15 @@ where
         }
     }
 
+    /// The framebuffer and the palette it is flushed through, for the console.
+    #[cfg(all(feature = "usb-console", not(feature = "sd-probe")))]
+    pub fn frame(&self) -> chimera_core::console::Frame<'_> {
+        chimera_core::console::Frame {
+            fb: self.fb,
+            palette: self.palette,
+        }
+    }
+
     /// Show the framebuffer through `palette` from the next flush on.
     pub fn set_palette(&mut self, palette: Palette) {
         self.palette = palette;

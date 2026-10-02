@@ -2,8 +2,10 @@ use core::fmt::Write;
 use core::hint::black_box;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use chimera_core::addr::{BlockRef, ParamAddr};
+use chimera_core::console::Report;
 use chimera_core::dsp::algo::algorithms::AlgoId;
 use chimera_core::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
 use chimera_core::dsp::algo::kernel::{Kernel, KernelBlock, OpBlock, SAMPLE_SCALE};
@@ -46,6 +48,23 @@ use cortex_m::peripheral::DWT;
 
 use crate::audio::engine;
 use crate::clocks::Clocks;
+
+/// The bench's screens as text: about 4 KB today, `# TRUNCATED` past this.
+pub const BENCH_TEXT_LEN: usize = 6144;
+type Text = Report<BENCH_TEXT_LEN>;
+
+static mut REPORT: Text = Report::new();
+static REPORT_TAKEN: AtomicBool = AtomicBool::new(false);
+
+/// The report, once: `run` writes it, the console reads it from then on.
+pub fn take_report() -> Option<&'static mut Text> {
+    if REPORT_TAKEN.swap(true, Ordering::AcqRel) {
+        return None;
+    }
+    // SAFETY: the flag lets exactly one caller past, so this is the only
+    // reference to `REPORT` ever made.
+    Some(unsafe { &mut *addr_of_mut!(REPORT) })
+}
 
 const WARM_BLOCKS: u32 = 8;
 const TIMED_BLOCKS: u32 = 64;
@@ -540,7 +559,12 @@ struct Rig<'p> {
 
 // Not inlined, so its frame never adds to `main`'s.
 #[inline(never)]
-pub fn run(display: &mut impl ChimeraDisplay, clocks: Clocks, project: &mut Project) {
+pub fn run(
+    display: &mut impl ChimeraDisplay,
+    clocks: Clocks,
+    project: &mut Project,
+    report: &mut Text,
+) {
     let proj_crc = time_project_crc(project);
     // SAFETY: the bench runs once from `main`, before `engine::init` and
     // before any interrupt is unmasked, so it is the only user of the
@@ -568,7 +592,7 @@ pub fn run(display: &mut impl ChimeraDisplay, clocks: Clocks, project: &mut Proj
     }
     let fx: [u32; FX_ROWS] = core::array::from_fn(|i| rig.time_bus(FX[i].1));
     let kernel = time_kernel();
-    show(display, clocks, &rows, kernel, &fx);
+    show(display, report, clocks, &rows, kernel, &fx);
     hold(clocks);
     let mut routing = [Counts::default(); ROUTING_ROWS];
     for (row, &(_, part, each)) in routing.iter_mut().zip(&ROUTING) {
@@ -590,7 +614,7 @@ pub fn run(display: &mut impl ChimeraDisplay, clocks: Clocks, project: &mut Proj
         .chunks(ROUTING_PAGE)
         .zip(routing.chunks(ROUTING_PAGE));
     for (page, (labels, counts)) in pages.enumerate() {
-        show_routing(display, page, labels, counts);
+        show_routing(display, report, page, labels, counts);
         hold(clocks);
     }
     let rebuild = time_rebuild();
@@ -605,7 +629,13 @@ pub fn run(display: &mut impl ChimeraDisplay, clocks: Clocks, project: &mut Proj
     let g1 = MidiNote::new(31).unwrap_or(MidiNote::A4);
     let dark = rig.time_note_on(g1, dark_pluck, (true, silent));
     let light = rig.time_note_on(g1, short_string, (true, silent));
-    show_memory(display, (rebuild, proj_crc), note_on, (lowest, dark, light));
+    show_memory(
+        display,
+        report,
+        (rebuild, proj_crc),
+        note_on,
+        (lowest, dark, light),
+    );
     hold(clocks);
 }
 
@@ -941,8 +971,15 @@ const ROW_H: i32 = 25;
 /// One count per voice across the screen: 29 px holds five digits at eight.
 const CELL_W: i32 = (theme::SCREEN_W - 8) / MAX_VOICES as i32;
 
+/// A screen's title, drawn and recorded as the report's heading.
+fn title(display: &mut impl ChimeraDisplay, report: &mut Text, text: &str) {
+    report.heading(text);
+    draw::text(display, &theme::FONT_VALUE, text, 4, 16, theme::INK);
+}
+
 fn show(
     display: &mut impl ChimeraDisplay,
+    report: &mut Text,
     clocks: Clocks,
     rows: &[Counts; ROWS],
     kernel: u32,
@@ -956,32 +993,22 @@ fn show(
         clocks.rev.label(),
         clocks.cpu_hz / 1_000_000
     );
-    draw::text(
-        display,
-        &theme::FONT_VALUE,
-        line.as_str(),
-        4,
-        16,
-        theme::INK,
-    );
+    title(display, report, line.as_str());
     line.clear();
     let _ = write!(line, "CYCLES/SAMPLE, 1..{MAX_VOICES} VOICES");
-    draw::text(
-        display,
-        &theme::FONT_LABEL,
-        line.as_str(),
-        4,
-        30,
-        theme::MID,
-    );
+    report.drawn(line.as_str(), |t| {
+        draw::text(display, &theme::FONT_LABEL, t, 4, 30, theme::MID)
+    });
     let mut y = 46;
     for (&(label, ..), counts) in PATCHES.iter().zip(rows) {
-        voice_row(display, &mut line, y, label, counts);
+        voice_row(display, report, &mut line, y, label, counts);
         y += ROW_H;
     }
     line.clear();
     let _ = write!(line, "KERNEL /VOICE {kernel} (350)");
-    draw::text(display, &theme::FONT_VALUE, line.as_str(), 4, y, theme::INK);
+    report.drawn(line.as_str(), |t| {
+        draw::text(display, &theme::FONT_VALUE, t, 4, y, theme::INK)
+    });
     // Seven rows, three to a line: with FX_ROWS at 7 the old 18/14 spacing
     // put the third line at y 317; 16/10 keeps it at 307, under 310.
     y += 16;
@@ -995,14 +1022,16 @@ fn show(
         line.clear();
         let _ = write!(line, "{label} {c}");
         let (col, row) = ((i % 3) as i32, (i / 3) as i32);
-        draw::text(
-            display,
-            &theme::FONT_LABEL,
-            line.as_str(),
-            4 + col * 78,
-            y + row * 10,
-            theme::INK2,
-        );
+        report.drawn(line.as_str(), |t| {
+            draw::text(
+                display,
+                &theme::FONT_LABEL,
+                t,
+                4 + col * 78,
+                y + row * 10,
+                theme::INK2,
+            )
+        });
     }
     display.flush();
 }
@@ -1010,6 +1039,7 @@ fn show(
 /// ROUTING screen `page` (from 0): `rows`' labels and their counts.
 fn show_routing(
     display: &mut impl ChimeraDisplay,
+    report: &mut Text,
     page: usize,
     rows: &[RoutingRow],
     counts: &[Counts],
@@ -1018,16 +1048,9 @@ fn show_routing(
     let mut line = FmtBuf::new();
     let pages = ROUTING_ROWS.div_ceil(ROUTING_PAGE);
     let _ = write!(line, "ROUTING {}/{pages}", page + 1);
-    draw::text(
-        display,
-        &theme::FONT_VALUE,
-        line.as_str(),
-        4,
-        16,
-        theme::INK,
-    );
+    title(display, report, line.as_str());
     for (i, (&(label, ..), c)) in rows.iter().zip(counts).enumerate() {
-        voice_row(display, &mut line, 46 + i as i32 * ROW_H, label, c);
+        voice_row(display, report, &mut line, 46 + i as i32 * ROW_H, label, c);
     }
     display.flush();
 }
@@ -1036,13 +1059,14 @@ fn show_routing(
 /// the project CRC's.
 fn show_memory(
     display: &mut impl ChimeraDisplay,
+    report: &mut Text,
     (rebuild, proj_crc): (u32, u32),
     note_on: u32,
     (lowest, dark, light): (u32, u32, u32),
 ) {
     use core::mem::size_of;
     draw::fill_rect(display, 0, 0, theme::SCREEN_W, theme::SCREEN_H, theme::BG);
-    draw::text(display, &theme::FONT_VALUE, "MEMORY", 4, 16, theme::INK);
+    title(display, report, "MEMORY");
     let lines = [
         format_args!("VOICE {}", size_of::<Voice>()),
         format_args!("SLOT {}", size_of::<EngineSlot>()),
@@ -1064,7 +1088,9 @@ fn show_memory(
         line.clear();
         let _ = line.write_fmt(args);
         let y = 46 + i as i32 * ROW_H;
-        draw::text(display, &theme::FONT_VALUE, line.as_str(), 4, y, theme::INK);
+        report.drawn(line.as_str(), |t| {
+            draw::text(display, &theme::FONT_VALUE, t, 4, y, theme::INK)
+        });
     }
     display.flush();
 }
@@ -1073,6 +1099,7 @@ fn show_memory(
 /// sounded when fewer than all, and its count at each voice count.
 fn voice_row(
     display: &mut impl ChimeraDisplay,
+    report: &mut Text,
     line: &mut FmtBuf,
     y: i32,
     label: &str,
@@ -1083,18 +1110,22 @@ fn voice_row(
     if counts.spans < MAX_VOICES {
         let _ = write!(line, " ({} V)", counts.spans);
     }
-    draw::text(display, &theme::FONT_VALUE, line.as_str(), 4, y, theme::INK);
+    report.drawn(line.as_str(), |t| {
+        draw::text(display, &theme::FONT_VALUE, t, 4, y, theme::INK)
+    });
     // One cell per count: the counts together overflow a `FmtBuf`.
     for (i, c) in counts.cycles.iter().enumerate() {
         line.clear();
         let _ = write!(line, "{c}");
-        draw::text(
-            display,
-            &theme::FONT_LABEL,
-            line.as_str(),
-            4 + i as i32 * CELL_W,
-            y + 12,
-            theme::INK2,
-        );
+        report.drawn(line.as_str(), |t| {
+            draw::text(
+                display,
+                &theme::FONT_LABEL,
+                t,
+                4 + i as i32 * CELL_W,
+                y + 12,
+                theme::INK2,
+            )
+        });
     }
 }

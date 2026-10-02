@@ -109,8 +109,8 @@ is `docs/superpowers/specs/2026-10-02-usb-console-design.md`.
   registers, and the RTC itself is unused. The PAC's `bkpr[0]` is enough.
 
 ## Consequences
-- About 20 KB of flash (about 2.2 points of 896 KB) and about 2.5 KB of
-  AXI SRAM. A bench build adds a 6 KB report buffer.
+- About 26 KB of flash (about 2.8 points of 896 KB; budget raised to 28 KB by the owner, 2026-10-02; measured 26,040 B) and about
+  1.5 KB of AXI SRAM. A bench build adds a 6 KB report buffer.
 - A `shot` freezes the UI for 0.15 to 0.3 s. Audio, MIDI and key latching
   go on.
 - The port appears once the UI loop starts, after the boot splash, so

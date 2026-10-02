@@ -90,7 +90,7 @@ These failure modes are implied by the spec but not exercised by any spec test. 
 ## Pre-flight: where the spec is silent, and what this plan decides
 
 1. **Base and merge order.** `usb-console` is cut from `nav-core` and uses its `Location`, `UiState::crumbs` and cached `project_status`. It lands after `nav-core`. Each task starts with `git fetch origin`. If `origin/nav-core` has moved, `git merge --no-edit origin/nav-core` before the task. Once `nav-core` is on `main`, merge `origin/main` instead and open the PR against `main`. Conflicts in `chimera-core/src/ui/{mod,nav}.rs` are resolved by keeping `nav-core`'s side, then re-applying Task 3's additions.
-2. **Task 1 measures before anything is built on it.** It writes the real bring-up (`usb.rs`: clock, CRS, USB2, the CDC device, `poll` in the loop, received bytes discarded) behind `usb-console`, which stays out of `default` until Task 8. So the measurement is of the code that ships, and nothing is thrown away. The functional core (Tasks 2–6) is still built and host-tested before either shell is finished (Tasks 7–8). The core is not linked in Task 1, so Task 1 adds the spec's 3 KB estimate for it. Task 8 measures the whole cost again, under the same 24 KB limit.
+2. **Task 1 measures before anything is built on it.** It writes the real bring-up (`usb.rs`: clock, CRS, USB2, the CDC device, `poll` in the loop, received bytes discarded) behind `usb-console`, which stays out of `default` until Task 8. So the measurement is of the code that ships, and nothing is thrown away. The functional core (Tasks 2–6) is still built and host-tested before either shell is finished (Tasks 7–8). The core is not linked in Task 1, so Task 1 adds the spec's 3 KB estimate for it. Task 8 measures the whole cost again, under a 28 KB limit (budget raised to 28 KB by the owner, 2026-10-02; measured 26,040 B).
 3. **`at` for SETTINGS** is the breadcrumb as drawn: the rows' short crumbs (`SETTINGS > SYSTEM > DIAG > AUD LOAD`), NAMING's crumb included, never shortened behind `..`. The spec's example now reads this way. `Crumbs::parts` becomes `pub` (Task 3).
 4. **No ORBIT row.** `nav-core` has no `Loc::Orbit`. `Rung` mirrors `Loc` exactly, and `Location::rung` matches exhaustively, so the ORBIT plan's new variant fails the build until it gets a `Rung` and an `at` (`ORBIT`).
 5. **A page title** is the header's page name as drawn: `components::header_text(..).name`, with the exciter and ENV A/B suffix rules. Task 3 moves those rules into one `UiState::page_name()`, which `draw_header` and `status` both call, so they can't drift.
@@ -136,7 +136,7 @@ These failure modes are implied by the spec but not exercised by any spec test. 
 
 ## Task order
 
-1. The USB crates and the bring-up, measured (STOP above 24 KB).
+1. The USB crates and the bring-up, measured (STOP above 24 KB; 28 KB from Task 8 on).
 2. `console`: the command table and the parser.
 3. `console`: `status`, and `Rung` in `nav`.
 4. `console`: `shot`, `Out` and the stall.
@@ -188,7 +188,9 @@ One row per pair of tasks that touch the same file or the same interface, and ho
 
 ---
 
-### Task 1: The USB crates and the bring-up, measured (STOP above 24 KB)
+### Task 1: The USB crates and the bring-up, measured (STOP above 24 KB; now 28 KB)
+
+> The limit is 28 672 bytes (28 KB) from Task 8 on: budget raised to 28 KB by the owner, 2026-10-02; measured 26,040 B.
 
 **Files:**
 - Modify: `chimera-stm32/Cargo.toml`, `Cargo.lock`, `chimera-stm32/src/main.rs`, `Justfile` (two temporary lines, Step 7); this plan (`## Measured`)
@@ -1130,16 +1132,18 @@ git commit -m "The desktop sim answers the console on 127.0.0.1:7341"
 impl Usb {
     /// The loop's top: time the lap, poll, read byte by byte into `Console`,
     /// answer at most one request.
-    pub fn service(&mut self, unit: &mut impl Unit);
-    pub fn take_loop_time(&mut self) -> (u32, u32);        // ChipUnit::stats calls it
+    // As built (F8, F9): `Usb` keeps the iteration's `Served` and feeds it to
+    // the next `LoopTimer::lap`, so the loop has nothing to do with it.
+    pub fn service(&mut self, ui: &UiState, stats: Option<&mut Reader<AudioStats>>,
+                   bench: Option<&str>, frame: Frame<'_>);
 }
-struct UsbOut<'a> { dev: &'a mut UsbDevice<..>, serial: &'a mut SerialPort<..>, cpu_hz: u32 }  // impl Out
-pub struct ChipUnit<'a> {
-    pub ui: &'a UiState,
-    pub stats: Option<&'a mut Reader<AudioStats>>,
-    pub loop_time: &'a mut LoopTimer,
-    pub bench: Option<&'static str>,
-    pub frame: Frame<'a>,
+struct UsbOut<'a> { dev: &'a mut UsbDevice<..>, serial: &'a mut SerialPort<..>, clock: AnswerClock }  // impl Out
+struct ChipUnit<'a> {   // private, built inside `service`
+    ui: &'a UiState,
+    stats: Option<&'a mut Reader<AudioStats>>,
+    timer: &'a mut LoopTimer,
+    bench: Option<&'a str>,
+    frame: Frame<'a>,
 }
 // display.rs
 impl Stm32Display<..> { pub fn frame(&self) -> Frame<'_>; }
@@ -1153,13 +1157,13 @@ pub fn run(display: &mut impl ChimeraDisplay, clocks: Clocks, project: &mut Proj
   `Usb` owns the `Console` and the `LoopTimer`. `ChipUnit` borrows the timer back out of `Usb` for the one call, so `service`'s signature is `service(&mut self, ui, stats, bench, frame)` if the borrow checker won't split it; the observable behaviour is the spec's either way.
 
 - [ ] **Step 1: Wire the serial number.** `init` reads the UID (the HAL's `signature::Uid` if 0.16 exports it, else three `read_volatile`s at `0x1FF1_E800`, `0x1FF1_E804`, `0x1FF1_E808` with a `// SAFETY:` note: read-only system memory, always mapped), formats it once with `serial_hex` into a take-once `static [u8; 24]`, and passes it to `.serial_number(..)` (`core::str::from_utf8` of hex digits, never unchecked).
-- [ ] **Step 2: `service` and `UsbOut`** as the spec's § Polling says. `UsbOut::put` loops `serial.write`, and on `WouldBlock` or a 0-byte write it calls `dev.poll(&mut [serial])`. The stall clock is DWT cycles (`STALL_MS * cpu_hz / 1000`, compared with `wrapping_sub`) and restarts whenever bytes are taken. After the whole answer, `serial.flush()` is pumped the same way. The lap is `DWT` cycles since the last loop top, divided by `cpu_hz / 1_000_000`. `answered()` is called before the answer goes out.
+- [ ] **Step 2: `service` and `UsbOut`** as the spec's § Polling says. `UsbOut::put` loops `serial.write`, and on `WouldBlock` or a 0-byte write it calls `dev.poll(&mut [serial])`. The stall clock is one `AnswerClock` per answer, read from `controls::now_ms()` (SysTick, 2 ms), not DWT: the cycle counter can fail to start (`sd.rs` keeps a fallback for that), and a clock that never moves would never stall. It restarts whenever bytes are taken. After the whole answer, `serial.flush()` is pumped the same way. The lap is `DWT` cycles since the last loop top, divided by `cpu_hz / 1_000_000`. The iteration's `Served` is kept in `Usb` and passed to the next `lap` (F9). Reading is capped at 256 bytes per loop top (`READ_BUDGET`), so a flood without a newline can't hold the UI.
 - [ ] **Step 3: `ChipUnit`.** `stats()` returns `None` without `perf-probe`. Otherwise it returns `*reader.read()` with `stack_used = probe::stack_used()`, as the loop does for the page, plus `loop_time.take()`. `bench()` is `Some(report.as_str())` in bench builds, else `None`. `frame()` is `display.frame()`.
 - [ ] **Step 4: The hook.** In `synth()`, Task 1's `usb.poll();` becomes `usb.service(&mut ChipUnit { .. });`, still the loop's first statement, before `controls.snapshot()`. That is the snapshot point: every path through the previous iteration (the `continue` after BUSY or a toast, the recolour's full flush, the dirty-region flush) has flushed before the loop comes back to the top. `apply_theme` sets the palette in the same iteration as the flush, so `frame().palette` is the palette the panel was last sent.
 - [ ] **Step 5: The bench's report.** `bench::run` takes the report. Each line that `show`, `show_routing`, `voice_row` and `show_memory` draw with `draw::text` also goes to `report.line(..)` from the same `FmtBuf`, and each screen title to `report.heading(..)`. `synth()` takes the report with `take_report()` before `bench::run`, and keeps `&'static str` of it for `ChipUnit::bench`.
 - [ ] **Step 6: `priority.rs`** gains one comment line: "USB has no level: it is polled from the UI loop (ADR 0068)."
 - [ ] **Step 7: Default on.** `default = ["midi-din", "perf-probe", "usb-console"]`; remove Task 1's two temporary `Justfile` lines (`check` and `clippy` now build it through the default sets).
-- [ ] **Step 8: Measure** as in Task 1 Step 2: `--no-default-features --features midi-din,perf-probe` (base) against the default build (with). Record the whole flash cost, RAM cost, and the bench build's extra RAM under `## Measured`. **STOP above 24 576 bytes**, as Task 1 Step 6 (commit the numbers only, revert the rest of this task, report).
+- [ ] **Step 8: Measure** as in Task 1 Step 2: `--no-default-features --features midi-din,perf-probe` (base) against the default build (with). Record the whole flash cost, RAM cost, and the bench build's extra RAM under `## Measured`. **STOP above 28 672 bytes** (budget raised to 28 KB by the owner, 2026-10-02; measured 26,040 B; first set at 24 576), as Task 1 Step 6 (commit the numbers only, revert the rest of this task, report).
 - [ ] **Step 9: Run** `just check` → PASS (it includes `just stack-check` over default, no-default, bench and sd-probe).
 - [ ] **Step 10: Commit**
 
@@ -1597,7 +1601,7 @@ git commit -m "USB console ship flash recorded; ADR 0068 accepted"
 | § Host tool: targets, raw mode, drain, 2 s, exit codes, PNG at 2×, bit replication, file names, recipes, udev | Task 10 |
 | § Enter DFU from the firmware: OS UPGRADE's prompt and `Said<RomDfu>`, the UPDATES page gone, `dfu`, the marker and its fallback, the check at the top of `main`, the jump, `just flash` hands-free, safety | Tasks 9, 10; U8–U10 |
 | § Real-time rules | Global Constraints; Task 8; U4 |
-| § Cost: measured, STOP over 24 KB; DFU entry under 1 KB | Tasks 1, 8, 9, 11 |
+| § Cost: measured, STOP over 28 KB (24 KB until the owner raised it); DFU entry under 1 KB | Tasks 1, 8, 9, 11 |
 | § Tests: core unit tests, property test | Tasks 2–6 |
 | § Tests: desktop QA | Tasks 7, 9, 11 |
 | § Tests: ship U1–U10 | Task 12 |
@@ -1623,14 +1627,14 @@ Filled by Tasks 1, 8, 9, 11 and 12.
 |---|---|---|---|
 | base (default, no console) | 722 528 | AXI 374 088, D2 168 364 | 1 |
 | bring-up (`--features usb-console`), + 3 072 core estimate | 13 128 + 3 072 = **16 200** (735 656, 80.18 %) | AXI +1 448 (375 536), D2 +0 | 1 |
-| whole (default with `usb-console`) − (`midi-din,perf-probe` only) | 747 144 − 721 104 = **26 040**, over the 24 576 limit by 1 464 (against the Task 1 baseline 722 528: 24 616, over by 40). **STOP**: Task 8's code reverted | AXI +1 484 (375 564 − 374 080), D2 +0 (168 364) | 8 |
+| whole (default with `usb-console`) − (`midi-din,perf-probe` only) | 747 144 − 721 104 = **26 040**, over the first 24 576 limit by 1 464 (against the Task 1 baseline 722 528: 24 616). Stopped, then budget raised to 28 KB by the owner, 2026-10-02; measured 26,040 B: under the 28 672 limit by 2 632 | AXI +1 484 (375 564 − 374 080), D2 +0 (168 364) | 8 |
 | bench build's extra RAM (`BENCH_TEXT`) | n/a | AXI +6 152 (`bench::REPORT`, `.bss`) | 8 |
 | DFU entry: default build after Task 9 − before | ____ | ____ | 9 |
-| limit | 24 576; DFU entry 1 024 | | |
+| limit | 28 672 (24 576 until the owner raised it, 2026-10-02); DFU entry 1 024 | | |
 
 Release builds of `usb-console` 5d05cd2+, `llvm-size -A`: flash is `.vector_table + .text + .rodata + .data`, AXI is `.data + .bss`, D2 is `.ram_d2 + .ram_d2_dma`. `.text` +16 360, `.rodata` −3 232. `llvm-nm -S` by crate, roughly (generics land under the crate that names them): `synopsys-usb-otg` 12.6 KB, `usb-device` 2.0 KB, the shell 2.3 KB.
 
-Task 8, release builds at 8bfed02 plus Task 8's code, measured the same way. Flash: `.text` +25 096, `.rodata` +944. By symbol: `synopsys-usb-otg` 12 886, the core's `console` 7 342 (its generics over `UsbOut` included; `Console::push` alone is 1 770), `usb-device` 1 952, `usb.rs` 1 820 (`init` 1 358), `usbd-serial` 154, the rest +1 886 net (`core::fmt` and glue). The USB crates at `opt-level = "s"` or `"z"` in release make it bigger, not smaller (26 364 and 27 148). Stack: `synth`'s frame 0xBD0 (base 0x778, Task 1 0xB70); `Usb::service` 0x5C. `just check` passed on the code before the revert.
+Task 8, release builds at 8bfed02 plus Task 8's code, measured the same way. Flash: `.text` +25 096, `.rodata` +944. By symbol: `synopsys-usb-otg` 12 886, the core's `console` 7 342 (its generics over `UsbOut` included; `Console::push` alone is 1 770), `usb-device` 1 952, `usb.rs` 1 820 (`init` 1 358), `usbd-serial` 154, the rest +1 886 net (`core::fmt` and glue). The USB crates at `opt-level = "s"` or `"z"` in release make it bigger, not smaller (26 364 and 27 148). Stack: `synth`'s frame 0xBD0 (base 0x778, Task 1 0xB70); `Usb::service` 0x5C. Dev builds: `synopsys-usb-otg`, `usb-device`, `usbd-serial` and `embedded-graphics` at `opt-level = 2` (root `Cargo.toml`), or the debug `bench,master-tape` build overflows flash by about 2.4 KB; it leaves 9 388 B free.
 
 ### Desktop QA (Task 11)
 
