@@ -1421,6 +1421,7 @@ then `just flash`. Fill each slot as read out.
 | B4 | no audio overrun during a load (`AudioStats`) | ____ |
 | B5 | frame time while turning a MIDI › CHANNELS cell (footer recomputes once per edit) | ____ |
 | B6 | no audio overrun while turning it (`AudioStats`) | ____ |
+| B7 | frame time while turning a knob on an Algo page (no project hash outside SETTINGS) | ____ |
 
 **This plan** (release build)
 
@@ -1433,6 +1434,7 @@ then `just flash`. Fill each slot as read out.
 | N5 | every built SETTINGS screen on the panel. UAT: legible, "obviously the settings world" | ____ |
 | N6 | swap the card, hold MENU: `CARD CHANGED` → SAVE AS saves on the new card | ____ |
 | N7 | no SYSTEM › DEMO; MIX+B6 is Part 6's mixer | ____ |
+| N8 | (1) on the SD card: DELETE, CLEAR another project, SAVE TO, and CLEAR your own with edits, answering SAVE THEN LOAD; (2) LOAD lists each correctly; (3) a relaunch boots the right project | ____ |
 
 **projects-core's checklist** (its Task 9)
 

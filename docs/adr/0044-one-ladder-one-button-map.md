@@ -29,7 +29,7 @@ on 2026-09-30.
 
 | Key | Meaning |
 |---|---|
-| **B*n*** | From anywhere on the ladder, ORBIT excepted (below): Part *n*'s sound pages on its engine's home, `Pages(n, home(engine))`: node 0 for Algo, RES for Modal, never EXC (amended 2026-10-01, owner: ADR 0066). SETTINGS included, from any depth (amended 2026-10-01, owner: ADR 0066). From Part *n*'s sound pages: Part *n*'s rung, the mixer (PART and SENDS), opening on the last-used mixer page, SENDS until one is used. From Part *n*'s rung: back to the sound page it left, if its engine is unchanged; from anywhere else, the home (amended 2026-10-01, owner: ADR 0066). |
+| **B*n*** | From anywhere on the ladder, ORBIT excepted (below): Part *n*'s sound pages on its engine's home, `Location::part_home(n, engine)`: node 0 for Algo, RES for Modal, never EXC (amended 2026-10-01, owner: ADR 0066). SETTINGS included, from any depth (amended 2026-10-01, owner: ADR 0066). From Part *n*'s sound pages: Part *n*'s rung, the mixer (PART and SENDS), opening on the last-used mixer page, SENDS until one is used. From Part *n*'s rung: back to the sound page it left, if its engine is unchanged; from anywhere else, the home (amended 2026-10-01, owner: ADR 0066). |
 | **MIX + B*n*** | Straight to Part *n*'s rung. MIX+B6 is Part 6's mixer, now that Demo is the debug-only row SYSTEM › DEMO (amended 2026-10-01, owner: ADR 0066). |
 | **EDIT** | Down or open (`down`). On pages, sub-page down, as today. In a SETTINGS list, open the row: a list or a leaf page; a Screen row is listed first, by `UiState`; a later row does nothing (amended 2026-10-01, owner: ADR 0066). In ORBIT, only ORBIT's own pages: on RING it cycles the sub-pages, RHYTHM → VOICE → NOTES → back to RHYTHM (amended 2026-09-30, owner); SCN's commit; it never leaves ORBIT. |
 | **Hold B*n* in ORBIT** | Out to the pages of the Part ring *n* plays: `Pages(p, recall.pages[p])`. Fires at `HOLD_MS`; the release does nothing. The only way from ORBIT to sound design. |
@@ -143,7 +143,7 @@ in the variant, so no box and no heap.
 - **`part_key(self, n, &Recall) -> Location`** is B*n*, the toggle:
   `Pages(n, _)` → `Part(n, recall.mix)`; `Part(n, _)` →
   `Pages(n, recall.pages[n])`; anything else → `Pages(n, 0,0)`
-  (now `Pages(n, home(engine))`, amended 2026-10-01, owner: ADR 0066). It is sugar,
+  (now `Location::part_home(n, engine)`, amended 2026-10-01, owner: ADR 0066). It is sugar,
   defined as a composition of `down` and `up`, so the storage spec's
   property test (every jump lands where its path ends) covers it.
 - **`orbit_key(self, &Recall) -> Location`** is SEQ hold: from outside ORBIT,
@@ -204,9 +204,10 @@ in the variant, so no box and no heap.
   Setup's channels still move to PART. Where its § ADRs and § Decisions
   awaiting owner review differ, this ADR rules.
 - **Owner rulings of 2026-10-01** (amended 2026-10-01, owner: ADR 0066):
-  - **Each engine has a home node**: `nav::home(engine)`, node 0 for Algo
-    and RES for Modal, looked up in the Modal chain. A new or INIT Modal
-    Part lands on RES, not EXC.
+  - **Each engine has a home node**: each chain declares it with
+    `ChainDef2::with_home_def`, checked at compile time, and
+    `Location::part_home` reads it: node 0 for Algo and RES for Modal. A
+    new or INIT Modal Part lands on RES, not EXC.
   - **The mixer walk reaches the FX** after Part 6's SENDS; the FX have no
     key or SETTINGS row of their own.
   - **RENAME of a project that isn't loaded is dimmed `LOAD TO RENAME`**

@@ -33,11 +33,23 @@ settings world of the synth. The spec is
   MENU cancels.
 - **Typed confirmations (#257):** `Confirmed<OverwriteTarget>`,
   `Confirmed<DeleteTarget>` and `SaveTo` carry the proof that the user
-  was asked.
+  was asked. Each is made from a `Said`, which only a prompt's confirming
+  pill holds: REPLACE, RELOAD and LOAD ANYWAY, and DELETE, CLEAR, SAVE
+  OVER and OVERWRITE THAT ONE alike.
+- **A confirmed file carries a witness**, the generation and name of its
+  newest header as listed; a write or delete refuses a file that moved
+  since. Accepted limit: a pair deleted and made again at the same id,
+  with the same name and the same generation, slips through (closing it
+  takes a format change).
 - **`project_status` is cached on `rev`**, which `Project`'s `&mut`
-  accessors bump; the footer does not recompute the CRC per frame.
-- **The card is re-listed after every card operation** (`CardEvent`);
-  after a swap, SAVE says CARD CHANGED and offers SAVE PROJECT AS.
+  accessors bump, and hashed only while SETTINGS is open: no frame
+  outside it hashes, and SETTINGS' first frame catches up.
+- **After every card operation the listing is marked stale**, and
+  re-listed while LOAD or MANAGE is on screen. After a swap, SAVE says
+  CARD CHANGED and offers SAVE PROJECT AS; the prompt carries any load
+  the save was inside, so SAVE AS then loads.
+- **The screen beneath a prompt is frozen**, and a prompt over a page
+  blanks the band between the header and the map.
 - **Mirrors go through `BlockRef::PartMix`:** MIDI CONFIG > CHANNELS and
   AUDIO ROUTING > OUTPUTS edit the same fields as each mixer PART page.
   Their defs take ids 68 and 69.
@@ -70,13 +82,20 @@ settings world of the synth. The spec is
   - **Each chain declares its home page** (node 0 unless it says
     otherwise), and every never-visited landing goes there; no code
     outside the chain assumes the first node (owner, 2026-10-02).
+  - **CLEAR of the loaded project** loads NEW, then saves it over the
+    file; the file's card and witness are checked first, so a moved file
+    leaves RAM alone. With edits, its prompt's SAVE THEN LOAD saves them
+    to a new file under the proposed name, then clears. The project ends
+    `Pristine`.
+  - **SAVE PART FIRST on RELOAD saves to a new slot**: over its own slot
+    the reload would undo nothing and leave the slot's other Parts Stale.
 - `ChainId::System` and `UiMode::SoundBrowser` go; the browser becomes
   the Sound rung, and saving is SETTINGS > PART.
 - The UX spec is the owner's file and is amended by hand.
 - `project::guard` takes a UI type, `ui::settings::replace::said::Said`,
   on purpose: only a prompt's confirming pill may confirm a replace (#258),
-  and Rust can't scope a constructor to a sibling module, so the token
-  lives in an import-free leaf of the UI.
+  a delete or an overwrite, and Rust can't scope a constructor to a
+  sibling module, so the token lives in an import-free leaf of the UI.
 - ADRs 0043, 0044, 0046 and 0066 move to Accepted at the single ship
   flash.
 
