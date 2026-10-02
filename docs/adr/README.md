@@ -74,3 +74,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0067](0067-focus-glyphs.md) | Focus glyphs: hand-assigned per parameter, ARC by default; composites draw from set values only | Proposed |
 | [0068](0068-usb-console.md) | Read the unit over a polled USB CDC-ACM console | Proposed |
 | [0069](0069-transpose-staff-glyph.md) | TRANSPOSE takes STAFF: a note on a three-line staff (amends 0067) | Proposed |
+| [0070](0070-wave-scope-glyph.md) | WAVE takes a scope traced from its own table (amends 0067) | Proposed |
