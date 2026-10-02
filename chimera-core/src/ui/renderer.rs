@@ -22,6 +22,8 @@ use crate::ui::glyph::{
 };
 use crate::ui::mod_grid::MatrixState;
 use crate::ui::nav::PageAt;
+use crate::ui::orbit::OrbitCell;
+use crate::ui::orbit::draw::{self as orbit, OrbitFrame};
 use crate::ui::page::PageLayout;
 use crate::ui::perf::PerfStats;
 use crate::ui::region::{self, Layout, RegionKind};
@@ -71,6 +73,8 @@ pub struct Frame<'a> {
     pub clock: crate::ui::animation::UiClock,
     /// The FX's stored params (a composite reads the chorus's).
     pub fx: &'a crate::dsp::fx_bus::FxParams,
+    /// What ORBIT's pages draw: the live scene and the UI's view of it.
+    pub orbit: OrbitFrame<'a>,
 }
 
 /// Full-screen renderer. Composites header, visualization, parameters, and dungeon map.
@@ -206,6 +210,12 @@ impl Renderer {
                 viz::compressor(display, -40.0 + 40.0 * a(0), ratio, f.master_gr_db);
             }
             VizType::About => crate::ui::about_page::draw_viz(display),
+            VizType::OrbitCircle => {
+                let cursor = (0..f.def.params.len())
+                    .find(|&i| view::view(f.def, i, &f.ctx) == View::Orbit(OrbitCell::Cursor))
+                    .map_or(0.0, a);
+                orbit::circle(display, &f.orbit, cursor);
+            }
             VizType::EnvSpeed => {
                 let e = &f.parts[f.active_part.index()].sound.params.envelopes;
                 viz::env_speed(
@@ -243,6 +253,8 @@ impl Renderer {
             VizType::EffectsFlow(FxFlow::Effect(node)) => {
                 viz::effects_flow(display, Some(node as usize), None)
             }
+            VizType::OrbitRhythm => orbit::rhythm(display, &f.orbit, f.ctx.ring),
+            VizType::OrbitChords => orbit::chords(display, &f.orbit),
             VizType::AlgoDiagram => {
                 let algo = &f.parts[f.active_part.index()].sound.params.algo;
                 let morph = crate::addr::ParamAddr::new(
@@ -345,6 +357,9 @@ impl Renderer {
                         (algo.alg_a as u32) << 8 | algo.alg_b as u32,
                     )
                 }
+                VizType::OrbitRhythm | VizType::OrbitChords => {
+                    ([0; 6], orbit::viz_key(f.def, &f.orbit, f.ctx.ring))
+                }
                 _ => ([0; 6], viz::live_key(f.scope)),
             },
             PageLayout::BigViz => {
@@ -355,9 +370,10 @@ impl Renderer {
                     }
                     _ => 0,
                 };
+                let orbit = orbit::viz_key(f.def, &f.orbit, f.ctx.ring);
                 (
                     region::quantize_values(&self.anim),
-                    f.focus as u32 | gr << 8,
+                    (f.focus as u32 | gr << 8) ^ orbit,
                 )
             }
             PageLayout::Matrix => ([0; 6], 0),
@@ -439,6 +455,17 @@ impl Renderer {
         if view == View::Empty {
             return;
         }
+        if let Some(o) = self.orbit_focus(f) {
+            let (label, text) = (o.label.as_str(), o.text.as_str());
+            return components::focus_band(
+                display,
+                label,
+                text,
+                o.gauge,
+                look(f, f.focus),
+                f.prime_status,
+            );
+        }
         let v = self.anim[f.focus].current();
         let buf = value_text(f, f.focus, v);
         components::focus_band(
@@ -451,8 +478,17 @@ impl Renderer {
         );
     }
 
-    /// The focused slot's gauge, by its glyph.
+    /// ORBIT's reading of the focused slot, if it has its own.
+    pub fn orbit_focus(&self, f: &Frame) -> Option<orbit::Focus> {
+        orbit::focus(f.def, f.focus, &f.ctx, &f.orbit, |i| self.anim[i].current())
+    }
+
+    /// The focused slot's gauge, by its glyph; ORBIT's own where it reads
+    /// the slot itself.
     pub fn gauge(&self, f: &Frame) -> Gauge {
+        if let Some(o) = self.orbit_focus(f) {
+            return o.gauge;
+        }
         let view = view::view(f.def, f.focus, &f.ctx);
         let (fmt, glyph, focused) = (view.fmt(), view.glyph(), view.addr());
         let value = match glyph {
@@ -547,6 +583,7 @@ impl Renderer {
                 View::Text { text, .. } => {
                     let _ = core::fmt::Write::write_str(&mut buf, text);
                 }
+                View::Orbit(cell) => buf = orbit::cell_text(cell, &f.orbit),
                 _ => fmt::fmt_val(&mut buf, value, v.fmt()),
             }
             let c = components::Cell {
@@ -622,7 +659,7 @@ impl BlockRead for Stored<'_, '_> {
 pub fn header_out(f: &Frame) -> DacPair {
     match f.head {
         Head::Sound(p) | Head::Mix(p) => f.parts[p.index()].mix.output,
-        Head::Settings => DacPair::P1,
+        Head::Settings | Head::Ring(_) | Head::Orbit => DacPair::P1,
     }
 }
 

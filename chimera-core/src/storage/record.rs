@@ -32,6 +32,8 @@ pub enum RecordTag {
     Fx,
     /// A Part's source: `[0, slot]` or `[1, engine code]`.
     Origin,
+    /// A scene's CUSTOM set (`orbit::scene::encode_scale`).
+    OrbitScale,
 }
 
 impl RecordTag {
@@ -47,6 +49,7 @@ impl RecordTag {
             RecordTag::Part => 0x8008,
             RecordTag::Fx => 0x8009,
             RecordTag::Origin => 0x000A,
+            RecordTag::OrbitScale => 0x0014,
         }
     }
 
@@ -62,6 +65,7 @@ impl RecordTag {
             0x8008 => RecordTag::Part,
             0x8009 => RecordTag::Fx,
             0x000A => RecordTag::Origin,
+            0x0014 => RecordTag::OrbitScale,
             _ => return None,
         })
     }

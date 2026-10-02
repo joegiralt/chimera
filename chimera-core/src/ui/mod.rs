@@ -745,6 +745,12 @@ impl UiState {
                 );
             }
         }
+        let chords = &self.project.orbit().live.chords;
+        for (i, value) in values.iter_mut().enumerate() {
+            if let View::Orbit(c) = view::view(def, i, &ctx) {
+                *value = c.value(chords, &self.orbit);
+            }
+        }
         if def.layout == PageLayout::Matrix {
             values[renderer::MATRIX_AMOUNT_SLOT] =
                 renderer::amount_value(self.matrix_state.current_amount());
@@ -1462,12 +1468,20 @@ impl UiState {
         }
         let (def, ctx) = (self.page_def(), self.ctx());
         let shift = c.edges(ButtonId::Mix).down;
+        let custom = |p: &Project| p.orbit().live.chords.scale == ScaleKind::Custom;
+        let was_custom = custom(&self.project);
         for (i, &enc) in ALL_ENCODERS.iter().enumerate() {
             let delta = c.encoder_delta(enc);
-            if delta == 0 || view::view(def, i, &ctx) == View::Empty {
+            let v = view::view(def, i, &ctx);
+            if delta == 0 || v == View::Empty {
                 continue;
             }
             self.focus.touch(def.id, i);
+            if let View::Orbit(cell) = v {
+                let chords = &mut self.project.orbit_mut().live.chords;
+                cell.turn(delta, shift, chords, &mut self.orbit);
+                continue;
+            }
             let params = &mut UiBlocks {
                 project: &mut self.project,
                 part: self.active_part,
@@ -1478,6 +1492,13 @@ impl UiState {
             } else {
                 part_page::apply_under(def, i, delta, params, &ctx, &mut self.sel_op);
             }
+        }
+        // SCALE turned to CUSTOM opens its circle.
+        if !was_custom
+            && custom(&self.project)
+            && let Some(o) = self.loc.orbit()
+        {
+            self.go(o.custom().into());
         }
     }
 
@@ -1854,9 +1875,11 @@ impl UiState {
         let cx = self.cx();
         let def = self.page_def();
         let settings = self.loc.settings();
-        let head = match (settings, self.loc.part()) {
-            (None, Some(p)) if self.loc.on_mixer() => Head::Mix(p),
-            (None, Some(p)) => Head::Sound(p),
+        let head = match (settings, self.loc.part(), self.loc.orbit()) {
+            (_, _, Some(o)) if o.page().node() as usize == orbit::RING_NODE => Head::Ring(o.ring()),
+            (_, _, Some(_)) => Head::Orbit,
+            (None, Some(p), _) if self.loc.on_mixer() => Head::Mix(p),
+            (None, Some(p), _) => Head::Sound(p),
             _ => Head::Settings,
         };
         renderer::Frame {
@@ -1881,6 +1904,15 @@ impl UiState {
             master_gr_db: crate::meter::MASTER_GR.read(),
             clock: self.clock,
             fx: &self.project.perf().fx,
+            orbit: self.orbit_frame(),
+        }
+    }
+
+    /// What ORBIT's pages draw from.
+    fn orbit_frame(&self) -> orbit::draw::OrbitFrame<'_> {
+        orbit::draw::OrbitFrame {
+            scene: &self.project.orbit().live,
+            ui: &self.orbit,
         }
     }
 
@@ -1894,13 +1926,15 @@ impl UiState {
     }
 
     /// Where the UI is as (place, node, sub) for the header and map keys:
-    /// Part n's pages n, its mixer 10 + n, its Sound rung 30 + n, SETTINGS 20.
+    /// Part n's pages n, its mixer 10 + n, its Sound rung 30 + n, SETTINGS 20,
+    /// ORBIT on ring r 40 + r.
     fn loc_tag(&self) -> (u8, u8, u8) {
-        let place = match (self.loc.settings(), self.loc.part()) {
-            (Some(_), _) | (_, None) => 20,
-            (_, Some(p)) if self.loc.on_mixer() => 10 + p.index() as u8,
-            (_, Some(p)) if self.loc.browse().is_some() => 30 + p.index() as u8,
-            (_, Some(p)) => p.index() as u8,
+        let place = match (self.loc.settings(), self.loc.part(), self.loc.orbit()) {
+            (_, _, Some(o)) => 40 + o.ring().get(),
+            (Some(_), _, _) | (_, None, _) => 20,
+            (_, Some(p), _) if self.loc.on_mixer() => 10 + p.index() as u8,
+            (_, Some(p), _) if self.loc.browse().is_some() => 30 + p.index() as u8,
+            (_, Some(p), _) => p.index() as u8,
         };
         let at = self
             .loc
@@ -1950,6 +1984,7 @@ impl UiState {
                 self.prime_status,
             )
             .with_set(region::quantize(self.renderer.set[f.focus].current()))
+            .with_text(self.renderer.orbit_focus(f).map_or(0, |o| o.key()))
             .animated(glyph::anim_key(
                 shown.is_some_and(|g| g.animates()),
                 f.clock.frame(),

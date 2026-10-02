@@ -15,7 +15,7 @@ use crate::dsp::modulator::law::Law;
 use crate::dsp::modulator::pick;
 use crate::project::PartId;
 use crate::ui::glyph::FocusGlyph;
-use chimera_theory::{Degree, Note, PitchClass};
+use chimera_theory::{Degree, Interval, Note, PitchClass, Scale};
 
 pub const SCENES: usize = 8;
 
@@ -498,7 +498,18 @@ impl Block for ChordRing {
         let n = (v as u8).saturating_add(1);
         match id {
             Self::KEY => self.tonic = pick(&PitchClass::ALL, v),
-            Self::SCALE => self.scale = pick(&ScaleKind::ALL, v),
+            Self::SCALE => {
+                let to = pick(&ScaleKind::ALL, v);
+                // A fresh CUSTOM set starts as the scale picked before it;
+                // a set no named scale is, the user's own, stays.
+                if to == ScaleKind::Custom
+                    && self.scale != ScaleKind::Custom
+                    && Scale::ALL.contains(&self.custom)
+                {
+                    self.custom = self.scale.scale(self.custom);
+                }
+                self.scale = to;
+            }
             Self::BARS => self.bars = Bars::new(n.min(Bars::MAX)).unwrap_or(Bars::ONE),
             Self::SEGS => self.segs = Segs::new(n.min(MAX_SEGS as u8)).unwrap_or(Segs::ONE),
             _ => {}
@@ -552,4 +563,28 @@ impl Block for Bpm {
             *self = Bpm::clamped(v as u16);
         }
     }
+}
+
+/// The CUSTOM set as an `OrbitScale` record: scene, then the set as `u16`
+/// LE, bit n the note n semitones above the root.
+pub fn encode_scale(scene: u8, s: Scale) -> [u8; 3] {
+    let bits = (0..12).fold(0u16, |m, i| m | (s.contains(Interval::ALL[i]) as u16) << i);
+    let [lo, hi] = bits.to_le_bytes();
+    [scene, lo, hi]
+}
+
+/// An `OrbitScale` payload: the root is set whatever the file says, and
+/// bits past the 12 are dropped.
+pub fn decode_scale(p: &[u8]) -> Option<(u8, Scale)> {
+    let &[scene, lo, hi] = p else { return None };
+    let bits = u16::from_le_bytes([lo, hi]);
+    let mut set = [Interval::UNISON; 12];
+    let mut n = 0;
+    for (i, &iv) in Interval::ALL.iter().enumerate() {
+        if bits >> i & 1 == 1 {
+            set[n] = iv;
+            n += 1;
+        }
+    }
+    Some((scene, Scale::custom(&set[..n])))
 }

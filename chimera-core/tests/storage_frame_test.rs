@@ -187,6 +187,7 @@ fn codes_are_frozen() {
         (RecordTag::Part, 0x8008),
         (RecordTag::Fx, 0x8009),
         (RecordTag::Origin, 0x000A),
+        (RecordTag::OrbitScale, 0x0014),
     ];
     for (t, c) in table {
         assert_eq!(t.code(), c);

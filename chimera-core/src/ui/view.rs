@@ -19,6 +19,7 @@ use crate::ui::block_def::{BlockDef, SlotBinding};
 use crate::ui::filter_panel::{self, PanelKnob, PanelTarget};
 use crate::ui::glyph::FocusGlyph;
 use crate::ui::mod_panel::{self, PanelSlot};
+use crate::ui::orbit::OrbitCell;
 
 /// What an ENV slot's page resolves against: type A's panel follows its
 /// SPEED, type B's its MODE and that MODE's FORM.
@@ -115,6 +116,8 @@ pub enum View {
         label: &'static str,
         text: &'static str,
     },
+    /// One of ORBIT's own cells: its text is `orbit::draw::cell_text`.
+    Orbit(OrbitCell),
 }
 
 impl View {
@@ -122,6 +125,7 @@ impl View {
         match *self {
             View::Empty => "--",
             View::SelectOp => "OP",
+            View::Orbit(c) => c.label(),
             View::Legacy { label, .. }
             | View::Param { label, .. }
             | View::Route { label, .. }
@@ -146,6 +150,7 @@ impl View {
             View::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
             View::Legacy { fmt, .. } | View::Param { fmt, .. } => fmt,
             View::Route { .. } => ValFmt::Route,
+            View::Orbit(c) => c.fmt(),
         }
     }
 
@@ -174,8 +179,9 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
         return View::Empty;
     };
     match slot.binding {
+        SlotBinding::Empty => View::Empty,
         // ORBIT's pages draw and turn their own cells.
-        SlotBinding::Empty | SlotBinding::Orbit(_) => View::Empty,
+        SlotBinding::Orbit(c) => View::Orbit(c),
         SlotBinding::SelectOp => View::SelectOp,
         SlotBinding::Legacy { label, fmt } => View::Legacy { label, fmt },
         // SPD: a type-B slot's SPEED and HOLD read TYPE B (spec § UI).

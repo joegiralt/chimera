@@ -119,6 +119,19 @@ fn draw_branches<D>(
         return;
     }
     let x = pill_x - 8;
+    let def_at = |i: usize| {
+        if i == 0 {
+            block.def
+        } else {
+            block.sub_pages[i - 1]
+        }
+    };
+    // Labels that would run off the right hang left of the trunk.
+    let widest = (0..count)
+        .map(|i| draw::text_width(&theme::FONT_LABEL, page_label(def_at(i), model), 0))
+        .max()
+        .unwrap_or(0);
+    let hang_left = x + 6 + widest > theme::SCREEN_W;
     let pill_bottom = theme::MAP_LINE_Y + theme::PILL_H / 2;
     let visible = |i: i32| {
         let y = theme::BRANCH_START_Y + i * theme::BRANCH_LINE_HEIGHT - branch_scroll_px;
@@ -133,19 +146,19 @@ fn draw_branches<D>(
     }
     for i in 0..count as i32 {
         let Some(y) = visible(i) else { continue };
-        let def = if i == 0 {
-            block.def
-        } else {
-            block.sub_pages[i as usize - 1]
-        };
-        let label = page_label(def, model);
+        let label = page_label(def_at(i as usize), model);
         let cy = y + theme::BRANCH_LINE_HEIGHT / 2;
-        if i == at.sub() as i32 {
+        let color = if i == at.sub() as i32 {
             draw::dot(d, x, cy, 2, theme::ACCENT);
-            draw::text(d, &theme::FONT_LABEL, label, x + 6, y + 8, theme::ACCENT);
+            theme::ACCENT
         } else {
             draw::ring(d, x, cy, 2, theme::MID, 1);
-            draw::text(d, &theme::FONT_LABEL, label, x + 6, y + 8, theme::MID);
+            theme::MID
+        };
+        if hang_left {
+            draw::text_right(d, &theme::FONT_LABEL, label, x - 6, y + 8, color, 0);
+        } else {
+            draw::text(d, &theme::FONT_LABEL, label, x + 6, y + 8, color);
         }
     }
 }

@@ -19,6 +19,12 @@ pub enum VizType {
     AlgoDiagram,
     /// SPD: each slot's SPEED and HOLD POSITION.
     EnvSpeed,
+    /// RING · RHYTHM: the ring's pattern unrolled, its step lit.
+    OrbitRhythm,
+    /// CHRD: the progression's segments as chips over the loop's bars.
+    OrbitChords,
+    /// CHRD › CUSTOM: the twelve notes round a circle, the set's lit.
+    OrbitCircle,
 }
 
 /// A node of the FX flow; the value is its index in `viz::effects_flow`.
@@ -140,6 +146,13 @@ impl ParamSlot {
     pub const fn modal_panel(page: crate::dsp::modal::ModalPage, k: u8) -> Self {
         Self {
             binding: SlotBinding::ModalPanel(page, k),
+            label_override: None,
+        }
+    }
+
+    pub const fn orbit(cell: crate::ui::orbit::OrbitCell) -> Self {
+        Self {
+            binding: SlotBinding::Orbit(cell),
             label_override: None,
         }
     }

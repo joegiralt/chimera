@@ -29,6 +29,7 @@ use chimera_core::ui::block_def::{BlockDef, ChainDef2, SlotBinding};
 use chimera_core::ui::block_registry::{MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART};
 use chimera_core::ui::busy::{ToastStep, draw_toast};
 use chimera_core::ui::nav::{Location, chain_def_for};
+use chimera_core::ui::orbit::{CHRD_NODE, ORBIT_CHAIN};
 use chimera_core::ui::settings::manage::Command;
 use chimera_core::ui::settings::part::{PartCmd, SAVE_ROWS};
 use chimera_core::ui::settings::view::{Footer, draw_footer};
@@ -104,6 +105,8 @@ enum Ctx {
     Mixer,
     /// A SETTINGS leaf, by its index in `leaves()`.
     Settings(usize),
+    /// ORBIT on ring 3, stopped; CUSTOM with SCALE turned to it.
+    Orbit,
 }
 
 impl Ctx {
@@ -112,6 +115,7 @@ impl Ctx {
             Ctx::Part(EngineType::Algo),
             Ctx::Part(EngineType::Modal),
             Ctx::Mixer,
+            Ctx::Orbit,
         ];
         all.extend((0..leaves().len()).map(Ctx::Settings));
         all
@@ -122,6 +126,7 @@ impl Ctx {
             Ctx::Part(EngineType::Algo) => "algo".into(),
             Ctx::Part(EngineType::Modal) => "modal".into(),
             Ctx::Mixer => "mixer".into(),
+            Ctx::Orbit => "orbit".into(),
             Ctx::Settings(i) => leaves()[i].name(),
         }
     }
@@ -130,6 +135,7 @@ impl Ctx {
         match self {
             Ctx::Part(e) => chain_def_for(e),
             Ctx::Mixer => &MIXER_CHANNEL_CHAIN,
+            Ctx::Orbit => &ORBIT_CHAIN,
             Ctx::Settings(i) => leaves()[i].of.chain(),
         }
     }
@@ -173,8 +179,24 @@ impl Ctx {
                 }
             }
             Ctx::Settings(i) => to_leaf(ui, &leaves()[i].labels),
+            Ctx::Orbit => {
+                to_ring(ui, 3);
+                for _ in 0..self.chain().len() {
+                    feed(ui, Input::press(ButtonId::Minus));
+                }
+                plus(ui, node);
+                // EDIT opens CUSTOM only once SCALE is on it, and turning
+                // SCALE there opens it.
+                if (node, sub) == (CHRD_NODE, 1) {
+                    feed(ui, Input::turn(EncoderId::B, 127));
+                }
+            }
         }
-        for _ in 0..sub {
+        let edits = match self {
+            Ctx::Orbit if node == CHRD_NODE => 0,
+            _ => sub,
+        };
+        for _ in 0..edits {
             feed(ui, Input::press(ButtonId::Edit));
         }
         let def = self.chain().active_def(node, sub).unwrap();

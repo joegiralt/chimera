@@ -40,6 +40,10 @@ pub enum Head {
     Mix(PartId),
     /// SETTINGS: its leaves draw a breadcrumb instead.
     Settings,
+    /// ORBIT's RING pages, on the ring they edit.
+    Ring(crate::orbit::RingIdx),
+    /// ORBIT's other pages.
+    Orbit,
 }
 
 /// A header's text: context, page name, and the OUT warning.
@@ -66,9 +70,11 @@ pub fn header_text(
         Head::Sound(p) => write!(context, "PART {} · SOUND", p.index() + 1),
         Head::Mix(p) => write!(context, "PART {} · MIX", p.index() + 1),
         Head::Settings => context.write_str("SETTINGS"),
+        Head::Ring(r) => write!(context, "RING {}", r.get() + 1),
+        Head::Orbit => context.write_str("ORBIT"),
     };
     let warn = match (head, out) {
-        (Head::Settings, _) | (_, DacPair::P1) => None,
+        (Head::Settings | Head::Ring(_) | Head::Orbit, _) | (_, DacPair::P1) => None,
         (_, DacPair::P2) => Some("OUT P2"),
         (_, DacPair::P3) => Some("OUT P3"),
     };

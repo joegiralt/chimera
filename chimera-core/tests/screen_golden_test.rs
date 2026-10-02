@@ -105,6 +105,10 @@ const GOLDENS: &[(&str, u64)] = &[
     ("settings_load", 0xbee3b127e748ef17),
     ("settings_prompt_load", 0xc47d45b862dea1e3),
     ("settings_naming", 0xe963e855baf239a6),
+    // ORBIT's RHYTHM, CHRD and CUSTOM (plan Task 9).
+    ("orbit_rhythm", 0x94e7f6914bf84e04),
+    ("orbit_chrd", 0x3926d21997677f52),
+    ("orbit_custom", 0xdbe09f01114200ae),
     ("busy", 0x198544cd36863145),
     ("toast_saved", 0xe344dd99a47d0dad),
     ("toast_exfat", 0xfc0cb3b4feb1a1b5),

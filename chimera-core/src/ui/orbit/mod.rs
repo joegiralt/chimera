@@ -1,11 +1,15 @@
-//! ORBIT's pages: ORB, RING (with VOICE and NOTES) and CHRD (with CUSTOM), a chain
-//! of its own that `Loc::Orbit` walks (ADR 0044). Placeholders until
-//! Tasks 9–10 give them cells; RING has RHYTHM's. And `OrbitUi`: the
-//! transport and what the pages draw of the runner's view.
+//! ORBIT's pages (`pages`), its own cells (`cells`) and how they are drawn
+//! (`draw`); and `OrbitUi`: the transport and what the pages draw of the
+//! runner's view.
 
 pub mod cells;
+pub mod draw;
+pub mod pages;
 
 pub use cells::OrbitCell;
+pub use pages::{
+    CHRD_NODE, ORBIT_CHAIN, ORBIT_CHRD, ORBIT_CUSTOM, ORBIT_ORB, ORBIT_RHYTHM, RING_NODE,
+};
 
 use crate::block::Block;
 use crate::orbit::RINGS;
@@ -14,62 +18,8 @@ use crate::orbit::euclid::HitMask;
 use crate::orbit::runner::{OrbitShared, OrbitView, beats_at};
 use crate::orbit::scene::{OrbitSong, Scene, SceneRing};
 use crate::project::Project;
-use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot};
 use crate::ui::nav::OrbitAct;
-use crate::ui::page::PageLayout;
 use chimera_theory::Chord;
-
-const fn placeholder(id: u16, name: &'static str, short: &'static str) -> BlockDef {
-    BlockDef {
-        id,
-        name,
-        short,
-        layout: PageLayout::CellGrid,
-        viz: crate::ui::block_def::VizType::None,
-        params: [ParamSlot::EMPTY; 6],
-    }
-}
-
-pub static ORBIT_ORB: BlockDef = placeholder(78, "Orbit", "ORB");
-static ORBIT_RING: BlockDef = BlockDef {
-    params: [
-        ParamSlot::selected_ring(SceneRing::STEPS),
-        ParamSlot::selected_ring(SceneRing::HITS),
-        ParamSlot::selected_ring(SceneRing::ROTATE),
-        ParamSlot::selected_ring(SceneRing::CHANCE),
-        ParamSlot::selected_ring(SceneRing::MUTATE),
-        ParamSlot::selected_ring(SceneRing::MUTE),
-    ],
-    ..placeholder(79, "Ring", "RNG")
-};
-static ORBIT_CHRD: BlockDef = placeholder(80, "Chords", "CHD");
-static ORBIT_CUSTOM: BlockDef = placeholder(81, "Custom", "CUS");
-static ORBIT_VOICE: BlockDef = placeholder(82, "Voice", "VOI");
-static ORBIT_NOTES: BlockDef = placeholder(83, "Notes", "NOT");
-
-static ORBIT_BLOCKS: [ChainBlock; 3] = [
-    ChainBlock::page(&ORBIT_ORB),
-    ChainBlock::with_subs(&ORBIT_RING, &[&ORBIT_VOICE, &ORBIT_NOTES]),
-    ChainBlock::with_subs(&ORBIT_CHRD, &[&ORBIT_CUSTOM]),
-];
-
-pub static ORBIT_CHAIN: ChainDef2 =
-    ChainDef2::new("Orbit", &ORBIT_BLOCKS, &[]).with_home_def(&ORBIT_ORB);
-
-/// The node whose home is `def`: a chain without it fails the build.
-const fn node_of(def: &BlockDef) -> usize {
-    let mut i = 0;
-    loop {
-        assert!(i < ORBIT_BLOCKS.len(), "not an ORBIT node");
-        if ORBIT_BLOCKS[i].def.id == def.id {
-            break i;
-        }
-        i += 1;
-    }
-}
-
-pub const RING_NODE: usize = node_of(&ORBIT_RING);
-pub const CHRD_NODE: usize = node_of(&ORBIT_CHRD);
 
 /// One ring as the pages draw it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,6 +27,9 @@ pub struct RingStatus {
     pub step: u8,
     pub fired: u8,
     pub hits: HitMask,
+    /// The rhythm these hits were played under: an edit not yet played
+    /// draws from the scene.
+    pub rhythm_rev: u8,
 }
 
 /// What the pages draw of the runner's view: none of its notes or pools,
@@ -109,12 +62,14 @@ impl OrbitStatus {
             step: 0,
             fired: 0,
             hits: scene.rings[0].ring.hits_mask(),
+            rhythm_rev: 0,
         }; RINGS];
         let mut i = 0;
         while i < RINGS {
             let r = &scene.rings[i].ring;
             rings[i].step = step_at(Phase::ZERO, r.fill().steps());
             rings[i].hits = r.hits_mask();
+            rings[i].rhythm_rev = scene.rings[i].rhythm_rev;
             i += 1;
         }
         OrbitStatus {
@@ -144,6 +99,7 @@ impl OrbitStatus {
                 step: r.step,
                 fired: r.fired,
                 hits: r.hits,
+                rhythm_rev: r.rhythm_rev,
             }),
         }
     }

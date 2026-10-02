@@ -587,6 +587,40 @@ pub fn scope_fixture() -> [f32; SCOPE_LEN] {
     })
 }
 
+/// `f` of a bar as a clock phase.
+pub fn phase(f: f64) -> chimera_core::orbit::clock::Phase {
+    chimera_core::orbit::clock::Phase::new((f * 4_294_967_296.0) as u32)
+}
+
+/// The runner's view of the init scene at `f` of the first bar, playing:
+/// what the ORBIT goldens draw from.
+pub fn orbit_view(f: f64) -> chimera_core::orbit::runner::OrbitView {
+    use chimera_core::orbit::clock::step_at;
+    let mut v = chimera_core::orbit::runner::OrbitView {
+        running: true,
+        ..Default::default()
+    };
+    v.pos.phase = phase(f);
+    for r in &mut v.rings {
+        r.step = step_at(v.pos.phase, r.hits.steps());
+    }
+    v
+}
+
+/// Hold SEQ into ORBIT, then B`n`'s tap: RING `n`'s RHYTHM.
+pub fn to_ring(ui: &mut UiState, n: usize) {
+    hold(ui, ButtonId::Seq);
+    tap(ui, PART_KEYS[n - 1]);
+}
+
+const PART_KEYS: [ButtonId; 5] = [
+    ButtonId::B1,
+    ButtonId::B2,
+    ButtonId::B3,
+    ButtonId::B4,
+    ButtonId::B5,
+];
+
 /// Load `engine`'s init Sound into Part 1 through the sound browser (EDIT + B1,
 /// scroll to the init row, EDIT), then MINUS from the engine's home to its
 /// first node.
@@ -1004,6 +1038,28 @@ pub const CASES: &[ScreenCase] = &[
     }),
     ("settings_prompt_load", prompt_load),
     ("settings_naming", naming_save_as),
+    // RING 3's RHYTHM at a third of the bar, HITS focused: 5/13.
+    ("orbit_rhythm", |ui| {
+        to_ring(ui, 3);
+        feed(ui, Input::turn(EncoderId::B, 1));
+        feed(ui, Input::turn(EncoderId::B, -1));
+        ui.set_orbit_view(&orbit_view(0.3));
+    }),
+    // CHRD: segment 2 playing, segment 3 picked (MIX + DEGREE).
+    ("orbit_chrd", |ui| {
+        to_ring(ui, 3);
+        plus(ui, 1);
+        feed(ui, Input::turn(EncoderId::E, 2).and_held(ButtonId::Mix));
+        ui.set_orbit_view(&orbit_view(0.3));
+    }),
+    // CUSTOM from MINOR, the tritone set under the cursor.
+    ("orbit_custom", |ui| {
+        to_ring(ui, 3);
+        plus(ui, 1);
+        feed(ui, Input::turn(EncoderId::B, 9));
+        feed(ui, Input::turn(EncoderId::A, 6));
+        feed(ui, Input::turn(EncoderId::B, 1));
+    }),
 ];
 
 /// `AudioStats` fixture for AUDIO LOAD's and ABOUT's goldens and tests.

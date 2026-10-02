@@ -59,6 +59,8 @@ pub enum RegionData {
         anim: u32,
         /// The slot's set value (quantized): a glyph may draw it, not `value`.
         set: u16,
+        /// What the band shows from outside its slot (ORBIT's readings).
+        text: u32,
     },
     /// The mod matrix readout: the selected route, its animated amount and
     /// the route count.
@@ -154,6 +156,7 @@ impl RegionData {
             status,
             anim: 0,
             set: 0,
+            text: 0,
         }
     }
 
@@ -167,6 +170,14 @@ impl RegionData {
     pub fn with_set(mut self, set: u16) -> Self {
         if let Self::Focus { set: s, .. } = &mut self {
             *s = set;
+        }
+        self
+    }
+
+    /// A focus band keyed on the text it shows from outside its slot too.
+    pub fn with_text(mut self, key: u32) -> Self {
+        if let Self::Focus { text, .. } = &mut self {
+            *text = key;
         }
         self
     }
@@ -247,6 +258,7 @@ impl RegionData {
             status: None,
             anim: u32::MAX,
             set: SENTINEL,
+            text: u32::MAX,
         }
     }
 
