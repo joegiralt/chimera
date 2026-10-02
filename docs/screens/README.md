@@ -182,7 +182,9 @@ in-memory card.
 | ![](settings_midi.png) | MIDI | SYNC and PORT later, CHANNELS |
 | ![](settings_audio.png) | AUDIO | OUTPUTS, SENDS later, TUNING |
 | ![](settings_personal.png) | PERSONAL | THEME |
-| ![](settings_system.png) | SYSTEM | OS, ABOUT, DEMO; the rest later |
+| ![](settings_system.png) | SYSTEM | OS, DIAGNOSTICS, ABOUT; the rest later |
+| ![](settings_system_diag.png) | SYSTEM › DIAG | AUDIO LOAD, TEST TONE and INPUT TEST later, DEMO (debug builds) |
+| ![](settings_system_diag_demo.png) | DIAG › DEMO | A row per storyboard page |
 
 ### Prompts
 
@@ -205,8 +207,7 @@ everything between the header and the map blanks.
 
 ### Leaves
 
-A leaf is the page it was on the old System chain. On a leaf with several
-pages, the breadcrumb ends on the page past the first.
+A leaf is one page (ADR 0066): no key steps it.
 
 | Screen | Where | What it shows |
 |---|---|---|
@@ -215,25 +216,27 @@ pages, the breadcrumb ends on the page past the first.
 | ![](settings_audio_tuning.png) | AUDIO › TUNING | TUNE and SCALE |
 | ![](settings_personal_theme.png) | PERSONAL › THEME | BRIGHT, GAMMA, ACCENT (AMBER, focused), BLACK |
 | ![](settings_system_os.png) | SYSTEM › OS | Updates: no controls yet |
-| ![](settings_system_about.png) | SYSTEM › ABOUT | About: no content yet |
-| ![](settings_system_about_audio.png) | ABOUT › AUD | Audio load, peak, overruns, drops, desyncs, stack |
+| ![](settings_system_about.png) | SYSTEM › ABOUT | Version, build, chip REV, clock, reset cause, the card |
+| ![](settings_system_diag_aud_load.png) | DIAG › AUD LOAD | Audio load, peak, overruns, drops, desyncs, stack |
 
-## DEMO (SETTINGS › SYSTEM › DEMO, debug builds)
+## DEMO (SETTINGS › SYSTEM › DIAGNOSTICS › DEMO, debug builds)
+
+A leaf per page, its row named by the page's short name.
 
 The UI component storyboard.
 
 | Screen | Where | What it shows |
 |---|---|---|
-| ![](settings_system_demo_wav.png) | WAV | Wave icons |
-| ![](settings_system_demo_shp.png) | SHP | Shape icons |
-| ![](settings_system_demo_mot.png) | MOT | Motion icons |
-| ![](settings_system_demo_fm.png) | FM | FM icons |
-| ![](settings_system_demo_mtx.png) | MTX | A matrix |
-| ![](settings_system_demo_arc.png) | ARC | Glyph: ARC; a drives it unipolar, b bipolar |
-| ![](settings_system_demo_none.png) | NONE | Glyph: NONE; a steps MODEL, its word has the whole band |
-| ![](settings_system_demo_sw.png) | SW | Glyph: SWITCH; a flips LFO 1's SYNC, FREE / RETRIG |
-| ![](settings_system_demo_lvl.png) | LVL | Glyph: LEVEL BAR; a drives VOLUME (8 ticks), b operator A's FDBK (a tick per step) |
-| ![](settings_system_demo_xf.png) | XF | Glyph: CROSSFADER; a slides ALG A to B (MORPH), b dry to wet (DRV MIX); set values only |
-| ![](settings_system_demo_brd.png) | BRD | Glyph: chorus BRAID; a MODE (strands), b RATE (twist speed), c DEPTH (swing), d MIX (strand weight); animated on the UI clock |
-| ![](settings_system_demo_rng.png) | RNG | Glyph: delay RINGS; a TIME (spacing), b FDBK (survivors), c TONE (crisp or blurred), d MIX (ring weight), e MECHANICS (wobble), f SAT (the newest ring's weight); REV dots the edge |
-| ![](settings_system_demo_cub.png) | CUB | Glyph: reverb CUBE; a SIZE (the room), b TIME (afterimage trails), c DAMP (far edges dim, then dot), d MIX (edge weight), e GRIT (crackle) |
+| ![](settings_system_diag_demo_wav.png) | WAV | Wave icons |
+| ![](settings_system_diag_demo_shp.png) | SHP | Shape icons |
+| ![](settings_system_diag_demo_mot.png) | MOT | Motion icons |
+| ![](settings_system_diag_demo_fm.png) | FM | FM icons |
+| ![](settings_system_diag_demo_mtx.png) | MTX | A matrix |
+| ![](settings_system_diag_demo_arc.png) | ARC | Glyph: ARC; a drives it unipolar, b bipolar |
+| ![](settings_system_diag_demo_none.png) | NONE | Glyph: NONE; a steps MODEL, its word has the whole band |
+| ![](settings_system_diag_demo_sw.png) | SW | Glyph: SWITCH; a flips LFO 1's SYNC, FREE / RETRIG |
+| ![](settings_system_diag_demo_lvl.png) | LVL | Glyph: LEVEL BAR; a drives VOLUME (8 ticks), b operator A's FDBK (a tick per step) |
+| ![](settings_system_diag_demo_xf.png) | XF | Glyph: CROSSFADER; a slides ALG A to B (MORPH), b dry to wet (DRV MIX); set values only |
+| ![](settings_system_diag_demo_brd.png) | BRD | Glyph: chorus BRAID; a MODE (strands), b RATE (twist speed), c DEPTH (swing), d MIX (strand weight); animated on the UI clock |
+| ![](settings_system_diag_demo_rng.png) | RNG | Glyph: delay RINGS; a TIME (spacing), b FDBK (survivors), c TONE (crisp or blurred), d MIX (ring weight), e MECHANICS (wobble), f SAT (the newest ring's weight); REV dots the edge |
+| ![](settings_system_diag_demo_cub.png) | CUB | Glyph: reverb CUBE; a SIZE (the room), b TIME (afterimage trails), c DAMP (far edges dim, then dot), d MIX (edge weight), e GRIT (crackle) |
