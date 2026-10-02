@@ -26,7 +26,6 @@ use crate::ui::hold::Presses;
 use crate::ui::region::settings_key;
 use job::{Then, ThenClear};
 use listing::Chosen;
-use manage::Whose;
 use naming::{NAME_MAX, Naming, NamingOut};
 use prompt::{
     Answer, CardChanged, CardChangedAnswer, Choice, Clear, ClearAnswer, Delete, DeleteAnswer, Load,
@@ -71,7 +70,7 @@ pub(crate) enum Ask {
     /// MANAGE's DELETE.
     Delete(Chosen, Choice<DeleteAnswer>),
     /// MANAGE's CLEAR, of the loaded project's own file or another's.
-    Clear(Chosen, Whose, Choice<ClearAnswer>),
+    Clear(Chosen, Choice<ClearAnswer>),
     /// MANAGE's SAVE TO.
     SaveOver(Chosen, Choice<SaveOverAnswer>),
 }
@@ -95,7 +94,7 @@ pub(crate) enum Answered {
     NameExists(SaveAs, ProjectEntry, Answer<NameExistsAnswer>),
     CardChanged(Then, Answer<CardChangedAnswer>),
     Delete(Chosen, Answer<DeleteAnswer>),
-    Clear(Chosen, Whose, Answer<ClearAnswer>),
+    Clear(Chosen, Answer<ClearAnswer>),
     SaveOver(Chosen, Answer<SaveOverAnswer>),
 }
 
@@ -148,7 +147,7 @@ impl Ask {
             ),
             Ask::CardChanged(_, c) => with_view(&CardChanged, c, f),
             Ask::Delete(e, c) => with_view(&Delete { name: subject(e) }, c, f),
-            Ask::Clear(e, _, c) => with_view(&Clear { name: subject(e) }, c, f),
+            Ask::Clear(e, c) => with_view(&Clear { name: subject(e) }, c, f),
             Ask::SaveOver(e, c) => with_view(&SaveOver { name: subject(e) }, c, f),
         }
     }
@@ -220,9 +219,9 @@ impl Ask {
                 Some(a) => Got(Answered::Delete(e, a)),
                 None => Open(Ask::Delete(e, choice)),
             },
-            Ask::Clear(e, w, mut choice) => match choice.input(c, p) {
-                Some(a) => Got(Answered::Clear(e, w, a)),
-                None => Open(Ask::Clear(e, w, choice)),
+            Ask::Clear(e, mut choice) => match choice.input(c, p) {
+                Some(a) => Got(Answered::Clear(e, a)),
+                None => Open(Ask::Clear(e, choice)),
             },
             Ask::SaveOver(e, mut choice) => match choice.input(c, p) {
                 Some(a) => Got(Answered::SaveOver(e, a)),

@@ -1189,7 +1189,7 @@ git commit -m "SETTINGS loads, saves as and quick-saves projects; a card swap of
   - `delete_another_after_confirm`: it is gone after DELETE; CANCEL keeps it.
   - `delete_the_project_system_names_clears_last_project`.
   - `save_to_overwrites_after_confirm`.
-  - `clear_other_and_clear_own`: the other loads as NEW. Clearing your own leaves RAM NEW, saved over its own file, and `Saved`.
+  - `clear_other_and_clear_own`: the other loads as NEW. Clearing your own leaves RAM NEW, saved over its own file: `file` is its own and `saved_crc` is NEW's. Its status reads `Pristine`, since NEW's content outranks Saved (`status_at`).
   - `rename_loaded_marks_modified`.
   - `menu_from_commands_returns_to_the_list`.
 - [ ] **Step 2: Run** `cargo test -p chimera-core --features chimera-hal/testkit --test settings_manage_test` → FAIL.

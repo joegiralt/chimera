@@ -1020,14 +1020,18 @@ impl UiState {
                         self.queue(load_job(p.anyway(&self.project), clear))
                     }
                     Answer::Pick(L::SaveThenLoad) => {
+                        // Clearing its own file: the edits go to a new one,
+                        // so the file the clear confirmed is untouched.
+                        let own = self.project.meta().file().is_some() && clear.is_none();
                         let then = Some(LoadAfter {
                             pending: p,
                             to,
                             clear,
                         });
-                        self.queue(match self.project.meta().file() {
-                            Some(_) => Job::QuickSave(then),
-                            None => Job::Fresh(then),
+                        self.queue(if own {
+                            Job::QuickSave(then)
+                        } else {
+                            Job::Fresh(then)
                         })
                     }
                     Answer::Pick(L::Cancel) | Answer::Cancel => {}
@@ -1061,9 +1065,9 @@ impl UiState {
                 let name = self.project.meta().name();
                 self.queue(Job::Save(SaveTo::Over(over), name, None))
             }
-            Done::Answered(Answered::Clear(c, w, Answer::Pick(prompt::ClearAnswer::Clear))) => {
+            Done::Answered(Answered::Clear(c, Answer::Pick(prompt::ClearAnswer::Clear))) => {
                 let over = Confirmed::<project::OverwriteTarget>::answered(c.entry());
-                match w {
+                match Whose::of(c.entry(), self.project.meta().file()) {
                     Whose::Other => self.queue(Job::Clear(over)),
                     Whose::Loaded => self.guarded_load(ProjectSource::New, None, Some(over)),
                 }
@@ -1157,13 +1161,15 @@ impl UiState {
                     self.name(at, NamingFor::RenameLoaded, n.as_str());
                 }
             }
-            Ok(Run::Clear(w)) => self.ask(Ask::Clear(c, w, prompt::Choice::new())),
+            Ok(Run::Clear) => self.ask(Ask::Clear(c, prompt::Choice::new())),
             Ok(Run::Delete) => self.ask(Ask::Delete(c, prompt::Choice::new())),
             Err(_) => {}
         }
     }
 
     /// MANAGE's command `c` as drawn for the project under the bar.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
     pub fn manage_command_row(&self, c: Command) -> Option<settings::view::ListRow<'static>> {
         let s = self.loc.settings()?;
         s.column()?;

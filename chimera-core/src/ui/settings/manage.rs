@@ -79,7 +79,7 @@ pub enum Run {
     RenameLoaded,
     /// CLEAR, then its own: a guarded NEW saved over its file; another:
     /// `Job::Clear`.
-    Clear(Whose),
+    Clear,
     /// DELETE, then `Job::Delete`.
     Delete,
 }
@@ -115,7 +115,7 @@ impl Command {
             (C::SaveTo, _) => Ok(Run::SaveOver),
             (C::Rename, Whose::Loaded) => Ok(Run::RenameLoaded),
             (C::Rename, Whose::Other) => Err(Off::Dimmed(Some(Note::LoadToRename))),
-            (C::Clear, w) => Ok(Run::Clear(w)),
+            (C::Clear, _) => Ok(Run::Clear),
             (C::Delete, Whose::Loaded) => Err(Off::Dimmed(None)),
             (C::Delete, Whose::Other) => Ok(Run::Delete),
             (C::Protect, _) => Err(Off::Later(PROTECT_ISSUE)),

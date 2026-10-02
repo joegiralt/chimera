@@ -48,6 +48,8 @@ struct Col {
     right: i32,
     scroll: i32,
     font: &'static FontRenderer,
+    /// No glyph is wider, tracking included.
+    max_glyph: i32,
     /// A note goes beneath the label, not beside it.
     note_below: bool,
 }
@@ -60,6 +62,7 @@ const FULL: Col = Col {
     right: theme::LIST_RIGHT,
     scroll: theme::SCROLL_X,
     font: &theme::FONT_VALUE,
+    max_glyph: 15,
     note_below: false,
 };
 /// MANAGE's projects, x 0–140.
@@ -69,6 +72,7 @@ const MANAGE_LIST: Col = Col {
     right: 130,
     scroll: 137,
     font: &theme::FONT_LABEL_BOLD,
+    max_glyph: 12,
     ..FULL
 };
 /// MANAGE's commands, x 144–240.
@@ -78,6 +82,7 @@ const MANAGE_CMDS: Col = Col {
     text: 152,
     right: theme::SCROLL_X - 2,
     font: &theme::FONT_LABEL_BOLD,
+    max_glyph: 12,
     note_below: true,
     ..FULL
 };
@@ -388,7 +393,7 @@ fn draw_row<D: DrawTarget<Color = Rgb565>>(d: &mut D, c: &Col, r: &ListRow<'_>, 
         Some(n) if !below => draw::text_width(&theme::FONT_LABEL, n, theme::LABEL_TRACKING) + 4,
         _ => 0,
     };
-    let shown = fit(c.font, r.label, c.right - c.text - beside, t);
+    let shown = fit(c, r.label, c.right - c.text - beside);
     if t == 0 {
         draw::text(d, c.font, shown, c.text, base, label);
     } else {
@@ -425,10 +430,13 @@ impl Col {
     }
 }
 
-/// `s` cut to `w` px at a character.
-fn fit<'s>(font: &FontRenderer, s: &'s str, w: i32, tracking: i32) -> &'s str {
+/// `s` cut to `w` px at a character; short enough, it isn't measured.
+fn fit<'s>(c: &Col, s: &'s str, w: i32) -> &'s str {
+    if s.len() as i32 * c.max_glyph <= w {
+        return s;
+    }
     let mut end = s.len();
-    while end > 0 && draw::text_width(font, &s[..end], tracking) > w {
+    while end > 0 && draw::text_width(c.font, &s[..end], c.tracking()) > w {
         end -= 1;
         while !s.is_char_boundary(end) {
             end -= 1;
@@ -777,5 +785,23 @@ impl Bands<'_> {
                 legend: self.legend(),
             },
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `fit` skips measuring on `max_glyph`: no glyph is wider.
+    #[test]
+    fn max_glyph_bounds_every_glyph() {
+        for c in [FULL, MANAGE_LIST, MANAGE_CMDS] {
+            for b in 32u8..127 {
+                let s = [b];
+                let ch = core::str::from_utf8(&s).unwrap();
+                let w = draw::text_width(c.font, ch, c.tracking());
+                assert!(w <= c.max_glyph, "{ch:?}: {w} px");
+            }
+        }
     }
 }

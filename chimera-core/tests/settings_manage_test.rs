@@ -3,7 +3,9 @@
 
 mod screen;
 
+use chimera_core::block::Block;
 use chimera_core::name::ProjectName;
+use chimera_core::part::PartParams;
 use chimera_core::project::{
     LoadLink, Project, ProjectEntry, ProjectFile, ProjectNote, ProjectSource, ProjectStatus,
     ReplaceGuard, SaveTo, list_projects, load_project, new_project_id, project_crc, save_project,
@@ -389,4 +391,77 @@ fn every_command_fits_its_column() {
             }
         }
     }
+}
+
+#[test]
+fn clear_own_when_saved() {
+    let (mut r, a, _) = two();
+    assert_eq!(r.ui.project_status(), ProjectStatus::Saved);
+    let fresh = project_crc(&Project::boxed().0);
+    r.tap(ButtonId::Menu);
+    r.command(a, Command::Clear);
+    r.tap(ButtonId::Seq);
+    assert_eq!(r.question(), "CLEAR ALPHA?");
+    r.tap(ButtonId::Seq);
+    // Saved: no load prompt.
+    assert!(!r.ui.prompt_open());
+    assert_eq!(project_crc(&read_back(&mut r.s, a)), fresh);
+    assert_eq!(listed(&mut r.s)[0].name, Some(name("NEW PROJECT")));
+    assert_eq!(r.ui.project().meta().file(), Some(a));
+}
+
+#[test]
+fn clear_own_save_then_load_keeps_the_edits_elsewhere() {
+    let (mut r, a, b) = two();
+    let fresh = project_crc(&Project::boxed().0);
+    let p1 = chimera_core::project::PartId::ALL[0];
+    let level = |p: &Project| p.part(p1).mix.get(PartParams::LEVEL);
+    r.ui.project_mut()
+        .edit_part(p1)
+        .mix
+        .set(PartParams::LEVEL, 0.25);
+    r.ui.update();
+    assert_eq!(r.ui.project_status(), ProjectStatus::Modified);
+    let edited = level(r.ui.project());
+    r.tap(ButtonId::Menu);
+    r.command(a, Command::Clear);
+    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Seq);
+    assert_eq!(r.question(), "START A NEW PROJECT?");
+    // SAVE THEN LOAD: SAVE AS, never over the file being cleared.
+    r.tap(ButtonId::Seq);
+    assert_eq!(r.ui.naming().unwrap().text(), "PULSE-003");
+    r.tap(ButtonId::Seq);
+    assert!(r.ui.naming().is_none() && !r.ui.prompt_open());
+
+    let all = listed(&mut r.s);
+    assert_eq!(all.len(), 3);
+    let c = all[2].file();
+    assert_eq!(all[2].name, Some(name("PULSE-003")));
+    assert_eq!(level(&read_back(&mut r.s, c)), edited);
+    assert_ne!(level(&read_back(&mut r.s, a)), edited);
+    assert_eq!(project_crc(&read_back(&mut r.s, a)), fresh);
+    assert_eq!(all[0].name, Some(name("NEW PROJECT")));
+    assert_eq!(all[1].file(), b);
+    assert_eq!(project_crc(r.ui.project()), fresh);
+    assert_eq!(r.ui.project().meta().file(), Some(a));
+}
+
+#[test]
+fn manage_never_sits_empty() {
+    let mut s = MemStore::new(1);
+    let a = put(&mut s, "ALPHA");
+    // NEW, no file: the only one on the card can go.
+    let mut r = Rig::new(s);
+    assert_eq!(r.ui.project().meta().file(), None);
+    r.open_manage();
+    r.command(a, Command::Delete);
+    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Seq);
+    assert!(r.files().is_empty());
+    let m = screen_path(Screen::ManageProjects);
+    assert_eq!(
+        r.ui.location(),
+        Location::settings_at(&m[..m.len() - 1], m[m.len() - 1])
+    );
 }
