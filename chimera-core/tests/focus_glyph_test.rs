@@ -16,7 +16,9 @@ use chimera_core::ui::UiState;
 use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_def::{BlockDef, slot_addr};
 use chimera_core::ui::block_registry as reg;
-use chimera_core::ui::glyph::{Braid, CompositeId, FocusGlyph, Gauge, Rings, anim_key};
+use chimera_core::ui::glyph::{
+    Accidental, Braid, CompositeId, FocusGlyph, Gauge, Rings, StaffNote, anim_key,
+};
 use chimera_core::ui::page::{PageId, PageKey, PageLayout};
 use chimera_core::ui::region::{RegionData, RegionKind};
 use chimera_core::ui::view::{SlotCtx, View, view};
@@ -54,6 +56,8 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Lfo", "TYPE", NONE),
     ("Lfo", "FORM", NONE),
     ("Lfo", "SHAPE", NONE),
+    // Semitones: a note on the staff.
+    ("Algo", "TRNSP", FocusGlyph::Staff),
     // Two states, one of them off: a toggle.
     ("Lfo", "SYNC", SWITCH),
     // Set-and-leave levels, 0 to max: a fader.
@@ -263,7 +267,11 @@ fn glyph_is_hand_assigned_on_the_spec() {
 
 #[test]
 fn each_glyph_maps_to_its_gauge() {
-    for g in FocusGlyph::ALL {
+    // STAFF reads semitones: `staff_eases_between_semitones`.
+    for g in FocusGlyph::ALL
+        .into_iter()
+        .filter(|&g| g != FocusGlyph::Staff)
+    {
         let want = match g {
             FocusGlyph::None => Gauge::None,
             FocusGlyph::Switch => Gauge::Switch { on: 0.25 },
@@ -288,6 +296,55 @@ fn each_glyph_maps_to_its_gauge() {
         };
         assert_eq!(g.gauge(0.25, ValFmt::Bi, composite), want, "{g:?}");
     }
+}
+
+/// Semitones to staff steps, spelled in C major: sharps up, flats down,
+/// an octave 7 steps, wrapping past it.
+#[test]
+fn staff_note_spells_semitones_in_c_major() {
+    use Accidental::{Flat, Natural, Sharp};
+    for (semis, step, accidental) in [
+        (0, 0, Natural),
+        (1, 0, Sharp),
+        (-1, -1, Natural),
+        (2, 1, Natural),
+        (-2, -1, Flat),
+        (5, 3, Natural),
+        (-5, -3, Natural),
+        (6, 3, Sharp),
+        (-6, -3, Flat),
+        (7, 4, Natural),
+        (-7, -4, Natural),
+        (12, 7, Natural),
+        (-12, -7, Natural),
+        (13, 0, Sharp),
+        (-13, -1, Natural),
+        (19, 4, Natural),
+        (-19, -4, Natural),
+        (24, 7, Natural),
+        (-24, -7, Natural),
+    ] {
+        assert_eq!(
+            StaffNote::of(semis),
+            StaffNote { step, accidental },
+            "{semis}"
+        );
+    }
+}
+
+/// The notehead slides between semitones as the value eases; the
+/// accidental is the nearest semitone's.
+#[test]
+fn staff_eases_between_semitones() {
+    let fmt = ValFmt::Signed(24);
+    let at = |semis: f32| FocusGlyph::Staff.gauge((semis + 24.0) / 48.0, fmt, |_| Gauge::None);
+    let staff = |step, accidental| Gauge::Staff { step, accidental };
+    assert_eq!(at(0.0), staff(0.0, Accidental::Natural));
+    assert_eq!(at(6.0), staff(3.0, Accidental::Sharp));
+    assert_eq!(at(-6.0), staff(-3.0, Accidental::Flat));
+    assert_eq!(at(12.0), staff(7.0, Accidental::Natural));
+    assert_eq!(at(1.5), staff(0.5, Accidental::Natural));
+    assert!(!at(3.0).animates());
 }
 
 /// A level bar's ticks: one per step for a few steps, else 8.
@@ -602,6 +659,47 @@ fn cap_x(v: f32) -> i32 {
 
 fn to_xf(ui: &mut UiState) {
     to_demo(ui, &reg::DEMO_GLYPH_XF);
+}
+
+/// GLYPH: STAFF. the notehead sits on the middle line at 0, a step
+/// (half a gap) a whole tone, an octave 7 steps up; the number carries
+/// the value. `SCREEN_DUMP` writes each as `glyph_staff_<semis>`.
+#[test]
+fn glyph_staff_page_moves_the_note() {
+    use chimera_core::dsp::algo::params::AlgoParams;
+    let mut ui = UiState::new();
+    to_demo(&mut ui, &reg::DEMO_GLYPH_STAFF);
+    let trnsp = ParamAddr::new(BlockRef::Algo, AlgoParams::TRANSPOSE);
+    let ctx = SlotCtx::read(ui.params(), ui.selected_op());
+    assert_eq!(view(ui.page_def(), 0, &ctx).addr(), Some(trnsp));
+    let note_y = |step: i32| theme::ARC_CY - step * theme::STAFF_GAP / 2;
+    for (semis, step) in [
+        (0i8, 0),
+        (1, 0),
+        (-1, -1),
+        (-2, -1),
+        (6, 3),
+        (7, 4),
+        (12, 7),
+        (-12, -7),
+        (19, 4),
+    ] {
+        feed(&mut ui, Input::turn(EncoderId::A, -127));
+        feed(&mut ui, Input::turn(EncoderId::A, 24 + semis));
+        settle(&mut ui);
+        assert_eq!(ui.params().algo.transpose, semis, "{semis}");
+        let fb = render_ui(&ui);
+        fb.dump(&format!("glyph_staff_{semis}"));
+        assert_eq!(fb.oob, 0);
+        assert_eq!(arc_top(&fb), theme::BG, "no arc");
+        let y = note_y(step);
+        assert_eq!(fb.at(theme::STAFF_NOTE_X, y), theme::ACCENT, "{semis}");
+        // The notehead alone at its height: none an octave away.
+        let other = note_y(if step > 0 { step - 7 } else { step + 7 });
+        if step != 0 {
+            assert_ne!(fb.at(theme::STAFF_NOTE_X, other), theme::ACCENT, "{semis}");
+        }
+    }
 }
 
 #[test]

@@ -21,6 +21,8 @@ pub enum FocusGlyph {
     LevelBar,
     /// Horizontal crossfader.
     Crossfader,
+    /// A note on a three-line staff, by semitones (`StaffNote`).
+    Staff,
     /// One animated glyph for all of an effect's params (`CompositeId::
     /// params`: the braid's 4, the rings' 7, the cube's 5), drawn from
     /// their set values, never the modulated ones.
@@ -65,12 +67,70 @@ pub enum Gauge {
     /// A horizontal crossfader, `value` 0 left .. 1 right, from the set
     /// value, never the modulated one.
     Crossfader { value: f32 },
+    /// A notehead `step` diatonic steps above the staff's middle line
+    /// (fractional while it eases), with its `accidental`.
+    Staff { step: f32, accidental: Accidental },
     /// The chorus braid (`CompositeId::ChorusBraid`).
     Braid(Braid),
     /// The delay's rings (`CompositeId::DelayRings`).
     Rings(Rings),
     /// The reverb's cube (`CompositeId::ReverbCube`).
     Cube(Cube),
+}
+
+/// A staff note's accidental.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Accidental {
+    Natural,
+    Sharp,
+    Flat,
+}
+
+/// A transposition on the staff: diatonic steps from the middle line
+/// (C), spelled in C major, sharps going up and flats going down.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StaffNote {
+    pub step: i8,
+    pub accidental: Accidental,
+}
+
+impl StaffNote {
+    /// `semis` on the staff: ±12 is an octave (±7 steps); past it the note
+    /// wraps within the octave and the readout carries the rest.
+    pub const fn of(semis: i8) -> Self {
+        // Steps above C for each pitch class, sharp-spelled and flat-spelled.
+        const UP: [i8; 12] = [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6];
+        const DOWN: [i8; 12] = [0, 1, 1, 2, 2, 3, 4, 4, 5, 5, 6, 6];
+        const BLACK: u16 = 0b0101_0100_1010;
+        let mag = semis.unsigned_abs();
+        let r = (if mag > 12 { (mag - 1) % 12 + 1 } else { mag }) as usize;
+        let (step, pc, inbetween) = if semis >= 0 {
+            let pc = r % 12;
+            (UP[pc] + 7 * (r / 12) as i8, pc, Accidental::Sharp)
+        } else {
+            let pc = 12 - r;
+            (DOWN[pc] - 7, pc, Accidental::Flat)
+        };
+        let accidental = if BLACK >> pc & 1 == 1 {
+            inbetween
+        } else {
+            Accidental::Natural
+        };
+        Self { step, accidental }
+    }
+}
+
+/// The staff gauge at `semis`, eased: the notehead slides between the
+/// whole semitones either side; the accidental is the nearest one's.
+fn staff(semis: f32) -> Gauge {
+    let semis = semis.clamp(-127.0, 126.0);
+    let lo = libm::floorf(semis);
+    let (a, b) = (StaffNote::of(lo as i8), StaffNote::of(lo as i8 + 1));
+    let t = semis - lo;
+    Gauge::Staff {
+        step: a.step as f32 + (b.step - a.step) as f32 * t,
+        accidental: StaffNote::of(libm::roundf(semis) as i8).accidental,
+    }
 }
 
 /// The reverb params the cube reads, in `Cube::from_set`'s order.
@@ -370,12 +430,13 @@ impl Braid {
 }
 
 impl FocusGlyph {
-    pub const ALL: [FocusGlyph; 8] = [
+    pub const ALL: [FocusGlyph; 9] = [
         FocusGlyph::Arc,
         FocusGlyph::None,
         FocusGlyph::Switch,
         FocusGlyph::LevelBar,
         FocusGlyph::Crossfader,
+        FocusGlyph::Staff,
         FocusGlyph::Composite(CompositeId::ReverbCube),
         FocusGlyph::Composite(CompositeId::DelayRings),
         FocusGlyph::Composite(CompositeId::ChorusBraid),
@@ -390,9 +451,10 @@ impl FocusGlyph {
             FocusGlyph::Switch => 2,
             FocusGlyph::LevelBar => 3,
             FocusGlyph::Crossfader => 4,
-            FocusGlyph::Composite(CompositeId::ReverbCube) => 5,
-            FocusGlyph::Composite(CompositeId::DelayRings) => 6,
-            FocusGlyph::Composite(CompositeId::ChorusBraid) => 7,
+            FocusGlyph::Staff => 5,
+            FocusGlyph::Composite(CompositeId::ReverbCube) => 6,
+            FocusGlyph::Composite(CompositeId::DelayRings) => 7,
+            FocusGlyph::Composite(CompositeId::ChorusBraid) => 8,
         }
     }
 
@@ -414,6 +476,10 @@ impl FocusGlyph {
                 ticks: level_ticks(fmt),
             },
             FocusGlyph::Crossfader => Gauge::Crossfader { value },
+            FocusGlyph::Staff => {
+                let n = fmt.max_int() as f32 / 2.0;
+                staff(value * 2.0 * n - n)
+            }
             FocusGlyph::Composite(CompositeId::ChorusBraid) => composite(CompositeId::ChorusBraid),
             FocusGlyph::Composite(CompositeId::DelayRings) => composite(CompositeId::DelayRings),
             FocusGlyph::Composite(CompositeId::ReverbCube) => composite(CompositeId::ReverbCube),
@@ -438,7 +504,8 @@ impl Gauge {
             | Gauge::None
             | Gauge::Switch { .. }
             | Gauge::LevelBar { .. }
-            | Gauge::Crossfader { .. } => false,
+            | Gauge::Crossfader { .. }
+            | Gauge::Staff { .. } => false,
             Gauge::Braid(_) | Gauge::Rings(_) | Gauge::Cube(_) => true,
         }
     }

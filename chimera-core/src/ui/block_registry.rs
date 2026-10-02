@@ -871,8 +871,25 @@ pub static DEMO_GLYPH_CUBE: BlockDef = BlockDef {
     ],
 };
 
+/// GLYPH: STAFF. a: TRANSPOSE, a note on the staff by semitones.
+pub static DEMO_GLYPH_STAFF: BlockDef = BlockDef {
+    id: 78,
+    name: "Glyph: Staff",
+    short: "STF",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Algo, AlgoParams::TRANSPOSE),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
 /// The DEMO pages, one SETTINGS leaf each (`leaves::DEMO_LEAVES`).
-pub static DEMO_BLOCKS: [ChainBlock; 13] = [
+pub static DEMO_BLOCKS: [ChainBlock; 14] = [
     ChainBlock::page(&DEMO_WAVES),
     ChainBlock::page(&DEMO_SHAPES),
     ChainBlock::page(&DEMO_MOTION),
@@ -883,6 +900,7 @@ pub static DEMO_BLOCKS: [ChainBlock; 13] = [
     ChainBlock::page(&DEMO_GLYPH_SWITCH),
     ChainBlock::page(&DEMO_GLYPH_LEVEL),
     ChainBlock::page(&DEMO_GLYPH_XF),
+    ChainBlock::page(&DEMO_GLYPH_STAFF),
     ChainBlock::page(&DEMO_GLYPH_BRAID),
     ChainBlock::page(&DEMO_GLYPH_RINGS),
     ChainBlock::page(&DEMO_GLYPH_CUBE),

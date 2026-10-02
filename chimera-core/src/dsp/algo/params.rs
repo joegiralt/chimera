@@ -248,7 +248,9 @@ pub static ALGO_SPECS: [ParamSpec; 4] = [
         .ident("MORPH")
         .glyph(crate::ui::glyph::FocusGlyph::Crossfader)
         .short("MRPH"),
-    ParamSpec::stepped(3, "TRNSP", ValFmt::Signed(24), -24.0, 24.0, 0.0, false).ident("TRNSP"),
+    ParamSpec::stepped(3, "TRNSP", ValFmt::Signed(24), -24.0, 24.0, 0.0, false)
+        .ident("TRNSP")
+        .glyph(crate::ui::glyph::FocusGlyph::Staff),
 ];
 
 const _: () = assert!(ALGO_SPECS[0].max as usize == ALGO_COUNT - 1);

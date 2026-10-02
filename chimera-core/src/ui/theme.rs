@@ -93,6 +93,13 @@ pub const XF_CX: i32 = SCREEN_W - MARGIN_X - XF_W / 2;
 pub const XF_TRACK_H: i32 = 6;
 pub const XF_CAP_W: i32 = 10;
 pub const XF_CAP_H: i32 = 26;
+/// The STAFF glyph: three lines on the arc's centre line, flush with the
+/// right margin, `STAFF_GAP` apart (a notehead's height); the note sits
+/// at `STAFF_NOTE_X`, half a gap a step, its accidental to the left.
+pub const STAFF_W: i32 = 60;
+pub const STAFF_X: i32 = SCREEN_W - MARGIN_X - STAFF_W;
+pub const STAFF_GAP: i32 = 8;
+pub const STAFF_NOTE_X: i32 = STAFF_X + STAFF_W / 2 + 8;
 /// The chorus braid's box, flush with the right margin, as tall as the
 /// arc: the only pixels it redraws each frame.
 pub const BRAID_W: i32 = 80;

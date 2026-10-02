@@ -7,7 +7,8 @@ use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::{AngleUnit, Point, Size};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::primitives::{
-    Arc, Circle, CornerRadii, Line, PrimitiveStyle, Rectangle, RoundedRectangle, StyledDrawable,
+    Arc, Circle, CornerRadii, Ellipse, Line, PrimitiveStyle, Rectangle, RoundedRectangle,
+    StyledDrawable,
 };
 use u8g2_fonts::FontRenderer;
 use u8g2_fonts::types::{FontColor, VerticalPosition};
@@ -176,6 +177,15 @@ where
         return;
     }
     let _ = Circle::with_center(Point::new(cx, cy), (2 * r + 1) as u32)
+        .draw_styled(&PrimitiveStyle::with_fill(color), d);
+}
+
+/// Filled ellipse `w` by `h` (odd, to centre) centred on (cx, cy).
+pub fn oval<D>(d: &mut D, cx: i32, cy: i32, w: u32, h: u32, color: Rgb565)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let _ = Ellipse::with_center(Point::new(cx, cy), Size::new(w, h))
         .draw_styled(&PrimitiveStyle::with_fill(color), d);
 }
 

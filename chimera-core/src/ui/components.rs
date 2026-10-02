@@ -13,7 +13,7 @@ use crate::ui::PrimeStatus;
 use crate::ui::block_def::{BlockDef, SlotBinding};
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
-use crate::ui::glyph::{Braid, BraidPart, Cube, CubePart, Gauge, Rings, RingsPart};
+use crate::ui::glyph::{Accidental, Braid, BraidPart, Cube, CubePart, Gauge, Rings, RingsPart};
 use crate::ui::theme;
 
 /// `s` in upper case (names are stored mixed case: "Filter", "4opFM").
@@ -359,7 +359,8 @@ pub fn gauge_rect(gauge: &Gauge) -> Option<(i32, i32, i32, i32)> {
         | Gauge::None
         | Gauge::Switch { .. }
         | Gauge::LevelBar { .. }
-        | Gauge::Crossfader { .. } => None,
+        | Gauge::Crossfader { .. }
+        | Gauge::Staff { .. } => None,
     }
 }
 
@@ -376,6 +377,7 @@ where
         Gauge::Switch { on } => switch(d, on),
         Gauge::LevelBar { value, ticks } => level_bar(d, value, ticks),
         Gauge::Crossfader { value } => crossfader(d, value),
+        Gauge::Staff { step, accidental } => staff(d, step, accidental),
         Gauge::Arc { value, bipolar } => draw::arc_gauge(
             d,
             theme::ARC_CX,
@@ -458,6 +460,51 @@ where
         theme::ACCENT,
     );
     draw::fill_rect(d, cx - cap_w / 2 + 2, cy - 1, cap_w - 4, 2, theme::BG);
+}
+
+/// The STAFF glyph at the band's right: three MID lines and an accent
+/// notehead `step` diatonic steps above the middle one, MID ledger lines
+/// past the staff, and its accidental in the accent to the left.
+fn staff<D>(d: &mut D, step: f32, accidental: Accidental)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let (cy, gap, nx) = (theme::ARC_CY, theme::STAFF_GAP, theme::STAFF_NOTE_X);
+    for k in -1..=1 {
+        draw::fill_rect(
+            d,
+            theme::STAFF_X,
+            cy + k * gap,
+            theme::STAFF_W,
+            1,
+            theme::MID,
+        );
+    }
+    let y = cy - libm::roundf(step * (gap / 2) as f32) as i32;
+    let reach = libm::roundf(libm::fabsf(step)) as i32;
+    let side = if step < 0.0 { -1 } else { 1 };
+    for s in (4..=reach).step_by(2) {
+        draw::fill_rect(d, nx - 10, cy - side * s * gap / 2, 21, 1, theme::MID);
+    }
+    draw::oval(d, nx, y, 13, gap as u32 + 1, theme::ACCENT);
+    let (ax, c) = (nx - 16, theme::ACCENT);
+    match accidental {
+        Accidental::Natural => {}
+        Accidental::Sharp => {
+            draw::fill_rect(d, ax - 2, y - 7, 1, 15, c);
+            draw::fill_rect(d, ax + 2, y - 7, 1, 15, c);
+            draw::fill_rect(d, ax - 5, y - 3, 11, 2, c);
+            draw::fill_rect(d, ax - 5, y + 2, 11, 2, c);
+        }
+        Accidental::Flat => {
+            draw::fill_rect(d, ax - 2, y - 12, 2, 16, c);
+            draw::line(d, ax - 1, y - 2, ax + 2, y - 4, c, 1);
+            draw::line(d, ax + 2, y - 4, ax + 4, y - 4, c, 1);
+            draw::line(d, ax + 5, y - 3, ax + 5, y - 2, c, 1);
+            draw::line(d, ax + 4, y - 1, ax, y + 3, c, 1);
+            draw::line(d, ax + 4, y - 2, ax, y + 2, c, 1);
+        }
+    }
 }
 
 /// The chorus braid in its box: a dry centre line, and `strands` strands
