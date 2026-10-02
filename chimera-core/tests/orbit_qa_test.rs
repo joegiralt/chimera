@@ -10,6 +10,7 @@
 mod common;
 
 use std::fmt::Write as _;
+use std::sync::OnceLock;
 
 use chimera_core::addr::BlockRef;
 use chimera_core::block::{ParamId, ParamSpec};
@@ -19,10 +20,12 @@ use chimera_core::orbit::RingIdx;
 use chimera_core::orbit::clock::Bpm;
 use chimera_core::orbit::euclid::{Fill, Steps};
 use chimera_core::orbit::rng::Pct;
-use chimera_core::orbit::scene::SceneRing;
+use chimera_core::orbit::scene::{Scene, SceneRing};
+use chimera_core::part::DacPair;
 use chimera_core::part::PartParams;
-use common::orbit::{OrbitRig, Report, orbit_block, report, secs, write_wav};
-use common::sweep::{BPS, Bench, Patch, SILENT_RMS, Tape, level};
+use chimera_core::project::PartId;
+use common::orbit::{Mark, OrbitRig, Report, STEADY, orbit_block, report, secs, write_wav};
+use common::sweep::{BPS, Bench, Patch, SILENT_RMS, Tape, level, steady_windows};
 
 /// Loops of the init scene (one bar each at 120 BPM: 1,500 blocks).
 const LOOP: usize = 1500;
@@ -36,8 +39,14 @@ fn assert_clean(name: &str, r: &Report) {
     assert!(f.is_empty(), "{name}:\n{}", f.join("\n"));
 }
 
-/// Blocks from a released note until its voice is free, the longest of
-/// INIT Algo's single note and chord.
+/// How long after STOP every voice must be free: INIT Algo's longest
+/// release, measured once, plus 1 s.
+fn stop_bound() -> usize {
+    static BOUND: OnceLock<usize> = OnceLock::new();
+    *BOUND.get_or_init(|| longest_release() + secs(1.0))
+}
+
+/// Blocks from a released chord at velocity 127 until its voices are free.
 fn longest_release() -> usize {
     let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::default());
     let mut tape = Tape::default();
@@ -73,7 +82,7 @@ fn stop_and_drain(rig: &mut OrbitRig, bound: usize) -> Option<usize> {
 
 #[test]
 fn init_scene_is_clean() {
-    let bound = longest_release() + secs(1.0);
+    let bound = stop_bound();
     let mut rig = OrbitRig::new();
     rig.play(true);
     rig.run_loops(10);
@@ -99,7 +108,7 @@ fn init_scene_is_clean() {
     // Ring offs are judged in numbers, and STOP. A steal is taken at the
     // note-on that needs the voice, and MUTATE's boundary is the downbeat,
     // where rings 1 and 2 always play: both share their block with an
-    // attack. The steal's fade is `instrument_test`'s to judge.
+    // attack, so `a_steal_fades_clean_on_its_pair` and the sweep judge them.
     assert!(r.judged[0] > 500 && r.judged[2] == 1, "{:?}", r.judged);
 }
 
@@ -151,8 +160,9 @@ fn init_scene_levels() {
         bad.join(", ")
     );
     // The rings the init scene plays sit within 6 dB of each other.
+    let init = Scene::init();
     let playing: Vec<f32> = (0..5)
-        .filter(|&i| !OrbitRig::new().song().live.rings[i].ring.mute)
+        .filter(|&i| !init.rings[i].ring.mute)
         .map(|i| solos[i])
         .collect();
     let (lo, hi) = playing
@@ -160,8 +170,7 @@ fn init_scene_levels() {
         .fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
     assert!(hi - lo <= 6.0, "ring solos span {:.1} dB", hi - lo);
     // Ring 1 carries the bass: the lowest register of the rings that play.
-    let mut rig = OrbitRig::new();
-    let rings = &rig.song().live.rings;
+    let rings = &init.rings;
     let low = rings[0].ring.octave.get();
     assert!(
         rings
@@ -180,7 +189,7 @@ fn lcg(x: &mut u32) -> u32 {
 
 #[test]
 fn stop_leaves_nothing_sounding() {
-    let bound = longest_release() + secs(1.0);
+    let bound = stop_bound();
     let mut seed = 0x0B17_5709;
     for _ in 0..10 {
         let at = BPS + lcg(&mut seed) as usize % (8 * LOOP);
@@ -200,7 +209,7 @@ fn stop_leaves_nothing_sounding() {
 
 #[test]
 fn stress_is_clean() {
-    let bound = longest_release() + secs(1.0);
+    let bound = stop_bound();
     let mut rig = OrbitRig::new();
     {
         let song = rig.song();
@@ -226,7 +235,69 @@ fn stress_is_clean() {
     assert!(freed.is_some_and(|f| f <= bound), "STOP freed in {freed:?}");
 }
 
+/// NEW's Parts spread over the pairs: ring 1's on P1, ring 2's on P2,
+/// rings 3 and 5's on P3. Each pair is bounded on its own, and none sits
+/// more than 6 dB from the others.
+#[test]
+fn init_scene_across_pairs() {
+    let mut rig = OrbitRig::new();
+    for (p, pair) in [(1, DacPair::P2), (2, DacPair::P3), (4, DacPair::P3)] {
+        rig.project.edit_part(PartId::ALL[p]).mix.output = pair;
+    }
+    rig.play(true);
+    rig.run_loops(16);
+    let r = report(&rig, LOOP);
+    assert_eq!(r.carrying(), [true; DAC_PAIRS], "every pair plays");
+    assert_clean("init scene across P1–P3", &r);
+}
+
+/// A steal's fade, apart from the attack that causes it. Part 1 (on P1)
+/// holds eight notes, the whole pool; Part 2, routed to P2, plays one. The
+/// voice it takes fades on P1, where nothing starts, so P1 is judged at
+/// the steal; the new note sounds on P2. Once with the victim held, once
+/// with it in its release (a tail, which the allocator takes first).
+#[test]
+fn a_steal_fades_clean_on_its_pair() {
+    let mut judged = 0;
+    for released in [false, true] {
+        let mut rig = OrbitRig::new();
+        rig.project.edit_part(PartId::ALL[1]).mix.output = DacPair::P2;
+        for n in [48, 52, 55, 59, 60, 64, 67, 71] {
+            rig.key(0, n, true);
+        }
+        rig.run(secs(1.0));
+        let mut prev = 0;
+        if released {
+            rig.key(0, 48, false);
+            prev = rig.blocks();
+            rig.run(100);
+        }
+        let e = rig.blocks();
+        rig.key(1, 72, true);
+        rig.run(secs(1.0));
+        let case = if released { "a tail" } else { "a held note" };
+        assert!(
+            rig.marks.contains(&(e, Mark::Steal)),
+            "{case}: Part 2's note stole a voice"
+        );
+        assert!(rig.tape.peak(1) > 1e-3, "{case}: the new note on P2");
+        let (pre, post) = steady_windows(e, (prev, usize::MAX), true);
+        if pre.len().max(post.len()) >= STEADY {
+            judged += 1;
+        }
+        let click = rig.tape.click(0, e, (prev, usize::MAX), true);
+        assert_eq!(click, None, "{case}: the stolen voice's fade on P1");
+    }
+    assert_eq!(judged, 2, "both steals judged");
+}
+
 // ── The parameter sweep, through a running ORBIT ───────────────────────
+
+/// Floors on the sweep's judged MUTATE boundaries and BPM jumps, about
+/// three quarters of what it judges (277 and 15, 2026-10-03): a change that
+/// moved them all next to a note-on would leave them unjudged.
+const MUTATE_JUDGED: usize = 200;
+const BPM_JUDGED: usize = 10;
 
 /// What a parameter may legitimately do, with the reason.
 fn silences(b: BlockRef, id: ParamId, v: f32) -> Option<&'static str> {
@@ -259,9 +330,9 @@ fn orbit_params() -> Vec<(BlockRef, &'static ParamSpec)> {
 }
 
 /// One parameter's sweep: each point held four loops (a lone hit at
-/// CHANCE 70 % may miss one), then min ↔ max every
-/// 3 blocks for 600 blocks. Returns the report's lines and its faults.
-fn sweep_param(b: BlockRef, s: &'static ParamSpec) -> (String, Vec<String>) {
+/// CHANCE 70 % may miss one), then min ↔ max every 3 blocks for 600
+/// blocks, then every 60 blocks for 1,200. Returns the report's row, its faults and its judged marks.
+fn sweep_param(b: BlockRef, s: &'static ParamSpec) -> (String, Vec<String>, [usize; 5]) {
     let mut rig = OrbitRig::new();
     if let BlockRef::OrbitRing(r) = b {
         for (i, sr) in rig.song().live.rings.iter_mut().enumerate() {
@@ -276,7 +347,7 @@ fn sweep_param(b: BlockRef, s: &'static ParamSpec) -> (String, Vec<String>) {
     for v in points(s) {
         set(&mut rig, v);
         let from = rig.blocks();
-        rig.run(4 * LOOP);
+        rig.run_loops(4);
         let heard = rig.tape.rms(0, from + 1, rig.blocks());
         let _ = write!(line, " {v}: {:.1} dBFS rms;", common::sweep::db(heard));
         if heard < SILENT_RMS {
@@ -288,12 +359,18 @@ fn sweep_param(b: BlockRef, s: &'static ParamSpec) -> (String, Vec<String>) {
             }
         }
     }
+    // Fast jumps, then slow ones: a jump every 3 blocks leaves no steady
+    // window between them, so a jump's break is judged only in the slow.
     for i in 0..200 {
         set(&mut rig, if i % 2 == 0 { s.min } else { s.max });
         rig.run(3);
     }
+    for i in 0..20 {
+        set(&mut rig, if i % 2 == 0 { s.max } else { s.min });
+        rig.run(60);
+    }
     set(&mut rig, s.min);
-    let bound = longest_release() + secs(1.0);
+    let bound = stop_bound();
     let freed = stop_and_drain(&mut rig, bound);
     if !freed.is_some_and(|f| f <= bound) {
         faults.push(format!("{name}: STOP freed in {freed:?}"));
@@ -307,7 +384,7 @@ fn sweep_param(b: BlockRef, s: &'static ParamSpec) -> (String, Vec<String>) {
         r.refused,
         if faults.is_empty() { "ok" } else { "FAIL" }
     );
-    (row, faults)
+    (row, faults, r.judged)
 }
 
 #[test]
@@ -318,7 +395,7 @@ fn orbit_param_sweep() {
         .chunks(cases.len().div_ceil(n))
         .map(<[_]>::to_vec)
         .collect();
-    let mut rows: Vec<(String, Vec<String>)> = std::thread::scope(|sc| {
+    let mut rows: Vec<(String, Vec<String>, [usize; 5])> = std::thread::scope(|sc| {
         let handles: Vec<_> = chunks
             .iter()
             .map(|c| {
@@ -340,10 +417,14 @@ fn orbit_param_sweep() {
          | parameter | points | verdict |\n|---|---|---|\n",
     );
     let mut faults = Vec::new();
-    for (row, f) in rows.drain(..) {
+    let mut judged = [0; 5];
+    for (row, f, j) in rows.drain(..) {
         report.push_str(&row);
         report.push('\n');
         faults.extend(f);
+        for (a, b) in judged.iter_mut().zip(j) {
+            *a += b;
+        }
     }
     println!("{report}");
     if let Ok(path) = std::env::var("PARAM_SWEEP_REPORT") {
@@ -356,6 +437,12 @@ fn orbit_param_sweep() {
         f.write_all(report.as_bytes()).expect("the report");
     }
     assert_eq!(cases.len(), 5 * 15 + 4 + 1);
+    println!("judged across the sweep, by {:?}: {judged:?}", Mark::KINDS);
+    // The full scene never judges MUTATE (the downbeat plays) and has no
+    // BPM jump: the sweep is where they are judged, so it must.
+    let (mutate, bpm) = (judged[Mark::Mutate(0).kind()], judged[Mark::Bpm.kind()]);
+    assert!(mutate >= MUTATE_JUDGED, "MUTATE judged {mutate}");
+    assert!(bpm >= BPM_JUDGED, "BPM jumps judged {bpm}");
     assert!(faults.is_empty(), "{}", faults.join("\n"));
 }
 

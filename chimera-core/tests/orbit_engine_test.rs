@@ -1,5 +1,5 @@
 use chimera_core::MidiChannel;
-use chimera_core::hw::MAX_PARTS;
+use chimera_core::hw::{BLOCK_SIZE, MAX_PARTS};
 use chimera_core::orbit::chords::{Bars, Segs, harmony};
 use chimera_core::orbit::clock::{Bpm, InternalClock, Position, step_start};
 use chimera_core::orbit::engine::{Events, OrbitEvent, OrbitKind, OrbitState, Span, block};
@@ -633,20 +633,27 @@ fn init_scene_events_golden() {
     let mut rig = Rig::new(Scene::init(), 120);
     rig.channels = core::array::from_fn(|i| MidiChannel::new(i as u8).unwrap());
     rig.run_bars(8);
-    let mut got = String::new();
-    for r in &rig.log {
-        let kind = match r.ev.kind {
-            OrbitKind::On(v) => format!("on {}", v.get()),
-            OrbitKind::Off => "off".into(),
-        };
-        got.push_str(&format!(
-            "{} {} {} {} {kind}\n",
-            r.t / 64,
-            r.ev.ring.get() + 1,
-            r.ev.channel.get() + 1,
-            r.ev.note.get()
-        ));
-    }
+    // Sorted within each block: the order of a block's events is not heard.
+    let mut lines: Vec<(u64, String)> = rig
+        .log
+        .iter()
+        .map(|r| {
+            let kind = match r.ev.kind {
+                OrbitKind::On(v) => format!("on {}", v.get()),
+                OrbitKind::Off => "off".into(),
+            };
+            let block = r.t / BLOCK_SIZE as u64;
+            let line = format!(
+                "{block} {} {} {} {kind}\n",
+                r.ev.ring.get() + 1,
+                r.ev.channel.get() + 1,
+                r.ev.note.get()
+            );
+            (block, line)
+        })
+        .collect();
+    lines.sort();
+    let got: String = lines.into_iter().map(|l| l.1).collect();
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/orbit_init_events.txt"

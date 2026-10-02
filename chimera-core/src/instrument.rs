@@ -428,7 +428,7 @@ impl Instrument {
         &self.alloc
     }
 
-    /// Who started each voice's note, by voice index.
+    /// Who started each voice's note, by voice index: for the tests.
     pub fn origins(&self) -> &[NoteOrigin; MAX_VOICES] {
         &self.note_origin
     }

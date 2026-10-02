@@ -303,7 +303,7 @@ impl OrbitRunner {
         Self::send(inst, shared, ev.iter(), &mut self.fired);
     }
 
-    /// Each ring's off still to send: a held ORBIT voice has one.
+    /// Each ring's off still to send, a held ORBIT voice's: for the tests.
     pub fn pending(&self) -> [Option<PendingOff>; RINGS] {
         self.state.pending()
     }

@@ -26,6 +26,7 @@ use chimera_core::project::PartId;
 use chimera_core::scope::ScopeWriter;
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
+use std::ops::Range;
 
 /// Blocks per second at 48 kHz.
 pub const BPS: usize = 750;
@@ -479,15 +480,17 @@ impl Tape {
         (prev, next): (usize, usize),
         after: bool,
     ) -> Option<f32> {
-        let span = |a: usize, b: usize| if a < b { self.d2(k, a, b) } else { 0.0 };
-        let pre = span(e.saturating_sub(40).max(prev + 6), e.saturating_sub(1));
-        let trans = self.d2(k, e + 1, e + 4);
-        let post = if after {
-            span(e + 20, (e + 60).min(next.saturating_sub(1)))
-        } else {
-            0.0
+        let span = |w: Range<usize>| {
+            if w.is_empty() {
+                0.0
+            } else {
+                self.d2(k, w.start, w.end)
+            }
         };
-        let steady = pre.max(post);
+        let (pre, post) = steady_windows(e, (prev, next), after);
+        let t = transient_window(e);
+        let trans = self.d2(k, t.start, t.end);
+        let steady = span(pre).max(span(post));
         (trans > CLICK_FLOOR && trans > CLICK_RATIO * steady).then_some(trans / steady.max(1e-9))
     }
 
@@ -495,6 +498,30 @@ impl Tape {
     pub fn freed(&self, from: usize) -> Option<usize> {
         self.busy[from..].iter().position(|&b| b == 0)
     }
+}
+
+/// The blocks `Tape::click` hears event `e`'s transient in: the three
+/// after it (the limiter's lookahead puts it a block late).
+pub fn transient_window(e: usize) -> Range<usize> {
+    e + 1..e + 4
+}
+
+/// `Tape::click`'s steady windows around event block `e`, before and after
+/// it: the before one starts past the previous event's transient (`prev`),
+/// the after one (only when the sound goes on, `after`) stops short of the
+/// next event (`next`). Either may be empty.
+pub fn steady_windows(
+    e: usize,
+    (prev, next): (usize, usize),
+    after: bool,
+) -> (Range<usize>, Range<usize>) {
+    let pre = e.saturating_sub(40).max(prev + 6)..e.saturating_sub(1);
+    let post = if after {
+        e + 20..(e + 60).min(next.saturating_sub(1))
+    } else {
+        0..0
+    };
+    (pre, post)
 }
 
 // ── The script ─────────────────────────────────────────────────────────

@@ -1,8 +1,14 @@
 //! ORBIT's QA rig (`orbit_qa_test.rs`): a NEW project, the real
 //! `Instrument`, `FxBus` and `DacBlocks`, and an `OrbitRunner`, driven in
-//! `Engine::block`'s order, with the UI's publish and absorb around each
-//! block. Every block it checks the stuck-note invariants and marks where
-//! sound can break discontinuously, for `Tape::click` to judge.
+//! `Engine::block`'s order (the gate, then inside it the live keys and the
+//! runner, then the render). Every block it checks the stuck-note
+//! invariants and marks where sound can break discontinuously, for
+//! `Tape::click` to judge.
+//!
+//! The UI side is idealised: the publish, `see` and `absorb` run every
+//! block, in place and with no latency, where the desktop runs them once a
+//! frame (12–25 blocks) through triple buffers. A stale slot or a frame's
+//! delay is not this rig's to catch.
 
 use chimera_core::addr::BlockRef;
 use chimera_core::block::Block;
@@ -22,7 +28,9 @@ use chimera_core::voice_alloc::VoiceSlot;
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 
-use super::sweep::{BPS, DC_FROM, LEAK_PEAK, Tape, within_ceiling};
+use super::sweep::{
+    BPS, DC_FROM, LEAK_PEAK, Tape, steady_windows, transient_window, within_ceiling,
+};
 use super::{SR, scope_writer};
 
 /// Blocks of steady state a mark needs on one side to be judged.
@@ -101,6 +109,8 @@ pub struct OrbitRig {
     /// Live keys held, by note; once released, no Live voice may stay held.
     live_released: bool,
     live: Vec<u8>,
+    /// Live keys for the next block's drain, as the MIDI queue holds them.
+    keys: Vec<NoteEvent>,
     slots: Vec<VoiceSlot>,
     last_view: OrbitView,
 }
@@ -136,6 +146,7 @@ impl OrbitRig {
             stopped_at: None,
             live_released: false,
             live: Vec::new(),
+            keys: Vec::new(),
             slots,
             last_view,
         }
@@ -173,7 +184,8 @@ impl OrbitRig {
         &self.last_view
     }
 
-    /// A key on Part `p`'s channel, as a keyboard plays it.
+    /// A key on Part `p`'s channel, as a keyboard plays it: queued for the
+    /// next block, which drains it inside the load gate.
     pub fn key(&mut self, p: usize, note: u8, on: bool) {
         let channel = self.project.part(PartId::ALL[p]).mix.channel;
         let ev = NoteEvent {
@@ -185,7 +197,7 @@ impl OrbitRig {
                 NoteKind::Off
             },
         };
-        self.inst.handle(ev, &self.shared);
+        self.keys.push(ev);
         if on {
             self.live.push(note);
             self.live_released = false;
@@ -210,6 +222,12 @@ impl OrbitRig {
             .gate
             .before_block(&self.link, &mut self.inst, &self.shared)
         {
+            for ev in self.keys.drain(..) {
+                if matches!(ev.kind, NoteKind::On(_)) {
+                    self.ons.push(b);
+                }
+                self.inst.handle(ev, &self.shared);
+            }
             self.runner.block(&mut self.inst, &self.shared);
         }
         self.inst
@@ -371,6 +389,21 @@ pub struct Report {
     pub refused: u32,
 }
 
+/// Whether `Tape::click` can judge event block `e`, between the events
+/// `prev` and `next`: its transient is on the tape and holds no note-on
+/// (an attack is legitimate), and one of its steady windows is `STEADY`
+/// blocks long on the tape (an attack just before and the next event just
+/// after leave nothing to judge against).
+pub fn judgeable(t: &Tape, e: usize, (prev, next): (usize, usize), ons: &[usize]) -> bool {
+    let end = t.blocks();
+    let heard = transient_window(e);
+    if heard.end >= end || ons.iter().any(|&o| o + 1 >= e && o <= heard.end) {
+        return false;
+    }
+    let (pre, post) = steady_windows(e, (prev, next), true);
+    pre.len().max((post.start..post.end.min(end)).len()) >= STEADY
+}
+
 /// Judges the render from block `from` on.
 pub fn report(rig: &OrbitRig, from: usize) -> Report {
     let t = &rig.tape;
@@ -389,25 +422,13 @@ pub fn report(rig: &OrbitRig, from: usize) -> Report {
     edges.dedup();
     for &(e, mark) in &rig.marks {
         marked[mark.kind()] += 1;
-        if e < from.max(42) || e + 60 >= end {
-            continue;
-        }
-        // Never at a note-on: an On in the transient's window is an attack.
-        if rig.ons.iter().any(|&o| o + 1 >= e && o <= e + 4) {
-            continue;
-        }
-        let prev = rig.ons.iter().rev().find(|&&x| x < e).copied().unwrap_or(0);
+        let prev = edges.iter().rev().find(|&&x| x < e).copied().unwrap_or(0);
         let next = edges
             .iter()
             .find(|&&x| x > e)
             .copied()
             .unwrap_or(usize::MAX);
-        // `Tape::click`'s steady windows: with neither STEADY blocks long
-        // (an attack just before, the next event just after), there is
-        // nothing to judge the transient against.
-        let pre = (e - 1).saturating_sub(e.saturating_sub(40).max(prev + 6));
-        let post = (e + 60).min(next.saturating_sub(1)).saturating_sub(e + 20);
-        if pre.max(post) < STEADY {
+        if e < from || !judgeable(t, e, (prev, next), &rig.ons) {
             continue;
         }
         judged[mark.kind()] += 1;

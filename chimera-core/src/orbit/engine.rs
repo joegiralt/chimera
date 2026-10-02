@@ -83,7 +83,7 @@ impl OrbitState {
         self.seg
     }
 
-    /// Each ring's off still to send.
+    /// Each ring's off still to send: for the tests.
     pub fn pending(&self) -> [Option<PendingOff>; RINGS] {
         self.pending
     }
