@@ -97,6 +97,7 @@ OK
 - `project` is the project's name, as the footer draws it.
 - `state` is one of `NEW`, `SAVED` or `MODIFIED`, the footer's words for `ProjectStatus::Pristine`, `Saved` and `Modified`. It comes from `UiState::project_status()`, which may hash the project once (about 1.7 ms on the chip, the B1 row). That is acceptable once per request.
 - `part` is the active Part, 1 to 6.
+- On the chip only, a last line `boot marker=<hex> readback=<hex> action=Synth rsr=<hex> dbp=<0|1> boots=<n> from=<menu|console|none> jump_rsr=<hex>`: what the top of `main` saw (`boot::BootSeen`). `marker` and `readback` are RTC_BKP0R before and after the clear, `rsr` is RCC_RSR before RMVF, `dbp` is PWR_CR1.DBP on entry, `boots` counts in BKP1R (it carries on through a power-off only if VBAT kept the backup domain), `from` is BKP2R, written by `dfu::enter`, and `jump_rsr` is BKP3R, RCC_RSR at the last jump to the ROM. The desktop has no such line.
 - `at` is `Location` in ASCII, with ` > ` between levels:
 
   | `Loc` | `at` |

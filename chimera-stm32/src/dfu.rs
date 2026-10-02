@@ -2,12 +2,16 @@
 //! BOOT0 jumper (USB console spec § Enter DFU from the firmware). `enter`
 //! leaves a marker in RTC_BKP0R and resets; `after_reset`, the top of
 //! `main`, reads and clears it, and jumps only when `boot::after_reset`
-//! says so: the clear read back, after a software reset.
+//! says so: the clear read back, after a software reset. BKP1R..3R keep a
+//! boot count, who wrote the marker and the last jump's RCC_RSR, for
+//! `status`'s `boot` line.
 
-use chimera_core::boot::{self, BootAction, ROM_DFU_BASE};
-use chimera_core::reset::ResetCause;
+#[cfg(all(not(feature = "sd-probe"), feature = "usb-console"))]
+use chimera_core::boot::FROM_CONSOLE;
+use chimera_core::boot::{self, BootAction, BootSeen, ROM_DFU_BASE};
 #[cfg(not(feature = "sd-probe"))]
-use chimera_core::boot::{DFU_MAGIC, RomDfu};
+use chimera_core::boot::{DFU_MAGIC, FROM_MENU, RomDfu};
+use chimera_core::reset::ResetCause;
 #[cfg(not(feature = "sd-probe"))]
 use chimera_core::ui::settings::replace::said::Said;
 use stm32h7xx_hal::pac;
@@ -15,15 +19,21 @@ use stm32h7xx_hal::pac;
 /// DBP read-backs before giving up: it lands in a few cycles.
 const DBP_TRIES: u32 = 1_000;
 
+/// The backup registers this module owns.
+const MARKER: usize = 0;
+const BOOTS: usize = 1;
+const FROM: usize = 2;
+const JUMP_RSR: usize = 3;
+
 /// `after_reset` ran: RTCAPBEN is set, the marker is clear (or stuck, and
 /// ignored) and RCC_RSR is read and cleared. Only `after_reset` makes one,
 /// and `boot` takes it.
 #[must_use]
-pub struct Checked(ResetCause);
+pub struct Checked(BootSeen);
 
 impl Checked {
-    /// The reset `after_reset` read from RCC_RSR.
-    pub fn cause(&self) -> ResetCause {
+    /// What the top of `main` saw.
+    pub fn seen(&self) -> BootSeen {
         self.0
     }
 }
@@ -58,8 +68,8 @@ fn clear(pwr: &pac::PWR, rtc: &pac::RTC) -> u32 {
     pwr.cr1.modify(|_, w| w.dbp().set_bit());
     // Without DBP the write is ignored and the read-back says so.
     let _ = (0..DBP_TRIES).any(|_| pwr.cr1.read().dbp().bit_is_set());
-    rtc.bkpr[0].write(|w| w.bkp().bits(0));
-    rtc.bkpr[0].read().bits()
+    rtc.bkpr[MARKER].write(|w| w.bkp().bits(0));
+    rtc.bkpr[MARKER].read().bits()
 }
 
 /// The top of `main`, before `boot()` touches a clock or a peripheral:
@@ -75,17 +85,34 @@ pub fn after_reset(
     // RCC_RSR survives the reset it records: cleared here, before the jump
     // too, so the next boot reads only its own reset. RMVF holds the flags
     // at 0 while set, so it is set and then cleared again.
-    let cause = ResetCause::from_rsr(rcc.rsr.read().bits());
+    let rsr = rcc.rsr.read().bits();
     rcc.rsr.modify(|_, w| w.rmvf().set_bit());
     rcc.rsr.modify(|_, w| w.rmvf().clear_bit());
+    let dbp = pwr.cr1.read().dbp().bit_is_set();
     rcc.apb4enr.modify(|_, w| w.rtcapben().set_bit());
     // The enable lands before the first RTC access (RM0433 § RCC).
     let _ = rcc.apb4enr.read();
     cortex_m::asm::dsb();
-    let m = rtc.bkpr[0].read().bits();
-    match boot::after_reset(m, clear(pwr, rtc), cause) {
-        BootAction::RomDfu => jump(cp),
-        BootAction::Synth => Checked(cause),
+    let marker = rtc.bkpr[MARKER].read().bits();
+    let readback = clear(pwr, rtc);
+    let boots = rtc.bkpr[BOOTS].read().bits().wrapping_add(1);
+    rtc.bkpr[BOOTS].write(|w| w.bkp().bits(boots));
+    let action = boot::after_reset(marker, readback, ResetCause::from_rsr(rsr));
+    match action {
+        BootAction::RomDfu => {
+            rtc.bkpr[JUMP_RSR].write(|w| w.bkp().bits(rsr));
+            jump(cp)
+        }
+        BootAction::Synth => Checked(BootSeen {
+            marker,
+            readback,
+            action,
+            rsr,
+            dbp,
+            boots,
+            from: rtc.bkpr[FROM].read().bits(),
+            jump_rsr: rtc.bkpr[JUMP_RSR].read().bits(),
+        }),
     }
 }
 
@@ -118,9 +145,16 @@ fn jump(cp: &mut cortex_m::Peripherals) -> ! {
     }
 }
 
-/// Writes `DFU_MAGIC` to BKP0R, then `SCB::sys_reset()`.
+/// Writes who asked to BKP2R and `DFU_MAGIC` to BKP0R, then
+/// `SCB::sys_reset()`.
 #[cfg(not(feature = "sd-probe"))]
-pub fn enter(m: &Marker, _from: DfuFrom) -> ! {
-    m.0.bkpr[0].write(|w| w.bkp().bits(DFU_MAGIC));
+pub fn enter(m: &Marker, from: DfuFrom) -> ! {
+    let tag = match from {
+        DfuFrom::Menu(_) => FROM_MENU,
+        #[cfg(feature = "usb-console")]
+        DfuFrom::Console(_) => FROM_CONSOLE,
+    };
+    m.0.bkpr[FROM].write(|w| w.bkp().bits(tag));
+    m.0.bkpr[MARKER].write(|w| w.bkp().bits(DFU_MAGIC));
     cortex_m::peripheral::SCB::sys_reset()
 }

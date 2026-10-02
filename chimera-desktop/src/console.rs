@@ -111,6 +111,9 @@ impl Unit for DeskUnit<'_> {
     fn dfu(&mut self) -> Option<()> {
         None
     }
+    fn boot(&self) -> Option<chimera_core::boot::BootSeen> {
+        None
+    }
 }
 
 /// A non-blocking stream as `Out`, for one answer: `WouldBlock` retries

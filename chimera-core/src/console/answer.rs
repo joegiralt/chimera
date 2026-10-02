@@ -6,6 +6,7 @@ use super::{
     Command, Frame, MAX_LINE, NoArg, Out, PROTOCOL, Refusal, Request, Stalled, write_shot,
     write_status,
 };
+use crate::boot::BootSeen;
 use crate::hw::MAX_VOICES;
 use crate::perf::load::AudioStats;
 use crate::ui::UiState;
@@ -26,6 +27,8 @@ pub trait Unit {
     fn frame(&self) -> Frame<'_>;
     /// Arms the restart, made once `OK` is out. `None`: not in this build.
     fn dfu(&mut self) -> Option<()>;
+    /// What the chip saw at boot: `status`'s last line. `None`: no line.
+    fn boot(&self) -> Option<BootSeen>;
 }
 
 /// Why an answer is a single `ERR` line.
@@ -65,7 +68,8 @@ pub fn answer(
     let body = match req {
         Err(r) => Err(Why::Refused(r)),
         Ok(Request::Help(NoArg)) => Ok(help(&mut t)),
-        Ok(Request::Status(NoArg)) => Ok(write_status(unit.ui(), &mut t)),
+        Ok(Request::Status(NoArg)) => Ok(write_status(unit.ui(), &mut t)
+            .and_then(|()| unit.boot().map_or(Ok(()), |b| writeln!(t, "{b}")))),
         Ok(r @ Request::Stats(NoArg)) => unit
             .stats()
             .map(|s| stats(&s, &mut t))

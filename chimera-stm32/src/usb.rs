@@ -2,6 +2,7 @@
 //! polled from the UI loop. `pac::Interrupt::OTG_FS` is never unmasked, so
 //! USB can never preempt audio.
 
+use chimera_core::boot::BootSeen;
 use chimera_core::console::{
     AnswerClock, Console, Frame, LoopTimer, Out, Served, Stalled, Stats, Unit, answer, serial_hex,
 };
@@ -54,6 +55,8 @@ pub struct UsbParts {
     pub rec: rec::Usb2Otg,
     pub crs: pac::CRS,
     pub crs_rec: rec::Crs,
+    /// What the top of `main` saw: `status`'s `boot` line.
+    pub boot: BootSeen,
 }
 
 /// `dfu` answered and its `OK` flushed: only `Usb::service` makes one, and
@@ -71,6 +74,7 @@ pub struct Usb {
     top: u32,
     last: Served,
     cycles_per_us: u32,
+    boot: BootSeen,
 }
 
 /// The port set up but not on the bus: no pull-up, so the host sees
@@ -80,6 +84,7 @@ pub struct Unconnected {
     serial: Port,
     uid: &'static str,
     cpu_hz: u32,
+    boot: BootSeen,
 }
 
 /// Sets the port up, once: the CRS trimming HSI48 from the host's SOF, the
@@ -94,6 +99,7 @@ pub fn init(parts: UsbParts, clocks: &CoreClocks, cpu_hz: u32) -> Unconnected {
         rec,
         crs,
         crs_rec,
+        boot,
     } = parts;
     crs_rec.enable();
     // SAFETY: SYNCSRC is a 2-bit field and 0b11 is a defined value, USB2
@@ -123,6 +129,7 @@ pub fn init(parts: UsbParts, clocks: &CoreClocks, cpu_hz: u32) -> Unconnected {
         serial,
         uid: uid.as_str(),
         cpu_hz,
+        boot,
     }
 }
 
@@ -153,6 +160,7 @@ impl Unconnected {
             top: DWT::cycle_count(),
             last: Served::Idle,
             cycles_per_us: (self.cpu_hz / 1_000_000).max(1),
+            boot: self.boot,
         }
     }
 }
@@ -179,6 +187,7 @@ impl Usb {
             serial,
             line,
             timer,
+            boot,
             ..
         } = self;
         dev.poll(&mut [&mut *serial]);
@@ -206,6 +215,7 @@ impl Usb {
                 bench,
                 frame,
                 dfu: false,
+                boot: *boot,
             };
             let out = &mut UsbOut {
                 dev,
@@ -239,6 +249,7 @@ struct ChipUnit<'a> {
     frame: Frame<'a>,
     /// `dfu` asked: the restart waits for the `OK` to be out.
     dfu: bool,
+    boot: BootSeen,
 }
 
 impl Unit for ChipUnit<'_> {
@@ -269,6 +280,10 @@ impl Unit for ChipUnit<'_> {
     fn dfu(&mut self) -> Option<()> {
         self.dfu = true;
         Some(())
+    }
+
+    fn boot(&self) -> Option<BootSeen> {
+        Some(self.boot)
     }
 }
 

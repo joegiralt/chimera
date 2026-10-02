@@ -138,11 +138,13 @@ fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::Check
     fp_flush_to_zero(&mut cp.FPU);
     // The probe never enters DFU: the check ran, nothing writes the marker.
     #[cfg(feature = "sd-probe")]
-    let _ = checked.cause();
+    let _ = checked.seen();
 
     // `dfu::after_reset` read RCC_RSR and cleared it for the next reset.
     #[cfg(not(feature = "sd-probe"))]
-    let reset_cause = checked.cause();
+    let seen = checked.seen();
+    #[cfg(not(feature = "sd-probe"))]
+    let reset_cause = ResetCause::from_rsr(seen.rsr);
 
     cache::enable_d2_sram();
     let rev = clocks::read_rev(&dp.DBGMCU);
@@ -242,6 +244,7 @@ fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::Check
                 rec: ccdr.peripheral.USB2OTG,
                 crs: dp.CRS,
                 crs_rec: ccdr.peripheral.CRS,
+                boot: seen,
             },
         },
         sd: sd::SdParts {

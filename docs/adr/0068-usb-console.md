@@ -59,10 +59,13 @@ is `docs/superpowers/specs/2026-10-02-usb-console-design.md`.
   RTC_BKP0R and calls `SCB::sys_reset()`. The stock bootloader runs and
   jumps to Chimera. At the top of `main`, before `boot()` touches a clock
   or peripheral, Chimera reads the register, always clears it and reads
-  the clear back, and asks the pure `boot::after_reset(marker,
-  readback)`: only `DFU_MAGIC` that read back 0 jumps, and a stuck marker
-  boots the synth (a transient stuck may enter DFU on a later reset,
-  which is accepted). `after_reset` returns `dfu::Checked`,
+  the clear back, reads RCC_RSR and clears it, and asks the pure
+  `boot::after_reset(marker, readback, cause)`: only `DFU_MAGIC` that
+  read back 0, after a software reset, jumps. A power-on or brown-out
+  never jumps, so a marker kept through a power-off by VBAT can't trap a
+  cold boot (it did on the unit, twice), and a stuck marker boots the
+  synth (a transient stuck may enter DFU on a later reset, which is
+  accepted). `after_reset` returns `dfu::Checked`,
   which `boot` takes and pairs with the owned RTC into the `dfu::Marker`
   that `dfu::enter` needs, so nothing writes the marker before the check
   ran. On the jump, it stops SysTick, disables and unpends every NVIC

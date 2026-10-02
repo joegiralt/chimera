@@ -1,4 +1,6 @@
-use chimera_core::boot::{BootAction, DFU_MAGIC, ROM_DFU_BASE, after_reset};
+use chimera_core::boot::{
+    BootAction, BootSeen, DFU_MAGIC, FROM_CONSOLE, FROM_MENU, ROM_DFU_BASE, after_reset,
+};
 use chimera_core::reset::ResetCause;
 
 const SOFT: ResetCause = ResetCause::Software;
@@ -56,7 +58,11 @@ fn only_a_software_reset_honours_the_marker() {
         ResetCause::Watchdog,
         ResetCause::Unknown,
     ] {
-        assert_eq!(after_reset(DFU_MAGIC, 0, cause), BootAction::Synth, "{cause:?}");
+        assert_eq!(
+            after_reset(DFU_MAGIC, 0, cause),
+            BootAction::Synth,
+            "{cause:?}"
+        );
     }
 }
 
@@ -76,4 +82,34 @@ fn the_reset_flags_decide() {
     assert_eq!(act(0), BootAction::Synth);
     assert_eq!(act(IWDG1 | SFT | PIN), BootAction::Synth);
     assert_eq!(act(SFT | PIN), BootAction::RomDfu);
+}
+
+#[test]
+fn the_boot_line() {
+    let seen = BootSeen {
+        marker: DFU_MAGIC,
+        readback: 0,
+        action: BootAction::Synth,
+        rsr: 0x00e6_0000,
+        dbp: false,
+        boots: 7,
+        from: FROM_CONSOLE,
+        jump_rsr: 0x0140_0000,
+    };
+    assert_eq!(
+        seen.to_string(),
+        "boot marker=44465521 readback=00000000 action=Synth rsr=00e60000 dbp=0 boots=7 \
+         from=console jump_rsr=01400000"
+    );
+    let words = |from| BootSeen { from, ..seen }.to_string();
+    assert!(words(FROM_MENU).contains(" from=menu "));
+    assert!(words(0).contains(" from=none "));
+    assert!(words(0x1234).contains(" from=00001234 "));
+    let jumped = BootSeen {
+        action: BootAction::RomDfu,
+        dbp: true,
+        ..seen
+    }
+    .to_string();
+    assert!(jumped.contains(" action=RomDfu ") && jumped.contains(" dbp=1 "));
 }

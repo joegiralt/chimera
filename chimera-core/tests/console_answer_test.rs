@@ -1,3 +1,4 @@
+use chimera_core::boot::{BootAction, BootSeen};
 use chimera_core::clock_plan::SiliconRev;
 use chimera_core::console::{
     Colours, Command, Console, Frame, NoArg, Out, Request, SHOT_HEADER, Stalled, Stats, Unit,
@@ -25,6 +26,7 @@ struct Fake {
     stats_reads: usize,
     dfu: Option<()>,
     dfu_calls: usize,
+    boot: Option<BootSeen>,
 }
 
 impl Fake {
@@ -37,6 +39,7 @@ impl Fake {
             stats_reads: 0,
             dfu: None,
             dfu_calls: 0,
+            boot: None,
         }
     }
 }
@@ -61,6 +64,9 @@ impl Unit for Fake {
     fn dfu(&mut self) -> Option<()> {
         self.dfu_calls += 1;
         self.dfu
+    }
+    fn boot(&self) -> Option<BootSeen> {
+        self.boot
     }
 }
 
@@ -219,6 +225,25 @@ fn status_is_its_lines_then_ok() {
     let mut want = String::new();
     chimera_core::console::write_status(&u.ui, &mut want).unwrap();
     assert_eq!(ask(&mut u, "status\n"), want + "OK\n");
+}
+
+#[test]
+fn the_chips_status_ends_with_its_boot_line() {
+    let mut u = Fake::new();
+    let seen = BootSeen {
+        marker: 0,
+        readback: 0,
+        action: BootAction::Synth,
+        rsr: 0x00e6_0000,
+        dbp: false,
+        boots: 1,
+        from: 0,
+        jump_rsr: 0,
+    };
+    u.boot = Some(seen);
+    let mut want = String::new();
+    chimera_core::console::write_status(&u.ui, &mut want).unwrap();
+    assert_eq!(ask(&mut u, "status\n"), format!("{want}{seen}\nOK\n"));
 }
 
 #[test]
