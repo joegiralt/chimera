@@ -139,7 +139,10 @@ fn main() {
 
         // UI framework handles navigation + encoder -> param binding
         ui.handle_input(&controls);
-        if ui.take_dfu().is_some() {
+        if ui
+            .take_dfu(&mut sync, &mut card, &mut store, &mut settings)
+            .is_some()
+        {
             eprintln!("dfu: not in this build");
         }
         // Card work the keys asked for, under BUSY; a load publishes

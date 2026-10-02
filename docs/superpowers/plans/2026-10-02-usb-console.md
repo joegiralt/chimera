@@ -48,7 +48,7 @@
 - **DFU entry** (spec § Enter DFU from the firmware; the owner, 2026-10-02):
   - OS UPGRADE is `Act::EnterDfu`. Its prompt is `ENTER DFU?` / `PLAY STOPS UNTIL FLASHED OR POWER-CYCLED`, pills `ENTER DFU`, `CANCEL`, sealed by `Said<RomDfu>` (`commits!`, `replace::said`). The empty UPDATES page goes.
   - `dfu` answers `OK`, then the unit restarts into the ROM loader; the sim answers `ERR dfu is not in this build`.
-  - The marker is `DFU_MAGIC` in RTC_BKP0R (fallback: 0x3800_FFFC, the last word of D3 SRAM4). It is read and always cleared at the top of `main`, before `boot()`. The jump to 0x1FF0_9800 is the feature's one `unsafe`.
+  - The marker is `DFU_MAGIC` in RTC_BKP0R (no fallback built; spec § The risk). It is read and always cleared at the top of `main`, before `boot()`. The jump to 0x1FF0_9800 is the feature's one `unsafe`.
   - `just flash` and `just flash-bench` send `dfu` when `0483:5740` is on the bus, wait up to 10 s for `0483:DF11`, then flash. Otherwise they print the jumper instruction and flash as today.
   - Under 1 KB of flash.
 
@@ -1413,7 +1413,7 @@ status:
   and `check` gains `python3 -m unittest discover -s tools -p 'test_*.py'`.
   - `tools/70-chimera.rules`, the spec's line exactly.
   - `python3 tools/chimera-usb.py to-dfu` (spec § `just flash` hands-free), using `usb_devices(sysfs) -> set[(vid, pid)]` read from `<sysfs>/bus/usb/devices/*/idVendor` and `idProduct`:
-    - `(0x0483, 0x5740)` present: it sends `dfu`, needs `OK`, then polls every 100 ms for up to `CHIMERA_DFU_WAIT` s (default 10) until `(0x0483, 0xDF11)` appears, and exits 0. On a timeout it prints `no DFU device after dfu: see U10 (marker clobbered?)` and exits 1.
+    - `(0x0483, 0x5740)` present: it sends `dfu`, needs `OK`, then polls every 100 ms for up to `CHIMERA_DFU_WAIT` s (default 10) until `(0x0483, 0xDF11)` appears, and exits 0. If the port vanishes before `OK` arrives and DF11 then appears, that is also success (the `OK` was lost to the reset). On a timeout it prints `no DFU device after dfu: see U10 (marker clobbered?)` and exits 1.
     - `(0x0483, 0xDF11)` already present: exit 0, nothing sent.
     - neither: it prints `no console: bridge BOOT0 on the back and re-plug for DFU` and exits 0.
   - `flash` and `flash-bench` gain `python3 tools/chimera-usb.py to-dfu` between `rust-objcopy` and `dfu-util`.
@@ -1636,7 +1636,7 @@ Release builds of `usb-console` 5d05cd2+, `llvm-size -A`: flash is `.vector_tabl
 
 Task 8, release builds at 8bfed02 plus Task 8's code, measured the same way. Flash: `.text` +25 096, `.rodata` +944. By symbol: `synopsys-usb-otg` 12 886, the core's `console` 7 342 (its generics over `UsbOut` included; `Console::push` alone is 1 770), `usb-device` 1 952, `usb.rs` 1 820 (`init` 1 358), `usbd-serial` 154, the rest +1 886 net (`core::fmt` and glue). The USB crates at `opt-level = "s"` or `"z"` in release make it bigger, not smaller (26 364 and 27 148). Stack: `synth`'s frame 0xBD0 (base 0x778, Task 1 0xB70); `Usb::service` 0x5C. Dev builds: `synopsys-usb-otg`, `usb-device`, `usbd-serial` and `embedded-graphics` at `opt-level = 2` (root `Cargo.toml`), or the debug `bench,master-tape` build overflows flash by about 2.4 KB; it leaves 9 388 B free.
 
-Task 9, release builds at bf71c12 and with Task 9, measured the same way. The OS UPGRADE page's retirement (`SYS_UPDATES`, its leaf and chain) pays for the DFU entry. By symbol: `dfu::after_reset` 146, `EnterDfu::words` 240, `with_view::<EnterDfu>` 378, `__bootstrap` 26; `enter` inlines into `synth`. `just stack-check` passes.
+Task 9, release builds at bf71c12 and with Task 9, measured the same way. The OS UPGRADE page's retirement (`SYS_UPDATES`, its leaf and chain) pays for the DFU entry. By symbol: `dfu::after_reset` 146, `EnterDfu::words` 240, `with_view::<EnterDfu>` 378, `__bootstrap` 26; `enter` inlines into `synth`. `just stack-check` passes. After the review's fixes (read-back, NVIC clear, the `OK` drain, SYSTEM synced first): 746 712, so −440 against bf71c12.
 
 ### Desktop QA (Task 11)
 
@@ -1657,6 +1657,6 @@ Flash `just flash` first, with the BOOT0 jumper: the build on the unit has no `d
 | U7 | `just flash-bench`: `just usb bench` gives the B1–B3 numbers the bench screens showed, screen by screen. | ____ |
 | U8 | Enter DFU from the menu. SETTINGS › SYSTEM › OS UPGRADE asks `ENTER DFU?` / `PLAY STOPS UNTIL FLASHED OR POWER-CYCLED`. `CANCEL` and MENU leave the chord playing. `ENTER DFU`: the sound stops, `0483:5740` leaves `lsusb`, and `lsusb -d 0483:df11` shows the ROM loader within 2 s. It is still there 30 s later (no watchdog reset). Note what the panel shows. Then power-cycle without flashing: the synth plays (the marker was cleared). | ____ |
 | U9 | `just flash` hands-free from the console. With the synth running, no jumper and the cable in: `just flash` prints nothing about BOOT0, sends `dfu`, waits for `0483:DF11`, flashes, and the new build boots and enumerates as `0483:5740`. Then `just flash-bench` the same way, and back with `just flash`. Also `just usb dfu` alone answers `OK` and the ROM loader appears. | ____ |
-| U10 | The clobber check. The marker must survive the stock bootloader. If U8 or U9 brings the unit back as `0483:5740` instead of `0483:DF11` (so `to-dfu` fails with `marker clobbered?` and ABOUT's RESET reads SOFTWARE), RTC_BKP0R was cleared on the way. Set `dfu::MARKER` to the SRAM4 fallback (0x3800_FFFC), `just flash` with the jumper, and repeat U8 and U9. Record which location works, and file an issue if neither does. | ____ |
+| U10 | The clobber check. The marker must survive the stock bootloader. If U8 or U9 brings the unit back as `0483:5740` instead of `0483:DF11` (so `to-dfu` fails with `marker clobbered?` and ABOUT's RESET reads SOFTWARE), RTC_BKP0R was cleared on the way. File an issue: the SRAM4 fallback was removed in review (spec § The risk names it as a possible alternative, with its cache and ECC caveats). | ____ |
 
 On all passing: ADR 0068 → `Accepted (<date>)` (Task 12 Step 2). On any failure: an issue, and no ADR moves.

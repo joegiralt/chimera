@@ -105,8 +105,8 @@ struct SynthParts {
     theme: ThemeSettings,
     iwdg: pac::IWDG,
     dbgmcu: pac::DBGMCU,
-    /// The DFU marker's register: `dfu::enter` writes it.
-    rtc: pac::RTC,
+    /// The DFU marker: `dfu::enter` writes it.
+    marker: dfu::Marker,
     #[cfg(feature = "usb-console")]
     usb: usb::UsbParts,
 }
@@ -117,8 +117,8 @@ fn main() -> ! {
     let dp = pac::Peripherals::take().unwrap();
     // Before `boot` sets up anything: a DFU request is honoured whatever
     // build is flashed.
-    dfu::after_reset(&mut cp, &dp.RCC, &dp.PWR, &dp.RTC);
-    let board = boot(cp, dp);
+    let checked = dfu::after_reset(&mut cp, &dp.RCC, &dp.PWR, &dp.RTC);
+    let board = boot(cp, dp, checked);
     #[cfg(feature = "sd-probe")]
     probe_card(board);
     #[cfg(not(feature = "sd-probe"))]
@@ -132,10 +132,13 @@ fn probe_card(mut b: Board) -> ! {
     sd_probe::run(&mut b.display, b.clk, store)
 }
 
-fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals) -> Board {
+fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::Checked) -> Board {
     #[cfg(not(feature = "sd-probe"))]
     probe::paint_stack();
     fp_flush_to_zero(&mut cp.FPU);
+    // The probe never enters DFU: the check ran, nothing writes the marker.
+    #[cfg(feature = "sd-probe")]
+    let _ = checked;
 
     // RCC_RSR survives the reset it records; clear it for the next one.
     #[cfg(not(feature = "sd-probe"))]
@@ -229,7 +232,7 @@ fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals) -> Board {
             theme,
             iwdg: dp.IWDG,
             dbgmcu: dp.DBGMCU,
-            rtc: dp.RTC,
+            marker: dfu::Marker::new(checked, dp.RTC),
             #[cfg(feature = "usb-console")]
             usb: usb::UsbParts {
                 dm: gpioa.pa11.into_alternate(),
@@ -283,7 +286,7 @@ fn synth(board: Board) -> ! {
                 mut theme,
                 iwdg,
                 dbgmcu,
-                rtc,
+                marker,
                 #[cfg(feature = "usb-console")]
                     usb: usb_parts,
             },
@@ -381,13 +384,14 @@ fn synth(board: Board) -> ! {
         // The snapshot point: every path through the last iteration flushed.
         #[cfg(feature = "usb-console")]
         if let Some(asked) = usb.service(ui, stats_r.as_mut(), bench_text, display.frame()) {
-            dfu::enter(&rtc, dfu::DfuFrom::Console(asked));
+            dfu::enter(&marker, dfu::DfuFrom::Console(asked));
         }
         controls.snapshot();
         // Every frame, even idle: a held key must age.
         ui.handle_input(&controls);
-        if let Some(yes) = ui.take_dfu() {
-            dfu::enter(&rtc, dfu::DfuFrom::Menu(yes));
+        // SYSTEM synced first: a THEME change made in this visit is kept.
+        if let Some(yes) = ui.take_dfu(&mut sync, &mut card, store, &mut settings) {
+            dfu::enter(&marker, dfu::DfuFrom::Menu(yes));
         }
         // Card work the keys asked for, under BUSY. A load settles before
         // it publishes: the ack, or `LOAD_ACK_TICKS`.

@@ -26,6 +26,11 @@ pub const VID_PID: (u16, u16) = (0x0483, 0x5740);
 // running synth.
 const _: () = assert!(!(VID_PID.0 == 0x0483 && VID_PID.1 == 0xDF11));
 
+/// After `dfu`'s `OK` is flushed, how long the port keeps polling so the
+/// host collects it before the reset. Full speed polls bulk IN every 1 ms
+/// frame; 20 frames covers a busy host.
+const DRAIN_MS: u32 = 20;
+
 /// Bytes read per loop top at most: a flood without a newline can't hold the UI.
 const READ_BUDGET: usize = 256;
 
@@ -185,7 +190,16 @@ impl Usb {
             // A stalled answer just stops: the host tool resyncs on its next request.
             let sent = answer(req, unit, out).and_then(|()| out.flush());
             self.last = Served::Answered;
-            return (unit.dfu && sent.is_ok()).then_some(DfuAsked(()));
+            if !(unit.dfu && sent.is_ok()) {
+                return None;
+            }
+            // `flush` empties the class's buffer, not the endpoint: polls
+            // until the host has had time to collect the last IN packet.
+            let start = crate::controls::now_ms();
+            while crate::controls::now_ms().since(start) < DRAIN_MS {
+                dev.poll(&mut [&mut *serial]);
+            }
+            return Some(DfuAsked(()));
         }
         None
     }

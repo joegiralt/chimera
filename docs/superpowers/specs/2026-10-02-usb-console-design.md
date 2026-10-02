@@ -155,7 +155,7 @@ OK
 OK
 ```
 
-Then the unit restarts into ST's ROM DFU loader and leaves the bus as `0483:5740`. Within about 2 s it comes back as `0483:DF11`. The `OK` is flushed to the host before the restart. The desktop answers `ERR dfu is not in this build`. § Enter DFU from the firmware has the details.
+Then the unit restarts into ST's ROM DFU loader and leaves the bus as `0483:5740`. Within about 2 s it comes back as `0483:DF11`. The `OK` is flushed, then the port keeps polling for 20 ms so the host collects it, before the restart. A host that still misses it sees the port vanish and DF11 appear, which `to-dfu` also counts as success. The desktop answers `ERR dfu is not in this build`. § Enter DFU from the firmware has the details.
 
 ## The functional core: `chimera_core::console`
 
@@ -360,22 +360,22 @@ The owner's ask (2026-10-02): today, flashing means moving the BOOT0 jumper on t
   | Reason | `PLAY STOPS UNTIL FLASHED OR POWER-CYCLED` (the prompt wraps it to two lines, as it does other long reasons) |
   | Pills | `ENTER DFU`, `CANCEL` (`DfuAnswer`, `Two`; the confirming pill first, as DELETE's and CLEAR's are) |
 
-- It is sealed like every other confirming prompt. `commits!(DfuAnswer => EnterDfu, RomDfu)` and `replace::said` make the only `Said<RomDfu>`. `UiState` keeps that yes until the shell takes it (`take_dfu`), and `dfu::enter` takes it as its argument. So no code path enters DFU from the menu without a SEQ on `ENTER DFU`. MENU and `CANCEL` close the prompt and play goes on.
+- It is sealed like every other confirming prompt. `commits!(DfuAnswer => EnterDfu, RomDfu)` and `replace::said` make the only `Said<RomDfu>`. `UiState` keeps that yes until the shell takes it (`take_dfu`), and `dfu::enter` takes it as its argument. `take_dfu` syncs SYSTEM before it hands the yes over, as leaving SETTINGS would: the restart never leaves SETTINGS, so a THEME change made in the same visit would otherwise be lost. So no code path enters DFU from the menu without a SEQ on `ENTER DFU`. MENU and `CANCEL` close the prompt and play goes on.
 - `RomDfu` is a unit type in `chimera_core::boot`. It is `Witnessed` with `Witness = ()`, sealed in `project::guard` beside the four targets: entering DFU loses nothing on the card, so there is nothing to witness.
 - There is no SAVE FIRST pill. Entering DFU is a power-cycle, so an unsaved project is lost exactly as it is at the power switch. The footer shows MODIFIED, and MENU hold saves.
 
 ### The console command
 
-`dfu` (§ The commands) answers `OK`. The shell flushes it, then enters DFU exactly as the menu's yes does. `Unit::dfu` returns `None` on the desktop, which answers `ERR dfu is not in this build`, and the menu's yes there prints `dfu: not in this build` on stderr and play goes on. `dfu` takes no argument.
+`dfu` (§ The commands) answers `OK`. The shell flushes it and keeps polling for `DRAIN_MS` (20 ms) so the host collects the last IN packet, then enters DFU exactly as the menu's yes does. Only `Usb::service` makes the `DfuAsked` that `DfuFrom::Console` needs, and only after that drain. `Unit::dfu` returns `None` on the desktop, which answers `ERR dfu is not in this build`, and the menu's yes there prints `dfu: not in this build` on stderr and play goes on. `dfu` takes no argument.
 
 ### The mechanism
 
 1. **The marker.** The firmware writes `DFU_MAGIC` to RTC_BKP0R (0x5800_4050). This register is in the backup domain, which a system reset does not clear. RCC_APB4ENR.RTCAPBEN clocks its bus, and PWR_CR1.DBP unlocks it for writing (the HAL's PWR `freeze` sets DBP and leaves it set, `pwr.rs`). Chimera uses no RTC. The HAL's `rtc::Rtc` is not used: `Rtc::init` resets the backup registers, and `open_or_init` wants an RTC clock source. The PAC's `RTC.bkpr[0]` is enough.
 2. **The reset.** `cortex_m::peripheral::SCB::sys_reset()`. ABOUT's RESET will read SOFTWARE after it.
 3. **The stock bootloader** at 0x08000000 runs first, as on every reset. It does `HAL_Init`, `SystemClock_Config`, then `MX_Deinit` (`HAL_RCC_DeInit`, `HAL_SuspendTick`) and jumps to 0x08020000 unless a button is held. Its `main.c` names no RTC, backup or IWDG register, and `HAL_RCC_DeInit` leaves RCC_BDCR alone. Its data and stack are in DTCM and the top of AXI SRAM (`STM32H753VITX_FLASH.ld`: `.data`/`.bss` in DTCMRAM, `_estack = 0x24080000`). So the marker should survive it, but that is checked on the unit (§ The risk).
-4. **The check, at the top of `#[entry] fn main`,** before `boot()`. RAM is set up there, and no clock or peripheral of Chimera's is touched yet. It does not go in `#[pre_init]`: cortex-m-rt 0.7.5 calls a Rust `pre_init` unsound because it runs before RAM is initialised, and Chimera has no `before_main`. `main` takes `cortex_m::Peripherals` and `pac::Peripherals` itself and hands them to `boot(cp, dp)`. It reads BKP0R through the owned `RTC`, after setting RTCAPBEN through the owned `RCC`. It **always** clears the register (DBP through the owned `PWR`), whatever it held, then acts on `boot::after_reset(marker)`:
+4. **The check, at the top of `#[entry] fn main`,** before `boot()`. RAM is set up there, and no clock or peripheral of Chimera's is touched yet. It does not go in `#[pre_init]`: cortex-m-rt 0.7.5 calls a Rust `pre_init` unsound because it runs before RAM is initialised, and Chimera has no `before_main`. `main` takes `cortex_m::Peripherals` and `pac::Peripherals` itself and hands them to `boot(cp, dp, checked)`. It reads BKP0R through the owned `RTC`, after setting RTCAPBEN through the owned `RCC`. It **always** clears the register (DBP through the owned `PWR`, read back), whatever it held, and reads it back: `clear` returns `Cleared` or `Stuck`. Only `(RomDfu, Cleared)` jumps; a `Stuck` marker boots the synth, so it can never trap the unit in DFU. `after_reset` returns `dfu::Checked`, which `boot` takes, and `boot` pairs it with the owned `RTC` into the `dfu::Marker` that `enter` needs:
    - `BootAction::Synth`: carry on into `boot()`, as today;
-   - `BootAction::RomDfu`: stop SysTick (`SYST_CSR = 0`; the stock bootloader's `HAL_SuspendTick` leaves it counting), set `SCB.VTOR = ROM_DFU_BASE`, and `cortex_m::asm::bootload(ROM_DFU_BASE as *const u32)`. That reads the MSP from the ROM's vector table, sets it, and branches to the ROM's reset vector. `ROM_DFU_BASE` is 0x1FF0_9800, the STM32H74x/75x system memory bootloader (ST AN2606). This block is the feature's one `unsafe`, with a `// SAFETY:` note: a fixed ROM vector table, at reset state, with nothing of Chimera's running.
+   - `BootAction::RomDfu` and `Cleared`: stop SysTick (`SYST_CSR = 0`; the stock bootloader's `HAL_SuspendTick` leaves it counting), disable and unpend every NVIC line (ICER and ICPR 0..8), set `SCB.VTOR = ROM_DFU_BASE`, and `cortex_m::asm::bootload(ROM_DFU_BASE as *const u32)`. That reads the MSP from the ROM's vector table, sets it, and branches to the ROM's reset vector. `ROM_DFU_BASE` is 0x1FF0_9800, the STM32H74x/75x system memory bootloader (ST AN2606). This block is the feature's one `unsafe`, with a `// SAFETY:` note naming what it relies on: a fixed ROM vector table; PRIMASK clear; the NVIC cleared; the caches and MPU as the stock bootloader left them; RTCAPBEN and DBP set, which the loader ignores.
 5. **The ROM loader** enumerates as `0483:DF11` on PA11/PA12, and `dfu-util` flashes as it does after the jumper. `:leave` resets into the stock bootloader and then into the new Chimera, with the marker clear.
 
 The decision is pure and host-tested:
@@ -397,7 +397,7 @@ Because the shell clears the marker before it acts, a marker can never trap the 
 
 ### The risk, checked on the unit
 
-The stock bootloader, the reset or Chimera's own early path could clobber RTC_BKP0R. If one does, `dfu` answers `OK`, the unit restarts, and the synth comes back as `0483:5740` instead of `0483:DF11`. `just flash` then times out with that message, and ABOUT's RESET reads SOFTWARE. The flash checklist's clobber check (U10) looks for exactly that. The fallback marker is the last word of D3 SRAM4, **0x3800_FFFC**. No section of the stock bootloader's linker script is in RAM_D3, Chimera's `memory.x` has no D3 region, and SRAM keeps its contents through a system reset. The swap is one const in `dfu.rs`.
+The stock bootloader, the reset or Chimera's own early path could clobber RTC_BKP0R. If one does, `dfu` answers `OK`, the unit restarts, and the synth comes back as `0483:5740` instead of `0483:DF11`. `just flash` then times out with that message, and ABOUT's RESET reads SOFTWARE. The flash checklist's clobber check (U10) looks for exactly that, and an issue is filed if it fails. A possible future alternative is a word of D3 SRAM4 (0x3800_FFFC): neither linker script maps RAM_D3, and SRAM keeps its contents through a system reset. It is not built. Two caveats come with it: SRAM is ECC-protected, so a read of a word never written since power-on can raise an ECC error on a cold boot, and the marker write must reach SRAM past the D-cache before the reset (a non-cacheable MPU region or a clean).
 
 Two more things are only checked on the unit:
 
@@ -408,7 +408,7 @@ Two more things are only checked on the unit:
 
 `just flash` and `just flash-bench` build, then run `python3 tools/chimera-usb.py to-dfu` before `dfu-util`:
 
-- **The console is there** (a USB device `0483:5740` in `/sys/bus/usb/devices`): it sends `dfu`, needs `OK`, then waits up to 10 s for `0483:DF11` to appear and exits 0. If DF11 does not appear, it exits 1 with `no DFU device after dfu: see U10 (marker clobbered?)`, and the recipe stops before `dfu-util`.
+- **The console is there** (a USB device `0483:5740` in `/sys/bus/usb/devices`): it sends `dfu`, needs `OK`, then waits up to 10 s for `0483:DF11` to appear and exits 0. The port vanishing before `OK` arrives, then DF11 appearing, is also success: the `OK` was lost to the reset, not refused. If DF11 does not appear, it exits 1 with `no DFU device after dfu: see U10 (marker clobbered?)`, and the recipe stops before `dfu-util`.
 - **DF11 is already there** (the jumper): it does nothing and exits 0.
 - **Neither:** it prints `no console: bridge BOOT0 on the back and re-plug for DFU` and exits 0, so `dfu-util` runs and behaves as today.
 
@@ -466,7 +466,7 @@ The plan's first task measures the real flash cost with `llvm-size`. Over 24 KB,
   | U7 | A bench build: `just usb bench` gives the B1–B3 numbers the screens showed. |
   | U8 | SETTINGS › SYSTEM › OS UPGRADE: `CANCEL` plays on. `ENTER DFU` stops the sound, and `0483:DF11` appears and stays. A power-cycle without flashing plays. |
   | U9 | No jumper: `just flash` (then `just flash-bench`) sends `dfu`, flashes, and the new build boots and enumerates. |
-  | U10 | The clobber check: if U8 or U9 brings back `0483:5740` instead of `0483:DF11`, the marker was cleared on the way. Switch to the SRAM4 fallback and repeat. |
+  | U10 | The clobber check: if U8 or U9 brings back `0483:5740` instead of `0483:DF11`, the marker was cleared on the way. File an issue (§ The risk names SRAM4 as a possible alternative, with its caveats). |
 
 ## Later, kept open but out of scope
 

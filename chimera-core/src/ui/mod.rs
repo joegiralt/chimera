@@ -306,9 +306,23 @@ impl UiState {
         }
     }
 
-    /// The DFU prompt's yes, once.
-    pub fn take_dfu(&mut self) -> Option<Said<RomDfu>> {
-        self.dfu.take()
+    /// The DFU prompt's yes, once, with SYSTEM synced first: the restart
+    /// leaves SETTINGS without the exit sync, so a THEME change made in
+    /// this visit would be lost.
+    pub fn take_dfu<S: Store>(
+        &mut self,
+        sync: &mut SystemSync,
+        card: &mut Card,
+        store: &mut S,
+        s: &mut SystemSettings,
+    ) -> Option<Said<RomDfu>> {
+        let yes = self.dfu.take()?;
+        s.theme = self.theme;
+        // As if SETTINGS were left: `left_system` keeps the untouched mark.
+        let _ = sync.left_system(false, s);
+        let _ = sync.on_exit(card, store, s, self.project.meta().file());
+        self.card = *card;
+        Some(yes)
     }
 
     /// The last MIX+PLUS outcome, shown in the focus band until the next
