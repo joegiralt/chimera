@@ -248,7 +248,7 @@ pub static RING_SPECS: [ParamSpec; 15] = [
         .ident("MUTE")
         .glyph(FocusGlyph::Switch),
     ParamSpec::stepped(6, "GATE", PCT, 0.0, 100.0, 50.0, false).ident("GATE"),
-    ParamSpec::stepped(7, "VEL", ValFmt::Uni, 0.0, 127.0, 100.0, false).ident("VEL"),
+    ParamSpec::stepped(7, "VEL", ValFmt::OneBased(126), 1.0, 127.0, 100.0, false).ident("VEL"),
     ParamSpec::stepped(8, "ACCENT", ValFmt::Int(32), 0.0, 32.0, 0.0, false).ident("ACCENT"),
     ParamSpec::stepped(9, "OCTAVE", ValFmt::Int(8), 0.0, 8.0, 4.0, false).ident("OCTAVE"),
     ParamSpec::choice(10, "RANGE", ValFmt::Names(&RANGE_NAMES), 3.0, 0.0).ident("RANGE"),
@@ -271,7 +271,16 @@ pub static CHORD_SPECS: [ParamSpec; 4] = [
     ParamSpec::choice(1, "SCALE", ValFmt::Names(&SCALE_NAMES), 10.0, 0.0)
         .ident("SCALE")
         .glyph(FocusGlyph::None),
-    ParamSpec::stepped(2, "BARS", ValFmt::OneBased(7), 0.0, 7.0, 0.0, false).ident("BARS"),
+    ParamSpec::stepped(
+        2,
+        "BARS",
+        ValFmt::OneBased(Bars::MAX - 1),
+        0.0,
+        (Bars::MAX - 1) as f32,
+        0.0,
+        false,
+    )
+    .ident("BARS"),
     ParamSpec::stepped(3, "SEGS", ValFmt::OneBased(7), 0.0, 7.0, 0.0, false).ident("SEGS"),
 ];
 
@@ -390,7 +399,7 @@ impl Block for SceneRing {
                     self.refill(fill);
                 }
             }
-            // `Fill::new` takes ROTATE mod STEPS: one past the last wraps to 0.
+            // `Fill::new` takes ROTATE mod STEPS.
             Self::ROTATE => {
                 if let Some(fill) = Fill::new(f.steps(), f.hits(), i) {
                     self.refill(fill);
@@ -413,6 +422,19 @@ impl Block for SceneRing {
             Self::WALK => r.walk = pick(&Walk::ALL, v),
             Self::TARGET => self.target = Target::Part(pick(&PartId::ALL, v)),
             _ => {}
+        }
+    }
+
+    /// ROTATE wraps both ways at the ring's STEPS; the rest step and clamp
+    /// as their specs say.
+    fn nudge(&mut self, id: ParamId, delta: i8) {
+        let Some(s) = self.spec(id) else { return };
+        if id == Self::ROTATE {
+            let f = self.ring.fill();
+            let to = (f.rotate() as i16 + delta as i16).rem_euclid(f.steps().get() as i16);
+            self.write(id, to as f32);
+        } else {
+            self.set(id, self.get(id) + delta as f32 * s.step);
         }
     }
 
@@ -477,7 +499,7 @@ impl Block for ChordRing {
         match id {
             Self::KEY => self.tonic = pick(&PitchClass::ALL, v),
             Self::SCALE => self.scale = pick(&ScaleKind::ALL, v),
-            Self::BARS => self.bars = Bars::new(n.min(8)).unwrap_or(Bars::ONE),
+            Self::BARS => self.bars = Bars::new(n.min(Bars::MAX)).unwrap_or(Bars::ONE),
             Self::SEGS => self.segs = Segs::new(n.min(MAX_SEGS as u8)).unwrap_or(Segs::ONE),
             _ => {}
         }
@@ -508,41 +530,26 @@ impl Block for ChordRing {
     }
 }
 
-/// `Bpm` as a block (BPM, `BlockRef::Tempo`), over the song's own field.
-#[derive(Debug)]
-#[repr(transparent)]
-pub struct Tempo(pub Bpm);
-
-impl Tempo {
+impl Bpm {
     pub const BPM: ParamId = ParamId(0);
-
-    pub fn of(b: &Bpm) -> &Tempo {
-        // SAFETY: `Tempo` is `repr(transparent)` over `Bpm`: same layout,
-        // and the borrow is carried over unchanged.
-        unsafe { &*(b as *const Bpm as *const Tempo) }
-    }
-
-    pub fn of_mut(b: &mut Bpm) -> &mut Tempo {
-        // SAFETY: as `of`; the unique borrow of `b` becomes the result's.
-        unsafe { &mut *(b as *mut Bpm as *mut Tempo) }
-    }
 }
 
-impl Block for Tempo {
+/// The song's tempo as a block (`BlockRef::Tempo`).
+impl Block for Bpm {
     fn specs(&self) -> &'static [ParamSpec] {
         &TEMPO_SPECS
     }
 
     fn get(&self, id: ParamId) -> f32 {
         match id {
-            Self::BPM => self.0.get() as f32,
+            Self::BPM => Bpm::get(*self) as f32,
             _ => 0.0,
         }
     }
 
     fn write(&mut self, id: ParamId, v: f32) {
         if id == Self::BPM {
-            self.0 = Bpm::clamped(v as u16);
+            *self = Bpm::clamped(v as u16);
         }
     }
 }

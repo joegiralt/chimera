@@ -11,9 +11,10 @@ pub struct Bars(u8);
 
 impl Bars {
     pub const ONE: Bars = Bars(1);
+    pub const MAX: u8 = 8;
 
     pub const fn new(n: u8) -> Option<Bars> {
-        if matches!(n, 1..=8) {
+        if n >= 1 && n <= Self::MAX {
             Some(Bars(n))
         } else {
             None

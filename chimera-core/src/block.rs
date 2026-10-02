@@ -42,8 +42,8 @@ impl ValFmt {
             // Discrete: shift-encoder jumps to 0 or max
             ValFmt::Int(_) | ValFmt::OneBased(_) | ValFmt::Names(_) => &[0.0, 1.0],
             ValFmt::Signed(_) => &[0.0, 0.5, 1.0],
-            // MIN, 120, MAX.
-            ValFmt::Bpm => &[0.0, 1.0 / 3.0, 1.0],
+            // MIN, the default, MAX.
+            ValFmt::Bpm => &[0.0, BPM_SNAP, 1.0],
         }
     }
 
@@ -69,10 +69,22 @@ impl ValFmt {
             ValFmt::Int(n) | ValFmt::OneBased(n) => n,
             ValFmt::Signed(n) => n.saturating_mul(2),
             ValFmt::Names(names) => names.len().saturating_sub(1) as u8,
-            _ => 127,
+            ValFmt::Uni
+            | ValFmt::Bi
+            | ValFmt::Pan
+            | ValFmt::Route
+            | ValFmt::Law(_)
+            | ValFmt::Bpm => 127,
         }
     }
 }
+
+/// `ValFmt::Bpm`'s middle snap point, a third of the way: 120 in 30–300.
+const BPM_SNAP: f32 = 1.0 / 3.0;
+const _: () = {
+    use crate::orbit::clock::Bpm;
+    assert!(3 * (Bpm::DEFAULT.get() - Bpm::MIN) == Bpm::MAX - Bpm::MIN);
+};
 
 /// Identifies a parameter within its block type. Stable; never reused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

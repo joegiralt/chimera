@@ -8,10 +8,10 @@ pub mod cells;
 pub use cells::OrbitCell;
 
 use crate::orbit::RINGS;
-use crate::orbit::clock::{Bpm, Position};
+use crate::orbit::clock::{Bpm, Phase, Position, step_at};
 use crate::orbit::euclid::HitMask;
-use crate::orbit::runner::{OrbitShared, OrbitView};
-use crate::orbit::scene::{OrbitSong, SceneRing};
+use crate::orbit::runner::{OrbitShared, OrbitView, beats_at};
+use crate::orbit::scene::{OrbitSong, Scene, SceneRing};
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot};
 use crate::ui::page::PageLayout;
 use chimera_theory::Chord;
@@ -81,9 +81,10 @@ pub struct RingStatus {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OrbitStatus {
     pub running: bool,
+    /// The load the view's runner is on.
+    pub epoch: u32,
     pub bpm: Bpm,
     pub pos: Position,
-    pub beats: u32,
     pub loops: u32,
     pub cued: bool,
     pub seg: u8,
@@ -92,12 +93,46 @@ pub struct OrbitStatus {
 }
 
 impl OrbitStatus {
+    /// The init scene, stopped at the top: the runner's first view.
+    pub const IDLE: OrbitStatus = OrbitStatus::stopped(&Scene::init());
+
+    const fn stopped(scene: &Scene) -> OrbitStatus {
+        let c = &scene.chords;
+        let chord = match c.played[0] {
+            Some(ch) => ch,
+            None => c.key().triad(c.degrees[0]),
+        };
+        let mut rings = [RingStatus {
+            step: 0,
+            fired: 0,
+            hits: scene.rings[0].ring.hits_mask(),
+        }; RINGS];
+        let mut i = 0;
+        while i < RINGS {
+            let r = &scene.rings[i].ring;
+            rings[i].step = step_at(Phase::ZERO, r.fill().steps());
+            rings[i].hits = r.hits_mask();
+            i += 1;
+        }
+        OrbitStatus {
+            running: false,
+            epoch: 0,
+            bpm: Bpm::DEFAULT,
+            pos: Position::ZERO,
+            loops: 0,
+            cued: false,
+            seg: 0,
+            chord,
+            rings,
+        }
+    }
+
     pub fn of(v: &OrbitView) -> OrbitStatus {
         OrbitStatus {
             running: v.running,
+            epoch: v.epoch,
             bpm: v.bpm,
             pos: v.pos,
-            beats: v.beats,
             loops: v.loops,
             cued: v.cued,
             seg: v.seg,
@@ -108,6 +143,11 @@ impl OrbitStatus {
                 hits: r.hits,
             }),
         }
+    }
+
+    /// Beats since the start, from the position.
+    pub const fn beats(&self) -> u32 {
+        beats_at(self.pos)
     }
 }
 
@@ -124,41 +164,59 @@ pub struct OrbitUi {
     pub scene_rev: u16,
     /// The view's `loops` when the drift was last absorbed.
     pub loops_seen: u32,
+    /// The project's load: only a view on it brings drift.
+    pub epoch: u32,
     pub status: OrbitStatus,
 }
 
 impl OrbitUi {
-    pub fn new() -> OrbitUi {
+    pub const fn new() -> OrbitUi {
         OrbitUi {
             seg: 0,
             cursor: 0,
             run: false,
             scene_rev: 0,
             loops_seen: 0,
-            status: OrbitStatus::of(&OrbitView::default()),
+            epoch: 0,
+            status: OrbitStatus::IDLE,
         }
     }
 
     /// Every field of `out`, every time: a triple buffer's slot comes back
     /// two publishes stale, so a field left alone would flip between
-    /// blocks (a false START or STOP).
+    /// blocks (a false START or STOP). The destructure fails to compile
+    /// when `OrbitShared` gains a field.
     pub fn publish(&self, song: &OrbitSong, out: &mut OrbitShared) {
-        out.run = self.run;
-        out.bpm = song.bpm;
-        out.scene_rev = self.scene_rev;
-        out.settings = song.live;
+        let OrbitShared {
+            run,
+            bpm,
+            scene_rev,
+            settings,
+        } = out;
+        *run = self.run;
+        *bpm = song.bpm;
+        *scene_rev = self.scene_rev;
+        *settings = song.live;
+    }
+
+    /// A project was loaded at `epoch`: views from before it are another
+    /// project's.
+    pub fn loaded(&mut self, epoch: u32) {
+        self.epoch = epoch;
     }
 
     /// Takes the runner's latest view; true when its drift is due in the
-    /// song: a loop went by, and no switch is queued. A runner that stopped
-    /// itself (a load) clears `run`, once, so one B6 starts it again.
+    /// song: a view on this project's load, a loop gone by, and no switch
+    /// queued. A runner that stopped itself clears `run`, once, so one B6
+    /// starts it again: seen stopping, or on a new load, which stops it
+    /// even before it was seen running.
     pub fn see(&mut self, v: &OrbitView) -> bool {
-        let was = self.status.running;
+        let was = self.status;
         self.status = OrbitStatus::of(v);
-        if self.run && was && !v.running {
+        if self.run && !v.running && (was.running || v.epoch != was.epoch) {
             self.run = false;
         }
-        let due = v.loops != self.loops_seen && !v.cued;
+        let due = v.epoch == self.epoch && v.loops != self.loops_seen && !v.cued;
         if due {
             self.loops_seen = v.loops;
         }

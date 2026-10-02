@@ -164,7 +164,7 @@ pub fn same(a: &Project, b: &Project) {
         );
     }
     assert_eq!(a.perf().fx, b.perf().fx, "FX");
-    assert!(a.orbit() == b.orbit(), "ORBIT");
+    assert_eq!(a.orbit(), b.orbit(), "ORBIT");
     assert_eq!(project_crc(a), project_crc(b), "project_crc");
 }
 

@@ -50,7 +50,6 @@ use crate::name::ProjectName;
 use crate::orbit::RingIdx;
 use crate::orbit::chords::ScaleKind;
 use crate::orbit::runner::{OrbitShared, OrbitView};
-use crate::orbit::scene::Tempo;
 use crate::params::{EngineType, ParamSnapshot};
 use crate::perf::load::AudioStats;
 use crate::preset::POOL_SIZE;
@@ -502,6 +501,7 @@ impl UiState {
         };
         let published = publish(swap, &self.project);
         self.project_replaced(was);
+        self.orbit.loaded(link.epoch());
         // Only a file load sets it: NEW, loaded or fallen back to, has none.
         if let Some(f) = self.project.meta().file() {
             self.remember(cx.card, cx.store, cx.sync, cx.settings, f);
@@ -1461,23 +1461,23 @@ impl UiState {
                 _ => {}
             }
         }
-        let def = self.page_def();
+        let (def, ctx) = (self.page_def(), self.ctx());
+        let shift = c.edges(ButtonId::Mix).down;
         for (i, &enc) in ALL_ENCODERS.iter().enumerate() {
             let delta = c.encoder_delta(enc);
-            if delta == 0 {
+            if delta == 0 || view::view(def, i, &ctx) == View::Empty {
                 continue;
             }
-            let Some(a) = view::view(def, i, &self.ctx()).addr() else {
-                continue;
-            };
             self.focus.touch(def.id, i);
-            let blocks = &mut UiBlocks {
+            let params = &mut UiBlocks {
                 project: &mut self.project,
                 part: self.active_part,
                 theme: &mut self.theme,
             };
-            if let Some(b) = blocks.block_mut(a.block) {
-                b.nudge(a.param, delta);
+            if shift {
+                part_page::snap_under(def, i, delta, params, &ctx);
+            } else {
+                part_page::apply_under(def, i, delta, params, &ctx, &mut self.sel_op);
             }
         }
     }
@@ -2201,7 +2201,7 @@ fn read_block<'a>(
         BlockRef::PartMix(p) => Some(project.read_part(p).mix),
         BlockRef::OrbitChords => Some(&song.live.chords),
         BlockRef::OrbitRing(r) => Some(&song.live.rings[r.get() as usize]),
-        BlockRef::Tempo => Some(Tempo::of(&song.bpm)),
+        BlockRef::Tempo => Some(&song.bpm),
         _ => project.read_part(part).block(b),
     }
 }
@@ -2221,7 +2221,7 @@ impl Blocks for UiBlocks<'_> {
             BlockRef::OrbitRing(r) => {
                 Some(&mut self.project.orbit_mut().live.rings[r.get() as usize])
             }
-            BlockRef::Tempo => Some(Tempo::of_mut(&mut self.project.orbit_mut().bpm)),
+            BlockRef::Tempo => Some(&mut self.project.orbit_mut().bpm),
             _ => {
                 let PartEdit { sound, mix, fx } = self.project.edit_part(self.part);
                 part_block_mut(sound, mix, fx, b)

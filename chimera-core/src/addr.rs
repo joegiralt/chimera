@@ -84,7 +84,7 @@ pub enum BlockRef {
     OrbitChords,
     /// ORBIT ring n of the live scene (`SceneRing`).
     OrbitRing(crate::orbit::RingIdx),
-    /// ORBIT's BPM (`Tempo`): saved in its own record, so no block code and
+    /// ORBIT's BPM (`Bpm`): saved in its own record, so no block code and
     /// not in `ALL`.
     Tempo,
 }

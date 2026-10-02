@@ -19,6 +19,7 @@ use chimera_core::project::PartId;
 use chimera_core::storage::Card;
 use chimera_core::triple::{Reader, TripleBuffer, Writer};
 use chimera_core::ui::UiState;
+use chimera_core::ui::orbit::OrbitUi;
 use chimera_hal::testkit::MemStore;
 use chimera_hal::{ButtonId, EncoderId};
 use chimera_theory::{Degree, Note, PitchClass};
@@ -90,12 +91,19 @@ fn rhythm_edits_bump_the_rev_and_knobs_do_not() {
     assert_eq!((steps(&r), r.ring.fill().hits()), (2, 2));
     assert_eq!(r.ring.hits_mask().hits(), 2, "the mask is re-laid");
 
-    // ROTATE wraps at STEPS.
-    r.set(SceneRing::STEPS, 4.0);
-    r.set(SceneRing::ROTATE, 4.0);
-    assert_eq!(r.ring.fill().rotate(), 4);
-    r.nudge(SceneRing::ROTATE, 1);
-    assert_eq!(r.ring.fill().rotate(), 0);
+    // ROTATE wraps both ways at every STEPS.
+    for n in 1..=32u8 {
+        r.set(SceneRing::STEPS, f32::from(n - 1));
+        r.set(SceneRing::ROTATE, 0.0);
+        r.nudge(SceneRing::ROTATE, -1);
+        assert_eq!(r.ring.fill().rotate(), n - 1, "{n} steps, down from 0");
+        r.nudge(SceneRing::ROTATE, 1);
+        assert_eq!(r.ring.fill().rotate(), 0, "{n} steps, up from the last");
+    }
+
+    // VEL is 1..=127: no velocity is a note-off.
+    r.set(SceneRing::VEL, 0.0);
+    assert_eq!(r.ring.velocity.get(), 1);
 }
 
 #[test]
@@ -205,7 +213,7 @@ fn orbit_codes_pinned() {
 }
 
 #[test]
-fn new_project_orbit_is_init_and_pristine() {
+fn new_project_orbit_is_init_and_reset_restores_it() {
     assert_eq!(OrbitSong::NEW.live, Scene::init());
     assert_eq!(OrbitSong::NEW.bpm, Bpm::DEFAULT);
     let mut ui = Box::new(UiState::new());
@@ -379,6 +387,38 @@ fn stop_play_keeps_the_drift() {
     let first = rig.runner.view();
     assert_eq!(first.pos.bar, 0, "still the first loop");
     assert_eq!(drift(&first), live, "PLAY plays the drift");
+}
+
+/// B6 and a load in one publish: the runner takes the load first and
+/// never starts, so the view never runs. The new epoch clears `run`
+/// anyway, and the next B6 starts.
+#[test]
+fn b6_with_a_load_never_sticks() {
+    let mut rig = Rig::new(in_orbit());
+    rig.epoch += 1;
+    rig.frame(Input::press(ButtonId::B6), 1);
+    assert!(!rig.running(), "the load wins the block");
+    rig.frame(Input::release(ButtonId::B6), 1);
+    assert!(!rig.ui.orbit().run, "the new load clears run");
+    rig.idle(1);
+    rig.b6();
+    assert!(rig.running(), "one B6 starts it");
+}
+
+/// A view from before a load is the old project's: its drift stays out
+/// of the new one.
+#[test]
+fn a_view_from_before_a_load_brings_no_drift() {
+    let mut o = OrbitUi::new();
+    o.loaded(1);
+    let mut v = OrbitView {
+        loops: 5,
+        ..OrbitView::default()
+    };
+    assert!(!o.see(&v), "epoch 0, the old project's");
+    v.epoch = 1;
+    assert!(o.see(&v), "the new project's");
+    assert!(!o.see(&v), "once a loop");
 }
 
 #[test]

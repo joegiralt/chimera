@@ -32,13 +32,26 @@ pub fn apply_encoder(
     params: &mut impl Blocks,
     sel_op: &mut Op,
 ) {
+    let ctx = SlotCtx::read(&*params, *sel_op);
+    apply_under(def, slot, delta, params, &ctx, sel_op);
+}
+
+/// `apply_encoder` under `ctx`: an ORBIT page's ring is the location's.
+pub fn apply_under(
+    def: &BlockDef,
+    slot: usize,
+    delta: i8,
+    params: &mut impl Blocks,
+    ctx: &SlotCtx,
+    sel_op: &mut Op,
+) {
     if def
         .params
         .get(slot)
         .is_some_and(|s| s.binding == SlotBinding::SelectOp)
     {
         *sel_op = sel_op.nudged(delta);
-    } else if let Some(a) = slot_addr(def, slot, &SlotCtx::read(&*params, *sel_op))
+    } else if let Some(a) = slot_addr(def, slot, ctx)
         && let Some(b) = params.block_mut(a.block)
     {
         b.nudge(a.param, delta);
@@ -47,7 +60,13 @@ pub fn apply_encoder(
 
 /// Shift+encoder on `slot`: snap the bound param (the selector does not snap).
 pub fn snap_encoder(def: &BlockDef, slot: usize, delta: i8, params: &mut impl Blocks, sel_op: Op) {
-    if let Some(a) = slot_addr(def, slot, &SlotCtx::read(&*params, sel_op))
+    let ctx = SlotCtx::read(&*params, sel_op);
+    snap_under(def, slot, delta, params, &ctx);
+}
+
+/// `snap_encoder` under `ctx`.
+pub fn snap_under(def: &BlockDef, slot: usize, delta: i8, params: &mut impl Blocks, ctx: &SlotCtx) {
+    if let Some(a) = slot_addr(def, slot, ctx)
         && let Some(b) = params.block_mut(a.block)
     {
         b.snap(a.param, delta);

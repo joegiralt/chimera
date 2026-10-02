@@ -58,6 +58,8 @@ pub struct RingView {
 #[derive(Clone, Copy, Debug)]
 pub struct OrbitView {
     pub running: bool,
+    /// The project load the runner is on (`AudioShared.epoch`).
+    pub epoch: u32,
     pub bpm: Bpm,
     pub pos: Position,
     pub beats: u32,
@@ -72,17 +74,22 @@ pub struct OrbitView {
 const BEATS_PER_BAR: u32 = 4;
 const BEAT_SHIFT: u32 = 32 - BEATS_PER_BAR.trailing_zeros();
 
+/// Beats from the start to `pos`.
+pub const fn beats_at(pos: Position) -> u32 {
+    pos.bar
+        .wrapping_mul(BEATS_PER_BAR)
+        .wrapping_add(pos.phase.get() >> BEAT_SHIFT)
+}
+
 impl OrbitView {
     /// The view of `scene` stopped at `pos`.
     fn of(scene: &Scene, pos: Position) -> OrbitView {
         OrbitView {
             running: false,
+            epoch: 0,
             bpm: Bpm::DEFAULT,
             pos,
-            beats: pos
-                .bar
-                .wrapping_mul(BEATS_PER_BAR)
-                .wrapping_add(pos.phase.get() >> BEAT_SHIFT),
+            beats: beats_at(pos),
             loops: 0,
             cued: false,
             seg: 0,
@@ -299,6 +306,7 @@ impl OrbitRunner {
     pub fn view(&self) -> OrbitView {
         let mut v = OrbitView::of(&self.working, self.edge);
         v.running = self.transport;
+        v.epoch = self.epoch;
         v.bpm = self.clock.bpm();
         v.loops = self.loops;
         v.cued = self.cue_pending;
