@@ -16,6 +16,7 @@ use crate::ui::nav::{Column, ListAt, Location};
 use super::listing::Validity;
 use super::naming::proposed_name;
 use super::prompt::Choice;
+use super::replace::ProjectAsk;
 use super::{Ask, NamingFor, SAVE_AS_AT, SaveAs, Screen, screen_path};
 
 /// SETTINGS › PROJECT, the bar on SAVE PROJECT AS.
@@ -273,11 +274,10 @@ impl UiState {
                     Err(again) => {
                         let current = self.project.meta().name();
                         self.ask(Ask::LoadProject {
-                            pending: again.into_pending(),
+                            ask: ProjectAsk::new(again),
                             to,
                             current,
                             clear,
-                            choice: Choice::new(),
                         });
                         None
                     }

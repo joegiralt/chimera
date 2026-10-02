@@ -6,7 +6,7 @@ mod screen;
 
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
-use chimera_core::project::{PartId, PartStatus, SlotId, part_status, test_support};
+use chimera_core::project::{Line, PartId, PartStatus, SlotId, part_status, test_support};
 use chimera_core::storage::sound_crc;
 use chimera_core::ui::UiState;
 use chimera_core::ui::busy::ToastStep;
@@ -120,7 +120,7 @@ fn part_strip_marks() {
     edit(&mut ui, P[1]);
     assert_eq!(mark(&ui, P[1]), "* EDITED · FROM SLOT 03");
     let _ = test_support::save_part_to(ui.project_mut(), P[1], S3);
-    assert_eq!(mark(&ui, P[2]), "◦ SLOT MOVED");
+    assert_eq!(mark(&ui, P[2]), "◦ SLOT 03 MOVED");
 
     let strip = |m: PartMark| {
         let mut fb = Fb::new();
@@ -130,6 +130,19 @@ fn part_strip_marks() {
     };
     assert!(strip(PartMark::of(ui.project(), P[0])), "edited in WARN");
     assert!(!strip(PartMark::of(ui.project(), P[1])), "clean");
+
+    // The moved mark leaves the name room.
+    let mut fb = Fb::new();
+    draw_part_strip(
+        &mut fb,
+        P[2],
+        "ABCDEFGHIJKLMNOP",
+        PartMark::of(ui.project(), P[2]),
+    );
+    assert_eq!(fb.oob, 0);
+    assert!((0..240).any(|x| (28..48).any(|y| fb.at(x, y) == theme::WARN)));
+    let name_px = (100..120).any(|x| (28..48).any(|y| fb.at(x, y) == theme::INK));
+    assert!(name_px, "the name runs past 100 px");
 }
 
 /// P1 and P4 on SLOT 03, P1 edited and saved over it: the prompt names P4.
@@ -147,7 +160,34 @@ fn saved_over() -> UiState {
     );
     tap(&mut ui, ButtonId::Seq);
     assert_eq!(question(&ui), "P4 ALSO USES SLOT 03");
+    assert_eq!(
+        ui.step_toast(0),
+        ToastStep::Show(Line::new("SAVED TO SLOT 03"))
+    );
     ui
+}
+
+/// UPDATE applies the reverts the prompt showed: a Part edited since, or
+/// one it didn't name, keeps its edit.
+#[test]
+fn update_applies_only_what_it_showed() {
+    let mut ui = UiState::new();
+    for p in [P[0], P[3], P[4]] {
+        load(&mut ui, p, S3);
+    }
+    edit(&mut ui, P[4]); // Edited, so never named; not as P1 is
+    edit(&mut ui, P[4]);
+    edit(&mut ui, P[0]);
+    save_row(&mut ui, P[0], PartCmd::OverSlot);
+    tap(&mut ui, ButtonId::Seq);
+    assert_eq!(question(&ui), "P4 ALSO USES SLOT 03");
+    let p5 = crc(&ui, P[4]);
+    edit(&mut ui, P[3]); // while the prompt is open
+    let p4 = crc(&ui, P[3]);
+    answer(&mut ui, 0); // UPDATE P4
+    assert_eq!(crc(&ui, P[3]), p4, "edited since: refused");
+    assert_eq!(crc(&ui, P[4]), p5, "not named: untouched");
+    assert_eq!(status(&ui, P[4]), PartStatus::Edited);
 }
 
 #[test]
@@ -197,7 +237,60 @@ fn reload_is_dimmed_until_there_is_something_to_revert() {
     );
     part_row(&mut ui, P[0], 3); // RELOAD FROM PROJ
     tap(&mut ui, ButtonId::Seq);
+    answer(&mut ui, 1); // REPLACE
     assert_eq!(status(&ui, P[0]), PartStatus::Clean);
+}
+
+#[test]
+fn reload_over_edits_asks_and_save_first_goes_to_a_new_slot() {
+    let mut ui = UiState::new();
+    load(&mut ui, P[1], S3);
+    let slot = sound_crc(ui.project().pool().get(S3).unwrap());
+    edit(&mut ui, P[1]);
+    let edited = crc(&ui, P[1]);
+    part_row(&mut ui, P[1], 3); // RELOAD FROM PROJ
+    tap(&mut ui, ButtonId::Seq);
+    assert_eq!(question(&ui), "RELOAD P2 FROM SLOT 03?");
+    answer(&mut ui, 2); // CANCEL
+    assert_eq!(crc(&ui, P[1]), edited);
+
+    let free = ui.project().pool().first_free().unwrap();
+    tap(&mut ui, ButtonId::Seq);
+    answer(&mut ui, 0); // SAVE PART FIRST
+    assert_eq!(sound_crc(ui.project().pool().get(free).unwrap()), edited);
+    assert_eq!(sound_crc(ui.project().pool().get(S3).unwrap()), slot);
+    assert_eq!(crc(&ui, P[1]), slot, "reloaded");
+    assert_eq!(status(&ui, P[1]), PartStatus::Clean);
+}
+
+#[test]
+fn a_stale_part_reloads_without_asking() {
+    let mut ui = saved_over();
+    answer(&mut ui, 1); // LEAVE
+    part_row(&mut ui, P[3], 3);
+    tap(&mut ui, ButtonId::Seq);
+    assert!(!ui.prompt_open());
+    assert_eq!(status(&ui, P[3]), PartStatus::Clean);
+    assert_eq!(crc(&ui, P[3]), crc(&ui, P[0]));
+}
+
+/// A replace refused at the answer says why and stays.
+#[test]
+fn a_refused_replace_says_why() {
+    let mut ui = UiState::new();
+    edit(&mut ui, P[0]);
+    let edited = crc(&ui, P[0]);
+    rung(&mut ui, P[0], S3.index());
+    feed(&mut ui, Input::press(ButtonId::Edit));
+    assert!(ui.prompt_open());
+    ui.project_mut().pool_clear(S3).unwrap();
+    answer(&mut ui, 1); // REPLACE
+    assert_eq!(
+        ui.step_toast(0),
+        ToastStep::Show(Line::new("SLOT IS EMPTY"))
+    );
+    assert_eq!(crc(&ui, P[0]), edited);
+    assert!(ui.location().browse().is_some());
 }
 
 /// CLEAR on Part 1, edited from INIT: its prompt.
@@ -311,7 +404,7 @@ fn sound_rung_mix_minus_clears_an_unused_slot_after_confirm() {
     assert!(!ui.prompt_open());
     assert_eq!(
         ui.step_toast(0),
-        ToastStep::Show(chimera_core::project::Line::new("SLOT IN USE: P1"))
+        ToastStep::Show(Line::new("SLOT IN USE: P1"))
     );
     assert!(ui.project().pool().get(S3).is_some());
 }

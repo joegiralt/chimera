@@ -12,8 +12,8 @@ use super::NamingFor;
 use super::listing::{LOADED, Listing};
 use super::manage::{Command, Note, Off, Whose, command_rows};
 use super::naming::{Naming, draw_naming};
-use super::part::{Offer, PartCmd, SAVE_ROWS};
-use super::tree::{Act, Kind, PART, ROOT, Row, Screen, row_at, rows};
+use super::part::{Offer, SAVE_ROWS};
+use super::tree::{Kind, PART, ROOT, Row, Screen, row_at, rows};
 use crate::name::{ProjectName, SoundName};
 use crate::project::{
     Line, Origin, PartId, PartStatus, Project, ProjectFile, ProjectStatus, SlotId, part_status,
@@ -498,7 +498,8 @@ pub enum PartMark {
     Clean,
     /// From its slot, or INIT (`None`).
     Edited(Option<SlotId>),
-    SlotMoved,
+    /// As loaded from this slot, which moved on.
+    SlotMoved(SlotId),
 }
 
 impl PartMark {
@@ -506,7 +507,7 @@ impl PartMark {
         let x = p.part(part);
         match part_status(x, p.pool()) {
             PartStatus::Clean => PartMark::Clean,
-            PartStatus::Stale(_) => PartMark::SlotMoved,
+            PartStatus::Stale(s) => PartMark::SlotMoved(s),
             PartStatus::Edited => PartMark::Edited(match x.origin() {
                 Origin::Slot { slot, .. } => Some(slot),
                 Origin::Init(_) => None,
@@ -517,7 +518,7 @@ impl PartMark {
     fn color(self) -> Rgb565 {
         match self {
             PartMark::Clean => theme::MID,
-            PartMark::Edited(_) | PartMark::SlotMoved => theme::WARN,
+            PartMark::Edited(_) | PartMark::SlotMoved(_) => theme::WARN,
         }
     }
 
@@ -525,7 +526,7 @@ impl PartMark {
         match self {
             PartMark::Clean => [0, 0],
             PartMark::Edited(s) => [1, s.map_or(0, |s| s.index() as u8 + 1)],
-            PartMark::SlotMoved => [2, 0],
+            PartMark::SlotMoved(s) => [2, s.index() as u8 + 1],
         }
     }
 }
@@ -536,7 +537,7 @@ impl fmt::Display for PartMark {
             PartMark::Clean => f.write_str("CLEAN"),
             PartMark::Edited(Some(s)) => write!(f, "* EDITED · FROM SLOT {:02}", s.index() + 1),
             PartMark::Edited(None) => f.write_str("* EDITED · FROM INIT"),
-            PartMark::SlotMoved => f.write_str("◦ SLOT MOVED"),
+            PartMark::SlotMoved(s) => write!(f, "◦ SLOT {:02} MOVED", s.index() + 1),
         }
     }
 }
@@ -608,7 +609,7 @@ impl PartBand {
     /// A PART row's look: RELOAD from the offer, the rest from the tree.
     fn look(&self, kind: Kind) -> RowLook {
         match kind {
-            Kind::Act(Act::PartReload) => self.offer.look(PartCmd::Reload),
+            Kind::Act(a) => a.part_cmd().map_or(RowLook::Normal, |c| self.offer.look(c)),
             k => RowLook::of(k),
         }
     }

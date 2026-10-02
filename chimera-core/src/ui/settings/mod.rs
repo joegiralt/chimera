@@ -22,8 +22,8 @@ use chimera_hal::Controls;
 
 use crate::name::{Name, ProjectName};
 use crate::project::{
-    FreshFile, PartFrom, PartId, PartSet, PartSource, Pending, Project, ProjectEntry,
-    ProjectSource, SlotId, Subject,
+    FreshFile, PartAction, PartId, PartSet, PartSource, Project, ProjectEntry, ProjectSource,
+    SlotId, Subject,
 };
 use crate::ui::hold::Presses;
 use crate::ui::region::settings_key;
@@ -33,9 +33,9 @@ use naming::{NAME_MAX, Naming, NamingOut};
 use prompt::{
     AlsoUses, AlsoUsesAnswer, Answer, CardChanged, CardChangedAnswer, Choice, Clear, ClearAnswer,
     ClearSlot, Delete, DeleteAnswer, Load, LoadAnswer, NameExists, NameExistsAnswer, PromptView,
-    Replace, ReplaceAnswer, SaveOver, SaveOverAnswer, with_view,
+    Replace, ReplaceAnswer, ReplaceTo, SaveOver, SaveOverAnswer, with_view,
 };
-use replace::{PartAsk, PartReply};
+use replace::{PartAsk, ProjectAsk, Reply};
 
 /// SAVE PROJECT AS, named: the file it goes to and the load it is inside.
 #[derive(Debug)]
@@ -48,13 +48,15 @@ pub(crate) struct SaveAs {
 /// An open prompt and what it holds until answered; dropping it is CANCEL.
 #[derive(Debug)]
 pub(crate) enum Ask {
-    /// A Sound into an Edited Part: a slot, or CLEAR's INIT.
-    ReplacePart(PartAsk, Choice<ReplaceAnswer>),
-    /// A save over a slot `first` and `more` also play.
+    /// A Sound into an Edited Part: a slot, CLEAR's INIT or RELOAD's own.
+    ReplacePart(PartAsk, ReplaceTo),
+    /// A save over a slot `first` and `more` also play; UPDATE applies
+    /// `reverts`, as offered when it opened.
     UpdateStale {
         first: PartId,
         more: PartSet,
         slot: SlotId,
+        reverts: Reverts,
         choice: Choice<AlsoUsesAnswer>,
     },
     /// MIX+MINUS on the Sound rung, on a slot no Part plays.
@@ -62,11 +64,10 @@ pub(crate) enum Ask {
     /// LOAD over a Modified project; `to` names the file, `None` is NEW,
     /// and `clear` is CLEAR's save of NEW over the project's own file.
     LoadProject {
-        pending: Pending<ProjectSource>,
+        ask: ProjectAsk,
         to: Option<ProjectName>,
         current: ProjectName,
         clear: ThenClear,
-        choice: Choice<LoadAnswer>,
     },
     /// SAVE AS to a name `entry` already has.
     NameExists {
@@ -94,15 +95,13 @@ fn subject(c: &Chosen) -> Subject {
 /// A prompt's answer, with what it held.
 #[derive(Debug)]
 pub(crate) enum Answered {
-    ReplacePart(PartReply),
-    /// The Parts the prompt named.
-    UpdateStale(PartSet, Answer<AlsoUsesAnswer>),
+    ReplacePart(Reply<PartSource, ReplaceAnswer>, ReplaceTo),
+    UpdateStale(Reverts, Answer<AlsoUsesAnswer>),
     ClearSlot(SlotId, Answer<ClearAnswer>),
     LoadProject {
-        pending: Pending<ProjectSource>,
+        reply: Reply<ProjectSource, LoadAnswer>,
         to: Option<ProjectName>,
         clear: ThenClear,
-        answer: Answer<LoadAnswer>,
     },
     NameExists(SaveAs, ProjectEntry, Answer<NameExistsAnswer>),
     CardChanged(Then, Answer<CardChangedAnswer>),
@@ -111,6 +110,10 @@ pub(crate) enum Answered {
     SaveOver(Chosen, Answer<SaveOverAnswer>),
 }
 
+/// Each named Part's `Revert`, by Part, as offered when the prompt opened:
+/// its witness refuses a Part edited since.
+pub(crate) type Reverts = [Option<PartAction>; PartId::ALL.len()];
+
 /// A prompt after a frame's keys.
 pub(crate) enum AskStep {
     Open(Ask),
@@ -118,34 +121,35 @@ pub(crate) enum AskStep {
 }
 
 impl Ask {
-    pub(crate) fn replace_part(p: PartAsk) -> Ask {
-        Ask::ReplacePart(p, Choice::new())
-    }
-
     /// `parts`, now Stale on `slot`; none asks nothing.
-    pub(crate) fn update_stale(parts: PartSet, slot: SlotId) -> Option<Ask> {
+    pub(crate) fn update_stale(parts: PartSet, slot: SlotId, p: &Project) -> Option<Ask> {
         let first = parts.iter().next()?;
         let more = parts.iter().skip(1).fold(PartSet::EMPTY, PartSet::with);
+        let mut reverts = [None; PartId::ALL.len()];
+        for q in parts.iter() {
+            reverts[q.index()] = part::Offer::of(p, q).get(part::PartCmd::Reload);
+        }
         Some(Ask::UpdateStale {
             first,
             more,
             slot,
+            reverts,
             choice: Choice::new(),
         })
     }
 
     pub(crate) fn with_view<R>(&self, f: impl FnOnce(&PromptView<'_>) -> R) -> R {
         match self {
-            Ask::ReplacePart(p, c) => {
-                let PartSource { part, from } = p.source();
-                let to_init = matches!(from, PartFrom::Init(_));
-                with_view(&Replace { part, to_init }, c, f)
+            Ask::ReplacePart(a, to) => {
+                let part = a.source().part;
+                with_view(&Replace { part, to: *to }, a.choice(), f)
             }
             Ask::UpdateStale {
                 first,
                 more,
                 slot,
                 choice,
+                ..
             } => with_view(
                 &AlsoUses {
                     first: *first,
@@ -157,16 +161,13 @@ impl Ask {
             ),
             Ask::ClearSlot(slot, c) => with_view(&ClearSlot { slot: *slot }, c, f),
             Ask::LoadProject {
-                to,
-                current,
-                choice,
-                ..
+                ask, to, current, ..
             } => with_view(
                 &Load {
                     to: *to,
                     current: *current,
                 },
-                choice,
+                ask.choice(),
                 f,
             ),
             Ask::NameExists {
@@ -210,21 +211,23 @@ impl Ask {
     fn input(self, c: &impl Controls, p: &Presses, project: &Project) -> AskStep {
         use AskStep::{Answered as Got, Open};
         match self {
-            Ask::ReplacePart(ask, mut choice) => match choice.input(c, p) {
-                Some(a) => Got(Answered::ReplacePart(ask.answer(a, project))),
-                None => Open(Ask::ReplacePart(ask, choice)),
+            Ask::ReplacePart(ask, to) => match ask.input(c, p, project) {
+                Ok(r) => Got(Answered::ReplacePart(r, to)),
+                Err(ask) => Open(Ask::ReplacePart(ask, to)),
             },
             Ask::UpdateStale {
                 first,
                 more,
                 slot,
+                reverts,
                 mut choice,
             } => match choice.input(c, p) {
-                Some(a) => Got(Answered::UpdateStale(more.with(first), a)),
+                Some(a) => Got(Answered::UpdateStale(reverts, a)),
                 None => Open(Ask::UpdateStale {
                     first,
                     more,
                     slot,
+                    reverts,
                     choice,
                 }),
             },
@@ -233,24 +236,17 @@ impl Ask {
                 None => Open(Ask::ClearSlot(slot, choice)),
             },
             Ask::LoadProject {
-                pending,
+                ask,
                 to,
                 current,
                 clear,
-                mut choice,
-            } => match choice.input(c, p) {
-                Some(answer) => Got(Answered::LoadProject {
-                    pending,
-                    to,
-                    clear,
-                    answer,
-                }),
-                None => Open(Ask::LoadProject {
-                    pending,
+            } => match ask.input(c, p, project) {
+                Ok(reply) => Got(Answered::LoadProject { reply, to, clear }),
+                Err(ask) => Open(Ask::LoadProject {
+                    ask,
                     to,
                     current,
                     clear,
-                    choice,
                 }),
             },
             Ask::NameExists {

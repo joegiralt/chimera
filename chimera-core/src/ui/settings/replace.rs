@@ -1,60 +1,117 @@
-//! A Part's replace waiting on its prompt (#258): the UI holds a `PartAsk`,
-//! never a bare `Pending`, and only REPLACE answered makes the
+//! A replace waiting on its prompt (#258): the prompt's `Pending` and its
+//! `Choice` together, so only a SEQ tap on the confirming pill makes the
 //! `Confirmed`. Nothing else holds a `Said`:
 //!
 //! ```compile_fail,E0423
-//! use chimera_core::ui::settings::replace::Said;
+//! use chimera_core::ui::settings::replace::said::Said;
 //! let _ = Said(());
 //! ```
 //!
-//! ```compile_fail,E0423
+//! ```compile_fail,E0451
 //! use chimera_core::project::{PartSource, Pending};
+//! use chimera_core::ui::settings::prompt::Choice;
 //! use chimera_core::ui::settings::replace::PartAsk;
-//! fn forge(p: Pending<PartSource>) -> PartAsk {
-//!     PartAsk(p)
+//! fn forge(pending: Pending<PartSource>) -> PartAsk {
+//!     PartAsk { pending, choice: Choice::new() }
 //! }
 //! ```
 
-use crate::project::{Confirmed, NeedsConfirm, PartSource, Pending, Project, TemplateCrc};
+pub mod said;
 
-use super::prompt::{Answer, ReplaceAnswer};
+use chimera_hal::Controls;
 
-/// What `Pending::<PartSource>::replace` takes: the prompt's REPLACE.
-pub struct Said(());
+use crate::project::{
+    Confirmed, NeedsConfirm, PartSource, Pending, Project, ProjectSource, Target, TemplateCrc,
+};
+use crate::ui::hold::Presses;
 
-/// A replace into an Edited Part, asked.
+use super::prompt::{Answers, Choice, LoadAnswer, ReplaceAnswer};
+use said::Said;
+
+/// A prompt that guards a replace: which pill confirms it, which saves first.
+pub trait Guarded: Answers {
+    const CONFIRM: Self;
+    const SAVE_FIRST: Self;
+}
+
+impl Guarded for ReplaceAnswer {
+    const CONFIRM: Self = ReplaceAnswer::Replace;
+    const SAVE_FIRST: Self = ReplaceAnswer::SavePartFirst;
+}
+
+impl Guarded for LoadAnswer {
+    const CONFIRM: Self = LoadAnswer::LoadAnyway;
+    const SAVE_FIRST: Self = LoadAnswer::SaveThenLoad;
+}
+
+/// A replace the guard asked about, and its prompt's pick.
 #[derive(Debug)]
-pub struct PartAsk(Pending<PartSource>);
+pub struct Asked<R, A> {
+    pending: Pending<R>,
+    choice: Choice<A>,
+}
 
-/// What the prompt's answer leaves.
+/// SAVE PART FIRST / REPLACE / CANCEL.
+pub type PartAsk = Asked<PartSource, ReplaceAnswer>;
+/// SAVE THEN LOAD / LOAD ANYWAY / CANCEL.
+pub type ProjectAsk = Asked<ProjectSource, LoadAnswer>;
+
+/// What the answer leaves.
 #[derive(Debug)]
-pub enum PartReply {
-    /// SAVE PART FIRST: the replace waits on the save.
-    SaveFirst(PartAsk),
-    Replace(Confirmed<PartSource>),
+pub enum Reply<R: Target, A> {
+    /// The replace waits on a save.
+    SaveFirst(Asked<R, A>),
+    Confirmed(Confirmed<R>),
     Cancel,
 }
 
-impl PartAsk {
-    pub fn new(n: NeedsConfirm<PartSource>) -> Self {
-        PartAsk(n.into_pending())
-    }
-
-    pub fn source(&self) -> PartSource {
-        self.0.source()
-    }
-
-    /// `a`, against the Part as it is now.
-    pub(crate) fn answer(self, a: Answer<ReplaceAnswer>, p: &Project) -> PartReply {
-        match a {
-            Answer::Pick(ReplaceAnswer::Replace) => PartReply::Replace(self.0.replace(p, Said(()))),
-            Answer::Pick(ReplaceAnswer::SavePartFirst) => PartReply::SaveFirst(self),
-            Answer::Pick(ReplaceAnswer::Cancel) | Answer::Cancel => PartReply::Cancel,
+impl<R: Target, A: Guarded> Asked<R, A> {
+    pub fn new(n: NeedsConfirm<R>) -> Self {
+        Asked {
+            pending: n.into_pending(),
+            choice: Choice::new(),
         }
     }
 
+    pub fn source(&self) -> R {
+        self.pending.source()
+    }
+
+    pub fn choice(&self) -> &Choice<A> {
+        &self.choice
+    }
+
+    /// A frame's keys: still open, or answered against the target as it
+    /// is now.
+    pub fn input(
+        mut self,
+        c: &impl Controls,
+        p: &Presses,
+        project: &Project,
+    ) -> Result<Reply<R, A>, Self> {
+        let Some(a) = self.choice.input(c, p) else {
+            return Err(self);
+        };
+        Ok(match a.picked() {
+            Some(x) if x == A::CONFIRM => {
+                Reply::Confirmed(self.pending.confirm(project, Said::new()))
+            }
+            Some(x) if x == A::SAVE_FIRST => Reply::SaveFirst(Asked {
+                choice: Choice::new(),
+                ..self
+            }),
+            _ => Reply::Cancel,
+        })
+    }
+
     /// After the save: through the guard again, or asked again.
-    pub fn save_then(self, p: &Project, t: TemplateCrc) -> Result<Confirmed<PartSource>, PartAsk> {
-        self.0.save_then(p, t).map_err(PartAsk::new)
+    pub fn save_then(self, p: &Project, t: TemplateCrc) -> Result<Confirmed<R>, Self> {
+        self.pending.save_then(p, t).map_err(Self::new)
+    }
+
+    /// The source alone, for a save the replace waits on: it confirms only
+    /// through the guard.
+    pub fn into_pending(self) -> Pending<R> {
+        self.pending
     }
 }

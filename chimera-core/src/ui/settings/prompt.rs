@@ -12,7 +12,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use u8g2_fonts::FontRenderer;
 
 use crate::name::ProjectName;
-use crate::project::{Line, PartId, PartSet, SlotId, Subject};
+use crate::project::{Line, PartId, PartSet, ReplaceError, SlotId, Subject};
 use crate::storage::ProjectId;
 use crate::ui::components::upper;
 use crate::ui::draw;
@@ -81,11 +81,21 @@ answers!(ClearAnswer { Clear => "CLEAR", Cancel => "CANCEL" } Two);
 answers!(SaveOverAnswer { SaveOver => "SAVE OVER", Cancel => "CANCEL" } Two);
 answers!(CardChangedAnswer { SaveAs => "SAVE AS", Cancel => "CANCEL" } Two);
 
-/// A pick, or MENU.
+/// A pick, or MENU (`None`). Only `Choice::input` makes one, so an answer
+/// is always a key's:
+///
+/// ```compile_fail,E0423
+/// use chimera_core::ui::settings::prompt::{Answer, ReplaceAnswer};
+/// let _ = Answer(Some(ReplaceAnswer::Replace));
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Answer<A> {
-    Pick(A),
-    Cancel,
+pub struct Answer<A>(Option<A>);
+
+impl<A: Copy> Answer<A> {
+    /// The option SEQ confirmed; `None` for MENU.
+    pub fn picked(self) -> Option<A> {
+        self.0
+    }
 }
 
 /// The highlighted option of an open prompt: always one of `A::ALL`.
@@ -118,10 +128,10 @@ impl<A: Answers> Choice<A> {
     /// turn; A moves, clamped.
     pub fn input(&mut self, c: &impl Controls, p: &Presses) -> Option<Answer<A>> {
         if p.menu == Some(Press::Tap) {
-            return Some(Answer::Cancel);
+            return Some(Answer(None));
         }
         if p.seq == Some(Press::Tap) {
-            return Some(Answer::Pick(self.picked()));
+            return Some(Answer(Some(self.picked())));
         }
         let last = A::ALL.as_slice().len() as i32 - 1;
         let to = self.at as i32 + c.encoder_delta(EncoderId::A) as i32;
@@ -228,17 +238,27 @@ impl Prompt for Load {
 /// A Part's Sound replaced: from a slot, or cleared to INIT.
 pub struct Replace {
     pub part: PartId,
-    pub to_init: bool,
+    pub to: ReplaceTo,
+}
+
+/// What an Edited Part's Sound would become.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReplaceTo {
+    /// A Sound chosen on the Sound rung.
+    Sound,
+    Init,
+    /// RELOAD FROM PROJ: its own slot again.
+    Reload(SlotId),
 }
 
 impl Prompt for Replace {
     type Answer = ReplaceAnswer;
     fn words(&self, q: &mut Line, r: &mut Line) {
         let p = part(self.part);
-        let _ = if self.to_init {
-            write!(q, "CLEAR P{p} TO INIT?")
-        } else {
-            write!(q, "REPLACE P{p} SOUND?")
+        let _ = match self.to {
+            ReplaceTo::Sound => write!(q, "REPLACE P{p} SOUND?"),
+            ReplaceTo::Init => write!(q, "CLEAR P{p} TO INIT?"),
+            ReplaceTo::Reload(s) => write!(q, "RELOAD P{p} FROM {}?", Slot(s)),
         };
         let _ = write!(r, "P{p} IS EDITED");
     }
@@ -352,6 +372,21 @@ impl Prompt for ClearSlot {
 
 /// SAVE PART FIRST with no slot free.
 pub const POOL_FULL: &str = "POOL FULL";
+
+/// A Part saved to `s` from SAVE TO PROJ.
+pub fn saved_to(s: SlotId) -> Line {
+    let mut l = Line::new("");
+    let _ = write!(l, "SAVED TO {}", Slot(s));
+    l
+}
+
+/// A confirmed replace refused.
+pub fn refused(e: &ReplaceError) -> &'static str {
+    match e {
+        ReplaceError::SlotEmpty => "SLOT IS EMPTY",
+        ReplaceError::Changed => "PART CHANGED",
+    }
+}
 
 /// MIX+MINUS on a slot `parts` play: `SLOT IN USE: P1 P3`.
 pub fn in_use(parts: PartSet) -> Line {

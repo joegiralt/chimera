@@ -73,6 +73,10 @@ settings world of the synth. The spec is
 - `ChainId::System` and `UiMode::SoundBrowser` go; the browser becomes
   the Sound rung, and saving is SETTINGS > PART.
 - The UX spec is the owner's file and is amended by hand.
+- `project::guard` takes a UI type, `ui::settings::replace::said::Said`,
+  on purpose: only a prompt's confirming pill may confirm a replace (#258),
+  and Rust can't scope a constructor to a sibling module, so the token
+  lives in an import-free leaf of the UI.
 - ADRs 0043, 0044, 0046 and 0066 move to Accepted at the single ship
   flash.
 

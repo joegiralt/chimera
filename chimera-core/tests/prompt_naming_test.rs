@@ -16,7 +16,7 @@ use chimera_core::ui::region::{MAX_REGIONS, PROMPT, RegionKind, layout_regions, 
 use chimera_core::ui::settings::naming::{Naming, NamingOut, proposed_name};
 use chimera_core::ui::settings::prompt::{
     AlsoUses, AlsoUsesAnswer, Answer, CardChanged, Choice, Clear, ClearSlot, Delete, Load,
-    NameExists, Prompt, Replace, ReplaceAnswer as R, SaveOver, fits, with_view,
+    NameExists, Prompt, Replace, ReplaceAnswer as R, ReplaceTo, SaveOver, fits, with_view,
 };
 use chimera_core::ui::settings::view::{Crumb, Crumbs};
 use chimera_core::ui::{UiState, theme};
@@ -56,13 +56,13 @@ fn seq_confirms_and_menu_cancels_on_release() {
     };
     assert_eq!(frame(&mut c, Input::press(ButtonId::Seq).at(0)), None);
     assert_eq!(
-        frame(&mut c, Input::release(ButtonId::Seq).at(100)),
-        Some(Answer::Pick(R::Replace))
+        frame(&mut c, Input::release(ButtonId::Seq).at(100)).map(Answer::picked),
+        Some(Some(R::Replace))
     );
     assert_eq!(frame(&mut c, Input::press(ButtonId::Menu).at(200)), None);
     assert_eq!(
-        frame(&mut c, Input::release(ButtonId::Menu).at(300)),
-        Some(Answer::Cancel)
+        frame(&mut c, Input::release(ButtonId::Menu).at(300)).map(Answer::picked),
+        Some(None)
     );
 }
 
@@ -74,8 +74,8 @@ fn seq_with_a_turn_confirms_the_pick_shown() {
         seq: Some(Press::Tap),
     };
     assert_eq!(
-        c.input(&turn(EncoderId::A, 1), &seq),
-        Some(Answer::Pick(R::SavePartFirst))
+        c.input(&turn(EncoderId::A, 1), &seq).map(Answer::picked),
+        Some(Some(R::SavePartFirst))
     );
 }
 
@@ -338,8 +338,8 @@ fn every_prompt_fits() {
         to: None,
         current: name,
     });
-    for to_init in [false, true] {
-        check(Replace { part: p2, to_init });
+    for to in [ReplaceTo::Sound, ReplaceTo::Init, ReplaceTo::Reload(slot)] {
+        check(Replace { part: p2, to });
     }
     for more in [PartSet::EMPTY, all_but(p2)] {
         check(AlsoUses {

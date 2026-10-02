@@ -7,6 +7,7 @@ use crate::project::{
     Line, Origin, PartAction, PartActionKind, PartId, Project, SlotId, part_actions,
 };
 
+use super::tree::Act;
 use super::view::RowLook;
 
 /// A row that runs a Part action.
@@ -29,6 +30,25 @@ impl PartCmd {
             PartActionKind::Revert(_) => PartCmd::Reload,
         }
     }
+
+    /// Its place in an `Offer`.
+    const fn idx(self) -> usize {
+        match self {
+            PartCmd::OverSlot => 0,
+            PartCmd::NewSlot => 1,
+            PartCmd::Reload => 2,
+        }
+    }
+}
+
+impl Act {
+    /// The PART row that runs a Part action: dimmed and run by its `Offer`.
+    pub const fn part_cmd(self) -> Option<PartCmd> {
+        match self {
+            Act::PartReload => Some(PartCmd::Reload),
+            Act::SaveProjectAs | Act::PartRename | Act::PartClear => None,
+        }
+    }
 }
 
 /// What `part_actions` offers a Part, by row: a row is live only with its
@@ -44,7 +64,7 @@ impl Offer {
     pub fn of(p: &Project, part: PartId) -> Self {
         let mut actions = [None; 3];
         for a in part_actions(p, part).iter() {
-            actions[PartCmd::of(a.kind()) as usize] = Some(a);
+            actions[PartCmd::of(a.kind()).idx()] = Some(a);
         }
         let home = match p.part(part).origin() {
             Origin::Slot { slot, .. } => Some(slot),
@@ -54,7 +74,7 @@ impl Offer {
     }
 
     pub fn get(&self, c: PartCmd) -> Option<PartAction> {
-        self.actions[c as usize]
+        self.actions[c.idx()]
     }
 
     /// SAVE PART FIRST's save: over the slot, else to a new one.

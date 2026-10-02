@@ -56,7 +56,7 @@ use super::{
     Origin, PartSource, PartStatus, Project, ProjectEntry, ProjectFile, ProjectStatus, TemplateCrc,
     part_status, project_crc, project_status,
 };
-use crate::ui::settings::replace::Said;
+use crate::ui::settings::replace::said::Said;
 
 /// The question asked before a replace that would lose work.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -233,23 +233,16 @@ impl<R: Target> Pending<R> {
     }
 }
 
-impl Pending<ProjectSource> {
-    /// LOAD ANYWAY: the project as it is now is what's confirmed.
-    pub fn anyway(self, p: &Project) -> Confirmed<ProjectSource> {
-        Confirmed::now(self.0, p)
-    }
-}
-
-impl Pending<PartSource> {
-    /// REPLACE, answered: the Part as it is now is what's confirmed. Only
-    /// the prompt's answer holds a `Said` (#258).
-    pub fn replace(self, p: &Project, _: Said) -> Confirmed<PartSource> {
+impl<R: Target> Pending<R> {
+    /// REPLACE / LOAD ANYWAY, answered: the target as it is now is what's
+    /// confirmed. Only a prompt's confirming pill holds a `Said` (#258).
+    pub fn confirm(self, p: &Project, _: Said) -> Confirmed<R> {
         Confirmed::now(self.0, p)
     }
 
-    /// REPLACE without the prompt: tests only.
+    /// Confirmed without a prompt: tests only.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn anyway(self, p: &Project) -> Confirmed<PartSource> {
+    pub fn anyway(self, p: &Project) -> Confirmed<R> {
         Confirmed::now(self.0, p)
     }
 }

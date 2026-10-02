@@ -163,7 +163,7 @@ These five failure modes are the ones the spec implies but no spec test exercise
     A breadcrumb too wide for 216 px drops its leading parts behind `..`.
 19. **The PART list header** is a 20 px strip under the breadcrumb:
     - left: `P2 · <SOUND NAME>`;
-    - right: the mark, which is `* EDITED · FROM SLOT 03`, `* EDITED · FROM INIT`, `◦ SLOT MOVED` or `CLEAN`.
+    - right: the mark, which is `* EDITED · FROM SLOT 03`, `* EDITED · FROM INIT`, `◦ SLOT 03 MOVED` or `CLEAN`. (Owner ruling, 2026-10-02: the moved mark names its slot, as RELOAD's UPDATE reverts from it.)
 20. **Mirrors** bind through a new UI-only block, `BlockRef::PartMix(PartId)`: a given Part's `PartParams`. It has no disk code and isn't modulatable. `UiBlocks` (Task 2's `{ project, part, theme }`) resolves it against `project.edit_part(id).mix`, and `UiRead` against `project.read_part(id).mix`. MIDI › CHANNELS is six cells `P1`–`P6` of `CHANNEL`; AUDIO › OUTPUTS is six of `OUTPUT`.
 21. **Taps.** A key gives at most one tap per UI frame. Two full taps of one key inside one stalled frame count as one: the latch keeps the last press and release. A press-and-release latched in one frame whose length is `HOLD_MS` or more is a `Hold`, fired late, once.
 22. **The Sound rung** is today's browser (the pool, then the INIT rows) as `Loc::Sound`:

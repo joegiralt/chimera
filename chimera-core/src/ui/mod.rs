@@ -72,8 +72,9 @@ use settings::listing::{Listing, LoadRow, Pick, refusal};
 use settings::manage::{Command, Run, Whose};
 use settings::naming::Naming;
 use settings::part::{Offer, PartCmd, SAVE_ROWS, slot_of};
-use settings::prompt::{self, Answer};
-use settings::replace::{PartAsk, PartReply};
+use settings::prompt;
+use settings::prompt::ReplaceTo;
+use settings::replace::{PartAsk, ProjectAsk, Reply};
 use settings::view::PartBand;
 use settings::{
     Act, Answered, Ask, Done, Modal, ModalStep, NamingFor, PART_ROW, SaveAs, Screen, screen_path,
@@ -823,17 +824,29 @@ impl UiState {
             let engine = self.project.part(part).sound.engine();
             return self.go(Location::part_home(part, engine));
         }
-        match ReplaceGuard::check(&self.project, self.template, PartSource { part, from }) {
+        let to = match from {
+            PartFrom::Slot(_) => ReplaceTo::Sound,
+            PartFrom::Init(_) => ReplaceTo::Init,
+        };
+        self.guarded_part(PartSource { part, from }, to);
+    }
+
+    /// `src` through the guard, or its prompt.
+    fn guarded_part(&mut self, src: PartSource, to: ReplaceTo) {
+        match ReplaceGuard::check(&self.project, self.template, src) {
             Ok(c) => self.replace(c),
-            Err(n) => self.ask(Ask::replace_part(PartAsk::new(n))),
+            Err(n) => self.ask(Ask::ReplacePart(PartAsk::new(n), to)),
         }
     }
 
-    /// A confirmed replace; on the Sound rung, then the Part's pages.
+    /// A confirmed replace; on the Sound rung, then the Part's pages. A
+    /// refused one says why and stays.
     fn replace(&mut self, c: Confirmed<PartSource>) {
         let part = c.target().part;
         let was = self.active_engine();
-        let _ = self.project.replace_part(c);
+        if let Err(e) = self.project.replace_part(c) {
+            return self.error(Line::new(prompt::refused(&e)));
+        }
         match self.loc.browse() {
             Some(_) => self.go(Location::part_home(
                 part,
@@ -843,55 +856,93 @@ impl UiState {
         }
     }
 
-    /// SAVE PART FIRST: the Part's first save, then the replace it was
-    /// asked for. With no slot free, the prompt stays.
-    fn save_first(&mut self, ask: PartAsk) {
-        let Some(a) = Offer::of(&self.project, ask.source().part).first_save() else {
-            self.error(Line::new(prompt::POOL_FULL));
-            return self.ask(Ask::replace_part(ask));
+    /// SAVE PART FIRST: a save, then the replace it was asked for. A
+    /// RELOAD saves to a new slot: over its own, the reload would undo
+    /// nothing and leave the slot's other Parts Stale. With no slot
+    /// free, the prompt stays.
+    fn save_first(&mut self, ask: PartAsk, to: ReplaceTo) {
+        let offer = Offer::of(&self.project, ask.source().part);
+        let first = match to {
+            ReplaceTo::Reload(_) => offer.get(PartCmd::NewSlot),
+            ReplaceTo::Sound | ReplaceTo::Init => offer.first_save(),
         };
-        let stale = self.project.apply_part_action(a);
+        let Some(a) = first else {
+            self.error(Line::new(prompt::POOL_FULL));
+            return self.ask(Ask::ReplacePart(ask, to));
+        };
+        let stale = self.save_sound(a);
         match ask.save_then(&self.project, self.template) {
             Ok(c) => {
                 self.replace(c);
-                self.ask_stale(stale, a);
+                if let Some(x) = stale {
+                    self.ask(x);
+                }
             }
-            Err(again) => self.ask(Ask::replace_part(again)),
+            Err(again) => self.ask(Ask::ReplacePart(again, to)),
         }
     }
 
-    /// A save of the active Part; any Part it leaves Stale is asked about.
-    fn save_part(&mut self, a: project::PartAction) {
-        let stale = self.project.apply_part_action(a);
-        self.ask_stale(stale, a);
+    /// A save of a Part, said; what it leaves Stale, to ask about.
+    fn save_sound(&mut self, a: project::PartAction) -> Option<Ask> {
+        let slot = slot_of(a.kind());
+        let stale = self.project.apply_part_action(a).ok()?;
+        self.toast.show(busy::Toast {
+            text: prompt::saved_to(slot),
+            ms: busy::Toast::SAVED_MS,
+        });
+        Ask::update_stale(stale, slot, &self.project)
     }
 
-    fn ask_stale(
-        &mut self,
-        stale: Result<project::PartSet, project::ActionGone>,
-        a: project::PartAction,
-    ) {
-        if let Some(x) = stale
-            .ok()
-            .and_then(|s| Ask::update_stale(s, slot_of(a.kind())))
-        {
-            self.ask(x);
+    /// The active Part's `c`, if `part_actions` offers it: SAVE TO PROJ's
+    /// rows and RELOAD.
+    fn run_part_cmd(&mut self, c: PartCmd) {
+        let Some(a) = Offer::of(&self.project, self.active_part).get(c) else {
+            return;
+        };
+        match c {
+            PartCmd::Reload => {
+                let s = slot_of(a.kind());
+                let src = PartSource {
+                    part: self.active_part,
+                    from: PartFrom::Slot(s),
+                };
+                self.guarded_part(src, ReplaceTo::Reload(s));
+            }
+            PartCmd::OverSlot | PartCmd::NewSlot => {
+                if let Some(x) = self.save_sound(a) {
+                    self.ask(x);
+                }
+            }
         }
     }
 
-    /// The active Part's `c`, if `part_actions` offers it.
-    fn part_action(&self, c: PartCmd) -> Option<project::PartAction> {
-        Offer::of(&self.project, self.active_part).get(c)
+    /// SEQ on an action row; `at` is its list.
+    fn run_act(&mut self, a: Act, at: Option<SettingsAt>) {
+        if let Some(c) = a.part_cmd() {
+            return self.run_part_cmd(c);
+        }
+        match a {
+            Act::SaveProjectAs => self.queue(Job::Fresh(None)),
+            Act::PartRename => {
+                if let Some(at) = at.and_then(|s| s.list()) {
+                    let p = self.active_part;
+                    let n = self.project.part(p).sound.name;
+                    self.name(at, NamingFor::RenamePart(p), n.as_str());
+                }
+            }
+            Act::PartClear => self.clear_part(),
+            // `part_cmd`'s.
+            Act::PartReload => {}
+        }
     }
 
     /// CLEAR: the active Part to its engine's INIT, through the guard.
     fn clear_part(&mut self) {
-        let part = self.active_part;
-        let from = PartFrom::Init(self.active_engine());
-        match ReplaceGuard::check(&self.project, self.template, PartSource { part, from }) {
-            Ok(c) => self.replace(c),
-            Err(n) => self.ask(Ask::replace_part(PartAsk::new(n))),
-        }
+        let src = PartSource {
+            part: self.active_part,
+            from: PartFrom::Init(self.active_engine()),
+        };
+        self.guarded_part(src, ReplaceTo::Init);
     }
 
     /// MIX+MINUS on the Sound rung: a filled slot no Part plays, asked.
@@ -1043,7 +1094,7 @@ impl UiState {
         match ReplaceGuard::check(&self.project, self.template, src) {
             Ok(_) => false,
             Err(n) => {
-                self.ask(Ask::replace_part(PartAsk::new(n)));
+                self.ask(Ask::ReplacePart(PartAsk::new(n), ReplaceTo::Sound));
                 true
             }
         }
@@ -1085,95 +1136,96 @@ impl UiState {
 
     /// A cancel drops what the prompt held.
     fn done(&mut self, d: Done) {
-        match d {
-            Done::Answered(Answered::ReplacePart(r)) => match r {
-                PartReply::Replace(c) => self.replace(c),
-                PartReply::SaveFirst(ask) => self.save_first(ask),
-                PartReply::Cancel => {}
+        use prompt::{
+            AlsoUsesAnswer as U, CardChangedAnswer as CC, ClearAnswer as C, DeleteAnswer as D,
+            NameExistsAnswer as N, SaveOverAnswer as SO,
+        };
+        let Done::Answered(a) = d else {
+            return self.named(d);
+        };
+        match a {
+            Answered::ReplacePart(r, to) => match r {
+                Reply::Confirmed(c) => self.replace(c),
+                Reply::SaveFirst(ask) => self.save_first(ask, to),
+                Reply::Cancel => {}
             },
-            Done::Answered(Answered::UpdateStale(
-                parts,
-                Answer::Pick(prompt::AlsoUsesAnswer::Update),
-            )) => {
-                for q in parts.iter() {
-                    if let Some(a) = Offer::of(&self.project, q).get(PartCmd::Reload) {
-                        let _ = self.project.apply_part_action(a);
+            Answered::UpdateStale(reverts, a) => {
+                if a.picked() == Some(U::Update) {
+                    // Each as offered: a Part edited since refuses its own.
+                    for r in reverts.into_iter().flatten() {
+                        let _ = self.project.apply_part_action(r);
                     }
                 }
             }
-            Done::Answered(Answered::UpdateStale(..)) => {}
-            Done::Answered(Answered::ClearSlot(s, Answer::Pick(prompt::ClearAnswer::Clear))) => {
-                if let Err(project::InUse(u)) = self.project.pool_clear(s) {
+            Answered::ClearSlot(s, a) => {
+                if a.picked() == Some(C::Clear)
+                    && let Err(project::InUse(u)) = self.project.pool_clear(s)
+                {
                     self.error(prompt::in_use(u));
                 }
             }
-            Done::Answered(Answered::ClearSlot(..)) => {}
-            Done::Answered(Answered::LoadProject {
-                pending: p,
-                to,
-                clear,
-                answer,
-            }) => {
-                use prompt::LoadAnswer as L;
-                match answer {
-                    Answer::Pick(L::LoadAnyway) => {
-                        self.queue(load_job(p.anyway(&self.project), clear))
-                    }
-                    Answer::Pick(L::SaveThenLoad) => {
-                        // Clearing its own file: the edits go to a new one,
-                        // so the file the clear confirmed is untouched.
-                        let own = self.project.meta().file().is_some() && clear.is_none();
-                        let then = Some(LoadAfter {
-                            pending: p,
-                            to,
-                            clear,
-                        });
-                        self.queue(if own {
-                            Job::QuickSave(then)
-                        } else {
-                            Job::Fresh(then)
-                        })
-                    }
-                    Answer::Pick(L::Cancel) | Answer::Cancel => {}
+            Answered::LoadProject { reply, to, clear } => match reply {
+                Reply::Confirmed(c) => self.queue(load_job(c, clear)),
+                Reply::SaveFirst(ask) => {
+                    // Clearing its own file: the edits go to a new one,
+                    // so the file the clear confirmed is untouched.
+                    let own = self.project.meta().file().is_some() && clear.is_none();
+                    let then = Some(LoadAfter {
+                        pending: ask.into_pending(),
+                        to,
+                        clear,
+                    });
+                    self.queue(if own {
+                        Job::QuickSave(then)
+                    } else {
+                        Job::Fresh(then)
+                    })
                 }
-            }
-            Done::Answered(Answered::NameExists(save, entry, a)) => {
-                use prompt::NameExistsAnswer as N;
-                let to = match a {
-                    Answer::Pick(N::KeepBoth) => SaveTo::Fresh(save.fresh),
-                    Answer::Pick(N::Overwrite) => {
+                Reply::Cancel => {}
+            },
+            Answered::NameExists(save, entry, a) => {
+                let to = match a.picked() {
+                    Some(N::KeepBoth) => SaveTo::Fresh(save.fresh),
+                    Some(N::Overwrite) => {
                         SaveTo::Over(Confirmed::<project::OverwriteTarget>::answered(&entry))
                     }
-                    Answer::Cancel => return,
+                    None => return,
                 };
                 self.queue(Job::Save(to, save.name, save.then));
             }
-            Done::Answered(Answered::CardChanged(then, a)) => {
-                if a == Answer::Pick(prompt::CardChangedAnswer::SaveAs) {
+            Answered::CardChanged(then, a) => {
+                if a.picked() == Some(CC::SaveAs) {
                     self.queue(Job::Fresh(then));
                 }
             }
-            Done::Answered(Answered::Delete(c, Answer::Pick(prompt::DeleteAnswer::Delete))) => self
-                .queue(Job::Delete(Confirmed::<project::DeleteTarget>::answered(
-                    c.entry(),
-                ))),
-            Done::Answered(Answered::SaveOver(
-                c,
-                Answer::Pick(prompt::SaveOverAnswer::SaveOver),
-            )) => {
-                let over = Confirmed::<project::OverwriteTarget>::answered(c.entry());
-                let name = self.project.meta().name();
-                self.queue(Job::Save(SaveTo::Over(over), name, None))
-            }
-            Done::Answered(Answered::Clear(c, Answer::Pick(prompt::ClearAnswer::Clear))) => {
-                let over = Confirmed::<project::OverwriteTarget>::answered(c.entry());
-                match Whose::of(c.entry(), self.project.meta().file()) {
-                    Whose::Other => self.queue(Job::Clear(over)),
-                    Whose::Loaded => self.guarded_load(ProjectSource::New, None, Some(over)),
+            Answered::Delete(c, a) => {
+                if a.picked() == Some(D::Delete) {
+                    let go = Confirmed::<project::DeleteTarget>::answered(c.entry());
+                    self.queue(Job::Delete(go))
                 }
             }
-            Done::Answered(Answered::Delete(..) | Answered::SaveOver(..) | Answered::Clear(..)) => {
+            Answered::SaveOver(c, a) => {
+                if a.picked() == Some(SO::SaveOver) {
+                    let over = Confirmed::<project::OverwriteTarget>::answered(c.entry());
+                    let name = self.project.meta().name();
+                    self.queue(Job::Save(SaveTo::Over(over), name, None))
+                }
             }
+            Answered::Clear(c, a) => {
+                if a.picked() == Some(C::Clear) {
+                    let over = Confirmed::<project::OverwriteTarget>::answered(c.entry());
+                    match Whose::of(c.entry(), self.project.meta().file()) {
+                        Whose::Other => self.queue(Job::Clear(over)),
+                        Whose::Loaded => self.guarded_load(ProjectSource::New, None, Some(over)),
+                    }
+                }
+            }
+        }
+    }
+
+    /// NAMING's answer.
+    fn named(&mut self, d: Done) {
+        match d {
             Done::Named(NamingFor::RenameLoaded, name) => self.project.set_name(name),
             Done::Named(NamingFor::RenamePart(part), name) => {
                 self.project.edit_part(part).sound.name = name
@@ -1181,7 +1233,7 @@ impl UiState {
             Done::Named(NamingFor::SaveAs(fresh, then), name) => {
                 self.queue(Job::Named(SaveAs { fresh, name, then }))
             }
-            Done::Cancelled => {}
+            Done::Cancelled | Done::Answered(_) => {}
         }
     }
 
@@ -1232,11 +1284,10 @@ impl UiState {
             Err(n) => {
                 let current = self.project.meta().name();
                 self.ask(Ask::LoadProject {
-                    pending: n.into_pending(),
+                    ask: ProjectAsk::new(n),
                     to,
                     current,
                     clear,
-                    choice: prompt::Choice::new(),
                 })
             }
         }
@@ -1313,22 +1364,7 @@ impl UiState {
             let at = self.loc.settings();
             match self.loc.step(k, &cx, &mut self.recall) {
                 Step::Go(to) => self.go(to),
-                Step::Act(Act::SaveProjectAs) => self.queue(Job::Fresh(None)),
-                Step::Act(Act::PartRename) => {
-                    if let Some(at) = at.and_then(|s| s.list()) {
-                        let p = self.active_part;
-                        let n = self.project.part(p).sound.name;
-                        self.name(at, NamingFor::RenamePart(p), n.as_str());
-                    }
-                }
-                Step::Act(Act::PartClear) => self.clear_part(),
-                Step::Act(Act::PartReload) => {
-                    if let Some(a) = self.part_action(PartCmd::Reload) {
-                        let was = self.active_engine();
-                        let _ = self.project.apply_part_action(a);
-                        self.project_replaced(was);
-                    }
-                }
+                Step::Act(a) => self.run_act(a, at),
                 Step::Screen(s @ (Screen::LoadProject | Screen::ManageProjects)) => {
                     self.queue(Job::List(s))
                 }
@@ -1339,9 +1375,8 @@ impl UiState {
                     (Some(Screen::LoadProject), Some(s)) => self.run_load(s.row()),
                     (Some(Screen::ManageProjects), Some(s)) => self.run_manage(s),
                     (Some(Screen::SaveToProj), Some(s)) => {
-                        let c = SAVE_ROWS.get(s.row() as usize);
-                        if let Some(a) = c.and_then(|&c| self.part_action(c)) {
-                            self.save_part(a);
+                        if let Some(&c) = SAVE_ROWS.get(s.row() as usize) {
+                            self.run_part_cmd(c);
                         }
                     }
                     _ => {}
