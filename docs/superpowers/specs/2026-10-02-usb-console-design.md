@@ -15,7 +15,7 @@ Plug the unit into the computer and it shows up as a serial port (`/dev/ttyACM0`
 
 The `just` recipes wrap it. The desktop simulator answers the same requests over a local socket, so the protocol is tested on the host before the chip sees it.
 
-This version is read-only. USB MIDI on the same cable (#203) and write commands come later; § Later says what this design keeps open for them.
+This version is read-only, with one exception: `dfu` restarts the unit into ST's ROM DFU loader, and so does SETTINGS › SYSTEM › OS UPGRADE. Then `just flash` needs no BOOT0 jumper (§ Enter DFU from the firmware). USB MIDI on the same cable (#203) and the other write commands come later; § Later says what this design keeps open for them.
 
 ## Research
 
@@ -24,7 +24,7 @@ This version is read-only. USB MIDI on the same cable (#203) and write commands 
 | Which peripheral and pins drive the USB connector? | **USB2 OTG_FS on PA11 (DM) and PA12 (DP), AF10**, internal full-speed PHY, device only, VBUS sensing off. In the HAL this is `usb_hs::USB2` with `OTG2_HS_GLOBAL/DEVICE/PWRCLK`, the same block under RM0433's other name. PB14/PB15 (OTG_HS's internal PHY) are ruled out on this board: they are SPI2's MISO and MOSI for the SD card (`chimera-stm32/src/main.rs`, `SdParts`; `docs/chimera-synth-design.md` § Storage). | Stock firmware `firmware/Src/usbd_conf.c` (`HAL_PCD_MspInit`: `USB_OTG_FS`, `GPIO_PIN_11\|GPIO_PIN_12`, `GPIO_AF10_OTG1_FS`; `Init.vbus_sensing_enable = DISABLE`, `phy_itface = PCD_PHY_EMBEDDED`) and `firmware/preenfm3.ioc` (`PA11.Signal=USB_OTG_FS_DM`, `PA12.Signal=USB_OTG_FS_DP`, `USB_OTG_FS.VirtualMode=Device_Only`), github.com/Ixox/preenfm3 at `master`. HAL: `stm32h7xx-hal-0.16.0/src/usb_hs.rs` (`USB2::new` takes `PA11<Alternate<10>>`, `PA12<Alternate<10>>`). |
 | Where does the 48 MHz USB clock come from? | **HSI48, trimmed by the CRS from USB2's start-of-frame.** The HAL's `freeze` always turns HSI48 on (`rcc/mod.rs`: `hsi48on().on()`), and `kernel_usb_clk_mux(UsbClkSel::Hsi48)` routes it to USB. A PLL output is not an option: PLL1 runs the core at a per-revision rate (`clocks.rs`, `rev.cpu_hz()`), PLL2_P is pinned at 100 MHz for the SPIs, and PLL3 is fractional for the SAI's 48 kHz (`init_pll3`), so none can also give an exact 48 MHz. The stock firmware runs USB from HSI48 with no CRS (`firmware/Src/main.c`: `UsbClockSelection = RCC_USBCLKSOURCE_HSI48`), and it works. Chimera adds the CRS anyway, since full speed needs ±0.25 % and the CRS costs three register writes. The CRS sync source for USB2's SOF is `SYNCSRC = 0b11` (`RCC_CRS_SYNC_SOURCE_USB2 = SYNCSRC_1\|SYNCSRC_0`, stock `stm32h7xx_hal_rcc_ex.h`). The core's AHB clock (`hclk` = CPU/2, 200 or 240 MHz) is far above OTG's 30 MHz floor. | As cited. |
 | Which crate versions work with today's `Cargo.lock`? | **`stm32h7xx-hal` 0.16.0** (already locked) with its `usb_hs` feature, which pulls **`synopsys-usb-otg` 0.4.0**; **`usb-device` 0.3.2**; **`usbd-serial` 0.2.2**. `synopsys-usb-otg` 0.4 and `usbd-serial` 0.2 both require `usb-device ^0.3`; the HAL's own examples use exactly this set. Adding them locks six new packages (`embedded-io` 0.6.1, `heapless` 0.8.0, `portable-atomic` 1.15.0 and the three USB crates) and changes nothing already locked. `cargo check -p chimera-stm32 --target thumbv7em-none-eabihf` passes with the `usb_hs` feature on (checked 2026-10-02, then reverted). `synopsys-usb-otg` 0.5.0 exists, but the HAL 0.16 pins 0.4. | crates.io dependency metadata; `stm32h7xx-hal-0.16.0/Cargo.toml`; a local `cargo tree -i usb-device`. |
-| Does anything here get in the way of `just flash`? | **No.** `just flash` runs `dfu-util -d 0x0483:0xdf11`, which talks to ST's ROM DFU loader. The unit reaches that loader only with BOOT0 bridged, and then no Chimera code runs, the console included. The ROM loader uses the same OTG_FS on PA11/PA12 (ST AN2606, STM32H74x/75x: USB DFU on PA11/PA12), so the connector is shared and nothing else is. The console never uses 0483:DF11 (§ Identity), never writes flash or option bytes, and never touches BOOT0. The stock PreenFM3 bootloader at 0x08000000 exposes the SD card as USB mass storage (`bootloader/Src/usbd_storage_if.c`), not DFU, and it runs before Chimera, so it is not affected either. | `Justfile` `flash`; `docs/chimera-synth-design.md` § Firmware Loading; AN2606. |
+| Does anything here get in the way of `just flash`? (DFU coexistence) | **No, and the console now opens the way to it.** `just flash` runs `dfu-util -d 0x0483:0xdf11`, which talks to ST's ROM DFU loader. The unit reaches that loader in two ways. With BOOT0 bridged, as before. Or, new here, through `dfu` or OS UPGRADE: Chimera restarts and jumps to the loader before its own boot (§ Enter DFU from the firmware). Either way no Chimera code runs while the loader does, the console included. The ROM loader uses the same OTG_FS on PA11/PA12 (ST AN2606, STM32H74x/75x: USB DFU on PA11/PA12), so the connector is shared and nothing else is. The console never uses 0483:DF11 (§ Identity), never writes flash or option bytes, and never touches BOOT0. The stock PreenFM3 bootloader at 0x08000000 exposes the SD card as USB mass storage (`bootloader/Src/usbd_storage_if.c`), not DFU. It runs before Chimera on every reset, the DFU restart included, and jumps on to 0x08020000 (`bootloader/Src/main.c`: `bootJumpToApplication(APPLICATION_ADDRESS)` unless a button is held). | `Justfile` `flash`; `docs/chimera-synth-design.md` § Firmware Loading; AN2606; stock `bootloader/Src/main.c`. |
 
 ## What this changes
 
@@ -32,8 +32,9 @@ This version is read-only. USB MIDI on the same cable (#203) and write commands 
 - **New in `chimera-stm32`:** `usb.rs`, the USB shell, behind the feature `usb-console`. It is in `default`, so `--no-default-features` builds without it, as it does without MIDI DIN. The sd-probe build has no console: the synth is not built there.
 - **New in `chimera-desktop`:** `console.rs`, the socket shell.
 - **New host tool:** `tools/chimera-usb.py` (Python 3, standard library only), its `just` recipes, and `tools/70-chimera.rules` (udev).
-- **Touched:** `main.rs`, which calls the shell once per UI loop iteration. `bench.rs` keeps its report text. `display.rs` (both shells) gains a read-only `frame()`. `priority.rs` gains a comment: USB has no interrupt priority because it is polled.
-- **Not touched:** the audio path, `priority.rs`'s levels, the SETTINGS tree. SYSTEM › USB CONFIG (#269) stays `Later`.
+- **New for DFU entry:** `chimera_core::boot`, the pure decision after a reset, and `chimera-stm32/src/dfu.rs`, the marker and the jump (§ Enter DFU from the firmware).
+- **Touched:** `main.rs`, which calls the shell once per UI loop iteration and checks the DFU marker at the top of `main`. `bench.rs` keeps its report text. `display.rs` (both shells) gains a read-only `frame()`. `priority.rs` gains a comment: USB has no interrupt priority because it is polled. In the SETTINGS tree, SYSTEM › OS UPGRADE changes from an empty one-page leaf to an action row with a prompt.
+- **Not touched:** the audio path and `priority.rs`'s levels. SYSTEM › USB CONFIG (#269) stays `Later`.
 
 ## Protocol
 
@@ -58,10 +59,10 @@ A text body is lines of `<key> <value>`: a lowercase key, one space, then the va
 | Error line | When |
 |---|---|
 | `ERR unknown command <word>, try help` | The word is not in the table. `<word>` is cut to 16 bytes. |
-| `ERR <command> takes no arguments` | Anything follows `help`, `status`, `stats` or `bench`. |
+| `ERR <command> takes no arguments` | Anything follows `help`, `status`, `stats`, `bench` or `dfu`. |
 | `ERR shot takes raw or nothing` | `shot` is followed by a word other than `raw`, or by more than one word. |
 | `ERR line too long, 64 max` | The line ran past `MAX_LINE`; everything up to the next terminator is dropped. |
-| `ERR <command> is not in this build` | The shell has no data for it: `stats` without `perf-probe` or on the desktop, `bench` outside a bench build. |
+| `ERR <command> is not in this build` | The shell has no data for it: `stats` without `perf-probe` or on the desktop, `bench` outside a bench build, `dfu` on the desktop. |
 
 ### The commands
 
@@ -74,6 +75,7 @@ status  firmware, project, Part and where the UI is
 stats   AUDIO LOAD and the UI loop's time
 bench   the bench's numbers (bench builds)
 shot    the screen in THEME's colours; shot raw: canonical
+dfu     restart into the ROM loader for just flash
 OK
 ```
 
@@ -147,6 +149,14 @@ OK
 - `shot raw` is the framebuffer as drawn, in the canonical palette (`Palette::IDENTITY`): the colours of `docs/screens` and the goldens, whatever THEME is set to. The header line is the same; the host knows which it asked for.
 - A host checks `width × height × 2 = length` and reads exactly `length` bytes, then the `OK` line.
 
+**`dfu`**
+
+```
+OK
+```
+
+Then the unit restarts into ST's ROM DFU loader and leaves the bus as `0483:5740`. Within about 2 s it comes back as `0483:DF11`. The `OK` is flushed to the host before the restart. The desktop answers `ERR dfu is not in this build`. § Enter DFU from the firmware has the details.
+
 ## The functional core: `chimera_core::console`
 
 No I/O, no allocation, no `unsafe`; the module is unit-tested on the host.
@@ -165,13 +175,14 @@ commands! {
     Stats  (NoArg)   => "stats",  "AUDIO LOAD and the UI loop's time",
     Bench  (NoArg)   => "bench",  "the bench's numbers (bench builds)",
     Shot   (Colours) => "shot",   "the screen in THEME's colours; shot raw: canonical",
+    Dfu    (NoArg)   => "dfu",    "restart into the ROM loader for just flash",
 }
 // expands to:
-// #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub enum Command { Help, Status, Stats, Bench, Shot }
-// impl Command { pub const ALL: [Command; 5]; pub const fn name(self) -> &'static str;
+// #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub enum Command { Help, Status, Stats, Bench, Shot, Dfu }
+// impl Command { pub const ALL: [Command; 6]; pub const fn name(self) -> &'static str;
 //                pub const fn about(self) -> &'static str; pub const fn usage(self) -> &'static str; }
 // #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-// pub enum Request { Help(NoArg), Status(NoArg), Stats(NoArg), Bench(NoArg), Shot(Colours) }
+// pub enum Request { Help(NoArg), Status(NoArg), Stats(NoArg), Bench(NoArg), Shot(Colours), Dfu(NoArg) }
 // impl Request { pub const fn command(self) -> Command; }
 
 pub trait Arg: Sized {
@@ -201,6 +212,9 @@ pub trait Unit {
     fn stats(&mut self) -> Option<Stats>;     // reading resets the loop timer
     fn bench(&self) -> Option<&str>;
     fn frame(&self) -> Frame<'_>;
+    /// Arms the restart into the ROM loader, which the shell makes once
+    /// `OK` is out. `None`: not in this build (the desktop).
+    fn dfu(&mut self) -> Option<()>;
 }
 pub struct Stats { pub audio: AudioStats, pub loop_avg_us: u32, pub loop_peak_us: u32 }
 pub struct Frame<'a> { pub fb: &'a [u16; FB_SIZE], pub palette: Palette }   // `shot raw` ignores `palette`
@@ -331,13 +345,85 @@ SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", ENV{ID_MM_D
 - `uaccess` gives the logged-in user the port without the `dialout` group.
 - `/dev/chimera` is a stable name for the tool's default target.
 
+## Enter DFU from the firmware
+
+The owner's ask (2026-10-02): today, flashing means moving the BOOT0 jumper on the back of the unit, re-plugging it, then running `just flash`. The unit should be able to enter DFU itself instead, from the menu or from the console, so `just flash` runs with no jumper.
+
+### The trigger: SETTINGS › SYSTEM › OS UPGRADE
+
+- Today OS UPGRADE is `Leaf(&UPDATES_LEAF)`, a `OnePage` over `SYS_UPDATES` (`block_registry.rs`: six `EMPTY` cells, `VizType::None`). It draws a header and nothing else, so it holds nothing that ABOUT doesn't already show (VERSION, BUILD, REV, CLOCK, RESET, CARD). Nothing moves. `SYS_UPDATES`, `UPDATES_BLOCKS` and `UPDATES_LEAF` go, and block id 34 is retired, not reused.
+- The row becomes `crumb("OS UPGRADE", "OS", Kind::Act(Act::EnterDfu))`. SEQ on it opens a prompt:
+
+  | | |
+  |---|---|
+  | Question | `ENTER DFU?` |
+  | Reason | `PLAY STOPS UNTIL FLASHED OR POWER-CYCLED` (the prompt wraps it to two lines, as it does other long reasons) |
+  | Pills | `ENTER DFU`, `CANCEL` (`DfuAnswer`, `Two`; the confirming pill first, as DELETE's and CLEAR's are) |
+
+- It is sealed like every other confirming prompt. `commits!(DfuAnswer => EnterDfu, RomDfu)` and `replace::said` make the only `Said<RomDfu>`. `UiState` keeps that yes until the shell takes it (`take_dfu`), and `dfu::enter` takes it as its argument. So no code path enters DFU from the menu without a SEQ on `ENTER DFU`. MENU and `CANCEL` close the prompt and play goes on.
+- `RomDfu` is a unit type in `chimera_core::boot`. It is `Witnessed` with `Witness = ()`, sealed in `project::guard` beside the four targets: entering DFU loses nothing on the card, so there is nothing to witness.
+- There is no SAVE FIRST pill. Entering DFU is a power-cycle, so an unsaved project is lost exactly as it is at the power switch. The footer shows MODIFIED, and MENU hold saves.
+
+### The console command
+
+`dfu` (§ The commands) answers `OK`. The shell flushes it, then enters DFU exactly as the menu's yes does. `Unit::dfu` returns `None` on the desktop, which answers `ERR dfu is not in this build`, and the menu's yes there prints `dfu: not in this build` on stderr and play goes on. `dfu` takes no argument.
+
+### The mechanism
+
+1. **The marker.** The firmware writes `DFU_MAGIC` to RTC_BKP0R (0x5800_4050). This register is in the backup domain, which a system reset does not clear. RCC_APB4ENR.RTCAPBEN clocks its bus, and PWR_CR1.DBP unlocks it for writing (the HAL's PWR `freeze` sets DBP and leaves it set, `pwr.rs`). Chimera uses no RTC. The HAL's `rtc::Rtc` is not used: `Rtc::init` resets the backup registers, and `open_or_init` wants an RTC clock source. The PAC's `RTC.bkpr[0]` is enough.
+2. **The reset.** `cortex_m::peripheral::SCB::sys_reset()`. ABOUT's RESET will read SOFTWARE after it.
+3. **The stock bootloader** at 0x08000000 runs first, as on every reset. It does `HAL_Init`, `SystemClock_Config`, then `MX_Deinit` (`HAL_RCC_DeInit`, `HAL_SuspendTick`) and jumps to 0x08020000 unless a button is held. Its `main.c` names no RTC, backup or IWDG register, and `HAL_RCC_DeInit` leaves RCC_BDCR alone. Its data and stack are in DTCM and the top of AXI SRAM (`STM32H753VITX_FLASH.ld`: `.data`/`.bss` in DTCMRAM, `_estack = 0x24080000`). So the marker should survive it, but that is checked on the unit (§ The risk).
+4. **The check, at the top of `#[entry] fn main`,** before `boot()`. RAM is set up there, and no clock or peripheral of Chimera's is touched yet. It does not go in `#[pre_init]`: cortex-m-rt 0.7.5 calls a Rust `pre_init` unsound because it runs before RAM is initialised, and Chimera has no `before_main`. `main` takes `cortex_m::Peripherals` and `pac::Peripherals` itself and hands them to `boot(cp, dp)`. It reads BKP0R through the owned `RTC`, after setting RTCAPBEN through the owned `RCC`. It **always** clears the register (DBP through the owned `PWR`), whatever it held, then acts on `boot::after_reset(marker)`:
+   - `BootAction::Synth`: carry on into `boot()`, as today;
+   - `BootAction::RomDfu`: stop SysTick (`SYST_CSR = 0`; the stock bootloader's `HAL_SuspendTick` leaves it counting), set `SCB.VTOR = ROM_DFU_BASE`, and `cortex_m::asm::bootload(ROM_DFU_BASE as *const u32)`. That reads the MSP from the ROM's vector table, sets it, and branches to the ROM's reset vector. `ROM_DFU_BASE` is 0x1FF0_9800, the STM32H74x/75x system memory bootloader (ST AN2606). This block is the feature's one `unsafe`, with a `// SAFETY:` note: a fixed ROM vector table, at reset state, with nothing of Chimera's running.
+5. **The ROM loader** enumerates as `0483:DF11` on PA11/PA12, and `dfu-util` flashes as it does after the jumper. `:leave` resets into the stock bootloader and then into the new Chimera, with the marker clear.
+
+The decision is pure and host-tested:
+
+```rust
+// chimera_core::boot
+pub const DFU_MAGIC: u32 = 0x4446_5521;          // "DFU!"
+pub const ROM_DFU_BASE: u32 = 0x1FF0_9800;       // ST AN2606, STM32H74x/75x system memory
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BootAction { Synth, RomDfu }
+/// The marker read after a reset. Only `DFU_MAGIC` enters the ROM loader.
+/// 0, a power-on's garbage and anything else boot the synth.
+pub const fn after_reset(marker: u32) -> BootAction;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RomDfu;                               // what the prompt's yes confirms
+```
+
+Because the shell clears the marker before it acts, a marker can never trap the unit in DFU: the next reset or power-cycle always plays.
+
+### The risk, checked on the unit
+
+The stock bootloader, the reset or Chimera's own early path could clobber RTC_BKP0R. If one does, `dfu` answers `OK`, the unit restarts, and the synth comes back as `0483:5740` instead of `0483:DF11`. `just flash` then times out with that message, and ABOUT's RESET reads SOFTWARE. The flash checklist's clobber check (U10) looks for exactly that. The fallback marker is the last word of D3 SRAM4, **0x3800_FFFC**. No section of the stock bootloader's linker script is in RAM_D3, Chimera's `memory.x` has no D3 region, and SRAM keeps its contents through a system reset. The swap is one const in `dfu.rs`.
+
+Two more things are only checked on the unit:
+
+- the ROM loader runs after the stock bootloader's `HAL_RCC_DeInit` state, as it does from reset (U8: `0483:DF11` appears);
+- the IWDG, started by the previous Chimera, does not survive the system reset into the ROM loader (U8: the DFU device is still there 30 s later).
+
+### `just flash` hands-free
+
+`just flash` and `just flash-bench` build, then run `python3 tools/chimera-usb.py to-dfu` before `dfu-util`:
+
+- **The console is there** (a USB device `0483:5740` in `/sys/bus/usb/devices`): it sends `dfu`, needs `OK`, then waits up to 10 s for `0483:DF11` to appear and exits 0. If DF11 does not appear, it exits 1 with `no DFU device after dfu: see U10 (marker clobbered?)`, and the recipe stops before `dfu-util`.
+- **DF11 is already there** (the jumper): it does nothing and exits 0.
+- **Neither:** it prints `no console: bridge BOOT0 on the back and re-plug for DFU` and exits 0, so `dfu-util` runs and behaves as today.
+
+### Safety
+
+The unit cannot be bricked by this. The ROM loader is in system memory and cannot be written. Chimera never writes flash, option bytes or BOOT0. The marker is cleared before the jump, so every following reset plays. And the BOOT0 jumper still reaches the ROM loader whatever is in flash.
+
 ## Real-time rules, checked
 
 | Rule | How |
 |---|---|
 | USB never disturbs audio | No USB interrupt. The console runs in the UI loop. Crate critical sections are packet-sized; `overruns` is checked across shots at ship. |
 | No heap | None in the core or the shells. `usb-device` and `usbd-serial` are `no_std`, with no `alloc`. |
-| No `unsafe` without `// SAFETY:` | The take-once statics (`EP_MEMORY`, the bus allocator) and the CRS register writes, each with its note. |
+| No `unsafe` without `// SAFETY:` | The take-once statics (`EP_MEMORY`, the bus allocator), the CRS register writes and the jump to the ROM loader, each with its note. |
+| DFU entry never touches audio mid-block | `dfu::enter` runs from the UI loop. The reset stops the SAI with everything else, which is a power-cycle's click at worst. |
 | Audio thread never blocks | Untouched. |
 | Framebuffer read safely | At the loop top, by the only writer (§ Snapshot point). |
 
@@ -350,6 +436,7 @@ SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", ENV{ID_MM_D
 | AXI SRAM | **about 2.5 KB**: `EP_MEMORY` 1 KB, `UsbBusAllocator` + `UsbDevice` + `SerialPort` (two 128-byte buffers) about 1 KB, `Console` 66 bytes, serial string 24 bytes, `LoopTimer` 16 bytes. 6 KB more for `BENCH_TEXT` in bench builds only. | `.data + .bss` is 372 KB of 512 KB today, so about 140 KB is free. |
 | Stack | The 480-byte row buffer and the pump frames, under 1 KB at the deepest. `just stack-check`'s 8 KB step rule holds. | |
 | CPU, idle | One `poll` per loop iteration, which reads `GINTSTS`: around a microsecond. | |
+| DFU entry | **well under 1 KB of flash**: `after_reset` and the early check (tens of instructions), the prompt's words and pills (about 70 bytes), the `dfu` table row (about 50 bytes), `enter`. No RAM: the marker is a backup register. The empty UPDATES page's block and leaf go. Boot time: one register read and one write before `boot()`. | The plan's DFU task measures it and stops above 1 024 bytes. |
 
 The plan's first task measures the real flash cost with `llvm-size`. Over 24 KB, it stops and reports before going on.
 
@@ -362,6 +449,9 @@ The plan's first task measures the real flash cost with `llvm-size`. Over 24 KB,
   - **`shot`:** the header, a body of exactly 153,600 bytes, then `OK`. A framebuffer with known pixels comes back big-endian through a non-identity palette, and through no palette for `shot raw`.
   - **`Stalled` mid-shot** stops the answer at that point.
   - **a property test:** random byte streams never panic, and every answer ends in exactly one `OK` or `ERR` line.
+  - **`dfu`:** `OK` and one `Unit::dfu` call; `None` gives `ERR dfu is not in this build`.
+  - **`boot::after_reset`:** only `DFU_MAGIC` gives `RomDfu`.
+  - **OS UPGRADE:** SEQ opens the DFU prompt with its words; `ENTER DFU` gives exactly one `Said<RomDfu>` through `take_dfu`; `CANCEL` and MENU give none.
 - **Desktop QA** (`qa.rs` harness): the sim answers `status` after a scripted key walk with the expected `at` line. `CHIMERA_USB=sim just shot` writes a PNG equal, pixel for pixel, to the window's frame.
 - **The ship flash** (the owner, once, with this branch's other checks):
 
@@ -374,6 +464,9 @@ The plan's first task measures the real flash cost with `llvm-size`. Over 24 KB,
   | U5 | Unplug USB mid-shot: the UI resumes within 250 ms, and the next `just status` answers after replugging. |
   | U6 | `just flash` still works, with BOOT0 bridged and the console port open in another terminal. |
   | U7 | A bench build: `just usb bench` gives the B1–B3 numbers the screens showed. |
+  | U8 | SETTINGS › SYSTEM › OS UPGRADE: `CANCEL` plays on. `ENTER DFU` stops the sound, and `0483:DF11` appears and stays. A power-cycle without flashing plays. |
+  | U9 | No jumper: `just flash` (then `just flash-bench`) sends `dfu`, flashes, and the new build boots and enumerates. |
+  | U10 | The clobber check: if U8 or U9 brings back `0483:5740` instead of `0483:DF11`, the marker was cleared on the way. Switch to the SRAM4 fallback and repeat. |
 
 ## Later, kept open but out of scope
 
@@ -382,7 +475,7 @@ The plan's first task measures the real flash cost with `llvm-size`. Over 24 KB,
   - MIDI needs lower latency than the UI loop gives (it stalls under BUSY and during a shot). So MIDI moves USB to an interrupt at its own level, below `AUDIO`, with the console's bytes crossing to the UI loop through SPSC queues. `NoteSources` already has room for a second chip source (ADR 0019, `MAX_NOTE_SOURCES = 2`).
   - The console core does not change: it only ever sees bytes. That switch needs its own ADR, superseding this one's "polled" decision.
 - **USB audio (#204)** would join the same composite device, and has the same consequence.
-- **Write commands** take arguments under the same grammar. Each becomes a `commands!` row with a typed argument parser (an enum per argument kind, never a raw string past the parser), e.g. a key press by name, a cell value, or `dfu` to restart into the ROM loader (system memory, AN2606) so `just flash` needs no BOOT0 bridge. A write acts through the same input path the keys use, so it obeys the lerp rule and the prompts.
+- **Write commands** take arguments under the same grammar. Each becomes a `commands!` row with a typed argument parser (an enum per argument kind, never a raw string past the parser), e.g. a key press by name or a cell value. (`dfu`, the first command that acts, is in this version: § Enter DFU from the firmware.) A write acts through the same input path the keys use, so it obeys the lerp rule and the prompts.
 - **SYSTEM › USB CONFIG (#269)** could later turn the console off or choose the composite's parts.
 
 ## The owner's answers (2026-10-02)
@@ -394,3 +487,7 @@ The five open questions are resolved; the design above already reads this way.
 3. **The screen during a shot:** the UI holds still for the 0.15 to 0.3 s the shot streams. No 150 KB copy, no compression.
 4. **Host tool language:** Python 3, standard library only, no dependencies.
 5. **When the port appears:** once the UI loop starts, after the splash. A hang during boot is not readable over it.
+
+A later ask the same day:
+
+6. **Enter DFU from the firmware.** Flashing should need no BOOT0 jumper. SETTINGS › SYSTEM › OS UPGRADE asks `ENTER DFU?`, and the console's `dfu` does the same. `just flash` uses `dfu` when the console is there, and falls back to the jumper otherwise (§ Enter DFU from the firmware).

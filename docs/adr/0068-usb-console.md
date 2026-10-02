@@ -2,7 +2,8 @@
 
 - **Status:** Proposed (accepted at the ship flash, the plan's last task)
 - **Deciders:** project owner (2026-10-02, the design in conversation, and
-  the answers to the spec's five open questions the same day); firmware
+  the answers to the spec's five open questions the same day, and the ask
+  to enter DFU from the firmware); firmware
 
 ## Context
 Reading the unit's numbers and screen meant photographing the panel: AUDIO
@@ -40,7 +41,24 @@ is `docs/superpowers/specs/2026-10-02-usb-console-design.md`.
   `Request` enum that carries the parsed argument (`Shot(Colours)`).
   `answer` matches exhaustively, so a new row does not build until it is
   answered. The commands are
-  `help`, `status`, `stats`, `bench` and `shot`, all read-only.
+  `help`, `status`, `stats`, `bench` and `shot`, all read-only, and `dfu`.
+- **Enter DFU from the firmware** (the owner, 2026-10-02: no BOOT0
+  jumper to flash). SETTINGS › SYSTEM › OS UPGRADE becomes an action
+  row. Its prompt reads `ENTER DFU?` / `PLAY STOPS UNTIL FLASHED OR
+  POWER-CYCLED`, with the pills `ENTER DFU` and `CANCEL`, sealed by
+  `Said<RomDfu>` through `commits!` and `replace::said`. The console's
+  `dfu` answers `OK`, then does the same; the desktop answers `ERR dfu is
+  not in this build`. Either way the firmware writes `DFU_MAGIC` to
+  RTC_BKP0R and calls `SCB::sys_reset()`. The stock bootloader runs and
+  jumps to Chimera. At the top of `main`, before `boot()` touches a clock
+  or peripheral, Chimera reads the register, always clears it, and asks
+  the pure `boot::after_reset(marker)`. On `RomDfu`, it sets VTOR and MSP
+  from the ROM's vector table at 0x1FF0_9800 (ST AN2606) and branches to
+  its reset vector. That jump is this feature's one `unsafe`. The empty
+  UPDATES page goes, since ABOUT already shows everything a version page
+  would. `just flash` and `just flash-bench` send `dfu` when the console is
+  there, wait up to 10 s for `0483:DF11`, then flash. Without the console,
+  they print the jumper instruction and flash as before.
 - **Functional core, thin shells:** `chimera_core::console` turns bytes
   into answers through `Unit` and `Out` traits. `chimera-stm32/src/usb.rs`
   (feature `usb-console`, on by default) and the desktop's socket on
@@ -79,6 +97,15 @@ is `docs/superpowers/specs/2026-10-02-usb-console-design.md`.
   serves until Chimera has its own.
 - **A port from the start of boot:** it would need polling from the boot
   steps, for hangs the splash already shows.
+- **DFU through Chimera's own USB DFU class, or by writing BOOT0's option
+  bytes:** the first is a flash writer in the firmware and the second
+  can leave the unit booting the ROM for good. The ROM loader already
+  does the job, and neither would let it be reached more safely.
+- **The DFU check in `#[pre_init]`:** cortex-m-rt 0.7.5 calls a Rust
+  `pre_init` unsound. The top of `main` runs before any of Chimera's
+  clock or peripheral setup, which is all the ROM needs.
+- **The HAL's `rtc::Rtc` for the marker:** `init` resets the backup
+  registers, and the RTC itself is unused. The PAC's `bkpr[0]` is enough.
 
 ## Consequences
 - About 20 KB of flash (about 2.2 points of 896 KB) and about 2.5 KB of
@@ -93,14 +120,33 @@ is `docs/superpowers/specs/2026-10-02-usb-console-design.md`.
   USB to an interrupt, which supersedes the "polled" part of this ADR. The
   console core is unchanged by that.
 - Write commands extend the same grammar with typed arguments.
+- Flashing needs no jumper while a working Chimera with the console is
+  on the unit: `just flash` reaches the ROM loader through `dfu`. The
+  jumper stays the way in for a unit that doesn't boot.
+- **The unit cannot be bricked by DFU entry.** The ROM loader is in
+  system memory and cannot be written. Chimera never writes flash, option
+  bytes or BOOT0. The marker is cleared before the jump, so the next reset
+  or power-cycle always plays. And the BOOT0 jumper reaches the ROM loader
+  whatever is in flash.
+- It rests on two facts checked only on the unit (the plan's U8 to U10):
+  the stock bootloader leaves RTC_BKP0R alone, and the ROM loader runs
+  from the state that bootloader leaves. If the marker is clobbered, it
+  moves to the last word of D3 SRAM4 (0x3800_FFFC), which neither image
+  uses. That is one const.
+- OS UPGRADE no longer opens a page. Block id 34 (`SYS_UPDATES`) is
+  retired, not reused.
+- Well under 1 KB of flash, and no RAM.
 
 ## Sources
 - `docs/superpowers/specs/2026-10-02-usb-console-design.md` (§ The owner's
   answers); `docs/superpowers/plans/2026-10-02-usb-console.md`.
 - Stock PreenFM3 firmware (github.com/Ixox/preenfm3, `master`, GPL-3.0):
   `firmware/Src/usbd_conf.c`, `firmware/Src/main.c`,
-  `firmware/preenfm3.ioc`, `bootloader/Src/usbd_storage_if.c`. Read only,
+  `firmware/preenfm3.ioc`, `bootloader/Src/usbd_storage_if.c`,
+  `bootloader/Src/main.c`, `bootloader/STM32H753VITX_FLASH.ld`. Read only,
   no code taken.
+- `cortex-m` 0.7.7 `asm::bootload`, `SCB::sys_reset`; `cortex-m-rt` 0.7.5
+  (`pre_init`); `stm32h7xx-hal` 0.16.0 `rtc.rs`, `pwr.rs` (DBP).
 - `stm32h7xx-hal` 0.16.0 `src/usb_hs.rs` and `examples/usb_serial.rs`;
   `synopsys-usb-otg` 0.4.0; `usb-device` 0.3.2; `usbd-serial` 0.2.2.
 - ST RM0433 (CRS, OTG, unique device ID); ST AN2606 (STM32H74x/75x
