@@ -48,12 +48,23 @@ is `docs/superpowers/specs/2026-10-02-usb-console-design.md`.
   row. Its prompt reads `ENTER DFU?` / `PLAY STOPS UNTIL FLASHED OR
   POWER-CYCLED`, with the pills `ENTER DFU` and `CANCEL`, sealed by
   `Said<RomDfu>` through `commits!` and `replace::said`. The console's
-  `dfu` answers `OK`, then does the same; the desktop answers `ERR dfu is
-  not in this build`. Either way the firmware writes `DFU_MAGIC` to
+  `dfu` answers `OK`, flushes it and keeps polling for 20 ms so the host
+  collects it, then does the same; the desktop answers `ERR dfu is not in
+  this build`. Only the shell's `service` makes the `DfuAsked` the
+  console's way in needs, and only after that drain; a host that still
+  misses the `OK` sees the port vanish and DF11 appear, which `to-dfu`
+  counts as success. The menu's yes syncs SYSTEM first, so a THEME change
+  made in the same visit is kept. Either way the firmware writes `DFU_MAGIC` to
   RTC_BKP0R and calls `SCB::sys_reset()`. The stock bootloader runs and
   jumps to Chimera. At the top of `main`, before `boot()` touches a clock
-  or peripheral, Chimera reads the register, always clears it, and asks
-  the pure `boot::after_reset(marker)`. On `RomDfu`, it sets VTOR and MSP
+  or peripheral, Chimera reads the register, always clears it and reads
+  the clear back (`Cleared` or `Stuck`), and asks the pure
+  `boot::after_reset(marker)`. Only `RomDfu` with `Cleared` jumps; a
+  `Stuck` marker boots the synth. `after_reset` returns `dfu::Checked`,
+  which `boot` takes and pairs with the owned RTC into the `dfu::Marker`
+  that `dfu::enter` needs, so nothing writes the marker before the check
+  ran. On the jump, it stops SysTick, disables and unpends every NVIC
+  line, sets VTOR and MSP
   from the ROM's vector table at 0x1FF0_9800 (ST AN2606) and branches to
   its reset vector. That jump is this feature's one `unsafe`. The empty
   UPDATES page goes, since ABOUT already shows everything a version page
@@ -131,9 +142,12 @@ is `docs/superpowers/specs/2026-10-02-usb-console-design.md`.
   whatever is in flash.
 - It rests on two facts checked only on the unit (the plan's U8 to U10):
   the stock bootloader leaves RTC_BKP0R alone, and the ROM loader runs
-  from the state that bootloader leaves. If the marker is clobbered, it
-  moves to the last word of D3 SRAM4 (0x3800_FFFC), which neither image
-  uses. That is one const.
+  from the state that bootloader leaves. If the marker is clobbered, an
+  issue is filed. A possible future alternative is a word of D3 SRAM4
+  (0x3800_FFFC), which neither image maps; it is not built. It carries two
+  caveats: SRAM is ECC-protected, so reading a word never written since
+  power-on can raise an ECC error on a cold boot, and the marker write
+  must reach SRAM past the D-cache before the reset.
 - OS UPGRADE no longer opens a page. Block id 34 (`SYS_UPDATES`) is
   retired, not reused.
 - Well under 1 KB of flash, and no RAM.
