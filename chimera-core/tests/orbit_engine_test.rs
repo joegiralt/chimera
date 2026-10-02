@@ -6,7 +6,7 @@ use chimera_core::orbit::engine::{Events, OrbitEvent, OrbitKind, OrbitState, Spa
 use chimera_core::orbit::euclid::{Fill, Steps, euclid};
 use chimera_core::orbit::ring::SnapTo;
 use chimera_core::orbit::rng::Pct;
-use chimera_core::orbit::scene::{Scene, Target};
+use chimera_core::orbit::scene::Scene;
 use chimera_core::orbit::walk::{Pool, Walk};
 use chimera_core::orbit::{RINGS, RingIdx};
 use chimera_theory::{Degree, Note, snap};
@@ -195,7 +195,7 @@ fn start_block_fires_step_zero() {
         .map(|e| e.ring.get() as usize)
         .collect();
     assert!(first.contains(&0) && first.contains(&1));
-    assert!(!first.contains(&3), "ring 4 is muted");
+    assert!(!first.contains(&4), "ring 5 is muted");
 }
 
 #[test]
@@ -552,14 +552,14 @@ fn a_segment_boundary_inside_a_window() {
 
 #[test]
 fn with_mask_keeps_steps_and_count() {
-    let ring = Scene::init().rings[2].ring;
+    let ring = Scene::init().rings[1].ring;
     let m = ring.hits_mask();
-    let from = (0..13).find(|&i| m.is_hit(i)).unwrap();
-    let to = (0..13).find(|&i| !m.is_hit(i)).unwrap();
+    let from = (0..8).find(|&i| m.is_hit(i)).unwrap();
+    let to = (0..8).find(|&i| !m.is_hit(i)).unwrap();
     let nudged = m.moved(from, to).unwrap();
     assert_eq!(ring.with_mask(nudged).unwrap().hits_mask(), nudged);
-    assert!(ring.with_mask(euclid(steps(13), 6, 0)).is_none());
-    assert!(ring.with_mask(euclid(steps(12), 5, 0)).is_none());
+    assert!(ring.with_mask(euclid(steps(8), 4, 0)).is_none());
+    assert!(ring.with_mask(euclid(steps(7), 3, 0)).is_none());
 }
 
 #[test]
@@ -598,17 +598,16 @@ fn scene_replays_identically() {
 fn init_scene_is_the_design_choice() {
     let s = Scene::init();
     assert_eq!(s.seed, 0x0B17_0001);
-    assert!(s.rings[3].ring.mute);
-    assert!(
-        s.rings
-            .iter()
-            .enumerate()
-            .all(|(i, r)| i == 3 || !r.ring.mute)
-    );
+    // The owner's pick at UAT (V4, sparse groove): ring 5 muted, to
+    // bring in; rings 3 and 4 both the pad's, on Part 3.
+    let muted: Vec<bool> = s.rings.iter().map(|r| r.ring.mute).collect();
+    assert_eq!(muted, [false, false, false, false, true]);
+    assert_eq!(s.chords.bars, Bars::new(4).unwrap());
     assert_eq!(s.chords.segs, Segs::new(4).unwrap());
-    for (i, r) in s.rings.iter().enumerate() {
-        let Target::Part(p) = r.target;
-        assert_eq!(p.index(), i);
+    let parts: Vec<usize> = s.rings.iter().map(|r| r.target.part().index()).collect();
+    assert_eq!(parts, [0, 1, 2, 2, 4]);
+    for r in &s.rings {
+        assert_eq!((r.ring.chance, r.ring.mutate), (Pct::FULL, Pct::ZERO));
     }
     let _ = RingIdx::ALL;
 }
@@ -625,7 +624,7 @@ fn forget_leaves_stop_no_offs() {
     assert!(rig.st.stop().is_empty());
 }
 
-/// The init scene's first 8 loops, pinned: `block ring channel note kind`
+/// The init scene's first 8 bars, pinned: `block ring channel note kind`
 /// per event, on NEW's channels. Re-record an intended change with
 /// `GOLDEN_RECORD=1`, which writes the fixture.
 #[test]

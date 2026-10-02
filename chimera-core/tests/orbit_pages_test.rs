@@ -25,10 +25,11 @@ fn ring_rhythm_golden() {
     let ring = Scene::init().rings[2].ring;
     let mask = ring.hits_mask();
     let steps = ring.fill().steps();
-    assert_eq!((steps.get(), mask.hits()), (13, 5));
+    assert_eq!((steps.get(), mask.hits()), (1, 1));
+    let n = steps.get() as usize;
     let now = step_at(screen::phase(0.3), steps) as usize;
-    let w = (theme::VIZ_RIGHT - theme::VIZ_LEFT) as f32 / 13.0;
-    for i in 0..13 {
+    let w = (theme::VIZ_RIGHT - theme::VIZ_LEFT) as f32 / n as f32;
+    for i in 0..n {
         let x = theme::VIZ_LEFT + (w * (i as f32 + 0.5)) as i32;
         let centre = fb.at(x, theme::VIZ_BAND_MID);
         let want = match (mask.is_hit(i), i == now) {
@@ -167,7 +168,7 @@ fn custom_scale_round_trips() {
 #[test]
 fn the_dirty_path_follows_orbit() {
     use chimera_core::ui::perf::PerfStats;
-    use chimera_hal::ButtonId::{B1, Mix};
+    use chimera_hal::ButtonId::{B1, B2, Mix};
     use chimera_hal::EncoderId::E;
     use screen::{Fb, audio_fixture, orbit_view, render_ui, scope_fixture, settle, ui_for};
 
@@ -185,6 +186,9 @@ fn the_dirty_path_follows_orbit() {
     let mut ui = Box::new(ui_for("orbit_rhythm"));
     let mut fb = Fb::new();
     frame(&mut ui, &mut fb, "RHYTHM");
+    // Ring 3 has one step: ring 2's eight show the clock move.
+    tap(&mut ui, B2);
+    frame(&mut ui, &mut fb, "ring 2");
     ui.set_orbit_view(&orbit_view(0.6));
     frame(&mut ui, &mut fb, "a later step");
     tap(&mut ui, B1);
@@ -197,7 +201,10 @@ fn the_dirty_path_follows_orbit() {
     frame(&mut ui, &mut fb, "segment 4");
     feed(&mut ui, Input::turn(E, -3).and_held(Mix));
     frame(&mut ui, &mut fb, "segment 1, the same degree");
-    ui.set_orbit_view(&orbit_view(0.8));
+    // Bar 4 of 4: the last segment.
+    let mut v = orbit_view(0.8);
+    (v.pos.bar, v.seg) = (3, 3);
+    ui.set_orbit_view(&v);
     frame(&mut ui, &mut fb, "the last segment playing");
 
     let mut ui = Box::new(ui_for("orbit_custom"));
@@ -279,10 +286,10 @@ fn the_cursor_eases_the_short_way() {
     assert!(low(&moving) == low(&rest), "not round the bottom");
 }
 
-/// ORB at phase 0.3, ring 2 just fired: every ring's steps round its
+/// ORB at phase 0.3, ring 1 just fired: every ring's steps round its
 /// circle, a hit filled, an accent ringed in INK2, the step under the
-/// clock lit, ring 4 dark (muted); the progression's first segment lit;
-/// the sweep at 0.3 of the turn. One tick after ring 2 fires again its
+/// clock lit, ring 5 dark (muted); the progression's first segment lit;
+/// the sweep at 0.3 of the turn. One tick after ring 1 fires again its
 /// step flashes, and is back by the third.
 #[test]
 fn orb_page_golden() {
@@ -324,7 +331,7 @@ fn orb_page_golden() {
             }
         }
     }
-    assert!(scene.rings[3].ring.mute, "ring 4 is the muted one");
+    assert!(scene.rings[4].ring.mute, "ring 5 is the muted one");
 
     // The progression: four segments, the first lit while it plays.
     let segs = scene.chords.segs.get() as usize;
@@ -350,15 +357,15 @@ fn orb_page_golden() {
     let (x, y) = orb_xy(0.8, mid);
     assert_eq!(fb.at(x, y), theme::BG, "no hand across");
 
-    // Ring 2 fires again: its step flashes, larger, and fades by the third tick.
+    // Ring 1 fires again: its step flashes, larger, and fades by the third tick.
     let mut ui = Box::new(ui);
-    let r2 = RingIdx::ALL[1];
-    let steps = scene.rings[1].ring.fill().steps();
-    let (x, y) = step_xy(r2, step_at(phase, steps) as usize, steps.get() as usize);
+    let r1 = RingIdx::ALL[0];
+    let steps = scene.rings[0].ring.fill().steps();
+    let (x, y) = step_xy(r1, step_at(phase, steps) as usize, steps.get() as usize);
     let at_rest = screen::render_ui(&ui);
     assert_eq!(at_rest.at(x + 3, y), theme::BG, "at rest, a small dot");
     let mut v = screen::orb_view(0.3);
-    v.rings[1].fired = 2;
+    v.rings[0].fired = 2;
     ui.set_orbit_view(&v);
     ui.update(UiTick::for_test());
     let lit = screen::render_ui(&ui);

@@ -97,15 +97,18 @@ const fn some<T: Copy>(o: Option<T>) -> T {
     }
 }
 
-/// Ring `n` of the init scene: `hits` in `steps` rotated, on A C E of
-/// `octave`.
-const fn ring(steps: u8, hits: u8, rotate: u8, octave: u8) -> Ring {
-    let oct = some(Octave::new(octave));
-    let c = oct.low().get();
+/// A ring of the init scene: `hits` in `steps` rotated, walking `pool`
+/// (MIDI notes) from `octave`.
+const fn ring(steps: u8, hits: u8, rotate: u8, octave: u8, pool: &[u8]) -> Ring {
     let fill = some(Fill::new(some(Steps::new(steps)), hits, rotate));
-    let mut r = Ring::new(fill, oct);
-    let (a, e) = (some(Note::new(c + 9)), some(Note::new(c + 4)));
-    r.pool = some(Pool::new(&[a, oct.low(), e]));
+    let mut r = Ring::new(fill, some(Octave::new(octave)));
+    let mut notes = [some(Note::new(0)); MAX_POOL];
+    let mut i = 0;
+    while i < pool.len() {
+        notes[i] = some(Note::new(pool[i]));
+        i += 1;
+    }
+    r.pool = some(Pool::new(notes.split_at(pool.len()).0));
     r
 }
 
@@ -119,34 +122,42 @@ const fn on_part(ring: Ring, n: usize) -> SceneRing {
 }
 
 impl Scene {
-    /// A minor, i-iv-v-i over one bar; five rings on Parts 1..=5.
+    /// The owner's pick at UAT, "sparse groove" (ADR 0073): A minor,
+    /// i-VI-VII-i a bar each. Ring 1 the bass on Part 1, each chord's root;
+    /// ring 2 the e-piano on Part 2; rings 3 and 4 the pad's two held notes
+    /// on Part 3; ring 5 (Part 5) muted, to bring in. Nothing random:
+    /// CHANCE 100, no MUTATE.
     pub const fn init() -> Scene {
-        let mut r1 = ring(4, 4, 0, 2);
+        let mut r1 = ring(2, 2, 0, 1, &[33, 33, 41, 41, 43, 43, 45, 45]);
         r1.snap = SnapTo::Chord;
-        r1.gate = Pct::clamped(80);
-        let mut r2 = ring(3, 3, 0, 3);
+        r1.gate = Pct::clamped(90);
+        let mut r2 = ring(8, 3, 0, 4, &[69, 72, 76]);
         r2.snap = SnapTo::Chord;
         r2.walk = Walk::PingPong;
-        let mut r3 = ring(13, 5, 2, 4);
-        r3.gate = Pct::clamped(30);
-        r3.walk = Walk::Random;
-        r3.mutate = Pct::clamped(20);
-        let mut r4 = ring(8, 3, 0, 5);
-        r4.gate = Pct::clamped(30);
-        r4.mute = true;
-        let mut r5 = ring(16, 9, 1, 5);
+        r2.gate = Pct::clamped(70);
+        r2.velocity = some(Velocity::new(80));
+        let mut r3 = ring(1, 1, 0, 4, &[64]);
+        r3.snap = SnapTo::Chord;
+        r3.gate = Pct::FULL;
+        r3.velocity = some(Velocity::new(90));
+        let mut r4 = ring(1, 1, 0, 3, &[57]);
+        r4.snap = SnapTo::Chord;
+        r4.gate = Pct::FULL;
+        r4.velocity = some(Velocity::new(90));
+        let mut r5 = ring(16, 9, 1, 5, &[81, 72, 76]);
         r5.gate = Pct::clamped(25);
-        r5.range = Range::One;
-        r5.chance = Pct::clamped(70);
-        r5.accent = 3;
-        r5.mutate = Pct::clamped(30);
-        let mut degrees = [Degree::I; MAX_SEGS];
-        degrees[1] = Degree::IV;
-        degrees[2] = Degree::V;
+        r5.mute = true;
+        let degrees = {
+            let mut d = [Degree::I; MAX_SEGS];
+            d[1] = Degree::VI;
+            d[2] = Degree::VII;
+            d
+        };
         Scene {
             chords: ChordRing {
                 tonic: PitchClass::A,
                 scale: ScaleKind::Minor,
+                bars: some(Bars::new(4)),
                 segs: some(Segs::new(4)),
                 degrees,
                 ..ChordRing::NEUTRAL
@@ -155,7 +166,7 @@ impl Scene {
                 on_part(r1, 0),
                 on_part(r2, 1),
                 on_part(r3, 2),
-                on_part(r4, 3),
+                on_part(r4, 2),
                 on_part(r5, 4),
             ],
             seed: 0x0B17_0001,

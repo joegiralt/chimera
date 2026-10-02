@@ -88,6 +88,7 @@ fn asking() -> (UiState, chimera_core::preset::Sound) {
 
 fn asking_on(go: impl FnOnce(&mut UiState)) -> (UiState, chimera_core::preset::Sound) {
     let mut ui = UiState::new();
+    init_part(&mut ui, PartId::ALL[0]);
     go(&mut ui);
     ui.params_mut().filter.cutoff *= 0.5;
     let before = ui.project().part(PartId::ALL[0]).sound.clone();

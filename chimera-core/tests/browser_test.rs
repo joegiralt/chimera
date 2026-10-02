@@ -4,7 +4,7 @@ mod screen;
 
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
-use chimera_core::project::{PartId, Pool, Project, SlotId};
+use chimera_core::project::{PartFrom, PartId, PartSource, Pool, Project, ReplaceGuard, SlotId};
 use chimera_core::ui::browser::{
     self, INIT_TYPES, SCROLL_TOP, SCROLL_X, TOTAL_ENTRIES, VISIBLE_ROWS, row_y,
 };
@@ -15,9 +15,17 @@ use chimera_core::ui::theme;
 use chimera_hal::{ButtonId, EncoderId};
 use screen::*;
 
-/// A project whose pool is empty.
+/// A project whose pool is empty, its Parts on INIT.
 fn empty() -> Box<Project> {
-    let mut p = Project::boxed().0;
+    let (mut p, t) = Project::boxed();
+    for part in PartId::ALL {
+        let src = PartSource {
+            part,
+            from: PartFrom::Init(EngineType::Algo),
+        };
+        p.replace_part(ReplaceGuard::check(&p, t, src).unwrap())
+            .unwrap();
+    }
     for s in SlotId::ALL {
         p.pool_clear(s).unwrap();
     }

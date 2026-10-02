@@ -5,7 +5,7 @@ mod common;
 
 use chimera_core::block::Block;
 use chimera_core::name::ProjectName;
-use chimera_core::params::FilterParams;
+use chimera_core::params::{EngineType, FilterParams};
 use chimera_core::project::test_support::{
     FailOnSecondRead, FlipOnSecondRead, FullOnWrite, confirm_delete, full, project_store_suite,
     same, save_at, save_part_to,
@@ -182,6 +182,12 @@ fn saved_toast_names_differing_parts() {
     let mut s = MemStore::new(1);
     let mut card = Card::new();
     let (mut p, t) = Project::boxed();
+    let init = PartSource {
+        part: PartId::ALL[0],
+        from: PartFrom::Init(EngineType::Algo),
+    };
+    p.replace_part(ReplaceGuard::check(&p, t, init).unwrap())
+        .unwrap();
     let one = FreshFile::for_test(at(&mut s, 1));
     assert_eq!(
         save_project(&mut card, &mut s, &mut p, SaveTo::Fresh(one)).out,

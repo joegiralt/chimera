@@ -19,8 +19,7 @@ use crate::storage::{
     sound_crc,
 };
 
-use super::parts::new_part;
-use super::template::new_slot;
+use super::template::{new_project_part, new_slot};
 use super::{Origin, Part, PartId, PartSet, Project, SlotId};
 
 const FX_BLOCKS: [BlockRef; 5] = [
@@ -159,7 +158,7 @@ pub fn encode_new_project(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
         }
     }
     for i in 0..MAX_PARTS {
-        put_part(w, i, &new_part(i))?;
+        put_part(w, i, &new_project_part(i))?;
     }
     Ok(())
 }

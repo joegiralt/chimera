@@ -414,8 +414,8 @@ mod tests {
     /// Task 9's desktop QA without a window: `boot` over a card holding a
     /// saved project, over no card and over a fresh card. Each gives the
     /// toast the shell would draw, and a note held on the selected Part's
-    /// channel sounds; on NEW, sample for sample as `Performance::new`,
-    /// what main played.
+    /// channel sounds; on NEW, sample for sample as `Project::boxed`'s
+    /// own Part plays it.
     #[test]
     fn each_card_boots_a_project_that_plays() {
         use crate::store::DirStore;
@@ -470,7 +470,8 @@ mod tests {
             let played = held_note(ui.project().perf(), ch);
             assert!(played.iter().any(|s| s.abs() > 1e-3), "{root:?}: silent");
             if toast.is_some() {
-                assert_eq!(played, held_note(&Performance::new(), ch), "{root:?}");
+                let new = chimera_core::project::Project::boxed().0;
+                assert_eq!(played, held_note(new.perf(), ch), "{root:?}");
             } else {
                 same(ui.project(), &want);
                 assert_eq!(

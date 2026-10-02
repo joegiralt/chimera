@@ -112,9 +112,10 @@ fn mark(ui: &UiState, p: PartId) -> String {
 #[test]
 fn part_strip_marks() {
     let mut ui = UiState::new();
-    assert_eq!(mark(&ui, P[0]), "CLEAN");
-    edit(&mut ui, P[0]);
-    assert_eq!(mark(&ui, P[0]), "* EDITED · FROM INIT");
+    // Part 6: NEW's one INIT Part.
+    assert_eq!(mark(&ui, P[5]), "CLEAN");
+    edit(&mut ui, P[5]);
+    assert_eq!(mark(&ui, P[5]), "* EDITED · FROM INIT");
 
     load(&mut ui, P[1], S3);
     load(&mut ui, P[2], S3);
@@ -129,7 +130,7 @@ fn part_strip_marks() {
         assert_eq!(fb.oob, 0);
         (0..240).any(|x| (28..48).any(|y| fb.at(x, y) == theme::WARN))
     };
-    assert!(strip(PartMark::of(ui.project(), P[0])), "edited in WARN");
+    assert!(strip(PartMark::of(ui.project(), P[5])), "edited in WARN");
     assert!(!strip(PartMark::of(ui.project(), P[1])), "clean");
 
     // The moved mark leaves the name room.
@@ -305,6 +306,7 @@ fn a_refused_replace_says_why() {
 
 /// CLEAR on Part 1, edited from INIT: its prompt.
 fn clear_asks(ui: &mut UiState) -> u32 {
+    screen::init_part(ui, P[0]);
     edit(ui, P[0]);
     part_row(ui, P[0], 1); // CLEAR
     tap(ui, ButtonId::Seq);

@@ -20,6 +20,7 @@ use chimera_core::orbit::engine::{OrbitEvent, PendingOff};
 use chimera_core::orbit::runner::{OrbitRunner, OrbitView};
 use chimera_core::orbit::scene::OrbitSong;
 use chimera_core::orbit::{RINGS, RingIdx};
+use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::{LoadGate, LoadLink, PartId, Project};
 use chimera_core::scope::ScopeWriter;
@@ -155,11 +156,12 @@ impl OrbitRig {
         }
     }
 
-    /// NEW with Part `p` playing `sound` instead of INIT.
-    pub fn with_sounds(sounds: &[(usize, Sound)]) -> Self {
+    /// NEW with every Part on INIT Algo, as NEW was before its factory
+    /// Sounds: a sine, for the checks set by it.
+    pub fn on_init() -> Self {
         let mut r = Self::new();
-        for (p, s) in sounds {
-            *r.project.edit_part(PartId::ALL[*p]).sound = s.clone();
+        for p in PartId::ALL {
+            *r.project.edit_part(p).sound = Sound::init(EngineType::Algo);
         }
         r
     }

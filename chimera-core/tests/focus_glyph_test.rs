@@ -621,6 +621,8 @@ fn glyph_crossfader_page_slides_left_centre_right() {
     use chimera_core::dsp::algo::params::AlgoParams;
     use chimera_core::params::DriveParams;
     let mut ui = UiState::new();
+    // INIT's MORPH, which the walk below starts from.
+    init_part(&mut ui, PartId::ALL[0]);
     to_xf(&mut ui);
     // Both specs carry CROSSFADER.
     let morph = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
@@ -1224,6 +1226,8 @@ fn a_crossfader_redraws_when_only_its_set_value_moves() {
     use chimera_core::dsp::algo::params::AlgoParams;
     let morph = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
     let mut ui = UiState::new();
+    // INIT's MORPH has no modulation of its own.
+    init_part(&mut ui, PartId::ALL[0]);
     feed(&mut ui, Input::press(ButtonId::B2));
     feed(&mut ui, Input::press(ButtonId::B1));
     let ctx = SlotCtx::read(ui.params(), ui.selected_op());

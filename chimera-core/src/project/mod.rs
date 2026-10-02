@@ -35,7 +35,7 @@ pub use store::{
     project_file, save_project, save_project_as,
 };
 pub use swap::{GateStep, LOAD_ACK_TIMEOUT_MS, LOAD_LINK, LoadGate, LoadLink, Settled, Swap};
-pub use template::TemplateCrc;
+pub use template::{NEW_PARTS, TemplateCrc};
 
 use crate::dsp::fx_bus::FxParams;
 use crate::name::ProjectName;

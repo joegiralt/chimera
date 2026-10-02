@@ -8,8 +8,8 @@ use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::test_support::save_part_to;
 use chimera_core::project::{
-    InUse, Origin, PartFrom, PartId, PartSet, PartSource, Project, ReplaceError, ReplaceGuard,
-    SlotId, TemplateCrc,
+    InUse, NEW_PARTS, Origin, PartFrom, PartId, PartSet, PartSource, Project, ReplaceError,
+    ReplaceGuard, SlotId, TemplateCrc,
 };
 use chimera_core::storage::sound_crc;
 
@@ -65,10 +65,18 @@ fn new_project_contents() {
     );
     assert_eq!(p.pool().used(), 10);
     assert_eq!(p.pool().first_free(), SlotId::new(10));
-    for id in PartId::ALL {
-        assert_eq!(p.part(id).origin(), Origin::Init(EngineType::Algo));
-        assert!(p.part(id).sound.bits_eq(&Sound::init(EngineType::Algo)));
+    // Parts 1–5 on the init scene's factory Sounds, from their slots;
+    // Part 6 on INIT Algo.
+    for (id, slot) in PartId::ALL.into_iter().zip(NEW_PARTS) {
+        let Origin::Slot { slot: from, .. } = p.part(id).origin() else {
+            panic!("{id:?} from INIT");
+        };
+        assert_eq!(from, slot);
+        assert!(p.part(id).sound.bits_eq(p.pool().get(slot).unwrap()));
     }
+    let six = p.part(PartId::ALL[5]);
+    assert_eq!(six.origin(), Origin::Init(EngineType::Algo));
+    assert!(six.sound.bits_eq(&Sound::init(EngineType::Algo)));
 }
 
 #[test]
@@ -89,7 +97,8 @@ fn store_and_clear_bump_the_generation() {
 #[test]
 fn clear_refuses_a_used_slot() {
     let (mut p, t) = Project::boxed();
-    let (a, b, s) = (PartId::ALL[1], PartId::ALL[3], SlotId::ALL[0]);
+    // TX BRASS: no Part of NEW's plays it.
+    let (a, b, s) = (PartId::ALL[1], PartId::ALL[3], SlotId::ALL[2]);
     for part in [a, b] {
         load(
             &mut p,

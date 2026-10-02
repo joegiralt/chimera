@@ -600,18 +600,19 @@ fn orbit_buttons() {
     let ring3 = ui.location();
 
     // MIX + B4: a mute on the press, no select, no cross after 600 ms.
-    // The init scene mutes ring 4 only.
-    let init = [false, false, false, true, false];
+    // The init scene mutes ring 5 only.
+    let init = [false, false, false, false, true];
     assert_eq!(muted(&ui), init);
     let rev = ui.project().rev();
     feed(&mut ui, Input::chord(Mix, B4).at(0));
-    assert_eq!(muted(&ui), [false; 5]);
+    let ring4_off = [false, false, false, true, true];
+    assert_eq!(muted(&ui), ring4_off);
     assert_ne!(ui.project().rev(), rev, "the project is marked");
     feed(&mut ui, Input::held(B4).and_held(Mix).at(600));
     feed(&mut ui, Input::release(B4).and_held(Mix).at(633));
     feed(&mut ui, Input::release(Mix).at(666));
     assert_eq!(ui.location(), ring3, "no select, no cross");
-    assert_eq!(muted(&ui), [false; 5], "once");
+    assert_eq!(muted(&ui), ring4_off, "once");
     // Again: back on.
     feed(&mut ui, Input::chord(Mix, B4).at(1000));
     feed(&mut ui, Input::release(B4).and_held(Mix).at(1100));

@@ -13,7 +13,8 @@ use chimera_core::perf::load::AudioStats;
 use chimera_core::preset::{POOL_SIZE, Sound};
 use chimera_core::project::SlotId;
 use chimera_core::project::{
-    LoadLink, Project, ProjectFile, ProjectNote, SaveTo, new_project_id, save_project,
+    LoadLink, PartFrom, PartId, PartSource, Project, ProjectFile, ProjectNote, ReplaceGuard,
+    SaveTo, new_project_id, save_project,
 };
 use chimera_core::reset::ResetCause;
 use chimera_core::scope::SCOPE_LEN;
@@ -607,10 +608,10 @@ pub fn orbit_view(f: f64) -> chimera_core::orbit::runner::OrbitView {
     v
 }
 
-/// `orbit_view(f)` with ring 2 just fired: what ORB's golden draws.
+/// `orbit_view(f)` with ring 1 just fired: what ORB's golden draws.
 pub fn orb_view(f: f64) -> chimera_core::orbit::runner::OrbitView {
     let mut v = orbit_view(f);
-    v.rings[1].fired = 1;
+    v.rings[0].fired = 1;
     v
 }
 
@@ -622,6 +623,18 @@ pub fn midi_view(f: f64) -> chimera_core::orbit::runner::OrbitView {
         bpm: Bpm::new(133).unwrap(),
         ..orb_view(f)
     }
+}
+
+/// Part `p` on INIT Algo, where NEW has a factory Sound: for the tests
+/// whose subject is an INIT Part, not NEW's.
+#[allow(dead_code)]
+pub fn init_part(ui: &mut UiState, p: PartId) {
+    let src = PartSource {
+        part: p,
+        from: PartFrom::Init(EngineType::Algo),
+    };
+    let c = ReplaceGuard::check(ui.project(), ui.template(), src).expect("a Clean Part");
+    ui.project_mut().replace_part(c).expect("INIT loads");
 }
 
 /// Hold SEQ into ORBIT, then B`n`'s tap: RING `n`'s RHYTHM.
@@ -794,20 +807,28 @@ const REV: usize = 4;
 const TAPE: usize = 5;
 
 pub const CASES: &[ScreenCase] = &[
-    ("engine_algo", |ui| feed(ui, Input::turn(EncoderId::A, 2))),
+    // The Algo cases walk from INIT Algo on Part 1, not NEW's TX BASS.
+    ("engine_algo", |ui| {
+        init_part(ui, PartId::ALL[0]);
+        feed(ui, Input::turn(EncoderId::A, 2))
+    }),
     ("algo_alg", |ui| {
+        init_part(ui, PartId::ALL[0]);
         feed(ui, Input::turn(EncoderId::B, 16)); // ALG B = A17, from INIT's A1
         feed(ui, Input::turn(EncoderId::C, 50)); // MORPH 50: the diagrams blend
     }),
     ("algo_wave", |ui| {
+        init_part(ui, PartId::ALL[0]);
         to_osc(ui);
         feed(ui, Input::turn(EncoderId::B, 5)); // operator 2's wave, a few steps in
     }),
     ("algo_level", |ui| {
+        init_part(ui, PartId::ALL[0]);
         to_level_page(ui);
         feed(ui, Input::turn(EncoderId::B, 60)); // operator 2 LEVEL
     }),
     ("algo_osc_last", |ui| {
+        init_part(ui, PartId::ALL[0]);
         to_osc(ui);
         for _ in 0..12 {
             feed(ui, Input::press(ButtonId::Edit)); // FEEDBACK, the last sub-page
@@ -979,6 +1000,7 @@ pub const CASES: &[ScreenCase] = &[
     }),
     // Part 1 on P3: the warning on its sound pages; ALGORITHM falls back to ALG.
     ("algo_out_p3", |ui| {
+        init_part(ui, PartId::ALL[0]);
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
         feed(ui, Input::press(ButtonId::Minus));
         feed(ui, Input::turn(EncoderId::C, 2)); // OUT P3
@@ -1010,11 +1032,13 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::E, -127));
     }),
     ("algo_alg_morph_dimmed", |ui| {
+        init_part(ui, PartId::ALL[0]);
         feed(ui, Input::turn(EncoderId::B, -8)); // ALG B = T1 = ALG A
         feed(ui, Input::turn(EncoderId::C, 1)); // MORPH focused, dimmed
     }),
     // ENV1 → MORPH primed while it was live; then ALG B = ALG A (#188).
     ("mod_matrix_morph_inert", |ui| {
+        init_part(ui, PartId::ALL[0]);
         feed(ui, Input::turn(EncoderId::C, 1));
         prime(ui);
         plus(ui, 5);
@@ -1055,21 +1079,23 @@ pub const CASES: &[ScreenCase] = &[
     }),
     ("settings_prompt_load", prompt_load),
     ("settings_naming", naming_save_as),
-    // RING 3's RHYTHM at a third of the bar, HITS focused: 5/13.
+    // RING 3's RHYTHM at a third of the bar, HITS focused: 1/1, the
+    // pad's one held note a bar.
     ("orbit_rhythm", |ui| {
         to_ring(ui, 3);
+        feed(ui, Input::turn(EncoderId::B, -1)); // down first: 1/1 is HITS' top
         feed(ui, Input::turn(EncoderId::B, 1));
-        feed(ui, Input::turn(EncoderId::B, -1));
         ui.set_orbit_view(&orbit_view(0.3));
     }),
-    // CHRD: segment 2 playing, segment 3 picked (MIX + DEGREE).
+    // CHRD: segment 1 playing, a third into bar 1 of 4; segment 3 picked
+    // (MIX + DEGREE).
     ("orbit_chrd", |ui| {
         to_ring(ui, 3);
         plus(ui, 1);
         feed(ui, Input::turn(EncoderId::E, 2).and_held(ButtonId::Mix));
         ui.set_orbit_view(&orbit_view(0.3));
     }),
-    // ORB on ring 3 at a third of the bar, ring 2 just fired.
+    // ORB on ring 3 at a third of the bar, ring 1 just fired.
     ("orbit_orb", |ui| {
         to_ring(ui, 3);
         feed(ui, Input::press(ButtonId::Minus));

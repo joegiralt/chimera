@@ -108,14 +108,14 @@ fn rhythm_edits_bump_the_rev_and_knobs_do_not() {
 
 #[test]
 fn octave_moves_the_notes() {
-    // Ring 2 of the init scene: OCTAVE 3, a pool of C3, E3, A3.
+    // Ring 2 of the init scene: OCTAVE 4, a pool of A4, C5, E5.
     let mut r = Scene::init().rings[1];
-    assert_eq!(r.ring.octave, Octave::new(3).unwrap());
+    assert_eq!(r.ring.octave, Octave::new(4).unwrap());
     let pool: Vec<u8> = r.ring.pool.notes().iter().map(|n| n.get()).collect();
     let notes = r.ring.notes;
     let rev = r.notes_rev;
-    r.set(SceneRing::OCTAVE, 5.0);
-    assert_eq!(r.ring.octave, Octave::new(5).unwrap());
+    r.set(SceneRing::OCTAVE, 6.0);
+    assert_eq!(r.ring.octave, Octave::new(6).unwrap());
     let up: Vec<u8> = r.ring.pool.notes().iter().map(|n| n.get()).collect();
     assert_eq!(up, pool.iter().map(|n| n + 24).collect::<Vec<_>>());
     for (a, b) in r.ring.notes.iter().zip(notes) {

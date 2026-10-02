@@ -1,11 +1,12 @@
 //! Slice 1's QA gate for ORBIT (Task 11): the init scene played from a NEW
-//! project on the desktop's real mix path, measured per DAC pair and
-//! summed. Clicks are judged where sound can break (a ring's off, a steal,
-//! STOP, MUTATE's boundary, a BPM jump), never at a note-on; stuck notes
-//! are checked every block while running, and after STOP.
+//! project, on NEW's factory Sounds, on the desktop's real mix path,
+//! measured per DAC pair and summed. Clicks are judged where sound can
+//! break (a ring's off, a steal, STOP, MUTATE's boundary, a BPM jump),
+//! never at a note-on; stuck notes are checked every block while running,
+//! and after STOP.
 //!
-//! With `ORBIT_QA_WAV=dir` set, `ab_renders` writes `a-new.wav` (NEW's
-//! INIT Parts) and `b-factory.wav` (factory Sounds on Parts 1–5) for UAT.
+//! With `ORBIT_QA_WAV=dir` set, `uat_render` writes `new.wav`, NEW as it
+//! plays, for UAT.
 
 mod common;
 
@@ -17,23 +18,28 @@ use chimera_core::block::{ParamId, ParamSpec};
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::hw::DAC_PAIRS;
 use chimera_core::orbit::RingIdx;
+use chimera_core::orbit::chords::Bars;
 use chimera_core::orbit::clock::Bpm;
 use chimera_core::orbit::euclid::{Fill, Steps};
 use chimera_core::orbit::rng::Pct;
 use chimera_core::orbit::scene::{Scene, SceneRing};
 use chimera_core::part::DacPair;
 use chimera_core::part::PartParams;
-use chimera_core::project::PartId;
+use chimera_core::project::{NEW_PARTS, PartId};
 use common::orbit::{Mark, OrbitRig, Report, judgeable, orbit_block, report, secs, write_wav};
 use common::sweep::{
     BPS, Bench, CLICK_RATIO, Patch, SILENT_RMS, Tape, level, steady_windows, transient_window,
 };
 
-/// Loops of the init scene (one bar each at 120 BPM: 1,500 blocks).
-const LOOP: usize = 1500;
+/// A bar at 120 BPM, in blocks; the init scene's loop is four.
+const BAR: usize = 1500;
 
-/// The level reference: INIT Algo's C4 triad, held 2 s.
+/// The level reference: a C4 triad held 2 s on TX EPIANO, NEW's Part 2,
+/// the scene's loudest voice. The scene sits on factory Sounds since the
+/// owner's pick at UAT, so INIT Algo's chord, 6.7 dB over it, no longer
+/// says how loud a factory Sound plays.
 const C4_CHORD: [u8; 3] = [60, 64, 67];
+const REFERENCE: Patch = Patch::Factory(NEW_PARTS[1].index() as u8);
 
 fn assert_clean(name: &str, r: &Report) {
     r.print(name);
@@ -41,16 +47,25 @@ fn assert_clean(name: &str, r: &Report) {
     assert!(f.is_empty(), "{name}:\n{}", f.join("\n"));
 }
 
-/// How long after STOP every voice must be free: INIT Algo's longest
-/// release, measured once, plus 1 s.
+/// How long after STOP every voice must be free: the longest release of
+/// NEW's Sounds (the five factory ones and Part 6's INIT), measured once,
+/// plus 1 s.
 fn stop_bound() -> usize {
     static BOUND: OnceLock<usize> = OnceLock::new();
-    *BOUND.get_or_init(|| longest_release() + secs(1.0))
+    *BOUND.get_or_init(|| {
+        let factory = NEW_PARTS.map(|s| Patch::Factory(s.index() as u8));
+        let longest = factory
+            .into_iter()
+            .chain([Patch::AlgoInit])
+            .map(longest_release)
+            .max();
+        longest.expect("NEW has Sounds") + secs(1.0)
+    })
 }
 
 /// Blocks from a released chord at velocity 127 until its voices are free.
-fn longest_release() -> usize {
-    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::default());
+fn longest_release(patch: Patch) -> usize {
+    let mut b = Bench::new(patch, PartParams::default(), FxParams::default());
     let mut tape = Tape::default();
     for &n in &C4_CHORD {
         b.note(n, Some(127));
@@ -68,7 +83,7 @@ fn longest_release() -> usize {
             break;
         }
     }
-    tape.freed(off).expect("INIT's release ends")
+    tape.freed(off).expect("the release ends")
 }
 
 fn stop_and_drain(rig: &mut OrbitRig, bound: usize) -> Option<usize> {
@@ -87,22 +102,22 @@ fn init_scene_is_clean() {
     let bound = stop_bound();
     let mut rig = OrbitRig::new();
     rig.play(true);
-    rig.run_loops(10);
-    // A live chord on ring 1's Part, held two loops and released.
+    rig.run_loops(2);
+    // A live chord on ring 1's Part, held a loop and released.
     for n in [57, 60, 64] {
         rig.key(0, n, true);
     }
-    rig.run_loops(2);
+    rig.run_loops(1);
     for n in [57, 60, 64] {
         rig.key(0, n, false);
     }
-    rig.run_loops(52);
-    assert_eq!(rig.view().loops, 65, "64 whole loops");
+    rig.run_loops(13);
+    assert_eq!(rig.view().loops, 17, "16 whole loops, 64 bars");
     // STOP between steps, so its break is judged apart from an attack.
     rig.run(40);
     let freed = stop_and_drain(&mut rig, bound);
     let r = report(&rig, 0);
-    assert_clean("init scene, 64 loops", &r);
+    assert_clean("init scene, 64 bars", &r);
     assert!(
         freed.is_some_and(|f| f <= bound),
         "STOP freed every voice in {freed:?} blocks, bound {bound}"
@@ -111,7 +126,7 @@ fn init_scene_is_clean() {
     // note-on that needs the voice, and MUTATE's boundary is the downbeat,
     // where rings 1 and 2 always play: both share their block with an
     // attack, so `a_steal_fades_clean_on_its_pair` and the sweep judge them.
-    assert!(r.judged[0] > 500 && r.judged[2] == 1, "{:?}", r.judged);
+    assert!(r.judged[0] > 240 && r.judged[2] == 1, "{:?}", r.judged);
 }
 
 /// Ring `solo` alone (unmuted), the others muted; `None`: the scene as is.
@@ -124,19 +139,19 @@ fn render_levels(solo: Option<usize>, loops: u32) -> Report {
     }
     rig.play(true);
     rig.run_loops(loops);
-    // From the second loop: past the first attacks' DC settling.
-    report(&rig, LOOP)
+    // From the second bar: past the first attacks' DC settling.
+    report(&rig, BAR)
 }
 
 #[test]
 fn init_scene_levels() {
-    let reference = level(Patch::AlgoInit, &C4_CHORD, 100, 2 * BPS).lufs;
-    let all = render_levels(None, 16);
+    let reference = level(REFERENCE, &C4_CHORD, 100, 2 * BPS).lufs;
+    let all = render_levels(None, 4);
     all.print("init scene");
-    println!("reference: INIT Algo C4 chord held, {reference:.1} LUFS");
+    println!("reference: TX EPIANO C4 chord held, {reference:.1} LUFS");
     let solos: Vec<f32> = (0..5)
         .map(|i| {
-            let r = render_levels(Some(i), 16);
+            let r = render_levels(Some(i), 4);
             println!(
                 "ring {} solo: P1 {:.1} LUFS, sum {:.1}, peak {:.3}",
                 i + 1,
@@ -194,7 +209,7 @@ fn stop_leaves_nothing_sounding() {
     let bound = stop_bound();
     let mut seed = 0x0B17_5709;
     for _ in 0..10 {
-        let at = BPS + lcg(&mut seed) as usize % (8 * LOOP);
+        let at = BPS + lcg(&mut seed) as usize % (8 * BAR);
         let mut rig = OrbitRig::new();
         rig.play(true);
         rig.run(at);
@@ -226,7 +241,7 @@ fn stress_is_clean() {
         }
     }
     rig.play(true);
-    rig.run_loops(16);
+    rig.run_loops(4);
     // Every ring fires on every step, so every off and steal shares a block
     // with an attack: STOP, between steps, is the one break judged.
     rig.run(10);
@@ -238,8 +253,9 @@ fn stress_is_clean() {
 }
 
 /// NEW's Parts spread over the pairs: ring 1's on P1, ring 2's on P2,
-/// rings 3 and 5's on P3. Each pair is bounded on its own, and none sits
-/// more than 6 dB from the others.
+/// rings 3 and 4's (Part 3) on P3, and Part 5's, muted ring 5's, there
+/// too. Each pair is bounded on its own, and none sits more than 6 dB from
+/// the others.
 #[test]
 fn init_scene_across_pairs() {
     let mut rig = OrbitRig::new();
@@ -247,8 +263,8 @@ fn init_scene_across_pairs() {
         rig.project.edit_part(PartId::ALL[p]).mix.output = pair;
     }
     rig.play(true);
-    rig.run_loops(16);
-    let r = report(&rig, LOOP);
+    rig.run_loops(4);
+    let r = report(&rig, BAR);
     assert_eq!(r.carrying(), [true; DAC_PAIRS], "every pair plays");
     assert_clean("init scene across P1–P3", &r);
 }
@@ -256,9 +272,10 @@ fn init_scene_across_pairs() {
 /// Part 1 (on P1) holds eight notes, the whole pool, for a second; with
 /// `released`, its 48 is let go 20 blocks before the end. With `steal`,
 /// Part 2 (routed to P2) then plays one note, which takes a voice of Part
-/// 1's. Returns the rig a second on, and the steal's block.
+/// 1's. Both Parts on INIT Algo, whose sustain and release the thresholds
+/// below were set by. Returns the rig a second on, and the steal's block.
 fn steal_scene(released: bool, steal: bool) -> (OrbitRig, usize) {
-    let mut rig = OrbitRig::new();
+    let mut rig = OrbitRig::on_init();
     rig.project.edit_part(PartId::ALL[1]).mix.output = DacPair::P2;
     for n in [48, 52, 55, 59, 60, 64, 67, 71] {
         rig.key(0, n, true);
@@ -330,7 +347,7 @@ fn a_steal_fades_clean_on_its_pair() {
 // ── The parameter sweep, through a running ORBIT ───────────────────────
 
 /// Floors on the sweep's judged MUTATE boundaries and BPM jumps, about
-/// three quarters of what it judges (270 and 15, 2026-10-03): a change that
+/// half of what it judges (416 and 19, 2026-10-03): a change that
 /// moved them all next to a note-on would leave them unjudged.
 const MUTATE_JUDGED: usize = 200;
 const BPM_JUDGED: usize = 10;
@@ -367,11 +384,25 @@ fn orbit_params() -> Vec<(BlockRef, &'static ParamSpec)> {
 
 /// One parameter's sweep: each point held four loops (a lone hit at
 /// CHANCE 70 % may miss one), then min ↔ max every 3 blocks for 600
-/// blocks, then every 60 blocks for 1,200. Returns the report's row, its faults and its judged marks.
+/// blocks, then every 60 blocks for 1,200. Returns the report's row, its
+/// faults and its judged marks.
+///
+/// On the init scene made busier: a loop a bar, and MUTATE 30 % on every
+/// ring. The init scene has four bars and no MUTATE, so the sweep would
+/// cross a quarter of the loop boundaries and judge no mutation outside
+/// MUTATE's own rows.
+///
+/// And on INIT Algo, as before NEW had factory Sounds: the sweep judges
+/// ORBIT's timing, not a Sound. TX EPIANO's tine (operator 2 at ×42, near
+/// 18 kHz at A4) gives its attack a second difference 22× its release's,
+/// so an off at GATE 0, two blocks into the attack, reads as a click.
 fn sweep_param(b: BlockRef, s: &'static ParamSpec) -> (String, Vec<String>, [usize; 5]) {
-    let mut rig = OrbitRig::new();
-    if let BlockRef::OrbitRing(r) = b {
-        for (i, sr) in rig.song().live.rings.iter_mut().enumerate() {
+    let mut rig = OrbitRig::on_init();
+    let song = rig.song();
+    song.live.chords.bars = Bars::ONE;
+    for (i, sr) in song.live.rings.iter_mut().enumerate() {
+        sr.ring.mutate = Pct::clamped(30);
+        if let BlockRef::OrbitRing(r) = b {
             sr.ring.mute = i != r.get() as usize;
         }
     }
@@ -482,32 +513,19 @@ fn orbit_param_sweep() {
     assert!(faults.is_empty(), "{}", faults.join("\n"));
 }
 
-// ── The UAT renders ────────────────────────────────────────────────────
+// ── The UAT render ─────────────────────────────────────────────────────
 
-/// 20 s of the init scene: the pairs summed, as the desktop plays them.
-fn render_20s(mut rig: OrbitRig) -> Vec<f32> {
-    rig.play(true);
-    rig.run(secs(20.0));
-    rig.sum
-}
-
+/// 20 s of NEW playing: the pairs summed, as the desktop plays them.
 #[test]
-fn ab_renders() {
+fn uat_render() {
     let Some(dir) = std::env::var_os("ORBIT_QA_WAV") else {
         return;
     };
     let dir = std::path::PathBuf::from(dir);
     std::fs::create_dir_all(&dir).expect("the WAV dir");
-    write_wav(&dir.join("a-new.wav"), &render_20s(OrbitRig::new()));
-    // TX BASS, TX EPIANO, MORPH PAD, TX BELL, SAW LEAD on Parts 1–5.
-    let sounds: Vec<(usize, chimera_core::preset::Sound)> = [0, 1, 6, 3, 4]
-        .into_iter()
-        .enumerate()
-        .map(|(p, i)| (p, chimera_core::factory::factory_sound(i).expect("factory")))
-        .collect();
-    write_wav(
-        &dir.join("b-factory.wav"),
-        &render_20s(OrbitRig::with_sounds(&sounds)),
-    );
-    println!("wrote {}/{{a-new,b-factory}}.wav", dir.display());
+    let mut rig = OrbitRig::new();
+    rig.play(true);
+    rig.run(secs(20.0));
+    write_wav(&dir.join("new.wav"), &rig.sum);
+    println!("wrote {}/new.wav", dir.display());
 }
