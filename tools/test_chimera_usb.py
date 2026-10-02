@@ -3,9 +3,12 @@
 Run: python3 -m unittest discover -s tools -p 'test_*.py'
 """
 
+import datetime
 import importlib.util
 import os
 import pathlib
+import re
+import shutil
 import socket
 import struct
 import subprocess
@@ -222,6 +225,19 @@ class Tool(unittest.TestCase):
             self.assertEqual(os.listdir(d), [], "nothing written")
         self.assertEqual(r.returncode, 1)
 
+    def test_a_shot_over_the_cap_is_refused_before_its_body(self):
+        # 1024 x 513 x 2 is consistent but over 1 MiB; no body follows.
+        with FakeUnit({b"shot\n": b"SHOT 1024 513 rgb565be 1050624\n"}) as u:
+            r = run_tool(["shot"], u.target)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn(b"is not a screen", r.stderr)
+
+    def test_an_empty_shot_is_refused(self):
+        with FakeUnit({b"shot\n": b"SHOT 0 320 rgb565be 0\nOK\n"}) as u, tempfile.TemporaryDirectory() as d:
+            r = run_tool(["shot"], u.target, cwd=d)
+            self.assertEqual(os.listdir(d), [])
+        self.assertEqual(r.returncode, 1)
+
     def test_a_stalled_tail_is_drained_before_the_next_request(self):
         # The unit first sends the tail of an earlier, stalled shot, then answers.
         with FakeUnit({b"status\n": b"firmware x\nOK\n"}, preamble=b"\x00" * 5000) as u:
@@ -239,8 +255,6 @@ class Tool(unittest.TestCase):
         self.assertIn(tool.target({}), [("tty", "/dev/chimera"), ("tty", "/dev/ttyACM0")])
 
     def test_shot_path_names_the_kind_and_time(self):
-        import datetime
-
         now = datetime.datetime(2026, 10, 2, 9, 5, 7)
         self.assertEqual(tool.shot_path(False, now).name, "shot-20261002-090507.png")
         self.assertEqual(tool.shot_path(True, now).name, "shot-raw-20261002-090507.png")
@@ -302,6 +316,39 @@ class Tool(unittest.TestCase):
             r = run_tool(["to-dfu"], u.target, sysfs=fs.root)
         self.assertEqual((r.returncode, u.requests), (0, []))
 
+    def test_to_dfu_with_both_ids_sends_nothing(self):
+        with FakeSysfs({(0x0483, 0x5740), (0x0483, 0xDF11)}) as fs, FakeUnit({b"dfu\n": b"OK\n"}) as u:
+            r = run_tool(["to-dfu"], u.target, sysfs=fs.root)
+        self.assertEqual((r.returncode, u.requests), (0, []))
+
+    def test_to_dfu_fails_at_once_when_the_listed_console_wont_open(self):
+        with FakeSysfs({(0x0483, 0x5740)}) as fs:
+            t = time.monotonic()
+            r = run_tool(["to-dfu"], "tcp:127.0.0.1:9", sysfs=fs.root)
+            took = time.monotonic() - t
+        self.assertEqual(r.returncode, 1)
+        self.assertIn(b"no console at 127.0.0.1:9", r.stderr)
+        self.assertLess(took, 1.5)
+
+    def test_to_dfu_silence_after_dfu_is_no_answer(self):
+        with FakeSysfs({(0x0483, 0x5740)}) as fs, FakeUnit({}) as u:
+            r = run_tool(["to-dfu"], u.target, sysfs=fs.root)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn(b"no answer from", r.stderr)
+        self.assertNotIn(b"marker clobbered", r.stderr)
+
+    def test_wait_console_sees_it_come_back(self):
+        with FakeSysfs(set()) as fs:
+            fs.replace({(0x0483, 0x5740)}, after=0.3)
+            r = run_tool(["wait-console", "5"], "tcp:127.0.0.1:9", sysfs=fs.root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_wait_console_gives_up(self):
+        with FakeSysfs({(0x0483, 0xDF11)}) as fs:
+            r = run_tool(["wait-console", "0.3"], "tcp:127.0.0.1:9", sysfs=fs.root)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn(b"console not back", r.stderr)
+
     def test_to_dfu_without_a_console_prints_the_jumper(self):
         with FakeSysfs(set()) as fs:
             r = run_tool(["to-dfu"], "tcp:127.0.0.1:9", sysfs=fs.root)
@@ -316,6 +363,43 @@ class Tool(unittest.TestCase):
             body = just.split("\n" + recipe, 1)[1].split("\n\n", 1)[0]
             self.assertLess(body.index("to-dfu"), body.index("dfu-util"), recipe)
             self.assertIn("-s 0x8020000:leave", body, recipe)
+            self.assertIn("set -euo pipefail", body, recipe)
+            self.assertIn('"$rc" -eq 74', body, recipe)
+            self.assertIn("File downloaded successfully", body, recipe)
+        flash = just.split("\nflash:", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("wait-console 10", flash)
+
+    def test_the_justfile_never_touches_the_option_bytes(self):
+        just = (ROOT / "Justfile").read_text()
+        self.assertEqual(re.findall(r"-a\s*1\b|--alt[ =]1\b", just), [])
+        alts = re.findall(r"^\s+(?:rc=0 && )?dfu-util (\S+)", just, re.M)
+        self.assertGreaterEqual(len(alts), 4)
+        self.assertEqual(set(alts), {"-a0"})
+
+    def test_backup_bootloader_refuses_to_overwrite(self):
+        just = shutil.which("just")
+        if not just:
+            self.skipTest("no just")
+        with tempfile.TemporaryDirectory() as home, FakeSysfs(set()) as fs:
+            bindir = pathlib.Path(home, "bin")
+            bindir.mkdir()
+            ran = pathlib.Path(home, "dfu-util-ran")
+            fake = bindir / "dfu-util"  # never the real one, whatever happens
+            fake.write_text("#!/bin/sh\ntouch %s\nexit 99\n" % ran)
+            fake.chmod(0o755)
+            backups = pathlib.Path(home, "chimera-backups")
+            backups.mkdir()
+            old = backups / ("preenfm3-bootloader-%s.bin" % datetime.date.today().isoformat())
+            old.write_bytes(b"keep me")
+            env = dict(os.environ, HOME=home, CHIMERA_SYSFS=fs.root, PATH="%s:%s" % (bindir, os.environ["PATH"]))
+            r = subprocess.run(
+                [just, "--justfile", str(ROOT / "Justfile"), "--working-directory", str(ROOT), "backup-bootloader"],
+                env=env, capture_output=True, timeout=30,
+            )
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn(b"not overwriting", r.stderr)
+            self.assertEqual(old.read_bytes(), b"keep me")
+            self.assertFalse(ran.exists())
 
 
 if __name__ == "__main__":

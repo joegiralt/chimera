@@ -3,6 +3,7 @@
 
     python3 tools/chimera-usb.py <cmd> [<arg>]     help, status, stats, bench, shot [raw], dfu
     python3 tools/chimera-usb.py to-dfu            the unit into ROM DFU, for just flash
+    python3 tools/chimera-usb.py wait-console [s]  wait (default 10 s) for the console on the bus
 
 Exit 0 on OK, 1 on ERR (to stderr) or 2 s of silence. Bodies go to stdout;
 `shot` writes a PNG and prints its path. Standard library only.
@@ -10,7 +11,7 @@ Exit 0 on OK, 1 on ERR (to stderr) or 2 s of silence. Bodies go to stdout;
 Environment: CHIMERA_USB picks the target (unset: /dev/chimera if present,
 else /dev/ttyACM0; `sim`: the desktop sim; `tcp:HOST:PORT`; else a device
 path). CHIMERA_SHOTS overrides target/shots. CHIMERA_SYSFS and
-CHIMERA_DFU_WAIT (s, default 10) are for to-dfu.
+CHIMERA_DFU_WAIT (s, default 10) are for to-dfu and wait-console.
 """
 
 import datetime
@@ -159,13 +160,17 @@ def drain(conn: Conn):
         pass
 
 
-def request(conn: Conn, line) -> tuple:
-    """Send one request; (Status.OK, body) or (Status.ERR, the ERR line).
-
-    A `SHOT` header line stays in the body, followed by exactly its length
-    of pixel bytes. Raises NoAnswer or Vanished."""
+def send(conn: Conn, line):
+    """Drain a stalled tail, then send one request line. Raises Vanished."""
     drain(conn)
     conn.write(line.encode() + b"\n" if isinstance(line, str) else line + b"\n")
+
+
+def answer(conn: Conn) -> tuple:
+    """(Status.OK, body) or (Status.ERR, the ERR line).
+
+    A `SHOT` header line stays in the body, followed by exactly its length
+    of pixel bytes. Raises NoAnswer, Vanished or BadShot."""
     rd, body = Reader(conn), b""
     while True:
         ln = rd.line()
@@ -176,6 +181,12 @@ def request(conn: Conn, line) -> tuple:
         body += ln + b"\n"
         if ln.startswith(b"SHOT "):
             body += rd.exactly(Shot.declared_length(ln))
+
+
+def request(conn: Conn, line) -> tuple:
+    """`send`, then `answer`."""
+    send(conn, line)
+    return answer(conn)
 
 
 class BadShot(Exception):
@@ -203,7 +214,7 @@ class Shot(NamedTuple):
         header, pixels = body.split(b"\n", 1)
         n = cls.declared_length(header)
         w, h = int(header.split()[1]), int(header.split()[2])
-        if w * h * 2 != n or len(pixels) != n:
+        if w * h == 0 or w * h * 2 != n or len(pixels) != n:
             raise BadShot("shot: %dx%d needs %d bytes, header says %d" % (w, h, w * h * 2, n))
         return cls(w, h, pixels)
 
@@ -301,27 +312,39 @@ def to_dfu(t: Target, env) -> int:
     if CONSOLE_ID not in ids:
         print("no console: bridge BOOT0 on the back and re-plug for DFU")
         return 0
+    conn = open_conn(t)  # the kernel lists it, so failing to open it is the fault
     try:
-        conn = Conn(t)
-    except PermissionError:
-        return fail("no access to %s: install the udev rule: %s" % (describe(t), UDEV_HINT))
-    except OSError:
-        conn = None  # the port already left: DF11 decides below
-    if conn:
         try:
-            status, body = request(conn, "dfu")
+            send(conn, "dfu")
+        except Vanished:
+            return fail("%s went away before dfu was sent" % describe(t))
+        try:
+            status, body = answer(conn)
             if status is Status.ERR:
                 return fail(body.decode(errors="replace"))
-        except (Vanished, NoAnswer):
-            pass  # the OK was lost to the reset, not refused: DF11 decides
-        finally:
-            conn.close()
+        except NoAnswer:
+            return fail("no answer from %s" % describe(t))
+        except Vanished:
+            pass  # dfu was sent: the OK was lost to the reset, not refused; DF11 decides
+    finally:
+        conn.close()
     deadline = time.monotonic() + float(env.get("CHIMERA_DFU_WAIT", "10"))
     while time.monotonic() < deadline:
         if ROM_DFU_ID in usb_devices(sysfs):
             return 0
         time.sleep(0.1)
     return fail("no DFU device after dfu: see U10 (marker clobbered?)")
+
+
+def wait_console(env, secs) -> int:
+    """Exit 0 once the console is on the bus again, 1 after `secs`."""
+    sysfs = env.get("CHIMERA_SYSFS", "/sys")
+    deadline = time.monotonic() + secs
+    while CONSOLE_ID not in usb_devices(sysfs):
+        if time.monotonic() >= deadline:
+            return fail("console not back %g s after the flash" % secs)
+        time.sleep(0.1)
+    return 0
 
 
 def main(argv, env) -> int:
@@ -331,6 +354,8 @@ def main(argv, env) -> int:
     t = target(env)
     if argv[0] == "to-dfu":
         return to_dfu(t, env)
+    if argv[0] == "wait-console":
+        return wait_console(env, float(argv[1]) if len(argv) > 1 else 10.0)
     conn = open_conn(t)
     try:
         status, body = request(conn, " ".join(argv))

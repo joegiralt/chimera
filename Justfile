@@ -110,18 +110,34 @@ status:
 
 # Flash firmware to PreenFM3 via DFU. With the console up, `to-dfu` sends
 # `dfu` and waits for the ROM loader; without it, bridge BOOT0 and re-plug.
+# dfu-util exits 74 when `:leave` resets the unit under it; that counts only
+# if the download completed and the console comes back within 10 s.
 flash:
+    #!/usr/bin/env bash
+    set -euo pipefail
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf
     rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera.bin
     python3 tools/chimera-usb.py to-dfu
-    dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera.bin -s 0x8020000:leave
+    log=$(mktemp) && trap 'rm -f "$log"' EXIT
+    rc=0 && dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera.bin -s 0x8020000:leave 2>&1 | tee "$log" || rc=$?
+    if [ "$rc" -eq 74 ] && grep -q 'File downloaded successfully' "$log"; then
+        python3 tools/chimera-usb.py wait-console 10
+    elif [ "$rc" -ne 0 ]; then exit "$rc"; fi
 
 # Flash the bench build (--features bench) to PreenFM3 via DFU
+# The bench holds its screens about 4 min before the UI loop (and so the
+# console) starts, so a 74 after a completed download is accepted unwaited.
 flash-bench:
+    #!/usr/bin/env bash
+    set -euo pipefail
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features bench
     rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-bench.bin
     python3 tools/chimera-usb.py to-dfu
-    dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-bench.bin -s 0x8020000:leave
+    log=$(mktemp) && trap 'rm -f "$log"' EXIT
+    rc=0 && dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-bench.bin -s 0x8020000:leave 2>&1 | tee "$log" || rc=$?
+    if [ "$rc" -eq 74 ] && grep -q 'File downloaded successfully' "$log"; then
+        echo "bench running ~4 min; console appears after"
+    elif [ "$rc" -ne 0 ]; then exit "$rc"; fi
 
 # Copy the stock bootloader (0x08000000, 128 KB) to ~/chimera-backups with a
 # .sha256, never over an existing file. Upload only: it never writes the
@@ -133,10 +149,11 @@ backup-bootloader:
     out=~/chimera-backups/preenfm3-bootloader-$(date +%F).bin
     if [ -e "$out" ]; then echo "backup-bootloader: $out exists, not overwriting" >&2; exit 1; fi
     mkdir -p ~/chimera-backups
-    trap 'rm -f "$out"' ERR  # a failed read leaves no partial backup behind
+    trap 'rm -f "$out"; exit 1' ERR INT TERM  # a failed or interrupted read leaves no partial backup
     python3 tools/chimera-usb.py to-dfu
     dfu-util -a0 -d 0483:df11 -s 0x08000000:131072 -U "$out"
     test "$(stat -c %s "$out")" -eq 131072
+    trap - ERR INT TERM
     cd ~/chimera-backups && sha256sum "$(basename "$out")" > "$(basename "$out").sha256"
     echo "$out"
 

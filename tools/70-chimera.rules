@@ -2,5 +2,7 @@
 #   sudo cp tools/70-chimera.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger
 # ID_MM_DEVICE_IGNORE keeps ModemManager's AT probe off the port; uaccess
 # gives the logged-in user the port without dialout; /dev/chimera is the
-# host tool's default target.
+# host tool's default target. uaccess covers the active local seat only
+# (not ssh or a second seat: those still need dialout). The stock PreenFM3
+# firmware shares this ID, so it gets the same symlink and access.
 SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", ENV{ID_MM_DEVICE_IGNORE}="1", TAG+="uaccess", SYMLINK+="chimera"

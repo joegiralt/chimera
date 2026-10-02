@@ -5,12 +5,21 @@ The PreenFM3 runs two programs from flash: the stock bootloader at
 `0x08020000`. `just flash` only ever writes `0x08020000`. The bootloader is
 never touched, but if it were ever lost or damaged, this page puts it back.
 
-## The bootloader is Ixox's, and it stays out of this repo
+## The bootloader is Ixox's
 
 The bootloader is Xavier Hosxe's (Ixox), from the stock PreenFM3 firmware:
-github.com/Ixox/preenfm3 (`bootloader/`). It is not Chimera's code, so it
-is deliberately not in this repo: neither its source nor a binary read off
-a unit. A backup is personal and stays on your machine. Never `git add` it.
+github.com/Ixox/preenfm3 (`bootloader/`). It is not Chimera's code, and
+Chimera never writes it.
+
+There are two copies:
+
+- the repo keeps one, `preenfm3-bootloader-backup.bin` at the root, pinned
+  to a known version;
+- `just backup-bootloader` takes a local one, read off your own unit, into
+  `~/chimera-backups/`.
+
+Whether the repo keeps its copy, and how the bootloader is licensed with
+Chimera, the owner decides both at V1. Until then, leave both as they are.
 
 ## Taking a backup
 
@@ -24,12 +33,11 @@ just backup-bootloader
 - It reads (`dfu-util -U`, upload only) 131072 bytes from `0x08000000` into
   `~/chimera-backups/preenfm3-bootloader-<YYYY-MM-DD>.bin`, and writes a
   `.sha256` beside it. It never writes to the unit.
-- It refuses to overwrite a backup that already exists. A failed read leaves
-  no partial file.
+- It refuses to overwrite a backup that already exists. A failed or
+  interrupted read leaves no partial file.
 - Afterwards the unit is still in DFU: power-cycle it (jumper off) to play.
 
-The backup lives in `~/chimera-backups/`. Keep a second copy somewhere off
-the machine too.
+The local backup lives in `~/chimera-backups/`.
 
 ## Restoring
 
@@ -43,7 +51,8 @@ means Chimera's `dfu` cannot be reached, so the jumper is the way in.
    cd ~/chimera-backups && sha256sum -c preenfm3-bootloader-<date>.bin.sha256
    ```
 
-2. Write the bootloader back at `0x08000000`:
+2. Write the bootloader back at `0x08000000` (the repo's
+   `preenfm3-bootloader-backup.bin` works in place of a local backup):
 
    ```
    dfu-util -a0 -d 0483:df11 -s 0x08000000 -D ~/chimera-backups/preenfm3-bootloader-<date>.bin
