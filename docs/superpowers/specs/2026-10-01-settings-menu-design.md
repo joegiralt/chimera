@@ -150,7 +150,7 @@ SETTINGS has its own visual language, on purpose (owner, 2026-10-01: "it's obvio
 
 ## The PART branch
 
-It acts on the active Part, which is the last B*n*. The header shows `PART n`, the Sound's name, and its mark: `* EDITED · FROM SLOT 03`, `◦ SLOT MOVED`, or `CLEAN`.
+It acts on the active Part, which is the last B*n*. The header shows `PART n`, the Sound's name, and its mark: `* EDITED · FROM SLOT 03`, `◦ SLOT nn MOVED`, or `CLEAN`.
 
 - **SAVE TO PROJ** and **RELOAD FROM PROJ** are the `part_actions` that apply:
   - Edited: OverSlot or NewSlot, and Revert.

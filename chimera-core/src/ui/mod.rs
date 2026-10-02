@@ -74,7 +74,7 @@ use settings::naming::Naming;
 use settings::part::{Offer, PartCmd, SAVE_ROWS, slot_of};
 use settings::prompt;
 use settings::prompt::ReplaceTo;
-use settings::replace::{PartAsk, ProjectAsk, Reply};
+use settings::replace::{Asked, Guarded, PartAsk, ProjectAsk, Reply};
 use settings::view::PartBand;
 use settings::{
     Act, Answered, Ask, Done, Modal, ModalStep, NamingFor, PART_ROW, SaveAs, Screen, screen_path,
@@ -856,19 +856,17 @@ impl UiState {
         }
     }
 
-    /// SAVE PART FIRST: a save, then the replace it was asked for. A
-    /// RELOAD saves to a new slot: over its own, the reload would undo
-    /// nothing and leave the slot's other Parts Stale. With no slot
-    /// free, the prompt stays.
-    fn save_first(&mut self, ask: PartAsk, to: ReplaceTo) {
-        let offer = Offer::of(&self.project, ask.source().part);
-        let first = match to {
-            ReplaceTo::Reload(_) => offer.get(PartCmd::NewSlot),
-            ReplaceTo::Sound | ReplaceTo::Init => offer.first_save(),
-        };
-        let Some(a) = first else {
+    /// SAVE PART FIRST: the save `save` picks, then the replace it was
+    /// asked for. With none, the prompt stays.
+    fn save_first<A: Guarded>(
+        &mut self,
+        ask: Asked<PartSource, A>,
+        save: fn(&Offer) -> Option<project::PartAction>,
+        again: impl Fn(Asked<PartSource, A>) -> Ask,
+    ) {
+        let Some(a) = save(&Offer::of(&self.project, ask.source().part)) else {
             self.error(Line::new(prompt::POOL_FULL));
-            return self.ask(Ask::ReplacePart(ask, to));
+            return self.ask(again(ask));
         };
         let stale = self.save_sound(a);
         match ask.save_then(&self.project, self.template) {
@@ -878,7 +876,7 @@ impl UiState {
                     self.ask(x);
                 }
             }
-            Err(again) => self.ask(Ask::ReplacePart(again, to)),
+            Err(ask) => self.ask(again(ask)),
         }
     }
 
@@ -906,7 +904,10 @@ impl UiState {
                     part: self.active_part,
                     from: PartFrom::Slot(s),
                 };
-                self.guarded_part(src, ReplaceTo::Reload(s));
+                match ReplaceGuard::check(&self.project, self.template, src) {
+                    Ok(c) => self.replace(c),
+                    Err(n) => self.ask(Ask::ReloadPart(Asked::new(n), s)),
+                }
             }
             PartCmd::OverSlot | PartCmd::NewSlot => {
                 if let Some(x) = self.save_sound(a) {
@@ -1146,7 +1147,19 @@ impl UiState {
         match a {
             Answered::ReplacePart(r, to) => match r {
                 Reply::Confirmed(c) => self.replace(c),
-                Reply::SaveFirst(ask) => self.save_first(ask, to),
+                Reply::SaveFirst(ask) => {
+                    self.save_first(ask, Offer::first_save, |x| Ask::ReplacePart(x, to))
+                }
+                Reply::Cancel => {}
+            },
+            Answered::ReloadPart(r, s) => match r {
+                Reply::Confirmed(c) => self.replace(c),
+                Reply::SaveFirst(ask) => {
+                    // Over its own slot, the reload would undo nothing and
+                    // leave the slot's other Parts Stale.
+                    let new_slot = |o: &Offer| o.get(PartCmd::NewSlot);
+                    self.save_first(ask, new_slot, |x| Ask::ReloadPart(x, s))
+                }
                 Reply::Cancel => {}
             },
             Answered::UpdateStale(reverts, a) => {

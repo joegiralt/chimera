@@ -25,7 +25,7 @@ use crate::project::{
 };
 use crate::ui::hold::Presses;
 
-use super::prompt::{Answers, Choice, LoadAnswer, ReplaceAnswer};
+use super::prompt::{Answers, Choice, LoadAnswer, ReloadAnswer, ReplaceAnswer};
 use said::Said;
 
 /// A prompt that guards a replace: which pill confirms it, which saves first.
@@ -37,6 +37,11 @@ pub trait Guarded: Answers {
 impl Guarded for ReplaceAnswer {
     const CONFIRM: Self = ReplaceAnswer::Replace;
     const SAVE_FIRST: Self = ReplaceAnswer::SavePartFirst;
+}
+
+impl Guarded for ReloadAnswer {
+    const CONFIRM: Self = ReloadAnswer::Reload;
+    const SAVE_FIRST: Self = ReloadAnswer::SavePartFirst;
 }
 
 impl Guarded for LoadAnswer {
@@ -53,6 +58,8 @@ pub struct Asked<R, A> {
 
 /// SAVE PART FIRST / REPLACE / CANCEL.
 pub type PartAsk = Asked<PartSource, ReplaceAnswer>;
+/// SAVE PART FIRST / RELOAD / CANCEL.
+pub type ReloadAsk = Asked<PartSource, ReloadAnswer>;
 /// SAVE THEN LOAD / LOAD ANYWAY / CANCEL.
 pub type ProjectAsk = Asked<ProjectSource, LoadAnswer>;
 

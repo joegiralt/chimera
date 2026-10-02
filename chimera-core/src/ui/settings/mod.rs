@@ -33,9 +33,9 @@ use naming::{NAME_MAX, Naming, NamingOut};
 use prompt::{
     AlsoUses, AlsoUsesAnswer, Answer, CardChanged, CardChangedAnswer, Choice, Clear, ClearAnswer,
     ClearSlot, Delete, DeleteAnswer, Load, LoadAnswer, NameExists, NameExistsAnswer, PromptView,
-    Replace, ReplaceAnswer, ReplaceTo, SaveOver, SaveOverAnswer, with_view,
+    Reload, ReloadAnswer, Replace, ReplaceAnswer, ReplaceTo, SaveOver, SaveOverAnswer, with_view,
 };
-use replace::{PartAsk, ProjectAsk, Reply};
+use replace::{PartAsk, ProjectAsk, ReloadAsk, Reply};
 
 /// SAVE PROJECT AS, named: the file it goes to and the load it is inside.
 #[derive(Debug)]
@@ -48,8 +48,10 @@ pub(crate) struct SaveAs {
 /// An open prompt and what it holds until answered; dropping it is CANCEL.
 #[derive(Debug)]
 pub(crate) enum Ask {
-    /// A Sound into an Edited Part: a slot, CLEAR's INIT or RELOAD's own.
+    /// A Sound into an Edited Part: a slot, or CLEAR's INIT.
     ReplacePart(PartAsk, ReplaceTo),
+    /// RELOAD FROM PROJ into an Edited Part, from its slot.
+    ReloadPart(ReloadAsk, SlotId),
     /// A save over a slot `first` and `more` also play; UPDATE applies
     /// `reverts`, as offered when it opened.
     UpdateStale {
@@ -96,6 +98,7 @@ fn subject(c: &Chosen) -> Subject {
 #[derive(Debug)]
 pub(crate) enum Answered {
     ReplacePart(Reply<PartSource, ReplaceAnswer>, ReplaceTo),
+    ReloadPart(Reply<PartSource, ReloadAnswer>, SlotId),
     UpdateStale(Reverts, Answer<AlsoUsesAnswer>),
     ClearSlot(SlotId, Answer<ClearAnswer>),
     LoadProject {
@@ -143,6 +146,10 @@ impl Ask {
             Ask::ReplacePart(a, to) => {
                 let part = a.source().part;
                 with_view(&Replace { part, to: *to }, a.choice(), f)
+            }
+            Ask::ReloadPart(a, slot) => {
+                let part = a.source().part;
+                with_view(&Reload { part, slot: *slot }, a.choice(), f)
             }
             Ask::UpdateStale {
                 first,
@@ -214,6 +221,10 @@ impl Ask {
             Ask::ReplacePart(ask, to) => match ask.input(c, p, project) {
                 Ok(r) => Got(Answered::ReplacePart(r, to)),
                 Err(ask) => Open(Ask::ReplacePart(ask, to)),
+            },
+            Ask::ReloadPart(ask, s) => match ask.input(c, p, project) {
+                Ok(r) => Got(Answered::ReloadPart(r, s)),
+                Err(ask) => Open(Ask::ReloadPart(ask, s)),
             },
             Ask::UpdateStale {
                 first,

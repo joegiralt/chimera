@@ -71,6 +71,7 @@ macro_rules! answers {
 
 answers!(LoadAnswer { SaveThenLoad => "SAVE THEN LOAD", LoadAnyway => "LOAD ANYWAY", Cancel => "CANCEL" } Three);
 answers!(ReplaceAnswer { SavePartFirst => "SAVE PART FIRST", Replace => "REPLACE", Cancel => "CANCEL" } Three);
+answers!(ReloadAnswer { SavePartFirst => "SAVE PART FIRST", Reload => "RELOAD", Cancel => "CANCEL" } Three);
 answers!(
     /// `Update`'s pill names the Parts: `UPDATE P4`, `UPDATE ALL`.
     AlsoUsesAnswer { Update => "UPDATE", Leave => "LEAVE" } Two
@@ -247,8 +248,6 @@ pub enum ReplaceTo {
     /// A Sound chosen on the Sound rung.
     Sound,
     Init,
-    /// RELOAD FROM PROJ: its own slot again.
-    Reload(SlotId),
 }
 
 impl Prompt for Replace {
@@ -258,8 +257,22 @@ impl Prompt for Replace {
         let _ = match self.to {
             ReplaceTo::Sound => write!(q, "REPLACE P{p} SOUND?"),
             ReplaceTo::Init => write!(q, "CLEAR P{p} TO INIT?"),
-            ReplaceTo::Reload(s) => write!(q, "RELOAD P{p} FROM {}?", Slot(s)),
         };
+        let _ = write!(r, "P{p} IS EDITED");
+    }
+}
+
+/// RELOAD FROM PROJ into an Edited Part: its own slot again.
+pub struct Reload {
+    pub part: PartId,
+    pub slot: SlotId,
+}
+
+impl Prompt for Reload {
+    type Answer = ReloadAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        let p = part(self.part);
+        let _ = write!(q, "RELOAD P{p} FROM {}?", Slot(self.slot));
         let _ = write!(r, "P{p} IS EDITED");
     }
 }

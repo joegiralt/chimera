@@ -16,7 +16,7 @@ use chimera_core::ui::region::{MAX_REGIONS, PROMPT, RegionKind, layout_regions, 
 use chimera_core::ui::settings::naming::{Naming, NamingOut, proposed_name};
 use chimera_core::ui::settings::prompt::{
     AlsoUses, AlsoUsesAnswer, Answer, CardChanged, Choice, Clear, ClearSlot, Delete, Load,
-    NameExists, Prompt, Replace, ReplaceAnswer as R, ReplaceTo, SaveOver, fits, with_view,
+    NameExists, Prompt, Reload, Replace, ReplaceAnswer as R, ReplaceTo, SaveOver, fits, with_view,
 };
 use chimera_core::ui::settings::view::{Crumb, Crumbs};
 use chimera_core::ui::{UiState, theme};
@@ -338,9 +338,10 @@ fn every_prompt_fits() {
         to: None,
         current: name,
     });
-    for to in [ReplaceTo::Sound, ReplaceTo::Init, ReplaceTo::Reload(slot)] {
+    for to in [ReplaceTo::Sound, ReplaceTo::Init] {
         check(Replace { part: p2, to });
     }
+    check(Reload { part: p2, slot });
     for more in [PartSet::EMPTY, all_but(p2)] {
         check(AlsoUses {
             first: p4,
@@ -459,4 +460,18 @@ fn naming_ends_the_breadcrumb_with_its_crumb() {
     tap(&mut ui, ButtonId::Menu);
     let crumbs = ui.crumbs().map(|c| c.to_string());
     assert_eq!(crumbs.as_deref(), Some("SETTINGS › PROJECT"));
+}
+
+/// RELOAD's prompt has its own answers: its pill says what it does.
+#[test]
+fn the_reload_prompt_says_reload() {
+    use chimera_core::ui::settings::prompt::ReloadAnswer;
+    let p = Reload {
+        part: PartId::ALL[1],
+        slot: SlotId::ALL[2],
+    };
+    with_view(&p, &Choice::<ReloadAnswer>::new(), |v| {
+        assert_eq!(v.question, "RELOAD P2 FROM SLOT 03?");
+        assert_eq!(v.options(), ["SAVE PART FIRST", "RELOAD", "CANCEL"]);
+    });
 }
