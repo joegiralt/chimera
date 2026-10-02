@@ -12,6 +12,7 @@ use chimera_core::project::{
 };
 use chimera_core::storage::{Card, SystemSettings, SystemSync};
 use chimera_core::ui::UiState;
+use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::busy::ToastStep;
 use chimera_core::ui::nav::{Column, Location};
 use chimera_core::ui::settings::manage::{Command, Note, Off, Whose};
@@ -160,13 +161,13 @@ fn two() -> (Rig, ProjectFile, ProjectFile) {
     r.command(a, Command::LoadFrom);
     r.tap(ButtonId::Seq);
     assert_eq!(r.ui.project().meta().file(), Some(a));
-    r.ui.update();
+    r.ui.update(UiTick::for_test());
     (r, a, b)
 }
 
 fn modify(r: &mut Rig, n: &str) {
     r.ui.project_mut().set_name(name(n));
-    r.ui.update();
+    r.ui.update(UiTick::for_test());
     assert_eq!(r.ui.project_status(), ProjectStatus::Modified);
 }
 
@@ -278,7 +279,7 @@ fn save_to_overwrites_after_confirm() {
     assert_eq!(project_crc(&read_back(&mut r.s, b)), crc);
     assert_eq!(listed(&mut r.s)[1].name, Some(name("GAMMA")));
     assert_eq!(r.ui.project().meta().file(), Some(b));
-    r.ui.update();
+    r.ui.update(UiTick::for_test());
     assert_eq!(r.ui.project_status(), ProjectStatus::Saved);
     assert_eq!(listed(&mut r.s)[0].file(), a);
     assert_eq!(listed(&mut r.s)[0].name, Some(name("ALPHA")));
@@ -311,7 +312,7 @@ fn clear_other_and_clear_own() {
     r.feed(Input::turn(EncoderId::A, 1));
     r.tap(ButtonId::Seq);
     assert!(!r.ui.prompt_open());
-    r.ui.update();
+    r.ui.update(UiTick::for_test());
     assert_eq!(project_crc(r.ui.project()), fresh);
     assert_eq!(r.ui.project().meta().file(), Some(a));
     assert_eq!(r.ui.project().meta().saved_crc(), Some(fresh));
@@ -333,7 +334,7 @@ fn rename_loaded_marks_modified() {
     r.tap(ButtonId::Seq);
     assert!(r.ui.naming().is_none());
     assert_eq!(r.ui.project().meta().name(), name("ALPH"));
-    r.ui.update();
+    r.ui.update(UiTick::for_test());
     assert_eq!(r.ui.project_status(), ProjectStatus::Modified);
     // Back on MANAGE's commands; the card is untouched.
     assert_eq!(r.column(), Some(Column::Command(Command::Rename as u8)));
@@ -444,7 +445,7 @@ fn clear_own_save_then_load_keeps_the_edits_elsewhere() {
         .edit_part(p1)
         .mix
         .set(PartParams::LEVEL, 0.25);
-    r.ui.update();
+    r.ui.update(UiTick::for_test());
     assert_eq!(r.ui.project_status(), ProjectStatus::Modified);
     let edited = level(r.ui.project());
     r.tap(ButtonId::Menu);

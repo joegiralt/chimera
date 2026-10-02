@@ -12,6 +12,7 @@ use chimera_core::project::{
 };
 use chimera_core::storage::{Card, CardEvent, Generation, SystemSettings, SystemSync};
 use chimera_core::ui::UiState;
+use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::busy::ToastStep;
 use chimera_core::ui::nav::Location;
 use chimera_core::ui::settings::CardCx;
@@ -205,7 +206,7 @@ fn loaded<S: Store>(r: &mut Rig<S>, f: ProjectFile) {
 /// An edit that leaves the project Modified.
 fn modify<S: Store>(r: &mut Rig<S>, n: &str) {
     r.ui.project_mut().set_name(name(n));
-    r.ui.update();
+    r.ui.update(UiTick::for_test());
     assert_eq!(r.ui.project_status(), ProjectStatus::Modified);
 }
 
@@ -272,7 +273,7 @@ fn load_over_modified_asks_and_each_answer() {
     r.turn(1);
     r.tap(ButtonId::Seq);
     assert_eq!(r.ui.project().meta().file(), Some(b));
-    r.ui.update();
+    r.ui.update(UiTick::for_test());
     assert_eq!(r.ui.project_status(), ProjectStatus::Saved);
     assert_eq!(r.swaps, 2);
 
@@ -330,7 +331,7 @@ fn save_as_names_and_saves() {
     assert_eq!(r.ui.naming().unwrap().text(), "ACID-001");
     r.tap(ButtonId::Seq);
     assert_eq!(r.toast(), "SAVED");
-    r.ui.update();
+    r.ui.update(UiTick::for_test());
     assert_eq!(r.ui.project_status(), ProjectStatus::Saved);
     assert_eq!(r.ui.project().meta().name(), name("ACID-001"));
     r.tap(ButtonId::Menu);
@@ -386,7 +387,7 @@ fn quick_save_saves_over_own_file() {
     r.hold(ButtonId::Menu);
     assert_eq!(r.toast(), "SAVED");
     assert_eq!(r.ui.location(), at);
-    r.ui.update();
+    r.ui.update(UiTick::for_test());
     assert_eq!(r.ui.project_status(), ProjectStatus::Saved);
     assert_ne!(generation(&mut r.s, a), was);
 }

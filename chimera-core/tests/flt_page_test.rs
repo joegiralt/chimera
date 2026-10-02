@@ -2,6 +2,7 @@
 //! honest", "Route knobs").
 mod common;
 use chimera_core::project::PartId;
+use chimera_core::ui::animation::UiTick;
 use common::Rig;
 
 mod screen;
@@ -370,13 +371,13 @@ fn stand_ins_move_the_cutoff_bar() {
     use chimera_core::modulation::amount_scale;
     let mut ui = on_flt(EngineType::Algo);
     ui.params_mut().filter.cutoff = 20.0;
-    ui.update();
+    ui.update(UiTick::for_test());
     let base = ui.renderer.anim[1].target();
     let spec = CUTOFF.spec().unwrap();
     let d = ui.mod_state().find(CUTOFF).unwrap();
     let bar = |ui: &mut UiState, src: ModSource, amount: i8| {
         ui.mod_state_mut().set_route(src.index(), d, amount);
-        ui.update();
+        ui.update(UiTick::for_test());
         let t = ui.renderer.anim[1].target();
         ui.mod_state_mut().set_route(src.index(), d, 0);
         t

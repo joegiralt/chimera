@@ -8,6 +8,7 @@ use chimera_core::params::EngineType;
 use chimera_core::part::PartParams;
 use chimera_core::project::PartId;
 use chimera_core::storage::{Card, SystemSync};
+use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_registry::{FILTER, MIXER_CHANNEL_CHAIN, MIXER_PART};
 use chimera_core::ui::nav::{Location, MixPage, PageAt, chain_def_for};
 use chimera_core::ui::perf::PerfStats;
@@ -102,7 +103,7 @@ fn theme_leaf_edits_ease() {
     settle(&mut ui);
     let from = ui.renderer.anim[0].current();
     feed(&mut ui, Input::turn(EncoderId::A, 1));
-    ui.update();
+    ui.update(UiTick::for_test());
     let to = ui.theme().normalized(ThemeSettings::BRIGHT);
     let now = ui.renderer.anim[0].current();
     assert_ne!(from, to);
@@ -180,7 +181,7 @@ fn settings_keys_follow_the_bar_and_the_status() {
     let mut ui = UiState::new();
     let mut fb = Fb::new();
     let mut draw = |ui: &mut UiState| {
-        ui.update();
+        ui.update(UiTick::for_test());
         ui.render_dirty_with_audio(&mut fb, &PerfStats::zero(), None, &scope_fixture());
     };
     tap(&mut ui, ButtonId::Menu);

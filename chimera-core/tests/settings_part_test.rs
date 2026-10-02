@@ -9,6 +9,7 @@ use chimera_core::preset::Sound;
 use chimera_core::project::{Line, PartId, PartStatus, SlotId, part_status, test_support};
 use chimera_core::storage::sound_crc;
 use chimera_core::ui::UiState;
+use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::busy::ToastStep;
 use chimera_core::ui::nav::Location;
 use chimera_core::ui::settings::part::{Offer, PartCmd};
@@ -433,7 +434,7 @@ fn sound_rung_load_never_replaces_without_an_answer() {
     ask(&mut ui);
     for _ in 0..30 {
         feed(&mut ui, Input::default());
-        ui.update();
+        ui.update(UiTick::for_test());
     }
     assert!(ui.prompt_open());
     assert_eq!(crc(&ui, P[0]), edited, "no answer");

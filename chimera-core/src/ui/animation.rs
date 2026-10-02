@@ -1,3 +1,5 @@
+use chimera_hal::Ms;
+
 /// Linear interpolation between a and b
 pub fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
@@ -93,5 +95,53 @@ impl UiClock {
 
     pub const fn frame(self) -> u32 {
         self.0
+    }
+}
+
+/// UI frames a second: what `update`'s easing and clock are tuned for.
+pub const UI_FPS: u32 = 20;
+const FRAME_MS: u32 = 1000 / UI_FPS;
+/// Frames still owed after a stall: the rest are dropped.
+const MAX_OWED: u32 = 2;
+
+/// Leave to run one UI frame. Only `Pacer` makes one, so `update` runs at
+/// `UI_FPS` however fast the loop spins:
+/// ```compile_fail,E0603
+/// let _ = chimera_core::ui::animation::UiTick(());
+/// ```
+#[derive(Debug)]
+pub struct UiTick(());
+
+impl UiTick {
+    /// A frame for tests and harnesses that step time themselves.
+    #[cfg(any(test, feature = "test-support"))]
+    pub const fn for_test() -> UiTick {
+        UiTick(())
+    }
+}
+
+/// Hands out `UiTick`s at `UI_FPS` from a wrapping ms clock.
+#[derive(Clone, Copy, Debug)]
+pub struct Pacer {
+    last: Ms,
+}
+
+impl Pacer {
+    /// A pacer from `now`, and the first frame, due at once.
+    pub const fn start(now: Ms) -> (Pacer, UiTick) {
+        (Pacer { last: now }, UiTick(()))
+    }
+
+    /// One frame if one is due: never a burst, and after a stall at most
+    /// `MAX_OWED` more on the calls that follow.
+    pub fn due(&mut self, now: Ms) -> Option<UiTick> {
+        if now.since(self.last) < FRAME_MS {
+            return None;
+        }
+        self.last = Ms(self.last.0.wrapping_add(FRAME_MS));
+        if now.since(self.last) > MAX_OWED * FRAME_MS {
+            self.last = Ms(now.0.wrapping_sub(MAX_OWED * FRAME_MS));
+        }
+        Some(UiTick(()))
     }
 }

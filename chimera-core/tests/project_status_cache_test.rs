@@ -13,6 +13,7 @@ use chimera_core::project::{
     boot_project, load_project, new_project_id, part_actions, project_crc, save_project,
 };
 use chimera_core::storage::Card;
+use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::perf::PerfStats;
 use chimera_hal::testkit::MemStore;
 use chimera_hal::{ButtonId, EncoderId};
@@ -120,7 +121,7 @@ fn frames_do_not_bump_the_revision() {
     let mut fb = Fb::new();
     for _ in 0..100 {
         feed(&mut ui, Input::default());
-        ui.update();
+        ui.update(UiTick::for_test());
         ui.render_with_scope(&mut fb, &PerfStats::zero(), &screen::scope_fixture());
         let _ = ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &screen::scope_fixture());
     }
@@ -130,17 +131,17 @@ fn frames_do_not_bump_the_revision() {
 #[test]
 fn ui_status_follows_edits_and_saves() {
     let mut ui = Box::new(chimera_core::ui::UiState::new());
-    ui.update();
+    ui.update(UiTick::for_test());
     assert_eq!(ui.project_status(), ProjectStatus::Pristine);
     feed(&mut ui, Input::press(ButtonId::Plus));
     feed(&mut ui, Input::turn(EncoderId::A, 1));
-    ui.update();
+    ui.update(UiTick::for_test());
     assert_eq!(ui.project_status(), ProjectStatus::Modified);
     let (mut card, mut store) = (Card::new(), MemStore::new(1));
     let (mut sync, mut set, _) = chimera_core::storage::SystemSync::boot(&mut card, &mut store);
     let f = new_project_id(&mut card, &mut store).out.unwrap();
     ui.save_project(&mut card, &mut store, &mut sync, &mut set, SaveTo::Fresh(f));
-    ui.update();
+    ui.update(UiTick::for_test());
     assert_eq!(ui.project_status(), ProjectStatus::Saved);
 }
 
@@ -151,7 +152,7 @@ fn a_whole_project_assigned_is_hashed_afresh() {
         ui.project_mut()
             .set_name(ProjectName::new("EDITED").unwrap());
     }
-    ui.update();
+    ui.update(UiTick::for_test());
     assert_eq!(ui.project_status(), ProjectStatus::Modified);
     // A saved project at the revision the cache last saw.
     let (mut q, _) = Project::boxed();
@@ -162,13 +163,13 @@ fn a_whole_project_assigned_is_hashed_afresh() {
     q.mark_saved_for_test();
     assert_eq!(q.rev(), ui.project().rev());
     *ui.project_mut() = *q;
-    ui.update();
+    ui.update(UiTick::for_test());
     assert_eq!(ui.project_status(), ProjectStatus::Saved);
 }
 
 fn frame(ui: &mut chimera_core::ui::UiState, fb: &mut Fb, input: Input) {
     feed(ui, input);
-    ui.update();
+    ui.update(UiTick::for_test());
     let _ = ui.render_dirty_with_scope(fb, &PerfStats::zero(), &screen::scope_fixture());
 }
 

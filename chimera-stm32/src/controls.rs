@@ -96,6 +96,11 @@ pub fn ticks() -> u32 {
     ISR_TICK.load(Ordering::Relaxed)
 }
 
+/// Now, in ms since controls started.
+pub fn now_ms() -> Ms {
+    Ms(tick_ms(ticks()))
+}
+
 /// `tick` in ms. Wrapping, never `tick * 1000 / CONTROLS_HZ`: that
 /// overflows `u32` after about 2.4 h.
 fn tick_ms(tick: u32) -> u32 {

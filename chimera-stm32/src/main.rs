@@ -324,7 +324,8 @@ fn synth(board: Board) -> ! {
             .expect("DIN producer taken once"),
     );
 
-    ui.update();
+    let (mut pacer, first) = chimera_core::ui::animation::Pacer::start(controls::now_ms());
+    ui.update(first);
     ui.render_with_audio(&mut display, &perf.stats, None, scope_r.read());
     display.flush();
     ui.prime_regions(&perf.stats, None, scope_r.read());
@@ -360,7 +361,10 @@ fn synth(board: Board) -> ! {
         ui.sync_system(&mut sync, &mut card, store, &mut settings);
         // SETTINGS › THEME: the UI loop owns the display and the backlight.
         let recolour = apply_theme(ui.theme(), &mut theme, &mut backlight, &mut display);
-        ui.update();
+        // The loop spins as fast as it can; animation runs at UI_FPS.
+        if let Some(t) = pacer.due(controls::now_ms()) {
+            ui.update(t);
+        }
         shared_w.publish(|b| b.update_from(ui.project().perf(), LOAD_LINK.epoch()));
         let stats = stats_r.as_mut().map(|r| {
             let mut s = *r.read();

@@ -5,6 +5,7 @@ mod screen;
 
 use chimera_core::project::PartId;
 use chimera_core::ui::UiState;
+use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::components::{self, Cell};
 use chimera_core::ui::fmt::{FmtBuf, fmt_val};
 use chimera_core::ui::page::ValFmt;
@@ -47,7 +48,7 @@ fn a_turn_redraws_focus_and_cells_only() {
     let scope = scope_fixture();
     ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &scope);
     feed(&mut ui, Input::turn(EncoderId::C, 3));
-    ui.update();
+    ui.update(UiTick::for_test());
     let flushed = ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &scope);
     let bands: Vec<(u16, u16)> = flushed.into_iter().filter(|&(a, b)| a != b).collect();
     assert_eq!(bands, [(28, 118), (186, 266)]);
@@ -120,7 +121,7 @@ fn the_focus_value_animates_toward_its_target() {
     let mut ui = ui_for("engine_algo");
     let before = ui.renderer.anim[0].current();
     feed(&mut ui, Input::turn(EncoderId::A, 40));
-    ui.update();
+    ui.update(UiTick::for_test());
     let (now, target) = (ui.renderer.anim[0].current(), ui.renderer.anim[0].target());
     assert!(before < now && now < target, "{before} < {now} < {target}");
 }

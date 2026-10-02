@@ -5,6 +5,7 @@ use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::part::{DacPair, PartMode, PartParams};
 use chimera_core::preset::Performance;
 use chimera_core::project::PartId;
+use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_def::{BlockDef, FxFlow, FxNode, SlotBinding, VizType};
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::page::PageKey;
@@ -298,7 +299,7 @@ fn part_overview_redraws_as_the_level_lerps() {
     );
     ui.render_dirty_with_scope(&mut fb, &perf, &scope);
     turn(&mut ui, EncoderId::D, -20);
-    ui.update();
+    ui.update(UiTick::for_test());
     let flushed = ui.render_dirty_with_scope(&mut fb, &perf, &scope);
     assert!(
         flushed.contains(&(118, 186)),

@@ -8,6 +8,7 @@ use chimera_core::dsp::modulator::{EnvForm, EnvSpeed, EnvType, Func, LfoForm, Lf
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::preset::Sound;
 use chimera_core::ui::UiState;
+use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_registry::{
     ALGO_CHAIN, ENV_2, ENV_3, ENV_SPEED, ENVELOPE, LFO, LFO_2, LFO_3, MOD_MATRIX,
 };
@@ -146,7 +147,7 @@ fn a_type_change_reseeds_the_page() {
     let mut ui = UiState::new();
     to_mod_sub(&mut ui, 1, &ENVELOPE);
     feed(&mut ui, Input::turn(EncoderId::F, 1)); // TYPE → B
-    ui.update();
+    ui.update(UiTick::for_test());
     let rise = ui.params().envelopes[0].func.rise;
     assert_eq!(ui.renderer.anim[1].current(), rise, "RISE shown at once");
 }

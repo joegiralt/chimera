@@ -1582,8 +1582,8 @@ impl UiState {
         }
     }
 
-    /// Advance animations. Call at UI_FPS (~20fps).
-    pub fn update(&mut self) {
+    /// Advance animations one frame: a `Pacer`'s, at `UI_FPS`.
+    pub fn update(&mut self, _: animation::UiTick) {
         self.refresh_status();
         self.clock.tick();
         let at = self.active_part;
@@ -1604,9 +1604,8 @@ impl UiState {
         if sound.mod_state.num_dests() > 0 {
             // The display LFO ticks once per UI frame. `process` steps its
             // phase by rate · BLOCK_SIZE / sample_rate, so a sample rate of
-            // BLOCK_SIZE · UI_FPS steps it by rate / UI_FPS: real time if
-            // the loop runs at UI_FPS frames a second.
-            const UI_FPS: u32 = 20;
+            // BLOCK_SIZE · UI_FPS steps it by rate / UI_FPS: real time.
+            use animation::UI_FPS;
             let p = &sound.params;
             let mut mod_sources = [0.0f32; MAX_MOD_SOURCES];
             // Spec § UI: an A slot stands in with its SUS, a B slot with ½;

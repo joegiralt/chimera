@@ -13,6 +13,7 @@ use chimera_core::modulation::ModSource;
 use chimera_core::params::OutParams;
 use chimera_core::project::PartId;
 use chimera_core::ui::UiState;
+use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_def::{BlockDef, slot_addr};
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::glyph::{Braid, CompositeId, FocusGlyph, Gauge, Rings, anim_key};
@@ -344,8 +345,8 @@ fn anim_key_follows_the_clock_only_while_animating() {
 fn the_clock_ticks_once_a_frame() {
     let mut ui = UiState::new();
     let t = ui.clock().frame();
-    ui.update();
-    ui.update();
+    ui.update(UiTick::for_test());
+    ui.update(UiTick::for_test());
     assert_eq!(ui.clock().frame(), t.wrapping_add(2));
 }
 
@@ -365,7 +366,7 @@ fn an_arc_focus_band_does_not_redraw_on_the_clock() {
     render_dirty_ui(&mut ui);
     let before = ui.drawn_key(RegionKind::Focus);
     for _ in 0..5 {
-        ui.update();
+        ui.update(UiTick::for_test());
     }
     render_dirty_ui(&mut ui);
     assert_eq!(ui.drawn_key(RegionKind::Focus), before);
@@ -519,7 +520,7 @@ fn glyph_switch_page_flips_a_real_two_state_param() {
     feed(&mut ui, Input::turn(EncoderId::A, 1));
     assert_eq!(lfo_sync(&ui), 1.0);
     // Eased: one frame in, the knob is on its way.
-    ui.update();
+    ui.update(UiTick::for_test());
     let t = ui.renderer.anim[0].current();
     assert!(t > 0.0 && t < 1.0, "eased: {t}");
     settle(&mut ui);
@@ -564,7 +565,7 @@ fn glyph_level_page_drives_a_level_and_a_stepped_value() {
 
     // a, high: lit to the top; eased on the way.
     feed(&mut ui, Input::turn(EncoderId::A, 127));
-    ui.update();
+    ui.update(UiTick::for_test());
     let t = ui.renderer.anim[0].current();
     assert!(t > 0.0 && t < 1.0, "eased: {t}");
     settle(&mut ui);
@@ -661,7 +662,7 @@ fn crossfader_ignores_modulation() {
     let first = cap(&render_ui(&ui));
     let mut moved = false;
     for _ in 0..40 {
-        ui.update();
+        ui.update(UiTick::for_test());
         moved |= (ui.renderer.anim[0].current() - ui.renderer.set[0].current()).abs() > 0.01;
         assert_eq!(cap(&render_ui(&ui)), first);
     }
@@ -726,7 +727,7 @@ fn glyph_braid_page_moves_only_inside_its_box() {
     let a = render_ui(&ui);
     assert_eq!(a.oob, 0);
     assert_eq!(arc_top(&a), theme::BG, "no arc");
-    ui.update();
+    ui.update(UiTick::for_test());
     let b = render_ui(&ui);
     let mut inside = 0;
     for y in 0..H as i32 {
@@ -749,7 +750,7 @@ fn braid_redraws_only_its_box_each_frame() {
     let perf = chimera_core::ui::perf::PerfStats::zero();
     ui.render_dirty_with_scope(&mut fb, &perf, &scope_fixture());
     for _ in 0..3 {
-        ui.update();
+        ui.update(UiTick::for_test());
         let flushed: Vec<_> = ui
             .render_dirty_with_scope(&mut fb, &perf, &scope_fixture())
             .into_iter()
@@ -775,7 +776,7 @@ fn braid_emphasises_the_focused_param() {
             let mut ui = braid_ui(e);
             // Same clock frame for every shot.
             while ui.clock().frame() < 200 {
-                ui.update();
+                ui.update(UiTick::for_test());
             }
             render_ui(&ui)
         })
@@ -849,7 +850,7 @@ fn status_stops_redrawing(mut ui: UiState) {
     let mut fb = Fb::new();
     let perf = chimera_core::ui::perf::PerfStats::zero();
     ui.render_dirty_with_scope(&mut fb, &perf, &scope_fixture());
-    ui.update();
+    ui.update(UiTick::for_test());
     let flushed: Vec<_> = ui
         .render_dirty_with_scope(&mut fb, &perf, &scope_fixture())
         .into_iter()
@@ -934,7 +935,7 @@ fn glyph_rings_page_moves_only_inside_its_box() {
     assert_eq!(arc_top(&a), theme::BG, "no arc");
     let mut inside = 0;
     for _ in 0..3 {
-        ui.update();
+        ui.update(UiTick::for_test());
     }
     let b = render_ui(&ui);
     for y in 0..H as i32 {
@@ -955,7 +956,7 @@ fn rings_redraw_only_their_box_each_frame() {
     let perf = chimera_core::ui::perf::PerfStats::zero();
     ui.render_dirty_with_scope(&mut fb, &perf, &scope_fixture());
     for _ in 0..3 {
-        ui.update();
+        ui.update(UiTick::for_test());
         let flushed: Vec<_> = ui
             .render_dirty_with_scope(&mut fb, &perf, &scope_fixture())
             .into_iter()
@@ -979,7 +980,7 @@ fn rings_emphasise_the_focused_param() {
         .map(|e| {
             let mut ui = rings_ui(e);
             while ui.clock().frame() < 200 {
-                ui.update();
+                ui.update(UiTick::for_test());
             }
             render_ui(&ui)
         })
@@ -1092,7 +1093,7 @@ fn glyph_cube_page_moves_only_inside_its_box() {
     assert_eq!(a.oob, 0);
     assert_eq!(arc_top(&a), theme::BG, "no arc");
     for _ in 0..3 {
-        ui.update();
+        ui.update(UiTick::for_test());
     }
     let b = render_ui(&ui);
     let mut inside = 0;
@@ -1114,7 +1115,7 @@ fn cube_redraws_only_its_box_each_frame() {
     let perf = chimera_core::ui::perf::PerfStats::zero();
     ui.render_dirty_with_scope(&mut fb, &perf, &scope_fixture());
     for _ in 0..3 {
-        ui.update();
+        ui.update(UiTick::for_test());
         let flushed: Vec<_> = ui
             .render_dirty_with_scope(&mut fb, &perf, &scope_fixture())
             .into_iter()
@@ -1135,7 +1136,7 @@ fn cube_emphasises_the_focused_param() {
         .map(|&e| {
             let mut ui = cube_ui(e);
             while ui.clock().frame() < 200 {
-                ui.update();
+                ui.update(UiTick::for_test());
             }
             render_ui(&ui)
         })
@@ -1226,7 +1227,7 @@ fn a_crossfader_redraws_when_only_its_set_value_moves() {
     let perf = chimera_core::ui::perf::PerfStats::zero();
     let mut fb = Fb::new();
     for _ in 0..120 {
-        ui.update();
+        ui.update(UiTick::for_test());
         ui.render_dirty_with_scope(&mut fb, &perf, &scope_fixture());
     }
     assert_eq!(ui.renderer.anim[slot].current(), 1.0, "modulated, pinned");
@@ -1240,7 +1241,7 @@ fn a_crossfader_redraws_when_only_its_set_value_moves() {
     let before = boxed_rect(&fb, xf);
     feed(&mut ui, Input::turn(SIX[slot], 26));
     for _ in 0..120 {
-        ui.update();
+        ui.update(UiTick::for_test());
         ui.render_dirty_with_scope(&mut fb, &perf, &scope_fixture());
     }
     assert_eq!(ui.renderer.anim[slot].current(), 1.0, "still pinned");

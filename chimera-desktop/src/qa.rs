@@ -7,6 +7,7 @@ use crate::store::DirStore;
 use chimera_core::project::LoadLink;
 use chimera_core::storage::{Card, SystemSettings, SystemSync};
 use chimera_core::ui::UiState;
+use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::busy::ToastStep;
 use chimera_core::ui::settings::CardCx;
 use chimera_hal::Ms;
@@ -71,7 +72,7 @@ impl Desk {
             &mut self.store,
             &mut self.settings,
         );
-        self.ui.update();
+        self.ui.update(UiTick::for_test());
     }
 
     pub fn tap(&mut self, k: Key) {

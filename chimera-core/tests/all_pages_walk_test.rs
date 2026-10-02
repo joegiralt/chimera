@@ -19,6 +19,7 @@ mod screen;
 use chimera_core::params::EngineType;
 use chimera_core::scope::SCOPE_LEN;
 use chimera_core::ui::UiState;
+use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_def::ChainDef2;
 use chimera_core::ui::block_registry::{MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART};
 use chimera_core::ui::nav::chain_def_for;
@@ -150,7 +151,7 @@ impl Walk {
     /// Several frames: advance the lerps, render dirty and full, compare.
     fn frames(&mut self, what: &str) {
         for _ in 0..self.frames_per_step {
-            self.ui.update();
+            self.ui.update(UiTick::for_test());
             let scope = self.scope();
             let perf = PerfStats {
                 audio_load_pct: self.load_pct,

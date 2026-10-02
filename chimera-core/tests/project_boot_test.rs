@@ -17,6 +17,7 @@ use chimera_core::project::{
 use chimera_core::storage::Exit;
 use chimera_core::storage::{AbFile, Card, FileError, ProjectId, Side, SystemSettings, SystemSync};
 use chimera_core::ui::UiState;
+use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::busy::{Toast, ToastStep};
 use chimera_core::ui::theme_settings::Bright;
 use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
@@ -668,7 +669,7 @@ fn replaced_ui_snaps() {
     let (mut p, _) = modal_project();
     put_project(&mut s, &mut p, 5);
     let mut b = boot_system(&mut s);
-    b.ui.update();
+    b.ui.update(UiTick::for_test());
     let before = shown(&b.ui);
     assert_ne!(
         b.ui.project().part(b.ui.active_part).sound.engine(),
@@ -694,7 +695,7 @@ fn replaced_ui_snaps() {
     let now = shown(&b.ui);
     // Settled: as many frames as any lerp takes.
     for _ in 0..500 {
-        b.ui.update();
+        b.ui.update(UiTick::for_test());
     }
     let settled = shown(&b.ui);
     assert_ne!(before, settled, "the page shows other values");
@@ -777,7 +778,7 @@ fn boot_shows_the_loaded_part() {
     );
     let now = shown(&b.ui);
     for _ in 0..500 {
-        b.ui.update();
+        b.ui.update(UiTick::for_test());
     }
     let settled = shown(&b.ui);
     for i in 0..6 {

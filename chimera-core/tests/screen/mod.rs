@@ -19,6 +19,7 @@ use chimera_core::reset::ResetCause;
 use chimera_core::scope::SCOPE_LEN;
 use chimera_core::storage::{Card, SystemSettings, SystemSync};
 use chimera_core::ui::UiState;
+use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::busy::{draw_busy, draw_toast};
 use chimera_core::ui::hold::HOLD_MS;
@@ -265,7 +266,7 @@ pub fn hold(ui: &mut UiState, b: ButtonId) {
 /// Let every lerp settle (the goldens lock the resting screen).
 pub fn settle(ui: &mut UiState) {
     for _ in 0..120 {
-        ui.update();
+        ui.update(UiTick::for_test());
     }
 }
 
@@ -479,7 +480,7 @@ impl<'u> Rig<'u> {
         while self.ui.in_settings() {
             self.tap(ButtonId::Menu);
         }
-        self.ui.update();
+        self.ui.update(UiTick::for_test());
     }
 }
 
@@ -508,7 +509,7 @@ pub fn three() -> (MemStore, [ProjectFile; 3]) {
 pub fn modify(ui: &mut UiState) {
     let p = chimera_core::project::PartId::ALL[0];
     ui.project_mut().edit_part(p).sound.params.filter.cutoff *= 0.5;
-    ui.update();
+    ui.update(UiTick::for_test());
     assert_eq!(
         ui.project_status(),
         chimera_core::project::ProjectStatus::Modified

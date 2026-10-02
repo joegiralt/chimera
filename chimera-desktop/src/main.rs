@@ -11,6 +11,7 @@ use chimera_core::project::{LOAD_ACK_TIMEOUT_MS, LOAD_LINK};
 use chimera_core::scope::scope_buffer;
 use chimera_core::storage::{Card, SystemSettings, SystemSync};
 use chimera_core::ui::UiState;
+use chimera_core::ui::animation::Pacer;
 use chimera_core::ui::busy::{ToastStep, draw_busy, draw_toast};
 use chimera_core::ui::perf::PerfTracker;
 use chimera_core::ui::settings::CardCx;
@@ -78,6 +79,8 @@ fn main() {
     let mut current_note: Option<(MidiChannel, MidiNote)> = None;
     let mut octave: i8 = 0; // -2 to +2
     let mut frame_start = Instant::now();
+    // The loop runs near 30 Hz; animation at UI_FPS.
+    let (mut pacer, _) = Pacer::start(Ms(first_light.elapsed().as_millis() as u32));
     // The toast's clock, read after the card work, as the firmware's is.
     let mut toast_at = Instant::now();
 
@@ -144,7 +147,9 @@ fn main() {
         // Leaving SETTINGS syncs SYSTEM; a toast says how it went.
         ui.sync_system(&mut sync, &mut card, &mut store, &mut settings);
         display.set_theme(&ui.theme());
-        ui.update();
+        if let Some(t) = pacer.due(Ms(first_light.elapsed().as_millis() as u32)) {
+            ui.update(t);
+        }
 
         // Push every Part and the FX to the audio thread.
         audio.update(ui.project().perf(), LOAD_LINK.epoch());
