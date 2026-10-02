@@ -72,3 +72,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0065](0065-steal-cut-or-glide.md) | A Part's own steal cuts, or glides the ring to the new note | Proposed |
 | [0066](0066-settings-menu.md) | MENU opens a SETTINGS menu (amends 0044, supersedes 0057 through it) | Proposed |
 | [0067](0067-focus-glyphs.md) | Focus glyphs: hand-assigned per parameter, ARC by default; composites draw from set values only | Proposed |
+| [0069](0069-orbit-runs-on-the-audio-thread.md) | ORBIT runs on the audio thread, block-accurate; the engine owns the drift, transport acts on edges | Proposed |

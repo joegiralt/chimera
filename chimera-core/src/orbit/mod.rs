@@ -9,6 +9,7 @@ pub mod euclid;
 pub mod mutate;
 pub mod ring;
 pub mod rng;
+pub mod runner;
 pub mod scene;
 pub mod walk;
 

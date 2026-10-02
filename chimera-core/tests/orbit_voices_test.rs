@@ -17,8 +17,10 @@ fn ring(i: u8) -> NoteOrigin {
     NoteOrigin::Orbit(RingIdx::new(i).unwrap())
 }
 
+/// Twice the chip's budget: all eight voices fit under `master-tape`, whose
+/// FX bus costs more, so the tests see the pool's size, not the budget's.
 fn rig() -> InstRig {
-    InstRig::with_budget(SampleBudget::for_cpu(CPU_HZ_REV_V))
+    InstRig::with_budget(SampleBudget::for_cpu(2 * CPU_HZ_REV_V))
 }
 
 fn ev(note: u8, on: bool) -> NoteEvent {

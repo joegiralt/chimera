@@ -22,6 +22,7 @@ use crate::in_place::{by_value, uninit_at};
 use crate::modulation::ModState;
 use crate::note_queue::{NoteEvent, NoteKind};
 use crate::orbit::RingIdx;
+use crate::orbit::runner::OrbitShared;
 use crate::params::ParamSnapshot;
 use crate::part::PartParams;
 use crate::perf::load::AudioStats;
@@ -63,6 +64,7 @@ pub struct AudioShared {
     pub fx: FxParams,
     /// The load epoch this snapshot was published under (ADR 0046).
     pub epoch: u32,
+    pub orbit: OrbitShared,
 }
 
 impl Default for AudioShared {
@@ -81,7 +83,7 @@ impl PartAudio {
     }
 }
 
-crate::in_place::field_list!(AudioShared => AudioShared { parts, fx, epoch });
+crate::in_place::field_list!(AudioShared => AudioShared { parts, fx, epoch, orbit });
 
 impl AudioShared {
     pub fn from_performance(perf: &Performance) -> Self {
@@ -106,6 +108,7 @@ impl AudioShared {
             }
             addr_of_mut!((*p).fx).write(perf.fx);
             addr_of_mut!((*p).epoch).write(0);
+            addr_of_mut!((*p).orbit).write(OrbitShared::default());
             slot.assume_init_mut()
         }
     }
@@ -119,6 +122,9 @@ impl AudioShared {
             parts,
             fx,
             epoch: e,
+            // The UI publishes ORBIT's settings in place (Task 7); until
+            // then each slot keeps its default.
+            orbit: _,
         } = self;
         for (d, p) in parts.iter_mut().zip(perf.parts()) {
             *d = PartAudio::of(p);

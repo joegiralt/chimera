@@ -210,3 +210,16 @@ fn sympathetic_pool_fits_d2() {
         hw::VOICE_RAM_BUDGET
     );
 }
+
+/// The runner is an AXI static beside the engine; its const assert is the
+/// check, this prints the figure.
+#[test]
+fn orbit_runner_size() {
+    use chimera_core::orbit::runner::{OrbitRunner, OrbitShared, OrbitView};
+    eprintln!(
+        "OrbitRunner = {} B, OrbitView = {} B, OrbitShared = {} B",
+        size_of::<OrbitRunner>(),
+        size_of::<OrbitView>(),
+        size_of::<OrbitShared>()
+    );
+}

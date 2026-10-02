@@ -7,6 +7,7 @@ mod midi;
 mod qa;
 mod store;
 
+use chimera_core::orbit::runner::orbit_buffer;
 use chimera_core::project::{LOAD_ACK_TIMEOUT_MS, LOAD_LINK};
 use chimera_core::scope::scope_buffer;
 use chimera_core::storage::{Card, SystemSettings, SystemSync};
@@ -56,7 +57,8 @@ fn main() {
     let mut display = DesktopDisplay::new();
     let mut controls = DesktopControls::new();
     let (scope_w, mut scope_r) = Box::leak(Box::new(scope_buffer())).split();
-    let mut audio = audio::DesktopAudio::new(scope_w);
+    let (orbit_w, _orbit_r) = Box::leak(Box::new(orbit_buffer())).split();
+    let mut audio = audio::DesktopAudio::new(scope_w, orbit_w);
 
     let mut ui = UiState::new();
 
