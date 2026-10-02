@@ -617,6 +617,14 @@ fn orbit_buttons() {
     feed(&mut ui, Input::release(B2).and_held(Edit).at(2110));
     feed(&mut ui, Input::release(Edit).at(2143));
     assert_eq!(ui.location(), ring3);
+    // Held 600 ms: no cross either, and the mutes stay as they were.
+    feed(&mut ui, Input::chord(Edit, B2).at(3000));
+    feed(&mut ui, Input::held(B2).and_held(Edit).at(3600));
+    feed(&mut ui, Input::release(B2).and_held(Edit).at(3633));
+    feed(&mut ui, Input::release(Edit).at(3666));
+    assert_eq!(ui.location(), ring3);
+    assert_eq!(ui.active_part, P[1]);
+    assert_eq!(muted(&ui), init);
 
     // B6 toggles run.
     assert!(!ui.orbit().run);
@@ -626,7 +634,7 @@ fn orbit_buttons() {
     ui.publish_orbit(&mut out);
     assert!(out.run);
 
-    // Hold B3: Part 3's pages; the first cell is Part 3's.
+    // Hold B1 reads Part 1's first cell; hold B3 is Part 3's own.
     hold(&mut ui, B1);
     assert_eq!(ui.active_part, P[0]);
     let one = first_cell(&ui);
@@ -655,6 +663,7 @@ fn orbit_buttons() {
     tap(&mut ui, Edit);
     let o = ui.location().orbit().unwrap();
     assert_eq!((o.page().node() as usize, o.ring()), (RING_NODE, R[2]));
+    assert_ne!(ui.location(), ring3, "the sub-page moved");
     ui.go_for_test(ring3);
 
     // A SEQ tap moves no page.
