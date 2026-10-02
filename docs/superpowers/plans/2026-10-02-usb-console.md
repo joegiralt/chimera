@@ -1623,12 +1623,14 @@ Filled by Tasks 1, 8, 9, 11 and 12.
 |---|---|---|---|
 | base (default, no console) | 722 528 | AXI 374 088, D2 168 364 | 1 |
 | bring-up (`--features usb-console`), + 3 072 core estimate | 13 128 + 3 072 = **16 200** (735 656, 80.18 %) | AXI +1 448 (375 536), D2 +0 | 1 |
-| whole (default with `usb-console`) − (`midi-din,perf-probe` only) | ____ | ____ | 8 |
-| bench build's extra RAM (`BENCH_TEXT`) | n/a | ____ | 8 |
+| whole (default with `usb-console`) − (`midi-din,perf-probe` only) | 747 144 − 721 104 = **26 040**, over the 24 576 limit by 1 464 (against the Task 1 baseline 722 528: 24 616, over by 40). **STOP**: Task 8's code reverted | AXI +1 484 (375 564 − 374 080), D2 +0 (168 364) | 8 |
+| bench build's extra RAM (`BENCH_TEXT`) | n/a | AXI +6 152 (`bench::REPORT`, `.bss`) | 8 |
 | DFU entry: default build after Task 9 − before | ____ | ____ | 9 |
 | limit | 24 576; DFU entry 1 024 | | |
 
 Release builds of `usb-console` 5d05cd2+, `llvm-size -A`: flash is `.vector_table + .text + .rodata + .data`, AXI is `.data + .bss`, D2 is `.ram_d2 + .ram_d2_dma`. `.text` +16 360, `.rodata` −3 232. `llvm-nm -S` by crate, roughly (generics land under the crate that names them): `synopsys-usb-otg` 12.6 KB, `usb-device` 2.0 KB, the shell 2.3 KB.
+
+Task 8, release builds at 8bfed02 plus Task 8's code, measured the same way. Flash: `.text` +25 096, `.rodata` +944. By symbol: `synopsys-usb-otg` 12 886, the core's `console` 7 342 (its generics over `UsbOut` included; `Console::push` alone is 1 770), `usb-device` 1 952, `usb.rs` 1 820 (`init` 1 358), `usbd-serial` 154, the rest +1 886 net (`core::fmt` and glue). The USB crates at `opt-level = "s"` or `"z"` in release make it bigger, not smaller (26 364 and 27 148). Stack: `synth`'s frame 0xBD0 (base 0x778, Task 1 0xB70); `Usb::service` 0x5C. `just check` passed on the code before the revert.
 
 ### Desktop QA (Task 11)
 
