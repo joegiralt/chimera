@@ -170,6 +170,14 @@ impl UiState {
                 None
             }
             Job::ClearOwn(go, over) => {
+                // A save over a file that moved would be refused only
+                // after NEW had replaced RAM.
+                let CardOut { out: ok, event } = project::still_over(cx.card, cx.store, &over);
+                self.saw(event);
+                if let Err(n) = ok {
+                    self.show_note(n);
+                    return None;
+                }
                 // Only NEW, loaded, saves over the file.
                 self.load_published(cx, go, link, publish, out)?;
                 let name = self.project.meta().name();

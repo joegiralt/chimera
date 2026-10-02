@@ -303,6 +303,28 @@ pub fn save_project_as<S: Store>(
     }
 }
 
+/// Whether a save over `c` would pass `write_project`'s checks, writing
+/// nothing: CLEAR of the loaded file asks before NEW replaces RAM.
+pub fn still_over<S: Store>(
+    card: &mut Card,
+    store: &mut S,
+    c: &Confirmed<OverwriteTarget>,
+) -> CardOut<Result<(), ProjectNote>> {
+    let file = c.target().file();
+    let subject = Subject::File(file.id());
+    let run = run_on(card, store, file.vol(), |s, r| {
+        still(s, r.volume(), file.id(), Expect::Newest(c.witness()))
+    });
+    let (result, event) = split(run);
+    let out = match result {
+        Ok(Ok(Ok(()))) => Ok(()),
+        Ok(Ok(Err(moved))) => Err(ProjectNote::FileChanged(moved)),
+        Ok(Err(now)) => Err(changed(now, subject)),
+        Err(err) => Err(card_note(err, Some(subject))),
+    };
+    CardOut { out, event }
+}
+
 /// CLEAR: the confirmed file becomes NEW, streamed by
 /// `encode_new_project`, on its card only; `FileChanged` if it moved
 /// since it was listed. The loaded project's own file is refused

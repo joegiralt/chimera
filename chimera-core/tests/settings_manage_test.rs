@@ -12,6 +12,7 @@ use chimera_core::project::{
 };
 use chimera_core::storage::{Card, SystemSettings, SystemSync};
 use chimera_core::ui::UiState;
+use chimera_core::ui::busy::ToastStep;
 use chimera_core::ui::nav::{Column, Location};
 use chimera_core::ui::settings::manage::{Command, Note, Off, Whose};
 use chimera_core::ui::settings::view::RowLook;
@@ -408,6 +409,29 @@ fn clear_own_when_saved() {
     assert_eq!(project_crc(&read_back(&mut r.s, a)), fresh);
     assert_eq!(listed(&mut r.s)[0].name, Some(name("NEW PROJECT")));
     assert_eq!(r.ui.project().meta().file(), Some(a));
+}
+
+/// The card swapped under CLEAR's prompt: refused before NEW loads, so
+/// RAM keeps the project and its file.
+#[test]
+fn clear_own_on_a_swapped_card_leaves_ram() {
+    let (mut r, a, _) = two();
+    let kept = project_crc(r.ui.project());
+    r.tap(ButtonId::Menu);
+    r.command(a, Command::Clear);
+    r.tap(ButtonId::Seq);
+    assert_eq!(r.question(), "CLEAR ALPHA?");
+    r.s.swap(2);
+    r.tap(ButtonId::Seq);
+    assert_eq!(project_crc(r.ui.project()), kept);
+    assert!(!r.ui.prompt_open());
+    let toast = match r.ui.step_toast(0) {
+        ToastStep::Show(t) => t.as_str().to_string(),
+        _ => String::new(),
+    };
+    assert!(toast.starts_with("CARD CHANGED"), "{toast}");
+    assert_eq!(r.ui.project().meta().file(), Some(a));
+    assert_eq!(r.ui.project().meta().name(), name("ALPHA"));
 }
 
 #[test]

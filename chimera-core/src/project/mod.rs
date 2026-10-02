@@ -31,7 +31,7 @@ pub use pool::Pool;
 pub use store::{
     CardOut, FreshFile, ListOutcome, LoadOutcome, MAX_LISTED, ProjectEntry, SaveTo, boot_project,
     clear_project, delete_project, find_named, list_projects, load_project, new_project_id,
-    project_file, save_project, save_project_as,
+    project_file, save_project, save_project_as, still_over,
 };
 pub use swap::{GateStep, LOAD_ACK_TIMEOUT_MS, LOAD_LINK, LoadGate, LoadLink, Settled, Swap};
 pub use template::TemplateCrc;
