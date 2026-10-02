@@ -356,6 +356,16 @@ fn rename_marks_the_part_edited() {
 }
 
 #[test]
+fn edit_runs_an_action_row() {
+    let mut ui = UiState::new();
+    part_row(&mut ui, P[0], 0); // RENAME
+    feed(&mut ui, Input::press(ButtonId::Edit));
+    assert!(ui.naming().is_some(), "EDIT on PART > RENAME");
+    tap(&mut ui, ButtonId::Menu);
+    assert!(ui.naming().is_none());
+}
+
+#[test]
 fn sound_rung_load_asks_when_edited() {
     let mut ui = UiState::new();
     edit(&mut ui, P[0]);

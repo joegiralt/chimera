@@ -31,8 +31,9 @@ settings world of the synth. The spec is
   page held), TEST TONE (#295) and INPUT TEST (#296), later, and in
   debug builds DEMO, a List with a leaf per storyboard page.
 - **Keys inside SETTINGS:** MENU tap backs one level, and at the top
-  closes to where MENU was pressed. EDIT opens the row. PLUS, MINUS and
-  encoder 1 move the bar. SEQ runs the highlighted action. B1-B6 leave
+  closes to where MENU was pressed. EDIT opens lists, leaves and screens, and runs actions; SEQ runs
+  actions and screen rows (owner, 2026-10-02). PLUS, MINUS and
+  encoder 1 move the bar. B1-B6 leave
   for Part *n*'s sound pages from any depth.
 - **Its own visual language:** lists with a highlight bar, a growing
   breadcrumb, a project footer (name and `* MODIFIED`, `SAVED` or `NEW`,

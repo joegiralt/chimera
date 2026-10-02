@@ -49,7 +49,7 @@ pub struct SettingsAt { path: [u8; 4], depth: u8, row: u8 }   // a row index per
 |---|---|
 | **MENU tap** | Outside SETTINGS, open SETTINGS at its top list (`settings_from` = here). Inside it, back one level; at the top, close to `settings_from`. Acts on release, before `HOLD_MS`. |
 | **MENU hold** | Quick save, from anywhere, ORBIT included. The project is saved over its own file. A project with no file (NEW) opens SAVE PROJECT AS instead. Fires at `HOLD_MS`; the release after it does nothing. |
-| **EDIT** | On pages, sub-page down, as today. In a SETTINGS list, open the highlighted row: a list or a leaf page. |
+| **EDIT** | On pages, sub-page down, as today. In a SETTINGS list, open the highlighted row: a list, a leaf page or a screen; on an action row, run it (owner, 2026-10-02): EDIT opens lists, leaves and screens, and runs actions; SEQ runs actions and screen rows. |
 | **PLUS / MINUS** | On pages, sideways, as today. On the mixer, PART → SENDS → that Part's FX, clamped; other Parts by MIX+B*n* (owner, 2026-10-02; ADR 0044). In a SETTINGS list, move the bar one row. |
 | **Encoder 1** | In a SETTINGS list, move the bar (it wraps). On pages and leaves, its cell, as today. |
 | **SEQ tap** | On pages, sub-page up, as today. In a SETTINGS list, run the highlighted action (LOAD, SAVE TO, RENAME…), behind a prompt where it can lose work. On the mixer (no sub-pages) and on the Sound rung, it opens SETTINGS › PART for that Part. In ORBIT, it saves the scene (ADR 0044). |

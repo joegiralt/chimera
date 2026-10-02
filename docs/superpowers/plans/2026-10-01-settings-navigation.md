@@ -119,7 +119,7 @@ These five failure modes are the ones the spec implies but no spec test exercise
    `SettingsAt` therefore gains `page: PageAt`, which is (0, 0) on lists. On a leaf, PLUS and MINUS step `page.node` within the leaf chain, clamped as pages are today (they move on DEMO only). EDIT is sub-page down and SEQ sub-page up (they move on ABOUT ↔ AUDIO only). Anything else on a one-page leaf is `Stay`.
 
    Every leaf chain goes in `block_registry::ALL_CHAINS` (Task 5), and `SYSTEM_CHAIN` leaves it when it is deleted (Task 8), so the uniqueness and focus checks see exactly the pages that can be reached.
-6. **EDIT opens and SEQ runs, strictly.** EDIT on an action row and SEQ on a list or leaf row do nothing, and the legend names the one key that applies. Later rows can be highlighted (that is how you read `LATER`), but EDIT and SEQ ignore them. PLUS and MINUS wrap, like encoder A.
+6. **EDIT opens lists, leaves and screens, and runs actions; SEQ runs actions and screen rows (owner, 2026-10-02).** SEQ on a list or leaf row does nothing, and the legend names the key that applies. Later rows can be highlighted (that is how you read `LATER`), but EDIT and SEQ ignore them. PLUS and MINUS wrap, like encoder A.
 7. **Dynamic lists:**
    - LOAD PROJECT's rows are the listed projects, by id (two digits at least, `03`), then `+ CREATE NEW`; with no card, a single dimmed `NO CARD`.
    - SAVE PROJECT AS is an action (SEQ), since it writes.

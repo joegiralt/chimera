@@ -49,7 +49,7 @@ fn legends_read_as_the_spec_says() {
     let copy = |l| [legend(l, false), legend(l, true)];
     let back_close = |a: &str| [format!("{a} · MENU BACK"), format!("{a} · MENU CLOSE")];
     assert_eq!(copy(LegendFor::Opens), back_close("EDIT OPEN"));
-    assert_eq!(copy(LegendFor::Action), back_close("SEQ RUN"));
+    assert_eq!(copy(LegendFor::Action), back_close("EDIT RUN"));
     assert_eq!(copy(LegendFor::Later), back_close("LATER"));
     for (l, s) in [
         (LegendFor::Leaf, "A-F EDIT · MENU BACK"),

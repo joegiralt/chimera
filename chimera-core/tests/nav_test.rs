@@ -352,7 +352,7 @@ fn seq_tap_runs_an_act() {
         l.step(NavKey::SeqTap, &cx, &mut r),
         Step::Act(Act::PartClear)
     );
-    assert_eq!(l.step(NavKey::Edit, &cx, &mut r), Step::Stay);
+    assert_eq!(l.step(NavKey::Edit, &cx, &mut r), Step::Act(Act::PartClear));
 }
 
 #[test]

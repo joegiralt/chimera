@@ -272,6 +272,7 @@ impl SettingsAt {
             (Some(Kind::List(rs)), NavKey::Edit, _) => match under_bar(rs) {
                 Some(Kind::List(_) | Kind::Leaf(_)) => self.child().map_or(Step::Stay, go),
                 Some(Kind::Screen(s)) => Step::Screen(s),
+                Some(Kind::Act(a)) => Step::Act(a),
                 _ => Step::Stay,
             },
             (Some(Kind::List(rs)), NavKey::SeqTap, _) => match under_bar(rs) {

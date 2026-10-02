@@ -322,6 +322,16 @@ fn save_then_load_on_new_names_first_and_cancel_aborts() {
 }
 
 #[test]
+fn edit_runs_an_action_row() {
+    let mut r = Rig::new(MemStore::new(1));
+    r.tap(ButtonId::Menu);
+    r.edit();
+    r.feed(Input::press(ButtonId::Plus));
+    r.edit();
+    assert!(r.ui.naming().is_some(), "EDIT on PROJECT > SAVE PROJECT AS");
+}
+
+#[test]
 fn save_as_names_and_saves() {
     let mut r = Rig::new(MemStore::new(1));
     r.tap(ButtonId::Menu);

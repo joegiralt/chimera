@@ -711,8 +711,8 @@ pub fn legend(on: LegendFor, at_top: bool) -> &'static str {
     match (on, at_top) {
         (L::Opens, false) => "EDIT OPEN · MENU BACK",
         (L::Opens, true) => "EDIT OPEN · MENU CLOSE",
-        (L::Action, false) => "SEQ RUN · MENU BACK",
-        (L::Action, true) => "SEQ RUN · MENU CLOSE",
+        (L::Action, false) => "EDIT RUN · MENU BACK",
+        (L::Action, true) => "EDIT RUN · MENU CLOSE",
         (L::Dimmed, false) => "MENU BACK",
         (L::Dimmed, true) => "MENU CLOSE",
         (L::Later, false) => "LATER · MENU BACK",
