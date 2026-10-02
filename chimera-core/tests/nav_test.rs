@@ -4,7 +4,7 @@ use chimera_core::params::EngineType;
 use chimera_core::project::PartId;
 use chimera_core::ui::block_registry::{MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART, MODAL_1};
 use chimera_core::ui::nav::{
-    Column, Location, MixPage, NavCtx, NavKey, PageAt, Recall, Step, chain_def_for,
+    Column, Location, MixPage, NavCtx, NavKey, OrbitCx, PageAt, Recall, Step, chain_def_for,
 };
 use chimera_core::ui::settings::{Act, Kind, MANAGE_COMMANDS, PART_ROW, Screen, row_at, rows};
 
@@ -14,6 +14,7 @@ fn cx() -> NavCtx {
     NavCtx {
         engines: [EngineType::Algo; 6],
         dyn_rows: 0,
+        orbit: OrbitCx::NONE,
     }
 }
 

@@ -1,5 +1,6 @@
 mod screen;
 
+use chimera_core::orbit::RINGS;
 use chimera_core::ui::hold::{HOLD_MS, HoldGate, HoldGates, Press, Presses};
 use chimera_hal::{ButtonId, ButtonState, Controls};
 use chimera_hal::{Edges, Ms};
@@ -185,6 +186,7 @@ fn stub(now: u32, mix: Edges, menu: Edges, seq: Edges) -> Stub {
 const NONE: Presses = Presses {
     menu: None,
     seq: None,
+    ring: [None; RINGS],
 };
 
 #[test]
@@ -243,4 +245,63 @@ fn harness_hold_gives_one_hold_and_tap_one_tap() {
         t.iter().filter_map(|p| p.menu).collect::<Vec<_>>(),
         [Press::Tap]
     );
+}
+
+/// B3's gate: a tap on the release under `HOLD_MS`, a hold once at it.
+#[test]
+fn b_gates_tap_and_hold() {
+    let b = ButtonId::B3;
+    let ring = |ps: Vec<Presses>| -> Vec<Option<Press>> { ps.iter().map(|p| p.ring[2]).collect() };
+    let t = run(&[Input::press(b).at(0), Input::release(b).at(HOLD_MS - 1)]);
+    assert_eq!(ring(t.clone()), [None, Some(Press::Tap)]);
+    let h = run(&[
+        Input::press(b).at(0),
+        Input::held(b).at(HOLD_MS),
+        Input::release(b).at(HOLD_MS + 33),
+    ]);
+    assert_eq!(ring(h.clone()), [None, Some(Press::Hold), None]);
+    for p in t.iter().chain(&h) {
+        assert_eq!(
+            (p.menu, p.seq, [p.ring[0], p.ring[1], p.ring[3], p.ring[4]]),
+            (None, None, [None; 4])
+        );
+    }
+}
+
+/// MIX + B3 is a mute and only that: MIX let go first, B3 held 600 ms,
+/// neither a ring tap nor a cross follows (Review Focus 6).
+#[test]
+fn mix_b_is_only_a_mute() {
+    let b = ButtonId::B3;
+    let frames = || {
+        [
+            Input::chord(ButtonId::Mix, b).at(1000),
+            Input::release(ButtonId::Mix).and_held(b).at(1033),
+            Input::held(b).at(1600),
+            Input::release(b).at(1633),
+        ]
+    };
+    assert!(run(&frames()).iter().all(|p| p.ring == [None; RINGS]));
+
+    #[cfg(feature = "orbit")]
+    {
+        use chimera_core::orbit::RingIdx;
+        use chimera_core::ui::UiState;
+        use chimera_core::ui::nav::OrbitKey;
+        let mut ui = Box::new(UiState::new());
+        screen::hold(&mut ui, ButtonId::Seq);
+        let at = ui.location();
+        assert!(at.orbit().is_some());
+        let keys: Vec<OrbitKey> = frames()
+            .iter()
+            .flat_map(|f| ui.orbit_frame_for_test(f))
+            .flatten()
+            .collect();
+        assert_eq!(keys, [OrbitKey::Mute(RingIdx::ALL[2])]);
+        // Through `handle_input`, the place stays.
+        for f in frames() {
+            screen::feed(&mut ui, f);
+        }
+        assert_eq!(ui.location(), at);
+    }
 }

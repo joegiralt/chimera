@@ -2,12 +2,14 @@
 //! `step` (ADR 0044, amended by ADR 0066).
 
 use crate::hw::MAX_PARTS;
+use crate::orbit::{RINGS, RingIdx};
 use crate::params::EngineType;
 use crate::project::PartId;
 use crate::ui::block_def::{ChainDef2, Move};
 use crate::ui::block_registry::{
     self, ALGO_CHAIN, CHORUS, MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART, MODAL_PLUCK_CHAIN,
 };
+use crate::ui::orbit::{CHRD_NODE, ORBIT_CHAIN, RING_NODE};
 use crate::ui::settings::leaves::OnePage;
 use crate::ui::settings::{Act, Kind, MANAGE_COMMANDS, PART_ROW, Row, Screen, row_at};
 
@@ -297,6 +299,150 @@ enum Loc {
     /// The Sound rung, its browser where it was left.
     Sound(PartId, Browse),
     Settings(SettingsAt),
+    /// ORBIT, a place of its own: SEQ hold goes in, MENU leaves.
+    Orbit(OrbitAt),
+}
+
+/// CHRD › CUSTOM, checked at compile time.
+const CUSTOM_PAGE: PageAt = match ORBIT_CHAIN.page(CHRD_NODE, 1) {
+    Some(p) => p,
+    None => panic!("CHRD has no CUSTOM"),
+};
+
+/// A place in ORBIT: one of `ORBIT_CHAIN`'s pages, and the ring it edits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OrbitAt {
+    page: PageAt,
+    ring: RingIdx,
+}
+
+impl OrbitAt {
+    /// ORB, ring 1.
+    pub const HOME: OrbitAt = OrbitAt {
+        page: ORBIT_CHAIN.home(),
+        ring: RingIdx::ALL[0],
+    };
+
+    pub fn page(self) -> PageAt {
+        self.page
+    }
+
+    pub fn ring(self) -> RingIdx {
+        self.ring
+    }
+
+    pub fn with_ring(self, ring: RingIdx) -> OrbitAt {
+        OrbitAt { ring, ..self }
+    }
+
+    /// CHRD › CUSTOM, the same ring.
+    pub fn custom(self) -> OrbitAt {
+        OrbitAt {
+            page: CUSTOM_PAGE,
+            ..self
+        }
+    }
+
+    fn on(self, node: usize) -> bool {
+        self.page.node() as usize == node
+    }
+
+    fn step(self, k: OrbitKey, cx: &NavCtx, r: &Recall) -> Step {
+        let go = |o: OrbitAt| Step::Go(Location(Loc::Orbit(o)));
+        let page = |at: Option<PageAt>| at.map_or(Step::Stay, |page| go(OrbitAt { page, ..self }));
+        let sub = self.page.sub() as usize;
+        match k {
+            OrbitKey::Ring(ring) => {
+                // On RING the sub-page shown stays; elsewhere the last one.
+                let s = if self.on(RING_NODE) {
+                    sub
+                } else {
+                    r.ring_sub as usize
+                };
+                let at = ORBIT_CHAIN
+                    .page(RING_NODE, s)
+                    .or(ORBIT_CHAIN.page(RING_NODE, 0));
+                at.map_or(Step::Stay, |page| go(OrbitAt { page, ring }))
+            }
+            OrbitKey::Cross(ring) => {
+                let p = cx.orbit.targets[ring.get() as usize];
+                Step::Go(Location(Loc::Pages(p, r.pages_of(p, cx))))
+            }
+            OrbitKey::Mute(ring) => Step::Orbit(OrbitAct::Mute(ring)),
+            OrbitKey::PlayStop => Step::Orbit(OrbitAct::PlayStop),
+            OrbitKey::SeqTap => Step::Orbit(OrbitAct::SaveScene),
+            OrbitKey::Plus => page(ORBIT_CHAIN.step(self.page, Move::Next)),
+            OrbitKey::Minus => page(ORBIT_CHAIN.step(self.page, Move::Prev)),
+            OrbitKey::Edit if self.on(RING_NODE) => {
+                let n = ORBIT_CHAIN.blocks[RING_NODE].sub_page_count().max(1);
+                page(ORBIT_CHAIN.page(RING_NODE, (sub + 1) % n))
+            }
+            OrbitKey::Edit if self.on(CHRD_NODE) && cx.orbit.custom => {
+                page(ORBIT_CHAIN.page(CHRD_NODE, 1 - sub.min(1)))
+            }
+            OrbitKey::Edit => Step::Stay,
+            OrbitKey::MenuTap => Step::Go(r.resolve(r.orbit_from, cx)),
+        }
+    }
+}
+
+impl From<OrbitAt> for Location {
+    fn from(o: OrbitAt) -> Location {
+        Location(Loc::Orbit(o))
+    }
+}
+
+/// A key in ORBIT, already decided (`UiState::orbit_keys`). It has no SEQ
+/// hold and no B*n* that jumps to a Part's pages: only `Cross`, a held
+/// B*n*, leaves for a Part, and only `MenuTap` for where ORBIT was entered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OrbitKey {
+    /// B1–B5 tapped: the ring, on RING.
+    Ring(RingIdx),
+    /// B1–B5 held: the ring's Part's pages.
+    Cross(RingIdx),
+    /// MIX + B1–B5.
+    Mute(RingIdx),
+    /// B6.
+    PlayStop,
+    Plus,
+    Minus,
+    Edit,
+    SeqTap,
+    MenuTap,
+}
+
+/// What an ORBIT key asks `UiState` to do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OrbitAct {
+    PlayStop,
+    Mute(RingIdx),
+    SaveScene,
+}
+
+/// What ORBIT's keys read from the project.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OrbitCx {
+    /// Each ring's Part: where a held B*n* crosses to.
+    pub targets: [PartId; RINGS],
+    /// SCALE is CUSTOM: EDIT on CHRD opens CUSTOM.
+    pub custom: bool,
+}
+
+impl OrbitCx {
+    /// Ring *n* plays Part *n*; SCALE isn't CUSTOM.
+    pub const NONE: OrbitCx = OrbitCx {
+        targets: {
+            let mut t = [PartId::ALL[0]; RINGS];
+            let mut i = 0;
+            while i < RINGS {
+                t[i] = PartId::ALL[i];
+                i += 1;
+            }
+            t
+        },
+        custom: false,
+    };
 }
 
 /// Where `Recall` starts, before anything is left: re-resolved on use.
@@ -305,14 +451,15 @@ const PLACEHOLDER: Loc = Loc::Pages(PartId::ALL[0], ALGO_CHAIN.home());
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Location(Loc);
 
-/// A `Location` outside SETTINGS, where MENU at the top returns.
+/// A sound-side `Location`, neither SETTINGS nor ORBIT: where MENU at
+/// SETTINGS' top, and MENU in ORBIT, return.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Outside(Loc);
 
 impl Outside {
     pub fn new(l: Location) -> Option<Outside> {
         match l.0 {
-            Loc::Settings(_) => None,
+            Loc::Settings(_) | Loc::Orbit(_) => None,
             l => Some(Outside(l)),
         }
     }
@@ -334,6 +481,12 @@ pub struct Recall {
     pages: [Option<SoundPage>; MAX_PARTS],
     mix: MixAt,
     settings_from: Outside,
+    /// The ORBIT page last left.
+    orbit: OrbitAt,
+    /// Where SEQ hold entered ORBIT from.
+    orbit_from: Outside,
+    /// RING's sub-page last shown: B1–B5 reopen it.
+    ring_sub: u8,
 }
 
 impl Default for Recall {
@@ -348,11 +501,18 @@ impl Recall {
             pages: [None; MAX_PARTS],
             mix: MixAt::Home,
             settings_from: Outside(PLACEHOLDER),
+            orbit: OrbitAt::HOME,
+            orbit_from: Outside(PLACEHOLDER),
+            ring_sub: 0,
         }
     }
 
     pub fn settings_from(&self) -> Location {
         self.settings_from.get()
+    }
+
+    pub fn orbit_from(&self) -> Location {
+        self.orbit_from.get()
     }
 
     fn leave(&mut self, from: Location, to: Location, cx: &NavCtx) {
@@ -365,10 +525,22 @@ impl Recall {
             }
             Loc::Part(..) => self.mix = MixAt::Home,
             Loc::Fx(_, at) => self.mix = MixAt::Fx(at),
+            Loc::Orbit(o) => {
+                if o.on(RING_NODE) {
+                    self.ring_sub = o.page.sub();
+                }
+                if to.orbit().is_none() {
+                    self.orbit = o;
+                }
+            }
             _ => {}
         }
         if let (Some(o), Some(_)) = (Outside::new(from), to.settings()) {
             self.settings_from = o;
+        }
+        // Into ORBIT: from here, or from SETTINGS where it was opened.
+        if from.orbit().is_none() && to.orbit().is_some() {
+            self.orbit_from = Outside::new(from).unwrap_or(self.settings_from);
         }
     }
 
@@ -388,10 +560,14 @@ impl Recall {
         }
     }
 
-    /// MENU at the top: where it was pressed, a page re-resolved in case
-    /// the engine changed meanwhile.
+    /// MENU at the top: where it was pressed.
     fn close_settings(&self, cx: &NavCtx) -> Location {
-        match self.settings_from.0 {
+        self.resolve(self.settings_from, cx)
+    }
+
+    /// `o`, a page re-resolved in case the engine changed meanwhile.
+    fn resolve(&self, o: Outside, cx: &NavCtx) -> Location {
+        match o.0 {
             Loc::Pages(p, _) => Location(Loc::Pages(p, self.pages_of(p, cx))),
             l => Location(l),
         }
@@ -402,6 +578,7 @@ pub struct NavCtx {
     pub engines: [EngineType; MAX_PARTS],
     /// A Screen's row count.
     pub dyn_rows: u8,
+    pub orbit: OrbitCx,
 }
 
 impl NavCtx {
@@ -423,6 +600,8 @@ pub enum NavKey {
     MenuTap,
     /// Encoder 1 on a list.
     Bar(i8),
+    /// SEQ held: into ORBIT.
+    SeqHold,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -433,6 +612,8 @@ pub enum Step {
     Screen(Screen),
     /// SEQ inside a Screen: `UiState` decides; on MANAGE, `column()` says which.
     Run,
+    /// An ORBIT key's act: `UiState` runs it.
+    Orbit(OrbitAct),
     Stay,
 }
 
@@ -521,7 +702,19 @@ impl Location {
     }
 
     pub fn step(self, k: NavKey, cx: &NavCtx, r: &mut Recall) -> Step {
-        match self.next(k, cx, r) {
+        let s = self.next(k, cx, r);
+        self.went(s, cx, r)
+    }
+
+    /// `step` for ORBIT's keys; outside ORBIT, nothing.
+    pub fn step_orbit(self, k: OrbitKey, cx: &NavCtx, r: &mut Recall) -> Step {
+        let s = self.orbit().map_or(Step::Stay, |o| o.step(k, cx, r));
+        self.went(s, cx, r)
+    }
+
+    /// A `Go` to here is a `Stay`; any other runs `Recall::leave`.
+    fn went(self, s: Step, cx: &NavCtx, r: &mut Recall) -> Step {
+        match s {
             Step::Go(to) if to == self => Step::Stay,
             Step::Go(to) => {
                 r.leave(self, to, cx);
@@ -535,6 +728,8 @@ impl Location {
         use Loc::*;
         let go = |l: Loc| Step::Go(Location(l));
         match (self.0, k) {
+            // ORBIT's keys are `OrbitKey`s: no ladder key moves it.
+            (Orbit(_), _) => Step::Stay,
             (Pages(p, _), NavKey::Part(n)) if p == n => go(r.mix_entry(n)),
             (Part(p, _) | Fx(p, _), NavKey::Part(n)) if p == n => go(Pages(n, r.pages_of(n, cx))),
             (_, NavKey::Part(n)) => go(Pages(n, chain_def_for(cx.engine(n)).home())),
@@ -542,6 +737,8 @@ impl Location {
             (Fx(_, at), NavKey::MixPart(n)) => go(Fx(n, at)),
             (_, NavKey::MixPart(n)) => go(r.mix_entry(n)),
             (_, NavKey::EditPart(n)) => go(Sound(n, Browse::default())),
+            // `Recall::leave` keeps where it came from.
+            (_, NavKey::SeqHold) => go(Orbit(r.orbit)),
             (Settings(s), NavKey::MenuTap) => match s.back() {
                 Some(up) => go(Settings(up)),
                 None => Step::Go(r.close_settings(cx)),
@@ -573,6 +770,7 @@ impl Location {
             Loc::Part(_, m) => Some((&MIXER_CHANNEL_CHAIN, m.page())),
             Loc::Fx(_, at) => Some((&MIXER_CHANNEL_CHAIN, at)),
             Loc::Settings(s) => s.at_leaf().map(|l| (l.chain(), l.chain().home())),
+            Loc::Orbit(o) => Some((&ORBIT_CHAIN, o.page)),
             Loc::Sound(..) => None,
         }
     }
@@ -588,7 +786,14 @@ impl Location {
     pub fn part(self) -> Option<PartId> {
         match self.0 {
             Loc::Pages(p, _) | Loc::Part(p, _) | Loc::Fx(p, _) | Loc::Sound(p, _) => Some(p),
-            Loc::Settings(_) => None,
+            Loc::Settings(_) | Loc::Orbit(_) => None,
+        }
+    }
+
+    pub fn orbit(self) -> Option<OrbitAt> {
+        match self.0 {
+            Loc::Orbit(o) => Some(o),
+            _ => None,
         }
     }
 

@@ -14,7 +14,7 @@ sd-probe = []
 master-tape = ["chimera-core/master-tape"]
 
 [dependencies]
-chimera-core = { path = "../chimera-core" }
+chimera-core = { path = "../chimera-core", default-features = false }
 chimera-hal = { path = "../chimera-hal" }
 chimera-fat = { path = "../chimera-fat" }
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }

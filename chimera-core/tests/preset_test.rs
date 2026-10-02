@@ -6,7 +6,7 @@ use chimera_core::project::{
 };
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_registry as reg;
-use chimera_core::ui::nav::{Browse, NavCtx};
+use chimera_core::ui::nav::{Browse, NavCtx, OrbitCx};
 use chimera_core::ui::page::PageKey;
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 
@@ -113,6 +113,7 @@ fn node(ui: &UiState) -> usize {
     let cx = NavCtx {
         engines: [EngineType::Algo; 6],
         dyn_rows: 0,
+        orbit: OrbitCx::NONE,
     };
     ui.location().page(&cx).unwrap().1.node() as usize
 }

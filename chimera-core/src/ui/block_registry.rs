@@ -899,7 +899,7 @@ pub static DEMO_BLOCKS: [ChainBlock; 13] = [
 ];
 
 /// The chains besides DEMO's leaves.
-const FIXED: [&ChainDef2; 10] = [
+const FIXED: [&ChainDef2; 11] = [
     &ALGO_CHAIN,
     &MODAL_PLUCK_CHAIN,
     &MIXER_CHANNEL_CHAIN,
@@ -910,6 +910,7 @@ const FIXED: [&ChainDef2; 10] = [
     UPDATES_LEAF.chain(),
     ABOUT_LEAF.chain(),
     AUDIO_LOAD_LEAF.chain(),
+    &crate::ui::orbit::ORBIT_CHAIN,
 ];
 
 /// Every chain, for whole-registry checks (unique ids, the focus table):

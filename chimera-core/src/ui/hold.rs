@@ -1,7 +1,9 @@
 //! Tap and hold from latched button edges: a tap acts on release, a hold
 //! fires once at `HOLD_MS` while still down.
 
-use chimera_hal::{ButtonId, Controls, Edges, Ms};
+use chimera_hal::{ButtonId, Controls, Edges, Ms, PART_BUTTONS};
+
+use crate::orbit::RINGS;
 
 pub const HOLD_MS: u32 = 500;
 
@@ -80,12 +82,15 @@ impl HoldGate {
 pub struct Presses {
     pub menu: Option<Press>,
     pub seq: Option<Press>,
+    /// B1–B5, indexed by `RingIdx`: ORBIT's ring keys. B6 never holds.
+    pub ring: [Option<Press>; RINGS],
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct HoldGates {
     menu: HoldGate,
     seq: HoldGate,
+    rings: [HoldGate; RINGS],
 }
 
 impl Default for HoldGates {
@@ -99,16 +104,25 @@ impl HoldGates {
         Self {
             menu: HoldGate::new(),
             seq: HoldGate::new(),
+            rings: [HoldGate::new(); RINGS],
         }
     }
 
-    /// MENU is muted while MIX is down; MIX is read as a level at frame end, so a chord inside one frame is not muted.
+    /// MENU and B1–B5 are muted while MIX is down (MIX + B*n* is a mute in
+    /// ORBIT); MIX is read as a level at frame end, so a chord inside one
+    /// frame is not muted. The B gates run everywhere, so they are in step
+    /// when ORBIT opens.
     pub fn step(&mut self, c: &impl Controls) -> Presses {
         let now = c.now_ms();
         let mix = c.edges(ButtonId::Mix).down;
+        let mut ring = [None; RINGS];
+        for ((g, out), &b) in self.rings.iter_mut().zip(&mut ring).zip(&PART_BUTTONS) {
+            *out = g.step(c.edges(b), now, mix);
+        }
         Presses {
             menu: self.menu.step(c.edges(ButtonId::Menu), now, mix),
             seq: self.seq.step(c.edges(ButtonId::Seq), now, false),
+            ring,
         }
     }
 }

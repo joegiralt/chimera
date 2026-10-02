@@ -5,8 +5,8 @@
 //! reset it.
 
 /// One entry per `BlockDef::id` (test-checked); glyph demo pages take
-/// 70 and up.
-pub const MAX_PAGES: usize = 80;
+/// 70–77, ORBIT's 78 and up.
+pub const MAX_PAGES: usize = 96;
 
 #[derive(Clone, Copy, Debug)]
 pub struct FocusMemory {

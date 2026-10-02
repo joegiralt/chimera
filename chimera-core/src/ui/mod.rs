@@ -17,6 +17,7 @@ pub mod hold;
 pub mod mod_grid;
 pub mod mod_panel;
 pub mod nav;
+pub mod orbit;
 pub mod page;
 pub mod part_page;
 pub mod perf;
@@ -46,6 +47,7 @@ use crate::in_place::{by_value, uninit_at};
 use crate::mod_path::{LABEL_LEN, RegistryError};
 use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::ProjectName;
+use crate::orbit::RingIdx;
 use crate::params::{EngineType, ParamSnapshot};
 use crate::perf::load::AudioStats;
 use crate::preset::POOL_SIZE;
@@ -63,7 +65,8 @@ use components::Head;
 use hold::{HoldGates, Press};
 use mod_grid::MatrixState;
 use nav::{
-    Browse, Column, ListAt, Location, NavCtx, NavKey, Recall, SettingsAt, Step, chain_def_for,
+    Browse, Column, ListAt, Location, NavCtx, NavKey, OrbitCx, OrbitKey, Recall, SettingsAt, Step,
+    chain_def_for,
 };
 use page::{PageKey, PageLayout};
 use perf::PerfStats;
@@ -1021,6 +1024,10 @@ impl UiState {
         if presses.seq == Some(Press::Tap) {
             push(NavKey::SeqTap);
         }
+        #[cfg(feature = "orbit")]
+        if presses.seq == Some(Press::Hold) {
+            push(NavKey::SeqHold);
+        }
         if pressed(ButtonId::Edit) && !edit_part {
             push(NavKey::Edit);
         }
@@ -1030,6 +1037,56 @@ impl UiState {
             push(NavKey::Bar(a));
         }
         keys
+    }
+
+    /// ORBIT's keys this frame, in order: MENU, B1–B5, B6, MINUS, PLUS,
+    /// SEQ, EDIT. MIX + B*n* is a mute on the press, its gate muted, so no
+    /// ring tap or cross follows; B*n* alone is a ring on a tap, a cross
+    /// on a hold.
+    fn orbit_keys(&self, c: &impl Controls, p: hold::Presses) -> [Option<OrbitKey>; 11] {
+        let pressed = |b| c.button_state(b) == ButtonState::Pressed;
+        let mix = c.edges(ButtonId::Mix).down;
+        let mut keys = [None; 11];
+        let mut n = 0;
+        let mut push = |k| {
+            keys[n] = Some(k);
+            n += 1;
+        };
+        if p.menu == Some(Press::Tap) {
+            push(OrbitKey::MenuTap);
+        }
+        for ((r, &b), press) in RingIdx::ALL.into_iter().zip(&PART_BUTTONS).zip(p.ring) {
+            match (mix && pressed(b), press) {
+                (true, _) => push(OrbitKey::Mute(r)),
+                (_, Some(Press::Tap)) => push(OrbitKey::Ring(r)),
+                (_, Some(Press::Hold)) => push(OrbitKey::Cross(r)),
+                _ => {}
+            }
+        }
+        if !mix && pressed(ButtonId::B6) {
+            push(OrbitKey::PlayStop);
+        }
+        if pressed(ButtonId::Minus) {
+            push(OrbitKey::Minus);
+        }
+        if pressed(ButtonId::Plus) {
+            push(OrbitKey::Plus);
+        }
+        if p.seq == Some(Press::Tap) {
+            push(OrbitKey::SeqTap);
+        }
+        if pressed(ButtonId::Edit) {
+            push(OrbitKey::Edit);
+        }
+        keys
+    }
+
+    /// One frame's gates and ORBIT keys, as `handle_input` reads them.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn orbit_frame_for_test(&mut self, c: &impl Controls) -> [Option<OrbitKey>; 11] {
+        let p = self.gates.step(c);
+        self.orbit_keys(c, p)
     }
 
     /// Whether a prompt is open.
@@ -1370,6 +1427,20 @@ impl UiState {
         Some(c.row(e.map(|e| Whose::of(&e, self.project.meta().file()))))
     }
 
+    /// ORBIT's frame: its keys, stepped as `OrbitKey`s. Its encoders wait
+    /// for its cells; its acts are a no-op until the transport is in.
+    fn orbit_input(&mut self, c: &impl Controls, p: hold::Presses) {
+        for k in self.orbit_keys(c, p).into_iter().flatten() {
+            if self.job.is_some() || self.modal.is_some() {
+                break;
+            }
+            let cx = self.cx();
+            if let Step::Go(to) = self.loc.step_orbit(k, &cx, &mut self.recall) {
+                self.go(to);
+            }
+        }
+    }
+
     /// Process one frame of input: navigation + encoder deltas.
     pub fn handle_input(&mut self, controls: &impl Controls) {
         // Any encoder turn or button press retires the last prime-status
@@ -1392,6 +1463,9 @@ impl UiState {
         }
         if presses.menu == Some(Press::Hold) {
             self.quick_save();
+        }
+        if self.loc.orbit().is_some() {
+            return self.orbit_input(controls, presses);
         }
         let keys = self.nav_keys(controls, presses);
         for k in keys.into_iter().flatten() {
@@ -1423,7 +1497,8 @@ impl UiState {
                     }
                     _ => {}
                 },
-                Step::Stay => {}
+                // ORBIT's acts come from `orbit_keys` only.
+                Step::Orbit(_) | Step::Stay => {}
             }
         }
 
@@ -2105,6 +2180,7 @@ fn nav_cx(project: &Project) -> NavCtx {
     NavCtx {
         engines: PartId::ALL.map(|p| project.part(p).sound.engine()),
         dyn_rows: 0,
+        orbit: OrbitCx::NONE,
     }
 }
 

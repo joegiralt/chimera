@@ -13,7 +13,7 @@ build:
     cargo build -p chimera-core -p chimera-hal -p chimera-desktop
 
 # Everything must pass before a commit (ADR 0013): core + hal tests (and core
-# with the master tape back on, ADR 0055), desktop
+# with the master tape back on, ADR 0055, and ORBIT's nav without it), desktop
 # tests and its no-MIDI build, the dosfstools cross-checks, the firmware built and linked with default
 # features, with none, with the bench (with and without the master tape) and
 # with the SD probe, clippy on host
@@ -23,6 +23,7 @@ build:
 check:
     cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit
     cargo test -p chimera-core --features master-tape
+    cargo test -p chimera-core --no-default-features --test orbit_nav_test --test settings_tree_test
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features

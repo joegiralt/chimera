@@ -26,6 +26,7 @@ use screen::*;
 const NO_PRESS: Presses = Presses {
     menu: None,
     seq: None,
+    ring: [None; chimera_core::orbit::RINGS],
 };
 
 fn turn(e: EncoderId, d: i8) -> Input {
@@ -72,6 +73,7 @@ fn seq_with_a_turn_confirms_the_pick_shown() {
     let seq = Presses {
         menu: None,
         seq: Some(Press::Tap),
+        ..NO_PRESS
     };
     assert_eq!(
         c.input(&turn(EncoderId::A, 1), &seq).map(Answer::picked),
@@ -261,6 +263,7 @@ fn save(n: &mut Naming) -> Option<NamingOut> {
     let p = Presses {
         menu: None,
         seq: Some(chimera_core::ui::hold::Press::Tap),
+        ..NO_PRESS
     };
     n.input(&Input::default(), &p)
 }
@@ -308,7 +311,7 @@ fn naming_trims_and_refuses_empty() {
     assert_eq!(save(&mut n), Some(NamingOut::Empty));
     let menu = Presses {
         menu: Some(chimera_core::ui::hold::Press::Tap),
-        seq: None,
+        ..NO_PRESS
     };
     assert_eq!(n.input(&Input::default(), &menu), Some(NamingOut::Cancel));
 }
