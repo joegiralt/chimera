@@ -3,7 +3,7 @@
 
 mod common;
 
-use chimera_core::hw::{CPU_HZ_REV_V, MAX_VOICES, SampleBudget};
+use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::NoteOrigin;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::orbit::RingIdx;
@@ -80,7 +80,7 @@ fn orbit_off_never_releases_a_held_key() {
         play(&mut r, ring(0), 60, true);
         play(&mut r, ring(0), 60, false);
     }
-    assert!(held(&r, 60) >= 1, "the live voice stays held");
+    assert_eq!(held(&r, 60), 1, "the live voice stays held");
     play(&mut r, NoteOrigin::Live, 60, false);
     assert_eq!(held(&r, 60), 0, "its own Off still releases it");
 }
@@ -114,7 +114,7 @@ fn live_off_never_releases_an_orbit_note() {
     play(&mut r, ring(0), 60, true);
     play(&mut r, NoteOrigin::Live, 60, true);
     play(&mut r, NoteOrigin::Live, 60, false);
-    assert!(held(&r, 60) >= 1, "the ORBIT voice stays held");
+    assert_eq!(held(&r, 60), 1, "the ORBIT voice stays held");
     play(&mut r, ring(0), 60, false);
     assert_eq!(held(&r, 60), 0);
 }
@@ -126,22 +126,27 @@ fn orbit_shares_voices() {
     for n in chord {
         play(&mut r, NoteOrigin::Live, n, true);
     }
-    // Five rings, notes that cycle past the pool: tails go first.
-    let mut tail = 70;
+    // Five rings: nine notes on eight voices, so one tail goes, not a key.
     for i in 0..5u8 {
-        play(&mut r, ring(i), tail + i, true);
-        play(&mut r, ring(i), tail + i, false);
+        play(&mut r, ring(i), 70 + i, true);
+        play(&mut r, ring(i), 70 + i, false);
     }
-    for _ in 0..2 {
-        r.render(1);
-    }
+    let slots = r.inst.allocator().slots();
+    assert!(
+        slots.iter().all(|s| s.note() != MidiNote::new(70)),
+        "the oldest tail was stolen"
+    );
+    assert_eq!(r.inst.allocator().refused(), 0);
     for n in chord {
         assert_eq!(held(&r, n), 1, "held key {n} survives while tails exist");
     }
-    // Fill the pool with held ORBIT notes; with no tails, the oldest held goes.
-    tail = 80;
-    for k in 0..MAX_VOICES as u8 {
-        play(&mut r, ring(0), tail + k, true);
+    // Four more held notes take the four tails left; the fifth has none to
+    // take, so the oldest held note goes.
+    for k in 0..5u8 {
+        play(&mut r, ring(0), 80 + k, true);
     }
     assert_eq!(held(&r, chord[0]), 0, "the oldest held note was stolen");
+    for n in &chord[1..] {
+        assert_eq!(held(&r, *n), 1, "held key {n} still held");
+    }
 }

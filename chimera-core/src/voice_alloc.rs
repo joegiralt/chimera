@@ -300,7 +300,8 @@ impl Allocator {
         {
             return fits(self.slots[v].cost).then_some(v);
         }
-        // Rule 2: the key's own voice, re-struck, if it fits (else on to
+        // Rule 2: the key's own voice, re-struck (if `restrike` accepts it),
+        // if it fits (else on to
         // the rest); else a free voice, round-robin, else the dying one
         // nearest the end of its fade — if it fits.
         if mode != PartMode::Mono

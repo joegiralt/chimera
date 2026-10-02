@@ -131,8 +131,6 @@ fn instrument_fits_d2() {
     let size = size_of::<chimera_core::instrument::Instrument>();
     eprintln!("Instrument = {size} B, budget {} B", hw::VOICE_RAM_BUDGET);
     assert!(size <= hw::VOICE_RAM_BUDGET, "Instrument = {size} B");
-    // The per-voice note origin (ORBIT's rings) is in that size: 2 B a voice.
-    assert_eq!(size_of::<chimera_core::instrument::NoteOrigin>(), 2);
 }
 
 /// The Project is the Performance and the pool's slots, plus no more than
@@ -190,6 +188,10 @@ fn sympathetic_pool_fits_d2() {
         ("SymPool", size_of::<SymPool>()),
         ("Voice", size_of::<Voice>()),
         ("[Voice; 8]", size_of::<[Voice; hw::MAX_VOICES]>()),
+        (
+            "[NoteOrigin; 8]",
+            size_of::<[chimera_core::instrument::NoteOrigin; hw::MAX_VOICES]>(),
+        ),
         ("Instrument", inst),
         ("left in D2", hw::VOICE_RAM_BUDGET.saturating_sub(inst)),
     ] {
