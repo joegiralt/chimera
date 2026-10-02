@@ -26,6 +26,8 @@ mod sd;
 mod sd_probe;
 #[cfg(not(feature = "sd-probe"))]
 mod shared;
+#[cfg(all(feature = "usb-console", not(feature = "sd-probe")))]
+mod usb;
 #[cfg(not(feature = "sd-probe"))]
 mod watchdog;
 
@@ -98,6 +100,8 @@ struct SynthParts {
     theme: ThemeSettings,
     iwdg: pac::IWDG,
     dbgmcu: pac::DBGMCU,
+    #[cfg(feature = "usb-console")]
+    usb: usb::UsbParts,
 }
 
 #[entry]
@@ -130,8 +134,19 @@ fn boot() -> Board {
 
     cache::enable_d2_sram();
     let rev = clocks::read_rev(&dp.DBGMCU);
-    let (ccdr, clk) = clocks::freeze(dp.PWR, dp.RCC, &dp.SYSCFG, rev);
+    #[cfg_attr(
+        not(all(feature = "usb-console", not(feature = "sd-probe"))),
+        allow(unused_mut)
+    )]
+    let (mut ccdr, clk) = clocks::freeze(dp.PWR, dp.RCC, &dp.SYSCFG, rev);
     cache::init(&mut cp.MPU, &mut cp.SCB, &mut cp.CPUID);
+    // The USB kernel clock, HSI48, which the CRS trims once the port is up.
+    #[cfg(all(feature = "usb-console", not(feature = "sd-probe")))]
+    {
+        use stm32h7xx_hal::rcc::rec::UsbClkSel;
+        ccdr.peripheral.kernel_usb_clk_mux(UsbClkSel::Hsi48);
+        assert!(ccdr.clocks.hsi48_ck().is_some());
+    }
     #[cfg(not(feature = "sd-probe"))]
     shared::copy_waves();
 
@@ -213,6 +228,17 @@ fn boot() -> Board {
             theme,
             iwdg: dp.IWDG,
             dbgmcu: dp.DBGMCU,
+            #[cfg(feature = "usb-console")]
+            usb: usb::UsbParts {
+                dm: gpioa.pa11.into_alternate(),
+                dp: gpioa.pa12.into_alternate(),
+                global: dp.OTG2_HS_GLOBAL,
+                device: dp.OTG2_HS_DEVICE,
+                pwrclk: dp.OTG2_HS_PWRCLK,
+                rec: ccdr.peripheral.USB2OTG,
+                crs: dp.CRS,
+                crs_rec: ccdr.peripheral.CRS,
+            },
         },
         sd: sd::SdParts {
             spi2: dp.SPI2,
@@ -255,6 +281,8 @@ fn synth(board: Board) -> ! {
                 mut theme,
                 iwdg,
                 dbgmcu,
+                #[cfg(feature = "usb-console")]
+                    usb: usb_parts,
             },
         sd,
     } = board;
@@ -324,6 +352,11 @@ fn synth(board: Board) -> ! {
             .expect("DIN producer taken once"),
     );
 
+    // After the audio and MIDI DIN start, before the first frame: the loop
+    // polls from its first iteration, so enumeration never waits.
+    #[cfg(feature = "usb-console")]
+    let mut usb = usb::init(usb_parts, &clocks);
+
     let (mut pacer, first) = chimera_core::ui::animation::Pacer::start(controls::now_ms());
     ui.update(first);
     ui.render_with_audio(&mut display, &perf.stats, None, scope_r.read());
@@ -333,6 +366,8 @@ fn synth(board: Board) -> ! {
 
     let mut last_tick = controls::ticks();
     loop {
+        #[cfg(feature = "usb-console")]
+        usb.poll();
         controls.snapshot();
         // Every frame, even idle: a held key must age.
         ui.handle_input(&controls);

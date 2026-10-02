@@ -12,6 +12,9 @@ bench = ["perf-probe"]
 sd-probe = []
 # The master tape stage back on the chain, with its bench row (ADR 0055).
 master-tape = ["chimera-core/master-tape"]
+# The USB console (ADR 0068): CDC-ACM on the OTG FS port, polled from the UI
+# loop, its interrupt never unmasked.
+usb-console = ["stm32h7xx-hal/usb_hs", "dep:usb-device", "dep:usbd-serial"]
 
 [dependencies]
 chimera-core = { path = "../chimera-core" }
@@ -29,6 +32,8 @@ embedded-graphics-core = "0.4"
 libm = "0.2"
 embedded-sdmmc = { version = "0.10", default-features = false }
 embedded-hal = "1.0"
+usb-device = { version = "0.3.2", optional = true }
+usbd-serial = { version = "0.2.2", optional = true }
 
 # no_std bin, own #[panic_handler]: the test harness pulls in std's, which
 # clashes (E0152). Nothing here to unit test; chimera-core holds the logic.

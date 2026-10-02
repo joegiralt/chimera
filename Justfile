@@ -31,6 +31,7 @@ check:
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features bench
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features bench,master-tape
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features sd-probe
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features usb-console
     cargo build -p chimera-bootloader --target thumbv7em-none-eabihf
     cargo build -p chimera-theory --target thumbv7em-none-eabihf
     just clippy
@@ -83,6 +84,7 @@ clippy:
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features bench -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features bench,master-tape -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features sd-probe -- -D warnings
+    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features usb-console -- -D warnings
     cargo clippy -p chimera-bootloader --target thumbv7em-none-eabihf -- -D warnings
 
 # Render every screen (the golden cases and the atlas) with the real renderer

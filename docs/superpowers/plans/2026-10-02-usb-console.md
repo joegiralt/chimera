@@ -1340,11 +1340,13 @@ Filled by Tasks 1, 8, 10 and 11.
 
 | | flash (bytes) | RAM (bytes) | Task |
 |---|---|---|---|
-| base (default, no console) | ____ | ____ | 1 |
-| bring-up (`--features usb-console`), + 3 072 core estimate | ____ | ____ | 1 |
+| base (default, no console) | 722 528 | AXI 374 088, D2 168 364 | 1 |
+| bring-up (`--features usb-console`), + 3 072 core estimate | 13 128 + 3 072 = **16 200** (735 656, 80.18 %) | AXI +1 448 (375 536), D2 +0 | 1 |
 | whole (default with `usb-console`) − (`midi-din,perf-probe` only) | ____ | ____ | 8 |
 | bench build's extra RAM (`BENCH_TEXT`) | n/a | ____ | 8 |
 | limit | 24 576 | | |
+
+Release builds of `usb-console` 5d05cd2+, `llvm-size -A`: flash is `.vector_table + .text + .rodata + .data`, AXI is `.data + .bss`, D2 is `.ram_d2 + .ram_d2_dma`. `.text` +16 360, `.rodata` −3 232. `llvm-nm -S` by crate, roughly (generics land under the crate that names them): `synopsys-usb-otg` 12.6 KB, `usb-device` 2.0 KB, the shell 2.3 KB.
 
 ### Desktop QA (Task 10)
 
