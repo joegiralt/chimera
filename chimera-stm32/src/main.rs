@@ -30,7 +30,7 @@ mod shared;
 mod watchdog;
 
 #[cfg(not(feature = "sd-probe"))]
-use chimera_core::project::LOAD_LINK;
+use chimera_core::project::{LOAD_ACK_TIMEOUT_MS, LOAD_LINK};
 #[cfg(not(feature = "sd-probe"))]
 use chimera_core::reset::ResetCause;
 use chimera_core::ui::theme_settings::ThemeSettings;
@@ -225,6 +225,12 @@ fn boot() -> Board {
     }
 }
 
+/// The load ack's timeout in control ticks.
+#[cfg(not(feature = "sd-probe"))]
+const LOAD_ACK_TICKS: u32 = LOAD_ACK_TIMEOUT_MS * controls::CONTROLS_HZ / 1000;
+#[cfg(not(feature = "sd-probe"))]
+const _: () = assert!(LOAD_ACK_TICKS >= 1, "the ack timeout is under a tick");
+
 #[cfg(not(feature = "sd-probe"))]
 fn synth(board: Board) -> ! {
     use chimera_core::clock_plan::pll3_for;
@@ -330,7 +336,7 @@ fn synth(board: Board) -> ! {
         // Every frame, even idle: a held key must age.
         ui.handle_input(&controls);
         // Card work the keys asked for, under BUSY. A load settles before
-        // it publishes: the ack, or 10 ms (5 ticks at 500 Hz).
+        // it publishes: the ack, or `LOAD_ACK_TICKS`.
         let busy = ui.card_pending();
         if busy {
             let (y0, y1) = draw_busy(&mut display);
@@ -344,7 +350,9 @@ fn synth(board: Board) -> ! {
         };
         ui.card_work(cx, &LOAD_LINK, |swap, p| {
             let t0 = controls::ticks();
-            let _ = swap.settle(&LOAD_LINK, || controls::ticks().wrapping_sub(t0) < 5);
+            let _ = swap.settle(&LOAD_LINK, || {
+                controls::ticks().wrapping_sub(t0) < LOAD_ACK_TICKS
+            });
             shared_w.publish(|b| b.update_from(p.perf(), LOAD_LINK.epoch()));
         });
         // Leaving SETTINGS syncs SYSTEM, with no overlay first: a save is

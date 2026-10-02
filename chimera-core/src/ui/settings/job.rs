@@ -3,20 +3,33 @@
 
 use chimera_hal::store::{Store, StoreError};
 
+use crate::name::ProjectName;
 use crate::project::{
-    self, CardOut, Confirmed, DeleteTarget, LoadLink, OverwriteTarget, Pending, Project,
+    self, CardOut, Confirmed, DeleteTarget, FreshFile, LoadLink, OverwriteTarget, Pending, Project,
     ProjectNote, ProjectSource, SaveTo, Swap,
 };
 use crate::storage::{Card, CardEvent, SystemSettings, SystemSync};
 use crate::ui::UiState;
-use crate::ui::nav::Location;
+use crate::ui::nav::{ListAt, Location};
 
 use super::listing::Validity;
 use super::naming::proposed_name;
-use super::{Ask, NamingFor, SAVE_AS_AT, Screen, path_of};
+use super::prompt::Choice;
+use super::{Ask, NamingFor, SAVE_AS_AT, SaveAs, Screen, screen_path};
 
-/// The load a save runs inside (SAVE THEN LOAD), if any.
-pub(crate) type Then = Option<Pending<ProjectSource>>;
+/// SETTINGS › PROJECT, the bar on SAVE PROJECT AS.
+pub(crate) const SAVE_AS_LIST: ListAt = ListAt::at(&[SAVE_AS_AT.0], SAVE_AS_AT.1);
+
+/// A load waiting on a save (SAVE THEN LOAD), and the name its prompt
+/// showed, should it have to ask again.
+#[derive(Debug)]
+pub(crate) struct LoadAfter {
+    pub pending: Pending<ProjectSource>,
+    pub to: Option<ProjectName>,
+}
+
+/// The load a save runs inside, if any.
+pub(crate) type Then = Option<LoadAfter>;
 
 /// One piece of card work.
 #[derive(Debug)]
@@ -25,9 +38,12 @@ pub(crate) enum Job {
     List(Screen),
     /// SAVE over the project's own file.
     QuickSave(Then),
-    /// SAVE PROJECT AS: a new id, then NAMING.
+    /// SAVE PROJECT AS: the card listed, its next id, then NAMING.
     Fresh(Then),
-    Save(SaveTo, Then),
+    /// NAMING's answer: NAME EXISTS asks of the whole card, else it saves.
+    Named(SaveAs),
+    /// A save under the name given; the project takes it once saved.
+    Save(SaveTo, ProjectName, Then),
     Load(Confirmed<ProjectSource>),
     #[expect(dead_code, reason = "MANAGE, Task 12")]
     Delete(Confirmed<DeleteTarget>),
@@ -74,7 +90,7 @@ impl UiState {
             next = self.run(job, &mut cx, link, &mut publish, &mut out);
         }
         if self.wants_list() {
-            self.relist(cx.card, cx.store);
+            let _ = self.relist(cx.card, cx.store);
         }
         out
     }
@@ -93,56 +109,37 @@ impl UiState {
         }
         match job {
             Job::List(s) => {
-                self.relist(cx.card, cx.store);
-                let (path, depth) = path_of(s);
-                self.go(Location::settings_at(&path[..depth], 0));
+                let _ = self.relist(cx.card, cx.store);
+                self.go(Location::settings_at(screen_path(s), 0));
                 None
             }
             Job::QuickSave(then) => {
-                let n = self.saved_to(cx, SaveTo::Own);
-                match (n, then) {
-                    (ProjectNote::NoFile, then) => {
+                let name = self.project.meta().name();
+                match self.saved_to(cx, SaveTo::Own, name) {
+                    ProjectNote::NoFile => {
                         if then.is_none() {
-                            self.go(save_as_place());
+                            self.go(SAVE_AS_LIST.location());
                         }
                         Some(Job::Fresh(then))
                     }
-                    (
-                        ProjectNote::Card {
-                            err: StoreError::VolumeChanged(_),
-                            ..
-                        },
-                        None,
-                    ) => {
-                        self.ask(Ask::CardChanged(Default::default()));
-                        None
-                    }
-                    (n, then) => self.after_save(n, then),
+                    n => self.after_save(n, then),
                 }
             }
             Job::Fresh(then) => {
-                let CardOut { out: fresh, event } = project::new_project_id(cx.card, cx.store);
-                self.saw(event);
-                match fresh {
+                match self.relist(cx.card, cx.store) {
                     Ok(fresh) => {
-                        // NAME EXISTS asks of the card as it is now.
-                        self.relist(cx.card, cx.store);
-                        let at = self
-                            .loc
-                            .settings()
-                            .and_then(|s| s.list())
-                            .or_else(|| save_as_place().settings().and_then(|s| s.list()));
+                        let at = self.loc.settings().and_then(|s| s.list());
                         let start = proposed_name(fresh.file().id());
-                        if let Some(at) = at {
-                            self.name(at, NamingFor::SaveAs(fresh, then), start.as_str());
-                        }
+                        let f = NamingFor::SaveAs(fresh, then);
+                        self.name(at.unwrap_or(SAVE_AS_LIST), f, start.as_str());
                     }
                     Err(n) => self.show_note(n),
                 }
                 None
             }
-            Job::Save(to, then) => {
-                let n = self.saved_to(cx, to);
+            Job::Named(save) => self.check_name(cx, save),
+            Job::Save(to, name, then) => {
+                let n = self.saved_to(cx, to, name);
                 self.after_save(n, then)
             }
             Job::Load(go) => {
@@ -170,22 +167,84 @@ impl UiState {
         }
     }
 
+    /// NAME EXISTS against the card in the slot: the listing, then any ids
+    /// past it. On another card the save goes ahead, to be refused there.
+    fn check_name<S: Store>(&mut self, cx: &mut CardCx<'_, S>, save: SaveAs) -> Option<Job> {
+        let _ = self.relist(cx.card, cx.store);
+        let here = self.listing.vol() == Some(save.fresh.file().vol());
+        let mut taken = self.listing.named(&save.name).filter(|_| here);
+        if here && taken.is_none() && self.listing.more() {
+            let after = self
+                .listing
+                .entry(self.listing.len() - 1)
+                .map_or(0, |e| e.id.get());
+            let CardOut { out, event } = project::find_named(cx.card, cx.store, &save.name, after);
+            self.saw(event);
+            match out {
+                Ok(e) => taken = e,
+                Err(n) => {
+                    self.show_note(n);
+                    return None;
+                }
+            }
+        }
+        match taken {
+            Some(entry) => {
+                self.ask(Ask::NameExists {
+                    save,
+                    entry,
+                    choice: Choice::new(),
+                });
+                None
+            }
+            None => Some(Job::Save(SaveTo::Fresh(save.fresh), save.name, save.then)),
+        }
+    }
+
     /// A save's note, its event seen; a landed save becomes SYSTEM's last.
-    fn saved_to<S: Store>(&mut self, cx: &mut CardCx<'_, S>, to: SaveTo) -> ProjectNote {
-        let CardOut { out, event } = self.save(cx.card, cx.store, cx.sync, cx.settings, to);
+    fn saved_to<S: Store>(
+        &mut self,
+        cx: &mut CardCx<'_, S>,
+        to: SaveTo,
+        name: ProjectName,
+    ) -> ProjectNote {
+        let CardOut { out, event } = self.save(cx.card, cx.store, cx.sync, cx.settings, to, name);
         self.saw(event);
         out
     }
 
-    /// The save's toast; the load it was inside runs only if it landed.
+    /// After a save: the load it was inside runs only if it landed; another
+    /// card in the slot offers SAVE AS there, the load still pending.
     fn after_save(&mut self, n: ProjectNote, then: Then) -> Option<Job> {
-        self.show_note(n);
-        match (n, then) {
-            (ProjectNote::Saved(_), Some(p)) => p
-                .save_then(&self.project, self.template)
-                .ok()
-                .map(Job::Load),
-            _ => None,
+        match n {
+            ProjectNote::Saved(_) => {
+                self.show_note(n);
+                let LoadAfter { pending, to } = then?;
+                match pending.save_then(&self.project, self.template) {
+                    Ok(c) => Some(Job::Load(c)),
+                    Err(again) => {
+                        let current = self.project.meta().name();
+                        self.ask(Ask::LoadProject {
+                            pending: again.into_pending(),
+                            to,
+                            current,
+                            choice: Choice::new(),
+                        });
+                        None
+                    }
+                }
+            }
+            ProjectNote::Card {
+                err: StoreError::VolumeChanged(_),
+                ..
+            } => {
+                self.ask(Ask::CardChanged(then, Choice::new()));
+                None
+            }
+            n => {
+                self.show_note(n);
+                None
+            }
         }
     }
 
@@ -196,8 +255,13 @@ impl UiState {
         }
     }
 
-    /// Re-reads the card into the listing, and keeps the bar on its rows.
-    fn relist<S: Store>(&mut self, card: &mut Card, store: &mut S) {
+    /// Re-reads the card into the listing in one pass, keeps the bar on its
+    /// rows, and gives the file a save as would take.
+    fn relist<S: Store>(
+        &mut self,
+        card: &mut Card,
+        store: &mut S,
+    ) -> Result<FreshFile, ProjectNote> {
         let listing = &mut self.listing;
         let mut begun = false;
         let out = project::list_projects(card, store, &mut |e| {
@@ -213,8 +277,11 @@ impl UiState {
             Card::Absent => None,
         };
         match (out.event, vol) {
-            (Some(_), Some(v)) if !begun => listing.begin(v),
-            (Some(_), _) if begun => {}
+            (Some(_), _) if begun => listing.ended(out.more),
+            (Some(_), Some(v)) => {
+                listing.begin(v);
+                listing.ended(out.more);
+            }
             _ => {
                 let err = match out.note {
                     Some(ProjectNote::Card { err, .. }) => err,
@@ -233,10 +300,6 @@ impl UiState {
             let rows = self.cx().dyn_rows;
             self.go(self.loc.with_row_within(rows));
         }
+        out.fresh.ok_or(out.note.unwrap_or(ProjectNote::NoIds))
     }
-}
-
-/// SETTINGS › PROJECT, the bar on SAVE PROJECT AS.
-fn save_as_place() -> Location {
-    Location::settings_at(&[SAVE_AS_AT.0], SAVE_AS_AT.1)
 }

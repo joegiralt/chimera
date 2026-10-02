@@ -209,23 +209,68 @@ pub const SAVE_AS_AT: (u8, u8) = {
     }
 };
 
-/// The path to Screen `s`'s row, and its depth.
-pub fn path_of(s: Screen) -> ([u8; 4], usize) {
-    fn find(rows: &'static [Row], s: Screen, path: &mut [u8; 4], d: usize) -> Option<usize> {
+/// The kind of the row `path` names, at compile time.
+pub const fn kind_at(path: &[u8]) -> Option<Kind> {
+    let mut cur = &ROOT;
+    let mut d = 0;
+    while d < path.len() {
+        match cur.kind {
+            List(rows) if (path[d] as usize) < rows.len() => cur = &rows[path[d] as usize],
+            _ => return None,
+        }
+        d += 1;
+    }
+    Some(cur.kind)
+}
+
+/// The path to Screen `s`'s row and its depth; no such row fails the build
+/// where a const asks.
+pub const fn path_of(s: Screen) -> ([u8; 4], usize) {
+    const fn find(
+        rows: &'static [Row],
+        s: Screen,
+        path: [u8; 4],
+        d: usize,
+    ) -> Option<([u8; 4], usize)> {
         if d == path.len() {
             return None;
         }
-        rows.iter().enumerate().find_map(|(i, r)| {
-            path[d] = i as u8;
-            match r.kind {
-                Kind::Screen(t) if t == s => Some(d + 1),
-                List(rs) => find(rs, s, path, d + 1),
-                _ => None,
+        let mut i = 0;
+        while i < rows.len() {
+            let mut p = path;
+            p[d] = i as u8;
+            match rows[i].kind {
+                Kind::Screen(t) if t as u8 == s as u8 => return Some((p, d + 1)),
+                List(rs) => {
+                    if let Some(hit) = find(rs, s, p, d + 1) {
+                        return Some(hit);
+                    }
+                }
+                _ => {}
             }
-        })
+            i += 1;
+        }
+        None
     }
-    let mut path = [0; 4];
-    let depth = find(rows(&[]), s, &mut path, 0).unwrap_or(0);
-    path[depth..].fill(0);
-    (path, depth)
+    match find(&TOP, s, [0; 4], 0) {
+        Some(hit) => hit,
+        None => panic!("a Screen with no row"),
+    }
+}
+
+/// Each Screen's path, found at compile time.
+const SCREEN_PATHS: [([u8; 4], usize); 3] = [
+    path_of(Screen::LoadProject),
+    path_of(Screen::ManageProjects),
+    path_of(Screen::SaveToProj),
+];
+
+/// Screen `s`'s path in the tree.
+pub fn screen_path(s: Screen) -> &'static [u8] {
+    let (path, depth) = match s {
+        Screen::LoadProject => &SCREEN_PATHS[0],
+        Screen::ManageProjects => &SCREEN_PATHS[1],
+        Screen::SaveToProj => &SCREEN_PATHS[2],
+    };
+    &path[..*depth]
 }

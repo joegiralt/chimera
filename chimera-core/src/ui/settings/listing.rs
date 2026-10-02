@@ -13,27 +13,77 @@ use crate::storage::{FileError, Generation, ProjectId};
 
 use super::view::RowLook;
 
-/// The most entries held; a card with more ends the list with `MORE ON CARD`.
-pub const MAX_LISTED: usize = 48;
+pub use crate::project::MAX_LISTED;
+
+/// What a file's headers said.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Head {
+    /// The newer readable side; `newer_fw` when a side needs newer
+    /// firmware, which a load refuses first.
+    Read {
+        generation: Generation,
+        name: Option<ProjectName>,
+        newer_fw: bool,
+    },
+    /// No side readable.
+    Bad(FileError),
+}
 
 /// An entry without its card: the listing holds the volume once.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Listed {
     pub id: ProjectId,
-    pub name: Option<ProjectName>,
-    pub err: Option<FileError>,
-    pub generation: Option<Generation>,
+    pub head: Head,
 }
 
-/// What was read: the entries are `Listing::items`.
+impl Listed {
+    fn of(e: &ProjectEntry) -> Self {
+        let head = match e.generation {
+            Some(generation) => Head::Read {
+                generation,
+                name: e.name,
+                newer_fw: e.err == Some(FileError::NeedsNewerFirmware),
+            },
+            None => Head::Bad(e.err.unwrap_or(FileError::Corrupt)),
+        };
+        Listed { id: e.id, head }
+    }
+
+    fn entry(self, vol: VolumeId) -> ProjectEntry {
+        let (name, err, generation) = match self.head {
+            Head::Read {
+                generation,
+                name,
+                newer_fw,
+            } => (
+                name,
+                newer_fw.then_some(FileError::NeedsNewerFirmware),
+                Some(generation),
+            ),
+            Head::Bad(e) => (None, Some(e), None),
+        };
+        ProjectEntry {
+            id: self.id,
+            vol,
+            name,
+            err,
+            generation,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[expect(clippy::large_enum_variant, reason = "one static")]
 enum Rows {
     Unread,
     /// The card couldn't be read (NO CARD): one dimmed row says why.
     Unreadable(StoreError),
+    /// `items[..len]` in id order; `more` past them on the card.
     Card {
         vol: VolumeId,
         more: bool,
+        items: [Listed; MAX_LISTED],
+        len: u8,
     },
 }
 
@@ -46,8 +96,6 @@ pub enum Validity {
 
 pub struct Listing {
     rows: Rows,
-    /// On `Rows::Card` only, from the first; `None` past the last.
-    items: [Option<Listed>; MAX_LISTED],
     validity: Validity,
     /// Moves on every re-list: the list band's key.
     revision: u16,
@@ -58,7 +106,9 @@ pub struct Listing {
 pub enum Pick {
     Entry(ProjectEntry),
     CreateNew,
-    /// NO CARD, MORE ON CARD: nothing runs.
+    /// NO CARD and the like: SEQ reads the card again.
+    Retry,
+    /// MORE ON CARD: nothing runs.
     Inert,
 }
 
@@ -86,7 +136,6 @@ impl Listing {
     pub const fn new() -> Self {
         Listing {
             rows: Rows::Unread,
-            items: [None; MAX_LISTED],
             validity: Validity::Stale,
             revision: 0,
         }
@@ -104,37 +153,48 @@ impl Listing {
         self.validity = Validity::Stale;
     }
 
-    /// Another card is in the slot: stale, and no entry's witness holds.
+    /// Another card is in the slot: the rows, and every witness in them,
+    /// go; the next re-list reads the new card.
     pub fn swapped(&mut self) {
+        self.rows = Rows::Unread;
         self.mark_stale();
-        for l in self.items.iter_mut().flatten() {
-            l.generation = None;
+    }
+
+    fn items(&self) -> &[Listed] {
+        match &self.rows {
+            Rows::Card { items, len, .. } => &items[..*len as usize],
+            _ => &[],
         }
     }
 
     /// The listed entries.
     pub fn len(&self) -> usize {
-        self.items.iter().take_while(|i| i.is_some()).count()
+        self.items().len()
     }
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    pub fn entry(&self, i: usize) -> Option<ProjectEntry> {
-        let Rows::Card { vol, .. } = self.rows else {
-            return None;
-        };
-        self.items.get(i).copied().flatten().map(|l| ProjectEntry {
-            id: l.id,
-            vol,
-            name: l.name,
-            err: l.err,
-            generation: l.generation,
-        })
+    /// The card the entries are on.
+    pub fn vol(&self) -> Option<VolumeId> {
+        match self.rows {
+            Rows::Card { vol, .. } => Some(vol),
+            _ => None,
+        }
     }
 
-    /// The entry named `n`, ignoring case; the lowest id of several.
+    /// Ids past the listed ones are on the card.
+    pub fn more(&self) -> bool {
+        matches!(self.rows, Rows::Card { more: true, .. })
+    }
+
+    pub fn entry(&self, i: usize) -> Option<ProjectEntry> {
+        let vol = self.vol()?;
+        self.items().get(i).map(|l| l.entry(vol))
+    }
+
+    /// The listed entry named `n`, ignoring case; the lowest id of several.
     pub fn named(&self, n: &ProjectName) -> Option<ProjectEntry> {
         let n = n.as_str();
         (0..self.len())
@@ -144,37 +204,46 @@ impl Listing {
 
     /// Starts a re-list: empty on `vol`.
     pub(crate) fn begin(&mut self, vol: VolumeId) {
-        self.rows = Rows::Card { vol, more: false };
-        self.items = [None; MAX_LISTED];
+        self.rows = Rows::Card {
+            vol,
+            more: false,
+            items: [Listed {
+                id: ProjectId::MIN,
+                head: Head::Bad(FileError::Corrupt),
+            }; MAX_LISTED],
+            len: 0,
+        };
         self.validity = Validity::Current;
         self.revision = self.revision.wrapping_add(1);
     }
 
+    /// The next entry; past `MAX_LISTED`, only `more`.
     pub(crate) fn push(&mut self, e: ProjectEntry) {
-        let n = self.len();
-        match (self.items.get_mut(n), &mut self.rows) {
-            (Some(slot), Rows::Card { .. }) => {
-                *slot = Some(Listed {
-                    id: e.id,
-                    name: e.name,
-                    err: e.err,
-                    generation: e.generation,
-                })
+        if let Rows::Card {
+            items, len, more, ..
+        } = &mut self.rows
+        {
+            match items.get_mut(*len as usize) {
+                Some(slot) => {
+                    *slot = Listed::of(&e);
+                    *len += 1;
+                }
+                None => *more = true,
             }
-            (None, Rows::Card { more, .. }) => *more = true,
-            _ => {}
+        }
+    }
+
+    /// The re-list's end: whether the card has more.
+    pub(crate) fn ended(&mut self, has_more: bool) {
+        if let Rows::Card { more, .. } = &mut self.rows {
+            *more |= has_more;
         }
     }
 
     pub(crate) fn unreadable(&mut self, e: StoreError) {
         self.rows = Rows::Unreadable(e);
-        self.items = [None; MAX_LISTED];
         self.validity = Validity::Current;
         self.revision = self.revision.wrapping_add(1);
-    }
-
-    fn more(&self) -> bool {
-        matches!(self.rows, Rows::Card { more: true, .. })
     }
 
     /// LOAD PROJECT's rows: the entries, `MORE ON CARD`, then `+ CREATE
@@ -188,7 +257,7 @@ impl Listing {
 
     pub fn load_pick(&self, i: usize) -> Option<Pick> {
         if let Rows::Unreadable(_) | Rows::Unread = self.rows {
-            return (i == 0).then_some(Pick::Inert);
+            return (i == 0).then_some(Pick::Retry);
         }
         let n = self.len();
         match i.checked_sub(n) {
@@ -226,11 +295,11 @@ impl Listing {
                 LoadRow { label, note, look }
             }
             Pick::CreateNew => row(CREATE_NEW, None, RowLook::Normal),
-            Pick::Inert => match self.rows {
+            Pick::Retry => match self.rows {
                 Rows::Unreadable(e) => row(e.message(), None, RowLook::Dimmed),
-                Rows::Unread => row("", None, RowLook::Dimmed),
-                Rows::Card { .. } => row(MORE_ON_CARD, None, RowLook::Dimmed),
+                _ => row("", None, RowLook::Dimmed),
             },
+            Pick::Inert => row(MORE_ON_CARD, None, RowLook::Dimmed),
         })
     }
 }
@@ -241,4 +310,37 @@ pub fn refusal(e: &ProjectEntry) -> Option<ProjectNote> {
         err,
         subject: e.name.map_or(Subject::File(e.id), Subject::Name),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn vol(serial: u32) -> VolumeId {
+        VolumeId {
+            serial,
+            label: *b"TEST       ",
+        }
+    }
+
+    /// A swap drops every entry and its witness: nothing listed on the old
+    /// card can confirm a write.
+    #[test]
+    fn swapped_drops_the_witnesses() {
+        let mut l = Listing::new();
+        l.begin(vol(1));
+        l.push(ProjectEntry {
+            id: ProjectId::new(3).unwrap(),
+            vol: vol(1),
+            name: ProjectName::new("A").ok(),
+            err: None,
+            generation: Some(Generation::FIRST),
+        });
+        assert!(l.entry(0).unwrap().generation.is_some());
+        l.swapped();
+        assert_eq!(l.validity(), Validity::Stale);
+        assert_eq!(l.entry(0), None);
+        assert!(l.named(&ProjectName::new("A").unwrap()).is_none());
+        assert_eq!(l.load_pick(0), Some(Pick::Retry));
+    }
 }

@@ -4,7 +4,7 @@
 mod screen;
 
 use chimera_core::name::ProjectName;
-use chimera_core::project::test_support::{confirm_delete, confirm_overwrite, damage};
+use chimera_core::project::test_support::{FullOnWrite, confirm_delete, confirm_overwrite, damage};
 use chimera_core::project::{
     CardOut, LoadLink, Project, ProjectEntry, ProjectFile, ProjectNote, ProjectSource,
     ProjectStatus, ReplaceGuard, SaveTo, clear_project, delete_project, list_projects,
@@ -22,9 +22,9 @@ use chimera_hal::testkit::MemStore;
 use chimera_hal::{ButtonId, EncoderId};
 use screen::{Input, feed, hold, tap};
 
-struct Rig {
+struct Rig<S: Store = MemStore> {
     ui: Box<UiState>,
-    s: MemStore,
+    s: S,
     card: Card,
     sync: SystemSync,
     set: SystemSettings,
@@ -33,8 +33,8 @@ struct Rig {
     swaps: usize,
 }
 
-impl Rig {
-    fn new(s: MemStore) -> Self {
+impl<S: Store> Rig<S> {
+    fn new(s: S) -> Self {
         let mut s = s;
         let mut card = Card::new();
         let (sync, set, _) = SystemSync::boot(&mut card, &mut s);
@@ -117,7 +117,7 @@ impl Rig {
 
     /// The bar to row `i` of a Screen.
     fn bar_to(&mut self, i: usize) {
-        let row = |r: &Rig| r.ui.location().settings().unwrap().row() as usize;
+        let row = |r: &Rig<S>| r.ui.location().settings().unwrap().row() as usize;
         while row(self) != i {
             let k = if row(self) < i {
                 ButtonId::Plus
@@ -191,7 +191,7 @@ fn read_back(s: &mut MemStore, f: ProjectFile) -> Box<Project> {
 }
 
 /// A rig with `f` loaded through LOAD, then outside SETTINGS.
-fn loaded(r: &mut Rig, f: ProjectFile) {
+fn loaded<S: Store>(r: &mut Rig<S>, f: ProjectFile) {
     r.open_load();
     let i = r.row_of(&format!("{:02}", f.id().get()));
     r.bar_to(i);
@@ -203,7 +203,7 @@ fn loaded(r: &mut Rig, f: ProjectFile) {
 }
 
 /// An edit that leaves the project Modified.
-fn modify(r: &mut Rig, n: &str) {
+fn modify<S: Store>(r: &mut Rig<S>, n: &str) {
     r.ui.project_mut().set_name(name(n));
     r.ui.update();
     assert_eq!(r.ui.project_status(), ProjectStatus::Modified);
@@ -544,4 +544,135 @@ fn edit_on_load_lists_then_enters() {
     assert!(!r.ui.card_pending());
     assert_eq!(r.ui.location(), Location::settings_at(&[0, 0], 0));
     assert_eq!(r.labels(), ["01 ALPHA", "+ CREATE NEW"]);
+}
+
+/// SAVE THEN LOAD with another card in the slot: the save is refused, the
+/// load waits behind CARD CHANGED, and nothing moves.
+#[test]
+fn save_then_load_refused_save_keeps_the_project() {
+    let mut s = MemStore::new(1);
+    let a = put(&mut s, "ALPHA");
+    put(&mut s, "BETA");
+    let mut r = Rig::new(s);
+    loaded(&mut r, a);
+    modify(&mut r, "EDITED");
+    let crc = project_crc(r.ui.project());
+    r.open_load();
+    r.bar_to(r.row_of("02"));
+    r.tap(ButtonId::Seq);
+    r.s.swap(2);
+    r.tap(ButtonId::Seq);
+    assert_eq!(r.question(), "CARD CHANGED");
+    assert_eq!(project_crc(r.ui.project()), crc);
+    assert_eq!(r.swaps, 1);
+    assert_eq!(r.ui.project().meta().file(), Some(a));
+
+    // SAVE AS on the new card; BETA was listed on the old one, so the
+    // load is still refused.
+    r.tap(ButtonId::Seq);
+    assert_eq!(r.ui.naming().unwrap().text(), "ACID-001");
+    r.tap(ButtonId::Seq);
+    let vol = r.vol();
+    assert_eq!(r.ui.project().meta().file().map(|f| f.vol()), Some(vol));
+    assert_eq!(r.ui.project().meta().name(), name("ACID-001"));
+    assert_eq!(r.swaps, 1);
+    assert!(r.toast().starts_with("CARD CHANGED"));
+}
+
+/// The same on NEW, the card swapped while NAMING was open: refused, the
+/// name not taken.
+#[test]
+fn save_then_load_on_new_refused_keeps_the_name() {
+    let mut s = MemStore::new(1);
+    put(&mut s, "ALPHA");
+    let mut r = Rig::new(s);
+    modify(&mut r, "SKETCH");
+    let crc = project_crc(r.ui.project());
+    r.open_load();
+    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Seq);
+    assert_eq!(r.ui.naming().unwrap().text(), "DRIFT-002");
+    r.s.swap(2);
+    r.tap(ButtonId::Seq);
+    assert_eq!(r.question(), "CARD CHANGED");
+    assert_eq!(project_crc(r.ui.project()), crc);
+    assert_eq!(r.ui.project().meta().name(), name("SKETCH"));
+    assert_eq!(r.ui.project().meta().file(), None);
+    assert_eq!(r.swaps, 0);
+    assert!(listed(&mut r.s).is_empty());
+}
+
+/// 50 projects: 48 rows, MORE ON CARD, and SAVE AS takes id 51 from the
+/// same pass; NAME EXISTS finds a name past the rows.
+#[test]
+fn a_full_card_lists_48_and_names_past_them() {
+    let mut s = MemStore::new(1);
+    for i in 1..=50 {
+        put(&mut s, if i == 50 { "pulse-051" } else { "X" });
+    }
+    let mut r = Rig::new(s);
+    r.open_load();
+    assert_eq!(r.ui.listing().len(), 48);
+    let labels = r.labels();
+    assert_eq!(labels.len(), 50);
+    assert_eq!(labels[47], "48 X");
+    assert_eq!(labels[48], "MORE ON CARD");
+    assert_eq!(labels[49], "+ CREATE NEW");
+    r.tap(ButtonId::Menu);
+    r.feed(Input::press(ButtonId::Plus));
+    r.tap(ButtonId::Seq);
+    assert_eq!(r.ui.naming().unwrap().text(), "PULSE-051");
+    r.tap(ButtonId::Seq);
+    assert_eq!(r.question(), "NAME EXISTS");
+}
+
+#[test]
+fn seq_on_no_card_reads_the_card_again() {
+    let mut s = MemStore::new(1);
+    put(&mut s, "ALPHA");
+    s.eject();
+    let mut r = Rig::new(s);
+    r.open_load();
+    assert_eq!(r.labels(), ["NO CARD"]);
+    r.s.insert();
+    r.tap(ButtonId::Seq);
+    assert_eq!(r.labels(), ["01 ALPHA", "+ CREATE NEW"]);
+}
+
+/// A swap to a card with fewer projects keeps the bar on the rows.
+#[test]
+fn a_shorter_card_clamps_the_bar() {
+    let mut s = MemStore::new(1);
+    for n in ["A", "B", "C"] {
+        put(&mut s, n);
+    }
+    let mut r = Rig::new(s);
+    r.open_load();
+    r.bar_to(2);
+    r.s.swap(2);
+    r.tap(ButtonId::Seq);
+    assert_eq!(r.labels(), ["+ CREATE NEW"]);
+    assert_eq!(r.ui.location(), Location::settings_at(&[0, 0], 0));
+}
+
+/// A save that fails on the card in the slot runs no load after it.
+#[test]
+fn save_then_load_failed_save_loads_nothing() {
+    let mut s = MemStore::new(1);
+    let a = put(&mut s, "ALPHA");
+    put(&mut s, "BETA");
+    let mut r = Rig::new(FullOnWrite(s, false));
+    loaded(&mut r, a);
+    modify(&mut r, "EDITED");
+    let crc = project_crc(r.ui.project());
+    r.open_load();
+    r.bar_to(r.row_of("02"));
+    r.tap(ButtonId::Seq);
+    r.s.1 = true;
+    r.tap(ButtonId::Seq);
+    assert!(r.toast().starts_with("CARD FULL"));
+    assert!(!r.ui.prompt_open());
+    assert_eq!(r.swaps, 1);
+    assert_eq!(project_crc(r.ui.project()), crc);
+    assert_eq!(r.ui.project().meta().file(), Some(a));
 }

@@ -1,17 +1,20 @@
 //! Display names stored in file headers.
 
+use core::num::NonZeroU8;
+
 /// A display name: 1..=N bytes of A-Z a-z 0-9, space and '-', with no
 /// leading or trailing space. Only `new` and `from_padded` make one.
 ///
 /// ```compile_fail,E0451
 /// use chimera_core::name::Name;
-/// let _ = Name::<16> { bytes: [b'A'; 16], len: 16 };
+/// let _ = Name::<16> { bytes: [b'A'; 16], len: core::num::NonZeroU8::MIN };
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Name<const N: usize> {
     /// NUL past `len`, so the derived equality is the text's.
     bytes: [u8; N],
-    len: u8,
+    /// Never 0, so `Option<Name>` costs no tag.
+    len: NonZeroU8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,7 +46,7 @@ impl<const N: usize> Name<N> {
         }
         Ok(Name {
             bytes,
-            len: b.len() as u8,
+            len: nonzero(b.len()),
         })
     }
 
@@ -57,17 +60,25 @@ impl<const N: usize> Name<N> {
         check(&b[..len], N)?;
         Ok(Name {
             bytes: *b,
-            len: len as u8,
+            len: nonzero(len),
         })
     }
 
     pub fn as_str(&self) -> &str {
         // ASCII by construction, so this never falls back.
-        core::str::from_utf8(&self.bytes[..self.len as usize]).unwrap_or("")
+        core::str::from_utf8(&self.bytes[..self.len.get() as usize]).unwrap_or("")
     }
 
     pub fn padded(&self) -> [u8; N] {
         self.bytes
+    }
+}
+
+/// A checked length: 1..=N, which `FITS_U8` keeps within a byte.
+const fn nonzero(n: usize) -> NonZeroU8 {
+    match NonZeroU8::new(n as u8) {
+        Some(n) => n,
+        None => panic!("a checked name is not empty"),
     }
 }
 

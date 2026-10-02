@@ -44,6 +44,7 @@ use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
 use crate::in_place::{by_value, uninit_at};
 use crate::mod_path::{LABEL_LEN, RegistryError};
 use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModState};
+use crate::name::ProjectName;
 use crate::params::{EngineType, ParamSnapshot};
 use crate::perf::load::AudioStats;
 use crate::preset::POOL_SIZE;
@@ -64,7 +65,7 @@ use nav::{Browse, ListAt, Location, NavCtx, NavKey, Recall, Step, chain_def_for}
 use page::{PageKey, PageLayout};
 use perf::PerfStats;
 use renderer::Renderer;
-use settings::job::{CardCx, Job, Then};
+use settings::job::{CardCx, Job, LoadAfter, SAVE_AS_LIST};
 use settings::listing::{Listing, LoadRow, Pick, refusal};
 use settings::naming::Naming;
 use settings::prompt::{self, Answer};
@@ -408,12 +409,13 @@ impl UiState {
         settings: &mut SystemSettings,
         to: SaveTo,
     ) -> Option<CardEvent> {
-        let CardOut { out, event } = self.save(card, store, sync, settings, to);
+        let name = self.project.meta().name();
+        let CardOut { out, event } = self.save(card, store, sync, settings, to, name);
         self.show_note(out);
         event
     }
 
-    /// `save_project` without the toast.
+    /// `save_project` under `name`, without the toast.
     fn save<S: Store>(
         &mut self,
         card: &mut Card,
@@ -421,8 +423,9 @@ impl UiState {
         sync: &mut SystemSync,
         settings: &mut SystemSettings,
         to: SaveTo,
+        name: ProjectName,
     ) -> CardOut<ProjectNote> {
-        let n = project::save_project(card, store, &mut self.project, to);
+        let n = project::save_project_as(card, store, &mut self.project, to, name);
         if let (ProjectNote::Saved(_), Some(f)) = (n.out, self.project.meta().file()) {
             self.remember(card, store, sync, settings, f);
         }
@@ -1002,11 +1005,17 @@ impl UiState {
                 })
             }
             Done::Answered(Answered::ReplacePart(_, Answer::Pick(R::Cancel) | Answer::Cancel)) => {}
-            Done::Answered(Answered::LoadProject(p, a)) => {
+            Done::Answered(Answered::LoadProject(p, to, a)) => {
                 use prompt::LoadAnswer as L;
                 match a {
                     Answer::Pick(L::LoadAnyway) => self.queue(Job::Load(p.anyway(&self.project))),
-                    Answer::Pick(L::SaveThenLoad) => self.save_then_load(p),
+                    Answer::Pick(L::SaveThenLoad) => {
+                        let then = Some(LoadAfter { pending: p, to });
+                        self.queue(match self.project.meta().file() {
+                            Some(_) => Job::QuickSave(then),
+                            None => Job::Fresh(then),
+                        })
+                    }
                     Answer::Pick(L::Cancel) | Answer::Cancel => {}
                 }
             }
@@ -1019,29 +1028,20 @@ impl UiState {
                     }
                     Answer::Cancel => return,
                 };
-                self.project.set_name(save.name);
-                self.queue(Job::Save(to, save.then));
+                self.queue(Job::Save(to, save.name, save.then));
             }
-            Done::Answered(Answered::CardChanged(a)) => {
+            Done::Answered(Answered::CardChanged(then, a)) => {
                 if a == Answer::Pick(prompt::CardChangedAnswer::SaveAs) {
-                    self.save_as(None);
+                    self.queue(Job::Fresh(then));
                 }
             }
             Done::Named(NamingFor::RenameLoaded, name) => self.project.set_name(name),
             Done::Named(NamingFor::RenamePart(part), name) => {
                 self.project.edit_part(part).sound.name = name
             }
-            Done::Named(NamingFor::SaveAs(fresh, then), name) => match self.listing.named(&name) {
-                Some(entry) => self.ask(Ask::NameExists {
-                    save: SaveAs { fresh, name, then },
-                    entry,
-                    choice: prompt::Choice::new(),
-                }),
-                None => {
-                    self.project.set_name(name);
-                    self.queue(Job::Save(SaveTo::Fresh(fresh), then));
-                }
-            },
+            Done::Named(NamingFor::SaveAs(fresh, then), name) => {
+                self.queue(Job::Named(SaveAs { fresh, name, then }))
+            }
             Done::Cancelled => {}
         }
     }
@@ -1053,30 +1053,13 @@ impl UiState {
         }
     }
 
-    /// SAVE PROJECT AS, inside the load `then` if any. NAMING opens on the
-    /// list shown, or on SAVE PROJECT AS's.
-    fn save_as(&mut self, then: Then) {
-        self.queue(Job::Fresh(then));
-    }
-
-    /// SAVE THEN LOAD: a quick save, or NAMING for NEW, then the load.
-    fn save_then_load(&mut self, p: project::Pending<ProjectSource>) {
-        match self.project.meta().file() {
-            Some(_) => self.queue(Job::QuickSave(Some(p))),
-            None => self.save_as(Some(p)),
-        }
-    }
-
     /// MENU hold: SAVE over the project's own file; NEW goes to SAVE AS.
     fn quick_save(&mut self) {
         match self.project.meta().file() {
             Some(_) => self.queue(Job::QuickSave(None)),
             None => {
-                self.go(Location::settings_at(
-                    &[settings::SAVE_AS_AT.0],
-                    settings::SAVE_AS_AT.1,
-                ));
-                self.save_as(None);
+                self.go(SAVE_AS_LIST.location());
+                self.queue(Job::Fresh(None));
             }
         }
     }
@@ -1097,6 +1080,7 @@ impl UiState {
                 )
             }
             Some(Pick::CreateNew) => (ProjectSource::New, None),
+            Some(Pick::Retry) => return self.queue(Job::List(Screen::LoadProject)),
             Some(Pick::Inert) | None => return,
         };
         match ReplaceGuard::check(&self.project, self.template, src) {
@@ -1149,7 +1133,7 @@ impl UiState {
             let at = self.loc.settings();
             match self.loc.step(k, &cx, &mut self.recall) {
                 Step::Go(to) => self.go(to),
-                Step::Act(Act::SaveProjectAs) => self.save_as(None),
+                Step::Act(Act::SaveProjectAs) => self.queue(Job::Fresh(None)),
                 Step::Screen(Screen::LoadProject) => self.queue(Job::List(Screen::LoadProject)),
                 Step::Run if self.screen() == Some(Screen::LoadProject) => {
                     self.run_load(at.map_or(0, |s| s.row()))

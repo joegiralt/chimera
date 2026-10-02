@@ -85,6 +85,31 @@ pub enum Column {
 pub struct ListAt(SettingsAt);
 
 impl ListAt {
+    /// The list at `path`, the bar on `row`: a path that isn't a list
+    /// fails the build where a const asks.
+    pub const fn at(path: &[u8], row: u8) -> ListAt {
+        assert!(path.len() <= MAX_DEPTH, "too deep");
+        assert!(
+            matches!(
+                crate::ui::settings::tree::kind_at(path),
+                Some(Kind::List(_))
+            ),
+            "not a list"
+        );
+        let mut p = [0; MAX_DEPTH];
+        let mut i = 0;
+        while i < path.len() {
+            p[i] = path[i];
+            i += 1;
+        }
+        ListAt(SettingsAt {
+            path: p,
+            depth: path.len() as u8,
+            row,
+            at: At::List,
+        })
+    }
+
     pub fn location(self) -> Location {
         Location(Loc::Settings(self.0))
     }

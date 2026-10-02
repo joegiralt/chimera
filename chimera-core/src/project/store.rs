@@ -79,7 +79,7 @@ fn load_note(e: LoadError, subject: Subject) -> ProjectNote {
 ///     FreshFile(f)
 /// }
 /// ```
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct FreshFile(ProjectFile);
 
 impl FreshFile {
@@ -257,6 +257,19 @@ pub fn save_project<S: Store>(
     p: &mut Project,
     to: SaveTo,
 ) -> CardOut<ProjectNote> {
+    let name = p.meta.name;
+    save_project_as(card, store, p, to, name)
+}
+
+/// `save_project` under `name`: the project takes it only once saved, so
+/// a refused save leaves it as it was.
+pub fn save_project_as<S: Store>(
+    card: &mut Card,
+    store: &mut S,
+    p: &mut Project,
+    to: SaveTo,
+    name: ProjectName,
+) -> CardOut<ProjectNote> {
     let (file, e) = match to {
         SaveTo::Own => match p.meta.file {
             Some(f) => (f, Expect::Own),
@@ -265,7 +278,6 @@ pub fn save_project<S: Store>(
         SaveTo::Fresh(f) => (f.0, Expect::Absent),
         SaveTo::Over(c) => (c.target().file(), Expect::Newest(c.witness())),
     };
-    let name = p.meta.name;
     let live = &*p;
     let out = write_project(
         card,
@@ -278,6 +290,7 @@ pub fn save_project<S: Store>(
     let note = match out.out {
         Ok(()) => {
             p.bump();
+            p.meta.name = name;
             p.meta.file = Some(file);
             p.meta.saved_crc = Some(project_crc(p));
             ProjectNote::Saved(differ(p))
@@ -459,12 +472,19 @@ impl ProjectEntry {
     }
 }
 
-/// `list_projects`' result: `event` when the card mounted.
+/// The most entries one listing holds (SETTINGS' LOAD and MANAGE).
+pub const MAX_LISTED: usize = 48;
+
+/// `list_projects`' result: `event` when the card mounted; `more` when
+/// ids past the `MAX_LISTED` lowest were left out; `fresh`, the id a save
+/// as would take, from the same pass (`None` with no note: no ids left).
 #[must_use]
 #[derive(Debug, PartialEq)]
 pub struct ListOutcome {
     pub event: Option<CardEvent>,
     pub note: Option<ProjectNote>,
+    pub more: bool,
+    pub fresh: Option<FreshFile>,
 }
 
 /// The first `HEADER_LEN` bytes of a file, then a break.
@@ -568,8 +588,55 @@ fn peek_entry<S: Store>(
     Ok((sides != [None, None]).then(|| entry(id, vol, sides)))
 }
 
-/// Each project on the card, in id order, from its headers alone (one
-/// block a side). Each id costs a directory scan to find: O(n²) sectors.
+/// What one directory pass found: the lowest ids, sorted, and the top.
+struct Ids {
+    low: [u32; MAX_LISTED],
+    len: usize,
+    more: bool,
+    top: u32,
+}
+
+impl Ids {
+    fn see(&mut self, id: u32) {
+        self.top = self.top.max(id);
+        let at = match self.low[..self.len].binary_search(&id) {
+            Ok(_) => return,
+            Err(at) => at,
+        };
+        if at == MAX_LISTED {
+            self.more = true;
+            return;
+        }
+        if self.len == MAX_LISTED {
+            self.more = true;
+        } else {
+            self.len += 1;
+        }
+        self.low.copy_within(at..self.len - 1, at + 1);
+        self.low[at] = id;
+    }
+}
+
+/// One pass over `PROJECTS`: an empty card has no directory.
+fn scan<S: Store>(s: &mut S, vol: VolumeId) -> Result<Ids, StoreError> {
+    let mut ids = Ids {
+        low: [0; MAX_LISTED],
+        len: 0,
+        more: false,
+        top: 0,
+    };
+    match s.list(vol, Dir::Projects, &mut |name, _| {
+        if let Some(id) = file_id(name) {
+            ids.see(id.get());
+        }
+    }) {
+        Ok(()) | Err(StoreError::NotFound) => Ok(ids),
+        Err(e) => Err(e),
+    }
+}
+
+/// The `MAX_LISTED` lowest projects on the card, in id order, from their
+/// headers alone (one block a side), after one directory pass.
 pub fn list_projects<S: Store>(
     card: &mut Card,
     store: &mut S,
@@ -577,37 +644,87 @@ pub fn list_projects<S: Store>(
 ) -> ListOutcome {
     let run = card.run(store, |s, r| {
         let vol = r.volume();
-        let mut after = 0;
+        let ids = scan(s, vol)?;
+        for &n in &ids.low[..ids.len] {
+            if let Some(e) = ProjectId::new(n)
+                .map(|id| peek_entry(s, vol, id))
+                .transpose()?
+            {
+                e.into_iter().for_each(&mut *f);
+            }
+        }
+        Ok((
+            ids.more,
+            ProjectId::new(ids.top + 1).map(|id| FreshFile(ProjectFile::new(id, vol))),
+        ))
+    });
+    match run {
+        Ok(Outcome {
+            event,
+            result: Ok((more, fresh)),
+        }) => ListOutcome {
+            event: Some(event),
+            note: None,
+            more,
+            fresh,
+        },
+        Ok(Outcome {
+            event,
+            result: Err(e),
+        }) => ListOutcome {
+            event: Some(event),
+            note: Some(card_note(e, None)),
+            more: false,
+            fresh: None,
+        },
+        Err(e) => ListOutcome {
+            event: None,
+            note: Some(card_note(e, None)),
+            more: false,
+            fresh: None,
+        },
+    }
+}
+
+/// The lowest id past `after` whose name is `n`, ignoring case: one
+/// directory scan per id, stopping at the first match.
+pub fn find_named<S: Store>(
+    card: &mut Card,
+    store: &mut S,
+    n: &ProjectName,
+    after: u32,
+) -> CardOut<Result<Option<ProjectEntry>, ProjectNote>> {
+    let run = card.run(store, |s, r| {
+        let vol = r.volume();
+        let mut after = after;
         loop {
             let mut next: Option<ProjectId> = None;
             match s.list(vol, Dir::Projects, &mut |name, _| {
                 if let Some(id) = file_id(name)
                     && id.get() > after
-                    && next.is_none_or(|n| id < n)
+                    && next.is_none_or(|m| id < m)
                 {
                     next = Some(id);
                 }
             }) {
                 Ok(()) => {}
-                Err(StoreError::NotFound) => return Ok(()),
+                Err(StoreError::NotFound) => return Ok(None),
                 Err(e) => return Err(e),
             }
-            let Some(id) = next else { return Ok(()) };
+            let Some(id) = next else { return Ok(None) };
             after = id.get();
-            if let Some(e) = peek_entry(s, vol, id)? {
-                f(e);
+            if let Some(e) = peek_entry(s, vol, id)?
+                && e.name
+                    .is_some_and(|m| m.as_str().eq_ignore_ascii_case(n.as_str()))
+            {
+                return Ok(Some(e));
             }
         }
     });
-    match run {
-        Ok(o) => ListOutcome {
-            event: Some(o.event),
-            note: o.result.err().map(|e| card_note(e, None)),
-        },
-        Err(e) => ListOutcome {
-            event: None,
-            note: Some(card_note(e, None)),
-        },
+    let (result, event) = split(run);
+    CardOut {
+        out: result.map_err(|e| card_note(e, None)),
+        event,
     }
 }
 

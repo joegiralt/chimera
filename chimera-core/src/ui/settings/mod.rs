@@ -10,8 +10,8 @@ pub mod view;
 
 pub use job::CardCx;
 pub use tree::{
-    Act, Issue, Kind, MANAGE_COMMANDS, PART_ROW, ROOT, Row, SAVE_AS_AT, Screen, issue, path_of,
-    row_at, rows,
+    Act, Issue, Kind, MANAGE_COMMANDS, PART_ROW, ROOT, Row, SAVE_AS_AT, Screen, issue, kind_at,
+    path_of, row_at, rows, screen_path,
 };
 
 use chimera_hal::Controls;
@@ -58,17 +58,22 @@ pub(crate) enum Ask {
         entry: ProjectEntry,
         choice: Choice<NameExistsAnswer>,
     },
-    /// A quick save refused: another card is in the slot.
-    CardChanged(Choice<CardChangedAnswer>),
+    /// A save refused: another card is in the slot. SAVE AS saves there,
+    /// still inside the load `Then` holds.
+    CardChanged(Then, Choice<CardChangedAnswer>),
 }
 
 /// A prompt's answer, with what it held.
 #[derive(Debug)]
 pub(crate) enum Answered {
     ReplacePart(Pending<PartSource>, Answer<ReplaceAnswer>),
-    LoadProject(Pending<ProjectSource>, Answer<LoadAnswer>),
+    LoadProject(
+        Pending<ProjectSource>,
+        Option<ProjectName>,
+        Answer<LoadAnswer>,
+    ),
     NameExists(SaveAs, ProjectEntry, Answer<NameExistsAnswer>),
-    CardChanged(Answer<CardChangedAnswer>),
+    CardChanged(Then, Answer<CardChangedAnswer>),
 }
 
 /// A prompt after a frame's keys.
@@ -118,7 +123,7 @@ impl Ask {
                 choice,
                 f,
             ),
-            Ask::CardChanged(c) => with_view(&CardChanged, c, f),
+            Ask::CardChanged(_, c) => with_view(&CardChanged, c, f),
         }
     }
 
@@ -154,7 +159,7 @@ impl Ask {
                 current,
                 mut choice,
             } => match choice.input(c, p) {
-                Some(a) => Got(Answered::LoadProject(pending, a)),
+                Some(a) => Got(Answered::LoadProject(pending, to, a)),
                 None => Open(Ask::LoadProject {
                     pending,
                     to,
@@ -174,9 +179,9 @@ impl Ask {
                     choice,
                 }),
             },
-            Ask::CardChanged(mut choice) => match choice.input(c, p) {
-                Some(a) => Got(Answered::CardChanged(a)),
-                None => Open(Ask::CardChanged(choice)),
+            Ask::CardChanged(then, mut choice) => match choice.input(c, p) {
+                Some(a) => Got(Answered::CardChanged(then, a)),
+                None => Open(Ask::CardChanged(then, choice)),
             },
         }
     }
