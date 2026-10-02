@@ -470,7 +470,6 @@ pub fn fits(v: &PromptView<'_>) -> bool {
             .all(|o| w(&theme::FONT_LABEL_BOLD, o) <= PILL_TEXT_W)
 }
 
-/// The panel, opaque over its own last frame: it never needs a clear.
 /// What a prompt lands on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Beneath {
@@ -490,11 +489,16 @@ impl Beneath {
     }
 }
 
-pub fn draw_prompt<D: DrawTarget<Color = Rgb565>>(d: &mut D, v: &PromptView<'_>, on: Beneath) {
-    let (top, h) = (PROMPT.1 as i32, (PROMPT.2 - PROMPT.1) as i32);
-    // No cut glyph of the screen beneath beside the panel.
+/// Blank what the prompt lands on, once as it opens: no cut glyph of the
+/// screen beneath beside the panel.
+pub fn blank_beneath<D: DrawTarget<Color = Rgb565>>(d: &mut D, on: Beneath) {
     let (y0, y1) = on.blanks();
     draw::fill_rect(d, 0, y0, theme::SCREEN_W, y1 - y0, theme::BG);
+}
+
+/// The panel, opaque over its own last frame: it never needs a clear.
+pub fn draw_prompt<D: DrawTarget<Color = Rgb565>>(d: &mut D, v: &PromptView<'_>) {
+    let (top, h) = (PROMPT.1 as i32, (PROMPT.2 - PROMPT.1) as i32);
     draw::round_rect(d, PANEL_X, top, PANEL_W, h, PANEL_R, theme::PANEL);
     draw::round_outline(d, PANEL_X, top, PANEL_W, h, PANEL_R, theme::ACCENT);
     let mut y = top + TEXT_DY;

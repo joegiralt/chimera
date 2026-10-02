@@ -202,6 +202,33 @@ fn the_screen_beneath_freezes_and_closing_redraws_it() {
 }
 
 #[test]
+fn a_prompt_over_a_page_blanks_between_the_header_and_the_map() {
+    let (mut ui, _) = asking();
+    settle(&mut ui);
+    let (perf, audio, scope) = (PerfStats::zero(), audio_fixture(), scope_fixture());
+    let mut fb = Fb::new();
+    ui.render_dirty_with_audio(&mut fb, &perf, Some(&audio), &scope);
+    let panel =
+        |x: i32, y: i32| (14..226).contains(&x) && (PROMPT.1 as i32..PROMPT.2 as i32).contains(&y);
+    for y in theme::HEADER_BOTTOM..theme::MAP_TOP {
+        for x in 0..theme::SCREEN_W {
+            if !panel(x, y) {
+                assert_eq!(fb.at(x, y), theme::BG, "({x}, {y})");
+            }
+        }
+    }
+    assert_eq!(fb.at(24, 150), theme::PANEL);
+
+    tap(&mut ui, ButtonId::Menu);
+    settle(&mut ui);
+    ui.render_dirty_with_audio(&mut fb, &perf, Some(&audio), &scope);
+    assert!(
+        fb.px == render_ui(&ui).px,
+        "closed, the page is as a full draw"
+    );
+}
+
+#[test]
 fn a_prompt_over_a_list_blanks_the_list() {
     let mut ui = UiState::new();
     tap(&mut ui, ButtonId::Menu);

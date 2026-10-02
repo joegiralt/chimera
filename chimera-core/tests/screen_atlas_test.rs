@@ -400,13 +400,17 @@ fn manage(ui: &mut UiState, f: impl FnOnce(&mut Rig, [ProjectFile; 3])) {
     f(&mut r, files);
 }
 
-/// MANAGE's command `c` on BETA.
-fn manage_command(ui: &mut UiState, c: Command, modified: bool) {
+/// The loaded project's row in MANAGE, and another's.
+const ALPHA: usize = 0;
+const BETA: usize = 1;
+
+/// MANAGE's command `c` on row `row`.
+fn manage_command(ui: &mut UiState, row: usize, c: Command, modified: bool) {
     manage(ui, |r, _| {
         if modified {
             modify(r.ui);
         }
-        r.bar_to(1);
+        r.bar_to(row);
         r.feed(Input::press(ButtonId::Edit));
         for _ in 0..c as usize {
             r.feed(Input::press(ButtonId::Plus));
@@ -465,15 +469,15 @@ fn prompt(k: AskKind, ui: &mut UiState) {
             r.hold(ButtonId::Menu);
         }
         AskKind::Delete => {
-            manage_command(ui, Command::Delete, false);
+            manage_command(ui, BETA, Command::Delete, false);
             tap(ui, ButtonId::Seq);
         }
         AskKind::Clear => {
-            manage_command(ui, Command::Clear, false);
+            manage_command(ui, BETA, Command::Clear, false);
             tap(ui, ButtonId::Seq);
         }
         AskKind::SaveOver => {
-            manage_command(ui, Command::SaveTo, true);
+            manage_command(ui, BETA, Command::SaveTo, true);
             tap(ui, ButtonId::Seq);
         }
     }
@@ -491,7 +495,7 @@ fn settings_shots() -> Vec<(String, Setup)> {
             v.push((n.name(), Box::new(move |ui| to_leaf(ui, &labels))));
         }
     }
-    let states: [ScreenCase; 8] = [
+    let states: [ScreenCase; 12] = [
         ("settings_project_load_no_card", |ui| {
             let mut s = MemStore::new(1);
             put(&mut s, "ALPHA");
@@ -502,7 +506,7 @@ fn settings_shots() -> Vec<(String, Setup)> {
             manage(ui, |r, _| r.bar_to(1))
         }),
         ("settings_project_manage_commands", |ui| {
-            manage_command(ui, Command::Rename, false)
+            manage_command(ui, BETA, Command::Rename, false)
         }),
         ("settings_part_save_to", |ui| {
             load_slot(ui, P1, S3);
@@ -521,6 +525,30 @@ fn settings_shots() -> Vec<(String, Setup)> {
             Rig::new(ui, s).load(a);
             tap(ui, ButtonId::Menu);
         }),
+        ("settings_project_manage_delete_loaded", |ui| {
+            manage_command(ui, ALPHA, Command::Delete, false)
+        }),
+        ("settings_project_manage_rename", |ui| {
+            manage_command(ui, ALPHA, Command::Rename, false);
+            tap(ui, ButtonId::Seq);
+            assert!(ui.naming().is_some());
+        }),
+        // SAVE AS inside a load: SAVE THEN LOAD on an edited NEW project.
+        ("settings_naming_save_then_load", |ui| {
+            let mut s = MemStore::new(1);
+            put(&mut s, "ALPHA");
+            let mut r = Rig::new(ui, s);
+            modify(r.ui);
+            r.to(&["PROJECT", "LOAD PROJECT"]);
+            r.tap(ButtonId::Seq);
+            r.tap(ButtonId::Seq);
+            assert!(r.ui.naming().is_some());
+        }),
+        ("settings_prompt_clear_loaded", |ui| {
+            manage_command(ui, ALPHA, Command::Clear, false);
+            tap(ui, ButtonId::Seq);
+            assert_eq!(ui.prompt_kind_for_test(), Some(AskKind::Clear));
+        }),
         ("settings_footer_modified", |ui| {
             let (s, [a, ..]) = three();
             Rig::new(ui, s).load(a);
@@ -531,7 +559,7 @@ fn settings_shots() -> Vec<(String, Setup)> {
     for (name, go) in states {
         v.push((name.into(), Box::new(go)));
     }
-    for k in AskKind::ALL {
+    for &k in AskKind::ALL {
         let name = format!("settings_prompt_{}", k.slug());
         v.push((name, Box::new(move |ui| prompt(k, ui))));
     }

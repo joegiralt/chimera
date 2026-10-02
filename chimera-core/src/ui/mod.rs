@@ -1691,7 +1691,8 @@ impl UiState {
             >,
     {
         if let Some(a) = self.prompt() {
-            a.with_view(|v| prompt::draw_prompt(d, v, prompt::Beneath::Page));
+            prompt::blank_beneath(d, prompt::Beneath::Page);
+            a.with_view(|v| prompt::draw_prompt(d, v));
         }
     }
 
@@ -1961,13 +1962,16 @@ impl UiState {
                     flush_list[flush_count] = rows;
                     flush_count += 1;
                 } else if data[i] != r.prev_data {
-                    // The panel is opaque over its own last frame.
+                    // The panel is opaque over its own last frame; what it
+                    // lands on blanks once, as it opens.
                     if !prompt {
                         renderer::Renderer::clear_region_fb(
                             display.pixel_buffer(),
                             r.y_start,
                             r.y_end,
                         );
+                    } else if fresh {
+                        renderer::Renderer::blank_beneath_prompt(display, &f);
                     }
                     self.renderer.draw_region_with_def(display, r.kind, &f);
                     flush_list[flush_count] = (r.y_start, r.y_end);

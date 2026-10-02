@@ -171,8 +171,11 @@ in-memory card.
 | ![](settings_load.png) | PROJECT › LOAD | Three projects, ALPHA `● LOADED`, the bar on BETA |
 | ![](settings_project_load_no_card.png) | PROJECT › LOAD | No card in the slot |
 | ![](settings_naming.png) | PROJECT › SAVE AS | NAMING, the proposed name |
+| ![](settings_naming_save_then_load.png) | LOAD › SAVE AS | SAVE THEN LOAD on an edited NEW project: NAMING inside the load |
 | ![](settings_project_manage.png) | PROJECT › MANAGE | The projects, and the commands of the one under the bar |
 | ![](settings_project_manage_commands.png) | PROJECT › MANAGE | The bar in the commands, on RENAME: dimmed, LOAD TO RENAME |
+| ![](settings_project_manage_delete_loaded.png) | PROJECT › MANAGE | DELETE on the loaded project: dimmed |
+| ![](settings_project_manage_rename.png) | MANAGE › RENAME | NAMING the loaded project |
 | ![](settings_part.png) | PART | The active Part's strip and its actions |
 | ![](settings_part_save_to.png) | PART › SAVE TO | Part 1 edited from SLOT 03: OVER SLOT 03, TO NEW SLOT |
 | ![](settings_part_rename.png) | PART › RENAME | NAMING the Part's Sound |
@@ -192,7 +195,8 @@ everything between the header and the map blanks.
 | ![](settings_prompt_name_exists.png) | PROJECT › SAVE AS | The proposed name is on the card |
 | ![](settings_prompt_card_changed.png) | MENU hold | Quick save refused: another card |
 | ![](settings_prompt_delete.png) | MANAGE › DELETE | DELETE BETA |
-| ![](settings_prompt_clear.png) | MANAGE › CLEAR | CLEAR BETA |
+| ![](settings_prompt_clear.png) | MANAGE › CLEAR | CLEAR BETA, another's file |
+| ![](settings_prompt_clear_loaded.png) | MANAGE › CLEAR | CLEAR ALPHA, the loaded project's own file |
 | ![](settings_prompt_save_over.png) | MANAGE › SAVE TO | SAVE OVER BETA |
 | ![](settings_prompt_replace_part.png) | PART › CLEAR | CLEAR an edited Part to INIT |
 | ![](settings_prompt_reload_part.png) | PART › RELOAD | RELOAD an edited Part from its slot |

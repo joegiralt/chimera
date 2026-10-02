@@ -26,7 +26,7 @@ use crate::ui::page::PageLayout;
 use crate::ui::perf::PerfStats;
 use crate::ui::region::{self, Layout, RegionKind};
 use crate::ui::settings::Ask;
-use crate::ui::settings::prompt::{Beneath, draw_prompt};
+use crate::ui::settings::prompt::{Beneath, blank_beneath, draw_prompt};
 use crate::ui::settings::view::Bands;
 use crate::ui::theme;
 use crate::ui::view::{self, EnvKind, SlotCtx, View};
@@ -304,7 +304,23 @@ impl Renderer {
         for &(kind, _, _) in f.layout.regions() {
             self.draw_region_with_def(display, kind, f);
         }
+        Self::blank_beneath_prompt(display, f);
         self.draw_region_with_def(display, RegionKind::Prompt, f);
+    }
+
+    /// Under an opening prompt: the panel's band over a SETTINGS list,
+    /// all but the header and map over a page.
+    pub fn blank_beneath_prompt<D>(display: &mut D, f: &Frame)
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        if f.prompt.is_some() {
+            let on = match f.settings {
+                Some(_) => Beneath::List,
+                None => Beneath::Page,
+            };
+            blank_beneath(display, on);
+        }
     }
 
     /// What the page's viz is drawn from, for dirty tracking: the slot
@@ -394,11 +410,7 @@ impl Renderer {
             }
             RegionKind::Prompt => {
                 if let Some(a) = f.prompt {
-                    let on = match f.settings {
-                        Some(_) => Beneath::List,
-                        None => Beneath::Page,
-                    };
-                    a.with_view(|v| draw_prompt(display, v, on))
+                    a.with_view(|v| draw_prompt(display, v))
                 }
             }
         }

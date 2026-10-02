@@ -88,64 +88,42 @@ pub(crate) enum Ask {
     SaveOver(Chosen, Choice<SaveOverAnswer>),
 }
 
-/// Which `Ask` is open, for tests that must cover each.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AskKind {
-    ReplacePart,
-    ReloadPart,
-    UpdateStale,
-    ClearSlot,
-    LoadProject,
-    NameExists,
-    CardChanged,
-    Delete,
-    Clear,
-    SaveOver,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl AskKind {
-    pub const ALL: [AskKind; 10] = [
-        AskKind::ReplacePart,
-        AskKind::ReloadPart,
-        AskKind::UpdateStale,
-        AskKind::ClearSlot,
-        AskKind::LoadProject,
-        AskKind::NameExists,
-        AskKind::CardChanged,
-        AskKind::Delete,
-        AskKind::Clear,
-        AskKind::SaveOver,
-    ];
-
-    /// `snake_case`, for file names.
-    pub fn slug(self) -> &'static str {
-        match self {
-            AskKind::ReplacePart => "replace_part",
-            AskKind::ReloadPart => "reload_part",
-            AskKind::UpdateStale => "update_stale",
-            AskKind::ClearSlot => "clear_slot",
-            AskKind::LoadProject => "load",
-            AskKind::NameExists => "name_exists",
-            AskKind::CardChanged => "card_changed",
-            AskKind::Delete => "delete",
-            AskKind::Clear => "clear",
-            AskKind::SaveOver => "save_over",
+/// `AskKind` and its `ALL`, from one list: no kind can miss `ALL`.
+macro_rules! ask_kinds {
+    ($($k:ident => $slug:literal,)*) => {
+        /// Which `Ask` is open, for tests that must cover each.
+        #[cfg(any(test, feature = "test-support"))]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum AskKind {
+            $($k,)*
         }
-    }
+
+        #[cfg(any(test, feature = "test-support"))]
+        impl AskKind {
+            pub const ALL: &[AskKind] = &[$(AskKind::$k,)*];
+
+            /// `snake_case`, for file names.
+            pub fn slug(self) -> &'static str {
+                match self {
+                    $(AskKind::$k => $slug,)*
+                }
+            }
+        }
+    };
 }
 
-// `ALL` is every kind, in declaration order.
-#[cfg(any(test, feature = "test-support"))]
-const _: () = {
-    let mut i = 0;
-    while i < AskKind::ALL.len() {
-        assert!(AskKind::ALL[i] as usize == i);
-        i += 1;
-    }
-    assert!(AskKind::SaveOver as usize + 1 == AskKind::ALL.len());
-};
+ask_kinds! {
+    ReplacePart => "replace_part",
+    ReloadPart => "reload_part",
+    UpdateStale => "update_stale",
+    ClearSlot => "clear_slot",
+    LoadProject => "load",
+    NameExists => "name_exists",
+    CardChanged => "card_changed",
+    Delete => "delete",
+    Clear => "clear",
+    SaveOver => "save_over",
+}
 
 /// A listed project as its prompt names it.
 fn subject(c: &Chosen) -> Subject {
