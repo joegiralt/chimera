@@ -82,6 +82,11 @@ impl OrbitState {
     pub fn seg(&self) -> u8 {
         self.seg
     }
+
+    /// Each ring's off still to send.
+    pub fn pending(&self) -> [Option<PendingOff>; RINGS] {
+        self.pending
+    }
 }
 
 /// A block's window on the song and on the sample clock.

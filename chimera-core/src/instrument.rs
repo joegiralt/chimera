@@ -428,6 +428,11 @@ impl Instrument {
         &self.alloc
     }
 
+    /// Who started each voice's note, by voice index.
+    pub fn origins(&self) -> &[NoteOrigin; MAX_VOICES] {
+        &self.note_origin
+    }
+
     /// Each voice's slot rebuilds (`Voice::rebuilds`): for the tests and
     /// the bench.
     pub fn rebuilds(&self) -> [u16; MAX_VOICES] {

@@ -4,7 +4,7 @@
 
 use super::chords::harmony;
 use super::clock::{Bpm, InternalClock, Position, step_at};
-use super::engine::{OrbitKind, OrbitState, Span, block};
+use super::engine::{OrbitKind, OrbitState, PendingOff, Span, block};
 use super::euclid::HitMask;
 use super::scene::Scene;
 use super::walk::Pool;
@@ -301,6 +301,11 @@ impl OrbitRunner {
         self.loops += ev.boundary() as u32;
         self.edge = to;
         Self::send(inst, shared, ev.iter(), &mut self.fired);
+    }
+
+    /// Each ring's off still to send: a held ORBIT voice has one.
+    pub fn pending(&self) -> [Option<PendingOff>; RINGS] {
+        self.state.pending()
     }
 
     pub fn view(&self) -> OrbitView {

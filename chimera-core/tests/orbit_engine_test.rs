@@ -624,3 +624,40 @@ fn forget_leaves_stop_no_offs() {
     rig.st.forget();
     assert!(rig.st.stop().is_empty());
 }
+
+/// The init scene's first 8 loops, pinned: `block ring channel note kind`
+/// per event, on NEW's channels. Re-record an intended change with
+/// `GOLDEN_RECORD=1`, which writes the fixture.
+#[test]
+fn init_scene_events_golden() {
+    let mut rig = Rig::new(Scene::init(), 120);
+    rig.channels = core::array::from_fn(|i| MidiChannel::new(i as u8).unwrap());
+    rig.run_bars(8);
+    let mut got = String::new();
+    for r in &rig.log {
+        let kind = match r.ev.kind {
+            OrbitKind::On(v) => format!("on {}", v.get()),
+            OrbitKind::Off => "off".into(),
+        };
+        got.push_str(&format!(
+            "{} {} {} {} {kind}\n",
+            r.t / 64,
+            r.ev.ring.get() + 1,
+            r.ev.channel.get() + 1,
+            r.ev.note.get()
+        ));
+    }
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/orbit_init_events.txt"
+    );
+    if std::env::var_os("GOLDEN_RECORD").is_some() {
+        std::fs::write(path, &got).expect("the fixture");
+        return;
+    }
+    let want = std::fs::read_to_string(path).unwrap_or_default();
+    assert!(
+        got == want,
+        "the init scene's events moved (GOLDEN_RECORD=1 to re-record); now:\n{got}"
+    );
+}
