@@ -471,10 +471,30 @@ pub fn fits(v: &PromptView<'_>) -> bool {
 }
 
 /// The panel, opaque over its own last frame: it never needs a clear.
-pub fn draw_prompt<D: DrawTarget<Color = Rgb565>>(d: &mut D, v: &PromptView<'_>) {
+/// What a prompt lands on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Beneath {
+    /// A SETTINGS list, already blank under the panel.
+    List,
+    /// A page or the Sound rung: only its header and map stay.
+    Page,
+}
+
+impl Beneath {
+    /// The rows the prompt blanks before its panel.
+    pub fn blanks(self) -> (i32, i32) {
+        match self {
+            Beneath::List => (PROMPT.1 as i32, PROMPT.2 as i32),
+            Beneath::Page => (theme::HEADER_BOTTOM, theme::MAP_TOP),
+        }
+    }
+}
+
+pub fn draw_prompt<D: DrawTarget<Color = Rgb565>>(d: &mut D, v: &PromptView<'_>, on: Beneath) {
     let (top, h) = (PROMPT.1 as i32, (PROMPT.2 - PROMPT.1) as i32);
-    // The whole band: no cut glyph of the screen beneath beside the panel.
-    draw::fill_rect(d, 0, top, theme::SCREEN_W, h, theme::BG);
+    // No cut glyph of the screen beneath beside the panel.
+    let (y0, y1) = on.blanks();
+    draw::fill_rect(d, 0, y0, theme::SCREEN_W, y1 - y0, theme::BG);
     draw::round_rect(d, PANEL_X, top, PANEL_W, h, PANEL_R, theme::PANEL);
     draw::round_outline(d, PANEL_X, top, PANEL_W, h, PANEL_R, theme::ACCENT);
     let mut y = top + TEXT_DY;

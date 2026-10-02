@@ -183,8 +183,8 @@ in-memory card.
 
 ### Prompts
 
-One per kind; the list beneath blanks. Outside SETTINGS the panel clears
-its band over the frozen screen.
+One per kind; the list beneath blanks. Over a page or the Sound rung,
+everything between the header and the map blanks.
 
 | Screen | Where | What it shows |
 |---|---|---|

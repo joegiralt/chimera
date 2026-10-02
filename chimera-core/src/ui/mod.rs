@@ -1683,7 +1683,7 @@ impl UiState {
             .draw_with_def(display, &self.frame(perf, audio, scope));
     }
 
-    /// The open prompt's panel, if any, over whatever is drawn.
+    /// The open prompt's panel, if any, over the Sound rung.
     fn draw_prompt<D>(&self, d: &mut D)
     where
         D: embedded_graphics::draw_target::DrawTarget<
@@ -1691,7 +1691,7 @@ impl UiState {
             >,
     {
         if let Some(a) = self.prompt() {
-            a.with_view(|v| prompt::draw_prompt(d, v));
+            a.with_view(|v| prompt::draw_prompt(d, v, prompt::Beneath::Page));
         }
     }
 

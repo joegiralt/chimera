@@ -26,7 +26,7 @@ use crate::ui::page::PageLayout;
 use crate::ui::perf::PerfStats;
 use crate::ui::region::{self, Layout, RegionKind};
 use crate::ui::settings::Ask;
-use crate::ui::settings::prompt::draw_prompt;
+use crate::ui::settings::prompt::{Beneath, draw_prompt};
 use crate::ui::settings::view::Bands;
 use crate::ui::theme;
 use crate::ui::view::{self, EnvKind, SlotCtx, View};
@@ -394,7 +394,11 @@ impl Renderer {
             }
             RegionKind::Prompt => {
                 if let Some(a) = f.prompt {
-                    a.with_view(|v| draw_prompt(display, v))
+                    let on = match f.settings {
+                        Some(_) => Beneath::List,
+                        None => Beneath::Page,
+                    };
+                    a.with_view(|v| draw_prompt(display, v, on))
                 }
             }
         }
