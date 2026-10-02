@@ -200,3 +200,5 @@ impl Console {
 
 mod status;
 pub use status::*;
+mod shot;
+pub use shot::*;
