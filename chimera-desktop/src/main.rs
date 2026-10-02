@@ -8,6 +8,7 @@ mod midi;
 mod qa;
 mod store;
 
+use chimera_core::console::Served;
 use chimera_core::project::{LOAD_ACK_TIMEOUT_MS, LOAD_LINK};
 use chimera_core::scope::scope_buffer;
 use chimera_core::storage::{Card, SystemSettings, SystemSync};
@@ -90,12 +91,12 @@ fn main() {
 
     while display.is_open() {
         // Before the frame's input and draw: the snapshot point the chip uses.
-        if let Some(c) = console.as_mut() {
+        let served = console.as_mut().map_or(Served::Idle, |c| {
             c.service(&mut DeskUnit {
                 ui: &ui,
                 frame: display.frame(),
-            });
-        }
+            })
+        });
         let now = Instant::now();
         let frame_us = now.duration_since(frame_start).as_micros() as u32;
         frame_start = now;
@@ -173,7 +174,10 @@ fn main() {
             draw_toast(&mut display, text.as_str());
         }
 
-        perf.record(frame_us, 0);
+        // An answer's time is the console's, not a frame spike.
+        if served == Served::Idle {
+            perf.record(frame_us, 0);
+        }
 
         display.flush();
         std::thread::sleep(std::time::Duration::from_millis(33));

@@ -1,10 +1,13 @@
 //! The console on a local socket: the unit's protocol, one client at a
-//! time, polled at the top of the sim's frame. Never blocks past STALL_MS.
+//! time, polled at the top of the sim's frame. An answer never holds it past its `AnswerClock`.
 
 #[cfg(test)]
 use chimera_core::console::SHOT_HEADER;
-use chimera_core::console::{Console, Frame, Out, STALL_MS, Served, Stalled, Stats, Unit, answer};
+use chimera_core::console::{
+    AnswerClock, Console, Frame, Out, Served, Stalled, Stats, Unit, answer,
+};
 use chimera_core::ui::UiState;
+use chimera_hal::Ms;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::{Duration, Instant};
@@ -66,7 +69,7 @@ impl SocketConsole {
             match c.stream.read(&mut byte) {
                 Ok(1) => {
                     if let Some(req) = c.line.push(byte[0]) {
-                        let out = &mut StreamOut { s: &mut c.stream };
+                        let out = &mut StreamOut::new(&mut c.stream);
                         if answer(req, unit, out).is_err() {
                             self.client = None;
                         }
@@ -107,25 +110,39 @@ impl Unit for DeskUnit<'_> {
     }
 }
 
-/// A non-blocking stream as `Out`: `WouldBlock` retries until STALL_MS
-/// without progress; any other failure means the client left.
+/// A non-blocking stream as `Out`, for one answer: `WouldBlock` retries
+/// until its `AnswerClock` expires; any other failure means the client left.
 struct StreamOut<'a> {
     s: &'a mut TcpStream,
+    epoch: Instant,
+    clock: AnswerClock,
+}
+
+impl<'a> StreamOut<'a> {
+    fn new(s: &'a mut TcpStream) -> Self {
+        StreamOut {
+            s,
+            epoch: Instant::now(),
+            clock: AnswerClock::start(Ms(0)),
+        }
+    }
+
+    fn now(&self) -> Ms {
+        Ms(self.epoch.elapsed().as_millis() as u32)
+    }
 }
 
 impl Out for StreamOut<'_> {
     fn put(&mut self, mut bytes: &[u8]) -> Result<(), Stalled> {
-        let stall = Duration::from_millis(STALL_MS.into());
-        let mut progress = Instant::now();
         while !bytes.is_empty() {
             match self.s.write(bytes) {
                 Ok(0) => return Err(Stalled),
                 Ok(n) => {
                     bytes = &bytes[n..];
-                    progress = Instant::now();
+                    self.clock.progress(self.now());
                 }
                 Err(e) if e.kind() == ErrorKind::Interrupted => {}
-                Err(e) if e.kind() == ErrorKind::WouldBlock && progress.elapsed() < stall => {
+                Err(e) if e.kind() == ErrorKind::WouldBlock && !self.clock.expired(self.now()) => {
                     std::thread::sleep(Duration::from_millis(1));
                 }
                 Err(_) => return Err(Stalled),
@@ -359,6 +376,11 @@ mod tests {
         }
         let took = stalled.expect("a reader that never reads stalls a shot");
         assert!(took < Duration::from_millis(1500), "{took:?}");
+        c.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        assert!(
+            c.read_to_end(&mut Vec::new()).is_ok(),
+            "the shell closed the stalled client"
+        );
     }
 
     #[test]
@@ -384,5 +406,46 @@ mod tests {
         c.write_all(b"help\n").unwrap();
         assert!(serve_until_answered(&mut con, &mut unit));
         assert!(read_until_terminal(&mut c).ends_with("OK\n"));
+    }
+
+    #[test]
+    fn a_flood_without_a_newline_is_read_a_budget_a_frame() {
+        let (ui, fb, pal) = fb_unit();
+        let mut con = SocketConsole::bind("127.0.0.1:0").unwrap();
+        let mut c = client(&con);
+        c.write_all(&[b'a'; 8 * READ_BUDGET]).unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        let unit = &mut DeskUnit {
+            ui: &ui,
+            frame: Frame {
+                fb: &fb,
+                palette: pal,
+            },
+        };
+        assert_eq!(con.service(unit), Served::Idle);
+        let left = con.client.as_ref().unwrap().stream.peek(&mut [0u8; 1]);
+        assert_eq!(left.unwrap(), 1, "the rest waits for later frames");
+    }
+
+    #[test]
+    fn a_new_client_starts_a_fresh_line() {
+        let (ui, fb, pal) = fb_unit();
+        let mut con = SocketConsole::bind("127.0.0.1:0").unwrap();
+        let mut old = client(&con);
+        let mut unit = DeskUnit {
+            ui: &ui,
+            frame: Frame {
+                fb: &fb,
+                palette: pal,
+            },
+        };
+        old.write_all(b"hel").unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(con.service(&mut unit), Served::Idle);
+        let mut new = client(&con);
+        new.write_all(b"help\n").unwrap();
+        assert!(serve_until_answered(&mut con, &mut unit));
+        let text = read_until_terminal(&mut new);
+        assert!(text.starts_with("chimera console 1\n"), "{text}");
     }
 }

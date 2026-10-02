@@ -5,6 +5,7 @@ use super::{ANSWER_MS, STALL_MS};
 use chimera_hal::Ms;
 
 /// Whether a loop iteration answered a console request.
+#[must_use]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Served {
     Idle,
