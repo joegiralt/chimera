@@ -1,4 +1,5 @@
 mod audio;
+mod console;
 mod controls;
 mod display;
 #[cfg(feature = "midi")]
@@ -17,6 +18,7 @@ use chimera_core::ui::perf::PerfTracker;
 use chimera_core::ui::settings::CardCx;
 use chimera_hal::store::Store;
 use chimera_hal::{ChimeraDisplay, MidiChannel, MidiNote, Ms, Velocity};
+use console::DeskUnit;
 use controls::DesktopControls;
 use display::DesktopDisplay;
 use std::path::PathBuf;
@@ -84,7 +86,16 @@ fn main() {
     // The toast's clock, read after the card work, as the firmware's is.
     let mut toast_at = Instant::now();
 
+    let mut console = console::bind_or_off(console::ADDR);
+
     while display.is_open() {
+        // Before the frame's input and draw: the snapshot point the chip uses.
+        if let Some(c) = console.as_mut() {
+            c.service(&mut DeskUnit {
+                ui: &ui,
+                frame: display.frame(),
+            });
+        }
         let now = Instant::now();
         let frame_us = now.duration_since(frame_start).as_micros() as u32;
         frame_start = now;

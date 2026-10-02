@@ -1,3 +1,4 @@
+use chimera_core::console::Frame;
 use chimera_core::ui::theme_settings::{Palette, ThemeSettings};
 use chimera_hal::{ChimeraDisplay, FB_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH};
 use embedded_graphics_core::Pixel;
@@ -43,6 +44,15 @@ impl DesktopDisplay {
     pub fn set_theme(&mut self, theme: &ThemeSettings) {
         self.palette = theme.palette();
         self.bright_pct = theme.bright.percent() as u32;
+    }
+
+    /// The framebuffer and its palette, as `shot` reads them: BRIGHT is
+    /// the window's, not the screen's, so it stays out.
+    pub fn frame(&self) -> Frame<'_> {
+        Frame {
+            fb: &self.fb,
+            palette: self.palette,
+        }
     }
 
     /// One framebuffer pixel as window RGB888: palette, then brightness.
