@@ -48,6 +48,7 @@ use core::fmt::Debug;
 use chimera_hal::store::VolumeId;
 
 use crate::block::DiskCode;
+use crate::name::ProjectName;
 use crate::storage::{Crc32, Generation, ProjectId, sound_crc};
 
 use super::marks::status_at;
@@ -254,13 +255,35 @@ impl ReplaceGuard {
     }
 }
 
-/// A file a save writes over: SAVE OVER, or CLEAR.
+/// A file a save writes over: SAVE OVER, or CLEAR. Only `answered`
+/// makes one, from a listing:
+///
+/// ```compile_fail,E0451
+/// use chimera_core::project::{OverwriteTarget, ProjectFile};
+/// fn forge(file: ProjectFile) -> OverwriteTarget {
+///     OverwriteTarget { file }
+/// }
+/// ```
+///
+/// ```compile_fail,E0624
+/// use chimera_core::project::{Confirmed, OverwriteTarget, ProjectEntry};
+/// fn forge(e: &ProjectEntry) -> Confirmed<OverwriteTarget> {
+///     Confirmed::<OverwriteTarget>::answered(e)
+/// }
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OverwriteTarget {
     file: ProjectFile,
 }
 
-/// A file DELETE removes.
+/// A file DELETE removes. Only `answered` confirms one:
+///
+/// ```compile_fail,E0624
+/// use chimera_core::project::{Confirmed, DeleteTarget, ProjectEntry};
+/// fn forge(e: &ProjectEntry) -> Confirmed<DeleteTarget> {
+///     Confirmed::<DeleteTarget>::answered(e)
+/// }
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DeleteTarget {
     file: ProjectFile,
@@ -278,14 +301,31 @@ impl DeleteTarget {
     }
 }
 
-/// The newest readable side's generation as listed (`None`: none
-/// readable). A file saved, cleared or deleted since refuses it.
+/// A file's newest readable header as listed, from its header alone. The
+/// name as well as the generation: a pair deleted and made again at the
+/// same id starts its generations over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Seen {
+    generation: Option<Generation>,
+    name: Option<ProjectName>,
+}
+
+impl Seen {
+    pub(crate) fn of(e: &ProjectEntry) -> Self {
+        Seen {
+            generation: e.generation,
+            name: e.name,
+        }
+    }
+}
+
+/// A file saved, cleared, deleted or made again since refuses it.
 impl Witnessed for OverwriteTarget {
-    type Witness = Option<Generation>;
+    type Witness = Seen;
 }
 
 impl Witnessed for DeleteTarget {
-    type Witness = Option<Generation>;
+    type Witness = Seen;
 }
 
 impl Confirmed<OverwriteTarget> {
@@ -297,7 +337,7 @@ impl Confirmed<OverwriteTarget> {
     pub(crate) fn answered(e: &ProjectEntry) -> Self {
         Confirmed {
             target: OverwriteTarget { file: e.file() },
-            witness: e.generation,
+            witness: Seen::of(e),
         }
     }
 }
@@ -311,7 +351,7 @@ impl Confirmed<DeleteTarget> {
     pub(crate) fn answered(e: &ProjectEntry) -> Self {
         Confirmed {
             target: DeleteTarget { file: e.file() },
-            witness: e.generation,
+            witness: Seen::of(e),
         }
     }
 }

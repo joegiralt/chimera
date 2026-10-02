@@ -520,6 +520,7 @@ pub fn project_store_suite<S: Store>(make: &mut dyn FnMut() -> S) {
     list_and_next_id(&mut make());
     delete_rules(&mut make());
     confirmed_writes_refuse_a_moved_file(&mut make());
+    fresh_file_taken_since_is_refused(&mut make());
     missing_file(&mut make());
 }
 
@@ -727,6 +728,24 @@ fn confirmed_writes_refuse_a_moved_file<S: Store>(s: &mut S) {
     assert!(out.note.is_none(), "{:?}", out.note);
     assert_eq!(project_crc(&q), t.get(), "NEW");
     assert_eq!(project_status(&q, t), ProjectStatus::Pristine);
+}
+
+/// Two `new_project_id`s before a save name the same id: the second save
+/// finds the pair there and writes nothing.
+fn fresh_file_taken_since_is_refused<S: Store>(s: &mut S) {
+    let mut card = Card::new();
+    let first = new_project_id(&mut card, s).expect("an id");
+    let second = new_project_id(&mut card, s).expect("an id");
+    assert_eq!(first.file(), second.file());
+    let (mut a, _) = full();
+    saved(save_project(&mut card, s, &mut a, SaveTo::Fresh(first)));
+    let (mut b, _) = Project::boxed();
+    assert_eq!(
+        save_project(&mut card, s, &mut b, SaveTo::Fresh(second)),
+        ProjectNote::FileChanged(Subject::Name(a.meta().name()))
+    );
+    assert_eq!(b.meta().file(), None);
+    assert_eq!(entry_of(&mut card, s, 1).name, Some(a.meta().name()));
 }
 
 fn missing_file<S: Store>(s: &mut S) {

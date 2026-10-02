@@ -98,6 +98,8 @@ pub enum ProjectNote {
     /// SAVE of a project with no file.
     NoFile,
     IsLoaded,
+    /// CLEAR of the loaded project's own file.
+    ClearLoaded,
     NoIds,
     NewProject,
 }
@@ -154,6 +156,7 @@ impl ProjectNote {
             ProjectNote::FileChanged(s) => return naming("CHANGED SINCE ASKED", s),
             ProjectNote::NoFile => l.write_str("NOT SAVED YET"),
             ProjectNote::IsLoaded => l.write_str("CAN NOT DELETE THE LOADED PROJECT"),
+            ProjectNote::ClearLoaded => l.write_str("CAN NOT CLEAR THE LOADED PROJECT"),
             ProjectNote::NoIds => l.write_str("NO PROJECT IDS LEFT"),
             ProjectNote::NewProject => l.write_str("NEW PROJECT"),
         };

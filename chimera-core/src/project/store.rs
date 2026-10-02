@@ -18,7 +18,7 @@ use super::codec::encode_new_project;
 use super::note::{Differ, ProjectNote, Subject};
 use super::{
     Confirmed, DeleteTarget, LoadLink, NEW_PROJECT_NAME, Origin, OverwriteTarget, PartId,
-    PartStatus, Project, ProjectCheck, ProjectDecoder, ProjectFile, ProjectSource, Swap,
+    PartStatus, Project, ProjectCheck, ProjectDecoder, ProjectFile, ProjectSource, Seen, Swap,
     encode_project, part_status, project_crc,
 };
 
@@ -155,8 +155,8 @@ enum Expect {
     Own,
     /// No pair: a `FreshFile`.
     Absent,
-    /// The newest generation a confirmation saw.
-    Newest(Option<Generation>),
+    /// The newest header a confirmation saw.
+    Newest(Seen),
 }
 
 /// `Err` with the file's subject when it moved from `e`.
@@ -172,7 +172,7 @@ fn still<S: Store>(
     let now = peek_entry(s, vol, id)?;
     let held = match (e, now) {
         (Expect::Absent, None) => true,
-        (Expect::Newest(g), Some(n)) => n.generation == g,
+        (Expect::Newest(seen), Some(n)) => Seen::of(&n) == seen,
         _ => false,
     };
     let subject = now
@@ -258,16 +258,19 @@ pub fn save_project<S: Store>(
 
 /// CLEAR: the confirmed file becomes NEW, streamed by
 /// `encode_new_project`, on its card only; `FileChanged` if it moved
-/// since it was listed. The loaded project's own file is allowed, but RAM
-/// isn't touched and still reads `Saved`: clearing your own is a guarded
-/// load of NEW, then `SaveTo::Over`.
+/// since it was listed. The loaded project's own file is refused
+/// (`ClearLoaded`), as RAM would still read `Saved`: clearing your own is
+/// a guarded load of NEW, then `SaveTo::Over`.
 pub fn clear_project<S: Store>(
     card: &mut Card,
     store: &mut S,
-    _loaded: &Project,
+    loaded: &Project,
     c: Confirmed<OverwriteTarget>,
 ) -> Result<(), ProjectNote> {
     let file = c.target().file();
+    if loaded.meta().file() == Some(file) {
+        return Err(ProjectNote::ClearLoaded);
+    }
     write_project(
         card,
         store,

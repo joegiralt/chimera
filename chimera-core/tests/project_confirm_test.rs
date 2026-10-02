@@ -168,25 +168,53 @@ fn overwrite_saves_over_and_becomes_that_file() {
 }
 
 #[test]
-fn fresh_file_taken_since_is_refused() {
+fn clear_of_the_loaded_file_is_refused() {
     let mut s = MemStore::new(1);
     let mut card = Card::new();
-    let first = new_project_id(&mut card, &mut s).unwrap();
-    let second = new_project_id(&mut card, &mut s).unwrap();
-    assert_eq!(first.file(), second.file());
     let (mut a, _) = full();
-    saved(save_project(
-        &mut card,
-        &mut s,
-        &mut a,
-        SaveTo::Fresh(first),
-    ));
-    let (mut b, _) = Project::boxed();
+    let id = save_new(&mut card, &mut s, &mut a);
+    let c = confirm_overwrite(&entry(&mut card, &mut s, id));
+    let got = clear_project(&mut card, &mut s, &a, c);
+    assert_eq!(got, Err(ProjectNote::ClearLoaded));
     assert_eq!(
-        save_project(&mut card, &mut s, &mut b, SaveTo::Fresh(second)),
-        ProjectNote::FileChanged(Subject::Name(name("FULL")))
+        got.unwrap_err().line().as_str(),
+        "CAN NOT CLEAR THE LOADED PROJECT"
     );
-    assert_eq!(b.meta().file(), None);
+    let (q, _) = load(&mut card, &mut s, id);
+    same(&a, &q);
+}
+
+/// A pair deleted and made again at the same id starts at the same
+/// generation: the name tells them apart.
+#[test]
+fn a_file_made_again_at_the_same_id_refuses_a_stale_confirmation() {
+    let mut s = MemStore::new(1);
+    let mut card = Card::new();
+    let (mut foo, _) = Project::boxed();
+    foo.set_name(name("FOO"));
+    let id = save_new(&mut card, &mut s, &mut foo);
+    let e = entry(&mut card, &mut s, id);
+    let (stale_del, stale_over) = (confirm_delete(&e), confirm_overwrite(&e));
+    let (other, _) = Project::boxed();
+    assert_eq!(
+        delete_project(&mut card, &mut s, &other, confirm_delete(&e)),
+        Ok(())
+    );
+    let (mut bar, _) = Project::boxed();
+    bar.set_name(name("BAR"));
+    assert_eq!(save_new(&mut card, &mut s, &mut bar), id, "the same id");
+    assert_eq!(entry(&mut card, &mut s, id).generation, e.generation);
+    let moved = ProjectNote::FileChanged(Subject::Name(name("BAR")));
+    assert_eq!(
+        delete_project(&mut card, &mut s, &other, stale_del),
+        Err(moved)
+    );
+    let (mut c, _) = Project::boxed();
+    assert_eq!(
+        save_project(&mut card, &mut s, &mut c, SaveTo::Over(stale_over)),
+        moved
+    );
+    assert_eq!(entry(&mut card, &mut s, id).name, Some(name("BAR")));
 }
 
 #[test]
