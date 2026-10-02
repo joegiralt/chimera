@@ -29,7 +29,7 @@ use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 
 use super::sweep::{
-    BPS, DC_FROM, LEAK_PEAK, Tape, steady_windows, transient_window, within_ceiling,
+    BPS, DC_FROM, LEAK_PEAK, PRE_BLOCKS, Tape, steady_windows, transient_window, within_ceiling,
 };
 use super::{SR, scope_writer};
 
@@ -390,14 +390,17 @@ pub struct Report {
 }
 
 /// Whether `Tape::click` can judge event block `e`, between the events
-/// `prev` and `next`: its transient is on the tape and holds no note-on
+/// `prev` and `next`: its before window is past the start-up, its
+/// transient is on the tape and holds no note-on
 /// (an attack is legitimate), and one of its steady windows is `STEADY`
 /// blocks long on the tape (an attack just before and the next event just
 /// after leave nothing to judge against).
 pub fn judgeable(t: &Tape, e: usize, (prev, next): (usize, usize), ons: &[usize]) -> bool {
     let end = t.blocks();
     let heard = transient_window(e);
-    if heard.end >= end || ons.iter().any(|&o| o + 1 >= e && o <= heard.end) {
+    // Earlier, the before window would reach into the start-up.
+    if e <= PRE_BLOCKS + 1 || heard.end >= end || ons.iter().any(|&o| o + 1 >= e && o <= heard.end)
+    {
         return false;
     }
     let (pre, post) = steady_windows(e, (prev, next), true);

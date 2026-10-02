@@ -510,12 +510,15 @@ pub fn transient_window(e: usize) -> Range<usize> {
 /// it: the before one starts past the previous event's transient (`prev`),
 /// the after one (only when the sound goes on, `after`) stops short of the
 /// next event (`next`). Either may be empty.
+/// How far back `steady_windows`' before window reaches.
+pub const PRE_BLOCKS: usize = 40;
+
 pub fn steady_windows(
     e: usize,
     (prev, next): (usize, usize),
     after: bool,
 ) -> (Range<usize>, Range<usize>) {
-    let pre = e.saturating_sub(40).max(prev + 6)..e.saturating_sub(1);
+    let pre = e.saturating_sub(PRE_BLOCKS).max(prev + 6)..e.saturating_sub(1);
     let post = if after {
         e + 20..(e + 60).min(next.saturating_sub(1))
     } else {

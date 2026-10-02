@@ -24,8 +24,10 @@ use chimera_core::orbit::scene::{Scene, SceneRing};
 use chimera_core::part::DacPair;
 use chimera_core::part::PartParams;
 use chimera_core::project::PartId;
-use common::orbit::{Mark, OrbitRig, Report, STEADY, orbit_block, report, secs, write_wav};
-use common::sweep::{BPS, Bench, Patch, SILENT_RMS, Tape, level, steady_windows};
+use common::orbit::{Mark, OrbitRig, Report, judgeable, orbit_block, report, secs, write_wav};
+use common::sweep::{
+    BPS, Bench, CLICK_RATIO, Patch, SILENT_RMS, Tape, level, steady_windows, transient_window,
+};
 
 /// Loops of the init scene (one bar each at 120 BPM: 1,500 blocks).
 const LOOP: usize = 1500;
@@ -251,50 +253,84 @@ fn init_scene_across_pairs() {
     assert_clean("init scene across P1–P3", &r);
 }
 
-/// A steal's fade, apart from the attack that causes it. Part 1 (on P1)
-/// holds eight notes, the whole pool; Part 2, routed to P2, plays one. The
-/// voice it takes fades on P1, where nothing starts, so P1 is judged at
-/// the steal; the new note sounds on P2. Once with the victim held, once
-/// with it in its release (a tail, which the allocator takes first).
+/// Part 1 (on P1) holds eight notes, the whole pool, for a second; with
+/// `released`, its 48 is let go 20 blocks before the end. With `steal`,
+/// Part 2 (routed to P2) then plays one note, which takes a voice of Part
+/// 1's. Returns the rig a second on, and the steal's block.
+fn steal_scene(released: bool, steal: bool) -> (OrbitRig, usize) {
+    let mut rig = OrbitRig::new();
+    rig.project.edit_part(PartId::ALL[1]).mix.output = DacPair::P2;
+    for n in [48, 52, 55, 59, 60, 64, 67, 71] {
+        rig.key(0, n, true);
+    }
+    rig.run(secs(1.0));
+    if released {
+        rig.key(0, 48, false);
+        rig.run(20);
+    }
+    let e = rig.blocks();
+    if steal {
+        rig.key(1, 72, true);
+    }
+    rig.run(secs(1.0));
+    (rig, e)
+}
+
+/// A steal's fade, apart from the attack that causes it and from the rest
+/// of the chord. The stealer plays on P2, so P1 holds only the victim's
+/// fade; P1 less the same render without the steal is the victim alone,
+/// fading out where the control's goes on. That difference is judged at
+/// the steal against the victim's own steady state: a hard cut there (the
+/// fade mutated to gain 0) fails both cases, at 6× and 8×. Once with the
+/// victim held, once with it 20 blocks into its release (a tail, which the
+/// allocator takes first).
 #[test]
 fn a_steal_fades_clean_on_its_pair() {
-    let mut judged = 0;
     for released in [false, true] {
-        let mut rig = OrbitRig::new();
-        rig.project.edit_part(PartId::ALL[1]).mix.output = DacPair::P2;
-        for n in [48, 52, 55, 59, 60, 64, 67, 71] {
-            rig.key(0, n, true);
-        }
-        rig.run(secs(1.0));
-        let mut prev = 0;
-        if released {
-            rig.key(0, 48, false);
-            prev = rig.blocks();
-            rig.run(100);
-        }
-        let e = rig.blocks();
-        rig.key(1, 72, true);
-        rig.run(secs(1.0));
         let case = if released { "a tail" } else { "a held note" };
+        let (rig, e) = steal_scene(released, true);
+        let (control, _) = steal_scene(released, false);
         assert!(
             rig.marks.contains(&(e, Mark::Steal)),
             "{case}: Part 2's note stole a voice"
         );
         assert!(rig.tape.peak(1) > 1e-3, "{case}: the new note on P2");
-        let (pre, post) = steady_windows(e, (prev, usize::MAX), true);
-        if pre.len().max(post.len()) >= STEADY {
-            judged += 1;
-        }
-        let click = rig.tape.click(0, e, (prev, usize::MAX), true);
-        assert_eq!(click, None, "{case}: the stolen voice's fade on P1");
+        let mut gone = Tape::default();
+        gone.out[0] = control.tape.out[0]
+            .iter()
+            .zip(&rig.tape.out[0])
+            .map(|(c, s)| c - s)
+            .collect();
+        gone.bus = vec![0.0; rig.tape.bus.len()];
+        let after = gone.rms(0, e + 20, e + 60);
+        assert!(after > 1e-4, "{case}: the victim left P1 ({after:.2e})");
+        let quiet_before = gone.pair(0, 0, e).iter().all(|&x| x == 0.0);
+        assert!(quiet_before, "{case}: the renders agree before the steal");
+        // The difference's only events: the chord's onsets at block 0.
+        assert!(
+            judgeable(&gone, e, (0, usize::MAX), &[0]),
+            "{case}: judgeable"
+        );
+        // `Tape::click`'s ratio without its floor: the difference is the
+        // victim alone, so its own steady state is the scale, however
+        // quiet a tail is.
+        let heard = transient_window(e);
+        let trans = gone.d2(0, heard.start, heard.end);
+        let (_, post) = steady_windows(e, (0, usize::MAX), true);
+        let steady = gone.d2(0, post.start, post.end);
+        println!("{case}: the fade's transient {trans:.2e}, the victim's steady {steady:.2e}");
+        assert!(
+            trans <= CLICK_RATIO * steady,
+            "{case}: the stolen voice's fade clicks on P1, {:.1}× its steady state",
+            trans / steady
+        );
     }
-    assert_eq!(judged, 2, "both steals judged");
 }
 
 // ── The parameter sweep, through a running ORBIT ───────────────────────
 
 /// Floors on the sweep's judged MUTATE boundaries and BPM jumps, about
-/// three quarters of what it judges (277 and 15, 2026-10-03): a change that
+/// three quarters of what it judges (270 and 15, 2026-10-03): a change that
 /// moved them all next to a note-on would leave them unjudged.
 const MUTATE_JUDGED: usize = 200;
 const BPM_JUDGED: usize = 10;
