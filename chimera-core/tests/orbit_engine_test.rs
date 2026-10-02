@@ -220,6 +220,7 @@ fn bpm_sweep_fires_every_step_once() {
         phase: chimera_core::orbit::clock::Phase::ZERO,
     };
     let mut blocks = 0u32;
+    let mut peak = 0;
     while rig.edge < end {
         if blocks.is_multiple_of(7) {
             let up = if rig.edge.bar < 25 {
@@ -228,10 +229,12 @@ fn bpm_sweep_fires_every_step_once() {
                 50 - rig.edge.bar
             };
             rig.set_bpm(60 + (240 * up / 25) as u16);
+            peak = peak.max(60 + (240 * up / 25) as u16);
         }
         rig.block(None);
         blocks += 1;
     }
+    assert_eq!(peak, 300);
     for (i, &steps_i) in n.iter().enumerate() {
         let seen: Vec<(u32, u8)> = rig
             .ons(i)
@@ -298,6 +301,13 @@ fn gate_zero_never_sticks() {
         assert!(is_on(&pair[0].1) && !is_on(&pair[1].1));
         assert!(pair[1].0 > pair[0].0, "an Off in its On's block");
     }
+    // The 96-sample floor, quantised: 64 or 128, both seen.
+    let gaps: HashSet<u64> = ev
+        .chunks(2)
+        .filter(|p| p.len() == 2)
+        .map(|p| p[1].0 - p[0].0)
+        .collect();
+    assert_eq!(gaps, HashSet::from([64, 128]));
     let ons = ev.iter().filter(|(_, e)| is_on(e)).count();
     assert!(ons - (ev.len() - ons) <= 1);
 }
@@ -417,12 +427,12 @@ fn loop_boundary_mutates_after_the_first_loop() {
     let mut snaps = Vec::new();
     while snaps.len() < 52 {
         if rig.block(None).boundary() {
-            snaps.push(rig.scene.rings.map(|r| r.ring));
+            snaps.push(rig.scene.rings.map(|r| (r.ring, r.rhythm_rev, r.notes_rev)));
         }
     }
     for i in 0..RINGS {
         assert_eq!(
-            snaps[0][i], start.rings[i].ring,
+            snaps[0][i].0, start.rings[i].ring,
             "the first boundary is the start"
         );
     }
@@ -430,10 +440,21 @@ fn loop_boundary_mutates_after_the_first_loop() {
         let changed = snaps
             .windows(2)
             .skip(1)
-            .filter(|w| w[0][i] != w[1][i])
+            .filter(|w| w[0][i].0 != w[1][i].0)
             .count();
         assert!(changed >= 40, "ring {i} changed on {changed} of 50");
-        assert!(snaps.iter().all(|w| w[i].hits_mask().hits() == 5));
+        // A nudge bumps rhythm_rev, a swap notes_rev, and nothing else does.
+        for w in snaps.windows(2).skip(1) {
+            let ((a, ar, an), (b, br, bn)) = (w[0][i], w[1][i]);
+            let nudged = a.hits_mask() != b.hits_mask();
+            assert_eq!(br.wrapping_sub(ar), nudged as u8);
+            // A swap may redraw the same note: then only the rev moves.
+            let swapped = bn.wrapping_sub(an);
+            assert!(
+                swapped <= 1 && (!nudged || swapped == 0) && (a == b || nudged || swapped == 1)
+            );
+        }
+        assert!(snaps.iter().all(|w| w[i].0.hits_mask().hits() == 5));
     }
 }
 

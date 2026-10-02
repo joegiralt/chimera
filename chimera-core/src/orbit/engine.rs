@@ -2,12 +2,13 @@
 //! state, the scene and the window it is handed.
 
 use super::chords::{harmony, segment_at};
-use super::clock::{Position, step_at, step_start};
+use super::clock::{Phase, Position, step_at, step_start};
+use super::mutate::{Mutation, mutate};
 use super::ring::Harmony;
 use super::rng::Rng;
 use super::scene::{Scene, Target};
 use super::walk::WalkState;
-use super::{RINGS, RingIdx};
+use super::{MAX_STEPS, RINGS, RingIdx};
 use crate::Velocity;
 use crate::hw::MAX_PARTS;
 use chimera_hal::MidiChannel;
@@ -24,8 +25,8 @@ pub struct PendingOff {
     pub at: u64,
 }
 
-/// A gate is at least this many samples, so an Off never shares a block
-/// with its On.
+/// A gate is at least this many samples: a floor on note length, one or two
+/// blocks once quantised to the block grid.
 const MIN_GATE: u64 = 96;
 
 #[derive(Clone, Copy, Debug)]
@@ -172,14 +173,24 @@ impl Events {
 }
 
 /// Phase units from `base` to `p`.
-fn units(p: Position, base: Position) -> i128 {
-    (((p.bar as i128) - (base.bar as i128)) << 32) + p.phase.get() as i128
-        - base.phase.get() as i128
+fn units(p: Position, base: Position) -> u64 {
+    (((p.bar - base.bar) as u64) << 32)
+        .wrapping_add(p.phase.get() as u64)
+        .wrapping_sub(base.phase.get() as u64)
+}
+
+fn to_ge(span: Span) -> bool {
+    span.to >= span.from
 }
 
 /// Everything ORBIT does for the window `span`: offs due, the loop
 /// boundary, then each ring's step. Steps land by linear interpolation of
 /// the window, which holds under an internal or a leading external clock.
+///
+/// A window is shorter than one step of any ring (clock.rs's const assert
+/// and the runner's advance cap). So a ring plays at most one step, the
+/// events never overflow, and no step before the loop boundary shares the
+/// window with it.
 pub fn block(
     st: &mut OrbitState,
     scene: &mut Scene,
@@ -187,6 +198,7 @@ pub fn block(
     span: Span,
     channels: &[MidiChannel; MAX_PARTS],
 ) -> Events {
+    debug_assert!(to_ge(span) && units(span.to, span.from) < (1 << 32) / MAX_STEPS as u64);
     let mut ev = Events::new();
     let Span { from, to, .. } = span;
 
@@ -201,26 +213,21 @@ pub fn block(
     let bars = scene.chords.bars.get() as u32;
     let line = |b: u32| Position {
         bar: b,
-        phase: super::clock::Phase::ZERO,
+        phase: Phase::ZERO,
     };
     if (from.bar..=to.bar).any(|b| b % bars == 0 && line(b) >= from && line(b) < to) {
         ev.boundary = true;
         if let Some(c) = cue {
             *scene = *c;
             st.restart_dice(scene);
-            st.fresh = true;
             ev.adopted = true;
         } else if !st.fresh {
             let h = harmony(&scene.chords, 0);
             for (i, sr) in scene.rings.iter_mut().enumerate() {
-                if let Some(m) = super::mutate::mutate(&sr.ring, &h, &mut st.rngs[i]) {
+                if let Some(m) = mutate(&sr.ring, &h, &mut st.rngs[i]) {
                     match m {
-                        super::mutate::Mutation::Swap { .. } => {
-                            sr.notes_rev = sr.notes_rev.wrapping_add(1)
-                        }
-                        super::mutate::Mutation::Nudge { .. } => {
-                            sr.rhythm_rev = sr.rhythm_rev.wrapping_add(1)
-                        }
+                        Mutation::Swap { .. } => sr.notes_rev = sr.notes_rev.wrapping_add(1),
+                        Mutation::Nudge { .. } => sr.rhythm_rev = sr.rhythm_rev.wrapping_add(1),
                     }
                     sr.ring = sr.ring.apply(m);
                 }
@@ -230,7 +237,7 @@ pub fn block(
     }
 
     let total = units(to, from).max(1);
-    let elapsed = span.to_sample.saturating_sub(span.from_sample) as i128;
+    let elapsed = span.to_sample.saturating_sub(span.from_sample);
     for r in RingIdx::ALL {
         let i = r.get() as usize;
         let ring = &scene.rings[i].ring;
@@ -260,7 +267,7 @@ pub fn block(
                 }
                 let Target::Part(part) = scene.rings[i].target;
                 let channel = channels[part.index()];
-                let sample = span.from_sample + (units(at, from) * elapsed / total) as u64;
+                let sample = span.from_sample + units(at, from) * elapsed / total;
                 let step_len = span.bar_len as u64 / n.get() as u64;
                 let gate = step_len * out.gate_fraction.get() as u64 / 100;
                 st.pending[i] = Some(PendingOff {

@@ -135,7 +135,8 @@ impl Scene {
 
     /// Nothing sounds: every ring muted, C major, one chord.
     pub const fn neutral() -> Scene {
-        let mut r = ring(1, 1, 0, 4);
+        let oct = some(Octave::new(4));
+        let mut r = Ring::new(some(Fill::new(some(Steps::new(1)), 1, 0)), oct);
         r.mute = true;
         Scene {
             chords: ChordRing::NEUTRAL,
