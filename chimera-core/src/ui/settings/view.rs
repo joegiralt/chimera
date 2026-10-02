@@ -609,7 +609,7 @@ impl PartBand {
     /// A PART row's look: RELOAD from the offer, the rest from the tree.
     fn look(&self, kind: Kind) -> RowLook {
         match kind {
-            Kind::Act(a) => a.part_cmd().map_or(RowLook::Normal, |c| self.offer.look(c)),
+            Kind::Act(a) if let Some(c) = a.part_cmd() => self.offer.look(c),
             k => RowLook::of(k),
         }
     }

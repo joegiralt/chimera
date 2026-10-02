@@ -182,7 +182,16 @@ fn update_applies_only_what_it_showed() {
     tap(&mut ui, ButtonId::Seq);
     assert_eq!(question(&ui), "P4 ALSO USES SLOT 03");
     let p5 = crc(&ui, P[4]);
-    edit(&mut ui, P[3]); // while the prompt is open
+    // While the prompt is open, and not to the sound P1 saved.
+    let r = &mut ui
+        .project_mut()
+        .edit_part(P[3])
+        .sound
+        .params
+        .filter
+        .resonance;
+    *r = if *r > 0.5 { 0.1 } else { 0.9 };
+    assert_eq!(status(&ui, P[3]), PartStatus::Edited);
     let p4 = crc(&ui, P[3]);
     answer(&mut ui, 0); // UPDATE P4
     assert_eq!(crc(&ui, P[3]), p4, "edited since: refused");
