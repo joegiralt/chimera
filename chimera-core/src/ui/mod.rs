@@ -74,7 +74,7 @@ use settings::naming::Naming;
 use settings::part::{Offer, PartCmd, SAVE_ROWS, slot_of};
 use settings::prompt;
 use settings::prompt::ReplaceTo;
-use settings::replace::{Asked, Guarded, PartAsk, ProjectAsk, Reply};
+use settings::replace::{Asked, Guarded, PartAsk, ProjectAsk, Reply, said};
 use settings::view::PartBand;
 use settings::{
     Act, Answered, Ask, Done, Modal, ModalStep, NamingFor, PART_ROW, SaveAs, Screen, screen_path,
@@ -1161,9 +1161,9 @@ impl UiState {
 
     /// A cancel drops what the prompt held.
     fn done(&mut self, d: Done) {
+        use project::{DeleteTarget, OverwriteTarget};
         use prompt::{
-            AlsoUsesAnswer as U, CardChangedAnswer as CC, ClearAnswer as C, DeleteAnswer as D,
-            NameExistsAnswer as N, SaveOverAnswer as SO,
+            AlsoUsesAnswer as U, CardChangedAnswer as CC, ClearAnswer as C, NameExistsAnswer as N,
         };
         let Done::Answered(a) = d else {
             return self.named(d);
@@ -1221,12 +1221,12 @@ impl UiState {
                 Reply::Cancel => {}
             },
             Answered::NameExists(save, entry, a) => {
-                let to = match a.picked() {
-                    Some(N::KeepBoth) => SaveTo::Fresh(save.fresh),
-                    Some(N::Overwrite) => {
-                        SaveTo::Over(Confirmed::<project::OverwriteTarget>::answered(&entry))
+                let to = match (said(a), a.picked()) {
+                    (Some(yes), _) => {
+                        SaveTo::Over(Confirmed::<OverwriteTarget>::answered(&entry, yes))
                     }
-                    None => return,
+                    (None, Some(N::KeepBoth)) => SaveTo::Fresh(save.fresh),
+                    (None, _) => return,
                 };
                 self.queue(Job::Save(to, save.name, save.then));
             }
@@ -1236,21 +1236,23 @@ impl UiState {
                 }
             }
             Answered::Delete(c, a) => {
-                if a.picked() == Some(D::Delete) {
-                    let go = Confirmed::<project::DeleteTarget>::answered(c.entry());
-                    self.queue(Job::Delete(go))
+                if let Some(yes) = said(a) {
+                    self.queue(Job::Delete(Confirmed::<DeleteTarget>::answered(
+                        c.entry(),
+                        yes,
+                    )))
                 }
             }
             Answered::SaveOver(c, a) => {
-                if a.picked() == Some(SO::SaveOver) {
-                    let over = Confirmed::<project::OverwriteTarget>::answered(c.entry());
+                if let Some(yes) = said(a) {
+                    let over = Confirmed::<OverwriteTarget>::answered(c.entry(), yes);
                     let name = self.project.meta().name();
                     self.queue(Job::Save(SaveTo::Over(over), name, None))
                 }
             }
             Answered::Clear(c, a) => {
-                if a.picked() == Some(C::Clear) {
-                    let over = Confirmed::<project::OverwriteTarget>::answered(c.entry());
+                if let Some(yes) = said(a) {
+                    let over = Confirmed::<OverwriteTarget>::answered(c.entry(), yes);
                     match Whose::of(c.entry(), self.project.meta().file()) {
                         Whose::Other => self.queue(Job::Clear(over)),
                         Whose::Loaded => self.guarded_load(ProjectSource::New, None, Some(over)),

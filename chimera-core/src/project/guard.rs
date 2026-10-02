@@ -275,7 +275,9 @@ impl ReplaceGuard {
 /// }
 /// ```
 ///
-/// ```compile_fail,E0624
+/// and only a prompt's yes confirms one:
+///
+/// ```compile_fail,E0061
 /// use chimera_core::project::{Confirmed, OverwriteTarget, ProjectEntry};
 /// fn forge(e: &ProjectEntry) -> Confirmed<OverwriteTarget> {
 ///     Confirmed::<OverwriteTarget>::answered(e)
@@ -286,9 +288,10 @@ pub struct OverwriteTarget {
     file: ProjectFile,
 }
 
-/// A file DELETE removes. Only `answered` confirms one:
+/// A file DELETE removes. Only `answered` confirms one, with a prompt's
+/// yes:
 ///
-/// ```compile_fail,E0624
+/// ```compile_fail,E0061
 /// use chimera_core::project::{Confirmed, DeleteTarget, ProjectEntry};
 /// fn forge(e: &ProjectEntry) -> Confirmed<DeleteTarget> {
 ///     Confirmed::<DeleteTarget>::answered(e)
@@ -338,22 +341,29 @@ impl Witnessed for DeleteTarget {
     type Witness = Seen;
 }
 
-impl Confirmed<OverwriteTarget> {
-    /// SAVE OVER or CLEAR answered on the listed `e`.
-    pub(crate) fn answered(e: &ProjectEntry) -> Self {
-        Confirmed {
-            target: OverwriteTarget { file: e.file() },
-            witness: Seen::of(e),
-        }
-    }
+macro_rules! answered {
+    ($($t:ident: $what:literal),+) => {
+        $(impl Confirmed<$t> {
+            #[doc = concat!($what, " answered on the listed `e`: only a prompt's")]
+            /// confirming pill holds a `Said`.
+            pub fn answered(e: &ProjectEntry, _: Said) -> Self {
+                Self::listed(e)
+            }
+
+            /// Confirmed without a prompt: tests only.
+            #[cfg(any(test, feature = "test-support"))]
+            pub(crate) fn unasked(e: &ProjectEntry) -> Self {
+                Self::listed(e)
+            }
+
+            fn listed(e: &ProjectEntry) -> Self {
+                Confirmed {
+                    target: $t { file: e.file() },
+                    witness: Seen::of(e),
+                }
+            }
+        })+
+    };
 }
 
-impl Confirmed<DeleteTarget> {
-    /// DELETE answered on the listed `e`.
-    pub(crate) fn answered(e: &ProjectEntry) -> Self {
-        Confirmed {
-            target: DeleteTarget { file: e.file() },
-            witness: Seen::of(e),
-        }
-    }
-}
+answered!(OverwriteTarget: "SAVE OVER, CLEAR or OVERWRITE THAT ONE", DeleteTarget: "DELETE");

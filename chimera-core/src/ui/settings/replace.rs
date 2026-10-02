@@ -1,6 +1,7 @@
 //! A replace waiting on its prompt (#258): the prompt's `Pending` and its
 //! `Choice` together, so only a SEQ tap on the confirming pill makes the
-//! `Confirmed`. Nothing else holds a `Said`:
+//! `Confirmed`. DELETE, CLEAR, SAVE OVER and OVERWRITE THAT ONE confirm
+//! through `said` the same way. Nothing else holds a `Said`:
 //!
 //! ```compile_fail,E0423
 //! use chimera_core::ui::settings::replace::said::Said;
@@ -25,28 +26,55 @@ use crate::project::{
 };
 use crate::ui::hold::Presses;
 
-use super::prompt::{Answers, Choice, LoadAnswer, ReloadAnswer, ReplaceAnswer};
+use super::prompt::{
+    Answer, Answers, Choice, ClearAnswer, DeleteAnswer, LoadAnswer, NameExistsAnswer, ReloadAnswer,
+    ReplaceAnswer, SaveOverAnswer,
+};
 use said::Said;
 
-/// A prompt that guards a replace: which pill confirms it, which saves first.
-pub trait Guarded: Answers {
+/// A prompt with a pill that commits what it asked about.
+pub trait Commits: Answers {
     const CONFIRM: Self;
+}
+
+/// A prompt that guards a replace: its confirming pill, and which saves first.
+pub trait Guarded: Commits {
     const SAVE_FIRST: Self;
 }
 
+macro_rules! commits {
+    ($($a:ident => $v:ident),+ $(,)?) => {
+        $(impl Commits for $a {
+            const CONFIRM: Self = $a::$v;
+        })+
+    };
+}
+
+commits!(
+    ReplaceAnswer => Replace,
+    ReloadAnswer => Reload,
+    LoadAnswer => LoadAnyway,
+    DeleteAnswer => Delete,
+    ClearAnswer => Clear,
+    SaveOverAnswer => SaveOver,
+    NameExistsAnswer => Overwrite,
+);
+
 impl Guarded for ReplaceAnswer {
-    const CONFIRM: Self = ReplaceAnswer::Replace;
     const SAVE_FIRST: Self = ReplaceAnswer::SavePartFirst;
 }
 
 impl Guarded for ReloadAnswer {
-    const CONFIRM: Self = ReloadAnswer::Reload;
     const SAVE_FIRST: Self = ReloadAnswer::SavePartFirst;
 }
 
 impl Guarded for LoadAnswer {
-    const CONFIRM: Self = LoadAnswer::LoadAnyway;
     const SAVE_FIRST: Self = LoadAnswer::SaveThenLoad;
+}
+
+/// The yes in `a`, if SEQ took the confirming pill.
+pub fn said<A: Commits>(a: Answer<A>) -> Option<Said> {
+    (a.picked() == Some(A::CONFIRM)).then(Said::new)
 }
 
 /// A replace the guard asked about, and its prompt's pick.
@@ -99,10 +127,10 @@ impl<R: Target, A: Guarded> Asked<R, A> {
         let Some(a) = self.choice.input(c, p) else {
             return Err(self);
         };
+        if let Some(yes) = said(a) {
+            return Ok(Reply::Confirmed(self.pending.confirm(project, yes)));
+        }
         Ok(match a.picked() {
-            Some(x) if x == A::CONFIRM => {
-                Reply::Confirmed(self.pending.confirm(project, Said::new()))
-            }
             Some(x) if x == A::SAVE_FIRST => Reply::SaveFirst(Asked {
                 choice: Choice::new(),
                 ..self

@@ -51,12 +51,12 @@ pub fn confirm_delete_of<S: Store>(s: &mut S, f: ProjectFile) -> Confirmed<Delet
 
 /// SAVE OVER or CLEAR answered on `e`, as the SETTINGS prompt answers it.
 pub fn confirm_overwrite(e: &ProjectEntry) -> Confirmed<OverwriteTarget> {
-    Confirmed::<OverwriteTarget>::answered(e)
+    Confirmed::<OverwriteTarget>::unasked(e)
 }
 
 /// DELETE answered on `e`.
 pub fn confirm_delete(e: &ProjectEntry) -> Confirmed<DeleteTarget> {
-    Confirmed::<DeleteTarget>::answered(e)
+    Confirmed::<DeleteTarget>::unasked(e)
 }
 
 /// NEW with every slot filled: the factory Sounds and INIT, then edited
