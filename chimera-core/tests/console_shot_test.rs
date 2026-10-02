@@ -131,6 +131,16 @@ fn shot_raw_ignores_the_palette() {
 #[test]
 fn a_stall_mid_shot_stops_without_a_terminal_line() {
     let fb = fb();
+    let mut full = Sink(Vec::new());
+    write_shot(
+        Frame {
+            fb: &fb,
+            palette: Palette::IDENTITY,
+        },
+        Colours::Theme,
+        &mut full,
+    )
+    .unwrap();
     for left in [
         0,
         10,
@@ -155,6 +165,7 @@ fn a_stall_mid_shot_stops_without_a_terminal_line() {
         );
         assert_eq!(r, Err(Stalled), "left {left}");
         assert!(!s.got.ends_with(b"OK\n"), "left {left}");
+        assert!(full.0.starts_with(&s.got), "left {left}");
         assert_eq!(s.after, 0, "nothing is put after a stall (left {left})");
     }
 }

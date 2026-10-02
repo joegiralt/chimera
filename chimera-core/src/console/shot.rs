@@ -74,16 +74,17 @@ const fn header_is(h: &[u8], w: usize, ht: usize, bytes: usize) -> bool {
 const _: () = assert!(header_is(SHOT_HEADER.as_bytes(), W, H, FB_SIZE * 2));
 
 /// The header, the body row by row (one 480-byte row on the stack at a time), then `OK`.
+/// On `Stalled` the answer stops where it is: no `OK`, no `ERR`; the host sees no terminal line.
 pub fn write_shot(f: Frame<'_>, c: Colours, out: &mut impl Out) -> Result<(), Stalled> {
     out.put(SHOT_HEADER.as_bytes())?;
+    let pal = match c {
+        Colours::Theme => f.palette,
+        Colours::Raw => Palette::IDENTITY,
+    };
     let mut row = [[0u8; 2]; W];
     for src in f.fb.as_chunks::<W>().0 {
         for (dst, &px) in row.iter_mut().zip(src) {
-            *dst = match c {
-                Colours::Theme => f.palette.map_raw(px),
-                Colours::Raw => px,
-            }
-            .to_be_bytes();
+            *dst = pal.map_raw(px).to_be_bytes();
         }
         out.put(row.as_flattened())?;
     }
