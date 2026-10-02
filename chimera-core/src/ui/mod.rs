@@ -61,12 +61,15 @@ use block_def::slot_addr;
 use components::Head;
 use hold::{HoldGates, Press};
 use mod_grid::MatrixState;
-use nav::{Browse, ListAt, Location, NavCtx, NavKey, Recall, Step, chain_def_for};
+use nav::{
+    Browse, Column, ListAt, Location, NavCtx, NavKey, Recall, SettingsAt, Step, chain_def_for,
+};
 use page::{PageKey, PageLayout};
 use perf::PerfStats;
 use renderer::Renderer;
-use settings::job::{CardCx, Job, LoadAfter, SAVE_AS_LIST};
+use settings::job::{CardCx, Job, LoadAfter, SAVE_AS_LIST, ThenClear, load_job};
 use settings::listing::{Listing, LoadRow, Pick, refusal};
+use settings::manage::{Command, Run, Whose};
 use settings::naming::Naming;
 use settings::prompt::{self, Answer};
 use settings::{Act, Answered, Ask, Done, Modal, ModalStep, NamingFor, SaveAs, Screen};
@@ -110,7 +113,7 @@ pub static NO_PAGE: BlockDef = BlockDef {
 /// No page has it: `focus` keeps no slot for it.
 pub const NO_PAGE_ID: u16 = u16::MAX;
 
-/// The SETTINGS rows and keys not wired yet (Tasks 11–13).
+/// The SETTINGS rows and keys not wired yet (Task 13).
 const NOT_YET: &str = "NOT YET";
 
 /// The outcome of the last MIX+PLUS attempt on a parameter page, shown in
@@ -1005,12 +1008,23 @@ impl UiState {
                 })
             }
             Done::Answered(Answered::ReplacePart(_, Answer::Pick(R::Cancel) | Answer::Cancel)) => {}
-            Done::Answered(Answered::LoadProject(p, to, a)) => {
+            Done::Answered(Answered::LoadProject {
+                pending: p,
+                to,
+                clear,
+                answer,
+            }) => {
                 use prompt::LoadAnswer as L;
-                match a {
-                    Answer::Pick(L::LoadAnyway) => self.queue(Job::Load(p.anyway(&self.project))),
+                match answer {
+                    Answer::Pick(L::LoadAnyway) => {
+                        self.queue(load_job(p.anyway(&self.project), clear))
+                    }
                     Answer::Pick(L::SaveThenLoad) => {
-                        let then = Some(LoadAfter { pending: p, to });
+                        let then = Some(LoadAfter {
+                            pending: p,
+                            to,
+                            clear,
+                        });
                         self.queue(match self.project.meta().file() {
                             Some(_) => Job::QuickSave(then),
                             None => Job::Fresh(then),
@@ -1034,6 +1048,27 @@ impl UiState {
                 if a == Answer::Pick(prompt::CardChangedAnswer::SaveAs) {
                     self.queue(Job::Fresh(then));
                 }
+            }
+            Done::Answered(Answered::Delete(c, Answer::Pick(prompt::DeleteAnswer::Delete))) => self
+                .queue(Job::Delete(Confirmed::<project::DeleteTarget>::answered(
+                    c.entry(),
+                ))),
+            Done::Answered(Answered::SaveOver(
+                c,
+                Answer::Pick(prompt::SaveOverAnswer::SaveOver),
+            )) => {
+                let over = Confirmed::<project::OverwriteTarget>::answered(c.entry());
+                let name = self.project.meta().name();
+                self.queue(Job::Save(SaveTo::Over(over), name, None))
+            }
+            Done::Answered(Answered::Clear(c, w, Answer::Pick(prompt::ClearAnswer::Clear))) => {
+                let over = Confirmed::<project::OverwriteTarget>::answered(c.entry());
+                match w {
+                    Whose::Other => self.queue(Job::Clear(over)),
+                    Whose::Loaded => self.guarded_load(ProjectSource::New, None, Some(over)),
+                }
+            }
+            Done::Answered(Answered::Delete(..) | Answered::SaveOver(..) | Answered::Clear(..)) => {
             }
             Done::Named(NamingFor::RenameLoaded, name) => self.project.set_name(name),
             Done::Named(NamingFor::RenamePart(part), name) => {
@@ -1064,37 +1099,76 @@ impl UiState {
         }
     }
 
-    /// SEQ on LOAD PROJECT's row `row`: through the guard, or its prompt.
+    /// SEQ on LOAD PROJECT's row `row`.
     fn run_load(&mut self, row: u8) {
-        let (src, to) = match self.listing.load_pick(row as usize) {
-            Some(Pick::Entry(e)) => {
-                if let Some(n) = refusal(&e) {
-                    return self.show_note(n);
-                }
-                (
-                    ProjectSource::File {
-                        id: e.id,
-                        vol: e.vol,
-                    },
-                    e.name,
-                )
-            }
-            Some(Pick::CreateNew) => (ProjectSource::New, None),
-            Some(Pick::Retry) => return self.queue(Job::List(Screen::LoadProject)),
-            Some(Pick::Inert) | None => return,
+        match self.listing.load_pick(row as usize) {
+            Some(Pick::Entry(e)) => self.load_entry(&e),
+            Some(Pick::CreateNew) => self.guarded_load(ProjectSource::New, None, None),
+            Some(Pick::Retry) => self.queue(Job::List(Screen::LoadProject)),
+            Some(Pick::Inert) | None => {}
+        }
+    }
+
+    /// A listed file's load; an errored one says why.
+    fn load_entry(&mut self, e: &project::ProjectEntry) {
+        if let Some(n) = refusal(e) {
+            return self.show_note(n);
+        }
+        let src = ProjectSource::File {
+            id: e.id,
+            vol: e.vol,
         };
+        self.guarded_load(src, e.name, None)
+    }
+
+    /// `src` through the guard, or its prompt; `clear` follows the load.
+    fn guarded_load(&mut self, src: ProjectSource, to: Option<ProjectName>, clear: ThenClear) {
         match ReplaceGuard::check(&self.project, self.template, src) {
-            Ok(c) => self.queue(Job::Load(c)),
+            Ok(c) => self.queue(load_job(c, clear)),
             Err(n) => {
                 let current = self.project.meta().name();
                 self.ask(Ask::LoadProject {
                     pending: n.into_pending(),
                     to,
                     current,
+                    clear,
                     choice: prompt::Choice::new(),
                 })
             }
         }
+    }
+
+    /// SEQ on MANAGE's command column: the command the table lets run on
+    /// the listed project under the bar.
+    fn run_manage(&mut self, s: SettingsAt) {
+        let Some(Column::Command(i)) = s.column() else {
+            return;
+        };
+        let (Some(cmd), Some(c)) = (Command::at(i), self.listing.chosen(s.row() as usize)) else {
+            return;
+        };
+        let w = Whose::of(c.entry(), self.project.meta().file());
+        match cmd.on(w) {
+            Ok(Run::Load) => self.load_entry(c.entry()),
+            Ok(Run::SaveOver) => self.ask(Ask::SaveOver(c, prompt::Choice::new())),
+            Ok(Run::RenameLoaded) => {
+                if let Some(at) = s.list() {
+                    let n = self.project.meta().name();
+                    self.name(at, NamingFor::RenameLoaded, n.as_str());
+                }
+            }
+            Ok(Run::Clear(w)) => self.ask(Ask::Clear(c, w, prompt::Choice::new())),
+            Ok(Run::Delete) => self.ask(Ask::Delete(c, prompt::Choice::new())),
+            Err(_) => {}
+        }
+    }
+
+    /// MANAGE's command `c` as drawn for the project under the bar.
+    pub fn manage_command_row(&self, c: Command) -> Option<settings::view::ListRow<'static>> {
+        let s = self.loc.settings()?;
+        s.column()?;
+        let e = self.listing.entry(s.row() as usize);
+        Some(c.row(e.map(|e| Whose::of(&e, self.project.meta().file()))))
     }
 
     /// Process one frame of input: navigation + encoder deltas.
@@ -1134,9 +1208,16 @@ impl UiState {
             match self.loc.step(k, &cx, &mut self.recall) {
                 Step::Go(to) => self.go(to),
                 Step::Act(Act::SaveProjectAs) => self.queue(Job::Fresh(None)),
-                Step::Screen(Screen::LoadProject) => self.queue(Job::List(Screen::LoadProject)),
+                Step::Screen(s @ (Screen::LoadProject | Screen::ManageProjects)) => {
+                    self.queue(Job::List(s))
+                }
                 Step::Run if self.screen() == Some(Screen::LoadProject) => {
                     self.run_load(at.map_or(0, |s| s.row()))
+                }
+                Step::Run if self.screen() == Some(Screen::ManageProjects) => {
+                    if let Some(s) = at {
+                        self.run_manage(s)
+                    }
                 }
                 Step::Act(_) | Step::Screen(_) | Step::Run => self.toast.show(busy::Toast {
                     text: Line::new(NOT_YET),

@@ -3,30 +3,35 @@
 pub(crate) mod job;
 pub mod leaves;
 pub mod listing;
+pub mod manage;
 pub mod naming;
 pub mod prompt;
 pub mod tree;
 pub mod view;
 
 pub use job::CardCx;
+pub use manage::MANAGE_COMMANDS;
 pub use tree::{
-    Act, Issue, Kind, MANAGE_COMMANDS, PART_ROW, ROOT, Row, SAVE_AS_AT, Screen, issue, kind_at,
-    path_of, row_at, rows, screen_path,
+    Act, Issue, Kind, PART_ROW, ROOT, Row, SAVE_AS_AT, Screen, issue, kind_at, path_of, row_at,
+    rows, screen_path,
 };
 
 use chimera_hal::Controls;
 
 use crate::name::{Name, ProjectName};
 use crate::project::{
-    FreshFile, PartFrom, PartId, PartSource, Pending, ProjectEntry, ProjectSource,
+    FreshFile, PartFrom, PartId, PartSource, Pending, ProjectEntry, ProjectSource, Subject,
 };
 use crate::ui::hold::Presses;
 use crate::ui::region::settings_key;
-use job::Then;
+use job::{Then, ThenClear};
+use listing::Chosen;
+use manage::Whose;
 use naming::{NAME_MAX, Naming, NamingOut};
 use prompt::{
-    Answer, CardChanged, CardChangedAnswer, Choice, Load, LoadAnswer, NameExists, NameExistsAnswer,
-    PromptView, Replace, ReplaceAnswer, with_view,
+    Answer, CardChanged, CardChangedAnswer, Choice, Clear, ClearAnswer, Delete, DeleteAnswer, Load,
+    LoadAnswer, NameExists, NameExistsAnswer, PromptView, Replace, ReplaceAnswer, SaveOver,
+    SaveOverAnswer, with_view,
 };
 
 /// SAVE PROJECT AS, named: the file it goes to and the load it is inside.
@@ -45,11 +50,13 @@ pub(crate) enum Ask {
         expect(dead_code, reason = "the PART branch, Task 13")
     )]
     ReplacePart(Pending<PartSource>, Choice<ReplaceAnswer>),
-    /// LOAD over a Modified project; `to` names the file, `None` is NEW.
+    /// LOAD over a Modified project; `to` names the file, `None` is NEW,
+    /// and `clear` is CLEAR's save of NEW over the project's own file.
     LoadProject {
         pending: Pending<ProjectSource>,
         to: Option<ProjectName>,
         current: ProjectName,
+        clear: ThenClear,
         choice: Choice<LoadAnswer>,
     },
     /// SAVE AS to a name `entry` already has.
@@ -61,19 +68,35 @@ pub(crate) enum Ask {
     /// A save refused: another card is in the slot. SAVE AS saves there,
     /// still inside the load `Then` holds.
     CardChanged(Then, Choice<CardChangedAnswer>),
+    /// MANAGE's DELETE.
+    Delete(Chosen, Choice<DeleteAnswer>),
+    /// MANAGE's CLEAR, of the loaded project's own file or another's.
+    Clear(Chosen, Whose, Choice<ClearAnswer>),
+    /// MANAGE's SAVE TO.
+    SaveOver(Chosen, Choice<SaveOverAnswer>),
+}
+
+/// A listed project as its prompt names it.
+fn subject(c: &Chosen) -> Subject {
+    let e = c.entry();
+    e.name.map_or(Subject::File(e.id), Subject::Name)
 }
 
 /// A prompt's answer, with what it held.
 #[derive(Debug)]
 pub(crate) enum Answered {
     ReplacePart(Pending<PartSource>, Answer<ReplaceAnswer>),
-    LoadProject(
-        Pending<ProjectSource>,
-        Option<ProjectName>,
-        Answer<LoadAnswer>,
-    ),
+    LoadProject {
+        pending: Pending<ProjectSource>,
+        to: Option<ProjectName>,
+        clear: ThenClear,
+        answer: Answer<LoadAnswer>,
+    },
     NameExists(SaveAs, ProjectEntry, Answer<NameExistsAnswer>),
     CardChanged(Then, Answer<CardChangedAnswer>),
+    Delete(Chosen, Answer<DeleteAnswer>),
+    Clear(Chosen, Whose, Answer<ClearAnswer>),
+    SaveOver(Chosen, Answer<SaveOverAnswer>),
 }
 
 /// A prompt after a frame's keys.
@@ -124,6 +147,9 @@ impl Ask {
                 f,
             ),
             Ask::CardChanged(_, c) => with_view(&CardChanged, c, f),
+            Ask::Delete(e, c) => with_view(&Delete { name: subject(e) }, c, f),
+            Ask::Clear(e, _, c) => with_view(&Clear { name: subject(e) }, c, f),
+            Ask::SaveOver(e, c) => with_view(&SaveOver { name: subject(e) }, c, f),
         }
     }
 
@@ -157,13 +183,20 @@ impl Ask {
                 pending,
                 to,
                 current,
+                clear,
                 mut choice,
             } => match choice.input(c, p) {
-                Some(a) => Got(Answered::LoadProject(pending, to, a)),
+                Some(answer) => Got(Answered::LoadProject {
+                    pending,
+                    to,
+                    clear,
+                    answer,
+                }),
                 None => Open(Ask::LoadProject {
                     pending,
                     to,
                     current,
+                    clear,
                     choice,
                 }),
             },
@@ -183,6 +216,18 @@ impl Ask {
                 Some(a) => Got(Answered::CardChanged(then, a)),
                 None => Open(Ask::CardChanged(then, choice)),
             },
+            Ask::Delete(e, mut choice) => match choice.input(c, p) {
+                Some(a) => Got(Answered::Delete(e, a)),
+                None => Open(Ask::Delete(e, choice)),
+            },
+            Ask::Clear(e, w, mut choice) => match choice.input(c, p) {
+                Some(a) => Got(Answered::Clear(e, w, a)),
+                None => Open(Ask::Clear(e, w, choice)),
+            },
+            Ask::SaveOver(e, mut choice) => match choice.input(c, p) {
+                Some(a) => Got(Answered::SaveOver(e, a)),
+                None => Open(Ask::SaveOver(e, choice)),
+            },
         }
     }
 }
@@ -190,14 +235,10 @@ impl Ask {
 /// Whose name NAMING edits.
 #[derive(Debug)]
 pub(crate) enum NamingFor {
-    #[cfg_attr(
-        not(any(test, feature = "test-support")),
-        expect(dead_code, reason = "RENAME, Tasks 12 and 13")
-    )]
     RenameLoaded,
     #[cfg_attr(
         not(any(test, feature = "test-support")),
-        expect(dead_code, reason = "RENAME, Tasks 12 and 13")
+        expect(dead_code, reason = "RENAME, Task 13")
     )]
     RenamePart(PartId),
     /// SAVE PROJECT AS to a file no pair had, inside a load or not.

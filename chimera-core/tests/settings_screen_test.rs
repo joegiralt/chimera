@@ -5,10 +5,11 @@ use chimera_core::project::PartId;
 use chimera_core::ui::page::PageLayout;
 use chimera_core::ui::region::{RegionKind, settings_regions};
 use chimera_core::ui::settings::PART_ROW;
+use chimera_core::ui::settings::manage::Note;
 use chimera_core::ui::settings::view::{Crumbs, LegendFor, VISIBLE_ROWS, first_visible, legend};
 use chimera_core::ui::{draw, theme};
 
-const ALL_LEGENDS: [LegendFor; 8] = [
+const ALL_LEGENDS: [LegendFor; 11] = [
     LegendFor::Opens,
     LegendFor::Action,
     LegendFor::Later,
@@ -17,6 +18,9 @@ const ALL_LEGENDS: [LegendFor; 8] = [
     LegendFor::Naming,
     LegendFor::ManageList,
     LegendFor::ManageCommands,
+    LegendFor::ManageDimmed(None),
+    LegendFor::ManageDimmed(Some(Note::LoadToRename)),
+    LegendFor::ManageLater,
 ];
 
 #[test]
@@ -45,6 +49,12 @@ fn legends_read_as_the_spec_says() {
         (LegendFor::Naming, "SEQ SAVE · MENU CANCEL"),
         (LegendFor::ManageList, "EDIT COMMANDS · MENU BACK"),
         (LegendFor::ManageCommands, "SEQ RUN · MENU LIST"),
+        (LegendFor::ManageDimmed(None), "MENU LIST"),
+        (
+            LegendFor::ManageDimmed(Some(Note::LoadToRename)),
+            "LOAD TO RENAME · MENU LIST",
+        ),
+        (LegendFor::ManageLater, "LATER · MENU LIST"),
     ] {
         assert_eq!(copy(l), [s, s], "{l:?}");
     }

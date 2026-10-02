@@ -12,7 +12,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use u8g2_fonts::FontRenderer;
 
 use crate::name::ProjectName;
-use crate::project::{Line, PartId, PartSet, SlotId};
+use crate::project::{Line, PartId, PartSet, SlotId, Subject};
 use crate::storage::ProjectId;
 use crate::ui::components::upper;
 use crate::ui::draw;
@@ -189,6 +189,13 @@ fn name(n: ProjectName) -> crate::ui::fmt::FmtBuf {
     upper(n.as_str())
 }
 
+/// A listed project: its name, or its file's when it has none.
+fn subject(s: Subject) -> crate::ui::fmt::FmtBuf {
+    let mut l = Line::new("");
+    let _ = write!(l, "{s}");
+    upper(l.as_str())
+}
+
 fn part(p: PartId) -> usize {
     p.index() + 1
 }
@@ -286,37 +293,37 @@ impl Prompt for NameExists {
 }
 
 pub struct Delete {
-    pub name: ProjectName,
+    pub name: Subject,
 }
 
 impl Prompt for Delete {
     type Answer = DeleteAnswer;
     fn words(&self, q: &mut Line, r: &mut Line) {
-        let _ = write!(q, "DELETE {}?", name(self.name).as_str());
+        let _ = write!(q, "DELETE {}?", subject(self.name).as_str());
         let _ = r.write_str("THIS CANNOT BE UNDONE");
     }
 }
 
 pub struct Clear {
-    pub name: ProjectName,
+    pub name: Subject,
 }
 
 impl Prompt for Clear {
     type Answer = ClearAnswer;
     fn words(&self, q: &mut Line, r: &mut Line) {
-        let _ = write!(q, "CLEAR {}?", name(self.name).as_str());
+        let _ = write!(q, "CLEAR {}?", subject(self.name).as_str());
         let _ = r.write_str("IT BECOMES A NEW PROJECT");
     }
 }
 
 pub struct SaveOver {
-    pub name: ProjectName,
+    pub name: Subject,
 }
 
 impl Prompt for SaveOver {
     type Answer = SaveOverAnswer;
     fn words(&self, q: &mut Line, r: &mut Line) {
-        let _ = write!(q, "SAVE OVER {}?", name(self.name).as_str());
+        let _ = write!(q, "SAVE OVER {}?", subject(self.name).as_str());
         let _ = r.write_str("ITS CONTENTS ARE REPLACED");
     }
 }

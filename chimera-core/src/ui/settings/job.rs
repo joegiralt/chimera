@@ -5,12 +5,13 @@ use chimera_hal::store::{Store, StoreError};
 
 use crate::name::ProjectName;
 use crate::project::{
-    self, CardOut, Confirmed, DeleteTarget, FreshFile, LoadLink, OverwriteTarget, Pending, Project,
-    ProjectNote, ProjectSource, SaveTo, Swap,
+    self, CardOut, Confirmed, DeleteTarget, FreshFile, Line, LoadLink, OverwriteTarget, Pending,
+    Project, ProjectEntry, ProjectNote, ProjectSource, SaveTo, Swap,
 };
 use crate::storage::{Card, CardEvent, SystemSettings, SystemSync};
 use crate::ui::UiState;
-use crate::ui::nav::{ListAt, Location};
+use crate::ui::busy::Toast;
+use crate::ui::nav::{Column, ListAt, Location};
 
 use super::listing::Validity;
 use super::naming::proposed_name;
@@ -26,10 +27,23 @@ pub(crate) const SAVE_AS_LIST: ListAt = ListAt::at(&[SAVE_AS_AT.0], SAVE_AS_AT.1
 pub(crate) struct LoadAfter {
     pub pending: Pending<ProjectSource>,
     pub to: Option<ProjectName>,
+    pub clear: ThenClear,
 }
 
 /// The load a save runs inside, if any.
 pub(crate) type Then = Option<LoadAfter>;
+
+/// CLEAR of the loaded project's own file: NEW saved over it once NEW
+/// has loaded.
+pub(crate) type ThenClear = Option<Confirmed<OverwriteTarget>>;
+
+/// A confirmed load, and the clear it leads to.
+pub(crate) fn load_job(go: Confirmed<ProjectSource>, clear: ThenClear) -> Job {
+    match clear {
+        Some(over) => Job::ClearOwn(go, over),
+        None => Job::Load(go),
+    }
+}
 
 /// One piece of card work.
 #[derive(Debug)]
@@ -45,9 +59,10 @@ pub(crate) enum Job {
     /// A save under the name given; the project takes it once saved.
     Save(SaveTo, ProjectName, Then),
     Load(Confirmed<ProjectSource>),
-    #[expect(dead_code, reason = "MANAGE, Task 12")]
+    /// CLEAR of the loaded project: NEW loads, then saves over its file.
+    ClearOwn(Confirmed<ProjectSource>, Confirmed<OverwriteTarget>),
     Delete(Confirmed<DeleteTarget>),
-    #[expect(dead_code, reason = "MANAGE, Task 12")]
+    /// CLEAR of another project's file.
     Clear(Confirmed<OverwriteTarget>),
 }
 
@@ -110,7 +125,14 @@ impl UiState {
         match job {
             Job::List(s) => {
                 let _ = self.relist(cx.card, cx.store);
-                self.go(Location::settings_at(screen_path(s), 0));
+                if s == Screen::ManageProjects && self.listing.is_empty() {
+                    self.toast.show(Toast {
+                        text: Line::new(self.listing.empty_reason()),
+                        ms: Toast::ERROR_MS,
+                    });
+                } else {
+                    self.go(Location::settings_at(screen_path(s), 0));
+                }
                 None
             }
             Job::QuickSave(then) => {
@@ -143,12 +165,14 @@ impl UiState {
                 self.after_save(n, then)
             }
             Job::Load(go) => {
-                if let Some(f) = publish.take() {
-                    let (r, event) = self.load_with(cx, go, link, f);
-                    self.saw(event);
-                    *out = r.or(out.take());
-                }
+                self.load_published(cx, go, link, publish, out);
                 None
+            }
+            Job::ClearOwn(go, over) => {
+                // Only NEW, loaded, saves over the file.
+                self.load_published(cx, go, link, publish, out)?;
+                let name = self.project.meta().name();
+                Some(Job::Save(SaveTo::Over(over), name, None))
             }
             Job::Delete(c) => {
                 let e = self.delete_project(cx.card, cx.store, cx.sync, cx.settings, c);
@@ -165,6 +189,23 @@ impl UiState {
                 None
             }
         }
+    }
+
+    /// A load, published; `Some` when it replaced the project.
+    fn load_published<S: Store, R, F: FnOnce(Swap, &Project) -> R>(
+        &mut self,
+        cx: &mut CardCx<'_, S>,
+        go: Confirmed<ProjectSource>,
+        link: &LoadLink,
+        publish: &mut Option<F>,
+        out: &mut Option<R>,
+    ) -> Option<()> {
+        let f = publish.take()?;
+        let (r, event) = self.load_with(cx, go, link, f);
+        self.saw(event);
+        let swapped = r.is_some().then_some(());
+        *out = r.or(out.take());
+        swapped
     }
 
     /// NAME EXISTS against the card in the slot: the listing, then any ids
@@ -226,15 +267,16 @@ impl UiState {
         match n {
             ProjectNote::Saved(_) => {
                 self.show_note(n);
-                let LoadAfter { pending, to } = then?;
+                let LoadAfter { pending, to, clear } = then?;
                 match pending.save_then(&self.project, self.template) {
-                    Ok(c) => Some(Job::Load(c)),
+                    Ok(c) => Some(load_job(c, clear)),
                     Err(again) => {
                         let current = self.project.meta().name();
                         self.ask(Ask::LoadProject {
                             pending: again.into_pending(),
                             to,
                             current,
+                            clear,
                             choice: Choice::new(),
                         });
                         None
@@ -255,6 +297,15 @@ impl UiState {
         }
     }
 
+    /// On MANAGE's commands, the entry they act on.
+    fn manage_entry(&self) -> Option<ProjectEntry> {
+        let s = self.loc.settings()?;
+        match s.column()? {
+            Column::Command(_) => self.listing.entry(s.row() as usize),
+            Column::Projects => None,
+        }
+    }
+
     /// Another card in the slot: what was listed belongs to the old one.
     pub(crate) fn saw(&mut self, e: Option<CardEvent>) {
         if let Some(CardEvent::Swapped { .. }) = e {
@@ -269,6 +320,7 @@ impl UiState {
         card: &mut Card,
         store: &mut S,
     ) -> Result<FreshFile, ProjectNote> {
+        let under_bar = self.manage_entry();
         let listing = &mut self.listing;
         let mut begun = false;
         let out = project::list_projects(card, store, &mut |e| {
@@ -305,7 +357,17 @@ impl UiState {
             && s.screen().is_some()
         {
             let rows = self.cx().dyn_rows;
-            self.go(self.loc.with_row_within(rows));
+            let mut to = self.loc.with_row_within(rows);
+            if s.screen() == Some(Screen::ManageProjects) {
+                // MANAGE always has a row; its commands are the listed
+                // project's, so they close when it goes.
+                if rows == 0 {
+                    to = to.up().unwrap_or(to);
+                } else if self.manage_entry().map(|e| e.file()) != under_bar.map(|e| e.file()) {
+                    to = to.manage_list();
+                }
+            }
+            self.go(to);
         }
         out.fresh.ok_or(out.note.unwrap_or(ProjectNote::NoIds))
     }

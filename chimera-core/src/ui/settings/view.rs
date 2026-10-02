@@ -9,14 +9,15 @@ use embedded_graphics::pixelcolor::Rgb565;
 use u8g2_fonts::FontRenderer;
 
 use super::NamingFor;
-use super::listing::Listing;
+use super::listing::{LOADED, Listing};
+use super::manage::{Command, Note, Off, Whose, command_rows};
 use super::naming::{Naming, draw_naming};
 use super::tree::{Kind, PART, ROOT, Row, Screen, row_at, rows};
 use crate::name::ProjectName;
 use crate::project::{PartId, ProjectFile, ProjectStatus};
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
-use crate::ui::nav::SettingsAt;
+use crate::ui::nav::{Column, SettingsAt};
 use crate::ui::region::settings_key;
 use crate::ui::theme;
 
@@ -31,12 +32,66 @@ const MAX_CRUMBS: usize = 6;
 const DOTS: &str = "..";
 /// Space either side of a breadcrumb's `›`.
 const SEP_GAP: i32 = 3;
-const BAR_X: i32 = 8;
-const BAR_RIGHT: i32 = theme::SCROLL_X - 4;
 const BAR_H: i32 = ROW_H - 4;
 const BAR_R: u32 = 6;
-const TICK_X: i32 = 4;
 const ROW_BASELINE: i32 = 17;
+/// A two-line row: the label, then its note beneath.
+const UPPER_BASELINE: i32 = 11;
+const NOTE_BASELINE: i32 = 21;
+
+/// Where a column of rows draws.
+#[derive(Clone, Copy)]
+struct Col {
+    tick: i32,
+    bar: (i32, i32),
+    text: i32,
+    right: i32,
+    scroll: i32,
+    font: &'static FontRenderer,
+    /// A note goes beneath the label, not beside it.
+    note_below: bool,
+}
+
+/// A whole-width list.
+const FULL: Col = Col {
+    tick: 4,
+    bar: (8, theme::SCROLL_X - 4),
+    text: theme::LIST_TEXT_X,
+    right: theme::LIST_RIGHT,
+    scroll: theme::SCROLL_X,
+    font: &theme::FONT_VALUE,
+    note_below: false,
+};
+/// MANAGE's projects, x 0–140.
+const MANAGE_LIST: Col = Col {
+    bar: (8, 134),
+    text: 14,
+    right: 130,
+    scroll: 137,
+    font: &theme::FONT_LABEL_BOLD,
+    ..FULL
+};
+/// MANAGE's commands, x 144–240.
+const MANAGE_CMDS: Col = Col {
+    tick: 144,
+    bar: (147, theme::SCROLL_X - 2),
+    text: 152,
+    right: theme::SCROLL_X - 2,
+    font: &theme::FONT_LABEL_BOLD,
+    note_below: true,
+    ..FULL
+};
+/// What a MANAGE command's label and note have, in px.
+pub const COMMAND_W: i32 = MANAGE_CMDS.right - MANAGE_CMDS.text;
+const MANAGE_RULE_X: i32 = 141;
+
+/// A row's bar: none, held while the other column has the keys, or keyed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Bar {
+    Off,
+    Held,
+    Keyed,
+}
 
 /// One part of the breadcrumb: a row's crumb, or a run-time `PART n`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -238,40 +293,82 @@ pub fn draw_list<D: DrawTarget<Color = Rgb565>>(
     draw_rows(d, rows.len(), bar, first, |i, f| f(rows[i]));
 }
 
+/// MANAGE PROJECTS: `rows` on the left from `first`, the bar on `bar`;
+/// the bar's project's commands on the right, `cmd` keyed when they have
+/// the keys.
+pub fn draw_manage<D: DrawTarget<Color = Rgb565>>(
+    d: &mut D,
+    rows: &[ListRow<'_>],
+    bar: usize,
+    first: usize,
+    cmds: &[ListRow<'_>],
+    cmd: Option<u8>,
+) {
+    draw_manage_rows(d, rows.len(), bar, first, |i, f| f(rows[i]), cmds, cmd);
+}
+
+fn draw_manage_rows<D: DrawTarget<Color = Rgb565>>(
+    d: &mut D,
+    len: usize,
+    bar: usize,
+    first: usize,
+    row: impl FnMut(usize, &mut dyn FnMut(ListRow<'_>)),
+    cmds: &[ListRow<'_>],
+    cmd: Option<u8>,
+) {
+    let held = if cmd.is_some() { Bar::Held } else { Bar::Keyed };
+    draw_col(d, &MANAGE_LIST, len, bar, first, held, row);
+    let h = VISIBLE_ROWS as i32 * ROW_H - 4;
+    draw::fill_rect(d, MANAGE_RULE_X, LIST_TOP, 1, h, theme::FAINT);
+    let on = cmd.map_or(usize::MAX, usize::from);
+    draw_col(d, &MANAGE_CMDS, cmds.len(), on, 0, Bar::Keyed, |i, f| {
+        f(cmds[i])
+    });
+}
+
 /// `len` rows, each lent by `row` to the draw, from `first`.
 pub fn draw_rows<D: DrawTarget<Color = Rgb565>>(
     d: &mut D,
     len: usize,
     bar: usize,
     first: usize,
+    row: impl FnMut(usize, &mut dyn FnMut(ListRow<'_>)),
+) {
+    draw_col(d, &FULL, len, bar, first, Bar::Keyed, row);
+}
+
+fn draw_col<D: DrawTarget<Color = Rgb565>>(
+    d: &mut D,
+    c: &Col,
+    len: usize,
+    bar: usize,
+    first: usize,
+    on: Bar,
     mut row: impl FnMut(usize, &mut dyn FnMut(ListRow<'_>)),
 ) {
     for i in (first..len).take(VISIBLE_ROWS) {
         let y = LIST_TOP + (i - first) as i32 * ROW_H;
-        row(i, &mut |r| draw_row(d, &r, y, i == bar));
+        let b = if i == bar { on } else { Bar::Off };
+        row(i, &mut |r| draw_row(d, c, &r, y, b));
     }
     if len > VISIBLE_ROWS {
         let h = VISIBLE_ROWS as i32 * ROW_H - 4;
-        draw::fill_rect(d, theme::SCROLL_X, LIST_TOP, 2, h, theme::FAINT);
+        draw::fill_rect(d, c.scroll, LIST_TOP, 2, h, theme::FAINT);
         let thumb = (h * VISIBLE_ROWS as i32 / len as i32).max(8);
         let max_first = len - VISIBLE_ROWS;
         let y = LIST_TOP + (h - thumb) * first.min(max_first) as i32 / max_first as i32;
-        draw::fill_rect(d, theme::SCROLL_X, y, 2, thumb, theme::MID);
+        draw::fill_rect(d, c.scroll, y, 2, thumb, theme::MID);
     }
 }
 
-fn draw_row<D: DrawTarget<Color = Rgb565>>(d: &mut D, r: &ListRow<'_>, y: i32, on: bool) {
+fn draw_row<D: DrawTarget<Color = Rgb565>>(d: &mut D, c: &Col, r: &ListRow<'_>, y: i32, b: Bar) {
+    let on = b != Bar::Off;
     if on {
-        draw::round_rect(
-            d,
-            BAR_X,
-            y,
-            BAR_RIGHT - BAR_X,
-            BAR_H,
-            BAR_R,
-            theme::ACCENT_SOFT,
-        );
-        draw::fill_rect(d, TICK_X, y + 4, 2, BAR_H - 8, theme::ACCENT);
+        let (l, rt) = c.bar;
+        draw::round_rect(d, l, y, rt - l, BAR_H, BAR_R, theme::ACCENT_SOFT);
+    }
+    if b == Bar::Keyed {
+        draw::fill_rect(d, c.tick, y + 4, 2, BAR_H - 8, theme::ACCENT);
     }
     let live = r.look == RowLook::Normal;
     let (label, side) = match (live, on) {
@@ -280,43 +377,64 @@ fn draw_row<D: DrawTarget<Color = Rgb565>>(d: &mut D, r: &ListRow<'_>, y: i32, o
         (false, true) => (theme::MID, theme::MID),
         (false, false) => (theme::BAR_REST, theme::BAR_REST),
     };
-    let base = y + ROW_BASELINE;
-    draw::text(
-        d,
-        &theme::FONT_VALUE,
-        r.label,
-        theme::LIST_TEXT_X,
-        base,
-        label,
-    );
     let note = match r.look {
         RowLook::Later => Some("LATER"),
         _ => r.note,
     };
-    let right = |d: &mut D, s: &str, c| {
-        draw::text_right(
-            d,
-            &theme::FONT_LABEL,
-            s,
-            theme::LIST_RIGHT,
-            base - 1,
-            c,
-            theme::LABEL_TRACKING,
-        )
+    let below = c.note_below && note.is_some();
+    let base = y + if below { UPPER_BASELINE } else { ROW_BASELINE };
+    let t = c.tracking();
+    let beside = match note {
+        Some(n) if !below => draw::text_width(&theme::FONT_LABEL, n, theme::LABEL_TRACKING) + 4,
+        _ => 0,
+    };
+    let shown = fit(c.font, r.label, c.right - c.text - beside, t);
+    if t == 0 {
+        draw::text(d, c.font, shown, c.text, base, label);
+    } else {
+        draw::text_tracked(d, c.font, shown, c.text, base, label, t);
+    }
+    let small = |d: &mut D, s: &str, x, y, color| {
+        draw::text_right(d, &theme::FONT_LABEL, s, x, y, color, theme::LABEL_TRACKING);
     };
     match note {
-        Some(n) => right(d, n, side),
-        None if r.opens => right(
-            d,
-            "›",
-            if on && live {
+        Some(n) if below => {
+            draw::text(d, &theme::FONT_LABEL, n, c.text, y + NOTE_BASELINE, side);
+        }
+        Some(n) => small(d, n, c.right, base - 1, side),
+        None if r.opens => {
+            let color = if on && live {
                 theme::ACCENT
             } else {
                 theme::BAR_REST
-            },
-        ),
+            };
+            small(d, "›", c.right, base - 1, color)
+        }
         None => {}
     }
+}
+
+impl Col {
+    /// The small face is tracked, like every label; the list face isn't.
+    fn tracking(&self) -> i32 {
+        if core::ptr::eq(self.font, &theme::FONT_VALUE) {
+            0
+        } else {
+            theme::LABEL_TRACKING
+        }
+    }
+}
+
+/// `s` cut to `w` px at a character.
+fn fit<'s>(font: &FontRenderer, s: &'s str, w: i32, tracking: i32) -> &'s str {
+    let mut end = s.len();
+    while end > 0 && draw::text_width(font, &s[..end], tracking) > w {
+        end -= 1;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+    }
+    &s[..end]
 }
 
 /// The first row shown: `prev_first` while the bar stays on screen, else
@@ -393,6 +511,9 @@ pub enum LegendFor {
     Naming,
     ManageList,
     ManageCommands,
+    /// A MANAGE command that doesn't apply, and why.
+    ManageDimmed(Option<Note>),
+    ManageLater,
     /// LOAD PROJECT's rows.
     Load,
 }
@@ -423,6 +544,9 @@ pub fn legend(on: LegendFor, at_top: bool) -> &'static str {
         (L::Naming, _) => "SEQ SAVE · MENU CANCEL",
         (L::ManageList, _) => "EDIT COMMANDS · MENU BACK",
         (L::ManageCommands, _) => "SEQ RUN · MENU LIST",
+        (L::ManageDimmed(None), _) => "MENU LIST",
+        (L::ManageDimmed(Some(Note::LoadToRename)), _) => "LOAD TO RENAME · MENU LIST",
+        (L::ManageLater, _) => "LATER · MENU LIST",
         (L::Load, _) => "SEQ LOAD · MENU BACK",
     }
 }
@@ -474,8 +598,11 @@ impl Bands<'_> {
         if self.at.at_leaf().is_some() {
             return legend(LegendFor::Leaf, false);
         }
-        if self.at.screen() == Some(Screen::LoadProject) {
-            return legend(LegendFor::Load, false);
+        match (self.at.screen(), self.at.column()) {
+            (Some(Screen::LoadProject), _) => return legend(LegendFor::Load, false),
+            (_, Some(Column::Projects)) => return legend(LegendFor::ManageList, false),
+            (_, Some(Column::Command(n))) => return legend(self.command_legend(n), false),
+            _ => {}
         }
         let on = self
             .rows()
@@ -510,7 +637,17 @@ impl Bands<'_> {
     }
 
     pub fn list_key(&self) -> u32 {
-        let list = [self.at.path().len() as u8, self.at.row(), self.first as u8];
+        let col = match self.at.column() {
+            None => 0,
+            Some(Column::Projects) => 1,
+            Some(Column::Command(n)) => 2 + n,
+        };
+        let list = [
+            self.at.path().len() as u8,
+            self.at.row(),
+            self.first as u8,
+            col,
+        ];
         let (tag, text, title, cursor) = match &self.modal {
             None => (0, "", "", 0),
             Some(BandsModal::Prompt) => (1, "", "", 0),
@@ -580,6 +717,9 @@ impl Bands<'_> {
                 },
             );
         }
+        if let Some(col) = self.at.column() {
+            return self.draw_manage(d, col);
+        }
         let rows = self.rows();
         debug_assert!(rows.len() <= MAX_ROWS);
         let mut shown = [ListRow::of(&ROOT); MAX_ROWS];
@@ -588,6 +728,43 @@ impl Bands<'_> {
             *s = ListRow::of(r);
         }
         draw_list(d, &shown[..n], self.at.row() as usize, self.first);
+    }
+
+    /// The keyed command's legend: what stops it, if anything.
+    fn command_legend(&self, n: u8) -> LegendFor {
+        let e = self.listing.entry(self.at.row() as usize);
+        let on = Command::at(n)
+            .zip(e)
+            .map(|(c, e)| c.on(Whose::of(&e, self.loaded)));
+        match on {
+            Some(Ok(_)) => LegendFor::ManageCommands,
+            Some(Err(Off::Dimmed(why))) => LegendFor::ManageDimmed(why),
+            Some(Err(Off::Later(_))) => LegendFor::ManageLater,
+            None => LegendFor::ManageDimmed(None),
+        }
+    }
+
+    /// MANAGE: the listing, and the commands of the project under the bar.
+    fn draw_manage<D: DrawTarget<Color = Rgb565>>(&self, d: &mut D, col: Column) {
+        let (l, loaded) = (self.listing, self.loaded);
+        let bar = self.at.row() as usize;
+        let whose = l.entry(bar).map(|e| Whose::of(&e, loaded));
+        let cmd = match col {
+            Column::Command(n) => Some(n),
+            Column::Projects => None,
+        };
+        let row = |i, f: &mut dyn FnMut(ListRow<'_>)| {
+            if let Some(r) = l.load_row(i, loaded) {
+                f(ListRow {
+                    label: r.label.as_str(),
+                    opens: false,
+                    // Only the loaded mark fits beside a name.
+                    note: (r.note == Some(LOADED)).then_some("●"),
+                    look: r.look,
+                })
+            }
+        };
+        draw_manage_rows(d, l.len(), bar, self.first, row, &command_rows(whose), cmd);
     }
 
     pub fn draw_footer<D: DrawTarget<Color = Rgb565>>(&self, d: &mut D) {

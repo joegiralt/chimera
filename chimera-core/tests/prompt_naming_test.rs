@@ -5,7 +5,7 @@ mod screen;
 
 use chimera_core::name::ProjectName;
 use chimera_core::params::EngineType;
-use chimera_core::project::{Line, PartFrom, PartId, PartSet, PartSource, SlotId};
+use chimera_core::project::{Line, PartFrom, PartId, PartSet, PartSource, SlotId, Subject};
 use chimera_core::storage::ProjectId;
 use chimera_core::ui::busy::ToastStep;
 use chimera_core::ui::hold::{HoldGates, Press, Presses};
@@ -348,9 +348,14 @@ fn every_prompt_fits() {
         id: ProjectId::new(ProjectId::MAX).unwrap(),
         name,
     });
-    check(Delete { name });
-    check(Clear { name });
-    check(SaveOver { name });
+    for name in [
+        Subject::Name(name),
+        Subject::File(ProjectId::new(1).unwrap()),
+    ] {
+        check(Delete { name });
+        check(Clear { name });
+        check(SaveOver { name });
+    }
     check(CardChanged);
     check(ClearSlot { slot });
     let two = AlsoUses {

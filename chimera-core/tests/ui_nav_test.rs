@@ -238,14 +238,14 @@ fn seq_on_a_part_action_says_not_yet() {
 }
 
 #[test]
-fn edit_on_manage_projects_says_not_yet() {
+fn edit_on_save_to_proj_says_not_yet() {
     let mut ui = UiState::new();
-    to_leaf(&mut ui, &["PROJECT"]);
+    to_leaf(&mut ui, &["PART"]);
     feed(&mut ui, Input::press(ButtonId::Plus));
-    feed(&mut ui, Input::press(ButtonId::Plus)); // MANAGE PROJECTS, a Screen
+    feed(&mut ui, Input::press(ButtonId::Plus)); // SAVE TO PROJ, a Screen (Task 13)
     feed(&mut ui, Input::press(ButtonId::Edit));
     assert_eq!(ui.step_toast(0), not_yet());
-    assert_eq!(ui.location(), Location::settings_at(&[0], 2));
+    assert_eq!(ui.location(), Location::settings_at(&[PART_ROW], 2));
 }
 
 /// Part `p` onto `e`'s INIT, behind the UI's back.

@@ -112,6 +112,18 @@ pub enum Pick {
     Inert,
 }
 
+/// A MANAGE row's entry, picked from a listing that was the card as last
+/// read: only `Listing::chosen` makes one, so no command runs on a stale
+/// row. The card still checks its witness when the command writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Chosen(ProjectEntry);
+
+impl Chosen {
+    pub fn entry(&self) -> &ProjectEntry {
+        &self.0
+    }
+}
+
 /// A LOAD row as drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LoadRow {
@@ -125,6 +137,7 @@ pub const DAMAGED: &str = "FILE DAMAGED";
 pub const NEWER: &str = "NEWER FIRMWARE";
 const CREATE_NEW: &str = "+ CREATE NEW";
 const MORE_ON_CARD: &str = "MORE ON CARD";
+const NO_PROJECTS: &str = "NO PROJECTS";
 
 impl Default for Listing {
     fn default() -> Self {
@@ -192,6 +205,22 @@ impl Listing {
     pub fn entry(&self, i: usize) -> Option<ProjectEntry> {
         let vol = self.vol()?;
         self.items().get(i).map(|l| l.entry(vol))
+    }
+
+    /// MANAGE's row `i`; none while the listing is stale.
+    pub fn chosen(&self, i: usize) -> Option<Chosen> {
+        match self.validity {
+            Validity::Current => self.entry(i).map(Chosen),
+            Validity::Stale => None,
+        }
+    }
+
+    /// Why nothing is listed: the card's error, or no projects on it.
+    pub fn empty_reason(&self) -> &'static str {
+        match self.rows {
+            Rows::Unreadable(e) => e.message(),
+            _ => NO_PROJECTS,
+        }
     }
 
     /// The listed entry named `n`, ignoring case; the lowest id of several.
@@ -342,5 +371,23 @@ mod tests {
         assert_eq!(l.entry(0), None);
         assert!(l.named(&ProjectName::new("A").unwrap()).is_none());
         assert_eq!(l.load_pick(0), Some(Pick::Retry));
+    }
+
+    /// No command picks from a listing something has since moved.
+    #[test]
+    fn a_stale_listing_chooses_nothing() {
+        let mut l = Listing::new();
+        l.begin(vol(1));
+        l.push(ProjectEntry {
+            id: ProjectId::new(3).unwrap(),
+            vol: vol(1),
+            name: ProjectName::new("A").ok(),
+            err: None,
+            generation: Some(Generation::FIRST),
+        });
+        assert!(l.chosen(0).is_some());
+        l.mark_stale();
+        assert!(l.entry(0).is_some());
+        assert_eq!(l.chosen(0), None);
     }
 }

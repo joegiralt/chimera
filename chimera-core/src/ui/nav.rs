@@ -149,9 +149,11 @@ impl SettingsAt {
         }
     }
 
-    /// This place as a list: NAMING opens only on one.
+    /// This place as a list, MANAGE's columns included: NAMING opens only
+    /// on one.
     pub fn list(self) -> Option<ListAt> {
-        (self.at == At::List && !matches!(self.kind(), Some(Kind::Leaf(_)))).then_some(ListAt(self))
+        let listed = matches!(self.at, At::List | At::Manage(_));
+        (listed && !matches!(self.kind(), Some(Kind::Leaf(_)))).then_some(ListAt(self))
     }
 
     /// The Screen this place shows, its rows built at run time.
@@ -210,6 +212,11 @@ impl SettingsAt {
                 ..self
             });
         }
+        self.parent()
+    }
+
+    /// One level up, the bar on the row just left.
+    fn parent(self) -> Option<SettingsAt> {
         let d = self.depth.checked_sub(1)?;
         let mut path = self.path;
         // Zero past `depth`, so equal places compare equal.
@@ -274,6 +281,7 @@ impl SettingsAt {
                 })
             }
             (Some(Kind::Screen(_)), _, Some(d)) => row(cx.dyn_rows as usize, d),
+            (_, NavKey::SeqTap, _) if self.at == At::Manage(Column::Projects) => Step::Stay,
             (Some(Kind::Screen(_)), NavKey::SeqTap, _) => Step::Run,
             (Some(Kind::List(rs)), NavKey::Edit, _) => match under_bar(rs) {
                 Some(Kind::List(_) | Kind::Leaf(_)) => self.child().map_or(Step::Stay, go),
@@ -498,6 +506,27 @@ impl Location {
         match self.0 {
             Loc::Settings(s) => Location(Loc::Settings(SettingsAt {
                 row: s.row.min(rows.saturating_sub(1)),
+                ..s
+            })),
+            l => Location(l),
+        }
+    }
+
+    /// In SETTINGS, one level up.
+    pub fn up(self) -> Option<Location> {
+        let s = self.settings()?.parent()?;
+        Some(Location(Loc::Settings(s)))
+    }
+
+    /// On MANAGE's commands, its list; anywhere else, itself.
+    pub fn manage_list(self) -> Location {
+        match self.0 {
+            Loc::Settings(
+                s @ SettingsAt {
+                    at: At::Manage(_), ..
+                },
+            ) => Location(Loc::Settings(SettingsAt {
+                at: At::Manage(Column::Projects),
                 ..s
             })),
             l => Location(l),
