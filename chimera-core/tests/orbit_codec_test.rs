@@ -188,8 +188,8 @@ fn orbit_records_round_trip() {
         assert_eq!(b.scene(n), a.scene(n), "slot {}", n.get() + 1);
     }
     assert_eq!(b.bpm, a.bpm);
-    assert_eq!(b.saved(), a.saved());
-    assert_eq!(b.saved(), 0xFF);
+    assert_eq!(b.saved().bits(), a.saved().bits());
+    assert_eq!(b.saved().bits(), 0xFF);
     assert_eq!(encode(&q), bytes);
 
     // Nothing queued: `live` itself, its cluster and seed.
@@ -301,7 +301,7 @@ fn a_file_without_orbit_loads_neutral() {
         assert_eq!(*o.scene(n), Scene::neutral());
     }
     assert_eq!(o.bpm, Bpm::DEFAULT);
-    assert_eq!((o.current(), o.queued(), o.saved()), (S[0], None, 0));
+    assert_eq!((o.current(), o.queued(), o.saved().bits()), (S[0], None, 0));
 }
 
 /// A pool or hit mask that can't be one, a chord missing its bass or of
@@ -480,13 +480,13 @@ fn a_load_moves_every_slot_and_the_saved_mask() {
         .map(|&n| Confirmed::<SceneSlot>::unasked(q.orbit(), n))
         .collect();
     decode(&encode(&src), &mut q).unwrap();
-    assert_eq!(q.orbit().saved(), 0xFF);
+    assert_eq!(q.orbit().saved().bits(), 0xFF);
     for c in asked {
         assert_eq!(q.orbit_mut().overwrite_scene(c), Err(Refused::SlotChanged));
     }
     let asked = Confirmed::<SceneSlot>::unasked(q.orbit(), S[2]);
     decode(&encode(&new_project()), &mut q).unwrap();
-    assert_eq!(q.orbit().saved(), 1, "NEW: slot 1");
+    assert_eq!(q.orbit().saved().bits(), 1, "NEW: slot 1");
     assert_eq!(q.orbit_mut().clear_scene(asked), Err(Refused::SlotChanged));
 }
 
@@ -528,7 +528,7 @@ fn damaged_orbit_records_never_cost_the_parts() {
             let mask = (0..8)
                 .filter(|&n| !o.scene(S[n]).is_neutral())
                 .fold(0, |m, n| m | 1 << n);
-            assert_eq!(o.saved(), mask, "{tag:?}");
+            assert_eq!(o.saved().bits(), mask, "{tag:?}");
             let (again, lossy) = loaded_lossy(&encode(&target));
             assert!(!lossy, "{tag:?}: written whole");
             assert_eq!(again.orbit(), target.orbit(), "{tag:?}: a fixed point");
@@ -585,7 +585,7 @@ fn new_sounds_the_same_after_a_save_and_load() {
 fn new_song_round_trips() {
     let q = loaded(&encode(&new_project()));
     assert_eq!(*q.orbit(), OrbitSong::NEW);
-    assert_eq!(q.orbit().saved(), OrbitSong::NEW.saved());
+    assert_eq!(q.orbit().saved().bits(), OrbitSong::NEW.saved().bits());
 }
 
 /// A captured chord, taken by the song, saves as exact tones.
@@ -978,7 +978,7 @@ fn the_orbit_fixture_loads_as_frozen() {
     assert!(!lossy, "a whole file");
     let o = q.orbit();
     assert_eq!(
-        (o.current(), o.queued(), o.saved(), o.bpm.get()),
+        (o.current(), o.queued(), o.saved().bits(), o.bpm.get()),
         (S[0], None, 0xFF, 97)
     );
     let live = &o.live;

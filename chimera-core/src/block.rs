@@ -4,6 +4,9 @@
 //! Each values struct keeps real field types and implements `Block`; its
 //! `ParamSpec` table is a `static` in the block's own module.
 
+/// A switch's two names, as `ValFmt::Names` shows it.
+pub const OFF_ON: [&str; 2] = ["OFF", "ON"];
+
 /// Display format and shift-snap behavior of a parameter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ValFmt {

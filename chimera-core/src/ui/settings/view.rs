@@ -16,7 +16,7 @@ use super::part::{Offer, SAVE_ROWS};
 use super::prompt::Slot;
 use super::tree::{Act, Kind, PART, ROOT, Row, Screen, row_at, rows};
 use crate::name::{ProjectName, SoundName};
-use crate::orbit::scene::{OrbitSong, SceneIdx};
+use crate::orbit::scene::{OrbitSong, SceneIdx, SceneSet};
 use crate::project::{
     Line, Origin, PartId, PartStatus, Project, ProjectFile, ProjectStatus, SlotId, part_status,
 };
@@ -617,8 +617,8 @@ impl PartBand {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OrbitBand {
     pub scene: SceneIdx,
-    /// The saved slots, bit n slot n (`OrbitSong::saved`).
-    pub saved: u8,
+    /// The saved slots (`OrbitSong::saved`).
+    pub saved: SceneSet,
     /// `live` differs from its slot: RELOAD has something to drop.
     pub edited: bool,
 }
@@ -644,11 +644,7 @@ impl OrbitBand {
     /// SAVE TO PROJ's row for slot `n`: `OVER SCENE 3`, or `SCENE 3` when
     /// neutral.
     pub fn save_label(&self, n: SceneIdx) -> Line {
-        let over = if self.saved & 1 << n.get() != 0 {
-            "OVER "
-        } else {
-            ""
-        };
+        let over = if self.saved.contains(n) { "OVER " } else { "" };
         let mut l = Line::new(over);
         let _ = write!(l, "SCENE {}", n.get() + 1);
         l
@@ -656,7 +652,7 @@ impl OrbitBand {
 
     /// Bits for a region key.
     fn key(&self) -> [u8; 3] {
-        [self.scene.get(), self.saved, self.edited as u8]
+        [self.scene.get(), self.saved.bits(), self.edited as u8]
     }
 }
 

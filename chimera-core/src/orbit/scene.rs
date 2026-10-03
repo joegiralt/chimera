@@ -12,7 +12,7 @@ use super::walk::{Pool, Walk};
 use super::{MAX_POOL, MAX_SEGS, RINGS, RingIdx};
 use crate::Velocity;
 use crate::addr::{BlockRead, BlockRef, Blocks};
-use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
+use crate::block::{Block, DiskCode, OFF_ON, ParamId, ParamSpec, ValFmt, apply_code};
 use crate::dsp::modulator::law::Law;
 use crate::dsp::modulator::pick;
 use crate::in_place::uninit_at;
@@ -48,6 +48,33 @@ impl SceneIdx {
     }
 
     pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+/// A set of scene slots, a bit each.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct SceneSet(u8);
+
+const _: () = assert!(SCENES <= u8::BITS as usize);
+
+impl SceneSet {
+    pub const EMPTY: SceneSet = SceneSet(0);
+
+    pub const fn with(self, n: SceneIdx) -> SceneSet {
+        SceneSet(self.0 | 1 << n.0)
+    }
+
+    pub const fn without(self, n: SceneIdx) -> SceneSet {
+        SceneSet(self.0 & !(1 << n.0))
+    }
+
+    pub const fn contains(self, n: SceneIdx) -> bool {
+        self.0 & 1 << n.0 != 0
+    }
+
+    /// Bit n slot n.
+    pub const fn bits(self) -> u8 {
         self.0
     }
 }
@@ -261,9 +288,9 @@ pub struct OrbitSong {
     scenes: [Scene; SCENES],
     /// Moves on every write to its slot; run-time only, never saved.
     slot_revs: [u16; SCENES],
-    /// Bit n: slot n holds a scene, not the neutral one. Kept on each
+    /// The slots holding a scene, not the neutral one. Kept on each
     /// write, so no frame compares whole scenes.
-    saved: u8,
+    saved: SceneSet,
     current: SceneIdx,
     /// A switch waiting on the runner: it lands on the loop.
     queued: Option<SceneIdx>,
@@ -329,7 +356,7 @@ impl OrbitSong {
             s
         },
         slot_revs: [0; SCENES],
-        saved: 1,
+        saved: SceneSet::EMPTY.with(SceneIdx(0)),
         current: SceneIdx(0),
         queued: None,
     };
@@ -348,7 +375,7 @@ impl OrbitSong {
                 scenes.add(i).write(new_scene(i));
             }
             addr_of_mut!((*p).slot_revs).write([0; SCENES]);
-            addr_of_mut!((*p).saved).write(1);
+            addr_of_mut!((*p).saved).write(SceneSet::EMPTY.with(SceneIdx(0)));
             addr_of_mut!((*p).current).write(SceneIdx(0));
             addr_of_mut!((*p).queued).write(None);
             slot.assume_init_mut()
@@ -365,8 +392,8 @@ impl OrbitSong {
         self.slot_revs = revs.map(|r| r.wrapping_add(1));
     }
 
-    /// The slots holding a scene, bit n slot n: the rest are neutral.
-    pub fn saved(&self) -> u8 {
+    /// The slots holding a scene: the rest are neutral.
+    pub fn saved(&self) -> SceneSet {
         self.saved
     }
 
@@ -415,11 +442,10 @@ impl OrbitSong {
         let i = n.0 as usize;
         self.scenes[i] = s;
         self.slot_revs[i] = self.slot_revs[i].wrapping_add(1);
-        let bit = 1 << i;
         self.saved = if s.is_neutral() {
-            self.saved & !bit
+            self.saved.without(n)
         } else {
-            self.saved | bit
+            self.saved.with(n)
         };
     }
 
@@ -475,7 +501,7 @@ impl OrbitSong {
         if self.queued.is_some() {
             return Err(SwitchPending);
         }
-        if n != self.current && self.saved() & 1 << n.0 != 0 {
+        if n != self.current && self.saved.contains(n) {
             return Ok(SceneSave::Ask(SceneAsk::of(self, n)));
         }
         self.write(n);
@@ -533,7 +559,7 @@ impl OrbitSong {
             *s = NEUTRAL;
             *rev = rev.wrapping_add(1);
         }
-        self.saved = 0;
+        self.saved = SceneSet::EMPTY;
         self.live = NEUTRAL;
         self.bpm = Bpm::DEFAULT;
         self.current = SceneIdx(0);
@@ -564,9 +590,10 @@ impl OrbitSong {
 
     /// A load done: `saved` from the slots as read.
     pub(crate) fn loaded(&mut self) {
-        self.saved = (0..SCENES)
-            .filter(|&i| !self.scenes[i].is_neutral())
-            .fold(0, |m, i| m | 1 << i);
+        self.saved = SceneIdx::ALL
+            .into_iter()
+            .filter(|n| !self.scenes[n.0 as usize].is_neutral())
+            .fold(SceneSet::EMPTY, SceneSet::with);
     }
 }
 
@@ -596,21 +623,23 @@ impl Blocks for Scene {
 
 const MAX_STEPS: usize = super::MAX_STEPS as usize;
 
-const PITCH_NAMES: [&str; 12] = [
-    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-];
-const SCALE_NAMES: [&str; 11] = [
-    "MAJOR", "MINOR", "DORIAN", "PHRYGIAN", "LYDIAN", "MIXOLYD", "LOCRIAN", "HARM MIN", "PENT MAJ",
-    "PENT MIN", "CUSTOM",
-];
-const OFF_ON: [&str; 2] = ["OFF", "ON"];
+/// The theory's names for the named scales, in `ScaleKind`'s order, then
+/// CUSTOM.
+const SCALE_NAMES: [&str; 11] = {
+    let mut n = ["CUSTOM"; 11];
+    let mut i = 0;
+    while i < chimera_theory::SCALE_NAMES.len() {
+        n[i] = chimera_theory::SCALE_NAMES[i];
+        i += 1;
+    }
+    n
+};
 const RANGE_NAMES: [&str; 4] = ["0", "1", "2", "3"];
 const SNAP_NAMES: [&str; 2] = ["SCALE", "CHORD"];
 const MODE_NAMES: [&str; 2] = ["STEP", "POOL"];
 /// PING-PONG as `PING-PG`: a cell holds no more.
 const WALK_NAMES: [&str; 4] = ["UP", "DOWN", "RANDOM", "PING-PG"];
 
-const _: () = assert!(PITCH_NAMES.len() == PitchClass::ALL.len());
 const _: () = assert!(SCALE_NAMES.len() == ScaleKind::ALL.len());
 const _: () = assert!(RANGE_NAMES.len() == Range::ALL.len());
 const _: () = assert!(SNAP_NAMES.len() == SnapTo::ALL.len());
@@ -655,9 +684,15 @@ pub static RING_SPECS: [ParamSpec; 15] = [
 ];
 
 pub static CHORD_SPECS: [ParamSpec; 4] = [
-    ParamSpec::choice(0, "KEY", ValFmt::Names(&PITCH_NAMES), 11.0, 0.0)
-        .ident("KEY")
-        .glyph(FocusGlyph::None),
+    ParamSpec::choice(
+        0,
+        "KEY",
+        ValFmt::Names(&chimera_theory::PITCH_NAMES),
+        11.0,
+        0.0,
+    )
+    .ident("KEY")
+    .glyph(FocusGlyph::None),
     ParamSpec::choice(1, "SCALE", ValFmt::Names(&SCALE_NAMES), 10.0, 0.0)
         .ident("SCALE")
         .glyph(FocusGlyph::None),

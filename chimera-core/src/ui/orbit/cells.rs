@@ -1,7 +1,7 @@
 //! ORBIT's own cells: what a page edits that is no block's param.
 
 use super::OrbitUi;
-use crate::block::ValFmt;
+use crate::block::{OFF_ON, ValFmt};
 use crate::orbit::chords::ChordRing;
 use crate::orbit::runner::Capture;
 use crate::orbit::scene::{OrbitSong, SCENES, SceneIdx, SceneRing};
@@ -40,7 +40,6 @@ pub enum OrbitCell {
     Switch,
 }
 
-const OFF_ON: [&str; 2] = ["OFF", "ON"];
 const LOOP: [&str; 1] = ["LOOP"];
 
 impl OrbitCell {

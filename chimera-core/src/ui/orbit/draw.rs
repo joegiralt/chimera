@@ -588,7 +588,7 @@ where
         let i = n.get() as i32;
         let x = VIZ_LEFT + (i % SLOT_COLS) * (SLOT_W + SLOT_GAP);
         let y = SLOT_TOP + (i / SLOT_COLS) * (SLOT_H + SLOT_GAP);
-        let saved = saved_slots & 1 << i != 0;
+        let saved = saved_slots.contains(n);
         if saved {
             draw::round_rect(d, x, y, SLOT_W, SLOT_H, 5, theme::ACCENT_SOFT);
         } else {

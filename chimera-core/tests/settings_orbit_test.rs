@@ -155,7 +155,7 @@ fn clear_asks_and_clears() {
     assert!(!rig.ui.prompt_open());
     let song = rig.ui.project().orbit();
     assert_eq!(slot(&rig.ui, 0), Scene::neutral());
-    assert_eq!(song.saved() & 1, 0);
+    assert_eq!(song.saved().bits() & 1, 0);
     assert_eq!(song.live, live, "live waits for the loop");
     assert_eq!(song.queued(), Some(S[0]));
     assert_eq!(rig.view().queued, Some(S[0]), "the runner holds it");

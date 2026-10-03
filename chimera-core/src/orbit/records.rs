@@ -12,7 +12,9 @@ use chimera_theory::{Chord, Degree, Note, PitchClass};
 
 use super::clock::Bpm;
 use super::euclid::HitMask;
-use super::scene::{NEUTRAL, OrbitSong, STORED_LIVE, Scene, SceneIdx, decode_scale, encode_scale};
+use super::scene::{
+    NEUTRAL, OrbitSong, STORED_LIVE, Scene, SceneIdx, SceneSet, decode_scale, encode_scale,
+};
 use super::walk::Pool;
 use super::{MAX_POOL, MAX_SEGS, MAX_STEPS, RingIdx};
 use crate::addr::{BlockRead, BlockRef, Blocks};
@@ -105,13 +107,13 @@ fn tempo_payload(bpm: Bpm) -> [u8; 4] {
 /// neutral, as the reader's base is.
 fn put_song<'a>(
     w: &mut RecordWriter<'_>,
-    saved: u8,
+    saved: SceneSet,
     scene: &dyn Fn(u8) -> &'a Scene,
     current: SceneIdx,
     bpm: Bpm,
 ) -> Result<(), StoreError> {
     for at in 0..STORED as u8 {
-        if at == STORED_LIVE || saved & 1 << at != 0 {
+        if SceneIdx::new(at).is_none_or(|n| saved.contains(n)) {
             put_scene(w, at, scene(at))?;
         }
     }
@@ -142,7 +144,7 @@ pub(crate) fn encode_new_orbit(w: &mut RecordWriter<'_>) -> Result<(), StoreErro
             &NEUTRAL
         }
     };
-    put_song(w, 1 << first.get(), &scene, first, Bpm::DEFAULT)
+    put_song(w, SceneSet::EMPTY.with(first), &scene, first, Bpm::DEFAULT)
 }
 
 /// The tempo's `f32`, rounded and held to BPM's range; NaN is 120.
