@@ -459,10 +459,12 @@ impl OrbitSong {
 
     /// An edit to the playing scene: `f` on its slot, then on `live`, so
     /// a switch away and back keeps it (ADR 0083). While a switch waits,
-    /// still the playing scene's. `live`'s result.
-    pub fn edit<R>(&mut self, mut f: impl FnMut(&mut Scene) -> R) -> R {
-        self.edit_slot(&mut f);
-        f(&mut self.live)
+    /// still the playing scene's. Out of line, `f` behind a `dyn`: one
+    /// copy in flash.
+    #[inline(never)]
+    pub fn edit(&mut self, f: &mut dyn FnMut(&mut Scene)) {
+        self.edit_slot(&mut *f);
+        f(&mut self.live);
     }
 
     /// Block `b`'s param `id`, edited on `live` through `Blocks`, into
@@ -474,13 +476,17 @@ impl OrbitSong {
         };
         let slot = &self.scenes[self.current.0 as usize];
         if slot.block(b).is_some_and(|x| x.get(id) != v) {
-            self.edit_slot(|s| s.block_mut(b).map(|x| x.write(id, v)));
+            self.edit_slot(&mut |s: &mut Scene| {
+                if let Some(x) = s.block_mut(b) {
+                    x.write(id, v);
+                }
+            });
         }
     }
 
     /// `f` on the playing slot, its rev moved; its touched marks are
     /// `live`'s to send, so dropped.
-    fn edit_slot<R>(&mut self, f: impl FnOnce(&mut Scene) -> R) {
+    fn edit_slot(&mut self, f: &mut dyn FnMut(&mut Scene)) {
         let n = self.current;
         let s = &mut self.scenes[n.0 as usize];
         f(s);

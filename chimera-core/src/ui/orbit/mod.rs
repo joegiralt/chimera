@@ -402,7 +402,7 @@ impl OrbitUi {
         let idle = self.chan.idle();
         if let Some(c) = self.take(v) {
             let song = project.orbit_mut();
-            song.edit(|s| s.take(&c));
+            song.edit(&mut |s| s.take(&c));
             self.harvest(song);
         }
         // Every arm applied: the runner's armed target is the truth, a
@@ -446,7 +446,7 @@ impl OrbitUi {
     pub fn mute(r: RingIdx, project: &mut Project) {
         let song = project.orbit_mut();
         let was = song.live.rings[r.get() as usize].get(SceneRing::MUTE) != 0.0;
-        song.edit(|s| s.rings[r.get() as usize].set(SceneRing::MUTE, f32::from(!was)));
+        song.edit(&mut |s| s.rings[r.get() as usize].set(SceneRing::MUTE, f32::from(!was)));
     }
 }
 
