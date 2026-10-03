@@ -101,10 +101,12 @@ not grow, and flash must shrink and be measured.
     `OrbitShared` 876 → 880 B (×3 +12), `OrbitRunner` unchanged at
     832 B (its removed bytes were padding).
   - Flash `text`, fat LTO with one codegen unit (thin LTO moves by
-    about ±1 KB between builds of the same code): 715,428 → 715,620 B,
-    +192 B. Thin LTO: 773,724 → 776,108 B. Scenes, edits and loads
+    about ±1 KB between builds of the same code): 715,428 → 715,236 B,
+    −192 B. Thin LTO: 773,724 → 774,876 B. Scenes, edits and loads
     alone measured +1,208 B fat; the transport and capture took back
-    976 B. The gate is ≤ 0, so the owner rules on the rest.
+    976 B; writing the arm and edit bytes directly, `OrbitUi::arm` out
+    of line, and the runner filling the view's slot in place
+    (`fill_view`, one shared `RingView::of`) took back 384 B more.
   - The `UiState` guard rises from 4 KB to 5,120 B (owner's ruling). It
     guards no stack, copy or memory region: `UiState` is an AXI static
     built in place, charged a fixed 64 KB `UI_RESERVE`, never cloned or
