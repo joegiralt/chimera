@@ -26,6 +26,7 @@ use chimera_core::orbit::scene::{Scene, SceneRing};
 use chimera_core::part::DacPair;
 use chimera_core::part::PartParams;
 use chimera_core::project::{NEW_PARTS, PartId};
+use chimera_hal::BLOCK_SIZE;
 use common::orbit::{Mark, OrbitRig, Report, judgeable, orbit_block, report, secs, write_wav};
 use common::sweep::{
     BPS, Bench, CLICK_RATIO, Patch, SILENT_RMS, Tape, level, steady_windows, transient_window,
@@ -312,13 +313,7 @@ fn a_steal_fades_clean_on_its_pair() {
             "{case}: Part 2's note stole a voice"
         );
         assert!(rig.tape.peak(1) > 1e-3, "{case}: the new note on P2");
-        let mut gone = Tape::default();
-        gone.out[0] = control.tape.out[0]
-            .iter()
-            .zip(&rig.tape.out[0])
-            .map(|(c, s)| c - s)
-            .collect();
-        gone.bus = vec![0.0; rig.tape.bus.len()];
+        let gone = gone(&control.tape, &rig.tape);
         let after = gone.rms(0, e + 20, e + 60);
         assert!(after > 1e-4, "{case}: the victim left P1 ({after:.2e})");
         let quiet_before = gone.pair(0, 0, e).iter().all(|&x| x == 0.0);
@@ -331,17 +326,93 @@ fn a_steal_fades_clean_on_its_pair() {
         // `Tape::click`'s ratio without its floor: the difference is the
         // victim alone, so its own steady state is the scale, however
         // quiet a tail is.
-        let heard = transient_window(e);
-        let trans = gone.d2(0, heard.start, heard.end);
-        let (_, post) = steady_windows(e, (0, usize::MAX), true);
-        let steady = gone.d2(0, post.start, post.end);
-        println!("{case}: the fade's transient {trans:.2e}, the victim's steady {steady:.2e}");
+        let r = fade_ratio(&gone, e);
+        println!("{case}: the fade's transient {r:.2}× the victim's steady");
         assert!(
-            trans <= CLICK_RATIO * steady,
-            "{case}: the stolen voice's fade clicks on P1, {:.1}× its steady state",
-            trans / steady
+            r <= CLICK_RATIO,
+            "{case}: the stolen voice's fade clicks on P1, {r:.1}× its steady state"
         );
     }
+}
+
+/// A fade's transient at event block `e` over its own steady state, on a
+/// tape holding only what the event took away (a control less the render).
+fn fade_ratio(gone: &Tape, e: usize) -> f32 {
+    let heard = transient_window(e);
+    let trans = gone.d2(0, heard.start, heard.end);
+    let (_, post) = steady_windows(e, (0, usize::MAX), true);
+    trans / gone.d2(0, post.start, post.end)
+}
+
+/// P1 less `cut`: what a note's off took away, alone.
+fn gone(control: &Tape, cut: &Tape) -> Tape {
+    let mut g = Tape::default();
+    g.out[0] = control.out[0]
+        .iter()
+        .zip(&cut.out[0])
+        .map(|(c, s)| c - s)
+        .collect();
+    g.bus = vec![0.0; control.bus.len()];
+    g
+}
+
+/// A note on `patch` at block `ON`, let go at `off` (`None`: held), then
+/// with `hard` muted from the loudest sample of the off's first heard
+/// block on.
+fn gate0(patch: Patch, note: u8, off: Option<usize>, hard: bool) -> Tape {
+    const ON: usize = 60;
+    let mut b = Bench::new(patch, PartParams::default(), FxParams::default());
+    let mut t = Tape::default();
+    for i in 0..ON + 80 {
+        if i == ON {
+            b.note(note, Some(100));
+        }
+        if Some(i) == off {
+            b.note(note, None);
+        }
+        b.render(&mut t);
+    }
+    if let (true, Some(e)) = (hard, off) {
+        let from = 2 * BLOCK_SIZE * (e + 1);
+        let peak = (0..BLOCK_SIZE).max_by(|&i, &j| {
+            let x = |i: usize| t.out[0][from + 2 * i].abs();
+            x(i).total_cmp(&x(j))
+        });
+        t.out[0][from + 2 * peak.expect("a block")..].fill(0.0);
+    }
+    t
+}
+
+/// A ring's off at GATE 0 lands two blocks into its note's attack. On a
+/// decaying Sound `Tape::click` hears that as a click (TX EPIANO's E5:
+/// 21.7×), but the note held reads the same there: the window holds the
+/// attack, the steady window a quieter release. Without its tine (operator
+/// 2 at LEVEL 0) still 6.7×: no band limit on the judge would clear it.
+/// So NEW's factory Sounds are judged here as a steal is: the release
+/// alone, the held control less the cut, against its own steady state
+/// (TX EPIANO's E5: 0.96×). A hard cut there reads tens of times over.
+#[test]
+fn a_gate_0_off_releases_clean_on_factory_sounds() {
+    const OFF: usize = 62;
+    for slot in NEW_PARTS {
+        let patch = Patch::Factory(slot.index() as u8);
+        for note in [48, 60, 76, 84] {
+            let control = gate0(patch, note, None, false);
+            let cut = gate0(patch, note, Some(OFF), false);
+            let r = fade_ratio(&gone(&control, &cut), OFF);
+            println!("{} note {note}: the release {r:.2}×", patch.name());
+            assert!(
+                r <= CLICK_RATIO,
+                "{} note {note}: the off at GATE 0 clicks, {r:.1}×",
+                patch.name()
+            );
+        }
+    }
+    // The judge hears a cut: TX EPIANO's E5 muted at the off.
+    let epiano = Patch::Factory(NEW_PARTS[1].index() as u8);
+    let control = gate0(epiano, 76, None, false);
+    let h = fade_ratio(&gone(&control, &gate0(epiano, 76, Some(OFF), true)), OFF);
+    assert!(h > CLICK_RATIO, "a hard cut reads {h:.1}×");
 }
 
 // ── The parameter sweep, through a running ORBIT ───────────────────────
@@ -393,9 +464,9 @@ fn orbit_params() -> Vec<(BlockRef, &'static ParamSpec)> {
 /// MUTATE's own rows.
 ///
 /// And on INIT Algo, as before NEW had factory Sounds: the sweep judges
-/// ORBIT's timing, not a Sound. TX EPIANO's tine (operator 2 at ×42, near
-/// 18 kHz at A4) gives its attack a second difference 22× its release's,
-/// so an off at GATE 0, two blocks into the attack, reads as a click.
+/// ORBIT's timing, not a Sound. On a decaying Sound an off at GATE 0 reads
+/// as a click where none is
+/// (`a_gate_0_off_releases_clean_on_factory_sounds` judges those).
 fn sweep_param(b: BlockRef, s: &'static ParamSpec) -> (String, Vec<String>, [usize; 5]) {
     let mut rig = OrbitRig::on_init();
     let song = rig.song();
