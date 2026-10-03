@@ -3,8 +3,11 @@ use embedded_graphics::geometry::{Point, Size};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, StyledDrawable};
 
-use crate::addr::{BlockRead, Op, ParamAddr};
+use crate::addr::{BlockRead, BlockRef, Op, ParamAddr};
+use crate::block::find_spec;
 use crate::dsp::algo::algorithms::AlgoId;
+use crate::dsp::algo::env::EnvRates;
+use crate::dsp::algo::params::AlgoOpParams;
 use crate::dsp::modulator::{EnvType, HoldPos};
 use crate::part::DacPair;
 use crate::perf::load::AudioStats;
@@ -262,8 +265,39 @@ impl Renderer {
                     self.anim[slot].current(),
                 );
             }
+            VizType::OpEnv => {
+                if let Some((rates, lit)) = self.op_env(f) {
+                    let (widths, heights) = viz::op_env(rates);
+                    let top = viz::BAND_PLOT_TOP;
+                    viz::envelope_from(display, top, &widths, &heights, &viz::OP_ENV_LABELS, lit);
+                }
+            }
             _ => viz::live_output(display, f.scope),
         }
+    }
+
+    /// The focused operator's envelope rates, this page's from its animated
+    /// slot (to the nearest step), and the stage that rate edits.
+    fn op_env(&self, f: &Frame) -> Option<(EnvRates, Option<usize>)> {
+        use AlgoOpParams as P;
+        let addr = slot_addr(f.def, f.focus, &f.ctx)?;
+        let BlockRef::AlgoOp(op) = addr.block else {
+            return None;
+        };
+        let spec = find_spec(addr.block.specs(), addr.param)?;
+        let v =
+            spec.quantize(spec.min + self.anim[f.focus].current() * (spec.max - spec.min)) as u8;
+        let mut r = f.parts[f.active_part.index()].sound.params.algo.ops[op.index()].rates();
+        let (field, lit) = match addr.param {
+            P::AR => (&mut r.ar, 0),
+            P::D1R => (&mut r.d1r, 1),
+            P::D1L => (&mut r.d1l, 1),
+            P::D2R => (&mut r.d2r, 2),
+            P::RR => (&mut r.rr, 3),
+            _ => return Some((r, None)),
+        };
+        *field = v;
+        Some((r, Some(lit)))
     }
 
     /// Level and pan of every Part; the edited one from its animated LEVEL
@@ -347,6 +381,18 @@ impl Renderer {
                         [0, 0, q[2], 0, 0, 0],
                         (algo.alg_a as u32) << 8 | algo.alg_b as u32,
                     )
+                }
+                VizType::OpEnv => {
+                    // AR D1R D2R 5 bits, D1L RR 4, the lit stage 3.
+                    let key = self.op_env(f).map_or(0, |(r, lit)| {
+                        (r.ar as u32) << 23
+                            | (r.d1r as u32) << 18
+                            | (r.d2r as u32) << 13
+                            | (r.d1l as u32) << 9
+                            | (r.rr as u32) << 5
+                            | lit.map_or(7, |l| l as u32)
+                    });
+                    ([0; 6], key)
                 }
                 _ => ([0; 6], viz::live_key(f.scope)),
             },

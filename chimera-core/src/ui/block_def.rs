@@ -18,6 +18,8 @@ pub enum VizType {
     AlgoDiagram,
     /// SPD: each slot's SPEED and HOLD POSITION.
     EnvSpeed,
+    /// ALGO's AR · D1R · D1L · D2R · RR: the focused operator's envelope.
+    OpEnv,
 }
 
 /// A node of the FX flow; the value is its index in `viz::effects_flow`.
