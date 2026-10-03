@@ -559,6 +559,14 @@ impl OrbitSong {
         }
     }
 
+    /// Scene `i` as a project file numbers it.
+    pub(crate) fn stored(&self, i: u8) -> Option<&Scene> {
+        match SceneIdx::new(i) {
+            Some(n) => Some(&self.scenes[n.0 as usize]),
+            None => (i == STORED_LIVE).then_some(&self.live),
+        }
+    }
+
     /// The loaded file's playing scene.
     pub(crate) fn set_current(&mut self, n: SceneIdx) {
         self.current = n;

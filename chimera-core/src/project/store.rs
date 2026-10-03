@@ -396,7 +396,8 @@ pub fn load_project<S: Store>(
     };
     let subject = Subject::File(id);
     let run = run_on(card, store, vol, |s, r| {
-        load_ab_in_place(s, r, project_file(id), &mut ProjectDecoder::new(p))
+        let mut d = ProjectDecoder::new(p);
+        load_ab_in_place(s, r, project_file(id), &mut d).map(|_| d.lossy())
     });
     let result = match run {
         Ok(o) => {
@@ -406,10 +407,10 @@ pub fn load_project<S: Store>(
         Err(e) => Err(e),
     };
     match result {
-        Ok(Ok(_)) => {
+        Ok(Ok(lossy)) => {
             p.bump();
             p.meta.file = Some(ProjectFile::new(id, vol));
-            p.meta.saved_crc = Some(project_crc(p));
+            p.meta.saved_crc = loaded_crc(p, lossy);
             out.swap = Some(link.bump());
         }
         // Not the card the file was listed on: nothing read.
@@ -448,15 +449,15 @@ pub fn boot_project<S: Store>(
         Some(id) => {
             let subject = Subject::File(id);
             let run = card.run(store, |s, r| {
-                load_ab_in_place(s, r, project_file(id), &mut ProjectDecoder::new(p))
-                    .map(|_| r.volume())
+                let mut d = ProjectDecoder::new(p);
+                load_ab_in_place(s, r, project_file(id), &mut d).map(|_| (r.volume(), d.lossy()))
             });
             match run {
                 Ok(o) => match o.result {
-                    Ok(vol) => {
+                    Ok((vol, lossy)) => {
                         p.bump();
                         p.meta.file = Some(ProjectFile::new(id, vol));
-                        p.meta.saved_crc = Some(project_crc(p));
+                        p.meta.saved_crc = loaded_crc(p, lossy);
                         return None;
                     }
                     Err(InPlaceError {
@@ -472,6 +473,13 @@ pub fn boot_project<S: Store>(
     };
     p.reset_new();
     Some(note)
+}
+
+/// What a loaded project was saved as: none when the load was lossy, so
+/// it reads Modified and offers the save that would write it whole (ADR
+/// 0078).
+fn loaded_crc(p: &Project, lossy: bool) -> Option<u32> {
+    (!lossy).then(|| project_crc(p))
 }
 
 /// A project as its headers list it, on the card `vol`.

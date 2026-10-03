@@ -78,6 +78,17 @@ pub fn decode_project(bytes: &[u8], target: &mut Project) -> Result<(), FileErro
     project_pass(target, bytes, true)
 }
 
+/// `decode_project`, and whether pass 2 was lossy (ADR 0078).
+pub fn decode_project_lossy(bytes: &[u8], target: &mut Project) -> Result<bool, FileError> {
+    project_pass(target, bytes, false)?;
+    let mut f = Framer::new(bytes.len() as u32)?;
+    let mut d = ProjectDecoder::new_for_test(target);
+    f.push(bytes, &mut |e| d.apply(e))?;
+    f.finish()?;
+    DecodeInPlace::finish(&mut d)?;
+    Ok(d.lossy())
+}
+
 /// Decodes `bytes` into `target`: never a panic; a pass-1 Ok means pass 2
 /// is Ok; and on Ok every Sound keeps `check_sound`'s bounds, every mix and
 /// FX value its spec's, the name is valid, and every slot Origin names a

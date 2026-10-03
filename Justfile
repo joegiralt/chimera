@@ -28,12 +28,13 @@ check:
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf
-    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features
-    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features bench
-    # Release: a build check, not a debug flash; its dev build sits a few KB
-    # under FLASH (private issue #303).
+    # Every other feature set in release: a build check, not a debug flash;
+    # their dev builds sit at or past FLASH
+    # (private issue #303).
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bench
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bench,master-tape
-    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features sd-probe
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features sd-probe
     cargo build -p chimera-bootloader --target thumbv7em-none-eabihf
     cargo build -p chimera-theory --target thumbv7em-none-eabihf
     just clippy
@@ -118,9 +119,11 @@ flash-sd-probe:
     dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-sd-probe.bin -s 0x8020000:leave
 
 # Coverage-guided fuzz of the Sound and project decoders, seeded with the
-# v1 fixtures (needs nightly and cargo-fuzz)
+# v1 fixtures and NEW, so ORBIT's records are in the corpus from the start
+# (needs nightly and cargo-fuzz)
 fuzz:
     mkdir -p chimera-core/fuzz/corpus/decode_sound chimera-core/fuzz/corpus/decode_project
     cp chimera-core/tests/fixtures/v1/*.snd chimera-core/fuzz/corpus/decode_sound/
     cp chimera-core/tests/fixtures/v1/project.prj chimera-core/fuzz/corpus/decode_project/
+    cp chimera-core/tests/fixtures/v1/orbit.prj chimera-core/fuzz/seeds/decode_project/*.prj chimera-core/fuzz/corpus/decode_project/
     cd chimera-core/fuzz && for t in decode_sound decode_project; do cargo +nightly fuzz run $t -- -max_total_time=300; done

@@ -19,6 +19,12 @@ safely, not sound the same.
   0x0012, `Orbit` 0x0013, and the existing `OrbitScale` 0x0014. All
   non-critical. `RecordTag::is_orbit` names them; a Sound file or SYSTEM
   holding one is `Corrupt`.
+- **0x000B is ORBIT's tempo for good.** The projects spec reserved it for
+  a project tempo; it is now that tempo, owned by ORBIT: `is_orbit`
+  holds it, so it is `Corrupt` anywhere before Part 6 and is read into
+  `OrbitSong::bpm`. A later global tempo (LFO or delay sync) takes this
+  one, ORBIT's, or a new tag; it can't sit at the top level before the
+  Parts under 0x000B.
 - **Where:** at the top level after Part 6. The first ORBIT record closes
   the last Part (`SoundCheck::finish`) and needs all six read, else
   `Corrupt`; after it, only ORBIT records and unknown non-critical ones
@@ -36,8 +42,7 @@ safely, not sound the same.
   the project's CRC does not move when the switch lands.
 - **A load's base** (`OrbitSong::clear_for_load`, at pass 2's header):
   every slot and `live` neutral, 120 BPM, slot 1 playing, nothing
-  queued. Each slot is written through `put`, so every slot's rev moves
-  and no `Confirmed<SceneSlot>` or `SceneAsk` from before the load holds
+  queued. Each slot is reset in place and its rev moved, so no `Confirmed<SceneSlot>` or `SceneAsk` from before the load holds
   after it. `finish` sets the cached `saved` mask from the slots read.
 - **A load takes what it can.** An ORBIT record of the wrong shape, or
   naming a scene past 8 or a ring past 5, is skipped; a value that can't
@@ -46,7 +51,20 @@ safely, not sound the same.
   step note through `Note::new`, a degree through its `DiskCode`, a
   played chord missing its bass or under two tones as none, the tempo
   rounded and clamped (NaN 120). Pass 1 has nothing ORBIT can fail, so
-  ORBIT never costs a project its Parts.
+  ORBIT never costs a project its Parts. A skipped record leaves only its
+  own part of the scene at the base; the rest loads, so a damaged scene
+  is valid but mixed (an `OrbitBlock` skipped leaves the fill 1/1, so the
+  ring's `OrbitNotes` mask is refused while its pool and steps are
+  taken).
+- **A lossy load is never Saved** (controller ruling, Task 18 review).
+  `orbit::records::read` says whether it took a record whole: the song
+  then writes that very record back, byte for byte. A record skipped, a
+  value defaulted or clamped, or bits dropped (a chord's tones past B, a
+  set's past the 12) is lossy, and so is a file with no ORBIT records at
+  all (projects-core v1), which a save would grow. `ProjectCheck`
+  latches it in pass 2, and the load leaves `saved_crc` empty, so the
+  project reads Modified and offers the save that writes it whole. A
+  file this firmware wrote loads Saved.
 - **Decode order is free.** SCALE is a coded param, decoded through
   `set_enum_code`, which never seeds the CUSTOM set (that is
   `ChordRing::write`'s, a UI edit's), so `OrbitScale` lands the file's
@@ -54,7 +72,10 @@ safely, not sound the same.
 - **Run-time revs are no part of a value.** `SceneRing`'s `rhythm_rev`
   and `notes_rev` (the runner's handshake) and a `Pool`'s slots past its
   length no longer count in `==`, as `slot_revs` already didn't in
-  `OrbitSong`'s: a scene loaded is the scene saved.
+  `OrbitSong`'s: a scene loaded is the scene saved. The revs a load
+  leaves are whatever its writes moved them to; `notes_rev` also seeds
+  CLEAR down's roll, so the first roll after a load differs from the
+  first one before the save. Harmless: a roll is new notes either way.
 - The transport is never saved: a load bumps the epoch, which stops the
   runner with no edge (ADR 0071), and it adopts the file's playing scene
   and `live` whole.
@@ -67,13 +88,16 @@ safely, not sound the same.
   Parts with it, over the sequencer's settings.
 - **The whole song back to neutral on any bad record**: the passes reset
   their state at the header, so pass 1 would have to smuggle a flag into
-  pass 2; and a record skipped already leaves its scene neutral there.
+  pass 2; and the rest of a damaged song is still the user's, worth
+  keeping (the load reads Modified instead).
+- **Lenient loads reading Saved**, like a Sound's unknown enum codes:
+  SAVED would claim the card holds what the unit plays when it doesn't.
 - **Zeroing the revs after a load and keeping them in `==`**: a scene
   edited and saved would never equal itself loaded.
 
 ## Consequences
 - Old projects (projects-core v1) load with every scene neutral and every
-  ring muted, at 120 BPM.
+  ring muted, at 120 BPM, and read Modified until saved.
 - A project grows by ~0.76 KB per saved scene plus `live`, and 49 B for
   the seeds and tempo; all eight slots saved is 6,862 B.
 - `project_status` sees every ORBIT edit and absorbed drift; NEW's
@@ -86,4 +110,6 @@ safely, not sound the same.
 - Spec `docs/superpowers/specs/2026-09-30-orbit-design.md` § 8; plan
   `docs/superpowers/plans/2026-09-30-orbit.md` Task 18 and Decisions.
 - ADR 0045, 0046, 0066, 0071, 0077.
-- Tests: `chimera-core/tests/orbit_codec_test.rs`.
+- Tests: `chimera-core/tests/orbit_codec_test.rs`; the frozen fixture
+  `chimera-core/tests/fixtures/v1/orbit.prj` pins every ORBIT payload's
+  layout (ADR 0045 § Fixtures).

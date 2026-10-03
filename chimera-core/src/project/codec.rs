@@ -206,6 +206,10 @@ pub struct ProjectCheck {
     mix: bool,
     origin: bool,
     origins: [ReadOrigin; MAX_PARTS],
+    /// Pass 2 took less than the file holds: an ORBIT record skipped or a
+    /// value in it defaulted, or no ORBIT records at all (ADR 0078). A save
+    /// would write other bytes, so the load is not Saved.
+    lossy: bool,
 }
 
 const _: () = assert!(SlotId::ALL.len() <= u32::BITS as usize);
@@ -228,6 +232,7 @@ impl ProjectCheck {
             mix: false,
             origin: false,
             origins: [ReadOrigin::Missing; MAX_PARTS],
+            lossy: false,
         }
     }
 
@@ -324,7 +329,9 @@ impl ProjectCheck {
             self.close(target.as_deref_mut())?;
             self.context = Context::Orbit;
         }
-        read_orbit(tag, p, target.map(|t| &mut t.orbit));
+        if !read_orbit(tag, p, target.map(|t| &mut t.orbit)) {
+            self.lossy = true;
+        }
         Ok(())
     }
 
@@ -423,6 +430,8 @@ impl ProjectCheck {
     /// Then resolves each Part's Origin against the pool as loaded.
     fn finish(&mut self, mut target: Option<&mut Project>) -> Result<(), FileError> {
         self.close(target.as_deref_mut())?;
+        // A file from before ORBIT: a save adds its records.
+        self.lossy |= self.context != Context::Orbit;
         self.context = Context::None;
         if PartId::ALL.iter().any(|&n| !self.parts.contains(n)) {
             return Err(FileError::Corrupt);
@@ -490,6 +499,12 @@ impl<'a> ProjectDecoder<'a> {
     #[doc(hidden)]
     pub fn new_for_test(target: &'a mut Project) -> Self {
         Self::new(target)
+    }
+
+    /// After pass 2: the project holds less than the file, or other bytes
+    /// than a save would write (ADR 0078). The load is then not Saved.
+    pub fn lossy(&self) -> bool {
+        self.check.lossy
     }
 }
 

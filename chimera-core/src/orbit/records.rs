@@ -15,7 +15,7 @@ use super::euclid::HitMask;
 use super::scene::{NEUTRAL, OrbitSong, STORED_LIVE, Scene, SceneIdx, decode_scale, encode_scale};
 use super::walk::Pool;
 use super::{MAX_POOL, MAX_SEGS, MAX_STEPS, RingIdx};
-use crate::addr::{BlockRef, Blocks};
+use crate::addr::{BlockRead, BlockRef, Blocks};
 use crate::block::{Block, DiskCode};
 use crate::storage::{
     MIGRATIONS, RecordBuf, RecordTag, RecordWriter, TRANSLATIONS, decode_block, encode_block,
@@ -31,39 +31,52 @@ const ORBIT_LEN: usize = 1 + 4 * STORED;
 const UNPLAYED: u8 = 0;
 const PLAYED: u8 = 1;
 
-fn put_scene(w: &mut RecordWriter<'_>, at: u8, s: &Scene) -> Result<(), StoreError> {
-    let rings =
-        (s.rings.iter().zip(RingIdx::ALL)).map(|(r, i)| (BlockRef::OrbitRing(i), r as &dyn Block));
-    for (b, blk) in core::iter::once((BlockRef::OrbitChords, &s.chords as &dyn Block)).chain(rings)
-    {
-        let mut r = RecordBuf::new();
-        r.u8(at);
-        encode_block(b, blk, &mut r);
-        w.put(RecordTag::OrbitBlock, r.as_slice())?;
+/// `OrbitBlock`: scene `at`, then block `b`'s payload.
+fn block_payload(at: u8, b: BlockRef, blk: &dyn Block) -> RecordBuf {
+    let mut r = RecordBuf::new();
+    r.u8(at);
+    encode_block(b, blk, &mut r);
+    r
+}
+
+/// `OrbitNotes`: scene, ring, the hits `u32`, the pool's length and notes,
+/// then the 32 step notes.
+fn notes_payload(at: u8, r: RingIdx, s: &Scene) -> RecordBuf {
+    let ring = &s.rings[r.get() as usize].ring;
+    let mut p = RecordBuf::new();
+    p.u8(at);
+    p.u8(r.get());
+    p.u32(ring.hits_mask().bits());
+    p.u8(ring.pool.len() as u8);
+    for n in ring.pool.notes().iter().chain(&ring.notes) {
+        p.u8(n.get());
     }
-    for (i, sr) in s.rings.iter().enumerate() {
-        let ring = &sr.ring;
-        let mut r = RecordBuf::new();
-        r.u8(at);
-        r.u8(i as u8);
-        r.u32(ring.hits_mask().bits());
-        r.u8(ring.pool.len() as u8);
-        for n in ring.pool.notes().iter().chain(&ring.notes) {
-            r.u8(n.get());
-        }
-        w.put(RecordTag::OrbitNotes, r.as_slice())?;
+    p
+}
+
+/// `OrbitChord`: scene, segment, degree, played, bass, tones `u16`.
+fn chord_payload(at: u8, seg: usize, s: &Scene) -> [u8; 7] {
+    let (played, bass, tones) = match s.chords.played[seg] {
+        Some(c) => (PLAYED, c.bass().disk_code(), tones_of(c)),
+        None => (UNPLAYED, 0, 0),
+    };
+    let [lo, hi] = tones.to_le_bytes();
+    let degree = s.chords.degrees[seg].disk_code();
+    [at, seg as u8, degree, played, bass, lo, hi]
+}
+
+fn put_scene(w: &mut RecordWriter<'_>, at: u8, s: &Scene) -> Result<(), StoreError> {
+    let r = block_payload(at, BlockRef::OrbitChords, &s.chords);
+    w.put(RecordTag::OrbitBlock, r.as_slice())?;
+    for (r, sr) in RingIdx::ALL.into_iter().zip(&s.rings) {
+        let p = block_payload(at, BlockRef::OrbitRing(r), sr);
+        w.put(RecordTag::OrbitBlock, p.as_slice())?;
+    }
+    for r in RingIdx::ALL {
+        w.put(RecordTag::OrbitNotes, notes_payload(at, r, s).as_slice())?;
     }
     for seg in 0..MAX_SEGS {
-        let (played, bass, tones) = match s.chords.played[seg] {
-            Some(c) => (PLAYED, c.bass().disk_code(), tones_of(c)),
-            None => (UNPLAYED, 0, 0),
-        };
-        let [lo, hi] = tones.to_le_bytes();
-        let degree = s.chords.degrees[seg].disk_code();
-        w.put(
-            RecordTag::OrbitChord,
-            &[at, seg as u8, degree, played, bass, lo, hi],
-        )?;
+        w.put(RecordTag::OrbitChord, &chord_payload(at, seg, s))?;
     }
     w.put(RecordTag::OrbitScale, &encode_scale(at, s.chords.custom))
 }
@@ -71,6 +84,20 @@ fn put_scene(w: &mut RecordWriter<'_>, at: u8, s: &Scene) -> Result<(), StoreErr
 /// Bit n: pitch class n.
 fn tones_of(c: Chord) -> u16 {
     c.tones().iter().fold(0, |m, pc| m | 1 << pc.disk_code())
+}
+
+/// `Orbit`: the playing scene, then each stored scene's seed.
+fn orbit_payload(current: SceneIdx, seed: &dyn Fn(u8) -> u32) -> RecordBuf {
+    let mut r = RecordBuf::new();
+    r.u8(current.get());
+    for at in 0..STORED as u8 {
+        r.u32(seed(at));
+    }
+    r
+}
+
+fn tempo_payload(bpm: Bpm) -> [u8; 4] {
+    f32::from(bpm.get()).to_le_bytes()
 }
 
 /// The scenes `scene` gives, the slots in `saved` and then `live`, then
@@ -88,13 +115,9 @@ fn put_song<'a>(
             put_scene(w, at, scene(at))?;
         }
     }
-    let mut r = RecordBuf::new();
-    r.u8(current.get());
-    for at in 0..STORED as u8 {
-        r.u32(scene(at).seed);
-    }
+    let r = orbit_payload(current, &|at| scene(at).seed);
     w.put(RecordTag::Orbit, r.as_slice())?;
-    w.put(RecordTag::Tempo, &f32::from(bpm.get()).to_le_bytes())
+    w.put(RecordTag::Tempo, &tempo_payload(bpm))
 }
 
 /// `song`'s records. While a switch waits, as if it had landed: the queued
@@ -152,18 +175,23 @@ fn played_chord(bass: u8, tones: u16) -> Option<Chord> {
     Chord::from_notes(&notes[..n])
 }
 
-/// One ORBIT record into `song` (pass 2); pass 1 has nothing to check.
-pub(crate) fn read(tag: RecordTag, p: &[u8], song: Option<&mut OrbitSong>) {
-    let Some(song) = song else { return };
+/// One ORBIT record into `song` (pass 2; pass 1 has nothing to check).
+/// True when it was taken whole: the song now writes this very record
+/// back. False when it was skipped, or a value in it was defaulted,
+/// clamped or dropped (ADR 0078: such a load is never Saved).
+pub(crate) fn read(tag: RecordTag, p: &[u8], song: Option<&mut OrbitSong>) -> bool {
+    let Some(song) = song else { return true };
     match tag {
         RecordTag::Tempo => {
-            if let Ok(&b) = <&[u8; 4]>::try_from(p) {
-                song.bpm = decode_tempo(f32::from_le_bytes(b));
-            }
+            let Ok(&b) = <&[u8; 4]>::try_from(p) else {
+                return false;
+            };
+            song.bpm = decode_tempo(f32::from_le_bytes(b));
+            tempo_payload(song.bpm) == b
         }
         RecordTag::Orbit => {
             let Ok(&[current, ref seeds @ ..]) = <&[u8; ORBIT_LEN]>::try_from(p) else {
-                return;
+                return false;
             };
             song.set_current(SceneIdx::new(current).unwrap_or(SceneIdx::ALL[0]));
             for (at, &seed) in (0..).zip(seeds.as_chunks::<4>().0) {
@@ -171,42 +199,55 @@ pub(crate) fn read(tag: RecordTag, p: &[u8], song: Option<&mut OrbitSong>) {
                     s.seed = u32::from_le_bytes(seed);
                 }
             }
+            let seed = |at| song.stored(at).map_or(0, |s| s.seed);
+            orbit_payload(song.current(), &seed).as_slice() == p
         }
         RecordTag::OrbitBlock => {
-            if let Some((&at, body)) = p.split_first()
-                && let Some(s) = song.stored_mut(at)
-            {
-                // A block of the wrong shape changes nothing: skipped.
-                let _ = decode_block(body, MIGRATIONS, TRANSLATIONS, Some(s as &mut dyn Blocks));
+            let Some((&at, body)) = p.split_first() else {
+                return false;
+            };
+            let Some(s) = song.stored_mut(at) else {
+                return false;
+            };
+            // A block of the wrong shape changes nothing: skipped.
+            if decode_block(body, MIGRATIONS, TRANSLATIONS, Some(s as &mut dyn Blocks)).is_err() {
+                return false;
             }
+            let Some(b) = body.first().and_then(|&c| BlockRef::from_disk_code(c)) else {
+                return false;
+            };
+            s.block(b)
+                .is_some_and(|blk| block_payload(at, b, blk).as_slice() == p)
         }
         RecordTag::OrbitNotes => notes(p, song),
         RecordTag::OrbitChord => chord(p, song),
         RecordTag::OrbitScale => {
-            if let Some((at, set)) = decode_scale(p)
-                && let Some(s) = song.stored_mut(at)
-            {
-                s.chords.custom = set;
-            }
+            let Some((at, set)) = decode_scale(p) else {
+                return false;
+            };
+            let Some(s) = song.stored_mut(at) else {
+                return false;
+            };
+            s.chords.custom = set;
+            encode_scale(at, set) == p
         }
-        _ => {}
+        _ => true,
     }
 }
 
-/// `OrbitNotes`: scene, ring, the hits `u32`, the pool's length and notes,
-/// then 32 step notes. A mask is taken only as the fill's own hits moved
+/// `OrbitNotes`: a mask is taken only as the fill's own hits moved
 /// (`with_mask`), a pool only whole (`Pool::new`), a step note only if it
 /// is one; the rest keep the base's.
-fn notes(p: &[u8], song: &mut OrbitSong) {
+fn notes(p: &[u8], song: &mut OrbitSong) -> bool {
     let &[at, ring, m0, m1, m2, m3, len, ref rest @ ..] = p else {
-        return;
+        return false;
     };
     let len = usize::from(len);
     let (Some(s), Some(r)) = (song.stored_mut(at), RingIdx::new(ring)) else {
-        return;
+        return false;
     };
     if rest.len() != len + STEPS {
-        return;
+        return false;
     }
     let ring = &mut s.rings[r.get() as usize].ring;
     let (pool, steps) = rest.split_at(len);
@@ -216,14 +257,7 @@ fn notes(p: &[u8], song: &mut OrbitSong) {
     {
         *ring = laid;
     }
-    let mut read = [Note::MIN; MAX_POOL];
-    if len <= MAX_POOL
-        && pool
-            .iter()
-            .zip(&mut read)
-            .all(|(&b, n)| Note::new(b).map(|x| *n = x).is_some())
-        && let Some(taken) = Pool::new(&read[..len])
-    {
+    if let Some(taken) = pool_of(pool) {
         ring.pool = taken;
     }
     for (n, &b) in ring.notes.iter_mut().zip(steps) {
@@ -231,18 +265,30 @@ fn notes(p: &[u8], song: &mut OrbitSong) {
             *n = x;
         }
     }
+    notes_payload(at, r, s).as_slice() == p
 }
 
-/// `OrbitChord`: scene, segment, degree, played, bass, tones `u16`. A
-/// degree this firmware lacks keeps the base's; a played chord that can't
-/// be one reads as none.
-fn chord(p: &[u8], song: &mut OrbitSong) {
+/// A pool read whole: 1..=8 notes, each one.
+fn pool_of(bytes: &[u8]) -> Option<Pool> {
+    let mut read = [Note::MIN; MAX_POOL];
+    if bytes.len() > MAX_POOL {
+        return None;
+    }
+    for (n, &b) in read.iter_mut().zip(bytes) {
+        *n = Note::new(b)?;
+    }
+    Pool::new(&read[..bytes.len()])
+}
+
+/// `OrbitChord`: a degree this firmware lacks keeps the base's; a played
+/// chord that can't be one reads as none.
+fn chord(p: &[u8], song: &mut OrbitSong) -> bool {
     let &[at, seg, degree, played, bass, lo, hi] = p else {
-        return;
+        return false;
     };
     let seg = usize::from(seg);
     let Some(s) = song.stored_mut(at).filter(|_| seg < MAX_SEGS) else {
-        return;
+        return false;
     };
     if let Some(d) = Degree::from_disk_code(degree) {
         s.chords.degrees[seg] = d;
@@ -251,4 +297,5 @@ fn chord(p: &[u8], song: &mut OrbitSong) {
         PLAYED => played_chord(bass, u16::from_le_bytes([lo, hi])),
         _ => None,
     };
+    chord_payload(at, seg, s) == *p
 }

@@ -484,7 +484,10 @@ fn a_load_moves_every_slot_and_the_saved_mask() {
 }
 
 /// Fuzz-ish: each kind of ORBIT record cut at every byte, and each bit of
-/// it flipped. Never a panic, never an error: the Parts always load.
+/// it flipped. Never a panic, never an error: the Parts always load. The
+/// song loaded is a fixed point (saved and loaded again it is itself), its
+/// saved-slot mask is exactly the slots not neutral, and a cut record is
+/// always a lossy load, the whole one never.
 #[test]
 fn damaged_orbit_records_never_cost_the_parts() {
     let p = rich();
@@ -496,7 +499,7 @@ fn damaged_orbit_records_never_cost_the_parts() {
         let i = recs.iter().rposition(|r| r.0 == tag.code()).unwrap();
         kinds += 1;
         let whole = recs[i].1.clone();
-        let mut versions: Vec<Vec<u8>> = (0..whole.len()).map(|n| whole[..n].to_vec()).collect();
+        let mut versions: Vec<Vec<u8>> = (0..=whole.len()).map(|n| whole[..n].to_vec()).collect();
         for byte in 0..whole.len() {
             for bit in 0..8 {
                 let mut v = whole.clone();
@@ -505,12 +508,29 @@ fn damaged_orbit_records_never_cost_the_parts() {
             }
         }
         for v in versions {
+            let cut = v.len() < whole.len();
+            let is_whole = v == whole;
             let mut r = recs.clone();
             r[i].1 = v;
             let f = rebuild(&h, &r);
             assert!(check_project_decode(&f, &mut target), "{tag:?}");
             for id in PartId::ALL {
                 assert!(target.part(id).sound.bits_eq(&p.part(id).sound));
+            }
+            let o = target.orbit();
+            let mask = (0..8)
+                .filter(|&n| !o.scene(S[n]).is_neutral())
+                .fold(0, |m, n| m | 1 << n);
+            assert_eq!(o.saved(), mask, "{tag:?}");
+            let (again, lossy) = loaded_lossy(&encode(&target));
+            assert!(!lossy, "{tag:?}: written whole");
+            assert_eq!(again.orbit(), target.orbit(), "{tag:?}: a fixed point");
+            let lossy = common::codec_util::decode_project_lossy(&f, &mut target).unwrap();
+            if cut {
+                assert!(lossy, "{tag:?} cut");
+            }
+            if is_whole {
+                assert!(!lossy, "{tag:?} whole");
             }
         }
     }
@@ -598,7 +618,7 @@ mod unit {
     use chimera_core::ui::UiState;
     use chimera_core::ui::animation::UiTick;
     use chimera_core::ui::hold::HOLD_MS;
-    use chimera_hal::ButtonId::{B6, Menu, Plus, Seq};
+    use chimera_hal::ButtonId::{B2, B6, Menu, Plus, Seq};
     use chimera_hal::EncoderId::A;
     use chimera_hal::testkit::MemStore;
 
@@ -744,6 +764,12 @@ mod unit {
         // Played on, then loaded back.
         audio.loops(&mut rig, 2);
         assert_ne!(view_drift(&audio.view()), playing);
+        rig.ui.update(UiTick::for_test());
+        assert_eq!(
+            rig.ui.project_status(),
+            ProjectStatus::Modified,
+            "drift absorbed"
+        );
         reload(&mut rig, &mut audio, f);
         assert_eq!(scene_drift(&rig.ui.project().orbit().live), playing);
         assert!(!audio.view().running, "a load stops ORBIT");
@@ -822,7 +848,7 @@ mod unit {
         assert_eq!(audio.view().chord.root(), PitchClass::E, "KEY reached it");
     }
 
-    /// R9: a STEPS edit marks the project; a transport toggle doesn't. A
+    /// R9: STEPS turned on RING marks the project; a transport toggle doesn't. A
     /// fresh NEW, ORBIT records and all, is `Pristine`.
     #[test]
     fn orbit_edits_mark_the_project() {
@@ -837,9 +863,194 @@ mod unit {
         ui.update(UiTick::for_test());
         assert_eq!(ui.project_status(), ProjectStatus::Pristine, "B6 again");
 
-        ui.project_mut().orbit_mut().live.rings[1].set(SceneRing::STEPS, 11.0);
+        // RING 2's RHYTHM: encoder A is STEPS, 8 → 7.
+        tap(&mut ui, B2);
+        feed(&mut ui, Input::turn(A, -1));
+        let steps = ui.project().orbit().live.rings[1].ring.fill().steps();
+        assert_eq!(steps.get(), 7, "the turn reached STEPS");
         ui.update(UiTick::for_test());
         assert_eq!(ui.project_status(), ProjectStatus::Modified, "STEPS");
-        feed(&mut ui, Input::default());
     }
+}
+
+const ORBIT_FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v1/orbit.prj");
+
+/// `rich()` with nothing queued: `live` keeps its cluster.
+fn fixture_project() -> Box<Project> {
+    let mut p = rich();
+    let current = p.orbit().current();
+    p.orbit_mut().queue(current);
+    p
+}
+
+/// Run once with `FIXTURE_WRITE=1 cargo test -p chimera-core --test
+/// orbit_codec_test -- --ignored`, then commit the files: the fixture is
+/// frozen from there on, never rewritten. It also writes NEW, the fuzz
+/// seed beside it (`just fuzz` copies both into the corpus).
+#[test]
+#[ignore]
+fn write_orbit_fixture() {
+    assert!(
+        std::env::var_os("FIXTURE_WRITE").is_some(),
+        "FIXTURE_WRITE=1"
+    );
+    for (path, bytes) in [
+        (ORBIT_FIXTURE, encode(&fixture_project())),
+        (NEW_SEED, encode(&new_project())),
+    ] {
+        let path = std::path::Path::new(path);
+        if !path.exists() {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, bytes).unwrap();
+        }
+    }
+}
+
+const NEW_SEED: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/fuzz/seeds/decode_project/new.prj"
+);
+
+/// The frozen fixture (ADR 0045 § Fixtures): its bytes, each ORBIT
+/// payload's layout pinned by hand, the song it loads, and the same ORBIT
+/// records written back.
+#[test]
+fn the_orbit_fixture_loads_as_frozen() {
+    let f = std::fs::read(ORBIT_FIXTURE).unwrap();
+    assert_eq!(f.len(), 26_379);
+    let recs = orbit_records(&f);
+    let payload = |tag: RecordTag, head: &[u8]| recs[find(&recs, tag, head)].1.clone();
+    // OrbitBlock: scene, block code 27, then (id, f32 or code u32)*: KEY A
+    // (code 9), SCALE MINOR (1), BARS 4 (3.0), SEGS 4 (3.0).
+    assert_eq!(
+        payload(RecordTag::OrbitBlock, &[LIVE, 27]),
+        [
+            8, 27, 0, 9, 0, 0, 0, 1, 1, 0, 0, 0, 2, 0, 0, 64, 64, 3, 0, 0, 64, 64
+        ]
+    );
+    // OrbitNotes: scene, ring, mask u32, pool length, pool, 32 steps.
+    let mut ring2 = vec![8, 1, 82, 0, 0, 0, 3, 62, 69, 72];
+    ring2.extend([60; 32]);
+    assert_eq!(payload(RecordTag::OrbitNotes, &[LIVE, 1]), ring2);
+    let mut ring1 = vec![8, 0, 3, 0, 0, 0, 8, 24, 26, 33, 33, 41, 43, 45, 45];
+    ring1.extend([24; 32]);
+    assert_eq!(payload(RecordTag::OrbitNotes, &[LIVE, 0]), ring1);
+    // OrbitChord: scene, segment, degree VI (5), played, bass C, tones
+    // C C# D.
+    assert_eq!(
+        payload(RecordTag::OrbitChord, &[LIVE, 1]),
+        [8, 1, 5, 1, 0, 7, 0]
+    );
+    // OrbitScale: slot 4's CUSTOM set, the root, a minor third, a tritone.
+    assert_eq!(payload(RecordTag::OrbitScale, &[3]), [3, 0b100_1001, 0]);
+    // Orbit: slot 1 playing, then the seeds, slots 1–8 and `live`.
+    let mut orbit = vec![0];
+    orbit.extend(0x0B17_0001u32.to_le_bytes());
+    for n in 1..8u32 {
+        orbit.extend((0x5EED_0000 + n).to_le_bytes());
+    }
+    orbit.extend(0xCAFE_F00Du32.to_le_bytes());
+    assert_eq!(payload(RecordTag::Orbit, &[]), orbit);
+    // Tempo: 97.0 as f32 LE.
+    assert_eq!(payload(RecordTag::Tempo, &[]), [0, 0, 194, 66]);
+
+    let (q, lossy) = loaded_lossy(&f);
+    assert!(!lossy, "a whole file");
+    let o = q.orbit();
+    assert_eq!(
+        (o.current(), o.queued(), o.saved(), o.bpm.get()),
+        (S[0], None, 0xFF, 97)
+    );
+    let live = &o.live;
+    assert_eq!(
+        (live.chords.tonic, live.chords.scale),
+        (PitchClass::A, ScaleKind::Minor)
+    );
+    assert_eq!(
+        live.chords.played[1],
+        Chord::from_notes(&notes(&[60, 61, 62]))
+    );
+    assert_eq!(live.seed, 0xCAFE_F00D);
+    let r2 = &live.rings[1].ring;
+    assert_eq!(r2.hits_mask().bits(), 0b101_0010);
+    assert_eq!(r2.pool.notes(), notes(&[62, 69, 72]));
+    assert_eq!(o.scene(S[3]).chords.scale, ScaleKind::Custom);
+    assert_eq!(o.scene(S[6]).seed, 0x5EED_0006);
+    assert_eq!(o.scene(S[6]).chords.tonic, PitchClass::ALL[6]);
+    // Written back: the same ORBIT bytes.
+    assert_eq!(orbit_records(&encode(&q)), recs);
+}
+
+/// `bytes` decoded over a fresh NEW, and whether the load was lossy.
+fn loaded_lossy(bytes: &[u8]) -> (Box<Project>, bool) {
+    let (mut q, _) = Project::boxed();
+    let lossy = common::codec_util::decode_project_lossy(bytes, &mut q).expect("loads");
+    (q, lossy)
+}
+
+/// `bytes` as P0000001 on a fresh card, then loaded through
+/// `load_project` and through boot: the status each shows.
+fn status_after_load(bytes: &[u8]) -> [chimera_core::project::ProjectStatus; 2] {
+    use chimera_core::project::{
+        LoadLink, ProjectFile, boot_project, list_projects, load_project, project_file,
+        project_status,
+    };
+    use chimera_core::storage::{Card, ProjectId, Side};
+    use chimera_hal::store::{ByteSink, Dir, Store};
+    use chimera_hal::testkit::MemStore;
+    let mut s = MemStore::new(1);
+    let vol = s.mount().unwrap();
+    s.make_dir(vol, Dir::Chimera).unwrap();
+    s.make_dir(vol, Dir::Projects).unwrap();
+    let id = ProjectId::new(1).unwrap();
+    let side = project_file(id).side(Side::A);
+    s.write(vol, side, &mut |w: &mut dyn ByteSink| w.put(bytes))
+        .unwrap();
+    let mut file = None;
+    let _ = list_projects(&mut Card::new(), &mut s, &mut |e| file = Some(e.file()));
+    let file: ProjectFile = file.expect("listed");
+    let (mut p, t) = Project::boxed();
+    let go = common::project::confirm_load(&p, t, file);
+    let out = load_project(&mut Card::new(), &mut s, &mut p, go, &LoadLink::new());
+    assert!(out.note.is_none(), "{:?}", out.note);
+    let loaded = project_status(&p, t);
+    let (mut b, t) = Project::boxed();
+    assert_eq!(
+        boot_project(&mut Card::new(), &mut s, Some(id), &mut b),
+        None
+    );
+    [loaded, project_status(&b, t)]
+}
+
+/// ADR 0078's ruling: a load that took less than the file, or that a save
+/// would write otherwise, is never Saved. A whole file is; a damaged ORBIT
+/// record or a file from before ORBIT reads Modified, and loads.
+#[test]
+fn a_lossy_load_reads_modified() {
+    use chimera_core::project::ProjectStatus::{Modified, Saved};
+    let p = fixture_project();
+    assert_eq!(status_after_load(&encode(&p)), [Saved; 2]);
+    let damaged = edited(&p, |r| {
+        let i = find(r, RecordTag::OrbitNotes, &[LIVE, 1]);
+        r[i].1[7] = 200;
+    });
+    assert_eq!(status_after_load(&damaged), [Modified; 2]);
+    // Bits past B in a chord's tones, or past the 12 in a set: dropped.
+    for (tag, head, at, bit) in [
+        (RecordTag::OrbitChord, &[LIVE, 1][..], 6, 0x80),
+        (RecordTag::OrbitScale, &[LIVE][..], 2, 0x10),
+    ] {
+        let f = edited(&p, |r| {
+            let i = find(r, tag, head);
+            r[i].1[at] |= bit;
+        });
+        assert!(loaded_lossy(&f).1, "{tag:?}");
+        assert_eq!(status_after_load(&f), [Modified; 2], "{tag:?}");
+    }
+    let v1 = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/v1/project.prj"
+    ))
+    .unwrap();
+    assert_eq!(status_after_load(&v1), [Modified; 2], "before ORBIT");
 }
