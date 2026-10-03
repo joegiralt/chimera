@@ -155,6 +155,13 @@ fn rich() -> Box<Project> {
     }
     let song = p.orbit_mut();
     song.live.chords.played[1] = Chord::from_notes(&notes(&[60, 61, 62]));
+    // Rings 1 and 2 with their own uneven steps, so no step can stand in
+    // for another.
+    for (r, base) in [(0, 36u8), (1, 60)] {
+        for (i, n) in song.live.rings[r].ring.notes.iter_mut().enumerate() {
+            *n = Note::new(base + (i as u8 * 5 + r as u8) % 19).unwrap();
+        }
+    }
     song.live.seed = 0xCAFE_F00D;
     song.bpm = Bpm::new(97).unwrap();
     song.queue(S[5]);
@@ -911,9 +918,10 @@ const NEW_SEED: &str = concat!(
     "/fuzz/seeds/decode_project/new.prj"
 );
 
-/// The frozen fixture (ADR 0045 § Fixtures): its bytes, each ORBIT
-/// payload's layout pinned by hand, the song it loads, and the same ORBIT
-/// records written back.
+/// The frozen fixture (ADR 0045 § Fixtures). The raw payloads below are
+/// literals copied from the file: they pin the frozen bytes, so a later
+/// reader must keep loading them; they exercise no encoder. Then the song
+/// the file loads, field by field, and the same ORBIT records written back.
 #[test]
 fn the_orbit_fixture_loads_as_frozen() {
     let f = std::fs::read(ORBIT_FIXTURE).unwrap();
@@ -929,11 +937,19 @@ fn the_orbit_fixture_loads_as_frozen() {
         ]
     );
     // OrbitNotes: scene, ring, mask u32, pool length, pool, 32 steps.
-    let mut ring2 = vec![8, 1, 82, 0, 0, 0, 3, 62, 69, 72];
-    ring2.extend([60; 32]);
+    #[rustfmt::skip]
+    let ring2 = [
+        8, 1, 82, 0, 0, 0, 3, 62, 69, 72,
+        61, 66, 71, 76, 62, 67, 72, 77, 63, 68, 73, 78, 64, 69, 74, 60,
+        65, 70, 75, 61, 66, 71, 76, 62, 67, 72, 77, 63, 68, 73, 78, 64,
+    ];
     assert_eq!(payload(RecordTag::OrbitNotes, &[LIVE, 1]), ring2);
-    let mut ring1 = vec![8, 0, 3, 0, 0, 0, 8, 24, 26, 33, 33, 41, 43, 45, 45];
-    ring1.extend([24; 32]);
+    #[rustfmt::skip]
+    let ring1 = [
+        8, 0, 3, 0, 0, 0, 8, 24, 26, 33, 33, 41, 43, 45, 45,
+        36, 41, 46, 51, 37, 42, 47, 52, 38, 43, 48, 53, 39, 44, 49, 54,
+        40, 45, 50, 36, 41, 46, 51, 37, 42, 47, 52, 38, 43, 48, 53, 39,
+    ];
     assert_eq!(payload(RecordTag::OrbitNotes, &[LIVE, 0]), ring1);
     // OrbitChord: scene, segment, degree VI (5), played, bass C, tones
     // C C# D.
@@ -970,12 +986,32 @@ fn the_orbit_fixture_loads_as_frozen() {
         live.chords.played[1],
         Chord::from_notes(&notes(&[60, 61, 62]))
     );
-    assert_eq!(live.seed, 0xCAFE_F00D);
+    let seeds: Vec<u32> = S
+        .iter()
+        .map(|&n| o.scene(n).seed)
+        .chain([live.seed])
+        .collect();
+    assert_eq!(
+        seeds,
+        [
+            0x0B17_0001,
+            0x5EED_0001,
+            0x5EED_0002,
+            0x5EED_0003,
+            0x5EED_0004,
+            0x5EED_0005,
+            0x5EED_0006,
+            0x5EED_0007,
+            0xCAFE_F00D,
+        ]
+    );
+    let steps = |r: usize| live.rings[r].ring.notes.map(|n| n.get());
+    assert_eq!(steps(0)[..4], [36, 41, 46, 51]);
+    assert_eq!(steps(1)[29..], [73, 78, 64]);
     let r2 = &live.rings[1].ring;
     assert_eq!(r2.hits_mask().bits(), 0b101_0010);
     assert_eq!(r2.pool.notes(), notes(&[62, 69, 72]));
     assert_eq!(o.scene(S[3]).chords.scale, ScaleKind::Custom);
-    assert_eq!(o.scene(S[6]).seed, 0x5EED_0006);
     assert_eq!(o.scene(S[6]).chords.tonic, PitchClass::ALL[6]);
     // Written back: the same ORBIT bytes.
     assert_eq!(orbit_records(&encode(&q)), recs);
