@@ -510,6 +510,10 @@ fn prompt(k: AskKind, ui: &mut UiState) {
             tap(ui, ButtonId::Edit);
             tap(ui, ButtonId::Edit);
         }
+        AskKind::EnterDfu => {
+            to_leaf(ui, &["SYSTEM"]);
+            tap(ui, ButtonId::Edit);
+        }
     }
     assert_eq!(ui.prompt_kind_for_test(), Some(k));
 }

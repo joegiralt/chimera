@@ -18,7 +18,7 @@ use crate::ui::midi_settings::MidiSettings;
 use crate::ui::page::{PageLayout, ValFmt};
 use crate::ui::settings::leaves::{
     ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, DEMO_LEAVES, LIVE_SNAP_LEAF, OUTPUTS_LEAF,
-    SYNC_LEAF, THEME_LEAF, TUNING_LEAF, UPDATES_LEAF,
+    SYNC_LEAF, THEME_LEAF, TUNING_LEAF,
 };
 use crate::ui::theme_settings::ThemeSettings;
 
@@ -634,17 +634,8 @@ pub static SYS_SYNC: BlockDef = BlockDef {
     ],
 };
 
-pub static SYS_UPDATES: BlockDef = BlockDef {
-    id: 34,
-    name: "Updates",
-    short: "UPD",
-    layout: PageLayout::CellGrid,
-    viz: VizType::None,
-    params: [EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY],
-};
-
 pub static SYS_ABOUT: BlockDef = BlockDef {
-    id: 35,
+    id: 35, // 34, SYSTEM's old UPDATES page, is retired: never reuse it.
     name: "About",
     short: "ABT",
     layout: PageLayout::BigViz,
@@ -918,7 +909,7 @@ pub static DEMO_BLOCKS: [ChainBlock; 13] = [
 ];
 
 /// The chains besides DEMO's leaves.
-const FIXED: [&ChainDef2; 13] = [
+const FIXED: [&ChainDef2; 12] = [
     &ALGO_CHAIN,
     &MODAL_PLUCK_CHAIN,
     &MIXER_CHANNEL_CHAIN,
@@ -927,7 +918,6 @@ const FIXED: [&ChainDef2; 13] = [
     OUTPUTS_LEAF.chain(),
     TUNING_LEAF.chain(),
     THEME_LEAF.chain(),
-    UPDATES_LEAF.chain(),
     ABOUT_LEAF.chain(),
     AUDIO_LOAD_LEAF.chain(),
     LIVE_SNAP_LEAF.chain(),

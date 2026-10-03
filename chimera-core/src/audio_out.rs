@@ -107,6 +107,33 @@ impl Heartbeat {
     }
 }
 
+/// Whether the watchdog's kicks are live: the audio block count and the
+/// controls tick have each moved at least `LIVE_STEPS` times since `start`.
+/// Arming before that leaves the start-up's own gaps on the clock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LiveCheck {
+    blocks: u32,
+    ticks: u32,
+}
+
+/// Two, so one move isn't a counter caught mid-start.
+pub const LIVE_STEPS: u32 = 2;
+
+impl LiveCheck {
+    pub const fn start(blocks: u32, ticks: u32) -> Self {
+        LiveCheck { blocks, ticks }
+    }
+
+    pub const fn live(&self, blocks: u32, ticks: u32) -> bool {
+        blocks.wrapping_sub(self.blocks) >= LIVE_STEPS
+            && ticks.wrapping_sub(self.ticks) >= LIVE_STEPS
+    }
+}
+
+/// How long start-up waits for `LiveCheck` before it resets instead: many
+/// blocks and ticks, so only dead audio or a dead tick reaches it.
+pub const LIVE_WAIT_MS: u32 = 500;
+
 /// The watchdog timeout in ms: the longest the audio interrupt may starve
 /// the controls tick, a hang or a sustained overrun alike, before the unit
 /// resets (ADR 0034). The IWDG counts it on the LSI's nominal 32 kHz.

@@ -43,6 +43,7 @@ use chimera_hal::{
 
 use crate::addr::{BlockRead, BlockRef, Blocks, Op, ParamAddr};
 use crate::block::Block;
+use crate::boot::RomDfu;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
 use crate::in_place::{by_value, uninit_at};
@@ -67,11 +68,12 @@ use block_def::BlockDef;
 use block_def::VizType;
 use block_def::slot_addr;
 use components::Head;
+use fmt::FmtBuf;
 use hold::{HoldGates, Press};
 use midi_settings::MidiSettings;
 use mod_grid::MatrixState;
 use nav::{
-    Browse, Column, ListAt, Location, NavCtx, NavKey, OrbitAct, OrbitCx, OrbitKey, Recall,
+    Browse, Column, ListAt, Location, NavCtx, NavKey, OrbitAct, OrbitCx, OrbitKey, Recall, Rung,
     SettingsAt, Step, chain_def_for,
 };
 use page::{PageKey, PageLayout};
@@ -84,6 +86,7 @@ use settings::naming::Naming;
 use settings::part::{Offer, PartCmd, SAVE_ROWS, slot_of};
 use settings::prompt;
 use settings::prompt::ReplaceTo;
+use settings::replace::said::Said;
 use settings::replace::{Asked, Guarded, PartAsk, ProjectAsk, Reply, said};
 use settings::view::PartBand;
 use settings::{
@@ -222,6 +225,8 @@ pub struct UiState {
     orbit: orbit::OrbitUi,
     /// The front-panel LED: ORBIT's beat.
     led: led::Led,
+    /// OS UPGRADE's yes, until the shell takes it.
+    dfu: Option<Said<RomDfu>>,
 }
 
 crate::in_place::field_list!(UiState => UiState {
@@ -252,6 +257,7 @@ crate::in_place::field_list!(UiState => UiState {
     card,
     orbit,
     led,
+    dfu,
 });
 
 impl Default for UiState {
@@ -316,10 +322,42 @@ impl UiState {
             addr_of_mut!((*p).card).write(Card::new());
             addr_of_mut!((*p).orbit).write(orbit::OrbitUi::new());
             addr_of_mut!((*p).led).write(led::Led::OFF);
+            addr_of_mut!((*p).dfu).write(None);
             let ui = slot.assume_init_mut();
             ui.load_matrix(PartId::ALL[0]);
             ui
         }
+    }
+
+    /// Before a restart: SYSTEM synced to the card now, as leaving SETTINGS
+    /// would. A restart never leaves SETTINGS, so a THEME change made in
+    /// this visit would otherwise be lost. Writes the card.
+    pub fn sync_system_now<S: Store>(
+        &mut self,
+        sync: &mut SystemSync,
+        card: &mut Card,
+        store: &mut S,
+        s: &mut SystemSettings,
+    ) {
+        s.theme = self.theme;
+        // As if SETTINGS were left: `left_system` keeps the untouched mark.
+        let _ = sync.left_system(false, s);
+        let _ = sync.on_exit(card, store, s, self.project.meta().file());
+        self.card = *card;
+    }
+
+    /// The DFU prompt's yes, once, after `sync_system_now`: the menu's
+    /// path to DFU can't skip the card write.
+    pub fn take_dfu_synced<S: Store>(
+        &mut self,
+        sync: &mut SystemSync,
+        card: &mut Card,
+        store: &mut S,
+        s: &mut SystemSettings,
+    ) -> Option<Said<RomDfu>> {
+        let yes = self.dfu.take()?;
+        self.sync_system_now(sync, card, store, s);
+        Some(yes)
     }
 
     /// The last MIX+PLUS outcome, shown in the focus band until the next
@@ -383,6 +421,14 @@ impl UiState {
         if let Some(t) = busy::toast_for(&r) {
             self.toast.show(t);
         }
+    }
+
+    /// A start-up fault as a toast, held `Toast::BOOT_MS`.
+    pub fn show_boot_fault(&mut self, text: &str) {
+        self.toast.show(busy::Toast {
+            text: Line::new(text),
+            ms: busy::Toast::BOOT_MS,
+        });
     }
 
     /// A project note as a toast: a save's time for SAVED, else an error's.
@@ -1024,6 +1070,7 @@ impl UiState {
             Act::SceneReload => {
                 self.ask_scene(true, |a| Ask::ReloadScene(a, prompt::Choice::new()))
             }
+            Act::EnterDfu => self.ask(Ask::EnterDfu(prompt::Choice::new())),
         }
     }
 
@@ -1200,8 +1247,18 @@ impl UiState {
     }
 
     fn bands(&self) -> Option<settings::view::Bands<'_>> {
+        self.loc.settings().map(|at| self.bands_at(at))
+    }
+
+    /// SETTINGS' breadcrumb at `at`, as drawn there: an open NAMING's
+    /// crumb ends it.
+    pub fn crumbs_at(&self, at: SettingsAt) -> settings::view::Crumbs {
+        self.bands_at(at).crumbs()
+    }
+
+    fn bands_at(&self, at: SettingsAt) -> settings::view::Bands<'_> {
         use settings::view::BandsModal;
-        self.loc.settings().map(|at| settings::view::Bands {
+        settings::view::Bands {
             at,
             active: self.active_part,
             first: self.list_first as usize,
@@ -1217,7 +1274,7 @@ impl UiState {
                 .then(|| PartBand::of(&self.project, self.active_part)),
             scene: self.project.orbit().current(),
             orbit: self.orbit_band(at),
-        })
+        }
     }
 
     /// In the ORBIT branch, the playing scene's band.
@@ -1458,6 +1515,7 @@ impl UiState {
                     }
                 }
             }
+            Answered::EnterDfu(a) => self.dfu = said(a),
         }
     }
 
@@ -2050,6 +2108,39 @@ impl UiState {
         }
     }
 
+    /// Whose page the header names.
+    fn head(&self) -> Head {
+        match self.loc.rung() {
+            Rung::Pages(p, _) | Rung::Sound(p) => Head::Sound(p),
+            Rung::Mixer(p, _) | Rung::Fx(p, _) => Head::Mix(p),
+            Rung::Settings(_) => Head::Settings,
+            Rung::Orbit(o) if o.page().node() as usize == orbit::RING_NODE => Head::Ring(o.ring()),
+            Rung::Orbit(_) => Head::Orbit(self.project.orbit().current()),
+        }
+    }
+
+    /// The page name the header draws (`FILTER`, `SENDS`, the exciter's
+    /// name, ` / A` or ` / B` on an ENV page), short when the line is full;
+    /// `None` where no header is drawn: SETTINGS and the Sound rung.
+    pub fn page_name(&self) -> Option<FmtBuf> {
+        matches!(
+            self.loc.rung(),
+            Rung::Pages(..) | Rung::Mixer(..) | Rung::Fx(..) | Rung::Orbit(..)
+        )
+        .then(|| self.page_title())
+    }
+
+    /// `page_name` where a header is drawn: Pages, Mixer, FX and ORBIT.
+    pub fn page_title(&self) -> FmtBuf {
+        renderer::page_header(
+            self.head(),
+            self.page_def(),
+            &self.ctx(),
+            self.project.perf().parts(),
+        )
+        .name
+    }
+
     /// What one frame draws from.
     fn frame<'a>(
         &'a self,
@@ -2060,15 +2151,8 @@ impl UiState {
         let cx = self.cx();
         let def = self.page_def();
         let settings = self.loc.settings();
-        let head = match (settings, self.loc.part(), self.loc.orbit()) {
-            (_, _, Some(o)) if o.page().node() as usize == orbit::RING_NODE => Head::Ring(o.ring()),
-            (_, _, Some(_)) => Head::Orbit(self.project.orbit().current()),
-            (None, Some(p), _) if self.loc.on_mixer() => Head::Mix(p),
-            (None, Some(p), _) => Head::Sound(p),
-            _ => Head::Settings,
-        };
         renderer::Frame {
-            head,
+            head: self.head(),
             map: self.loc.page(&cx).filter(|_| settings.is_none()),
             layout: self.layout(),
             settings: self.bands(),
@@ -2143,7 +2227,7 @@ impl UiState {
                 chain,
                 node,
                 sub,
-                renderer::title_type(f),
+                renderer::title_type(f.def, &f.ctx.envs),
                 renderer::header_out(f) as u8,
                 f.header_status(),
             )

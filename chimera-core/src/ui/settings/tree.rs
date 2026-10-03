@@ -4,7 +4,7 @@
 
 use super::leaves::{
     ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, LIVE_SNAP_LEAF, OUTPUTS_LEAF, OnePage, THEME_LEAF,
-    TUNING_LEAF, UPDATES_LEAF,
+    TUNING_LEAF,
 };
 use core::num::NonZeroU16;
 
@@ -66,6 +66,8 @@ pub enum Act {
     /// ORBIT's CLEAR and RELOAD FROM PROJ, on the playing scene.
     SceneClear,
     SceneReload,
+    /// OS UPGRADE: asks, then the shell restarts into the ROM loader.
+    EnterDfu,
 }
 
 const fn row(label: &'static str, kind: Kind) -> Row {
@@ -162,7 +164,7 @@ static DIAGNOSTICS: &[Row] = &[
 ];
 
 static SYSTEM: [Row; 6] = [
-    crumb("OS UPGRADE", "OS", Leaf(&UPDATES_LEAF)),
+    crumb("OS UPGRADE", "OS", Kind::Act(Act::EnterDfu)),
     row("STORAGE", Later(issue(267))),
     crumb("FORMAT CARD", "FORMAT", Later(issue(268))),
     crumb("USB CONFIG", "USB", Later(issue(269))),

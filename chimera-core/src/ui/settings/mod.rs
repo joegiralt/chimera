@@ -34,10 +34,10 @@ use listing::Chosen;
 use naming::{NAME_MAX, Naming, NamingOut};
 use prompt::{
     AlsoUses, AlsoUsesAnswer, Answer, CardChanged, CardChangedAnswer, Choice, Clear, ClearAnswer,
-    ClearScene, ClearSceneAnswer, ClearSlot, Delete, DeleteAnswer, Load, LoadAnswer, NameExists,
-    NameExistsAnswer, PromptView, Reload, ReloadAnswer, ReloadScene, ReloadSceneAnswer, Replace,
-    ReplaceAnswer, ReplaceTo, SaveOver, SaveOverAnswer, SaveSceneOver, SaveSceneOverAnswer,
-    with_view,
+    ClearScene, ClearSceneAnswer, ClearSlot, Delete, DeleteAnswer, DfuAnswer, EnterDfu, Load,
+    LoadAnswer, NameExists, NameExistsAnswer, PromptView, Reload, ReloadAnswer, ReloadScene,
+    ReloadSceneAnswer, Replace, ReplaceAnswer, ReplaceTo, SaveOver, SaveOverAnswer, SaveSceneOver,
+    SaveSceneOverAnswer, with_view,
 };
 use replace::{PartAsk, ProjectAsk, ReloadAsk, Reply};
 
@@ -96,6 +96,8 @@ pub(crate) enum Ask {
     /// slot was when asked.
     ClearScene(SceneAsk, Choice<ClearSceneAnswer>),
     ReloadScene(SceneAsk, Choice<ReloadSceneAnswer>),
+    /// SYSTEM's OS UPGRADE.
+    EnterDfu(Choice<DfuAnswer>),
 }
 
 /// `AskKind` and its `ALL`, from one list: no kind can miss `ALL`.
@@ -136,6 +138,7 @@ ask_kinds! {
     SaveSceneOver => "save_scene_over",
     ClearScene => "clear_scene",
     ReloadScene => "reload_scene",
+    EnterDfu => "enter_dfu",
 }
 
 /// A listed project as its prompt names it.
@@ -164,6 +167,7 @@ pub(crate) enum Answered {
     SaveSceneOver(SceneAsk, Answer<SaveSceneOverAnswer>),
     ClearScene(SceneAsk, Answer<ClearSceneAnswer>),
     ReloadScene(SceneAsk, Answer<ReloadSceneAnswer>),
+    EnterDfu(Answer<DfuAnswer>),
 }
 
 /// Each named Part's `Revert`, by Part, as offered when the prompt opened:
@@ -267,6 +271,7 @@ impl Ask {
                 c,
                 f,
             ),
+            Ask::EnterDfu(c) => with_view(&EnterDfu, c, f),
         }
     }
 
@@ -286,6 +291,7 @@ impl Ask {
             Ask::SaveSceneOver(..) => AskKind::SaveSceneOver,
             Ask::ClearScene(..) => AskKind::ClearScene,
             Ask::ReloadScene(..) => AskKind::ReloadScene,
+            Ask::EnterDfu(_) => AskKind::EnterDfu,
         }
     }
 
@@ -392,6 +398,10 @@ impl Ask {
             Ask::ReloadScene(a, mut choice) => match choice.input(c, p) {
                 Some(x) => Got(Answered::ReloadScene(a, x)),
                 None => Open(Ask::ReloadScene(a, choice)),
+            },
+            Ask::EnterDfu(mut choice) => match choice.input(c, p) {
+                Some(a) => Got(Answered::EnterDfu(a)),
+                None => Open(Ask::EnterDfu(choice)),
             },
         }
     }

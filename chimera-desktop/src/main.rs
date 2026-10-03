@@ -1,4 +1,5 @@
 mod audio;
+mod console;
 mod controls;
 mod display;
 #[cfg(feature = "midi")]
@@ -7,6 +8,7 @@ mod midi;
 mod qa;
 mod store;
 
+use chimera_core::console::Served;
 use chimera_core::orbit::runner::orbit_buffer;
 use chimera_core::project::{LOAD_ACK_TIMEOUT_MS, LOAD_LINK};
 use chimera_core::scope::scope_buffer;
@@ -18,6 +20,7 @@ use chimera_core::ui::perf::PerfTracker;
 use chimera_core::ui::settings::CardCx;
 use chimera_hal::store::Store;
 use chimera_hal::{ChimeraDisplay, MidiChannel, MidiNote, Ms, Velocity};
+use console::DeskUnit;
 use controls::DesktopControls;
 use display::DesktopDisplay;
 use std::path::PathBuf;
@@ -87,7 +90,16 @@ fn main() {
     // The toast's clock, read after the card work, as the firmware's is.
     let mut toast_at = Instant::now();
 
+    let mut console = console::bind_or_off(console::ADDR);
+
     while display.is_open() {
+        // Before the frame's input and draw: the snapshot point the chip uses.
+        let served = console.as_mut().map_or(Served::Idle, |c| {
+            c.service(&mut DeskUnit {
+                ui: &ui,
+                frame: display.frame(),
+            })
+        });
         let now = Instant::now();
         let frame_us = now.duration_since(frame_start).as_micros() as u32;
         frame_start = now;
@@ -132,6 +144,12 @@ fn main() {
         ui.set_orbit_view(orbit_r.read());
         // UI framework handles navigation + encoder -> param binding
         ui.handle_input(&controls);
+        if ui
+            .take_dfu_synced(&mut sync, &mut card, &mut store, &mut settings)
+            .is_some()
+        {
+            eprintln!("dfu: not in this build");
+        }
         // Card work the keys asked for, under BUSY; a load publishes
         // once the audio acks, or the timeout passes.
         if ui.card_pending() {
@@ -172,7 +190,10 @@ fn main() {
             draw_toast(&mut display, text.as_str());
         }
 
-        perf.record(frame_us, 0);
+        // An answer's time is the console's, not a frame spike.
+        if served == Served::Idle {
+            perf.record(frame_us, 0);
+        }
 
         display.flush();
         std::thread::sleep(std::time::Duration::from_millis(33));

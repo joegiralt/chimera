@@ -75,6 +75,7 @@ mod sealed {
     impl Sealed for super::OverwriteTarget {}
     impl Sealed for super::DeleteTarget {}
     impl Sealed for super::SceneSlot {}
+    impl Sealed for crate::boot::RomDfu {}
 }
 
 /// What a `Confirmed` can confirm, and what it keeps of the target then.
@@ -351,6 +352,11 @@ impl Witnessed for OverwriteTarget {
 
 impl Witnessed for DeleteTarget {
     type Witness = Seen;
+}
+
+/// Entering DFU loses nothing on the card: nothing to witness.
+impl Witnessed for crate::boot::RomDfu {
+    type Witness = ();
 }
 
 macro_rules! answered {

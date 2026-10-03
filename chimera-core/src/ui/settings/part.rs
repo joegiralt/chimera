@@ -51,7 +51,8 @@ impl Act {
             | Act::PartRename
             | Act::PartClear
             | Act::SceneClear
-            | Act::SceneReload => None,
+            | Act::SceneReload
+            | Act::EnterDfu => None,
         }
     }
 }
