@@ -11,6 +11,7 @@ use super::runner::{Capture, Captured, OrbitView};
 use super::walk::{Pool, Walk};
 use super::{MAX_POOL, MAX_SEGS, RINGS, RingIdx};
 use crate::Velocity;
+use crate::addr::{BlockRead, BlockRef, Blocks};
 use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
 use crate::dsp::modulator::law::Law;
 use crate::dsp::modulator::pick;
@@ -78,14 +79,25 @@ impl Target {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub struct SceneRing {
     pub ring: Ring,
     pub target: Target,
     /// Bumped when the rhythm or the notes change under the player's feet.
+    /// Run-time only: never saved, and no part of equality.
     pub rhythm_rev: u8,
     pub notes_rev: u8,
 }
+
+/// Equal as a project keeps it: the revs are the runner's handshake, so a
+/// scene loaded or reverted is the scene saved.
+impl PartialEq for SceneRing {
+    fn eq(&self, o: &Self) -> bool {
+        self.ring == o.ring && self.target == o.target
+    }
+}
+
+impl Eq for SceneRing {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Scene {
@@ -205,6 +217,12 @@ impl Scene {
         }
     }
 
+    /// `neutral()`'s, compared out of line: one copy of `==` in flash.
+    #[inline(never)]
+    pub fn is_neutral(&self) -> bool {
+        *self == NEUTRAL
+    }
+
     /// Nothing sounds: every ring muted, C major, one chord.
     pub const fn neutral() -> Scene {
         let oct = some(Octave::new(4));
@@ -223,6 +241,9 @@ impl Scene {
         }
     }
 }
+
+/// The neutral scene, once in flash: a load's base and `saved`'s measure.
+pub static NEUTRAL: Scene = Scene::neutral();
 
 /// What a project keeps of ORBIT: the eight saved scenes, the one playing
 /// and any queued, the scene being edited and played (`live`, its drift
@@ -266,11 +287,7 @@ impl Eq for OrbitSong {}
 
 /// NEW's slot `i`: the init scene first, the rest neutral.
 fn new_scene(i: usize) -> Scene {
-    if i == 0 {
-        Scene::init()
-    } else {
-        Scene::neutral()
-    }
+    if i == 0 { Scene::init() } else { NEUTRAL }
 }
 
 /// A save refused while a switch is queued: what lands stays what was
@@ -399,7 +416,7 @@ impl OrbitSong {
         self.scenes[i] = s;
         self.slot_revs[i] = self.slot_revs[i].wrapping_add(1);
         let bit = 1 << i;
-        self.saved = if s == Scene::neutral() {
+        self.saved = if s.is_neutral() {
             self.saved & !bit
         } else {
             self.saved | bit
@@ -430,7 +447,7 @@ impl OrbitSong {
             return Err(Refused::SlotChanged);
         }
         let n = yes.target().index();
-        self.put(n, Scene::neutral());
+        self.put(n, NEUTRAL);
         if n == self.current {
             self.reland();
         }
@@ -506,6 +523,75 @@ impl OrbitSong {
                 s.ring.notes = r.notes;
                 s.ring.pool = r.pool;
             }
+        }
+    }
+
+    /// What a save writes as playing, and as `live`: while a switch waits,
+    /// the queued slot, as if it had landed (Decisions).
+    pub fn landing(&self) -> (SceneIdx, &Scene) {
+        match self.queued {
+            Some(q) => (q, &self.scenes[q.0 as usize]),
+            None => (self.current, &self.live),
+        }
+    }
+
+    /// A load's base (spec § 8): every slot and `live` neutral, 120 BPM,
+    /// slot 1 playing, nothing queued. Every slot is written, so each
+    /// one's rev moves: no confirmation from before the load holds after.
+    pub(crate) fn clear_for_load(&mut self) {
+        for (s, rev) in self.scenes.iter_mut().zip(&mut self.slot_revs) {
+            *s = NEUTRAL;
+            *rev = rev.wrapping_add(1);
+        }
+        self.saved = 0;
+        self.live = NEUTRAL;
+        self.bpm = Bpm::DEFAULT;
+        self.current = SceneIdx(0);
+        self.queued = None;
+    }
+
+    /// Scene `i` as a project file numbers it: the slots 0–7, `live` 8.
+    /// A load's writes: `loaded` keeps `saved` once they are done.
+    pub(crate) fn stored_mut(&mut self, i: u8) -> Option<&mut Scene> {
+        match SceneIdx::new(i) {
+            Some(n) => Some(&mut self.scenes[n.0 as usize]),
+            None => (i == STORED_LIVE).then_some(&mut self.live),
+        }
+    }
+
+    /// The loaded file's playing scene.
+    pub(crate) fn set_current(&mut self, n: SceneIdx) {
+        self.current = n;
+    }
+
+    /// A load done: `saved` from the slots as read.
+    pub(crate) fn loaded(&mut self) {
+        self.saved = (0..SCENES)
+            .filter(|&i| !self.scenes[i].is_neutral())
+            .fold(0, |m, i| m | 1 << i);
+    }
+}
+
+/// `live`'s number in a project file, after the eight slots (spec § 8).
+pub const STORED_LIVE: u8 = SCENES as u8;
+
+/// A scene's blocks, as an `OrbitBlock` record reaches them.
+impl BlockRead for Scene {
+    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
+        match b {
+            BlockRef::OrbitChords => Some(&self.chords),
+            BlockRef::OrbitRing(r) => Some(&self.rings[r.get() as usize]),
+            _ => None,
+        }
+    }
+}
+
+impl Blocks for Scene {
+    fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
+        match b {
+            BlockRef::OrbitChords => Some(&mut self.chords),
+            BlockRef::OrbitRing(r) => Some(&mut self.rings[r.get() as usize]),
+            _ => None,
         }
     }
 }

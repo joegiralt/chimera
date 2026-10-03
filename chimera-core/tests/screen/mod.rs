@@ -427,6 +427,11 @@ impl<'u> Rig<'u> {
         });
     }
 
+    /// The load epoch: what a snapshot published now carries.
+    pub fn epoch(&self) -> u32 {
+        self.link.epoch()
+    }
+
     pub fn tap(&mut self, b: ButtonId) {
         tap(self.ui, b);
         self.work();

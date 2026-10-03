@@ -12,8 +12,8 @@ pub const MAX_RECORD_LEN: usize = 512;
 pub const CRITICAL: u16 = 0x8000;
 
 /// The records this firmware writes. Codes are frozen (ADR 0045). Low 15
-/// bits 0x0B–0x0F stay free for the reserved project records (tempo, AFX
-/// map, CC map, set list, tag names), in either criticality.
+/// bits 0x0C–0x0F stay free for the reserved project records (AFX map, CC
+/// map, set list, tag names), in either criticality; 0x0B is the tempo.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RecordTag {
     Block,
@@ -32,6 +32,16 @@ pub enum RecordTag {
     Fx,
     /// A Part's source: `[0, slot]` or `[1, engine code]`.
     Origin,
+    /// ORBIT's BPM, `f32` LE: the tempo slot the projects spec reserves.
+    Tempo,
+    /// An ORBIT scene's block: scene `u8`, then a `Block` payload.
+    OrbitBlock,
+    /// A ring's hits and notes (`orbit::records`).
+    OrbitNotes,
+    /// A segment's degree and played chord, as exact tones.
+    OrbitChord,
+    /// The playing scene and the nine seeds.
+    Orbit,
     /// A scene's CUSTOM set (`orbit::scene::encode_scale`).
     OrbitScale,
 }
@@ -49,6 +59,11 @@ impl RecordTag {
             RecordTag::Part => 0x8008,
             RecordTag::Fx => 0x8009,
             RecordTag::Origin => 0x000A,
+            RecordTag::Tempo => 0x000B,
+            RecordTag::OrbitBlock => 0x0010,
+            RecordTag::OrbitNotes => 0x0011,
+            RecordTag::OrbitChord => 0x0012,
+            RecordTag::Orbit => 0x0013,
             RecordTag::OrbitScale => 0x0014,
         }
     }
@@ -65,9 +80,28 @@ impl RecordTag {
             0x8008 => RecordTag::Part,
             0x8009 => RecordTag::Fx,
             0x000A => RecordTag::Origin,
+            0x000B => RecordTag::Tempo,
+            0x0010 => RecordTag::OrbitBlock,
+            0x0011 => RecordTag::OrbitNotes,
+            0x0012 => RecordTag::OrbitChord,
+            0x0013 => RecordTag::Orbit,
             0x0014 => RecordTag::OrbitScale,
             _ => return None,
         })
+    }
+
+    /// ORBIT's, which a project keeps after its six Parts: no Sound or
+    /// SYSTEM holds one.
+    pub const fn is_orbit(self) -> bool {
+        matches!(
+            self,
+            RecordTag::Tempo
+                | RecordTag::OrbitBlock
+                | RecordTag::OrbitNotes
+                | RecordTag::OrbitChord
+                | RecordTag::Orbit
+                | RecordTag::OrbitScale
+        )
     }
 }
 

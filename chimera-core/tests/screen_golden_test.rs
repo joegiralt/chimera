@@ -114,7 +114,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // SETTINGS › ORBIT and its SAVE TO PROJ (plan Task 17); the crumb
     // `SCENE n` (fix round 1).
     ("settings_orbit", 0xf0d520f40ac7f0bb),
-    ("settings_orbit_save_to", 0xda478843e6e2fc63),
+    // Slot 3 written: MODIFIED, as ORBIT is in the project's CRC (Task 18).
+    ("settings_orbit_save_to", 0xa4d2405ea9f09bf6),
     ("settings_load", 0xbee3b127e748ef17),
     ("settings_prompt_load", 0xc47d45b862dea1e3),
     ("settings_naming", 0x3ad617885a99ddf2),

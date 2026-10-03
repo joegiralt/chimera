@@ -7,6 +7,7 @@ pub mod clock;
 pub mod engine;
 pub mod euclid;
 pub mod mutate;
+pub mod records;
 pub mod ring;
 pub mod rng;
 pub mod runner;

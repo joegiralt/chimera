@@ -187,6 +187,11 @@ fn codes_are_frozen() {
         (RecordTag::Part, 0x8008),
         (RecordTag::Fx, 0x8009),
         (RecordTag::Origin, 0x000A),
+        (RecordTag::Tempo, 0x000B),
+        (RecordTag::OrbitBlock, 0x0010),
+        (RecordTag::OrbitNotes, 0x0011),
+        (RecordTag::OrbitChord, 0x0012),
+        (RecordTag::Orbit, 0x0013),
         (RecordTag::OrbitScale, 0x0014),
     ];
     for (t, c) in table {

@@ -1,7 +1,8 @@
 //! A project as card records (projects spec § Format): `Fx` and its five
 //! blocks, then `Slot` and its Sound per filled slot, then each `Part`: its
-//! Sound, `Block(Part)` (the mix) and `Origin`. `Slot`, `Part` and `Fx`
-//! open a context; the records after one belong to it.
+//! Sound, `Block(Part)` (the mix) and `Origin`; then ORBIT's records
+//! (`orbit::records`). `Slot`, `Part` and `Fx` open a context; the records
+//! after one belong to it. An ORBIT record closes the last Part's.
 
 use chimera_hal::store::StoreError;
 
@@ -10,6 +11,7 @@ use crate::block::{Block, DiskCode};
 use crate::dsp::fx_bus::FxParams;
 use crate::hw::MAX_PARTS;
 use crate::name::SoundName;
+use crate::orbit::records::{encode_new_orbit, encode_orbit, read as read_orbit};
 use crate::params::EngineType;
 use crate::part::PartParams;
 use crate::preset::Sound;
@@ -145,7 +147,7 @@ pub fn encode_project(p: &Project, w: &mut RecordWriter<'_>) -> Result<(), Store
     for (i, part) in p.perf.parts.iter().enumerate() {
         put_part(w, i, part)?;
     }
-    Ok(())
+    encode_orbit(&p.orbit, w)
 }
 
 /// NEW's records, as `encode_project` of NEW puts them, built a Sound at a
@@ -160,7 +162,7 @@ pub fn encode_new_project(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     for i in 0..MAX_PARTS {
         put_part(w, i, &new_project_part(i))?;
     }
-    Ok(())
+    encode_new_orbit(w)
 }
 
 /// The project's canonical CRC: its padded name, then `encode_project`'s
@@ -169,13 +171,15 @@ pub fn project_crc(p: &Project) -> u32 {
     records_crc(&p.meta.name.padded(), |w| encode_project(p, w))
 }
 
-/// The context the records belong to: the last `Fx`, `Slot` or `Part`.
+/// The context the records belong to: the last `Fx`, `Slot` or `Part`,
+/// or ORBIT's, which is last.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Context {
     None,
     Fx,
     Slot(SlotId),
     Part(PartId),
+    Orbit,
 }
 
 /// A Part's `Origin` record as read; `finish` resolves it.
@@ -231,9 +235,11 @@ impl ProjectCheck {
     ///
     /// `WrongKind`: not a project. `Corrupt`: a nameless header, a known
     /// record outside any context, a context repeated, a record the context
-    /// doesn't hold or holds once read twice, or a Sound's rule broken.
-    /// `Bounds`: an index out of range or a payload of the wrong shape.
-    /// `BadName`: a context's name.
+    /// doesn't hold or holds once read twice, a Sound's rule broken, an
+    /// ORBIT record before the six Parts, or anything but ORBIT's after
+    /// one. `Bounds`: an index out of range or a payload of the wrong
+    /// shape. `BadName`: a context's name. An ORBIT record is never an
+    /// error past its place: a bad one keeps the neutral base.
     fn step(&mut self, e: Event<'_>, target: Option<&mut Project>) -> Result<(), FileError> {
         let (tag, p) = match e {
             Event::Header(h) => {
@@ -249,12 +255,16 @@ impl ProjectCheck {
                     }
                     t.perf.fx = FxParams::default();
                     t.meta.name = name;
+                    t.orbit.clear_for_load();
                 }
                 return Ok(());
             }
             Event::Record(tag, p) => (tag, p),
         };
         match (tag, self.context) {
+            (ReadTag::Known(t), _) if t.is_orbit() => self.orbit(t, p, target),
+            (ReadTag::Unknown(_), Context::Orbit) => Ok(()),
+            (ReadTag::Known(_), Context::Orbit) => Err(FileError::Corrupt),
             (ReadTag::Known(t @ (RecordTag::Fx | RecordTag::Slot | RecordTag::Part)), _) => {
                 self.open(t, p, target)
             }
@@ -297,6 +307,25 @@ impl ProjectCheck {
                 self.sound.step(e, staged)
             }
         }
+    }
+
+    /// An ORBIT record: the first closes the last Part, so all six must be
+    /// read; then into the song.
+    fn orbit(
+        &mut self,
+        tag: RecordTag,
+        p: &[u8],
+        mut target: Option<&mut Project>,
+    ) -> Result<(), FileError> {
+        if self.context != Context::Orbit {
+            if PartId::ALL.iter().any(|&n| !self.parts.contains(n)) {
+                return Err(FileError::Corrupt);
+            }
+            self.close(target.as_deref_mut())?;
+            self.context = Context::Orbit;
+        }
+        read_orbit(tag, p, target.map(|t| &mut t.orbit));
+        Ok(())
     }
 
     /// Closes the open context, then opens `tag`'s.
@@ -386,7 +415,7 @@ impl ProjectCheck {
                 let staged = target.map(|t| &mut t.perf.parts[n.index()].sound);
                 self.sound.finish(staged)
             }
-            Context::None | Context::Fx => Ok(()),
+            Context::None | Context::Fx | Context::Orbit => Ok(()),
         }
     }
 
@@ -399,6 +428,7 @@ impl ProjectCheck {
             return Err(FileError::Corrupt);
         }
         let Some(t) = target else { return Ok(()) };
+        t.orbit.loaded();
         for (part, read) in t.perf.parts.iter_mut().zip(self.origins) {
             let engine = part.sound.engine();
             part.origin = match read {

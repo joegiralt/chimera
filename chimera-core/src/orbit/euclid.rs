@@ -84,6 +84,15 @@ impl HitMask {
         HitMask { bits: 0, steps }
     }
 
+    /// `bits` as `steps`' hits; None with a hit past STEPS.
+    pub const fn new(steps: Steps, bits: u32) -> Option<HitMask> {
+        if (bits as u64) >> steps.0 == 0 {
+            Some(HitMask { bits, steps })
+        } else {
+            None
+        }
+    }
+
     pub const fn steps(self) -> Steps {
         self.steps
     }

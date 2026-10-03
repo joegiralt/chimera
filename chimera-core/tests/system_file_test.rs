@@ -278,12 +278,19 @@ fn record_rules() {
     let g = with_record(&f, end, 0x8002, &[0]);
     assert_eq!(boot_bytes(&g), (SystemSettings::DEFAULT, corrupt));
 
-    // A project's records, Origin (non-critical) too, are refused.
+    // A project's records, Origin and ORBIT's (non-critical) too, are
+    // refused.
     for (tag, payload) in [
         (0x8007, vec![0; 17]),
         (0x8008, vec![0; 17]),
         (0x8009, vec![]),
         (0x000A, vec![0, 0]),
+        (0x000B, vec![0; 4]),
+        (0x0010, vec![8, 27]),
+        (0x0011, vec![0; 40]),
+        (0x0012, vec![0; 7]),
+        (0x0013, vec![0; 37]),
+        (0x0014, vec![0; 3]),
     ] {
         let g = with_record(&f, end, tag, &payload);
         assert_eq!(

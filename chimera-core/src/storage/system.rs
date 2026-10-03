@@ -129,12 +129,9 @@ impl SystemCheck {
             }
             // A project's records are no SYSTEM we wrote, critical or not.
             ReadTag::Known(
-                RecordTag::Slot
-                | RecordTag::Part
-                | RecordTag::Fx
-                | RecordTag::Origin
-                | RecordTag::OrbitScale,
+                RecordTag::Slot | RecordTag::Part | RecordTag::Fx | RecordTag::Origin,
             ) => Err(FileError::Corrupt),
+            ReadTag::Known(t) if t.is_orbit() => Err(FileError::Corrupt),
             // The framer refuses an unknown critical record before it gets
             // here; a known one that isn't SYSTEM's is no SYSTEM we wrote.
             t if t.critical() => Err(FileError::Corrupt),

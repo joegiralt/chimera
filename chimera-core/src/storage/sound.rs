@@ -114,6 +114,11 @@ const fn once_bit(tag: RecordTag) -> u8 {
         | RecordTag::Part
         | RecordTag::Fx
         | RecordTag::Origin
+        | RecordTag::Tempo
+        | RecordTag::OrbitBlock
+        | RecordTag::OrbitNotes
+        | RecordTag::OrbitChord
+        | RecordTag::Orbit
         | RecordTag::OrbitScale => 0,
     }
 }
@@ -242,12 +247,9 @@ impl SoundCheck {
         };
         if matches!(
             tag,
-            RecordTag::Slot
-                | RecordTag::Part
-                | RecordTag::Fx
-                | RecordTag::Origin
-                | RecordTag::OrbitScale
-        ) {
+            RecordTag::Slot | RecordTag::Part | RecordTag::Fx | RecordTag::Origin
+        ) || tag.is_orbit()
+        {
             return Err(FileError::Corrupt);
         }
         // Engine first, and once.
@@ -289,6 +291,11 @@ impl SoundCheck {
             | RecordTag::Part
             | RecordTag::Fx
             | RecordTag::Origin
+            | RecordTag::Tempo
+            | RecordTag::OrbitBlock
+            | RecordTag::OrbitNotes
+            | RecordTag::OrbitChord
+            | RecordTag::Orbit
             | RecordTag::OrbitScale => Err(FileError::Corrupt),
         }
     }

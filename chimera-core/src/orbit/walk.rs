@@ -6,10 +6,25 @@ use super::rng::Rng;
 use chimera_theory::Note;
 
 /// 1..=8 notes, kept sorted.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug)]
 pub struct Pool {
     notes: [Note; MAX_POOL],
     len: u8,
+}
+
+/// Equal by its notes: what lies past `len` is no part of a pool.
+impl PartialEq for Pool {
+    fn eq(&self, o: &Self) -> bool {
+        self.notes() == o.notes()
+    }
+}
+
+impl Eq for Pool {}
+
+impl core::hash::Hash for Pool {
+    fn hash<H: core::hash::Hasher>(&self, h: &mut H) {
+        self.notes().hash(h);
+    }
 }
 
 impl Pool {

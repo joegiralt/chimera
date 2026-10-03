@@ -79,3 +79,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0075](0075-capture-is-armed-once-and-taken-once.md) | A capture is armed once and taken once; a STEP ring's spans key-ups | Proposed |
 | [0076](0076-live-keys-snap-per-part-held-keys-glide.md) | Live keys snap per Part in the Instrument; a held key re-snaps from its raw key on the pitch path | Proposed |
 | [0077](0077-scenes-land-by-generation-saves-are-witnessed.md) | A scene switch lands by its generation; SAVE OVER is witnessed when it asks | Proposed |
+| [0078](0078-orbit-saves-after-the-parts-and-loads-what-it-can.md) | ORBIT saves after the six Parts, and a load takes what it can | Proposed |
