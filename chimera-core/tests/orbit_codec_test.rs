@@ -857,6 +857,31 @@ mod unit {
         assert_eq!(audio.view().chord.root(), PitchClass::E, "KEY reached it");
     }
 
+    /// Boot on a file playing scene 3: the runner, which starts on slot 1,
+    /// is told by the first publish, before any input.
+    #[test]
+    fn boot_tells_the_runner_the_playing_scene() {
+        let mut ui = Box::new(UiState::new());
+        let (mut rig, _, f) = unit(&mut ui);
+        {
+            let song = rig.ui.project_mut().orbit_mut();
+            let c = Confirmed::<SceneSlot>::unasked(song, S[2]);
+            song.overwrite_scene(c).unwrap();
+            song.queue(S[2]);
+        }
+        let mut audio = Audio::new();
+        audio.quick_save(&mut rig);
+        let mut boot = Box::new(UiState::new());
+        let mut card = chimera_core::storage::Card::new();
+        boot.boot_project(&mut card, &mut rig.s, Some(f.id()));
+        assert_eq!(boot.project().orbit().current(), S[2]);
+        let mut a = Audio::new();
+        a.shared.update_from(boot.project().perf(), 0);
+        boot.publish_orbit(&mut a.shared.orbit);
+        let _ = a.runner.block(&mut a.inst, &a.shared);
+        assert_eq!(a.view().playing, S[2]);
+    }
+
     /// R9: STEPS turned on RING marks the project; a transport toggle doesn't. A
     /// fresh NEW, ORBIT records and all, is `Pristine`.
     #[test]

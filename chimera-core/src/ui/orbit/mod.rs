@@ -312,14 +312,20 @@ impl OrbitUi {
     /// publish. Cold: kept out of the card work.
     #[inline(never)]
     pub fn loaded(&mut self, epoch: u32, song: &mut OrbitSong) {
-        // The decode's writes: no edits.
-        song.live.harvest();
         self.chan.loaded();
-        self.chan.scene(SceneCmd::Keep(song.current()));
-        self.chan.flush();
+        self.booted(song);
         self.epoch = epoch;
         self.capture = Capture::Off;
         self.save = None;
+    }
+
+    /// The project read at boot, or a load's: the decode's writes are no
+    /// edits, and the runner, which starts on slot 1, is told the playing
+    /// slot with a `Keep` in the next publish.
+    pub fn booted(&mut self, song: &mut OrbitSong) {
+        song.live.harvest();
+        self.chan.scene(SceneCmd::Keep(song.current()));
+        self.chan.flush();
     }
 
     /// The view's capture, once, for the song to take (`Scene::take`);
@@ -349,12 +355,17 @@ impl OrbitUi {
         salt
     }
 
-    /// Every command sent is applied: the view's drift is on top of
-    /// every edit, so the pages may draw it. Out of line: each ring's
-    /// draw asks.
-    #[inline(never)]
-    pub fn fresh(&self) -> bool {
+    /// Every command sent is applied.
+    pub fn idle(&self) -> bool {
         self.chan.idle()
+    }
+
+    /// Ring `r` has no rhythm edit unapplied: the view's hits, drift and
+    /// all, are on top of every edit to it, so its draw may show them.
+    /// Out of line: each ring's draw asks.
+    #[inline(never)]
+    pub fn fresh(&self, r: RingIdx) -> bool {
+        !self.chan.rhythm_pending(r)
     }
 
     /// The scene command sent and not yet landed.
@@ -379,9 +390,10 @@ impl OrbitUi {
     /// the runner has adopted it, and the drift absorbed once a loop
     /// while every command is applied.
     pub fn sync(&mut self, v: &OrbitView, project: &mut Project) {
-        if v.epoch != self.epoch || !self.chan.ack(v.acked) {
+        if v.epoch != self.epoch {
             return;
         }
+        self.chan.ack(v.acked);
         self.status = OrbitStatus::of(v);
         // An edit since the last flush counts as unapplied.
         if !project.orbit().live.untouched() {

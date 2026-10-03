@@ -486,7 +486,7 @@ fn b6_presses_during_a_stall_toggle_by_parity() {
             }
             rig.frame(Input::release(ButtonId::B6), 0);
         }
-        while !rig.ui.orbit().fresh() {
+        while !rig.ui.orbit().idle() {
             rig.idle(1);
         }
         rig.idle(1);
@@ -547,18 +547,33 @@ fn a_view_from_before_a_load_brings_no_drift() {
     };
     v.rings[1].pool = drift(70);
     let absorbed = |p: &chimera_core::project::Project| p.orbit().live.rings[1].ring.pool;
-    // `acked` before the load's seq, and the old project's epoch.
+    // The old project's epoch.
     o.sync(&v, &mut p);
     assert_eq!(p.orbit().live, live, "epoch 0, the old project's");
     v.epoch = 1;
-    o.sync(&v, &mut p);
-    assert_eq!(p.orbit().live, live, "acked before the load");
     v.acked = o.log().head();
     o.sync(&v, &mut p);
     assert_eq!(absorbed(&p), drift(70), "the new project's");
     v.rings[1].pool = drift(72);
     o.sync(&v, &mut p);
     assert_eq!(absorbed(&p), drift(70), "once a loop");
+}
+
+/// A view on the load's epoch with `acked` before the load's seq can't
+/// arise (the load publish carries both): the epoch is the gate, and
+/// debug builds say so.
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "a view from before the load")]
+fn a_view_on_the_epoch_acked_before_the_load_is_a_bug() {
+    let (mut p, _) = chimera_core::project::Project::boxed();
+    let mut o = OrbitUi::new();
+    o.loaded(1, p.orbit_mut());
+    let v = OrbitView {
+        epoch: 1,
+        ..OrbitView::default()
+    };
+    o.sync(&v, &mut p);
 }
 
 /// A load stops the runner with no press from the UI: B6 is a press, so
@@ -578,4 +593,59 @@ fn one_b6_starts_after_a_self_stop() {
     rig.idle(1);
     rig.b6();
     assert!(running(&rig), "one B6 starts it again");
+}
+
+/// Each ring draws the runner's hits, drift and all, unless an edit to
+/// that ring's rhythm is still unacked: then it draws `live`'s. A command
+/// for no ring (B6), or an edit to another ring, changes nothing.
+#[test]
+fn only_a_ring_with_an_unacked_edit_draws_live() {
+    use chimera_core::orbit::euclid::HitMask;
+    use chimera_core::ui::orbit::draw::OrbitFrame;
+    let mut ui = in_orbit();
+    let mut v = OrbitView::default();
+    for r in &mut v.rings {
+        r.hits = HitMask::empty(r.hits.steps());
+    }
+    v.acked = ui.orbit().log().head();
+    ui.set_orbit_view(&v);
+    let drawn =
+        |ui: &UiState, r: RingIdx| OrbitFrame::new(ui.project().orbit(), ui.orbit()).hits(r);
+    let runner = |r: RingIdx| v.rings[r.get() as usize].hits;
+    for r in R {
+        assert_eq!(drawn(&ui, r), runner(r), "ring {}: all acked", r.get() + 1);
+    }
+    screen::feed(&mut ui, Input::press(ButtonId::B6));
+    assert!(!ui.orbit().idle(), "B6 unacked");
+    for r in R {
+        assert_eq!(
+            drawn(&ui, r),
+            runner(r),
+            "ring {}: B6 is no ring's",
+            r.get() + 1
+        );
+    }
+    let ring = &mut ui.project_mut().orbit_mut().live.rings[1];
+    let h = ring.ring.fill().hits();
+    ring.set(
+        SceneRing::HITS,
+        f32::from(if h >= 2 { h - 1 } else { h + 1 }),
+    );
+    screen::feed(&mut ui, Input::default());
+    let live = ui.project().orbit().live.rings[1].ring.hits_mask();
+    assert_ne!(live, runner(R[1]));
+    for r in R {
+        let want = if r == R[1] { live } else { runner(r) };
+        assert_eq!(
+            drawn(&ui, r),
+            want,
+            "ring {}: ring 2's HITS unacked",
+            r.get() + 1
+        );
+    }
+    v.acked = ui.orbit().log().head();
+    ui.set_orbit_view(&v);
+    for r in R {
+        assert_eq!(drawn(&ui, r), runner(r), "ring {}: acked", r.get() + 1);
+    }
 }

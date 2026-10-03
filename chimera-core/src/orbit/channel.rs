@@ -466,18 +466,34 @@ impl Channel {
         room
     }
 
-    /// Takes a view's `acked`. While a load is pending, a view from before
-    /// it is refused (`false`): only views with `acked` in `[L, L + LOG]`
-    /// pass, and the first that does ends the check.
-    pub fn ack(&mut self, acked: Seq) -> bool {
-        if self.flags & LOAD_PENDING != 0 {
-            if acked.since(self.load) as usize > LOG {
-                return false;
-            }
-            self.flags &= !LOAD_PENDING;
-        }
+    /// Takes a view's `acked`. The caller's `u32` load epoch is the only
+    /// stale-view check: a view on the newest load's epoch has `acked` in
+    /// `[L, L + LOG]` (TB a), which `admits` says in debug builds.
+    pub fn ack(&mut self, acked: Seq) {
+        debug_assert!(self.admits(acked), "a view from before the load");
+        self.flags &= !LOAD_PENDING;
         self.acked = acked;
-        true
+    }
+
+    /// `acked` could be a view's from the newest load: while it is
+    /// pending, within `[L, L + LOG]`. A `u8` window that aliases after
+    /// 28 back-to-back loads, so a check, not the gate.
+    pub fn admits(&self, acked: Seq) -> bool {
+        self.flags & LOAD_PENDING == 0 || acked.since(self.load) as usize <= LOG
+    }
+
+    /// An `EditRhythm` naming ring `r` is issued and not yet applied: the
+    /// view's hits for `r` are from before it.
+    pub fn rhythm_pending(&self, r: RingIdx) -> bool {
+        let mut s = self.acked;
+        let mut pending = self.outbox.rhythm.contains(r);
+        for _ in 0..self.log.head.since(self.acked).min(LOG as u8) {
+            s = s.next();
+            let b = self.log.ring[s.slot()];
+            pending |= (RHYTHM_FIRST..=RHYTHM_LAST).contains(&b)
+                && RingMask(b - (RHYTHM_FIRST - 1)).contains(r);
+        }
+        pending
     }
 
     /// The runner has applied every command issued.
@@ -625,7 +641,7 @@ mod tests {
             "a 9th entry would overwrite an unread one"
         );
         assert!(!ch.idle());
-        assert!(ch.ack(head));
+        ch.ack(head);
         ch.flush();
         assert_eq!(ch.log().head(), head.next());
         assert_eq!(
@@ -689,7 +705,7 @@ mod tests {
     }
 
     #[test]
-    fn load_gate_refuses_views_before_l() {
+    fn the_load_window_admits_views_from_l_only() {
         let mut ch = Channel::new();
         for _ in 0..3 {
             ch.flip();
@@ -698,24 +714,22 @@ mod tests {
         let l = ch.loaded();
         assert_eq!((ch.load(), ch.acked(), ch.log().head()), (l, l, l));
         assert!(ch.idle());
-        assert!(!ch.ack(Seq(l.0.wrapping_sub(1))));
-        assert!(!ch.ack(Seq(l.0.wrapping_sub(1 + LOG as u8))));
+        assert!(!ch.admits(Seq(l.0.wrapping_sub(1))));
+        assert!(!ch.admits(Seq(l.0.wrapping_sub(1 + LOG as u8))));
         assert!(
-            !ch.ack(Seq(l.0.wrapping_add(1 + LOG as u8))),
+            !ch.admits(Seq(l.0.wrapping_add(1 + LOG as u8))),
             "past the window"
         );
-        assert!(!ch.ack(Seq(l.0.wrapping_add(127))));
-        assert_eq!(ch.acked(), l, "a refused view moves nothing");
-        assert!(
-            ch.ack(Seq(l.0.wrapping_add(LOG as u8))),
-            "the window's top edge"
-        );
+        assert!(!ch.admits(Seq(l.0.wrapping_add(127))));
+        let top = Seq(l.0.wrapping_add(LOG as u8));
+        assert!(ch.admits(top), "the window's top edge");
+        ch.ack(top);
         assert_eq!(ch.flags & LOAD_PENDING, 0);
         let l = ch.loaded();
-        assert!(ch.ack(l));
+        ch.ack(l);
         assert_eq!(ch.flags & LOAD_PENDING, 0);
-        assert!(ch.ack(Seq(l.0.wrapping_sub(1))));
-        assert!(ch.ack(Seq(l.0.wrapping_add(200))));
+        assert!(ch.admits(Seq(l.0.wrapping_sub(1))));
+        assert!(ch.admits(Seq(l.0.wrapping_add(200))));
     }
 
     #[test]
@@ -743,7 +757,7 @@ mod tests {
         let head = ch.log().head();
         ch.flush();
         assert_eq!(ch.log().head(), head, "a sent scene is not sent again");
-        assert!(ch.ack(head));
+        ch.ack(head);
         assert!(ch.idle() && !ch.synced());
         ch.landed(SceneCmd::Cue(SceneIdx::new(5).unwrap()));
         assert_eq!(
@@ -794,7 +808,7 @@ mod tests {
             assert_eq!(ch.log().head().since(ch.acked()) as usize, LOG);
             let l = ch.loaded();
             assert_eq!(l.since(old) as usize, (LOG + 1) * k % 256);
-            assert_eq!(ch.ack(old), k == 28, "{k} loads");
+            assert_eq!(ch.admits(old), k == 28, "{k} loads");
         }
     }
 

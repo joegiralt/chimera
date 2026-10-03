@@ -701,7 +701,7 @@ impl Captures {
             }
         }
         self.seen = rig.views.len();
-        if ui.fresh() {
+        if ui.idle() {
             assert_eq!(
                 ui.capture, read.armed,
                 "seed {}: the runner's armed",

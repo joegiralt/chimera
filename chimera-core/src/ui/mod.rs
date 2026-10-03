@@ -478,6 +478,7 @@ impl UiState {
         if let Some(n) = project::boot_project(card, store, last, &mut self.project) {
             self.show_note(n);
         }
+        self.orbit.booted(self.project.orbit_mut());
         self.project_replaced(was);
     }
 

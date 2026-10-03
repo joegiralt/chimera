@@ -356,19 +356,19 @@ impl Sim {
 
     fn ui_ack(&mut self) {
         let a = *self.acks.read();
+        // The UI's u32 epoch gate, and the seq window that agrees with it.
         let fresh = a.epoch == self.epoch;
-        let took = self.ui.ack(a.acked);
+        let admits = self.ui.admits(a.acked);
         if fresh {
+            self.ui.ack(a.acked);
             self.model.acked = a.at;
         } else {
             self.stats.stale_acks += 1;
         }
-        if !took {
+        if !admits {
             self.stats.refused += 1;
         }
-        // Both checks: a pre-load view taken as fresh is wrong whatever
-        // it does to the log.
-        assert_eq!(took, fresh, "the load gate");
+        assert_eq!(admits, fresh, "the load window");
         if self.check == Check::Log {
             assert_eq!(self.ui.acked().get(), self.model.acked as u8, "acked");
         }

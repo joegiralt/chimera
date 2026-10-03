@@ -1293,7 +1293,7 @@ fn loads_void_everything_before() {
             }
             rig.idle(1);
             assert_eq!(rig.ui.orbit().awaiting(), None, "seed {seed} round {round}");
-            assert!(rig.ui.orbit().fresh(), "seed {seed} round {round}");
+            assert!(rig.ui.orbit().idle(), "seed {seed} round {round}");
             assert_eq!(
                 drift(&rig.view()),
                 scene_drift(&new),

@@ -51,12 +51,12 @@ impl<'a> OrbitFrame<'a> {
     }
 
     /// Ring `r`'s pattern: the runner's, drift and all, while it has
-    /// applied every edit; else the scene's (an edit not yet heard).
+    /// applied every edit to it; else the scene's (an edit not yet heard).
     pub fn hits(&self, r: RingIdx) -> HitMask {
         let s = &self.scene().rings[r.get() as usize];
         let seen = &self.ui.status.rings[r.get() as usize];
         let ours = s.ring.hits_mask();
-        if self.ui.fresh() && seen.hits.steps() == ours.steps() {
+        if self.ui.fresh(r) && seen.hits.steps() == ours.steps() {
             seen.hits
         } else {
             ours
