@@ -1,8 +1,9 @@
 use chimera_core::boot::{
-    BootAction, BootSeen, BootStage, DFU_MAGIC, FROM_CONSOLE, FROM_MENU, ROM_DFU_BASE, UsbOff,
-    UsbState, after_reset, wait_until,
+    BootAction, BootSeen, BootStage, DFU_MAGIC, FROM_CONSOLE, FROM_MENU, ROM_DFU_BASE,
+    USB_RETRY_MS, USB_TRIES, UsbOff, UsbRetry, UsbState, after_reset, wait_until,
 };
 use chimera_core::reset::ResetCause;
+use chimera_hal::Ms;
 
 const SOFT: ResetCause = ResetCause::Software;
 
@@ -97,12 +98,16 @@ fn the_boot_line() {
         from: FROM_CONSOLE,
         jump_rsr: 0x0140_0000,
         last_stage: BootStage::Audio.code(),
-        last_usb: UsbState::Off(UsbOff::CoreReset).code(),
+        last_usb: UsbState::Off {
+            why: UsbOff::CoreReset,
+            tries: 3,
+        }
+        .code(),
     };
     assert_eq!(
         seen.to_string(),
         "boot marker=44465521 readback=00000000 action=Synth rsr=00e60000 dbp=0 boots=7 \
-         from=console jump_rsr=01400000 last_stage=audio last_usb=off(csrst)"
+         from=console jump_rsr=01400000 last_stage=audio last_usb=off(csrst, try 3)"
     );
     let words = |from| BootSeen { from, ..seen }.to_string();
     assert!(words(FROM_MENU).contains(" from=menu "));
@@ -146,11 +151,46 @@ fn every_stage_reads_back_from_its_code() {
 
 #[test]
 fn every_usb_state_reads_back_from_its_code() {
-    for s in UsbState::ALL {
-        assert_ne!(s.code(), 0, "0 is not reached");
-        assert_eq!(UsbState::from_code(s.code()), Some(s));
+    for tries in [1, 2, USB_TRIES] {
+        let mut all = vec![UsbState::On { tries }];
+        for why in [UsbOff::Hsi48, UsbOff::AhbIdle, UsbOff::CoreReset] {
+            all.push(UsbState::Off { why, tries });
+        }
+        for s in all {
+            assert_ne!(s.code(), 0, "0 is not reached");
+            assert_eq!(UsbState::from_code(s.code()), Some(s));
+        }
     }
     assert_eq!(UsbState::from_code(0), None);
+    assert_eq!(UsbState::On { tries: 2 }.to_string(), "on(try 2)");
+}
+
+#[test]
+fn usb_retries_every_500_ms_ten_times_then_gives_up() {
+    let mut r = UsbRetry::new();
+    assert!(r.due(Ms(7)), "the first try is at once");
+    assert_eq!(r.tried(Ms(7)), 1);
+    assert!(!r.due(Ms(7 + USB_RETRY_MS - 1)));
+    let mut now = 7;
+    for n in 2..=USB_TRIES {
+        now += USB_RETRY_MS;
+        assert!(r.due(Ms(now)), "try {n}");
+        assert_eq!(r.tried(Ms(now)), n);
+    }
+    assert!(!r.due(Ms(now + 10 * USB_RETRY_MS)), "no try after the last");
+    let wrap = {
+        let mut w = UsbRetry::new();
+        w.tried(Ms(u32::MAX - 100));
+        w
+    };
+    assert!(wrap.due(Ms(USB_RETRY_MS)), "the clock wraps");
+    let off = |tries| UsbState::Off {
+        why: UsbOff::CoreReset,
+        tries,
+    };
+    assert!(!off(USB_TRIES - 1).gave_up());
+    assert!(off(USB_TRIES).gave_up());
+    assert!(!UsbState::On { tries: USB_TRIES }.gave_up());
 }
 
 #[test]
@@ -176,10 +216,7 @@ fn a_bounded_wait_gives_up_after_its_limit() {
 
 #[test]
 fn the_usb_toast_names_the_field() {
-    for s in UsbState::ALL {
-        if let UsbState::Off(why) = s {
-            assert_eq!(why.toast(), format!("USB OFF: {}", why.label()));
-            assert_eq!(s.label(), format!("off({})", why.label()));
-        }
+    for why in [UsbOff::Hsi48, UsbOff::AhbIdle, UsbOff::CoreReset] {
+        assert_eq!(why.toast(), format!("USB OFF: {}", why.label()));
     }
 }

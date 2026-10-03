@@ -249,6 +249,7 @@ dependencies = [
  "embedded-sdmmc",
  "libm",
  "stm32h7xx-hal",
+ "synopsys-usb-otg",
  "usb-device",
  "usbd-serial",
 ]

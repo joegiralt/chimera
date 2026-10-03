@@ -262,8 +262,6 @@ const _: () = assert!(LOAD_ACK_TICKS >= 1, "the ack timeout is under a tick");
 #[cfg(not(feature = "sd-probe"))]
 fn synth(board: Board) -> ! {
     use chimera_core::boot::BootStage;
-    #[cfg(feature = "usb-console")]
-    use chimera_core::boot::UsbState;
     use chimera_core::clock_plan::pll3_for;
     use chimera_core::hw::SampleBudget;
     use chimera_core::storage::{Card, SystemSync};
@@ -303,8 +301,9 @@ fn synth(board: Board) -> ! {
     // 3. PART 1 drawn, then the watchdog, armed once its kicks are live
     //    (`await_live`), so no earlier step runs on its clock;
     // 4. USB under the watchdog: `preflight` checks with bounded waits what
-    //    `connect` spins on with interrupts masked; a port that isn't
-    //    ready stays off this boot, toasted and kept for `last_usb`;
+    //    `connect` spins on with interrupts masked. A port that isn't ready
+    //    is tried again from the loop every 500 ms, 10 tries in all; the
+    //    last failure is toasted, and `last_usb` keeps how it ended;
     // 5. the UI loop.
     // `last_stage` on the next boot says how far this one got.
     // Step 1: SYSTEM behind the splash, then its theme. Card work runs only
@@ -388,26 +387,19 @@ fn synth(board: Board) -> ! {
 
     // Step 4. On the bus only now: the loop below polls it from here on.
     #[cfg(feature = "usb-console")]
-    let mut usb = match usb::preflight(usb_parts, clk.cpu_hz) {
-        Ok(ready) => {
-            let usb = usb::init(ready, &clocks, clk.cpu_hz).connect();
-            marker.usb(UsbState::On);
-            Some(usb)
-        }
-        Err(why) => {
-            marker.usb(UsbState::Off(why));
-            ui.show_boot_fault(why.toast());
-            None
-        }
-    };
+    let mut usb = usb::PortState::new(usb_parts);
+    #[cfg(feature = "usb-console")]
+    try_usb(&mut usb, ui, &marker, &clocks, clk.cpu_hz);
     marker.stage(BootStage::Running);
 
     let mut last_tick = controls::ticks();
     loop {
         // The snapshot point: every path through the last iteration flushed.
         #[cfg(feature = "usb-console")]
+        try_usb(&mut usb, ui, &marker, &clocks, clk.cpu_hz);
+        #[cfg(feature = "usb-console")]
         if let Some(asked) = usb
-            .as_mut()
+            .up()
             .and_then(|u| u.service(ui, stats_r.as_mut(), bench_text, display.frame()))
         {
             // As the menu's path: a THEME change in this visit is kept.
@@ -484,6 +476,28 @@ fn synth(board: Board) -> ! {
                 }
             }
         }
+    }
+}
+
+/// A USB try if one is due: its end kept for `last_usb`, and the last
+/// one's failure toasted.
+#[cfg(feature = "usb-console")]
+fn try_usb(
+    port: &mut usb::PortState,
+    ui: &mut chimera_core::ui::UiState,
+    marker: &dfu::Marker,
+    clocks: &CoreClocks,
+    cpu_hz: u32,
+) {
+    use chimera_core::boot::UsbState;
+    let Some(state) = port.try_up(controls::now_ms(), clocks, cpu_hz) else {
+        return;
+    };
+    marker.usb(state);
+    if let UsbState::Off { why, .. } = state
+        && state.gave_up()
+    {
+        ui.show_boot_fault(why.toast());
     }
 }
 

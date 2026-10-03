@@ -4,6 +4,8 @@
 
 use core::fmt;
 
+use chimera_hal::Ms;
+
 use crate::reset::ResetCause;
 
 /// "DFU!". 0 and every other value boot the synth.
@@ -93,11 +95,12 @@ pub enum UsbOff {
     CoreReset,
 }
 
-/// How the last boot's USB step ended, kept in RTC_BKP5R.
+/// How the last boot's USB step ended, kept in RTC_BKP5R, with the try
+/// it ended on (1-based, `UsbRetry`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UsbState {
-    On,
-    Off(UsbOff),
+    On { tries: u8 },
+    Off { why: UsbOff, tries: u8 },
 }
 
 impl UsbOff {
@@ -121,34 +124,88 @@ impl UsbOff {
 }
 
 impl UsbState {
-    pub const ALL: [UsbState; 4] = [
-        UsbState::On,
-        UsbState::Off(UsbOff::Hsi48),
-        UsbState::Off(UsbOff::AhbIdle),
-        UsbState::Off(UsbOff::CoreReset),
-    ];
-
-    /// Never 0, which is "not reached".
+    /// The state in bits 8.., the try in 0..8; never 0, "not reached".
     pub const fn code(self) -> u32 {
-        match self {
-            UsbState::On => 1,
-            UsbState::Off(UsbOff::Hsi48) => 2,
-            UsbState::Off(UsbOff::AhbIdle) => 3,
-            UsbState::Off(UsbOff::CoreReset) => 4,
-        }
+        let (state, tries) = match self {
+            UsbState::On { tries } => (1, tries),
+            UsbState::Off { why, tries } => (
+                match why {
+                    UsbOff::Hsi48 => 2,
+                    UsbOff::AhbIdle => 3,
+                    UsbOff::CoreReset => 4,
+                },
+                tries,
+            ),
+        };
+        state << 8 | tries as u32
     }
 
     pub fn from_code(code: u32) -> Option<UsbState> {
-        UsbState::ALL.into_iter().find(|s| s.code() == code)
+        let tries = u8::try_from(code & 0xFF).ok()?;
+        let why = match code >> 8 {
+            1 => return Some(UsbState::On { tries }),
+            2 => UsbOff::Hsi48,
+            3 => UsbOff::AhbIdle,
+            4 => UsbOff::CoreReset,
+            _ => return None,
+        };
+        Some(UsbState::Off { why, tries })
     }
 
-    pub const fn label(self) -> &'static str {
+    /// The last try failed: USB stays off this boot.
+    pub const fn gave_up(self) -> bool {
+        matches!(self, UsbState::Off { tries, .. } if tries >= USB_TRIES)
+    }
+}
+
+impl fmt::Display for UsbState {
+    /// `on(try 2)`, `off(csrst, try 10)`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            UsbState::On => "on",
-            UsbState::Off(UsbOff::Hsi48) => "off(hsi48)",
-            UsbState::Off(UsbOff::AhbIdle) => "off(ahbidl)",
-            UsbState::Off(UsbOff::CoreReset) => "off(csrst)",
+            UsbState::On { tries } => write!(f, "on(try {tries})"),
+            UsbState::Off { why, tries } => write!(f, "off({}, try {tries})", why.label()),
         }
+    }
+}
+
+/// USB tries per boot: one at start-up, then one every `USB_RETRY_MS`
+/// from the UI loop. The core reset can fail for a while after a cold
+/// power-up; the synth plays between tries.
+pub const USB_TRIES: u8 = 10;
+pub const USB_RETRY_MS: u32 = 500;
+
+/// When the next USB try is due.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UsbRetry {
+    tries: u8,
+    last: Ms,
+}
+
+impl Default for UsbRetry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl UsbRetry {
+    pub const fn new() -> Self {
+        UsbRetry {
+            tries: 0,
+            last: Ms(0),
+        }
+    }
+
+    /// The first at once, then `USB_RETRY_MS` after the last, `USB_TRIES`
+    /// in all.
+    pub fn due(&self, now: Ms) -> bool {
+        self.tries == 0 || (self.tries < USB_TRIES && now.since(self.last) >= USB_RETRY_MS)
+    }
+
+    /// A try made at `now`: its number, from 1.
+    pub fn tried(&mut self, now: Ms) -> u8 {
+        self.tries = self.tries.saturating_add(1);
+        self.last = now;
+        self.tries
     }
 }
 
@@ -227,7 +284,7 @@ impl fmt::Display for BootSeen {
         }
         f.write_str(" last_usb=")?;
         match (self.last_usb, UsbState::from_code(self.last_usb)) {
-            (_, Some(s)) => f.write_str(s.label()),
+            (_, Some(s)) => write!(f, "{s}"),
             (0, None) => f.write_str("none"),
             (x, None) => write!(f, "{x:08x}"),
         }

@@ -2,20 +2,22 @@
 //! polled from the UI loop. `pac::Interrupt::OTG_FS` is never unmasked, so
 //! USB can never preempt audio.
 
-use chimera_core::boot::{BootSeen, UsbOff, wait_until};
+use chimera_core::boot::{BootSeen, UsbOff, UsbRetry, UsbState, wait_until};
 use chimera_core::console::{
     AnswerClock, Console, Frame, LoopTimer, Out, Served, Stalled, Stats, Unit, answer, serial_hex,
 };
 use chimera_core::perf::load::AudioStats;
 use chimera_core::triple::Reader;
 use chimera_core::ui::UiState;
+use chimera_hal::Ms;
 use cortex_m::peripheral::DWT;
 use stm32h7xx_hal::gpio::{Alternate, PA11, PA12};
 use stm32h7xx_hal::pac;
 use stm32h7xx_hal::rcc::rec::{self, UsbClkSel, UsbClkSelGetter};
 use stm32h7xx_hal::rcc::{Ccdr, CoreClocks, ResetEnable};
 use stm32h7xx_hal::signature::Uid;
-use stm32h7xx_hal::usb_hs::{USB2, UsbBus};
+use stm32h7xx_hal::usb_hs::UsbBus;
+use synopsys_usb_otg::UsbPeripheral;
 use usb_device::UsbError;
 use usb_device::bus::UsbBusAllocator;
 use usb_device::device::{StringDescriptors, UsbDevice, UsbDeviceBuilder, UsbVidPid};
@@ -41,8 +43,49 @@ const READY_WAIT_MS: u32 = 50;
 /// Bytes read per loop top at most: a flood without a newline can't hold the UI.
 const READ_BUDGET: usize = 256;
 
-type Dev = UsbDevice<'static, UsbBus<USB2>>;
-type Port = SerialPort<'static, UsbBus<USB2>>;
+type Dev = UsbDevice<'static, UsbBus<Otg2>>;
+type Port = SerialPort<'static, UsbBus<Otg2>>;
+
+/// OTG2, the OTG FS core on PA11/PA12, brought up in the stock PreenFM3
+/// firmware's order (Ixox/preenfm3 `firmware/Src/usbd_conf.c`
+/// `HAL_PCD_MspInit`, then `usb_device.c`): its AHB clock enabled and
+/// nothing else, then the core reset, and the VDD33USB detector only once
+/// the device has started (`connect`). The HAL's `USB2::enable` instead
+/// sets USB33DEN and pulses the RCC reset right before the core reset,
+/// which on a cold power-up left CSRST set past 50 ms ("USB OFF: csrst",
+/// f11d65e; IWDG resets before that) while the stock order plays from cold.
+pub struct Otg2 {
+    _global: pac::OTG2_HS_GLOBAL,
+    _device: pac::OTG2_HS_DEVICE,
+    _pwrclk: pac::OTG2_HS_PWRCLK,
+    hclk: u32,
+}
+
+// SAFETY: as the HAL's `USB2` (stm32h7xx-hal 0.16 usb_hs.rs): the register
+// blocks are owned here, and only `UsbBus` touches them, through
+// `REGISTERS`, under its own critical sections.
+unsafe impl Sync for Otg2 {}
+
+// SAFETY: REGISTERS is OTG2's global block, which this type owns with its
+// device and power-and-clock blocks; the constants are the HAL's for USB2
+// (RM0433: 9 endpoints, 4 KB of FIFO RAM).
+unsafe impl UsbPeripheral for Otg2 {
+    const REGISTERS: *const () = pac::OTG2_HS_GLOBAL::ptr() as *const ();
+    const HIGH_SPEED: bool = true;
+    const FIFO_DEPTH_WORDS: usize = 1024;
+    const ENDPOINT_COUNT: usize = 9;
+
+    fn enable() {
+        // SAFETY: AHB1ENR's USB2OTGEN is this port's own clock bit; set
+        // in a critical section, as the HAL sets it.
+        let rcc = unsafe { &*pac::RCC::ptr() };
+        cortex_m::interrupt::free(|_| rcc.ahb1enr.modify(|_, w| w.usb2otgen().set_bit()));
+    }
+
+    fn ahb_frequency_hz(&self) -> u32 {
+        self.hclk
+    }
+}
 
 /// Routes HSI48, which the CRS trims once the port is up, to the USB
 /// kernel clock. At boot, before `ccdr.peripheral` is split up.
@@ -86,7 +129,7 @@ pub struct Usb {
 /// The port set up but not on the bus: no pull-up, so the host sees
 /// nothing until `connect`. Only `init` makes one.
 pub struct Unconnected {
-    bus: &'static UsbBusAllocator<UsbBus<USB2>>,
+    bus: &'static UsbBusAllocator<UsbBus<Otg2>>,
     serial: Port,
     uid: &'static str,
     cpu_hz: u32,
@@ -104,35 +147,26 @@ pub struct Ready(UsbParts);
 /// reset (CSRST) on the FS PHY. `Err` names the first that never came
 /// true: `connect` would spin on it forever with interrupts masked, so the
 /// boot goes on without USB, and the shell toasts why.
-pub fn preflight(parts: UsbParts, cpu_hz: u32) -> Result<Ready, UsbOff> {
-    check(&parts, cpu_hz).map(|()| Ready(parts))
+pub fn preflight(parts: UsbParts, cpu_hz: u32) -> Result<Ready, (UsbParts, UsbOff)> {
+    match check(&parts, cpu_hz) {
+        Ok(()) => Ok(Ready(parts)),
+        Err(why) => Err((parts, why)),
+    }
 }
 
 fn check(parts: &UsbParts, cpu_hz: u32) -> Result<(), UsbOff> {
     let limit = READY_WAIT_MS * (cpu_hz / 1000);
     let wait = |ready: &mut dyn FnMut() -> bool| wait_until(limit, DWT::cycle_count, ready);
-    // SAFETY: RCC and PWR are owned by the HAL after `freeze`; this touches
-    // only HSI48RDY (read), PWR_CR3.USB33DEN (set), the bit the HAL's own
-    // `USB2::enable` sets the same way (stm32h7xx-hal 0.16 usb_hs.rs), and
-    // RCC's OTG2 enable and reset bits, which `UsbBus::enable` writes too.
-    // Nothing else writes these after `freeze`, and no interrupt does.
-    let (rcc, pwr) = unsafe { (&*pac::RCC::ptr(), &*pac::PWR::ptr()) };
+    // SAFETY: RCC is owned by the HAL after `freeze`; this reads
+    // HSI48RDY and sets AHB1ENR's USB2OTGEN, this port's own clock bit,
+    // as `Otg2::enable` does. No interrupt writes either.
+    let rcc = unsafe { &*pac::RCC::ptr() };
     if !wait(&mut || rcc.cr.read().hsi48rdy().is_ready()) {
         return Err(UsbOff::Hsi48);
     }
-    // The VDD33USB detector, as the HAL's enable sets it. USB33RDY is not
-    // waited for: ST's HAL waits for it only after USBREGEN (the internal
-    // regulator, `HAL_PWREx_EnableUSBReg`), never after USB33DEN alone
-    // (`HAL_PWREx_EnableUSBVoltageDetector`); with VDD33USB supplied from
-    // outside and USBREGEN clear, it failed on every boot (861bedb) while
-    // the port works.
-    pwr.cr3.modify(|_, w| w.usb33den().set_bit());
-    let global = &parts.global;
-    // AHB1ENR/AHB1RSTR's OTG2 bits belong to this port alone, and
-    // `UsbBus::enable` repeats this enable and reset itself.
+    // The stock order (`Otg2`): the clock, no RCC reset, no USB33DEN yet.
     rcc.ahb1enr.modify(|_, w| w.usb2otgen().set_bit());
-    rcc.ahb1rstr.modify(|_, w| w.usb2otgrst().set_bit());
-    rcc.ahb1rstr.modify(|_, w| w.usb2otgrst().clear_bit());
+    let global = &parts.global;
     if !wait(&mut || global.grstctl.read().ahbidl().bit_is_set()) {
         return Err(UsbOff::AhbIdle);
     }
@@ -167,17 +201,24 @@ pub fn init(ready: Ready, clocks: &CoreClocks, cpu_hz: u32) -> Unconnected {
     crs.cr
         .modify(|_, w| w.autotrimen().set_bit().cen().set_bit());
 
-    // Without its 48 MHz the core never leaves CSRST and `USB2::new` spins
+    // Without its 48 MHz the core never leaves CSRST and `connect` spins
     // there, interrupts off.
     assert_eq!(rec.get_kernel_clk_mux(), UsbClkSel::Hsi48);
-    let usb = USB2::new(global, device, pwrclk, dm, dp, rec, clocks);
+    // PA11/PA12 are AF10 already; holding them keeps them so.
+    let _pins = (dm, dp);
+    let usb = Otg2 {
+        _global: global,
+        _device: device,
+        _pwrclk: pwrclk,
+        hclk: clocks.hclk().raw(),
+    };
     // EP OUT packets only (EP0 and the bulk OUT, 64 bytes each); the TX
     // FIFOs live in the core's own RAM.
     let ep_memory = cortex_m::singleton!(: [u32; 256] = [0; 256]).expect("EP memory taken once");
     let bus = UsbBus::new(usb, ep_memory);
     // Here, so the device and the class can both borrow it for 'static.
-    let bus: &'static UsbBusAllocator<UsbBus<USB2>> =
-        cortex_m::singleton!(: UsbBusAllocator<UsbBus<USB2>> = bus).expect("USB bus taken once");
+    let bus: &'static UsbBusAllocator<UsbBus<Otg2>> =
+        cortex_m::singleton!(: UsbBusAllocator<UsbBus<Otg2>> = bus).expect("USB bus taken once");
 
     let serial = SerialPort::new(bus);
     // The chip's 96-bit UID: a stable /dev/serial/by-id name per unit.
@@ -211,6 +252,13 @@ impl Unconnected {
             .expect("100 mA is within 500")
             .device_class(USB_CLASS_CDC)
             .build();
+        // The VDD33USB detector last, as the stock firmware enables it after
+        // `USBD_Start` (usb_device.c `HAL_PWREx_EnableUSBVoltageDetector`).
+        // SAFETY: PWR is owned by the HAL after `freeze`; USB33DEN is the
+        // bit the HAL's `USB2::enable` sets the same way, and nothing else
+        // writes PWR_CR3 after `freeze`, no interrupt included.
+        let pwr = unsafe { &*pac::PWR::ptr() };
+        pwr.cr3.modify(|_, w| w.usb33den().set_bit());
         Usb {
             dev,
             serial: self.serial,
@@ -390,5 +438,57 @@ impl Out for UsbOut<'_> {
             }
         }
         Ok(())
+    }
+}
+
+/// The port through the boot: waiting for a try that passes `preflight`,
+/// up, or given up after `USB_TRIES`. One lives on `synth`'s frame for
+/// the whole run, and there's no heap to box `Usb` into.
+#[allow(clippy::large_enum_variant)]
+pub enum PortState {
+    Waiting(UsbParts, UsbRetry),
+    Up(Usb),
+    Off,
+}
+
+impl PortState {
+    pub fn new(parts: UsbParts) -> PortState {
+        PortState::Waiting(parts, UsbRetry::new())
+    }
+
+    /// A try if one is due (`UsbRetry`): `Some` with how it ended. Each
+    /// try's waits are bounded, interrupts on, so the synth plays on.
+    pub fn try_up(&mut self, now: Ms, clocks: &CoreClocks, cpu_hz: u32) -> Option<UsbState> {
+        let PortState::Waiting(_, retry) = self else {
+            return None;
+        };
+        if !retry.due(now) {
+            return None;
+        }
+        let PortState::Waiting(parts, mut retry) = core::mem::replace(self, PortState::Off) else {
+            return None;
+        };
+        let tries = retry.tried(now);
+        let state = match preflight(parts, cpu_hz) {
+            Ok(ready) => {
+                *self = PortState::Up(init(ready, clocks, cpu_hz).connect());
+                UsbState::On { tries }
+            }
+            Err((parts, why)) => {
+                let state = UsbState::Off { why, tries };
+                if !state.gave_up() {
+                    *self = PortState::Waiting(parts, retry);
+                }
+                state
+            }
+        };
+        Some(state)
+    }
+
+    pub fn up(&mut self) -> Option<&mut Usb> {
+        match self {
+            PortState::Up(usb) => Some(usb),
+            _ => None,
+        }
     }
 }

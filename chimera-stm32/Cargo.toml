@@ -14,7 +14,12 @@ sd-probe = []
 master-tape = ["chimera-core/master-tape"]
 # The USB console (ADR 0068): CDC-ACM on the OTG FS port, polled from the UI
 # loop, its interrupt never unmasked.
-usb-console = ["stm32h7xx-hal/usb_hs", "dep:usb-device", "dep:usbd-serial"]
+usb-console = [
+    "stm32h7xx-hal/usb_hs",
+    "dep:usb-device",
+    "dep:usbd-serial",
+    "dep:synopsys-usb-otg",
+]
 
 [dependencies]
 chimera-core = { path = "../chimera-core" }
@@ -34,6 +39,9 @@ embedded-sdmmc = { version = "0.10", default-features = false }
 embedded-hal = "1.0"
 usb-device = { version = "0.3.2", optional = true }
 usbd-serial = { version = "0.2.2", optional = true }
+# The HAL's own OTG driver, for `usb::Otg2`: the stock PreenFM3's bring-up
+# order, which the HAL's `USB2` doesn't follow.
+synopsys-usb-otg = { version = "0.4.0", features = ["hs"], optional = true }
 
 # no_std bin, own #[panic_handler]: the test harness pulls in std's, which
 # clashes (E0152). Nothing here to unit test; chimera-core holds the logic.
