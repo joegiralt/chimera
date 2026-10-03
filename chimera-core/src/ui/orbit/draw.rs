@@ -23,6 +23,7 @@ use crate::ui::block_def::{BlockDef, VizType};
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
 use crate::ui::glyph::Gauge;
+use crate::ui::region::Fnv;
 use crate::ui::theme::{self, VIZ_BAND_MID as MID, VIZ_LEFT, VIZ_RIGHT};
 use crate::ui::view::{SlotCtx, View, view};
 use chimera_theory::{Interval, Note, Stack};
@@ -841,7 +842,7 @@ impl Focus {
             _ => 0.0,
         };
         h.write_u16(crate::ui::region::quantize(g));
-        h.finish() as u32
+        h.get()
     }
 }
 
@@ -954,16 +955,7 @@ pub fn viz_key(def: &BlockDef, f: &OrbitFrame, r: RingIdx, cursor: f32) -> u32 {
     let mut h = Fnv::new();
     let st = &f.ui.status;
     match def.viz {
-        VizType::OrbitRhythm => {
-            f.scene.rings[r.get() as usize].ring.hash(&mut h);
-            f.hits(r).hash(&mut h);
-            f.now(r).hash(&mut h);
-        }
-        VizType::OrbitVoice => {
-            f.scene.rings[r.get() as usize].ring.hash(&mut h);
-            f.hits(r).hash(&mut h);
-            f.now(r).hash(&mut h);
-        }
+        VizType::OrbitRhythm | VizType::OrbitVoice => ring_key(&mut h, f, r),
         VizType::OrbitNotes => {
             let sr = &f.scene.rings[r.get() as usize];
             sr.ring.hash(&mut h);
@@ -979,9 +971,7 @@ pub fn viz_key(def: &BlockDef, f: &OrbitFrame, r: RingIdx, cursor: f32) -> u32 {
         }
         VizType::Orbit => {
             for ring in RingIdx::ALL {
-                f.scene.rings[ring.get() as usize].ring.hash(&mut h);
-                f.hits(ring).hash(&mut h);
-                f.now(ring).hash(&mut h);
+                ring_key(&mut h, f, ring);
                 f.ui.anim.flash(ring).hash(&mut h);
             }
             f.chords().hash(&mut h);
@@ -1005,26 +995,16 @@ pub fn viz_key(def: &BlockDef, f: &OrbitFrame, r: RingIdx, cursor: f32) -> u32 {
         }
         _ => return 0,
     }
-    h.finish() as u32
+    h.get()
 }
 
-/// FNV-1a, 32 bits wide in a `Hasher`.
-struct Fnv(u32);
-
-impl Fnv {
-    const fn new() -> Self {
-        Fnv(0x811c_9dc5)
-    }
-}
-
-impl Hasher for Fnv {
-    fn finish(&self) -> u64 {
-        self.0 as u64
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            self.0 = (self.0 ^ b as u32).wrapping_mul(0x0100_0193);
-        }
-    }
+/// What RHYTHM, VOICE and ORB draw of ring `r`: its hits as heard and
+/// their accents, the step under the clock, and the knobs they read; not
+/// its notes, which none of them shows.
+fn ring_key(h: &mut Fnv, f: &OrbitFrame, r: RingIdx) {
+    let ring = &f.scene.rings[r.get() as usize].ring;
+    let mask = f.hits(r);
+    (mask, ring.accents_on(mask), f.now(r)).hash(h);
+    (ring.mute, ring.chance, ring.gate, ring.velocity).hash(h);
+    (ring.accent(), ring.octave, ring.range).hash(h);
 }

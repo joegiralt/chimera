@@ -471,14 +471,45 @@ impl From<PageLayout> for Layout {
     }
 }
 
+/// FNV-1a, 32 bits wide, as a `Hasher`: every region key's hash.
+#[derive(Clone, Copy, Debug)]
+pub struct Fnv(u32);
+
+impl Fnv {
+    pub const fn new() -> Self {
+        Fnv(0x811c_9dc5)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl Default for Fnv {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl core::hash::Hasher for Fnv {
+    fn finish(&self) -> u64 {
+        self.0 as u64
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0 ^ b as u32).wrapping_mul(0x0100_0193);
+        }
+    }
+}
+
 /// FNV-1a over `parts`: a SETTINGS band's key.
 pub fn settings_key(parts: &[&[u8]]) -> u32 {
-    let mut h: u32 = 0x811c_9dc5;
-    for b in parts.iter().flat_map(|p| p.iter()) {
-        h ^= *b as u32;
-        h = h.wrapping_mul(0x0100_0193);
-    }
-    h
+    let mut h = Fnv::new();
+    parts
+        .iter()
+        .for_each(|p| core::hash::Hasher::write(&mut h, p));
+    h.get()
 }
 
 impl RegionSet {

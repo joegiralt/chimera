@@ -32,9 +32,7 @@ pub fn live_columns(buf: &[f32; SCOPE_LEN]) -> [i8; LIVE_COLS] {
 /// Cheap fingerprint of what `live_output` draws: the viz region redraws
 /// only when it changes (a silent or frozen scope costs no SPI traffic).
 pub fn live_key(buf: &[f32; SCOPE_LEN]) -> u32 {
-    live_columns(buf).iter().fold(0x811c_9dc5u32, |h, &c| {
-        (h ^ c as u8 as u32).wrapping_mul(0x0100_0193)
-    })
+    crate::ui::region::settings_key(&[&live_columns(buf).map(|c| c as u8)])
 }
 
 /// The page's live output as a filled waveform in the viz band.

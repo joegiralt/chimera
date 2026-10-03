@@ -2148,6 +2148,8 @@ impl UiState {
         let cx = self.cx();
         let def = self.page_def();
         let settings = self.loc.settings();
+        let (ctx, focus, orbit) = (self.ctx(), self.focused_slot(), self.orbit_frame());
+        let anim = &self.renderer.anim;
         renderer::Frame {
             head: self.head(),
             map: self.loc.page(&cx).filter(|_| settings.is_none()),
@@ -2158,8 +2160,9 @@ impl UiState {
             perf,
             matrix: &self.matrix_state,
             sel_op: self.sel_op,
-            ctx: self.ctx(),
-            focus: self.focused_slot(),
+            orbit_focus: orbit::draw::focus(def, focus, &ctx, &orbit, |i| anim[i].current()),
+            ctx,
+            focus,
             scope,
             sounding: crate::scope::peak(scope) > crate::scope::SOUNDING_PEAK,
             orbit_dot: self.orbit.anim.dot(),
@@ -2171,7 +2174,7 @@ impl UiState {
             master_gr_db: crate::meter::MASTER_GR.read(),
             clock: self.clock,
             fx: &self.project.perf().fx,
-            orbit: self.orbit_frame(),
+            orbit,
         }
     }
 
@@ -2251,7 +2254,7 @@ impl UiState {
                 self.prime_status,
             )
             .with_set(region::quantize(self.renderer.set[f.focus].current()))
-            .with_text(self.renderer.orbit_focus(f).map_or(0, |o| o.key()))
+            .with_text(f.orbit_focus.as_ref().map_or(0, |o| o.key()))
             .animated(glyph::anim_key(
                 shown.is_some_and(|g| g.animates()),
                 f.clock.frame(),

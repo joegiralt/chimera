@@ -197,6 +197,8 @@ pub fn focus_key(s: Option<&AudioStats>) -> u16 {
 
 pub fn viz_key(s: Option<&AudioStats>) -> u32 {
     s.map_or(u32::MAX - 1, |s| {
+        use core::hash::Hasher;
+        let mut h = crate::ui::region::Fnv::new();
         [
             s.rev.label().as_bytes()[0] as u32,
             s.cpu_hz / 1_000_000,
@@ -204,7 +206,8 @@ pub fn viz_key(s: Option<&AudioStats>) -> u32 {
             s.load_peak as u32,
             s.reset as u32,
         ]
-        .iter()
-        .fold(0x811c_9dc5u32, |h, &v| (h ^ v).wrapping_mul(0x0100_0193))
+        .into_iter()
+        .for_each(|v| h.write_u32(v));
+        h.get()
     })
 }

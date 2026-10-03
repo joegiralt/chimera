@@ -79,6 +79,9 @@ pub struct Frame<'a> {
     pub fx: &'a crate::dsp::fx_bus::FxParams,
     /// What ORBIT's pages draw: the live scene and the UI's view of it.
     pub orbit: OrbitFrame<'a>,
+    /// ORBIT's reading of the focused slot, if it has its own: built once
+    /// a frame, for the band's key, its gauge and its drawing.
+    pub orbit_focus: Option<orbit::Focus>,
 }
 
 impl Frame<'_> {
@@ -475,7 +478,7 @@ impl Renderer {
         if view == View::Empty {
             return;
         }
-        if let Some(o) = self.orbit_focus(f) {
+        if let Some(o) = &f.orbit_focus {
             let (label, text) = (o.label.as_str(), o.text.as_str());
             return components::focus_band(
                 display,
@@ -503,15 +506,10 @@ impl Renderer {
         orbit::viz_key(f.def, &f.orbit, f.ctx.ring, self.orbit_cursor.current())
     }
 
-    /// ORBIT's reading of the focused slot, if it has its own.
-    pub fn orbit_focus(&self, f: &Frame) -> Option<orbit::Focus> {
-        orbit::focus(f.def, f.focus, &f.ctx, &f.orbit, |i| self.anim[i].current())
-    }
-
     /// The focused slot's gauge, by its glyph; ORBIT's own where it reads
     /// the slot itself.
     pub fn gauge(&self, f: &Frame) -> Gauge {
-        if let Some(o) = self.orbit_focus(f) {
+        if let Some(o) = &f.orbit_focus {
             return o.gauge;
         }
         let view = view::view(f.def, f.focus, &f.ctx);
@@ -758,10 +756,14 @@ fn value_text(f: &Frame, i: usize, v: f32) -> FmtBuf {
 
 /// Fingerprint of the Mixer overview (quantized levels and pans, selection).
 fn strips_key(strips: &[viz::Strip], selected: usize) -> u32 {
-    strips.iter().fold(selected as u32, |h, s| {
-        let q = (region::quantize(s.level) as u32) << 16 | region::quantize(s.pan + 1.0) as u32;
-        (h ^ q).wrapping_mul(0x0100_0193)
-    })
+    use core::hash::Hasher;
+    let mut h = region::Fnv::new();
+    h.write_usize(selected);
+    for s in strips {
+        h.write_u16(region::quantize(s.level));
+        h.write_u16(region::quantize(s.pan + 1.0));
+    }
+    h.get()
 }
 
 /// The matrix page shows the selected amount through this display slot.
