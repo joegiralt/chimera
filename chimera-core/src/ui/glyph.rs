@@ -155,7 +155,7 @@ impl Cube {
     /// turn at 20 fps. In f64, so it stays smooth however long it runs.
     pub fn turn(&self) -> f32 {
         use core::f64::consts::TAU;
-        libm::fmod(self.frame as f64 * TAU / 320.0, TAU) as f32
+        ((self.frame % 320) as f64 * TAU / 320.0) as f32
     }
 }
 
@@ -267,13 +267,13 @@ impl Rings {
     /// The wobble's phase at `frame`, radians in 0..τ, 0.37 a frame. In
     /// f64, so it stays smooth however long the clock has run.
     pub fn wobble_phase(&self) -> f32 {
-        libm::fmod(self.frame as f64 * 0.37, core::f64::consts::TAU) as f32
+        wrap(self.frame as f64 * 0.37, core::f64::consts::TAU)
     }
 
     /// How long the newest ring has been out, UI frames (0..period). In
     /// f64, so it stays smooth however long the clock has run.
     pub fn age(&self) -> f32 {
-        libm::fmod(self.frame as f64, self.period() as f64) as f32
+        wrap(self.frame as f64, self.period() as f64)
     }
 }
 
@@ -362,10 +362,10 @@ impl Braid {
     pub fn twist(&self) -> f32 {
         let per_frame = 0.05 + 0.45 * self.rate as f64;
         let speed = self.turns_and_speed().1;
-        libm::fmod(
+        wrap(
             self.frame as f64 * per_frame * speed,
             core::f64::consts::TAU,
-        ) as f32
+        )
     }
 }
 
@@ -458,4 +458,10 @@ fn level_ticks(fmt: ValFmt) -> u8 {
 /// glyph animates, else constant.
 pub const fn anim_key(animates: bool, frame: u32) -> u32 {
     if animates { frame } else { 0 }
+}
+
+/// `x` (0 or more, a frame count's worth) into 0..period: whole periods
+/// off by a truncating cast, not f64 `fmod`, which costs 3.6 KB of flash.
+fn wrap(x: f64, period: f64) -> f32 {
+    (x - period * (x / period) as u32 as f64).max(0.0) as f32
 }
