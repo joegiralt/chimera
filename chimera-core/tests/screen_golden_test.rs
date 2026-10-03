@@ -113,7 +113,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // PLAY's cell (plan Task 14).
     ("orbit_chrd", 0xd2650b9ae975a5e6),
     // Chords played into segments: a name for a numeral (Task 14).
-    ("orbit_chrd_played", 0xdee431f939bb2b85),
+    ("orbit_chrd_played", 0x5db36af4633ab953),
     // ORB (plan Task 10).
     ("orbit_orb", 0xcf53a6661bfca1b4),
     ("orbit_orb_midi", 0xf609d4540c46355f),

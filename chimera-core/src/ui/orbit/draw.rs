@@ -459,8 +459,8 @@ where
 const CHIP_TOP: i32 = 124;
 const CHIP_H: i32 = 38;
 const CHIP_GAP: i32 = 4;
-/// A played chord's dot's room at the chip's edge.
-const PLAYED_INSET: i32 = 9;
+/// A played chord's name's baseline, over its dot.
+const PLAYED_Y: i32 = CHIP_TOP + 22;
 /// A played chord's name, largest first.
 static CHIP_FONTS: [&FontRenderer; 3] = [
     &theme::FONT_VALUE,
@@ -494,33 +494,24 @@ where
         if i == f.ui.seg_of(c) {
             draw::round_outline(d, x, CHIP_TOP, cw, CHIP_H, 5, theme::INK2);
         }
-        if c.played[i].is_some() {
-            draw::dot(d, x + cw - 6, CHIP_TOP + 6, 2, theme::INK2);
-        }
         let mid = x + cw / 2;
         let name = chord_name(c, i);
         if c.played[i].is_some() {
             // A played chord has no degree: its name is the main line, in
-            // the largest font it fits, else its root's.
-            // Clear of the dot, either side, so it stays centred.
-            let fits = |font| draw::text_width(font, name.as_str(), 0) <= cw - 2 * PLAYED_INSET;
-            match CHIP_FONTS.iter().find(|&&font| fits(font)) {
-                Some(font) => draw::text_center(d, font, name.as_str(), mid, CHIP_TOP + 24, ink, 0),
-                None => {
-                    let root = harmony(c, i).chord.root();
-                    let mut b = FmtBuf::new();
-                    let _ = write!(b, "{root}");
-                    draw::text_center(
-                        d,
-                        &theme::FONT_VALUE,
-                        b.as_str(),
-                        mid,
-                        CHIP_TOP + 24,
-                        ink,
-                        0,
-                    );
-                }
+            // the largest font it fits, else its root's; its dot under it,
+            // centred, clear of any text however narrow the chip.
+            let mut root = FmtBuf::new();
+            let _ = write!(root, "{}", harmony(c, i).chord.root());
+            let fit = [name.as_str(), root.as_str()].into_iter().find_map(|t| {
+                let font = CHIP_FONTS
+                    .iter()
+                    .find(|&&f| draw::text_width(f, t, 0) <= cw - 4)?;
+                Some((t, *font))
+            });
+            if let Some((t, font)) = fit {
+                draw::text_center(d, font, t, mid, PLAYED_Y, ink, 0);
             }
+            draw::dot(d, mid, CHIP_TOP + CHIP_H - 7, 2, theme::INK2);
             continue;
         }
         let top = numeral(c, i);

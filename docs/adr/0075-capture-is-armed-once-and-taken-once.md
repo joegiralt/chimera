@@ -13,14 +13,21 @@ open how a STEP ring's capture ends when the notes are played one at a
 time, what happens past eight notes, and what PLAY's turns do.
 
 ## Decision
-- **Arming is a change of the published target.** The runner remembers
-  the target it last saw. A different one, `Off` included, re-arms and
-  drops what was under way. A finished capture disarms the runner
-  itself, and the same target published again does not re-arm it. So a
-  capture is taken once per arming, whatever the slots say after. The UI
-  takes each new `Captured.count` once, writes it into the song (a
-  ring's `notes_rev` bumped), and disarms. A load disarms too, and a
-  capture reported from before a load is dropped.
+- **Arming is a new arming generation.** `OrbitShared.arming` (`u8`)
+  is bumped by the UI on every arming, the same target again included,
+  and written on every publish with `capture`. A new generation arms the
+  runner on the published target and drops what was under way. The
+  target published `Off` under the same generation disarms it. A
+  finished capture disarms the runner itself, and the same generation
+  published again does not re-arm it. So a capture is taken once per
+  arming, whatever the slots say after, and an arming in the very frame
+  a capture is taken (the UI's take-time disarm and the new turn up
+  together) still arms. The UI takes each new `Captured.count` once,
+  writes it into the song (a ring's `notes_rev` bumped), and disarms. A
+  load disarms too, and a capture reported from before a load is
+  dropped.
+- **SEGS shrunk under an armed segment** disarms it, and `Scene::take`
+  writes no segment past SEGS.
 - **Who decides.** The runner decides when a capture ends and whether a
   segment's notes make a chord: under two pitch classes, nothing is
   reported and it stays armed. The UI writes the result
@@ -32,37 +39,48 @@ time, what happens past eight notes, and what PLAY's turns do.
   played one key at a time. Hits past the eighth cycle the notes. Each
   rest takes the note of the hit before it, and the steps before the
   first hit take the last hit's note. Only STEPS steps are written.
+  The runner counts the hits on its working copy (MUTATE's drift kept)
+  and the UI fills the song's mask, so a drifted ring can disagree on
+  the count: `played[k % len]` keeps the fill total, cycling or cutting
+  the melody, never failing.
 - **OCTAVE** becomes the lowest captured note's octave (held to 0..=8)
   in both modes. The notes stay as played (spec § 3.4: OCTAVE is the
   ring's lowest note's octave).
 - **CHRD's PLAY** reads `-` with no played chord (the fonts are ASCII),
   `HOLD` while armed, and otherwise the played chord's name. Turned up,
   it arms (and drops any other target). Turned down, it disarms if armed
-  there, and otherwise clears the played chord. That plain turn is
-  destructive, unlike CLEAR (ADR 0074): it loses one chord, and the
-  degree under it plays again.
+  there. **Clearing the played chord needs MIX + down** (controller
+  ruling at review, as CLEAR's in ADR 0074), and the degree under it
+  plays again. A plain down only disarms: detents spread over frames, so
+  a two-detent flick to cancel a re-capture would otherwise disarm on
+  one frame and clear the chord on the next.
 - **LEARN** reads ON on the ring it armed. Up arms, down disarms.
 - **A played chord's chip** shows its name as the one line, in the
-  largest of the value, bold label and label fonts that fits clear of
-  its dot, and else its root. **DEGREE** names the degree's own triad,
+  largest of the value, bold label and label fonts that fits the chip,
+  else its root the same way (F# fits at SEGS 8). Its dot sits centred
+  under the name, so no text, however narrow the chip, runs into it. **DEGREE** names the degree's own triad,
   not the played chord: that is what it edits, and what plays once PLAY
   clears.
 
 ## Alternatives considered
 - Arm on every block the slot says armed: a stale or late slot re-arms
   and takes a second chord before the UI's disarm arrives.
-- An arming counter in `OrbitShared`: it does the same as the latch,
-  with a field the brief does not have.
+- Arm on a change of the target alone (this ADR as first written): the
+  UI's take-time disarm and a turn up in the same frame publish the same
+  target, the runner never sees `Off`, and the UI shows HOLD while
+  nothing captures. Replaced by the arming generation at review.
+- A plain turn down clears the played chord (the brief's words): an
+  overshoot loses it.
 - The UI decides the chord: the runner would report under-two-class
   captures, and they would cost a count and a re-arm.
 - A STEP capture ending at the last key-up, like a pool's: one key at a
   time would end it after the first note.
 
 ## Consequences
-- Re-arming the same target needs the UI to publish `Off` in between,
-  which it does when it takes the capture. A disarm and re-arm within one
-  frame would go unseen. A person cannot turn that fast.
-- Arming takes effect from the next block's drain, about 1.3 ms late.
+- `OrbitShared` and `OrbitUi` carry one more byte each.
+- Arming reaches the runner with the next publish, then the next
+  block's drain: up to a UI frame plus a block, about 17-22 ms on the
+  desktop. Keys struck in that window are not captured.
 - The firmware drain gets the hook with its runner in Task 19.
 
 ## Sources

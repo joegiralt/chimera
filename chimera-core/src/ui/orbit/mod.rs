@@ -13,6 +13,7 @@ pub use pages::{
 };
 
 use crate::block::Block;
+use crate::orbit::chords::ChordRing;
 use crate::orbit::clock::{Bpm, ClockSource, Phase, Position, step_at};
 use crate::orbit::euclid::HitMask;
 use crate::orbit::runner::{Capture, Captured, OrbitShared, OrbitView, beats_at};
@@ -208,6 +209,8 @@ pub struct OrbitUi {
     pub run: bool,
     /// What LEARN or CHRD's PLAY armed; `Off` once a capture is taken.
     pub capture: Capture,
+    /// Bumped by every arming, published with `capture`.
+    pub arming: u8,
     /// The view's capture `count` last taken.
     pub took: u16,
     pub scene_rev: u16,
@@ -227,6 +230,7 @@ impl OrbitUi {
             chip: 0,
             run: false,
             capture: Capture::Off,
+            arming: 0,
             took: 0,
             scene_rev: 0,
             loops_seen: 0,
@@ -247,12 +251,28 @@ impl OrbitUi {
             scene_rev,
             settings,
             capture,
+            arming,
         } = out;
         *run = self.run;
         *bpm = song.bpm;
         *scene_rev = self.scene_rev;
         *settings = song.live;
         *capture = self.capture;
+        *arming = self.arming;
+    }
+
+    /// Capture armed into `to`, anew even if it already was.
+    pub fn arm(&mut self, to: Capture) {
+        self.capture = to;
+        self.arming = self.arming.wrapping_add(1);
+    }
+
+    /// A segment capture past the progression's SEGS is dropped: SEGS
+    /// shrank under it.
+    pub fn fit(&mut self, c: &ChordRing) {
+        if matches!(self.capture, Capture::Segment(s) if s >= c.segs.get()) {
+            self.capture = Capture::Off;
+        }
     }
 
     /// A project was loaded at `epoch`: views from before it are another

@@ -53,7 +53,7 @@ fn chord(rig: &mut OrbitRig, keys: &[u8], gap: usize) {
 #[test]
 fn capture_chord_over_300_ms() {
     let mut rig = OrbitRig::new();
-    rig.ui.capture = Capture::Segment(1);
+    rig.ui.arm(Capture::Segment(1));
     rig.run(1);
     chord(&mut rig, &[64, 60, 57], secs(0.1));
     let want = Chord::from_notes(&notes(&[57, 60, 64])).unwrap();
@@ -76,7 +76,7 @@ fn capture_chord_over_300_ms() {
 #[test]
 fn capture_single_note_ignored() {
     let mut rig = OrbitRig::new();
-    rig.ui.capture = Capture::Segment(0);
+    rig.ui.arm(Capture::Segment(0));
     rig.run(1);
     chord(&mut rig, &[60], 4);
     chord(&mut rig, &[60, 72], 4);
@@ -93,7 +93,7 @@ fn capture_single_note_ignored() {
 #[test]
 fn capture_ninth_note_dropped() {
     let mut rig = OrbitRig::new();
-    rig.ui.capture = Capture::Ring(R[1]);
+    rig.ui.arm(Capture::Ring(R[1]));
     rig.run(1);
     let rev = rig.song().live.rings[1].notes_rev;
     chord(&mut rig, &[67, 60, 61, 62, 63, 64, 65, 66, 68], 2);
@@ -110,7 +110,7 @@ fn capture_ninth_note_dropped() {
 fn capture_pool_sets_octave() {
     let mut rig = OrbitRig::new();
     assert_eq!(rig.song().live.rings[1].ring.octave.get(), 4);
-    rig.ui.capture = Capture::Ring(R[1]);
+    rig.ui.arm(Capture::Ring(R[1]));
     rig.run(1);
     rig.key(0, 50, true);
     rig.run(2);
@@ -151,7 +151,7 @@ fn capture_step_fills_hits_in_order() {
             s.rhythm_rev = s.rhythm_rev.wrapping_add(1);
         }
         let mask = rig.song().live.rings[1].ring.hits_mask();
-        rig.ui.capture = Capture::Ring(R[1]);
+        rig.ui.arm(Capture::Ring(R[1]));
         rig.run(1);
         for k in [64, 60, 67, 71] {
             rig.key(0, k, true);
@@ -189,7 +189,7 @@ fn capture_step_fills_hits_in_order() {
 fn capture_notes_still_sound() {
     let render = |arm: Capture| {
         let mut rig = OrbitRig::new();
-        rig.ui.capture = arm;
+        rig.ui.arm(arm);
         rig.run(1);
         for k in [57, 60, 64] {
             rig.key(0, k, true);
@@ -235,6 +235,7 @@ fn runner_takes_one_capture_per_arming() {
     // Held before arming: never part of it, its key-up ends nothing.
     runner.live(ev(48, true));
     shared.orbit.capture = Capture::Segment(2);
+    shared.orbit.arming = 1;
     runner.block(&mut inst, &shared);
     runner.live(ev(60, true));
     runner.live(ev(48, false));
@@ -248,7 +249,7 @@ fn runner_takes_one_capture_per_arming() {
         (1, Capture::Segment(2), 2)
     );
     assert_eq!(&cap.notes[..2], &notes(&[60, 64])[..]);
-    // Still armed in the slot: no second capture until it is re-armed.
+    // Still armed in the slot, the same arming: no second capture.
     for _ in 0..4 {
         runner.block(&mut inst, &shared);
         runner.live(ev(62, true));
@@ -257,15 +258,25 @@ fn runner_takes_one_capture_per_arming() {
         runner.live(ev(65, false));
     }
     assert_eq!(runner.view().captured.count, 1);
+    let chord = |runner: &mut OrbitRunner| {
+        for (n, on) in [(62, true), (65, true), (62, false), (65, false)] {
+            runner.live(ev(n, on));
+        }
+        runner.view().captured.count
+    };
+    // The same target armed anew, with no Off between: a new arming.
+    shared.orbit.arming = 2;
+    runner.block(&mut inst, &shared);
+    assert_eq!(chord(&mut runner), 2, "re-armed");
+    // Off, the arming unchanged, disarms; armed again takes again.
+    shared.orbit.arming = 3;
+    runner.block(&mut inst, &shared);
     shared.orbit.capture = Capture::Off;
     runner.block(&mut inst, &shared);
-    shared.orbit.capture = Capture::Segment(2);
+    assert_eq!(chord(&mut runner), 2, "disarmed");
+    (shared.orbit.capture, shared.orbit.arming) = (Capture::Segment(2), 4);
     runner.block(&mut inst, &shared);
-    runner.live(ev(62, true));
-    runner.live(ev(65, true));
-    runner.live(ev(62, false));
-    runner.live(ev(65, false));
-    assert_eq!(runner.view().captured.count, 2, "re-armed");
+    assert_eq!(chord(&mut runner), 3);
 }
 
 /// The UI and runner joined through a real triple buffer, as the desktop
@@ -363,10 +374,85 @@ fn capture_survives_the_triple_buffer() {
     assert_eq!(count, 1, "disarmed: C major is no capture");
     frame(&mut ui, Input::default(), &[]);
     assert_eq!(ui.project().orbit().live.chords.played[0], am);
-    // Turned down, PLAY clears the played chord: the degree plays again.
+    // PLAY armed over the played chord, then a quick two-detent flick
+    // down over two frames: disarmed, the chord kept.
+    frame(&mut ui, Input::turn(F, 1), &[]);
+    assert_eq!(text(&ui), "HOLD");
     frame(&mut ui, Input::turn(F, -1), &[]);
+    frame(&mut ui, Input::turn(F, -1), &[]);
+    assert_eq!(ui.orbit().capture, Capture::Off);
+    assert_eq!(ui.project().orbit().live.chords.played[0], am);
+    assert_eq!(text(&ui), "Am");
+    // MIX + down clears it: the degree plays again.
+    frame(&mut ui, Input::turn(F, -1).and_held(ButtonId::Mix), &[]);
     assert_eq!(ui.project().orbit().live.chords.played[0], None);
     assert_eq!(text(&ui), "-");
+
+    // A capture taken in the frame PLAY is turned up again: the take's
+    // disarm and the new arming land together, and the next chord is
+    // still captured.
+    frame(&mut ui, Input::turn(F, 1), &[]);
+    let n = frame(
+        &mut ui,
+        Input::default(),
+        &[
+            (57, true),
+            (60, true),
+            (64, true),
+            (57, false),
+            (60, false),
+            (64, false),
+        ],
+    );
+    assert_eq!(n, 2);
+    frame(&mut ui, Input::turn(F, 1), &[]);
+    assert_eq!(
+        ui.orbit().capture,
+        Capture::Segment(0),
+        "re-armed in that frame"
+    );
+    assert_eq!(text(&ui), "HOLD");
+    let n = frame(
+        &mut ui,
+        Input::default(),
+        &[
+            (60, true),
+            (64, true),
+            (67, true),
+            (60, false),
+            (64, false),
+            (67, false),
+        ],
+    );
+    assert_eq!(n, 3, "the next chord is captured");
+    frame(&mut ui, Input::default(), &[]);
+    let c = ui.project().orbit().live.chords.played[0].unwrap();
+    assert_eq!(c.to_string(), "C");
+}
+
+/// SEGS turned below an armed segment drops the capture: nothing is
+/// written to a hidden segment.
+#[test]
+fn segs_shrinking_disarms_a_segment() {
+    use chimera_hal::EncoderId::E;
+    let mut ui = Box::new(UiState::new());
+    screen::to_ring(&mut ui, 1);
+    screen::plus(&mut ui, 1);
+    feed(&mut ui, Input::turn(E, 3).and_held(ButtonId::Mix));
+    feed(&mut ui, Input::turn(F, 1));
+    assert_eq!(ui.orbit().capture, Capture::Segment(3));
+    // SEGS (D) from 4 to 3.
+    feed(&mut ui, Input::turn(D, -1));
+    assert_eq!(ui.project().orbit().live.chords.segs.get(), 3);
+    assert_eq!(ui.orbit().capture, Capture::Off);
+    // A capture already reported into it is not written past SEGS.
+    let mut s = ui.project().orbit().live;
+    let mut c = chimera_core::orbit::runner::OrbitView::default().captured;
+    c.target = Capture::Segment(3);
+    c.len = 3;
+    c.notes[..3].copy_from_slice(&notes(&[57, 60, 64]));
+    s.take(&c);
+    assert_eq!(s.chords.played, ui.project().orbit().live.chords.played);
 }
 
 /// LEARN arms the ring it is turned on, shows ON there and OFF on the
@@ -406,7 +492,7 @@ fn a_load_drops_the_capture() {
     use chimera_core::orbit::runner::OrbitView;
     use chimera_core::ui::orbit::OrbitUi;
     let mut ui = OrbitUi::new();
-    ui.capture = Capture::Ring(R[0]);
+    ui.arm(Capture::Ring(R[0]));
     ui.loaded(1);
     assert_eq!(ui.capture, Capture::Off);
     let mut v = OrbitView::default();

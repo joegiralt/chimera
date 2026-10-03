@@ -32,6 +32,9 @@ pub struct OrbitShared {
     pub settings: Scene,
     /// What the keys play into (spec § 5.3).
     pub capture: Capture,
+    /// Bumped on every arming, the same target again included: the runner
+    /// arms on its change (ADR 0075).
+    pub arming: u8,
 }
 
 impl Default for OrbitShared {
@@ -42,6 +45,7 @@ impl Default for OrbitShared {
             scene_rev: 0,
             settings: Scene::init(),
             capture: Capture::Off,
+            arming: 0,
         }
     }
 }
@@ -83,9 +87,10 @@ impl Captured {
 /// A capture under way: the notes since the first key-down.
 #[derive(Clone, Copy, Debug)]
 struct Take {
-    /// The target as last published: arming is its change, so a slot
-    /// still armed after a capture never takes a second.
-    seen: Capture,
+    /// The arming last acted on: a new one arms, so a slot still armed
+    /// after a capture never takes a second, and an arming in the frame
+    /// a capture is taken is never lost.
+    arming: u8,
     /// What the keys play into; `Off` once taken, until re-armed.
     armed: Capture,
     /// Keys down since the first, by MIDI note: the last one up ends it.
@@ -98,7 +103,7 @@ struct Take {
 impl Take {
     const fn new() -> Take {
         Take {
-            seen: Capture::Off,
+            arming: 0,
             armed: Capture::Off,
             held: 0,
             notes: [Note::MIN; MAX_POOL],
@@ -107,11 +112,15 @@ impl Take {
         }
     }
 
-    /// The UI's target, as published: a change re-arms and starts over.
-    fn arm(&mut self, to: Capture) {
-        if to != self.seen {
-            self.seen = to;
+    /// The UI's target and arming, as published: a new arming arms and
+    /// starts over; the target gone `Off` disarms.
+    fn arm(&mut self, to: Capture, arming: u8) {
+        if arming != self.arming {
+            self.arming = arming;
             self.armed = to;
+            self.restart();
+        } else if to == Capture::Off && self.armed != Capture::Off {
+            self.armed = Capture::Off;
             self.restart();
         }
     }
@@ -438,7 +447,7 @@ impl OrbitRunner {
     /// Spec § 4 steps 2-5 for one block: what it sent the `Instrument`.
     /// The shells drop it; the tests read each block's events from it.
     pub fn block(&mut self, inst: &mut Instrument, shared: &AudioShared) -> Events {
-        self.take.arm(shared.orbit.capture);
+        self.take.arm(shared.orbit.capture, shared.orbit.arming);
         let sent = self.advance(shared);
         Self::send(inst, shared, &sent, &mut self.fired);
         sent

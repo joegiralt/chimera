@@ -1507,6 +1507,8 @@ impl UiState {
                 part_page::apply_under(def, i, delta, params, &ctx, &mut self.sel_op);
             }
         }
+        // SEGS shrunk under an armed segment drops the capture.
+        self.orbit.fit(&self.project.orbit().live.chords);
         // SCALE turned to CUSTOM opens its circle.
         if !was_custom
             && custom(&self.project)

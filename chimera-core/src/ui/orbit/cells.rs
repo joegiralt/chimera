@@ -30,7 +30,7 @@ pub enum OrbitCell {
     /// either way loses notes set by hand.
     Clear,
     /// CHRD: up arms a capture of the next chord held into the segment;
-    /// down disarms it, or drops the played chord for the degree.
+    /// down disarms it, and with MIX drops the played chord for the degree.
     Play,
 }
 
@@ -125,14 +125,15 @@ impl OrbitCell {
                     ui.chip = r.set_chip(i, to) as u8;
                 }
             }
-            OrbitCell::Learn => ui.capture = arm(ui.capture, Capture::Ring(*ring), delta),
+            OrbitCell::Learn => arm(ui, Capture::Ring(*ring), delta),
+            // Down disarms; with MIX it drops the played chord too, for the
+            // degree: a flick past disarming loses no chord.
             OrbitCell::Play => {
                 let seg = ui.seg_of(c);
-                let to = Capture::Segment(seg as u8);
-                if delta < 0 && ui.capture != to {
+                if delta < 0 && mix {
                     c.played[seg] = None;
                 }
-                ui.capture = arm(ui.capture, to, delta);
+                arm(ui, Capture::Segment(seg as u8), delta);
             }
             // MIX held, or nothing: a slip on its way to NOTE loses no notes.
             OrbitCell::Clear if !mix => {}
@@ -143,11 +144,11 @@ impl OrbitCell {
 }
 
 /// Up arms `to` (dropping any other), down disarms it.
-fn arm(now: Capture, to: Capture, delta: i8) -> Capture {
-    match (delta > 0, now == to) {
-        (true, _) => to,
-        (false, true) => Capture::Off,
-        (false, false) => now,
+fn arm(ui: &mut OrbitUi, to: Capture, delta: i8) {
+    if delta > 0 {
+        ui.arm(to);
+    } else if ui.capture == to {
+        ui.capture = Capture::Off;
     }
 }
 

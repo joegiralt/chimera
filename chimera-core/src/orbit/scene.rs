@@ -189,8 +189,10 @@ impl Scene {
         match c.target {
             Capture::Off => {}
             Capture::Segment(s) => {
+                // None past SEGS: it shrank under the capture.
+                let segs = self.chords.segs.get() as usize;
                 if let (Some(p), Some(ch)) = (
-                    self.chords.played.get_mut(s as usize),
+                    self.chords.played[..segs].get_mut(s as usize),
                     Chord::from_notes(c.notes()),
                 ) {
                     *p = Some(ch);
