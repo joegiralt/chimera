@@ -976,26 +976,26 @@ impl UiState {
             Act::PartClear => self.clear_part(),
             // `part_cmd`'s.
             Act::PartReload => {}
-            Act::SceneClear => {
-                let a = SceneAsk::of(self.project.orbit(), self.project.orbit().current());
-                self.ask(Ask::ClearScene(a, prompt::Choice::new()));
+            Act::SceneClear => self.ask_scene(false, |a| Ask::ClearScene(a, prompt::Choice::new())),
+            Act::SceneReload => {
+                self.ask_scene(true, |a| Ask::ReloadScene(a, prompt::Choice::new()))
             }
-            Act::SceneReload => self.ask_reload_scene(),
         }
     }
 
-    /// SETTINGS › ORBIT's RELOAD: asked when `live` has something to drop
-    /// and no switch waits; dimmed otherwise.
-    fn ask_reload_scene(&mut self) {
+    /// SETTINGS › ORBIT's CLEAR or RELOAD, `open` on the playing scene:
+    /// refused while a switch waits, as SEQ's save is. RELOAD (`dims`)
+    /// with nothing to drop is dimmed, and inert before that: a dimmed row
+    /// says nothing, whatever waits.
+    fn ask_scene(&mut self, dims: bool, open: fn(SceneAsk) -> Ask) {
         let song = self.project.orbit();
-        if !song.edited() {
+        if dims && !song.edited() {
             return;
         }
         if song.queued().is_some() {
             return self.error(Line::new(prompt::SWITCH_PENDING));
         }
-        let a = SceneAsk::of(song, song.current());
-        self.ask(Ask::ReloadScene(a, prompt::Choice::new()));
+        self.ask(open(SceneAsk::of(song, song.current())));
     }
 
     /// CLEAR: the active Part to its engine's INIT, through the guard.

@@ -101,7 +101,7 @@ pub static PART: [Row; 5] = [
     crumb("LIVE SNAP", "SNAP", Leaf(&LIVE_SNAP_LEAF)),
 ];
 
-/// The playing scene's list: its crumb is `ORBIT · SCENE n`.
+/// The playing scene's list: its crumb is `SCENE n`.
 #[cfg(feature = "orbit")]
 pub static ORBIT: [Row; 4] = [
     // private issue #298

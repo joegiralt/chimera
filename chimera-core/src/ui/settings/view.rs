@@ -121,7 +121,7 @@ enum Bar {
 }
 
 /// One part of the breadcrumb: a row's crumb, or a run-time `PART n` or
-/// `ORBIT · SCENE n`.
+/// `SCENE n` (ORBIT's list, as `PART n` is PART's).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Crumb {
     Name(&'static str),
@@ -134,7 +134,7 @@ impl fmt::Display for Crumb {
         match self {
             Crumb::Name(s) => f.write_str(s),
             Crumb::Part(p) => write!(f, "PART {}", p.index() + 1),
-            Crumb::Orbit(s) => write!(f, "ORBIT · SCENE {}", s.get() + 1),
+            Crumb::Orbit(s) => write!(f, "SCENE {}", s.get() + 1),
         }
     }
 }
@@ -150,8 +150,8 @@ pub struct Crumbs {
 
 impl Crumbs {
     /// The crumbs of the rows on `path`, from SETTINGS down; the PART list
-    /// is `PART n` for the `active` Part, the ORBIT list `ORBIT · SCENE n`
-    /// for the playing `scene`.
+    /// is `PART n` for the `active` Part, the ORBIT list `SCENE n` for the
+    /// playing `scene`.
     // Without ORBIT no list names a scene.
     #[cfg_attr(not(feature = "orbit"), allow(unused_variables))]
     pub fn of(path: &[u8], active: PartId, scene: SceneIdx) -> Self {

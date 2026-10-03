@@ -105,8 +105,7 @@ fn orbit_list_reaches_every_row() {
     assert_eq!(look(&ui, RENAME), RowLook::Later);
     assert_eq!(look(&ui, CLEAR), RowLook::Normal);
     assert_eq!(look(&ui, SAVE_TO), RowLook::Normal);
-    // SETTINGS behind `..`: the crumbs keep left of the beat dot.
-    assert_eq!(ui.crumbs().unwrap().to_string(), ".. › ORBIT · SCENE 1");
+    assert_eq!(ui.crumbs().unwrap().to_string(), "SETTINGS › SCENE 1");
     // RENAME is inert.
     for k in [Edit, Seq] {
         tap(&mut ui, k);
@@ -127,8 +126,9 @@ fn orbit_list_reaches_every_row() {
         ui.location().settings().unwrap().path(),
         screen_path(Screen::SceneSaveTo)
     );
-    let crumbs = ui.crumbs().unwrap().within(400).to_string();
-    assert_eq!(crumbs, "SETTINGS › ORBIT · SCENE 1 › SAVE TO");
+    // SETTINGS behind `..`: the crumbs keep left of the beat dot.
+    let crumbs = ui.crumbs().unwrap().to_string();
+    assert_eq!(crumbs, ".. › SCENE 1 › SAVE TO");
 }
 
 /// CLEAR on the playing scene: CANCEL and MENU leave the slot; CLEAR
@@ -382,13 +382,13 @@ fn the_crumb_follows_the_playing_scene() {
     rig.ui
         .render_dirty_with_scope(&mut fb, &perf, &screen::scope_fixture());
     let before = rig.ui.drawn_key(RegionKind::Crumbs);
-    assert_eq!(rig.ui.crumbs().unwrap().to_string(), ".. › ORBIT · SCENE 1");
+    assert_eq!(rig.ui.crumbs().unwrap().to_string(), "SETTINGS › SCENE 1");
     past_the_loop(&mut rig);
     assert_eq!(rig.ui.project().orbit().current(), S[1]);
     rig.ui
         .render_dirty_with_scope(&mut fb, &perf, &screen::scope_fixture());
     assert_ne!(rig.ui.drawn_key(RegionKind::Crumbs), before, "redrawn");
-    assert_eq!(rig.ui.crumbs().unwrap().to_string(), ".. › ORBIT · SCENE 2");
+    assert_eq!(rig.ui.crumbs().unwrap().to_string(), "SETTINGS › SCENE 2");
 }
 
 /// Once the runner has landed the cleared scene, the UI's `settings` are
@@ -420,4 +420,34 @@ fn a_landing_takes_no_knobs_the_ui_has_not_landed() {
         .filter(|e| matches!(e.kind, OrbitKind::On(_)))
         .count();
     assert_eq!(ons, 0, "the old knobs unmute nothing");
+}
+
+/// While a switch waits, CLEAR and RELOAD ask nothing and say why, as SEQ's
+/// save does: what lands stays what was queued. The song refuses a CLEAR
+/// confirmed before the switch was queued, too.
+#[test]
+fn clear_and_reload_wait_for_a_switch() {
+    let mut ui = UiState::new();
+    hold(&mut ui, Seq);
+    for _ in 0..3 {
+        feed(&mut ui, Input::press(Plus));
+    }
+    let before = slot(&ui, 0);
+    let c = Confirmed::<SceneSlot>::unasked(ui.project().orbit(), S[0]);
+    feed(&mut ui, Input::turn(A, 1));
+    assert_eq!(ui.project().orbit().queued(), Some(S[1]));
+    ui.project_mut().orbit_mut().live.rings[0].set(SceneRing::MUTE, 1.0);
+    for row in [CLEAR, RELOAD] {
+        orbit_row(&mut ui, row);
+        assert_eq!(look(&ui, row), RowLook::Normal);
+        tap(&mut ui, Seq);
+        assert!(!ui.prompt_open(), "row {row}");
+        assert_eq!(toast(&mut ui), "SWITCH PENDING");
+    }
+    assert_eq!(
+        ui.project_mut().orbit_mut().clear_scene(c),
+        Err(chimera_core::orbit::scene::Refused::SwitchPending)
+    );
+    assert_eq!(slot(&ui, 0), before);
+    assert_eq!(ui.project().orbit().queued(), Some(S[1]));
 }

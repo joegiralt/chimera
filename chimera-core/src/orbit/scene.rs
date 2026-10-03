@@ -420,15 +420,18 @@ impl OrbitSong {
 
     /// SETTINGS › ORBIT's CLEAR, answered: the slot it asked about to
     /// neutral, unless written since. The playing one also lands again, so
-    /// `live` goes neutral on the loop; a switch already waiting lands as
-    /// queued.
+    /// `live` goes neutral on the loop. Refused while a switch waits: what
+    /// lands stays what was queued, and the prompt's "on the loop" holds.
     pub fn clear_scene(&mut self, yes: Confirmed<SceneSlot>) -> Result<(), Refused> {
+        if self.queued.is_some() {
+            return Err(Refused::SwitchPending);
+        }
         if !yes.holds(self) {
             return Err(Refused::SlotChanged);
         }
         let n = yes.target().index();
         self.put(n, Scene::neutral());
-        if n == self.current && self.queued.is_none() {
+        if n == self.current {
             self.reland();
         }
         Ok(())

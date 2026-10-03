@@ -4,6 +4,9 @@
 //! (`orbit_rhythm`, `orbit_voice`, `orbit_notes`, `orbit_notes_step`,
 //! `orbit_chrd`, `orbit_custom`).
 
+// ORBIT's UI: SEQ hold opens it only with the feature.
+#![cfg(feature = "orbit")]
+
 mod common;
 mod screen;
 

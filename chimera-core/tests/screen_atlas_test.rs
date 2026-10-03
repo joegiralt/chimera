@@ -14,6 +14,10 @@
 //! `settings_project_load_no_card`, `settings_footer_saved`, and each
 //! prompt, `settings_prompt_<kind>`.
 
+// The goldens and the atlas are recorded with ORBIT built: its pages,
+// its SETTINGS list and the crumbs left of its beat dot.
+#![cfg(feature = "orbit")]
+
 mod screen;
 
 use std::collections::HashSet;

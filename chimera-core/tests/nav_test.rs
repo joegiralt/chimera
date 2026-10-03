@@ -400,9 +400,14 @@ fn later_rows_are_inert() {
     let cx = cx();
     let mut r = Recall::new();
     // ORBIT › RENAME (#298); ORBIT itself without its feature (#262).
-    let rename = path_of(&["ORBIT", "RENAME"]);
-    let l = Location::settings_at(&rename[..1], rename[1]);
-    assert!(matches!(row_at(&rename).unwrap().kind, Kind::Later(_)));
+    let later = if cfg!(feature = "orbit") {
+        path_of(&["ORBIT", "RENAME"])
+    } else {
+        path_of(&["ORBIT"])
+    };
+    let (list, row) = later.split_at(later.len() - 1);
+    let l = Location::settings_at(list, row[0]);
+    assert!(matches!(row_at(&later).unwrap().kind, Kind::Later(_)));
     assert_eq!(l.step(NavKey::Edit, &cx, &mut r), Step::Stay);
     assert_eq!(l.step(NavKey::SeqTap, &cx, &mut r), Step::Stay);
 }

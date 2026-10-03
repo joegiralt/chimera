@@ -40,7 +40,10 @@ settings world of the synth. The spec is
   and a key legend). A leaf page uses the cell grid but keeps the
   breadcrumb and footer, never the chain map.
 - **SETTINGS › ORBIT acts on the playing scene** (amended 2026-10-02:
-  SETTINGS › ORBIT, #262). Its crumb is `ORBIT · SCENE n`. CLEAR asks
+  SETTINGS › ORBIT, #262). Its crumb is `SCENE n`, as PART's is
+  `PART n`, short enough that SAVE TO keeps it at the breadcrumb's width.
+  CLEAR and RELOAD are refused while a switch waits (`SWITCH PENDING`), as
+  SEQ's save is. CLEAR asks
   `CLEAR SCENE n?` and sets the slot neutral; the playing slot lands again,
   so `live` goes neutral on the loop. SAVE TO PROJ is a row per slot
   (`OVER SCENE n`, or `SCENE n` when neutral), saving as SCN's SAVE does.

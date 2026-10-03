@@ -1,6 +1,9 @@
 //! ORBIT's settings in the project (Task 7): the ring, chord and tempo
 //! blocks, their frozen codes, and the drift the UI absorbs from the view.
 
+// ORBIT's UI: SEQ hold opens it only with the feature.
+#![cfg(feature = "orbit")]
+
 mod screen;
 
 use chimera_core::addr::BlockRef;

@@ -6,6 +6,10 @@
 //!
 //!     SCREEN_DUMP=/tmp/screens cargo test -p chimera-core --test screen_golden_test
 
+// The goldens and the atlas are recorded with ORBIT built: its pages,
+// its SETTINGS list and the crumbs left of its beat dot.
+#![cfg(feature = "orbit")]
+
 mod common;
 mod screen;
 
@@ -107,9 +111,10 @@ const GOLDENS: &[(&str, u64)] = &[
     ("settings_top", 0x08d6ee26dad9fb97),
     // Part 3's LIVE SNAP leaf (plan Task 15).
     ("settings_part_live_snap", 0x78c80cf3c4c1cc6a),
-    // SETTINGS › ORBIT and its SAVE TO PROJ (plan Task 17).
-    ("settings_orbit", 0x7b61c06f16fb8a5f),
-    ("settings_orbit_save_to", 0xc04620c41b42aa83),
+    // SETTINGS › ORBIT and its SAVE TO PROJ (plan Task 17); the crumb
+    // `SCENE n` (fix round 1).
+    ("settings_orbit", 0xf0d520f40ac7f0bb),
+    ("settings_orbit_save_to", 0xda478843e6e2fc63),
     ("settings_load", 0xbee3b127e748ef17),
     ("settings_prompt_load", 0xc47d45b862dea1e3),
     ("settings_naming", 0x3ad617885a99ddf2),

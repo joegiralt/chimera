@@ -2,6 +2,9 @@
 //! lands on the loop; SEQ saves the playing one with its drift; SCN's SAVE
 //! over another saved scene asks, and only its pill overwrites.
 
+// ORBIT's UI: SEQ hold opens it only with the feature.
+#![cfg(feature = "orbit")]
+
 mod common;
 mod screen;
 
@@ -373,10 +376,15 @@ fn a_switch_turned_back_lands_nothing() {
     rig.frame(Input::turn(A, -1), 1);
     assert_eq!(rig.view().loops, loops, "back before the boundary");
     assert_eq!(rig.ui.project().orbit().queued(), None);
+    // Taken at once as a cancel, not cued as a re-landing of 1.
+    let rev = rig.ui.orbit().scene_rev;
+    assert_eq!((rig.view().queued, rig.view().scene_rev), (None, rev));
     while rig.view().loops < loops + 2 {
         rig.idle(1);
         let song = rig.ui.project().orbit();
         assert_eq!((song.current(), song.queued()), (S[0], None));
+        // No relaunch at a boundary: no rev is adopted there.
+        assert_eq!((rig.view().queued, rig.view().scene_rev), (None, rev));
     }
     assert!(rig.views[from..].iter().all(|v| v.playing == S[0]));
     assert_eq!(rig.ui.project().orbit().live, live, "nothing landed");
@@ -463,6 +471,60 @@ fn the_cancel_race_plays_the_switch_one_loop() {
     let song = rig.ui.project().orbit();
     assert_eq!((song.current(), song.queued()), (S[0], None));
     assert_eq!(song.live, live, "nothing lost");
+}
+
+/// Through the real triple buffers, playing: in the cancel race's window
+/// (2 adopted unseen, SCENE back to 1), SCENE on to 2 again queues 2 under
+/// a new rev. The views still read 2 under the old rev for the rest of
+/// that loop, and land nothing; at the next boundary the runner adopts the
+/// new rev, 2 again from its slot, and its view lands it (ADR 0077).
+#[test]
+fn requeued_in_the_cancel_window_lands_on_the_next_loop() {
+    let mut ui = in_orbit();
+    to_scn(&mut ui);
+    let mut rig = ShellRig::new(ui);
+    rig.b6();
+    rig.until(|v| v.running && v.loops >= 1);
+    let at = |rig: &ShellRig| rig.views.len();
+    let loops = rig.view().loops;
+    rig.until(|v| v.loops != loops);
+    let start = at(&rig);
+    let loops = rig.view().loops;
+    rig.until(|v| v.loops != loops);
+    let len = at(&rig) - start;
+
+    let start = at(&rig);
+    rig.frame(Input::turn(A, 1), 1);
+    let r1 = rig.ui.orbit().scene_rev;
+    while at(&rig) < start + len - 10 {
+        rig.idle(1);
+    }
+    rig.late(20, Input::turn(A, -1), 0);
+    assert_eq!((rig.view().playing, rig.view().scene_rev), (S[1], r1));
+    rig.frame(Input::turn(A, 1), 1);
+    let r3 = rig.ui.orbit().scene_rev;
+    assert_ne!(r3, r1);
+    let song = rig.ui.project().orbit();
+    assert_eq!((song.current(), song.queued()), (S[0], Some(S[1])));
+
+    let loops = rig.view().loops;
+    while rig.view().loops == loops {
+        let v = rig.view();
+        assert_eq!((v.playing, v.scene_rev, v.queued), (S[1], r1, Some(S[1])));
+        let song = rig.ui.project().orbit();
+        assert_eq!((song.current(), song.queued()), (S[0], Some(S[1])), "stale");
+        rig.idle(1);
+    }
+    let v = rig.view();
+    assert_eq!(
+        (v.playing, v.scene_rev, v.queued),
+        (S[1], r3, None),
+        "adopted"
+    );
+    rig.idle(1);
+    let song = rig.ui.project().orbit();
+    assert_eq!((song.current(), song.queued()), (S[1], None));
+    assert_eq!(song.live, *song.scene(S[1]), "landed from its slot");
 }
 
 /// SAVE defaults to the playing scene again after a switch lands, and

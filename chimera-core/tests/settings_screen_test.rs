@@ -82,9 +82,9 @@ fn part_crumb_names_the_active_part() {
     );
 }
 
-/// ORBIT's crumb names the playing scene. It is wide: at the breadcrumb's
-/// width, left of the beat dot, SETTINGS goes behind `..`, and SAVE TO
-/// shows alone.
+/// ORBIT's list crumb is `SCENE n`, the playing scene, as PART's is
+/// `PART n`: short enough that SAVE TO keeps it at the breadcrumb's width,
+/// left of the beat dot.
 #[cfg(feature = "orbit")]
 #[test]
 fn orbit_crumb_names_the_playing_scene() {
@@ -92,18 +92,13 @@ fn orbit_crumb_names_the_playing_scene() {
     let at = rows(&[]).iter().position(|r| r.label == "ORBIT").unwrap() as u8;
     let s3 = SceneIdx::ALL[2];
     assert_eq!(
-        format!("{}", Crumbs::of(&[at], P2, s3).within(400)),
-        "SETTINGS › ORBIT · SCENE 3"
-    );
-    assert_eq!(
         format!("{}", Crumbs::of(&[at], P2, s3)),
-        ".. › ORBIT · SCENE 3"
+        "SETTINGS › SCENE 3"
     );
     assert_eq!(
-        format!("{}", Crumbs::of(&[at, 2], P2, s3).within(400)),
-        "SETTINGS › ORBIT · SCENE 3 › SAVE TO"
+        format!("{}", Crumbs::of(&[at, 2], P2, s3)),
+        ".. › SCENE 3 › SAVE TO"
     );
-    assert_eq!(format!("{}", Crumbs::of(&[at, 2], P2, s3)), ".. › SAVE TO");
 }
 
 #[test]
@@ -180,15 +175,24 @@ fn a_leaf_ends_the_breadcrumb() {
     assert_eq!(about, "SETTINGS › SYSTEM › ABOUT");
     to_leaf(&mut ui, &["SYSTEM", "DIAGNOSTICS", "AUDIO LOAD"]);
     let (audio, k1) = crumbs(&mut ui);
-    // The crumbs always clear ORBIT's beat dot.
-    assert_eq!(audio, ".. › DIAG › AUD LOAD");
+    // The crumbs always clear ORBIT's beat dot; without ORBIT there is
+    // room for SYSTEM.
+    let (want, theme) = if cfg!(feature = "orbit") {
+        (".. › DIAG › AUD LOAD", ".. › PERSONAL › THEME")
+    } else {
+        (
+            ".. › SYSTEM › DIAG › AUD LOAD",
+            "SETTINGS › PERSONAL › THEME",
+        )
+    };
+    assert_eq!(audio, want);
     assert_ne!(k0, k1);
     // EDIT on a leaf steps nothing: the crumbs stay.
     feed(&mut ui, Input::press(ButtonId::Edit));
     assert_eq!(crumbs(&mut ui), (audio, k1));
 
     to_leaf(&mut ui, &["PERSONALIZE", "THEME"]);
-    assert_eq!(crumbs(&mut ui).0, ".. › PERSONAL › THEME");
+    assert_eq!(crumbs(&mut ui).0, theme);
 }
 
 #[test]

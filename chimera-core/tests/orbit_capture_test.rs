@@ -3,6 +3,9 @@
 //! segment's chord. Through the QA rig: the drain's `live` hook, the
 //! runner's view, and the UI taking it into the song.
 
+// ORBIT's UI: SEQ hold opens it only with the feature.
+#![cfg(feature = "orbit")]
+
 mod common;
 mod screen;
 
