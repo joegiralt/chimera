@@ -376,10 +376,12 @@ impl OrbitRig {
         let after = self.runner.pending();
         let slots = self.inst.allocator().slots();
         let origins = self.inst.origins();
+        // A voice `kill_all` marked dying may still read held: it is going.
+        let held = |v: usize| slots[v].held() && !slots[v].dying();
         for r in RingIdx::ALL {
             let i = r.get() as usize;
             let held: Vec<MidiNote> = (0..slots.len())
-                .filter(|&v| slots[v].held() && origins[v] == NoteOrigin::Orbit(r))
+                .filter(|&v| held(v) && origins[v] == NoteOrigin::Orbit(r))
                 .filter_map(|v| slots[v].note())
                 .collect();
             let pend = after[i];
@@ -406,8 +408,7 @@ impl OrbitRig {
                 self.ons.push(b);
             }
         }
-        if self.live_released
-            && (0..slots.len()).any(|v| slots[v].held() && origins[v] == NoteOrigin::Live)
+        if self.live_released && (0..slots.len()).any(|v| held(v) && origins[v] == NoteOrigin::Live)
         {
             self.stuck
                 .push((b, "a Live voice held after release".into()));
