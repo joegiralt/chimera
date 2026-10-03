@@ -11,6 +11,7 @@ use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::{Instrument, RESNAP_GLIDE_MS};
+use chimera_core::note_queue::RealTime;
 use chimera_core::orbit::ring::Harmony;
 use chimera_core::part::{Held, LiveSnap, PartParams};
 use chimera_core::project::{NEW_PARTS, PartId, Project};
@@ -246,6 +247,79 @@ fn the_runner_resnaps_at_a_segment_change() {
             assert_eq!(held_notes(rig.inst(), P2), [first], "segment {seg}");
         }
     }
+}
+
+/// NEW's scene on muted rings, Part 1 SNAP CHORD and HELD RE-SNAP, played
+/// into its second segment with F# held: the rig, segment 0's chord and
+/// the held note.
+fn held_into_segment_1() -> (OrbitRig, Chord, u8) {
+    let mut rig = OrbitRig::on_init();
+    for ring in &mut rig.song().live.rings {
+        ring.ring.mute = true;
+    }
+    let mix = &mut rig.project.edit_part(P1).mix;
+    mix.snap = LiveSnap::Chord;
+    mix.held = Held::Resnap;
+    rig.play(true);
+    rig.run(4);
+    let first = rig.view().chord;
+    while rig.view().seg == 0 {
+        rig.block();
+    }
+    rig.key(0, 66, true);
+    rig.run(2);
+    let now = snap(Note::new(66).unwrap(), SnapTo::Chord(rig.view().chord)).get();
+    assert_eq!(held_notes(rig.inst(), P1), [now]);
+    let back = snap(Note::new(66).unwrap(), SnapTo::Chord(first)).get();
+    assert_ne!(now, back, "segment 1's chord moves F# elsewhere");
+    (rig, first, back)
+}
+
+/// A MIDI Start goes back to bar 0, segment 0's chord, with no segment
+/// step: the held key re-snaps to it.
+#[test]
+fn a_midi_start_back_to_bar_0_resnaps() {
+    let (mut rig, first, back) = held_into_segment_1();
+    rig.rt(0, RealTime::Start);
+    rig.run(2);
+    assert_eq!(rig.view().seg, 0);
+    assert_eq!(rig.view().chord, first);
+    assert_eq!(held_notes(rig.inst(), P1), [back]);
+}
+
+/// B6 stops, the key held, and starts again at bar 0: the held key
+/// re-snaps to segment 0's chord.
+#[test]
+fn a_b6_restart_resnaps() {
+    let (mut rig, _, back) = held_into_segment_1();
+    rig.play(false);
+    rig.run(8);
+    rig.play(true);
+    rig.run(2);
+    assert_eq!(rig.view().seg, 0);
+    assert_eq!(held_notes(rig.inst(), P1), [back]);
+}
+
+/// Hold C, tap D, which snaps to C (a tie goes down) and joins C's voice:
+/// D's key-up leaves C sounding, and C's own key-up lets it go.
+#[test]
+fn a_key_up_keeps_a_voice_another_key_holds() {
+    let mut r = rig();
+    r.shared.parts[0].mix.snap = LiveSnap::Chord;
+    let am = harmony(AM.0, AM.1);
+    r.inst.set_harmony(Some(am));
+    r.note_on(0, 60);
+    r.render(4);
+    r.note_on(0, 62);
+    assert_eq!(to_chord(62, am), 60);
+    assert_eq!(held_notes(&r.inst, P1), [60], "D joins C's voice");
+    r.render(4);
+    r.note_off(0, 62);
+    r.render(4);
+    assert_eq!(held_notes(&r.inst, P1), [60], "C still down");
+    assert!(r.inst.active()[..].iter().any(|&a| a), "and sounding");
+    r.note_off(0, 60);
+    assert!(held_notes(&r.inst, P1).is_empty());
 }
 
 /// A held note on `patch`, RE-SNAP or STAY, snapped from `raw` to chord

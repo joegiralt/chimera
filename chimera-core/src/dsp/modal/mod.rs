@@ -1997,6 +1997,45 @@ mod tests {
         }
     }
 
+    /// A re-snap's retune down, the widest a re-snap moves (C5 to G#4, 4
+    /// st) and the widest the call takes (C5 to C2), sizes every ring at
+    /// its start, billed within one note-on's clear: grown block by block
+    /// the growth would be written unbilled on the audio path.
+    #[test]
+    fn a_retune_grows_no_ring_on_its_way() {
+        for mode in [
+            ResonatorMode::String,
+            ResonatorMode::Bowed,
+            ResonatorMode::Sympathetic,
+        ] {
+            for to in [68, 36] {
+                let mut pool = SymPool::boxed();
+                let mut e = engine(&mut pool, mode);
+                let p = ModalParams {
+                    mode,
+                    ..ModalParams::default()
+                };
+                e.note_on(72, 100, &p, SR, &mut pool);
+                let mut out = [0.0; BLOCK_SIZE];
+                for _ in 0..40 {
+                    e.render(&mut out, &p, SR, &mut pool);
+                }
+                let bill = e.strike_clear(to, true, SR, &pool).unwrap();
+                assert!(bill <= SYM_NOTE_ON_CLEAR_MAX, "{mode:?} {to}: {bill}");
+                e.glide_to(to, (SR, 0.04 / 3.0), &mut pool);
+                let rings = |e: &ModalEngine, pool: &SymPool| -> Vec<usize> {
+                    all_lines(e, pool).iter().map(|k| k.ring_len()).collect()
+                };
+                let at_start = rings(&e, &pool);
+                for _ in 0..400 {
+                    e.render(&mut out, &p, SR, &mut pool);
+                    assert_eq!(rings(&e, &pool), at_start, "{mode:?} {to}");
+                }
+                assert_eq!(e.slide(), 1.0, "{mode:?} {to}: landed");
+            }
+        }
+    }
+
     /// Every line's next clear zeros its whole ring: the full clear.
     fn soil(e: &mut ModalEngine, pool: &mut SymPool) {
         let ModelSlot::Sympathetic(m) = &mut e.model else {

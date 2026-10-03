@@ -25,7 +25,7 @@ use crate::orbit::RingIdx;
 use crate::orbit::ring::Harmony;
 use crate::orbit::runner::OrbitShared;
 use crate::params::ParamSnapshot;
-use crate::part::{Held, PartParams};
+use crate::part::{Held, LiveSnap, PartParams};
 use crate::perf::load::AudioStats;
 use crate::preset::{Part, Performance};
 use crate::project::Project;
@@ -84,12 +84,13 @@ impl PartAudio {
         }
     }
 
-    /// Cycles/sample of a voice of this Part: its Sound's, and at HELD
-    /// RE-SNAP the retune a re-snap's glide runs each block.
+    /// Cycles/sample of a voice of this Part: its Sound's, and where a
+    /// re-snap can move it (SNAP on, HELD RE-SNAP) the retune its glide
+    /// runs each block.
     fn voice_cost(&self) -> Cost {
-        let glide = match self.mix.held {
-            Held::Stay => Cost::ZERO,
-            Held::Resnap => Voice::glide_cost(&self.params, &self.mod_state),
+        let glide = match (self.mix.snap, self.mix.held) {
+            (LiveSnap::Off, _) | (_, Held::Stay) => Cost::ZERO,
+            (_, Held::Resnap) => Voice::glide_cost(&self.params, &self.mod_state),
         };
         Voice::cost(&self.params, &self.mod_state) + glide
     }
@@ -381,6 +382,10 @@ pub struct Instrument {
     /// A snapped live note sounds another (the allocator's); a re-snap
     /// snaps this again, so repeated chord changes never drift.
     keys: [MidiNote; MAX_VOICES],
+    /// The keys down on each voice, by MIDI note: two keys that snap to one
+    /// pitch share a voice (a Poly re-strike), and it is let go when the
+    /// last of them is up.
+    held_keys: [u128; MAX_VOICES],
     /// ORBIT's key and chord now; `None` while it is stopped (spec § 5.2).
     harmony: Option<Harmony>,
     /// A re-snap's note waiting on the clear budget (a SYMP voice's rings
@@ -419,7 +424,7 @@ pub enum NoteOrigin {
 /// worst-case slots starts a note a block, a typical one all at once.
 pub const SYM_CLEAR_BUDGET: usize = SYM_NOTE_ON_CLEAR_MAX;
 
-crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, harmony, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog });
+crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog });
 
 const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
@@ -448,6 +453,7 @@ impl Instrument {
             addr_of_mut!((*p).note_channel).write([MidiChannel::clamped(0); MAX_VOICES]);
             addr_of_mut!((*p).note_origin).write([NoteOrigin::Live; MAX_VOICES]);
             addr_of_mut!((*p).keys).write([MidiNote::A4; MAX_VOICES]);
+            addr_of_mut!((*p).held_keys).write([0; MAX_VOICES]);
             addr_of_mut!((*p).harmony).write(None);
             addr_of_mut!((*p).resnap_to).write([None; MAX_VOICES]);
             addr_of_mut!((*p).sounding).write([0; MAX_VOICES]);
@@ -584,6 +590,17 @@ impl Instrument {
                     if SlotKind::of(&part.params) == SYMPATHETIC {
                         self.sym.alloc_mut().place(VoiceIdx::ALL[v]);
                     }
+                    // A key whose note this Part's voice already holds, from
+                    // this origin and channel, joins its held keys.
+                    let was = self.alloc.slots()[v];
+                    let joins = was.held()
+                        && !was.dying()
+                        && was.part() == Some(q)
+                        && was.note() == Some(note)
+                        && self.note_origin[v] == from
+                        && self.note_channel[v] == ev.channel;
+                    let key = 1u128 << ev.note.get();
+                    self.held_keys[v] = if joins { self.held_keys[v] | key } else { key };
                     self.alloc.book(v, q, mode, note, cost);
                     let waits = self.sounding[v] as usize != p && self.voices[v].is_active();
                     // Sympathetic starts now only if the block's clear
@@ -616,15 +633,25 @@ impl Instrument {
                 }
             }
             NoteKind::Off => {
-                // By voice index: every held voice this channel started
-                // with this key (one per layered Part), and no other.
+                // By voice index: every held voice this channel and `from`
+                // hold the key on (one per layered Part), let go with the
+                // last of its keys.
+                let key = 1u128 << ev.note.get();
                 for v in 0..MAX_VOICES {
                     let s = self.alloc.slots()[v];
-                    if s.held()
-                        && self.keys[v] == ev.note
+                    if !(s.held()
+                        && self.held_keys[v] & key != 0
                         && self.note_channel[v] == ev.channel
-                        && self.note_origin[v] == from
+                        && self.note_origin[v] == from)
                     {
+                        continue;
+                    }
+                    self.held_keys[v] &= !key;
+                    if self.held_keys[v] != 0 {
+                        // A key still down names it now.
+                        let left = self.held_keys[v].trailing_zeros() as u8;
+                        self.keys[v] = MidiNote::new(left).unwrap_or(self.keys[v]);
+                    } else {
                         self.alloc.release(v);
                         self.resnap_to[v] = None;
                         self.voices[v].note_off(&mut self.sym);
@@ -659,6 +686,7 @@ impl Instrument {
                 || s.dying()
                 || self.note_origin[v] != NoteOrigin::Live
                 || part.mix.held != Held::Resnap
+                || part.mix.snap == LiveSnap::Off
             {
                 continue;
             }

@@ -248,11 +248,7 @@ impl EngineSlot {
         if p.engine() != EngineType::Modal || billed {
             return Cost::ZERO;
         }
-        if p.modal.mode == ResonatorMode::Sympathetic {
-            ModalEngine::PITCH + ModalEngine::HALO_PITCH
-        } else {
-            ModalEngine::PITCH
-        }
+        pitch_cost(p)
     }
 
     /// A glide steal's ratio now, 1 at rest: for the tests.
@@ -321,10 +317,7 @@ impl EngineSlot {
                 let mut c = ModalEngine::cost(&p.modal);
                 // A steal's glide retunes each block, as a route does.
                 if pitch_routed(mods) || p.pitch.steal == Steal::Glide {
-                    c = c + ModalEngine::PITCH;
-                    if p.modal.mode == ResonatorMode::Sympathetic {
-                        c = c + ModalEngine::HALO_PITCH;
-                    }
+                    c = c + pitch_cost(p);
                 }
                 if p.modal.mode == ResonatorMode::Sympathetic && chord_routed(mods) {
                     c = c + ModalEngine::CHORD;
@@ -338,6 +331,16 @@ impl EngineSlot {
 /// A route, of any amount, into STRUCTURE: SYMP's chord.
 fn chord_routed(mods: &ModState) -> bool {
     mods.routes_into(ParamAddr::new(BlockRef::Modal, ModalParams::STRUCTURE)) != 0
+}
+
+/// A Modal voice that retunes each block (a PITCH route, a glide):
+/// `ModalEngine::PITCH`, and on SYMP `HALO_PITCH` for its halo's targets.
+fn pitch_cost(p: &ParamSnapshot) -> Cost {
+    if p.modal.mode == ResonatorMode::Sympathetic {
+        ModalEngine::PITCH + ModalEngine::HALO_PITCH
+    } else {
+        ModalEngine::PITCH
+    }
 }
 
 /// A route, of any amount, into the voice's PITCH or FINE.

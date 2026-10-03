@@ -172,7 +172,7 @@ impl DiskCode for Held {
     fn disk_ident(self) -> &'static str {
         match self {
             Held::Stay => "STAY",
-            Held::Resnap => "RE-SNAP",
+            Held::Resnap => "RE_SNAP",
         }
     }
 

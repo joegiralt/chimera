@@ -8,7 +8,7 @@ use super::clock::{
 };
 use super::engine::{Events, OrbitKind, OrbitState, PendingOff, Span, block};
 use super::euclid::HitMask;
-use super::ring::NoteMode;
+use super::ring::{Harmony, NoteMode};
 use super::scene::Scene;
 use super::walk::Pool;
 use super::{MAX_POOL, MAX_STEPS, RINGS, RingIdx};
@@ -274,6 +274,8 @@ pub struct OrbitRunner {
     loops: u32,
     fired: [u8; RINGS],
     take: Take,
+    /// The harmony last handed to the `Instrument`: a change re-snaps.
+    harmony: Option<Harmony>,
 }
 
 const _: () = assert!(size_of::<OrbitRunner>() <= 1024);
@@ -306,6 +308,7 @@ impl OrbitRunner {
             loops: 0,
             fired: [0; RINGS],
             take: Take::new(),
+            harmony: None,
         }
     }
 
@@ -447,17 +450,20 @@ impl OrbitRunner {
     /// Spec § 4 steps 2-5 for one block: what it sent the `Instrument`.
     /// The shells drop it; the tests read each block's events from it.
     /// Step 5 hands the `Instrument` the harmony its live keys snap to,
-    /// `None` while stopped, and re-snaps held keys at a segment change or
-    /// a landed scene (spec § 5.2).
+    /// `None` while stopped, and re-snaps held keys whenever it differs
+    /// from the last one handed (spec § 5.2): a segment change, a landed
+    /// scene, a start or a MIDI Start back to bar 0, a chord played in.
     pub fn block(&mut self, inst: &mut Instrument, shared: &AudioShared) -> Events {
         self.take.arm(shared.orbit.capture, shared.orbit.arming);
         let sent = self.advance(shared);
         Self::send(inst, shared, &sent, &mut self.fired);
         let playing = self.transport && self.ext_playing;
-        inst.set_harmony(playing.then(|| self.state.harmony(&self.working)));
-        if sent.seg_changed() || sent.adopted() {
+        let h = playing.then(|| self.state.harmony(&self.working));
+        inst.set_harmony(h);
+        if h.is_some() && h != self.harmony {
             inst.resnap(shared);
         }
+        self.harmony = h;
         sent
     }
 
