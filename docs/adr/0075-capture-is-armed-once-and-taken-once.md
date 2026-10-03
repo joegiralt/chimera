@@ -24,8 +24,10 @@ time, what happens past eight notes, and what PLAY's turns do.
   a capture is taken (the UI's take-time disarm and the new turn up
   together) still arms. The UI takes each new `Captured.count` once,
   writes it into the song (a ring's `notes_rev` bumped), and disarms. A
-  load disarms too, and a capture reported from before a load is
-  dropped.
+  load disarms too, the runner as well: its load publish still carries
+  the old arming, so the runner drops the arming, the held keys and a
+  capture ended by keys drained before it saw the load, and the UI drops
+  a capture reported from before the load.
 - **SEGS shrunk under an armed segment** disarms it, and `Scene::take`
   writes no segment past SEGS.
 - **Who decides.** The runner decides when a capture ends and whether a
@@ -81,7 +83,7 @@ time, what happens past eight notes, and what PLAY's turns do.
 - Arming reaches the runner with the next publish, then the next
   block's drain: up to a UI frame plus a block, about 17-22 ms on the
   desktop. Keys struck in that window are not captured.
-- The firmware drain gets the hook with its runner in Task 19.
+- The firmware drain feeds the hook before its runner's block (Task 19).
 
 ## Sources
 - docs/superpowers/specs/2026-09-30-orbit-design.md § 3.4, § 4.1, § 5.3

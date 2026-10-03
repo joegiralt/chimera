@@ -24,8 +24,9 @@ the player is holding.
   copies the knobs from `AudioShared.orbit.settings`; a ring's hits (only
   through `with_mask`, so a changed fill with no rev still stands) and its
   notes and pool only when `rhythm_rev` or `notes_rev` moved. A changed
-  `scene_rev` queues the scene: the settings are ignored until the next loop
-  boundary (at once if stopped), then adopted whole.
+  `scene_rev` queues the scene: the playing scene's knobs are still
+  copied until the next loop boundary (at once if stopped), then the
+  queued one is adopted whole (ADR 0077).
 - **The transport acts on edges.** A false to true edge of `run` starts
   (fresh clock, loop start, working copy from the settings), true to false
   stops; a level with no edge does nothing. A new load epoch stops the

@@ -6,7 +6,7 @@ use super::chords::{Bars, harmony};
 use super::clock::{
     Bpm, ClockSource, InternalClock, MidiClock, Position, WINDOW, advance_cap, step_at,
 };
-use super::engine::{Events, OrbitKind, OrbitState, PendingOff, Span, block};
+use super::engine::{Events, OrbitKind, OrbitState, Span, block};
 use super::euclid::HitMask;
 use super::ring::{Harmony, NoteMode};
 use super::scene::{Scene, SceneIdx};
@@ -118,6 +118,8 @@ struct Take {
     notes: [Note; MAX_POOL],
     len: u8,
     done: Captured,
+    /// `done.count` at the last block's end: what the UI may have seen.
+    reported: u16,
 }
 
 impl Take {
@@ -129,6 +131,7 @@ impl Take {
             notes: [Note::MIN; MAX_POOL],
             len: 0,
             done: Captured::NONE,
+            reported: 0,
         }
     }
 
@@ -147,6 +150,15 @@ impl Take {
 
     fn restart(&mut self) {
         (self.held, self.len) = (0, 0);
+    }
+
+    /// A load disarms (ADR 0075). Its publish still carries the old
+    /// arming, and keys drained before the runner saw it played into the
+    /// old project's capture: one ended there is never reported.
+    fn forget(&mut self) {
+        self.armed = Capture::Off;
+        self.restart();
+        self.done.count = self.reported;
     }
 
     fn played(&self) -> &[Note] {
@@ -500,6 +512,7 @@ impl OrbitRunner {
             inst.resnap(shared);
         }
         self.harmony = h;
+        self.take.reported = self.take.done.count;
         sent
     }
 
@@ -513,6 +526,7 @@ impl OrbitRunner {
             // A load killed every voice: nothing to release, and no edge.
             self.epoch = shared.epoch;
             self.state.forget();
+            self.take.forget();
             self.transport = false;
             self.run_seen = o.run;
             self.adopt(shared);
@@ -636,7 +650,8 @@ impl OrbitRunner {
     }
 
     /// Each ring's off still to send, a held ORBIT voice's: for the tests.
-    pub fn pending(&self) -> [Option<PendingOff>; RINGS] {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn pending(&self) -> [Option<super::engine::PendingOff>; RINGS] {
         self.state.pending()
     }
 

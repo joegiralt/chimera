@@ -499,3 +499,50 @@ fn a_load_drops_the_capture() {
     v.captured.count = 2;
     assert!(ui.take(&v).is_some());
 }
+
+/// Ring 2 as STEP with one hit, LEARN armed on it: one key-down takes it.
+fn armed_step(rig: &mut OrbitRig) {
+    let s = &mut rig.song().live.rings[1];
+    s.ring.mode = NoteMode::Step;
+    let fill = Fill::new(Steps::new(8).unwrap(), 1, 0).unwrap();
+    s.ring = s.ring.with_fill(fill);
+    s.rhythm_rev = s.rhythm_rev.wrapping_add(1);
+    rig.ui.arm(Capture::Ring(R[1]));
+    rig.run(1);
+}
+
+/// A load disarms the runner too (ADR 0075): the load publish still
+/// carries the old project's arming, and the first key after it, drained
+/// in that block, writes nothing into the loaded project.
+#[test]
+fn a_load_disarms_the_runner() {
+    let mut rig = OrbitRig::new();
+    armed_step(&mut rig);
+    let ring = rig.song().live.rings[1];
+    rig.load();
+    rig.key(0, 72, true);
+    rig.run(2);
+    rig.key(0, 72, false);
+    rig.run(4);
+    assert_eq!(rig.view().captured.count, 0, "nothing captured");
+    assert_eq!(rig.song().live.rings[1], ring, "the loaded ring untouched");
+}
+
+/// Keys held through a load end no capture when they come up after it,
+/// in the load publish's block too.
+#[test]
+fn a_key_held_through_a_load_ends_nothing() {
+    let mut rig = OrbitRig::new();
+    rig.ui.arm(Capture::Ring(R[1]));
+    rig.run(1);
+    rig.key(0, 60, true);
+    rig.key(0, 64, true);
+    rig.run(2);
+    let ring = rig.song().live.rings[1];
+    rig.load();
+    rig.key(0, 60, false);
+    rig.key(0, 64, false);
+    rig.run(4);
+    assert_eq!(rig.view().captured.count, 0, "nothing captured");
+    assert_eq!(rig.song().live.rings[1], ring, "the loaded ring untouched");
+}

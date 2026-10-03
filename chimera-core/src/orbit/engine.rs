@@ -84,6 +84,7 @@ impl OrbitState {
     }
 
     /// Each ring's off still to send: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn pending(&self) -> [Option<PendingOff>; RINGS] {
         self.pending
     }

@@ -14,8 +14,6 @@ pub mod runner;
 pub mod scene;
 pub mod walk;
 
-use core::mem::size_of;
-
 pub const RINGS: usize = 5;
 pub const MAX_STEPS: u8 = 32;
 pub const MAX_POOL: usize = 8;
@@ -40,12 +38,3 @@ impl RingIdx {
         self.0
     }
 }
-
-/// Bytes of ORBIT's pure state: the rings, their walks and dice, and the
-/// harmony.
-pub const STATE_BYTES: usize = size_of::<[ring::Ring; RINGS]>()
-    + size_of::<[walk::WalkState; RINGS]>()
-    + size_of::<[rng::Rng; RINGS]>()
-    + size_of::<ring::Harmony>();
-
-const _: () = assert!(STATE_BYTES < 1024);

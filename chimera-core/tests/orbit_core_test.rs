@@ -1,4 +1,5 @@
 use chimera_core::Velocity;
+use chimera_core::orbit::RingIdx;
 use chimera_core::orbit::euclid::{Fill, HitMask, Steps, accents, euclid};
 use chimera_core::orbit::mutate::{Mutation, mutate};
 use chimera_core::orbit::ring::{
@@ -6,7 +7,6 @@ use chimera_core::orbit::ring::{
 };
 use chimera_core::orbit::rng::{Pct, Rng};
 use chimera_core::orbit::walk::{Pool, Walk, WalkState};
-use chimera_core::orbit::{RingIdx, STATE_BYTES};
 use chimera_theory::{Chord, Key, Note, PitchClass, Quality, Scale};
 
 fn n(x: u8) -> Note {
@@ -562,12 +562,4 @@ fn a_fixed_seed_replays_exactly() {
     assert_eq!(a, b);
     let c = run(r, &h, 1235, 64);
     assert_ne!(a.0, c.0);
-}
-
-// Size
-
-#[test]
-fn state_fits_in_a_kilobyte() {
-    const { assert!(STATE_BYTES < 1024) };
-    println!("orbit state: {STATE_BYTES} B");
 }

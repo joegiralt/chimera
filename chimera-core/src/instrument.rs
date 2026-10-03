@@ -479,6 +479,7 @@ impl Instrument {
     }
 
     /// Who started each voice's note, by voice index: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn origins(&self) -> &[NoteOrigin; MAX_VOICES] {
         &self.note_origin
     }

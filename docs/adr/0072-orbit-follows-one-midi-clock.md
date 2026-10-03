@@ -91,7 +91,8 @@ jump, and the windows have to stay contiguous whatever the ticks do
   cable gone, the internal clock leads after 500 ms and B6 alone plays.
 - A tempo jump (or a burst) runs ORBIT at up to `MAX_BPM_EXT` until it has
   caught up; at `MAX_BPM_EXT` itself a burst's lag is never made up.
-- `OrbitRunner` grows by `MidiClock` (616 to 728 B, under its 1 KB).
+- `OrbitRunner` grows by `MidiClock` (616 to 728 B, under its 1 KB); the
+  rest of ORBIT brings it to 800 B.
 
 ## Sources
 - `docs/superpowers/specs/2026-09-30-orbit-design.md` § 6.1–6.3
