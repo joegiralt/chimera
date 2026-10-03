@@ -288,7 +288,7 @@ On the desktop the ORBIT steps (2–7) run inside the per-block branch (`audio.r
 
 - **Log.** Events go in as one-byte commands in an 8-slot ring: `TogglePlay`, `Cue(n)`, `Keep(n)`, `Arm(target)`, `Disarm`, `EditRhythm(mask)`, `EditNotes(mask)`. The runner applies the new ones each block and reports `acked`.
 - **Knobs.** The runner keeps its own **working copy** of the playing scene, because MUTATE drifts it. Knob fields are copied from `settings` every block while the runner's `base_landed` holds: the UI's `synced` sets it, and only adopting a slot the UI hasn't landed clears it. It stays set while a switch waits, so the knobs keep reaching the playing scene. A ring's `hits_mask` and notes are copied only when an edit command names that ring; otherwise the working copy's drift stands.
-- **Switches.** `Cue(n)` queues a scene, and the runner reports it as `cue`. The working copy keeps playing until the next loop boundary (at once if stopped). Then the whole scene is adopted, drift and all, the walks reset and the `Rng`s reseed. The UI lands its newest scene command once everything is acked and `cue` is empty. `synced` says no scene command awaits landing. Edits made while a switch is queued go to the playing scene.
+- **Switches.** `Cue(n)` queues a scene, and the runner reports it as `cue`. The working copy keeps playing until the next loop boundary (at once if stopped). Then the whole scene is adopted, drift and all, the walks reset and the `Rng`s reseed. The UI lands its newest scene command once everything is acked and `cue` is empty. `synced` says no scene command awaits landing. Edits made while a switch is queued go to the playing scene. When the UI lands a scene, `live` becomes its slot: the scene's edits kept, its drift restarted; landing the playing slot again re-sends every ring's rhythm and notes, so an edit made between the runner's adoption and the landing reaches it. (amended 2026-10-04, owner: ADR 0083)
 - **Arming.** The runner reports its armed target as `armed`; the UI mirrors it while everything is acked.
 - **Loads** bump the epoch and carry a fresh seq that voids every earlier command (ADR 0082).
 
@@ -373,7 +373,7 @@ ORB ── RING ── CHRD ── SCN
 - **SCN:** SCENE, SAVE, SWITCH; eight slots, the playing one outlined, a queued one filling as the loop runs out.
 - **Split by meaning** (amended 2026-10-03, owner, ADR 0079): ORB is the song's frame, RING, KEY, SCALE, BARS, SCENE, BPM; KEY, SCALE and BARS are edited there alone. CHRD is the progression only: A to C reserved (`--`) for chord controls to come, D to F SEGS, DEGREE, PLAY. CUSTOM moves under ORB: EDIT on ORB opens it while SCALE is CUSTOM and in focus, EDIT on CUSTOM returns to ORB; CHRD no longer opens it. The chain is now `ORB (› CUSTOM) ── RING ── CHRD ── SCN`.
 
-The ring cells bind through a new `SlotBinding::SelectedRing(ParamId)`, as `SelectedOp` binds an operator's (`block_def.rs:37-59`). The chord ring and the rings are UI-held blocks resolved in `UiBlocks`, as THEME is (`ui/mod.rs:1036-1058`). The per-ring pages edit the *live* scene; the drift they draw comes from `OrbitView`.
+The ring cells bind through a new `SlotBinding::SelectedRing(ParamId)`, as `SelectedOp` binds an operator's (`block_def.rs:37-59`). The chord ring and the rings are UI-held blocks resolved in `UiBlocks`, as THEME is (`ui/mod.rs:1036-1058`). The per-ring pages edit the *live* scene and, with it, the playing scene's slot, so a switch away and back keeps the edit; the drift they draw comes from `OrbitView`, and only `live` takes it. (amended 2026-10-04, owner: ADR 0083)
 
 ### 7.2 Buttons (owner, 2026-09-30)
 
@@ -427,7 +427,7 @@ The PART block (25) gains **SNAP** (ParamId 8) and **HELD** (ParamId 9). `ScaleK
 
 The tags follow projects-core's 0x8007–0x000A; 0x000B is the tempo slot its spec reserves. The ORBIT records sit at the top level after the six Parts; each closes the open Part context. (amended 2026-09-30: plan)
 
-- Scene 0–7 are the saved slots; **scene 8 is the live scene**, drift included, so a project reloads exactly where it was saved (projects spec, "comes back bit-identical").
+- Scene 0–7 are the slots, each its scene's working copy: the user's edits, never the drift (amended 2026-10-04, owner: ADR 0083); **scene 8 is the live scene**, drift included, so a project reloads exactly where it was saved (projects spec, "comes back bit-identical").
 - The transport is never saved: a loaded project is stopped.
 - The model and codec compile without the `orbit` feature, so a firmware with ORBIT off still loads and re-saves ORBIT's records rather than dropping them.
 - A decoded scene starts from the neutral scene (every ring muted, the chord ring on I), not from the init scene, whose tuning may change.
@@ -511,6 +511,7 @@ Per block: a clock step (a `u64` multiply and divide), five step lookups (a `u64
 | `scene_switch_lands_on_the_loop` | A switch queued mid-loop: the old scene plays to the boundary, the new one's step 0s fire at it, its first loop is unmutated; stopped, it lands at once. |
 | `edits_while_queued_go_to_the_queued_scene` | An edit between the cue and the boundary applies from the boundary and does not change the old scene's last loop. |
 | `save_captures_the_drift` | MUTATE for 20 loops, SAVE into slot 5, switch away and back: slot 5 plays the drifted mask and notes. |
+| `a_scene_left_and_returned_to_keeps_its_edits` | KEY and SCALE turned on scene 1, a switch to scene 2 and back while playing: scene 1 comes back with its edit and plays it. MUTATE's drift does not come back (`a_returning_scene_drops_its_drift`). (ADR 0083) |
 | `live_snaps_per_part` | Two Parts on one channel, SNAP CHORD and OFF: the first sounds the snapped note, the second the raw one; a key-up releases both. |
 | `live_does_not_snap_when_stopped` | ORBIT stopped: SNAP CHORD Parts play raw notes. |
 | `held_stay_and_resnap` | A chord change under two held keys: HELD STAY keeps the pitch; RE-SNAP glides over 40 ms to `snap(raw key, new chord)`; five changes in a row never drift from the raw key. |
@@ -554,7 +555,7 @@ Each task leaves the tree green. ADRs are written where the decision lands, at t
 - **`orbit-core`** builds tasks 1 and 2. This spec is its contract; names may change there, behaviour may not.
 - **Projects plan 2** (project files) writes and reads § 8's records. It takes the tempo record defined here.
 - **#214 / #215** (DRUM and KIT). ORBIT comes first (owner, 2026-09-30); slice 3 waits on #215.
-- **`nav-core`** (ADR 0044 as amended, ADR 0066) merges first; ORBIT adds `Loc::Orbit` to its `Location`, and **SETTINGS › ORBIT** (#262: CLEAR, SAVE TO PROJ, RELOAD FROM PROJ for the playing scene; RENAME later, #298) replaces its `Later` row (amended 2026-10-02: navigation, nav-core).
+- **`nav-core`** (ADR 0044 as amended, ADR 0066) merges first; ORBIT adds `Loc::Orbit` to its `Location`, and **SETTINGS › ORBIT** (#262: CLEAR, SAVE TO PROJ, RELOAD FROM PROJ for the playing scene; RENAME later, #298) replaces its `Later` row (amended 2026-10-02: navigation, nav-core). RELOAD restarts the playing scene from its slot on the loop: its edits stay, its drift is dropped; it reads nothing from the card (amended 2026-10-04, owner: ADR 0083).
 - **#207** (per-Part VOICES) would cap a Part's share of the pool; ORBIT uses whatever cap exists and adds none.
 - **`Instrument::handle`** gains a `NoteOrigin` argument (`Live`, `Orbit(RingIdx)`; named apart from projects-core's `project::Origin`, and carrying the ring so rings never release each other). (amended 2026-09-30: plan) The bench (`chimera-stm32/src/bench.rs:566`, `:605-609`) and the test rigs pass `NoteOrigin::Live`.
 
@@ -581,7 +582,7 @@ Each task leaves the tree green. ADRs are written where the decision lands, at t
 - **Register:** OCTAVE (base register) and RANGE (0–3 octaves, for pool walks and mutation) per ring; snapping keeps it in key.
 - **Targets, per ring:** a Part, or a key in a KIT Part (#215).
 - **Clock:** internal BPM when nothing is connected; locks to incoming MIDI clock and start/stop when present. Chimera does not send clock.
-- **Scenes:** about eight per project, each the whole setup (chords, rings, notes, mutation state). SAVE captures the current drift. Switching lands on the next loop boundary. No morph.
+- **Scenes:** about eight per project, each the whole setup (chords, rings, notes, mutation state). SAVE captures the current drift. Switching lands on the next loop boundary. No morph. A scene keeps its edits across switches; its drift restarts when it lands again (amended 2026-10-04, owner: ADR 0083).
 - **Pages:** ORB (home, the rings animated), RING (RHYTHM, VOICE, NOTES), CHRD, SCN, as mocked. The full per-ring pages stay the main view.
 - **Buttons in ORBIT** become transport (play/stop) and ring mutes; from a ring you can jump straight to its Part's pages by holding its button. (amended 2026-09-30, owner: ORBIT is a mode; ADR 0044)
 - **Saved with the project.**

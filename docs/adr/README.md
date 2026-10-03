@@ -81,9 +81,10 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0074](0074-notes-edits-by-chip-clear-rolls-in-key.md) | Edit a ring's notes by chip; MIX + CLEAR up resets, down rolls in key | Proposed |
 | [0075](0075-capture-is-armed-once-and-taken-once.md) | A capture is armed once and taken once; a STEP ring's spans key-ups | Proposed; superseded in part by [0082](0082-orbit-command-channel.md) |
 | [0076](0076-live-keys-snap-per-part-held-keys-glide.md) | Live keys snap per Part in the Instrument; a held key re-snaps from its raw key on the pitch path | Proposed |
-| [0077](0077-scenes-land-by-generation-saves-are-witnessed.md) | A scene switch lands by its generation; SAVE OVER is witnessed when it asks | Proposed; superseded in part by [0082](0082-orbit-command-channel.md) |
+| [0077](0077-scenes-land-by-generation-saves-are-witnessed.md) | A scene switch lands by its generation; SAVE OVER is witnessed when it asks | Proposed; superseded in part by [0082](0082-orbit-command-channel.md); amended by [0083](0083-a-scene-keeps-its-edits-across-switches.md) |
 | [0078](0078-orbit-saves-after-the-parts-and-loads-what-it-can.md) | ORBIT saves after the six Parts, and a load takes what it can | Proposed |
 | [0079](0079-orbs-four-cells-mirror-key-scale-bars-and-scene.md) | ORB's four cells: KEY, SCALE, BARS and SCENE (amended: ORB the frame, CHRD the progression) | Proposed |
 | [0080](0080-sync-int-or-ext-a-daw-drives-orbits-transport.md) | SYNC picks ORBIT's master: INT runs free, EXT lets a DAW drive the transport; stored in SYSTEM (amends 0071, 0072) | Proposed; amended by [0082](0082-orbit-command-channel.md) |
 | [0081](0081-one-d-pad-on-every-chain.md) | One D-pad on every chain: SEQ up, EDIT down with wrap, MINUS and PLUS along (supersedes the SEQ tap of 0044 and 0066) | Proposed |
 | [0082](0082-orbit-command-channel.md) | ORBIT's UI and runner talk through one sequenced command log and one ack (supersedes parts of 0071, 0075, 0077; amends 0080) | Proposed |
+| [0083](0083-a-scene-keeps-its-edits-across-switches.md) | A scene keeps its edits across switches; drift restarts (amends 0077) | Proposed |
