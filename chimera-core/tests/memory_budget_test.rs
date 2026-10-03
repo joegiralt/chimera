@@ -241,4 +241,9 @@ fn orbit_runner_size() {
         size_of::<OrbitView>() <= 336,
         "OrbitView grew past 2dc9eefd's"
     );
+    // § 5: the three copies in `AudioShared` grow by 12 B at most.
+    assert!(
+        size_of::<OrbitShared>() <= 880,
+        "OrbitShared past 2dc9eefd's 876 + 4"
+    );
 }

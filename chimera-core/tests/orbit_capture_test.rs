@@ -13,7 +13,7 @@ use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::{AudioShared, Instrument};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::orbit::RingIdx;
-use chimera_core::orbit::channel::receive;
+use chimera_core::orbit::channel::{ArmTarget, Cmd, receive};
 use chimera_core::orbit::euclid::{Fill, Steps};
 use chimera_core::orbit::ring::NoteMode;
 use chimera_core::orbit::runner::{Capture, OrbitRunner};
@@ -239,8 +239,8 @@ fn runner_takes_one_capture_per_arming() {
     };
     // Held before arming: never part of it, its key-up ends nothing.
     runner.live(ev(48, true));
-    shared.orbit.capture = Capture::Segment(2);
-    shared.orbit.arming = 1;
+    let seg2 = Cmd::Arm(ArmTarget::Segment(2));
+    shared.orbit.push(seg2);
     runner.block(&mut inst, &shared);
     runner.live(ev(60, true));
     runner.live(ev(48, false));
@@ -254,7 +254,7 @@ fn runner_takes_one_capture_per_arming() {
         (1, Capture::Segment(2), 2)
     );
     assert_eq!(&cap.notes[..2], &notes(&[60, 64])[..]);
-    // Still armed in the slot, the same arming: no second capture.
+    // The same log read again, nothing new in it: no second capture.
     for _ in 0..4 {
         runner.block(&mut inst, &shared);
         runner.live(ev(62, true));
@@ -270,18 +270,56 @@ fn runner_takes_one_capture_per_arming() {
         runner.view().captured.count
     };
     // The same target armed anew, with no Off between: a new arming.
-    shared.orbit.arming = 2;
+    shared.orbit.push(seg2);
     runner.block(&mut inst, &shared);
     assert_eq!(chord(&mut runner), 2, "re-armed");
-    // Off, the arming unchanged, disarms; armed again takes again.
-    shared.orbit.arming = 3;
+    // Armed, then disarmed; armed again takes again.
+    shared.orbit.push(seg2);
     runner.block(&mut inst, &shared);
-    shared.orbit.capture = Capture::Off;
+    shared.orbit.push(Cmd::Disarm);
     runner.block(&mut inst, &shared);
     assert_eq!(chord(&mut runner), 2, "disarmed");
-    (shared.orbit.capture, shared.orbit.arming) = (Capture::Segment(2), 4);
+    shared.orbit.push(seg2);
     runner.block(&mut inst, &shared);
     assert_eq!(chord(&mut runner), 3);
+}
+
+/// `Arm` of the target already armed starts over: the keys held before
+/// it are no part of the capture.
+#[test]
+fn rearming_drops_what_was_under_way() {
+    let sr = core::num::NonZeroU32::new(chimera_hal::SAMPLE_RATE).unwrap();
+    let mut runner = OrbitRunner::new(sr);
+    let mut inst = Box::new(Instrument::new(
+        chimera_hal::SAMPLE_RATE,
+        SampleBudget::for_cpu(CPU_HZ_REV_V),
+    ));
+    let mut shared = Box::new(AudioShared::default());
+    let key = |runner: &mut OrbitRunner, n: u8, on: bool| {
+        runner.live(NoteEvent {
+            channel: chimera_core::MidiChannel::new(1).unwrap(),
+            note: MidiNote::new(n).unwrap(),
+            kind: if on {
+                NoteKind::On(Velocity::DEFAULT)
+            } else {
+                NoteKind::Off
+            },
+        });
+    };
+    let ring = Cmd::Arm(ArmTarget::Ring(R[1]));
+    shared.orbit.push(ring);
+    runner.block(&mut inst, &shared);
+    key(&mut runner, 60, true);
+    shared.orbit.push(ring);
+    runner.block(&mut inst, &shared);
+    key(&mut runner, 64, true);
+    key(&mut runner, 67, true);
+    for n in [60, 64, 67] {
+        key(&mut runner, n, false);
+    }
+    let cap = runner.view().captured;
+    assert_eq!((cap.count, cap.target), (1, Capture::Ring(R[1])));
+    assert_eq!(cap.notes(), &notes(&[64, 67])[..]);
 }
 
 /// The UI and runner joined through a real triple buffer, as the desktop
@@ -607,4 +645,202 @@ fn rearmed_before_the_view_takes_the_next() {
     assert_eq!(rig.view().captured.count, 2, "the next taken");
     assert_eq!(pool(&mut rig, 1), [67]);
     assert_eq!(rig.ui.capture, Capture::Off);
+}
+
+/// The capture property's bookkeeping: what the runner finished, what the
+/// UI took, and the newest arm command with its seq and the views before
+/// it entered the log.
+struct Captures {
+    intent: (Capture, Option<(chimera_core::orbit::channel::Seq, usize)>),
+    finished: Vec<chimera_core::orbit::runner::Captured>,
+    taken: Vec<chimera_core::orbit::runner::Captured>,
+    seen: usize,
+    /// Frames checked with every command applied.
+    checked: usize,
+    seed: u32,
+}
+
+impl Captures {
+    /// One frame of `rig`, checked: a take is the view's capture, taken
+    /// into `live` as `Scene::take` takes it; every command applied, the
+    /// UI shows the runner's armed target, the newest arm's unless its
+    /// capture is taken.
+    fn frame(&mut self, rig: &mut screen::ShellRig, input: Input, (first, then): (usize, usize)) {
+        use chimera_core::orbit::channel::{Cmd, receive_each};
+        let read = rig.views.last().copied().unwrap_or_default();
+        let ui = rig.ui.orbit();
+        let (live, head, took) = (rig.ui.project().orbit().live, ui.log().head(), ui.took);
+        let before = rig.views.len();
+        rig.late(first, input, then);
+        let (mut at, mut s) = (head, head);
+        receive_each(rig.ui.orbit().log(), &mut at, |c| {
+            s = s.next();
+            match c {
+                Cmd::Arm(t) => self.intent = (t.into(), Some((s, before))),
+                Cmd::Disarm => self.intent = (Capture::Off, Some((s, before))),
+                _ => {}
+            }
+        });
+        let ui = rig.ui.orbit();
+        if ui.took != took {
+            let c = read.captured;
+            assert_eq!(c.count, ui.took, "seed {}", self.seed);
+            let mut want = live;
+            want.take(&c);
+            let seed = self.seed;
+            assert_eq!(
+                rig.ui.project().orbit().live,
+                want,
+                "seed {seed}: taken into live"
+            );
+            self.taken.push(c);
+        }
+        for v in &rig.views[self.seen..] {
+            if v.captured.count != self.finished.last().map_or(0, |c| c.count) {
+                self.finished.push(v.captured);
+            }
+        }
+        self.seen = rig.views.len();
+        if ui.fresh() {
+            assert_eq!(
+                ui.capture, read.armed,
+                "seed {}: the runner's armed",
+                self.seed
+            );
+            let want = match self.intent {
+                (t, Some((s, from))) if t != Capture::Off => {
+                    let acked = rig.views[from..].iter().find(|v| v.acked.since(s) < 128);
+                    let at = acked.expect("acked").captured.count;
+                    if ui.took == at { t } else { Capture::Off }
+                }
+                _ => Capture::Off,
+            };
+            assert_eq!(
+                ui.capture, want,
+                "seed {}: the newest arm, untaken",
+                self.seed
+            );
+            self.checked += 1;
+        }
+    }
+}
+
+/// § 4.3: LEARN (ring 2) and PLAY (segment 1) turned up and down at
+/// random, the page switched between them, key chords held and released,
+/// the audio interrupting frames and stalling. Every capture the runner
+/// finishes is taken into `live` once, in order; after a frame with every
+/// command applied, the UI shows the runner's armed target, which is the
+/// newest arm act's unless its capture is taken.
+#[test]
+fn captures_taken_once_after_any_interleaving() {
+    use chimera_core::orbit::rng::Rng;
+    use chimera_core::ui::orbit::{ORBIT_CHRD, ORBIT_NOTES};
+    use screen::ShellRig;
+    const STEPS: usize = 4000;
+    const CHORDS: [&[u8]; 5] = [
+        &[57, 60, 64],
+        &[60, 64, 67],
+        &[62, 65, 69],
+        &[60],
+        &[60, 72],
+    ];
+    let key = |rig: &mut ShellRig, n: u8, on: bool| {
+        rig.runner.live(NoteEvent {
+            channel: chimera_core::MidiChannel::new(1).unwrap(),
+            note: MidiNote::new(n).unwrap(),
+            kind: if on {
+                NoteKind::On(Velocity::DEFAULT)
+            } else {
+                NoteKind::Off
+            },
+        });
+    };
+    let mut checked = 0;
+    for seed in 1..=4u32 {
+        let mut ui = Box::new(UiState::new());
+        screen::to_ring(&mut ui, 2);
+        screen::tap(&mut ui, ButtonId::Edit);
+        screen::tap(&mut ui, ButtonId::Edit);
+        assert_eq!(ui.page_def().id, ORBIT_NOTES.id);
+        let mut rig = ShellRig::new(ui);
+        let mut rng = Rng::new(seed);
+        let mut held: Vec<u8> = Vec::new();
+        let mut m = Captures {
+            intent: (Capture::Off, None),
+            finished: Vec::new(),
+            taken: Vec::new(),
+            seen: 0,
+            checked: 0,
+            seed,
+        };
+        for _ in 0..STEPS {
+            let notes = rig.ui.page_def().id == ORBIT_NOTES.id;
+            let (enc, page) = if notes {
+                (D, ORBIT_CHRD)
+            } else {
+                (C, ORBIT_NOTES)
+            };
+            let late = (rng.below(3) as usize, rng.below(5) as usize);
+            match rng.below(9) {
+                0 | 1 => m.frame(&mut rig, Input::turn(enc, 1), late),
+                2 => m.frame(&mut rig, Input::turn(enc, -1), late),
+                3 | 4 => {
+                    for &n in CHORDS[rng.below(5) as usize] {
+                        if !held.contains(&n) {
+                            key(&mut rig, n, true);
+                            held.push(n);
+                        }
+                    }
+                    m.frame(&mut rig, Input::default(), late);
+                }
+                5 => {
+                    for n in held.drain(..) {
+                        key(&mut rig, n, false);
+                    }
+                    m.frame(&mut rig, Input::default(), late);
+                }
+                // A stall: blocks with no frame.
+                6 => rig.blocks(rng.below(30) as usize),
+                7 => {
+                    let b = if notes {
+                        ButtonId::Plus
+                    } else {
+                        ButtonId::Minus
+                    };
+                    m.frame(&mut rig, Input::press(b), late);
+                    m.frame(&mut rig, Input::release(b), (0, 1));
+                    while rig.ui.page_def().id != page.id {
+                        m.frame(&mut rig, Input::press(ButtonId::Edit).at(0), (0, 1));
+                        m.frame(&mut rig, Input::release(ButtonId::Edit).at(100), (0, 1));
+                    }
+                }
+                _ => m.frame(&mut rig, Input::default(), late),
+            }
+        }
+        for n in held.drain(..) {
+            key(&mut rig, n, false);
+        }
+        for _ in 0..3 {
+            m.frame(&mut rig, Input::default(), (0, 1));
+        }
+        assert!(
+            m.finished.len() > 40,
+            "seed {seed}: {} captures",
+            m.finished.len()
+        );
+        let counts = |cs: &[chimera_core::orbit::runner::Captured]| {
+            cs.iter().map(|c| c.count).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            counts(&m.taken),
+            counts(&m.finished),
+            "seed {seed}: each once"
+        );
+        assert!(
+            m.taken.iter().all(|c| c.target != Capture::Off),
+            "seed {seed}"
+        );
+        checked += m.checked;
+    }
+    assert!(checked > 1000, "{checked} idle frames checked");
 }

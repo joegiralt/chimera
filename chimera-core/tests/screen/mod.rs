@@ -620,17 +620,18 @@ pub fn orbit_view(f: f64) -> chimera_core::orbit::runner::OrbitView {
 
 /// PLAY armed on CHRD's segment and `notes` captured into it: the
 /// runner's `count`th capture, a third into the bar.
-pub fn played(ui: &mut UiState, count: u16, notes: &[u8]) {
+pub fn played(ui: &mut UiState, count: u8, notes: &[u8]) {
     use chimera_core::orbit::runner::{Capture, Captured};
     feed(ui, Input::turn(EncoderId::C, 1));
     let Capture::Segment(seg) = ui.orbit().capture else {
         panic!("PLAY arms the segment");
     };
+    // Every command applied: the arm, and the take that disarmed.
     let mut v = orbit_view(0.3);
+    v.acked = ui.orbit().log().head();
     let mut c = Captured {
         count,
         target: Capture::Segment(seg),
-        arming: ui.orbit().arming,
         notes: [chimera_theory::Note::MIN; 8],
         len: notes.len() as u8,
     };

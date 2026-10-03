@@ -567,6 +567,7 @@ mod quick_save {
 #[test]
 fn orbit_buttons() {
     use chimera_core::addr::Op;
+    use chimera_core::orbit::channel::{Cmd, CmdLog, Seq as LogSeq, receive_each};
     use chimera_core::orbit::runner::OrbitShared;
     use chimera_core::ui::UiState;
     use chimera_core::ui::hold::HOLD_MS;
@@ -632,13 +633,20 @@ fn orbit_buttons() {
     assert_eq!(ui.active_part, P[1]);
     assert_eq!(muted(&ui), init);
 
-    // B6 counts a press.
-    assert_eq!(ui.orbit().presses, 0);
+    // B6 logs one TogglePlay, and the publish carries it.
+    assert_eq!(ui.orbit().log().head(), LogSeq::ZERO);
     tap(&mut ui, B6);
-    assert_eq!(ui.orbit().presses, 1);
+    let toggles = |log: &CmdLog| {
+        let mut n = 0;
+        receive_each(log, &mut LogSeq::default(), |c| {
+            n += (c == Cmd::TogglePlay) as usize
+        });
+        n
+    };
+    assert_eq!(toggles(ui.orbit().log()), 1);
     let mut out = OrbitShared::default();
     ui.publish_orbit(&mut out);
-    assert_eq!(out.presses, 1);
+    assert_eq!(toggles(&out.log), 1);
 
     // Hold B1 reads Part 1's first cell; hold B3 is Part 3's own.
     hold(&mut ui, B1);
@@ -716,7 +724,7 @@ fn orbit_buttons() {
     tap(&mut ui, Menu);
     assert_eq!(ui.location(), entry);
     assert_eq!(ui.active_part, P[1]);
-    assert_eq!(ui.orbit().presses, 1);
+    assert_eq!(toggles(ui.orbit().log()), 1);
 
     // MENU hold queues the quick save and stays.
     hold(&mut ui, Seq);
@@ -726,7 +734,7 @@ fn orbit_buttons() {
     feed(&mut ui, Input::held(Menu).at(HOLD_MS));
     feed(&mut ui, Input::release(Menu).at(HOLD_MS + 33));
     assert_eq!(ui.location(), at);
-    assert_eq!(ui.orbit().presses, 1);
+    assert_eq!(toggles(ui.orbit().log()), 1);
 }
 
 /// Every ORBIT page draws on screen, inside 240×320.

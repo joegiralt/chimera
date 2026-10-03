@@ -50,7 +50,7 @@ impl Rig {
     /// B6, pressed if the runner isn't already `on`.
     fn play(&mut self, on: bool) {
         if on != self.runner.view().running {
-            self.shared.orbit.presses = self.shared.orbit.presses.wrapping_add(1);
+            self.shared.orbit.push(Cmd::TogglePlay);
         }
     }
 

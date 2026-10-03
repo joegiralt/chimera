@@ -595,7 +595,6 @@ fn a_captured_chord_saves_as_its_tones() {
     let mut c = Captured {
         count: 1,
         target: chimera_core::orbit::runner::Capture::Segment(2),
-        arming: 0,
         notes: [Note::new(0).unwrap(); 8],
         len: 4,
     };
@@ -862,12 +861,14 @@ mod unit {
     /// fresh NEW, ORBIT records and all, is `Pristine`.
     #[test]
     fn orbit_edits_mark_the_project() {
+        use chimera_core::orbit::channel::{Seq as LogSeq, receive};
         let mut ui = Box::new(UiState::new());
         assert_eq!(ui.project_status(), ProjectStatus::Pristine);
         hold(&mut ui, Seq);
         tap(&mut ui, B6);
         ui.update(UiTick::for_test());
-        assert_eq!(ui.orbit().presses, 1);
+        let sent = receive(ui.orbit().log(), &mut LogSeq::default());
+        assert!(sent.flip, "one TogglePlay");
         assert_eq!(ui.project_status(), ProjectStatus::Pristine, "B6");
         tap(&mut ui, B6);
         ui.update(UiTick::for_test());

@@ -26,10 +26,6 @@ use core::num::NonZeroU32;
 /// levels, and its commands in one log (ADR 0082).
 #[derive(Clone, Debug)]
 pub struct OrbitShared {
-    /// Bumped on every B6 press: each press starts a stopped ORBIT or
-    /// stops a playing one (ADR 0080). A count, so presses between two
-    /// runner reads never alias.
-    pub presses: u8,
     pub bpm: Bpm,
     /// MIDI CONFIG's SYNC, from SYSTEM (ADR 0080).
     pub sync: SyncMode,
@@ -44,11 +40,6 @@ pub struct OrbitShared {
     /// The UI has landed its newest scene command: `settings` is the
     /// base of what plays.
     pub synced: bool,
-    /// What the keys play into (spec § 5.3).
-    pub capture: Capture,
-    /// Bumped on every arming, the same target again included: the runner
-    /// arms on its change (ADR 0075).
-    pub arming: u8,
 }
 
 impl OrbitShared {
@@ -61,7 +52,6 @@ impl OrbitShared {
 impl Default for OrbitShared {
     fn default() -> Self {
         OrbitShared {
-            presses: 0,
             bpm: Bpm::DEFAULT,
             sync: SyncMode::DEFAULT,
             settings: Scene::init(),
@@ -69,8 +59,6 @@ impl Default for OrbitShared {
             log: CmdLog::EMPTY,
             load: Seq::ZERO,
             synced: true,
-            capture: Capture::Off,
-            arming: 0,
         }
     }
 }
@@ -97,10 +85,8 @@ pub enum Capture {
 /// new `count` into its target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Captured {
-    pub count: u16,
+    pub count: u8,
     pub target: Capture,
-    /// The arming it was taken under: a newer one stays armed in the UI.
-    pub arming: u8,
     /// In the order played, each once (a STEP ring's may repeat).
     pub notes: [Note; MAX_POOL],
     pub len: u8,
@@ -110,7 +96,6 @@ impl Captured {
     const NONE: Captured = Captured {
         count: 0,
         target: Capture::Off,
-        arming: 0,
         notes: [Note::MIN; MAX_POOL],
         len: 0,
     };
@@ -123,10 +108,6 @@ impl Captured {
 /// A capture under way: the notes since the first key-down.
 #[derive(Clone, Copy, Debug)]
 struct Take {
-    /// The arming last acted on: a new one arms, so a slot still armed
-    /// after a capture never takes a second, and an arming in the frame
-    /// a capture is taken is never lost.
-    arming: u8,
     /// What the keys play into; `Off` once taken, until re-armed.
     armed: Capture,
     /// Keys down since the first, by MIDI note: the last one up ends it.
@@ -139,7 +120,6 @@ struct Take {
 impl Take {
     const fn new() -> Take {
         Take {
-            arming: 0,
             armed: Capture::Off,
             held: NoteSet::EMPTY,
             notes: [Note::MIN; MAX_POOL],
@@ -148,28 +128,15 @@ impl Take {
         }
     }
 
-    /// The UI's target and arming, as published: a new arming arms and
-    /// starts over; the target gone `Off` disarms.
-    fn arm(&mut self, to: Capture, arming: u8) {
-        if arming != self.arming {
-            self.arming = arming;
-            self.armed = to;
-            self.restart();
-        } else if to == Capture::Off && self.armed != Capture::Off {
-            self.armed = Capture::Off;
-            self.restart();
-        }
+    /// An `Arm` or `Disarm` (ADR 0082), or a load's disarm (ADR 0075):
+    /// what was under way is dropped, so keys held through it end nothing.
+    fn set(&mut self, to: Capture) {
+        self.armed = to;
+        self.restart();
     }
 
     fn restart(&mut self) {
         (self.held, self.len) = (NoteSet::EMPTY, 0);
-    }
-
-    /// A load disarms (ADR 0075): its publish still carries the old
-    /// arming, and keys held through it end nothing.
-    fn forget(&mut self) {
-        self.armed = Capture::Off;
-        self.restart();
     }
 
     fn played(&self) -> &[Note] {
@@ -185,7 +152,6 @@ impl Take {
         self.done = Captured {
             count: self.done.count.wrapping_add(1),
             target: self.armed,
-            arming: self.arming,
             notes: self.notes,
             len: self.len,
         };
@@ -226,6 +192,9 @@ pub struct OrbitView {
     /// A scene waiting on the loop boundary: with every command applied,
     /// `None` means the newest scene command is adopted.
     pub cue: Option<SceneIdx>,
+    /// What the keys play into: the newest arm command's target, `Off`
+    /// once its capture is taken.
+    pub armed: Capture,
     pub seg: u8,
     pub chord: Chord,
     pub rings: [RingView; RINGS],
@@ -258,6 +227,7 @@ impl OrbitView {
             loops: 0,
             playing: SceneIdx::ALL[0],
             cue: None,
+            armed: Capture::Off,
             seg: 0,
             chord: harmony(&scene.chords, 0).chord,
             rings: core::array::from_fn(|i| {
@@ -337,8 +307,6 @@ pub struct OrbitRunner {
     /// `settings`. The UI's `synced` sets it; only a slot's adoption
     /// clears it (`live`'s keeps it).
     base_landed: bool,
-    /// `presses` as of the last block.
-    presses_seen: u8,
     /// Whether ORBIT plays: B6 toggles it, the DAW's Start and Continue
     /// set it and its Stop clears it (ADR 0080).
     transport: bool,
@@ -373,7 +341,6 @@ impl OrbitRunner {
             playing: SceneIdx::ALL[0],
             applied: Seq::ZERO,
             base_landed: true,
-            presses_seen: 0,
             transport: false,
             cue: None,
             epoch: 0,
@@ -560,7 +527,6 @@ impl OrbitRunner {
     /// from the last one handed (spec § 5.2): a segment change, a landed
     /// scene, a start or a MIDI Start back to bar 0, a chord played in.
     pub fn block(&mut self, inst: &mut Instrument, shared: &AudioShared) -> Events {
-        self.take.arm(shared.orbit.capture, shared.orbit.arming);
         let sent = self.advance(shared);
         Self::send(inst, shared, &sent, &mut self.fired);
         let h = self.transport.then(|| self.state.harmony(&self.working));
@@ -581,11 +547,10 @@ impl OrbitRunner {
         self.epoch = epoch;
         (self.ext_start, self.ext_play) = (false, None);
         self.state.forget();
-        self.take.forget();
+        self.take.set(Capture::Off);
         // A capture ended on the old project is taken into nothing.
         (self.take.done.target, self.take.done.len) = (Capture::Off, 0);
         self.transport = false;
-        self.presses_seen = o.presses;
         // The loaded `live`, whole, and every command up to the load void.
         self.working = o.settings;
         self.cue = None;
@@ -604,8 +569,11 @@ impl OrbitRunner {
             self.load(shared.epoch, o);
         }
         // After a load, the commands past it: its `Keep` names the playing
-        // slot.
+        // slot. A B6 read with the load is dropped: the load stops ORBIT.
         let edits = self.commands(o);
+        if let Some(to) = edits.arm {
+            self.take.set(to);
+        }
         if loaded {
             return Events::new();
         }
@@ -635,9 +603,8 @@ impl OrbitRunner {
         }
 
         let midi = self.midi.position(t + WINDOW);
-        // Every press toggles: an odd count since the last block flips it.
-        let pressed = o.presses.wrapping_sub(self.presses_seen) & 1 == 1;
-        self.presses_seen = o.presses;
+        // An odd number of `TogglePlay`s since the last block flips it.
+        let pressed = edits.flip;
         // B6 toggles the transport as it was before the DAW's word, so B6
         // and a Stop in one block both stop.
         let play = match (pressed, daw) {
@@ -763,6 +730,7 @@ impl OrbitRunner {
         v.captured = self.take.done;
         v.playing = self.playing;
         v.cue = self.cue.map(Incoming::scene);
+        v.armed = self.take.armed;
         v.seg = self.state.seg();
         v.chord = self.state.harmony(&self.working).chord;
         for (r, f) in v.rings.iter_mut().zip(self.fired) {

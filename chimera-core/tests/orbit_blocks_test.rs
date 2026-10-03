@@ -241,8 +241,10 @@ fn orbit_edits_bump_the_project_rev() {
     screen::feed(&mut ui, Input::turn(EncoderId::A, 1));
     assert_ne!(ui.project().rev(), rev, "STEPS marks the project");
     let rev = ui.project().rev();
+    let at = ui.orbit().log().head();
     screen::tap(&mut ui, ButtonId::B6);
-    assert_eq!(ui.orbit().presses, 1);
+    let sent = chimera_core::orbit::channel::receive(ui.orbit().log(), &mut at.clone());
+    assert!(sent.flip, "one TogglePlay");
     assert_eq!(
         ui.project().rev(),
         rev,
@@ -396,10 +398,13 @@ fn stop_play_keeps_the_drift() {
 }
 
 /// B6 presses published with no block between: the runner reads only the
-/// newest slot, and every press still counts, past the counter's wrap.
-/// Two are a stop and a play, 257 a stop.
+/// newest slot, and every press still counts, past the log's wrap. Two
+/// are a stop and a play, 257 a stop. Once the log is full, presses fold
+/// by parity in the outbox: two leave the log as it is, three put one
+/// `TogglePlay` in it once the runner acks.
 #[test]
 fn presses_between_runner_reads_all_count() {
+    use chimera_core::orbit::channel::{LOG, Seq, receive};
     let mut rig = Rig::new(in_orbit());
     rig.b6();
     rig.idle(4);
@@ -408,19 +413,94 @@ fn presses_between_runner_reads_all_count() {
         rig.frame(Input::press(ButtonId::B6), 0);
         rig.frame(Input::release(ButtonId::B6), 0);
     };
-    let from: u8 = rig.ui.orbit().presses;
+    let head = |rig: &Rig| rig.ui.orbit().log().head();
+    let from = head(&rig);
     press(&mut rig);
     press(&mut rig);
-    assert_eq!(rig.ui.orbit().presses, from.wrapping_add(2));
+    assert_eq!(head(&rig).since(from), 2);
+    let sent = receive(rig.ui.orbit().log(), &mut from.clone());
+    assert!(!sent.flip, "two toggles: no flip");
     rig.idle(4);
     assert!(rig.running(), "two presses: stopped and played again");
+    let from = head(&rig);
     for _ in 0..257 {
         press(&mut rig);
     }
+    assert_eq!(head(&rig).since(from) as usize, LOG, "the log full");
+    rig.idle(4);
     rig.idle(4);
     assert!(!rig.running(), "257 presses: stopped");
     rig.b6();
     assert!(rig.running(), "the next press plays");
+
+    // The log full again: two presses fold away, three leave one.
+    let full = |rig: &mut Rig| {
+        for _ in 0..LOG {
+            press(rig);
+        }
+    };
+    full(&mut rig);
+    let at = head(&rig);
+    press(&mut rig);
+    press(&mut rig);
+    assert_eq!(head(&rig), at, "two presses folded in the outbox");
+    rig.idle(1);
+    rig.idle(1);
+    assert_eq!(head(&rig), at, "and cancelled");
+    assert!(rig.running());
+    full(&mut rig);
+    let at = head(&rig);
+    for _ in 0..3 {
+        press(&mut rig);
+    }
+    assert_eq!(head(&rig), at);
+    rig.idle(1);
+    rig.idle(1);
+    assert_eq!(head(&rig).since(at), 1, "one TogglePlay");
+    let mut a: Seq = at;
+    assert!(receive(rig.ui.orbit().log(), &mut a).flip);
+    rig.idle(1);
+    assert!(!rig.running(), "three presses: stopped");
+}
+
+/// Review Focus 5: ORBIT stopped, the runner stalls for 12 frames, and
+/// B6 is pressed in 11 of them, twice in some. When it resumes, ORBIT
+/// runs iff the presses were odd, once they are all acked, and stays so.
+#[test]
+fn b6_presses_during_a_stall_toggle_by_parity() {
+    use chimera_core::orbit::rng::Rng;
+    for seed in 1..=8u32 {
+        let mut rng = Rng::new(seed);
+        let mut rig = Rig::new(in_orbit());
+        rig.idle(2);
+        assert!(!rig.running());
+        let skip = rng.below(12);
+        let mut presses = 0;
+        for f in 0..12 {
+            if f != skip {
+                if rng.below(3) == 0 {
+                    screen::feed(&mut rig.ui, Input::press(ButtonId::B6));
+                    screen::feed(&mut rig.ui, Input::release(ButtonId::B6));
+                    presses += 1;
+                }
+                screen::feed(&mut rig.ui, Input::press(ButtonId::B6));
+                presses += 1;
+            }
+            rig.frame(Input::release(ButtonId::B6), 0);
+        }
+        while !rig.ui.orbit().fresh() {
+            rig.idle(1);
+        }
+        rig.idle(1);
+        for _ in 0..20 {
+            assert_eq!(
+                rig.running(),
+                presses % 2 == 1,
+                "seed {seed}: {presses} presses"
+            );
+            rig.idle(1 + rng.below(4) as usize);
+        }
+    }
 }
 
 /// B6 and a load in one publish: the runner takes the load first and

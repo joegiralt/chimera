@@ -196,14 +196,10 @@ pub struct OrbitUi {
     pub cursor: u8,
     /// NOTES' selected chip: a pool note, or a STEP ring's step.
     pub chip: u8,
-    /// Bumped by every B6 press: what `publish_orbit` sends, and the
-    /// runner toggles on each press (ADR 0080). Never saved.
-    pub presses: u8,
-    /// What LEARN or CHRD's PLAY armed; `Off` once a capture is taken.
+    /// What LEARN or CHRD's PLAY armed: the UI's intent until the runner
+    /// has applied every command, then the view's `armed`.
     pub capture: Capture,
-    /// Bumped by every arming, published with `capture`.
-    pub arming: u8,
-    /// The view's capture `count` last taken, its low byte.
+    /// The view's capture `count` last taken.
     pub took: u8,
     /// SCN's SAVE → n; `None`, the playing scene.
     pub save: Option<SceneIdx>,
@@ -225,9 +221,7 @@ impl OrbitUi {
             seg: 0,
             cursor: 0,
             chip: 0,
-            presses: 0,
             capture: Capture::Off,
-            arming: 0,
             took: 0,
             save: None,
             loops_seen: 0,
@@ -246,7 +240,6 @@ impl OrbitUi {
     pub fn publish(&self, song: &OrbitSong, sync_mode: SyncMode, out: &mut OrbitShared) {
         debug_assert!(song.live.untouched(), "an edit not flushed");
         let OrbitShared {
-            presses,
             bpm,
             sync,
             settings,
@@ -254,10 +247,7 @@ impl OrbitUi {
             log,
             load,
             synced,
-            capture,
-            arming,
         } = out;
-        *presses = self.presses;
         *bpm = song.bpm;
         *sync = sync_mode;
         *settings = song.live;
@@ -265,8 +255,6 @@ impl OrbitUi {
         *log = *self.chan.log();
         *load = self.chan.load();
         *synced = self.chan.synced();
-        *capture = self.capture;
-        *arming = self.arming;
     }
 
     /// `live`'s edits since the last harvest, into the outbox.
@@ -297,17 +285,22 @@ impl OrbitUi {
         });
     }
 
-    /// Capture armed into `to`, anew even if it already was.
+    /// Capture armed into `to`, anew even if it already was: the runner
+    /// drops what was under way.
     pub fn arm(&mut self, to: Capture) {
         self.capture = to;
-        self.arming = self.arming.wrapping_add(1);
+        self.chan.arm(to);
+    }
+
+    pub fn disarm(&mut self) {
+        self.arm(Capture::Off);
     }
 
     /// A segment capture past the progression's SEGS is dropped: SEGS
     /// shrank under it.
     pub fn fit(&mut self, c: &ChordRing) {
         if matches!(self.capture, Capture::Segment(s) if s >= c.segs.get()) {
-            self.capture = Capture::Off;
+            self.disarm();
         }
     }
 
@@ -328,18 +321,14 @@ impl OrbitUi {
         self.save = None;
     }
 
-    /// The view's capture, once, for the song to take (`Scene::take`),
-    /// and capture disarmed; `None` with nothing new.
+    /// The view's capture, once, for the song to take (`Scene::take`);
+    /// `None` with nothing new.
     pub fn take(&mut self, v: &OrbitView) -> Option<Captured> {
         let c = v.captured;
-        if c.count as u8 == self.took {
+        if c.count == self.took {
             return None;
         }
-        self.took = c.count as u8;
-        // Re-armed since, the same target too: that arming stands.
-        if self.arming == c.arming && self.capture == c.target {
-            self.capture = Capture::Off;
-        }
+        self.took = c.count;
         Some(c)
     }
 
@@ -352,7 +341,7 @@ impl OrbitUi {
     }
 
     /// CLEAR down's salt: new on every turn, the log flowing or full.
-    /// A fresh UI's first is 0, as `notes_rev` was.
+    /// A fresh UI's first is 0.
     pub fn clear_salt(&mut self) -> u8 {
         let salt = self.clears.wrapping_add(self.chan.log().head().get());
         self.clears = self.clears.wrapping_add(1);
@@ -384,7 +373,8 @@ impl OrbitUi {
 
     /// The runner's latest view into the project, in one order (ADR
     /// 0082): the load gate and the ack, the view kept for the pages, a
-    /// capture taken into the song, the newest scene command landed once
+    /// capture taken into the song, LEARN and PLAY shown as the runner is
+    /// armed once every command is applied, the newest scene command landed once
     /// the runner has adopted it, and the drift absorbed once a loop
     /// while every command is applied.
     pub fn sync(&mut self, v: &OrbitView, project: &mut Project) {
@@ -401,6 +391,11 @@ impl OrbitUi {
             let song = project.orbit_mut();
             song.live.take(&c);
             self.harvest(song);
+        }
+        // Every arm applied: the runner's armed target is the truth, a
+        // capture taken or a re-arm since included.
+        if idle {
+            self.capture = v.armed;
         }
         if let Some(c) = self.chan.awaiting()
             && idle
@@ -431,7 +426,7 @@ impl OrbitUi {
     /// the press reaches it, whoever started it (ADR 0080). The transport
     /// is never the project's.
     pub fn play_stop(&mut self) {
-        self.presses = self.presses.wrapping_add(1);
+        self.chan.flip();
     }
 
     /// MIX + B*n*: ring `r`'s MUTE, in the project (so marked).

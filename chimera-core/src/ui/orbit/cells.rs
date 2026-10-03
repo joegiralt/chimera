@@ -191,7 +191,7 @@ fn arm(ui: &mut OrbitUi, to: Capture, delta: i8) {
     if delta > 0 {
         ui.arm(to);
     } else if ui.capture == to {
-        ui.capture = Capture::Off;
+        ui.disarm();
     }
 }
 
