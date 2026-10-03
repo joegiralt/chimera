@@ -19,7 +19,7 @@ use crate::orbit::clock::{Bpm, ClockSource};
 use crate::orbit::euclid::{HitMask, accents};
 use crate::orbit::ring::{ACCENT_BOOST, NoteMode, Ring};
 use crate::orbit::runner::Capture;
-use crate::orbit::scene::{Scene, SceneRing};
+use crate::orbit::scene::{OrbitSong, Scene, SceneIdx, SceneRing};
 use crate::ui::block_def::{BlockDef, VizType};
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
@@ -33,13 +33,24 @@ use u8g2_fonts::FontRenderer;
 /// selections and last view of the runner.
 #[derive(Clone, Copy)]
 pub struct OrbitFrame<'a> {
+    /// The scenes, which plays and which waits.
+    pub song: &'a OrbitSong,
     pub scene: &'a Scene,
     /// The song's tempo, as BPM sets it.
     pub bpm: Bpm,
     pub ui: &'a OrbitUi,
 }
 
-impl OrbitFrame<'_> {
+impl<'a> OrbitFrame<'a> {
+    pub fn new(song: &'a OrbitSong, ui: &'a OrbitUi) -> Self {
+        OrbitFrame {
+            song,
+            scene: &song.live,
+            bpm: song.bpm,
+            ui,
+        }
+    }
+
     /// Ring `r`'s pattern: the runner's, drift and all, while it plays
     /// the rhythm the scene has; else the scene's (an edit not yet heard).
     pub fn hits(&self, r: RingIdx) -> HitMask {
@@ -544,6 +555,78 @@ where
     }
 }
 
+/// SCN's slots: two rows of four in the band.
+const SLOT_COLS: i32 = 4;
+const SLOT_GAP: i32 = 4;
+const SLOT_TOP: i32 = theme::VIZ_BAND_TOP + 4;
+const SLOT_H: i32 = 28;
+const SLOT_W: i32 = (VIZ_RIGHT - VIZ_LEFT - SLOT_GAP * (SLOT_COLS - 1)) / SLOT_COLS;
+const _: () = assert!(SLOT_TOP + 2 * SLOT_H + SLOT_GAP <= theme::VIZ_BAND_BOTTOM);
+
+/// How far through its loop the playing scene is, 0..1, while it runs:
+/// how full a queued slot is.
+fn loop_done(f: &OrbitFrame) -> Option<f32> {
+    let st = &f.ui.status;
+    let bars = st.bars.get() as u32;
+    let into = (st.pos.bar % bars) as f32 + st.pos.phase.get() as f32 / 4_294_967_296.0;
+    st.running.then_some(into / bars as f32)
+}
+
+/// A queued slot's fill, in pixels, `done` of the way through the loop.
+fn fill_w(done: f32) -> i32 {
+    ((SLOT_W - 4) as f32 * done) as i32
+}
+
+/// SCN: the eight slots, a saved one filled and a neutral one an outline,
+/// the playing one ringed, a queued one filling as the loop runs out, and
+/// SAVE's slot dotted.
+pub fn scenes<D>(d: &mut D, f: &OrbitFrame)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let song = f.song;
+    let save = f.ui.save_slot(song);
+    let saved_slots = song.saved();
+    for n in SceneIdx::ALL {
+        let i = n.get() as i32;
+        let x = VIZ_LEFT + (i % SLOT_COLS) * (SLOT_W + SLOT_GAP);
+        let y = SLOT_TOP + (i / SLOT_COLS) * (SLOT_H + SLOT_GAP);
+        let saved = saved_slots & 1 << i != 0;
+        if saved {
+            draw::round_rect(d, x, y, SLOT_W, SLOT_H, 5, theme::ACCENT_SOFT);
+        } else {
+            draw::round_outline(d, x, y, SLOT_W, SLOT_H, 5, theme::PILL_EDGE);
+        }
+        if song.queued() == Some(n) {
+            let w = fill_w(loop_done(f).unwrap_or(0.0));
+            draw::fill_rect(d, x + 2, y + 2, w, SLOT_H - 4, theme::ACCENT);
+        }
+        if song.current() == n {
+            draw::round_outline(d, x, y, SLOT_W, SLOT_H, 5, theme::ACCENT);
+            draw::round_outline(d, x + 1, y + 1, SLOT_W - 2, SLOT_H - 2, 4, theme::ACCENT);
+        }
+        let ink = if saved || song.queued() == Some(n) {
+            theme::INK
+        } else {
+            theme::MID
+        };
+        let mut b = FmtBuf::new();
+        let _ = write!(b, "{}", i + 1);
+        draw::text_center(
+            d,
+            &theme::FONT_VALUE,
+            b.as_str(),
+            x + SLOT_W / 2,
+            y + 18,
+            ink,
+            0,
+        );
+        if save == n {
+            draw::dot(d, x + SLOT_W - 8, y + SLOT_H - 8, 2, theme::INK2);
+        }
+    }
+}
+
 /// Where the clock is along the loop's line, while it runs.
 fn loop_x(f: &OrbitFrame) -> Option<i32> {
     let st = &f.ui.status;
@@ -756,6 +839,26 @@ pub fn cell_text(cell: OrbitCell, f: &OrbitFrame, ring: RingIdx) -> FmtBuf {
             let _ = b.write_str(" / RND");
             b
         }
+        OrbitCell::Scene => {
+            let mut b = FmtBuf::new();
+            let _ = write!(
+                b,
+                "{}",
+                f.song.queued().unwrap_or(f.song.current()).get() + 1
+            );
+            b
+        }
+        // No arrow in the fonts.
+        OrbitCell::Save => {
+            let mut b = FmtBuf::new();
+            let _ = write!(b, "TO {}", f.ui.save_slot(f.song).get() + 1);
+            b
+        }
+        OrbitCell::Switch => {
+            let mut b = FmtBuf::new();
+            let _ = b.write_str("LOOP");
+            b
+        }
     }
 }
 
@@ -783,7 +886,8 @@ impl Focus {
 
 /// ORBIT's reading of `slot` on `def`, from the slots' eased `values`:
 /// HITS as HITS/STEPS, its arc the fill; DEGREE as its segment's chord;
-/// CUSTOM's note and whether it is in; NOTES' chip, LEARN and CLEAR. `None` elsewhere.
+/// CUSTOM's note and whether it is in; NOTES' chip, LEARN and CLEAR; SCN's
+/// cells. `None` elsewhere.
 pub fn focus(
     def: &BlockDef,
     slot: usize,
@@ -836,6 +940,25 @@ pub fn focus(
             let _ = label.write_str(OrbitCell::Set.label());
             text = cell_text(OrbitCell::Set, f, ctx.ring);
             Gauge::Switch { on: values(slot) }
+        }
+        View::Orbit(OrbitCell::Scene) => {
+            let when = match f.song.queued() {
+                Some(_) => "ON THE LOOP",
+                None => "PLAYING",
+            };
+            let _ = write!(label, "SCENE · {when}");
+            text = cell_text(OrbitCell::Scene, f, ctx.ring);
+            Gauge::None
+        }
+        View::Orbit(OrbitCell::Save) => {
+            let _ = label.write_str("EDIT SAVES");
+            text = cell_text(OrbitCell::Save, f, ctx.ring);
+            Gauge::None
+        }
+        View::Orbit(OrbitCell::Switch) => {
+            let _ = label.write_str("A SWITCH LANDS ON THE");
+            text = cell_text(OrbitCell::Switch, f, ctx.ring);
+            Gauge::None
         }
         View::Param { addr, label: l, .. }
             if matches!(addr.block, BlockRef::OrbitRing(_)) && addr.param == SceneRing::HITS =>
@@ -900,6 +1023,13 @@ pub fn viz_key(def: &BlockDef, f: &OrbitFrame, r: RingIdx, cursor: f32) -> u32 {
             st.running.then_some(st.seg).hash(&mut h);
             r.hash(&mut h);
             h.write_u16(crate::ui::region::quantize(f.ui.anim.sweep() * 64.0));
+        }
+        VizType::OrbitScenes => {
+            let song = f.song;
+            (song.saved(), song.current(), song.queued()).hash(&mut h);
+            f.ui.save_slot(song).hash(&mut h);
+            // The queued fill, to the pixel.
+            loop_done(f).map(fill_w).hash(&mut h);
         }
         VizType::OrbitCircle => {
             f.chords().hash(&mut h);

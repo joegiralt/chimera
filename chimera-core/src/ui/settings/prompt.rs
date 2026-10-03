@@ -12,6 +12,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use u8g2_fonts::FontRenderer;
 
 use crate::name::ProjectName;
+use crate::orbit::scene::{Refused, SceneIdx};
 use crate::project::{Line, PartId, PartSet, ReplaceError, SlotId, Subject};
 use crate::storage::ProjectId;
 use crate::ui::components::upper;
@@ -80,6 +81,7 @@ answers!(NameExistsAnswer { KeepBoth => "KEEP BOTH", Overwrite => "OVERWRITE THA
 answers!(DeleteAnswer { Delete => "DELETE", Cancel => "CANCEL" } Two);
 answers!(ClearAnswer { Clear => "CLEAR", Cancel => "CANCEL" } Two);
 answers!(SaveOverAnswer { SaveOver => "SAVE OVER", Cancel => "CANCEL" } Two);
+answers!(SaveSceneOverAnswer { SaveOver => "SAVE OVER", Cancel => "CANCEL" } Two);
 answers!(CardChangedAnswer { SaveAs => "SAVE AS", Cancel => "CANCEL" } Two);
 
 /// A pick, or MENU (`None`). Only `Choice::input` makes one, so an answer
@@ -359,6 +361,37 @@ impl Prompt for SaveOver {
     fn words(&self, q: &mut Line, r: &mut Line) {
         let _ = write!(q, "SAVE OVER {}?", subject(self.name).as_str());
         let _ = r.write_str("ITS CONTENTS ARE REPLACED");
+    }
+}
+
+/// SCN's SAVE over a saved scene other than the playing one.
+pub struct SaveSceneOver {
+    pub scene: SceneIdx,
+}
+
+impl Prompt for SaveSceneOver {
+    type Answer = SaveSceneOverAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        let _ = write!(q, "SAVE OVER SCENE {}?", self.scene.get() + 1);
+        let _ = r.write_str("ITS SAVED SCENE IS REPLACED");
+    }
+}
+
+/// A scene save while a switch waits: `live` is the queued scene's.
+pub const SWITCH_PENDING: &str = "SWITCH PENDING";
+
+/// Scene `n` saved.
+pub fn scene_saved(n: SceneIdx) -> Line {
+    let mut l = Line::new("");
+    let _ = write!(l, "SCENE {} SAVED", n.get() + 1);
+    l
+}
+
+/// SAVE OVER refused.
+pub fn scene_refused(e: Refused) -> &'static str {
+    match e {
+        Refused::SwitchPending => SWITCH_PENDING,
+        Refused::SlotChanged => "SCENE CHANGED",
     }
 }
 

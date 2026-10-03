@@ -269,6 +269,7 @@ impl Renderer {
             VizType::OrbitVoice => orbit::voice(display, &f.orbit, f.ctx.ring),
             VizType::OrbitNotes => orbit::notes(display, &f.orbit, f.ctx.ring),
             VizType::OrbitChords => orbit::chords(display, &f.orbit),
+            VizType::OrbitScenes => orbit::scenes(display, &f.orbit),
             VizType::AlgoDiagram => {
                 let algo = &f.parts[f.active_part.index()].sound.params.algo;
                 let morph = crate::addr::ParamAddr::new(
@@ -375,7 +376,8 @@ impl Renderer {
                 VizType::OrbitRhythm
                 | VizType::OrbitVoice
                 | VizType::OrbitNotes
-                | VizType::OrbitChords => ([0; 6], 0),
+                | VizType::OrbitChords
+                | VizType::OrbitScenes => ([0; 6], 0),
                 _ => ([0; 6], viz::live_key(f.scope)),
             },
             PageLayout::BigViz => {

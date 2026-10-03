@@ -109,21 +109,24 @@ const GOLDENS: &[(&str, u64)] = &[
     ("settings_load", 0xbee3b127e748ef17),
     ("settings_prompt_load", 0xc47d45b862dea1e3),
     ("settings_naming", 0x3ad617885a99ddf2),
+    // Every ORBIT page again for Task 16: the map gains SCN.
     // ORBIT's RHYTHM, CHRD and CUSTOM (plan Task 9); Task 10's header,
     // `SCENE n`, and the beat dot on the playing ones.
-    ("orbit_rhythm", 0xcb8989a08a6af203),
+    ("orbit_rhythm", 0x535a82923b7caa35),
     // PLAY's cell (plan Task 14).
-    ("orbit_chrd", 0xd2650b9ae975a5e6),
+    ("orbit_chrd", 0x796aaa2cf0909228),
     // Chords played into segments: a name for a numeral (Task 14).
-    ("orbit_chrd_played", 0x5db36af4633ab953),
+    ("orbit_chrd_played", 0x9b561396b0917db9),
     // ORB (plan Task 10).
-    ("orbit_orb", 0xcf53a6661bfca1b4),
-    ("orbit_orb_midi", 0xf609d4540c46355f),
-    ("orbit_custom", 0xf89d2ed7662b5f8e),
+    ("orbit_orb", 0xfc6b4891553b93ee),
+    ("orbit_orb_midi", 0x4f74386ba5057845),
+    ("orbit_custom", 0x0b8c7ec6a693e768),
     // RING's VOICE and NOTES, a STEP ring's NOTES (plan Task 13).
-    ("orbit_voice", 0x6f38b1f9cc20676e),
-    ("orbit_notes", 0x83337c45d6a70dc3),
-    ("orbit_notes_step", 0x628dae5822338650),
+    ("orbit_voice", 0x3e7065c2ffca6918),
+    ("orbit_notes", 0x5bee96f2ea3f8e45),
+    ("orbit_notes_step", 0xec88885c7d87a73e),
+    // SCN: a saved slot, SAVE's, a queued one filling (plan Task 16).
+    ("orbit_scn", 0x7c2558bf895b7432),
     ("busy", 0x198544cd36863145),
     ("toast_saved", 0xe344dd99a47d0dad),
     ("toast_exfat", 0xfc0cb3b4feb1a1b5),

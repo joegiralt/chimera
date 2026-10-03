@@ -269,12 +269,7 @@ impl OrbitRig {
         self.inst
             .render(&mut self.fx, &mut self.dac, &self.shared, &mut self.scope);
         let view = self.runner.view();
-        if let Some(c) = self.ui.take(&view) {
-            self.project.orbit_mut().live.take(&c);
-        }
-        if self.ui.see(&view) {
-            self.project.orbit_mut().absorb(&view);
-        }
+        self.ui.sync(&view, &mut self.project);
 
         self.record();
         self.check(b, pending_before);

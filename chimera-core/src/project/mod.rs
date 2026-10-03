@@ -18,7 +18,7 @@ pub mod test_support;
 pub use codec::{ProjectCheck, ProjectDecoder, encode_new_project, encode_project, project_crc};
 pub use guard::{
     Confirmed, DeleteTarget, NeedsConfirm, OverwriteTarget, Pending, ProjectSource, Prompt,
-    ReplaceGuard, Seen, Target, Witnessed,
+    ReplaceGuard, SceneAsk, SceneSlot, Seen, Target, Witnessed,
 };
 pub use ids::{PartId, PartSet, SlotId};
 pub use marks::{

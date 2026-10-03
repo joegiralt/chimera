@@ -9,7 +9,7 @@ use crate::ui::block_def::{ChainDef2, Move};
 use crate::ui::block_registry::{
     self, ALGO_CHAIN, CHORUS, MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART, MODAL_PLUCK_CHAIN,
 };
-use crate::ui::orbit::{CHRD_NODE, ORBIT_CHAIN, RING_NODE};
+use crate::ui::orbit::{CHRD_NODE, ORBIT_CHAIN, RING_NODE, SCN_NODE};
 use crate::ui::settings::leaves::OnePage;
 use crate::ui::settings::{Act, Kind, MANAGE_COMMANDS, PART_ROW, Row, Screen, row_at};
 
@@ -388,6 +388,8 @@ impl OrbitAt {
             OrbitKey::Edit if self.on(CHRD_NODE) && cx.orbit.custom => {
                 page(ORBIT_CHAIN.page(CHRD_NODE, 1))
             }
+            // SCN's commit: SAVE → n.
+            OrbitKey::Edit if self.on(SCN_NODE) => Step::Orbit(OrbitAct::SaveTo),
             OrbitKey::Edit => Step::Stay,
             OrbitKey::MenuTap => Step::Go(r.resolve(r.orbit_from, cx)),
         }
@@ -425,7 +427,10 @@ pub enum OrbitKey {
 pub enum OrbitAct {
     PlayStop,
     Mute(RingIdx),
+    /// SEQ: `live` over the playing scene.
     SaveScene,
+    /// EDIT on SCN: `live` to SAVE's slot, asking over another saved one.
+    SaveTo,
 }
 
 /// What ORBIT's keys read from the project.

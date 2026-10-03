@@ -46,7 +46,7 @@ impl Project {
             addr_of_mut!((*p).meta).write(ProjectMeta::new_project());
             Pool::init_in_place(uninit_at(addr_of_mut!((*p).pool)));
             addr_of_mut!((*p).perf).write(Performance::new());
-            addr_of_mut!((*p).orbit).write(OrbitSong::NEW);
+            OrbitSong::init_in_place(uninit_at(addr_of_mut!((*p).orbit)));
             addr_of_mut!((*p).rev).write(0);
             slot.assume_init_mut()
         };
@@ -69,7 +69,7 @@ impl Project {
         self.bump();
         self.meta = ProjectMeta::new_project();
         self.perf.reset();
-        self.orbit = OrbitSong::NEW;
+        self.orbit.reset();
         self.fill_new();
     }
 

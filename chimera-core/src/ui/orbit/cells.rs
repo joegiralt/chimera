@@ -4,7 +4,7 @@ use super::OrbitUi;
 use crate::block::ValFmt;
 use crate::orbit::chords::ChordRing;
 use crate::orbit::runner::Capture;
-use crate::orbit::scene::{Scene, SceneRing};
+use crate::orbit::scene::{OrbitSong, SCENES, SceneIdx, SceneRing};
 use crate::orbit::{RINGS, RingIdx};
 use chimera_theory::{Degree, Interval, Note};
 
@@ -32,9 +32,16 @@ pub enum OrbitCell {
     /// CHRD: up arms a capture of the next chord held into the segment;
     /// down disarms it, and with MIX drops the played chord for the degree.
     Play,
+    /// SCN: the scene playing, or queued; a turn queues another.
+    Scene,
+    /// SCN: the slot EDIT saves `live` to, the playing one at first.
+    Save,
+    /// SCN: when a switch lands, the loop's end. Read-only.
+    Switch,
 }
 
 const OFF_ON: [&str; 2] = ["OFF", "ON"];
+const LOOP: [&str; 1] = ["LOOP"];
 
 impl OrbitCell {
     pub const fn label(self) -> &'static str {
@@ -46,6 +53,9 @@ impl OrbitCell {
             OrbitCell::Learn => "LEARN",
             OrbitCell::Clear => "CLEAR",
             OrbitCell::Play => "PLAY",
+            OrbitCell::Scene => "SCENE",
+            OrbitCell::Save => "SAVE",
+            OrbitCell::Switch => "SWITCH",
         }
     }
 
@@ -55,6 +65,8 @@ impl OrbitCell {
             OrbitCell::Ring => ValFmt::OneBased(RINGS as u8 - 1),
             OrbitCell::Degree | OrbitCell::Cursor => ValFmt::Int(11),
             OrbitCell::Note => ValFmt::Int(127),
+            OrbitCell::Scene | OrbitCell::Save => ValFmt::OneBased(SCENES as u8 - 1),
+            OrbitCell::Switch => ValFmt::Names(&LOOP),
             OrbitCell::Set | OrbitCell::Learn | OrbitCell::Clear | OrbitCell::Play => {
                 ValFmt::Names(&OFF_ON)
             }
@@ -62,9 +74,14 @@ impl OrbitCell {
     }
 
     /// The cell's value, 0..1, on ring `ring`: what it eases toward.
-    pub fn value(self, s: &Scene, ui: &OrbitUi, ring: RingIdx) -> f32 {
+    pub fn value(self, song: &OrbitSong, ui: &OrbitUi, ring: RingIdx) -> f32 {
+        let s = &song.live;
         let c = &s.chords;
+        let slot = |n: SceneIdx| n.get() as f32 / (SCENES - 1) as f32;
         match self {
+            OrbitCell::Scene => slot(song.queued().unwrap_or(song.current())),
+            OrbitCell::Save => slot(ui.save_slot(song)),
+            OrbitCell::Switch => 0.0,
             OrbitCell::Ring => ring.get() as f32 / (RINGS - 1) as f32,
             OrbitCell::Degree => {
                 let last = c.key().degree_count().saturating_sub(1).max(1);
@@ -92,9 +109,35 @@ impl OrbitCell {
 
     /// One turn by `delta`, `mix` held or not, on ring `ring`: RING moves
     /// it, and the caller goes there.
-    pub fn turn(self, delta: i8, mix: bool, s: &mut Scene, ui: &mut OrbitUi, ring: &mut RingIdx) {
+    pub fn turn(
+        self,
+        delta: i8,
+        mix: bool,
+        song: &mut OrbitSong,
+        ui: &mut OrbitUi,
+        ring: &mut RingIdx,
+    ) {
         let by =
             |at: usize, len: usize| (at as i32 + delta as i32).clamp(0, len as i32 - 1) as usize;
+        match self {
+            // Past the ends it stays: no switch to what already plays or waits.
+            OrbitCell::Scene => {
+                let at = song.queued().unwrap_or(song.current());
+                let to = SceneIdx::ALL[by(at.get() as usize, SCENES)];
+                if to != at {
+                    ui.queue(to, song);
+                }
+                return;
+            }
+            OrbitCell::Save => {
+                let to = by(ui.save_slot(song).get() as usize, SCENES);
+                ui.save = Some(SceneIdx::ALL[to]);
+                return;
+            }
+            OrbitCell::Switch => return,
+            _ => {}
+        }
+        let s = &mut song.live;
         let c = &mut s.chords;
         let r = &mut s.rings[ring.get() as usize];
         match self {
@@ -139,6 +182,7 @@ impl OrbitCell {
             OrbitCell::Clear if !mix => {}
             OrbitCell::Clear if delta > 0 => r.clear(),
             OrbitCell::Clear => s.scatter(*ring),
+            OrbitCell::Scene | OrbitCell::Save | OrbitCell::Switch => {}
         }
     }
 }

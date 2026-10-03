@@ -704,9 +704,13 @@ fn orbit_buttons() {
     assert_eq!(ui.page_def().id, ORBIT_VOICE.id);
     ui.go_for_test(ring3);
 
-    // A SEQ tap moves no page.
+    // A SEQ tap moves no page, and saves the scene (every page's:
+    // `orbit_scenes_test::seq_saves_on_every_orbit_page`).
+    ui.project_mut().orbit_mut().live.chords.tonic = chimera_theory::PitchClass::E;
     tap(&mut ui, Seq);
     assert_eq!(ui.location(), ring3);
+    let song = ui.project().orbit();
+    assert_eq!(*song.scene(song.current()), song.live, "saved");
 
     // MENU tap goes back to where ORBIT was entered, Part and all.
     ui.go_for_test(entry);

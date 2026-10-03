@@ -486,6 +486,14 @@ fn prompt(k: AskKind, ui: &mut UiState) {
             manage_command(ui, BETA, Command::SaveTo, true);
             tap(ui, ButtonId::Seq);
         }
+        // SCN's SAVE → 5 twice: a neutral slot saves, a saved one asks.
+        AskKind::SaveSceneOver => {
+            hold(ui, ButtonId::Seq);
+            plus(ui, 3);
+            feed(ui, Input::turn(EncoderId::B, 4));
+            tap(ui, ButtonId::Edit);
+            tap(ui, ButtonId::Edit);
+        }
     }
     assert_eq!(ui.prompt_kind_for_test(), Some(k));
 }

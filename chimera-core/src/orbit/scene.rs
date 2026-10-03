@@ -14,9 +14,12 @@ use crate::Velocity;
 use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
 use crate::dsp::modulator::law::Law;
 use crate::dsp::modulator::pick;
-use crate::project::PartId;
+use crate::in_place::uninit_at;
+use crate::project::{Confirmed, PartId, SceneAsk, SceneSlot};
 use crate::ui::glyph::FocusGlyph;
 use chimera_theory::{Chord, Degree, Interval, Key, Note, PitchClass, Scale};
+use core::mem::MaybeUninit;
+use core::ptr::addr_of_mut;
 
 pub const SCENES: usize = 8;
 
@@ -221,25 +224,213 @@ impl Scene {
     }
 }
 
-/// What a project keeps of ORBIT: the scene being edited and played, its
-/// drift absorbed, and the tempo.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// What a project keeps of ORBIT: the eight saved scenes, the one playing
+/// and any queued, the scene being edited and played (`live`, its drift
+/// absorbed), and the tempo.
+///
+/// The slots are written only here: `save_scene`, `save_to` and a
+/// confirmed `overwrite_scene`, each moving the slot's rev, which is what a
+/// `Confirmed<SceneSlot>` witnesses.
+#[derive(Clone, Copy, Debug)]
 pub struct OrbitSong {
+    /// The playing scene, or the queued one once queued: what the pages
+    /// edit and the runner is sent.
     pub live: Scene,
     pub bpm: Bpm,
+    scenes: [Scene; SCENES],
+    /// Moves on every write to its slot; run-time only, never saved.
+    slot_revs: [u16; SCENES],
+    current: SceneIdx,
+    /// A switch waiting on the runner: it lands on the loop.
+    queued: Option<SceneIdx>,
+}
+
+crate::in_place::field_list!(OrbitSong => OrbitSong { live, bpm, scenes, slot_revs, current, queued });
+
+/// Equal as a project keeps it: the slots' revs are run-time only.
+impl PartialEq for OrbitSong {
+    fn eq(&self, o: &Self) -> bool {
+        self.live == o.live
+            && self.bpm == o.bpm
+            && self.scenes == o.scenes
+            && self.current == o.current
+            && self.queued == o.queued
+    }
+}
+
+impl Eq for OrbitSong {}
+
+/// NEW's slot `i`: the init scene first, the rest neutral.
+fn new_scene(i: usize) -> Scene {
+    if i == 0 {
+        Scene::init()
+    } else {
+        Scene::neutral()
+    }
+}
+
+/// A save refused while a switch is queued: `live` is the queued scene's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SwitchPending;
+
+/// An overwrite refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refused {
+    SwitchPending,
+    /// The slot was written since its prompt opened.
+    SlotChanged,
+}
+
+impl From<SwitchPending> for Refused {
+    fn from(_: SwitchPending) -> Refused {
+        Refused::SwitchPending
+    }
+}
+
+/// What SCN's SAVE did.
+#[derive(Debug)]
+pub enum SceneSave {
+    Saved(SceneIdx),
+    /// Another saved scene: it asks first.
+    Ask(SceneAsk),
 }
 
 impl OrbitSong {
-    /// NEW's: the init scene at 120 BPM.
+    /// NEW's: the init scene in slot 1, playing, the rest neutral, at 120
+    /// BPM.
     pub const NEW: OrbitSong = OrbitSong {
         live: Scene::init(),
         bpm: Bpm::DEFAULT,
+        scenes: {
+            let mut s = [Scene::neutral(); SCENES];
+            s[0] = Scene::init();
+            s
+        },
+        slot_revs: [0; SCENES],
+        current: SceneIdx(0),
+        queued: None,
     };
+
+    /// NEW (`NEW`'s value), built in place a scene at a time: the firmware
+    /// keeps no nine-scene constant in flash.
+    pub fn init_in_place(slot: &mut MaybeUninit<OrbitSong>) -> &mut OrbitSong {
+        let p = slot.as_mut_ptr();
+        // SAFETY: `p` is valid and unaliased; every field, and each of the
+        // scenes, is written once before `assume_init_mut`.
+        unsafe {
+            addr_of_mut!((*p).live).write(Scene::init());
+            addr_of_mut!((*p).bpm).write(Bpm::DEFAULT);
+            let scenes = addr_of_mut!((*p).scenes).cast::<Scene>();
+            for i in 0..SCENES {
+                scenes.add(i).write(new_scene(i));
+            }
+            addr_of_mut!((*p).slot_revs).write([0; SCENES]);
+            addr_of_mut!((*p).current).write(SceneIdx(0));
+            addr_of_mut!((*p).queued).write(None);
+            slot.assume_init_mut()
+        }
+    }
+
+    /// Back to NEW in place. Every slot is written, so each one's rev
+    /// moves: a confirmation from before refuses.
+    pub fn reset(&mut self) {
+        let revs = self.slot_revs;
+        // SAFETY: `self` is valid, aligned and unaliased, and `OrbitSong`
+        // is `Copy`: overwriting it drops nothing.
+        Self::init_in_place(unsafe { uninit_at(self) });
+        self.slot_revs = revs.map(|r| r.wrapping_add(1));
+    }
+
+    /// The slots holding a scene, bit n slot n: the rest are neutral.
+    pub fn saved(&self) -> u8 {
+        let neutral = Scene::neutral();
+        (0..SCENES).fold(0, |m, i| m | u8::from(self.scenes[i] != neutral) << i)
+    }
+
+    pub fn scene(&self, n: SceneIdx) -> &Scene {
+        &self.scenes[n.0 as usize]
+    }
+
+    /// The scene playing, as the runner last reported landing it.
+    pub fn current(&self) -> SceneIdx {
+        self.current
+    }
+
+    pub fn queued(&self) -> Option<SceneIdx> {
+        self.queued
+    }
+
+    /// Slot `n`'s writes so far, wrapping: a `Confirmed<SceneSlot>`'s witness.
+    pub(crate) fn slot_rev(&self, n: SceneIdx) -> u16 {
+        self.slot_revs[n.0 as usize]
+    }
+
+    /// SCENE turned to `s`: `live` becomes a copy of it, to land on the
+    /// loop. Edits from here go to it.
+    pub fn queue(&mut self, s: SceneIdx) {
+        self.live = self.scenes[s.0 as usize];
+        self.queued = Some(s);
+    }
+
+    /// The runner adopted `s` (the view says so): it plays.
+    pub(crate) fn land(&mut self, s: SceneIdx) {
+        if self.queued == Some(s) {
+            self.current = s;
+            self.queued = None;
+        }
+    }
+
+    fn write(&mut self, n: SceneIdx) {
+        let i = n.0 as usize;
+        self.scenes[i] = self.live;
+        self.slot_revs[i] = self.slot_revs[i].wrapping_add(1);
+    }
+
+    /// SEQ in ORBIT: `live`, drift and all, over the playing slot. No
+    /// prompt: the scene's quick save.
+    pub fn save_scene(&mut self) -> Result<SceneIdx, SwitchPending> {
+        if self.queued.is_some() {
+            return Err(SwitchPending);
+        }
+        self.write(self.current);
+        Ok(self.current)
+    }
+
+    /// SCN's SAVE → `n`: at once over the playing slot or a neutral one;
+    /// over another saved scene it asks.
+    pub fn save_to(&mut self, n: SceneIdx) -> Result<SceneSave, SwitchPending> {
+        if self.queued.is_some() {
+            return Err(SwitchPending);
+        }
+        if n != self.current && self.saved() & 1 << n.0 != 0 {
+            return Ok(SceneSave::Ask(SceneAsk::of(self, n)));
+        }
+        self.write(n);
+        Ok(SceneSave::Saved(n))
+    }
+
+    /// SAVE OVER, answered: `live` over the slot it asked about, unless the
+    /// slot was written since.
+    pub fn overwrite_scene(&mut self, yes: Confirmed<SceneSlot>) -> Result<(), Refused> {
+        if self.queued.is_some() {
+            return Err(Refused::SwitchPending);
+        }
+        if !yes.holds(self) {
+            return Err(Refused::SlotChanged);
+        }
+        self.write(yes.target().index());
+        Ok(())
+    }
 
     /// Each ring's drift from `v` into `live`, the revs untouched: its hits
     /// while the rhythm is the one the view played, its notes and pool
-    /// while the notes are. A ring edited since is left as edited.
+    /// while the notes are. A ring edited since is left as edited; nothing
+    /// is taken while a switch is queued, or from another scene than the
+    /// playing one.
     pub fn absorb(&mut self, v: &OrbitView) {
+        if self.queued.is_some() || v.playing != self.current {
+            return;
+        }
         for (s, r) in self.live.rings.iter_mut().zip(&v.rings) {
             if r.rhythm_rev == s.rhythm_rev
                 && let Some(ring) = s.ring.with_mask(r.hits)

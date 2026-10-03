@@ -632,11 +632,7 @@ fn voice_and_notes_pages() {
     let mut ui = Box::new(UiState::new());
     to_notes(&mut ui, 2);
     let text = |ui: &UiState, c: OrbitCell| {
-        let f = OrbitFrame {
-            scene: &ui.project().orbit().live,
-            bpm: ui.project().orbit().bpm,
-            ui: ui.orbit(),
-        };
+        let f = OrbitFrame::new(ui.project().orbit(), ui.orbit());
         cell_text(c, &f, ui.location().orbit().unwrap().ring())
             .as_str()
             .to_string()
@@ -919,11 +915,7 @@ fn clear_needs_mix() {
     }
     // Its focus names both: MIX + UP / DOWN over C4 / RND.
     let r = ui.location().orbit().unwrap().ring();
-    let f = OrbitFrame {
-        scene: &ui.project().orbit().live,
-        bpm: ui.project().orbit().bpm,
-        ui: ui.orbit(),
-    };
+    let f = OrbitFrame::new(ui.project().orbit(), ui.orbit());
     let ctx = chimera_core::ui::view::SlotCtx::read(
         &ui.project().part(ui.active_part).sound.params,
         chimera_core::addr::Op::A,

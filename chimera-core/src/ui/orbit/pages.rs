@@ -1,5 +1,5 @@
-//! ORBIT's pages: ORB, RING (RHYTHM, with VOICE and NOTES) and CHRD (with
-//! CUSTOM), a chain of its own that `Loc::Orbit` walks (ADR 0044).
+//! ORBIT's pages: ORB, RING (RHYTHM, with VOICE and NOTES), CHRD (with
+//! CUSTOM) and SCN, a chain of its own that `Loc::Orbit` walks (ADR 0044).
 
 use super::OrbitCell;
 use crate::addr::BlockRef;
@@ -117,13 +117,32 @@ pub static ORBIT_NOTES: BlockDef = BlockDef {
     ],
 };
 
-static ORBIT_BLOCKS: [ChainBlock; 3] = [
+/// The eight scenes: SCENE queues one, SAVE picks where EDIT saves `live`,
+/// SWITCH says when a switch lands.
+pub static ORBIT_SCN: BlockDef = BlockDef {
+    id: 84,
+    name: "Scenes",
+    short: "SCN",
+    layout: PageLayout::CellGrid,
+    viz: VizType::OrbitScenes,
+    params: [
+        ParamSlot::orbit(OrbitCell::Scene),
+        ParamSlot::orbit(OrbitCell::Save),
+        ParamSlot::orbit(OrbitCell::Switch),
+        ParamSlot::EMPTY,
+        ParamSlot::EMPTY,
+        ParamSlot::EMPTY,
+    ],
+};
+
+static ORBIT_BLOCKS: [ChainBlock; 4] = [
     ChainBlock::page(&ORBIT_ORB),
     ChainBlock {
         map: Some("RING"),
         ..ChainBlock::with_subs(&ORBIT_RHYTHM, &[&ORBIT_VOICE, &ORBIT_NOTES])
     },
     ChainBlock::with_subs(&ORBIT_CHRD, &[&ORBIT_CUSTOM]),
+    ChainBlock::page(&ORBIT_SCN),
 ];
 
 pub static ORBIT_CHAIN: ChainDef2 =
@@ -143,3 +162,4 @@ const fn node_of(def: &BlockDef) -> usize {
 
 pub const RING_NODE: usize = node_of(&ORBIT_RHYTHM);
 pub const CHRD_NODE: usize = node_of(&ORBIT_CHRD);
+pub const SCN_NODE: usize = node_of(&ORBIT_SCN);

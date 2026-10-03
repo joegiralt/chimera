@@ -32,6 +32,9 @@ pub enum VizType {
     OrbitChords,
     /// CHRD › CUSTOM: the twelve notes round a circle, the set's lit.
     OrbitCircle,
+    /// SCN: the eight slots, the playing one outlined, a queued one
+    /// filling as the loop runs out.
+    OrbitScenes,
 }
 
 /// A node of the FX flow; the value is its index in `viz::effects_flow`.

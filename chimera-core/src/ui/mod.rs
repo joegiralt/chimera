@@ -50,14 +50,14 @@ use crate::name::ProjectName;
 use crate::orbit::RingIdx;
 use crate::orbit::chords::ScaleKind;
 use crate::orbit::runner::{OrbitShared, OrbitView};
-use crate::orbit::scene::SceneIdx;
+use crate::orbit::scene::{SceneIdx, SceneSave, SwitchPending};
 use crate::params::{EngineType, ParamSnapshot};
 use crate::perf::load::AudioStats;
 use crate::preset::POOL_SIZE;
 use crate::project::{
     self, CardOut, Confirmed, DeleteTarget, Line, LoadLink, PartEdit, PartFrom, PartId, PartSource,
     Project, ProjectFile, ProjectNote, ProjectSource, ProjectStatus, ReplaceGuard, SaveTo,
-    StatusCache, Swap, TemplateCrc, part_block_mut,
+    SceneSlot, StatusCache, Swap, TemplateCrc, part_block_mut,
 };
 use crate::scope::SCOPE_LEN;
 use crate::storage::ProjectId;
@@ -68,8 +68,8 @@ use components::Head;
 use hold::{HoldGates, Press};
 use mod_grid::MatrixState;
 use nav::{
-    Browse, Column, ListAt, Location, NavCtx, NavKey, OrbitCx, OrbitKey, Recall, SettingsAt, Step,
-    chain_def_for,
+    Browse, Column, ListAt, Location, NavCtx, NavKey, OrbitAct, OrbitCx, OrbitKey, Recall,
+    SettingsAt, Step, chain_def_for,
 };
 use page::{PageKey, PageLayout};
 use perf::PerfStats;
@@ -748,10 +748,10 @@ impl UiState {
                 );
             }
         }
-        let live = &self.project.orbit().live;
+        let song = self.project.orbit();
         for (i, value) in values.iter_mut().enumerate() {
             if let View::Orbit(c) = view::view(def, i, &ctx) {
-                *value = c.value(live, &self.orbit, ctx.ring);
+                *value = c.value(song, &self.orbit, ctx.ring);
             }
         }
         if def.layout == PageLayout::Matrix {
@@ -1344,6 +1344,16 @@ impl UiState {
                     self.queue(Job::Save(SaveTo::Over(over), name, None))
                 }
             }
+            Answered::SaveSceneOver(ask, a) => {
+                if let Some(yes) = said(a) {
+                    let n = ask.slot().index();
+                    let yes = Confirmed::<SceneSlot>::said(ask, yes);
+                    match self.project.orbit_mut().overwrite_scene(yes) {
+                        Ok(()) => self.scene_saved(n),
+                        Err(e) => self.error(Line::new(prompt::scene_refused(e))),
+                    }
+                }
+            }
             Answered::Clear(c, a) => {
                 if let Some(yes) = said(a) {
                     let over = Confirmed::<OverwriteTarget>::answered(c.entry(), yes);
@@ -1465,6 +1475,8 @@ impl UiState {
             let cx = self.cx();
             match self.loc.step_orbit(k, &cx, &mut self.recall) {
                 Step::Go(to) => self.go(to),
+                Step::Orbit(OrbitAct::SaveScene) => self.save_scene(),
+                Step::Orbit(OrbitAct::SaveTo) => self.save_scene_to(),
                 Step::Orbit(a) => self.orbit.act(a, &mut self.project),
                 _ => {}
             }
@@ -1481,9 +1493,9 @@ impl UiState {
             }
             self.focus.touch(def.id, i);
             if let View::Orbit(cell) = v {
-                let live = &mut self.project.orbit_mut().live;
+                let song = self.project.orbit_mut();
                 let mut ring = ctx.ring;
-                cell.turn(delta, shift, live, &mut self.orbit, &mut ring);
+                cell.turn(delta, shift, song, &mut self.orbit, &mut ring);
                 // RING picks another ring: a move, on the same page.
                 if ring != ctx.ring
                     && let Some(o) = self.loc.orbit()
@@ -1528,12 +1540,33 @@ impl UiState {
     /// capture taken into the song, the view kept for the pages, its drift
     /// absorbed into the project once a loop.
     pub fn set_orbit_view(&mut self, v: &OrbitView) {
-        if let Some(c) = self.orbit.take(v) {
-            self.project.orbit_mut().live.take(&c);
+        self.orbit.sync(v, &mut self.project);
+    }
+
+    /// SEQ in ORBIT: the playing scene saved, drift and all, or why not.
+    fn save_scene(&mut self) {
+        match self.project.orbit_mut().save_scene() {
+            Ok(n) => self.scene_saved(n),
+            Err(SwitchPending) => self.error(Line::new(prompt::SWITCH_PENDING)),
         }
-        if self.orbit.see(v) {
-            self.project.orbit_mut().absorb(v);
+    }
+
+    /// EDIT on SCN: `live` to SAVE's slot, at once over the playing or a
+    /// neutral one; over another saved scene, SAVE OVER asks.
+    fn save_scene_to(&mut self) {
+        let n = self.orbit.save_slot(self.project.orbit());
+        match self.project.orbit_mut().save_to(n) {
+            Ok(SceneSave::Saved(n)) => self.scene_saved(n),
+            Ok(SceneSave::Ask(a)) => self.ask(Ask::SaveSceneOver(a, prompt::Choice::new())),
+            Err(SwitchPending) => self.error(Line::new(prompt::SWITCH_PENDING)),
         }
+    }
+
+    fn scene_saved(&mut self, n: SceneIdx) {
+        self.toast.show(busy::Toast {
+            text: prompt::scene_saved(n),
+            ms: busy::Toast::SAVED_MS,
+        });
     }
 
     /// ORBIT's transport and what the pages draw of it.
@@ -1908,8 +1941,7 @@ impl UiState {
         let settings = self.loc.settings();
         let head = match (settings, self.loc.part(), self.loc.orbit()) {
             (_, _, Some(o)) if o.page().node() as usize == orbit::RING_NODE => Head::Ring(o.ring()),
-            // Task 16: the playing scene.
-            (_, _, Some(_)) => Head::Orbit(SceneIdx::ALL[0]),
+            (_, _, Some(_)) => Head::Orbit(self.project.orbit().current()),
             (None, Some(p), _) if self.loc.on_mixer() => Head::Mix(p),
             (None, Some(p), _) => Head::Sound(p),
             _ => Head::Settings,
@@ -1943,11 +1975,7 @@ impl UiState {
 
     /// What ORBIT's pages draw from.
     fn orbit_frame(&self) -> orbit::draw::OrbitFrame<'_> {
-        orbit::draw::OrbitFrame {
-            scene: &self.project.orbit().live,
-            bpm: self.project.orbit().bpm,
-            ui: &self.orbit,
-        }
+        orbit::draw::OrbitFrame::new(self.project.orbit(), &self.orbit)
     }
 
     /// The bands on screen: a page's, or SETTINGS' list or leaf.
@@ -1997,7 +2025,11 @@ impl UiState {
                 renderer::title_type(f),
                 renderer::header_out(f) as u8,
                 f.header_status(),
-            ),
+            )
+            .with_scene(match f.head {
+                Head::Orbit(n) => n.get(),
+                _ => 0,
+            }),
             RegionKind::Focus if f.def.layout == PageLayout::Matrix => RegionData::route(
                 self.matrix_state.sel_row as u8,
                 self.matrix_state.sel_col as u8,

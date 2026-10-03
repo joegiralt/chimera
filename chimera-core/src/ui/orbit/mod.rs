@@ -9,15 +9,15 @@ pub mod pages;
 pub use cells::OrbitCell;
 pub use pages::{
     CHRD_NODE, ORBIT_CHAIN, ORBIT_CHRD, ORBIT_CUSTOM, ORBIT_NOTES, ORBIT_ORB, ORBIT_RHYTHM,
-    ORBIT_VOICE, RING_NODE,
+    ORBIT_SCN, ORBIT_VOICE, RING_NODE, SCN_NODE,
 };
 
 use crate::block::Block;
-use crate::orbit::chords::ChordRing;
+use crate::orbit::chords::{Bars, ChordRing};
 use crate::orbit::clock::{Bpm, ClockSource, Phase, Position, step_at};
 use crate::orbit::euclid::HitMask;
 use crate::orbit::runner::{Capture, Captured, OrbitShared, OrbitView, beats_at};
-use crate::orbit::scene::{OrbitSong, Scene, SceneRing};
+use crate::orbit::scene::{OrbitSong, Scene, SceneIdx, SceneRing};
 use crate::orbit::{RINGS, RingIdx};
 use crate::project::Project;
 use crate::ui::animation::AnimatedValue;
@@ -46,8 +46,9 @@ pub struct OrbitStatus {
     /// The internal BPM, or the MIDI clock's measured one.
     pub bpm: Bpm,
     pub pos: Position,
+    /// The playing scene's BARS: its loop.
+    pub bars: Bars,
     pub loops: u32,
-    pub cued: bool,
     pub seg: u8,
     pub chord: Chord,
     pub rings: [RingStatus; RINGS],
@@ -83,8 +84,8 @@ impl OrbitStatus {
             source: ClockSource::Internal,
             bpm: Bpm::DEFAULT,
             pos: Position::ZERO,
+            bars: c.bars,
             loops: 0,
-            cued: false,
             seg: 0,
             chord,
             rings,
@@ -98,8 +99,8 @@ impl OrbitStatus {
             source: v.source,
             bpm: v.bpm,
             pos: v.pos,
+            bars: v.bars,
             loops: v.loops,
-            cued: v.cued,
             seg: v.seg,
             chord: v.chord,
             rings: v.rings.map(|r| RingStatus {
@@ -213,7 +214,11 @@ pub struct OrbitUi {
     pub arming: u8,
     /// The view's capture `count` last taken.
     pub took: u16,
+    /// Bumped by every switch, published with the scene: the runner
+    /// adopts each once, and a view reporting it lands it.
     pub scene_rev: u16,
+    /// SCN's SAVE → n; `None`, the playing scene.
+    pub save: Option<SceneIdx>,
     /// The view's `loops` when the drift was last absorbed.
     pub loops_seen: u32,
     /// The project's load: only a view on it brings drift.
@@ -233,6 +238,7 @@ impl OrbitUi {
             arming: 0,
             took: 0,
             scene_rev: 0,
+            save: None,
             loops_seen: 0,
             epoch: 0,
             status: OrbitStatus::IDLE,
@@ -249,6 +255,7 @@ impl OrbitUi {
             run,
             bpm,
             scene_rev,
+            scene,
             settings,
             capture,
             arming,
@@ -256,6 +263,7 @@ impl OrbitUi {
         *run = self.run;
         *bpm = song.bpm;
         *scene_rev = self.scene_rev;
+        *scene = song.queued().unwrap_or(song.current());
         *settings = song.live;
         *capture = self.capture;
         *arming = self.arming;
@@ -311,11 +319,41 @@ impl OrbitUi {
         if self.run && !v.running && (was.running || v.epoch != was.epoch) {
             self.run = false;
         }
-        let due = v.epoch == self.epoch && v.loops != self.loops_seen && !v.cued;
+        let due = v.epoch == self.epoch && v.loops != self.loops_seen && v.queued.is_none();
         if due {
             self.loops_seen = v.loops;
         }
         due
+    }
+
+    /// SCENE turned to `s`: queued in the song, and a new switch for the
+    /// runner, which lands it on the loop (at once when stopped).
+    pub fn queue(&mut self, s: SceneIdx, song: &mut OrbitSong) {
+        song.queue(s);
+        self.scene_rev = self.scene_rev.wrapping_add(1);
+    }
+
+    /// SCN's SAVE → n: the slot picked, or the playing one.
+    pub fn save_slot(&self, song: &OrbitSong) -> SceneIdx {
+        self.save.unwrap_or(song.current())
+    }
+
+    /// The runner's latest view into the project: a capture taken into the
+    /// song, a switch landed once the view reports this rev adopted, the
+    /// view kept for the pages, and its drift absorbed once a loop.
+    pub fn sync(&mut self, v: &OrbitView, project: &mut Project) {
+        if let Some(c) = self.take(v) {
+            project.orbit_mut().live.take(&c);
+        }
+        if project.orbit().queued().is_some()
+            && v.epoch == self.epoch
+            && v.scene_rev == self.scene_rev
+        {
+            project.orbit_mut().land(v.playing);
+        }
+        if self.see(v) {
+            project.orbit_mut().absorb(v);
+        }
     }
 
     /// One `UiTick` of ORB's and the header's animation.
@@ -334,8 +372,8 @@ impl OrbitUi {
                 let was = ring.get(SceneRing::MUTE) != 0.0;
                 ring.set(SceneRing::MUTE, f32::from(!was));
             }
-            // Task 16.
-            OrbitAct::SaveScene => {}
+            // `UiState`'s: they toast, and SAVE may ask.
+            OrbitAct::SaveScene | OrbitAct::SaveTo => {}
         }
     }
 }

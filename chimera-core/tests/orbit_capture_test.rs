@@ -324,11 +324,7 @@ fn capture_survives_the_triple_buffer() {
         runner.view().captured.count
     };
     let text = |ui: &UiState| {
-        let f = OrbitFrame {
-            scene: &ui.project().orbit().live,
-            bpm: ui.project().orbit().bpm,
-            ui: ui.orbit(),
-        };
+        let f = OrbitFrame::new(ui.project().orbit(), ui.orbit());
         cell_text(OrbitCell::Play, &f, R[0]).as_str().to_string()
     };
     assert_eq!(text(&ui), "-");
@@ -464,11 +460,7 @@ fn learn_arms_the_selected_ring() {
     screen::tap(&mut ui, ButtonId::Edit);
     screen::tap(&mut ui, ButtonId::Edit);
     let text = |ui: &UiState, r: RingIdx| {
-        let f = OrbitFrame {
-            scene: &ui.project().orbit().live,
-            bpm: ui.project().orbit().bpm,
-            ui: ui.orbit(),
-        };
+        let f = OrbitFrame::new(ui.project().orbit(), ui.orbit());
         cell_text(OrbitCell::Learn, &f, r).as_str().to_string()
     };
     let before = ui.project().orbit().live;

@@ -1179,6 +1179,19 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::F, 3).and_held(ButtonId::Mix));
         feed(ui, Input::turn(EncoderId::F, 2));
     }),
+    // SCN on ring 3: scene 5 saved, SAVE on 3, scene 2 queued, the
+    // playing scene's loop past half way, playing.
+    ("orbit_scn", |ui| {
+        to_ring(ui, 3);
+        plus(ui, 2);
+        feed(ui, Input::turn(EncoderId::B, 4));
+        tap(ui, ButtonId::Edit);
+        feed(ui, Input::turn(EncoderId::B, -2));
+        feed(ui, Input::turn(EncoderId::A, 1));
+        let mut v = orbit_view(0.3);
+        v.pos.bar = 2;
+        ui.set_orbit_view(&v);
+    }),
     // RING 2 as a STEP ring, CLEAR down's notes, step 4 picked; a third
     // into the bar, playing.
     ("orbit_notes_step", |ui| {

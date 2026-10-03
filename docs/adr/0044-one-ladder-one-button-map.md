@@ -65,8 +65,10 @@ type has no variant for a B*n* that jumps to a Part, nor for SEQ hold:
 
 ```rust
 pub enum OrbitKey { Ring(RingIdx), Cross(RingIdx), Mute(RingIdx), PlayStop, Plus, Minus, Edit, SeqTap, MenuTap }
-pub enum OrbitAct { PlayStop, Mute(RingIdx), SaveScene }   // `Step::Orbit`, run by `UiState`
+pub enum OrbitAct { PlayStop, Mute(RingIdx), SaveScene, SaveTo }   // `Step::Orbit`, run by `UiState`
 ```
+
+`SaveTo` is EDIT on SCN, SCN's commit: SAVE → n (amended 2026-10-03: plan Task 16, ADR 0077).
 
 - A B1–B5 tap (on release) is `Ring`: RING, on the sub-page last shown. A
   hold is `Cross`, the only key to a Part's pages; `orbit_from` is kept.

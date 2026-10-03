@@ -667,9 +667,9 @@ impl Instrument {
         self.harmony = h;
     }
 
-    /// A segment change, or a landed scene (spec § 5.2): each held live
-    /// voice on a HELD RE-SNAP Part glides to its key snapped to the
-    /// harmony now, from the key, never from where it was. At most one
+    /// Any harmony change (spec § 5.2): each held live voice on a HELD
+    /// RE-SNAP Part glides to its key snapped to the harmony now, from the
+    /// key, never from where it was. At most one
     /// retune a voice; a SYMP voice whose rings' growth doesn't fit the
     /// block's clear budget waits for the next block's.
     pub fn resnap(&mut self, shared: &AudioShared) {

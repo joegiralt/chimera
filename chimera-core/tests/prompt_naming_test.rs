@@ -16,7 +16,8 @@ use chimera_core::ui::region::{MAX_REGIONS, PROMPT, RegionKind, layout_regions, 
 use chimera_core::ui::settings::naming::{Naming, NamingOut, proposed_name};
 use chimera_core::ui::settings::prompt::{
     AlsoUses, AlsoUsesAnswer, Answer, CardChanged, Choice, Clear, ClearSlot, Delete, Load,
-    NameExists, Prompt, Reload, Replace, ReplaceAnswer as R, ReplaceTo, SaveOver, fits, with_view,
+    NameExists, Prompt, Reload, Replace, ReplaceAnswer as R, ReplaceTo, SaveOver, SaveSceneOver,
+    fits, with_view,
 };
 use chimera_core::ui::settings::view::{Crumb, Crumbs};
 use chimera_core::ui::{UiState, theme};
@@ -394,6 +395,9 @@ fn every_prompt_fits() {
     }
     check(CardChanged);
     check(ClearSlot { slot });
+    for scene in chimera_core::orbit::scene::SceneIdx::ALL {
+        check(SaveSceneOver { scene });
+    }
     let two = AlsoUses {
         first: p4,
         more: PartSet::EMPTY.with(PartId::ALL[4]),

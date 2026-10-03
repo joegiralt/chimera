@@ -44,6 +44,8 @@ pub enum RegionData {
         out: u8,
         /// The load and the dots.
         status: HeaderStatus,
+        /// ORBIT's `SCENE n`, the playing scene; 0 elsewhere.
+        scene: u8,
     },
     /// The focus band: which slot, its animated value, and any pending
     /// prime-status message (issue #21) shown in the value's place.
@@ -138,7 +140,16 @@ impl RegionData {
             title_type,
             out,
             status,
+            scene: 0,
         }
+    }
+
+    /// A header reading `SCENE n`: it redraws when a switch lands.
+    pub fn with_scene(mut self, n: u8) -> Self {
+        if let Self::Header { scene, .. } = &mut self {
+            *scene = n;
+        }
+        self
     }
 
     pub fn focus(
@@ -258,6 +269,7 @@ impl RegionData {
                 load_pct: u8::MAX,
                 orbit_dot: None,
             },
+            scene: u8::MAX,
         }
     }
 

@@ -2,14 +2,14 @@
 //! transport and the working copy of the playing scene, and each block
 //! turns them into note events for the `Instrument` (spec § 4).
 
-use super::chords::harmony;
+use super::chords::{Bars, harmony};
 use super::clock::{
     Bpm, ClockSource, InternalClock, MidiClock, Position, WINDOW, advance_cap, step_at,
 };
 use super::engine::{Events, OrbitKind, OrbitState, PendingOff, Span, block};
 use super::euclid::HitMask;
 use super::ring::{Harmony, NoteMode};
-use super::scene::Scene;
+use super::scene::{Scene, SceneIdx};
 use super::walk::Pool;
 use super::{MAX_POOL, MAX_STEPS, RINGS, RingIdx};
 use crate::MidiNote;
@@ -26,9 +26,11 @@ use core::num::NonZeroU32;
 pub struct OrbitShared {
     pub run: bool,
     pub bpm: Bpm,
-    /// Bumped when a different scene is queued; the runner adopts
-    /// `settings` whole at the next loop boundary.
+    /// Bumped on every switch, the same scene again included; the runner
+    /// adopts `settings` whole at the next loop boundary, once a rev.
     pub scene_rev: u16,
+    /// The scene `settings` is: the queued one while a switch waits.
+    pub scene: SceneIdx,
     pub settings: Scene,
     /// What the keys play into (spec § 5.3).
     pub capture: Capture,
@@ -43,6 +45,7 @@ impl Default for OrbitShared {
             run: false,
             bpm: Bpm::DEFAULT,
             scene_rev: 0,
+            scene: SceneIdx::ALL[0],
             settings: Scene::init(),
             capture: Capture::Off,
             arming: 0,
@@ -174,9 +177,16 @@ pub struct OrbitView {
     /// The internal BPM, or the MIDI clock's measured one.
     pub bpm: Bpm,
     pub pos: Position,
+    /// The playing scene's loop, so a page can say where in it `pos` is.
+    pub bars: Bars,
     pub beats: u32,
     pub loops: u32,
-    pub cued: bool,
+    /// The scene adopted last, and the switch it adopted (`scene_rev`):
+    /// the UI lands a switch on its own rev only, never a stale view's.
+    pub playing: SceneIdx,
+    pub scene_rev: u16,
+    /// A switch waiting on the loop boundary.
+    pub queued: Option<SceneIdx>,
     pub seg: u8,
     pub chord: Chord,
     pub rings: [RingView; RINGS],
@@ -203,9 +213,12 @@ impl OrbitView {
             source: ClockSource::Internal,
             bpm: Bpm::DEFAULT,
             pos,
+            bars: scene.chords.bars,
             beats: beats_at(pos),
             loops: 0,
-            cued: false,
+            playing: SceneIdx::ALL[0],
+            scene_rev: 0,
+            queued: None,
             seg: 0,
             chord: harmony(&scene.chords, 0).chord,
             rings: core::array::from_fn(|i| {
@@ -262,11 +275,14 @@ pub struct OrbitRunner {
     state: OrbitState,
     working: Scene,
     revs: [Revs; RINGS],
+    /// The switch adopted last, and its scene.
     scene_rev: u16,
+    playing: SceneIdx,
     /// `run` as of the last block: transport acts on its edges only.
     run_seen: bool,
     transport: bool,
-    cue_pending: bool,
+    /// A switch waiting on the boundary: the scene it brings.
+    cue: Option<SceneIdx>,
     epoch: u32,
     /// The sample at the start of the next block.
     sample: u64,
@@ -299,9 +315,10 @@ impl OrbitRunner {
             revs: revs_of(&working),
             working,
             scene_rev: 0,
+            playing: SceneIdx::ALL[0],
             run_seen: false,
             transport: false,
-            cue_pending: false,
+            cue: None,
             epoch: 0,
             sample: 0,
             sample_rate,
@@ -317,7 +334,8 @@ impl OrbitRunner {
         self.working = shared.orbit.settings;
         self.revs = revs_of(&self.working);
         self.scene_rev = shared.orbit.scene_rev;
-        self.cue_pending = false;
+        self.playing = shared.orbit.scene;
+        self.cue = None;
     }
 
     /// The knobs from `settings`; a ring's hits and notes only if their
@@ -522,12 +540,12 @@ impl OrbitRunner {
         }
 
         if o.scene_rev != self.scene_rev {
-            self.cue_pending = true;
+            self.cue = Some(o.scene);
         }
-        if self.cue_pending && !self.transport {
+        if self.cue.is_some() && !self.transport {
             self.adopt(shared);
         }
-        if !self.cue_pending {
+        if self.cue.is_none() {
             self.copy_knobs(&o.settings);
         }
 
@@ -575,12 +593,13 @@ impl OrbitRunner {
             bar_len,
         };
         let channels = core::array::from_fn::<_, MAX_PARTS, _>(|i| shared.parts[i].mix.channel);
-        let cue = self.cue_pending.then_some(&o.settings);
+        let cue = self.cue.map(|_| &o.settings);
         let ev = block(&mut self.state, &mut self.working, cue, span, &channels);
         if ev.adopted() {
             self.revs = revs_of(&self.working);
             self.scene_rev = o.scene_rev;
-            self.cue_pending = false;
+            self.playing = o.scene;
+            self.cue = None;
         }
         self.loops += ev.boundary() as u32;
         self.edge = to;
@@ -603,7 +622,9 @@ impl OrbitRunner {
         };
         v.loops = self.loops;
         v.captured = self.take.done;
-        v.cued = self.cue_pending;
+        v.playing = self.playing;
+        v.scene_rev = self.scene_rev;
+        v.queued = self.cue;
         v.seg = self.state.seg();
         v.chord = self.state.harmony(&self.working).chord;
         for ((r, f), (rhythm, notes)) in v.rings.iter_mut().zip(self.fired).zip(self.revs) {

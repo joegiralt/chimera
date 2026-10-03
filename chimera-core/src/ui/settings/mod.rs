@@ -23,7 +23,7 @@ use chimera_hal::Controls;
 use crate::name::{Name, ProjectName};
 use crate::project::{
     FreshFile, PartAction, PartId, PartSet, PartSource, Project, ProjectEntry, ProjectSource,
-    SlotId, Subject,
+    SceneAsk, SlotId, Subject,
 };
 use crate::ui::hold::Presses;
 use crate::ui::region::settings_key;
@@ -33,7 +33,8 @@ use naming::{NAME_MAX, Naming, NamingOut};
 use prompt::{
     AlsoUses, AlsoUsesAnswer, Answer, CardChanged, CardChangedAnswer, Choice, Clear, ClearAnswer,
     ClearSlot, Delete, DeleteAnswer, Load, LoadAnswer, NameExists, NameExistsAnswer, PromptView,
-    Reload, ReloadAnswer, Replace, ReplaceAnswer, ReplaceTo, SaveOver, SaveOverAnswer, with_view,
+    Reload, ReloadAnswer, Replace, ReplaceAnswer, ReplaceTo, SaveOver, SaveOverAnswer,
+    SaveSceneOver, SaveSceneOverAnswer, with_view,
 };
 use replace::{PartAsk, ProjectAsk, ReloadAsk, Reply};
 
@@ -86,6 +87,8 @@ pub(crate) enum Ask {
     Clear(Chosen, Choice<ClearAnswer>),
     /// MANAGE's SAVE TO.
     SaveOver(Chosen, Choice<SaveOverAnswer>),
+    /// SCN's SAVE over another saved scene, as the slot was when asked.
+    SaveSceneOver(SceneAsk, Choice<SaveSceneOverAnswer>),
 }
 
 /// `AskKind` and its `ALL`, from one list: no kind can miss `ALL`.
@@ -123,6 +126,7 @@ ask_kinds! {
     Delete => "delete",
     Clear => "clear",
     SaveOver => "save_over",
+    SaveSceneOver => "save_scene_over",
 }
 
 /// A listed project as its prompt names it.
@@ -148,6 +152,7 @@ pub(crate) enum Answered {
     Delete(Chosen, Answer<DeleteAnswer>),
     Clear(Chosen, Answer<ClearAnswer>),
     SaveOver(Chosen, Answer<SaveOverAnswer>),
+    SaveSceneOver(SceneAsk, Answer<SaveSceneOverAnswer>),
 }
 
 /// Each named Part's `Revert`, by Part, as offered when the prompt opened:
@@ -230,6 +235,13 @@ impl Ask {
             Ask::Delete(e, c) => with_view(&Delete { name: subject(e) }, c, f),
             Ask::Clear(e, c) => with_view(&Clear { name: subject(e) }, c, f),
             Ask::SaveOver(e, c) => with_view(&SaveOver { name: subject(e) }, c, f),
+            Ask::SaveSceneOver(a, c) => with_view(
+                &SaveSceneOver {
+                    scene: a.slot().index(),
+                },
+                c,
+                f,
+            ),
         }
     }
 
@@ -246,6 +258,7 @@ impl Ask {
             Ask::Delete(..) => AskKind::Delete,
             Ask::Clear(..) => AskKind::Clear,
             Ask::SaveOver(..) => AskKind::SaveOver,
+            Ask::SaveSceneOver(..) => AskKind::SaveSceneOver,
         }
     }
 
@@ -340,6 +353,10 @@ impl Ask {
             Ask::SaveOver(e, mut choice) => match choice.input(c, p) {
                 Some(a) => Got(Answered::SaveOver(e, a)),
                 None => Open(Ask::SaveOver(e, choice)),
+            },
+            Ask::SaveSceneOver(a, mut choice) => match choice.input(c, p) {
+                Some(x) => Got(Answered::SaveSceneOver(a, x)),
+                None => Open(Ask::SaveSceneOver(a, choice)),
             },
         }
     }

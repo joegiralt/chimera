@@ -201,7 +201,7 @@ fn no_knob_copy_while_cued() {
     r.shared.orbit.scene_rev += 1;
     r.shared.orbit.settings.rings[0].ring.mute = true;
     r.run(1);
-    assert!(r.view().cued);
+    assert!(r.view().queued.is_some());
     // A bar is 1500 blocks at 120 BPM; the steps at 0.25, 0.5, 0.75 still sound.
     r.run(1300);
     assert_eq!(
@@ -209,9 +209,9 @@ fn no_knob_copy_while_cued() {
         3,
         "knob unchanged"
     );
-    assert!(r.view().cued);
+    assert!(r.view().queued.is_some());
     r.run(200);
-    assert!(!r.view().cued, "adopted at the boundary");
+    assert!(r.view().queued.is_none(), "adopted at the boundary");
     let at = r.view().rings[0].fired;
     r.run(1400);
     assert_eq!(

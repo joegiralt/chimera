@@ -23,13 +23,13 @@ use chimera_hal::Controls;
 
 use crate::project::{
     Confirmed, DeleteTarget, NeedsConfirm, OverwriteTarget, PartSource, Pending, Project,
-    ProjectSource, Target, TemplateCrc, Witnessed,
+    ProjectSource, SceneSlot, Target, TemplateCrc, Witnessed,
 };
 use crate::ui::hold::Presses;
 
 use super::prompt::{
     Answer, Answers, Choice, ClearAnswer, DeleteAnswer, LoadAnswer, NameExistsAnswer, ReloadAnswer,
-    ReplaceAnswer, SaveOverAnswer,
+    ReplaceAnswer, SaveOverAnswer, SaveSceneOverAnswer,
 };
 use said::Said;
 
@@ -61,6 +61,7 @@ commits!(
     ClearAnswer => Clear, OverwriteTarget;
     SaveOverAnswer => SaveOver, OverwriteTarget;
     NameExistsAnswer => Overwrite, OverwriteTarget;
+    SaveSceneOverAnswer => SaveOver, SceneSlot;
 );
 
 impl Guarded for ReplaceAnswer {
