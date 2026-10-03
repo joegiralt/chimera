@@ -13,7 +13,8 @@ const fn chords(id: crate::block::ParamId) -> ParamSlot {
     ParamSlot::param(BlockRef::OrbitChords, id)
 }
 
-/// ORBIT's home: every ring at once. A picks the ring, F the tempo.
+/// ORBIT's home: every ring at once. A picks the ring, B to E mirror
+/// CHRD's KEY, SCALE and BARS and SCN's SCENE, F the tempo (ADR 0079).
 pub static ORBIT_ORB: BlockDef = BlockDef {
     id: 78,
     name: "Orbit",
@@ -22,10 +23,10 @@ pub static ORBIT_ORB: BlockDef = BlockDef {
     viz: VizType::Orbit,
     params: [
         ParamSlot::orbit(OrbitCell::Ring),
-        ParamSlot::EMPTY,
-        ParamSlot::EMPTY,
-        ParamSlot::EMPTY,
-        ParamSlot::EMPTY,
+        chords(ChordRing::KEY),
+        chords(ChordRing::SCALE),
+        chords(ChordRing::BARS),
+        ParamSlot::orbit(OrbitCell::Scene),
         ParamSlot::param(BlockRef::Tempo, Bpm::BPM),
     ],
 };

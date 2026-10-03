@@ -80,3 +80,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0076](0076-live-keys-snap-per-part-held-keys-glide.md) | Live keys snap per Part in the Instrument; a held key re-snaps from its raw key on the pitch path | Proposed |
 | [0077](0077-scenes-land-by-generation-saves-are-witnessed.md) | A scene switch lands by its generation; SAVE OVER is witnessed when it asks | Proposed |
 | [0078](0078-orbit-saves-after-the-parts-and-loads-what-it-can.md) | ORBIT saves after the six Parts, and a load takes what it can | Proposed |
+| [0079](0079-orbs-four-cells-mirror-key-scale-bars-and-scene.md) | ORB's four cells mirror KEY, SCALE, BARS and SCENE | Proposed |

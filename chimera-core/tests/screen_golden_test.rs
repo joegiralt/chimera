@@ -127,9 +127,9 @@ const GOLDENS: &[(&str, u64)] = &[
     ("orbit_chrd", 0x796aaa2cf0909228),
     // Chords played into segments: a name for a numeral (Task 14).
     ("orbit_chrd_played", 0x9b561396b0917db9),
-    // ORB (plan Task 10).
-    ("orbit_orb", 0xfc6b4891553b93ee),
-    ("orbit_orb_midi", 0x4f74386ba5057845),
+    // ORB (plan Task 10); B to E gain KEY, SCALE, BARS, SCENE (ADR 0079).
+    ("orbit_orb", 0x0372ba4be5be5bf2),
+    ("orbit_orb_midi", 0x6be8f39d4b929591),
     ("orbit_custom", 0x0b8c7ec6a693e768),
     // RING's VOICE and NOTES, a STEP ring's NOTES (plan Task 13).
     ("orbit_voice", 0x3e7065c2ffca6918),

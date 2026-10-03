@@ -17,7 +17,7 @@ use chimera_core::ui::UiState;
 use chimera_core::ui::orbit::{ORBIT_CHRD, ORBIT_CUSTOM, ORBIT_RHYTHM};
 use chimera_core::ui::theme;
 use chimera_hal::ButtonId::{Edit, Plus, Seq};
-use chimera_hal::EncoderId::{A, B};
+use chimera_hal::EncoderId::{A, B, C, D, E};
 use chimera_theory::{Interval, Scale};
 use screen::{Input, feed, hold, render, tap};
 
@@ -929,4 +929,51 @@ fn clear_needs_mix() {
         (fo.label.as_str(), fo.text.as_str()),
         ("MIX + UP / DOWN", "C4 / RND")
     );
+}
+
+/// ORB's B to E are KEY, SCALE, BARS and SCENE (ADR 0079): a turn there
+/// does what the same turn does on CHRD or SCN, SCENE's queue and cancel
+/// and SCALE's CUSTOM seeding included.
+#[test]
+fn orb_cells_mirror_their_home_pages() {
+    use chimera_hal::EncoderId;
+    let fresh = || {
+        let mut ui = Box::new(UiState::new());
+        hold(&mut ui, Seq);
+        ui
+    };
+    let state = |ui: &UiState| {
+        let o = ui.project().orbit();
+        (o.live.chords, o.queued())
+    };
+    // (ORB's encoder, the home page's presses of PLUS, its encoder, turns)
+    let cases: [(EncoderId, usize, EncoderId, &[i8]); 4] = [
+        (B, 2, A, &[3, -1, 40]),
+        (C, 2, B, &[2, 9, -4, 1]),
+        (D, 2, C, &[1, -3, 5]),
+        (E, 3, A, &[1, 2, -1, -9]),
+    ];
+    for (orb, plus, home, turns) in cases {
+        let (mut on_orb, mut at_home) = (fresh(), fresh());
+        for _ in 0..plus {
+            feed(&mut at_home, Input::press(Plus));
+        }
+        for &t in turns {
+            feed(&mut on_orb, Input::turn(orb, t));
+            feed(&mut at_home, Input::turn(home, t));
+            assert_eq!(state(&on_orb), state(&at_home), "{orb:?} by {t}");
+        }
+    }
+    // Each did something.
+    let mut ui = fresh();
+    let before = state(&ui);
+    for e in [B, C, D] {
+        feed(&mut ui, Input::turn(e, 1));
+    }
+    assert_ne!(state(&ui).0, before.0);
+    let mut ui = fresh();
+    feed(&mut ui, Input::turn(E, 1));
+    assert!(state(&ui).1.is_some(), "SCENE queued");
+    feed(&mut ui, Input::turn(E, -1));
+    assert_eq!(state(&ui).1, None, "and cancelled");
 }
