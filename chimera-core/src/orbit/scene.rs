@@ -1,6 +1,7 @@
 //! A scene: everything a loop plays, as plain data; and the song a
 //! project keeps, edited through the ORBIT blocks.
 
+use super::channel::RingMask;
 use super::chords::{Bars, ChordRing, ScaleKind, Segs};
 use super::clock::Bpm;
 use super::euclid::{Fill, Steps};
@@ -90,17 +91,36 @@ impl Target {
     }
 }
 
+/// What an edit changed in a ring since the UI last sent its edits: its
+/// rhythm (the hits), its notes (and pool), or both.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Touched(u8);
+
+impl Touched {
+    pub const NONE: Touched = Touched(0);
+    pub const RHYTHM: Touched = Touched(1);
+    pub const NOTES: Touched = Touched(2);
+
+    pub const fn contains(self, t: Touched) -> bool {
+        self.0 & t.0 == t.0
+    }
+
+    pub const fn with(self, t: Touched) -> Touched {
+        Touched(self.0 | t.0)
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct SceneRing {
     pub ring: Ring,
     pub target: Target,
-    /// Bumped when the rhythm or the notes change under the player's feet.
-    /// Run-time only: never saved, and no part of equality.
-    pub rhythm_rev: u8,
-    pub notes_rev: u8,
+    /// Set when the rhythm or the notes change under the player's feet,
+    /// until the UI sends the edit (ADR 0082). Run-time only: never saved,
+    /// and no part of equality.
+    pub touched: Touched,
 }
 
-/// Equal as a project keeps it: the revs are the runner's handshake, so a
+/// Equal as a project keeps it: `touched` is the runner's handshake, so a
 /// scene loaded or reverted is the scene saved.
 impl PartialEq for SceneRing {
     fn eq(&self, o: &Self) -> bool {
@@ -143,8 +163,7 @@ const fn on_part(ring: Ring, n: usize) -> SceneRing {
     SceneRing {
         ring,
         target: Target::Part(PartId::ALL[n]),
-        rhythm_rev: 0,
-        notes_rev: 0,
+        touched: Touched::NONE,
     }
 }
 
@@ -201,12 +220,32 @@ impl Scene {
     }
 
     /// CLEAR down on ring `r`: its notes rolled from the scene's seed and
-    /// the ring's `notes_rev`, so each turn rolls new ones.
-    pub fn scatter(&mut self, r: RingIdx) {
+    /// `salt`, which the UI moves on each turn, so each rolls new ones.
+    pub fn scatter(&mut self, r: RingIdx, salt: u8) {
         let key = self.chords.key();
-        let s = &mut self.rings[r.get() as usize];
-        let seed = self.seed.wrapping_add(u32::from(s.notes_rev) << 16);
-        s.scatter(&key, &mut Rng::for_ring(seed, r));
+        let seed = self.seed.wrapping_add(u32::from(salt) << 16);
+        self.rings[r.get() as usize].scatter(&key, &mut Rng::for_ring(seed, r));
+    }
+
+    /// The rings touched since the last harvest, as the edits to send:
+    /// (rhythm, notes). Clears them.
+    pub fn harvest(&mut self) -> (RingMask, RingMask) {
+        let (mut rhythm, mut notes) = (RingMask::EMPTY, RingMask::EMPTY);
+        for (r, s) in RingIdx::ALL.into_iter().zip(&mut self.rings) {
+            if s.touched.contains(Touched::RHYTHM) {
+                rhythm = rhythm.with(r);
+            }
+            if s.touched.contains(Touched::NOTES) {
+                notes = notes.with(r);
+            }
+            s.touched = Touched::NONE;
+        }
+        (rhythm, notes)
+    }
+
+    /// No edit waits to be harvested.
+    pub fn untouched(&self) -> bool {
+        self.rings.iter().all(|s| s.touched == Touched::NONE)
     }
 
     /// A capture into its target (spec § 5.3): a segment's chord over its
@@ -497,24 +536,16 @@ impl OrbitSong {
         Ok(())
     }
 
-    /// Each ring's drift from `v` into `live`, the revs untouched: its hits
-    /// while the rhythm is the one the view played, its notes and pool
-    /// while the notes are. A ring edited since is left as edited; nothing
-    /// is taken from another scene than the playing one.
+    /// Each ring's drift from `v` into `live`: its hits, notes and pool,
+    /// nothing marked touched. `OrbitUi::sync` gates it: only a view of the
+    /// scene `live` is, with every edit applied (ADR 0082).
     pub fn absorb(&mut self, v: &OrbitView) {
-        if v.playing != self.current {
-            return;
-        }
         for (s, r) in self.live.rings.iter_mut().zip(&v.rings) {
-            if r.rhythm_rev == s.rhythm_rev
-                && let Some(ring) = s.ring.with_mask(r.hits)
-            {
+            if let Some(ring) = s.ring.with_mask(r.hits) {
                 s.ring = ring;
             }
-            if r.notes_rev == s.notes_rev {
-                s.ring.notes = r.notes;
-                s.ring.pool = r.pool;
-            }
+            s.ring.notes = r.notes;
+            s.ring.pool = r.pool;
         }
     }
 
@@ -734,13 +765,13 @@ impl SceneRing {
     fn refill(&mut self, fill: Fill) {
         if fill != self.ring.fill() {
             self.ring = self.ring.with_fill(fill);
-            self.rhythm_rev = self.rhythm_rev.wrapping_add(1);
+            self.touched = self.touched.with(Touched::RHYTHM);
         }
     }
 
     /// The notes changed under the player: it takes them, drift and all.
     fn renoted(&mut self) {
-        self.notes_rev = self.notes_rev.wrapping_add(1);
+        self.touched = self.touched.with(Touched::NOTES);
     }
 
     /// What NOTES shows as chips and NOTE edits: the pool's notes, or a

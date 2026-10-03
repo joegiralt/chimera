@@ -598,7 +598,6 @@ fn a_captured_chord_saves_as_its_tones() {
         arming: 0,
         notes: [Note::new(0).unwrap(); 8],
         len: 4,
-        epoch: 0,
     };
     for (i, n) in [50u8, 64, 67, 73].into_iter().enumerate() {
         c.notes[i] = Note::new(n).unwrap();
@@ -811,7 +810,7 @@ mod unit {
         }
         audio.frame(&mut rig, Input::turn(A, 2), 1);
         assert_eq!(rig.ui.project().orbit().queued(), Some(S[2]));
-        assert_eq!(audio.view().queued, Some(S[2]), "waits for the loop");
+        assert_eq!(audio.view().cue, Some(S[2]), "waits for the loop");
         audio.quick_save(&mut rig);
         assert_eq!(rig.ui.project().orbit().queued(), Some(S[2]));
         assert_eq!(rig.ui.project().orbit().current(), S[0]);
@@ -847,7 +846,7 @@ mod unit {
             audio.frame(&mut rig, Input::press(Plus), 0);
         }
         audio.frame(&mut rig, Input::turn(A, 1), 1);
-        assert_eq!(audio.view().queued, Some(S[1]));
+        assert_eq!(audio.view().cue, Some(S[1]));
         assert_eq!(audio.view().playing, S[0]);
 
         reload(&mut rig, &mut audio, f);

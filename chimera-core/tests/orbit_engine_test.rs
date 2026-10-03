@@ -427,12 +427,12 @@ fn loop_boundary_mutates_after_the_first_loop() {
     let mut snaps = Vec::new();
     while snaps.len() < 52 {
         if rig.block(None).boundary() {
-            snaps.push(rig.scene.rings.map(|r| (r.ring, r.rhythm_rev, r.notes_rev)));
+            snaps.push(rig.scene.rings.map(|r| r.ring));
         }
     }
     for i in 0..RINGS {
         assert_eq!(
-            snaps[0][i].0, start.rings[i].ring,
+            snaps[0][i], start.rings[i].ring,
             "the first boundary is the start"
         );
     }
@@ -440,21 +440,16 @@ fn loop_boundary_mutates_after_the_first_loop() {
         let changed = snaps
             .windows(2)
             .skip(1)
-            .filter(|w| w[0][i].0 != w[1][i].0)
+            .filter(|w| w[0][i] != w[1][i])
             .count();
         assert!(changed >= 40, "ring {i} changed on {changed} of 50");
-        // A nudge bumps rhythm_rev, a swap notes_rev, and nothing else does.
+        // A boundary nudges the hits or swaps a note, never both.
         for w in snaps.windows(2).skip(1) {
-            let ((a, ar, an), (b, br, bn)) = (w[0][i], w[1][i]);
+            let (a, b) = (w[0][i], w[1][i]);
             let nudged = a.hits_mask() != b.hits_mask();
-            assert_eq!(br.wrapping_sub(ar), nudged as u8);
-            // A swap may redraw the same note: then only the rev moves.
-            let swapped = bn.wrapping_sub(an);
-            assert!(
-                swapped <= 1 && (!nudged || swapped == 0) && (a == b || nudged || swapped == 1)
-            );
+            assert!(!nudged || (a.notes, a.pool) == (b.notes, b.pool));
         }
-        assert!(snaps.iter().all(|w| w[i].0.hits_mask().hits() == 5));
+        assert!(snaps.iter().all(|w| w[i].hits_mask().hits() == 5));
     }
 }
 

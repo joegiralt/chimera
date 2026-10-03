@@ -53,7 +53,7 @@ use crate::name::ProjectName;
 use crate::orbit::RingIdx;
 use crate::orbit::chords::ScaleKind;
 use crate::orbit::runner::{OrbitShared, OrbitView};
-use crate::orbit::scene::{Refused, SceneIdx, SceneSave};
+use crate::orbit::scene::{OrbitSong, Refused, SceneIdx, SceneSave};
 use crate::params::{EngineType, ParamSnapshot};
 use crate::perf::load::AudioStats;
 use crate::preset::POOL_SIZE;
@@ -543,7 +543,7 @@ impl UiState {
         settings: &mut SystemSettings,
         go: Confirmed<ProjectSource>,
         link: &LoadLink,
-        publish: impl FnOnce(Swap, &Project) -> R,
+        publish: impl FnOnce(Swap, &UiState) -> R,
     ) -> Option<R> {
         let mut cx = CardCx {
             card,
@@ -560,7 +560,7 @@ impl UiState {
         cx: &mut CardCx<'_, S>,
         go: Confirmed<ProjectSource>,
         link: &LoadLink,
-        publish: impl FnOnce(Swap, &Project) -> R,
+        publish: impl FnOnce(Swap, &UiState) -> R,
     ) -> (Option<R>, Option<CardEvent>) {
         let was = self.active_engine();
         let out = project::load_project(cx.card, cx.store, &mut self.project, go, link);
@@ -570,9 +570,10 @@ impl UiState {
         let Some(swap) = out.swap else {
             return (None, out.event);
         };
-        let published = publish(swap, &self.project);
+        // Before the publish: it carries the load to the runner.
+        self.orbit.loaded(link.epoch(), self.project.orbit_mut());
+        let published = publish(swap, self);
         self.project_replaced(was);
-        self.orbit.loaded(link.epoch());
         // Only a file load sets it: NEW, loaded or fallen back to, has none.
         if let Some(f) = self.project.meta().file() {
             self.remember(cx.card, cx.store, cx.sync, cx.settings, f);
@@ -1493,16 +1494,14 @@ impl UiState {
             Answered::ClearScene(ask, a) => {
                 if let Some(yes) = said(a) {
                     self.scene_answered(Confirmed::said(ask, yes), |ui, yes| {
-                        let song = ui.project.orbit_mut();
-                        ui.orbit.requeueing(song, |s| s.clear_scene(yes))
+                        ui.relanding(|s| s.clear_scene(yes))
                     });
                 }
             }
             Answered::ReloadScene(ask, a) => {
                 if let Some(yes) = said(a) {
                     self.scene_answered(Confirmed::said(ask, yes), |ui, yes| {
-                        let song = ui.project.orbit_mut();
-                        ui.orbit.requeueing(song, |s| s.reload_scene(yes))
+                        ui.relanding(|s| s.reload_scene(yes))
                     });
                 }
             }
@@ -1693,6 +1692,31 @@ impl UiState {
             .publish(self.project.orbit(), self.midi.sync, out);
     }
 
+    /// SETTINGS › ORBIT's CLEAR or RELOAD, answered: `act` on the song;
+    /// a re-landing it queues goes to the runner as a switch.
+    fn relanding(
+        &mut self,
+        act: impl FnOnce(&mut OrbitSong) -> Result<(), Refused>,
+    ) -> Result<(), Refused> {
+        let song = self.project.orbit_mut();
+        act(song)?;
+        if song.queued().is_some() {
+            self.orbit.issue_scene(song);
+        }
+        Ok(())
+    }
+
+    /// ORBIT's edits and commands into the log, ready for the publish:
+    /// the end of every frame's input (ADR 0082).
+    pub fn flush_orbit(&mut self) {
+        // `orbit_mut` only with an edit to take: it re-keys the status.
+        if self.project.orbit().live.untouched() {
+            self.orbit.chan.flush();
+        } else {
+            self.orbit.flush(self.project.orbit_mut());
+        }
+    }
+
     /// The runner's latest view, each loop before `handle_input`: a
     /// capture taken into the song, the view kept for the pages, its drift
     /// absorbed into the project once a loop.
@@ -1744,8 +1768,14 @@ impl UiState {
         &self.orbit
     }
 
-    /// Process one frame of input: navigation + encoder deltas.
+    /// Process one frame of input: navigation + encoder deltas, then
+    /// ORBIT's commands flushed for the frame's publish.
     pub fn handle_input(&mut self, controls: &impl Controls) {
+        self.input(controls);
+        self.flush_orbit();
+    }
+
+    fn input(&mut self, controls: &impl Controls) {
         // Any encoder turn or button press retires the last prime-status
         // message (issue #21; no timer). The MIX+Plus branch below re-sets
         // it when this same frame is itself a prime attempt.

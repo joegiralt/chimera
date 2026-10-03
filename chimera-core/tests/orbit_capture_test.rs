@@ -13,9 +13,11 @@ use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::{AudioShared, Instrument};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::orbit::RingIdx;
+use chimera_core::orbit::channel::receive;
 use chimera_core::orbit::euclid::{Fill, Steps};
 use chimera_core::orbit::ring::NoteMode;
 use chimera_core::orbit::runner::{Capture, OrbitRunner};
+use chimera_core::orbit::scene::Touched;
 use chimera_core::triple::TripleBuffer;
 use chimera_core::ui::UiState;
 use chimera_core::ui::orbit::OrbitCell;
@@ -98,11 +100,11 @@ fn capture_ninth_note_dropped() {
     let mut rig = OrbitRig::new();
     rig.ui.arm(Capture::Ring(R[1]));
     rig.run(1);
-    let rev = rig.song().live.rings[1].notes_rev;
+    let mut at = rig.ui.log().head();
     chord(&mut rig, &[67, 60, 61, 62, 63, 64, 65, 66, 68], 2);
     assert_eq!(pool(&mut rig, 1), [60, 61, 62, 63, 64, 65, 66, 67]);
-    let r = rig.song().live.rings[1];
-    assert_eq!(r.notes_rev, rev.wrapping_add(1), "notes_rev bumped");
+    let sent = receive(rig.ui.log(), &mut at);
+    assert!(sent.notes.contains(R[1]), "the notes sent as an edit");
     let cap = rig.view().captured;
     assert_eq!((cap.len, cap.target), (8, Capture::Ring(R[1])));
 }
@@ -151,7 +153,7 @@ fn capture_step_fills_hits_in_order() {
             s.ring.mode = NoteMode::Step;
             let fill = Fill::new(Steps::new(8).unwrap(), 3, rotate).unwrap();
             s.ring = s.ring.with_fill(fill);
-            s.rhythm_rev = s.rhythm_rev.wrapping_add(1);
+            s.touched = s.touched.with(Touched::RHYTHM);
         }
         let mask = rig.song().live.rings[1].ring.hits_mask();
         rig.ui.arm(Capture::Ring(R[1]));
@@ -485,19 +487,31 @@ fn learn_arms_the_selected_ring() {
 #[test]
 fn a_load_drops_the_capture() {
     use chimera_core::orbit::runner::OrbitView;
+    use chimera_core::project::Project;
     use chimera_core::ui::orbit::OrbitUi;
+    let (mut p, _) = Project::boxed();
     let mut ui = OrbitUi::new();
     ui.arm(Capture::Ring(R[0]));
-    ui.loaded(1);
+    ui.loaded(1, p.orbit_mut());
     assert_eq!(ui.capture, Capture::Off);
+    let ring = p.orbit().live.rings[0];
     let mut v = OrbitView::default();
     v.captured.count = 1;
     v.captured.target = Capture::Ring(R[0]);
-    assert!(ui.take(&v).is_none(), "from before the load");
-    (v.epoch, v.captured.epoch) = (1, 1);
-    assert!(ui.take(&v).is_none(), "taken once, never again");
+    v.captured.notes[0] = Note::new(70).unwrap();
+    v.captured.len = 1;
+    // A view with `acked` before the load's seq, on the old project.
+    ui.sync(&v, &mut p);
+    assert_eq!(p.orbit().live.rings[0], ring, "from before the load");
+    // The load's runner reports the old capture with its target cleared.
+    (v.epoch, v.acked) = (1, ui.log().head());
+    v.captured.target = Capture::Off;
+    ui.sync(&v, &mut p);
+    assert_eq!(p.orbit().live.rings[0], ring, "taken once, never again");
     v.captured.count = 2;
-    assert!(ui.take(&v).is_some());
+    v.captured.target = Capture::Ring(R[0]);
+    ui.sync(&v, &mut p);
+    assert_ne!(p.orbit().live.rings[0], ring);
 }
 
 /// Ring 2 as STEP with one hit, LEARN armed on it: one key-down takes it.
@@ -506,7 +520,7 @@ fn armed_step(rig: &mut OrbitRig) {
     s.ring.mode = NoteMode::Step;
     let fill = Fill::new(Steps::new(8).unwrap(), 1, 0).unwrap();
     s.ring = s.ring.with_fill(fill);
-    s.rhythm_rev = s.rhythm_rev.wrapping_add(1);
+    s.touched = s.touched.with(Touched::RHYTHM);
     rig.ui.arm(Capture::Ring(R[1]));
     rig.run(1);
 }
@@ -525,7 +539,7 @@ fn a_load_disarms_the_runner() {
     rig.key(0, 72, false);
     rig.run(4);
     let v = rig.view();
-    assert_ne!(v.captured.epoch, v.epoch, "the old project's, if any");
+    assert_eq!(v.captured.target, Capture::Off, "the old project's, if any");
     assert_eq!(rig.song().live.rings[1], ring, "the loaded ring untouched");
 }
 
@@ -545,7 +559,7 @@ fn a_key_held_through_a_load_ends_nothing() {
     rig.key(0, 64, false);
     rig.run(4);
     let v = rig.view();
-    assert_ne!(v.captured.epoch, v.epoch, "the old project's, if any");
+    assert_eq!(v.captured.target, Capture::Off, "the old project's, if any");
     assert_eq!(rig.song().live.rings[1], ring, "the loaded ring untouched");
 }
 

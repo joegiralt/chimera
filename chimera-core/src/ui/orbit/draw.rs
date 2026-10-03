@@ -50,13 +50,13 @@ impl<'a> OrbitFrame<'a> {
         &self.song.live
     }
 
-    /// Ring `r`'s pattern: the runner's, drift and all, while it plays
-    /// the rhythm the scene has; else the scene's (an edit not yet heard).
+    /// Ring `r`'s pattern: the runner's, drift and all, while it has
+    /// applied every edit; else the scene's (an edit not yet heard).
     pub fn hits(&self, r: RingIdx) -> HitMask {
         let s = &self.scene().rings[r.get() as usize];
         let seen = &self.ui.status.rings[r.get() as usize];
         let ours = s.ring.hits_mask();
-        if seen.rhythm_rev == s.rhythm_rev && seen.hits.steps() == ours.steps() {
+        if self.ui.fresh() && seen.hits.steps() == ours.steps() {
             seen.hits
         } else {
             ours

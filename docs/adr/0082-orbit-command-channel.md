@@ -66,11 +66,18 @@ not grow, and flash must shrink and be measured.
   the runner armed again. That closes finding 2 by construction.
 - **Load is the one command outside the ring.**
   - `OrbitUi::loaded()` runs before the load publish and takes a fresh
-    seq `L` as `OrbitShared.load`.
+    seq `L` as `OrbitShared.load`. It then issues `Keep(n)` for the
+    loaded playing slot `n`, in the same publish, so the runner learns
+    what plays.
   - The runner still detects a load by `AudioShared.epoch` (ADR 0046, a
     `u32`), and then sets `applied = L`.
-  - The UI refuses views with `acked < L` until the first post-load view
-    arrives. That is the only stale-view check.
+  - **The load gate is the epoch.** `OrbitView` carries the runner's
+    `u32` epoch, and the UI keeps its newest load's. A view on another
+    epoch is refused, however many loads pass without an audio block: a
+    `u32` never aliases. While the load is pending, `Channel::ack` also
+    refuses a view with `acked` outside `[L, L + LOG]`. A `u8` seq alone
+    can't be the gate: it aliases after 28 back-to-back loads. This is
+    the only stale-view check.
   - The runner clears its last capture's target at a load, which
     replaces `Captured.epoch`.
   - The load publish closure gets the post-load `UiState`.

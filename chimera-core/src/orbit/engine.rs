@@ -3,7 +3,7 @@
 
 use super::chords::{harmony, segment_at};
 use super::clock::{Phase, Position, step_at, step_start};
-use super::mutate::{Mutation, mutate};
+use super::mutate::mutate;
 use super::ring::Harmony;
 use super::rng::Rng;
 use super::scene::{Scene, Target};
@@ -246,10 +246,6 @@ pub fn block(
             let h = harmony(&scene.chords, 0);
             for (i, sr) in scene.rings.iter_mut().enumerate() {
                 if let Some(m) = mutate(&sr.ring, &h, &mut st.rngs[i]) {
-                    match m {
-                        Mutation::Swap { .. } => sr.notes_rev = sr.notes_rev.wrapping_add(1),
-                        Mutation::Nudge { .. } => sr.rhythm_rev = sr.rhythm_rev.wrapping_add(1),
-                    }
                     sr.ring = sr.ring.apply(m);
                 }
             }

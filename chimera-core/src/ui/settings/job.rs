@@ -6,7 +6,7 @@ use chimera_hal::store::{Store, StoreError};
 use crate::name::ProjectName;
 use crate::project::{
     self, CardOut, Confirmed, DeleteTarget, FreshFile, Line, LoadLink, OverwriteTarget, Pending,
-    Project, ProjectEntry, ProjectNote, ProjectSource, SaveTo, Swap,
+    ProjectEntry, ProjectNote, ProjectSource, SaveTo, Swap,
 };
 use crate::storage::{Card, CardEvent, SystemSettings, SystemSync};
 use crate::ui::UiState;
@@ -97,7 +97,7 @@ impl UiState {
         &mut self,
         mut cx: CardCx<'_, S>,
         link: &LoadLink,
-        publish: impl FnOnce(Swap, &Project) -> R,
+        publish: impl FnOnce(Swap, &UiState) -> R,
     ) -> Option<R> {
         let mut publish = Some(publish);
         let mut out = None;
@@ -112,7 +112,7 @@ impl UiState {
     }
 
     /// One job; what runs next in the same call.
-    fn run<S: Store, R, F: FnOnce(Swap, &Project) -> R>(
+    fn run<S: Store, R, F: FnOnce(Swap, &UiState) -> R>(
         &mut self,
         job: Job,
         cx: &mut CardCx<'_, S>,
@@ -201,7 +201,7 @@ impl UiState {
     }
 
     /// A load, published; `Some` when it replaced the project.
-    fn load_published<S: Store, R, F: FnOnce(Swap, &Project) -> R>(
+    fn load_published<S: Store, R, F: FnOnce(Swap, &UiState) -> R>(
         &mut self,
         cx: &mut CardCx<'_, S>,
         go: Confirmed<ProjectSource>,

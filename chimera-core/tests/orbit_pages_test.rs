@@ -634,6 +634,26 @@ fn to_notes(ui: &mut UiState, n: usize) {
     assert_eq!(ui.page_def().id, chimera_core::ui::orbit::ORBIT_NOTES.id);
 }
 
+/// What `act` sent the runner, folded as it applies it: read from the
+/// log, and then acked as a view would, so the log never fills.
+fn sent(ui: &mut UiState, act: impl FnOnce(&mut UiState)) -> chimera_core::orbit::channel::Batch {
+    use chimera_core::orbit::channel::receive;
+    use chimera_core::orbit::runner::OrbitView;
+    let mut at = ui.orbit().log().head();
+    act(ui);
+    let b = receive(ui.orbit().log(), &mut at);
+    ui.set_orbit_view(&OrbitView {
+        acked: at,
+        ..OrbitView::default()
+    });
+    b
+}
+
+/// The selected ring, as an index.
+fn sel(ui: &UiState) -> chimera_core::orbit::RingIdx {
+    ui.location().orbit().unwrap().ring()
+}
+
 /// The selected ring as the project holds it.
 fn sel_ring(ui: &UiState) -> chimera_core::orbit::scene::SceneRing {
     let r = ui.location().orbit().unwrap().ring();
@@ -857,17 +877,18 @@ fn step_ring_plays_its_steps() {
     assert_eq!(sel_ring(&ui).ring.mode, NoteMode::Step);
     // Every step starts at OCTAVE's C: C4. Steps 0, 3, 6 to C, D, E.
     assert!(sel_ring(&ui).ring.notes.iter().all(|n| n.get() == 60));
-    let rev = sel_ring(&ui).notes_rev;
-    feed(&mut ui, Input::turn(F, 3).and_held(Mix));
-    feed(&mut ui, Input::turn(F, 2));
-    feed(&mut ui, Input::turn(F, 3).and_held(Mix));
-    feed(&mut ui, Input::turn(F, 4));
+    let b = sent(&mut ui, |ui| {
+        feed(ui, Input::turn(F, 3).and_held(Mix));
+        feed(ui, Input::turn(F, 2));
+        feed(ui, Input::turn(F, 3).and_held(Mix));
+        feed(ui, Input::turn(F, 4));
+    });
     let notes = sel_ring(&ui).ring.notes;
     assert_eq!(
         [notes[0], notes[3], notes[6]].map(|n| n.get()),
         [60, 62, 64]
     );
-    assert_ne!(sel_ring(&ui).notes_rev, rev, "the edit bumps notes_rev");
+    assert!(b.notes.contains(sel(&ui)), "the edit is sent");
     // VOICE: SNAP to SCALE, so A minor keeps C, D and E as they are.
     tap(&mut ui, Edit);
     tap(&mut ui, Edit);
@@ -898,7 +919,7 @@ fn step_ring_plays_its_steps() {
 
 /// CLEAR down fills the pool (or every step) with notes of the key in the
 /// ring's register, new dice each time; CLEAR up leaves one note at
-/// OCTAVE's C. Each bumps `notes_rev`.
+/// OCTAVE's C. Each is sent as an edit of the ring's notes.
 #[test]
 fn clear_down_randomises_in_key() {
     use chimera_core::orbit::MAX_POOL;
@@ -921,10 +942,9 @@ fn clear_down_randomises_in_key() {
             .ring
             .range = range;
         for _ in 0..3 {
-            let rev = sel_ring(&ui).notes_rev;
-            feed(&mut ui, Input::turn(E, -1).and_held(Mix));
+            let b = sent(&mut ui, |ui| feed(ui, Input::turn(E, -1).and_held(Mix)));
             let s = sel_ring(&ui);
-            assert_ne!(s.notes_rev, rev, "a new notes_rev");
+            assert!(b.notes.contains(sel(&ui)), "an EditNotes for the ring");
             assert_eq!(s.ring.pool.len(), MAX_POOL, "the pool filled");
             for n in s.ring.pool.notes() {
                 assert!(in_register(&ui, n.get()), "{n} in A minor, {range:?}");
@@ -934,10 +954,9 @@ fn clear_down_randomises_in_key() {
         }
     }
     // CLEAR up: one note at OCTAVE's C.
-    let rev = sel_ring(&ui).notes_rev;
-    feed(&mut ui, Input::turn(E, 2).and_held(Mix));
+    let b = sent(&mut ui, |ui| feed(ui, Input::turn(E, 2).and_held(Mix)));
     let s = sel_ring(&ui);
-    assert_ne!(s.notes_rev, rev);
+    assert!(b.notes.contains(sel(&ui)));
     assert_eq!(s.ring.pool.notes(), [s.ring.octave.low()]);
 
     // STEP: every step.
@@ -972,8 +991,8 @@ fn clear_needs_mix() {
             feed(&mut ui, Input::turn(E, d));
             assert_eq!(sel_ring(&ui), before, "a plain turn of {d}");
         }
-        feed(&mut ui, Input::turn(E, -1).and_held(Mix));
-        assert_ne!(sel_ring(&ui).notes_rev, before.notes_rev, "MIX + turn");
+        let b = sent(&mut ui, |ui| feed(ui, Input::turn(E, -1).and_held(Mix)));
+        assert!(b.notes.contains(sel(&ui)), "MIX + turn");
     }
     // Its focus names both: MIX + UP / DOWN over C4 / RND.
     let r = ui.location().orbit().unwrap().ring();
@@ -1032,4 +1051,29 @@ fn orb_owns_the_songs_frame() {
     assert!(state(&ui).is_some(), "SCENE queued");
     feed(&mut ui, Input::turn(E, -1));
     assert_eq!(state(&ui), None, "and cancelled");
+}
+
+/// Review Focus 2: CLEAR down turned once a frame while ORBIT runs rolls
+/// new dice every turn, and the runner plays the last roll.
+#[test]
+fn clear_down_rolls_new_dice_through_the_runner() {
+    use chimera_hal::ButtonId::Mix;
+    let mut ui = Box::new(UiState::new());
+    to_notes(&mut ui, 2);
+    let mut rig = screen::ShellRig::new(ui);
+    rig.b6();
+    rig.until(|v| v.running);
+    let mut pools = Vec::new();
+    for _ in 0..10 {
+        rig.frame(Input::turn(E, -1).and_held(Mix), 1);
+        let p = sel_ring(&rig.ui).ring.pool;
+        assert!(!pools.contains(&p), "new dice each turn");
+        pools.push(p);
+    }
+    rig.idle(1);
+    assert_eq!(
+        rig.view().rings[1].pool,
+        pools[9],
+        "the runner plays the last"
+    );
 }

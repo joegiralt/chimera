@@ -2,6 +2,7 @@
 //! transport and the working copy of the playing scene, and each block
 //! turns them into note events for the `Instrument` (spec § 4).
 
+use super::channel::{Batch, Cmd, CmdLog, RingMask, SceneCmd, Seq, receive};
 use super::chords::{Bars, harmony};
 use super::clock::{
     Bpm, ClockSource, InternalClock, MidiClock, Position, SyncMode, WINDOW, advance_cap, step_at,
@@ -21,7 +22,8 @@ use chimera_theory::{Chord, Note};
 use core::mem::size_of;
 use core::num::NonZeroU32;
 
-/// What the UI asks of ORBIT, published with the Parts (ADR 0021).
+/// What the UI asks of ORBIT, published with the Parts (ADR 0021): its
+/// levels, and its commands in one log (ADR 0082).
 #[derive(Clone, Debug)]
 pub struct OrbitShared {
     /// Bumped on every B6 press: each press starts a stopped ORBIT or
@@ -31,17 +33,17 @@ pub struct OrbitShared {
     pub bpm: Bpm,
     /// MIDI CONFIG's SYNC, from SYSTEM (ADR 0080).
     pub sync: SyncMode,
-    /// Bumped on every switch, re-landing and cancel; the runner acts on
-    /// each rev once (ADR 0077).
-    pub scene_rev: u16,
-    /// The playing scene, which `settings` is: the knobs come from it.
-    pub scene: SceneIdx,
+    /// `live`: the knobs, the fields an edit names, and what `Keep` plays.
     pub settings: Scene,
-    /// A switch waiting on the loop, and the slot it brings (`next`),
-    /// adopted whole at the boundary; the playing slot itself lands again.
-    /// `next` means nothing without it.
-    pub queued: Option<SceneIdx>,
+    /// The queued slot, else the playing one: what a `Cue` lands.
     pub next: Scene,
+    /// The UI's commands, each applied once.
+    pub log: CmdLog,
+    /// The seq a project load took: every command up to it is void.
+    pub load: Seq,
+    /// The UI has landed its newest scene command: `settings` is the
+    /// base of what plays.
+    pub synced: bool,
     /// What the keys play into (spec § 5.3).
     pub capture: Capture,
     /// Bumped on every arming, the same target again included: the runner
@@ -50,12 +52,9 @@ pub struct OrbitShared {
 }
 
 impl OrbitShared {
-    /// What the newest rev brings: the queued slot, or `settings` itself.
-    fn incoming(&self) -> (SceneIdx, &Scene) {
-        match self.queued {
-            Some(s) => (s, &self.next),
-            None => (self.scene, &self.settings),
-        }
+    /// `c` into the log as the UI's flush puts it; its seq.
+    pub fn push(&mut self, c: Cmd) -> Seq {
+        self.log.push(c.into())
     }
 }
 
@@ -65,15 +64,23 @@ impl Default for OrbitShared {
             presses: 0,
             bpm: Bpm::DEFAULT,
             sync: SyncMode::DEFAULT,
-            scene_rev: 0,
-            scene: SceneIdx::ALL[0],
             settings: Scene::init(),
-            queued: None,
             next: Scene::init(),
+            log: CmdLog::EMPTY,
+            load: Seq::ZERO,
+            synced: true,
             capture: Capture::Off,
             arming: 0,
         }
     }
+}
+
+/// A project load as the shells publish one, for rigs with no UI: a new
+/// epoch, and the seq it voids every command up to.
+#[cfg(any(test, feature = "test-support"))]
+pub fn fake_load(shared: &mut AudioShared) {
+    shared.epoch = shared.epoch.wrapping_add(1);
+    shared.orbit.load = shared.orbit.log.reserve();
 }
 
 /// What a capture is armed into: NOTES' LEARN arms a ring, CHRD's PLAY a
@@ -97,8 +104,6 @@ pub struct Captured {
     /// In the order played, each once (a STEP ring's may repeat).
     pub notes: [Note; MAX_POOL],
     pub len: u8,
-    /// The project load it was played on: another's is never taken.
-    pub epoch: u32,
 }
 
 impl Captured {
@@ -108,7 +113,6 @@ impl Captured {
         arming: 0,
         notes: [Note::MIN; MAX_POOL],
         len: 0,
-        epoch: 0,
     };
 
     pub fn notes(&self) -> &[Note] {
@@ -173,8 +177,8 @@ impl Take {
     }
 
     /// The notes taken: a segment's only if they make a chord, else it
-    /// stays armed for the next. `epoch` is the load it was played on.
-    fn finish(&mut self, epoch: u32) {
+    /// stays armed for the next.
+    fn finish(&mut self) {
         if matches!(self.armed, Capture::Segment(_)) && Chord::from_notes(self.played()).is_none() {
             return self.restart();
         }
@@ -184,7 +188,6 @@ impl Take {
             arming: self.arming,
             notes: self.notes,
             len: self.len,
-            epoch,
         };
         self.armed = Capture::Off;
         self.restart();
@@ -200,17 +203,16 @@ pub struct RingView {
     pub hits: HitMask,
     pub pool: Pool,
     pub notes: [Note; MAX_STEPS as usize],
-    /// The revs these hits and notes were played under: `absorb` keeps
-    /// an edit the runner hasn't seen yet.
-    pub rhythm_rev: u8,
-    pub notes_rev: u8,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct OrbitView {
     pub running: bool,
-    /// The project load the runner is on (`AudioShared.epoch`).
+    /// The project load the runner is on (`AudioShared.epoch`): the UI
+    /// takes no view from before its own (ADR 0082's load gate).
     pub epoch: u32,
+    /// The newest command applied.
+    pub acked: Seq,
     pub source: ClockSource,
     /// The internal BPM, or the MIDI clock's measured one.
     pub bpm: Bpm,
@@ -219,12 +221,11 @@ pub struct OrbitView {
     pub bars: Bars,
     pub beats: u32,
     pub loops: u32,
-    /// The scene adopted last, and the switch it adopted (`scene_rev`):
-    /// the UI lands a switch on its own rev only, never a stale view's.
+    /// The scene adopted last.
     pub playing: SceneIdx,
-    pub scene_rev: u16,
-    /// A switch waiting on the loop boundary.
-    pub queued: Option<SceneIdx>,
+    /// A scene waiting on the loop boundary: with every command applied,
+    /// `None` means the newest scene command is adopted.
+    pub cue: Option<SceneIdx>,
     pub seg: u8,
     pub chord: Chord,
     pub rings: [RingView; RINGS],
@@ -248,6 +249,7 @@ impl OrbitView {
         OrbitView {
             running: false,
             epoch: 0,
+            acked: Seq::ZERO,
             source: ClockSource::Internal,
             bpm: Bpm::DEFAULT,
             pos,
@@ -255,21 +257,17 @@ impl OrbitView {
             beats: beats_at(pos),
             loops: 0,
             playing: SceneIdx::ALL[0],
-            scene_rev: 0,
-            queued: None,
+            cue: None,
             seg: 0,
             chord: harmony(&scene.chords, 0).chord,
             rings: core::array::from_fn(|i| {
-                let s = &scene.rings[i];
-                let r = &s.ring;
+                let r = &scene.rings[i].ring;
                 RingView {
                     step: step_at(pos.phase, r.fill().steps()),
                     fired: 0,
                     hits: r.hits_mask(),
                     pool: r.pool,
                     notes: r.notes,
-                    rhythm_rev: s.rhythm_rev,
-                    notes_rev: s.notes_rev,
                 }
             }),
             captured: Captured::NONE,
@@ -292,8 +290,29 @@ pub fn orbit_buffer() -> TripleBuffer<OrbitView> {
     )
 }
 
-/// A ring's revs as last copied from the settings.
-type Revs = (u8, u8);
+/// A scene waiting on the boundary, as slot n: the slot itself (`next`),
+/// or `live` (`settings`), when the UI turned back from a switch it never
+/// saw adopted.
+#[derive(Clone, Copy, Debug)]
+enum Incoming {
+    Slot(SceneIdx),
+    Live(SceneIdx),
+}
+
+impl Incoming {
+    fn scene(self) -> SceneIdx {
+        match self {
+            Incoming::Slot(n) | Incoming::Live(n) => n,
+        }
+    }
+
+    fn of(self, o: &OrbitShared) -> &Scene {
+        match self {
+            Incoming::Slot(_) => &o.next,
+            Incoming::Live(_) => &o.settings,
+        }
+    }
+}
 
 pub struct OrbitRunner {
     clock: InternalClock,
@@ -311,17 +330,19 @@ pub struct OrbitRunner {
     edge: Position,
     state: OrbitState,
     working: Scene,
-    revs: [Revs; RINGS],
-    /// The switch adopted last, and its scene.
-    scene_rev: u16,
     playing: SceneIdx,
+    /// The newest command applied.
+    applied: Seq,
+    /// `working`'s base is the UI's `live`: knobs and edits copy from
+    /// `settings`. The UI's `synced` sets it; only an adoption clears it.
+    base_landed: bool,
     /// `presses` as of the last block.
     presses_seen: u8,
     /// Whether ORBIT plays: B6 toggles it, the DAW's Start and Continue
     /// set it and its Stop clears it (ADR 0080).
     transport: bool,
-    /// A switch waiting on the boundary: the scene it brings.
-    cue: Option<SceneIdx>,
+    /// A scene waiting on the boundary.
+    cue: Option<Incoming>,
     epoch: u32,
     /// The sample at the start of the next block.
     sample: u64,
@@ -335,10 +356,6 @@ pub struct OrbitRunner {
 
 const _: () = assert!(size_of::<OrbitRunner>() <= 1024);
 
-fn revs_of(s: &Scene) -> [Revs; RINGS] {
-    core::array::from_fn(|i| (s.rings[i].rhythm_rev, s.rings[i].notes_rev))
-}
-
 impl OrbitRunner {
     pub fn new(sample_rate: NonZeroU32) -> Self {
         let working = Scene::init();
@@ -351,10 +368,10 @@ impl OrbitRunner {
             ext_play: None,
             edge: Position::ZERO,
             state: OrbitState::start(&working),
-            revs: revs_of(&working),
             working,
-            scene_rev: 0,
             playing: SceneIdx::ALL[0],
+            applied: Seq::ZERO,
+            base_landed: true,
             presses_seen: 0,
             transport: false,
             cue: None,
@@ -368,36 +385,53 @@ impl OrbitRunner {
         }
     }
 
-    /// What the newest rev brings, whole, as the playing scene.
-    fn adopt(&mut self, shared: &AudioShared) {
-        let (s, scene) = shared.orbit.incoming();
-        self.working = *scene;
-        self.revs = revs_of(&self.working);
-        self.scene_rev = shared.orbit.scene_rev;
-        self.playing = s;
+    /// `inc`, whole, as the playing scene: `working`'s base is no longer
+    /// the UI's `live` until the UI says it has landed it.
+    fn adopt(&mut self, inc: Incoming, o: &OrbitShared) {
+        self.working = *inc.of(o);
+        self.playing = inc.scene();
         self.cue = None;
+        self.base_landed = false;
     }
 
-    /// The knobs from `settings`; a ring's hits and notes only if their
-    /// rev moved, so MUTATE's drift stands otherwise.
-    fn copy_knobs(&mut self, settings: &Scene) {
+    /// The UI's commands since the last block (ADR 0082): a scene command
+    /// cues, or cancels a cue; the edit masks go to the knob copy.
+    fn commands(&mut self, o: &OrbitShared) -> Batch {
+        let b = receive(&o.log, &mut self.applied);
+        match b.scene {
+            Some(SceneCmd::Cue(n)) => self.cue = Some(Incoming::Slot(n)),
+            // In sync, `live` already plays as slot n: nothing to land.
+            Some(SceneCmd::Keep(n)) if self.base_landed => {
+                self.cue = None;
+                self.playing = n;
+            }
+            Some(SceneCmd::Keep(n)) => self.cue = Some(Incoming::Live(n)),
+            None => {}
+        }
+        b
+    }
+
+    /// The knobs from `settings`; a ring's hits, notes and pool only where
+    /// an edit names them, so MUTATE's drift stands otherwise.
+    fn copy_knobs(&mut self, settings: &Scene, rhythm: RingMask, notes: RingMask) {
         let w = &mut self.working;
         w.chords = settings.chords;
         w.seed = settings.seed;
-        for (i, s) in settings.rings.iter().enumerate() {
-            let (rhythm, notes) = self.revs[i];
+        for (r, (w, s)) in RingIdx::ALL
+            .into_iter()
+            .zip(w.rings.iter_mut().zip(&settings.rings))
+        {
             let mut sr = *s;
-            let old = w.rings[i].ring;
-            if s.rhythm_rev == rhythm {
-                // `None`: the fill changed with no rev, so the fresh one stands.
+            let old = w.ring;
+            if !rhythm.contains(r) {
+                // `None`: the fill changed with no edit, so the fresh one stands.
                 sr.ring = sr.ring.with_mask(old.hits_mask()).unwrap_or(sr.ring);
             }
-            if s.notes_rev == notes {
+            if !notes.contains(r) {
                 sr.ring.notes = old.notes;
                 sr.ring.pool = old.pool;
             }
-            w.rings[i] = sr;
-            self.revs[i] = (s.rhythm_rev, s.notes_rev);
+            *w = sr;
         }
     }
 
@@ -484,7 +518,6 @@ impl OrbitRunner {
                     .then(|| ring.hits_mask().hits().clamp(1, MAX_POOL as u8))
             }
         };
-        let epoch = self.epoch;
         let t = &mut self.take;
         let Some(note) = Note::new(ev.note.get()) else {
             return;
@@ -498,7 +531,7 @@ impl OrbitRunner {
                     t.len += 1;
                 }
                 if step.is_some_and(|n| t.len >= n) {
-                    t.finish(epoch);
+                    t.finish();
                 }
             }
             NoteKind::Off => {
@@ -507,7 +540,7 @@ impl OrbitRunner {
                 }
                 t.held = t.held.without(ev.note);
                 if t.held.is_empty() && step.is_none() {
-                    t.finish(epoch);
+                    t.finish();
                 }
             }
         }
@@ -532,24 +565,45 @@ impl OrbitRunner {
         sent
     }
 
+    /// A project load, at `epoch`: it killed every voice, so nothing to
+    /// release, and no edge. It is the player's newer act, so the DAW's
+    /// pending Start, Continue or Stop is dropped: its next Start plays
+    /// the load. Cold: out of `advance`.
+    #[inline(never)]
+    fn load(&mut self, epoch: u32, o: &OrbitShared) {
+        self.epoch = epoch;
+        (self.ext_start, self.ext_play) = (false, None);
+        self.state.forget();
+        self.take.forget();
+        // A capture ended on the old project is taken into nothing.
+        (self.take.done.target, self.take.done.len) = (Capture::Off, 0);
+        self.transport = false;
+        self.presses_seen = o.presses;
+        // The loaded `live`, whole, and every command up to the load void.
+        self.working = o.settings;
+        self.cue = None;
+        self.base_landed = true;
+        self.applied = o.load;
+    }
+
     /// One block's transport, clock and steps.
     fn advance(&mut self, shared: &AudioShared) -> Events {
         let o = &shared.orbit;
         let t = self.sample;
         self.sample += BLOCK_SIZE as u64;
 
-        if shared.epoch != self.epoch {
-            // A load killed every voice: nothing to release, and no edge.
-            // It is the player's newer act, so the DAW's pending Start,
-            // Continue or Stop is dropped: its next Start plays the load.
-            self.epoch = shared.epoch;
-            (self.ext_start, self.ext_play) = (false, None);
-            self.state.forget();
-            self.take.forget();
-            self.transport = false;
-            self.presses_seen = o.presses;
-            self.adopt(shared);
+        let loaded = shared.epoch != self.epoch;
+        if loaded {
+            self.load(shared.epoch, o);
+        }
+        // After a load, the commands past it: its `Keep` names the playing
+        // slot.
+        let edits = self.commands(o);
+        if loaded {
             return Events::new();
+        }
+        if o.synced {
+            self.base_landed = true;
         }
 
         if o.sync != self.sync {
@@ -585,7 +639,12 @@ impl OrbitRunner {
             (false, None) => was,
         };
         if play && !self.transport {
-            self.adopt(shared);
+            // The waiting scene, else `live`; out of sync with nothing
+            // waiting, what plays already (the UI is landing it).
+            let base = self.base_landed.then_some(Incoming::Live(self.playing));
+            if let Some(inc) = self.cue.or(base) {
+                self.adopt(inc, o);
+            }
             if midi.is_some() {
                 // Joins the external clock in phase: the dice from the
                 // seed, the position kept (§ 6.3).
@@ -608,23 +667,15 @@ impl OrbitRunner {
             self.loops = 0;
         }
 
-        if o.scene_rev != self.scene_rev {
-            // A queued slot lands, the playing one again too (CLEAR or
-            // RELOAD); back to the scene playing with nothing queued is a
-            // cancel, nothing to adopt. Its rev isn't taken: `scene_rev`
-            // stays the adopted scene's, which the UI's drift is gated on.
-            let (s, _) = o.incoming();
-            self.cue = (o.queued.is_some() || s != self.playing).then_some(s);
+        if let Some(inc) = self.cue
+            && !self.transport
+        {
+            self.adopt(inc, o);
         }
-        if self.cue.is_some() && !self.transport {
-            self.adopt(shared);
-        }
-        // Only the playing scene's knobs: a waiting switch's are its own,
-        // and once the UI's switch is adopted its `settings` are a frame
-        // behind until its view lands it.
-        let unseen = o.queued.is_some() && o.scene_rev == self.scene_rev;
-        if o.scene == self.playing && !unseen {
-            self.copy_knobs(&o.settings);
+        // Only onto the UI's `live`: once a scene is adopted, `settings`
+        // is another scene's until the UI lands it.
+        if self.base_landed {
+            self.copy_knobs(&o.settings, edits.rhythm, edits.notes);
         }
 
         let sounding = self.transport;
@@ -671,13 +722,14 @@ impl OrbitRunner {
             bar_len,
         };
         let channels = core::array::from_fn::<_, MAX_PARTS, _>(|i| shared.parts[i].mix.channel);
-        let cue = self.cue.map(|_| o.incoming().1);
+        let cue = self.cue.map(|c| c.of(o));
         let ev = block(&mut self.state, &mut self.working, cue, span, &channels);
-        if ev.adopted() {
-            self.revs = revs_of(&self.working);
-            self.scene_rev = o.scene_rev;
-            self.playing = o.incoming().0;
+        if let Some(inc) = self.cue
+            && ev.adopted()
+        {
+            self.playing = inc.scene();
             self.cue = None;
+            self.base_landed = false;
         }
         self.loops += ev.boundary() as u32;
         self.edge = to;
@@ -694,6 +746,7 @@ impl OrbitRunner {
         let mut v = OrbitView::of(&self.working, self.edge);
         v.running = self.transport;
         v.epoch = self.epoch;
+        v.acked = self.applied;
         v.source = self.source;
         v.bpm = match self.source {
             ClockSource::Internal => self.clock.bpm(),
@@ -702,13 +755,11 @@ impl OrbitRunner {
         v.loops = self.loops;
         v.captured = self.take.done;
         v.playing = self.playing;
-        v.scene_rev = self.scene_rev;
-        v.queued = self.cue;
+        v.cue = self.cue.map(Incoming::scene);
         v.seg = self.state.seg();
         v.chord = self.state.harmony(&self.working).chord;
-        for ((r, f), (rhythm, notes)) in v.rings.iter_mut().zip(self.fired).zip(self.revs) {
+        for (r, f) in v.rings.iter_mut().zip(self.fired) {
             r.fired = f;
-            (r.rhythm_rev, r.notes_rev) = (rhythm, notes);
         }
         v
     }

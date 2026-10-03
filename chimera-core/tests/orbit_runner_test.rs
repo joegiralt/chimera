@@ -7,10 +7,12 @@ use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
+use chimera_core::orbit::RingIdx;
+use chimera_core::orbit::channel::{Cmd, RingMask};
 use chimera_core::orbit::euclid::{Fill, Steps};
 use chimera_core::orbit::ring::{Octave, Ring};
 use chimera_core::orbit::rng::Pct;
-use chimera_core::orbit::runner::{OrbitRunner, OrbitView};
+use chimera_core::orbit::runner::{OrbitRunner, OrbitView, fake_load};
 use chimera_core::orbit::scene::Scene;
 use chimera_core::project::{LoadGate, LoadLink};
 use chimera_core::scope::ScopeWriter;
@@ -184,7 +186,9 @@ fn edits_keep_the_drift() {
 
     let sr = &mut r.shared.orbit.settings.rings[0];
     sr.ring = sr.ring.with_fill(fill(12, 4, 0));
-    sr.rhythm_rev = sr.rhythm_rev.wrapping_add(1);
+    r.shared
+        .orbit
+        .push(Cmd::EditRhythm(RingMask::EMPTY.with(RingIdx::ALL[0])));
     r.run(2);
     assert_eq!(
         r.view().rings[0].hits,
@@ -206,19 +210,18 @@ fn knobs_copy_while_cued_and_the_cue_lands_whole() {
     let mut next = s;
     next.rings[0].ring.mute = true;
     r.shared.orbit.next = next;
-    r.shared.orbit.queued = SceneIdx::new(1);
-    r.shared.orbit.scene_rev += 1;
+    r.shared.orbit.push(Cmd::Cue(SceneIdx::ALL[1]));
     r.run(1);
-    assert_eq!(r.view().queued, SceneIdx::new(1));
+    assert_eq!(r.view().cue, SceneIdx::new(1));
     // A knob of the playing scene is heard before the boundary: CHANCE 0.
     r.shared.orbit.settings.rings[0].ring.chance = Pct::clamped(0);
     let fired = r.view().rings[0].fired;
     // A bar is 1500 blocks at 120 BPM; the steps at 0.25, 0.5, 0.75 are silent.
     r.run(1300);
     assert_eq!(r.view().rings[0].fired, fired, "the knob copied");
-    assert!(r.view().queued.is_some());
+    assert!(r.view().cue.is_some());
     r.run(200);
-    assert!(r.view().queued.is_none(), "adopted at the boundary");
+    assert!(r.view().cue.is_none(), "adopted at the boundary");
     assert_eq!(r.view().playing, SceneIdx::ALL[1]);
     let at = r.view().rings[0].fired;
     r.run(1400);
@@ -236,7 +239,7 @@ fn a_project_load_stops_orbit_cleanly() {
     r.run(300);
     assert!(!r.held().is_empty());
     let _swap = r.link.bump_for_test();
-    r.shared.epoch = r.link.epoch();
+    fake_load(&mut r.shared);
     let mut quiet_at = None;
     for i in 0..100 {
         r.block();

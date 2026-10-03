@@ -460,7 +460,8 @@ impl Case {
         }
     }
 
-    fn set(self, song: &mut OrbitSong, v: f32) {
+    /// `salt` is CLEAR down's, as the UI's `clear_salt` gives it.
+    fn set(self, song: &mut OrbitSong, salt: u8, v: f32) {
         match self {
             Case::Param(b, s) => orbit_block(song, b).set(s.id, v),
             Case::Note(r, _) => {
@@ -469,7 +470,7 @@ impl Case {
             }
             // The scene's own: the UI's MIX gate is `clear_needs_mix`'s.
             Case::Clear(r, _) if v > 0.0 => song.live.rings[r.get() as usize].clear(),
-            Case::Clear(r, _) => song.live.scatter(r),
+            Case::Clear(r, _) => song.live.scatter(r, salt),
         }
     }
 
@@ -527,7 +528,10 @@ fn sweep_param(case: Case) -> (String, Vec<String>, [usize; 5]) {
     if let Case::Note(r, m) | Case::Clear(r, m) = case {
         song.live.rings[r.get() as usize].ring.mode = m;
     }
-    let set = |rig: &mut OrbitRig, v: f32| case.set(rig.song(), v);
+    let set = |rig: &mut OrbitRig, v: f32| {
+        let salt = rig.ui.clear_salt();
+        case.set(rig.song(), salt, v)
+    };
     let name = case.name();
     let [min, _, max] = case.points();
     let mut line = String::new();

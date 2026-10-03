@@ -162,12 +162,11 @@ fn main() {
             sync: &mut sync,
             settings: &mut settings,
         };
-        let (orbit, sync_mode) = (*ui.orbit(), ui.midi().sync);
-        ui.card_work(cx, &LOAD_LINK, |swap, p| {
+        ui.card_work(cx, &LOAD_LINK, |swap, u| {
             let deadline = Instant::now() + Duration::from_millis(LOAD_ACK_TIMEOUT_MS.into());
             let _ = swap.settle(&LOAD_LINK, || Instant::now() < deadline);
-            audio.update(p.perf(), LOAD_LINK.epoch(), |o| {
-                orbit.publish(p.orbit(), sync_mode, o)
+            audio.update(u.project().perf(), LOAD_LINK.epoch(), |o| {
+                u.publish_orbit(o)
             });
         });
         // Leaving SETTINGS syncs SYSTEM; a toast says how it went.

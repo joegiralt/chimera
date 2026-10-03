@@ -448,16 +448,12 @@ fn synth(board: Board) -> ! {
             sync: &mut sync,
             settings: &mut settings,
         };
-        let snap = orbit::Snap::of(ui);
-        ui.card_work(cx, &LOAD_LINK, |swap, p| {
+        ui.card_work(cx, &LOAD_LINK, |swap, u| {
             let t0 = controls::ticks();
             let _ = swap.settle(&LOAD_LINK, || {
                 controls::ticks().wrapping_sub(t0) < LOAD_ACK_TICKS
             });
-            shared_w.publish(|b| {
-                b.update_from(p.perf(), LOAD_LINK.epoch());
-                snap.publish(p, b);
-            });
+            shared_w.publish(|b| publish(b, u));
         });
         // Leaving SETTINGS syncs SYSTEM, with no overlay first: a save is
         // quicker than BUSY can be read. A toast says how it went.
@@ -470,11 +466,7 @@ fn synth(board: Board) -> ! {
             // ORBIT's beat on the front-panel LED; off when it is stopped.
             orbit.beat(ui);
         }
-        // Every Part, the FX and ORBIT to the audio.
-        shared_w.publish(|b| {
-            b.update_from(ui.project().perf(), LOAD_LINK.epoch());
-            orbit::publish(ui, b);
-        });
+        shared_w.publish(|b| publish(b, ui));
         let stats = audio_stats(stats_r.as_mut());
         // Read after the card work; the toast's first step ignores it.
         let now = controls::ticks();
@@ -541,6 +533,15 @@ fn tend_usb(
         *last_snap = now;
         marker.usb_regs(usb::regs());
     }
+}
+
+/// Every Part, the FX and ORBIT into an audio publish: the loop's and a
+/// load's, one copy in flash.
+#[cfg(not(feature = "sd-probe"))]
+#[inline(never)]
+fn publish(b: &mut chimera_core::instrument::AudioShared, ui: &chimera_core::ui::UiState) {
+    b.update_from(ui.project().perf(), LOAD_LINK.epoch());
+    orbit::publish(ui, b);
 }
 
 /// The audio's latest stats with the stack's high-water mark, as the

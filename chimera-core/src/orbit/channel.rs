@@ -19,6 +19,8 @@ const SLOT: u8 = LOG as u8 - 1;
 const _: () = assert!(LOG.is_power_of_two() && 256 % LOG == 0);
 // The byte map below is laid out for these.
 const _: () = assert!(SCENES == 8 && RINGS == 5 && MAX_SEGS == 8);
+// `SceneCmd::of_byte` takes the slot from the low bits past `CUE_FIRST`.
+const _: () = assert!(KEEP_FIRST - CUE_FIRST == SCENES as u8);
 
 /// A position in the log. Wraps; compared only within `LOG` of another.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
@@ -105,6 +107,19 @@ pub enum SceneCmd {
     Cue(SceneIdx),
     /// Play `live` as slot n: SCENE turned back.
     Keep(SceneIdx),
+}
+
+impl SceneCmd {
+    /// A `Cue` or `Keep` byte, by range: they sit `SCENES` apart, so the
+    /// low bits past `CUE_FIRST` are the slot. `None` for any other.
+    const fn of_byte(b: u8) -> Option<SceneCmd> {
+        let n = SceneIdx::ALL[b.wrapping_sub(CUE_FIRST) as usize & (SCENES - 1)];
+        match b {
+            CUE_FIRST..=CUE_LAST => Some(SceneCmd::Cue(n)),
+            KEEP_FIRST..=KEEP_LAST => Some(SceneCmd::Keep(n)),
+            _ => None,
+        }
+    }
 }
 
 impl From<SceneCmd> for Cmd {
@@ -266,6 +281,9 @@ pub struct Batch {
 }
 
 impl Batch {
+    /// `receive`'s fold, one `Cmd` at a time: the reference it is tested
+    /// against.
+    #[cfg(test)]
     fn fold(&mut self, c: Cmd) {
         match c {
             Cmd::TogglePlay => self.flip = !self.flip,
@@ -296,10 +314,33 @@ pub fn receive_each(log: &CmdLog, applied: &mut Seq, mut f: impl FnMut(Cmd)) {
     *applied = log.head;
 }
 
-/// The runner's side: folds the gap into one `Batch`.
+/// The runner's side: folds the gap into one `Batch`, as `Batch::fold`
+/// does `receive_each`'s commands, decoding each byte by its range in
+/// place: no `Cmd` between costs flash.
 pub fn receive(log: &CmdLog, applied: &mut Seq) -> Batch {
     let mut b = Batch::default();
-    receive_each(log, applied, |c| b.fold(c));
+    let n = log.head.since(*applied);
+    debug_assert!(n as usize <= LOG, "a gap of {n} outruns the log");
+    let mut s = *applied;
+    for _ in 0..n.min(LOG as u8) {
+        s = s.next();
+        let c = log.ring[s.slot()];
+        match c {
+            TOGGLE_PLAY => b.flip = !b.flip,
+            CUE_FIRST..=KEEP_LAST => b.scene = SceneCmd::of_byte(c),
+            ARM_RING_FIRST..=ARM_RING_LAST => {
+                b.arm = Some(Capture::Ring(
+                    RingIdx::ALL[usize::from(c - ARM_RING_FIRST) % RINGS],
+                ));
+            }
+            ARM_SEG_FIRST..=ARM_SEG_LAST => b.arm = Some(Capture::Segment(c - ARM_SEG_FIRST)),
+            DISARM => b.arm = Some(Capture::Off),
+            RHYTHM_FIRST..=RHYTHM_LAST => b.rhythm.0 |= c - (RHYTHM_FIRST - 1),
+            NOTES_FIRST..=NOTES_LAST => b.notes.0 |= c - (NOTES_FIRST - 1),
+            _ => debug_assert!(false, "no command at seq {}", s.0),
+        }
+    }
+    *applied = log.head;
     b
 }
 
@@ -451,12 +492,8 @@ impl Channel {
 
     /// The scene command in the log and not yet landed.
     pub fn awaiting(&self) -> Option<SceneCmd> {
-        if self.flags & SENT == 0 {
-            return None;
-        }
-        match self.scene.map(Cmd8::cmd) {
-            Some(Cmd::Cue(n)) => Some(SceneCmd::Cue(n)),
-            Some(Cmd::Keep(n)) => Some(SceneCmd::Keep(n)),
+        match self.scene {
+            Some(c) if self.flags & SENT != 0 => SceneCmd::of_byte(c.0.get()),
             _ => None,
         }
     }
@@ -509,6 +546,7 @@ mod tests {
     use crate::orbit::runner::Capture;
     use crate::orbit::scene::SceneIdx;
     use core::mem::size_of;
+    use std::vec;
     use std::vec::Vec;
 
     fn every_cmd() -> Vec<Cmd> {
@@ -759,6 +797,35 @@ mod tests {
             let l = ch.loaded();
             assert_eq!(l.since(old) as usize, (LOG + 1) * k % 256);
             assert_eq!(ch.ack(old), k == 28, "{k} loads");
+        }
+    }
+
+    /// `receive`'s in-place decode folds every byte as `fold` folds its
+    /// `Cmd`: each command alone, then random runs of eight.
+    #[test]
+    fn receive_folds_like_each() {
+        let all = every_cmd();
+        let mut x = 0x9E37_79B9u32;
+        let mut pick = || {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            all[x as usize % all.len()]
+        };
+        let runs = all
+            .iter()
+            .map(|&c| vec![c])
+            .chain((0..4000).map(|_| (0..LOG).map(|_| pick()).collect()));
+        for run in runs {
+            let mut log = CmdLog::EMPTY;
+            for &c in &run {
+                log.push(c.into());
+            }
+            let (mut a, mut b) = (Seq::ZERO, Seq::ZERO);
+            let mut want = Batch::default();
+            receive_each(&log, &mut a, |c| want.fold(c));
+            assert_eq!(receive(&log, &mut b), want, "{run:?}");
+            assert_eq!(a, b);
         }
     }
 

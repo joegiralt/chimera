@@ -5,7 +5,6 @@
 
 use chimera_core::instrument::{AudioShared, Instrument};
 use chimera_core::note_queue::{NoteEvent, RealTime};
-use chimera_core::project::Project;
 use chimera_core::ui::UiState;
 use stm32h7xx_hal::gpio::{Output, PB1, PushPull};
 
@@ -21,10 +20,8 @@ pub use off::*;
 #[cfg(feature = "orbit")]
 mod on {
     use super::*;
-    use chimera_core::orbit::clock::SyncMode;
     use chimera_core::orbit::runner::{OrbitRunner, OrbitView};
     use chimera_core::triple::{Reader, Writer};
-    use chimera_core::ui::orbit::OrbitUi;
 
     use crate::audio::engine::SAMPLE_RATE_NZ;
 
@@ -91,20 +88,6 @@ mod on {
         }
     }
 
-    /// What a card load's publish needs of the UI, copied out while the
-    /// card work borrows it.
-    pub struct Snap(OrbitUi, SyncMode);
-
-    impl Snap {
-        pub fn of(ui: &UiState) -> Snap {
-            Snap(*ui.orbit(), ui.midi().sync)
-        }
-
-        pub fn publish(&self, p: &Project, b: &mut AudioShared) {
-            self.0.publish(p.orbit(), self.1, &mut b.orbit);
-        }
-    }
-
     /// ORBIT's settings into an audio publish.
     pub fn publish(ui: &UiState, b: &mut AudioShared) {
         ui.publish_orbit(&mut b.orbit);
@@ -144,16 +127,6 @@ mod off {
         pub fn see(&mut self, _: &mut UiState) {}
 
         pub fn beat(&mut self, _: &UiState) {}
-    }
-
-    pub struct Snap;
-
-    impl Snap {
-        pub fn of(_: &UiState) -> Snap {
-            Snap
-        }
-
-        pub fn publish(&self, _: &Project, _: &mut AudioShared) {}
     }
 
     pub fn publish(_: &UiState, _: &mut AudioShared) {}

@@ -9,17 +9,22 @@ mod common;
 mod screen;
 
 use chimera_core::block::Block;
+use chimera_core::orbit::RingIdx;
+use chimera_core::orbit::channel::{SceneCmd, Seq as LogSeq};
+use chimera_core::orbit::chords::harmony;
+use chimera_core::orbit::clock::Bpm;
 use chimera_core::orbit::engine::{OrbitEvent, OrbitKind};
+use chimera_core::orbit::rng::Rng;
 use chimera_core::orbit::runner::OrbitView;
 use chimera_core::orbit::scene::{Scene, SceneIdx, SceneRing};
 use chimera_core::part::{Held, LiveSnap};
 use chimera_core::project::{Confirmed, PartId, SceneSlot};
 use chimera_core::ui::UiState;
 use chimera_core::ui::busy::ToastStep;
-use chimera_core::ui::orbit::{ORBIT_SCN, OrbitCell};
+use chimera_core::ui::orbit::{ORBIT_ORB, ORBIT_SCN, OrbitCell};
 use chimera_core::ui::region::{RegionData, RegionKind};
-use chimera_hal::ButtonId::{B2, Edit, Menu, Plus, Seq};
-use chimera_hal::EncoderId::{A, B};
+use chimera_hal::ButtonId::{B2, B6, Edit, Menu, Plus, Seq};
+use chimera_hal::EncoderId::{A, B, E};
 use chimera_theory::{Note, PitchClass, SnapTo, snap};
 use common::orbit::{OrbitRig, secs};
 use screen::{Input, ShellRig, feed, hold, tap};
@@ -155,7 +160,7 @@ fn scene_switch_lands_on_the_loop() {
     );
     rig.block();
     assert_eq!(rig.view().playing, S[0]);
-    assert_eq!(rig.view().queued, Some(S[1]));
+    assert_eq!(rig.view().cue, Some(S[1]));
     assert_eq!(
         rig.view().chord.root(),
         PitchClass::A,
@@ -169,7 +174,7 @@ fn scene_switch_lands_on_the_loop() {
         rig.block();
     }
     // The boundary block: the new scene's step 0s, snapped to C.
-    assert_eq!((rig.view().playing, rig.view().queued), (S[1], None));
+    assert_eq!((rig.view().playing, rig.view().cue), (S[1], None));
     assert_eq!(rig.view().chord.root(), PitchClass::C);
     let ons: Vec<_> = rig
         .sent
@@ -198,7 +203,7 @@ fn scene_switch_lands_on_the_loop() {
     rig.run(4);
     rig.ui.queue(S[0], rig.project.orbit_mut());
     rig.run(2);
-    assert_eq!((rig.view().playing, rig.view().queued), (S[0], None));
+    assert_eq!((rig.view().playing, rig.view().cue), (S[0], None));
     assert_eq!(rig.project.orbit().current(), S[0]);
 }
 
@@ -307,11 +312,11 @@ fn turning_back_cancels_the_switch() {
     rig.ui.queue(S[1], rig.project.orbit_mut());
     assert_eq!(rig.project.orbit().live, before, "queuing copies nothing");
     rig.run(2);
-    assert_eq!(rig.view().queued, Some(S[1]));
+    assert_eq!(rig.view().cue, Some(S[1]));
     rig.ui.queue(S[0], rig.project.orbit_mut());
     assert_eq!(rig.project.orbit().queued(), None, "cancelled");
     rig.run(2);
-    assert_eq!((rig.view().playing, rig.view().queued), (S[0], None));
+    assert_eq!((rig.view().playing, rig.view().cue), (S[0], None));
     let loops = rig.view().loops;
     let mut last = drift(rig.view());
     while rig.view().loops == loops {
@@ -328,20 +333,21 @@ fn turning_back_cancels_the_switch() {
 }
 
 /// A view from before a switch lands nothing: away to 2 and landed, back
-/// to 1, a stale view playing 1 (an old rev) leaves 1 queued; only the
-/// rev's own view lands it. Landing on `playing == queued` would not.
+/// to 1, a stale view playing 1 (one that hasn't applied the switch back)
+/// leaves 1 queued; only a view that has applied it lands it. Landing on
+/// `playing == queued` would not.
 #[test]
 fn a_stale_view_lands_nothing() {
     let mut ui = in_orbit();
     to_scn(&mut ui);
-    let view = |playing: usize, rev: u16| OrbitView {
+    let view = |playing: usize, acked: LogSeq| OrbitView {
         playing: S[playing],
-        scene_rev: rev,
+        acked,
         ..OrbitView::default()
     };
-    let stale = ui.orbit().scene_rev;
     feed(&mut ui, Input::turn(A, 1));
-    ui.set_orbit_view(&view(1, ui.orbit().scene_rev));
+    let stale = ui.orbit().log().head();
+    ui.set_orbit_view(&view(1, ui.orbit().log().head()));
     assert_eq!(ui.project().orbit().current(), S[1]);
     feed(&mut ui, Input::turn(A, -1));
     assert_eq!(ui.project().orbit().queued(), Some(S[0]));
@@ -352,7 +358,7 @@ fn a_stale_view_lands_nothing() {
         "stale: not landed"
     );
     assert_eq!(ui.project().orbit().current(), S[1]);
-    ui.set_orbit_view(&view(0, ui.orbit().scene_rev));
+    ui.set_orbit_view(&view(0, ui.orbit().log().head()));
     assert_eq!(ui.project().orbit().current(), S[0]);
 }
 
@@ -369,25 +375,25 @@ fn a_switch_turned_back_lands_nothing() {
     rig.idle(1);
     let live = rig.ui.project().orbit().live;
     let (loops, from) = (rig.view().loops, rig.views.len());
-    let rev = rig.view().scene_rev;
     rig.frame(Input::turn(A, 1), 1);
     for _ in 0..20 {
         rig.idle(1);
     }
-    assert_eq!(rig.view().queued, Some(S[1]), "the runner holds it");
+    assert_eq!(rig.view().cue, Some(S[1]), "the runner holds it");
     rig.frame(Input::turn(A, -1), 1);
     assert_eq!(rig.view().loops, loops, "back before the boundary");
     assert_eq!(rig.ui.project().orbit().queued(), None);
-    // Taken at once as a cancel, not cued as a re-landing of 1: the view
-    // stays on the rev 1 was adopted under.
-    assert_ne!(rig.ui.orbit().scene_rev, rev);
-    assert_eq!((rig.view().queued, rig.view().scene_rev), (None, rev));
+    // Taken at once as a cancel, not cued as a re-landing of 1: a `Keep`,
+    // applied with nothing left to adopt.
+    assert_eq!(rig.ui.orbit().awaiting(), Some(SceneCmd::Keep(S[0])));
+    let head = rig.ui.orbit().log().head();
+    assert_eq!((rig.view().cue, rig.view().acked), (None, head));
     while rig.view().loops < loops + 2 {
         rig.idle(1);
         let song = rig.ui.project().orbit();
         assert_eq!((song.current(), song.queued()), (S[0], None));
-        // No relaunch at a boundary: no rev is adopted there.
-        assert_eq!((rig.view().queued, rig.view().scene_rev), (None, rev));
+        // No relaunch at a boundary: nothing is cued there.
+        assert_eq!(rig.view().cue, None);
     }
     assert!(rig.views[from..].iter().all(|v| v.playing == S[0]));
     assert_eq!(rig.ui.project().orbit().live, live, "nothing landed");
@@ -395,23 +401,23 @@ fn a_switch_turned_back_lands_nothing() {
 
 /// Through the real triple buffers, stopped: the runner adopts 2 between
 /// the UI's view read and its keys, which turn SCENE back to 1 (a cancel,
-/// as the UI sees it) and then on to 2 again, under a new rev. The views
-/// that follow read `playing` 2 under the old rev: stale, they land
-/// nothing. Only the new rev's view lands 2.
+/// as the UI sees it) and then on to 2 again, a newer command. The views
+/// that follow read `playing` 2 with the newer commands unapplied: stale,
+/// they land nothing. Only a view that has applied them lands 2.
 #[test]
 fn a_stale_view_through_the_buffers_lands_nothing() {
     let mut ui = in_orbit();
     to_scn(&mut ui);
     let mut rig = ShellRig::new(ui);
     rig.frame(Input::turn(A, 1), 0);
-    let r1 = rig.ui.orbit().scene_rev;
+    let r1 = rig.ui.orbit().log().head();
     rig.late(1, Input::turn(A, -1), 0);
-    assert_eq!((rig.view().playing, rig.view().scene_rev), (S[1], r1));
+    assert_eq!((rig.view().playing, rig.view().acked), (S[1], r1));
     assert_eq!(rig.ui.project().orbit().current(), S[0], "unseen");
     assert_eq!(rig.ui.project().orbit().queued(), None, "cancelled");
     rig.frame(Input::turn(A, 1), 0);
     assert_eq!(rig.ui.project().orbit().queued(), Some(S[1]));
-    assert_ne!(rig.ui.orbit().scene_rev, r1);
+    assert_ne!(rig.ui.orbit().log().head(), r1);
     for _ in 0..3 {
         rig.idle(0);
         let song = rig.ui.project().orbit();
@@ -421,7 +427,7 @@ fn a_stale_view_through_the_buffers_lands_nothing() {
     rig.idle(0);
     let song = rig.ui.project().orbit();
     assert_eq!((song.current(), song.queued()), (S[1], None), "its own rev");
-    assert_eq!(rig.view().scene_rev, rig.ui.orbit().scene_rev);
+    assert_eq!(rig.view().acked, rig.ui.orbit().log().head());
 }
 
 /// The cancel race (ADR 0077): playing, the runner adopts 2 at the
@@ -498,14 +504,14 @@ fn requeued_in_the_cancel_window_lands_on_the_next_loop() {
 
     let start = at(&rig);
     rig.frame(Input::turn(A, 1), 1);
-    let r1 = rig.ui.orbit().scene_rev;
+    let r1 = rig.ui.orbit().log().head();
     while at(&rig) < start + len - 10 {
         rig.idle(1);
     }
     rig.late(20, Input::turn(A, -1), 0);
-    assert_eq!((rig.view().playing, rig.view().scene_rev), (S[1], r1));
+    assert_eq!((rig.view().playing, rig.view().acked), (S[1], r1));
     rig.frame(Input::turn(A, 1), 1);
-    let r3 = rig.ui.orbit().scene_rev;
+    let r3 = rig.ui.orbit().log().head();
     assert_ne!(r3, r1);
     let song = rig.ui.project().orbit();
     assert_eq!((song.current(), song.queued()), (S[0], Some(S[1])));
@@ -513,17 +519,13 @@ fn requeued_in_the_cancel_window_lands_on_the_next_loop() {
     let loops = rig.view().loops;
     while rig.view().loops == loops {
         let v = rig.view();
-        assert_eq!((v.playing, v.scene_rev, v.queued), (S[1], r1, Some(S[1])));
+        assert_eq!((v.playing, v.acked, v.cue), (S[1], r3, Some(S[1])));
         let song = rig.ui.project().orbit();
         assert_eq!((song.current(), song.queued()), (S[0], Some(S[1])), "stale");
         rig.idle(1);
     }
     let v = rig.view();
-    assert_eq!(
-        (v.playing, v.scene_rev, v.queued),
-        (S[1], r3, None),
-        "adopted"
-    );
+    assert_eq!((v.playing, v.acked, v.cue), (S[1], r3, None), "adopted");
     rig.idle(1);
     let song = rig.ui.project().orbit();
     assert_eq!((song.current(), song.queued()), (S[1], None));
@@ -542,7 +544,7 @@ fn save_follows_the_playing_scene() {
     feed(&mut ui, Input::turn(A, 2));
     let v = OrbitView {
         playing: S[2],
-        scene_rev: ui.orbit().scene_rev,
+        acked: ui.orbit().log().head(),
         ..OrbitView::default()
     };
     ui.set_orbit_view(&v);
@@ -550,7 +552,8 @@ fn save_follows_the_playing_scene() {
 
     let mut o = OrbitUi::new();
     o.save = Some(S[4]);
-    o.loaded(1);
+    let mut song = chimera_core::orbit::scene::OrbitSong::NEW;
+    o.loaded(1, &mut song);
     assert_eq!(o.save, None);
 }
 
@@ -576,12 +579,12 @@ fn save_captures_the_drift() {
 
     to_scn(&mut rig.ui);
     rig.frame(Input::turn(A, 1), 1);
-    rig.until(|v| v.playing == S[1] && v.queued.is_none());
+    rig.until(|v| v.playing == S[1] && v.cue.is_none());
     rig.frame(Input::turn(A, -1), 1);
     let loops = rig.view().loops;
     rig.until(|v| v.loops != loops);
     let v = rig.view();
-    assert_eq!((v.playing, v.queued), (S[0], None));
+    assert_eq!((v.playing, v.cue), (S[0], None));
     assert_eq!(drift(&v), scene_drift(&saved), "the slot plays its drift");
 }
 
@@ -700,8 +703,8 @@ fn the_header_reads_the_playing_scene() {
     // Stopped: the runner adopts at once; its view lands it.
     let v = OrbitView {
         playing: S[2],
-        queued: None,
-        scene_rev: ui.orbit().scene_rev,
+        cue: None,
+        acked: ui.orbit().log().head(),
         ..OrbitView::default()
     };
     ui.set_orbit_view(&v);
@@ -787,11 +790,10 @@ fn a_clear_adopted_then_cancelled_leaves_live_alone() {
     rig.run_loops(1);
     let live = rig.project.orbit().live;
     let yes = Confirmed::<SceneSlot>::unasked(rig.project.orbit(), S[0]);
-    rig.ui
-        .requeueing(rig.project.orbit_mut(), |s| s.clear_scene(yes))
-        .expect("nothing queued");
-    let rev = rig.ui.scene_rev;
-    while rig.view().scene_rev != rev {
+    rig.song().clear_scene(yes).expect("nothing queued");
+    rig.ui.issue_scene(rig.project.orbit());
+    rig.card_read(1);
+    while !(rig.view().acked == rig.ui.log().head() && rig.view().cue.is_none()) {
         rig.card_read(1);
     }
     rig.ui.queue(S[1], rig.project.orbit_mut());
@@ -804,5 +806,445 @@ fn a_clear_adopted_then_cancelled_leaves_live_alone() {
     for (a, b) in song.live.rings.iter().zip(&live.rings) {
         assert_eq!(a.ring.pool, b.ring.pool, "no foreign pool");
         assert_eq!(a.ring.notes, b.ring.notes, "no foreign notes");
+    }
+}
+
+/// A frame's blocks in the property tests: a few, so the runner keeps up.
+fn some_blocks(rng: &mut Rng) -> usize {
+    rng.below(4) as usize
+}
+
+/// SETTINGS › ORBIT's `row` (CLEAR 1, RELOAD 3) answered yes, if it asks,
+/// through the rig's frames; then back into ORBIT on ORB.
+fn settings_scene_act(rig: &mut ShellRig, row: usize) {
+    while rig.ui.location().orbit().is_some() {
+        tap(&mut rig.ui, Menu);
+    }
+    screen::to_leaf(&mut rig.ui, &["ORBIT"]);
+    screen::plus(&mut rig.ui, row);
+    rig.tap(Edit);
+    if rig.ui.prompt_open() {
+        rig.tap(Seq);
+    }
+    let _ = rig.ui.step_toast(0);
+    while rig.ui.in_settings() {
+        tap(&mut rig.ui, Menu);
+    }
+    hold(&mut rig.ui, Seq);
+    assert_eq!(rig.ui.page_def().id, ORBIT_ORB.id);
+}
+
+/// § 4.3: random SCENE, CLEAR, RELOAD and B6, at random frame-to-block
+/// ratios and with the audio interrupting frames. With no drift (MUTATE
+/// 0), `live` changes only by the UI's own acts; after two quiet loops
+/// the song plays what the runner plays, nothing waits, the runner is in
+/// sync (a knob reaches it) and `live`'s rings are the runner's.
+#[test]
+fn scenes_converge_after_any_interleaving() {
+    const STEPS: usize = 300;
+    for seed in 1..=4u32 {
+        let mut ui = in_orbit();
+        {
+            let song = ui.project_mut().orbit_mut();
+            song.bpm = Bpm::clamped(Bpm::MAX);
+            let mut b = song.live;
+            b.chords.tonic = PitchClass::C;
+            b.rings[0].set(SceneRing::STEPS, 7.0);
+            song.live = b;
+            let c = Confirmed::<SceneSlot>::unasked(song, S[1]);
+            song.overwrite_scene(c).expect("nothing queued");
+            song.live = *song.scene(S[0]);
+        }
+        let mut rig = ShellRig::new(ui);
+        let mut rng = Rng::new(seed);
+        for step in 0..STEPS {
+            let (first, then) = (some_blocks(&mut rng), some_blocks(&mut rng));
+            match rng.below(10) {
+                0..=4 => {
+                    let d = [-2, -1, 1, 2][rng.below(4) as usize];
+                    rig.late(first, Input::turn(E, d), then);
+                }
+                5 => {
+                    rig.late(first, Input::press(B6), then);
+                    rig.frame(Input::release(B6), some_blocks(&mut rng));
+                }
+                6 => settings_scene_act(&mut rig, 1),
+                7 => settings_scene_act(&mut rig, 3),
+                _ => {
+                    let song = rig.ui.project().orbit();
+                    let (live, at) = (song.live, (song.current(), song.queued()));
+                    rig.late(first, Input::default(), then);
+                    let song = rig.ui.project().orbit();
+                    if (song.current(), song.queued()) == at {
+                        assert_eq!(
+                            song.live, live,
+                            "seed {seed} step {step}: no act, no change"
+                        );
+                    }
+                }
+            }
+        }
+        // Two quiet loops, or a few frames stopped.
+        if rig.view().running {
+            let loops = rig.view().loops;
+            while rig.view().loops < loops + 2 {
+                rig.idle(25);
+            }
+        }
+        for _ in 0..4 {
+            rig.idle(1);
+        }
+        let v = rig.view();
+        let song = rig.ui.project().orbit();
+        assert_eq!(song.current(), v.playing, "seed {seed}");
+        assert_eq!((song.queued(), v.cue), (None, None), "seed {seed}");
+        assert_eq!(rig.ui.orbit().awaiting(), None, "seed {seed}");
+        assert_eq!(scene_drift(&song.live), drift(&v), "seed {seed}");
+        // In sync: a knob reaches the runner.
+        let live = &mut rig.ui.project_mut().orbit_mut().live;
+        live.chords.tonic = if live.chords.tonic == PitchClass::E {
+            PitchClass::G
+        } else {
+            PitchClass::E
+        };
+        rig.idle(1);
+        rig.idle(1);
+        let v = rig.view();
+        let chords = rig.ui.project().orbit().live.chords;
+        assert_eq!(
+            v.chord,
+            harmony(&chords, v.seg as usize).chord,
+            "seed {seed}"
+        );
+    }
+}
+
+/// Review Focus 1: the loop boundary falls between the UI's view read and
+/// its SCENE turn, so the switch waits a loop on a drift the UI has not
+/// absorbed. RHYTHM and ORB draw the runner's hits all the while, never
+/// the scene's bare ones.
+#[test]
+fn rhythm_draws_the_drift_while_a_switch_waits() {
+    use chimera_core::ui::orbit::draw::OrbitFrame;
+    let mut ui = in_orbit();
+    for r in &mut ui.project_mut().orbit_mut().live.rings {
+        r.set(SceneRing::MUTATE, 100.0);
+    }
+    let mut rig = ShellRig::new(ui);
+    rig.b6();
+    rig.until(|v| v.running && v.loops >= 2);
+    let at = |rig: &ShellRig| rig.views.len();
+    let loops = rig.view().loops;
+    rig.until(|v| v.loops != loops);
+    let start = at(&rig);
+    let loops = rig.view().loops;
+    rig.until(|v| v.loops != loops);
+    let len = at(&rig) - start;
+    let start = at(&rig);
+    while at(&rig) < start + len - 10 {
+        rig.idle(1);
+    }
+    let loops = rig.view().loops;
+    rig.late(20, Input::turn(E, 1), 1);
+    assert_ne!(rig.view().loops, loops, "the boundary fell in the frame");
+    assert_eq!(rig.ui.project().orbit().queued(), Some(S[1]));
+    let loops = rig.view().loops;
+    let mut drifted = false;
+    while rig.view().loops == loops {
+        let (song, o) = (rig.ui.project().orbit(), rig.ui.orbit());
+        let f = OrbitFrame::new(song, o);
+        for r in chimera_core::orbit::RingIdx::ALL {
+            let seen = o.status.rings[r.get() as usize].hits;
+            assert_eq!(f.hits(r), seen, "ring {} draws the drift", r.get() + 1);
+            drifted |= song.live.rings[r.get() as usize].ring.hits_mask() != seen;
+        }
+        rig.idle(1);
+    }
+    assert!(drifted, "the boundary moved a hit `live` hasn't taken");
+}
+
+/// Review Focus 3: SCENE spun over seven slots and back while the runner
+/// stalls, more commands than the log holds. Only the last slot lands,
+/// and none between ever plays.
+#[test]
+fn a_scene_spin_during_a_stall_lands_only_the_last() {
+    let mut rig = ShellRig::new(in_orbit());
+    rig.b6();
+    rig.until(|v| v.running && v.loops >= 1);
+    let loops = rig.view().loops;
+    rig.until(|v| v.loops != loops);
+    let from = rig.views.len();
+    for d in [1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1] {
+        rig.frame(Input::turn(E, d), 0);
+    }
+    for _ in 0..8 {
+        rig.idle(0);
+    }
+    assert_eq!(rig.ui.project().orbit().queued(), Some(S[2]));
+    let loops = rig.view().loops;
+    rig.until(|v| v.loops != loops);
+    rig.idle(1);
+    assert!(
+        rig.views[from..]
+            .iter()
+            .all(|v| v.playing == S[0] || v.playing == S[2]),
+        "no slot between plays"
+    );
+    let song = rig.ui.project().orbit();
+    assert_eq!((song.current(), song.queued()), (S[2], None));
+}
+
+/// Review Focus 4: stopped under SYNC EXT, SCENE → 2 is published and a
+/// MIDI Start reaches the block that reads it: ORBIT starts in scene 2,
+/// its slot whole.
+#[test]
+fn a_daw_start_lands_the_waiting_switch() {
+    use chimera_core::note_queue::RealTime;
+    let mut rig = ShellRig::new(in_orbit());
+    rig.idle(2);
+    assert!(!rig.view().running);
+    assert_eq!(
+        rig.ui.midi().sync,
+        chimera_core::orbit::clock::SyncMode::Ext
+    );
+    rig.frame(Input::turn(E, 1), 0);
+    let now = rig.runner.now();
+    rig.runner.realtime(0, RealTime::Start, now);
+    rig.blocks(1);
+    let v = rig.view();
+    assert!(v.running, "the DAW's Start plays");
+    assert_eq!(v.playing, S[1]);
+    assert_eq!(drift(&v), scene_drift(&slot(&rig.ui, 1)), "slot 2 whole");
+}
+
+/// The newest edit of one ring's rhythm or notes, as `live` holds it.
+struct Pending {
+    ring: usize,
+    rhythm: bool,
+    want: SceneRing,
+    /// The log's head once it was flushed.
+    target: LogSeq,
+    /// The first view after it.
+    from: usize,
+}
+
+impl Pending {
+    fn holds(&self, r: &SceneRing) -> bool {
+        match self.rhythm {
+            true => r.ring.hits_mask() == self.want.ring.hits_mask(),
+            false => r.ring.pool == self.want.ring.pool && r.ring.notes == self.want.ring.notes,
+        }
+    }
+
+    fn played(&self, v: &OrbitView) -> bool {
+        let r = &v.rings[self.ring];
+        match self.rhythm {
+            true => r.hits == self.want.ring.hits_mask(),
+            false => r.pool == self.want.ring.pool && r.notes == self.want.ring.notes,
+        }
+    }
+
+    /// The first view at or past its seq.
+    fn acked(&self, views: &[OrbitView]) -> Option<usize> {
+        (self.from..views.len()).find(|&i| views[i].acked.since(self.target) < 128)
+    }
+}
+
+/// § 4.3: MUTATE 100 and random NOTE, STEPS and CLEAR edits, the audio
+/// interrupting frames. The block that applies an edit plays it (unless a
+/// boundary moved it there), and until the UI sees it applied, no drift
+/// overwrites it in `live`.
+#[test]
+fn edits_never_lost_to_drift() {
+    const STEPS: usize = 1500;
+    for seed in 1..=4u32 {
+        let mut ui = in_orbit();
+        {
+            let song = ui.project_mut().orbit_mut();
+            song.bpm = Bpm::clamped(Bpm::MAX);
+            song.live.chords.bars = chimera_core::orbit::chords::Bars::ONE;
+            for r in &mut song.live.rings {
+                r.set(SceneRing::MUTATE, 100.0);
+            }
+        }
+        let mut rig = ShellRig::new(ui);
+        rig.b6();
+        let mut rng = Rng::new(seed);
+        let mut edits: Vec<Pending> = Vec::new();
+        let mut checked = 0;
+        for step in 0..STEPS {
+            let edited = (rng.below(3) == 0).then(|| {
+                let r = rng.below(5) as usize;
+                let song = rig.ui.project_mut().orbit_mut();
+                let kind = rng.below(4);
+                match kind {
+                    0 => song.live.rings[r].set(SceneRing::STEPS, rng.below(32) as f32),
+                    1 => {
+                        let n = Note::new(36 + rng.below(60) as u8).unwrap();
+                        song.live.rings[r].set_chip(0, n);
+                    }
+                    2 => song.live.rings[r].clear(),
+                    _ => song.live.scatter(RingIdx::ALL[r], rng.below(256) as u8),
+                }
+                (r, kind == 0, song.live.rings[r])
+            });
+            let seen = rig.views.len();
+            let (first, then) = (rng.below(3) as usize, 1 + rng.below(12) as usize);
+            rig.late(first, Input::default(), then);
+            if let Some((ring, rhythm, want)) = edited {
+                edits.retain(|e| (e.ring, e.rhythm) != (ring, rhythm));
+                edits.push(Pending {
+                    ring,
+                    rhythm,
+                    want,
+                    target: rig.ui.orbit().log().head(),
+                    from: seen,
+                });
+            }
+            let live = rig.ui.project().orbit().live;
+            edits.retain(|e| {
+                let acked = e.acked(&rig.views);
+                // The UI read the newest view at its frame's start.
+                let seen_by_ui = acked.is_some_and(|i| i < seen);
+                if !seen_by_ui {
+                    assert!(
+                        e.holds(&live.rings[e.ring]),
+                        "seed {seed} step {step}: ring {} lost its edit",
+                        e.ring + 1
+                    );
+                }
+                if let Some(i) = acked
+                    && i > 0
+                    && rig.views[i].loops == rig.views[i - 1].loops
+                {
+                    assert!(
+                        e.played(&rig.views[i]),
+                        "seed {seed} step {step}: ring {} applied without its edit",
+                        e.ring + 1
+                    );
+                    checked += 1;
+                }
+                !seen_by_ui
+            });
+        }
+        assert!(checked > 100, "seed {seed}: {checked} edits checked");
+    }
+}
+
+/// § 4.3: random acts (LEARN, keys, NOTE edits, B6) and loads of NEW, with
+/// blocks the UI never sees before a load (its card read). After each
+/// load: no capture or drift from before it reaches `live`, ORBIT is
+/// stopped, and once a view from the load arrives both sides are in sync
+/// (nothing awaits; a knob reaches the runner).
+#[test]
+fn loads_void_everything_before() {
+    use chimera_core::note_queue::{NoteEvent, NoteKind};
+    use chimera_core::orbit::chords::Bars;
+    use chimera_core::{MidiChannel, MidiNote, Velocity};
+    use chimera_hal::EncoderId::{D, F};
+    let key = |rig: &mut ShellRig, n: u8, on: bool| {
+        rig.runner.live(NoteEvent {
+            channel: MidiChannel::new(1).unwrap(),
+            note: MidiNote::new(n).unwrap(),
+            kind: if on {
+                NoteKind::On(Velocity::DEFAULT)
+            } else {
+                NoteKind::Off
+            },
+        });
+    };
+    for seed in 1..=4u32 {
+        let mut ui = Box::new(UiState::new());
+        screen::to_ring(&mut ui, 2);
+        tap(&mut ui, Edit);
+        tap(&mut ui, Edit);
+        let mut rig = ShellRig::new(ui);
+        let mut rng = Rng::new(seed);
+        for round in 0..12u32 {
+            {
+                let song = rig.ui.project_mut().orbit_mut();
+                song.bpm = Bpm::clamped(Bpm::MAX);
+                song.live.chords.bars = Bars::ONE;
+                for r in &mut song.live.rings {
+                    r.set(SceneRing::MUTATE, 100.0);
+                }
+            }
+            if !rig.view().running {
+                rig.b6();
+            }
+            let mut held = Vec::new();
+            for _ in 0..rng.below(60) {
+                let blocks = some_blocks(&mut rng);
+                match rng.below(6) {
+                    0 => rig.frame(Input::turn(D, 1), blocks),
+                    1 => rig.frame(Input::turn(F, 1 + rng.below(3) as i8), blocks),
+                    2 => {
+                        let n = 48 + rng.below(24) as u8;
+                        key(&mut rig, n, true);
+                        held.push(n);
+                        rig.idle(blocks);
+                    }
+                    3 => {
+                        for n in held.drain(..) {
+                            key(&mut rig, n, false);
+                        }
+                        rig.idle(blocks);
+                    }
+                    _ => rig.idle(blocks),
+                }
+            }
+            // The card read: blocks the UI doesn't see, keys ending in it.
+            rig.blocks(rng.below(700) as usize);
+            if rng.below(2) == 0 {
+                for n in held.drain(..) {
+                    key(&mut rig, n, false);
+                }
+                rig.blocks(rng.below(4) as usize);
+            }
+            rig.load_new();
+            for n in held.drain(..) {
+                key(&mut rig, n, false);
+            }
+            let new = Scene::init();
+            let views = rig.views.len();
+            for _ in 0..2 + rng.below(20) {
+                rig.late(
+                    some_blocks(&mut rng),
+                    Input::default(),
+                    some_blocks(&mut rng),
+                );
+                assert_eq!(
+                    rig.ui.project().orbit().live,
+                    new,
+                    "seed {seed} round {round}: nothing from before the load"
+                );
+                // Once the runner has taken the load: one load a round.
+                let v = rig.view();
+                if v.epoch == round + 1 {
+                    assert!(!v.running, "seed {seed} round {round}: stopped");
+                }
+            }
+            while rig.views.len() == views {
+                rig.idle(1);
+            }
+            rig.idle(1);
+            assert_eq!(rig.ui.orbit().awaiting(), None, "seed {seed} round {round}");
+            assert!(rig.ui.orbit().fresh(), "seed {seed} round {round}");
+            assert_eq!(
+                drift(&rig.view()),
+                scene_drift(&new),
+                "seed {seed} round {round}"
+            );
+            rig.ui.project_mut().orbit_mut().live.chords.tonic = PitchClass::E;
+            rig.idle(1);
+            rig.idle(1);
+            let v = rig.view();
+            let chords = rig.ui.project().orbit().live.chords;
+            assert_eq!(
+                v.chord,
+                harmony(&chords, v.seg as usize).chord,
+                "seed {seed} round {round}: a knob reaches the runner"
+            );
+        }
     }
 }

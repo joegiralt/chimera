@@ -13,11 +13,12 @@ pub use pages::{
 };
 
 use crate::block::Block;
+use crate::orbit::channel::{Channel, CmdLog, SceneCmd};
 use crate::orbit::chords::{Bars, ChordRing};
 use crate::orbit::clock::{Bpm, ClockSource, Phase, Position, SyncMode, step_at};
 use crate::orbit::euclid::HitMask;
 use crate::orbit::runner::{Capture, Captured, OrbitShared, OrbitView, beats_at};
-use crate::orbit::scene::{OrbitSong, Refused, Scene, SceneIdx, SceneRing};
+use crate::orbit::scene::{OrbitSong, Scene, SceneIdx, SceneRing};
 use crate::orbit::{RINGS, RingIdx};
 use crate::project::Project;
 use crate::ui::animation::{AnimatedValue, wrap};
@@ -30,18 +31,13 @@ pub struct RingStatus {
     pub step: u8,
     pub fired: u8,
     pub hits: HitMask,
-    /// The rhythm these hits were played under: an edit not yet played
-    /// draws from the scene.
-    pub rhythm_rev: u8,
 }
 
 /// What the pages draw of the runner's view: none of its notes or pools,
-/// so the UI keeps it whole (`UiState` has a 4 KB guard).
+/// so the UI keeps it whole (`UiState` has a size guard).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OrbitStatus {
     pub running: bool,
-    /// The load the view's runner is on.
-    pub epoch: u32,
     pub source: ClockSource,
     /// The internal BPM, or the MIDI clock's measured one.
     pub bpm: Bpm,
@@ -68,19 +64,16 @@ impl OrbitStatus {
             step: 0,
             fired: 0,
             hits: scene.rings[0].ring.hits_mask(),
-            rhythm_rev: 0,
         }; RINGS];
         let mut i = 0;
         while i < RINGS {
             let r = &scene.rings[i].ring;
             rings[i].step = step_at(Phase::ZERO, r.fill().steps());
             rings[i].hits = r.hits_mask();
-            rings[i].rhythm_rev = scene.rings[i].rhythm_rev;
             i += 1;
         }
         OrbitStatus {
             running: false,
-            epoch: 0,
             source: ClockSource::Internal,
             bpm: Bpm::DEFAULT,
             pos: Position::ZERO,
@@ -95,7 +88,6 @@ impl OrbitStatus {
     pub fn of(v: &OrbitView) -> OrbitStatus {
         OrbitStatus {
             running: v.running,
-            epoch: v.epoch,
             source: v.source,
             bpm: v.bpm,
             pos: v.pos,
@@ -107,7 +99,6 @@ impl OrbitStatus {
                 step: r.step,
                 fired: r.fired,
                 hits: r.hits,
-                rhythm_rev: r.rhythm_rev,
             }),
         }
     }
@@ -195,7 +186,8 @@ impl OrbitAnim {
 }
 
 /// ORBIT's UI state beside the project: the transport, the CHRD, CUSTOM
-/// and NOTES selections, the last view, and what ORB and the header animate of it.
+/// and NOTES selections, the commands to the runner, the last view, and
+/// what ORB and the header animate of it.
 #[derive(Clone, Copy, Debug)]
 pub struct OrbitUi {
     /// CHRD's selected segment.
@@ -211,20 +203,18 @@ pub struct OrbitUi {
     pub capture: Capture,
     /// Bumped by every arming, published with `capture`.
     pub arming: u8,
-    /// The view's capture `count` last taken.
-    pub took: u16,
-    /// Bumped by every switch, published with the scene: the runner
-    /// adopts each once, and a view reporting it lands it.
-    pub scene_rev: u16,
+    /// The view's capture `count` last taken, its low byte.
+    pub took: u8,
     /// SCN's SAVE → n; `None`, the playing scene.
     pub save: Option<SceneIdx>,
-    /// The rev the runner was last seen adopting at the UI's own: only
-    /// a view still on it plays the scene `live` is, and brings drift.
-    pub landed: u16,
-    /// The view's `loops` when the drift was last absorbed.
-    pub loops_seen: u32,
-    /// The project's load: only a view on it brings drift.
-    pub epoch: u32,
+    /// The view's `loops`, its low byte, when the drift was last absorbed.
+    pub loops_seen: u8,
+    /// CLEAR downs, each moving the roll's salt.
+    clears: u8,
+    /// The commands for the runner, and its ack (ADR 0082).
+    pub(super) chan: Channel,
+    /// The project's load: no view from before it is taken.
+    epoch: u32,
     pub status: OrbitStatus,
     pub anim: OrbitAnim,
 }
@@ -239,10 +229,10 @@ impl OrbitUi {
             capture: Capture::Off,
             arming: 0,
             took: 0,
-            scene_rev: 0,
             save: None,
-            landed: 0,
             loops_seen: 0,
+            clears: 0,
+            chan: Channel::new(),
             epoch: 0,
             status: OrbitStatus::IDLE,
             anim: OrbitAnim::new(),
@@ -254,28 +244,51 @@ impl OrbitUi {
     /// blocks (a false START or STOP). The destructure fails to compile
     /// when `OrbitShared` gains a field.
     pub fn publish(&self, song: &OrbitSong, sync_mode: SyncMode, out: &mut OrbitShared) {
+        debug_assert!(song.live.untouched(), "an edit not flushed");
         let OrbitShared {
             presses,
             bpm,
             sync,
-            scene_rev,
-            scene,
             settings,
-            queued,
             next,
+            log,
+            load,
+            synced,
             capture,
             arming,
         } = out;
         *presses = self.presses;
         *bpm = song.bpm;
         *sync = sync_mode;
-        *scene_rev = self.scene_rev;
-        *scene = song.current();
         *settings = song.live;
-        *queued = song.queued();
         *next = *song.scene(song.queued().unwrap_or(song.current()));
+        *log = *self.chan.log();
+        *load = self.chan.load();
+        *synced = self.chan.synced();
         *capture = self.capture;
         *arming = self.arming;
+    }
+
+    /// `live`'s edits since the last harvest, into the outbox.
+    #[inline(never)]
+    fn harvest(&mut self, song: &mut OrbitSong) {
+        let (rhythm, notes) = song.live.harvest();
+        self.chan.edit(rhythm, notes);
+    }
+
+    /// The frame's edits and commands into the log, before its publish.
+    pub fn flush(&mut self, song: &mut OrbitSong) {
+        self.harvest(song);
+        self.chan.flush();
+    }
+
+    /// The song's scene intent as the newest scene command: land the
+    /// queued slot, or play `live` as the playing one.
+    pub fn issue_scene(&mut self, song: &OrbitSong) {
+        self.chan.scene(match song.queued() {
+            Some(q) => SceneCmd::Cue(q),
+            None => SceneCmd::Keep(song.current()),
+        });
     }
 
     /// Capture armed into `to`, anew even if it already was.
@@ -292,26 +305,31 @@ impl OrbitUi {
         }
     }
 
-    /// A project was loaded at `epoch`: views from before it are another
-    /// project's, and a capture armed in the last one is dropped.
-    pub fn loaded(&mut self, epoch: u32) {
+    /// A project was loaded at `epoch`, before its publish: views from
+    /// before it are another project's, every command before it is void,
+    /// and a capture armed in the last one is dropped. The runner takes
+    /// `live` whole, and the playing slot from a `Keep` in the same
+    /// publish. Cold: kept out of the card work.
+    #[inline(never)]
+    pub fn loaded(&mut self, epoch: u32, song: &mut OrbitSong) {
+        // The decode's writes: no edits.
+        song.live.harvest();
+        self.chan.loaded();
+        self.chan.scene(SceneCmd::Keep(song.current()));
+        self.chan.flush();
         self.epoch = epoch;
         self.capture = Capture::Off;
         self.save = None;
     }
 
     /// The view's capture, once, for the song to take (`Scene::take`),
-    /// and capture disarmed; `None` with nothing new, or played before a
-    /// load: on the old project, or while the card was read.
+    /// and capture disarmed; `None` with nothing new.
     pub fn take(&mut self, v: &OrbitView) -> Option<Captured> {
         let c = v.captured;
-        if c.count == self.took {
+        if c.count as u8 == self.took {
             return None;
         }
-        self.took = c.count;
-        if c.epoch != self.epoch {
-            return None;
-        }
+        self.took = c.count as u8;
         // Re-armed since, the same target too: that arming stands.
         if self.arming == c.arming && self.capture == c.target {
             self.capture = Capture::Off;
@@ -319,40 +337,38 @@ impl OrbitUi {
         Some(c)
     }
 
-    /// Takes the runner's latest view; true when its drift is due in the
-    /// song: a view on this project's load, on the scene `live` is
-    /// (`landed`), and a loop gone by (`absorb` takes it from the playing
-    /// scene only).
-    pub fn see(&mut self, v: &OrbitView) -> bool {
-        self.status = OrbitStatus::of(v);
-        let due = v.epoch == self.epoch && v.scene_rev == self.landed && v.loops != self.loops_seen;
-        if due {
-            self.loops_seen = v.loops;
-        }
-        due
-    }
-
-    /// SCENE turned to `s`: queued in the song, and a new rev for the
-    /// runner, which lands it on the loop (at once when stopped); `s` the
-    /// playing scene cancels a waiting switch.
+    /// SCENE turned to `s`: queued in the song, and the switch (or, back
+    /// on the playing scene, its cancel) sent to the runner, which lands
+    /// it on the loop (at once when stopped).
     pub fn queue(&mut self, s: SceneIdx, song: &mut OrbitSong) {
         song.queue(s);
-        self.scene_rev = self.scene_rev.wrapping_add(1);
+        self.issue_scene(song);
     }
 
-    /// `act` on the song (SETTINGS › ORBIT's CLEAR or RELOAD, answered); a
-    /// re-landing it queues gets a new rev.
-    pub fn requeueing(
-        &mut self,
-        song: &mut OrbitSong,
-        act: impl FnOnce(&mut OrbitSong) -> Result<(), Refused>,
-    ) -> Result<(), Refused> {
-        let was = song.queued();
-        act(song)?;
-        if song.queued() != was {
-            self.scene_rev = self.scene_rev.wrapping_add(1);
-        }
-        Ok(())
+    /// CLEAR down's salt: new on every turn, the log flowing or full.
+    /// A fresh UI's first is 0, as `notes_rev` was.
+    pub fn clear_salt(&mut self) -> u8 {
+        let salt = self.clears.wrapping_add(self.chan.log().head().get());
+        self.clears = self.clears.wrapping_add(1);
+        salt
+    }
+
+    /// Every command sent is applied: the view's drift is on top of
+    /// every edit, so the pages may draw it. Out of line: each ring's
+    /// draw asks.
+    #[inline(never)]
+    pub fn fresh(&self) -> bool {
+        self.chan.idle()
+    }
+
+    /// The scene command sent and not yet landed.
+    pub fn awaiting(&self) -> Option<SceneCmd> {
+        self.chan.awaiting()
+    }
+
+    /// The log as the next publish carries it.
+    pub fn log(&self) -> &CmdLog {
+        self.chan.log()
     }
 
     /// SCN's SAVE → n: the slot picked, or the playing one.
@@ -360,23 +376,39 @@ impl OrbitUi {
         self.save.unwrap_or(song.current())
     }
 
-    /// The runner's latest view into the project: a capture taken into the
-    /// song, a switch landed once the view reports this rev adopted, the
-    /// view kept for the pages, and its drift absorbed once a loop.
+    /// The runner's latest view into the project, in one order (ADR
+    /// 0082): the load gate and the ack, the view kept for the pages, a
+    /// capture taken into the song, the newest scene command landed once
+    /// the runner has adopted it, and the drift absorbed once a loop
+    /// while every command is applied.
     pub fn sync(&mut self, v: &OrbitView, project: &mut Project) {
-        if let Some(c) = self.take(v) {
-            project.orbit_mut().live.take(&c);
+        if v.epoch != self.epoch || !self.chan.ack(v.acked) {
+            return;
         }
-        if v.epoch == self.epoch && v.scene_rev == self.scene_rev {
-            if project.orbit().queued().is_some() {
-                project.orbit_mut().land(v.playing);
+        self.status = OrbitStatus::of(v);
+        // An edit since the last flush counts as unapplied.
+        if !project.orbit().live.untouched() {
+            self.harvest(project.orbit_mut());
+        }
+        let idle = self.chan.idle();
+        if let Some(c) = self.take(v) {
+            let song = project.orbit_mut();
+            song.live.take(&c);
+            self.harvest(song);
+        }
+        if let Some(c) = self.chan.awaiting()
+            && idle
+            && v.cue.is_none()
+        {
+            if let SceneCmd::Cue(n) = c {
+                project.orbit_mut().land(n);
                 // SAVE defaults to the playing scene again.
                 self.save = None;
             }
-            // Adopted at the UI's own rev: what plays is what `live` is.
-            self.landed = v.scene_rev;
+            self.chan.landed(c);
         }
-        if self.see(v) {
+        if self.chan.synced() && self.chan.idle() && v.loops as u8 != self.loops_seen {
+            self.loops_seen = v.loops as u8;
             project.orbit_mut().absorb(v);
         }
     }

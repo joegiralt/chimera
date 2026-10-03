@@ -5,7 +5,7 @@
 //! invariants and marks where sound can break discontinuously, for
 //! `Tape::click` to judge.
 //!
-//! The UI side is idealised: the publish, `take`, `see` and `absorb` run every
+//! The UI side is idealised: the flush, the publish and `sync` run every
 //! block, in place and with no latency, where the desktop runs them once a
 //! frame (12–25 blocks) through triple buffers. A stale slot or a frame's
 //! delay is not this rig's to catch.
@@ -117,8 +117,6 @@ pub struct OrbitRig {
     pub sent: Vec<OrbitEvent>,
     slots: Vec<VoiceSlot>,
     last_view: OrbitView,
-    /// The `OrbitUi` the next publish carries instead of `ui`: a load's.
-    stale: Option<OrbitUi>,
     /// MIDI CONFIG's SYNC, as SYSTEM holds it.
     pub sync: SyncMode,
 }
@@ -158,7 +156,6 @@ impl OrbitRig {
             sent: Vec::new(),
             slots,
             last_view,
-            stale: None,
             sync: SyncMode::DEFAULT,
         }
     }
@@ -227,12 +224,11 @@ impl OrbitRig {
         self.keys.push((src, InEvent::Rt(rt)));
     }
 
-    /// A project load as the shells run it: the load publish carries the
-    /// `OrbitUi` copied before the card work, and `loaded` runs after it.
+    /// A project load as the shells run it: `loaded` before the load
+    /// publish, which the next block carries.
     pub fn load(&mut self) {
         let _swap = self.link.bump_for_test();
-        self.stale = Some(self.ui);
-        self.ui.loaded(self.link.epoch());
+        self.ui.loaded(self.link.epoch(), self.project.orbit_mut());
     }
 
     /// Each ring's off still to send.
@@ -263,11 +259,9 @@ impl OrbitRig {
         let b = self.blocks();
         self.shared
             .update_from(self.project.perf(), self.link.epoch());
-        self.stale.take().unwrap_or(self.ui).publish(
-            self.project.orbit(),
-            self.sync,
-            &mut self.shared.orbit,
-        );
+        self.ui.flush(self.project.orbit_mut());
+        self.ui
+            .publish(self.project.orbit(), self.sync, &mut self.shared.orbit);
         let bpm_before = self.last_view.bpm;
         let pending_before = self.runner.pending();
 

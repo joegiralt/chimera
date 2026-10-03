@@ -123,6 +123,10 @@ fn axi_residents_fit() {
     let total: usize = parts.iter().map(|p| p.1).sum();
     eprintln!("{:>15} {total:>7} B of {} B", "AXI", hw::AXI_SRAM);
     assert_eq!(total, AXI_RESIDENT);
+    // The default build's, at 2dc9eefd; the master tape adds its own.
+    if !cfg!(feature = "master-tape") {
+        assert!(total <= 442_132, "AXI grew past 2dc9eefd's");
+    }
     assert!(
         hw::AXI_SRAM - total >= 64 * 1024,
         "{} B of AXI left",
@@ -171,9 +175,12 @@ fn ui_state_fits_the_ui_reserve() {
         "UiState without its Project = {rest} B, reserve {} B",
         hw::UI_RESERVE
     );
-    // 4 KB, not 2: SETTINGS' project listing (`MAX_LISTED` entries).
+    // A growth tripwire, no physical limit: `UiState` is an AXI static
+    // built in place, charged a fixed `UI_RESERVE`, never moved or cloned.
+    // 2 KB, then 4 KB for SETTINGS' project listing (`MAX_LISTED`), then
+    // 5 KB (owner, 2026-10-03; ORBIT command channel spec § 5.0).
     assert!(
-        rest <= 4 * 1024,
+        rest <= 5 * 1024,
         "UiState grew to {rest} B besides its Project"
     );
 }
@@ -229,5 +236,9 @@ fn orbit_runner_size() {
         size_of::<OrbitRunner>(),
         size_of::<OrbitView>(),
         size_of::<OrbitShared>()
+    );
+    assert!(
+        size_of::<OrbitView>() <= 336,
+        "OrbitView grew past 2dc9eefd's"
     );
 }

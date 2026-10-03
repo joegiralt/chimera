@@ -63,27 +63,24 @@ fn ring_cells_edit_the_selected_ring() {
 }
 
 #[test]
-fn rhythm_edits_bump_the_rev_and_knobs_do_not() {
-    let mut r = Scene::init().rings[2];
-    let revs = |r: &SceneRing| (r.rhythm_rev, r.notes_rev);
-    let (rhythm, notes) = revs(&r);
-    r.nudge(SceneRing::STEPS, 1);
-    r.nudge(SceneRing::HITS, 1);
-    r.nudge(SceneRing::ROTATE, 1);
-    assert_eq!(revs(&r), (rhythm.wrapping_add(3), notes));
-    r.nudge(SceneRing::CHANCE, -1);
-    assert_eq!(r.ring.chance, Pct::clamped(99));
-    assert_eq!(
-        revs(&r),
-        (rhythm.wrapping_add(3), notes),
-        "CHANCE is a knob"
-    );
+fn rhythm_edits_touch_and_knobs_do_not() {
+    use chimera_core::orbit::channel::RingMask;
+    let mut s = Scene::init();
+    let none = (RingMask::EMPTY, RingMask::EMPTY);
+    s.rings[2].nudge(SceneRing::STEPS, 1);
+    s.rings[2].nudge(SceneRing::HITS, 1);
+    s.rings[2].nudge(SceneRing::ROTATE, 1);
+    assert_eq!(s.harvest(), (RingMask::EMPTY.with(R[2]), RingMask::EMPTY));
+    s.rings[2].nudge(SceneRing::CHANCE, -1);
+    assert_eq!(s.rings[2].ring.chance, Pct::clamped(99));
+    assert_eq!(s.harvest(), none, "CHANCE is a knob");
 
     // A turn that changes nothing re-lays nothing.
-    r.set(SceneRing::STEPS, 31.0);
-    let at_max = revs(&r);
-    r.nudge(SceneRing::STEPS, 1);
-    assert_eq!(revs(&r), at_max);
+    s.rings[2].set(SceneRing::STEPS, 31.0);
+    s.harvest();
+    s.rings[2].nudge(SceneRing::STEPS, 1);
+    assert_eq!(s.harvest(), none);
+    let mut r = s.rings[2];
 
     // HITS never exceeds STEPS, whichever moves.
     r.set(SceneRing::STEPS, 3.0);
@@ -112,20 +109,26 @@ fn rhythm_edits_bump_the_rev_and_knobs_do_not() {
 #[test]
 fn octave_moves_the_notes() {
     // Ring 2 of the init scene: OCTAVE 4, a pool of A4, C5, E5.
-    let mut r = Scene::init().rings[1];
+    let r = Scene::init().rings[1];
     assert_eq!(r.ring.octave, Octave::new(4).unwrap());
     let pool: Vec<u8> = r.ring.pool.notes().iter().map(|n| n.get()).collect();
     let notes = r.ring.notes;
-    let rev = r.notes_rev;
-    r.set(SceneRing::OCTAVE, 6.0);
+    let mut s = Scene::init();
+    s.rings[1].set(SceneRing::OCTAVE, 6.0);
+    let touched = s.harvest();
+    let mut r = s.rings[1];
     assert_eq!(r.ring.octave, Octave::new(6).unwrap());
     let up: Vec<u8> = r.ring.pool.notes().iter().map(|n| n.get()).collect();
     assert_eq!(up, pool.iter().map(|n| n + 24).collect::<Vec<_>>());
     for (a, b) in r.ring.notes.iter().zip(notes) {
         assert_eq!(a.get(), b.get() + 24);
     }
-    assert_eq!(r.notes_rev, rev.wrapping_add(1));
-    assert_eq!(r.rhythm_rev, Scene::init().rings[1].rhythm_rev);
+    let ring = chimera_core::orbit::channel::RingMask::EMPTY;
+    assert_eq!(
+        touched,
+        (ring, ring.with(R[1])),
+        "the notes, not the rhythm"
+    );
 
     // A note pushed past 127 folds back down by octaves.
     r.set(SceneRing::OCTAVE, 7.0);
@@ -438,16 +441,29 @@ fn b6_with_a_load_never_sticks() {
 /// of the new one.
 #[test]
 fn a_view_from_before_a_load_brings_no_drift() {
+    let (mut p, _) = chimera_core::project::Project::boxed();
     let mut o = OrbitUi::new();
-    o.loaded(1);
+    o.loaded(1, p.orbit_mut());
+    let live = p.orbit().live;
+    let drift = |n: u8| Pool::one(Note::new(n).unwrap());
     let mut v = OrbitView {
         loops: 5,
         ..OrbitView::default()
     };
-    assert!(!o.see(&v), "epoch 0, the old project's");
+    v.rings[1].pool = drift(70);
+    let absorbed = |p: &chimera_core::project::Project| p.orbit().live.rings[1].ring.pool;
+    // `acked` before the load's seq, and the old project's epoch.
+    o.sync(&v, &mut p);
+    assert_eq!(p.orbit().live, live, "epoch 0, the old project's");
     v.epoch = 1;
-    assert!(o.see(&v), "the new project's");
-    assert!(!o.see(&v), "once a loop");
+    o.sync(&v, &mut p);
+    assert_eq!(p.orbit().live, live, "acked before the load");
+    v.acked = o.log().head();
+    o.sync(&v, &mut p);
+    assert_eq!(absorbed(&p), drift(70), "the new project's");
+    v.rings[1].pool = drift(72);
+    o.sync(&v, &mut p);
+    assert_eq!(absorbed(&p), drift(70), "once a loop");
 }
 
 /// A load stops the runner with no press from the UI: B6 is a press, so

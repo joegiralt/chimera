@@ -180,7 +180,7 @@ impl OrbitCell {
             // MIX held, or nothing: a slip on its way to NOTE loses no notes.
             OrbitCell::Clear if !mix => {}
             OrbitCell::Clear if delta > 0 => r.clear(),
-            OrbitCell::Clear => s.scatter(*ring),
+            OrbitCell::Clear => s.scatter(*ring, ui.clear_salt()),
             OrbitCell::Scene | OrbitCell::Save | OrbitCell::Switch => {}
         }
     }

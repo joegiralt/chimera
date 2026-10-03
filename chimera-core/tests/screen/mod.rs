@@ -17,8 +17,8 @@ use chimera_core::perf::load::AudioStats;
 use chimera_core::preset::{POOL_SIZE, Sound};
 use chimera_core::project::SlotId;
 use chimera_core::project::{
-    LoadLink, PartFrom, PartId, PartSource, Project, ProjectFile, ProjectNote, ReplaceGuard,
-    SaveTo, new_project_id, save_project,
+    LoadLink, PartFrom, PartId, PartSource, Project, ProjectFile, ProjectNote, ProjectSource,
+    ReplaceGuard, SaveTo, new_project_id, save_project,
 };
 use chimera_core::reset::ResetCause;
 use chimera_core::scope::SCOPE_LEN;
@@ -633,7 +633,6 @@ pub fn played(ui: &mut UiState, count: u16, notes: &[u8]) {
         arming: ui.orbit().arming,
         notes: [chimera_theory::Note::MIN; 8],
         len: notes.len() as u8,
-        epoch: v.epoch,
     };
     for (n, &k) in c.notes.iter_mut().zip(notes) {
         *n = chimera_theory::Note::new(k).unwrap();
@@ -1347,6 +1346,12 @@ pub struct ShellRig {
     /// Each block's events.
     pub sent: Vec<Vec<OrbitEvent>>,
     pub views: Vec<OrbitView>,
+    /// A card for `load_new`, and the load's epoch every publish carries.
+    card: Card,
+    store: MemStore,
+    sync: SystemSync,
+    set: SystemSettings,
+    link: LoadLink,
 }
 
 impl ShellRig {
@@ -1359,6 +1364,9 @@ impl ShellRig {
         let (w, r) = buf.split();
         let (view_w, view_r) = Box::leak(Box::new(orbit_buffer())).split();
         let sr = core::num::NonZeroU32::new(chimera_hal::SAMPLE_RATE).unwrap();
+        let mut card = Card::new();
+        let mut store = MemStore::new(1);
+        let (sync, set, _) = SystemSync::boot(&mut card, &mut store);
         ShellRig {
             ui,
             w,
@@ -1372,6 +1380,11 @@ impl ShellRig {
             runner: Box::new(OrbitRunner::new(sr)),
             sent: Vec::new(),
             views: Vec::new(),
+            card,
+            store,
+            sync,
+            set,
+            link: LoadLink::new(),
         }
     }
 
@@ -1386,15 +1399,45 @@ impl ShellRig {
         self.ui.set_orbit_view(self.view_r.read());
         self.blocks(first);
         feed(&mut self.ui, input);
-        let ui = &self.ui;
+        let (ui, epoch) = (&self.ui, self.link.epoch());
         self.w.publish(|b| {
-            b.update_from(ui.project().perf(), 0);
+            b.update_from(ui.project().perf(), epoch);
             ui.publish_orbit(&mut b.orbit);
         });
         self.blocks(then);
     }
 
-    fn blocks(&mut self, n: usize) {
+    /// NEW loaded as the shells load a project: `card_work`'s publish,
+    /// after the settle, with no block between (the card read). The
+    /// blocks of the next frame take it.
+    pub fn load_new(&mut self) {
+        let ui = &mut *self.ui;
+        let go = match ReplaceGuard::check(ui.project(), ui.template(), ProjectSource::New) {
+            Ok(go) => go,
+            Err(ask) => ask.into_pending().anyway(ui.project()),
+        };
+        let (w, link) = (&mut self.w, &self.link);
+        let loaded = ui.load_project(
+            &mut self.card,
+            &mut self.store,
+            &mut self.sync,
+            &mut self.set,
+            go,
+            link,
+            |swap, u| {
+                let _ = swap.settle(link, || false);
+                w.publish(|b| {
+                    b.update_from(u.project().perf(), link.epoch());
+                    u.publish_orbit(&mut b.orbit);
+                });
+            },
+        );
+        assert!(loaded.is_some(), "NEW loads");
+    }
+
+    /// `n` blocks, each publishing its view: with no frame between, the
+    /// UI is busy (a card read, a stall).
+    pub fn blocks(&mut self, n: usize) {
         for _ in 0..n {
             let ev = self.runner.block(&mut self.inst, self.r.read());
             self.sent.push(ev.iter().collect());

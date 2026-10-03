@@ -158,7 +158,7 @@ fn clear_asks_and_clears() {
     assert_eq!(song.saved().bits() & 1, 0);
     assert_eq!(song.live, live, "live waits for the loop");
     assert_eq!(song.queued(), Some(S[0]));
-    assert_eq!(rig.view().queued, Some(S[0]), "the runner holds it");
+    assert_eq!(rig.view().cue, Some(S[0]), "the runner holds it");
     assert_eq!(rig.view().playing, S[0]);
 
     past_the_loop(&mut rig);
@@ -402,7 +402,7 @@ fn a_landing_takes_no_knobs_the_ui_has_not_landed() {
     rig.tap(Seq); // CLEAR
     assert_eq!(rig.ui.project().orbit().queued(), Some(S[0]));
     let loops = rig.view().loops;
-    rig.until(|v| v.loops == loops && v.queued.is_some());
+    rig.until(|v| v.loops == loops && v.cue.is_some());
     // Slow frames, about 1.3 s of blocks each: the boundary falls inside one.
     let from = rig.sent.len();
     let mut crossed = None;
