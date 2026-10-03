@@ -84,3 +84,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0079](0079-orbs-four-cells-mirror-key-scale-bars-and-scene.md) | ORB's four cells: KEY, SCALE, BARS and SCENE (amended: ORB the frame, CHRD the progression) | Proposed |
 | [0080](0080-sync-int-or-ext-a-daw-drives-orbits-transport.md) | SYNC picks ORBIT's master: INT runs free, EXT lets a DAW drive the transport; stored in SYSTEM (amends 0071, 0072) | Proposed |
 | [0081](0081-one-d-pad-on-every-chain.md) | One D-pad on every chain: SEQ up, EDIT down with wrap, MINUS and PLUS along (supersedes the SEQ tap of 0044 and 0066) | Proposed |
+| [0082](0082-orbit-command-channel.md) | ORBIT's UI and runner talk through one sequenced command log and one ack (supersedes parts of 0071, 0075, 0077; amends 0080) | Proposed |
