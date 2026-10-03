@@ -6,6 +6,7 @@ mod screen;
 use chimera_core::addr::{BlockRead, BlockRef, Op, ParamAddr};
 use chimera_core::block::{ParamSpec, ValFmt};
 use chimera_core::dsp::algo::params::AlgoOpParams;
+use chimera_core::dsp::algo::waves::{WAVE_COUNT, WAVE_LEN, WaveId};
 use chimera_core::dsp::lfo::LfoParams;
 use chimera_core::dsp::modal::{MODEL_NAMES, ModalParams};
 use chimera_core::dsp::modulator::LfoSlot;
@@ -16,7 +17,9 @@ use chimera_core::ui::UiState;
 use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_def::{BlockDef, slot_addr};
 use chimera_core::ui::block_registry as reg;
-use chimera_core::ui::glyph::{Braid, CompositeId, FocusGlyph, Gauge, Rings, anim_key};
+use chimera_core::ui::glyph::{
+    Accidental, Braid, CompositeId, FocusGlyph, Gauge, Rings, StaffNote, anim_key, wave_trace,
+};
 use chimera_core::ui::page::{PageId, PageKey, PageLayout};
 use chimera_core::ui::region::{RegionData, RegionKind};
 use chimera_core::ui::view::{SlotCtx, View, view};
@@ -40,7 +43,6 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Modal", "MODE", NONE),
     ("Algo", "ALG_A", NONE),
     ("Algo", "ALG_B", NONE),
-    ("AlgoOp", "WAVE", NONE),
     ("Filter", "KIND", NONE),
     ("Filter", "MODE", NONE),
     ("Env", "TYPE", NONE),
@@ -54,6 +56,10 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Lfo", "TYPE", NONE),
     ("Lfo", "FORM", NONE),
     ("Lfo", "SHAPE", NONE),
+    // A wave choice: a scope tracing its table.
+    ("AlgoOp", "WAVE", FocusGlyph::Wave),
+    // Semitones: a note on the staff.
+    ("Algo", "TRNSP", FocusGlyph::Staff),
     // Two states, one of them off: a toggle.
     ("Lfo", "SYNC", SWITCH),
     // Set-and-leave levels, 0 to max: a fader.
@@ -263,7 +269,11 @@ fn glyph_is_hand_assigned_on_the_spec() {
 
 #[test]
 fn each_glyph_maps_to_its_gauge() {
-    for g in FocusGlyph::ALL {
+    // STAFF reads semitones: `staff_eases_between_semitones`.
+    for g in FocusGlyph::ALL
+        .into_iter()
+        .filter(|&g| g != FocusGlyph::Staff)
+    {
         let want = match g {
             FocusGlyph::None => Gauge::None,
             FocusGlyph::Switch => Gauge::Switch { on: 0.25 },
@@ -272,6 +282,8 @@ fn each_glyph_maps_to_its_gauge() {
                 ticks: 8,
             },
             FocusGlyph::Crossfader => Gauge::Crossfader { value: 0.25 },
+            // Index 31.75 of 127, past the last wave: clamped to it.
+            FocusGlyph::Wave => Gauge::Wave(WaveId::SSAW),
             // A built composite: whatever its inputs make of it.
             FocusGlyph::Composite(CompositeId::ChorusBraid) => Gauge::Switch { on: 9.0 },
             FocusGlyph::Composite(CompositeId::DelayRings) => Gauge::Switch { on: 8.0 },
@@ -287,6 +299,186 @@ fn each_glyph_maps_to_its_gauge() {
             CompositeId::ReverbCube => Gauge::Switch { on: 7.0 },
         };
         assert_eq!(g.gauge(0.25, ValFmt::Bi, composite), want, "{g:?}");
+    }
+}
+
+/// Semitones to staff steps, spelled in C major: sharps up, flats down,
+/// an octave 7 steps, wrapping past it.
+#[test]
+fn staff_note_spells_semitones_in_c_major() {
+    // −24..=24: (spelling, step); ♯ up, ♭ down, wrapping past ±12.
+    const SPELT: [(&str, i8); 49] = [
+        ("C", -7),
+        ("Db", -6),
+        ("D", -6),
+        ("Eb", -5),
+        ("E", -5),
+        ("F", -4),
+        ("Gb", -3),
+        ("G", -3),
+        ("Ab", -2),
+        ("A", -2),
+        ("Bb", -1),
+        ("B", -1),
+        ("C", -7),
+        ("Db", -6),
+        ("D", -6),
+        ("Eb", -5),
+        ("E", -5),
+        ("F", -4),
+        ("Gb", -3),
+        ("G", -3),
+        ("Ab", -2),
+        ("A", -2),
+        ("Bb", -1),
+        ("B", -1),
+        ("C", 0),
+        ("C#", 0),
+        ("D", 1),
+        ("D#", 1),
+        ("E", 2),
+        ("F", 3),
+        ("F#", 3),
+        ("G", 4),
+        ("G#", 4),
+        ("A", 5),
+        ("A#", 5),
+        ("B", 6),
+        ("C", 7),
+        ("C#", 0),
+        ("D", 1),
+        ("D#", 1),
+        ("E", 2),
+        ("F", 3),
+        ("F#", 3),
+        ("G", 4),
+        ("G#", 4),
+        ("A", 5),
+        ("A#", 5),
+        ("B", 6),
+        ("C", 7),
+    ];
+    for (i, (name, step)) in SPELT.into_iter().enumerate() {
+        let semis = i as i8 - 24;
+        let accidental = match name.as_bytes().get(1) {
+            Some(b'#') => Accidental::Sharp,
+            Some(b'b') => Accidental::Flat,
+            _ => Accidental::Natural,
+        };
+        assert_eq!(
+            StaffNote::of(semis),
+            StaffNote { step, accidental },
+            "{semis}: {name}"
+        );
+    }
+}
+
+/// The notehead slides between semitones as the value eases; the
+/// accidental is the nearest semitone's.
+#[test]
+fn staff_eases_between_semitones() {
+    let fmt = ValFmt::Signed(24);
+    let at = |semis: f32| FocusGlyph::Staff.gauge((semis + 24.0) / 48.0, fmt, |_| Gauge::None);
+    let staff = |step, accidental| Gauge::Staff { step, accidental };
+    assert_eq!(at(0.0), staff(0.0, Accidental::Natural));
+    assert_eq!(at(6.0), staff(3.0, Accidental::Sharp));
+    assert_eq!(at(-6.0), staff(-3.0, Accidental::Flat));
+    // The octave wrap snaps: +12 to +13 is step 7 to 0, never between.
+    for semis in [12.25, 12.5, 12.75, -12.25, -12.5, -12.75] {
+        let Gauge::Staff { step, .. } = at(semis) else {
+            panic!()
+        };
+        assert_eq!(step, step.round(), "{semis}");
+    }
+    assert_eq!(at(12.0), staff(7.0, Accidental::Natural));
+    assert_eq!(at(1.5), staff(0.5, Accidental::Natural));
+    assert!(!at(3.0).animates());
+}
+
+fn every_wave() -> impl Iterator<Item = WaveId> {
+    (0..WAVE_COUNT as u8).map(|i| WaveId::from_index(i).unwrap())
+}
+
+/// The scope's trace is the wave's own mip-0 table, sampled across one
+/// period: every wave, W1 to SSAW.
+#[test]
+fn wave_trace_is_the_table() {
+    const N: usize = 55;
+    let half = 19;
+    for w in every_wave() {
+        let t = w.table(0);
+        let trace = wave_trace::<N>(w, half);
+        for (i, &y) in trace.iter().enumerate() {
+            let s = t[i * WAVE_LEN / (N - 1)] as i32;
+            assert_eq!(y, (s * half + (1 << 14)) >> 15, "{}", w.name());
+            assert!(y.abs() <= half, "{}", w.name());
+        }
+        assert_eq!(trace[0], trace[N - 1], "{}: one whole period", w.name());
+    }
+    // SQR: two levels, high then low, but at the jumps (ends and middle).
+    let sqr = wave_trace::<N>(WaveId::SQR, half);
+    let inner = |i: usize| i != 0 && i != N / 2 && i != N - 1;
+    let (mut hi, mut lo) = (Vec::new(), Vec::new());
+    for (i, &y) in sqr.iter().enumerate().filter(|&(i, _)| inner(i)) {
+        if i < N / 2 { hi.push(y) } else { lo.push(y) }
+    }
+    let span = |v: &[i32]| v.iter().max().unwrap() - v.iter().min().unwrap();
+    assert!(hi.iter().all(|&y| y > half / 2) && lo.iter().all(|&y| y < -half / 2));
+    assert!(span(&hi) <= 3 && span(&lo) <= 3, "{hi:?} {lo:?}");
+    // SAW: rises all the way but for one jump down (through the middle
+    // sample, which sits on it).
+    let saw = wave_trace::<N>(WaveId::SAW, half);
+    let falls: Vec<usize> = (1..N).filter(|&i| saw[i] < saw[i - 1]).collect();
+    assert!(falls.windows(2).all(|f| f[1] == f[0] + 1), "{saw:?}");
+    let (first, last) = (falls[0] - 1, falls[falls.len() - 1]);
+    assert!(saw[first] - saw[last] > half, "{saw:?}");
+}
+
+/// Every wave's name fits before the scope at the focus size.
+#[test]
+fn every_wave_name_fits_beside_the_scope() {
+    let room = theme::WAVE_X - 4 - theme::FOCUS_VALUE_X;
+    for w in every_wave() {
+        let width = draw::text_width(&theme::FONT_FOCUS, w.name(), 0);
+        assert!(width <= room, "{}: {width} > {room}", w.name());
+    }
+}
+
+/// GLYPH: WAVE. each wave's scope on the demo page: the frame, and the
+/// trace where the table puts it. `SCREEN_DUMP` writes `glyph_wave_<NAME>`.
+#[test]
+fn glyph_wave_page_traces_each_wave() {
+    let mut ui = UiState::new();
+    to_demo(&mut ui, &reg::DEMO_GLYPH_WAVE);
+    let addr = ParamAddr::new(BlockRef::AlgoOp(Op::A), AlgoOpParams::WAVE);
+    assert_eq!(addr.spec().unwrap().glyph, FocusGlyph::Wave);
+    let ctx = SlotCtx::read(ui.params(), ui.selected_op());
+    assert_eq!(view(ui.page_def(), 0, &ctx).addr(), Some(addr));
+    const N: usize = (theme::WAVE_W - 2 * theme::WAVE_PAD) as usize + 1;
+    let cy = theme::WAVE_Y + theme::WAVE_H / 2;
+    let mut seen = Vec::new();
+    for w in every_wave() {
+        feed(&mut ui, Input::turn(EncoderId::A, -127));
+        feed(&mut ui, Input::turn(EncoderId::A, w.get() as i8));
+        settle(&mut ui);
+        let fb = render_ui(&ui);
+        fb.dump(&format!("glyph_wave_{}", w.name()));
+        assert_eq!(fb.oob, 0);
+        assert_eq!(arc_top(&fb), theme::BG, "no arc");
+        assert_eq!(
+            fb.at(theme::WAVE_X + theme::WAVE_W / 2, theme::WAVE_Y),
+            theme::FAINT
+        );
+        let trace = wave_trace::<N>(w, theme::WAVE_H / 2 - theme::WAVE_PAD);
+        let i = N / 4;
+        let x = theme::WAVE_X + theme::WAVE_PAD + i as i32;
+        assert_eq!(fb.at(x, cy - trace[i]), theme::ACCENT, "{}", w.name());
+        let scope: Vec<_> = (theme::WAVE_Y..theme::WAVE_Y + theme::WAVE_H)
+            .flat_map(|y| (theme::WAVE_X..theme::WAVE_X + theme::WAVE_W).map(move |x| (x, y)))
+            .map(|(x, y)| fb.at(x, y))
+            .collect();
+        assert!(!seen.contains(&scope), "{}: a scope of its own", w.name());
+        seen.push(scope);
     }
 }
 
@@ -602,6 +794,47 @@ fn cap_x(v: f32) -> i32 {
 
 fn to_xf(ui: &mut UiState) {
     to_demo(ui, &reg::DEMO_GLYPH_XF);
+}
+
+/// GLYPH: STAFF. the notehead sits on the middle line at 0, a step
+/// (half a gap) a whole tone, an octave 7 steps up; the number carries
+/// the value. `SCREEN_DUMP` writes each as `glyph_staff_<semis>`.
+#[test]
+fn glyph_staff_page_moves_the_note() {
+    use chimera_core::dsp::algo::params::AlgoParams;
+    let mut ui = UiState::new();
+    to_demo(&mut ui, &reg::DEMO_GLYPH_STAFF);
+    let trnsp = ParamAddr::new(BlockRef::Algo, AlgoParams::TRANSPOSE);
+    let ctx = SlotCtx::read(ui.params(), ui.selected_op());
+    assert_eq!(view(ui.page_def(), 0, &ctx).addr(), Some(trnsp));
+    let note_y = |step: i32| theme::ARC_CY - step * theme::STAFF_GAP / 2;
+    for (semis, step) in [
+        (0i8, 0),
+        (1, 0),
+        (-1, -1),
+        (-2, -1),
+        (6, 3),
+        (7, 4),
+        (12, 7),
+        (-12, -7),
+        (19, 4),
+    ] {
+        feed(&mut ui, Input::turn(EncoderId::A, -127));
+        feed(&mut ui, Input::turn(EncoderId::A, 24 + semis));
+        settle(&mut ui);
+        assert_eq!(ui.params().algo.transpose, semis, "{semis}");
+        let fb = render_ui(&ui);
+        fb.dump(&format!("glyph_staff_{semis}"));
+        assert_eq!(fb.oob, 0);
+        assert_eq!(arc_top(&fb), theme::BG, "no arc");
+        let y = note_y(step);
+        assert_eq!(fb.at(theme::STAFF_NOTE_X, y), theme::ACCENT, "{semis}");
+        // The notehead alone at its height: none an octave away.
+        let other = note_y(if step > 0 { step - 7 } else { step + 7 });
+        if step != 0 {
+            assert_ne!(fb.at(theme::STAFF_NOTE_X, other), theme::ACCENT, "{semis}");
+        }
+    }
 }
 
 #[test]
