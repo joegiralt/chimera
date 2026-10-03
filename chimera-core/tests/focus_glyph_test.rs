@@ -306,32 +306,69 @@ fn each_glyph_maps_to_its_gauge() {
 /// an octave 7 steps, wrapping past it.
 #[test]
 fn staff_note_spells_semitones_in_c_major() {
-    use Accidental::{Flat, Natural, Sharp};
-    for (semis, step, accidental) in [
-        (0, 0, Natural),
-        (1, 0, Sharp),
-        (-1, -1, Natural),
-        (2, 1, Natural),
-        (-2, -1, Flat),
-        (5, 3, Natural),
-        (-5, -3, Natural),
-        (6, 3, Sharp),
-        (-6, -3, Flat),
-        (7, 4, Natural),
-        (-7, -4, Natural),
-        (12, 7, Natural),
-        (-12, -7, Natural),
-        (13, 0, Sharp),
-        (-13, -1, Natural),
-        (19, 4, Natural),
-        (-19, -4, Natural),
-        (24, 7, Natural),
-        (-24, -7, Natural),
-    ] {
+    // −24..=24: (spelling, step); ♯ up, ♭ down, wrapping past ±12.
+    const SPELT: [(&str, i8); 49] = [
+        ("C", -7),
+        ("Db", -6),
+        ("D", -6),
+        ("Eb", -5),
+        ("E", -5),
+        ("F", -4),
+        ("Gb", -3),
+        ("G", -3),
+        ("Ab", -2),
+        ("A", -2),
+        ("Bb", -1),
+        ("B", -1),
+        ("C", -7),
+        ("Db", -6),
+        ("D", -6),
+        ("Eb", -5),
+        ("E", -5),
+        ("F", -4),
+        ("Gb", -3),
+        ("G", -3),
+        ("Ab", -2),
+        ("A", -2),
+        ("Bb", -1),
+        ("B", -1),
+        ("C", 0),
+        ("C#", 0),
+        ("D", 1),
+        ("D#", 1),
+        ("E", 2),
+        ("F", 3),
+        ("F#", 3),
+        ("G", 4),
+        ("G#", 4),
+        ("A", 5),
+        ("A#", 5),
+        ("B", 6),
+        ("C", 7),
+        ("C#", 0),
+        ("D", 1),
+        ("D#", 1),
+        ("E", 2),
+        ("F", 3),
+        ("F#", 3),
+        ("G", 4),
+        ("G#", 4),
+        ("A", 5),
+        ("A#", 5),
+        ("B", 6),
+        ("C", 7),
+    ];
+    for (i, (name, step)) in SPELT.into_iter().enumerate() {
+        let semis = i as i8 - 24;
+        let accidental = match name.as_bytes().get(1) {
+            Some(b'#') => Accidental::Sharp,
+            Some(b'b') => Accidental::Flat,
+            _ => Accidental::Natural,
+        };
         assert_eq!(
             StaffNote::of(semis),
             StaffNote { step, accidental },
-            "{semis}"
+            "{semis}: {name}"
         );
     }
 }
@@ -346,6 +383,13 @@ fn staff_eases_between_semitones() {
     assert_eq!(at(0.0), staff(0.0, Accidental::Natural));
     assert_eq!(at(6.0), staff(3.0, Accidental::Sharp));
     assert_eq!(at(-6.0), staff(-3.0, Accidental::Flat));
+    // The octave wrap snaps: +12 to +13 is step 7 to 0, never between.
+    for semis in [12.25, 12.5, 12.75, -12.25, -12.5, -12.75] {
+        let Gauge::Staff { step, .. } = at(semis) else {
+            panic!()
+        };
+        assert_eq!(step, step.round(), "{semis}");
+    }
     assert_eq!(at(12.0), staff(7.0, Accidental::Natural));
     assert_eq!(at(1.5), staff(0.5, Accidental::Natural));
     assert!(!at(3.0).animates());
@@ -365,13 +409,8 @@ fn wave_trace_is_the_table() {
         let t = w.table(0);
         let trace = wave_trace::<N>(w, half);
         for (i, &y) in trace.iter().enumerate() {
-            let s = t[i * WAVE_LEN / (N - 1)] as f32;
-            assert_eq!(
-                y,
-                (s * half as f32 / 32767.0).round() as i32,
-                "{}",
-                w.name()
-            );
+            let s = t[i * WAVE_LEN / (N - 1)] as i32;
+            assert_eq!(y, (s * half + (1 << 14)) >> 15, "{}", w.name());
             assert!(y.abs() <= half, "{}", w.name());
         }
         assert_eq!(trace[0], trace[N - 1], "{}: one whole period", w.name());

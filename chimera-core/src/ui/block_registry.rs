@@ -873,7 +873,7 @@ pub static DEMO_GLYPH_CUBE: BlockDef = BlockDef {
 
 /// GLYPH: STAFF. a: TRANSPOSE, a note on the staff by semitones.
 pub static DEMO_GLYPH_STAFF: BlockDef = BlockDef {
-    id: 78,
+    id: 90,
     name: "Glyph: Staff",
     short: "STF",
     layout: PageLayout::CellGrid,
@@ -891,7 +891,7 @@ pub static DEMO_GLYPH_STAFF: BlockDef = BlockDef {
 /// GLYPH: WAVE (SCP: WAV is the WAVES demo). a: operator A's WAVE, a scope
 /// tracing its table.
 pub static DEMO_GLYPH_WAVE: BlockDef = BlockDef {
-    id: 79,
+    id: 91,
     name: "Glyph: Wave",
     short: "SCP",
     layout: PageLayout::CellGrid,

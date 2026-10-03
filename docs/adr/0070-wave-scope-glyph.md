@@ -21,7 +21,7 @@ doesn't already know them.
   ripple included.
 - **It is static**: drawn from the set value (`Renderer::set`), no
   animation and no per-frame box.
-- **Its Demo page is "Glyph: Wave"** (id 79, short SCP: WAV is the
+- **Its Demo page is "Glyph: Wave"** (id 91, short SCP: WAV is the
   WAVES demo), slot a operator A's WAVE.
 
 ## Alternatives considered

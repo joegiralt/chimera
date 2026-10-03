@@ -126,26 +126,32 @@ impl StaffNote {
 }
 
 /// The staff gauge at `semis`, eased: the notehead slides between the
-/// whole semitones either side; the accidental is the nearest one's.
+/// whole semitones either side, but snaps where they are more than a
+/// step apart (the octave wrap); the accidental is the nearest one's.
 fn staff(semis: f32) -> Gauge {
     let semis = semis.clamp(-127.0, 126.0);
     let lo = libm::floorf(semis);
     let (a, b) = (StaffNote::of(lo as i8), StaffNote::of(lo as i8 + 1));
-    let t = semis - lo;
+    let near = StaffNote::of(libm::roundf(semis) as i8);
+    let step = if (b.step - a.step).abs() > 1 {
+        near.step as f32
+    } else {
+        a.step as f32 + (b.step - a.step) as f32 * (semis - lo)
+    };
     Gauge::Staff {
-        step: a.step as f32 + (b.step - a.step) as f32 * t,
-        accidental: StaffNote::of(libm::roundf(semis) as i8).accidental,
+        step,
+        accidental: near.accidental,
     }
 }
 
 /// One period of `wave`'s mip-0 table across `N` points, the last the
 /// table's guard (its first sample again): each the nearest sample, scaled
-/// so full scale is `half` px, up positive.
+/// so full scale is `half` px (rounded, by 2^15), up positive.
 pub fn wave_trace<const N: usize>(wave: WaveId, half: i32) -> [i32; N] {
     let table = wave.table(0);
     core::array::from_fn(|i| {
-        let s = table[i * WAVE_LEN / (N - 1).max(1)];
-        libm::roundf(s as f32 * half as f32 / i16::MAX as f32) as i32
+        let s = table[i * WAVE_LEN / (N - 1).max(1)] as i32;
+        (s * half + (1 << 14)) >> 15
     })
 }
 

@@ -22,7 +22,7 @@ semitones.
 - **It draws the set value**, eased in `Renderer::set` like CROSSFADER:
   the notehead slides between the whole semitones either side, the
   accidental the nearest one's. No new animation.
-- **Its Demo page is "Glyph: Staff"** (id 78), slot a TRANSPOSE.
+- **Its Demo page is "Glyph: Staff"** (id 90: ORBIT has 76 to 86), slot a TRANSPOSE.
 
 ## Alternatives considered
 - **A five-line staff with clefs:** too much for the focus band's 56 px; the

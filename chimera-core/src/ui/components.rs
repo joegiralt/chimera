@@ -493,6 +493,17 @@ where
     }
 }
 
+/// The flat's bowl beside its stem, `(dx, dy, w)` spans from the
+/// stem's right and the note's centre: round at the top, tapering in.
+const FLAT_BOWL: [(i32, i32, i32); 6] = [
+    (0, -3, 3),
+    (2, -2, 2),
+    (2, -1, 2),
+    (1, 0, 2),
+    (0, 1, 2),
+    (0, 2, 1),
+];
+
 /// The STAFF glyph at the band's right: three MID lines and an accent
 /// notehead `step` diatonic steps above the middle one, MID ledger lines
 /// past the staff, and its accidental in the accent to the left.
@@ -517,7 +528,7 @@ where
     for s in (4..=reach).step_by(2) {
         draw::fill_rect(d, nx - 10, cy - side * s * gap / 2, 21, 1, theme::MID);
     }
-    draw::oval(d, nx, y, 13, gap as u32 + 1, theme::ACCENT);
+    draw::round_rect(d, nx - 6, y - gap / 2, 13, gap + 1, 4, theme::ACCENT);
     let (ax, c) = (nx - 16, theme::ACCENT);
     match accidental {
         Accidental::Natural => {}
@@ -528,12 +539,10 @@ where
             draw::fill_rect(d, ax - 5, y + 2, 11, 2, c);
         }
         Accidental::Flat => {
-            draw::fill_rect(d, ax - 2, y - 12, 2, 16, c);
-            draw::line(d, ax - 1, y - 2, ax + 2, y - 4, c, 1);
-            draw::line(d, ax + 2, y - 4, ax + 4, y - 4, c, 1);
-            draw::line(d, ax + 5, y - 3, ax + 5, y - 2, c, 1);
-            draw::line(d, ax + 4, y - 1, ax, y + 3, c, 1);
-            draw::line(d, ax + 4, y - 2, ax, y + 2, c, 1);
+            draw::fill_rect(d, ax - 2, y - 10, 1, 13, c);
+            for (dx, dy, w) in FLAT_BOWL {
+                draw::fill_rect(d, ax - 1 + dx, y + dy, w, 1, c);
+            }
         }
     }
 }
