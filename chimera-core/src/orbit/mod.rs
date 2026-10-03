@@ -19,21 +19,13 @@ pub const MAX_STEPS: u8 = 32;
 pub const MAX_POOL: usize = 8;
 pub const MAX_SEGS: usize = 8;
 
-/// A ring's index, 0..5.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RingIdx(u8);
+crate::project::bounded_index!(
+    /// A ring's index, 0..5.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    RingIdx < RINGS
+);
 
 impl RingIdx {
-    pub const ALL: [RingIdx; RINGS] = [RingIdx(0), RingIdx(1), RingIdx(2), RingIdx(3), RingIdx(4)];
-
-    pub const fn new(i: u8) -> Option<RingIdx> {
-        if (i as usize) < RINGS {
-            Some(RingIdx(i))
-        } else {
-            None
-        }
-    }
-
     pub const fn get(self) -> u8 {
         self.0
     }

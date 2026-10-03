@@ -20,6 +20,7 @@ pub use guard::{
     Confirmed, DeleteTarget, NeedsConfirm, OverwriteTarget, Pending, ProjectSource, Prompt,
     ReplaceGuard, SceneAsk, SceneSlot, Seen, Target, Witnessed,
 };
+pub(crate) use ids::bounded_index;
 pub use ids::{PartId, PartSet, SlotId};
 pub use marks::{
     ActionGone, PartAction, PartActionKind, PartActions, PartStatus, ProjectStatus, StatusCache,

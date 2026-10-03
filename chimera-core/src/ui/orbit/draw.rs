@@ -34,28 +34,25 @@ use u8g2_fonts::FontRenderer;
 /// selections and last view of the runner.
 #[derive(Clone, Copy)]
 pub struct OrbitFrame<'a> {
-    /// The scenes, which plays and which waits.
+    /// The scenes, which plays and which waits, and the tempo.
     pub song: &'a OrbitSong,
-    pub scene: &'a Scene,
-    /// The song's tempo, as BPM sets it.
-    pub bpm: Bpm,
     pub ui: &'a OrbitUi,
 }
 
 impl<'a> OrbitFrame<'a> {
     pub fn new(song: &'a OrbitSong, ui: &'a OrbitUi) -> Self {
-        OrbitFrame {
-            song,
-            scene: &song.live,
-            bpm: song.bpm,
-            ui,
-        }
+        OrbitFrame { song, ui }
+    }
+
+    /// The scene being edited and played.
+    pub fn scene(&self) -> &'a Scene {
+        &self.song.live
     }
 
     /// Ring `r`'s pattern: the runner's, drift and all, while it plays
     /// the rhythm the scene has; else the scene's (an edit not yet heard).
     pub fn hits(&self, r: RingIdx) -> HitMask {
-        let s = &self.scene.rings[r.get() as usize];
+        let s = &self.scene().rings[r.get() as usize];
         let seen = &self.ui.status.rings[r.get() as usize];
         let ours = s.ring.hits_mask();
         if seen.rhythm_rev == s.rhythm_rev && seen.hits.steps() == ours.steps() {
@@ -73,14 +70,14 @@ impl<'a> OrbitFrame<'a> {
     }
 
     fn chords(&self) -> &ChordRing {
-        &self.scene.chords
+        &self.scene().chords
     }
 
     /// The tempo the header reads and its source: BPM's own, or the MIDI
     /// clock's measured one.
     pub fn tempo(&self) -> (Bpm, &'static str) {
         match self.ui.status.source {
-            ClockSource::Internal => (self.bpm, "INT"),
+            ClockSource::Internal => (self.song.bpm, "INT"),
             ClockSource::Midi => (self.ui.status.bpm, "MIDI"),
         }
     }
@@ -96,7 +93,7 @@ pub fn rhythm<D>(d: &mut D, f: &OrbitFrame, r: RingIdx)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let ring = &f.scene.rings[r.get() as usize].ring;
+    let ring = &f.scene().rings[r.get() as usize].ring;
     let mask = f.hits(r);
     let n = mask.steps().get() as usize;
     let now = f.now(r);
@@ -190,7 +187,7 @@ pub fn voice<D>(d: &mut D, f: &OrbitFrame, r: RingIdx)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let ring = &f.scene.rings[r.get() as usize].ring;
+    let ring = &f.scene().rings[r.get() as usize].ring;
     let mut line = FmtBuf::new();
     let (lo, hi) = register(ring);
     let _ = write!(line, "{lo} TO {hi}");
@@ -289,7 +286,7 @@ pub fn notes<D>(d: &mut D, f: &OrbitFrame, r: RingIdx)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let sr = &f.scene.rings[r.get() as usize];
+    let sr = &f.scene().rings[r.get() as usize];
     let ring = &sr.ring;
     let (head, tail) = notes_line(ring);
     band_line(d, &[head.as_str(), tail.as_str()]);
@@ -435,7 +432,7 @@ fn orb_ring<D>(d: &mut D, f: &OrbitFrame, r: RingIdx)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let ring = &f.scene.rings[r.get() as usize].ring;
+    let ring = &f.scene().rings[r.get() as usize].ring;
     let mask = f.hits(r);
     let n = mask.steps().get() as usize;
     let now = f.now(r);
@@ -752,7 +749,7 @@ pub fn cell_text(cell: OrbitCell, f: &OrbitFrame, ring: RingIdx) -> FmtBuf {
             }
         )),
         OrbitCell::Note => {
-            let r = &f.scene.rings[ring.get() as usize];
+            let r = &f.scene().rings[ring.get() as usize];
             note_name(r.chip(f.ui.chip_of(r)))
         }
         OrbitCell::Play => {
@@ -765,7 +762,7 @@ pub fn cell_text(cell: OrbitCell, f: &OrbitFrame, ring: RingIdx) -> FmtBuf {
             }
         }
         OrbitCell::Clear => {
-            let r = &f.scene.rings[ring.get() as usize].ring;
+            let r = &f.scene().rings[ring.get() as usize].ring;
             let mut b = note_name(r.octave.low());
             let _ = b.write_str(" / RND");
             b
@@ -824,7 +821,7 @@ pub fn focus(
             Gauge::None
         }
         View::Orbit(OrbitCell::Note) => {
-            let r = &f.scene.rings[ctx.ring.get() as usize];
+            let r = &f.scene().rings[ctx.ring.get() as usize];
             let what = match r.ring.mode {
                 NoteMode::Pool => "NOTE",
                 NoteMode::Step => "STEP",
@@ -908,7 +905,7 @@ pub fn viz_key(def: &BlockDef, f: &OrbitFrame, r: RingIdx, cursor: f32) -> u32 {
     match def.viz {
         VizType::OrbitRhythm | VizType::OrbitVoice => ring_key(&mut h, f, r),
         VizType::OrbitNotes => {
-            let sr = &f.scene.rings[r.get() as usize];
+            let sr = &f.scene().rings[r.get() as usize];
             sr.ring.hash(&mut h);
             f.ui.chip_of(sr).hash(&mut h);
             f.hits(r).hash(&mut h);
@@ -953,7 +950,7 @@ pub fn viz_key(def: &BlockDef, f: &OrbitFrame, r: RingIdx, cursor: f32) -> u32 {
 /// their accents, the step under the clock, and the knobs they read; not
 /// its notes, which none of them shows.
 fn ring_key(h: &mut Fnv, f: &OrbitFrame, r: RingIdx) {
-    let ring = &f.scene.rings[r.get() as usize].ring;
+    let ring = &f.scene().rings[r.get() as usize].ring;
     let mask = f.hits(r);
     (mask, ring.accents_on(mask), f.now(r)).hash(h);
     (ring.mute, ring.chance, ring.gate, ring.velocity).hash(h);

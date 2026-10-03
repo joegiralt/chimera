@@ -24,29 +24,13 @@ use core::ptr::addr_of_mut;
 
 pub const SCENES: usize = 8;
 
-/// A scene slot, 0..8.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SceneIdx(u8);
+crate::project::bounded_index!(
+    /// A scene slot, 0..8.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    SceneIdx < SCENES
+);
 
 impl SceneIdx {
-    pub const ALL: [SceneIdx; SCENES] = {
-        let mut a = [SceneIdx(0); SCENES];
-        let mut i = 0;
-        while i < SCENES {
-            a[i] = SceneIdx(i as u8);
-            i += 1;
-        }
-        a
-    };
-
-    pub const fn new(i: u8) -> Option<SceneIdx> {
-        if (i as usize) < SCENES {
-            Some(SceneIdx(i))
-        } else {
-            None
-        }
-    }
-
     pub const fn get(self) -> u8 {
         self.0
     }
