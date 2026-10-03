@@ -406,8 +406,12 @@ impl MidiClock {
         }
         let tick = at(self.ticks);
         let next = at(self.ticks + 1);
+        // A beat's samples past the tick is past the next one already:
+        // clamped there, the product fits u64 (sum < 2^21, n ≤ 24).
         let run = match (self.measured(), self.last_tick) {
-            (Some((n, sum)), Some(t)) => (now.saturating_sub(t) << 32) * n / (TICKS_PER_BAR * sum),
+            (Some((n, sum)), Some(t)) => {
+                (now.saturating_sub(t).min(sum) << 32) * n / (TICKS_PER_BAR * sum)
+            }
             _ => 0,
         };
         Some(Position::from_units((tick + run.max(1)).min(next - 1)))

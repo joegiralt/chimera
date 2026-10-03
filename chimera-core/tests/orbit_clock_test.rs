@@ -117,3 +117,27 @@ fn mid_bar_bpm_change_round_trips() {
     let want = (1.0 - p.phase.get() as f64 / 4294967296.0) * 48_000.0 * 240.0 / 143.0;
     assert!(((line - 300_001) as f64 - want).abs() <= 1.0);
 }
+
+/// A leader that keeps sending Continue, and no Clock, for over an hour:
+/// the run past the last tick is clamped, never overflows, and stops
+/// short of the next tick, in debug as in release.
+#[test]
+fn midi_clock_hour_without_clock_holds_before_the_next_tick() {
+    use chimera_core::orbit::clock::MidiClock;
+    let sr = 48_000u64;
+    let mut m = MidiClock::new(NonZeroU32::new(sr as u32).unwrap());
+    assert!(m.start(0, 0));
+    for k in 1..=25 {
+        assert!(m.tick(0, k * 500));
+    }
+    let last = 25 * 500;
+    // A tick's interval past it: held just short of the next.
+    let held = m.position(last + 500).unwrap();
+    assert!(held > m.position(last + 499).unwrap());
+    let mut now = last;
+    while now < last + 70 * 60 * sr {
+        now += sr / 4;
+        assert!(m.resume(0, now));
+    }
+    assert_eq!(m.position(now), Some(held), "held short of the next tick");
+}
