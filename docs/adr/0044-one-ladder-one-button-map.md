@@ -1,6 +1,6 @@
 # 0044. One ladder and one button map for Parts, the mixer and ORBIT
 
-- **Status:** Proposed
+- **Status:** Proposed; its SEQ tap assignments are superseded by [0081](0081-one-d-pad-on-every-chain.md)
 - **Deciders:** project owner (2026-09-30); firmware
 
 ## Context

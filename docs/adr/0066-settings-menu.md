@@ -1,6 +1,6 @@
 # 0066. MENU opens a SETTINGS menu
 
-- **Status:** Proposed
+- **Status:** Proposed; its SEQ tap in SETTINGS is superseded by [0081](0081-one-d-pad-on-every-chain.md)
 - **Deciders:** project owner (2026-10-01, "looks right" on the mockups; the rulings below); firmware
 
 ## Context
