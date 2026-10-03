@@ -7,7 +7,11 @@
 #![allow(dead_code)]
 
 use chimera_core::clock_plan::SiliconRev;
+use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
+use chimera_core::instrument::{AudioShared, Instrument};
 use chimera_core::name::ProjectName;
+use chimera_core::orbit::engine::OrbitEvent;
+use chimera_core::orbit::runner::{OrbitRunner, OrbitView, orbit_buffer};
 use chimera_core::params::EngineType;
 use chimera_core::perf::load::AudioStats;
 use chimera_core::preset::{POOL_SIZE, Sound};
@@ -19,6 +23,7 @@ use chimera_core::project::{
 use chimera_core::reset::ResetCause;
 use chimera_core::scope::SCOPE_LEN;
 use chimera_core::storage::{Card, SystemSettings, SystemSync};
+use chimera_core::triple::{Reader, TripleBuffer, Writer};
 use chimera_core::ui::UiState;
 use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_registry as reg;
@@ -1099,6 +1104,22 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::A, 2));
         feed(ui, Input::turn(EncoderId::B, 1));
     }),
+    // SETTINGS › ORBIT (plan Task 17): the bar on CLEAR, RENAME later,
+    // RELOAD dimmed with nothing to drop.
+    ("settings_orbit", |ui| {
+        to_leaf(ui, &["ORBIT"]);
+        plus(ui, 1);
+    }),
+    // Its SAVE TO PROJ, slot 3 saved: the bar on the playing one.
+    ("settings_orbit_save_to", |ui| {
+        use chimera_core::orbit::scene::SceneIdx;
+        use chimera_core::project::{Confirmed, SceneSlot};
+        let c = Confirmed::<SceneSlot>::unasked(ui.project().orbit(), SceneIdx::ALL[2]);
+        ui.project_mut().orbit_mut().overwrite_scene(c).unwrap();
+        to_leaf(ui, &["ORBIT"]);
+        plus(ui, 2);
+        feed(ui, Input::press(ButtonId::Edit));
+    }),
     // ALPHA loaded, the bar on BETA.
     ("settings_load", |ui| {
         let (s, [a, ..]) = three();
@@ -1298,4 +1319,105 @@ pub fn render_dirty(name: &str) -> Fb {
         &scope_fixture(),
     );
     fb
+}
+
+/// The UI and the runner through their triple buffers, as the desktop
+/// runs them: the view read, the keys, the publish; then the blocks, each
+/// publishing its view.
+pub struct ShellRig {
+    pub ui: Box<UiState>,
+    pub w: Writer<AudioShared>,
+    pub r: Reader<AudioShared>,
+    view_w: Writer<OrbitView>,
+    view_r: Reader<OrbitView>,
+    pub inst: Box<Instrument>,
+    pub runner: Box<OrbitRunner>,
+    /// Each block's events.
+    pub sent: Vec<Vec<OrbitEvent>>,
+    pub views: Vec<OrbitView>,
+}
+
+impl ShellRig {
+    pub fn new(ui: Box<UiState>) -> ShellRig {
+        let buf = Box::leak(Box::new(TripleBuffer::new(
+            AudioShared::default(),
+            AudioShared::default(),
+            AudioShared::default(),
+        )));
+        let (w, r) = buf.split();
+        let (view_w, view_r) = Box::leak(Box::new(orbit_buffer())).split();
+        let sr = core::num::NonZeroU32::new(chimera_hal::SAMPLE_RATE).unwrap();
+        ShellRig {
+            ui,
+            w,
+            r,
+            view_w,
+            view_r,
+            inst: Box::new(Instrument::new(
+                chimera_hal::SAMPLE_RATE,
+                SampleBudget::for_cpu(CPU_HZ_REV_V),
+            )),
+            runner: Box::new(OrbitRunner::new(sr)),
+            sent: Vec::new(),
+            views: Vec::new(),
+        }
+    }
+
+    pub fn frame(&mut self, input: Input, blocks: usize) {
+        self.late(0, input, blocks);
+    }
+
+    /// A frame the audio thread interrupts: `first` blocks run between
+    /// the UI's view read and its keys, so the keys act on a view already
+    /// stale; then the publish and `then` blocks.
+    pub fn late(&mut self, first: usize, input: Input, then: usize) {
+        self.ui.set_orbit_view(self.view_r.read());
+        self.blocks(first);
+        feed(&mut self.ui, input);
+        let ui = &self.ui;
+        self.w.publish(|b| {
+            b.update_from(ui.project().perf(), 0);
+            ui.publish_orbit(&mut b.orbit);
+        });
+        self.blocks(then);
+    }
+
+    fn blocks(&mut self, n: usize) {
+        for _ in 0..n {
+            let ev = self.runner.block(&mut self.inst, self.r.read());
+            self.sent.push(ev.iter().collect());
+            let v = self.runner.view();
+            self.view_w.publish(|o| *o = v);
+            self.views.push(v);
+        }
+    }
+
+    pub fn idle(&mut self, blocks: usize) {
+        self.frame(Input::default(), blocks);
+    }
+
+    pub fn b6(&mut self) {
+        self.frame(Input::press(chimera_hal::ButtonId::B6), 1);
+        self.frame(Input::release(chimera_hal::ButtonId::B6), 1);
+    }
+
+    pub fn tap(&mut self, b: chimera_hal::ButtonId) {
+        self.frame(Input::press(b).at(0), 1);
+        self.frame(Input::release(b).at(100), 1);
+    }
+
+    pub fn view(&self) -> OrbitView {
+        self.runner.view()
+    }
+
+    /// Frames of one block until `f` holds of the view.
+    pub fn until(&mut self, f: impl Fn(&OrbitView) -> bool) {
+        for _ in 0..200_000 {
+            if f(&self.view()) {
+                return;
+            }
+            self.idle(1);
+        }
+        panic!("never");
+    }
 }

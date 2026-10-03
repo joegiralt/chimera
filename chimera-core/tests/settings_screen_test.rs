@@ -3,6 +3,7 @@
 
 mod screen;
 
+use chimera_core::orbit::scene::SceneIdx;
 use chimera_core::project::{PartId, ProjectStatus};
 use chimera_core::ui::UiState;
 use chimera_core::ui::page::PageLayout;
@@ -43,6 +44,7 @@ fn settings_leaf_never_draws_the_map() {
 
 const P1: PartId = PartId::ALL[0];
 const P2: PartId = PartId::ALL[1];
+const S1: SceneIdx = SceneIdx::ALL[0];
 
 #[test]
 fn legends_read_as_the_spec_says() {
@@ -71,13 +73,37 @@ fn legends_read_as_the_spec_says() {
 #[test]
 fn part_crumb_names_the_active_part() {
     assert_eq!(
-        format!("{}", Crumbs::of(&[PART_ROW], P2)),
+        format!("{}", Crumbs::of(&[PART_ROW], P2, S1)),
         "SETTINGS › PART 2"
     );
     assert_eq!(
-        format!("{}", Crumbs::of(&[PART_ROW, 2], P2)),
+        format!("{}", Crumbs::of(&[PART_ROW, 2], P2, S1)),
         "SETTINGS › PART 2 › SAVE TO"
     );
+}
+
+/// ORBIT's crumb names the playing scene. It is wide: at the breadcrumb's
+/// width, left of the beat dot, SETTINGS goes behind `..`, and SAVE TO
+/// shows alone.
+#[cfg(feature = "orbit")]
+#[test]
+fn orbit_crumb_names_the_playing_scene() {
+    use chimera_core::ui::settings::rows;
+    let at = rows(&[]).iter().position(|r| r.label == "ORBIT").unwrap() as u8;
+    let s3 = SceneIdx::ALL[2];
+    assert_eq!(
+        format!("{}", Crumbs::of(&[at], P2, s3).within(400)),
+        "SETTINGS › ORBIT · SCENE 3"
+    );
+    assert_eq!(
+        format!("{}", Crumbs::of(&[at], P2, s3)),
+        ".. › ORBIT · SCENE 3"
+    );
+    assert_eq!(
+        format!("{}", Crumbs::of(&[at, 2], P2, s3).within(400)),
+        "SETTINGS › ORBIT · SCENE 3 › SAVE TO"
+    );
+    assert_eq!(format!("{}", Crumbs::of(&[at, 2], P2, s3)), ".. › SAVE TO");
 }
 
 #[test]
@@ -94,12 +120,12 @@ fn every_legend_fits() {
 #[test]
 fn breadcrumb_drops_leading_parts_behind_dots() {
     // SETTINGS › AUDIO ROUTING › OUTPUTS
-    let c = Crumbs::of(&[5, 0], P1).within(120);
+    let c = Crumbs::of(&[5, 0], P1, S1).within(120);
     let line = format!("{c}");
     assert!(line.starts_with(".."), "{line}");
     assert!(line.ends_with("› OUTPUTS"), "{line}");
     assert_eq!(
-        format!("{}", Crumbs::of(&[5, 0], P1)),
+        format!("{}", Crumbs::of(&[5, 0], P1, S1)),
         "SETTINGS › AUDIO › OUTPUTS"
     );
 }
@@ -220,8 +246,9 @@ fn every_breadcrumb_clears_the_dots() {
     let mut paths = Vec::new();
     walk(&mut Vec::new(), &mut paths);
     assert!(paths.len() > 20, "{} paths", paths.len());
-    for path in &paths {
-        let base = Crumbs::of(path, PartId::ALL[5]);
+    // Every scene: ORBIT's crumb names the playing one.
+    for (path, scene) in paths.iter().flat_map(|p| SceneIdx::ALL.map(|s| (p, s))) {
+        let base = Crumbs::of(path, PartId::ALL[5], scene);
         // A crumb for each row from the top, and one for NAMING's.
         let naming: &[&str] = if path.len() + 2 <= 6 {
             &["RENAME", "SAVE AS"]

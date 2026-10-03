@@ -51,6 +51,10 @@ pub enum Screen {
     ManageProjects,
     /// OVER SLOT nn, TO NEW SLOT nn: slot numbers are run-time.
     SaveToProj,
+    /// ORBIT's SAVE TO PROJ: a row per scene slot, `OVER SCENE n` or
+    /// `SCENE n` as the slot is saved or neutral.
+    #[cfg(feature = "orbit")]
+    SceneSaveTo,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,6 +63,9 @@ pub enum Act {
     PartRename,
     PartClear,
     PartReload,
+    /// ORBIT's CLEAR and RELOAD FROM PROJ, on the playing scene.
+    SceneClear,
+    SceneReload,
 }
 
 const fn row(label: &'static str, kind: Kind) -> Row {
@@ -93,6 +100,24 @@ pub static PART: [Row; 5] = [
     crumb("RELOAD FROM PROJ", "RELOAD", Kind::Act(Act::PartReload)),
     crumb("LIVE SNAP", "SNAP", Leaf(&LIVE_SNAP_LEAF)),
 ];
+
+/// The playing scene's list: its crumb is `ORBIT · SCENE n`.
+#[cfg(feature = "orbit")]
+pub static ORBIT: [Row; 4] = [
+    // private issue #298
+    row("RENAME", Later(issue(298))),
+    row("CLEAR", Kind::Act(Act::SceneClear)),
+    crumb("SAVE TO PROJ", "SAVE TO", Kind::Screen(Screen::SceneSaveTo)),
+    crumb("RELOAD FROM PROJ", "RELOAD", Kind::Act(Act::SceneReload)),
+];
+
+/// ORBIT's row, chosen by the feature: the tree is a static table, so no
+/// run-time flag could pick it.
+#[cfg(feature = "orbit")]
+const ORBIT_KIND: Kind = List(&ORBIT);
+// private issue #262
+#[cfg(not(feature = "orbit"))]
+const ORBIT_KIND: Kind = Later(issue(262));
 
 static MIDI: [Row; 3] = [
     row("SYNC", Later(issue(264))),
@@ -141,7 +166,7 @@ static SYSTEM: [Row; 6] = [
 static TOP: [Row; 8] = [
     row("PROJECT", List(&PROJECT)),
     row("PART", List(&PART)),
-    row("ORBIT", Later(issue(262))),
+    row("ORBIT", ORBIT_KIND),
     crumb("MIDI CONFIG", "MIDI", List(&MIDI)),
     crumb("SYSEX DUMP", "SYSEX", Later(issue(263))),
     crumb("AUDIO ROUTING", "AUDIO", List(&AUDIO)),
@@ -158,6 +183,19 @@ pub const PART_ROW: u8 = {
     loop {
         assert!(i < TOP.len(), "no PART row at the top");
         if str_eq(TOP[i].crumb, "PART") && matches!(TOP[i].kind, List(_)) {
+            break i as u8;
+        }
+        i += 1;
+    }
+};
+
+/// The top list's ORBIT row, found the same way.
+#[cfg(feature = "orbit")]
+pub const ORBIT_ROW: u8 = {
+    let mut i = 0;
+    loop {
+        assert!(i < TOP.len(), "no ORBIT row at the top");
+        if str_eq(TOP[i].crumb, "ORBIT") && matches!(TOP[i].kind, List(_)) {
             break i as u8;
         }
         i += 1;
@@ -271,10 +309,12 @@ pub const fn path_of(s: Screen) -> ([u8; 4], usize) {
 }
 
 /// Each Screen's path, found at compile time.
-const SCREEN_PATHS: [([u8; 4], usize); 3] = [
+const SCREEN_PATHS: &[([u8; 4], usize)] = &[
     path_of(Screen::LoadProject),
     path_of(Screen::ManageProjects),
     path_of(Screen::SaveToProj),
+    #[cfg(feature = "orbit")]
+    path_of(Screen::SceneSaveTo),
 ];
 
 /// Screen `s`'s path in the tree.
@@ -283,6 +323,8 @@ pub fn screen_path(s: Screen) -> &'static [u8] {
         Screen::LoadProject => &SCREEN_PATHS[0],
         Screen::ManageProjects => &SCREEN_PATHS[1],
         Screen::SaveToProj => &SCREEN_PATHS[2],
+        #[cfg(feature = "orbit")]
+        Screen::SceneSaveTo => &SCREEN_PATHS[3],
     };
     &path[..*depth]
 }

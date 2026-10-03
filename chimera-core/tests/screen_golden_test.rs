@@ -103,9 +103,13 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: a fresh project's footer drops NEW (#286).
     ("settings_personal_theme", 0x4ceb975ee846afcc),
     ("settings_system_diag_aud_load", 0x0d5edcdc4826225e),
-    ("settings_top", 0xb8200119c8d8b837),
+    // ORBIT's row opens its list (plan Task 17).
+    ("settings_top", 0x08d6ee26dad9fb97),
     // Part 3's LIVE SNAP leaf (plan Task 15).
     ("settings_part_live_snap", 0x78c80cf3c4c1cc6a),
+    // SETTINGS › ORBIT and its SAVE TO PROJ (plan Task 17).
+    ("settings_orbit", 0x7b61c06f16fb8a5f),
+    ("settings_orbit_save_to", 0xc04620c41b42aa83),
     ("settings_load", 0xbee3b127e748ef17),
     ("settings_prompt_load", 0xc47d45b862dea1e3),
     ("settings_naming", 0x3ad617885a99ddf2),

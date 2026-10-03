@@ -6,14 +6,11 @@ mod common;
 mod screen;
 
 use chimera_core::block::Block;
-use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
-use chimera_core::instrument::{AudioShared, Instrument};
 use chimera_core::orbit::engine::{OrbitEvent, OrbitKind};
-use chimera_core::orbit::runner::{OrbitRunner, OrbitView};
+use chimera_core::orbit::runner::OrbitView;
 use chimera_core::orbit::scene::{Scene, SceneIdx, SceneRing};
 use chimera_core::part::{Held, LiveSnap};
 use chimera_core::project::{Confirmed, PartId, SceneSlot};
-use chimera_core::triple::{Reader, TripleBuffer, Writer};
 use chimera_core::ui::UiState;
 use chimera_core::ui::busy::ToastStep;
 use chimera_core::ui::orbit::{ORBIT_SCN, OrbitCell};
@@ -22,7 +19,7 @@ use chimera_hal::ButtonId::{B2, Edit, Menu, Plus, Seq};
 use chimera_hal::EncoderId::{A, B};
 use chimera_theory::{Note, PitchClass, SnapTo, snap};
 use common::orbit::OrbitRig;
-use screen::{Input, feed, hold, tap};
+use screen::{Input, ShellRig, feed, hold, tap};
 
 const S: [SceneIdx; 8] = SceneIdx::ALL;
 
@@ -89,87 +86,6 @@ fn question(ui: &UiState) -> String {
     ui.prompt_words_for_test()
         .map(|(q, _)| q.as_str().into())
         .unwrap_or_default()
-}
-
-/// The UI and the runner through the triple buffer, as the shells run
-/// them: the view in, the keys, the publish; then the blocks.
-struct Rig {
-    ui: Box<UiState>,
-    w: Writer<AudioShared>,
-    r: Reader<AudioShared>,
-    inst: Box<Instrument>,
-    runner: Box<OrbitRunner>,
-    /// Each block's events.
-    sent: Vec<Vec<OrbitEvent>>,
-    views: Vec<OrbitView>,
-}
-
-impl Rig {
-    fn new(ui: Box<UiState>) -> Rig {
-        let buf = Box::leak(Box::new(TripleBuffer::new(
-            AudioShared::default(),
-            AudioShared::default(),
-            AudioShared::default(),
-        )));
-        let (w, r) = buf.split();
-        let sr = core::num::NonZeroU32::new(chimera_hal::SAMPLE_RATE).unwrap();
-        Rig {
-            ui,
-            w,
-            r,
-            inst: Box::new(Instrument::new(
-                chimera_hal::SAMPLE_RATE,
-                SampleBudget::for_cpu(CPU_HZ_REV_V),
-            )),
-            runner: Box::new(OrbitRunner::new(sr)),
-            sent: Vec::new(),
-            views: Vec::new(),
-        }
-    }
-
-    fn frame(&mut self, input: Input, blocks: usize) {
-        self.ui.set_orbit_view(&self.runner.view());
-        feed(&mut self.ui, input);
-        let ui = &self.ui;
-        self.w.publish(|b| {
-            b.update_from(ui.project().perf(), 0);
-            ui.publish_orbit(&mut b.orbit);
-        });
-        for _ in 0..blocks {
-            let ev = self.runner.block(&mut self.inst, self.r.read());
-            self.sent.push(ev.iter().collect());
-            self.views.push(self.runner.view());
-        }
-    }
-
-    fn idle(&mut self, blocks: usize) {
-        self.frame(Input::default(), blocks);
-    }
-
-    fn b6(&mut self) {
-        self.frame(Input::press(chimera_hal::ButtonId::B6), 1);
-        self.frame(Input::release(chimera_hal::ButtonId::B6), 1);
-    }
-
-    fn tap(&mut self, b: chimera_hal::ButtonId) {
-        self.frame(Input::press(b).at(0), 1);
-        self.frame(Input::release(b).at(100), 1);
-    }
-
-    fn view(&self) -> OrbitView {
-        self.runner.view()
-    }
-
-    /// Frames of one block until `f` holds of the view.
-    fn until(&mut self, f: impl Fn(&OrbitView) -> bool) {
-        for _ in 0..200_000 {
-            if f(&self.view()) {
-                return;
-            }
-            self.idle(1);
-        }
-        panic!("never");
-    }
 }
 
 /// Each ring's drift as a view shows it.
@@ -436,6 +352,119 @@ fn a_stale_view_lands_nothing() {
     assert_eq!(ui.project().orbit().current(), S[0]);
 }
 
+/// Through the real triple buffers, playing: SCENE away and back before
+/// the loop ends cancels the switch. The runner never leaves the playing
+/// scene, and nothing lands: the song keeps it, and `live` as it was.
+#[test]
+fn a_switch_turned_back_lands_nothing() {
+    let mut ui = in_orbit();
+    to_scn(&mut ui);
+    let mut rig = ShellRig::new(ui);
+    rig.b6();
+    rig.until(|v| v.running && v.loops >= 1);
+    rig.idle(1);
+    let live = rig.ui.project().orbit().live;
+    let (loops, from) = (rig.view().loops, rig.views.len());
+    rig.frame(Input::turn(A, 1), 1);
+    for _ in 0..20 {
+        rig.idle(1);
+    }
+    assert_eq!(rig.view().queued, Some(S[1]), "the runner holds it");
+    rig.frame(Input::turn(A, -1), 1);
+    assert_eq!(rig.view().loops, loops, "back before the boundary");
+    assert_eq!(rig.ui.project().orbit().queued(), None);
+    while rig.view().loops < loops + 2 {
+        rig.idle(1);
+        let song = rig.ui.project().orbit();
+        assert_eq!((song.current(), song.queued()), (S[0], None));
+    }
+    assert!(rig.views[from..].iter().all(|v| v.playing == S[0]));
+    assert_eq!(rig.ui.project().orbit().live, live, "nothing landed");
+}
+
+/// Through the real triple buffers, stopped: the runner adopts 2 between
+/// the UI's view read and its keys, which turn SCENE back to 1 (a cancel,
+/// as the UI sees it) and then on to 2 again, under a new rev. The views
+/// that follow read `playing` 2 under the old rev: stale, they land
+/// nothing. Only the new rev's view lands 2.
+#[test]
+fn a_stale_view_through_the_buffers_lands_nothing() {
+    let mut ui = in_orbit();
+    to_scn(&mut ui);
+    let mut rig = ShellRig::new(ui);
+    rig.frame(Input::turn(A, 1), 0);
+    let r1 = rig.ui.orbit().scene_rev;
+    rig.late(1, Input::turn(A, -1), 0);
+    assert_eq!((rig.view().playing, rig.view().scene_rev), (S[1], r1));
+    assert_eq!(rig.ui.project().orbit().current(), S[0], "unseen");
+    assert_eq!(rig.ui.project().orbit().queued(), None, "cancelled");
+    rig.frame(Input::turn(A, 1), 0);
+    assert_eq!(rig.ui.project().orbit().queued(), Some(S[1]));
+    assert_ne!(rig.ui.orbit().scene_rev, r1);
+    for _ in 0..3 {
+        rig.idle(0);
+        let song = rig.ui.project().orbit();
+        assert_eq!((song.current(), song.queued()), (S[0], Some(S[1])), "stale");
+    }
+    rig.idle(1);
+    rig.idle(0);
+    let song = rig.ui.project().orbit();
+    assert_eq!((song.current(), song.queued()), (S[1], None), "its own rev");
+    assert_eq!(rig.view().scene_rev, rig.ui.orbit().scene_rev);
+}
+
+/// The cancel race (ADR 0077): playing, the runner adopts 2 at the
+/// boundary between the UI's view read and its turn back to 1. The UI
+/// never saw 2 land, so the turn is a cancel to it, and its song never
+/// leaves 1; the runner plays 2 for one loop, then takes 1 back at the
+/// next boundary. Nothing is lost: `live` is 1's as it was.
+#[test]
+fn the_cancel_race_plays_the_switch_one_loop() {
+    let mut ui = in_orbit();
+    to_scn(&mut ui);
+    let mut rig = ShellRig::new(ui);
+    rig.b6();
+    rig.until(|v| v.running && v.loops >= 1);
+    // A loop's length in blocks, boundary to boundary.
+    let at = |rig: &ShellRig| rig.views.len();
+    let loops = rig.view().loops;
+    rig.until(|v| v.loops != loops);
+    let start = at(&rig);
+    let loops = rig.view().loops;
+    rig.until(|v| v.loops != loops);
+    let len = at(&rig) - start;
+    let live = rig.ui.project().orbit().live;
+
+    let start = at(&rig);
+    rig.frame(Input::turn(A, 1), 1);
+    while at(&rig) < start + len - 10 {
+        rig.idle(1);
+    }
+    assert_eq!(rig.view().playing, S[0]);
+    rig.late(20, Input::turn(A, -1), 0);
+    assert_eq!(rig.view().playing, S[1], "adopted, unseen");
+    let song = rig.ui.project().orbit();
+    assert_eq!((song.current(), song.queued()), (S[0], None));
+
+    let loops = rig.view().loops;
+    let from = at(&rig);
+    while rig.view().loops < loops + 1 {
+        rig.idle(1);
+        assert_eq!(rig.ui.project().orbit().current(), S[0]);
+    }
+    assert!(
+        rig.views[from..at(&rig) - 1]
+            .iter()
+            .all(|v| v.playing == S[1]),
+        "one loop of 2"
+    );
+    assert_eq!(rig.view().playing, S[0], "then 1 again");
+    rig.idle(1);
+    let song = rig.ui.project().orbit();
+    assert_eq!((song.current(), song.queued()), (S[0], None));
+    assert_eq!(song.live, live, "nothing lost");
+}
+
 /// SAVE defaults to the playing scene again after a switch lands, and
 /// after a load.
 #[test]
@@ -469,7 +498,7 @@ fn save_captures_the_drift() {
         r.set(SceneRing::MUTATE, 100.0);
     }
     let init = scene_drift(&ui.project().orbit().live);
-    let mut rig = Rig::new(ui);
+    let mut rig = ShellRig::new(ui);
     rig.b6();
     rig.until(|v| v.loops >= 20);
     rig.idle(1);

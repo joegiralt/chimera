@@ -39,6 +39,16 @@ settings world of the synth. The spec is
   breadcrumb, a project footer (name and `* MODIFIED`, `SAVED` or `NEW`,
   and a key legend). A leaf page uses the cell grid but keeps the
   breadcrumb and footer, never the chain map.
+- **SETTINGS › ORBIT acts on the playing scene** (amended 2026-10-02:
+  SETTINGS › ORBIT, #262). Its crumb is `ORBIT · SCENE n`. CLEAR asks
+  `CLEAR SCENE n?` and sets the slot neutral; the playing slot lands again,
+  so `live` goes neutral on the loop. SAVE TO PROJ is a row per slot
+  (`OVER SCENE n`, or `SCENE n` when neutral), saving as SCN's SAVE does.
+  RELOAD FROM PROJ asks `RELOAD SCENE n?` and lands the slot again,
+  dropping edits and drift since the save; it is dimmed with nothing to
+  drop. RENAME is later (#298). Without the `orbit` feature the row stays
+  later (#262): its kind is a `const` chosen by the feature, and
+  `Screen::SceneSaveTo` doesn't exist.
 - **MENU hold is a quick save**, at `HOLD_MS`, from anywhere: over the
   project's own file, or SAVE PROJECT AS for a project with no file.
 - **A prompt for every `NeedsConfirm`.** Encoder 1 picks, SEQ confirms,
@@ -47,7 +57,8 @@ settings world of the synth. The spec is
   `Confirmed<DeleteTarget>` and `SaveTo` carry the proof that the user
   was asked. Each is made from a `Said`, which only a prompt's confirming
   pill holds: REPLACE, RELOAD and LOAD ANYWAY, and DELETE, CLEAR, SAVE
-  OVER and OVERWRITE THAT ONE alike.
+  OVER and OVERWRITE THAT ONE alike; ORBIT's CLEAR and RELOAD confirm a
+  `Confirmed<SceneSlot>` the same way (ADR 0077).
 - **A confirmed file carries a witness**, the generation and name of its
   newest header as listed; a write or delete refuses a file that moved
   since. Accepted limit: a pair deleted and made again at the same id,

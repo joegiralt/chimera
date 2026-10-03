@@ -399,8 +399,10 @@ fn edit_and_the_sound_rung() {
 fn later_rows_are_inert() {
     let cx = cx();
     let mut r = Recall::new();
-    let l = Location::settings_at(&[], path_of(&["ORBIT"])[0]);
-    assert!(matches!(row_at(&[2]).unwrap().kind, Kind::Later(_)));
+    // ORBIT › RENAME (#298); ORBIT itself without its feature (#262).
+    let rename = path_of(&["ORBIT", "RENAME"]);
+    let l = Location::settings_at(&rename[..1], rename[1]);
+    assert!(matches!(row_at(&rename).unwrap().kind, Kind::Later(_)));
     assert_eq!(l.step(NavKey::Edit, &cx, &mut r), Step::Stay);
     assert_eq!(l.step(NavKey::SeqTap, &cx, &mut r), Step::Stay);
 }

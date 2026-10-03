@@ -4,6 +4,7 @@
 mod screen;
 
 use chimera_core::name::ProjectName;
+use chimera_core::orbit::scene::SceneIdx;
 use chimera_core::params::EngineType;
 use chimera_core::project::{Line, PartFrom, PartId, PartSet, PartSource, SlotId, Subject};
 use chimera_core::storage::ProjectId;
@@ -15,9 +16,9 @@ use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::region::{MAX_REGIONS, PROMPT, RegionKind, layout_regions, settings_regions};
 use chimera_core::ui::settings::naming::{Naming, NamingOut, proposed_name};
 use chimera_core::ui::settings::prompt::{
-    AlsoUses, AlsoUsesAnswer, Answer, CardChanged, Choice, Clear, ClearSlot, Delete, Load,
-    NameExists, Prompt, Reload, Replace, ReplaceAnswer as R, ReplaceTo, SaveOver, SaveSceneOver,
-    fits, with_view,
+    AlsoUses, AlsoUsesAnswer, Answer, CardChanged, Choice, Clear, ClearScene, ClearSlot, Delete,
+    Load, NameExists, Prompt, Reload, ReloadScene, Replace, ReplaceAnswer as R, ReplaceTo,
+    SaveOver, SaveSceneOver, fits, with_view,
 };
 use chimera_core::ui::settings::view::{Crumb, Crumbs};
 use chimera_core::ui::{UiState, theme};
@@ -395,8 +396,10 @@ fn every_prompt_fits() {
     }
     check(CardChanged);
     check(ClearSlot { slot });
-    for scene in chimera_core::orbit::scene::SceneIdx::ALL {
+    for scene in SceneIdx::ALL {
         check(SaveSceneOver { scene });
+        check(ClearScene { scene });
+        check(ReloadScene { scene });
     }
     let two = AlsoUses {
         first: p4,
@@ -490,7 +493,7 @@ fn naming_ends_the_breadcrumb_with_its_crumb() {
     // The crumbs clear ORBIT's beat dot, so SETTINGS drops behind `..`.
     assert_eq!(crumbs.to_string(), ".. › PROJECT › RENAME");
     // Task 11's SAVE AS, the widest third crumb, ends it the same way.
-    let mut save_as = Crumbs::of(&[0], PartId::ALL[0]);
+    let mut save_as = Crumbs::of(&[0], PartId::ALL[0], SceneIdx::ALL[0]);
     save_as.push(Crumb::Name("SAVE AS"));
     assert_eq!(save_as.to_string(), ".. › PROJECT › SAVE AS");
     tap(&mut ui, ButtonId::Menu);

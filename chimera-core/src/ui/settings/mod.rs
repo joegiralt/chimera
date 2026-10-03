@@ -13,6 +13,8 @@ pub mod view;
 
 pub use job::CardCx;
 pub use manage::MANAGE_COMMANDS;
+#[cfg(feature = "orbit")]
+pub use tree::ORBIT_ROW;
 pub use tree::{
     Act, Issue, Kind, PART_ROW, ROOT, Row, SAVE_AS_AT, Screen, issue, kind_at, path_of, row_at,
     rows, screen_path,
@@ -32,9 +34,10 @@ use listing::Chosen;
 use naming::{NAME_MAX, Naming, NamingOut};
 use prompt::{
     AlsoUses, AlsoUsesAnswer, Answer, CardChanged, CardChangedAnswer, Choice, Clear, ClearAnswer,
-    ClearSlot, Delete, DeleteAnswer, Load, LoadAnswer, NameExists, NameExistsAnswer, PromptView,
-    Reload, ReloadAnswer, Replace, ReplaceAnswer, ReplaceTo, SaveOver, SaveOverAnswer,
-    SaveSceneOver, SaveSceneOverAnswer, with_view,
+    ClearScene, ClearSceneAnswer, ClearSlot, Delete, DeleteAnswer, Load, LoadAnswer, NameExists,
+    NameExistsAnswer, PromptView, Reload, ReloadAnswer, ReloadScene, ReloadSceneAnswer, Replace,
+    ReplaceAnswer, ReplaceTo, SaveOver, SaveOverAnswer, SaveSceneOver, SaveSceneOverAnswer,
+    with_view,
 };
 use replace::{PartAsk, ProjectAsk, ReloadAsk, Reply};
 
@@ -89,6 +92,10 @@ pub(crate) enum Ask {
     SaveOver(Chosen, Choice<SaveOverAnswer>),
     /// SCN's SAVE over another saved scene, as the slot was when asked.
     SaveSceneOver(SceneAsk, Choice<SaveSceneOverAnswer>),
+    /// SETTINGS › ORBIT's CLEAR and RELOAD, of the playing scene as its
+    /// slot was when asked.
+    ClearScene(SceneAsk, Choice<ClearSceneAnswer>),
+    ReloadScene(SceneAsk, Choice<ReloadSceneAnswer>),
 }
 
 /// `AskKind` and its `ALL`, from one list: no kind can miss `ALL`.
@@ -127,6 +134,8 @@ ask_kinds! {
     Clear => "clear",
     SaveOver => "save_over",
     SaveSceneOver => "save_scene_over",
+    ClearScene => "clear_scene",
+    ReloadScene => "reload_scene",
 }
 
 /// A listed project as its prompt names it.
@@ -153,6 +162,8 @@ pub(crate) enum Answered {
     Clear(Chosen, Answer<ClearAnswer>),
     SaveOver(Chosen, Answer<SaveOverAnswer>),
     SaveSceneOver(SceneAsk, Answer<SaveSceneOverAnswer>),
+    ClearScene(SceneAsk, Answer<ClearSceneAnswer>),
+    ReloadScene(SceneAsk, Answer<ReloadSceneAnswer>),
 }
 
 /// Each named Part's `Revert`, by Part, as offered when the prompt opened:
@@ -242,6 +253,20 @@ impl Ask {
                 c,
                 f,
             ),
+            Ask::ClearScene(a, c) => with_view(
+                &ClearScene {
+                    scene: a.slot().index(),
+                },
+                c,
+                f,
+            ),
+            Ask::ReloadScene(a, c) => with_view(
+                &ReloadScene {
+                    scene: a.slot().index(),
+                },
+                c,
+                f,
+            ),
         }
     }
 
@@ -259,6 +284,8 @@ impl Ask {
             Ask::Clear(..) => AskKind::Clear,
             Ask::SaveOver(..) => AskKind::SaveOver,
             Ask::SaveSceneOver(..) => AskKind::SaveSceneOver,
+            Ask::ClearScene(..) => AskKind::ClearScene,
+            Ask::ReloadScene(..) => AskKind::ReloadScene,
         }
     }
 
@@ -357,6 +384,14 @@ impl Ask {
             Ask::SaveSceneOver(a, mut choice) => match choice.input(c, p) {
                 Some(x) => Got(Answered::SaveSceneOver(a, x)),
                 None => Open(Ask::SaveSceneOver(a, choice)),
+            },
+            Ask::ClearScene(a, mut choice) => match choice.input(c, p) {
+                Some(x) => Got(Answered::ClearScene(a, x)),
+                None => Open(Ask::ClearScene(a, choice)),
+            },
+            Ask::ReloadScene(a, mut choice) => match choice.input(c, p) {
+                Some(x) => Got(Answered::ReloadScene(a, x)),
+                None => Open(Ask::ReloadScene(a, choice)),
             },
         }
     }

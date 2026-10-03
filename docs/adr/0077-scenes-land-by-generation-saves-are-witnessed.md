@@ -37,6 +37,22 @@ a slot written meanwhile can't overwrite it.
   dropped. Whether `live` edits should persist per scene is the owner's
   question; this ruling does not decide it. Supersedes this ADR's first
   text (the copy at the turn, edits to the queued scene).
+- **A queued slot always lands, the playing one too** (plan Task 17,
+  SETTINGS › ORBIT): CLEAR of the playing scene and RELOAD queue the
+  playing slot itself under a new rev, and the runner adopts it at the
+  boundary like any switch; only a rev with nothing queued is a cancel.
+  Once the runner has adopted the UI's newest rev and the UI still shows
+  it queued, the runner takes no knobs from `settings`, which are the old
+  `live` until the view lands it.
+- **The cancel race** (Task 16 review): if the runner adopts a switch to
+  B at the boundary after the UI last read its view, SCENE turned back to
+  A is a cancel as the UI sees it, a rev with nothing queued. The runner,
+  playing B, takes that rev as a switch back to A: B plays one extra loop,
+  then A lands at the next boundary. The song never leaves A, the view
+  and the song agree again after that loop, and nothing is lost: `live` is
+  A's throughout. Turning SCENE on to B again in that window queues B
+  under a new rev; a view still reporting B under the old rev is stale and
+  lands nothing, and B lands again at the next boundary.
 - **The cost:** `OrbitShared` carries `next`, a second scene, so the
   runner can hear the playing scene's knobs and still adopt the queued
   one: ≈1.2 KB AXI across the triple buffer's three slots.
@@ -48,7 +64,8 @@ a slot written meanwhile can't overwrite it.
 - **The witness is read when the prompt opens.** Every write to slot n
   moves `slot_revs[n]` (run-time only, never saved, ignored by `==`).
   The prompt holds a `SceneAsk`, the slot and its rev when it opened,
-  which only `OrbitSong::save_to` makes. `Confirmed::<SceneSlot>::said`
+  which only the crate makes (`OrbitSong::save_to`, and SETTINGS ›
+  ORBIT's CLEAR and RELOAD). `Confirmed::<SceneSlot>::said`
   takes it with the confirming pill's `Said<SceneSlot>`;
   `overwrite_scene` refuses a slot whose rev moved (`SCENE CHANGED`).
 

@@ -28,8 +28,9 @@ use crate::project::{
 use crate::ui::hold::Presses;
 
 use super::prompt::{
-    Answer, Answers, Choice, ClearAnswer, DeleteAnswer, LoadAnswer, NameExistsAnswer, ReloadAnswer,
-    ReplaceAnswer, SaveOverAnswer, SaveSceneOverAnswer,
+    Answer, Answers, Choice, ClearAnswer, ClearSceneAnswer, DeleteAnswer, LoadAnswer,
+    NameExistsAnswer, ReloadAnswer, ReloadSceneAnswer, ReplaceAnswer, SaveOverAnswer,
+    SaveSceneOverAnswer,
 };
 use said::Said;
 
@@ -62,6 +63,8 @@ commits!(
     SaveOverAnswer => SaveOver, OverwriteTarget;
     NameExistsAnswer => Overwrite, OverwriteTarget;
     SaveSceneOverAnswer => SaveOver, SceneSlot;
+    ClearSceneAnswer => Clear, SceneSlot;
+    ReloadSceneAnswer => Reload, SceneSlot;
 );
 
 impl Guarded for ReplaceAnswer {

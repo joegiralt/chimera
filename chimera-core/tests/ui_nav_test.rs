@@ -198,23 +198,28 @@ fn settings_keys_follow_the_bar_and_the_status() {
         "PART opens, as PROJECT"
     );
 
-    // PART (a list) → ORBIT (later): the legend changes.
-    feed(&mut ui, Input::press(ButtonId::Plus));
+    // PART (a list) → SYSEX DUMP (later): the legend changes.
+    let to_sysex = |ui: &mut UiState, k| {
+        for _ in 0..3 {
+            feed(ui, Input::press(k));
+        }
+    };
+    to_sysex(&mut ui, ButtonId::Plus);
     draw(&mut ui);
     assert_ne!(key(&ui, RegionKind::Footer), footer, "legend");
     let footer = key(&ui, RegionKind::Footer);
 
     // Into PART and MENU back out: the breadcrumb changes.
-    feed(&mut ui, Input::press(ButtonId::Minus));
+    to_sysex(&mut ui, ButtonId::Minus);
     feed(&mut ui, Input::press(ButtonId::Edit));
     draw(&mut ui);
     let crumbs = key(&ui, RegionKind::Crumbs);
     tap(&mut ui, ButtonId::Menu);
     draw(&mut ui);
     assert_ne!(key(&ui, RegionKind::Crumbs), crumbs, "MENU back");
-    feed(&mut ui, Input::press(ButtonId::Plus));
+    to_sysex(&mut ui, ButtonId::Plus);
     draw(&mut ui);
-    assert_eq!(key(&ui, RegionKind::Footer), footer, "back on ORBIT");
+    assert_eq!(key(&ui, RegionKind::Footer), footer, "back on SYSEX DUMP");
 
     ui.project_mut()
         .edit_part(P[0])

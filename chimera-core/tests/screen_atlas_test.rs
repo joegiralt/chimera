@@ -486,6 +486,18 @@ fn prompt(k: AskKind, ui: &mut UiState) {
             manage_command(ui, BETA, Command::SaveTo, true);
             tap(ui, ButtonId::Seq);
         }
+        // SETTINGS › ORBIT's CLEAR, and RELOAD with an edit to drop.
+        AskKind::ClearScene => {
+            to_leaf(ui, &["ORBIT"]);
+            plus(ui, 1);
+            tap(ui, ButtonId::Seq);
+        }
+        AskKind::ReloadScene => {
+            ui.project_mut().orbit_mut().live.chords.tonic = chimera_theory::PitchClass::E;
+            to_leaf(ui, &["ORBIT"]);
+            plus(ui, 3);
+            tap(ui, ButtonId::Seq);
+        }
         // SCN's SAVE → 5 twice: a neutral slot saves, a saved one asks.
         AskKind::SaveSceneOver => {
             hold(ui, ButtonId::Seq);

@@ -28,10 +28,18 @@ fn every_later_row_names_its_issue() {
         }
     }
     let names: Vec<_> = labels.iter().map(|l| l.0).collect();
+    // ORBIT is built with its feature, RENAME inside it later (#298);
+    // without it, the row is later itself (#262).
+    let orbit = if cfg!(feature = "orbit") {
+        ("RENAME", 298)
+    } else {
+        ("ORBIT", 262)
+    };
+    assert!(labels.contains(&orbit));
     assert_eq!(
         names,
         [
-            "ORBIT",
+            orbit.0,
             "SYNC",
             "PORT CONFIG",
             "SYSEX DUMP",

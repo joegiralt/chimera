@@ -82,6 +82,8 @@ answers!(DeleteAnswer { Delete => "DELETE", Cancel => "CANCEL" } Two);
 answers!(ClearAnswer { Clear => "CLEAR", Cancel => "CANCEL" } Two);
 answers!(SaveOverAnswer { SaveOver => "SAVE OVER", Cancel => "CANCEL" } Two);
 answers!(SaveSceneOverAnswer { SaveOver => "SAVE OVER", Cancel => "CANCEL" } Two);
+answers!(ClearSceneAnswer { Clear => "CLEAR", Cancel => "CANCEL" } Two);
+answers!(ReloadSceneAnswer { Reload => "RELOAD", Cancel => "CANCEL" } Two);
 answers!(CardChangedAnswer { SaveAs => "SAVE AS", Cancel => "CANCEL" } Two);
 
 /// A pick, or MENU (`None`). Only `Choice::input` makes one, so an answer
@@ -374,6 +376,34 @@ impl Prompt for SaveSceneOver {
     fn words(&self, q: &mut Line, r: &mut Line) {
         let _ = write!(q, "SAVE OVER SCENE {}?", self.scene.get() + 1);
         let _ = r.write_str("ITS SAVED SCENE IS REPLACED");
+    }
+}
+
+/// SETTINGS › ORBIT's CLEAR, of the playing scene: its slot goes
+/// neutral, and so does `live` on the loop.
+pub struct ClearScene {
+    pub scene: SceneIdx,
+}
+
+impl Prompt for ClearScene {
+    type Answer = ClearSceneAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        let _ = write!(q, "CLEAR SCENE {}?", self.scene.get() + 1);
+        let _ = r.write_str("IT GOES SILENT ON THE LOOP");
+    }
+}
+
+/// SETTINGS › ORBIT's RELOAD FROM PROJ: the playing scene's slot again,
+/// on the loop.
+pub struct ReloadScene {
+    pub scene: SceneIdx,
+}
+
+impl Prompt for ReloadScene {
+    type Answer = ReloadSceneAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        let _ = write!(q, "RELOAD SCENE {}?", self.scene.get() + 1);
+        let _ = r.write_str("EDITS AND DRIFT SINCE ITS SAVE ARE DROPPED");
     }
 }
 

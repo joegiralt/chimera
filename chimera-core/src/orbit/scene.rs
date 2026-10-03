@@ -228,9 +228,9 @@ impl Scene {
 /// and any queued, the scene being edited and played (`live`, its drift
 /// absorbed), and the tempo.
 ///
-/// The slots are written only here: `save_scene`, `save_to` and a
-/// confirmed `overwrite_scene`, each moving the slot's rev, which is what a
-/// `Confirmed<SceneSlot>` witnesses.
+/// The slots are written only here: `save_scene`, `save_to`, and a
+/// confirmed `overwrite_scene` or `clear_scene`, each moving the slot's
+/// rev, which is what a `Confirmed<SceneSlot>` witnesses.
 #[derive(Clone, Copy, Debug)]
 pub struct OrbitSong {
     /// The playing scene: what the pages edit and the runner plays. A
@@ -372,7 +372,8 @@ impl OrbitSong {
     }
 
     /// SCENE turned to `s`: queued, to land on the loop; `live` stays the
-    /// playing scene till then. Back to the playing scene cancels it.
+    /// playing scene till then. Back to the playing scene cancels it, a
+    /// re-landing (`reland`) too.
     pub fn queue(&mut self, s: SceneIdx) {
         self.queued = (s != self.current).then_some(s);
     }
@@ -387,16 +388,65 @@ impl OrbitSong {
         }
     }
 
+    /// `live` over slot `n`.
     fn write(&mut self, n: SceneIdx) {
+        self.put(n, self.live);
+    }
+
+    /// `s` into slot `n`, its rev moved and `saved` kept.
+    fn put(&mut self, n: SceneIdx, s: Scene) {
         let i = n.0 as usize;
-        self.scenes[i] = self.live;
+        self.scenes[i] = s;
         self.slot_revs[i] = self.slot_revs[i].wrapping_add(1);
         let bit = 1 << i;
-        self.saved = if self.live == Scene::neutral() {
+        self.saved = if s == Scene::neutral() {
             self.saved & !bit
         } else {
             self.saved | bit
         };
+    }
+
+    /// `live` differs from the playing slot: an edit or drift since the
+    /// last save, which RELOAD would drop.
+    pub fn edited(&self) -> bool {
+        self.live != self.scenes[self.current.0 as usize]
+    }
+
+    /// The playing slot queued to land again, like a switch: `live` becomes
+    /// its copy on the loop.
+    fn reland(&mut self) {
+        self.queued = Some(self.current);
+    }
+
+    /// SETTINGS › ORBIT's CLEAR, answered: the slot it asked about to
+    /// neutral, unless written since. The playing one also lands again, so
+    /// `live` goes neutral on the loop; a switch already waiting lands as
+    /// queued.
+    pub fn clear_scene(&mut self, yes: Confirmed<SceneSlot>) -> Result<(), Refused> {
+        if !yes.holds(self) {
+            return Err(Refused::SlotChanged);
+        }
+        let n = yes.target().index();
+        self.put(n, Scene::neutral());
+        if n == self.current && self.queued.is_none() {
+            self.reland();
+        }
+        Ok(())
+    }
+
+    /// SETTINGS › ORBIT's RELOAD FROM PROJ, answered: `live` back to the
+    /// playing slot, queued like a switch, so its edits and drift since
+    /// the save are dropped on the loop. Refused while a switch waits, and
+    /// for a slot written since, or no longer playing.
+    pub fn reload_scene(&mut self, yes: Confirmed<SceneSlot>) -> Result<(), Refused> {
+        if self.queued.is_some() {
+            return Err(Refused::SwitchPending);
+        }
+        if !yes.holds(self) || yes.target().index() != self.current {
+            return Err(Refused::SlotChanged);
+        }
+        self.reland();
+        Ok(())
     }
 
     /// SEQ in ORBIT: `live`, drift and all, over the playing slot. No

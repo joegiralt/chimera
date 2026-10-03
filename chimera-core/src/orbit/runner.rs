@@ -26,14 +26,15 @@ use core::num::NonZeroU32;
 pub struct OrbitShared {
     pub run: bool,
     pub bpm: Bpm,
-    /// Bumped on every switch and every cancel; the runner acts on each
-    /// rev once (ADR 0077).
+    /// Bumped on every switch, re-landing and cancel; the runner acts on
+    /// each rev once (ADR 0077).
     pub scene_rev: u16,
     /// The playing scene, which `settings` is: the knobs come from it.
     pub scene: SceneIdx,
     pub settings: Scene,
     /// A switch waiting on the loop, and the slot it brings (`next`),
-    /// adopted whole at the boundary. `next` means nothing without it.
+    /// adopted whole at the boundary; the playing slot itself lands again.
+    /// `next` means nothing without it.
     pub queued: Option<SceneIdx>,
     pub next: Scene,
     /// What the keys play into (spec § 5.3).
@@ -557,9 +558,11 @@ impl OrbitRunner {
         }
 
         if o.scene_rev != self.scene_rev {
-            // Back to the scene playing: a cancel, nothing to adopt.
+            // A queued slot lands, the playing one again too (CLEAR or
+            // RELOAD); back to the scene playing with nothing queued is a
+            // cancel, nothing to adopt.
             let (s, _) = o.incoming();
-            self.cue = (s != self.playing).then_some(s);
+            self.cue = (o.queued.is_some() || s != self.playing).then_some(s);
             if self.cue.is_none() {
                 self.scene_rev = o.scene_rev;
             }
@@ -568,8 +571,10 @@ impl OrbitRunner {
             self.adopt(shared);
         }
         // Only the playing scene's knobs: a waiting switch's are its own,
-        // and right after a landing the UI's `settings` are a frame behind.
-        if o.scene == self.playing {
+        // and once the UI's switch is adopted its `settings` are a frame
+        // behind until its view lands it.
+        let unseen = o.queued.is_some() && o.scene_rev == self.scene_rev;
+        if o.scene == self.playing && !unseen {
             self.copy_knobs(&o.settings);
         }
 

@@ -57,7 +57,7 @@ use crate::preset::POOL_SIZE;
 use crate::project::{
     self, CardOut, Confirmed, DeleteTarget, Line, LoadLink, PartEdit, PartFrom, PartId, PartSource,
     Project, ProjectFile, ProjectNote, ProjectSource, ProjectStatus, ReplaceGuard, SaveTo,
-    SceneSlot, StatusCache, Swap, TemplateCrc, part_block_mut,
+    SceneAsk, SceneSlot, StatusCache, Swap, TemplateCrc, part_block_mut,
 };
 use crate::scope::SCOPE_LEN;
 use crate::storage::ProjectId;
@@ -581,6 +581,8 @@ impl UiState {
             Screen::LoadProject => self.listing.load_rows(),
             Screen::ManageProjects => self.listing.len(),
             Screen::SaveToProj => SAVE_ROWS.len(),
+            #[cfg(feature = "orbit")]
+            Screen::SceneSaveTo => SceneIdx::ALL.len(),
         }
     }
 
@@ -974,7 +976,26 @@ impl UiState {
             Act::PartClear => self.clear_part(),
             // `part_cmd`'s.
             Act::PartReload => {}
+            Act::SceneClear => {
+                let a = SceneAsk::of(self.project.orbit(), self.project.orbit().current());
+                self.ask(Ask::ClearScene(a, prompt::Choice::new()));
+            }
+            Act::SceneReload => self.ask_reload_scene(),
         }
+    }
+
+    /// SETTINGS › ORBIT's RELOAD: asked when `live` has something to drop
+    /// and no switch waits; dimmed otherwise.
+    fn ask_reload_scene(&mut self) {
+        let song = self.project.orbit();
+        if !song.edited() {
+            return;
+        }
+        if song.queued().is_some() {
+            return self.error(Line::new(prompt::SWITCH_PENDING));
+        }
+        let a = SceneAsk::of(song, song.current());
+        self.ask(Ask::ReloadScene(a, prompt::Choice::new()));
     }
 
     /// CLEAR: the active Part to its engine's INIT, through the guard.
@@ -1150,7 +1171,21 @@ impl UiState {
             loaded: self.project.meta().file(),
             part: (at.path().first() == Some(&PART_ROW))
                 .then(|| PartBand::of(&self.project, self.active_part)),
+            scene: self.project.orbit().current(),
+            orbit: self.orbit_band(at),
         })
+    }
+
+    /// In the ORBIT branch, the playing scene's band.
+    #[cfg(feature = "orbit")]
+    fn orbit_band(&self, at: SettingsAt) -> Option<settings::view::OrbitBand> {
+        (at.path().first() == Some(&settings::ORBIT_ROW))
+            .then(|| settings::view::OrbitBand::of(self.project.orbit()))
+    }
+
+    #[cfg(not(feature = "orbit"))]
+    fn orbit_band(&self, _: SettingsAt) -> Option<settings::view::OrbitBand> {
+        None
     }
 
     /// NAMING, if it is open.
@@ -1354,6 +1389,22 @@ impl UiState {
                     }
                 }
             }
+            Answered::ClearScene(ask, a) => {
+                if let Some(yes) = said(a) {
+                    let yes = Confirmed::<SceneSlot>::said(ask, yes);
+                    if let Err(e) = self.orbit.clear_scene(yes, self.project.orbit_mut()) {
+                        self.error(Line::new(prompt::scene_refused(e)));
+                    }
+                }
+            }
+            Answered::ReloadScene(ask, a) => {
+                if let Some(yes) = said(a) {
+                    let yes = Confirmed::<SceneSlot>::said(ask, yes);
+                    if let Err(e) = self.orbit.reload_scene(yes, self.project.orbit_mut()) {
+                        self.error(Line::new(prompt::scene_refused(e)));
+                    }
+                }
+            }
             Answered::Clear(c, a) => {
                 if let Some(yes) = said(a) {
                     let over = Confirmed::<OverwriteTarget>::answered(c.entry(), yes);
@@ -1554,10 +1605,14 @@ impl UiState {
         }
     }
 
-    /// EDIT on SCN: `live` to SAVE's slot, at once over the playing or a
-    /// neutral one; over another saved scene, SAVE OVER asks.
+    /// EDIT on SCN: `live` to SAVE's slot.
     fn save_scene_to(&mut self) {
-        let n = self.orbit.save_slot(self.project.orbit());
+        self.save_scene_in(self.orbit.save_slot(self.project.orbit()));
+    }
+
+    /// `live` to slot `n`, at once over the playing or a neutral one; over
+    /// another saved scene, SAVE OVER asks.
+    fn save_scene_in(&mut self, n: SceneIdx) {
         match self.project.orbit_mut().save_to(n) {
             Ok(SceneSave::Saved(n)) => self.scene_saved(n),
             Ok(SceneSave::Ask(a)) => self.ask(Ask::SaveSceneOver(a, prompt::Choice::new())),
@@ -1623,12 +1678,24 @@ impl UiState {
                 Step::Screen(Screen::SaveToProj) => {
                     self.go(Location::settings_at(screen_path(Screen::SaveToProj), 0))
                 }
+                // On the playing scene's row, as SCN's SAVE starts.
+                #[cfg(feature = "orbit")]
+                Step::Screen(Screen::SceneSaveTo) => {
+                    let row = self.project.orbit().current().get();
+                    self.go(Location::settings_at(screen_path(Screen::SceneSaveTo), row))
+                }
                 Step::Run => match (self.screen(), at) {
                     (Some(Screen::LoadProject), Some(s)) => self.run_load(s.row()),
                     (Some(Screen::ManageProjects), Some(s)) => self.run_manage(s),
                     (Some(Screen::SaveToProj), Some(s)) => {
                         if let Some(&c) = SAVE_ROWS.get(s.row() as usize) {
                             self.run_part_cmd(c);
+                        }
+                    }
+                    #[cfg(feature = "orbit")]
+                    (Some(Screen::SceneSaveTo), Some(s)) => {
+                        if let Some(&n) = SceneIdx::ALL.get(s.row() as usize) {
+                            self.save_scene_in(n);
                         }
                     }
                     _ => {}

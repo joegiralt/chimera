@@ -47,7 +47,11 @@ impl Act {
     pub const fn part_cmd(self) -> Option<PartCmd> {
         match self {
             Act::PartReload => Some(PartCmd::Reload),
-            Act::SaveProjectAs | Act::PartRename | Act::PartClear => None,
+            Act::SaveProjectAs
+            | Act::PartRename
+            | Act::PartClear
+            | Act::SceneClear
+            | Act::SceneReload => None,
         }
     }
 }
