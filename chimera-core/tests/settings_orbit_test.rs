@@ -297,7 +297,7 @@ fn b_n_leaves_from_any_depth() {
     orbit_row(&mut ui, CLEAR);
     feed(&mut ui, Input::press(B6));
     assert_eq!(ui.location().part(), Some(PartId::ALL[5]));
-    assert!(!ui.orbit().run);
+    assert_eq!(ui.orbit().presses, 0);
 }
 
 /// Each scene prompt's `ALL` is its pills' order, and its pills commit by

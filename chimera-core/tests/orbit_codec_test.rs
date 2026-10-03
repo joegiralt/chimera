@@ -867,7 +867,7 @@ mod unit {
         hold(&mut ui, Seq);
         tap(&mut ui, B6);
         ui.update(UiTick::for_test());
-        assert!(ui.orbit().run);
+        assert_eq!(ui.orbit().presses, 1);
         assert_eq!(ui.project_status(), ProjectStatus::Pristine, "B6");
         tap(&mut ui, B6);
         ui.update(UiTick::for_test());

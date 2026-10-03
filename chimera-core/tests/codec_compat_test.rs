@@ -19,8 +19,8 @@ use chimera_core::project::{
 use chimera_core::storage::{FileError, MIGRATIONS, TRANSLATIONS, decode_block, sound_crc};
 use chimera_hal::BLOCK_SIZE;
 use common::codec_util::{
-    SYSTEM_FIXTURE, decode, decode_into, encode, fix_crc, record_offsets, system_file,
-    system_fixture_settings,
+    SYSTEM_FIXTURE, SYSTEM_MIDI_FIXTURE, decode, decode_into, encode, fix_crc, record_offsets,
+    system_file, system_fixture_settings, system_midi_fixture_settings,
 };
 use common::project::{decode as decode_project, encode as encode_project, load};
 use common::{
@@ -96,6 +96,14 @@ fn write_v1_fixtures() {
     if write_fixture(SYSTEM_FIXTURE, &sys) {
         println!("system ({}, {:#018x}),", sys.len(), fnv1a_bytes(&sys));
     }
+    let midi = system_file(&system_midi_fixture_settings());
+    if write_fixture(SYSTEM_MIDI_FIXTURE, &midi) {
+        println!(
+            "system midi ({}, {:#018x}),",
+            midi.len(),
+            fnv1a_bytes(&midi)
+        );
+    }
     let prj = encode_project(&fixture_project());
     if write_fixture(PROJECT_FIXTURE, &prj) {
         println!("project ({}, {:#018x}),", prj.len(), fnv1a_bytes(&prj));
@@ -169,6 +177,9 @@ const FIXTURE_BYTES: &[(&str, usize, u64)] = &[
 
 /// `system.sys`'s length and FNV-1a.
 const SYSTEM_FIXTURE_BYTES: (usize, u64) = (65, 0xf544fe6fdcbdda8c);
+
+/// `system_midi.sys`'s length and FNV-1a.
+const SYSTEM_MIDI_FIXTURE_BYTES: (usize, u64) = (75, 0x4b20b5e9de7cbffc);
 
 /// The v1 project fixture, written from `fixture_project`.
 const PROJECT_FIXTURE: &str = "project.prj";
@@ -398,6 +409,11 @@ fn v1_fixture_bytes_are_frozen() {
             SYSTEM_FIXTURE,
             SYSTEM_FIXTURE_BYTES.0,
             SYSTEM_FIXTURE_BYTES.1,
+        ),
+        (
+            SYSTEM_MIDI_FIXTURE,
+            SYSTEM_MIDI_FIXTURE_BYTES.0,
+            SYSTEM_MIDI_FIXTURE_BYTES.1,
         ),
         (
             PROJECT_FIXTURE,

@@ -4,6 +4,7 @@
 
 mod common;
 
+use chimera_core::instrument::NoteOrigin;
 use chimera_core::note_queue::{InEvent, NoteEvent, NoteKind, NoteSources, RealTime, SourceId};
 use chimera_core::orbit::clock::{
     ClockSource, MAX_BPM_EXT, Phase, Position, SyncMode, step_at, step_start,
@@ -836,6 +837,55 @@ fn int_ignores_clock_and_transport() {
     assert!(r.stuck_notes().is_empty(), "{:?}", r.stuck_notes());
 }
 
+/// The Live voices held, by note.
+fn live_held(r: &OrbitRig) -> Vec<u8> {
+    let slots = r.inst().allocator().slots();
+    let origins = r.inst().origins();
+    (0..slots.len())
+        .filter(|&v| slots[v].held() && origins[v] == NoteOrigin::Live)
+        .filter_map(|v| slots[v].note().map(|n| n.get()))
+        .collect()
+}
+
+/// SYNC INT: a key played while clock and every transport message flood
+/// in sounds, holds and releases as with nothing coming in.
+#[test]
+fn int_plays_live_notes_under_a_flood() {
+    let steps = [4, 3, 5, 7, 16];
+    let mut r = rig(steps, 50, 90);
+    r.sync = SyncMode::Int;
+    let flood = [
+        RealTime::Start,
+        RealTime::Stop,
+        RealTime::Continue,
+        RealTime::Stop,
+    ];
+    let mut feed = clock_from(&r, 2000, 140.0);
+    let mut flood_block = |r: &mut OrbitRig, i: usize| {
+        for _ in 0..4 {
+            r.rt(0, RealTime::Clock);
+        }
+        r.rt(0, flood[i % flood.len()]);
+        feed.feed(r, 0);
+        r.block();
+    };
+    for i in 0..20 {
+        flood_block(&mut r, i);
+    }
+    r.key(0, 60, true);
+    flood_block(&mut r, 20);
+    assert_eq!(live_held(&r), [60], "the key sounds");
+    for i in 21..200 {
+        flood_block(&mut r, i);
+        assert_eq!(live_held(&r), [60], "held through the flood (block {i})");
+        assert!(!r.view().running, "INT: nothing starts ORBIT");
+    }
+    r.key(0, 60, false);
+    flood_block(&mut r, 200);
+    assert!(live_held(&r).is_empty(), "the key releases");
+    assert!(r.stuck_notes().is_empty(), "{:?}", r.stuck_notes());
+}
+
 /// SYNC EXT: the DAW's Start plays ORBIT, from bar 0, with no B6, also
 /// right after its own Stop; B6 still stops it locally.
 #[test]
@@ -883,6 +933,91 @@ fn ext_start_plays_without_b6_after_a_stop() {
         assert_eq!(ons(&r), 0);
     }
     assert!(r.stuck_notes().is_empty(), "{:?}", r.stuck_notes());
+}
+
+/// SYNC EXT: B6 and the DAW's Stop in one block both say stop. B6
+/// toggles the transport as it was before the DAW's word, so ORBIT
+/// stops and stays stopped, never restarted from bar 0.
+#[test]
+fn b6_and_daw_stop_in_one_block_stop() {
+    let steps = [4, 3, 5, 7, 16];
+    let mut r = rig(steps, 50, 120);
+    r.rt(0, RealTime::Start);
+    let mut feed = clock_from(&r, 4 * 96, 120.0);
+    for _ in 0..200 {
+        feed.feed(&mut r, 0);
+        r.block();
+    }
+    assert!(r.view().running);
+    r.rt(0, RealTime::Stop);
+    r.ui.play_stop();
+    feed.feed(&mut r, 0);
+    r.block();
+    assert!(!r.view().running, "B6 + Stop: stopped");
+    for _ in 0..100 {
+        feed.feed(&mut r, 0);
+        r.block();
+        assert!(!r.view().running, "stays stopped");
+        assert_eq!(ons(&r), 0);
+    }
+    assert!(r.stuck_notes().is_empty(), "{:?}", r.stuck_notes());
+}
+
+/// SYNC EXT: B6 and the DAW's Start in one block. B6 toggles the
+/// transport as it was before the Start: a stopped ORBIT plays, a
+/// playing one stops.
+#[test]
+fn b6_and_daw_start_in_one_block_toggle_the_transport_before() {
+    let steps = [4, 3, 5, 7, 16];
+    let mut r = rig(steps, 50, 120);
+    r.rt(0, RealTime::Start);
+    r.ui.play_stop();
+    let mut feed = clock_from(&r, 4 * 96, 120.0);
+    r.block();
+    assert!(r.view().running, "stopped, B6 + Start: plays");
+    assert_eq!(r.view().pos, Position::ZERO, "from bar 0");
+    for _ in 0..200 {
+        feed.feed(&mut r, 0);
+        r.block();
+        assert!(r.view().running);
+    }
+    r.rt(0, RealTime::Start);
+    r.ui.play_stop();
+    feed.feed(&mut r, 0);
+    r.block();
+    assert!(!r.view().running, "playing, B6 + Start: stops");
+    for _ in 0..100 {
+        feed.feed(&mut r, 0);
+        r.block();
+        assert!(!r.view().running, "stays stopped");
+        assert_eq!(ons(&r), 0);
+    }
+    assert!(r.stuck_notes().is_empty(), "{:?}", r.stuck_notes());
+}
+
+/// SYNC EXT: a project load is the player's newer act, so the DAW's
+/// Start, Continue or Stop drained with it is dropped: the new project waits stopped
+/// for the DAW's next Start (ADR 0080).
+#[test]
+fn a_load_drops_a_pending_daw_start() {
+    let steps = [4, 3, 5, 7, 16];
+    for rt in [RealTime::Start, RealTime::Continue, RealTime::Stop] {
+        let mut r = rig(steps, 50, 120);
+        let mut feed = clock_from(&r, 4 * 96, 120.0);
+        r.rt(0, rt);
+        r.load();
+        for _ in 0..100 {
+            feed.feed(&mut r, 0);
+            r.block();
+            assert!(!r.view().running, "{rt:?} with a load: stopped");
+            assert_eq!(ons(&r), 0);
+        }
+        r.rt(0, RealTime::Start);
+        r.block();
+        assert!(r.view().running, "the DAW's next Start plays");
+        assert_eq!(r.view().pos, Position::ZERO);
+        assert!(r.stuck_notes().is_empty(), "{:?}", r.stuck_notes());
+    }
 }
 
 /// SYNC EXT: Continue plays on from where Stop left ORBIT, not bar 0.

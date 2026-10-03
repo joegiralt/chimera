@@ -836,7 +836,7 @@ impl Rig<'_> {
             r.set(SceneRing::GATE, 100.0);
             r.set(SceneRing::MUTE, 0.0);
         }
-        (o.bpm, o.run) = (Bpm::clamped(Bpm::MAX), true);
+        (o.bpm, o.presses) = (Bpm::clamped(Bpm::MAX), 1);
         let mut runner = OrbitRunner::new(engine::SAMPLE_RATE_NZ);
         let mut view = runner.view();
         let (mut total, mut worst, mut blocks) = (0u32, 0u32, 0u32);

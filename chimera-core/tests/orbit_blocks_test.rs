@@ -239,7 +239,7 @@ fn orbit_edits_bump_the_project_rev() {
     assert_ne!(ui.project().rev(), rev, "STEPS marks the project");
     let rev = ui.project().rev();
     screen::tap(&mut ui, ButtonId::B6);
-    assert!(ui.orbit().run);
+    assert_eq!(ui.orbit().presses, 1);
     assert_eq!(
         ui.project().rev(),
         rev,
@@ -390,6 +390,34 @@ fn stop_play_keeps_the_drift() {
     let first = rig.runner.view();
     assert_eq!(first.pos.bar, 0, "still the first loop");
     assert_eq!(drift(&first), live, "PLAY plays the drift");
+}
+
+/// B6 presses published with no block between: the runner reads only the
+/// newest slot, and every press still counts, past the counter's wrap.
+/// Two are a stop and a play, 257 a stop.
+#[test]
+fn presses_between_runner_reads_all_count() {
+    let mut rig = Rig::new(in_orbit());
+    rig.b6();
+    rig.idle(4);
+    assert!(rig.running());
+    let press = |rig: &mut Rig| {
+        rig.frame(Input::press(ButtonId::B6), 0);
+        rig.frame(Input::release(ButtonId::B6), 0);
+    };
+    let from: u8 = rig.ui.orbit().presses;
+    press(&mut rig);
+    press(&mut rig);
+    assert_eq!(rig.ui.orbit().presses, from.wrapping_add(2));
+    rig.idle(4);
+    assert!(rig.running(), "two presses: stopped and played again");
+    for _ in 0..257 {
+        press(&mut rig);
+    }
+    rig.idle(4);
+    assert!(!rig.running(), "257 presses: stopped");
+    rig.b6();
+    assert!(rig.running(), "the next press plays");
 }
 
 /// B6 and a load in one publish: the runner takes the load first and

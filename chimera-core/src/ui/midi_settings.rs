@@ -28,7 +28,8 @@ impl Default for MidiSettings {
 
 const SYNC_NAMES: [&str; 2] = ["INT", "EXT"];
 
-/// SYNC by index, `SyncMode::ALL`'s order. INT and EXT are two peers,
+/// SYNC by index, `SyncMode::ALL`'s order; `SYNC_NAMES` too
+/// (`midi_sync_page_test::sync_value_names_and_order_agree`). INT and EXT are two peers,
 /// neither off, so the focus shows the word.
 pub static MIDI_SPECS: [ParamSpec; 1] =
     [
@@ -38,6 +39,14 @@ pub static MIDI_SPECS: [ParamSpec; 1] =
     ];
 
 const _: () = assert!(SyncMode::ALL.len() == SYNC_NAMES.len());
+// `get` reads the discriminant as the index: `ALL` keeps declaration order.
+const _: () = {
+    let mut i = 0;
+    while i < SyncMode::ALL.len() {
+        assert!(SyncMode::ALL[i] as usize == i);
+        i += 1;
+    }
+};
 const _: () = assert!(matches!(SyncMode::ALL[1], SyncMode::DEFAULT));
 
 impl Block for MidiSettings {

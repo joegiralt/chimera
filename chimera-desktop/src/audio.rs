@@ -507,7 +507,7 @@ mod tests {
             let mut scope = ScopeWriter::new(w);
             let link = LoadLink::new();
             let mut shared = Box::new(AudioShared::default());
-            shared.orbit.run = true;
+            shared.orbit.presses = 1;
             let mut sums = Vec::new();
             for _ in 0..(20 * SAMPLE_RATE as usize) / BLOCK_SIZE {
                 e.block(&link, &mut drain, &shared, &mut scope);

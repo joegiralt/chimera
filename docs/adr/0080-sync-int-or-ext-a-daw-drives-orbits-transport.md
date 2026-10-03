@@ -30,12 +30,19 @@ SETTINGS › MIDI CONFIG › SYNC was a `Later` row (#264) for this.
   transport is stopped, so B6 under a stopped DAW plays ORBIT on its own
   clock from bar 0. A clock still sent while stopped keeps the leader and
   its tempo average, as before.
-- **B6 is a press, not a level.** `OrbitShared.run` flips on every press
-  (`OrbitUi::play_stop`), and the runner toggles its transport on each flip.
-  With two writers, a level would need the UI to mirror what the DAW did,
-  and a press in the frame before the mirror is published is lost. A flip
-  can't be lost, and the UI's "the runner stopped itself" rules go. This
-  amends ADR 0071's edge rule: every edge is a press.
+- **B6 is a press, not a level.** `OrbitShared.presses` is a wrapping `u8`
+  bumped on every press (`OrbitUi::play_stop`), compared as `arming` and
+  `scene_rev` are, and the runner toggles its transport once per press: an
+  odd count since its last read flips it. With two writers, a level would
+  need the UI to mirror what the DAW did, and a press in the frame before
+  the mirror is published is lost. A count can't be lost or alias when
+  several presses land between two runner reads, and the UI's "the runner
+  stopped itself" rules go. This amends ADR 0071's edge rule: every edge is
+  a press.
+- **B6 toggles the transport as it was before the DAW's word.** With B6
+  and a Start, Continue or Stop in one block, B6 flips the transport the
+  block began with and the DAW's message only resets the position. B6 and
+  a Stop together stop, never restart.
 - **Switching SYNC forgets the other mode's clock.** The block that sees a
   new `OrbitShared.sync` resets `MidiClock` and drops any Start, Continue or
   Stop not yet acted on. The transport is untouched. INT takes over at the
@@ -80,6 +87,10 @@ SETTINGS › MIDI CONFIG › SYNC was a `Later` row (#264) for this.
 - A SYSTEM written by this firmware carries one more record. An older file
   is only rewritten when something in it changes (`body_crc` is taken of
   what was decoded), and the v1 SYSTEM fixture still loads, as EXT.
+- A project load drops a DAW Start, Continue or Stop not yet acted on.
+  The load is the player's newer act, so the new project waits stopped,
+  and the DAW's next Start plays it, from bar 0. A DAW still playing
+  through a load leaves ORBIT stopped until that Start or B6.
 - `OrbitRunner` keeps its size: `sync` and `ext_play` replace `ext_playing`
   and `ext_stop`, still under its 1 KB assert.
 
@@ -93,5 +104,10 @@ SETTINGS › MIDI CONFIG › SYNC was a `Later` row (#264) for this.
   (`play_stop`).
 - Tests: `orbit_midi_clock_test.rs` (`int_ignores_clock_and_transport`,
   `ext_start_plays_without_b6_after_a_stop`, `ext_continue_resumes`,
-  `switching_sync_while_playing`), `midi_sync_page_test.rs`,
-  `system_file_test.rs`.
+  `switching_sync_while_playing`, `b6_and_daw_stop_in_one_block_stop`,
+  `b6_and_daw_start_in_one_block_toggle_the_transport_before`,
+  `a_load_drops_a_pending_daw_start`, `int_plays_live_notes_under_a_flood`),
+  `orbit_blocks_test.rs` (`presses_between_runner_reads_all_count`),
+  `midi_sync_page_test.rs`,
+  `system_file_test.rs` (`system_midi_fixture_round_trips`, frozen
+  `fixtures/v1/system_midi.sys`).

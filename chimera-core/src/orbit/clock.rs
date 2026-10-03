@@ -310,8 +310,8 @@ impl MidiClock {
 
     /// `src` may lead: no leader, it is the leader, or the leader is silent.
     /// A new leader, or one back from silence, starts a fresh average and
-    /// plays: a clock with no Start still moves, whatever an old one's Stop
-    /// left.
+    /// counts: a clock with no Start still moves ORBIT, whatever an old
+    /// one's Stop left, but never starts it (ADR 0072, amended).
     fn take(&mut self, src: usize, now: u64) -> bool {
         let (src, quiet) = (src as u8, self.quiet(now));
         if self.leader.is_some_and(|l| l != src) && !quiet {

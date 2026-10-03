@@ -635,13 +635,13 @@ fn orbit_buttons() {
     assert_eq!(ui.active_part, P[1]);
     assert_eq!(muted(&ui), init);
 
-    // B6 toggles run.
-    assert!(!ui.orbit().run);
+    // B6 counts a press.
+    assert_eq!(ui.orbit().presses, 0);
     tap(&mut ui, B6);
-    assert!(ui.orbit().run);
+    assert_eq!(ui.orbit().presses, 1);
     let mut out = OrbitShared::default();
     ui.publish_orbit(&mut out);
-    assert!(out.run);
+    assert_eq!(out.presses, 1);
 
     // Hold B1 reads Part 1's first cell; hold B3 is Part 3's own.
     hold(&mut ui, B1);
@@ -720,7 +720,7 @@ fn orbit_buttons() {
     tap(&mut ui, Menu);
     assert_eq!(ui.location(), entry);
     assert_eq!(ui.active_part, P[1]);
-    assert!(ui.orbit().run);
+    assert_eq!(ui.orbit().presses, 1);
 
     // MENU hold queues the quick save and stays.
     hold(&mut ui, Seq);
@@ -730,7 +730,7 @@ fn orbit_buttons() {
     feed(&mut ui, Input::held(Menu).at(HOLD_MS));
     feed(&mut ui, Input::release(Menu).at(HOLD_MS + 33));
     assert_eq!(ui.location(), at);
-    assert!(ui.orbit().run);
+    assert_eq!(ui.orbit().presses, 1);
 }
 
 /// Every ORBIT page draws on screen, inside 240×320.

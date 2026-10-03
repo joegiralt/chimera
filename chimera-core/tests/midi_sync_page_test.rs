@@ -74,3 +74,23 @@ fn sync_is_kept_in_system() {
     assert_eq!(ui.midi().sync, SyncMode::Int, "loaded and applied");
     assert_eq!(published(&ui), SyncMode::Int);
 }
+
+/// SYNC's value is its index in `SyncMode::ALL`, and that index names it:
+/// `get`, `write` and the page's names agree for every mode.
+#[test]
+fn sync_value_names_and_order_agree() {
+    use chimera_core::block::{Block, DiskCode, ValFmt};
+    use chimera_core::ui::midi_settings::MIDI_SPECS;
+    let ValFmt::Names(names) = MIDI_SPECS[0].fmt else {
+        panic!("SYNC is a choice");
+    };
+    assert_eq!(names.len(), SyncMode::ALL.len());
+    for (i, &m) in SyncMode::ALL.iter().enumerate() {
+        let mut s = MidiSettings { sync: m };
+        assert_eq!(s.get(MidiSettings::SYNC), i as f32, "{m:?}");
+        assert_eq!(names[i], m.disk_ident(), "{m:?}");
+        s.sync = SyncMode::ALL[(i + 1) % SyncMode::ALL.len()];
+        s.write(MidiSettings::SYNC, i as f32);
+        assert_eq!(s.sync, m);
+    }
+}

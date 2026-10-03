@@ -13,7 +13,8 @@ use chimera_core::ui::theme_settings::{Accent, Black, Bright, Gamma, ThemeSettin
 use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use chimera_hal::testkit::MemStore;
 use common::codec_util::{
-    SYSTEM_FIXTURE, fix_crc, record_offsets, system_file, system_fixture_settings,
+    SYSTEM_FIXTURE, SYSTEM_MIDI_FIXTURE, fix_crc, record_offsets, system_file,
+    system_fixture_settings, system_midi_fixture_settings,
 };
 use core::ops::ControlFlow;
 
@@ -713,4 +714,18 @@ fn system_fixture_loads() {
         .join(SYSTEM_FIXTURE);
     let f = std::fs::read(p).unwrap();
     assert_eq!(boot_bytes(&f), (system_fixture_settings(), None));
+}
+
+/// The frozen SYSTEM with MIDI CONFIG's record, SYNC INT: it reads as
+/// written, and writing what it read gives the same bytes back.
+#[test]
+fn system_midi_fixture_round_trips() {
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/v1")
+        .join(SYSTEM_MIDI_FIXTURE);
+    let f = std::fs::read(p).unwrap();
+    let (got, note) = boot_bytes(&f);
+    assert_eq!((got, note), (system_midi_fixture_settings(), None));
+    assert_eq!(got.midi.sync, SyncMode::Int);
+    assert_eq!(system_file(&got), f, "byte-exact");
 }

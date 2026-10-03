@@ -209,9 +209,9 @@ pub struct OrbitUi {
     pub cursor: u8,
     /// NOTES' selected chip: a pool note, or a STEP ring's step.
     pub chip: u8,
-    /// Flipped by every B6 press: what `publish_orbit` sends, and the
-    /// runner toggles on each flip (ADR 0080). Never saved.
-    pub run: bool,
+    /// Bumped by every B6 press: what `publish_orbit` sends, and the
+    /// runner toggles on each press (ADR 0080). Never saved.
+    pub presses: u8,
     /// What LEARN or CHRD's PLAY armed; `Off` once a capture is taken.
     pub capture: Capture,
     /// Bumped by every arming, published with `capture`.
@@ -237,7 +237,7 @@ impl OrbitUi {
             seg: 0,
             cursor: 0,
             chip: 0,
-            run: false,
+            presses: 0,
             capture: Capture::Off,
             arming: 0,
             took: 0,
@@ -256,7 +256,7 @@ impl OrbitUi {
     /// when `OrbitShared` gains a field.
     pub fn publish(&self, song: &OrbitSong, sync_mode: SyncMode, out: &mut OrbitShared) {
         let OrbitShared {
-            run,
+            presses,
             bpm,
             sync,
             scene_rev,
@@ -267,7 +267,7 @@ impl OrbitUi {
             capture,
             arming,
         } = out;
-        *run = self.run;
+        *presses = self.presses;
         *bpm = song.bpm;
         *sync = sync_mode;
         *scene_rev = self.scene_rev;
@@ -407,7 +407,7 @@ impl OrbitUi {
     /// the press reaches it, whoever started it (ADR 0080). The transport
     /// is never the project's.
     pub fn play_stop(&mut self) {
-        self.run = !self.run;
+        self.presses = self.presses.wrapping_add(1);
     }
 
     /// MIX + B*n*: ring `r`'s MUTE, in the project (so marked).

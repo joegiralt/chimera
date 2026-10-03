@@ -176,6 +176,27 @@ pub fn system_fixture_settings() -> SystemSettings {
     }
 }
 
+/// The SYSTEM fixture carrying MIDI CONFIG (ADR 0080), under
+/// `tests/fixtures/v1/`.
+pub const SYSTEM_MIDI_FIXTURE: &str = "system_midi.sys";
+
+/// What the MIDI SYSTEM fixture was written from: SYNC INT, off its
+/// default, and every other field off its default too.
+pub fn system_midi_fixture_settings() -> SystemSettings {
+    SystemSettings {
+        midi: MidiSettings {
+            sync: chimera_core::orbit::clock::SyncMode::Int,
+        },
+        theme: ThemeSettings {
+            bright: Bright::new(55),
+            gamma: Gamma::Soft,
+            accent: Accent::ALL[2],
+            black: Black::new(-1),
+        },
+        last_project: ProjectId::new(89),
+    }
+}
+
 /// One pass onto `target`; `apply` false only checks.
 pub fn pass(target: &mut Sound, bytes: &[u8], apply: bool) -> Result<(), FileError> {
     let mut d = SoundDecoder::new(target);

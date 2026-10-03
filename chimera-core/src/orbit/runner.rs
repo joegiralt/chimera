@@ -24,9 +24,10 @@ use core::num::NonZeroU32;
 /// What the UI asks of ORBIT, published with the Parts (ADR 0021).
 #[derive(Clone, Debug)]
 pub struct OrbitShared {
-    /// Flips on every B6 press: each flip starts a stopped ORBIT or stops
-    /// a playing one (ADR 0080).
-    pub run: bool,
+    /// Bumped on every B6 press: each press starts a stopped ORBIT or
+    /// stops a playing one (ADR 0080). A count, so presses between two
+    /// runner reads never alias.
+    pub presses: u8,
     pub bpm: Bpm,
     /// MIDI CONFIG's SYNC, from SYSTEM (ADR 0080).
     pub sync: SyncMode,
@@ -61,7 +62,7 @@ impl OrbitShared {
 impl Default for OrbitShared {
     fn default() -> Self {
         OrbitShared {
-            run: false,
+            presses: 0,
             bpm: Bpm::DEFAULT,
             sync: SyncMode::DEFAULT,
             scene_rev: 0,
@@ -310,8 +311,8 @@ pub struct OrbitRunner {
     /// The switch adopted last, and its scene.
     scene_rev: u16,
     playing: SceneIdx,
-    /// `run` as of the last block: each change is a B6 press.
-    run_seen: bool,
+    /// `presses` as of the last block.
+    presses_seen: u8,
     /// Whether ORBIT plays: B6 toggles it, the DAW's Start and Continue
     /// set it and its Stop clears it (ADR 0080).
     transport: bool,
@@ -350,7 +351,7 @@ impl OrbitRunner {
             working,
             scene_rev: 0,
             playing: SceneIdx::ALL[0],
-            run_seen: false,
+            presses_seen: 0,
             transport: false,
             cue: None,
             epoch: 0,
@@ -435,7 +436,9 @@ impl OrbitRunner {
         let now = now.saturating_sub(WINDOW);
         let led = self.midi.position(now).is_some();
         match rt {
-            // A clock taken up with no Start carries on from where ORBIT is.
+            // A clock that led nothing before it (a new leader, one back
+            // from silence, or a stopped DAW's) counts on from where ORBIT
+            // is. A stopped DAW's stays unled; Continue rebases anyway.
             RealTime::Clock => {
                 if self.midi.tick(src, now) && !led {
                     self.midi.rebase(self.edge);
@@ -534,11 +537,14 @@ impl OrbitRunner {
 
         if shared.epoch != self.epoch {
             // A load killed every voice: nothing to release, and no edge.
+            // It is the player's newer act, so the DAW's pending Start,
+            // Continue or Stop is dropped: its next Start plays the load.
             self.epoch = shared.epoch;
+            (self.ext_start, self.ext_play) = (false, None);
             self.state.forget();
             self.take.forget();
             self.transport = false;
-            self.run_seen = o.run;
+            self.presses_seen = o.presses;
             self.adopt(shared);
             return Events::new();
         }
@@ -553,10 +559,11 @@ impl OrbitRunner {
 
         // The DAW's Start or Stop first ends what ORBIT holds; Start goes
         // back to bar 0.
+        let was = self.transport;
         let reset = core::mem::take(&mut self.ext_start);
         let daw = self.ext_play.take();
         let mut sent = Events::new();
-        if reset || daw == Some(false) && self.transport {
+        if reset || daw == Some(false) && was {
             sent = self.state.stop();
         }
         if daw == Some(false) {
@@ -564,12 +571,15 @@ impl OrbitRunner {
         }
 
         let midi = self.midi.position(t + WINDOW);
-        let pressed = o.run != self.run_seen;
-        self.run_seen = o.run;
-        let play = if pressed {
-            !self.transport
-        } else {
-            self.transport || daw == Some(true)
+        // Every press toggles: an odd count since the last block flips it.
+        let pressed = o.presses.wrapping_sub(self.presses_seen) & 1 == 1;
+        self.presses_seen = o.presses;
+        // B6 toggles the transport as it was before the DAW's word, so B6
+        // and a Stop in one block both stop.
+        let play = match (pressed, daw) {
+            (true, _) => !was,
+            (false, Some(p)) => p,
+            (false, None) => was,
         };
         if play && !self.transport {
             self.adopt(shared);
