@@ -73,15 +73,15 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0066](0066-settings-menu.md) | MENU opens a SETTINGS menu (amends 0044, supersedes 0057 through it) | Proposed |
 | [0067](0067-focus-glyphs.md) | Focus glyphs: hand-assigned per parameter, ARC by default; composites draw from set values only | Proposed |
 | [0068](0068-usb-console.md) | Read the unit over a polled USB CDC-ACM console | Proposed |
-| [0071](0071-orbit-runs-on-the-audio-thread.md) | ORBIT runs on the audio thread, block-accurate; the engine owns the drift, transport acts on edges | Proposed; edge rule amended by [0080](0080-sync-int-or-ext-a-daw-drives-orbits-transport.md) |
+| [0071](0071-orbit-runs-on-the-audio-thread.md) | ORBIT runs on the audio thread, block-accurate; the engine owns the drift, transport acts on edges | Proposed; edge rule amended by [0080](0080-sync-int-or-ext-a-daw-drives-orbits-transport.md); superseded in part by [0082](0082-orbit-command-channel.md) |
 | [0072](0072-orbit-follows-one-midi-clock.md) | ORBIT follows one MIDI clock through the note queues: ticks are places, the time between a guess, never back, never skipped | Proposed; transport amended by [0080](0080-sync-int-or-ext-a-daw-drives-orbits-transport.md) |
 | [0073](0073-new-plays-the-sparse-groove-on-factory-sounds.md) | NEW plays the sparse groove on factory Sounds (amends 0043's template) | Proposed |
 | [0074](0074-notes-edits-by-chip-clear-rolls-in-key.md) | Edit a ring's notes by chip; MIX + CLEAR up resets, down rolls in key | Proposed |
-| [0075](0075-capture-is-armed-once-and-taken-once.md) | A capture is armed once and taken once; a STEP ring's spans key-ups | Proposed |
+| [0075](0075-capture-is-armed-once-and-taken-once.md) | A capture is armed once and taken once; a STEP ring's spans key-ups | Proposed; superseded in part by [0082](0082-orbit-command-channel.md) |
 | [0076](0076-live-keys-snap-per-part-held-keys-glide.md) | Live keys snap per Part in the Instrument; a held key re-snaps from its raw key on the pitch path | Proposed |
-| [0077](0077-scenes-land-by-generation-saves-are-witnessed.md) | A scene switch lands by its generation; SAVE OVER is witnessed when it asks | Proposed |
+| [0077](0077-scenes-land-by-generation-saves-are-witnessed.md) | A scene switch lands by its generation; SAVE OVER is witnessed when it asks | Proposed; superseded in part by [0082](0082-orbit-command-channel.md) |
 | [0078](0078-orbit-saves-after-the-parts-and-loads-what-it-can.md) | ORBIT saves after the six Parts, and a load takes what it can | Proposed |
 | [0079](0079-orbs-four-cells-mirror-key-scale-bars-and-scene.md) | ORB's four cells: KEY, SCALE, BARS and SCENE (amended: ORB the frame, CHRD the progression) | Proposed |
-| [0080](0080-sync-int-or-ext-a-daw-drives-orbits-transport.md) | SYNC picks ORBIT's master: INT runs free, EXT lets a DAW drive the transport; stored in SYSTEM (amends 0071, 0072) | Proposed |
+| [0080](0080-sync-int-or-ext-a-daw-drives-orbits-transport.md) | SYNC picks ORBIT's master: INT runs free, EXT lets a DAW drive the transport; stored in SYSTEM (amends 0071, 0072) | Proposed; amended by [0082](0082-orbit-command-channel.md) |
 | [0081](0081-one-d-pad-on-every-chain.md) | One D-pad on every chain: SEQ up, EDIT down with wrap, MINUS and PLUS along (supersedes the SEQ tap of 0044 and 0066) | Proposed |
 | [0082](0082-orbit-command-channel.md) | ORBIT's UI and runner talk through one sequenced command log and one ack (supersedes parts of 0071, 0075, 0077; amends 0080) | Proposed |

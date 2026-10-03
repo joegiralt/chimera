@@ -284,14 +284,13 @@ On the desktop the ORBIT steps (2–7) run inside the per-block branch (`audio.r
 
 ### 4.1 Settings flow (UI → audio)
 
-`AudioShared` gains `orbit: OrbitShared { run: bool, bpm: Bpm, scene: SceneIdx, scene_rev: u16, settings: Scene, capture: Capture }`, published every frame through the existing triple buffer (ADR 0021), as the Parts are.
+`AudioShared` gains `orbit: OrbitShared { log, head, settings: Scene, synced, load, .. }`, published every frame through the existing triple buffer (ADR 0021), as the Parts are. The UI and the runner talk through one sequenced command log and one ack (ADR 0082; design `2026-10-03-orbit-command-channel-design.md`).
 
-The engine keeps its own **working copy** of the playing scene, because MUTATE drifts it. Each block:
-
-- If `scene_rev` is unchanged: the knob fields are copied from `settings`. A ring's `hits_mask` is copied only when its `rhythm_rev` changed, and its notes only when `notes_rev` changed; otherwise the working copy's drift stands.
-- If `scene_rev` changed, a scene is queued (a switch, a load or a project load): the working copy is kept and `settings` ignored until the next loop boundary (at once if stopped). Then the whole scene is adopted, drift and all, the walks reset and the `Rng`s reseed.
-
-Edits made while a switch is queued go to the queued scene, and apply when it lands.
+- **Log.** Events go in as one-byte commands in an 8-slot ring: `TogglePlay`, `Cue(n)`, `Keep(n)`, `Arm(target)`, `Disarm`, `EditRhythm(mask)`, `EditNotes(mask)`. The runner applies the new ones each block and reports `acked`.
+- **Knobs.** The runner keeps its own **working copy** of the playing scene, because MUTATE drifts it. Knob fields are copied from `settings` every block while `synced`. A ring's `hits_mask` and notes are copied only when an edit command names that ring; otherwise the working copy's drift stands.
+- **Switches.** `Cue(n)` queues a scene, and the runner reports it as `cue`. The working copy stays and `settings` is ignored until the next loop boundary (at once if stopped). Then the whole scene is adopted, drift and all, the walks reset and the `Rng`s reseed. The UI lands its newest scene command once everything is acked and `cue` is empty. `synced` says no scene command awaits landing. Edits made while a switch is queued go to the queued scene.
+- **Arming.** The runner reports its armed target as `armed`; the UI mirrors it while everything is acked.
+- **Loads** bump the epoch and carry a fresh seq that voids every earlier command (ADR 0082).
 
 ### 4.2 Report (audio → UI)
 
@@ -612,7 +611,7 @@ Each task leaves the tree green. ADRs are written where the decision lands, at t
 - **Snap ties go down:** one fixed rule keeps `snap` a pure function (§ 5.1).
 - **RE-SNAP from the raw key, over a 40 ms glide:** repeated chord changes never drift, and 40 ms follows the chord without a click (§ 5.2).
 - **Capture: first key-down to last key-up, any channel, ≤ 8 notes, root = lowest:** a chord is the notes you held together, and the root is what you played at the bottom (§ 5.3).
-- **The engine owns the drift; the UI owns the knobs; revs say who wins:** MUTATE is sample-exact on the audio thread, and edits still apply at once (§ 4.1).
+- **The engine owns the drift; the UI owns the knobs; edits travel as commands, drift comes back whole (ADR 0082):** MUTATE is sample-exact on the audio thread, and edits still apply at once (§ 4.1).
 - **One `Rng` per ring:** editing one ring never reshuffles another (§ 3.2).
 - **A missed or muted hit still walks and draws:** the phase between rings and pools is kept (§ 3.6).
 - **Memory: engine ≈ 520 B, asserted under 1 KB; about 5.7 KB in all, mostly saved scenes in AXI** (§ Memory).

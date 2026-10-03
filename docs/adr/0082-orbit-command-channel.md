@@ -70,8 +70,9 @@ not grow, and flash must shrink and be measured.
   applied, and the next drift would revert it in `live`. Knobs and edits
   reach `working` only while `base_landed`. `Keep(n)` out of sync cues
   `live`. A start out of sync with nothing cued keeps `working`, the slot
-  the UI is about to land, and does not adopt the stale `settings`. The UI's newest scene intent wins, which keeps ADR 0077's
-  cancel-race behaviour and closes adversarial finding 1 by construction.
+  the UI is about to land, and does not adopt the stale `settings`. The
+  UI's newest scene intent wins, which keeps ADR 0077's cancel-race
+  behaviour and closes adversarial finding 1 by construction.
   A re-arm before the view keeps showing armed, because the view reports
   the runner armed again. That closes finding 2 by construction.
 - **Load is the one command outside the ring.**
