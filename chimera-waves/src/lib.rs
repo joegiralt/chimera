@@ -189,12 +189,6 @@ pub fn render(r: &Recipe) -> [[i16; WAVE_LEN]; MIPS] {
 pub fn emit_rust() -> String {
     let mut out = String::new();
     let names: Vec<String> = RECIPES.iter().map(|r| format!("{:?}", r.name)).collect();
-    let _ = writeln!(
-        out,
-        "pub static WAVE_NAMES: [&str; {}] = [{}];",
-        RECIPES.len(),
-        names.join(", ")
-    );
     let idents: Vec<String> = RECIPES.iter().map(|r| format!("{:?}", r.ident)).collect();
     let _ = writeln!(
         out,
@@ -202,6 +196,21 @@ pub fn emit_rust() -> String {
         RECIPES.len(),
         idents.join(", ")
     );
+    // Names that match the idents share their table: one copy in flash.
+    let _ = if names == idents {
+        writeln!(
+            out,
+            "pub static WAVE_NAMES: &[&str; {}] = &WAVE_IDENTS;",
+            RECIPES.len()
+        )
+    } else {
+        writeln!(
+            out,
+            "pub static WAVE_NAMES: &[&str; {}] = &[{}];",
+            RECIPES.len(),
+            names.join(", ")
+        )
+    };
     let _ = writeln!(
         out,
         "pub static WAVES: [[[i16; {}]; {MIPS}]; {}] = [",

@@ -146,21 +146,24 @@ impl Card {
         store: &mut S,
         op: impl FnOnce(&mut S, &Ready) -> Result<R, E>,
     ) -> Result<Outcome<R, E>, E> {
-        let vol = match store.mount() {
-            Ok(v) => v,
-            Err(e) => {
-                *self = mount_failed(*self, e);
-                return Err(e.into());
-            }
-        };
-        let (card, event) = mounted(*self, vol);
-        *self = card;
-        let ready = Ready { vol };
-        let result = op(store, &ready);
+        let (vol, event) = self.mount(store.mount())?;
+        let result = op(store, &Ready { vol });
         if let Some(e) = result.as_ref().err().and_then(CardFault::store_error) {
             *self = after_error(*self, e);
         }
         Ok(Outcome { event, result })
+    }
+
+    /// `run`'s mount bookkeeping, out of line: one copy, not one per op.
+    #[inline(never)]
+    fn mount(
+        &mut self,
+        r: Result<VolumeId, StoreError>,
+    ) -> Result<(VolumeId, CardEvent), StoreError> {
+        let vol = r.inspect_err(|&e| *self = mount_failed(*self, e))?;
+        let (card, event) = mounted(*self, vol);
+        *self = card;
+        Ok((vol, event))
     }
 }
 
