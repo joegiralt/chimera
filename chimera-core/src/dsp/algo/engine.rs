@@ -254,6 +254,20 @@ impl AlgoEngine {
         }
     }
 
+    /// A sounding note moved to `note` with no strike (a re-snap, spec
+    /// § 5.2): its operators glide there from the pitch they sound, as a
+    /// glide steal's do, and the envelopes run on. Idle, or on `note`,
+    /// nothing moves.
+    pub fn glide_to(&mut self, note: MidiNote, tau: f32) {
+        if !self.active || note == self.note {
+            return;
+        }
+        let from = exp2((self.note.get() as f32 - note.get() as f32) / 12.0) * self.slide.value();
+        self.note = note;
+        self.slide = Glide::new(from, tau);
+        self.slide.toward(1.0);
+    }
+
     /// The glide steal's ratio now, 1 at rest: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn slide(&self) -> f32 {

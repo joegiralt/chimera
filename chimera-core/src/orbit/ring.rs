@@ -83,6 +83,16 @@ pub struct Harmony {
     pub chord: Chord,
 }
 
+impl Harmony {
+    /// `to`'s set at this moment: the key's scale or the chord's tones.
+    pub const fn target(self, to: SnapTo) -> chimera_theory::SnapTo {
+        match to {
+            SnapTo::Scale => chimera_theory::SnapTo::Scale(self.key),
+            SnapTo::Chord => chimera_theory::SnapTo::Chord(self.chord),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Ring {
     fill: Fill,
@@ -188,10 +198,7 @@ impl Ring {
         if !fired || self.mute {
             return None;
         }
-        let note = match self.snap {
-            SnapTo::Scale => snap(raw, chimera_theory::SnapTo::Scale(harmony.key)),
-            SnapTo::Chord => snap(raw, chimera_theory::SnapTo::Chord(harmony.chord)),
-        };
+        let note = snap(raw, harmony.target(self.snap));
         let accent = accents(mask, self.accent).is_hit(i);
         let velocity = if accent {
             let v = self.velocity.get().saturating_add(ACCENT_BOOST).min(127);

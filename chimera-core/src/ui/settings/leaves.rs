@@ -42,6 +42,24 @@ pub static OUTPUTS: BlockDef = BlockDef {
     params: per_part(PartParams::OUTPUT),
 };
 
+/// PART > LIVE SNAP: the active Part's SNAP and HELD (spec § 5.2,
+/// owner Q6), bound as the mixer's PART page binds its cells.
+pub static LIVE_SNAP: BlockDef = BlockDef {
+    id: 85,
+    name: "Live Snap",
+    short: "SNP",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Part, PartParams::SNAP),
+        ParamSlot::param(BlockRef::Part, PartParams::HELD),
+        ParamSlot::EMPTY,
+        ParamSlot::EMPTY,
+        ParamSlot::EMPTY,
+        ParamSlot::EMPTY,
+    ],
+};
+
 /// A SETTINGS leaf: one page, no sub-pages, so no key in it steps a page.
 /// A leaf with sub-pages fails the build:
 ///
@@ -89,6 +107,7 @@ static THEME_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_THEME)];
 static UPDATES_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_UPDATES)];
 static ABOUT_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_ABOUT)];
 static AUDIO_LOAD_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_AUDIO)];
+static LIVE_SNAP_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&LIVE_SNAP)];
 
 pub static CHANNELS_LEAF: OnePage = OnePage::new("Channels", &CHANNELS_BLOCKS);
 pub static OUTPUTS_LEAF: OnePage = OnePage::new("Outputs", &OUTPUTS_BLOCKS);
@@ -97,6 +116,7 @@ pub static THEME_LEAF: OnePage = OnePage::new("Theme", &THEME_BLOCKS);
 pub static UPDATES_LEAF: OnePage = OnePage::new("Updates", &UPDATES_BLOCKS);
 pub static ABOUT_LEAF: OnePage = OnePage::new("About", &ABOUT_BLOCKS);
 pub static AUDIO_LOAD_LEAF: OnePage = OnePage::new("Audio Load", &AUDIO_LOAD_BLOCKS);
+pub static LIVE_SNAP_LEAF: OnePage = OnePage::new("Live Snap", &LIVE_SNAP_BLOCKS);
 
 /// One leaf per DEMO page, in `DEMO_BLOCKS`' order.
 pub static DEMO_LEAVES: [OnePage; DEMO_BLOCKS.len()] = {

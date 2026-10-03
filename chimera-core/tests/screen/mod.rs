@@ -1092,6 +1092,13 @@ pub const CASES: &[ScreenCase] = &[
         to_leaf(ui, &["SYSTEM", "DIAGNOSTICS", "AUDIO LOAD"])
     }),
     ("settings_top", |ui| tap(ui, ButtonId::Menu)),
+    // Part 3's LIVE SNAP (plan Task 15): SNAP CHORD, HELD RE-SNAP focused.
+    ("settings_part_live_snap", |ui| {
+        tap(ui, ButtonId::B3);
+        to_leaf(ui, &["PART", "LIVE SNAP"]);
+        feed(ui, Input::turn(EncoderId::A, 2));
+        feed(ui, Input::turn(EncoderId::B, 1));
+    }),
     // ALPHA loaded, the bar on BETA.
     ("settings_load", |ui| {
         let (s, [a, ..]) = three();

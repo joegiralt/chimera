@@ -189,6 +189,10 @@ impl OrbitRig {
         &self.last_view
     }
 
+    pub fn inst(&self) -> &Instrument {
+        &self.inst
+    }
+
     /// A key on Part `p`'s channel, as a keyboard plays it: queued for the
     /// next block, which drains it inside the load gate.
     pub fn key(&mut self, p: usize, note: u8, on: bool) {

@@ -92,6 +92,8 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Pitch", "STEAL", NONE),
     ("Part", "MODE", NONE),
     ("Part", "OUT", NONE),
+    ("Part", "SNAP", NONE),
+    ("Part", "HELD", NONE),
     ("Theme", "GAMMA", NONE),
     ("Theme", "ACCENT", NONE),
     ("OrbitChords", "KEY", NONE),
@@ -129,6 +131,8 @@ const TWO_PEERS: &[(&str, &str)] = &[
     ("OrbitRing", "SNAP"),
     // STEP and POOL: two ways to pick a note.
     ("OrbitRing", "MODE"),
+    // STAY and RE-SNAP: two ways to hold a key through a chord change.
+    ("Part", "HELD"),
 ];
 
 /// Every LEVEL BAR param is a unipolar level, 0 to max.

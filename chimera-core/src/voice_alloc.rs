@@ -215,6 +215,14 @@ impl Allocator {
         }
     }
 
+    /// A held `voice`'s note moved to `note` (a re-snap): its age and the
+    /// rest stand. No-op for a free voice or an index out of range.
+    pub fn renote(&mut self, voice: usize, note: MidiNote) {
+        if let Some(s) = self.slots.get_mut(voice).filter(|s| !s.is_free()) {
+            s.note = Some(note);
+        }
+    }
+
     /// The voice now costs `cost` (its Part's Sound changed).
     pub fn recost(&mut self, voice: usize, cost: Cost) {
         if let Some(s) = self.slots.get_mut(voice).filter(|s| !s.is_free()) {

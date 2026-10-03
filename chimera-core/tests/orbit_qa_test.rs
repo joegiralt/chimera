@@ -31,7 +31,7 @@ use chimera_hal::BLOCK_SIZE;
 use chimera_theory::Note;
 use common::orbit::{Mark, OrbitRig, Report, judgeable, orbit_block, report, secs, write_wav};
 use common::sweep::{
-    BPS, Bench, CLICK_RATIO, Patch, SILENT_RMS, Tape, level, steady_windows, transient_window,
+    BPS, Bench, CLICK_RATIO, Patch, SILENT_RMS, Tape, control_diff_ratio, gone_from, level,
 };
 
 /// A bar at 120 BPM, in blocks; the init scene's loop is four.
@@ -315,7 +315,7 @@ fn a_steal_fades_clean_on_its_pair() {
             "{case}: Part 2's note stole a voice"
         );
         assert!(rig.tape.peak(1) > 1e-3, "{case}: the new note on P2");
-        let gone = gone(&control.tape, &rig.tape);
+        let gone = gone_from(&control.tape, &rig.tape);
         let after = gone.rms(0, e + 20, e + 60);
         assert!(after > 1e-4, "{case}: the victim left P1 ({after:.2e})");
         let quiet_before = gone.pair(0, 0, e).iter().all(|&x| x == 0.0);
@@ -328,34 +328,13 @@ fn a_steal_fades_clean_on_its_pair() {
         // `Tape::click`'s ratio without its floor: the difference is the
         // victim alone, so its own steady state is the scale, however
         // quiet a tail is.
-        let r = fade_ratio(&gone, e);
+        let r = control_diff_ratio(&gone, e);
         println!("{case}: the fade's transient {r:.2}× the victim's steady");
         assert!(
             r <= CLICK_RATIO,
             "{case}: the stolen voice's fade clicks on P1, {r:.1}× its steady state"
         );
     }
-}
-
-/// A fade's transient at event block `e` over its own steady state, on a
-/// tape holding only what the event took away (a control less the render).
-fn fade_ratio(gone: &Tape, e: usize) -> f32 {
-    let heard = transient_window(e);
-    let trans = gone.d2(0, heard.start, heard.end);
-    let (_, post) = steady_windows(e, (0, usize::MAX), true);
-    trans / gone.d2(0, post.start, post.end)
-}
-
-/// P1 less `cut`: what a note's off took away, alone.
-fn gone(control: &Tape, cut: &Tape) -> Tape {
-    let mut g = Tape::default();
-    g.out[0] = control.out[0]
-        .iter()
-        .zip(&cut.out[0])
-        .map(|(c, s)| c - s)
-        .collect();
-    g.bus = vec![0.0; control.bus.len()];
-    g
 }
 
 /// A note on `patch` at block `ON`, let go at `off` (`None`: held), then
@@ -401,7 +380,7 @@ fn a_gate_0_off_releases_clean_on_factory_sounds() {
         for note in [48, 60, 76, 84] {
             let control = gate0(patch, note, None, false);
             let cut = gate0(patch, note, Some(OFF), false);
-            let r = fade_ratio(&gone(&control, &cut), OFF);
+            let r = control_diff_ratio(&gone_from(&control, &cut), OFF);
             println!("{} note {note}: the release {r:.2}×", patch.name());
             assert!(
                 r <= CLICK_RATIO,
@@ -413,7 +392,10 @@ fn a_gate_0_off_releases_clean_on_factory_sounds() {
     // The judge hears a cut: TX EPIANO's E5 muted at the off.
     let epiano = Patch::Factory(NEW_PARTS[1].index() as u8);
     let control = gate0(epiano, 76, None, false);
-    let h = fade_ratio(&gone(&control, &gate0(epiano, 76, Some(OFF), true)), OFF);
+    let h = control_diff_ratio(
+        &gone_from(&control, &gate0(epiano, 76, Some(OFF), true)),
+        OFF,
+    );
     assert!(h > CLICK_RATIO, "a hard cut reads {h:.1}×");
 }
 

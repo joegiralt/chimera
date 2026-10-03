@@ -3,8 +3,8 @@
 //! kind and navigation stays as it is.
 
 use super::leaves::{
-    ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, OUTPUTS_LEAF, OnePage, THEME_LEAF, TUNING_LEAF,
-    UPDATES_LEAF,
+    ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, LIVE_SNAP_LEAF, OUTPUTS_LEAF, OnePage, THEME_LEAF,
+    TUNING_LEAF, UPDATES_LEAF,
 };
 use core::num::NonZeroU16;
 
@@ -86,11 +86,12 @@ static PROJECT: [Row; 3] = [
 ];
 
 /// The active Part's list: its crumb is `PART n`.
-pub static PART: [Row; 4] = [
+pub static PART: [Row; 5] = [
     row("RENAME", Kind::Act(Act::PartRename)),
     row("CLEAR", Kind::Act(Act::PartClear)),
     crumb("SAVE TO PROJ", "SAVE TO", Kind::Screen(Screen::SaveToProj)),
     crumb("RELOAD FROM PROJ", "RELOAD", Kind::Act(Act::PartReload)),
+    crumb("LIVE SNAP", "SNAP", Leaf(&LIVE_SNAP_LEAF)),
 ];
 
 static MIDI: [Row; 3] = [

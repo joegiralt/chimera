@@ -19,6 +19,7 @@ use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 use chimera_core::modulation::{ModSource, VCA};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::orbit::RingIdx;
+use chimera_core::orbit::ring::Harmony;
 use chimera_core::params::{DriveParams, EngineType, FilterParams, FolderParams, OutParams};
 use chimera_core::part::PartParams;
 use chimera_core::preset::{Performance, Sound};
@@ -392,6 +393,21 @@ impl Bench {
     pub fn all_free(&self) -> bool {
         self.inst.allocator().slots().iter().all(|s| s.is_free())
     }
+
+    /// ORBIT's harmony, as the runner hands it on (`None`: stopped).
+    pub fn harmony(&mut self, h: Option<Harmony>) {
+        self.inst.set_harmony(h);
+    }
+
+    /// A segment change: held RE-SNAP notes glide to the harmony's.
+    pub fn resnap(&mut self) {
+        self.inst.resnap(&self.shared);
+    }
+
+    /// Each voice's glide ratio, 1 at rest.
+    pub fn slides(&self) -> [f32; chimera_core::hw::MAX_VOICES] {
+        self.inst.slides()
+    }
 }
 
 /// What one run left: each pair's output (interleaved L, R, after the
@@ -498,6 +514,29 @@ impl Tape {
     pub fn freed(&self, from: usize) -> Option<usize> {
         self.busy[from..].iter().position(|&b| b == 0)
     }
+}
+
+/// P1 of `control` less `cut`'s: what the event took away or added, alone.
+pub fn gone_from(control: &Tape, cut: &Tape) -> Tape {
+    let mut g = Tape::default();
+    g.out[0] = control.out[0]
+        .iter()
+        .zip(&cut.out[0])
+        .map(|(c, s)| c - s)
+        .collect();
+    g.bus = vec![0.0; control.bus.len()];
+    g
+}
+
+/// The control-diff judge: the transient at event block `e` of a tape
+/// holding only what the event changed (`gone_from`), over that
+/// difference's own steady state after it. `Tape::click`'s ratio without
+/// its floor, so a quiet difference is judged at its own scale.
+pub fn control_diff_ratio(gone: &Tape, e: usize) -> f32 {
+    let heard = transient_window(e);
+    let trans = gone.d2(0, heard.start, heard.end);
+    let (_, post) = steady_windows(e, (0, usize::MAX), true);
+    trans / gone.d2(0, post.start, post.end)
 }
 
 /// The blocks `Tape::click` hears event `e`'s transient in: the three

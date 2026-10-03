@@ -219,6 +219,42 @@ impl EngineSlot {
         }
     }
 
+    /// The sounding note moved to `note` with no strike, gliding a one-pole
+    /// of `tau` seconds in log pitch (a re-snap, spec § 5.2).
+    pub fn retune(&mut self, note: MidiNote, (sample_rate, tau): (u32, f32), pool: &mut SymPool) {
+        match self {
+            Self::Algo(a) => a.glide_to(note, tau),
+            Self::Modal(m) => m.glide_to(note.get(), (sample_rate, tau), pool),
+        }
+    }
+
+    /// The bytes `retune` to `note` writes to the lines: a glide's growth
+    /// (`ModalEngine::strike_clear`), none on Algo or an idle engine.
+    pub fn retune_clear(&self, pool: &SymPool, note: MidiNote, sample_rate: u32) -> usize {
+        match self {
+            Self::Modal(m) => m
+                .strike_clear(note.get(), true, sample_rate, pool)
+                .unwrap_or(0),
+            Self::Algo(_) => 0,
+        }
+    }
+
+    /// What a glide costs `p` under `mods` beyond `cost`, which bills it
+    /// only at STEAL GLIDE or with a PITCH route: a Modal voice's retune
+    /// each block (`ModalEngine::PITCH`, and `HALO_PITCH` on SYMP). Algo
+    /// sets its frequency each block anyway.
+    pub fn glide_cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
+        let billed = pitch_routed(mods) || p.pitch.steal == Steal::Glide;
+        if p.engine() != EngineType::Modal || billed {
+            return Cost::ZERO;
+        }
+        if p.modal.mode == ResonatorMode::Sympathetic {
+            ModalEngine::PITCH + ModalEngine::HALO_PITCH
+        } else {
+            ModalEngine::PITCH
+        }
+    }
+
     /// A glide steal's ratio now, 1 at rest: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn slide(&self) -> f32 {

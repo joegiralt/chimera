@@ -16,8 +16,8 @@ use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, ParamSlot, VizType};
 use crate::ui::page::{PageLayout, ValFmt};
 use crate::ui::settings::leaves::{
-    ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, DEMO_LEAVES, OUTPUTS_LEAF, THEME_LEAF, TUNING_LEAF,
-    UPDATES_LEAF,
+    ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, DEMO_LEAVES, LIVE_SNAP_LEAF, OUTPUTS_LEAF,
+    THEME_LEAF, TUNING_LEAF, UPDATES_LEAF,
 };
 use crate::ui::theme_settings::ThemeSettings;
 
@@ -899,7 +899,7 @@ pub static DEMO_BLOCKS: [ChainBlock; 13] = [
 ];
 
 /// The chains besides DEMO's leaves.
-const FIXED: [&ChainDef2; 11] = [
+const FIXED: [&ChainDef2; 12] = [
     &ALGO_CHAIN,
     &MODAL_PLUCK_CHAIN,
     &MIXER_CHANNEL_CHAIN,
@@ -910,6 +910,7 @@ const FIXED: [&ChainDef2; 11] = [
     UPDATES_LEAF.chain(),
     ABOUT_LEAF.chain(),
     AUDIO_LOAD_LEAF.chain(),
+    LIVE_SNAP_LEAF.chain(),
     &crate::ui::orbit::ORBIT_CHAIN,
 ];
 

@@ -623,6 +623,27 @@ impl ModalEngine {
         self.strike(note, velocity, params, (sample_rate, Some(tau)), pool);
     }
 
+    /// What rings moved to `note` with no strike (a re-snap, spec § 5.2):
+    /// it glides from the pitch it sounds, a one-pole of `tau` seconds in
+    /// log pitch, its rings sized first for the glide's longest period, as a
+    /// glide steal's are; nothing is plucked, cleared or eased. Idle, or on
+    /// `note`, nothing moves.
+    pub fn glide_to(&mut self, note: u8, (sample_rate, tau): (u32, f32), pool: &mut SymPool) {
+        let freq = note_to_freq(note);
+        let f = freq / sample_rate as f32;
+        if !self.active || f == self.frequency {
+            return;
+        }
+        let span = self.span(freq, sample_rate);
+        self.slide = Glide::new(self.frequency * self.slide.value() / f, tau);
+        self.slide.toward(1.0);
+        self.frequency = f;
+        self.fit(span, pool);
+        // The strings follow the new frequency at the next block's retune,
+        // even a glide that lands within it.
+        self.tuned = 0.0;
+    }
+
     fn strike(
         &mut self,
         note: u8,

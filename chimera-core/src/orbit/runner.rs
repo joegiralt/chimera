@@ -446,10 +446,18 @@ impl OrbitRunner {
 
     /// Spec § 4 steps 2-5 for one block: what it sent the `Instrument`.
     /// The shells drop it; the tests read each block's events from it.
+    /// Step 5 hands the `Instrument` the harmony its live keys snap to,
+    /// `None` while stopped, and re-snaps held keys at a segment change or
+    /// a landed scene (spec § 5.2).
     pub fn block(&mut self, inst: &mut Instrument, shared: &AudioShared) -> Events {
         self.take.arm(shared.orbit.capture, shared.orbit.arming);
         let sent = self.advance(shared);
         Self::send(inst, shared, &sent, &mut self.fired);
+        let playing = self.transport && self.ext_playing;
+        inst.set_harmony(playing.then(|| self.state.harmony(&self.working)));
+        if sent.seg_changed() || sent.adopted() {
+            inst.resnap(shared);
+        }
         sent
     }
 
