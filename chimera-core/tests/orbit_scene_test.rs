@@ -31,6 +31,34 @@ fn segments_split_the_loop_evenly() {
     assert_eq!(segment_at(1, half, b, s), 3);
     assert_eq!(segment_at(1, Phase::new(u32::MAX), b, s), 3);
 
+    // As the 64-bit divide had it, at every size, edges and all.
+    for (nb, ns) in (1..=8).flat_map(|b| (1..=8).map(move |s| (b, s))) {
+        for bar in [0, 1, 7, 8, 9, 1000, u32::MAX] {
+            for p in [0, 1, 1 << 31, u32::MAX, 0x5555_5555, 0xAAAA_AAAB] {
+                let x = ((bar as u64 % nb) << 32) | p as u64;
+                let want = (x * ns / (nb << 32)) as usize;
+                let got = segment_at(bar, Phase::new(p), bars(nb as u8), segs(ns as u8));
+                assert_eq!(got, want, "bar {bar} phase {p} bars {nb} segs {ns}");
+            }
+        }
+        for k in 1..ns {
+            let edge = (k * nb << 32).div_ceil(ns);
+            for x in [edge - 1, edge] {
+                let got = segment_at(
+                    (x >> 32) as u32,
+                    Phase::new(x as u32),
+                    bars(nb as u8),
+                    segs(ns as u8),
+                );
+                assert_eq!(
+                    got as u64,
+                    x * ns / (nb << 32),
+                    "edge {x} bars {nb} segs {ns}"
+                );
+            }
+        }
+    }
+
     let (b, s) = (bars(1), segs(3));
     for k in 1..3u64 {
         let edge = (k << 32).div_ceil(3) as u32;

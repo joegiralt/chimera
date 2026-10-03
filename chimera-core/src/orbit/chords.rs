@@ -120,10 +120,12 @@ impl ChordRing {
 
 /// The segment holding bar `bar_in_loop` at `phase`:
 /// ⌊(bar + phase)/bars · segs⌋, exact in integers; a bar past the loop wraps.
+/// No 64-bit divide: ⌊x / (bars · 2³²)⌋ is ⌊⌊x / 2³²⌋ / bars⌋, and
+/// `x · segs` is under 2⁴⁸.
 pub fn segment_at(bar_in_loop: u32, phase: Phase, bars: Bars, segs: Segs) -> usize {
-    let into_loop = ((bar_in_loop as u64) << 32) | phase.get() as u64;
-    let loop_len = (bars.get() as u64) << 32;
-    (into_loop % loop_len * segs.get() as u64 / loop_len) as usize
+    let bars = bars.get() as u32;
+    let into_loop = (((bar_in_loop % bars) as u64) << 32) | phase.get() as u64;
+    (((into_loop * segs.get() as u64) >> 32) as u32 / bars) as usize
 }
 
 pub fn harmony(c: &ChordRing, seg: usize) -> Harmony {

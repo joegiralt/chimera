@@ -259,10 +259,14 @@ pub fn block(
 
     let total = units(to, from).max(1);
     let elapsed = span.to_sample.saturating_sub(span.from_sample);
+    // A window is under a step long, so it sees a segment or two: each
+    // one's chord is built once, not per step.
+    let mut held: Option<(usize, Harmony)> = None;
     for r in RingIdx::ALL {
         let i = r.get() as usize;
         let ring = &scene.rings[i].ring;
         let n = ring.fill().steps();
+        let step_len = (span.bar_len / n.get() as u32) as u64;
         for bar in from.bar..=to.bar {
             let first = if bar == from.bar {
                 let k = step_at(from.phase, n);
@@ -279,7 +283,10 @@ pub fn block(
                     break;
                 }
                 let seg = segment_at(bar, at.phase, scene.chords.bars, scene.chords.segs);
-                let h = harmony(&scene.chords, seg);
+                let h = match held {
+                    Some((s, h)) if s == seg => h,
+                    _ => held.insert((seg, harmony(&scene.chords, seg))).1,
+                };
                 let Some(out) = ring.play(k as usize, &mut st.walks[i], &h, &mut st.rngs[i]) else {
                     continue;
                 };
@@ -289,7 +296,6 @@ pub fn block(
                 let Target::Part(part) = scene.rings[i].target;
                 let channel = channels[part.index()];
                 let sample = span.from_sample + units(at, from) * elapsed / total;
-                let step_len = span.bar_len as u64 / n.get() as u64;
                 let gate = step_len * out.gate_fraction.get() as u64 / 100;
                 st.pending[i] = Some(PendingOff {
                     channel,
