@@ -13,7 +13,6 @@ use chimera_core::ui::block_registry::{FILTER, MIXER_CHANNEL_CHAIN, MIXER_PART};
 use chimera_core::ui::nav::{Location, MixPage, PageAt, chain_def_for};
 use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::region::RegionKind;
-use chimera_core::ui::settings::PART_ROW;
 use chimera_core::ui::theme_settings::ThemeSettings;
 use chimera_core::ui::{UiState, block_def::SlotBinding, page::PageKey};
 use chimera_hal::{ButtonId, EncoderId};
@@ -145,14 +144,17 @@ fn mix_b6_is_part_6_mixer() {
 }
 
 #[test]
-fn edit_on_mixer_opens_sound_and_seq_opens_part_settings() {
+fn edit_on_mixer_opens_sound_and_seq_comes_back() {
     let mut ui = UiState::new();
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::B2));
     feed(&mut ui, Input::press(ButtonId::Edit));
     assert_eq!(ui.location(), Location::sound(P[1]));
-    feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::B2));
     tap(&mut ui, ButtonId::Seq);
-    assert_eq!(ui.location(), Location::settings_at(&[PART_ROW], 0));
+    let sends = Location::mixer(P[1], MixPage::Sends);
+    assert_eq!(ui.location(), sends);
+    // The mixer is the top: SEQ does nothing there (ADR 0081).
+    tap(&mut ui, ButtonId::Seq);
+    assert_eq!(ui.location(), sends);
     assert_eq!(ui.active_part, P[1]);
 }
 

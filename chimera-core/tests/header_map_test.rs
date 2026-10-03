@@ -405,8 +405,8 @@ fn every_osc_sub_page_is_reachable_and_lit_on_the_map() {
     feed(&mut ui, Input::press(ButtonId::Edit));
     assert_eq!(
         ui.page_def().id,
-        block.active_def(block.sub_page_count() - 1).id,
-        "EDIT stops at the last"
+        block.active_def(0).id,
+        "EDIT wraps from the last to the first (ADR 0081)"
     );
 }
 

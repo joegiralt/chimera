@@ -24,7 +24,7 @@ pub enum Kind {
     /// A screen whose rows are built at run time.
     Screen(Screen),
     Act(Act),
-    /// Not built: dimmed, and EDIT and SEQ ignore it.
+    /// Not built: dimmed, and EDIT ignores it.
     Later(Issue),
 }
 

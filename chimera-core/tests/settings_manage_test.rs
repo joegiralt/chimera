@@ -159,7 +159,7 @@ fn two() -> (Rig, ProjectFile, ProjectFile) {
     let mut r = Rig::new(s);
     r.open_manage();
     r.command(a, Command::LoadFrom);
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert_eq!(r.ui.project().meta().file(), Some(a));
     r.ui.update(UiTick::for_test());
     (r, a, b)
@@ -178,7 +178,7 @@ fn delete_is_dimmed_on_the_loaded_project() {
     r.command(a, Command::Delete);
     let row = r.ui.manage_command_row(Command::Delete).unwrap();
     assert_eq!(row.look, RowLook::Dimmed);
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert!(!r.ui.prompt_open());
     assert_eq!(r.files(), [a, b]);
 
@@ -200,11 +200,11 @@ fn delete_is_dimmed_on_the_loaded_project() {
         Command::Rename.on(Whose::Other),
         Err(Off::Dimmed(Some(Note::LoadToRename)))
     );
-    // Dimmed: SEQ opens nothing.
+    // Dimmed: EDIT opens nothing.
     r.feed(Input::press(ButtonId::Minus));
     r.feed(Input::press(ButtonId::Minus));
     assert_eq!(r.column(), Some(Column::Command(Command::Rename as u8)));
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert!(r.ui.naming().is_none() && !r.ui.prompt_open());
 }
 
@@ -213,7 +213,7 @@ fn delete_another_after_confirm() {
     let (mut r, a, b) = two();
     r.tap(ButtonId::Menu);
     r.command(b, Command::Delete);
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert_eq!(r.question(), "DELETE BETA?");
     // CANCEL keeps it.
     r.feed(Input::turn(EncoderId::A, 1));
@@ -221,12 +221,12 @@ fn delete_another_after_confirm() {
     assert!(!r.ui.prompt_open());
     assert_eq!(r.files(), [a, b]);
     // MENU cancels too.
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     r.tap(ButtonId::Menu);
     assert!(!r.ui.prompt_open());
     assert_eq!(r.files(), [a, b]);
 
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     r.tap(ButtonId::Seq);
     assert_eq!(r.files(), [a]);
     assert_eq!(r.ui.listing().len(), 1);
@@ -248,14 +248,14 @@ fn delete_the_project_system_names_clears_last_project() {
     for _ in 0..new {
         r.feed(Input::press(ButtonId::Plus));
     }
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert_eq!(r.ui.project().meta().file(), None);
     assert_eq!(r.set.last_project, Some(a.id()));
 
     r.leave();
     r.open_manage();
     r.command(a, Command::Delete);
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     r.tap(ButtonId::Seq);
     assert_eq!(r.files(), [b]);
     assert_eq!(r.set.last_project, None);
@@ -268,13 +268,13 @@ fn save_to_overwrites_after_confirm() {
     let crc = project_crc(r.ui.project());
     r.tap(ButtonId::Menu);
     r.command(b, Command::SaveTo);
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert_eq!(r.question(), "SAVE OVER BETA?");
     // CANCEL: BETA stays BETA.
     r.tap(ButtonId::Menu);
     assert_eq!(listed(&mut r.s)[1].name, Some(name("BETA")));
 
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     r.tap(ButtonId::Seq);
     assert_eq!(project_crc(&read_back(&mut r.s, b)), crc);
     assert_eq!(listed(&mut r.s)[1].name, Some(name("GAMMA")));
@@ -293,7 +293,7 @@ fn clear_other_and_clear_own() {
     // Another: its file becomes NEW; RAM is untouched.
     r.tap(ButtonId::Menu);
     r.command(b, Command::Clear);
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert_eq!(r.question(), "CLEAR BETA?");
     r.tap(ButtonId::Seq);
     assert_eq!(listed(&mut r.s)[1].name, Some(name("NEW PROJECT")));
@@ -305,7 +305,7 @@ fn clear_other_and_clear_own() {
     modify(&mut r, "EDITED");
     r.tap(ButtonId::Menu);
     r.command(a, Command::Clear);
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert_eq!(r.question(), "CLEAR ALPHA?");
     r.tap(ButtonId::Seq);
     assert_eq!(r.question(), "START A NEW PROJECT?");
@@ -328,7 +328,7 @@ fn rename_loaded_marks_modified() {
     assert_eq!(r.ui.project_status(), ProjectStatus::Saved);
     r.tap(ButtonId::Menu);
     r.command(a, Command::Rename);
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert_eq!(r.ui.naming().unwrap().text(), "ALPHA");
     r.feed(Input::turn(EncoderId::E, -1));
     r.tap(ButtonId::Seq);
@@ -349,10 +349,9 @@ fn menu_from_commands_returns_to_the_list() {
     r.tap(ButtonId::Menu);
     assert_eq!(r.column(), Some(Column::Projects));
     assert_eq!(r.ui.location().settings().unwrap().row(), 1);
-    // SEQ on the list runs nothing.
+    // SEQ on the list runs nothing: it backs out, as MENU (ADR 0081).
     r.tap(ButtonId::Seq);
     assert!(!r.ui.prompt_open());
-    r.tap(ButtonId::Menu);
     let m = screen_path(Screen::ManageProjects);
     assert_eq!(
         r.ui.location(),
@@ -402,7 +401,7 @@ fn clear_own_when_saved() {
     let fresh = project_crc(&Project::boxed().0);
     r.tap(ButtonId::Menu);
     r.command(a, Command::Clear);
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert_eq!(r.question(), "CLEAR ALPHA?");
     r.tap(ButtonId::Seq);
     // Saved: no load prompt.
@@ -420,7 +419,7 @@ fn clear_own_on_a_swapped_card_leaves_ram() {
     let kept = project_crc(r.ui.project());
     r.tap(ButtonId::Menu);
     r.command(a, Command::Clear);
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert_eq!(r.question(), "CLEAR ALPHA?");
     r.s.swap(2);
     r.tap(ButtonId::Seq);
@@ -450,7 +449,7 @@ fn clear_own_save_then_load_keeps_the_edits_elsewhere() {
     let edited = level(r.ui.project());
     r.tap(ButtonId::Menu);
     r.command(a, Command::Clear);
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     r.tap(ButtonId::Seq);
     assert_eq!(r.question(), "START A NEW PROJECT?");
     // SAVE THEN LOAD: SAVE AS, never over the file being cleared.
@@ -481,7 +480,7 @@ fn manage_never_sits_empty() {
     assert_eq!(r.ui.project().meta().file(), None);
     r.open_manage();
     r.command(a, Command::Delete);
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     r.tap(ButtonId::Seq);
     assert!(r.files().is_empty());
     let m = screen_path(Screen::ManageProjects);

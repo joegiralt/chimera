@@ -766,11 +766,11 @@ pub fn legend(on: LegendFor, at_top: bool) -> &'static str {
         (L::Prompt, _) => "A PICK · SEQ OK · MENU CANCEL",
         (L::Naming, _) => "SEQ SAVE · MENU CANCEL",
         (L::ManageList, _) => "EDIT COMMANDS · MENU BACK",
-        (L::ManageCommands, _) => "SEQ RUN · MENU LIST",
+        (L::ManageCommands, _) => "EDIT RUN · MENU LIST",
         (L::ManageDimmed(None), _) => "MENU LIST",
         (L::ManageDimmed(Some(Note::LoadToRename)), _) => "LOAD TO RENAME · MENU LIST",
         (L::ManageLater, _) => "LATER · MENU LIST",
-        (L::Load, _) => "SEQ LOAD · MENU BACK",
+        (L::Load, _) => "EDIT LOAD · MENU BACK",
     }
 }
 

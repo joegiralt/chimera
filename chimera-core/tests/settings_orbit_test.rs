@@ -107,12 +107,10 @@ fn orbit_list_reaches_every_row() {
     assert_eq!(look(&ui, SAVE_TO), RowLook::Normal);
     assert_eq!(ui.crumbs().unwrap().to_string(), "SETTINGS › SCENE 1");
     // RENAME is inert.
-    for k in [Edit, Seq] {
-        tap(&mut ui, k);
-        assert!(!ui.prompt_open());
-        assert!(ui.naming().is_none());
-        assert_eq!(ui.location().settings().unwrap().path(), to_orbit());
-    }
+    tap(&mut ui, Edit);
+    assert!(!ui.prompt_open());
+    assert!(ui.naming().is_none());
+    assert_eq!(ui.location().settings().unwrap().path(), to_orbit());
     for i in 1..4 {
         feed(&mut ui, Input::press(Plus));
         assert_eq!(ui.location().settings().unwrap().row() as usize, i);
@@ -140,7 +138,7 @@ fn clear_asks_and_clears() {
     assert_ne!(one, Scene::neutral());
     orbit_row(&mut rig.ui, CLEAR);
     for cancel in [Menu, Seq] {
-        rig.tap(Seq);
+        rig.tap(Edit);
         assert_eq!(question(&rig.ui), "CLEAR SCENE 1?");
         if cancel == Seq {
             rig.frame(Input::turn(A, 1), 1); // CANCEL
@@ -152,7 +150,7 @@ fn clear_asks_and_clears() {
         assert_eq!(rig.ui.project().orbit().queued(), None);
     }
     let live = rig.ui.project().orbit().live;
-    rig.tap(Seq);
+    rig.tap(Edit);
     rig.tap(Seq); // CLEAR
     assert!(!rig.ui.prompt_open());
     let song = rig.ui.project().orbit();
@@ -215,7 +213,7 @@ fn save_to_lists_eight_slots() {
 
     // A neutral slot: at once.
     plus(&mut ui, 2);
-    tap(&mut ui, Seq);
+    tap(&mut ui, Edit);
     assert!(!ui.prompt_open());
     assert_eq!(toast(&mut ui), "SCENE 3 SAVED");
     assert_eq!(slot(&ui, 2), ui.project().orbit().live);
@@ -224,7 +222,7 @@ fn save_to_lists_eight_slots() {
     // Another saved slot: it asks.
     ui.project_mut().orbit_mut().live.rings[2].set(SceneRing::MUTE, 1.0);
     plus(&mut ui, 2);
-    tap(&mut ui, Seq);
+    tap(&mut ui, Edit);
     assert_eq!(question(&ui), "SAVE OVER SCENE 5?");
     tap(&mut ui, Menu);
     assert!(!ui.prompt_open());
@@ -232,7 +230,7 @@ fn save_to_lists_eight_slots() {
     // The playing slot: at once.
     plus(&mut ui, 4);
     assert_eq!(ui.location().settings().unwrap().row(), 0);
-    tap(&mut ui, Seq);
+    tap(&mut ui, Edit);
     assert!(!ui.prompt_open());
     assert_eq!(toast(&mut ui), "SCENE 1 SAVED");
     assert_eq!(slot(&ui, 0), ui.project().orbit().live);
@@ -246,14 +244,15 @@ fn reload_drops_the_drift() {
     let mut ui = UiState::new();
     orbit_row(&mut ui, RELOAD);
     assert_eq!(look(&ui, RELOAD), RowLook::Dimmed, "NEW: nothing to drop");
-    tap(&mut ui, Seq);
+    tap(&mut ui, Edit);
     assert!(!ui.prompt_open());
 
     let mut ui = Box::new(UiState::new());
     for r in &mut ui.project_mut().orbit_mut().live.rings {
         r.set(SceneRing::MUTATE, 100.0);
     }
-    ui.project_mut().orbit_mut().save_scene().unwrap();
+    let playing = ui.project().orbit().current();
+    ui.project_mut().orbit_mut().save_to(playing).unwrap();
     let saved = slot(&ui, 0);
     hold(&mut ui, Seq);
     let mut rig = ShellRig::new(ui);
@@ -263,7 +262,7 @@ fn reload_drops_the_drift() {
     assert_ne!(rig.ui.project().orbit().live, saved, "drifted");
     orbit_row(&mut rig.ui, RELOAD);
     assert_eq!(look(&rig.ui, RELOAD), RowLook::Normal);
-    rig.tap(Seq);
+    rig.tap(Edit);
     assert_eq!(question(&rig.ui), "RELOAD SCENE 1?");
     rig.tap(Seq); // RELOAD
     assert!(!rig.ui.prompt_open());
@@ -277,7 +276,7 @@ fn reload_drops_the_drift() {
     let heard = rig.view().rings.map(|r| r.hits.bits());
     assert_eq!(heard, masks(&saved), "the saved masks play");
     assert_eq!(look(&rig.ui, RELOAD), RowLook::Dimmed);
-    rig.tap(Seq);
+    rig.tap(Edit);
     assert!(!rig.ui.prompt_open());
 }
 
@@ -341,10 +340,10 @@ fn scene_prompts_answer_by_meaning() {
     let mut ui = UiState::new();
     let one = slot(&ui, 0);
     orbit_row(&mut ui, CLEAR);
-    tap(&mut ui, Seq);
+    tap(&mut ui, Edit);
     pick(&mut ui, place(ClearSceneAnswer::Cancel).unwrap());
     assert_eq!(slot(&ui, 0), one);
-    tap(&mut ui, Seq);
+    tap(&mut ui, Edit);
     pick(&mut ui, place(ClearSceneAnswer::Clear).unwrap());
     assert_eq!(slot(&ui, 0), Scene::neutral());
 
@@ -357,10 +356,10 @@ fn scene_prompts_answer_by_meaning() {
     let mut ui = UiState::new();
     ui.project_mut().orbit_mut().live.rings[0].set(SceneRing::MUTE, 1.0);
     orbit_row(&mut ui, RELOAD);
-    tap(&mut ui, Seq);
+    tap(&mut ui, Edit);
     pick(&mut ui, place(ReloadSceneAnswer::Cancel).unwrap());
     assert_eq!(ui.project().orbit().queued(), None);
-    tap(&mut ui, Seq);
+    tap(&mut ui, Edit);
     pick(&mut ui, place(ReloadSceneAnswer::Reload).unwrap());
     assert_eq!(ui.project().orbit().queued(), Some(S[0]));
 }
@@ -399,7 +398,7 @@ fn the_crumb_follows_the_playing_scene() {
 fn a_landing_takes_no_knobs_the_ui_has_not_landed() {
     let mut rig = playing();
     orbit_row(&mut rig.ui, CLEAR);
-    rig.tap(Seq);
+    rig.tap(Edit);
     rig.tap(Seq); // CLEAR
     assert_eq!(rig.ui.project().orbit().queued(), Some(S[0]));
     let loops = rig.view().loops;
@@ -440,7 +439,7 @@ fn clear_and_reload_wait_for_a_switch() {
     for row in [CLEAR, RELOAD] {
         orbit_row(&mut ui, row);
         assert_eq!(look(&ui, row), RowLook::Normal);
-        tap(&mut ui, Seq);
+        tap(&mut ui, Edit);
         assert!(!ui.prompt_open(), "row {row}");
         assert_eq!(toast(&mut ui), "SWITCH PENDING");
     }

@@ -1,0 +1,312 @@
+//! One D-pad on every chain (#316, ADR 0081): MINUS and PLUS along it,
+//! EDIT down and wrapping from the bottom, SEQ up and inert at the top.
+
+mod screen;
+
+use chimera_core::params::EngineType;
+use chimera_core::project::{PartId, PartStatus, part_status};
+use chimera_core::ui::UiState;
+use chimera_core::ui::block_def::ChainDef2;
+use chimera_core::ui::block_def::Move;
+use chimera_core::ui::block_registry::{MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART};
+use chimera_core::ui::nav::{
+    Column, Location, MixPage, NavCtx, NavKey, OrbitAt, OrbitCx, OrbitKey, PageAt, Recall, Step,
+    chain_def_for,
+};
+use chimera_core::ui::orbit::ORBIT_CHAIN;
+use chimera_core::ui::settings::{Kind, rows};
+use chimera_hal::ButtonId;
+use screen::{Input, feed};
+
+const P: [PartId; 6] = PartId::ALL;
+const FX_FIRST: usize = if MIXER_HOME > MIXER_PART {
+    MIXER_HOME + 1
+} else {
+    MIXER_PART + 1
+};
+
+fn cx(engine: EngineType) -> NavCtx {
+    NavCtx {
+        engines: [engine; 6],
+        dyn_rows: 3,
+        orbit: OrbitCx {
+            custom: true,
+            ..OrbitCx::NONE
+        },
+    }
+}
+
+/// Where a key takes a chain page: PLUS and MINUS the node, clamped; EDIT
+/// the next sub-page, wrapping; SEQ the one above, none at the top.
+fn expect(c: &ChainDef2, at: PageAt, k: NavKey) -> Option<PageAt> {
+    let (n, s) = (at.node() as usize, at.sub() as usize);
+    let to = match k {
+        NavKey::Plus => c.page(n + 1, 0),
+        NavKey::Minus => n.checked_sub(1).and_then(|n| c.page(n, 0)),
+        NavKey::Edit => c.page(n, s + 1).or(c.page(n, 0)),
+        NavKey::SeqTap => s.checked_sub(1).and_then(|s| c.page(n, s)),
+        _ => unreachable!(),
+    };
+    to.filter(|&t| t != at)
+}
+
+/// Every page of `c`.
+fn pages(c: &ChainDef2) -> Vec<PageAt> {
+    (0..c.len())
+        .flat_map(|n| (0..).map_while(move |s| c.page(n, s)))
+        .collect()
+}
+
+const DPAD: [NavKey; 4] = [NavKey::Minus, NavKey::Plus, NavKey::Edit, NavKey::SeqTap];
+
+#[test]
+fn part_pages_move_the_same_way_on_every_engine() {
+    for engine in [EngineType::Algo, EngineType::Modal] {
+        let cx = cx(engine);
+        let c = chain_def_for(engine);
+        for at in pages(c) {
+            let l = Location::pages(P[2], at);
+            for k in DPAD {
+                let want =
+                    expect(c, at, k).map_or(Step::Stay, |a| Step::Go(Location::pages(P[2], a)));
+                assert_eq!(
+                    l.step(k, &cx, &mut Recall::new()),
+                    want,
+                    "{engine:?} {at:?} {k:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn edit_wraps_from_the_bottom_sub_page() {
+    for engine in [EngineType::Algo, EngineType::Modal] {
+        let cx = cx(engine);
+        let c = chain_def_for(engine);
+        let deep = (0..c.len())
+            .find(|&n| c.page(n, 1).is_some())
+            .expect("a node with sub-pages");
+        let subs = (0..).take_while(|&s| c.page(deep, s).is_some()).count();
+        let mut l = Location::pages(P[0], c.page(deep, 0).unwrap());
+        let mut r = Recall::new();
+        for _ in 0..subs {
+            if let Step::Go(to) = l.step(NavKey::Edit, &cx, &mut r) {
+                l = to;
+            }
+        }
+        assert_eq!(
+            l,
+            Location::pages(P[0], c.page(deep, 0).unwrap()),
+            "{engine:?}"
+        );
+    }
+}
+
+#[test]
+fn the_mixer_and_the_sound_rung() {
+    let cx = cx(EngineType::Algo);
+    let p = P[3];
+    let step = |l: Location, k| l.step(k, &cx, &mut Recall::new());
+    let go = Step::Go;
+    let part = Location::mixer(p, MixPage::Part);
+    let sends = Location::mixer(p, MixPage::Sends);
+    let sound = Location::sound(p);
+    let table = [
+        (part, NavKey::Minus, Step::Stay),
+        (part, NavKey::Plus, go(sends)),
+        (part, NavKey::Edit, go(sound)),
+        (part, NavKey::SeqTap, Step::Stay),
+        (sends, NavKey::Minus, go(part)),
+        (sends, NavKey::Edit, go(sound)),
+        (sends, NavKey::SeqTap, Step::Stay),
+        (sound, NavKey::Minus, go(Location::sound(P[2]))),
+        (sound, NavKey::Plus, go(Location::sound(P[4]))),
+        // EDIT on a row loads it: `UiState`'s.
+        (sound, NavKey::Edit, Step::Stay),
+        (sound, NavKey::SeqTap, go(sends)),
+    ];
+    for (from, k, want) in table {
+        assert_eq!(step(from, k), want, "{from:?} {k:?}");
+    }
+    let Step::Go(fx) = step(sends, NavKey::Plus) else {
+        panic!("PLUS on SENDS")
+    };
+    assert_eq!(fx.page(&cx).unwrap().1.node() as usize, FX_FIRST);
+}
+
+#[test]
+fn the_fx_pages_move_as_a_chain() {
+    let cx = cx(EngineType::Algo);
+    let c = &MIXER_CHANNEL_CHAIN;
+    let p = P[1];
+    // Every FX page, reached by PLUS from SENDS, then EDIT.
+    let mut r = Recall::new();
+    let mut l = Location::mixer(p, MixPage::Sends);
+    let mut fx = Vec::new();
+    while let Step::Go(to) = l.step(NavKey::Plus, &cx, &mut r) {
+        l = to;
+        let mut sub = l;
+        loop {
+            fx.push(sub);
+            match sub.step(NavKey::Edit, &cx, &mut r) {
+                Step::Go(to) if to != l => sub = to,
+                _ => break,
+            }
+        }
+    }
+    assert_eq!(fx.len(), pages(c).len() - FX_FIRST);
+    for l in fx {
+        let at = l.page(&cx).unwrap().1;
+        for k in DPAD {
+            let got = match l.step(k, &cx, &mut Recall::new()) {
+                Step::Go(to) if to.on_mixer() && to.part() == Some(p) => to.page(&cx).map(|x| x.1),
+                Step::Stay => None,
+                s => panic!("{at:?} {k:?}: {s:?}"),
+            };
+            assert_eq!(got, expect(c, at, k), "{at:?} {k:?}");
+        }
+    }
+}
+
+/// Every SETTINGS list and leaf path, depth first.
+fn settings_paths() -> Vec<Vec<u8>> {
+    fn walk(path: &mut Vec<u8>, out: &mut Vec<Vec<u8>>) {
+        for (i, r) in rows(path).iter().enumerate() {
+            path.push(i as u8);
+            if matches!(r.kind, Kind::List(_) | Kind::Leaf(_) | Kind::Screen(_)) {
+                out.push(path.clone());
+                walk(path, out);
+            }
+            path.pop();
+        }
+    }
+    let mut out = vec![vec![]];
+    walk(&mut Vec::new(), &mut out);
+    out
+}
+
+#[test]
+fn seq_backs_out_of_settings_as_menu_does_and_never_runs_a_row() {
+    let cx = cx(EngineType::Algo);
+    for path in settings_paths() {
+        let n = rows(&path).len().max(3) as u8;
+        for row in 0..n {
+            let l = Location::settings_at(&path, row);
+            let seq = l.step(NavKey::SeqTap, &cx, &mut Recall::new());
+            match path.split_last() {
+                None => assert_eq!(seq, Step::Stay, "the top: nothing"),
+                Some((&last, up)) => {
+                    assert_eq!(seq, Step::Go(Location::settings_at(up, last)), "{path:?}");
+                    assert_eq!(
+                        seq,
+                        l.step(NavKey::MenuTap, &cx, &mut Recall::new()),
+                        "{path:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn edit_runs_inside_a_screen() {
+    let cx = cx(EngineType::Algo);
+    let mut r = Recall::new();
+    // PROJECT › LOAD PROJECT.
+    let load = Location::settings_at(&[0, 0], 1);
+    assert_eq!(load.step(NavKey::Edit, &cx, &mut r), Step::Run);
+    assert_eq!(
+        load.step(NavKey::Plus, &cx, &mut r),
+        Step::Go(Location::settings_at(&[0, 0], 2))
+    );
+    // MANAGE PROJECTS: EDIT into the commands, EDIT runs one, SEQ back.
+    let manage = rows(&[0])
+        .iter()
+        .position(|r| r.label == "MANAGE PROJECTS")
+        .unwrap() as u8;
+    let mut l = Location::settings_at(&[0, manage], 1);
+    let list = l;
+    let Step::Go(cmds) = l.step(NavKey::Edit, &cx, &mut r) else {
+        panic!("into the commands")
+    };
+    assert_eq!(cmds.settings().unwrap().column(), Some(Column::Command(0)));
+    l = cmds;
+    assert_eq!(l.step(NavKey::Edit, &cx, &mut r), Step::Run);
+    assert_eq!(l.step(NavKey::SeqTap, &cx, &mut r), Step::Go(list));
+    assert_eq!(
+        list.step(NavKey::SeqTap, &cx, &mut r),
+        Step::Go(Location::settings_at(&[0], manage))
+    );
+}
+
+/// Every ORBIT page, reached by its own keys, SCALE on CUSTOM.
+fn orbit_places(cx: &NavCtx) -> Vec<OrbitAt> {
+    let mut seen = vec![OrbitAt::HOME];
+    let mut i = 0;
+    while i < seen.len() {
+        for k in [OrbitKey::Plus, OrbitKey::Minus, OrbitKey::Edit] {
+            if let Step::Go(to) = Location::from(seen[i]).step_orbit(k, cx, &mut Recall::new())
+                && let Some(o) = to.orbit()
+                && !seen.contains(&o)
+            {
+                seen.push(o);
+            }
+        }
+        i += 1;
+    }
+    seen
+}
+
+#[test]
+fn orbit_moves_as_a_chain_and_seq_never_saves() {
+    let cx = cx(EngineType::Algo);
+    let c = &ORBIT_CHAIN;
+    let places = orbit_places(&cx);
+    assert_eq!(places.len(), pages(c).len());
+    for o in places {
+        let at = o.page();
+        let l = Location::from(o);
+        let step = |k| l.step_orbit(k, &cx, &mut Recall::new());
+        let page = |s: Step| match s {
+            Step::Go(to) => Some(to.orbit().unwrap().page()),
+            Step::Stay => None,
+            s => panic!("{at:?}: {s:?}"),
+        };
+        assert_eq!(page(step(OrbitKey::Plus)), c.step(at, Move::Next), "{at:?}");
+        assert_eq!(
+            page(step(OrbitKey::Minus)),
+            c.step(at, Move::Prev),
+            "{at:?}"
+        );
+        assert_eq!(page(step(OrbitKey::SeqTap)), c.step(at, Move::Up), "{at:?}");
+        // EDIT on a page with sub-pages wraps them.
+        if c.page(at.node() as usize, 1).is_some() {
+            let n = at.node() as usize;
+            assert_eq!(
+                page(step(OrbitKey::Edit)),
+                c.page(n, at.sub() as usize + 1).or(c.page(n, 0)),
+                "{at:?}"
+            );
+        }
+    }
+}
+
+/// MIX + EDIT on the Sound rung saves the Part's Sound, over its slot.
+#[test]
+fn mix_edit_in_the_browser_saves_the_sound() {
+    let mut ui = UiState::new();
+    let p = P[1];
+    feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B2));
+    assert!(ui.location().browse().is_some());
+    ui.project_mut().edit_part(p).sound.params.filter.cutoff *= 0.5;
+    let status = |ui: &UiState| part_status(ui.project().part(p), ui.project().pool());
+    assert_eq!(status(&ui), PartStatus::Edited);
+    feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Edit));
+    assert_eq!(status(&ui), PartStatus::Clean, "saved");
+    assert_eq!(
+        ui.location().browse().map(|b| b.0),
+        Some(p),
+        "still browsing"
+    );
+}

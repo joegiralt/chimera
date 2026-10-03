@@ -103,7 +103,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("algo_out_p3", 0x3e91d6b588f4ebfa),
     ("mod_matrix", 0xa6cf67e584e06c56),
     ("mod_matrix_wide", 0xca78c74fca4ac959),
-    ("sound_browser", 0x1d1ac95bdfaca72b),
+    ("sound_browser", 0xeba30208aa18feb2),
     // Re-recorded: a fresh project's footer drops NEW (#286).
     ("settings_personal_theme", 0x4ceb975ee846afcc),
     ("settings_midi_sync", 0x0e26ce69d0f54980),
@@ -117,7 +117,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("settings_orbit", 0xf0d520f40ac7f0bb),
     // Slot 3 written: MODIFIED, as ORBIT is in the project's CRC (Task 18).
     ("settings_orbit_save_to", 0xa4d2405ea9f09bf6),
-    ("settings_load", 0xbee3b127e748ef17),
+    ("settings_load", 0x34b0bd576d341497),
     ("settings_prompt_load", 0xc47d45b862dea1e3),
     ("settings_naming", 0x3ad617885a99ddf2),
     // Every ORBIT page again for Task 16: the map gains SCN.

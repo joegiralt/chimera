@@ -727,7 +727,7 @@ mod unit {
             .find(|&i| l.entry(i).unwrap().file() == f)
             .expect("listed");
         rig.bar_to(i);
-        rig.tap(Seq);
+        rig.tap(chimera_hal::ButtonId::Edit);
         if rig.ui.prompt_open() {
             rig.feed(Input::turn(A, 1));
             rig.tap(Seq);

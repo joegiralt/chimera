@@ -63,13 +63,16 @@ pub const SCROLL_TOP: i32 = 40;
 pub const SCROLL_H: i32 = 208;
 const HINT_Y: i32 = 284;
 const INFO_Y: i32 = 304;
-/// The key and what it does here (Pre-flight 22).
-const HINTS: [(&str, &str); 3] = [("EDIT", "LOAD"), ("SEQ", "PART"), ("MIX-", "CLEAR")];
+/// The keys and what they do here (Pre-flight 22), on the hint line;
+/// MIX-'s clear opens the info line, as three don't fit on one. SEQ's way
+/// up is every chain's (ADR 0081), so it goes unsaid.
+const HINTS: [(&str, &str); 2] = [("EDIT", "LOAD"), ("MIX+EDIT", "SAVE")];
+const CLEAR_HINT: (&str, &str) = ("MIX-", "CLEAR");
 const HINT_GAP: i32 = 4;
 
 /// Encoder A moves the cursor, clamped to the list; the scroll follows it
-/// on screen. EDIT's load, MIX+MINUS's clear and every key's way out are
-/// `UiState`'s.
+/// on screen. EDIT's load, MIX+EDIT's save, MIX+MINUS's clear and every
+/// key's way out are `UiState`'s.
 pub fn input(controls: &impl Controls, b: Browse) -> Browse {
     let visible = VISIBLE_ROWS.min(TOTAL_ENTRIES);
     let delta = i32::from(controls.encoder_delta(EncoderId::A));
@@ -125,28 +128,11 @@ where
     let used: i32 = HINTS.iter().map(|&h| width(h)).sum();
     let gap = (theme::VIZ_RIGHT - theme::MARGIN_X - used) / (HINTS.len() as i32 - 1);
     let mut x = theme::MARGIN_X;
-    for &(key, what) in &HINTS {
-        let w = draw::text_tracked(d, &theme::FONT_LABEL_BOLD, key, x, HINT_Y, theme::INK, t);
-        draw::text_tracked(
-            d,
-            &theme::FONT_LABEL,
-            what,
-            x + w + HINT_GAP,
-            HINT_Y,
-            theme::MID,
-            t,
-        );
-        x += width((key, what)) + gap;
+    for &h in &HINTS {
+        hint(d, h, x, HINT_Y);
+        x += width(h) + gap;
     }
-    // Two strings: FmtBuf holds 32 bytes and one line would not fit.
-    draw::text(
-        d,
-        &theme::FONT_LABEL,
-        "A SCROLLS",
-        theme::MARGIN_X,
-        INFO_Y,
-        theme::MID,
-    );
+    hint(d, CLEAR_HINT, theme::MARGIN_X, INFO_Y);
     let mut info = FmtBuf::new();
     let _ = write!(info, "{} INIT + {} SLOTS", INIT_TYPES.len(), POOL_SIZE);
     draw::text_right(
@@ -157,6 +143,24 @@ where
         INFO_Y,
         theme::MID,
         0,
+    );
+}
+
+/// A key in bold ink, then what it does.
+fn hint<D>(d: &mut D, (key, what): (&str, &str), x: i32, y: i32)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let t = theme::LABEL_TRACKING;
+    let w = draw::text_tracked(d, &theme::FONT_LABEL_BOLD, key, x, y, theme::INK, t);
+    draw::text_tracked(
+        d,
+        &theme::FONT_LABEL,
+        what,
+        x + w + HINT_GAP,
+        y,
+        theme::MID,
+        t,
     );
 }
 

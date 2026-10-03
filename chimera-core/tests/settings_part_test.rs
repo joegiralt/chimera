@@ -11,7 +11,7 @@ use chimera_core::storage::sound_crc;
 use chimera_core::ui::UiState;
 use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::busy::ToastStep;
-use chimera_core::ui::nav::Location;
+use chimera_core::ui::nav::{Location, MixPage};
 use chimera_core::ui::settings::part::{Offer, PartCmd};
 use chimera_core::ui::settings::view::{PartMark, RowLook, draw_part_strip};
 use chimera_core::ui::settings::{PART_ROW, Screen, screen_path};
@@ -160,7 +160,7 @@ fn saved_over() -> UiState {
             .as_str(),
         "OVER SLOT 03"
     );
-    tap(&mut ui, ButtonId::Seq);
+    tap(&mut ui, ButtonId::Edit);
     assert_eq!(question(&ui), "P4 ALSO USES SLOT 03");
     assert_eq!(
         ui.step_toast(0),
@@ -181,7 +181,7 @@ fn update_applies_only_what_it_showed() {
     edit(&mut ui, P[4]);
     edit(&mut ui, P[0]);
     save_row(&mut ui, P[0], PartCmd::OverSlot);
-    tap(&mut ui, ButtonId::Seq);
+    tap(&mut ui, ButtonId::Edit);
     assert_eq!(question(&ui), "P4 ALSO USES SLOT 03");
     let p5 = crc(&ui, P[4]);
     // While the prompt is open, and not to the sound P1 saved.
@@ -226,7 +226,7 @@ fn stale_part_offers_no_over_slot() {
     assert_eq!(o.look(PartCmd::OverSlot), RowLook::Dimmed);
     assert_eq!(o.look(PartCmd::NewSlot), RowLook::Normal);
     assert_eq!(o.look(PartCmd::Reload), RowLook::Normal, "UPDATE");
-    tap(&mut ui, ButtonId::Seq);
+    tap(&mut ui, ButtonId::Edit);
     assert!(!ui.prompt_open());
     assert_eq!(status(&ui, P[3]), PartStatus::Stale(S3));
     assert_eq!(crc(&ui, P[3]), was);
@@ -247,7 +247,7 @@ fn reload_is_dimmed_until_there_is_something_to_revert() {
         RowLook::Normal
     );
     part_row(&mut ui, P[0], 3); // RELOAD FROM PROJ
-    tap(&mut ui, ButtonId::Seq);
+    tap(&mut ui, ButtonId::Edit);
     answer(&mut ui, 1); // REPLACE
     assert_eq!(status(&ui, P[0]), PartStatus::Clean);
 }
@@ -260,13 +260,13 @@ fn reload_over_edits_asks_and_save_first_goes_to_a_new_slot() {
     edit(&mut ui, P[1]);
     let edited = crc(&ui, P[1]);
     part_row(&mut ui, P[1], 3); // RELOAD FROM PROJ
-    tap(&mut ui, ButtonId::Seq);
+    tap(&mut ui, ButtonId::Edit);
     assert_eq!(question(&ui), "RELOAD P2 FROM SLOT 03?");
     answer(&mut ui, 2); // CANCEL
     assert_eq!(crc(&ui, P[1]), edited);
 
     let free = ui.project().pool().first_free().unwrap();
-    tap(&mut ui, ButtonId::Seq);
+    tap(&mut ui, ButtonId::Edit);
     answer(&mut ui, 0); // SAVE PART FIRST
     assert_eq!(sound_crc(ui.project().pool().get(free).unwrap()), edited);
     assert_eq!(sound_crc(ui.project().pool().get(S3).unwrap()), slot);
@@ -279,7 +279,7 @@ fn a_stale_part_reloads_without_asking() {
     let mut ui = saved_over();
     answer(&mut ui, 1); // LEAVE
     part_row(&mut ui, P[3], 3);
-    tap(&mut ui, ButtonId::Seq);
+    tap(&mut ui, ButtonId::Edit);
     assert!(!ui.prompt_open());
     assert_eq!(status(&ui, P[3]), PartStatus::Clean);
     assert_eq!(crc(&ui, P[3]), crc(&ui, P[0]));
@@ -309,7 +309,7 @@ fn clear_asks(ui: &mut UiState) -> u32 {
     screen::init_part(ui, P[0]);
     edit(ui, P[0]);
     part_row(ui, P[0], 1); // CLEAR
-    tap(ui, ButtonId::Seq);
+    tap(ui, ButtonId::Edit);
     assert_eq!(question(ui), "CLEAR P1 TO INIT?");
     crc(ui, P[0])
 }
@@ -322,7 +322,7 @@ fn clear_edited_part_asks_and_each_answer() {
     let edited = clear_asks(&mut ui);
     answer(&mut ui, 2); // CANCEL
     assert_eq!(crc(&ui, P[0]), edited);
-    tap(&mut ui, ButtonId::Seq);
+    tap(&mut ui, ButtonId::Edit);
     tap(&mut ui, ButtonId::Menu); // CANCEL too
     assert!(!ui.prompt_open());
     assert_eq!(crc(&ui, P[0]), edited);
@@ -348,7 +348,7 @@ fn rename_marks_the_part_edited() {
     load(&mut ui, P[0], S3);
     let name = ui.project().part(P[0]).sound.name;
     part_row(&mut ui, P[0], 0); // RENAME
-    tap(&mut ui, ButtonId::Seq);
+    tap(&mut ui, ButtonId::Edit);
     assert_eq!(ui.naming().expect("NAMING").text(), name.as_str());
     feed(&mut ui, Input::turn(EncoderId::B, 1));
     tap(&mut ui, ButtonId::Seq);
@@ -393,10 +393,16 @@ fn sound_rung_load_asks_when_edited() {
 }
 
 #[test]
-fn sound_rung_seq_opens_part_settings() {
+fn sound_rung_seq_goes_up_and_menu_reaches_part_settings() {
     let mut ui = UiState::new();
     rung(&mut ui, P[2], 0);
     tap(&mut ui, ButtonId::Seq);
+    assert_eq!(ui.location(), Location::mixer(P[2], MixPage::Sends));
+    tap(&mut ui, ButtonId::Menu);
+    for _ in 0..PART_ROW {
+        feed(&mut ui, Input::press(ButtonId::Plus));
+    }
+    feed(&mut ui, Input::press(ButtonId::Edit));
     assert_eq!(ui.location(), Location::settings_at(&[PART_ROW], 0));
     assert_eq!(ui.active_part, P[2]);
     assert_eq!(ui.crumbs().unwrap().to_string(), "SETTINGS › PART 3");

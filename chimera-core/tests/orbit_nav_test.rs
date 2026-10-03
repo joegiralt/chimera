@@ -304,15 +304,12 @@ fn ring_tap_reopens_the_ring_sub_page_last_shown() {
 }
 
 #[test]
-fn seq_tap_in_orbit_saves() {
+fn seq_tap_in_orbit_never_saves() {
     let cx = cx();
     for o in every_orbit_place() {
         let mut r = Recall::new();
-        assert_eq!(
-            orbit(o).step_orbit(OrbitKey::SeqTap, &cx, &mut r),
-            Step::Orbit(OrbitAct::SaveScene),
-            "{o:?}"
-        );
+        let s = orbit(o).step_orbit(OrbitKey::SeqTap, &cx, &mut r);
+        assert!(matches!(s, Step::Go(_) | Step::Stay), "{o:?}: {s:?}");
     }
 }
 
@@ -526,7 +523,7 @@ mod quick_save {
         r.tap(ButtonId::Menu);
         r.feed(Input::press(ButtonId::Edit));
         r.feed(Input::press(ButtonId::Edit));
-        r.tap(ButtonId::Seq);
+        r.tap(ButtonId::Edit);
         assert_eq!(r.ui.project().meta().file(), Some(f));
         while r.ui.in_settings() {
             r.tap(ButtonId::Menu);
@@ -705,13 +702,12 @@ fn orbit_buttons() {
     assert_eq!(ui.page_def().id, ORBIT_VOICE.id);
     ui.go_for_test(ring3);
 
-    // A SEQ tap moves no page, and saves the scene (every page's:
-    // `orbit_scenes_test::seq_saves_on_every_orbit_page`).
+    // A SEQ tap saves no scene (every page's:
+    // `orbit_scenes_test::seq_saves_nothing_on_any_orbit_page`).
     ui.project_mut().orbit_mut().live.chords.tonic = chimera_theory::PitchClass::E;
     tap(&mut ui, Seq);
-    assert_eq!(ui.location(), ring3);
     let song = ui.project().orbit();
-    assert_eq!(*song.scene(song.current()), song.live, "saved");
+    assert_ne!(*song.scene(song.current()), song.live, "not saved");
 
     // MENU tap goes back to where ORBIT was entered, Part and all.
     ui.go_for_test(entry);

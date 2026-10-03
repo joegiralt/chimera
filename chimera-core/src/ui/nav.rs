@@ -1,5 +1,5 @@
 //! Where the UI is, and where each key takes it: one `Location` and a pure
-//! `step` (ADR 0044, amended by ADR 0066).
+//! `step` (ADR 0044, amended by ADR 0066; its D-pad by ADR 0081).
 
 use crate::hw::MAX_PARTS;
 use crate::orbit::{RINGS, RingIdx};
@@ -11,7 +11,7 @@ use crate::ui::block_registry::{
 };
 use crate::ui::orbit::{ORB_NODE, ORBIT_CHAIN, RING_NODE, SCN_NODE};
 use crate::ui::settings::leaves::OnePage;
-use crate::ui::settings::{Act, Kind, MANAGE_COMMANDS, PART_ROW, Row, Screen, row_at};
+use crate::ui::settings::{Act, Kind, MANAGE_COMMANDS, Row, Screen, row_at};
 
 pub use crate::ui::block_def::PageAt;
 pub use crate::ui::browser::Browse;
@@ -25,8 +25,6 @@ const FX_FIRST: u8 = if MIXER_HOME > MIXER_PART {
     MIXER_PART as u8 + 1
 };
 const _: () = assert!(MIXER_CHANNEL_CHAIN.blocks[FX_FIRST as usize].def.id == CHORUS.id);
-/// SETTINGS › PART, where SEQ on the mixer and the Sound rung goes.
-const PART_SETTINGS: [u8; 1] = [PART_ROW];
 
 // The mixer's home is SENDS: from outside it, B*n* and MIX+B*n* open there.
 const _: () = assert!(MIXER_CHANNEL_CHAIN.home().node() as usize == MIXER_HOME);
@@ -198,8 +196,8 @@ impl SettingsAt {
         )
     }
 
-    /// MENU: MANAGE's commands back to its list, else one level up with the
-    /// bar on the row just left.
+    /// MENU and SEQ: MANAGE's commands back to its list, else one level up
+    /// with the bar on the row just left.
     fn back(self) -> Option<SettingsAt> {
         if let At::Manage(Column::Command(_)) = self.at {
             return Some(SettingsAt {
@@ -250,7 +248,9 @@ impl SettingsAt {
         };
         let under_bar = |rs: &'static [Row]| rs.get(self.row as usize).map(|r| r.kind);
         match (self.kind(), k, delta) {
-            // One page: no key steps it.
+            // Up, as MENU; at the top, nothing (ADR 0081).
+            (_, NavKey::SeqTap, _) => self.back().map_or(Step::Stay, go),
+            // One page: no other key steps it.
             (Some(Kind::Leaf(_)), _, _) => Step::Stay,
             (Some(Kind::List(rs)), _, Some(d)) => row(rs.len(), d),
             (_, _, Some(d)) if matches!(self.at, At::Manage(Column::Command(_))) => {
@@ -262,24 +262,21 @@ impl SettingsAt {
                     ..self
                 })
             }
-            (_, NavKey::Edit, _) if self.at == At::Manage(Column::Projects) && cx.dyn_rows > 0 => {
+            (_, NavKey::Edit, _) if self.at == At::Manage(Column::Projects) => {
+                if cx.dyn_rows == 0 {
+                    return Step::Stay;
+                }
                 go(SettingsAt {
                     at: At::Manage(Column::Command(0)),
                     ..self
                 })
             }
             (Some(Kind::Screen(_)), _, Some(d)) => row(cx.dyn_rows as usize, d),
-            (_, NavKey::SeqTap, _) if self.at == At::Manage(Column::Projects) => Step::Stay,
-            (Some(Kind::Screen(_)), NavKey::SeqTap, _) => Step::Run,
+            (Some(Kind::Screen(_)), NavKey::Edit, _) => Step::Run,
             (Some(Kind::List(rs)), NavKey::Edit, _) => match under_bar(rs) {
                 Some(Kind::List(_) | Kind::Leaf(_)) => self.child().map_or(Step::Stay, go),
                 Some(Kind::Screen(s)) => Step::Screen(s),
                 Some(Kind::Act(a)) => Step::Act(a),
-                _ => Step::Stay,
-            },
-            (Some(Kind::List(rs)), NavKey::SeqTap, _) => match under_bar(rs) {
-                Some(Kind::Act(a)) => Step::Act(a),
-                Some(Kind::Screen(s)) => Step::Screen(s),
                 _ => Step::Stay,
             },
             _ => Step::Stay,
@@ -373,7 +370,8 @@ impl OrbitAt {
             }
             OrbitKey::Mute(ring) => Step::Orbit(OrbitAct::Mute(ring)),
             OrbitKey::PlayStop => Step::Orbit(OrbitAct::PlayStop),
-            OrbitKey::SeqTap => Step::Orbit(OrbitAct::SaveScene),
+            // Up a sub-page, never a save (ADR 0081).
+            OrbitKey::SeqTap => page(ORBIT_CHAIN.step(self.page, Move::Up)),
             OrbitKey::Plus => page(ORBIT_CHAIN.step(self.page, Move::Next)),
             OrbitKey::Minus => page(ORBIT_CHAIN.step(self.page, Move::Prev)),
             OrbitKey::Edit if self.on(RING_NODE) => {
@@ -425,8 +423,6 @@ pub enum OrbitKey {
 pub enum OrbitAct {
     PlayStop,
     Mute(RingIdx),
-    /// SEQ: `live` over the playing scene.
-    SaveScene,
     /// EDIT on SCN: `live` to SAVE's slot, asking over another saved one.
     SaveTo,
 }
@@ -619,9 +615,9 @@ pub enum NavKey {
 pub enum Step {
     Go(Location),
     Act(Act),
-    /// EDIT or SEQ on a Screen row: `UiState` lists it, then goes in.
+    /// EDIT on a Screen row: `UiState` lists it, then goes in.
     Screen(Screen),
-    /// SEQ inside a Screen: `UiState` decides; on MANAGE, `column()` says which.
+    /// EDIT inside a Screen: `UiState` decides; on MANAGE, `column()` says which.
     Run,
     /// An ORBIT key's act: `UiState` runs it.
     Orbit(OrbitAct),
@@ -761,9 +757,9 @@ impl Location {
             (Part(p, m), NavKey::Plus) => go(mix_walk(p, m, 1)),
             (Part(p, m), NavKey::Minus) => go(mix_walk(p, m, -1)),
             (Part(p, _), NavKey::Edit) => go(Sound(p, Browse::default())),
-            (Part(..) | Fx(..) | Sound(..), NavKey::SeqTap) => {
-                Step::Go(Location::settings_at(&PART_SETTINGS, 0))
-            }
+            // The mixer is the top of its chain; the Sound rung is under it.
+            (Part(..), NavKey::SeqTap) => Step::Stay,
+            (Sound(p, _), NavKey::SeqTap) => go(r.mix_entry(p)),
             (Fx(p, at), NavKey::Minus) if at.node() == FX_FIRST => go(Part(p, MixPage::Sends)),
             (Fx(p, at), k) => {
                 page_step(&MIXER_CHANNEL_CHAIN, at, k).map_or(Step::Stay, |at| go(Fx(p, at)))
@@ -831,7 +827,8 @@ fn wrap(p: PartId, d: i8) -> PartId {
     PartId::ALL[n as usize]
 }
 
-/// PLUS and MINUS step the node, clamped; EDIT is sub-page down, SEQ up.
+/// PLUS and MINUS step the node, clamped; EDIT is sub-page down, from the
+/// last back to the first; SEQ up, none above the first (ADR 0081).
 fn page_step(c: &ChainDef2, at: PageAt, k: NavKey) -> Option<PageAt> {
     let m = match k {
         NavKey::Plus => Move::Next,
@@ -840,7 +837,10 @@ fn page_step(c: &ChainDef2, at: PageAt, k: NavKey) -> Option<PageAt> {
         NavKey::SeqTap => Move::Up,
         _ => return None,
     };
-    c.step(at, m)
+    match c.step(at, m) {
+        None if m == Move::Down => c.page(at.node() as usize, 0),
+        to => to,
+    }
 }
 
 /// Part `n`'s mixer place showing `at`: PART, SENDS or an FX page.

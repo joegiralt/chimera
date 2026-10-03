@@ -551,8 +551,8 @@ fn save_follows_the_playing_scene() {
     assert_eq!(o.save, None);
 }
 
-/// 20 loops of MUTATE, a SEQ tap, a switch away and back: the slot plays
-/// the drift as it was saved.
+/// 20 loops of MUTATE, SCN's SAVE on the playing slot, a switch away and
+/// back: the slot plays the drift as it was saved.
 #[test]
 fn save_captures_the_drift() {
     let mut ui = in_orbit();
@@ -564,7 +564,8 @@ fn save_captures_the_drift() {
     rig.b6();
     rig.until(|v| v.loops >= 20);
     rig.idle(1);
-    rig.tap(Seq);
+    to_scn(&mut rig.ui);
+    save_to(&mut rig.ui, 1);
     assert_eq!(toast(&mut rig.ui), "SCENE 1 SAVED");
     let saved = slot(&rig.ui, 0);
     assert_ne!(scene_drift(&saved), init, "20 loops drift");
@@ -581,7 +582,7 @@ fn save_captures_the_drift() {
     assert_eq!(drift(&v), scene_drift(&saved), "the slot plays its drift");
 }
 
-/// While a switch is queued, SEQ and SCN's SAVE are refused, and say so:
+/// While a switch is queued, SCN's SAVE is refused, and says so:
 /// `live` is the queued scene's.
 #[test]
 fn save_while_queued_is_refused() {
@@ -591,8 +592,6 @@ fn save_while_queued_is_refused() {
     feed(&mut ui, Input::turn(A, 1));
     assert_eq!(ui.project().orbit().queued(), Some(S[1]));
     edit_live(&mut ui, PitchClass::E);
-    tap(&mut ui, Seq);
-    assert_eq!(toast(&mut ui), "SWITCH PENDING");
     save_to(&mut ui, 1);
     assert_eq!(toast(&mut ui), "SWITCH PENDING");
     save_to(&mut ui, 6);
@@ -710,9 +709,10 @@ fn the_header_reads_the_playing_scene() {
     assert!(matches!(after, Some(RegionData::Header { scene: 3, .. })));
 }
 
-/// SEQ saves the scene on every ORBIT page, and moves none.
+/// SEQ saves nothing on any ORBIT page (ADR 0081): scene saving is SCN's
+/// SAVE and SETTINGS › ORBIT's.
 #[test]
-fn seq_saves_on_every_orbit_page() {
+fn seq_saves_nothing_on_any_orbit_page() {
     use chimera_core::orbit::chords::ScaleKind;
     let mut ui = in_orbit();
     ui.project_mut().orbit_mut().live.chords.scale = ScaleKind::Custom;
@@ -722,11 +722,16 @@ fn seq_saves_on_every_orbit_page() {
     for _ in 0..4 {
         for _ in 0..3 {
             let at = ui.location();
-            edit_live(&mut ui, PitchClass::ALL[seen.len() % 12]);
+            let saved = slot(&ui, 0).chords.tonic;
+            edit_live(
+                &mut ui,
+                *PitchClass::ALL.iter().find(|&&t| t != saved).unwrap(),
+            );
             tap(&mut ui, Seq);
-            assert_eq!(ui.location(), at, "SEQ moves no page");
-            assert_eq!(slot(&ui, 0), ui.project().orbit().live);
-            assert_eq!(toast(&mut ui), "SCENE 1 SAVED");
+            assert_ne!(slot(&ui, 0), ui.project().orbit().live, "not saved");
+            assert!(matches!(ui.step_toast(0), ToastStep::Idle), "no toast");
+            // SEQ is up a sub-page: back to where it was pressed.
+            ui.go_for_test(at);
             seen.push(ui.page_def().id);
             // ORB's and RING's sub-pages; EDIT does nothing elsewhere.
             if ORBIT_SCN.id != ui.page_def().id {

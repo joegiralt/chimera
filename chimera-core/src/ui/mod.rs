@@ -990,7 +990,20 @@ impl UiState {
         }
     }
 
-    /// SEQ on an action row; `at` is its list.
+    /// MIX + EDIT on the Sound rung: Part `p`'s Sound over its slot, else
+    /// to a new one, as SAVE TO PROJ's rows save it (ADR 0081).
+    fn save_part(&mut self, p: PartId) {
+        match Offer::of(&self.project, p).first_save() {
+            Some(a) => {
+                if let Some(x) = self.save_sound(a) {
+                    self.ask(x);
+                }
+            }
+            None => self.error(Line::new(prompt::POOL_FULL)),
+        }
+    }
+
+    /// EDIT on an action row; `at` is its list.
     fn run_act(&mut self, a: Act, at: Option<SettingsAt>) {
         if let Some(c) = a.part_cmd() {
             return self.run_part_cmd(c);
@@ -1015,7 +1028,7 @@ impl UiState {
     }
 
     /// SETTINGS › ORBIT's CLEAR or RELOAD, `open` on the playing scene:
-    /// refused while a switch waits, as SEQ's save is. RELOAD (`dims`)
+    /// refused while a switch waits, as SCN's SAVE is. RELOAD (`dims`)
     /// with nothing to drop is dimmed, and inert before that: a dimmed row
     /// says nothing, whatever waits.
     fn ask_scene(&mut self, dims: bool, open: fn(SceneAsk) -> Ask) {
@@ -1474,7 +1487,7 @@ impl UiState {
         self.queue(Job::QuickSave(None));
     }
 
-    /// SEQ on LOAD PROJECT's row `row`.
+    /// EDIT on LOAD PROJECT's row `row`.
     fn run_load(&mut self, row: u8) {
         match self.listing.load_pick(row as usize) {
             Some(Pick::Entry(e)) => self.load_entry(&e),
@@ -1512,7 +1525,7 @@ impl UiState {
         }
     }
 
-    /// SEQ on MANAGE's command column: the command the table lets run on
+    /// EDIT on MANAGE's command column: the command the table lets run on
     /// the listed project under the bar.
     fn run_manage(&mut self, s: SettingsAt) {
         let Some(Column::Command(i)) = s.column() else {
@@ -1560,7 +1573,6 @@ impl UiState {
                 Step::Orbit(a) => match a {
                     OrbitAct::PlayStop => self.orbit.play_stop(),
                     OrbitAct::Mute(r) => orbit::OrbitUi::mute(r, &mut self.project),
-                    OrbitAct::SaveScene => self.save_scene(),
                     OrbitAct::SaveTo => self.save_scene_to(),
                 },
                 _ => {}
@@ -1635,14 +1647,6 @@ impl UiState {
         self.led.on()
     }
 
-    /// SEQ in ORBIT: the playing scene saved, drift and all, or why not.
-    fn save_scene(&mut self) {
-        match self.project.orbit_mut().save_scene() {
-            Ok(n) => self.scene_saved(n),
-            Err(SwitchPending) => self.error(Line::new(prompt::SWITCH_PENDING)),
-        }
-    }
-
     /// EDIT on SCN: `live` to SAVE's slot.
     fn save_scene_to(&mut self) {
         self.save_scene_in(self.orbit.save_slot(self.project.orbit()));
@@ -1702,7 +1706,10 @@ impl UiState {
                 break;
             }
             if let (Some((p, b)), NavKey::Edit) = (self.loc.browse(), k) {
-                self.load_sound(p, b);
+                match controls.edges(ButtonId::Mix).down {
+                    true => self.save_part(p),
+                    false => self.load_sound(p, b),
+                }
                 continue;
             }
             let cx = self.cx();

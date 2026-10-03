@@ -249,7 +249,7 @@ pub static NEUTRAL: Scene = Scene::neutral();
 /// and any queued, the scene being edited and played (`live`, its drift
 /// absorbed), and the tempo.
 ///
-/// The slots are written only here: `save_scene`, `save_to`, and a
+/// The slots are written only here: `save_to`, and a
 /// confirmed `overwrite_scene` or `clear_scene`, each moving the slot's
 /// rev, which is what a `Confirmed<SceneSlot>` witnesses.
 #[derive(Clone, Copy, Debug)]
@@ -467,16 +467,6 @@ impl OrbitSong {
         }
         self.reland();
         Ok(())
-    }
-
-    /// SEQ in ORBIT: `live`, drift and all, over the playing slot. No
-    /// prompt: the scene's quick save.
-    pub fn save_scene(&mut self) -> Result<SceneIdx, SwitchPending> {
-        if self.queued.is_some() {
-            return Err(SwitchPending);
-        }
-        self.write(self.current);
-        Ok(self.current)
     }
 
     /// SCN's SAVE → `n`: at once over the playing slot or a neutral one;

@@ -58,7 +58,7 @@ fn legends_read_as_the_spec_says() {
         (LegendFor::Prompt, "A PICK · SEQ OK · MENU CANCEL"),
         (LegendFor::Naming, "SEQ SAVE · MENU CANCEL"),
         (LegendFor::ManageList, "EDIT COMMANDS · MENU BACK"),
-        (LegendFor::ManageCommands, "SEQ RUN · MENU LIST"),
+        (LegendFor::ManageCommands, "EDIT RUN · MENU LIST"),
         (LegendFor::ManageDimmed(None), "MENU LIST"),
         (
             LegendFor::ManageDimmed(Some(Note::LoadToRename)),

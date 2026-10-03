@@ -486,7 +486,7 @@ impl<'u> Rig<'u> {
             .find(|&i| l.entry(i).unwrap().file() == f)
             .expect("listed");
         self.bar_to(i);
-        self.tap(ButtonId::Seq);
+        self.tap(ButtonId::Edit);
         assert_eq!(self.ui.project().meta().file(), Some(f));
         while self.ui.in_settings() {
             self.tap(ButtonId::Menu);
@@ -537,7 +537,7 @@ pub fn prompt_load(ui: &mut UiState) {
     let l = r.ui.listing();
     let i = (0..l.len()).find(|&i| l.entry(i).unwrap().file() == b);
     r.bar_to(i.unwrap());
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert!(r.ui.prompt_open());
 }
 
@@ -546,7 +546,7 @@ pub fn naming_save_as(ui: &mut UiState) {
     let mut r = Rig::new(ui, MemStore::new(1));
     r.to(&["PROJECT"]);
     r.bar_to(1);
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert!(r.ui.naming().is_some());
 }
 

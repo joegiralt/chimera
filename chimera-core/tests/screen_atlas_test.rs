@@ -434,13 +434,13 @@ fn prompt(k: AskKind, ui: &mut UiState) {
         AskKind::ReplacePart => {
             edit(ui, P1);
             part_row(ui, 1); // CLEAR
-            tap(ui, ButtonId::Seq);
+            tap(ui, ButtonId::Edit);
         }
         AskKind::ReloadPart => {
             load_slot(ui, P1, S3);
             edit(ui, P1);
             part_row(ui, 3); // RELOAD FROM PROJ
-            tap(ui, ButtonId::Seq);
+            tap(ui, ButtonId::Edit);
         }
         AskKind::UpdateStale => {
             load_slot(ui, P1, S3);
@@ -451,7 +451,7 @@ fn prompt(k: AskKind, ui: &mut UiState) {
             feed(ui, Input::press(ButtonId::Edit));
             let over = SAVE_ROWS.iter().position(|&c| c == PartCmd::OverSlot);
             plus(ui, over.unwrap());
-            tap(ui, ButtonId::Seq);
+            tap(ui, ButtonId::Edit);
         }
         AskKind::ClearSlot => {
             rung(ui, P1, S3);
@@ -467,7 +467,7 @@ fn prompt(k: AskKind, ui: &mut UiState) {
                 .set_name(ProjectName::new("SKETCH").unwrap());
             r.to(&["PROJECT"]);
             r.bar_to(1);
-            r.tap(ButtonId::Seq);
+            r.tap(ButtonId::Edit);
             r.tap(ButtonId::Seq);
         }
         AskKind::CardChanged => {
@@ -480,27 +480,27 @@ fn prompt(k: AskKind, ui: &mut UiState) {
         }
         AskKind::Delete => {
             manage_command(ui, BETA, Command::Delete, false);
-            tap(ui, ButtonId::Seq);
+            tap(ui, ButtonId::Edit);
         }
         AskKind::Clear => {
             manage_command(ui, BETA, Command::Clear, false);
-            tap(ui, ButtonId::Seq);
+            tap(ui, ButtonId::Edit);
         }
         AskKind::SaveOver => {
             manage_command(ui, BETA, Command::SaveTo, true);
-            tap(ui, ButtonId::Seq);
+            tap(ui, ButtonId::Edit);
         }
         // SETTINGS › ORBIT's CLEAR, and RELOAD with an edit to drop.
         AskKind::ClearScene => {
             to_leaf(ui, &["ORBIT"]);
             plus(ui, 1);
-            tap(ui, ButtonId::Seq);
+            tap(ui, ButtonId::Edit);
         }
         AskKind::ReloadScene => {
             ui.project_mut().orbit_mut().live.chords.tonic = chimera_theory::PitchClass::E;
             to_leaf(ui, &["ORBIT"]);
             plus(ui, 3);
-            tap(ui, ButtonId::Seq);
+            tap(ui, ButtonId::Edit);
         }
         // SCN's SAVE → 5 twice: a neutral slot saves, a saved one asks.
         AskKind::SaveSceneOver => {
@@ -546,7 +546,7 @@ fn settings_shots() -> Vec<(String, Setup)> {
         }),
         ("settings_part_rename", |ui| {
             part_row(ui, 0);
-            tap(ui, ButtonId::Seq);
+            tap(ui, ButtonId::Edit);
             assert!(ui.naming().is_some());
         }),
         ("settings_naming", naming_save_as),
@@ -560,7 +560,7 @@ fn settings_shots() -> Vec<(String, Setup)> {
         }),
         ("settings_project_manage_rename", |ui| {
             manage_command(ui, ALPHA, Command::Rename, false);
-            tap(ui, ButtonId::Seq);
+            tap(ui, ButtonId::Edit);
             assert!(ui.naming().is_some());
         }),
         // SAVE AS inside a load: SAVE THEN LOAD on an edited NEW project.
@@ -570,13 +570,13 @@ fn settings_shots() -> Vec<(String, Setup)> {
             let mut r = Rig::new(ui, s);
             modify(r.ui);
             r.to(&["PROJECT", "LOAD PROJECT"]);
-            r.tap(ButtonId::Seq);
+            r.tap(ButtonId::Edit);
             r.tap(ButtonId::Seq);
             assert!(r.ui.naming().is_some());
         }),
         ("settings_prompt_clear_loaded", |ui| {
             manage_command(ui, ALPHA, Command::Clear, false);
-            tap(ui, ButtonId::Seq);
+            tap(ui, ButtonId::Edit);
             assert_eq!(ui.prompt_kind_for_test(), Some(AskKind::Clear));
         }),
         ("settings_footer_modified", |ui| {

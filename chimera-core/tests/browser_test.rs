@@ -8,9 +8,8 @@ use chimera_core::project::{PartFrom, PartId, PartSource, Pool, Project, Replace
 use chimera_core::ui::browser::{
     self, INIT_TYPES, SCROLL_TOP, SCROLL_X, TOTAL_ENTRIES, VISIBLE_ROWS, row_y,
 };
-use chimera_core::ui::nav::{Browse, Location};
+use chimera_core::ui::nav::{Browse, Location, MixPage};
 use chimera_core::ui::perf::PerfStats;
-use chimera_core::ui::settings::PART_ROW;
 use chimera_core::ui::theme;
 use chimera_hal::{ButtonId, EncoderId};
 use screen::*;
@@ -230,7 +229,7 @@ fn browser_input_moves_the_cursor() {
 }
 
 /// On the Sound rung, B<n> leaves for Part n's pages, MENU opens SETTINGS
-/// and SEQ the Part's: the browser's own CANCEL and SAVE are gone.
+/// and SEQ goes up to the Part's mixer (ADR 0081).
 #[test]
 fn the_sound_rung_leaves_by_the_location_keys() {
     let mut ui = chimera_core::ui::UiState::new();
@@ -240,5 +239,8 @@ fn the_sound_rung_leaves_by_the_location_keys() {
     assert!(ui.location().browse().is_none());
     feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B2));
     tap(&mut ui, ButtonId::Seq);
-    assert_eq!(ui.location(), Location::settings_at(&[PART_ROW], 0));
+    assert_eq!(
+        ui.location(),
+        Location::mixer(PartId::ALL[1], MixPage::Sends)
+    );
 }
