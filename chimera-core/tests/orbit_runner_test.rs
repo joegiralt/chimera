@@ -190,34 +190,39 @@ fn edits_keep_the_drift() {
     );
 }
 
+/// While a switch waits, the playing scene's knobs still copy from
+/// `settings`; the boundary adopts `next`, the queued slot, whole.
 #[test]
-fn no_knob_copy_while_cued() {
+fn knobs_copy_while_cued_and_the_cue_lands_whole() {
+    use chimera_core::orbit::scene::SceneIdx;
     let mut s = Scene::neutral();
     voice(&mut s, 0, 4, 4, 20);
     let mut r = Rig::new(s);
     r.play(true);
     r.run(100);
-    let fired = r.view().rings[0].fired;
+    let mut next = s;
+    next.rings[0].ring.mute = true;
+    r.shared.orbit.next = next;
+    r.shared.orbit.queued = SceneIdx::new(1);
     r.shared.orbit.scene_rev += 1;
-    r.shared.orbit.settings.rings[0].ring.mute = true;
     r.run(1);
-    assert!(r.view().queued.is_some());
-    // A bar is 1500 blocks at 120 BPM; the steps at 0.25, 0.5, 0.75 still sound.
+    assert_eq!(r.view().queued, SceneIdx::new(1));
+    // A knob of the playing scene is heard before the boundary: CHANCE 0.
+    r.shared.orbit.settings.rings[0].ring.chance = Pct::clamped(0);
+    let fired = r.view().rings[0].fired;
+    // A bar is 1500 blocks at 120 BPM; the steps at 0.25, 0.5, 0.75 are silent.
     r.run(1300);
-    assert_eq!(
-        r.view().rings[0].fired.wrapping_sub(fired),
-        3,
-        "knob unchanged"
-    );
+    assert_eq!(r.view().rings[0].fired, fired, "the knob copied");
     assert!(r.view().queued.is_some());
     r.run(200);
     assert!(r.view().queued.is_none(), "adopted at the boundary");
+    assert_eq!(r.view().playing, SceneIdx::ALL[1]);
     let at = r.view().rings[0].fired;
     r.run(1400);
     assert_eq!(
         r.view().rings[0].fired,
         at,
-        "the muted scene is the whole of settings"
+        "the muted slot is the whole of next"
     );
 }
 

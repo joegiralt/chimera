@@ -563,8 +563,8 @@ const SLOT_H: i32 = 28;
 const SLOT_W: i32 = (VIZ_RIGHT - VIZ_LEFT - SLOT_GAP * (SLOT_COLS - 1)) / SLOT_COLS;
 const _: () = assert!(SLOT_TOP + 2 * SLOT_H + SLOT_GAP <= theme::VIZ_BAND_BOTTOM);
 
-/// How far through its loop the playing scene is, 0..1, while it runs:
-/// how full a queued slot is.
+/// How far through its loop the playing scene is, 0..1, while it runs, by
+/// the runner's own BARS: CHRD's loop dot, and how full a queued slot is.
 fn loop_done(f: &OrbitFrame) -> Option<f32> {
     let st = &f.ui.status;
     let bars = st.bars.get() as u32;
@@ -629,11 +629,7 @@ where
 
 /// Where the clock is along the loop's line, while it runs.
 fn loop_x(f: &OrbitFrame) -> Option<i32> {
-    let st = &f.ui.status;
-    let bars = f.chords().bars.get() as u32;
-    let into = (st.pos.bar % bars) as f32 + st.pos.phase.get() as f32 / 4_294_967_296.0;
-    st.running
-        .then(|| VIZ_LEFT + (BAND_W * into / bars as f32) as i32)
+    loop_done(f).map(|d| VIZ_LEFT + (BAND_W * d) as i32)
 }
 
 /// The circle's centre and radius, and its note names' radius.

@@ -26,17 +26,31 @@ use core::num::NonZeroU32;
 pub struct OrbitShared {
     pub run: bool,
     pub bpm: Bpm,
-    /// Bumped on every switch, the same scene again included; the runner
-    /// adopts `settings` whole at the next loop boundary, once a rev.
+    /// Bumped on every switch and every cancel; the runner acts on each
+    /// rev once (ADR 0077).
     pub scene_rev: u16,
-    /// The scene `settings` is: the queued one while a switch waits.
+    /// The playing scene, which `settings` is: the knobs come from it.
     pub scene: SceneIdx,
     pub settings: Scene,
+    /// A switch waiting on the loop, and the slot it brings (`next`),
+    /// adopted whole at the boundary. `next` means nothing without it.
+    pub queued: Option<SceneIdx>,
+    pub next: Scene,
     /// What the keys play into (spec § 5.3).
     pub capture: Capture,
     /// Bumped on every arming, the same target again included: the runner
     /// arms on its change (ADR 0075).
     pub arming: u8,
+}
+
+impl OrbitShared {
+    /// What the newest rev brings: the queued slot, or `settings` itself.
+    fn incoming(&self) -> (SceneIdx, &Scene) {
+        match self.queued {
+            Some(s) => (s, &self.next),
+            None => (self.scene, &self.settings),
+        }
+    }
 }
 
 impl Default for OrbitShared {
@@ -47,6 +61,8 @@ impl Default for OrbitShared {
             scene_rev: 0,
             scene: SceneIdx::ALL[0],
             settings: Scene::init(),
+            queued: None,
+            next: Scene::init(),
             capture: Capture::Off,
             arming: 0,
         }
@@ -329,12 +345,13 @@ impl OrbitRunner {
         }
     }
 
-    /// `settings` whole, as the playing scene.
+    /// What the newest rev brings, whole, as the playing scene.
     fn adopt(&mut self, shared: &AudioShared) {
-        self.working = shared.orbit.settings;
+        let (s, scene) = shared.orbit.incoming();
+        self.working = *scene;
         self.revs = revs_of(&self.working);
         self.scene_rev = shared.orbit.scene_rev;
-        self.playing = shared.orbit.scene;
+        self.playing = s;
         self.cue = None;
     }
 
@@ -540,12 +557,19 @@ impl OrbitRunner {
         }
 
         if o.scene_rev != self.scene_rev {
-            self.cue = Some(o.scene);
+            // Back to the scene playing: a cancel, nothing to adopt.
+            let (s, _) = o.incoming();
+            self.cue = (s != self.playing).then_some(s);
+            if self.cue.is_none() {
+                self.scene_rev = o.scene_rev;
+            }
         }
         if self.cue.is_some() && !self.transport {
             self.adopt(shared);
         }
-        if self.cue.is_none() {
+        // Only the playing scene's knobs: a waiting switch's are its own,
+        // and right after a landing the UI's `settings` are a frame behind.
+        if o.scene == self.playing {
             self.copy_knobs(&o.settings);
         }
 
@@ -593,12 +617,12 @@ impl OrbitRunner {
             bar_len,
         };
         let channels = core::array::from_fn::<_, MAX_PARTS, _>(|i| shared.parts[i].mix.channel);
-        let cue = self.cue.map(|_| &o.settings);
+        let cue = self.cue.map(|_| o.incoming().1);
         let ev = block(&mut self.state, &mut self.working, cue, span, &channels);
         if ev.adopted() {
             self.revs = revs_of(&self.working);
             self.scene_rev = o.scene_rev;
-            self.playing = o.scene;
+            self.playing = o.incoming().0;
             self.cue = None;
         }
         self.loops += ev.boundary() as u32;

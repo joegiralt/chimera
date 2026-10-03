@@ -1475,9 +1475,12 @@ impl UiState {
             let cx = self.cx();
             match self.loc.step_orbit(k, &cx, &mut self.recall) {
                 Step::Go(to) => self.go(to),
-                Step::Orbit(OrbitAct::SaveScene) => self.save_scene(),
-                Step::Orbit(OrbitAct::SaveTo) => self.save_scene_to(),
-                Step::Orbit(a) => self.orbit.act(a, &mut self.project),
+                Step::Orbit(a) => match a {
+                    OrbitAct::PlayStop => self.orbit.play_stop(),
+                    OrbitAct::Mute(r) => orbit::OrbitUi::mute(r, &mut self.project),
+                    OrbitAct::SaveScene => self.save_scene(),
+                    OrbitAct::SaveTo => self.save_scene_to(),
+                },
                 _ => {}
             }
         }
@@ -2027,7 +2030,7 @@ impl UiState {
                 f.header_status(),
             )
             .with_scene(match f.head {
-                Head::Orbit(n) => n.get(),
+                Head::Orbit(n) => n.get() + 1,
                 _ => 0,
             }),
             RegionKind::Focus if f.def.layout == PageLayout::Matrix => RegionData::route(

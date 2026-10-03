@@ -233,21 +233,25 @@ impl Scene {
 /// `Confirmed<SceneSlot>` witnesses.
 #[derive(Clone, Copy, Debug)]
 pub struct OrbitSong {
-    /// The playing scene, or the queued one once queued: what the pages
-    /// edit and the runner is sent.
+    /// The playing scene: what the pages edit and the runner plays. A
+    /// switch replaces it when it lands (ADR 0077).
     pub live: Scene,
     pub bpm: Bpm,
     scenes: [Scene; SCENES],
     /// Moves on every write to its slot; run-time only, never saved.
     slot_revs: [u16; SCENES],
+    /// Bit n: slot n holds a scene, not the neutral one. Kept on each
+    /// write, so no frame compares whole scenes.
+    saved: u8,
     current: SceneIdx,
     /// A switch waiting on the runner: it lands on the loop.
     queued: Option<SceneIdx>,
 }
 
-crate::in_place::field_list!(OrbitSong => OrbitSong { live, bpm, scenes, slot_revs, current, queued });
+crate::in_place::field_list!(OrbitSong => OrbitSong { live, bpm, scenes, slot_revs, saved, current, queued });
 
-/// Equal as a project keeps it: the slots' revs are run-time only.
+/// Equal as a project keeps it: the slots' revs are run-time only, and
+/// `saved` follows from the slots.
 impl PartialEq for OrbitSong {
     fn eq(&self, o: &Self) -> bool {
         self.live == o.live
@@ -269,7 +273,8 @@ fn new_scene(i: usize) -> Scene {
     }
 }
 
-/// A save refused while a switch is queued: `live` is the queued scene's.
+/// A save refused while a switch is queued: what lands stays what was
+/// queued, and a save waits for it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SwitchPending;
 
@@ -307,6 +312,7 @@ impl OrbitSong {
             s
         },
         slot_revs: [0; SCENES],
+        saved: 1,
         current: SceneIdx(0),
         queued: None,
     };
@@ -325,6 +331,7 @@ impl OrbitSong {
                 scenes.add(i).write(new_scene(i));
             }
             addr_of_mut!((*p).slot_revs).write([0; SCENES]);
+            addr_of_mut!((*p).saved).write(1);
             addr_of_mut!((*p).current).write(SceneIdx(0));
             addr_of_mut!((*p).queued).write(None);
             slot.assume_init_mut()
@@ -343,8 +350,7 @@ impl OrbitSong {
 
     /// The slots holding a scene, bit n slot n: the rest are neutral.
     pub fn saved(&self) -> u8 {
-        let neutral = Scene::neutral();
-        (0..SCENES).fold(0, |m, i| m | u8::from(self.scenes[i] != neutral) << i)
+        self.saved
     }
 
     pub fn scene(&self, n: SceneIdx) -> &Scene {
@@ -365,16 +371,17 @@ impl OrbitSong {
         self.slot_revs[n.0 as usize]
     }
 
-    /// SCENE turned to `s`: `live` becomes a copy of it, to land on the
-    /// loop. Edits from here go to it.
+    /// SCENE turned to `s`: queued, to land on the loop; `live` stays the
+    /// playing scene till then. Back to the playing scene cancels it.
     pub fn queue(&mut self, s: SceneIdx) {
-        self.live = self.scenes[s.0 as usize];
-        self.queued = Some(s);
+        self.queued = (s != self.current).then_some(s);
     }
 
-    /// The runner adopted `s` (the view says so): it plays.
+    /// The runner adopted `s` (the view says so): it plays, and `live`
+    /// becomes a copy of its slot.
     pub(crate) fn land(&mut self, s: SceneIdx) {
         if self.queued == Some(s) {
+            self.live = self.scenes[s.0 as usize];
             self.current = s;
             self.queued = None;
         }
@@ -384,6 +391,12 @@ impl OrbitSong {
         let i = n.0 as usize;
         self.scenes[i] = self.live;
         self.slot_revs[i] = self.slot_revs[i].wrapping_add(1);
+        let bit = 1 << i;
+        self.saved = if self.live == Scene::neutral() {
+            self.saved & !bit
+        } else {
+            self.saved | bit
+        };
     }
 
     /// SEQ in ORBIT: `live`, drift and all, over the playing slot. No
@@ -425,10 +438,9 @@ impl OrbitSong {
     /// Each ring's drift from `v` into `live`, the revs untouched: its hits
     /// while the rhythm is the one the view played, its notes and pool
     /// while the notes are. A ring edited since is left as edited; nothing
-    /// is taken while a switch is queued, or from another scene than the
-    /// playing one.
+    /// is taken from another scene than the playing one.
     pub fn absorb(&mut self, v: &OrbitView) {
-        if self.queued.is_some() || v.playing != self.current {
+        if v.playing != self.current {
             return;
         }
         for (s, r) in self.live.rings.iter_mut().zip(&v.rings) {

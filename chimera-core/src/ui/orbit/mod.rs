@@ -21,7 +21,6 @@ use crate::orbit::scene::{OrbitSong, Scene, SceneIdx, SceneRing};
 use crate::orbit::{RINGS, RingIdx};
 use crate::project::Project;
 use crate::ui::animation::AnimatedValue;
-use crate::ui::nav::OrbitAct;
 use chimera_theory::Chord;
 
 /// One ring as the pages draw it.
@@ -257,14 +256,18 @@ impl OrbitUi {
             scene_rev,
             scene,
             settings,
+            queued,
+            next,
             capture,
             arming,
         } = out;
         *run = self.run;
         *bpm = song.bpm;
         *scene_rev = self.scene_rev;
-        *scene = song.queued().unwrap_or(song.current());
+        *scene = song.current();
         *settings = song.live;
+        *queued = song.queued();
+        *next = *song.scene(song.queued().unwrap_or(song.current()));
         *capture = self.capture;
         *arming = self.arming;
     }
@@ -288,6 +291,7 @@ impl OrbitUi {
     pub fn loaded(&mut self, epoch: u32) {
         self.epoch = epoch;
         self.capture = Capture::Off;
+        self.save = None;
     }
 
     /// The view's capture, once, for the song to take (`Scene::take`),
@@ -309,8 +313,8 @@ impl OrbitUi {
     }
 
     /// Takes the runner's latest view; true when its drift is due in the
-    /// song: a view on this project's load, a loop gone by, and no switch
-    /// queued. A runner that stopped itself clears `run`, once, so one B6
+    /// song: a view on this project's load and a loop gone by (`absorb`
+    /// takes it from the playing scene only). A runner that stopped itself clears `run`, once, so one B6
     /// starts it again: seen stopping, or on a new load, which stops it
     /// even before it was seen running.
     pub fn see(&mut self, v: &OrbitView) -> bool {
@@ -319,15 +323,16 @@ impl OrbitUi {
         if self.run && !v.running && (was.running || v.epoch != was.epoch) {
             self.run = false;
         }
-        let due = v.epoch == self.epoch && v.loops != self.loops_seen && v.queued.is_none();
+        let due = v.epoch == self.epoch && v.loops != self.loops_seen;
         if due {
             self.loops_seen = v.loops;
         }
         due
     }
 
-    /// SCENE turned to `s`: queued in the song, and a new switch for the
-    /// runner, which lands it on the loop (at once when stopped).
+    /// SCENE turned to `s`: queued in the song, and a new rev for the
+    /// runner, which lands it on the loop (at once when stopped); `s` the
+    /// playing scene cancels a waiting switch.
     pub fn queue(&mut self, s: SceneIdx, song: &mut OrbitSong) {
         song.queue(s);
         self.scene_rev = self.scene_rev.wrapping_add(1);
@@ -350,6 +355,8 @@ impl OrbitUi {
             && v.scene_rev == self.scene_rev
         {
             project.orbit_mut().land(v.playing);
+            // SAVE defaults to the playing scene again.
+            self.save = None;
         }
         if self.see(v) {
             project.orbit_mut().absorb(v);
@@ -361,20 +368,17 @@ impl OrbitUi {
         self.anim.tick(&self.status);
     }
 
-    /// What an ORBIT key asks. Only a mute touches the project (and so
-    /// marks it); the transport is the UI's.
-    pub fn act(&mut self, a: OrbitAct, project: &mut Project) {
-        match a {
-            // B6: PLAY when stopped, STOP when playing.
-            OrbitAct::PlayStop => self.run = !self.status.running,
-            OrbitAct::Mute(r) => {
-                let ring = &mut project.orbit_mut().live.rings[r.get() as usize];
-                let was = ring.get(SceneRing::MUTE) != 0.0;
-                ring.set(SceneRing::MUTE, f32::from(!was));
-            }
-            // `UiState`'s: they toast, and SAVE may ask.
-            OrbitAct::SaveScene | OrbitAct::SaveTo => {}
-        }
+    /// B6: PLAY when stopped, STOP when playing. The transport is the
+    /// UI's, never the project's.
+    pub fn play_stop(&mut self) {
+        self.run = !self.status.running;
+    }
+
+    /// MIX + B*n*: ring `r`'s MUTE, in the project (so marked).
+    pub fn mute(r: RingIdx, project: &mut Project) {
+        let ring = &mut project.orbit_mut().live.rings[r.get() as usize];
+        let was = ring.get(SceneRing::MUTE) != 0.0;
+        ring.set(SceneRing::MUTE, f32::from(!was));
     }
 }
 

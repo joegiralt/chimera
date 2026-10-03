@@ -30,7 +30,9 @@ check:
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features bench
-    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features bench,master-tape
+    # Release: a build check, not a debug flash; its dev build sits a few KB
+    # under FLASH (private issue #303).
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bench,master-tape
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features sd-probe
     cargo build -p chimera-bootloader --target thumbv7em-none-eabihf
     cargo build -p chimera-theory --target thumbv7em-none-eabihf

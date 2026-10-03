@@ -229,7 +229,11 @@ fn scene_switch_lands_on_the_loop() {
     rig.run(500);
     let loops = rig.view().loops;
     rig.ui.queue(S[1], rig.project.orbit_mut());
-    assert_eq!(rig.project.orbit().live, b, "live is the queued scene");
+    assert_eq!(
+        rig.project.orbit().live.chords.tonic,
+        PitchClass::A,
+        "live waits"
+    );
     rig.block();
     assert_eq!(rig.view().playing, S[0]);
     assert_eq!(rig.view().queued, Some(S[1]));
@@ -260,6 +264,7 @@ fn scene_switch_lands_on_the_loop() {
         "ring 1 snaps to Cm"
     );
     assert_eq!(rig.project.orbit().current(), S[1], "the song took it");
+    assert_eq!(rig.project.orbit().live, b, "live is the slot's copy");
     assert_eq!(rig.project.orbit().queued(), None);
     // Its first loop plays as saved, MUTATE 100 or not.
     let landed = rig.view().loops;
@@ -318,11 +323,11 @@ fn a_landed_scene_resnaps_held_keys() {
     assert_eq!(held(&rig), [cm], "the held key re-snapped");
 }
 
-/// An edit between the cue and the boundary goes to the queued scene: the
-/// old scene's last loop sends what it would have without it, and the
-/// edit plays from the boundary.
+/// An edit while a switch waits goes to the playing scene, and is heard
+/// at once; the switch then lands its slot as saved, and `live` becomes a
+/// copy of it (interim ruling, ADR 0077).
 #[test]
-fn edits_while_queued_go_to_the_queued_scene() {
+fn edits_while_queued_play_in_the_playing_scene() {
     let run = |edit: bool| {
         let mut rig = OrbitRig::new();
         with_c_in_slot_2(&mut rig);
@@ -332,7 +337,6 @@ fn edits_while_queued_go_to_the_queued_scene() {
         rig.ui.queue(S[1], rig.project.orbit_mut());
         rig.run(2);
         if edit {
-            rig.song().live.chords.tonic = PitchClass::D;
             for r in &mut rig.song().live.rings {
                 r.ring.mute = true;
             }
@@ -349,24 +353,111 @@ fn edits_while_queued_go_to_the_queued_scene() {
     };
     let (control, old_control) = run(false);
     let (edited, old_edited) = run(true);
-    assert!(!old_control.is_empty());
-    assert_eq!(old_edited, old_control, "the old scene's last loop");
-    assert_eq!(control.view().chord.root(), PitchClass::C);
+    let ons = |old: &[Vec<OrbitEvent>]| {
+        old.iter()
+            .flatten()
+            .filter(|e| matches!(e.kind, OrbitKind::On(_)))
+            .count()
+    };
+    assert!(ons(&old_control) > 0);
+    assert_eq!(ons(&old_edited), 0, "the mute is heard before the boundary");
+    for rig in [&control, &edited] {
+        let song = rig.project.orbit();
+        assert_eq!(rig.view().chord.root(), PitchClass::C, "the slot lands");
+        assert_eq!(song.current(), S[1]);
+        assert_eq!(song.live, *song.scene(S[1]), "live is the slot's copy");
+    }
+}
+
+/// Queuing leaves `live` alone; turning SCENE back to the playing scene
+/// before the boundary cancels the switch: nothing is lost, and the loop
+/// goes on, mutating, with no relaunch.
+#[test]
+fn turning_back_cancels_the_switch() {
+    let mut rig = OrbitRig::new();
+    for r in &mut rig.song().live.rings {
+        r.set(SceneRing::MUTATE, 100.0);
+    }
+    with_c_in_slot_2(&mut rig);
+    rig.play(true);
+    rig.run_loops(1);
+    rig.run(300);
+    rig.song().live.chords.tonic = PitchClass::E;
+    rig.run(2);
+    let before = rig.project.orbit().live;
+    rig.ui.queue(S[1], rig.project.orbit_mut());
+    assert_eq!(rig.project.orbit().live, before, "queuing copies nothing");
+    rig.run(2);
+    assert_eq!(rig.view().queued, Some(S[1]));
+    rig.ui.queue(S[0], rig.project.orbit_mut());
+    assert_eq!(rig.project.orbit().queued(), None, "cancelled");
+    rig.run(2);
+    assert_eq!((rig.view().playing, rig.view().queued), (S[0], None));
+    let loops = rig.view().loops;
+    let mut last = drift(rig.view());
+    while rig.view().loops == loops {
+        last = drift(rig.view());
+        rig.block();
+    }
+    assert_eq!(rig.view().playing, S[0]);
+    assert_eq!(rig.view().chord.root(), PitchClass::E, "the edit stands");
+    assert_ne!(drift(rig.view()), last, "mutated on: no relaunch");
+    let song = rig.project.orbit();
+    assert_eq!((song.current(), song.queued()), (S[0], None));
+    assert_eq!(song.live.chords.tonic, PitchClass::E);
+}
+
+/// A view from before a switch lands nothing: away to 2 and landed, back
+/// to 1, a stale view playing 1 (an old rev) leaves 1 queued; only the
+/// rev's own view lands it. Landing on `playing == queued` would not.
+#[test]
+fn a_stale_view_lands_nothing() {
+    let mut ui = in_orbit();
+    to_scn(&mut ui);
+    let view = |playing: usize, rev: u16| OrbitView {
+        playing: S[playing],
+        scene_rev: rev,
+        ..OrbitView::default()
+    };
+    let stale = ui.orbit().scene_rev;
+    feed(&mut ui, Input::turn(A, 1));
+    ui.set_orbit_view(&view(1, ui.orbit().scene_rev));
+    assert_eq!(ui.project().orbit().current(), S[1]);
+    feed(&mut ui, Input::turn(A, -1));
+    assert_eq!(ui.project().orbit().queued(), Some(S[0]));
+    ui.set_orbit_view(&view(0, stale));
     assert_eq!(
-        edited.view().chord.root(),
-        PitchClass::D,
-        "from the boundary"
+        ui.project().orbit().queued(),
+        Some(S[0]),
+        "stale: not landed"
     );
-    assert!(
-        edited.sent.iter().all(|e| e.kind == OrbitKind::Off),
-        "muted from the boundary: offs only"
-    );
-    assert_eq!(edited.project.orbit().current(), S[1]);
-    assert_eq!(
-        edited.project.orbit().scene(S[1]).chords.tonic,
-        PitchClass::C,
-        "the slot keeps what was saved"
-    );
+    assert_eq!(ui.project().orbit().current(), S[1]);
+    ui.set_orbit_view(&view(0, ui.orbit().scene_rev));
+    assert_eq!(ui.project().orbit().current(), S[0]);
+}
+
+/// SAVE defaults to the playing scene again after a switch lands, and
+/// after a load.
+#[test]
+fn save_follows_the_playing_scene() {
+    use chimera_core::ui::orbit::OrbitUi;
+    let mut ui = in_orbit();
+    to_scn(&mut ui);
+    feed(&mut ui, Input::turn(B, 4));
+    assert_eq!(ui.orbit().save_slot(ui.project().orbit()), S[4]);
+    feed(&mut ui, Input::turn(A, 2));
+    let v = OrbitView {
+        playing: S[2],
+        scene_rev: ui.orbit().scene_rev,
+        ..OrbitView::default()
+    };
+    ui.set_orbit_view(&v);
+    assert_eq!(ui.orbit().save_slot(ui.project().orbit()), S[2]);
+
+    let mut o = OrbitUi::new();
+    o.save = Some(S[4]);
+    o.loaded(1);
+    assert_eq!(o.save, None);
 }
 
 /// 20 loops of MUTATE, a SEQ tap, a switch away and back: the slot plays
@@ -525,7 +616,7 @@ fn the_header_reads_the_playing_scene() {
     ui.render_dirty_with_scope(&mut fb, &perf, &screen::scope_fixture());
     let after = header(&ui);
     assert_ne!(after, before, "the header redraws");
-    assert!(matches!(after, Some(RegionData::Header { scene: 2, .. })));
+    assert!(matches!(after, Some(RegionData::Header { scene: 3, .. })));
 }
 
 /// SEQ saves the scene on every ORBIT page, and moves none.

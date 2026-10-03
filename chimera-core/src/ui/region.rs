@@ -44,7 +44,7 @@ pub enum RegionData {
         out: u8,
         /// The load and the dots.
         status: HeaderStatus,
-        /// ORBIT's `SCENE n`, the playing scene; 0 elsewhere.
+        /// ORBIT's `SCENE n`, one-based; 0 where the header reads no scene.
         scene: u8,
     },
     /// The focus band: which slot, its animated value, and any pending

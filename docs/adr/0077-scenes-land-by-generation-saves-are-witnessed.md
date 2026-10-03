@@ -16,25 +16,35 @@ saved scene asks first, and plan ruling R7 that a prompt left open over
 a slot written meanwhile can't overwrite it.
 
 ## Decision
-- **A switch is a generation.** `OrbitUi::queue` copies the slot into
-  `live`, sets `queued`, and bumps `scene_rev`; every publish writes
-  `scene_rev` and `scene` (the queued slot, else the playing one). The
-  runner adopts a rev once, at the boundary, and reports `playing`, the
+- **A switch is a generation.** `OrbitUi::queue` sets `queued` and bumps
+  `scene_rev`; every publish writes `scene_rev`, `scene` and `settings`
+  (the playing scene and `live`), and `queued` with `next`, the queued
+  slot. The runner acts on a rev once: it adopts `next` whole at the
+  boundary (at once when stopped), and reports `playing`, the
   `scene_rev` it adopted, and `queued` while one waits. The UI lands the
-  switch (`current` takes it, `queued` clears) only on a view of this
-  load whose `scene_rev` is the UI's own. A stale triple-buffer slot
-  repeats an old rev and lands nothing.
-- **Drift is absorbed only from the playing scene with nothing queued**
-  (`absorb` checks `view.playing == current` and `queued`).
-- **A queued switch replaces `live` at the turn.** Edits made while it
-  waits go to the queued scene and play from the boundary; unsaved edits
-  and drift of the scene left behind are dropped, as the spec's one
-  working scene implies. Turning SCENE back queues a copy of the slot.
+  switch only on a view of this load whose `scene_rev` is the UI's own;
+  a stale triple-buffer slot repeats an old rev and lands nothing.
+- **Interim ruling (controller, 2026-10-03, Task 16 review I1): queuing
+  copies nothing into `live`; the copy happens at landing.** Until the
+  boundary `live` stays the playing scene: its edits are heard (the
+  runner copies knobs from `settings` while `o.scene` is the scene it
+  plays), and its drift is still absorbed (`absorb` checks only
+  `view.playing == current`). Turning SCENE back to the playing scene
+  before the boundary cancels the switch: a new rev with nothing queued,
+  which the runner takes without adopting, so nothing is lost and the
+  loop runs on without a relaunch. When a switch lands, `live` becomes a
+  copy of the slot: unsaved edits and drift of the scene left are
+  dropped. Whether `live` edits should persist per scene is the owner's
+  question; this ruling does not decide it. Supersedes this ADR's first
+  text (the copy at the turn, edits to the queued scene).
+- **The cost:** `OrbitShared` carries `next`, a second scene, so the
+  runner can hear the playing scene's knobs and still adopt the queued
+  one: ≈1.2 KB AXI across the triple buffer's three slots.
 - **Saves.** SEQ on any ORBIT page saves `live` over the playing slot at
   once (`save_scene`). EDIT on SCN saves to SAVE's slot (`save_to`): at
   once over the playing or a neutral slot, else it opens SAVE OVER
   SCENE n? / SAVE OVER · CANCEL. Both are refused while a switch is
-  queued (`SWITCH PENDING`): `live` is then the queued scene's.
+  queued (`SWITCH PENDING`): what lands stays what was queued.
 - **The witness is read when the prompt opens.** Every write to slot n
   moves `slot_revs[n]` (run-time only, never saved, ignored by `==`).
   The prompt holds a `SceneAsk`, the slot and its rev when it opened,
@@ -49,13 +59,20 @@ a slot written meanwhile can't overwrite it.
   R7's sketch wrote it. The witness then always holds, and a slot
   written while the prompt is open is overwritten anyway; rejected for
   the open-time `SceneAsk`.
-- **A second working scene for the queued one**, keeping the old
-  scene's unsaved edits to return to. The spec's runner and project hold
-  one; it would cost a scene in both and change § 4.1.
+- **Copy the slot into `live` at the turn** (this ADR's first text): one
+  detent of SCENE dropped unsaved edits and drift with no way back;
+  replaced by the interim ruling.
+- **Publish only the queued slot while it waits** (no `next`): saves the
+  1.2 KB, but edits to the playing scene would go unheard and then be
+  dropped at the landing.
 
 ## Consequences
-- Turning SCENE away and back drops unsaved edits and drift of the
-  scene left; SEQ first keeps them. A UAT question.
+- A landed switch drops unsaved edits and drift of the scene left; SEQ
+  first keeps them. Turning back before the boundary loses nothing.
+- Task 18: a project save while a switch waits saves the landing, so it
+  must write the queued slot as `live`, not today's `live`.
+- `OrbitSong.saved` caches which slots differ from neutral, kept on each
+  write; Task 18's decode must set it, and give every slot a fresh rev.
 - `OrbitSong` holds nine scenes (3,552 B in the project, AXI).
 - Task 18 encodes `scenes`, `live`, `current` (the queued index while
   one waits) and each scene's seed; never `slot_revs`.
