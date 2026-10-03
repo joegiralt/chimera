@@ -207,7 +207,7 @@ pub struct Scene { pub chords: ChordRing, pub rings: [SceneRing; RINGS], pub see
 pub struct SceneRing {                    // the shell's view of a ring
     pub ring: Ring,
     pub target: Target,
-    pub rhythm_rev: u8, pub notes_rev: u8,// bumped by the UI when it re-lays either
+    pub touched: Touched,                   // edit bits the UI sets; they become edit commands (ADR 0082)
 }
 pub struct ChordRing {
     pub tonic: PitchClass,                // KEY
@@ -223,7 +223,7 @@ pub enum ScaleKind { Major, Minor, Dorian, Phrygian, Lydian, Mixolydian, Locrian
 pub enum Target { Part(PartId) /* Kit(PartId, KitKey): slice 3 */ }
 ```
 
-Editing STEPS, HITS or ROTATE builds a new `Fill`, `Ring::with_fill` re-lays the mask, and `rhythm_rev` bumps, so any nudges MUTATE made are replaced. Capturing, picking or clearing notes bumps `notes_rev`.
+Editing STEPS, HITS or ROTATE builds a new `Fill`, `Ring::with_fill` re-lays the mask, and an `EditRhythm` command follows (ADR 0082), so any nudges MUTATE made are replaced. Capturing, picking or clearing notes sends `EditNotes`.
 
 ### 3.2 Pure functions
 
@@ -320,7 +320,7 @@ ORBIT notes snap once, in the ring, to the ring's SNAP. A note already sounding 
 - **Chord:** `Chord::from_notes`, root = the lowest note. Fewer than two pitch classes is ignored, and capture stays armed.
 - **POOL ring:** the notes, sorted, become the pool; OCTAVE becomes the lowest note's octave.
 - **STEP ring:** notes fill the ring's hit steps in the order played, one per note-on, and capture ends when every hit is filled. Each step that is not a hit takes the note of the hit before it.
-- The result goes back through `OrbitView`; the UI writes it into its settings, bumps `notes_rev` (a ring) and disarms.
+- The result goes back through `OrbitView`; the UI writes it into its settings, sends `EditNotes` (a ring) and disarms.
 
 ## 6. Clock and time
 
@@ -445,7 +445,7 @@ Estimates for `thumbv7em`; the plan measures them and asserts the engine's size.
 
 | What | Where | Bytes |
 |---|---|---|
-| `SceneRing` (`Ring`: fill, mask, knobs, 32 step notes, `Pool`; target, 2 revs) | | ≈ 64 |
+| `SceneRing` (`Ring`: fill, mask, knobs, 32 step notes, `Pool`; target, `touched`) | | ≈ 64 |
 | `ChordRing` (tonic, scale, custom set, bars, segs, 8 degrees, 8 × `Option<Chord>`) | | ≈ 46 |
 | `Scene` (chord ring, 5 rings, seed) | | ≈ 370 |
 | **Engine** (`OrbitRunner`: working `Scene` 370; per ring `Rng`, walk, pending note-off ≈ 16 × 5; clock ≈ 40; capture ≈ 28) | audio shell | **≈ 520** |
