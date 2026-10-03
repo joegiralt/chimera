@@ -105,6 +105,11 @@ pub fn text_width(font: &FontRenderer, s: &str, tracking: i32) -> i32 {
     adv + marks + tracking * s.chars().count() as i32
 }
 
+/// The first of `fonts` (largest first) that sets `s` within `w`.
+pub fn fit_font<'a>(fonts: &[&'a FontRenderer], s: &str, w: i32) -> Option<&'a FontRenderer> {
+    fonts.iter().copied().find(|f| text_width(f, s, 0) <= w)
+}
+
 /// Draw `s` ending at `right` (exclusive).
 pub fn text_right<D>(
     d: &mut D,

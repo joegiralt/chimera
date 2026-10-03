@@ -28,6 +28,13 @@ impl FmtBuf {
     pub fn clear(&mut self) {
         self.pos = 0;
     }
+
+    /// `args` written out, cut at 32 bytes.
+    pub fn of(args: core::fmt::Arguments<'_>) -> Self {
+        let mut b = Self::new();
+        let _ = core::fmt::Write::write_fmt(&mut b, args);
+        b
+    }
 }
 
 use crate::ui::page::ValFmt;

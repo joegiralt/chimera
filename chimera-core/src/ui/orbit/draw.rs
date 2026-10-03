@@ -12,6 +12,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 
 use super::{OrbitCell, OrbitUi};
 use crate::addr::{BlockRef, ParamAddr};
+use crate::block::OFF_ON;
 use crate::orbit::RingIdx;
 use crate::orbit::chords::{ChordRing, harmony};
 use crate::orbit::clock::{Bpm, ClockSource};
@@ -21,7 +22,7 @@ use crate::orbit::runner::Capture;
 use crate::orbit::scene::{OrbitSong, Scene, SceneIdx, SceneRing};
 use crate::ui::block_def::{BlockDef, VizType};
 use crate::ui::draw;
-use crate::ui::fmt::FmtBuf;
+use crate::ui::fmt::{FmtBuf, fmt_val};
 use crate::ui::glyph::Gauge;
 use crate::ui::region::Fnv;
 use crate::ui::theme::{self, VIZ_BAND_MID as MID, VIZ_LEFT, VIZ_RIGHT};
@@ -508,14 +509,10 @@ where
             // A played chord has no degree: its name is the main line, in
             // the largest font it fits, else its root's; its dot under it,
             // centred, clear of any text however narrow the chip.
-            let mut root = FmtBuf::new();
-            let _ = write!(root, "{}", harmony(c, i).chord.root());
-            let fit = [name.as_str(), root.as_str()].into_iter().find_map(|t| {
-                let font = CHIP_FONTS
-                    .iter()
-                    .find(|&&f| draw::text_width(f, t, 0) <= cw - 4)?;
-                Some((t, *font))
-            });
+            let root = FmtBuf::of(format_args!("{}", harmony(c, i).chord.root()));
+            let fit = [name.as_str(), root.as_str()]
+                .into_iter()
+                .find_map(|t| Some((t, draw::fit_font(&CHIP_FONTS, t, cw - 4)?)));
             if let Some((t, font)) = fit {
                 draw::text_center(d, font, t, mid, PLAYED_Y, ink, 0);
             }
@@ -523,11 +520,8 @@ where
             continue;
         }
         let top = numeral(c, i);
-        let font = if draw::text_width(&theme::FONT_VALUE, top.as_str(), 0) <= cw - 4 {
-            &theme::FONT_VALUE
-        } else {
-            &theme::FONT_LABEL_BOLD
-        };
+        let font = draw::fit_font(&[&theme::FONT_VALUE], top.as_str(), cw - 4)
+            .unwrap_or(&theme::FONT_LABEL_BOLD);
         draw::text_center(d, font, top.as_str(), mid, CHIP_TOP + 18, ink, 0);
         if draw::text_width(&theme::FONT_LABEL, name.as_str(), 0) <= cw - 4 {
             draw::text_center(
@@ -607,8 +601,7 @@ where
         } else {
             theme::MID
         };
-        let mut b = FmtBuf::new();
-        let _ = write!(b, "{}", i + 1);
+        let b = FmtBuf::of(format_args!("{}", i + 1));
         draw::text_center(
             d,
             &theme::FONT_VALUE,
@@ -669,16 +662,14 @@ where
                 draw::ring(d, x, y, 4, theme::MID, 1);
             }
         }
-        let mut name = FmtBuf::new();
-        let _ = write!(name, "{}", c.tonic.up(Interval::ALL[i]));
+        let name = FmtBuf::of(format_args!("{}", c.tonic.up(Interval::ALL[i])));
         let (lx, ly) = round(i as f32, NAMES_R);
         let ink = if on { theme::INK2 } else { theme::MID };
         draw::text_center(d, &theme::FONT_LABEL, name.as_str(), lx, ly + 4, ink, 0);
     }
     let (x, y) = round(cursor, CIRCLE_R);
     draw::ring(d, x, y, 9, theme::INK, 1);
-    let mut name = FmtBuf::new();
-    let _ = write!(name, "{set}");
+    let name = FmtBuf::of(format_args!("{set}"));
     draw::text_center(
         d,
         &theme::FONT_VALUE,
@@ -688,8 +679,7 @@ where
         theme::INK,
         theme::LABEL_TRACKING,
     );
-    let mut size = FmtBuf::new();
-    let _ = write!(size, "{count} NOTES");
+    let size = FmtBuf::of(format_args!("{count} NOTES"));
     draw::text_center(
         d,
         &theme::FONT_LABEL,
@@ -703,9 +693,10 @@ where
 
 /// Segment `seg`'s degree as a numeral: "iv", "V7".
 fn numeral(c: &ChordRing, seg: usize) -> FmtBuf {
-    let mut b = FmtBuf::new();
-    let _ = write!(b, "{}", c.key().degree_label(c.degrees[seg], Stack::Triad));
-    b
+    FmtBuf::of(format_args!(
+        "{}",
+        c.key().degree_label(c.degrees[seg], Stack::Triad)
+    ))
 }
 
 /// Segment `seg`'s degree's chord by name, under any played one: what
@@ -718,32 +709,28 @@ fn degree_name(c: &ChordRing, seg: usize) -> FmtBuf {
 
 /// Segment `seg`'s chord by name, a played one's if it has one.
 fn chord_name(c: &ChordRing, seg: usize) -> FmtBuf {
-    let mut b = FmtBuf::new();
-    let _ = write!(b, "{}", harmony(c, seg).chord);
-    b
+    FmtBuf::of(format_args!("{}", harmony(c, seg).chord))
 }
 
 /// A note by name: "A4", "C#5".
 fn note_name(n: Note) -> FmtBuf {
-    let mut b = FmtBuf::new();
-    let _ = write!(b, "{n}");
-    b
+    FmtBuf::of(format_args!("{n}"))
 }
 
 /// The note `cursor` names, above the tonic.
 fn cursor_note(f: &OrbitFrame) -> FmtBuf {
-    let mut b = FmtBuf::new();
-    let _ = write!(b, "{}", f.chords().tonic.up(f.ui.interval()));
-    b
+    FmtBuf::of(format_args!("{}", f.chords().tonic.up(f.ui.interval())))
 }
 
 /// An ORBIT cell's value as its cell shows it, on ring `ring`.
 pub fn cell_text(cell: OrbitCell, f: &OrbitFrame, ring: RingIdx) -> FmtBuf {
     let c = f.chords();
     match cell {
-        OrbitCell::Ring => {
+        // As the cell's format shows its value: RING and SCENE one-based,
+        // LEARN OFF or ON, SWITCH LOOP.
+        OrbitCell::Ring | OrbitCell::Scene | OrbitCell::Learn | OrbitCell::Switch => {
             let mut b = FmtBuf::new();
-            let _ = write!(b, "{}", ring.get() + 1);
+            fmt_val(&mut b, cell.value(f.song, f.ui, ring), cell.fmt());
             b
         }
         OrbitCell::Degree => {
@@ -757,43 +744,25 @@ pub fn cell_text(cell: OrbitCell, f: &OrbitFrame, ring: RingIdx) -> FmtBuf {
             }
         }
         OrbitCell::Cursor => cursor_note(f),
-        OrbitCell::Set => {
-            let mut b = FmtBuf::new();
-            let _ = b.write_str(
-                match (f.ui.interval(), c.custom.contains(f.ui.interval())) {
-                    (Interval::UNISON, _) => "ROOT",
-                    (_, true) => "ON",
-                    (_, false) => "OFF",
-                },
-            );
-            b
-        }
+        OrbitCell::Set => FmtBuf::of(format_args!(
+            "{}",
+            match (f.ui.interval(), c.custom.contains(f.ui.interval())) {
+                (Interval::UNISON, _) => "ROOT",
+                (_, on) => OFF_ON[on as usize],
+            }
+        )),
         OrbitCell::Note => {
             let r = &f.scene.rings[ring.get() as usize];
             note_name(r.chip(f.ui.chip_of(r)))
         }
-        OrbitCell::Learn => {
-            let mut b = FmtBuf::new();
-            let on = f.ui.capture == Capture::Ring(ring);
-            let _ = b.write_str(if on { "ON" } else { "OFF" });
-            b
-        }
         OrbitCell::Play => {
             let seg = f.ui.seg_of(c);
-            let mut b = FmtBuf::new();
             match (f.ui.capture == Capture::Segment(seg as u8), c.played[seg]) {
-                (true, _) => {
-                    let _ = b.write_str("HOLD");
-                }
-                (false, Some(ch)) => {
-                    let _ = write!(b, "{ch}");
-                }
+                (true, _) => FmtBuf::of(format_args!("HOLD")),
+                (false, Some(ch)) => FmtBuf::of(format_args!("{ch}")),
                 // No em dash in the fonts.
-                (false, None) => {
-                    let _ = b.write_str("-");
-                }
+                (false, None) => FmtBuf::of(format_args!("-")),
             }
-            b
         }
         OrbitCell::Clear => {
             let r = &f.scene.rings[ring.get() as usize].ring;
@@ -801,26 +770,8 @@ pub fn cell_text(cell: OrbitCell, f: &OrbitFrame, ring: RingIdx) -> FmtBuf {
             let _ = b.write_str(" / RND");
             b
         }
-        OrbitCell::Scene => {
-            let mut b = FmtBuf::new();
-            let _ = write!(
-                b,
-                "{}",
-                f.song.queued().unwrap_or(f.song.current()).get() + 1
-            );
-            b
-        }
         // No arrow in the fonts.
-        OrbitCell::Save => {
-            let mut b = FmtBuf::new();
-            let _ = write!(b, "TO {}", f.ui.save_slot(f.song).get() + 1);
-            b
-        }
-        OrbitCell::Switch => {
-            let mut b = FmtBuf::new();
-            let _ = b.write_str("LOOP");
-            b
-        }
+        OrbitCell::Save => FmtBuf::of(format_args!("TO {}", f.ui.save_slot(f.song).get() + 1)),
     }
 }
 
