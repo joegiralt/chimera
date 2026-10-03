@@ -42,7 +42,7 @@ fn segments_split_the_loop_evenly() {
             }
         }
         for k in 1..ns {
-            let edge = (k * nb << 32).div_ceil(ns);
+            let edge = ((k * nb) << 32).div_ceil(ns);
             for x in [edge - 1, edge] {
                 let got = segment_at(
                     (x >> 32) as u32,
