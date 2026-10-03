@@ -229,10 +229,12 @@ pub struct MidiClock {
     heard: u64,
     /// The leader's last Clock, for the next interval.
     last_tick: Option<u64>,
-    /// The last `AVERAGE` intervals, a ring, `len` of them filled.
+    /// The last `AVERAGE` intervals, a ring, `len` of them filled, and
+    /// their sum.
     intervals: [u16; AVERAGE],
     len: u8,
     at: u8,
+    sum: u32,
     /// Clocks counted since Start, or since a rebase.
     ticks: u32,
     /// Where tick 1 falls.
@@ -253,6 +255,7 @@ impl MidiClock {
             intervals: [0; AVERAGE],
             len: 0,
             at: 0,
+            sum: 0,
             ticks: 0,
             origin: Position::ZERO,
             playing: true,
@@ -266,7 +269,9 @@ impl MidiClock {
     }
 
     /// `src` may lead: no leader, it is the leader, or the leader is silent.
-    /// A new leader, or one back from silence, starts a fresh average.
+    /// A new leader, or one back from silence, starts a fresh average and
+    /// plays: a clock with no Start still moves, whatever an old one's Stop
+    /// left.
     fn take(&mut self, src: usize, now: u64) -> bool {
         let (src, quiet) = (src as u8, self.quiet(now));
         if self.leader.is_some_and(|l| l != src) && !quiet {
@@ -276,6 +281,8 @@ impl MidiClock {
             self.leader = Some(src);
             self.last_tick = None;
             self.len = 0;
+            self.sum = 0;
+            self.playing = true;
         }
         self.heard = now;
         true
@@ -288,7 +295,12 @@ impl MidiClock {
         }
         if let Some(prev) = self.last_tick {
             let d = now.saturating_sub(prev).min(u16::MAX as u64) as u16;
-            self.intervals[self.at as usize] = d;
+            let slot = &mut self.intervals[self.at as usize];
+            if self.len as usize == AVERAGE {
+                self.sum -= *slot as u32;
+            }
+            *slot = d;
+            self.sum += d as u32;
             self.at = (self.at + 1) % AVERAGE as u8;
             self.len = (self.len + 1).min(AVERAGE as u8);
         }
@@ -335,9 +347,7 @@ impl MidiClock {
     /// The last beat's intervals: their count and their sum in samples;
     /// `None` before the first.
     fn measured(&self) -> Option<(u64, u64)> {
-        let n = self.len as usize;
-        let sum: u64 = self.intervals[..n].iter().map(|&d| d as u64).sum();
-        (n > 0 && sum > 0).then_some((n as u64, sum))
+        (self.len > 0 && self.sum > 0).then_some((self.len as u64, self.sum as u64))
     }
 
     /// Where the clock is at `now`; `None` with no leader or after

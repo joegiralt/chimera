@@ -139,8 +139,9 @@ pub struct OrbitRunner {
     midi: MidiClock,
     /// The clock that moved the last block.
     source: ClockSource,
-    /// The external transport: true under the internal clock, set by MIDI
-    /// Start or Continue, cleared by Stop; the fallback keeps it.
+    /// The external transport: set by MIDI Start or Continue, a new
+    /// leader's first Clock, or B6 with no clock leading; cleared by Stop.
+    /// The fallback alone keeps it.
     ext_playing: bool,
     /// A MIDI Start to act on next block: offs, then bar 0.
     ext_start: bool,
@@ -263,10 +264,12 @@ impl OrbitRunner {
         let now = now.saturating_sub(WINDOW);
         let led = self.midi.position(now).is_some();
         match rt {
-            // A clock taken up with no Start carries on from where ORBIT is.
+            // A clock taken up with no Start carries on from where ORBIT
+            // is, and plays: its first Clock is a Continue.
             RealTime::Clock => {
                 if self.midi.tick(src, now) && !led {
                     self.midi.rebase(self.edge);
+                    self.ext_playing = true;
                 }
             }
             RealTime::Start => {
@@ -286,6 +289,7 @@ impl OrbitRunner {
     }
 
     /// Spec § 4 steps 2-5 for one block: what it sent the `Instrument`.
+    /// The shells drop it; the tests read each block's events from it.
     pub fn block(&mut self, inst: &mut Instrument, shared: &AudioShared) -> Events {
         let sent = self.advance(shared);
         Self::send(inst, shared, &sent, &mut self.fired);
@@ -333,6 +337,8 @@ impl OrbitRunner {
                 // seed, the position kept (§ 6.3).
                 self.state.restart_dice(&self.working);
             } else {
+                // B6 with no external clock: nothing outside to wait for.
+                self.ext_playing = true;
                 self.clock = InternalClock::start(t, o.bpm, self.sample_rate);
                 self.edge = Position::ZERO;
                 self.state = OrbitState::start(&self.working);

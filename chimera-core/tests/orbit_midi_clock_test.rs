@@ -158,10 +158,17 @@ impl Ticks {
     /// Queues the ticks due by the next block's start: block resolution, as
     /// a shell drains them.
     fn feed(&mut self, r: &mut OrbitRig, src: usize) -> usize {
-        let t = r.blocks() as u64 * B;
+        let n = self.due(r.blocks() as u64 * B);
+        for _ in 0..n {
+            r.rt(src, RealTime::Clock);
+        }
+        n
+    }
+
+    /// Takes the ticks due by sample `t`: how many.
+    fn due(&mut self, t: u64) -> usize {
         let from = self.next;
         while self.next < self.at.len() && self.at[self.next] <= t {
-            r.rt(src, RealTime::Clock);
             self.next += 1;
         }
         self.next - from
@@ -347,12 +354,18 @@ fn clock_locks_to_midi() {
         }
         // A step on a tick fires in the block that drains the tick. Every
         // step lands within ±1 block of its ideal time, give or take the
-        // tick's own ±1 ms and the drain's block: ±2 blocks in all. On
-        // average, within the drain's half block.
-        let mut sum = 0.0;
+        // tick's own ±1 ms and the drain's block: ±2 blocks in all.
+        //
+        // A step between ticks is the estimator's: from the tick's arrival
+        // at the tempo's rate. Against that it lands within ±1.5 blocks: a
+        // half block from dating the drain, a half from the block it fires
+        // in, a half for an average lagging the ramp. On average within a
+        // third of a block; dated at the drain, a step is 0.6 late.
+        let mut between = Vec::new();
         for &(i, bar, k, b) in &fired {
             let n = steps[i] as u64;
             let x = (bar as u64 * n + k as u64) * 96;
+            let at = b as f64 * B as f64;
             if x.is_multiple_of(n) {
                 assert_eq!(
                     b as u64 * B,
@@ -360,19 +373,28 @@ fn clock_locks_to_midi() {
                     "run {run}: ring {} ({n} steps) bar {bar} step {k} is on a tick",
                     i + 1
                 );
+            } else {
+                let (j, f) = ((x / n) as usize, (x % n) as f64 / n as f64);
+                let due = arrive[j] as f64 + f * (ideal[j + 1] - ideal[j]);
+                let d = (at - due) / B as f64;
+                assert!(
+                    d.abs() <= 1.5,
+                    "run {run}: ring {} ({n} steps) bar {bar} step {k}: {d:.2} blocks from its tick's arrival",
+                    i + 1
+                );
+                between.push(d);
             }
-            let d = (b as f64 * B as f64 - when(&ideal, bar, k, steps[i])) / B as f64;
-            sum += d;
+            let d = (at - when(&ideal, bar, k, steps[i])) / B as f64;
             assert!(
                 d.abs() <= 2.0,
                 "run {run}: ring {} ({n} steps) bar {bar} step {k}: block {b} is {d:.2} blocks off",
                 i + 1
             );
         }
-        let mean = sum / fired.len() as f64;
+        let mean = between.iter().sum::<f64>() / between.len() as f64;
         assert!(
-            mean.abs() <= 0.6,
-            "run {run}: {mean:.2} blocks off on average"
+            mean.abs() <= 0.35,
+            "run {run}: steps between ticks {mean:.2} blocks off on average"
         );
     }
 }
@@ -400,8 +422,19 @@ fn max_tempo_32_steps_fits_events() {
     let mut feed = Ticks::new(at);
     let mut fired = Fired::new();
     let mut max_units = 0;
+    // The ticks go through a real note queue, the burst too.
+    const SRC: SourceId<1> = SourceId::new(0);
+    let q: NoteSources<1> = NoteSources::new();
+    let (mut producers, mut drain) = q.split().unwrap();
+    let mut tx = producers.take(SRC).unwrap();
     while !feed.done() {
-        feed.feed(&mut r, 0);
+        for _ in 0..feed.due(r.blocks() as u64 * B) {
+            assert!(tx.push(RealTime::Clock), "the queue holds the burst");
+        }
+        drain.drain(|s, e| match e {
+            InEvent::Rt(rt) => r.rt(s.index(), rt),
+            InEvent::Note(n) => panic!("only clock was sent: {n:?}"),
+        });
         let before = r.view().pos;
         step(&mut r, steps, &mut fired);
         let d = units(r.view().pos) - units(before);
@@ -417,6 +450,7 @@ fn max_tempo_32_steps_fits_events() {
         "a window never spans a step: {max_units}"
     );
     assert!(r.stuck_notes().is_empty(), "{:?}", r.stuck_notes());
+    assert_eq!(q.drops(), [0]);
 }
 
 /// Ticks at 120 BPM from Start for `bars`; returns the last tick's block.
@@ -555,6 +589,79 @@ fn one_clock_leads() {
         r.view().bpm.get()
     );
     each_once(&fired, steps);
+}
+
+fn ons(r: &OrbitRig) -> usize {
+    r.sent.iter().filter(|e| e.kind != OrbitKind::Off).count()
+}
+
+/// Stop, then the cable is pulled: the internal clock takes over, and B6
+/// plays ORBIT on it. Nothing outside is left to wait for.
+#[test]
+fn stop_then_silence_b6_plays() {
+    let steps = [4, 3, 5, 7, 16];
+    let mut r = rig(steps, 50, 120);
+    r.play(true);
+    r.block();
+    let mut fired = Fired::new();
+    let heard = play_ticks(&mut r, steps, 1, &mut fired);
+    r.rt(0, RealTime::Stop);
+    r.block();
+    assert!(!r.view().running);
+    while r.blocks() as u64 * B <= heard + 2 * SILENT {
+        r.block();
+        assert_eq!(ons(&r), 0, "stopped");
+    }
+    assert_eq!(r.view().source, ClockSource::Internal);
+    r.play(true);
+    let mut n = 0;
+    for _ in 0..200 {
+        r.block();
+        n += ons(&r);
+    }
+    assert!(r.view().running);
+    assert!(n > 0, "B6 plays on the internal clock");
+}
+
+/// One source's Stop, then another clocks with no Start: once the first is
+/// silent, the second leads and moves, and B6 plays on it.
+#[test]
+fn new_leader_without_start_moves() {
+    let steps = [4, 3, 5, 7, 16];
+    let mut r = rig(steps, 50, 120);
+    r.play(true);
+    r.block();
+    let mut fired = Fired::new();
+    let heard = play_ticks(&mut r, steps, 1, &mut fired);
+    r.rt(0, RealTime::Stop);
+    r.block();
+    let start = r.blocks() as u64 * B;
+    let mut other = Ticks::new(
+        ticks(start, 400, |_| 120.0)
+            .iter()
+            .map(|&t| t as u64)
+            .collect(),
+    );
+    let held = r.view().pos;
+    while r.blocks() as u64 * B <= heard + SILENT - B {
+        other.feed(&mut r, 1);
+        r.block();
+        assert_eq!(r.view().pos, held, "the first leader's Stop holds it");
+    }
+    for _ in 0..(SR as u64 / B) {
+        other.feed(&mut r, 1);
+        r.block();
+    }
+    assert_eq!(r.view().source, ClockSource::Midi);
+    assert!(r.view().pos > held, "the new leader moves the clock");
+    r.play(true);
+    let mut n = 0;
+    for _ in 0..200 {
+        other.feed(&mut r, 1);
+        r.block();
+        n += ons(&r);
+    }
+    assert!(n > 0, "B6 plays on the new leader");
 }
 
 #[test]

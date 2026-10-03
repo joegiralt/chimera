@@ -21,7 +21,9 @@ jump, and the windows have to stay contiguous whatever the ticks do
 - **One source leads.** `MidiClock` follows the first source to send a
   Clock or Start, and ignores the others until the leader has been silent
   500 ms (`SILENT_MS`). A new leader, or one back from silence, starts a
-  fresh tempo average.
+  fresh tempo average and plays: its Clocks count whatever an old leader's
+  Stop left, and its first Clock, with no Start, sets `ext_playing` as a
+  Continue would.
 - **A tick is a place, the time between ticks is a guess.** The n-th Clock
   after Start marks (n − 1)/96 of a bar, rounded up as `step_start` rounds,
   so a step on a tick is that tick. Between ticks the phase runs at the
@@ -45,7 +47,10 @@ jump, and the windows have to stay contiguous whatever the ticks do
   count, which ORBIT can't know without Song Position Pointer.
 - **Silence falls back from the edge.** After 500 ms with no tick, the
   internal clock re-anchors at the last window's edge at the internal BPM.
-  The transport and `ext_playing` don't change. While ORBIT is silent the
+  The transport and `ext_playing` don't change, so a stopped DAW never
+  starts ORBIT (spec § 6.1 for the transport; `ext_playing` is this ADR's).
+  A B6 up-edge with no clock leading sets `ext_playing`: the owner's own
+  start, with nothing outside to wait for. While ORBIT is silent the
   internal clock stays anchored at the edge, so it never jumps when it
   starts.
 - **Start and Stop act at the next block.** `realtime` only flags them;
@@ -57,10 +62,14 @@ jump, and the windows have to stay contiguous whatever the ticks do
   inert cell while MIDI leads.
 
 ## Alternatives considered
-- **Sample-stamped ticks.** The shells would stamp each byte as it
-  arrives. The USART interrupt could, but USB and midir arrive in packets,
-  and the block's ±32-sample window already bounds a note's error; a
-  half-block estimate costs nothing.
+- **Sample-stamped ticks.** The shells would stamp each message as it
+  arrives: the USART interrupt could stamp a sub-block offset (bits 21..32
+  of the packed event are free), and midir already hands a µs timestamp
+  that `connect_midi` drops. That would take the drain's ±½ block out of
+  the anchor for steps between ticks; a step on a tick still waits for its
+  drain. Not done here: the half-block estimate centres the error at no
+  cost, and stamping is a later refinement. On the desktop several blocks
+  render per cpal callback, so its ticks bunch more than a block.
 - **Holding the phase until a tempo is known.** Steps between the first
   two ticks would wait for the second; the one-unit rule keeps step 0 on
   the first Clock, which § 6.1 requires.
@@ -69,13 +78,17 @@ jump, and the windows have to stay contiguous whatever the ticks do
 - **±1 block of the ideal for every step under ±1 ms jitter.** Not
   reachable: a tick 1 ms late and drained a block later is 1.75 blocks
   late, and steps between ticks inherit the next interval's jitter. The
-  test holds steps on a tick to the block that drains the tick, every step
-  within ±2 blocks of its ideal time, and the mean within 0.6 of a block.
+  test holds steps on a tick to the block that drains the tick and every
+  step within ±2 blocks of its ideal time. Steps between ticks, the
+  estimator's own, are held within ±1.5 blocks of their tick's arrival at
+  the tempo's rate (the drain's ±½, the firing block's ±½ and the average
+  lagging a ramp) and to a mean within 0.35 of a block, which dating at
+  the drain (0.6) fails.
 
 ## Consequences
 - After a MIDI Stop, ORBIT stays silent until B6 and the external transport
-  both play again: a Start or Continue, even if the cable is gone and the
-  internal clock leads. `ext_playing` survives the fallback by § 6.1.
+  both play again (Start, Continue, or a new leader's Clock). With the
+  cable gone, the internal clock leads after 500 ms and B6 alone plays.
 - A tempo jump (or a burst) runs ORBIT at up to `MAX_BPM_EXT` until it has
   caught up; at `MAX_BPM_EXT` itself a burst's lag is never made up.
 - `OrbitRunner` grows by `MidiClock` (616 to 728 B, under its 1 KB).
