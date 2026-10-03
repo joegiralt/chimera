@@ -3,8 +3,9 @@
 use super::OrbitUi;
 use crate::block::ValFmt;
 use crate::orbit::chords::ChordRing;
+use crate::orbit::scene::{Scene, SceneRing};
 use crate::orbit::{RINGS, RingIdx};
-use chimera_theory::{Degree, Interval};
+use chimera_theory::{Degree, Interval, Note};
 
 /// A cell bound to ORBIT's UI state rather than a param (`SlotBinding::Orbit`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,6 +18,14 @@ pub enum OrbitCell {
     Cursor,
     /// CUSTOM: the cursor's note in the scale or out of it.
     Set,
+    /// NOTES: the selected chip's note, a semitone a detent; with MIX,
+    /// which chip.
+    Note,
+    /// NOTES: capture from the keys (Task 14); inert until then.
+    Learn,
+    /// NOTES: up leaves one note at OCTAVE's C, down rolls random notes
+    /// of the key in the register.
+    Clear,
 }
 
 const OFF_ON: [&str; 2] = ["OFF", "ON"];
@@ -26,8 +35,10 @@ impl OrbitCell {
         match self {
             OrbitCell::Ring => "RING",
             OrbitCell::Degree => "DEGREE",
-            OrbitCell::Cursor => "NOTE",
+            OrbitCell::Cursor | OrbitCell::Note => "NOTE",
             OrbitCell::Set => "IN SCALE",
+            OrbitCell::Learn => "LEARN",
+            OrbitCell::Clear => "CLEAR",
         }
     }
 
@@ -36,12 +47,14 @@ impl OrbitCell {
         match self {
             OrbitCell::Ring => ValFmt::OneBased(RINGS as u8 - 1),
             OrbitCell::Degree | OrbitCell::Cursor => ValFmt::Int(11),
-            OrbitCell::Set => ValFmt::Names(&OFF_ON),
+            OrbitCell::Note => ValFmt::Int(127),
+            OrbitCell::Set | OrbitCell::Learn | OrbitCell::Clear => ValFmt::Names(&OFF_ON),
         }
     }
 
     /// The cell's value, 0..1, on ring `ring`: what it eases toward.
-    pub fn value(self, c: &ChordRing, ui: &OrbitUi, ring: RingIdx) -> f32 {
+    pub fn value(self, s: &Scene, ui: &OrbitUi, ring: RingIdx) -> f32 {
+        let c = &s.chords;
         match self {
             OrbitCell::Ring => ring.get() as f32 / (RINGS - 1) as f32,
             OrbitCell::Degree => {
@@ -50,21 +63,21 @@ impl OrbitCell {
             }
             OrbitCell::Cursor => ui.cursor as f32 / 11.0,
             OrbitCell::Set => f32::from(c.custom.contains(ui.interval())),
+            OrbitCell::Note => {
+                let r = &s.rings[ring.get() as usize];
+                r.chip(ui.chip_of(r)).get() as f32 / 127.0
+            }
+            OrbitCell::Learn | OrbitCell::Clear => 0.0,
         }
     }
 
     /// One turn by `delta`, `mix` held or not, on ring `ring`: RING moves
     /// it, and the caller goes there.
-    pub fn turn(
-        self,
-        delta: i8,
-        mix: bool,
-        c: &mut ChordRing,
-        ui: &mut OrbitUi,
-        ring: &mut RingIdx,
-    ) {
+    pub fn turn(self, delta: i8, mix: bool, s: &mut Scene, ui: &mut OrbitUi, ring: &mut RingIdx) {
         let by =
             |at: usize, len: usize| (at as i32 + delta as i32).clamp(0, len as i32 - 1) as usize;
+        let c = &mut s.chords;
+        let r = &mut s.rings[ring.get() as usize];
         match self {
             OrbitCell::Ring => *ring = RingIdx::ALL[by(ring.get() as usize, RINGS)],
             // MIX picks the segment DEGREE edits.
@@ -83,6 +96,19 @@ impl OrbitCell {
                     c.custom = c.custom.toggle(i);
                 }
             }
+            // MIX picks the chip NOTE edits.
+            OrbitCell::Note if mix => ui.chip = by(ui.chip_of(r), r.chips()) as u8,
+            // The chip follows its note as the pool re-sorts.
+            OrbitCell::Note => {
+                let i = ui.chip_of(r);
+                let to = (r.chip(i).get() as i32 + delta as i32).clamp(0, 127) as u8;
+                if let Some(to) = Note::new(to) {
+                    ui.chip = r.set_chip(i, to) as u8;
+                }
+            }
+            OrbitCell::Learn => {}
+            OrbitCell::Clear if delta > 0 => r.clear(),
+            OrbitCell::Clear => s.scatter(*ring),
         }
     }
 }
@@ -91,6 +117,11 @@ impl OrbitUi {
     /// CHRD's segment, within the progression's.
     pub fn seg_of(&self, c: &ChordRing) -> usize {
         (self.seg as usize).min(c.segs.get() as usize - 1)
+    }
+
+    /// NOTES' chip, within the ring's.
+    pub fn chip_of(&self, r: &SceneRing) -> usize {
+        (self.chip as usize).min(r.chips() - 1)
     }
 
     /// The note under CUSTOM's cursor, above the tonic.

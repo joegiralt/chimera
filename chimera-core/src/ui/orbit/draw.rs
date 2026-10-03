@@ -1,5 +1,6 @@
-//! What ORBIT's pages draw: RHYTHM's pattern unrolled, CHRD's segments as
-//! chips over the loop's bars, and the CUSTOM circle; the text of ORBIT's
+//! What ORBIT's pages draw: RHYTHM's pattern unrolled, VOICE's gates as
+//! bars, NOTES' chips, CHRD's segments as chips over the loop's bars, and
+//! the CUSTOM circle; the text of ORBIT's
 //! own cells and focus band; and the keys that redraw them. Drawn from the
 //! live scene and the runner's last view, so a drift shows as it plays.
 
@@ -16,6 +17,7 @@ use crate::orbit::RingIdx;
 use crate::orbit::chords::{ChordRing, harmony};
 use crate::orbit::clock::{Bpm, ClockSource};
 use crate::orbit::euclid::{HitMask, accents};
+use crate::orbit::ring::{ACCENT_BOOST, NoteMode, Ring};
 use crate::orbit::scene::{Scene, SceneRing};
 use crate::ui::block_def::{BlockDef, VizType};
 use crate::ui::draw;
@@ -23,7 +25,7 @@ use crate::ui::fmt::FmtBuf;
 use crate::ui::glyph::Gauge;
 use crate::ui::theme::{self, VIZ_BAND_MID as MID, VIZ_LEFT, VIZ_RIGHT};
 use crate::ui::view::{SlotCtx, View, view};
-use chimera_theory::{Interval, Stack};
+use chimera_theory::{Interval, Note, Stack};
 
 /// What ORBIT's pages draw from: the scene being edited and the UI's
 /// selections and last view of the runner.
@@ -131,6 +133,188 @@ where
         }
     }
     draw::fill_rect(d, x(0.5), MID + 12, 1, 4, theme::MID);
+}
+
+/// The line atop VOICE's and NOTES' bands.
+const LINE_Y: i32 = theme::VIZ_BAND_TOP + 10;
+
+/// A line atop the band, in the labels' voice, from its parts (a
+/// `FmtBuf` holds 32 bytes); untracked when tracked it would not fit.
+fn band_line<D>(d: &mut D, parts: &[&str])
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let font = &theme::FONT_LABEL;
+    let width = |t| {
+        parts
+            .iter()
+            .map(|s| draw::text_width(font, s, t))
+            .sum::<i32>()
+    };
+    let tracking = if width(theme::LABEL_TRACKING) <= VIZ_RIGHT - VIZ_LEFT {
+        theme::LABEL_TRACKING
+    } else {
+        0
+    };
+    let mut x = VIZ_LEFT;
+    for s in parts {
+        draw::text_tracked(d, font, s, x, LINE_Y, theme::MID, tracking);
+        x += draw::text_width(font, s, tracking);
+    }
+}
+
+/// VOICE's bars stand on this line, at most this tall.
+const BARS_BASE: i32 = theme::VIZ_BAND_BOTTOM - 6;
+const BARS_H: f32 = 40.0;
+
+/// RING · VOICE: each hit a bar as long as GATE holds it, as tall as its
+/// velocity, an accent taller (VEL + 30) and in INK2; a rest a dot; the
+/// step under the clock lit; all dark while MUTE holds it. Above, the
+/// register OCTAVE and RANGE span, and what an accent adds.
+pub fn voice<D>(d: &mut D, f: &OrbitFrame, r: RingIdx)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let ring = &f.scene.rings[r.get() as usize].ring;
+    let mut line = FmtBuf::new();
+    let (lo, hi) = register(ring);
+    let _ = write!(line, "{lo} TO {hi}");
+    if ring.accent > 0 {
+        let _ = write!(line, " · ACCENT +{ACCENT_BOOST} VEL");
+    }
+    band_line(d, &[line.as_str()]);
+
+    let mask = f.hits(r);
+    let n = mask.steps().get() as usize;
+    let now = f.now(r);
+    let w = BAND_W / n as f32;
+    let x = |at: f32| VIZ_LEFT + (w * at) as i32;
+    let accented = accents(mask, ring.accent);
+    let gate = ring.gate.get() as f32 / 100.0;
+    let (hit, accent, rest) = if ring.mute {
+        (theme::PILL_EDGE, theme::PILL_EDGE, theme::FAINT)
+    } else {
+        (theme::ACCENT, theme::INK2, theme::BAR_REST)
+    };
+    let top = BARS_BASE - BARS_H as i32 - 2;
+    for i in 0..n {
+        let x0 = x(i as f32);
+        let cell = x(i as f32 + 1.0) - x0;
+        if now == Some(i) {
+            draw::fill_rect(d, x0, top, cell, BARS_BASE + 3 - top, theme::ACCENT_SOFT);
+        }
+        if !mask.is_hit(i) {
+            draw::dot(d, x0 + cell / 2, BARS_BASE, 1, rest);
+            continue;
+        }
+        let acc = accented.is_hit(i);
+        let vel = if acc {
+            ring.velocity.get().saturating_add(ACCENT_BOOST).min(127)
+        } else {
+            ring.velocity.get()
+        };
+        let h = libm::roundf(BARS_H * vel as f32 / 127.0).max(1.0) as i32;
+        let bw = libm::roundf((cell - 2) as f32 * gate).max(1.0) as i32;
+        let c = match (now == Some(i) && !ring.mute, acc) {
+            (true, _) => theme::INK,
+            (false, true) => accent,
+            (false, false) => hit,
+        };
+        draw::fill_rect(d, x0 + 1, BARS_BASE - h, bw, h, c);
+    }
+    draw::fill_rect(
+        d,
+        VIZ_LEFT,
+        BARS_BASE + 1,
+        VIZ_RIGHT - VIZ_LEFT,
+        1,
+        theme::FAINT,
+    );
+}
+
+/// The lowest and highest notes of a ring's register: OCTAVE's C, up
+/// RANGE + 1 octaves.
+fn register(ring: &Ring) -> (Note, Note) {
+    let lo = ring.octave.low();
+    let hi = lo.get() as u16 + 12 * (ring.range.octaves() as u16 + 1) - 1;
+    (lo, Note::new(hi.min(127) as u8).unwrap_or(Note::MAX))
+}
+
+/// What NOTES says of a ring: a pool's size against the hits, and how
+/// many hits until the two line up again; a STEP ring's steps. In two
+/// parts, each within a `FmtBuf`.
+pub fn notes_line(r: &Ring) -> (FmtBuf, FmtBuf) {
+    let (mut head, mut tail) = (FmtBuf::new(), FmtBuf::new());
+    let hits = r.hits_mask().hits();
+    let (what, n, round) = match r.mode {
+        NoteMode::Pool => ("POOL", r.pool.len(), r.comes_round_in()),
+        NoteMode::Step => ("STEPS", r.fill().steps().get() as usize, hits as u32),
+    };
+    let _ = write!(head, "{what} {n} · HITS {hits} · ");
+    let _ = write!(tail, "COMES ROUND IN {round}");
+    (head, tail)
+}
+
+/// NOTES' chips: their top and height.
+const NOTE_TOP: i32 = theme::VIZ_BAND_TOP + 18;
+const NOTE_H: i32 = 34;
+
+/// RING · NOTES: the line, then the pool as chips, each named; a STEP
+/// ring's steps instead, a hit's filled, a rest's outlined, the step under
+/// the clock lit. The chip NOTE edits is outlined in INK2. Chips too
+/// narrow for their names mark each pitch in the register by height.
+pub fn notes<D>(d: &mut D, f: &OrbitFrame, r: RingIdx)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let sr = &f.scene.rings[r.get() as usize];
+    let ring = &sr.ring;
+    let (head, tail) = notes_line(ring);
+    band_line(d, &[head.as_str(), tail.as_str()]);
+    let n = sr.chips() as i32;
+    let gap = if n > 8 { 2 } else { 4 };
+    let cw = (VIZ_RIGHT - VIZ_LEFT - gap * (n - 1)) / n;
+    let radius = (cw / 2).clamp(1, 5) as u32;
+    let mask = f.hits(r);
+    let now = f.now(r);
+    let (lo, hi) = register(ring);
+    let step = ring.mode == NoteMode::Step;
+    // One font for every chip: the largest every name fits.
+    let fits = |font| {
+        (0..n as usize).all(|i| draw::text_width(font, note_name(sr.chip(i)).as_str(), 0) <= cw - 4)
+    };
+    let font = [&theme::FONT_VALUE, &theme::FONT_LABEL_BOLD]
+        .into_iter()
+        .find(|&font| fits(font));
+    for i in 0..n as usize {
+        let x = VIZ_LEFT + i as i32 * (cw + gap);
+        let (fill, ink) = match (step, step && mask.is_hit(i), now == Some(i)) {
+            (true, _, true) => (Some(theme::ACCENT), theme::BG),
+            (true, false, _) => (None, theme::MID),
+            _ => (Some(theme::ACCENT_SOFT), theme::INK),
+        };
+        match fill {
+            Some(c) => draw::round_rect(d, x, NOTE_TOP, cw, NOTE_H, radius, c),
+            None => draw::round_outline(d, x, NOTE_TOP, cw, NOTE_H, radius, theme::FAINT),
+        }
+        if i == f.ui.chip_of(sr) {
+            draw::round_outline(d, x, NOTE_TOP, cw, NOTE_H, radius, theme::INK2);
+        }
+        let note = sr.chip(i);
+        match font {
+            Some(font) => {
+                let y = NOTE_TOP + NOTE_H / 2 + 5;
+                let name = note_name(note);
+                draw::text_center(d, font, name.as_str(), x + cw / 2, y, ink, 0);
+            }
+            None => {
+                let span = (hi.get() - lo.get()).max(1) as f32;
+                let at = (note.get().clamp(lo.get(), hi.get()) - lo.get()) as f32 / span;
+                let y = NOTE_TOP + NOTE_H - 4 - libm::roundf(at * (NOTE_H - 8) as f32) as i32;
+                draw::fill_rect(d, x + 1, y, (cw - 2).max(1), 2, ink);
+            }
+        }
+    }
 }
 
 /// ORB's centre.
@@ -445,6 +629,13 @@ fn chord_name(c: &ChordRing, seg: usize) -> FmtBuf {
     b
 }
 
+/// A note by name: "A4", "C#5".
+fn note_name(n: Note) -> FmtBuf {
+    let mut b = FmtBuf::new();
+    let _ = write!(b, "{n}");
+    b
+}
+
 /// The note `cursor` names, above the tonic.
 fn cursor_note(f: &OrbitFrame) -> FmtBuf {
     let mut b = FmtBuf::new();
@@ -483,6 +674,21 @@ pub fn cell_text(cell: OrbitCell, f: &OrbitFrame, ring: RingIdx) -> FmtBuf {
             );
             b
         }
+        OrbitCell::Note => {
+            let r = &f.scene.rings[ring.get() as usize];
+            note_name(r.chip(f.ui.chip_of(r)))
+        }
+        OrbitCell::Learn => {
+            let mut b = FmtBuf::new();
+            let _ = b.write_str("OFF");
+            b
+        }
+        OrbitCell::Clear => {
+            let r = &f.scene.rings[ring.get() as usize].ring;
+            let mut b = note_name(r.octave.low());
+            let _ = b.write_str(" / RND");
+            b
+        }
     }
 }
 
@@ -510,7 +716,7 @@ impl Focus {
 
 /// ORBIT's reading of `slot` on `def`, from the slots' eased `values`:
 /// HITS as HITS/STEPS, its arc the fill; DEGREE as its segment's chord;
-/// CUSTOM's note and whether it is in. `None` elsewhere.
+/// CUSTOM's note and whether it is in; NOTES' chip, LEARN and CLEAR. `None` elsewhere.
 pub fn focus(
     def: &BlockDef,
     slot: usize,
@@ -531,6 +737,26 @@ pub fn focus(
         View::Orbit(OrbitCell::Cursor) => {
             let _ = label.write_str(OrbitCell::Cursor.label());
             text = cursor_note(f);
+            Gauge::None
+        }
+        View::Orbit(OrbitCell::Note) => {
+            let r = &f.scene.rings[ctx.ring.get() as usize];
+            let what = match r.ring.mode {
+                NoteMode::Pool => "NOTE",
+                NoteMode::Step => "STEP",
+            };
+            let _ = write!(label, "{what} {} OF {}", f.ui.chip_of(r) + 1, r.chips());
+            text = cell_text(OrbitCell::Note, f, ctx.ring);
+            Gauge::None
+        }
+        View::Orbit(OrbitCell::Learn) => {
+            let _ = label.write_str(OrbitCell::Learn.label());
+            text = cell_text(OrbitCell::Learn, f, ctx.ring);
+            Gauge::Switch { on: 0.0 }
+        }
+        View::Orbit(OrbitCell::Clear) => {
+            let _ = label.write_str("UP ONE · DOWN RND");
+            text = cell_text(OrbitCell::Clear, f, ctx.ring);
             Gauge::None
         }
         View::Orbit(OrbitCell::Set) => {
@@ -568,6 +794,18 @@ pub fn viz_key(def: &BlockDef, f: &OrbitFrame, r: RingIdx, cursor: f32) -> u32 {
     match def.viz {
         VizType::OrbitRhythm => {
             f.scene.rings[r.get() as usize].ring.hash(&mut h);
+            f.hits(r).hash(&mut h);
+            f.now(r).hash(&mut h);
+        }
+        VizType::OrbitVoice => {
+            f.scene.rings[r.get() as usize].ring.hash(&mut h);
+            f.hits(r).hash(&mut h);
+            f.now(r).hash(&mut h);
+        }
+        VizType::OrbitNotes => {
+            let sr = &f.scene.rings[r.get() as usize];
+            sr.ring.hash(&mut h);
+            f.ui.chip_of(sr).hash(&mut h);
             f.hits(r).hash(&mut h);
             f.now(r).hash(&mut h);
         }

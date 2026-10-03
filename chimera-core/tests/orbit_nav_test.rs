@@ -572,8 +572,9 @@ fn orbit_buttons() {
     use chimera_core::orbit::runner::OrbitShared;
     use chimera_core::ui::UiState;
     use chimera_core::ui::hold::HOLD_MS;
+    use chimera_core::ui::orbit::{ORBIT_NOTES, ORBIT_RHYTHM, ORBIT_VOICE};
     use chimera_core::ui::part_page;
-    use chimera_hal::ButtonId::{B1, B2, B3, B4, B6, Edit, Menu, Mix, Seq};
+    use chimera_hal::ButtonId::{B1, B2, B3, B4, B5, B6, Edit, Menu, Mix, Seq};
     use screen::{Input, feed, hold, tap};
 
     fn muted(ui: &UiState) -> [bool; 5] {
@@ -671,6 +672,36 @@ fn orbit_buttons() {
     let o = ui.location().orbit().unwrap();
     assert_eq!((o.page().node() as usize, o.ring()), (RING_NODE, R[2]));
     assert_ne!(ui.location(), ring3, "the sub-page moved");
+
+    // Three EDITs on RING: VOICE, NOTES, and back to RHYTHM.
+    ui.go_for_test(ring3);
+    let mut shown = vec![ui.page_def().id];
+    for _ in 0..3 {
+        tap(&mut ui, Edit);
+        shown.push(ui.page_def().id);
+    }
+    assert_eq!(
+        shown,
+        [
+            ORBIT_RHYTHM.id,
+            ORBIT_VOICE.id,
+            ORBIT_NOTES.id,
+            ORBIT_RHYTHM.id
+        ]
+    );
+    assert_eq!(ui.location(), ring3);
+    // B1–B5 open each ring on the sub-page last shown: NOTES, then VOICE.
+    tap(&mut ui, Edit);
+    tap(&mut ui, Edit);
+    for (b, r) in [B1, B2, B3, B4, B5].into_iter().zip(R) {
+        tap(&mut ui, b);
+        assert_eq!(ui.page_def().id, ORBIT_NOTES.id, "ring {}", r.get() + 1);
+        assert_eq!(ui.location().orbit().unwrap().ring(), r);
+    }
+    tap(&mut ui, Edit);
+    tap(&mut ui, Edit);
+    tap(&mut ui, B1);
+    assert_eq!(ui.page_def().id, ORBIT_VOICE.id);
     ui.go_for_test(ring3);
 
     // A SEQ tap moves no page.

@@ -1,7 +1,10 @@
-//! ORBIT's pages as drawn and turned: RHYTHM's pattern, CHRD's segments and
-//! the CUSTOM circle; and the custom set's record. Their screens are locked
-//! in `screen_golden_test` (`orbit_rhythm`, `orbit_chrd`, `orbit_custom`).
+//! ORBIT's pages as drawn and turned: RHYTHM's pattern, VOICE's bars,
+//! NOTES' chips, CHRD's segments and the CUSTOM circle; and the custom
+//! set's record. Their screens are locked in `screen_golden_test`
+//! (`orbit_rhythm`, `orbit_voice`, `orbit_notes`, `orbit_notes_step`,
+//! `orbit_chrd`, `orbit_custom`).
 
+mod common;
 mod screen;
 
 use chimera_core::orbit::chords::ScaleKind;
@@ -164,12 +167,12 @@ fn custom_scale_round_trips() {
 
 /// The dirty path redraws what ORBIT's own data moves: the ring in the
 /// header, the segment DEGREE edits, the runner's step and segment, the
-/// CUSTOM cursor and set. Each frame matches a full render.
+/// CUSTOM cursor and set, VOICE's bars, NOTES' chips and the chip picked. Each frame matches a full render.
 #[test]
 fn the_dirty_path_follows_orbit() {
     use chimera_core::ui::perf::PerfStats;
     use chimera_hal::ButtonId::{B1, B2, Mix};
-    use chimera_hal::EncoderId::E;
+    use chimera_hal::EncoderId::{E, F};
     use screen::{Fb, audio_fixture, orbit_view, render_ui, scope_fixture, settle, ui_for};
 
     fn frame(ui: &mut UiState, fb: &mut Fb, what: &str) {
@@ -206,6 +209,30 @@ fn the_dirty_path_follows_orbit() {
     (v.pos.bar, v.seg) = (3, 3);
     ui.set_orbit_view(&v);
     frame(&mut ui, &mut fb, "the last segment playing");
+
+    let mut ui = Box::new(ui_for("orbit_voice"));
+    let mut fb = Fb::new();
+    frame(&mut ui, &mut fb, "VOICE");
+    feed(&mut ui, Input::turn(B, 10));
+    frame(&mut ui, &mut fb, "VEL");
+    let mut v = orbit_view(0.6);
+    v.rings[2].step = 4;
+    ui.set_orbit_view(&v);
+    frame(&mut ui, &mut fb, "a later step");
+
+    let mut ui = Box::new(ui_for("orbit_notes_step"));
+    let mut fb = Fb::new();
+    frame(&mut ui, &mut fb, "NOTES, STEP");
+    feed(&mut ui, Input::turn(F, 1).and_held(Mix));
+    frame(&mut ui, &mut fb, "the next step picked");
+    feed(&mut ui, Input::turn(F, 2));
+    frame(&mut ui, &mut fb, "its note");
+    feed(&mut ui, Input::turn(chimera_hal::EncoderId::E, -1));
+    frame(&mut ui, &mut fb, "CLEAR down");
+    feed(&mut ui, Input::turn(A, 1));
+    frame(&mut ui, &mut fb, "POOL");
+    ui.set_orbit_view(&orbit_view(0.6));
+    frame(&mut ui, &mut fb, "a later step");
 
     let mut ui = Box::new(ui_for("orbit_custom"));
     let mut fb = Fb::new();
@@ -517,4 +544,308 @@ fn idle_is_the_first_view() {
     use chimera_core::orbit::runner::OrbitView;
     use chimera_core::ui::orbit::OrbitStatus;
     assert_eq!(OrbitStatus::IDLE, OrbitStatus::of(&OrbitView::default()));
+}
+
+/// Ring `n`'s NOTES page (two EDITs from RHYTHM).
+fn to_notes(ui: &mut UiState, n: usize) {
+    screen::to_ring(ui, n);
+    tap(ui, Edit);
+    tap(ui, Edit);
+    assert_eq!(ui.page_def().id, chimera_core::ui::orbit::ORBIT_NOTES.id);
+}
+
+/// The selected ring as the project holds it.
+fn sel_ring(ui: &UiState) -> chimera_core::orbit::scene::SceneRing {
+    let r = ui.location().orbit().unwrap().ring();
+    ui.project().orbit().live.rings[r.get() as usize]
+}
+
+/// RING · VOICE and RING · NOTES: each cell's label, range and format,
+/// and the goldens (`orbit_voice`, `orbit_notes`, `orbit_notes_step` in
+/// `screen_golden_test`): gates as bars, an accent taller in INK2, the
+/// pool as chips, the selected one outlined.
+#[test]
+fn voice_and_notes_pages() {
+    use chimera_core::block::ValFmt;
+    use chimera_core::orbit::scene::SceneRing;
+    use chimera_core::ui::block_def::SlotBinding;
+    use chimera_core::ui::orbit::draw::{OrbitFrame, cell_text};
+    use chimera_core::ui::orbit::{ORBIT_NOTES, ORBIT_VOICE, OrbitCell};
+    use chimera_hal::ButtonId::Mix;
+    use chimera_hal::EncoderId::{D, F};
+
+    let ring = |id| SlotBinding::SelectedRing(id);
+    let voice = [
+        (ring(SceneRing::GATE), "GATE", 0.0, 100.0),
+        (ring(SceneRing::VEL), "VEL", 1.0, 127.0),
+        (ring(SceneRing::ACCENT), "ACCENT", 0.0, 32.0),
+        (ring(SceneRing::OCTAVE), "OCTAVE", 0.0, 8.0),
+        (ring(SceneRing::RANGE), "RANGE", 0.0, 3.0),
+        (ring(SceneRing::SNAP), "SNAP", 0.0, 1.0),
+    ];
+    for (slot, (binding, label, min, max)) in ORBIT_VOICE.params.iter().zip(voice) {
+        assert_eq!(slot.binding, binding, "{label}");
+        let s = slot.spec().unwrap();
+        assert_eq!((slot.label(), s.min, s.max), (label, min, max));
+        assert_eq!(slot.format(), s.fmt, "{label}");
+    }
+    let notes = [
+        (ring(SceneRing::MODE), "MODE", 0.0, 1.0),
+        (ring(SceneRing::WALK), "WALK", 0.0, 3.0),
+        (ring(SceneRing::TARGET), "TARGET", 0.0, 5.0),
+    ];
+    for (slot, (binding, label, min, max)) in ORBIT_NOTES.params.iter().zip(notes) {
+        assert_eq!(slot.binding, binding, "{label}");
+        let s = slot.spec().unwrap();
+        assert_eq!((slot.label(), s.min, s.max), (label, min, max));
+    }
+    let cells = [OrbitCell::Learn, OrbitCell::Clear, OrbitCell::Note];
+    for (slot, cell) in ORBIT_NOTES.params[3..].iter().zip(cells) {
+        assert_eq!(slot.binding, SlotBinding::Orbit(cell));
+    }
+    assert_eq!(
+        cells.map(OrbitCell::label),
+        ["LEARN", "CLEAR", "NOTE"],
+        "the cells' labels"
+    );
+    assert_eq!(OrbitCell::Note.fmt(), ValFmt::Int(127));
+
+    // The cells' text on ring 2's NOTES: its pool [69, 72, 76].
+    let mut ui = Box::new(UiState::new());
+    to_notes(&mut ui, 2);
+    let text = |ui: &UiState, c: OrbitCell| {
+        let f = OrbitFrame {
+            scene: &ui.project().orbit().live,
+            bpm: ui.project().orbit().bpm,
+            ui: ui.orbit(),
+        };
+        cell_text(c, &f, ui.location().orbit().unwrap().ring())
+            .as_str()
+            .to_string()
+    };
+    assert_eq!(text(&ui, OrbitCell::Note), "A4");
+    assert_eq!(text(&ui, OrbitCell::Learn), "OFF");
+    assert_eq!(text(&ui, OrbitCell::Clear), "C4 / RND");
+    // MIX + NOTE picks the chip, clamped to the pool.
+    feed(&mut ui, Input::turn(F, 1).and_held(Mix));
+    assert_eq!(text(&ui, OrbitCell::Note), "C5");
+    feed(&mut ui, Input::turn(F, 9).and_held(Mix));
+    assert_eq!(text(&ui, OrbitCell::Note), "E5");
+    // NOTE runs C-1 to G9, a semitone a detent; the pool re-sorts under
+    // it and the chip follows its note.
+    feed(&mut ui, Input::turn(F, 127));
+    assert_eq!(text(&ui, OrbitCell::Note), "G9");
+    feed(&mut ui, Input::turn(F, -127));
+    feed(&mut ui, Input::turn(F, -127));
+    assert_eq!(text(&ui, OrbitCell::Note), "C-1");
+    let pool = sel_ring(&ui).ring.pool;
+    assert_eq!(
+        pool.notes().iter().map(|n| n.get()).collect::<Vec<_>>(),
+        [0, 69, 72]
+    );
+    // LEARN is Task 14's: inert.
+    let before = sel_ring(&ui);
+    feed(&mut ui, Input::turn(D, 3));
+    assert_eq!(sel_ring(&ui), before);
+    assert_eq!(text(&ui, OrbitCell::Learn), "OFF");
+    // OCTAVE 3 names CLEAR's C.
+    let r = ui.location().orbit().unwrap().ring();
+    ui.project_mut().orbit_mut().live.rings[r.get() as usize]
+        .ring
+        .octave = chimera_core::orbit::ring::Octave::new(3).unwrap();
+    assert_eq!(text(&ui, OrbitCell::Clear), "C3 / RND");
+
+    // The goldens. VOICE: E(5,8), two accents, GATE 60, VEL 90, step 2
+    // under the clock. A hit a bar, an accent taller (VEL + 30) in INK2;
+    // a rest none.
+    let ui = screen::ui_for("orbit_voice");
+    assert_eq!(ui.page_def().id, ORBIT_VOICE.id);
+    let fb = render("orbit_voice");
+    let ring = sel_ring(&ui).ring;
+    let mask = ring.hits_mask();
+    assert_eq!((mask.steps().get(), mask.hits(), ring.accent), (8, 5, 2));
+    let accented = chimera_core::orbit::euclid::accents(mask, ring.accent);
+    let base = theme::VIZ_BAND_BOTTOM - 6;
+    let w = (theme::VIZ_RIGHT - theme::VIZ_LEFT) / 8;
+    let (low, high) = (base - 2, base - 33);
+    for i in (0..8).filter(|&i| i != 2) {
+        let x = theme::VIZ_LEFT + w * i as i32 + 4;
+        let want = match (mask.is_hit(i), accented.is_hit(i)) {
+            (true, true) => (theme::INK2, theme::INK2),
+            (true, false) => (theme::ACCENT, theme::BG),
+            (false, _) => (theme::BG, theme::BG),
+        };
+        assert_eq!((fb.at(x, low), fb.at(x, high)), want, "step {i}");
+    }
+    assert!(accented.hits() == 2 && mask.is_hit(2) && !accented.is_hit(2));
+    let x = theme::VIZ_LEFT + w * 2 + 4;
+    assert_eq!(fb.at(x, low), theme::INK, "the clock's step");
+    // GATE 60 %: a bar ends about 60 % into its step.
+    let x0 = theme::VIZ_LEFT + 1;
+    assert_eq!(fb.at(x0 + 14, low), theme::INK2);
+    assert_eq!(fb.at(x0 + 16, low), theme::BG);
+
+    // NOTES: eight chips, the sixth outlined in INK2.
+    let ui = screen::ui_for("orbit_notes");
+    assert_eq!(ui.page_def().id, ORBIT_NOTES.id);
+    assert_eq!(ui.orbit().chip, 5);
+    let fb = render("orbit_notes");
+    let cw = (theme::VIZ_RIGHT - theme::VIZ_LEFT - 4 * 7) / 8;
+    let y = theme::VIZ_BAND_TOP + 18 + 17;
+    for i in 0..8 {
+        let x = theme::VIZ_LEFT + i * (cw + 4);
+        let want = if i == 5 {
+            theme::INK2
+        } else {
+            theme::ACCENT_SOFT
+        };
+        assert_eq!(fb.at(x, y), want, "chip {i}");
+    }
+    let ui = screen::ui_for("orbit_notes_step");
+    assert_eq!(ui.page_def().id, ORBIT_NOTES.id);
+    assert_eq!(
+        sel_ring(&ui).ring.mode,
+        chimera_core::orbit::ring::NoteMode::Step
+    );
+}
+
+/// The NOTES line's figure: a pool of 3 on 5 hits comes round in 15, and
+/// in 30 walked over one octave more (spec § 3.4).
+#[test]
+fn comes_round_in() {
+    use chimera_core::orbit::euclid::{Fill, Steps};
+    use chimera_core::orbit::ring::{Octave, Range, Ring};
+    use chimera_core::orbit::walk::Pool;
+    use chimera_theory::Note;
+    let fill = Fill::new(Steps::new(8).unwrap(), 5, 0).unwrap();
+    let mut r = Ring::new(fill, Octave::new(4).unwrap());
+    let n = |x| Note::new(x).unwrap();
+    r.pool = Pool::new(&[n(60), n(64), n(67)]).unwrap();
+    assert_eq!(r.comes_round_in(), 15);
+    r.range = Range::One;
+    assert_eq!(r.comes_round_in(), 30);
+    r.pool = Pool::one(n(60));
+    r.range = Range::Zero;
+    assert_eq!(r.comes_round_in(), 5);
+    // The line NOTES draws.
+    use chimera_core::ui::orbit::draw::notes_line;
+    r.range = Range::One;
+    r.pool = Pool::new(&[n(60), n(64), n(67)]).unwrap();
+    let (head, tail) = notes_line(&r);
+    assert_eq!(
+        format!("{}{}", head.as_str(), tail.as_str()),
+        "POOL 3 · HITS 5 · COMES ROUND IN 30"
+    );
+}
+
+/// A STEP ring plays each step's own note, in step order, as NOTE set
+/// them; OCTAVE moves them all. Through the UI, then a running ORBIT.
+#[test]
+fn step_ring_plays_its_steps() {
+    use chimera_core::orbit::engine::OrbitKind;
+    use chimera_core::orbit::ring::NoteMode;
+    use chimera_hal::ButtonId::Mix;
+    use chimera_hal::EncoderId::{D, F};
+    let mut ui = Box::new(UiState::new());
+    // Ring 2: E(3,8), hits on steps 0, 3 and 6.
+    to_notes(&mut ui, 2);
+    feed(&mut ui, Input::turn(A, -1));
+    assert_eq!(sel_ring(&ui).ring.mode, NoteMode::Step);
+    // Every step starts at OCTAVE's C: C4. Steps 0, 3, 6 to C, D, E.
+    assert!(sel_ring(&ui).ring.notes.iter().all(|n| n.get() == 60));
+    let rev = sel_ring(&ui).notes_rev;
+    feed(&mut ui, Input::turn(F, 3).and_held(Mix));
+    feed(&mut ui, Input::turn(F, 2));
+    feed(&mut ui, Input::turn(F, 3).and_held(Mix));
+    feed(&mut ui, Input::turn(F, 4));
+    let notes = sel_ring(&ui).ring.notes;
+    assert_eq!(
+        [notes[0], notes[3], notes[6]].map(|n| n.get()),
+        [60, 62, 64]
+    );
+    assert_ne!(sel_ring(&ui).notes_rev, rev, "the edit bumps notes_rev");
+    // VOICE: SNAP to SCALE, so A minor keeps C, D and E as they are.
+    tap(&mut ui, Edit);
+    tap(&mut ui, Edit);
+    assert_eq!(ui.page_def().id, chimera_core::ui::orbit::ORBIT_VOICE.id);
+    feed(&mut ui, Input::turn(F, -1));
+
+    let played = |song: &chimera_core::orbit::scene::OrbitSong| {
+        let mut rig = common::orbit::OrbitRig::on_init();
+        *rig.song() = *song;
+        rig.play(true);
+        let mut out = Vec::new();
+        while out.len() < 6 {
+            rig.block();
+            out.extend(
+                rig.sent
+                    .iter()
+                    .filter(|e| e.ring.get() == 1 && matches!(e.kind, OrbitKind::On(_)))
+                    .map(|e| e.note.get()),
+            );
+        }
+        out
+    };
+    assert_eq!(played(ui.project().orbit()), [60, 62, 64, 60, 62, 64]);
+    // OCTAVE up one: the same steps, an octave higher.
+    feed(&mut ui, Input::turn(D, 1));
+    assert_eq!(played(ui.project().orbit()), [72, 74, 76, 72, 74, 76]);
+}
+
+/// CLEAR down fills the pool (or every step) with notes of the key in the
+/// ring's register, new dice each time; CLEAR up leaves one note at
+/// OCTAVE's C. Each bumps `notes_rev`.
+#[test]
+fn clear_down_randomises_in_key() {
+    use chimera_core::orbit::MAX_POOL;
+    use chimera_core::orbit::ring::Range;
+    use chimera_hal::EncoderId::E;
+    let mut ui = Box::new(UiState::new());
+    to_notes(&mut ui, 2);
+    let key = ui.project().orbit().live.chords.key();
+    let in_register = |ui: &UiState, n: u8| {
+        let r = sel_ring(ui).ring;
+        let lo = r.octave.low().get();
+        let hi = lo + 12 * (r.range.octaves() + 1);
+        (lo..hi).contains(&n) && key.contains(chimera_theory::Note::new(n).unwrap().pc())
+    };
+    let mut seen = Vec::new();
+    for range in [Range::Zero, Range::Two] {
+        let r = ui.location().orbit().unwrap().ring();
+        ui.project_mut().orbit_mut().live.rings[r.get() as usize]
+            .ring
+            .range = range;
+        for _ in 0..3 {
+            let rev = sel_ring(&ui).notes_rev;
+            feed(&mut ui, Input::turn(E, -1));
+            let s = sel_ring(&ui);
+            assert_ne!(s.notes_rev, rev, "a new notes_rev");
+            assert_eq!(s.ring.pool.len(), MAX_POOL, "the pool filled");
+            for n in s.ring.pool.notes() {
+                assert!(in_register(&ui, n.get()), "{n} in A minor, {range:?}");
+            }
+            assert!(!seen.contains(&s.ring.pool), "new dice each turn");
+            seen.push(s.ring.pool);
+        }
+    }
+    // CLEAR up: one note at OCTAVE's C.
+    let rev = sel_ring(&ui).notes_rev;
+    feed(&mut ui, Input::turn(E, 2));
+    let s = sel_ring(&ui);
+    assert_ne!(s.notes_rev, rev);
+    assert_eq!(s.ring.pool.notes(), [s.ring.octave.low()]);
+
+    // STEP: every step.
+    feed(&mut ui, Input::turn(A, -1));
+    feed(&mut ui, Input::turn(E, -1));
+    let s = sel_ring(&ui);
+    assert!(s.ring.notes.iter().all(|n| in_register(&ui, n.get())));
+    assert!(
+        s.ring.notes.iter().any(|n| *n != s.ring.notes[0]),
+        "random, not one note"
+    );
+    assert_eq!(s.ring.pool.len(), 1, "the pool untouched");
+    feed(&mut ui, Input::turn(E, 1));
+    let s = sel_ring(&ui);
+    assert!(s.ring.notes.iter().all(|n| *n == s.ring.octave.low()));
 }

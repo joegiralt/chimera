@@ -8,7 +8,8 @@ pub mod pages;
 
 pub use cells::OrbitCell;
 pub use pages::{
-    CHRD_NODE, ORBIT_CHAIN, ORBIT_CHRD, ORBIT_CUSTOM, ORBIT_ORB, ORBIT_RHYTHM, RING_NODE,
+    CHRD_NODE, ORBIT_CHAIN, ORBIT_CHRD, ORBIT_CUSTOM, ORBIT_NOTES, ORBIT_ORB, ORBIT_RHYTHM,
+    ORBIT_VOICE, RING_NODE,
 };
 
 use crate::block::Block;
@@ -193,14 +194,16 @@ impl OrbitAnim {
     }
 }
 
-/// ORBIT's UI state beside the project: the transport, the CHRD and CUSTOM
-/// selections, the last view, and what ORB and the header animate of it.
+/// ORBIT's UI state beside the project: the transport, the CHRD, CUSTOM
+/// and NOTES selections, the last view, and what ORB and the header animate of it.
 #[derive(Clone, Copy, Debug)]
 pub struct OrbitUi {
     /// CHRD's selected segment.
     pub seg: u8,
     /// CUSTOM's cursor, 0..12 from the tonic.
     pub cursor: u8,
+    /// NOTES' selected chip: a pool note, or a STEP ring's step.
+    pub chip: u8,
     /// PLAY asked for: what `publish_orbit` sends. Never saved.
     pub run: bool,
     pub scene_rev: u16,
@@ -217,6 +220,7 @@ impl OrbitUi {
         OrbitUi {
             seg: 0,
             cursor: 0,
+            chip: 0,
             run: false,
             scene_rev: 0,
             loops_seen: 0,

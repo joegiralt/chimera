@@ -1,6 +1,5 @@
 //! ORBIT's pages: ORB, RING (RHYTHM, with VOICE and NOTES) and CHRD (with
-//! CUSTOM), a chain of its own that `Loc::Orbit` walks (ADR 0044). VOICE
-//! and NOTES are placeholders until Task 13.
+//! CUSTOM), a chain of its own that `Loc::Orbit` walks (ADR 0044).
 
 use super::OrbitCell;
 use crate::addr::BlockRef;
@@ -9,17 +8,6 @@ use crate::orbit::clock::Bpm;
 use crate::orbit::scene::SceneRing;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot, VizType};
 use crate::ui::page::PageLayout;
-
-const fn placeholder(id: u16, name: &'static str, short: &'static str) -> BlockDef {
-    BlockDef {
-        id,
-        name,
-        short,
-        layout: PageLayout::CellGrid,
-        viz: VizType::None,
-        params: [ParamSlot::EMPTY; 6],
-    }
-}
 
 const fn chords(id: crate::block::ParamId) -> ParamSlot {
     ParamSlot::param(BlockRef::OrbitChords, id)
@@ -93,8 +81,41 @@ pub static ORBIT_CUSTOM: BlockDef = BlockDef {
     ],
 };
 
-static ORBIT_VOICE: BlockDef = placeholder(82, "Voice", "VOICE");
-static ORBIT_NOTES: BlockDef = placeholder(83, "Notes", "NOTES");
+/// How the selected ring's hits sound: their length, their force, and
+/// where in pitch they sit.
+pub static ORBIT_VOICE: BlockDef = BlockDef {
+    id: 82,
+    name: "Voice",
+    short: "VOICE",
+    layout: PageLayout::CellGrid,
+    viz: VizType::OrbitVoice,
+    params: [
+        ParamSlot::selected_ring(SceneRing::GATE),
+        ParamSlot::selected_ring(SceneRing::VEL),
+        ParamSlot::selected_ring(SceneRing::ACCENT),
+        ParamSlot::selected_ring(SceneRing::OCTAVE),
+        ParamSlot::selected_ring(SceneRing::RANGE),
+        ParamSlot::selected_ring(SceneRing::SNAP),
+    ],
+};
+
+/// The selected ring's notes, as a pool walked or one a step, and the
+/// Part they play.
+pub static ORBIT_NOTES: BlockDef = BlockDef {
+    id: 83,
+    name: "Notes",
+    short: "NOTES",
+    layout: PageLayout::CellGrid,
+    viz: VizType::OrbitNotes,
+    params: [
+        ParamSlot::selected_ring(SceneRing::MODE),
+        ParamSlot::selected_ring(SceneRing::WALK),
+        ParamSlot::selected_ring(SceneRing::TARGET),
+        ParamSlot::orbit(OrbitCell::Learn),
+        ParamSlot::orbit(OrbitCell::Clear),
+        ParamSlot::orbit(OrbitCell::Note),
+    ],
+};
 
 static ORBIT_BLOCKS: [ChainBlock; 3] = [
     ChainBlock::page(&ORBIT_ORB),

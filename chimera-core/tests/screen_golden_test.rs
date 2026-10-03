@@ -115,6 +115,10 @@ const GOLDENS: &[(&str, u64)] = &[
     ("orbit_orb", 0xcf53a6661bfca1b4),
     ("orbit_orb_midi", 0xf609d4540c46355f),
     ("orbit_custom", 0xf89d2ed7662b5f8e),
+    // RING's VOICE and NOTES, a STEP ring's NOTES (plan Task 13).
+    ("orbit_voice", 0x6f38b1f9cc20676e),
+    ("orbit_notes", 0x61bb6e8097ca4c6b),
+    ("orbit_notes_step", 0x3ce1b1e7f994b7f9),
     ("busy", 0x198544cd36863145),
     ("toast_saved", 0xe344dd99a47d0dad),
     ("toast_exfat", 0xfc0cb3b4feb1a1b5),

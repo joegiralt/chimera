@@ -748,10 +748,10 @@ impl UiState {
                 );
             }
         }
-        let chords = &self.project.orbit().live.chords;
+        let live = &self.project.orbit().live;
         for (i, value) in values.iter_mut().enumerate() {
             if let View::Orbit(c) = view::view(def, i, &ctx) {
-                *value = c.value(chords, &self.orbit, ctx.ring);
+                *value = c.value(live, &self.orbit, ctx.ring);
             }
         }
         if def.layout == PageLayout::Matrix {
@@ -1481,9 +1481,9 @@ impl UiState {
             }
             self.focus.touch(def.id, i);
             if let View::Orbit(cell) = v {
-                let chords = &mut self.project.orbit_mut().live.chords;
+                let live = &mut self.project.orbit_mut().live;
                 let mut ring = ctx.ring;
-                cell.turn(delta, shift, chords, &mut self.orbit, &mut ring);
+                cell.turn(delta, shift, live, &mut self.orbit, &mut ring);
                 // RING picks another ring: a move, on the same page.
                 if ring != ctx.ring
                     && let Some(o) = self.loc.orbit()

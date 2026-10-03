@@ -201,6 +201,24 @@ impl Ring {
         })
     }
 
+    /// NOTES' "COMES ROUND IN": hits until the walk and the hits line up
+    /// again, `lcm(pool · (RANGE + 1), hits)` (spec § 3.4); 0 with no hits.
+    pub fn comes_round_in(&self) -> u32 {
+        let walk = self.pool.len() as u32 * (self.range.octaves() as u32 + 1);
+        let hits = self.hits_mask.hits() as u32;
+        let gcd = |mut a: u32, mut b: u32| {
+            while b != 0 {
+                (a, b) = (b, a % b);
+            }
+            a
+        };
+        if hits == 0 {
+            0
+        } else {
+            walk / gcd(walk, hits) * hits
+        }
+    }
+
     /// The ring after `m`.
     pub fn apply(mut self, m: Mutation) -> Ring {
         match m {

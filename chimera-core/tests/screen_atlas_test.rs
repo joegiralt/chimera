@@ -646,6 +646,28 @@ fn orb_page_in_the_atlas() {
     assert_eq!(shot.ui().page_def().layout, PageLayout::BigViz);
 }
 
+/// The atlas writes RING's VOICE and NOTES as their goldens,
+/// `orbit_voice` and `orbit_notes`, on the ring 3 it stands on.
+#[test]
+fn voice_and_notes_in_the_atlas() {
+    use chimera_core::ui::orbit::{ORBIT_NOTES, ORBIT_VOICE};
+    for (def, name) in [(&ORBIT_VOICE, "orbit_voice"), (&ORBIT_NOTES, "orbit_notes")] {
+        let shot = atlas()
+            .into_iter()
+            .find(|s| {
+                matches!(s.ctx, Ctx::Orbit)
+                    && s.ctx.chain().active_def(s.node, s.sub).unwrap().id == def.id
+            })
+            .unwrap_or_else(|| panic!("{name} is in the atlas"));
+        assert_eq!(shot.name, name);
+        assert!(
+            key(&shot.ui()) == key(&ui_for(name)),
+            "the golden covers {name}"
+        );
+        assert_eq!(shot.ui().page_def().viz, def.viz);
+    }
+}
+
 /// Every SETTINGS frame's map band is its footer, drawn alone.
 #[test]
 fn atlas_settings_never_shows_the_map() {

@@ -4,18 +4,19 @@
 use super::chords::{Bars, ChordRing, ScaleKind, Segs};
 use super::clock::Bpm;
 use super::euclid::{Fill, Steps};
+use super::mutate::register_note;
 use super::ring::{NoteMode, Octave, Range, Ring, SnapTo};
-use super::rng::Pct;
+use super::rng::{Pct, Rng};
 use super::runner::OrbitView;
 use super::walk::{Pool, Walk};
-use super::{MAX_POOL, MAX_SEGS, RINGS};
+use super::{MAX_POOL, MAX_SEGS, RINGS, RingIdx};
 use crate::Velocity;
 use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
 use crate::dsp::modulator::law::Law;
 use crate::dsp::modulator::pick;
 use crate::project::PartId;
 use crate::ui::glyph::FocusGlyph;
-use chimera_theory::{Degree, Interval, Note, PitchClass, Scale};
+use chimera_theory::{Degree, Interval, Key, Note, PitchClass, Scale};
 
 pub const SCENES: usize = 8;
 
@@ -173,6 +174,15 @@ impl Scene {
         }
     }
 
+    /// CLEAR down on ring `r`: its notes rolled from the scene's seed and
+    /// the ring's `notes_rev`, so each turn rolls new ones.
+    pub fn scatter(&mut self, r: RingIdx) {
+        let key = self.chords.key();
+        let s = &mut self.rings[r.get() as usize];
+        let seed = self.seed.wrapping_add(u32::from(s.notes_rev) << 16);
+        s.scatter(&key, &mut Rng::for_ring(seed, r));
+    }
+
     /// Nothing sounds: every ring muted, C major, one chord.
     pub const fn neutral() -> Scene {
         let oct = some(Octave::new(4));
@@ -225,6 +235,8 @@ impl OrbitSong {
     }
 }
 
+const MAX_STEPS: usize = super::MAX_STEPS as usize;
+
 const PITCH_NAMES: [&str; 12] = [
     "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
 ];
@@ -236,7 +248,8 @@ const OFF_ON: [&str; 2] = ["OFF", "ON"];
 const RANGE_NAMES: [&str; 4] = ["0", "1", "2", "3"];
 const SNAP_NAMES: [&str; 2] = ["SCALE", "CHORD"];
 const MODE_NAMES: [&str; 2] = ["STEP", "POOL"];
-const WALK_NAMES: [&str; 4] = ["UP", "DOWN", "RANDOM", "PINGPONG"];
+/// PING-PONG as `PING-PG`: a cell holds no more.
+const WALK_NAMES: [&str; 4] = ["UP", "DOWN", "RANDOM", "PING-PG"];
 
 const _: () = assert!(PITCH_NAMES.len() == PitchClass::ALL.len());
 const _: () = assert!(SCALE_NAMES.len() == ScaleKind::ALL.len());
@@ -355,6 +368,76 @@ impl SceneRing {
         }
     }
 
+    /// The notes changed under the player: it takes them, drift and all.
+    fn renoted(&mut self) {
+        self.notes_rev = self.notes_rev.wrapping_add(1);
+    }
+
+    /// What NOTES shows as chips and NOTE edits: the pool's notes, or a
+    /// STEP ring's steps.
+    pub fn chips(&self) -> usize {
+        match self.ring.mode {
+            NoteMode::Pool => self.ring.pool.len(),
+            NoteMode::Step => self.ring.fill().steps().get() as usize,
+        }
+    }
+
+    /// Chip `i`'s note.
+    pub fn chip(&self, i: usize) -> Note {
+        match self.ring.mode {
+            NoteMode::Pool => self.ring.pool.get(i),
+            NoteMode::Step => self.ring.notes[i % MAX_STEPS],
+        }
+    }
+
+    /// Chip `i` set to `to`; where it is after, as the pool re-sorts.
+    pub fn set_chip(&mut self, i: usize, to: Note) -> usize {
+        if self.chip(i) == to {
+            return i;
+        }
+        self.renoted();
+        let r = &mut self.ring;
+        match r.mode {
+            NoteMode::Pool => {
+                r.pool = r.pool.with(i, to);
+                r.pool.notes().iter().position(|&n| n == to).unwrap_or(i)
+            }
+            NoteMode::Step => {
+                r.notes[i % MAX_STEPS] = to;
+                i
+            }
+        }
+    }
+
+    /// CLEAR up: one note, OCTAVE's C; a STEP ring every step at it.
+    pub fn clear(&mut self) {
+        self.renoted();
+        let r = &mut self.ring;
+        let c = r.octave.low();
+        match r.mode {
+            NoteMode::Pool => r.pool = Pool::one(c),
+            NoteMode::Step => r.notes = [c; MAX_STEPS],
+        }
+    }
+
+    /// CLEAR down: a full pool, or every step, of notes of `key` in the
+    /// ring's register (`register_note`, as MUTATE draws them).
+    pub fn scatter(&mut self, key: &Key, rng: &mut Rng) {
+        self.renoted();
+        let r = &mut self.ring;
+        match r.mode {
+            NoteMode::Pool => {
+                let pool: [Note; MAX_POOL] = core::array::from_fn(|_| register_note(r, key, rng));
+                r.pool = Pool::new(&pool).unwrap_or(r.pool);
+            }
+            NoteMode::Step => {
+                for i in 0..MAX_STEPS {
+                    r.notes[i] = register_note(r, key, rng);
+                }
+            }
+        }
+    }
+
     /// A new OCTAVE: the stored notes and pool move with it, whole octaves.
     fn transpose(&mut self, to: Octave) {
         let r = &mut self.ring;
@@ -372,7 +455,7 @@ impl SceneRing {
             *m = fold(*n, by);
         }
         r.pool = Pool::new(&moved[..len]).unwrap_or(r.pool);
-        self.notes_rev = self.notes_rev.wrapping_add(1);
+        self.renoted();
     }
 }
 

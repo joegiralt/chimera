@@ -24,6 +24,10 @@ pub enum VizType {
     Orbit,
     /// RING · RHYTHM: the ring's pattern unrolled, its step lit.
     OrbitRhythm,
+    /// RING · VOICE: each hit's gate as a bar, its force as its height.
+    OrbitVoice,
+    /// RING · NOTES: the pool as chips, or one a step.
+    OrbitNotes,
     /// CHRD: the progression's segments as chips over the loop's bars.
     OrbitChords,
     /// CHRD › CUSTOM: the twelve notes round a circle, the set's lit.

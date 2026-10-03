@@ -21,12 +21,14 @@ use chimera_core::orbit::RingIdx;
 use chimera_core::orbit::chords::Bars;
 use chimera_core::orbit::clock::Bpm;
 use chimera_core::orbit::euclid::{Fill, Steps};
+use chimera_core::orbit::ring::NoteMode;
 use chimera_core::orbit::rng::Pct;
-use chimera_core::orbit::scene::{Scene, SceneRing};
+use chimera_core::orbit::scene::{OrbitSong, Scene, SceneRing};
 use chimera_core::part::DacPair;
 use chimera_core::part::PartParams;
 use chimera_core::project::{NEW_PARTS, PartId};
 use chimera_hal::BLOCK_SIZE;
+use chimera_theory::Note;
 use common::orbit::{Mark, OrbitRig, Report, judgeable, orbit_block, report, secs, write_wav};
 use common::sweep::{
     BPS, Bench, CLICK_RATIO, Patch, SILENT_RMS, Tape, level, steady_windows, transient_window,
@@ -437,20 +439,81 @@ fn silences(b: BlockRef, id: ParamId, v: f32) -> Option<&'static str> {
     }
 }
 
-/// The values a parameter is swept through: min, an interior value, max.
-fn points(s: &ParamSpec) -> [f32; 3] {
-    [s.min, s.quantize(s.min + (s.max - s.min) / 2.0), s.max]
+/// What the sweep turns: a parameter, or NOTES' own cells on a ring, a
+/// pool's or a STEP ring's.
+#[derive(Clone, Copy, Debug)]
+enum Case {
+    Param(BlockRef, &'static ParamSpec),
+    /// The first chip's note, C-1 to G9.
+    Note(RingIdx, NoteMode),
+    /// CLEAR: down rolls new notes (below 0), up leaves one C.
+    Clear(RingIdx, NoteMode),
 }
 
-/// Every ORBIT parameter's case, with its ring soloed (the chords' and the
-/// tempo's on the whole scene).
-fn orbit_params() -> Vec<(BlockRef, &'static ParamSpec)> {
+impl Case {
+    fn ring(self) -> Option<RingIdx> {
+        match self {
+            Case::Param(BlockRef::OrbitRing(r), _) | Case::Note(r, _) | Case::Clear(r, _) => {
+                Some(r)
+            }
+            Case::Param(..) => None,
+        }
+    }
+
+    fn name(self) -> String {
+        match self {
+            Case::Param(b, s) => format!("{b:?}.{}", s.label),
+            Case::Note(r, m) => format!("OrbitRing({}).NOTE {m:?}", r.get()),
+            Case::Clear(r, m) => format!("OrbitRing({}).CLEAR {m:?}", r.get()),
+        }
+    }
+
+    /// Min, an interior value, max.
+    fn points(self) -> [f32; 3] {
+        match self {
+            Case::Param(_, s) => [s.min, s.quantize(s.min + (s.max - s.min) / 2.0), s.max],
+            Case::Note(..) => [0.0, 64.0, 127.0],
+            Case::Clear(..) => [-1.0, 1.0, -1.0],
+        }
+    }
+
+    fn set(self, song: &mut OrbitSong, v: f32) {
+        match self {
+            Case::Param(b, s) => orbit_block(song, b).set(s.id, v),
+            Case::Note(r, _) => {
+                let note = Note::new(v as u8).expect("a note");
+                song.live.rings[r.get() as usize].set_chip(0, note);
+            }
+            Case::Clear(r, _) if v > 0.0 => song.live.rings[r.get() as usize].clear(),
+            Case::Clear(r, _) => song.live.scatter(r),
+        }
+    }
+
+    /// What it may legitimately do, with the reason.
+    fn silences(self, v: f32) -> Option<&'static str> {
+        match self {
+            Case::Param(b, s) => silences(b, s.id, v),
+            Case::Note(..) | Case::Clear(..) => None,
+        }
+    }
+}
+
+/// Every ORBIT parameter's case, and NOTE and CLEAR on every ring in
+/// either mode; a ring's soloed (the chords' and the tempo's on the whole
+/// scene).
+fn orbit_params() -> Vec<Case> {
     let mut blocks: Vec<BlockRef> = RingIdx::ALL.map(BlockRef::OrbitRing).to_vec();
     blocks.extend([BlockRef::OrbitChords, BlockRef::Tempo]);
-    blocks
+    let mut cases: Vec<Case> = blocks
         .into_iter()
-        .flat_map(|b| b.specs().iter().map(move |s| (b, s)))
-        .collect()
+        .flat_map(|b| b.specs().iter().map(move |s| Case::Param(b, s)))
+        .collect();
+    for r in RingIdx::ALL {
+        for m in NoteMode::ALL {
+            cases.extend([Case::Note(r, m), Case::Clear(r, m)]);
+        }
+    }
+    cases
 }
 
 /// One parameter's sweep: each point held four loops (a lone hit at
@@ -467,29 +530,33 @@ fn orbit_params() -> Vec<(BlockRef, &'static ParamSpec)> {
 /// ORBIT's timing, not a Sound. On a decaying Sound an off at GATE 0 reads
 /// as a click where none is
 /// (`a_gate_0_off_releases_clean_on_factory_sounds` judges those).
-fn sweep_param(b: BlockRef, s: &'static ParamSpec) -> (String, Vec<String>, [usize; 5]) {
+fn sweep_param(case: Case) -> (String, Vec<String>, [usize; 5]) {
     let mut rig = OrbitRig::on_init();
     let song = rig.song();
     song.live.chords.bars = Bars::ONE;
     for (i, sr) in song.live.rings.iter_mut().enumerate() {
         sr.ring.mutate = Pct::clamped(30);
-        if let BlockRef::OrbitRing(r) = b {
+        if let Some(r) = case.ring() {
             sr.ring.mute = i != r.get() as usize;
         }
     }
-    let set = |rig: &mut OrbitRig, v: f32| orbit_block(rig.song(), b).set(s.id, v);
-    let name = format!("{b:?}.{}", s.label);
+    if let Case::Note(r, m) | Case::Clear(r, m) = case {
+        song.live.rings[r.get() as usize].ring.mode = m;
+    }
+    let set = |rig: &mut OrbitRig, v: f32| case.set(rig.song(), v);
+    let name = case.name();
+    let [min, _, max] = case.points();
     let mut line = String::new();
     let mut faults = Vec::new();
     rig.play(true);
-    for v in points(s) {
+    for v in case.points() {
         set(&mut rig, v);
         let from = rig.blocks();
         rig.run_loops(4);
         let heard = rig.tape.rms(0, from + 1, rig.blocks());
         let _ = write!(line, " {v}: {:.1} dBFS rms;", common::sweep::db(heard));
         if heard < SILENT_RMS {
-            match silences(b, s.id, v) {
+            match case.silences(v) {
                 Some(why) => {
                     let _ = write!(line, " silent ({why});");
                 }
@@ -500,14 +567,14 @@ fn sweep_param(b: BlockRef, s: &'static ParamSpec) -> (String, Vec<String>, [usi
     // Fast jumps, then slow ones: a jump every 3 blocks leaves no steady
     // window between them, so a jump's break is judged only in the slow.
     for i in 0..200 {
-        set(&mut rig, if i % 2 == 0 { s.min } else { s.max });
+        set(&mut rig, if i % 2 == 0 { min } else { max });
         rig.run(3);
     }
     for i in 0..20 {
-        set(&mut rig, if i % 2 == 0 { s.max } else { s.min });
+        set(&mut rig, if i % 2 == 0 { max } else { min });
         rig.run(60);
     }
-    set(&mut rig, s.min);
+    set(&mut rig, min);
     let bound = stop_bound();
     let freed = stop_and_drain(&mut rig, bound);
     if !freed.is_some_and(|f| f <= bound) {
@@ -529,20 +596,14 @@ fn sweep_param(b: BlockRef, s: &'static ParamSpec) -> (String, Vec<String>, [usi
 fn orbit_param_sweep() {
     let cases = orbit_params();
     let n = std::thread::available_parallelism().map_or(4, |n| n.get());
-    let chunks: Vec<Vec<(BlockRef, &'static ParamSpec)>> = cases
+    let chunks: Vec<Vec<Case>> = cases
         .chunks(cases.len().div_ceil(n))
         .map(<[_]>::to_vec)
         .collect();
     let mut rows: Vec<(String, Vec<String>, [usize; 5])> = std::thread::scope(|sc| {
         let handles: Vec<_> = chunks
             .iter()
-            .map(|c| {
-                sc.spawn(move || {
-                    c.iter()
-                        .map(|&(b, s)| sweep_param(b, s))
-                        .collect::<Vec<_>>()
-                })
-            })
+            .map(|c| sc.spawn(move || c.iter().map(|&c| sweep_param(c)).collect::<Vec<_>>()))
             .collect();
         handles
             .into_iter()
@@ -574,7 +635,7 @@ fn orbit_param_sweep() {
             .expect("the report");
         f.write_all(report.as_bytes()).expect("the report");
     }
-    assert_eq!(cases.len(), 5 * 15 + 4 + 1);
+    assert_eq!(cases.len(), 5 * 15 + 4 + 1 + 5 * 4);
     println!("judged across the sweep, by {:?}: {judged:?}", Mark::KINDS);
     // The full scene never judges MUTATE (the downbeat plays) and has no
     // BPM jump: the sweep is where they are judged, so it must.

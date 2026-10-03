@@ -1116,6 +1116,40 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::A, 6));
         feed(ui, Input::turn(EncoderId::B, 1));
     }),
+    // RING 3's VOICE, its pad note made E(5,8) on RHYTHM: GATE 60, two
+    // accents, a third into the bar, playing.
+    ("orbit_voice", |ui| {
+        to_ring(ui, 3);
+        feed(ui, Input::turn(EncoderId::A, 7)); // STEPS 8
+        feed(ui, Input::turn(EncoderId::B, 4)); // HITS 5
+        tap(ui, ButtonId::Edit);
+        feed(ui, Input::turn(EncoderId::A, -40)); // GATE 60
+        feed(ui, Input::turn(EncoderId::C, 2)); // ACCENT 2
+        let mut v = orbit_view(0.3);
+        v.rings[2].step = 2;
+        ui.set_orbit_view(&v);
+    }),
+    // RING 3's NOTES: CLEAR down's eight notes, the fourth picked and
+    // raised a tone, past two others: the sixth now.
+    ("orbit_notes", |ui| {
+        to_ring(ui, 3);
+        tap(ui, ButtonId::Edit);
+        tap(ui, ButtonId::Edit);
+        feed(ui, Input::turn(EncoderId::E, -1));
+        feed(ui, Input::turn(EncoderId::F, 3).and_held(ButtonId::Mix));
+        feed(ui, Input::turn(EncoderId::F, 2));
+    }),
+    // RING 2 as a STEP ring, CLEAR down's notes, step 4 picked; a third
+    // into the bar, playing.
+    ("orbit_notes_step", |ui| {
+        to_ring(ui, 2);
+        tap(ui, ButtonId::Edit);
+        tap(ui, ButtonId::Edit);
+        feed(ui, Input::turn(EncoderId::A, -1));
+        feed(ui, Input::turn(EncoderId::E, -1));
+        feed(ui, Input::turn(EncoderId::F, 3).and_held(ButtonId::Mix));
+        ui.set_orbit_view(&orbit_view(0.3));
+    }),
 ];
 
 /// `AudioStats` fixture for AUDIO LOAD's and ABOUT's goldens and tests.

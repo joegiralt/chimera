@@ -266,6 +266,8 @@ impl Renderer {
                 viz::effects_flow(display, Some(node as usize), None)
             }
             VizType::OrbitRhythm => orbit::rhythm(display, &f.orbit, f.ctx.ring),
+            VizType::OrbitVoice => orbit::voice(display, &f.orbit, f.ctx.ring),
+            VizType::OrbitNotes => orbit::notes(display, &f.orbit, f.ctx.ring),
             VizType::OrbitChords => orbit::chords(display, &f.orbit),
             VizType::AlgoDiagram => {
                 let algo = &f.parts[f.active_part.index()].sound.params.algo;
@@ -370,7 +372,10 @@ impl Renderer {
                     )
                 }
                 // ORBIT's own key: `orbit_viz_key`.
-                VizType::OrbitRhythm | VizType::OrbitChords => ([0; 6], 0),
+                VizType::OrbitRhythm
+                | VizType::OrbitVoice
+                | VizType::OrbitNotes
+                | VizType::OrbitChords => ([0; 6], 0),
                 _ => ([0; 6], viz::live_key(f.scope)),
             },
             PageLayout::BigViz => {
