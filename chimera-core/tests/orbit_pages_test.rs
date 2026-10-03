@@ -227,7 +227,7 @@ fn the_dirty_path_follows_orbit() {
     frame(&mut ui, &mut fb, "the next step picked");
     feed(&mut ui, Input::turn(F, 2));
     frame(&mut ui, &mut fb, "its note");
-    feed(&mut ui, Input::turn(chimera_hal::EncoderId::E, -1));
+    feed(&mut ui, Input::turn(E, -1).and_held(Mix));
     frame(&mut ui, &mut fb, "CLEAR down");
     feed(&mut ui, Input::turn(A, 1));
     frame(&mut ui, &mut fb, "POOL");
@@ -690,10 +690,11 @@ fn voice_and_notes_pages() {
     assert_eq!(ui.page_def().id, ORBIT_NOTES.id);
     assert_eq!(ui.orbit().chip, 5);
     let fb = render("orbit_notes");
-    let cw = (theme::VIZ_RIGHT - theme::VIZ_LEFT - 4 * 7) / 8;
+    // Laid at fractional x: chip i at a slot of (216 + 4) / 8.
+    let slot = (theme::VIZ_RIGHT - theme::VIZ_LEFT + 4) as f32 / 8.0;
     let y = theme::VIZ_BAND_TOP + 18 + 17;
     for i in 0..8 {
-        let x = theme::VIZ_LEFT + i * (cw + 4);
+        let x = theme::VIZ_LEFT + (slot * i as f32).round() as i32;
         let want = if i == 5 {
             theme::INK2
         } else {
@@ -716,19 +717,44 @@ fn comes_round_in() {
     use chimera_core::orbit::euclid::{Fill, Steps};
     use chimera_core::orbit::ring::{Octave, Range, Ring};
     use chimera_core::orbit::walk::Pool;
+    use chimera_core::ui::orbit::draw::notes_line;
     use chimera_theory::Note;
     let fill = Fill::new(Steps::new(8).unwrap(), 5, 0).unwrap();
     let mut r = Ring::new(fill, Octave::new(4).unwrap());
     let n = |x| Note::new(x).unwrap();
     r.pool = Pool::new(&[n(60), n(64), n(67)]).unwrap();
-    assert_eq!(r.comes_round_in(), 15);
+    assert_eq!(r.comes_round_in(), Some(15));
     r.range = Range::One;
-    assert_eq!(r.comes_round_in(), 30);
+    assert_eq!(r.comes_round_in(), Some(30));
     r.pool = Pool::one(n(60));
     r.range = Range::Zero;
-    assert_eq!(r.comes_round_in(), 5);
+    assert_eq!(r.comes_round_in(), Some(5));
+    // DOWN as UP; PING-PONG plays its ends once: 2(L − 1), one note 1;
+    // RANDOM never comes round.
+    use chimera_core::orbit::walk::Walk;
+    r.walk = Walk::Down;
+    assert_eq!(r.comes_round_in(), Some(5));
+    r.walk = Walk::PingPong;
+    assert_eq!(r.comes_round_in(), Some(5), "one note");
+    r.pool = Pool::new(&[n(60), n(64), n(67)]).unwrap();
+    assert_eq!(r.comes_round_in(), Some(20), "lcm(4, 5)");
+    r.walk = Walk::Random;
+    assert_eq!(r.comes_round_in(), None);
+    let (_, tail) = notes_line(&r);
+    assert_eq!(tail.as_str(), "COMES ROUND IN -");
+    r.walk = Walk::Up;
+    // The factory ring 2: PING-PONG over 3 notes on 3 hits, 12; at
+    // RANGE 1 (the contact sheet's frame 06) six notes, 30.
+    let mut two = chimera_core::orbit::scene::Scene::init().rings[1].ring;
+    assert_eq!(two.walk, Walk::PingPong);
+    assert_eq!(two.comes_round_in(), Some(12));
+    two.range = Range::One;
+    assert_eq!(two.comes_round_in(), Some(30));
+    // A STEP ring comes round with the ring: no figure.
+    two.mode = chimera_core::orbit::ring::NoteMode::Step;
+    let (head, tail) = notes_line(&two);
+    assert_eq!((head.as_str(), tail.as_str()), ("STEPS 8 · HITS 3", ""));
     // The line NOTES draws.
-    use chimera_core::ui::orbit::draw::notes_line;
     r.range = Range::One;
     r.pool = Pool::new(&[n(60), n(64), n(67)]).unwrap();
     let (head, tail) = notes_line(&r);
@@ -799,6 +825,7 @@ fn step_ring_plays_its_steps() {
 fn clear_down_randomises_in_key() {
     use chimera_core::orbit::MAX_POOL;
     use chimera_core::orbit::ring::Range;
+    use chimera_hal::ButtonId::Mix;
     use chimera_hal::EncoderId::E;
     let mut ui = Box::new(UiState::new());
     to_notes(&mut ui, 2);
@@ -817,7 +844,7 @@ fn clear_down_randomises_in_key() {
             .range = range;
         for _ in 0..3 {
             let rev = sel_ring(&ui).notes_rev;
-            feed(&mut ui, Input::turn(E, -1));
+            feed(&mut ui, Input::turn(E, -1).and_held(Mix));
             let s = sel_ring(&ui);
             assert_ne!(s.notes_rev, rev, "a new notes_rev");
             assert_eq!(s.ring.pool.len(), MAX_POOL, "the pool filled");
@@ -830,14 +857,14 @@ fn clear_down_randomises_in_key() {
     }
     // CLEAR up: one note at OCTAVE's C.
     let rev = sel_ring(&ui).notes_rev;
-    feed(&mut ui, Input::turn(E, 2));
+    feed(&mut ui, Input::turn(E, 2).and_held(Mix));
     let s = sel_ring(&ui);
     assert_ne!(s.notes_rev, rev);
     assert_eq!(s.ring.pool.notes(), [s.ring.octave.low()]);
 
     // STEP: every step.
     feed(&mut ui, Input::turn(A, -1));
-    feed(&mut ui, Input::turn(E, -1));
+    feed(&mut ui, Input::turn(E, -1).and_held(Mix));
     let s = sel_ring(&ui);
     assert!(s.ring.notes.iter().all(|n| in_register(&ui, n.get())));
     assert!(
@@ -845,7 +872,46 @@ fn clear_down_randomises_in_key() {
         "random, not one note"
     );
     assert_eq!(s.ring.pool.len(), 1, "the pool untouched");
-    feed(&mut ui, Input::turn(E, 1));
+    feed(&mut ui, Input::turn(E, 1).and_held(Mix));
     let s = sel_ring(&ui);
     assert!(s.ring.notes.iter().all(|n| *n == s.ring.octave.low()));
+}
+
+/// CLEAR acts only with MIX held (the controller's ruling, ADR 0074): a
+/// plain turn either way, as a slip reaching for NOTE, leaves the notes.
+#[test]
+fn clear_needs_mix() {
+    use chimera_core::ui::orbit::ORBIT_NOTES;
+    use chimera_core::ui::orbit::draw::{OrbitFrame, focus};
+    use chimera_hal::ButtonId::Mix;
+    use chimera_hal::EncoderId::E;
+    let mut ui = Box::new(UiState::new());
+    to_notes(&mut ui, 2);
+    for mode in [0, -1] {
+        feed(&mut ui, Input::turn(A, mode));
+        let before = sel_ring(&ui);
+        for d in [-1, 1, -5, 5] {
+            feed(&mut ui, Input::turn(E, d));
+            assert_eq!(sel_ring(&ui), before, "a plain turn of {d}");
+        }
+        feed(&mut ui, Input::turn(E, -1).and_held(Mix));
+        assert_ne!(sel_ring(&ui).notes_rev, before.notes_rev, "MIX + turn");
+    }
+    // Its focus names both: MIX + UP / DOWN over C4 / RND.
+    let r = ui.location().orbit().unwrap().ring();
+    let f = OrbitFrame {
+        scene: &ui.project().orbit().live,
+        bpm: ui.project().orbit().bpm,
+        ui: ui.orbit(),
+    };
+    let ctx = chimera_core::ui::view::SlotCtx::read(
+        &ui.project().part(ui.active_part).sound.params,
+        chimera_core::addr::Op::A,
+    )
+    .on_ring(r);
+    let fo = focus(&ORBIT_NOTES, 4, &ctx, &f, |_| 0.0).unwrap();
+    assert_eq!(
+        (fo.label.as_str(), fo.text.as_str()),
+        ("MIX + UP / DOWN", "C4 / RND")
+    );
 }

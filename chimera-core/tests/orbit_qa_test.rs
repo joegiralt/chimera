@@ -446,7 +446,8 @@ enum Case {
     Param(BlockRef, &'static ParamSpec),
     /// The first chip's note, C-1 to G9.
     Note(RingIdx, NoteMode),
-    /// CLEAR: down rolls new notes (below 0), up leaves one C.
+    /// CLEAR, as MIX + turn: down rolls new notes (below 0), up leaves
+    /// one C. The jumps alternate the two.
     Clear(RingIdx, NoteMode),
 }
 
@@ -473,7 +474,7 @@ impl Case {
         match self {
             Case::Param(_, s) => [s.min, s.quantize(s.min + (s.max - s.min) / 2.0), s.max],
             Case::Note(..) => [0.0, 64.0, 127.0],
-            Case::Clear(..) => [-1.0, 1.0, -1.0],
+            Case::Clear(..) => [-1.0, 1.0, 1.0],
         }
     }
 
@@ -484,6 +485,7 @@ impl Case {
                 let note = Note::new(v as u8).expect("a note");
                 song.live.rings[r.get() as usize].set_chip(0, note);
             }
+            // The scene's own: the UI's MIX gate is `clear_needs_mix`'s.
             Case::Clear(r, _) if v > 0.0 => song.live.rings[r.get() as usize].clear(),
             Case::Clear(r, _) => song.live.scatter(r),
         }

@@ -241,17 +241,24 @@ fn register(ring: &Ring) -> (Note, Note) {
 }
 
 /// What NOTES says of a ring: a pool's size against the hits, and how
-/// many hits until the two line up again; a STEP ring's steps. In two
-/// parts, each within a `FmtBuf`.
+/// many hits until the walk and the hits line up again (`-` for RANDOM,
+/// which never does); a STEP ring's steps and hits, which come round
+/// with the ring. In two parts, each within a `FmtBuf`.
 pub fn notes_line(r: &Ring) -> (FmtBuf, FmtBuf) {
     let (mut head, mut tail) = (FmtBuf::new(), FmtBuf::new());
     let hits = r.hits_mask().hits();
-    let (what, n, round) = match r.mode {
-        NoteMode::Pool => ("POOL", r.pool.len(), r.comes_round_in()),
-        NoteMode::Step => ("STEPS", r.fill().steps().get() as usize, hits as u32),
-    };
-    let _ = write!(head, "{what} {n} · HITS {hits} · ");
-    let _ = write!(tail, "COMES ROUND IN {round}");
+    match r.mode {
+        NoteMode::Pool => {
+            let _ = write!(head, "POOL {} · HITS {hits} · ", r.pool.len());
+            let _ = match r.comes_round_in() {
+                Some(n) => write!(tail, "COMES ROUND IN {n}"),
+                None => tail.write_str("COMES ROUND IN -"),
+            };
+        }
+        NoteMode::Step => {
+            let _ = write!(head, "STEPS {} · HITS {hits}", r.fill().steps().get());
+        }
+    }
     (head, tail)
 }
 
@@ -272,8 +279,16 @@ where
     let (head, tail) = notes_line(ring);
     band_line(d, &[head.as_str(), tail.as_str()]);
     let n = sr.chips() as i32;
-    let gap = if n > 8 { 2 } else { 4 };
-    let cw = (VIZ_RIGHT - VIZ_LEFT - gap * (n - 1)) / n;
+    let gap = match n {
+        17.. => 1,
+        9..=16 => 2,
+        _ => 4,
+    };
+    // Each chip a slot of the band, laid at fractional x so the row
+    // spans it; `cw` the narrowest, for the font and the corners.
+    let slot = (BAND_W + gap as f32) / n as f32;
+    let left = |i: i32| VIZ_LEFT + libm::roundf(slot * i as f32) as i32;
+    let cw = libm::floorf(slot) as i32 - gap;
     let radius = (cw / 2).clamp(1, 5) as u32;
     let mask = f.hits(r);
     let now = f.now(r);
@@ -287,7 +302,8 @@ where
         .into_iter()
         .find(|&font| fits(font));
     for i in 0..n as usize {
-        let x = VIZ_LEFT + i as i32 * (cw + gap);
+        let x = left(i as i32);
+        let cw = left(i as i32 + 1) - gap - x;
         let (fill, ink) = match (step, step && mask.is_hit(i), now == Some(i)) {
             (true, _, true) => (Some(theme::ACCENT), theme::BG),
             (true, false, _) => (None, theme::MID),
@@ -755,7 +771,7 @@ pub fn focus(
             Gauge::Switch { on: 0.0 }
         }
         View::Orbit(OrbitCell::Clear) => {
-            let _ = label.write_str("UP ONE · DOWN RND");
+            let _ = label.write_str("MIX + UP / DOWN");
             text = cell_text(OrbitCell::Clear, f, ctx.ring);
             Gauge::None
         }

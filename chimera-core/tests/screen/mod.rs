@@ -1129,13 +1129,13 @@ pub const CASES: &[ScreenCase] = &[
         v.rings[2].step = 2;
         ui.set_orbit_view(&v);
     }),
-    // RING 3's NOTES: CLEAR down's eight notes, the fourth picked and
+    // RING 3's NOTES: CLEAR down's eight notes (MIX held), the fourth picked and
     // raised a tone, past two others: the sixth now.
     ("orbit_notes", |ui| {
         to_ring(ui, 3);
         tap(ui, ButtonId::Edit);
         tap(ui, ButtonId::Edit);
-        feed(ui, Input::turn(EncoderId::E, -1));
+        feed(ui, Input::turn(EncoderId::E, -1).and_held(ButtonId::Mix));
         feed(ui, Input::turn(EncoderId::F, 3).and_held(ButtonId::Mix));
         feed(ui, Input::turn(EncoderId::F, 2));
     }),
@@ -1146,7 +1146,7 @@ pub const CASES: &[ScreenCase] = &[
         tap(ui, ButtonId::Edit);
         tap(ui, ButtonId::Edit);
         feed(ui, Input::turn(EncoderId::A, -1));
-        feed(ui, Input::turn(EncoderId::E, -1));
+        feed(ui, Input::turn(EncoderId::E, -1).and_held(ButtonId::Mix));
         feed(ui, Input::turn(EncoderId::F, 3).and_held(ButtonId::Mix));
         ui.set_orbit_view(&orbit_view(0.3));
     }),

@@ -23,8 +23,9 @@ pub enum OrbitCell {
     Note,
     /// NOTES: capture from the keys (Task 14); inert until then.
     Learn,
-    /// NOTES: up leaves one note at OCTAVE's C, down rolls random notes
-    /// of the key in the register.
+    /// NOTES, with MIX held: up leaves one note at OCTAVE's C, down rolls
+    /// random notes of the key in the register. A plain turn does nothing:
+    /// either way loses notes set by hand.
     Clear,
 }
 
@@ -107,6 +108,8 @@ impl OrbitCell {
                 }
             }
             OrbitCell::Learn => {}
+            // MIX held, or nothing: a slip on its way to NOTE loses no notes.
+            OrbitCell::Clear if !mix => {}
             OrbitCell::Clear if delta > 0 => r.clear(),
             OrbitCell::Clear => s.scatter(*ring),
         }

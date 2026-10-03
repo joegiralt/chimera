@@ -202,9 +202,17 @@ impl Ring {
     }
 
     /// NOTES' "COMES ROUND IN": hits until the walk and the hits line up
-    /// again, `lcm(pool · (RANGE + 1), hits)` (spec § 3.4); 0 with no hits.
-    pub fn comes_round_in(&self) -> u32 {
-        let walk = self.pool.len() as u32 * (self.range.octaves() as u32 + 1);
+    /// again, `lcm(period, hits)`; 0 with no hits. A walk of L notes
+    /// (the pool over RANGE + 1 octaves) comes round in L going UP or
+    /// DOWN, in 2(L − 1) PING-PONG (its ends once), and never RANDOM:
+    /// `None` (ADR 0074 amends spec § 3.4).
+    pub fn comes_round_in(&self) -> Option<u32> {
+        let len = self.pool.len() as u32 * (self.range.octaves() as u32 + 1);
+        let walk = match self.walk {
+            Walk::Up | Walk::Down => len,
+            Walk::PingPong => (2 * (len - 1)).max(1),
+            Walk::Random => return None,
+        };
         let hits = self.hits_mask.hits() as u32;
         let gcd = |mut a: u32, mut b: u32| {
             while b != 0 {
@@ -212,11 +220,11 @@ impl Ring {
             }
             a
         };
-        if hits == 0 {
+        Some(if hits == 0 {
             0
         } else {
             walk / gcd(walk, hits) * hits
-        }
+        })
     }
 
     /// The ring after `m`.
