@@ -94,6 +94,8 @@ struct Board {
 struct SynthParts {
     reset_cause: ResetCause,
     led: stm32h7xx_hal::gpio::PE1<Output<PushPull>>,
+    #[cfg(feature = "orbit")]
+    beat_led: stm32h7xx_hal::gpio::PB1<Output<PushPull>>,
     backlight: Backlight,
     theme: ThemeSettings,
     iwdg: pac::IWDG,
@@ -146,6 +148,11 @@ fn boot() -> Board {
     let _hc_load = gpiof.pf1.into_push_pull_output();
     let _hc_clk = gpiof.pf0.into_push_pull_output();
 
+    // The front-panel LED between D and E: low from boot, never floating.
+    // A plain GPIO; TIM3_CH4 is its pin for a later fade (#307). Without
+    // ORBIT it just stays low.
+    let mut beat_led = gpiob.pb1.into_push_pull_output();
+    beat_led.set_low();
     let mut led = gpioe.pe1.into_push_pull_output();
     // TIM1 CH2 PWM, above hearing so the backlight driver cannot whine.
     // Full brightness lifts a TN panel's blacks; SETTINGS › THEME's BRIGHT
@@ -209,6 +216,8 @@ fn boot() -> Board {
         synth: SynthParts {
             reset_cause,
             led,
+            #[cfg(feature = "orbit")]
+            beat_led,
             backlight,
             theme,
             iwdg: dp.IWDG,
@@ -251,6 +260,8 @@ fn synth(board: Board) -> ! {
             SynthParts {
                 reset_cause,
                 mut led,
+                #[cfg(feature = "orbit")]
+                mut beat_led,
                 mut backlight,
                 mut theme,
                 iwdg,
@@ -382,6 +393,13 @@ fn synth(board: Board) -> ! {
         // The loop spins as fast as it can; animation runs at UI_FPS.
         if let Some(t) = pacer.due(controls::now_ms()) {
             ui.update(t);
+            // ORBIT's beat on the front-panel LED; off when it is stopped.
+            #[cfg(feature = "orbit")]
+            if ui.led() {
+                beat_led.set_high();
+            } else {
+                beat_led.set_low();
+            }
         }
         // Every Part, the FX and ORBIT to the audio.
         shared_w.publish(|b| {

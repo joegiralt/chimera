@@ -211,7 +211,7 @@ pub struct OrbitView {
 }
 
 /// Beats in a bar (4/4, spec § 6.2) and the shift taking a phase to a beat.
-const BEATS_PER_BAR: u32 = 4;
+pub(crate) const BEATS_PER_BAR: u32 = 4;
 const BEAT_SHIFT: u32 = 32 - BEATS_PER_BAR.trailing_zeros();
 
 /// Beats from the start to `pos`.

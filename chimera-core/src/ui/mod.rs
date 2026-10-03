@@ -14,6 +14,7 @@ pub mod fmt;
 pub mod focus;
 pub mod glyph;
 pub mod hold;
+pub mod led;
 pub mod mod_grid;
 pub mod mod_panel;
 pub mod nav;
@@ -215,6 +216,8 @@ pub struct UiState {
     card: Card,
     /// ORBIT's transport and the runner's last view.
     orbit: orbit::OrbitUi,
+    /// The front-panel LED: ORBIT's beat.
+    led: led::Led,
 }
 
 crate::in_place::field_list!(UiState => UiState {
@@ -243,6 +246,7 @@ crate::in_place::field_list!(UiState => UiState {
     job,
     card,
     orbit,
+    led,
 });
 
 impl Default for UiState {
@@ -303,6 +307,7 @@ impl UiState {
             addr_of_mut!((*p).job).write(None);
             addr_of_mut!((*p).card).write(Card::new());
             addr_of_mut!((*p).orbit).write(orbit::OrbitUi::new());
+            addr_of_mut!((*p).led).write(led::Led::OFF);
             let ui = slot.assume_init_mut();
             ui.load_matrix(PartId::ALL[0]);
             ui
@@ -1597,6 +1602,11 @@ impl UiState {
         self.orbit.sync(v, &mut self.project);
     }
 
+    /// The front-panel LED: lit on ORBIT's beat, off when it is stopped.
+    pub fn led(&self) -> bool {
+        self.led.on()
+    }
+
     /// SEQ in ORBIT: the playing scene saved, drift and all, or why not.
     fn save_scene(&mut self) {
         match self.project.orbit_mut().save_scene() {
@@ -1939,7 +1949,12 @@ impl UiState {
         self.renderer.branch_scroll.set_target(target_scroll);
         self.renderer.branch_scroll.update();
 
-        self.orbit.tick();
+        let pulse = self.orbit.tick();
+        self.led = if self.orbit.status.running {
+            self.led.step(pulse)
+        } else {
+            led::Led::OFF
+        };
 
         // CUSTOM's cursor eases the short way round, and comes back into
         // one turn once it rests.

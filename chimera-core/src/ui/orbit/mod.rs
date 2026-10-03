@@ -21,6 +21,7 @@ use crate::orbit::scene::{OrbitSong, Refused, Scene, SceneIdx, SceneRing};
 use crate::orbit::{RINGS, RingIdx};
 use crate::project::{Confirmed, Project, SceneSlot};
 use crate::ui::animation::AnimatedValue;
+use crate::ui::led::{self, Pulse};
 use chimera_theory::Chord;
 
 /// One ring as the pages draw it.
@@ -149,7 +150,7 @@ impl OrbitAnim {
 
     /// One `UiTick`: a new beat fills the dot, a ring that fired flashes,
     /// and what was lit fades; the sweep eases toward the phase.
-    fn tick(&mut self, st: &OrbitStatus) {
+    fn tick(&mut self, st: &OrbitStatus) -> Option<Pulse> {
         let fade = |v: &mut u8| *v = v.saturating_sub(PULSE_FADE);
         fade(&mut self.dot);
         self.flash.iter_mut().for_each(fade);
@@ -165,11 +166,13 @@ impl OrbitAnim {
             self.dot = 0;
             self.flash = [0; RINGS];
             self.fired = st.rings.map(|r| r.fired);
-            return;
+            return None;
         }
+        let mut pulse = None;
         if self.beat != Some(st.beats()) {
             self.beat = Some(st.beats());
             self.dot = PULSE_FULL;
+            pulse = Some(Pulse::of(st.beats()));
         }
         for (i, r) in st.rings.iter().enumerate() {
             if r.fired != self.fired[i] {
@@ -177,6 +180,7 @@ impl OrbitAnim {
                 self.flash[i] = PULSE_FULL;
             }
         }
+        pulse
     }
 
     /// The sweep's turn, 0..1 from the top, eased.
@@ -396,9 +400,10 @@ impl OrbitUi {
         }
     }
 
-    /// One `UiTick` of ORB's and the header's animation.
-    pub fn tick(&mut self) {
-        self.anim.tick(&self.status);
+    /// One `UiTick` of ORB's and the header's animation; the beat that
+    /// began in it, for the LED.
+    pub fn tick(&mut self) -> Option<led::Pulse> {
+        self.anim.tick(&self.status)
     }
 
     /// B6: PLAY when stopped, STOP when playing. The transport is the
