@@ -39,7 +39,7 @@
 **Hard gates. Each is a verification step in the task where it applies.**
 
 1. **Flash.** Baseline at `2dc9eefd`, measured for this plan with `cargo size --release -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit`: **`text` = 773,724 B** (`.vector_table` 664 + `.text` 613,056 + `.rodata` 160,004; `.data` 3,092). After Task 2, `text` must be ≤ 773,724. If it isn't, apply the levers of § 5 inside Task 2. If it is still over, **the controller stops and reports to the owner. Task 3 does not start.** After Tasks 3 and 4, `text` must not rise above its Task 2 value.
-2. **UiState.** `memory_budget_test`'s line `UiState without its Project = N B` must read N ≤ **3,832** after every task. The guard `ui_state_fits_the_ui_reserve` rises to `5 * 1024` in Task 2 (owner's ruling, § 5.0). The design still holds 3,832. If N comes out over, apply the § 5 fallbacks in order: `LOG = 4`, then drop `acked`.
+2. **UiState.** `memory_budget_test`'s line `UiState without its Project = N B` must read N ≤ **3,840** after every task (owner, 2026-10-03: the `u32` load epoch stays in `OrbitView` and `OrbitUi`, spec § 1.8 (4)). The guard `ui_state_fits_the_ui_reserve` rises to `5 * 1024` in Task 2 (owner's ruling, § 5.0). The design still holds 3,832. If N comes out over, apply the § 5 fallbacks in order: `LOG = 4`, then drop `acked`.
 3. **Behaviour.** Every audio golden and every screen golden stays bit-identical, and no golden table literal is edited. The goldens are `golden_test::{goldens_match, goldens_match_through_the_instrument}`, `fx_golden_test::fx_goldens_match`, `instrument_test::instrument_goldens_match`, `screen_golden_test::screen_goldens_match`, `theme_test::default_theme_leaves_every_golden_bit_identical`, `orbit_engine_test::init_scene_events_golden`, `orbit_pages_test::{ring_rhythm_golden, orb_page_golden}` and `disk_codes_test::table_matches_golden`. The one allowed change is the CLEAR-down roll (owner, Q3). No golden at `2dc9eefd` exercises `scatter`, so the expected change to golden tables is **none**. Any golden that moves must be traced to the salt, or the task stops. Every race test in `RACE` below passes. Its assertions on behaviour (what lands, plays, is taken, starts or stops) are unchanged. A line may be rewritten only where it reads or pokes a removed field, as § 4.2 says.
 
 **`RACE`: the race tests (§ 4.2), all must pass after every task**
@@ -273,7 +273,7 @@ Run `G-gold`. Expected: all pass, no golden literal changed.
 
 - [ ] **Step 11: UiState and AXI gate**
 
-Run `G-mem`. Expected: `UiState without its Project` ≤ 3,832, AXI ≤ 442,132 and OrbitView ≤ 336. If UiState is over, apply `LOG = 4` (`Cmd8` is unchanged; `CmdLog` becomes 5 B and `Channel` 12 B; update `option_cmd8_is_one_byte`), re-run, then drop `acked`, as § 5 says.
+Run `G-mem`. Expected: `UiState without its Project` ≤ 3,840, AXI ≤ 442,132 and OrbitView ≤ 336. If UiState is over, apply `LOG = 4` (`Cmd8` is unchanged; `CmdLog` becomes 5 B and `Channel` 12 B; update `option_cmd8_is_one_byte`), re-run, then drop `acked`, as § 5 says.
 
 - [ ] **Step 12: FLASH GATE (hard stop)**
 
@@ -364,7 +364,7 @@ Expected: PASS.
 
 - `G-race`: all pass. Apply the same `assert`-diff check as Task 2 Step 10.
 - `G-gold`: all pass, no literal changed.
-- `G-mem`: UiState ≤ 3,832; AXI ≤ 442,132 and ≤ Task 2's; OrbitShared ≤ 880.
+- `G-mem`: UiState ≤ 3,840; AXI ≤ 442,132 and ≤ Task 2's; OrbitShared ≤ 880.
 - `G-flash`: `text` ≤ Task 2's recorded value. If it isn't, apply the § 5 levers here; if it is still over, stop and report.
 - `just check`: green.
 

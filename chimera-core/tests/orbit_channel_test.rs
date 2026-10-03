@@ -162,7 +162,6 @@ enum Check {
 
 #[derive(Default)]
 struct Stats {
-    issued: u64,
     repeats: u64,
     skips: u64,
     stale_acks: u64,
@@ -365,8 +364,10 @@ impl Sim {
         if !took {
             self.stats.refused += 1;
         }
+        // Both checks: a pre-load view taken as fresh is wrong whatever
+        // it does to the log.
+        assert_eq!(took, fresh, "the load gate");
         if self.check == Check::Log {
-            assert_eq!(took, fresh, "the load gate");
             assert_eq!(self.ui.acked().get(), self.model.acked as u8, "acked");
         }
     }
@@ -434,7 +435,7 @@ impl Sim {
     }
 }
 
-fn run(check: Check) -> Stats {
+fn run(check: Check) {
     let mut all = Stats::default();
     for seed in SEEDS {
         let mut sim = Sim::new(seed, check);
@@ -442,8 +443,12 @@ fn run(check: Check) -> Stats {
             sim.step();
         }
         sim.drain();
+        let wraps = sim.model.head / 256;
+        assert!(
+            wraps >= 1_000,
+            "seed {seed:#x}: {wraps} wraps of the u8 seq"
+        );
         let s = sim.stats;
-        all.issued += sim.issued.len() as u64;
         all.repeats += s.repeats;
         all.skips += s.skips;
         all.stale_acks += s.stale_acks;
@@ -453,7 +458,8 @@ fn run(check: Check) -> Stats {
         all.checkpoints += s.checkpoints;
     }
     // The harness reaches what the proofs lean on: skipped and repeated
-    // publishes (TB c), a full window, and pre-load views refused.
+    // publishes (TB c), a full window, pre-load views refused, and (per
+    // seed, above) the u8 wrap.
     assert!(all.repeats > 0 && all.skips > 0, "TB(c) exercised");
     assert!(all.full > 0, "the window filled");
     assert!(
@@ -461,18 +467,12 @@ fn run(check: Check) -> Stats {
         "pre-load views refused"
     );
     assert!(all.checkpoints > 100_000, "{} checkpoints", all.checkpoints);
-    all
 }
 
+/// Also the wrap test: every seed wraps the u8 seq at least 1,000 times.
 #[test]
 fn log_applies_every_command_once() {
     run(Check::Log);
-}
-
-#[test]
-fn log_survives_the_u8_wrap() {
-    let s = run(Check::Log);
-    assert!(s.issued > 10_000 * 256, "{} issued", s.issued);
 }
 
 #[test]

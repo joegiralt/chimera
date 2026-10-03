@@ -36,9 +36,9 @@ This spec replaces them with **one sequenced command log from the UI, one ack fr
 **Done when:**
 
 - Every UI-to-runner event is a one-byte `Cmd` in one `CmdLog`. The runner reports `acked`.
-- None of these is left in the tree: `presses`, `presses_seen`, `arming` (any of its four), `scene_rev` (any of its four), `OrbitShared.scene`, `.queued`, `.capture`, `incoming`, `unseen`, `requeued`, `landed`, `epoch` in `OrbitView`, `Captured`, `OrbitUi` and `OrbitStatus`, `rhythm_rev`, `notes_rev`, `Revs`, `revs_of`.
+- None of these is left in the tree: `presses`, `presses_seen`, `arming` (any of its four), `scene_rev` (any of its four), `OrbitShared.scene`, `.queued`, `.capture`, `incoming`, `unseen`, `requeued`, `landed`, `epoch` in `Captured` and `OrbitStatus`, `rhythm_rev`, `notes_rev`, `Revs`, `revs_of`.
 - **Space gates** (measured, § 5):
-  - `UiState` without its `Project` ≤ 3,832 B, today's size. This is the design target. The guard itself rises to 5,120 B (§ 5.0).
+  - `UiState` without its `Project` ≤ 3,840 B: today's 3,832 plus the UI's load epoch (owner, 2026-10-03, within the 5,120 B guard of § 5.0).
   - AXI resident ≤ today's.
   - Release `--features orbit` firmware flash at or below the baseline measured before commit 2 (§ 6).
 - Every race test in § 4.2 passes with its assertion unchanged. The property tests in § 4.3 pass on 4 seeds × 1M steps.
@@ -105,7 +105,7 @@ An entry carries no seq. The slot of seq `s` is `s & 7`, and Lemma R (§ 1.8) sh
 | `load: Seq` | event marker | § 3 |
 | `synced: bool` | level | the UI has landed its newest scene command (§ 2.3) |
 
-`OrbitView` loses `epoch`, `scene_rev` and both `RingView` revs. It gains `acked: Seq` and `armed: Capture`, the runner's armed target. `Captured` loses `arming` and `epoch`, and `count` narrows to `u8`.
+`OrbitView` keeps its `u32` `epoch` (the load gate, § 1.8 (4)) and loses `scene_rev` and both `RingView` revs. It gains `acked: Seq` and `armed: Capture`, the runner's armed target. `Captured` loses `arming` and `epoch`, and `count` narrows to `u8`.
 
 ### 1.3 The commands
 
@@ -147,7 +147,7 @@ Each block, before the transport, the clock and the steps:
 
 The UI's view handling runs once per frame, in one function and one order:
 
-1. **Load gate.** While `load_pending`, refuse the view unless `v.acked − L ≤ LOG` (wrapping u8), which means `acked ≥ L` inside the window. The first view that passes clears `load_pending`. This is the only stale-view check (§ 3).
+1. **Load gate.** Refuse the view unless `v.epoch` is the epoch of the UI's newest load. Both are the `u32` `AudioShared.epoch`, which never aliases (ADR 0046). `Channel::ack` also refuses, while `load_pending`, a view with `v.acked − L > LOG` (wrapping u8); the first view that passes clears `load_pending`. This is the only stale-view check (§ 3).
 2. **Status.** Set `acked = v.acked` and `status = OrbitStatus::of(v)`.
 3. **All acked** is `idle = (acked == head) && outbox empty`: the runner has applied every command the UI issued.
 4. **Capture.** If `v.captured.count != took`: `Scene::take(c)`, `took = count`, and harvest the edit (§ 2.2). LEARN and PLAY show `v.armed` whenever `idle`, and the UI's own intent otherwise. A re-arm before the view (adversarial finding 2) keeps showing armed: the view reports the runner armed again. The capture before it is still taken, because the count moved.
@@ -201,15 +201,15 @@ The writer's back slot is two publishes stale, which is harmless because every p
 - (1) the receive gap;
 - (2) W's `head − acked`;
 - (3) `idle`'s `acked == head`;
-- (4) the load gate's `v.acked − L`.
+- (4) `Channel::ack`'s `v.acked − L`, the load gate's second check.
 
-In each, the true distance is at most `LOG`:
+In (1)–(3) the true distance is at most `LOG`:
 
 - (1) and (2) by W and Lemma R.
 - (3) by W.
-- (4) because, while the load is pending, every view the UI reads has `acked` in `[L − 1 − LOG, L + LOG]`. Before the runner sees the load, `acked` is at least the pre-load `acked_ui ≥ L − 1 − LOG`. After it, `acked ≤ head ≤ L + LOG`, since the UI took `acked_ui = L` at the load.
+A u8 resolves distances below 128, so none of these aliases.
 
-A u8 resolves distances below 128, so none of these aliases. No other seq is kept.
+(4) is not bounded by `LOG`, and an earlier draft's claim that it was is withdrawn. `loaded()` sets `acked_ui = L` without the runner having seen anything, so with no view accepted, each load moves `L` up to `LOG + 1` further from the runner's last `applied`: up to 8 pushes against `acked = L`, then the reservation. After `k` back-to-back loads a pre-load view is `9k` behind, and the u8 check accepts it once `9k mod 256 ≥ 248`, first at `k = 28` (pinned by `back_to_back_loads_refuse_the_old_view_until_the_alias`). So the seq check cannot be the gate. **The gate is the view's `u32` `epoch`** (owner, 2026-10-03). A view's epoch is the load the runner was under when it wrote the view, and it equals the UI's only once the runner has read that load's snapshot. A `u32` epoch never aliases, so no pre-load view is accepted, however many loads pass without an audio block. Every post-load view then has `acked` in `[L, L + LOG]`, so the seq check passes it. No other seq is kept.
 
 **The other narrowed counters:**
 
@@ -274,7 +274,7 @@ A u8 resolves distances below 128, so none of these aliases. No other seq is kep
   The publish closure gets `&UiState` after `loaded()`. The shells' pre-load copy, `let (orbit, sync_mode) = (*ui.orbit(), ui.midi().sync)`, goes.
 - **Runner.** Detection stays on `AudioShared.epoch`, a `u32` that never aliases. That is ADR 0046's contract, and it reaches the `Instrument` in the same snapshot. On a new epoch the runner keeps today's reset: it forgets pending offs, stops the transport, drops the DAW's pending word, forgets the take and adopts `settings` whole. It also sets `applied = o.load` and `base_landed = true`, and clears `done.target` to `Off` with `done.len = 0`. So a capture finished during the card read changes `count` but takes nothing (`Scene::take` on `Off` is a no-op). That replaces `Captured.epoch`.
 - **Pre-load commands are void.** They have seqs below `L`, so `applied = o.load` passes them over. Post-load ones have seqs above `L` and are applied, whether or not the runner read the load snapshot itself. The load publish carries the new epoch and `load` together (TB a).
-- **One stale-view check.** Pre-load views have `acked ≤ L − 1`, and post-load ones have `acked ≥ L`. The gate in § 1.6 step 1 refuses the first kind until the first post-load view arrives, then stops comparing. That replaces `v.epoch == self.epoch` ×3, `OrbitStatus.epoch`, `OrbitUi.epoch` and `OrbitView.epoch`.
+- **One stale-view check.** A pre-load view carries an older `epoch`, and the gate in § 1.6 step 1 refuses it. That one gate replaces `v.epoch == self.epoch` ×3 and `OrbitStatus.epoch`. `OrbitView.epoch` and the UI's `u32` load epoch stay (owner, 2026-10-03), because a seq compare alone aliases after 28 back-to-back loads (§ 1.8).
 - **Test rigs** that fake a load by bumping `shared.epoch` alone call a `load()` helper that also sets `o.load`.
 
 ## 4. Inventory
@@ -296,7 +296,7 @@ A u8 resolves distances below 128, so none of these aliases. No other seq is kep
 | `Captured.count: u16` | Capture identity | **Narrowed** → `u8` (§ 1.8) |
 | `Captured.arming: u8` | Arming it was taken under | **Removed** → `v.armed` |
 | `Captured.epoch: u32` | Load it was played on | **Removed** → `done.target = Off` at load |
-| `OrbitView.epoch: u32` | Runner's load | **Removed** → load gate |
+| `OrbitView.epoch: u32` | Runner's load | **Kept**: the load gate (§ 1.8 (4), owner 2026-10-03) |
 | `OrbitView.scene_rev: u16` | Rev adopted | **Removed** → `cue` with all acked |
 | `RingView.rhythm_rev`, `.notes_rev` | Revs the drift was played under | **Removed** → edit gate |
 | `OrbitRunner.revs`, `Revs`, `revs_of` | Revs last copied | **Removed** |
@@ -311,7 +311,7 @@ A u8 resolves distances below 128, so none of these aliases. No other seq is kep
 | `OrbitUi.took: u16` | Count taken | **Narrowed** → `u8` |
 | `OrbitUi.scene_rev: u16`, `.landed: u16` | Switch generation and landing | **Removed** → `scene: Option<Cmd8>` + `sent` bit |
 | `OrbitUi.loops_seen: u32` | Once-a-loop cadence | **Narrowed** → `u8` |
-| `OrbitUi.epoch: u32` | Load | **Removed** → `load: Seq` + `load_pending` bit |
+| `OrbitUi.epoch: u32` | Load | **Kept**, for the load gate; `load: Seq` + `load_pending` bit are added |
 | `OrbitUi::requeued`, `was` snapshots | Rev bump after CLEAR or RELOAD | **Removed**: they issue `Cue(current)` |
 | `OrbitStatus.epoch`, `RingStatus.rhythm_rev` | Draw-side copies | **Removed**. The ORB and RHYTHM drawing asks `OrbitUi::fresh()` (`idle && scene.is_none()`) instead of comparing revs |
 | `SceneRing.rhythm_rev`, `.notes_rev` | Edit revs, scatter seed | **Removed** → `touched: u8` |
@@ -321,11 +321,11 @@ A u8 resolves distances below 128, so none of these aliases. No other seq is kep
 
 **Count:**
 
-- **25 fields removed.**
+- **23 fields removed.**
   - `OrbitShared` 6: `presses`, `scene_rev`, `scene`, `queued`, `capture`, `arming`.
-  - `OrbitView` with `RingView` and `Captured` 6: `epoch`, `scene_rev`, two revs, `Captured.arming` and `Captured.epoch`.
+  - `OrbitView` with `RingView` and `Captured` 5: `scene_rev`, two revs, `Captured.arming` and `Captured.epoch`.
   - `OrbitRunner` with `Take` 4: `revs`, `scene_rev`, `presses_seen`, `Take.arming`.
-  - `OrbitUi` with `OrbitStatus` and `RingStatus` 7: `presses`, `arming`, `scene_rev`, `landed`, `epoch`, `OrbitStatus.epoch`, `RingStatus.rhythm_rev`.
+  - `OrbitUi` with `OrbitStatus` and `RingStatus` 6: `presses`, `arming`, `scene_rev`, `landed`, `OrbitStatus.epoch`, `RingStatus.rhythm_rev`.
   - `SceneRing` 2.
 - **14 added.**
   - `OrbitShared` 3: `log`, `load`, `synced`.
@@ -333,7 +333,7 @@ A u8 resolves distances below 128, so none of these aliases. No other seq is kep
   - `OrbitRunner` 2: `applied`, `base_landed`.
   - `OrbitUi` 6: `log`, `outbox`, `flags` (flip, sent, `load_pending`), `load`, `scene`, `acked`.
   - `SceneRing` 1: `touched`.
-- **Net −11.** Three narrowed: `count`, `took`, `loops_seen`. One retyped: `cue`.
+- **Net −9.** (`OrbitView.epoch` and `OrbitUi.epoch` stay for the load gate, § 1.8 (4).) Three narrowed: `count`, `took`, `loops_seen`. One retyped: `cue`.
 - **Removed functions and guards:** `incoming`, `revs_of`, `requeued`, `unseen`, three epoch tests, `copy_knobs`' rev branches, `Take::arm`'s generation logic, the parity trick, and four of `absorb`'s seven conditions.
 
 ### 4.2 Race tests that must still pass
@@ -421,7 +421,7 @@ These were measured at 4989eb9d (host, 64-bit, `memory_budget_test`, plus a scra
 | `anim` | 32 | same | 32 |
 | **Sum** | 143 → **144** | | 141 → **144** |
 
-`UiState` without its `Project` stays at **3,832 B**, with 3 B of slack inside `OrbitUi`'s padding. If the measurement comes out over, these fallbacks apply in order:
+`UiState` without its `Project` stays at **3,832 B**, with 3 B of slack inside `OrbitUi`'s padding. The table predates the owner's 2026-10-03 ruling: `OrbitUi` keeps its `u32` load epoch, which adds 4 B, so the gate is **3,840 B**. If the measurement comes out over, these fallbacks apply in order:
 
 1. `LOG` = 4 (−4 B).
 2. `acked` dropped and read from the view at flush time (−1 B).
@@ -468,7 +468,7 @@ Every commit builds with `--features orbit` and `--no-default-features`, and pas
 
 After each of commits 2–5, record the same numbers in the commit message.
 
-- **Hard limits, every commit:** `UiState` ≤ 3,832 B (the design target) and AXI ≤ baseline. In commit 2, `memory_budget_test` raises `ui_state_fits_the_ui_reserve`'s cap from 4 KB to 5,120 B (the owner's ruling, § 5.0). It also gains an assertion against the baseline `OrbitView` and `OrbitShared` sizes.
+- **Hard limits, every commit:** `UiState` ≤ 3,840 B (owner, 2026-10-03) and AXI ≤ baseline. In commit 2, `memory_budget_test` raises `ui_state_fits_the_ui_reserve`'s cap from 4 KB to 5,120 B (the owner's ruling, § 5.0). It also gains an assertion against the baseline `OrbitView` and `OrbitShared` sizes.
 - **Flash:** after commit 2 the cumulative delta must be ≤ 0. If it isn't, apply the levers in § 5 within commit 2. If it is still > 0, **stop and report to the owner** before commit 3. After commits 3–5 the cumulative delta must not rise above its commit-2 value.
 
 **The commits:**
@@ -481,7 +481,7 @@ After each of commits 2–5, record the same numbers in the commit message.
    - Tests added: `scenes_converge_after_any_interleaving` and `edits_never_lost_to_drift`.
    - Record the gate.
 3. **Transport and capture through the log.** `TogglePlay`, `Arm`, `Disarm` and `v.armed`. Remove `presses` ×2, `arming` ×4 and `Take`'s generation logic; narrow `count` and `took`. Add `captures_taken_once_after_any_interleaving`. Record the gate.
-4. **Load.** `load: Seq`, the load gate, and `done.target = Off` at load. The publish closure gets `&UiState` after `loaded()` in both shells. Remove `epoch` from `OrbitView`, `Captured`, `OrbitUi` and `OrbitStatus`. Narrow `loops_seen`. Add `loads_void_everything_before`. Record the gate.
+4. **Load.** `load: Seq`, the load gate, and `done.target = Off` at load. The publish closure gets `&UiState` after `loaded()` in both shells. Remove `epoch` from `Captured` and `OrbitStatus`; `OrbitView` and `OrbitUi` keep theirs for the load gate. Narrow `loops_seen`. Add `loads_void_everything_before`. Record the gate.
 5. **Docs.**
    - Update the ORBIT design spec's § 4.1 and its Decisions row ("revs say who wins").
    - Set ADR 0082's status as the owner rules.
@@ -499,4 +499,4 @@ The no-alloc and bounded-cost rules hold throughout. The receive loop is bounded
 5. Drift pauses for at most a frame while any command is unacked.
 6. The DAW transport stays off the log.
 7. **Space is the top priority.** AXI must not grow, and flash must shrink and be measured. Flash is estimated at −0.7 to +0.5 KB and is gated after the first wiring commit (§ 6).
-8. **The `UiState` cap** guards no stack, copy or region (§ 5.0), so it rises to 5,120 B. This design still holds `UiState` at 3,832 B.
+8. **The `UiState` cap** guards no stack, copy or region (§ 5.0), so it rises to 5,120 B. This design holds `UiState` at or under 3,840 B: 3,832 plus the kept load epoch (owner, 2026-10-03).

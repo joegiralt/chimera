@@ -135,34 +135,60 @@ pub enum Cmd {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Cmd8(NonZeroU8);
 
-const CUE: u8 = 2;
-const KEEP: u8 = 10;
-const ARM_RING: u8 = 18;
-const ARM_SEG: u8 = 23;
+// The byte map, range by range. A scene, ring or segment index is added
+// to its range's first byte; an edit's mask 1..=31 to its range's byte
+// before the first.
+const TOGGLE_PLAY: u8 = 1;
+const CUE_FIRST: u8 = 2;
+const CUE_LAST: u8 = 9;
+const KEEP_FIRST: u8 = 10;
+const KEEP_LAST: u8 = 17;
+const ARM_RING_FIRST: u8 = 18;
+const ARM_RING_LAST: u8 = 22;
+const ARM_SEG_FIRST: u8 = 23;
+const ARM_SEG_LAST: u8 = 30;
 const DISARM: u8 = 31;
-const RHYTHM: u8 = DISARM; // + a mask of 1..=31
-const NOTES: u8 = 62; // + a mask of 1..=31
-const LAST: u8 = 93;
+const RHYTHM_FIRST: u8 = 32;
+const RHYTHM_LAST: u8 = 62;
+const NOTES_FIRST: u8 = 63;
+const NOTES_LAST: u8 = 93;
+
+// Each range follows the last with no gap, and holds what it encodes.
+const _: () = assert!(
+    CUE_FIRST == TOGGLE_PLAY + 1
+        && CUE_LAST - CUE_FIRST + 1 == SCENES as u8
+        && KEEP_FIRST == CUE_LAST + 1
+        && KEEP_LAST - KEEP_FIRST + 1 == SCENES as u8
+        && ARM_RING_FIRST == KEEP_LAST + 1
+        && ARM_RING_LAST - ARM_RING_FIRST + 1 == RINGS as u8
+        && ARM_SEG_FIRST == ARM_RING_LAST + 1
+        && ARM_SEG_LAST - ARM_SEG_FIRST + 1 == MAX_SEGS as u8
+        && DISARM == ARM_SEG_LAST + 1
+        && RHYTHM_FIRST == DISARM + 1
+        && RHYTHM_LAST - RHYTHM_FIRST + 1 == (1 << RINGS) - 1
+        && NOTES_FIRST == RHYTHM_LAST + 1
+        && NOTES_LAST - NOTES_FIRST + 1 == (1 << RINGS) - 1
+);
 
 impl From<Cmd> for Cmd8 {
     fn from(c: Cmd) -> Cmd8 {
         let b = match c {
-            Cmd::TogglePlay => 1,
-            Cmd::Cue(n) => CUE + n.get(),
-            Cmd::Keep(n) => KEEP + n.get(),
-            Cmd::Arm(ArmTarget::Ring(r)) => ARM_RING + r.get(),
+            Cmd::TogglePlay => TOGGLE_PLAY,
+            Cmd::Cue(n) => CUE_FIRST + n.get(),
+            Cmd::Keep(n) => KEEP_FIRST + n.get(),
+            Cmd::Arm(ArmTarget::Ring(r)) => ARM_RING_FIRST + r.get(),
             Cmd::Arm(ArmTarget::Segment(s)) => {
                 debug_assert!((s as usize) < MAX_SEGS);
-                ARM_SEG + (s & 7)
+                ARM_SEG_FIRST + (s & 7)
             }
             Cmd::Disarm => DISARM,
             Cmd::EditRhythm(m) => {
                 debug_assert!(!m.is_empty());
-                RHYTHM + m.0
+                RHYTHM_FIRST - 1 + m.0
             }
             Cmd::EditNotes(m) => {
                 debug_assert!(!m.is_empty());
-                NOTES + m.0
+                NOTES_FIRST - 1 + m.0
             }
         };
         // Every arm above is at least 1.
@@ -173,7 +199,7 @@ impl From<Cmd> for Cmd8 {
 impl Cmd8 {
     pub const fn from_byte(b: u8) -> Option<Cmd8> {
         match NonZeroU8::new(b) {
-            Some(n) if b <= LAST => Some(Cmd8(n)),
+            Some(n) if b <= NOTES_LAST => Some(Cmd8(n)),
             _ => None,
         }
     }
@@ -182,14 +208,17 @@ impl Cmd8 {
     pub fn cmd(self) -> Cmd {
         let b = self.0.get();
         match b {
-            1 => Cmd::TogglePlay,
-            CUE..KEEP => Cmd::Cue(SceneIdx::ALL[(b - CUE) as usize]),
-            KEEP..ARM_RING => Cmd::Keep(SceneIdx::ALL[(b - KEEP) as usize]),
-            ARM_RING..ARM_SEG => Cmd::Arm(ArmTarget::Ring(RingIdx::ALL[(b - ARM_RING) as usize])),
-            ARM_SEG..DISARM => Cmd::Arm(ArmTarget::Segment(b - ARM_SEG)),
+            TOGGLE_PLAY => Cmd::TogglePlay,
+            CUE_FIRST..=CUE_LAST => Cmd::Cue(SceneIdx::ALL[(b - CUE_FIRST) as usize]),
+            KEEP_FIRST..=KEEP_LAST => Cmd::Keep(SceneIdx::ALL[(b - KEEP_FIRST) as usize]),
+            ARM_RING_FIRST..=ARM_RING_LAST => {
+                Cmd::Arm(ArmTarget::Ring(RingIdx::ALL[(b - ARM_RING_FIRST) as usize]))
+            }
+            ARM_SEG_FIRST..=ARM_SEG_LAST => Cmd::Arm(ArmTarget::Segment(b - ARM_SEG_FIRST)),
             DISARM => Cmd::Disarm,
-            32..=NOTES => Cmd::EditRhythm(RingMask(b - RHYTHM)),
-            _ => Cmd::EditNotes(RingMask(b - NOTES)),
+            RHYTHM_FIRST..=RHYTHM_LAST => Cmd::EditRhythm(RingMask(b - (RHYTHM_FIRST - 1))),
+            // NOTES_FIRST..=NOTES_LAST: `from_byte` admits nothing else.
+            _ => Cmd::EditNotes(RingMask(b - (NOTES_FIRST - 1))),
         }
     }
 }
@@ -251,7 +280,8 @@ impl Batch {
 }
 
 /// Hands `f` each command in `(applied, head]`, in order, and sets
-/// `applied = head`. At most `LOG` entries, whatever the log says.
+/// `applied = head`. At most `LOG` entries, whatever the log says. The
+/// runner calls `receive`; this is its per-command form, for tests.
 pub fn receive_each(log: &CmdLog, applied: &mut Seq, mut f: impl FnMut(Cmd)) {
     let n = log.head.since(*applied);
     debug_assert!(n as usize <= LOG, "a gap of {n} outruns the log");
@@ -274,19 +304,19 @@ pub fn receive(log: &CmdLog, applied: &mut Seq) -> Batch {
 }
 
 /// The commands a frame issued that haven't reached the log: each class
-/// folded into one.
+/// folded into one. An empty mask is no edit.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Outbox {
     arm: Option<Cmd8>,
-    rhythm: Option<Cmd8>,
-    notes: Option<Cmd8>,
+    rhythm: RingMask,
+    notes: RingMask,
 }
 
 impl Outbox {
     const EMPTY: Outbox = Outbox {
         arm: None,
-        rhythm: None,
-        notes: None,
+        rhythm: RingMask::EMPTY,
+        notes: RingMask::EMPTY,
     };
 
     fn is_empty(&self) -> bool {
@@ -297,20 +327,6 @@ impl Outbox {
 const FLIP: u8 = 1;
 const SENT: u8 = 2;
 const LOAD_PENDING: u8 = 4;
-
-/// One edit class's outbox slot after `m` joins it.
-fn unite(slot: Option<Cmd8>, m: RingMask, edit: fn(RingMask) -> Cmd) -> Option<Cmd8> {
-    let old = match slot.map(Cmd8::cmd) {
-        Some(Cmd::EditRhythm(o) | Cmd::EditNotes(o)) => o,
-        _ => RingMask::EMPTY,
-    };
-    let m = old.union(m);
-    if m.is_empty() {
-        None
-    } else {
-        Some(edit(m).into())
-    }
-}
 
 /// The UI's side: the log it publishes, what waits to enter it, and the
 /// runner's ack.
@@ -361,8 +377,8 @@ impl Channel {
     }
 
     pub fn edit(&mut self, rhythm: RingMask, notes: RingMask) {
-        self.outbox.rhythm = unite(self.outbox.rhythm, rhythm, Cmd::EditRhythm);
-        self.outbox.notes = unite(self.outbox.notes, notes, Cmd::EditNotes);
+        self.outbox.rhythm = self.outbox.rhythm.union(rhythm);
+        self.outbox.notes = self.outbox.notes.union(notes);
     }
 
     /// Moves the outbox into the log, in the fixed order scene, arm,
@@ -377,16 +393,24 @@ impl Channel {
             }
             self.flags |= SENT;
         }
-        for slot in [
-            &mut self.outbox.arm,
-            &mut self.outbox.rhythm,
-            &mut self.outbox.notes,
+        if let Some(c) = self.outbox.arm {
+            if !Self::push(&mut self.log, self.acked, c) {
+                return;
+            }
+            self.outbox.arm = None;
+        }
+        for (mask, edit) in [
+            (
+                &mut self.outbox.rhythm,
+                Cmd::EditRhythm as fn(RingMask) -> Cmd,
+            ),
+            (&mut self.outbox.notes, Cmd::EditNotes),
         ] {
-            if let Some(c) = *slot {
-                if !Self::push(&mut self.log, self.acked, c) {
+            if !mask.is_empty() {
+                if !Self::push(&mut self.log, self.acked, edit(*mask).into()) {
                     return;
                 }
-                *slot = None;
+                *mask = RingMask::EMPTY;
             }
         }
         if self.flags & FLIP != 0 && Self::push(&mut self.log, self.acked, Cmd::TogglePlay.into()) {
@@ -437,9 +461,13 @@ impl Channel {
         }
     }
 
-    pub fn landed(&mut self) {
-        self.scene = None;
-        self.flags &= !SENT;
+    /// `c` has landed. Only the command awaited lands: a newer one, sent
+    /// or not, stays.
+    pub fn landed(&mut self, c: SceneCmd) {
+        if self.awaiting() == Some(c) {
+            self.scene = None;
+            self.flags &= !SENT;
+        }
     }
 
     /// The newest scene command has landed: the UI's `live` is the base.
@@ -636,7 +664,18 @@ mod tests {
         assert!(ch.idle());
         assert!(!ch.ack(Seq(l.0.wrapping_sub(1))));
         assert!(!ch.ack(Seq(l.0.wrapping_sub(1 + LOG as u8))));
+        assert!(
+            !ch.ack(Seq(l.0.wrapping_add(1 + LOG as u8))),
+            "past the window"
+        );
+        assert!(!ch.ack(Seq(l.0.wrapping_add(127))));
         assert_eq!(ch.acked(), l, "a refused view moves nothing");
+        assert!(
+            ch.ack(Seq(l.0.wrapping_add(LOG as u8))),
+            "the window's top edge"
+        );
+        assert_eq!(ch.flags & LOAD_PENDING, 0);
+        let l = ch.loaded();
         assert!(ch.ack(l));
         assert_eq!(ch.flags & LOAD_PENDING, 0);
         assert!(ch.ack(Seq(l.0.wrapping_sub(1))));
@@ -670,8 +709,57 @@ mod tests {
         assert_eq!(ch.log().head(), head, "a sent scene is not sent again");
         assert!(ch.ack(head));
         assert!(ch.idle() && !ch.synced());
-        ch.landed();
+        ch.landed(SceneCmd::Cue(SceneIdx::new(5).unwrap()));
+        assert_eq!(
+            ch.awaiting(),
+            Some(s),
+            "another command's landing lands nothing"
+        );
+        ch.landed(s);
         assert!(ch.synced() && ch.awaiting().is_none());
+    }
+
+    #[test]
+    fn a_landing_keeps_a_newer_scene_command() {
+        let mut ch = Channel::new();
+        let (a, b) = (
+            SceneCmd::Cue(SceneIdx::new(1).unwrap()),
+            SceneCmd::Cue(SceneIdx::new(2).unwrap()),
+        );
+        ch.scene(a);
+        ch.flush();
+        ch.scene(b);
+        assert_eq!(ch.awaiting(), None, "b is not sent yet");
+        ch.landed(a);
+        assert!(!ch.synced(), "b survives a's landing");
+        let h = ch.log().head();
+        ch.flush();
+        assert_eq!(
+            gap(ch.log(), h),
+            [(h.next(), Cmd::Cue(SceneIdx::new(2).unwrap()))]
+        );
+        ch.landed(b);
+        assert!(ch.synced());
+    }
+
+    /// The gate's alias bound. Each load with no view accepted moves `L`
+    /// at most `LOG + 1` past the runner's last ack, so a pre-load view
+    /// is refused for 27 back-to-back loads and aliases at 28 (9 × 28 =
+    /// 252). The shell's u32 load epoch in the view closes that.
+    #[test]
+    fn back_to_back_loads_refuse_the_old_view_until_the_alias() {
+        let mut ch = Channel::new();
+        let old = ch.acked();
+        for k in 1..=28 {
+            for _ in 0..LOG {
+                ch.flip();
+                ch.flush();
+            }
+            assert_eq!(ch.log().head().since(ch.acked()) as usize, LOG);
+            let l = ch.loaded();
+            assert_eq!(l.since(old) as usize, (LOG + 1) * k % 256);
+            assert_eq!(ch.ack(old), k == 28, "{k} loads");
+        }
     }
 
     #[test]
