@@ -23,9 +23,9 @@ const GOLDENS: &[(&str, u64)] = &[
     ("algo_level", 0x408f6bef763157fe),
     ("algo_osc_last", 0x7ac731494a9568e2),
     // The ENV stages' band draws the focused operator's envelope (#311).
-    ("algo_ar", 0xb5b27e7051189e83),
-    ("algo_d1l", 0x0eb7a93ae9dabbea),
-    ("algo_d2r", 0xe2a1cc0e86ec1dd2),
+    ("algo_ar", 0x7a1f379473575179),
+    ("algo_d1l", 0x4f5314d1e36ae59d),
+    ("algo_d2r", 0x955ae4dc6d47a3d7),
     ("bigviz_filter", 0x64de3de945e82cf3),
     ("flt_mode", 0x9dd12a044e75cc68),
     ("env_a", 0x6f15c442d71edf83),

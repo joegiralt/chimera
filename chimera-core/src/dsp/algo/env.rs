@@ -9,6 +9,10 @@ const ATTACK_SECONDS: f32 = 11.6;
 /// Time a decay takes to fall 96 dB (16 octaves) at effective rate 0.
 const DECAY_SECONDS: f32 = 92.8;
 pub const DECAY_OCTAVES: f32 = 16.0;
+/// `log2(DECAY_SECONDS / ATTACK_SECONDS)`: at one rate, a full decay takes
+/// eight full attacks.
+pub const DECAY_OVER_ATTACK_OCTAVES: f32 = 3.0;
+const _: () = assert!(DECAY_SECONDS == ATTACK_SECONDS * 8.0);
 /// -80 dB: a decay or release below this is over.
 pub const ENV_FLOOR: f32 = 1.0e-4;
 

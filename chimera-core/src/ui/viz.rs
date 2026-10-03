@@ -6,7 +6,12 @@ use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
 use crate::dsp::algo::algorithms::Algorithm;
+use crate::dsp::algo::env::{
+    DECAY_OCTAVES, DECAY_OVER_ATTACK_OCTAVES, EnvRates, decay_seconds, effective, effective_release,
+};
+use crate::dsp::algo::math::log2;
 use crate::dsp::algo::plan::{OPS, blend};
+use crate::dsp::algo::tx::d1l_level;
 use crate::dsp::modulator::{EnvForm, EnvSpeed, Func, HoldPos, LfoForm};
 use crate::scope::{self, SCOPE_LEN};
 use crate::ui::alg_layout;
@@ -351,53 +356,56 @@ pub fn label_floor(label: &str, rest: f32) -> f32 {
 /// The operator envelope's stage labels, one per `op_env` width.
 pub const OP_ENV_LABELS: [&str; 4] = ["A", "D1", "D2", "R"];
 
-/// D2 runs while the key is held, so like the amp's sustain it gets a fixed
-/// width; how far D2R sinks it is read over `OP_D2_SECONDS`.
+/// D2 runs while the key is held, so like the amp's sustain it gets a set
+/// weight beside the other stages' widths rather than a time; how far D2R
+/// sinks it is read over `OP_D2_SECONDS`.
 const OP_D2_WIDTH: f32 = 0.3;
-const OP_D2_SECONDS: f32 = 1.0;
+pub const OP_D2_SECONDS: f32 = 1.0;
 /// The graph's level axis: 48 dB, D1L's own range (3 dB a step), so D1L 1
 /// sits near the floor.
-const OP_LEVEL_OCTAVES: f32 = 8.0;
+pub const OP_LEVEL_OCTAVES: f32 = 8.0;
 
 /// An operator envelope (key scaling aside) as `envelope`'s widths and
-/// heights: A · D1 · D2 · R. Stage times are the DSP's own (`env`), placed
-/// on a log axis from the fastest attack to the slowest full decay; a rate
-/// 0 holds, so its stage is full width. Levels are in dB
-/// (`OP_LEVEL_OCTAVES`), the axis the decays fall straight along. A keeps
-/// the amp's least width; D1 and R widen to fit their labels.
-pub fn op_env(r: crate::dsp::algo::env::EnvRates) -> ([f32; 4], [f32; 5]) {
-    use crate::dsp::algo::env::{
-        DECAY_OCTAVES, attack_seconds, decay_seconds, effective, effective_release,
+/// heights: A · D1 · D2 · R. Each stage's width is the log of its own DSP
+/// time (`env`'s law, `t = K * 2^(-rate/4)`, in closed form), placed
+/// between the fastest attack and the slowest stage that can occur, a fall
+/// down the whole axis at effective rate 2; a rate 0 holds, so its stage
+/// is full width. Levels are in dB (`OP_LEVEL_OCTAVES`), the axis the
+/// decays fall straight along. A keeps the amp's least width; D1 and R
+/// widen to fit their labels; all are then scaled to fill the plot.
+pub fn op_env(r: EnvRates) -> ([f32; 4], [f32; 5]) {
+    // Octaves of time above the fastest attack (effective rate 63).
+    let attack = |rate: u8| (63 - rate) as f32 / 4.0;
+    // A fall of `by` heights at `rate`: a full decay's time, scaled.
+    let fall = |rate: u8, by: f32| {
+        attack(rate) + DECAY_OVER_ATTACK_OCTAVES + log2(by * OP_LEVEL_OCTAVES / DECAY_OCTAVES)
     };
-    use crate::dsp::algo::tx::d1l_level;
-    let (fast, slow) = (attack_seconds(63), decay_seconds(1));
-    let span = |t: f32| (libm::log2f(t / fast) / libm::log2f(slow / fast)).clamp(0.0, 1.0);
-    // Seconds a decay at `rate` takes to fall one height unit.
-    let unit = |rate: u8| decay_seconds(rate) * OP_LEVEL_OCTAVES / DECAY_OCTAVES;
-    let fall = |rate: u8, by: f32| span(by * unit(rate));
+    let span = |oct: f32| (oct / fall(2, 1.0)).clamp(0.0, 1.0);
     let (ar, d1r, d2r) = (effective(r.ar, 0), effective(r.d1r, 0), effective(r.d2r, 0));
+    let l = d1l_level(r.d1l);
+    // D1R 0 holds D1, unless D1L 15 meets it at once and D2 runs (`OpEnv`).
+    let d1_holds = d1r == 0 && l < 1.0;
     let peak = if ar == 0 { 0.0 } else { 1.0 };
-    let knee = match (d1r, d1l_level(r.d1l)) {
-        (0, _) => peak,
-        (_, l) if l > 0.0 => (1.0 + libm::log2f(l) / OP_LEVEL_OCTAVES).clamp(0.0, peak),
-        _ => 0.0,
+    let knee = if d1_holds {
+        peak
+    } else if l > 0.0 {
+        (1.0 + log2(l) / OP_LEVEL_OCTAVES).clamp(0.0, peak)
+    } else {
+        0.0
     };
-    let end = match (d1r, d2r) {
-        (0, _) | (_, 0) => knee,
-        _ => (knee - OP_D2_SECONDS / unit(d2r)).max(0.0),
+    let end = if d1_holds || d2r == 0 {
+        knee
+    } else {
+        let per_height = decay_seconds(d2r) * OP_LEVEL_OCTAVES / DECAY_OCTAVES;
+        (knee - OP_D2_SECONDS / per_height).max(0.0)
     };
-    let a = if ar == 0 {
+    let a = if ar == 0 { 1.0 } else { span(attack(ar)) }.max(0.02);
+    let d1 = if d1_holds {
         1.0
     } else {
-        span(attack_seconds(ar))
-    }
-    .max(0.02);
-    let d1 = if d1r == 0 {
-        1.0
-    } else {
-        fall(d1r, peak - knee)
+        span(fall(d1r, peak - knee))
     };
-    let rel = fall(effective_release(r.rr, 0), end).max(0.02);
+    let rel = span(fall(effective_release(r.rr, 0), end)).max(0.02);
     let d1 = d1.max(label_floor("D1", a + OP_D2_WIDTH + rel));
     let rel = rel.max(label_floor("R", a + d1 + OP_D2_WIDTH));
     let total = a + d1 + OP_D2_WIDTH + rel;

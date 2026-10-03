@@ -3,8 +3,11 @@ use embedded_graphics::geometry::{Point, Size};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, StyledDrawable};
 
-use crate::addr::{BlockRead, Op, ParamAddr};
+use crate::addr::{BlockRead, BlockRef, Op, ParamAddr};
+use crate::block::find_spec;
 use crate::dsp::algo::algorithms::AlgoId;
+use crate::dsp::algo::env::EnvRates;
+use crate::dsp::algo::params::AlgoOpParams;
 use crate::dsp::modulator::{EnvType, HoldPos};
 use crate::part::DacPair;
 use crate::perf::load::AudioStats;
@@ -275,13 +278,13 @@ impl Renderer {
 
     /// The focused operator's envelope rates, this page's from its animated
     /// slot (to the nearest step), and the stage that rate edits.
-    fn op_env(&self, f: &Frame) -> Option<(crate::dsp::algo::env::EnvRates, Option<usize>)> {
-        use crate::dsp::algo::params::AlgoOpParams as P;
+    fn op_env(&self, f: &Frame) -> Option<(EnvRates, Option<usize>)> {
+        use AlgoOpParams as P;
         let addr = slot_addr(f.def, f.focus, &f.ctx)?;
-        let crate::addr::BlockRef::AlgoOp(op) = addr.block else {
+        let BlockRef::AlgoOp(op) = addr.block else {
             return None;
         };
-        let spec = crate::block::find_spec(addr.block.specs(), addr.param)?;
+        let spec = find_spec(addr.block.specs(), addr.param)?;
         let v =
             spec.quantize(spec.min + self.anim[f.focus].current() * (spec.max - spec.min)) as u8;
         let mut r = f.parts[f.active_part.index()].sound.params.algo.ops[op.index()].rates();
@@ -380,12 +383,14 @@ impl Renderer {
                     )
                 }
                 VizType::OpEnv => {
+                    // AR D1R D2R 5 bits, D1L RR 4, the lit stage 3.
                     let key = self.op_env(f).map_or(0, |(r, lit)| {
-                        [r.ar, r.d1r, r.d1l, r.d2r, r.rr, lit.map_or(9, |l| l as u8)]
-                            .iter()
-                            .fold(0x811c_9dc5u32, |h, &b| {
-                                (h ^ b as u32).wrapping_mul(0x0100_0193)
-                            })
+                        (r.ar as u32) << 23
+                            | (r.d1r as u32) << 18
+                            | (r.d2r as u32) << 13
+                            | (r.d1l as u32) << 9
+                            | (r.rr as u32) << 5
+                            | lit.map_or(7, |l| l as u32)
                     });
                     ([0; 6], key)
                 }
