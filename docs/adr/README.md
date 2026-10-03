@@ -73,3 +73,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0066](0066-settings-menu.md) | MENU opens a SETTINGS menu (amends 0044, supersedes 0057 through it) | Proposed |
 | [0067](0067-focus-glyphs.md) | Focus glyphs: hand-assigned per parameter, ARC by default; composites draw from set values only | Proposed |
 | [0068](0068-usb-console.md) | Read the unit over a polled USB CDC-ACM console | Proposed |
+| [0069](0069-transpose-staff-glyph.md) | TRANSPOSE takes STAFF: a note on a three-line staff (amends 0067) | Proposed |
