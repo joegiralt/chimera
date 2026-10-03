@@ -91,7 +91,7 @@ pub enum UsbOff {
     Hsi48,
     /// PWR_CR3.USB33RDY after USB33DEN: VDD33USB, the FS PHY's supply.
     Usb33,
-    /// OTG GRSTCTL.AHBIDL after the RCC reset.
+    /// OTG GRSTCTL.AHBIDL once the OTG clock is on.
     AhbIdle,
     /// OTG GRSTCTL.CSRST, the core soft reset, never cleared.
     CoreReset,
@@ -165,7 +165,7 @@ impl UsbState {
 }
 
 impl fmt::Display for UsbState {
-    /// `on(try 2)`, `off(csrst, try 10)`.
+    /// `on(try 2)`, `off(csrst, try 3)`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             UsbState::On { tries } => write!(f, "on(try {tries})"),
@@ -176,8 +176,7 @@ impl fmt::Display for UsbState {
 
 /// USB tries per boot: one at start-up, then one every `USB_RETRY_MS`
 /// from the UI loop, so a port that won't come up is given up on in
-/// about a second (#331). The synth plays between
-/// tries.
+/// about a second (#331). The synth plays between tries.
 pub const USB_TRIES: u8 = 3;
 pub const USB_RETRY_MS: u32 = 500;
 

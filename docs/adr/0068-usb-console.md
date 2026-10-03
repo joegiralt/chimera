@@ -18,8 +18,21 @@ is `docs/superpowers/specs/2026-10-02-usb-console-design.md`.
 
 ## Decision
 - **Transport:** a CDC-ACM serial device on USB2 OTG_FS, PA11/PA12 AF10,
-  from `stm32h7xx-hal` 0.16's `usb_hs` (`synopsys-usb-otg` 0.4), with
-  `usb-device` 0.3 and `usbd-serial` 0.2. No hand-written driver.
+  on `synopsys-usb-otg` 0.4's `UsbBus` (the driver under `stm32h7xx-hal`
+  0.16's `usb_hs`), with `usb-device` 0.3 and `usbd-serial` 0.2. The
+  `UsbPeripheral` is Chimera's `usb::Otg2`, not the HAL's `USB2`: its
+  `enable` only sets the OTG clock bit, so the bus's enable, which spins
+  on AHBIDL and CSRST with interrupts masked and no timeout, repeats only
+  what `usb::preflight` checked. The HAL's would also pulse the block's
+  RCC reset and set USB33DEN inside that masked section.
+- **Bring-up:** after the audio, the first frame and the watchdog
+  (`watchdog::await_live`, then `start`), so a hang there resets instead
+  of freezing. `usb::preflight` bounds every precondition with interrupts
+  on: HSI48RDY, USB33DEN then USB33RDY, the OTG clock, AHBIDL, then PHYSEL
+  and CSRST. A failed try is retried from the UI loop every 500 ms, three
+  tries in all (`boot::UsbRetry`); after the last the synth plays without
+  USB and the screen toasts `USB OFF: <field>`. The boot record keeps each
+  step and the OTG/PWR registers in RTC backup registers for `status`.
 - **Clock:** HSI48 to the USB kernel clock, trimmed by the CRS from USB2's
   SOF (`SYNCSRC = 0b11`).
 - **Polled, never interrupt-driven:** `usb_dev.poll` runs at the top of the

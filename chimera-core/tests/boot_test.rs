@@ -177,7 +177,7 @@ fn every_usb_state_reads_back_from_its_code() {
 }
 
 #[test]
-fn usb_retries_every_500_ms_ten_times_then_gives_up() {
+fn usb_retries_every_500_ms_until_usb_tries_then_gives_up() {
     let mut r = UsbRetry::new();
     assert!(r.due(Ms(7)), "the first try is at once");
     assert_eq!(r.tried(Ms(7)), 1);

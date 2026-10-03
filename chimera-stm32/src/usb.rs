@@ -51,12 +51,13 @@ const READ_BUDGET: usize = 256;
 type Dev = UsbDevice<'static, UsbBus<Otg2>>;
 type Port = SerialPort<'static, UsbBus<Otg2>>;
 
-/// OTG2, the OTG FS core on PA11/PA12, brought up in the stock PreenFM3
-/// firmware's order (Ixox/preenfm3 `firmware/Src/usbd_conf.c`
-/// `HAL_PCD_MspInit`): its AHB clock enabled and nothing else, no RCC
-/// reset; `preflight` enables VDD33USB's detector first. From a cold
-/// power-on the core reset still never completes (CSRST stays set), and
-/// the console stays off until a pass through the ROM loader:
+/// OTG2, the OTG FS core on PA11/PA12, for `UsbBus`. Its `enable` only
+/// sets the clock bit, so `UsbBus::enable`'s masked, unbounded spins
+/// (AHBIDL, then PHYSEL and CSRST) repeat exactly what `preflight` just
+/// saw complete. The HAL's `USB2::enable` would also pulse the block's
+/// RCC reset and set USB33DEN inside that masked section, which
+/// `preflight` never checked. From a cold power-on CSRST never completes
+/// and the console stays off until a pass through the ROM loader:
 /// https://github.com/joegiralt/chimera/issues/331
 pub struct Otg2 {
     _global: pac::OTG2_HS_GLOBAL,
@@ -66,8 +67,8 @@ pub struct Otg2 {
 }
 
 // SAFETY: as the HAL's `USB2` (stm32h7xx-hal 0.16 usb_hs.rs): the register
-// blocks are owned here, and only `UsbBus` touches them, through
-// `REGISTERS`, under its own critical sections.
+// blocks are owned here; `UsbBus` writes them, through `REGISTERS`, under
+// its own critical sections, and `regs()` only reads them.
 unsafe impl Sync for Otg2 {}
 
 // SAFETY: REGISTERS is OTG2's global block, which this type owns with its
@@ -145,31 +146,29 @@ pub struct Unconnected {
 #[must_use]
 pub struct Ready(UsbParts);
 
-/// What `connect`'s enable (synopsys-usb-otg `UsbBus::enable`) spins on
-/// with interrupts masked and no timeout, checked first with interrupts
-/// on and a timeout: HSI48RDY, then the OTG core's AHBIDL and a core soft
-/// reset (CSRST) on the FS PHY. `Err` names the first that never came
-/// true: `connect` would spin on it forever with interrupts masked, so the
-/// boot goes on without USB, and the shell toasts why.
-pub fn preflight(parts: UsbParts, cpu_hz: u32, tries: u8) -> Result<Ready, (UsbParts, UsbOff)> {
-    match check(&parts, cpu_hz, tries) {
+/// The port's bring-up, each wait bounded, interrupts on: HSI48RDY (the
+/// kernel clock), USB33DEN then USB33RDY (VDD33USB), the OTG clock, then
+/// AHBIDL and a core soft reset (CSRST) on the FS PHY. The last two are
+/// what `connect`'s enable (synopsys-usb-otg `UsbBus::enable`) spins on
+/// with interrupts masked and no timeout. `Err` names the first that
+/// never came true and hands the parts back for the next try.
+pub fn preflight(parts: UsbParts, cpu_hz: u32) -> Result<Ready, (UsbParts, UsbOff)> {
+    match check(&parts, cpu_hz) {
         Ok(()) => Ok(Ready(parts)),
         Err(why) => Err((parts, why)),
     }
 }
 
-/// How long the OTG block's RCC reset is left to settle.
-const RESET_SETTLE_MS: u32 = 2;
-
-fn check(parts: &UsbParts, cpu_hz: u32, tries: u8) -> Result<(), UsbOff> {
+fn check(parts: &UsbParts, cpu_hz: u32) -> Result<(), UsbOff> {
     let limit = READY_WAIT_MS * (cpu_hz / 1000);
     let wait = |ready: &mut dyn FnMut() -> bool| wait_until(limit, DWT::cycle_count, ready);
     // SAFETY: RCC and PWR are owned by the HAL after `freeze`; this reads
     // HSI48RDY, sets PWR_CR3.USB33DEN (bit 24), the bit the HAL's own
     // `USB2::enable` sets the same way, reads USB33RDY (bit 26, RM0433
-    // PWR_CR3; the PAC's `usb33rdy`), and sets AHB1ENR's USB2OTGEN and
-    // pulses AHB1RSTR's USB2OTGRST, this port's own clock and reset bits.
-    // Nothing else writes these after `freeze`, no interrupt included.
+    // PWR_CR3; the PAC's `usb33rdy`), and sets AHB1ENR's USB2OTGEN, this
+    // port's own clock bit. Both registers are shared, and these
+    // read-modify-writes run outside a critical section: sound because no
+    // interrupt handler writes RCC or PWR.
     let (rcc, pwr) = unsafe { (&*pac::RCC::ptr(), &*pac::PWR::ptr()) };
     if !wait(&mut || rcc.cr.read().hsi48rdy().is_ready()) {
         return Err(UsbOff::Hsi48);
@@ -183,16 +182,6 @@ fn check(parts: &UsbParts, cpu_hz: u32, tries: u8) -> Result<(), UsbOff> {
         return Err(UsbOff::Usb33);
     }
     rcc.ahb1enr.modify(|_, w| w.usb2otgen().set_bit());
-    // From try 2: the block's RCC reset and a moment to settle, in case a
-    // CSRST that never cleared wedged the core. It doesn't free the cold
-    // case (#331), but costs nothing.
-    if tries >= 2 {
-        rcc.ahb1rstr.modify(|_, w| w.usb2otgrst().set_bit());
-        rcc.ahb1rstr.modify(|_, w| w.usb2otgrst().clear_bit());
-        let _ = wait_until(RESET_SETTLE_MS * (cpu_hz / 1000), DWT::cycle_count, || {
-            false
-        });
-    }
     let global = &parts.global;
     if !wait(&mut || global.grstctl.read().ahbidl().bit_is_set()) {
         return Err(UsbOff::AhbIdle);
@@ -465,6 +454,13 @@ impl Out for UsbOut<'_> {
     }
 }
 
+/// DSTS.FNSOF (bits 8..22): moving while the host sends start-of-frame.
+fn frame_number() -> u32 {
+    // SAFETY: a plain read of OTG2's DSTS, which has no read side effect.
+    let d = unsafe { &*pac::OTG2_HS_DEVICE::ptr() };
+    d.dsts.read().bits() & 0x3F_FF00
+}
+
 /// The OTG and PWR registers a cold and a warm bring-up are compared on.
 pub fn regs() -> UsbRegs {
     // SAFETY: plain reads of OTG2's and PWR's fixed registers; none of
@@ -539,7 +535,7 @@ impl PortState {
         };
         let tries = retry.tried(now);
         step(UsbStep::Preflight, tries);
-        let state = match preflight(parts, cpu_hz, tries) {
+        let state = match preflight(parts, cpu_hz) {
             Ok(ready) => {
                 let unconnected = init(ready, clocks, cpu_hz);
                 step(UsbStep::Init, tries);
@@ -550,7 +546,7 @@ impl PortState {
                     usb,
                     tries,
                     step: UsbStep::Up,
-                    sof: regs().dsts,
+                    sof: frame_number(),
                 };
                 UsbState::On { tries }
             }
@@ -577,8 +573,7 @@ impl PortState {
         else {
             return None;
         };
-        // DSTS.FNSOF, bits 8..22.
-        let frame = regs().dsts & 0x3F_FF00;
+        let frame = frame_number();
         let next = bus_step(usb.dev.state(), frame != *sof, *step);
         *sof = frame;
         (next != *step).then(|| {

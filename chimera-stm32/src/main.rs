@@ -374,8 +374,7 @@ fn synth(board: Board) -> ! {
 
     marker.stage(BootStage::Audio);
 
-    // Step 3.
-
+    // Step 3: PART 1 replaces the splash.
     let (mut pacer, first) = chimera_core::ui::animation::Pacer::start(controls::now_ms());
     ui.update(first);
     ui.render_with_audio(&mut display, &perf.stats, None, scope_r.read());

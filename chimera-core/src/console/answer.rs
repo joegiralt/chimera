@@ -27,9 +27,11 @@ pub trait Unit {
     fn frame(&self) -> Frame<'_>;
     /// Arms the restart, made once `OK` is out. `None`: not in this build.
     fn dfu(&mut self) -> Option<()>;
-    /// What the chip saw at boot: `status`'s last line. `None`: no line.
+    /// What the chip saw at boot: `status`'s `boot` and `last_usb_regs`
+    /// lines, after `at`. `None`: neither.
     fn boot(&self) -> Option<BootSeen>;
-    /// The OTG and PWR registers now: `status`'s `usb_regs` line.
+    /// The OTG and PWR registers now: `status`'s `usb_regs` line, last
+    /// before `OK`. `None`: no line.
     fn usb_regs(&self) -> Option<UsbRegs>;
 }
 

@@ -89,7 +89,10 @@ Once per session, after powering on:
    dfu-util -a0 -d 0483:df11 -s 0x8020000:leave
    ```
 
-   (or `just flash`, which flashes and leaves the same way).
+   dfu-util then reports an error and exits 74: `:leave` resets the unit
+   under it, so the final status request fails. That is expected (the
+   `Justfile`'s `flash` recipe accepts it the same way). `just flash`
+   flashes and leaves the same way.
 
 Chimera restarts with the console up (`0483:5740`), and `just status`,
 `just flash` and the rest work hands-free until the unit is powered off.

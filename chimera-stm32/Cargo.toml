@@ -39,8 +39,9 @@ embedded-sdmmc = { version = "0.10", default-features = false }
 embedded-hal = "1.0"
 usb-device = { version = "0.3.2", optional = true }
 usbd-serial = { version = "0.2.2", optional = true }
-# The HAL's own OTG driver, for `usb::Otg2`: the stock PreenFM3's bring-up
-# order, which the HAL's `USB2` doesn't follow.
+# The HAL's own OTG driver, for `usb::Otg2`, whose enable adds nothing to
+# what `usb::preflight` checked (the HAL's `USB2` resets the block and sets
+# USB33DEN inside the masked section).
 synopsys-usb-otg = { version = "0.4.0", features = ["hs"], optional = true }
 
 # no_std bin, own #[panic_handler]: the test harness pulls in std's, which

@@ -137,6 +137,7 @@ pub fn after_reset(
         rtc.bkpr[JUMP_RSR].write(|w| w.bkp().bits(rsr));
         jump(cp)
     }
+    // Only a synth boot gets here.
     let read = |i: usize| rtc.bkpr[i].read().bits();
     let last_stage = read(STAGE);
     let last_usb = read(USB);
@@ -144,26 +145,26 @@ pub fn after_reset(
     let last_usb_regs = UsbRegs::from_words(core::array::from_fn(|i| read(USB_REGS + i)));
     // This boot's record starts here, so a step it never reaches reads none.
     rtc.bkpr[STAGE].write(|w| w.bkp().bits(BootStage::Entry.code()));
-    for i in [USB, USB_STEP] {
+    for i in [USB, USB_STEP]
+        .into_iter()
+        .chain(USB_REGS..USB_REGS + UsbRegs::WORDS)
+    {
         rtc.bkpr[i].write(|w| w.bkp().bits(0));
     }
-    match action {
-        BootAction::RomDfu => jump(cp),
-        BootAction::Synth => Checked(BootSeen {
-            marker,
-            readback,
-            action,
-            rsr,
-            dbp,
-            boots,
-            from: rtc.bkpr[FROM].read().bits(),
-            jump_rsr: rtc.bkpr[JUMP_RSR].read().bits(),
-            last_stage,
-            last_usb,
-            last_usb_step,
-            last_usb_regs,
-        }),
-    }
+    Checked(BootSeen {
+        marker,
+        readback,
+        action,
+        rsr,
+        dbp,
+        boots,
+        from: rtc.bkpr[FROM].read().bits(),
+        jump_rsr: rtc.bkpr[JUMP_RSR].read().bits(),
+        last_stage,
+        last_usb,
+        last_usb_step,
+        last_usb_regs,
+    })
 }
 
 /// Into the ROM loader, never back. The marker read back clear, so the

@@ -1,4 +1,4 @@
-use chimera_core::boot::{BootAction, BootSeen};
+use chimera_core::boot::{BootAction, BootSeen, UsbRegs};
 use chimera_core::clock_plan::SiliconRev;
 use chimera_core::console::{
     Colours, Command, Console, Frame, NoArg, Out, Request, SHOT_HEADER, Stalled, Stats, Unit,
@@ -27,6 +27,7 @@ struct Fake {
     dfu: Option<()>,
     dfu_calls: usize,
     boot: Option<BootSeen>,
+    usb_regs: Option<UsbRegs>,
 }
 
 impl Fake {
@@ -40,6 +41,7 @@ impl Fake {
             dfu: None,
             dfu_calls: 0,
             boot: None,
+            usb_regs: None,
         }
     }
 }
@@ -68,8 +70,8 @@ impl Unit for Fake {
     fn boot(&self) -> Option<BootSeen> {
         self.boot
     }
-    fn usb_regs(&self) -> Option<chimera_core::boot::UsbRegs> {
-        None
+    fn usb_regs(&self) -> Option<UsbRegs> {
+        self.usb_regs
     }
 }
 
@@ -251,6 +253,14 @@ fn the_chips_status_ends_with_its_boot_line() {
     let mut want = String::new();
     chimera_core::console::write_status(&u.ui, &mut want).unwrap();
     assert_eq!(ask(&mut u, "status\n"), format!("{want}{seen}\nOK\n"));
+    u.usb_regs = Some(UsbRegs::from_words([1, 2, 3, 4, 5, 6]));
+    assert_eq!(
+        ask(&mut u, "status\n"),
+        format!(
+            "{want}{seen}\nusb_regs gotgctl=00000001 gccfg=00000002 dctl=00000003 \
+             gintsts=00000004 dsts=00000005 pwr_cr3=00000006\nOK\n"
+        )
+    );
 }
 
 #[test]
