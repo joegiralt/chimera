@@ -29,6 +29,8 @@ use chimera_core::instrument::{
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{CUTOFF, MAX_MOD_SOURCES, ModSource, ModState, VCA};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
+#[cfg(feature = "orbit")]
+use chimera_core::orbit::runner::OrbitRunner;
 use chimera_core::params::{
     EngineType, EnvParams, FilterParams, FolderParams, OutParams, ParamSnapshot,
 };
@@ -605,7 +607,17 @@ pub fn run(display: &mut impl ChimeraDisplay, clocks: Clocks, project: &mut Proj
     let g1 = MidiNote::new(31).unwrap_or(MidiNote::A4);
     let dark = rig.time_note_on(g1, dark_pluck, (true, silent));
     let light = rig.time_note_on(g1, short_string, (true, silent));
-    show_memory(display, (rebuild, proj_crc), note_on, (lowest, dark, light));
+    #[cfg(feature = "orbit")]
+    let orbit = Some(rig.time_orbit());
+    #[cfg(not(feature = "orbit"))]
+    let orbit = None;
+    show_memory(
+        display,
+        (rebuild, proj_crc),
+        note_on,
+        (lowest, dark, light),
+        orbit,
+    );
     hold(clocks);
 }
 
@@ -797,6 +809,40 @@ impl Rig<'_> {
             }
         }
         cycles / ROUNDS
+    }
+
+    /// Cycles of `OrbitRunner::block`, its mean and its worst over
+    /// `ORBIT_LOOPS` loops: five rings of 32 steps, every step a hit,
+    /// MUTATE 100 %, at the top BPM so the loops come quickly, into a quiet
+    /// `Instrument` that renders nothing. The clock's division and the
+    /// notes' `handle` are inside the timing.
+    #[cfg(feature = "orbit")]
+    #[inline(never)]
+    fn time_orbit(&mut self) -> (u32, u32) {
+        use chimera_core::block::Block;
+        use chimera_core::orbit::clock::Bpm;
+        use chimera_core::orbit::scene::SceneRing;
+        const ORBIT_LOOPS: u32 = 2;
+        let budget = SampleBudget::for_cpu(u32::MAX);
+        let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
+        let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
+        let o = &mut shared.orbit;
+        for r in o.settings.rings.iter_mut() {
+            r.set(SceneRing::STEPS, 31.0);
+            r.set(SceneRing::HITS, 32.0);
+            r.set(SceneRing::MUTATE, 100.0);
+            r.set(SceneRing::MUTE, 0.0);
+        }
+        (o.bpm, o.run) = (Bpm::clamped(Bpm::MAX), true);
+        let mut runner = OrbitRunner::new(engine::SAMPLE_RATE_NZ);
+        let (mut total, mut worst, mut blocks) = (0u32, 0u32, 0u32);
+        while runner.view().loops < ORBIT_LOOPS && blocks < IDLE_BLOCKS {
+            let start = DWT::cycle_count();
+            black_box(runner.block(inst, shared));
+            let c = DWT::cycle_count().wrapping_sub(start);
+            (total, worst, blocks) = (total.wrapping_add(c), worst.max(c), blocks + 1);
+        }
+        (total / blocks.max(1), worst)
     }
 
     /// Six Parts written with one noise block, sends 0.5, no voices:
@@ -1039,6 +1085,7 @@ fn show_memory(
     (rebuild, proj_crc): (u32, u32),
     note_on: u32,
     (lowest, dark, light): (u32, u32, u32),
+    orbit: Option<(u32, u32)>,
 ) {
     use core::mem::size_of;
     draw::fill_rect(display, 0, 0, theme::SCREEN_W, theme::SCREEN_H, theme::BG);
@@ -1059,11 +1106,18 @@ fn show_memory(
         // One project's CRC, every slot filled: the project status's cost.
         format_args!("PROJ CRC {proj_crc} CYC"),
     ];
+    let (mean, worst) = orbit.unwrap_or_default();
+    // A block's ORBIT, mean and worst (a step on every ring, MUTATE at
+    // the loop), against `SampleBudget`'s cycles per block.
+    let orbit_line = format_args!("ORBIT {mean}/{worst} CYC/BLK");
+    let lines = lines.into_iter().chain(orbit.map(|_| orbit_line));
+    // Twelve lines at 22 px end at 288, under 320; eleven fit at ROW_H.
+    let row_h = if orbit.is_some() { 22 } else { ROW_H };
     let mut line = FmtBuf::new();
-    for (i, args) in lines.into_iter().enumerate() {
+    for (i, args) in lines.enumerate() {
         line.clear();
         let _ = line.write_fmt(args);
-        let y = 46 + i as i32 * ROW_H;
+        let y = 46 + i as i32 * row_h;
         draw::text(display, &theme::FONT_VALUE, line.as_str(), 4, y, theme::INK);
     }
     display.flush();

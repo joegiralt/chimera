@@ -23,7 +23,7 @@ use crate::modulation::ModState;
 use crate::note_queue::{NoteEvent, NoteKind};
 use crate::orbit::RingIdx;
 use crate::orbit::ring::Harmony;
-use crate::orbit::runner::OrbitShared;
+use crate::orbit::runner::{OrbitRunner, OrbitShared, OrbitView};
 use crate::params::ParamSnapshot;
 use crate::part::{Held, LiveSnap, PartParams};
 use crate::perf::load::AudioStats;
@@ -36,8 +36,10 @@ use crate::{MidiChannel, MidiNote, Velocity};
 use chimera_theory::{Note, snap};
 
 /// Everything the port places in AXI SRAM (ADR 0014): framebuffer, UI,
-/// the Project, the `AudioShared`, scope and `AudioStats` triple
-/// buffers (the scope's writer besides), the FX bus, and the card's store.
+/// the Project, the `AudioShared`, scope, `AudioStats` and ORBIT view
+/// triple buffers (the scope's writer and ORBIT's runner besides, in the
+/// engine), the FX bus, and the card's store. ORBIT's settings ride in
+/// `AudioShared` and its song in `Project`: not counted twice.
 pub const AXI_RESIDENT: usize = FB_BYTES
     + UI_RESERVE
     + STORE_RESERVE
@@ -46,6 +48,8 @@ pub const AXI_RESIDENT: usize = FB_BYTES
     + size_of::<TripleBuffer<ScopeFrame>>()
     + size_of::<ScopeWriter>()
     + size_of::<TripleBuffer<AudioStats>>()
+    + size_of::<TripleBuffer<OrbitView>>()
+    + size_of::<OrbitRunner>()
     + size_of::<FxBus>();
 const _: () = assert!(AXI_RESIDENT <= AXI_SRAM);
 // Spec § Hardware parity: 64 KB of AXI to spare.

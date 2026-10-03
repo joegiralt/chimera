@@ -9,6 +9,8 @@ use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 #[cfg(feature = "midi-din")]
 use chimera_core::note_queue::SourceId;
 use chimera_core::note_queue::{InEvent, NoteDrain, NoteSources};
+#[cfg(feature = "orbit")]
+use chimera_core::orbit::runner::{OrbitRunner, OrbitView};
 use chimera_core::part::DacPair;
 use chimera_core::project::{LOAD_LINK, LoadGate};
 use chimera_core::scope::{ScopeFrame, ScopeWriter};
@@ -38,6 +40,10 @@ struct Engine {
     dac: DacBlocks,
     /// Holds the note queues through a project load (ADR 0046).
     gate: LoadGate,
+    #[cfg(feature = "orbit")]
+    orbit: OrbitRunner,
+    #[cfg(feature = "orbit")]
+    view: Writer<OrbitView>,
 }
 
 static mut ENGINE: MaybeUninit<Engine> = MaybeUninit::uninit();
@@ -59,6 +65,7 @@ pub fn init(
     shared: Reader<AudioShared>,
     notes: NoteDrain<'static, NOTE_SOURCES>,
     scope: Writer<ScopeFrame>,
+    #[cfg(feature = "orbit")] view: Writer<OrbitView>,
 ) {
     if ENGINE_TAKEN.swap(true, Ordering::AcqRel) {
         return;
@@ -66,7 +73,7 @@ pub fn init(
     // SAFETY: the flag lets exactly one caller past, and `render_half` does
     // not touch these statics until `ENGINE_READY` is set below, so these are
     // the only references. The Instrument (D2) and FX bus (AXI) are built in
-    // place; `Engine` (5 KB) is written by value.
+    // place; `Engine` (5 KB, 6 KB with ORBIT's runner) is written by value.
     unsafe {
         let (inst_slot, fx_slot) = slots();
         let inst = Instrument::init_in_place(inst_slot, SAMPLE_RATE, budget);
@@ -79,11 +86,26 @@ pub fn init(
             scope: ScopeWriter::new(scope),
             dac: DacBlocks::new(),
             gate: LoadGate::new(),
+            #[cfg(feature = "orbit")]
+            orbit: OrbitRunner::new(SAMPLE_RATE_NZ),
+            #[cfg(feature = "orbit")]
+            view,
         });
     }
     ENGINE_READY.store(true, Ordering::Release);
 }
 
+#[cfg(feature = "orbit")]
+pub(crate) const SAMPLE_RATE_NZ: core::num::NonZeroU32 =
+    match core::num::NonZeroU32::new(SAMPLE_RATE) {
+        Some(r) => r,
+        None => panic!("a sample rate of 0"),
+    };
+
+/// One half, as the desktop's `Engine::block` renders a block: the gate,
+/// then only when it opens the drain (live notes to ORBIT's capture and
+/// then the Parts, real-time to ORBIT's clock) and ORBIT, then the render
+/// and ORBIT's view.
 pub fn render_half(half: Half) {
     if !ENGINE_READY.load(Ordering::Acquire) {
         return;
@@ -95,14 +117,29 @@ pub fn render_half(half: Half) {
     let e = unsafe { (*addr_of_mut!(ENGINE)).assume_init_mut() };
     let shared = e.shared.read();
     if e.gate.before_block(&LOAD_LINK, e.inst, shared) {
-        // Real-time waits for ORBIT's runner (Task 19).
-        e.notes.drain(|_, ev| {
-            if let InEvent::Note(n) = ev {
+        #[cfg(feature = "orbit")]
+        let now = e.orbit.now();
+        e.notes.drain(|src, ev| match ev {
+            // Capture sees the raw key, before any snap.
+            InEvent::Note(n) => {
+                #[cfg(feature = "orbit")]
+                e.orbit.live(n);
                 e.inst.handle(n, shared);
             }
+            #[cfg(feature = "orbit")]
+            InEvent::Rt(rt) => e.orbit.realtime(src.index(), rt, now),
+            // Without ORBIT nothing follows a clock.
+            #[cfg(not(feature = "orbit"))]
+            InEvent::Rt(_) => {
+                let _ = src;
+            }
         });
+        #[cfg(feature = "orbit")]
+        e.orbit.block(e.inst, shared);
     }
     e.inst.render(e.fx, &mut e.dac, shared, &mut e.scope);
+    #[cfg(feature = "orbit")]
+    e.view.publish(|v| *v = e.orbit.view());
     for pair in DacPair::ALL {
         // SAFETY: `main` runs `dma::clear` before `prefill`; the caller is
         // this half's only writer while the DMA reads the other half, and the

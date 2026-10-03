@@ -8,22 +8,26 @@ desktop:
 firmware:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf
 
+# Build STM32 firmware with ORBIT (release)
+firmware-orbit:
+    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit
+
 # Build all (desktop targets only)
 build:
     cargo build -p chimera-core -p chimera-hal -p chimera-desktop
 
 # Everything must pass before a commit (ADR 0013): core + hal tests (and core
-# with the master tape back on, ADR 0055, and ORBIT's nav and SETTINGS without it), desktop
+# with the master tape back on, ADR 0055, and the whole suite without ORBIT), desktop
 # tests and its no-MIDI build, the dosfstools cross-checks, the firmware built and linked with default
-# features, with none, with the bench (with and without the master tape) and
-# with the SD probe, clippy on host
+# features, with none, with ORBIT, with the bench (with and without the master
+# tape, and with ORBIT) and with the SD probe, clippy on host
 # and firmware (every feature set), rustfmt and the stack check. The desktop needs ALSA's
 # pkg-config file; point PKG_CONFIG_PATH at it if it is not installed
 # system-wide.
 check:
     cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit
     cargo test -p chimera-core --features master-tape
-    cargo test -p chimera-core --no-default-features --test orbit_nav_test --test settings_tree_test --test nav_test --test settings_screen_test --test prompt_naming_test --test settings_orbit_test --test theme_test
+    cargo test -p chimera-core --no-default-features
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
@@ -34,6 +38,8 @@ check:
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bench
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bench,master-tape
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bench,orbit
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features sd-probe
     cargo build -p chimera-bootloader --target thumbv7em-none-eabihf
     cargo build -p chimera-theory --target thumbv7em-none-eabihf
@@ -44,7 +50,7 @@ check:
 # The stack is the 63.75 KB of DTCM below the wave tables (ADR 0025): fail if any release function moves
 # SP by 8 KB or more in one step, or by a register (a large value built on
 # the stack instead of in a static), checked for the default, no-default,
-# bench and sd-probe feature sets. Needs the llvm-tools rustup component; a
+# bench, orbit, bench with orbit and sd-probe feature sets. Needs the llvm-tools rustup component; a
 # missing llvm-objdump or an unreadable ELF fails the recipe instead of
 # passing silently.
 stack-check:
@@ -53,7 +59,7 @@ stack-check:
     objdump="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/llvm-objdump"
     test -x "$objdump"
     elf=target/thumbv7em-none-eabihf/release/chimera-stm32
-    for features in "" "--no-default-features" "--features bench" "--features sd-probe"; do
+    for features in "" "--no-default-features" "--features bench" "--features orbit" "--features bench,orbit" "--features sd-probe"; do
         cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf $features
         test -r "$elf"
         if "$objdump" -d --no-show-raw-insn -C "$elf" \
@@ -87,6 +93,8 @@ clippy:
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features bench -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features bench,master-tape -- -D warnings
+    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit -- -D warnings
+    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features bench,orbit -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features sd-probe -- -D warnings
     cargo clippy -p chimera-bootloader --target thumbv7em-none-eabihf -- -D warnings
 

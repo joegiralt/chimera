@@ -90,13 +90,16 @@ fn fx_bus_fits_its_axi_share() {
 }
 
 /// Spec § Hardware parity: the Project (Performance and pool), the
-/// framebuffer, the UI reserve, the AudioShared, scope and AudioStats triple
-/// buffers, the scope's writer, the FX bus and the card's store (ADR 0014,
-/// ADR 0021) fit AXI, with 64 KB to spare.
+/// framebuffer, the UI reserve, the AudioShared, scope, AudioStats and
+/// ORBIT view triple buffers, the scope's writer, ORBIT's runner, the FX bus
+/// and the card's store (ADR 0014, ADR 0021) fit AXI, with 64 KB to spare.
+/// ORBIT's settings ride inside `AudioShared` and its song inside `Project`,
+/// so neither is counted again.
 #[test]
 fn axi_residents_fit() {
     use chimera_core::dsp::fx_bus::FxBus;
     use chimera_core::instrument::{AXI_RESIDENT, AudioShared};
+    use chimera_core::orbit::runner::{OrbitRunner, OrbitView};
     use chimera_core::perf::load::AudioStats;
     use chimera_core::project::Project;
     use chimera_core::scope::{ScopeFrame, ScopeWriter};
@@ -109,6 +112,8 @@ fn axi_residents_fit() {
         ("scope x3", size_of::<TripleBuffer<ScopeFrame>>()),
         ("scope writer", size_of::<ScopeWriter>()),
         ("AudioStats x3", size_of::<TripleBuffer<AudioStats>>()),
+        ("OrbitView x3", size_of::<TripleBuffer<OrbitView>>()),
+        ("OrbitRunner", size_of::<OrbitRunner>()),
         ("FxBus", size_of::<FxBus>()),
         ("store reserve", hw::STORE_RESERVE),
     ];

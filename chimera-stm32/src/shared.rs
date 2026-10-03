@@ -4,6 +4,8 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use chimera_core::dsp::algo::waves::{self, Waves};
 use chimera_core::instrument::AudioShared;
+#[cfg(feature = "orbit")]
+use chimera_core::orbit::runner::OrbitView;
 use chimera_core::preset::Performance;
 use chimera_core::scope::{ScopeFrame, scope_buffer};
 use chimera_core::triple::{Reader, TripleBuffer, Writer};
@@ -70,4 +72,21 @@ pub fn take_audio(perf: &Performance) -> Option<(Writer<AudioShared>, Reader<Aud
         })
     };
     Some(buf.split())
+}
+
+// ORBIT's view, from the runner to the UI: AXI, beside `AUDIO`.
+#[cfg(feature = "orbit")]
+static mut ORBIT: MaybeUninit<TripleBuffer<OrbitView>> = MaybeUninit::uninit();
+#[cfg(feature = "orbit")]
+static ORBIT_TAKEN: AtomicBool = AtomicBool::new(false);
+
+#[cfg(feature = "orbit")]
+pub fn take_orbit() -> Option<(Writer<OrbitView>, Reader<OrbitView>)> {
+    if ORBIT_TAKEN.swap(true, Ordering::AcqRel) {
+        return None;
+    }
+    // SAFETY: the flag lets exactly one caller past, so this is the only
+    // reference to `ORBIT` ever made.
+    let slot = unsafe { &mut *addr_of_mut!(ORBIT) };
+    Some(TripleBuffer::init_in_place(slot, OrbitView::default).split())
 }

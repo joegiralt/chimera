@@ -12,6 +12,8 @@ bench = ["perf-probe"]
 sd-probe = []
 # The master tape stage back on the chain, with its bench row (ADR 0055).
 master-tape = ["chimera-core/master-tape"]
+# ORBIT, the ring sequencer: SEQ hold opens it, the audio block runs it.
+orbit = ["chimera-core/orbit"]
 
 [dependencies]
 chimera-core = { path = "../chimera-core", default-features = false }

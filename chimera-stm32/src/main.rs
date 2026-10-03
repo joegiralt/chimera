@@ -303,7 +303,16 @@ fn synth(board: Board) -> ! {
     let (mut producers, notes) = audio::engine::NOTES
         .split()
         .expect("note sources split once");
-    audio::engine::init(SampleBudget::for_cpu(clk.cpu_hz), shared_r, notes, scope_w);
+    #[cfg(feature = "orbit")]
+    let (orbit_w, mut orbit_r) = shared::take_orbit().expect("ORBIT view taken once");
+    audio::engine::init(
+        SampleBudget::for_cpu(clk.cpu_hz),
+        shared_r,
+        notes,
+        scope_w,
+        #[cfg(feature = "orbit")]
+        orbit_w,
+    );
 
     let pll3 = pll3_for(clocks::HSE_HZ, chimera_hal::SAMPLE_RATE, clk.rev);
     clocks::init_pll3(&pll3);
@@ -334,6 +343,9 @@ fn synth(board: Board) -> ! {
     let mut last_tick = controls::ticks();
     loop {
         controls.snapshot();
+        // ORBIT's latest view: the pages draw it, the drift is absorbed.
+        #[cfg(feature = "orbit")]
+        ui.set_orbit_view(orbit_r.read());
         // Every frame, even idle: a held key must age.
         ui.handle_input(&controls);
         // Card work the keys asked for, under BUSY. A load settles before
@@ -349,12 +361,18 @@ fn synth(board: Board) -> ! {
             sync: &mut sync,
             settings: &mut settings,
         };
+        #[cfg(feature = "orbit")]
+        let orbit = *ui.orbit();
         ui.card_work(cx, &LOAD_LINK, |swap, p| {
             let t0 = controls::ticks();
             let _ = swap.settle(&LOAD_LINK, || {
                 controls::ticks().wrapping_sub(t0) < LOAD_ACK_TICKS
             });
-            shared_w.publish(|b| b.update_from(p.perf(), LOAD_LINK.epoch()));
+            shared_w.publish(|b| {
+                b.update_from(p.perf(), LOAD_LINK.epoch());
+                #[cfg(feature = "orbit")]
+                orbit.publish(p.orbit(), &mut b.orbit);
+            });
         });
         // Leaving SETTINGS syncs SYSTEM, with no overlay first: a save is
         // quicker than BUSY can be read. A toast says how it went.
@@ -365,7 +383,12 @@ fn synth(board: Board) -> ! {
         if let Some(t) = pacer.due(controls::now_ms()) {
             ui.update(t);
         }
-        shared_w.publish(|b| b.update_from(ui.project().perf(), LOAD_LINK.epoch()));
+        // Every Part, the FX and ORBIT to the audio.
+        shared_w.publish(|b| {
+            b.update_from(ui.project().perf(), LOAD_LINK.epoch());
+            #[cfg(feature = "orbit")]
+            ui.publish_orbit(&mut b.orbit);
+        });
         let stats = stats_r.as_mut().map(|r| {
             let mut s = *r.read();
             s.stack_used = probe::stack_used();
