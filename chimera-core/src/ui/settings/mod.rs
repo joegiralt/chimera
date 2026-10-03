@@ -37,7 +37,7 @@ use prompt::{
     ClearScene, ClearSceneAnswer, ClearSlot, Delete, DeleteAnswer, DfuAnswer, EnterDfu, Load,
     LoadAnswer, NameExists, NameExistsAnswer, PromptView, Reload, ReloadAnswer, ReloadScene,
     ReloadSceneAnswer, Replace, ReplaceAnswer, ReplaceTo, SaveOver, SaveOverAnswer, SaveSceneOver,
-    SaveSceneOverAnswer, with_view,
+    SaveSceneOverAnswer, panel,
 };
 use replace::{PartAsk, ProjectAsk, ReloadAsk, Reply};
 
@@ -199,14 +199,19 @@ impl Ask {
     }
 
     pub(crate) fn with_view<R>(&self, f: impl FnOnce(&PromptView<'_>) -> R) -> R {
+        prompt::once(f, |g| self.show(g))
+    }
+
+    /// The panel, to `f`: one body for every caller.
+    fn show(&self, f: &mut dyn FnMut(&PromptView<'_>)) {
         match self {
             Ask::ReplacePart(a, to) => {
                 let part = a.source().part;
-                with_view(&Replace { part, to: *to }, a.choice(), f)
+                panel(&Replace { part, to: *to }, a.choice(), f)
             }
             Ask::ReloadPart(a, slot) => {
                 let part = a.source().part;
-                with_view(&Reload { part, slot: *slot }, a.choice(), f)
+                panel(&Reload { part, slot: *slot }, a.choice(), f)
             }
             Ask::UpdateStale {
                 first,
@@ -214,7 +219,7 @@ impl Ask {
                 slot,
                 choice,
                 ..
-            } => with_view(
+            } => panel(
                 &AlsoUses {
                     first: *first,
                     more: *more,
@@ -223,10 +228,10 @@ impl Ask {
                 choice,
                 f,
             ),
-            Ask::ClearSlot(slot, c) => with_view(&ClearSlot { slot: *slot }, c, f),
+            Ask::ClearSlot(slot, c) => panel(&ClearSlot { slot: *slot }, c, f),
             Ask::LoadProject {
                 ask, to, current, ..
-            } => with_view(
+            } => panel(
                 &Load {
                     to: *to,
                     current: *current,
@@ -238,7 +243,7 @@ impl Ask {
                 save,
                 entry,
                 choice,
-            } => with_view(
+            } => panel(
                 &NameExists {
                     id: entry.id,
                     name: entry.name.unwrap_or(save.name),
@@ -246,32 +251,32 @@ impl Ask {
                 choice,
                 f,
             ),
-            Ask::CardChanged(_, c) => with_view(&CardChanged, c, f),
-            Ask::Delete(e, c) => with_view(&Delete { name: subject(e) }, c, f),
-            Ask::Clear(e, c) => with_view(&Clear { name: subject(e) }, c, f),
-            Ask::SaveOver(e, c) => with_view(&SaveOver { name: subject(e) }, c, f),
-            Ask::SaveSceneOver(a, c) => with_view(
+            Ask::CardChanged(_, c) => panel(&CardChanged, c, f),
+            Ask::Delete(e, c) => panel(&Delete { name: subject(e) }, c, f),
+            Ask::Clear(e, c) => panel(&Clear { name: subject(e) }, c, f),
+            Ask::SaveOver(e, c) => panel(&SaveOver { name: subject(e) }, c, f),
+            Ask::SaveSceneOver(a, c) => panel(
                 &SaveSceneOver {
                     scene: a.slot().index(),
                 },
                 c,
                 f,
             ),
-            Ask::ClearScene(a, c) => with_view(
+            Ask::ClearScene(a, c) => panel(
                 &ClearScene {
                     scene: a.slot().index(),
                 },
                 c,
                 f,
             ),
-            Ask::ReloadScene(a, c) => with_view(
+            Ask::ReloadScene(a, c) => panel(
                 &ReloadScene {
                     scene: a.slot().index(),
                 },
                 c,
                 f,
             ),
-            Ask::EnterDfu(c) => with_view(&EnterDfu, c, f),
+            Ask::EnterDfu(c) => panel(&EnterDfu, c, f),
         }
     }
 
