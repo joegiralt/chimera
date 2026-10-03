@@ -565,3 +565,27 @@ fn a_capture_in_the_card_read_is_dropped() {
     rig.run(4);
     assert_eq!(rig.song().live.rings[1], ring, "the loaded ring untouched");
 }
+
+/// LEARN re-armed on the same ring before the UI sees the capture just
+/// taken: the UI takes the first and stays armed, so the next is taken too.
+#[test]
+fn rearmed_before_the_view_takes_the_next() {
+    let mut rig = OrbitRig::new();
+    rig.ui.arm(Capture::Ring(R[1]));
+    rig.run(1);
+    rig.key(0, 60, true);
+    rig.key(0, 64, true);
+    rig.run(2);
+    rig.key(0, 60, false);
+    rig.key(0, 64, false);
+    rig.card_read(1);
+    assert_eq!(rig.view().captured.count, 1, "taken, unseen");
+    rig.ui.arm(Capture::Ring(R[1]));
+    rig.run(2);
+    assert_eq!(pool(&mut rig, 1), [60, 64]);
+    assert_eq!(rig.ui.capture, Capture::Ring(R[1]), "still armed");
+    chord(&mut rig, &[67], 2);
+    assert_eq!(rig.view().captured.count, 2, "the next taken");
+    assert_eq!(pool(&mut rig, 1), [67]);
+    assert_eq!(rig.ui.capture, Capture::Off);
+}

@@ -595,6 +595,7 @@ fn a_captured_chord_saves_as_its_tones() {
     let mut c = Captured {
         count: 1,
         target: chimera_core::orbit::runner::Capture::Segment(2),
+        arming: 0,
         notes: [Note::new(0).unwrap(); 8],
         len: 4,
         epoch: 0,

@@ -21,7 +21,7 @@ use chimera_core::ui::region::{RegionData, RegionKind};
 use chimera_hal::ButtonId::{B2, Edit, Menu, Plus, Seq};
 use chimera_hal::EncoderId::{A, B};
 use chimera_theory::{Note, PitchClass, SnapTo, snap};
-use common::orbit::OrbitRig;
+use common::orbit::{OrbitRig, secs};
 use screen::{Input, ShellRig, feed, hold, tap};
 
 const S: [SceneIdx; 8] = SceneIdx::ALL;
@@ -324,6 +324,7 @@ fn turning_back_cancels_the_switch() {
     let song = rig.project.orbit();
     assert_eq!((song.current(), song.queued()), (S[0], None));
     assert_eq!(song.live.chords.tonic, PitchClass::E);
+    assert_eq!(scene_drift(&song.live), drift(rig.view()), "drift absorbed");
 }
 
 /// A view from before a switch lands nothing: away to 2 and landed, back
@@ -368,6 +369,7 @@ fn a_switch_turned_back_lands_nothing() {
     rig.idle(1);
     let live = rig.ui.project().orbit().live;
     let (loops, from) = (rig.view().loops, rig.views.len());
+    let rev = rig.view().scene_rev;
     rig.frame(Input::turn(A, 1), 1);
     for _ in 0..20 {
         rig.idle(1);
@@ -376,8 +378,9 @@ fn a_switch_turned_back_lands_nothing() {
     rig.frame(Input::turn(A, -1), 1);
     assert_eq!(rig.view().loops, loops, "back before the boundary");
     assert_eq!(rig.ui.project().orbit().queued(), None);
-    // Taken at once as a cancel, not cued as a re-landing of 1.
-    let rev = rig.ui.orbit().scene_rev;
+    // Taken at once as a cancel, not cued as a re-landing of 1: the view
+    // stays on the rev 1 was adopted under.
+    assert_ne!(rig.ui.orbit().scene_rev, rev);
     assert_eq!((rig.view().queued, rig.view().scene_rev), (None, rev));
     while rig.view().loops < loops + 2 {
         rig.idle(1);
@@ -768,4 +771,38 @@ fn new_plays_v4_as_scene_1() {
     assert_eq!((song.current(), song.queued()), (S[0], None));
     let ui = UiState::new();
     assert_eq!(*ui.project().orbit(), song);
+}
+
+/// CLEAR on the playing slot adopted by the runner, unseen, then SCENE
+/// away and back (a cancel to the UI): `live` keeps its notes. The
+/// cleared scene's drift is never absorbed into it.
+#[test]
+fn a_clear_adopted_then_cancelled_leaves_live_alone() {
+    let mut rig = OrbitRig::new();
+    // No drift of its own: whatever moves came from elsewhere.
+    for r in &mut rig.song().live.rings {
+        r.set(SceneRing::MUTATE, 0.0);
+    }
+    rig.play(true);
+    rig.run_loops(1);
+    let live = rig.project.orbit().live;
+    let yes = Confirmed::<SceneSlot>::unasked(rig.project.orbit(), S[0]);
+    rig.ui
+        .clear_scene(yes, rig.project.orbit_mut())
+        .expect("nothing queued");
+    let rev = rig.ui.scene_rev;
+    while rig.view().scene_rev != rev {
+        rig.card_read(1);
+    }
+    rig.ui.queue(S[1], rig.project.orbit_mut());
+    rig.ui.queue(S[0], rig.project.orbit_mut());
+    let song = rig.project.orbit();
+    assert_eq!((song.current(), song.queued()), (S[0], None), "cancelled");
+    rig.run(secs(10.0));
+    let song = rig.project.orbit();
+    assert_eq!((song.current(), song.queued()), (S[0], None));
+    for (a, b) in song.live.rings.iter().zip(&live.rings) {
+        assert_eq!(a.ring.pool, b.ring.pool, "no foreign pool");
+        assert_eq!(a.ring.notes, b.ring.notes, "no foreign notes");
+    }
 }

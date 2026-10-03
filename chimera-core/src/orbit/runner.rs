@@ -92,6 +92,8 @@ pub enum Capture {
 pub struct Captured {
     pub count: u16,
     pub target: Capture,
+    /// The arming it was taken under: a newer one stays armed in the UI.
+    pub arming: u8,
     /// In the order played, each once (a STEP ring's may repeat).
     pub notes: [Note; MAX_POOL],
     pub len: u8,
@@ -103,6 +105,7 @@ impl Captured {
     const NONE: Captured = Captured {
         count: 0,
         target: Capture::Off,
+        arming: 0,
         notes: [Note::MIN; MAX_POOL],
         len: 0,
         epoch: 0,
@@ -178,6 +181,7 @@ impl Take {
         self.done = Captured {
             count: self.done.count.wrapping_add(1),
             target: self.armed,
+            arming: self.arming,
             notes: self.notes,
             len: self.len,
             epoch,
@@ -608,12 +612,10 @@ impl OrbitRunner {
         if o.scene_rev != self.scene_rev {
             // A queued slot lands, the playing one again too (CLEAR or
             // RELOAD); back to the scene playing with nothing queued is a
-            // cancel, nothing to adopt.
+            // cancel, nothing to adopt. Its rev isn't taken: `scene_rev`
+            // stays the adopted scene's, which the UI's drift is gated on.
             let (s, _) = o.incoming();
             self.cue = (o.queued.is_some() || s != self.playing).then_some(s);
-            if self.cue.is_none() {
-                self.scene_rev = o.scene_rev;
-            }
         }
         if self.cue.is_some() && !self.transport {
             self.adopt(shared);

@@ -223,6 +223,9 @@ pub struct OrbitUi {
     pub scene_rev: u16,
     /// SCN's SAVE → n; `None`, the playing scene.
     pub save: Option<SceneIdx>,
+    /// The rev the runner was last seen adopting at the UI's own: only
+    /// a view still on it plays the scene `live` is, and brings drift.
+    pub landed: u16,
     /// The view's `loops` when the drift was last absorbed.
     pub loops_seen: u32,
     /// The project's load: only a view on it brings drift.
@@ -243,6 +246,7 @@ impl OrbitUi {
             took: 0,
             scene_rev: 0,
             save: None,
+            landed: 0,
             loops_seen: 0,
             epoch: 0,
             status: OrbitStatus::IDLE,
@@ -313,18 +317,20 @@ impl OrbitUi {
         if c.epoch != self.epoch {
             return None;
         }
-        if self.capture == c.target {
+        // Re-armed since, the same target too: that arming stands.
+        if self.arming == c.arming && self.capture == c.target {
             self.capture = Capture::Off;
         }
         Some(c)
     }
 
     /// Takes the runner's latest view; true when its drift is due in the
-    /// song: a view on this project's load and a loop gone by (`absorb`
-    /// takes it from the playing scene only).
+    /// song: a view on this project's load, on the scene `live` is
+    /// (`landed`), and a loop gone by (`absorb` takes it from the playing
+    /// scene only).
     pub fn see(&mut self, v: &OrbitView) -> bool {
         self.status = OrbitStatus::of(v);
-        let due = v.epoch == self.epoch && v.loops != self.loops_seen;
+        let due = v.epoch == self.epoch && v.scene_rev == self.landed && v.loops != self.loops_seen;
         if due {
             self.loops_seen = v.loops;
         }
@@ -384,13 +390,14 @@ impl OrbitUi {
         if let Some(c) = self.take(v) {
             project.orbit_mut().live.take(&c);
         }
-        if project.orbit().queued().is_some()
-            && v.epoch == self.epoch
-            && v.scene_rev == self.scene_rev
-        {
-            project.orbit_mut().land(v.playing);
-            // SAVE defaults to the playing scene again.
-            self.save = None;
+        if v.epoch == self.epoch && v.scene_rev == self.scene_rev {
+            if project.orbit().queued().is_some() {
+                project.orbit_mut().land(v.playing);
+                // SAVE defaults to the playing scene again.
+                self.save = None;
+            }
+            // Adopted at the UI's own rev: what plays is what `live` is.
+            self.landed = v.scene_rev;
         }
         if self.see(v) {
             project.orbit_mut().absorb(v);
