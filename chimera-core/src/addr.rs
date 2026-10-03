@@ -76,6 +76,9 @@ pub enum BlockRef {
     /// SETTINGS › PERSONALIZE › THEME (`ThemeSettings`): held by the UI,
     /// not a Sound.
     Theme,
+    /// SETTINGS › MIDI CONFIG (`MidiSettings`): SYNC, held by the UI and
+    /// stored in SYSTEM (ADR 0080).
+    Midi,
     /// Part n's `PartParams` from any page: the SETTINGS mirrors. UI-only,
     /// so not in `ALL` and never stored.
     PartMix(crate::project::PartId),
@@ -90,7 +93,7 @@ pub enum BlockRef {
 }
 
 impl BlockRef {
-    pub const ALL: [BlockRef; 32] = [
+    pub const ALL: [BlockRef; 33] = [
         BlockRef::Modal,
         BlockRef::Algo,
         BlockRef::AlgoOp(Op::A),
@@ -123,6 +126,7 @@ impl BlockRef {
         BlockRef::OrbitRing(RingIdx::ALL[2]),
         BlockRef::OrbitRing(RingIdx::ALL[3]),
         BlockRef::OrbitRing(RingIdx::ALL[4]),
+        BlockRef::Midi,
     ];
 
     /// The block type's spec table (static; no instance needed).
@@ -145,6 +149,7 @@ impl BlockRef {
             BlockRef::Comp => &crate::dsp::comp::COMP_SPECS,
             BlockRef::Part | BlockRef::PartMix(_) => &crate::part::PART_SPECS,
             BlockRef::Theme => &crate::ui::theme_settings::THEME_SPECS,
+            BlockRef::Midi => &crate::ui::midi_settings::MIDI_SPECS,
             BlockRef::OrbitChords => &crate::orbit::scene::CHORD_SPECS,
             BlockRef::OrbitRing(_) => &crate::orbit::scene::RING_SPECS,
             BlockRef::Tempo => &crate::orbit::scene::TEMPO_SPECS,
@@ -175,6 +180,7 @@ impl BlockRef {
             | BlockRef::Part
             | BlockRef::PartMix(_)
             | BlockRef::Theme
+            | BlockRef::Midi
             | BlockRef::OrbitChords
             | BlockRef::OrbitRing(_)
             | BlockRef::Tempo => false,

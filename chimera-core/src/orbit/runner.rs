@@ -4,7 +4,7 @@
 
 use super::chords::{Bars, harmony};
 use super::clock::{
-    Bpm, ClockSource, InternalClock, MidiClock, Position, WINDOW, advance_cap, step_at,
+    Bpm, ClockSource, InternalClock, MidiClock, Position, SyncMode, WINDOW, advance_cap, step_at,
 };
 use super::engine::{Events, OrbitKind, OrbitState, Span, block};
 use super::euclid::HitMask;
@@ -24,8 +24,12 @@ use core::num::NonZeroU32;
 /// What the UI asks of ORBIT, published with the Parts (ADR 0021).
 #[derive(Clone, Debug)]
 pub struct OrbitShared {
+    /// Flips on every B6 press: each flip starts a stopped ORBIT or stops
+    /// a playing one (ADR 0080).
     pub run: bool,
     pub bpm: Bpm,
+    /// MIDI CONFIG's SYNC, from SYSTEM (ADR 0080).
+    pub sync: SyncMode,
     /// Bumped on every switch, re-landing and cancel; the runner acts on
     /// each rev once (ADR 0077).
     pub scene_rev: u16,
@@ -59,6 +63,7 @@ impl Default for OrbitShared {
         OrbitShared {
             run: false,
             bpm: Bpm::DEFAULT,
+            sync: SyncMode::DEFAULT,
             scene_rev: 0,
             scene: SceneIdx::ALL[0],
             settings: Scene::init(),
@@ -290,14 +295,13 @@ pub struct OrbitRunner {
     midi: MidiClock,
     /// The clock that moved the last block.
     source: ClockSource,
-    /// The external transport: set by MIDI Start or Continue, a new
-    /// leader's first Clock, or B6 with no clock leading; cleared by Stop.
-    /// The fallback alone keeps it.
-    ext_playing: bool,
+    /// SYNC as of the last block: INT hears no real-time (ADR 0080).
+    sync: SyncMode,
     /// A MIDI Start to act on next block: offs, then bar 0.
     ext_start: bool,
-    /// A MIDI Stop to act on next block: offs, and the transport down.
-    ext_stop: bool,
+    /// The DAW's last Start or Continue (true) or Stop (false), to act on
+    /// next block: the transport up or down.
+    ext_play: Option<bool>,
     /// The previous window's end: the next one starts here.
     edge: Position,
     state: OrbitState,
@@ -306,8 +310,10 @@ pub struct OrbitRunner {
     /// The switch adopted last, and its scene.
     scene_rev: u16,
     playing: SceneIdx,
-    /// `run` as of the last block: transport acts on its edges only.
+    /// `run` as of the last block: each change is a B6 press.
     run_seen: bool,
+    /// Whether ORBIT plays: B6 toggles it, the DAW's Start and Continue
+    /// set it and its Stop clears it (ADR 0080).
     transport: bool,
     /// A switch waiting on the boundary: the scene it brings.
     cue: Option<SceneIdx>,
@@ -335,9 +341,9 @@ impl OrbitRunner {
             clock: InternalClock::start(0, Bpm::DEFAULT, sample_rate),
             midi: MidiClock::new(sample_rate),
             source: ClockSource::Internal,
-            ext_playing: true,
+            sync: SyncMode::DEFAULT,
             ext_start: false,
-            ext_stop: false,
+            ext_play: None,
             edge: Position::ZERO,
             state: OrbitState::start(&working),
             revs: revs_of(&working),
@@ -419,32 +425,38 @@ impl OrbitRunner {
     }
 
     /// A MIDI real-time message from source `src`, drained at `now` (§ 6.1).
-    /// Only the leading clock's are taken. Start and Stop act at the next
-    /// block, which sends their offs.
+    /// Only the leading clock's are taken, and none under SYNC INT. Start,
+    /// Continue and Stop act at the next block, which sends their offs.
     pub fn realtime(&mut self, src: usize, rt: RealTime, now: u64) {
+        if self.sync == SyncMode::Int {
+            return;
+        }
         // It came during the block before its drain: half a block, on average.
         let now = now.saturating_sub(WINDOW);
         let led = self.midi.position(now).is_some();
         match rt {
-            // A clock taken up with no Start carries on from where ORBIT
-            // is, and plays: its first Clock is a Continue.
+            // A clock taken up with no Start carries on from where ORBIT is.
             RealTime::Clock => {
                 if self.midi.tick(src, now) && !led {
                     self.midi.rebase(self.edge);
-                    self.ext_playing = true;
                 }
             }
             RealTime::Start => {
                 if self.midi.start(src, now) {
-                    self.ext_playing = true;
                     self.ext_start = true;
+                    self.ext_play = Some(true);
                 }
             }
-            RealTime::Continue => self.ext_playing |= self.midi.resume(src, now),
+            // On from where ORBIT is, which B6 may have moved since Stop.
+            RealTime::Continue => {
+                if self.midi.resume(src, now) {
+                    self.midi.rebase(self.edge);
+                    self.ext_play = Some(true);
+                }
+            }
             RealTime::Stop => {
                 if self.midi.stop(src, now) {
-                    self.ext_playing = false;
-                    self.ext_stop = true;
+                    self.ext_play = Some(false);
                 }
             }
         }
@@ -505,8 +517,7 @@ impl OrbitRunner {
         self.take.arm(shared.orbit.capture, shared.orbit.arming);
         let sent = self.advance(shared);
         Self::send(inst, shared, &sent, &mut self.fired);
-        let playing = self.transport && self.ext_playing;
-        let h = playing.then(|| self.state.harmony(&self.working));
+        let h = self.transport.then(|| self.state.harmony(&self.working));
         inst.set_harmony(h);
         if h.is_some() && h != self.harmony {
             inst.resnap(shared);
@@ -532,42 +543,56 @@ impl OrbitRunner {
             return Events::new();
         }
 
-        // A MIDI Start or Stop first ends what ORBIT holds. Stop drops the
-        // transport with no edge (Decisions); Start goes back to bar 0.
+        if o.sync != self.sync {
+            // Either way the other mode's clock is forgotten: INT never
+            // hears it, and EXT takes the next one up from the edge.
+            self.sync = o.sync;
+            self.midi = MidiClock::new(self.sample_rate);
+            (self.ext_start, self.ext_play) = (false, None);
+        }
+
+        // The DAW's Start or Stop first ends what ORBIT holds; Start goes
+        // back to bar 0.
+        let reset = core::mem::take(&mut self.ext_start);
+        let daw = self.ext_play.take();
         let mut sent = Events::new();
-        if self.ext_start || self.ext_stop {
+        if reset || daw == Some(false) && self.transport {
             sent = self.state.stop();
         }
-        if core::mem::take(&mut self.ext_stop) {
+        if daw == Some(false) {
             self.transport = false;
-        }
-        if core::mem::take(&mut self.ext_start) {
-            self.edge = Position::ZERO;
-            self.state = OrbitState::start(&self.working);
-            self.loops = 0;
         }
 
         let midi = self.midi.position(t + WINDOW);
-        let (up, down) = (o.run && !self.run_seen, !o.run && self.run_seen);
+        let pressed = o.run != self.run_seen;
         self.run_seen = o.run;
-        if up && !self.transport {
+        let play = if pressed {
+            !self.transport
+        } else {
+            self.transport || daw == Some(true)
+        };
+        if play && !self.transport {
             self.adopt(shared);
             if midi.is_some() {
                 // Joins the external clock in phase: the dice from the
                 // seed, the position kept (§ 6.3).
                 self.state.restart_dice(&self.working);
             } else {
-                // B6 with no external clock: nothing outside to wait for.
-                self.ext_playing = true;
+                // No external clock: ORBIT's own, from bar 0.
                 self.clock = InternalClock::start(t, o.bpm, self.sample_rate);
                 self.edge = Position::ZERO;
                 self.state = OrbitState::start(&self.working);
                 self.loops = 0;
             }
             self.transport = true;
-        } else if down && self.transport {
+        } else if !play && self.transport {
             sent = sent.then(&self.state.stop());
             self.transport = false;
+        }
+        if reset {
+            self.edge = Position::ZERO;
+            self.state = OrbitState::start(&self.working);
+            self.loops = 0;
         }
 
         if o.scene_rev != self.scene_rev {
@@ -591,7 +616,7 @@ impl OrbitRunner {
             self.copy_knobs(&o.settings);
         }
 
-        let sounding = self.transport && self.ext_playing;
+        let sounding = self.transport;
         let (to, from_sample, bar_len) = match midi {
             Some(at) => {
                 self.source = ClockSource::Midi;

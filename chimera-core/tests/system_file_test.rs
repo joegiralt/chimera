@@ -1,12 +1,14 @@
-//! SYSTEM (ADR 0045): theme and last project, read at boot and written on
+//! SYSTEM (ADR 0045): theme, MIDI CONFIG (ADR 0080) and last project, read at boot and written on
 //! leaving System when RAM differs from what this card is known to hold.
 
 mod common;
 
+use chimera_core::orbit::clock::SyncMode;
 use chimera_core::storage::{
     AbFile, BootNote, Card, Exit, ExitPlan, FileError, LoadError, ProjectId, Side, SyncError,
     SystemCheck, SystemSettings, SystemSync, encode_system, exit_plan, save_ab,
 };
+use chimera_core::ui::midi_settings::MidiSettings;
 use chimera_core::ui::theme_settings::{Accent, Black, Bright, Gamma, ThemeSettings};
 use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use chimera_hal::testkit::MemStore;
@@ -15,9 +17,12 @@ use common::codec_util::{
 };
 use core::ops::ControlFlow;
 
-/// BRIGHT 40, GAMMA SOFT, ACCENT index 3, BLACK +1, project 7.
+/// BRIGHT 40, GAMMA SOFT, ACCENT index 3, BLACK +1, SYNC INT, project 7.
 fn settings() -> SystemSettings {
     SystemSettings {
+        midi: MidiSettings {
+            sync: SyncMode::Int,
+        },
         theme: ThemeSettings {
             bright: Bright::new(40),
             gamma: Gamma::Soft,
@@ -582,6 +587,35 @@ fn no_file_boot_creates_on_first_exit() {
         sync.on_exit(&mut card, &mut s, &mut cur, None),
         Ok(Exit::Unchanged)
     );
+}
+
+/// SYNC is the user's too: a change to it alone touches the defaults.
+#[test]
+fn a_sync_change_is_a_change() {
+    let mut s = MemStore::new(1);
+    save(&mut s, &settings());
+    s.eject();
+    let mut card = Card::new();
+    let (mut sync, mut cur, _) = SystemSync::boot(&mut card, &mut s);
+    cur.midi.sync = SyncMode::Int;
+    assert!(!sync.left_system(true, &cur));
+    assert!(sync.left_system(false, &cur));
+    s.insert();
+    assert_eq!(
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
+        Ok(Exit::Wrote)
+    );
+    assert_eq!(boot(&mut s).0.midi.sync, SyncMode::Int);
+}
+
+/// A SYSTEM from before SYNC, the v1 fixture, reads as EXT, the default.
+#[test]
+fn a_system_from_before_sync_is_ext() {
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/v1")
+        .join(SYSTEM_FIXTURE);
+    let f = std::fs::read(p).unwrap();
+    assert_eq!(boot_bytes(&f).0.midi.sync, SyncMode::Ext);
 }
 
 /// A change undone is still the user's: it goes over another card's SYSTEM.

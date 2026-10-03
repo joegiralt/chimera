@@ -5,7 +5,9 @@
 mod common;
 
 use chimera_core::note_queue::{InEvent, NoteEvent, NoteKind, NoteSources, RealTime, SourceId};
-use chimera_core::orbit::clock::{ClockSource, MAX_BPM_EXT, Phase, Position, step_at, step_start};
+use chimera_core::orbit::clock::{
+    ClockSource, MAX_BPM_EXT, Phase, Position, SyncMode, step_at, step_start,
+};
 use chimera_core::orbit::engine::{EVENTS_PER_RING, OrbitKind};
 use chimera_core::orbit::euclid::{Fill, Steps};
 use chimera_core::orbit::ring::{Octave, Ring};
@@ -513,10 +515,13 @@ fn clock_falls_back_after_500_ms() {
     );
     each_once(&fired, steps);
 
-    // Stopped: the fallback starts nothing.
+    // Stopped by the DAW: the fallback starts nothing.
     let mut r = rig(steps, 50, 90);
     let mut fired = Fired::new();
     let heard = play_ticks(&mut r, steps, 1, &mut fired);
+    r.rt(0, RealTime::Stop);
+    r.block();
+    fired.clear();
     while r.blocks() as u64 * B <= heard + 2 * SILENT {
         step(&mut r, steps, &mut fired);
         assert!(!r.view().running, "a stopped transport stays stopped");
@@ -682,17 +687,16 @@ fn midi_stop_stays_stopped() {
     );
     assert!(r.runner_pending().iter().all(Option::is_none));
     assert!(!r.view().running);
-    // The clock goes on while stopped, as many DAWs send it; `run` stays up.
+    // The clock goes on while stopped, as many DAWs send it.
     let start = r.blocks() as u64 * B;
     let mut feed = Ticks::new(
-        ticks(start, 200, |_| 120.0)
+        ticks(start, 400, |_| 120.0)
             .iter()
             .map(|&t| t as u64)
             .collect(),
     );
     let pos = r.view().pos;
     for _ in 0..100 {
-        r.play(true);
         feed.feed(&mut r, 0);
         r.block();
         assert!(
@@ -700,18 +704,34 @@ fn midi_stop_stays_stopped() {
             "no ORBIT On after Stop: {:?}",
             r.sent
         );
-        assert!(!r.view().running, "no edge, no start");
+        assert!(!r.view().running, "no B6, no start");
         assert_eq!(r.view().pos, pos, "a stopped clock doesn't move");
     }
+    // B6 under the stopped DAW: ORBIT plays on its own clock, from bar 0.
+    r.play(true);
+    let mut n = 0;
+    for _ in 0..100 {
+        feed.feed(&mut r, 0);
+        r.block();
+        n += ons(&r);
+        assert_eq!(r.view().source, ClockSource::Internal);
+    }
+    assert!(r.view().running && n > 0, "B6 plays ORBIT locally");
     assert!(r.stuck_notes().is_empty(), "{:?}", r.stuck_notes());
 }
 
+/// The DAW plays, B6 has stopped ORBIT: the clock runs on without it, and
+/// B6 joins it in phase.
 #[test]
 fn b6_gates_orbit_under_an_external_clock() {
     let steps = [4, 3, 5, 7, 16];
     let mut r = rig(steps, 50, 120);
     r.rt(0, RealTime::Start);
     r.block();
+    assert!(r.view().running, "the DAW's Start plays ORBIT");
+    r.ui.play_stop();
+    r.block();
+    assert!(!r.view().running, "B6 stops it");
     let start = r.blocks() as u64 * B + 20;
     let at: Vec<u64> = ticks(start, 8 * 96, |_| 120.0)
         .iter()
@@ -758,4 +778,200 @@ fn b6_gates_orbit_under_an_external_clock() {
         }
     }
     assert!(r.view().running);
+}
+
+/// 120 BPM ticks from the next block, for `n` ticks.
+fn clock_from(r: &OrbitRig, n: usize, bpm: f64) -> Ticks {
+    let start = r.blocks() as u64 * B + 20;
+    Ticks::new(ticks(start, n, |_| bpm).iter().map(|&t| t as u64).collect())
+}
+
+/// SYNC INT (ADR 0080): ORBIT runs on its own clock whatever comes in.
+/// Clock, Start, Continue and Stop move nothing.
+#[test]
+fn int_ignores_clock_and_transport() {
+    let steps = [4, 3, 5, 7, 16];
+    let mut r = rig(steps, 50, 90);
+    r.sync = SyncMode::Int;
+    // Stopped: a DAW's Start and clock start nothing.
+    r.rt(0, RealTime::Start);
+    let mut feed = clock_from(&r, 400, 140.0);
+    for _ in 0..100 {
+        feed.feed(&mut r, 0);
+        r.block();
+        assert!(!r.view().running, "INT: Start doesn't play ORBIT");
+        assert_eq!(ons(&r), 0);
+    }
+    // Playing on B6: the clock and every transport message are ignored.
+    r.play(true);
+    r.run(4);
+    let mut prev = r.view().pos;
+    let from = units(prev);
+    let blocks = (SR as u64 / B) as usize;
+    for i in 0..blocks {
+        if i == 100 {
+            r.rt(0, RealTime::Stop);
+        }
+        if i == 200 {
+            r.rt(0, RealTime::Start);
+        }
+        if i == 300 {
+            r.rt(0, RealTime::Continue);
+        }
+        feed.feed(&mut r, 0);
+        r.block();
+        let v = r.view();
+        assert!(v.running, "INT: Stop doesn't stop ORBIT (block {i})");
+        assert_eq!(v.source, ClockSource::Internal);
+        assert_eq!(v.bpm.get(), 90);
+        assert!(v.pos >= prev, "INT: Start doesn't send ORBIT back");
+        prev = v.pos;
+    }
+    // A second at the internal 90 BPM is 3/8 of a bar.
+    let moved = (units(r.view().pos) - from) as f64 / BAR as f64;
+    assert!(
+        (moved - 0.375).abs() < 0.01,
+        "the internal BPM drives it: {moved}"
+    );
+    assert!(r.stuck_notes().is_empty(), "{:?}", r.stuck_notes());
+}
+
+/// SYNC EXT: the DAW's Start plays ORBIT, from bar 0, with no B6, also
+/// right after its own Stop; B6 still stops it locally.
+#[test]
+fn ext_start_plays_without_b6_after_a_stop() {
+    let steps = [4, 3, 5, 7, 16];
+    let mut r = rig(steps, 50, 120);
+    assert_eq!(r.sync, SyncMode::Ext, "EXT is the default");
+    for round in 0..2 {
+        r.rt(0, RealTime::Start);
+        r.block();
+        assert!(r.view().running, "round {round}: Start plays ORBIT");
+        assert_eq!(r.view().pos, Position::ZERO, "round {round}: from bar 0");
+        let mut feed = clock_from(&r, 2 * 96, 120.0);
+        let mut fired = Fired::new();
+        while !feed.done() {
+            feed.feed(&mut r, 0);
+            step(&mut r, steps, &mut fired);
+        }
+        assert_eq!(
+            each_once(&fired, steps),
+            [8, 6, 10, 14, 32],
+            "round {round}"
+        );
+        r.rt(0, RealTime::Stop);
+        r.block();
+        assert!(!r.view().running, "round {round}: Stop stops");
+        r.run(20);
+        assert!(!r.view().running);
+    }
+    // B6 stops what the DAW started.
+    r.rt(0, RealTime::Start);
+    let mut feed = clock_from(&r, 96, 120.0);
+    for _ in 0..50 {
+        feed.feed(&mut r, 0);
+        r.block();
+    }
+    assert!(r.view().running);
+    r.ui.play_stop();
+    feed.feed(&mut r, 0);
+    r.block();
+    assert!(!r.view().running, "B6 stops ORBIT under the DAW");
+    for _ in 0..50 {
+        feed.feed(&mut r, 0);
+        r.block();
+        assert_eq!(ons(&r), 0);
+    }
+    assert!(r.stuck_notes().is_empty(), "{:?}", r.stuck_notes());
+}
+
+/// SYNC EXT: Continue plays on from where Stop left ORBIT, not bar 0.
+#[test]
+fn ext_continue_resumes() {
+    let steps = [4, 3, 5, 7, 16];
+    let mut r = rig(steps, 50, 120);
+    let mut fired = Fired::new();
+    play_ticks(&mut r, steps, 1, &mut fired);
+    // Half a bar more, then Stop.
+    let mut feed = clock_from(&r, 48, 120.0);
+    while !feed.done() {
+        feed.feed(&mut r, 0);
+        step(&mut r, steps, &mut fired);
+    }
+    r.rt(0, RealTime::Stop);
+    r.block();
+    let held = r.view().pos;
+    assert!(!r.view().running);
+    assert_eq!(held.bar, 1);
+    r.run(100);
+    assert_eq!(r.view().pos, held, "stopped, ORBIT stays put");
+    r.rt(0, RealTime::Continue);
+    r.block();
+    assert!(r.view().running, "Continue plays ORBIT with no B6");
+    assert!(r.view().pos >= held && units(r.view().pos) < units(held) + BAR / 96);
+    let mut feed = clock_from(&r, 2 * 96, 120.0);
+    while !feed.done() {
+        feed.feed(&mut r, 0);
+        step(&mut r, steps, &mut fired);
+    }
+    // Every step once from bar 0, through the Stop and on.
+    let n = each_once(&fired, steps);
+    for (i, &k) in steps.iter().enumerate() {
+        assert!(n[i] >= 3 * k as usize, "ring {}: {} ons", i + 1, n[i]);
+    }
+    assert!(r.stuck_notes().is_empty(), "{:?}", r.stuck_notes());
+}
+
+/// SYNC turned while ORBIT plays: never a jump back, never a stop, and the
+/// new mode's clock takes over from where ORBIT is.
+#[test]
+fn switching_sync_while_playing() {
+    let steps = [4, 3, 5, 7, 16];
+    let mut r = rig(steps, 50, 90);
+    let mut fired = Fired::new();
+    play_ticks(&mut r, steps, 1, &mut fired);
+    let mut feed = clock_from(&r, 2000, 140.0);
+    for _ in 0..50 {
+        feed.feed(&mut r, 0);
+        step(&mut r, steps, &mut fired);
+    }
+    assert_eq!(r.view().source, ClockSource::Midi);
+    // EXT → INT: the internal 90 BPM carries on from the edge.
+    r.sync = SyncMode::Int;
+    let mut prev = r.view().pos;
+    for _ in 0..400 {
+        feed.feed(&mut r, 0);
+        step(&mut r, steps, &mut fired);
+        let v = r.view();
+        assert!(v.running, "INT keeps ORBIT playing");
+        assert_eq!(v.source, ClockSource::Internal);
+        assert_eq!(v.bpm.get(), 90);
+        assert!(v.pos >= prev, "never back");
+        prev = v.pos;
+    }
+    // A Stop in INT is ignored, so EXT doesn't wake to it.
+    r.rt(0, RealTime::Stop);
+    r.block();
+    assert!(r.view().running);
+    // INT → EXT: the running clock leads again, on from the edge.
+    r.sync = SyncMode::Ext;
+    let mut led = false;
+    for _ in 0..400 {
+        feed.feed(&mut r, 0);
+        step(&mut r, steps, &mut fired);
+        let v = r.view();
+        assert!(v.running, "EXT keeps ORBIT playing");
+        assert!(v.pos >= prev, "never back");
+        prev = v.pos;
+        led |= v.source == ClockSource::Midi;
+    }
+    assert!(led, "the DAW's clock leads again");
+    assert_eq!(r.view().source, ClockSource::Midi);
+    assert!(
+        r.view().bpm.get().abs_diff(140) <= 1,
+        "{}",
+        r.view().bpm.get()
+    );
+    each_once(&fired, steps);
+    assert!(r.stuck_notes().is_empty(), "{:?}", r.stuck_notes());
 }

@@ -1099,6 +1099,11 @@ pub const CASES: &[ScreenCase] = &[
         to_leaf(ui, &["PERSONALIZE", "THEME"]);
         feed(ui, Input::turn(EncoderId::C, 1)); // ACCENT AMBER, focused
     }),
+    // MIDI CONFIG › SYNC (ADR 0080): EXT, the default, focused.
+    ("settings_midi_sync", |ui| {
+        to_leaf(ui, &["MIDI CONFIG", "SYNC"]);
+        feed(ui, Input::turn(EncoderId::A, 1));
+    }),
     ("settings_system_diag_aud_load", |ui| {
         to_leaf(ui, &["SYSTEM", "DIAGNOSTICS", "AUDIO LOAD"])
     }),

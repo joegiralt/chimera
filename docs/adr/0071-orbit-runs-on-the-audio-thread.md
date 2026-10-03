@@ -1,6 +1,7 @@
 # 0071. ORBIT runs on the audio thread, block-accurate
 
-- **Status:** Proposed (accepted at the ORBIT plan's ship flash)
+- **Status:** Proposed (accepted at the ORBIT plan's ship flash); the
+  transport edge rule amended by [0080](0080-sync-int-or-ext-a-daw-drives-orbits-transport.md)
 - **Deciders:** owner (ORBIT design spec, 2026-09-30), firmware
 
 ## Context
@@ -27,10 +28,12 @@ the player is holding.
   `scene_rev` queues the scene: the playing scene's knobs are still
   copied until the next loop boundary (at once if stopped), then the
   queued one is adopted whole (ADR 0077).
-- **The transport acts on edges.** A false to true edge of `run` starts
-  (fresh clock, loop start, working copy from the settings), true to false
-  stops; a level with no edge does nothing. A new load epoch stops the
-  runner with no edge and only a fresh false to true edge starts it again.
+- **The transport acts on edges.** Each edge of `run` is a B6 press
+  (amended by ADR 0080, where a DAW's Start and Stop move the transport
+  too): it starts a stopped runner (fresh clock, loop start, working copy
+  from the settings) and stops a playing one; a level with no edge does
+  nothing. A new load epoch stops the runner with no edge, and the next
+  press starts it again.
 - **A note-off matches its origin, channel and key** (`NoteOrigin`): a ring's
   off never releases a held key or another ring's note.
 - **STOP releases only ORBIT's notes**, one off each in the same block, and

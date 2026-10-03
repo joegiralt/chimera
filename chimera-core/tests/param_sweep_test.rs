@@ -616,7 +616,7 @@ fn sweep(quick: bool, t: Timing) -> Sweep {
 // ── Tests ──────────────────────────────────────────────────────────────
 
 /// The sweep reads the registry: every block with audio, and every one of
-/// its parameters, is in it; Theme alone is left out.
+/// its parameters, is in it; `NOT_AUDIO`'s are left out.
 #[test]
 fn the_sweep_covers_the_registry() {
     let all = registry(false);

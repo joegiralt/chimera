@@ -14,7 +14,7 @@ pub use pages::{
 
 use crate::block::Block;
 use crate::orbit::chords::{Bars, ChordRing};
-use crate::orbit::clock::{Bpm, ClockSource, Phase, Position, step_at};
+use crate::orbit::clock::{Bpm, ClockSource, Phase, Position, SyncMode, step_at};
 use crate::orbit::euclid::HitMask;
 use crate::orbit::runner::{Capture, Captured, OrbitShared, OrbitView, beats_at};
 use crate::orbit::scene::{OrbitSong, Refused, Scene, SceneIdx, SceneRing};
@@ -209,7 +209,8 @@ pub struct OrbitUi {
     pub cursor: u8,
     /// NOTES' selected chip: a pool note, or a STEP ring's step.
     pub chip: u8,
-    /// PLAY asked for: what `publish_orbit` sends. Never saved.
+    /// Flipped by every B6 press: what `publish_orbit` sends, and the
+    /// runner toggles on each flip (ADR 0080). Never saved.
     pub run: bool,
     /// What LEARN or CHRD's PLAY armed; `Off` once a capture is taken.
     pub capture: Capture,
@@ -253,10 +254,11 @@ impl OrbitUi {
     /// two publishes stale, so a field left alone would flip between
     /// blocks (a false START or STOP). The destructure fails to compile
     /// when `OrbitShared` gains a field.
-    pub fn publish(&self, song: &OrbitSong, out: &mut OrbitShared) {
+    pub fn publish(&self, song: &OrbitSong, sync_mode: SyncMode, out: &mut OrbitShared) {
         let OrbitShared {
             run,
             bpm,
+            sync,
             scene_rev,
             scene,
             settings,
@@ -267,6 +269,7 @@ impl OrbitUi {
         } = out;
         *run = self.run;
         *bpm = song.bpm;
+        *sync = sync_mode;
         *scene_rev = self.scene_rev;
         *scene = song.current();
         *settings = song.live;
@@ -318,15 +321,9 @@ impl OrbitUi {
 
     /// Takes the runner's latest view; true when its drift is due in the
     /// song: a view on this project's load and a loop gone by (`absorb`
-    /// takes it from the playing scene only). A runner that stopped itself clears `run`, once, so one B6
-    /// starts it again: seen stopping, or on a new load, which stops it
-    /// even before it was seen running.
+    /// takes it from the playing scene only).
     pub fn see(&mut self, v: &OrbitView) -> bool {
-        let was = self.status;
         self.status = OrbitStatus::of(v);
-        if self.run && !v.running && (was.running || v.epoch != was.epoch) {
-            self.run = false;
-        }
         let due = v.epoch == self.epoch && v.loops != self.loops_seen;
         if due {
             self.loops_seen = v.loops;
@@ -406,10 +403,11 @@ impl OrbitUi {
         self.anim.tick(&self.status)
     }
 
-    /// B6: PLAY when stopped, STOP when playing. The transport is the
-    /// UI's, never the project's.
+    /// B6: PLAY when stopped, STOP when playing, as the runner is when
+    /// the press reaches it, whoever started it (ADR 0080). The transport
+    /// is never the project's.
     pub fn play_stop(&mut self) {
-        self.run = !self.status.running;
+        self.run = !self.run;
     }
 
     /// MIX + B*n*: ring `r`'s MUTE, in the project (so marked).

@@ -1,6 +1,7 @@
 //! ORBIT's clock types: the internal clock, and a MIDI clock to follow.
 
 use super::euclid::Steps;
+use crate::block::DiskCode;
 use core::num::NonZeroU32;
 
 /// A position within a bar, in 2³² ths.
@@ -201,6 +202,45 @@ pub enum ClockSource {
     Midi,
 }
 
+/// SETTINGS › MIDI CONFIG › SYNC: who drives ORBIT's transport (ADR 0080).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SyncMode {
+    /// ORBIT's own clock; MIDI clock, Start, Continue and Stop are ignored.
+    Int,
+    /// The DAW's clock and transport lead; silence falls back (ADR 0072).
+    Ext,
+}
+
+impl SyncMode {
+    pub const ALL: [SyncMode; 2] = [SyncMode::Int, SyncMode::Ext];
+    /// A DAW works out of the box; with no clock ORBIT still runs free.
+    pub const DEFAULT: SyncMode = SyncMode::Ext;
+}
+
+impl DiskCode for SyncMode {
+    fn disk_code(self) -> u8 {
+        match self {
+            SyncMode::Int => 0,
+            SyncMode::Ext => 1,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            SyncMode::Int => "INT",
+            SyncMode::Ext => "EXT",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(SyncMode::Int),
+            1 => Some(SyncMode::Ext),
+            _ => None,
+        }
+    }
+}
+
 /// MIDI clocks in a bar: four beats of 24 (§ 6.2).
 pub const TICKS_PER_BAR: u64 = 96;
 /// Tick intervals the tempo is averaged over: a beat's.
@@ -350,12 +390,14 @@ impl MidiClock {
         (self.len > 0 && self.sum > 0).then_some((self.len as u64, self.sum as u64))
     }
 
-    /// Where the clock is at `now`; `None` with no leader or after
-    /// `SILENT_MS` of silence. Past a tick it runs on at the average rate,
-    /// at least one unit (the tick has come), and stops short of the next.
+    /// Where the clock is at `now`; `None` with no leader, after
+    /// `SILENT_MS` of silence, or stopped: a stopped DAW leads nothing, so
+    /// B6 plays on the internal clock (ADR 0080). Past a tick it runs on at
+    /// the average rate, at least one unit (the tick has come), and stops
+    /// short of the next.
     pub fn position(&self, now: u64) -> Option<Position> {
         self.leader?;
-        if self.quiet(now) {
+        if self.quiet(now) || !self.playing {
             return None;
         }
         let at = |n| self.origin.units().saturating_add(tick_units(n));
@@ -363,9 +405,6 @@ impl MidiClock {
             return Some(self.origin);
         }
         let tick = at(self.ticks);
-        if !self.playing {
-            return Some(Position::from_units(tick));
-        }
         let next = at(self.ticks + 1);
         let run = match (self.measured(), self.last_tick) {
             (Some((n, sum)), Some(t)) => (now.saturating_sub(t) << 32) * n / (TICKS_PER_BAR * sum),

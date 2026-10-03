@@ -49,6 +49,7 @@ fn boot<S: Store>(
     // private issue #197
     let (sync, settings, _) = SystemSync::boot(card, store);
     ui.set_theme(settings.theme);
+    ui.set_midi(settings.midi);
     ui.boot_project(card, store, settings.last_project);
     (sync, settings)
 }
@@ -143,11 +144,13 @@ fn main() {
             sync: &mut sync,
             settings: &mut settings,
         };
-        let orbit = *ui.orbit();
+        let (orbit, sync_mode) = (*ui.orbit(), ui.midi().sync);
         ui.card_work(cx, &LOAD_LINK, |swap, p| {
             let deadline = Instant::now() + Duration::from_millis(LOAD_ACK_TIMEOUT_MS.into());
             let _ = swap.settle(&LOAD_LINK, || Instant::now() < deadline);
-            audio.update(p.perf(), LOAD_LINK.epoch(), |o| orbit.publish(p.orbit(), o));
+            audio.update(p.perf(), LOAD_LINK.epoch(), |o| {
+                orbit.publish(p.orbit(), sync_mode, o)
+            });
         });
         // Leaving SETTINGS syncs SYSTEM; a toast says how it went.
         ui.sync_system(&mut sync, &mut card, &mut store, &mut settings);

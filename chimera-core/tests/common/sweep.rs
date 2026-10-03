@@ -269,9 +269,11 @@ impl Param {
 
 /// Theme is the UI's (`ThemeSettings`): it never reaches the audio. ORBIT's
 /// blocks reach it only through a running ORBIT, so `orbit_param_sweep`
-/// sweeps them there.
-pub const NOT_AUDIO: [BlockRef; 7] = [
+/// sweeps them there; MIDI CONFIG's SYNC only picks ORBIT's clock, which
+/// `orbit_midi_clock_test` drives.
+pub const NOT_AUDIO: [BlockRef; 8] = [
     BlockRef::Theme,
+    BlockRef::Midi,
     BlockRef::OrbitChords,
     BlockRef::OrbitRing(RingIdx::ALL[0]),
     BlockRef::OrbitRing(RingIdx::ALL[1]),

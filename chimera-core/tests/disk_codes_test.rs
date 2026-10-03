@@ -15,6 +15,7 @@ use chimera_core::storage::{
     Crc32, DiskValue, RETIRED, RETIRED_BLOCKS, RETIRED_CODES, RETIRED_SOURCES, ValidAddr,
     read_value,
 };
+use chimera_core::ui::midi_settings::MidiSettings;
 use chimera_core::ui::theme_settings::ThemeSettings;
 use chimera_theory::Degree;
 
@@ -24,6 +25,7 @@ struct Bank {
     fx: FxParams,
     part: PartParams,
     theme: ThemeSettings,
+    midi: MidiSettings,
     scene: Scene,
 }
 
@@ -34,6 +36,7 @@ impl Bank {
             fx: FxParams::default(),
             part: PartParams::default(),
             theme: ThemeSettings::DEFAULT,
+            midi: MidiSettings::DEFAULT,
             scene: Scene::init(),
         }
     }
@@ -47,6 +50,7 @@ impl Bank {
             BlockRef::Comp => &mut self.fx.comp,
             BlockRef::Part => &mut self.part,
             BlockRef::Theme => &mut self.theme,
+            BlockRef::Midi => &mut self.midi,
             BlockRef::OrbitChords => &mut self.scene.chords,
             BlockRef::OrbitRing(r) => &mut self.scene.rings[r.get() as usize],
             b => self.snap.block_mut(b).expect("a Sound block"),
@@ -421,7 +425,7 @@ fn block_codes_unique_and_round_trip() {
     }
     assert_eq!(seen.len(), BlockRef::ALL.len());
     assert_eq!(BlockRef::from_disk_code(0), None);
-    assert_eq!(BlockRef::from_disk_code(33), None);
+    assert_eq!(BlockRef::from_disk_code(34), None);
     assert_eq!(BlockRef::from_disk_code(255), None);
 }
 

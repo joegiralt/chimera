@@ -36,7 +36,7 @@ fn block_ref_all_has_no_duplicates() {
 }
 
 /// `block()` hands out the instance whose spec table `BlockRef::specs`
-/// names; a Part view resolves every address but THEME, the channel
+/// names; a Part view resolves every address but THEME, MIDI CONFIG, the channel
 /// overview (the UI holds them) and ORBIT's (the project's), a Sound all
 /// but the FX and the Part's own mix settings.
 #[test]
@@ -46,7 +46,7 @@ fn block_and_specs_agree() {
     for b in BlockRef::ALL {
         if matches!(
             b,
-            BlockRef::Theme | BlockRef::OrbitChords | BlockRef::OrbitRing(_)
+            BlockRef::Theme | BlockRef::Midi | BlockRef::OrbitChords | BlockRef::OrbitRing(_)
         ) {
             assert!(part.block(b).is_none());
             assert!(ParamSnapshot::default().block(b).is_none());

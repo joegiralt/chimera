@@ -14,10 +14,11 @@ use crate::modulation::{MAX_MOD_SOURCES, ModSource};
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams, PitchParams};
 use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, ParamSlot, VizType};
+use crate::ui::midi_settings::MidiSettings;
 use crate::ui::page::{PageLayout, ValFmt};
 use crate::ui::settings::leaves::{
     ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, DEMO_LEAVES, LIVE_SNAP_LEAF, OUTPUTS_LEAF,
-    THEME_LEAF, TUNING_LEAF, UPDATES_LEAF,
+    SYNC_LEAF, THEME_LEAF, TUNING_LEAF, UPDATES_LEAF,
 };
 use crate::ui::theme_settings::ThemeSettings;
 
@@ -615,6 +616,24 @@ pub static SYS_THEME: BlockDef = BlockDef {
     ],
 };
 
+/// MIDI CONFIG › SYNC: who drives ORBIT's transport (ADR 0080).
+pub static SYS_SYNC: BlockDef = BlockDef {
+    id: 86,
+    name: "Sync",
+    short: "SYN",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    // Held by `UiState` and stored in SYSTEM (`ui::midi_settings`).
+    params: [
+        ParamSlot::param(BlockRef::Midi, MidiSettings::SYNC),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
 pub static SYS_UPDATES: BlockDef = BlockDef {
     id: 34,
     name: "Updates",
@@ -899,11 +918,12 @@ pub static DEMO_BLOCKS: [ChainBlock; 13] = [
 ];
 
 /// The chains besides DEMO's leaves.
-const FIXED: [&ChainDef2; 12] = [
+const FIXED: [&ChainDef2; 13] = [
     &ALGO_CHAIN,
     &MODAL_PLUCK_CHAIN,
     &MIXER_CHANNEL_CHAIN,
     CHANNELS_LEAF.chain(),
+    SYNC_LEAF.chain(),
     OUTPUTS_LEAF.chain(),
     TUNING_LEAF.chain(),
     THEME_LEAF.chain(),

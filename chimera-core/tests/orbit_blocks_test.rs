@@ -393,8 +393,7 @@ fn stop_play_keeps_the_drift() {
 }
 
 /// B6 and a load in one publish: the runner takes the load first and
-/// never starts, so the view never runs. The new epoch clears `run`
-/// anyway, and the next B6 starts.
+/// never starts, so the view never runs, and the next B6 starts.
 #[test]
 fn b6_with_a_load_never_sticks() {
     let mut rig = Rig::new(in_orbit());
@@ -402,7 +401,6 @@ fn b6_with_a_load_never_sticks() {
     rig.frame(Input::press(ButtonId::B6), 1);
     assert!(!rig.running(), "the load wins the block");
     rig.frame(Input::release(ButtonId::B6), 1);
-    assert!(!rig.ui.orbit().run, "the new load clears run");
     rig.idle(1);
     rig.b6();
     assert!(rig.running(), "one B6 starts it");
@@ -424,8 +422,10 @@ fn a_view_from_before_a_load_brings_no_drift() {
     assert!(!o.see(&v), "once a loop");
 }
 
+/// A load stops the runner with no press from the UI: B6 is a press, so
+/// one starts it again (ADR 0080).
 #[test]
-fn a_self_stop_clears_run() {
+fn one_b6_starts_after_a_self_stop() {
     let mut rig = Rig::new(in_orbit());
     rig.b6();
     rig.idle(4);
@@ -435,10 +435,7 @@ fn a_self_stop_clears_run() {
     rig.epoch += 1;
     rig.idle(1);
     assert!(!rig.running());
-    assert!(rig.ui.orbit().run, "the UI hasn't seen the stop yet");
     rig.idle(1);
-    assert!(!rig.ui.orbit().run, "the view's stop clears run");
     rig.b6();
     assert!(rig.running(), "one B6 starts it again");
-    assert!(rig.ui.orbit().run);
 }

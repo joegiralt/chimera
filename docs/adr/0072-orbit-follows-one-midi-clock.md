@@ -1,6 +1,7 @@
 # 0072. ORBIT follows one MIDI clock through the note queues
 
-- **Status:** Proposed (accepted at the ORBIT plan's ship flash)
+- **Status:** Proposed (accepted at the ORBIT plan's ship flash); the
+  transport rules amended by [0080](0080-sync-int-or-ext-a-daw-drives-orbits-transport.md)
 - **Deciders:** owner (ORBIT design spec § 6, 2026-09-30), firmware
 
 ## Context
@@ -21,9 +22,10 @@ jump, and the windows have to stay contiguous whatever the ticks do
 - **One source leads.** `MidiClock` follows the first source to send a
   Clock or Start, and ignores the others until the leader has been silent
   500 ms (`SILENT_MS`). A new leader, or one back from silence, starts a
-  fresh tempo average and plays: its Clocks count whatever an old leader's
-  Stop left, and its first Clock, with no Start, sets `ext_playing` as a
-  Continue would.
+  fresh tempo average and its Clocks count whatever an old leader's Stop
+  left. Its first Clock, with no Start, moves ORBIT but never starts it
+  (ADR 0080). All of this only under SYNC EXT: under INT the runner drops
+  every real-time message.
 - **A tick is a place, the time between ticks is a guess.** The n-th Clock
   after Start marks (n − 1)/96 of a bar, rounded up as `step_start` rounds,
   so a step on a tick is that tick. Between ticks the phase runs at the
@@ -31,7 +33,9 @@ jump, and the windows have to stay contiguous whatever the ticks do
   tick has come, so its step fires in its block, even before an interval
   is known), and stops one unit short of the next. Clocks count only
   between Start or Continue and Stop: a clock sent while stopped keeps the
-  leader alive and the average fresh, and moves nothing.
+  leader alive and the average fresh, and moves nothing. A stopped leader
+  leads nothing (`position` is `None`), so B6 then plays ORBIT on its own
+  clock (ADR 0080).
 - **A drained message came half a block before its drain.** The shells see
   real-time once a block; the runner dates each message `WINDOW` samples
   before the block that drains it, the mean of when it can have come.
@@ -44,19 +48,19 @@ jump, and the windows have to stay contiguous whatever the ticks do
   joins in phase (`restart_dice`, never a new position).
 - **Taken up with no Start, a clock carries on from where ORBIT is**
   (`MidiClock::rebase`): the bar and phase don't jump to the sender's tick
-  count, which ORBIT can't know without Song Position Pointer.
+  count, which ORBIT can't know without Song Position Pointer. Continue
+  rebases the same way (ADR 0080).
 - **Silence falls back from the edge.** After 500 ms with no tick, the
   internal clock re-anchors at the last window's edge at the internal BPM.
-  The transport and `ext_playing` don't change, so a stopped DAW never
-  starts ORBIT (spec § 6.1 for the transport; `ext_playing` is this ADR's).
-  A B6 up-edge with no clock leading sets `ext_playing`: the owner's own
-  start, with nothing outside to wait for. While ORBIT is silent the
+  The transport doesn't change, so a stopped DAW never starts ORBIT and a
+  playing one's ORBIT plays on (spec § 6.1). While ORBIT is silent the
   internal clock stays anchored at the edge, so it never jumps when it
   starts.
-- **Start and Stop act at the next block.** `realtime` only flags them;
-  `block` sends the held notes' offs first. Stop drops the transport with
-  no edge (ADR 0071), so only a fresh B6 starts ORBIT again; Start goes back
-  to bar 0 and holds there until the first Clock.
+- **Start, Continue and Stop act at the next block** (amended by ADR 0080:
+  one transport, `ext_playing` gone). `realtime` only flags them; `block`
+  sends the held notes' offs first. Start goes back to bar 0 and plays,
+  holding there until the first Clock; Continue plays on from the edge;
+  Stop stops. None needs B6.
 - **F is inert under MIDI.** ORB's header reads the measured BPM and `MIDI`
   (or the internal BPM and `INT`); `SlotCtx.clock` makes BPM a dimmed,
   inert cell while MIDI leads.
@@ -86,9 +90,9 @@ jump, and the windows have to stay contiguous whatever the ticks do
   the drain (0.6) fails.
 
 ## Consequences
-- After a MIDI Stop, ORBIT stays silent until B6 and the external transport
-  both play again (Start, Continue, or a new leader's Clock). With the
-  cable gone, the internal clock leads after 500 ms and B6 alone plays.
+- After a MIDI Stop, ORBIT stays silent until the DAW's Start or Continue,
+  or B6, which plays it on the internal clock (ADR 0080). With the cable
+  gone, the internal clock leads after 500 ms.
 - A tempo jump (or a burst) runs ORBIT at up to `MAX_BPM_EXT` until it has
   caught up; at `MAX_BPM_EXT` itself a burst's lag is never made up.
 - `OrbitRunner` grows by `MidiClock` (616 to 728 B, under its 1 KB); the

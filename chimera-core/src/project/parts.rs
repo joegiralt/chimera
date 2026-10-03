@@ -183,6 +183,7 @@ pub fn part_block<'a>(
         BlockRef::Comp => Some(&fx.comp),
         BlockRef::Part => Some(mix),
         BlockRef::Theme
+        | BlockRef::Midi
         | BlockRef::PartMix(_)
         | BlockRef::OrbitChords
         | BlockRef::OrbitRing(_)
@@ -215,6 +216,7 @@ pub fn part_block_mut<'a>(
         BlockRef::Comp => Some(&mut fx.comp),
         BlockRef::Part => Some(mix),
         BlockRef::Theme
+        | BlockRef::Midi
         | BlockRef::PartMix(_)
         | BlockRef::OrbitChords
         | BlockRef::OrbitRing(_)

@@ -48,6 +48,7 @@ impl BlockRef {
             BlockRef::Theme => 26,
             BlockRef::OrbitChords => 27,
             BlockRef::OrbitRing(r) => 28 + r.get(),
+            BlockRef::Midi => 33,
             BlockRef::PartMix(_) | BlockRef::Tempo => return None,
         })
     }
@@ -86,6 +87,7 @@ impl BlockRef {
             BlockRef::OrbitRing(r) => {
                 ["RING1", "RING2", "RING3", "RING4", "RING5"][r.get() as usize]
             }
+            BlockRef::Midi => "MIDI",
             BlockRef::PartMix(_) | BlockRef::Tempo => return None,
         })
     }

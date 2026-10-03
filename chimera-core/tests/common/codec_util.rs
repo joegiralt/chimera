@@ -19,6 +19,7 @@ use chimera_core::storage::{
     Check, Crc32, Decode, DecodeInPlace, FileError, FileKind, Framer, Generation, Header,
     ProjectId, SoundDecoder, SystemSettings, encode_sound, encode_system, sound_crc, write_file,
 };
+use chimera_core::ui::midi_settings::MidiSettings;
 use chimera_core::ui::theme_settings::{Accent, Black, Bright, Gamma, ThemeSettings};
 use chimera_hal::store::{ByteSink, StoreError};
 
@@ -160,9 +161,11 @@ pub fn system_file(s: &SystemSettings) -> Vec<u8> {
 /// The v1 SYSTEM fixture, under `tests/fixtures/v1/`.
 pub const SYSTEM_FIXTURE: &str = "system.sys";
 
-/// What the SYSTEM fixture was written from: every field off its default.
+/// What the SYSTEM fixture was written from: every field off its default,
+/// MIDI CONFIG aside: the fixture predates it, so it reads as the default.
 pub fn system_fixture_settings() -> SystemSettings {
     SystemSettings {
+        midi: MidiSettings::DEFAULT,
         theme: ThemeSettings {
             bright: Bright::new(85),
             gamma: Gamma::Panel,

@@ -36,21 +36,23 @@ fn every_later_row_names_its_issue() {
         ("ORBIT", 262)
     };
     assert!(labels.contains(&orbit));
-    assert_eq!(
-        names,
-        [
-            orbit.0,
-            "SYNC",
-            "PORT CONFIG",
-            "SYSEX DUMP",
-            "SENDS",
-            "STORAGE",
-            "FORMAT CARD",
-            "USB CONFIG",
-            "TEST TONE",
-            "INPUT TEST"
-        ]
-    );
+    // SYNC drives ORBIT, so it is built with it (ADR 0080), later without (#264).
+    let mut want = vec![orbit.0];
+    if !cfg!(feature = "orbit") {
+        want.push("SYNC");
+        assert!(labels.contains(&("SYNC", 264)));
+    }
+    want.extend([
+        "PORT CONFIG",
+        "SYSEX DUMP",
+        "SENDS",
+        "STORAGE",
+        "FORMAT CARD",
+        "USB CONFIG",
+        "TEST TONE",
+        "INPUT TEST",
+    ]);
+    assert_eq!(names, want);
     assert!(labels.contains(&("SENDS", 259)));
     assert!(labels.contains(&("TEST TONE", 295)));
     assert!(labels.contains(&("INPUT TEST", 296)));

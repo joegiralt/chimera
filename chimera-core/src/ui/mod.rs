@@ -15,6 +15,7 @@ pub mod focus;
 pub mod glyph;
 pub mod hold;
 pub mod led;
+pub mod midi_settings;
 pub mod mod_grid;
 pub mod mod_panel;
 pub mod nav;
@@ -67,6 +68,7 @@ use block_def::VizType;
 use block_def::slot_addr;
 use components::Head;
 use hold::{HoldGates, Press};
+use midi_settings::MidiSettings;
 use mod_grid::MatrixState;
 use nav::{
     Browse, Column, ListAt, Location, NavCtx, NavKey, OrbitAct, OrbitCx, OrbitKey, Recall,
@@ -199,6 +201,8 @@ pub struct UiState {
     prime_status: Option<PrimeStatus>,
     /// SETTINGS › THEME; boot sets it from SYSTEM (`set_theme`).
     theme: ThemeSettings,
+    /// SETTINGS › MIDI CONFIG's SYNC; boot sets it from SYSTEM (`set_midi`).
+    midi: MidiSettings,
     /// What the last card operation said, for a moment.
     toast: busy::ToastTimer,
     /// `project_status`, refreshed by `handle_input` and `update` inside
@@ -238,6 +242,7 @@ crate::in_place::field_list!(UiState => UiState {
     display_lfos,
     prime_status,
     theme,
+    midi,
     toast,
     status,
     clock,
@@ -277,10 +282,12 @@ impl UiState {
             let page = PageKey::from_location(loc, def, Op::A);
             let mut renderer = Renderer::new();
             let theme = ThemeSettings::DEFAULT;
+            let midi = MidiSettings::DEFAULT;
             let read = UiRead {
                 project,
                 part: PartId::ALL[0],
                 theme: &theme,
+                midi: &midi,
             };
             renderer.snap_to_current(page_values(page, def, &read, &SlotCtx::read(&read, Op::A)));
             addr_of_mut!((*p).loc).write(loc);
@@ -299,6 +306,7 @@ impl UiState {
             addr_of_mut!((*p).display_lfos).write([Lfo::new(); 3]);
             addr_of_mut!((*p).prime_status).write(None);
             addr_of_mut!((*p).theme).write(theme);
+            addr_of_mut!((*p).midi).write(midi);
             addr_of_mut!((*p).toast).write(busy::ToastTimer::new());
             addr_of_mut!((*p).status).write(StatusCache::new());
             addr_of_mut!((*p).clock).write(animation::UiClock::new());
@@ -340,6 +348,16 @@ impl UiState {
         self.theme = t;
     }
 
+    /// SETTINGS › MIDI CONFIG as last edited.
+    pub fn midi(&self) -> MidiSettings {
+        self.midi
+    }
+
+    /// The MIDI CONFIG SYSTEM held, set at boot before the first frame.
+    pub fn set_midi(&mut self, m: MidiSettings) {
+        self.midi = m;
+    }
+
     /// Once a frame, after input: on leaving SETTINGS, syncs SYSTEM (one
     /// mount, which may load or save) and puts up what came of it. It draws
     /// nothing, so no BUSY covers a save too quick to read; a `Loaded`
@@ -352,6 +370,7 @@ impl UiState {
         s: &mut SystemSettings,
     ) {
         s.theme = self.theme;
+        s.midi = self.midi;
         self.card = *card;
         if !sync.left_system(self.in_settings(), s) {
             return;
@@ -359,7 +378,7 @@ impl UiState {
         let r = sync.on_exit(card, store, s, self.project.meta().file());
         self.card = *card;
         if r == Ok(Exit::Loaded) {
-            self.theme = s.theme;
+            self.adopt_system(s);
         }
         if let Some(t) = busy::toast_for(&r) {
             self.toast.show(t);
@@ -534,7 +553,7 @@ impl UiState {
             // SYSTEM; until then a boot falls back to NEW and says why.
             Ok(()) => {
                 if sync.forget(card, store, settings, file) == Ok(Exit::Loaded) {
-                    self.theme = settings.theme;
+                    self.adopt_system(settings);
                 }
             }
             Err(n) => self.show_note(n),
@@ -554,8 +573,14 @@ impl UiState {
         f: ProjectFile,
     ) {
         if sync.write(card, store, settings, f) == Ok(Exit::Loaded) {
-            self.theme = settings.theme;
+            self.adopt_system(settings);
         }
+    }
+
+    /// A card's SYSTEM, taken: its theme and MIDI CONFIG.
+    fn adopt_system(&mut self, s: &SystemSettings) {
+        self.theme = s.theme;
+        self.midi = s.midi;
     }
 
     /// Once a frame: the toast, `elapsed_ms` after the last frame.
@@ -681,6 +706,7 @@ impl UiState {
             project: &self.project,
             part,
             theme: &self.theme,
+            midi: &self.midi,
         }
     }
 
@@ -1571,6 +1597,7 @@ impl UiState {
                 project: &mut self.project,
                 part: self.active_part,
                 theme: &mut self.theme,
+                midi: &mut self.midi,
             };
             if shift {
                 part_page::snap_under(def, i, delta, params, &ctx);
@@ -1592,7 +1619,8 @@ impl UiState {
     /// ORBIT's settings for the audio thread, into a slot of its triple
     /// buffer, in the same publish as the Parts.
     pub fn publish_orbit(&self, out: &mut OrbitShared) {
-        self.orbit.publish(self.project.orbit(), out);
+        self.orbit
+            .publish(self.project.orbit(), self.midi.sync, out);
     }
 
     /// The runner's latest view, each loop before `handle_input`: a
@@ -1793,6 +1821,7 @@ impl UiState {
                     project: &mut self.project,
                     part: at,
                     theme: &mut self.theme,
+                    midi: &mut self.midi,
                 };
                 match (self.page, shift) {
                     (PageKey::Part { .. }, true) => {
@@ -2357,13 +2386,14 @@ fn any_input(controls: &impl Controls) -> bool {
             .any(|&b| controls.button_state(b) == ButtonState::Pressed)
 }
 
-/// A Part's blocks plus SETTINGS › THEME, so the theme edits through the same
-/// slot bindings as any other. Only a block written takes `edit_part`, so
-/// only a write moves the project's revision.
+/// A Part's blocks plus SETTINGS › THEME and MIDI CONFIG, so those edit
+/// through the same slot bindings as any other. Only a block written takes
+/// `edit_part`, so only a write moves the project's revision.
 struct UiBlocks<'a> {
     project: &'a mut Project,
     part: PartId,
     theme: &'a mut ThemeSettings,
+    midi: &'a mut MidiSettings,
 }
 
 /// `UiBlocks`' shared twin: no `block_mut`, so a frame can't write.
@@ -2371,18 +2401,21 @@ struct UiRead<'a> {
     project: &'a Project,
     part: PartId,
     theme: &'a ThemeSettings,
+    midi: &'a MidiSettings,
 }
 
-/// Part `part`'s block `b`, the theme, or ORBIT's: what both views read.
+/// Part `part`'s block `b`, the theme, MIDI CONFIG, or ORBIT's: what both
+/// views read.
 fn read_block<'a>(
     project: &'a Project,
     part: PartId,
-    theme: &'a ThemeSettings,
+    (theme, midi): (&'a ThemeSettings, &'a MidiSettings),
     b: BlockRef,
 ) -> Option<&'a dyn Block> {
     let song = project.orbit();
     match b {
         BlockRef::Theme => Some(theme),
+        BlockRef::Midi => Some(midi),
         BlockRef::PartMix(p) => Some(project.read_part(p).mix),
         BlockRef::OrbitChords => Some(&song.live.chords),
         BlockRef::OrbitRing(r) => Some(&song.live.rings[r.get() as usize]),
@@ -2393,7 +2426,7 @@ fn read_block<'a>(
 
 impl BlockRead for UiBlocks<'_> {
     fn block(&self, b: BlockRef) -> Option<&dyn Block> {
-        read_block(self.project, self.part, self.theme, b)
+        read_block(self.project, self.part, (self.theme, self.midi), b)
     }
 }
 
@@ -2401,6 +2434,7 @@ impl Blocks for UiBlocks<'_> {
     fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
         match b {
             BlockRef::Theme => Some(self.theme),
+            BlockRef::Midi => Some(self.midi),
             BlockRef::PartMix(p) => Some(self.project.edit_part(p).mix),
             BlockRef::OrbitChords => Some(&mut self.project.orbit_mut().live.chords),
             BlockRef::OrbitRing(r) => {
@@ -2417,7 +2451,7 @@ impl Blocks for UiBlocks<'_> {
 
 impl BlockRead for UiRead<'_> {
     fn block(&self, b: BlockRef) -> Option<&dyn Block> {
-        read_block(self.project, self.part, self.theme, b)
+        read_block(self.project, self.part, (self.theme, self.midi), b)
     }
 }
 
@@ -2458,6 +2492,7 @@ mod tests {
     fn part_mix_edits_the_named_part() {
         let (mut project, _) = Project::boxed();
         let mut theme = ThemeSettings::default();
+        let mut midi = MidiSettings::default();
         let [p1, _, p3, ..] = PartId::ALL;
         let a = ParamAddr::new(BlockRef::PartMix(p3), PartParams::CHANNEL);
         let ch = |p: &Project, id| p.part(id).mix.get(PartParams::CHANNEL);
@@ -2466,6 +2501,7 @@ mod tests {
             project: &mut project,
             part: p1,
             theme: &mut theme,
+            midi: &mut midi,
         };
         ui.block_mut(a.block).unwrap().set(a.param, 9.0);
         assert_eq!(ch(&project, p3), 9.0);
@@ -2474,6 +2510,7 @@ mod tests {
             project: &project,
             part: p1,
             theme: &theme,
+            midi: &midi,
         };
         assert_eq!(read.block(a.block).unwrap().get(a.param), 9.0);
     }

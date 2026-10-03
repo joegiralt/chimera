@@ -5,7 +5,7 @@ use crate::part::PartParams;
 use crate::project::PartId;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot, VizType};
 use crate::ui::block_registry::{
-    DEMO_BLOCKS, SYS_ABOUT, SYS_AUDIO, SYS_THEME, SYS_TUNING, SYS_UPDATES,
+    DEMO_BLOCKS, SYS_ABOUT, SYS_AUDIO, SYS_SYNC, SYS_THEME, SYS_TUNING, SYS_UPDATES,
 };
 use crate::ui::page::{PageId, PageLayout};
 
@@ -101,6 +101,7 @@ impl OnePage {
 }
 
 static CHANNELS_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&CHANNELS)];
+static SYNC_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_SYNC)];
 static OUTPUTS_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&OUTPUTS)];
 static TUNING_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_TUNING)];
 static THEME_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_THEME)];
@@ -110,6 +111,7 @@ static AUDIO_LOAD_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_AUDIO)];
 static LIVE_SNAP_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&LIVE_SNAP)];
 
 pub static CHANNELS_LEAF: OnePage = OnePage::new("Channels", &CHANNELS_BLOCKS);
+pub static SYNC_LEAF: OnePage = OnePage::new("Sync", &SYNC_BLOCKS);
 pub static OUTPUTS_LEAF: OnePage = OnePage::new("Outputs", &OUTPUTS_BLOCKS);
 pub static TUNING_LEAF: OnePage = OnePage::new("Tuning", &TUNING_BLOCKS);
 pub static THEME_LEAF: OnePage = OnePage::new("Theme", &THEME_BLOCKS);

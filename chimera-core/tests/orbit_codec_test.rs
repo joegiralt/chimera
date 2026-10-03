@@ -781,8 +781,10 @@ mod unit {
         reload(&mut rig, &mut audio, f);
         assert_eq!(scene_drift(&rig.ui.project().orbit().live), playing);
         assert!(!audio.view().running, "a load stops ORBIT");
-        assert!(!rig.ui.orbit().run);
         assert_eq!(view_drift(&audio.view()), playing, "the runner took it");
+        audio.frame(&mut rig, Input::press(B6), 1);
+        audio.frame(&mut rig, Input::release(B6), 1);
+        assert!(audio.view().running, "one B6 starts it again");
     }
 
     /// Review Focus 7: MENU hold while a switch to scene 3 waits saves it

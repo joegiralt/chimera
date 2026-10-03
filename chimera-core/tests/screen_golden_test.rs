@@ -106,6 +106,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("sound_browser", 0x1d1ac95bdfaca72b),
     // Re-recorded: a fresh project's footer drops NEW (#286).
     ("settings_personal_theme", 0x4ceb975ee846afcc),
+    ("settings_midi_sync", 0x0e26ce69d0f54980),
     ("settings_system_diag_aud_load", 0x0d5edcdc4826225e),
     // ORBIT's row opens its list (plan Task 17).
     ("settings_top", 0x08d6ee26dad9fb97),

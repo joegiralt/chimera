@@ -45,8 +45,11 @@ impl Rig {
         }
     }
 
+    /// B6, pressed if the runner isn't already `on`.
     fn play(&mut self, on: bool) {
-        self.shared.orbit.run = on;
+        if on != self.runner.view().running {
+            self.shared.orbit.run ^= true;
+        }
     }
 
     fn block(&mut self) {

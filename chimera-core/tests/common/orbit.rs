@@ -16,6 +16,7 @@ use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::hw::{CPU_HZ_REV_V, DAC_PAIRS, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument, NoteOrigin};
 use chimera_core::note_queue::{InEvent, NoteEvent, NoteKind, RealTime};
+use chimera_core::orbit::clock::SyncMode;
 use chimera_core::orbit::engine::{OrbitEvent, PendingOff};
 use chimera_core::orbit::runner::{OrbitRunner, OrbitView};
 use chimera_core::orbit::scene::OrbitSong;
@@ -118,6 +119,8 @@ pub struct OrbitRig {
     last_view: OrbitView,
     /// The `OrbitUi` the next publish carries instead of `ui`: a load's.
     stale: Option<OrbitUi>,
+    /// MIDI CONFIG's SYNC, as SYSTEM holds it.
+    pub sync: SyncMode,
 }
 
 impl OrbitRig {
@@ -156,6 +159,7 @@ impl OrbitRig {
             slots,
             last_view,
             stale: None,
+            sync: SyncMode::DEFAULT,
         }
     }
 
@@ -173,15 +177,13 @@ impl OrbitRig {
         self.project.orbit_mut()
     }
 
-    /// B6: the UI's transport.
+    /// B6, pressed if ORBIT isn't already `on` as last seen.
     pub fn play(&mut self, on: bool) {
-        if self.ui.run && !on {
-            self.stopped_at = Some(self.blocks());
+        if on == self.last_view.running {
+            return;
         }
-        if on {
-            self.stopped_at = None;
-        }
-        self.ui.run = on;
+        self.stopped_at = (!on).then(|| self.blocks());
+        self.ui.play_stop();
     }
 
     pub fn blocks(&self) -> usize {
@@ -261,10 +263,11 @@ impl OrbitRig {
         let b = self.blocks();
         self.shared
             .update_from(self.project.perf(), self.link.epoch());
-        self.stale
-            .take()
-            .unwrap_or(self.ui)
-            .publish(self.project.orbit(), &mut self.shared.orbit);
+        self.stale.take().unwrap_or(self.ui).publish(
+            self.project.orbit(),
+            self.sync,
+            &mut self.shared.orbit,
+        );
         let bpm_before = self.last_view.bpm;
         let pending_before = self.runner.pending();
 

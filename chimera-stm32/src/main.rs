@@ -288,6 +288,7 @@ fn synth(board: Board) -> ! {
     // private issue #197
     let (mut sync, mut settings, _) = SystemSync::boot(&mut card, store);
     ui.set_theme(settings.theme);
+    ui.set_midi(settings.midi);
     apply_theme(settings.theme, &mut theme, &mut backlight, &mut display);
     // Boot step 2, still behind BUSY, before the audio and the watchdog
     // start: the last project (about 130 KB read), or NEW and why.
@@ -373,7 +374,7 @@ fn synth(board: Board) -> ! {
             settings: &mut settings,
         };
         #[cfg(feature = "orbit")]
-        let orbit = *ui.orbit();
+        let (orbit, sync_mode) = (*ui.orbit(), ui.midi().sync);
         ui.card_work(cx, &LOAD_LINK, |swap, p| {
             let t0 = controls::ticks();
             let _ = swap.settle(&LOAD_LINK, || {
@@ -382,7 +383,7 @@ fn synth(board: Board) -> ! {
             shared_w.publish(|b| {
                 b.update_from(p.perf(), LOAD_LINK.epoch());
                 #[cfg(feature = "orbit")]
-                orbit.publish(p.orbit(), &mut b.orbit);
+                orbit.publish(p.orbit(), sync_mode, &mut b.orbit);
             });
         });
         // Leaving SETTINGS syncs SYSTEM, with no overlay first: a save is

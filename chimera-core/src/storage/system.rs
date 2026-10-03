@@ -1,10 +1,11 @@
-//! SYSTEM: the theme and the last project, read at boot and written on
+//! SYSTEM: the theme, MIDI CONFIG's SYNC and the last project, read at boot and written on
 //! leaving System when RAM differs from what the card is known to hold (ADR 0045).
 
 use chimera_hal::store::{Dir, Store, StoreError, VolumeId};
 
 use crate::addr::{BlockRead, BlockRef, Blocks};
 use crate::block::Block;
+use crate::ui::midi_settings::MidiSettings;
 use crate::ui::theme_settings::ThemeSettings;
 
 use super::block_codec::{ByteSet, decode_block, encode_block};
@@ -19,6 +20,8 @@ use super::record::{ReadTag, RecordBuf, RecordTag, RecordWriter};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SystemSettings {
     pub theme: ThemeSettings,
+    /// A SYSTEM from before SYNC has none: the default (ADR 0080).
+    pub midi: MidiSettings,
     pub last_project: Option<ProjectId>,
 }
 
@@ -26,6 +29,7 @@ impl SystemSettings {
     /// No card, no file or an error: the built-in theme, no project.
     pub const DEFAULT: Self = SystemSettings {
         theme: ThemeSettings::DEFAULT,
+        midi: MidiSettings::DEFAULT,
         last_project: None,
     };
 }
@@ -36,10 +40,13 @@ impl Default for SystemSettings {
     }
 }
 
-/// `Block(Theme)`, then `LastProject` when there is one.
+/// `Block(Theme)`, `Block(Midi)`, then `LastProject` when there is one.
 pub fn encode_system(s: &SystemSettings, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     let mut r = RecordBuf::new();
     encode_block(BlockRef::Theme, &s.theme, &mut r);
+    w.put(RecordTag::Block, r.as_slice())?;
+    let mut r = RecordBuf::new();
+    encode_block(BlockRef::Midi, &s.midi, &mut r);
     w.put(RecordTag::Block, r.as_slice())?;
     match s.last_project {
         Some(p) => w.put(RecordTag::LastProject, &p.get().to_le_bytes()),
@@ -53,18 +60,26 @@ pub fn body_crc(s: &SystemSettings) -> u32 {
     records_crc(&[], |w| encode_system(s, w))
 }
 
-/// The theme as the one block a `Block` record can reach.
-struct ThemeBlocks<'a>(&'a mut ThemeSettings);
+/// The theme and MIDI CONFIG: the blocks a `Block` record can reach.
+struct SystemBlocks<'a>(&'a mut SystemSettings);
 
-impl BlockRead for ThemeBlocks<'_> {
+impl BlockRead for SystemBlocks<'_> {
     fn block(&self, b: BlockRef) -> Option<&dyn Block> {
-        (b == BlockRef::Theme).then_some(&*self.0 as &dyn Block)
+        match b {
+            BlockRef::Theme => Some(&self.0.theme),
+            BlockRef::Midi => Some(&self.0.midi),
+            _ => None,
+        }
     }
 }
 
-impl Blocks for ThemeBlocks<'_> {
+impl Blocks for SystemBlocks<'_> {
     fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
-        (b == BlockRef::Theme).then_some(&mut *self.0 as &mut dyn Block)
+        match b {
+            BlockRef::Theme => Some(&mut self.0.theme),
+            BlockRef::Midi => Some(&mut self.0.midi),
+            _ => None,
+        }
     }
 }
 
@@ -89,7 +104,7 @@ impl SystemCheck {
     ///
     /// `WrongKind`: not a SYSTEM file. `Corrupt`: a block or last project
     /// read twice, a critical record SYSTEM doesn't read, or a project's. `Bounds`: a
-    /// payload of the wrong shape. A block other than THEME, and any other
+    /// payload of the wrong shape. A block other than THEME or MIDI, and any other
     /// record, is skipped; a last project out of range is none.
     fn step(&mut self, e: Event<'_>, staged: Option<&mut SystemSettings>) -> Result<(), FileError> {
         let (tag, p) = match e {
@@ -107,12 +122,12 @@ impl SystemCheck {
                 if p.first().is_some_and(|&b| !self.blocks.insert(b)) {
                     return Err(FileError::Corrupt);
                 }
-                let mut theme = staged.map(|s| ThemeBlocks(&mut s.theme));
+                let mut sys = staged.map(SystemBlocks);
                 decode_block(
                     p,
                     MIGRATIONS,
                     TRANSLATIONS,
-                    theme.as_mut().map(|t| t as &mut dyn Blocks),
+                    sys.as_mut().map(|t| t as &mut dyn Blocks),
                 )
             }
             ReadTag::Known(RecordTag::LastProject) => {
@@ -316,7 +331,8 @@ enum Last {
 pub struct SystemSync {
     /// The volume and `body_crc` last loaded from or saved to it.
     known: Option<(VolumeId, u32)>,
-    /// RAM's theme is the default no card gave and the user hasn't changed.
+    /// RAM's theme and MIDI CONFIG are the defaults no card gave and the
+    /// user hasn't changed.
     /// The last project doesn't count: writing it to a card with no SYSTEM
     /// leaves the theme untouched for the next card.
     untouched: bool,
@@ -349,11 +365,12 @@ impl SystemSync {
         (sync, settings, note)
     }
 
-    /// Once a frame: true on the frame System is left. Any theme change
-    /// from the defaults, even one undone, marks them touched; the last
-    /// project is no user setting.
+    /// Once a frame: true on the frame System is left. Any theme or MIDI
+    /// CONFIG change from the defaults, even one undone, marks them
+    /// touched; the last project is no user setting.
     pub fn left_system(&mut self, in_system: bool, s: &SystemSettings) -> bool {
-        self.untouched &= s.theme == SystemSettings::DEFAULT.theme;
+        let d = SystemSettings::DEFAULT;
+        self.untouched &= s.theme == d.theme && s.midi == d.midi;
         let left = self.was_in && !in_system;
         self.was_in = in_system;
         left

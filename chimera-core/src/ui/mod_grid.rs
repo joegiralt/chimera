@@ -344,6 +344,7 @@ pub fn block_tag(b: BlockRef) -> &'static str {
         BlockRef::Comp => "CMP",
         BlockRef::Part | BlockRef::PartMix(_) => "PRT",
         BlockRef::Theme => "THM",
+        BlockRef::Midi => "MID",
         BlockRef::OrbitChords => "CHD",
         BlockRef::OrbitRing(r) => ["R1", "R2", "R3", "R4", "R5"][r.get() as usize],
         BlockRef::Tempo => "BPM",
@@ -406,6 +407,7 @@ pub fn block_name(b: BlockRef) -> &'static str {
         BlockRef::Comp => "COMP",
         BlockRef::Part | BlockRef::PartMix(_) => "PART",
         BlockRef::Theme => "THEME",
+        BlockRef::Midi => "MIDI",
         BlockRef::OrbitChords => "ORBIT CHORDS",
         BlockRef::OrbitRing(r) => {
             ["RING 1", "RING 2", "RING 3", "RING 4", "RING 5"][r.get() as usize]

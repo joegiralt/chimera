@@ -119,8 +119,15 @@ const ORBIT_KIND: Kind = List(&ORBIT);
 #[cfg(not(feature = "orbit"))]
 const ORBIT_KIND: Kind = Later(issue(262));
 
+/// SYNC drives ORBIT's transport: without ORBIT there is nothing to drive.
+#[cfg(feature = "orbit")]
+const SYNC_KIND: Kind = Leaf(&super::leaves::SYNC_LEAF);
+// private issue #264
+#[cfg(not(feature = "orbit"))]
+const SYNC_KIND: Kind = Later(issue(264));
+
 static MIDI: [Row; 3] = [
-    row("SYNC", Later(issue(264))),
+    row("SYNC", SYNC_KIND),
     crumb("PORT CONFIG", "PORT", Later(issue(265))),
     row("CHANNELS", Leaf(&CHANNELS_LEAF)),
 ];
