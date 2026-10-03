@@ -1,5 +1,5 @@
-//! ORBIT's pages: ORB, RING (RHYTHM, with VOICE and NOTES), CHRD (with
-//! CUSTOM) and SCN, a chain of its own that `Loc::Orbit` walks (ADR 0044).
+//! ORBIT's pages: ORB (with CUSTOM), RING (RHYTHM, with VOICE and NOTES),
+//! CHRD and SCN, a chain of its own that `Loc::Orbit` walks (ADR 0044).
 
 use super::OrbitCell;
 use crate::addr::BlockRef;
@@ -13,8 +13,9 @@ const fn chords(id: crate::block::ParamId) -> ParamSlot {
     ParamSlot::param(BlockRef::OrbitChords, id)
 }
 
-/// ORBIT's home: every ring at once. A picks the ring, B to E mirror
-/// CHRD's KEY, SCALE and BARS and SCN's SCENE, F the tempo (ADR 0079).
+/// ORBIT's home and the song's frame: every ring at once. A picks the
+/// ring, B to D are KEY, SCALE and BARS (here alone), E mirrors SCN's
+/// SCENE, F the tempo (ADR 0079).
 pub static ORBIT_ORB: BlockDef = BlockDef {
     id: 78,
     name: "Orbit",
@@ -30,6 +31,9 @@ pub static ORBIT_ORB: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Tempo, Bpm::BPM),
     ],
 };
+
+/// ORB's SCALE slot: EDIT opens CUSTOM with it in focus.
+pub const ORB_SCALE: usize = 2;
 
 /// The selected ring's Euclidean fill and its odds.
 pub static ORBIT_RHYTHM: BlockDef = BlockDef {
@@ -48,7 +52,8 @@ pub static ORBIT_RHYTHM: BlockDef = BlockDef {
     ],
 };
 
-/// The key and the progression, and PLAY: a chord held into a segment.
+/// The progression, and PLAY: a chord held into a segment. A to C are
+/// reserved for chord controls to come (ADR 0079).
 pub static ORBIT_CHRD: BlockDef = BlockDef {
     id: 80,
     name: "Chords",
@@ -56,9 +61,9 @@ pub static ORBIT_CHRD: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::OrbitChords,
     params: [
-        chords(ChordRing::KEY),
-        chords(ChordRing::SCALE),
-        chords(ChordRing::BARS),
+        ParamSlot::EMPTY,
+        ParamSlot::EMPTY,
+        ParamSlot::EMPTY,
         chords(ChordRing::SEGS),
         ParamSlot::orbit(OrbitCell::Degree),
         ParamSlot::orbit(OrbitCell::Play),
@@ -137,12 +142,12 @@ pub static ORBIT_SCN: BlockDef = BlockDef {
 };
 
 static ORBIT_BLOCKS: [ChainBlock; 4] = [
-    ChainBlock::page(&ORBIT_ORB),
+    ChainBlock::with_subs(&ORBIT_ORB, &[&ORBIT_CUSTOM]),
     ChainBlock {
         map: Some("RING"),
         ..ChainBlock::with_subs(&ORBIT_RHYTHM, &[&ORBIT_VOICE, &ORBIT_NOTES])
     },
-    ChainBlock::with_subs(&ORBIT_CHRD, &[&ORBIT_CUSTOM]),
+    ChainBlock::page(&ORBIT_CHRD),
     ChainBlock::page(&ORBIT_SCN),
 ];
 
@@ -161,6 +166,7 @@ const fn node_of(def: &BlockDef) -> usize {
     }
 }
 
+pub const ORB_NODE: usize = node_of(&ORBIT_ORB);
 pub const RING_NODE: usize = node_of(&ORBIT_RHYTHM);
 pub const CHRD_NODE: usize = node_of(&ORBIT_CHRD);
 pub const SCN_NODE: usize = node_of(&ORBIT_SCN);

@@ -372,6 +372,7 @@ ORB ── RING ── CHRD ── SCN
 - **CHRD:** KEY, SCALE, BARS, SEGS, DEGREE, PLAY; the segments as chips, a played chord shown by name with a dot. SCALE offers the ten named scales and CUSTOM. (amended 2026-09-30: plan)
 - **CHRD › CUSTOM** (a sub-page, shown while SCALE is CUSTOM): a 12-dot circle, one dot per pitch class from the tonic, lit when in the scale; the root's dot is locked on. Turning SCALE to CUSTOM opens it. Encoder A moves the cursor round the 12 notes; encoder B turned right sets the note under it on, turned left sets it off; the root stays on. EDIT cycles CHRD ↔ CUSTOM. (amended 2026-09-30, controller ruling)
 - **SCN:** SCENE, SAVE, SWITCH; eight slots, the playing one outlined, a queued one filling as the loop runs out.
+- **Split by meaning** (amended 2026-10-03, owner, ADR 0079): ORB is the song's frame, RING, KEY, SCALE, BARS, SCENE, BPM; KEY, SCALE and BARS are edited there alone. CHRD is the progression only: A to C reserved (`--`) for chord controls to come, D to F SEGS, DEGREE, PLAY. CUSTOM moves under ORB: EDIT on ORB opens it while SCALE is CUSTOM and in focus, EDIT on CUSTOM returns to ORB; CHRD no longer opens it. The chain is now `ORB (› CUSTOM) ── RING ── CHRD ── SCN`.
 
 The ring cells bind through a new `SlotBinding::SelectedRing(ParamId)`, as `SelectedOp` binds an operator's (`block_def.rs:37-59`). The chord ring and the rings are UI-held blocks resolved in `UiBlocks`, as THEME is (`ui/mod.rs:1036-1058`). The per-ring pages edit the *live* scene; the drift they draw comes from `OrbitView`.
 

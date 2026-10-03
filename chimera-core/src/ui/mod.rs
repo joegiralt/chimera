@@ -597,6 +597,7 @@ impl UiState {
     fn cx(&self) -> NavCtx {
         let mut cx = nav_cx(&self.project);
         cx.dyn_rows = self.screen().map_or(0, |s| self.screen_rows(s)) as u8;
+        cx.orbit.custom &= self.focus.get(orbit::ORBIT_ORB.id) == orbit::ORB_SCALE;
         cx
     }
 

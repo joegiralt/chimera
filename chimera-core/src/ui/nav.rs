@@ -9,7 +9,7 @@ use crate::ui::block_def::{ChainDef2, Move};
 use crate::ui::block_registry::{
     self, ALGO_CHAIN, CHORUS, MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART, MODAL_PLUCK_CHAIN,
 };
-use crate::ui::orbit::{CHRD_NODE, ORBIT_CHAIN, RING_NODE, SCN_NODE};
+use crate::ui::orbit::{ORB_NODE, ORBIT_CHAIN, RING_NODE, SCN_NODE};
 use crate::ui::settings::leaves::OnePage;
 use crate::ui::settings::{Act, Kind, MANAGE_COMMANDS, PART_ROW, Row, Screen, row_at};
 
@@ -303,10 +303,10 @@ enum Loc {
     Orbit(OrbitAt),
 }
 
-/// CHRD › CUSTOM, checked at compile time.
-const CUSTOM_PAGE: PageAt = match ORBIT_CHAIN.page(CHRD_NODE, 1) {
+/// ORB › CUSTOM, checked at compile time.
+const CUSTOM_PAGE: PageAt = match ORBIT_CHAIN.page(ORB_NODE, 1) {
     Some(p) => p,
-    None => panic!("CHRD has no CUSTOM"),
+    None => panic!("ORB has no CUSTOM"),
 };
 
 /// RING's first sub-page, checked at compile time.
@@ -341,7 +341,7 @@ impl OrbitAt {
         OrbitAt { ring, ..self }
     }
 
-    /// CHRD › CUSTOM, the same ring.
+    /// ORB › CUSTOM, the same ring.
     pub fn custom(self) -> OrbitAt {
         OrbitAt {
             page: CUSTOM_PAGE,
@@ -380,14 +380,11 @@ impl OrbitAt {
                 let n = ORBIT_CHAIN.blocks[RING_NODE].sub_page_count().max(1);
                 page(ORBIT_CHAIN.page(RING_NODE, (sub + 1) % n))
             }
-            // CUSTOM always returns to CHRD, even with SCALE named under
-            // it (a load, a scene switch); CHRD opens CUSTOM while SCALE is.
-            OrbitKey::Edit if self.on(CHRD_NODE) && sub == 1 => {
-                page(ORBIT_CHAIN.page(CHRD_NODE, 0))
-            }
-            OrbitKey::Edit if self.on(CHRD_NODE) && cx.orbit.custom => {
-                page(ORBIT_CHAIN.page(CHRD_NODE, 1))
-            }
+            // EDIT is down (#316): ORB's one sub-page, CUSTOM, opens while
+            // SCALE is CUSTOM and in focus; from it EDIT wraps back to ORB,
+            // even with SCALE named under it (a load, a scene switch).
+            OrbitKey::Edit if self.on(ORB_NODE) && sub == 1 => page(ORBIT_CHAIN.page(ORB_NODE, 0)),
+            OrbitKey::Edit if self.on(ORB_NODE) && cx.orbit.custom => page(Some(CUSTOM_PAGE)),
             // SCN's commit: SAVE → n.
             OrbitKey::Edit if self.on(SCN_NODE) => Step::Orbit(OrbitAct::SaveTo),
             OrbitKey::Edit => Step::Stay,
@@ -438,7 +435,7 @@ pub enum OrbitAct {
 pub struct OrbitCx {
     /// Each ring's Part: where a held B*n* crosses to.
     pub targets: [PartId; RINGS],
-    /// SCALE is CUSTOM: EDIT on CHRD opens CUSTOM.
+    /// SCALE is CUSTOM and ORB's focus is on it: EDIT on ORB opens CUSTOM.
     pub custom: bool,
 }
 

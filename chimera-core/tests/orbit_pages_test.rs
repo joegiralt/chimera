@@ -1,5 +1,5 @@
 //! ORBIT's pages as drawn and turned: RHYTHM's pattern, VOICE's bars,
-//! NOTES' chips, CHRD's segments and the CUSTOM circle; and the custom
+//! NOTES' chips, CHRD's segments and ORB's CUSTOM circle; and the custom
 //! set's record. Their screens are locked in `screen_golden_test`
 //! (`orbit_rhythm`, `orbit_voice`, `orbit_notes`, `orbit_notes_step`,
 //! `orbit_chrd`, `orbit_custom`).
@@ -14,7 +14,7 @@ use chimera_core::orbit::chords::ScaleKind;
 use chimera_core::orbit::clock::step_at;
 use chimera_core::orbit::scene::{Scene, decode_scale, encode_scale};
 use chimera_core::ui::UiState;
-use chimera_core::ui::orbit::{ORBIT_CHRD, ORBIT_CUSTOM, ORBIT_RHYTHM};
+use chimera_core::ui::orbit::{ORBIT_CHRD, ORBIT_CUSTOM, ORBIT_ORB, ORBIT_RHYTHM};
 use chimera_core::ui::theme;
 use chimera_hal::ButtonId::{Edit, Plus, Seq};
 use chimera_hal::EncoderId::{A, B, C, D, E};
@@ -54,26 +54,29 @@ fn ring_rhythm_golden() {
     }
 }
 
-/// CHRD › CUSTOM, the controller ruling: SCALE turned to CUSTOM opens the
-/// circle on the scale it was; A walks the cursor, B sets and clears; the
-/// root stays; EDIT cycles while SCALE is CUSTOM and only then.
+/// ORB › CUSTOM, the controller ruling (ADR 0079, amended 2026-10-03):
+/// SCALE (C) turned to CUSTOM opens the circle on the scale it was; A
+/// walks the cursor, B sets and clears; the root stays; EDIT on ORB opens
+/// it while SCALE is CUSTOM and in focus, and only then.
 #[test]
-fn chrd_custom_circle() {
+fn orb_custom_circle() {
     let mut ui = Box::new(UiState::new());
     let chords = |ui: &UiState| ui.project().orbit().live.chords;
     let page = |ui: &UiState| ui.page_def().id;
     hold(&mut ui, Seq);
-    feed(&mut ui, Input::press(Plus));
-    feed(&mut ui, Input::press(Plus));
-    assert_eq!(page(&ui), ORBIT_CHRD.id);
+    assert_eq!(page(&ui), ORBIT_ORB.id);
     assert_eq!(chords(&ui).scale, ScaleKind::Minor);
 
-    // A named scale: EDIT does nothing.
+    // A named scale: EDIT does nothing, SCALE in focus or not.
     tap(&mut ui, Edit);
-    assert_eq!(page(&ui), ORBIT_CHRD.id);
+    assert_eq!(page(&ui), ORBIT_ORB.id);
+    feed(&mut ui, Input::turn(C, -1));
+    feed(&mut ui, Input::turn(C, 1));
+    tap(&mut ui, Edit);
+    assert_eq!(page(&ui), ORBIT_ORB.id);
 
-    // SCALE (B) from MINOR up to CUSTOM: the circle, holding MINOR.
-    feed(&mut ui, Input::turn(B, 9));
+    // SCALE (C) from MINOR up to CUSTOM: the circle, holding MINOR.
+    feed(&mut ui, Input::turn(C, 9));
     assert_eq!(chords(&ui).scale, ScaleKind::Custom);
     assert_eq!(page(&ui), ORBIT_CUSTOM.id);
     assert_eq!(chords(&ui).custom, Scale::MINOR);
@@ -108,33 +111,74 @@ fn chrd_custom_circle() {
     assert!(has(&ui, 0));
     assert_eq!(chords(&ui).custom, Scale::MINOR);
 
-    // EDIT: back to CHRD, and again to CUSTOM.
+    // EDIT: back to ORB, and again to CUSTOM.
     tap(&mut ui, Edit);
-    assert_eq!(page(&ui), ORBIT_CHRD.id);
+    assert_eq!(page(&ui), ORBIT_ORB.id);
     tap(&mut ui, Edit);
     assert_eq!(page(&ui), ORBIT_CUSTOM.id);
 
+    // KEY (B) in focus: EDIT stays on ORB though SCALE is CUSTOM.
+    tap(&mut ui, Edit);
+    feed(&mut ui, Input::turn(B, 1));
+    feed(&mut ui, Input::turn(B, -1));
+    assert_eq!(chords(&ui).scale, ScaleKind::Custom);
+    tap(&mut ui, Edit);
+    assert_eq!(page(&ui), ORBIT_ORB.id, "KEY in focus");
+
     // A set no named scale is stays the user's when SCALE comes back.
+    feed(&mut ui, Input::turn(C, 1));
+    assert_eq!(
+        chords(&ui).scale,
+        ScaleKind::Custom,
+        "CUSTOM is SCALE's top"
+    );
+    tap(&mut ui, Edit);
+    assert_eq!(page(&ui), ORBIT_CUSTOM.id, "SCALE in focus again");
     feed(&mut ui, Input::turn(A, 1));
     feed(&mut ui, Input::turn(B, 1));
     let own = chords(&ui).custom;
     assert!(!Scale::ALL.contains(&own));
     tap(&mut ui, Edit);
-    feed(&mut ui, Input::turn(B, -2));
+    feed(&mut ui, Input::turn(C, -2));
     assert_eq!(chords(&ui).scale, ScaleKind::PentatonicMajor);
-    feed(&mut ui, Input::turn(B, 2));
+    feed(&mut ui, Input::turn(C, 2));
     assert_eq!(page(&ui), ORBIT_CUSTOM.id);
     assert_eq!(chords(&ui).custom, own);
 
-    // Turned off CUSTOM, EDIT on CHRD does nothing again.
+    // Turned off CUSTOM, EDIT on ORB does nothing again.
     tap(&mut ui, Edit);
-    feed(&mut ui, Input::turn(B, -1));
+    feed(&mut ui, Input::turn(C, -1));
     tap(&mut ui, Edit);
-    assert_eq!(page(&ui), ORBIT_CHRD.id);
+    assert_eq!(page(&ui), ORBIT_ORB.id);
 
     // The screen: `orbit_custom` in `screen_golden_test`.
     let ui = screen::ui_for("orbit_custom");
     assert_eq!(page(&ui), ORBIT_CUSTOM.id);
+}
+
+/// CHRD is the progression only: KEY, SCALE and BARS are ORB's alone, A to
+/// C are reserved, and EDIT there never opens CUSTOM.
+#[test]
+fn chrd_is_the_progression_only() {
+    let mut ui = Box::new(UiState::new());
+    hold(&mut ui, Seq);
+    feed(&mut ui, Input::press(Plus));
+    feed(&mut ui, Input::press(Plus));
+    assert_eq!(ui.page_def().id, ORBIT_CHRD.id);
+    let before = ui.project().orbit().live.chords;
+    for e in [A, B, C] {
+        feed(&mut ui, Input::turn(e, 3));
+        feed(&mut ui, Input::turn(e, -1));
+    }
+    assert_eq!(ui.project().orbit().live.chords, before, "A to C: nothing");
+    // SEGS, DEGREE and PLAY stay on D to F.
+    feed(&mut ui, Input::turn(D, -1));
+    assert_ne!(ui.project().orbit().live.chords.segs, before.segs);
+
+    // SCALE CUSTOM, from ORB: CHRD's EDIT stays.
+    ui.project_mut().orbit_mut().live.chords.scale = ScaleKind::Custom;
+    tap(&mut ui, Edit);
+    assert_eq!(ui.page_def().id, ORBIT_CHRD.id);
 }
 
 /// Every set of the 12 round-trips through `OrbitScale`; a file's bit 0
@@ -288,21 +332,19 @@ fn degree_turns_from_the_sets_last() {
     assert_eq!(ui.project().orbit().live.chords.degrees[0], Degree::V);
 }
 
-/// EDIT on CUSTOM returns to CHRD even when SCALE is named under it (a
+/// EDIT on CUSTOM returns to ORB even when SCALE is named under it (a
 /// load or a scene switch changed it), so the page is never a dead end.
 #[test]
 fn custom_edit_returns_with_scale_named() {
     let mut ui = Box::new(UiState::new());
     hold(&mut ui, Seq);
-    feed(&mut ui, Input::press(Plus));
-    feed(&mut ui, Input::press(Plus));
-    feed(&mut ui, Input::turn(B, 9));
+    feed(&mut ui, Input::turn(C, 9));
     assert_eq!(ui.page_def().id, ORBIT_CUSTOM.id);
     ui.project_mut().orbit_mut().live.chords.scale = ScaleKind::Dorian;
     tap(&mut ui, Edit);
-    assert_eq!(ui.page_def().id, ORBIT_CHRD.id);
+    assert_eq!(ui.page_def().id, ORBIT_ORB.id);
     tap(&mut ui, Edit);
-    assert_eq!(ui.page_def().id, ORBIT_CHRD.id, "named: no CUSTOM");
+    assert_eq!(ui.page_def().id, ORBIT_ORB.id, "named: no CUSTOM");
 }
 
 /// CUSTOM's cursor eases the short way: across 11 and 0 it moves one
@@ -344,7 +386,6 @@ fn orb_page_golden() {
     use chimera_core::orbit::RingIdx;
     use chimera_core::orbit::euclid::accents;
     use chimera_core::ui::animation::UiTick;
-    use chimera_core::ui::orbit::ORBIT_ORB;
     use chimera_core::ui::orbit::draw::{BAND_R, orb_xy, ring_r};
     let ui = screen::ui_for("orbit_orb");
     assert_eq!(ui.page_def().id, ORBIT_ORB.id);
@@ -519,7 +560,6 @@ fn header_dot_pulses() {
 /// ORB's encoders: A picks the ring, one to five; F sets the BPM.
 #[test]
 fn orb_encoders() {
-    use chimera_core::ui::orbit::ORBIT_ORB;
     use chimera_hal::EncoderId::F;
     let mut ui = Box::new(UiState::new());
     hold(&mut ui, Seq);
@@ -931,49 +971,46 @@ fn clear_needs_mix() {
     );
 }
 
-/// ORB's B to E are KEY, SCALE, BARS and SCENE (ADR 0079): a turn there
-/// does what the same turn does on CHRD or SCN, SCENE's queue and cancel
-/// and SCALE's CUSTOM seeding included.
+/// ORB's B to E are KEY, SCALE, BARS and SCENE (ADR 0079): KEY, SCALE
+/// and BARS live there alone; SCENE does what SCN's does, its queue and
+/// cancel included.
 #[test]
-fn orb_cells_mirror_their_home_pages() {
-    use chimera_hal::EncoderId;
+fn orb_owns_the_songs_frame() {
     let fresh = || {
         let mut ui = Box::new(UiState::new());
         hold(&mut ui, Seq);
         ui
     };
-    let state = |ui: &UiState| {
-        let o = ui.project().orbit();
-        (o.live.chords, o.queued())
-    };
-    // (ORB's encoder, the home page's presses of PLUS, its encoder, turns)
-    let cases: [(EncoderId, usize, EncoderId, &[i8]); 4] = [
-        (B, 2, A, &[3, -1, 40]),
-        (C, 2, B, &[2, 9, -4, 1]),
-        (D, 2, C, &[1, -3, 5]),
-        (E, 3, A, &[1, 2, -1, -9]),
-    ];
-    for (orb, plus, home, turns) in cases {
-        let (mut on_orb, mut at_home) = (fresh(), fresh());
-        for _ in 0..plus {
-            feed(&mut at_home, Input::press(Plus));
-        }
-        for &t in turns {
-            feed(&mut on_orb, Input::turn(orb, t));
-            feed(&mut at_home, Input::turn(home, t));
-            assert_eq!(state(&on_orb), state(&at_home), "{orb:?} by {t}");
-        }
-    }
-    // Each did something.
+    let chords = |ui: &UiState| ui.project().orbit().live.chords;
     let mut ui = fresh();
-    let before = state(&ui);
-    for e in [B, C, D] {
-        feed(&mut ui, Input::turn(e, 1));
+    let c0 = chords(&ui);
+    feed(&mut ui, Input::turn(B, 2));
+    assert_ne!(chords(&ui).tonic, c0.tonic, "B: KEY");
+    assert_eq!((chords(&ui).scale, chords(&ui).bars), (c0.scale, c0.bars));
+    let c1 = chords(&ui);
+    feed(&mut ui, Input::turn(C, 1));
+    assert_ne!(chords(&ui).scale, c1.scale, "C: SCALE");
+    assert_eq!((chords(&ui).tonic, chords(&ui).bars), (c1.tonic, c1.bars));
+    let c2 = chords(&ui);
+    feed(&mut ui, Input::turn(D, 1));
+    assert_ne!(chords(&ui).bars, c2.bars, "D: BARS");
+    assert_eq!((chords(&ui).tonic, chords(&ui).scale), (c2.tonic, c2.scale));
+    assert_eq!(ui.page_def().id, ORBIT_ORB.id);
+
+    // E: SCENE, turn for turn as on SCN.
+    let state = |ui: &UiState| ui.project().orbit().queued();
+    let (mut on_orb, mut on_scn) = (fresh(), fresh());
+    for _ in 0..3 {
+        feed(&mut on_scn, Input::press(Plus));
     }
-    assert_ne!(state(&ui).0, before.0);
+    for t in [1, 2, -1, -9] {
+        feed(&mut on_orb, Input::turn(E, t));
+        feed(&mut on_scn, Input::turn(A, t));
+        assert_eq!(state(&on_orb), state(&on_scn), "E by {t}");
+    }
     let mut ui = fresh();
     feed(&mut ui, Input::turn(E, 1));
-    assert!(state(&ui).1.is_some(), "SCENE queued");
+    assert!(state(&ui).is_some(), "SCENE queued");
     feed(&mut ui, Input::turn(E, -1));
-    assert_eq!(state(&ui).1, None, "and cancelled");
+    assert_eq!(state(&ui), None, "and cancelled");
 }

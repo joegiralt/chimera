@@ -33,7 +33,7 @@ use chimera_core::ui::block_def::{BlockDef, ChainDef2, SlotBinding};
 use chimera_core::ui::block_registry::{MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART};
 use chimera_core::ui::busy::{ToastStep, draw_toast};
 use chimera_core::ui::nav::{Location, chain_def_for};
-use chimera_core::ui::orbit::{CHRD_NODE, ORBIT_CHAIN, ORBIT_ORB};
+use chimera_core::ui::orbit::{ORB_NODE, ORBIT_CHAIN, ORBIT_ORB};
 use chimera_core::ui::page::PageLayout;
 use chimera_core::ui::settings::manage::Command;
 use chimera_core::ui::settings::part::{PartCmd, SAVE_ROWS};
@@ -192,13 +192,13 @@ impl Ctx {
                 plus(ui, node);
                 // EDIT opens CUSTOM only once SCALE is on it, and turning
                 // SCALE there opens it.
-                if (node, sub) == (CHRD_NODE, 1) {
-                    feed(ui, Input::turn(EncoderId::B, 127));
+                if (node, sub) == (ORB_NODE, 1) {
+                    feed(ui, Input::turn(EncoderId::C, 127));
                 }
             }
         }
         let edits = match self {
-            Ctx::Orbit if node == CHRD_NODE => 0,
+            Ctx::Orbit if node == ORB_NODE => 0,
             _ => sub,
         };
         for _ in 0..edits {

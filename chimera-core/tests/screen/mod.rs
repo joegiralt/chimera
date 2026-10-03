@@ -1180,11 +1180,11 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::press(ButtonId::Minus));
         ui.set_orbit_view(&midi_view(0.3));
     }),
-    // CUSTOM from MINOR, the tritone set under the cursor.
+    // ORB › CUSTOM from MINOR, the tritone set under the cursor.
     ("orbit_custom", |ui| {
         to_ring(ui, 3);
-        plus(ui, 1);
-        feed(ui, Input::turn(EncoderId::B, 9));
+        feed(ui, Input::press(ButtonId::Minus));
+        feed(ui, Input::turn(EncoderId::C, 9));
         feed(ui, Input::turn(EncoderId::A, 6));
         feed(ui, Input::turn(EncoderId::B, 1));
     }),

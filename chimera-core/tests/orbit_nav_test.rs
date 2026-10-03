@@ -10,7 +10,7 @@ use chimera_core::ui::block_registry::{ALGO_CHAIN, FILTER};
 use chimera_core::ui::nav::{
     Location, MixPage, NavCtx, NavKey, OrbitAct, OrbitAt, OrbitCx, OrbitKey, Outside, Recall, Step,
 };
-use chimera_core::ui::orbit::{CHRD_NODE, ORBIT_CHAIN, RING_NODE};
+use chimera_core::ui::orbit::{CHRD_NODE, ORB_NODE, ORBIT_CHAIN, RING_NODE};
 use chimera_core::ui::settings::rows;
 
 const P: [PartId; 6] = PartId::ALL;
@@ -231,11 +231,22 @@ fn edit_cycles_only_inside() {
     };
     let mut r = Recall::new();
 
-    // ORB: nothing.
+    // ORB opens CUSTOM only while SCALE is CUSTOM and in focus; CUSTOM
+    // always returns to ORB (ADR 0079), even with SCALE named under it (a
+    // load, a scene switch).
     let home = orbit(OrbitAt::HOME);
-    for cx in [&plain, &custom] {
-        assert_eq!(home.step_orbit(OrbitKey::Edit, cx, &mut r), Step::Stay);
-    }
+    assert_eq!(home.step_orbit(OrbitKey::Edit, &plain, &mut r), Step::Stay);
+    let mut l = home;
+    okey(&mut l, OrbitKey::Edit, &custom, &mut r);
+    assert_eq!(l, orbit(OrbitAt::HOME.custom()));
+    assert_eq!(l.orbit().unwrap().page().node() as usize, ORB_NODE);
+    assert_eq!(
+        l.step_orbit(OrbitKey::Edit, &plain, &mut r),
+        Step::Go(home),
+        "SCALE named"
+    );
+    okey(&mut l, OrbitKey::Edit, &custom, &mut r);
+    assert_eq!(l, home);
 
     // RING: wraps over its sub-pages.
     let mut l = home;
@@ -258,24 +269,14 @@ fn edit_cycles_only_inside() {
     shown.dedup();
     assert_eq!(shown.len(), subs, "each sub-page once");
 
-    // CHRD opens CUSTOM only while SCALE is CUSTOM; CUSTOM always returns
-    // to CHRD (spec § 7.2), even with SCALE named under it (a load, a
-    // scene switch).
+    // CHRD: nothing, SCALE CUSTOM or not.
     let mut l = home;
     while l.orbit().unwrap().page().node() as usize != CHRD_NODE {
         okey(&mut l, OrbitKey::Plus, &plain, &mut r);
     }
-    let chrd = l;
-    assert_eq!(chrd.step_orbit(OrbitKey::Edit, &plain, &mut r), Step::Stay);
-    okey(&mut l, OrbitKey::Edit, &custom, &mut r);
-    assert_eq!(l, orbit(chrd.orbit().unwrap().custom()));
-    assert_eq!(
-        l.step_orbit(OrbitKey::Edit, &plain, &mut r),
-        Step::Go(chrd),
-        "SCALE named"
-    );
-    okey(&mut l, OrbitKey::Edit, &custom, &mut r);
-    assert_eq!(l, chrd);
+    for cx in [&plain, &custom] {
+        assert_eq!(l.step_orbit(OrbitKey::Edit, cx, &mut r), Step::Stay);
+    }
 }
 
 #[test]

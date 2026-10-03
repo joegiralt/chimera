@@ -716,6 +716,8 @@ fn seq_saves_on_every_orbit_page() {
     use chimera_core::orbit::chords::ScaleKind;
     let mut ui = in_orbit();
     ui.project_mut().orbit_mut().live.chords.scale = ScaleKind::Custom;
+    // SCALE in focus on ORB, CUSTOM its top: EDIT there opens CUSTOM.
+    feed(&mut ui, Input::turn(chimera_hal::EncoderId::C, 1));
     let mut seen = Vec::new();
     for _ in 0..4 {
         for _ in 0..3 {
@@ -726,7 +728,7 @@ fn seq_saves_on_every_orbit_page() {
             assert_eq!(slot(&ui, 0), ui.project().orbit().live);
             assert_eq!(toast(&mut ui), "SCENE 1 SAVED");
             seen.push(ui.page_def().id);
-            // RING's and CHRD's sub-pages; EDIT does nothing elsewhere.
+            // ORB's and RING's sub-pages; EDIT does nothing elsewhere.
             if ORBIT_SCN.id != ui.page_def().id {
                 tap(&mut ui, Edit);
             }

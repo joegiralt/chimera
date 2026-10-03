@@ -1,4 +1,4 @@
-# 0079. ORB's four cells mirror KEY, SCALE, BARS and SCENE
+# 0079. ORB's four cells: KEY, SCALE, BARS and SCENE (amended: ORB the frame, CHRD the progression)
 
 - **Status:** Proposed
 - **Deciders:** owner (left the choice to the implementer), for the owner's UAT
@@ -22,3 +22,24 @@ owner left what fills them to us.
 - SCALE turned to CUSTOM on ORB opens the CUSTOM circle, as on CHRD.
 - The owner may revise the choice at UAT; it is one `params` array in
   `ui/orbit/pages.rs`.
+
+## Amendment (2026-10-03, owner): split by meaning
+The mirror is replaced. ORB is the song's frame; CHRD is the progression.
+- **ORB:** A RING, B KEY, C SCALE, D BARS, E SCENE, F BPM. KEY, SCALE and
+  BARS are edited here alone; E still mirrors SCN's SCENE.
+- **CHRD:** A to C empty (`--`), reserved for chord controls such as
+  inversion or voicing; D SEGS, E DEGREE, F PLAY stay where they were, so
+  the hands and the tests that know them keep their places. Three cells
+  are free, not two.
+- **CUSTOM** is ORB's sub-page (`ORB_NODE`, sub 1). EDIT on ORB opens it
+  while SCALE is CUSTOM and ORB's focus (its last-turned cell) is SCALE;
+  EDIT on CUSTOM returns to ORB, even with SCALE named under it. SCALE
+  turned to CUSTOM still opens it. CHRD's EDIT does nothing.
+- **Why this EDIT:** #316 makes EDIT "down into sub-pages, wrapping from
+  the bottom to the top". CUSTOM as ORB's one sub-page is exactly that:
+  EDIT goes down into it and wraps back up, and SEQ-as-up lands on ORB
+  too. The SCALE-in-focus gate only narrows when down is offered, so the
+  D-pad can adopt it unchanged.
+- No disk codes or `ParamId`s change; `UiState` is unchanged (the gate
+  reads the existing `FocusMemory`). `orbit_orb`, `orbit_orb_midi`,
+  `orbit_chrd`, `orbit_chrd_played` and `orbit_custom` are re-recorded.
