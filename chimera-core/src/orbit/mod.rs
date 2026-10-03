@@ -2,6 +2,7 @@
 //! UI live in the shell. A step costs a mask lookup, and on a hit a draw,
 //! a walk and a snap; a Bjorklund pass runs only when a fill is re-laid.
 
+pub mod channel;
 pub mod chords;
 pub mod clock;
 pub mod engine;
