@@ -1,7 +1,7 @@
 # ORBIT command channel: Design
 
 **Date:** 2026-10-03, revised the same day for space
-**Status:** Draft. The owner accepted Q1–Q6 of the first draft (§ 7), made space the top priority, and ruled on the `UiState` cap (§ 5.0). This revision is awaiting review.
+**Status:** Final. The owner accepted Q1–Q6 of the first draft (§ 7), made space the top priority, and ruled on the `UiState` cap (§ 5.0). Built on the `orbit` branch; ADR 0082 records the decision, and this text follows the code where the rulings changed it.
 **Builds on:** branch `orbit` at 4989eb9d.
 **Decision record:** ADR 0082 (Proposed). It supersedes the handshake parts of ADR 0071, 0075 and 0077, and amends 0080's `presses`.
 **Inputs:** the altitude and simplification reviews (findings 1–4, 6, 8 and 13 of the altitude review; the "six counters" row of the simplification review), the adversarial review (findings 1 and 2), and the code at 4989eb9d: `orbit/runner.rs`, `orbit/scene.rs`, `ui/orbit/mod.rs`, `triple.rs`, and the shells' publish and view calls.
@@ -41,7 +41,7 @@ This spec replaces them with **one sequenced command log from the UI, one ack fr
   - `UiState` without its `Project` ≤ 3,840 B: today's 3,832 plus the UI's load epoch (owner, 2026-10-03, within the 5,120 B guard of § 5.0).
   - AXI resident ≤ today's.
   - Release `--features orbit` firmware flash at or below the baseline measured before commit 2 (§ 6).
-- Every race test in § 4.2 passes with its assertion unchanged. The property tests in § 4.3 pass on 4 seeds × 1M steps.
+- Every race test in § 4.2 passes with its assertion unchanged. The property tests in § 4.3 pass on 4 seeds each, at the step counts § 4.3 gives.
 
 ## Principles (binding)
 
@@ -147,7 +147,7 @@ Each block, before the transport, the clock and the steps:
 
 The UI's view handling runs once per frame, in one function and one order:
 
-1. **Load gate.** Refuse the view unless `v.epoch` is the epoch of the UI's newest load. Both are the `u32` `AudioShared.epoch`, which never aliases (ADR 0046). `Channel::ack` also refuses, while `load_pending`, a view with `v.acked − L > LOG` (wrapping u8); the first view that passes clears `load_pending`. This is the only stale-view check (§ 3).
+1. **Load gate.** Refuse the view unless `v.epoch` is the epoch of the UI's newest load. Both are the `u32` `AudioShared.epoch`, which never aliases (ADR 0046). This is the only stale-view check (§ 3). A view that passes has `v.acked − L ≤ LOG` (wrapping u8), because the load publish carries the epoch and `L` together; `Channel::ack` asserts it in debug builds while `load_pending`, and the first view clears `load_pending`.
 2. **Status.** Set `acked = v.acked` and `status = OrbitStatus::of(v)`.
 3. **All acked** is `idle = (acked == head) && outbox empty`: the runner has applied every command the UI issued.
 4. **Capture.** If `v.captured.count != took`: `Scene::take(c)`, `took = count`, and harvest the edit (§ 2.2). LEARN and PLAY show `v.armed` whenever `idle`, and the UI's own intent otherwise. A re-arm before the view (adversarial finding 2) keeps showing armed: the view reports the runner armed again. The capture before it is still taken, because the count moved.
@@ -201,7 +201,7 @@ The writer's back slot is two publishes stale, which is harmless because every p
 - (1) the receive gap;
 - (2) W's `head − acked`;
 - (3) `idle`'s `acked == head`;
-- (4) `Channel::ack`'s `v.acked − L`, the load gate's second check.
+- (4) `Channel::ack`'s `v.acked − L`, a debug assertion beside the load gate.
 
 In (1)–(3) the true distance is at most `LOG`:
 
@@ -265,11 +265,12 @@ A u8 resolves distances below 128, so none of these aliases.
 
 ## 3. Load as a command
 
-- **UI.** `UiState::load_with` calls `OrbitUi::loaded()` *before* the load publish. It does four things:
+- **UI.** `UiState::load_with` calls `OrbitUi::loaded()` *before* the load publish. It does five things:
   1. allocates `L = head + 1` and sets `head = L`, so no entry uses `L`;
   2. sets `load = L`, `load_pending = true` and `acked = L`;
-  3. empties the outbox, sets `scene = None` and `took = 0`, and drops every `touched` bit, because the decode's writes set them and the runner adopts `live` whole;
-  4. drops the capture and the SAVE choice, as today.
+  3. empties the outbox, sets `scene = None`, and drops every `touched` bit, because the decode's writes set them and the runner adopts `live` whole. `took` is kept: the runner's `count` runs on across the load, so `took = 0` would take a post-load capture twice;
+  4. issues `Keep(current)` and flushes it, so the load publish tells the runner which slot plays. Boot does the same (`OrbitUi::booted`), because the runner starts on slot 1;
+  5. drops the capture and the SAVE choice, as today.
 
   The publish closure gets `&UiState` after `loaded()`. The shells' pre-load copy, `let (orbit, sync_mode) = (*ui.orbit(), ui.midi().sync)`, goes.
 - **Runner.** Detection stays on `AudioShared.epoch`, a `u32` that never aliases. That is ADR 0046's contract, and it reaches the `Instrument` in the same snapshot. On a new epoch the runner keeps today's reset: it forgets pending offs, stops the transport, drops the DAW's pending word, forgets the take and adopts `settings` whole. It also sets `applied = o.load` and `base_landed = true`, and clears `done.target` to `Off` with `done.len = 0`. So a capture finished during the card read changes `count` but takes nothing (`Scene::take` on `Off` is a no-op). That replaces `Captured.epoch`.
@@ -313,7 +314,7 @@ A u8 resolves distances below 128, so none of these aliases.
 | `OrbitUi.loops_seen: u32` | Once-a-loop cadence | **Narrowed** → `u8` |
 | `OrbitUi.epoch: u32` | Load | **Kept**, for the load gate; `load: Seq` + `load_pending` bit are added |
 | `OrbitUi::requeued`, `was` snapshots | Rev bump after CLEAR or RELOAD | **Removed**: they issue `Cue(current)` |
-| `OrbitStatus.epoch`, `RingStatus.rhythm_rev` | Draw-side copies | **Removed**. The ORB and RHYTHM drawing asks `OrbitUi::fresh()` (`idle && scene.is_none()`) instead of comparing revs |
+| `OrbitStatus.epoch`, `RingStatus.rhythm_rev` | Draw-side copies | **Removed**. The ORB and RHYTHM drawing asks `OrbitUi::fresh(r)`: ring `r` has no unacked `EditRhythm` naming it, in the outbox or the log (gap 3's ruling made it `idle`; the final review made it per ring, as the revs were) |
 | `SceneRing.rhythm_rev`, `.notes_rev` | Edit revs, scatter seed | **Removed** → `touched: u8` |
 | Engine Swap and Nudge rev bumps | Unread | **Removed** |
 | `absorb`'s playing check and two rev tests | Drift gate | **Removed** → § 1.6 step 6 |
@@ -327,13 +328,14 @@ A u8 resolves distances below 128, so none of these aliases.
   - `OrbitRunner` with `Take` 4: `revs`, `scene_rev`, `presses_seen`, `Take.arming`.
   - `OrbitUi` with `OrbitStatus` and `RingStatus` 6: `presses`, `arming`, `scene_rev`, `landed`, `OrbitStatus.epoch`, `RingStatus.rhythm_rev`.
   - `SceneRing` 2.
-- **14 added.**
+- **15 added.**
   - `OrbitShared` 3: `log`, `load`, `synced`.
   - `OrbitView` 2: `acked`, `armed`.
   - `OrbitRunner` 2: `applied`, `base_landed`.
   - `OrbitUi` 6: `log`, `outbox`, `flags` (flip, sent, `load_pending`), `load`, `scene`, `acked`.
   - `SceneRing` 1: `touched`.
-- **Net −9.** (`OrbitView.epoch` and `OrbitUi.epoch` stay for the load gate, § 1.8 (4).) Three narrowed: `count`, `took`, `loops_seen`. One retyped: `cue`.
+  - `OrbitUi` 1 more: `clears`, the CLEAR salt's counter (gap 4).
+- **Net −8.** (`OrbitView.epoch` and `OrbitUi.epoch` stay for the load gate, § 1.8 (4).) Three narrowed: `count`, `took`, `loops_seen`. One retyped: `cue`.
 - **Removed functions and guards:** `incoming`, `revs_of`, `requeued`, `unseen`, three epoch tests, `copy_knobs`' rev branches, `Take::arm`'s generation logic, the parity trick, and four of `absorb`'s seven conditions.
 
 ### 4.2 Race tests that must still pass
@@ -368,7 +370,7 @@ Each keeps its assertion. "Mechanics" means it drives commands or the `load()` h
 
 ### 4.3 Property tests to add
 
-All use the crate's xorshift `Rng` (as `property_test.rs` does), 4 seeds × 1M steps, and the real `TripleBuffer` driven from one thread. Each step is one of the following:
+All use the crate's xorshift `Rng` (as `property_test.rs` does), 4 seeds, and the real `TripleBuffer` driven from one thread. The two `channel` tests run 1M steps a seed; the shell-level ones, which run the whole UI and runner, run 300 (`scenes_converge…`), 1,500 (`edits_never_lost…`), 4,000 (`captures_taken_once…`) steps, or 12 loads of up to 60 acts (`loads_void…`). Each step is one of the following:
 
 - a UI frame: 0–6 acts, harvest, flush, publish;
 - a runner block;
@@ -380,10 +382,9 @@ Skips and repeats exercise TB(c). Every publish goes through `Writer::publish`, 
 
 | Test | Drives | Asserts |
 |---|---|---|
-| `log_applies_every_command_once` | `channel` alone, with a reference list of issued commands that keeps full `u32` numbers outside the system | The receiver applies each post-load command once, in order, and no pre-load one after the load. Every gap is `≤ LOG` |
-| `log_survives_the_u8_wrap` | The same, for > 10,000 wraps of the u8 seq | The same |
+| `log_applies_every_command_once` | `channel` alone, with a reference list of issued commands that keeps full `u32` numbers outside the system | The receiver applies each post-load command once, in order, and no pre-load one after the load. Every gap is `≤ LOG`. The u8 seq wraps at least 1,000 times a seed |
 | `outbox_folds_like_the_runner` | `channel` with stalls up to 50 frames | The final parity, last scene and arm command, and the mask unions equal a reference fold of the unfolded acts |
-| `loads_void_everything_before` | `UiState` + `OrbitRunner`, random acts and loads | After each load: no pre-load capture taken, no pre-load drift absorbed, the transport off, synced on both sides once the view arrives |
+| `loads_void_everything_before` | `UiState` + `OrbitRunner`, random acts and loads | After each load: no pre-load capture taken, no pre-load drift absorbed, the transport off unless a B6 was pressed after the load, synced on both sides once the view arrives |
 | `scenes_converge_after_any_interleaving` | MUTATE 0, random SCENE, CLEAR, RELOAD and B6, random frame and block ratios | After 2 quiet loops: `song.current() == view.playing`, `scene == None`, `base_landed`, and `live`'s rings equal `working`'s. While unsynced, `live` changes only by the UI's own acts |
 | `captures_taken_once_after_any_interleaving` | Random LEARN and PLAY up and down, key chords | Every capture finished under a post-load `Arm` is taken once. LEARN and PLAY show armed iff the newest arm act was `Arm` and its capture is untaken |
 | `edits_never_lost_to_drift` | MUTATE 100, random NOTE, STEPS and CLEAR edits | An edit's value is in `working` once acked. `absorb` never writes a field whose edit is unacked |

@@ -41,7 +41,8 @@ not grow, and flash must shrink and be measured.
     most `LOG + 1` between two UI reads.
 
   The UI lands its newest scene command when every command is acked and
-  `cue` is empty. It mirrors `armed` while everything is acked.
+  `cue` is empty. It mirrors `armed` while everything is acked. A ring
+  draws the view's hits unless a rhythm edit to that ring is unacked.
 - **One fold rule per class.** Within a frame, and while the runner
   stalls, the UI folds each class in a 3 B outbox:
   - presses by parity;
@@ -91,10 +92,11 @@ not grow, and flash must shrink and be measured.
   - **The load gate is the epoch.** `OrbitView` carries the runner's
     `u32` epoch, and the UI keeps its newest load's. A view on another
     epoch is refused, however many loads pass without an audio block: a
-    `u32` never aliases. While the load is pending, `Channel::ack` also
-    refuses a view with `acked` outside `[L, L + LOG]`. A `u8` seq alone
-    can't be the gate: it aliases after 28 back-to-back loads. This is
-    the only stale-view check.
+    `u32` never aliases. This is the only stale-view check. A view on
+    the new epoch always has `acked` in `[L, L + LOG]`, because the load
+    publish carries both; `Channel::ack` only asserts that in debug
+    builds. A `u8` seq alone can't be the gate: it aliases after 28
+    back-to-back loads.
   - The runner clears its last capture's target at a load, which
     replaces `Captured.epoch`.
   - The load publish closure gets the post-load `UiState`.
@@ -108,13 +110,14 @@ not grow, and flash must shrink and be measured.
     `OrbitShared` 876 → 880 B (×3 +12), `OrbitRunner` unchanged at
     832 B (its removed bytes were padding).
   - Flash `text`, fat LTO with one codegen unit (thin LTO moves by
-    about ±1 KB between builds of the same code): 715,428 → 714,956 B,
-    −472 B. Thin LTO: 773,724 → 774,852 B. Scenes, edits and loads
+    about ±1 KB between builds of the same code): 715,428 → 715,252 B,
+    −176 B. Thin LTO: 773,724 → 774,404 B. Scenes, edits and loads
     alone measured +1,208 B fat; the transport and capture took back
     976 B; writing the arm and edit bytes directly, `OrbitUi::arm` out
     of line, and the runner filling the view's slot in place
     (`fill_view`, one shared `RingView::of`) took back 384 B more, and
-    dropping the load block's early return 280 B more.
+    dropping the load block's early return 280 B more. Per-ring
+    freshness and the boot's `Keep` cost 296 B back.
   - The `UiState` guard rises from 4 KB to 5,120 B (owner's ruling). It
     guards no stack, copy or memory region: `UiState` is an AXI static
     built in place, charged a fixed 64 KB `UI_RESERVE`, never cloned or
@@ -153,20 +156,24 @@ not grow, and flash must shrink and be measured.
   fallback if `UiState` measures over.
 
 ## Consequences
-- 25 fields go and 14 come: net −11. `incoming`, `revs_of`, `requeued`,
-  `unseen`, three epoch tests and the generation logic go. `count`,
-  `took` and `loops_seen` narrow to `u8`.
+- 23 fields go and 15 come: net −8. The 15 include `OrbitUi.clears`, the
+  CLEAR salt's counter. `incoming`, `revs_of`, `requeued`, `unseen`,
+  three epoch tests and the generation logic go. `count`, `took` and
+  `loops_seen` narrow to `u8`.
 - The runner's common block makes one `u8` compare where it made four
   generation compares and ten rev compares. Its worst block decodes 8
   bytes, about 0.2 µs.
 - Drift absorption pauses, for at most a frame, while any command is
   unacked.
-- CLEAR down's roll salt moves from `notes_rev` to the UI's seq.
+- CLEAR down's roll salt moves from `notes_rev` to `clears + head`: a
+  count of CLEAR downs plus the log's head, so it moves on every turn,
+  the log flowing or full.
 - Flash is estimated at −0.7 to +0.5 KB and is not guaranteed to shrink.
   The measurement gate decides, and the levers are in the design's § 5.
 - Tests that poked removed fields drive commands instead, with unchanged
-  assertions (design, § 4.2). Seven property tests are added, one across
-  more than 10,000 `u8` wraps (design, § 4.3).
+  assertions (design, § 4.2). Six property tests are added (design,
+  § 4.3). The `u8` wrap is checked inside `log_applies_every_command_once`,
+  at least 1,000 wraps per seed.
 
 ## Sources
 - Design: `docs/superpowers/specs/2026-10-03-orbit-command-channel-design.md`
