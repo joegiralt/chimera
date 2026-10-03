@@ -159,7 +159,12 @@ fn every_stage_reads_back_from_its_code() {
 fn every_usb_state_reads_back_from_its_code() {
     for tries in [1, 2, USB_TRIES] {
         let mut all = vec![UsbState::On { tries }];
-        for why in [UsbOff::Hsi48, UsbOff::AhbIdle, UsbOff::CoreReset] {
+        for why in [
+            UsbOff::Hsi48,
+            UsbOff::Usb33,
+            UsbOff::AhbIdle,
+            UsbOff::CoreReset,
+        ] {
             all.push(UsbState::Off { why, tries });
         }
         for s in all {
@@ -222,7 +227,12 @@ fn a_bounded_wait_gives_up_after_its_limit() {
 
 #[test]
 fn the_usb_toast_names_the_field() {
-    for why in [UsbOff::Hsi48, UsbOff::AhbIdle, UsbOff::CoreReset] {
+    for why in [
+        UsbOff::Hsi48,
+        UsbOff::Usb33,
+        UsbOff::AhbIdle,
+        UsbOff::CoreReset,
+    ] {
         assert_eq!(why.toast(), format!("USB OFF: {}", why.label()));
     }
 }

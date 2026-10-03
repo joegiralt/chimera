@@ -42,6 +42,9 @@ const DRAIN_MS: u32 = 20;
 /// kicked through them.
 const READY_WAIT_MS: u32 = 50;
 
+/// VDD33USB's detector, from USB33DEN to USB33RDY, at most.
+const USB33_WAIT_MS: u32 = 100;
+
 /// Bytes read per loop top at most: a flood without a newline can't hold the UI.
 const READ_BUDGET: usize = 256;
 
@@ -50,12 +53,12 @@ type Port = SerialPort<'static, UsbBus<Otg2>>;
 
 /// OTG2, the OTG FS core on PA11/PA12, brought up in the stock PreenFM3
 /// firmware's order (Ixox/preenfm3 `firmware/Src/usbd_conf.c`
-/// `HAL_PCD_MspInit`, then `usb_device.c`): its AHB clock enabled and
-/// nothing else, then the core reset, and the VDD33USB detector only once
-/// the device has started (`connect`). The HAL's `USB2::enable` instead
-/// sets USB33DEN and pulses the RCC reset right before the core reset,
-/// which on a cold power-up left CSRST set past 50 ms ("USB OFF: csrst",
-/// f11d65e; IWDG resets before that) while the stock order plays from cold.
+/// `HAL_PCD_MspInit`): its AHB clock enabled and nothing else, no RCC
+/// reset. VDD33USB's detector is `preflight`'s to enable, before the core
+/// reset: without USB33DEN the FS PHY's supply isn't seen and CSRST never
+/// clears (a cold record: PWR_CR3 0x42, CSRST set through 10 tries over
+/// 5 s; a warm start, which the ROM loader left with USB33DEN set, reads
+/// 0x0500_0042 and comes up).
 pub struct Otg2 {
     _global: pac::OTG2_HS_GLOBAL,
     _device: pac::OTG2_HS_DEVICE,
@@ -159,14 +162,24 @@ pub fn preflight(parts: UsbParts, cpu_hz: u32) -> Result<Ready, (UsbParts, UsbOf
 fn check(parts: &UsbParts, cpu_hz: u32) -> Result<(), UsbOff> {
     let limit = READY_WAIT_MS * (cpu_hz / 1000);
     let wait = |ready: &mut dyn FnMut() -> bool| wait_until(limit, DWT::cycle_count, ready);
-    // SAFETY: RCC is owned by the HAL after `freeze`; this reads
-    // HSI48RDY and sets AHB1ENR's USB2OTGEN, this port's own clock bit,
-    // as `Otg2::enable` does. No interrupt writes either.
-    let rcc = unsafe { &*pac::RCC::ptr() };
+    // SAFETY: RCC and PWR are owned by the HAL after `freeze`; this reads
+    // HSI48RDY, sets PWR_CR3.USB33DEN (bit 24), the bit the HAL's own
+    // `USB2::enable` sets the same way, reads USB33RDY (bit 26, RM0433
+    // PWR_CR3; the PAC's `usb33rdy`), and sets AHB1ENR's USB2OTGEN, this
+    // port's own clock bit. Nothing else writes these after `freeze`, no
+    // interrupt included.
+    let (rcc, pwr) = unsafe { (&*pac::RCC::ptr(), &*pac::PWR::ptr()) };
     if !wait(&mut || rcc.cr.read().hsi48rdy().is_ready()) {
         return Err(UsbOff::Hsi48);
     }
-    // The stock order (`Otg2`): the clock, no RCC reset, no USB33DEN yet.
+    // VDD33USB seen before the core reset, which needs the PHY (`Otg2`).
+    pwr.cr3.modify(|_, w| w.usb33den().set_bit());
+    let usb33 = USB33_WAIT_MS * (cpu_hz / 1000);
+    if !wait_until(usb33, DWT::cycle_count, || {
+        pwr.cr3.read().usb33rdy().bit_is_set()
+    }) {
+        return Err(UsbOff::Usb33);
+    }
     rcc.ahb1enr.modify(|_, w| w.usb2otgen().set_bit());
     let global = &parts.global;
     if !wait(&mut || global.grstctl.read().ahbidl().bit_is_set()) {
@@ -254,13 +267,6 @@ impl Unconnected {
             .expect("100 mA is within 500")
             .device_class(USB_CLASS_CDC)
             .build();
-        // The VDD33USB detector last, as the stock firmware enables it after
-        // `USBD_Start` (usb_device.c `HAL_PWREx_EnableUSBVoltageDetector`).
-        // SAFETY: PWR is owned by the HAL after `freeze`; USB33DEN is the
-        // bit the HAL's `USB2::enable` sets the same way, and nothing else
-        // writes PWR_CR3 after `freeze`, no interrupt included.
-        let pwr = unsafe { &*pac::PWR::ptr() };
-        pwr.cr3.modify(|_, w| w.usb33den().set_bit());
         Usb {
             dev,
             serial: self.serial,
