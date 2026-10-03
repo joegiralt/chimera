@@ -81,6 +81,12 @@ not grow, and flash must shrink and be measured.
     what plays.
   - The runner still detects a load by `AudioShared.epoch` (ADR 0046, a
     `u32`), and then sets `applied = L`.
+  - Commands past `L` read in the load's own block are applied after
+    its reset, like any others. `TogglePlay` is one of them: a B6
+    pressed after the load, before the runner took it, plays the loaded
+    project. The old `presses` count dropped such a press, so the
+    player's first PLAY after a load could do nothing. A press made
+    before the load is below `L` and void.
   - **The load gate is the epoch.** `OrbitView` carries the runner's
     `u32` epoch, and the UI keeps its newest load's. A view on another
     epoch is refused, however many loads pass without an audio block: a
@@ -101,12 +107,13 @@ not grow, and flash must shrink and be measured.
     `OrbitShared` 876 → 880 B (×3 +12), `OrbitRunner` unchanged at
     832 B (its removed bytes were padding).
   - Flash `text`, fat LTO with one codegen unit (thin LTO moves by
-    about ±1 KB between builds of the same code): 715,428 → 715,236 B,
-    −192 B. Thin LTO: 773,724 → 774,876 B. Scenes, edits and loads
+    about ±1 KB between builds of the same code): 715,428 → 714,956 B,
+    −472 B. Thin LTO: 773,724 → 774,852 B. Scenes, edits and loads
     alone measured +1,208 B fat; the transport and capture took back
     976 B; writing the arm and edit bytes directly, `OrbitUi::arm` out
     of line, and the runner filling the view's slot in place
-    (`fill_view`, one shared `RingView::of`) took back 384 B more.
+    (`fill_view`, one shared `RingView::of`) took back 384 B more, and
+    dropping the load block's early return 280 B more.
   - The `UiState` guard rises from 4 KB to 5,120 B (owner's ruling). It
     guards no stack, copy or memory region: `UiState` is an AXI static
     built in place, charged a fixed 64 KB `UI_RESERVE`, never cloned or

@@ -2,6 +2,7 @@
 
 use super::OrbitUi;
 use crate::block::{OFF_ON, ValFmt};
+use crate::orbit::channel::ArmTarget;
 use crate::orbit::chords::ChordRing;
 use crate::orbit::runner::Capture;
 use crate::orbit::scene::{OrbitSong, SCENES, SceneIdx, SceneRing};
@@ -167,7 +168,7 @@ impl OrbitCell {
                     ui.chip = r.set_chip(i, to) as u8;
                 }
             }
-            OrbitCell::Learn => arm(ui, Capture::Ring(*ring), delta),
+            OrbitCell::Learn => arm(ui, ArmTarget::Ring(*ring), delta),
             // Down disarms; with MIX it drops the played chord too, for the
             // degree: a flick past disarming loses no chord.
             OrbitCell::Play => {
@@ -175,7 +176,7 @@ impl OrbitCell {
                 if delta < 0 && mix {
                     c.played[seg] = None;
                 }
-                arm(ui, Capture::Segment(seg as u8), delta);
+                arm(ui, ArmTarget::Segment(seg as u8), delta);
             }
             // MIX held, or nothing: a slip on its way to NOTE loses no notes.
             OrbitCell::Clear if !mix => {}
@@ -187,10 +188,10 @@ impl OrbitCell {
 }
 
 /// Up arms `to` (dropping any other), down disarms it.
-fn arm(ui: &mut OrbitUi, to: Capture, delta: i8) {
+fn arm(ui: &mut OrbitUi, to: ArmTarget, delta: i8) {
     if delta > 0 {
-        ui.arm(to);
-    } else if ui.capture == to {
+        ui.arm(Some(to));
+    } else if ui.capture == to.into() {
         ui.disarm();
     }
 }

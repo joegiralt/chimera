@@ -58,7 +58,7 @@ fn chord(rig: &mut OrbitRig, keys: &[u8], gap: usize) {
 #[test]
 fn capture_chord_over_300_ms() {
     let mut rig = OrbitRig::new();
-    rig.ui.arm(Capture::Segment(1));
+    rig.ui.arm(Some(ArmTarget::Segment(1)));
     rig.run(1);
     chord(&mut rig, &[64, 60, 57], secs(0.1));
     let want = Chord::from_notes(&notes(&[57, 60, 64])).unwrap();
@@ -81,7 +81,7 @@ fn capture_chord_over_300_ms() {
 #[test]
 fn capture_single_note_ignored() {
     let mut rig = OrbitRig::new();
-    rig.ui.arm(Capture::Segment(0));
+    rig.ui.arm(Some(ArmTarget::Segment(0)));
     rig.run(1);
     chord(&mut rig, &[60], 4);
     chord(&mut rig, &[60, 72], 4);
@@ -98,7 +98,7 @@ fn capture_single_note_ignored() {
 #[test]
 fn capture_ninth_note_dropped() {
     let mut rig = OrbitRig::new();
-    rig.ui.arm(Capture::Ring(R[1]));
+    rig.ui.arm(Some(ArmTarget::Ring(R[1])));
     rig.run(1);
     let mut at = rig.ui.log().head();
     chord(&mut rig, &[67, 60, 61, 62, 63, 64, 65, 66, 68], 2);
@@ -115,7 +115,7 @@ fn capture_ninth_note_dropped() {
 fn capture_pool_sets_octave() {
     let mut rig = OrbitRig::new();
     assert_eq!(rig.song().live.rings[1].ring.octave.get(), 4);
-    rig.ui.arm(Capture::Ring(R[1]));
+    rig.ui.arm(Some(ArmTarget::Ring(R[1])));
     rig.run(1);
     rig.key(0, 50, true);
     rig.run(2);
@@ -156,7 +156,7 @@ fn capture_step_fills_hits_in_order() {
             s.touched = s.touched.with(Touched::RHYTHM);
         }
         let mask = rig.song().live.rings[1].ring.hits_mask();
-        rig.ui.arm(Capture::Ring(R[1]));
+        rig.ui.arm(Some(ArmTarget::Ring(R[1])));
         rig.run(1);
         for k in [64, 60, 67, 71] {
             rig.key(0, k, true);
@@ -192,7 +192,7 @@ fn capture_step_fills_hits_in_order() {
 /// for voice and sample for sample.
 #[test]
 fn capture_notes_still_sound() {
-    let render = |arm: Capture| {
+    let render = |arm: Option<ArmTarget>| {
         let mut rig = OrbitRig::new();
         rig.ui.arm(arm);
         rig.run(1);
@@ -208,8 +208,8 @@ fn capture_notes_still_sound() {
         assert!(rig.stuck_notes().is_empty(), "{:?}", rig.stuck_notes());
         (held, rig.sum.clone(), rig.song().live.chords.played[0])
     };
-    let (held, armed, took) = render(Capture::Segment(0));
-    let (_, plain, none) = render(Capture::Off);
+    let (held, armed, took) = render(Some(ArmTarget::Segment(0)));
+    let (_, plain, none) = render(None);
     assert!(held >= 3, "three voices held, got {held}");
     assert!(took.is_some() && none.is_none());
     let peak = armed.iter().fold(0f32, |m, x| m.max(x.abs()));
@@ -324,8 +324,8 @@ fn rearming_drops_what_was_under_way() {
 
 /// The UI and runner joined through a real triple buffer, as the desktop
 /// joins them: PLAY armed on CHRD, a chord, then frame after frame with
-/// nothing new. The chord is taken once; `capture` is written on every
-/// publish, so a stale slot never re-arms it, and a later chord is no
+/// nothing new. The chord is taken once; the arm is one command, applied
+/// once, so a stale slot never re-arms it, and a later chord is no
 /// capture.
 #[test]
 fn capture_survives_the_triple_buffer() {
@@ -529,7 +529,7 @@ fn a_load_drops_the_capture() {
     use chimera_core::ui::orbit::OrbitUi;
     let (mut p, _) = Project::boxed();
     let mut ui = OrbitUi::new();
-    ui.arm(Capture::Ring(R[0]));
+    ui.arm(Some(ArmTarget::Ring(R[0])));
     ui.loaded(1, p.orbit_mut());
     assert_eq!(ui.capture, Capture::Off);
     let ring = p.orbit().live.rings[0];
@@ -564,13 +564,13 @@ fn armed_step(rig: &mut OrbitRig) {
     let fill = Fill::new(Steps::new(8).unwrap(), 1, 0).unwrap();
     s.ring = s.ring.with_fill(fill);
     s.touched = s.touched.with(Touched::RHYTHM);
-    rig.ui.arm(Capture::Ring(R[1]));
+    rig.ui.arm(Some(ArmTarget::Ring(R[1])));
     rig.run(1);
 }
 
-/// A load disarms the runner too (ADR 0075): the load publish still
-/// carries the old project's arming, and the first key after it, drained
-/// in that block, writes nothing into the loaded project.
+/// A load disarms the runner too (ADR 0075): the arm before it is void,
+/// and the first key after it, drained in that block, writes nothing into
+/// the loaded project.
 #[test]
 fn a_load_disarms_the_runner() {
     let mut rig = OrbitRig::new();
@@ -591,7 +591,7 @@ fn a_load_disarms_the_runner() {
 #[test]
 fn a_key_held_through_a_load_ends_nothing() {
     let mut rig = OrbitRig::new();
-    rig.ui.arm(Capture::Ring(R[1]));
+    rig.ui.arm(Some(ArmTarget::Ring(R[1])));
     rig.run(1);
     rig.key(0, 60, true);
     rig.key(0, 64, true);
@@ -628,7 +628,7 @@ fn a_capture_in_the_card_read_is_dropped() {
 #[test]
 fn rearmed_before_the_view_takes_the_next() {
     let mut rig = OrbitRig::new();
-    rig.ui.arm(Capture::Ring(R[1]));
+    rig.ui.arm(Some(ArmTarget::Ring(R[1])));
     rig.run(1);
     rig.key(0, 60, true);
     rig.key(0, 64, true);
@@ -637,7 +637,7 @@ fn rearmed_before_the_view_takes_the_next() {
     rig.key(0, 64, false);
     rig.card_read(1);
     assert_eq!(rig.view().captured.count, 1, "taken, unseen");
-    rig.ui.arm(Capture::Ring(R[1]));
+    rig.ui.arm(Some(ArmTarget::Ring(R[1])));
     rig.run(2);
     assert_eq!(pool(&mut rig, 1), [60, 64]);
     assert_eq!(rig.ui.capture, Capture::Ring(R[1]), "still armed");

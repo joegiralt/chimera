@@ -13,7 +13,7 @@ pub use pages::{
 };
 
 use crate::block::Block;
-use crate::orbit::channel::{Channel, CmdLog, SceneCmd};
+use crate::orbit::channel::{ArmTarget, Channel, CmdLog, SceneCmd};
 use crate::orbit::chords::{Bars, ChordRing};
 use crate::orbit::clock::{Bpm, ClockSource, Phase, Position, SyncMode, step_at};
 use crate::orbit::euclid::HitMask;
@@ -288,13 +288,13 @@ impl OrbitUi {
     /// Capture armed into `to`, anew even if it already was: the runner
     /// drops what was under way.
     #[inline(never)]
-    pub fn arm(&mut self, to: Capture) {
-        self.capture = to;
+    pub fn arm(&mut self, to: Option<ArmTarget>) {
+        self.capture = to.map_or(Capture::Off, Capture::from);
         self.chan.arm(to);
     }
 
     pub fn disarm(&mut self) {
-        self.arm(Capture::Off);
+        self.arm(None);
     }
 
     /// A segment capture past the progression's SEGS is dropped: SEGS

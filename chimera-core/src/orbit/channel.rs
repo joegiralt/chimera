@@ -79,18 +79,6 @@ pub enum ArmTarget {
     Segment(u8),
 }
 
-impl ArmTarget {
-    /// `None` for `Off`, and for a segment past `MAX_SEGS`.
-    pub const fn of(c: Capture) -> Option<ArmTarget> {
-        match c {
-            Capture::Off => None,
-            Capture::Ring(r) => Some(ArmTarget::Ring(r)),
-            Capture::Segment(s) if (s as usize) < MAX_SEGS => Some(ArmTarget::Segment(s)),
-            Capture::Segment(_) => None,
-        }
-    }
-}
-
 impl From<ArmTarget> for Capture {
     fn from(t: ArmTarget) -> Capture {
         match t {
@@ -415,14 +403,16 @@ impl Channel {
         self.flags &= !SENT;
     }
 
-    /// `Off` disarms. Its byte is written directly: a segment is below
-    /// `MAX_SEGS` (8), so `s & 7` is `s`.
-    pub fn arm(&mut self, to: Capture) {
-        debug_assert!(to == Capture::Off || ArmTarget::of(to).is_some());
+    /// `None` disarms. The byte is written directly, as `Cmd8::from`
+    /// writes it.
+    pub fn arm(&mut self, to: Option<ArmTarget>) {
         let b = match to {
-            Capture::Off => DISARM,
-            Capture::Ring(r) => ARM_RING_FIRST + r.get(),
-            Capture::Segment(s) => ARM_SEG_FIRST + (s & 7),
+            None => DISARM,
+            Some(ArmTarget::Ring(r)) => ARM_RING_FIRST + r.get(),
+            Some(ArmTarget::Segment(s)) => {
+                debug_assert!((s as usize) < MAX_SEGS);
+                ARM_SEG_FIRST + (s & 7)
+            }
         };
         self.outbox.arm = NonZeroU8::new(b).map(Cmd8);
     }
@@ -664,7 +654,7 @@ mod tests {
         ch.flip();
         ch.edit(RingMask::EMPTY, mask(0b100));
         ch.edit(mask(0b10), RingMask::EMPTY);
-        ch.arm(Capture::Ring(r2));
+        ch.arm(Some(ArmTarget::Ring(r2)));
         ch.scene(SceneCmd::Cue(s3));
         ch.flush();
         let mut seq = h;
@@ -732,7 +722,7 @@ mod tests {
     fn a_load_voids_the_outbox_and_the_scene() {
         let mut ch = Channel::new();
         ch.scene(SceneCmd::Keep(SceneIdx::new(1).unwrap()));
-        ch.arm(Capture::Segment(2));
+        ch.arm(Some(ArmTarget::Segment(2)));
         ch.edit(mask(1), mask(2));
         ch.flip();
         let l = ch.loaded();
@@ -840,14 +830,13 @@ mod tests {
     #[test]
     fn arm_off_is_disarm() {
         let mut ch = Channel::new();
-        ch.arm(Capture::Segment(7));
-        ch.arm(Capture::Off);
+        let t = ArmTarget::Segment(7);
+        ch.arm(Some(t));
         let h = ch.log().head();
         ch.flush();
-        assert_eq!(gap(ch.log(), h), [(h.next(), Cmd::Disarm)]);
-        assert_eq!(ArmTarget::of(Capture::Off), None);
-        assert_eq!(ArmTarget::of(Capture::Segment(8)), None);
-        let t = ArmTarget::Segment(7);
-        assert_eq!(ArmTarget::of(t.into()), Some(t));
+        assert_eq!(gap(ch.log(), h), [(h.next(), Cmd::Arm(t))]);
+        ch.arm(None);
+        ch.flush();
+        assert_eq!(gap(ch.log(), h.next()), [(h.next().next(), Cmd::Disarm)]);
     }
 }

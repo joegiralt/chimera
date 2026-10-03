@@ -105,7 +105,8 @@ impl Model {
         };
         let arm = self.arm.map(|a| match a {
             Capture::Off => Cmd::Disarm,
-            t => Cmd::Arm(ArmTarget::of(t).unwrap()),
+            Capture::Ring(r) => Cmd::Arm(ArmTarget::Ring(r)),
+            Capture::Segment(s) => Cmd::Arm(ArmTarget::Segment(s)),
         });
         let edit = |m: RingMask, f: fn(RingMask) -> Cmd| (!m.is_empty()).then(|| f(m));
         let queue = [
@@ -256,12 +257,13 @@ impl Sim {
                 self.want.scene = Some(c);
             }
             2 => {
-                let to = match self.rng.below(4) {
-                    0 => Capture::Off,
-                    1 => Capture::Ring(RingIdx::ALL[self.rng.below(5) as usize]),
-                    _ => Capture::Segment(self.rng.below(MAX_SEGS as u32) as u8),
+                let t = match self.rng.below(4) {
+                    0 => None,
+                    1 => Some(ArmTarget::Ring(RingIdx::ALL[self.rng.below(5) as usize])),
+                    _ => Some(ArmTarget::Segment(self.rng.below(MAX_SEGS as u32) as u8)),
                 };
-                self.ui.arm(to);
+                self.ui.arm(t);
+                let to = t.map_or(Capture::Off, Capture::from);
                 m.arm = Some(to);
                 self.want.arm = Some(to);
             }

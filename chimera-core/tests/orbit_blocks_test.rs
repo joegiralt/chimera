@@ -261,7 +261,6 @@ struct Rig {
     r: Reader<AudioShared>,
     inst: Box<Instrument>,
     runner: Box<OrbitRunner>,
-    epoch: u32,
     views: Vec<OrbitView>,
 }
 
@@ -283,7 +282,6 @@ impl Rig {
                 SampleBudget::for_cpu(CPU_HZ_REV_V),
             )),
             runner: Box::new(OrbitRunner::new(sr)),
-            epoch: 0,
             views: Vec::new(),
         }
     }
@@ -293,7 +291,7 @@ impl Rig {
     fn frame(&mut self, input: Input, blocks: usize) {
         self.ui.set_orbit_view(&self.runner.view());
         screen::feed(&mut self.ui, input);
-        let (ui, epoch) = (&self.ui, self.epoch);
+        let (ui, epoch) = (&self.ui, 0);
         self.w.publish(|b| {
             b.update_from(ui.project().perf(), epoch);
             ui.publish_orbit(&mut b.orbit);
@@ -503,22 +501,35 @@ fn b6_presses_during_a_stall_toggle_by_parity() {
     }
 }
 
-/// B6 and a load in one publish: the runner takes the load first and
-/// never starts, so the view never runs, and the next B6 starts.
+/// B6 pressed before a load, read by the runner only with it: the load
+/// voids the press, so the runner takes the load and never starts, and
+/// the next B6 starts.
 #[test]
 fn b6_with_a_load_never_sticks() {
-    let mut rig = Rig::new(in_orbit());
-    // The epoch alone, not `fake_load`: this rig publishes the UI's own
-    // log every frame, so a seq reserved in the snapshot only would be
-    // overwritten. The UI, never told, refuses the views after; the
-    // subject is the runner's transport.
-    rig.epoch += 1;
-    rig.frame(Input::press(ButtonId::B6), 1);
-    assert!(!rig.running(), "the load wins the block");
+    let mut rig = screen::ShellRig::new(in_orbit());
+    rig.frame(Input::press(ButtonId::B6), 0);
+    rig.load_new();
     rig.frame(Input::release(ButtonId::B6), 1);
+    assert!(!rig.view().running, "the load wins the block");
     rig.idle(1);
     rig.b6();
-    assert!(rig.running(), "one B6 starts it");
+    assert!(rig.view().running, "one B6 starts it");
+}
+
+/// B6 pressed after a load, before the runner has read it: the press is
+/// the player's first act on the loaded project, so the block that takes
+/// the load plays (spec § 3: a post-load command is applied).
+#[test]
+fn b6_after_a_load_read_with_it_plays() {
+    let mut rig = screen::ShellRig::new(in_orbit());
+    rig.idle(2);
+    rig.load_new();
+    rig.frame(Input::press(ButtonId::B6), 1);
+    let v = rig.view();
+    assert_eq!(v.epoch, 1, "the load taken");
+    assert!(v.running, "the press after it plays");
+    rig.frame(Input::release(ButtonId::B6), 4);
+    assert!(rig.view().running);
 }
 
 /// A view from before a load is the old project's: its drift stays out
@@ -554,16 +565,17 @@ fn a_view_from_before_a_load_brings_no_drift() {
 /// one starts it again (ADR 0080).
 #[test]
 fn one_b6_starts_after_a_self_stop() {
-    let mut rig = Rig::new(in_orbit());
+    let mut rig = screen::ShellRig::new(in_orbit());
+    let running = |rig: &screen::ShellRig| rig.view().running;
     rig.b6();
     rig.idle(4);
-    assert!(rig.running());
+    assert!(running(&rig));
     rig.idle(1);
     // A load: the runner stops itself, with no edge from the UI.
-    rig.epoch += 1;
+    rig.load_new();
     rig.idle(1);
-    assert!(!rig.running());
+    assert!(!running(&rig));
     rig.idle(1);
     rig.b6();
-    assert!(rig.running(), "one B6 starts it again");
+    assert!(running(&rig), "one B6 starts it again");
 }

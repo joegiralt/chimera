@@ -570,18 +570,15 @@ impl OrbitRunner {
         let t = self.sample;
         self.sample += BLOCK_SIZE as u64;
 
-        let loaded = shared.epoch != self.epoch;
-        if loaded {
+        if shared.epoch != self.epoch {
             self.load(shared.epoch, o);
         }
-        // After a load, the commands past it: its `Keep` names the playing
-        // slot. A B6 read with the load is dropped: the load stops ORBIT.
+        // After a load, the commands past it, applied as any others (spec
+        // § 3): its `Keep` names the playing slot, and a B6 pressed after
+        // it plays the loaded project.
         let edits = self.commands(o);
         if let Some(to) = edits.arm {
             self.take.set(to);
-        }
-        if loaded {
-            return Events::new();
         }
         if o.synced {
             self.base_landed = true;

@@ -626,9 +626,15 @@ pub fn played(ui: &mut UiState, count: u8, notes: &[u8]) {
     let Capture::Segment(seg) = ui.orbit().capture else {
         panic!("PLAY arms the segment");
     };
-    // Every command applied: the arm, and the take that disarmed.
+    // Every command applied: the runner armed, nothing taken yet.
     let mut v = orbit_view(0.3);
     v.acked = ui.orbit().log().head();
+    v.armed = Capture::Segment(seg);
+    v.captured.count = ui.orbit().took;
+    ui.set_orbit_view(&v);
+    assert_eq!(ui.orbit().capture, Capture::Segment(seg), "armed");
+    // Then the capture, and the runner disarmed by its take.
+    v.armed = Capture::Off;
     let mut c = Captured {
         count,
         target: Capture::Segment(seg),
@@ -640,7 +646,8 @@ pub fn played(ui: &mut UiState, count: u8, notes: &[u8]) {
     }
     v.captured = c;
     ui.set_orbit_view(&v);
-    assert_eq!(ui.orbit().capture, Capture::Off, "taken, disarmed");
+    assert_eq!(ui.orbit().took, count, "taken");
+    assert_eq!(ui.orbit().capture, Capture::Off, "disarmed");
 }
 
 /// `orbit_view(f)` with ring 1 just fired: what ORB's golden draws.
