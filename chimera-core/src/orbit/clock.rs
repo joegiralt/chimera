@@ -401,8 +401,7 @@ impl MidiClock {
     /// the average rate, at least one unit (the tick has come), and stops
     /// short of the next.
     pub fn position(&self, now: u64) -> Option<Position> {
-        self.leader?;
-        if self.quiet(now) || !self.playing {
+        if !self.leading(now) {
             return None;
         }
         let at = |n| self.origin.units().saturating_add(tick_units(n));
@@ -420,6 +419,12 @@ impl MidiClock {
             _ => 0,
         };
         Some(Position::from_units((tick + run.max(1)).min(next - 1)))
+    }
+
+    /// A leader, heard within `SILENT_MS` and playing: `position` is
+    /// `Some`, without its divides.
+    pub fn leading(&self, now: u64) -> bool {
+        self.leader.is_some() && !self.quiet(now) && self.playing
     }
 
     /// A bar's samples at the averaged rate; 120 BPM's before one is known.

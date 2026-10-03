@@ -438,7 +438,7 @@ impl OrbitRunner {
         }
         // It came during the block before its drain: half a block, on average.
         let now = now.saturating_sub(WINDOW);
-        let led = self.midi.position(now).is_some();
+        let led = self.midi.leading(now);
         match rt {
             // A clock that led nothing before it (a new leader, one back
             // from silence, or a stopped DAW's) counts on from where ORBIT

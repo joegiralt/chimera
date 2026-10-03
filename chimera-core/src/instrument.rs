@@ -588,7 +588,7 @@ impl Instrument {
                     let origins = &self.note_origin;
                     let Some(v) = self
                         .alloc
-                        .pick_where(q, mode, note, cost, FxBus::COST, |v| origins[v] == from)
+                        .pick_where(q, mode, note, cost, FxBus::COST, &|v| origins[v] == from)
                     else {
                         self.alloc.refuse();
                         continue;

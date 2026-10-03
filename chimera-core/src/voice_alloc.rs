@@ -291,7 +291,7 @@ impl Allocator {
         cost: Cost,
         reserved: Cost,
     ) -> Option<usize> {
-        self.pick_where(part, mode, note, cost, reserved, |_| true)
+        self.pick_where(part, mode, note, cost, reserved, &|_| true)
     }
 
     /// `pick`, where rule 2 re-strikes only voices `restrike` accepts: a key
@@ -303,7 +303,7 @@ impl Allocator {
         note: MidiNote,
         cost: Cost,
         reserved: Cost,
-        restrike: impl Fn(usize) -> bool,
+        restrike: &dyn Fn(usize) -> bool,
     ) -> Option<usize> {
         let fits = |freed: Cost| {
             let total = reserved.0 + self.live_cost().0 + cost.0;
