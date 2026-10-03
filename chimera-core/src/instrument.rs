@@ -389,7 +389,7 @@ pub struct Instrument {
     /// The keys down on each voice, by MIDI note: two keys that snap to one
     /// pitch share a voice (a Poly re-strike), and it is let go when the
     /// last of them is up.
-    held_keys: [u128; MAX_VOICES],
+    held_keys: [NoteSet; MAX_VOICES],
     /// ORBIT's key and chord now; `None` while it is stopped (spec § 5.2).
     harmony: Option<Harmony>,
     /// A re-snap's note waiting on the clear budget (a SYMP voice's rings
@@ -457,7 +457,7 @@ impl Instrument {
             addr_of_mut!((*p).note_channel).write([MidiChannel::clamped(0); MAX_VOICES]);
             addr_of_mut!((*p).note_origin).write([NoteOrigin::Live; MAX_VOICES]);
             addr_of_mut!((*p).keys).write([MidiNote::A4; MAX_VOICES]);
-            addr_of_mut!((*p).held_keys).write([0; MAX_VOICES]);
+            addr_of_mut!((*p).held_keys).write([NoteSet::EMPTY; MAX_VOICES]);
             addr_of_mut!((*p).harmony).write(None);
             addr_of_mut!((*p).resnap_to).write([None; MAX_VOICES]);
             addr_of_mut!((*p).sounding).write([0; MAX_VOICES]);
@@ -609,8 +609,12 @@ impl Instrument {
                         && was.note() == Some(note)
                         && self.note_origin[v] == from
                         && self.note_channel[v] == ev.channel;
-                    let key = 1u128 << ev.note.get();
-                    self.held_keys[v] = if joins { self.held_keys[v] | key } else { key };
+                    let base = if joins {
+                        self.held_keys[v]
+                    } else {
+                        NoteSet::EMPTY
+                    };
+                    self.held_keys[v] = base.with(ev.note);
                     self.alloc.book(v, q, mode, note, cost);
                     let waits = self.sounding[v] as usize != p && self.voices[v].is_active();
                     // Sympathetic starts now only if the block's clear
@@ -646,21 +650,19 @@ impl Instrument {
                 // By voice index: every held voice this channel and `from`
                 // hold the key on (one per layered Part), let go with the
                 // last of its keys.
-                let key = 1u128 << ev.note.get();
                 for v in 0..MAX_VOICES {
                     let s = self.alloc.slots()[v];
                     if !(s.held()
-                        && self.held_keys[v] & key != 0
+                        && self.held_keys[v].contains(ev.note)
                         && self.note_channel[v] == ev.channel
                         && self.note_origin[v] == from)
                     {
                         continue;
                     }
-                    self.held_keys[v] &= !key;
-                    if self.held_keys[v] != 0 {
+                    self.held_keys[v] = self.held_keys[v].without(ev.note);
+                    if let Some(left) = self.held_keys[v].lowest() {
                         // A key still down names it now.
-                        let left = self.held_keys[v].trailing_zeros() as u8;
-                        self.keys[v] = MidiNote::new(left).unwrap_or(self.keys[v]);
+                        self.keys[v] = left;
                     } else {
                         self.alloc.release(v);
                         self.resnap_to[v] = None;
@@ -953,5 +955,34 @@ impl Instrument {
 
         // Oscilloscope: every part's bus, before pan and level.
         scope.write(&scope_block);
+    }
+}
+
+/// A set of MIDI keys, a bit each.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct NoteSet(u128);
+
+impl NoteSet {
+    pub(crate) const EMPTY: NoteSet = NoteSet(0);
+
+    pub(crate) const fn with(self, n: MidiNote) -> NoteSet {
+        NoteSet(self.0 | 1 << n.get())
+    }
+
+    pub(crate) const fn without(self, n: MidiNote) -> NoteSet {
+        NoteSet(self.0 & !(1 << n.get()))
+    }
+
+    pub(crate) const fn contains(self, n: MidiNote) -> bool {
+        self.0 & 1 << n.get() != 0
+    }
+
+    pub(crate) const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// The lowest key in the set.
+    pub(crate) fn lowest(self) -> Option<MidiNote> {
+        (!self.is_empty()).then(|| MidiNote::new(self.0.trailing_zeros() as u8))?
     }
 }

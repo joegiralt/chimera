@@ -14,7 +14,7 @@ use super::walk::Pool;
 use super::{MAX_POOL, MAX_STEPS, RINGS, RingIdx};
 use crate::MidiNote;
 use crate::hw::{BLOCK_SIZE, MAX_PARTS};
-use crate::instrument::{AudioShared, Instrument, NoteOrigin};
+use crate::instrument::{AudioShared, Instrument, NoteOrigin, NoteSet};
 use crate::note_queue::{NoteEvent, NoteKind, RealTime};
 use crate::triple::TripleBuffer;
 use chimera_theory::{Chord, Note};
@@ -126,7 +126,7 @@ struct Take {
     /// What the keys play into; `Off` once taken, until re-armed.
     armed: Capture,
     /// Keys down since the first, by MIDI note: the last one up ends it.
-    held: u128,
+    held: NoteSet,
     notes: [Note; MAX_POOL],
     len: u8,
     done: Captured,
@@ -137,7 +137,7 @@ impl Take {
         Take {
             arming: 0,
             armed: Capture::Off,
-            held: 0,
+            held: NoteSet::EMPTY,
             notes: [Note::MIN; MAX_POOL],
             len: 0,
             done: Captured::NONE,
@@ -158,7 +158,7 @@ impl Take {
     }
 
     fn restart(&mut self) {
-        (self.held, self.len) = (0, 0);
+        (self.held, self.len) = (NoteSet::EMPTY, 0);
     }
 
     /// A load disarms (ADR 0075): its publish still carries the old
@@ -489,10 +489,9 @@ impl OrbitRunner {
         let Some(note) = Note::new(ev.note.get()) else {
             return;
         };
-        let bit = 1u128 << note.get();
         match ev.kind {
             NoteKind::On(_) => {
-                t.held |= bit;
+                t.held = t.held.with(ev.note);
                 let fresh = step.is_some() || !t.played().contains(&note);
                 if fresh && (t.len as usize) < MAX_POOL {
                     t.notes[t.len as usize] = note;
@@ -503,11 +502,11 @@ impl OrbitRunner {
                 }
             }
             NoteKind::Off => {
-                if t.held & bit == 0 {
+                if !t.held.contains(ev.note) {
                     return;
                 }
-                t.held &= !bit;
-                if t.held == 0 && step.is_none() {
+                t.held = t.held.without(ev.note);
+                if t.held.is_empty() && step.is_none() {
                     t.finish(epoch);
                 }
             }

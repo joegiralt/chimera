@@ -6,6 +6,7 @@ use crate::orbit::chords::ChordRing;
 use crate::orbit::runner::Capture;
 use crate::orbit::scene::{OrbitSong, SCENES, SceneIdx, SceneRing};
 use crate::orbit::{RINGS, RingIdx};
+use crate::ui::nav::{step_clamped, step_wrapped};
 use chimera_theory::{Degree, Interval, Note};
 
 /// A cell bound to ORBIT's UI state rather than a param (`SlotBinding::Orbit`).
@@ -116,8 +117,7 @@ impl OrbitCell {
         ui: &mut OrbitUi,
         ring: &mut RingIdx,
     ) {
-        let by =
-            |at: usize, len: usize| (at as i32 + delta as i32).clamp(0, len as i32 - 1) as usize;
+        let by = |at: usize, len: usize| step_clamped(at, delta as i32, len);
         match self {
             // Past the ends it stays: no switch to what already plays or waits.
             OrbitCell::Scene => {
@@ -149,7 +149,7 @@ impl OrbitCell {
                 // A degree past a smaller set turns from the set's last.
                 c.degrees[seg] = Degree::ALL[by(c.degrees[seg].index().min(n - 1), n)];
             }
-            OrbitCell::Cursor => ui.cursor = (ui.cursor as i32 + delta as i32).rem_euclid(12) as u8,
+            OrbitCell::Cursor => ui.cursor = step_wrapped(ui.cursor as i32, delta as i32, 12) as u8,
             // Right sets, left clears, however far; `toggle` keeps the root.
             OrbitCell::Set => {
                 let i = ui.interval();

@@ -227,13 +227,7 @@ impl SettingsAt {
 
     fn step(self, k: NavKey, cx: &NavCtx) -> Step {
         let go = |s: SettingsAt| Step::Go(Location(Loc::Settings(s)));
-        let wrap = |i: u8, n: usize, d: i32| {
-            if n == 0 {
-                0
-            } else {
-                (i as i32 + d).rem_euclid(n as i32) as u8
-            }
-        };
+        let wrap = |i: u8, n: usize, d: i32| step_wrapped(i as i32, d, n) as u8;
         let delta = match k {
             NavKey::Bar(d) => Some(d as i32),
             NavKey::Plus => Some(1),
@@ -847,8 +841,21 @@ fn mix_walk(p: PartId, m: MixPage, d: i8) -> Loc {
 }
 
 fn wrap(p: PartId, d: i8) -> PartId {
-    let n = (p.index() as i32 + d as i32).rem_euclid(MAX_PARTS as i32);
-    PartId::ALL[n as usize]
+    PartId::ALL[step_wrapped(p.index() as i32, d as i32, MAX_PARTS)]
+}
+
+/// `at` moved `delta` round `len` places; 0 with none.
+pub(crate) fn step_wrapped(at: i32, delta: i32, len: usize) -> usize {
+    if len == 0 {
+        0
+    } else {
+        (at + delta).rem_euclid(len as i32) as usize
+    }
+}
+
+/// `at` moved `delta`, held to `0..len` (`len` at least 1).
+pub(crate) fn step_clamped(at: usize, delta: i32, len: usize) -> usize {
+    (at as i32 + delta).clamp(0, len as i32 - 1) as usize
 }
 
 /// PLUS and MINUS step the node, clamped; EDIT is sub-page down, from the
