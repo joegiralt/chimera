@@ -19,7 +19,7 @@ use crate::orbit::euclid::HitMask;
 use crate::orbit::runner::{Capture, Captured, OrbitShared, OrbitView, beats_at};
 use crate::orbit::scene::{OrbitSong, Refused, Scene, SceneIdx, SceneRing};
 use crate::orbit::{RINGS, RingIdx};
-use crate::project::{Confirmed, Project, SceneSlot};
+use crate::project::Project;
 use crate::ui::animation::{AnimatedValue, wrap};
 use crate::ui::led::{self, Pulse};
 use chimera_theory::Chord;
@@ -340,37 +340,19 @@ impl OrbitUi {
         self.scene_rev = self.scene_rev.wrapping_add(1);
     }
 
-    /// SETTINGS › ORBIT's CLEAR, answered, into the song; a re-landing it
-    /// queues gets a new rev.
-    pub fn clear_scene(
+    /// `act` on the song (SETTINGS › ORBIT's CLEAR or RELOAD, answered); a
+    /// re-landing it queues gets a new rev.
+    pub fn requeueing(
         &mut self,
-        yes: Confirmed<SceneSlot>,
         song: &mut OrbitSong,
+        act: impl FnOnce(&mut OrbitSong) -> Result<(), Refused>,
     ) -> Result<(), Refused> {
         let was = song.queued();
-        song.clear_scene(yes)?;
-        self.requeued(was, song);
-        Ok(())
-    }
-
-    /// SETTINGS › ORBIT's RELOAD, answered: the playing slot lands again,
-    /// under a new rev.
-    pub fn reload_scene(
-        &mut self,
-        yes: Confirmed<SceneSlot>,
-        song: &mut OrbitSong,
-    ) -> Result<(), Refused> {
-        let was = song.queued();
-        song.reload_scene(yes)?;
-        self.requeued(was, song);
-        Ok(())
-    }
-
-    /// The song's queue moved from `was`: a new rev for the runner.
-    fn requeued(&mut self, was: Option<SceneIdx>, song: &OrbitSong) {
+        act(song)?;
         if song.queued() != was {
             self.scene_rev = self.scene_rev.wrapping_add(1);
         }
+        Ok(())
     }
 
     /// SCN's SAVE → n: the slot picked, or the playing one.

@@ -317,23 +317,14 @@ fn new_scene(i: usize) -> Scene {
     if i == 0 { Scene::init() } else { NEUTRAL }
 }
 
-/// A save refused while a switch is queued: what lands stays what was
-/// queued, and a save waits for it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SwitchPending;
-
-/// An overwrite refused.
+/// A save or an overwrite refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Refused {
+    /// A switch is queued: what lands stays what was queued, and a save
+    /// waits for it.
     SwitchPending,
     /// The slot was written since its prompt opened.
     SlotChanged,
-}
-
-impl From<SwitchPending> for Refused {
-    fn from(_: SwitchPending) -> Refused {
-        Refused::SwitchPending
-    }
 }
 
 /// What SCN's SAVE did.
@@ -497,9 +488,10 @@ impl OrbitSong {
 
     /// SCN's SAVE → `n`: at once over the playing slot or a neutral one;
     /// over another saved scene it asks.
-    pub fn save_to(&mut self, n: SceneIdx) -> Result<SceneSave, SwitchPending> {
+    /// Only ever refused as `SwitchPending`.
+    pub fn save_to(&mut self, n: SceneIdx) -> Result<SceneSave, Refused> {
         if self.queued.is_some() {
-            return Err(SwitchPending);
+            return Err(Refused::SwitchPending);
         }
         if n != self.current && self.saved.contains(n) {
             return Ok(SceneSave::Ask(SceneAsk::of(self, n)));
@@ -881,6 +873,21 @@ impl SceneRing {
     }
 }
 
+/// RANGE, SNAP, MODE and WALK, the ring's enum params: `$m!(Type, field)`
+/// for the one `$id` names, `None` for any other. One list for `get`,
+/// `write` and the disk code's three.
+macro_rules! ring_enum {
+    ($id:expr, $m:ident) => {
+        match $id {
+            SceneRing::RANGE => Some($m!(Range, range)),
+            SceneRing::SNAP => Some($m!(SnapTo, snap)),
+            SceneRing::MODE => Some($m!(NoteMode, mode)),
+            SceneRing::WALK => Some($m!(Walk, walk)),
+            _ => None,
+        }
+    };
+}
+
 impl Block for SceneRing {
     fn specs(&self) -> &'static [ParamSpec] {
         &RING_SPECS
@@ -888,6 +895,14 @@ impl Block for SceneRing {
 
     fn get(&self, id: ParamId) -> f32 {
         let r = &self.ring;
+        macro_rules! at {
+            ($t:ident, $f:ident) => {
+                index_of(&$t::ALL, &r.$f)
+            };
+        }
+        if let Some(v) = ring_enum!(id, at) {
+            return v;
+        }
         let f = r.fill();
         match id {
             Self::STEPS => (f.steps().get() - 1) as f32,
@@ -900,16 +915,21 @@ impl Block for SceneRing {
             Self::VEL => r.velocity.get() as f32,
             Self::ACCENT => r.accent() as f32,
             Self::OCTAVE => r.octave.get() as f32,
-            Self::RANGE => index_of(&Range::ALL, &r.range),
-            Self::SNAP => index_of(&SnapTo::ALL, &r.snap),
-            Self::MODE => index_of(&NoteMode::ALL, &r.mode),
-            Self::WALK => index_of(&Walk::ALL, &r.walk),
             Self::TARGET => self.target.part().index() as f32,
             _ => 0.0,
         }
     }
 
     fn write(&mut self, id: ParamId, v: f32) {
+        let r = &mut self.ring;
+        macro_rules! put {
+            ($t:ident, $f:ident) => {
+                r.$f = pick(&$t::ALL, v)
+            };
+        }
+        if ring_enum!(id, put).is_some() {
+            return;
+        }
         let i = v as u8;
         let f = self.ring.fill();
         let r = &mut self.ring;
@@ -939,10 +959,6 @@ impl Block for SceneRing {
                     self.transpose(o);
                 }
             }
-            Self::RANGE => r.range = pick(&Range::ALL, v),
-            Self::SNAP => r.snap = pick(&SnapTo::ALL, v),
-            Self::MODE => r.mode = pick(&NoteMode::ALL, v),
-            Self::WALK => r.walk = pick(&Walk::ALL, v),
             Self::TARGET => self.target = Target::Part(pick(&PartId::ALL, v)),
             _ => {}
         }
@@ -963,35 +979,32 @@ impl Block for SceneRing {
 
     fn enum_code(&self, id: ParamId) -> Option<u8> {
         let r = &self.ring;
-        match id {
-            Self::RANGE => Some(r.range.disk_code()),
-            Self::SNAP => Some(r.snap.disk_code()),
-            Self::MODE => Some(r.mode.disk_code()),
-            Self::WALK => Some(r.walk.disk_code()),
-            _ => None,
+        macro_rules! code {
+            ($t:ident, $f:ident) => {
+                r.$f.disk_code()
+            };
         }
+        ring_enum!(id, code)
     }
 
     fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
         let r = &self.ring;
-        match id {
-            Self::RANGE => Some(r.range.disk_ident()),
-            Self::SNAP => Some(r.snap.disk_ident()),
-            Self::MODE => Some(r.mode.disk_ident()),
-            Self::WALK => Some(r.walk.disk_ident()),
-            _ => None,
+        macro_rules! ident {
+            ($t:ident, $f:ident) => {
+                r.$f.disk_ident()
+            };
         }
+        ring_enum!(id, ident)
     }
 
     fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
         let r = &mut self.ring;
-        match id {
-            Self::RANGE => apply_code(Range::from_disk_code(code), |x| r.range = x),
-            Self::SNAP => apply_code(SnapTo::from_disk_code(code), |x| r.snap = x),
-            Self::MODE => apply_code(NoteMode::from_disk_code(code), |x| r.mode = x),
-            Self::WALK => apply_code(Walk::from_disk_code(code), |x| r.walk = x),
-            _ => false,
+        macro_rules! set {
+            ($t:ident, $f:ident) => {
+                apply_code($t::from_disk_code(code), |x| r.$f = x)
+            };
         }
+        ring_enum!(id, set).unwrap_or(false)
     }
 }
 

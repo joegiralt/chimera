@@ -53,7 +53,7 @@ use crate::name::ProjectName;
 use crate::orbit::RingIdx;
 use crate::orbit::chords::ScaleKind;
 use crate::orbit::runner::{OrbitShared, OrbitView};
-use crate::orbit::scene::{SceneIdx, SceneSave, SwitchPending};
+use crate::orbit::scene::{Refused, SceneIdx, SceneSave};
 use crate::params::{EngineType, ParamSnapshot};
 use crate::perf::load::AudioStats;
 use crate::preset::POOL_SIZE;
@@ -1483,27 +1483,27 @@ impl UiState {
             Answered::SaveSceneOver(ask, a) => {
                 if let Some(yes) = said(a) {
                     let n = ask.slot().index();
-                    let yes = Confirmed::<SceneSlot>::said(ask, yes);
-                    match self.project.orbit_mut().overwrite_scene(yes) {
-                        Ok(()) => self.scene_saved(n),
-                        Err(e) => self.error(Line::new(prompt::scene_refused(e))),
-                    }
+                    self.scene_answered(Confirmed::said(ask, yes), |ui, yes| {
+                        ui.project.orbit_mut().overwrite_scene(yes)?;
+                        ui.scene_saved(n);
+                        Ok(())
+                    });
                 }
             }
             Answered::ClearScene(ask, a) => {
                 if let Some(yes) = said(a) {
-                    let yes = Confirmed::<SceneSlot>::said(ask, yes);
-                    if let Err(e) = self.orbit.clear_scene(yes, self.project.orbit_mut()) {
-                        self.error(Line::new(prompt::scene_refused(e)));
-                    }
+                    self.scene_answered(Confirmed::said(ask, yes), |ui, yes| {
+                        let song = ui.project.orbit_mut();
+                        ui.orbit.requeueing(song, |s| s.clear_scene(yes))
+                    });
                 }
             }
             Answered::ReloadScene(ask, a) => {
                 if let Some(yes) = said(a) {
-                    let yes = Confirmed::<SceneSlot>::said(ask, yes);
-                    if let Err(e) = self.orbit.reload_scene(yes, self.project.orbit_mut()) {
-                        self.error(Line::new(prompt::scene_refused(e)));
-                    }
+                    self.scene_answered(Confirmed::said(ask, yes), |ui, yes| {
+                        let song = ui.project.orbit_mut();
+                        ui.orbit.requeueing(song, |s| s.reload_scene(yes))
+                    });
                 }
             }
             Answered::Clear(c, a) => {
@@ -1716,7 +1716,19 @@ impl UiState {
         match self.project.orbit_mut().save_to(n) {
             Ok(SceneSave::Saved(n)) => self.scene_saved(n),
             Ok(SceneSave::Ask(a)) => self.ask(Ask::SaveSceneOver(a, prompt::Choice::new())),
-            Err(SwitchPending) => self.error(Line::new(prompt::SWITCH_PENDING)),
+            Err(e) => self.error(Line::new(prompt::scene_refused(e))),
+        }
+    }
+
+    /// A scene prompt answered yes: `act` on the slot it asked about, a
+    /// refusal toasted.
+    fn scene_answered(
+        &mut self,
+        yes: Confirmed<SceneSlot>,
+        act: impl FnOnce(&mut Self, Confirmed<SceneSlot>) -> Result<(), Refused>,
+    ) {
+        if let Err(e) = act(self, yes) {
+            self.error(Line::new(prompt::scene_refused(e)));
         }
     }
 

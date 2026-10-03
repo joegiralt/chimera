@@ -788,7 +788,7 @@ fn a_clear_adopted_then_cancelled_leaves_live_alone() {
     let live = rig.project.orbit().live;
     let yes = Confirmed::<SceneSlot>::unasked(rig.project.orbit(), S[0]);
     rig.ui
-        .clear_scene(yes, rig.project.orbit_mut())
+        .requeueing(rig.project.orbit_mut(), |s| s.clear_scene(yes))
         .expect("nothing queued");
     let rev = rig.ui.scene_rev;
     while rig.view().scene_rev != rev {
