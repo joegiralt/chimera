@@ -632,6 +632,7 @@ pub fn played(ui: &mut UiState, count: u16, notes: &[u8]) {
         target: Capture::Segment(seg),
         notes: [chimera_theory::Note::MIN; 8],
         len: notes.len() as u8,
+        epoch: v.epoch,
     };
     for (n, &k) in c.notes.iter_mut().zip(notes) {
         *n = chimera_theory::Note::new(k).unwrap();

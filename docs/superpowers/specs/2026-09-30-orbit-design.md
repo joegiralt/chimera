@@ -455,7 +455,7 @@ Estimates for `thumbv7em`; the plan measures them and asserts the engine's size.
 | UI: 8 scenes, the live scene, nav and hold state | AXI | ≈ 3,350 |
 | **Total** | | **≈ 5.7 KB** |
 
-- The engine, all of ORBIT's audio-thread state, is about 520 B: well under 1 KB. `orbit-core` measures its part, `STATE_BYTES` (5 rings, walks, `Rng`s and a `Harmony`), at 356 B on the host and asserts it under 1,024. The runner asserts `size_of::<OrbitRunner>() <= 1024`.
+- The engine, all of ORBIT's audio-thread state, is about 520 B: well under 1 KB. The runner, which holds it all, asserts `size_of::<OrbitRunner>() <= 1024` (800 B on the host).
 - Most of the rest is the eight saved scenes, which are project data like the Sound pool. AXI had 88,892 B free at ADR 0045's measurement; ORBIT takes about 5.2 KB of it. Every new static is added to `AXI_RESIDENT` (`instrument.rs:35-45`).
 - `chimera-theory`'s tables are a few hundred bytes of flash.
 
@@ -488,7 +488,7 @@ Per block: a clock step (a `u64` multiply and divide), five step lookups (a `u64
 | `rings_have_their_own_dice` | Changing ring 2's CHANCE leaves ring 4's events unchanged. |
 | `mutate_zero_locks` (built) | 10,000 calls at MUTATE 0 draw nothing; 100 loops leave the ring unchanged. |
 | `mutate_keeps_count_and_register`, `a_full_ring_has_nowhere_to_nudge` (built) | 1,000 loops in POOL and STEP, OCTAVE 0, 3 and 8, RANGE 0, 1 and 3: the hit count holds, every swapped note is in the key and the register; a full ring never nudges. |
-| `mutate_back_to_zero_freezes`, `a_fixed_seed_replays_exactly`, `rng_is_seeded`, `rng_below_and_chance`, `state_fits_in_a_kilobyte` (built) | Back at 0 the ring keeps what it became; a seed replays exactly; `STATE_BYTES < 1024`. |
+| `mutate_back_to_zero_freezes`, `a_fixed_seed_replays_exactly`, `rng_is_seeded`, `rng_below_and_chance` (built) | Back at 0 the ring keeps what it became; a seed replays exactly. |
 | `gate_off_precedes_the_next_on` | GATE 100% on a ring whose notes repeat: each block orders the off before the on, and no voice is released by the wrong event. |
 | `orbit_events_reach_parts_like_midi` | An ORBIT note-on for Part 2 renders bit-identically to the same `NoteEvent` from a keyboard. |
 | `orbit_off_never_releases_a_held_key` | A live key held on note 60, ring on Part 1 playing 60: the ring's note-offs leave the live voice held. |
@@ -521,7 +521,7 @@ Per block: a clock step (a `u64` multiply and divide), five step lookups (a `u64
 | `orbit_off_keeps_orbit_records` | A build without `orbit` loads and re-saves a project with ORBIT records unchanged. |
 | `part_snap_default_is_neutral` | A PART block without SNAP and HELD decodes to OFF and STAY. |
 | **Every slice** | |
-| Size assert | `STATE_BYTES < 1024` (built) and `OrbitRunner <= 1024` B, printed in `memory_budget_test`; `AXI_RESIDENT` still fits. |
+| Size assert | `OrbitRunner <= 1024` B (built), printed in `memory_budget_test`; `AXI_RESIDENT` still fits. |
 | Existing suites | Goldens, instrument, allocator, codec and page tests pass unchanged; the SEQ tests move from press to tap. |
 
 ## Slices and plan order

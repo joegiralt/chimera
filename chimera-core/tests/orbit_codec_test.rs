@@ -597,6 +597,7 @@ fn a_captured_chord_saves_as_its_tones() {
         target: chimera_core::orbit::runner::Capture::Segment(2),
         notes: [Note::new(0).unwrap(); 8],
         len: 4,
+        epoch: 0,
     };
     for (i, n) in [50u8, 64, 67, 73].into_iter().enumerate() {
         c.notes[i] = Note::new(n).unwrap();

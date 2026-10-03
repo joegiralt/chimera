@@ -246,6 +246,18 @@ impl OrbitRig {
     /// One block: the publish, `Engine::block`, the view absorbed, the
     /// tape and the checks.
     pub fn block(&mut self) {
+        self.step(true);
+    }
+
+    /// `blocks` blocks while the UI reads the card: the audio runs on and
+    /// the UI takes no view.
+    pub fn card_read(&mut self, blocks: usize) {
+        for _ in 0..blocks {
+            self.step(false);
+        }
+    }
+
+    fn step(&mut self, sync: bool) {
         let b = self.blocks();
         self.shared
             .update_from(self.project.perf(), self.link.epoch());
@@ -282,7 +294,9 @@ impl OrbitRig {
         self.inst
             .render(&mut self.fx, &mut self.dac, &self.shared, &mut self.scope);
         let view = self.runner.view();
-        self.ui.sync(&view, &mut self.project);
+        if sync {
+            self.ui.sync(&view, &mut self.project);
+        }
 
         self.record();
         self.check(b, pending_before);

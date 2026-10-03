@@ -494,7 +494,7 @@ fn a_load_drops_the_capture() {
     v.captured.count = 1;
     v.captured.target = Capture::Ring(R[0]);
     assert!(ui.take(&v).is_none(), "from before the load");
-    v.epoch = 1;
+    (v.epoch, v.captured.epoch) = (1, 1);
     assert!(ui.take(&v).is_none(), "taken once, never again");
     v.captured.count = 2;
     assert!(ui.take(&v).is_some());
@@ -524,7 +524,8 @@ fn a_load_disarms_the_runner() {
     rig.run(2);
     rig.key(0, 72, false);
     rig.run(4);
-    assert_eq!(rig.view().captured.count, 0, "nothing captured");
+    let v = rig.view();
+    assert_ne!(v.captured.epoch, v.epoch, "the old project's, if any");
     assert_eq!(rig.song().live.rings[1], ring, "the loaded ring untouched");
 }
 
@@ -543,6 +544,24 @@ fn a_key_held_through_a_load_ends_nothing() {
     rig.key(0, 60, false);
     rig.key(0, 64, false);
     rig.run(4);
-    assert_eq!(rig.view().captured.count, 0, "nothing captured");
+    let v = rig.view();
+    assert_ne!(v.captured.epoch, v.epoch, "the old project's, if any");
+    assert_eq!(rig.song().live.rings[1], ring, "the loaded ring untouched");
+}
+
+/// A capture ended while the UI reads the card for a load, so on the old
+/// project, is never taken into the loaded one.
+#[test]
+fn a_capture_in_the_card_read_is_dropped() {
+    let mut rig = OrbitRig::new();
+    armed_step(&mut rig);
+    let ring = rig.song().live.rings[1];
+    rig.key(0, 72, true);
+    rig.card_read(2);
+    rig.key(0, 72, false);
+    rig.card_read(2);
+    assert_eq!(rig.view().captured.count, 1, "taken on the old project");
+    rig.load();
+    rig.run(4);
     assert_eq!(rig.song().live.rings[1], ring, "the loaded ring untouched");
 }

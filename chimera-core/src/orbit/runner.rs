@@ -89,6 +89,8 @@ pub struct Captured {
     /// In the order played, each once (a STEP ring's may repeat).
     pub notes: [Note; MAX_POOL],
     pub len: u8,
+    /// The project load it was played on: another's is never taken.
+    pub epoch: u32,
 }
 
 impl Captured {
@@ -97,6 +99,7 @@ impl Captured {
         target: Capture::Off,
         notes: [Note::MIN; MAX_POOL],
         len: 0,
+        epoch: 0,
     };
 
     pub fn notes(&self) -> &[Note] {
@@ -118,8 +121,6 @@ struct Take {
     notes: [Note; MAX_POOL],
     len: u8,
     done: Captured,
-    /// `done.count` at the last block's end: what the UI may have seen.
-    reported: u16,
 }
 
 impl Take {
@@ -131,7 +132,6 @@ impl Take {
             notes: [Note::MIN; MAX_POOL],
             len: 0,
             done: Captured::NONE,
-            reported: 0,
         }
     }
 
@@ -152,13 +152,11 @@ impl Take {
         (self.held, self.len) = (0, 0);
     }
 
-    /// A load disarms (ADR 0075). Its publish still carries the old
-    /// arming, and keys drained before the runner saw it played into the
-    /// old project's capture: one ended there is never reported.
+    /// A load disarms (ADR 0075): its publish still carries the old
+    /// arming, and keys held through it end nothing.
     fn forget(&mut self) {
         self.armed = Capture::Off;
         self.restart();
-        self.done.count = self.reported;
     }
 
     fn played(&self) -> &[Note] {
@@ -166,8 +164,8 @@ impl Take {
     }
 
     /// The notes taken: a segment's only if they make a chord, else it
-    /// stays armed for the next.
-    fn finish(&mut self) {
+    /// stays armed for the next. `epoch` is the load it was played on.
+    fn finish(&mut self, epoch: u32) {
         if matches!(self.armed, Capture::Segment(_)) && Chord::from_notes(self.played()).is_none() {
             return self.restart();
         }
@@ -176,6 +174,7 @@ impl Take {
             target: self.armed,
             notes: self.notes,
             len: self.len,
+            epoch,
         };
         self.armed = Capture::Off;
         self.restart();
@@ -466,6 +465,7 @@ impl OrbitRunner {
                     .then(|| ring.hits_mask().hits().clamp(1, MAX_POOL as u8))
             }
         };
+        let epoch = self.epoch;
         let t = &mut self.take;
         let Some(note) = Note::new(ev.note.get()) else {
             return;
@@ -480,7 +480,7 @@ impl OrbitRunner {
                     t.len += 1;
                 }
                 if step.is_some_and(|n| t.len >= n) {
-                    t.finish();
+                    t.finish(epoch);
                 }
             }
             NoteKind::Off => {
@@ -489,7 +489,7 @@ impl OrbitRunner {
                 }
                 t.held &= !bit;
                 if t.held == 0 && step.is_none() {
-                    t.finish();
+                    t.finish(epoch);
                 }
             }
         }
@@ -512,7 +512,6 @@ impl OrbitRunner {
             inst.resnap(shared);
         }
         self.harmony = h;
-        self.take.reported = self.take.done.count;
         sent
     }
 

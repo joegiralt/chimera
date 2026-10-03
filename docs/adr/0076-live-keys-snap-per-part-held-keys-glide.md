@@ -27,9 +27,10 @@ click.
   Poly re-strike), and it is let go only when the last of them is up
   (owner's ruling, review I3): hold C, tap D (it snaps to C), let D go,
   and C sounds on. A key-up of the snapped pitch releases nothing it did
-  not start. The voice re-snaps from its lowest key still down
-  (private issue #321 asks whether it
-  should be the latest).
+  not start. The voice re-snaps from the latest key struck on it; after a
+  key-up, from the lowest key still down
+  (private issue #321 asks whether that
+  should be the latest too).
 - **Re-snap from the raw key, whenever the harmony changes.** The runner
   calls `resnap` whenever the harmony it hands on differs from the last
   one: a segment change, a landed scene, a B6 start or a MIDI Start back
@@ -100,8 +101,8 @@ click.
 
 ## Consequences
 - Two keys that snap to one pitch on a Part share a voice and re-strike
-  it, rather than doubling the pitch; it re-snaps as the lowest key still
-  down.
+  it, rather than doubling the pitch; it re-snaps as the latest key
+  struck, or after a key-up as the lowest key still down.
 - The click judges (`Tape::click`, the control diff) do not hear an
   instant pitch step: a phase-continuous jump has no discontinuity. The
   glide is held by the test's own check (a block in it is still near the

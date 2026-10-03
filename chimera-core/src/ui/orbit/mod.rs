@@ -299,15 +299,15 @@ impl OrbitUi {
     }
 
     /// The view's capture, once, for the song to take (`Scene::take`),
-    /// and capture disarmed; `None` with nothing new, or from before a
-    /// load.
+    /// and capture disarmed; `None` with nothing new, or played before a
+    /// load: on the old project, or while the card was read.
     pub fn take(&mut self, v: &OrbitView) -> Option<Captured> {
         let c = v.captured;
         if c.count == self.took {
             return None;
         }
         self.took = c.count;
-        if v.epoch != self.epoch {
+        if c.epoch != self.epoch {
             return None;
         }
         if self.capture == c.target {

@@ -25,9 +25,11 @@ time, what happens past eight notes, and what PLAY's turns do.
   together) still arms. The UI takes each new `Captured.count` once,
   writes it into the song (a ring's `notes_rev` bumped), and disarms. A
   load disarms too, the runner as well: its load publish still carries
-  the old arming, so the runner drops the arming, the held keys and a
-  capture ended by keys drained before it saw the load, and the UI drops
-  a capture reported from before the load.
+  the old arming, so the runner drops the arming and the held keys.
+  Each `Captured` carries the load epoch it was played on, and the UI
+  takes only its own: a capture ended on the old project, while the card
+  was read or by keys drained before the runner saw the load, is
+  dropped.
 - **SEGS shrunk under an armed segment** disarms it, and `Scene::take`
   writes no segment past SEGS.
 - **Who decides.** The runner decides when a capture ends and whether a
