@@ -34,6 +34,16 @@ opt-level = 2
 opt-level = 2
 [profile.dev.package.cortex-m]
 opt-level = 2
+# With the USB console's crates, the debug bench builds no longer fit the
+# 896 KB of flash unoptimised.
+[profile.dev.package.synopsys-usb-otg]
+opt-level = 2
+[profile.dev.package.usb-device]
+opt-level = 2
+[profile.dev.package.usbd-serial]
+opt-level = 2
+[profile.dev.package.embedded-graphics]
+opt-level = 2
 
 # The DSP tests render seconds of audio in debug builds; opt-level 1 keeps
 # overflow checks and debug assertions and changes no f32 result (no

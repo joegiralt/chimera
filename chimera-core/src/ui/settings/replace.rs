@@ -1,7 +1,7 @@
 //! A replace waiting on its prompt (#258): the prompt's `Pending` and its
 //! `Choice` together, so only a SEQ tap on the confirming pill makes the
-//! `Confirmed`. DELETE, CLEAR, SAVE OVER and OVERWRITE THAT ONE confirm
-//! through `said` the same way. Nothing else holds a `Said`:
+//! `Confirmed`. DELETE, CLEAR, SAVE OVER, OVERWRITE THAT ONE and ENTER DFU
+//! confirm through `said` the same way. Nothing else holds a `Said`:
 //!
 //! ```compile_fail,E0423
 //! use chimera_core::ui::settings::replace::said::Said;
@@ -21,6 +21,7 @@ pub mod said;
 
 use chimera_hal::Controls;
 
+use crate::boot::RomDfu;
 use crate::project::{
     Confirmed, DeleteTarget, NeedsConfirm, OverwriteTarget, PartSource, Pending, Project,
     ProjectSource, Target, TemplateCrc, Witnessed,
@@ -28,8 +29,8 @@ use crate::project::{
 use crate::ui::hold::Presses;
 
 use super::prompt::{
-    Answer, Answers, Choice, ClearAnswer, DeleteAnswer, LoadAnswer, NameExistsAnswer, ReloadAnswer,
-    ReplaceAnswer, SaveOverAnswer,
+    Answer, Answers, Choice, ClearAnswer, DeleteAnswer, DfuAnswer, LoadAnswer, NameExistsAnswer,
+    ReloadAnswer, ReplaceAnswer, SaveOverAnswer,
 };
 use said::Said;
 
@@ -61,6 +62,7 @@ commits!(
     ClearAnswer => Clear, OverwriteTarget;
     SaveOverAnswer => SaveOver, OverwriteTarget;
     NameExistsAnswer => Overwrite, OverwriteTarget;
+    DfuAnswer => EnterDfu, RomDfu;
 );
 
 impl Guarded for ReplaceAnswer {

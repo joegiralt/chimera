@@ -305,6 +305,17 @@ const PLACEHOLDER: Loc = Loc::Pages(PartId::ALL[0], ALGO_CHAIN.home());
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Location(Loc);
 
+/// Which rung of the ladder `Location` is on, without its private memory
+/// (the Sound rung's browser): the public mirror of `Loc`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rung {
+    Pages(PartId, PageAt),
+    Mixer(PartId, MixPage),
+    Fx(PartId, PageAt),
+    Sound(PartId),
+    Settings(SettingsAt),
+}
+
 /// A `Location` outside SETTINGS, where MENU at the top returns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Outside(Loc);
@@ -596,6 +607,17 @@ impl Location {
         match self.0 {
             Loc::Settings(s) => Some(s),
             _ => None,
+        }
+    }
+
+    /// Exhaustive over `Loc`: a new place does not build until it has a rung.
+    pub fn rung(self) -> Rung {
+        match self.0 {
+            Loc::Pages(p, at) => Rung::Pages(p, at),
+            Loc::Part(p, m) => Rung::Mixer(p, m),
+            Loc::Fx(p, at) => Rung::Fx(p, at),
+            Loc::Sound(p, _) => Rung::Sound(p),
+            Loc::Settings(s) => Rung::Settings(s),
         }
     }
 }

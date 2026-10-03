@@ -517,3 +517,22 @@ fn a_restrike_over_budget_steals_as_any_note_does() {
     let got = voice(a.note_on(0, Poly, n(48), Cost(650), reserved));
     assert_eq!(got, tail, "the tail stolen, key {key}");
 }
+
+#[test]
+fn cost_pct_is_the_booked_share_of_the_budget() {
+    let budget = BUDGET.as_cost().0;
+    let pct = |c: u32| (u64::from(c) * 100 / u64::from(budget)) as u8;
+    let fx = Cost(1_000);
+    let mut a = Allocator::new(BUDGET);
+    assert_eq!(a.cost_pct(fx), pct(1_000), "the FX bus alone");
+    for i in 0..2 {
+        let _ = a.note_on(0, Poly, n(60 + i), Cost(1_210), fx);
+    }
+    assert_eq!(a.cost_pct(fx), pct(1_000 + 2 * 1_210));
+    assert_eq!(Allocator::new(BUDGET).cost_pct(BUDGET.as_cost()), 100);
+    assert_eq!(
+        Allocator::new(BUDGET).cost_pct(Cost(u32::MAX)),
+        u8::MAX,
+        "saturates"
+    );
+}

@@ -105,6 +105,8 @@ pub struct Toast {
 impl Toast {
     pub const SAVED_MS: u32 = 600;
     pub const ERROR_MS: u32 = 1_200;
+    /// A start-up fault, read once after PART 1 comes up.
+    pub const BOOT_MS: u32 = 5_000;
 }
 
 /// What leaving System shows: SAVED for a write that landed, the error's

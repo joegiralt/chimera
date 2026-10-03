@@ -178,7 +178,7 @@ impl Crumbs {
         Crumbs { width, ..self }
     }
 
-    fn parts(&self) -> &[Crumb] {
+    pub fn parts(&self) -> &[Crumb] {
         &self.parts[..self.len as usize]
     }
 

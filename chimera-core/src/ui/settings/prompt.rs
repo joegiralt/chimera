@@ -81,6 +81,7 @@ answers!(DeleteAnswer { Delete => "DELETE", Cancel => "CANCEL" } Two);
 answers!(ClearAnswer { Clear => "CLEAR", Cancel => "CANCEL" } Two);
 answers!(SaveOverAnswer { SaveOver => "SAVE OVER", Cancel => "CANCEL" } Two);
 answers!(CardChangedAnswer { SaveAs => "SAVE AS", Cancel => "CANCEL" } Two);
+answers!(DfuAnswer { EnterDfu => "ENTER DFU", Cancel => "CANCEL" } Two);
 
 /// A pick, or MENU (`None`). Only `Choice::input` makes one, so an answer
 /// is always a key's:
@@ -381,6 +382,17 @@ impl Prompt for ClearSlot {
     fn words(&self, q: &mut Line, r: &mut Line) {
         let _ = write!(q, "CLEAR {}?", Slot(self.slot));
         let _ = r.write_str("NO PART USES IT");
+    }
+}
+
+/// OS UPGRADE: restart into the ROM loader for `just flash`.
+pub struct EnterDfu;
+
+impl Prompt for EnterDfu {
+    type Answer = DfuAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        let _ = q.write_str("ENTER DFU?");
+        let _ = r.write_str("PLAY STOPS UNTIL FLASHED OR POWER-CYCLED");
     }
 }
 

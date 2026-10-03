@@ -3,6 +3,10 @@
 
 #[cfg(all(feature = "bench", feature = "sd-probe"))]
 compile_error!("bench and sd-probe both take over after boot: pick one");
+#[cfg(all(feature = "usb-console", feature = "sd-probe"))]
+compile_error!(
+    "the SD probe halts after boot, so nothing would poll USB: build it with --no-default-features"
+);
 
 // The SD probe build halts after `boot`: nothing of the synth is built.
 #[cfg(not(feature = "sd-probe"))]
@@ -13,6 +17,7 @@ mod cache;
 mod clocks;
 #[cfg(not(feature = "sd-probe"))]
 mod controls;
+mod dfu;
 mod display;
 #[cfg(all(feature = "midi-din", not(feature = "sd-probe")))]
 mod midi_din;
@@ -26,6 +31,8 @@ mod sd;
 mod sd_probe;
 #[cfg(not(feature = "sd-probe"))]
 mod shared;
+#[cfg(feature = "usb-console")]
+mod usb;
 #[cfg(not(feature = "sd-probe"))]
 mod watchdog;
 
@@ -39,11 +46,6 @@ use display::Stm32Display;
 use stm32h7xx_hal::gpio::{Output, PD8, PD9, PD10, PushPull, Speed};
 use stm32h7xx_hal::rcc::CoreClocks;
 use stm32h7xx_hal::{pac, prelude::*, spi};
-
-/// How long the boot splash stays up from first light; SYSTEM and the
-/// last project load behind it.
-#[cfg(not(feature = "sd-probe"))]
-const SPLASH_US: u32 = 1_000_000;
 
 /// Flush-to-zero and default NaN, in this context (FPSCR) and in every
 /// exception's (FPDSCR, which the audio ISR starts from; it resets to
@@ -98,11 +100,20 @@ struct SynthParts {
     theme: ThemeSettings,
     iwdg: pac::IWDG,
     dbgmcu: pac::DBGMCU,
+    /// The DFU marker: `dfu::enter` writes it.
+    marker: dfu::Marker,
+    #[cfg(feature = "usb-console")]
+    usb: usb::UsbParts,
 }
 
 #[entry]
 fn main() -> ! {
-    let board = boot();
+    let mut cp = cortex_m::Peripherals::take().unwrap();
+    let dp = pac::Peripherals::take().unwrap();
+    // Before `boot` sets up anything: a DFU request is honoured whatever
+    // build is flashed.
+    let checked = dfu::after_reset(&mut cp, &dp.RCC, &dp.PWR, &dp.RTC);
+    let board = boot(cp, dp, checked);
     #[cfg(feature = "sd-probe")]
     probe_card(board);
     #[cfg(not(feature = "sd-probe"))]
@@ -116,21 +127,25 @@ fn probe_card(mut b: Board) -> ! {
     sd_probe::run(&mut b.display, b.clk, store)
 }
 
-fn boot() -> Board {
+fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::Checked) -> Board {
     #[cfg(not(feature = "sd-probe"))]
     probe::paint_stack();
-    let mut cp = cortex_m::Peripherals::take().unwrap();
     fp_flush_to_zero(&mut cp.FPU);
-    let dp = pac::Peripherals::take().unwrap();
+    // The probe never enters DFU: the check ran, nothing writes the marker.
+    #[cfg(feature = "sd-probe")]
+    let _ = checked.seen();
 
-    // RCC_RSR survives the reset it records; clear it for the next one.
+    // `dfu::after_reset` read RCC_RSR and cleared it for the next reset.
     #[cfg(not(feature = "sd-probe"))]
-    let reset_cause = ResetCause::from_rsr(dp.RCC.rsr.read().bits());
-    dp.RCC.rsr.modify(|_, w| w.rmvf().set_bit());
+    let seen = checked.seen();
+    #[cfg(not(feature = "sd-probe"))]
+    let reset_cause = ResetCause::from_rsr(seen.rsr);
 
     cache::enable_d2_sram();
     let rev = clocks::read_rev(&dp.DBGMCU);
     let (ccdr, clk) = clocks::freeze(dp.PWR, dp.RCC, &dp.SYSCFG, rev);
+    #[cfg(feature = "usb-console")]
+    let ccdr = usb::route_kernel_clock(ccdr);
     cache::init(&mut cp.MPU, &mut cp.SCB, &mut cp.CPUID);
     #[cfg(not(feature = "sd-probe"))]
     shared::copy_waves();
@@ -213,6 +228,19 @@ fn boot() -> Board {
             theme,
             iwdg: dp.IWDG,
             dbgmcu: dp.DBGMCU,
+            marker: dfu::Marker::new(checked, dp.RTC),
+            #[cfg(feature = "usb-console")]
+            usb: usb::UsbParts {
+                dm: gpioa.pa11.into_alternate(),
+                dp: gpioa.pa12.into_alternate(),
+                global: dp.OTG2_HS_GLOBAL,
+                device: dp.OTG2_HS_DEVICE,
+                pwrclk: dp.OTG2_HS_PWRCLK,
+                rec: ccdr.peripheral.USB2OTG,
+                crs: dp.CRS,
+                crs_rec: ccdr.peripheral.CRS,
+                boot: seen,
+            },
         },
         sd: sd::SdParts {
             spi2: dp.SPI2,
@@ -233,6 +261,7 @@ const _: () = assert!(LOAD_ACK_TICKS >= 1, "the ack timeout is under a tick");
 
 #[cfg(not(feature = "sd-probe"))]
 fn synth(board: Board) -> ! {
+    use chimera_core::boot::BootStage;
     use chimera_core::clock_plan::pll3_for;
     use chimera_core::hw::SampleBudget;
     use chimera_core::storage::{Card, SystemSync};
@@ -255,6 +284,9 @@ fn synth(board: Board) -> ! {
                 mut theme,
                 iwdg,
                 dbgmcu,
+                marker,
+                #[cfg(feature = "usb-console")]
+                    usb: usb_parts,
             },
         sd,
     } = board;
@@ -263,10 +295,20 @@ fn synth(board: Board) -> ! {
     let mut controls = Stm32Controls::new();
     let ui = shared::take_ui().expect("UI state taken once");
 
-    // Boot step 1: SYSTEM behind the splash, then its theme. Card work runs
-    // only here and in the UI loop, never on the audio path, and every card
-    // path is bounded, so it can run before the watchdog starts.
-    let first_light = cortex_m::peripheral::DWT::cycle_count();
+    // Start-up, in order, behind the splash until PART 1 can be drawn:
+    // 1. SYSTEM and the last project from the card, however slow;
+    // 2. the controls tick, the audio and MIDI DIN;
+    // 3. PART 1 drawn, then the watchdog, armed once its kicks are live
+    //    (`await_live`), so no earlier step runs on its clock;
+    // 4. USB under the watchdog: `preflight` checks with bounded waits what
+    //    `connect` spins on with interrupts masked. A port that isn't ready
+    //    is tried again from the loop every 500 ms, 3 tries in all; the
+    //    last failure is toasted, and `last_usb` keeps how it ended. From
+    //    a cold power-on it fails (#331): the synth plays without USB;
+    // 5. the UI loop.
+    // `last_stage` on the next boot says how far this one got.
+    // Step 1: SYSTEM behind the splash, then its theme. Card work runs only
+    // here and in the UI loop, never on the audio path.
     let _ = chimera_core::ui::splash::draw(&mut display);
     display.flush();
     let sd = sd::init(sd, &mut cp.DCB, &mut cp.DWT, &clocks, clk.cpu_hz);
@@ -278,20 +320,27 @@ fn synth(board: Board) -> ! {
     let (mut sync, mut settings, _) = SystemSync::boot(&mut card, store);
     ui.set_theme(settings.theme);
     apply_theme(settings.theme, &mut theme, &mut backlight, &mut display);
-    // Boot step 2, still behind BUSY, before the audio and the watchdog
-    // start: the last project (about 130 KB read), or NEW and why.
+    // Still behind the splash: the last project (about 130 KB read), or
+    // NEW and why.
     ui.boot_project(&mut card, store, settings.last_project);
-    // The splash again in the card's theme, held to SPLASH_US from first
-    // light: the boot's card work hides inside it rather than adding to it.
+    // The splash again in the card's theme; it stays up until PART 1.
     let _ = chimera_core::ui::splash::draw(&mut display);
     display.flush();
-    let held_us = cortex_m::peripheral::DWT::cycle_count().wrapping_sub(first_light)
-        / (clk.cpu_hz / 1_000_000);
-    clocks::delay_us(clk.cpu_hz, SPLASH_US.saturating_sub(held_us));
+    marker.stage(BootStage::Card);
     let perf = PerfTracker::new();
+    // The bench's screens as text, kept for the console's `bench`.
     #[cfg(feature = "bench")]
-    bench::run(&mut display, clk, ui.project_mut());
+    #[cfg_attr(not(feature = "usb-console"), allow(unused_variables))]
+    let bench_text = {
+        let report = bench::take_report().expect("bench report taken once");
+        bench::run(&mut display, clk, ui.project_mut(), report);
+        let report: &'static chimera_core::console::Report<{ bench::BENCH_TEXT_LEN }> = report;
+        Some(report.as_str())
+    };
+    #[cfg(all(feature = "usb-console", not(feature = "bench")))]
+    let bench_text: Option<&str> = None;
 
+    // Step 2.
     controls::start_systick(cp.SYST, &mut cp.SCB, clk.cpu_hz);
     controls::enable();
 
@@ -310,7 +359,6 @@ fn synth(board: Board) -> ! {
     audio::sai::init(clk.rev.new_sai(), pll3.mckdiv);
     audio::dma::clear();
     audio::prefill();
-    watchdog::start(iwdg, &dbgmcu);
     audio::dma::init(&mut cp.NVIC);
     audio::dma::start();
     audio::sai::start();
@@ -324,6 +372,9 @@ fn synth(board: Board) -> ! {
             .expect("DIN producer taken once"),
     );
 
+    marker.stage(BootStage::Audio);
+
+    // Step 3: PART 1 replaces the splash.
     let (mut pacer, first) = chimera_core::ui::animation::Pacer::start(controls::now_ms());
     ui.update(first);
     ui.render_with_audio(&mut display, &perf.stats, None, scope_r.read());
@@ -331,11 +382,39 @@ fn synth(board: Board) -> ! {
     ui.prime_regions(&perf.stats, None, scope_r.read());
     led.set_low();
 
+    watchdog::start(iwdg, &dbgmcu, watchdog::await_live(clk.cpu_hz));
+    marker.stage(BootStage::Armed);
+
+    // Step 4. On the bus only now: the loop below polls it from here on.
+    #[cfg(feature = "usb-console")]
+    let mut usb = usb::PortState::new(usb_parts);
+    #[cfg(feature = "usb-console")]
+    let mut usb_snap = controls::now_ms();
+    #[cfg(feature = "usb-console")]
+    tend_usb(&mut usb, ui, &marker, &clocks, clk.cpu_hz, &mut usb_snap);
+    marker.stage(BootStage::Running);
+
     let mut last_tick = controls::ticks();
     loop {
+        // The snapshot point: every path through the last iteration flushed.
+        #[cfg(feature = "usb-console")]
+        tend_usb(&mut usb, ui, &marker, &clocks, clk.cpu_hz, &mut usb_snap);
+        #[cfg(feature = "usb-console")]
+        if let Some(asked) = usb
+            .up()
+            .and_then(|u| u.service(ui, stats_r.as_mut(), bench_text, display.frame()))
+        {
+            // As the menu's path: a THEME change in this visit is kept.
+            ui.sync_system_now(&mut sync, &mut card, store, &mut settings);
+            dfu::enter(&marker, dfu::DfuFrom::Console(asked));
+        }
         controls.snapshot();
         // Every frame, even idle: a held key must age.
         ui.handle_input(&controls);
+        // SYSTEM synced first: a THEME change made in this visit is kept.
+        if let Some(yes) = ui.take_dfu_synced(&mut sync, &mut card, store, &mut settings) {
+            dfu::enter(&marker, dfu::DfuFrom::Menu(yes));
+        }
         // Card work the keys asked for, under BUSY. A load settles before
         // it publishes: the ack, or `LOAD_ACK_TICKS`.
         let busy = ui.card_pending();
@@ -366,11 +445,7 @@ fn synth(board: Board) -> ! {
             ui.update(t);
         }
         shared_w.publish(|b| b.update_from(ui.project().perf(), LOAD_LINK.epoch()));
-        let stats = stats_r.as_mut().map(|r| {
-            let mut s = *r.read();
-            s.stack_used = probe::stack_used();
-            s
-        });
+        let stats = audio_stats(stats_r.as_mut());
         // Read after the card work; the toast's first step ignores it.
         let now = controls::ticks();
         let elapsed_ms = now.wrapping_sub(last_tick) * 1_000 / controls::CONTROLS_HZ;
@@ -404,6 +479,51 @@ fn synth(board: Board) -> ! {
             }
         }
     }
+}
+
+/// A USB try if one is due, and the host's progress: each step, the try's
+/// end and a register snapshot (every `USB_RETRY_MS`) kept for the next
+/// boot's line; the last failed try toasted.
+#[cfg(feature = "usb-console")]
+fn tend_usb(
+    port: &mut usb::PortState,
+    ui: &mut chimera_core::ui::UiState,
+    marker: &dfu::Marker,
+    clocks: &CoreClocks,
+    cpu_hz: u32,
+    last_snap: &mut chimera_hal::Ms,
+) {
+    use chimera_core::boot::{USB_RETRY_MS, UsbState};
+    let now = controls::now_ms();
+    let tried = port.try_up(now, clocks, cpu_hz, &mut |s, n| marker.usb_step(s, n));
+    if let Some(state) = tried {
+        marker.usb(state);
+        if let UsbState::Off { why, .. } = state
+            && state.gave_up()
+        {
+            ui.show_boot_fault(why.toast());
+        }
+    }
+    if let Some((s, n)) = port.host_step() {
+        marker.usb_step(s, n);
+    }
+    if tried.is_some() || now.since(*last_snap) >= USB_RETRY_MS {
+        *last_snap = now;
+        marker.usb_regs(usb::regs());
+    }
+}
+
+/// The audio's latest stats with the stack's high-water mark, as the
+/// AUDIO LOAD page and the console's `stats` both read them.
+#[cfg(not(feature = "sd-probe"))]
+fn audio_stats(
+    r: Option<&mut chimera_core::triple::Reader<chimera_core::perf::load::AudioStats>>,
+) -> Option<chimera_core::perf::load::AudioStats> {
+    r.map(|r| {
+        let mut s = *r.read();
+        s.stack_used = probe::stack_used();
+        s
+    })
 }
 
 /// Pushes `new` to the backlight and the panel. True when the palette
