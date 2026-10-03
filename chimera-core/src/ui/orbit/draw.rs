@@ -967,7 +967,12 @@ pub fn focus(
             };
             let (hits, steps) = (real(addr, slot)?, real(steps, at)? + 1.0);
             let _ = label.write_str(l);
-            let _ = write!(text, "{}/{}", libm::roundf(hits), libm::roundf(steps));
+            let _ = write!(
+                text,
+                "{}/{}",
+                libm::roundf(hits) as u32,
+                libm::roundf(steps) as u32
+            );
             Gauge::Arc {
                 value: (hits / steps).clamp(0.0, 1.0),
                 bipolar: false,
