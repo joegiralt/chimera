@@ -21,6 +21,8 @@ mod dfu;
 mod display;
 #[cfg(all(feature = "midi-din", not(feature = "sd-probe")))]
 mod midi_din;
+#[cfg(not(feature = "sd-probe"))]
+mod orbit;
 mod panic;
 #[cfg(not(feature = "sd-probe"))]
 mod priority;
@@ -96,8 +98,7 @@ struct Board {
 struct SynthParts {
     reset_cause: ResetCause,
     led: stm32h7xx_hal::gpio::PE1<Output<PushPull>>,
-    #[cfg(feature = "orbit")]
-    beat_led: stm32h7xx_hal::gpio::PB1<Output<PushPull>>,
+    beat_led: orbit::BeatLed,
     backlight: Backlight,
     theme: ThemeSettings,
     iwdg: pac::IWDG,
@@ -231,7 +232,6 @@ fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::Check
         synth: SynthParts {
             reset_cause,
             led,
-            #[cfg(feature = "orbit")]
             beat_led,
             backlight,
             theme,
@@ -289,8 +289,7 @@ fn synth(board: Board) -> ! {
             SynthParts {
                 reset_cause,
                 mut led,
-                #[cfg(feature = "orbit")]
-                mut beat_led,
+                beat_led,
                 mut backlight,
                 mut theme,
                 iwdg,
@@ -364,15 +363,13 @@ fn synth(board: Board) -> ! {
     let (mut producers, notes) = audio::engine::NOTES
         .split()
         .expect("note sources split once");
-    #[cfg(feature = "orbit")]
-    let (orbit_w, mut orbit_r) = shared::take_orbit().expect("ORBIT view taken once");
+    let (orbit_runner, mut orbit) = orbit::take(beat_led);
     audio::engine::init(
         SampleBudget::for_cpu(clk.cpu_hz),
         shared_r,
         notes,
         scope_w,
-        #[cfg(feature = "orbit")]
-        orbit_w,
+        orbit_runner,
     );
 
     let pll3 = pll3_for(clocks::HSE_HZ, chimera_hal::SAMPLE_RATE, clk.rev);
@@ -431,8 +428,7 @@ fn synth(board: Board) -> ! {
         }
         controls.snapshot();
         // ORBIT's latest view: the pages draw it, the drift is absorbed.
-        #[cfg(feature = "orbit")]
-        ui.set_orbit_view(orbit_r.read());
+        orbit.see(ui);
         // Every frame, even idle: a held key must age.
         ui.handle_input(&controls);
         // SYSTEM synced first: a THEME change made in this visit is kept.
@@ -452,8 +448,7 @@ fn synth(board: Board) -> ! {
             sync: &mut sync,
             settings: &mut settings,
         };
-        #[cfg(feature = "orbit")]
-        let (orbit, sync_mode) = (*ui.orbit(), ui.midi().sync);
+        let snap = orbit::Snap::of(ui);
         ui.card_work(cx, &LOAD_LINK, |swap, p| {
             let t0 = controls::ticks();
             let _ = swap.settle(&LOAD_LINK, || {
@@ -461,8 +456,7 @@ fn synth(board: Board) -> ! {
             });
             shared_w.publish(|b| {
                 b.update_from(p.perf(), LOAD_LINK.epoch());
-                #[cfg(feature = "orbit")]
-                orbit.publish(p.orbit(), sync_mode, &mut b.orbit);
+                snap.publish(p, b);
             });
         });
         // Leaving SETTINGS syncs SYSTEM, with no overlay first: a save is
@@ -474,18 +468,12 @@ fn synth(board: Board) -> ! {
         if let Some(t) = pacer.due(controls::now_ms()) {
             ui.update(t);
             // ORBIT's beat on the front-panel LED; off when it is stopped.
-            #[cfg(feature = "orbit")]
-            if ui.led() {
-                beat_led.set_high();
-            } else {
-                beat_led.set_low();
-            }
+            orbit.beat(ui);
         }
         // Every Part, the FX and ORBIT to the audio.
         shared_w.publish(|b| {
             b.update_from(ui.project().perf(), LOAD_LINK.epoch());
-            #[cfg(feature = "orbit")]
-            ui.publish_orbit(&mut b.orbit);
+            orbit::publish(ui, b);
         });
         let stats = audio_stats(stats_r.as_mut());
         // Read after the card work; the toast's first step ignores it.

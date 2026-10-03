@@ -11,8 +11,6 @@ use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 #[cfg(feature = "midi-din")]
 use chimera_core::note_queue::SourceId;
 use chimera_core::note_queue::{InEvent, NoteDrain, NoteSources};
-#[cfg(feature = "orbit")]
-use chimera_core::orbit::runner::{OrbitRunner, OrbitView};
 use chimera_core::part::DacPair;
 use chimera_core::project::{LOAD_LINK, LoadGate};
 use chimera_core::scope::{ScopeFrame, ScopeWriter};
@@ -42,10 +40,7 @@ struct Engine {
     dac: DacBlocks,
     /// Holds the note queues through a project load (ADR 0046).
     gate: LoadGate,
-    #[cfg(feature = "orbit")]
-    orbit: OrbitRunner,
-    #[cfg(feature = "orbit")]
-    view: Writer<OrbitView>,
+    orbit: crate::orbit::Runner,
 }
 
 static mut ENGINE: MaybeUninit<Engine> = MaybeUninit::uninit();
@@ -74,7 +69,7 @@ pub fn init(
     shared: Reader<AudioShared>,
     notes: NoteDrain<'static, NOTE_SOURCES>,
     scope: Writer<ScopeFrame>,
-    #[cfg(feature = "orbit")] view: Writer<OrbitView>,
+    orbit: crate::orbit::Runner,
 ) {
     if ENGINE_TAKEN.swap(true, Ordering::AcqRel) {
         return;
@@ -95,10 +90,7 @@ pub fn init(
             scope: ScopeWriter::new(scope),
             dac: DacBlocks::new(),
             gate: LoadGate::new(),
-            #[cfg(feature = "orbit")]
-            orbit: OrbitRunner::new(SAMPLE_RATE_NZ),
-            #[cfg(feature = "orbit")]
-            view,
+            orbit,
         });
     }
     ENGINE_READY.store(true, Ordering::Release);
@@ -126,28 +118,19 @@ pub fn render_half(half: Half) {
     let e = unsafe { (*addr_of_mut!(ENGINE)).assume_init_mut() };
     let shared = e.shared.read();
     if e.gate.before_block(&LOAD_LINK, e.inst, shared) {
-        #[cfg(feature = "orbit")]
         let now = e.orbit.now();
-        #[cfg_attr(not(feature = "orbit"), allow(unused_variables))]
         e.notes.drain(|src, ev| match ev {
             // Capture sees the raw key, before any snap.
             InEvent::Note(n) => {
-                #[cfg(feature = "orbit")]
                 e.orbit.live(n);
                 e.inst.handle(n, shared);
             }
-            #[cfg(feature = "orbit")]
             InEvent::Rt(rt) => e.orbit.realtime(src.index(), rt, now),
-            // Without ORBIT nothing follows a clock.
-            #[cfg(not(feature = "orbit"))]
-            InEvent::Rt(_) => {}
         });
-        #[cfg(feature = "orbit")]
         e.orbit.block(e.inst, shared);
     }
     e.inst.render(e.fx, &mut e.dac, shared, &mut e.scope);
-    #[cfg(feature = "orbit")]
-    e.view.publish(|v| *v = e.orbit.view());
+    e.orbit.publish();
     #[cfg(feature = "perf-probe")]
     {
         VOICES.store(e.inst.sounding() as u8, Ordering::Relaxed);
