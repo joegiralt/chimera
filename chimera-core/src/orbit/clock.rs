@@ -18,6 +18,11 @@ impl Phase {
     pub const fn get(self) -> u32 {
         self.0
     }
+
+    /// As a fraction of the bar, 0..1.
+    pub fn turns(self) -> f32 {
+        self.0 as f32 / 4_294_967_296.0
+    }
 }
 
 /// A tempo in whole BPM, 30..=300.

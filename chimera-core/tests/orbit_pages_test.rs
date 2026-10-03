@@ -369,7 +369,8 @@ fn custom_edit_returns_with_scale_named() {
 /// note, not round the circle.
 #[test]
 fn the_cursor_eases_the_short_way() {
-    use chimera_core::ui::orbit::draw::nearest_turn;
+    use chimera_core::ui::animation::nearest;
+    let nearest_turn = |from, to: u8| nearest(from, to as f32, 12.0);
     assert_eq!(nearest_turn(0.0, 11), -1.0);
     assert_eq!(nearest_turn(11.0, 0), 12.0);
     assert_eq!(nearest_turn(-1.0, 11), -1.0);

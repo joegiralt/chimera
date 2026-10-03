@@ -4,7 +4,6 @@
 //! own cells and focus band; and the keys that redraw them. Drawn from the
 //! live scene and the runner's last view, so a drift shows as it plays.
 
-use core::f32::consts::TAU;
 use core::fmt::Write;
 use core::hash::{Hash, Hasher};
 
@@ -105,6 +104,8 @@ where
     let rest_r = if w >= 6.0 { 2 } else { 1 };
     let accented = accents(mask, ring.accent);
     let odds = ring.chance.get() as f32 / 100.0;
+    // A hit's filled core: as wide as CHANCE lets it sound.
+    let core = libm::roundf(hit_r as f32 * libm::sqrtf(odds)) as i32;
     let (hit, rest, accent) = if ring.mute {
         (theme::PILL_EDGE, theme::FAINT, theme::PILL_EDGE)
     } else {
@@ -136,7 +137,6 @@ where
             draw::dot(d, cx, MID, hit_r, c);
         } else {
             draw::ring(d, cx, MID, hit_r, c, 1);
-            let core = libm::roundf(hit_r as f32 * libm::sqrtf(odds)) as i32;
             if core > 0 {
                 draw::dot(d, cx, MID, core, c);
             }
@@ -362,11 +362,7 @@ pub const fn ring_r(r: RingIdx) -> i32 {
 
 /// The point `turn` (0..1, clockwise from the top) round ORB, `radius` out.
 pub fn orb_xy(turn: f32, radius: f32) -> (i32, i32) {
-    let a = turn * TAU - TAU / 4.0;
-    (
-        ORB_CX + libm::roundf(radius * libm::cosf(a)) as i32,
-        ORB_CY + libm::roundf(radius * libm::sinf(a)) as i32,
-    )
+    draw::polar(ORB_CX, ORB_CY, radius, turn)
 }
 
 /// The progression band's width and the gap between its segments.
@@ -568,7 +564,7 @@ const _: () = assert!(SLOT_TOP + 2 * SLOT_H + SLOT_GAP <= theme::VIZ_BAND_BOTTOM
 fn loop_done(f: &OrbitFrame) -> Option<f32> {
     let st = &f.ui.status;
     let bars = st.bars.get() as u32;
-    let into = (st.pos.bar % bars) as f32 + st.pos.phase.get() as f32 / 4_294_967_296.0;
+    let into = (st.pos.bar % bars) as f32 + st.pos.phase.turns();
     st.running.then_some(into / bars as f32)
 }
 
@@ -640,38 +636,7 @@ const NAMES_R: f32 = 66.0;
 
 /// The point `at` twelfths round from the top, `r` out.
 fn round(at: f32, r: f32) -> (i32, i32) {
-    let a = at * TAU / 12.0 - TAU / 4.0;
-    (
-        CIRCLE_X + libm::roundf(r * libm::cosf(a)) as i32,
-        CIRCLE_Y + libm::roundf(r * libm::sinf(a)) as i32,
-    )
-}
-
-/// The note `to` (0..12) nearest `from` round the circle, in unwrapped
-/// twelfths: what CUSTOM's cursor eases toward, the short way.
-pub fn nearest_turn(from: f32, to: u8) -> f32 {
-    nearest(from, to as f32, 12.0)
-}
-
-/// `x` into 0..period.
-pub fn wrap(x: f32, period: f32) -> f32 {
-    let r = libm::fmodf(x, period);
-    if r < 0.0 { r + period } else { r }
-}
-
-/// `to`, or `to` some whole `period`s away, whichever is nearest `from`:
-/// a value round a circle, unwrapped so it eases the short way.
-pub fn nearest(from: f32, to: f32, period: f32) -> f32 {
-    let half = period / 2.0;
-    let d = libm::fmodf(to - from, period);
-    let d = if d < -half {
-        d + period
-    } else if d >= half {
-        d - period
-    } else {
-        d
-    };
-    from + d
+    draw::polar(CIRCLE_X, CIRCLE_Y, r, at / 12.0)
 }
 
 /// CHRD › CUSTOM: the twelve notes from the tonic round a circle, named;
@@ -1034,9 +999,9 @@ pub fn viz_key(def: &BlockDef, f: &OrbitFrame, r: RingIdx, cursor: f32) -> u32 {
         }
         VizType::OrbitCircle => {
             f.chords().hash(&mut h);
-            h.write_u16(crate::ui::region::quantize(
-                libm::fmodf(cursor, 12.0) + 12.0,
-            ));
+            h.write_u16(crate::ui::region::quantize(crate::ui::animation::wrap(
+                cursor, 12.0,
+            )));
         }
         _ => return 0,
     }

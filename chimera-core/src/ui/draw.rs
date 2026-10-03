@@ -331,11 +331,19 @@ pub fn arc_gauge<D>(
         Arc::with_center(center, dia, from.deg(), (to - from).deg()).draw_styled(&stroke(fill), d);
     let cap = (width as i32) / 2;
     for a in [from, to] {
-        let rad = a.to_radians();
-        let px = cx + libm::roundf(r as f32 * libm::cosf(rad)) as i32;
-        let py = cy + libm::roundf(r as f32 * libm::sinf(rad)) as i32;
+        let (px, py) = polar(cx, cy, r as f32, (a + 90.0) / 360.0);
         dot(d, px, py, cap, fill);
     }
+}
+
+/// The point `turn` (clockwise from 12:00, any range) round (`cx`, `cy`),
+/// `r` out, by the DSP's sine table rather than libm.
+pub fn polar(cx: i32, cy: i32, r: f32, turn: f32) -> (i32, i32) {
+    use crate::dsp::fast_sin_turns as sin;
+    (
+        cx + libm::roundf(r * sin(turn)) as i32,
+        cy - libm::roundf(r * sin(turn + 0.25)) as i32,
+    )
 }
 
 /// A right arrow ("→") at the text baseline in the label size; returns its width.

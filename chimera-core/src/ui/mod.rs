@@ -2052,12 +2052,9 @@ impl UiState {
 
         // CUSTOM's cursor eases the short way round, and comes back into
         // one turn once it rests.
-        let c = &mut self.renderer.orbit_cursor;
-        c.set_target(orbit::draw::nearest_turn(c.target(), self.orbit.cursor));
-        c.update();
-        if c.is_settled() {
-            c.snap((libm::roundf(c.target()) as i32).rem_euclid(12) as f32);
-        }
+        self.renderer
+            .orbit_cursor
+            .ease_round(self.orbit.cursor as f32, 12.0);
     }
 
     /// Render full screen with `scope` as the live output (tests pass a

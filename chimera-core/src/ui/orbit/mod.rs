@@ -20,7 +20,7 @@ use crate::orbit::runner::{Capture, Captured, OrbitShared, OrbitView, beats_at};
 use crate::orbit::scene::{OrbitSong, Refused, Scene, SceneIdx, SceneRing};
 use crate::orbit::{RINGS, RingIdx};
 use crate::project::{Confirmed, Project, SceneSlot};
-use crate::ui::animation::AnimatedValue;
+use crate::ui::animation::{AnimatedValue, wrap};
 use crate::ui::led::{self, Pulse};
 use chimera_theory::Chord;
 
@@ -154,13 +154,8 @@ impl OrbitAnim {
         let fade = |v: &mut u8| *v = v.saturating_sub(PULSE_FADE);
         fade(&mut self.dot);
         self.flash.iter_mut().for_each(fade);
-        let turn = st.pos.phase.get() as f32 / 4_294_967_296.0;
-        self.sweep
-            .set_target(draw::nearest(self.sweep.target(), turn, 1.0));
-        self.sweep.update();
-        if self.sweep.is_settled() {
-            self.sweep.snap(draw::wrap(self.sweep.target(), 1.0));
-        }
+        let turn = st.pos.phase.turns();
+        self.sweep.ease_round(turn, 1.0);
         if !st.running {
             self.beat = None;
             self.dot = 0;
@@ -185,7 +180,7 @@ impl OrbitAnim {
 
     /// The sweep's turn, 0..1 from the top, eased.
     pub fn sweep(&self) -> f32 {
-        draw::wrap(self.sweep.current(), 1.0)
+        wrap(self.sweep.current(), 1.0)
     }
 
     /// Ring `r`'s flash, 0..=255.

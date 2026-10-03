@@ -31,8 +31,14 @@ static SINE_LUT: [f32; 1024] = {
 #[inline(always)]
 pub fn fast_sin(theta: f32) -> f32 {
     const INV_TAU: f32 = 1.0 / core::f32::consts::TAU;
+    fast_sin_turns(theta * INV_TAU)
+}
+
+/// `fast_sin` of `turn` whole turns (any range).
+#[inline(always)]
+pub fn fast_sin_turns(turn: f32) -> f32 {
     // Normalize to 0.0..1.0
-    let mut t = theta * INV_TAU;
+    let mut t = turn;
     // Fast floor: cast to i32 truncates toward zero; adjust for negatives
     t -= if t >= 0.0 {
         t as i32 as f32

@@ -103,7 +103,7 @@ pub struct Renderer {
     /// Animated scroll offset for dungeon map sub-page branches (in pixels).
     pub branch_scroll: AnimatedValue,
     /// CUSTOM's cursor in twelfths round the circle, unwrapped, so it eases
-    /// the short way across 11 and 0 (`orbit::nearest_turn`).
+    /// the short way across 11 and 0 (`animation::nearest`).
     pub orbit_cursor: AnimatedValue,
 }
 

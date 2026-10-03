@@ -77,6 +77,29 @@ impl AnimatedValue {
     pub fn is_settled(&self) -> bool {
         abs(self.target - self.current) < SNAP_THRESHOLD
     }
+
+    /// One frame round a circle `period` long: eases toward `to` the short
+    /// way, unwrapped, and comes back into 0..period once it rests.
+    pub fn ease_round(&mut self, to: f32, period: f32) {
+        self.set_target(nearest(self.target, to, period));
+        self.update();
+        if self.is_settled() {
+            self.snap(wrap(self.target, period));
+        }
+    }
+}
+
+/// `x` into 0..period.
+pub fn wrap(x: f32, period: f32) -> f32 {
+    x - period * libm::floorf(x / period)
+}
+
+/// `to`, or `to` some whole `period`s away, whichever is nearest `from`
+/// (a tie goes back): a value round a circle, unwrapped so it eases the
+/// short way.
+pub fn nearest(from: f32, to: f32, period: f32) -> f32 {
+    let d = to - from;
+    from + d - period * libm::floorf(d / period + 0.5)
 }
 
 /// UI frames since boot, ticked once per `UiState::update`: the phase an
