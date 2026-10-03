@@ -35,6 +35,8 @@ pub enum VizType {
     /// SCN: the eight slots, the playing one outlined, a queued one
     /// filling as the loop runs out.
     OrbitScenes,
+    /// ALGO's AR · D1R · D1L · D2R · RR: the focused operator's envelope.
+    OpEnv,
 }
 
 /// A node of the FX flow; the value is its index in `viz::effects_flow`.

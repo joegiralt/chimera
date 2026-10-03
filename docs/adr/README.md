@@ -73,6 +73,8 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0066](0066-settings-menu.md) | MENU opens a SETTINGS menu (amends 0044, supersedes 0057 through it) | Proposed |
 | [0067](0067-focus-glyphs.md) | Focus glyphs: hand-assigned per parameter, ARC by default; composites draw from set values only | Proposed |
 | [0068](0068-usb-console.md) | Read the unit over a polled USB CDC-ACM console | Proposed |
+| [0069](0069-transpose-staff-glyph.md) | TRANSPOSE takes STAFF: a note on a three-line staff (amends 0067) | Proposed |
+| [0070](0070-wave-scope-glyph.md) | WAVE takes a scope traced from its own table (amends 0067) | Proposed |
 | [0071](0071-orbit-runs-on-the-audio-thread.md) | ORBIT runs on the audio thread, block-accurate; the engine owns the drift, transport acts on edges | Proposed; edge rule amended by [0080](0080-sync-int-or-ext-a-daw-drives-orbits-transport.md); superseded in part by [0082](0082-orbit-command-channel.md) |
 | [0072](0072-orbit-follows-one-midi-clock.md) | ORBIT follows one MIDI clock through the note queues: ticks are places, the time between a guess, never back, never skipped | Proposed; transport amended by [0080](0080-sync-int-or-ext-a-daw-drives-orbits-transport.md) |
 | [0073](0073-new-plays-the-sparse-groove-on-factory-sounds.md) | NEW plays the sparse groove on factory Sounds (amends 0043's template) | Proposed |

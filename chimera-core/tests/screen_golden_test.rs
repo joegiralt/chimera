@@ -25,9 +25,14 @@ const GOLDENS: &[(&str, u64)] = &[
     ("algo_alg", 0xb73321ba103c1886),
     ("algo_alg_morph_dimmed", 0xd8e8a78a528ad3b4),
     ("mod_matrix_morph_inert", 0xc0a153ae29f9167b),
-    ("algo_wave", 0xa04fd344f3387270),
+    // Re-recorded: WAVE shows its scope (#310).
+    ("algo_wave", 0xe156f3e83d0aab72),
     ("algo_level", 0x408f6bef763157fe),
     ("algo_osc_last", 0x7ac731494a9568e2),
+    // The ENV stages' band draws the focused operator's envelope (#311).
+    ("algo_ar", 0x661a8ad43d30be01),
+    ("algo_d1l", 0x7ca2aaf1d50c3055),
+    ("algo_d2r", 0x60965afdf2d22552),
     ("bigviz_filter", 0x64de3de945e82cf3),
     ("flt_mode", 0x9dd12a044e75cc68),
     ("env_a", 0x6f15c442d71edf83),
