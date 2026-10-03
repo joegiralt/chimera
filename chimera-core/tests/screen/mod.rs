@@ -623,16 +623,27 @@ pub fn to_osc(ui: &mut UiState) {
 
 /// From Part 1's home, to OSC, then EDIT down to the LEVEL sub-page.
 pub fn to_level_page(ui: &mut UiState) {
-    use chimera_core::ui::block_registry::{ALGO_CHAIN, ALGO_LEVEL};
     to_osc(ui);
+    to_osc_sub(ui, &chimera_core::ui::block_registry::ALGO_LEVEL);
+}
+
+/// From OSC or an earlier OSC sub-page, EDIT on down to `def`.
+pub fn to_osc_sub(ui: &mut UiState, def: &chimera_core::ui::block_def::BlockDef) {
+    use chimera_core::ui::block_registry::ALGO_CHAIN;
     let subs = ALGO_CHAIN.blocks[osc_node()].sub_pages;
     let n = subs
         .iter()
-        .position(|d| d.id == ALGO_LEVEL.id)
-        .expect("LEVEL is an OSC sub-page")
+        .position(|d| d.id == def.id)
+        .expect("an OSC sub-page")
         + 1;
-    for _ in 0..n {
+    while ui.page_def().id != def.id {
+        let before = ui.page_def().id;
         feed(ui, Input::press(ButtonId::Edit));
+        assert_ne!(
+            before,
+            ui.page_def().id,
+            "EDIT moves on toward sub-page {n}"
+        );
     }
 }
 
@@ -755,6 +766,30 @@ pub const CASES: &[ScreenCase] = &[
     ("algo_level", |ui| {
         to_level_page(ui);
         feed(ui, Input::turn(EncoderId::B, 60)); // operator 2 LEVEL
+    }),
+    ("algo_ar", |ui| {
+        use chimera_core::ui::block_registry::ALGO_AR;
+        to_osc(ui);
+        to_osc_sub(ui, &ALGO_AR);
+        feed(ui, Input::turn(EncoderId::A, -20)); // operator 1 AR 11
+    }),
+    ("algo_d1l", |ui| {
+        use chimera_core::ui::block_registry::{ALGO_D1L, ALGO_D1R};
+        to_osc(ui);
+        to_osc_sub(ui, &ALGO_D1R);
+        feed(ui, Input::turn(EncoderId::B, 14)); // operator 2 D1R 14
+        to_osc_sub(ui, &ALGO_D1L);
+        feed(ui, Input::turn(EncoderId::B, -5)); // D1L 10
+    }),
+    ("algo_d2r", |ui| {
+        use chimera_core::ui::block_registry::{ALGO_D1L, ALGO_D1R, ALGO_D2R};
+        to_osc(ui);
+        to_osc_sub(ui, &ALGO_D1R);
+        feed(ui, Input::turn(EncoderId::A, 18)); // D1R 18
+        to_osc_sub(ui, &ALGO_D1L);
+        feed(ui, Input::turn(EncoderId::A, -3)); // D1L 12
+        to_osc_sub(ui, &ALGO_D2R);
+        feed(ui, Input::turn(EncoderId::A, 8)); // D2R 8
     }),
     ("algo_osc_last", |ui| {
         to_osc(ui);

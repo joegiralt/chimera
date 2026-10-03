@@ -25,6 +25,7 @@ fn dirty_render_from_scratch_equals_full_render() {
         "engine_algo",
         "algo_alg",
         "algo_level",
+        "algo_d2r",
         "settings_personal_theme",
     ] {
         assert!(render(name).px == render_dirty(name).px, "{name}");
