@@ -22,7 +22,7 @@ use chimera_core::ui::orbit::OrbitCell;
 use chimera_core::ui::orbit::draw::{OrbitFrame, cell_text};
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::ButtonId;
-use chimera_hal::EncoderId::{D, F};
+use chimera_hal::EncoderId::{A, C, D};
 use chimera_theory::{Chord, Note, PitchClass};
 use common::orbit::{OrbitRig, secs};
 use screen::{Input, feed};
@@ -331,7 +331,7 @@ fn capture_survives_the_triple_buffer() {
         cell_text(OrbitCell::Play, &f, R[0]).as_str().to_string()
     };
     assert_eq!(text(&ui), "-");
-    frame(&mut ui, Input::turn(F, 1), &[]);
+    frame(&mut ui, Input::turn(C, 1), &[]);
     assert_eq!(ui.orbit().capture, Capture::Segment(0));
     assert_eq!(text(&ui), "HOLD");
     frame(&mut ui, Input::default(), &[]);
@@ -375,22 +375,22 @@ fn capture_survives_the_triple_buffer() {
     assert_eq!(ui.project().orbit().live.chords.played[0], am);
     // PLAY armed over the played chord, then a quick two-detent flick
     // down over two frames: disarmed, the chord kept.
-    frame(&mut ui, Input::turn(F, 1), &[]);
+    frame(&mut ui, Input::turn(C, 1), &[]);
     assert_eq!(text(&ui), "HOLD");
-    frame(&mut ui, Input::turn(F, -1), &[]);
-    frame(&mut ui, Input::turn(F, -1), &[]);
+    frame(&mut ui, Input::turn(C, -1), &[]);
+    frame(&mut ui, Input::turn(C, -1), &[]);
     assert_eq!(ui.orbit().capture, Capture::Off);
     assert_eq!(ui.project().orbit().live.chords.played[0], am);
     assert_eq!(text(&ui), "Am");
     // MIX + down clears it: the degree plays again.
-    frame(&mut ui, Input::turn(F, -1).and_held(ButtonId::Mix), &[]);
+    frame(&mut ui, Input::turn(C, -1).and_held(ButtonId::Mix), &[]);
     assert_eq!(ui.project().orbit().live.chords.played[0], None);
     assert_eq!(text(&ui), "-");
 
     // A capture taken in the frame PLAY is turned up again: the take's
     // disarm and the new arming land together, and the next chord is
     // still captured.
-    frame(&mut ui, Input::turn(F, 1), &[]);
+    frame(&mut ui, Input::turn(C, 1), &[]);
     let n = frame(
         &mut ui,
         Input::default(),
@@ -404,7 +404,7 @@ fn capture_survives_the_triple_buffer() {
         ],
     );
     assert_eq!(n, 2);
-    frame(&mut ui, Input::turn(F, 1), &[]);
+    frame(&mut ui, Input::turn(C, 1), &[]);
     assert_eq!(
         ui.orbit().capture,
         Capture::Segment(0),
@@ -433,15 +433,15 @@ fn capture_survives_the_triple_buffer() {
 /// written to a hidden segment.
 #[test]
 fn segs_shrinking_disarms_a_segment() {
-    use chimera_hal::EncoderId::E;
+    use chimera_hal::EncoderId::B;
     let mut ui = Box::new(UiState::new());
     screen::to_ring(&mut ui, 1);
     screen::plus(&mut ui, 1);
-    feed(&mut ui, Input::turn(E, 3).and_held(ButtonId::Mix));
-    feed(&mut ui, Input::turn(F, 1));
+    feed(&mut ui, Input::turn(B, 3).and_held(ButtonId::Mix));
+    feed(&mut ui, Input::turn(C, 1));
     assert_eq!(ui.orbit().capture, Capture::Segment(3));
-    // SEGS (D) from 4 to 3.
-    feed(&mut ui, Input::turn(D, -1));
+    // SEGS (A) from 4 to 3.
+    feed(&mut ui, Input::turn(A, -1));
     assert_eq!(ui.project().orbit().live.chords.segs.get(), 3);
     assert_eq!(ui.orbit().capture, Capture::Off);
     // A capture already reported into it is not written past SEGS.

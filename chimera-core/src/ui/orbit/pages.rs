@@ -32,9 +32,6 @@ pub static ORBIT_ORB: BlockDef = BlockDef {
     ],
 };
 
-/// ORB's SCALE slot: EDIT opens CUSTOM with it in focus.
-pub const ORB_SCALE: usize = 2;
-
 /// The selected ring's Euclidean fill and its odds.
 pub static ORBIT_RHYTHM: BlockDef = BlockDef {
     id: 79,
@@ -52,8 +49,9 @@ pub static ORBIT_RHYTHM: BlockDef = BlockDef {
     ],
 };
 
-/// The progression, and PLAY: a chord held into a segment. A to C are
-/// reserved for chord controls to come (ADR 0079).
+/// The progression, and PLAY: a chord held into a segment, on the top
+/// row, so the focus starts on SEGS. D to F are reserved for chord
+/// controls to come (ADR 0079).
 pub static ORBIT_CHRD: BlockDef = BlockDef {
     id: 80,
     name: "Chords",
@@ -61,12 +59,12 @@ pub static ORBIT_CHRD: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::OrbitChords,
     params: [
-        ParamSlot::EMPTY,
-        ParamSlot::EMPTY,
-        ParamSlot::EMPTY,
         chords(ChordRing::SEGS),
         ParamSlot::orbit(OrbitCell::Degree),
         ParamSlot::orbit(OrbitCell::Play),
+        ParamSlot::EMPTY,
+        ParamSlot::EMPTY,
+        ParamSlot::EMPTY,
     ],
 };
 

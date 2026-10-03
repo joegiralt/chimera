@@ -380,9 +380,10 @@ impl OrbitAt {
                 let n = ORBIT_CHAIN.blocks[RING_NODE].sub_page_count().max(1);
                 page(ORBIT_CHAIN.page(RING_NODE, (sub + 1) % n))
             }
-            // EDIT is down (#316): ORB's one sub-page, CUSTOM, opens while
-            // SCALE is CUSTOM and in focus; from it EDIT wraps back to ORB,
-            // even with SCALE named under it (a load, a scene switch).
+            // EDIT is down (#316): ORB's one sub-page, CUSTOM, opens
+            // whenever SCALE is CUSTOM, whichever cell was turned last;
+            // from it EDIT wraps back to ORB, even with SCALE named under
+            // it (a load, a scene switch).
             OrbitKey::Edit if self.on(ORB_NODE) && sub == 1 => page(ORBIT_CHAIN.page(ORB_NODE, 0)),
             OrbitKey::Edit if self.on(ORB_NODE) && cx.orbit.custom => page(Some(CUSTOM_PAGE)),
             // SCN's commit: SAVE → n.
@@ -435,7 +436,7 @@ pub enum OrbitAct {
 pub struct OrbitCx {
     /// Each ring's Part: where a held B*n* crosses to.
     pub targets: [PartId; RINGS],
-    /// SCALE is CUSTOM and ORB's focus is on it: EDIT on ORB opens CUSTOM.
+    /// SCALE is CUSTOM: EDIT on ORB opens CUSTOM.
     pub custom: bool,
 }
 

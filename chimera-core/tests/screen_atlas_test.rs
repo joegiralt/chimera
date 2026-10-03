@@ -190,8 +190,8 @@ impl Ctx {
                     feed(ui, Input::press(ButtonId::Minus));
                 }
                 plus(ui, node);
-                // EDIT opens CUSTOM only once SCALE is on it, and turning
-                // SCALE there opens it.
+                // EDIT opens CUSTOM only while SCALE is CUSTOM, and
+                // turning SCALE there opens it.
                 if (node, sub) == (ORB_NODE, 1) {
                     feed(ui, Input::turn(EncoderId::C, 127));
                 }

@@ -57,7 +57,8 @@ fn ring_rhythm_golden() {
 /// ORB › CUSTOM, the controller ruling (ADR 0079, amended 2026-10-03):
 /// SCALE (C) turned to CUSTOM opens the circle on the scale it was; A
 /// walks the cursor, B sets and clears; the root stays; EDIT on ORB opens
-/// it while SCALE is CUSTOM and in focus, and only then.
+/// it whenever SCALE is CUSTOM, whichever cell was turned last, and does
+/// nothing otherwise.
 #[test]
 fn orb_custom_circle() {
     let mut ui = Box::new(UiState::new());
@@ -117,13 +118,17 @@ fn orb_custom_circle() {
     tap(&mut ui, Edit);
     assert_eq!(page(&ui), ORBIT_CUSTOM.id);
 
-    // KEY (B) in focus: EDIT stays on ORB though SCALE is CUSTOM.
+    // KEY (B), then BPM (F), turned last: EDIT still goes down to CUSTOM.
+    for e in [B, chimera_hal::EncoderId::F] {
+        tap(&mut ui, Edit);
+        assert_eq!(page(&ui), ORBIT_ORB.id);
+        feed(&mut ui, Input::turn(e, 1));
+        feed(&mut ui, Input::turn(e, -1));
+        assert_eq!(chords(&ui).scale, ScaleKind::Custom);
+        tap(&mut ui, Edit);
+        assert_eq!(page(&ui), ORBIT_CUSTOM.id, "{e:?} turned last");
+    }
     tap(&mut ui, Edit);
-    feed(&mut ui, Input::turn(B, 1));
-    feed(&mut ui, Input::turn(B, -1));
-    assert_eq!(chords(&ui).scale, ScaleKind::Custom);
-    tap(&mut ui, Edit);
-    assert_eq!(page(&ui), ORBIT_ORB.id, "KEY in focus");
 
     // A set no named scale is stays the user's when SCALE comes back.
     feed(&mut ui, Input::turn(C, 1));
@@ -133,7 +138,7 @@ fn orb_custom_circle() {
         "CUSTOM is SCALE's top"
     );
     tap(&mut ui, Edit);
-    assert_eq!(page(&ui), ORBIT_CUSTOM.id, "SCALE in focus again");
+    assert_eq!(page(&ui), ORBIT_CUSTOM.id, "SCALE again");
     feed(&mut ui, Input::turn(A, 1));
     feed(&mut ui, Input::turn(B, 1));
     let own = chords(&ui).custom;
@@ -156,24 +161,38 @@ fn orb_custom_circle() {
     assert_eq!(page(&ui), ORBIT_CUSTOM.id);
 }
 
-/// CHRD is the progression only: KEY, SCALE and BARS are ORB's alone, A to
-/// C are reserved, and EDIT there never opens CUSTOM.
+/// CHRD is the progression only: SEGS, DEGREE and PLAY on the top row,
+/// A to C, so the focus starts on a real cell; D to F are reserved; KEY,
+/// SCALE and BARS are ORB's alone, and EDIT there never opens CUSTOM.
 #[test]
 fn chrd_is_the_progression_only() {
+    use chimera_core::orbit::runner::Capture;
+    use chimera_core::ui::block_def::SlotBinding;
+    use chimera_hal::EncoderId::F;
     let mut ui = Box::new(UiState::new());
     hold(&mut ui, Seq);
     feed(&mut ui, Input::press(Plus));
     feed(&mut ui, Input::press(Plus));
     assert_eq!(ui.page_def().id, ORBIT_CHRD.id);
+    assert_eq!(ui.focused_slot(), 0);
+    assert!(
+        !matches!(ORBIT_CHRD.params[0].binding, SlotBinding::Empty),
+        "the focus starts on SEGS"
+    );
     let before = ui.project().orbit().live.chords;
-    for e in [A, B, C] {
+    for e in [D, E, F] {
         feed(&mut ui, Input::turn(e, 3));
         feed(&mut ui, Input::turn(e, -1));
     }
-    assert_eq!(ui.project().orbit().live.chords, before, "A to C: nothing");
-    // SEGS, DEGREE and PLAY stay on D to F.
-    feed(&mut ui, Input::turn(D, -1));
+    assert_eq!(ui.project().orbit().live.chords, before, "D to F: nothing");
+    assert_eq!(ui.orbit().capture, Capture::Off);
+    // SEGS on A, DEGREE on B, PLAY on C.
+    feed(&mut ui, Input::turn(A, -1));
     assert_ne!(ui.project().orbit().live.chords.segs, before.segs);
+    feed(&mut ui, Input::turn(B, 1));
+    assert_ne!(ui.project().orbit().live.chords.degrees, before.degrees);
+    feed(&mut ui, Input::turn(C, 1));
+    assert!(matches!(ui.orbit().capture, Capture::Segment(_)));
 
     // SCALE CUSTOM, from ORB: CHRD's EDIT stays.
     ui.project_mut().orbit_mut().live.chords.scale = ScaleKind::Custom;
@@ -247,26 +266,26 @@ fn the_dirty_path_follows_orbit() {
     let mut ui = Box::new(ui_for("orbit_chrd"));
     let mut fb = Fb::new();
     frame(&mut ui, &mut fb, "CHRD");
-    feed(&mut ui, Input::turn(E, 1).and_held(Mix));
+    feed(&mut ui, Input::turn(B, 1).and_held(Mix));
     frame(&mut ui, &mut fb, "segment 4");
-    feed(&mut ui, Input::turn(E, -3).and_held(Mix));
+    feed(&mut ui, Input::turn(B, -3).and_held(Mix));
     frame(&mut ui, &mut fb, "segment 1, the same degree");
     // Bar 4 of 4: the last segment.
     let mut v = orbit_view(0.8);
     (v.pos.bar, v.seg) = (3, 3);
     ui.set_orbit_view(&v);
     frame(&mut ui, &mut fb, "the last segment playing");
-    feed(&mut ui, Input::turn(F, 1));
+    feed(&mut ui, Input::turn(C, 1));
     frame(&mut ui, &mut fb, "PLAY armed");
     screen::played(&mut ui, 1, &[57, 60, 64]);
     frame(&mut ui, &mut fb, "a chord played in");
     // Segment 4 has segment 1's degree: only PLAY's text tells them apart.
-    feed(&mut ui, Input::turn(E, 3).and_held(Mix));
+    feed(&mut ui, Input::turn(B, 3).and_held(Mix));
     frame(&mut ui, &mut fb, "segment 4, the same degree, none played");
     screen::played(&mut ui, 2, &[57, 60, 64, 67]);
-    feed(&mut ui, Input::turn(E, -3).and_held(Mix));
+    feed(&mut ui, Input::turn(B, -3).and_held(Mix));
     frame(&mut ui, &mut fb, "segment 1 again");
-    feed(&mut ui, Input::turn(E, 3).and_held(Mix));
+    feed(&mut ui, Input::turn(B, 3).and_held(Mix));
     frame(
         &mut ui,
         &mut fb,
@@ -314,7 +333,6 @@ fn the_dirty_path_follows_orbit() {
 #[test]
 fn degree_turns_from_the_sets_last() {
     use chimera_core::orbit::chords::ScaleKind;
-    use chimera_hal::EncoderId::E;
     use chimera_theory::Degree;
     let mut ui = Box::new(UiState::new());
     hold(&mut ui, Seq);
@@ -324,11 +342,11 @@ fn degree_turns_from_the_sets_last() {
     let c = &mut ui.project_mut().orbit_mut().live.chords;
     c.scale = ScaleKind::PentatonicMinor;
     c.degrees[0] = Degree::ALL[11];
-    feed(&mut ui, Input::turn(E, -1));
+    feed(&mut ui, Input::turn(B, -1));
     assert_eq!(ui.project().orbit().live.chords.degrees[0], Degree::IV);
     let c = &mut ui.project_mut().orbit_mut().live.chords;
     c.degrees[0] = Degree::ALL[11];
-    feed(&mut ui, Input::turn(E, 1));
+    feed(&mut ui, Input::turn(B, 1));
     assert_eq!(ui.project().orbit().live.chords.degrees[0], Degree::V);
 }
 

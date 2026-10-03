@@ -622,7 +622,7 @@ pub fn orbit_view(f: f64) -> chimera_core::orbit::runner::OrbitView {
 /// runner's `count`th capture, a third into the bar.
 pub fn played(ui: &mut UiState, count: u16, notes: &[u8]) {
     use chimera_core::orbit::runner::{Capture, Captured};
-    feed(ui, Input::turn(EncoderId::F, 1));
+    feed(ui, Input::turn(EncoderId::C, 1));
     let Capture::Segment(seg) = ui.orbit().capture else {
         panic!("PLAY arms the segment");
     };
@@ -1154,7 +1154,7 @@ pub const CASES: &[ScreenCase] = &[
     ("orbit_chrd", |ui| {
         to_ring(ui, 3);
         plus(ui, 1);
-        feed(ui, Input::turn(EncoderId::E, 2).and_held(ButtonId::Mix));
+        feed(ui, Input::turn(EncoderId::B, 2).and_held(ButtonId::Mix));
         ui.set_orbit_view(&orbit_view(0.3));
     }),
     // CHRD with two chords played in through PLAY: Bm7b5 on segment 2,
@@ -1162,9 +1162,9 @@ pub const CASES: &[ScreenCase] = &[
     ("orbit_chrd_played", |ui| {
         to_ring(ui, 3);
         plus(ui, 1);
-        feed(ui, Input::turn(EncoderId::E, 3).and_held(ButtonId::Mix));
+        feed(ui, Input::turn(EncoderId::B, 3).and_held(ButtonId::Mix));
         played(ui, 1, &[60, 64, 67]);
-        feed(ui, Input::turn(EncoderId::E, -2).and_held(ButtonId::Mix));
+        feed(ui, Input::turn(EncoderId::B, -2).and_held(ButtonId::Mix));
         played(ui, 2, &[59, 62, 65, 69]);
     }),
     // ORB on ring 3 at a third of the bar, ring 1 just fired.
