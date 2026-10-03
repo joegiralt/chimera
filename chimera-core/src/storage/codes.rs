@@ -268,6 +268,11 @@ pub fn read_value(b: &dyn Block, a: ValidAddr) -> DiskValue {
 // ORBIT's stored enums (spec § 8). `from_disk_code` searches `ALL` by the
 // explicit code, as `BlockRef` does, so a variant's place never matters.
 
+/// The one of `all` stored as `c`.
+fn find_code<T: DiskCode>(all: &[T], c: u8) -> Option<T> {
+    all.iter().copied().find(|x| x.disk_code() == c)
+}
+
 impl DiskCode for ScaleKind {
     fn disk_code(self) -> u8 {
         match self {
@@ -302,7 +307,7 @@ impl DiskCode for ScaleKind {
     }
 
     fn from_disk_code(c: u8) -> Option<Self> {
-        ScaleKind::ALL.into_iter().find(|k| k.disk_code() == c)
+        find_code(&ScaleKind::ALL, c)
     }
 }
 
@@ -342,7 +347,7 @@ impl DiskCode for PitchClass {
     }
 
     fn from_disk_code(c: u8) -> Option<Self> {
-        PitchClass::ALL.into_iter().find(|p| p.disk_code() == c)
+        find_code(&PitchClass::ALL, c)
     }
 }
 
@@ -385,7 +390,7 @@ impl DiskCode for Range {
     }
 
     fn from_disk_code(c: u8) -> Option<Self> {
-        Range::ALL.into_iter().find(|r| r.disk_code() == c)
+        find_code(&Range::ALL, c)
     }
 }
 
@@ -405,7 +410,7 @@ impl DiskCode for SnapTo {
     }
 
     fn from_disk_code(c: u8) -> Option<Self> {
-        SnapTo::ALL.into_iter().find(|s| s.disk_code() == c)
+        find_code(&SnapTo::ALL, c)
     }
 }
 
@@ -425,7 +430,7 @@ impl DiskCode for NoteMode {
     }
 
     fn from_disk_code(c: u8) -> Option<Self> {
-        NoteMode::ALL.into_iter().find(|m| m.disk_code() == c)
+        find_code(&NoteMode::ALL, c)
     }
 }
 
@@ -449,7 +454,7 @@ impl DiskCode for Walk {
     }
 
     fn from_disk_code(c: u8) -> Option<Self> {
-        Walk::ALL.into_iter().find(|w| w.disk_code() == c)
+        find_code(&Walk::ALL, c)
     }
 }
 

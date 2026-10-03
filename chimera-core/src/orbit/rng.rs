@@ -42,12 +42,7 @@ impl Rng {
     }
 
     pub fn next_u32(&mut self) -> u32 {
-        let mut x = self.0;
-        x ^= x << 13;
-        x ^= x >> 17;
-        x ^= x << 5;
-        self.0 = x;
-        x
+        crate::dsp::xorshift32(&mut self.0)
     }
 
     /// 0..n; 0 when n is 0.

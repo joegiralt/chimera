@@ -321,10 +321,7 @@ pub fn arc_gauge<D>(
     const START: f32 = 135.0;
     const SWEEP: f32 = 270.0;
     let v = value.clamp(0.0, 1.0);
-    let dia = (2 * r + 1) as u32;
-    let center = Point::new(cx, cy);
-    let stroke = |c| PrimitiveStyle::with_stroke(c, width);
-    let _ = Arc::with_center(center, dia, START.deg(), SWEEP.deg()).draw_styled(&stroke(track), d);
+    arc(d, cx, cy, r, width, START, SWEEP, track);
     let end = START + SWEEP * v;
     let (from, to) = if bipolar {
         let mid = START + SWEEP / 2.0;
@@ -332,8 +329,7 @@ pub fn arc_gauge<D>(
     } else {
         (START, end.max(START + 1.0))
     };
-    let _ =
-        Arc::with_center(center, dia, from.deg(), (to - from).deg()).draw_styled(&stroke(fill), d);
+    arc(d, cx, cy, r, width, from, to - from, fill);
     let cap = (width as i32) / 2;
     for a in [from, to] {
         let (px, py) = polar(cx, cy, r as f32, (a + 90.0) / 360.0);

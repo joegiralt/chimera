@@ -53,13 +53,20 @@ pub fn fast_sin_turns(turn: f32) -> f32 {
     a + (b - a) * frac
 }
 
-/// Xorshift32 white noise in [−1, 1]; a zero state stays zero, so seed it.
+/// Xorshift32 (13, 17, 5): the next state, kept and returned; a zero
+/// state stays zero, so seed it.
 #[inline]
-pub(crate) fn xorshift_noise(state: &mut u32) -> f32 {
+pub(crate) fn xorshift32(state: &mut u32) -> u32 {
     *state ^= *state << 13;
     *state ^= *state >> 17;
     *state ^= *state << 5;
-    (*state as i32) as f32 / i32::MAX as f32
+    *state
+}
+
+/// Xorshift32 white noise in [−1, 1]; a zero state stays zero, so seed it.
+#[inline]
+pub(crate) fn xorshift_noise(state: &mut u32) -> f32 {
+    (xorshift32(state) as i32) as f32 / i32::MAX as f32
 }
 
 /// sin(2π·phase) for phase in [0, 1): a parabola with one correction step
