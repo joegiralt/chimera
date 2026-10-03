@@ -227,6 +227,115 @@ pub fn wait_until(
     }
 }
 
+/// How far the USB bring-up got, kept in RTC_BKP6R as it goes, with the
+/// try it is on: the step in bits 8.., the try in 0..8.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UsbStep {
+    /// `preflight` started.
+    Preflight = 1,
+    /// `init` done: the bus and the class built.
+    Init = 2,
+    /// `connect` called: the core enable and the D+ pull-up.
+    Connect = 3,
+    /// `connect` returned: on the bus, nothing from the host yet.
+    Up = 4,
+    /// Start-of-frame packets arriving (OTG DSTS.FNSOF moving): the host
+    /// reset the bus and drives it.
+    Sof = 5,
+    /// The host gave the device an address.
+    Addressed = 6,
+    /// The host configured it.
+    Configured = 7,
+    /// The bus went idle (usb-device `Suspend`).
+    Suspended = 8,
+}
+
+impl UsbStep {
+    pub const ALL: [UsbStep; 8] = [
+        UsbStep::Preflight,
+        UsbStep::Init,
+        UsbStep::Connect,
+        UsbStep::Up,
+        UsbStep::Sof,
+        UsbStep::Addressed,
+        UsbStep::Configured,
+        UsbStep::Suspended,
+    ];
+
+    pub const fn code(self, tries: u8) -> u32 {
+        (self as u32) << 8 | tries as u32
+    }
+
+    /// The step and its try, from `code`.
+    pub fn from_code(code: u32) -> Option<(UsbStep, u8)> {
+        let tries = u8::try_from(code & 0xFF).ok()?;
+        let step = UsbStep::ALL.into_iter().find(|s| *s as u32 == code >> 8)?;
+        Some((step, tries))
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            UsbStep::Preflight => "preflight",
+            UsbStep::Init => "init",
+            UsbStep::Connect => "connect",
+            UsbStep::Up => "up",
+            UsbStep::Sof => "sof",
+            UsbStep::Addressed => "addressed",
+            UsbStep::Configured => "configured",
+            UsbStep::Suspended => "suspended",
+        }
+    }
+}
+
+/// The OTG and PWR registers a cold and a warm bring-up are compared on,
+/// snapshotted to RTC_BKP7R..12R while the port runs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct UsbRegs {
+    pub gotgctl: u32,
+    pub gccfg: u32,
+    pub dctl: u32,
+    pub gintsts: u32,
+    pub dsts: u32,
+    pub pwr_cr3: u32,
+}
+
+impl UsbRegs {
+    pub const WORDS: usize = 6;
+
+    pub const fn words(self) -> [u32; UsbRegs::WORDS] {
+        [
+            self.gotgctl,
+            self.gccfg,
+            self.dctl,
+            self.gintsts,
+            self.dsts,
+            self.pwr_cr3,
+        ]
+    }
+
+    pub const fn from_words(w: [u32; UsbRegs::WORDS]) -> UsbRegs {
+        UsbRegs {
+            gotgctl: w[0],
+            gccfg: w[1],
+            dctl: w[2],
+            gintsts: w[3],
+            dsts: w[4],
+            pwr_cr3: w[5],
+        }
+    }
+}
+
+impl fmt::Display for UsbRegs {
+    /// `gotgctl=… gccfg=… dctl=… gintsts=… dsts=… pwr_cr3=…`
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "gotgctl={:08x} gccfg={:08x} dctl={:08x} gintsts={:08x} dsts={:08x} pwr_cr3={:08x}",
+            self.gotgctl, self.gccfg, self.dctl, self.gintsts, self.dsts, self.pwr_cr3
+        )
+    }
+}
+
 /// What the shell saw at the top of `main`, for `status`'s `boot` line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BootSeen {
@@ -252,10 +361,16 @@ pub struct BootSeen {
     /// RTC_BKP5R on entry: the boot before this one's `UsbState`, 0 if it
     /// never got that far.
     pub last_usb: u32,
+    /// RTC_BKP6R on entry: the boot before this one's last `UsbStep`.
+    pub last_usb_step: u32,
+    /// RTC_BKP7R..12R on entry: the boot before this one's last
+    /// `UsbRegs` snapshot.
+    pub last_usb_regs: UsbRegs,
 }
 
 impl fmt::Display for BootSeen {
-    /// `boot marker=… readback=… action=Synth rsr=… dbp=0 boots=… from=… jump_rsr=… last_stage=… last_usb=…`
+    /// `boot marker=… … last_usb=… last_usb_step=…`, then a
+    /// `last_usb_regs …` line.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let action = match self.action {
             BootAction::Synth => "Synth",
@@ -284,10 +399,17 @@ impl fmt::Display for BootSeen {
         }
         f.write_str(" last_usb=")?;
         match (self.last_usb, UsbState::from_code(self.last_usb)) {
-            (_, Some(s)) => write!(f, "{s}"),
-            (0, None) => f.write_str("none"),
-            (x, None) => write!(f, "{x:08x}"),
+            (_, Some(s)) => write!(f, "{s}")?,
+            (0, None) => f.write_str("none")?,
+            (x, None) => write!(f, "{x:08x}")?,
         }
+        f.write_str(" last_usb_step=")?;
+        match (self.last_usb_step, UsbStep::from_code(self.last_usb_step)) {
+            (_, Some((s, n))) => write!(f, "{}(try {n})", s.label())?,
+            (0, None) => f.write_str("none")?,
+            (x, None) => write!(f, "{x:08x}")?,
+        }
+        write!(f, "\nlast_usb_regs {}", self.last_usb_regs)
     }
 }
 

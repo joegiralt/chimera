@@ -8,11 +8,12 @@
 
 #[cfg(all(not(feature = "sd-probe"), feature = "usb-console"))]
 use chimera_core::boot::FROM_CONSOLE;
-#[cfg(feature = "usb-console")]
-use chimera_core::boot::UsbState;
+use chimera_core::boot::UsbRegs;
 use chimera_core::boot::{self, BootAction, BootSeen, BootStage, ROM_DFU_BASE};
 #[cfg(not(feature = "sd-probe"))]
 use chimera_core::boot::{DFU_MAGIC, FROM_MENU, RomDfu};
+#[cfg(feature = "usb-console")]
+use chimera_core::boot::{UsbState, UsbStep};
 use chimera_core::reset::ResetCause;
 #[cfg(not(feature = "sd-probe"))]
 use chimera_core::ui::settings::replace::said::Said;
@@ -28,6 +29,9 @@ const FROM: usize = 2;
 const JUMP_RSR: usize = 3;
 const STAGE: usize = 4;
 const USB: usize = 5;
+const USB_STEP: usize = 6;
+/// BKP7R..12R: `UsbRegs::words`.
+const USB_REGS: usize = 7;
 
 /// `after_reset` ran: RTCAPBEN is set, the marker is clear (or stuck, and
 /// ignored) and RCC_RSR is read and cleared. Only `after_reset` makes one,
@@ -61,6 +65,20 @@ impl Marker {
     #[cfg(feature = "usb-console")]
     pub fn usb(&self, s: UsbState) {
         self.0.bkpr[USB].write(|w| w.bkp().bits(s.code()));
+    }
+
+    /// How far the USB bring-up got, on try `tries`.
+    #[cfg(feature = "usb-console")]
+    pub fn usb_step(&self, s: UsbStep, tries: u8) {
+        self.0.bkpr[USB_STEP].write(|w| w.bkp().bits(s.code(tries)));
+    }
+
+    /// The OTG and PWR registers now, for the next boot's line.
+    #[cfg(feature = "usb-console")]
+    pub fn usb_regs(&self, r: UsbRegs) {
+        for (i, word) in r.words().into_iter().enumerate() {
+            self.0.bkpr[USB_REGS + i].write(|w| w.bkp().bits(word));
+        }
     }
 }
 
@@ -112,16 +130,25 @@ pub fn after_reset(
     let readback = clear(pwr, rtc);
     let boots = rtc.bkpr[BOOTS].read().bits().wrapping_add(1);
     rtc.bkpr[BOOTS].write(|w| w.bkp().bits(boots));
-    let last_stage = rtc.bkpr[STAGE].read().bits();
-    rtc.bkpr[STAGE].write(|w| w.bkp().bits(BootStage::Entry.code()));
-    let last_usb = rtc.bkpr[USB].read().bits();
-    rtc.bkpr[USB].write(|w| w.bkp().bits(0));
     let action = boot::after_reset(marker, readback, ResetCause::from_rsr(rsr));
+    if action == BootAction::RomDfu {
+        // The boot record stays as the boot before left it: the DFU detour
+        // (OS UPGRADE, flash, leave) is how a cold boot's record is read.
+        rtc.bkpr[JUMP_RSR].write(|w| w.bkp().bits(rsr));
+        jump(cp)
+    }
+    let read = |i: usize| rtc.bkpr[i].read().bits();
+    let last_stage = read(STAGE);
+    let last_usb = read(USB);
+    let last_usb_step = read(USB_STEP);
+    let last_usb_regs = UsbRegs::from_words(core::array::from_fn(|i| read(USB_REGS + i)));
+    // This boot's record starts here, so a step it never reaches reads none.
+    rtc.bkpr[STAGE].write(|w| w.bkp().bits(BootStage::Entry.code()));
+    for i in [USB, USB_STEP] {
+        rtc.bkpr[i].write(|w| w.bkp().bits(0));
+    }
     match action {
-        BootAction::RomDfu => {
-            rtc.bkpr[JUMP_RSR].write(|w| w.bkp().bits(rsr));
-            jump(cp)
-        }
+        BootAction::RomDfu => jump(cp),
         BootAction::Synth => Checked(BootSeen {
             marker,
             readback,
@@ -133,6 +160,8 @@ pub fn after_reset(
             jump_rsr: rtc.bkpr[JUMP_RSR].read().bits(),
             last_stage,
             last_usb,
+            last_usb_step,
+            last_usb_regs,
         }),
     }
 }

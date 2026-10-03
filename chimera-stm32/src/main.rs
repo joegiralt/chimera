@@ -389,14 +389,16 @@ fn synth(board: Board) -> ! {
     #[cfg(feature = "usb-console")]
     let mut usb = usb::PortState::new(usb_parts);
     #[cfg(feature = "usb-console")]
-    try_usb(&mut usb, ui, &marker, &clocks, clk.cpu_hz);
+    let mut usb_snap = controls::now_ms();
+    #[cfg(feature = "usb-console")]
+    tend_usb(&mut usb, ui, &marker, &clocks, clk.cpu_hz, &mut usb_snap);
     marker.stage(BootStage::Running);
 
     let mut last_tick = controls::ticks();
     loop {
         // The snapshot point: every path through the last iteration flushed.
         #[cfg(feature = "usb-console")]
-        try_usb(&mut usb, ui, &marker, &clocks, clk.cpu_hz);
+        tend_usb(&mut usb, ui, &marker, &clocks, clk.cpu_hz, &mut usb_snap);
         #[cfg(feature = "usb-console")]
         if let Some(asked) = usb
             .up()
@@ -479,25 +481,35 @@ fn synth(board: Board) -> ! {
     }
 }
 
-/// A USB try if one is due: its end kept for `last_usb`, and the last
-/// one's failure toasted.
+/// A USB try if one is due, and the host's progress: each step, the try's
+/// end and a register snapshot (every `USB_RETRY_MS`) kept for the next
+/// boot's line; the last failed try toasted.
 #[cfg(feature = "usb-console")]
-fn try_usb(
+fn tend_usb(
     port: &mut usb::PortState,
     ui: &mut chimera_core::ui::UiState,
     marker: &dfu::Marker,
     clocks: &CoreClocks,
     cpu_hz: u32,
+    last_snap: &mut chimera_hal::Ms,
 ) {
-    use chimera_core::boot::UsbState;
-    let Some(state) = port.try_up(controls::now_ms(), clocks, cpu_hz) else {
-        return;
-    };
-    marker.usb(state);
-    if let UsbState::Off { why, .. } = state
-        && state.gave_up()
-    {
-        ui.show_boot_fault(why.toast());
+    use chimera_core::boot::{USB_RETRY_MS, UsbState};
+    let now = controls::now_ms();
+    let tried = port.try_up(now, clocks, cpu_hz, &mut |s, n| marker.usb_step(s, n));
+    if let Some(state) = tried {
+        marker.usb(state);
+        if let UsbState::Off { why, .. } = state
+            && state.gave_up()
+        {
+            ui.show_boot_fault(why.toast());
+        }
+    }
+    if let Some((s, n)) = port.host_step() {
+        marker.usb_step(s, n);
+    }
+    if tried.is_some() || now.since(*last_snap) >= USB_RETRY_MS {
+        *last_snap = now;
+        marker.usb_regs(usb::regs());
     }
 }
 

@@ -68,6 +68,9 @@ impl Unit for Fake {
     fn boot(&self) -> Option<BootSeen> {
         self.boot
     }
+    fn usb_regs(&self) -> Option<chimera_core::boot::UsbRegs> {
+        None
+    }
 }
 
 fn audio() -> AudioStats {
@@ -241,6 +244,8 @@ fn the_chips_status_ends_with_its_boot_line() {
         jump_rsr: 0,
         last_stage: 0,
         last_usb: 0,
+        last_usb_step: 0,
+        last_usb_regs: Default::default(),
     };
     u.boot = Some(seen);
     let mut want = String::new();

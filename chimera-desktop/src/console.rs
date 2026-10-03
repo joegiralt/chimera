@@ -114,6 +114,9 @@ impl Unit for DeskUnit<'_> {
     fn boot(&self) -> Option<chimera_core::boot::BootSeen> {
         None
     }
+    fn usb_regs(&self) -> Option<chimera_core::boot::UsbRegs> {
+        None
+    }
 }
 
 /// A non-blocking stream as `Out`, for one answer: `WouldBlock` retries

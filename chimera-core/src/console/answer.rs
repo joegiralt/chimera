@@ -6,7 +6,7 @@ use super::{
     Command, Frame, MAX_LINE, NoArg, Out, PROTOCOL, Refusal, Request, Stalled, write_shot,
     write_status,
 };
-use crate::boot::BootSeen;
+use crate::boot::{BootSeen, UsbRegs};
 use crate::hw::MAX_VOICES;
 use crate::perf::load::AudioStats;
 use crate::ui::UiState;
@@ -29,6 +29,8 @@ pub trait Unit {
     fn dfu(&mut self) -> Option<()>;
     /// What the chip saw at boot: `status`'s last line. `None`: no line.
     fn boot(&self) -> Option<BootSeen>;
+    /// The OTG and PWR registers now: `status`'s `usb_regs` line.
+    fn usb_regs(&self) -> Option<UsbRegs>;
 }
 
 /// Why an answer is a single `ERR` line.
@@ -69,7 +71,11 @@ pub fn answer(
         Err(r) => Err(Why::Refused(r)),
         Ok(Request::Help(NoArg)) => Ok(help(&mut t)),
         Ok(Request::Status(NoArg)) => Ok(write_status(unit.ui(), &mut t)
-            .and_then(|()| unit.boot().map_or(Ok(()), |b| writeln!(t, "{b}")))),
+            .and_then(|()| unit.boot().map_or(Ok(()), |b| writeln!(t, "{b}")))
+            .and_then(|()| {
+                unit.usb_regs()
+                    .map_or(Ok(()), |r| writeln!(t, "usb_regs {r}"))
+            })),
         Ok(r @ Request::Stats(NoArg)) => unit
             .stats()
             .map(|s| stats(&s, &mut t))

@@ -2,7 +2,7 @@
 //! polled from the UI loop. `pac::Interrupt::OTG_FS` is never unmasked, so
 //! USB can never preempt audio.
 
-use chimera_core::boot::{BootSeen, UsbOff, UsbRetry, UsbState, wait_until};
+use chimera_core::boot::{BootSeen, UsbOff, UsbRegs, UsbRetry, UsbState, UsbStep, wait_until};
 use chimera_core::console::{
     AnswerClock, Console, Frame, LoopTimer, Out, Served, Stalled, Stats, Unit, answer, serial_hex,
 };
@@ -20,7 +20,9 @@ use stm32h7xx_hal::usb_hs::UsbBus;
 use synopsys_usb_otg::UsbPeripheral;
 use usb_device::UsbError;
 use usb_device::bus::UsbBusAllocator;
-use usb_device::device::{StringDescriptors, UsbDevice, UsbDeviceBuilder, UsbVidPid};
+use usb_device::device::{
+    StringDescriptors, UsbDevice, UsbDeviceBuilder, UsbDeviceState, UsbVidPid,
+};
 use usbd_serial::{SerialPort, USB_CLASS_CDC};
 
 /// The stock PreenFM3's ID: Ixox/preenfm3 firmware/Src/usbd_desc.c.
@@ -392,6 +394,10 @@ impl Unit for ChipUnit<'_> {
     fn boot(&self) -> Option<BootSeen> {
         Some(self.boot)
     }
+
+    fn usb_regs(&self) -> Option<UsbRegs> {
+        Some(regs())
+    }
 }
 
 /// The port as `Out`, for one answer: it polls the device while the port
@@ -441,13 +447,51 @@ impl Out for UsbOut<'_> {
     }
 }
 
+/// The OTG and PWR registers a cold and a warm bring-up are compared on.
+pub fn regs() -> UsbRegs {
+    // SAFETY: plain reads of OTG2's and PWR's fixed registers; none of
+    // these has a read side effect (GINTSTS clears on a write of 1).
+    let (g, d, pwr) = unsafe {
+        (
+            &*pac::OTG2_HS_GLOBAL::ptr(),
+            &*pac::OTG2_HS_DEVICE::ptr(),
+            &*pac::PWR::ptr(),
+        )
+    };
+    UsbRegs {
+        gotgctl: g.gotgctl.read().bits(),
+        gccfg: g.gccfg.read().bits(),
+        dctl: d.dctl.read().bits(),
+        gintsts: g.gintsts.read().bits(),
+        dsts: d.dsts.read().bits(),
+        pwr_cr3: pwr.cr3.read().bits(),
+    }
+}
+
+/// The furthest step the host has taken the device to, from its state
+/// and whether start-of-frame packets arrive (DSTS.FNSOF moving).
+fn bus_step(state: UsbDeviceState, sof_moved: bool, was: UsbStep) -> UsbStep {
+    match state {
+        UsbDeviceState::Configured => UsbStep::Configured,
+        UsbDeviceState::Addressed => UsbStep::Addressed,
+        UsbDeviceState::Suspend => UsbStep::Suspended,
+        UsbDeviceState::Default if sof_moved => UsbStep::Sof,
+        UsbDeviceState::Default => was,
+    }
+}
+
 /// The port through the boot: waiting for a try that passes `preflight`,
 /// up, or given up after `USB_TRIES`. One lives on `synth`'s frame for
 /// the whole run, and there's no heap to box `Usb` into.
 #[allow(clippy::large_enum_variant)]
 pub enum PortState {
     Waiting(UsbParts, UsbRetry),
-    Up(Usb),
+    Up {
+        usb: Usb,
+        tries: u8,
+        step: UsbStep,
+        sof: u32,
+    },
     Off,
 }
 
@@ -458,7 +502,14 @@ impl PortState {
 
     /// A try if one is due (`UsbRetry`): `Some` with how it ended. Each
     /// try's waits are bounded, interrupts on, so the synth plays on.
-    pub fn try_up(&mut self, now: Ms, clocks: &CoreClocks, cpu_hz: u32) -> Option<UsbState> {
+    /// `step` hears each `UsbStep` as the try reaches it.
+    pub fn try_up(
+        &mut self,
+        now: Ms,
+        clocks: &CoreClocks,
+        cpu_hz: u32,
+        step: &mut dyn FnMut(UsbStep, u8),
+    ) -> Option<UsbState> {
         let PortState::Waiting(_, retry) = self else {
             return None;
         };
@@ -469,9 +520,20 @@ impl PortState {
             return None;
         };
         let tries = retry.tried(now);
+        step(UsbStep::Preflight, tries);
         let state = match preflight(parts, cpu_hz) {
             Ok(ready) => {
-                *self = PortState::Up(init(ready, clocks, cpu_hz).connect());
+                let unconnected = init(ready, clocks, cpu_hz);
+                step(UsbStep::Init, tries);
+                step(UsbStep::Connect, tries);
+                let usb = unconnected.connect();
+                step(UsbStep::Up, tries);
+                *self = PortState::Up {
+                    usb,
+                    tries,
+                    step: UsbStep::Up,
+                    sof: regs().dsts,
+                };
                 UsbState::On { tries }
             }
             Err((parts, why)) => {
@@ -485,9 +547,31 @@ impl PortState {
         Some(state)
     }
 
+    /// The host's progress since the last look, if it moved: the step and
+    /// the try that brought the port up.
+    pub fn host_step(&mut self) -> Option<(UsbStep, u8)> {
+        let PortState::Up {
+            usb,
+            tries,
+            step,
+            sof,
+        } = self
+        else {
+            return None;
+        };
+        // DSTS.FNSOF, bits 8..22.
+        let frame = regs().dsts & 0x3F_FF00;
+        let next = bus_step(usb.dev.state(), frame != *sof, *step);
+        *sof = frame;
+        (next != *step).then(|| {
+            *step = next;
+            (next, *tries)
+        })
+    }
+
     pub fn up(&mut self) -> Option<&mut Usb> {
         match self {
-            PortState::Up(usb) => Some(usb),
+            PortState::Up { usb, .. } => Some(usb),
             _ => None,
         }
     }

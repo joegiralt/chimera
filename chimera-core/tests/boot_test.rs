@@ -1,6 +1,6 @@
 use chimera_core::boot::{
     BootAction, BootSeen, BootStage, DFU_MAGIC, FROM_CONSOLE, FROM_MENU, ROM_DFU_BASE,
-    USB_RETRY_MS, USB_TRIES, UsbOff, UsbRetry, UsbState, after_reset, wait_until,
+    USB_RETRY_MS, USB_TRIES, UsbOff, UsbRegs, UsbRetry, UsbState, UsbStep, after_reset, wait_until,
 };
 use chimera_core::reset::ResetCause;
 use chimera_hal::Ms;
@@ -103,11 +103,15 @@ fn the_boot_line() {
             tries: 3,
         }
         .code(),
+        last_usb_step: UsbStep::Connect.code(3),
+        last_usb_regs: UsbRegs::from_words([0xC0000, 0x10000, 2, 0x0400_0020, 0x100, 0x0100_0006]),
     };
     assert_eq!(
         seen.to_string(),
         "boot marker=44465521 readback=00000000 action=Synth rsr=00e60000 dbp=0 boots=7 \
-         from=console jump_rsr=01400000 last_stage=audio last_usb=off(csrst, try 3)"
+         from=console jump_rsr=01400000 last_stage=audio last_usb=off(csrst, try 3) last_usb_step=connect(try 3)\n\
+         last_usb_regs gotgctl=000c0000 gccfg=00010000 dctl=00000002 gintsts=04000020 \
+         dsts=00000100 pwr_cr3=01000006"
     );
     let words = |from| BootSeen { from, ..seen }.to_string();
     assert!(words(FROM_MENU).contains(" from=menu "));
@@ -139,11 +143,13 @@ fn every_stage_reads_back_from_its_code() {
         jump_rsr: 0,
         last_stage,
         last_usb: 0,
+        last_usb_step: 0,
+        last_usb_regs: UsbRegs::default(),
     };
     assert!(
         seen(0)
             .to_string()
-            .ends_with(" last_stage=none last_usb=none")
+            .contains(" last_stage=none last_usb=none last_usb_step=none\n")
     );
     assert!(seen(99).to_string().contains(" last_stage=00000063 "));
     assert!(seen(5).to_string().contains(" last_stage=running "));
@@ -219,4 +225,16 @@ fn the_usb_toast_names_the_field() {
     for why in [UsbOff::Hsi48, UsbOff::AhbIdle, UsbOff::CoreReset] {
         assert_eq!(why.toast(), format!("USB OFF: {}", why.label()));
     }
+}
+
+#[test]
+fn every_usb_step_reads_back_from_its_code() {
+    for s in UsbStep::ALL {
+        for tries in [1, USB_TRIES] {
+            assert_eq!(UsbStep::from_code(s.code(tries)), Some((s, tries)));
+        }
+    }
+    assert_eq!(UsbStep::from_code(0), None);
+    let r = UsbRegs::from_words([1, 2, 3, 4, 5, 6]);
+    assert_eq!(UsbRegs::from_words(r.words()), r);
 }
