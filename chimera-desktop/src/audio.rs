@@ -228,7 +228,7 @@ impl Engine {
             runner.block(inst, shared);
         }
         inst.render(fx, dac, shared, scope);
-        view.publish(|v| *v = runner.view());
+        view.publish(|v| runner.fill_view(v));
     }
 }
 

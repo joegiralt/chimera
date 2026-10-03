@@ -872,7 +872,7 @@ impl Rig<'_> {
         while view.loops < ORBIT_LOOPS && blocks < IDLE_BLOCKS {
             let start = DWT::cycle_count();
             black_box(runner.block(inst, shared));
-            *black_box(&mut view) = runner.view();
+            runner.fill_view(black_box(&mut view));
             let c = DWT::cycle_count().wrapping_sub(start);
             (total, worst, blocks) = (total.wrapping_add(c), worst.max(c), blocks + 1);
         }

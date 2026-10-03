@@ -68,7 +68,7 @@ mod on {
         /// The runner's view, for the UI.
         pub fn publish(&mut self) {
             let r = &self.runner;
-            self.view.publish(|v| *v = r.view());
+            self.view.publish(|v| r.fill_view(v));
         }
     }
 

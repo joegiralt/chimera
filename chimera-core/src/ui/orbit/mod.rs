@@ -287,6 +287,7 @@ impl OrbitUi {
 
     /// Capture armed into `to`, anew even if it already was: the runner
     /// drops what was under way.
+    #[inline(never)]
     pub fn arm(&mut self, to: Capture) {
         self.capture = to;
         self.chan.arm(to);

@@ -9,7 +9,7 @@ use super::clock::{
 };
 use super::engine::{Events, OrbitKind, OrbitState, Span, block};
 use super::euclid::HitMask;
-use super::ring::{Harmony, NoteMode};
+use super::ring::{Harmony, NoteMode, Ring};
 use super::scene::{Scene, SceneIdx};
 use super::walk::Pool;
 use super::{MAX_POOL, MAX_STEPS, RINGS, RingIdx};
@@ -171,6 +171,21 @@ pub struct RingView {
     pub notes: [Note; MAX_STEPS as usize],
 }
 
+impl RingView {
+    /// `r` at `pos`, as the view reports it. Out of line: the default
+    /// view and every publish share it.
+    #[inline(never)]
+    fn of(r: &Ring, pos: Position, fired: u8) -> RingView {
+        RingView {
+            step: step_at(pos.phase, r.fill().steps()),
+            fired,
+            hits: r.hits_mask(),
+            pool: r.pool,
+            notes: r.notes,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct OrbitView {
     pub running: bool,
@@ -230,16 +245,7 @@ impl OrbitView {
             armed: Capture::Off,
             seg: 0,
             chord: harmony(&scene.chords, 0).chord,
-            rings: core::array::from_fn(|i| {
-                let r = &scene.rings[i].ring;
-                RingView {
-                    step: step_at(pos.phase, r.fill().steps()),
-                    fired: 0,
-                    hits: r.hits_mask(),
-                    pool: r.pool,
-                    notes: r.notes,
-                }
-            }),
+            rings: core::array::from_fn(|i| RingView::of(&scene.rings[i].ring, pos, 0)),
             captured: Captured::NONE,
         }
     }
@@ -716,26 +722,56 @@ impl OrbitRunner {
         self.state.pending()
     }
 
+    /// The view, built.
     pub fn view(&self) -> OrbitView {
-        let mut v = OrbitView::of(&self.working, self.edge);
-        v.running = self.transport;
-        v.epoch = self.epoch;
-        v.acked = self.applied;
-        v.source = self.source;
-        v.bpm = match self.source {
+        let mut v = OrbitView::default();
+        self.fill_view(&mut v);
+        v
+    }
+
+    /// The view, written into `v` in place: every field, every time, as
+    /// a triple buffer's slot comes back two publishes stale. The
+    /// destructure fails to compile when `OrbitView` gains a field.
+    pub fn fill_view(&self, v: &mut OrbitView) {
+        let OrbitView {
+            running,
+            epoch,
+            acked,
+            source,
+            bpm,
+            pos,
+            bars,
+            beats,
+            loops,
+            playing,
+            cue,
+            armed,
+            seg,
+            chord,
+            rings,
+            captured,
+        } = v;
+        let w = &self.working;
+        *running = self.transport;
+        *epoch = self.epoch;
+        *acked = self.applied;
+        *source = self.source;
+        *bpm = match self.source {
             ClockSource::Internal => self.clock.bpm(),
             ClockSource::Midi => self.midi.bpm(),
         };
-        v.loops = self.loops;
-        v.captured = self.take.done;
-        v.playing = self.playing;
-        v.cue = self.cue.map(Incoming::scene);
-        v.armed = self.take.armed;
-        v.seg = self.state.seg();
-        v.chord = self.state.harmony(&self.working).chord;
-        for (r, f) in v.rings.iter_mut().zip(self.fired) {
-            r.fired = f;
+        *pos = self.edge;
+        *bars = w.chords.bars;
+        *beats = beats_at(self.edge);
+        *loops = self.loops;
+        *playing = self.playing;
+        *cue = self.cue.map(Incoming::scene);
+        *armed = self.take.armed;
+        *seg = self.state.seg();
+        *chord = self.state.harmony(w).chord;
+        for ((rv, s), &fired) in rings.iter_mut().zip(&w.rings).zip(&self.fired) {
+            *rv = RingView::of(&s.ring, self.edge, fired);
         }
-        v
+        *captured = self.take.done;
     }
 }

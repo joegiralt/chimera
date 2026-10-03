@@ -415,10 +415,16 @@ impl Channel {
         self.flags &= !SENT;
     }
 
-    /// `Off` (or a segment past `MAX_SEGS`) disarms.
+    /// `Off` disarms. Its byte is written directly: a segment is below
+    /// `MAX_SEGS` (8), so `s & 7` is `s`.
     pub fn arm(&mut self, to: Capture) {
         debug_assert!(to == Capture::Off || ArmTarget::of(to).is_some());
-        self.outbox.arm = Some(ArmTarget::of(to).map_or(Cmd::Disarm, Cmd::Arm).into());
+        let b = match to {
+            Capture::Off => DISARM,
+            Capture::Ring(r) => ARM_RING_FIRST + r.get(),
+            Capture::Segment(s) => ARM_SEG_FIRST + (s & 7),
+        };
+        self.outbox.arm = NonZeroU8::new(b).map(Cmd8);
     }
 
     pub fn edit(&mut self, rhythm: RingMask, notes: RingMask) {
@@ -444,15 +450,13 @@ impl Channel {
             }
             self.outbox.arm = None;
         }
-        for (mask, edit) in [
-            (
-                &mut self.outbox.rhythm,
-                Cmd::EditRhythm as fn(RingMask) -> Cmd,
-            ),
-            (&mut self.outbox.notes, Cmd::EditNotes),
+        // An edit's byte is its mask past the class's base.
+        for (mask, base) in [
+            (&mut self.outbox.rhythm, RHYTHM_FIRST - 1),
+            (&mut self.outbox.notes, NOTES_FIRST - 1),
         ] {
-            if !mask.is_empty() {
-                if !Self::push(&mut self.log, self.acked, edit(*mask).into()) {
+            if let Some(b) = NonZeroU8::new(mask.0) {
+                if !Self::push(&mut self.log, self.acked, Cmd8(b.saturating_add(base))) {
                     return;
                 }
                 *mask = RingMask::EMPTY;
