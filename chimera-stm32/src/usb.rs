@@ -152,21 +152,24 @@ pub struct Ready(UsbParts);
 /// reset (CSRST) on the FS PHY. `Err` names the first that never came
 /// true: `connect` would spin on it forever with interrupts masked, so the
 /// boot goes on without USB, and the shell toasts why.
-pub fn preflight(parts: UsbParts, cpu_hz: u32) -> Result<Ready, (UsbParts, UsbOff)> {
-    match check(&parts, cpu_hz) {
+pub fn preflight(parts: UsbParts, cpu_hz: u32, tries: u8) -> Result<Ready, (UsbParts, UsbOff)> {
+    match check(&parts, cpu_hz, tries) {
         Ok(()) => Ok(Ready(parts)),
         Err(why) => Err((parts, why)),
     }
 }
 
-fn check(parts: &UsbParts, cpu_hz: u32) -> Result<(), UsbOff> {
+/// How long the OTG block's RCC reset is left to settle.
+const RESET_SETTLE_MS: u32 = 2;
+
+fn check(parts: &UsbParts, cpu_hz: u32, tries: u8) -> Result<(), UsbOff> {
     let limit = READY_WAIT_MS * (cpu_hz / 1000);
     let wait = |ready: &mut dyn FnMut() -> bool| wait_until(limit, DWT::cycle_count, ready);
     // SAFETY: RCC and PWR are owned by the HAL after `freeze`; this reads
     // HSI48RDY, sets PWR_CR3.USB33DEN (bit 24), the bit the HAL's own
     // `USB2::enable` sets the same way, reads USB33RDY (bit 26, RM0433
-    // PWR_CR3; the PAC's `usb33rdy`), and sets AHB1ENR's USB2OTGEN, this
-    // port's own clock bit. Nothing else writes these after `freeze`, no
+    // PWR_CR3; the PAC's `usb33rdy`), and sets AHB1ENR's USB2OTGEN and
+    // pulses AHB1RSTR's USB2OTGRST, this port's own clock and reset bits. Nothing else writes these after `freeze`, no
     // interrupt included.
     let (rcc, pwr) = unsafe { (&*pac::RCC::ptr(), &*pac::PWR::ptr()) };
     if !wait(&mut || rcc.cr.read().hsi48rdy().is_ready()) {
@@ -181,6 +184,17 @@ fn check(parts: &UsbParts, cpu_hz: u32) -> Result<(), UsbOff> {
         return Err(UsbOff::Usb33);
     }
     rcc.ahb1enr.modify(|_, w| w.usb2otgen().set_bit());
+    // From try 2: a CSRST that never cleared may have wedged the core, and
+    // waiting doesn't free it (a cold record: CSRST set through 10 tries
+    // over 5 s), while a reset did (b8247dc's IWDG resets). The block's
+    // RCC reset, then a moment for it to settle.
+    if tries >= 2 {
+        rcc.ahb1rstr.modify(|_, w| w.usb2otgrst().set_bit());
+        rcc.ahb1rstr.modify(|_, w| w.usb2otgrst().clear_bit());
+        let _ = wait_until(RESET_SETTLE_MS * (cpu_hz / 1000), DWT::cycle_count, || {
+            false
+        });
+    }
     let global = &parts.global;
     if !wait(&mut || global.grstctl.read().ahbidl().bit_is_set()) {
         return Err(UsbOff::AhbIdle);
@@ -527,7 +541,7 @@ impl PortState {
         };
         let tries = retry.tried(now);
         step(UsbStep::Preflight, tries);
-        let state = match preflight(parts, cpu_hz) {
+        let state = match preflight(parts, cpu_hz, tries) {
             Ok(ready) => {
                 let unconnected = init(ready, clocks, cpu_hz);
                 step(UsbStep::Init, tries);

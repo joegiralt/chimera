@@ -501,6 +501,12 @@ fn tend_usb(
         if let UsbState::Off { why, .. } = state
             && state.gave_up()
         {
+            // Once per power-on: a reset brings the port up where tries
+            // didn't (b8247dc's IWDG resets did so by accident).
+            if marker.take_usb_fallback() {
+                marker.usb_regs(usb::regs());
+                cortex_m::peripheral::SCB::sys_reset();
+            }
             ui.show_boot_fault(why.toast());
         }
     }
