@@ -8,17 +8,27 @@ use super::theme;
 /// Side of the square bitmap, in pixels.
 const SIZE: usize = 192;
 
-/// 1 bit per pixel, row-major, MSB first, set = ink. ponytail: baked from
-/// the owner's Elektronauts avatar (144 px JPEG, Lanczos to 192, luma < 128);
-/// re-bake from a vector source if it ever needs to be sharper.
-static SIGN: &[u8; SIZE * SIZE / 8] = include_bytes!("yellow_sign.bin");
+/// Row-major run lengths, ground first, then ink, alternating; a run
+/// over 255 is split by a 0 of the other. ponytail: baked from the
+/// owner's Elektronauts avatar (144 px JPEG, Lanczos to 192, luma < 128) as
+/// 1 bit per pixel, then run-length coded (4.6 KB to 1 KB); re-bake from a
+/// vector source if it ever needs to be sharper.
+static SIGN: &[u8] = include_bytes!("yellow_sign.rle");
 
 /// The avatar's yellow, #f1e579.
 const YELLOW: Rgb565 = Rgb565::new(241 >> 3, 229 >> 2, 121 >> 3);
 
-fn ink(x: usize, y: usize) -> bool {
-    let n = y * SIZE + x;
-    SIGN[n / 8] & (0x80 >> (n % 8)) != 0
+/// The ink's pixels, row-major, as indices into the square.
+fn inked() -> impl Iterator<Item = usize> {
+    SIGN.iter()
+        .scan(0, |at, &run| {
+            let from = *at;
+            *at += run as usize;
+            Some(from..*at)
+        })
+        .skip(1)
+        .step_by(2)
+        .flatten()
 }
 
 /// Fill the target yellow and centre the sign on it. The ink is `theme::BG`,
@@ -26,17 +36,25 @@ fn ink(x: usize, y: usize) -> bool {
 pub fn draw<D: DrawTarget<Color = Rgb565>>(d: &mut D) -> Result<(), D::Error> {
     d.clear(YELLOW)?;
     let origin = d.bounding_box().center() - Point::new(SIZE as i32 / 2, SIZE as i32 / 2);
-    d.draw_iter(
-        (0..SIZE * SIZE)
-            .map(|n| (n % SIZE, n / SIZE))
-            .filter(|&(x, y)| ink(x, y))
-            .map(|(x, y)| Pixel(origin + Point::new(x as i32, y as i32), theme::BG)),
-    )
+    d.draw_iter(inked().map(|n| {
+        let (x, y) = (n % SIZE, n / SIZE);
+        Pixel(origin + Point::new(x as i32, y as i32), theme::BG)
+    }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ink(x: usize, y: usize) -> bool {
+        inked().any(|n| n == y * SIZE + x)
+    }
+
+    #[test]
+    fn the_runs_cover_the_square() {
+        let total: usize = SIGN.iter().map(|&r| r as usize).sum();
+        assert_eq!(total, SIZE * SIZE);
+    }
 
     #[test]
     fn corners_are_ground_and_the_ring_is_ink() {
