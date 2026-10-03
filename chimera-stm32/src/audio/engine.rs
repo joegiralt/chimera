@@ -119,6 +119,7 @@ pub fn render_half(half: Half) {
     if e.gate.before_block(&LOAD_LINK, e.inst, shared) {
         #[cfg(feature = "orbit")]
         let now = e.orbit.now();
+        #[cfg_attr(not(feature = "orbit"), allow(unused_variables))]
         e.notes.drain(|src, ev| match ev {
             // Capture sees the raw key, before any snap.
             InEvent::Note(n) => {
@@ -130,9 +131,7 @@ pub fn render_half(half: Half) {
             InEvent::Rt(rt) => e.orbit.realtime(src.index(), rt, now),
             // Without ORBIT nothing follows a clock.
             #[cfg(not(feature = "orbit"))]
-            InEvent::Rt(_) => {
-                let _ = src;
-            }
+            InEvent::Rt(_) => {}
         });
         #[cfg(feature = "orbit")]
         e.orbit.block(e.inst, shared);

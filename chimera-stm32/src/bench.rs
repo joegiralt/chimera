@@ -811,9 +811,11 @@ impl Rig<'_> {
         cycles / ROUNDS
     }
 
-    /// Cycles of `OrbitRunner::block`, its mean and its worst over
-    /// `ORBIT_LOOPS` loops: five rings of 32 steps, every step a hit,
-    /// MUTATE 100 %, at the top BPM so the loops come quickly, into a quiet
+    /// Cycles of a half's ORBIT, `OrbitRunner::block` and the view built
+    /// and copied out as `render_half` publishes it, its mean and its worst
+    /// over `ORBIT_LOOPS` loops: five rings of 32 steps and 31 hits (a rest
+    /// for MUTATE to move), MUTATE and GATE 100 % (each step's off lands
+    /// with its on), at the top BPM so the loops come quickly, into a quiet
     /// `Instrument` that renders nothing. The clock's division and the
     /// notes' `handle` are inside the timing.
     #[cfg(feature = "orbit")]
@@ -829,16 +831,19 @@ impl Rig<'_> {
         let o = &mut shared.orbit;
         for r in o.settings.rings.iter_mut() {
             r.set(SceneRing::STEPS, 31.0);
-            r.set(SceneRing::HITS, 32.0);
+            r.set(SceneRing::HITS, 31.0);
             r.set(SceneRing::MUTATE, 100.0);
+            r.set(SceneRing::GATE, 100.0);
             r.set(SceneRing::MUTE, 0.0);
         }
         (o.bpm, o.run) = (Bpm::clamped(Bpm::MAX), true);
         let mut runner = OrbitRunner::new(engine::SAMPLE_RATE_NZ);
+        let mut view = runner.view();
         let (mut total, mut worst, mut blocks) = (0u32, 0u32, 0u32);
-        while runner.view().loops < ORBIT_LOOPS && blocks < IDLE_BLOCKS {
+        while view.loops < ORBIT_LOOPS && blocks < IDLE_BLOCKS {
             let start = DWT::cycle_count();
             black_box(runner.block(inst, shared));
+            *black_box(&mut view) = runner.view();
             let c = DWT::cycle_count().wrapping_sub(start);
             (total, worst, blocks) = (total.wrapping_add(c), worst.max(c), blocks + 1);
         }
