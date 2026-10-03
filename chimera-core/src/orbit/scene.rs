@@ -7,7 +7,7 @@ use super::euclid::{Fill, Steps};
 use super::mutate::register_note;
 use super::ring::{NoteMode, Octave, Range, Ring, SnapTo};
 use super::rng::{Pct, Rng};
-use super::runner::OrbitView;
+use super::runner::{Capture, Captured, OrbitView};
 use super::walk::{Pool, Walk};
 use super::{MAX_POOL, MAX_SEGS, RINGS, RingIdx};
 use crate::Velocity;
@@ -16,7 +16,7 @@ use crate::dsp::modulator::law::Law;
 use crate::dsp::modulator::pick;
 use crate::project::PartId;
 use crate::ui::glyph::FocusGlyph;
-use chimera_theory::{Degree, Interval, Key, Note, PitchClass, Scale};
+use chimera_theory::{Chord, Degree, Interval, Key, Note, PitchClass, Scale};
 
 pub const SCENES: usize = 8;
 
@@ -181,6 +181,23 @@ impl Scene {
         let s = &mut self.rings[r.get() as usize];
         let seed = self.seed.wrapping_add(u32::from(s.notes_rev) << 16);
         s.scatter(&key, &mut Rng::for_ring(seed, r));
+    }
+
+    /// A capture into its target (spec § 5.3): a segment's chord over its
+    /// lowest note, or a ring's notes.
+    pub fn take(&mut self, c: &Captured) {
+        match c.target {
+            Capture::Off => {}
+            Capture::Segment(s) => {
+                if let (Some(p), Some(ch)) = (
+                    self.chords.played.get_mut(s as usize),
+                    Chord::from_notes(c.notes()),
+                ) {
+                    *p = Some(ch);
+                }
+            }
+            Capture::Ring(r) => self.rings[r.get() as usize].take(c.notes()),
+        }
     }
 
     /// Nothing sounds: every ring muted, C major, one chord.
@@ -433,6 +450,34 @@ impl SceneRing {
             NoteMode::Step => {
                 for i in 0..MAX_STEPS {
                     r.notes[i] = register_note(r, key, rng);
+                }
+            }
+        }
+    }
+
+    /// Notes played in: a POOL ring's pool, sorted; a STEP ring's hits
+    /// in the order played, each rest after a hit at its note (the steps
+    /// before the first, the last hit's). OCTAVE becomes the lowest's, the
+    /// notes left where they were played.
+    pub fn take(&mut self, played: &[Note]) {
+        let Some(&low) = played.iter().min() else {
+            return;
+        };
+        self.renoted();
+        let r = &mut self.ring;
+        r.octave = Octave::of(low);
+        match r.mode {
+            NoteMode::Pool => r.pool = Pool::new(played).unwrap_or(r.pool),
+            NoteMode::Step => {
+                let mask = r.hits_mask();
+                let at = |k: usize| played[k % played.len()];
+                let mut note = at((mask.hits() as usize).saturating_sub(1));
+                let steps = mask.steps().get() as usize;
+                for (i, n) in r.notes[..steps].iter_mut().enumerate() {
+                    if let Some(k) = mask.hit_index(i) {
+                        note = at(k);
+                    }
+                    *n = note;
                 }
             }
         }

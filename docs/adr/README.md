@@ -76,3 +76,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0072](0072-orbit-follows-one-midi-clock.md) | ORBIT follows one MIDI clock through the note queues: ticks are places, the time between a guess, never back, never skipped | Proposed |
 | [0073](0073-new-plays-the-sparse-groove-on-factory-sounds.md) | NEW plays the sparse groove on factory Sounds (amends 0043's template) | Proposed |
 | [0074](0074-notes-edits-by-chip-clear-rolls-in-key.md) | Edit a ring's notes by chip; MIX + CLEAR up resets, down rolls in key | Proposed |
+| [0075](0075-capture-is-armed-once-and-taken-once.md) | A capture is armed once and taken once; a STEP ring's spans key-ups | Proposed |

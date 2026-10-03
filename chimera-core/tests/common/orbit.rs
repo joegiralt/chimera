@@ -5,7 +5,7 @@
 //! invariants and marks where sound can break discontinuously, for
 //! `Tape::click` to judge.
 //!
-//! The UI side is idealised: the publish, `see` and `absorb` run every
+//! The UI side is idealised: the publish, `take`, `see` and `absorb` run every
 //! block, in place and with no latency, where the desktop runs them once a
 //! frame (12–25 blocks) through triple buffers. A stale slot or a frame's
 //! delay is not this rig's to catch.
@@ -250,6 +250,7 @@ impl OrbitRig {
                         if matches!(n.kind, NoteKind::On(_)) {
                             self.ons.push(b);
                         }
+                        self.runner.live(n);
                         self.inst.handle(n, &self.shared);
                     }
                     InEvent::Rt(rt) => self.runner.realtime(src, rt, now),
@@ -264,6 +265,9 @@ impl OrbitRig {
         self.inst
             .render(&mut self.fx, &mut self.dac, &self.shared, &mut self.scope);
         let view = self.runner.view();
+        if let Some(c) = self.ui.take(&view) {
+            self.project.orbit_mut().live.take(&c);
+        }
         if self.ui.see(&view) {
             self.project.orbit_mut().absorb(&view);
         }

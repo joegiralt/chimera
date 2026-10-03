@@ -608,6 +608,29 @@ pub fn orbit_view(f: f64) -> chimera_core::orbit::runner::OrbitView {
     v
 }
 
+/// PLAY armed on CHRD's segment and `notes` captured into it: the
+/// runner's `count`th capture, a third into the bar.
+pub fn played(ui: &mut UiState, count: u16, notes: &[u8]) {
+    use chimera_core::orbit::runner::{Capture, Captured};
+    feed(ui, Input::turn(EncoderId::F, 1));
+    let Capture::Segment(seg) = ui.orbit().capture else {
+        panic!("PLAY arms the segment");
+    };
+    let mut v = orbit_view(0.3);
+    let mut c = Captured {
+        count,
+        target: Capture::Segment(seg),
+        notes: [chimera_theory::Note::MIN; 8],
+        len: notes.len() as u8,
+    };
+    for (n, &k) in c.notes.iter_mut().zip(notes) {
+        *n = chimera_theory::Note::new(k).unwrap();
+    }
+    v.captured = c;
+    ui.set_orbit_view(&v);
+    assert_eq!(ui.orbit().capture, Capture::Off, "taken, disarmed");
+}
+
 /// `orbit_view(f)` with ring 1 just fired: what ORB's golden draws.
 pub fn orb_view(f: f64) -> chimera_core::orbit::runner::OrbitView {
     let mut v = orbit_view(f);
@@ -729,7 +752,7 @@ pub fn to_pitch(ui: &mut UiState, engine: EngineType) {
     );
 }
 
-fn plus(ui: &mut UiState, n: usize) {
+pub fn plus(ui: &mut UiState, n: usize) {
     for _ in 0..n {
         feed(ui, Input::press(ButtonId::Plus));
     }
@@ -1094,6 +1117,16 @@ pub const CASES: &[ScreenCase] = &[
         plus(ui, 1);
         feed(ui, Input::turn(EncoderId::E, 2).and_held(ButtonId::Mix));
         ui.set_orbit_view(&orbit_view(0.3));
+    }),
+    // CHRD with two chords played in through PLAY: Bm7b5 on segment 2,
+    // picked, and C on segment 4. Each a name, no numeral.
+    ("orbit_chrd_played", |ui| {
+        to_ring(ui, 3);
+        plus(ui, 1);
+        feed(ui, Input::turn(EncoderId::E, 3).and_held(ButtonId::Mix));
+        played(ui, 1, &[60, 64, 67]);
+        feed(ui, Input::turn(EncoderId::E, -2).and_held(ButtonId::Mix));
+        played(ui, 2, &[59, 62, 65, 69]);
     }),
     // ORB on ring 3 at a third of the bar, ring 1 just fired.
     ("orbit_orb", |ui| {

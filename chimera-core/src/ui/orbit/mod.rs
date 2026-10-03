@@ -15,7 +15,7 @@ pub use pages::{
 use crate::block::Block;
 use crate::orbit::clock::{Bpm, ClockSource, Phase, Position, step_at};
 use crate::orbit::euclid::HitMask;
-use crate::orbit::runner::{OrbitShared, OrbitView, beats_at};
+use crate::orbit::runner::{Capture, Captured, OrbitShared, OrbitView, beats_at};
 use crate::orbit::scene::{OrbitSong, Scene, SceneRing};
 use crate::orbit::{RINGS, RingIdx};
 use crate::project::Project;
@@ -206,6 +206,10 @@ pub struct OrbitUi {
     pub chip: u8,
     /// PLAY asked for: what `publish_orbit` sends. Never saved.
     pub run: bool,
+    /// What LEARN or CHRD's PLAY armed; `Off` once a capture is taken.
+    pub capture: Capture,
+    /// The view's capture `count` last taken.
+    pub took: u16,
     pub scene_rev: u16,
     /// The view's `loops` when the drift was last absorbed.
     pub loops_seen: u32,
@@ -222,6 +226,8 @@ impl OrbitUi {
             cursor: 0,
             chip: 0,
             run: false,
+            capture: Capture::Off,
+            took: 0,
             scene_rev: 0,
             loops_seen: 0,
             epoch: 0,
@@ -240,17 +246,38 @@ impl OrbitUi {
             bpm,
             scene_rev,
             settings,
+            capture,
         } = out;
         *run = self.run;
         *bpm = song.bpm;
         *scene_rev = self.scene_rev;
         *settings = song.live;
+        *capture = self.capture;
     }
 
     /// A project was loaded at `epoch`: views from before it are another
-    /// project's.
+    /// project's, and a capture armed in the last one is dropped.
     pub fn loaded(&mut self, epoch: u32) {
         self.epoch = epoch;
+        self.capture = Capture::Off;
+    }
+
+    /// The view's capture, once, for the song to take (`Scene::take`),
+    /// and capture disarmed; `None` with nothing new, or from before a
+    /// load.
+    pub fn take(&mut self, v: &OrbitView) -> Option<Captured> {
+        let c = v.captured;
+        if c.count == self.took {
+            return None;
+        }
+        self.took = c.count;
+        if v.epoch != self.epoch {
+            return None;
+        }
+        if self.capture == c.target {
+            self.capture = Capture::Off;
+        }
+        Some(c)
     }
 
     /// Takes the runner's latest view; true when its drift is due in the

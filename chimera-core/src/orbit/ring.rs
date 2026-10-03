@@ -21,6 +21,12 @@ impl Octave {
         self.0
     }
 
+    /// The octave `n` is in, held to 0..=8.
+    pub const fn of(n: Note) -> Octave {
+        let o = (n.get() / 12).saturating_sub(1);
+        Octave(if o > 8 { 8 } else { o })
+    }
+
     /// Its C.
     pub const fn low(self) -> Note {
         match Note::new(12 * (self.0 + 1)) {

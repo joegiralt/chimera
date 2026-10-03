@@ -110,7 +110,10 @@ const GOLDENS: &[(&str, u64)] = &[
     // ORBIT's RHYTHM, CHRD and CUSTOM (plan Task 9); Task 10's header,
     // `SCENE n`, and the beat dot on the playing ones.
     ("orbit_rhythm", 0xcb8989a08a6af203),
-    ("orbit_chrd", 0xf40c5d8b8a7f9498),
+    // PLAY's cell (plan Task 14).
+    ("orbit_chrd", 0xd2650b9ae975a5e6),
+    // Chords played into segments: a name for a numeral (Task 14).
+    ("orbit_chrd_played", 0xdee431f939bb2b85),
     // ORB (plan Task 10).
     ("orbit_orb", 0xcf53a6661bfca1b4),
     ("orbit_orb_midi", 0xf609d4540c46355f),

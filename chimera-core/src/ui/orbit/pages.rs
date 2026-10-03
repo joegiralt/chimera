@@ -47,7 +47,7 @@ pub static ORBIT_RHYTHM: BlockDef = BlockDef {
     ],
 };
 
-/// The key and the progression; PLAY is Task 14's.
+/// The key and the progression, and PLAY: a chord held into a segment.
 pub static ORBIT_CHRD: BlockDef = BlockDef {
     id: 80,
     name: "Chords",
@@ -60,7 +60,7 @@ pub static ORBIT_CHRD: BlockDef = BlockDef {
         chords(ChordRing::BARS),
         chords(ChordRing::SEGS),
         ParamSlot::orbit(OrbitCell::Degree),
-        ParamSlot::EMPTY,
+        ParamSlot::orbit(OrbitCell::Play),
     ],
 };
 

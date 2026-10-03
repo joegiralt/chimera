@@ -209,6 +209,22 @@ fn the_dirty_path_follows_orbit() {
     (v.pos.bar, v.seg) = (3, 3);
     ui.set_orbit_view(&v);
     frame(&mut ui, &mut fb, "the last segment playing");
+    feed(&mut ui, Input::turn(F, 1));
+    frame(&mut ui, &mut fb, "PLAY armed");
+    screen::played(&mut ui, 1, &[57, 60, 64]);
+    frame(&mut ui, &mut fb, "a chord played in");
+    // Segment 4 has segment 1's degree: only PLAY's text tells them apart.
+    feed(&mut ui, Input::turn(E, 3).and_held(Mix));
+    frame(&mut ui, &mut fb, "segment 4, the same degree, none played");
+    screen::played(&mut ui, 2, &[57, 60, 64, 67]);
+    feed(&mut ui, Input::turn(E, -3).and_held(Mix));
+    frame(&mut ui, &mut fb, "segment 1 again");
+    feed(&mut ui, Input::turn(E, 3).and_held(Mix));
+    frame(
+        &mut ui,
+        &mut fb,
+        "segment 4, the same degree, another chord",
+    );
 
     let mut ui = Box::new(ui_for("orbit_voice"));
     let mut fb = Fb::new();
@@ -229,6 +245,8 @@ fn the_dirty_path_follows_orbit() {
     frame(&mut ui, &mut fb, "its note");
     feed(&mut ui, Input::turn(E, -1).and_held(Mix));
     frame(&mut ui, &mut fb, "CLEAR down");
+    feed(&mut ui, Input::turn(chimera_hal::EncoderId::D, 1));
+    frame(&mut ui, &mut fb, "LEARN armed");
     feed(&mut ui, Input::turn(A, 1));
     frame(&mut ui, &mut fb, "POOL");
     ui.set_orbit_view(&orbit_view(0.6));
@@ -643,10 +661,12 @@ fn voice_and_notes_pages() {
         pool.notes().iter().map(|n| n.get()).collect::<Vec<_>>(),
         [0, 69, 72]
     );
-    // LEARN is Task 14's: inert.
+    // LEARN arms a capture (orbit_capture_test) and edits nothing.
     let before = sel_ring(&ui);
     feed(&mut ui, Input::turn(D, 3));
     assert_eq!(sel_ring(&ui), before);
+    assert_eq!(text(&ui, OrbitCell::Learn), "ON");
+    feed(&mut ui, Input::turn(D, -1));
     assert_eq!(text(&ui, OrbitCell::Learn), "OFF");
     // OCTAVE 3 names CLEAR's C.
     let r = ui.location().orbit().unwrap().ring();

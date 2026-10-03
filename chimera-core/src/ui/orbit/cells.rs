@@ -3,6 +3,7 @@
 use super::OrbitUi;
 use crate::block::ValFmt;
 use crate::orbit::chords::ChordRing;
+use crate::orbit::runner::Capture;
 use crate::orbit::scene::{Scene, SceneRing};
 use crate::orbit::{RINGS, RingIdx};
 use chimera_theory::{Degree, Interval, Note};
@@ -21,12 +22,16 @@ pub enum OrbitCell {
     /// NOTES: the selected chip's note, a semitone a detent; with MIX,
     /// which chip.
     Note,
-    /// NOTES: capture from the keys (Task 14); inert until then.
+    /// NOTES: up arms a capture into the ring from the keys, down
+    /// disarms it.
     Learn,
     /// NOTES, with MIX held: up leaves one note at OCTAVE's C, down rolls
     /// random notes of the key in the register. A plain turn does nothing:
     /// either way loses notes set by hand.
     Clear,
+    /// CHRD: up arms a capture of the next chord held into the segment;
+    /// down disarms it, or drops the played chord for the degree.
+    Play,
 }
 
 const OFF_ON: [&str; 2] = ["OFF", "ON"];
@@ -40,6 +45,7 @@ impl OrbitCell {
             OrbitCell::Set => "IN SCALE",
             OrbitCell::Learn => "LEARN",
             OrbitCell::Clear => "CLEAR",
+            OrbitCell::Play => "PLAY",
         }
     }
 
@@ -49,7 +55,9 @@ impl OrbitCell {
             OrbitCell::Ring => ValFmt::OneBased(RINGS as u8 - 1),
             OrbitCell::Degree | OrbitCell::Cursor => ValFmt::Int(11),
             OrbitCell::Note => ValFmt::Int(127),
-            OrbitCell::Set | OrbitCell::Learn | OrbitCell::Clear => ValFmt::Names(&OFF_ON),
+            OrbitCell::Set | OrbitCell::Learn | OrbitCell::Clear | OrbitCell::Play => {
+                ValFmt::Names(&OFF_ON)
+            }
         }
     }
 
@@ -68,7 +76,17 @@ impl OrbitCell {
                 let r = &s.rings[ring.get() as usize];
                 r.chip(ui.chip_of(r)).get() as f32 / 127.0
             }
-            OrbitCell::Learn | OrbitCell::Clear => 0.0,
+            OrbitCell::Learn => f32::from(ui.capture == Capture::Ring(ring)),
+            OrbitCell::Clear => 0.0,
+            // Armed, or which segment's chord: a cell to redraw either way.
+            OrbitCell::Play => {
+                let seg = ui.seg_of(c);
+                match (ui.capture == Capture::Segment(seg as u8), c.played[seg]) {
+                    (true, _) => 1.0,
+                    (false, Some(_)) => 0.25 + seg as f32 / 32.0,
+                    (false, None) => 0.0,
+                }
+            }
         }
     }
 
@@ -107,12 +125,29 @@ impl OrbitCell {
                     ui.chip = r.set_chip(i, to) as u8;
                 }
             }
-            OrbitCell::Learn => {}
+            OrbitCell::Learn => ui.capture = arm(ui.capture, Capture::Ring(*ring), delta),
+            OrbitCell::Play => {
+                let seg = ui.seg_of(c);
+                let to = Capture::Segment(seg as u8);
+                if delta < 0 && ui.capture != to {
+                    c.played[seg] = None;
+                }
+                ui.capture = arm(ui.capture, to, delta);
+            }
             // MIX held, or nothing: a slip on its way to NOTE loses no notes.
             OrbitCell::Clear if !mix => {}
             OrbitCell::Clear if delta > 0 => r.clear(),
             OrbitCell::Clear => s.scatter(*ring),
         }
+    }
+}
+
+/// Up arms `to` (dropping any other), down disarms it.
+fn arm(now: Capture, to: Capture, delta: i8) -> Capture {
+    match (delta > 0, now == to) {
+        (true, _) => to,
+        (false, true) => Capture::Off,
+        (false, false) => now,
     }
 }
 

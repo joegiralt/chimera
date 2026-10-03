@@ -18,6 +18,7 @@ use crate::orbit::chords::{ChordRing, harmony};
 use crate::orbit::clock::{Bpm, ClockSource};
 use crate::orbit::euclid::{HitMask, accents};
 use crate::orbit::ring::{ACCENT_BOOST, NoteMode, Ring};
+use crate::orbit::runner::Capture;
 use crate::orbit::scene::{Scene, SceneRing};
 use crate::ui::block_def::{BlockDef, VizType};
 use crate::ui::draw;
@@ -26,6 +27,7 @@ use crate::ui::glyph::Gauge;
 use crate::ui::theme::{self, VIZ_BAND_MID as MID, VIZ_LEFT, VIZ_RIGHT};
 use crate::ui::view::{SlotCtx, View, view};
 use chimera_theory::{Interval, Note, Stack};
+use u8g2_fonts::FontRenderer;
 
 /// What ORBIT's pages draw from: the scene being edited and the UI's
 /// selections and last view of the runner.
@@ -457,6 +459,14 @@ where
 const CHIP_TOP: i32 = 124;
 const CHIP_H: i32 = 38;
 const CHIP_GAP: i32 = 4;
+/// A played chord's dot's room at the chip's edge.
+const PLAYED_INSET: i32 = 9;
+/// A played chord's name, largest first.
+static CHIP_FONTS: [&FontRenderer; 3] = [
+    &theme::FONT_VALUE,
+    &theme::FONT_LABEL_BOLD,
+    &theme::FONT_LABEL,
+];
 /// The loop's line under the chips.
 const LOOP_Y: i32 = CHIP_TOP + CHIP_H + 8;
 
@@ -488,6 +498,31 @@ where
             draw::dot(d, x + cw - 6, CHIP_TOP + 6, 2, theme::INK2);
         }
         let mid = x + cw / 2;
+        let name = chord_name(c, i);
+        if c.played[i].is_some() {
+            // A played chord has no degree: its name is the main line, in
+            // the largest font it fits, else its root's.
+            // Clear of the dot, either side, so it stays centred.
+            let fits = |font| draw::text_width(font, name.as_str(), 0) <= cw - 2 * PLAYED_INSET;
+            match CHIP_FONTS.iter().find(|&&font| fits(font)) {
+                Some(font) => draw::text_center(d, font, name.as_str(), mid, CHIP_TOP + 24, ink, 0),
+                None => {
+                    let root = harmony(c, i).chord.root();
+                    let mut b = FmtBuf::new();
+                    let _ = write!(b, "{root}");
+                    draw::text_center(
+                        d,
+                        &theme::FONT_VALUE,
+                        b.as_str(),
+                        mid,
+                        CHIP_TOP + 24,
+                        ink,
+                        0,
+                    );
+                }
+            }
+            continue;
+        }
         let top = numeral(c, i);
         let font = if draw::text_width(&theme::FONT_VALUE, top.as_str(), 0) <= cw - 4 {
             &theme::FONT_VALUE
@@ -495,7 +530,6 @@ where
             &theme::FONT_LABEL_BOLD
         };
         draw::text_center(d, font, top.as_str(), mid, CHIP_TOP + 18, ink, 0);
-        let name = chord_name(c, i);
         if draw::text_width(&theme::FONT_LABEL, name.as_str(), 0) <= cw - 4 {
             draw::text_center(
                 d,
@@ -638,6 +672,14 @@ fn numeral(c: &ChordRing, seg: usize) -> FmtBuf {
     b
 }
 
+/// Segment `seg`'s degree's chord by name, under any played one: what
+/// DEGREE edits, and what plays once PLAY clears.
+fn degree_name(c: &ChordRing, seg: usize) -> FmtBuf {
+    let mut c = *c;
+    c.played[seg] = None;
+    chord_name(&c, seg)
+}
+
 /// Segment `seg`'s chord by name, a played one's if it has one.
 fn chord_name(c: &ChordRing, seg: usize) -> FmtBuf {
     let mut b = FmtBuf::new();
@@ -671,7 +713,7 @@ pub fn cell_text(cell: OrbitCell, f: &OrbitFrame, ring: RingIdx) -> FmtBuf {
         OrbitCell::Degree => {
             let seg = f.ui.seg_of(c);
             let mut b = numeral(c, seg);
-            let _ = write!(b, " {}", chord_name(c, seg).as_str());
+            let _ = write!(b, " {}", degree_name(c, seg).as_str());
             if draw::text_width(&theme::FONT_VALUE, b.as_str(), 0) <= theme::CELL_COL_W - 6 {
                 b
             } else {
@@ -696,7 +738,25 @@ pub fn cell_text(cell: OrbitCell, f: &OrbitFrame, ring: RingIdx) -> FmtBuf {
         }
         OrbitCell::Learn => {
             let mut b = FmtBuf::new();
-            let _ = b.write_str("OFF");
+            let on = f.ui.capture == Capture::Ring(ring);
+            let _ = b.write_str(if on { "ON" } else { "OFF" });
+            b
+        }
+        OrbitCell::Play => {
+            let seg = f.ui.seg_of(c);
+            let mut b = FmtBuf::new();
+            match (f.ui.capture == Capture::Segment(seg as u8), c.played[seg]) {
+                (true, _) => {
+                    let _ = b.write_str("HOLD");
+                }
+                (false, Some(ch)) => {
+                    let _ = write!(b, "{ch}");
+                }
+                // No em dash in the fonts.
+                (false, None) => {
+                    let _ = b.write_str("-");
+                }
+            }
             b
         }
         OrbitCell::Clear => {
@@ -747,7 +807,7 @@ pub fn focus(
             let c = f.chords();
             let seg = f.ui.seg_of(c);
             let _ = write!(label, "SEGMENT {} · {}", seg + 1, numeral(c, seg).as_str());
-            text = chord_name(c, seg);
+            text = degree_name(c, seg);
             Gauge::None
         }
         View::Orbit(OrbitCell::Cursor) => {
@@ -768,7 +828,13 @@ pub fn focus(
         View::Orbit(OrbitCell::Learn) => {
             let _ = label.write_str(OrbitCell::Learn.label());
             text = cell_text(OrbitCell::Learn, f, ctx.ring);
-            Gauge::Switch { on: 0.0 }
+            Gauge::Switch { on: values(slot) }
+        }
+        View::Orbit(OrbitCell::Play) => {
+            let seg = f.ui.seg_of(f.chords()) + 1;
+            let _ = write!(label, "SEGMENT {seg} · PLAY");
+            text = cell_text(OrbitCell::Play, f, ctx.ring);
+            Gauge::None
         }
         View::Orbit(OrbitCell::Clear) => {
             let _ = label.write_str("MIX + UP / DOWN");

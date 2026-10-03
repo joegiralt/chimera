@@ -1522,9 +1522,13 @@ impl UiState {
         self.orbit.publish(self.project.orbit(), out);
     }
 
-    /// The runner's latest view, each loop before `handle_input`: kept for
-    /// the pages, its drift absorbed into the project once a loop.
+    /// The runner's latest view, each loop before `handle_input`: a
+    /// capture taken into the song, the view kept for the pages, its drift
+    /// absorbed into the project once a loop.
     pub fn set_orbit_view(&mut self, v: &OrbitView) {
+        if let Some(c) = self.orbit.take(v) {
+            self.project.orbit_mut().live.take(&c);
+        }
         if self.orbit.see(v) {
             self.project.orbit_mut().absorb(v);
         }

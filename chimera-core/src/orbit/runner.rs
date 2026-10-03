@@ -8,9 +8,10 @@ use super::clock::{
 };
 use super::engine::{Events, OrbitKind, OrbitState, PendingOff, Span, block};
 use super::euclid::HitMask;
+use super::ring::NoteMode;
 use super::scene::Scene;
 use super::walk::Pool;
-use super::{MAX_STEPS, RINGS};
+use super::{MAX_POOL, MAX_STEPS, RINGS, RingIdx};
 use crate::MidiNote;
 use crate::hw::{BLOCK_SIZE, MAX_PARTS};
 use crate::instrument::{AudioShared, Instrument, NoteOrigin};
@@ -29,6 +30,8 @@ pub struct OrbitShared {
     /// `settings` whole at the next loop boundary.
     pub scene_rev: u16,
     pub settings: Scene,
+    /// What the keys play into (spec § 5.3).
+    pub capture: Capture,
 }
 
 impl Default for OrbitShared {
@@ -38,7 +41,103 @@ impl Default for OrbitShared {
             bpm: Bpm::DEFAULT,
             scene_rev: 0,
             settings: Scene::init(),
+            capture: Capture::Off,
         }
+    }
+}
+
+/// What a capture is armed into: NOTES' LEARN arms a ring, CHRD's PLAY a
+/// segment (spec § 5.3).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Capture {
+    #[default]
+    Off,
+    Ring(RingIdx),
+    Segment(u8),
+}
+
+/// The runner's last capture, as the view reports it: the UI takes each
+/// new `count` into its target.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Captured {
+    pub count: u16,
+    pub target: Capture,
+    /// In the order played, each once (a STEP ring's may repeat).
+    pub notes: [Note; MAX_POOL],
+    pub len: u8,
+}
+
+impl Captured {
+    const NONE: Captured = Captured {
+        count: 0,
+        target: Capture::Off,
+        notes: [Note::MIN; MAX_POOL],
+        len: 0,
+    };
+
+    pub fn notes(&self) -> &[Note] {
+        &self.notes[..self.len as usize]
+    }
+}
+
+/// A capture under way: the notes since the first key-down.
+#[derive(Clone, Copy, Debug)]
+struct Take {
+    /// The target as last published: arming is its change, so a slot
+    /// still armed after a capture never takes a second.
+    seen: Capture,
+    /// What the keys play into; `Off` once taken, until re-armed.
+    armed: Capture,
+    /// Keys down since the first, by MIDI note: the last one up ends it.
+    held: u128,
+    notes: [Note; MAX_POOL],
+    len: u8,
+    done: Captured,
+}
+
+impl Take {
+    const fn new() -> Take {
+        Take {
+            seen: Capture::Off,
+            armed: Capture::Off,
+            held: 0,
+            notes: [Note::MIN; MAX_POOL],
+            len: 0,
+            done: Captured::NONE,
+        }
+    }
+
+    /// The UI's target, as published: a change re-arms and starts over.
+    fn arm(&mut self, to: Capture) {
+        if to != self.seen {
+            self.seen = to;
+            self.armed = to;
+            self.restart();
+        }
+    }
+
+    fn restart(&mut self) {
+        (self.held, self.len) = (0, 0);
+    }
+
+    fn played(&self) -> &[Note] {
+        &self.notes[..self.len as usize]
+    }
+
+    /// The notes taken: a segment's only if they make a chord, else it
+    /// stays armed for the next.
+    fn finish(&mut self) {
+        if matches!(self.armed, Capture::Segment(_)) && Chord::from_notes(self.played()).is_none() {
+            return self.restart();
+        }
+        self.done = Captured {
+            count: self.done.count.wrapping_add(1),
+            target: self.armed,
+            notes: self.notes,
+            len: self.len,
+        };
+        self.armed = Capture::Off;
+        self.restart();
     }
 }
 
@@ -72,6 +171,7 @@ pub struct OrbitView {
     pub seg: u8,
     pub chord: Chord,
     pub rings: [RingView; RINGS],
+    pub captured: Captured,
 }
 
 /// Beats in a bar (4/4, spec § 6.2) and the shift taking a phase to a beat.
@@ -112,6 +212,7 @@ impl OrbitView {
                     notes_rev: s.notes_rev,
                 }
             }),
+            captured: Captured::NONE,
         }
     }
 }
@@ -163,6 +264,7 @@ pub struct OrbitRunner {
     sample_rate: NonZeroU32,
     loops: u32,
     fired: [u8; RINGS],
+    take: Take,
 }
 
 const _: () = assert!(size_of::<OrbitRunner>() <= 1024);
@@ -194,6 +296,7 @@ impl OrbitRunner {
             sample_rate,
             loops: 0,
             fired: [0; RINGS],
+            take: Take::new(),
         }
     }
 
@@ -288,9 +391,54 @@ impl OrbitRunner {
         }
     }
 
+    /// A live note, drained before it goes to the `Instrument`: into an
+    /// armed capture (spec § 5.3), from any source and channel. It runs
+    /// from the first key-down to the last key-up, at most `MAX_POOL`
+    /// notes, each once; a STEP ring's takes one a key-down, repeats too,
+    /// and ends when its hits are filled.
+    pub fn live(&mut self, ev: NoteEvent) {
+        let step = match self.take.armed {
+            Capture::Off => return,
+            Capture::Segment(_) => None,
+            Capture::Ring(r) => {
+                let ring = &self.working.rings[r.get() as usize].ring;
+                (ring.mode == NoteMode::Step)
+                    .then(|| ring.hits_mask().hits().clamp(1, MAX_POOL as u8))
+            }
+        };
+        let t = &mut self.take;
+        let Some(note) = Note::new(ev.note.get()) else {
+            return;
+        };
+        let bit = 1u128 << note.get();
+        match ev.kind {
+            NoteKind::On(_) => {
+                t.held |= bit;
+                let fresh = step.is_some() || !t.played().contains(&note);
+                if fresh && (t.len as usize) < MAX_POOL {
+                    t.notes[t.len as usize] = note;
+                    t.len += 1;
+                }
+                if step.is_some_and(|n| t.len >= n) {
+                    t.finish();
+                }
+            }
+            NoteKind::Off => {
+                if t.held & bit == 0 {
+                    return;
+                }
+                t.held &= !bit;
+                if t.held == 0 && step.is_none() {
+                    t.finish();
+                }
+            }
+        }
+    }
+
     /// Spec § 4 steps 2-5 for one block: what it sent the `Instrument`.
     /// The shells drop it; the tests read each block's events from it.
     pub fn block(&mut self, inst: &mut Instrument, shared: &AudioShared) -> Events {
+        self.take.arm(shared.orbit.capture);
         let sent = self.advance(shared);
         Self::send(inst, shared, &sent, &mut self.fired);
         sent
@@ -431,6 +579,7 @@ impl OrbitRunner {
             ClockSource::Midi => self.midi.bpm(),
         };
         v.loops = self.loops;
+        v.captured = self.take.done;
         v.cued = self.cue_pending;
         v.seg = self.state.seg();
         v.chord = self.state.harmony(&self.working).chord;

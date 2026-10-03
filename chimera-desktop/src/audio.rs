@@ -197,8 +197,9 @@ impl Engine {
     }
 
     /// One block, as the firmware renders each half: the gate, then only
-    /// when it opens the drain (live notes to the Parts, real-time to
-    /// ORBIT's clock) and ORBIT, then the render and ORBIT's report.
+    /// when it opens the drain (live notes to any capture and then the
+    /// Parts, real-time to ORBIT's clock) and ORBIT, then the render and
+    /// ORBIT's report.
     fn block<const N: usize>(
         &mut self,
         link: &LoadLink,
@@ -217,7 +218,11 @@ impl Engine {
         if gate.before_block(link, inst, shared) {
             let now = runner.now();
             drain.drain(|src, ev| match ev {
-                InEvent::Note(n) => inst.handle(n, shared),
+                // Capture sees the raw key, before any snap.
+                InEvent::Note(n) => {
+                    runner.live(n);
+                    inst.handle(n, shared);
+                }
                 InEvent::Rt(rt) => runner.realtime(src.index(), rt, now),
             });
             runner.block(inst, shared);
