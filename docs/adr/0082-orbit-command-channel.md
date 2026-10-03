@@ -92,13 +92,19 @@ not grow, and flash must shrink and be measured.
     replaces `Captured.epoch`.
   - The load publish closure gets the post-load `UiState`.
 - **The DAW transport stays on the audio thread**, off the log.
-- **Space.**
-  - `UiState` stays at 3,832 B, within `OrbitUi`'s padding.
-  - AXI shrinks by about 90 B: `OrbitView` ×3 −84, `OrbitRunner` −20,
-    `OrbitShared` ×3 at most +12.
-  - Flash is measured before commit 2 and after each wiring commit. The
-    work continues only if the cumulative delta is ≤ 0 after the first
-    wiring commit and does not rise after it.
+- **Space,** measured after the transport and capture moved onto the
+  log, against 2dc9eefd (host `memory_budget_test`; release
+  `--features orbit` firmware):
+  - `UiState` without its `Project` stays at 3,832 B, within
+    `OrbitUi`'s padding (gate 3,840 B).
+  - AXI shrinks by 60 B, to 442,072: `OrbitView` 336 → 308 B (×3 −84),
+    `OrbitShared` 876 → 880 B (×3 +12), `OrbitRunner` unchanged at
+    832 B (its removed bytes were padding).
+  - Flash `text`, fat LTO with one codegen unit (thin LTO moves by
+    about ±1 KB between builds of the same code): 715,428 → 715,620 B,
+    +192 B. Thin LTO: 773,724 → 776,108 B. Scenes, edits and loads
+    alone measured +1,208 B fat; the transport and capture took back
+    976 B. The gate is ≤ 0, so the owner rules on the rest.
   - The `UiState` guard rises from 4 KB to 5,120 B (owner's ruling). It
     guards no stack, copy or memory region: `UiState` is an AXI static
     built in place, charged a fixed 64 KB `UI_RESERVE`, never cloned or
