@@ -879,8 +879,43 @@ pub static DEMO_GLYPH_CUBE: BlockDef = BlockDef {
     ],
 };
 
+/// GLYPH: STAFF. a: TRANSPOSE, a note on the staff by semitones.
+pub static DEMO_GLYPH_STAFF: BlockDef = BlockDef {
+    id: 90,
+    name: "Glyph: Staff",
+    short: "STF",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Algo, AlgoParams::TRANSPOSE),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+/// GLYPH: WAVE (SCP: WAV is the WAVES demo). a: operator A's WAVE, a scope
+/// tracing its table.
+pub static DEMO_GLYPH_WAVE: BlockDef = BlockDef {
+    id: 91,
+    name: "Glyph: Wave",
+    short: "SCP",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::AlgoOp(Op::A), AlgoOpParams::WAVE),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
 /// The DEMO pages, one SETTINGS leaf each (`leaves::DEMO_LEAVES`).
-pub static DEMO_BLOCKS: [ChainBlock; 13] = [
+pub static DEMO_BLOCKS: [ChainBlock; 15] = [
     ChainBlock::page(&DEMO_WAVES),
     ChainBlock::page(&DEMO_SHAPES),
     ChainBlock::page(&DEMO_MOTION),
@@ -891,6 +926,8 @@ pub static DEMO_BLOCKS: [ChainBlock; 13] = [
     ChainBlock::page(&DEMO_GLYPH_SWITCH),
     ChainBlock::page(&DEMO_GLYPH_LEVEL),
     ChainBlock::page(&DEMO_GLYPH_XF),
+    ChainBlock::page(&DEMO_GLYPH_STAFF),
+    ChainBlock::page(&DEMO_GLYPH_WAVE),
     ChainBlock::page(&DEMO_GLYPH_BRAID),
     ChainBlock::page(&DEMO_GLYPH_RINGS),
     ChainBlock::page(&DEMO_GLYPH_CUBE),

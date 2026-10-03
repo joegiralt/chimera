@@ -505,7 +505,9 @@ impl Renderer {
         let view = view::view(f.def, f.focus, &f.ctx);
         let (fmt, glyph, focused) = (view.fmt(), view.glyph(), view.addr());
         let value = match glyph {
-            FocusGlyph::Crossfader => self.set[f.focus].current(),
+            FocusGlyph::Crossfader | FocusGlyph::Staff | FocusGlyph::Wave => {
+                self.set[f.focus].current()
+            }
             _ => self.anim[f.focus].current(),
         };
         let frame = f.clock.frame();

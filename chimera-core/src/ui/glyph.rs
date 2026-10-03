@@ -3,6 +3,7 @@
 
 use crate::addr::{BlockRef, ParamAddr};
 use crate::block::ValFmt;
+use crate::dsp::algo::waves::{WAVE_LEN, WaveId};
 use crate::dsp::chorus::{ChorusMode, ChorusParams};
 use crate::dsp::delay::DelayParams;
 use crate::dsp::reverb::ReverbParams;
@@ -21,6 +22,10 @@ pub enum FocusGlyph {
     LevelBar,
     /// Horizontal crossfader.
     Crossfader,
+    /// A note on a three-line staff, by semitones (`StaffNote`).
+    Staff,
+    /// A small scope tracing one period of the chosen wave's table.
+    Wave,
     /// One animated glyph for all of an effect's params (`CompositeId::
     /// params`: the braid's 4, the rings' 7, the cube's 5), drawn from
     /// their set values, never the modulated ones.
@@ -65,12 +70,89 @@ pub enum Gauge {
     /// A horizontal crossfader, `value` 0 left .. 1 right, from the set
     /// value, never the modulated one.
     Crossfader { value: f32 },
+    /// A notehead `step` diatonic steps above the staff's middle line
+    /// (fractional while it eases), with its `accidental`.
+    Staff { step: f32, accidental: Accidental },
+    /// The scope, tracing `wave_trace` of this wave.
+    Wave(WaveId),
     /// The chorus braid (`CompositeId::ChorusBraid`).
     Braid(Braid),
     /// The delay's rings (`CompositeId::DelayRings`).
     Rings(Rings),
     /// The reverb's cube (`CompositeId::ReverbCube`).
     Cube(Cube),
+}
+
+/// A staff note's accidental.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Accidental {
+    Natural,
+    Sharp,
+    Flat,
+}
+
+/// A transposition on the staff: diatonic steps from the middle line
+/// (C), spelled in C major, sharps going up and flats going down.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StaffNote {
+    pub step: i8,
+    pub accidental: Accidental,
+}
+
+impl StaffNote {
+    /// `semis` on the staff: ±12 is an octave (±7 steps); past it the note
+    /// wraps within the octave and the readout carries the rest.
+    pub const fn of(semis: i8) -> Self {
+        // Steps above C for each pitch class, sharp-spelled and flat-spelled.
+        const UP: [i8; 12] = [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6];
+        const DOWN: [i8; 12] = [0, 1, 1, 2, 2, 3, 4, 4, 5, 5, 6, 6];
+        const BLACK: u16 = 0b0101_0100_1010;
+        let mag = semis.unsigned_abs();
+        let r = (if mag > 12 { (mag - 1) % 12 + 1 } else { mag }) as usize;
+        let (step, pc, inbetween) = if semis >= 0 {
+            let pc = r % 12;
+            (UP[pc] + 7 * (r / 12) as i8, pc, Accidental::Sharp)
+        } else {
+            let pc = 12 - r;
+            (DOWN[pc] - 7, pc, Accidental::Flat)
+        };
+        let accidental = if BLACK >> pc & 1 == 1 {
+            inbetween
+        } else {
+            Accidental::Natural
+        };
+        Self { step, accidental }
+    }
+}
+
+/// The staff gauge at `semis`, eased: the notehead slides between the
+/// whole semitones either side, but snaps where they are more than a
+/// step apart (the octave wrap); the accidental is the nearest one's.
+fn staff(semis: f32) -> Gauge {
+    let semis = semis.clamp(-127.0, 126.0);
+    let lo = libm::floorf(semis);
+    let (a, b) = (StaffNote::of(lo as i8), StaffNote::of(lo as i8 + 1));
+    let near = StaffNote::of(libm::roundf(semis) as i8);
+    let step = if (b.step - a.step).abs() > 1 {
+        near.step as f32
+    } else {
+        a.step as f32 + (b.step - a.step) as f32 * (semis - lo)
+    };
+    Gauge::Staff {
+        step,
+        accidental: near.accidental,
+    }
+}
+
+/// One period of `wave`'s mip-0 table across `N` points, the last the
+/// table's guard (its first sample again): each the nearest sample, scaled
+/// so full scale is `half` px (rounded, by 2^15), up positive.
+pub fn wave_trace<const N: usize>(wave: WaveId, half: i32) -> [i32; N] {
+    let table = wave.table(0);
+    core::array::from_fn(|i| {
+        let s = table[i * WAVE_LEN / (N - 1).max(1)] as i32;
+        (s * half + (1 << 14)) >> 15
+    })
 }
 
 /// The reverb params the cube reads, in `Cube::from_set`'s order.
@@ -370,12 +452,14 @@ impl Braid {
 }
 
 impl FocusGlyph {
-    pub const ALL: [FocusGlyph; 8] = [
+    pub const ALL: [FocusGlyph; 10] = [
         FocusGlyph::Arc,
         FocusGlyph::None,
         FocusGlyph::Switch,
         FocusGlyph::LevelBar,
         FocusGlyph::Crossfader,
+        FocusGlyph::Staff,
+        FocusGlyph::Wave,
         FocusGlyph::Composite(CompositeId::ReverbCube),
         FocusGlyph::Composite(CompositeId::DelayRings),
         FocusGlyph::Composite(CompositeId::ChorusBraid),
@@ -390,9 +474,11 @@ impl FocusGlyph {
             FocusGlyph::Switch => 2,
             FocusGlyph::LevelBar => 3,
             FocusGlyph::Crossfader => 4,
-            FocusGlyph::Composite(CompositeId::ReverbCube) => 5,
-            FocusGlyph::Composite(CompositeId::DelayRings) => 6,
-            FocusGlyph::Composite(CompositeId::ChorusBraid) => 7,
+            FocusGlyph::Staff => 5,
+            FocusGlyph::Wave => 6,
+            FocusGlyph::Composite(CompositeId::ReverbCube) => 7,
+            FocusGlyph::Composite(CompositeId::DelayRings) => 8,
+            FocusGlyph::Composite(CompositeId::ChorusBraid) => 9,
         }
     }
 
@@ -414,6 +500,13 @@ impl FocusGlyph {
                 ticks: level_ticks(fmt),
             },
             FocusGlyph::Crossfader => Gauge::Crossfader { value },
+            FocusGlyph::Staff => {
+                let n = fmt.max_int() as f32 / 2.0;
+                staff(value * 2.0 * n - n)
+            }
+            FocusGlyph::Wave => Gauge::Wave(WaveId::clamped(libm::roundf(
+                value.clamp(0.0, 1.0) * fmt.max_int() as f32,
+            ) as u8)),
             FocusGlyph::Composite(CompositeId::ChorusBraid) => composite(CompositeId::ChorusBraid),
             FocusGlyph::Composite(CompositeId::DelayRings) => composite(CompositeId::DelayRings),
             FocusGlyph::Composite(CompositeId::ReverbCube) => composite(CompositeId::ReverbCube),
@@ -438,7 +531,9 @@ impl Gauge {
             | Gauge::None
             | Gauge::Switch { .. }
             | Gauge::LevelBar { .. }
-            | Gauge::Crossfader { .. } => false,
+            | Gauge::Crossfader { .. }
+            | Gauge::Staff { .. }
+            | Gauge::Wave(_) => false,
             Gauge::Braid(_) | Gauge::Rings(_) | Gauge::Cube(_) => true,
         }
     }
