@@ -1119,3 +1119,32 @@ fn a_lossy_load_reads_modified() {
     .unwrap();
     assert_eq!(status_after_load(&v1), [Modified; 2], "before ORBIT");
 }
+
+/// ADR 0083: an edit on scene 1, unsaved by SCN, then scene 2 landed: the
+/// project file carries scene 1's edit in its slot, and loads it back.
+#[cfg(feature = "orbit")]
+#[test]
+fn a_left_scenes_edits_round_trip() {
+    use chimera_core::orbit::runner::OrbitView;
+    use chimera_core::ui::UiState;
+    use chimera_hal::ButtonId::Seq;
+    use chimera_hal::EncoderId::{B, E};
+    use screen::{Input, feed, hold};
+    let mut ui = Box::new(UiState::new());
+    hold(&mut ui, Seq);
+    feed(&mut ui, Input::turn(B, -9)); // KEY A → C
+    assert_eq!(ui.project().orbit().scene(S[0]).chords.tonic, PitchClass::C);
+    feed(&mut ui, Input::turn(E, 1)); // SCENE → 2
+    // Stopped: the runner adopts at once; its view lands it.
+    let v = OrbitView {
+        playing: S[1],
+        acked: ui.orbit().log().head(),
+        ..OrbitView::default()
+    };
+    ui.set_orbit_view(&v);
+    assert_eq!(ui.project().orbit().current(), S[1]);
+    let q = loaded(&encode(ui.project()));
+    assert_eq!(q.orbit().current(), S[1]);
+    assert_eq!(q.orbit().scene(S[0]).chords.tonic, PitchClass::C);
+    assert_eq!(*q.orbit().scene(S[0]), *ui.project().orbit().scene(S[0]));
+}

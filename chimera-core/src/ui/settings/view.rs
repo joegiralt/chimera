@@ -619,7 +619,7 @@ pub struct OrbitBand {
     pub scene: SceneIdx,
     /// The saved slots (`OrbitSong::saved`).
     pub saved: SceneSet,
-    /// `live` differs from its slot: RELOAD has something to drop.
+    /// `live` differs from its slot: RELOAD has drift to restart.
     pub edited: bool,
 }
 
@@ -632,7 +632,7 @@ impl OrbitBand {
         }
     }
 
-    /// An ORBIT row's look: RELOAD dimmed with nothing to drop, the rest
+    /// An ORBIT row's look: RELOAD dimmed with no drift, the rest
     /// from the tree.
     pub fn look(&self, kind: Kind) -> RowLook {
         match kind {

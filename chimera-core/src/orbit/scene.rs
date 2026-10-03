@@ -295,17 +295,20 @@ impl Scene {
 /// The neutral scene, once in flash: a load's base and `saved`'s measure.
 pub static NEUTRAL: Scene = Scene::neutral();
 
-/// What a project keeps of ORBIT: the eight saved scenes, the one playing
-/// and any queued, the scene being edited and played (`live`, its drift
+/// What a project keeps of ORBIT: the eight scenes, the one playing and
+/// any queued, the scene being edited and played (`live`, its drift
 /// absorbed), and the tempo.
 ///
-/// The slots are written only here: `save_to`, and a
-/// confirmed `overwrite_scene` or `clear_scene`, each moving the slot's
-/// rev, which is what a `Confirmed<SceneSlot>` witnesses.
+/// Each slot is its scene's working copy: the user's edits, never the
+/// drift (ADR 0083). The slots are written only here: `edit` and `keep`
+/// into the playing one, `save_to`, and a confirmed `overwrite_scene` or
+/// `clear_scene`, each moving the slot's rev, which is what a
+/// `Confirmed<SceneSlot>` witnesses.
 #[derive(Clone, Copy, Debug)]
 pub struct OrbitSong {
-    /// The playing scene: what the pages edit and the runner plays. A
-    /// switch replaces it when it lands (ADR 0077).
+    /// The playing scene: what the pages show and the runner plays, its
+    /// slot plus the drift. A switch replaces it with the slot when it
+    /// lands (ADR 0077, 0083).
     pub live: Scene,
     pub bpm: Bpm,
     scenes: [Scene; SCENES],
@@ -437,13 +440,52 @@ impl OrbitSong {
     }
 
     /// The runner adopted `s` (the view says so): it plays, and `live`
-    /// becomes a copy of its slot.
+    /// becomes a copy of its slot, its edits kept and its drift restarted.
+    /// Landing the playing slot again, every ring is marked touched: the
+    /// runner took the slot a moment before, and an edit since goes with
+    /// them.
     pub(crate) fn land(&mut self, s: SceneIdx) {
         if self.queued == Some(s) {
             self.live = self.scenes[s.0 as usize];
+            if s == self.current {
+                for r in &mut self.live.rings {
+                    r.touched = Touched::RHYTHM.with(Touched::NOTES);
+                }
+            }
             self.current = s;
             self.queued = None;
         }
+    }
+
+    /// An edit to the playing scene: `f` on its slot, then on `live`, so
+    /// a switch away and back keeps it (ADR 0083). While a switch waits,
+    /// still the playing scene's. `live`'s result.
+    pub fn edit<R>(&mut self, mut f: impl FnMut(&mut Scene) -> R) -> R {
+        self.edit_slot(&mut f);
+        f(&mut self.live)
+    }
+
+    /// Block `b`'s param `id`, edited on `live` through `Blocks`, into
+    /// the playing slot as `live` has it: a new OCTAVE moves the slot's own
+    /// notes, a new HITS re-lays its own hits.
+    pub fn keep(&mut self, b: BlockRef, id: ParamId) {
+        let Some(v) = self.live.block(b).map(|x| x.get(id)) else {
+            return;
+        };
+        let slot = &self.scenes[self.current.0 as usize];
+        if slot.block(b).is_some_and(|x| x.get(id) != v) {
+            self.edit_slot(|s| s.block_mut(b).map(|x| x.write(id, v)));
+        }
+    }
+
+    /// `f` on the playing slot, its rev moved; its touched marks are
+    /// `live`'s to send, so dropped.
+    fn edit_slot<R>(&mut self, f: impl FnOnce(&mut Scene) -> R) {
+        let n = self.current;
+        let s = &mut self.scenes[n.0 as usize];
+        f(s);
+        s.harvest();
+        self.wrote(n);
     }
 
     /// `live` over slot `n`.
@@ -453,18 +495,24 @@ impl OrbitSong {
 
     /// `s` into slot `n`, its rev moved and `saved` kept.
     fn put(&mut self, n: SceneIdx, s: Scene) {
+        self.scenes[n.0 as usize] = s;
+        self.scenes[n.0 as usize].harvest();
+        self.wrote(n);
+    }
+
+    /// Slot `n` written: its rev moved, `saved` kept.
+    fn wrote(&mut self, n: SceneIdx) {
         let i = n.0 as usize;
-        self.scenes[i] = s;
         self.slot_revs[i] = self.slot_revs[i].wrapping_add(1);
-        self.saved = if s.is_neutral() {
+        self.saved = if self.scenes[i].is_neutral() {
             self.saved.without(n)
         } else {
             self.saved.with(n)
         };
     }
 
-    /// `live` differs from the playing slot: an edit or drift since the
-    /// last save, which RELOAD would drop.
+    /// `live` differs from the playing slot: drift since the scene last
+    /// landed (or an edit to `live` alone), which RELOAD restarts.
     pub fn edited(&self) -> bool {
         self.live != self.scenes[self.current.0 as usize]
     }
@@ -495,9 +543,9 @@ impl OrbitSong {
     }
 
     /// SETTINGS › ORBIT's RELOAD FROM PROJ, answered: `live` back to the
-    /// playing slot, queued like a switch, so its edits and drift since
-    /// the save are dropped on the loop. Refused while a switch waits, and
-    /// for a slot written since, or no longer playing.
+    /// playing slot, queued like a switch, so the scene restarts on the
+    /// loop from its edits, its drift dropped (ADR 0083). Refused while a
+    /// switch waits, and for a slot written since, or no longer playing.
     pub fn reload_scene(&mut self, yes: Confirmed<SceneSlot>) -> Result<(), Refused> {
         if self.queued.is_some() {
             return Err(Refused::SwitchPending);
@@ -536,8 +584,8 @@ impl OrbitSong {
         Ok(())
     }
 
-    /// Each ring's drift from `v` into `live`: its hits, notes and pool,
-    /// nothing marked touched. `OrbitUi::sync` gates it: only a view of the
+    /// Each ring's drift from `v` into `live`, never its slot: its hits,
+    /// notes and pool, nothing marked touched. `OrbitUi::sync` gates it: only a view of the
     /// scene `live` is, with every edit applied (ADR 0082).
     pub fn absorb(&mut self, v: &OrbitView) {
         for (s, r) in self.live.rings.iter_mut().zip(&v.rings) {

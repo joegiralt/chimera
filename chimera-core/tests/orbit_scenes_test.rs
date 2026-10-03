@@ -23,7 +23,7 @@ use chimera_core::ui::UiState;
 use chimera_core::ui::busy::ToastStep;
 use chimera_core::ui::orbit::{ORBIT_ORB, ORBIT_SCN, OrbitCell};
 use chimera_core::ui::region::{RegionData, RegionKind};
-use chimera_hal::ButtonId::{B2, B6, Edit, Menu, Plus, Seq};
+use chimera_hal::ButtonId::{B2, B6, Edit, Menu, Minus, Plus, Seq};
 use chimera_hal::EncoderId::{A, B, E};
 use chimera_theory::{Note, PitchClass, SnapTo, snap};
 use common::orbit::{OrbitRig, secs};
@@ -1311,4 +1311,126 @@ fn loads_void_everything_before() {
             );
         }
     }
+}
+
+/// SCENE turned by `by` on ORB, playing: frames until the runner plays
+/// the new scene and the song has landed it.
+fn switch(rig: &mut ShellRig, by: i8) {
+    let to = S[(rig.ui.project().orbit().current().get() as i8 + by) as usize];
+    rig.frame(Input::turn(E, by), 1);
+    rig.until(|v| v.playing == to && v.cue.is_none());
+    rig.idle(1);
+    let song = rig.ui.project().orbit();
+    assert_eq!((song.current(), song.queued()), (to, None));
+}
+
+/// The owner's report (ADR 0083): KEY and SCALE turned on scene 1 (ring
+/// 2's harmony with every other ring's), a switch to scene 2 and back
+/// while playing: scene 1 comes back with its edit, and plays it.
+#[test]
+fn a_scene_left_and_returned_to_keeps_its_edits() {
+    use chimera_core::orbit::chords::ScaleKind;
+    let ui = in_orbit();
+    let mut rig = ShellRig::new(ui);
+    rig.b6();
+    rig.until(|v| v.running);
+    // A minor → C major: B is KEY, C SCALE.
+    rig.frame(Input::turn(B, -9), 1);
+    rig.frame(Input::turn(chimera_hal::EncoderId::C, -1), 1);
+    let edited = rig.ui.project().orbit().live.chords;
+    assert_eq!(
+        (edited.tonic, edited.scale),
+        (PitchClass::C, ScaleKind::Major)
+    );
+    assert_eq!(slot(&rig.ui, 0).chords, edited, "the slot has it");
+
+    switch(&mut rig, 1);
+    assert_eq!(rig.ui.project().orbit().live, Scene::neutral());
+    switch(&mut rig, -1);
+    let song = rig.ui.project().orbit();
+    assert_eq!(song.live.chords, edited, "scene 1 keeps its edit");
+    let v = rig.view();
+    assert_eq!(
+        v.chord,
+        harmony(&edited, v.seg as usize).chord,
+        "and plays it"
+    );
+}
+
+/// MUTATE drifts scene 1 (MUTATE itself an edit, so kept); away and back,
+/// it restarts from its edited base, not the drifted notes.
+#[test]
+fn a_returning_scene_drops_its_drift() {
+    let mut ui = in_orbit();
+    feed(&mut ui, Input::press(Plus));
+    assert_eq!(ui.page_def().id, chimera_core::ui::orbit::ORBIT_RHYTHM.id);
+    // E is ring 1's MUTATE.
+    feed(&mut ui, Input::turn(E, 100));
+    feed(&mut ui, Input::press(Minus));
+    assert_eq!(ui.page_def().id, ORBIT_ORB.id);
+    let base = slot(&ui, 0);
+    assert_eq!(base.rings[0].ring.mutate.get(), 100, "the slot has MUTATE");
+    let mut rig = ShellRig::new(ui);
+    rig.b6();
+    rig.until(|v| v.loops >= 20);
+    rig.idle(1);
+    let song = rig.ui.project().orbit();
+    assert_ne!(scene_drift(&song.live), scene_drift(&base), "drifted");
+    assert_eq!(*song.scene(S[0]), base, "the slot never drifts");
+
+    switch(&mut rig, 1);
+    switch(&mut rig, -1);
+    assert_eq!(rig.ui.project().orbit().live, base, "the edited base");
+    assert_eq!(
+        drift(&rig.view()),
+        scene_drift(&base),
+        "plays it, drift restarted"
+    );
+}
+
+/// SCN's SAVE is the deliberate act that locks the drift in: away and
+/// back, the scene plays the drift as saved.
+#[test]
+fn a_save_locks_the_drift_in() {
+    let mut ui = in_orbit();
+    feed(&mut ui, Input::press(Plus));
+    feed(&mut ui, Input::turn(E, 100));
+    feed(&mut ui, Input::press(Minus));
+    let base = slot(&ui, 0);
+    let mut rig = ShellRig::new(ui);
+    rig.b6();
+    rig.until(|v| v.loops >= 20);
+    rig.idle(1);
+    to_scn(&mut rig.ui);
+    save_to(&mut rig.ui, 1);
+    assert_eq!(toast(&mut rig.ui), "SCENE 1 SAVED");
+    let locked = slot(&rig.ui, 0);
+    assert_ne!(scene_drift(&locked), scene_drift(&base), "the drift saved");
+    // SCN's A is SCENE.
+    rig.frame(Input::turn(A, 1), 1);
+    rig.until(|v| v.playing == S[1] && v.cue.is_none());
+    rig.idle(1);
+    rig.frame(Input::turn(A, -1), 1);
+    rig.until(|v| v.playing == S[0] && v.cue.is_none());
+    rig.idle(1);
+    assert_eq!(rig.ui.project().orbit().live, locked);
+    assert_eq!(drift(&rig.view()), scene_drift(&locked));
+}
+
+/// The cells' edits and MIX + B*n*'s MUTE reach the slot as `live` takes
+/// them; drift, never.
+#[test]
+fn cell_edits_reach_the_slot() {
+    use chimera_core::ui::orbit::{ORBIT_CHRD, OrbitUi};
+    let mut ui = in_orbit();
+    feed(&mut ui, Input::press(Plus));
+    feed(&mut ui, Input::press(Plus));
+    assert_eq!(ui.page_def().id, ORBIT_CHRD.id);
+    feed(&mut ui, Input::turn(B, 2)); // DEGREE
+    OrbitUi::mute(RingIdx::ALL[4], ui.project_mut());
+    let song = ui.project().orbit();
+    assert!(!song.live.rings[4].ring.mute, "ring 5 unmuted");
+    assert_eq!(song.live, *song.scene(S[0]));
+    assert_ne!(song.live, Scene::init(), "edited");
+    assert!(!song.edited(), "nothing for RELOAD to restart");
 }

@@ -1674,6 +1674,12 @@ impl UiState {
             } else {
                 part_page::apply_under(def, i, delta, params, &ctx, &mut self.sel_op);
             }
+            // A scene's param into its slot too (ADR 0083).
+            if let Some(a) = slot_addr(def, i, &ctx)
+                && matches!(a.block, BlockRef::OrbitChords | BlockRef::OrbitRing(_))
+            {
+                self.project.orbit_mut().keep(a.block, a.param);
+            }
         }
         // SEGS shrunk under an armed segment drops the capture.
         self.orbit.fit(&self.project.orbit().live.chords);

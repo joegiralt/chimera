@@ -432,7 +432,7 @@ impl Prompt for ClearScene {
 }
 
 /// SETTINGS › ORBIT's RELOAD FROM PROJ: the playing scene's slot again,
-/// on the loop.
+/// on the loop: its edits, its drift restarted (ADR 0083).
 pub struct ReloadScene {
     pub scene: SceneIdx,
 }
@@ -441,7 +441,7 @@ impl Prompt for ReloadScene {
     type Answer = ReloadSceneAnswer;
     fn words(&self, q: &mut Line, r: &mut Line) {
         let _ = write!(q, "RELOAD SCENE {}?", self.scene.get() + 1);
-        let _ = r.write_str("EDITS AND DRIFT SINCE ITS SAVE ARE DROPPED");
+        let _ = r.write_str("ITS DRIFT RESTARTS, ITS EDITS STAY");
     }
 }
 

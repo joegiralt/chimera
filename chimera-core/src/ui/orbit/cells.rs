@@ -137,25 +137,30 @@ impl OrbitCell {
             OrbitCell::Switch => return,
             _ => {}
         }
-        let s = &mut song.live;
-        let c = &mut s.chords;
-        let r = &mut s.rings[ring.get() as usize];
+        // What the turn reads, from `live`; what it changes, through
+        // `edit`, into the slot too (ADR 0083).
+        let s = &song.live;
+        let c = &s.chords;
+        let ri = ring.get() as usize;
+        let r = &s.rings[ri];
         match self {
-            OrbitCell::Ring => *ring = RingIdx::ALL[by(ring.get() as usize, RINGS)],
+            OrbitCell::Ring => *ring = RingIdx::ALL[by(ri, RINGS)],
             // MIX picks the segment DEGREE edits.
             OrbitCell::Degree if mix => ui.seg = by(ui.seg_of(c), c.segs.get() as usize) as u8,
             OrbitCell::Degree => {
                 let seg = ui.seg_of(c);
                 let n = c.key().degree_count();
                 // A degree past a smaller set turns from the set's last.
-                c.degrees[seg] = Degree::ALL[by(c.degrees[seg].index().min(n - 1), n)];
+                let to = Degree::ALL[by(c.degrees[seg].index().min(n - 1), n)];
+                song.edit(|s| s.chords.degrees[seg] = to);
             }
             OrbitCell::Cursor => ui.cursor = step_wrapped(ui.cursor as i32, delta as i32, 12) as u8,
             // Right sets, left clears, however far; `toggle` keeps the root.
             OrbitCell::Set => {
                 let i = ui.interval();
                 if (delta > 0) != c.custom.contains(i) {
-                    c.custom = c.custom.toggle(i);
+                    let to = c.custom.toggle(i);
+                    song.edit(|s| s.chords.custom = to);
                 }
             }
             // MIX picks the chip NOTE edits.
@@ -165,7 +170,7 @@ impl OrbitCell {
                 let i = ui.chip_of(r);
                 let to = (r.chip(i).get() as i32 + delta as i32).clamp(0, 127) as u8;
                 if let Some(to) = Note::new(to) {
-                    ui.chip = r.set_chip(i, to) as u8;
+                    ui.chip = song.edit(|s| s.rings[ri].set_chip(i, to)) as u8;
                 }
             }
             OrbitCell::Learn => arm(ui, ArmTarget::Ring(*ring), delta),
@@ -174,14 +179,17 @@ impl OrbitCell {
             OrbitCell::Play => {
                 let seg = ui.seg_of(c);
                 if delta < 0 && mix {
-                    c.played[seg] = None;
+                    song.edit(|s| s.chords.played[seg] = None);
                 }
                 arm(ui, ArmTarget::Segment(seg as u8), delta);
             }
             // MIX held, or nothing: a slip on its way to NOTE loses no notes.
             OrbitCell::Clear if !mix => {}
-            OrbitCell::Clear if delta > 0 => r.clear(),
-            OrbitCell::Clear => s.scatter(*ring, ui.clear_salt()),
+            OrbitCell::Clear if delta > 0 => song.edit(|s| s.rings[ri].clear()),
+            OrbitCell::Clear => {
+                let salt = ui.clear_salt();
+                song.edit(|s| s.scatter(*ring, salt));
+            }
             OrbitCell::Scene | OrbitCell::Save | OrbitCell::Switch => {}
         }
     }
