@@ -639,7 +639,7 @@ pub fn write_wav(path: &std::path::Path, stereo: &[f32]) {
     b.extend_from_slice(b"data");
     b.extend_from_slice(&data.to_le_bytes());
     for &x in stereo {
-        let s = (x.clamp(-1.0, 1.0) * 32767.0).round() as i16;
+        let s = (chimera_core::dsp::clampf(x, -1.0, 1.0) * 32767.0).round() as i16;
         b.extend_from_slice(&s.to_le_bytes());
     }
     std::fs::write(path, b).expect("the WAV");

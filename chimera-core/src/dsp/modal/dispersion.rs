@@ -26,6 +26,7 @@
 //! partials stretch as in a stiff string (ADR 0056).
 
 use super::loop_parts::{Allpass1, allpass_phase_delay};
+use crate::dsp::clampf;
 
 pub const DISPERSION_STAGES: usize = 4;
 
@@ -37,7 +38,7 @@ const SPAN: f32 = 0.1;
 
 /// Rings' `ap_gain` curve, `s / (0.15 + s)`, normalized to 1 at 1.
 fn curve(structure: f32) -> f32 {
-    let s = structure.clamp(0.0, 1.0);
+    let s = clampf(structure, 0.0, 1.0);
     s / (0.15 + s) * 1.15
 }
 

@@ -10,6 +10,7 @@
 //! `limit` then runs the output stage, the trim and the peak limiter
 //! (ADR 0050).
 
+use crate::dsp::clampf;
 use chimera_hal::BLOCK_SIZE;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
@@ -210,5 +211,5 @@ fn add(acc: &mut [f32; BLOCK_SIZE], x: &[f32; BLOCK_SIZE]) {
 
 /// Clamped to 0..1; NaN reads as 0.
 fn unit(v: f32) -> f32 {
-    if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) }
+    if v.is_nan() { 0.0 } else { clampf(v, 0.0, 1.0) }
 }

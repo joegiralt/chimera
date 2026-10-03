@@ -1,6 +1,7 @@
 //! Mod matrix: routing state (cursor, amounts, sources, destinations), its
 //! amount grid and the route readout (UI refresh spec § Page types, #161).
 
+use crate::dsp::clampf;
 use core::fmt::Write;
 
 use embedded_graphics::draw_target::DrawTarget;
@@ -202,7 +203,7 @@ impl MatrixState {
                 for amounts in self.amounts.iter().take(self.num_sources) {
                     total += amounts[di] as i16;
                 }
-                return Some((total as f32 / 127.0).clamp(-1.0, 1.0));
+                return Some(clampf(total as f32 / 127.0, -1.0, 1.0));
             }
         }
         None

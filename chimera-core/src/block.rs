@@ -4,6 +4,8 @@
 //! Each values struct keeps real field types and implements `Block`; its
 //! `ParamSpec` table is a `static` in the block's own module.
 
+use crate::dsp::clampf;
+
 /// A switch's two names, as `ValFmt::Names` shows it.
 pub const OFF_ON: [&str; 2] = ["OFF", "ON"];
 
@@ -230,7 +232,7 @@ impl ParamSpec {
 
     /// `v` clamped to the range; Stepped/Enum rounded to nearest (UI input).
     pub fn quantize(&self, v: f32) -> f32 {
-        let v = v.clamp(self.min, self.max);
+        let v = clampf(v, self.min, self.max);
         match self.kind {
             ParamKind::Continuous => v,
             ParamKind::Stepped | ParamKind::Enum => libm::roundf(v),
@@ -298,10 +300,10 @@ impl ParamSpec {
     /// `v` moved by a matrix offset `off`, clamped to the range.
     pub fn offset(&self, v: f32, off: f32) -> f32 {
         match self.law {
-            OffsetLaw::Linear => (v + off * (self.max - self.min)).clamp(self.min, self.max),
-            OffsetLaw::Octaves(n) => (v * crate::dsp::fast_exp2(n * off)).clamp(self.min, self.max),
+            OffsetLaw::Linear => clampf(v + off * (self.max - self.min), self.min, self.max),
+            OffsetLaw::Octaves(n) => clampf(v * crate::dsp::fast_exp2(n * off), self.min, self.max),
             OffsetLaw::Semitones(n) | OffsetLaw::Cents(n) => {
-                (v + off * n).clamp(self.min, self.max)
+                clampf(v + off * n, self.min, self.max)
             }
         }
     }
@@ -309,7 +311,7 @@ impl ParamSpec {
     /// `offset` on a 0..1 display value (the UI's mod bars).
     pub fn offset_normalized(&self, n: f32, off: f32) -> f32 {
         match self.law {
-            OffsetLaw::Linear => (n + off).clamp(0.0, 1.0),
+            OffsetLaw::Linear => clampf(n + off, 0.0, 1.0),
             OffsetLaw::Octaves(_) | OffsetLaw::Semitones(_) | OffsetLaw::Cents(_) => {
                 self.normalize(self.offset(self.min + n * (self.max - self.min), off))
             }

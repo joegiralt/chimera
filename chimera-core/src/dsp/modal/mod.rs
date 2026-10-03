@@ -46,6 +46,7 @@ pub use chords::{CHORD_COUNT, CHORD_GLIDE_TAU, CHORDS, chord_of, fold};
 pub use params::*;
 pub use string::MAX_STRING_DELAY;
 
+use crate::dsp::clampf;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
@@ -1140,7 +1141,7 @@ impl BowedString {
 /// already runs sharp, all from INIT's 0.5.
 fn grip(force: f32, speed: f32) -> f32 {
     let f = ((force - 0.3) / (0.447 - 0.3)).min((0.8 - force) / (0.8 - 0.55));
-    f.clamp(0.0, 1.0) * ((speed - 0.1) / 0.4).clamp(0.0, 1.0)
+    clampf(f, 0.0, 1.0) * clampf((speed - 0.1) / 0.4, 0.0, 1.0)
 }
 
 /// Periods under this, samples (C6 up), lean toward a whole number: the
@@ -1208,9 +1209,11 @@ impl BowHair {
     /// For `freq` Hz, `w` rad/sample, its history kept.
     fn tuned(self, freq: f32, w: f32) -> Self {
         let half = 0.5 * (1.0 + libm::cosf(w));
-        let t = (libm::log2f(freq / Self::NARROW_HZ)
-            / libm::log2f(Self::WIDE_HZ / Self::NARROW_HZ))
-        .clamp(0.0, 1.0);
+        let t = clampf(
+            libm::log2f(freq / Self::NARROW_HZ) / libm::log2f(Self::WIDE_HZ / Self::NARROW_HZ),
+            0.0,
+            1.0,
+        );
         let wide = t * t * (3.0 - 2.0 * t);
         let gain = (1.0 - wide) * half + wide * half * half * half;
         Self {

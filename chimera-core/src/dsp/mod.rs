@@ -124,6 +124,9 @@ pub use self::algo::math::exp2 as fast_exp2;
 /// `log2(x)` for `x > 0`, absolute error below 3e-5.
 pub use self::algo::math::log2 as fast_log2;
 
+/// `x` held to `[lo, hi]` without a panic path.
+pub use self::algo::math::clampf;
+
 pub mod algo;
 pub mod chorus;
 pub mod comp;

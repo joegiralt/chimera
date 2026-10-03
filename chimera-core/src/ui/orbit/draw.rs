@@ -4,6 +4,7 @@
 //! own cells and focus band; and the keys that redraw them. Drawn from the
 //! live scene and the runner's last view, so a drift shows as it plays.
 
+use crate::dsp::clampf;
 use core::fmt::Write;
 use core::hash::{Hash, Hasher};
 
@@ -888,7 +889,7 @@ pub fn focus(
                 libm::roundf(steps) as u32
             );
             Gauge::Arc {
-                value: (hits / steps).clamp(0.0, 1.0),
+                value: clampf(hits / steps, 0.0, 1.0),
                 bipolar: false,
             }
         }

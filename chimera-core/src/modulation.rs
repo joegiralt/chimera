@@ -8,6 +8,7 @@
 use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::OPS;
+use crate::dsp::clampf;
 use crate::dsp::modulator::{EnvSlot, EnvType, FuncMode, LfoType};
 use crate::hw::Cost;
 use crate::mod_path::{LABEL_LEN, ModDestRegistry};
@@ -108,7 +109,7 @@ impl ModSource {
 /// The NOTE source: `(note − 60) / 120`, clamped to −1..1, so a route at
 /// 127 into CUTOFF tracks one octave per octave (spec § 2, § 3).
 pub fn note_source(note: crate::MidiNote) -> f32 {
-    ((note.get() as f32 - 60.0) / 120.0).clamp(-1.0, 1.0)
+    clampf((note.get() as f32 - 60.0) / 120.0, -1.0, 1.0)
 }
 
 /// `amount / 127` for every amount (index `amount + 127`): the same f32 the

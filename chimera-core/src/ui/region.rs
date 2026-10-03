@@ -3,6 +3,7 @@
 //! Each PageLayout defines screen regions with data snapshots.
 //! Only regions whose data changed get cleared, redrawn, and flushed.
 
+use crate::dsp::clampf;
 use crate::ui::PrimeStatus;
 use crate::ui::animation::AnimatedValue;
 use crate::ui::components::{HeaderStatus, Look};
@@ -11,7 +12,7 @@ use crate::ui::theme;
 
 /// Quantize a float to u16 for cheap comparison. Range 0.0..65.0 → 0..65000.
 pub fn quantize(f: f32) -> u16 {
-    (f.clamp(0.0, 65.0) * 1000.0) as u16
+    (clampf(f, 0.0, 65.0) * 1000.0) as u16
 }
 
 /// Quantize 6 animated values into a [u16; 6] for snapshot comparison.

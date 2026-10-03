@@ -1,6 +1,7 @@
 //! An ENV slot of the modulator pool (spec § 1): runs its TYPE from
 //! `EnvParams` and the matrix's inputs, once per block or per sample.
 
+use crate::dsp::clampf;
 use chimera_hal::BLOCK_SIZE;
 
 use crate::dsp::modulator::env_a::{ACoefs, EnvA};
@@ -169,7 +170,7 @@ impl Envelope {
 
     /// `raw` plus the leftover `n` samples on, within the glide's range.
     fn glided(&self, raw: f32, n: usize) -> f32 {
-        (raw + self.glide.at(n)).clamp(self.glide_lo, 1.0)
+        clampf(raw + self.glide.at(n), self.glide_lo, 1.0)
     }
 
     /// `gain[n] += amount · level[n] · peak[n]`, the peak ramped from `from`

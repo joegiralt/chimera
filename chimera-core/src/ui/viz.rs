@@ -2,6 +2,7 @@
 //! soft accent fill under a 1.5-px accent line (spec § Shared components);
 //! drawn 2 px since the display has no anti-aliasing. No grid lines.
 
+use crate::dsp::clampf;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
@@ -225,7 +226,7 @@ pub fn filter<D>(
         1,
         theme::FAINT,
     );
-    let mx = theme::VIZ_LEFT + (w * cutoff.clamp(0.0, 1.0)) as i32;
+    let mx = theme::VIZ_LEFT + (w * clampf(cutoff, 0.0, 1.0)) as i32;
     let my = y(mx);
     let mut dy = my + 6;
     while dy < PLOT_BASE {
@@ -258,7 +259,7 @@ where
     let mut pts = [(0i32, 0i32); MAX_STAGES + 1];
     let mut cx = x0 as f32;
     for i in 0..=n {
-        pts[i] = (cx as i32, base - (h * heights[i].clamp(0.0, 1.0)) as i32);
+        pts[i] = (cx as i32, base - (h * clampf(heights[i], 0.0, 1.0)) as i32);
         if i < n {
             cx += w * widths[i];
         }
@@ -391,7 +392,7 @@ pub fn func_shape(f: Func, rise: f32, fall: f32, shape: f32, t: f32) -> f32 {
             let x = t * 8.0;
             let k = (x as usize).min(7);
             let u = x - k as f32;
-            let at = |i: usize| 0.5 + 0.5 * (WALK[i] * fall.max(0.2)).clamp(-1.0, 1.0);
+            let at = |i: usize| 0.5 + 0.5 * clampf(WALK[i] * fall.max(0.2), -1.0, 1.0);
             let lin = at(k) + (at(k + 1) - at(k)) * u;
             // SLEW rounds each corner toward the segment's middle.
             let mid = 0.5 * (at(k) + at(k + 1));
@@ -438,7 +439,7 @@ where
     );
     let y = |x: i32| {
         let t = (x - theme::VIZ_LEFT) as f32 / w;
-        PLOT_BASE - (h * func_shape(f, rise, fall, shape, t).clamp(0.0, 1.0)) as i32
+        PLOT_BASE - (h * clampf(func_shape(f, rise, fall, shape, t), 0.0, 1.0)) as i32
     };
     filled_curve(d, theme::VIZ_LEFT, theme::VIZ_RIGHT, PLOT_BASE, y);
 }
@@ -478,7 +479,7 @@ where
         PLOT_TOP + 8,
         theme::MID,
     );
-    let lit = (h * (gr_db / GR_RANGE_DB).clamp(0.0, 1.0) + 0.5) as i32;
+    let lit = (h * clampf(gr_db / GR_RANGE_DB, 0.0, 1.0) + 0.5) as i32;
     draw::fill_rect(d, GR_X, PLOT_TOP, GR_W, PLOT_BASE - PLOT_TOP, theme::FAINT);
     draw::fill_rect(d, GR_X, PLOT_TOP, GR_W, lit, theme::ACCENT);
 }
@@ -518,7 +519,7 @@ where
         };
         draw::text_center(d, font, num.as_str(), x + 4, STRIP_NUM_Y, color, 0);
         draw::fill_rect(d, x, STRIP_TOP, 8, STRIP_H, theme::FAINT);
-        let h = (STRIP_H as f32 * s.level.clamp(0.0, 1.0) + 0.5) as i32;
+        let h = (STRIP_H as f32 * clampf(s.level, 0.0, 1.0) + 0.5) as i32;
         let fill = if sel {
             theme::ACCENT
         } else if s.level > 0.0 {
@@ -528,7 +529,7 @@ where
         };
         draw::fill_rect(d, x, STRIP_TOP + STRIP_H - h, 8, h, fill);
         draw::fill_rect(d, x - 6, STRIP_PAN_Y, 20, 1, theme::FAINT);
-        let px = x + 4 + libm::roundf(s.pan.clamp(-1.0, 1.0) * 10.0) as i32;
+        let px = x + 4 + libm::roundf(clampf(s.pan, -1.0, 1.0) * 10.0) as i32;
         draw::dot(
             d,
             px,

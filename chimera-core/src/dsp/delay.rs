@@ -3,6 +3,7 @@
 //! character.
 
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::dsp::clampf;
 use crate::dsp::ease::{Ease, at, ease_coeff, step_of};
 use crate::dsp::{sin_turns, xorshift_noise};
 use chimera_hal::BLOCK_SIZE;
@@ -173,7 +174,11 @@ impl Tap {
         let sr = sample_rate as f32;
         let jitter_coeff = core::f32::consts::TAU * JITTER_HZ / sr;
         Self {
-            base: (params.time_ms * sr / 1000.0).clamp(1.0, (MAX_DELAY_SAMPLES - 2) as f32),
+            base: clampf(
+                params.time_ms * sr / 1000.0,
+                1.0,
+                (MAX_DELAY_SAMPLES - 2) as f32,
+            ),
             wow: params.wow_flutter * WOW_SAMPLES,
             wow_rate: WOW_HZ / sr,
             flutter: params.wow_flutter * FLUTTER_SAMPLES,
@@ -444,7 +449,7 @@ impl TapeDelay {
             } else {
                 transport.offsets(tap)
             };
-            let head = |base: f32| (base + wow + flutter).clamp(1.0, top);
+            let head = |base: f32| clampf(base + wow + flutter, 1.0, top);
             let mut delayed = read(&self.buffer, write_pos, head(time));
             if FADE {
                 delayed += (read(&self.buffer, write_pos, head(next)) - delayed) * t;

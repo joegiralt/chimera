@@ -84,7 +84,7 @@ fn env2_on_the_vca_follows_its_contour() {
             );
             for (n, gn) in g.iter().enumerate() {
                 let i = blk * BLOCK_SIZE + n;
-                let want = plain[i] * gn.clamp(0.0, 1.0) * v;
+                let want = plain[i] * chimera_core::dsp::clampf(*gn, 0.0, 1.0) * v;
                 assert!(
                     (routed[i] - want).abs() <= 0.01 * plain[i].abs() + 1e-7,
                     "{e:?} sample {i}"

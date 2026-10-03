@@ -1,5 +1,6 @@
 //! MORPH between ALG A and ALG B (ADR 0024).
 
+use super::math::clampf;
 use crate::dsp::algo::math::inv_sqrt;
 use crate::dsp::algo::plan::{EvalPlan, OPS, blend};
 
@@ -13,7 +14,7 @@ impl Morph {
 
     /// A stored MORPH, or a modulated one (fractional, maybe out of range).
     pub fn from_param(v: f32) -> Self {
-        Morph((v / Self::STORED_MAX).clamp(0.0, 1.0))
+        Morph(clampf(v / Self::STORED_MAX, 0.0, 1.0))
     }
 
     pub fn get(self) -> f32 {

@@ -5,6 +5,7 @@
 
 use crate::dsp::Stereo;
 use crate::dsp::algo::math::exp2;
+use crate::dsp::clampf;
 use crate::dsp::ease::{Ease, at, ease_coeff, step_of};
 use crate::dsp::halfband::{Decimator, HALF, Interpolator};
 use chimera_hal::BLOCK_SIZE;
@@ -152,7 +153,7 @@ const _: () = assert!(fits());
 
 /// round(SIZE·31).
 pub fn size_step(size: f32) -> u8 {
-    (size.clamp(0.0, 1.0) * 31.0 + 0.5) as u8
+    (clampf(size, 0.0, 1.0) * 31.0 + 0.5) as u8
 }
 
 /// Stage k's share of the round trip at `step`: D + M1 + M2.
@@ -172,7 +173,7 @@ pub fn t_min(step: u8, fs_ring: f32) -> f32 {
 /// Target RT60 in seconds: 0.3·40^TIME, no shorter than `t_min`.
 pub fn rt60(time: f32, step: u8, fs_ring: f32) -> f32 {
     const LOG2_40: f32 = 5.321_928;
-    (0.3 * exp2(time.clamp(0.0, 1.0) * LOG2_40)).max(t_min(step, fs_ring))
+    (0.3 * exp2(clampf(time, 0.0, 1.0) * LOG2_40)).max(t_min(step, fs_ring))
 }
 
 /// g_k = 10^(−3·L_k / (RT60·fs_ring)), capped at `MAX_GAIN`.
@@ -187,7 +188,7 @@ pub fn stage_gains(rt60: f32, step: u8, fs_ring: f32) -> [f32; STAGES] {
 /// f_c = 11,000·(1.5/11)^DAMP Hz.
 pub fn damp_coef(damp: f32, fs_ring: f32) -> f32 {
     const LOG2_RATIO: f32 = -2.874_469; // log2(1.5 / 11)
-    let fc = 11_000.0 * exp2(damp.clamp(0.0, 1.0) * LOG2_RATIO);
+    let fc = 11_000.0 * exp2(clampf(damp, 0.0, 1.0) * LOG2_RATIO);
     1.0 - exp2(-2.0 * PI * fc / fs_ring * LOG2_E)
 }
 
@@ -211,7 +212,7 @@ pub struct Grid {
 
 impl Grid {
     pub fn new(grit: f32) -> Self {
-        let delta = exp2(6.0 * grit.clamp(0.0, 1.0));
+        let delta = exp2(6.0 * clampf(grit, 0.0, 1.0));
         Self {
             delta,
             inv: 1.0 / delta,
@@ -572,7 +573,7 @@ impl RingControls {
     /// Each control clamped to 0..1; NaN reads as its default.
     pub fn sanitised(self) -> Self {
         let d = Self::default();
-        let f = |v: f32, d: f32| if v.is_nan() { d } else { v.clamp(0.0, 1.0) };
+        let f = |v: f32, d: f32| if v.is_nan() { d } else { clampf(v, 0.0, 1.0) };
         Self {
             grit: f(self.grit, d.grit),
             time: f(self.time, d.time),

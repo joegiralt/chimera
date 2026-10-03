@@ -46,7 +46,7 @@ impl Reference {
             }
             _ => self.random_value,
         };
-        let out = (raw * p.depth + 0.0).clamp(-1.0, 1.0);
+        let out = chimera_core::dsp::clampf(raw * p.depth + 0.0, -1.0, 1.0);
         self.phase += p.rate / SR as f32 * BLOCK_SIZE as f32;
         if self.phase >= 1.0 {
             self.phase -= 1.0;

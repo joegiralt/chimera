@@ -54,7 +54,8 @@ fn send(sig: Sig, n: usize) -> f32 {
             .sum(),
     };
     let up = (n as f32 / (20 * MS) as f32).min(1.0);
-    let kill = 1.0 - ((n as f32 - PLAY as f32) / Voice::FADE as f32).clamp(0.0, 1.0);
+    let kill =
+        1.0 - chimera_core::dsp::clampf((n as f32 - PLAY as f32) / Voice::FADE as f32, 0.0, 1.0);
     x * up * kill
 }
 

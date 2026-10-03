@@ -4,6 +4,7 @@
 use crate::addr::{BlockRef, ParamAddr};
 use crate::block::ValFmt;
 use crate::dsp::chorus::{ChorusMode, ChorusParams};
+use crate::dsp::clampf;
 use crate::dsp::delay::DelayParams;
 use crate::dsp::reverb::ReverbParams;
 
@@ -124,7 +125,7 @@ pub struct Cube {
 impl Cube {
     /// From `CUBE_PARAMS`' set values, normalized.
     pub fn from_set(set: [f32; 5], focus: Option<CubePart>, frame: u32) -> Self {
-        let n = |i: usize| set[i].clamp(0.0, 1.0);
+        let n = |i: usize| clampf(set[i], 0.0, 1.0);
         Self {
             size: n(0),
             time: n(1),
@@ -224,7 +225,7 @@ impl Rings {
 
     /// From `RINGS_PARAMS`' set values, normalized.
     pub fn from_set(set: [f32; 7], focus: Option<RingsPart>, frame: u32) -> Self {
-        let n = |i: usize| set[i].clamp(0.0, 1.0);
+        let n = |i: usize| clampf(set[i], 0.0, 1.0);
         Self {
             time: n(0),
             fdbk: n(1),
@@ -324,10 +325,10 @@ impl Braid {
     /// From `BRAID_PARAMS`' set values, normalized.
     pub fn from_set(set: [f32; 4], focus: Option<BraidPart>, frame: u32) -> Self {
         Self {
-            mode: ChorusMode::from_u8(libm::roundf(set[0].clamp(0.0, 1.0) * 3.0) as u8),
-            rate: set[1].clamp(0.0, 1.0),
-            depth: set[2].clamp(0.0, 1.0),
-            mix: set[3].clamp(0.0, 1.0),
+            mode: ChorusMode::from_u8(libm::roundf(clampf(set[0], 0.0, 1.0) * 3.0) as u8),
+            rate: clampf(set[1], 0.0, 1.0),
+            depth: clampf(set[2], 0.0, 1.0),
+            mix: clampf(set[3], 0.0, 1.0),
             focus,
             frame,
         }

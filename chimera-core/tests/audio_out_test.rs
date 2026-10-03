@@ -54,7 +54,7 @@ fn a_words_level_is_what_the_dac_plays() {
         let x = i as f32 / 997.0;
         let step = to_dac(x).level();
         assert!(
-            (step - x.clamp(-1.0, 1.0)).abs() <= 0.5 / 8_388_607.0 + 1e-7,
+            (step - chimera_core::dsp::clampf(x, -1.0, 1.0)).abs() <= 0.5 / 8_388_607.0 + 1e-7,
             "{x}"
         );
     }

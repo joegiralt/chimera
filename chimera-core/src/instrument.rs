@@ -2,6 +2,7 @@
 //! what the audio thread reads from the UI, and the voice pool that renders
 //! every Part into the three DAC pairs.
 
+use crate::dsp::clampf;
 use core::cmp::Reverse;
 use core::mem::{MaybeUninit, size_of};
 use core::ptr::addr_of_mut;
@@ -180,7 +181,7 @@ pub fn pan_gains(pan: f32) -> (f32, f32) {
     let pan = if pan.is_nan() {
         0.0
     } else {
-        pan.clamp(-1.0, 1.0)
+        clampf(pan, -1.0, 1.0)
     };
     let q = core::f32::consts::FRAC_PI_4;
     (libm::sinf((1.0 - pan) * q), libm::sinf((1.0 + pan) * q))

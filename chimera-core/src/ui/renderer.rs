@@ -1,3 +1,4 @@
+use crate::dsp::clampf;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::{Point, Size};
 use embedded_graphics::pixelcolor::Rgb565;
@@ -390,7 +391,7 @@ impl Renderer {
                 // The GR meter redraws every 0.25 dB.
                 let gr = match f.def.viz {
                     VizType::CompressorCurve => {
-                        (f.master_gr_db.clamp(0.0, viz::GR_RANGE_DB) * 4.0) as u32
+                        (clampf(f.master_gr_db, 0.0, viz::GR_RANGE_DB) * 4.0) as u32
                     }
                     _ => 0,
                 };
@@ -776,7 +777,7 @@ pub fn amount_value(amount: i8) -> f32 {
 
 /// Inverse of `amount_value`, rounded.
 pub fn amount_of(v: f32) -> i8 {
-    libm::roundf((v - 0.5) * 254.0).clamp(-127.0, 127.0) as i8
+    clampf(libm::roundf((v - 0.5) * 254.0), -127.0, 127.0) as i8
 }
 
 /// A cell's label: the spec's short form when the full one would outrun

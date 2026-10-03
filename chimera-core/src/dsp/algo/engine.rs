@@ -1,5 +1,6 @@
 //! `AlgoEngine`: the imperative shell around the pure core.
 
+use super::math::clampf;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
@@ -52,7 +53,7 @@ impl AlgoLive {
             _ => return false,
         };
         if let Some(s) = addr.spec() {
-            *slot = (*slot + off * (s.max - s.min)).clamp(s.min, s.max);
+            *slot = clampf(*slot + off * (s.max - s.min), s.min, s.max);
         }
         true
     }

@@ -1,6 +1,7 @@
 //! Direction A shared components (UI refresh spec § Shared components):
 //! header, focus band, cells. The map lives in `dungeon_map`.
 
+use crate::dsp::clampf;
 use core::fmt::Write;
 
 use embedded_graphics::draw_target::DrawTarget;
@@ -424,7 +425,7 @@ where
 {
     let (w, h) = (theme::SWITCH_W, theme::SWITCH_H);
     let (x, y) = (theme::SWITCH_CX - w / 2, theme::ARC_CY - h / 2);
-    let on = on.clamp(0.0, 1.0);
+    let on = clampf(on, 0.0, 1.0);
     let knob = x + h / 2 + libm::roundf(on * (w - h) as f32) as i32;
     draw::pill(d, x, y, w, h, theme::FAINT);
     if on > 0.0 {
@@ -445,7 +446,7 @@ where
     let (x, w) = (theme::LEVEL_X, theme::LEVEL_W);
     let (top, bottom) = (theme::LEVEL_TOP, theme::LEVEL_BOTTOM);
     let travel = bottom - top - w;
-    let v = value.clamp(0.0, 1.0);
+    let v = clampf(value, 0.0, 1.0);
     let rise = libm::roundf(v * travel as f32) as i32;
     draw::pill(d, x - w / 2, top, w, bottom - top, theme::FAINT);
     draw::pill(d, x - w / 2, bottom - w - rise, w, w + rise, theme::ACCENT);
@@ -472,7 +473,7 @@ where
     draw::pill(d, x0, cy - track_h / 2, w, track_h, theme::FAINT);
     draw::fill_rect(d, theme::XF_CX - 1, cy - 7, 2, 14, theme::MID);
     let travel = (w - cap_w) as f32;
-    let cx = x0 + cap_w / 2 + libm::roundf(value.clamp(0.0, 1.0) * travel) as i32;
+    let cx = x0 + cap_w / 2 + libm::roundf(clampf(value, 0.0, 1.0) * travel) as i32;
     draw::round_rect(
         d,
         cx - cap_w / 2,
@@ -937,7 +938,7 @@ where
     }
     if let Some(m) = c.mod_amount.filter(|_| !dim) {
         let mid = x + theme::CELL_BAR_W / 2;
-        let len = (m.clamp(-1.0, 1.0) * (theme::CELL_BAR_W / 2) as f32) as i32;
+        let len = (clampf(m, -1.0, 1.0) * (theme::CELL_BAR_W / 2) as f32) as i32;
         let (x0, x1) = if len >= 0 {
             (mid, mid + len)
         } else {

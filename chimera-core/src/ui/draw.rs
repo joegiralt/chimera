@@ -3,6 +3,7 @@
 //! grid's (ADR 0041). Every function ignores draw errors (the targets are
 //! infallible framebuffers).
 
+use crate::dsp::clampf;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::{AngleUnit, Point, Size};
 use embedded_graphics::pixelcolor::Rgb565;
@@ -264,7 +265,7 @@ pub fn bar<D>(
     D: DrawTarget<Color = Rgb565>,
 {
     fill_rect(d, x, y, w, h, track);
-    let v = value.clamp(0.0, 1.0);
+    let v = clampf(value, 0.0, 1.0);
     if bipolar {
         let c = x + w / 2;
         let len = ((v - 0.5) * w as f32) as i32;
@@ -320,7 +321,7 @@ pub fn arc_gauge<D>(
 {
     const START: f32 = 135.0;
     const SWEEP: f32 = 270.0;
-    let v = value.clamp(0.0, 1.0);
+    let v = clampf(value, 0.0, 1.0);
     arc(d, cx, cy, r, width, START, SWEEP, track);
     let end = START + SWEEP * v;
     let (from, to) = if bipolar {
