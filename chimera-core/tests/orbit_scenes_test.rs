@@ -482,6 +482,70 @@ fn the_cancel_race_plays_the_switch_one_loop() {
     assert_eq!(song.live, live, "nothing lost");
 }
 
+/// The cancel race's second boundary, where the runner adopts `live`
+/// back (a `Live` cue), falls between a frame's view read and its publish
+/// of a NOTE edit. The edit reaches the runner, and no drift takes it back
+/// out of `live` once the UI lands its turn back. (A HITS edit hides the
+/// hole: a new fill re-lays the hits with or without the edit.)
+#[test]
+fn an_edit_across_the_live_adoption_is_kept() {
+    let mut ui = in_orbit();
+    to_scn(&mut ui);
+    // Slot 2 loops as long as slot 1: scene 1 in C.
+    let song = ui.project_mut().orbit_mut();
+    let one = song.live;
+    song.live.chords.tonic = PitchClass::C;
+    let c = Confirmed::<SceneSlot>::unasked(song, S[1]);
+    song.overwrite_scene(c).expect("nothing queued");
+    song.live = one;
+    let mut rig = ShellRig::new(ui);
+    rig.b6();
+    rig.until(|v| v.running && v.loops >= 1);
+    let at = |rig: &ShellRig| rig.views.len();
+    let loops = rig.view().loops;
+    rig.until(|v| v.loops != loops);
+    let start = at(&rig);
+    let loops = rig.view().loops;
+    rig.until(|v| v.loops != loops);
+    let len = at(&rig) - start;
+
+    // The cancel race: 2 adopted unseen, SCENE back to 1 cues `live`.
+    let start = at(&rig);
+    rig.frame(Input::turn(A, 1), 1);
+    while at(&rig) < start + len - 10 {
+        rig.idle(1);
+    }
+    rig.late(20, Input::turn(A, -1), 0);
+    assert_eq!((rig.view().playing, rig.view().cue), (S[1], None));
+    rig.idle(1);
+    assert_eq!(rig.view().cue, Some(S[0]), "`live` cued back");
+
+    // A NOTE edit read before the boundary, published after it.
+    let loops = rig.view().loops;
+    let start = rig.views.iter().position(|v| v.loops == loops).unwrap();
+    while at(&rig) < start + len - 10 {
+        rig.idle(1);
+    }
+    assert_eq!(rig.view().cue, Some(S[0]), "still cued");
+    let ring = &mut rig.ui.project_mut().orbit_mut().live.rings[1];
+    ring.set_chip(0, Note::new(50).unwrap());
+    let edited = ring.ring.pool;
+    rig.late(20, Input::default(), 0);
+    assert_ne!(rig.view().loops, loops, "the boundary fell in the frame");
+    assert_eq!(rig.view().playing, S[0]);
+    for _ in 0..4 {
+        rig.idle(1);
+    }
+    let song = rig.ui.project().orbit();
+    assert_eq!((song.current(), song.queued()), (S[0], None));
+    assert_eq!(
+        rig.view().rings[1].pool,
+        edited,
+        "the runner plays the edit"
+    );
+    assert_eq!(song.live.rings[1].ring.pool, edited, "`live` keeps it");
+}
+
 /// Through the real triple buffers, playing: in the cancel race's window
 /// (2 adopted unseen, SCENE back to 1), SCENE on to 2 again queues 2 under
 /// a new rev. The views still read 2 under the old rev for the rest of

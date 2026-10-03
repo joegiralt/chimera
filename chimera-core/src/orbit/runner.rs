@@ -334,7 +334,8 @@ pub struct OrbitRunner {
     /// The newest command applied.
     applied: Seq,
     /// `working`'s base is the UI's `live`: knobs and edits copy from
-    /// `settings`. The UI's `synced` sets it; only an adoption clears it.
+    /// `settings`. The UI's `synced` sets it; only a slot's adoption
+    /// clears it (`live`'s keeps it).
     base_landed: bool,
     /// `presses` as of the last block.
     presses_seen: u8,
@@ -385,13 +386,19 @@ impl OrbitRunner {
         }
     }
 
-    /// `inc`, whole, as the playing scene: `working`'s base is no longer
-    /// the UI's `live` until the UI says it has landed it.
+    /// `inc`, whole, as the playing scene.
     fn adopt(&mut self, inc: Incoming, o: &OrbitShared) {
         self.working = *inc.of(o);
         self.playing = inc.scene();
         self.cue = None;
-        self.base_landed = false;
+        self.base_landed = Self::lands_live(inc);
+    }
+
+    /// Whether `working`'s base is the UI's `live` once `inc` is adopted:
+    /// `live` itself, yes, so its edits keep coming; a slot, not until the
+    /// UI says it has landed it.
+    fn lands_live(inc: Incoming) -> bool {
+        matches!(inc, Incoming::Live(_))
     }
 
     /// The UI's commands since the last block (ADR 0082): a scene command
@@ -729,7 +736,7 @@ impl OrbitRunner {
         {
             self.playing = inc.scene();
             self.cue = None;
-            self.base_landed = false;
+            self.base_landed = Self::lands_live(inc);
         }
         self.loops += ev.boundary() as u32;
         self.edge = to;

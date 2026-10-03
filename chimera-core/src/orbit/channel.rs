@@ -211,6 +211,9 @@ impl From<Cmd> for Cmd8 {
     }
 }
 
+/// The byte map read back as a `Cmd`: the reference `receive`'s in-place
+/// decode is tested against. The runner never needs it.
+#[cfg(any(test, feature = "test-support"))]
 impl Cmd8 {
     pub const fn from_byte(b: u8) -> Option<Cmd8> {
         match NonZeroU8::new(b) {
@@ -300,6 +303,7 @@ impl Batch {
 /// Hands `f` each command in `(applied, head]`, in order, and sets
 /// `applied = head`. At most `LOG` entries, whatever the log says. The
 /// runner calls `receive`; this is its per-command form, for tests.
+#[cfg(any(test, feature = "test-support"))]
 pub fn receive_each(log: &CmdLog, applied: &mut Seq, mut f: impl FnMut(Cmd)) {
     let n = log.head.since(*applied);
     debug_assert!(n as usize <= LOG, "a gap of {n} outruns the log");

@@ -212,7 +212,7 @@ pub struct OrbitUi {
     /// CLEAR downs, each moving the roll's salt.
     clears: u8,
     /// The commands for the runner, and its ack (ADR 0082).
-    pub(super) chan: Channel,
+    chan: Channel,
     /// The project's load: no view from before it is taken.
     epoch: u32,
     pub status: OrbitStatus,
@@ -279,6 +279,12 @@ impl OrbitUi {
     /// The frame's edits and commands into the log, before its publish.
     pub fn flush(&mut self, song: &mut OrbitSong) {
         self.harvest(song);
+        self.chan.flush();
+    }
+
+    /// `flush` with no edit to harvest: the caller knows `live` is
+    /// untouched, and saves the `&mut` that would re-key the project.
+    pub fn flush_log(&mut self) {
         self.chan.flush();
     }
 
@@ -407,6 +413,8 @@ impl OrbitUi {
             }
             self.chan.landed(c);
         }
+        // `idle()` again, not step 3's: a capture taken above is an edit
+        // the runner hasn't applied, and drift would overwrite it.
         if self.chan.synced() && self.chan.idle() && v.loops as u8 != self.loops_seen {
             self.loops_seen = v.loops as u8;
             project.orbit_mut().absorb(v);

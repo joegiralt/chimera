@@ -1711,7 +1711,7 @@ impl UiState {
     pub fn flush_orbit(&mut self) {
         // `orbit_mut` only with an edit to take: it re-keys the status.
         if self.project.orbit().live.untouched() {
-            self.orbit.chan.flush();
+            self.orbit.flush_log();
         } else {
             self.orbit.flush(self.project.orbit_mut());
         }

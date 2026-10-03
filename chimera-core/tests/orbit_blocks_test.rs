@@ -428,6 +428,10 @@ fn presses_between_runner_reads_all_count() {
 #[test]
 fn b6_with_a_load_never_sticks() {
     let mut rig = Rig::new(in_orbit());
+    // The epoch alone, not `fake_load`: this rig publishes the UI's own
+    // log every frame, so a seq reserved in the snapshot only would be
+    // overwritten. The UI, never told, refuses the views after; the
+    // subject is the runner's transport.
     rig.epoch += 1;
     rig.frame(Input::press(ButtonId::B6), 1);
     assert!(!rig.running(), "the load wins the block");

@@ -56,11 +56,21 @@ not grow, and flash must shrink and be measured.
   - **Drift.** It comes back whole in the view, because skipped views
     would lose deltas. The UI absorbs it once a loop, only while synced
     and with every command acked.
+  - **The order in `sync`.** The UI harvests any edit still touched
+    before it reads `idle`, and it reads `idle()` again after taking a
+    capture, before it absorbs. A capture is an edit the runner has not
+    applied yet: with the earlier `idle`, drift at a loop boundary would
+    overwrite it.
 - **In sync is one bit each way.** The UI publishes
   `synced = (no scene command awaiting landing)`. The runner sets
-  `base_landed` from it and clears it only by its own adoption. Knobs and
-  edits reach `working` only while `base_landed`. `Keep(n)` out of sync
-  cues `live`. The UI's newest scene intent wins, which keeps ADR 0077's
+  `base_landed` from it and clears it only when it adopts a slot.
+  Adopting `live` (a `Live` cue) keeps it set, because `working` is then
+  the UI's `live`. Clearing it there would drop every edit made between
+  that adoption and the UI's landing: the edit would be acked, never
+  applied, and the next drift would revert it in `live`. Knobs and edits
+  reach `working` only while `base_landed`. `Keep(n)` out of sync cues
+  `live`. A start out of sync with nothing cued keeps `working`, the slot
+  the UI is about to land, and does not adopt the stale `settings`. The UI's newest scene intent wins, which keeps ADR 0077's
   cancel-race behaviour and closes adversarial finding 1 by construction.
   A re-arm before the view keeps showing armed, because the view reports
   the runner armed again. That closes finding 2 by construction.

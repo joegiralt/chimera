@@ -511,7 +511,12 @@ fn a_load_drops_the_capture() {
     v.captured.count = 2;
     v.captured.target = Capture::Ring(R[0]);
     ui.sync(&v, &mut p);
-    assert_ne!(p.orbit().live.rings[0], ring);
+    let taken = p.orbit().live.rings[0];
+    assert_ne!(taken, ring);
+    // The same count again, other notes: a capture is taken once.
+    v.captured.notes[0] = Note::new(74).unwrap();
+    ui.sync(&v, &mut p);
+    assert_eq!(p.orbit().live.rings[0], taken, "never twice");
 }
 
 /// Ring 2 as STEP with one hit, LEARN armed on it: one key-down takes it.
