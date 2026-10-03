@@ -302,8 +302,9 @@ fn synth(board: Board) -> ! {
     //    (`await_live`), so no earlier step runs on its clock;
     // 4. USB under the watchdog: `preflight` checks with bounded waits what
     //    `connect` spins on with interrupts masked. A port that isn't ready
-    //    is tried again from the loop every 500 ms, 10 tries in all; the
-    //    last failure is toasted, and `last_usb` keeps how it ended;
+    //    is tried again from the loop every 500 ms, 3 tries in all; the
+    //    last failure is toasted, and `last_usb` keeps how it ended. From
+    //    a cold power-on it fails (#331): the synth plays without USB;
     // 5. the UI loop.
     // `last_stage` on the next boot says how far this one got.
     // Step 1: SYSTEM behind the splash, then its theme. Card work runs only
@@ -501,12 +502,6 @@ fn tend_usb(
         if let UsbState::Off { why, .. } = state
             && state.gave_up()
         {
-            // Once per power-on: a reset brings the port up where tries
-            // didn't (b8247dc's IWDG resets did so by accident).
-            if marker.take_usb_fallback() {
-                marker.usb_regs(usb::regs());
-                cortex_m::peripheral::SCB::sys_reset();
-            }
             ui.show_boot_fault(why.toast());
         }
     }

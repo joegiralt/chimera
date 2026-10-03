@@ -54,11 +54,10 @@ type Port = SerialPort<'static, UsbBus<Otg2>>;
 /// OTG2, the OTG FS core on PA11/PA12, brought up in the stock PreenFM3
 /// firmware's order (Ixox/preenfm3 `firmware/Src/usbd_conf.c`
 /// `HAL_PCD_MspInit`): its AHB clock enabled and nothing else, no RCC
-/// reset. VDD33USB's detector is `preflight`'s to enable, before the core
-/// reset: without USB33DEN the FS PHY's supply isn't seen and CSRST never
-/// clears (a cold record: PWR_CR3 0x42, CSRST set through 10 tries over
-/// 5 s; a warm start, which the ROM loader left with USB33DEN set, reads
-/// 0x0500_0042 and comes up).
+/// reset; `preflight` enables VDD33USB's detector first. From a cold
+/// power-on the core reset still never completes (CSRST stays set), and
+/// the console stays off until a pass through the ROM loader:
+/// https://github.com/joegiralt/chimera/issues/331
 pub struct Otg2 {
     _global: pac::OTG2_HS_GLOBAL,
     _device: pac::OTG2_HS_DEVICE,
@@ -169,13 +168,13 @@ fn check(parts: &UsbParts, cpu_hz: u32, tries: u8) -> Result<(), UsbOff> {
     // HSI48RDY, sets PWR_CR3.USB33DEN (bit 24), the bit the HAL's own
     // `USB2::enable` sets the same way, reads USB33RDY (bit 26, RM0433
     // PWR_CR3; the PAC's `usb33rdy`), and sets AHB1ENR's USB2OTGEN and
-    // pulses AHB1RSTR's USB2OTGRST, this port's own clock and reset bits. Nothing else writes these after `freeze`, no
-    // interrupt included.
+    // pulses AHB1RSTR's USB2OTGRST, this port's own clock and reset bits.
+    // Nothing else writes these after `freeze`, no interrupt included.
     let (rcc, pwr) = unsafe { (&*pac::RCC::ptr(), &*pac::PWR::ptr()) };
     if !wait(&mut || rcc.cr.read().hsi48rdy().is_ready()) {
         return Err(UsbOff::Hsi48);
     }
-    // VDD33USB seen before the core reset, which needs the PHY (`Otg2`).
+    // VDD33USB seen before the core reset, as the ROM loader leaves it.
     pwr.cr3.modify(|_, w| w.usb33den().set_bit());
     let usb33 = USB33_WAIT_MS * (cpu_hz / 1000);
     if !wait_until(usb33, DWT::cycle_count, || {
@@ -184,10 +183,9 @@ fn check(parts: &UsbParts, cpu_hz: u32, tries: u8) -> Result<(), UsbOff> {
         return Err(UsbOff::Usb33);
     }
     rcc.ahb1enr.modify(|_, w| w.usb2otgen().set_bit());
-    // From try 2: a CSRST that never cleared may have wedged the core, and
-    // waiting doesn't free it (a cold record: CSRST set through 10 tries
-    // over 5 s), while a reset did (b8247dc's IWDG resets). The block's
-    // RCC reset, then a moment for it to settle.
+    // From try 2: the block's RCC reset and a moment to settle, in case a
+    // CSRST that never cleared wedged the core. It doesn't free the cold
+    // case (#331), but costs nothing.
     if tries >= 2 {
         rcc.ahb1rstr.modify(|_, w| w.usb2otgrst().set_bit());
         rcc.ahb1rstr.modify(|_, w| w.usb2otgrst().clear_bit());

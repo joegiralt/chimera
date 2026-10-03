@@ -175,12 +175,10 @@ impl fmt::Display for UsbState {
 }
 
 /// USB tries per boot: one at start-up, then one every `USB_RETRY_MS`
-/// from the UI loop. The core reset can fail for a while after a cold
-/// power-up; the synth plays between tries.
-pub const USB_TRIES: u8 = 10;
-
-/// RTC_BKP13R once the USB fallback reset ran this power-on: "USBR".
-pub const USB_FALLBACK: u32 = u32::from_be_bytes(*b"USBR");
+/// from the UI loop, so a port that won't come up is given up on in
+/// about a second (#331). The synth plays between
+/// tries.
+pub const USB_TRIES: u8 = 3;
 pub const USB_RETRY_MS: u32 = 500;
 
 /// When the next USB try is due.
@@ -375,9 +373,6 @@ pub struct BootSeen {
     /// RTC_BKP7R..12R on entry: the boot before this one's last
     /// `UsbRegs` snapshot.
     pub last_usb_regs: UsbRegs,
-    /// RTC_BKP13R is `USB_FALLBACK`: this power-on has used its one reset
-    /// after `USB_TRIES` failed tries.
-    pub usb_fallback: bool,
 }
 
 impl fmt::Display for BootSeen {
@@ -414,9 +409,6 @@ impl fmt::Display for BootSeen {
             (_, Some(s)) => write!(f, "{s}")?,
             (0, None) => f.write_str("none")?,
             (x, None) => write!(f, "{x:08x}")?,
-        }
-        if self.usb_fallback {
-            f.write_str("(reset fallback)")?;
         }
         f.write_str(" last_usb_step=")?;
         match (self.last_usb_step, UsbStep::from_code(self.last_usb_step)) {

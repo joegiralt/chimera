@@ -105,7 +105,6 @@ fn the_boot_line() {
         .code(),
         last_usb_step: UsbStep::Connect.code(3),
         last_usb_regs: UsbRegs::from_words([0xC0000, 0x10000, 2, 0x0400_0020, 0x100, 0x0100_0006]),
-        usb_fallback: false,
     };
     assert_eq!(
         seen.to_string(),
@@ -146,7 +145,6 @@ fn every_stage_reads_back_from_its_code() {
         last_usb: 0,
         last_usb_step: 0,
         last_usb_regs: UsbRegs::default(),
-        usb_fallback: false,
     };
     assert!(
         seen(0)
@@ -249,27 +247,4 @@ fn every_usb_step_reads_back_from_its_code() {
     assert_eq!(UsbStep::from_code(0), None);
     let r = UsbRegs::from_words([1, 2, 3, 4, 5, 6]);
     assert_eq!(UsbRegs::from_words(r.words()), r);
-}
-
-#[test]
-fn the_boot_line_marks_the_usb_fallback() {
-    let seen = BootSeen {
-        marker: 0,
-        readback: 0,
-        action: BootAction::Synth,
-        rsr: 0,
-        dbp: false,
-        boots: 2,
-        from: 0,
-        jump_rsr: 0,
-        last_stage: 0,
-        last_usb: UsbState::On { tries: 1 }.code(),
-        last_usb_step: 0,
-        last_usb_regs: UsbRegs::default(),
-        usb_fallback: true,
-    };
-    assert!(
-        seen.to_string()
-            .contains(" last_usb=on(try 1)(reset fallback) ")
-    );
 }

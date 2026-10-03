@@ -8,10 +8,10 @@
 
 #[cfg(all(not(feature = "sd-probe"), feature = "usb-console"))]
 use chimera_core::boot::FROM_CONSOLE;
+use chimera_core::boot::UsbRegs;
 use chimera_core::boot::{self, BootAction, BootSeen, BootStage, ROM_DFU_BASE};
 #[cfg(not(feature = "sd-probe"))]
 use chimera_core::boot::{DFU_MAGIC, FROM_MENU, RomDfu};
-use chimera_core::boot::{USB_FALLBACK, UsbRegs};
 #[cfg(feature = "usb-console")]
 use chimera_core::boot::{UsbState, UsbStep};
 use chimera_core::reset::ResetCause;
@@ -32,8 +32,6 @@ const USB: usize = 5;
 const USB_STEP: usize = 6;
 /// BKP7R..12R: `UsbRegs::words`.
 const USB_REGS: usize = 7;
-/// BKP13R: `USB_FALLBACK` once this power-on's one fallback reset is used.
-const FALLBACK: usize = 13;
 
 /// `after_reset` ran: RTCAPBEN is set, the marker is clear (or stuck, and
 /// ignored) and RCC_RSR is read and cleared. Only `after_reset` makes one,
@@ -73,16 +71,6 @@ impl Marker {
     #[cfg(feature = "usb-console")]
     pub fn usb_step(&self, s: UsbStep, tries: u8) {
         self.0.bkpr[USB_STEP].write(|w| w.bkp().bits(s.code(tries)));
-    }
-
-    /// The USB fallback reset, once per power-on: true if it may run now,
-    /// and marked as used. A power cut clears the backup domain, so the
-    /// next power-on gets its own.
-    #[cfg(feature = "usb-console")]
-    pub fn take_usb_fallback(&self) -> bool {
-        let free = self.0.bkpr[FALLBACK].read().bits() != USB_FALLBACK;
-        self.0.bkpr[FALLBACK].write(|w| w.bkp().bits(USB_FALLBACK));
-        free
     }
 
     /// The OTG and PWR registers now, for the next boot's line.
@@ -174,7 +162,6 @@ pub fn after_reset(
             last_usb,
             last_usb_step,
             last_usb_regs,
-            usb_fallback: read(FALLBACK) == USB_FALLBACK,
         }),
     }
 }

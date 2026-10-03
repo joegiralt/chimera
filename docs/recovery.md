@@ -71,6 +71,29 @@ means Chimera's `dfu` cannot be reached, so the jumper is the way in.
 4. Take the jumper off and power-cycle. The bootloader runs and jumps to
    Chimera.
 
+## No console after a cold power-on
+
+Known issue: https://github.com/joegiralt/chimera/issues/331. From a cold
+power-on the USB console doesn't come up: the OTG core's reset never
+completes, and about a second after PART 1 the screen toasts
+`USB OFF: csrst`. The synth plays normally. Once the unit has been
+through the ROM loader, the console works until the next power-off.
+
+Once per session, after powering on:
+
+1. SETTINGS › SYSTEM › OS UPGRADE, then `ENTER DFU`. The unit enumerates
+   as `0483:df11`.
+2. Leave DFU, flashing nothing:
+
+   ```
+   dfu-util -a0 -d 0483:df11 -s 0x8020000:leave
+   ```
+
+   (or `just flash`, which flashes and leaves the same way).
+
+Chimera restarts with the console up (`0483:5740`), and `just status`,
+`just flash` and the rest work hands-free until the unit is powered off.
+
 ## Never write the option bytes
 
 The ROM loader offers a second DFU alternate setting, alt 1, `@Option

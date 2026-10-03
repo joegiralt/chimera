@@ -246,7 +246,6 @@ fn the_chips_status_ends_with_its_boot_line() {
         last_usb: 0,
         last_usb_step: 0,
         last_usb_regs: Default::default(),
-        usb_fallback: false,
     };
     u.boot = Some(seen);
     let mut want = String::new();

@@ -63,7 +63,7 @@ is `docs/superpowers/specs/2026-10-02-usb-console-design.md`.
   `boot::after_reset(marker, readback, cause)`: only `DFU_MAGIC` that
   read back 0, after a software reset, jumps. A power-on or brown-out
   never jumps, so a marker kept through a power-off by VBAT can't trap a
-  cold boot (it did on the unit, twice), and a stuck marker boots the
+  cold boot, and a stuck marker boots the
   synth (a transient stuck may enter DFU on a later reset, which is
   accepted). `after_reset` returns `dfu::Checked`,
   which `boot` takes and pairs with the owned RTC into the `dfu::Marker`
@@ -140,6 +140,15 @@ is `docs/superpowers/specs/2026-10-02-usb-console-design.md`.
 - Flashing needs no jumper while a working Chimera with the console is
   on the unit: `just flash` reaches the ROM loader through `dfu`. The
   jumper stays the way in for a unit that doesn't boot.
+- **Known limitation: the console is not there after a cold power-on.**
+  The OTG core's reset (GRSTCTL.CSRST) never completes from cold, so USB
+  is given up on after three bounded tries (about a second), the synth
+  plays without it, and the screen toasts `USB OFF: csrst`. After one
+  pass through the ROM loader (OS UPGRADE, then `dfu-util … :leave`) it
+  comes up and stays until power-off. `status` keeps the boot record and
+  the OTG/PWR registers for the investigation:
+  https://github.com/joegiralt/chimera/issues/331, workaround in
+  `docs/recovery.md`.
 - **The unit cannot be bricked by DFU entry.** The ROM loader is in
   system memory and cannot be written. Chimera never writes flash, option
   bytes or BOOT0. The marker is cleared before the jump, so the next reset

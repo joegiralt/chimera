@@ -17,7 +17,9 @@ and only once `audio_out::LiveCheck` sees the block count and the
 controls tick both moving (`watchdog::Live`, else a reset after
 `LIVE_WAIT_MS`). Arming it before the audio, as first decided, put the
 start-up's own gaps on its clock: a cold boot reset twice under it
-(2026-10-02). The tick kicks only once arming has returned, so no kick can
+(2026-10-02), spinning in USB's core reset, which never completes from
+cold (#331). USB's tries now run with interrupts on, under the armed
+watchdog, each wait bounded. The tick kicks only once arming has returned, so no kick can
 interleave with its setup. The SysTick controls
 tick (500 Hz, lowest priority) kicks it only when the DMA interrupt's block
 count has moved since the previous tick (`audio_out::Heartbeat`).
