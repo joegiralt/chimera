@@ -166,3 +166,15 @@ fn watchdog_timeout_fits_the_12_bit_reload_at_div4() {
     assert_eq!(iwdg_reload_at_div4(WATCHDOG_TIMEOUT_MS), 800);
     assert!(iwdg_reload_at_div4(WATCHDOG_TIMEOUT_MS) <= 0xFFF);
 }
+
+#[test]
+fn kicks_are_live_once_audio_and_the_tick_both_move() {
+    use chimera_core::audio_out::LiveCheck;
+    let c = LiveCheck::start(10, 500);
+    assert!(!c.live(10, 500));
+    assert!(!c.live(40, 501), "the tick moved once");
+    assert!(!c.live(11, 900), "audio moved once");
+    assert!(c.live(12, 502));
+    let wrap = LiveCheck::start(u32::MAX, u32::MAX - 1);
+    assert!(wrap.live(1, 0), "counters wrap");
+}

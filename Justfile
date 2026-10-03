@@ -19,8 +19,9 @@ build:
 # with the SD probe, clippy on host
 # and firmware (every feature set), rustfmt and the stack check. The desktop needs ALSA's
 # pkg-config file; point PKG_CONFIG_PATH at it if it is not installed
-# system-wide.
+# system-wide. The host tool's tests run first, against a fake unit.
 check:
+    python3 -m unittest discover -s tools -p 'test_*.py'
     cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit
     cargo test -p chimera-core --features master-tape
     just test-fat-tools
@@ -30,7 +31,7 @@ check:
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features bench
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features bench,master-tape
-    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features sd-probe
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features sd-probe
     cargo build -p chimera-bootloader --target thumbv7em-none-eabihf
     cargo build -p chimera-theory --target thumbv7em-none-eabihf
     just clippy
@@ -49,7 +50,7 @@ stack-check:
     objdump="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/llvm-objdump"
     test -x "$objdump"
     elf=target/thumbv7em-none-eabihf/release/chimera-stm32
-    for features in "" "--no-default-features" "--features bench" "--features sd-probe"; do
+    for features in "" "--no-default-features" "--features bench" "--no-default-features --features sd-probe"; do
         cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf $features
         test -r "$elf"
         if "$objdump" -d --no-show-raw-insn -C "$elf" \
@@ -82,7 +83,9 @@ clippy:
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features bench -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features bench,master-tape -- -D warnings
-    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features sd-probe -- -D warnings
+    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features sd-probe -- -D warnings
+    # usb-console alone: `stats` answers from no reader
+    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features usb-console -- -D warnings
     cargo clippy -p chimera-bootloader --target thumbv7em-none-eabihf -- -D warnings
 
 # Render every screen (the golden cases and the atlas) with the real renderer
@@ -95,21 +98,68 @@ screens:
     SCREEN_DUMP="$(pwd)/target/screens" cargo test -p chimera-core --test screen_golden_test --test screen_atlas_test -q
     for f in target/screens/*.ppm; do magick "$f" -filter point -resize 200% "docs/screens/$(basename "$f" .ppm).png"; done
 
-# Flash firmware to PreenFM3 via DFU
+# Read the unit over USB (CHIMERA_USB=sim for the desktop sim)
+usb +cmd:
+    python3 tools/chimera-usb.py {{cmd}}
+shot *args:
+    python3 tools/chimera-usb.py shot {{args}}
+stats:
+    python3 tools/chimera-usb.py stats
+status:
+    python3 tools/chimera-usb.py status
+
+# Flash firmware to PreenFM3 via DFU. With the console up, `to-dfu` sends
+# `dfu` and waits for the ROM loader; without it, bridge BOOT0 and re-plug.
+# dfu-util exits 74 when `:leave` resets the unit under it; that counts only
+# if the download completed and the console comes back within 10 s.
 flash:
+    #!/usr/bin/env bash
+    set -euo pipefail
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf
     rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera.bin
-    dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera.bin -s 0x8020000:leave
+    python3 tools/chimera-usb.py to-dfu
+    log=$(mktemp) && trap 'rm -f "$log"' EXIT
+    rc=0 && dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera.bin -s 0x8020000:leave 2>&1 | tee "$log" || rc=$?
+    if [ "$rc" -eq 74 ] && grep -q 'File downloaded successfully' "$log"; then
+        python3 tools/chimera-usb.py wait-console 10
+    elif [ "$rc" -ne 0 ]; then exit "$rc"; fi
 
 # Flash the bench build (--features bench) to PreenFM3 via DFU
+# The bench holds its screens about 4 min before the UI loop (and so the
+# console) starts, so a 74 after a completed download is accepted unwaited.
 flash-bench:
+    #!/usr/bin/env bash
+    set -euo pipefail
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features bench
     rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-bench.bin
-    dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-bench.bin -s 0x8020000:leave
+    python3 tools/chimera-usb.py to-dfu
+    log=$(mktemp) && trap 'rm -f "$log"' EXIT
+    rc=0 && dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-bench.bin -s 0x8020000:leave 2>&1 | tee "$log" || rc=$?
+    if [ "$rc" -eq 74 ] && grep -q 'File downloaded successfully' "$log"; then
+        echo "bench running ~4 min; console appears after"
+    elif [ "$rc" -ne 0 ]; then exit "$rc"; fi
 
-# Flash the SD bring-up probe (--features sd-probe) to PreenFM3 via DFU
+# Copy the stock bootloader (0x08000000, 128 KB) to ~/chimera-backups with a
+# .sha256, never over an existing file. Upload only: it never writes the
+# unit. Needs DFU (the console's `dfu` or the BOOT0 jumper). Never commit the
+# copy; docs/recovery.md has the restore.
+backup-bootloader:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=~/chimera-backups/preenfm3-bootloader-$(date +%F).bin
+    if [ -e "$out" ]; then echo "backup-bootloader: $out exists, not overwriting" >&2; exit 1; fi
+    mkdir -p ~/chimera-backups
+    trap 'rm -f "$out"; exit 1' ERR INT TERM  # a failed or interrupted read leaves no partial backup
+    python3 tools/chimera-usb.py to-dfu
+    dfu-util -a0 -d 0483:df11 -s 0x08000000:131072 -U "$out"
+    test "$(stat -c %s "$out")" -eq 131072
+    trap - ERR INT TERM
+    cd ~/chimera-backups && sha256sum "$(basename "$out")" > "$(basename "$out").sha256"
+    echo "$out"
+
+# Flash the SD bring-up probe (--no-default-features --features sd-probe) to PreenFM3 via DFU
 flash-sd-probe:
-    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features sd-probe
+    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features sd-probe
     rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe.bin
     dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-sd-probe.bin -s 0x8020000:leave
 

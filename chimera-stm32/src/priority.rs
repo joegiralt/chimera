@@ -11,6 +11,7 @@ impl Priority {
     #[cfg(feature = "midi-din")]
     pub const MIDI: Priority = Priority::level(4);
     pub const SYSTICK: Priority = Priority::level(15);
+    // USB has no level: it is polled from the UI loop (ADR 0068).
 
     const fn level(level: u8) -> Self {
         assert!(level < 16);

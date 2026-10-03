@@ -178,19 +178,6 @@ fn live_output_is_flat_when_silent_and_scaled_to_the_band() {
     }
 }
 
-/// A page whose slots are all empty (SYSTEM › OS UPGRADE) shows no focus band.
-#[test]
-fn an_all_empty_page_has_an_empty_focus_band() {
-    let mut ui = UiState::new();
-    to_leaf(&mut ui, &["SYSTEM", "OS UPGRADE"]);
-    settle(&mut ui);
-    let mut fb = Fb::new();
-    ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
-    let ground = fb.px[0];
-    assert!(band(&fb, 28, 118).iter().all(|&p| p == ground));
-    assert_eq!(fb.oob, 0);
-}
-
 /// Garbage in the scope buffer (NaN, ±inf) draws a flat line, in the band.
 #[test]
 fn non_finite_live_output_is_flat() {

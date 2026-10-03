@@ -33,7 +33,7 @@ fn fmt_count(b: &mut FmtBuf, n: u32) {
 /// so it never touches the DESYNC cell beside it); otherwise the saturating
 /// total alone. `--` with no sources.
 fn fmt_drops(b: &mut FmtBuf, s: &AudioStats) {
-    let active = &s.drops[..s.sources as usize];
+    let active = s.active_drops();
     let Some((&first, rest)) = active.split_first() else {
         let _ = b.write_str(NONE);
         return;

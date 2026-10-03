@@ -1,5 +1,7 @@
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
+#[cfg(feature = "perf-probe")]
+use core::sync::atomic::AtomicU8;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use chimera_core::audio_out::{Half, interleave};
@@ -43,6 +45,13 @@ struct Engine {
 static mut ENGINE: MaybeUninit<Engine> = MaybeUninit::uninit();
 static ENGINE_TAKEN: AtomicBool = AtomicBool::new(false);
 static ENGINE_READY: AtomicBool = AtomicBool::new(false);
+
+/// After each block: voices sounding, and the voice budget booked in
+/// percent. Plain stores; the probe reads them in the same interrupt.
+#[cfg(feature = "perf-probe")]
+pub static VOICES: AtomicU8 = AtomicU8::new(0);
+#[cfg(feature = "perf-probe")]
+pub static COST_PCT: AtomicU8 = AtomicU8::new(0);
 
 /// # Safety
 /// Only before `init`, and from one context at a time.
@@ -98,6 +107,11 @@ pub fn render_half(half: Half) {
         e.notes.drain(|ev| e.inst.handle(ev, shared));
     }
     e.inst.render(e.fx, &mut e.dac, shared, &mut e.scope);
+    #[cfg(feature = "perf-probe")]
+    {
+        VOICES.store(e.inst.sounding() as u8, Ordering::Relaxed);
+        COST_PCT.store(e.inst.cost_pct(), Ordering::Relaxed);
+    }
     for pair in DacPair::ALL {
         // SAFETY: `main` runs `dma::clear` before `prefill`; the caller is
         // this half's only writer while the DMA reads the other half, and the

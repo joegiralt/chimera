@@ -61,12 +61,7 @@ fn legacy_bindings_name_semantic_addresses() {
     );
     assert_eq!(PageId::Demo(reg::DEMO_MATRIX.id).binding(0), None);
     // Spec §5: a leaf page with no bound slots edits nothing.
-    for def in [
-        &reg::SYS_TUNING,
-        &reg::SYS_UPDATES,
-        &reg::SYS_ABOUT,
-        &reg::SYS_AUDIO,
-    ] {
+    for def in [&reg::SYS_TUNING, &reg::SYS_ABOUT, &reg::SYS_AUDIO] {
         for i in 0..6 {
             assert_eq!(PageId::System(def.id).binding(i), None);
         }

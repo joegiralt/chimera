@@ -148,6 +148,16 @@ impl Allocator {
         self.slots.iter().map(|s| s.cost).sum()
     }
 
+    /// `reserved` and every allocated voice, as a share of the budget,
+    /// saturating.
+    pub fn cost_pct(&self, reserved: Cost) -> u8 {
+        let booked = reserved.0.saturating_add(self.sounding_cost().0);
+        booked
+            .saturating_mul(100)
+            .checked_div(self.budget.as_cost().0)
+            .map_or(u8::MAX, |p| p.min(u32::from(u8::MAX)) as u8)
+    }
+
     /// `sounding_cost` without the dying voices.
     fn live_cost(&self) -> Cost {
         self.slots
