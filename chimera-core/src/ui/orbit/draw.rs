@@ -15,7 +15,7 @@ use crate::addr::{BlockRef, ParamAddr};
 use crate::orbit::RingIdx;
 use crate::orbit::chords::{ChordRing, harmony};
 use crate::orbit::clock::{Bpm, ClockSource};
-use crate::orbit::euclid::{HitMask, accents};
+use crate::orbit::euclid::HitMask;
 use crate::orbit::ring::{ACCENT_BOOST, NoteMode, Ring};
 use crate::orbit::runner::Capture;
 use crate::orbit::scene::{OrbitSong, Scene, SceneIdx, SceneRing};
@@ -102,7 +102,7 @@ where
     let x = |at: f32| VIZ_LEFT + (w * at) as i32;
     let hit_r = ((w / 2.0) as i32 - 1).clamp(2, 5);
     let rest_r = if w >= 6.0 { 2 } else { 1 };
-    let accented = accents(mask, ring.accent);
+    let accented = ring.accents_on(mask);
     let odds = ring.chance.get() as f32 / 100.0;
     // A hit's filled core: as wide as CHANCE lets it sound.
     let core = libm::roundf(hit_r as f32 * libm::sqrtf(odds)) as i32;
@@ -192,7 +192,7 @@ where
     let mut line = FmtBuf::new();
     let (lo, hi) = register(ring);
     let _ = write!(line, "{lo} TO {hi}");
-    if ring.accent > 0 {
+    if ring.accent() > 0 {
         let _ = write!(line, " · ACCENT +{ACCENT_BOOST} VEL");
     }
     band_line(d, &[line.as_str()]);
@@ -202,7 +202,7 @@ where
     let now = f.now(r);
     let w = BAND_W / n as f32;
     let x = |at: f32| VIZ_LEFT + (w * at) as i32;
-    let accented = accents(mask, ring.accent);
+    let accented = ring.accents_on(mask);
     let gate = ring.gate.get() as f32 / 100.0;
     let (hit, accent, rest) = if ring.mute {
         (theme::PILL_EDGE, theme::PILL_EDGE, theme::FAINT)
@@ -437,7 +437,7 @@ where
     let mask = f.hits(r);
     let n = mask.steps().get() as usize;
     let now = f.now(r);
-    let accented = accents(mask, ring.accent);
+    let accented = ring.accents_on(mask);
     let flash = f.ui.anim.flash(r) as i32;
     let (hit, rest, accent) = if ring.mute {
         (theme::PILL_EDGE, theme::FAINT, theme::PILL_EDGE)

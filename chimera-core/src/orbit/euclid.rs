@@ -220,7 +220,8 @@ pub const fn euclid(steps: Steps, hits: u8, rotate_by: u8) -> HitMask {
 /// The ACCENT fill: `euclid(k, accent, 0)` laid over the `k` hits of
 /// `mask` in order.
 pub const fn accents(mask: HitMask, accent: u8) -> HitMask {
-    let Some(k) = Steps::new(mask.hits()) else {
+    // No ACCENT, the common case: none, without laying a fill.
+    let Some(k) = Steps::new(if accent == 0 { 0 } else { mask.hits() }) else {
         return HitMask::empty(mask.steps);
     };
     let a = euclid(k, accent, 0);

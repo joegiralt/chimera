@@ -418,7 +418,7 @@ fn orb_page_golden() {
         let steps = ring.fill().steps();
         let n = steps.get() as usize;
         let now = step_at(phase, steps) as usize;
-        let accented = accents(mask, ring.accent);
+        let accented = accents(mask, ring.accent());
         for i in 0..n {
             let (x, y) = step_xy(r, i, n);
             let want = match (ring.mute, mask.is_hit(i), i == now) {
@@ -741,8 +741,8 @@ fn voice_and_notes_pages() {
     let fb = render("orbit_voice");
     let ring = sel_ring(&ui).ring;
     let mask = ring.hits_mask();
-    assert_eq!((mask.steps().get(), mask.hits(), ring.accent), (8, 5, 2));
-    let accented = chimera_core::orbit::euclid::accents(mask, ring.accent);
+    assert_eq!((mask.steps().get(), mask.hits(), ring.accent()), (8, 5, 2));
+    let accented = chimera_core::orbit::euclid::accents(mask, ring.accent());
     let base = theme::VIZ_BAND_BOTTOM - 6;
     let w = (theme::VIZ_RIGHT - theme::VIZ_LEFT) / 8;
     let (low, high) = (base - 2, base - 33);

@@ -98,12 +98,14 @@ pub struct Ring {
     fill: Fill,
     /// The realised hits; MUTATE drifts it, a new fill re-lays it.
     hits_mask: HitMask,
+    /// ACCENT's fill over the hits, kept with them.
+    accented: HitMask,
     pub chance: Pct,
     pub mutate: Pct,
     pub mute: bool,
     pub gate: Pct,
     pub velocity: Velocity,
-    pub accent: u8,
+    accent: u8,
     pub octave: Octave,
     pub range: Range,
     pub snap: SnapTo,
@@ -134,6 +136,7 @@ impl Ring {
         Ring {
             fill,
             hits_mask: fill.mask(),
+            accented: accents(fill.mask(), 0),
             chance: Pct::FULL,
             mutate: Pct::ZERO,
             mute: false,
@@ -158,22 +161,49 @@ impl Ring {
         self.hits_mask
     }
 
+    /// How many of the hits ACCENT spreads over them.
+    pub const fn accent(&self) -> u8 {
+        self.accent
+    }
+
+    pub const fn with_accent(mut self, accent: u8) -> Ring {
+        self.accent = accent;
+        self.with_hits(self.hits_mask)
+    }
+
+    /// The accents laid over `mask`: the ring's own, kept, when `mask` is
+    /// its hits; else laid now (a runner's drifted hits).
+    pub const fn accents_on(&self, mask: HitMask) -> HitMask {
+        if mask.bits() == self.hits_mask.bits()
+            && mask.steps().get() == self.hits_mask.steps().get()
+        {
+            self.accented
+        } else {
+            accents(mask, self.accent)
+        }
+    }
+
+    /// `m` as the hits, the accents laid over them.
+    const fn with_hits(mut self, m: HitMask) -> Ring {
+        self.hits_mask = m;
+        self.accented = accents(m, self.accent);
+        self
+    }
+
     /// A new STEPS, HITS or ROTATE: re-lays the hits, dropping MUTATE's
     /// nudges.
     pub const fn with_fill(mut self, fill: Fill) -> Ring {
         self.fill = fill;
-        self.hits_mask = fill.mask();
-        self
+        self.with_hits(fill.mask())
     }
 
     /// `m` as the hits, if it keeps STEPS and the hit count: a nudge.
-    pub fn with_mask(mut self, m: HitMask) -> Option<Ring> {
+    pub fn with_mask(self, m: HitMask) -> Option<Ring> {
         let cur = self.hits_mask;
         if m.steps() != cur.steps() || m.hits() != cur.hits() {
             return None;
         }
-        self.hits_mask = m;
-        Some(self)
+        Some(self.with_hits(m))
     }
 
     /// Step `i` of the loop (wrapping each bar). A hit draws CHANCE and
@@ -199,7 +229,7 @@ impl Ring {
             return None;
         }
         let note = snap(raw, harmony.target(self.snap));
-        let accent = accents(mask, self.accent).is_hit(i);
+        let accent = self.accented.is_hit(i);
         let velocity = if accent {
             let v = self.velocity.get().saturating_add(ACCENT_BOOST).min(127);
             Velocity::new(v).unwrap_or(Velocity::MAX)
@@ -249,7 +279,7 @@ impl Ring {
             },
             Mutation::Nudge { from, to } => {
                 if let Some(h) = self.hits_mask.moved(from, to) {
-                    self.hits_mask = h;
+                    self = self.with_hits(h);
                 }
             }
         }

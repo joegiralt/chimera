@@ -425,8 +425,7 @@ fn notes_snap_to_the_ring_target() {
 #[test]
 fn accents_play_louder() {
     let h = a_minor();
-    let mut r = ring(8, 5);
-    r.accent = 2;
+    let mut r = ring(8, 5).with_accent(2);
     r.velocity = Velocity::new(80).unwrap();
     let (out, _) = run(r, &h, 1, 1);
     let acc: Vec<_> = out
@@ -553,7 +552,7 @@ fn a_fixed_seed_replays_exactly() {
         |r| {
             r.chance = pct(70);
             r.mutate = pct(60);
-            r.accent = 2;
+            *r = r.with_accent(2);
         },
     )
     .with_fill(fill(13, 5, 2));

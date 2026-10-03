@@ -863,7 +863,7 @@ impl Block for SceneRing {
             Self::MUTE => r.mute as u8 as f32,
             Self::GATE => r.gate.get() as f32,
             Self::VEL => r.velocity.get() as f32,
-            Self::ACCENT => r.accent as f32,
+            Self::ACCENT => r.accent() as f32,
             Self::OCTAVE => r.octave.get() as f32,
             Self::RANGE => index_of(&Range::ALL, &r.range),
             Self::SNAP => index_of(&SnapTo::ALL, &r.snap),
@@ -898,7 +898,7 @@ impl Block for SceneRing {
             Self::MUTE => r.mute = i != 0,
             Self::GATE => r.gate = Pct::clamped(i),
             Self::VEL => r.velocity = Velocity::new(i.clamp(1, 127)).unwrap_or(Velocity::MAX),
-            Self::ACCENT => r.accent = i.min(super::MAX_STEPS),
+            Self::ACCENT => *r = r.with_accent(i.min(super::MAX_STEPS)),
             Self::OCTAVE => {
                 if let Some(o) = Octave::new(i.min(8)) {
                     self.transpose(o);
