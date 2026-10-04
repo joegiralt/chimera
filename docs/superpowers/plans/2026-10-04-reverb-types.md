@@ -956,6 +956,18 @@ against `BlockBudget::budget_cycles` (448,000).
   rand_4k p95 5,410 µs, card 15,931 MB, free 15,912 MB
   (`.superpowers/sdd/2026-10-04-reverb-types/card-run.txt`).
 
+### Task 4: the dispatcher (2026-10-04, host)
+
+- **T4 golden reference: `a2abe82f`.** QUAD through `Reverb` hashes as
+  `RingReverb` did at `695a6ef3`: `reverb_dispatch_test`'s three goldens
+  (a 48 kHz and a 44.1 kHz sweep of every control with SIZE crossfades,
+  MIX ramps and a saturating burst; the whole bus with REV SEND) and
+  every `fx_golden_test` case, unchanged.
+- **Flash:** plain release `text` 701,012 B (+240 over `695a6ef3`'s
+  700,772); `--features orbit` 720,596 B (+352 over 720,244).
+- **REV QUAD bench:** deferred to the next unit session (the unit was
+  busy); gate REV QUAD ≤ QUAD_REV + 1 %.
+
 ---
 
 ## Self-review
