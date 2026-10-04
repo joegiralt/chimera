@@ -47,7 +47,10 @@ against the ring's 48 while crossfading.
   existing half-bands, with GRIT's grid and ADR 0028's Q3 quantiser.
 - **PLATE is not a TYPE.** It is HALL's corner: the same graph and only
   other constants, so by the owner's own rule it is a preset. HALL's SIZE
-  reaches down to a 120 ms loop. The corner is a tested golden.
+  reaches down to a 120 ms loop. The corner is a tested golden, and it is
+  one knob away: below SIZE 0.15, a plate zone pulls DIFFUSE up and TONE
+  and PRE-DLY to the plate's values (three lerps a block, about 150 B of
+  flash).
 - **QUAD stays exactly as it is** (owner, 2026-10-04): the same sound, the
   same cost, and its double-read SIZE crossfade, which is clean and
   pitch-free. Only the new TYPEs glide SIZE (and every other moving length)
@@ -61,18 +64,24 @@ against the ring's 48 while crossfading.
     budget, which is 70 % of the CPU (`AUDIO_BUDGET_PERCENT` in `hw.rs`,
     ADR 0020): 7,000 cycles per sample on rev V. That keeps the **30 %
     reserve** for UI, MIDI and interrupts whole.
-    - Admission bills voices by cost, and ADR 0040 gives the costliest
-      patch, A16 ∪ A17 at 889, six voices.
-    - So the headroom is 7,000 − 6 × 889 − `FxBus::COST`: **486** cycles
-      per sample in the default build (`COST` 1,180), and **176** with
-      `master-tape` (1,490), checked against the code on 2026-10-04.
-    - **The gate is ΔCOST ≤ headroom**, where ΔCOST is the costliest TYPE's
-      BUS row above QUAD's.
-    - A stress run (six admitted voices, every FX, ORBIT, the UI) only
-      confirms it, with OVER 0 and DROPS 0. It would pass by construction,
-      so it cannot be the gate.
-  - A TYPE may exceed the target when the A/B shows its cheaper design
-    sounds wrong and its ΔCOST fits the headroom.
+    - Admission bills voices by cost. **The headroom** is the minimum,
+      over every voice-count assertion in `cost_test`, on both chip
+      revisions and both builds, of budget − `FxBus::COST` − n × voice.
+    - From the code on 2026-10-04 it is **96 cycles per sample in the
+      default build** (A16 ∪ A17 with FOLD, 954, six voices on rev V) and
+      **23 with `master-tape`** (MORPH KEYS, 864, five voices on rev Y).
+    - **The gate is ΔCOST ≤ headroom**, where ΔCOST is the costliest
+      TYPE's BUS row above QUAD's. A `reverb_headroom` test derives the
+      headroom from `cost_test`'s own constants, so it cannot go stale.
+    - **The stress run is a second, real gate:** six admitted voices,
+      every FX, ORBIT and the UI, with OVER 0, DROPS 0 and a peak block
+      load under 100 %. The bill does not model cache effects, and
+      ADR 0040's run peaked at 87 %.
+  - **"Sound first" has little room.** A TYPE may exceed the target when
+    the A/B shows its cheaper design sounds wrong, but only within 96
+    cycles (23 with the tape). Beyond that it needs a cheaper design, or an
+    owner ruling that gives up a voice guarantee. SIZE-scaled LOOP taps
+    (about 200 cycles) do not fit.
   - Cheaper fallback designs are a last resort: they are used only if the
     reserve would be breached, or the A/B hears no difference.
 - **Moving reads are few and costed.** A read whose length changes within a
@@ -107,19 +116,30 @@ against the ring's 48 while crossfading.
     encoder step, or marks it absent (ADR 0037's pattern).
   - Slot 3's static step is 1/128. QUAD's panel keeps its 1/31 tick, and
     `size_step` still rounds to 32, so QUAD's goldens hold.
-  - A UI edit of TYPE loads that TYPE's starting knobs and keeps MIX, GRIT
-    and SYNC. Decode and CC writes store TYPE alone.
+  - A UI edit of TYPE loads that TYPE's knobs and keeps MIX, GRIT and
+    SYNC. A TYPE visited before gets its last knobs back from a 140 B RAM
+    memory in `UiState`, never saved; one not visited gets its starting
+    knobs. Decode and CC writes store TYPE alone.
+  - MIDI MAP shows the current TYPE's panel labels. Labels of 7
+    characters get short forms of ≤ 6 (ADR 0053's rule).
+- **Input gain.** Each new engine scales its send by 2 / G, where G is its
+  worst-case send-to-line gain at maximum feedback (ECHO's comb +19 dB,
+  BURST's REGEN and tap sum about +21 dB). A full-scale send then never
+  clips the ±2.0 lines; a hot-send test counts clamp hits. QUAD keeps ½.
 - **The switch.**
   1. The old engine runs on knobs latched when the switch starts, since
      the UI has already written the new TYPE's knobs. Its return ramps
      linearly to 0 over 20 ms.
-  2. One block clears the whole arena (about 12 k cycles, under the
-     reverb's 31 k per-block share) with no engine running. The engine
-     state and the interpolators' histories are cleared too.
+  2. One block clears the whole arena with no engine running. It is
+     bound by the bus (at least about 11.6 k cycles) and evicts the
+     D-cache, so the next block refills. The engine state and the
+     interpolators' histories are cleared too.
   3. The new engine starts fresh and ramps in over 20 ms.
 
   A test holds the new engine bit-equal to a fresh engine from its first
-  block, and a host test bounds the peak block's cost.
+  block. An on-chip REV SWITCH MAX row, with voices playing, takes the
+  *maximum* block over forced switches; if it breaks the block deadline,
+  CLEAR spreads over four blocks.
 - **The extensions.**
   - A wobble LFO on every new TYPE.
   - No external mod destinations (owner, 2026-10-04). Every mod source
@@ -211,12 +231,16 @@ against the ring's 48 while crossfading.
   - measures a moving pair's cost;
   - benches the worst-case BURST, ROOM-loop and HALL-loop kernels on the
     chip, before any TYPE work;
-  - recomputes the headroom from `cost_test` and `fx_bus.rs`, and runs the
-    confirming stress run with QUAD.
+  - lands the `reverb_headroom` test with QUAD's BUS reading, and runs the
+    stress run with QUAD as the reference.
 
   The gates are absolute:
-  - ΔCOST ≤ headroom, recomputed as each TYPE lands;
-  - each TYPE's bench row is recorded against the target.
+  - ΔCOST ≤ headroom, by the `reverb_headroom` test;
+  - the stress run on the unit;
+  - REV SWITCH MAX within the block deadline;
+  - each TYPE's bench row is recorded against the target. The REV and BUS
+    rows run with voice traffic between blocks, so the reverb's streams
+    start cold.
 
   `FxBus::COST` is unchanged while every TYPE ≤ QUAD. A dearer TYPE raises
   it to the new BUS reading, and the voice counts are re-checked.
@@ -228,14 +252,17 @@ against the ring's 48 while crossfading.
 - **Interactions.** A TYPE switch drops about 1.3 ms of send and dips the
   return for about 41 ms. Sweeps list this as by design. #142's quiet-send tail
   loss applies to every TYPE alike.
-- **Order.** Step 0 (the baseline and the BURST spike) comes first, and
+- **Order.** Step 0 (the baselines, the moving-pair cost, the BURST,
+  ROOM-loop and HALL-loop kernels, and the headroom test) comes first, and
   tempo sync waits for ORBIT on `main`. ADR 0085 is accepted once every
-  A/B pair passes the spec's criterion, (each time metric within ±30 % of the named Midiverb plugin's, or an
-  owner-signed ear exception), every TYPE's ΔCOST fits the headroom, and UAT
+  A/B pair passes the spec's criterion (each time metric within ±30 % of
+  the named Midiverb plugin's, or an owner-signed ear exception), every
+  TYPE's ΔCOST fits the headroom, the stress run passes, and UAT
   passes, with measured CPU and flash recorded here.
-- **What it rules out.** FREEZE, per-TYPE knob memory and external
+- **What it rules out.** FREEZE, saving per-TYPE knobs to the card, and
+  external
   modulation of the reverb, unless a later ADR adds them (#345 for the
-  last).
+  last). Per-TYPE knob memory exists in RAM only.
 
 ## Sources
 - `docs/superpowers/specs/2026-10-04-reverb-types-design.md`.

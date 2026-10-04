@@ -99,6 +99,11 @@ The owner's rule is that TYPEs are families, not presets. A family is a differen
 
 That makes it a preset. The MV2 itself had no plate topology. So:
 - HALL's SIZE range reaches down into plate territory, a 120 ms loop (§ HALL).
+- **One knob reaches it.** HALL's SIZE has a **plate zone** at its bottom, 0 → 0.15, with w = 1 − SIZE/0.15 (1 at SIZE 0):
+  - the engine reads DIFFUSE as `DIFFUSE + w·(1 − DIFFUSE)`, TONE as `TONE·(1 − w)` and PRE-DLY as `PRE-DLY·(1 − w)`;
+  - so turning SIZE to 0 gives the plate's diffusion, brightness and zero pre-delay, whatever those three knobs say, and above 0.15 they are untouched;
+  - the stored knobs never change. The SIZE cell's value text reads `PLATE` with its ms in the zone, and TAIL draws the effective values.
+  - Cost: three lerps once a block, nothing per sample; about 150 B of flash.
 - The **plate corner** is a named, tested setting: HALL with SIZE 0, DECAY 0.35, TONE 0, DIFFUSE 1, DAMP 0.1, PRE-DLY 0, WOBBLE 0.5 and RATE 0.6. It has its own golden and its own A/B render.
 
 Reversing this later is cheap. A PLATE TYPE would be a new disk code (7) mapped to the HALL engine with its own panel row and ranges: about 200 B of flash and no DSP. Nothing in this design blocks it.
@@ -121,7 +126,7 @@ Reversing this later is cheap. A PLATE TYPE would be a new disk code (7) mapped 
 - **Reads never reach the write head.** Every read is at least 2 samples behind its line's write point (`d ≥ 2`, a clamp after each length is computed). The one exception is BURST's tap 0, which is the input value itself, taken from a register. Wobble depth is capped at half the shortest length it moves.
 - **Allpass.** `v = x − g·z` is written (truncated onto the grid), and `y = z + g·v`. Same form as QUAD's.
 - **Tone filter.** One one-pole lowpass per engine on the input, after the decimator: `y += a·(x − y)`, with `a = 1 − exp(−2π·fc / 24 000)`. TONE sets fc, bright (0) to dark (1). This is where MV2's Bright, Warm and Dark live.
-- **Dampers.** One-pole lowpasses inside loops, written onto the grid with rounding, like QUAD's DAMP. Each sits in a loop that also holds a truncating allpass.
+- **Dampers.** One-pole lowpasses inside loops, written onto the grid with rounding, like QUAD's DAMP. In ROOM, HALL, BLOOM and GATE's TAIL each sits in a loop that also holds a truncating allpass. ECHO's TONE damper and REGEN's smoothing do not, and that is harmless: their loops' feedback writes truncate (the Storage bullet above), so those loops still decay to zero.
 - **Decay.**
   - Each loop stage's gain is `g_k = 10^(−3·L_k / (RT60·fs))`, where L_k is the stage's share of the round trip (QUAD's `stage_gains`).
   - The new engines cap a stage at **0.985**; QUAD keeps its 0.97. The truncating writes keep every loop decaying, and 0.985⁴ reaches HALL's 10 s at its 120 ms loop (§ Each TYPE's knobs).
@@ -131,6 +136,17 @@ Reversing this later is cheap. A PLATE TYPE would be a new disk code (7) mapped 
   - One per engine: a `u32` phase and a branch-free parabolic sine, the same idiom as the chorus's LFO (ADR 0031, `335cd3a`).
   - In ROOM, HALL, BLOOM, GATE and REVERSE, the moved reads run 90° apart, so the left and right tails move differently.
   - It is computed at the block's ends and interpolated linearly across the block's 32 ring samples. At 7 Hz the error is under 5 × 10⁻⁴ of the depth.
+- **Input gain.** QUAD injects the send at ½ (unchanged). Each new engine scales its send by `IN[type] = 2 / G[type]`. `G` is the worst-case peak gain from the send to any stored line at the TYPE's maximum feedback, so a full-scale (0 dBFS) send peaks inside the ±2.0 full scale.
+  - Estimates, each pinned by a `const fn` and the hot-send test (§ Tests):
+
+| TYPE | Worst-case G | IN |
+|---|---|---|
+| ECHO | 1/(1 − 0.891) = 9.2: the coherent comb, +19 dB | ≈ 0.22 |
+| GATE, REVERSE | REGEN's 1/(1 − 0.708) = 3.4 (+10.7 dB) × the burst sum's Σ\|w\| 3.46 (+10.8 dB) ≈ 11.8 | ≈ 0.17 |
+| BLOOM | 1/(1 − 0.866) ≈ 7.5 (SWELL 0, DECAY 12 s) | ≈ 0.27 |
+| ROOM, HALL | ≤ 4 (diffused loops, gains spread over stages) | ½ |
+
+  - A smaller IN costs resolution: GRIT's grid and #142's truncation bite a little earlier. `WET[type]` puts the level back on the way out.
 - **Output.** The return is ×`WET[type]` × MIX, eased as today. Each TYPE's `WET` is set so its default return's RMS matches QUAD's default within ±1 dB. A test pins this (§ Tests); QUAD's `WET_GAIN` 4.54 is unchanged.
 
 ### Glide
@@ -180,7 +196,7 @@ Output taps are (line, fraction of the line's **maximum** length, sign). They ar
 - **Why the maximum** (the other two taps). A line owns its maximum length's slots, and the shared write head writes every one of them each pass. So a tap anywhere inside the maximum reads written data at any SIZE, at the same cost.
 - **What a tap reads.** At SIZE 1 the taps spread across each whole stage. At a small SIZE a tap past the current read point reads the line's input from an earlier pass: still the decaying tail, just older.
 - **Why not the minimum.** Fractions of the SIZE-0 length would read only the first 11 % of HALL's 540 ms stages at SIZE 1, and the output could pulse once per pass.
-- **The trade.** The early pattern stays put as SIZE moves. The ear judges it at A/B. SIZE-scaled taps would cost 6 more moving pairs, well over the target. They are allowed if the A/B asks for them and the system worst case keeps the reserve (§ CPU budget, "sound first").
+- **The trade.** The early pattern stays put as SIZE moves. The ear judges it at A/B. SIZE-scaled taps would cost 6 more moving pairs, well over the target. **They do not fit**: 6 pairs is about 190–225 cycles per output sample, over the 96 (23) headroom. They would need an owner ruling to give up a voice guarantee (§ CPU budget).
 
 ### BURST engine: GATE and REVERSE
 
@@ -232,7 +248,7 @@ L = AP5's output → decorrelator L (2 AP) ;  R = AP10's output → decorrelator
 - **SWELL** sets the loop delay, 0 → 446 ms, so the round trip runs about 250 → 700 ms. That delay is the one read that glides. Scaling all ten allpasses instead would cost ten moving pairs, about 282 instructions against 239.
 - **Risk: an echo instead of a swell.** At SWELL 1, 446 ms of the 700 ms loop is plain delay. The loop may then repeat audibly once per pass instead of blooming.
   - The A/B checks this explicitly (BLOOM at SWELL 1 against Bloom 1).
-  - **Fallback:** split the SWELL delay in two and put one fixed allpass between the halves (17 ms, g 0.5). That adds diffusion inside the long delay for 2 fixed accesses (+10 instructions). It is paid for by wobbling 2 APs instead of 3 (−1 pair, −15 to −20), as the CPU table shows.
+  - **Fallback:** split the SWELL delay in two and put one fixed allpass between the halves (17 ms, g 0.5). That adds diffusion inside the long delay for 2 fixed accesses (+10 instructions). It is paid for by wobbling 2 APs instead of 3 (−1 pair, −15 to −20), as the CPU table shows. Alone it adds about 19 cycles per output sample. That fits both headrooms (96 / 23).
 - **TONE** is the in-loop damper here (fc 10 kHz → 1.5 kHz). The bloom's darkness lives in the loop, as the spike measured: HF RT60 about 0.9× LF.
 - **DIFFUSE** sets the loop APs' g, 0.45 → 0.65.
 - **Taps.** The outputs are values already in registers (AP5's and AP10's outputs), not reads, so they cost nothing.
@@ -428,7 +444,11 @@ The issue's naming ruling (owner, 2026-10-03): "Each TYPE is an engine … plus 
 - Turning TYPE in the UI writes, in one edit, the new TYPE's defaults (the tables above) into slots 1, 2, 3, 7, 8, 9, 10, 11, 12 and 14.
 - MIX, GRIT and SYNC are kept: they are the player's level, grain and clock.
 - `ReverbParams::with_type(t) -> ReverbParams` is the pure function, and the UI's TYPE edit calls it. `Block::write`, decode and MIDI-CC writes of TYPE only store the TYPE. A project or Sound load therefore keeps its stored knobs.
-- Leaving a TYPE and coming back gives its starting point, not the last tweak. Per-TYPE memory would need either 56 stored ids or a UI cache that a save would drop.
+- **An accidental nudge does not wipe the tweaks.** `UiState` keeps each TYPE's last knobs in RAM: 7 TYPEs × 10 slots as `u16` (the stored 0..1 at 1/65,535), 140 B.
+  - Leaving a TYPE stores its knobs there. Coming back restores them instead of the starting point.
+  - The memory is never saved to the card: a project stores only the current TYPE's knobs. A project load clears it.
+  - 140 B fits `UiState`'s guard (5,120 B, ADR 0082 on the ORBIT branch; `UiState` reads 3,832 B there).
+  - `with_type(t, memory)` takes the memory, and falls back to the starting knobs for a TYPE not yet visited.
 
 ## Switching TYPE
 
@@ -442,10 +462,13 @@ The audio thread runs one engine. A change of `params.reverb.kind` from the one 
 
 - **The latch.** The UI's TYPE edit has already written the new TYPE's starting knobs into the shared slots (`with_type`). So when the switch starts, the dispatcher copies the running engine's last `ReverbParams`, and FADE OUT runs on that copy. The old engine never plays the new TYPE's values.
 - **CLEAR.**
-  - It zeroes the whole arena in one block: 46,440 B as 64-bit stores, about 12 k cycles. That is under the reverb's per-block share, 485 × 64 ≈ 31 k, and no engine runs in that block.
+  - It zeroes the whole arena in one block: 46,440 B as 64-bit stores.
+    - The cost is bound by the bus: at least about 11.6 k cycles.
+    - Zeroing 46 KB also evicts the 16 KB D-cache, so the next block refills the voices' working set.
+    - The reverb's per-block share is 485 × 64 ≈ 31 k, and no engine runs in that block.
   - It also zeroes the new engine's state and both interpolators' histories, so no sample of the old tail survives anywhere.
   - The decimator's history is the send's own and is kept.
-  - A host test holds the CLEAR block's cost at or under the worst steady engine block (§ Tests).
+  - The on-chip **REV SWITCH MAX** row measures it (§ Bench rows). If its maximum block breaks the deadline, CLEAR spreads over 4 blocks of a quarter each.
 - **The send during CLEAR** is dropped. A note struck in that 1.3 ms gets no reverb.
 - **A change during a switch.**
   - The target follows the newest TYPE. In FADE OUT or CLEAR the sequence simply continues.
@@ -543,7 +566,8 @@ ROOM has no ALL because 7 of the 10 beat values would clamp to its 1.5 s maximum
     - units such as `141ms`, `2.5s`, `6.6k`, `0.30Hz`, `-9dB` and `1/8`, from the same pure mappings the DSP uses;
     - slot 3's static step is 1/128, and QUAD's panel overrides it to 1/31, so QUAD's SIZE still moves one table step per tick;
     - a synced knob steps one division per tick.
-  - The static spec's own label (`SIZE`, `TONE` …) is what the MIDI MAP page shows.
+  - **MIDI MAP** (the per-Part CC map) shows the current TYPE's panel label for a reverb slot: a CC on slot 3 reads SIZE under ROOM and LENGTH under GATE. It never shows the static spec's label.
+  - **Short forms**, ≤ 6 characters, for cells whose label outruns its bar (ADR 0053's MECHANICS → MECH rule): PRE-DLY → `PRE`, DENSITY → `DENS`, REPEATS → `REPEAT`, PATTERN → `PATT`, DIFFUSE → `DIFF`. The focus band shows the full word.
 - **The demo page** `DEMO_GLYPH_CUBE` stays bound to QUAD's slots.
 
 ### TYPE and the words
@@ -575,7 +599,7 @@ Hints follow ADR **0086** ("Every gesture shows a contextual hint in the focus b
 - **The reverb cells carry no gesture.** Every new control is a knob, and navigation stays the D-pad (ADR 0081). Modulation is deferred (§ Modulation), so MIX+PLUS priming does not reach these cells. So under 0086 no reverb cell has a hint, and `View::hint` returns none for them.
 - **What would have been informational text goes elsewhere.**
   - A folded synced time shows in the value text, with 0086's ▾/▴ mark (§ Tempo sync).
-  - The plate corner is documented here, has a golden, and ships as a corner the factory project template can use. It gets no hint.
+  - The plate corner is one knob away (HALL's SIZE plate zone), has a golden, and gets no hint.
 - **If 0086 changes or never lands,** this spec still needs no hint: there is no reverb gesture to explain. A later gesture on a reverb cell (#345's priming) brings its static `Gesture` with it.
 
 ## CPU budget
@@ -586,22 +610,33 @@ The owner, 2026-10-04: **"sound first."**
 
 - **The target** is QUAD's worst case: 485 cycles per output sample on the REVERB row, and 239 instructions per ring sample on the host (ADR 0031, 2026-09-27; re-measured at step 0). Every TYPE is designed to it, and the table below shows they all meet it by estimate.
 - **The hard limit is the cost model's headroom.**
-  - **The budget.** The audio thread may use **70 % of the CPU**: `AUDIO_BUDGET_PERCENT` = 70 in `chimera-core/src/hw.rs` ("30% is left for UI, MIDI and interrupt overhead"). `SampleBudget::for_cpu` builds it from the real clock (ADR 0020): **7,000 cycles per sample on rev V** (480 MHz) and 5,833 on rev Y (400 MHz).
-  - **Why not a stress run.** Admission bills voices by cost, so the costliest patch never gets 8 voices. ADR 0040 gives A16 ∪ A17 (889 cycles a voice) six. A stress run therefore passes by construction, and the real gate is the bill.
-  - **The headroom**, on rev V: 7,000 − 6 × 889 − `FxBus::COST`. Checked against the code on 2026-10-04:
-    - default build (`COST` 1,180): 7,000 − 5,334 − 1,180 = **486 cycles per sample**;
-    - with `master-tape` (`COST` 1,490): **176**.
-  - **The gate: ΔCOST ≤ headroom.** ΔCOST is how far the costliest TYPE's BUS row reads above today's (QUAD's). `FxBus::COST` rises by that amount, and `cost_test` must still give A16 ∪ A17 six voices.
-    - The plan re-reads 889 and `COST` from `cost_test` and `fx_bus.rs` at step 0, and recomputes the headroom.
-    - The tighter `master-tape` figure binds only while that feature ships (ADR 0055).
-  - **The stress run only confirms.** On the unit, with the TYPE under test, it runs:
+  - **The budget.** The audio thread may use **70 % of the CPU**: `AUDIO_BUDGET_PERCENT` = 70 in `chimera-core/src/hw.rs` ("30% is left for UI, MIDI and interrupt overhead"). `SampleBudget::for_cpu` builds it from the real clock (ADR 0020): **7,000 cycles per sample on rev V** (480 MHz) and **5,833 on rev Y** (400 MHz).
+  - **Headroom** is how far `FxBus::COST` can rise before any voice-count assertion in `cost_test` fails. It is the **minimum**, over every one of those assertions, of `budget − FxBus::COST − n × voice`, on both chip revisions and both builds (default and `master-tape`). From the code on 2026-10-04 (voice = `CHAIN_COST` + `ModRouting::BASE` 47 + the engine's cost, at LP24):
+
+| Assertion in `cost_test` | Voice | Rev V (default / tape) | Rev Y (default / tape) |
+|---|---|---|---|
+| A16 ∪ A17 (`the_costliest_patch_gets_six_voices_on_rev_v`) | 909 | 6 voices: 366 / 56 | 5 / 4: 108 / 707 |
+| A16 ∪ A17 + FOLD | 954 | 6 / 5: **96** / 740 | 4 / 4: 837 / 527 |
+| A16 ∪ A17 + FOLD + DRIVE | 1,011 | 5 / 5: 765 / 455 | 4 / 4: 609 / 299 |
+| TX factory Sounds (`every_factory_sound…`), up to | 712 | 8 / 7: 124 / 526 | ≥ 5: 1,093 / 783 |
+| MORPH KEYS | 864 | 6 / 6: 636 / 326 | ≥ 5: 333 / **23** |
+| MORPH PAD | 853 | 6 / 6: 702 / 392 | ≥ 5: 388 / 78 |
+
+  The headroom is therefore **96 cycles per sample in the default build** (FOLD on rev V: 5,820 − 6 × 954) and **23 with `master-tape`** (MORPH KEYS on rev Y: 4,343 − 5 × 864). The factory rows use the TX Sounds' highest cost, 712; the derived test below uses every Sound's real cost.
+  - **The gate: ΔCOST ≤ headroom**, where ΔCOST is how far the costliest TYPE's BUS row reads above QUAD's on the same build.
+  - **The gate is a test, so it cannot go stale.** A `reverb_headroom` test in `cost_test` computes the headroom from `cost_test`'s own constants and functions (`voices_at`, the factory Sounds' `Voice::cost`, `FOLD_COST`, `DRIVE_COST`, `SampleBudget` for both revisions). It asserts `FxBus::COST − QUAD_BUS ≤ headroom`, where `QUAD_BUS` is the recorded BUS reading with QUAD. Raising `FxBus::COST` for a dearer TYPE then fails that test, and the existing voice-count tests, at once.
+  - **"Sound first" has little room.** 96 cycles (23 with the tape) is about one moving pair per ring sample in each case.
+    - A TYPE costing more than QUAD by more than that needs either a cheaper design, or an owner ruling that gives up a voice guarantee in `cost_test` (for example FOLD's sixth voice on rev V).
+    - The "allowed if the A/B asks" items each say below whether they fit.
+  - **The stress run is a second, real gate.** On the unit, with the TYPE under test, it runs:
     - six admitted voices of A16 ∪ A17;
     - every FX at its bench worst;
     - ORBIT running all five rings;
     - the UI editing, with an animated glyph in focus.
 
-    It must show OVER 0 and DROPS 0, read as ADR 0040's run was (87 % peak block load, OVER 0). It confirms the bill; it does not replace it.
-- **A TYPE may exceed the target** when the A/B shows its cheaper design sounds wrong, provided its ΔCOST fits the headroom.
+    It must show OVER 0 and DROPS 0 and a peak block load under 100 %. The bill can pass while the chip fails: ADR 0040's run peaked at 87 % on cache effects the bill does not model. So the run is not a formality.
+  - **Host instruction counts** (ADR 0031's trace) are design estimates only, never a gate. ADR 0013 rejects emulation for budgets.
+- **A TYPE may exceed the target** when the A/B shows its cheaper design sounds wrong, provided its ΔCOST fits the headroom (96 / 23) and the stress run passes.
 - **The QUAD regression check stays.** After step 1a, REV QUAD must read ≤ step 0's baseline + 1 %. QUAD's cost is unchanged by ruling, and the dispatcher must not hide a regression.
 - **Why re-measure.** Since 2026-09-27 the bench subtracts the MIX row, and MIX now includes the limiter.
 
@@ -654,9 +689,13 @@ QUAD measured 158 instructions fixed and 239 crossfading, for 30 and 48 accesses
   - **BLOOM**: SWELL alternating; DECAY 1; WOBBLE 1.
   - **ECHO**: TIME alternating; WOBBLE 1; RATE 1; DIFFUSE 1; PATTERN CLOUD.
 - **The gates are absolute.**
-  - **ΔCOST ≤ headroom** (§ Target and hard limit), recomputed from the BUS row as each new TYPE lands. The stress run confirms it on the unit.
+  - **ΔCOST ≤ headroom** (§ Target and hard limit), enforced by the `reverb_headroom` test as each new TYPE lands, plus the stress run on the unit.
   - **Each REV row** is recorded against the 485 target. A row over the target is reported, and is allowed when the A/B justifies it.
-- **The switch has no bench row.** A row averages 64 blocks and would hide the one CLEAR block. A host test instead checks the peak *block*'s instruction count under the emulator (§ Tests).
+- **REV SWITCH MAX** is an on-chip row that records the *maximum* block, not the mean.
+  - It runs six A16 ∪ A17 voices while TYPE is forced to switch every 40 blocks (QUAD → HALL → GATE → …), so FADE OUT, CLEAR, the refill after it and FADE IN all land inside the window.
+  - A mean over 64 blocks would hide the one CLEAR block, which is why this row takes the maximum.
+  - **Gate:** the maximum whole-callback block stays within `BlockBudget::budget_cycles` (70 % of the 64-sample block).
+- **Cache.** The REV rows and BUS run with voice traffic between blocks: six A16 ∪ A17 voices play, so the reverb's streams start cold as they do in use. Streams differ (QUAD 48, the new TYPEs 30–37), and each stream misses again after the voices evict it: about 9 cycles per output sample. A warm bench would flatter the TYPEs with fewer streams less than it flatters QUAD.
 - The plan records every row's reading, the build and the date, as ADR 0031 did.
 
 ## Flash
@@ -730,7 +769,7 @@ The usual battery, per TYPE, on the host first (owner's rule: QA before UAT).
 
 ### Sound (render)
 
-- **Stable and silent.** At GRIT 0 and 1, every TYPE's energy never grows after the send stops. The return reaches exact zero within the TYPE's DECAY maximum × 3.
+- **Stable and silent.** At GRIT 0 and 1, every TYPE's energy never grows after the send stops. The return reaches exact zero within **1.5 × the TYPE's longest RT60 at the tested settings**: for ECHO at REPEATS 1 and TIME 900 ms that RT60 is 3 × 0.9 / 0.050 ≈ 54 s, so 81 s. These long tests run the engine alone at 24 kHz, not the whole bus.
   - This includes ECHO at REPEATS 1 and REVERSE at REGEN 1: their truncating feedback writes must reach zero, with no ±Δ hum or DC.
   - These follow `falls_silent_within` and `no_limit_cycle_at_grit_*`, which test QUAD.
 - **RT60 tracks DECAY.** Measured on a 0.5 s noise burst (Schroeder EDC, as `rt60_follows_time`), at p = 0, 0.25, 0.5, 0.75 and 1, within ±35 % of the target at GRIT 0. The same tolerance and method as ADR 0028. ROOM at DECAY 0 (0.2 s) checks the rotation.
@@ -748,6 +787,9 @@ The usual battery, per TYPE, on the host first (owner's rule: QA before UAT).
 - **Moving taps don't click.** A full LENGTH sweep (40 → 600 ms) and a SYNC 1/8 → 1/4 step, mid-burst, keep the max second difference within `click_free_test`'s bound.
 - **REGEN's tail holds its pitch.** A 1 kHz sine regenerating through REVERSE at REGEN 1 keeps its instantaneous pitch within −2.4 / +2.1 semitones (zero crossings) through a LENGTH move of 150 → 800 ms.
 - **Sanitising.** NaN and out-of-range knobs render finite and recover, as QUAD's do.
+- **Hot send.** Every TYPE at its maximum feedback (REPEATS 1, REGEN 1, DECAY 1) takes:
+  - a full-scale sine swept 50 Hz → 10 kHz over 10 s: the clamp hits on every line write are counted, and must be ≤ 0.1 % of writes;
+  - a −12 dBFS pink-noise pad, held 10 s: **zero** clamp hits.
 
 ### Switch
 
@@ -757,7 +799,7 @@ The usual battery, per TYPE, on the host first (owner's rule: QA before UAT).
   - **no stale echo**: from the first FADE IN block, the new engine's pre-gain output is bit-identical to a fresh engine's fed the same send;
   - **the latch**: FADE OUT's output is bit-identical to the old engine run on its old knobs, after `with_type` has overwritten the slots;
   - a second switch during FADE IN starts its fade from the current gain.
-- **Peak block cost** (host, emulator count): the CLEAR block and the first FADE IN block each cost no more than the costliest steady TYPE's block.
+- **Peak block cost** is the on-chip REV SWITCH MAX row (§ Bench rows), not a host test.
 - **A project swap** that changes TYPE goes the same path (`fx_swap_test`).
 
 ### Sweeps
@@ -837,9 +879,9 @@ The CPU risk comes first. Each step after step 0 is a mergeable slice with its t
      - **ROOM loop**, the tightest: PRE-DLY, the diffuser, 2 × 2 stages with all four delays gliding and two wobbled, the rotation and 6 fixed taps;
      - **HALL loop:** PRE-DLY, the diffuser, 1 × 4 stages with all four delays gliding and two wobbled, and 6 fixed taps.
    - BLOOM and ECHO are estimated from the measured pair cost, since BLOOM's count equals HALL's.
-   - **Compute the headroom**: 7,000 − 6 × the costliest patch's voice cost − `FxBus::COST`, from `cost_test` and `fx_bus.rs` as they stand (486 default, 176 with `master-tape`, on 2026-10-04's numbers). Run the confirming stress run with QUAD (six admitted voices, every FX, ORBIT and the UI) and record OVER and DROPS.
+   - **Land the `reverb_headroom` test** with QUAD's BUS reading as `QUAD_BUS`, and record the headroom it computes (96 default, 23 with `master-tape`, on 2026-10-04's numbers). Run the stress run with QUAD (six admitted voices, every FX, ORBIT and the UI) and record its OVER, DROPS and peak block load as the reference.
    - **Gate ("sound first"):**
-     - each kernel's excess over the baseline QUAD (its ΔCOST) must fit the headroom;
+     - each kernel's excess over the baseline QUAD (its ΔCOST) must fit the headroom, 96 (23);
      - a kernel over the 485 target is recorded and kept, and the A/B decides;
      - a kernel whose excess would breach the reserve takes its TYPE's fallback design and is benched again before any TYPE work.
 
@@ -869,7 +911,7 @@ Each plan task's review grades quality, efficiency, performance and principled-n
   - No new gesture or page type.
 - **Performance.**
   - Moving reads are costed, kept to five or six per TYPE, and benched on the chip at step 0 before any TYPE work.
-  - Every TYPE aims at QUAD's cost and the estimates meet it. The hard gate is ΔCOST ≤ the cost model's headroom inside the 30 % reserve ("sound first"), and QUAD itself stays ≤ the absolute baseline.
+  - Every TYPE aims at QUAD's cost and the estimates meet it. The hard gates are ΔCOST ≤ the cost model's headroom (96, or 23 with the tape; a test derives it), and the stress run on the unit ("sound first"), and QUAD itself stays ≤ the absolute baseline.
 - **Principled-ness.**
   - The provenance rule is checked per task.
   - Families are graphs, so PLATE is a corner, not a TYPE.
@@ -881,8 +923,8 @@ Each plan task's review grades quality, efficiency, performance and principled-n
 - **A moving pair's real cost** is 17–20 instructions by estimate. Step 0 measures it, and the fallback table covers either end.
 - **BURST density with 12 taps.** Pre-diffusion should make 11 reads sound like the MV2's 47–90. If the A/B says grainy:
   - raise the pre-diffuser's g first (free);
-  - the next step is 14 taps, +2 fixed reads (+10 instructions), still under.
-- **Fixed output taps in ROOM and HALL.** The taps sit at fractions of each line's maximum length, so the early pattern no longer scales with SIZE. The ear decides at A/B whether that matters. Scaling them would cost 6 moving pairs, about 100 instructions over the target. Under "sound first" they come back if the A/B asks for them and the system worst case keeps the reserve.
+  - the next step is 14 taps, +2 fixed reads (+10 instructions, about +19 cycles): BURST stays at or under QUAD, so it fits.
+- **Fixed output taps in ROOM and HALL.** The taps sit at fractions of each line's maximum length, so the early pattern no longer scales with SIZE. The ear decides at A/B whether that matters. Scaling them would cost 6 moving pairs, about 190–225 cycles per output sample over the target. That does not fit the 96 (23) headroom; it would take an owner ruling to give up a voice guarantee.
 - **ROOM is at the limit if a pair costs +10.** Step 0 benches it, and its fallback design is ready (§ CPU budget).
 - **BLOOM's long delay** may echo rather than swell at SWELL 1. The A/B checks it, and the fallback is ready (§ BLOOM engine).
 - **The glide's pitch smear.** It may be too obvious on HALL and BLOOM. Slower τ and slew constants are free; only the time to reach a new SIZE grows.
