@@ -209,6 +209,10 @@ code 23, ident `"TAPE"`, ADR 0055).
   - A host render change never renames a source.
   - The rate is chosen per source.
   - The audio follows #282's dataset rule. None is committed.
+  - **Owner ruling (2026-10-05):** `tapes-v1` is openly licensed
+    recordings plus Chimera's renders. The owner's own recordings come
+    later as new sealed `.SRC` files and new factory Sounds in a later
+    versioned release, with no format change.
 
 ## Alternatives considered
 - **Rename the master stage to `MasterTape`** (the second draft). It

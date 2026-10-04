@@ -511,7 +511,7 @@ A file is capped at 1 MiB, the `put` limit: 29 s at 24 kHz, 87 s at 8 kHz. RAM m
 - **Where the audio comes from,** under #282's dataset rule (Chimera's renders, the owner's recordings, clearly licensed audio; never commercial records):
   1. **Chimera's own renders:** ALGO and MODAL patches rendered offline by the desktop simulator from recipes in `tools/factory-tapes/`.
   2. **CC0 recordings** (Freesound CC0).
-  3. **The owner's own recordings,** if they supply them (owner question 1).
+  3. **The owner's own recordings, later** (owner ruling, 2026-10-05). `tapes-v1` is openly licensed recordings plus Chimera's renders. The owner will record their own samples in time, and they join with **no format change**: each is a new sealed `.SRC` file, with new factory TAPE Sounds in the card library, shipped as the next versioned release (`tapes-v2`, …) beside the earlier files.
 - **The built files are frozen, versioned release assets.** `tapes-v1` is a GitHub release holding every `.SRC`, its manifest (name, CRC, rate, source of the audio) and a zip of the **CC0 originals with each licence text**.
   - The manifest's CRCs are pinned by a test, and factory TAPE Sounds reference them.
   - A change to the host renderer never renames a factory source. The recipes record where a source came from; they aren't re-run to rebuild it.
@@ -650,7 +650,7 @@ TAPE's steps 1–3 can be built on the host beside that, against a boxed arena.
 
 ## Owner questions
 
-1. **The factory set's recordings.** It is built from Chimera's own renders and CC0 audio. Do you want to supply recordings of your own (voice, guitar, a room, a field recording) for it, and if so, which?
+None open. The factory set's recordings were settled by the owner on 2026-10-05: openly licensed recordings and Chimera's renders now, and the owner's own recordings later as new `.SRC` files and Sounds in a later release, with no format change (§ 7).
 
 Settled by precedent or the code, not asked:
 - **#279's four macros are the home page, with SPACE,** as on MODAL's RES. SIZE is on the model page.
