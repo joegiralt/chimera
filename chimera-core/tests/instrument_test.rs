@@ -33,7 +33,10 @@ use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 /// bus's own cost folded in: the smallest `cpu_hz` whose `SampleBudget`
 /// rounds up to at least `FxBus::COST + voice_share` (`for_cpu` truncates).
 const fn budget_for(voice_share: u32) -> SampleBudget {
-    SampleBudget::for_cpu(((FxBus::COST.0 + voice_share) as u64 * 480_000).div_ceil(7) as u32)
+    SampleBudget::for_cpu(
+        ((chimera_core::instrument::Instrument::RESERVED.0 + voice_share) as u64 * 480_000)
+            .div_ceil(7) as u32,
+    )
 }
 
 /// The voices' share before the FX diet (7,000 − 3,310). After the diet
@@ -86,17 +89,13 @@ impl Rig {
     fn rev_v() -> Self {
         Self::with_budget(SampleBudget::for_cpu(CPU_HZ_REV_V))
     }
-    /// Rev V, or with the master tape (where ALGO INIT plays seven since
-    /// ADR 0060) a budget for eight: the pool full of INIT.
+    /// A budget for eight ALGO INIT voices, the pool full of them (rev V
+    /// gives seven since ADR 0091's burst reserve; six with the tape).
     fn full_pool() -> Self {
-        let mut rig = Self::rev_v();
-        if cfg!(feature = "master-tape") {
-            let init = AudioShared::default();
-            let p = &init.parts[0];
-            let voice = chimera_core::dsp::voice::Voice::cost(&p.params, &p.mod_state).0;
-            *rig.inst = Instrument::new(SR, budget_for(8 * voice));
-        }
-        rig
+        let init = AudioShared::default();
+        let p = &init.parts[0];
+        let voice = chimera_core::dsp::voice::Voice::cost(&p.params, &p.mod_state).0;
+        Self::with_budget(budget_for(8 * voice))
     }
 }
 
@@ -462,9 +461,10 @@ fn tails_ring_out_then_free_the_voice() {
     );
 }
 
-/// Six Mono Parts of the costliest factory Sound, MORPH KEYS, spend the
-/// rev V budget with two voices still free: a Poly note on top would go over
-/// it, and every sounding voice is mono, so nothing can be stolen.
+/// Five Mono Parts of the costliest factory Sound, MORPH KEYS, spend the
+/// rev V budget (less ADR 0091's reserve) with three voices still free: a
+/// Poly note on top would go over it, and every sounding voice is mono, so
+/// nothing can be stolen.
 #[test]
 fn refused_notes_are_counted_and_silent() {
     let mut rig = Rig::rev_v();
@@ -473,7 +473,7 @@ fn refused_notes_are_counted_and_silent() {
         *perf.edit(p).sound = chimera_core::factory::factory_sound(7).unwrap();
     }
     let mut shared = AudioShared::from_performance(&perf);
-    for p in 0..MAX_PARTS {
+    for p in 1..MAX_PARTS {
         shared.parts[p].mix.mode = PartMode::Mono;
         rig.inst.handle(on(p as u8, 60), &shared);
     }
@@ -624,7 +624,7 @@ fn a_six_note_tx_epiano_chord_stays_in_budget() {
 
 #[test]
 fn the_test_budget_keeps_the_pre_diet_voice_share() {
-    assert_eq!(BUDGET.as_cost().0, FxBus::COST.0 + VOICE_SHARE);
+    assert_eq!(BUDGET.as_cost().0, Instrument::RESERVED.0 + VOICE_SHARE);
 }
 
 /// ADR 0040: on rev V a light patch (SAW LEAD, 555) plays every voice of the
@@ -647,10 +647,11 @@ fn a_light_patch_plays_every_voice_on_rev_v() {
 }
 
 /// Spec "Done when" and ADR 0040: on rev V the allocator grants the
-/// costliest patch, A16 ∪ A17, six voices: a full-pool chord steals, so six
-/// of its notes sound and none is refused.
+/// costliest patch, A16 ∪ A17, five voices beside ADR 0091's reserve
+/// (six before it): a full-pool chord steals, so five of its notes sound
+/// and none is refused.
 #[test]
-fn the_costliest_patch_plays_six_voices_on_rev_v() {
+fn the_costliest_patch_plays_five_voices_on_rev_v() {
     use chimera_core::dsp::algo::algorithms::AlgoId;
     let mut shared = AudioShared::default();
     let a = &mut shared.parts[0].params.algo;
@@ -665,8 +666,9 @@ fn the_costliest_patch_plays_six_voices_on_rev_v() {
     rig.block(&shared);
     let a = rig.inst.allocator();
     assert_eq!(a.refused(), 0);
-    assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), 6);
-    assert!(a.sounding_cost() + FxBus::COST <= SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost());
+    assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), 5);
+    let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost();
+    assert!(a.sounding_cost() + Instrument::RESERVED <= budget);
 }
 
 /// Recorded when the instrument path landed (plan Task 12). Re-record only
@@ -804,7 +806,7 @@ fn sound_change_mid_chord_stays_in_budget() {
     }
     rig.block(&shared);
     let fits = |p: &ParamSnapshot| {
-        ((budget.as_cost().0 - FxBus::COST.0) / Voice::cost(p, &ModState::new()).0)
+        ((budget.as_cost().0 - Instrument::RESERVED.0) / Voice::cost(p, &ModState::new()).0)
             .min(MAX_VOICES as u32) as usize
     };
     let held = fits(&shared.parts[0].params);
@@ -820,8 +822,8 @@ fn sound_change_mid_chord_stays_in_budget() {
     shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
     rig.block(&shared);
     let a = rig.inst.allocator();
-    assert!(a.sounding_cost() + FxBus::COST <= budget.as_cost());
-    let expected = ((budget.as_cost().0 - FxBus::COST.0)
+    assert!(a.sounding_cost() + Instrument::RESERVED <= budget.as_cost());
+    let expected = ((budget.as_cost().0 - Instrument::RESERVED.0)
         / Voice::cost(
             &ParamSnapshot::for_engine(EngineType::Modal),
             &ModState::new(),
@@ -840,11 +842,11 @@ fn sound_change_mid_chord_stays_in_budget() {
             )));
 }
 
-/// ADR 0040, 0049: eight held INIT notes all sound at rev V's budget;
-/// seven with the master tape (ADR 0055), whose two cycles to spare ADR
-/// 0060's DC blocker took.
+/// ADR 0040, 0049: eight held INIT notes, of which seven sound at rev V's
+/// budget beside ADR 0091's reserve (eight before it); six with the master
+/// tape (ADR 0055).
 #[test]
-fn eight_init_voices_fit_rev_v() {
+fn seven_init_voices_fit_rev_v() {
     let mut rig = Rig::rev_v();
     let shared = AudioShared::default();
     for n in 0..MAX_VOICES as u8 {
@@ -855,11 +857,11 @@ fn eight_init_voices_fit_rev_v() {
     }
     let a = rig.inst.allocator();
     assert_eq!(MAX_VOICES, 8);
-    let want = if cfg!(feature = "master-tape") { 7 } else { 8 };
+    let want = if cfg!(feature = "master-tape") { 6 } else { 7 };
     assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), want);
     let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost();
     assert!(
-        a.sounding_cost() + FxBus::COST <= budget,
+        a.sounding_cost() + Instrument::RESERVED <= budget,
         "{:?}",
         a.sounding_cost()
     );

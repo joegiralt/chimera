@@ -338,11 +338,11 @@ const _: () = assert!(size_of::<OrbitRunner>() <= 1024);
 
 impl OrbitRunner {
     /// Reserved from the voice budget while ORBIT plays, as `FxBus::COST`
-    /// is (ADR 0091): its worst block, the bench's ORBIT row (five rings
-    /// firing at once, MUTATE and GATE 100 %, every note admitted), over
-    /// the block's samples, so a block of it and the voices admitted
-    /// beside it fit the budget.
-    pub const COST: Cost = Cost(1_519); // ORBIT row worst 97,153 (2026-10-04, bench, rev V at 480 MHz, reverb-types 2431fedc; 88,466 at cf50ee74) / 64, rounded up
+    /// is (ADR 0091): its own worst block, the clock, rings, MUTATE,
+    /// harmony, re-snap and view, without the notes it hands the
+    /// `Instrument` (`Instrument::BURST` bills those, as anyone's), over
+    /// the block's samples.
+    pub const COST: Cost = Cost(171); // worst block less its notes' handling, 10,913 (STRESS keys first), measured 2026-10-04, bench ORBIT PHASES, rev V at 480 MHz, 06dd8707; / 64, rounded up
 
     pub fn new(sample_rate: NonZeroU32) -> Self {
         let working = Scene::init();

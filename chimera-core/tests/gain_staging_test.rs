@@ -117,7 +117,8 @@ fn chord(
     // Rev V, or with the master tape (where ALGO INIT plays seven since
     // ADR 0060) a budget for all eight.
     let voice = Voice::cost(&shared.parts[0].params, &shared.parts[0].mod_state).0;
-    let eight = ((FxBus::COST.0 + 8 * voice) as u64 * 480_000).div_ceil(7) as u32;
+    let eight = ((chimera_core::instrument::Instrument::RESERVED.0 + 8 * voice) as u64 * 480_000)
+        .div_ceil(7) as u32;
     let mut inst = Box::new(Instrument::new(
         SAMPLE_RATE,
         SampleBudget::for_cpu(eight.max(CPU_HZ_REV_V)),

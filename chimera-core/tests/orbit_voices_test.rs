@@ -3,7 +3,6 @@
 
 mod common;
 
-use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::hw::SampleBudget;
 use chimera_core::instrument::NoteOrigin;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
@@ -22,7 +21,10 @@ fn ring(i: u8) -> NoteOrigin {
 /// folded in (`instrument_test.rs`), so the pool's eight voices fit with or
 /// without `master-tape`.
 const fn budget_for(voice_share: u32) -> SampleBudget {
-    SampleBudget::for_cpu(((FxBus::COST.0 + voice_share) as u64 * 480_000).div_ceil(7) as u32)
+    SampleBudget::for_cpu(
+        ((chimera_core::instrument::Instrument::RESERVED.0 + voice_share) as u64 * 480_000)
+            .div_ceil(7) as u32,
+    )
 }
 
 /// Room for eight voices of the Parts' default Sounds.
