@@ -40,125 +40,41 @@ const fn k(id: ParamId, label: &'static str) -> RevKnob {
     }
 }
 
-const fn short(id: ParamId, label: &'static str, short: &'static str) -> RevKnob {
-    RevKnob {
-        id,
-        label,
-        short: Some(short),
-        step: TICK,
-    }
-}
-
 use ReverbParams as P;
 
-// Each word once; the panels share them.
 /// QUAD's SIZE ticks one table step (`ring::SIZE_STEPS`).
 static QUAD_SIZE: RevKnob = RevKnob {
     step: 1.0 / 31.0,
     ..k(P::SIZE, "SIZE")
 };
-static SIZE: RevKnob = k(P::SIZE, "SIZE");
-static SWELL: RevKnob = k(P::SIZE, "SWELL");
-static LENGTH: RevKnob = k(P::SIZE, "LENGTH");
 static TIME: RevKnob = k(P::TIME, "TIME");
-static DECAY: RevKnob = k(P::TIME, "DECAY");
-static TAIL: RevKnob = k(P::TIME, "TAIL");
-static REGEN: RevKnob = k(P::TIME, "REGEN");
 static DAMP: RevKnob = k(P::DAMPING, "DAMP");
-static TONE: RevKnob = k(P::TONE, "TONE");
-static DIFFUSE: RevKnob = short(P::DIFFUSE, "DIFFUSE", "DIFF");
-static DENSITY: RevKnob = short(P::DIFFUSE, "DENSITY", "DENS");
-static PRE: RevKnob = short(P::PREDELAY, "PRE-DLY", "PRE");
-static SHAPE: RevKnob = k(P::SHAPE, "SHAPE");
-static CURVE: RevKnob = k(P::SHAPE, "CURVE");
 static SMEAR: RevKnob = k(P::SMEAR, "SMEAR");
 static RATE: RevKnob = k(P::RATE, "RATE");
-static SYNC: RevKnob = k(P::SYNC, "SYNC");
 
-const fn row(main: [&'static RevKnob; 4], more: [Option<&'static RevKnob>; 6]) -> Panel {
-    [
-        Some(main[0]),
-        Some(main[1]),
-        Some(main[2]),
-        Some(main[3]),
-        more[0],
-        more[1],
-        more[2],
-        more[3],
-        more[4],
-        more[5],
-    ]
-}
-
-/// SIZE · TIME · DAMP · SMEAR; MORE: RATE.
-static QUAD: Panel = row(
-    [&QUAD_SIZE, &TIME, &DAMP, &SMEAR],
-    [None, None, None, Some(&RATE), None, None],
-);
-static ROOM: Panel = row(
-    [&SIZE, &DECAY, &TONE, &DIFFUSE],
-    [
-        Some(&PRE),
-        None,
-        Some(&SMEAR),
-        Some(&RATE),
-        Some(&SYNC),
-        None,
-    ],
-);
-static HALL: Panel = row(
-    [&SIZE, &DECAY, &TONE, &DIFFUSE],
-    [
-        Some(&PRE),
-        Some(&DAMP),
-        Some(&SMEAR),
-        Some(&RATE),
-        Some(&SYNC),
-        None,
-    ],
-);
-static BLOOM: Panel = row(
-    [&SWELL, &DECAY, &TONE, &DIFFUSE],
-    [
-        Some(&PRE),
-        None,
-        Some(&SMEAR),
-        Some(&RATE),
-        Some(&SYNC),
-        None,
-    ],
-);
-static GATE: Panel = row(
-    [&LENGTH, &TAIL, &TONE, &DENSITY],
-    [
-        None,
-        Some(&SHAPE),
-        Some(&SMEAR),
-        Some(&RATE),
-        Some(&SYNC),
-        None,
-    ],
-);
-static REVERSE: Panel = row(
-    [&LENGTH, &REGEN, &TONE, &DENSITY],
-    [
-        None,
-        Some(&CURVE),
-        Some(&SMEAR),
-        Some(&RATE),
-        Some(&SYNC),
-        None,
-    ],
-);
+/// SIZE · TIME · DAMP · SMEAR; MORE: RATE. Each other TYPE's panel lands
+/// with its engine (Tasks 8–11).
+static QUAD: Panel = [
+    Some(&QUAD_SIZE),
+    Some(&TIME),
+    Some(&DAMP),
+    Some(&SMEAR),
+    None,
+    None,
+    None,
+    Some(&RATE),
+    None,
+    None,
+];
 
 fn panel(t: ReverbType) -> &'static Panel {
     match t {
-        ReverbType::Quad => &QUAD,
-        ReverbType::Room => &ROOM,
-        ReverbType::Hall => &HALL,
-        ReverbType::Bloom => &BLOOM,
-        ReverbType::Gate => &GATE,
-        ReverbType::Reverse => &REVERSE,
+        ReverbType::Quad
+        | ReverbType::Room
+        | ReverbType::Hall
+        | ReverbType::Bloom
+        | ReverbType::Gate
+        | ReverbType::Reverse => &QUAD,
     }
 }
 
@@ -200,14 +116,6 @@ pub fn label(t: ReverbType, id: ParamId) -> &'static str {
         .map(|c| c.label)
         .or_else(|| find_spec(&REVERB_SPECS, id).map(|s| s.label))
         .unwrap_or("--")
-}
-
-/// The short form of a panel word.
-pub fn short_of(label: &str) -> Option<&'static str> {
-    [&DIFFUSE, &DENSITY, &PRE]
-        .into_iter()
-        .find(|c| c.label == label)
-        .and_then(|c| c.short)
 }
 
 /// One encoder tick of `id` under `p`'s panel.

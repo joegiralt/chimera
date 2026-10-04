@@ -108,7 +108,9 @@ pub(crate) fn fixed(buf: &mut FmtBuf, x: f32, places: u32, unit: &str) {
     let k = 10i32.pow(places);
     let n = libm::roundf(x * k as f32) as i32;
     let sign = if n < 0 { "-" } else { "" };
-    let n = n.abs();
+    // `as` saturates (−inf is `i32::MIN`), whose `abs` would overflow.
+    let n = n.unsigned_abs();
+    let k = k as u32;
     let _ = if places == 0 {
         write!(buf, "{sign}{n}{unit}")
     } else {
@@ -186,7 +188,24 @@ impl core::fmt::Write for FmtBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::FmtBuf;
+    use super::{FmtBuf, fixed};
+
+    /// Out-of-range values saturate, never overflow: ±inf print the
+    /// `i32` ends, NaN prints 0.
+    #[test]
+    fn fixed_saturates() {
+        let at = |x: f32, places| {
+            let mut b = FmtBuf::new();
+            fixed(&mut b, x, places, "ms");
+            b
+        };
+        assert_eq!(at(f32::NEG_INFINITY, 0).as_str(), "-2147483648ms");
+        assert_eq!(at(f32::NEG_INFINITY, 2).as_str(), "-21474836.48ms");
+        assert_eq!(at(f32::INFINITY, 1).as_str(), "214748364.7ms");
+        assert_eq!(at(f32::NAN, 2).as_str(), "0.00ms");
+        assert_eq!(at(-3.6, 1).as_str(), "-3.6ms");
+        assert_eq!(at(0.37, 2).as_str(), "0.37ms");
+    }
     use core::fmt::Write;
 
     /// A multi-byte char straddling the capacity is dropped whole, never

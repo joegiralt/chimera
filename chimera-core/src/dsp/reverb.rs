@@ -374,6 +374,15 @@ impl Block for ReverbParams {
         }
     }
 
+    /// The default's body, out of line: `nudge` and `snap` would each
+    /// inline it, and the twelve-way `write` with it.
+    #[inline(never)]
+    fn set(&mut self, id: ParamId, v: f32) {
+        if let Some(s) = self.spec(id) {
+            self.write(id, s.quantize(v));
+        }
+    }
+
     fn enum_code(&self, id: ParamId) -> Option<u8> {
         match id {
             Self::TYPE => Some(self.kind.disk_code()),

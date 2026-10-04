@@ -38,36 +38,16 @@ fn every_type_shows_its_cells() {
     };
     assert_eq!(main(Quad), s(&["SIZE", "TIME", "DAMP", "SMEAR"]));
     assert_eq!(more(Quad), s(&["-", "-", "-", "RATE", "-", "-"]));
-    assert_eq!(main(Room), s(&["SIZE", "DECAY", "TONE", "DIFFUSE"]));
-    assert_eq!(
-        more(Room),
-        s(&["PRE-DLY", "-", "SMEAR", "RATE", "SYNC", "-"])
-    );
-    assert_eq!(main(Hall), s(&["SIZE", "DECAY", "TONE", "DIFFUSE"]));
-    assert_eq!(
-        more(Hall),
-        s(&["PRE-DLY", "DAMP", "SMEAR", "RATE", "SYNC", "-"])
-    );
-    assert_eq!(main(Gate), s(&["LENGTH", "TAIL", "TONE", "DENSITY"]));
-    assert_eq!(more(Gate), s(&["-", "SHAPE", "SMEAR", "RATE", "SYNC", "-"]));
-    assert_eq!(main(Reverse), s(&["LENGTH", "REGEN", "TONE", "DENSITY"]));
-    assert_eq!(
-        more(Reverse),
-        s(&["-", "CURVE", "SMEAR", "RATE", "SYNC", "-"])
-    );
-    assert_eq!(main(Bloom), s(&["SWELL", "DECAY", "TONE", "DIFFUSE"]));
-    assert_eq!(
-        more(Bloom),
-        s(&["PRE-DLY", "-", "SMEAR", "RATE", "SYNC", "-"])
-    );
+    // Each other TYPE's panel lands with its engine (Tasks 8–11): until
+    // then it is QUAD's, which is what plays.
+    for t in ALL {
+        assert_eq!((main(t), more(t)), (main(Quad), more(Quad)), "{t:?}");
+    }
     // Each label sits on its slot: a cell's id is the spec table's.
     let id = |t, page, k| knob(t, page, k).unwrap().id;
     assert_eq!(id(Quad, RevPage::Main, 0), ReverbParams::SIZE);
     assert_eq!(id(Quad, RevPage::Main, 3), ReverbParams::SMEAR);
-    assert_eq!(id(Gate, RevPage::Main, 1), ReverbParams::TIME);
-    assert_eq!(id(Hall, RevPage::More, 1), ReverbParams::DAMPING);
-    assert_eq!(id(Reverse, RevPage::More, 1), ReverbParams::SHAPE);
-    assert_eq!(id(Bloom, RevPage::More, 4), ReverbParams::SYNC);
+    assert_eq!(id(Quad, RevPage::More, 3), ReverbParams::RATE);
     // REV: TYPE, the panel's four, then MIX on every TYPE.
     for t in ALL {
         let v = |def: &BlockDef, i| view(def, i, &ctx(t));
@@ -90,6 +70,7 @@ fn every_type_shows_its_cells() {
 fn addr(id: ParamId) -> ParamAddr {
     ParamAddr::new(BlockRef::Reverb, id)
 }
+
 #[test]
 fn no_reverb_cell_has_a_hint() {
     for t in ALL {
@@ -104,9 +85,9 @@ fn no_reverb_cell_has_a_hint() {
 
 #[test]
 fn label_follows_the_type() {
-    assert_eq!(label(ReverbType::Room, ParamId(3)), "SIZE");
-    assert_eq!(label(ReverbType::Gate, ParamId(3)), "LENGTH");
-    assert_eq!(label(ReverbType::Reverse, ParamId(1)), "REGEN");
+    // GATE's LENGTH and REVERSE's REGEN arrive with their panels (T8).
+    assert_eq!(label(ReverbType::Quad, ParamId(3)), "SIZE");
+    assert_eq!(label(ReverbType::Quad, ParamId(1)), "TIME");
     assert_eq!(label(ReverbType::Quad, ParamId(6)), "TYPE");
     assert_eq!(label(ReverbType::Quad, ParamId(4)), "MIX");
     // A slot the TYPE lacks still names its spec.

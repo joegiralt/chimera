@@ -429,7 +429,7 @@ git commit -m "GRIT out of the reverb, id 5 retired; SMEAR into QUAD: <re-record
 
 ### Task 6: TYPE, slots, knob maps, panels and pages
 
-> **Scope cut (review of `e932ed5f`, 2026-10-04).** Task 6 ships the slots, codes, `KnobMemory`, `with_type`, the panels as `const` data, REV › MORE, and QUAD's laws and value texts only. Each TYPE's laws move to its engine task (8–11), and SYNC (`with_sync`, `fold`, `Division`, the lists) moves to Task 12, each with its tests below. `Tempo` is BPM, free of the sample rate. A TYPE not yet on screen shows QUAD's panel and plays QUAD.
+> **Scope cut (review of `e932ed5f`, 2026-10-04).** Task 6 ships the slots, codes, `KnobMemory`, `with_type`, REV › MORE, and QUAD's panel, laws and value texts only. Each other TYPE's panel (its words, shorts such as `DIFF`, `DENS` and `PRE`, and `label`'s per-TYPE words) lands with its engine. Each TYPE's laws move to its engine task (8–11), and SYNC (`with_sync`, `fold`, `Division`, the lists) moves to Task 12, each with its tests below. `Tempo` is BPM, free of the sample rate. A TYPE not yet on screen shows QUAD's panel and plays QUAD.
 
 **Files:**
 - Create: `chimera-core/src/ui/reverb_panel.rs`, `chimera-core/tests/reverb_params_test.rs`, `chimera-core/tests/reverb_panel_test.rs`
@@ -604,7 +604,7 @@ git commit -m "Reverb switch: latch, fade out, one-block clear, fade in"
 
 ### Task 8: GATE and REVERSE on the BURST engine (unit check)
 
-> **Owns, moved from Task 6:** GATE's and REVERSE's rows in a `const` `Ranges` table read by one law function, in `dsp::reverb::knobs`; their `EngineKnobs` fields (`tail`, `regen`, `taps`, `shape_db`, the pre-diffuser's g); their value texts; adding them to `types_on_screen`; their rows of `knobs_hit_the_spec_endpoints`, and their NaN rows in `unknown_type_code_and_nan_slots_load_as_safe_quad`.
+> **Owns, moved from Task 6:** its panel in `ui::reverb_panel` (and `View::short`'s reverb words where it brings `DENS`); GATE's and REVERSE's rows in a `const` `Ranges` table read by one law function, in `dsp::reverb::knobs`; their `EngineKnobs` fields (`tail`, `regen`, `taps`, `shape_db`, the pre-diffuser's g); their value texts; adding them to `types_on_screen`; their rows of `knobs_hit_the_spec_endpoints`, and their NaN rows in `unknown_type_code_and_nan_slots_load_as_safe_quad`.
 
 **Files:**
 - Create: `chimera-core/src/dsp/rev/burst.rs`, `chimera-core/tests/reverb_burst_test.rs`
@@ -678,7 +678,7 @@ git commit -m "GATE and REVERSE on the BURST engine"
 
 ### Task 9: ROOM on the LOOP engine (unit check)
 
-> **Owns, moved from Task 6:** ROOM's `Ranges` row (Task 8's table), `tone_hz`, `diffuse_g`, `predelay_ms` and the SMEAR cap (0.72 % of the loop) in `knobs`; its value texts; `types_on_screen`; its rows of `knobs_hit_the_spec_endpoints` and `smear_caps_hold_at_every_size`. Check ROOM's `t_min` floor against its 0.2 s DECAY.
+> **Owns, moved from Task 6:** its panel in `ui::reverb_panel` (and `View::short`'s reverb words where it brings `DENS`); ROOM's `Ranges` row (Task 8's table), `tone_hz`, `diffuse_g`, `predelay_ms` and the SMEAR cap (0.72 % of the loop) in `knobs`; its value texts; `types_on_screen`; its rows of `knobs_hit_the_spec_endpoints` and `smear_caps_hold_at_every_size`. Check ROOM's `t_min` floor against its 0.2 s DECAY.
 
 **Files:**
 - Create: `chimera-core/src/dsp/rev/loop_engine.rs`, `chimera-core/tests/reverb_loop_test.rs`
@@ -742,7 +742,7 @@ git commit -m "ROOM on the LOOP engine"
 
 ### Task 10: HALL and its plate zone (unit check)
 
-> **Owns, moved from Task 6:** HALL's `Ranges` row, its DAMP and SMEAR cap (0.36 %), the plate zone (`plate_pull`, `plate_zone_pulls_diffuse_tone_predelay`), and `PLATE` shown in the SIZE cell's label (not the value, ADR 0085); its value texts; `types_on_screen`.
+> **Owns, moved from Task 6:** its panel in `ui::reverb_panel` (and `View::short`'s reverb words where it brings `DENS`); HALL's `Ranges` row, its DAMP and SMEAR cap (0.36 %), the plate zone (`plate_pull`, `plate_zone_pulls_diffuse_tone_predelay`), and `PLATE` shown in the SIZE cell's label (not the value, ADR 0085); its value texts; `types_on_screen`.
 
 **Files:**
 - Modify:
@@ -795,7 +795,7 @@ git commit -m "HALL and its plate zone; bench kernels retired"
 
 ### Task 11: BLOOM (unit check)
 
-> **Owns, moved from Task 6:** BLOOM's `Ranges` row, its in-loop TONE and SMEAR cap (0.24 %), its value texts, `types_on_screen`, and its rows of the endpoint and cap tests.
+> **Owns, moved from Task 6:** its panel in `ui::reverb_panel` (and `View::short`'s reverb words where it brings `DENS`); BLOOM's `Ranges` row, its in-loop TONE and SMEAR cap (0.24 %), its value texts, `types_on_screen`, and its rows of the endpoint and cap tests.
 
 **Files:**
 - Create: `chimera-core/src/dsp/rev/bloom.rs`, `chimera-core/tests/reverb_bloom_test.rs`
