@@ -28,15 +28,23 @@ impl ReverbArena {
 
     /// `len` f32s over the 2·`len` slots from `offset`, which is even.
     pub fn f32_region(&mut self, offset: usize, len: usize) -> &mut [f32] {
+        self.split(offset, len).1
+    }
+
+    /// The i16 slots below `offset`, the `len` f32s over the 2·`len` slots
+    /// from `offset` (even), and the i16 slots above them: all three at
+    /// once, for an engine that runs lines and a diffuser together.
+    pub fn split(&mut self, offset: usize, len: usize) -> (&mut [i16], &mut [f32], &mut [i16]) {
         assert!(offset.is_multiple_of(2) && offset <= RING_LEN && len <= (RING_LEN - offset) / 2);
+        let (lo, rest) = self.lines.split_at_mut(offset);
+        let (mid, hi) = rest.split_at_mut(2 * len);
         // SAFETY: alignment: the arena is `align(4)` and `offset` is even,
-        // so the region starts on a 4-byte boundary. Bounds: `offset +
-        // 2·len ≤ RING_LEN`, asserted above, so the f32s lie inside
-        // `lines`. Aliasing: `&mut self` is held for the slice's life, so
-        // no i16 view of it is alive. Every bit pattern is a valid f32.
-        unsafe {
-            core::slice::from_raw_parts_mut(self.lines.as_mut_ptr().add(offset).cast::<f32>(), len)
-        }
+        // so `mid` starts on a 4-byte boundary. Bounds: `mid` is exactly
+        // 2·`len` i16s, the size of `len` f32s. Aliasing: `mid` is borrowed
+        // mutably and only this f32 view of it outlives the call; `lo` and
+        // `hi` are disjoint from it. Every bit pattern is a valid f32.
+        let f = unsafe { core::slice::from_raw_parts_mut(mid.as_mut_ptr().cast::<f32>(), len) };
+        (lo, f, hi)
     }
 
     /// Every slot zero: i16 0, and +0.0 in every f32 region.

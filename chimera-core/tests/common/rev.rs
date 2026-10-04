@@ -215,8 +215,12 @@ pub fn settled_peak_hz(x: &[f32]) -> f32 {
 /// The largest normalised autocorrelation of `x` over lags `lags_ms.0` to
 /// `lags_ms.1`, in dB (20·log10 |ρ|).
 pub fn autocorr_peak_db(x: &[f32], lags_ms: (f32, f32)) -> f32 {
-    let lag = |ms: f32| (ms * MS as f32).round() as usize;
     let x: Vec<f64> = x.iter().map(|&s| s as f64).collect();
+    rho_peak_db(&x, lags_ms)
+}
+
+fn rho_peak_db(x: &[f64], lags_ms: (f32, f32)) -> f32 {
+    let lag = |ms: f32| (ms * MS as f32).round() as usize;
     let rho = |k: usize| {
         let (a, b) = (&x[..x.len() - k], &x[k..]);
         let ab: f64 = a.iter().zip(b).map(|(p, q)| p * q).sum();
@@ -227,6 +231,37 @@ pub fn autocorr_peak_db(x: &[f32], lags_ms: (f32, f32)) -> f32 {
         .map(rho)
         .fold(0.0, f64::max);
     (20.0 * most.log10()) as f32
+}
+
+/// `x` less its own order-16 linear prediction (Levinson–Durbin): the
+/// short-term spectrum flattened, so a dark tail no longer correlates at
+/// 1 ms by its colour, while anything longer than 16 samples (an echo) is
+/// left in the residual.
+fn whiten(x: &[f32]) -> Vec<f64> {
+    const P: usize = 16;
+    let x: Vec<f64> = x.iter().map(|&s| s as f64).collect();
+    let r: Vec<f64> = (0..=P)
+        .map(|k| {
+            x[..x.len() - k]
+                .iter()
+                .zip(&x[k..])
+                .map(|(a, b)| a * b)
+                .sum()
+        })
+        .collect();
+    let (mut a, mut e) = (vec![0.0; P + 1], r[0]);
+    a[0] = 1.0;
+    for i in 1..=P {
+        let k = -(0..i).map(|j| a[j] * r[i - j]).sum::<f64>() / e;
+        let prev = a.clone();
+        for j in 1..=i {
+            a[j] = prev[j] + k * prev[i - j];
+        }
+        e *= 1.0 - k * k;
+    }
+    (P..x.len())
+        .map(|n| (0..=P).map(|j| a[j] * x[n - j]).sum())
+        .collect()
 }
 
 /// Zero-crossing frequency over `x`: rising crossings, interpolated.
@@ -296,12 +331,17 @@ pub fn check_settles_on_pitch(r: Render, step: &mut dyn FnMut(usize) -> bool, lo
     );
 }
 
-/// 10 ms windows' energy in dB, less its own least-squares trend.
+/// 10 ms windows' energy in dB, less its own least-squares trend, up to
+/// the first window 60 dB under the loudest.
 fn off_trend_db(x: &[f32]) -> Vec<f64> {
-    let db: Vec<f64> = windows(x, 10 * MS)
+    let mut db: Vec<f64> = windows(x, 10 * MS)
         .iter()
-        .map(|&v| 20.0 * (v as f64).max(1e-12).log10())
+        .map(|&v| 20.0 * (v as f64).log10())
         .collect();
+    let top = db.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    if let Some(end) = db.iter().position(|&d| d < top - 60.0) {
+        db.truncate(end);
+    }
     let n = db.len() as f64;
     let (sx, sy) = ((n - 1.0) * n / 2.0, db.iter().sum::<f64>());
     let sxx: f64 = (0..db.len()).map(|i| (i * i) as f64).sum();
@@ -314,14 +354,14 @@ fn off_trend_db(x: &[f32]) -> Vec<f64> {
         .collect()
 }
 
-/// A tail after a move against a static tail at the end setting: no lag of
-/// 1–10 ms above −20 dB nor more than 3 dB over `fixed`'s, and no 10 ms
-/// window dipping more than 3 dB further below its own decay trend than
-/// `fixed`'s deepest dip.
+/// A tail after a move against a static tail at the end setting: once
+/// each is whitened (`whiten`), no lag of 1–10 ms above −20 dB nor more
+/// than 3 dB over `fixed`'s; and no 10 ms window dipping more than 3 dB
+/// further below its own decay trend than `fixed`'s deepest dip.
 pub fn check_no_slap(moved: &[f32], fixed: &[f32]) {
     let (m, f) = (
-        autocorr_peak_db(moved, (1.0, 10.0)),
-        autocorr_peak_db(fixed, (1.0, 10.0)),
+        rho_peak_db(&whiten(moved), (1.0, 10.0)),
+        rho_peak_db(&whiten(fixed), (1.0, 10.0)),
     );
     assert!(m <= -20.0, "slap: autocorrelation {m} dB");
     assert!(m <= f + 3.0, "slap: autocorrelation {m} dB, static {f} dB");
@@ -335,10 +375,9 @@ pub fn check_no_slap(moved: &[f32], fixed: &[f32]) {
     }
 }
 
-/// At WOBBLE 1 and RATE 1 (2 Hz), set by the caller: a 1 kHz sine for
-/// 0.5 s circulates; from 1.5 s, every `loop_s` pass is within ±25 cents
-/// of the tail's mean pitch, and each 0.5 s LFO cycle's mean within ±1.
-pub fn check_wobble_bound(r: Render, loop_s: f32) {
+/// The tail `check_wobble_bound` judges: a 1 kHz sine for 0.5 s, then
+/// from 1.5 s to 5.5 s, cut where it falls 60 dB, in whole 0.5 s cycles.
+fn wobble_tail(r: Render) -> Vec<f32> {
     let sine = tone(1_000.0, 0.25);
     let (l, _) = run(
         r,
@@ -359,15 +398,28 @@ pub fn check_wobble_bound(r: Render, loop_s: f32) {
         "the tail dies in {} ms",
         tail.len() / MS
     );
-    let tail = &tail[..tail.len() / cycle * cycle];
-    let f_ref = zc_hz(tail).expect("a tail");
-    let passes = pitch_per_pass_cents(tail, f_ref as f32, loop_s);
+    tail[..tail.len() / cycle * cycle].to_vec()
+}
+
+/// The pitch `check_wobble_bound` judges against: the same engine's tail
+/// at WOBBLE 0, from zero crossings.
+pub fn tail_pitch_hz(r: Render) -> f32 {
+    zc_hz(&wobble_tail(r)).expect("a tail") as f32
+}
+
+/// At WOBBLE 1 and RATE 1 (2 Hz), set by the caller: a 1 kHz sine for
+/// 0.5 s circulates; from 1.5 s, every `loop_s` pass is within ±25 cents
+/// of `f_ref` (`tail_pitch_hz` at WOBBLE 0), and each 0.5 s LFO cycle's
+/// mean within ±1 cent of it: no drift and no offset.
+pub fn check_wobble_bound(r: Render, loop_s: f32, f_ref: f32) {
+    let tail = wobble_tail(r);
+    let passes = pitch_per_pass_cents(&tail, f_ref, loop_s);
     assert!(!passes.is_empty());
     for (i, c) in passes.iter().enumerate() {
         assert!(c.abs() <= 25.0, "pass {i}: {c} cents");
     }
-    for (i, w) in tail.chunks_exact(cycle).enumerate() {
-        let c = cents(zc_hz(w).expect("a cycle"), f_ref);
+    for (i, w) in tail.as_chunks::<{ SR as usize / 2 }>().0.iter().enumerate() {
+        let c = cents(zc_hz(w).expect("a cycle"), f_ref as f64);
         assert!(c.abs() <= 1.0, "LFO cycle {i}: mean {c} cents");
     }
 }

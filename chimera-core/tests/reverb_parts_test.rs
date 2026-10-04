@@ -11,10 +11,13 @@ use chimera_core::dsp::ring::RING_LEN;
 use chimera_hal::BLOCK_SIZE;
 use common::SR;
 use common::rev::{
-    check_knobs_ease, check_level_plan, check_no_slap, check_noise_and_loudness, corr, rt60_t20,
-    settled_peak_hz, thd,
+    autocorr_peak_db, check_knobs_ease, check_level_plan, check_no_slap, check_noise_and_loudness,
+    check_settles_on_pitch, check_wobble_bound, corr, rt60_t20, settled_peak_hz, tail_pitch_hz,
+    thd,
 };
+use std::cell::RefCell;
 use std::f64::consts::TAU;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 struct Noise(u32);
 
@@ -300,16 +303,206 @@ fn the_shared_checks_pass_a_plain_delay() {
     check_knobs_ease(&mut a, &[ParamId(6)], &mut |_, _| {});
 }
 
+/// One second of decaying noise, `dark` through two one-poles at 500 Hz.
+fn tail(seed: u32, dark: bool) -> Vec<f32> {
+    let (mut n, mut a, mut b) = (Noise(seed), 0.0f32, 0.0f32);
+    let k = if dark {
+        one_pole(500.0, SR as f32)
+    } else {
+        1.0
+    };
+    (0..SR as usize)
+        .map(|i| {
+            a += k * (n.next() - a);
+            b += k * (a - b);
+            b * (-3.0 * i as f32 / SR as f32).exp()
+        })
+        .collect()
+}
+
+fn with_echo(x: &[f32]) -> Vec<f32> {
+    (0..x.len())
+        .map(|i| x[i] + if i >= 240 { 0.7 * x[i - 240] } else { 0.0 })
+        .collect()
+}
+
 #[test]
-fn no_slap_passes_a_plain_tail_and_catches_an_echo() {
-    let mut n = Noise(31);
-    let tail: Vec<f32> = (0..SR as usize)
-        .map(|i| n.next() * (-3.0 * i as f32 / SR as f32).exp())
-        .collect();
-    check_no_slap(&tail, &tail);
-    let echo: Vec<f32> = (0..tail.len())
-        .map(|i| tail[i] + if i >= 240 { 0.7 * tail[i - 240] } else { 0.0 })
-        .collect();
-    let caught = std::panic::catch_unwind(|| check_no_slap(&echo, &tail));
-    assert!(caught.is_err(), "a 5 ms echo passes");
+fn no_slap_passes_plain_and_dark_tails_and_catches_an_echo() {
+    for dark in [false, true] {
+        let (moved, fixed) = (tail(31, dark), tail(77, dark));
+        check_no_slap(&moved, &fixed);
+        let caught = catch_unwind(|| check_no_slap(&with_echo(&moved), &fixed));
+        assert!(caught.is_err(), "dark {dark}: a 5 ms echo passes");
+    }
+    // Unwhitened, the dark tail's colour alone reads as a slap.
+    assert!(autocorr_peak_db(&tail(31, true), (1.0, 10.0)) > -20.0);
+}
+
+/// A test feedback comb at the bus rate: one i16 line, gain 0.9, read
+/// `len` back. A new `target` crossfades there in steps of ≤ 240 samples,
+/// or with `glide` slides there at 1,200 samples a second. `depth` moves
+/// the read by a 2 Hz `Wobble`; the output is two-poled by `dark` (a
+/// one-pole's own second difference is white) and
+/// scaled by `level`, eased or not.
+struct Comb {
+    line: Vec<i16>,
+    head: usize,
+    xf: Xfade,
+    target: u16,
+    glide: Option<f32>,
+    wob: Wobble,
+    w: f32,
+    depth: f32,
+    level: f32,
+    gain: Ease,
+    ease: bool,
+    dark: f32,
+    lp: [f32; 2],
+}
+
+impl Comb {
+    fn new(len: u16) -> Self {
+        let (mut xf, mut wob) = (Xfade::default(), Wobble::default());
+        (xf.from, xf.to) = (len, len);
+        wob.set_rate(2.0, 24_000.0);
+        let line = vec![0; 6_100];
+        Comb {
+            line,
+            head: 0,
+            xf,
+            target: len,
+            glide: None,
+            wob,
+            w: 0.0,
+            depth: 0.0,
+            level: 1.0,
+            gain: Ease::default(),
+            ease: true,
+            dark: 1.0,
+            lp: [0.0; 2],
+        }
+    }
+
+    fn moving(&self) -> bool {
+        self.glide
+            .map_or(self.xf.busy() || self.xf.to != self.target, |d| {
+                d < self.target as f32
+            })
+    }
+
+    fn block(&mut self, send: &[f32; BLOCK_SIZE]) -> [f32; BLOCK_SIZE] {
+        let w1 = self.wob.block()[0];
+        let w0 = core::mem::replace(&mut self.w, w1);
+        let (g0, g1) = match self.ease {
+            true => self.gain.step(self.level, ease_k(0.02)),
+            false => (self.level, self.level),
+        };
+        core::array::from_fn(|k| {
+            let f = k as f32 / BLOCK_SIZE as f32;
+            let m = self.depth * (w0 + f * (w1 - w0));
+            let rd = |d: f32| pair(&self.line, self.head, d) / 8192.0;
+            let fb = if let Some(d) = self.glide {
+                self.glide = Some((d + 0.025).min(self.target as f32));
+                rd(d + m)
+            } else {
+                let (wt, from, to) = (self.xf.weight(), self.xf.from as f32, self.xf.to as f32);
+                let y = (1.0 - wt) * rd(from + m) + wt * rd(to + m);
+                self.xf.tick();
+                if !self.xf.busy() && self.xf.to != self.target {
+                    let to = self.xf.to;
+                    self.xf.start(to + (self.target - to).min(240));
+                }
+                y
+            };
+            let y = 0.5 * send[k] + 0.9 * fb;
+            self.line[self.head] = store_round(y * 8192.0);
+            self.head = (self.head + 1) % self.line.len();
+            self.lp[0] += self.dark * (y - self.lp[0]);
+            self.lp[1] += self.dark * (self.lp[0] - self.lp[1]);
+            self.lp[1] * (g0 + f * (g1 - g0))
+        })
+    }
+}
+
+/// `c` as a `Render`, mono on both sides.
+fn render(
+    c: &RefCell<Comb>,
+) -> impl FnMut(&[f32; BLOCK_SIZE]) -> ([f32; BLOCK_SIZE], [f32; BLOCK_SIZE]) + '_ {
+    |send| {
+        let y = c.borrow_mut().block(send);
+        (y, y)
+    }
+}
+
+/// The comb's 100 → 125 ms move, starting as the sine stops.
+fn settles(glide: bool) {
+    let c = RefCell::new(Comb::new(4_800));
+    if glide {
+        c.borrow_mut().glide = Some(4_800.0);
+    }
+    let mut step = |b: usize| {
+        if b == common::rev::blocks(0.5) {
+            c.borrow_mut().target = 6_000;
+        }
+        c.borrow().moving()
+    };
+    check_settles_on_pitch(&mut render(&c), &mut step, 0.125);
+}
+
+#[test]
+fn a_crossfaded_move_settles_on_pitch_and_a_glide_does_not() {
+    settles(false);
+    let caught = catch_unwind(|| settles(true));
+    assert!(caught.is_err(), "a glide re-pitches the tail and passes");
+}
+
+#[test]
+fn the_wobble_bound_holds_on_the_comb_and_catches_an_offset() {
+    let still = RefCell::new(Comb::new(4_800));
+    let f_ref = tail_pitch_hz(&mut render(&still));
+    let wobbled = || {
+        let c = RefCell::new(Comb::new(4_800));
+        c.borrow_mut().depth = 30.0;
+        c
+    };
+    let c = wobbled();
+    check_wobble_bound(&mut render(&c), 0.1, f_ref);
+    let c = wobbled();
+    let sharp = f_ref * 2f32.powf(5.0 / 1_200.0);
+    let caught = catch_unwind(AssertUnwindSafe(|| {
+        check_wobble_bound(&mut render(&c), 0.1, sharp)
+    }));
+    assert!(caught.is_err(), "a 5-cent offset passes");
+}
+
+#[test]
+fn knobs_ease_passes_an_eased_gain_and_catches_a_snapped_one() {
+    for ease in [true, false] {
+        let c = RefCell::new(Comb::new(480));
+        (c.borrow_mut().dark, c.borrow_mut().ease) = (one_pole(100.0, SR as f32), ease);
+        let mut set = |_: ParamId, v: f32| c.borrow_mut().level = 0.8 + 0.2 * v;
+        let mut r = render(&c);
+        let run = catch_unwind(AssertUnwindSafe(|| {
+            check_knobs_ease(&mut r, &[ParamId(6)], &mut set)
+        }));
+        assert_eq!(run.is_ok(), ease, "eased {ease}");
+    }
+}
+
+#[test]
+fn split_holds_lines_and_a_region_at_once() {
+    let mut a = Box::new(ReverbArena::new());
+    let (lo, f, hi) = a.split(100, 50);
+    assert_eq!((lo.len(), f.len(), hi.len()), (100, 50, RING_LEN - 200));
+    lo[99] = 5;
+    f[0] = 1.5;
+    f[49] = -2.5;
+    hi[0] = 9;
+    assert_eq!(a.f32_region(100, 50)[0], 1.5);
+    assert_eq!(a.f32_region(100, 50)[49], -2.5);
+    assert_eq!((a.lines()[99], a.lines()[200]), (5, 9));
+    let odd = catch_unwind(AssertUnwindSafe(|| {
+        a.split(3, 1);
+    }));
+    assert!(odd.is_err());
 }

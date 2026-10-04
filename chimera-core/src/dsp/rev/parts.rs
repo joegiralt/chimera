@@ -121,8 +121,10 @@ impl Wobble {
 }
 
 /// sin(2π·`t`), `t` in −1..1, to under 4e-6: folded to a quarter turn,
-/// then Taylor to the 9th power. `fast_sin_turns`' table errs 5e-4 near
-/// a half turn and the parabola 1e-3, against the lerp's 1e-4 budget.
+/// then Taylor to the 9th power. Not `fast_sin_turns`: `SINE_LUT` is built
+/// by a Taylor series over ±π with no quarter-wave fold, so its entries
+/// err up to 5e-4 near a half turn, past the lerp's 1e-4 budget. Goes
+/// when private issue #352 fixes the table.
 #[inline(always)]
 fn sin_turn(t: f32) -> f32 {
     let mut x = t - (t as i32) as f32;
