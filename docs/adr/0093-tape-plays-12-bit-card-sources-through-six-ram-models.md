@@ -75,8 +75,8 @@ code 23, ident `"TAPE"`, ADR 0055).
     landing the last near 58 ms, and wow adds up to 33 cents of speed.
     The lone-note estimate (35 ms, 1 024 frames, 18 576 B an instrument,
     six Parts about 75 % with NEW) is an estimate, not a promise.
-  - At about 3.5 MB, a zone set is past `put`'s 1 MiB. It needs a chunked,
-    resumable `put` (256 KiB chunks, each with its own CRC and deadline,
+  - At about 3.5 MB, a zone set is past `put`'s 1 MiB. It needs ADR 0094's
+    chunked `put` made resumable (256 KiB chunks, each with its own CRC and deadline,
     resumed from the unsealed file's length, sealed when whole), under its
     own future ADR, before TRON ships.
   - Six TRON Parts are six sources, so `MAX_SOURCES` = 32 and the `u32`
@@ -194,14 +194,17 @@ code 23, ident `"TAPE"`, ADR 0055).
   - TPDF dither, then `pack12` and `write_source`.
 
   The firmware links no importer, dither or resampler.
-- **The USB `put` extension is a dependency,** under its own ADR (ADR 0092
-  says so):
+- **The USB `put` extension is a dependency.** `put` as merged (ADR 0092,
+  #361) takes project files only. Sources come with ADR 0094, built as the
+  TAPE plan's Task 18:
   - a `/CHIMERA/TAPES/XXXXXXXX.SRC` path class;
   - a streaming `SourceCheck` (the CRC must equal the stem);
   - `write_source`'s rules: `OK PRESENT` for a sealed, verified file; a
     torn file replaced; `ERR put: damaged` for a sealed, failing one;
     sealing only after verifying;
-  - 1 MiB at most, with a deadline that scales with the size.
+  - 1 MiB at most, sent in 256 KiB chunks, each with its own CRC and 30 s
+    deadline; a failure deletes the unsealed file, and a re-run retries.
+    Resume is TRON's.
 - **The factory set:** about 24 sources and four transwaves, about 1 MB.
   - It is frozen as **versioned release assets** (`tapes-v1`): the `.SRC`
     files, a manifest with pinned CRCs, and the CC0 originals with their

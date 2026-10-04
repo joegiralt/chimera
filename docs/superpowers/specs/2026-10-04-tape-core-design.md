@@ -4,7 +4,7 @@ Status: draft for owner review (2026-10-04), revised the same day after two adve
 
 It builds on:
 - the sound pool budget (private issue #337): ADR 0087, ADR 0090 and the plan at `sound-pool-budget` 4b7ac2c1, all unmerged;
-- the USB `put` of ADR 0092 (`console-put`), extended to sources;
+- the USB `put` of ADR 0092, merged in #361 (project files only), extended to sources by ADR 0094 (TAPE plan Task 18);
 - billing per ADR 0091 (`orbit-budget`).
 
 TRON, the streamed model, is the second sub-project. RESAMPLE and PROCESS (MELLOW, SMEAR, AGE, neural: private issue #282) come after it. Neither is specified here. § 8 decides what they need now, before any format freezes.
@@ -70,7 +70,7 @@ Sources:
   - a 16 GB card.
 
   That is about 10 streams at 24 kHz/12-bit with margin. Under load the UI loop runs 22–26 ms a pass (stress test, 2026-10-02).
-- **USB `put` (ADR 0092, unmerged):** project files only, at most 1 MiB, written through an A/B save, with a 30 s deadline.
+- **USB `put` (ADR 0092, merged in #361):** project files only (`/CHIMERA/PROJECTS/`), at most 1 MiB, written through an A/B save, with a 30 s deadline. It takes no source today.
 
 ## 1. Sources
 
@@ -479,9 +479,9 @@ Host estimates, in the house manner (instructions × 1.46 × 1.1, as `ModalEngin
 8. **Report:** the name, rate, frames, seconds, root, period or `UNPITCHED`, the cost on the meter, any `smpl` loop as a suggested POSITION and SIZE, and a warning if it won't fit beside NEW.
 9. **Send:** `just put-tape <file>` runs `chimera-usb.py put <file> /CHIMERA/TAPES/`.
 
-A file is capped at 1 MiB, the `put` limit: 29 s at 24 kHz, 87 s at 8 kHz. RAM models use only what fits the arena. A TRON zone set is larger (12 zones × 8 s at 24 kHz is about 3.5 MB), so it needs the chunked `put` below; this core doesn't send one.
+A file is capped at 1 MiB, the `put` limit: 29 s at 24 kHz, 87 s at 8 kHz. RAM models use only what fits the arena. A TRON zone set is larger (12 zones × 8 s at 24 kHz is about 3.5 MB), so it needs the resumable `put` below; this core doesn't send one.
 
-**What TAPE needs from the USB `put` (ADR 0092), as a dependency.** It is built as ADR 0092's extension, under its own ADR (0092 § Consequences says so):
+**What TAPE needs from the USB `put` (ADR 0092), as a dependency.** `put` as merged (#361) takes project files only. Sources come with ADR 0094, ADR 0092's extension, built as TAPE plan Task 18 (`docs/superpowers/plans/2026-10-05-tape-core.md`):
 - **A second path class:** `/CHIMERA/TAPES/XXXXXXXX.SRC`, eight hex digits, any case. `ls` takes `tapes`.
 - **A streaming `SourceCheck`** in place of `ProjectCheck`: the header's kind is `Source`; the `SourceHead`'s frames match the data; the CRC over the structure and data equals the stem. It refuses before writing, as a project's header is refused today.
 - **`write_source`'s rules, not A/B:**
@@ -490,13 +490,8 @@ A file is capped at 1 MiB, the `put` limit: 29 s at 24 kHz, 87 s at 8 kHz. RAM m
   - a sealed file that fails its check answers `ERR put: damaged`, is never rewritten, and reads as missing (card cleanup is #267);
   - a failed `put` deletes its unsealed file;
   - only a verified file is sealed.
-- **The limit stays 1 MiB** for this core. The deadline scales with size: 30 s plus 30 s a MiB, measured on the unit when built.
-- **A chunked, resumable `put` for TRON,** a further dependency under its own future ADR, before TRON ships:
-  - `put <path> <size> <crc32>` opens a source of any size up to 8 MiB, unsealed;
-  - the data goes in 256 KiB chunks, each with its own CRC and its own 30 s deadline;
-  - a broken transfer resumes with `put <path> <size> <crc32> resume`, which answers the bytes already on the card (the unsealed file's length, checked against the chunks' CRCs) and continues from there;
-  - only when the whole file verifies is it sealed;
-  - an abandoned unsealed file is a torn one, and `write_source`'s rule replaces it.
+- **Chunked from the start** (owner, 2026-10-05): `put <path> <size> <crc32>`, the data in 256 KiB chunks, each ending with its own CRC and under its own 30 s deadline. The core's limit is 1 MiB. A failure deletes the unsealed file, and a re-run is the retry.
+- **Resume, and zone sets, for TRON,** under a later ADR before TRON ships: `put <path> <size> <crc32> resume` answers the bytes already on the card (the unsealed file's length, checked against the chunks' CRCs) and continues from there, with a `Store` append and an 8 MiB limit. The core reserves the word and refuses it. An abandoned unsealed file is a torn one, and `write_source`'s rule replaces it.
 
 ## 7. The factory set
 
