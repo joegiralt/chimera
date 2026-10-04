@@ -633,6 +633,18 @@ pub fn run(
         show_routing(rec, page, labels, counts);
         hold(clocks);
     }
+    memory_pages(&mut rig, rec, clocks, proj_crc);
+}
+
+/// The MEMORY and ORBIT PHASES screens: out of `run`, so its frame stays
+/// under the stack check's 8 KB.
+#[inline(never)]
+fn memory_pages(
+    rig: &mut Rig<'_>,
+    rec: &mut Recorder<'_, impl ChimeraDisplay>,
+    clocks: Clocks,
+    proj_crc: u32,
+) {
     let rebuild = time_rebuild();
     // A4 after A4, the default Sound: the lines clear a loop each.
     let sym = |p: &mut PartAudio| modal(p, ResonatorMode::Sympathetic);
