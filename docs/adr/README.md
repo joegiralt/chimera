@@ -22,7 +22,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0014](0014-audio-memory-map.md) | Voices in D2, FX bus in AXI; buffers sized to the range they serve | Accepted; 16-bit-line rejection and FX totals superseded in part by 0028; string sizing by [0040](0040-eight-voices-modal-strings-to-g1.md) |
 | [0015](0015-voice-steal-and-fx-returns.md) | Steal released voices first; FX sends return wet only | Accepted; mono-return clause superseded in part by 0029 |
 | [0016](0016-visual-direction-refined-elektron.md) | Visual direction: refined Elektron | Accepted; outline-box rule superseded in part by [0041](0041-mod-matrix-amount-grid.md) |
-| [0017](0017-prime-status-feedback.md) | MIX+PLUS reports its outcome in place, until the next input | Accepted |
+| [0017](0017-prime-status-feedback.md) | MIX+PLUS reports its outcome in place, until the next input | Accepted; hint text superseded by [0086](0086-every-gesture-shows-a-contextual-hint-in-the-focus-band.md) |
 | [0018](0018-fm-alg4-follows-tx81z.md) | FM algorithm 4 follows the TX81Z, not p81z | Superseded by 0022 |
 | [0019](0019-note-input-per-source-queues.md) | One parser and one single-producer queue per note source | Accepted |
 | [0020](0020-audio-clocking-and-output.md) | Clock the chip by silicon revision; derive the cycle budget from it | Accepted; DTCM stack clause superseded in part by 0025 |
@@ -48,7 +48,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0040](0040-eight-voices-modal-strings-to-g1.md) | Eight voices in D2; Modal strings sized to G1 (supersedes in part 0014 and 0031) | Accepted; line length superseded in part by [0056](0056-modal-resonators-share-four-macros.md) |
 | [0041](0041-mod-matrix-amount-grid.md) | The mod matrix is an amount grid of outlined cells (supersedes in part 0016) | Accepted |
 | [0042](0042-voice-pitch-is-a-matrix-destination.md) | Voice pitch is a matrix destination on each engine's PITCH page | Accepted; `ModalEngine::PITCH` superseded in part by [0056](0056-modal-resonators-share-four-macros.md) |
-| [0043](0043-projects-own-their-sounds.md) | Projects own their sounds; marks are derived; one typed replace guard | Proposed |
+| [0043](0043-projects-own-their-sounds.md) | Projects own their sounds; marks are derived; one typed replace guard | Proposed; template amended by [0073](0073-new-plays-the-sparse-groove-on-factory-sounds.md) |
 | [0044](0044-one-ladder-one-button-map.md) | One ladder and one button map for Parts, the mixer and ORBIT (absorbs 0057; amended by 0066 for SETTINGS) | Proposed |
 | [0045](0045-card-format.md) | Store cards in 8.3 A/B files of versioned TLV records | Accepted; load staging superseded in part by [0046](0046-project-load-protocol.md) |
 | [0046](0046-project-load-protocol.md) | Swap projects by epoch: fade the voices, then publish (supersedes in part [0045](0045-card-format.md)) | Proposed |
@@ -75,3 +75,18 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0068](0068-usb-console.md) | Read the unit over a polled USB CDC-ACM console | Proposed |
 | [0069](0069-transpose-staff-glyph.md) | TRANSPOSE takes STAFF: a note on a three-line staff (amends 0067) | Proposed |
 | [0070](0070-wave-scope-glyph.md) | WAVE takes a scope traced from its own table (amends 0067) | Proposed |
+| [0071](0071-orbit-runs-on-the-audio-thread.md) | ORBIT runs on the audio thread, block-accurate; the engine owns the drift, transport acts on edges | Proposed; edge rule amended by [0080](0080-sync-int-or-ext-a-daw-drives-orbits-transport.md); superseded in part by [0082](0082-orbit-command-channel.md) |
+| [0072](0072-orbit-follows-one-midi-clock.md) | ORBIT follows one MIDI clock through the note queues: ticks are places, the time between a guess, never back, never skipped | Proposed; transport amended by [0080](0080-sync-int-or-ext-a-daw-drives-orbits-transport.md) |
+| [0073](0073-new-plays-the-sparse-groove-on-factory-sounds.md) | NEW plays the sparse groove on factory Sounds (amends 0043's template) | Proposed |
+| [0074](0074-notes-edits-by-chip-clear-rolls-in-key.md) | Edit a ring's notes by chip; MIX + CLEAR up resets, down rolls in key | Proposed; CLEAR's focus amended by [0086](0086-every-gesture-shows-a-contextual-hint-in-the-focus-band.md) |
+| [0075](0075-capture-is-armed-once-and-taken-once.md) | A capture is armed once and taken once; a STEP ring's spans key-ups | Proposed; superseded in part by [0082](0082-orbit-command-channel.md) |
+| [0076](0076-live-keys-snap-per-part-held-keys-glide.md) | Live keys snap per Part in the Instrument; a held key re-snaps from its raw key on the pitch path | Proposed |
+| [0077](0077-scenes-land-by-generation-saves-are-witnessed.md) | A scene switch lands by its generation; SAVE OVER is witnessed when it asks | Proposed; superseded in part by [0082](0082-orbit-command-channel.md); amended by [0083](0083-a-scene-keeps-its-edits-across-switches.md) |
+| [0078](0078-orbit-saves-after-the-parts-and-loads-what-it-can.md) | ORBIT saves after the six Parts, and a load takes what it can | Proposed |
+| [0079](0079-orbs-four-cells-mirror-key-scale-bars-and-scene.md) | ORB's four cells: KEY, SCALE, BARS and SCENE (amended: ORB the frame, CHRD the progression) | Proposed; amended by [0084](0084-edit-on-orb-always-opens-custom-rings-show-their-part.md) |
+| [0080](0080-sync-int-or-ext-a-daw-drives-orbits-transport.md) | SYNC picks ORBIT's master: INT runs free, EXT lets a DAW drive the transport; stored in SYSTEM (amends 0071, 0072) | Proposed; amended by [0082](0082-orbit-command-channel.md) |
+| [0081](0081-one-d-pad-on-every-chain.md) | One D-pad on every chain: SEQ up, EDIT down with wrap, MINUS and PLUS along (supersedes the SEQ tap of 0044 and 0066) | Proposed; browser hints amended by [0086](0086-every-gesture-shows-a-contextual-hint-in-the-focus-band.md) |
+| [0082](0082-orbit-command-channel.md) | ORBIT's UI and runner talk through one sequenced command log and one ack (supersedes parts of 0071, 0075, 0077; amends 0080) | Proposed |
+| [0083](0083-a-scene-keeps-its-edits-across-switches.md) | A scene keeps its edits across switches; drift restarts (amends 0077) | Proposed |
+| [0084](0084-edit-on-orb-always-opens-custom-rings-show-their-part.md) | EDIT on ORB always opens CUSTOM, a named scale made CUSTOM by the first toggle; each ring shows its Part on ORB (amends 0079) | Proposed |
+| [0086](0086-every-gesture-shows-a-contextual-hint-in-the-focus-band.md) | Every gesture shows a contextual hint in the focus band, one shared component, HINTS ON/OFF in THEME (amends 0074, 0081; supersedes 0017's hint text) | Proposed |

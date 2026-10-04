@@ -1,5 +1,6 @@
 //! The generated wave tables (ADR 0023).
 
+use super::math::clampf;
 use core::mem::MaybeUninit;
 use core::ptr;
 use core::sync::atomic::{AtomicPtr, Ordering};
@@ -114,6 +115,6 @@ pub fn mip_step(from: f32, to: f32) -> (usize, f32, f32) {
     } else {
         floor.saturating_sub(1)
     };
-    let to = to.clamp(lo as f32, lo as f32 + 1.0);
+    let to = clampf(to, lo as f32, lo as f32 + 1.0);
     (lo, from - lo as f32, to - lo as f32)
 }

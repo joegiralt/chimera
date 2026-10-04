@@ -39,6 +39,9 @@ fn every_part_slot_resolves_to_a_spec() {
                 SlotBinding::Legacy { .. } => {
                     panic!("{} slot {i}: Part pages must not be Legacy", def.name)
                 }
+                SlotBinding::SelectedRing(_) | SlotBinding::Orbit(_) => {
+                    panic!("{} slot {i}: an ORBIT cell on a Part page", def.name)
+                }
             }
         }
     }
@@ -94,7 +97,7 @@ fn block_def_ids_are_unique() {
 #[test]
 fn all_chains_holds_every_reachable_chain() {
     use chimera_core::project::PartId;
-    use chimera_core::ui::nav::{Location, MixPage, NavCtx, chain_def_for};
+    use chimera_core::ui::nav::{Location, MixPage, NavCtx, OrbitCx, chain_def_for};
     use chimera_core::ui::settings::{Kind, rows};
     fn leaves(path: &mut Vec<u8>, out: &mut Vec<Location>) {
         for (i, r) in rows(path).iter().enumerate() {
@@ -126,6 +129,7 @@ fn all_chains_holds_every_reachable_chain() {
         let cx = NavCtx {
             engines: [engine; 6],
             dyn_rows: 0,
+            orbit: OrbitCx::NONE,
         };
         let (chain, _) = l.page(&cx).unwrap();
         assert!(

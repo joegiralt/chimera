@@ -1,0 +1,6 @@
+# f32::clamp's debug assert formats its bounds, which links core's float
+# formatting (~21 KB) into the firmware; dsp::clampf never panics.
+disallowed-methods = [
+    { path = "f32::clamp", reason = "links float formatting; use chimera_core::dsp::clampf" },
+    { path = "f64::clamp", reason = "links float formatting; use chimera_core::dsp::clampf" },
+]

@@ -28,6 +28,13 @@ impl FmtBuf {
     pub fn clear(&mut self) {
         self.pos = 0;
     }
+
+    /// `args` written out, cut at 32 bytes.
+    pub fn of(args: core::fmt::Arguments<'_>) -> Self {
+        let mut b = Self::new();
+        let _ = core::fmt::Write::write_fmt(&mut b, args);
+        b
+    }
 }
 
 use crate::ui::page::ValFmt;
@@ -86,6 +93,11 @@ pub fn fmt_val(buf: &mut FmtBuf, val: f32, fmt: ValFmt) {
             }
         }
         ValFmt::Law(law) => fmt_law(buf, val, law),
+        ValFmt::Bpm => {
+            use crate::orbit::clock::Bpm;
+            let span = (Bpm::MAX - Bpm::MIN) as f32;
+            let _ = write!(buf, "{}", Bpm::MIN + libm::roundf(val * span) as u16);
+        }
     }
 }
 

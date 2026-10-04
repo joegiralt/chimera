@@ -18,8 +18,9 @@ pub mod test_support;
 pub use codec::{ProjectCheck, ProjectDecoder, encode_new_project, encode_project, project_crc};
 pub use guard::{
     Confirmed, DeleteTarget, NeedsConfirm, OverwriteTarget, Pending, ProjectSource, Prompt,
-    ReplaceGuard, Seen, Target, Witnessed,
+    ReplaceGuard, SceneAsk, SceneSlot, Seen, Target, Witnessed,
 };
+pub(crate) use ids::bounded_index;
 pub use ids::{PartId, PartSet, SlotId};
 pub use marks::{
     ActionGone, PartAction, PartActionKind, PartActions, PartStatus, ProjectStatus, StatusCache,
@@ -35,10 +36,11 @@ pub use store::{
     project_file, save_project, save_project_as,
 };
 pub use swap::{GateStep, LOAD_ACK_TIMEOUT_MS, LOAD_LINK, LoadGate, LoadLink, Settled, Swap};
-pub use template::TemplateCrc;
+pub use template::{NEW_PARTS, TemplateCrc};
 
 use crate::dsp::fx_bus::FxParams;
 use crate::name::ProjectName;
+use crate::orbit::scene::OrbitSong;
 use crate::params::EngineType;
 use crate::preset::Sound;
 pub use crate::storage::ProjectFile;
@@ -114,11 +116,13 @@ pub struct Project {
     meta: ProjectMeta,
     pool: Pool,
     perf: Performance,
+    /// ORBIT's scene and tempo: project data, as the Parts are.
+    orbit: OrbitSong,
     /// Moves on every `&mut` path, so a status keyed on it is never stale.
     rev: u32,
 }
 
-crate::in_place::field_list!(Project => Project { meta, pool, perf, rev });
+crate::in_place::field_list!(Project => Project { meta, pool, perf, orbit, rev });
 
 impl Project {
     /// Wrapping; any two reads with an edit between differ.
@@ -165,6 +169,15 @@ impl Project {
     pub fn edit_fx(&mut self) -> &mut FxParams {
         self.bump();
         &mut self.perf.fx
+    }
+
+    pub fn orbit(&self) -> &OrbitSong {
+        &self.orbit
+    }
+
+    pub fn orbit_mut(&mut self) -> &mut OrbitSong {
+        self.bump();
+        &mut self.orbit
     }
 
     pub fn set_name(&mut self, n: ProjectName) {

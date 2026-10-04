@@ -45,6 +45,7 @@ fn write_at(ui: &UiState, w: &mut impl Write) -> fmt::Result {
         }
         Rung::Fx(..) => write!(w, "FX > {}", ui.page_title().as_str()),
         Rung::Sound(p) => write!(w, "SOUND {}", p.index() + 1),
+        Rung::Orbit(_) => write!(w, "ORBIT > {}", ui.page_title().as_str()),
         Rung::Settings(at) => {
             for (i, c) in ui.crumbs_at(at).parts().iter().enumerate() {
                 if i > 0 {

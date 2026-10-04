@@ -1,6 +1,7 @@
 //! LFO — Low Frequency Oscillator for modulation.
 //! Outputs -1.0 to +1.0 (bipolar) at sub-audio rates.
 
+use crate::dsp::clampf;
 use chimera_hal::BLOCK_SIZE;
 
 use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code, identity_code};
@@ -314,7 +315,7 @@ impl Lfo {
         }
         // No glide: `raw` itself, so CLASSIC stays bit for bit.
         let out = if self.glide.active() {
-            (raw + self.glide.value()).clamp(-1.0, 1.0)
+            clampf(raw + self.glide.value(), -1.0, 1.0)
         } else {
             raw
         };
@@ -369,7 +370,7 @@ impl Lfo {
         };
 
         // Depth; OFFSET is no longer applied (spec § LFO slots).
-        self.output = (raw * params.depth).clamp(-1.0, 1.0);
+        self.output = clampf(raw * params.depth, -1.0, 1.0);
 
         // Advance phase
         let phase_inc = params.rate / sample_rate as f32;

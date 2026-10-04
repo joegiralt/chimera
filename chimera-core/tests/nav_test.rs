@@ -4,7 +4,7 @@ use chimera_core::params::EngineType;
 use chimera_core::project::PartId;
 use chimera_core::ui::block_registry::{MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART, MODAL_1};
 use chimera_core::ui::nav::{
-    Column, Location, MixPage, NavCtx, NavKey, PageAt, Recall, Step, chain_def_for,
+    Column, Location, MixPage, NavCtx, NavKey, OrbitCx, PageAt, Recall, Step, chain_def_for,
 };
 use chimera_core::ui::settings::{Act, Kind, MANAGE_COMMANDS, PART_ROW, Screen, row_at, rows};
 
@@ -14,6 +14,7 @@ fn cx() -> NavCtx {
     NavCtx {
         engines: [EngineType::Algo; 6],
         dyn_rows: 0,
+        orbit: OrbitCx::NONE,
     }
 }
 
@@ -306,15 +307,16 @@ fn leaf_keys() {
         };
         let (c, at) = l.page(&cx).unwrap();
         assert!(core::ptr::eq(c, leaf.chain()) && at == c.home(), "{path:?}");
-        for k in [
-            NavKey::Plus,
-            NavKey::Minus,
-            NavKey::Edit,
-            NavKey::SeqTap,
-            NavKey::Bar(3),
-        ] {
+        for k in [NavKey::Plus, NavKey::Minus, NavKey::Edit, NavKey::Bar(3)] {
             assert_eq!(l.step(k, &cx, &mut r), Step::Stay, "{path:?} {k:?}");
         }
+        // SEQ backs out, as MENU (ADR 0081).
+        let (up, row) = path.split_at(path.len() - 1);
+        assert_eq!(
+            l.step(NavKey::SeqTap, &cx, &mut r),
+            Step::Go(Location::settings_at(up, row[0])),
+            "{path:?}"
+        );
     }
 }
 
@@ -331,34 +333,39 @@ fn edit_on_a_screen_row_does_not_move() {
     assert_eq!(l, Location::settings_at(&[0], 0));
     assert_eq!(
         l.step(NavKey::SeqTap, &cx, &mut r),
-        Step::Screen(Screen::LoadProject),
-        "SEQ on a Screen row is EDIT"
+        Step::Go(Location::settings_at(&[], 0)),
+        "SEQ on a Screen row backs out (ADR 0081)"
     );
 
-    // Inside a Screen, SEQ runs the row and EDIT stays.
+    // Inside a Screen, EDIT runs the row and SEQ backs out.
     let s = Location::settings_at(&[0, 0], 0);
     let cx = NavCtx { dyn_rows: 3, ..cx };
-    assert_eq!(s.step(NavKey::SeqTap, &cx, &mut r), Step::Run);
-    assert_eq!(s.step(NavKey::Edit, &cx, &mut r), Step::Stay);
+    assert_eq!(s.step(NavKey::Edit, &cx, &mut r), Step::Run);
+    assert_eq!(
+        s.step(NavKey::SeqTap, &cx, &mut r),
+        Step::Go(Location::settings_at(&[0], 0))
+    );
     assert!(s.page(&cx).is_none());
 }
 
 #[test]
-fn seq_tap_runs_an_act() {
+fn edit_runs_an_act_and_seq_backs_out() {
     let cx = cx();
     let mut r = Recall::new();
     let l = Location::settings_at(&path_of(&["PART"]), 1);
+    assert_eq!(l.step(NavKey::Edit, &cx, &mut r), Step::Act(Act::PartClear));
     assert_eq!(
         l.step(NavKey::SeqTap, &cx, &mut r),
-        Step::Act(Act::PartClear)
+        Step::Go(Location::settings_at(&[], PART_ROW))
     );
-    assert_eq!(l.step(NavKey::Edit, &cx, &mut r), Step::Act(Act::PartClear));
 }
 
+/// SETTINGS › PART stays one EDIT from SETTINGS' top, now that SEQ on the
+/// mixer and the Sound rung no longer jumps there (ADR 0081).
 #[test]
-fn seq_on_mixer_and_sound_opens_part_settings() {
+fn part_settings_is_reached_by_menu_then_edit() {
     let cx = cx();
-    assert_eq!(rows(&[])[1].label, "PART");
+    assert_eq!(rows(&[])[PART_ROW as usize].label, "PART");
     for from in [
         Location::mixer(P[1], MixPage::Sends),
         Location::mixer(P[3], MixPage::Part),
@@ -366,13 +373,13 @@ fn seq_on_mixer_and_sound_opens_part_settings() {
     ] {
         let mut r = Recall::new();
         let mut l = from;
-        key(&mut l, NavKey::SeqTap, &cx, &mut r);
+        key(&mut l, NavKey::MenuTap, &cx, &mut r);
+        for _ in 0..PART_ROW {
+            key(&mut l, NavKey::Plus, &cx, &mut r);
+        }
+        key(&mut l, NavKey::Edit, &cx, &mut r);
         assert_eq!(l, Location::settings_at(&[PART_ROW], 0), "{from:?}");
         assert_eq!(r.settings_from(), from);
-        key(&mut l, NavKey::MenuTap, &cx, &mut r);
-        assert_eq!(l, Location::settings_at(&[], 1));
-        key(&mut l, NavKey::MenuTap, &cx, &mut r);
-        assert_eq!(l, from);
     }
 }
 
@@ -398,10 +405,16 @@ fn edit_and_the_sound_rung() {
 fn later_rows_are_inert() {
     let cx = cx();
     let mut r = Recall::new();
-    let l = Location::settings_at(&[], path_of(&["ORBIT"])[0]);
-    assert!(matches!(row_at(&[2]).unwrap().kind, Kind::Later(_)));
+    // ORBIT › RENAME (#298); ORBIT itself without its feature (#262).
+    let later = if cfg!(feature = "orbit") {
+        path_of(&["ORBIT", "RENAME"])
+    } else {
+        path_of(&["ORBIT"])
+    };
+    let (list, row) = later.split_at(later.len() - 1);
+    let l = Location::settings_at(list, row[0]);
+    assert!(matches!(row_at(&later).unwrap().kind, Kind::Later(_)));
     assert_eq!(l.step(NavKey::Edit, &cx, &mut r), Step::Stay);
-    assert_eq!(l.step(NavKey::SeqTap, &cx, &mut r), Step::Stay);
 }
 
 #[test]
@@ -489,8 +502,8 @@ fn mix_bn_from_the_fx_keeps_the_page() {
     assert_eq!(fx_node(l, &cx), Some((P[2], fx)), "from SETTINGS");
     assert_eq!(
         l.step(NavKey::SeqTap, &cx, &mut r),
-        Step::Go(Location::settings_at(&[PART_ROW], 0)),
-        "SEQ on the FX: SETTINGS › PART"
+        Step::Stay,
+        "SEQ on the FX's top page: nothing (ADR 0081)"
     );
 }
 
@@ -567,9 +580,8 @@ fn manage_has_a_command_column() {
         (1, Some(Column::Command(last))),
         "the bar is the command"
     );
-    assert_eq!(l.step(NavKey::Edit, &cx, &mut r), Step::Stay);
-    assert_eq!(l.step(NavKey::SeqTap, &cx, &mut r), Step::Run);
-    key(&mut l, NavKey::MenuTap, &cx, &mut r);
+    assert_eq!(l.step(NavKey::Edit, &cx, &mut r), Step::Run);
+    key(&mut l, NavKey::SeqTap, &cx, &mut r);
     assert_eq!(l, Location::settings_at(&path, 1), "back to the list");
     key(&mut l, NavKey::MenuTap, &cx, &mut r);
     assert_eq!(l, Location::settings_at(&path[..1], path[1]));

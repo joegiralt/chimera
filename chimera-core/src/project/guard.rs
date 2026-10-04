@@ -49,6 +49,7 @@ use chimera_hal::store::VolumeId;
 
 use crate::block::DiskCode;
 use crate::name::ProjectName;
+use crate::orbit::scene::{OrbitSong, SceneIdx};
 use crate::storage::{Crc32, Generation, ProjectId, sound_crc};
 
 use super::marks::status_at;
@@ -73,6 +74,7 @@ mod sealed {
     impl Sealed for super::ProjectSource {}
     impl Sealed for super::OverwriteTarget {}
     impl Sealed for super::DeleteTarget {}
+    impl Sealed for super::SceneSlot {}
     impl Sealed for crate::boot::RomDfu {}
 }
 
@@ -383,3 +385,97 @@ macro_rules! answered {
 }
 
 answered!(OverwriteTarget: "SAVE OVER, CLEAR or OVERWRITE THAT ONE", DeleteTarget: "DELETE");
+
+/// A scene slot SCN's SAVE OVER writes. Only a prompt's yes confirms
+/// one, with what the slot was when the prompt opened:
+///
+/// ```compile_fail,E0451
+/// use chimera_core::project::{Confirmed, SceneAsk, SceneSlot};
+/// fn forge(a: &SceneAsk) -> Confirmed<SceneSlot> {
+///     Confirmed { target: a.slot(), witness: 0 }
+/// }
+/// ```
+///
+/// ```compile_fail,E0423
+/// use chimera_core::orbit::scene::SceneIdx;
+/// use chimera_core::project::SceneSlot;
+/// fn forge(n: SceneIdx) -> SceneSlot {
+///     SceneSlot(n)
+/// }
+/// ```
+///
+/// ```compile_fail,E0061
+/// use chimera_core::project::{Confirmed, SceneAsk, SceneSlot};
+/// fn forge(a: SceneAsk) -> Confirmed<SceneSlot> {
+///     Confirmed::<SceneSlot>::said(a)
+/// }
+/// ```
+///
+/// and a project's SAVE OVER is no scene's:
+///
+/// ```compile_fail,E0308
+/// use chimera_core::project::{Confirmed, OverwriteTarget, SceneAsk, SceneSlot};
+/// use chimera_core::ui::settings::replace::said::Said;
+/// fn forge(a: SceneAsk, yes: Said<OverwriteTarget>) -> Confirmed<SceneSlot> {
+///     Confirmed::<SceneSlot>::said(a, yes)
+/// }
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SceneSlot(SceneIdx);
+
+impl SceneSlot {
+    pub fn index(self) -> SceneIdx {
+        self.0
+    }
+}
+
+/// A slot written since refuses it: the slot's rev as the prompt saw it.
+impl Witnessed for SceneSlot {
+    type Witness = u16;
+}
+
+/// SAVE OVER's question: the slot, as it was when the prompt opened.
+#[derive(Debug)]
+pub struct SceneAsk {
+    slot: SceneSlot,
+    seen: u16,
+}
+
+impl SceneAsk {
+    /// Slot `n` of `song` now.
+    pub(crate) fn of(song: &OrbitSong, n: SceneIdx) -> SceneAsk {
+        SceneAsk {
+            slot: SceneSlot(n),
+            seen: song.slot_rev(n),
+        }
+    }
+
+    pub fn slot(&self) -> SceneSlot {
+        self.slot
+    }
+}
+
+impl Confirmed<SceneSlot> {
+    /// SAVE OVER answered: only a prompt's confirming pill holds a `Said`.
+    /// It confirms the slot as the prompt saw it, not as it is now.
+    pub fn said(a: SceneAsk, _: Said<SceneSlot>) -> Self {
+        Confirmed {
+            target: a.slot,
+            witness: a.seen,
+        }
+    }
+
+    /// The slot unwritten since it was confirmed.
+    pub fn holds(&self, song: &OrbitSong) -> bool {
+        song.slot_rev(self.target.0) == self.witness
+    }
+
+    /// Slot `n` confirmed now, without a prompt: tests only.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn unasked(song: &OrbitSong, n: SceneIdx) -> Self {
+        Confirmed {
+            target: SceneSlot(n),
+            witness: song.slot_rev(n),
+        }
+    }
+}

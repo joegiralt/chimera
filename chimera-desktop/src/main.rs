@@ -9,6 +9,7 @@ mod qa;
 mod store;
 
 use chimera_core::console::Served;
+use chimera_core::orbit::runner::orbit_buffer;
 use chimera_core::project::{LOAD_ACK_TIMEOUT_MS, LOAD_LINK};
 use chimera_core::scope::scope_buffer;
 use chimera_core::storage::{Card, SystemSettings, SystemSync};
@@ -51,6 +52,7 @@ fn boot<S: Store>(
     // private issue #197
     let (sync, settings, _) = SystemSync::boot(card, store);
     ui.set_theme(settings.theme);
+    ui.set_midi(settings.midi);
     ui.boot_project(card, store, settings.last_project);
     (sync, settings)
 }
@@ -59,7 +61,8 @@ fn main() {
     let mut display = DesktopDisplay::new();
     let mut controls = DesktopControls::new();
     let (scope_w, mut scope_r) = Box::leak(Box::new(scope_buffer())).split();
-    let mut audio = audio::DesktopAudio::new(scope_w);
+    let (orbit_w, mut orbit_r) = Box::leak(Box::new(orbit_buffer())).split();
+    let mut audio = audio::DesktopAudio::new(scope_w, orbit_w);
 
     let mut ui = UiState::new();
 
@@ -137,6 +140,8 @@ fn main() {
             }
         }
 
+        // ORBIT's latest view: the pages draw it, the drift is absorbed.
+        ui.set_orbit_view(orbit_r.read());
         // UI framework handles navigation + encoder -> param binding
         ui.handle_input(&controls);
         if ui
@@ -157,10 +162,12 @@ fn main() {
             sync: &mut sync,
             settings: &mut settings,
         };
-        ui.card_work(cx, &LOAD_LINK, |swap, p| {
+        ui.card_work(cx, &LOAD_LINK, |swap, u| {
             let deadline = Instant::now() + Duration::from_millis(LOAD_ACK_TIMEOUT_MS.into());
             let _ = swap.settle(&LOAD_LINK, || Instant::now() < deadline);
-            audio.update(p.perf(), LOAD_LINK.epoch());
+            audio.update(u.project().perf(), LOAD_LINK.epoch(), |o| {
+                u.publish_orbit(o)
+            });
         });
         // Leaving SETTINGS syncs SYSTEM; a toast says how it went.
         ui.sync_system(&mut sync, &mut card, &mut store, &mut settings);
@@ -169,8 +176,10 @@ fn main() {
             ui.update(t);
         }
 
-        // Push every Part and the FX to the audio thread.
-        audio.update(ui.project().perf(), LOAD_LINK.epoch());
+        // Push every Part, the FX and ORBIT to the audio thread.
+        audio.update(ui.project().perf(), LOAD_LINK.epoch(), |o| {
+            ui.publish_orbit(o)
+        });
 
         ui.render_with_scope(&mut display, &perf.stats, scope_r.read());
         let now = Instant::now();

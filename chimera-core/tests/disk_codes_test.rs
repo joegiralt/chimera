@@ -1,12 +1,13 @@
 //! Frozen disk codes (ADR 0045): every stored enum's code is permanent.
 
 use chimera_core::addr::{BlockRef, Blocks, Op};
-use chimera_core::block::{Block, ParamId, ValFmt};
+use chimera_core::block::{Block, DiskCode, ParamId, ValFmt};
 use chimera_core::dsp::algo::algorithms::{ALGO_IDENTS, ALGO_NAMES};
 use chimera_core::dsp::algo::waves::{WAVE_IDENTS, WAVE_NAMES};
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::modulator::{EnvForm, EnvSlot, FuncMode, LfoForm};
 use chimera_core::modulation::ModSource;
+use chimera_core::orbit::scene::{Scene, TargetKind};
 use chimera_core::params::EnvParams;
 use chimera_core::params::{FilterParams, ParamSnapshot};
 use chimera_core::part::PartParams;
@@ -14,7 +15,9 @@ use chimera_core::storage::{
     Crc32, DiskValue, RETIRED, RETIRED_BLOCKS, RETIRED_CODES, RETIRED_SOURCES, ValidAddr,
     read_value,
 };
+use chimera_core::ui::midi_settings::MidiSettings;
 use chimera_core::ui::theme_settings::ThemeSettings;
+use chimera_theory::Degree;
 
 /// One of each block's owner, so any stored `BlockRef` resolves.
 struct Bank {
@@ -22,6 +25,8 @@ struct Bank {
     fx: FxParams,
     part: PartParams,
     theme: ThemeSettings,
+    midi: MidiSettings,
+    scene: Scene,
 }
 
 impl Bank {
@@ -31,6 +36,8 @@ impl Bank {
             fx: FxParams::default(),
             part: PartParams::default(),
             theme: ThemeSettings::DEFAULT,
+            midi: MidiSettings::DEFAULT,
+            scene: Scene::init(),
         }
     }
 
@@ -43,6 +50,9 @@ impl Bank {
             BlockRef::Comp => &mut self.fx.comp,
             BlockRef::Part => &mut self.part,
             BlockRef::Theme => &mut self.theme,
+            BlockRef::Midi => &mut self.midi,
+            BlockRef::OrbitChords => &mut self.scene.chords,
+            BlockRef::OrbitRing(r) => &mut self.scene.rings[r.get() as usize],
             b => self.snap.block_mut(b).expect("a Sound block"),
         }
     }
@@ -99,6 +109,22 @@ fn table() -> Vec<String> {
             s.name()
         ));
     }
+    // Enums stored outside a block param: a record's own byte.
+    let mut coded = |table: &str, all: &mut dyn Iterator<Item = (u8, &'static str)>| {
+        for (c, i) in all {
+            out.push(format!("C {table} {c} {i} # {i}"));
+        }
+    };
+    coded(
+        "DEGREE",
+        &mut Degree::ALL.iter().map(|d| (d.disk_code(), d.disk_ident())),
+    );
+    coded(
+        "TARGET_KIND",
+        &mut [TargetKind::Part]
+            .iter()
+            .map(|k| (k.disk_code(), k.disk_ident())),
+    );
     out
 }
 
@@ -399,7 +425,7 @@ fn block_codes_unique_and_round_trip() {
     }
     assert_eq!(seen.len(), BlockRef::ALL.len());
     assert_eq!(BlockRef::from_disk_code(0), None);
-    assert_eq!(BlockRef::from_disk_code(27), None);
+    assert_eq!(BlockRef::from_disk_code(34), None);
     assert_eq!(BlockRef::from_disk_code(255), None);
 }
 

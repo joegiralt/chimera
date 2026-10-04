@@ -31,8 +31,14 @@ static SINE_LUT: [f32; 1024] = {
 #[inline(always)]
 pub fn fast_sin(theta: f32) -> f32 {
     const INV_TAU: f32 = 1.0 / core::f32::consts::TAU;
+    fast_sin_turns(theta * INV_TAU)
+}
+
+/// `fast_sin` of `turn` whole turns (any range).
+#[inline(always)]
+pub fn fast_sin_turns(turn: f32) -> f32 {
     // Normalize to 0.0..1.0
-    let mut t = theta * INV_TAU;
+    let mut t = turn;
     // Fast floor: cast to i32 truncates toward zero; adjust for negatives
     t -= if t >= 0.0 {
         t as i32 as f32
@@ -47,13 +53,20 @@ pub fn fast_sin(theta: f32) -> f32 {
     a + (b - a) * frac
 }
 
-/// Xorshift32 white noise in [−1, 1]; a zero state stays zero, so seed it.
+/// Xorshift32 (13, 17, 5): the next state, kept and returned; a zero
+/// state stays zero, so seed it.
 #[inline]
-pub(crate) fn xorshift_noise(state: &mut u32) -> f32 {
+pub(crate) fn xorshift32(state: &mut u32) -> u32 {
     *state ^= *state << 13;
     *state ^= *state >> 17;
     *state ^= *state << 5;
-    (*state as i32) as f32 / i32::MAX as f32
+    *state
+}
+
+/// Xorshift32 white noise in [−1, 1]; a zero state stays zero, so seed it.
+#[inline]
+pub(crate) fn xorshift_noise(state: &mut u32) -> f32 {
+    (xorshift32(state) as i32) as f32 / i32::MAX as f32
 }
 
 /// sin(2π·phase) for phase in [0, 1): a parabola with one correction step
@@ -110,6 +123,9 @@ pub fn fast_tan(x: f32) -> f32 {
 pub use self::algo::math::exp2 as fast_exp2;
 /// `log2(x)` for `x > 0`, absolute error below 3e-5.
 pub use self::algo::math::log2 as fast_log2;
+
+/// `x` held to `[lo, hi]` without a panic path.
+pub use self::algo::math::clampf;
 
 pub mod algo;
 pub mod chorus;

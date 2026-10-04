@@ -31,7 +31,9 @@ impl DacSample {
 /// The final conversion: clamped to full scale, a safety the limiter
 /// before it keeps from ever engaging (ADR 0050).
 pub fn to_dac(x: f32) -> DacSample {
-    let steps = libm::roundf(x.clamp(-1.0, 1.0) * DAC_FULL_SCALE) as i32;
+    // Clamped after the saturating cast, so NaN plays silence.
+    const TOP: i32 = DAC_FULL_SCALE as i32;
+    let steps = (libm::roundf(x * DAC_FULL_SCALE) as i32).clamp(-TOP, TOP);
     DacSample(steps << 8)
 }
 

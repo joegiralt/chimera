@@ -4,7 +4,9 @@ use crate::addr::BlockRef;
 use crate::part::PartParams;
 use crate::project::PartId;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot, VizType};
-use crate::ui::block_registry::{DEMO_BLOCKS, SYS_ABOUT, SYS_AUDIO, SYS_THEME, SYS_TUNING};
+use crate::ui::block_registry::{
+    DEMO_BLOCKS, SYS_ABOUT, SYS_AUDIO, SYS_SYNC, SYS_THEME, SYS_TUNING,
+};
 use crate::ui::page::{PageId, PageLayout};
 
 /// One cell per Part, `P1`–`P6`, each Part's `param`: the mixer's own
@@ -38,6 +40,24 @@ pub static OUTPUTS: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: per_part(PartParams::OUTPUT),
+};
+
+/// PART > LIVE SNAP: the active Part's SNAP and HELD (spec § 5.2,
+/// owner Q6), bound as the mixer's PART page binds its cells.
+pub static LIVE_SNAP: BlockDef = BlockDef {
+    id: 85,
+    name: "Live Snap",
+    short: "SNP",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Part, PartParams::SNAP),
+        ParamSlot::param(BlockRef::Part, PartParams::HELD),
+        ParamSlot::EMPTY,
+        ParamSlot::EMPTY,
+        ParamSlot::EMPTY,
+        ParamSlot::EMPTY,
+    ],
 };
 
 /// A SETTINGS leaf: one page, no sub-pages, so no key in it steps a page.
@@ -81,18 +101,22 @@ impl OnePage {
 }
 
 static CHANNELS_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&CHANNELS)];
+static SYNC_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_SYNC)];
 static OUTPUTS_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&OUTPUTS)];
 static TUNING_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_TUNING)];
 static THEME_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_THEME)];
 static ABOUT_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_ABOUT)];
 static AUDIO_LOAD_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_AUDIO)];
+static LIVE_SNAP_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&LIVE_SNAP)];
 
 pub static CHANNELS_LEAF: OnePage = OnePage::new("Channels", &CHANNELS_BLOCKS);
+pub static SYNC_LEAF: OnePage = OnePage::new("Sync", &SYNC_BLOCKS);
 pub static OUTPUTS_LEAF: OnePage = OnePage::new("Outputs", &OUTPUTS_BLOCKS);
 pub static TUNING_LEAF: OnePage = OnePage::new("Tuning", &TUNING_BLOCKS);
 pub static THEME_LEAF: OnePage = OnePage::new("Theme", &THEME_BLOCKS);
 pub static ABOUT_LEAF: OnePage = OnePage::new("About", &ABOUT_BLOCKS);
 pub static AUDIO_LOAD_LEAF: OnePage = OnePage::new("Audio Load", &AUDIO_LOAD_BLOCKS);
+pub static LIVE_SNAP_LEAF: OnePage = OnePage::new("Live Snap", &LIVE_SNAP_BLOCKS);
 
 /// One leaf per DEMO page, in `DEMO_BLOCKS`' order.
 pub static DEMO_LEAVES: [OnePage; DEMO_BLOCKS.len()] = {

@@ -3,6 +3,7 @@
 
 mod screen;
 
+use chimera_core::orbit::scene::SceneIdx;
 use chimera_core::project::{PartId, ProjectStatus};
 use chimera_core::ui::UiState;
 use chimera_core::ui::page::PageLayout;
@@ -43,6 +44,7 @@ fn settings_leaf_never_draws_the_map() {
 
 const P1: PartId = PartId::ALL[0];
 const P2: PartId = PartId::ALL[1];
+const S1: SceneIdx = SceneIdx::ALL[0];
 
 #[test]
 fn legends_read_as_the_spec_says() {
@@ -56,7 +58,7 @@ fn legends_read_as_the_spec_says() {
         (LegendFor::Prompt, "A PICK · SEQ OK · MENU CANCEL"),
         (LegendFor::Naming, "SEQ SAVE · MENU CANCEL"),
         (LegendFor::ManageList, "EDIT COMMANDS · MENU BACK"),
-        (LegendFor::ManageCommands, "SEQ RUN · MENU LIST"),
+        (LegendFor::ManageCommands, "EDIT RUN · MENU LIST"),
         (LegendFor::ManageDimmed(None), "MENU LIST"),
         (
             LegendFor::ManageDimmed(Some(Note::LoadToRename)),
@@ -71,12 +73,31 @@ fn legends_read_as_the_spec_says() {
 #[test]
 fn part_crumb_names_the_active_part() {
     assert_eq!(
-        format!("{}", Crumbs::of(&[PART_ROW], P2)),
+        format!("{}", Crumbs::of(&[PART_ROW], P2, S1)),
         "SETTINGS › PART 2"
     );
     assert_eq!(
-        format!("{}", Crumbs::of(&[PART_ROW, 2], P2)),
+        format!("{}", Crumbs::of(&[PART_ROW, 2], P2, S1)),
         "SETTINGS › PART 2 › SAVE TO"
+    );
+}
+
+/// ORBIT's list crumb is `SCENE n`, the playing scene, as PART's is
+/// `PART n`: short enough that SAVE TO keeps it at the breadcrumb's width,
+/// left of the beat dot.
+#[cfg(feature = "orbit")]
+#[test]
+fn orbit_crumb_names_the_playing_scene() {
+    use chimera_core::ui::settings::rows;
+    let at = rows(&[]).iter().position(|r| r.label == "ORBIT").unwrap() as u8;
+    let s3 = SceneIdx::ALL[2];
+    assert_eq!(
+        format!("{}", Crumbs::of(&[at], P2, s3)),
+        "SETTINGS › SCENE 3"
+    );
+    assert_eq!(
+        format!("{}", Crumbs::of(&[at, 2], P2, s3)),
+        ".. › SCENE 3 › SAVE TO"
     );
 }
 
@@ -94,12 +115,12 @@ fn every_legend_fits() {
 #[test]
 fn breadcrumb_drops_leading_parts_behind_dots() {
     // SETTINGS › AUDIO ROUTING › OUTPUTS
-    let c = Crumbs::of(&[5, 0], P1).within(120);
+    let c = Crumbs::of(&[5, 0], P1, S1).within(120);
     let line = format!("{c}");
     assert!(line.starts_with(".."), "{line}");
     assert!(line.ends_with("› OUTPUTS"), "{line}");
     assert_eq!(
-        format!("{}", Crumbs::of(&[5, 0], P1)),
+        format!("{}", Crumbs::of(&[5, 0], P1, S1)),
         "SETTINGS › AUDIO › OUTPUTS"
     );
 }
@@ -154,14 +175,24 @@ fn a_leaf_ends_the_breadcrumb() {
     assert_eq!(about, "SETTINGS › SYSTEM › ABOUT");
     to_leaf(&mut ui, &["SYSTEM", "DIAGNOSTICS", "AUDIO LOAD"]);
     let (audio, k1) = crumbs(&mut ui);
-    assert_eq!(audio, ".. › SYSTEM › DIAG › AUD LOAD");
+    // The crumbs always clear ORBIT's beat dot; without ORBIT there is
+    // room for SYSTEM.
+    let (want, theme) = if cfg!(feature = "orbit") {
+        (".. › DIAG › AUD LOAD", ".. › PERSONAL › THEME")
+    } else {
+        (
+            ".. › SYSTEM › DIAG › AUD LOAD",
+            "SETTINGS › PERSONAL › THEME",
+        )
+    };
+    assert_eq!(audio, want);
     assert_ne!(k0, k1);
     // EDIT on a leaf steps nothing: the crumbs stay.
     feed(&mut ui, Input::press(ButtonId::Edit));
     assert_eq!(crumbs(&mut ui), (audio, k1));
 
     to_leaf(&mut ui, &["PERSONALIZE", "THEME"]);
-    assert_eq!(crumbs(&mut ui).0, "SETTINGS › PERSONAL › THEME");
+    assert_eq!(crumbs(&mut ui).0, theme);
 }
 
 #[test]
@@ -194,5 +225,56 @@ fn a_read_only_leaf_says_only_menu_back() {
         let mut ui = UiState::new();
         to_leaf(&mut ui, &["SYSTEM", "DIAGNOSTICS", "DEMO", "MTX"]);
         assert_eq!(ui.legend_for_test(), Some("A-F EDIT · MENU BACK"));
+    }
+}
+
+/// Every SETTINGS breadcrumb, NAMING's last part on it too, ends left of
+/// ORBIT's beat dot (`theme::CRUMBS_RIGHT`): `dropped` keeps it there
+/// however deep the path, so the crumbs never move with ORBIT's transport.
+#[test]
+fn every_breadcrumb_clears_the_dots() {
+    use chimera_core::ui::settings::tree::{Kind, rows};
+    use chimera_core::ui::settings::view::{Crumb, draw_crumbs};
+    use screen::W;
+    fn walk(path: &mut Vec<u8>, out: &mut Vec<Vec<u8>>) {
+        out.push(path.clone());
+        for (i, r) in rows(path).iter().enumerate() {
+            path.push(i as u8);
+            match r.kind {
+                Kind::List(_) => walk(path, out),
+                _ => out.push(path.clone()),
+            }
+            path.pop();
+        }
+    }
+    let mut paths = Vec::new();
+    walk(&mut Vec::new(), &mut paths);
+    assert!(paths.len() > 20, "{} paths", paths.len());
+    // Every scene: ORBIT's crumb names the playing one.
+    for (path, scene) in paths.iter().flat_map(|p| SceneIdx::ALL.map(|s| (p, s))) {
+        let base = Crumbs::of(path, PartId::ALL[5], scene);
+        // A crumb for each row from the top, and one for NAMING's.
+        let naming: &[&str] = if path.len() + 2 <= 6 {
+            &["RENAME", "SAVE AS"]
+        } else {
+            &[]
+        };
+        let ends = core::iter::once(None).chain(naming.iter().copied().map(Some));
+        for last in ends {
+            let mut c = base;
+            if let Some(n) = last {
+                c.push(Crumb::Name(n));
+            }
+            let mut fb = Fb::new();
+            draw_crumbs(&mut fb, &c);
+            let right = (0..W)
+                .rev()
+                .find(|&x| (0..theme::HEADER_BOTTOM as usize).any(|y| fb.px[y * W + x] != 0));
+            assert!(
+                right.is_some_and(|r| r as i32 <= theme::CRUMBS_RIGHT),
+                "{c}: ends at {right:?}, past {}",
+                theme::CRUMBS_RIGHT
+            );
+        }
     }
 }

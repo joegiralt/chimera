@@ -106,7 +106,7 @@ pub struct Listing {
 pub enum Pick {
     Entry(ProjectEntry),
     CreateNew,
-    /// NO CARD and the like: SEQ reads the card again.
+    /// NO CARD and the like: EDIT reads the card again.
     Retry,
     /// MORE ON CARD: nothing runs.
     Inert,

@@ -102,7 +102,8 @@ fn save_part_to_names_only_the_stale_users() {
 fn new_slot_saves_to_the_free_slot_and_cleans_the_part() {
     let (mut p, t) = Project::boxed();
     let a = PartId::ALL[0];
-    load(&mut p, t, src(a, SlotId::ALL[4])).unwrap();
+    // TX BRASS: no other Part of NEW's plays it.
+    load(&mut p, t, src(a, SlotId::ALL[2])).unwrap();
     edit(&mut p, a, 0.5);
     let free = p.pool().first_free().unwrap();
     let new = part_actions(&p, a)
@@ -118,7 +119,7 @@ fn new_slot_saves_to_the_free_slot_and_cleans_the_part() {
         }
         o => panic!("origin {o:?}"),
     }
-    assert!(p.users(SlotId::ALL[4]).is_empty());
+    assert!(p.users(SlotId::ALL[2]).is_empty());
 }
 
 #[test]
@@ -210,7 +211,7 @@ fn edited_part_never_stale_after_reload() {
 #[test]
 fn stale_reloads_as_edited() {
     let (mut p, t) = Project::boxed();
-    let s = SlotId::ALL[0];
+    let s = SlotId::ALL[2];
     let [a, b] = [PartId::ALL[3], PartId::ALL[4]];
     load(&mut p, t, src(a, s)).unwrap();
     load(&mut p, t, src(b, s)).unwrap();
@@ -270,6 +271,9 @@ fn actions_offer_only_what_applies() {
         stale,
         saver,
     ] = PartId::ALL;
+    for part in [clean_init, edited_init] {
+        load(&mut p, t, init(part, EngineType::Algo)).unwrap();
+    }
     load(&mut p, t, src(clean_slot, s)).unwrap();
     load(&mut p, t, src(stale, s)).unwrap();
     load(&mut p, t, src(saver, s)).unwrap();
@@ -359,7 +363,8 @@ fn an_action_is_gone_once_its_part_or_slot_moves() {
     assert_eq!(project_crc(&p), crc);
 
     // Origin: the Part reloaded from another slot and edited.
-    load(&mut p, t, src(a, SlotId::ALL[4])).unwrap();
+    // TX BRASS: no other Part of NEW's plays it.
+    load(&mut p, t, src(a, SlotId::ALL[2])).unwrap();
     edit(&mut p, a, 0.5);
     assert_eq!(p.apply_part_action(over), Err(ActionGone));
     assert_eq!(p.apply_part_action(rev), Err(ActionGone));

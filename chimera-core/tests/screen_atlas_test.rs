@@ -14,6 +14,10 @@
 //! `settings_project_load_no_card`, `settings_footer_saved`, and each
 //! prompt, `settings_prompt_<kind>`.
 
+// The goldens and the atlas are recorded with ORBIT built: its pages,
+// its SETTINGS list and the crumbs left of its beat dot.
+#![cfg(feature = "orbit")]
+
 mod screen;
 
 use std::collections::HashSet;
@@ -29,6 +33,8 @@ use chimera_core::ui::block_def::{BlockDef, ChainDef2, SlotBinding};
 use chimera_core::ui::block_registry::{MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART};
 use chimera_core::ui::busy::{ToastStep, draw_toast};
 use chimera_core::ui::nav::{Location, chain_def_for};
+use chimera_core::ui::orbit::{ORBIT_CHAIN, ORBIT_ORB};
+use chimera_core::ui::page::PageLayout;
 use chimera_core::ui::settings::manage::Command;
 use chimera_core::ui::settings::part::{PartCmd, SAVE_ROWS};
 use chimera_core::ui::settings::view::{Footer, draw_footer};
@@ -104,6 +110,8 @@ enum Ctx {
     Mixer,
     /// A SETTINGS leaf, by its index in `leaves()`.
     Settings(usize),
+    /// ORBIT on ring 3, stopped; CUSTOM by EDIT, SCALE still named.
+    Orbit,
 }
 
 impl Ctx {
@@ -112,6 +120,7 @@ impl Ctx {
             Ctx::Part(EngineType::Algo),
             Ctx::Part(EngineType::Modal),
             Ctx::Mixer,
+            Ctx::Orbit,
         ];
         all.extend((0..leaves().len()).map(Ctx::Settings));
         all
@@ -122,6 +131,7 @@ impl Ctx {
             Ctx::Part(EngineType::Algo) => "algo".into(),
             Ctx::Part(EngineType::Modal) => "modal".into(),
             Ctx::Mixer => "mixer".into(),
+            Ctx::Orbit => "orbit".into(),
             Ctx::Settings(i) => leaves()[i].name(),
         }
     }
@@ -130,6 +140,7 @@ impl Ctx {
         match self {
             Ctx::Part(e) => chain_def_for(e),
             Ctx::Mixer => &MIXER_CHANNEL_CHAIN,
+            Ctx::Orbit => &ORBIT_CHAIN,
             Ctx::Settings(i) => leaves()[i].of.chain(),
         }
     }
@@ -173,6 +184,13 @@ impl Ctx {
                 }
             }
             Ctx::Settings(i) => to_leaf(ui, &leaves()[i].labels),
+            Ctx::Orbit => {
+                to_ring(ui, 3);
+                for _ in 0..self.chain().len() {
+                    feed(ui, Input::press(ButtonId::Minus));
+                }
+                plus(ui, node);
+            }
         }
         for _ in 0..sub {
             feed(ui, Input::press(ButtonId::Edit));
@@ -407,13 +425,13 @@ fn prompt(k: AskKind, ui: &mut UiState) {
         AskKind::ReplacePart => {
             edit(ui, P1);
             part_row(ui, 1); // CLEAR
-            tap(ui, ButtonId::Seq);
+            tap(ui, ButtonId::Edit);
         }
         AskKind::ReloadPart => {
             load_slot(ui, P1, S3);
             edit(ui, P1);
             part_row(ui, 3); // RELOAD FROM PROJ
-            tap(ui, ButtonId::Seq);
+            tap(ui, ButtonId::Edit);
         }
         AskKind::UpdateStale => {
             load_slot(ui, P1, S3);
@@ -424,7 +442,7 @@ fn prompt(k: AskKind, ui: &mut UiState) {
             feed(ui, Input::press(ButtonId::Edit));
             let over = SAVE_ROWS.iter().position(|&c| c == PartCmd::OverSlot);
             plus(ui, over.unwrap());
-            tap(ui, ButtonId::Seq);
+            tap(ui, ButtonId::Edit);
         }
         AskKind::ClearSlot => {
             rung(ui, P1, S3);
@@ -440,7 +458,7 @@ fn prompt(k: AskKind, ui: &mut UiState) {
                 .set_name(ProjectName::new("SKETCH").unwrap());
             r.to(&["PROJECT"]);
             r.bar_to(1);
-            r.tap(ButtonId::Seq);
+            r.tap(ButtonId::Edit);
             r.tap(ButtonId::Seq);
         }
         AskKind::CardChanged => {
@@ -453,19 +471,43 @@ fn prompt(k: AskKind, ui: &mut UiState) {
         }
         AskKind::Delete => {
             manage_command(ui, BETA, Command::Delete, false);
-            tap(ui, ButtonId::Seq);
+            tap(ui, ButtonId::Edit);
         }
         AskKind::Clear => {
             manage_command(ui, BETA, Command::Clear, false);
-            tap(ui, ButtonId::Seq);
+            tap(ui, ButtonId::Edit);
         }
         AskKind::SaveOver => {
             manage_command(ui, BETA, Command::SaveTo, true);
-            tap(ui, ButtonId::Seq);
+            tap(ui, ButtonId::Edit);
+        }
+        // SETTINGS › ORBIT's CLEAR, and RELOAD with an edit to drop.
+        AskKind::ClearScene => {
+            to_leaf(ui, &["ORBIT"]);
+            plus(ui, 1);
+            tap(ui, ButtonId::Edit);
+        }
+        AskKind::ReloadScene => {
+            ui.project_mut()
+                .orbit_mut()
+                .live_mut_for_test()
+                .chords
+                .tonic = chimera_theory::PitchClass::E;
+            to_leaf(ui, &["ORBIT"]);
+            plus(ui, 3);
+            tap(ui, ButtonId::Edit);
+        }
+        // SCN's SAVE → 5 twice: a neutral slot saves, a saved one asks.
+        AskKind::SaveSceneOver => {
+            hold(ui, ButtonId::Seq);
+            plus(ui, 3);
+            feed(ui, Input::turn(EncoderId::B, 4));
+            tap(ui, ButtonId::Edit);
+            tap(ui, ButtonId::Edit);
         }
         AskKind::EnterDfu => {
             to_leaf(ui, &["SYSTEM"]);
-            tap(ui, ButtonId::Seq);
+            tap(ui, ButtonId::Edit);
         }
     }
     assert_eq!(ui.prompt_kind_for_test(), Some(k));
@@ -503,7 +545,7 @@ fn settings_shots() -> Vec<(String, Setup)> {
         }),
         ("settings_part_rename", |ui| {
             part_row(ui, 0);
-            tap(ui, ButtonId::Seq);
+            tap(ui, ButtonId::Edit);
             assert!(ui.naming().is_some());
         }),
         ("settings_naming", naming_save_as),
@@ -517,7 +559,7 @@ fn settings_shots() -> Vec<(String, Setup)> {
         }),
         ("settings_project_manage_rename", |ui| {
             manage_command(ui, ALPHA, Command::Rename, false);
-            tap(ui, ButtonId::Seq);
+            tap(ui, ButtonId::Edit);
             assert!(ui.naming().is_some());
         }),
         // SAVE AS inside a load: SAVE THEN LOAD on an edited NEW project.
@@ -527,13 +569,13 @@ fn settings_shots() -> Vec<(String, Setup)> {
             let mut r = Rig::new(ui, s);
             modify(r.ui);
             r.to(&["PROJECT", "LOAD PROJECT"]);
-            r.tap(ButtonId::Seq);
+            r.tap(ButtonId::Edit);
             r.tap(ButtonId::Seq);
             assert!(r.ui.naming().is_some());
         }),
         ("settings_prompt_clear_loaded", |ui| {
             manage_command(ui, ALPHA, Command::Clear, false);
-            tap(ui, ButtonId::Seq);
+            tap(ui, ButtonId::Edit);
             assert_eq!(ui.prompt_kind_for_test(), Some(AskKind::Clear));
         }),
         ("settings_footer_modified", |ui| {
@@ -605,6 +647,47 @@ fn every_screen_renders() {
         assert_eq!(fb.oob, 0, "{name}");
         assert!(names.insert(name.into()), "{name} twice");
         fb.dump(name);
+    }
+}
+
+/// The atlas writes ORB as its golden, `orbit_orb`: the ring 3 the atlas
+/// stands on, so the golden covers it and nothing is written twice.
+#[test]
+fn orb_page_in_the_atlas() {
+    let shot = atlas()
+        .into_iter()
+        .find(|s| {
+            matches!(s.ctx, Ctx::Orbit)
+                && s.ctx.chain().active_def(s.node, s.sub).unwrap().id == ORBIT_ORB.id
+        })
+        .expect("ORB is in the atlas");
+    assert_eq!(shot.name, "orbit_orb");
+    assert!(
+        key(&shot.ui()) == key(&ui_for("orbit_orb")),
+        "the golden covers it"
+    );
+    assert_eq!(shot.ui().page_def().layout, PageLayout::BigViz);
+}
+
+/// The atlas writes RING's VOICE and NOTES as their goldens,
+/// `orbit_voice` and `orbit_notes`, on the ring 3 it stands on.
+#[test]
+fn voice_and_notes_in_the_atlas() {
+    use chimera_core::ui::orbit::{ORBIT_NOTES, ORBIT_VOICE};
+    for (def, name) in [(&ORBIT_VOICE, "orbit_voice"), (&ORBIT_NOTES, "orbit_notes")] {
+        let shot = atlas()
+            .into_iter()
+            .find(|s| {
+                matches!(s.ctx, Ctx::Orbit)
+                    && s.ctx.chain().active_def(s.node, s.sub).unwrap().id == def.id
+            })
+            .unwrap_or_else(|| panic!("{name} is in the atlas"));
+        assert_eq!(shot.name, name);
+        assert!(
+            key(&shot.ui()) == key(&ui_for(name)),
+            "the golden covers {name}"
+        );
+        assert_eq!(shot.ui().page_def().viz, def.viz);
     }
 }
 

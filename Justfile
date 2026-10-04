@@ -8,15 +8,19 @@ desktop:
 firmware:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf
 
+# Build STM32 firmware with ORBIT (release)
+firmware-orbit:
+    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit
+
 # Build all (desktop targets only)
 build:
     cargo build -p chimera-core -p chimera-hal -p chimera-desktop
 
 # Everything must pass before a commit (ADR 0013): core + hal tests (and core
-# with the master tape back on, ADR 0055), desktop
+# with the master tape back on, ADR 0055, and the whole suite without ORBIT), desktop
 # tests and its no-MIDI build, the dosfstools cross-checks, the firmware built and linked with default
-# features, with none, with the bench (with and without the master tape) and
-# with the SD probe, clippy on host
+# features, with none, with ORBIT, with the bench (with and without the master
+# tape, and with ORBIT) and with the SD probe, clippy on host
 # and firmware (every feature set), rustfmt and the stack check. The desktop needs ALSA's
 # pkg-config file; point PKG_CONFIG_PATH at it if it is not installed
 # system-wide. The host tool's tests run first, against a fake unit.
@@ -24,14 +28,20 @@ check:
     python3 -m unittest discover -s tools -p 'test_*.py'
     cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit
     cargo test -p chimera-core --features master-tape
+    cargo test -p chimera-core --no-default-features
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf
-    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features
-    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features bench
-    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features bench,master-tape
-    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features sd-probe
+    # Every other feature set in release: a build check, not a debug flash;
+    # their dev builds sit at or past FLASH
+    # (private issue #303).
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bench
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bench,master-tape
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bench,orbit
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features sd-probe
     cargo build -p chimera-bootloader --target thumbv7em-none-eabihf
     cargo build -p chimera-theory --target thumbv7em-none-eabihf
     just clippy
@@ -41,7 +51,7 @@ check:
 # The stack is the 63.75 KB of DTCM below the wave tables (ADR 0025): fail if any release function moves
 # SP by 8 KB or more in one step, or by a register (a large value built on
 # the stack instead of in a static), checked for the default, no-default,
-# bench and sd-probe feature sets. Needs the llvm-tools rustup component; a
+# bench, orbit, bench with orbit and sd-probe feature sets. Needs the llvm-tools rustup component; a
 # missing llvm-objdump or an unreadable ELF fails the recipe instead of
 # passing silently.
 stack-check:
@@ -50,7 +60,7 @@ stack-check:
     objdump="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/llvm-objdump"
     test -x "$objdump"
     elf=target/thumbv7em-none-eabihf/release/chimera-stm32
-    for features in "" "--no-default-features" "--features bench" "--no-default-features --features sd-probe"; do
+    for features in "" "--no-default-features" "--features bench" "--features orbit" "--features bench,orbit" "--no-default-features --features sd-probe"; do
         cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf $features
         test -r "$elf"
         if "$objdump" -d --no-show-raw-insn -C "$elf" \
@@ -78,11 +88,14 @@ test-fat-tools:
 clippy:
     cargo clippy -p chimera-core -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit --all-targets -- -D warnings
     cargo clippy -p chimera-core --features master-tape --all-targets -- -D warnings
+    cargo clippy -p chimera-core --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-desktop --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features bench -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features bench,master-tape -- -D warnings
+    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit -- -D warnings
+    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features bench,orbit -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features sd-probe -- -D warnings
     # usb-console alone: `stats` answers from no reader
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features usb-console -- -D warnings
@@ -164,9 +177,11 @@ flash-sd-probe:
     dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-sd-probe.bin -s 0x8020000:leave
 
 # Coverage-guided fuzz of the Sound and project decoders, seeded with the
-# v1 fixtures (needs nightly and cargo-fuzz)
+# v1 fixtures and NEW, so ORBIT's records are in the corpus from the start
+# (needs nightly and cargo-fuzz)
 fuzz:
     mkdir -p chimera-core/fuzz/corpus/decode_sound chimera-core/fuzz/corpus/decode_project
     cp chimera-core/tests/fixtures/v1/*.snd chimera-core/fuzz/corpus/decode_sound/
     cp chimera-core/tests/fixtures/v1/project.prj chimera-core/fuzz/corpus/decode_project/
+    cp chimera-core/tests/fixtures/v1/orbit.prj chimera-core/fuzz/seeds/decode_project/*.prj chimera-core/fuzz/corpus/decode_project/
     cd chimera-core/fuzz && for t in decode_sound decode_project; do cargo +nightly fuzz run $t -- -max_total_time=300; done

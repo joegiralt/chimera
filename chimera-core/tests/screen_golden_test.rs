@@ -6,6 +6,10 @@
 //!
 //!     SCREEN_DUMP=/tmp/screens cargo test -p chimera-core --test screen_golden_test
 
+// The goldens and the atlas are recorded with ORBIT built: its pages,
+// its SETTINGS list and the crumbs left of its beat dot.
+#![cfg(feature = "orbit")]
+
 mod common;
 mod screen;
 
@@ -14,19 +18,21 @@ use screen::*;
 // Re-recorded for ADR 0057: every Part and mixer header reads
 // `PART n · SOUND` or `· MIX`; the mixer recipes open on SENDS. The Algo
 // screens again for ADR 0063: INIT's VOL 45 and RR 5.
+// SETTINGS crumbs again for ORBIT (plan Task 10): they always clear its
+// beat dot, so three paths drop their first part.
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0x29fa1ef579c4a0e7),
     ("algo_alg", 0xb73321ba103c1886),
     ("algo_alg_morph_dimmed", 0xd8e8a78a528ad3b4),
-    ("mod_matrix_morph_inert", 0xc0a153ae29f9167b),
+    ("mod_matrix_morph_inert", 0xe5dc545f78f89d13),
     // Re-recorded: WAVE shows its scope (#310).
     ("algo_wave", 0xe156f3e83d0aab72),
     ("algo_level", 0x408f6bef763157fe),
     ("algo_osc_last", 0x7ac731494a9568e2),
     // The ENV stages' band draws the focused operator's envelope (#311).
-    ("algo_ar", 0x7a1f379473575179),
-    ("algo_d1l", 0x4f5314d1e36ae59d),
-    ("algo_d2r", 0x955ae4dc6d47a3d7),
+    ("algo_ar", 0x661a8ad43d30be01),
+    ("algo_d1l", 0x7ca2aaf1d50c3055),
+    ("algo_d2r", 0x60965afdf2d22552),
     ("bigviz_filter", 0x64de3de945e82cf3),
     ("flt_mode", 0x9dd12a044e75cc68),
     ("env_a", 0x6f15c442d71edf83),
@@ -100,16 +106,49 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_out_p2", 0xc7a057082a7a6932),
     ("algo_out_p3", 0x3e91d6b588f4ebfa),
-    ("mod_matrix", 0xa6cf67e584e06c56),
-    ("mod_matrix_wide", 0xca78c74fca4ac959),
-    ("sound_browser", 0x1d1ac95bdfaca72b),
+    ("mod_matrix", 0x908cc3655fdaf8ee),
+    ("mod_matrix_wide", 0xc34ca17250bc0e55),
+    ("sound_browser", 0xc5fad13cf6ddc71f),
     // Re-recorded: a fresh project's footer drops NEW (#286).
-    ("settings_personal_theme", 0x2158e1935828c468),
-    ("settings_system_diag_aud_load", 0x72f498c93e0f22f6),
-    ("settings_top", 0xb8200119c8d8b837),
-    ("settings_load", 0xbee3b127e748ef17),
+    ("settings_personal_theme", 0xc35039e65219cdc2),
+    ("settings_midi_sync", 0x0e26ce69d0f54980),
+    ("settings_system_diag_aud_load", 0x0d5edcdc4826225e),
+    // ORBIT's row opens its list (plan Task 17).
+    ("settings_top", 0x08d6ee26dad9fb97),
+    // Part 3's LIVE SNAP leaf (plan Task 15).
+    ("settings_part_live_snap", 0x78c80cf3c4c1cc6a),
+    // SETTINGS › ORBIT and its SAVE TO PROJ (plan Task 17); the crumb
+    // `SCENE n` (fix round 1).
+    ("settings_orbit", 0xf0d520f40ac7f0bb),
+    // Slot 3 written: MODIFIED, as ORBIT is in the project's CRC (Task 18).
+    ("settings_orbit_save_to", 0xa4d2405ea9f09bf6),
+    ("settings_load", 0x34b0bd576d341497),
     ("settings_prompt_load", 0xc47d45b862dea1e3),
-    ("settings_naming", 0xe963e855baf239a6),
+    ("settings_naming", 0x3ad617885a99ddf2),
+    // Every ORBIT page again for Task 16: the map gains SCN.
+    // ORBIT's RHYTHM, CHRD and CUSTOM (plan Task 9); Task 10's header,
+    // `SCENE n`, and the beat dot on the playing ones.
+    ("orbit_rhythm", 0x535a82923b7caa35),
+    // PLAY's cell (plan Task 14); KEY, SCALE and BARS gone to ORB; SEGS,
+    // DEGREE and PLAY on A to C, D to F reserved (ADR 0079, 2026-10-03).
+    ("orbit_chrd", 0x9e90b371b6b38670),
+    // Chords played into segments: a name for a numeral (Task 14).
+    ("orbit_chrd_played", 0x7739f4cbbc895e11),
+    // ORB (plan Task 10); B to E gain KEY, SCALE, BARS, SCENE (ADR 0079),
+    // and CUSTOM hangs under it; each ring's Part by its top and in RING,
+    // and CUSTOM by EDIT on a named scale (ADR 0084).
+    ("orbit_orb", 0xddf44d94d5f622ca),
+    ("orbit_orb_midi", 0x35a2ff6ecca97ad1),
+    ("orbit_custom", 0x7c5bdf51a79d88a1),
+    ("orbit_custom_named", 0x6f9acf1a43362d0e),
+    // RING's VOICE and NOTES, a STEP ring's NOTES (plan Task 13).
+    ("orbit_voice", 0xdaefdb55fbe49e98),
+    ("orbit_notes", 0x2865bfd4ee762860),
+    ("orbit_notes_step", 0xc1c3dab7eeb50a2f),
+    // 32 steps, step 32 picked: the row scrolled to its last eight.
+    ("orbit_notes_step32", 0x211fc000f7a5be91),
+    // SCN: a saved slot, SAVE's, a queued one filling (plan Task 16).
+    ("orbit_scn", 0x7c2558bf895b7432),
     ("busy", 0x198544cd36863145),
     ("toast_saved", 0xe344dd99a47d0dad),
     ("toast_exfat", 0xfc0cb3b4feb1a1b5),

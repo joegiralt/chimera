@@ -28,21 +28,31 @@ fn every_later_row_names_its_issue() {
         }
     }
     let names: Vec<_> = labels.iter().map(|l| l.0).collect();
-    assert_eq!(
-        names,
-        [
-            "ORBIT",
-            "SYNC",
-            "PORT CONFIG",
-            "SYSEX DUMP",
-            "SENDS",
-            "STORAGE",
-            "FORMAT CARD",
-            "USB CONFIG",
-            "TEST TONE",
-            "INPUT TEST"
-        ]
-    );
+    // ORBIT is built with its feature, RENAME inside it later (#298);
+    // without it, the row is later itself (#262).
+    let orbit = if cfg!(feature = "orbit") {
+        ("RENAME", 298)
+    } else {
+        ("ORBIT", 262)
+    };
+    assert!(labels.contains(&orbit));
+    // SYNC drives ORBIT, so it is built with it (ADR 0080), later without (#264).
+    let mut want = vec![orbit.0];
+    if !cfg!(feature = "orbit") {
+        want.push("SYNC");
+        assert!(labels.contains(&("SYNC", 264)));
+    }
+    want.extend([
+        "PORT CONFIG",
+        "SYSEX DUMP",
+        "SENDS",
+        "STORAGE",
+        "FORMAT CARD",
+        "USB CONFIG",
+        "TEST TONE",
+        "INPUT TEST",
+    ]);
+    assert_eq!(names, want);
     assert!(labels.contains(&("SENDS", 259)));
     assert!(labels.contains(&("TEST TONE", 295)));
     assert!(labels.contains(&("INPUT TEST", 296)));

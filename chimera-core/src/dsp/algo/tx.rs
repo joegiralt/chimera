@@ -1,5 +1,6 @@
 //! TX81Z operator facts from the owner's manual, re-implemented (ADR 0023).
 
+use super::math::clampf;
 use crate::dsp::algo::math::exp2;
 
 // 3.14 and 6.28 are TX81Z ratios, not approximations of pi and tau.
@@ -55,7 +56,7 @@ pub static LEVEL_GAIN: [f32; 100] = {
 
 /// A modulated LEVEL is fractional: linear between steps, so it never zippers.
 pub fn level_gain(level: f32) -> f32 {
-    let l = level.clamp(0.0, 99.0);
+    let l = clampf(level, 0.0, 99.0);
     let i = (l as usize).min(98);
     LEVEL_GAIN[i] + (LEVEL_GAIN[i + 1] - LEVEL_GAIN[i]) * (l - i as f32)
 }

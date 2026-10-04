@@ -695,7 +695,7 @@ fn every_route_readout_fits_its_line() {
                 m.set(src.index(), 0, -127);
                 m.sel_row = (0..8).find(|&r| m.row_source(r) == src.index()).unwrap();
                 let mut fb = Fb::new();
-                draw_readout(&mut fb, &m, -127, 0);
+                draw_readout(&mut fb, &m, -127, 0, m.hint());
                 assert_eq!(fb.oob, 0);
                 let right = (0..theme::SCREEN_W)
                     .rev()

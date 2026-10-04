@@ -14,11 +14,13 @@ use super::manage::{Command, Note, Off, Whose, command_rows};
 use super::naming::{Naming, draw_naming};
 use super::part::{Offer, SAVE_ROWS};
 use super::prompt::Slot;
-use super::tree::{Kind, PART, ROOT, Row, Screen, row_at, rows};
+use super::tree::{Act, Kind, PART, ROOT, Row, Screen, row_at, rows};
 use crate::name::{ProjectName, SoundName};
+use crate::orbit::scene::{OrbitSong, SceneIdx, SceneSet};
 use crate::project::{
     Line, Origin, PartId, PartStatus, Project, ProjectFile, ProjectStatus, SlotId, part_status,
 };
+use crate::ui::components::HeaderStatus;
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
 use crate::ui::nav::{Column, SettingsAt};
@@ -118,11 +120,13 @@ enum Bar {
     Keyed,
 }
 
-/// One part of the breadcrumb: a row's crumb, or a run-time `PART n`.
+/// One part of the breadcrumb: a row's crumb, or a run-time `PART n` or
+/// `SCENE n` (ORBIT's list, as `PART n` is PART's).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Crumb {
     Name(&'static str),
     Part(PartId),
+    Orbit(SceneIdx),
 }
 
 impl fmt::Display for Crumb {
@@ -130,6 +134,7 @@ impl fmt::Display for Crumb {
         match self {
             Crumb::Name(s) => f.write_str(s),
             Crumb::Part(p) => write!(f, "PART {}", p.index() + 1),
+            Crumb::Orbit(s) => write!(f, "SCENE {}", s.get() + 1),
         }
     }
 }
@@ -145,8 +150,11 @@ pub struct Crumbs {
 
 impl Crumbs {
     /// The crumbs of the rows on `path`, from SETTINGS down; the PART list
-    /// is `PART n` for the `active` Part.
-    pub fn of(path: &[u8], active: PartId) -> Self {
+    /// is `PART n` for the `active` Part, the ORBIT list `SCENE n` for the
+    /// playing `scene`.
+    // Without ORBIT no list names a scene.
+    #[cfg_attr(not(feature = "orbit"), allow(unused_variables))]
+    pub fn of(path: &[u8], active: PartId, scene: SceneIdx) -> Self {
         let mut c = Crumbs {
             parts: [Crumb::Name(ROOT.crumb); MAX_CRUMBS],
             len: 1,
@@ -154,9 +162,9 @@ impl Crumbs {
         };
         for d in 1..=path.len() {
             match row_at(&path[..d]) {
-                Some(r) if matches!(r.kind, Kind::List(rs) if core::ptr::eq(rs, &PART[..])) => {
-                    c.push(Crumb::Part(active))
-                }
+                Some(r) if is_list(r, &PART) => c.push(Crumb::Part(active)),
+                #[cfg(feature = "orbit")]
+                Some(r) if is_list(r, &super::tree::ORBIT) => c.push(Crumb::Orbit(scene)),
                 Some(r) => c.push(Crumb::Name(r.crumb)),
                 None => {}
             }
@@ -215,6 +223,11 @@ impl fmt::Display for Crumbs {
         }
         Ok(())
     }
+}
+
+/// Row `r` is the list `rows`.
+fn is_list(r: &Row, rows: &'static [Row]) -> bool {
+    matches!(r.kind, Kind::List(rs) if core::ptr::eq(rs, rows))
 }
 
 fn with_text<R>(c: Crumb, f: impl FnOnce(&str) -> R) -> R {
@@ -427,17 +440,12 @@ fn draw_row<D: DrawTarget<Color = Rgb565>>(d: &mut D, c: &Col, r: &ListRow<'_>, 
     };
     let below = c.note_below && note.is_some();
     let base = y + if below { UPPER_BASELINE } else { ROW_BASELINE };
-    let t = c.tracking();
     let beside = match note {
         Some(n) if !below => draw::text_width(&theme::FONT_LABEL, n, theme::LABEL_TRACKING) + 4,
         _ => 0,
     };
     let shown = fit(c, r.label, c.right - c.text - beside);
-    if t == 0 {
-        draw::text(d, c.font, shown, c.text, base, label);
-    } else {
-        draw::text_tracked(d, c.font, shown, c.text, base, label, t);
-    }
+    draw::text_tracked(d, c.font, shown, c.text, base, label, theme::LABEL_TRACKING);
     let small = |d: &mut D, s: &str, x, y, color| {
         draw::text_right(d, &theme::FONT_LABEL, s, x, y, color, theme::LABEL_TRACKING);
     };
@@ -458,24 +466,13 @@ fn draw_row<D: DrawTarget<Color = Rgb565>>(d: &mut D, c: &Col, r: &ListRow<'_>, 
     }
 }
 
-impl Col {
-    /// The small face is tracked, like every label; the list face isn't.
-    fn tracking(&self) -> i32 {
-        if core::ptr::eq(self.font, &theme::FONT_VALUE) {
-            0
-        } else {
-            theme::LABEL_TRACKING
-        }
-    }
-}
-
 /// `s` cut to `w` px at a character; short enough, it isn't measured.
 fn fit<'s>(c: &Col, s: &'s str, w: i32) -> &'s str {
     if s.len() as i32 * c.max_glyph <= w {
         return s;
     }
     let mut end = s.len();
-    while end > 0 && draw::text_width(c.font, &s[..end], c.tracking()) > w {
+    while end > 0 && draw::text_width(c.font, &s[..end], theme::LABEL_TRACKING) > w {
         end -= 1;
         while !s.is_char_boundary(end) {
             end -= 1;
@@ -616,6 +613,49 @@ impl PartBand {
     }
 }
 
+/// What SETTINGS › ORBIT's bands show of the playing scene.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OrbitBand {
+    pub scene: SceneIdx,
+    /// The saved slots (`OrbitSong::saved`).
+    pub saved: SceneSet,
+    /// `live` differs from its slot: RELOAD has drift to restart.
+    pub edited: bool,
+}
+
+impl OrbitBand {
+    pub fn of(song: &OrbitSong) -> Self {
+        OrbitBand {
+            scene: song.current(),
+            saved: song.saved(),
+            edited: song.edited(),
+        }
+    }
+
+    /// An ORBIT row's look: RELOAD dimmed with no drift, the rest
+    /// from the tree.
+    pub fn look(&self, kind: Kind) -> RowLook {
+        match kind {
+            Kind::Act(Act::SceneReload) if !self.edited => RowLook::Dimmed,
+            k => RowLook::of(k),
+        }
+    }
+
+    /// SAVE TO PROJ's row for slot `n`: `OVER SCENE 3`, or `SCENE 3` when
+    /// neutral.
+    pub fn save_label(&self, n: SceneIdx) -> Line {
+        let over = if self.saved.contains(n) { "OVER " } else { "" };
+        let mut l = Line::new(over);
+        let _ = write!(l, "SCENE {}", n.get() + 1);
+        l
+    }
+
+    /// Bits for a region key.
+    fn key(&self) -> [u8; 3] {
+        [self.scene.get(), self.saved.bits(), self.edited as u8]
+    }
+}
+
 pub struct Footer<'a> {
     pub name: &'a str,
     pub status: ProjectStatus,
@@ -722,11 +762,11 @@ pub fn legend(on: LegendFor, at_top: bool) -> &'static str {
         (L::Prompt, _) => "A PICK · SEQ OK · MENU CANCEL",
         (L::Naming, _) => "SEQ SAVE · MENU CANCEL",
         (L::ManageList, _) => "EDIT COMMANDS · MENU BACK",
-        (L::ManageCommands, _) => "SEQ RUN · MENU LIST",
+        (L::ManageCommands, _) => "EDIT RUN · MENU LIST",
         (L::ManageDimmed(None), _) => "MENU LIST",
         (L::ManageDimmed(Some(Note::LoadToRename)), _) => "LOAD TO RENAME · MENU LIST",
         (L::ManageLater, _) => "LATER · MENU LIST",
-        (L::Load, _) => "SEQ LOAD · MENU BACK",
+        (L::Load, _) => "EDIT LOAD · MENU BACK",
     }
 }
 
@@ -750,6 +790,9 @@ pub struct Bands<'a> {
     pub loaded: Option<ProjectFile>,
     /// In the PART branch, the active Part.
     pub part: Option<PartBand>,
+    /// The playing scene, for ORBIT's crumb; its band in the ORBIT branch.
+    pub scene: SceneIdx,
+    pub orbit: Option<OrbitBand>,
 }
 
 /// What is over SETTINGS' bands.
@@ -793,6 +836,8 @@ impl Bands<'_> {
                 };
                 return legend(on, false);
             }
+            #[cfg(feature = "orbit")]
+            (Some(Screen::SceneSaveTo), _) => return legend(LegendFor::Action, false),
             (_, Some(Column::Projects)) => return legend(LegendFor::ManageList, false),
             (_, Some(Column::Command(n))) => return legend(self.command_legend(n), false),
             _ => {}
@@ -801,7 +846,9 @@ impl Bands<'_> {
             .rows()
             .get(self.at.row() as usize)
             .map_or(LegendFor::Opens, |r| {
-                match self.part.map(|b| b.look(r.kind)) {
+                let looks =
+                    (self.part.map(|b| b.look(r.kind))).or(self.orbit.map(|b| b.look(r.kind)));
+                match looks {
                     Some(RowLook::Dimmed) => LegendFor::Dimmed,
                     _ => LegendFor::of(r.kind),
                 }
@@ -809,11 +856,15 @@ impl Bands<'_> {
         legend(on, self.at.path().is_empty())
     }
 
-    pub fn crumbs_key(&self, sounding: bool) -> u32 {
+    /// The breadcrumb and its dots; not the load, which it never shows.
+    pub fn crumbs_key(&self, s: HeaderStatus) -> u32 {
         let head = [
             self.at.path().len() as u8,
             self.active.index() as u8,
-            sounding as u8,
+            self.scene.get(),
+            s.sounding as u8,
+            s.orbit_dot.is_some() as u8,
+            s.orbit_dot.unwrap_or(0),
         ];
         settings_key(&[self.at.path(), &head, self.naming_crumb().as_bytes()])
     }
@@ -827,7 +878,7 @@ impl Bands<'_> {
 
     /// As drawn: NAMING's crumb ends it.
     pub fn crumbs(&self) -> Crumbs {
-        let mut c = Crumbs::of(self.at.path(), self.active);
+        let mut c = Crumbs::of(self.at.path(), self.active, self.scene);
         if let Some(BandsModal::Naming { of, .. }) = self.modal {
             c.push(Crumb::Name(of.crumb()));
         }
@@ -866,9 +917,11 @@ impl Bands<'_> {
             }
             None => ("", [0; 7]),
         };
+        let okey = self.orbit.map_or([0xFF; 3], |b| b.key());
         settings_key(&[
             pname.as_bytes(),
             &pkey,
+            &okey,
             self.at.path(),
             &list,
             text.as_bytes(),
@@ -887,18 +940,10 @@ impl Bands<'_> {
         ])
     }
 
-    /// The breadcrumb, and the sounding dot where the header has it.
-    pub fn draw_crumbs<D: DrawTarget<Color = Rgb565>>(&self, d: &mut D, sounding: bool) {
+    /// The breadcrumb, and the dots where the header has them.
+    pub fn draw_crumbs<D: DrawTarget<Color = Rgb565>>(&self, d: &mut D, s: HeaderStatus) {
         draw_crumbs(d, &self.crumbs());
-        if sounding {
-            draw::dot(
-                d,
-                theme::HEADER_DOT_X,
-                theme::HEADER_DOT_Y,
-                theme::HEADER_DOT_R,
-                theme::ACCENT,
-            );
-        }
+        crate::ui::components::header_dots(d, s);
     }
 
     pub fn draw_list<D: DrawTarget<Color = Rgb565>>(&self, d: &mut D) {
@@ -934,6 +979,9 @@ impl Bands<'_> {
         if let Some(b) = &self.part {
             return self.draw_part(d, b);
         }
+        if let Some(b) = &self.orbit {
+            return self.draw_orbit(d, b);
+        }
         let rows = self.rows();
         debug_assert!(rows.len() <= MAX_ROWS);
         let mut shown = [ListRow::of(&ROOT); MAX_ROWS];
@@ -962,6 +1010,30 @@ impl Bands<'_> {
         let rows = self.rows();
         // RELOAD's slot is in the strip: beside the label, it would cut it.
         draw_part_list(d, rows.len(), bar, |i, f| {
+            let r = &rows[i];
+            f(ListRow {
+                look: b.look(r.kind),
+                ..ListRow::of(r)
+            })
+        });
+    }
+
+    /// ORBIT's rows or SAVE TO PROJ's.
+    fn draw_orbit<D: DrawTarget<Color = Rgb565>>(&self, d: &mut D, b: &OrbitBand) {
+        let bar = self.at.row() as usize;
+        #[cfg(feature = "orbit")]
+        if self.at.screen() == Some(Screen::SceneSaveTo) {
+            return draw_rows(d, SceneIdx::ALL.len(), bar, self.first, |i, f| {
+                f(ListRow {
+                    label: b.save_label(SceneIdx::ALL[i]).as_str(),
+                    opens: false,
+                    note: None,
+                    look: RowLook::Normal,
+                })
+            });
+        }
+        let rows = self.rows();
+        draw_rows(d, rows.len(), bar, self.first, |i, f| {
             let r = &rows[i];
             f(ListRow {
                 look: b.look(r.kind),
@@ -1031,7 +1103,7 @@ mod tests {
             for b in 32u8..127 {
                 let s = [b];
                 let ch = core::str::from_utf8(&s).unwrap();
-                let w = draw::text_width(c.font, ch, c.tracking());
+                let w = draw::text_width(c.font, ch, theme::LABEL_TRACKING);
                 assert!(w <= c.max_glyph, "{ch:?}: {w} px");
             }
         }

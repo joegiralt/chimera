@@ -5,6 +5,7 @@ use crate::addr::{BlockRef, ParamAddr};
 use crate::block::ValFmt;
 use crate::dsp::algo::waves::{WAVE_LEN, WaveId};
 use crate::dsp::chorus::{ChorusMode, ChorusParams};
+use crate::dsp::clampf;
 use crate::dsp::delay::DelayParams;
 use crate::dsp::reverb::ReverbParams;
 
@@ -129,7 +130,7 @@ impl StaffNote {
 /// whole semitones either side, but snaps where they are more than a
 /// step apart (the octave wrap); the accidental is the nearest one's.
 fn staff(semis: f32) -> Gauge {
-    let semis = semis.clamp(-127.0, 126.0);
+    let semis = clampf(semis, -127.0, 126.0);
     let lo = libm::floorf(semis);
     let (a, b) = (StaffNote::of(lo as i8), StaffNote::of(lo as i8 + 1));
     let near = StaffNote::of(libm::roundf(semis) as i8);
@@ -206,7 +207,7 @@ pub struct Cube {
 impl Cube {
     /// From `CUBE_PARAMS`' set values, normalized.
     pub fn from_set(set: [f32; 5], focus: Option<CubePart>, frame: u32) -> Self {
-        let n = |i: usize| set[i].clamp(0.0, 1.0);
+        let n = |i: usize| clampf(set[i], 0.0, 1.0);
         Self {
             size: n(0),
             time: n(1),
@@ -237,7 +238,7 @@ impl Cube {
     /// turn at 20 fps. In f64, so it stays smooth however long it runs.
     pub fn turn(&self) -> f32 {
         use core::f64::consts::TAU;
-        libm::fmod(self.frame as f64 * TAU / 320.0, TAU) as f32
+        ((self.frame % 320) as f64 * TAU / 320.0) as f32
     }
 }
 
@@ -306,7 +307,7 @@ impl Rings {
 
     /// From `RINGS_PARAMS`' set values, normalized.
     pub fn from_set(set: [f32; 7], focus: Option<RingsPart>, frame: u32) -> Self {
-        let n = |i: usize| set[i].clamp(0.0, 1.0);
+        let n = |i: usize| clampf(set[i], 0.0, 1.0);
         Self {
             time: n(0),
             fdbk: n(1),
@@ -349,13 +350,13 @@ impl Rings {
     /// The wobble's phase at `frame`, radians in 0..τ, 0.37 a frame. In
     /// f64, so it stays smooth however long the clock has run.
     pub fn wobble_phase(&self) -> f32 {
-        libm::fmod(self.frame as f64 * 0.37, core::f64::consts::TAU) as f32
+        wrap(self.frame as f64 * 0.37, core::f64::consts::TAU)
     }
 
     /// How long the newest ring has been out, UI frames (0..period). In
     /// f64, so it stays smooth however long the clock has run.
     pub fn age(&self) -> f32 {
-        libm::fmod(self.frame as f64, self.period() as f64) as f32
+        wrap(self.frame as f64, self.period() as f64)
     }
 }
 
@@ -406,10 +407,10 @@ impl Braid {
     /// From `BRAID_PARAMS`' set values, normalized.
     pub fn from_set(set: [f32; 4], focus: Option<BraidPart>, frame: u32) -> Self {
         Self {
-            mode: ChorusMode::from_u8(libm::roundf(set[0].clamp(0.0, 1.0) * 3.0) as u8),
-            rate: set[1].clamp(0.0, 1.0),
-            depth: set[2].clamp(0.0, 1.0),
-            mix: set[3].clamp(0.0, 1.0),
+            mode: ChorusMode::from_u8(libm::roundf(clampf(set[0], 0.0, 1.0) * 3.0) as u8),
+            rate: clampf(set[1], 0.0, 1.0),
+            depth: clampf(set[2], 0.0, 1.0),
+            mix: clampf(set[3], 0.0, 1.0),
             focus,
             frame,
         }
@@ -444,10 +445,10 @@ impl Braid {
     pub fn twist(&self) -> f32 {
         let per_frame = 0.05 + 0.45 * self.rate as f64;
         let speed = self.turns_and_speed().1;
-        libm::fmod(
+        wrap(
             self.frame as f64 * per_frame * speed,
             core::f64::consts::TAU,
-        ) as f32
+        )
     }
 }
 
@@ -505,7 +506,7 @@ impl FocusGlyph {
                 staff(value * 2.0 * n - n)
             }
             FocusGlyph::Wave => Gauge::Wave(WaveId::clamped(libm::roundf(
-                value.clamp(0.0, 1.0) * fmt.max_int() as f32,
+                clampf(value, 0.0, 1.0) * fmt.max_int() as f32,
             ) as u8)),
             FocusGlyph::Composite(CompositeId::ChorusBraid) => composite(CompositeId::ChorusBraid),
             FocusGlyph::Composite(CompositeId::DelayRings) => composite(CompositeId::DelayRings),
@@ -553,4 +554,10 @@ fn level_ticks(fmt: ValFmt) -> u8 {
 /// glyph animates, else constant.
 pub const fn anim_key(animates: bool, frame: u32) -> u32 {
     if animates { frame } else { 0 }
+}
+
+/// `x` (0 or more, a frame count's worth) into 0..period: whole periods
+/// off by a truncating cast, not f64 `fmod`, which costs 3.6 KB of flash.
+fn wrap(x: f64, period: f64) -> f32 {
+    (x - period * (x / period) as u32 as f64).max(0.0) as f32
 }

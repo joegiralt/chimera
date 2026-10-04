@@ -1,7 +1,7 @@
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicU32, Ordering, compiler_fence};
 
-use chimera_core::note_queue::{NoteEvent, NoteProducer};
+use chimera_core::note_queue::{InEvent, NoteProducer};
 use chimera_hal::midi::MidiParser;
 use cortex_m::peripheral::NVIC;
 use stm32h7xx_hal::pac::{self, interrupt};
@@ -67,7 +67,7 @@ fn USART1() {
             break;
         }
         let byte = usart.rdr.read().rdr().bits() as u8;
-        if let Some(ev) = parser.feed(byte).and_then(NoteEvent::from_midi)
+        if let Some(ev) = parser.feed(byte).and_then(InEvent::from_midi)
             && let Some(notes) = notes.as_mut()
         {
             notes.push(ev);

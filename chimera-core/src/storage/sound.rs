@@ -110,7 +110,16 @@ const fn once_bit(tag: RecordTag) -> u8 {
         RecordTag::Routes => 1 << 3,
         RecordTag::LastProject => 1 << 4,
         // A project's own records: refused before `once` is asked.
-        RecordTag::Slot | RecordTag::Part | RecordTag::Fx | RecordTag::Origin => 0,
+        RecordTag::Slot
+        | RecordTag::Part
+        | RecordTag::Fx
+        | RecordTag::Origin
+        | RecordTag::Tempo
+        | RecordTag::OrbitBlock
+        | RecordTag::OrbitNotes
+        | RecordTag::OrbitChord
+        | RecordTag::Orbit
+        | RecordTag::OrbitScale => 0,
     }
 }
 
@@ -239,7 +248,8 @@ impl SoundCheck {
         if matches!(
             tag,
             RecordTag::Slot | RecordTag::Part | RecordTag::Fx | RecordTag::Origin
-        ) {
+        ) || tag.is_orbit()
+        {
             return Err(FileError::Corrupt);
         }
         // Engine first, and once.
@@ -277,9 +287,16 @@ impl SoundCheck {
                 Ok(())
             }
             RecordTag::LastProject => Ok(()),
-            RecordTag::Slot | RecordTag::Part | RecordTag::Fx | RecordTag::Origin => {
-                Err(FileError::Corrupt)
-            }
+            RecordTag::Slot
+            | RecordTag::Part
+            | RecordTag::Fx
+            | RecordTag::Origin
+            | RecordTag::Tempo
+            | RecordTag::OrbitBlock
+            | RecordTag::OrbitNotes
+            | RecordTag::OrbitChord
+            | RecordTag::Orbit
+            | RecordTag::OrbitScale => Err(FileError::Corrupt),
         }
     }
 

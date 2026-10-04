@@ -1,5 +1,6 @@
 use crate::addr::{BlockRef, Op, ParamAddr};
 use crate::block::{ParamId, ParamSpec, find_spec};
+use crate::orbit::RingIdx;
 use crate::ui::page::{PageLayout, ValFmt};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -18,6 +19,22 @@ pub enum VizType {
     AlgoDiagram,
     /// SPD: each slot's SPEED and HOLD POSITION.
     EnvSpeed,
+    /// ORB: the rings round their circles inside the progression, swept
+    /// by the clock.
+    Orbit,
+    /// RING · RHYTHM: the ring's pattern unrolled, its step lit.
+    OrbitRhythm,
+    /// RING · VOICE: each hit's gate as a bar, its force as its height.
+    OrbitVoice,
+    /// RING · NOTES: the pool as chips, or one a step.
+    OrbitNotes,
+    /// CHRD: the progression's segments as chips over the loop's bars.
+    OrbitChords,
+    /// CHRD › CUSTOM: the twelve notes round a circle, the set's lit.
+    OrbitCircle,
+    /// SCN: the eight slots, the playing one outlined, a queued one
+    /// filling as the loop runs out.
+    OrbitScenes,
     /// ALGO's AR · D1R · D1L · D2R · RR: the focused operator's envelope.
     OpEnv,
 }
@@ -62,6 +79,10 @@ pub enum SlotBinding {
     LfoPanel(crate::dsp::modulator::LfoSlot, u8),
     /// Cell k of EXC or MDL2, per MODEL (`modal::page_cells`).
     ModalPanel(crate::dsp::modal::ModalPage, u8),
+    /// A param of the ORBIT ring the location selects.
+    SelectedRing(ParamId),
+    /// One of ORBIT's own cells.
+    Orbit(crate::ui::orbit::OrbitCell),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -88,6 +109,13 @@ impl ParamSlot {
     pub const fn selected_op(param: ParamId) -> Self {
         Self {
             binding: SlotBinding::SelectedOp(param),
+            label_override: None,
+        }
+    }
+
+    pub const fn selected_ring(param: ParamId) -> Self {
+        Self {
+            binding: SlotBinding::SelectedRing(param),
             label_override: None,
         }
     }
@@ -134,6 +162,13 @@ impl ParamSlot {
         }
     }
 
+    pub const fn orbit(cell: crate::ui::orbit::OrbitCell) -> Self {
+        Self {
+            binding: SlotBinding::Orbit(cell),
+            label_override: None,
+        }
+    }
+
     pub const fn with_label(self, label: &'static str) -> Self {
         Self {
             label_override: Some(label),
@@ -147,7 +182,11 @@ impl ParamSlot {
             SlotBinding::Param(a) => a.spec(),
             // All six operators share one spec table, so AlgoOp(Op::A) stands in.
             SlotBinding::SelectedOp(id) => find_spec(BlockRef::AlgoOp(Op::A).specs(), id),
+            SlotBinding::SelectedRing(id) => {
+                find_spec(BlockRef::OrbitRing(RingIdx::ALL[0]).specs(), id)
+            }
             SlotBinding::Empty
+            | SlotBinding::Orbit(_)
             | SlotBinding::SelectOp
             | SlotBinding::Legacy { .. }
             | SlotBinding::FilterPanel(_)
@@ -164,13 +203,14 @@ impl ParamSlot {
         match self.binding {
             // Views resolve a panel knob.
             SlotBinding::Empty
+            | SlotBinding::Orbit(_)
             | SlotBinding::FilterPanel(_)
             | SlotBinding::EnvPanel(..)
             | SlotBinding::LfoPanel(..)
             | SlotBinding::ModalPanel(..) => "--",
             SlotBinding::SelectOp => "OP",
             SlotBinding::Legacy { label, .. } => label,
-            SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
+            SlotBinding::Param(_) | SlotBinding::SelectedOp(_) | SlotBinding::SelectedRing(_) => {
                 self.spec().map_or("??", |s| s.label)
             }
         }
@@ -179,13 +219,14 @@ impl ParamSlot {
     pub fn format(&self) -> ValFmt {
         match self.binding {
             SlotBinding::Empty
+            | SlotBinding::Orbit(_)
             | SlotBinding::FilterPanel(_)
             | SlotBinding::EnvPanel(..)
             | SlotBinding::LfoPanel(..)
             | SlotBinding::ModalPanel(..) => ValFmt::Uni,
             SlotBinding::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
             SlotBinding::Legacy { fmt, .. } => fmt,
-            SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
+            SlotBinding::Param(_) | SlotBinding::SelectedOp(_) | SlotBinding::SelectedRing(_) => {
                 self.spec().map_or(ValFmt::Uni, |s| s.fmt)
             }
         }

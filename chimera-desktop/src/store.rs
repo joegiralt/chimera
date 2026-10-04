@@ -290,13 +290,13 @@ pub(crate) mod tests {
             f
         };
         let mut d = Desk::launch(root.clone());
-        // SETTINGS › PROJECT › LOAD, row 01, SEQ.
+        // SETTINGS › PROJECT › LOAD, row 01, EDIT.
         d.tap(Key::M);
         d.tap(Key::Down);
         d.tap(Key::Down);
         assert_eq!(d.ui.location(), Location::settings_at(&[0, 0], 0));
         assert!(d.ui.load_row(0).unwrap().label.as_str().starts_with("01"));
-        d.tap(Key::Up);
+        d.tap(Key::Down);
         assert_eq!(d.ui.project().meta().file(), Some(a));
         while d.ui.in_settings() {
             d.tap(Key::M);

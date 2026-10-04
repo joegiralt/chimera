@@ -102,10 +102,6 @@ where
 
 /// What the cells show, for dirty tracking.
 pub fn cells_key(s: Option<&AudioStats>, card: Card) -> [u16; 6] {
-    let h = cell_texts(s, card).map(|b| {
-        b.as_str().bytes().fold(0x811c_9dc5u32, |h, c| {
-            (h ^ c as u32).wrapping_mul(0x0100_0193)
-        })
-    });
+    let h = cell_texts(s, card).map(|b| crate::ui::region::settings_key(&[b.as_str().as_bytes()]));
     h.map(|h| (h ^ (h >> 16)) as u16)
 }

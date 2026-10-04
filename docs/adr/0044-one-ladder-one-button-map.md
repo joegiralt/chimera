@@ -1,6 +1,6 @@
 # 0044. One ladder and one button map for Parts, the mixer and ORBIT
 
-- **Status:** Proposed
+- **Status:** Proposed; its SEQ tap assignments are superseded by [0081](0081-one-d-pad-on-every-chain.md)
 - **Deciders:** project owner (2026-09-30); firmware
 
 ## Context
@@ -34,10 +34,10 @@ on 2026-09-30.
 | **EDIT** | Down or open (`down`). On pages, sub-page down, as today. In a SETTINGS list, open the row: a list or a leaf page; a Screen row is listed first, by `UiState`; a later row does nothing (amended 2026-10-01, owner: ADR 0066). In ORBIT, only ORBIT's own pages: on RING it cycles the sub-pages, RHYTHM → VOICE → NOTES → back to RHYTHM (amended 2026-09-30, owner); SCN's commit; it never leaves ORBIT. |
 | **Hold B*n* in ORBIT** | Out to the pages of the Part ring *n* plays: `Pages(p, recall.pages[p])`. Fires at `HOLD_MS`; the release does nothing. The only way from ORBIT to sound design. |
 | **MENU tap** | ~~Up one rung (`up`)~~. Outside SETTINGS: open SETTINGS at its top list, remembering where you were. In it: back one level, and at the top close, back to where MENU was pressed (amended 2026-10-01, owner: ADR 0066). Acts on release, before `HOLD_MS`. |
-| **MENU hold** | ~~System~~ Quick save, from anywhere, ORBIT included (orbit spec lines 370 and 570: "MENU hold: save the project") (amended 2026-10-01, owner: ADR 0066). |
+| **MENU hold** | ~~System~~ Quick save, from anywhere, ORBIT included (amended 2026-10-01, owner: ADR 0066). It stands on ADR 0066, not on the ORBIT spec: ~~orbit spec lines 370 and 570: "MENU hold: save the project"~~ those lines (at `ee4380f`) read "Leave, to System, as today" and "MENU leaves as today" (amended 2026-10-02, owner: Q1, Q2). In ORBIT it saves the project and leaves the place as it is; its release does nothing (amended 2026-10-02, owner: Q1, Q2). |
 | **SEQ tap** | ~~Save what this rung is about.~~ On the mixer and the Sound rung, open SETTINGS › PART for that Part; in a SETTINGS list, run the highlighted action (amended 2026-10-01, owner: ADR 0066). On pages and leaf pages it keeps today's sub-page up. In ORBIT it always saves the scene, on every ORBIT page, since EDIT cycles the RING sub-pages and no sub-page-up is needed there (amended 2026-09-30, owner). Acts on release, before `HOLD_MS`. |
-| **SEQ hold** | ORBIT, from anywhere, including from the pages a hold B*n* opened. |
-| **MENU tap in ORBIT** | Leave ORBIT, back to where you were before; ORBIT keeps playing. |
+| **SEQ hold** | ORBIT, from anywhere, including from the pages a hold B*n* opened. From SETTINGS too: SETTINGS closes as MENU at its top would, and ORBIT's way back is where SETTINGS was opened. With a prompt or NAMING open, nothing. Built only with `chimera-core`'s `orbit` feature; without it SEQ hold does nothing (amended 2026-10-02, owner: Q1, Q2). |
+| **MENU tap in ORBIT** | Leave ORBIT, back to where you were before; ORBIT keeps playing. "Before" is where SEQ hold entered from, `Recall.orbit_from`, a sound page re-resolved for its Part's current engine; never SETTINGS, so from SETTINGS it is where SETTINGS was opened. A second tap, now outside ORBIT, opens SETTINGS (amended 2026-10-02, owner: Q1, Q2). |
 | **PLUS / MINUS** | Sideways: the next or previous page or node. On a Part's rung (the mixer), PLUS steps PART → SENDS → the shared FX, CHORUS to MASTER, inside Part *n*'s mixer, clamped at both ends, and MINUS goes the other way; other Parts' mixers are MIX+B*n* (owner, 2026-10-02: ADR 0066). On the Sound rung, the next or previous Part, wrapping. In a SETTINGS list, the bar; on a leaf page, the node (amended 2026-10-01, owner: ADR 0066). |
 | **MIX+MINUS** | Remove, behind a confirm (storage spec § The keys). |
 | **MIX+PLUS** | Prime a route on pages (ADR 0017); rename and retag on a library entry. |
@@ -58,13 +58,34 @@ ORB jumps to the ring's Part" shortcut is removed. MENU tap leaves ORBIT, back
 to where you were before, and ORBIT keeps playing; hold SEQ from anywhere
 returns to ORBIT. MENU hold is quick save, as everywhere (amended 2026-10-01, owner: ADR 0066).
 
+**`OrbitKey` seals the mode** (amended 2026-10-02, owner: Q1, Q2). In ORBIT, `UiState` reads the frame as
+`OrbitKey`s (`orbit_keys`), never `NavKey`s, and `Location::step_orbit`
+steps them; `Location::step` on `Orbit` stays put for every `NavKey`. The
+type has no variant for a B*n* that jumps to a Part, nor for SEQ hold:
+
+```rust
+pub enum OrbitKey { Ring(RingIdx), Cross(RingIdx), Mute(RingIdx), PlayStop, Plus, Minus, Edit, SeqTap, MenuTap }
+pub enum OrbitAct { PlayStop, Mute(RingIdx), SaveScene, SaveTo }   // `Step::Orbit`, run by `UiState`
+```
+
+`SaveTo` is EDIT on SCN, SCN's commit: SAVE → n (amended 2026-10-03: plan Task 16, ADR 0077).
+
+- A B1–B5 tap (on release) is `Ring`: RING, on the sub-page last shown. A
+  hold is `Cross`, the only key to a Part's pages; `orbit_from` is kept.
+- MIX + B1–B5 is `Mute`, on the press; that B gate is muted for the
+  press (as MIX mutes MENU), so no `Ring` or `Cross` follows it.
+- `MenuTap` is the only other key out. Every other `OrbitKey` stays in
+  ORBIT or is an `OrbitAct`.
+
 ### `Location`
 
 Amended 2026-10-01 (owner: ADR 0066): `Loc` loses `Projects`, `Project`, `System` and
 `Orbit`, and gains `Settings(SettingsAt)`. `Orbit`, with `Recall`'s `orbit`
 and `from`, returns with the ORBIT plan. `Recall` gains `settings_from`,
-an `Outside` that by type can never hold SETTINGS. As built
-(`ui::nav`):
+an `Outside` that by type can never hold SETTINGS. `Orbit(OrbitAt)`
+returns with `Recall.{orbit, orbit_from, ring_page}`, and `Outside` refuses
+`Orbit` as well, so `settings_from` and `orbit_from` are both sound-side by
+type (amended 2026-10-02, owner: Q1, Q2). As built (`ui::nav`):
 
 ```rust
 pub struct Location(Loc);              // opaque; `Loc` is private to ui::nav
@@ -74,12 +95,17 @@ enum Loc {
     Fx(PartId, PageAt),                // CHORUS … MASTER, as Part n's own mixer
     Sound(PartId),                     // the Sound rung
     Settings(SettingsAt),              // a SETTINGS list, Screen or leaf page
+    Orbit(OrbitAt),                    // ORBIT_CHAIN's page and the ring (amended 2026-10-02)
 }
-pub struct Outside(Loc);               // never Settings
+pub struct OrbitAt { page: PageAt, ring: RingIdx }
+pub struct Outside(Loc);               // never Settings, never Orbit
 pub struct Recall {
     pages: [Option<SoundPage>; 6],     // each Part's page left, with its engine
     mix: MixAt,                        // the mixer page from outside it
     settings_from: Outside,            // where MENU at the top returns
+    orbit: OrbitAt,                    // the ORBIT page last left (amended 2026-10-02)
+    orbit_from: Outside,               // where SEQ hold entered from (amended 2026-10-02)
+    ring_page: PageAt,                 // RING's sub-page last shown (amended 2026-10-02)
 }
 enum MixAt { Sends, Fx(PageAt) }       // never PART (ADR 0057)
 ```

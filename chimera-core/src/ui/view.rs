@@ -12,12 +12,17 @@ use crate::dsp::modulator::{
     EnvForm, EnvSlot, EnvSpeed, EnvType, Func, FuncMode, LfoForm, LfoSlot, LfoType, pick,
 };
 use crate::modulation::{ModSource, VCA};
+use crate::orbit::RingIdx;
+use crate::orbit::clock::ClockSource;
+use crate::orbit::scene::SceneRing;
 use crate::params::{EnvParams, FilterParams, OutParams};
 use crate::preset::Sound;
 use crate::ui::block_def::{BlockDef, SlotBinding};
 use crate::ui::filter_panel::{self, PanelKnob, PanelTarget};
 use crate::ui::glyph::FocusGlyph;
+use crate::ui::hint::{self, Gesture, Hint};
 use crate::ui::mod_panel::{self, PanelSlot};
+use crate::ui::orbit::OrbitCell;
 
 /// What an ENV slot's page resolves against: type A's panel follows its
 /// SPEED, type B's its MODE and that MODE's FORM.
@@ -53,6 +58,10 @@ pub struct SlotCtx {
     pub lfos: [LfoKind; 3],
     /// MODEL: which cells MDL2 shows.
     pub model: ResonatorMode,
+    /// The ORBIT ring the location selects: what `SelectedRing` edits.
+    pub ring: RingIdx,
+    /// ORBIT's clock: BPM is inert while MIDI leads.
+    pub clock: ClockSource,
 }
 
 impl SlotCtx {
@@ -77,7 +86,19 @@ impl SlotCtx {
                 }
             }),
             model: ResonatorMode::from_u8(get(BlockRef::Modal, ModalParams::MODE) as u8),
+            ring: RingIdx::ALL[0],
+            clock: ClockSource::Internal,
         }
+    }
+
+    /// This context on ORBIT ring `ring`.
+    pub fn on_ring(self, ring: RingIdx) -> Self {
+        Self { ring, ..self }
+    }
+
+    /// This context under ORBIT's `clock`.
+    pub fn on_clock(self, clock: ClockSource) -> Self {
+        Self { clock, ..self }
     }
 }
 
@@ -106,6 +127,8 @@ pub enum View {
         label: &'static str,
         text: &'static str,
     },
+    /// One of ORBIT's own cells: its text is `orbit::draw::cell_text`.
+    Orbit(OrbitCell),
 }
 
 impl View {
@@ -113,6 +136,7 @@ impl View {
         match *self {
             View::Empty => "--",
             View::SelectOp => "OP",
+            View::Orbit(c) => c.label(),
             View::Legacy { label, .. }
             | View::Param { label, .. }
             | View::Route { label, .. }
@@ -137,6 +161,7 @@ impl View {
             View::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
             View::Legacy { fmt, .. } | View::Param { fmt, .. } => fmt,
             View::Route { .. } => ValFmt::Route,
+            View::Orbit(c) => c.fmt(),
         }
     }
 
@@ -153,7 +178,21 @@ impl View {
             _ => None,
         }
     }
+
+    /// The gesture hint a param's focus band shows (ADR 0086): MUTE's
+    /// MIX + B*n*, which mutes any ring from anywhere in ORBIT. ORBIT's
+    /// own cells give theirs through their focus.
+    pub fn hint(&self) -> Hint {
+        match self.addr() {
+            Some(a) if matches!(a.block, BlockRef::OrbitRing(_)) && a.param == SceneRing::MUTE => {
+                MUTE_HINT
+            }
+            _ => hint::NONE,
+        }
+    }
 }
+
+const MUTE_HINT: Hint = &[Gesture("MIX + B1-5", "MUTES THAT RING")];
 
 fn param(addr: ParamAddr, label: &'static str, fmt: ValFmt) -> View {
     View::Param { addr, label, fmt }
@@ -166,6 +205,8 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
     };
     match slot.binding {
         SlotBinding::Empty => View::Empty,
+        // ORBIT's pages draw and turn their own cells.
+        SlotBinding::Orbit(c) => View::Orbit(c),
         SlotBinding::SelectOp => View::SelectOp,
         SlotBinding::Legacy { label, fmt } => View::Legacy { label, fmt },
         // SPD: a type-B slot's SPEED and HOLD read TYPE B (spec § UI).
@@ -179,6 +220,11 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
         SlotBinding::Param(addr) => param(addr, slot.label(), slot.format()),
         SlotBinding::SelectedOp(id) => param(
             ParamAddr::new(BlockRef::AlgoOp(ctx.sel_op), id),
+            slot.label(),
+            slot.format(),
+        ),
+        SlotBinding::SelectedRing(id) => param(
+            ParamAddr::new(BlockRef::OrbitRing(ctx.ring), id),
             slot.label(),
             slot.format(),
         ),
@@ -246,11 +292,20 @@ pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
     }
 }
 
-/// The view is drawn dimmed and inert: a fixed readout, or a param
-/// `dimmed` rules inapplicable.
-pub fn is_dimmed(v: &View, sound: &Sound) -> bool {
+/// The view is drawn dimmed and inert: a fixed readout, a param `dimmed`
+/// rules inapplicable, or BPM while a MIDI clock leads (spec § Design
+/// choices: F sets the internal BPM, dimmed under an external clock).
+pub fn is_dimmed(v: &View, sound: &Sound, ctx: &SlotCtx) -> bool {
     match *v {
         View::Text { .. } => true,
+        View::Param {
+            addr:
+                ParamAddr {
+                    block: BlockRef::Tempo,
+                    ..
+                },
+            ..
+        } => ctx.clock == ClockSource::Midi,
         View::Param { addr, .. } => dimmed(addr, sound),
         _ => false,
     }

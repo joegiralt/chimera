@@ -87,6 +87,7 @@ fn new_live_output_redraws_only_the_viz_band() {
 #[test]
 fn focus_band_shows_the_last_touched_slot() {
     let mut ui = UiState::new();
+    init_part(&mut ui, PartId::ALL[0]);
     feed(&mut ui, Input::turn(EncoderId::C, 5)); // MORPH
     settle(&mut ui);
     let mut fb = Fb::new();

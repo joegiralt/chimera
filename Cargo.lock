@@ -197,6 +197,7 @@ version = "0.1.0"
 dependencies = [
  "chimera-core",
  "chimera-hal",
+ "chimera-theory",
  "chimera-waves",
  "embedded-graphics",
  "embedded-graphics-core",

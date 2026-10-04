@@ -1,6 +1,7 @@
 //! Modal's parameters and their specs.
 
 use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
+use crate::dsp::clampf;
 
 // ── Modal Params ────────────────────────────────────────────────────
 
@@ -271,7 +272,7 @@ pub(super) fn t60(damp: f32) -> f32 {
 
 /// `t60`'s inverse, held to DAMP's range.
 pub fn damp_for(t60_s: f32) -> f32 {
-    (libm::logf(t60_s / T60_MIN) / libm::logf(T60_SPAN)).clamp(0.0, 1.0)
+    clampf(libm::logf(t60_s / T60_MIN) / libm::logf(T60_SPAN), 0.0, 1.0)
 }
 
 /// The old loop's gain per pass at `decay`, rung at C3, as DAMP: old

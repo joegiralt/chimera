@@ -212,7 +212,7 @@ fn spd_dims_a_type_b_slot() {
     let s = Sound::init(EngineType::Algo);
     let ctx = SlotCtx::read(&s.params, Op::A);
     let dim: Vec<bool> = (0..6)
-        .map(|i| is_dimmed(&view(&ENV_SPEED, i, &ctx), &s))
+        .map(|i| is_dimmed(&view(&ENV_SPEED, i, &ctx), &s, &ctx))
         .collect();
     assert_eq!(dim, [false, false, true, false, false, true]);
 }

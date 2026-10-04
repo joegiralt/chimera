@@ -98,8 +98,18 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Pitch", "STEAL", NONE),
     ("Part", "MODE", NONE),
     ("Part", "OUT", NONE),
+    ("Part", "SNAP", NONE),
+    ("Part", "HELD", NONE),
     ("Theme", "GAMMA", NONE),
     ("Theme", "ACCENT", NONE),
+    ("Theme", "HINTS", SWITCH),
+    ("Midi", "SYNC", NONE),
+    ("OrbitChords", "KEY", NONE),
+    ("OrbitChords", "SCALE", NONE),
+    ("OrbitRing", "MUTE", SWITCH),
+    ("OrbitRing", "SNAP", NONE),
+    ("OrbitRing", "MODE", NONE),
+    ("OrbitRing", "WALK", NONE),
 ];
 
 /// Named choices that keep the ARC: their names are numbers on a scale,
@@ -110,6 +120,8 @@ const NAMED_ARC: &[(&str, &str)] = &[
     ("Comp", "RATIO"),
     ("Theme", "BRIGHT"),
     ("Theme", "BLACK"),
+    // 0 to 3 extra octaves.
+    ("OrbitRing", "RANGE"),
 ];
 
 /// Two-value choices that are two peers, not on and off: a toggle would
@@ -123,6 +135,14 @@ const TWO_PEERS: &[(&str, &str)] = &[
     ("Part", "MODE"),
     // CUT and GLIDE: two ways to steal; GLIDE could read as "glide on".
     ("Pitch", "STEAL"),
+    // SCALE and CHORD: two sets to snap to.
+    ("OrbitRing", "SNAP"),
+    // STEP and POOL: two ways to pick a note.
+    ("OrbitRing", "MODE"),
+    // STAY and RE-SNAP: two ways to hold a key through a chord change.
+    ("Part", "HELD"),
+    // INT and EXT: two clocks to follow, neither is off.
+    ("Midi", "SYNC"),
 ];
 
 /// Every LEVEL BAR param is a unipolar level, 0 to max.
@@ -842,6 +862,8 @@ fn glyph_crossfader_page_slides_left_centre_right() {
     use chimera_core::dsp::algo::params::AlgoParams;
     use chimera_core::params::DriveParams;
     let mut ui = UiState::new();
+    // INIT's MORPH, which the walk below starts from.
+    init_part(&mut ui, PartId::ALL[0]);
     to_xf(&mut ui);
     // Both specs carry CROSSFADER.
     let morph = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
@@ -1445,6 +1467,8 @@ fn a_crossfader_redraws_when_only_its_set_value_moves() {
     use chimera_core::dsp::algo::params::AlgoParams;
     let morph = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
     let mut ui = UiState::new();
+    // INIT's MORPH has no modulation of its own.
+    init_part(&mut ui, PartId::ALL[0]);
     feed(&mut ui, Input::press(ButtonId::B2));
     feed(&mut ui, Input::press(ButtonId::B1));
     let ctx = SlotCtx::read(ui.params(), ui.selected_op());

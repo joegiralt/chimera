@@ -134,10 +134,16 @@ fn apply_offset_is_the_old_formula_and_never_rounds() {
         e: 0,
     };
     apply_offset(&mut p, S, 0.03);
-    assert_eq!(p.s, (5.0f32 + 0.03f32 * (10.0 - 0.0)).clamp(0.0, 10.0));
+    assert_eq!(
+        p.s,
+        chimera_core::dsp::clampf(5.0 + 0.03 * (10.0 - 0.0), 0.0, 10.0)
+    );
     assert_ne!(p.s, 5.0); // fractional: Stepped modulation is not rounded
     apply_offset(&mut p, C, -0.1);
-    assert_eq!(p.c, (0.0f32 + -0.1f32 * (1.0 - -1.0)).clamp(-1.0, 1.0));
+    assert_eq!(
+        p.c,
+        chimera_core::dsp::clampf(0.0 + -0.1 * (1.0 - -1.0), -1.0, 1.0)
+    );
     apply_offset(&mut p, C, 2.0);
     assert_eq!(p.c, 1.0);
 }

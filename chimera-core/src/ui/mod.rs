@@ -13,10 +13,14 @@ pub mod filter_panel;
 pub mod fmt;
 pub mod focus;
 pub mod glyph;
+pub mod hint;
 pub mod hold;
+pub mod led;
+pub mod midi_settings;
 pub mod mod_grid;
 pub mod mod_panel;
 pub mod nav;
+pub mod orbit;
 pub mod page;
 pub mod part_page;
 pub mod perf;
@@ -47,13 +51,17 @@ use crate::in_place::{by_value, uninit_at};
 use crate::mod_path::{LABEL_LEN, RegistryError};
 use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::ProjectName;
+use crate::orbit::RingIdx;
+use crate::orbit::chords::ScaleKind;
+use crate::orbit::runner::{OrbitShared, OrbitView};
+use crate::orbit::scene::{OrbitSong, Refused, SceneIdx, SceneSave};
 use crate::params::{EngineType, ParamSnapshot};
 use crate::perf::load::AudioStats;
 use crate::preset::POOL_SIZE;
 use crate::project::{
     self, CardOut, Confirmed, DeleteTarget, Line, LoadLink, PartEdit, PartFrom, PartId, PartSource,
     Project, ProjectFile, ProjectNote, ProjectSource, ProjectStatus, ReplaceGuard, SaveTo,
-    StatusCache, Swap, TemplateCrc, part_block_mut,
+    SceneAsk, SceneSlot, StatusCache, Swap, TemplateCrc, part_block_mut,
 };
 use crate::scope::SCOPE_LEN;
 use crate::storage::ProjectId;
@@ -63,9 +71,11 @@ use block_def::slot_addr;
 use components::Head;
 use fmt::FmtBuf;
 use hold::{HoldGates, Press};
+use midi_settings::MidiSettings;
 use mod_grid::MatrixState;
 use nav::{
-    Browse, Column, ListAt, Location, NavCtx, NavKey, Recall, Rung, SettingsAt, Step, chain_def_for,
+    Browse, Column, ListAt, Location, NavCtx, NavKey, OrbitAct, OrbitCx, OrbitKey, Recall, Rung,
+    SettingsAt, Step, chain_def_for,
 };
 use page::{PageKey, PageLayout};
 use perf::PerfStats;
@@ -195,6 +205,8 @@ pub struct UiState {
     prime_status: Option<PrimeStatus>,
     /// SETTINGS › THEME; boot sets it from SYSTEM (`set_theme`).
     theme: ThemeSettings,
+    /// SETTINGS › MIDI CONFIG's SYNC; boot sets it from SYSTEM (`set_midi`).
+    midi: MidiSettings,
     /// What the last card operation said, for a moment.
     toast: busy::ToastTimer,
     /// `project_status`, refreshed by `handle_input` and `update` inside
@@ -210,6 +222,10 @@ pub struct UiState {
     job: Option<Job>,
     /// The card as `sync_system` last saw it, for ABOUT.
     card: Card,
+    /// ORBIT's transport and the runner's last view.
+    orbit: orbit::OrbitUi,
+    /// The front-panel LED: ORBIT's beat.
+    led: led::Led,
     /// OS UPGRADE's yes, until the shell takes it.
     dfu: Option<Said<RomDfu>>,
 }
@@ -232,6 +248,7 @@ crate::in_place::field_list!(UiState => UiState {
     display_lfos,
     prime_status,
     theme,
+    midi,
     toast,
     status,
     clock,
@@ -239,6 +256,8 @@ crate::in_place::field_list!(UiState => UiState {
     listing,
     job,
     card,
+    orbit,
+    led,
     dfu,
 });
 
@@ -270,12 +289,14 @@ impl UiState {
             let page = PageKey::from_location(loc, def, Op::A);
             let mut renderer = Renderer::new();
             let theme = ThemeSettings::DEFAULT;
+            let midi = MidiSettings::DEFAULT;
             let read = UiRead {
                 project,
                 part: PartId::ALL[0],
                 theme: &theme,
+                midi: &midi,
             };
-            renderer.snap_to_current(page_values(page, def, &read, Op::A));
+            renderer.snap_to_current(page_values(page, def, &read, &SlotCtx::read(&read, Op::A)));
             addr_of_mut!((*p).loc).write(loc);
             addr_of_mut!((*p).recall).write(Recall::new());
             addr_of_mut!((*p).gates).write(HoldGates::new());
@@ -292,6 +313,7 @@ impl UiState {
             addr_of_mut!((*p).display_lfos).write([Lfo::new(); 3]);
             addr_of_mut!((*p).prime_status).write(None);
             addr_of_mut!((*p).theme).write(theme);
+            addr_of_mut!((*p).midi).write(midi);
             addr_of_mut!((*p).toast).write(busy::ToastTimer::new());
             addr_of_mut!((*p).status).write(StatusCache::new());
             addr_of_mut!((*p).clock).write(animation::UiClock::new());
@@ -299,6 +321,8 @@ impl UiState {
             addr_of_mut!((*p).listing).write(Listing::new());
             addr_of_mut!((*p).job).write(None);
             addr_of_mut!((*p).card).write(Card::new());
+            addr_of_mut!((*p).orbit).write(orbit::OrbitUi::new());
+            addr_of_mut!((*p).led).write(led::Led::OFF);
             addr_of_mut!((*p).dfu).write(None);
             let ui = slot.assume_init_mut();
             ui.load_matrix(PartId::ALL[0]);
@@ -363,6 +387,16 @@ impl UiState {
         self.theme = t;
     }
 
+    /// SETTINGS › MIDI CONFIG as last edited.
+    pub fn midi(&self) -> MidiSettings {
+        self.midi
+    }
+
+    /// The MIDI CONFIG SYSTEM held, set at boot before the first frame.
+    pub fn set_midi(&mut self, m: MidiSettings) {
+        self.midi = m;
+    }
+
     /// Once a frame, after input: on leaving SETTINGS, syncs SYSTEM (one
     /// mount, which may load or save) and puts up what came of it. It draws
     /// nothing, so no BUSY covers a save too quick to read; a `Loaded`
@@ -375,6 +409,7 @@ impl UiState {
         s: &mut SystemSettings,
     ) {
         s.theme = self.theme;
+        s.midi = self.midi;
         self.card = *card;
         if !sync.left_system(self.in_settings(), s) {
             return;
@@ -382,7 +417,7 @@ impl UiState {
         let r = sync.on_exit(card, store, s, self.project.meta().file());
         self.card = *card;
         if r == Ok(Exit::Loaded) {
-            self.theme = s.theme;
+            self.adopt_system(s);
         }
         if let Some(t) = busy::toast_for(&r) {
             self.toast.show(t);
@@ -444,6 +479,7 @@ impl UiState {
         if let Some(n) = project::boot_project(card, store, last, &mut self.project) {
             self.show_note(n);
         }
+        self.orbit.booted(self.project.orbit_mut());
         self.project_replaced(was);
     }
 
@@ -509,7 +545,7 @@ impl UiState {
         settings: &mut SystemSettings,
         go: Confirmed<ProjectSource>,
         link: &LoadLink,
-        publish: impl FnOnce(Swap, &Project) -> R,
+        publish: impl FnOnce(Swap, &UiState) -> R,
     ) -> Option<R> {
         let mut cx = CardCx {
             card,
@@ -526,7 +562,7 @@ impl UiState {
         cx: &mut CardCx<'_, S>,
         go: Confirmed<ProjectSource>,
         link: &LoadLink,
-        publish: impl FnOnce(Swap, &Project) -> R,
+        publish: impl FnOnce(Swap, &UiState) -> R,
     ) -> (Option<R>, Option<CardEvent>) {
         let was = self.active_engine();
         let out = project::load_project(cx.card, cx.store, &mut self.project, go, link);
@@ -536,7 +572,9 @@ impl UiState {
         let Some(swap) = out.swap else {
             return (None, out.event);
         };
-        let published = publish(swap, &self.project);
+        // Before the publish: it carries the load to the runner.
+        self.orbit.loaded(link.epoch(), self.project.orbit_mut());
+        let published = publish(swap, self);
         self.project_replaced(was);
         // Only a file load sets it: NEW, loaded or fallen back to, has none.
         if let Some(f) = self.project.meta().file() {
@@ -564,7 +602,7 @@ impl UiState {
             // SYSTEM; until then a boot falls back to NEW and says why.
             Ok(()) => {
                 if sync.forget(card, store, settings, file) == Ok(Exit::Loaded) {
-                    self.theme = settings.theme;
+                    self.adopt_system(settings);
                 }
             }
             Err(n) => self.show_note(n),
@@ -584,8 +622,14 @@ impl UiState {
         f: ProjectFile,
     ) {
         if sync.write(card, store, settings, f) == Ok(Exit::Loaded) {
-            self.theme = settings.theme;
+            self.adopt_system(settings);
         }
+    }
+
+    /// A card's SYSTEM, taken: its theme and MIDI CONFIG.
+    fn adopt_system(&mut self, s: &SystemSettings) {
+        self.theme = s.theme;
+        self.midi = s.midi;
     }
 
     /// Once a frame: the toast, `elapsed_ms` after the last frame.
@@ -616,6 +660,8 @@ impl UiState {
             Screen::LoadProject => self.listing.load_rows(),
             Screen::ManageProjects => self.listing.len(),
             Screen::SaveToProj => SAVE_ROWS.len(),
+            #[cfg(feature = "orbit")]
+            Screen::SceneSaveTo => SceneIdx::ALL.len(),
         }
     }
 
@@ -709,6 +755,7 @@ impl UiState {
             project: &self.project,
             part,
             theme: &self.theme,
+            midi: &self.midi,
         }
     }
 
@@ -748,12 +795,18 @@ impl UiState {
         self.sel_op
     }
 
-    /// What the edited Part's page slots resolve against.
+    /// What the edited Part's page slots resolve against, on the ORBIT
+    /// ring the location selects and under ORBIT's clock.
     fn ctx(&self) -> SlotCtx {
-        SlotCtx::read(
+        let ctx = SlotCtx::read(
             &self.project.part(self.active_part).sound.params,
             self.sel_op,
         )
+        .on_clock(self.orbit.status.source);
+        match self.loc.orbit() {
+            Some(o) => ctx.on_ring(o.ring()),
+            None => ctx,
+        }
     }
 
     /// Recompute the page identity and jump the display to its values.
@@ -761,20 +814,26 @@ impl UiState {
         self.page = PageKey::from_location(self.loc, self.page_def(), self.sel_op);
         let values = self.display_values();
         self.renderer.snap_to_current(values);
+        self.renderer.orbit_cursor.snap(self.orbit.cursor as f32);
     }
 
     /// The six values the display animates toward: the page's slots, and on
     /// the mod matrix the selected route's amount in slot e.
     fn display_values(&self) -> [f32; 6] {
         let def = self.page_def();
-        let (page, sel_op) = (self.page, self.sel_op);
-        let mut values = page_values(page, def, &self.read(self.active_part), sel_op);
         let ctx = self.ctx();
+        let mut values = page_values(self.page, def, &self.read(self.active_part), &ctx);
         for (i, value) in values.iter_mut().enumerate() {
             if let View::Route { source, .. } = view::view(def, i, &ctx) {
                 *value = renderer::amount_value(
                     self.matrix_state.route(source.index(), CUTOFF).unwrap_or(0),
                 );
+            }
+        }
+        let song = self.project.orbit();
+        for (i, value) in values.iter_mut().enumerate() {
+            if let View::Orbit(c) = view::view(def, i, &ctx) {
+                *value = c.value(song, &self.orbit, ctx.ring);
             }
         }
         if def.layout == PageLayout::Matrix {
@@ -980,7 +1039,20 @@ impl UiState {
         }
     }
 
-    /// SEQ on an action row; `at` is its list.
+    /// MIX + EDIT on the Sound rung: Part `p`'s Sound over its slot, else
+    /// to a new one, as SAVE TO PROJ's rows save it (ADR 0081).
+    fn save_part(&mut self, p: PartId) {
+        match Offer::of(&self.project, p).first_save() {
+            Some(a) => {
+                if let Some(x) = self.save_sound(a) {
+                    self.ask(x);
+                }
+            }
+            None => self.error(Line::new(prompt::POOL_FULL)),
+        }
+    }
+
+    /// EDIT on an action row; `at` is its list.
     fn run_act(&mut self, a: Act, at: Option<SettingsAt>) {
         if let Some(c) = a.part_cmd() {
             return self.run_part_cmd(c);
@@ -997,8 +1069,27 @@ impl UiState {
             Act::PartClear => self.clear_part(),
             // `part_cmd`'s.
             Act::PartReload => {}
+            Act::SceneClear => self.ask_scene(false, |a| Ask::ClearScene(a, prompt::Choice::new())),
+            Act::SceneReload => {
+                self.ask_scene(true, |a| Ask::ReloadScene(a, prompt::Choice::new()))
+            }
             Act::EnterDfu => self.ask(Ask::EnterDfu(prompt::Choice::new())),
         }
+    }
+
+    /// SETTINGS › ORBIT's CLEAR or RELOAD, `open` on the playing scene:
+    /// refused while a switch waits, as SCN's SAVE is. RELOAD (`dims`)
+    /// with nothing to drop is dimmed, and inert before that: a dimmed row
+    /// says nothing, whatever waits.
+    fn ask_scene(&mut self, dims: bool, open: fn(SceneAsk) -> Ask) {
+        let song = self.project.orbit();
+        if dims && !song.edited() {
+            return;
+        }
+        if song.queued().is_some() {
+            return self.error(Line::new(prompt::SWITCH_PENDING));
+        }
+        self.ask(open(SceneAsk::of(song, song.current())));
     }
 
     /// CLEAR: the active Part to its engine's INIT, through the guard.
@@ -1068,6 +1159,10 @@ impl UiState {
         if presses.seq == Some(Press::Tap) {
             push(NavKey::SeqTap);
         }
+        #[cfg(feature = "orbit")]
+        if presses.seq == Some(Press::Hold) {
+            push(NavKey::SeqHold);
+        }
         if pressed(ButtonId::Edit) && !edit_part {
             push(NavKey::Edit);
         }
@@ -1077,6 +1172,64 @@ impl UiState {
             push(NavKey::Bar(a));
         }
         keys
+    }
+
+    /// ORBIT's keys this frame, in order: MENU, B1–B5, B6, MINUS, PLUS,
+    /// SEQ, EDIT. MIX + B*n* is a mute on the press, its gate muted, so no
+    /// ring tap or cross follows; B*n* alone is a ring on a tap, a cross
+    /// on a hold.
+    fn orbit_keys(&self, c: &impl Controls, p: hold::Presses) -> [Option<OrbitKey>; 11] {
+        let pressed = |b| c.button_state(b) == ButtonState::Pressed;
+        let mix = c.edges(ButtonId::Mix).down;
+        let mut keys = [None; 11];
+        let mut n = 0;
+        let mut push = |k| {
+            keys[n] = Some(k);
+            n += 1;
+        };
+        if p.menu == Some(Press::Tap) {
+            push(OrbitKey::MenuTap);
+        }
+        for ((r, &b), press) in RingIdx::ALL.into_iter().zip(&PART_BUTTONS).zip(p.ring) {
+            match (mix && pressed(b), press) {
+                (true, _) => push(OrbitKey::Mute(r)),
+                (_, Some(Press::Tap)) => push(OrbitKey::Ring(r)),
+                (_, Some(Press::Hold)) => push(OrbitKey::Cross(r)),
+                _ => {}
+            }
+        }
+        if !mix && pressed(ButtonId::B6) {
+            push(OrbitKey::PlayStop);
+        }
+        // MIX + PLUS and MIX + MINUS stay free, as on the ladder.
+        if !mix && pressed(ButtonId::Minus) {
+            push(OrbitKey::Minus);
+        }
+        if !mix && pressed(ButtonId::Plus) {
+            push(OrbitKey::Plus);
+        }
+        if p.seq == Some(Press::Tap) {
+            push(OrbitKey::SeqTap);
+        }
+        if pressed(ButtonId::Edit) {
+            push(OrbitKey::Edit);
+        }
+        keys
+    }
+
+    /// One frame's gates and ORBIT keys, as `handle_input` reads them.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn orbit_frame_for_test(&mut self, c: &impl Controls) -> [Option<OrbitKey>; 11] {
+        let p = self.gates.step(c);
+        self.orbit_keys(c, p)
+    }
+
+    /// Go straight to `to`, as a key would.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn go_for_test(&mut self, to: Location) {
+        self.go(to)
     }
 
     /// Whether a prompt is open.
@@ -1122,7 +1275,21 @@ impl UiState {
             loaded: self.project.meta().file(),
             part: (at.path().first() == Some(&PART_ROW))
                 .then(|| PartBand::of(&self.project, self.active_part)),
+            scene: self.project.orbit().current(),
+            orbit: self.orbit_band(at),
         }
+    }
+
+    /// In the ORBIT branch, the playing scene's band.
+    #[cfg(feature = "orbit")]
+    fn orbit_band(&self, at: SettingsAt) -> Option<settings::view::OrbitBand> {
+        (at.path().first() == Some(&settings::ORBIT_ROW))
+            .then(|| settings::view::OrbitBand::of(self.project.orbit()))
+    }
+
+    #[cfg(not(feature = "orbit"))]
+    fn orbit_band(&self, _: SettingsAt) -> Option<settings::view::OrbitBand> {
+        None
     }
 
     /// NAMING, if it is open.
@@ -1316,6 +1483,30 @@ impl UiState {
                     self.queue(Job::Save(SaveTo::Over(over), name, None))
                 }
             }
+            Answered::SaveSceneOver(ask, a) => {
+                if let Some(yes) = said(a) {
+                    let n = ask.slot().index();
+                    self.scene_answered(Confirmed::said(ask, yes), |ui, yes| {
+                        ui.project.orbit_mut().overwrite_scene(yes)?;
+                        ui.scene_saved(n);
+                        Ok(())
+                    });
+                }
+            }
+            Answered::ClearScene(ask, a) => {
+                if let Some(yes) = said(a) {
+                    self.scene_answered(Confirmed::said(ask, yes), |ui, yes| {
+                        ui.relanding(|s| s.clear_scene(yes))
+                    });
+                }
+            }
+            Answered::ReloadScene(ask, a) => {
+                if let Some(yes) = said(a) {
+                    self.scene_answered(Confirmed::said(ask, yes), |ui, yes| {
+                        ui.relanding(|s| s.reload_scene(yes))
+                    });
+                }
+            }
             Answered::Clear(c, a) => {
                 if let Some(yes) = said(a) {
                     let over = Confirmed::<OverwriteTarget>::answered(c.entry(), yes);
@@ -1355,7 +1546,7 @@ impl UiState {
         self.queue(Job::QuickSave(None));
     }
 
-    /// SEQ on LOAD PROJECT's row `row`.
+    /// EDIT on LOAD PROJECT's row `row`.
     fn run_load(&mut self, row: u8) {
         match self.listing.load_pick(row as usize) {
             Some(Pick::Entry(e)) => self.load_entry(&e),
@@ -1393,7 +1584,7 @@ impl UiState {
         }
     }
 
-    /// SEQ on MANAGE's command column: the command the table lets run on
+    /// EDIT on MANAGE's command column: the command the table lets run on
     /// the listed project under the bar.
     fn run_manage(&mut self, s: SettingsAt) {
         let Some(Column::Command(i)) = s.column() else {
@@ -1428,8 +1619,168 @@ impl UiState {
         Some(c.row(e.map(|e| Whose::of(&e, self.project.meta().file()))))
     }
 
-    /// Process one frame of input: navigation + encoder deltas.
+    /// ORBIT's frame: its keys, stepped as `OrbitKey`s, then its encoders
+    /// on the page's param cells. Its acts run in `OrbitUi::act`.
+    fn orbit_input(&mut self, c: &impl Controls, p: hold::Presses) {
+        for k in self.orbit_keys(c, p).into_iter().flatten() {
+            if self.job.is_some() || self.modal.is_some() {
+                return;
+            }
+            let cx = self.cx();
+            match self.loc.step_orbit(k, &cx, &mut self.recall) {
+                Step::Go(to) => self.go(to),
+                Step::Orbit(a) => match a {
+                    OrbitAct::PlayStop => self.orbit.play_stop(),
+                    OrbitAct::Mute(r) => orbit::OrbitUi::mute(r, &mut self.project),
+                    OrbitAct::SaveTo => self.save_scene_to(),
+                },
+                _ => {}
+            }
+        }
+        let (def, ctx) = (self.page_def(), self.ctx());
+        let shift = c.edges(ButtonId::Mix).down;
+        let custom = |p: &Project| p.orbit().live().chords.scale == ScaleKind::Custom;
+        let was_custom = custom(&self.project);
+        for (i, &enc) in ALL_ENCODERS.iter().enumerate() {
+            let delta = c.encoder_delta(enc);
+            let v = view::view(def, i, &ctx);
+            if delta == 0 || v == View::Empty {
+                continue;
+            }
+            self.focus.touch(def.id, i);
+            if let View::Orbit(cell) = v {
+                let song = self.project.orbit_mut();
+                let mut ring = ctx.ring;
+                cell.turn(delta, shift, song, &mut self.orbit, &mut ring);
+                // RING picks another ring: a move, on the same page.
+                if ring != ctx.ring
+                    && let Some(o) = self.loc.orbit()
+                {
+                    self.go(o.with_ring(ring).into());
+                }
+                continue;
+            }
+            // Dimmed: BPM under a MIDI clock.
+            if view::is_dimmed(&v, &self.project.part(self.active_part).sound, &ctx) {
+                continue;
+            }
+            // A scene's param: on `live` and its slot alike (ADR 0083).
+            if let Some(a) = slot_addr(def, i, &ctx)
+                && matches!(a.block, BlockRef::OrbitChords | BlockRef::OrbitRing(_))
+            {
+                self.project.orbit_mut().turn(a, delta, shift);
+                continue;
+            }
+            let params = &mut UiBlocks {
+                project: &mut self.project,
+                part: self.active_part,
+                theme: &mut self.theme,
+                midi: &mut self.midi,
+            };
+            if shift {
+                part_page::snap_under(def, i, delta, params, &ctx);
+            } else {
+                part_page::apply_under(def, i, delta, params, &ctx, &mut self.sel_op);
+            }
+        }
+        // SEGS shrunk under an armed segment drops the capture.
+        self.orbit.fit(&self.project.orbit().live().chords);
+        // SCALE turned to CUSTOM opens its circle; a toggle on it stays.
+        if !was_custom
+            && custom(&self.project)
+            && let Some(o) = self.loc.orbit()
+            && o != o.custom()
+        {
+            self.go(o.custom().into());
+        }
+    }
+
+    /// ORBIT's settings for the audio thread, into a slot of its triple
+    /// buffer, in the same publish as the Parts.
+    pub fn publish_orbit(&self, out: &mut OrbitShared) {
+        self.orbit
+            .publish(self.project.orbit(), self.midi.sync, out);
+    }
+
+    /// SETTINGS › ORBIT's CLEAR or RELOAD, answered: `act` on the song;
+    /// a re-landing it queues goes to the runner as a switch.
+    fn relanding(
+        &mut self,
+        act: impl FnOnce(&mut OrbitSong) -> Result<(), Refused>,
+    ) -> Result<(), Refused> {
+        let song = self.project.orbit_mut();
+        act(song)?;
+        if song.queued().is_some() {
+            self.orbit.issue_scene(song);
+        }
+        Ok(())
+    }
+
+    /// ORBIT's edits and commands into the log, ready for the publish:
+    /// the end of every frame's input (ADR 0082).
+    pub fn flush_orbit(&mut self) {
+        self.orbit.flush(&mut self.project);
+    }
+
+    /// The runner's latest view, each loop before `handle_input`: a
+    /// capture taken into the song, the view kept for the pages, its drift
+    /// absorbed into the project once a loop.
+    pub fn set_orbit_view(&mut self, v: &OrbitView) {
+        self.orbit.sync(v, &mut self.project);
+    }
+
+    /// The front-panel LED: lit on ORBIT's beat, off when it is stopped.
+    pub fn led(&self) -> bool {
+        self.led.on()
+    }
+
+    /// EDIT on SCN: `live` to SAVE's slot.
+    fn save_scene_to(&mut self) {
+        self.save_scene_in(self.orbit.save_slot(self.project.orbit()));
+    }
+
+    /// `live` to slot `n`, at once over the playing or a neutral one; over
+    /// another saved scene, SAVE OVER asks.
+    fn save_scene_in(&mut self, n: SceneIdx) {
+        match self.project.orbit_mut().save_to(n) {
+            Ok(SceneSave::Saved(n)) => self.scene_saved(n),
+            Ok(SceneSave::Ask(a)) => self.ask(Ask::SaveSceneOver(a, prompt::Choice::new())),
+            Err(e) => self.error(Line::new(prompt::scene_refused(e))),
+        }
+    }
+
+    /// A scene prompt answered yes: `act` on the slot it asked about, a
+    /// refusal toasted.
+    fn scene_answered(
+        &mut self,
+        yes: Confirmed<SceneSlot>,
+        act: impl FnOnce(&mut Self, Confirmed<SceneSlot>) -> Result<(), Refused>,
+    ) {
+        if let Err(e) = act(self, yes) {
+            self.error(Line::new(prompt::scene_refused(e)));
+        }
+    }
+
+    fn scene_saved(&mut self, n: SceneIdx) {
+        self.toast.show(busy::Toast {
+            text: prompt::scene_saved(n),
+            ms: busy::Toast::SAVED_MS,
+        });
+    }
+
+    /// ORBIT's transport and what the pages draw of it.
+    pub fn orbit(&self) -> &orbit::OrbitUi {
+        &self.orbit
+    }
+
+    /// Process one frame of input: navigation + encoder deltas, then
+    /// ORBIT's commands flushed for the frame's publish.
     pub fn handle_input(&mut self, controls: &impl Controls) {
+        self.input(controls);
+        self.flush_orbit();
+    }
+
+    fn input(&mut self, controls: &impl Controls) {
         // Any encoder turn or button press retires the last prime-status
         // message (issue #21; no timer). The MIX+Plus branch below re-sets
         // it when this same frame is itself a prime attempt.
@@ -1451,13 +1802,19 @@ impl UiState {
         if presses.menu == Some(Press::Hold) {
             self.quick_save();
         }
+        if self.loc.orbit().is_some() {
+            return self.orbit_input(controls, presses);
+        }
         let keys = self.nav_keys(controls, presses);
         for k in keys.into_iter().flatten() {
             if self.job.is_some() || self.modal.is_some() {
                 break;
             }
             if let (Some((p, b)), NavKey::Edit) = (self.loc.browse(), k) {
-                self.load_sound(p, b);
+                match controls.edges(ButtonId::Mix).down {
+                    true => self.save_part(p),
+                    false => self.load_sound(p, b),
+                }
                 continue;
             }
             let cx = self.cx();
@@ -1471,6 +1828,12 @@ impl UiState {
                 Step::Screen(Screen::SaveToProj) => {
                     self.go(Location::settings_at(screen_path(Screen::SaveToProj), 0))
                 }
+                // On the playing scene's row, as SCN's SAVE starts.
+                #[cfg(feature = "orbit")]
+                Step::Screen(Screen::SceneSaveTo) => {
+                    let row = self.project.orbit().current().get();
+                    self.go(Location::settings_at(screen_path(Screen::SceneSaveTo), row))
+                }
                 Step::Run => match (self.screen(), at) {
                     (Some(Screen::LoadProject), Some(s)) => self.run_load(s.row()),
                     (Some(Screen::ManageProjects), Some(s)) => self.run_manage(s),
@@ -1479,9 +1842,16 @@ impl UiState {
                             self.run_part_cmd(c);
                         }
                     }
+                    #[cfg(feature = "orbit")]
+                    (Some(Screen::SceneSaveTo), Some(s)) => {
+                        if let Some(&n) = SceneIdx::ALL.get(s.row() as usize) {
+                            self.save_scene_in(n);
+                        }
+                    }
                     _ => {}
                 },
-                Step::Stay => {}
+                // ORBIT's acts come from `orbit_keys` only.
+                Step::Orbit(_) | Step::Stay => {}
             }
         }
 
@@ -1556,13 +1926,14 @@ impl UiState {
                     });
                     continue;
                 }
-                if view::is_dimmed(&v, &self.project.part(at).sound) {
+                if view::is_dimmed(&v, &self.project.part(at).sound, &self.ctx()) {
                     continue; // dimmed: the encoder is ignored
                 }
                 let params = &mut UiBlocks {
                     project: &mut self.project,
                     part: at,
                     theme: &mut self.theme,
+                    midi: &mut self.midi,
                 };
                 match (self.page, shift) {
                     (PageKey::Part { .. }, true) => {
@@ -1598,7 +1969,7 @@ impl UiState {
                     let sound = &self.project.part(at).sound;
                     if let Some(a) = v.addr()
                         && prime_target(a) == a
-                        && view::is_dimmed(&v, sound)
+                        && view::is_dimmed(&v, sound, &self.ctx())
                     {
                         self.prime_status = Some(PrimeStatus::NotModulatable);
                     } else if let Some(addr) = self.current_param_addr() {
@@ -1718,6 +2089,19 @@ impl UiState {
         };
         self.renderer.branch_scroll.set_target(target_scroll);
         self.renderer.branch_scroll.update();
+
+        let pulse = self.orbit.tick();
+        self.led = if self.orbit.status.running {
+            self.led.step(pulse)
+        } else {
+            led::Led::OFF
+        };
+
+        // CUSTOM's cursor eases the short way round, and comes back into
+        // one turn once it rests.
+        self.renderer
+            .orbit_cursor
+            .ease_round(self.orbit.cursor as f32, 12.0);
     }
 
     /// Render full screen with `scope` as the live output (tests pass a
@@ -1747,7 +2131,14 @@ impl UiState {
         if let Some((part, b)) = self.loc.browse() {
             let _ = display.clear(theme::BG);
             let (cursor, scroll) = (b.cursor(), b.scroll());
-            browser::draw(display, self.project.pool(), part, cursor, scroll);
+            browser::draw(
+                display,
+                self.project.pool(),
+                part,
+                cursor,
+                scroll,
+                self.theme.hints,
+            );
             self.draw_prompt(display);
             return;
         }
@@ -1774,6 +2165,8 @@ impl UiState {
             Rung::Pages(p, _) | Rung::Sound(p) => Head::Sound(p),
             Rung::Mixer(p, _) | Rung::Fx(p, _) => Head::Mix(p),
             Rung::Settings(_) => Head::Settings,
+            Rung::Orbit(o) if o.page().node() as usize == orbit::RING_NODE => Head::Ring(o.ring()),
+            Rung::Orbit(_) => Head::Orbit(self.project.orbit().current()),
         }
     }
 
@@ -1783,12 +2176,12 @@ impl UiState {
     pub fn page_name(&self) -> Option<FmtBuf> {
         matches!(
             self.loc.rung(),
-            Rung::Pages(..) | Rung::Mixer(..) | Rung::Fx(..)
+            Rung::Pages(..) | Rung::Mixer(..) | Rung::Fx(..) | Rung::Orbit(..)
         )
         .then(|| self.page_title())
     }
 
-    /// `page_name` where a header is drawn: Pages, Mixer and FX.
+    /// `page_name` where a header is drawn: Pages, Mixer, FX and ORBIT.
     pub fn page_title(&self) -> FmtBuf {
         renderer::page_header(
             self.head(),
@@ -1809,6 +2202,8 @@ impl UiState {
         let cx = self.cx();
         let def = self.page_def();
         let settings = self.loc.settings();
+        let (ctx, focus, orbit) = (self.ctx(), self.focused_slot(), self.orbit_frame());
+        let anim = &self.renderer.anim;
         renderer::Frame {
             head: self.head(),
             map: self.loc.page(&cx).filter(|_| settings.is_none()),
@@ -1819,10 +2214,15 @@ impl UiState {
             perf,
             matrix: &self.matrix_state,
             sel_op: self.sel_op,
-            ctx: self.ctx(),
-            focus: self.focused_slot(),
+            orbit_focus: orbit::draw::focus(def, focus, &ctx, &orbit, self.theme.hints, |i| {
+                anim[i].current()
+            }),
+            hints: self.theme.hints,
+            ctx,
+            focus,
             scope,
             sounding: crate::scope::peak(scope) > crate::scope::SOUNDING_PEAK,
+            orbit_dot: self.orbit.anim.dot(),
             parts: self.project.perf().parts(),
             active_part: self.active_part,
             prime_status: self.prime_status,
@@ -1831,7 +2231,13 @@ impl UiState {
             master_gr_db: crate::meter::MASTER_GR.read(),
             clock: self.clock,
             fx: &self.project.perf().fx,
+            orbit,
         }
+    }
+
+    /// What ORBIT's pages draw from.
+    fn orbit_frame(&self) -> orbit::draw::OrbitFrame<'_> {
+        orbit::draw::OrbitFrame::new(self.project.orbit(), &self.orbit)
     }
 
     /// The bands on screen: a page's, or SETTINGS' list or leaf.
@@ -1844,13 +2250,15 @@ impl UiState {
     }
 
     /// Where the UI is as (place, node, sub) for the header and map keys:
-    /// Part n's pages n, its mixer 10 + n, its Sound rung 30 + n, SETTINGS 20.
+    /// Part n's pages n, its mixer 10 + n, its Sound rung 30 + n, SETTINGS 20,
+    /// ORBIT on ring r 40 + r.
     fn loc_tag(&self) -> (u8, u8, u8) {
-        let place = match (self.loc.settings(), self.loc.part()) {
-            (Some(_), _) | (_, None) => 20,
-            (_, Some(p)) if self.loc.on_mixer() => 10 + p.index() as u8,
-            (_, Some(p)) if self.loc.browse().is_some() => 30 + p.index() as u8,
-            (_, Some(p)) => p.index() as u8,
+        let place = match (self.loc.settings(), self.loc.part(), self.loc.orbit()) {
+            (_, _, Some(o)) => 40 + o.ring().get(),
+            (Some(_), _, _) | (_, None, _) => 20,
+            (_, Some(p), _) if self.loc.on_mixer() => 10 + p.index() as u8,
+            (_, Some(p), _) if self.loc.browse().is_some() => 30 + p.index() as u8,
+            (_, Some(p), _) => p.index() as u8,
         };
         let at = self
             .loc
@@ -1876,11 +2284,14 @@ impl UiState {
                 chain,
                 node,
                 sub,
-                f.perf.audio_load_pct,
-                f.sounding,
                 renderer::title_type(f.def, &f.ctx.envs),
                 renderer::header_out(f) as u8,
-            ),
+                f.header_status(),
+            )
+            .with_scene(match f.head {
+                Head::Orbit(n) => n.get() + 1,
+                _ => 0,
+            }),
             RegionKind::Focus if f.def.layout == PageLayout::Matrix => RegionData::route(
                 self.matrix_state.sel_row as u8,
                 self.matrix_state.sel_col as u8,
@@ -1900,6 +2311,7 @@ impl UiState {
                 self.prime_status,
             )
             .with_set(region::quantize(self.renderer.set[f.focus].current()))
+            .with_text(f.orbit_focus.as_ref().map_or(0, |o| o.key()), f.hints)
             .animated(glyph::anim_key(
                 shown.is_some_and(|g| g.animates()),
                 f.clock.frame(),
@@ -1912,6 +2324,7 @@ impl UiState {
                     .prime_status
                     .filter(|_| f.def.layout == PageLayout::BigViz);
                 RegionData::viz_with_status(self.page, values, live, status)
+                    .with_orbit(self.renderer.orbit_viz_key(f))
             }
             RegionKind::Cells => {
                 let looks = (0..6).fold(0u16, |k, i| k | (renderer::look(f, i) as u16) << (2 * i));
@@ -1944,7 +2357,7 @@ impl UiState {
             .keyed(self.matrix_state.rev, renderer::inert(f)),
             RegionKind::Crumbs | RegionKind::List | RegionKind::Footer => {
                 let key = f.settings.map_or(0, |b| match kind {
-                    RegionKind::Crumbs => b.crumbs_key(f.sounding),
+                    RegionKind::Crumbs => b.crumbs_key(f.header_status()),
                     RegionKind::List => b.list_key(),
                     _ => b.footer_key(),
                 });
@@ -2012,7 +2425,14 @@ impl UiState {
                 let fb = display.pixel_buffer();
                 Renderer::clear_region_fb(fb, 0, chimera_hal::SCREEN_HEIGHT);
                 let (cursor, scroll) = (b.cursor(), b.scroll());
-                browser::draw(display, self.project.pool(), part, cursor, scroll);
+                browser::draw(
+                    display,
+                    self.project.pool(),
+                    part,
+                    cursor,
+                    scroll,
+                    self.theme.hints,
+                );
                 self.draw_prompt(display);
                 // Invalidate region set so normal layout forces full rebuild on exit
                 self.region_set.prev_screen = None;
@@ -2121,13 +2541,14 @@ fn any_input(controls: &impl Controls) -> bool {
             .any(|&b| controls.button_state(b) == ButtonState::Pressed)
 }
 
-/// A Part's blocks plus SETTINGS › THEME, so the theme edits through the same
-/// slot bindings as any other. Only a block written takes `edit_part`, so
-/// only a write moves the project's revision.
+/// A Part's blocks plus SETTINGS › THEME and MIDI CONFIG, so those edit
+/// through the same slot bindings as any other. Only a block written takes
+/// `edit_part`, so only a write moves the project's revision.
 struct UiBlocks<'a> {
     project: &'a mut Project,
     part: PartId,
     theme: &'a mut ThemeSettings,
+    midi: &'a mut MidiSettings,
 }
 
 /// `UiBlocks`' shared twin: no `block_mut`, so a frame can't write.
@@ -2135,25 +2556,32 @@ struct UiRead<'a> {
     project: &'a Project,
     part: PartId,
     theme: &'a ThemeSettings,
+    midi: &'a MidiSettings,
 }
 
-/// Part `part`'s block `b`, or the theme: what both views read.
+/// Part `part`'s block `b`, the theme, MIDI CONFIG, or ORBIT's: what both
+/// views read.
 fn read_block<'a>(
     project: &'a Project,
     part: PartId,
-    theme: &'a ThemeSettings,
+    (theme, midi): (&'a ThemeSettings, &'a MidiSettings),
     b: BlockRef,
 ) -> Option<&'a dyn Block> {
+    let song = project.orbit();
     match b {
         BlockRef::Theme => Some(theme),
+        BlockRef::Midi => Some(midi),
         BlockRef::PartMix(p) => Some(project.read_part(p).mix),
+        BlockRef::OrbitChords => Some(&song.live().chords),
+        BlockRef::OrbitRing(r) => Some(&song.live().rings[r.get() as usize]),
+        BlockRef::Tempo => Some(&song.bpm),
         _ => project.read_part(part).block(b),
     }
 }
 
 impl BlockRead for UiBlocks<'_> {
     fn block(&self, b: BlockRef) -> Option<&dyn Block> {
-        read_block(self.project, self.part, self.theme, b)
+        read_block(self.project, self.part, (self.theme, self.midi), b)
     }
 }
 
@@ -2161,7 +2589,16 @@ impl Blocks for UiBlocks<'_> {
     fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
         match b {
             BlockRef::Theme => Some(self.theme),
+            BlockRef::Midi => Some(self.midi),
             BlockRef::PartMix(p) => Some(self.project.edit_part(p).mix),
+            // A scene's params change through `OrbitSong::edit`, which
+            // writes its slot too (ADR 0083): never from here. A caller
+            // naming one is a bug the tests catch; release reads nothing.
+            BlockRef::OrbitChords | BlockRef::OrbitRing(_) => {
+                debug_assert!(false, "{b:?} edits through OrbitSong::edit");
+                None
+            }
+            BlockRef::Tempo => Some(&mut self.project.orbit_mut().bpm),
             _ => {
                 let PartEdit { sound, mix, fx } = self.project.edit_part(self.part);
                 part_block_mut(sound, mix, fx, b)
@@ -2172,23 +2609,27 @@ impl Blocks for UiBlocks<'_> {
 
 impl BlockRead for UiRead<'_> {
     fn block(&self, b: BlockRef) -> Option<&dyn Block> {
-        read_block(self.project, self.part, self.theme, b)
+        read_block(self.project, self.part, (self.theme, self.midi), b)
     }
 }
 
 /// Display values for `page`: Part pages through slot bindings, legacy pages
 /// through `PageId`.
-fn page_values(page: PageKey, def: &BlockDef, params: &impl BlockRead, sel_op: Op) -> [f32; 6] {
+fn page_values(page: PageKey, def: &BlockDef, params: &impl BlockRead, ctx: &SlotCtx) -> [f32; 6] {
     match page {
-        PageKey::Part { .. } => part_page::read_values(def, params, sel_op),
+        PageKey::Part { .. } => part_page::values_under(def, params, ctx),
         PageKey::Legacy(p) => p.read_values(params),
     }
 }
 
 fn nav_cx(project: &Project) -> NavCtx {
+    let live = project.orbit().live();
     NavCtx {
         engines: PartId::ALL.map(|p| project.part(p).sound.engine()),
         dyn_rows: 0,
+        orbit: OrbitCx {
+            targets: live.rings.map(|r| r.target.part()),
+        },
     }
 }
 
@@ -2208,6 +2649,7 @@ mod tests {
     fn part_mix_edits_the_named_part() {
         let (mut project, _) = Project::boxed();
         let mut theme = ThemeSettings::default();
+        let mut midi = MidiSettings::default();
         let [p1, _, p3, ..] = PartId::ALL;
         let a = ParamAddr::new(BlockRef::PartMix(p3), PartParams::CHANNEL);
         let ch = |p: &Project, id| p.part(id).mix.get(PartParams::CHANNEL);
@@ -2216,6 +2658,7 @@ mod tests {
             project: &mut project,
             part: p1,
             theme: &mut theme,
+            midi: &mut midi,
         };
         ui.block_mut(a.block).unwrap().set(a.param, 9.0);
         assert_eq!(ch(&project, p3), 9.0);
@@ -2224,6 +2667,7 @@ mod tests {
             project: &project,
             part: p1,
             theme: &theme,
+            midi: &midi,
         };
         assert_eq!(read.block(a.block).unwrap().get(a.param), 9.0);
     }

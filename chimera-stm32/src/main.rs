@@ -21,6 +21,8 @@ mod dfu;
 mod display;
 #[cfg(all(feature = "midi-din", not(feature = "sd-probe")))]
 mod midi_din;
+#[cfg(not(feature = "sd-probe"))]
+mod orbit;
 mod panic;
 #[cfg(not(feature = "sd-probe"))]
 mod priority;
@@ -96,6 +98,7 @@ struct Board {
 struct SynthParts {
     reset_cause: ResetCause,
     led: stm32h7xx_hal::gpio::PE1<Output<PushPull>>,
+    beat_led: orbit::BeatLed,
     backlight: Backlight,
     theme: ThemeSettings,
     iwdg: pac::IWDG,
@@ -161,6 +164,11 @@ fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::Check
     let _hc_load = gpiof.pf1.into_push_pull_output();
     let _hc_clk = gpiof.pf0.into_push_pull_output();
 
+    // The front-panel LED between D and E: low from boot, never floating.
+    // A plain GPIO; TIM3_CH4 is its pin for a later fade (#307). Without
+    // ORBIT it just stays low.
+    let mut beat_led = gpiob.pb1.into_push_pull_output();
+    beat_led.set_low();
     let mut led = gpioe.pe1.into_push_pull_output();
     // TIM1 CH2 PWM, above hearing so the backlight driver cannot whine.
     // Full brightness lifts a TN panel's blacks; SETTINGS › THEME's BRIGHT
@@ -224,6 +232,7 @@ fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::Check
         synth: SynthParts {
             reset_cause,
             led,
+            beat_led,
             backlight,
             theme,
             iwdg: dp.IWDG,
@@ -280,6 +289,7 @@ fn synth(board: Board) -> ! {
             SynthParts {
                 reset_cause,
                 mut led,
+                beat_led,
                 mut backlight,
                 mut theme,
                 iwdg,
@@ -319,6 +329,7 @@ fn synth(board: Board) -> ! {
     // private issue #197
     let (mut sync, mut settings, _) = SystemSync::boot(&mut card, store);
     ui.set_theme(settings.theme);
+    ui.set_midi(settings.midi);
     apply_theme(settings.theme, &mut theme, &mut backlight, &mut display);
     // Still behind the splash: the last project (about 130 KB read), or
     // NEW and why.
@@ -352,7 +363,14 @@ fn synth(board: Board) -> ! {
     let (mut producers, notes) = audio::engine::NOTES
         .split()
         .expect("note sources split once");
-    audio::engine::init(SampleBudget::for_cpu(clk.cpu_hz), shared_r, notes, scope_w);
+    let (orbit_runner, mut orbit) = orbit::take(beat_led);
+    audio::engine::init(
+        SampleBudget::for_cpu(clk.cpu_hz),
+        shared_r,
+        notes,
+        scope_w,
+        orbit_runner,
+    );
 
     let pll3 = pll3_for(clocks::HSE_HZ, chimera_hal::SAMPLE_RATE, clk.rev);
     clocks::init_pll3(&pll3);
@@ -409,6 +427,8 @@ fn synth(board: Board) -> ! {
             dfu::enter(&marker, dfu::DfuFrom::Console(asked));
         }
         controls.snapshot();
+        // ORBIT's latest view: the pages draw it, the drift is absorbed.
+        orbit.see(ui);
         // Every frame, even idle: a held key must age.
         ui.handle_input(&controls);
         // SYSTEM synced first: a THEME change made in this visit is kept.
@@ -428,12 +448,12 @@ fn synth(board: Board) -> ! {
             sync: &mut sync,
             settings: &mut settings,
         };
-        ui.card_work(cx, &LOAD_LINK, |swap, p| {
+        ui.card_work(cx, &LOAD_LINK, |swap, u| {
             let t0 = controls::ticks();
             let _ = swap.settle(&LOAD_LINK, || {
                 controls::ticks().wrapping_sub(t0) < LOAD_ACK_TICKS
             });
-            shared_w.publish(|b| b.update_from(p.perf(), LOAD_LINK.epoch()));
+            shared_w.publish(|b| publish(b, u));
         });
         // Leaving SETTINGS syncs SYSTEM, with no overlay first: a save is
         // quicker than BUSY can be read. A toast says how it went.
@@ -443,8 +463,10 @@ fn synth(board: Board) -> ! {
         // The loop spins as fast as it can; animation runs at UI_FPS.
         if let Some(t) = pacer.due(controls::now_ms()) {
             ui.update(t);
+            // ORBIT's beat on the front-panel LED; off when it is stopped.
+            orbit.beat(ui);
         }
-        shared_w.publish(|b| b.update_from(ui.project().perf(), LOAD_LINK.epoch()));
+        shared_w.publish(|b| publish(b, ui));
         let stats = audio_stats(stats_r.as_mut());
         // Read after the card work; the toast's first step ignores it.
         let now = controls::ticks();
@@ -511,6 +533,15 @@ fn tend_usb(
         *last_snap = now;
         marker.usb_regs(usb::regs());
     }
+}
+
+/// Every Part, the FX and ORBIT into an audio publish: the loop's and a
+/// load's, one copy in flash.
+#[cfg(not(feature = "sd-probe"))]
+#[inline(never)]
+fn publish(b: &mut chimera_core::instrument::AudioShared, ui: &chimera_core::ui::UiState) {
+    b.update_from(ui.project().perf(), LOAD_LINK.epoch());
+    orbit::publish(ui, b);
 }
 
 /// The audio's latest stats with the stack's high-water mark, as the

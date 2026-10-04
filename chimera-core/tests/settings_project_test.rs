@@ -196,7 +196,7 @@ fn loaded<S: Store>(r: &mut Rig<S>, f: ProjectFile) {
     r.open_load();
     let i = r.row_of(&format!("{:02}", f.id().get()));
     r.bar_to(i);
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert_eq!(r.ui.project().meta().file(), Some(f));
     while r.ui.in_settings() {
         r.tap(ButtonId::Menu);
@@ -227,7 +227,7 @@ fn load_lists_marks_the_loaded_and_greys_the_damaged() {
     assert_eq!(row(&r, 1).look, RowLook::Dimmed);
     // SEQ on it says why, and loads nothing.
     r.bar_to(1);
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert_eq!(r.toast(), "FILE IS CUT SHORT: P0000002");
     assert_eq!(r.ui.project().meta().file(), Some(a));
     assert_eq!(r.swaps, 1);
@@ -242,7 +242,7 @@ fn no_card_lists_only_no_card() {
     r.open_load();
     assert_eq!(r.labels(), ["NO CARD"]);
     assert_eq!(r.ui.load_row(0).unwrap().look, RowLook::Dimmed);
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert_eq!(r.swaps, 0);
     assert!(!r.ui.prompt_open());
 }
@@ -260,7 +260,7 @@ fn load_over_modified_asks_and_each_answer() {
     let crc = project_crc(r.ui.project());
     r.open_load();
     r.bar_to(r.row_of("02"));
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert!(r.ui.prompt_open());
     assert_eq!(r.question(), "LOAD BETA?");
     r.tap(ButtonId::Menu);
@@ -269,7 +269,7 @@ fn load_over_modified_asks_and_each_answer() {
     assert_eq!(r.swaps, 1);
 
     // LOAD ANYWAY: BETA, Saved.
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     r.turn(1);
     r.tap(ButtonId::Seq);
     assert_eq!(r.ui.project().meta().file(), Some(b));
@@ -281,7 +281,7 @@ fn load_over_modified_asks_and_each_answer() {
     modify(&mut r, "BETA2");
     let edited = project_crc(r.ui.project());
     r.bar_to(r.row_of("01"));
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert!(r.ui.prompt_open());
     r.tap(ButtonId::Seq);
     assert_eq!(r.ui.project().meta().file(), Some(a));
@@ -298,7 +298,7 @@ fn save_then_load_on_new_names_first_and_cancel_aborts() {
     modify(&mut r, "SKETCH");
     let crc = project_crc(r.ui.project());
     r.open_load();
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert!(r.ui.prompt_open());
     r.tap(ButtonId::Seq);
     assert_eq!(r.ui.naming().unwrap().text(), "DRIFT-002");
@@ -311,7 +311,7 @@ fn save_then_load_on_new_names_first_and_cancel_aborts() {
     assert_eq!(r.ui.location(), Location::settings_at(&[0, 0], 0));
 
     // Named: saved as id 2, then ALPHA loads.
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     r.tap(ButtonId::Seq);
     r.tap(ButtonId::Seq);
     assert_eq!(r.ui.project().meta().file(), Some(a));
@@ -337,7 +337,7 @@ fn save_as_names_and_saves() {
     r.tap(ButtonId::Menu);
     r.edit();
     r.feed(Input::press(ButtonId::Plus));
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert_eq!(r.ui.naming().unwrap().text(), "ACID-001");
     r.tap(ButtonId::Seq);
     assert_eq!(r.toast(), "SAVED");
@@ -360,7 +360,7 @@ fn name_taken() -> (Rig, ProjectFile) {
     r.tap(ButtonId::Menu);
     r.edit();
     r.feed(Input::press(ButtonId::Plus));
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     r.tap(ButtonId::Seq);
     assert_eq!(r.question(), "NAME EXISTS");
     (r, taken)
@@ -457,7 +457,7 @@ fn menu_hold_inside_a_prompt_does_nothing() {
     let was = generation(&mut r.s, a);
     r.open_load();
     r.bar_to(r.row_of("02"));
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert!(r.ui.prompt_open());
     r.hold(ButtonId::Menu);
     assert!(r.ui.prompt_open());
@@ -496,7 +496,7 @@ fn swap_while_listed_relists_and_refuses() {
     let crc = project_crc(r.ui.project());
     r.s.swap(2);
     put(&mut r.s, "GAMMA");
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert!(r.toast().starts_with("CARD CHANGED"));
     assert_eq!(project_crc(r.ui.project()), crc);
     assert_eq!(r.swaps, 0);
@@ -510,7 +510,7 @@ fn relist_after_every_operation() {
     r.open_load();
     assert_eq!(r.labels(), ["+ CREATE NEW"]);
     // + CREATE NEW over a Modified NEW: SAVE THEN LOAD names it first.
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     r.tap(ButtonId::Seq);
     r.tap(ButtonId::Seq);
     assert_eq!(r.ui.location(), Location::settings_at(&[0, 0], 0));
@@ -585,7 +585,7 @@ fn save_then_load_refused_save_keeps_the_project() {
     let crc = project_crc(r.ui.project());
     r.open_load();
     r.bar_to(r.row_of("02"));
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     r.s.swap(2);
     r.tap(ButtonId::Seq);
     assert_eq!(r.question(), "CARD CHANGED");
@@ -615,7 +615,7 @@ fn save_then_load_on_new_refused_keeps_the_name() {
     modify(&mut r, "SKETCH");
     let crc = project_crc(r.ui.project());
     r.open_load();
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     r.tap(ButtonId::Seq);
     assert_eq!(r.ui.naming().unwrap().text(), "DRIFT-002");
     r.s.swap(2);
@@ -646,14 +646,14 @@ fn a_full_card_lists_48_and_names_past_them() {
     assert_eq!(labels[49], "+ CREATE NEW");
     r.tap(ButtonId::Menu);
     r.feed(Input::press(ButtonId::Plus));
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert_eq!(r.ui.naming().unwrap().text(), "PULSE-051");
     r.tap(ButtonId::Seq);
     assert_eq!(r.question(), "NAME EXISTS");
 }
 
 #[test]
-fn seq_on_no_card_reads_the_card_again() {
+fn edit_on_no_card_reads_the_card_again() {
     let mut s = MemStore::new(1);
     put(&mut s, "ALPHA");
     s.eject();
@@ -661,7 +661,7 @@ fn seq_on_no_card_reads_the_card_again() {
     r.open_load();
     assert_eq!(r.labels(), ["NO CARD"]);
     r.s.insert();
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert_eq!(r.labels(), ["01 ALPHA", "+ CREATE NEW"]);
 }
 
@@ -676,7 +676,7 @@ fn a_shorter_card_clamps_the_bar() {
     r.open_load();
     r.bar_to(2);
     r.s.swap(2);
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert_eq!(r.labels(), ["+ CREATE NEW"]);
     assert_eq!(r.ui.location(), Location::settings_at(&[0, 0], 0));
 }
@@ -693,7 +693,7 @@ fn save_then_load_failed_save_loads_nothing() {
     let crc = project_crc(r.ui.project());
     r.open_load();
     r.bar_to(r.row_of("02"));
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     r.s.1 = true;
     r.tap(ButtonId::Seq);
     assert!(r.toast().starts_with("CARD FULL"));
@@ -713,7 +713,7 @@ fn a_card_error_after_naming_drops_the_save_and_its_load() {
     modify(&mut r, "SKETCH");
     let crc = project_crc(r.ui.project());
     r.open_load();
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     r.tap(ButtonId::Seq);
     assert!(r.ui.naming().is_some());
     r.s.eject();

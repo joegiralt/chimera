@@ -10,7 +10,7 @@ use chimera_core::hw::{SAMPLE_RATE, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 #[cfg(feature = "midi-din")]
 use chimera_core::note_queue::SourceId;
-use chimera_core::note_queue::{NoteDrain, NoteSources};
+use chimera_core::note_queue::{InEvent, NoteDrain, NoteSources};
 use chimera_core::part::DacPair;
 use chimera_core::project::{LOAD_LINK, LoadGate};
 use chimera_core::scope::{ScopeFrame, ScopeWriter};
@@ -40,6 +40,7 @@ struct Engine {
     dac: DacBlocks,
     /// Holds the note queues through a project load (ADR 0046).
     gate: LoadGate,
+    orbit: crate::orbit::Runner,
 }
 
 static mut ENGINE: MaybeUninit<Engine> = MaybeUninit::uninit();
@@ -68,6 +69,7 @@ pub fn init(
     shared: Reader<AudioShared>,
     notes: NoteDrain<'static, NOTE_SOURCES>,
     scope: Writer<ScopeFrame>,
+    orbit: crate::orbit::Runner,
 ) {
     if ENGINE_TAKEN.swap(true, Ordering::AcqRel) {
         return;
@@ -75,7 +77,7 @@ pub fn init(
     // SAFETY: the flag lets exactly one caller past, and `render_half` does
     // not touch these statics until `ENGINE_READY` is set below, so these are
     // the only references. The Instrument (D2) and FX bus (AXI) are built in
-    // place; `Engine` (5 KB) is written by value.
+    // place; `Engine` (5 KB, 6 KB with ORBIT's runner) is written by value.
     unsafe {
         let (inst_slot, fx_slot) = slots();
         let inst = Instrument::init_in_place(inst_slot, SAMPLE_RATE, budget);
@@ -88,11 +90,23 @@ pub fn init(
             scope: ScopeWriter::new(scope),
             dac: DacBlocks::new(),
             gate: LoadGate::new(),
+            orbit,
         });
     }
     ENGINE_READY.store(true, Ordering::Release);
 }
 
+#[cfg(feature = "orbit")]
+pub(crate) const SAMPLE_RATE_NZ: core::num::NonZeroU32 =
+    match core::num::NonZeroU32::new(SAMPLE_RATE) {
+        Some(r) => r,
+        None => panic!("a sample rate of 0"),
+    };
+
+/// One half, as the desktop's `Engine::block` renders a block: the gate,
+/// then only when it opens the drain (live notes to ORBIT's capture and
+/// then the Parts, real-time to ORBIT's clock) and ORBIT, then the render
+/// and ORBIT's view.
 pub fn render_half(half: Half) {
     if !ENGINE_READY.load(Ordering::Acquire) {
         return;
@@ -104,9 +118,19 @@ pub fn render_half(half: Half) {
     let e = unsafe { (*addr_of_mut!(ENGINE)).assume_init_mut() };
     let shared = e.shared.read();
     if e.gate.before_block(&LOAD_LINK, e.inst, shared) {
-        e.notes.drain(|ev| e.inst.handle(ev, shared));
+        let now = e.orbit.now();
+        e.notes.drain(|src, ev| match ev {
+            // Capture sees the raw key, before any snap.
+            InEvent::Note(n) => {
+                e.orbit.live(n);
+                e.inst.handle(n, shared);
+            }
+            InEvent::Rt(rt) => e.orbit.realtime(src.index(), rt, now),
+        });
+        e.orbit.block(e.inst, shared);
     }
     e.inst.render(e.fx, &mut e.dac, shared, &mut e.scope);
+    e.orbit.publish();
     #[cfg(feature = "perf-probe")]
     {
         VOICES.store(e.inst.sounding() as u8, Ordering::Relaxed);

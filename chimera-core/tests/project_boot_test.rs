@@ -556,7 +556,7 @@ fn load_writes_the_last_project() {
 }
 
 /// A shell's publish: settle at once (no audio runs here).
-fn settle(swap: chimera_core::project::Swap, _: &Project) {
+fn settle(swap: chimera_core::project::Swap, _: &UiState) {
     let _ = swap.settle(&LoadLink::new(), || false);
 }
 

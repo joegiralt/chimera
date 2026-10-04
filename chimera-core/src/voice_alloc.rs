@@ -225,6 +225,14 @@ impl Allocator {
         }
     }
 
+    /// A held `voice`'s note moved to `note` (a re-snap): its age and the
+    /// rest stand. No-op for a free voice or an index out of range.
+    pub fn renote(&mut self, voice: usize, note: MidiNote) {
+        if let Some(s) = self.slots.get_mut(voice).filter(|s| !s.is_free()) {
+            s.note = Some(note);
+        }
+    }
+
     /// The voice now costs `cost` (its Part's Sound changed).
     pub fn recost(&mut self, voice: usize, cost: Cost) {
         if let Some(s) = self.slots.get_mut(voice).filter(|s| !s.is_free()) {
@@ -283,6 +291,20 @@ impl Allocator {
         cost: Cost,
         reserved: Cost,
     ) -> Option<usize> {
+        self.pick_where(part, mode, note, cost, reserved, &|_| true)
+    }
+
+    /// `pick`, where rule 2 re-strikes only voices `restrike` accepts: a key
+    /// held by another origin is a voice of its own (`Instrument::handle_from`).
+    pub fn pick_where(
+        &self,
+        part: u8,
+        mode: PartMode,
+        note: MidiNote,
+        cost: Cost,
+        reserved: Cost,
+        restrike: &dyn Fn(usize) -> bool,
+    ) -> Option<usize> {
         let fits = |freed: Cost| {
             let total = reserved.0 + self.live_cost().0 + cost.0;
             total.saturating_sub(freed.0) <= self.budget.as_cost().0
@@ -296,14 +318,14 @@ impl Allocator {
         {
             return fits(self.slots[v].cost).then_some(v);
         }
-        // Rule 2: the key's own voice, re-struck, if it fits (else on to
+        // Rule 2: the key's own voice, re-struck (if `restrike` accepts it),
+        // if it fits (else on to
         // the rest); else a free voice, round-robin, else the dying one
         // nearest the end of its fade — if it fits.
         if mode != PartMode::Mono
-            && let Some(v) = self
-                .slots
-                .iter()
-                .position(|s| !s.mono && !s.dying() && s.part == Some(part) && s.note == Some(note))
+            && let Some(v) = self.slots.iter().enumerate().position(|(v, s)| {
+                !s.mono && !s.dying() && s.part == Some(part) && s.note == Some(note) && restrike(v)
+            })
             && fits(self.slots[v].cost)
         {
             return Some(v);

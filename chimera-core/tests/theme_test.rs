@@ -184,6 +184,8 @@ fn mapped(fb: &Fb, p: &Palette) -> Vec<u16> {
 }
 
 /// TEAL, BLACK 0 through the display's palette changes no pixel of any golden.
+/// The goldens are recorded with ORBIT built.
+#[cfg(feature = "orbit")]
 #[test]
 fn default_theme_leaves_every_golden_bit_identical() {
     let p = ThemeSettings::NEUTRAL.palette();
@@ -292,6 +294,7 @@ fn in_settings_and_set_theme() {
         gamma: Gamma::Soft,
         accent: Accent::Lime,
         black: Black::new(1),
+        hints: false,
     };
     ui.set_theme(t);
     assert_eq!(ui.theme(), t);

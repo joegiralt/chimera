@@ -3,7 +3,8 @@
 //! kind and navigation stays as it is.
 
 use super::leaves::{
-    ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, OUTPUTS_LEAF, OnePage, THEME_LEAF, TUNING_LEAF,
+    ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, LIVE_SNAP_LEAF, OUTPUTS_LEAF, OnePage, THEME_LEAF,
+    TUNING_LEAF,
 };
 use core::num::NonZeroU16;
 
@@ -23,7 +24,7 @@ pub enum Kind {
     /// A screen whose rows are built at run time.
     Screen(Screen),
     Act(Act),
-    /// Not built: dimmed, and EDIT and SEQ ignore it.
+    /// Not built: dimmed, and EDIT ignores it.
     Later(Issue),
 }
 
@@ -50,6 +51,10 @@ pub enum Screen {
     ManageProjects,
     /// OVER SLOT nn, TO NEW SLOT nn: slot numbers are run-time.
     SaveToProj,
+    /// ORBIT's SAVE TO PROJ: a row per scene slot, `OVER SCENE n` or
+    /// `SCENE n` as the slot is saved or neutral.
+    #[cfg(feature = "orbit")]
+    SceneSaveTo,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +63,9 @@ pub enum Act {
     PartRename,
     PartClear,
     PartReload,
+    /// ORBIT's CLEAR and RELOAD FROM PROJ, on the playing scene.
+    SceneClear,
+    SceneReload,
     /// OS UPGRADE: asks, then the shell restarts into the ROM loader.
     EnterDfu,
 }
@@ -87,15 +95,41 @@ static PROJECT: [Row; 3] = [
 ];
 
 /// The active Part's list: its crumb is `PART n`.
-pub static PART: [Row; 4] = [
+pub static PART: [Row; 5] = [
     row("RENAME", Kind::Act(Act::PartRename)),
     row("CLEAR", Kind::Act(Act::PartClear)),
     crumb("SAVE TO PROJ", "SAVE TO", Kind::Screen(Screen::SaveToProj)),
     crumb("RELOAD FROM PROJ", "RELOAD", Kind::Act(Act::PartReload)),
+    crumb("LIVE SNAP", "SNAP", Leaf(&LIVE_SNAP_LEAF)),
 ];
 
+/// The playing scene's list: its crumb is `SCENE n`.
+#[cfg(feature = "orbit")]
+pub static ORBIT: [Row; 4] = [
+    // private issue #298
+    row("RENAME", Later(issue(298))),
+    row("CLEAR", Kind::Act(Act::SceneClear)),
+    crumb("SAVE TO PROJ", "SAVE TO", Kind::Screen(Screen::SceneSaveTo)),
+    crumb("RELOAD FROM PROJ", "RELOAD", Kind::Act(Act::SceneReload)),
+];
+
+/// ORBIT's row, chosen by the feature: the tree is a static table, so no
+/// run-time flag could pick it.
+#[cfg(feature = "orbit")]
+const ORBIT_KIND: Kind = List(&ORBIT);
+// private issue #262
+#[cfg(not(feature = "orbit"))]
+const ORBIT_KIND: Kind = Later(issue(262));
+
+/// SYNC drives ORBIT's transport: without ORBIT there is nothing to drive.
+#[cfg(feature = "orbit")]
+const SYNC_KIND: Kind = Leaf(&super::leaves::SYNC_LEAF);
+// private issue #264
+#[cfg(not(feature = "orbit"))]
+const SYNC_KIND: Kind = Later(issue(264));
+
 static MIDI: [Row; 3] = [
-    row("SYNC", Later(issue(264))),
+    row("SYNC", SYNC_KIND),
     crumb("PORT CONFIG", "PORT", Later(issue(265))),
     row("CHANNELS", Leaf(&CHANNELS_LEAF)),
 ];
@@ -141,7 +175,7 @@ static SYSTEM: [Row; 6] = [
 static TOP: [Row; 8] = [
     row("PROJECT", List(&PROJECT)),
     row("PART", List(&PART)),
-    row("ORBIT", Later(issue(262))),
+    row("ORBIT", ORBIT_KIND),
     crumb("MIDI CONFIG", "MIDI", List(&MIDI)),
     crumb("SYSEX DUMP", "SYSEX", Later(issue(263))),
     crumb("AUDIO ROUTING", "AUDIO", List(&AUDIO)),
@@ -158,6 +192,19 @@ pub const PART_ROW: u8 = {
     loop {
         assert!(i < TOP.len(), "no PART row at the top");
         if str_eq(TOP[i].crumb, "PART") && matches!(TOP[i].kind, List(_)) {
+            break i as u8;
+        }
+        i += 1;
+    }
+};
+
+/// The top list's ORBIT row, found the same way.
+#[cfg(feature = "orbit")]
+pub const ORBIT_ROW: u8 = {
+    let mut i = 0;
+    loop {
+        assert!(i < TOP.len(), "no ORBIT row at the top");
+        if str_eq(TOP[i].crumb, "ORBIT") && matches!(TOP[i].kind, List(_)) {
             break i as u8;
         }
         i += 1;
@@ -271,10 +318,12 @@ pub const fn path_of(s: Screen) -> ([u8; 4], usize) {
 }
 
 /// Each Screen's path, found at compile time.
-const SCREEN_PATHS: [([u8; 4], usize); 3] = [
+const SCREEN_PATHS: &[([u8; 4], usize)] = &[
     path_of(Screen::LoadProject),
     path_of(Screen::ManageProjects),
     path_of(Screen::SaveToProj),
+    #[cfg(feature = "orbit")]
+    path_of(Screen::SceneSaveTo),
 ];
 
 /// Screen `s`'s path in the tree.
@@ -283,6 +332,8 @@ pub fn screen_path(s: Screen) -> &'static [u8] {
         Screen::LoadProject => &SCREEN_PATHS[0],
         Screen::ManageProjects => &SCREEN_PATHS[1],
         Screen::SaveToProj => &SCREEN_PATHS[2],
+        #[cfg(feature = "orbit")]
+        Screen::SceneSaveTo => &SCREEN_PATHS[3],
     };
     &path[..*depth]
 }

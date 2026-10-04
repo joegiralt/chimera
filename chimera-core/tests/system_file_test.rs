@@ -1,28 +1,36 @@
-//! SYSTEM (ADR 0045): theme and last project, read at boot and written on
+//! SYSTEM (ADR 0045): theme, MIDI CONFIG (ADR 0080) and last project, read at boot and written on
 //! leaving System when RAM differs from what this card is known to hold.
 
 mod common;
 
+use chimera_core::orbit::clock::SyncMode;
 use chimera_core::storage::{
     AbFile, BootNote, Card, Exit, ExitPlan, FileError, LoadError, ProjectId, Side, SyncError,
     SystemCheck, SystemSettings, SystemSync, encode_system, exit_plan, save_ab,
 };
+use chimera_core::ui::midi_settings::MidiSettings;
 use chimera_core::ui::theme_settings::{Accent, Black, Bright, Gamma, ThemeSettings};
 use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use chimera_hal::testkit::MemStore;
 use common::codec_util::{
-    SYSTEM_FIXTURE, fix_crc, record_offsets, system_file, system_fixture_settings,
+    SYSTEM_FIXTURE, SYSTEM_MIDI_FIXTURE, fix_crc, record_offsets, system_file,
+    system_fixture_settings, system_midi_fixture_settings,
 };
 use core::ops::ControlFlow;
 
-/// BRIGHT 40, GAMMA SOFT, ACCENT index 3, BLACK +1, project 7.
+/// BRIGHT 40, GAMMA SOFT, ACCENT index 3, BLACK +1, HINTS OFF, SYNC INT,
+/// project 7.
 fn settings() -> SystemSettings {
     SystemSettings {
+        midi: MidiSettings {
+            sync: SyncMode::Int,
+        },
         theme: ThemeSettings {
             bright: Bright::new(40),
             gamma: Gamma::Soft,
             accent: Accent::ALL[3],
             black: Black::new(1),
+            hints: false,
         },
         last_project: ProjectId::new(7),
     }
@@ -278,12 +286,19 @@ fn record_rules() {
     let g = with_record(&f, end, 0x8002, &[0]);
     assert_eq!(boot_bytes(&g), (SystemSettings::DEFAULT, corrupt));
 
-    // A project's records, Origin (non-critical) too, are refused.
+    // A project's records, Origin and ORBIT's (non-critical) too, are
+    // refused.
     for (tag, payload) in [
         (0x8007, vec![0; 17]),
         (0x8008, vec![0; 17]),
         (0x8009, vec![]),
         (0x000A, vec![0, 0]),
+        (0x000B, vec![0; 4]),
+        (0x0010, vec![8, 27]),
+        (0x0011, vec![0; 40]),
+        (0x0012, vec![0; 7]),
+        (0x0013, vec![0; 37]),
+        (0x0014, vec![0; 3]),
     ] {
         let g = with_record(&f, end, tag, &payload);
         assert_eq!(
@@ -577,6 +592,67 @@ fn no_file_boot_creates_on_first_exit() {
     );
 }
 
+/// SYNC is the user's too: a change to it alone touches the defaults.
+#[test]
+fn a_sync_change_is_a_change() {
+    let mut s = MemStore::new(1);
+    save(&mut s, &settings());
+    s.eject();
+    let mut card = Card::new();
+    let (mut sync, mut cur, _) = SystemSync::boot(&mut card, &mut s);
+    cur.midi.sync = SyncMode::Int;
+    assert!(!sync.left_system(true, &cur));
+    assert!(sync.left_system(false, &cur));
+    s.insert();
+    assert_eq!(
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
+        Ok(Exit::Wrote)
+    );
+    assert_eq!(boot(&mut s).0.midi.sync, SyncMode::Int);
+}
+
+/// A SYSTEM from before SYNC, the v1 fixture, reads as EXT, the default.
+#[test]
+fn a_system_from_before_sync_is_ext() {
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/v1")
+        .join(SYSTEM_FIXTURE);
+    let f = std::fs::read(p).unwrap();
+    assert_eq!(boot_bytes(&f).0.midi.sync, SyncMode::Ext);
+}
+
+/// A SYSTEM from before HINTS, either v1 fixture, shows them: ON, the
+/// default (ADR 0086).
+#[test]
+fn a_system_from_before_hints_shows_them() {
+    for name in [SYSTEM_FIXTURE, SYSTEM_MIDI_FIXTURE] {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/v1")
+            .join(name);
+        let f = std::fs::read(p).unwrap();
+        assert!(boot_bytes(&f).0.theme.hints, "{name}");
+    }
+}
+
+/// HINTS OFF round-trips, and alone is a change to write.
+#[test]
+fn hints_off_round_trips() {
+    let mut s = MemStore::new(1);
+    let off = SystemSettings {
+        theme: ThemeSettings {
+            hints: false,
+            ..ThemeSettings::DEFAULT
+        },
+        ..SystemSettings::DEFAULT
+    };
+    save(&mut s, &off);
+    assert!(!boot(&mut s).0.theme.hints);
+    assert_ne!(
+        chimera_core::storage::body_crc(&off),
+        chimera_core::storage::body_crc(&SystemSettings::DEFAULT)
+    );
+}
+
 /// A change undone is still the user's: it goes over another card's SYSTEM.
 #[test]
 fn a_reverted_change_is_still_a_change() {
@@ -672,4 +748,21 @@ fn system_fixture_loads() {
         .join(SYSTEM_FIXTURE);
     let f = std::fs::read(p).unwrap();
     assert_eq!(boot_bytes(&f), (system_fixture_settings(), None));
+}
+
+/// The frozen SYSTEM with MIDI CONFIG's record, SYNC INT: it reads as
+/// written, and what it read writes and reads back the same. Not byte for
+/// byte since HINTS: the fixture predates it, a write carries it (ADR 0086).
+#[test]
+fn system_midi_fixture_round_trips() {
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/v1")
+        .join(SYSTEM_MIDI_FIXTURE);
+    let f = std::fs::read(p).unwrap();
+    let (got, note) = boot_bytes(&f);
+    assert_eq!((got, note), (system_midi_fixture_settings(), None));
+    assert_eq!(got.midi.sync, SyncMode::Int);
+    let again = system_file(&got);
+    assert!(again.len() > f.len(), "HINTS added");
+    assert_eq!(boot_bytes(&again), (got, None));
 }

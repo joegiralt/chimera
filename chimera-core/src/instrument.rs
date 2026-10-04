@@ -2,6 +2,7 @@
 //! what the audio thread reads from the UI, and the voice pool that renders
 //! every Part into the three DAC pairs.
 
+use crate::dsp::clampf;
 use core::cmp::Reverse;
 use core::mem::{MaybeUninit, size_of};
 use core::ptr::addr_of_mut;
@@ -21,8 +22,11 @@ use crate::hw::{
 use crate::in_place::{by_value, uninit_at};
 use crate::modulation::ModState;
 use crate::note_queue::{NoteEvent, NoteKind};
+use crate::orbit::RingIdx;
+use crate::orbit::ring::Harmony;
+use crate::orbit::runner::{OrbitRunner, OrbitShared, OrbitView};
 use crate::params::ParamSnapshot;
-use crate::part::PartParams;
+use crate::part::{Held, LiveSnap, PartParams};
 use crate::perf::load::AudioStats;
 use crate::preset::{Part, Performance};
 use crate::project::Project;
@@ -30,10 +34,13 @@ use crate::scope::{ScopeFrame, ScopeWriter};
 use crate::triple::TripleBuffer;
 use crate::voice_alloc::{Allocator, VoiceIdx};
 use crate::{MidiChannel, MidiNote, Velocity};
+use chimera_theory::{Note, snap};
 
 /// Everything the port places in AXI SRAM (ADR 0014): framebuffer, UI,
-/// the Project, the `AudioShared`, scope and `AudioStats` triple
-/// buffers (the scope's writer besides), the FX bus, and the card's store.
+/// the Project, the `AudioShared`, scope, `AudioStats` and ORBIT view
+/// triple buffers (the scope's writer and ORBIT's runner besides, in the
+/// engine), the FX bus, and the card's store. ORBIT's settings ride in
+/// `AudioShared` and its song in `Project`: not counted twice.
 pub const AXI_RESIDENT: usize = FB_BYTES
     + UI_RESERVE
     + STORE_RESERVE
@@ -42,6 +49,8 @@ pub const AXI_RESIDENT: usize = FB_BYTES
     + size_of::<TripleBuffer<ScopeFrame>>()
     + size_of::<ScopeWriter>()
     + size_of::<TripleBuffer<AudioStats>>()
+    + size_of::<TripleBuffer<OrbitView>>()
+    + size_of::<OrbitRunner>()
     + size_of::<FxBus>();
 const _: () = assert!(AXI_RESIDENT <= AXI_SRAM);
 // Spec § Hardware parity: 64 KB of AXI to spare.
@@ -62,6 +71,7 @@ pub struct AudioShared {
     pub fx: FxParams,
     /// The load epoch this snapshot was published under (ADR 0046).
     pub epoch: u32,
+    pub orbit: OrbitShared,
 }
 
 impl Default for AudioShared {
@@ -78,9 +88,36 @@ impl PartAudio {
             mix: p.mix,
         }
     }
+
+    /// Cycles/sample of a voice of this Part: its Sound's, and where a
+    /// re-snap can move it (SNAP on, HELD RE-SNAP) the retune its glide
+    /// runs each block.
+    fn voice_cost(&self) -> Cost {
+        let glide = match (self.mix.snap, self.mix.held) {
+            (LiveSnap::Off, _) | (_, Held::Stay) => Cost::ZERO,
+            (_, Held::Resnap) => Voice::glide_cost(&self.params, &self.mod_state),
+        };
+        Voice::cost(&self.params, &self.mod_state) + glide
+    }
+
+    /// `key` as this Part plays it live under `h` (spec § 5.2): snapped to
+    /// its SNAP while ORBIT runs, else as played.
+    fn live_note(&self, key: MidiNote, h: Option<Harmony>) -> MidiNote {
+        let (Some(h), Some(to)) = (h, self.mix.snap.target()) else {
+            return key;
+        };
+        Note::new(key.get())
+            .and_then(|n| MidiNote::new(snap(n, h.target(to)).get()))
+            .unwrap_or(key)
+    }
 }
 
-crate::in_place::field_list!(AudioShared => AudioShared { parts, fx, epoch });
+/// A held key on a HELD RE-SNAP Part glides to its new note over this
+/// (95 % of the way, as GLIDE TIME is, ADR 0065): quick enough to follow
+/// the chord, slow enough not to click (spec § 5.2).
+pub const RESNAP_GLIDE_MS: u32 = 40;
+
+crate::in_place::field_list!(AudioShared => AudioShared { parts, fx, epoch, orbit });
 
 impl AudioShared {
     pub fn from_performance(perf: &Performance) -> Self {
@@ -105,6 +142,7 @@ impl AudioShared {
             }
             addr_of_mut!((*p).fx).write(perf.fx);
             addr_of_mut!((*p).epoch).write(0);
+            addr_of_mut!((*p).orbit).write(OrbitShared::default());
             slot.assume_init_mut()
         }
     }
@@ -118,6 +156,8 @@ impl AudioShared {
             parts,
             fx,
             epoch: e,
+            // `UiState::publish_orbit` writes it, in the same publish.
+            orbit: _,
         } = self;
         for (d, p) in parts.iter_mut().zip(perf.parts()) {
             *d = PartAudio::of(p);
@@ -141,7 +181,7 @@ pub fn pan_gains(pan: f32) -> (f32, f32) {
     let pan = if pan.is_nan() {
         0.0
     } else {
-        pan.clamp(-1.0, 1.0)
+        clampf(pan, -1.0, 1.0)
     };
     let q = core::f32::consts::FRAC_PI_4;
     (libm::sinf((1.0 - pan) * q), libm::sinf((1.0 + pan) * q))
@@ -339,6 +379,23 @@ pub struct Instrument {
     /// The MIDI channel each voice's note-on arrived on, so its note-off
     /// releases it even if the Part's channel changed meanwhile.
     note_channel: [MidiChannel; MAX_VOICES],
+    /// Who started each voice's note: a note-off releases only its own
+    /// origin's voices, so ORBIT's rings and a played key never release
+    /// one another.
+    note_origin: [NoteOrigin; MAX_VOICES],
+    /// The key that started each voice's note: what its note-off names.
+    /// A snapped live note sounds another (the allocator's); a re-snap
+    /// snaps this again, so repeated chord changes never drift.
+    keys: [MidiNote; MAX_VOICES],
+    /// The keys down on each voice, by MIDI note: two keys that snap to one
+    /// pitch share a voice (a Poly re-strike), and it is let go when the
+    /// last of them is up.
+    held_keys: [NoteSet; MAX_VOICES],
+    /// ORBIT's key and chord now; `None` while it is stopped (spec § 5.2).
+    harmony: Option<Harmony>,
+    /// A re-snap's note waiting on the clear budget (a SYMP voice's rings
+    /// grow for its glide), served at the next block's start.
+    resnap_to: [Option<MidiNote>; MAX_VOICES],
     /// The Part whose Sound each voice renders: its slot's Part, except
     /// while another Part's sound fades out ahead of a waiting note.
     sounding: [u8; MAX_VOICES],
@@ -359,13 +416,20 @@ pub struct Instrument {
     clear_backlog: bool,
 }
 
+/// Who plays a note: the keys and MIDI, or one of ORBIT's rings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoteOrigin {
+    Live,
+    Orbit(RingIdx),
+}
+
 /// The string-line bytes Sympathetic note-ons may clear in one block (spec
 /// § 4.8): one worst-case note-on, so any one fits a fresh block. A
 /// note-on past it waits a block, as a stolen note does: a chord of
 /// worst-case slots starts a note a block, a typical one all at once.
 pub const SYM_CLEAR_BUDGET: usize = SYM_NOTE_ON_CLEAR_MAX;
 
-crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog });
+crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog });
 
 const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
@@ -392,6 +456,11 @@ impl Instrument {
             SymPool::init_in_place(uninit_at(addr_of_mut!((*p).sym)));
             addr_of_mut!((*p).alloc).write(Allocator::new(budget));
             addr_of_mut!((*p).note_channel).write([MidiChannel::clamped(0); MAX_VOICES]);
+            addr_of_mut!((*p).note_origin).write([NoteOrigin::Live; MAX_VOICES]);
+            addr_of_mut!((*p).keys).write([MidiNote::A4; MAX_VOICES]);
+            addr_of_mut!((*p).held_keys).write([NoteSet::EMPTY; MAX_VOICES]);
+            addr_of_mut!((*p).harmony).write(None);
+            addr_of_mut!((*p).resnap_to).write([None; MAX_VOICES]);
             addr_of_mut!((*p).sounding).write([0; MAX_VOICES]);
             addr_of_mut!((*p).waiting).write([None; MAX_VOICES]);
             addr_of_mut!((*p).buses).write([[0.0; BLOCK_SIZE]; MAX_PARTS]);
@@ -408,6 +477,12 @@ impl Instrument {
 
     pub fn allocator(&self) -> &Allocator {
         &self.alloc
+    }
+
+    /// Who started each voice's note, by voice index: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn origins(&self) -> &[NoteOrigin; MAX_VOICES] {
+        &self.note_origin
     }
 
     /// Each voice's slot rebuilds (`Voice::rebuilds`): for the tests and
@@ -478,6 +553,7 @@ impl Instrument {
             let _ = v.kill();
         }
         self.waiting = [None; MAX_VOICES];
+        self.resnap_to = [None; MAX_VOICES];
     }
 
     /// Part `part`'s mono bus from the last `render` (before pan and level).
@@ -485,9 +561,16 @@ impl Instrument {
         &self.buses[part]
     }
 
-    /// Note-on: play on every Part listening on the channel. Note-off:
-    /// release the voices this channel started.
+    /// A played key or MIDI note: `handle_from` `NoteOrigin::Live`.
     pub fn handle(&mut self, ev: NoteEvent, shared: &AudioShared) {
+        self.handle_from(ev, shared, NoteOrigin::Live);
+    }
+
+    /// Note-on: play on every Part listening on the channel, a live key
+    /// snapped per Part while ORBIT runs. Note-off: release the voices this
+    /// channel, `from` and the key started. A Poly re-strike takes back
+    /// only `from`'s own voice of the note.
+    pub fn handle_from(&mut self, ev: NoteEvent, shared: &AudioShared, from: NoteOrigin) {
         match ev.kind {
             NoteKind::On(vel) => {
                 // Judge the note against this block's patches, not the last.
@@ -497,8 +580,17 @@ impl Instrument {
                         continue;
                     }
                     let (q, mode) = (p as u8, part.mix.mode);
-                    let cost = Voice::cost(&part.params, &part.mod_state);
-                    let Some(v) = self.alloc.pick(q, mode, ev.note, cost, FxBus::COST) else {
+                    // ORBIT's notes are snapped in their ring.
+                    let note = match from {
+                        NoteOrigin::Live => part.live_note(ev.note, self.harmony),
+                        NoteOrigin::Orbit(_) => ev.note,
+                    };
+                    let cost = part.voice_cost();
+                    let origins = &self.note_origin;
+                    let Some(v) = self
+                        .alloc
+                        .pick_where(q, mode, note, cost, FxBus::COST, &|v| origins[v] == from)
+                    else {
                         self.alloc.refuse();
                         continue;
                     };
@@ -509,7 +601,22 @@ impl Instrument {
                     if SlotKind::of(&part.params) == SYMPATHETIC {
                         self.sym.alloc_mut().place(VoiceIdx::ALL[v]);
                     }
-                    self.alloc.book(v, q, mode, ev.note, cost);
+                    // A key whose note this Part's voice already holds, from
+                    // this origin and channel, joins its held keys.
+                    let was = self.alloc.slots()[v];
+                    let joins = was.held()
+                        && !was.dying()
+                        && was.part() == Some(q)
+                        && was.note() == Some(note)
+                        && self.note_origin[v] == from
+                        && self.note_channel[v] == ev.channel;
+                    let base = if joins {
+                        self.held_keys[v]
+                    } else {
+                        NoteSet::EMPTY
+                    };
+                    self.held_keys[v] = base.with(ev.note);
+                    self.alloc.book(v, q, mode, note, cost);
                     let waits = self.sounding[v] as usize != p && self.voices[v].is_active();
                     // Sympathetic starts now only if the block's clear
                     // budget takes it and no note waits on it before; else
@@ -517,7 +624,7 @@ impl Instrument {
                     let deferred = !waits
                         && SlotKind::of(&part.params) == SYMPATHETIC
                         && !(self.voices[v].starts_now(&part.params, &self.sym)
-                            && self.admit(v, &part.params, ev.note));
+                            && self.admit(v, &part.params, note));
                     let voice = &mut self.voices[v];
                     let waited = self.waiting[v].take().is_some();
                     let queued = if waits || deferred {
@@ -528,26 +635,105 @@ impl Instrument {
                         voice.kill()
                     } else {
                         self.sounding[v] = q;
-                        voice.note_on(ev.note, vel, &part.params, &mut self.sym)
+                        voice.note_on(note, vel, &part.params, &mut self.sym)
                     };
                     // A note replaced before it sounded (ADR 0027).
                     if waited || queued {
                         self.alloc.dropped_unheard();
                     }
                     self.note_channel[v] = ev.channel;
+                    self.note_origin[v] = from;
+                    self.keys[v] = ev.note;
+                    self.resnap_to[v] = None;
                 }
             }
             NoteKind::Off => {
-                // By voice index: every held voice this channel started on
-                // this note (one per layered Part), and no other.
+                // By voice index: every held voice this channel and `from`
+                // hold the key on (one per layered Part), let go with the
+                // last of its keys.
                 for v in 0..MAX_VOICES {
                     let s = self.alloc.slots()[v];
-                    if s.held() && s.note() == Some(ev.note) && self.note_channel[v] == ev.channel {
+                    if !(s.held()
+                        && self.held_keys[v].contains(ev.note)
+                        && self.note_channel[v] == ev.channel
+                        && self.note_origin[v] == from)
+                    {
+                        continue;
+                    }
+                    self.held_keys[v] = self.held_keys[v].without(ev.note);
+                    if let Some(left) = self.held_keys[v].lowest() {
+                        // A key still down names it now.
+                        self.keys[v] = left;
+                    } else {
                         self.alloc.release(v);
+                        self.resnap_to[v] = None;
                         self.voices[v].note_off(&mut self.sym);
                     }
                 }
             }
+        }
+    }
+
+    /// ORBIT's key and chord, handed on each block by its runner: live
+    /// keys snap to it (`None`: ORBIT stopped, nothing snaps).
+    pub fn set_harmony(&mut self, h: Option<Harmony>) {
+        self.harmony = h;
+    }
+
+    /// Any harmony change (spec § 5.2): each held live voice on a HELD
+    /// RE-SNAP Part glides to its key snapped to the harmony now, from the
+    /// key, never from where it was. At most one
+    /// retune a voice; a SYMP voice whose rings' growth doesn't fit the
+    /// block's clear budget waits for the next block's.
+    pub fn resnap(&mut self, shared: &AudioShared) {
+        let Some(h) = self.harmony else {
+            return;
+        };
+        for v in 0..MAX_VOICES {
+            let s = self.alloc.slots()[v];
+            let (Some(q), Some(now)) = (s.part(), s.note()) else {
+                continue;
+            };
+            let part = &shared.parts[q as usize % MAX_PARTS];
+            if !s.held()
+                || s.dying()
+                || self.note_origin[v] != NoteOrigin::Live
+                || part.mix.held != Held::Resnap
+                || part.mix.snap == LiveSnap::Off
+            {
+                continue;
+            }
+            let to = part.live_note(self.keys[v], Some(h));
+            if to != now {
+                self.alloc.renote(v, to);
+                self.resnap_to[v] = Some(to);
+            }
+        }
+        self.serve_resnaps();
+    }
+
+    /// The re-snaps the clear budget lets start: a SYMP voice's takes its
+    /// rings' growth from it, unless a note waits on it first; any other
+    /// writes nothing it bills. A voice let go meanwhile has none.
+    fn serve_resnaps(&mut self) {
+        let glide = RESNAP_GLIDE_MS * self.sample_rate / 1000;
+        for v in 0..MAX_VOICES {
+            let Some(to) = self.resnap_to[v] else {
+                continue;
+            };
+            if !self.alloc.slots()[v].held() {
+                self.resnap_to[v] = None;
+                continue;
+            }
+            if self.voices[v].kind() == SYMPATHETIC {
+                let bytes = self.voices[v].retune_clear(&self.sym, to);
+                if self.clear_backlog || bytes > self.clear_left {
+                    continue;
+                }
+                self.clear_left -= bytes;
+            }
+            self.voices[v].retune(to, glide, &mut self.sym);
+            self.resnap_to[v] = None;
         }
     }
 
@@ -626,9 +812,7 @@ impl Instrument {
     /// over the budget (ADR 0027). The slot stays taken until the fade ends
     /// and `render` step 5 frees it.
     fn recost(&mut self, shared: &AudioShared) {
-        let costs: [Cost; MAX_PARTS] = core::array::from_fn(|p| {
-            Voice::cost(&shared.parts[p].params, &shared.parts[p].mod_state)
-        });
+        let costs: [Cost; MAX_PARTS] = core::array::from_fn(|p| shared.parts[p].voice_cost());
         for v in 0..MAX_VOICES {
             if let Some(p) = self.alloc.slots()[v].part() {
                 let p = p as usize % MAX_PARTS;
@@ -720,6 +904,7 @@ impl Instrument {
         //    before the voices render: let in this block, one sounds in it.
         self.clear_backlog = false;
         self.start_waiting(shared);
+        self.serve_resnaps();
         for v in 0..MAX_VOICES {
             if self.alloc.slots()[v].is_free() {
                 continue;
@@ -771,5 +956,34 @@ impl Instrument {
 
         // Oscilloscope: every part's bus, before pan and level.
         scope.write(&scope_block);
+    }
+}
+
+/// A set of MIDI keys, a bit each.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct NoteSet(u128);
+
+impl NoteSet {
+    pub(crate) const EMPTY: NoteSet = NoteSet(0);
+
+    pub(crate) const fn with(self, n: MidiNote) -> NoteSet {
+        NoteSet(self.0 | 1 << n.get())
+    }
+
+    pub(crate) const fn without(self, n: MidiNote) -> NoteSet {
+        NoteSet(self.0 & !(1 << n.get()))
+    }
+
+    pub(crate) const fn contains(self, n: MidiNote) -> bool {
+        self.0 & 1 << n.get() != 0
+    }
+
+    pub(crate) const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// The lowest key in the set.
+    pub(crate) fn lowest(self) -> Option<MidiNote> {
+        (!self.is_empty()).then(|| MidiNote::new(self.0.trailing_zeros() as u8))?
     }
 }

@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 chimera-hal = { path = "../chimera-hal" }
+chimera-theory = { path = "../chimera-theory" }
 libm = "0.2"
 embedded-graphics = "0.8"
 embedded-graphics-core = "0.4"
@@ -12,6 +13,9 @@ embedded-graphics-core = "0.4"
 u8g2-fonts = "=0.8.0"
 
 [features]
+default = ["orbit"]
+# ORBIT, the ring sequencer: SEQ hold opens it. Off, SEQ hold does nothing.
+orbit = []
 # The master tape stage on DAC pair 1 (ADR 0055: off the chain by default;
 # its parameters and disk codes stay either way).
 master-tape = []
@@ -20,7 +24,8 @@ master-tape = []
 test-support = []
 
 [dev-dependencies]
-chimera-core = { path = ".", features = ["test-support"] }
+# No default features: `--no-default-features` must reach the library too.
+chimera-core = { path = ".", default-features = false, features = ["test-support"] }
 chimera-hal = { path = "../chimera-hal", features = ["testkit"] }
 
 [build-dependencies]

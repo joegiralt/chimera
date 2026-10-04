@@ -1,3 +1,4 @@
+use crate::dsp::clampf;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::{Point, Size};
 use embedded_graphics::pixelcolor::Rgb565;
@@ -23,8 +24,10 @@ use crate::ui::glyph::{
     BRAID_PARAMS, Braid, BraidPart, CUBE_PARAMS, CompositeId, Cube, CubePart, FocusGlyph, Gauge,
     RINGS_PARAMS, Rings, RingsPart,
 };
+use crate::ui::hint;
 use crate::ui::mod_grid::MatrixState;
 use crate::ui::nav::PageAt;
+use crate::ui::orbit::draw::{self as orbit, OrbitFrame};
 use crate::ui::page::PageLayout;
 use crate::ui::perf::PerfStats;
 use crate::ui::region::{self, Layout, RegionKind};
@@ -61,6 +64,8 @@ pub struct Frame<'a> {
     pub scope: &'a [f32; crate::scope::SCOPE_LEN],
     /// The live output is above silence (header dot).
     pub sounding: bool,
+    /// ORBIT's beat dot: its fill while ORBIT runs (`OrbitAnim::dot`).
+    pub orbit_dot: Option<u8>,
     /// Every Part (Mixer overview) and the one being edited.
     pub parts: &'a Parts,
     pub active_part: PartId,
@@ -77,6 +82,29 @@ pub struct Frame<'a> {
     pub clock: crate::ui::animation::UiClock,
     /// The FX's stored params (a composite reads the chorus's).
     pub fx: &'a crate::dsp::fx_bus::FxParams,
+    /// What ORBIT's pages draw: the live scene and the UI's view of it.
+    pub orbit: OrbitFrame<'a>,
+    /// ORBIT's reading of the focused slot, if it has its own: built once
+    /// a frame, for the band's key, its gauge and its drawing.
+    pub orbit_focus: Option<orbit::Focus>,
+    /// THEME's HINTS: gesture hints drawn (ADR 0086).
+    pub hints: bool,
+}
+
+impl Frame<'_> {
+    /// `h`, or none with HINTS off.
+    pub fn hint(&self, h: hint::Hint) -> hint::Hint {
+        if self.hints { h } else { hint::NONE }
+    }
+
+    /// What the header shows beside its words: the load and the dots.
+    pub fn header_status(&self) -> components::HeaderStatus {
+        components::HeaderStatus {
+            sounding: self.sounding,
+            load_pct: self.perf.audio_load_pct,
+            orbit_dot: self.orbit_dot,
+        }
+    }
 }
 
 /// Full-screen renderer. Composites header, visualization, parameters, and dungeon map.
@@ -89,6 +117,9 @@ pub struct Renderer {
     pub set: [AnimatedValue; 6],
     /// Animated scroll offset for dungeon map sub-page branches (in pixels).
     pub branch_scroll: AnimatedValue,
+    /// CUSTOM's cursor in twelfths round the circle, unwrapped, so it eases
+    /// the short way across 11 and 0 (`animation::nearest`).
+    pub orbit_cursor: AnimatedValue,
 }
 
 impl Default for Renderer {
@@ -103,6 +134,7 @@ impl Renderer {
             anim: [AnimatedValue::new(0.5); 6],
             set: [AnimatedValue::new(0.5); 6],
             branch_scroll: AnimatedValue::new(0.0).with_speed(0.25),
+            orbit_cursor: AnimatedValue::new(0.0),
         }
     }
 
@@ -212,6 +244,8 @@ impl Renderer {
                 viz::compressor(display, -40.0 + 40.0 * a(0), ratio, f.master_gr_db);
             }
             VizType::About => crate::ui::about_page::draw_viz(display),
+            VizType::Orbit => orbit::orb(display, &f.orbit, f.ctx.ring),
+            VizType::OrbitCircle => orbit::circle(display, &f.orbit, self.orbit_cursor.current()),
             VizType::EnvSpeed => {
                 let e = &f.parts[f.active_part.index()].sound.params.envelopes;
                 viz::env_speed(
@@ -249,6 +283,11 @@ impl Renderer {
             VizType::EffectsFlow(FxFlow::Effect(node)) => {
                 viz::effects_flow(display, Some(node as usize), None)
             }
+            VizType::OrbitRhythm => orbit::rhythm(display, &f.orbit, f.ctx.ring),
+            VizType::OrbitVoice => orbit::voice(display, &f.orbit, f.ctx.ring),
+            VizType::OrbitNotes => orbit::notes(display, &f.orbit, f.ctx.ring),
+            VizType::OrbitChords => orbit::chords(display, &f.orbit),
+            VizType::OrbitScenes => orbit::scenes(display, &f.orbit),
             VizType::AlgoDiagram => {
                 let algo = &f.parts[f.active_part.index()].sound.params.algo;
                 let morph = crate::addr::ParamAddr::new(
@@ -382,6 +421,12 @@ impl Renderer {
                         (algo.alg_a as u32) << 8 | algo.alg_b as u32,
                     )
                 }
+                // ORBIT's own key: `orbit_viz_key`.
+                VizType::OrbitRhythm
+                | VizType::OrbitVoice
+                | VizType::OrbitNotes
+                | VizType::OrbitChords
+                | VizType::OrbitScenes => ([0; 6], 0),
                 VizType::OpEnv => {
                     // AR D1R D2R 5 bits, D1L RR 4, the lit stage 3.
                     let key = self.op_env(f).map_or(0, |(r, lit)| {
@@ -400,7 +445,7 @@ impl Renderer {
                 // The GR meter redraws every 0.25 dB.
                 let gr = match f.def.viz {
                     VizType::CompressorCurve => {
-                        (f.master_gr_db.clamp(0.0, viz::GR_RANGE_DB) * 4.0) as u32
+                        (clampf(f.master_gr_db, 0.0, viz::GR_RANGE_DB) * 4.0) as u32
                     }
                     _ => 0,
                 };
@@ -447,7 +492,7 @@ impl Renderer {
             }
             RegionKind::Crumbs => {
                 if let Some(b) = &f.settings {
-                    b.draw_crumbs(display, f.sounding)
+                    b.draw_crumbs(display, f.header_status())
                 }
             }
             RegionKind::List => {
@@ -479,6 +524,7 @@ impl Renderer {
                 f.matrix,
                 amount_of(self.anim[MATRIX_AMOUNT_SLOT].current()),
                 inert(f),
+                f.hint(f.matrix.hint()),
             );
         }
         if f.def.viz == VizType::AudioStats {
@@ -487,6 +533,18 @@ impl Renderer {
         let view = view::view(f.def, f.focus, &f.ctx);
         if view == View::Empty {
             return;
+        }
+        if let Some(o) = &f.orbit_focus {
+            let (label, text) = (o.label.as_str(), o.text.as_str());
+            components::focus_band(
+                display,
+                label,
+                text,
+                o.gauge,
+                look(f, f.focus),
+                f.prime_status,
+            );
+            return hint::focus(display, f.hint(o.hint));
         }
         let v = self.anim[f.focus].current();
         let buf = value_text(f, f.focus, v);
@@ -498,10 +556,20 @@ impl Renderer {
             look(f, f.focus),
             f.prime_status,
         );
+        hint::focus(display, f.hint(view.hint()));
     }
 
-    /// The focused slot's gauge, by its glyph.
+    /// What an ORBIT viz draws, for its region's key; 0 on any other.
+    pub fn orbit_viz_key(&self, f: &Frame) -> u32 {
+        orbit::viz_key(f.def, &f.orbit, f.ctx.ring, self.orbit_cursor.current())
+    }
+
+    /// The focused slot's gauge, by its glyph; ORBIT's own where it reads
+    /// the slot itself.
     pub fn gauge(&self, f: &Frame) -> Gauge {
+        if let Some(o) = &f.orbit_focus {
+            return o.gauge;
+        }
         let view = view::view(f.def, f.focus, &f.ctx);
         let (fmt, glyph, focused) = (view.fmt(), view.glyph(), view.addr());
         let value = match glyph {
@@ -598,6 +666,7 @@ impl Renderer {
                 View::Text { text, .. } => {
                     let _ = core::fmt::Write::write_str(&mut buf, text);
                 }
+                View::Orbit(cell) => buf = orbit::cell_text(cell, &f.orbit, f.ctx.ring),
                 _ => fmt::fmt_val(&mut buf, value, v.fmt()),
             }
             let c = components::Cell {
@@ -624,8 +693,7 @@ impl Renderer {
             h.context.as_str(),
             h.name.as_str(),
             h.warn,
-            f.sounding,
-            f.perf.audio_load_pct,
+            f.header_status(),
         );
     }
 
@@ -688,7 +756,7 @@ pub fn header_out(f: &Frame) -> DacPair {
 fn out_of(head: Head, parts: &Parts) -> DacPair {
     match head {
         Head::Sound(p) | Head::Mix(p) => parts[p.index()].mix.output,
-        Head::Settings => DacPair::P1,
+        Head::Settings | Head::Ring(_) | Head::Orbit(_) => DacPair::P1,
     }
 }
 
@@ -715,7 +783,7 @@ pub fn look(f: &Frame, i: usize) -> components::Look {
         {
             components::Look::Absent
         }
-        v if view::is_dimmed(&v, sound) => components::Look::Dimmed,
+        v if view::is_dimmed(&v, sound, &f.ctx) => components::Look::Dimmed,
         _ => components::Look::Live,
     }
 }
@@ -748,10 +816,14 @@ fn value_text(f: &Frame, i: usize, v: f32) -> FmtBuf {
 
 /// Fingerprint of the Mixer overview (quantized levels and pans, selection).
 fn strips_key(strips: &[viz::Strip], selected: usize) -> u32 {
-    strips.iter().fold(selected as u32, |h, s| {
-        let q = (region::quantize(s.level) as u32) << 16 | region::quantize(s.pan + 1.0) as u32;
-        (h ^ q).wrapping_mul(0x0100_0193)
-    })
+    use core::hash::Hasher;
+    let mut h = region::Fnv::new();
+    h.write_usize(selected);
+    for s in strips {
+        h.write_u16(region::quantize(s.level));
+        h.write_u16(region::quantize(s.pan + 1.0));
+    }
+    h.get()
 }
 
 /// The matrix page shows the selected amount through this display slot.
@@ -764,7 +836,7 @@ pub fn amount_value(amount: i8) -> f32 {
 
 /// Inverse of `amount_value`, rounded.
 pub fn amount_of(v: f32) -> i8 {
-    libm::roundf((v - 0.5) * 254.0).clamp(-127.0, 127.0) as i8
+    clampf(libm::roundf((v - 0.5) * 254.0), -127.0, 127.0) as i8
 }
 
 /// A cell's label: the spec's short form when the full one would outrun

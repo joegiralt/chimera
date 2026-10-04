@@ -158,7 +158,7 @@ pub static ALGORITHMS: [Algorithm; ALGO_COUNT] = [
     ),
 ];
 
-pub static ALGO_NAMES: [&str; ALGO_COUNT] = {
+const NAMES: [&str; ALGO_COUNT] = {
     let mut n = [""; ALGO_COUNT];
     let mut i = 0;
     while i < ALGO_COUNT {
@@ -168,7 +168,7 @@ pub static ALGO_NAMES: [&str; ALGO_COUNT] = {
     n
 };
 
-pub static ALGO_IDENTS: [&str; ALGO_COUNT] = {
+const IDENTS: [&str; ALGO_COUNT] = {
     let mut n = [""; ALGO_COUNT];
     let mut i = 0;
     while i < ALGO_COUNT {
@@ -177,6 +177,38 @@ pub static ALGO_IDENTS: [&str; ALGO_COUNT] = {
     }
     n
 };
+
+pub static ALGO_IDENTS: [&str; ALGO_COUNT] = IDENTS;
+
+/// The names; the idents' own table while every name matches its ident,
+/// so flash holds one copy.
+pub static ALGO_NAMES: &[&str; ALGO_COUNT] = if same(&NAMES, &IDENTS) {
+    &ALGO_IDENTS
+} else {
+    &NAMES
+};
+
+const fn same(a: &[&str], b: &[&str]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        let (x, y) = (a[i].as_bytes(), b[i].as_bytes());
+        if x.len() != y.len() {
+            return false;
+        }
+        let mut j = 0;
+        while j < x.len() {
+            if x[j] != y[j] {
+                return false;
+            }
+            j += 1;
+        }
+        i += 1;
+    }
+    true
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AlgoId(u8);

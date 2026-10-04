@@ -25,6 +25,7 @@ pub mod mod_path;
 pub mod modulation;
 pub mod name;
 pub mod note_queue;
+pub mod orbit;
 pub mod params;
 pub mod part;
 pub mod perf;

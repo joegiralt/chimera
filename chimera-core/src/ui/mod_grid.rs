@@ -1,6 +1,7 @@
 //! Mod matrix: routing state (cursor, amounts, sources, destinations), its
 //! amount grid and the route readout (UI refresh spec § Page types, #161).
 
+use crate::dsp::clampf;
 use core::fmt::Write;
 
 use embedded_graphics::draw_target::DrawTarget;
@@ -10,6 +11,7 @@ use crate::addr::{BlockRef, ParamAddr};
 use crate::mod_path::LABEL_LEN;
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
+use crate::ui::hint::{self, Gesture, Hint};
 use crate::ui::theme;
 
 /// Grid geometry (grid region 28..`GRID_BOTTOM`): destination labels
@@ -32,9 +34,6 @@ pub const READOUT_Y: i32 = 206;
 pub const AMOUNT_Y: i32 = 223;
 pub const HINT_Y: i32 = 241;
 pub const STATS_Y: i32 = 257;
-/// Widest readout line: the screen less both margins.
-pub const READOUT_MAX_W: i32 = theme::SCREEN_W - 2 * theme::MARGIN_X;
-
 /// Rows top to bottom as `ModSource` indices: envelopes, then LFOs, VELO,
 /// NOTE (the mockup's grouping). Amounts and presence stay by source index.
 pub const ROW_ORDER: [usize; MAX_SOURCES] = {
@@ -202,7 +201,7 @@ impl MatrixState {
                 for amounts in self.amounts.iter().take(self.num_sources) {
                     total += amounts[di] as i16;
                 }
-                return Some((total as f32 / 127.0).clamp(-1.0, 1.0));
+                return Some(clampf(total as f32 / 127.0, -1.0, 1.0));
             }
         }
         None
@@ -321,8 +320,21 @@ impl Default for MatrixState {
     }
 }
 
-/// The matrix's hint line (spec § UI: MIX+MINUS deletes a route).
-pub const HINT: &str = "PRIME MIX+PLUS  DELETE MIX+MINUS";
+/// The cursor's gesture (ADR 0086): MIX + MINUS on a route deletes it;
+/// on no route, where its columns come from, MIX + PLUS on a param.
+pub const DELETE: Hint = &[Gesture("MIX + MINUS", "DELETES THE ROUTE")];
+pub const PRIME: Hint = &[Gesture("MIX + PLUS", "ON A PARAM PRIMES IT")];
+
+impl MatrixState {
+    /// The hint under the cursor's route.
+    pub fn hint(&self) -> Hint {
+        if self.is_present(self.sel_source(), self.sel_col) {
+            DELETE
+        } else {
+            PRIME
+        }
+    }
+}
 
 /// Short tag for the block a destination lives in (column header, top line).
 pub fn block_tag(b: BlockRef) -> &'static str {
@@ -344,6 +356,10 @@ pub fn block_tag(b: BlockRef) -> &'static str {
         BlockRef::Comp => "CMP",
         BlockRef::Part | BlockRef::PartMix(_) => "PRT",
         BlockRef::Theme => "THM",
+        BlockRef::Midi => "MID",
+        BlockRef::OrbitChords => "CHD",
+        BlockRef::OrbitRing(r) => ["R1", "R2", "R3", "R4", "R5"][r.get() as usize],
+        BlockRef::Tempo => "BPM",
     }
 }
 
@@ -403,6 +419,12 @@ pub fn block_name(b: BlockRef) -> &'static str {
         BlockRef::Comp => "COMP",
         BlockRef::Part | BlockRef::PartMix(_) => "PART",
         BlockRef::Theme => "THEME",
+        BlockRef::Midi => "MIDI",
+        BlockRef::OrbitChords => "ORBIT CHORDS",
+        BlockRef::OrbitRing(r) => {
+            ["RING 1", "RING 2", "RING 3", "RING 4", "RING 5"][r.get() as usize]
+        }
+        BlockRef::Tempo => "TEMPO",
     }
 }
 
@@ -414,11 +436,11 @@ fn names_width(source: &str, dest: &str) -> i32 {
 const ARROW_GAP: i32 = 5;
 
 /// The readout's destination: `FILTER CUTOFF`, or `FLT CUTOFF` when the
-/// full block name would push the line past `READOUT_MAX_W`. The param
+/// full block name would push the line past `theme::CONTENT_W`. The param
 /// name is never cut.
 pub fn fmt_readout_dest(buf: &mut FmtBuf, source: &str, d: &ModDest) {
     let _ = write!(buf, "{} {}", block_name(d.addr.block), dest_name(d));
-    if names_width(source, buf.as_str()) > READOUT_MAX_W {
+    if names_width(source, buf.as_str()) > theme::CONTENT_W {
         *buf = FmtBuf::new();
         fmt_route_dest(buf, d);
     }
@@ -636,9 +658,10 @@ where
 
 /// The band under the grid: the cursor's route by full names (`ENV 3 →
 /// FILTER CUTOFF`), then its lerped amount and effect (`+42 = +3.3 oct`,
-/// `--` with no route; in MID and tagged `INERT` on an `inert` column), the
-/// hint and the route count. `NO DESTINATIONS` without one.
-pub fn draw_readout<D>(d: &mut D, state: &MatrixState, sel_amount: i8, inert: u16)
+/// `--` with no route; in MID and tagged `INERT` on an `inert` column), its
+/// gesture `hint` (`MatrixState::hint`, or none with HINTS off) and the
+/// route count. `NO DESTINATIONS` without one.
+pub fn draw_readout<D>(d: &mut D, state: &MatrixState, sel_amount: i8, inert: u16, hint: Hint)
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -707,14 +730,7 @@ where
             label(d, "NO DESTINATIONS", theme::MARGIN_X, theme::MID);
         }
     }
-    draw::text(
-        d,
-        &theme::FONT_LABEL,
-        HINT,
-        theme::MARGIN_X,
-        HINT_Y,
-        theme::MID,
-    );
+    hint::draw(d, hint, theme::MARGIN_X, HINT_Y);
     let routes = (0..state.num_sources)
         .flat_map(|r| (0..state.num_dests).map(move |c| (r, c)))
         .filter(|&(r, c)| state.is_present(r, c))

@@ -485,6 +485,44 @@ impl Voice {
         self.played_live = AlgoLive::from_params(&params.algo);
     }
 
+    /// The note moves to `note` without a strike, gliding there on the
+    /// voice's pitch path (ADR 0042, as a glide steal does, ADR 0065): a
+    /// one-pole in log pitch, `glide_samples` 95 % of the way (the time
+    /// constant a third of it). The envelopes and the modulators run on;
+    /// NOTE reads the new note. A fading voice moves only the note that
+    /// starts after its fade; an idle one has nothing to move. Its cost:
+    /// three transcendentals (the start ratio, `Glide::new`), and on Modal
+    /// the rings' growth (`retune_clear`), which the caller bills.
+    pub fn retune(&mut self, note: MidiNote, glide_samples: u32, pool: &mut SymPool) {
+        if self.fade > 0 {
+            if self.after_fade != AfterFade::Idle {
+                self.last_note = note;
+            }
+            return;
+        }
+        if !self.active {
+            return;
+        }
+        self.last_note = note;
+        let tau = glide_samples as f32 / (3.0 * self.sample_rate as f32);
+        self.slot.retune(note, (self.sample_rate, tau), pool);
+    }
+
+    /// The bytes `retune` to `note` writes to the lines (`ModalEngine::fit`'s
+    /// growth), for the `Instrument`'s clear budget: none fading or idle.
+    pub fn retune_clear(&self, pool: &SymPool, note: MidiNote) -> usize {
+        if self.fade > 0 || !self.active {
+            return 0;
+        }
+        self.slot.retune_clear(pool, note, self.sample_rate)
+    }
+
+    /// What a voice playing `p` under `mods` costs more while it may
+    /// retune (`EngineSlot::glide_cost`).
+    pub fn glide_cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
+        EngineSlot::glide_cost(p, mods)
+    }
+
     pub fn note_off(&mut self, pool: &mut SymPool) {
         self.held = false;
         if self.after_fade == AfterFade::Restart {

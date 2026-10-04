@@ -33,19 +33,19 @@ pub const ALERT: Rgb565 = Rgb565::new(31, 0, 0);
 // --- Fonts (u8g2; only these are linked) ---
 
 /// Focus value: Logisoso 42 px, ASCII (choices show as text: POLY, P1).
-pub const FONT_FOCUS: FontRenderer =
+pub static FONT_FOCUS: FontRenderer =
     FontRenderer::new::<fonts::u8g2_font_logisoso42_tr>().with_ignore_unknown_chars(true);
 /// Readout riding on a BigViz viz: Logisoso 20 px.
-pub const FONT_READOUT: FontRenderer =
+pub static FONT_READOUT: FontRenderer =
     FontRenderer::new::<fonts::u8g2_font_logisoso20_tr>().with_ignore_unknown_chars(true);
 /// Values, header name, focus label, list names: Helvetica Bold 10.
-pub const FONT_VALUE: FontRenderer =
+pub static FONT_VALUE: FontRenderer =
     FontRenderer::new::<fonts::u8g2_font_helvB10_tr>().with_ignore_unknown_chars(true);
 /// Small uppercase labels: Helvetica 8.
-pub const FONT_LABEL: FontRenderer =
+pub static FONT_LABEL: FontRenderer =
     FontRenderer::new::<fonts::u8g2_font_helvR08_tr>().with_ignore_unknown_chars(true);
 /// Map pill, header name: Helvetica Bold 8.
-pub const FONT_LABEL_BOLD: FontRenderer =
+pub static FONT_LABEL_BOLD: FontRenderer =
     FontRenderer::new::<fonts::u8g2_font_helvB08_tr>().with_ignore_unknown_chars(true);
 /// Extra advance between uppercase label letters.
 pub const LABEL_TRACKING: i32 = 1;
@@ -56,6 +56,8 @@ pub const SCREEN_W: i32 = 240;
 pub const SCREEN_H: i32 = 320;
 /// Left text margin.
 pub const MARGIN_X: i32 = 12;
+/// The screen less both margins: the widest a readout or hint line runs.
+pub const CONTENT_W: i32 = SCREEN_W - 2 * MARGIN_X;
 
 /// Header band 0..28.
 pub const HEADER_BOTTOM: i32 = 28;
@@ -64,6 +66,8 @@ pub const HEADER_BASELINE: i32 = 20;
 pub const HEADER_DOT_X: i32 = 225;
 pub const HEADER_DOT_Y: i32 = 16;
 pub const HEADER_DOT_R: i32 = 3;
+/// ORBIT's beat dot, one dot left of the sounding dot.
+pub const ORBIT_DOT_X: i32 = HEADER_DOT_X - 10;
 
 /// Focus band 28..118: label, big value, arc gauge.
 pub const FOCUS_BOTTOM: i32 = 118;
@@ -168,8 +172,16 @@ pub const BRANCH_LINE_HEIGHT: i32 = 10;
 
 /// SETTINGS (spec § Screens): breadcrumb, list and footer, in its own look.
 /// The breadcrumb's width before it drops leading parts: it clears the
-/// sounding dot.
-pub const CRUMBS_W: i32 = HEADER_DOT_X - HEADER_DOT_R - 4 - MARGIN_X;
+/// dots. With ORBIT built, always its beat dot too, so the crumbs never
+/// move when it starts or stops.
+pub const CRUMBS_W: i32 = CRUMBS_RIGHT - MARGIN_X;
+/// Where the breadcrumb must end.
+pub const CRUMBS_RIGHT: i32 = if cfg!(feature = "orbit") {
+    ORBIT_DOT_X
+} else {
+    HEADER_DOT_X
+} - HEADER_DOT_R
+    - 4;
 /// A list row's label, and the right edge of its note or `›`.
 pub const LIST_TEXT_X: i32 = 18;
 pub const LIST_RIGHT: i32 = 222;

@@ -5,7 +5,7 @@ use chimera_core::ui::animation::AnimatedValue;
 use chimera_core::ui::block_def::BlockDef;
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::fmt::{FmtBuf, fmt_val};
-use chimera_core::ui::nav::{Location, NavCtx, PageAt};
+use chimera_core::ui::nav::{Location, NavCtx, OrbitCx, PageAt};
 use chimera_core::ui::page::{PageId, PageKey, ValFmt};
 use chimera_core::ui::settings::rows;
 
@@ -160,6 +160,7 @@ fn cx() -> NavCtx {
     NavCtx {
         engines: [EngineType::Algo; 6],
         dyn_rows: 0,
+        orbit: OrbitCx::NONE,
     }
 }
 

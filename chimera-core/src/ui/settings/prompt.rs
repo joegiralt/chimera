@@ -12,6 +12,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use u8g2_fonts::FontRenderer;
 
 use crate::name::ProjectName;
+use crate::orbit::scene::{Refused, SceneIdx};
 use crate::project::{Line, PartId, PartSet, ReplaceError, SlotId, Subject};
 use crate::storage::ProjectId;
 use crate::ui::components::upper;
@@ -80,6 +81,9 @@ answers!(NameExistsAnswer { KeepBoth => "KEEP BOTH", Overwrite => "OVERWRITE THA
 answers!(DeleteAnswer { Delete => "DELETE", Cancel => "CANCEL" } Two);
 answers!(ClearAnswer { Clear => "CLEAR", Cancel => "CANCEL" } Two);
 answers!(SaveOverAnswer { SaveOver => "SAVE OVER", Cancel => "CANCEL" } Two);
+answers!(SaveSceneOverAnswer { SaveOver => "SAVE OVER", Cancel => "CANCEL" } Two);
+answers!(ClearSceneAnswer { Clear => "CLEAR", Cancel => "CANCEL" } Two);
+answers!(ReloadSceneAnswer { Reload => "RELOAD", Cancel => "CANCEL" } Two);
 answers!(CardChangedAnswer { SaveAs => "SAVE AS", Cancel => "CANCEL" } Two);
 answers!(DfuAnswer { EnterDfu => "ENTER DFU", Cancel => "CANCEL" } Two);
 
@@ -178,13 +182,50 @@ pub fn with_view<P: Prompt, R>(
     c: &Choice<P::Answer>,
     f: impl FnOnce(&PromptView<'_>) -> R,
 ) -> R {
+    once(f, |g| show(p, c.at, g))
+}
+
+/// `f`, run once by `run` through a `dyn` callback, so the panel's body
+/// is built once rather than per prompt and caller (#336).
+pub(super) fn once<R>(
+    f: impl FnOnce(&PromptView<'_>) -> R,
+    run: impl FnOnce(&mut dyn FnMut(&PromptView<'_>)),
+) -> R {
+    let (mut f, mut out) = (Some(f), None);
+    run(&mut |v| out = f.take().map(|f| f(v)));
+    out.expect("show calls back once")
+}
+
+/// A prompt's words and pills, without its answer type.
+trait Panel {
+    fn question(&self, q: &mut Line, r: &mut Line);
+    fn pills(&self) -> Opts<Line>;
+}
+
+impl<P: Prompt> Panel for P {
+    fn question(&self, q: &mut Line, r: &mut Line) {
+        self.words(q, r);
+    }
+
+    fn pills(&self) -> Opts<Line> {
+        P::Answer::ALL.map(|a| {
+            let mut l = Line::new("");
+            self.label(a, &mut l);
+            l
+        })
+    }
+}
+
+/// `p` as drawn with `c`'s pick, to `f`.
+pub(super) fn panel<P: Prompt>(p: &P, c: &Choice<P::Answer>, f: &mut dyn FnMut(&PromptView<'_>)) {
+    show(p, c.at, f)
+}
+
+/// `p` as drawn with option `at` picked, to `f`.
+fn show(p: &dyn Panel, at: u8, f: &mut dyn FnMut(&PromptView<'_>)) {
     let (mut q, mut r) = (Line::new(""), Line::new(""));
-    p.words(&mut q, &mut r);
-    let labels = P::Answer::ALL.map(|a| {
-        let mut l = Line::new("");
-        p.label(a, &mut l);
-        l
-    });
+    p.question(&mut q, &mut r);
+    let labels = p.pills();
     let options = match &labels {
         Opts::Two([a, b]) => Opts::Two([a.as_str(), b.as_str()]),
         Opts::Three([a, b, c]) => Opts::Three([a.as_str(), b.as_str(), c.as_str()]),
@@ -193,7 +234,7 @@ pub fn with_view<P: Prompt, R>(
         question: q.as_str(),
         reason: r.as_str(),
         options,
-        picked: c.at,
+        picked: at,
     })
 }
 
@@ -360,6 +401,65 @@ impl Prompt for SaveOver {
     fn words(&self, q: &mut Line, r: &mut Line) {
         let _ = write!(q, "SAVE OVER {}?", subject(self.name).as_str());
         let _ = r.write_str("ITS CONTENTS ARE REPLACED");
+    }
+}
+
+/// SCN's SAVE over a saved scene other than the playing one.
+pub struct SaveSceneOver {
+    pub scene: SceneIdx,
+}
+
+impl Prompt for SaveSceneOver {
+    type Answer = SaveSceneOverAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        let _ = write!(q, "SAVE OVER SCENE {}?", self.scene.get() + 1);
+        let _ = r.write_str("ITS SAVED SCENE IS REPLACED");
+    }
+}
+
+/// SETTINGS › ORBIT's CLEAR, of the playing scene: its slot goes
+/// neutral, and so does `live` on the loop.
+pub struct ClearScene {
+    pub scene: SceneIdx,
+}
+
+impl Prompt for ClearScene {
+    type Answer = ClearSceneAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        let _ = write!(q, "CLEAR SCENE {}?", self.scene.get() + 1);
+        let _ = r.write_str("IT GOES SILENT ON THE LOOP");
+    }
+}
+
+/// SETTINGS › ORBIT's RELOAD FROM PROJ: the playing scene's slot again,
+/// on the loop: its edits, its drift restarted (ADR 0083).
+pub struct ReloadScene {
+    pub scene: SceneIdx,
+}
+
+impl Prompt for ReloadScene {
+    type Answer = ReloadSceneAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        let _ = write!(q, "RELOAD SCENE {}?", self.scene.get() + 1);
+        let _ = r.write_str("ITS DRIFT RESTARTS, ITS EDITS STAY");
+    }
+}
+
+/// A scene save while a switch waits: `live` is the queued scene's.
+pub const SWITCH_PENDING: &str = "SWITCH PENDING";
+
+/// Scene `n` saved.
+pub fn scene_saved(n: SceneIdx) -> Line {
+    let mut l = Line::new("");
+    let _ = write!(l, "SCENE {} SAVED", n.get() + 1);
+    l
+}
+
+/// SAVE OVER refused.
+pub fn scene_refused(e: Refused) -> &'static str {
+    match e {
+        Refused::SwitchPending => SWITCH_PENDING,
+        Refused::SlotChanged => "SCENE CHANGED",
     }
 }
 

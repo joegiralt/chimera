@@ -101,7 +101,7 @@ impl Naming {
         let from = c
             .and_then(|c| set.iter().position(|&s| s == c))
             .map_or(if d > 0 { -1 } else { 0 }, |i| i as i32);
-        set[(from + d as i32).rem_euclid(set.len() as i32) as usize]
+        set[crate::ui::nav::step_wrapped(from, d as i32, set.len())]
     }
 
     pub fn input(&mut self, c: &impl Controls, p: &Presses) -> Option<NamingOut> {

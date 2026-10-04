@@ -1,6 +1,7 @@
 //! The Karplus-Strong string, the project owner's own code from their
 //! Carcosa firmware for the Ambika, relicensed here under MIT (ADR 0032).
 
+use crate::dsp::clampf;
 use core::cell::Cell;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
@@ -103,7 +104,7 @@ impl KsString {
         if delay > MAX_LINE || period - other < MIN_LINE as f32 + 0.5 {
             // Clamped, the fraction leaves [0.5, 1.5]: held at its edge.
             delay = delay.min(MAX_LINE);
-            let frac = (period - other - delay as f32).clamp(0.5, 1.5);
+            let frac = clampf(period - other - delay as f32, 0.5, 1.5);
             eta = super::loop_parts::eta_for(frac, w);
         }
         self.delay = delay;

@@ -128,7 +128,8 @@ mod tests {
         d.frame(&[]);
         assert_eq!(d.ui.project_status(), ProjectStatus::Modified);
         d.hold(Key::M);
-        assert_eq!(d.toast().as_deref(), Some("SAVED"));
+        // Part 1 is NEW's TX BASS, from slot 1: the edit differs from it.
+        assert_eq!(d.toast().as_deref(), Some("SAVED: P1 DIFFERS FROM SLOT 01"));
         assert_eq!(d.ui.project_status(), ProjectStatus::Saved);
         // Quit: `d` stays only as the project to compare against.
         let kept = d.ui.project();

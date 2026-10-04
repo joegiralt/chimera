@@ -46,6 +46,7 @@ pub use chords::{CHORD_COUNT, CHORD_GLIDE_TAU, CHORDS, chord_of, fold};
 pub use params::*;
 pub use string::MAX_STRING_DELAY;
 
+use crate::dsp::clampf;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
@@ -623,6 +624,27 @@ impl ModalEngine {
         self.strike(note, velocity, params, (sample_rate, Some(tau)), pool);
     }
 
+    /// What rings moved to `note` with no strike (a re-snap, spec § 5.2):
+    /// it glides from the pitch it sounds, a one-pole of `tau` seconds in
+    /// log pitch, its rings sized first for the glide's longest period, as a
+    /// glide steal's are; nothing is plucked, cleared or eased. Idle, or on
+    /// `note`, nothing moves.
+    pub fn glide_to(&mut self, note: u8, (sample_rate, tau): (u32, f32), pool: &mut SymPool) {
+        let freq = note_to_freq(note);
+        let f = freq / sample_rate as f32;
+        if !self.active || f == self.frequency {
+            return;
+        }
+        let span = self.span(freq, sample_rate);
+        self.slide = Glide::new(self.frequency * self.slide.value() / f, tau);
+        self.slide.toward(1.0);
+        self.frequency = f;
+        self.fit(span, pool);
+        // The strings follow the new frequency at the next block's retune,
+        // even a glide that lands within it.
+        self.tuned = 0.0;
+    }
+
     fn strike(
         &mut self,
         note: u8,
@@ -1119,7 +1141,7 @@ impl BowedString {
 /// already runs sharp, all from INIT's 0.5.
 fn grip(force: f32, speed: f32) -> f32 {
     let f = ((force - 0.3) / (0.447 - 0.3)).min((0.8 - force) / (0.8 - 0.55));
-    f.clamp(0.0, 1.0) * ((speed - 0.1) / 0.4).clamp(0.0, 1.0)
+    clampf(f, 0.0, 1.0) * clampf((speed - 0.1) / 0.4, 0.0, 1.0)
 }
 
 /// Periods under this, samples (C6 up), lean toward a whole number: the
@@ -1187,9 +1209,11 @@ impl BowHair {
     /// For `freq` Hz, `w` rad/sample, its history kept.
     fn tuned(self, freq: f32, w: f32) -> Self {
         let half = 0.5 * (1.0 + libm::cosf(w));
-        let t = (libm::log2f(freq / Self::NARROW_HZ)
-            / libm::log2f(Self::WIDE_HZ / Self::NARROW_HZ))
-        .clamp(0.0, 1.0);
+        let t = clampf(
+            libm::log2f(freq / Self::NARROW_HZ) / libm::log2f(Self::WIDE_HZ / Self::NARROW_HZ),
+            0.0,
+            1.0,
+        );
         let wide = t * t * (3.0 - 2.0 * t);
         let gain = (1.0 - wide) * half + wide * half * half * half;
         Self {
@@ -1973,6 +1997,45 @@ mod tests {
                 assert_eq!(rings(&e, &pool), at_start, "{mode:?}");
             }
             assert_eq!(e.slide(), 1.0, "{mode:?}: landed");
+        }
+    }
+
+    /// A re-snap's retune down, the widest a re-snap moves (C5 to G#4, 4
+    /// st) and the widest the call takes (C5 to C2), sizes every ring at
+    /// its start, billed within one note-on's clear: grown block by block
+    /// the growth would be written unbilled on the audio path.
+    #[test]
+    fn a_retune_grows_no_ring_on_its_way() {
+        for mode in [
+            ResonatorMode::String,
+            ResonatorMode::Bowed,
+            ResonatorMode::Sympathetic,
+        ] {
+            for to in [68, 36] {
+                let mut pool = SymPool::boxed();
+                let mut e = engine(&mut pool, mode);
+                let p = ModalParams {
+                    mode,
+                    ..ModalParams::default()
+                };
+                e.note_on(72, 100, &p, SR, &mut pool);
+                let mut out = [0.0; BLOCK_SIZE];
+                for _ in 0..40 {
+                    e.render(&mut out, &p, SR, &mut pool);
+                }
+                let bill = e.strike_clear(to, true, SR, &pool).unwrap();
+                assert!(bill <= SYM_NOTE_ON_CLEAR_MAX, "{mode:?} {to}: {bill}");
+                e.glide_to(to, (SR, 0.04 / 3.0), &mut pool);
+                let rings = |e: &ModalEngine, pool: &SymPool| -> Vec<usize> {
+                    all_lines(e, pool).iter().map(|k| k.ring_len()).collect()
+                };
+                let at_start = rings(&e, &pool);
+                for _ in 0..400 {
+                    e.render(&mut out, &p, SR, &mut pool);
+                    assert_eq!(rings(&e, &pool), at_start, "{mode:?} {to}");
+                }
+                assert_eq!(e.slide(), 1.0, "{mode:?} {to}: landed");
+            }
         }
     }
 

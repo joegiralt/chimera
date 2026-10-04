@@ -1,6 +1,7 @@
 //! Direction A shared components (UI refresh spec § Shared components):
 //! header, focus band, cells. The map lives in `dungeon_map`.
 
+use crate::dsp::clampf;
 use core::fmt::Write;
 
 use embedded_graphics::draw_target::DrawTarget;
@@ -41,6 +42,10 @@ pub enum Head {
     Mix(PartId),
     /// SETTINGS: its leaves draw a breadcrumb instead.
     Settings,
+    /// ORBIT's RING pages, on the ring they edit.
+    Ring(crate::orbit::RingIdx),
+    /// ORBIT's other pages, on the scene they play.
+    Orbit(crate::orbit::scene::SceneIdx),
 }
 
 /// A header's text: context, page name, and the OUT warning.
@@ -67,9 +72,11 @@ pub fn header_text(
         Head::Sound(p) => write!(context, "PART {} · SOUND", p.index() + 1),
         Head::Mix(p) => write!(context, "PART {} · MIX", p.index() + 1),
         Head::Settings => context.write_str("SETTINGS"),
+        Head::Ring(r) => write!(context, "RING {}", r.get() + 1),
+        Head::Orbit(n) => write!(context, "SCENE {}", n.get() + 1),
     };
     let warn = match (head, out) {
-        (Head::Settings, _) | (_, DacPair::P1) => None,
+        (Head::Settings | Head::Ring(_) | Head::Orbit(_), _) | (_, DacPair::P1) => None,
         (_, DacPair::P2) => Some("OUT P2"),
         (_, DacPair::P3) => Some("OUT P3"),
     };
@@ -95,6 +102,8 @@ pub fn header_text(
 
 /// Right edge of the CPU readout and of the OUT warning.
 const HEADER_RIGHT: i32 = theme::HEADER_DOT_X - 8;
+/// How far the CPU readout moves left for ORBIT's beat dot: one dot.
+const ORBIT_DOT_SHIFT: i32 = theme::HEADER_DOT_X - theme::ORBIT_DOT_X;
 
 /// Gap between the context and the name.
 const HEADER_GAP: i32 = 7;
@@ -110,28 +119,33 @@ fn header_end(context: &str, name: &str) -> i32 {
 }
 
 /// Whether the context and name end `RIGHT_GAP` short of the OUT warning,
-/// or of the sounding dot.
+/// or of ORBIT's beat dot, which may show on any page.
 pub fn header_fits(h: &HeaderText) -> bool {
     let right = match h.warn {
         Some(warn) => {
             HEADER_RIGHT - draw::text_width(&theme::FONT_LABEL, warn, theme::LABEL_TRACKING)
         }
-        None => theme::HEADER_DOT_X - theme::HEADER_DOT_R,
+        None => theme::ORBIT_DOT_X - theme::HEADER_DOT_R,
     };
     header_end(h.context.as_str(), h.name.as_str()) + RIGHT_GAP <= right
 }
 
+/// What a header shows of the instrument beside its words.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HeaderStatus {
+    /// The live output is above silence: the sounding dot.
+    pub sounding: bool,
+    /// Audio load (0 = not measured).
+    pub load_pct: u8,
+    /// ORBIT's beat dot: its fill while ORBIT runs.
+    pub orbit_dot: Option<u8>,
+}
+
 /// Header band (y 0..28): grey context label, bold name, the OUT warning
-/// or else the audio load when measured, and an accent dot while the
-/// instrument is sounding.
-pub fn header<D>(
-    d: &mut D,
-    context: &str,
-    name: &str,
-    warn: Option<&str>,
-    sounding: bool,
-    load_pct: u8,
-) where
+/// or else the audio load when measured, and the dots (`header_dots`).
+/// The load moves left by one dot while ORBIT's shows.
+pub fn header<D>(d: &mut D, context: &str, name: &str, warn: Option<&str>, s: HeaderStatus)
+where
     D: DrawTarget<Color = Rgb565>,
 {
     let y = theme::HEADER_BASELINE;
@@ -164,36 +178,48 @@ pub fn header<D>(
             theme::WARN,
             theme::LABEL_TRACKING,
         );
-    } else if load_pct > 0 {
+    } else if s.load_pct > 0 {
         let mut buf = FmtBuf::new();
-        let _ = write!(buf, "CPU {}%", load_pct);
-        let color = match load_pct {
+        let _ = write!(buf, "CPU {}%", s.load_pct);
+        let color = match s.load_pct {
             81.. => theme::ALERT,
             61..=80 => theme::WARN,
             _ => theme::MID,
         };
         // The bench readout yields to a long page name.
+        let right = HEADER_RIGHT
+            - if s.orbit_dot.is_some() {
+                ORBIT_DOT_SHIFT
+            } else {
+                0
+            };
         let w = draw::text_width(&theme::FONT_LABEL, buf.as_str(), 0);
-        if header_end(context, name) + RIGHT_GAP <= HEADER_RIGHT - w {
-            draw::text_right(
-                d,
-                &theme::FONT_LABEL,
-                buf.as_str(),
-                HEADER_RIGHT,
-                y,
-                color,
-                0,
-            );
+        if header_end(context, name) + RIGHT_GAP <= right - w {
+            draw::text_right(d, &theme::FONT_LABEL, buf.as_str(), right, y, color, 0);
         }
     }
-    if sounding {
-        draw::dot(
-            d,
-            theme::HEADER_DOT_X,
-            theme::HEADER_DOT_Y,
-            theme::HEADER_DOT_R,
-            theme::ACCENT,
-        );
+    header_dots(d, s);
+}
+
+/// The header's dots: the sounding dot, accent while the instrument
+/// sounds; left of it while ORBIT runs, its beat dot, an outline filled
+/// as far as `s.orbit_dot` (255 full, 0 an outline). Palette colours only,
+/// so the fill is a radius, not a shade.
+pub fn header_dots<D>(d: &mut D, s: HeaderStatus)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let (y, r) = (theme::HEADER_DOT_Y, theme::HEADER_DOT_R);
+    if s.sounding {
+        draw::dot(d, theme::HEADER_DOT_X, y, r, theme::ACCENT);
+    }
+    if let Some(fill) = s.orbit_dot {
+        let x = theme::ORBIT_DOT_X;
+        draw::ring(d, x, y, r, theme::ACCENT, 1);
+        let filled = (r * fill as i32 + 127) / 255;
+        if filled > 0 {
+            draw::dot(d, x, y, filled, theme::ACCENT);
+        }
     }
 }
 
@@ -404,7 +430,7 @@ where
 {
     let (w, h) = (theme::SWITCH_W, theme::SWITCH_H);
     let (x, y) = (theme::SWITCH_CX - w / 2, theme::ARC_CY - h / 2);
-    let on = on.clamp(0.0, 1.0);
+    let on = clampf(on, 0.0, 1.0);
     let knob = x + h / 2 + libm::roundf(on * (w - h) as f32) as i32;
     draw::pill(d, x, y, w, h, theme::FAINT);
     if on > 0.0 {
@@ -425,7 +451,7 @@ where
     let (x, w) = (theme::LEVEL_X, theme::LEVEL_W);
     let (top, bottom) = (theme::LEVEL_TOP, theme::LEVEL_BOTTOM);
     let travel = bottom - top - w;
-    let v = value.clamp(0.0, 1.0);
+    let v = clampf(value, 0.0, 1.0);
     let rise = libm::roundf(v * travel as f32) as i32;
     draw::pill(d, x - w / 2, top, w, bottom - top, theme::FAINT);
     draw::pill(d, x - w / 2, bottom - w - rise, w, w + rise, theme::ACCENT);
@@ -452,7 +478,7 @@ where
     draw::pill(d, x0, cy - track_h / 2, w, track_h, theme::FAINT);
     draw::fill_rect(d, theme::XF_CX - 1, cy - 7, 2, 14, theme::MID);
     let travel = (w - cap_w) as f32;
-    let cx = x0 + cap_w / 2 + libm::roundf(value.clamp(0.0, 1.0) * travel) as i32;
+    let cx = x0 + cap_w / 2 + libm::roundf(clampf(value, 0.0, 1.0) * travel) as i32;
     draw::round_rect(
         d,
         cx - cap_w / 2,
@@ -971,13 +997,15 @@ where
         (false, true) => theme::INK,
         (false, false) => theme::INK2,
     };
-    draw::text(
+    // Tracked by 0: the same glyphs, and the marks (RING's "3 › P3").
+    draw::text_tracked(
         d,
         &theme::FONT_VALUE,
         c.text,
         x,
         y + theme::CELL_VALUE_DY,
         value_color,
+        0,
     );
     if !c.fmt.is_discrete() && !dim {
         let fill = if c.active {
@@ -999,7 +1027,7 @@ where
     }
     if let Some(m) = c.mod_amount.filter(|_| !dim) {
         let mid = x + theme::CELL_BAR_W / 2;
-        let len = (m.clamp(-1.0, 1.0) * (theme::CELL_BAR_W / 2) as f32) as i32;
+        let len = (clampf(m, -1.0, 1.0) * (theme::CELL_BAR_W / 2) as f32) as i32;
         let (x0, x1) = if len >= 0 {
             (mid, mid + len)
         } else {

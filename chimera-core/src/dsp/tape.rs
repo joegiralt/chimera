@@ -8,6 +8,7 @@
 //! Performance keeps its TAPE settings either way.
 
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::dsp::clampf;
 
 #[cfg(feature = "master-tape")]
 mod stage;
@@ -49,7 +50,7 @@ impl TapeParams {
     /// NaN reads as the default; everything clamps to 0..1.
     pub fn sanitised(&self) -> Self {
         let d = Self::default();
-        let f = |v: f32, def: f32| if v.is_nan() { def } else { v.clamp(0.0, 1.0) };
+        let f = |v: f32, def: f32| if v.is_nan() { def } else { clampf(v, 0.0, 1.0) };
         Self {
             drive: f(self.drive, d.drive),
             tone: f(self.tone, d.tone),

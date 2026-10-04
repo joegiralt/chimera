@@ -4,6 +4,7 @@
 
 use crate::block::{Block, ParamId, ParamSpec, find_spec};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
+use crate::orbit::RingIdx;
 
 /// An operator of the Algo engine. `TryFrom<u8>` rejects values above 5, so an out-of-range
 /// operator (bad sound or SysEx data) is unrepresentable.
@@ -75,13 +76,24 @@ pub enum BlockRef {
     /// SETTINGS › PERSONALIZE › THEME (`ThemeSettings`): held by the UI,
     /// not a Sound.
     Theme,
+    /// SETTINGS › MIDI CONFIG (`MidiSettings`): SYNC, held by the UI and
+    /// stored in SYSTEM (ADR 0080).
+    Midi,
     /// Part n's `PartParams` from any page: the SETTINGS mirrors. UI-only,
     /// so not in `ALL` and never stored.
     PartMix(crate::project::PartId),
+    /// ORBIT's chord ring (`ChordRing`): KEY, SCALE, BARS, SEGS. Project
+    /// data, never a voice's.
+    OrbitChords,
+    /// ORBIT ring n of the live scene (`SceneRing`).
+    OrbitRing(crate::orbit::RingIdx),
+    /// ORBIT's BPM (`Bpm`): saved in its own record, so no block code and
+    /// not in `ALL`.
+    Tempo,
 }
 
 impl BlockRef {
-    pub const ALL: [BlockRef; 26] = [
+    pub const ALL: [BlockRef; 33] = [
         BlockRef::Modal,
         BlockRef::Algo,
         BlockRef::AlgoOp(Op::A),
@@ -108,6 +120,13 @@ impl BlockRef {
         BlockRef::Comp,
         BlockRef::Part,
         BlockRef::Theme,
+        BlockRef::OrbitChords,
+        BlockRef::OrbitRing(RingIdx::ALL[0]),
+        BlockRef::OrbitRing(RingIdx::ALL[1]),
+        BlockRef::OrbitRing(RingIdx::ALL[2]),
+        BlockRef::OrbitRing(RingIdx::ALL[3]),
+        BlockRef::OrbitRing(RingIdx::ALL[4]),
+        BlockRef::Midi,
     ];
 
     /// The block type's spec table (static; no instance needed).
@@ -130,6 +149,10 @@ impl BlockRef {
             BlockRef::Comp => &crate::dsp::comp::COMP_SPECS,
             BlockRef::Part | BlockRef::PartMix(_) => &crate::part::PART_SPECS,
             BlockRef::Theme => &crate::ui::theme_settings::THEME_SPECS,
+            BlockRef::Midi => &crate::ui::midi_settings::MIDI_SPECS,
+            BlockRef::OrbitChords => &crate::orbit::scene::CHORD_SPECS,
+            BlockRef::OrbitRing(_) => &crate::orbit::scene::RING_SPECS,
+            BlockRef::Tempo => &crate::orbit::scene::TEMPO_SPECS,
         }
     }
 
@@ -156,7 +179,11 @@ impl BlockRef {
             | BlockRef::Comp
             | BlockRef::Part
             | BlockRef::PartMix(_)
-            | BlockRef::Theme => false,
+            | BlockRef::Theme
+            | BlockRef::Midi
+            | BlockRef::OrbitChords
+            | BlockRef::OrbitRing(_)
+            | BlockRef::Tempo => false,
         }
     }
 }

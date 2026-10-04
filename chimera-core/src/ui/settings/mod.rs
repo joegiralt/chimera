@@ -13,6 +13,8 @@ pub mod view;
 
 pub use job::CardCx;
 pub use manage::MANAGE_COMMANDS;
+#[cfg(feature = "orbit")]
+pub use tree::ORBIT_ROW;
 pub use tree::{
     Act, Issue, Kind, PART_ROW, ROOT, Row, SAVE_AS_AT, Screen, issue, kind_at, path_of, row_at,
     rows, screen_path,
@@ -23,7 +25,7 @@ use chimera_hal::Controls;
 use crate::name::{Name, ProjectName};
 use crate::project::{
     FreshFile, PartAction, PartId, PartSet, PartSource, Project, ProjectEntry, ProjectSource,
-    SlotId, Subject,
+    SceneAsk, SlotId, Subject,
 };
 use crate::ui::hold::Presses;
 use crate::ui::region::settings_key;
@@ -32,9 +34,10 @@ use listing::Chosen;
 use naming::{NAME_MAX, Naming, NamingOut};
 use prompt::{
     AlsoUses, AlsoUsesAnswer, Answer, CardChanged, CardChangedAnswer, Choice, Clear, ClearAnswer,
-    ClearSlot, Delete, DeleteAnswer, DfuAnswer, EnterDfu, Load, LoadAnswer, NameExists,
-    NameExistsAnswer, PromptView, Reload, ReloadAnswer, Replace, ReplaceAnswer, ReplaceTo,
-    SaveOver, SaveOverAnswer, with_view,
+    ClearScene, ClearSceneAnswer, ClearSlot, Delete, DeleteAnswer, DfuAnswer, EnterDfu, Load,
+    LoadAnswer, NameExists, NameExistsAnswer, PromptView, Reload, ReloadAnswer, ReloadScene,
+    ReloadSceneAnswer, Replace, ReplaceAnswer, ReplaceTo, SaveOver, SaveOverAnswer, SaveSceneOver,
+    SaveSceneOverAnswer, panel,
 };
 use replace::{PartAsk, ProjectAsk, ReloadAsk, Reply};
 
@@ -87,6 +90,12 @@ pub(crate) enum Ask {
     Clear(Chosen, Choice<ClearAnswer>),
     /// MANAGE's SAVE TO.
     SaveOver(Chosen, Choice<SaveOverAnswer>),
+    /// SCN's SAVE over another saved scene, as the slot was when asked.
+    SaveSceneOver(SceneAsk, Choice<SaveSceneOverAnswer>),
+    /// SETTINGS › ORBIT's CLEAR and RELOAD, of the playing scene as its
+    /// slot was when asked.
+    ClearScene(SceneAsk, Choice<ClearSceneAnswer>),
+    ReloadScene(SceneAsk, Choice<ReloadSceneAnswer>),
     /// SYSTEM's OS UPGRADE.
     EnterDfu(Choice<DfuAnswer>),
 }
@@ -126,6 +135,9 @@ ask_kinds! {
     Delete => "delete",
     Clear => "clear",
     SaveOver => "save_over",
+    SaveSceneOver => "save_scene_over",
+    ClearScene => "clear_scene",
+    ReloadScene => "reload_scene",
     EnterDfu => "enter_dfu",
 }
 
@@ -152,6 +164,9 @@ pub(crate) enum Answered {
     Delete(Chosen, Answer<DeleteAnswer>),
     Clear(Chosen, Answer<ClearAnswer>),
     SaveOver(Chosen, Answer<SaveOverAnswer>),
+    SaveSceneOver(SceneAsk, Answer<SaveSceneOverAnswer>),
+    ClearScene(SceneAsk, Answer<ClearSceneAnswer>),
+    ReloadScene(SceneAsk, Answer<ReloadSceneAnswer>),
     EnterDfu(Answer<DfuAnswer>),
 }
 
@@ -184,14 +199,19 @@ impl Ask {
     }
 
     pub(crate) fn with_view<R>(&self, f: impl FnOnce(&PromptView<'_>) -> R) -> R {
+        prompt::once(f, |g| self.show(g))
+    }
+
+    /// The panel, to `f`: one body for every caller.
+    fn show(&self, f: &mut dyn FnMut(&PromptView<'_>)) {
         match self {
             Ask::ReplacePart(a, to) => {
                 let part = a.source().part;
-                with_view(&Replace { part, to: *to }, a.choice(), f)
+                panel(&Replace { part, to: *to }, a.choice(), f)
             }
             Ask::ReloadPart(a, slot) => {
                 let part = a.source().part;
-                with_view(&Reload { part, slot: *slot }, a.choice(), f)
+                panel(&Reload { part, slot: *slot }, a.choice(), f)
             }
             Ask::UpdateStale {
                 first,
@@ -199,7 +219,7 @@ impl Ask {
                 slot,
                 choice,
                 ..
-            } => with_view(
+            } => panel(
                 &AlsoUses {
                     first: *first,
                     more: *more,
@@ -208,10 +228,10 @@ impl Ask {
                 choice,
                 f,
             ),
-            Ask::ClearSlot(slot, c) => with_view(&ClearSlot { slot: *slot }, c, f),
+            Ask::ClearSlot(slot, c) => panel(&ClearSlot { slot: *slot }, c, f),
             Ask::LoadProject {
                 ask, to, current, ..
-            } => with_view(
+            } => panel(
                 &Load {
                     to: *to,
                     current: *current,
@@ -223,7 +243,7 @@ impl Ask {
                 save,
                 entry,
                 choice,
-            } => with_view(
+            } => panel(
                 &NameExists {
                     id: entry.id,
                     name: entry.name.unwrap_or(save.name),
@@ -231,11 +251,32 @@ impl Ask {
                 choice,
                 f,
             ),
-            Ask::CardChanged(_, c) => with_view(&CardChanged, c, f),
-            Ask::Delete(e, c) => with_view(&Delete { name: subject(e) }, c, f),
-            Ask::Clear(e, c) => with_view(&Clear { name: subject(e) }, c, f),
-            Ask::SaveOver(e, c) => with_view(&SaveOver { name: subject(e) }, c, f),
-            Ask::EnterDfu(c) => with_view(&EnterDfu, c, f),
+            Ask::CardChanged(_, c) => panel(&CardChanged, c, f),
+            Ask::Delete(e, c) => panel(&Delete { name: subject(e) }, c, f),
+            Ask::Clear(e, c) => panel(&Clear { name: subject(e) }, c, f),
+            Ask::SaveOver(e, c) => panel(&SaveOver { name: subject(e) }, c, f),
+            Ask::SaveSceneOver(a, c) => panel(
+                &SaveSceneOver {
+                    scene: a.slot().index(),
+                },
+                c,
+                f,
+            ),
+            Ask::ClearScene(a, c) => panel(
+                &ClearScene {
+                    scene: a.slot().index(),
+                },
+                c,
+                f,
+            ),
+            Ask::ReloadScene(a, c) => panel(
+                &ReloadScene {
+                    scene: a.slot().index(),
+                },
+                c,
+                f,
+            ),
+            Ask::EnterDfu(c) => panel(&EnterDfu, c, f),
         }
     }
 
@@ -252,6 +293,9 @@ impl Ask {
             Ask::Delete(..) => AskKind::Delete,
             Ask::Clear(..) => AskKind::Clear,
             Ask::SaveOver(..) => AskKind::SaveOver,
+            Ask::SaveSceneOver(..) => AskKind::SaveSceneOver,
+            Ask::ClearScene(..) => AskKind::ClearScene,
+            Ask::ReloadScene(..) => AskKind::ReloadScene,
             Ask::EnterDfu(_) => AskKind::EnterDfu,
         }
     }
@@ -347,6 +391,18 @@ impl Ask {
             Ask::SaveOver(e, mut choice) => match choice.input(c, p) {
                 Some(a) => Got(Answered::SaveOver(e, a)),
                 None => Open(Ask::SaveOver(e, choice)),
+            },
+            Ask::SaveSceneOver(a, mut choice) => match choice.input(c, p) {
+                Some(x) => Got(Answered::SaveSceneOver(a, x)),
+                None => Open(Ask::SaveSceneOver(a, choice)),
+            },
+            Ask::ClearScene(a, mut choice) => match choice.input(c, p) {
+                Some(x) => Got(Answered::ClearScene(a, x)),
+                None => Open(Ask::ClearScene(a, choice)),
+            },
+            Ask::ReloadScene(a, mut choice) => match choice.input(c, p) {
+                Some(x) => Got(Answered::ReloadScene(a, x)),
+                None => Open(Ask::ReloadScene(a, choice)),
             },
             Ask::EnterDfu(mut choice) => match choice.input(c, p) {
                 Some(a) => Got(Answered::EnterDfu(a)),

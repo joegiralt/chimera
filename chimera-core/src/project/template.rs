@@ -6,10 +6,16 @@ use core::ptr::addr_of_mut;
 
 use crate::factory::{FACTORY_LEN, factory_sound};
 use crate::in_place::uninit_at;
+use crate::orbit::scene::OrbitSong;
 use crate::params::EngineType;
 use crate::preset::Sound;
+use crate::storage::sound_crc;
 
-use super::{Performance, Pool, Project, ProjectMeta, SlotId, project_crc};
+use super::parts::new_part;
+use super::{
+    Origin, Part, PartFrom, PartId, PartSource, Performance, Pool, Project, ProjectMeta, SlotId,
+    project_crc,
+};
 
 /// The CRC of NEW, as `init_in_place` built it (`reset_new` builds the
 /// same project): a project equal to it is `Pristine`. Nothing else makes
@@ -34,15 +40,17 @@ impl Project {
     pub fn init_in_place(slot: &mut MaybeUninit<Project>) -> TemplateCrc {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; `meta`, `pool` (in place),
-        // `perf` and `rev` are each written once before `assume_init_mut`.
+        // `perf`, `orbit` and `rev` are each written once before
+        // `assume_init_mut`.
         let project = unsafe {
             addr_of_mut!((*p).meta).write(ProjectMeta::new_project());
             Pool::init_in_place(uninit_at(addr_of_mut!((*p).pool)));
             addr_of_mut!((*p).perf).write(Performance::new());
+            OrbitSong::init_in_place(uninit_at(addr_of_mut!((*p).orbit)));
             addr_of_mut!((*p).rev).write(0);
             slot.assume_init_mut()
         };
-        project.fill_new_pool();
+        project.fill_new();
         TemplateCrc(project_crc(project))
     }
 
@@ -61,19 +69,51 @@ impl Project {
         self.bump();
         self.meta = ProjectMeta::new_project();
         self.perf.reset();
-        self.fill_new_pool();
+        self.orbit.reset();
+        self.fill_new();
     }
 
-    /// The factory Sounds, then an INIT Sound per engine, then empty slots;
-    /// a slot at a time, and every generation moves.
-    fn fill_new_pool(&mut self) {
+    /// The pool: the factory Sounds, then an INIT Sound per engine, then
+    /// empty slots, a slot at a time, and every generation moves. Then
+    /// Parts 1–5 load theirs from it, clean (`NEW_PARTS`).
+    fn fill_new(&mut self) {
         for s in SlotId::ALL {
             match new_slot(s) {
                 Some(sound) => self.pool.store(s, sound),
                 None => self.pool.clear(s),
             }
         }
+        for (part, slot) in PartId::ALL.into_iter().zip(NEW_PARTS) {
+            let from = PartFrom::Slot(slot);
+            self.load_part(PartSource { part, from })
+                .expect("NEW_PARTS names filled slots");
+        }
     }
+}
+
+/// The factory slots NEW's Parts 1–5 load, for the init scene's rings
+/// (the owner's pick at UAT): TX BASS, TX EPIANO, MORPH PAD, TX BELL and
+/// SAW LEAD. Part 6 stays INIT Algo.
+pub const NEW_PARTS: [SlotId; 5] = {
+    let s = SlotId::ALL;
+    [s[0], s[1], s[6], s[3], s[4]]
+};
+
+/// NEW's Part `i`, as `fill_new` leaves it but for the generation, which
+/// no record keeps.
+pub(super) fn new_project_part(i: usize) -> Part {
+    let mut part = new_part(i);
+    if let Some(&slot) = NEW_PARTS.get(i)
+        && let Some(sound) = new_slot(slot)
+    {
+        part.origin = Origin::Slot {
+            slot,
+            generation: 0,
+            crc: sound_crc(&sound),
+        };
+        part.sound = sound;
+    }
+    part
 }
 
 /// NEW's Sound in slot `s`.
@@ -89,7 +129,28 @@ pub(super) fn new_slot(s: SlotId) -> Option<Sound> {
 mod tests {
     use super::*;
     use crate::name::ProjectName;
-    use crate::project::{Origin, PartFrom, PartId, PartSource};
+    use crate::project::{
+        Origin, PartFrom, PartId, PartSource, PartStatus, ProjectStatus, part_status,
+        project_status,
+    };
+
+    /// The owner's UAT pick: the init scene's Sounds, loaded clean, and NEW
+    /// still reads as NEW.
+    #[test]
+    fn new_parts_hold_the_factory_sounds_clean() {
+        let (p, t) = Project::boxed();
+        let names = ["TX BASS", "TX EPIANO", "MORPH PAD", "TX BELL", "SAW LEAD"];
+        for (id, name) in PartId::ALL.into_iter().zip(names) {
+            let part = p.part(id);
+            assert_eq!(part.sound.name.as_str(), name, "{id:?}");
+            assert!(matches!(part.origin(), Origin::Slot { .. }), "{id:?}");
+            assert_eq!(part_status(part, p.pool()), PartStatus::Clean, "{id:?}");
+        }
+        let six = p.part(PartId::ALL[5]);
+        assert_eq!(six.origin(), Origin::Init(EngineType::Algo));
+        assert!(six.sound.bits_eq(&Sound::init(EngineType::Algo)));
+        assert_eq!(project_status(&p, t), ProjectStatus::Pristine);
+    }
 
     #[test]
     fn reset_new_is_new_and_moves_every_generation() {
@@ -116,8 +177,13 @@ mod tests {
             }
             assert_ne!(p.pool().generation(s), before[s.index()]);
         }
+        // By slot and CRC, never generation (ADR 0043).
+        let from = |o: Origin| match o {
+            Origin::Slot { slot, crc, .. } => Ok((slot, crc)),
+            Origin::Init(e) => Err(e),
+        };
         for id in PartId::ALL {
-            assert_eq!(p.part(id).origin(), Origin::Init(EngineType::Algo));
+            assert_eq!(from(p.part(id).origin()), from(fresh.part(id).origin()));
             assert!(p.part(id).sound.bits_eq(&fresh.part(id).sound));
             assert_eq!(p.part(id).mix, fresh.part(id).mix);
         }

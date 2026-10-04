@@ -24,13 +24,14 @@ use chimera_hal::Controls;
 use crate::boot::RomDfu;
 use crate::project::{
     Confirmed, DeleteTarget, NeedsConfirm, OverwriteTarget, PartSource, Pending, Project,
-    ProjectSource, Target, TemplateCrc, Witnessed,
+    ProjectSource, SceneSlot, Target, TemplateCrc, Witnessed,
 };
 use crate::ui::hold::Presses;
 
 use super::prompt::{
-    Answer, Answers, Choice, ClearAnswer, DeleteAnswer, DfuAnswer, LoadAnswer, NameExistsAnswer,
-    ReloadAnswer, ReplaceAnswer, SaveOverAnswer,
+    Answer, Answers, Choice, ClearAnswer, ClearSceneAnswer, DeleteAnswer, DfuAnswer, LoadAnswer,
+    NameExistsAnswer, ReloadAnswer, ReloadSceneAnswer, ReplaceAnswer, SaveOverAnswer,
+    SaveSceneOverAnswer,
 };
 use said::Said;
 
@@ -62,6 +63,9 @@ commits!(
     ClearAnswer => Clear, OverwriteTarget;
     SaveOverAnswer => SaveOver, OverwriteTarget;
     NameExistsAnswer => Overwrite, OverwriteTarget;
+    SaveSceneOverAnswer => SaveOver, SceneSlot;
+    ClearSceneAnswer => Clear, SceneSlot;
+    ReloadSceneAnswer => Reload, SceneSlot;
     DfuAnswer => EnterDfu, RomDfu;
 );
 

@@ -4,6 +4,11 @@
 //! Each values struct keeps real field types and implements `Block`; its
 //! `ParamSpec` table is a `static` in the block's own module.
 
+use crate::dsp::clampf;
+
+/// A switch's two names, as `ValFmt::Names` shows it.
+pub const OFF_ON: [&str; 2] = ["OFF", "ON"];
+
 /// Display format and shift-snap behavior of a parameter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ValFmt {
@@ -27,6 +32,8 @@ pub enum ValFmt {
     Route,
     /// A slider shown in its unit (spec § 1's laws).
     Law(crate::dsp::modulator::law::Law),
+    /// ORBIT's tempo, whole BPM over `Bpm::MIN..=Bpm::MAX`.
+    Bpm,
 }
 
 impl ValFmt {
@@ -40,6 +47,8 @@ impl ValFmt {
             // Discrete: shift-encoder jumps to 0 or max
             ValFmt::Int(_) | ValFmt::OneBased(_) | ValFmt::Names(_) => &[0.0, 1.0],
             ValFmt::Signed(_) => &[0.0, 0.5, 1.0],
+            // MIN, the default, MAX.
+            ValFmt::Bpm => &[0.0, BPM_SNAP, 1.0],
         }
     }
 
@@ -65,10 +74,22 @@ impl ValFmt {
             ValFmt::Int(n) | ValFmt::OneBased(n) => n,
             ValFmt::Signed(n) => n.saturating_mul(2),
             ValFmt::Names(names) => names.len().saturating_sub(1) as u8,
-            _ => 127,
+            ValFmt::Uni
+            | ValFmt::Bi
+            | ValFmt::Pan
+            | ValFmt::Route
+            | ValFmt::Law(_)
+            | ValFmt::Bpm => 127,
         }
     }
 }
+
+/// `ValFmt::Bpm`'s middle snap point, a third of the way: 120 in 30–300.
+const BPM_SNAP: f32 = 1.0 / 3.0;
+const _: () = {
+    use crate::orbit::clock::Bpm;
+    assert!(3 * (Bpm::DEFAULT.get() - Bpm::MIN) == Bpm::MAX - Bpm::MIN);
+};
 
 /// Identifies a parameter within its block type. Stable; never reused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -211,7 +232,7 @@ impl ParamSpec {
 
     /// `v` clamped to the range; Stepped/Enum rounded to nearest (UI input).
     pub fn quantize(&self, v: f32) -> f32 {
-        let v = v.clamp(self.min, self.max);
+        let v = clampf(v, self.min, self.max);
         match self.kind {
             ParamKind::Continuous => v,
             ParamKind::Stepped | ParamKind::Enum => libm::roundf(v),
@@ -279,10 +300,10 @@ impl ParamSpec {
     /// `v` moved by a matrix offset `off`, clamped to the range.
     pub fn offset(&self, v: f32, off: f32) -> f32 {
         match self.law {
-            OffsetLaw::Linear => (v + off * (self.max - self.min)).clamp(self.min, self.max),
-            OffsetLaw::Octaves(n) => (v * crate::dsp::fast_exp2(n * off)).clamp(self.min, self.max),
+            OffsetLaw::Linear => clampf(v + off * (self.max - self.min), self.min, self.max),
+            OffsetLaw::Octaves(n) => clampf(v * crate::dsp::fast_exp2(n * off), self.min, self.max),
             OffsetLaw::Semitones(n) | OffsetLaw::Cents(n) => {
-                (v + off * n).clamp(self.min, self.max)
+                clampf(v + off * n, self.min, self.max)
             }
         }
     }
@@ -290,7 +311,7 @@ impl ParamSpec {
     /// `offset` on a 0..1 display value (the UI's mod bars).
     pub fn offset_normalized(&self, n: f32, off: f32) -> f32 {
         match self.law {
-            OffsetLaw::Linear => (n + off).clamp(0.0, 1.0),
+            OffsetLaw::Linear => clampf(n + off, 0.0, 1.0),
             OffsetLaw::Octaves(_) | OffsetLaw::Semitones(_) | OffsetLaw::Cents(_) => {
                 self.normalize(self.offset(self.min + n * (self.max - self.min), off))
             }

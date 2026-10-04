@@ -9,7 +9,7 @@ use chimera_core::ui::UiState;
 use chimera_core::ui::block_def::{BlockDef, ChainDef2};
 use chimera_core::ui::block_registry::ALGO_CHAIN;
 use chimera_core::ui::block_registry::MIXER_CHANNEL_CHAIN;
-use chimera_core::ui::components::{Head, header, header_fits, header_text};
+use chimera_core::ui::components::{Head, HeaderStatus, header, header_fits, header_text};
 use chimera_core::ui::dungeon_map::{self, node_x};
 use chimera_core::ui::nav::{Location, PageAt};
 use chimera_core::ui::perf::PerfStats;
@@ -91,7 +91,16 @@ fn header_names_context_and_page() {
 fn header_dot_shows_only_while_sounding_and_stays_in_the_band() {
     for sounding in [false, true] {
         let mut fb = Fb::new();
-        header(&mut fb, "PART 1", "WAVE", None, sounding, 0);
+        header(
+            &mut fb,
+            "PART 1",
+            "WAVE",
+            None,
+            HeaderStatus {
+                sounding,
+                ..HeaderStatus::default()
+            },
+        );
         assert_eq!(
             fb.at(theme::HEADER_DOT_X, theme::HEADER_DOT_Y) == theme::ACCENT,
             sounding
@@ -109,14 +118,23 @@ fn header_dot_shows_only_while_sounding_and_stays_in_the_band() {
 #[test]
 fn header_shows_audio_load_in_warning_colours() {
     let mut fb = Fb::new();
-    header(&mut fb, "PART 1", "WAVE", None, false, 85);
+    header(
+        &mut fb,
+        "PART 1",
+        "WAVE",
+        None,
+        HeaderStatus {
+            load_pct: 85,
+            ..HeaderStatus::default()
+        },
+    );
     let alert = (0..28)
         .flat_map(|y| (120..225).map(move |x| (x, y)))
         .any(|(x, y)| fb.at(x, y) == theme::ALERT);
     assert!(alert, "85 % is drawn in the alert colour");
 }
 
-/// Every page's header text fits left of the dot, or of the OUT warning
+/// Every page's header text fits left of ORBIT's beat dot, or of the OUT warning
 /// (and inside FmtBuf's 32 bytes). Without a warning every name is whole;
 /// with one, a long name falls back to its short form (ADR 0057).
 #[test]
@@ -127,16 +145,15 @@ fn every_header_fits() {
     use chimera_core::ui::nav::chain_def_for;
     let models = [M::String, M::Modal, M::Bowed, M::Sympathetic];
     let p6 = PartId::ALL[5];
-    let mut places = vec![
+    // SETTINGS' pages draw a breadcrumb, not this header
+    // (`region::settings_regions`); ORBIT's every page reads `SCENE n`.
+    let scene = chimera_core::orbit::scene::SceneIdx::ALL[7];
+    let places = [
         At::new(Head::Sound(p6), chain_def_for(EngineType::Algo)),
         At::new(Head::Sound(p6), chain_def_for(EngineType::Modal)),
         At::mix(5),
+        At::new(Head::Orbit(scene), &chimera_core::ui::orbit::ORBIT_CHAIN),
     ];
-    places.extend(
-        chimera_core::ui::block_registry::ALL_CHAINS[3..]
-            .iter()
-            .map(|&c| At::new(Head::Settings, c)),
-    );
     for place in places {
         for node in 0..place.chain.len() {
             let subs = place.at(node, 0).subs().max(1);
@@ -192,7 +209,16 @@ fn the_out_warning_keeps_short_names_whole() {
 #[test]
 fn the_out_warning_draws_in_warn_and_hides_the_load() {
     let mut fb = Fb::new();
-    header(&mut fb, "PART 2 · MIX", "SENDS", Some("OUT P2"), false, 50);
+    header(
+        &mut fb,
+        "PART 2 · MIX",
+        "SENDS",
+        Some("OUT P2"),
+        HeaderStatus {
+            load_pct: 50,
+            ..HeaderStatus::default()
+        },
+    );
     let warn = |fb: &Fb| {
         (0..28)
             .flat_map(|y| (160..222).map(move |x| (x, y)))
@@ -379,8 +405,8 @@ fn every_osc_sub_page_is_reachable_and_lit_on_the_map() {
     feed(&mut ui, Input::press(ButtonId::Edit));
     assert_eq!(
         ui.page_def().id,
-        block.active_def(block.sub_page_count() - 1).id,
-        "EDIT stops at the last"
+        block.active_def(0).id,
+        "EDIT wraps from the last to the first (ADR 0081)"
     );
 }
 

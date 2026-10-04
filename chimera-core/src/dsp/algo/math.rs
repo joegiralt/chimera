@@ -2,6 +2,16 @@
 
 use core::f32::consts::LN_2;
 
+/// `x` held to `[lo, hi]` as `x.max(lo).min(hi)`: equal to `f32::clamp` for
+/// non-NaN input but never panics, so no bound check (and no float
+/// formatting) links in. A NaN `x` comes out as `lo` (`max`/`min` return
+/// the non-NaN operand); `lo > hi` gives `hi`. ±0 at a zero bound may come
+/// out either sign.
+#[inline]
+pub const fn clampf(x: f32, lo: f32, hi: f32) -> f32 {
+    x.max(lo).min(hi)
+}
+
 /// `2^x`; relative error below 1e-6 for `x` in `-126..127`, exact at
 /// integers. Reduces to `f` in `[-0.5, 0.5]` (round-to-nearest, not floor),
 /// so the Taylor polynomial below is always evaluated near its center,
@@ -9,7 +19,7 @@ use core::f32::consts::LN_2;
 /// just below an integer, which is its least accurate point and made slow
 /// decays run up to 18% fast.
 pub const fn exp2(x: f32) -> f32 {
-    let x = x.clamp(-126.0, 127.0);
+    let x = clampf(x, -126.0, 127.0);
     let bias = if x >= 0.0 { 0.5 } else { -0.5 };
     let xi = (x + bias) as i32;
     let f = x - xi as f32;

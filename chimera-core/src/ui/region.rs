@@ -3,15 +3,16 @@
 //! Each PageLayout defines screen regions with data snapshots.
 //! Only regions whose data changed get cleared, redrawn, and flushed.
 
+use crate::dsp::clampf;
 use crate::ui::PrimeStatus;
 use crate::ui::animation::AnimatedValue;
-use crate::ui::components::Look;
+use crate::ui::components::{HeaderStatus, Look};
 use crate::ui::page::{PageId, PageKey, PageLayout};
 use crate::ui::theme;
 
 /// Quantize a float to u16 for cheap comparison. Range 0.0..65.0 → 0..65000.
 pub fn quantize(f: f32) -> u16 {
-    (f.clamp(0.0, 65.0) * 1000.0) as u16
+    (clampf(f, 0.0, 65.0) * 1000.0) as u16
 }
 
 /// Quantize 6 animated values into a [u16; 6] for snapshot comparison.
@@ -38,13 +39,14 @@ pub enum RegionData {
         chain_idx: u8,
         node_idx: u8,
         sub_page: u8,
-        /// Audio load shown in the header (0 = not measured).
-        load_pct: u8,
-        sounding: bool,
         /// The ENV title's TYPE suffix (`renderer::title_type`).
         title_type: u8,
         /// The Part's OUT, for its warning (`renderer::header_out`).
         out: u8,
+        /// The load and the dots.
+        status: HeaderStatus,
+        /// ORBIT's `SCENE n`, one-based; 0 where the header reads no scene.
+        scene: u8,
     },
     /// The focus band: which slot, its animated value, and any pending
     /// prime-status message (issue #21) shown in the value's place.
@@ -59,6 +61,10 @@ pub enum RegionData {
         anim: u32,
         /// The slot's set value (quantized): a glyph may draw it, not `value`.
         set: u16,
+        /// What the band shows from outside its slot (ORBIT's readings).
+        text: u32,
+        /// HINTS on: the band draws its hint.
+        hints: bool,
     },
     /// The mod matrix readout: the selected route, its animated amount and
     /// the route count.
@@ -80,6 +86,9 @@ pub enum RegionData {
         /// A pending prime-status message drawn on the viz — BigViz pages
         /// only, which have no focus band to carry it (issue #21).
         status: Option<PrimeStatus>,
+        /// What an ORBIT viz draws of the scene and the runner
+        /// (`orbit::draw::viz_key`).
+        orbit: u32,
     },
     Cells {
         page: PageKey,
@@ -123,20 +132,27 @@ impl RegionData {
         chain_idx: u8,
         node_idx: u8,
         sub_page: u8,
-        load_pct: u8,
-        sounding: bool,
         title_type: u8,
         out: u8,
+        status: HeaderStatus,
     ) -> Self {
         Self::Header {
             chain_idx,
             node_idx,
             sub_page,
-            load_pct,
-            sounding,
             title_type,
             out,
+            status,
+            scene: 0,
         }
+    }
+
+    /// A header reading `SCENE n`: it redraws when a switch lands.
+    pub fn with_scene(mut self, n: u8) -> Self {
+        if let Self::Header { scene, .. } = &mut self {
+            *scene = n;
+        }
+        self
     }
 
     pub fn focus(
@@ -154,6 +170,8 @@ impl RegionData {
             status,
             anim: 0,
             set: 0,
+            text: 0,
+            hints: false,
         }
     }
 
@@ -167,6 +185,16 @@ impl RegionData {
     pub fn with_set(mut self, set: u16) -> Self {
         if let Self::Focus { set: s, .. } = &mut self {
             *s = set;
+        }
+        self
+    }
+
+    /// A focus band keyed on the text it shows from outside its slot,
+    /// and on HINTS, too.
+    pub fn with_text(mut self, key: u32, hints_on: bool) -> Self {
+        if let Self::Focus { text, hints, .. } = &mut self {
+            *text = key;
+            *hints = hints_on;
         }
         self
     }
@@ -195,7 +223,16 @@ impl RegionData {
             values,
             live,
             status,
+            orbit: 0,
         }
+    }
+
+    /// A viz keyed on what it draws of ORBIT too.
+    pub fn with_orbit(mut self, key: u32) -> Self {
+        if let Self::Viz { orbit, .. } = &mut self {
+            *orbit = key;
+        }
+        self
     }
 
     pub fn cells(
@@ -231,10 +268,14 @@ impl RegionData {
             chain_idx: 255,
             node_idx: 255,
             sub_page: 255,
-            load_pct: u8::MAX,
-            sounding: false,
             title_type: u8::MAX,
             out: u8::MAX,
+            status: HeaderStatus {
+                sounding: false,
+                load_pct: u8::MAX,
+                orbit_dot: None,
+            },
+            scene: u8::MAX,
         }
     }
 
@@ -247,6 +288,8 @@ impl RegionData {
             status: None,
             anim: u32::MAX,
             set: SENTINEL,
+            text: u32::MAX,
+            hints: false,
         }
     }
 
@@ -256,6 +299,7 @@ impl RegionData {
             values: [SENTINEL; 6],
             live: u32::MAX,
             status: None,
+            orbit: u32::MAX,
         }
     }
 
@@ -434,14 +478,45 @@ impl From<PageLayout> for Layout {
     }
 }
 
+/// FNV-1a, 32 bits wide, as a `Hasher`: every region key's hash.
+#[derive(Clone, Copy, Debug)]
+pub struct Fnv(u32);
+
+impl Fnv {
+    pub const fn new() -> Self {
+        Fnv(0x811c_9dc5)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl Default for Fnv {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl core::hash::Hasher for Fnv {
+    fn finish(&self) -> u64 {
+        self.0 as u64
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0 ^ b as u32).wrapping_mul(0x0100_0193);
+        }
+    }
+}
+
 /// FNV-1a over `parts`: a SETTINGS band's key.
 pub fn settings_key(parts: &[&[u8]]) -> u32 {
-    let mut h: u32 = 0x811c_9dc5;
-    for b in parts.iter().flat_map(|p| p.iter()) {
-        h ^= *b as u32;
-        h = h.wrapping_mul(0x0100_0193);
-    }
-    h
+    let mut h = Fnv::new();
+    parts
+        .iter()
+        .for_each(|p| core::hash::Hasher::write(&mut h, p));
+    h.get()
 }
 
 impl RegionSet {

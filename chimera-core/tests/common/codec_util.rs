@@ -19,6 +19,7 @@ use chimera_core::storage::{
     Check, Crc32, Decode, DecodeInPlace, FileError, FileKind, Framer, Generation, Header,
     ProjectId, SoundDecoder, SystemSettings, encode_sound, encode_system, sound_crc, write_file,
 };
+use chimera_core::ui::midi_settings::MidiSettings;
 use chimera_core::ui::theme_settings::{Accent, Black, Bright, Gamma, ThemeSettings};
 use chimera_hal::store::{ByteSink, StoreError};
 
@@ -76,6 +77,17 @@ pub fn project_pass(target: &mut Project, bytes: &[u8], apply: bool) -> Result<(
 pub fn decode_project(bytes: &[u8], target: &mut Project) -> Result<(), FileError> {
     project_pass(target, bytes, false)?;
     project_pass(target, bytes, true)
+}
+
+/// `decode_project`, and whether pass 2 was lossy (ADR 0078).
+pub fn decode_project_lossy(bytes: &[u8], target: &mut Project) -> Result<bool, FileError> {
+    project_pass(target, bytes, false)?;
+    let mut f = Framer::new(bytes.len() as u32)?;
+    let mut d = ProjectDecoder::new_for_test(target);
+    f.push(bytes, &mut |e| d.apply(e))?;
+    f.finish()?;
+    DecodeInPlace::finish(&mut d)?;
+    Ok(d.lossy())
 }
 
 /// Decodes `bytes` into `target`: never a panic; a pass-1 Ok means pass 2
@@ -149,16 +161,43 @@ pub fn system_file(s: &SystemSettings) -> Vec<u8> {
 /// The v1 SYSTEM fixture, under `tests/fixtures/v1/`.
 pub const SYSTEM_FIXTURE: &str = "system.sys";
 
-/// What the SYSTEM fixture was written from: every field off its default.
+/// What the SYSTEM fixture was written from: every field off its default,
+/// MIDI CONFIG and HINTS aside: the fixture predates them, so they read as
+/// their defaults.
 pub fn system_fixture_settings() -> SystemSettings {
     SystemSettings {
+        midi: MidiSettings::DEFAULT,
         theme: ThemeSettings {
             bright: Bright::new(85),
             gamma: Gamma::Panel,
             accent: Accent::Rose,
             black: Black::new(3),
+            hints: true,
         },
         last_project: ProjectId::new(1_234_567),
+    }
+}
+
+/// The SYSTEM fixture carrying MIDI CONFIG (ADR 0080), under
+/// `tests/fixtures/v1/`.
+pub const SYSTEM_MIDI_FIXTURE: &str = "system_midi.sys";
+
+/// What the MIDI SYSTEM fixture was written from: SYNC INT, off its
+/// default, and every other field off its default too, HINTS aside: the
+/// fixture predates it.
+pub fn system_midi_fixture_settings() -> SystemSettings {
+    SystemSettings {
+        midi: MidiSettings {
+            sync: chimera_core::orbit::clock::SyncMode::Int,
+        },
+        theme: ThemeSettings {
+            bright: Bright::new(55),
+            gamma: Gamma::Soft,
+            accent: Accent::ALL[2],
+            black: Black::new(-1),
+            hints: true,
+        },
+        last_project: ProjectId::new(89),
     }
 }
 

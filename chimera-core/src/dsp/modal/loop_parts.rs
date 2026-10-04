@@ -1,5 +1,7 @@
 //! What every string loop is built from, so none can run away (ADR 0056).
 
+use crate::dsp::clampf;
+
 /// A string loop's gain per pass: always below 1.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 pub struct LoopGain(f32);
@@ -181,7 +183,7 @@ pub fn allpass_phase_delay(eta: f32, w: f32) -> f32 {
 /// The η whose phase delay at `w` is `frac`, exactly; `w` held to
 /// `[1e-6, 3]`, so 0 Hz is not NaN.
 pub fn eta_for(frac: f32, w: f32) -> f32 {
-    let w = w.clamp(1e-6, 3.0);
+    let w = clampf(w, 1e-6, 3.0);
     let theta = w * (1.0 - frac) * 0.5;
     libm::sinf(theta) / libm::sinf(w - theta)
 }

@@ -25,7 +25,7 @@ fn op_env(ar: u8, d1r: u8, d1l: u8, d2r: u8) -> ([f32; 4], [f32; 5]) {
 /// A level as a graph height: the dB axis `op_env` draws on.
 fn height(level: f32) -> f32 {
     if level > 0.0 {
-        (1.0 + level.log2() / viz::OP_LEVEL_OCTAVES).clamp(0.0, 1.0)
+        chimera_core::dsp::clampf(1.0 + level.log2() / viz::OP_LEVEL_OCTAVES, 0.0, 1.0)
     } else {
         0.0
     }

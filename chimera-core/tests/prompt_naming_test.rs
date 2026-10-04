@@ -4,6 +4,7 @@
 mod screen;
 
 use chimera_core::name::ProjectName;
+use chimera_core::orbit::scene::SceneIdx;
 use chimera_core::params::EngineType;
 use chimera_core::project::{Line, PartFrom, PartId, PartSet, PartSource, SlotId, Subject};
 use chimera_core::storage::ProjectId;
@@ -15,9 +16,9 @@ use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::region::{MAX_REGIONS, PROMPT, RegionKind, layout_regions, settings_regions};
 use chimera_core::ui::settings::naming::{Naming, NamingOut, proposed_name};
 use chimera_core::ui::settings::prompt::{
-    AlsoUses, AlsoUsesAnswer, Answer, CardChanged, Choice, Clear, ClearSlot, Delete, EnterDfu,
-    Load, NameExists, Prompt, Reload, Replace, ReplaceAnswer as R, ReplaceTo, SaveOver, fits,
-    with_view,
+    AlsoUses, AlsoUsesAnswer, Answer, CardChanged, Choice, Clear, ClearScene, ClearSlot, Delete,
+    EnterDfu, Load, NameExists, Prompt, Reload, ReloadScene, Replace, ReplaceAnswer as R,
+    ReplaceTo, SaveOver, SaveSceneOver, fits, with_view,
 };
 use chimera_core::ui::settings::view::{Crumb, Crumbs};
 use chimera_core::ui::{UiState, theme};
@@ -27,6 +28,7 @@ use screen::*;
 const NO_PRESS: Presses = Presses {
     menu: None,
     seq: None,
+    ring: [None; chimera_core::orbit::RINGS],
 };
 
 fn turn(e: EncoderId, d: i8) -> Input {
@@ -73,6 +75,7 @@ fn seq_with_a_turn_confirms_the_pick_shown() {
     let seq = Presses {
         menu: None,
         seq: Some(Press::Tap),
+        ..NO_PRESS
     };
     assert_eq!(
         c.input(&turn(EncoderId::A, 1), &seq).map(Answer::picked),
@@ -87,6 +90,7 @@ fn asking() -> (UiState, chimera_core::preset::Sound) {
 
 fn asking_on(go: impl FnOnce(&mut UiState)) -> (UiState, chimera_core::preset::Sound) {
     let mut ui = UiState::new();
+    init_part(&mut ui, PartId::ALL[0]);
     go(&mut ui);
     ui.params_mut().filter.cutoff *= 0.5;
     let before = ui.project().part(PartId::ALL[0]).sound.clone();
@@ -262,6 +266,7 @@ fn save(n: &mut Naming) -> Option<NamingOut> {
     let p = Presses {
         menu: None,
         seq: Some(chimera_core::ui::hold::Press::Tap),
+        ..NO_PRESS
     };
     n.input(&Input::default(), &p)
 }
@@ -309,7 +314,7 @@ fn naming_trims_and_refuses_empty() {
     assert_eq!(save(&mut n), Some(NamingOut::Empty));
     let menu = Presses {
         menu: Some(chimera_core::ui::hold::Press::Tap),
-        seq: None,
+        ..NO_PRESS
     };
     assert_eq!(n.input(&Input::default(), &menu), Some(NamingOut::Cancel));
 }
@@ -391,6 +396,11 @@ fn every_prompt_fits() {
     }
     check(CardChanged);
     check(ClearSlot { slot });
+    for scene in SceneIdx::ALL {
+        check(SaveSceneOver { scene });
+        check(ClearScene { scene });
+        check(ReloadScene { scene });
+    }
     check(EnterDfu);
     let two = AlsoUses {
         first: p4,
@@ -481,11 +491,18 @@ fn naming_ends_the_breadcrumb_with_its_crumb() {
     let mut ui = UiState::new();
     ui.rename_for_test(project_list(), None, "DUB-042");
     let crumbs = ui.crumbs().unwrap();
-    assert_eq!(crumbs.to_string(), "SETTINGS › PROJECT › RENAME");
-    // Task 11's SAVE AS, the widest third crumb, fits too.
-    let mut save_as = Crumbs::of(&[0], PartId::ALL[0]);
+    // The crumbs clear ORBIT's beat dot, so SETTINGS drops behind `..`;
+    // without ORBIT there is no dot and room for it.
+    let root = if cfg!(feature = "orbit") {
+        ".."
+    } else {
+        "SETTINGS"
+    };
+    assert_eq!(crumbs.to_string(), format!("{root} › PROJECT › RENAME"));
+    // Task 11's SAVE AS, the widest third crumb, ends it the same way.
+    let mut save_as = Crumbs::of(&[0], PartId::ALL[0], SceneIdx::ALL[0]);
     save_as.push(Crumb::Name("SAVE AS"));
-    assert_eq!(save_as.to_string(), "SETTINGS › PROJECT › SAVE AS");
+    assert_eq!(save_as.to_string(), format!("{root} › PROJECT › SAVE AS"));
     tap(&mut ui, ButtonId::Menu);
     let crumbs = ui.crumbs().map(|c| c.to_string());
     assert_eq!(crumbs.as_deref(), Some("SETTINGS › PROJECT"));

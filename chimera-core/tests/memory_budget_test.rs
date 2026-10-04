@@ -90,13 +90,16 @@ fn fx_bus_fits_its_axi_share() {
 }
 
 /// Spec § Hardware parity: the Project (Performance and pool), the
-/// framebuffer, the UI reserve, the AudioShared, scope and AudioStats triple
-/// buffers, the scope's writer, the FX bus and the card's store (ADR 0014,
-/// ADR 0021) fit AXI, with 64 KB to spare.
+/// framebuffer, the UI reserve, the AudioShared, scope, AudioStats and
+/// ORBIT view triple buffers, the scope's writer, ORBIT's runner, the FX bus
+/// and the card's store (ADR 0014, ADR 0021) fit AXI, with 64 KB to spare.
+/// ORBIT's settings ride inside `AudioShared` and its song inside `Project`,
+/// so neither is counted again.
 #[test]
 fn axi_residents_fit() {
     use chimera_core::dsp::fx_bus::FxBus;
     use chimera_core::instrument::{AXI_RESIDENT, AudioShared};
+    use chimera_core::orbit::runner::{OrbitRunner, OrbitView};
     use chimera_core::perf::load::AudioStats;
     use chimera_core::project::Project;
     use chimera_core::scope::{ScopeFrame, ScopeWriter};
@@ -109,6 +112,8 @@ fn axi_residents_fit() {
         ("scope x3", size_of::<TripleBuffer<ScopeFrame>>()),
         ("scope writer", size_of::<ScopeWriter>()),
         ("AudioStats x3", size_of::<TripleBuffer<AudioStats>>()),
+        ("OrbitView x3", size_of::<TripleBuffer<OrbitView>>()),
+        ("OrbitRunner", size_of::<OrbitRunner>()),
         ("FxBus", size_of::<FxBus>()),
         ("store reserve", hw::STORE_RESERVE),
     ];
@@ -118,6 +123,10 @@ fn axi_residents_fit() {
     let total: usize = parts.iter().map(|p| p.1).sum();
     eprintln!("{:>15} {total:>7} B of {} B", "AXI", hw::AXI_SRAM);
     assert_eq!(total, AXI_RESIDENT);
+    // The default build's, at 2dc9eefd; the master tape adds its own.
+    if !cfg!(feature = "master-tape") {
+        assert!(total <= 442_132, "AXI grew past 2dc9eefd's");
+    }
     assert!(
         hw::AXI_SRAM - total >= 64 * 1024,
         "{} B of AXI left",
@@ -137,18 +146,21 @@ fn instrument_fits_d2() {
 /// its meta and the slots' generations.
 #[test]
 fn axi_counts_the_project() {
+    use chimera_core::orbit::scene::OrbitSong;
     use chimera_core::preset::{POOL_SIZE, Performance, Sound};
     use chimera_core::project::Project;
-    let (project, perf, slots) = (
+    let (project, perf, slots, orbit) = (
         size_of::<Project>(),
         size_of::<Performance>(),
         POOL_SIZE * size_of::<Option<Sound>>(),
+        size_of::<OrbitSong>(),
     );
-    eprintln!("Project = {project} B: Performance {perf} B, slots {slots} B");
+    eprintln!("Project = {project} B: Performance {perf} B, slots {slots} B, ORBIT {orbit} B");
+    let parts = perf + slots + orbit;
     assert!(
-        project - (perf + slots) <= 128,
+        project - parts <= 128,
         "Project = {project} B, {} B over its parts",
-        project - (perf + slots)
+        project - parts
     );
 }
 
@@ -163,9 +175,12 @@ fn ui_state_fits_the_ui_reserve() {
         "UiState without its Project = {rest} B, reserve {} B",
         hw::UI_RESERVE
     );
-    // 4 KB, not 2: SETTINGS' project listing (`MAX_LISTED` entries).
+    // A growth tripwire, no physical limit: `UiState` is an AXI static
+    // built in place, charged a fixed `UI_RESERVE`, never moved or cloned.
+    // 2 KB, then 4 KB for SETTINGS' project listing (`MAX_LISTED`), then
+    // 5 KB (owner, 2026-10-03; ORBIT command channel spec § 5.0).
     assert!(
-        rest <= 4 * 1024,
+        rest <= 5 * 1024,
         "UiState grew to {rest} B besides its Project"
     );
 }
@@ -188,6 +203,10 @@ fn sympathetic_pool_fits_d2() {
         ("SymPool", size_of::<SymPool>()),
         ("Voice", size_of::<Voice>()),
         ("[Voice; 8]", size_of::<[Voice; hw::MAX_VOICES]>()),
+        (
+            "[NoteOrigin; 8]",
+            size_of::<[chimera_core::instrument::NoteOrigin; hw::MAX_VOICES]>(),
+        ),
         ("Instrument", inst),
         ("left in D2", hw::VOICE_RAM_BUDGET.saturating_sub(inst)),
     ] {
@@ -204,5 +223,27 @@ fn sympathetic_pool_fits_d2() {
         inst <= hw::VOICE_RAM_BUDGET,
         "Instrument = {inst} B, budget {} B",
         hw::VOICE_RAM_BUDGET
+    );
+}
+
+/// The runner is an AXI static beside the engine; its const assert is the
+/// check, this prints the figure.
+#[test]
+fn orbit_runner_size() {
+    use chimera_core::orbit::runner::{OrbitRunner, OrbitShared, OrbitView};
+    eprintln!(
+        "OrbitRunner = {} B, OrbitView = {} B, OrbitShared = {} B",
+        size_of::<OrbitRunner>(),
+        size_of::<OrbitView>(),
+        size_of::<OrbitShared>()
+    );
+    assert!(
+        size_of::<OrbitView>() <= 336,
+        "OrbitView grew past 2dc9eefd's"
+    );
+    // § 5: the three copies in `AudioShared` grow by 12 B at most.
+    assert!(
+        size_of::<OrbitShared>() <= 880,
+        "OrbitShared past 2dc9eefd's 876 + 4"
     );
 }

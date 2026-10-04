@@ -1,6 +1,6 @@
 //! Sound browser overlay in Direction A (UI refresh spec § Page types):
 //! title, list rows (slot / name / engine tag) with the selected row an
-//! accent pill and empty slots dimmed, a thin scroll indicator, key hints.
+//! accent pill and empty slots dimmed, a thin scroll indicator, its gesture hints.
 
 use core::fmt::Write;
 
@@ -15,6 +15,7 @@ use crate::project::{PartId, Pool, SlotId};
 use crate::ui::components;
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
+use crate::ui::hint::{self, Gesture, Hint};
 use crate::ui::nav::chain_def_for;
 use crate::ui::theme;
 
@@ -61,15 +62,18 @@ pub const ROW_H: i32 = 26;
 pub const SCROLL_X: i32 = theme::SCROLL_X;
 pub const SCROLL_TOP: i32 = 40;
 pub const SCROLL_H: i32 = 208;
-const HINT_Y: i32 = 284;
+const HINT_Y: i32 = 264;
+const CLEAR_Y: i32 = 284;
 const INFO_Y: i32 = 304;
-/// The key and what it does here (Pre-flight 22).
-const HINTS: [(&str, &str); 3] = [("EDIT", "LOAD"), ("SEQ", "PART"), ("MIX-", "CLEAR")];
-const HINT_GAP: i32 = 4;
+/// The keys and what they do here (Pre-flight 22, ADR 0086). SEQ's way up
+/// is every chain's (ADR 0081), so it goes unsaid. MIX + MINUS's clear
+/// has a line of its own, on a filled slot alone: nothing else clears.
+pub const HINT: Hint = &[Gesture("EDIT", "LOADS"), Gesture("MIX + EDIT", "SAVES")];
+pub const CLEAR_HINT: Hint = &[Gesture("MIX + MINUS", "CLEARS")];
 
 /// Encoder A moves the cursor, clamped to the list; the scroll follows it
-/// on screen. EDIT's load, MIX+MINUS's clear and every key's way out are
-/// `UiState`'s.
+/// on screen. EDIT's load, MIX+EDIT's save, MIX+MINUS's clear and every
+/// key's way out are `UiState`'s.
 pub fn input(controls: &impl Controls, b: Browse) -> Browse {
     let visible = VISIBLE_ROWS.min(TOTAL_ENTRIES);
     let delta = i32::from(controls.encoder_delta(EncoderId::A));
@@ -90,8 +94,9 @@ pub fn row_y(i: usize) -> i32 {
 }
 
 /// The full-screen browser for Part `part` (0-based), on a screen the
-/// caller has cleared to `theme::BG`.
-pub fn draw<D>(d: &mut D, pool: &Pool, part: PartId, cursor: usize, scroll: usize)
+/// caller has cleared to `theme::BG`; its gesture hints with `hints`
+/// (THEME's HINTS).
+pub fn draw<D>(d: &mut D, pool: &Pool, part: PartId, cursor: usize, scroll: usize, hints: bool)
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -115,38 +120,12 @@ where
         SCROLL_TOP + (SCROLL_H - thumb_h) * scroll.min(max_scroll as usize) as i32 / max_scroll;
     draw::fill_rect(d, SCROLL_X, thumb_y, 2, thumb_h, theme::MID);
 
-    // Spread across the line: the first at the margin, the last flush right.
-    let t = theme::LABEL_TRACKING;
-    let width = |(k, w): (&str, &str)| {
-        draw::text_width(&theme::FONT_LABEL_BOLD, k, t)
-            + HINT_GAP
-            + draw::text_width(&theme::FONT_LABEL, w, t)
-    };
-    let used: i32 = HINTS.iter().map(|&h| width(h)).sum();
-    let gap = (theme::VIZ_RIGHT - theme::MARGIN_X - used) / (HINTS.len() as i32 - 1);
-    let mut x = theme::MARGIN_X;
-    for &(key, what) in &HINTS {
-        let w = draw::text_tracked(d, &theme::FONT_LABEL_BOLD, key, x, HINT_Y, theme::INK, t);
-        draw::text_tracked(
-            d,
-            &theme::FONT_LABEL,
-            what,
-            x + w + HINT_GAP,
-            HINT_Y,
-            theme::MID,
-            t,
-        );
-        x += width((key, what)) + gap;
+    if hints {
+        hint::draw(d, HINT, theme::MARGIN_X, HINT_Y);
     }
-    // Two strings: FmtBuf holds 32 bytes and one line would not fit.
-    draw::text(
-        d,
-        &theme::FONT_LABEL,
-        "A SCROLLS",
-        theme::MARGIN_X,
-        INFO_Y,
-        theme::MID,
-    );
+    if hints && slot_at(cursor).is_some_and(|s| pool.get(s).is_some()) {
+        hint::draw(d, CLEAR_HINT, theme::MARGIN_X, CLEAR_Y);
+    }
     let mut info = FmtBuf::new();
     let _ = write!(info, "{} INIT + {} SLOTS", INIT_TYPES.len(), POOL_SIZE);
     draw::text_right(

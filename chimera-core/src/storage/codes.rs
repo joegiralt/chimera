@@ -4,9 +4,14 @@
 //! `tests/fixtures/disk_codes_v1.txt` pins them, and only appending is allowed.
 
 use crate::addr::{BlockRef, Op, ParamAddr};
-use crate::block::{Block, ParamId, ParamKind, ParamSpec};
+use crate::block::{Block, DiskCode, ParamId, ParamKind, ParamSpec};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::modulation::ModSource;
+use crate::orbit::chords::ScaleKind;
+use crate::orbit::ring::{NoteMode, Range, SnapTo};
+use crate::orbit::scene::TargetKind;
+use crate::orbit::walk::Walk;
+use chimera_theory::{Degree, PitchClass};
 
 use super::block_codec::MAX_BLOCK_PARAMS;
 
@@ -41,7 +46,10 @@ impl BlockRef {
             BlockRef::Comp => 24,
             BlockRef::Part => 25,
             BlockRef::Theme => 26,
-            BlockRef::PartMix(_) => return None,
+            BlockRef::OrbitChords => 27,
+            BlockRef::OrbitRing(r) => 28 + r.get(),
+            BlockRef::Midi => 33,
+            BlockRef::PartMix(_) | BlockRef::Tempo => return None,
         })
     }
 
@@ -75,7 +83,12 @@ impl BlockRef {
             BlockRef::Comp => "COMP",
             BlockRef::Part => "PART",
             BlockRef::Theme => "THEME",
-            BlockRef::PartMix(_) => return None,
+            BlockRef::OrbitChords => "ORBIT",
+            BlockRef::OrbitRing(r) => {
+                ["RING1", "RING2", "RING3", "RING4", "RING5"][r.get() as usize]
+            }
+            BlockRef::Midi => "MIDI",
+            BlockRef::PartMix(_) | BlockRef::Tempo => return None,
         })
     }
 
@@ -249,5 +262,216 @@ pub fn read_value(b: &dyn Block, a: ValidAddr) -> DiskValue {
     match code {
         Some(c) if a.coded() => DiskValue::Code(c),
         _ => DiskValue::Real(b.get(id)),
+    }
+}
+
+// ORBIT's stored enums (spec § 8). `from_disk_code` searches `ALL` by the
+// explicit code, as `BlockRef` does, so a variant's place never matters.
+
+/// The one of `all` stored as `c`.
+fn find_code<T: DiskCode>(all: &[T], c: u8) -> Option<T> {
+    all.iter().copied().find(|x| x.disk_code() == c)
+}
+
+impl DiskCode for ScaleKind {
+    fn disk_code(self) -> u8 {
+        match self {
+            ScaleKind::Major => 0,
+            ScaleKind::Minor => 1,
+            ScaleKind::Dorian => 2,
+            ScaleKind::Phrygian => 3,
+            ScaleKind::Lydian => 4,
+            ScaleKind::Mixolydian => 5,
+            ScaleKind::Locrian => 6,
+            ScaleKind::HarmonicMinor => 7,
+            ScaleKind::PentatonicMajor => 8,
+            ScaleKind::PentatonicMinor => 9,
+            ScaleKind::Custom => 10,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            ScaleKind::Major => "MAJOR",
+            ScaleKind::Minor => "MINOR",
+            ScaleKind::Dorian => "DORIAN",
+            ScaleKind::Phrygian => "PHRYGIAN",
+            ScaleKind::Lydian => "LYDIAN",
+            ScaleKind::Mixolydian => "MIXOLYDIAN",
+            ScaleKind::Locrian => "LOCRIAN",
+            ScaleKind::HarmonicMinor => "HARMONIC_MINOR",
+            ScaleKind::PentatonicMajor => "PENT_MAJOR",
+            ScaleKind::PentatonicMinor => "PENT_MINOR",
+            ScaleKind::Custom => "CUSTOM",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        find_code(&ScaleKind::ALL, c)
+    }
+}
+
+impl DiskCode for PitchClass {
+    fn disk_code(self) -> u8 {
+        match self {
+            PitchClass::C => 0,
+            PitchClass::Cs => 1,
+            PitchClass::D => 2,
+            PitchClass::Ds => 3,
+            PitchClass::E => 4,
+            PitchClass::F => 5,
+            PitchClass::Fs => 6,
+            PitchClass::G => 7,
+            PitchClass::Gs => 8,
+            PitchClass::A => 9,
+            PitchClass::As => 10,
+            PitchClass::B => 11,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            PitchClass::C => "C",
+            PitchClass::Cs => "C_SHARP",
+            PitchClass::D => "D",
+            PitchClass::Ds => "D_SHARP",
+            PitchClass::E => "E",
+            PitchClass::F => "F",
+            PitchClass::Fs => "F_SHARP",
+            PitchClass::G => "G",
+            PitchClass::Gs => "G_SHARP",
+            PitchClass::A => "A",
+            PitchClass::As => "A_SHARP",
+            PitchClass::B => "B",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        find_code(&PitchClass::ALL, c)
+    }
+}
+
+/// A degree's code is its index from the root, I = 0 .. XII = 11.
+const DEGREE_IDENTS: [&str; 12] = [
+    "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII",
+];
+
+impl DiskCode for Degree {
+    fn disk_code(self) -> u8 {
+        self.index() as u8
+    }
+
+    fn disk_ident(self) -> &'static str {
+        DEGREE_IDENTS[self.index()]
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        Degree::ALL.get(c as usize).copied()
+    }
+}
+
+impl DiskCode for Range {
+    fn disk_code(self) -> u8 {
+        match self {
+            Range::Zero => 0,
+            Range::One => 1,
+            Range::Two => 2,
+            Range::Three => 3,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            Range::Zero => "0",
+            Range::One => "1",
+            Range::Two => "2",
+            Range::Three => "3",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        find_code(&Range::ALL, c)
+    }
+}
+
+impl DiskCode for SnapTo {
+    fn disk_code(self) -> u8 {
+        match self {
+            SnapTo::Scale => 0,
+            SnapTo::Chord => 1,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            SnapTo::Scale => "SCALE",
+            SnapTo::Chord => "CHORD",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        find_code(&SnapTo::ALL, c)
+    }
+}
+
+impl DiskCode for NoteMode {
+    fn disk_code(self) -> u8 {
+        match self {
+            NoteMode::Step => 0,
+            NoteMode::Pool => 1,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            NoteMode::Step => "STEP",
+            NoteMode::Pool => "POOL",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        find_code(&NoteMode::ALL, c)
+    }
+}
+
+impl DiskCode for Walk {
+    fn disk_code(self) -> u8 {
+        match self {
+            Walk::Up => 0,
+            Walk::Down => 1,
+            Walk::Random => 2,
+            Walk::PingPong => 3,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            Walk::Up => "UP",
+            Walk::Down => "DOWN",
+            Walk::Random => "RANDOM",
+            Walk::PingPong => "PING_PONG",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        find_code(&Walk::ALL, c)
+    }
+}
+
+impl DiskCode for TargetKind {
+    fn disk_code(self) -> u8 {
+        match self {
+            TargetKind::Part => 0,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            TargetKind::Part => "PART",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        (c == 0).then_some(TargetKind::Part)
     }
 }

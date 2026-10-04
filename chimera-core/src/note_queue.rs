@@ -1,4 +1,5 @@
-//! Notes from the UI/input thread to the audio thread (instrument-core spec
+//! Notes and MIDI real-time (ORBIT spec § 6.1) from the input threads to the
+//! audio thread, in the order they came (instrument-core spec
 //! § Threading): a fixed 64-event single-producer single-consumer ring.
 //! Lock-free and allocation-free; each event is packed into one `AtomicU32`,
 //! so there is no `unsafe`. A full queue drops the event and counts it.
@@ -47,26 +48,6 @@ pub struct NoteEvent {
 }
 
 impl NoteEvent {
-    pub fn from_midi(msg: MidiMessage) -> Option<Self> {
-        match msg {
-            MidiMessage::NoteOn {
-                channel,
-                note,
-                velocity,
-            } => Some(Self {
-                channel,
-                note,
-                kind: NoteKind::On(velocity),
-            }),
-            MidiMessage::NoteOff { channel, note, .. } => Some(Self {
-                channel,
-                note,
-                kind: NoteKind::Off,
-            }),
-            MidiMessage::ControlChange { .. } | MidiMessage::PitchBend { .. } => None,
-        }
-    }
-
     /// Bits 0..4 channel, 4..11 note, 11..18 velocity (0 = note-off).
     fn pack(self) -> u32 {
         let vel = match self.kind {
@@ -85,6 +66,88 @@ impl NoteEvent {
                 None => NoteKind::Off,
             },
         })
+    }
+}
+
+/// System real-time: the MIDI clock and its transport (spec § 6.1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RealTime {
+    Clock,
+    Start,
+    Continue,
+    Stop,
+}
+
+impl RealTime {
+    const ALL: [RealTime; 4] = [
+        RealTime::Clock,
+        RealTime::Start,
+        RealTime::Continue,
+        RealTime::Stop,
+    ];
+}
+
+/// What a note queue carries: notes and real-time, in the order they came.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InEvent {
+    Note(NoteEvent),
+    Rt(RealTime),
+}
+
+impl From<NoteEvent> for InEvent {
+    fn from(n: NoteEvent) -> Self {
+        InEvent::Note(n)
+    }
+}
+
+impl From<RealTime> for InEvent {
+    fn from(rt: RealTime) -> Self {
+        InEvent::Rt(rt)
+    }
+}
+
+/// Bits 18..21: 0 a note, else 1 + the `RealTime`'s index.
+const KIND_SHIFT: u32 = 18;
+
+impl InEvent {
+    /// Notes and real-time; CC and pitch bend are not queued.
+    pub fn from_midi(msg: MidiMessage) -> Option<Self> {
+        Some(match msg {
+            MidiMessage::NoteOn {
+                channel,
+                note,
+                velocity,
+            } => InEvent::Note(NoteEvent {
+                channel,
+                note,
+                kind: NoteKind::On(velocity),
+            }),
+            MidiMessage::NoteOff { channel, note, .. } => InEvent::Note(NoteEvent {
+                channel,
+                note,
+                kind: NoteKind::Off,
+            }),
+            MidiMessage::Clock => InEvent::Rt(RealTime::Clock),
+            MidiMessage::Start => InEvent::Rt(RealTime::Start),
+            MidiMessage::Continue => InEvent::Rt(RealTime::Continue),
+            MidiMessage::Stop => InEvent::Rt(RealTime::Stop),
+            MidiMessage::ControlChange { .. } | MidiMessage::PitchBend { .. } => return None,
+        })
+    }
+
+    /// A note packs as `NoteEvent::pack`, kind 0.
+    fn pack(self) -> u32 {
+        match self {
+            InEvent::Note(n) => n.pack(),
+            InEvent::Rt(rt) => (rt as u32 + 1) << KIND_SHIFT,
+        }
+    }
+
+    fn unpack(bits: u32) -> Option<Self> {
+        match (bits >> KIND_SHIFT) as usize {
+            0 => NoteEvent::unpack(bits).map(InEvent::Note),
+            k => RealTime::ALL.get(k - 1).copied().map(InEvent::Rt),
+        }
     }
 }
 
@@ -109,13 +172,13 @@ pub struct NoteConsumer<'a>(&'a NoteQueue);
 
 impl NoteProducer<'_> {
     /// `false`: the queue was full and the event was dropped.
-    pub fn push(&mut self, ev: NoteEvent) -> bool {
-        self.0.push(ev)
+    pub fn push(&mut self, ev: impl Into<InEvent>) -> bool {
+        self.0.push(ev.into())
     }
 }
 
 impl NoteConsumer<'_> {
-    pub fn pop(&mut self) -> Option<NoteEvent> {
+    pub fn pop(&mut self) -> Option<InEvent> {
         self.0.pop()
     }
 }
@@ -152,7 +215,7 @@ impl NoteQueue {
     /// is published by the `Release` store to `tail` right after it, which
     /// is what `pop`'s `Acquire` load of `tail` synchronizes with, so the
     /// slot write always happens-before the matching read in `pop`.
-    fn push(&self, ev: NoteEvent) -> bool {
+    fn push(&self, ev: InEvent) -> bool {
         let tail = self.tail.load(Ordering::Relaxed);
         let head = self.head.load(Ordering::Acquire);
         if tail.wrapping_sub(head) as usize >= NOTE_QUEUE_LEN {
@@ -173,14 +236,14 @@ impl NoteQueue {
     /// `Release` store to `head` afterward is what `push`'s `Acquire` load
     /// of `head` pairs with, so the producer never reuses this slot before
     /// this read of it has completed.
-    fn pop(&self) -> Option<NoteEvent> {
+    fn pop(&self) -> Option<InEvent> {
         let head = self.head.load(Ordering::Relaxed);
         if head == self.tail.load(Ordering::Acquire) {
             return None;
         }
         let bits = self.slots[head as usize % NOTE_QUEUE_LEN].load(Ordering::Relaxed);
         self.head.store(head.wrapping_add(1), Ordering::Release);
-        NoteEvent::unpack(bits)
+        InEvent::unpack(bits)
     }
 
     /// Events dropped because the queue was full.
@@ -228,10 +291,11 @@ impl<'a, const N: usize> NoteProducers<'a, N> {
 }
 
 impl<const N: usize> NoteDrain<'_, N> {
-    pub fn drain(&mut self, mut f: impl FnMut(NoteEvent)) {
-        for q in &self.0.queues {
+    /// Every event, each with the source it came from.
+    pub fn drain(&mut self, mut f: impl FnMut(SourceId<N>, InEvent)) {
+        for (i, q) in self.0.queues.iter().enumerate() {
             while let Some(ev) = q.pop() {
-                f(ev);
+                f(SourceId(i), ev);
             }
         }
     }

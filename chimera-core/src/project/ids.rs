@@ -4,57 +4,55 @@
 use crate::hw::MAX_PARTS;
 use crate::preset::POOL_SIZE;
 
-/// One of the six Parts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct PartId(u8);
+/// A `u8` index below `$len`, only `new` (or `ALL`) making one: the
+/// struct, `ALL` in order, and `new`. The type adds its own reader.
+macro_rules! bounded_index {
+    ($(#[$m:meta])* $name:ident < $len:expr) => {
+        $(#[$m])*
+        pub struct $name(u8);
+
+        impl $name {
+            pub const ALL: [$name; $len] = {
+                let mut a = [$name(0); $len];
+                let mut i = 0;
+                while i < $len {
+                    a[i] = $name(i as u8);
+                    i += 1;
+                }
+                a
+            };
+
+            pub const fn new(n: u8) -> Option<$name> {
+                if (n as usize) < $len {
+                    Some($name(n))
+                } else {
+                    None
+                }
+            }
+        }
+    };
+}
+pub(crate) use bounded_index;
+
+bounded_index!(
+    /// One of the six Parts.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+    PartId < MAX_PARTS
+);
 
 impl PartId {
-    pub const ALL: [PartId; MAX_PARTS] = {
-        let mut a = [PartId(0); MAX_PARTS];
-        let mut i = 0;
-        while i < MAX_PARTS {
-            a[i] = PartId(i as u8);
-            i += 1;
-        }
-        a
-    };
-
-    pub const fn new(n: u8) -> Option<PartId> {
-        if (n as usize) < MAX_PARTS {
-            Some(PartId(n))
-        } else {
-            None
-        }
-    }
-
     pub const fn index(self) -> usize {
         self.0 as usize
     }
 }
 
-/// One of the pool's slots.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct SlotId(u8);
+bounded_index!(
+    /// One of the pool's slots.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+    SlotId < POOL_SIZE
+);
 
 impl SlotId {
-    pub const ALL: [SlotId; POOL_SIZE] = {
-        let mut a = [SlotId(0); POOL_SIZE];
-        let mut i = 0;
-        while i < POOL_SIZE {
-            a[i] = SlotId(i as u8);
-            i += 1;
-        }
-        a
-    };
-
-    pub const fn new(n: u8) -> Option<SlotId> {
-        if (n as usize) < POOL_SIZE {
-            Some(SlotId(n))
-        } else {
-            None
-        }
-    }
-
     pub const fn index(self) -> usize {
         self.0 as usize
     }

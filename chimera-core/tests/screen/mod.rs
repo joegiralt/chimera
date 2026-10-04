@@ -7,17 +7,23 @@
 #![allow(dead_code)]
 
 use chimera_core::clock_plan::SiliconRev;
+use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
+use chimera_core::instrument::{AudioShared, Instrument};
 use chimera_core::name::ProjectName;
+use chimera_core::orbit::engine::OrbitEvent;
+use chimera_core::orbit::runner::{OrbitRunner, OrbitView, orbit_buffer};
 use chimera_core::params::EngineType;
 use chimera_core::perf::load::AudioStats;
 use chimera_core::preset::{POOL_SIZE, Sound};
 use chimera_core::project::SlotId;
 use chimera_core::project::{
-    LoadLink, Project, ProjectFile, ProjectNote, SaveTo, new_project_id, save_project,
+    LoadLink, PartFrom, PartId, PartSource, Project, ProjectFile, ProjectNote, ProjectSource,
+    ReplaceGuard, SaveTo, new_project_id, save_project,
 };
 use chimera_core::reset::ResetCause;
 use chimera_core::scope::SCOPE_LEN;
 use chimera_core::storage::{Card, SystemSettings, SystemSync};
+use chimera_core::triple::{Reader, TripleBuffer, Writer};
 use chimera_core::ui::UiState;
 use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_registry as reg;
@@ -421,6 +427,11 @@ impl<'u> Rig<'u> {
         });
     }
 
+    /// The load epoch: what a snapshot published now carries.
+    pub fn epoch(&self) -> u32 {
+        self.link.epoch()
+    }
+
     pub fn tap(&mut self, b: ButtonId) {
         tap(self.ui, b);
         self.work();
@@ -475,7 +486,7 @@ impl<'u> Rig<'u> {
             .find(|&i| l.entry(i).unwrap().file() == f)
             .expect("listed");
         self.bar_to(i);
-        self.tap(ButtonId::Seq);
+        self.tap(ButtonId::Edit);
         assert_eq!(self.ui.project().meta().file(), Some(f));
         while self.ui.in_settings() {
             self.tap(ButtonId::Menu);
@@ -526,7 +537,7 @@ pub fn prompt_load(ui: &mut UiState) {
     let l = r.ui.listing();
     let i = (0..l.len()).find(|&i| l.entry(i).unwrap().file() == b);
     r.bar_to(i.unwrap());
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert!(r.ui.prompt_open());
 }
 
@@ -535,7 +546,7 @@ pub fn naming_save_as(ui: &mut UiState) {
     let mut r = Rig::new(ui, MemStore::new(1));
     r.to(&["PROJECT"]);
     r.bar_to(1);
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert!(r.ui.naming().is_some());
 }
 
@@ -586,6 +597,102 @@ pub fn scope_fixture() -> [f32; SCOPE_LEN] {
         }
     })
 }
+
+/// `f` of a bar as a clock phase.
+pub fn phase(f: f64) -> chimera_core::orbit::clock::Phase {
+    chimera_core::orbit::clock::Phase::new((f * 4_294_967_296.0) as u32)
+}
+
+/// The runner's view of the init scene at `f` of the first bar, playing:
+/// what the ORBIT goldens draw from.
+pub fn orbit_view(f: f64) -> chimera_core::orbit::runner::OrbitView {
+    use chimera_core::orbit::clock::step_at;
+    let mut v = chimera_core::orbit::runner::OrbitView {
+        running: true,
+        ..Default::default()
+    };
+    v.pos.phase = phase(f);
+    for r in &mut v.rings {
+        r.step = step_at(v.pos.phase, r.hits.steps());
+    }
+    v
+}
+
+/// PLAY armed on CHRD's segment and `notes` captured into it: the
+/// runner's `count`th capture, a third into the bar.
+pub fn played(ui: &mut UiState, count: u8, notes: &[u8]) {
+    use chimera_core::orbit::runner::{Capture, Captured};
+    feed(ui, Input::turn(EncoderId::C, 1));
+    let Capture::Segment(seg) = ui.orbit().capture else {
+        panic!("PLAY arms the segment");
+    };
+    // Every command applied: the runner armed, nothing taken yet.
+    let mut v = orbit_view(0.3);
+    v.acked = ui.orbit().log().head();
+    v.armed = Capture::Segment(seg);
+    v.captured.count = ui.orbit().took;
+    ui.set_orbit_view(&v);
+    assert_eq!(ui.orbit().capture, Capture::Segment(seg), "armed");
+    // Then the capture, and the runner disarmed by its take.
+    v.armed = Capture::Off;
+    let mut c = Captured {
+        count,
+        target: Capture::Segment(seg),
+        scene: ui.project().orbit().current(),
+        notes: [chimera_theory::Note::MIN; 8],
+        len: notes.len() as u8,
+    };
+    for (n, &k) in c.notes.iter_mut().zip(notes) {
+        *n = chimera_theory::Note::new(k).unwrap();
+    }
+    v.captured = c;
+    ui.set_orbit_view(&v);
+    assert_eq!(ui.orbit().took, count, "taken");
+    assert_eq!(ui.orbit().capture, Capture::Off, "disarmed");
+}
+
+/// `orbit_view(f)` with ring 1 just fired: what ORB's golden draws.
+pub fn orb_view(f: f64) -> chimera_core::orbit::runner::OrbitView {
+    let mut v = orbit_view(f);
+    v.rings[0].fired = 1;
+    v
+}
+
+/// `orb_view(f)` with a MIDI clock leading at 133 BPM.
+pub fn midi_view(f: f64) -> chimera_core::orbit::runner::OrbitView {
+    use chimera_core::orbit::clock::{Bpm, ClockSource};
+    chimera_core::orbit::runner::OrbitView {
+        source: ClockSource::Midi,
+        bpm: Bpm::new(133).unwrap(),
+        ..orb_view(f)
+    }
+}
+
+/// Part `p` on INIT Algo, where NEW has a factory Sound: for the tests
+/// whose subject is an INIT Part, not NEW's.
+#[allow(dead_code)]
+pub fn init_part(ui: &mut UiState, p: PartId) {
+    let src = PartSource {
+        part: p,
+        from: PartFrom::Init(EngineType::Algo),
+    };
+    let c = ReplaceGuard::check(ui.project(), ui.template(), src).expect("a Clean Part");
+    ui.project_mut().replace_part(c).expect("INIT loads");
+}
+
+/// Hold SEQ into ORBIT, then B`n`'s tap: RING `n`'s RHYTHM.
+pub fn to_ring(ui: &mut UiState, n: usize) {
+    hold(ui, ButtonId::Seq);
+    tap(ui, PART_KEYS[n - 1]);
+}
+
+const PART_KEYS: [ButtonId; 5] = [
+    ButtonId::B1,
+    ButtonId::B2,
+    ButtonId::B3,
+    ButtonId::B4,
+    ButtonId::B5,
+];
 
 /// Load `engine`'s init Sound into Part 1 through the sound browser (EDIT + B1,
 /// scroll to the init row, EDIT), then MINUS from the engine's home to its
@@ -676,7 +783,7 @@ pub fn to_pitch(ui: &mut UiState, engine: EngineType) {
     );
 }
 
-fn plus(ui: &mut UiState, n: usize) {
+pub fn plus(ui: &mut UiState, n: usize) {
     for _ in 0..n {
         feed(ui, Input::press(ButtonId::Plus));
     }
@@ -754,16 +861,23 @@ const REV: usize = 4;
 const TAPE: usize = 5;
 
 pub const CASES: &[ScreenCase] = &[
-    ("engine_algo", |ui| feed(ui, Input::turn(EncoderId::A, 2))),
+    // The Algo cases walk from INIT Algo on Part 1, not NEW's TX BASS.
+    ("engine_algo", |ui| {
+        init_part(ui, PartId::ALL[0]);
+        feed(ui, Input::turn(EncoderId::A, 2))
+    }),
     ("algo_alg", |ui| {
+        init_part(ui, PartId::ALL[0]);
         feed(ui, Input::turn(EncoderId::B, 16)); // ALG B = A17, from INIT's A1
         feed(ui, Input::turn(EncoderId::C, 50)); // MORPH 50: the diagrams blend
     }),
     ("algo_wave", |ui| {
+        init_part(ui, PartId::ALL[0]);
         to_osc(ui);
         feed(ui, Input::turn(EncoderId::B, 5)); // operator 2's wave, a few steps in
     }),
     ("algo_level", |ui| {
+        init_part(ui, PartId::ALL[0]);
         to_level_page(ui);
         feed(ui, Input::turn(EncoderId::B, 60)); // operator 2 LEVEL
     }),
@@ -792,6 +906,7 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::A, 8)); // D2R 8
     }),
     ("algo_osc_last", |ui| {
+        init_part(ui, PartId::ALL[0]);
         to_osc(ui);
         for _ in 0..12 {
             feed(ui, Input::press(ButtonId::Edit)); // FEEDBACK, the last sub-page
@@ -963,6 +1078,7 @@ pub const CASES: &[ScreenCase] = &[
     }),
     // Part 1 on P3: the warning on its sound pages; ALGORITHM falls back to ALG.
     ("algo_out_p3", |ui| {
+        init_part(ui, PartId::ALL[0]);
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
         feed(ui, Input::press(ButtonId::Minus));
         feed(ui, Input::turn(EncoderId::C, 2)); // OUT P3
@@ -994,11 +1110,13 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::E, -127));
     }),
     ("algo_alg_morph_dimmed", |ui| {
+        init_part(ui, PartId::ALL[0]);
         feed(ui, Input::turn(EncoderId::B, -8)); // ALG B = T1 = ALG A
         feed(ui, Input::turn(EncoderId::C, 1)); // MORPH focused, dimmed
     }),
     // ENV1 → MORPH primed while it was live; then ALG B = ALG A (#188).
     ("mod_matrix_morph_inert", |ui| {
+        init_part(ui, PartId::ALL[0]);
         feed(ui, Input::turn(EncoderId::C, 1));
         prime(ui);
         plus(ui, 5);
@@ -1025,10 +1143,38 @@ pub const CASES: &[ScreenCase] = &[
         to_leaf(ui, &["PERSONALIZE", "THEME"]);
         feed(ui, Input::turn(EncoderId::C, 1)); // ACCENT AMBER, focused
     }),
+    // MIDI CONFIG › SYNC (ADR 0080): EXT, the default, focused.
+    ("settings_midi_sync", |ui| {
+        to_leaf(ui, &["MIDI CONFIG", "SYNC"]);
+        feed(ui, Input::turn(EncoderId::A, 1));
+    }),
     ("settings_system_diag_aud_load", |ui| {
         to_leaf(ui, &["SYSTEM", "DIAGNOSTICS", "AUDIO LOAD"])
     }),
     ("settings_top", |ui| tap(ui, ButtonId::Menu)),
+    // Part 3's LIVE SNAP (plan Task 15): SNAP CHORD, HELD RE-SNAP focused.
+    ("settings_part_live_snap", |ui| {
+        tap(ui, ButtonId::B3);
+        to_leaf(ui, &["PART", "LIVE SNAP"]);
+        feed(ui, Input::turn(EncoderId::A, 2));
+        feed(ui, Input::turn(EncoderId::B, 1));
+    }),
+    // SETTINGS › ORBIT (plan Task 17): the bar on CLEAR, RENAME later,
+    // RELOAD dimmed with nothing to drop.
+    ("settings_orbit", |ui| {
+        to_leaf(ui, &["ORBIT"]);
+        plus(ui, 1);
+    }),
+    // Its SAVE TO PROJ, slot 3 saved: the bar on the playing one.
+    ("settings_orbit_save_to", |ui| {
+        use chimera_core::orbit::scene::SceneIdx;
+        use chimera_core::project::{Confirmed, SceneSlot};
+        let c = Confirmed::<SceneSlot>::unasked(ui.project().orbit(), SceneIdx::ALL[2]);
+        ui.project_mut().orbit_mut().overwrite_scene(c).unwrap();
+        to_leaf(ui, &["ORBIT"]);
+        plus(ui, 2);
+        feed(ui, Input::press(ButtonId::Edit));
+    }),
     // ALPHA loaded, the bar on BETA.
     ("settings_load", |ui| {
         let (s, [a, ..]) = three();
@@ -1039,6 +1185,119 @@ pub const CASES: &[ScreenCase] = &[
     }),
     ("settings_prompt_load", prompt_load),
     ("settings_naming", naming_save_as),
+    // RING 3's RHYTHM at a third of the bar, HITS focused: 1/1, the
+    // pad's one held note a bar.
+    ("orbit_rhythm", |ui| {
+        to_ring(ui, 3);
+        feed(ui, Input::turn(EncoderId::B, -1)); // down first: 1/1 is HITS' top
+        feed(ui, Input::turn(EncoderId::B, 1));
+        ui.set_orbit_view(&orbit_view(0.3));
+    }),
+    // CHRD: segment 1 playing, a third into bar 1 of 4; segment 3 picked
+    // (MIX + DEGREE).
+    ("orbit_chrd", |ui| {
+        to_ring(ui, 3);
+        plus(ui, 1);
+        feed(ui, Input::turn(EncoderId::B, 2).and_held(ButtonId::Mix));
+        ui.set_orbit_view(&orbit_view(0.3));
+    }),
+    // CHRD with two chords played in through PLAY: Bm7b5 on segment 2,
+    // picked, and C on segment 4. Each a name, no numeral.
+    ("orbit_chrd_played", |ui| {
+        to_ring(ui, 3);
+        plus(ui, 1);
+        feed(ui, Input::turn(EncoderId::B, 3).and_held(ButtonId::Mix));
+        played(ui, 1, &[60, 64, 67]);
+        feed(ui, Input::turn(EncoderId::B, -2).and_held(ButtonId::Mix));
+        played(ui, 2, &[59, 62, 65, 69]);
+    }),
+    // ORB on ring 3 at a third of the bar, ring 1 just fired.
+    ("orbit_orb", |ui| {
+        to_ring(ui, 3);
+        feed(ui, Input::press(ButtonId::Minus));
+        ui.set_orbit_view(&orb_view(0.3));
+    }),
+    // ORB under a MIDI clock at 133 BPM: the header reads the source, and
+    // F, the internal BPM, is dimmed.
+    ("orbit_orb_midi", |ui| {
+        to_ring(ui, 3);
+        feed(ui, Input::press(ButtonId::Minus));
+        ui.set_orbit_view(&midi_view(0.3));
+    }),
+    // ORB › CUSTOM from MINOR, the tritone set under the cursor.
+    ("orbit_custom", |ui| {
+        to_ring(ui, 3);
+        feed(ui, Input::press(ButtonId::Minus));
+        feed(ui, Input::turn(EncoderId::C, 9));
+        feed(ui, Input::turn(EncoderId::A, 6));
+        feed(ui, Input::turn(EncoderId::B, 1));
+    }),
+    // ORB › CUSTOM by EDIT, SCALE still MINOR: its notes, the tritone
+    // under the cursor, nothing toggled.
+    ("orbit_custom_named", |ui| {
+        to_ring(ui, 3);
+        feed(ui, Input::press(ButtonId::Minus));
+        tap(ui, ButtonId::Edit);
+        feed(ui, Input::turn(EncoderId::A, 6));
+    }),
+    // RING 3's VOICE, its pad note made E(5,8) on RHYTHM: GATE 60, two
+    // accents, a third into the bar, playing.
+    ("orbit_voice", |ui| {
+        to_ring(ui, 3);
+        feed(ui, Input::turn(EncoderId::A, 7)); // STEPS 8
+        feed(ui, Input::turn(EncoderId::B, 4)); // HITS 5
+        tap(ui, ButtonId::Edit);
+        feed(ui, Input::turn(EncoderId::A, -40)); // GATE 60
+        feed(ui, Input::turn(EncoderId::C, 2)); // ACCENT 2
+        let mut v = orbit_view(0.3);
+        v.rings[2].step = 2;
+        ui.set_orbit_view(&v);
+    }),
+    // RING 3's NOTES: CLEAR down's eight notes (MIX held), the fourth picked and
+    // raised a tone, past two others: the sixth now.
+    ("orbit_notes", |ui| {
+        to_ring(ui, 3);
+        tap(ui, ButtonId::Edit);
+        tap(ui, ButtonId::Edit);
+        feed(ui, Input::turn(EncoderId::E, -1).and_held(ButtonId::Mix));
+        feed(ui, Input::turn(EncoderId::F, 3).and_held(ButtonId::Mix));
+        feed(ui, Input::turn(EncoderId::F, 2));
+    }),
+    // SCN on ring 3: scene 5 saved, SAVE on 3, scene 2 queued, the
+    // playing scene's loop past half way, playing.
+    ("orbit_scn", |ui| {
+        to_ring(ui, 3);
+        plus(ui, 2);
+        feed(ui, Input::turn(EncoderId::B, 4));
+        tap(ui, ButtonId::Edit);
+        feed(ui, Input::turn(EncoderId::B, -2));
+        feed(ui, Input::turn(EncoderId::A, 1));
+        let mut v = orbit_view(0.3);
+        v.pos.bar = 2;
+        ui.set_orbit_view(&v);
+    }),
+    // RING 2 as a STEP ring, CLEAR down's notes, step 4 picked; a third
+    // into the bar, playing.
+    ("orbit_notes_step", |ui| {
+        to_ring(ui, 2);
+        tap(ui, ButtonId::Edit);
+        tap(ui, ButtonId::Edit);
+        feed(ui, Input::turn(EncoderId::A, -1));
+        feed(ui, Input::turn(EncoderId::E, -1).and_held(ButtonId::Mix));
+        feed(ui, Input::turn(EncoderId::F, 3).and_held(ButtonId::Mix));
+        ui.set_orbit_view(&orbit_view(0.3));
+    }),
+    // RING 2 as a 32-step STEP ring, CLEAR down's notes, step 32 picked:
+    // the chip row scrolled to its last eight, NOTE's gestures under it.
+    ("orbit_notes_step32", |ui| {
+        to_ring(ui, 2);
+        feed(ui, Input::turn(EncoderId::A, 40)); // STEPS 32
+        tap(ui, ButtonId::Edit);
+        tap(ui, ButtonId::Edit);
+        feed(ui, Input::turn(EncoderId::A, -1));
+        feed(ui, Input::turn(EncoderId::E, -1).and_held(ButtonId::Mix));
+        feed(ui, Input::turn(EncoderId::F, 40).and_held(ButtonId::Mix));
+    }),
 ];
 
 /// `AudioStats` fixture for AUDIO LOAD's and ABOUT's goldens and tests.
@@ -1134,4 +1393,149 @@ pub fn render_dirty(name: &str) -> Fb {
         &scope_fixture(),
     );
     fb
+}
+
+/// The UI and the runner through their triple buffers, as the desktop
+/// runs them: the view read, the keys, the publish; then the blocks, each
+/// publishing its view.
+pub struct ShellRig {
+    pub ui: Box<UiState>,
+    pub w: Writer<AudioShared>,
+    pub r: Reader<AudioShared>,
+    view_w: Writer<OrbitView>,
+    view_r: Reader<OrbitView>,
+    pub inst: Box<Instrument>,
+    pub runner: Box<OrbitRunner>,
+    /// Each block's events.
+    pub sent: Vec<Vec<OrbitEvent>>,
+    pub views: Vec<OrbitView>,
+    /// A card for `load_new`, and the load's epoch every publish carries.
+    card: Card,
+    store: MemStore,
+    sync: SystemSync,
+    set: SystemSettings,
+    link: LoadLink,
+}
+
+impl ShellRig {
+    pub fn new(ui: Box<UiState>) -> ShellRig {
+        let buf = Box::leak(Box::new(TripleBuffer::new(
+            AudioShared::default(),
+            AudioShared::default(),
+            AudioShared::default(),
+        )));
+        let (w, r) = buf.split();
+        let (view_w, view_r) = Box::leak(Box::new(orbit_buffer())).split();
+        let sr = core::num::NonZeroU32::new(chimera_hal::SAMPLE_RATE).unwrap();
+        let mut card = Card::new();
+        let mut store = MemStore::new(1);
+        let (sync, set, _) = SystemSync::boot(&mut card, &mut store);
+        ShellRig {
+            ui,
+            w,
+            r,
+            view_w,
+            view_r,
+            inst: Box::new(Instrument::new(
+                chimera_hal::SAMPLE_RATE,
+                SampleBudget::for_cpu(CPU_HZ_REV_V),
+            )),
+            runner: Box::new(OrbitRunner::new(sr)),
+            sent: Vec::new(),
+            views: Vec::new(),
+            card,
+            store,
+            sync,
+            set,
+            link: LoadLink::new(),
+        }
+    }
+
+    pub fn frame(&mut self, input: Input, blocks: usize) {
+        self.late(0, input, blocks);
+    }
+
+    /// A frame the audio thread interrupts: `first` blocks run between
+    /// the UI's view read and its keys, so the keys act on a view already
+    /// stale; then the publish and `then` blocks.
+    pub fn late(&mut self, first: usize, input: Input, then: usize) {
+        self.ui.set_orbit_view(self.view_r.read());
+        self.blocks(first);
+        feed(&mut self.ui, input);
+        let (ui, epoch) = (&self.ui, self.link.epoch());
+        self.w.publish(|b| {
+            b.update_from(ui.project().perf(), epoch);
+            ui.publish_orbit(&mut b.orbit);
+        });
+        self.blocks(then);
+    }
+
+    /// NEW loaded as the shells load a project: `card_work`'s publish,
+    /// after the settle, with no block between (the card read). The
+    /// blocks of the next frame take it.
+    pub fn load_new(&mut self) {
+        let ui = &mut *self.ui;
+        let go = match ReplaceGuard::check(ui.project(), ui.template(), ProjectSource::New) {
+            Ok(go) => go,
+            Err(ask) => ask.into_pending().anyway(ui.project()),
+        };
+        let (w, link) = (&mut self.w, &self.link);
+        let loaded = ui.load_project(
+            &mut self.card,
+            &mut self.store,
+            &mut self.sync,
+            &mut self.set,
+            go,
+            link,
+            |swap, u| {
+                let _ = swap.settle(link, || false);
+                w.publish(|b| {
+                    b.update_from(u.project().perf(), link.epoch());
+                    u.publish_orbit(&mut b.orbit);
+                });
+            },
+        );
+        assert!(loaded.is_some(), "NEW loads");
+    }
+
+    /// `n` blocks, each publishing its view: with no frame between, the
+    /// UI is busy (a card read, a stall).
+    pub fn blocks(&mut self, n: usize) {
+        for _ in 0..n {
+            let ev = self.runner.block(&mut self.inst, self.r.read());
+            self.sent.push(ev.iter().collect());
+            let v = self.runner.view();
+            self.view_w.publish(|o| *o = v);
+            self.views.push(v);
+        }
+    }
+
+    pub fn idle(&mut self, blocks: usize) {
+        self.frame(Input::default(), blocks);
+    }
+
+    pub fn b6(&mut self) {
+        self.frame(Input::press(chimera_hal::ButtonId::B6), 1);
+        self.frame(Input::release(chimera_hal::ButtonId::B6), 1);
+    }
+
+    pub fn tap(&mut self, b: chimera_hal::ButtonId) {
+        self.frame(Input::press(b).at(0), 1);
+        self.frame(Input::release(b).at(100), 1);
+    }
+
+    pub fn view(&self) -> OrbitView {
+        self.runner.view()
+    }
+
+    /// Frames of one block until `f` holds of the view.
+    pub fn until(&mut self, f: impl Fn(&OrbitView) -> bool) {
+        for _ in 0..200_000 {
+            if f(&self.view()) {
+                return;
+            }
+            self.idle(1);
+        }
+        panic!("never");
+    }
 }

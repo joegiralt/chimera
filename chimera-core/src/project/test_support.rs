@@ -119,7 +119,8 @@ pub fn full() -> (Box<Project>, TemplateCrc) {
 
 /// Panics with the first difference: the names, each slot (`bits_eq`),
 /// each Part's Sound (`bits_eq`), mix, Origin (slot and CRC, or engine;
-/// never the generation) and `part_status`, the FX, then `project_crc`.
+/// never the generation) and `part_status`, the FX, ORBIT, then
+/// `project_crc`.
 pub fn same(a: &Project, b: &Project) {
     assert_eq!(a.meta().name(), b.meta().name(), "project name");
     for s in SlotId::ALL {
@@ -163,6 +164,7 @@ pub fn same(a: &Project, b: &Project) {
         );
     }
     assert_eq!(a.perf().fx, b.perf().fx, "FX");
+    assert_eq!(a.orbit(), b.orbit(), "ORBIT");
     assert_eq!(project_crc(a), project_crc(b), "project_crc");
 }
 

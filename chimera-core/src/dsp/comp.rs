@@ -3,6 +3,7 @@
 //! Hard knee, smoothed in the log domain (octaves of amplitude), the gain
 //! computed every `STEP` samples and ramped between. MIX 0, or RATIO 1:1 with MAKEUP 0, is an exact bypass.
 
+use crate::dsp::clampf;
 use chimera_hal::BLOCK_SIZE;
 use core::mem::MaybeUninit;
 
@@ -116,7 +117,7 @@ impl CompParams {
     /// NaN reads as the default; everything clamps to its range.
     pub fn sanitised(&self) -> Self {
         let d = Self::default();
-        let f = |v: f32, def: f32| if v.is_nan() { def } else { v.clamp(0.0, 1.0) };
+        let f = |v: f32, def: f32| if v.is_nan() { def } else { clampf(v, 0.0, 1.0) };
         Self {
             thresh: f(self.thresh, d.thresh),
             ratio: self.ratio.min(RATIOS.len() as u8 - 1),

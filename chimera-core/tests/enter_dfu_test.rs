@@ -39,10 +39,10 @@ impl Sys {
     }
 }
 
-/// SETTINGS › SYSTEM, the cursor on OS UPGRADE (row 0), SEQ.
+/// SETTINGS › SYSTEM, the cursor on OS UPGRADE (row 0), EDIT (ADR 0081).
 fn ask(ui: &mut UiState) {
     to_leaf(ui, &["SYSTEM"]);
-    tap(ui, ButtonId::Seq);
+    tap(ui, ButtonId::Edit);
 }
 
 #[test]
@@ -113,6 +113,7 @@ fn the_theme_is_saved_before_the_restart() {
         gamma: Gamma::Soft,
         accent: Accent::Lime,
         black: Black::new(1),
+        hints: false,
     };
     let mut ui = Box::new(UiState::new());
     let mut sys = Sys::new();
