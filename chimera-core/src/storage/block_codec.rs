@@ -14,18 +14,41 @@ const ENTRY_LEN: usize = 5;
 pub(crate) const MAX_BLOCK_PARAMS: usize = 32;
 
 /// `b`'s code, then every stored param in canonical (spec) order, into an
-/// empty `out`.
+/// empty `out`. With a `base`, only the params whose disk value differs from
+/// its (a real by bits): a sparse block, decoded onto that base. Returns the
+/// params written.
 ///
 /// # Panics
 /// For a block with no disk code: an encoder bug.
-pub fn encode_block(b: BlockRef, blk: &dyn Block, out: &mut RecordBuf) {
+pub fn encode_block(
+    b: BlockRef,
+    blk: &dyn Block,
+    base: Option<&dyn Block>,
+    out: &mut RecordBuf,
+) -> usize {
     out.u8(b.disk_code().expect("a stored block"));
+    let mut n = 0;
     for a in ValidAddr::of_block(b) {
+        let v = read_value(blk, a);
+        if base.is_some_and(|base| same(read_value(base, a), v)) {
+            continue;
+        }
         out.u8(a.spec().id.0);
-        match read_value(blk, a) {
+        match v {
             DiskValue::Real(v) => out.f32(v),
             DiskValue::Code(c) => out.u32(c.into()),
         }
+        n += 1;
+    }
+    n
+}
+
+/// The same bytes on disk.
+fn same(a: DiskValue, b: DiskValue) -> bool {
+    match (a, b) {
+        (DiskValue::Real(x), DiskValue::Real(y)) => x.to_bits() == y.to_bits(),
+        (DiskValue::Code(x), DiskValue::Code(y)) => x == y,
+        _ => false,
     }
 }
 

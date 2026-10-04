@@ -94,7 +94,7 @@ impl Blocks for MixBlocks<'_> {
 
 fn put_block(w: &mut RecordWriter<'_>, b: BlockRef, blk: &dyn Block) -> Result<(), StoreError> {
     let mut r = RecordBuf::new();
-    encode_block(b, blk, &mut r);
+    encode_block(b, blk, None, &mut r);
     w.put(RecordTag::Block, r.as_slice())
 }
 

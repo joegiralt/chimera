@@ -43,10 +43,10 @@ impl Default for SystemSettings {
 /// `Block(Theme)`, `Block(Midi)`, then `LastProject` when there is one.
 pub fn encode_system(s: &SystemSettings, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     let mut r = RecordBuf::new();
-    encode_block(BlockRef::Theme, &s.theme, &mut r);
+    encode_block(BlockRef::Theme, &s.theme, None, &mut r);
     w.put(RecordTag::Block, r.as_slice())?;
     let mut r = RecordBuf::new();
-    encode_block(BlockRef::Midi, &s.midi, &mut r);
+    encode_block(BlockRef::Midi, &s.midi, None, &mut r);
     w.put(RecordTag::Block, r.as_slice())?;
     match s.last_project {
         Some(p) => w.put(RecordTag::LastProject, &p.get().to_le_bytes()),

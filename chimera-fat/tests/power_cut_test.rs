@@ -21,8 +21,8 @@ use chimera_core::part::PartParams;
 use chimera_core::preset::Sound;
 use chimera_core::project::test_support::{confirm_overwrite, full, same, save_at};
 use chimera_core::project::{
-    PartId, Project, ProjectDecoder, ProjectNote, clear_project, list_projects, project_crc,
-    project_file,
+    PartId, Project, ProjectDecoder, ProjectNote, SlotId, clear_project, list_projects,
+    project_crc, project_file,
 };
 use chimera_core::storage::{
     Card, CardError, CardEvent, FileKind, Generation, Header, InPlaceError, ProjectId, RecordTag,
@@ -430,9 +430,20 @@ fn full_card_keeps_previous_generation() {
     assert!(load(&disk).unwrap().bits_eq(&sound(2)));
 }
 
-/// `full()` with Part 1's LEVEL at save `n`'s value: each save differs.
+/// `full()` with every Part and every slot no Part came from `dense` (a
+/// Part's Origin keeps its slot's CRC), and Part 1's LEVEL at save `n`'s
+/// value: each save differs.
 fn project_gen(n: u32) -> Box<Project> {
     let (mut p, _) = full();
+    for s in SlotId::ALL {
+        if let Some(mut x) = p.pool().get(s).filter(|_| p.users(s).is_empty()).cloned() {
+            ab::dense(&mut x, s.index() as u64);
+            p.pool_store(s, x);
+        }
+    }
+    for (i, id) in PartId::ALL.into_iter().enumerate() {
+        ab::dense(p.edit_part(id).sound, 100 + i as u64);
+    }
     p.edit_part(PartId::ALL[0])
         .mix
         .set(PartParams::LEVEL, 0.1 * n as f32);
@@ -471,7 +482,7 @@ fn load_project_in_place(slot: &Slot) -> Result<Box<Project>, InPlaceError> {
     Ok(q)
 }
 
-/// A project (about 44 KB, 90-odd blocks a side) cut at every block
+/// A project (`project_gen`'s: 75 block writes a save) cut at every block
 /// write of its third save: the in-place load always gets save 2 or 3
 /// whole, never an error, and the next save lands.
 #[test]
@@ -489,7 +500,7 @@ fn project_cut_keeps_a_generation() {
         let blocks: Vec<u32> = log(&s).writes.borrow().iter().map(|&(b, _)| b).collect();
         blocks
     };
-    assert!(blocks.len() > 80, "{} writes", blocks.len());
+    assert!(blocks.len() > 60, "{} writes", blocks.len());
     let (two, three) = (project_gen(2), project_gen(3));
     let (crc2, crc3) = (project_crc(&two), project_crc(&three));
     assert_ne!(crc2, crc3);
@@ -546,7 +557,8 @@ fn project_clear_cut_keeps_a_generation() {
         let blocks: Vec<u32> = log(&s).writes.borrow().iter().map(|&(b, _)| b).collect();
         blocks
     };
-    assert!(blocks.len() > 20, "{} writes", blocks.len());
+    // NEW, sparse (ADR 0087): 17 writes.
+    assert!(blocks.len() > 12, "{} writes", blocks.len());
     let (new, t) = Project::boxed();
     let two = project_gen(2);
     let mut loaded = [0; 2];

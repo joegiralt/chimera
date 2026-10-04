@@ -24,24 +24,40 @@ const MAX_ROUTES: usize = MAX_MOD_SOURCES * MAX_MOD_DESTS;
 const _: () = assert!(MAX_ROUTES * ROUTE_LEN <= MAX_RECORD_LEN);
 const _: () = assert!(MAX_REGISTRY_DESTS * REGISTRY_ENTRY_LEN <= MAX_RECORD_LEN);
 
+/// The most a Sound costs in the pool: its 16 B name and its sparse records
+/// with every param off neutral, a full registry and every route (1 858 B
+/// for 205 params), rounded up to 16 B. `sparse_bound` pins it.
+pub const MAX_SOUND_COST: usize = 1872;
+
 impl Sound {
     /// The frozen base a file decodes onto: every param at its v1 default,
     /// no routes, an empty registry. Not `init`, whose routes may change,
     /// nor today's defaults: OUT LEVEL 0.8 and RR 8, as before ADR 0063
     /// moved INIT's.
+    ///
+    /// A format contract (ADR 0087): `encode_sound` omits every param at
+    /// these values, so changing one changes every saved Sound. It needs a
+    /// migration in the same commit; `neutral_v1.txt` pins it.
     pub fn neutral(engine: EngineType) -> Sound {
-        let mut params = ParamSnapshot::for_engine(engine);
-        params.out.volume = 0.8;
-        for o in &mut params.algo.ops {
-            o.rr = 8;
-        }
         Sound {
             name: Sound::init_name(),
-            params,
+            params: neutral_params(engine),
             mod_state: ModState::with_sources(MAX_MOD_SOURCES),
             dest_registry: ModDestRegistry::new(),
         }
     }
+}
+
+/// `Sound::neutral`'s params, without the rest of a Sound. Out of line:
+/// inlined into each caller it cost 1.2 KB of flash.
+#[inline(never)]
+fn neutral_params(engine: EngineType) -> ParamSnapshot {
+    let mut params = ParamSnapshot::for_engine(engine);
+    params.out.volume = 0.8;
+    for o in &mut params.algo.ops {
+        o.rr = 8;
+    }
+    params
 }
 
 /// `a`'s (block code, param id). Every address a Sound routes is modulatable,
@@ -56,13 +72,18 @@ fn addr_of(block: u8, id: u8) -> Option<ParamAddr> {
     ValidAddr::find(b, ParamId(id)).map(ValidAddr::addr)
 }
 
+/// `Engine`, a `Block` per voice block holding only the params off
+/// `Sound::neutral` (none: no record), then `Registry`, `ModDests` and
+/// `Routes`.
 pub fn encode_sound(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     w.put(RecordTag::Engine, &[s.engine().disk_code()])?;
+    let neutral = neutral_params(s.engine());
     for b in BlockRef::ALL {
         if let Some(blk) = s.params.block(b) {
             let mut r = RecordBuf::new();
-            encode_block(b, blk, &mut r);
-            w.put(RecordTag::Block, r.as_slice())?;
+            if encode_block(b, blk, neutral.block(b), &mut r) > 0 {
+                w.put(RecordTag::Block, r.as_slice())?;
+            }
         }
     }
 
