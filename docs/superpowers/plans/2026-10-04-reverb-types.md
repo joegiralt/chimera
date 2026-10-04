@@ -993,6 +993,68 @@ against `BlockBudget::budget_cycles` (448,000).
   rand_4k p95 5,410 µs, card 15,931 MB, free 15,912 MB
   (`.superpowers/sdd/2026-10-04-reverb-types/card-run.txt`).
 
+### Task 3: worst-case kernels (2026-10-04, rev V at 480 MHz, unit)
+
+Bench at `3f73921b` plus `bench_rev` (this task's commit), builds
+`bench,orbit` ("default") and `bench,orbit,master-tape` ("tape"). Each K
+row is one kernel's ring block timed alone, in cycles per output sample,
+with six A16+17 voices rendered untimed between blocks (BUS+V's cache
+traffic). K QUAD is QUAD's crossfading ring (`QuadState`, `worst_reverb`'s
+settings) in the same harness: ΔCOST = K row − K QUAD, and the row in
+BUS+V's frame is QUAD_BUS_V + ΔCOST, so ΔCOST = that row − QUAD_BUS_V.
+
+| Row | default | tape | ΔCOST default / tape |
+|---|---|---|---|
+| K QUAD (reference) | 304 | 303 | — |
+| K ROOM | 287 | 288 | **−17 / −15** |
+| K HALL | 278 | 280 | **−26 / −23** |
+| K BURST | 241 | 242 | **−63 / −61** |
+| K PAIR (16 moving pairs) | 265 | 265 | — |
+| K FIX (32 fixed reads) | 132 | 132 | — |
+| K CONV (converter stubs alone) | 33 | 33 | — |
+
+- **Pair cost:** (K PAIR − K FIX) / 16 = **8.3 cycles per output sample**
+  a pair over its two fixed reads, both builds: about +4.5 instructions in
+  the § CPU budget model (1.86 cycles per instruction per ring sample),
+  under both the +7 and the +10 estimate.
+- **The kernels carry GRIT's converter stubs** (3 quantisations, 3
+  one-poles, 2 xorshifts: K CONV, 33), as the brief bills them; GRIT has
+  since left, so the engines will read about 33 under these. Without them
+  ROOM is about −50.
+- **Gate:** every kernel's ΔCOST ≤ 0, inside 76 (default) and 23 (tape).
+- **ROOM-T: not needed.** K ROOM reads 15 under K QUAD on the tape build
+  (gate ≤ 23), with the stubs in. Task 9 builds ROOM as specified: both
+  stage APs smeared, 3 output taps a side. BURST keeps 4 crossfading
+  taps, HALL two smeared APs.
+- **Kernel shapes** (`chimera-stm32/src/bench_rev.rs`): ROOM, PRE-DLY and
+  4 stage delays always crossfading (720 samples, 5 ms round-trip steps),
+  A2's and B1's stage APs smeared, A1's and B2's fixed, all normalised;
+  4-AP f32 diffuser, rotation, 2 soft clips, 6 fixed taps. HALL, 1 loop ×
+  4 stages, APs 1 and 3 smeared, 1 soft clip. BURST, 12 taps (tap 0 the
+  register, tap 11 REGEN's read too, taps 8–11 crossfading every 128),
+  REGEN's one-pole into a clipped truncating write, TAIL's delay and
+  normalised AP with its clip, a 2-AP f32 pre-diffuser, 2 f32
+  decorrelator APs a side with each side's second smeared (the spec's 2
+  moving pairs). Lengths are the spec's at SIZE 1 / LENGTH 800 ms.
+
+### Unit session readings (2026-10-04, same flashes as Task 3)
+
+| Row | default (`bench,orbit`) | tape (`bench,orbit,master-tape`) |
+|---|---|---|
+| MIX | 793 | 794 |
+| REV QUAD | 58 | 55 |
+| REV QUAD S | 51 | 51 |
+| BUS | 1039 | 1356 |
+| BUS+V | 1084 | 1395 |
+| STRESS (max/budget) | 529,497 / 448,000: over | 489,640 / 448,000: over |
+| REV SWITCH MAX (max/budget) | **414,093 / 448,000** | **435,137 / 448,000** |
+
+- **BUS+V fell about 100** against Task 1's ORBIT column (1186 → 1084;
+  MIX 871 → 793): GRIT's removal and the dispatcher. `FxBus::COST` (1188)
+  now bills above the reading; it is left as is here.
+- **STRESS is over with ORBIT** on both builds, as Task 1 found (536,475
+  then); not this task's.
+
 ### Task 4: the dispatcher (2026-10-04, host)
 
 - **T4 golden reference: `a2abe82f`.** QUAD through `Reverb` hashes as
@@ -1002,8 +1064,9 @@ against `BlockBudget::budget_cycles` (448,000).
   every `fx_golden_test` case, unchanged.
 - **Flash:** plain release `text` 701,012 B (+240 over `695a6ef3`'s
   700,772); `--features orbit` 720,596 B (+352 over 720,244).
-- **REV QUAD bench:** deferred to the next unit session (the unit was
-  busy); gate REV QUAD ≤ QUAD_REV + 1 %.
+- **REV QUAD bench** (unit, 2026-10-04, at `3f73921b` + Task 3): 58 on
+  `bench,orbit` against Task 1's ORBIT 61, gate ≤ 61.6: **passes**; 55 on
+  `bench,orbit,master-tape` (Task 1's tape, no ORBIT, read 57).
 
 ### Task 5, first build: the converters (2026-10-04, host). Superseded the same day: GRIT leaves the reverb; this code is on `converters-wip`
 
@@ -1069,8 +1132,9 @@ against `BlockBudget::budget_cycles` (448,000).
   `--features orbit` 721,968 B (+1,372 over 720,596). SMEAR is a runtime
   branch at the four stage reads (a third `run` monomorph cost +4.3 KB);
   the cube's jitter is about 300 B of it.
-- **REV QUAD, REV QUAD S bench:** deferred (the unit was busy). The bench
-  build carries the REV QUAD S row.
+- **REV QUAD S bench** (unit, 2026-10-04, at `3f73921b` + Task 3): 51 on
+  both `bench,orbit` and `bench,orbit,master-tape`, under REV QUAD (58,
+  55): **passes**; ΔCOST against REV QUAD < 0.
 
 ### Task 7: the switch (2026-10-04, host)
 
@@ -1087,7 +1151,9 @@ against `BlockBudget::budget_cycles` (448,000).
   `Left<N>` cost +144 over the one-block CLEAR. MIX's ramp and the
   switch's share one out-of-line loop, which more than pays for the
   switch.
-- **REV SWITCH MAX bench:** deferred to the next unit session. The bench
+- **REV SWITCH MAX bench** (unit, 2026-10-04, at `3f73921b` + Task 3):
+  414,093 on `bench,orbit` and 435,137 on `bench,orbit,master-tape`,
+  against 448,000: **passes** both. The bench
   build carries the row (QUAD → QUAD every 40 blocks over 2,000, six
   A16+17 voices, every effect at its worst, the TAPE too in the
   master-tape build); gate ≤ `BlockBudget::budget_cycles`, run on both

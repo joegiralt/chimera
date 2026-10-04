@@ -13,6 +13,8 @@ compile_error!(
 mod audio;
 #[cfg(all(feature = "bench", not(feature = "sd-probe")))]
 mod bench;
+#[cfg(all(feature = "bench", not(feature = "sd-probe")))]
+mod bench_rev;
 mod cache;
 #[cfg(all(feature = "bench", feature = "usb-console"))]
 mod card_speed;

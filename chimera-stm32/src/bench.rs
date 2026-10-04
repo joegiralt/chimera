@@ -52,6 +52,7 @@ use cortex_m::peripheral::DWT;
 use embedded_graphics_core::pixelcolor::Rgb565;
 
 use crate::audio::engine;
+use crate::bench_rev::{self, RevKernel};
 use crate::clocks::Clocks;
 
 /// The bench's screens as text: about 4 KB today, `# TRUNCATED` past this.
@@ -634,7 +635,9 @@ pub fn run(
         BlockBudget::for_cpu(clocks.cpu_hz).budget_cycles(),
     );
     let switch = rig.switch_max();
-    show_reverb(rec, &rev, fx[0], bus_v, stress, switch);
+    let kernels: [u32; bench_rev::ROWS.len()] =
+        core::array::from_fn(|i| bench_rev::with_kernel(i, |k| rig.time_rev_kernel(k)));
+    show_reverb(rec, &rev, fx[0], bus_v, stress, switch, &kernels);
     hold(clocks);
     let mut routing = [Counts::default(); ROUTING_ROWS];
     for (row, &(_, part, each)) in routing.iter_mut().zip(&ROUTING) {
@@ -1031,6 +1034,45 @@ impl Rig<'_> {
         let mut cycles = 0u32;
         for b in 0..TIMED_BLOCKS {
             cycles = cycles.wrapping_add(block(shared, fx, &mut self.dac, WARM_BLOCKS + b));
+        }
+        cycles / (TIMED_BLOCKS * BLOCK_SIZE as u32)
+    }
+
+    /// A reverb kernel's cycles per output sample (`bench_rev`), its ring
+    /// block timed alone: as BUS+V, six `a16_a17` voices on Part 1 render,
+    /// untimed, before every block, so its lines start cold.
+    #[inline(never)]
+    fn time_rev_kernel(&mut self, k: &mut dyn RevKernel) -> u32 {
+        use chimera_core::dsp::halfband::HALF;
+        let budget = SampleBudget::for_cpu(u32::MAX);
+        let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
+        let fx = FxBus::init_in_place(self.fx_slot);
+        let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
+        shared.fx = FxParams::default();
+        for (i, part) in shared.parts.iter_mut().enumerate() {
+            part.mix.channel = MidiChannel::clamped(i as u8);
+        }
+        shared.parts[0].params = a16_a17();
+        hold_notes(inst, shared, 0);
+        let arena = bench_rev::arena();
+        let mut x = 0x1234_5678u32;
+        let u: [f32; HALF] = core::array::from_fn(|_| {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x as f32 / u32::MAX as f32 - 0.5
+        });
+        let (mut l, mut r) = ([0.0; HALF], [0.0; HALF]);
+        let mut cycles = 0u32;
+        for b in 0..WARM_BLOCKS + TIMED_BLOCKS {
+            inst.render(fx, &mut self.dac, shared, &mut self.scope);
+            let start = DWT::cycle_count();
+            k.run(arena, black_box(&u), &mut l, &mut r);
+            let c = DWT::cycle_count().wrapping_sub(start);
+            black_box((&l, &r));
+            if b >= WARM_BLOCKS {
+                cycles = cycles.wrapping_add(c);
+            }
         }
         cycles / (TIMED_BLOCKS * BLOCK_SIZE as u32)
     }
@@ -1469,6 +1511,7 @@ fn show_reverb(
     bus_v: u32,
     ([first, after], budget): ([u32; 2], u32),
     (switch, switch_budget): (u32, u32),
+    kernels: &[u32; bench_rev::ROWS.len()],
 ) {
     rec.clear();
     rec.heading("REVERB");
@@ -1493,6 +1536,17 @@ fn show_reverb(
     line.clear();
     let _ = write!(line, "REV SWITCH MAX {switch}/{switch_budget}");
     rec.line(Face::Label(theme::INK2), line.as_str(), (4, y + 20));
+    // Task 3's throwaway kernels, cycles per output sample as timed.
+    for (i, (label, c)) in bench_rev::ROWS.iter().zip(kernels).enumerate() {
+        line.clear();
+        let _ = write!(line, "{label} {c}");
+        let (col, row) = ((i % 3) as i32, (i / 3) as i32);
+        rec.line(
+            Face::Label(theme::INK2),
+            line.as_str(),
+            (4 + col * 78, y + 30 + row * 10),
+        );
+    }
     rec.flush();
 }
 
