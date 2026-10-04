@@ -366,27 +366,30 @@ impl<'a, B: Blocks> Fs<'a, B> {
             Some(e @ FsError::Dev(_)) => (Some(e), None),
             f => (None, f),
         };
-        let linked = match dev {
+        let flushed = match dev {
             Some(e) => Err(e),
-            None => self.table.flush().and_then(|()| {
-                self.put_entry(
-                    at,
-                    &Entry {
-                        start: first,
-                        len,
-                        ..empty
-                    },
-                    false,
-                )
-            }),
+            None => self.table.flush(),
         };
-        if let Err(e) = linked {
+        if let Err(e) = flushed {
             // No entry holds the chain: free it now, or at the next change.
             if first != 0 {
                 self.table.drop_chain(first);
             }
             return Err(e);
         }
+        // A failed entry write may still have landed (a card that took the
+        // block, then timed out busy), so its chain is never freed here: a
+        // leak at worst, never a cross-link.
+        // private issue #360
+        self.put_entry(
+            at,
+            &Entry {
+                start: first,
+                len,
+                ..empty
+            },
+            false,
+        )?;
         match (failed, r) {
             (Some(e), _) => Err(e),
             (None, Err(e)) => Err(FsError::Body(e)),
