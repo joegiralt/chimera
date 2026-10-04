@@ -12,7 +12,7 @@ use chimera_core::dsp::filter::{FilterKind, FilterMode};
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{CPU_HZ_REV_V, CPU_HZ_REV_Y, Cost, MAX_VOICES, SampleBudget};
-use chimera_core::instrument::AudioShared;
+use chimera_core::instrument::{AudioShared, NoteOrigin};
 use chimera_core::modulation::{ModRouting, ModSource, ModState, VCA};
 use chimera_core::params::{EngineType, ParamSnapshot};
 
@@ -1033,8 +1033,10 @@ fn a_stolen_voice_is_billed_until_its_fade_ends() {
 /// The STRESS scene (the bench's): NEW's Sounds on Parts 1–5, A16 ∪ A17
 /// on Part 6, its six keys down a block after ORBIT starts (or, with
 /// `keys_first`, before), ORBIT playing NEW's groove. Every block, the
-/// most voices sounding and the most the voices and bus rendered.
-fn stress(keys_first: bool, blocks: usize) -> (usize, u32) {
+/// most voices sounding and the most the voices and bus rendered; and
+/// whether every block from ORBIT's start held all six keys, none stolen
+/// or shed.
+fn stress(keys_first: bool, blocks: usize) -> (usize, u32, bool) {
     use chimera_core::factory::factory_sound;
     use chimera_core::orbit::runner::OrbitRunner;
     use chimera_core::part::PartParams;
@@ -1063,7 +1065,7 @@ fn stress(keys_first: bool, blocks: usize) -> (usize, u32) {
         .push(chimera_core::orbit::channel::Cmd::TogglePlay);
     let sr = core::num::NonZeroU32::new(common::SR).unwrap();
     let mut runner = Box::new(OrbitRunner::new(sr));
-    let (mut voices, mut most) = (0, 0);
+    let (mut voices, mut most, mut kept) = (0, 0, true);
     for b in 0..blocks {
         if b == 1 && !keys_first {
             keys(&mut r);
@@ -1073,8 +1075,17 @@ fn stress(keys_first: bool, blocks: usize) -> (usize, u32) {
         r.render(1);
         voices = voices.max(r.inst.sounding());
         most = most.max(before).max(rendered(&r.inst, &r.shared));
+        let a = r.inst.allocator();
+        let origins = r.inst.origins();
+        let held = (0..MAX_VOICES)
+            .filter(|&v| {
+                let s = a.slots()[v];
+                s.part() == Some(5) && s.held() && !s.dying() && origins[v] == NoteOrigin::Live
+            })
+            .count();
+        kept &= held == 6;
     }
-    (voices, most)
+    (voices, most, kept)
 }
 
 /// The bench's STRESS run: 10 s, past NEW's four bars.
@@ -1082,15 +1093,20 @@ const STRESS_BLOCKS: usize = 7_500;
 
 /// ADR 0091: in the STRESS scene with the keys down a block after ORBIT
 /// starts, what the voices and bus render leaves room for ORBIT's own
-/// block and a burst in every block. Keys down before it keep sounding
-/// past that (its reserve refuses, it never sheds), within the budget.
+/// block and a burst in every block. Keys down before it keep sounding,
+/// all six, past that (its reserve refuses, it never steals them or sheds),
+/// within the budget.
 #[test]
 fn orbit_and_a_burst_fit_beside_what_renders() {
     use chimera_core::instrument::Instrument;
     use chimera_core::orbit::runner::OrbitRunner;
     let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
     for keys_first in [true, false] {
-        let (voices, most) = stress(keys_first, STRESS_BLOCKS);
+        let (voices, most, kept) = stress(keys_first, STRESS_BLOCKS);
+        // Six keys first, none stolen or shed once ORBIT starts; a block
+        // after, five voices beside ORBIT's reserve (the tape's too).
+        assert_eq!(voices, if keys_first { 6 } else { 5 }, "{keys_first}");
+        assert!(kept || !keys_first, "a key stolen or shed");
         let room = match keys_first {
             true => 0,
             false => Instrument::BURST.0 + OrbitRunner::COST.0,
