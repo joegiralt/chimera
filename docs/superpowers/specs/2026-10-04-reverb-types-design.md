@@ -8,14 +8,15 @@ The owner's answers of 2026-10-04 are folded in:
 - "sound first" on CPU;
 - ECHO is dropped, since the master tape delay covers it, and its design moves to a separate per-Part echo issue;
 - reverbs stay pitch-stable;
-- GRIT is redesigned everywhere, QUAD included, as a converter rather than an in-loop grid (§ GRIT).
+- GRIT leaves the reverb: no converters and no grid. Converter colour is a future master-stage feature (§ GRIT is retired);
+- SMEAR replaces the sine wobble and GRIT's slot on the page: Lexicon-style random wander on every modulated line, QUAD included (§ SMEAR).
 
 ## Intent
 
 The owner, 2026-10-03:
 - The master reverb gets a TYPE setting, and only the selected model runs.
 - The TYPEs are families, not presets.
-- The method is to study how the Midiverb II programs work and write our own Rust. Then extend past the hardware with an LFO wobble, mod destinations and tempo-synced times.
+- The method is to study how the Midiverb II programs work and write our own Rust. Then extend past the hardware with modulation of the loops (now SMEAR), mod destinations and tempo-synced times.
 - No TYPE may cost more CPU than today's reverb. The owner amended this the same day with "sound first" (2026-10-04): QUAD's cost becomes the target, and the hard limit is the cost model's headroom (§ CPU budget).
 - All TYPEs share today's delay memory, and nothing grows.
 
@@ -28,10 +29,10 @@ This spec turns that into three engines and five new TYPEs beside today's ring. 
 | A TYPE setting. Only the selected model runs. | § Switching TYPE: one engine at a time, the fade included. |
 | TYPEs are families: QUAD, ROOM, HALL (PLATE a zone of it), BLOOM, GATE, REVERSE. The engines are LOOP, BURST and BLOOM. ECHO is dropped (2026-10-04). | § Engines; § PLATE is a zone of HALL. |
 | Study github.com/thement/midiverb_emulator (GPL-3.0) as documentation only. Never copy its code or transcribe its ROM coefficient tables. Commit 7119f7ad is not revived. | § Provenance. |
-| Extend past the hardware: a loop LFO wobble, mod destinations, and tempo-synced PRE-DLY, GATE LENGTH and optionally DECAY. Mod destinations are deferred to #345 (2026-10-04). | § Wobble; § Modulation (deferred); § Tempo sync. |
+| Extend past the hardware: modulation of the loops (a sine wobble, now SMEAR's random wander, 2026-10-04), mod destinations, and tempo-synced PRE-DLY, GATE LENGTH and optionally DECAY. Mod destinations are deferred to #345 (2026-10-04). | § SMEAR; § Modulation (deferred); § Tempo sync. |
 | "Sound first" (2026-10-04). QUAD's 485 cycles per output sample is the **target**. The **hard limit** is the cost model's headroom, enforced by a test, plus a stress run on the unit. | § CPU budget; § Build order, step 0. |
 | One 23,220-sample i16 arena (46,440 B), and nothing grows. About 1–3 KB of flash per TYPE. | § Arena; § Flash. |
-| QUAD stays exactly as it is, crossfade included (2026-10-04). Amended the same day for GRIT only: GRIT is redesigned everywhere, QUAD included. | § QUAD; § GRIT. |
+| QUAD stays exactly as it is, crossfade included (2026-10-04). Amended the same day: GRIT leaves the reverb, and QUAD gains SMEAR (bit-identical at SMEAR 0). | § QUAD; § SMEAR; § GRIT is retired. |
 | **Reverbs stay pitch-stable** (2026-10-04). In LOOP, the round-trip sum moves together and the tail is never re-pitched pass after pass. In BURST and REGEN, the cumulative shift per pass is bounded. The tape-echo pitch dive belongs to the future per-Part echo. This supersedes the earlier "SIZE glides via interpolated read pointers". | § Moving a length; § Pitch bounds. |
 | A switch fades the old tail out quickly while the arena clears, with no click and no stale echo. Parameter changes are lerped, never snapped. | § Switching TYPE; § Smoothing. |
 | No users yet: old projects load safely, as QUAD. | § Storage. |
@@ -123,7 +124,7 @@ That makes it a preset, and the MV2 itself had no plate topology. So:
   - the stored knobs never change. The SIZE cell's value text reads `PLATE` with its ms in the zone, and TAIL draws the effective values;
   - DIFFUSE and TONE take the zone's values through their per-block eases. **PRE-DLY's** effective length moves, so it goes through the crossfade path like SIZE (§ Moving a length), in steps of at most 5 ms. Nothing is lerped per sample.
   - Cost: the eases and the crossfade setup already exist, and the zone itself is about 150 B of flash.
-- **The plate corner** is a named, tested setting: HALL with SIZE 0, DECAY 0.35, TONE 0, DIFFUSE 1, DAMP 0.1, PRE-DLY 0, WOBBLE 0.5 and RATE 0.6. It has its own golden and its own A/B render.
+- **The plate corner** is a named, tested setting: HALL with SIZE 0, DECAY 0.35, TONE 0, DIFFUSE 1, DAMP 0.1, PRE-DLY 0, SMEAR 0.5 and RATE 0.6. It has its own golden and its own A/B render.
 - **Reversing this later is cheap.** A PLATE TYPE would be a new disk code mapped to the HALL engine, with its own panel row and ranges: about 200 B of flash and no DSP.
 
 ## Engines
@@ -133,13 +134,13 @@ That makes it a preset, and the MV2 itself had no plate topology. So:
 - **Rate.** Every engine runs at half rate, 24 kHz on the chip, behind today's half-band decimator and two interpolators (ADR 0028). They are shared and unchanged. The band limit stays the dark top every TYPE shares.
 - **Storage.**
   - Every line is i16, full scale ±2.0, in the one arena (§ Arena).
-  - **Storage quantisation is fixed**, at 1 LSB, whatever GRIT is: plain 16-bit memory, as the Midiverb's was. `Grid` is no longer GRIT's mechanism (§ GRIT).
+  - **Storage quantisation is fixed**, at 1 LSB: plain 16-bit memory, as the Midiverb's was, which gives its own fine grain. There is no `Grid` and no GRIT (§ GRIT is retired).
   - ADR 0028's Q3 rule carries over at that fixed step: allpass state writes truncate toward zero, and delay and damper writes round. Truncation is kept where ADR 0028 measured it necessary, because rounding everywhere sustains a 12–32 LSB tail.
   - **A loop with no allpass in it truncates its feedback write.** That means BURST's line when REGEN is up. Rounding there would sustain a limit cycle: any gain above ½ holds ±Δ, as hum or DC, at the 1 LSB level. Truncation toward zero always decays.
   - FREEZE is not in this spec. No loop gain reaches 1.
 - **Two kinds of read.**
   - **Fixed reads** sit at an integer offset that changes only at a crossfade's start. These are QUAD's kind of read: they go through `ring.rs`'s wrap-free segments, one integer load each, with no per-sample index work.
-  - **Moving reads** are only the wobble's. Each is a linear pair, `x0 + f·(x1 − x0)`. Its index is computed per sample (integer part, fraction, and a branch-free wrap of both slots), so it stays out of the segment bound. That costs about 7–10 instructions more than two fixed reads.
+  - **Moving reads** are only SMEAR's. Each is a linear pair, `x0 + f·(x1 − x0)`. Its index is computed per sample (integer part, fraction, and a branch-free wrap of both slots), so it stays out of the segment bound. That costs about 7–10 instructions more than two fixed reads.
   - **Every length that a knob or the tempo moves** (SIZE, LENGTH, SWELL, PRE-DLY) changes by a pitch-free crossfade between fixed reads (§ Moving a length), never by a moving read.
   - **Output taps never move.** They sit at fixed offsets behind their line's write point (§ LOOP engine).
 - **Reads never reach the write head.** Every read is at least 2 samples behind its line's write point (`d ≥ 2`, a clamp after each length is computed). The one exception is BURST's tap 0, which is the input value itself, taken from a register.
@@ -154,63 +155,66 @@ That makes it a preset, and the MV2 itself had no plate topology. So:
   - The new engines cap a stage at **0.985**; QUAD keeps its 0.97. The truncating writes keep every loop decaying, and 0.985⁴ reaches HALL's 10 s at its 120 ms loop (§ Each TYPE's knobs).
   - RT60 has a floor at `t_min`, the longest allpass's own ring, as in QUAD.
   - Gains ramp across each block from the last block's value (QUAD's `RingBlock`).
-- **The wobble LFO.**
-  - One per engine: a `u32` phase and a branch-free parabolic sine, the same idiom as the chorus's LFO (ADR 0031, `335cd3a`).
-  - Its moved reads run 90° apart, so the left and right tails move differently.
-  - It is computed at the block's ends and interpolated linearly across the block's 32 ring samples. At its fastest rate, 2 Hz, the error is under 10⁻⁴ of the depth.
-  - The pitch it can cause is bounded (§ Pitch bounds).
+- **The SMEAR source.** Each smeared line has its own slow random wander (§ SMEAR). It is computed once a block and interpolated linearly across the block's 32 ring samples. The pitch it can cause is bounded (§ Pitch bounds).
 - **Input gain is ½ in every engine**, as in QUAD, so every TYPE keeps QUAD's resolution. Headroom comes from the level plan instead (§ Level plan).
 - **Output.** The return is ×`WET[type]` × MIX, eased as today. Each TYPE's `WET` is set so its default return's RMS matches QUAD's default within ±1 dB. A test pins this (§ Tests). QUAD's `WET_GAIN`, 4.54, is unchanged.
 
-### GRIT: a converter, not a grid
+### SMEAR: random wander
 
-Owner ruling, 2026-10-04: GRIT is redesigned everywhere, QUAD included.
-- **What was wrong.** Today's GRIT requantises every write *inside* the feedback loop (`Grid`, Δ = 2^(6·GRIT) LSBs, about 10 bits at GRIT 1, undithered). That error is correlated with the signal and recirculates, so decaying tails break into fizz. The owner hears it as "crinkling noise on top", not as old converters.
-- **What GRIT becomes:** the reverb's converters, at the two points where the signal enters and leaves the engine. The loop never quantises by GRIT again.
+Owner ruling, 2026-10-04: SMEAR replaces the sine WOBBLE, after the Lexicon 480L's Spin/Wander and Random Hall programs (described in Lexicon's manuals; no code).
+- **What it does.** Every modulated delay line in a loop drifts slowly and randomly, each independently of the others. The tail smears into a soft wash instead of ringing metallic, and there is no audible vibrato, because no line moves periodically and no two move together.
+- **The knobs.** SMEAR (slot 11, ident `SMEAR`) sets the depth; RATE (slot 12) sets the wander speed. Slots 6–13 are not on `main` yet, so the ident change freezes nothing.
 
-**The two converter points** (both at the 24 kHz engine rate):
-- **ADC:** the decimated send, in dBFS units (1.0 = 0 dBFS), after the decimator and before TONE and the ½ injection. It is mono.
-- **DAC:** the engine's L and R return, after `WET` and before MIX and the interpolators, in output dBFS units. MIX follows it, so a lower MIX lowers the hiss with the wet level, as a return fader does.
+**The source, per smeared line:**
+1. **Targets.** A new random target, uniform in −1..1, every `T = 1 / (2·rate)` seconds. Each line's period starts at its own phase (line k at k/n of T), so no two lines jump together.
+2. **Randomness.** One xorshift32 per engine, stepped once per new target. The lines draw in turn, so their sequences are decorrelated.
+3. **Smoothing.** A 2-pole low-pass (two cascaded one-poles at `fc = rate`), stepped once a block, turns the stepped targets into a smooth drift with no corners.
+4. **Interpolation.** The drift is interpolated linearly across the block, like the old LFO. At the fastest rate, 2 Hz, the error is under 10⁻⁴ of the depth.
+5. **Read offset.** `d_eff = d − D·(1 + x)`, with x the smoothed drift in −1..1, so the read only ever moves *shorter* than the nominal length, within [d − 2D, d]. No line needs slots beyond its length, so QUAD's full arena needs no change.
 
-**At each point, in order:**
-1. **Bandwidth.** A one-pole lowpass per channel (ADC one, DAC two). Its cutoff is `fc = 11 kHz · (8/11)^GRIT`: 11 kHz at GRIT 0, about 8 kHz at GRIT 1. At the ADC it acts as the anti-alias filter, and at the DAC as the reconstruction filter.
-2. **Dither.** TPDF dither of ±1 converter LSB: the sum of two uniforms. Low levels become soft hiss, not granular distortion.
-3. **Bit depth.** Quantisation with rounding to `b = 16 − 6·GRIT` bits, continuous, with step `Δ_c = 2^(1−b)` over the ±1.0 range: 16 bits at GRIT 0, 14.2 at 0.3, 12.4 at 0.6 and 10 at 1.
+**Cost.**
+- Per smeared line per block: one target check, at most one xorshift step, and two one-poles. That is about 10 instructions, or **under 0.4 a sample**.
+- Per moving read, the cost is the pair's: 17–20 instructions, as the wobble's was. SMEAR adds only that 0.4.
 
-**The details.**
-- **GRIT 0 is a bypass.** When eased GRIT is exactly 0, the filters and both quantisers are skipped. QUAD at GRIT 0 is then bit-identical to today's QUAD at GRIT 0, since today's grid at GRIT 0 is the same 1 LSB Q3 storage.
-- **The noise source.** One xorshift32 state in the reverb, stepped twice per ring sample. Each step gives 4 bytes, and two bytes make one TPDF value (byte − byte, scaled to Δ_c), so the 6 bytes cover the ADC and both DAC channels. The 8-bit granularity is 1/256 of a converter LSB, far below audibility. It uses no heap and no libc.
-- **Idle mute.** Dither runs at a converter only while its input has been non-zero within the last 100 ms. After that it fades out over 50 ms. Real units' converters gated the same way.
-  - A silent reverb therefore still falls to exact zero, as ADR 0028 and the silent-tail tests require.
-  - The fade is a gain ramp, not a switch, so there is no click.
-- **GRIT eases**, with a 20 ms one-pole as before (ADR 0061). Δ_c and the cutoff follow the eased value once a block.
+**Which lines it moves:**
 
-**The noise floor.** A b-bit TPDF-dithered converter's noise is about −6.02·b + 3 dBFS. ADC noise reaches the output through the reverb at about unity broadband gain, since `WET` matches loudness, so the two converters together are about −6.02·b + 6 dBFS at MIX 1. Combined with the arena floor (QUAD's estimated −66 dBFS):
+| TYPE | Smeared lines | In one loop |
+|---|---|---|
+| QUAD | the 4 stage delays (S1–S4) | all 4: the ring is one loop |
+| ROOM | the APs of stages A2 and B1 | 1 per loop |
+| HALL | the APs of stages 1 and 3 | 2 |
+| BLOOM | loop APs 3, 6 and 9 | 3 |
+| GATE, REVERSE | the second decorrelator AP per side | none: outside every loop |
 
-| GRIT | Bits | Converters (ADC + DAC) | QUAD total | Today's QUAD |
-|---|---|---|---|---|
-| 0 | 16 | bypassed | −66 dBFS | −66 dBFS |
-| 0.3 | 14.2 | −79 | −66 | −55, as fizz |
-| 0.6 | 12.4 | −69 | −64 | about −45, as fizz |
-| 1 | 10 | −54 | −54, as hiss under an 8 kHz top | about −36, as fizz |
+**QUAD with SMEAR.**
+- QUAD's main page becomes SIZE · TIME · DAMP · SMEAR, and RATE sits on QUAD's MORE page.
+  - **Why MORE and not a fixed rate:** RATE then means the same thing in the same place on every TYPE. The wander speed is what decides between a slow wash and a restless one. A fixed rate would take that choice away on the TYPE most people start from.
+- **Bit-identical at SMEAR 0.** SMEAR 0 runs QUAD's existing code path untouched (its `run::<XF>`), so its output equals the Task 4 reference wherever that reference ran at GRIT 0. Cases that used GRIT ≠ 0 are re-recorded once, when GRIT leaves.
+- **SMEAR and QUAD's SIZE crossfade never run together.** QUAD gets a third monomorph, `run::<XF = false, SMEAR = true>`, and never `<true, true>`.
+  - When SIZE moves while SMEAR > 0, the smear depth eases to 0 (20 ms, so the reads land exactly on their integer lengths). Then the 32-step crossfade runs, and then the depth eases back.
+  - A SIZE move under SMEAR therefore takes 20 ms longer. QUAD's worst case stays its crossfading path.
+- **The default** is SMEAR 0 for QUAD, so its sound and goldens hold, and 0.3 for ROOM, HALL and BLOOM.
 
-The other TYPEs add their arena offsets from the table above at GRIT 0 and 0.3. From GRIT 0.6 up, the converters dominate, so every TYPE sits within about 1 dB of QUAD.
+### GRIT is retired
 
-- The default GRIT stays 0.3. It is now cleaner than before, and the owner's before-and-after A/B (§ Tests) decides whether the default should move.
+Owner ruling, 2026-10-04: GRIT leaves the reverb completely.
+- **No converters and no `Grid`.** The arena keeps plain i16 storage with fixed rounding, ADR 0028's Q3 at 1 LSB, which gives some grain on its own, like the Midiverb's memory.
+- **The converter work moves.** Converter colour (bits, high cut, noise floor, compander grain) becomes a future master-stage feature, filed as its own issue. The Task 5 converter code is kept on branch `converters-wip` for it.
+- **Reverb ParamId 5 (`GRIT`) is retired**, as id 0 is:
+  - it leaves `REVERB_SPECS`, and `(22, 5)` joins `RETIRED`;
+  - the fixture's `B 22 5 GRIT` row goes, as Filter's retired ids did;
+  - an old project's stored GRIT loads safely and is ignored.
+- **The cost.** Fixed 1 LSB storage drops `Grid`'s per-write scale and rescale: about 4 instructions on a truncating write and 3 on a rounding one.
 
-**Cost**, per ring sample at GRIT > 0 (billed at GRIT 1):
-- **Added:** 3 quantisations of about 3 instructions, 3 dither adds of about 2, TPDF extraction of about 6, 2 xorshift steps of 3, and 3 one-poles of 3. That is about **36 instructions**.
-- **Saved:** every in-loop write drops `Grid`'s scale and rescale. A truncating write saves about 4 instructions (`(x·inv) as i32 as f32 · Δ` becomes one convert), and a rounding write saves about 3 (`rint(x·inv)·Δ` becomes one VCVTA).
+| TYPE | i16 writes per ring sample (truncating + rounding) | Saved |
+|---|---|---|
+| QUAD | 8 + 8 (4 delays, 4 dampers) | 56 |
+| ROOM | 4 + 7 | 37 |
+| HALL | 4 + 7 | 37 |
+| GATE, REVERSE | 2 + 2 | 14 |
+| BLOOM | 10 + 3 | 49 |
 
-| TYPE | i16 writes per ring sample (truncating + rounding) | Saved | Net |
-|---|---|---|---|
-| QUAD | 8 + 8 (4 delays, 4 dampers) | 56 | **−20** |
-| ROOM | 4 + 7 | 37 | **−1** |
-| HALL | 4 + 7 | 37 | **−1** |
-| GATE, REVERSE | 2 + 2 | 14 | **+22** |
-| BLOOM | 10 + 3 | 49 | **−13** |
-
-The CPU table (§ CPU budget) includes these.
+- **Bit-identity.** At GRIT 0, `Grid` was exactly this fixed quantiser, so dropping it leaves every GRIT-0 output bit-identical.
 
 ### Level plan
 
@@ -276,7 +280,7 @@ Every stored value must stay inside the i16 full scale, ±2.0 in line units, at 
 - Alias energy is bounded by test at −40 dB, on a held loop mode near 5 kHz.
 - Oversampling the clip was rejected: it would double the clip's cost on every loop.
 
-**Arena noise floor**, at MIX 1, against QUAD's estimated −66 dBFS. This is the fixed 1 LSB storage floor. GRIT's converter noise adds to it (§ GRIT):
+**Arena noise floor**, at MIX 1, against QUAD's estimated −66 dBFS. This is the fixed 1 LSB storage floor, and the reverb's only noise:
 
 | TYPE | Estimate | Why |
 |---|---|---|
@@ -284,9 +288,8 @@ Every stored value must stay inside the i16 full scale, ±2.0 in line units, at 
 | GATE, REVERSE | ±2 dB | f32 decorrelators (no noise); the TAIL path alone runs up to 10.8 dB lower, inside a tail ≥ 20 dB below the burst |
 | BLOOM | +3 to +4 dB at the default (g 0.55); +4 to +5 dB at DIFFUSE 1 (g 0.65) | ten normalised loop APs, +7 to +9 dB on their error |
 
-- **GRIT means the same on every TYPE** by construction: its converters sit outside every engine (§ GRIT).
 - **The noise test bound** is QUAD's measured floor + 4 dB at each TYPE's defaults, and + 6 dB at DIFFUSE 1.
-- **Density against grain is an A/B item.** DIFFUSE 1 buys the Midiverb's ¾ density in ROOM and on the PLATE zone, at +4 to +6 dB of noise in quiet tails. The A/B compares DIFFUSE 0.4 and 1 on a quiet tail at GRIT 0. If the owner hears the noise, DIFFUSE's top stops lower, at the g the ear accepts.
+- **Density against grain is an A/B item.** DIFFUSE 1 buys the Midiverb's ¾ density in ROOM and on the PLATE zone, at +4 to +6 dB of noise in quiet tails. The A/B compares DIFFUSE 0.4 and 1 on a quiet tail. If the owner hears the noise, DIFFUSE's top stops lower, at the g the ear accepts.
 
 ### Moving a length
 
@@ -323,17 +326,19 @@ The bound, stated per pass and cumulatively, for every TYPE:
 |---|---|---|
 | SIZE, LENGTH, SWELL, PRE-DLY and tempo moves (all TYPEs) | while a crossfade runs: up to about 29 cents instantaneously, about 7 averaged over a 120 ms pass; none once settled | 0 once settled: the spectral peak sits within 1/L of the input's |
 | REGEN's feedback (REVERSE), during LENGTH moves | the same | the same |
-| Wobble inside a loop (ROOM, HALL, BLOOM) | ≤ 25 cents | ≤ 25 cents, with no drift: the shift returns to 0 each LFO cycle |
-| Wobble on BURST's decorrelators (outside every loop) | single pass only: ≤ 22 cents at ±1 ms and 2 Hz | not fed back, so no accumulation |
+| SMEAR inside a loop (QUAD, ROOM, HALL, BLOOM) | ≤ 25 cents | ≤ 25 cents, with no drift: the drift is bounded, so the mean pitch over a window of 4/RATE stays within ±1 cent |
+| SMEAR on BURST's decorrelators (outside every loop) | single pass only: ≤ 22 cents at ±1 ms and 2 Hz | not fed back, so no accumulation |
 
-**The wobble bound.**
-- A delay that wobbles inside a loop can only stretch the circulating content by its own excursion. Over any number of passes, a component's frequency stays within the ratio `L / (L − E)`, where E is the loop's total peak-to-peak wobble excursion and L its round trip.
-- **The cap.** Each loop caps its wobble so that E ≤ 1.45 % of L, which gives 1200·log2(1/(1 − 0.0145)) ≈ **25 cents**:
-  - **ROOM:** one wobbled allpass per loop, so E = 2D, and D ≤ 0.72 % of L: 0.72 ms at a 100 ms loop.
-  - **HALL:** two wobbled allpasses in quadrature, so E = 2√2·D, and D ≤ 0.51 % of L: 0.62 ms at the 120 ms plate, 1.75 ms at the default 342 ms.
-  - **BLOOM:** three wobbled allpasses at 0°, 90° and 180°. The 0° and 180° ones cancel in the loop sum, so E = 2D, and D ≤ 0.72 % of L: 1.8 ms at 250 ms.
-- The cap applies after WOBBLE's mapping, as the knob tables say. The panel's value text shows the depth that plays.
-- At the defaults the wobble sits well under its cap: ROOM about 9 cents, HALL about 7, BLOOM about 3.
+**The SMEAR bound.**
+- **Why there is a bound.** A line that drifts inside a loop can only stretch the circulating content by its own excursion. Over any number of passes, a component's frequency stays within the ratio `L / (L − E)`, where E is the loop's total peak-to-peak excursion and L its round trip.
+- **Worst case.** The lines drift independently, so the worst case is all of them at their extremes together. Then E = Σ 2D over the loop's smeared lines.
+- **The cap.** E ≤ 1.45 % of L, which gives 1200·log2(1/(1 − 0.0145)) ≈ **25 cents**:
+  - **ROOM:** 1 line per loop, D ≤ 0.72 % of L: 0.72 ms at a 100 ms loop.
+  - **HALL:** 2 lines, D ≤ 0.36 % of L: 0.43 ms at the 120 ms plate, 1.24 ms at the default 342 ms.
+  - **BLOOM:** 3 lines, D ≤ 0.24 % of L: 0.6 ms at 250 ms.
+  - **QUAD:** 4 lines, D ≤ 0.18 % of the ring's round trip: 0.61 ms at SIZE 0 (0.338 s), 1.74 ms at SIZE 1 (0.967 s).
+- **Where it applies.** The cap applies after SMEAR's mapping, and the panel's value text shows the depth that plays.
+- **No drift and no vibrato.** The drift is bounded and has no period, so it has no mean shift and no single LFO frequency. Two tests pin this (§ Tests): the mean pitch over a window of 4/RATE stays within ±1 cent, and the pitch-deviation trace's spectrum has no line above its median + 10 dB.
 
 ### LOOP engine: ROOM and HALL
 
@@ -351,7 +356,7 @@ outputs: 3 fixed taps per side, from different stage delays, signs ±
   - The stage gains carry the decay, so the round trip's gain is exactly g and RT60 tracks DECAY.
   - The send enters A at +½ and B at −½, as QUAD injects into S1 and S3.
 - **Dampers.** ROOM has one per loop. HALL has two, after stages 2 and 4.
-- **Wobble** moves stage *allpasses*, which never crossfade: in ROOM, A2's AP and B1's AP; in HALL, the APs of stages 1 and 3, in quadrature.
+- **SMEAR** moves stage *allpasses*, which never crossfade: in ROOM, A2's AP and B1's AP; in HALL, the APs of stages 1 and 3, each with its own wander.
 
 Starting lengths in ms at SIZE 1. Each becomes the nearest distinct prime in samples at 24 kHz, as `ring.rs` builds QUAD's:
 
@@ -369,7 +374,7 @@ Fractions without a mark are of the line's **maximum** length.
 - **The early tap.** Each side's first tap is a fraction of its line's SIZE-0 length: about 2–3 ms in ROOM and about 4 ms in HALL. That keeps the plate corner's onset short.
 - **Why the maximum, for the other two.** A line owns its maximum length's slots, and the shared write head writes every one of them each pass. So a tap anywhere inside the maximum reads written data at any SIZE, at the same cost. At a small SIZE, a tap past the current read point reads the line's input from an earlier pass: still the decaying tail, just older.
 - **Why not the minimum.** Fractions of the SIZE-0 length would read only the first 11 % of HALL's 540 ms stages at SIZE 1, and the output could pulse once per pass.
-- **The trade.** The pattern stays put as SIZE moves, and the ear judges it at A/B. SIZE-scaled taps would add 6 crossfading reads to every SIZE move: about +96 cycles over QUAD for ROOM. That is at the default build's limit (96) and over `master-tape`'s (23), so they need an owner ruling (§ CPU budget).
+- **The trade.** The pattern stays put as SIZE moves, and the ear judges it at A/B. SIZE-scaled taps would add 6 crossfading reads to every SIZE move: about +78 cycles, which takes ROOM to about +27 over QUAD after GRIT's savings. That fits the default build's headroom (76) but not `master-tape`'s (23), where it needs an owner ruling (§ CPU budget).
 
 ### BURST engine: GATE and REVERSE
 
@@ -404,7 +409,7 @@ send → TONE → pre-diffuser (2 AP) → burst line ──► 12 taps over [0, 
 - **REGEN (REVERSE).** Tap 11 is fed back into the burst line's input through a one-pole at about 6 kHz, so each pass darkens. The gain is g = 0.708·REGEN, up to −3 dB per pass. The line write that carries it truncates (§ Shared machinery).
 - **Decorrelators.**
   - Two APs per side, at g 0.6: L 3.1 and 8.3 ms, R 4.7 and 6.1 ms, stored f32 (§ Level plan).
-  - Each side's second AP is the one the wobble moves. They sit outside every loop, so their wobble is a single-pass vibrato (§ Pitch bounds).
+  - Each side's second AP is the one SMEAR moves. They sit outside every loop, so SMEAR there is a single pass of drift (§ Pitch bounds).
   - The taps sum mono first (the MV2 shape), and the decorrelators make the stereo.
 
 ### BLOOM engine
@@ -425,35 +430,36 @@ L = AP5's output → decorrelator L (2 AP) ;  R = AP10's output → decorrelator
 - **DIFFUSE** sets the loop APs' g, 0.45 → 0.65. Their states are stored normalised (§ Level plan).
 - **Taps.** The outputs are values already in registers (AP5's and AP10's outputs), not reads, so they cost nothing.
 - **Decorrelators:** L 4.1 and 9.7 ms, R 5.3 and 7.9 ms, at g 0.6, stored f32 (§ Level plan).
-- **Wobble** moves APs 3, 6 and 9 (moving reads), at 0°, 90° and 180°.
+- **SMEAR** moves APs 3, 6 and 9 (moving reads), each with its own wander.
 
 ### QUAD
 
-Owner ruling (2026-10-04): leave QUAD exactly as it is, **except GRIT**, which the owner amended the same day.
-- QUAD is today's `dsp::ring`, except that GRIT becomes the converters (§ GRIT) and its storage quantises at a fixed 1 LSB.
-  - At GRIT 0, QUAD is bit for bit today's QUAD at GRIT 0.
-  - Its goldens at other GRIT values change, and are re-recorded deliberately (ADR 0011).
+Owner ruling (2026-10-04): leave QUAD exactly as it is. Two same-day amendments: GRIT leaves the reverb, and QUAD gains SMEAR.
+- **What QUAD is.** Today's `dsp::ring`, with its storage at the fixed 1 LSB (§ GRIT is retired) and SMEAR on its four stage delays (§ SMEAR).
+  - At SMEAR 0, QUAD is bit for bit the Task 4 reference wherever that reference ran at GRIT 0.
+  - Goldens that used GRIT ≠ 0 are re-recorded once, deliberately (ADR 0011).
   - It is pre-alpha with no users, so old patches only need to load safely, and they do.
-- Its only change is internal: `Ring` borrows the arena instead of owning `lines`.
-- It keeps its 32-step double-read SIZE crossfade, which is clean and pitch-free. The new TYPEs now move their lengths the same pitch-free way, on fewer lines (§ Moving a length).
-- That crossfade is QUAD's measured worst case, and the target the other TYPEs aim at (§ CPU budget).
-- QUAD shows no MORE knobs and takes no wobble or sync.
+- **The arena.** `Ring` borrows it instead of owning `lines`. SMEAR reads only shorter than nominal, so QUAD's layout does not change.
+- **The crossfade.** QUAD keeps its 32-step double-read SIZE crossfade, which is clean and pitch-free. The new TYPEs now move their lengths the same pitch-free way, on fewer lines (§ Moving a length).
+  - That crossfade is QUAD's measured worst case, and the target the other TYPEs aim at (§ CPU budget).
+  - SMEAR never runs during it (§ SMEAR).
+- **The pages.** QUAD's MORE page shows RATE only. QUAD takes no sync.
 
 ## Arena
 
 - The arena is `ReverbArena { lines: [i16; 23_220] }`, 46,440 B in `FxBus` (AXI, ADR 0014). It is today's `Ring::lines` moved out, unchanged in size.
 - Each TYPE has a `const` layout:
-  - every line owns `max_len + 2` slots: its longest length, plus the wobble's depth where it wobbles, plus one slot for a pair's second read;
+  - every line owns `max_len + 2` slots: its longest length,  plus one slot for a pair's second read;
   - all lines rotate with one shared write head, `ring.rs`'s scheme (`OFFSET`, `HEAD`, wrap-free segments for the fixed reads);
   - a `const` assert per TYPE proves its layout fits in 23,220.
 
 | TYPE | Lines at their maximum (samples at 24 kHz) | Total | Headroom |
 |---|---|---|---|
 | QUAD | 12 lines (`RING_LEN`) | 23,220 | 0 |
-| ROOM | PRE 1,200 · diffuser 498 f32 = 996 slots · delays at k = 1 7,872 · stage APs 1,728 · wobble 48 | 11,844 | 11,376 |
-| HALL | PRE 3,000 · diffuser 456 f32 = 912 slots · delays at k = 1 12,960 · stage APs 1,440 · wobble 96 | 18,408 | 4,812 |
-| GATE, REVERSE | pre-diffuser 274 f32 = 548 slots · burst line 19,200 (REVERSE's 800 ms) · TAIL loop 1,152 · decorrelators 533 f32 = 1,066 slots · wobble 48 | 22,014 | 1,206 |
-| BLOOM | PRE 3,000 · loop APs 6,096 · SWELL delay 10,704 · decorrelators 648 f32 = 1,296 slots · wobble 144 | 21,240 | 1,980 |
+| ROOM | PRE 1,200 · diffuser 498 f32 = 996 slots · delays at k = 1 7,872 · stage APs 1,728 · smear 48 | 11,844 | 11,376 |
+| HALL | PRE 3,000 · diffuser 456 f32 = 912 slots · delays at k = 1 12,960 · stage APs 1,440 · smear 96 | 18,408 | 4,812 |
+| GATE, REVERSE | pre-diffuser 274 f32 = 548 slots · burst line 19,200 (REVERSE's 800 ms) · TAIL loop 1,152 · decorrelators 533 f32 = 1,066 slots · smear 48 | 22,014 | 1,206 |
+| BLOOM | PRE 3,000 · loop APs 6,096 · SWELL delay 10,704 · decorrelators 648 f32 = 1,296 slots · smear 144 | 21,240 | 1,980 |
 
 Each line also takes its 2 guard slots, under 50 per TYPE, inside the headroom shown. The arena and `RING_LEN` do not change.
 
@@ -485,17 +491,17 @@ Each line also takes its 2 guard slots, under 50 per TYPE, inside the headroom s
 | 2 | `DAMP` | continuous 0..1 | in-loop HF damping: QUAD DAMP, HALL DAMP | 0.3 | no |
 | 3 | `SIZE` | continuous 0..1 | how big or how long the space is: SIZE, LENGTH, SWELL | 0.5 | no |
 | 4 | `MIX` | continuous 0..1 | return level | 0.0 | no |
-| 5 | `GRIT` | continuous 0..1 | the converters: bit depth, dither and bandwidth (§ GRIT) | 0.3 | no |
+| 5 | — | — | retired GRIT: ignored on load (§ GRIT is retired) | — | — |
 | 6 | `TYPE` | Enum, `ReverbType` | the TYPE | QUAD | yes |
 | 7 | `TONE` | continuous 0..1 | input brightness (BLOOM: the in-loop damper) | 0.3 | yes |
 | 8 | `DIFFUSE` | continuous 0..1 | density: DIFFUSE, DENSITY | 0.4 | yes |
 | 9 | `PREDELAY` | continuous 0..1 | PRE-DLY | 0.0 | yes |
 | 10 | `SHAPE` | continuous 0..1 | the burst's curve: GATE SHAPE, REVERSE CURVE | 0.2 | yes |
-| 11 | `WOBBLE` | continuous 0..1 | the LFO's depth | 0.0 | yes |
-| 12 | `RATE` | continuous 0..1 | the LFO's rate | 0.5 | yes |
+| 11 | `SMEAR` | continuous 0..1 | the random wander's depth | 0.0 | yes |
+| 12 | `RATE` | continuous 0..1 | the wander's speed | 0.5 | yes |
 | 13 | `SYNC` | Enum, `RevSync` | OFF, TIME, ALL | OFF | yes |
 
-- **Count.** That is 13 ids of the 32.
+- **Count.** That is 12 live ids (1–4 and 6–13) of the 32.
 - **Slot 3's step.** Its static step becomes 1/128, so GATE LENGTH moves about 2 % per tick, not 9 %. QUAD's panel keeps its 1/31 tick (§ Pages).
 - **Typed choices.** `ReverbType` and `RevSync` are enums with explicit `DiskCode` matches, never discriminants (ADR 0045). `RevSync` is OFF 0, TIME 1, ALL 2. The fixture gains rows `B 22 6 TYPE` … `B 22 13 SYNC` and their `E` rows.
 - **Pure mappings.** Every mapping from a knob to a quantity is a pure function of (TYPE, slot value, tempo), in `dsp::reverb` (functional core). The laws are `exp(lo, hi, p) = lo·(hi/lo)^p` and `lin(lo, hi, p)`. The DSP and the UI's value text call the same functions.
@@ -504,7 +510,7 @@ Each line also takes its 2 guard slots, under 50 per TYPE, inside the headroom s
 
 Values are p (0..1) → quantity. The main page holds cells 2–5, and REV › MORE is the sub-page (§ Pages). "—" means absent.
 
-**ROOM** (main: SIZE · DECAY · TONE · DIFFUSE; MORE: PRE-DLY · — · WOBBLE · RATE · SYNC · GRIT)
+**ROOM** (main: SIZE · DECAY · TONE · DIFFUSE; MORE: PRE-DLY · — · SMEAR · RATE · SYNC · —)
 
 | Knob | Slot | Law | Range | Default p → value |
 |---|---|---|---|---|
@@ -513,10 +519,10 @@ Values are p (0..1) → quantity. The main page holds cells 2–5, and REV › M
 | TONE | 7 | exp | input fc 10 → 2.5 kHz | 0.3 → 6.6 kHz |
 | DIFFUSE | 8 | lin | diffuser (f32) and stage AP g together, 0.5–0.75 (§ Level plan) | 0.4 → 0.60 |
 | PRE-DLY | 9 | lin | 0–50 ms | 0.1 → 5 ms |
-| WOBBLE | 11 | lin | ±0–1 ms, capped at 0.72 % of the loop (§ Pitch bounds) | 0.3 → ±0.3 ms |
+| SMEAR | 11 | lin | ±0–1 ms, capped at 0.72 % of the loop (§ Pitch bounds) | 0.3 → ±0.3 ms |
 | RATE | 12 | exp | 0.1–1 Hz | 0.5 → 0.32 Hz |
 
-**HALL** (main: SIZE · DECAY · TONE · DIFFUSE; MORE: PRE-DLY · DAMP · WOBBLE · RATE · SYNC · GRIT)
+**HALL** (main: SIZE · DECAY · TONE · DIFFUSE; MORE: PRE-DLY · DAMP · SMEAR · RATE · SYNC · —)
 
 | Knob | Slot | Law | Range | Default p → value |
 |---|---|---|---|---|
@@ -526,12 +532,12 @@ Values are p (0..1) → quantity. The main page holds cells 2–5, and REV › M
 | DIFFUSE | 8 | lin | diffuser (f32) and stage AP g together, 0.5–0.75 | 0.4 → 0.60 |
 | DAMP | 2 | exp | in-loop fc 11 → 1.5 kHz (QUAD's `damp_coef` law) | 0.3 → 6.1 kHz |
 | PRE-DLY | 9 | lin | 0–125 ms | 0.15 → 19 ms |
-| WOBBLE | 11 | lin | ±0–2 ms, capped at 0.51 % of the loop | 0.35 → ±0.7 ms |
+| SMEAR | 11 | lin | ±0–2 ms, capped at 0.36 % of the loop | 0.35 → ±0.7 ms |
 | RATE | 12 | exp | 0.1–1.5 Hz | 0.4 → 0.30 Hz |
 
-The plate corner is SIZE 0 (120 ms), DECAY 0.35 (1.9 s), TONE 0 (10 kHz), DIFFUSE 1 (0.75), DAMP 0.1, PRE-DLY 0, WOBBLE 0.5 (±1 ms set, ±0.62 ms played under the cap) and RATE 0.6 (0.51 Hz).
+The plate corner is SIZE 0 (120 ms), DECAY 0.35 (1.9 s), TONE 0 (10 kHz), DIFFUSE 1 (0.75), DAMP 0.1, PRE-DLY 0, SMEAR 0.5 (±1 ms set, ±0.43 ms played under the cap) and RATE 0.6 (0.51 Hz).
 
-**GATE** (main: LENGTH · TAIL · TONE · DENSITY; MORE: — · SHAPE · WOBBLE · RATE · SYNC · GRIT)
+**GATE** (main: LENGTH · TAIL · TONE · DENSITY; MORE: — · SHAPE · SMEAR · RATE · SYNC · —)
 
 | Knob | Slot | Law | Range | Default p → value |
 |---|---|---|---|---|
@@ -540,10 +546,10 @@ The plate corner is SIZE 0 (120 ms), DECAY 0.35 (1.9 s), TONE 0 (10 kHz), DIFFUS
 | TONE | 7 | exp | input fc 10 → 2.5 kHz | 0.2 → 7.6 kHz |
 | DENSITY | 8 | lin | taps 6–12; pre-diffuser g 0.5–0.7 | 0.7 → 10.2 taps, g 0.64 |
 | SHAPE | 10 | lin | flat → falling 18 dB | 0.2 → −3.6 dB |
-| WOBBLE | 11 | lin | ±0–1 ms (decorrelators) | 0 → off |
+| SMEAR | 11 | lin | ±0–1 ms (decorrelators) | 0 → off |
 | RATE | 12 | exp | 0.1–2 Hz | 0.5 → 0.45 Hz |
 
-**REVERSE** (main: LENGTH · REGEN · TONE · DENSITY; MORE: — · CURVE · WOBBLE · RATE · SYNC · GRIT)
+**REVERSE** (main: LENGTH · REGEN · TONE · DENSITY; MORE: — · CURVE · SMEAR · RATE · SYNC · —)
 
 | Knob | Slot | Law | Range | Default p → value |
 |---|---|---|---|---|
@@ -552,10 +558,10 @@ The plate corner is SIZE 0 (120 ms), DECAY 0.35 (1.9 s), TONE 0 (10 kHz), DIFFUS
 | TONE | 7 | exp | input fc 10 → 2.5 kHz | 0 → 10 kHz |
 | DENSITY | 8 | lin | taps 6–12; pre-diffuser g 0.5–0.7 | 0.8 → 10.8 taps, g 0.66 |
 | CURVE | 10 | lin | rising ramp 12–30 dB | 0.67 → 24 dB |
-| WOBBLE | 11 | lin | ±0–1 ms (decorrelators) | 0 → off |
+| SMEAR | 11 | lin | ±0–1 ms (decorrelators) | 0 → off |
 | RATE | 12 | exp | 0.1–2 Hz | 0.5 → 0.45 Hz |
 
-**BLOOM** (main: SWELL · DECAY · TONE · DIFFUSE; MORE: PRE-DLY · — · WOBBLE · RATE · SYNC · GRIT)
+**BLOOM** (main: SWELL · DECAY · TONE · DIFFUSE; MORE: PRE-DLY · — · SMEAR · RATE · SYNC · —)
 
 | Knob | Slot | Law | Range | Default p → value |
 |---|---|---|---|---|
@@ -564,16 +570,21 @@ The plate corner is SIZE 0 (120 ms), DECAY 0.35 (1.9 s), TONE 0 (10 kHz), DIFFUS
 | TONE | 7 | exp | in-loop fc 10 → 1.5 kHz | 0.35 → 5.1 kHz |
 | DIFFUSE | 8 | lin | loop AP g 0.45–0.65 (normalised states, § Level plan) | 0.5 → 0.55 |
 | PRE-DLY | 9 | lin | 0–125 ms | 0 → 0 ms |
-| WOBBLE | 11 | lin | ±0–2 ms, capped at 0.72 % of the loop | 0.3 → ±0.6 ms |
+| SMEAR | 11 | lin | ±0–2 ms, capped at 0.24 % of the loop | 0.3 → ±0.6 ms |
 | RATE | 12 | exp | 0.05–0.5 Hz | 0.4 → 0.13 Hz |
 
-**QUAD** (main: SIZE · TIME · DAMP · GRIT; MORE: all absent). Its ids, ranges and laws are today's (ADR 0028). GRIT sits on the main page for QUAD only, because QUAD has no MORE knobs.
+**QUAD** (main: SIZE · TIME · DAMP · SMEAR; MORE: — · — · — · RATE · — · —). SIZE, TIME and DAMP keep today's ids, ranges and laws (ADR 0028).
+
+| Knob | Slot | Law | Range | Default p → value |
+|---|---|---|---|---|
+| SMEAR | 11 | lin | ±0–2 ms, capped at 0.18 % of the ring's round trip | 0 → off |
+| RATE | 12 | exp | 0.05–1 Hz | 0.5 → 0.22 Hz |
 
 ### A TYPE change loads that TYPE's knobs
 
 The issue's naming ruling (owner, 2026-10-03): "Each TYPE is an engine … plus its tuned settings. The existing knobs … still adjust from that starting point." So:
-- **What a TYPE change writes.** Turning TYPE in the UI writes the new TYPE's knobs, in one edit, into slots 1, 2, 3, 7, 8, 9, 10, 11 and 12.
-- **What it keeps.** MIX, GRIT and SYNC are kept: they are the player's level, grain and clock.
+- **What a TYPE change writes.** Turning TYPE in the UI writes the new TYPE's knobs, in one edit, into slots 1, 2, 3, 7, 8, 9, 10, 11 and 12 (QUAD: 1, 2, 3, 11 and 12).
+- **What it keeps.** MIX and SYNC are kept: they are the player's level and clock.
 - **Who calls it.** `ReverbParams::with_type(t, memory) -> ReverbParams` is the pure function, and the UI's TYPE edit calls it. `Block::write`, decode and MIDI-CC writes of TYPE only store the TYPE, so a project or Sound load keeps its stored knobs.
 - **An accidental nudge does not wipe the tweaks.** `UiState` keeps each TYPE's last knobs in RAM: 6 TYPEs × 9 slots as `u16` (the stored 0..1 at 1/65,535), 108 B.
   - Leaving a TYPE stores its knobs there, and coming back restores them. A TYPE not yet visited gets its starting knobs (the tables above).
@@ -614,28 +625,22 @@ The audio thread runs one engine. When `params.reverb.kind` differs from the one
 - **Continuous knobs.** Every continuous knob eases:
   - lengths by pitch-free crossfades (§ Moving a length);
   - gains, TONE, DAMP, DIFFUSE, SHAPE and the curve weights by a per-block one-pole ramped across the block: τ 50 ms for DECAY (as QUAD's TIME), 20 ms for the rest;
-  - GRIT by a 20 ms one-pole, with Δ_c and the converter cutoff updated once a block (§ GRIT);
+  - SMEAR's depth by the same 20 ms one-pole, and RATE by setting the next target's period;
   - MIX by `Ease` (ADR 0061).
 - **Discrete choices.** SYNC changes a length's target, which crossfades. TYPE runs the switch.
 - **Nothing snaps** except a fresh engine's priming inside FADE IN, which no one can hear move.
 
-## Wobble
+## SMEAR, in short
 
-The owner asked for an LFO wobble on the loops. The MV2's reverbs were static, which is why its small bright rooms ring metallic.
-- Every new TYPE has WOBBLE (depth) and RATE.
-- It is on by default in ROOM, HALL and BLOOM, and off in GATE and REVERSE.
-- Which reads it moves:
-  - ROOM: the APs of stages A2 and B1;
-  - HALL: the APs of stages 1 and 3;
-  - BLOOM: loop APs 3, 6 and 9;
-  - GATE and REVERSE: the second decorrelator AP per side.
-- Its pitch is bounded: ≤ 25 cents, with no drift (§ Pitch bounds).
-- It is the TYPEs' only modulation (§ Modulation). Its cost is in § CPU budget.
+- **Who has it.** Every TYPE has SMEAR (depth) and RATE (wander speed). § SMEAR has the source and the lines it moves.
+- **Defaults.** On by default in ROOM, HALL and BLOOM (0.3, 0.35 and 0.3); off in QUAD, GATE and REVERSE.
+- **Pitch** is bounded at 25 cents, with no drift and no vibrato (§ Pitch bounds).
+- **The only motion.** It is the TYPEs' only modulation (§ Modulation). Its cost is in § CPU budget.
 
 ## Modulation (deferred to #345)
 
 Owner, 2026-10-04: every mod source today lives inside a Part, and nothing exists at the mixer level. A mixer-level LFO or matrix gets its own thought before anything routes into shared FX (private issue #345).
-- **This build has no external mod destinations.** Every reverb spec stays `modulatable: false`. The only motion is each TYPE's own wobble (§ Wobble), set by its WOBBLE and RATE knobs.
+- **This build has no external mod destinations.** Every reverb spec stays `modulatable: false`. The only motion is each TYPE's own SMEAR (§ SMEAR), set by its SMEAR and RATE knobs.
 - **Out of scope, deferred to #345:** Part-matrix routes into the reverb, an envelope follower or DUCK on the send, and MIX+PLUS priming on reverb cells.
 - **What #345 will have to change:**
   - **Disk: nothing.** Routes are stored by `ParamAddr` (block and id), and the ids exist.
@@ -693,8 +698,8 @@ ROOM has no ALL, because 7 of the 10 beat values would clamp to its 1.5 s maximu
   - Cells 2–5 come from the TYPE's panel.
   - MIX stays last on every TYPE, so the level is always in the same place.
 - **REV › MORE** is a new sub-page, short `MORE`, made with `ChainBlock::with_subs` as DLY › CHAR is.
-  - Its cells, by panel: PRE-DLY · DAMP, SHAPE or CURVE · WOBBLE · RATE · SYNC · GRIT.
-  - Under QUAD every MORE cell is absent.
+  - Its cells, by panel: PRE-DLY · DAMP, SHAPE or CURVE · SMEAR · RATE · SYNC · —.
+  - Under QUAD the MORE page shows RATE only, and SMEAR sits on QUAD's main page.
 - **How the cells look.**
   - An absent cell draws the dash, and a dimmed one the dim look; `renderer::look` decides, as for the filter (ADR 0037).
   - A cell's label, value text and **encoder step** come from the panel:
@@ -757,28 +762,29 @@ The owner, 2026-10-04: **"sound first."**
     - It is taken on both chip revisions and both builds, default and `master-tape`.
     - A voice is `CHAIN_COST` + `ModRouting::BASE` (47) + the engine's cost, at LP24.
 
-  From the code on 2026-10-04:
+  Task 1's re-measure (2026-10-04) set the default build's `COST` to 1,188 (BUS+V); the tape build's stays 1,490:
 
 | Assertion in `cost_test` | Voice | Rev V (default / tape) | Rev Y (default / tape) |
 |---|---|---|---|
-| A16 ∪ A17 (`the_costliest_patch_gets_six_voices_on_rev_v`) | 909 | 6 voices: 366 / 56 | 5 / 4: 108 / 707 |
-| A16 ∪ A17 + FOLD | 954 | 6 / 5: **96** / 740 | 4 / 4: 837 / 527 |
-| A16 ∪ A17 + FOLD + DRIVE | 1,011 | 5 / 5: 765 / 455 | 4 / 4: 609 / 299 |
-| TX factory Sounds (`every_factory_sound…`), up to | 712 | 8 / 7: 124 / 526 | ≥ 5: 1,093 / 783 |
-| MORPH KEYS | 864 | 6 / 6: 636 / 326 | ≥ 5: 333 / **23** |
-| MORPH PAD | 853 | 6 / 6: 702 / 392 | ≥ 5: 388 / 78 |
+| BOWED (factory) | 717 | 8 voices: **76** / — | ≥ 5 |
+| A16 ∪ A17 (`the_costliest_patch_gets_six_voices_on_rev_v`) | 909 | 6: 358 / 56 | 5 / 4: 100 / 707 |
+| A16 ∪ A17 + FOLD | 954 | 6 / 5: 88 / 740 | 4 / 4: 829 / 527 |
+| A16 ∪ A17 + FOLD + DRIVE | 1,011 | 5 / 5: 757 / 455 | 4 / 4: 601 / 299 |
+| TX factory Sounds, up to | 712 | 8 / 7: 116 / 526 | ≥ 5: 1,085 / 783 |
+| MORPH KEYS | 864 | 6 / 6: 628 / 326 | ≥ 5: 325 / **23** |
+| MORPH PAD | 853 | 6 / 6: 694 / 392 | ≥ 5: 380 / 78 |
 
-  - **The figures.** The headroom is **96 cycles per sample in the default build** (FOLD on rev V: 5,820 − 6 × 954), and **23 with `master-tape`** (MORPH KEYS on rev Y: 4,343 − 5 × 864). The factory rows use the TX Sounds' highest cost, 712; the derived test below uses every Sound's real cost.
+  - **The figures.** The headroom is **76 cycles per sample in the default build** (BOWED on rev V: 5,812 − 8 × 717), and **23 with `master-tape`** (MORPH KEYS on rev Y: 4,343 − 5 × 864).
   - **The gate: ΔCOST ≤ headroom.** ΔCOST is how far the costliest TYPE's BUS row reads above QUAD's, on the same build.
   - **The gate is `cost_test` itself.** There is no separate headroom test, so nothing duplicates or halves the margin.
-    - A TYPE that reads over QUAD sets `FxBus::COST` to the costliest TYPE's BUS reading, and updates `cost_test`'s `bus` literal (1,180, or 1,490 with the tape) to match.
+    - A TYPE that reads over QUAD sets `FxBus::COST` to the costliest TYPE's BUS reading, and updates `cost_test`'s `bus` literal (1,188, or 1,490 with the tape) to match.
     - `cost_test` then runs unchanged, on both builds. Its voice-count assertions are the gate: if any fails, ΔCOST exceeded the headroom.
     - The headroom table above only explains where that line falls.
   - **If re-baselining eats the tape's 23.** Step 0 re-measures QUAD's BUS row with voice traffic. If that reading exceeds today's `COST`, `COST` rises first, as a QUAD-only change recorded like ADR 0031's readings.
     - If that alone fails a `master-tape` voice assertion, it goes to the owner before any TYPE work: either the tape build's guarantee is re-ruled, or every TYPE must be ≤ QUAD (ΔCOST ≤ 0) in the tape build.
-    - The same applies to the default build's 96, though there it is unlikely.
-  - **"Sound first" has little room.** 96 cycles (23 with the tape) is about one moving pair per ring sample.
-    - A TYPE costing more than QUAD by more than that needs either a cheaper design, or an owner ruling that gives up a voice guarantee in `cost_test` (FOLD's sixth voice on rev V, for example).
+    - The same applies to the default build's 76.
+  - **"Sound first" has little room.** 76 cycles (23 with the tape) is about one moving pair per ring sample.
+    - A TYPE costing more than QUAD by more than that needs either a cheaper design, or an owner ruling that gives up a voice guarantee in `cost_test` (BOWED's eighth voice on rev V, for example).
     - Each "if the A/B asks for it" item in this spec says whether it fits.
   - **The stress run is a second, real gate.** On the unit, with the TYPE under test, it runs:
     - six admitted voices of A16 ∪ A17;
@@ -788,7 +794,7 @@ The owner, 2026-10-04: **"sound first."**
 
     It must show OVER 0, DROPS 0, and a peak block load under 100 %. The bill can pass while the chip fails: ADR 0040's run peaked at 87 % on cache effects the bill does not model.
   - **Host instruction counts** (ADR 0031's trace) are design estimates only, never a gate. ADR 0013 rejects emulation for budgets.
-- **A TYPE may exceed the target** when the A/B shows its cheaper design sounds wrong, provided its ΔCOST fits the headroom (96, or 23 with the tape) and the stress run passes.
+- **A TYPE may exceed the target** when the A/B shows its cheaper design sounds wrong, provided its ΔCOST fits the headroom (76, or 23 with the tape) and the stress run passes.
 - **The QUAD regression check stays.** After step 1a, REV QUAD must read ≤ step 0's baseline + 1 %. QUAD's cost is unchanged by ruling, and the dispatcher must not hide a regression.
 - **Why re-measure.** Since 2026-09-27 the bench subtracts the MIX row, and MIX now includes the limiter.
 
@@ -796,34 +802,34 @@ The owner, 2026-10-04: **"sound first."**
 
 QUAD measured 158 instructions fixed and 239 crossfading, for 30 and 48 accesses: about **5.0 instructions per fixed access**, everything around it included.
 - **A fixed access** is QUAD's kind: one load or store at a segment offset. A crossfading line adds one fixed read and a blend (about 2 instructions).
-- **A moving pair**, the wobble's only, costs two loads plus the per-sample index work: integer part, fraction, the wrap of both slots and the lerp. That work is estimated at **+7** (this spec's estimate) to **+10** (the review's), so 17–20 instructions a pair. Step 0 measures it.
+- **A moving pair**, SMEAR's only, costs two loads plus the per-sample index work: integer part, fraction, the wrap of both slots and the lerp. That work is estimated at **+7** (this spec's estimate) to **+10** (the review's), so 17–20 instructions a pair. Step 0 measures it.
 - **On the chip,** cycles per output sample ≈ 40 + 1.86 × instructions per ring sample (QUAD: 40 + 1.86 × 239 = 485).
 
-Worst case: every crossfadable line crossfading, wobble at its maximum.
+Worst case: every crossfadable line crossfading, SMEAR at its maximum. These figures include GRIT's retirement (§ GRIT is retired) and SMEAR's source (0.4 a line).
 
 | TYPE | Fixed accesses, worst (writes + reads + crossfade reads) | Moving pairs | Blends and extras | Instructions, pair +7 / +10 | Cycles, +7 / +10 |
 |---|---|---|---|---|---|
 | QUAD, before (today, measured) | 30 steady / 48 crossfading | 0 | — | 158 / **239** | 320 / **485** |
-| QUAD, with the new GRIT | same | 0 | GRIT −20 | 138 / 219 | 297 / 447 |
-| ROOM | 13 + 17 + 5 (PRE, 4 delays) = 35 | 2 (wobbled APs) | 10 + 4 (rotation) + 12 (2 soft clips) + 8 (4 normalised APs), GRIT −1 | **242 / 248** | 490 / 501 |
-| HALL | 13 + 17 + 5 = 35 | 2 | 10 + 6 (soft clip) + 8 (4 normalised APs), GRIT −1 | **232 / 238** | 472 / 483 |
-| GATE, REVERSE | 9 + 17 + 4 (crossfading taps) = 30 | 2 (wobbled decorrelator APs) | 8 + 12 (2 soft clips) + 3 (TAIL's normalised AP, Σ scale), GRIT +22 | **229 / 235** | 466 / 477 |
-| BLOOM | 16 + 13 + 2 (PRE, SWELL) = 31 | 3 (wobbled loop APs) | 4 + 6 (soft clip) + 20 (10 normalised APs), GRIT −13 | **223 / 232** | 455 / 472 |
+| QUAD, crossfading (no SMEAR during it) | 48 | 0 | Grid gone −56 | 183 | 380 |
+| QUAD, SMEAR 1, steady | 30 + 4 (each smeared delay's second read) | 4 (the stage delays) | Grid gone −56, source +2 | 152 / 164 | 323 / 345 |
+| ROOM | 13 + 17 + 5 (PRE, 4 delays) = 35 | 2 (smeared APs) | 10 + 4 (rotation) + 12 (2 soft clips) + 8 (4 normalised APs), Grid gone −37 | **206 / 212** | 423 / 434 |
+| HALL | 13 + 17 + 5 = 35 | 2 | 10 + 6 (soft clip) + 8 (4 normalised APs), Grid gone −37 | **196 / 202** | 405 / 416 |
+| GATE, REVERSE | 9 + 17 + 4 (crossfading taps) = 30 | 2 (smeared decorrelator APs) | 8 + 12 (2 soft clips) + 3 (TAIL's normalised AP, Σ scale), Grid gone −14 | **193 / 199** | 399 / 410 |
+| BLOOM | 16 + 13 + 2 (PRE, SWELL) = 31 | 3 (smeared loop APs) | 4 + 6 (soft clip) + 20 (10 normalised APs), Grid gone −49 | **187 / 196** | 388 / 405 |
 
-- **Where TYPEs exceed QUAD.**
-  - ΔCOST is measured against the **pre-refactor** QUAD row (485), which is what `FxBus::COST` bills.
-  - Against it, ROOM is over by about +5 / +16 cycles.
-  - HALL, BURST and BLOOM are under.
-  - QUAD itself drops about 38 cycles with the new GRIT.
-  - All of these fit both headrooms, 96 and 23. This is "sound first": the level plan's clips and normalised states buy QUAD's noise floor at full input gain.
-- **Why it is cheaper than the earlier draft.** Crossfades replaced every moving read except the wobble's. A crossfading line costs 5 + 2 instructions only while it moves; a glide's moving pair cost 17–20 all the time.
-- **The tightest is ROOM**, at 248 instructions (501 cycles, ΔCOST ≈ +16 of the tape build's 23) if a pair costs +10. Step 0 benches it.
+- **Where the TYPEs stand against QUAD.**
+  - ΔCOST is measured against the pre-refactor QUAD row (485), which `FxBus::COST` bills.
+  - Every TYPE, and QUAD in both of its paths, is under it by these estimates. So ΔCOST ≤ 0, and the headroom (76, or 23 with the tape) is untouched.
+  - QUAD's worst case is still its crossfading path, since SMEAR never runs during a SIZE crossfade.
+  - **QUAD's SMEAR is gated** by its own bench row, REV QUAD S (§ Bench rows): it must read ≤ REV QUAD, and ΔCOST ≤ headroom.
+- **Why it is cheaper than the earlier draft.** Crossfades replaced every moving read except SMEAR's. A crossfading line costs 5 + 2 instructions only while it moves; a glide's moving pair cost 17–20 all the time.
+- **The tightest is ROOM**, at 212 instructions (434 cycles) if a pair costs +10. Step 0 benched its kernel with GRIT's cost still in it, which is pessimistic.
 - **What fits if the A/B asks for it:**
   - BLOOM's split SWELL delay (+10 instructions, ≈ +19 cycles). It takes BLOOM to about +30 by this table. The review's cache-aware estimate puts BLOOM's base design about **+14** and the split about **+33**:
-    - it **fits the default build** (96);
+    - it **fits the default build** (76);
     - in the **`master-tape` build it does not fit** (23). There, the split is not offered unless the owner rules to give up a voice guarantee.
   - 14 BURST taps (+2 fixed reads, +10 instructions): **fits**.
-  - SIZE-scaled LOOP taps (+6 crossfading reads, +42 instructions, ≈ +78 cycles, taking ROOM to about 581, ΔCOST ≈ +96): this is **at the default build's limit** (96) and over `master-tape`'s (23). It needs an owner ruling in either build.
+  - SIZE-scaled LOOP taps (+6 crossfading reads, +42 instructions, ≈ +78 cycles, taking ROOM to about 581, ΔCOST ≈ +27 after GRIT's savings): this **fits the default build** (76) but **not `master-tape`** (23). There, it needs an owner ruling.
 - **Fallbacks are a last resort**, not the plan ("sound first").
   - A fallback is taken only when ΔCOST would breach the headroom or the stress run fails, or when the A/B shows the cheaper design sounds the same.
   - A TYPE over the 485 target alone is no reason to take one.
@@ -831,15 +837,15 @@ Worst case: every crossfadable line crossfading, wobble at its maximum.
 
 | TYPE | Fallback design | Saving (+7 / +10) |
 |---|---|---|
-| ROOM | **ROOM-T** (below): wobble loop B's AP only, then 2 output taps a side | 12 / 15, then 10 more |
-| HALL | Wobble one stage AP (stage 3) instead of two | 12 / 15 |
+| ROOM | **ROOM-T** (below): smear loop B's AP only, then 2 output taps a side | 12 / 15, then 10 more |
+| HALL | Smear one stage AP (stage 3) instead of two | 12 / 15 |
 | GATE, REVERSE | 3 crossfading taps at a time, not 4 (a 250 → 500 ms move takes about 0.53 s) | 7 |
-| BLOOM | Wobble 2 APs (3 and 9), not 3 | 12 / 15 |
+| BLOOM | Smear 2 APs (3 and 9), not 3 | 12 / 15 |
 
 - **ROOM-T, the pre-written tape-build fallback.**
-  - ROOM sits at about +16 cycles of the tape build's 23 headroom by this table. A pessimistic estimate puts it near +41. **Step 0's bench of the ROOM kernel decides.**
+  - ROOM sits under QUAD by this table. ROOM-T stays pre-written in case the bench disagrees. **Step 0's bench of the ROOM kernel decides.**
   - If the kernel's ΔCOST exceeds 23, ROOM takes ROOM-T before any TYPE work, a constant change and not a redesign:
-    1. **Wobble loop B's AP only** (B1's AP). Loop A's AP becomes a fixed read. This saves 12 / 15 instructions, about 22–28 cycles. Loop A stays static, B still moves, so the tail still drifts apart L/R.
+    1. **Smear loop B's AP only** (B1's AP). Loop A's AP becomes a fixed read. This saves 12 / 15 instructions, about 22–28 cycles. Loop A stays static and B still wanders, so the tail still drifts apart L/R.
     2. **If that is not enough, 2 output taps a side**: drop (A2, 0.83) on the left and (B2, 0.79) on the right, and keep the early tap and one mid tap. That saves 10 more instructions, about 19 cycles.
   - Together these save about 41–47 cycles, which covers the pessimistic +43.
   - ROOM-T applies to both builds, so ROOM sounds the same everywhere, and its golden is re-recorded. The A/B hears it.
@@ -854,9 +860,10 @@ Worst case: every crossfadable line crossfading, wobble at its maximum.
 - **REV QUAD.** The REVERB row on the FX screen stays, as REV QUAD (today's `worst_reverb`).
 - **The new rows.** A new **REVERB bench screen** carries the five new rows, three to a line in today's FX layout, so nothing falls past y 320. The console's `bench` (ADR 0068) prints every row.
 - **Each row runs at its worst:**
-  - **ROOM** and **HALL**: SIZE sweeping between 0 and 1 without pause, so a crossfade always runs, as in a long move; DECAY 1; WOBBLE 1, RATE 1; GRIT 1; MIX 0.5;
-  - **GATE** and **RVRS**: LENGTH alternating, so 4 taps always crossfade; DENSITY 1; TAIL or REGEN 1; WOBBLE 1;
-  - **BLOOM**: SWELL and PRE-DLY alternating; DECAY 1; WOBBLE 1.
+  - **REV QUAD S**: QUAD at SMEAR 1 and RATE 1 with SIZE still, which is the SMEAR path. Gate: ≤ REV QUAD (the crossfading path), and ΔCOST ≤ headroom;
+  - **ROOM** and **HALL**: SIZE sweeping between 0 and 1 without pause, so a crossfade always runs, as in a long move; DECAY 1; SMEAR 1, RATE 1; MIX 0.5;
+  - **GATE** and **RVRS**: LENGTH alternating, so 4 taps always crossfade; DENSITY 1; TAIL or REGEN 1; SMEAR 1;
+  - **BLOOM**: SWELL and PRE-DLY alternating; DECAY 1; SMEAR 1.
 - **The gates are absolute.**
   - **ΔCOST ≤ headroom** (§ Target and hard limit), enforced by `cost_test`'s voice counts with `COST` set to the costliest TYPE's BUS reading, as each new TYPE lands. The stress run on the unit is the second gate.
   - **Each REV row** is recorded against the 485 target. A row over the target is reported, and is allowed when the A/B justifies it and the headroom holds.
@@ -891,10 +898,10 @@ Every TYPE stays inside 1–3 KB. The memory map gives the firmware 896 KB of fl
 - **Old projects.**
   - A project saved before this work has a Reverb block with ids 1–5 and no id 6. Decode leaves an absent id at its target's value.
   - A load decodes into a fresh `Project` whose reverb is `ReverbParams::default()`, so TYPE is QUAD: **every existing project loads as QUAD**, and sounds as it did.
-  - Ids 7–13 also take their spec defaults, and QUAD ignores them.
+  - Ids 7–13 take their spec defaults; QUAD reads only SMEAR (0) and RATE from them. A stored GRIT (id 5) is skipped as a retired id.
 - **New projects** default to QUAD as well: one rule, and today's sound is the starting point.
 - **A future TYPE code on this firmware**, a file from a newer build, is an unknown code. The value keeps the target's, QUAD (`set_enum_code` returns false), so it loads safely.
-- **`FxParams`** grows by about 26 B: six more f32 (TONE, DIFFUSE, PREDELAY, SHAPE, WOBBLE, RATE) and two enum bytes. It sits in `Performance`, in the triple buffer (ADR 0021); `memory_budget_test` re-pins it.
+- **`FxParams`** grows by about 26 B: six more f32 (TONE, DIFFUSE, PREDELAY, SHAPE, SMEAR, RATE) and two enum bytes, less GRIT's f32. It sits in `Performance`, in the triple buffer (ADR 0021); `memory_budget_test` re-pins it.
 
 ## Tests
 
@@ -903,32 +910,24 @@ The usual battery, per TYPE, on the host first (owner's rule: QA before UAT).
 ### Refactor lock (QUAD)
 
 - **First commit: the arena move.** `fx_golden_test`'s reverb cases, `reverb_test`, `gain_staging_test`, `fx_bus_test` and `mixer_page_test`'s SIZE nudge (+1/31) pass unchanged, bit for bit, with QUAD on the shared arena. That proves the arena move, the dispatcher and slot 3's new 1/128 static step changed nothing. `size_step` still rounds to 32 steps, and the panel keeps QUAD's tick at 1/31.
-- **Second commit: the new GRIT.**
-  - The goldens at GRIT 0 still match bit for bit.
-  - The goldens at other GRIT values are re-recorded deliberately (ADR 0011).
-  - `reverb_test`'s grid tests are replaced by the converter tests below:
-    - `grit_rounds_onto_its_grid`;
-    - `grit_truncates_toward_zero_onto_its_grid`;
-    - `grit_1_stores_only_multiples_of_64`;
-    - `grit_raises_the_noise_floor`;
-    - `no_limit_cycle_at_grit_1`;
-    - `falls_silent_within` at GRIT 1.
+- **Second commit: GRIT out, SMEAR into QUAD.**
+  - At SMEAR 0, QUAD's goldens equal the Task 4 reference bit for bit wherever it ran at GRIT 0. Cases that used GRIT ≠ 0 are re-recorded deliberately (ADR 0011).
+  - Tests that go: `reverb_test`'s grid tests (`grit_rounds_onto_its_grid`, `grit_truncates_toward_zero_onto_its_grid`, `grit_1_stores_only_multiples_of_64`, `grit_raises_the_noise_floor`, `no_limit_cycle_at_grit_1`) and Task 5's converter tests.
 
-### GRIT (the converters)
+### SMEAR
 
-- **No correlated distortion.** A 1 kHz sine burst at −12 dBFS goes into each TYPE at GRIT 1, and its tail decays.
-  - Over the decay, in 100 ms windows, the energy at the harmonic and intermodulation product bins (2 and 3 kHz, and 1 kHz ± the loop's strongest mode spacing) may exceed the median of the surrounding bins (±200 Hz) by **no more than 3 dB**. The error must be noise, not products.
-  - The same test on today's in-loop GRIT is kept as a documented failing reference (`#[ignore]`), to show what changed.
-- **Bit depth.** At GRIT 0, 0.3, 0.6 and 1, a full-scale ramp through the ADC alone (dither off) lands on multiples of Δ_c = 2^(1−b), with b = 16, 14.2, 12.4 and 10.
-- **Dither.** With dither on, a −80 dBFS sine at GRIT 1 survives as a sine in noise: its bin stands ≥ 10 dB above the noise median, with no harmonic above the median + 3 dB.
-- **Bandwidth.** The converter one-pole's −3 dB point is 11 kHz ± 3 % at GRIT 0.01 and 8 kHz ± 3 % at GRIT 1.
-- **The bypass.** At GRIT exactly 0 the converters are skipped, and the output is bit-identical to a build without them.
-- **Idle mute.** 150 ms after the send goes to zero, the dither has faded out, and the silent-tail tests reach exact zero.
-- **The floor.** QUAD's measured output noise at GRIT 0.3, 0.6 and 1 lies within ±2 dB of the § GRIT table, and every other TYPE within ±1 dB of QUAD at GRIT ≥ 0.6.
+- **QUAD bit-identical at SMEAR 0** (above).
+- **Decorrelated lines.** Over 60 s at RATE 1, any two smeared lines' drifts correlate at |ρ| ≤ 0.2.
+- **No vibrato.** A 1 kHz sine circulates at SMEAR 1 and RATE 1. The spectrum of its pitch-deviation trace has no line above the trace's median + 10 dB.
+- **No drift.** The mean pitch over every window of 4/RATE stays within ±1 cent.
+- **The cap.** For every TYPE and every SIZE, Σ 2D over a loop's smeared lines is ≤ 1.45 % of L.
+- **Reads only shorten.** Every smeared read length is in [d − 2D, d] and ≥ 2. QUAD's never exceeds its line's `BASE`.
+- **QUAD's SIZE under SMEAR.** A SIZE request at SMEAR 1 eases the depth to 0 before the crossfade starts, and no block runs both. `max_d2` holds `click_free_test`'s bound.
+- **GRIT is gone.** `ReverbParams` has no GRIT; decoding a v1 block with id 5 = 0.8 succeeds and changes nothing; the fixture has no `B 22 5` row, and `RETIRED` holds `(22, 5)`.
 
 ### Pitch (the owner's per-pass test)
 
-- **Moves are pitch-free.** For each loop (ROOM, HALL, BLOOM), with DECAY at its maximum, dampers open and WOBBLE 0, a 1 kHz sine circulates through a full SIZE (or SWELL) sweep, then a PRE-DLY sweep, then a tempo step.
+- **Moves are pitch-free.** For each loop (ROOM, HALL, BLOOM), with DECAY at its maximum, dampers open and SMEAR 0, a 1 kHz sine circulates through a full SIZE (or SWELL) sweep, then a PRE-DLY sweep, then a tempo step.
   - The pitch is measured from zero crossings, once per pass.
   - **The pass:** once the move has settled (the last crossfade done, plus one round trip), the tail's spectral peak sits within **1/L Hz** of the input's 1 kHz, where L is the new round trip in seconds. That is the loop's own mode spacing.
   - **Not judged, only reported:** the in-crossfade deviation, up to about 29 cents instantaneously and about 7 cents averaged over a 120 ms pass.
@@ -936,19 +935,19 @@ The usual battery, per TYPE, on the host first (owner's rule: QA before UAT).
 - **No slap, no cancellation.** After a full SIZE sweep (and a full LENGTH move under REGEN), a noise-fed tail is compared with a static tail at the end setting.
   - Normalised autocorrelation of the moved tail over lags of 1–10 ms (the step slice's range) must show **no peak above −20 dB**, and no lag more than 3 dB above the static tail's.
   - The short-time energy (10 ms windows) must never dip more than 3 dB below the static tail's envelope trend during the move.
-- **The wobble is bounded.** At WOBBLE 1 and RATE 1, at each TYPE's smallest SIZE, the circulating sine's pitch stays within **±25 cents on every pass**. Its mean over each LFO cycle stays within ±1 cent, so there is no drift.
+- **SMEAR is bounded.** At SMEAR 1 and RATE 1, at each TYPE's smallest SIZE, the circulating sine's pitch stays within **±25 cents on every pass**. Its mean over each window of 4/RATE stays within ±1 cent, so there is no drift.
 
 ### Per engine (unit)
 
 - **Layout.** Each TYPE's layout is distinct primes that fit, and is ≤ 23,220 (`const` assert plus test).
 - **Reads.**
-  - Every computed read length is ≥ 2 (except BURST tap 0, which is not a read), across every knob's ends and WOBBLE 1.
+  - Every computed read length is ≥ 2 (except BURST tap 0, which is not a read), across every knob's ends and SMEAR 1.
   - A moving pair at fraction 0 equals the fixed read; at 0.5 it is the mean; and it is correct across the wrap.
 - **Crossfades.**
   - Every length lands on its target.
   - One LOOP crossfade moves the round trip, and PRE-DLY, by at most 5 ms, with every stage delay switching in the same crossfade.
   - The BURST scheduler never crossfades more than 4 taps at once, never moves a tap more than 120 samples in one crossfade, and brings every tap to its target.
-  - The wobble cap holds at every SIZE.
+  - The SMEAR cap holds at every SIZE.
 - **Mappings.** Each pure mapping hits its table's endpoints and defaults to 1e-3; `exp` and `lin` are monotonic.
 - **Gains and floor.**
   - Stage gains are ≤ 0.985 for the new TYPEs and ≤ 0.97 for QUAD.
@@ -971,12 +970,12 @@ The usual battery, per TYPE, on the host first (owner's rule: QA before UAT).
 
 ### Sound (render)
 
-- **Stable and silent.** At GRIT 0 and 1, every TYPE's energy never grows after the send stops. At GRIT 1 this holds after the converters' idle mute.
+- **Stable and silent.** Every TYPE's energy never grows after the send stops, at SMEAR 0 and 1.
   - The return reaches exact zero within **1.5 × the TYPE's longest RT60 at the tested settings**. REVERSE at REGEN 1 and LENGTH 800 ms has an RT60 of about 16 s, so its deadline is 24 s.
   - Long tests run the engine alone at 24 kHz, not the whole bus.
   - REVERSE at REGEN 1 must reach zero with no ±Δ hum or DC, from its truncating write.
-  - These follow `falls_silent_within` and `no_limit_cycle_at_grit_*`, which test QUAD.
-- **RT60 tracks DECAY.** It is measured on a 0.5 s noise burst (Schroeder EDC, as `rt60_follows_time`), at p = 0, 0.25, 0.5, 0.75 and 1, and must be within ±35 % of the target at GRIT 0. That is ADR 0028's tolerance and method. ROOM at DECAY 0 (0.2 s) checks the rotation.
+  - These follow `falls_silent_within` and `no_limit_cycle_at_grit_0`, which test QUAD.
+- **RT60 tracks DECAY.** It is measured on a 0.5 s noise burst (Schroeder EDC, as `rt60_follows_time`), at p = 0, 0.25, 0.5, 0.75 and 1, and must be within ±35 % of the target. That is ADR 0028's tolerance and method. ROOM at DECAY 0 (0.2 s) checks the rotation.
 - **The spike's windows (±30 %).**
   - ROOM at defaults: RT60 0.55 s, and onset ≤ 34 ms.
   - HALL at defaults: L/R correlation |ρ| ≤ 0.2.
@@ -986,7 +985,7 @@ The usual battery, per TYPE, on the host first (owner's rule: QA before UAT).
   - BLOOM at defaults: onset 140–300 ms, peak 450–750 ms.
 - **Band-limited**, as `the_return_is_band_limited`.
 - **Loudness parity.** Each TYPE's default return RMS is within ±1 dB of QUAD's default, on the same noise burst at MIX 0.5. This sets `WET[type]`.
-- **Wobble.** At WOBBLE 0, the output equals the output with the LFO frozen. At WOBBLE 1, a short-time spectrum shows the spectral peaks of a sustained tail moving.
+- **SMEAR.** At SMEAR 0, the output equals the output with the wander frozen. At SMEAR 1, a short-time spectrum shows a sustained tail's spectral peaks broadening, with no periodic sidebands.
 - **Crossfades don't click.** A full SIZE, SWELL or LENGTH sweep, and a SYNC 1/8 → 1/4 step mid-tail, keep the max second difference within `click_free_test`'s bound.
 - **Hot send.** Every TYPE at its maximum feedback (REGEN 1, DECAY 1, smallest SIZE) takes these stimuli:
   - a full-scale sine swept from 50 Hz to 10 kHz over 10 s. Clamp hits are counted on every line write, and must be ≤ 0.1 % of writes. These are the transients of § Level plan;
@@ -996,7 +995,7 @@ The usual battery, per TYPE, on the host first (owner's rule: QA before UAT).
   - a −12 dBFS RMS pink-noise pad held for 10 s, at the **default DECAY**. The soft clip never engages, so the output is **bit-identical** to the same engine built without the clip, with zero clamp hits;
   - the same pad at **maximum DECAY**. The clip shaves peaks, and the return's difference from an unclipped f32 reference must stay ≤ −40 dB, with zero clamp hits;
   - **every bound in § Level plan's table**, as an assertion: the engine records each stored quantity's peak magnitude through all of the stimuli above. Each must stay within its bound, or show only the counted transient clamp hits.
-- **Arena noise floor.** At GRIT 0, each TYPE's storage quantisation noise is measured as its i16 engine's output minus an f32-line build of the same engine, on the same noise-burst tail at MIX 1. It must lie no more than **4 dB** above QUAD's, measured the same way (§ Level plan's estimates: +2 to +4).
+- **Arena noise floor.** Each TYPE's storage quantisation noise is measured as its i16 engine's output minus an f32-line build of the same engine, on the same noise-burst tail at MIX 1. It must lie no more than **4 dB** above QUAD's, measured the same way (§ Level plan's estimates: +2 to +4).
 - **Sanitising.** NaN and out-of-range knobs render finite and recover, as QUAD's do.
 
 ### Switch
@@ -1046,7 +1045,7 @@ They lock refactors, not quality (ADR 0011). Ear tuning re-records them delibera
   - a 0.5 s pink-noise burst at −12 dBFS RMS;
   - a dry snare and a short saw chord, each peaking at −12 dBFS.
 - **Render settings.**
-  - Chimera renders on the host through the real bus (`FxBus`), at MIX 1, dry off, GRIT 0 unless the pair says otherwise.
+  - Chimera renders on the host through the real bus (`FxBus`), at MIX 1, dry off.
   - The VST renders 100 % wet in a host at 48 kHz, with its reported latency compensated. A render of the plugin's Defeat program confirms the alignment: the impulse must come back at sample 0 ± 1.
 - **Measurement.** The same metrics on both sides:
   - RT60 by T20 (Schroeder EDC);
@@ -1069,7 +1068,7 @@ They lock refactors, not quality (ADR 0011). Ear tuning re-records them delibera
 | BLOOM defaults | Bloom 1 |
 | BLOOM, SWELL 1 | Bloom 1: listen for a once-per-pass echo instead of a swell (fallback in § BLOOM engine) |
 
-- **GRIT before and after**, for the owner. One patch (QUAD at its defaults, on the saw chord and the snare) is rendered at GRIT 0, 0.3, 0.6 and 1, twice: with today's in-loop grid and with the new converters. That makes eight WAVs, with the measured noise floor and the correlated-product figure of each. The owner judges by ear whether the new GRIT reads as old converters, and where its default should sit.
+- **SMEAR on and off**, for the owner. Every TYPE is rendered on the saw chord and the snare at SMEAR 0, at its default and at 1. For QUAD there is also today's QUAD (the Task 4 reference) beside SMEAR 0, to show it unchanged. Each comes with its measured pitch-deviation spread. The owner judges by ear whether the tail smears into a wash without vibrato, and where the defaults should sit.
 
 - **The pass.**
   - Every time metric (RT60, onset, peak, −20 dB end) of every pair lies within ±30 % of the VST's value.
@@ -1084,25 +1083,25 @@ The CPU risk comes first. Each step after step 0 is a mergeable slice with its t
 
 0. **Baselines and kernels.** Nothing for the user yet; this step decides whether the CPU plan holds.
    - **Re-measure** the REVERB row on today's code, with voice traffic, and record it as the absolute baseline (`QUAD_BUS` comes from the BUS row).
-   - **Record the headroom** from `cost_test`'s assertions: 96 in the default build and 23 with `master-tape`, on 2026-10-04's numbers. If QUAD's re-measured BUS reading exceeds today's `COST`, raise `COST` first, and take any broken voice assertion to the owner (§ Target and hard limit).
+   - **Record the headroom** from `cost_test`'s assertions: 76 in the default build (after `COST` rose to 1,188) and 23 with `master-tape`. If QUAD's re-measured BUS reading exceeds today's `COST`, raise `COST` first, and take any broken voice assertion to the owner (§ Target and hard limit).
    - **Run the stress run with QUAD** (six admitted voices, every FX, ORBIT and the UI), and record its OVER, DROPS and peak block load as the reference.
    - **Measure one moving pair's marginal cost** (the +7 vs +10 question) with a microbench of fixed reads against moving pairs.
    - **Write three worst-case kernels.** Run each on a synthetic arena, bench it on the chip as a temporary row with voice traffic, and count it on the host:
-     - **BURST:** 12 taps (tap 0 from the register, tap 11 shared with REGEN), 4 taps crossfading, 2 wobbled decorrelator APs, the TAIL loop and the truncating write;
-     - **ROOM loop**, the tightest: PRE-DLY and all four stage delays crossfading, 2 wobbled APs, the f32 diffuser, the rotation, 2 soft clips, 4 normalised APs and 6 fixed taps. **It decides the tape-build margin**: a ΔCOST over 23 takes ROOM-T (§ CPU budget) and is benched again, both stages of ROOM-T if needed;
-     - **HALL loop:** PRE-DLY and four stage delays crossfading, 2 wobbled APs, the diffuser and 6 fixed taps.
+     - **BURST:** 12 taps (tap 0 from the register, tap 11 shared with REGEN), 4 taps crossfading, 2 smeared decorrelator APs, the TAIL loop and the truncating write;
+     - **ROOM loop**, the tightest: PRE-DLY and all four stage delays crossfading, 2 smeared APs, the f32 diffuser, the rotation, 2 soft clips, 4 normalised APs and 6 fixed taps. **It decides the tape-build margin**: a ΔCOST over 23 takes ROOM-T (§ CPU budget) and is benched again, both stages of ROOM-T if needed;
+     - **HALL loop:** PRE-DLY and four stage delays crossfading, 2 smeared APs, the diffuser and 6 fixed taps.
 
      BLOOM is estimated from the measured costs, since its counts sit between BURST's and HALL's.
    - **Gate ("sound first"):**
-     - each kernel's ΔCOST over the baseline must fit the headroom, 96 (23 with the tape);
+     - each kernel's ΔCOST over the baseline must fit the headroom, 76 (23 with the tape);
      - a kernel over the 485 target is recorded and kept, and the A/B decides;
      - a kernel whose ΔCOST would breach the headroom takes its TYPE's fallback and is benched again, before any TYPE work.
 
      The kernels become steps 2–4's engines once they pass.
 1. **Scaffold, in two slices.**
-   - **1a. The arena, the dispatcher and the new GRIT** (the QUAD refactor).
+   - **1a. The arena, the dispatcher, GRIT out and SMEAR into QUAD** (the QUAD refactor).
      - `ReverbArena` comes out of `Ring`, and `dsp::reverb_bus::Reverb` replaces `RingReverb` in `FxBus`. QUAD stays bit-identical (the first commit), and REV QUAD reads ≤ the step 0 baseline + 1 %.
-     - Then the new GRIT lands, as a second commit: the converters, fixed 1 LSB storage, and `Grid` retired as GRIT's mechanism. The goldens away from GRIT 0 are re-recorded, the GRIT tests are replaced, and the before-and-after A/B is rendered. REV QUAD is re-read.
+     - Then, as a second commit, GRIT leaves: the converters are reverted (kept on `converters-wip`), storage stays at a fixed 1 LSB with no `Grid`, and id 5 is retired. SMEAR comes into QUAD on its four stage delays, with RATE on QUAD's MORE page. QUAD is bit-identical at SMEAR 0, the GRIT tests are replaced by SMEAR's, and the SMEAR on/off renders are made. REV QUAD and REV QUAD S are read.
      - The `EngineState` enum and its zero test land here.
    - **1b. The parameters and the switch.**
      - The new slots and disk codes, with `ReverbType` allowing QUAD only.
@@ -1111,7 +1110,7 @@ The CPU risk comes first. Each step after step 0 is a mergeable slice with its t
      - The crossfade, read-kind, allpass, tone and LFO helpers, unit-tested alone.
      - `reverb_panel.rs`, REV › MORE and `CompositeId::Reverb`.
 2. **GATE, then REVERSE**, on `BurstEngine` (the step 0 kernel): the tap scheduler, the curves, TAIL and REGEN, REGEN's pitch test, the TAIL glyph, the first A/B pairs, and the GATE and RVRS rows.
-3. **ROOM**: `LoopEngine`, the rotation, the crossfades, the wobble and its cap, the per-pass pitch test, and the ROOM row.
+3. **ROOM**: `LoopEngine`, the rotation, the crossfades, SMEAR and its cap, the per-pass pitch test, and the ROOM row.
 4. **HALL**, on the same engine: the plate zone and corner, and the HALL row.
 5. **BLOOM**: the BLOOM row, and the SWELL 1 A/B item.
 6. **Tempo sync**, once ORBIT is on `main`: `Tempo` into `FxBus`, its quantiser, SYNC with its conversion, the division lists and the fold. This is the owner's "big one" for GATE. It lands as soon as ORBIT merges, even if step 5 is still open.
@@ -1131,20 +1130,20 @@ Each plan task's review grades quality, efficiency, performance and principled-n
   - Crossfades instead of moving reads.
   - No new gesture or page type.
 - **Performance.**
-  - Moving reads are costed and limited to the wobble.
+  - Moving reads are costed and limited to SMEAR.
   - Every TYPE estimates within +18 cycles of QUAD at either pair cost, inside both headrooms.
   - Step 0 benches the tightest kernels on the chip before any TYPE work.
   - `cost_test`'s voice counts are the gate, and so is the stress run.
 - **Principled-ness.**
   - The provenance rule is checked per task.
   - Families are graphs, so PLATE is a zone, not a TYPE.
-  - Tails are never re-pitched: moves are pitch-free by construction, and the wobble is bounded with no drift.
+  - Tails are never re-pitched: moves are pitch-free by construction, and SMEAR is bounded, with no drift and no vibrato.
   - The switch is provably stale-free.
   - Absent parameters are absent, not inert.
 
 ## Risks
 
-- **A moving pair's real cost** is 17–20 instructions by estimate. Step 0 measures it. Only the wobble uses moving pairs now, so even +10 leaves every TYPE under QUAD.
+- **A moving pair's real cost** is 17–20 instructions by estimate. Step 0 measures it. Only SMEAR uses moving pairs now, so even +10 leaves every TYPE under QUAD.
 - **Crossfade colour.** A 30 ms crossfade blends two lengths of a line, and colours the tail briefly as a comb, as QUAD's does. Slowing SIZE to more, smaller crossfades is free if the A/B hears it.
 - **BURST density with 12 taps.** Pre-diffusion should make 11 reads sound like the MV2's 47–90. If the A/B says grainy:
   - first raise the pre-diffuser's g, which is free;

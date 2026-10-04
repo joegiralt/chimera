@@ -1,12 +1,12 @@
 # Reverb TYPEs Implementation Plan
 
-**Goal:** Give the master reverb a TYPE: today's QUAD, plus ROOM, HALL (with PLATE as a zone of it), BLOOM, GATE and REVERSE. They share one i16 arena, switch without a click, and never re-pitch a tail. GRIT is redesigned as the reverb's converters, QUAD included.
+**Goal:** Give the master reverb a TYPE: today's QUAD, plus ROOM, HALL (with PLATE as a zone of it), BLOOM, GATE and REVERSE. They share one i16 arena, switch without a click, and never re-pitch a tail. GRIT leaves the reverb, and SMEAR (random wander) comes to every TYPE, QUAD included.
 
 **Architecture:**
 - The three new engines (LOOP, BURST, BLOOM) live in `chimera-core/src/dsp/rev/`, beside today's `dsp::ring` (QUAD). A dispatcher, `dsp::rev::Reverb`, runs one engine at a time over a shared `ReverbArena`, and replaces `RingReverb` in `FxBus`.
-- Lengths move by pitch-free crossfades between fixed reads. Only the wobble's reads are interpolated.
+- Lengths move by pitch-free crossfades between fixed reads. Only SMEAR's reads are interpolated.
 - The level plan bounds every stored value with a soft clip at each loop's re-entry, normalised in-loop allpass states, and f32 diffusers and decorrelators.
-- GRIT is the ADC and DAC converters (high cut, TPDF dither, bit depth), outside the engines.
+- GRIT leaves the reverb (owner, 2026-10-04): no converters, no `Grid`, and ParamId 5 retired. SMEAR, an independent random wander per modulated line, replaces the sine wobble on every TYPE, QUAD included.
 - One parameter block of semantic slots, with a per-TYPE `const` panel.
 
 **Tech Stack:** Rust 2024 on stable; `no_std` `chimera-core`; `chimera-stm32` (bench build, `--features bench`); host tests in `chimera-core/tests`; `tools/chimera-usb.py` for the unit.
@@ -48,7 +48,7 @@
 1. **Scrolling TYPE through all six mid-tail at MIX 1** ends on the last TYPE with no click and no burst. Test: Task 7, `scrolling_types_mid_tail_lands_on_the_last_without_a_click`.
 2. **A project with an unknown TYPE code or NaN slots** loads as QUAD and renders finite. Test: Task 6, `unknown_type_code_and_nan_slots_load_as_safe_quad`.
 3. **A switch at MIX 0, then MIX up,** plays the new TYPE from the current send, with no stale tail. Test: Task 7, `switch_at_mix_0_then_mix_up_has_no_stale_tail`.
-4. **GRIT moved across the converters' idle mute** gives no step in the return. Test: Task 5, `dither_mute_fades_without_a_step`.
+4. **SIZE moved on QUAD while SMEAR is up** eases the smear out, crossfades, and eases it back, with no click and no block running both. Test: Task 5, `quad_size_move_under_smear_does_not_click`.
 5. **The MIDI clock dropping out while synced** moves a synced length once, with no fold flapping and no click. Test: Task 12, `clock_dropout_moves_synced_length_once`.
 
 ---
@@ -59,9 +59,9 @@
 |---|---|---|
 | `chimera-core/src/dsp/rev/mod.rs` | `Reverb`, `EngineState`, `SwitchPhase`, the half-bands, the MIX ease | T2 (stub), T4 |
 | `chimera-core/src/dsp/rev/arena.rs` | `ReverbArena`, f32 regions, `clear` | T2 |
-| `chimera-core/src/dsp/rev/parts.rs` | soft clip, allpasses, pair read, `Xfade`, `Wobble`, `Ease1`, `one_pole` | T2 |
+| `chimera-core/src/dsp/rev/parts.rs` | soft clip, allpasses, pair read, `Xfade`, `Wander` (T5; replaces T2's `Wobble`), `Ease1`, `one_pole` | T2, T5 |
 | `chimera-core/src/dsp/rev/sync.rs` | `Tempo`, then `Division`, the lists, `fold`, `FoldState`, then tempo quantising | T4, T6, T12 |
-| `chimera-core/src/dsp/rev/grit.rs` | `Converters` | T5 |
+| `chimera-core/src/dsp/rev/grit.rs` | removed in T5 (kept on `converters-wip`) | T5 |
 | `chimera-core/src/dsp/rev/burst.rs` | `BurstEngine` | T8 |
 | `chimera-core/src/dsp/rev/loop_engine.rs` | `LoopEngine<LOOPS, STAGES>` | T9 |
 | `chimera-core/src/dsp/rev/bloom.rs` | `BloomEngine` | T11 |
@@ -127,7 +127,7 @@ git commit -m "Bench: REVERB screen with REV QUAD, BUS+V and STRESS; baselines"
   - `pub fn ap_norm(x: f32, w_d: f32, g: f32, inv_1mg: f32) -> (f32 /*y*/, f32 /*w*/)` and `pub fn ap_f32(x: f32, z: f32, g: f32) -> (f32 /*y*/, f32 /*v*/)`;
   - `pub fn pair(lines: &[i16], base: usize, d: f32) -> f32`, which requires `d ≥ 2.0` and wraps;
   - `pub struct Xfade { pub from: u16, pub to: u16, left: u16 }`, with `pub const XFADE: u16 = 720`, `start(&mut self, to: u16)`, `weight(&self) -> f32`, `tick(&mut self)` and `busy(&self) -> bool`;
-  - `pub struct Wobble { phase: u32, inc: u32 }`, with `set_rate(&mut self, hz: f32, fs: f32)` and `block(&mut self) -> [f32; 2]` (L and R, 90° apart, in −1..1);
+  - `pub struct Wobble { phase: u32, inc: u32 }`, with `set_rate(&mut self, hz: f32, fs: f32)` and `block(&mut self) -> [f32; 2]` (L and R, 90° apart, in −1..1). Built here; Task 5 replaces it with `Wander`;
   - `pub struct Ease1 { v: f32, primed: bool }`, with `step(&mut self, target: f32, k: f32) -> (f32, f32)`, the per-block one-pole every continuous knob uses, and `pub fn ease_k(tau_s: f32) -> f32` (64-sample blocks at 48 kHz);
   - `pub fn one_pole(fc: f32, fs: f32) -> f32`.
 - **Produces, in `arena.rs`:** `#[repr(C, align(4))] pub struct ReverbArena { lines: [i16; RING_LEN] }`, with `lines()`, `lines_mut()`, `f32_region(&mut self, offset: usize, len: usize) -> &mut [f32]` and `clear(&mut self)`.
@@ -139,7 +139,7 @@ git commit -m "Bench: REVERB screen with REV QUAD, BUS+V and STRESS; baselines"
   - **Shared checks:**
     - `check_settles_on_pitch(r, step: &mut dyn FnMut(usize), loop_s: f32)`: the settled peak is within 1/L Hz of 1 kHz, and the in-crossfade deviation is printed, not asserted.
     - `check_no_slap(moved: &[f32], fixed: &[f32])`: lags of 1–10 ms are ≤ −20 dB and ≤ `fixed` + 3 dB; the 10 ms energy dips ≤ 3 dB.
-    - `check_wobble_bound(r, loop_s)`: ±25 cents on every pass, and an LFO-cycle mean of ±1 cent.
+    - `check_smear_bound(r, loop_s)` (Task 5 renames T2's `check_wobble_bound`): ±25 cents on every pass, a mean over each 4/RATE window of ±1 cent, and no line in the pitch-deviation spectrum above its median + 10 dB.
     - `check_level_plan(r, set_max: &mut dyn FnMut(), r_unclipped: Render, r_f32: Render, loop_mode_hz: f32)`:
       - a held 0 dBFS loop-mode sine gives THD ≤ 3 % and 0 clamp hits;
       - a 5 kHz loop mode gives alias ≤ −40 dB;
@@ -306,102 +306,125 @@ git add chimera-core/src/dsp/ring.rs chimera-core/src/dsp/rev/mod.rs chimera-cor
 git commit -m "Reverb arena out of the ring; Reverb dispatches QUAD"
 ```
 
-### Task 5: GRIT becomes the converters (unit check)
+### Task 5: GRIT out; SMEAR into QUAD (unit check)
+
+Owner ruling, 2026-10-04: GRIT leaves the reverb, and SMEAR (Lexicon-style random wander) replaces the wobble, QUAD included. This task undoes the converters built at `46540d87`/`ae8edcba` and lands SMEAR on QUAD. The parts are already built, so `Wobble` is **replaced** by `Wander` in `parts.rs`, not kept beside it: nothing else uses it, and keeping both would leave a dead periodic modulator.
 
 **Files:**
-- Create:
-  - `chimera-core/src/dsp/rev/grit.rs`;
-  - `chimera-core/tests/reverb_grit_test.rs`;
-  - `chimera-core/tests/reverb_render_test.rs` (the A/B renderer, using `common::orbit::write_wav`);
-  - `tools/ab/stimuli.py`;
-  - `tools/ab/render.sh`.
-- Modify: `chimera-core/src/dsp/ring.rs`, `chimera-core/src/dsp/rev/mod.rs`, `chimera-core/tests/reverb_test.rs`, `chimera-core/tests/fx_golden_test.rs`
+- Delete: `chimera-core/src/dsp/rev/grit.rs` and `chimera-core/tests/reverb_grit_test.rs`. First run `git branch -f converters-wip ae8edcba`, so the code survives for the master-stage issue.
+- Create: `chimera-core/tests/reverb_smear_test.rs`
+- Modify:
+  - `chimera-core/src/dsp/rev/parts.rs` (`Wobble` → `Wander`) and `chimera-core/tests/reverb_parts_test.rs`;
+  - `chimera-core/tests/common/rev.rs` (`check_wobble_bound` → `check_smear_bound`; drop `sine_floor_dbfs`'s GRIT use, `burst_products_db` and `products_db`);
+  - `chimera-core/src/dsp/rev/mod.rs` (no converters; QUAD's SMEAR);
+  - `chimera-core/src/dsp/ring.rs` (`Grid` removed; fixed Q3 at 1 LSB by `q_round_fixed` / `q_trunc_fixed`; the third monomorph);
+  - `chimera-core/src/dsp/reverb.rs` (GRIT out; SMEAR and RATE in for QUAD);
+  - `chimera-core/src/storage/codes.rs` (`(22, 5)` added to `RETIRED`);
+  - `chimera-core/tests/fixtures/disk_codes_v1.txt` (the `B 22 5 GRIT` row goes);
+  - `chimera-core/tests/reverb_test.rs`;
+  - `chimera-core/tests/fx_golden_test.rs`, `chimera-core/tests/reverb_dispatch_test.rs` and `chimera-core/tests/instrument_test.rs` (re-recorded);
+  - `chimera-core/tests/mixer_page_test.rs` (QUAD's cells);
+  - `chimera-core/src/ui/block_registry.rs` (`EFX`: SIZE · TIME · DAMP · SMEAR; QUAD's RATE is placed on MORE by Task 6) and `chimera-core/src/ui/glyph.rs` (`CUBE_PARAMS`: GRIT → SMEAR; the cube draws SMEAR as a slow random jitter of its far edges);
+  - `chimera-core/tests/reverb_render_test.rs` and `tools/ab/render.sh` (`AB_GRIT` → `AB_SMEAR`);
+  - `chimera-stm32/src/bench.rs` (the REV QUAD S row), plan § Measured.
 
 **Interfaces:**
-- **Produces:**
-  - `pub struct Converters`, with:
-    - `fn adc(&mut self, x: &mut [f32; HALF], grit: f32)`;
-    - `fn dac(&mut self, l: &mut [f32; HALF], r: &mut [f32; HALF], grit: f32)`.
-  - `pub fn bits(grit: f32) -> f32`, which is `16.0 − 6.0·grit`.
-  - `pub fn cutoff_hz(grit: f32) -> f32`, which is `11_000.0 · exp2(grit · log2(8/11))`.
-  - `pub const IDLE_HOLD: u32 = 2_400` (100 ms at 24 kHz) and `pub const IDLE_FADE: u32 = 1_200` (50 ms).
-- **Where the converters run in `Reverb`:**
-  - `adc` on the decimated send, in dBFS units, before the ½ injection.
-  - `dac` on the return, after `WET` and before MIX.
-  - Both are skipped when the eased GRIT is exactly 0.
-- **The ring's storage:** `Grid` becomes a fixed Q3 quantiser at Δ = 1. Its `new(grit)` is removed, and `Grid::FIXED` replaces it.
+- **Produces, in `parts.rs`:**
+  - `pub struct Wander { rng: u32, target: f32, lp1: f32, lp2: f32, left: u32, period: u32, a: f32 }`
+  - `fn new(seed: u32, phase: f32) -> Self`
+  - `fn set_rate(&mut self, hz: f32, fs: f32)`, which sets `period = fs / (2·hz)` samples and `a = one_pole(hz, fs / HALF as f32)`.
+  - `fn block(&mut self) -> f32`: the smoothed drift at this block's end, in −1..1.
+  - `pub fn wander_seeds<const N: usize>(engine_seed: u32) -> [u32; N]`: one xorshift32 seed per line, decorrelated.
+- **Produces in `dsp::reverb`:**
+  - `ReverbParams` drops `grit` and gains `smear` and `rate` (for QUAD now; Task 6 adds the rest);
+  - `ReverbParams::SMEAR = ParamId(11)`, ident `SMEAR`, default 0.0; `RATE = ParamId(12)`, default 0.5;
+  - `REVERB_SPECS` has no id 5.
+- **Produces in `ring.rs`:**
+  - `Ring::run::<const XF: bool, const SMEAR: bool>`. `<true, true>` is never instantiated.
+  - The SMEAR path reads each stage delay at `d − D·(1 + x_k)`, a moving pair, with `x_k` from its own `Wander`.
+  - `D = min(depth_ms·24, 0.0018·ring_round_trip)`.
+- **Produces in `Reverb`:**
+  - A SIZE request while the eased SMEAR depth is above 0 first eases the depth to 0 over 20 ms.
+  - When the depth is exactly 0, it runs the crossfade (`XF`, no SMEAR), then eases the depth back up.
 
-- [ ] **Step 1: Write the failing tests** in `reverb_grit_test.rs`:
+- [ ] **Step 1: Write the failing tests.**
 
 ```rust
-#[test] fn grit_0_bypasses_bit_for_bit() {
-    // fx_golden_test's reverb cases at grit 0.0 hash exactly as at the T4 golden reference.
+// reverb_parts_test.rs (replaces the wobble test)
+#[test] fn wander_is_smooth_bounded_and_decorrelated() {
+    // four Wanders from wander_seeds::<4>(0x5EED_0343), set_rate(1.0, 24_000.0), 120 s of blocks:
+    // every value in −1..1; block-to-block step ≤ 2π·1·(32/24_000)·1.1; pairwise |corr| ≤ 0.2;
+    // the spectrum of each trace has no line above its median + 10 dB (no period)
 }
-#[test] fn adc_lands_on_its_step() {
-    for (g, b) in [(0.3f32, 14.2f32), (0.6, 12.4), (1.0, 10.0)] {
-        // dither forced off: a ramp −1..1 through adc; every output y satisfies |y / 2^(1−b) − round(y / 2^(1−b))| < 1e-6
-    }
+
+// reverb_smear_test.rs
+#[test] fn quad_at_smear_0_is_the_t4_reference() {
+    // fx_golden_test's GRIT-0 reverb renders and reverb_dispatch_test's GRIT-0 goldens hash as at a2abe82f
 }
-#[test] fn cutoff_tracks_grit() {
-    assert!((cutoff_hz(1.0) - 8_000.0).abs() < 1.0);
-    // measured −3 dB point of the converter one-pole at 24 kHz: 11 kHz ± 3 % at grit 0.01, 8 kHz ± 3 % at grit 1
+#[test] fn grit_is_retired() {
+    // REVERB_SPECS has no ParamId(5); RETIRED contains (22, 5); decoding a v1 block with id 5 = 0.8 succeeds and leaves params == default
 }
-#[test] fn dither_keeps_a_minus_80_dbfs_sine_as_a_sine() {
-    // grit 1, a 997 Hz sine at −80 dBFS, 1 s: its bin ≥ 10 dB over the noise median; no harmonic bin > median + 3 dB
+#[test] fn quad_smear_reads_only_shorten_and_respect_the_cap() {
+    // SMEAR 1 at SIZE 0 and 1: every stage-delay read in [d − 2D, d] with d ≤ BASE[j]; Σ 2D ≤ 0.0145 · ring round trip
 }
-#[test] fn a_grit_1_tail_has_no_correlated_products() {
-    // QUAD defaults, a 1 kHz burst at −12 dBFS for 0.5 s, then 4 s of decay; each 100 ms window:
-    // the bins at 2 kHz, 3 kHz and 1 kHz ± (1 / QUAD's stage-1 round trip) are ≤ median(±200 Hz) + 3 dB
+#[test] fn quad_smear_has_no_vibrato_and_no_drift() {
+    // check_smear_bound(quad at SMEAR 1, RATE 1, SIZE 0): per pass ±25 cents; mean over each 4/RATE window ±1 cent;
+    // pitch-deviation spectrum has no line above median + 10 dB
 }
-#[test] fn idle_mute_lets_the_tail_reach_zero() {
-    // grit 1: 150 ms after the send stops, the converter dither gain == 0.0; falls_silent_within(1.0, 20.0) holds
+#[test] fn quad_size_move_under_smear_does_not_click() {
+    // Review Focus 4: SMEAR 1, SIZE 0.2 → 0.8 mid-tail: no block runs XF and SMEAR together (Reverb::debug_paths());
+    // depth reaches 0 before the first crossfade block; max_d2 ≤ click_free_test's bound
 }
-#[test] fn dither_mute_fades_without_a_step() {
-    // Review Focus 4: send stops; GRIT eases 1 → 0.3 → 1 across IDLE_HOLD; max_d2 of the return ≤ click_free_test's bound
+#[test] fn smear_spreads_a_held_tone() {
+    // QUAD defaults with SMEAR 0 vs 1, 1 kHz held: the tail's −20 dB spectral width at 1 kHz is ≥ 2× wider at SMEAR 1
 }
-#[test] fn noise_floor_matches_the_table() {
-    // QUAD, MIX 1, silent input before the mute: dBFS of the return at grit 0.3, 0.6, 1 == −66, −64, −54 ± 2
-}
+#[test] fn quad_falls_silent_with_smear() { /* SMEAR 1: exact zero within falls_silent_within's QUAD bound */ }
 ```
 
 - [ ] **Step 2: Run the tests and see them fail.**
-  - Run: `cargo test -p chimera-core --test reverb_grit_test`.
+  - Run: `cargo test -p chimera-core --test reverb_smear_test --test reverb_parts_test`.
   - Expected: FAIL.
 - [ ] **Step 3: Implement.**
-  - **Noise:**
-    - one xorshift32, stepped twice per ring sample;
-    - TPDF = `(b0 as f32 − b1 as f32) / 256.0 · Δ_c`;
-    - bytes 0–1 feed the ADC, 2–3 DAC L, and 4–5 DAC R.
-  - **Quantise:** `rint(x / Δ_c) · Δ_c`, with `Δ_c = 2^(1−b)`.
-  - **Idle mute:**
-    - a counter per converter resets on any non-zero input;
-    - after `IDLE_HOLD` samples, a linear gain falls to 0 over `IDLE_FADE`;
-    - any non-zero input restores the gain to 1 over 24 samples.
-- [ ] **Step 4: Replace the grid tests in `reverb_test.rs`.**
-  - Delete `grit_rounds_onto_its_grid`, `grit_truncates_toward_zero_onto_its_grid`, `grit_1_stores_only_multiples_of_64`, `grit_raises_the_noise_floor` and `no_limit_cycle_at_grit_1`.
-  - Keep `no_limit_cycle_at_grit_0` and `falls_silent_within` at 0, and change its grit-1 case to run after the idle mute.
+  - **GRIT out:**
+    - delete `grit.rs` and its use in `Reverb`;
+    - `ring.rs` stores through fixed `q_round_fixed`/`q_trunc_fixed`, which give the same bits `Grid::new(0.0)` gave;
+    - retire id 5.
+  - **SMEAR in:**
+    - `Wander`, set out below;
+    - QUAD's third monomorph, with the 4 stage-delay reads as `parts::pair`;
+    - the depth ease and the SIZE-move sequencing in `Reverb`.
+  - **`Wander::block`:**
+    - `left` counts down by HALF. At 0, it draws a new `target` (an xorshift32 step, mapped to −1..1) and resets `left = period`.
+    - Then `lp1 += a·(target − lp1)` and `lp2 += a·(lp1 − lp2)`, and it returns `lp2`.
+    - The phase offsets: line k starts at `left = k·period/n`.
+- [ ] **Step 4: Replace the tests.**
+  - Delete `reverb_grit_test.rs`.
+  - In `reverb_test.rs`, the grid tests are gone already. Keep `no_limit_cycle_at_grit_0` (renamed `no_limit_cycle`) and `falls_silent_within`.
 - [ ] **Step 5: Re-record the goldens.**
-  - Re-record `fx_golden_test`'s reverb cases at grit ≠ 0, using `tests/common/golden.rs`'s update procedure.
-  - Expected: only those cases change.
-  - List them in the commit message.
-- [ ] **Step 6: Write the renderer and the owner's before-and-after artifact.**
-  - `reverb_render_test.rs` has `#[test] #[ignore] fn render()`. It reads `AB_STIMULUS` and `AB_GRIT` from the environment, writes `target/ab/<stimulus>_g<grit>.wav` through `common::orbit::write_wav`, and asserts that the file exists and every sample is finite.
-  - `tools/ab/stimuli.py` writes the spec's four stimuli (48 kHz, 12 s tails) from seed 343.
-  - `tools/ab/render.sh <tag>` runs the renderer at grit 0, 0.3, 0.6 and 1.
-  - The **before** renders come from a `git worktree` at the T4 golden reference; the **after** renders from HEAD.
-  - `target/ab/grit_report.md` lists, for all eight renders, the noise floor and the correlated-product figure from `a_grit_1_tail_has_no_correlated_products`'s measure.
-  - Hand the report and the WAVs to the owner. This replaces any ignored assertion on the old GRIT.
+  - Every reverb golden that ran at GRIT ≠ 0 is re-recorded, using `tests/common/golden.rs`'s procedure: `fx_golden_test`'s `reverb_ring`, `reverb_ring_max_size` and `reverb_ring_full_grit` (renamed `reverb_ring_smear`, run at SMEAR 1); `reverb_dispatch_test`'s three; `instrument_test`'s `reverb_send_on`.
+  - The GRIT-0 cases must keep their `a2abe82f` hashes.
+  - List the re-recorded cases in the commit message.
+- [ ] **Step 6: Renders for the owner.**
+  - Run `tools/ab/render.sh smear`. It renders QUAD on the saw chord and the snare at SMEAR 0, 0.3 and 1, and the T4 reference (`git worktree` at `a2abe82f`, GRIT 0) beside SMEAR 0.
+  - Write `target/ab/smear_report.md`, with each render's pitch-deviation spread (`pitch_per_pass_cents`) and the SMEAR-0 versus reference match.
+  - Hand it over.
 - [ ] **Step 7: Run the suite.**
   - Run: `cargo test -p chimera-core`.
   - Expected: PASS.
 - [ ] **Step 8: Bench (unit).**
-  - Run `just flash-bench`, then `just usb bench`.
-  - Record REV QUAD with the new GRIT (estimate: 447).
+  - Add **REV QUAD S** to the REVERB screen: QUAD at SMEAR 1, RATE 1, with SIZE still.
+  - Run `just flash-bench`, then `just usb bench`, and record REV QUAD and REV QUAD S.
+  - Gates:
+    - REV QUAD S ≤ REV QUAD;
+    - REV QUAD ≤ QUAD_REV + 1 % (estimate: below it, since `Grid` is gone);
+    - both ΔCOST ≤ 76 (23 tape).
+  - Record flash: the delta since `ae8edcba` should be negative, since `grit.rs` goes.
 - [ ] **Step 9: Commit.**
 
 ```bash
-git add chimera-core/src/dsp/rev/grit.rs chimera-core/src/dsp/ring.rs chimera-core/src/dsp/rev/mod.rs chimera-core/tests/reverb_grit_test.rs chimera-core/tests/reverb_render_test.rs chimera-core/tests/reverb_test.rs chimera-core/tests/fx_golden_test.rs tools/ab/stimuli.py tools/ab/render.sh docs/superpowers/plans/2026-10-04-reverb-types.md
-git commit -m "GRIT is the reverb's converters; goldens re-recorded away from GRIT 0: <cases>"
+git rm chimera-core/src/dsp/rev/grit.rs chimera-core/tests/reverb_grit_test.rs
+git add chimera-core/src/dsp/rev/parts.rs chimera-core/src/dsp/rev/mod.rs chimera-core/src/dsp/ring.rs chimera-core/src/dsp/reverb.rs chimera-core/src/storage/codes.rs chimera-core/tests/fixtures/disk_codes_v1.txt chimera-core/tests/common/rev.rs chimera-core/tests/reverb_parts_test.rs chimera-core/tests/reverb_smear_test.rs chimera-core/tests/reverb_test.rs chimera-core/tests/fx_golden_test.rs chimera-core/tests/reverb_dispatch_test.rs chimera-core/tests/instrument_test.rs chimera-core/tests/mixer_page_test.rs chimera-core/tests/reverb_render_test.rs chimera-core/src/ui/block_registry.rs chimera-core/src/ui/glyph.rs tools/ab/render.sh chimera-stm32/src/bench.rs docs/superpowers/plans/2026-10-04-reverb-types.md
+git commit -m "GRIT out of the reverb, id 5 retired; SMEAR into QUAD: <re-recorded cases>"
 ```
 
 ### Task 6: TYPE, slots, knob maps, panels and pages
@@ -418,7 +441,7 @@ git commit -m "GRIT is the reverb's converters; goldens re-recorded away from GR
 **Interfaces:**
 - **Produces, in `dsp::reverb`:**
   - `ReverbType { Quad, Room, Hall, Bloom, Gate, Reverse }` and `RevSync { Off, Time, All }`, both with explicit `DiskCode` matches;
-  - `ReverbParams` gains `kind`, `sync`, `tone`, `diffuse`, `predelay`, `shape`, `wobble` and `rate`;
+  - `ReverbParams` gains `kind`, `sync`, `tone`, `diffuse`, `predelay` and `shape` (SMEAR and RATE came in Task 5);
   - id constants `TYPE = 6` through `SYNC = 13`;
   - `pub fn with_type(self, t: ReverbType, mem: &KnobMemory) -> Self` and `pub fn with_sync(self, s: RevSync, tempo: Tempo) -> Self`;
   - `pub struct KnobMemory { slots: [[u16; 9]; 6] }`:
@@ -426,7 +449,7 @@ git commit -m "GRIT is the reverb's converters; goldens re-recorded away from GR
     - a slot stores `round(p · 65_534)`, and `u16::MAX` in a TYPE's first slot marks it unvisited;
     - `new()` fills it with `u16::MAX`;
     - methods `store(&mut self, p: &ReverbParams)`, `recall(&self, t) -> Option<[f32; 9]>` and `clear(&mut self)`;
-  - `pub struct EngineKnobs { … }` (the mapped quantities) and `pub fn knobs(p: &ReverbParams, tempo: Tempo, fold: &mut FoldState) -> EngineKnobs`. This covers every row of the spec's per-TYPE tables, the wobble caps and the plate zone.
+  - `pub struct EngineKnobs { … }` (the mapped quantities) and `pub fn knobs(p: &ReverbParams, tempo: Tempo, fold: &mut FoldState) -> EngineKnobs`. This covers every row of the spec's per-TYPE tables, the SMEAR caps and the plate zone.
 - **Produces, in `dsp::rev::sync`:**
   - `pub struct Division { pub num: u8, pub den: u8, pub kind: DivKind }`, with `DivKind { Straight, Triplet, Dotted }`;
   - the lists `ROOM_PRE`, `HALL_PRE`, `GATE_LENGTH`, `REVERSE_LENGTH` and `DECAY_BEATS: &[u8] = &[1, 2, 3, 4, 6, 8, 12, 16, 24, 32]`;
@@ -450,10 +473,10 @@ git commit -m "GRIT is the reverb's converters; goldens re-recorded away from GR
 ```rust
 // reverb_params_test.rs
 #[test] fn new_ids_and_idents_are_frozen() {
-    let want = [(6,"TYPE"),(7,"TONE"),(8,"DIFFUSE"),(9,"PREDELAY"),(10,"SHAPE"),(11,"WOBBLE"),(12,"RATE"),(13,"SYNC")];
+    let want = [(6,"TYPE"),(7,"TONE"),(8,"DIFFUSE"),(9,"PREDELAY"),(10,"SHAPE"),(11,"SMEAR"),(12,"RATE"),(13,"SYNC")];
     for (id, ident) in want { assert_eq!(find_spec(&REVERB_SPECS, ParamId(id)).unwrap().ident, ident); }
-    assert!(find_spec(&REVERB_SPECS, ParamId(0)).is_none());
-    assert_eq!(REVERB_SPECS.len(), 13);
+    assert!(find_spec(&REVERB_SPECS, ParamId(0)).is_none() && find_spec(&REVERB_SPECS, ParamId(5)).is_none());
+    assert_eq!(REVERB_SPECS.len(), 12);
 }
 #[test] fn type_and_sync_codes_are_frozen() {
     use ReverbType::*;
@@ -462,16 +485,17 @@ git commit -m "GRIT is the reverb's converters; goldens re-recorded away from GR
     for (s, c) in [(RevSync::Off,0),(RevSync::Time,1),(RevSync::All,2)] { assert_eq!(s.disk_code(), c); }
 }
 #[test] fn an_old_project_loads_as_quad() {
-    // decode a Reverb block carrying ids 1–5 only (grit .3, time .7, damp .3, size .5, mix .5) into FxParams::default(): kind == Quad, the five values set, the rest at spec defaults
+    // decode a Reverb block carrying ids 1–5 only (grit .3, time .7, damp .3, size .5, mix .5) into FxParams::default(): kind == Quad, time/damp/size/mix set, GRIT ignored, smear == 0, the rest at spec defaults
 }
 #[test] fn unknown_type_code_and_nan_slots_load_as_safe_quad() {
     // Review Focus 2: id 6 code 9, ids 7–13 NaN: kind == Quad; Reverb renders 1 s of noise send with every sample finite
 }
-#[test] fn with_type_loads_starting_knobs_and_keeps_mix_grit_sync() {
-    let mut p = ReverbParams::default(); (p.mix, p.grit, p.sync) = (0.7, 0.9, RevSync::Time);
+#[test] fn with_type_loads_starting_knobs_and_keeps_mix_and_sync() {
+    let mut p = ReverbParams::default(); (p.mix, p.sync) = (0.7, RevSync::Time);
     let h = p.with_type(ReverbType::Hall, &KnobMemory::new());
-    assert_eq!((h.size, h.time, h.tone, h.diffuse, h.predelay, h.wobble, h.rate, h.damping), (0.65, 0.45, 0.3, 0.4, 0.15, 0.35, 0.4, 0.3));
-    assert_eq!((h.mix, h.grit, h.sync), (0.7, 0.9, RevSync::Time));
+    assert_eq!((h.size, h.time, h.tone, h.diffuse, h.predelay, h.smear, h.rate, h.damping), (0.65, 0.45, 0.3, 0.4, 0.15, 0.35, 0.4, 0.3));
+    assert_eq!((h.mix, h.sync), (0.7, RevSync::Time));
+    let q = h.with_type(ReverbType::Quad, &KnobMemory::new()); assert_eq!((q.smear, q.rate), (0.0, 0.5));
 }
 #[test] fn knob_memory_is_108_bytes_restores_and_clears() {
     assert_eq!(core::mem::size_of::<KnobMemory>(), 108);
@@ -489,8 +513,8 @@ git commit -m "GRIT is the reverb's converters; goldens re-recorded away from GR
 #[test] fn plate_zone_pulls_diffuse_tone_predelay() {
     // Hall, stored diffuse .4, tone .6, predelay .5: at size 0, effective (1.0, 0.0, 0.0); at size .15 and above, (0.4, 0.6, 0.5); size .075 → (0.7, 0.3, 0.25)
 }
-#[test] fn wobble_caps_hold_at_every_size() {
-    // for size in 0..=1 step 1/128, wobble 1: Room D ≤ 0.0072·L, Hall D ≤ 0.0051·L, Bloom D ≤ 0.0072·L (L the round trip)
+#[test] fn smear_caps_hold_at_every_size() {
+    // for size in 0..=1 step 1/128, smear 1: Room D ≤ 0.0072·L, Hall D ≤ 0.0036·L, Bloom D ≤ 0.0024·L, Quad D ≤ 0.0018·L (L the round trip)
 }
 #[test] fn fold_halves_doubles_and_holds() {
     let mut st = FoldState(0);
@@ -504,7 +528,7 @@ git commit -m "GRIT is the reverb's converters; goldens re-recorded away from GR
 
 // reverb_panel_test.rs
 #[test] fn every_type_shows_its_cells() {
-    // Main and More labels per the spec, e.g. Hall More == ["PRE-DLY","DAMP","WOBBLE","RATE","SYNC","GRIT"]; Quad More all None; Gate More[0] None
+    // Main and More labels per the spec, e.g. Hall More == ["PRE-DLY","DAMP","SMEAR","RATE","SYNC",None]; Quad Main == ["SIZE","TIME","DAMP","SMEAR"], Quad More == [None,None,None,"RATE",None,None]; Gate More[0] None
 }
 #[test] fn room_sync_steps_off_and_time_only() { /* nudging SYNC under Room visits Off, Time, Off; a stored All reads as Time in value_text */ }
 #[test] fn labels_and_values_fit_their_cells() { /* every label/short/value_text at its range ends ≤ the cell width; incl. "PRE", "DENS", "DIFF", "▾1/8", "PLATE 120ms" */ }
@@ -612,7 +636,7 @@ git commit -m "Reverb switch: latch, fade out, one-block clear, fade in"
 #[test] fn reverse_window() { /* defaults: peak_ms within ±15 % of 346 ms; 0.3 ≤ |corr(l, r)| ≤ 0.75 */ }
 #[test] fn regen_settles_on_its_input_pitch() { /* check_settles_on_pitch: Reverse, REGEN 1, LENGTH 150 → 800 ms, L = 0.8 s */ }
 #[test] fn no_slap_after_a_length_move() { /* check_no_slap: Reverse REGEN .7 after LENGTH .2 → .9 vs a static Reverse at .9 */ }
-#[test] fn regen_1_falls_to_exact_zero() { /* Reverse REGEN 1, LENGTH 1: returns exact 0 within 24 s at grit 0, and at grit 1 after the idle mute */ }
+#[test] fn regen_1_falls_to_exact_zero() { /* Reverse REGEN 1, LENGTH 1: returns exact 0 within 24 s */ }
 #[test] fn level_plan_holds_for_burst() { /* check_level_plan for Gate and Reverse at REGEN 1, DECAY 1, smallest LENGTH; loop mode = nearest k / LENGTH to 500 Hz */ }
 #[test] fn burst_knobs_ease() { /* check_knobs_ease over ids 1, 3, 7, 8, 10, 11, 12 */ }
 #[test] fn burst_noise_and_loudness() { /* check_noise_and_loudness(gate, quad, 4.0); same for reverse — sets WET[Gate], WET[Reverse] */ }
@@ -677,14 +701,14 @@ git commit -m "GATE and REVERSE on the BURST engine"
 #[test] fn rotation_preserves_energy() { /* gains 1, dampers off: loop-pair energy constant to 1e-6 over 10 round trips; (c, s) = rotation(THETA) has c² + s² == 1 ± 1e-7 */ }
 #[test] fn round_trip_moves_at_most_5_ms_per_crossfade() { /* SIZE 0 → 1: each crossfade changes Σ stage delays by ≤ 120 samples, all four in the same crossfade; PRE-DLY the same */ }
 #[test] fn room_settles_on_its_input_pitch() { /* check_settles_on_pitch: SIZE sweep 0 → 1, then PRE-DLY 0 → 1, then tempo 120 → 90 BPM under SYNC TIME; L = 0.2 s */ }
-#[test] fn room_wobble_is_bounded_without_drift() { /* check_wobble_bound at WOBBLE 1, RATE 1, SIZE 0 (L = 0.1 s) */ }
+#[test] fn room_smear_is_bounded_without_drift_or_vibrato() { /* check_smear_bound at SMEAR 1, RATE 1, SIZE 0 (L = 0.1 s) */ }
 #[test] fn no_slap_after_a_size_sweep() { /* check_no_slap: Room after SIZE 0 → 1 vs a static Room at 1 */ }
 #[test] fn room_window_and_rt60() {
     // defaults: rt60_t20 == 0.548 s ± 30 %, onset_ms ≤ 34;
     // DECAY .25, .5, .75 and 1: rt60 within ±35 % of 0.2·7.5^p (floored at t_min); DECAY 0 within ±35 % of 0.2 s (checks the rotation)
 }
 #[test] fn level_plan_holds_for_room() { /* check_level_plan at DECAY 1, SIZE 0, DIFFUSE 1; plus every stored quantity's recorded peak within its § Level plan bound */ }
-#[test] fn room_knobs_ease() { /* check_knobs_ease over ids 1, 3, 7, 8, 9, 11, 12 */ }
+#[test] fn room_knobs_ease() { /* check_knobs_ease over ids 1, 3, 7, 8, 9, 11 (SMEAR), 12 */ }
 #[test] fn room_noise_and_loudness() { /* check_noise_and_loudness(room, quad, 4.0) at defaults; extra 6.0 at DIFFUSE 1 */ }
 ```
 
@@ -732,11 +756,11 @@ git commit -m "ROOM on the LOOP engine"
 
 ```rust
 #[test] fn hall_reaches_10_s_at_size_0() { /* SIZE 0, DECAY 1: no stage gain above 0.985; rt60_t20 == 10 s ± 35 % */ }
-#[test] fn plate_corner_onset_is_short() { /* SIZE 0, DECAY .35, TONE 0, DIFFUSE 1, DAMP .1, PRE 0, WOBBLE .5, RATE .6: onset_ms ≤ 8 */ }
+#[test] fn plate_corner_onset_is_short() { /* SIZE 0, DECAY .35, TONE 0, DIFFUSE 1, DAMP .1, PRE 0, SMEAR .5, RATE .6: onset_ms ≤ 8 */ }
 #[test] fn plate_zone_moves_predelay_by_crossfade() { /* PRE .5, SIZE .15 → 0: the PRE read length changes only at crossfade starts, by ≤ 120 samples each */ }
 #[test] fn hall_decorrelates() { /* defaults, noise burst: |corr(l, r)| ≤ 0.2 */ }
 #[test] fn hall_settles_on_its_input_pitch() { /* check_settles_on_pitch: SIZE 0 → 1 then PRE 0 → 1; L = 0.6 s */ }
-#[test] fn hall_wobble_is_bounded_without_drift() { /* check_wobble_bound at SIZE 0 (L = 0.12 s) */ }
+#[test] fn hall_smear_is_bounded_without_drift_or_vibrato() { /* check_smear_bound at SIZE 0 (L = 0.12 s); 2 lines, D ≤ 0.36 % of L */ }
 #[test] fn level_plan_holds_for_hall() { /* check_level_plan at DECAY 1, SIZE 0, DIFFUSE 1; stored-quantity peaks within their bounds */ }
 #[test] fn hall_knobs_ease() { /* check_knobs_ease over ids 1, 2, 3, 7, 8, 9, 11, 12 */ }
 #[test] fn hall_noise_and_loudness() { /* check_noise_and_loudness(hall, quad, 4.0); 6.0 at DIFFUSE 1 */ }
@@ -782,10 +806,10 @@ git commit -m "HALL and its plate zone; bench kernels retired"
 #[test] fn bloom_window() { /* defaults: onset_ms ∈ [140, 300], peak_ms ∈ [450, 750] */ }
 #[test] fn swell_moves_one_delay_by_crossfade() { /* SWELL 0 → 1: only the SWELL delay and PRE-DLY change length, at crossfade starts, by ≤ 120 samples; the ten AP lengths never change */ }
 #[test] fn bloom_settles_on_its_input_pitch() { /* check_settles_on_pitch: SWELL 0 → 1; L = 0.7 s */ }
-#[test] fn bloom_wobble_is_bounded_without_drift() { /* check_wobble_bound at SWELL 0 (L = 0.25 s); APs 3, 6, 9 at 0°, 90°, 180° */ }
+#[test] fn bloom_smear_is_bounded_without_drift_or_vibrato() { /* check_smear_bound at SWELL 0 (L = 0.25 s); APs 3, 6, 9, each its own Wander; D ≤ 0.24 % of L */ }
 #[test] fn bloom_rt60() { /* DECAY .6: rt60 == 5.86 s ± 35 %; DECAY 1: 12 s ± 35 % */ }
 #[test] fn level_plan_holds_for_bloom() { /* check_level_plan at DECAY 1, SWELL 0, DIFFUSE 1 */ }
-#[test] fn bloom_knobs_ease() { /* check_knobs_ease over ids 1, 3, 7, 8, 9, 11, 12 */ }
+#[test] fn bloom_knobs_ease() { /* check_knobs_ease over ids 1, 3, 7, 8, 9, 11 (SMEAR), 12 */ }
 #[test] fn bloom_noise_and_loudness() { /* check_noise_and_loudness(bloom, quad, 4.0); 6.0 at DIFFUSE 1 */ }
 ```
 
@@ -894,6 +918,7 @@ git commit -m "Reverb tempo sync on ORBIT's clock"
   - Expected: PASS.
 - [ ] **Step 3: The A/B renders.**
   - Render Chimera's side of the spec's eleven pairs to `target/ab/` with `tools/ab/render.sh pairs`.
+  - Render every TYPE on the saw chord and the snare at SMEAR 0, at its default and at 1, with `tools/ab/render.sh smear-all`, for the owner's SMEAR on/off judgement.
   - Write `target/ab/report.md`, with RT60 (T20), onset, peak, −20 dB end, tilt and ρ for each pair, measured with `tests/common/rev.rs`'s measures, and a VST column left blank.
   - Hand it to the owner.
 - [ ] **Step 4: Final bench (unit).**
@@ -968,7 +993,7 @@ against `BlockBudget::budget_cycles` (448,000).
 - **REV QUAD bench:** deferred to the next unit session (the unit was
   busy); gate REV QUAD ≤ QUAD_REV + 1 %.
 
-### Task 5: the converters (2026-10-04, host)
+### Task 5, first build: the converters (2026-10-04, host). Superseded the same day: GRIT leaves the reverb; this code is on `converters-wip`
 
 - **GRIT 0 is bit for bit the T4 reference:** `reverb_grit_test`'s
   `grit_0_bypasses_bit_for_bit` holds `fx_golden_test`'s two reverb renders
@@ -1013,12 +1038,12 @@ against `BlockBudget::budget_cycles` (448,000).
 | Engines | T8–T11 |
 | Moving lengths and pitch bounds | T2, T8–T11 |
 | Level plan | T2 (`check_level_plan`), T8–T11 |
-| GRIT | T5 |
+| GRIT retired, SMEAR | T5 (QUAD), T6, T8–T11 |
 | Arena and f32 regions | T2, T4 |
 | Parameters, `with_type` and memory | T6 |
 | Switch | T7 |
 | Smoothing | T2 (`Ease1`, `check_knobs_ease`), T8–T11 |
-| Wobble | T2, T9–T11 |
+| SMEAR | T5 (`Wander`), T8–T11 |
 | Modulation | deferred, nothing to build |
 | Tempo sync | T6 (`fold`), T12 |
 | UI, glyph and hints | T6, T8 |
