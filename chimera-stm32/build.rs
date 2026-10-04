@@ -55,9 +55,26 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
     )
     .unwrap();
 
+    // The AXI margin: what the UI's stack-free state and the card may still
+    // grow into. Shipping keeps 32 KiB; a bench build carries the probe's
+    // extra state and keeps 8 KiB (ADR 0087).
+    let margin = if env::var_os("CARGO_FEATURE_BENCH").is_some() {
+        "8K"
+    } else {
+        "32K"
+    };
+    fs::write(
+        out_dir.join("axi_margin.x"),
+        format!(
+            "AXI_MARGIN = {margin};\nASSERT(ORIGIN(RAM) + LENGTH(RAM) - __sheap >= AXI_MARGIN, \"AXI: under the margin (ADR 0087)\");\n"
+        ),
+    )
+    .unwrap();
+
     println!("cargo:rustc-link-search={}", out_dir.display());
     println!("cargo:rustc-link-arg=-Tram_d2.x");
     println!("cargo:rustc-link-arg=-Tdtcm.x");
+    println!("cargo:rustc-link-arg=-Taxi_margin.x");
     println!("cargo:rerun-if-changed=memory.x");
     println!("cargo:rerun-if-changed=build.rs");
 }

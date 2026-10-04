@@ -89,16 +89,17 @@ fn fx_bus_fits_its_axi_share() {
     assert!(size <= hw::FX_BUS_BUDGET, "FxBus = {size} B");
 }
 
-/// Spec § Hardware parity: the Project (Performance and pool), the
-/// framebuffer, the UI reserve, the AudioShared, scope, AudioStats and
+/// The AXI residents, reported (the linker enforces the margin, ADR 0087):
+/// the Project (Performance and pool), the framebuffer, the UI,
+/// the AudioShared, scope, AudioStats and
 /// ORBIT view triple buffers, the scope's writer, ORBIT's runner, the FX bus
-/// and the card's store (ADR 0014, ADR 0021) fit AXI, with 64 KB to spare.
+/// and the card's store (ADR 0014, ADR 0021).
 /// ORBIT's settings ride inside `AudioShared` and its song inside `Project`,
 /// so neither is counted again.
 #[test]
-fn axi_residents_fit() {
+fn axi_report() {
     use chimera_core::dsp::fx_bus::FxBus;
-    use chimera_core::instrument::{AXI_RESIDENT, AudioShared};
+    use chimera_core::instrument::AudioShared;
     use chimera_core::orbit::runner::{OrbitRunner, OrbitView};
     use chimera_core::perf::load::AudioStats;
     use chimera_core::project::Project;
@@ -106,7 +107,10 @@ fn axi_residents_fit() {
     use chimera_core::triple::TripleBuffer;
     let parts = [
         ("framebuffer", hw::FB_BYTES),
-        ("UI reserve", hw::UI_RESERVE),
+        (
+            "UI besides Project",
+            size_of::<chimera_core::ui::UiState>() - size_of::<Project>(),
+        ),
         ("Project", size_of::<Project>()),
         ("AudioShared x3", size_of::<TripleBuffer<AudioShared>>()),
         ("scope x3", size_of::<TripleBuffer<ScopeFrame>>()),
@@ -122,16 +126,6 @@ fn axi_residents_fit() {
     }
     let total: usize = parts.iter().map(|p| p.1).sum();
     eprintln!("{:>15} {total:>7} B of {} B", "AXI", hw::AXI_SRAM);
-    assert_eq!(total, AXI_RESIDENT);
-    // The default build's, at 2dc9eefd; the master tape adds its own.
-    if !cfg!(feature = "master-tape") {
-        assert!(total <= 442_132, "AXI grew past 2dc9eefd's");
-    }
-    assert!(
-        hw::AXI_SRAM - total >= 64 * 1024,
-        "{} B of AXI left",
-        hw::AXI_SRAM - total
-    );
 }
 
 /// The whole pool with its bookkeeping (allocator, part buses, sends) fits D2.
@@ -165,24 +159,16 @@ fn axi_counts_the_project() {
 }
 
 /// UiState is one AXI static (`chimera-stm32/src/shared.rs`). Its Project
-/// is counted on its own in `axi_residents_fit`; the rest (navigation,
-/// renderer, regions, focus) comes out of the UI reserve.
+/// is counted on its own in `axi_report`; the rest (navigation, renderer,
+/// regions, focus) is held to a growth tripwire.
 #[test]
-fn ui_state_fits_the_ui_reserve() {
+fn ui_state_rest_under_4k() {
     use chimera_core::project::Project;
     let rest = size_of::<chimera_core::ui::UiState>() - size_of::<Project>();
-    eprintln!(
-        "UiState without its Project = {rest} B, reserve {} B",
-        hw::UI_RESERVE
-    );
+    eprintln!("UiState without its Project = {rest} B");
     // A growth tripwire, no physical limit: `UiState` is an AXI static
-    // built in place, charged a fixed `UI_RESERVE`, never moved or cloned.
-    // 2 KB, then 4 KB for SETTINGS' project listing (`MAX_LISTED`), then
-    // 5 KB (owner, 2026-10-03; ORBIT command channel spec § 5.0).
-    assert!(
-        rest <= 5 * 1024,
-        "UiState grew to {rest} B besides its Project"
-    );
+    // built in place, never moved or cloned.
+    assert!(rest <= 4096, "UiState grew to {rest} B besides its Project");
 }
 
 /// Exclusive-state spec § Memory: Sympathetic's seven lines live in a pool

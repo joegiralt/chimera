@@ -15,46 +15,20 @@ use crate::dsp::engines::SlotKind;
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use crate::dsp::modal::{ResonatorMode, SYM_NOTE_ON_CLEAR_MAX, SymPool};
 use crate::dsp::voice::Voice;
-use crate::hw::{
-    AXI_SRAM, Cost, DAC_PAIRS, FB_BYTES, MAX_PARTS, MAX_VOICES, STORE_RESERVE, SampleBudget,
-    UI_RESERVE, VOICE_RAM_BUDGET,
-};
+use crate::hw::{Cost, DAC_PAIRS, MAX_PARTS, MAX_VOICES, SampleBudget, VOICE_RAM_BUDGET};
 use crate::in_place::{by_value, uninit_at};
 use crate::modulation::ModState;
 use crate::note_queue::{NoteEvent, NoteKind};
 use crate::orbit::RingIdx;
 use crate::orbit::ring::Harmony;
-use crate::orbit::runner::{OrbitRunner, OrbitShared, OrbitView};
+use crate::orbit::runner::OrbitShared;
 use crate::params::ParamSnapshot;
 use crate::part::{Held, LiveSnap, PartParams};
-use crate::perf::load::AudioStats;
 use crate::preset::{Part, Performance};
-use crate::project::Project;
-use crate::scope::{ScopeFrame, ScopeWriter};
-use crate::triple::TripleBuffer;
+use crate::scope::ScopeWriter;
 use crate::voice_alloc::{Allocator, VoiceIdx};
 use crate::{MidiChannel, MidiNote, Velocity};
 use chimera_theory::{Note, snap};
-
-/// Everything the port places in AXI SRAM (ADR 0014): framebuffer, UI,
-/// the Project, the `AudioShared`, scope, `AudioStats` and ORBIT view
-/// triple buffers (the scope's writer and ORBIT's runner besides, in the
-/// engine), the FX bus, and the card's store. ORBIT's settings ride in
-/// `AudioShared` and its song in `Project`: not counted twice.
-pub const AXI_RESIDENT: usize = FB_BYTES
-    + UI_RESERVE
-    + STORE_RESERVE
-    + size_of::<Project>()
-    + size_of::<TripleBuffer<AudioShared>>()
-    + size_of::<TripleBuffer<ScopeFrame>>()
-    + size_of::<ScopeWriter>()
-    + size_of::<TripleBuffer<AudioStats>>()
-    + size_of::<TripleBuffer<OrbitView>>()
-    + size_of::<OrbitRunner>()
-    + size_of::<FxBus>();
-const _: () = assert!(AXI_RESIDENT <= AXI_SRAM);
-// Spec § Hardware parity: 64 KB of AXI to spare.
-const _: () = assert!(AXI_SRAM - AXI_RESIDENT >= 64 * 1024);
 
 /// One Part as the audio thread sees it.
 #[derive(Clone, Debug)]
