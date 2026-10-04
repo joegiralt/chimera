@@ -192,6 +192,20 @@ impl<'a, B: Blocks> Fs<'a, B> {
         Ok(e.len)
     }
 
+    /// Whether `bytes` fit in free clusters (a new file's entry aside).
+    pub fn has_room(&mut self, bytes: u32) -> Result<bool, FsError<B::Error>> {
+        let clusters = bytes.div_ceil(self.table.layout().cluster_bytes());
+        self.table.has_free(clusters)
+    }
+
+    /// The allocator's next search starts `per_mille` of the way into the
+    /// volume's clusters: a file written next lands about there.
+    pub fn aim(&mut self, per_mille: u16) {
+        let n = u64::from(self.table.layout().clusters());
+        let at = n * u64::from(per_mille.min(1_000)) / 1_000;
+        *self.hint = Some(2 + at.min(n.saturating_sub(1)) as u32);
+    }
+
     /// `file`'s entry, its chain checked to hold its length.
     fn find(&mut self, file: FileName) -> Result<Entry, FsError<B::Error>> {
         let at = self.open(file.dir())?;
@@ -237,6 +251,47 @@ impl<'a, B: Blocks> Fs<'a, B> {
     pub fn delete(&mut self, file: FileName) -> Result<(), FsError<B::Error>> {
         let r = self.remove(file);
         self.settle(r)
+    }
+
+    /// Removes `dir` if it holds nothing but `.` and `..`: its entry, and
+    /// a matching long-name run, become 0xE5, then its chain is freed.
+    /// `false`, nothing written, if it holds anything else; a missing one
+    /// is `NotFound`.
+    pub fn remove_dir(&mut self, dir: Dir) -> Result<bool, FsError<B::Error>> {
+        let r = self.drop_dir(dir);
+        self.settle(r)
+    }
+
+    fn drop_dir(&mut self, dir: Dir) -> Result<bool, FsError<B::Error>> {
+        let parent = match path(dir) {
+            [.., p, _] => self.open(*p)?,
+            _ => self.table.layout().root(),
+        };
+        let found = self.lookup(parent, ShortName::dir(dir))?;
+        let Some((Slot::Dir(e), at)) = found.hit else {
+            return Err(FsError::NotFound);
+        };
+        let first = self
+            .table
+            .layout()
+            .cluster_block(e.start)
+            .ok_or(FsError::Corrupt)?;
+        let held = self.scan(Root::Cluster(e.start), |s, l| {
+            let dot = l.block == first && l.slot < 2;
+            match s {
+                Slot::Free | Slot::End => ControlFlow::Continue(()),
+                _ if dot => ControlFlow::Continue(()),
+                _ => ControlFlow::Break(()),
+            }
+        })?;
+        if held.is_some() {
+            return Ok(false);
+        }
+        self.will_change()?;
+        self.mark_free(at, &found.run.at[..found.run.n])?;
+        self.table.free_chain(e.start)?;
+        self.table.flush()?;
+        Ok(true)
     }
 
     /// Makes `dir`. One that exists is `Ok`, with nothing written. A new

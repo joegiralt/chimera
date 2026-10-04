@@ -175,6 +175,24 @@ impl<D: Medium> FatStore<D> {
         &self.dev
     }
 
+    /// `Fs::remove_dir` on the card, if it is still `vol`.
+    pub fn remove_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<bool, StoreError> {
+        self.run(vol, |fs, _| fs.remove_dir(dir))
+    }
+
+    /// `Fs::has_room` on the card, if it is still `vol`.
+    pub fn has_room(&mut self, vol: VolumeId, bytes: u32) -> Result<bool, StoreError> {
+        self.run(vol, |fs, _| fs.has_room(bytes))
+    }
+
+    /// `Fs::aim` on the card, if it is still `vol`: kept for its next write.
+    pub fn aim(&mut self, vol: VolumeId, per_mille: u16) -> Result<(), StoreError> {
+        self.run(vol, |fs, _| {
+            fs.aim(per_mille);
+            Ok(())
+        })
+    }
+
     /// `Fs::runs` on the card, if it is still `vol`, each run's first block
     /// on the device: for raw reads that bypass the FAT.
     pub fn runs(

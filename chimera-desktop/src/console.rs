@@ -4,7 +4,7 @@
 #[cfg(test)]
 use chimera_core::console::SHOT_HEADER;
 use chimera_core::console::{
-    AnswerClock, CardFail, CardSpeed, Console, Frame, Out, Served, Stalled, Stats, Unit, answer,
+    AnswerClock, CardAnswer, Console, Frame, Out, Served, Stalled, Stats, Unit, answer,
 };
 use chimera_core::ui::UiState;
 use chimera_hal::Ms;
@@ -105,7 +105,7 @@ impl Unit for DeskUnit<'_> {
     fn bench(&self) -> Option<&str> {
         None
     }
-    fn card(&mut self) -> Option<Result<CardSpeed, CardFail>> {
+    fn card(&mut self) -> Option<CardAnswer> {
         None
     }
     fn frame(&self) -> Frame<'_> {

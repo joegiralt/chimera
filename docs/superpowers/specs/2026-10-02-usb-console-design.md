@@ -74,7 +74,7 @@ help    this list
 status  firmware, project, Part and where the UI is
 stats   AUDIO LOAD and the UI loop's time
 bench   the bench's numbers (bench builds)
-card    SD read speed and streams, a chord playing (bench builds)
+card    SD speed and streams, a chord playing; clean (bench builds)
 shot    the screen in THEME's colours; shot raw: canonical
 dfu     restart into the ROM loader for just flash
 OK
@@ -144,29 +144,32 @@ A bench build's numbers as text: the text the bench screens draw, one screen lin
 **`card`**
 
 ```
-file_kb 4194
-file_runs 1
+seed 2864434397
+file_kb 8388
+file_runs 2
 file_created 0
+file_apart_mib 7450
 seq_512_kb_s 610
 seq_4k_kb_s 1290
 seq_16k_kb_s 1410
 rand_4k_min_us 2810
 rand_4k_median_us 3020
+rand_4k_p95_us 3900
 rand_4k_p99_us 4630
 rand_4k_max_us 9870
-loaded_16k_kb_s 1330
+streams_kb_s 1180
 loaded_voices 8
 loaded_load_pct 31
 overruns 0
-streams_seq 18
-streams_rand 12
-streams 12
+streams 16
 OK
 ```
 
-(Added 2026-10-04, bench builds only; the numbers above are made up.) How fast the card reads while audio runs, for sizing TAPE's and TRON's streams. KB is 1000 B. It times raw multi-block reads (the SD driver's own, CMD18) over the runs of `/CHIMERA/BENCH/CARDTEST.BIN`, a 4 MiB file it writes on first use (about 12 s at the card's 363 KB/s). The runs come from `FatStore::runs`, so a TAPE that streams from the blocks it looked up once is what is measured. `seq_*` read 768 KiB each in 512 B, 4 KB and 16 KB transfers; `rand_4k_*` are 256 reads of 4 KB at random 4 KB-aligned places in the file; `loaded_16k_kb_s` reads another 768 KiB in 16 KB transfers with an eight-note chord on channel 1 sounding (its `loaded_voices` and `loaded_load_pct` say how much load that was), and `overruns` counts audio blocks missed while `card` ran. `streams` is the number of 24 kHz 12-bit streams (36 KB/s each) at half the card's rate: the lower of `streams_seq` (half the loaded rate) and `streams_rand` (half the rate of 4 KB refills that each wait the p99 latency).
+(Added 2026-10-04, bench builds only; the numbers above are made up.) How fast the card reads while audio runs, for sizing TAPE's and TRON's streams. KB is 1000 B. It times raw multi-block reads (the SD driver's own, CMD18) over the runs of two 4 MiB test files, `/CHIMERA/BENCH/CARD0.BIN` and `CARD1.BIN`, which it writes on first use aimed a quarter and three quarters into the card (`FatStore::aim`), so reads that switch between them cross half the card (`file_apart_mib`). A file is written only with 5 MiB free (`FatStore::has_room`), so the card never fills; a write that fails is deleted. The runs come from `FatStore::runs`, so a TAPE that streams from blocks it looked up once is what is measured.
 
-It runs in the UI loop before the answer starts, so the answer's 1 s clock starts after it. The UI and the port hold still for its few seconds (about 15 on first use); audio, MIDI and the watchdog's kicks go on, and every card transaction keeps its `SD_IDLE_MS` deadline (the file's write raises only the operation cap). With no audio block rendered in 10 ms it answers `ERR card: audio is not running`. The host tool waits up to 60 s for its first line.
+`seq_*` read 768 KiB each of the first file in 512 B, 4 KB and 16 KB transfers, no chord. Then an eight-note chord sounds on channel 1 (`loaded_voices`, `loaded_load_pct` say how much load that was) while `rand_4k_*` time 1024 reads of 4 KB at random 4 KB-aligned places in either file, and `streams_kb_s` times TRON's pattern: eight streams, four in each file, each refilling 4 KB in turn, 24 rounds. `streams` is the number of 24 kHz 12-bit streams (36 KB/s each) at half that interleaved rate. `overruns` counts audio blocks missed while `card` ran. `seed` names the random reads; `card seed=N` repeats them. `card clean` deletes the test files and `/CHIMERA/BENCH`'s contents.
+
+It runs in the UI loop before the answer starts, so the answer's 1 s clock starts after it, and it ends within 45 s, files written included. A stop (`timeout`, a card error, no room) prints what was measured before it, then `ERR card: <why>`. A span the cycle counter times is refused, not misread, once it passes 8 s (the counter wraps at 8.9 s). The UI and the port hold still meanwhile; audio, MIDI and the watchdog's kicks go on, and every card transaction keeps its `SD_IDLE_MS` deadline. With no audio block rendered in 10 ms it answers `ERR card: audio is not running`. The host tool waits up to 60 s for its first line.
 
 **`shot`**
 

@@ -1,78 +1,131 @@
 //! The console's `card` on the unit (bench builds): the SD driver's own
-//! multi-block reads over the test file's runs, timed by the cycle counter,
-//! from the UI loop while audio runs. Every read keeps `SD_IDLE_MS`; audio,
-//! MIDI and the watchdog's kicks run above it in interrupts throughout.
+//! multi-block reads over two test files' runs, each read timed by the
+//! cycle counter, from the UI loop while audio runs. Every read keeps
+//! `SD_IDLE_MS` and the whole run `DEADLINE_MS`; audio, MIDI and the
+//! watchdog's kicks run above it in interrupts throughout.
 
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use chimera_core::boot::wait_until;
 use chimera_core::console::{
-    CardFail, CardSpeed, Extents, FILE_BLOCKS, LOADED_BLOCKS, Latency, RANDOM_BLOCKS, RANDOM_READS,
-    SEQ_BLOCKS, SPAN_BLOCKS, Throughput, random_starts, span_start,
+    CardAnswer, CardArg, CardFail, CardSpeed, DEADLINE_MS, Extents, FILE_AIMS, FILE_BYTES, FILES,
+    Files, Latency, Load, RANDOM_READS, READ_BLOCKS, ROOM_MARGIN_BYTES, SEQ_BLOCKS, SPAN_BLOCKS,
+    Throughput, interleaved, random_reads, span_start, span_us,
 };
 use chimera_core::note_queue::{NoteEvent, NoteKind, NoteProducer};
 use chimera_core::perf::load::AudioStats;
 use chimera_core::triple::Reader;
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_fat::Medium;
+use chimera_hal::Ms;
 use chimera_hal::store::{ByteSink, CHUNK, Dir, FileName, Store, StoreError, VolumeId};
 use cortex_m::peripheral::DWT;
 use embedded_sdmmc::{Block, BlockDevice, BlockIdx};
 
 use crate::audio::dma::{BLOCKS, OVERRUNS};
+use crate::controls::now_ms;
 use crate::sd::{SD_OP_CAP_MS, SdStore};
 
 /// The largest transfer, 16 KB.
 const BUF_BLOCKS: usize = 32;
-const _: () = assert!(LOADED_BLOCKS as usize <= BUF_BLOCKS);
-const _: () = assert!(RANDOM_BLOCKS as usize <= BUF_BLOCKS);
+const _: () = assert!(READ_BLOCKS as usize <= BUF_BLOCKS);
 /// Audio counts as running if it renders a block within this.
 const LIVE_MS: u32 = 10;
-/// The test file's write in all: 4 MiB at the 363 KB/s ADR 0045 measured
-/// is about 12 s.
-const CREATE_CAP_MS: u32 = 40_000;
-/// The chord's voices start before the loaded run is timed.
+/// A test file's write starts only with this long left of the deadline.
+const WRITE_MIN_MS: u32 = 1_000;
+/// The chord's voices start before the loaded reads are timed.
 const SETTLE_US: u32 = 100_000;
 /// Eight voices on channel 1, an octave and a half of C major sevenths.
 const CHORD: [u8; 8] = [48, 52, 55, 59, 60, 64, 67, 71];
+/// Names `card clean` deletes per listing.
+const CLEAN_BATCH: usize = 8;
 
-// A static, not the stack: 16 KB would trip the stack check.
-static mut BUF: [Block; BUF_BLOCKS] = [const {
-    Block {
-        contents: [0; Block::LEN],
-    }
-}; BUF_BLOCKS];
-static BUF_TAKEN: AtomicBool = AtomicBool::new(false);
+/// The transfer buffer and the latency samples: statics, not the stack.
+struct Bufs {
+    blocks: [Block; BUF_BLOCKS],
+    lat: [u32; RANDOM_READS],
+}
+
+static mut BUFS: Bufs = Bufs {
+    blocks: [const {
+        Block {
+            contents: [0; Block::LEN],
+        }
+    }; BUF_BLOCKS],
+    lat: [0; RANDOM_READS],
+};
+static BUFS_TAKEN: AtomicBool = AtomicBool::new(false);
 
 pub struct CardBench {
-    buf: &'static mut [Block; BUF_BLOCKS],
+    bufs: &'static mut Bufs,
     notes: NoteProducer<'static>,
     cpu_hz: u32,
 }
 
 /// The one `CardBench`, over the `CARD` note source.
 pub fn take(notes: NoteProducer<'static>, cpu_hz: u32) -> Option<CardBench> {
-    if BUF_TAKEN.swap(true, Ordering::AcqRel) {
+    if BUFS_TAKEN.swap(true, Ordering::AcqRel) {
         return None;
     }
     // SAFETY: the flag lets exactly one caller past, so this is the only
-    // reference to `BUF` ever made.
-    let buf = unsafe { &mut *addr_of_mut!(BUF) };
-    Some(CardBench { buf, notes, cpu_hz })
+    // reference to `BUFS` ever made.
+    let bufs = unsafe { &mut *addr_of_mut!(BUFS) };
+    Some(CardBench {
+        bufs,
+        notes,
+        cpu_hz,
+    })
 }
 
-fn test_file() -> FileName {
-    FileName::new(Dir::Bench, b"CARDTEST", b"BIN").expect("an 8.3 name")
+fn test_file(i: usize) -> FileName {
+    let stem = [b"CARD0", b"CARD1"][i % FILES];
+    FileName::new(Dir::Bench, stem, b"BIN").expect("an 8.3 name")
+}
+
+/// The run's one deadline, on the ms clock (no wrap in 49 days).
+struct Deadline(Ms);
+
+impl Deadline {
+    fn left_ms(&self) -> u32 {
+        DEADLINE_MS.saturating_sub(now_ms().since(self.0))
+    }
+
+    fn check(&self) -> Result<(), CardFail> {
+        if self.left_ms() == 0 {
+            return Err(CardFail::Timeout);
+        }
+        Ok(())
+    }
 }
 
 impl CardBench {
-    /// The whole measurement; `stats` gives the loaded run's audio load.
-    pub fn measure(
+    /// `card`'s answer, all its card work done.
+    pub fn answer(
         &mut self,
+        arg: CardArg,
         store: &mut SdStore,
         stats: Option<&mut Reader<AudioStats>>,
-    ) -> Result<CardSpeed, CardFail> {
+    ) -> CardAnswer {
+        match arg {
+            CardArg::Clean => CardAnswer::Cleaned(clean(store)),
+            CardArg::Run(seed) => {
+                let mut s = CardSpeed {
+                    seed: seed.unwrap_or_else(DWT::cycle_count),
+                    ..CardSpeed::default()
+                };
+                let fail = self.measure(&mut s, store, stats).err();
+                CardAnswer::Measured(s, fail)
+            }
+        }
+    }
+
+    fn measure(
+        &mut self,
+        s: &mut CardSpeed,
+        store: &mut SdStore,
+        stats: Option<&mut Reader<AudioStats>>,
+    ) -> Result<(), CardFail> {
         let seen = BLOCKS.load(Ordering::Relaxed);
         let live = wait_until(LIVE_MS * (self.cpu_hz / 1_000), DWT::cycle_count, || {
             BLOCKS.load(Ordering::Relaxed) != seen
@@ -81,35 +134,40 @@ impl CardBench {
             return Err(CardFail::NoAudio);
         }
         let overruns = OVERRUNS.load(Ordering::Relaxed);
+        let due = Deadline(now_ms());
+        let r = self.phases(s, store, stats, &due);
+        s.overruns = OVERRUNS.load(Ordering::Relaxed).wrapping_sub(overruns);
+        r
+    }
+
+    /// Each phase into `s` as it completes, so a stop keeps the earlier.
+    fn phases(
+        &mut self,
+        s: &mut CardSpeed,
+        store: &mut SdStore,
+        mut stats: Option<&mut Reader<AudioStats>>,
+        due: &Deadline,
+    ) -> Result<(), CardFail> {
         let vol = store.mount()?;
         store.make_dir(vol, Dir::Chimera)?;
         store.make_dir(vol, Dir::Bench)?;
-        let (ext, file_bytes, created) = test_runs(store, vol)?;
-        let mut s = CardSpeed {
-            file_bytes,
-            runs: ext.seen(),
-            created,
-            ..CardSpeed::default()
-        };
+        let (ext, files) = test_files(store, vol, due)?;
+        s.files = Some(files);
         for ((i, &n), out) in (0..).zip(&SEQ_BLOCKS).zip(&mut s.seq) {
-            *out = self.sequential(store, &ext, span_start(i), n)?;
+            *out = Some(self.sequential(store, &ext[0], span_start(i), n, due)?);
         }
-        s.random = self.random(store, &ext)?;
         self.chord(NoteKind::On(Velocity::DEFAULT));
         crate::clocks::delay_us(self.cpu_hz, SETTLE_US);
-        let loaded = self.sequential(
-            store,
-            &ext,
-            span_start(SEQ_BLOCKS.len() as u32),
-            LOADED_BLOCKS,
-        );
-        if let Some(a) = crate::audio_stats(stats) {
-            (s.voices, s.load_pct) = (a.voices, a.load_avg);
-        }
+        let mut loaded = || -> Result<(), CardFail> {
+            s.random = Some(self.random(store, &ext, s.seed, due)?);
+            s.load = load(stats.as_deref_mut());
+            s.interleaved = Some(self.interleaved(store, &ext, due)?);
+            s.load = load(stats.as_deref_mut()).or(s.load);
+            Ok(())
+        };
+        let r = loaded();
         self.chord(NoteKind::Off);
-        s.loaded = loaded?;
-        s.overruns = OVERRUNS.load(Ordering::Relaxed).wrapping_sub(overruns);
-        Ok(s)
+        r
     }
 
     fn chord(&mut self, kind: NoteKind) {
@@ -129,82 +187,215 @@ impl CardBench {
         ext: &Extents,
         from: u32,
         max: u32,
+        due: &Deadline,
     ) -> Result<Throughput, CardFail> {
-        let t = DWT::cycle_count();
+        let mut us = 0u64;
         for (lba, n) in ext.transfers(from, SPAN_BLOCKS, max) {
-            self.read(store, lba, n)?;
+            us += u64::from(self.timed_read(store, lba, n, due)?);
         }
-        Ok(Throughput {
-            bytes: SPAN_BLOCKS * Block::LEN_U32,
-            us: self.us_since(t),
-        })
+        Ok(throughput(SPAN_BLOCKS, us))
     }
 
-    /// `RANDOM_READS` reads of 4 KB, each timed.
-    fn random(&mut self, store: &SdStore, ext: &Extents) -> Result<Latency, CardFail> {
-        let mut us = [0u32; RANDOM_READS];
-        for (slot, at) in us.iter_mut().zip(random_starts(DWT::cycle_count())) {
-            let t = DWT::cycle_count();
-            for (lba, n) in ext.transfers(at, RANDOM_BLOCKS, RANDOM_BLOCKS) {
-                self.read(store, lba, n)?;
+    /// `RANDOM_READS` timed reads of 4 KB across both files.
+    fn random(
+        &mut self,
+        store: &SdStore,
+        ext: &[Extents; FILES],
+        seed: u32,
+        due: &Deadline,
+    ) -> Result<Latency, CardFail> {
+        for (i, (file, at)) in random_reads(seed).enumerate() {
+            let us = self.read_4k(store, &ext[file], at, due)?;
+            if let Some(slot) = self.bufs.lat.get_mut(i) {
+                *slot = us;
             }
-            *slot = self.us_since(t);
         }
-        Ok(Latency::of(&mut us).unwrap_or_default())
+        Ok(Latency::of(&mut self.bufs.lat).unwrap_or_default())
     }
 
-    /// One multi-block read, under its own `SD_IDLE_MS`. A failure
-    /// re-inits the card, as `FatStore` does.
-    fn read(&mut self, store: &SdStore, lba: u32, n: u32) -> Result<(), CardFail> {
+    /// TRON's pattern, `interleaved()`, timed as one rate.
+    fn interleaved(
+        &mut self,
+        store: &SdStore,
+        ext: &[Extents; FILES],
+        due: &Deadline,
+    ) -> Result<Throughput, CardFail> {
+        let (mut us, mut blocks) = (0u64, 0u32);
+        for (file, at) in interleaved() {
+            us += u64::from(self.read_4k(store, &ext[file], at, due)?);
+            blocks += READ_BLOCKS;
+        }
+        Ok(throughput(blocks, us))
+    }
+
+    /// One 4 KB read from file block `at`, split where a run ends.
+    fn read_4k(
+        &mut self,
+        store: &SdStore,
+        ext: &Extents,
+        at: u32,
+        due: &Deadline,
+    ) -> Result<u32, CardFail> {
+        let mut us = 0u32;
+        for (lba, n) in ext.transfers(at, READ_BLOCKS, READ_BLOCKS) {
+            us = us.saturating_add(self.timed_read(store, lba, n, due)?);
+        }
+        Ok(us)
+    }
+
+    /// One multi-block read under its own `SD_IDLE_MS`, in µs. A failure
+    /// re-inits the card, as `FatStore` does; a read past the cycle
+    /// counter's wrap is `ClockWrap`.
+    fn timed_read(
+        &mut self,
+        store: &SdStore,
+        lba: u32,
+        n: u32,
+        due: &Deadline,
+    ) -> Result<u32, CardFail> {
+        due.check()?;
         let dev = store.device();
-        let blocks = self.buf.get_mut(..n as usize).ok_or(StoreError::Io)?;
+        let blocks = self
+            .bufs
+            .blocks
+            .get_mut(..n as usize)
+            .ok_or(StoreError::Io)?;
+        let (t, ms) = (DWT::cycle_count(), now_ms());
         dev.start_op();
         dev.read(blocks, BlockIdx(lba)).map_err(|e| {
             let why = dev.classify(&e);
             dev.reinit();
             CardFail::Store(why)
-        })
-    }
-
-    fn us_since(&self, t: u32) -> u32 {
-        DWT::cycle_count().wrapping_sub(t) / (self.cpu_hz / 1_000_000).max(1)
+        })?;
+        let cycles = DWT::cycle_count().wrapping_sub(t);
+        span_us(cycles, self.cpu_hz, now_ms().since(ms)).ok_or(CardFail::ClockWrap)
     }
 }
 
-/// The test file's runs, its length, and whether this call wrote it: an
-/// existing file of `FILE_BLOCKS` is used as it is.
-fn test_runs(store: &mut SdStore, vol: VolumeId) -> Result<(Extents, u32, bool), CardFail> {
-    let want = FILE_BLOCKS * Block::LEN_U32;
-    let mut created = false;
-    loop {
-        let mut ext = Extents::new();
-        match store.runs(vol, test_file(), &mut |at, n| ext.push(at, n)) {
-            Ok(len) if len >= want => {
-                if !ext.whole() {
-                    return Err(CardFail::Fragmented);
-                }
-                return Ok((ext, len, created));
+fn throughput(blocks: u32, us: u64) -> Throughput {
+    Throughput {
+        bytes: blocks * Block::LEN_U32,
+        us: u32::try_from(us).unwrap_or(u32::MAX),
+    }
+}
+
+fn load(stats: Option<&mut Reader<AudioStats>>) -> Option<Load> {
+    crate::audio_stats(stats).map(|a| Load {
+        voices: a.voices,
+        load_pct: a.load_avg,
+    })
+}
+
+/// Both test files' runs, each written first if missing or short.
+fn test_files(
+    store: &mut SdStore,
+    vol: VolumeId,
+    due: &Deadline,
+) -> Result<([Extents; FILES], Files), CardFail> {
+    let mut ext = [Extents::new(); FILES];
+    let mut files = Files::default();
+    for (i, e) in ext.iter_mut().enumerate() {
+        let name = test_file(i);
+        *e = match whole_file(store, vol, name)? {
+            Some(e) => e,
+            None => {
+                write_test_file(store, vol, name, FILE_AIMS[i], due)?;
+                files.created += 1;
+                whole_file(store, vol, name)?.ok_or(StoreError::Corrupt)?
             }
-            Ok(_) | Err(StoreError::NotFound) if !created => {}
-            Ok(_) => return Err(StoreError::Corrupt.into()),
-            Err(e) => return Err(e.into()),
+        };
+        if !e.whole() {
+            return Err(CardFail::Fragmented);
         }
-        write_test_file(store, vol, want)?;
-        created = true;
+        files.runs += e.seen();
+    }
+    let [a, b] = ext.map(|e| e.first().unwrap_or(0));
+    files.apart_mib = a.abs_diff(b) / 2_048;
+    Ok((ext, files))
+}
+
+/// `name`'s runs if it holds a whole test file; `None` if it is missing
+/// or short.
+fn whole_file(
+    store: &mut SdStore,
+    vol: VolumeId,
+    name: FileName,
+) -> Result<Option<Extents>, CardFail> {
+    let mut ext = Extents::new();
+    match store.runs(vol, name, &mut |at, n| ext.push(at, n)) {
+        Ok(len) if len >= FILE_BYTES => Ok(Some(ext)),
+        Ok(_) | Err(StoreError::NotFound) => Ok(None),
+        Err(e) => Err(e.into()),
     }
 }
 
-/// `bytes` of a counting pattern, under `CREATE_CAP_MS`.
-fn write_test_file(store: &mut SdStore, vol: VolumeId, bytes: u32) -> Result<(), StoreError> {
-    store.device().spi(|s| s.set_cap_ms(CREATE_CAP_MS));
-    let wrote = store.write(vol, test_file(), &mut |sink: &mut dyn ByteSink| {
+/// A test file, aimed `aim` per mille into the card: only with room for it
+/// and `ROOM_MARGIN_BYTES` after, and within the deadline. One that
+/// doesn't complete is deleted.
+fn write_test_file(
+    store: &mut SdStore,
+    vol: VolumeId,
+    name: FileName,
+    aim: u16,
+    due: &Deadline,
+) -> Result<(), CardFail> {
+    if due.left_ms() < WRITE_MIN_MS {
+        return Err(CardFail::Timeout);
+    }
+    if !store.has_room(vol, FILE_BYTES + ROOM_MARGIN_BYTES)? {
+        return Err(CardFail::NoRoom);
+    }
+    store.aim(vol, aim)?;
+    store.device().spi(|s| s.set_cap_ms(due.left_ms()));
+    let wrote = store.write(vol, name, &mut |sink: &mut dyn ByteSink| {
         let mut chunk = [0u8; CHUNK];
-        for i in 0..bytes / CHUNK as u32 {
+        for i in 0..FILE_BYTES / CHUNK as u32 {
             chunk.fill(i as u8);
             sink.put(&chunk)?;
         }
         Ok(())
     });
     store.device().spi(|s| s.set_cap_ms(SD_OP_CAP_MS));
-    wrote.map(|_| ())
+    match wrote {
+        Ok(n) if n == FILE_BYTES => Ok(()),
+        short => {
+            // A failed write re-inited the card: mount it again first.
+            let _ = store.mount().and_then(|v| store.delete(v, name));
+            Err(match short {
+                Err(StoreError::Timeout) => CardFail::SlowWrite,
+                Err(StoreError::Full) => CardFail::NoRoom,
+                Err(e) => CardFail::Store(e),
+                Ok(_) => CardFail::Store(StoreError::Io),
+            })
+        }
+    }
+}
+
+/// `card clean`: every file in `/CHIMERA/BENCH`, then the directory.
+fn clean(store: &mut SdStore) -> Result<(), CardFail> {
+    let vol = store.mount()?;
+    loop {
+        let mut names = [None; CLEAN_BATCH];
+        let mut n = 0;
+        match store.list(vol, Dir::Bench, &mut |f, _| {
+            if let Some(slot) = names.get_mut(n) {
+                *slot = Some(f);
+                n += 1;
+            }
+        }) {
+            Err(StoreError::NotFound) => return Ok(()),
+            r => r?,
+        }
+        if n == 0 {
+            break;
+        }
+        for f in names.into_iter().flatten() {
+            store.delete(vol, f)?;
+        }
+    }
+    match store.remove_dir(vol, Dir::Bench) {
+        Ok(true) | Err(StoreError::NotFound) => Ok(()),
+        Ok(false) => Err(CardFail::NotEmpty),
+        Err(e) => Err(e.into()),
+    }
 }

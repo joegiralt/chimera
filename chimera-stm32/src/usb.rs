@@ -4,7 +4,7 @@
 
 use chimera_core::boot::{BootSeen, UsbOff, UsbRegs, UsbRetry, UsbState, UsbStep, wait_until};
 use chimera_core::console::{
-    AnswerClock, CardFail, CardSpeed, Console, Frame, LoopTimer, Out, Request, Served, Stalled,
+    AnswerClock, CardAnswer, CardArg, Console, Frame, LoopTimer, Out, Request, Served, Stalled,
     Stats, Unit, answer, serial_hex,
 };
 use chimera_core::perf::load::AudioStats;
@@ -122,7 +122,7 @@ pub struct DfuAsked(());
 /// `card`'s measurement, run before its answer starts: `None` without one
 /// in this build.
 pub type CardRun<'a> =
-    &'a mut dyn FnMut(Option<&mut Reader<AudioStats>>) -> Option<Result<CardSpeed, CardFail>>;
+    &'a mut dyn FnMut(CardArg, Option<&mut Reader<AudioStats>>) -> Option<CardAnswer>;
 
 /// The port, the half-read request line, and the loop's time between tops.
 pub struct Usb {
@@ -334,7 +334,9 @@ impl Usb {
             };
             // Outside a bench build nothing measures, and none of it links.
             let card = match req {
-                Ok(Request::Card(_)) if cfg!(feature = "bench") => card(stats.as_deref_mut()),
+                Ok(Request::Card(arg)) if cfg!(feature = "bench") => {
+                    card(arg, stats.as_deref_mut())
+                }
                 _ => None,
             };
             let unit = &mut ChipUnit {
@@ -374,7 +376,7 @@ impl Usb {
 struct ChipUnit<'a> {
     ui: &'a UiState,
     stats: Option<&'a mut Reader<AudioStats>>,
-    card: Option<Result<CardSpeed, CardFail>>,
+    card: Option<CardAnswer>,
     timer: &'a mut LoopTimer,
     bench: Option<&'a str>,
     frame: Frame<'a>,
@@ -404,7 +406,7 @@ impl Unit for ChipUnit<'_> {
         self.bench
     }
 
-    fn card(&mut self) -> Option<Result<CardSpeed, CardFail>> {
+    fn card(&mut self) -> Option<CardAnswer> {
         self.card
     }
 

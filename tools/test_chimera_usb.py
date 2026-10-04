@@ -212,6 +212,12 @@ class Tool(unittest.TestCase):
         self.assertEqual(tool.first_wait("stats"), tool.SILENCE_S)
         self.assertGreaterEqual(tool.CARD_WAIT_S, 30)
 
+    def test_a_card_stopped_short_prints_what_it_measured(self):
+        with FakeUnit({b"card seed=7\n": b"seed 7\noverruns 0\nERR card: timeout\n"}) as u:
+            r = run_tool(["card", "seed=7"], u.target)
+        self.assertEqual((r.returncode, r.stdout), (1, b"seed 7\noverruns 0\n"))
+        self.assertIn(b"ERR card: timeout", r.stderr)
+
     def test_card_prints_its_body(self):
         with FakeUnit({b"card\n": b"streams 12\nOK\n"}) as u:
             r = run_tool(["card"], u.target)

@@ -1156,3 +1156,68 @@ fn the_bench_dir_lives_under_chimera() {
     assert_eq!(read_back(&mut s, vol, f), b"x");
     entry(&disk, b"BENCH      ");
 }
+
+#[test]
+fn has_room_counts_free_clusters() {
+    let (disk, vol) = card();
+    let cluster = layout_of(&disk).cluster_bytes();
+    fill(&disk, 3);
+    let mut s = probed(&disk);
+    assert_eq!(s.has_room(vol, 3 * cluster), Ok(true));
+    assert_eq!(s.has_room(vol, 3 * cluster + 1), Ok(false));
+    assert_eq!(s.has_room(vol, 0), Ok(true));
+}
+
+#[test]
+fn aim_puts_the_next_file_there() {
+    let (disk, vol) = card();
+    let clusters = layout_of(&disk).clusters();
+    let mut s = probed(&disk);
+    s.aim(vol, 750).unwrap();
+    s.write(vol, name(b"FAR"), &mut |w| w.put(&pattern(5, 600)))
+        .unwrap();
+    let at = start(&disk, b"FAR     BIN");
+    assert!(
+        at >= 2 + clusters * 3 / 4 && at < 2 + clusters * 3 / 4 + 4,
+        "{at}"
+    );
+    s.aim(vol, 1_000).unwrap();
+    s.write(vol, name(b"END"), &mut |w| w.put(&pattern(6, 600)))
+        .unwrap();
+    assert!(
+        start(&disk, b"END     BIN") >= at,
+        "the last cluster, or wrapped past it"
+    );
+    assert_eq!(read_back(&mut s, vol, name(b"FAR")), pattern(5, 600));
+}
+
+#[test]
+fn remove_dir_takes_only_an_empty_one() {
+    for (what, img) in [("FAT16", with_clusters(CLUSTERS, 7)), ("FAT32", fat32(7))] {
+        let disk = Rc::new(img);
+        let mut s = probed(&disk);
+        let vol = s.mount().unwrap();
+        s.make_dir(vol, Dir::Chimera).unwrap();
+        let before = free(&disk);
+        let f = FileName::new(Dir::Bench, b"CARD0", b"BIN").unwrap();
+        s.make_dir(vol, Dir::Bench).unwrap();
+        s.write(vol, f, &mut |w| w.put(&pattern(1, 3_000))).unwrap();
+        assert_eq!(
+            s.remove_dir(vol, Dir::Bench),
+            Ok(false),
+            "{what}: holds CARD0"
+        );
+        s.delete(vol, f).unwrap();
+        assert_eq!(s.remove_dir(vol, Dir::Bench), Ok(true), "{what}");
+        assert_eq!(free(&disk), before, "{what}: every cluster back");
+        assert_eq!(
+            s.remove_dir(vol, Dir::Bench),
+            Err(StoreError::NotFound),
+            "{what}"
+        );
+        consistent(&s);
+        s.make_dir(vol, Dir::Bench).unwrap();
+        s.write(vol, f, &mut |w| w.put(b"again")).unwrap();
+        assert_eq!(read_back(&mut s, vol, f), b"again", "{what}");
+    }
+}

@@ -115,7 +115,7 @@ commands! {
     Status (NoArg)   => "status", "firmware, project, Part and where the UI is",
     Stats  (NoArg)   => "stats",  "AUDIO LOAD and the UI loop's time",
     Bench  (NoArg)   => "bench",  "the bench's numbers (bench builds)",
-    Card   (NoArg)   => "card",   "SD read speed and streams, a chord playing (bench builds)",
+    Card   (CardArg) => "card",   "SD speed and streams, a chord playing; clean (bench builds)",
     Shot   (Colours) => "shot",   "the screen in THEME's colours; shot raw: canonical",
     Dfu    (NoArg)   => "dfu",    "restart into the ROM loader for just flash",
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Read the unit over its USB console (or the desktop sim's socket).
 
-    python3 tools/chimera-usb.py <cmd> [<arg>]     help, status, stats, bench, card, shot [raw], dfu
+    python3 tools/chimera-usb.py <cmd> [<arg>]     help, status, stats, bench, card [clean|seed=N], shot [raw], dfu
     python3 tools/chimera-usb.py to-dfu            the unit into ROM DFU, for just flash
     python3 tools/chimera-usb.py wait-console [s]  wait (default 10 s) for the console on the bus
 
@@ -170,6 +170,13 @@ def send(conn: Conn, line):
     conn.write(line.encode() + b"\n" if isinstance(line, str) else line + b"\n")
 
 
+class ErrLine(bytes):
+    """An ERR line; `before` holds the lines the answer sent ahead of it
+    (what a `card` measured before it stopped)."""
+
+    before = b""
+
+
 def answer(conn: Conn, first=SILENCE_S) -> tuple:
     """(Status.OK, body) or (Status.ERR, the ERR line), the first byte
     waited for up to `first` s.
@@ -182,7 +189,9 @@ def answer(conn: Conn, first=SILENCE_S) -> tuple:
         if ln == b"OK":
             return Status.OK, body
         if ln == b"ERR" or ln.startswith(b"ERR "):
-            return Status.ERR, ln
+            err = ErrLine(ln)
+            err.before = body
+            return Status.ERR, err
         body += ln + b"\n"
         if ln.startswith(b"SHOT "):
             body += rd.exactly(Shot.declared_length(ln))
@@ -379,6 +388,8 @@ def main(argv, env) -> int:
     finally:
         conn.close()
     if status is Status.ERR:
+        sys.stdout.buffer.write(getattr(body, "before", b""))
+        sys.stdout.flush()
         return fail(body.decode(errors="replace"))
     if argv[0].lower() == "shot":
         try:

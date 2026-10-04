@@ -1,6 +1,7 @@
 use chimera_core::console::{
-    CardSpeed, Extents, FILE_BLOCKS, Latency, MAX_RUNS, RANDOM_BLOCKS, RANDOM_READS,
-    STREAM_BYTES_PER_S, Throughput, random_starts,
+    CYCLE_SPAN_MS, CardArg, CardSpeed, Console, Extents, FILE_BLOCKS, FILES, Latency, MAX_RUNS,
+    RANDOM_READS, READ_BLOCKS, Refusal, Request, STREAM_BYTES_PER_S, STREAM_ROUNDS, STREAMS,
+    Throughput, interleaved, random_reads, span_us,
 };
 
 #[test]
@@ -8,18 +9,45 @@ fn a_stream_is_24_khz_of_12_bits() {
     assert_eq!(STREAM_BYTES_PER_S, 36_000);
 }
 
+fn parse(line: &str) -> Option<Result<Request, Refusal>> {
+    let mut c = Console::new();
+    line.bytes().chain(*b"\n").filter_map(|b| c.push(b)).last()
+}
+
 #[test]
-fn latency_takes_min_median_p99_max() {
-    let mut us: Vec<u32> = (1..=200).rev().collect();
+fn card_takes_clean_a_seed_or_nothing() {
+    assert_eq!(parse("card"), Some(Ok(Request::Card(CardArg::Run(None)))));
+    assert_eq!(parse("card CLEAN"), Some(Ok(Request::Card(CardArg::Clean))));
+    assert_eq!(
+        parse("card seed=4294967295"),
+        Some(Ok(Request::Card(CardArg::Run(Some(u32::MAX)))))
+    );
+    for bad in [
+        "card seed=",
+        "card seed=-1",
+        "card seed=4294967296",
+        "card x",
+        "card clean 1",
+    ] {
+        assert!(
+            matches!(parse(bad), Some(Err(Refusal::Arguments(_)))),
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn latency_takes_min_median_p95_p99_max() {
+    let mut us: Vec<u32> = (1..=1_000).rev().collect();
     let l = Latency::of(&mut us).unwrap();
     assert_eq!(
-        (l.min_us, l.median_us, l.p99_us, l.max_us),
-        (1, 101, 198, 200)
+        (l.min_us, l.median_us, l.p95_us, l.p99_us, l.max_us),
+        (1, 501, 950, 990, 1_000)
     );
     assert_eq!(Latency::of(&mut []), None);
     let one = Latency::of(&mut [7]).unwrap();
     assert_eq!(
-        (one.min_us, one.median_us, one.p99_us, one.max_us),
+        (one.min_us, one.p95_us, one.p99_us, one.max_us),
         (7, 7, 7, 7)
     );
 }
@@ -35,19 +63,29 @@ fn throughput_never_divides_by_zero() {
 }
 
 #[test]
-fn streams_are_the_lower_of_the_two_at_half_rate() {
-    let mut s = CardSpeed {
-        loaded: Throughput {
-            bytes: 1_440_000,
-            us: 1_000_000,
-        },
-        ..CardSpeed::default()
-    };
-    // 4 KB every 4096 µs: 1 MB/s.
-    s.random.p99_us = 4_096;
-    assert_eq!(s.streams_seq(), 20);
-    assert_eq!(s.streams_random(), 13);
-    assert_eq!(s.streams(), 13);
+fn streams_are_half_the_interleaved_rate() {
+    let mut s = CardSpeed::default();
+    assert_eq!(s.streams(), None, "nothing interleaved, no count");
+    s.interleaved = Some(Throughput {
+        bytes: 1_440_000,
+        us: 1_000_000,
+    });
+    assert_eq!(s.streams(), Some(20));
+}
+
+#[test]
+fn a_span_past_the_wrap_is_refused() {
+    let hz = 480_000_000;
+    assert_eq!(span_us(480_000, hz, 1), Some(1_000));
+    assert_eq!(
+        span_us(u32::MAX, hz, CYCLE_SPAN_MS - 1),
+        Some(u32::MAX / 480)
+    );
+    assert_eq!(
+        span_us(5, hz, CYCLE_SPAN_MS),
+        None,
+        "wrapped: the cycles lie"
+    );
 }
 
 #[test]
@@ -59,7 +97,7 @@ fn transfers_never_cross_a_run() {
     assert_eq!(t, [(1_004, 4), (1_008, 2), (5_000, 4), (5_004, 2)]);
     assert_eq!(e.locate(15), Some((5_005, 1)));
     assert_eq!(e.locate(16), None);
-    // Past the runs it stops short.
+    assert_eq!(e.first(), Some(1_000));
     assert_eq!(e.transfers(14, 10, 32).map(|(_, n)| n).sum::<u32>(), 2);
 }
 
@@ -75,19 +113,60 @@ fn extents_count_runs_they_cannot_keep() {
 }
 
 #[test]
-fn random_starts_are_aligned_inside_the_file_and_spread() {
-    let starts: Vec<u32> = random_starts(0).collect();
-    assert_eq!(starts.len(), RANDOM_READS);
+fn random_reads_cover_both_files_and_repeat_by_seed() {
+    let reads: Vec<_> = random_reads(42).collect();
+    const { assert!(RANDOM_READS >= 1_000, "enough for a p99") };
+    assert_eq!(reads.len(), RANDOM_READS);
     assert!(
-        starts
-            .iter()
-            .all(|&b| b % RANDOM_BLOCKS == 0 && b + RANDOM_BLOCKS <= FILE_BLOCKS)
+        reads == random_reads(42).collect::<Vec<_>>(),
+        "a seed repeats"
     );
-    let mut distinct = starts.clone();
+    for other in [0, 1, 43] {
+        assert!(
+            reads != random_reads(other).collect::<Vec<_>>(),
+            "seed {other}"
+        );
+    }
+    assert!(random_reads(0).collect::<Vec<_>>() != random_reads(1).collect::<Vec<_>>());
+    assert!(
+        reads
+            .iter()
+            .all(|&(f, b)| f < FILES && b % READ_BLOCKS == 0 && b + READ_BLOCKS <= FILE_BLOCKS)
+    );
+    for f in 0..FILES {
+        let n = reads.iter().filter(|r| r.0 == f).count();
+        assert!(n > RANDOM_READS / 3, "file {f}: {n}");
+    }
+    assert!(reads.iter().any(|&(_, b)| b < FILE_BLOCKS / 4));
+    assert!(reads.iter().any(|&(_, b)| b >= FILE_BLOCKS * 3 / 4));
+}
+
+#[test]
+fn interleaved_turns_through_every_stream_each_round() {
+    let reads: Vec<_> = interleaved().collect();
+    assert_eq!(reads.len(), (STREAMS * STREAM_ROUNDS) as usize);
+    let first: Vec<_> = reads[..STREAMS as usize].to_vec();
+    let mut distinct = first.clone();
     distinct.sort_unstable();
     distinct.dedup();
-    // 256 draws of 1024 slots: about 226 distinct.
-    assert!(distinct.len() > RANDOM_READS * 8 / 10);
-    assert!(starts.iter().any(|&b| b < FILE_BLOCKS / 4));
-    assert!(starts.iter().any(|&b| b >= FILE_BLOCKS * 3 / 4));
+    assert_eq!(
+        distinct.len(),
+        STREAMS as usize,
+        "each stream its own place"
+    );
+    for f in 0..FILES {
+        assert_eq!(
+            first.iter().filter(|r| r.0 == f).count(),
+            STREAMS as usize / FILES
+        );
+    }
+    for (i, &(f, b)) in reads.iter().enumerate().skip(STREAMS as usize) {
+        let (pf, pb) = reads[i - STREAMS as usize];
+        assert_eq!(
+            (f, b),
+            (pf, pb + READ_BLOCKS),
+            "a stream reads on from its last"
+        );
+        assert!(b + READ_BLOCKS <= FILE_BLOCKS);
+    }
 }

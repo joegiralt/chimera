@@ -434,9 +434,9 @@ fn synth(board: Board) -> ! {
         #[cfg(feature = "usb-console")]
         tend_usb(&mut usb, ui, &marker, &clocks, clk.cpu_hz, &mut usb_snap);
         #[cfg(all(feature = "usb-console", feature = "bench"))]
-        let card_run: usb::CardRun = &mut |s| Some(card_bench.measure(store, s));
+        let card_run: usb::CardRun = &mut |arg, s| Some(card_bench.answer(arg, store, s));
         #[cfg(all(feature = "usb-console", not(feature = "bench")))]
-        let card_run: usb::CardRun = &mut |_| None;
+        let card_run: usb::CardRun = &mut |_, _| None;
         #[cfg(feature = "usb-console")]
         if let Some(asked) = usb
             .up()
