@@ -29,8 +29,9 @@ Measured on `orbit` (43d59110), which merges first:
 - **D2's 121 504 B free is TAPE's streaming rings and VA.**
 - **Flash has 100 036 B free** on `bench,orbit`.
 
-Even the whole free AXI holds only about 4.2 s of 24 kHz 12-bit audio. A
-RAM-only TAPE would be a one-source engine.
+Even all the free AXI, with the delay line halved (ADR 0090), holds only
+about 5.6 s of 24 kHz 12-bit audio. A RAM-only TAPE would be a one-source
+engine.
 
 ## Decision
 - **The linker enforces the AXI margin, not a paper sum.**
@@ -39,8 +40,15 @@ RAM-only TAPE would be a one-source engine.
   - `UI_RESERVE` and the 64 KiB const assert go. `axi_residents_fit`
     becomes a report.
   - This supersedes ADR 0014's AXI accounting in part.
-- **One arena, `ARENA_BYTES` = 112 KiB, in AXI**, replacing the fixed
-  slots. On `bench,orbit` that leaves 37 148 B above the margin.
+- **One arena, `ARENA_BYTES` = 160 KiB, in AXI**, replacing the fixed
+  slots.
+  - It is sized after ADR 0090 stores the master delay line as `i16`
+    (owner, 2026-10-04), which frees 48 128 B.
+  - On `bench,orbit`: 398 556 − 48 128 − 28 672 + 2 176 (index) + 392
+    (`SourceTable`) + 163 840 = 488 164 B used, leaving 36 124 B, above
+    the 32 KiB margin.
+  - Without ADR 0090 the same arithmetic stops at 112 KiB.
+  - ADR 0090 is step 1 of the build, before the arena.
   - Sources pack up from 0, Sounds pack down from the top, and free space
     is the gap.
   - Entries are rounded to a 16 B granule.
@@ -106,7 +114,7 @@ RAM-only TAPE would be a one-source engine.
     `PoolSource` as a failed load, and falls back to NEW.
   - Old projects load and sound the same.
   - A project over the budget loads in priority order, with a note.
-- **NEW copies a sparse factory blob** (about 10 KB) into the arena: 9 %
+- **NEW copies a sparse factory blob** (about 10 KB) into the arena: 7 %
   on the meter. Factory sources are card-only.
 
 ## Alternatives considered
@@ -137,12 +145,13 @@ RAM-only TAPE would be a one-source engine.
 ## Consequences
 - `Pool::get` returns an encoded view, so every `pool().get` caller
   changes once.
-- NEW reads 9 %. One 2 s, 24 kHz source beside it reads 72 %. A TRON
-  instrument's heads read 38 %.
-- **The delay line as `i16`** would free 48 128 B and allow a 160 KiB
-  arena: 4.3 s in place of 2.9 s at 24 kHz beside NEW. It would grain the
-  delay's repeats. It is an owner question, and would be its own ADR,
-  superseding ADR 0014's delay storage in part.
+- NEW's 32 Sounds take 10 240 B, 7 %. That leaves 153 600 B: 4.3 s at
+  24 kHz or 6.4 s at 16 kHz. In Sounds alone, it holds about 510 curated
+  Sounds, so the 128-slot cap binds first.
+- One 2 s, 24 kHz source beside NEW reads 51 %. A TRON instrument's heads
+  read 27 %.
+- The arena depends on ADR 0090. The delay's repeats carry 16-bit grain,
+  and that is the price of the extra 48 KB.
 - About 23 KB of flash across the build steps, measured at each.
 - A project needs its card's `/CHIMERA/TAPES` to sound its TAPE Parts.
   Orphaned card sources wait for SETTINGS › SYSTEM › STORAGE (#267).
@@ -161,7 +170,8 @@ RAM-only TAPE would be a one-source engine.
   - `chimera-core/tests/memory_budget_test.rs`;
   - fixtures `chimera-core/tests/fixtures/v1/*.snd`.
 - ADRs:
-  - 0014 and 0025 (memory map, DTCM stack), 0028 (`i16` reverb);
+  - 0014 and 0025 (memory map, DTCM stack), 0028 (`i16` reverb), 0090
+    (`i16` delay line);
   - 0043, 0045, 0046 (projects, card format, load);
   - 0066, 0073, 0078, 0081, 0086.
 - Manuals:

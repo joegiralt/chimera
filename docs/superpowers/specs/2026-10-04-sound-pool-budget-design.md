@@ -1,6 +1,6 @@
 # Sound pool by memory budget: sparse Sounds, card-backed sources, one meter
 
-Status: draft for owner review (2026-10-04), revised after an adversarial review the same day. Issue: private issue #337. ADR 0087 (Proposed) records the decision. It supersedes ADR 0043's fixed 32-slot `Pool` in part, and ADR 0014's AXI accounting in part. TAPE (private issue #279) builds on it. The factory library (private issue #317) fills it.
+Status: draft for owner review (2026-10-04), revised after an adversarial review the same day. The arena size depends on ADR 0090 (the master delay line as `i16`, owner ruling 2026-10-04). Issue: private issue #337. ADR 0087 (Proposed) records the decision. It supersedes ADR 0043's fixed 32-slot `Pool` in part, and ADR 0014's AXI accounting in part. TAPE (private issue #279) builds on it. The factory library (private issue #317) fills it.
 
 ## Intent
 
@@ -15,7 +15,7 @@ The owner, 2026-10-03: the project's sound pool is budgeted by **memory**, not b
 - **Few controls.** Every MIX or hold gesture gets a contextual focus-band hint (ADR 0086).
 - **Never snap parameters, and never allocate in the audio thread.**
 
-**The frame this revision adds.** RAM can't hold TAPE's sources; the card can. The honest ceiling for the arena is about 152 KB (148 KiB), and 200 KB (195 KiB) with the delay trade (owner question 1). That is 4.2–5.6 s of 24 kHz 12-bit audio for the whole project, which would make a RAM-only TAPE a one-source engine. So:
+**The frame this revision adds.** RAM can't hold TAPE's sources; the card can. Even with the master delay line moved to `i16` (owner ruling 2026-10-04, ADR 0090), the honest ceiling for the arena is about 200 KB (195 KiB). That is 5.6 s of 24 kHz 12-bit audio for the whole project, which would make a RAM-only TAPE a one-source engine. So:
 
 - **Every source lives on the card**, written once, under `/CHIMERA/TAPES`.
 - **The arena holds, per source, either the whole of a short source** (a microsample, for the random-access models: TRANSWAVE, LOOP, GRAIN, SCRUB and the rest) **or the first slice of a streamed one** (TRON, #279). Both count on the one meter.
@@ -36,7 +36,7 @@ The owner, 2026-10-03: the project's sound pool is budgeted by **memory**, not b
 | AXI really used, `--features orbit` | 384 248 (`.data` 3 092 + `.bss` 381 156); 140 040 free | `rust-size -A`, release ELF |
 | AXI really used, `--features bench,orbit` (the largest build `just` makes) | 398 556 (`.data` 5 976 + `.bss` 392 580); **125 732 free** | same |
 | What `UI_RESERVE` (65 536) actually covers | `UiState` less its `Project` 3 840, `ENGINE` 5 864, the USB console's statics 1 456, plus others it was never sized for | `ui_state_fits_the_ui_reserve`; `rust-nm -S` |
-| Master delay line (`[f32; 24 064]`, `dsp/delay.rs`) | 96 256; as `i16`, 48 128 | `MAX_DELAY_SAMPLES` |
+| Master delay line (`[f32; 24 064]`, `dsp/delay.rs`) | 96 256; as `i16` (ADR 0090), 48 128, freeing 48 128 | `MAX_DELAY_SAMPLES` |
 | D2 free | **121 504** of 286 720 | `instrument_fits_d2` |
 | `SymPool` (D2) | 112 200: Sympathetic's string state, DSP not Sounds, so encoding Sounds frees none of it | `sympathetic_pool_fits_d2` |
 | Flash free, `--features orbit` | 128 832 of 917 504 | `rust-size` |
@@ -74,46 +74,47 @@ Sources:
 - `UI_RESERVE` and the const `≥ 64 KiB` assert go. `axi_residents_fit` stays as a host-side report: it prints the parts, but it no longer asserts spare.
 - **32 KiB is the stated margin.** It is room for the next features' UI state (TAPE's pages, VA's) without re-deciding the arena.
 
-**`ARENA_BYTES` = 112 KiB (114 688 B), in AXI.** It is sized from the `bench,orbit` measurement:
+**`ARENA_BYTES` = 160 KiB (163 840 B), in AXI.** It is sized from the `bench,orbit` measurement, after ADR 0090 halves the delay line:
 
 | | Bytes |
 |---|---|
 | AXI used today, `bench,orbit` | 398 556 |
+| − the delay line as `i16` (ADR 0090) | − 48 128 |
 | − the 32 fixed slots | − 28 672 |
 | + index (128 Sound entries × 12 B + 32 source entries × 20 B) | + 2 176 |
 | + `SourceTable` (32 rows × 12 B) and the gate and `sounding` words | + 392 |
-| + arena | + 114 688 |
-| **AXI used after** | **487 140** |
-| **Free, against the 32 KiB margin** | **37 148** (36.3 KiB) |
+| + arena | + 163 840 |
+| **AXI used after** | **488 164** |
+| **Free, against the 32 KiB margin** | **36 124** (35.3 KiB) |
 
-The honest ceiling, with no margin at all, is 125 732 + 28 672 − 2 176 − 392 = **151 836 B** (148 KiB). The delay trade (owner question 1) adds 48 128 B: 199 964 B (195 KiB).
+The honest ceiling, with no margin at all, is 125 732 + 48 128 + 28 672 − 2 176 − 392 = **199 964 B** (195 KiB). The margin caps the arena at 199 964 − 32 768 = 167 196 B. 160 KiB is the largest 16 KiB multiple under that. 163 KiB would also fit, but it leaves 284 B for the next static. Without ADR 0090, the same arithmetic gives 112 KiB.
 
-**What fits.** A Sound costs its sparse encoding plus its 16 B name, rounded up to 16 B. The curated set is budgeted at 320 B a Sound, above the measured 211 B mean. NEW's 32 then take **10 240 B, 9 %**, and leave **104 448 B** for sources:
+**What fits.** A Sound costs its sparse encoding plus its 16 B name, rounded up to 16 B. The curated set is budgeted at 320 B a Sound, above the measured 211 B mean. NEW's 32 then take **10 240 B, 7 %**, and leave **153 600 B** for sources:
 
-| Source rate | 12-bit bytes/s | Seconds in 104 448 B (112 KiB arena) | With the delay trade (160 KiB arena: 153 600 B) |
-|---|---|---|---|
-| 48 kHz | 72 000 | 1.5 s | 2.1 s |
-| 32 kHz | 48 000 | 2.2 s | 3.2 s |
-| **24 kHz** (default) | 36 000 | **2.9 s** | **4.3 s** |
-| 16 kHz | 24 000 | 4.4 s | 6.4 s |
-| 8 kHz | 12 000 | 8.7 s | 12.8 s |
+| Source rate | 12-bit bytes/s | Seconds in 153 600 B, after NEW |
+|---|---|---|
+| 48 kHz | 72 000 | 2.1 s |
+| 32 kHz | 48 000 | 3.2 s |
+| **24 kHz** (default) | 36 000 | **4.3 s** |
+| **16 kHz** | 24 000 | **6.4 s** |
+| 8 kHz | 12 000 | 12.8 s |
 
 As 16-bit, each figure would be a quarter less.
 
 **What sources cost.**
-- **A TRON instrument's heads:** 12 zones × 100 ms at 24 kHz is 43 200 B, **38 %**. The rest of its 4–5 MB streams from the card into D2's rings.
-- **A 2 s microsample at 24 kHz:** 72 000 B, 63 %. NEW plus one reads **72 %**.
+- **A TRON instrument's heads:** 12 zones × 100 ms at 24 kHz is 43 200 B, **27 %**. The rest of its 4–5 MB streams from the card into D2's rings.
+- **A 2 s microsample at 24 kHz:** 72 000 B, 44 %. NEW plus one reads **51 %**.
 
-In Sounds alone, 112 KiB holds about 350 curated Sounds, so the 128-slot cap binds first unless sources are loaded.
+In Sounds alone, 160 KiB holds about 510 curated Sounds, so the 128-slot cap binds first unless sources are loaded.
 
-**The delay trade, both ways.** The delay line as `i16` (full scale ±2.0, as ADR 0028 did for the reverb) frees 48 128 B, and the arena can grow to 160 KiB (163 840 B) at the same 32 KiB margin: 487 140 − 114 688 + 163 840 − 48 128 = 488 164 used, 36 124 free. It changes the delay's sound: 16-bit grain on every repeat, compounding with feedback. It needs its own ADR, superseding ADR 0014's delay storage in part. Kept as f32, the arena stays at 112 KiB. This is owner question 1.
+**The delay line goes to `i16` first** (owner ruling 2026-10-04). ADR 0090 records it: the sound cost (grain on the repeats, SAT's loop bound against the ±2.0 full scale) and the CPU cost (a convert on each write and read). It is step 1 of the build, because the arena can grow past 112 KiB only once those 48 128 B are free.
 
 ## The model
 
 ```rust
 pub const MAX_SOUNDS: usize = 128;   // Sound slots: was POOL_SIZE = 32
 pub const MAX_SOURCES: usize = 32;   // source slots
-pub const ARENA_BYTES: usize = 112 * 1024;
+pub const ARENA_BYTES: usize = 160 * 1024;
 pub const GRANULE: usize = 16;
 
 pub struct SlotId(u8);    // < MAX_SOUNDS; built only by new / ALL, as today
@@ -144,7 +145,7 @@ pub struct SourceRef { crc: u32, frames: u32, rate: Hz }   // rate: u16 Hz; toge
 ## Memory layout and allocator
 
 ```
- POOL_ARENA (112 KiB, AXI)
+ POOL_ARENA (160 KiB, AXI)
  0                                                              ARENA_BYTES
  | src 0 | src 3 | src 1 |  ......... free gap .........  | snd 7 | snd 0 | snd 2 |
  ^ sources grow up from 0                       Sounds grow down from the top ^
@@ -185,7 +186,7 @@ A source delete leaves a hole below the sources above it. Compaction slides them
    - a note-on whose source is among `above` is **held for the block**: the voice is allocated and latched, its envelope waits, and it starts on the first block after the gate opens;
    - every other source plays normally.
 3. **Re-check after the ack.** A note-on in the block just before the gate closed may have started a voice on a source in `above`: that block's `sounding` already has its bit. The UI re-reads `sounding & above` from a block that began after the ack. If any bit is set, it reopens the gate (`gate = 0`, `Release`) and goes back to step 1. Only with the mask clear, under a closed and acknowledged gate, does it move. No voice can start on `above` after that, so nothing reads a moving byte.
-4. **Move.** `copy_within` the sources above the hole down, and rewrite their rows' `base` (`Relaxed`). The largest possible move, every source byte, is 104 KB, about 0.2 ms at 480 MHz.
+4. **Move.** `copy_within` the sources above the hole down, and rewrite their rows' `base` (`Relaxed`). The largest possible move, every source byte, is 154 KB, about 0.3 ms at 480 MHz.
 5. **Open the gate:** `gate = 0` with `Release`. The audio's next `Acquire` sees the new bases.
 
 **The cost** is that a note on a moving source can start up to two blocks (2.7 ms) late, once per source delete, which is a deliberate user action. The audio never reads a byte mid-move, and never takes a branch per sample. There is no per-read mapping The latency is accepted, not asked: 2.7 ms is far below the 10–20 ms at which two onsets are heard as a flam, and every note already lands on a 1.33 ms block edge.
@@ -323,7 +324,7 @@ A source delete leaves a hole below the sources above it. Compaction slides them
 
 - **NEW's 32 curated Sounds are one sparse blob in flash** (`factory.bin`, about 10 KB). A desktop tool generates it from the authored Sounds (#317), and a test decodes every entry against its authored form. NEW copies the entries into the arena without decoding, since they are already canonical.
 - **Factory sources are card-only.** Flash has 100 KB free on the largest build, and one second of 16 kHz 12-bit audio is 24 KB. Until a card is present, the 32 are ALGO and MODAL Sounds. A factory TAPE Sound on the card library brings its source from `/CHIMERA/TAPES` like any other.
-- **NEW reads 9 %.**
+- **NEW reads 7 %.**
 - **`TemplateCrc`** is computed at run time from the arena as filled.
 - **ADR 0073's `NEW_PARTS`** carries over, with slot numbers from #317's curated list.
 
@@ -344,11 +345,11 @@ These are estimates, to be measured with `rust-size` on `bench,orbit` at each st
 
 | Case | What happens |
 |---|---|
-| **No card at boot** | NEW from flash: 32 Sounds, 9 %. Library rows read `NO CARD`. Sound-only pool work goes on. |
+| **No card at boot** | NEW from flash: 32 Sounds, 7 %. Library rows read `NO CARD`. Sound-only pool work goes on. |
 | **No card, project with TAPE Parts** | It can't be loaded without a card, since projects live on the card. A card pulled after load leaves whole sources playing. Streamed (TRON) notes play their heads, then fall silent per note, which is #279's rule. |
 | **Card pulled during an add or a project load's pass 2** | The add abandons its staged bytes, with no index entry and the meter unchanged: `CARD READ FAILED`. A load fails and falls back to NEW, as today. |
 | **Card swapped** | `Card::run`'s volume check refuses it (ADR 0043/0046), with the same outcome. |
-| **Slow card** | A source read is 4 KiB a UI pass, behind `ui::busy`. 104 KB at 1.3 MB/s (#279's measurement) is 80 ms of card time. At full audio load, with UI passes of 22–26 ms (stress test 2026-10-02), it takes about 0.7 s on screen. MENU cancels an add. A project load's sources read inside its existing fade. |
+| **Slow card** | A source read is 4 KiB a UI pass, behind `ui::busy`. 154 KB at 1.3 MB/s (#279's measurement) is 120 ms of card time. At full audio load, with UI passes of 22–26 ms (stress test 2026-10-02), it takes about 1 s on screen. MENU cancels an add. A project load's sources read inside its existing fade. |
 | **A source missing from the card at load** | Its `PoolSource` loads as an empty slot. A Part that resolved to it loads silent, with `SOURCE MISSING`. The note names the count. |
 | **Project over the budget** | It loads in priority order, with a note. |
 | **A purged or cleared source still sounding** | It is retired, its bytes stay pending until the note ends, and the meter shows them in `FAINT`. |
@@ -408,7 +409,7 @@ All host-side (`just test`). Hardware checks wait for the ship flash.
 - The over-budget fixture loads in priority order, with the counts in the note.
 - A project with `PoolSource`s round-trips save → load byte-equal. Its file holds no `SourceData`. A quick-save's bytes written are independent of source sizes.
 - A missing `/CHIMERA/TAPES` file leaves its Part silent, with no panic.
-- NEW: 32 Sounds, 9 %, `Pristine`, every factory entry decode-equal to its authored form.
+- NEW: 32 Sounds, 7 %, `Pristine`, every factory entry decode-equal to its authored form.
 
 **Desktop QA** (QA before UAT): browse, clear and purge on the simulator. Once TAPE's first voice exists, delete sources while other sources loop, and check the recordings for discontinuities.
 
@@ -416,25 +417,25 @@ All host-side (`just test`). Hardware checks wait for the ship flash.
 
 Each step ships on its own, and the meter is right at each.
 
-1. **Sparse `encode_sound`,** with the encoding tests, `MAX_SOUND_COST` and the neutral contract note. It is a writer change only.
-2. **The linker assert in place of the paper rule.** `UI_RESERVE` and the 64 KiB const go, and `axi_residents_fit` becomes a report. This lands first, on its own, because step 3 can't link without it.
-3. **The arena and the index, Sounds only.** `Pool` changes over to 128 `SlotId`s, `EncodedSound`, encoded marks and Sound compaction. The `Slot` range grows, and the 28 KB of fixed slots go.
-4. **The meter and the refusals:** the bar, row costs, the preview, `POOL FULL`, the amended hints, and SETTINGS › PROJECT › POOL. PURGE waits for sources.
-5. **NEW from the factory blob,** once #317's 32 are curated. Until then, the blob holds today's 8 and the two INITs: about 2 %.
-6. **Sources,** with the TAPE core (#279):
+1. **The delay line as `i16` (ADR 0090).** It frees 48 128 B of AXI, re-blesses the delay goldens, and comes with ADR 0090's tests. It lands first, on its own, because the 160 KiB arena can't link without it.
+2. **Sparse `encode_sound`,** with the encoding tests, `MAX_SOUND_COST` and the neutral contract note. It is a writer change only.
+3. **The linker assert in place of the paper rule.** `UI_RESERVE` and the 64 KiB const go, and `axi_residents_fit` becomes a report. It lands before step 4, on its own, because step 4 can't link under the paper rule.
+4. **The arena and the index, Sounds only.** `Pool` changes over to 128 `SlotId`s, `EncodedSound`, encoded marks and Sound compaction. The `Slot` range grows, and the 28 KB of fixed slots go.
+5. **The meter and the refusals:** the bar, row costs, the preview, `POOL FULL`, the amended hints, and SETTINGS › PROJECT › POOL. PURGE waits for sources.
+6. **NEW from the factory blob,** once #317's 32 are curated. Until then, the blob holds today's 8 and the two INITs: about 2 %.
+7. **Sources,** with the TAPE core (#279):
    - `SourceId`, the source end, the table, the gate, retirement, `source_users`;
    - PURGE UNUSED SOURCES;
    - 12-bit packing, the importer and `Dir::Tapes`;
    - `PoolSource` and `SourceRef`;
    - the over-budget load order.
 
-Step 3 merges after ORBIT, since both touch the project codec and `template.rs` (ADR 0073, 0078).
+Step 4 merges after ORBIT, since both touch the project codec and `template.rs` (ADR 0073, 0078).
 
 ## Owner questions
 
-1. **The delay line as `i16`, for a 160 KiB arena?** It frees 48 128 B, which takes 24 kHz audio beside NEW from 2.9 s to 4.3 s. It puts 16-bit grain on every delay repeat, compounding with feedback, as ADR 0028 accepted for the reverb. It needs a new ADR, superseding ADR 0014's delay storage in part. Kept f32, the arena stays 112 KiB.
-
-Settled by precedent or the code, and no longer asked:
+None open. Settled by the owner, by precedent or by the code:
+- **The delay line goes to `i16`** (owner, 2026-10-04): ADR 0090, giving a 160 KiB arena.
 - **The budget size** comes from the arithmetic (§ The budget).
 - **PURGE takes samples only,** as on the Play, the Digitakt and the Octatrack.
 - **Factory sources are card-only,** because of flash.
