@@ -328,8 +328,8 @@ static DELAY_SUB_PAGES: [&BlockDef; 1] = [&DELAY_CHAR];
 #[cfg(feature = "master-tape")]
 pub static TAPE: BlockDef = BlockDef {
     id: 57,
-    name: "Tape",
-    short: "TAPE",
+    name: "Reel",
+    short: "REEL",
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [

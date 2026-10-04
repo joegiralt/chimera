@@ -123,7 +123,7 @@ const FX: [FxRow; FX_ROWS] = [
     ("DELAY", |s, _| worst_delay(s)),
     ("REVERB", worst_reverb),
     #[cfg(feature = "master-tape")]
-    ("TAPE", |s, _| worst_tape(s)),
+    ("REEL", |s, _| worst_tape(s)),
     ("COMP", |s, _| worst_comp(s)),
     ("BUS", |s, b| {
         worst_chorus(s);
