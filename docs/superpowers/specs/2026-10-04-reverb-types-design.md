@@ -158,23 +158,21 @@ That makes it a preset, and the MV2 itself had no plate topology. So:
   - Its moved reads run 90° apart, so the left and right tails move differently.
   - It is computed at the block's ends and interpolated linearly across the block's 32 ring samples. At its fastest rate, 2 Hz, the error is under 10⁻⁴ of the depth.
   - The pitch it can cause is bounded (§ Pitch bounds).
-- **Input gain.** QUAD injects the send at ½, unchanged. Each new engine scales its send by `IN[type] = 2 / G[type]`, where G is the worst-case peak gain from the send to any stored line at the TYPE's maximum feedback. A full-scale (0 dBFS) send then peaks inside the ±2.0 full scale.
-  - The values are estimates. Each is pinned by a `const fn` and by the hot-send test (§ Tests).
+- **Input gain: ½ everywhere, with a soft clip in each loop.** Every engine injects the send at ½, as QUAD does, so every TYPE has QUAD's resolution in the i16 arena.
+  - **Why not a lower gain.** Scaling the send by the worst-case gain 2/G (HALL's G is 12.5) would set HALL's input at 0.16. Its output noise would then sit at about −56 dBFS at MIX 1 against QUAD's −66, and at −45 against −55 at GRIT 0.3: audible grain in quiet tails.
+  - **Where headroom comes from instead.** Each loop's re-entry sum passes through a soft clip before it is written:
+    - `s(x) = x` for |x| ≤ 1.0, in line units where ±2.0 is full scale;
+    - `s(x) = sign(x)·(1 + u − u²/4)` with u = min(|x| − 1, 2), above 1.0. It reaches exactly 2.0, with slope 0, at |x| = 3, so the i16 saturation is never hit;
+    - it is branch-free, about 6 instructions.
+  - **Where the clips sit.** One per loop: ROOM's two rotation outputs, HALL's loop re-entry, BLOOM's re-entry, BURST's REGEN write and GATE's TAIL re-entry. BURST's single code path pays for both of its clips.
+  - **Transparent at normal levels.** The clip only engages above half of full scale. That happens only under a coherent build-up on a loop mode: HALL's G is 12.5 at DECAY 10 s on its 120 ms loop, BURST's REGEN × Σ|w| is about 11.8, and BLOOM's G is about 7.5. A −12 dBFS program never reaches it (§ Tests).
+  - **GRIT means the same on every TYPE.** GRIT's grid step is `Δ = 2^(6·GRIT)` LSBs × IN/0.5. With IN ½ everywhere the factor is 1, but the rule stands for any future TYPE whose input gain differs.
+  - **Output noise floor**, at MIX 1 against QUAD's estimated −66 dBFS at GRIT 0 and −55 at GRIT 0.3:
+    - ROOM and HALL, with 3 taps a side like QUAD: within ±1 dB of QUAD;
+    - GATE and REVERSE, with 12 taps summed at constant Σw² and no tap louder than QUAD's: within ±2 dB;
+    - BLOOM, whose taps are register values with no extra read noise: within ±1 dB.
 
-| TYPE | Worst-case G | IN |
-|---|---|---|
-| HALL | the round trip's gain at DECAY 10 s on the 120 ms loop is 10^(−3·0.12/10) = 0.92, so G = 1/(1 − 0.92) = 12.5: a sine held on a loop mode builds to about 6 at IN ½ | ≈ 0.16 |
-| GATE, REVERSE | REGEN's 1/(1 − 0.708) = 3.4 (+10.7 dB) × the burst sum's Σ\|w\| 3.46 (+10.8 dB) ≈ 11.8 | ≈ 0.17 |
-| BLOOM | 1/(1 − 0.866) ≈ 7.5 (SWELL 0, DECAY 12 s) | ≈ 0.27 |
-| ROOM | 1/(1 − 0.63) ≈ 2.7 (DECAY 1.5 s on the 100 ms loop) | ½ (capped at QUAD's) |
-
-  - **IN is fixed per TYPE**, at its worst case. A per-setting IN would have to rescale the tail already in the lines whenever DECAY or SIZE moved, through `WET`.
-  - **The cost is the noise floor.** The i16 grid is fixed in LSBs (16,384 per 1.0), so a smaller IN puts the signal closer to it. Against QUAD's ½:
-    - HALL at 0.16 sits 9.9 dB lower: at GRIT 0 about 68 dB from a non-resonant tail's level to the LSB floor, against QUAD's 78;
-    - GATE and REVERSE (0.17) sit 9.4 dB lower, and BLOOM (0.27) 5.4 dB lower;
-    - at higher GRIT the grid is the intended grain, and it bites the same few dB earlier;
-    - #142's truncation tail loss starts the same number of dB earlier.
-  - `WET[type]` puts the level back on the way out, so loudness parity holds.
+    A test measures each against QUAD (§ Tests).
 - **Output.** The return is ×`WET[type]` × MIX, eased as today. Each TYPE's `WET` is set so its default return's RMS matches QUAD's default within ±1 dB. A test pins this (§ Tests). QUAD's `WET_GAIN`, 4.54, is unchanged.
 
 ### Moving a length
@@ -197,11 +195,11 @@ Owner, 2026-10-04: reverbs stay pitch-stable.
     - PRE-DLY 0 → 125 ms: 25 crossfades, about 0.75 s, run in the same crossfades as SIZE.
   - **Why so small.** A crossfade between two lengths duplicates or drops a slice of the circulating tail as long as the step. A 60 ms slice is a ghost slap on every pass, and cancels at the 50 % point. A 5 ms slice is a brief comb at 200 Hz spacing, as in QUAD.
   - **Pitch.** During a crossfade the loop's content is not resampled: each read is at a fixed position, and only the blend weight moves.
-    - The tail's **mean** pitch stays put: 0 cents per pass and 0 cumulatively.
-    - Inside one crossfade, the blend of two reads 5 ms apart gives a phase slide worth at most about 0.6 cents on a 120 ms loop. It is gone when the blend ends.
+    - **While a crossfade runs**, the blend of two reads 5 ms apart slides the phase by up to π over 30 ms. That is up to about **29 cents** instantaneously, and about **7 cents** averaged over a 120 ms pass.
+    - **Once the move settles**, nothing is left of it: no read was resampled, so the tail rings on the loop modes of the new length at its original pitch, with no accumulated shift.
     - While the blend runs there is a 30 ms comb colour, as in QUAD.
 - **BLOOM.** The SWELL delay and PRE-DLY crossfade together, under the same rule.
-- **BURST.** Taps crossfade, at most 4 at a time (§ BURST engine). Tap 11, REGEN's feedback read, crossfades like the others, so the regenerating tail is re-pitched by **0 cents** per pass.
+- **BURST.** Taps crossfade, at most 4 at a time (§ BURST engine). Tap 11, REGEN's feedback read, crossfades like the others, so the regenerating tail carries no accumulated shift once the move settles.
 - **Cost.** A crossfading line costs one more fixed read and a blend. A long move is many crossfades back to back, so while it runs the line is *always* crossfading. That is the worst case the CPU table bills, plus a crossfade setup of about 10 instructions per line every 720 samples, under 0.1 instruction a sample (§ CPU budget). It is still cheaper than the moving pair a glide would need.
 
 ### Pitch bounds
@@ -210,8 +208,8 @@ The bound, stated per pass and cumulatively, for every TYPE:
 
 | Source | Per pass | Cumulative |
 |---|---|---|
-| SIZE, LENGTH, SWELL, PRE-DLY and tempo moves (all TYPEs) | 0 cents | 0 cents |
-| REGEN's feedback (REVERSE), during LENGTH moves | 0 cents | 0 cents |
+| SIZE, LENGTH, SWELL, PRE-DLY and tempo moves (all TYPEs) | while a crossfade runs: up to about 29 cents instantaneously, about 7 averaged over a 120 ms pass; none once settled | 0 once settled: the spectral peak sits within 1/L of the input's |
+| REGEN's feedback (REVERSE), during LENGTH moves | the same | the same |
 | Wobble inside a loop (ROOM, HALL, BLOOM) | ≤ 25 cents | ≤ 25 cents, with no drift: the shift returns to 0 each LFO cycle |
 | Wobble on BURST's decorrelators (outside every loop) | single pass only: ≤ 22 cents at ±1 ms and 2 Hz | not fed back, so no accumulation |
 
@@ -258,7 +256,7 @@ Fractions without a mark are of the line's **maximum** length.
 - **The early tap.** Each side's first tap is a fraction of its line's SIZE-0 length: about 2–3 ms in ROOM and about 4 ms in HALL. That keeps the plate corner's onset short.
 - **Why the maximum, for the other two.** A line owns its maximum length's slots, and the shared write head writes every one of them each pass. So a tap anywhere inside the maximum reads written data at any SIZE, at the same cost. At a small SIZE, a tap past the current read point reads the line's input from an earlier pass: still the decaying tail, just older.
 - **Why not the minimum.** Fractions of the SIZE-0 length would read only the first 11 % of HALL's 540 ms stages at SIZE 1, and the output could pulse once per pass.
-- **The trade.** The pattern stays put as SIZE moves, and the ear judges it at A/B. SIZE-scaled taps would add 6 crossfading reads to every SIZE move: about +59 cycles over QUAD for ROOM. That fits the default build's headroom (96), but not `master-tape`'s (23), so while the tape ships they need an owner ruling (§ CPU budget).
+- **The trade.** The pattern stays put as SIZE moves, and the ear judges it at A/B. SIZE-scaled taps would add 6 crossfading reads to every SIZE move: about +81 cycles over QUAD for ROOM. That fits the default build's headroom (96), but not `master-tape`'s (23), so while the tape ships they need an owner ruling (§ CPU budget).
 
 ### BURST engine: GATE and REVERSE
 
@@ -685,20 +683,20 @@ Worst case: every crossfadable line crossfading, wobble at its maximum.
 | TYPE | Fixed accesses, worst (writes + reads + crossfade reads) | Moving pairs | Blends and extras | Instructions, pair +7 / +10 | Cycles, +7 / +10 |
 |---|---|---|---|---|---|
 | QUAD | 30 steady / 48 crossfading | 0 | — | 158 / **239 measured** | 320 / **485 measured** |
-| ROOM | 13 + 17 + 5 (PRE, 4 delays) = 35 | 2 (wobbled APs) | 10 + 4 (rotation) | **223 / 229** | 455 / 466 |
-| HALL | 13 + 17 + 5 = 35 | 2 | 10 | **219 / 225** | 447 / 459 |
-| GATE, REVERSE | 9 + 17 + 4 (crossfading taps) = 30 | 2 (wobbled decorrelator APs) | 8 | **192 / 198** | 397 / 408 |
-| BLOOM | 16 + 13 + 2 (PRE, SWELL) = 31 | 3 (wobbled loop APs) | 4 | **210 / 219** | 431 / 447 |
+| ROOM | 13 + 17 + 5 (PRE, 4 delays) = 35 | 2 (wobbled APs) | 10 + 4 (rotation) + 12 (2 soft clips) | **235 / 241** | 477 / 488 |
+| HALL | 13 + 17 + 5 = 35 | 2 | 10 + 6 (soft clip) | **225 / 231** | 459 / 470 |
+| GATE, REVERSE | 9 + 17 + 4 (crossfading taps) = 30 | 2 (wobbled decorrelator APs) | 8 + 12 (2 soft clips) | **204 / 210** | 419 / 431 |
+| BLOOM | 16 + 13 + 2 (PRE, SWELL) = 31 | 3 (wobbled loop APs) | 4 + 6 (soft clip) | **216 / 225** | 442 / 459 |
 
-- **Every TYPE is under QUAD** at either pair cost, so ΔCOST ≤ 0 and the headroom is untouched.
+- **Every TYPE is under QUAD except ROOM at +10**, which reads about 488 cycles, ΔCOST ≈ +3. That fits both headrooms, 96 and 23 ("sound first": the soft clips buy the noise floor).
 - **Why it is cheaper than the earlier draft.** Crossfades replaced every moving read except the wobble's. A crossfading line costs 5 + 2 instructions only while it moves; a glide's moving pair cost 17–20 all the time.
-- **The tightest is ROOM**, at 229 instructions (466 cycles) if a pair costs +10. Step 0 benches it.
+- **The tightest is ROOM**, at 241 instructions (488 cycles) if a pair costs +10. Step 0 benches it.
 - **What fits if the A/B asks for it:**
   - BLOOM's split SWELL delay (+10 instructions, ≈ +19 cycles). By this table BLOOM stays under QUAD. The review's cache-aware estimate puts BLOOM's base design about **+14** over QUAD, which fits both builds, and the split about **+33**:
     - it **fits the default build** (96);
     - in the **`master-tape` build it does not fit** (23). There, the split is not offered unless the owner rules to give up a voice guarantee.
   - 14 BURST taps (+2 fixed reads, +10 instructions): **fits**.
-  - SIZE-scaled LOOP taps (+6 crossfading reads, +42 instructions, ≈ +78 cycles, taking ROOM to about 544, ΔCOST ≈ +59): **fits the default build** (96), but **not `master-tape`** (23). While the tape ships, they need an owner ruling.
+  - SIZE-scaled LOOP taps (+6 crossfading reads, +42 instructions, ≈ +78 cycles, taking ROOM to about 566, ΔCOST ≈ +81): **fits the default build** (96), but **not `master-tape`** (23). While the tape ships, they need an owner ruling.
 - **Fallbacks are a last resort**, not the plan ("sound first").
   - A fallback is taken only when ΔCOST would breach the headroom or the stress run fails, or when the A/B shows the cheaper design sounds the same.
   - A TYPE over the 485 target alone is no reason to take one.
@@ -773,8 +771,9 @@ The usual battery, per TYPE, on the host first (owner's rule: QA before UAT).
 
 - **Moves are pitch-free.** For each loop (ROOM, HALL, BLOOM), with DECAY at its maximum, dampers open and WOBBLE 0, a 1 kHz sine circulates through a full SIZE (or SWELL) sweep, then a PRE-DLY sweep, then a tempo step.
   - The pitch is measured from zero crossings, once per pass.
-  - Its **mean** pitch over each pass must stay within **±1 cent of 1 kHz on every pass**, and within ±1 cent cumulatively after the move. The brief in-crossfade phase slide, ≤ about 0.6 cents, is reported but not judged.
-- **REGEN is pitch-free.** The same check, with a 1 kHz sine regenerating through REVERSE at REGEN 1 during a LENGTH move from 150 to 800 ms: mean pitch ±1 cent per pass, and cumulatively.
+  - **The pass:** once the move has settled (the last crossfade done, plus one round trip), the tail's spectral peak sits within **1/L Hz** of the input's 1 kHz, where L is the new round trip in seconds. That is the loop's own mode spacing.
+  - **Not judged, only reported:** the in-crossfade deviation, up to about 29 cents instantaneously and about 7 cents averaged over a 120 ms pass.
+- **REGEN is pitch-free.** The same check, with a 1 kHz sine regenerating through REVERSE at REGEN 1 during a LENGTH move from 150 to 800 ms. Once settled, the spectral peak sits within 1/L of 1 kHz, with L the new LENGTH.
 - **No slap, no cancellation.** After a full SIZE sweep (and a full LENGTH move under REGEN), a noise-fed tail is compared with a static tail at the end setting.
   - Normalised autocorrelation of the moved tail over lags of 1–10 ms (the step slice's range) must show **no peak above −20 dB**, and no lag more than 3 dB above the static tail's.
   - The short-time energy (10 ms windows) must never dip more than 3 dB below the static tail's envelope trend during the move.
@@ -832,8 +831,10 @@ The usual battery, per TYPE, on the host first (owner's rule: QA before UAT).
 - **Crossfades don't click.** A full SIZE, SWELL or LENGTH sweep, and a SYNC 1/8 → 1/4 step mid-tail, keep the max second difference within `click_free_test`'s bound.
 - **Hot send.** Every TYPE at its maximum feedback (REGEN 1, DECAY 1, smallest SIZE) takes three stimuli:
   - a full-scale sine swept from 50 Hz to 10 kHz over 10 s. Clamp hits are counted on every line write, and must be ≤ 0.1 % of writes;
-  - a full-scale sine **held on a loop mode**: at k / round trip, the k whose frequency is nearest 500 Hz, held for 3 × RT60 so the coherent build-up peaks. There must be **zero** clamp hits. This is the case that sets G;
-  - a −12 dBFS pink-noise pad held for 10 s, with **zero** clamp hits.
+  - a full-scale sine **held on a loop mode**: at k / round trip, the k whose frequency is nearest 500 Hz, held for 3 × RT60 so the coherent build-up peaks. The soft clip engages here. The return's **THD must stay ≤ 3 %** (−30 dB), and there must be **zero** i16 clamp hits.
+    - **Why 3 %.** It is the level of light tape saturation, and it applies only to a pathological input: a pure tone held exactly on a loop mode for seconds at maximum decay. Anything below it sits under the reverb's own diffusion smear. A tighter bound would need a lower input gain, which costs the noise floor above;
+  - a −12 dBFS pink-noise pad held for 10 s: the soft clip never engages, so the output is **bit-identical** to the same engine built without the clip.
+- **Noise floor.** At GRIT 0 and 0.3, each TYPE's quantisation noise is measured as its i16 engine's output minus an f32-line build of the same engine, on the same noise-burst tail at MIX 1. It must lie within ±2 dB of QUAD's measured the same way.
 - **Sanitising.** NaN and out-of-range knobs render finite and recover, as QUAD's do.
 
 ### Switch
@@ -967,7 +968,7 @@ Each plan task's review grades quality, efficiency, performance and principled-n
   - No new gesture or page type.
 - **Performance.**
   - Moving reads are costed and limited to the wobble.
-  - Every TYPE estimates under QUAD at either pair cost.
+  - Every TYPE estimates at or under QUAD + 3 cycles at either pair cost, inside both headrooms.
   - Step 0 benches the tightest kernels on the chip before any TYPE work.
   - `cost_test`'s voice counts are the gate, and so is the stress run.
 - **Principled-ness.**
@@ -986,6 +987,6 @@ Each plan task's review grades quality, efficiency, performance and principled-n
   - then go to 14 taps, which fits (§ CPU budget).
 - **Fixed output taps in ROOM and HALL.** The taps sit at fractions of each line's maximum length (with one early tap per side), so the pattern does not scale with SIZE. The ear decides at A/B. Scaled taps fit the default build's headroom but not the tape's (§ CPU budget).
 - **BLOOM's long delay** may echo rather than swell at SWELL 1. The A/B checks it, and the fallback fits.
-- **#142** (quiet sends lose their tail to i16 truncation) applies to every TYPE alike, and is fixed or not for all of them at once, outside this spec. The new truncating feedback writes and the smaller input gains add to it at low send levels; the silent-tail tests show how much.
+- **#142** (quiet sends lose their tail to i16 truncation) applies to every TYPE alike, and is fixed or not for all of them at once, outside this spec. The new truncating feedback writes add to it at low send levels; the silent-tail tests show how much. Input gains stay at QUAD's ½, so nothing else does.
 - **ADR 0086** is not yet on `main` (§ Hints).
 - **Flash** is ≈ 9.5–12.5 KB in total. Each step's delta is gated (§ Flash).

@@ -84,8 +84,11 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
     - In BURST, at most 4 taps crossfade at a time. Tap 11 is REGEN's
       feedback read, and it crossfades like the others, in steps of at most
     5 ms.
-  - **The bounds.** Moves, and REGEN during them, shift 0 cents per pass
-    and 0 cents cumulatively.
+  - **The bounds.** No read is resampled, so a move leaves no accumulated
+    shift. Once it settles, the tail's spectral peak sits within 1/L of the
+    input's. While a crossfade runs, the blend of two reads 5 ms apart
+    slides the phase: up to about 29 cents instantaneously, about 7 averaged
+    over a 120 ms pass. That is stated, not hidden.
   - **The wobble** is the only continuous motion. Inside a loop it is
     capped so the loop's total excursion is ≤ 1.45 % of the round trip. A
     component then stays within 25 cents over any number of passes, and
@@ -104,13 +107,20 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
     write, so no ±Δ limit cycle survives.
   - ROOM couples its loops through an energy-preserving rotation.
   - New engines cap a stage gain at 0.985 (QUAD keeps 0.97).
-  - Each engine scales its send by 2 / G, where G is its worst-case
-    send-to-line gain, including a sine held on a loop mode. A full-scale
-    send then never clips the ±2.0 lines. The values are about 0.16 for
-    HALL (G 12.5 at 10 s on its 120 ms loop), 0.17 for BURST and 0.27 for
-    BLOOM; ROOM keeps ½, as QUAD does. The cost is the i16 noise floor: up
-    to 9.9 dB less resolution than QUAD's, which `WET` makes up in level,
-    not in noise.
+  - **Input gain is ½ in every engine, as in QUAD**, so every TYPE keeps
+    QUAD's resolution in the i16 arena and its output noise floor (within
+    ±2 dB of QUAD's estimated −66 dBFS at GRIT 0 and −55 at GRIT 0.3).
+    - Each loop's re-entry passes a branch-free soft clip instead. It is
+      transparent below half of full scale and reaches 2.0 with zero slope,
+      so a coherent build-up on a loop mode (HALL's G is 12.5) saturates
+      gently rather than hitting the i16 clamp.
+    - The cost is about 6 instructions per loop.
+    - A held loop-mode sine must stay ≤ 3 % THD, and a −12 dBFS program is
+      bit-identical to an unclipped build.
+    - Scaling the send down instead (HALL to 0.16) was rejected: about
+      10 dB more audible grain in quiet tails.
+  - GRIT's step scales by IN/0.5, which is 1 for every TYPE today, so
+    GRIT means the same everywhere.
 - **CPU: "sound first"** (owner, 2026-10-04).
   - **The target** is QUAD's worst case, 485 cycles per output sample.
   - **The hard limit** is the cost model's headroom inside the audio
@@ -219,7 +229,7 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
     and slowing the glide only spreads the shift out;
   - every moving read pays 17–20 instructions all the time, and gliding
     every BURST tap reached about 330 instructions against QUAD's 239.
-- **SIZE-scaled LOOP taps:** about +59 cycles over QUAD in ROOM. That fits
+- **SIZE-scaled LOOP taps:** about +81 cycles over QUAD in ROOM. That fits
   the default headroom but not `master-tape`'s; the ear judges the fixed
   taps at A/B.
 - **Running both engines through a switch crossfade:** twice the cost for
@@ -234,12 +244,14 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
 
   | TYPE | Instructions (pair +7 / +10) | Cycles |
   |---|---|---|
-  | ROOM | 223 / 229 | 455 / 466 |
-  | HALL | 219 / 225 | 447 / 459 |
-  | GATE, REVERSE | 192 / 198 | 397 / 408 |
-  | BLOOM | 210 / 219 | 431 / 447 |
+  | ROOM | 235 / 241 | 477 / 488 |
+  | HALL | 225 / 231 | 459 / 470 |
+  | GATE, REVERSE | 204 / 210 | 419 / 431 |
+  | BLOOM | 216 / 225 | 442 / 459 |
 
-  Every TYPE is under QUAD, so ΔCOST ≤ 0 and `FxBus::COST` is unchanged.
+  These include the soft clips. Every TYPE is under QUAD, except ROOM if a
+  pair costs +10: about +3 cycles, which fits both headrooms.
+  `FxBus::COST` changes only if the bench confirms it.
 
   Step 0 comes before any TYPE work. It:
   - re-measures the baselines, with voice traffic;
