@@ -101,6 +101,11 @@ The owner's rulings:
   their own.** The owner asked for one element.
 - **All 32 chips at once.** At about 5 px each, a chip can't hold a name
   or a selection you can see.
+- **ASCII `<>` and `^v` for a turn's way.** Helvetica 8 has them, so
+  the four marks' drawing could go. Measured with fat LTO, that firmware
+  is 723,600 B, against 724,088 B with the marks: the marks cost 488 B.
+  We keep them. `^` and `v` read as a caret and a letter at 8 px, and
+  `<>` reads as markup. The owner asked for arrows (`◂▸`, `▴▾`).
 - **HINTS per project.** It is the user's preference, not the song's, as
   SYNC is.
 
@@ -113,6 +118,16 @@ The owner's rulings:
 - SYSTEM gains the THEME param `B 26 4 HINTS` (`disk_codes_v1.txt`).
   Rewriting the v1 MIDI fixture is no longer byte-exact, because a write
   now carries HINTS. It still reads back the same.
+- `orbit::draw::Focus::key` leaves the hint out. Today a hint depends
+  only on its cell and a NOTE's mode, and the label already keys both. A
+  hint that varies with other state must be added to the key, or its
+  band won't redraw when it changes. The matrix's hint is safe: its
+  region key holds the cursor and the matrix's revision.
+- The same round makes RING's value, its redraw key, well formed. It is
+  `(ring × 6 + part) / (RINGS × 6 − 1)`, one value per ring and Part
+  within 0..=1. Before, `(ring + part / 16) / 4` reached 1.08 for ring 5
+  on Part 6. That still redrew, since `quantize` clamps at 65, but it was
+  outside a cell value's 0..1 contract.
 - The global modifiers (snap, prime) stay undiscoverable on screen. If
   that bites, a help page under SETTINGS is the place for them, not the
   bands.

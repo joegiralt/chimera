@@ -278,8 +278,8 @@ pub fn notes_line(r: &Ring) -> (FmtBuf, FmtBuf) {
 
 /// NOTES' chips: their top and height, the gap between them, and the
 /// scroll's line under them.
-const NOTE_TOP: i32 = theme::VIZ_BAND_TOP + 21;
-const NOTE_H: i32 = 34;
+pub const NOTE_TOP: i32 = theme::VIZ_BAND_TOP + 21;
+pub const NOTE_H: i32 = 34;
 const NOTE_GAP: i32 = 4;
 const SCROLL_Y: i32 = NOTE_TOP + NOTE_H + 6;
 const _: () = assert!(SCROLL_Y + 2 < theme::VIZ_BAND_BOTTOM);

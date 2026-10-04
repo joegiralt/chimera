@@ -15,12 +15,15 @@ use chimera_core::project::PartId;
 use chimera_core::ui::block_def::BlockDef;
 use chimera_core::ui::hint::{self, Gesture, Hint};
 use chimera_core::ui::mod_grid::{self, MatrixState};
-use chimera_core::ui::orbit::draw::{CHIPS_SHOWN, OrbitFrame, chip_window, focus};
+use chimera_core::ui::orbit::draw::{
+    CHIPS_SHOWN, NOTE_H, NOTE_TOP, OrbitFrame, chip_window, focus,
+};
 use chimera_core::ui::orbit::{ORBIT_CHRD, ORBIT_NOTES, ORBIT_RHYTHM, OrbitCell};
 use chimera_core::ui::view::{SlotCtx, view};
 use chimera_core::ui::{UiState, browser, theme};
-use chimera_hal::EncoderId::{B, E, F};
-use screen::{Input, feed, render_ui, ui_for};
+use chimera_hal::ButtonId::{Edit, Seq};
+use chimera_hal::EncoderId::{A, B, E, F};
+use screen::{Input, feed, render_ui, tap, ui_for};
 
 /// `def`'s slot `slot` as its focus band reads it on the selected ring:
 /// the label and the hint.
@@ -148,13 +151,65 @@ fn step_32_of_32_is_on_screen() {
     let ui = ui_for("orbit_notes_step32");
     assert_eq!(band(&ui, &ORBIT_NOTES, 5).0, "STEP 32 OF 32");
     let fb = render_ui(&ui);
-    let slot = (theme::VIZ_RIGHT - theme::VIZ_LEFT + 4) as f32 / 8.0;
-    let y = theme::VIZ_BAND_TOP + 18 + 17;
+    assert_eq!(outlined(&fb), [7], "the last chip outlined");
+}
+
+/// Which of the eight chips on show are outlined in INK2, by their left
+/// edge at mid height.
+fn outlined(fb: &screen::Fb) -> Vec<i32> {
+    let slot = (theme::VIZ_RIGHT - theme::VIZ_LEFT + 4) as f32 / CHIPS_SHOWN as f32;
+    let y = NOTE_TOP + NOTE_H / 2;
     let x = |i: i32| theme::VIZ_LEFT + (slot * i as f32).round() as i32;
-    assert_eq!(fb.at(x(7), y), theme::INK2, "the last chip outlined");
-    for i in 0..7 {
-        assert_ne!(fb.at(x(i), y), theme::INK2, "chip {i}");
+    (0..CHIPS_SHOWN as i32)
+        .filter(|&i| fb.at(x(i), y) == theme::INK2)
+        .collect()
+}
+
+/// Step 32 picked, then STEPS cut to 8: the pick clamps to step 8, the
+/// window to the eight there are, and the stored pick waits for STEPS to
+/// grow back.
+#[test]
+fn fewer_steps_clamp_the_pick_and_the_window() {
+    let mut ui = Box::new(ui_for("orbit_notes_step32"));
+    while ui.page_def().id != ORBIT_RHYTHM.id {
+        tap(&mut ui, Seq);
     }
+    feed(&mut ui, Input::turn(A, -24)); // STEPS 8
+    tap(&mut ui, Edit);
+    tap(&mut ui, Edit);
+    screen::settle(&mut ui);
+    let r = &ui.project().orbit().live().rings[1];
+    assert_eq!(r.chips(), 8);
+    assert_eq!(ui.orbit().chip, 31, "the pick kept");
+    assert_eq!(ui.orbit().chip_of(r), 7, "read as the last step");
+    assert_eq!(chip_window(ui.orbit().chip_of(r), r.chips()), 0..8);
+    assert_eq!(band(&ui, &ORBIT_NOTES, 5).0, "STEP 8 OF 8");
+    assert_eq!(outlined(&render_ui(&ui)), [7]);
+}
+
+/// The matrix's hint line as drawn: its INK pixels, against `want`
+/// drawn alone at the same place.
+fn matrix_hint_is(ui: &UiState, want: Hint) -> bool {
+    let ink = |fb: &screen::Fb| -> Vec<(i32, i32)> {
+        (0..theme::SCREEN_W)
+            .flat_map(|x| (mod_grid::HINT_Y - 8..=mod_grid::HINT_Y + 2).map(move |y| (x, y)))
+            .filter(|&(x, y)| fb.at(x, y) == theme::INK)
+            .collect()
+    };
+    let mut alone = screen::Fb::new();
+    hint::draw(&mut alone, want, theme::MARGIN_X, mod_grid::HINT_Y);
+    ink(&render_ui(ui)) == ink(&alone)
+}
+
+/// On a route the matrix draws DELETE; the cursor moved off it, PRIME.
+#[test]
+fn the_matrix_draws_the_hint_of_its_cursor() {
+    let mut ui = Box::new(ui_for("mod_matrix"));
+    assert!(matrix_hint_is(&ui, mod_grid::DELETE), "LFO 1 → CUTOFF");
+    feed(&mut ui, Input::turn(A, 1));
+    screen::settle(&mut ui);
+    assert!(matrix_hint_is(&ui, mod_grid::PRIME), "LFO 2: no route");
+    assert!(!matrix_hint_is(&ui, mod_grid::DELETE));
 }
 
 #[test]
