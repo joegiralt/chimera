@@ -18,8 +18,6 @@ pub const NONE: Hint = &[];
 
 /// The focus band's hint: under the value, over the viz band.
 pub const FOCUS_Y: i32 = theme::FOCUS_BOTTOM - 3;
-/// Widest a hint may be: the screen less both margins.
-pub const MAX_W: i32 = theme::SCREEN_W - 2 * theme::MARGIN_X;
 const KEY_GAP: i32 = 3;
 const GAP: i32 = 8;
 
@@ -29,7 +27,8 @@ fn keys_w(g: &Gesture) -> i32 {
     draw::text_width(&theme::FONT_LABEL_BOLD, g.0, T) + KEY_GAP
 }
 
-/// `hint`'s width as `draw` sets it.
+/// `hint`'s width as `draw` sets it: the tests' fit check.
+#[cfg(any(test, feature = "test-support"))]
 pub fn width(hint: Hint) -> i32 {
     let w: i32 = hint
         .iter()

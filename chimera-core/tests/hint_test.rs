@@ -284,7 +284,11 @@ fn every_hint_fits() {
         ]);
     for h in all {
         println!("{:3} {h:?}", hint::width(h));
-        assert!(hint::width(h) <= hint::MAX_W, "{h:?}: {}", hint::width(h));
+        assert!(
+            hint::width(h) <= chimera_core::ui::theme::CONTENT_W,
+            "{h:?}: {}",
+            hint::width(h)
+        );
     }
 }
 

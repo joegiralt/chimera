@@ -56,6 +56,8 @@ pub const SCREEN_W: i32 = 240;
 pub const SCREEN_H: i32 = 320;
 /// Left text margin.
 pub const MARGIN_X: i32 = 12;
+/// The screen less both margins: the widest a readout or hint line runs.
+pub const CONTENT_W: i32 = SCREEN_W - 2 * MARGIN_X;
 
 /// Header band 0..28.
 pub const HEADER_BOTTOM: i32 = 28;

@@ -34,9 +34,6 @@ pub const READOUT_Y: i32 = 206;
 pub const AMOUNT_Y: i32 = 223;
 pub const HINT_Y: i32 = 241;
 pub const STATS_Y: i32 = 257;
-/// Widest readout line: the screen less both margins.
-pub const READOUT_MAX_W: i32 = theme::SCREEN_W - 2 * theme::MARGIN_X;
-
 /// Rows top to bottom as `ModSource` indices: envelopes, then LFOs, VELO,
 /// NOTE (the mockup's grouping). Amounts and presence stay by source index.
 pub const ROW_ORDER: [usize; MAX_SOURCES] = {
@@ -439,11 +436,11 @@ fn names_width(source: &str, dest: &str) -> i32 {
 const ARROW_GAP: i32 = 5;
 
 /// The readout's destination: `FILTER CUTOFF`, or `FLT CUTOFF` when the
-/// full block name would push the line past `READOUT_MAX_W`. The param
+/// full block name would push the line past `theme::CONTENT_W`. The param
 /// name is never cut.
 pub fn fmt_readout_dest(buf: &mut FmtBuf, source: &str, d: &ModDest) {
     let _ = write!(buf, "{} {}", block_name(d.addr.block), dest_name(d));
-    if names_width(source, buf.as_str()) > READOUT_MAX_W {
+    if names_width(source, buf.as_str()) > theme::CONTENT_W {
         *buf = FmtBuf::new();
         fmt_route_dest(buf, d);
     }
