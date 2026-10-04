@@ -64,8 +64,8 @@ impl Descriptor {
     }
 
     /// `None` for a short slice, an unknown shape, a count outside its
-    /// shape's `1..=max` (a `Plain` holds exactly 1), a rate of 0 or over
-    /// 48 000, `head_frames` set on anything but a `ZoneSet`, or a set
+    /// shape's `1..=max` (a `Plain` holds exactly 1), a rate outside
+    /// 4 000..=48 000 (the pool spec's range), `head_frames` set on anything but a `ZoneSet`, or a set
     /// reserved byte.
     pub fn from_bytes(b: &[u8]) -> Option<Descriptor> {
         let b: &[u8; DESC_LEN] = b.get(..DESC_LEN)?.try_into().ok()?;
@@ -77,7 +77,7 @@ impl Descriptor {
             head_frames: u32::from_le_bytes([b[4], b[5], b[6], b[7]]),
         };
         let ok = (1..=shape.max_count()).contains(&d.count)
-            && (1..=48_000).contains(&d.rate)
+            && (4_000..=48_000).contains(&d.rate)
             && (d.head_frames == 0 || shape == Shape::ZoneSet)
             && b[8..].iter().all(|&x| x == 0);
         ok.then_some(d)

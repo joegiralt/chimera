@@ -93,6 +93,7 @@ fn descriptor_round_trips() {
         desc(Shape::ZoneSet, 25, 48_000),
         desc(Shape::Plain, 1, 0),
         desc(Shape::Plain, 1, 48_001),
+        desc(Shape::Plain, 1, 3_999),
         desc(Shape::ZoneSet, 1, u16::MAX),
         Descriptor {
             head_frames: 1,

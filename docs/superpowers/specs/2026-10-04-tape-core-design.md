@@ -409,7 +409,7 @@ Host estimates, in the house manner (instructions × 1.46 × 1.1, as `ModalEngin
 
 - **Measured (TAPE Task 2), not estimated:** `SourceView::read` compiles to 96 instructions and `read_cycle` to 103, on `thumbv7em-none-eabihf` with `target-cpu=cortex-m7` at opt-level 2, as out-of-line functions. That includes about 8 for the call, the frame and two loads from the view, which inlining into a model's loop removes. The rows above split the measured `read`.
 - The first draft's 55 assumed one clamp instruction a tap and three word loads for four taps. A branch-free clamp is 5 on Thumb-2 (`qadd`, `bic`, `cmp`, `it`, `movlt`).
-- **The model rows below still carry the 55-instruction head.** Build step 3's bench replaces every bill anyway (§ 10). At 88 a head, a two-head model is about 66 instructions over its row.
+- **The model rows below bill the measured 88-instruction head.** Build step 3's bench still replaces every bill (§ 10).
 
 **Cache misses grow with `inc`.**
 - A 32 B line holds 21.3 packed samples.
@@ -423,12 +423,12 @@ Host estimates, in the house manner (instructions × 1.46 × 1.1, as `ModalEngin
 
 | Model | Heads | Instructions | Cycles (with misses) | **Billed** |
 |---|---|---|---|---|
-| LOOP, REVERSE | 2 | 119 | 191 + 24 = 215 | **230** |
-| PING-PONG | 2 (one, two in a clamp) | 119 | 215 | **230** |
-| SCRUB | 2 (+ the finger, 2) | 121 | 218 | **230** |
-| TRANSWAVE | 2 (+ `p`'s ramp and the scan, 4) | 123 | 222 | **240** |
-| TRANSWAVE, pitch able to move > ±6.2 st (STEAL GLIDE, or deep PITCH/FINE routes) | 4 in a level change | 233 | 422 | **450** |
-| STRETCH | 2 (+ two gains, the grain clock, 5) | 124 | 223 | **240** |
+| LOOP, REVERSE | 2 | 185 | 297 + 24 = 321 | **340** |
+| PING-PONG | 2 (one, two in a clamp) | 185 | 321 | **340** |
+| SCRUB | 2 (+ the finger, 2) | 187 | 324 | **350** |
+| TRANSWAVE | 2 (+ `p`'s ramp and the scan, 4) | 189 | 328 | **350** |
+| TRANSWAVE, pitch able to move > ±6.2 st (STEAL GLIDE, or deep PITCH/FINE routes) | 4 in a level change | 365 | 634 | **680** |
+| STRETCH | 2 (+ two gains, the grain clock, 5) | 190 | 329 | **350** |
 | AGE stored above 0 or routed, on any model | (one-pole 3, hiss 5, gain 2) | 10 | 16 | **+20** |
 
 `TapeEngine::cost(&TapeEngineParams, &ModState)` returns the model's figure plus AGE's, and `playing_cost` returns the latched model's, as MODAL's does. TRANSWAVE's level-change term is TAPE's `glide_cost`, billed exactly where MODAL's `PITCH` is.
@@ -437,15 +437,15 @@ Host estimates, in the house manner (instructions × 1.46 × 1.1, as `ModalEngin
 
 | Voice | Cost | rev V (4 984 room) | rev Y (3 817) | rev V, ORBIT (4 813) | rev V, master tape (4 674) |
 |---|---|---|---|---|---|
-| STRETCH or TRANSWAVE with AGE | 337 | 14 → **8** | 11 → **8** | 14 → **8** | 13 → **8** |
-| … with DRIVE and FOLD (+102) | 439 | 11 → **8** | 8 → **8** | 10 → **8** | 10 → **8** |
-| TRANSWAVE, pitch able to move > ±6.2 st, with AGE | 547 | 9 → **8** | **6** | 8 → **8** | 8 → **8** |
-| … with the worst routing (633 in place of 47) | 1 133 | **4** | **3** | **4** | **4** |
-| STRETCH with AGE and the worst routing | 923 | **5** | **4** | **5** | **5** |
+| STRETCH or TRANSWAVE with AGE | 447 | 11 → **8** | 8 → **8** | 10 → **8** | 10 → **8** |
+| … with DRIVE and FOLD (+102) | 549 | 9 → **8** | **6** | 8 → **8** | 8 → **8** |
+| TRANSWAVE, pitch able to move > ±6.2 st, with AGE | 777 | **6** | **4** | **6** | **6** |
+| … with the worst routing (633 in place of 47) | 1 363 | **3** | **2** | **3** | **3** |
+| STRETCH with AGE and the worst routing | 1 033 | **4** | **3** | **4** | **4** |
 
 **What these numbers support, and no more.**
-- Eight voices of any plain TAPE Sound hold on rev V while the benched engine stays under **546** (4 984 / 8 − 77), and on rev Y under **400** (3 817 / 8 − 77). The estimates sit at 260, with room for the bench to come in up to 54 % higher before rev Y loses a voice.
-- A TRANSWAVE whose pitch can move more than ±6.2 semitones gets 6 voices on rev Y (a vibrato route doesn't count), and the heaviest routing matches the heaviest ALGO.
+- Eight voices of any plain TAPE Sound hold on rev V while the benched engine stays under **546** (4 984 / 8 − 77), and on rev Y under **400** (3 817 / 8 − 77). The estimates sit at 370, with room for the bench to come in up to 8 % higher before rev Y loses a voice.
+- A TRANSWAVE whose pitch can move more than ±6.2 semitones gets 4 voices on rev Y (a vibrato route doesn't count), and the heaviest routing gets 2.
 - These are counts of the **billed** figures. The guarantee holds only once the bench's cold-cache rows confirm them. Until then they are stated as estimates.
 
 **The bench rows** (build step 3, `--features bench`), each the worst block over four runs, cold cache:
@@ -556,7 +556,7 @@ All host-side (`just test`). Hardware waits for the ship flash.
 - **`plays_in_tune`:** a source of known period at root, played at C2–C6 at each rate, measures within 0.1 cent (zero-crossing estimator over 1 s). TRANSWAVE's cycle plays at the note's frequency.
 - **`transwave_is_alias_free`:** a 16-frame saw transwave swept C1 → C8 with a pitch route. Energy that isn't a harmonic of the note stays under −60 dB relative at every level and in every level change. Above C8 the test asserts nothing.
 - **`transwave_level_is_largest`:** at note-on the level is the largest whose step is ≤ 1, at every note, for `--top` 512 and 1 024. A ±1-semitone vibrato never changes it, and a ±7-semitone route does.
-- **`vibrato_costs_no_level_heads`:** a transwave Sound with a shallow PITCH route bills 240, and one with a ±12-semitone route bills 450.
+- **`vibrato_costs_no_level_heads`:** a transwave Sound with a shallow PITCH route bills 350, and one with a ±12-semitone route bills 680.
 - **`stretch_keeps_pitch`:** at MOTION 0.5, 1 and 2, STRETCH's pitch is the note's within 1 cent, and a marked event in the source arrives at `t / MOTION` within one D-TIME.
 - **`stretch_fades_are_complementary`:** the two gains sum to 1 at every sample while SIZE is swept 0 → 1 → 0 in 50 ms. MONO's splices of a sine are click-free by the rule below. POLY on white noise wobbles under 3 dB: the S950's tremolo, measured, not hidden.
 - **`unpitched_mono_is_poly`:** a `period` 0 source renders bit-identically under MONO and POLY.
