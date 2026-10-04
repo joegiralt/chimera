@@ -54,7 +54,8 @@ code 23, ident `"TAPE"`, ADR 0055).
     root and period into the Sound (ROOT, PERIOD; a zone set's into a
     `ZoneTune` record, 0x001A). A project then tunes the same on every
     card.
-  - `held` begins with a 16 B descriptor (shape, count, rate), so the audio
+  - `held` begins with a 16 B descriptor (shape, count, rate, head
+    frames), so the audio
     reads a source's shape from its own bytes.
   - Files are written by ADR 0087's `write_source`: verified, then sealed.
     A sealed failing file reads as missing and is never rewritten. A torn,
@@ -67,9 +68,13 @@ code 23, ident `"TAPE"`, ADR 0055).
     the CRC; each zone's root and period are labels, copied into the
     Sound's `ZoneTune`.
   - In the arena: the descriptor, the layout, then each zone's head.
-  - **A head covers only the slowest UI pass plus a card stall, about
-    35 ms:** 1 024 frames at 24 kHz, 18 576 B an instrument. Six TRON Parts
-    take 111 456 B, 75 % with NEW.
+  - **A head covers only the time until its first refill lands.** Its
+    length is the descriptor's `head_frames`, so the format freezes none.
+    TRON's spec sizes it from benched worst-case stalls and the refills one
+    UI pass queues: a six-note chord queues about 32 ms of 5.4 ms reads,
+    landing the last near 58 ms, and wow adds up to 33 cents of speed.
+    The lone-note estimate (35 ms, 1 024 frames, 18 576 B an instrument,
+    six Parts about 75 % with NEW) is an estimate, not a promise.
   - At about 3.5 MB, a zone set is past `put`'s 1 MiB. It needs a chunked,
     resumable `put` (256 KiB chunks, each with its own CRC and deadline,
     resumed from the unsealed file's length, sealed when whole), under its
@@ -248,7 +253,7 @@ code 23, ident `"TAPE"`, ADR 0055).
   state itself fits the existing slot.
 - Six one-second 24 kHz sources don't fit beside NEW. At 16 kHz, or at
   0.7 s each, they do. A 16-frame transwave costs 22 % of the meter, and six
-  TRON instruments 75 %.
+  TRON instruments an estimated 75 %.
 - The voice guarantees are host estimates until build step 3's bench. If
   the bench comes in higher, the counts are restated.
 - MONO is smooth only on pitched sources. POLY keeps the S950's tremolo

@@ -99,7 +99,7 @@ ADR 0087's `Source` file is `FileKind` 6, at `/CHIMERA/TAPES/<CRC>.SRC`: a heade
 
 ### What the arena holds
 
-**`held` begins with a 16 B descriptor:** `shape`, `count` and the rate (the rest reserved). A `ZoneSet`'s zone table follows it (§ 8). The packed samples come after that. The descriptor is inside `held`, so it is on the meter. The audio reads a source's description from the same bytes it plays, and ADR 0087's 12 B `SourceRow` stays as it is.
+**`held` begins with a 16 B descriptor:** `shape`, `count`, the rate and `head_frames` (`u32`: for a `ZoneSet`, the frames of each zone's head held in RAM; 0 for a source held whole), the rest reserved. Head length is data, so the format never freezes one. A `ZoneSet`'s zone table follows it (§ 8). The packed samples come after that. The descriptor is inside `held`, so it is on the meter. The audio reads a source's description from the same bytes it plays, and ADR 0087's 12 B `SourceRow` stays as it is.
 
 ## 2. The engine
 
@@ -528,11 +528,12 @@ A file is capped at 1 MiB, the `put` limit: 29 s at 24 kHz, 87 s at 8 kHz. RAM m
   - **The layout (`start`, `frames`, `key`) is in the CRC,** because a voice's reads and zone choice depend on it. **Each zone's `root` and `period` are labels,** out of the CRC, as a plain source's are.
   - When SOURCE picks a zone set, they are copied into the Sound's **`ZoneTune` record** (0x001A, defined now: per zone `root: u16`, `period: u32`, 6 B each, 72 B for 12). The voice reads them from the Sound, so a TRON project tunes the same on every card. This is the same rule as § 1's.
 - **In the arena,** `held` is the descriptor, the zone layout (9 B a zone), then each zone's head, in zone order. The voice picks its zone at note-on from the layout it reads in its own row.
-- **A head covers only the time until the first refill lands,** not a fixed 100 ms: the slowest UI pass under load (26 ms, 2026-10-02) plus a card stall (p95 5.4 ms, with margin to 9 ms), about **35 ms of audio**.
-  - At 24 kHz played 3 semitones up, that is 35 ms × 28 540 frames/s ≈ 1 000 frames, rounded to **1 024 frames: 1 536 B a zone.**
+- **A head covers only the time until the first refill lands,** not a fixed 100 ms. Its length is the descriptor's `head_frames`, chosen per instrument when the head is loaded, so nothing here freezes it.
+- **TRON's spec sizes it** from benched worst-case stalls and from the refills one UI pass can queue, not from one stall alone. Example, a six-note chord: six 4 KB refills at 5.4 ms p95 queue about 32 ms of reads, so the last lands near **58 ms** after a 26 ms pass; wow (TAPE) can add up to 33 cents of read speed. At 24 kHz played 3 semitones up, that is 58 ms × 29 090 frames/s ≈ 1 690 frames, or 2 048 rounded.
+  - **The estimate used below** is the lone-note case, about 35 ms (a 26 ms pass plus a stall): **1 024 frames, 1 536 B a zone.** The figures that follow are estimates for sizing, not promises; at 2 048 frames an instrument is about 37 KB.
   - An instrument is 16 + 108 (layout) + 12 × 1 536 = **18 556 B**, about 11 % of the arena, in place of the 43 200 B ADR 0087 counted.
-  - **Six TRON Parts:** 6 × 18 576 (rounded to the granule, with the 16 B entry) = **111 456 B, 75 % with NEW**, leaving about 42 KB for RAM sources.
-  - The streaming ring that follows a head is TRON's, in D2, refilled from the card. Its size is set by TRON's spec from the bench's measured stall.
+  - **Six TRON Parts, estimated:** 6 × 18 576 (rounded to the granule, with the 16 B entry) = 111 456 B, about 75 % with NEW, leaving about 42 KB for RAM sources. At 2 048-frame heads six would not fit beside NEW; TRON's spec settles which, from the bench.
+  - The streaming ring that follows a head is TRON's, in D2, refilled from the card, sized by the same benched worst case.
 - **So `MAX_SOURCES` = 32 and the `u32` `sounding` mask suffice.** Six TRON Parts are six sources, not 72. A zone set is one row, one bit and one meter entry.
 - **`SourceRef` (0x0016) freezes as ADR 0087 has it,** `{ crc, frames, rate }`, with `frames` the set's total. A zone set needs nothing from it.
 - `TapeModel` leaves code 6 for TRON. A source's `held` is the most its users need: all of it for a RAM model, the layout and the heads for TRON. A Part switching a zone set to a RAM model is then a pool add, refusable, and TRON's spec states it.
