@@ -247,3 +247,37 @@ fn orbit_runner_size() {
         "OrbitShared past 2dc9eefd's 876 + 4"
     );
 }
+
+/// FxBus as measured at cf50ee74, with the f32 line; the orbit firmware's
+/// real AXI use there (`rust-size`: .data + .bss). Without the master tape,
+/// which adds its own.
+#[cfg(not(feature = "master-tape"))]
+const FXBUS_F32: usize = 159_784;
+#[cfg(not(feature = "master-tape"))]
+const ORBIT_AXI_USED: usize = 384_264;
+
+/// ADR 0090: the i16 delay line frees half its bytes.
+#[cfg(not(feature = "master-tape"))]
+#[test]
+fn delay_line_frees_48128() {
+    use chimera_core::dsp::fx_bus::FxBus;
+    assert_eq!(FXBUS_F32 - size_of::<FxBus>(), 48_128);
+}
+
+/// ADR 0087: the 160 KiB arena fits the 32 KiB margin only with the i16
+/// line.
+#[cfg(not(feature = "master-tape"))]
+#[test]
+fn arena_needs_the_delay() {
+    use chimera_core::dsp::fx_bus::FxBus;
+    let freed = FXBUS_F32 - size_of::<FxBus>();
+    let after = |freed: usize| ORBIT_AXI_USED - freed - 28_672 + 2_568 + 160 * 1024;
+    assert!(
+        after(freed) <= hw::AXI_SRAM - 32 * 1024,
+        "160 KiB fits the 32 KiB margin with the i16 line"
+    );
+    assert!(
+        after(0) > hw::AXI_SRAM - 32 * 1024,
+        "and would not with the f32 line (ADR 0087)"
+    );
+}
