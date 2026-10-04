@@ -7,6 +7,8 @@ use crate::orbit::chords::ChordRing;
 use crate::orbit::runner::Capture;
 use crate::orbit::scene::{OrbitSong, SCENES, SceneIdx, SceneRing};
 use crate::orbit::{RINGS, RingIdx};
+use crate::project::PartId;
+use crate::ui::hint::{self, Gesture, Hint};
 use crate::ui::nav::{step_clamped, step_wrapped};
 use chimera_theory::{Degree, Interval, Note};
 
@@ -42,7 +44,21 @@ pub enum OrbitCell {
     Switch,
 }
 
+const PARTS: usize = PartId::ALL.len();
+
 const LOOP: [&str; 1] = ["LOOP"];
+
+const NOTE_STEP: Hint = &[
+    Gesture("MIX + NOTE", "◂▸ STEP"),
+    Gesture("NOTE", "▴▾ PITCH"),
+];
+const NOTE_POOL: Hint = &[
+    Gesture("MIX + NOTE", "◂▸ PICK"),
+    Gesture("NOTE", "▴▾ PITCH"),
+];
+const DEGREE: Hint = &[Gesture("MIX + DEGREE", "◂▸ SEGMENT")];
+const PLAY: Hint = &[Gesture("MIX + PLAY", "▾ DROPS THE CHORD")];
+const CLEAR: Hint = &[Gesture("MIX + CLEAR", "▴ RESET  ▾ RANDOM")];
 
 impl OrbitCell {
     pub const fn label(self) -> &'static str {
@@ -57,6 +73,19 @@ impl OrbitCell {
             OrbitCell::Scene => "SCENE",
             OrbitCell::Save => "SAVE",
             OrbitCell::Switch => "SWITCH",
+        }
+    }
+
+    /// What MIX does to the cell, for its focus band (ADR 0086); a NOTE
+    /// on a STEP ring (`step`) picks a step.
+    pub const fn hint(self, step: bool) -> Hint {
+        match self {
+            OrbitCell::Note if step => NOTE_STEP,
+            OrbitCell::Note => NOTE_POOL,
+            OrbitCell::Degree => DEGREE,
+            OrbitCell::Play => PLAY,
+            OrbitCell::Clear => CLEAR,
+            _ => hint::NONE,
         }
     }
 
@@ -83,11 +112,11 @@ impl OrbitCell {
             OrbitCell::Scene => slot(song.queued().unwrap_or(song.current())),
             OrbitCell::Save => slot(ui.save_slot(song)),
             OrbitCell::Switch => 0.0,
-            // The ring, and its Part a sixteenth of a ring past it: a
+            // The ring and its Part, one of RINGS × PARTS within 0..=1: a
             // TARGET change redraws the cell, its text "3 › P3".
             OrbitCell::Ring => {
-                let part = s.rings[ring.get() as usize].target.part().index() as f32;
-                (ring.get() as f32 + part / 16.0) / (RINGS - 1) as f32
+                let part = s.rings[ring.get() as usize].target.part().index();
+                (ring.get() as usize * PARTS + part) as f32 / (RINGS * PARTS - 1) as f32
             }
             OrbitCell::Degree => {
                 let last = c.key().degree_count().saturating_sub(1).max(1);

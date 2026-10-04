@@ -1,5 +1,6 @@
 //! SETTINGS › PERSONALIZE › THEME: backlight, panel gamma, accent and
-//! ground (ADR 0033).
+//! ground (ADR 0033), and whether focus bands show gesture hints (ADR
+//! 0086).
 //!
 //! The renderer keeps drawing the canonical palette (`theme::ACCENT`,
 //! `ACCENT_SOFT`, `BG`); the display shell swaps those three colours for the
@@ -15,7 +16,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
 use embedded_graphics::prelude::RgbColor;
 
-use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
+use crate::block::{Block, DiskCode, OFF_ON, ParamId, ParamSpec, ValFmt, apply_code};
 use crate::ui::theme;
 
 /// BRIGHT's and BLACK's values, by step index (see `DiskCode`).
@@ -336,6 +337,8 @@ pub struct ThemeSettings {
     pub gamma: Gamma,
     pub accent: Accent,
     pub black: Black,
+    /// Gesture hints in the focus bands; off, a band reads its cell alone.
+    pub hints: bool,
 }
 
 impl Default for ThemeSettings {
@@ -392,6 +395,7 @@ impl ThemeSettings {
         gamma: Gamma::Punch,
         accent: Accent::Teal,
         black: Black::DEFAULT,
+        hints: true,
     };
 
     /// TEAL at ground 0: the palette the renderer draws, unchanged.
@@ -404,6 +408,7 @@ impl ThemeSettings {
     pub const GAMMA: ParamId = ParamId(1);
     pub const ACCENT: ParamId = ParamId(2);
     pub const BLACK: ParamId = ParamId(3);
+    pub const HINTS: ParamId = ParamId(4);
 
     /// The colours the display shows for ACCENT, ACCENT_SOFT and BG. The soft
     /// accent rides the ground: it moves with BLACK by the ground's own step.
@@ -436,7 +441,7 @@ const _: () = assert!(BLACK_IDENTS.len() == THEME_SPECS[3].max as usize + 1);
 
 /// Choices by index: BRIGHT 0..=18 (10..100 %), BLACK 0..=6 (−2..+4). The
 /// defaults are the owner's pick: 70, PUNCH, TEAL, −2.
-pub static THEME_SPECS: [ParamSpec; 4] = [
+pub static THEME_SPECS: [ParamSpec; 5] = [
     ParamSpec::choice(0, "BRIGHT", ValFmt::Names(&BRIGHT_NAMES), 18.0, 12.0).ident("BRIGHT"),
     ParamSpec::choice(1, "GAMMA", ValFmt::Names(&GAMMA_NAMES), 2.0, 2.0)
         .ident("GAMMA")
@@ -445,6 +450,10 @@ pub static THEME_SPECS: [ParamSpec; 4] = [
         .ident("ACCENT")
         .glyph(crate::ui::glyph::FocusGlyph::None),
     ParamSpec::choice(3, "BLACK", ValFmt::Names(&BLACK_NAMES), 6.0, 0.0).ident("BLACK"),
+    // A SYSTEM from before HINTS has none: ON.
+    ParamSpec::stepped(4, "HINTS", ValFmt::Names(&OFF_ON), 0.0, 1.0, 1.0, false)
+        .ident("HINTS")
+        .glyph(crate::ui::glyph::FocusGlyph::Switch),
 ];
 
 impl Block for ThemeSettings {
@@ -458,6 +467,7 @@ impl Block for ThemeSettings {
             Self::GAMMA => self.gamma as u8 as f32,
             Self::ACCENT => self.accent as u8 as f32,
             Self::BLACK => (self.black.0 - Black::MIN) as f32,
+            Self::HINTS => f32::from(self.hints),
             _ => 0.0,
         }
     }
@@ -469,6 +479,7 @@ impl Block for ThemeSettings {
             Self::GAMMA => self.gamma = Gamma::ALL[(i as usize).min(Gamma::ALL.len() - 1)],
             Self::ACCENT => self.accent = Accent::ALL[(i as usize).min(Accent::ALL.len() - 1)],
             Self::BLACK => self.black = Black::new(Black::MIN.saturating_add(i.min(127) as i8)),
+            Self::HINTS => self.hints = i != 0,
             _ => {}
         }
     }

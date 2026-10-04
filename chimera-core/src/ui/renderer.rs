@@ -24,6 +24,7 @@ use crate::ui::glyph::{
     BRAID_PARAMS, Braid, BraidPart, CUBE_PARAMS, CompositeId, Cube, CubePart, FocusGlyph, Gauge,
     RINGS_PARAMS, Rings, RingsPart,
 };
+use crate::ui::hint;
 use crate::ui::mod_grid::MatrixState;
 use crate::ui::nav::PageAt;
 use crate::ui::orbit::draw::{self as orbit, OrbitFrame};
@@ -86,9 +87,16 @@ pub struct Frame<'a> {
     /// ORBIT's reading of the focused slot, if it has its own: built once
     /// a frame, for the band's key, its gauge and its drawing.
     pub orbit_focus: Option<orbit::Focus>,
+    /// THEME's HINTS: gesture hints drawn (ADR 0086).
+    pub hints: bool,
 }
 
 impl Frame<'_> {
+    /// `h`, or none with HINTS off.
+    pub fn hint(&self, h: hint::Hint) -> hint::Hint {
+        if self.hints { h } else { hint::NONE }
+    }
+
     /// What the header shows beside its words: the load and the dots.
     pub fn header_status(&self) -> components::HeaderStatus {
         components::HeaderStatus {
@@ -516,6 +524,7 @@ impl Renderer {
                 f.matrix,
                 amount_of(self.anim[MATRIX_AMOUNT_SLOT].current()),
                 inert(f),
+                f.hint(f.matrix.hint()),
             );
         }
         if f.def.viz == VizType::AudioStats {
@@ -527,7 +536,7 @@ impl Renderer {
         }
         if let Some(o) = &f.orbit_focus {
             let (label, text) = (o.label.as_str(), o.text.as_str());
-            return components::focus_band(
+            components::focus_band(
                 display,
                 label,
                 text,
@@ -535,6 +544,7 @@ impl Renderer {
                 look(f, f.focus),
                 f.prime_status,
             );
+            return hint::focus(display, f.hint(o.hint));
         }
         let v = self.anim[f.focus].current();
         let buf = value_text(f, f.focus, v);
@@ -546,6 +556,7 @@ impl Renderer {
             look(f, f.focus),
             f.prime_status,
         );
+        hint::focus(display, f.hint(view.hint()));
     }
 
     /// What an ORBIT viz draws, for its region's key; 0 on any other.

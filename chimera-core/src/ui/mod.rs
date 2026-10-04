@@ -13,6 +13,7 @@ pub mod filter_panel;
 pub mod fmt;
 pub mod focus;
 pub mod glyph;
+pub mod hint;
 pub mod hold;
 pub mod led;
 pub mod midi_settings;
@@ -2135,7 +2136,14 @@ impl UiState {
         if let Some((part, b)) = self.loc.browse() {
             let _ = display.clear(theme::BG);
             let (cursor, scroll) = (b.cursor(), b.scroll());
-            browser::draw(display, self.project.pool(), part, cursor, scroll);
+            browser::draw(
+                display,
+                self.project.pool(),
+                part,
+                cursor,
+                scroll,
+                self.theme.hints,
+            );
             self.draw_prompt(display);
             return;
         }
@@ -2212,6 +2220,7 @@ impl UiState {
             matrix: &self.matrix_state,
             sel_op: self.sel_op,
             orbit_focus: orbit::draw::focus(def, focus, &ctx, &orbit, |i| anim[i].current()),
+            hints: self.theme.hints,
             ctx,
             focus,
             scope,
@@ -2419,7 +2428,14 @@ impl UiState {
                 let fb = display.pixel_buffer();
                 Renderer::clear_region_fb(fb, 0, chimera_hal::SCREEN_HEIGHT);
                 let (cursor, scroll) = (b.cursor(), b.scroll());
-                browser::draw(display, self.project.pool(), part, cursor, scroll);
+                browser::draw(
+                    display,
+                    self.project.pool(),
+                    part,
+                    cursor,
+                    scroll,
+                    self.theme.hints,
+                );
                 self.draw_prompt(display);
                 // Invalidate region set so normal layout forces full rebuild on exit
                 self.region_set.prev_screen = None;

@@ -24,7 +24,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0x29fa1ef579c4a0e7),
     ("algo_alg", 0xb73321ba103c1886),
     ("algo_alg_morph_dimmed", 0xd8e8a78a528ad3b4),
-    ("mod_matrix_morph_inert", 0xc0a153ae29f9167b),
+    ("mod_matrix_morph_inert", 0xe5dc545f78f89d13),
     // Re-recorded: WAVE shows its scope (#310).
     ("algo_wave", 0xe156f3e83d0aab72),
     ("algo_level", 0x408f6bef763157fe),
@@ -106,11 +106,11 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_out_p2", 0xc7a057082a7a6932),
     ("algo_out_p3", 0x3e91d6b588f4ebfa),
-    ("mod_matrix", 0xa6cf67e584e06c56),
-    ("mod_matrix_wide", 0xca78c74fca4ac959),
-    ("sound_browser", 0xeba30208aa18feb2),
+    ("mod_matrix", 0x908cc3655fdaf8ee),
+    ("mod_matrix_wide", 0xc34ca17250bc0e55),
+    ("sound_browser", 0xc5fad13cf6ddc71f),
     // Re-recorded: a fresh project's footer drops NEW (#286).
-    ("settings_personal_theme", 0x4ceb975ee846afcc),
+    ("settings_personal_theme", 0xc35039e65219cdc2),
     ("settings_midi_sync", 0x0e26ce69d0f54980),
     ("settings_system_diag_aud_load", 0x0d5edcdc4826225e),
     // ORBIT's row opens its list (plan Task 17).
@@ -131,9 +131,9 @@ const GOLDENS: &[(&str, u64)] = &[
     ("orbit_rhythm", 0x535a82923b7caa35),
     // PLAY's cell (plan Task 14); KEY, SCALE and BARS gone to ORB; SEGS,
     // DEGREE and PLAY on A to C, D to F reserved (ADR 0079, 2026-10-03).
-    ("orbit_chrd", 0x7e7decae3dbd93e8),
+    ("orbit_chrd", 0x9e90b371b6b38670),
     // Chords played into segments: a name for a numeral (Task 14).
-    ("orbit_chrd_played", 0x319a5933ba8defed),
+    ("orbit_chrd_played", 0x7739f4cbbc895e11),
     // ORB (plan Task 10); B to E gain KEY, SCALE, BARS, SCENE (ADR 0079),
     // and CUSTOM hangs under it; each ring's Part by its top and in RING,
     // and CUSTOM by EDIT on a named scale (ADR 0084).
@@ -142,9 +142,11 @@ const GOLDENS: &[(&str, u64)] = &[
     ("orbit_custom", 0x7c5bdf51a79d88a1),
     ("orbit_custom_named", 0x6f9acf1a43362d0e),
     // RING's VOICE and NOTES, a STEP ring's NOTES (plan Task 13).
-    ("orbit_voice", 0x3e7065c2ffca6918),
-    ("orbit_notes", 0x5bee96f2ea3f8e45),
-    ("orbit_notes_step", 0xec88885c7d87a73e),
+    ("orbit_voice", 0xdaefdb55fbe49e98),
+    ("orbit_notes", 0x2865bfd4ee762860),
+    ("orbit_notes_step", 0xc1c3dab7eeb50a2f),
+    // 32 steps, step 32 picked: the row scrolled to its last eight.
+    ("orbit_notes_step32", 0x211fc000f7a5be91),
     // SCN: a saved slot, SAVE's, a queued one filling (plan Task 16).
     ("orbit_scn", 0x7c2558bf895b7432),
     ("busy", 0x198544cd36863145),

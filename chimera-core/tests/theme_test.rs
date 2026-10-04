@@ -294,6 +294,7 @@ fn in_settings_and_set_theme() {
         gamma: Gamma::Soft,
         accent: Accent::Lime,
         black: Black::new(1),
+        hints: false,
     };
     ui.set_theme(t);
     assert_eq!(ui.theme(), t);

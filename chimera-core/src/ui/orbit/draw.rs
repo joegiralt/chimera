@@ -25,6 +25,7 @@ use crate::ui::block_def::{BlockDef, VizType};
 use crate::ui::draw;
 use crate::ui::fmt::{FmtBuf, fmt_val};
 use crate::ui::glyph::Gauge;
+use crate::ui::hint::{self, Hint};
 use crate::ui::region::Fnv;
 use crate::ui::theme::{self, VIZ_BAND_MID as MID, VIZ_LEFT, VIZ_RIGHT};
 use crate::ui::view::{SlotCtx, View, view};
@@ -149,7 +150,7 @@ where
 }
 
 /// The line atop VOICE's and NOTES' bands.
-const LINE_Y: i32 = theme::VIZ_BAND_TOP + 10;
+const LINE_Y: i32 = theme::VIZ_BAND_TOP + 13;
 
 /// A line atop the band, in the labels' voice, from its parts (a
 /// `FmtBuf` holds 32 bytes); untracked when tracked it would not fit.
@@ -275,14 +276,29 @@ pub fn notes_line(r: &Ring) -> (FmtBuf, FmtBuf) {
     (head, tail)
 }
 
-/// NOTES' chips: their top and height.
-const NOTE_TOP: i32 = theme::VIZ_BAND_TOP + 18;
+/// NOTES' chips: their top and height, the gap between them, and the
+/// scroll's line under them.
+const NOTE_TOP: i32 = theme::VIZ_BAND_TOP + 21;
 const NOTE_H: i32 = 34;
+const NOTE_GAP: i32 = 4;
+const SCROLL_Y: i32 = NOTE_TOP + NOTE_H + 6;
+const _: () = assert!(SCROLL_Y + 2 < theme::VIZ_BAND_BOTTOM);
+/// NOTES shows this many chips at most: a longer STEP ring scrolls.
+pub const CHIPS_SHOWN: usize = 8;
+
+/// The chips on show of `n`, `sel` among them: eight from a multiple of
+/// eight, so a page is a bar of a 16th ring; the last eight at the end.
+pub fn chip_window(sel: usize, n: usize) -> core::ops::Range<usize> {
+    let shown = n.min(CHIPS_SHOWN);
+    let first = (sel / CHIPS_SHOWN * CHIPS_SHOWN).min(n - shown);
+    first..first + shown
+}
 
 /// RING · NOTES: the line, then the pool as chips, each named; a STEP
 /// ring's steps instead, a hit's filled, a rest's outlined, the step under
-/// the clock lit. The chip NOTE edits is outlined in INK2. Chips too
-/// narrow for their names mark each pitch in the register by height.
+/// the clock lit, eight at a time with the selected one among them and a
+/// scroll line under them. The chip NOTE edits is outlined in INK2. Chips
+/// too narrow for their names mark each pitch in the register by height.
 pub fn notes<D>(d: &mut D, f: &OrbitFrame, r: RingIdx)
 where
     D: DrawTarget<Color = Rgb565>,
@@ -291,32 +307,31 @@ where
     let ring = &sr.ring;
     let (head, tail) = notes_line(ring);
     band_line(d, &[head.as_str(), tail.as_str()]);
-    let n = sr.chips() as i32;
-    let gap = match n {
-        17.. => 1,
-        9..=16 => 2,
-        _ => 4,
-    };
+    let (all, sel) = (sr.chips(), f.ui.chip_of(sr));
+    let shown = chip_window(sel, all);
+    let n = shown.len() as i32;
     // Each chip a slot of the band, laid at fractional x so the row
     // spans it; `cw` the narrowest, for the font and the corners.
-    let slot = (BAND_W + gap as f32) / n as f32;
+    let slot = (BAND_W + NOTE_GAP as f32) / n as f32;
     let left = |i: i32| VIZ_LEFT + libm::roundf(slot * i as f32) as i32;
-    let cw = libm::floorf(slot) as i32 - gap;
+    let cw = libm::floorf(slot) as i32 - NOTE_GAP;
     let radius = (cw / 2).clamp(1, 5) as u32;
     let mask = f.hits(r);
     let now = f.now(r);
     let (lo, hi) = register(ring);
     let step = ring.mode == NoteMode::Step;
-    // One font for every chip: the largest every name fits.
+    // One font for every chip on show: the largest every name fits.
     let fits = |font| {
-        (0..n as usize).all(|i| draw::text_width(font, note_name(sr.chip(i)).as_str(), 0) <= cw - 4)
+        shown
+            .clone()
+            .all(|i| draw::text_width(font, note_name(sr.chip(i)).as_str(), 0) <= cw - 4)
     };
     let font = [&theme::FONT_VALUE, &theme::FONT_LABEL_BOLD]
         .into_iter()
         .find(|&font| fits(font));
-    for i in 0..n as usize {
-        let x = left(i as i32);
-        let cw = left(i as i32 + 1) - gap - x;
+    for (k, i) in shown.clone().enumerate() {
+        let x = left(k as i32);
+        let cw = left(k as i32 + 1) - NOTE_GAP - x;
         let (fill, ink) = match (step, step && mask.is_hit(i), now == Some(i)) {
             (true, _, true) => (Some(theme::ACCENT), theme::BG),
             (true, false, _) => (None, theme::MID),
@@ -326,7 +341,7 @@ where
             Some(c) => draw::round_rect(d, x, NOTE_TOP, cw, NOTE_H, radius, c),
             None => draw::round_outline(d, x, NOTE_TOP, cw, NOTE_H, radius, theme::FAINT),
         }
-        if i == f.ui.chip_of(sr) {
+        if i == sel {
             draw::round_outline(d, x, NOTE_TOP, cw, NOTE_H, radius, theme::INK2);
         }
         let note = sr.chip(i);
@@ -343,6 +358,12 @@ where
                 draw::fill_rect(d, x + 1, y, (cw - 2).max(1), 2, ink);
             }
         }
+    }
+    if shown.len() < all {
+        let x = |i: usize| VIZ_LEFT + (BAND_W * i as f32 / all as f32) as i32;
+        draw::fill_rect(d, VIZ_LEFT, SCROLL_Y, VIZ_RIGHT - VIZ_LEFT, 1, theme::FAINT);
+        let x0 = x(shown.start);
+        draw::fill_rect(d, x0, SCROLL_Y - 1, x(shown.end) - x0, 3, theme::MID);
     }
 }
 
@@ -815,6 +836,9 @@ pub struct Focus {
     pub label: FmtBuf,
     pub text: FmtBuf,
     pub gauge: Gauge,
+    /// Static per cell (and a NOTE's mode, which its label names), so
+    /// the key leaves it out.
+    pub hint: Hint,
 }
 
 impl Focus {
@@ -845,7 +869,8 @@ pub fn focus(
 ) -> Option<Focus> {
     let mut label = FmtBuf::new();
     let mut text = FmtBuf::new();
-    let gauge = match view(def, slot, ctx) {
+    let v = view(def, slot, ctx);
+    let gauge = match v {
         View::Orbit(OrbitCell::Degree) => {
             let c = f.chords();
             let seg = f.ui.seg_of(c);
@@ -880,7 +905,7 @@ pub fn focus(
             Gauge::None
         }
         View::Orbit(OrbitCell::Clear) => {
-            let _ = label.write_str("MIX + UP / DOWN");
+            let _ = label.write_str(OrbitCell::Clear.label());
             text = cell_text(OrbitCell::Clear, f, ctx.ring);
             Gauge::None
         }
@@ -932,7 +957,19 @@ pub fn focus(
         }
         _ => return None,
     };
-    Some(Focus { label, text, gauge })
+    let hint = match v {
+        View::Orbit(c) => {
+            let step = f.scene().rings[ctx.ring.get() as usize].ring.mode == NoteMode::Step;
+            c.hint(step)
+        }
+        _ => hint::NONE,
+    };
+    Some(Focus {
+        label,
+        text,
+        gauge,
+        hint,
+    })
 }
 
 /// What `def`'s viz draws of ORBIT, on ring `r` with CUSTOM's eased

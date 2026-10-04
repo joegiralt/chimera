@@ -1286,6 +1286,17 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::F, 3).and_held(ButtonId::Mix));
         ui.set_orbit_view(&orbit_view(0.3));
     }),
+    // RING 2 as a 32-step STEP ring, CLEAR down's notes, step 32 picked:
+    // the chip row scrolled to its last eight, NOTE's gestures under it.
+    ("orbit_notes_step32", |ui| {
+        to_ring(ui, 2);
+        feed(ui, Input::turn(EncoderId::A, 40)); // STEPS 32
+        tap(ui, ButtonId::Edit);
+        tap(ui, ButtonId::Edit);
+        feed(ui, Input::turn(EncoderId::A, -1));
+        feed(ui, Input::turn(EncoderId::E, -1).and_held(ButtonId::Mix));
+        feed(ui, Input::turn(EncoderId::F, 40).and_held(ButtonId::Mix));
+    }),
 ];
 
 /// `AudioStats` fixture for AUDIO LOAD's and ABOUT's goldens and tests.

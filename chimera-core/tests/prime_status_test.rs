@@ -7,7 +7,6 @@ mod screen;
 
 use chimera_core::mod_path::RegistryError;
 use chimera_core::project::PartId;
-use chimera_core::ui::draw;
 use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::theme;
 use chimera_core::ui::{PrimeStatus, UiState};
@@ -108,16 +107,18 @@ fn un_priming_also_clears_the_status() {
     assert_eq!(ui.prime_status(), None);
 }
 
-/// Direction A (ADR 0016): the hint must fit its row (spec: no literals —
-/// widths come from `theme::SCREEN_W`/`MARGIN_X`, the same budget every
-/// other row is checked against).
+/// Direction A (ADR 0016): each of the matrix's hints fits its row (ADR
+/// 0086; widths from `theme`, the budget every row is checked against).
 #[test]
 fn matrix_hint_fits_its_row() {
-    let w = draw::text_width(&theme::FONT_LABEL, chimera_core::ui::mod_grid::HINT, 0);
-    assert!(
-        w <= theme::SCREEN_W - 2 * theme::MARGIN_X,
-        "hint is {w}px wide"
-    );
+    use chimera_core::ui::{hint, mod_grid};
+    for h in [mod_grid::DELETE, mod_grid::PRIME] {
+        let w = hint::width(h);
+        assert!(
+            w <= theme::SCREEN_W - 2 * theme::MARGIN_X,
+            "hint is {w}px wide"
+        );
+    }
 }
 
 /// Review Focus (#21): the message is redrawn through the dirty-region

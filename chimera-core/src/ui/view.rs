@@ -14,11 +14,13 @@ use crate::dsp::modulator::{
 use crate::modulation::{ModSource, VCA};
 use crate::orbit::RingIdx;
 use crate::orbit::clock::ClockSource;
+use crate::orbit::scene::SceneRing;
 use crate::params::{EnvParams, FilterParams, OutParams};
 use crate::preset::Sound;
 use crate::ui::block_def::{BlockDef, SlotBinding};
 use crate::ui::filter_panel::{self, PanelKnob, PanelTarget};
 use crate::ui::glyph::FocusGlyph;
+use crate::ui::hint::{self, Gesture, Hint};
 use crate::ui::mod_panel::{self, PanelSlot};
 use crate::ui::orbit::OrbitCell;
 
@@ -176,7 +178,21 @@ impl View {
             _ => None,
         }
     }
+
+    /// The gesture hint a param's focus band shows (ADR 0086): MUTE's
+    /// MIX + B*n*, which mutes any ring from anywhere in ORBIT. ORBIT's
+    /// own cells give theirs through their focus.
+    pub fn hint(&self) -> Hint {
+        match self.addr() {
+            Some(a) if matches!(a.block, BlockRef::OrbitRing(_)) && a.param == SceneRing::MUTE => {
+                MUTE_HINT
+            }
+            _ => hint::NONE,
+        }
+    }
 }
+
+const MUTE_HINT: Hint = &[Gesture("MIX + B1-5", "MUTES THAT RING")];
 
 fn param(addr: ParamAddr, label: &'static str, fmt: ValFmt) -> View {
     View::Param { addr, label, fmt }

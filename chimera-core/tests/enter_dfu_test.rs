@@ -113,6 +113,7 @@ fn the_theme_is_saved_before_the_restart() {
         gamma: Gamma::Soft,
         accent: Accent::Lime,
         black: Black::new(1),
+        hints: false,
     };
     let mut ui = Box::new(UiState::new());
     let mut sys = Sys::new();

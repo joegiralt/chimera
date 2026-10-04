@@ -979,8 +979,8 @@ fn clear_down_randomises_in_key() {
 /// plain turn either way, as a slip reaching for NOTE, leaves the notes.
 #[test]
 fn clear_needs_mix() {
-    use chimera_core::ui::orbit::ORBIT_NOTES;
     use chimera_core::ui::orbit::draw::{OrbitFrame, focus};
+    use chimera_core::ui::orbit::{ORBIT_NOTES, OrbitCell};
     use chimera_hal::ButtonId::Mix;
     use chimera_hal::EncoderId::E;
     let mut ui = Box::new(UiState::new());
@@ -995,7 +995,7 @@ fn clear_needs_mix() {
         let b = sent(&mut ui, |ui| feed(ui, Input::turn(E, -1).and_held(Mix)));
         assert!(b.notes.contains(sel(&ui)), "MIX + turn");
     }
-    // Its focus names both: MIX + UP / DOWN over C4 / RND.
+    // Its focus names it over C4 / RND, its gesture under (ADR 0086).
     let r = ui.location().orbit().unwrap().ring();
     let f = OrbitFrame::new(ui.project().orbit(), ui.orbit());
     let ctx = chimera_core::ui::view::SlotCtx::read(
@@ -1004,10 +1004,8 @@ fn clear_needs_mix() {
     )
     .on_ring(r);
     let fo = focus(&ORBIT_NOTES, 4, &ctx, &f, |_| 0.0).unwrap();
-    assert_eq!(
-        (fo.label.as_str(), fo.text.as_str()),
-        ("MIX + UP / DOWN", "C4 / RND")
-    );
+    assert_eq!((fo.label.as_str(), fo.text.as_str()), ("CLEAR", "C4 / RND"));
+    assert_eq!(fo.hint, OrbitCell::Clear.hint(true));
 }
 
 /// ORB's B to E are KEY, SCALE, BARS and SCENE (ADR 0079): KEY, SCALE

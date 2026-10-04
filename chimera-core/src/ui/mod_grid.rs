@@ -11,6 +11,7 @@ use crate::addr::{BlockRef, ParamAddr};
 use crate::mod_path::LABEL_LEN;
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
+use crate::ui::hint::{self, Gesture, Hint};
 use crate::ui::theme;
 
 /// Grid geometry (grid region 28..`GRID_BOTTOM`): destination labels
@@ -322,8 +323,21 @@ impl Default for MatrixState {
     }
 }
 
-/// The matrix's hint line (spec § UI: MIX+MINUS deletes a route).
-pub const HINT: &str = "PRIME MIX+PLUS  DELETE MIX+MINUS";
+/// The cursor's gesture (ADR 0086): MIX + MINUS on a route deletes it;
+/// on no route, where its columns come from, MIX + PLUS on a param.
+pub const DELETE: Hint = &[Gesture("MIX + MINUS", "DELETES THE ROUTE")];
+pub const PRIME: Hint = &[Gesture("MIX + PLUS", "ON A PARAM PRIMES IT")];
+
+impl MatrixState {
+    /// The hint under the cursor's route.
+    pub fn hint(&self) -> Hint {
+        if self.is_present(self.sel_source(), self.sel_col) {
+            DELETE
+        } else {
+            PRIME
+        }
+    }
+}
 
 /// Short tag for the block a destination lives in (column header, top line).
 pub fn block_tag(b: BlockRef) -> &'static str {
@@ -647,9 +661,10 @@ where
 
 /// The band under the grid: the cursor's route by full names (`ENV 3 →
 /// FILTER CUTOFF`), then its lerped amount and effect (`+42 = +3.3 oct`,
-/// `--` with no route; in MID and tagged `INERT` on an `inert` column), the
-/// hint and the route count. `NO DESTINATIONS` without one.
-pub fn draw_readout<D>(d: &mut D, state: &MatrixState, sel_amount: i8, inert: u16)
+/// `--` with no route; in MID and tagged `INERT` on an `inert` column), its
+/// gesture `hint` (`MatrixState::hint`, or none with HINTS off) and the
+/// route count. `NO DESTINATIONS` without one.
+pub fn draw_readout<D>(d: &mut D, state: &MatrixState, sel_amount: i8, inert: u16, hint: Hint)
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -718,14 +733,7 @@ where
             label(d, "NO DESTINATIONS", theme::MARGIN_X, theme::MID);
         }
     }
-    draw::text(
-        d,
-        &theme::FONT_LABEL,
-        HINT,
-        theme::MARGIN_X,
-        HINT_Y,
-        theme::MID,
-    );
+    hint::draw(d, hint, theme::MARGIN_X, HINT_Y);
     let routes = (0..state.num_sources)
         .flat_map(|r| (0..state.num_dests).map(move |c| (r, c)))
         .filter(|&(r, c)| state.is_present(r, c))

@@ -162,7 +162,8 @@ pub fn system_file(s: &SystemSettings) -> Vec<u8> {
 pub const SYSTEM_FIXTURE: &str = "system.sys";
 
 /// What the SYSTEM fixture was written from: every field off its default,
-/// MIDI CONFIG aside: the fixture predates it, so it reads as the default.
+/// MIDI CONFIG and HINTS aside: the fixture predates them, so they read as
+/// their defaults.
 pub fn system_fixture_settings() -> SystemSettings {
     SystemSettings {
         midi: MidiSettings::DEFAULT,
@@ -171,6 +172,7 @@ pub fn system_fixture_settings() -> SystemSettings {
             gamma: Gamma::Panel,
             accent: Accent::Rose,
             black: Black::new(3),
+            hints: true,
         },
         last_project: ProjectId::new(1_234_567),
     }
@@ -181,7 +183,8 @@ pub fn system_fixture_settings() -> SystemSettings {
 pub const SYSTEM_MIDI_FIXTURE: &str = "system_midi.sys";
 
 /// What the MIDI SYSTEM fixture was written from: SYNC INT, off its
-/// default, and every other field off its default too.
+/// default, and every other field off its default too, HINTS aside: the
+/// fixture predates it.
 pub fn system_midi_fixture_settings() -> SystemSettings {
     SystemSettings {
         midi: MidiSettings {
@@ -192,6 +195,7 @@ pub fn system_midi_fixture_settings() -> SystemSettings {
             gamma: Gamma::Soft,
             accent: Accent::ALL[2],
             black: Black::new(-1),
+            hints: true,
         },
         last_project: ProjectId::new(89),
     }

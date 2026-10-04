@@ -18,7 +18,8 @@ use common::codec_util::{
 };
 use core::ops::ControlFlow;
 
-/// BRIGHT 40, GAMMA SOFT, ACCENT index 3, BLACK +1, SYNC INT, project 7.
+/// BRIGHT 40, GAMMA SOFT, ACCENT index 3, BLACK +1, HINTS OFF, SYNC INT,
+/// project 7.
 fn settings() -> SystemSettings {
     SystemSettings {
         midi: MidiSettings {
@@ -29,6 +30,7 @@ fn settings() -> SystemSettings {
             gamma: Gamma::Soft,
             accent: Accent::ALL[3],
             black: Black::new(1),
+            hints: false,
         },
         last_project: ProjectId::new(7),
     }
@@ -619,6 +621,38 @@ fn a_system_from_before_sync_is_ext() {
     assert_eq!(boot_bytes(&f).0.midi.sync, SyncMode::Ext);
 }
 
+/// A SYSTEM from before HINTS, either v1 fixture, shows them: ON, the
+/// default (ADR 0086).
+#[test]
+fn a_system_from_before_hints_shows_them() {
+    for name in [SYSTEM_FIXTURE, SYSTEM_MIDI_FIXTURE] {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/v1")
+            .join(name);
+        let f = std::fs::read(p).unwrap();
+        assert!(boot_bytes(&f).0.theme.hints, "{name}");
+    }
+}
+
+/// HINTS OFF round-trips, and alone is a change to write.
+#[test]
+fn hints_off_round_trips() {
+    let mut s = MemStore::new(1);
+    let off = SystemSettings {
+        theme: ThemeSettings {
+            hints: false,
+            ..ThemeSettings::DEFAULT
+        },
+        ..SystemSettings::DEFAULT
+    };
+    save(&mut s, &off);
+    assert!(!boot(&mut s).0.theme.hints);
+    assert_ne!(
+        chimera_core::storage::body_crc(&off),
+        chimera_core::storage::body_crc(&SystemSettings::DEFAULT)
+    );
+}
+
 /// A change undone is still the user's: it goes over another card's SYSTEM.
 #[test]
 fn a_reverted_change_is_still_a_change() {
@@ -717,7 +751,8 @@ fn system_fixture_loads() {
 }
 
 /// The frozen SYSTEM with MIDI CONFIG's record, SYNC INT: it reads as
-/// written, and writing what it read gives the same bytes back.
+/// written, and what it read writes and reads back the same. Not byte for
+/// byte since HINTS: the fixture predates it, a write carries it (ADR 0086).
 #[test]
 fn system_midi_fixture_round_trips() {
     let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -727,5 +762,7 @@ fn system_midi_fixture_round_trips() {
     let (got, note) = boot_bytes(&f);
     assert_eq!((got, note), (system_midi_fixture_settings(), None));
     assert_eq!(got.midi.sync, SyncMode::Int);
-    assert_eq!(system_file(&got), f, "byte-exact");
+    let again = system_file(&got);
+    assert!(again.len() > f.len(), "HINTS added");
+    assert_eq!(boot_bytes(&again), (got, None));
 }

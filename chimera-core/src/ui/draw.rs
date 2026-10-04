@@ -71,12 +71,19 @@ pub const CHEVRON: char = '›';
 pub const BULLET: char = '●';
 /// A hollow dot, r = 2.
 pub const RING: char = '◦';
+/// 3×5 triangles, a turn's way: `◂▸` along a row, `▴▾` up and down.
+pub const LEFT: char = '◂';
+pub const RIGHT: char = '▸';
+pub const UP: char = '▴';
+pub const DOWN: char = '▾';
 
 fn mark_adv(ch: char) -> Option<i32> {
     match ch {
         MIDDOT => Some(3),
         CHEVRON => Some(5),
         BULLET | RING => Some(6),
+        LEFT | RIGHT => Some(4),
+        UP | DOWN => Some(5),
         _ => None,
     }
 }
@@ -93,6 +100,18 @@ where
         }
         BULLET => dot(d, x + 2, y - 4, 2, color),
         RING => ring(d, x + 2, y - 4, 2, color, 1),
+        LEFT | RIGHT => {
+            for i in 0..3 {
+                let c = if ch == RIGHT { x + i } else { x + 2 - i };
+                fill_rect(d, c, y - 6 + i, 1, 5 - 2 * i, color);
+            }
+        }
+        UP | DOWN => {
+            for i in 0..3 {
+                let r = if ch == UP { y - 3 - i } else { y - 5 + i };
+                fill_rect(d, x + i, r, 5 - 2 * i, 1, color);
+            }
+        }
         _ => debug_assert!(false, "{ch:?} is not a mark"),
     }
 }

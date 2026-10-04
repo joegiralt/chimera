@@ -36,7 +36,7 @@ fn drawn(pool: &Pool, cursor: usize, scroll: usize) -> Fb {
     use embedded_graphics::draw_target::DrawTarget;
     let mut fb = Fb::new();
     let _ = fb.clear(theme::BG);
-    browser::draw(&mut fb, pool, PartId::ALL[0], cursor, scroll);
+    browser::draw(&mut fb, pool, PartId::ALL[0], cursor, scroll, true);
     assert_eq!(fb.oob, 0);
     fb
 }
