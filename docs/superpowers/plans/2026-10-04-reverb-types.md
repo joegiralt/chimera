@@ -564,7 +564,7 @@ git commit -m "Reverb TYPE, semantic slots, knob maps, panels, REV › MORE"
 
 **Interfaces:**
 - **Produces:**
-  - `pub enum SwitchPhase { Running, FadeOut { left: u8 }, Clear, FadeIn { left: u8 } }`, with `pub const FADE_BLOCKS: u8 = 15`;
+  - `pub enum SwitchPhase { Running, FadeOut { left: Left<FADE_BLOCKS> }, Clear { left: Left<CLEAR_BLOCKS> }, FadeIn { left: Left<FADE_BLOCKS> } }`, with `pub const FADE_BLOCKS: u8 = 15`, `pub const CLEAR_BLOCKS: u8 = 4` and `Left<N>` a count bounded to 1..=N;
   - `Reverb::phase(&self) -> SwitchPhase`;
   - `#[doc(hidden)] pub fn force_restart(&mut self)`, which runs the same sequence QUAD → QUAD;
   - `latched: ReverbParams`, taken when a switch starts;
@@ -575,8 +575,8 @@ git commit -m "Reverb TYPE, semantic slots, knob maps, panels, REV › MORE"
 
 ```rust
 #[test] fn every_ordered_pair_switches_without_a_click() { /* for a, b in TYPES (and the forced restart): mid-tail at MIX 1, max_d2 over the switch window ≤ max_d2 of the 30 blocks before */ }
-#[test] fn the_phases_run_15_1_15() { /* after a TYPE change: 15 blocks FadeOut, 1 Clear, 15 FadeIn, then Running */ }
-#[test] fn clear_block_returns_exact_zero() { /* every L and R sample of the Clear block == 0.0, and arena().lines() all 0 after it */ }
+#[test] fn the_phases_run_15_4_15() { /* after a TYPE change: 15 blocks FadeOut, 4 Clear, 15 FadeIn, then Running */ }
+#[test] fn clear_blocks_return_exact_zero() { /* every L and R sample of each Clear block == 0.0, each zeroes a quarter, and arena().lines() all 0 after the last */ }
 #[test] fn fade_in_is_bit_identical_to_a_fresh_engine() { /* the pre-gain output from the first FadeIn block == a fresh Reverb of the new TYPE fed the same send from that block */ }
 #[test] fn fade_out_plays_the_latched_knobs() { /* with_type overwrote the slots; FadeOut output == the old TYPE run on the old params, bit for bit */ }
 #[test] fn a_switch_during_fade_in_fades_from_the_current_gain() { /* switch at FadeIn{left: 5}: the next FadeOut's first gain == the gain FadeIn had reached (10/15) ± 1e-6 */ }
@@ -1074,23 +1074,24 @@ against `BlockBudget::budget_cycles` (448,000).
 
 ### Task 7: the switch (2026-10-04, host)
 
-- **Phases:** FADE OUT 15, CLEAR 1, FADE IN 15, as specified. CLEAR
-  zeroes the arena in one block and also resets the decimator, so FADE IN
-  is bit for bit a fresh engine fed the send from its first block, whatever
-  the send (the spec kept the decimator; the dropped CLEAR block would
-  leave a gap in its history anyway).
+- **Phases:** FADE OUT 15, CLEAR 4, FADE IN 15 (review: one 11.6 k-cycle
+  CLEAR block outran the master tape's ~9 k STRESS headroom). CLEAR zeroes
+  a quarter of the arena a block; its last block also resets the state and
+  the half-bands, the decimator's included, so FADE IN is bit for bit a
+  fresh engine fed the send from its first block. `Left<N>` bounds each
+  phase's count to 1..=N, so no ramp under- or overruns.
 - **AXI:** `FxBus` +48 B (the latched `ReverbParams`; the TYPE and the
   phase sit in padding).
-- **Flash:** `--features orbit` `.text` 575,016 → 574,704 (**−312**),
-  `.rodata` 150,112 (±0), `text` 725,792 → 725,480; plain release `text`
-  705,976 → 705,664 (−312), against `9aba0a0b`. MIX's ramp and the
+- **Flash:** `--features orbit` `.text` 575,016 → 574,848 (**−168**),
+  `.rodata` 150,112 (±0), against `9aba0a0b`; the quartered CLEAR and
+  `Left<N>` cost +144 over the one-block CLEAR. MIX's ramp and the
   switch's share one out-of-line loop, which more than pays for the
   switch.
 - **REV SWITCH MAX bench:** deferred to the next unit session. The bench
   build carries the row (QUAD → QUAD every 40 blocks over 2,000, six
-  A16+17 voices, every effect at its worst); gate ≤
-  `BlockBudget::budget_cycles`. If it fails, CLEAR becomes 4
-  quarter-arena blocks and `the_phases_run_15_1_15` becomes 15/4/15.
+  A16+17 voices, every effect at its worst, the TAPE too in the
+  master-tape build); gate ≤ `BlockBudget::budget_cycles`, run on both
+  `bench` and `bench,master-tape`.
 
 ---
 

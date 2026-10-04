@@ -51,6 +51,14 @@ impl ReverbArena {
     pub fn clear(&mut self) {
         self.lines.fill(0);
     }
+
+    /// Part `i` of `of` zeroed: CLEAR's share of a block.
+    pub fn clear_part(&mut self, i: u8, of: u8) {
+        let n = RING_LEN.div_ceil(usize::from(of));
+        if let Some(c) = self.lines.chunks_mut(n).nth(usize::from(i)) {
+            c.fill(0);
+        }
+    }
 }
 
 impl Default for ReverbArena {

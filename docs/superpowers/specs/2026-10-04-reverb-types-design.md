@@ -599,19 +599,18 @@ The audio thread runs one engine. When `params.reverb.kind` differs from the one
 | Phase | Blocks | Engine | Return |
 |---|---|---|---|
 | FADE OUT | 15 (20 ms) | the old TYPE runs on its own lines, with its **latched** knobs | its return × a linear ramp 1 → 0, applied after the interpolators |
-| CLEAR | 1 (1.3 ms) | none runs | exactly 0 |
+| CLEAR | 4 (5.3 ms) | none runs | exactly 0 |
 | FADE IN | 15 (20 ms) | the new TYPE, with fresh state and its knobs primed (no crossfade from the old TYPE's lengths) | × a linear ramp 0 → 1 |
 
 - **The latch.** The UI's TYPE edit has already written the new TYPE's knobs into the shared slots (`with_type`). So when the switch starts, the dispatcher copies the running engine's last `ReverbParams`, and FADE OUT runs on that copy. The old engine never plays the new TYPE's values.
 - **CLEAR.**
-  - It zeroes the whole arena in one block: 46,440 B as 64-bit stores.
-    - The cost is bound by the bus: at least about 11.6 k cycles.
-    - Zeroing 46 KB also evicts the 16 KB D-cache, so the next block refills the voices' working set.
-    - The reverb's per-block share is 485 × 64 ≈ 31 k, and no engine runs in that block.
-  - It also zeroes the new engine's state and both interpolators' histories, so no sample of the old tail survives anywhere.
-  - The decimator's history is the send's own and is kept.
-  - The on-chip **REV SWITCH MAX** row measures it (§ Bench rows). If its maximum block breaks the deadline, CLEAR spreads over 4 blocks of a quarter each.
-- **The send during CLEAR** is dropped. A note struck in that 1.3 ms gets no reverb.
+  - It zeroes the arena a quarter a block: 11,610 B each.
+    - The whole 46,440 B in one block would cost at least about 11.6 k cycles, bound by the bus, and evict the 16 KB D-cache, more than the master-tape build's STRESS headroom (about 9 k).
+    - A quarter, about 2.9 k, costs less than the engine work it replaces: no block of the switch costs more than a RUNNING one.
+    - The arena isn't read until FADE IN, so a part-zeroed one is never heard.
+  - Its last block also zeroes the new engine's state and the half-bands' histories, the decimator's included, so no sample of the old tail survives anywhere and FADE IN is bit for bit a fresh engine.
+  - The on-chip **REV SWITCH MAX** row measures it (§ Bench rows), in the default and master-tape builds.
+- **The send during CLEAR** is dropped. A note struck in those 5.3 ms gets no reverb.
 - **A change during a switch.**
   - The target follows the newest TYPE. In FADE OUT or CLEAR, the sequence simply continues.
   - In FADE IN, a new FADE OUT starts from the current ramp value, never from 1. Its latch is taken from the knobs that engine is running.
@@ -870,7 +869,7 @@ Worst case: every crossfadable line crossfading, SMEAR at its maximum. These fig
   - **Each REV row** is recorded against the 485 target. A row over the target is reported, and is allowed when the A/B justifies it and the headroom holds.
 - **REV SWITCH MAX** is an on-chip row that records the *maximum* block, not the mean.
   - It runs six A16 ∪ A17 voices while TYPE is forced to switch every 40 blocks (QUAD → HALL → GATE → …), so FADE OUT, CLEAR, the refill after it and FADE IN all land inside the window.
-  - A mean over 64 blocks would hide the one CLEAR block.
+  - A mean over 64 blocks would hide the CLEAR blocks.
   - **Gate:** the maximum whole-callback block stays within `BlockBudget::budget_cycles`, 70 % of the 64-sample block.
 - **Cache.** The REV rows and BUS run with voice traffic between blocks: six A16 ∪ A17 voices play, so the reverb's streams start cold, as they do in use.
   - The stream counts differ: QUAD 48, the new TYPEs 30–37.
@@ -1002,8 +1001,8 @@ The usual battery, per TYPE, on the host first (owner's rule: QA before UAT).
 ### Switch
 
 - **All 30 ordered pairs of TYPEs**, mid-tail at MIX 1, through `FxBus`:
-  - **no click**: the return's max second difference in the switch window is ≤ its steady neighbours', `click_free_test`'s measure;
-  - the return is **exactly 0** in the CLEAR block;
+  - **no click**: each block's max second difference over the loudest sample near it, in the switch window, is within 1.25 × the steady tail's; a cut to 0 and a one-ramp-step gain jump both break it;
+  - the return is **exactly 0** in the CLEAR blocks;
   - **no stale echo**: from the first FADE IN block, the new engine's pre-gain output is bit-identical to a fresh engine's fed the same send;
   - **the latch**: FADE OUT's output is bit-identical to the old engine run on its old knobs, after `with_type` has overwritten the slots;
   - a second switch during FADE IN starts its fade from the current gain.
@@ -1127,7 +1126,7 @@ Each plan task's review grades quality, efficiency, performance and principled-n
   - Every TYPE gets the same test battery, including the per-pass pitch test, limit cycles and the latch.
 - **Efficiency.**
   - One code path per engine, and monomorphs only where the graph differs.
-  - One arena, cleared in one block.
+  - One arena, cleared a quarter a block.
   - Crossfades instead of moving reads.
   - No new gesture or page type.
 - **Performance.**

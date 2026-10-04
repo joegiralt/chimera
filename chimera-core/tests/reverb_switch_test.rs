@@ -1,6 +1,7 @@
 //! Switching TYPE (reverb TYPEs spec § Switching TYPE): the old tail
-//! fades out on its latched knobs, one block clears the arena, and the new
-//! TYPE fades in as a fresh engine. Never a click, never a stale tail.
+//! fades out on its latched knobs, four blocks clear the arena a quarter
+//! each, and the new TYPE fades in as a fresh engine. Never a click, never
+//! a stale tail.
 
 mod common;
 
@@ -8,7 +9,7 @@ use chimera_core::dsp::Stereo;
 use chimera_core::dsp::ease::{at, step_of};
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use chimera_core::dsp::rev::sync::Tempo;
-use chimera_core::dsp::rev::{FADE_BLOCKS, Reverb, SwitchPhase};
+use chimera_core::dsp::rev::{CLEAR_BLOCKS, FADE_BLOCKS, Left, Reverb, SwitchPhase};
 use chimera_core::dsp::reverb::{KnobMemory, ReverbParams, ReverbType};
 use chimera_hal::BLOCK_SIZE;
 use common::SR;
@@ -18,7 +19,25 @@ use common::rev::{Noise, max_d2};
 const TYPES: &[ReverbType] = &[ReverbType::Quad];
 
 /// The switch's blocks: FADE OUT, CLEAR, FADE IN.
-const SWITCH: usize = 2 * FADE_BLOCKS as usize + 1;
+const SWITCH: usize = 2 * FADE_BLOCKS as usize + CLEAR_BLOCKS as usize;
+
+fn fade_out(left: u8) -> SwitchPhase {
+    SwitchPhase::FadeOut {
+        left: Left::new(left).expect("1..=15"),
+    }
+}
+
+fn clear(left: u8) -> SwitchPhase {
+    SwitchPhase::Clear {
+        left: Left::new(left).expect("1..=4"),
+    }
+}
+
+fn fade_in(left: u8) -> SwitchPhase {
+    SwitchPhase::FadeIn {
+        left: Left::new(left).expect("1..=15"),
+    }
+}
 /// The tail's own window, before the switch.
 const BEFORE: usize = 30;
 /// The tone burst's blocks, and the switch's first block: mid-tail, its
@@ -89,21 +108,89 @@ impl Sides {
     }
 }
 
+/// Each block's roughness over `w` (two samples early, as `Sides::at`
+/// gives): its largest second difference over the loudest sample of it and
+/// its neighbours, floored at `floor`. A tail that only decays or ramps
+/// keeps it; a step in it, to 0 or by one ramp step, raises it.
+fn roughness(w: &[f32], floor: f32) -> f32 {
+    let blocks = (w.len() - 2) / BLOCK_SIZE;
+    (0..blocks)
+        .map(|b| {
+            let d2 = max_d2(&w[b * BLOCK_SIZE..(b + 1) * BLOCK_SIZE + 2]);
+            let near = &w[b.saturating_sub(1) * BLOCK_SIZE..((b + 2).min(blocks)) * BLOCK_SIZE + 2];
+            d2 / near.iter().fold(floor, |m, x| m.max(x.abs()))
+        })
+        .fold(0.0, f32::max)
+}
+
 /// The click bound: across `window` (blocks from `AT`), each side's
-/// largest second difference stays within the `BEFORE` blocks' before
-/// `AT`. And it has teeth: the tail cut to 0 at `AT` breaks it.
+/// roughness stays within 1.25 × the `BEFORE` blocks' before `AT`, under a
+/// floor 60 dB below their peak. And it has teeth: the tail cut to 0 at
+/// `AT` passes 2 ×, and a one-ramp-step gain jump mid-FADE OUT 1.5 ×
+/// (`gain_jump_breaks_it`).
 fn no_click(out: &Sides, window: usize, what: &str) {
     for side in 0..2 {
-        let bound = max_d2(out.at(side, AT - BEFORE..AT));
-        let got = max_d2(out.at(side, AT..AT + window));
-        assert!(got <= bound, "{what}, side {side}: d2 {got} over {bound}");
+        let (bound, floor) = bound(out, side);
+        let w = out.at(side, AT..AT + window);
+        let got = roughness(w, floor);
+        assert!(
+            got <= 1.25 * bound,
+            "{what}, side {side}: roughness {got} over {bound}"
+        );
         let mut cut = out.at(side, AT - 1..AT + 1).to_vec();
         cut[BLOCK_SIZE + 2..].fill(0.0);
-        let heard = max_d2(&cut);
+        let heard = roughness(&cut, floor);
         assert!(
             heard > 2.0 * bound,
             "{what}, side {side}: a cut ({heard}) is within {bound}"
         );
+        if window > usize::from(FADE_BLOCKS) {
+            let heard = roughness(&gain_jump(w), floor);
+            assert!(
+                heard > 1.5 * bound,
+                "{what}, side {side}: a gain jump ({heard}) is within {bound}"
+            );
+        }
+    }
+}
+
+/// `side`'s roughness over the `BEFORE` blocks, and the floor: their peak
+/// less 60 dB.
+fn bound(out: &Sides, side: usize) -> (f32, f32) {
+    let before = out.at(side, AT - BEFORE..AT);
+    let floor = 1e-3 * before.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+    (roughness(before, floor), floor)
+}
+
+/// `w` with a ramp step skipped mid-FADE OUT: from block `FADE_BLOCKS / 2`'s
+/// loudest sample on, × (1 − 1/15).
+fn gain_jump(w: &[f32]) -> Vec<f32> {
+    let mut w = w.to_vec();
+    let b = usize::from(FADE_BLOCKS / 2) * BLOCK_SIZE + 2;
+    let k = (b..b + BLOCK_SIZE)
+        .max_by(|&i, &j| w[i].abs().total_cmp(&w[j].abs()))
+        .expect("a block");
+    let step = 1.0 - 1.0 / f32::from(FADE_BLOCKS);
+    w[k..].iter_mut().for_each(|s| *s *= step);
+    w
+}
+
+/// A gain jump the size of one ramp step mid-FADE OUT, as a skipped or
+/// doubled block would make, breaks the bound the switch itself keeps:
+/// `no_click` hears more than cuts to 0.
+#[test]
+fn gain_jump_breaks_it() {
+    let (out, _) = render(ReverbType::Quad, ReverbType::Quad, SWITCH + 10);
+    for side in 0..2 {
+        let (bound, floor) = bound(&out, side);
+        let w = out.at(side, AT..AT + SWITCH);
+        let clean = roughness(w, floor);
+        let jumped = roughness(&gain_jump(w), floor);
+        assert!(
+            clean <= 1.25 * bound,
+            "side {side}: the switch itself clicks"
+        );
+        assert!(jumped > 1.5 * bound, "side {side}: {jumped} within {bound}");
     }
 }
 
@@ -143,22 +230,22 @@ fn phases_after(rv: &mut Reverb, p: &ReverbParams, blocks: usize) -> Vec<SwitchP
         .collect()
 }
 
-/// FADE OUT `from`..=1 then CLEAR, FADE IN 15..=1 and RUNNING: the phases
-/// after each block of a switch whose first block ran FADE OUT `from + 1`.
+/// FADE OUT `from`..=1, CLEAR 4..=1, FADE IN 15..=1 and RUNNING: the
+/// phases after each block of a switch whose first block ran FADE OUT
+/// `from + 1`.
 fn sequence(from: u8) -> Vec<SwitchPhase> {
-    let out = (1..=from).rev().map(|left| SwitchPhase::FadeOut { left });
-    let fade_in = (1..=FADE_BLOCKS)
-        .rev()
-        .map(|left| SwitchPhase::FadeIn { left });
-    out.chain([SwitchPhase::Clear])
-        .chain(fade_in)
+    let out = (1..=from).rev().map(fade_out);
+    let clears = (1..=CLEAR_BLOCKS).rev().map(clear);
+    let fade_ins = (1..=FADE_BLOCKS).rev().map(fade_in);
+    out.chain(clears)
+        .chain(fade_ins)
         .chain([SwitchPhase::Running])
         .collect()
 }
 
 #[test]
-fn the_phases_run_15_1_15() {
-    assert_eq!(FADE_BLOCKS, 15);
+fn the_phases_run_15_4_15() {
+    assert_eq!((FADE_BLOCKS, CLEAR_BLOCKS), (15, 4));
     // A TYPE change: the block that sees it runs FADE OUT 15.
     let mut rv = Box::new(Reverb::new());
     let p = params(ReverbType::Quad);
@@ -169,7 +256,7 @@ fn the_phases_run_15_1_15() {
     assert_eq!(rv.running(), ReverbType::Room);
     // A forced restart starts at FADE OUT 15 before its first block.
     rv.force_restart();
-    assert_eq!(rv.phase(), SwitchPhase::FadeOut { left: FADE_BLOCKS });
+    assert_eq!(rv.phase(), fade_out(FADE_BLOCKS));
     let seen = phases_after(&mut rv, &room, SWITCH);
     assert_eq!(seen, sequence(FADE_BLOCKS - 1));
 }
@@ -185,7 +272,7 @@ fn run_to(rv: &mut Reverb, p: &ReverbParams, want: SwitchPhase, blk: &mut usize,
 }
 
 #[test]
-fn clear_block_returns_exact_zero() {
+fn clear_blocks_return_exact_zero() {
     for &b in TYPES {
         let mut rv = Box::new(Reverb::new());
         let p = params(ReverbType::Quad);
@@ -196,14 +283,21 @@ fn clear_block_returns_exact_zero() {
         }
         assert!(rv.arena().lines().iter().any(|&s| s != 0));
         let p = switch(&mut rv, &p, b);
-        run_to(&mut rv, &p, SwitchPhase::Clear, &mut blk, &mut out);
-        // The send is loud: CLEAR drops it.
+        run_to(&mut rv, &p, clear(CLEAR_BLOCKS), &mut blk, &mut out);
+        // The send is loud: CLEAR drops it. Each block zeroes a quarter.
         let loud = [0.9f32; BLOCK_SIZE];
-        let o = tick(&mut rv, &loud, &p);
-        assert!(
-            o.l.iter().chain(&o.r).all(|&s| s == 0.0),
-            "{b:?}: CLEAR block not silent"
-        );
+        let mut live = rv.arena().lines().iter().filter(|&&s| s != 0).count();
+        for left in (1..=CLEAR_BLOCKS).rev() {
+            let o = tick(&mut rv, &loud, &p);
+            assert!(
+                o.l.iter().chain(&o.r).all(|&s| s == 0.0),
+                "{b:?}: CLEAR {left} not silent"
+            );
+            let now = rv.arena().lines().iter().filter(|&&s| s != 0).count();
+            assert!(now < live || now == 0, "{b:?}: CLEAR {left} zeroed nothing");
+            live = now;
+        }
+        assert_eq!(rv.phase(), fade_in(FADE_BLOCKS));
         assert!(
             rv.arena().lines().iter().all(|&s| s == 0),
             "{b:?}: arena not clear"
@@ -216,6 +310,16 @@ fn fade_in_gain(left: u8, i: usize) -> f32 {
     let g = |n: u8| f32::from(n) / f32::from(FADE_BLOCKS);
     let (from, to) = (g(FADE_BLOCKS - left), g(FADE_BLOCKS + 1 - left));
     at(from, step_of((from, to), BLOCK_SIZE), i)
+}
+
+/// The gain `phase`'s ramp starts from.
+fn from_gain(phase: SwitchPhase) -> f32 {
+    let g = |n: u8| f32::from(n) / f32::from(FADE_BLOCKS);
+    match phase {
+        SwitchPhase::FadeOut { left } => g(left.get()),
+        SwitchPhase::FadeIn { left } => g(left.done()),
+        _ => panic!("{phase:?} has no ramp"),
+    }
 }
 
 /// FADE OUT `left`'s gain at sample `i`.
@@ -241,7 +345,7 @@ fn fade_in_is_bit_identical_to_a_fresh_engine() {
                 tick(&mut rv, &noise_send(&mut n), &p);
             }
             p = switch(&mut rv, &p, b);
-            while rv.phase() != (SwitchPhase::FadeIn { left: FADE_BLOCKS }) {
+            while rv.phase() != fade_in(FADE_BLOCKS) {
                 tick(&mut rv, &noise_send(&mut n), &p);
             }
             let mut fresh = Box::new(Reverb::of_type(b));
@@ -252,7 +356,7 @@ fn fade_in_is_bit_identical_to_a_fresh_engine() {
                 for (g, w) in [(&got.l, &want.l), (&got.r, &want.r)] {
                     for i in 0..BLOCK_SIZE {
                         let w = match phase {
-                            SwitchPhase::FadeIn { left } => w[i] * fade_in_gain(left, i),
+                            SwitchPhase::FadeIn { left } => w[i] * fade_in_gain(left.get(), i),
                             _ => w[i],
                         };
                         assert_eq!(
@@ -314,7 +418,7 @@ fn fade_out_plays_the_latched_knobs() {
         differs,
         "the new knobs sound the same: the test would not tell"
     );
-    assert_eq!(sw.phase(), SwitchPhase::Clear);
+    assert_eq!(sw.phase(), clear(CLEAR_BLOCKS));
 }
 
 #[test]
@@ -327,18 +431,15 @@ fn a_switch_during_fade_in_fades_from_the_current_gain() {
         blk += 1;
     }
     rv.force_restart();
-    let five = SwitchPhase::FadeIn { left: 5 };
+    let five = fade_in(5);
     run_to(&mut rv, &p, five, &mut blk, &mut out);
-    let reached = five.gains().expect("FADE IN ramps").0;
+    let reached = from_gain(five);
     assert!((reached - 10.0 / 15.0).abs() <= 1e-6, "{reached}");
     // A TYPE change in this block: it runs FADE OUT from that gain.
     let room = p.with_type(ReverbType::Room, &KnobMemory::new());
     out.push(&tick(&mut rv, &burst(blk), &room));
-    assert_eq!(rv.phase(), SwitchPhase::FadeOut { left: 9 });
-    let first = SwitchPhase::FadeOut { left: 10 }
-        .gains()
-        .expect("FADE OUT ramps")
-        .0;
+    assert_eq!(rv.phase(), fade_out(9));
+    let first = from_gain(fade_out(10));
     assert!((first - reached).abs() <= 1e-6, "{first} from {reached}");
     // And a forced one, from FADE IN 5, starts at the same place.
     let mut rv = Box::new(Reverb::new());
@@ -346,19 +447,13 @@ fn a_switch_during_fade_in_fades_from_the_current_gain() {
     let mut blk = 0;
     run_to(&mut rv, &p, five, &mut blk, &mut out);
     rv.force_restart();
-    assert_eq!(rv.phase(), SwitchPhase::FadeOut { left: 10 });
+    assert_eq!(rv.phase(), fade_out(10));
     // From FADE IN 15 (no gain yet), straight to CLEAR.
     let mut rv = Box::new(Reverb::new());
     rv.force_restart();
-    run_to(
-        &mut rv,
-        &p,
-        SwitchPhase::FadeIn { left: FADE_BLOCKS },
-        &mut blk,
-        &mut out,
-    );
+    run_to(&mut rv, &p, fade_in(FADE_BLOCKS), &mut blk, &mut out);
     rv.force_restart();
-    assert_eq!(rv.phase(), SwitchPhase::Clear);
+    assert_eq!(rv.phase(), clear(CLEAR_BLOCKS));
 }
 
 /// Review Focus 1.
@@ -424,7 +519,7 @@ fn switch_at_mix_0_then_mix_up_has_no_stale_tail() {
                 if blk == 40 {
                     p.mix = 1.0;
                 }
-                if fresh.is_none() && rv.phase() == (SwitchPhase::FadeIn { left: FADE_BLOCKS }) {
+                if fresh.is_none() && rv.phase() == fade_in(FADE_BLOCKS) {
                     fresh = Some(Box::new(Reverb::of_type(b)));
                 }
                 let x = noise_send(&mut n);
@@ -453,7 +548,7 @@ fn switch_at_mix_0_then_mix_up_has_no_stale_tail() {
 }
 
 /// A project swap (ADR 0046) through the bus, as `fx_swap_test` runs it,
-/// carrying another TYPE: the same 15, 1, 15.
+/// carrying another TYPE: the same 15, 4, 15.
 #[test]
 fn a_project_swap_changing_type_takes_the_same_path() {
     let a = FxParams {
@@ -481,4 +576,122 @@ fn a_project_swap_changing_type_takes_the_same_path() {
     }
     assert_eq!(seen, sequence(FADE_BLOCKS - 1));
     assert_eq!(bus.reverb().running(), ReverbType::Room);
+}
+
+/// A project load (ADR 0046) mid-switch, in FADE OUT and in CLEAR: the
+/// switch runs on, unrestarted, to the loaded TYPE, and FADE IN is a fresh
+/// engine on the loaded knobs. No click.
+#[test]
+fn a_project_load_mid_switch_lands_on_the_loaded_type() {
+    let loaded = ReverbParams {
+        kind: ReverbType::Hall,
+        time: 0.5,
+        size: 0.7,
+        damping: 0.3,
+        mix: 1.0,
+        ..Default::default()
+    };
+    for at in [fade_out(8), clear(2)] {
+        // Noise for the fresh-engine check; the tail for the click.
+        for noisy in [true, false] {
+            let mut n = Noise(0xF00D_0001);
+            let mut send = |blk| {
+                if noisy {
+                    noise_send(&mut n)
+                } else {
+                    burst(blk)
+                }
+            };
+            let mut rv = Box::new(Reverb::new());
+            let mut p = params(ReverbType::Quad);
+            let (mut out, mut seen) = (Sides::default(), Vec::new());
+            let mut fresh: Option<Box<Reverb>> = None;
+            for blk in 0..AT + SWITCH + 10 {
+                if blk == AT {
+                    p = switch(&mut rv, &p, ReverbType::Room);
+                }
+                if rv.phase() == at {
+                    p = loaded;
+                }
+                if fresh.is_none() && rv.phase() == fade_in(FADE_BLOCKS) {
+                    fresh = Some(Box::new(Reverb::of_type(ReverbType::Hall)));
+                }
+                let (x, phase) = (send(blk), rv.phase());
+                let got = tick(&mut rv, &x, &p);
+                out.push(&got);
+                if blk >= AT {
+                    seen.push(rv.phase());
+                }
+                let Some(f) = fresh.as_deref_mut() else {
+                    continue;
+                };
+                let want = tick(f, &x, &p);
+                let gain = |i| match phase {
+                    SwitchPhase::FadeIn { left } => fade_in_gain(left.get(), i),
+                    _ => 1.0,
+                };
+                for (g, w) in [(&got.l, &want.l), (&got.r, &want.r)] {
+                    for i in 0..BLOCK_SIZE {
+                        let w = w[i] * gain(i);
+                        assert_eq!(g[i].to_bits(), w.to_bits(), "{at:?}: {phase:?} sample {i}");
+                    }
+                }
+            }
+            assert_eq!(seen[..SWITCH], sequence(FADE_BLOCKS - 1)[..], "{at:?}");
+            assert_eq!(rv.running(), ReverbType::Hall, "{at:?}");
+            let fresh = fresh.expect("FADE IN reached");
+            if noisy {
+                assert!(fresh.arena().lines().iter().any(|&s| s != 0));
+            } else {
+                no_click(&out, SWITCH + 10, &format!("load in {at:?}"));
+            }
+        }
+    }
+}
+
+/// Scrolling slowly enough that the next TYPE lands in FADE IN: each turns
+/// it back into FADE OUT from the gain reached, and the last one plays.
+#[test]
+fn scrolling_into_fade_in_turns_back_without_a_click() {
+    let mut rv = Box::new(Reverb::new());
+    let mut p = params(ReverbType::Quad);
+    let mut mem = KnobMemory::new();
+    let mut out = Sides::default();
+    let mut blk = 0;
+    while blk < AT {
+        out.push(&tick(&mut rv, &burst(blk), &p));
+        blk += 1;
+    }
+    let order = [ReverbType::Room, ReverbType::Hall, ReverbType::Bloom];
+    let mut turned = 0;
+    for t in order {
+        mem.store(&p);
+        p = p.with_type(t, &mem);
+        let was = rv.phase();
+        out.push(&tick(&mut rv, &burst(blk), &p));
+        blk += 1;
+        if let SwitchPhase::FadeIn { left } = was {
+            assert!(
+                left.get() < FADE_BLOCKS,
+                "{t:?} landed before any FADE IN gain"
+            );
+            assert_eq!(rv.phase(), fade_out(left.done() - 1), "{t:?}");
+            turned += 1;
+        }
+        // On to FADE IN, two blocks in.
+        while rv.phase() != fade_in(FADE_BLOCKS - 2) {
+            out.push(&tick(&mut rv, &burst(blk), &p));
+            blk += 1;
+        }
+    }
+    assert_eq!(turned, 2, "the scroll never reached FADE IN");
+    for _ in 0..SWITCH + 10 {
+        out.push(&tick(&mut rv, &burst(blk), &p));
+        blk += 1;
+    }
+    assert_eq!(
+        (rv.phase(), rv.running()),
+        (SwitchPhase::Running, ReverbType::Bloom)
+    );
+    no_click(&out, blk - AT, "scrolling into FADE IN");
 }

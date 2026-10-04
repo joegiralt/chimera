@@ -227,15 +227,17 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
 - **The switch.**
   1. The old engine runs on knobs latched when the switch starts. Its
      return ramps linearly to 0 over 20 ms.
-  2. One block clears the whole arena with no engine running. It is bound
-     by the bus, at least about 11.6 k cycles, and evicts the D-cache. The
-     engine state and the interpolators' histories are cleared too.
+  2. Four blocks clear the arena, a quarter each, with no engine running.
+     Zeroing it all in one block would cost about 11.6 k cycles, bound by
+     the bus, and evict the D-cache: more than the master tape's headroom.
+     A quarter costs less than the engine work it replaces. The last block
+     clears the engine state and the half-bands' histories too.
   3. The new engine starts fresh and ramps in over 20 ms.
 
   A test holds the new engine bit-equal to a fresh engine from its first
   block. An on-chip REV SWITCH MAX row, with voices playing, takes the
-  maximum block over forced switches. If that block breaks the deadline,
-  CLEAR spreads over four blocks.
+  maximum block over forced switches, in the default and master-tape
+  builds.
 - **The extensions.**
   - **SMEAR** on every TYPE, QUAD included.
   - **No external mod destinations** (owner, 2026-10-04): every mod source
@@ -340,8 +342,8 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
   scaffold, then 1–2.5 KB per TYPE. Each step's fat-LTO delta is recorded,
   and a TYPE over 3 KB is cut back before the next one starts.
 - **Interactions.**
-  - A TYPE switch drops about 1.3 ms of send and dips the return for about
-    41 ms; sweeps list this as by design.
+  - A TYPE switch drops about 5.3 ms of send and dips the return for about
+    45 ms; sweeps list this as by design.
   - A SIZE move colours the tail with a 30 ms comb per crossfade, as QUAD's
     does.
   - #142's quiet-send tail loss applies to every TYPE alike.

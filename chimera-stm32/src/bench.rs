@@ -1119,9 +1119,10 @@ impl Rig<'_> {
     /// callback block over `SWITCH_BLOCKS`, and the block budget it must
     /// stay under: six `a16_a17` voices held on Part 1, every effect at its
     /// worst, the reverb forced through a switch every `SWITCH_EVERY`
-    /// blocks, QUAD → QUAD (Tasks 8–11 step through their TYPEs). The one
-    /// CLEAR block, 46 KB zeroed, and the voices' refill after it are what
-    /// a mean would hide.
+    /// blocks, QUAD → QUAD (Tasks 8–11 step through their TYPEs); TAPE
+    /// too in the master-tape build, by `worst_bus`. The four CLEAR blocks,
+    /// 11.6 KB zeroed each, and the voices' refill after them are what a
+    /// mean would hide.
     #[inline(never)]
     fn switch_max(&mut self) -> (u32, u32) {
         let budget = SampleBudget::for_cpu(u32::MAX);

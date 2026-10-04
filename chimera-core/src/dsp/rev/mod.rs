@@ -2,8 +2,8 @@
 //! the half-band rate change, SMEAR's source and depth, and MIX, and
 //! dispatches the block to the TYPE's engine over the one shared arena. A
 //! TYPE change runs the switch (§ Switching TYPE): the old tail fades out
-//! on its latched knobs, one block clears the arena, and the new TYPE
-//! fades in as a fresh engine.
+//! on its latched knobs, four blocks clear the arena a quarter each, and
+//! the new TYPE fades in as a fresh engine.
 
 pub mod arena;
 pub mod parts;
@@ -39,6 +39,43 @@ const _: () = assert!(core::mem::size_of::<EngineState>() <= 160);
 /// Blocks each fade of the switch takes: 20 ms at 48 kHz.
 pub const FADE_BLOCKS: u8 = 15;
 
+/// Blocks CLEAR takes, a quarter of the arena each: no block costs more
+/// than the engine work it replaces.
+pub const CLEAR_BLOCKS: u8 = 4;
+
+/// Blocks a phase has left, 1..=`N`: a ramp can't run past either end.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Left<const N: u8>(u8);
+
+impl<const N: u8> Left<N> {
+    /// The phase's first block.
+    pub const FULL: Self = Self(N);
+
+    /// `n` blocks left, if `n` is 1..=`N`.
+    pub const fn new(n: u8) -> Option<Self> {
+        if n >= 1 && n <= N {
+            Some(Self(n))
+        } else {
+            None
+        }
+    }
+
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+
+    /// Blocks of the phase already run, 0..`N`.
+    pub const fn done(self) -> u8 {
+        N - self.0
+    }
+
+    /// One block on; `None` past the last.
+    const fn next(self) -> Option<Self> {
+        Self::new(self.0 - 1)
+    }
+}
+
 /// Where a TYPE switch is: the phase the next block runs. Zero bytes are
 /// `Running`.
 #[repr(u8)]
@@ -48,35 +85,46 @@ pub enum SwitchPhase {
     /// The old TYPE on its latched knobs, its return ramping to 0: `left`
     /// blocks of it, the ramp at `left / FADE_BLOCKS`.
     FadeOut {
-        left: u8,
+        left: Left<FADE_BLOCKS>,
     },
-    /// No engine: the arena, the state and the half-bands cleared, the
-    /// return exactly 0.
-    Clear,
+    /// No engine, the return exactly 0: quarter `left.done()` of the arena
+    /// zeroed; with the last, the state and the half-bands.
+    Clear {
+        left: Left<CLEAR_BLOCKS>,
+    },
     /// The new TYPE, fresh, its return ramping from 0: `left` blocks of it.
     FadeIn {
-        left: u8,
+        left: Left<FADE_BLOCKS>,
     },
 }
 
 impl SwitchPhase {
     /// This block's return ramp `(from, to)`; `None` without one.
-    pub fn gains(self) -> Option<(f32, f32)> {
+    pub(crate) fn gains(self) -> Option<(f32, f32)> {
         let g = |n: u8| f32::from(n) / f32::from(FADE_BLOCKS);
         match self {
-            Self::FadeOut { left } => Some((g(left), g(left - 1))),
-            Self::FadeIn { left } => Some((g(FADE_BLOCKS - left), g(FADE_BLOCKS + 1 - left))),
-            Self::Running | Self::Clear => None,
+            Self::FadeOut { left } => Some((g(left.get()), g(left.get() - 1))),
+            Self::FadeIn { left } => Some((g(left.done()), g(left.done() + 1))),
+            Self::Running | Self::Clear { .. } => None,
         }
     }
 
     fn next(self) -> Self {
         match self {
-            Self::FadeOut { left: 1 } => Self::Clear,
-            Self::FadeOut { left } => Self::FadeOut { left: left - 1 },
-            Self::Clear => Self::FadeIn { left: FADE_BLOCKS },
-            Self::FadeIn { left: 1 } | Self::Running => Self::Running,
-            Self::FadeIn { left } => Self::FadeIn { left: left - 1 },
+            Self::Running => Self::Running,
+            Self::FadeOut { left } => left
+                .next()
+                .map_or(Self::Clear { left: Left::FULL }, |left| Self::FadeOut {
+                    left,
+                }),
+            Self::Clear { left } => left
+                .next()
+                .map_or(Self::FadeIn { left: Left::FULL }, |left| Self::Clear {
+                    left,
+                }),
+            Self::FadeIn { left } => left
+                .next()
+                .map_or(Self::Running, |left| Self::FadeIn { left }),
         }
     }
 }
@@ -242,23 +290,29 @@ impl Reverb {
     #[doc(hidden)]
     pub fn force_restart(&mut self) {
         self.phase = match self.phase {
-            SwitchPhase::Running => SwitchPhase::FadeOut { left: FADE_BLOCKS },
-            SwitchPhase::FadeIn { left: FADE_BLOCKS } => SwitchPhase::Clear,
-            SwitchPhase::FadeIn { left } => SwitchPhase::FadeOut {
-                left: FADE_BLOCKS - left,
-            },
+            SwitchPhase::Running => SwitchPhase::FadeOut { left: Left::FULL },
+            SwitchPhase::FadeIn { left } => Left::new(left.done())
+                .map_or(SwitchPhase::Clear { left: Left::FULL }, |left| {
+                    SwitchPhase::FadeOut { left }
+                }),
             s => s,
         };
     }
 
-    /// CLEAR: no sample of the old tail survives. The arena, `kind`'s
-    /// fresh state, SMEAR's eases and wanders, and the half-bands'
-    /// histories: the decimator's too, so the new TYPE is bit for bit a
-    /// fresh engine fed the send from FADE IN's first block (the send
-    /// CLEAR drops would leave a 64-sample gap in it anyway). MIX keeps
-    /// easing: it is the player's.
+    /// All of CLEAR at once: the arena, then `reset`.
+    #[cfg(any(test, feature = "test-support"))]
     fn clear(&mut self, kind: ReverbType) {
         self.arena.clear();
+        self.reset(kind);
+    }
+
+    /// CLEAR's last block: with the arena zeroed, no sample of the old
+    /// tail survives. `kind`'s fresh state, SMEAR's eases and wanders, and
+    /// the half-bands' histories: the decimator's too, so the new TYPE is
+    /// bit for bit a fresh engine fed the send from FADE IN's first block
+    /// (the send CLEAR drops would leave a gap in it anyway). MIX keeps
+    /// easing: it is the player's.
+    fn reset(&mut self, kind: ReverbType) {
         self.kind = kind;
         // Every TYPE plays QUAD's engine until its own lands (Tasks 8–11).
         self.state = EngineState::Quad(QuadState::default());
@@ -290,7 +344,10 @@ impl Reverb {
         sample_rate: u32,
         out: &mut Stereo,
     ) {
-        let switching = matches!(self.phase, SwitchPhase::FadeOut { .. } | SwitchPhase::Clear);
+        let switching = matches!(
+            self.phase,
+            SwitchPhase::FadeOut { .. } | SwitchPhase::Clear { .. }
+        );
         if !switching {
             if p.kind != self.kind {
                 self.force_restart();
@@ -301,8 +358,12 @@ impl Reverb {
         let phase = self.phase;
         self.phase = phase.next();
         let (from, to) = self.mix.step(mix, ease_coeff(sample_rate));
-        if phase == SwitchPhase::Clear {
-            self.clear(p.kind);
+        if let SwitchPhase::Clear { left } = phase {
+            // The arena isn't read until FADE IN: a part-zeroed one is never heard.
+            self.arena.clear_part(left.done(), CLEAR_BLOCKS);
+            if left.get() == 1 {
+                self.reset(p.kind);
+            }
             out.l.fill(0.0);
             out.r.fill(0.0);
             return;
