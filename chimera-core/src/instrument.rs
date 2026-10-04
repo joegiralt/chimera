@@ -611,7 +611,9 @@ impl Instrument {
     /// Note-on: play on every Part listening on the channel, a live key
     /// snapped per Part while ORBIT runs. Note-off: release the voices this
     /// channel, `from` and the key started. A Poly re-strike takes back
-    /// only `from`'s own voice of the note.
+    /// only `from`'s own voice of the note. A note-on judges against the
+    /// Parts' costs worked out once for the block's snapshot (`recost`), so
+    /// a burst, admitted or refused, costs them once.
     pub fn handle_from(&mut self, ev: NoteEvent, shared: &AudioShared, from: NoteOrigin) {
         match ev.kind {
             NoteKind::On(vel) => {
@@ -670,12 +672,11 @@ impl Instrument {
                     self.alloc.book(v, q, mode, note, cost);
                     let waits = self.sounding[v] as usize != p && self.voices[v].is_active();
                     // A voice taken from another Part fades out on that
-                    // Part's Sound before the note starts: billed till then
-                    // (ADR 0091). A shed one's fade was never billed (ADR
-                    // 0027).
+                    // Part's Sound before the note starts: billed what it
+                    // was (a held Modal's extra in) till then (ADR 0091). A
+                    // shed one's fade was never billed (ADR 0027).
                     if waits && !was.dying() {
-                        let fading = self.costs[self.sounding[v] as usize % MAX_PARTS];
-                        self.alloc.fade_from(v, fading);
+                        self.alloc.fade_from(v, was.cost());
                     }
                     // Sympathetic starts now only if the block's clear
                     // budget takes it and no note waits on it before; else
