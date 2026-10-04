@@ -16,7 +16,7 @@ use crate::storage::{
     Crc32, Event, FileError, ReadTag, RecordTag, RecordWriter, SoundCheck, encode_sound,
 };
 
-use super::arena::{ArenaWriter, Cost};
+use super::arena::{ArenaWriter, Cost, Shift};
 use super::ids::SlotId;
 
 /// An entry's name, padded, before its records.
@@ -79,6 +79,9 @@ impl Pool {
             }
             addr_of_mut!((*p).index.gens).write([0; MAX_SOUNDS]);
             addr_of_mut!((*p).arena).write(arena);
+            // ponytail: built by value, left to the optimiser to write in
+            // place (`neutral_params` returns its snapshot whole);
+            // stack-check guards the frame.
             addr_of_mut!((*p).scratch).write(Sound::neutral(EngineType::Algo));
             slot.assume_init_mut()
         }
@@ -157,24 +160,32 @@ impl Index {
         let len = entry_len(sound);
         let old = self.slots[s.index()].map_or(0, |e| Cost::of(e.len as usize).bytes());
         let needs = Cost::of(len).bytes().saturating_sub(old);
-        let full = PoolFull {
-            needs: Cost::of(needs as usize),
-            free: arena.gap(),
-        };
         if needs > arena.gap().bytes() {
-            return Err(full);
+            return Err(PoolFull {
+                needs: Cost::of(needs as usize),
+                free: arena.gap(),
+            });
         }
-        self.drop_entry(arena, s);
-        // Checked against the gap above, the old Sound's bytes given back.
-        let Some(offset) = arena.sound_alloc(len) else {
-            return Err(full);
+        // Into the gap first, so a refusal can't cost the old Sound; only
+        // a Sound that needs the old one's bytes frees them first.
+        let offset = match arena.sound_alloc(len) {
+            Some(at) => {
+                write_entry(arena, at, len, sound);
+                // The new entry is the lowest: the free moves it up too.
+                match self.drop_entry(arena, s) {
+                    Some(shift) if at < shift.from => at + shift.by,
+                    _ => at,
+                }
+            }
+            None => {
+                self.drop_entry(arena, s);
+                let Some(at) = arena.sound_alloc(len) else {
+                    unreachable!("needs <= gap: the old Sound's bytes made room")
+                };
+                write_entry(arena, at, len, sound);
+                at
+            }
         };
-        let bytes = arena.bytes_mut(offset, len);
-        let (name, records) = bytes.split_at_mut(NAME_LEN);
-        name.copy_from_slice(&sound.name.padded());
-        let mut w = Fill(records);
-        let wrote = encode_sound(sound, &mut RecordWriter::over(&mut w));
-        debug_assert!(wrote.is_ok() && w.0.is_empty(), "the count's length");
         debug_assert_eq!(
             EncodedSound {
                 bytes: arena.bytes(offset, len),
@@ -191,23 +202,32 @@ impl Index {
         Ok(())
     }
 
-    /// Frees the slot's bytes; the Sounds below move up over them.
-    fn drop_entry(&mut self, arena: &mut ArenaWriter, s: SlotId) {
-        let Some(e) = self.slots[s.index()].take() else {
-            return;
-        };
+    /// Frees the slot's bytes; the Sounds below move up over them, as the
+    /// shift says.
+    fn drop_entry(&mut self, arena: &mut ArenaWriter, s: SlotId) -> Option<Shift> {
+        let e = self.slots[s.index()].take()?;
         let shift = arena.sound_free(e.offset, e.len as usize);
         for x in self.slots.iter_mut().flatten() {
             if x.offset < shift.from {
                 x.offset += shift.by;
             }
         }
+        Some(shift)
     }
 
     fn bump(&mut self, s: SlotId) {
         let g = &mut self.gens[s.index()];
         *g = g.wrapping_add(1);
     }
+}
+
+/// `sound`'s name and records into the `len` bytes at `at`.
+fn write_entry(arena: &mut ArenaWriter, at: u32, len: usize, sound: &Sound) {
+    let (name, records) = arena.bytes_mut(at, len).split_at_mut(NAME_LEN);
+    name.copy_from_slice(&sound.name.padded());
+    let mut w = Fill(records);
+    let wrote = encode_sound(sound, &mut RecordWriter::over(&mut w));
+    debug_assert!(wrote.is_ok() && w.0.is_empty(), "the count's length");
 }
 
 /// The bytes `sound` takes in the pool: its name, then its records.
