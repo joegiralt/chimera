@@ -98,3 +98,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0092](0092-put-files-over-the-usb-console.md) | Put project files onto the card over the USB console: `ls`, and `put` through the unit's own A/B save, checked as it streams, a refused side deleted (amends 0068) | Proposed |
 ||||||| parent of d402b12e (Reverb TYPEs: ADR 0085 and the design spec)
 | [0085](0085-the-master-reverb-picks-a-type.md) | The master reverb picks a TYPE: QUAD plus ROOM, HALL, GATE, REVERSE, BLOOM and ECHO (supersedes in part 0028; amends 0067) | Proposed |
+| [0085](0085-the-master-reverb-picks-a-type.md) | The master reverb picks a TYPE: QUAD plus ROOM, HALL, GATE, REVERSE and BLOOM (supersedes in part 0028; amends 0067) | Proposed |
