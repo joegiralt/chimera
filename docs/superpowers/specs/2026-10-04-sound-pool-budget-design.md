@@ -15,15 +15,15 @@ The owner, 2026-10-03: the project's sound pool is budgeted by **memory**, not b
 - **Few controls.** Every MIX or hold gesture gets a contextual focus-band hint (ADR 0086).
 - **Never snap parameters, and never allocate in the audio thread.**
 
-**The frame this revision adds.** RAM can't hold TAPE's sources; the card can. Even with the master delay line moved to `i16` (owner ruling 2026-10-04, ADR 0090), the honest ceiling for the arena is about 200 KB (195 KiB). That is 5.6 s of 24 kHz 12-bit audio for the whole project, which would make a RAM-only TAPE a one-source engine. So:
+**The frame this revision adds.** RAM can't hold TAPE's sources; the card can. Even with the master delay line moved to `i16` (owner ruling 2026-10-04, ADR 0090), the honest ceiling for the arena is about 214 KB (209 KiB) on the shipping build. That is 5.9 s of 24 kHz 12-bit audio for the whole project, which would make a RAM-only TAPE a one-source engine. So:
 
 - **Every source lives on the card**, written once, under `/CHIMERA/TAPES`.
 - **The arena holds, per source, either the whole of a short source** (a microsample, for the random-access models: TRANSWAVE, LOOP, GRAIN, SCRUB and the rest) **or the first slice of a streamed one** (TRON, #279). Both count on the one meter.
 - **Projects carry only a `SourceRef` to each source, never audio.** That is the Octatrack's and the Digitakt's model: a project's sample list points into the card's audio pool. Quick-save never rewrites sample data.
 
-## What exists (measured 2026-10-04 on `orbit` at 43d59110)
+## What exists (measured 2026-10-04 on `main` at cf50ee74)
 
-`orbit` is measured, not `main`, because ORBIT merges before this work (roadmap: ORBIT unit QA → #337 → TAPE core).
+These figures were first measured on `orbit` (43d59110), then re-measured on `main` once ORBIT, fat LTO and the console's `card` command merged. The table is `main`'s.
 
 | Thing | Bytes | Source of the figure |
 |---|---|---|
@@ -32,20 +32,22 @@ The owner, 2026-10-03: the project's sound pool is budgeted by **memory**, not b
 | A Sound as card records today (`encode_sound`, every block of both engines) | **1 143** (1 127 records + 16 name) | `tests/fixtures/v1/*.snd`, 1 159 B with the 28 B header and 4 B CRC |
 | The same Sounds, sparse (§ Sparse encoding) | **153–273, mean 211**; INIT 58 | the 8 factory fixtures, re-encoded by hand |
 | Worst case, sparse | 1 823 | § Sparse encoding |
-| AXI by the paper model (`AXI_RESIDENT`) | 442 072 (64 KiB spare required, 82 216 spare) | `axi_residents_fit` |
-| AXI really used, `--features orbit` | 384 248 (`.data` 3 092 + `.bss` 381 156); 140 040 free | `rust-size -A`, release ELF |
-| AXI really used, `--features bench,orbit` (the largest build `just` makes) | 398 556 (`.data` 5 976 + `.bss` 392 580); **125 732 free** | same |
+| AXI by the paper model (`AXI_RESIDENT`, with `orbit`) | 442 084 (64 KiB spare required, 82 204 spare) | `axi_residents_fit` |
+| AXI really used, default features | 382 496; 141 792 free | `rust-size -A`, release ELF |
+| AXI really used, `--features orbit` (the largest shipping build) | 384 264; **140 024 free** | same |
+| AXI really used, `--features bench,orbit` | 419 332; 104 956 free | same |
+| AXI really used, `--features bench,master-tape` (the largest build `just check` makes) | 420 100; **104 188 free**. The bench builds hold 31 KB of diagnostics statics, 20 480 B of it the `card` command's transfer buffers (`card_speed::BUFS`) | same, and `rust-nm -S` |
 | What `UI_RESERVE` (65 536) actually covers | `UiState` less its `Project` 3 840, `ENGINE` 5 864, the USB console's statics 1 456, plus others it was never sized for | `ui_state_fits_the_ui_reserve`; `rust-nm -S` |
 | Master delay line (`[f32; 24 064]`, `dsp/delay.rs`) | 96 256; as `i16` (ADR 0090), 48 128, freeing 48 128 | `MAX_DELAY_SAMPLES` |
 | D2 free | **121 504** of 286 720 | `instrument_fits_d2` |
 | `SymPool` (D2) | 112 200: Sympathetic's string state, DSP not Sounds, so encoding Sounds frees none of it | `sympathetic_pool_fits_d2` |
-| Flash free, `--features orbit` | 128 832 of 917 504 | `rust-size` |
-| Flash free, `--features bench,orbit` | **100 036** | same |
+| Flash free, `--features orbit` | 194 168 of 917 504 (fat LTO) | `rust-size` |
+| Flash free, `--features bench,orbit` (the largest flash image) | **120 304** | same |
 
 Three findings shape the design:
 
 1. **Today's encoding is bigger than the RAM struct.** `encode_sound` writes all 19 voice blocks, MODAL's on an ALGO Sound and ALGO's on a MODAL Sound, at 5 B a param. "Store Sounds encoded" saves nothing until the encoding is sparse, which is step 1 of the build.
-2. **The paper AXI rule binds before the chip does.** `AXI_RESIDENT` counts `UI_RESERVE` at 64 KiB. ADR 0014 sized that reserve from `main`'s measured stack, and ADR 0025 has since moved the stack to DTCM. The reserve now quietly covers statics no one budgeted (the row above). On orbit's figure, a 96 KiB arena would fail the `≥ 64 KiB` const assert (about 59 KB spare), even with the chip holding 125 KB free. The rule is replaced (§ The budget).
+2. **The paper AXI rule binds before the chip does.** `AXI_RESIDENT` counts `UI_RESERVE` at 64 KiB. ADR 0014 sized that reserve from `main`'s measured stack, and ADR 0025 has since moved the stack to DTCM. The reserve now quietly covers statics no one budgeted (the row above). On the paper model, a 96 KiB arena would fail the `≥ 64 KiB` const assert (about 59 KB spare), even with the chip holding 140 KB free. The rule is replaced (§ The budget).
 3. **D2 is TAPE's streaming memory.** Its 121.5 KB free is the TRON ring buffers (#279: about 10 KB a note, about 60 KB for six) and VA's state. The arena does not go there.
 
 ## Prior art, and what we take
@@ -69,25 +71,20 @@ Sources:
 
 **The rule changes from a paper sum to the linker.**
 
-- `memory.x` gains `ASSERT(ORIGIN(RAM) + LENGTH(RAM) - __sheap >= 32K, "AXI: under 32 KiB free")`. `__sheap` is cortex-m-rt's end of `.bss` and `.uninit`; there is no heap, so it is the real end of AXI statics.
-- Every firmware feature set `just check` builds is checked, and the largest, `bench,orbit`, is the one that binds.
+- `chimera-stm32/build.rs` writes `axi_margin.x` beside `ram_d2.x`: `ASSERT(ORIGIN(RAM) + LENGTH(RAM) - __sheap >= AXI_MARGIN, "AXI: under the margin")`. `__sheap` is cortex-m-rt's end of `.bss` and `.uninit`; there is no heap, so it is the real end of AXI statics.
+- **`AXI_MARGIN` is 32 KiB on shipping builds and 8 KiB on bench builds** (`CARGO_FEATURE_BENCH`). The bench builds carry 31 KB of diagnostics, the `card` command's buffers among them, and are never what a user runs. The margin is growth room for product features. A diagnostics build needs only to link and run.
+- Every feature set `just check` builds is checked. `orbit` binds the 32 KiB rule, and `bench,master-tape` binds the 8 KiB one.
 - `UI_RESERVE` and the const `≥ 64 KiB` assert go. `axi_residents_fit` stays as a host-side report: it prints the parts, but it no longer asserts spare.
 - **32 KiB is the stated margin.** It is room for the next features' UI state (TAPE's pages, VA's) without re-deciding the arena.
 
-**`ARENA_BYTES` = 160 KiB (163 840 B), in AXI.** It is sized from the `bench,orbit` measurement, after ADR 0090 halves the delay line:
+**`ARENA_BYTES` = 160 KiB (163 840 B), in AXI.** It is sized on `main` (cf50ee74), after ADR 0090 halves the delay line. The pool's own change is −48 128 (delay) − 28 672 (the fixed slots) + 2 176 (index: 128 × 12 B + 32 × 20 B) + 392 (`SourceTable`, 32 × 12 B, the gate and `sounding`) + the arena:
 
-| | Bytes |
-|---|---|
-| AXI used today, `bench,orbit` | 398 556 |
-| − the delay line as `i16` (ADR 0090) | − 48 128 |
-| − the 32 fixed slots | − 28 672 |
-| + index (128 Sound entries × 12 B + 32 source entries × 20 B) | + 2 176 |
-| + `SourceTable` (32 rows × 12 B) and the gate and `sounding` words | + 392 |
-| + arena | + 163 840 |
-| **AXI used after** | **488 164** |
-| **Free, against the 32 KiB margin** | **36 124** (35.3 KiB) |
+| Build | Used today | Used after | Free after | Margin | Largest arena it allows |
+|---|---|---|---|---|---|
+| `orbit` (shipping) | 384 264 | 473 872 | **50 416** | 32 KiB | 181 488 B (177 KiB) |
+| `bench,master-tape` | 420 100 | 509 708 | **14 580** | 8 KiB | 170 228 B (166 KiB) |
 
-The honest ceiling, with no margin at all, is 125 732 + 48 128 + 28 672 − 2 176 − 392 = **199 964 B** (195 KiB). The margin caps the arena at 199 964 − 32 768 = 167 196 B. 160 KiB is the largest 16 KiB multiple under that. 163 KiB would also fit, but it leaves 284 B for the next static. Without ADR 0090, the same arithmetic gives 112 KiB.
+160 KiB is the largest 16 KiB multiple that both rows allow. With no margin at all, the shipping build's ceiling is 524 288 − 310 032 = **214 256 B** (209 KiB). Without ADR 0090, the same arithmetic gives 112 KiB.
 
 **What fits.** A Sound costs its sparse encoding plus its 16 B name, rounded up to 16 B. The curated set is budgeted at 320 B a Sound, above the measured 211 B mean. NEW's 32 then take **10 240 B, 7 %**, and leave **153 600 B** for sources:
 
@@ -323,14 +320,14 @@ A source delete leaves a hole below the sources above it. Compaction slides them
 ### The factory set
 
 - **NEW's 32 curated Sounds are one sparse blob in flash** (`factory.bin`, about 10 KB). A desktop tool generates it from the authored Sounds (#317), and a test decodes every entry against its authored form. NEW copies the entries into the arena without decoding, since they are already canonical.
-- **Factory sources are card-only.** Flash has 100 KB free on the largest build, and one second of 16 kHz 12-bit audio is 24 KB. Until a card is present, the 32 are ALGO and MODAL Sounds. A factory TAPE Sound on the card library brings its source from `/CHIMERA/TAPES` like any other.
+- **Factory sources are card-only.** Flash has 120 KB free on the largest build, and one second of 16 kHz 12-bit audio is 24 KB. Until a card is present, the 32 are ALGO and MODAL Sounds. A factory TAPE Sound on the card library brings its source from `/CHIMERA/TAPES` like any other.
 - **NEW reads 7 %.**
 - **`TemplateCrc`** is computed at run time from the arena as filled.
 - **ADR 0073's `NEW_PARTS`** carries over, with slot numbers from #317's curated list.
 
 ### Flash cost
 
-These are estimates, to be measured with `rust-size` on `bench,orbit` at each step, against 100 036 B free.
+These are estimates, to be measured with `rust-size` on `bench,orbit` (the largest flash image) at each step, against 120 304 B free.
 
 | Step | Adds | Removes | Net |
 |---|---|---|---|
@@ -339,7 +336,7 @@ These are estimates, to be measured with `rust-size` on `bench,orbit` at each st
 | Meter, row costs, preview, POOL leaf, PURGE row and prompt, hint text | ~3 KB | | +3 KB |
 | Factory blob, 32 Sounds | ~10 KB | today's code-built 8 Sounds (`factory.rs`), ~3 KB | +7 KB |
 | Sources: table, gate, retire, 12-bit read, importer with dither and decimator, `Dir::Tapes`, records | ~8 KB | | +8 KB |
-| **Total** | | | **≈ 23 KB**, leaving ≈ 77 KB |
+| **Total** | | | **≈ 23 KB**, leaving ≈ 97 KB |
 
 ## Failure modes
 
@@ -381,7 +378,7 @@ All host-side (`just test`). Hardware checks wait for the ship flash.
 - **`memory_budget_test`:**
   - `axi_residents_fit` becomes a report;
   - `pool_arena_fits_axi` prints the arena, the index and the table;
-  - the binding check is the linker `ASSERT`, exercised by `just check`'s `bench,orbit` firmware build.
+  - the binding check is the linker `ASSERT`, exercised by every firmware build in `just check`.
 
 **Sources and `source_users`**
 - `choir_orphan`, the review's scenario:

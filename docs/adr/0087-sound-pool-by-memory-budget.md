@@ -21,22 +21,25 @@ Measured on `orbit` (43d59110), which merges first:
   Sound, more than the struct. Writing only params that differ from
   `Sound::neutral` gives 153–273 B for the factory Sounds and 58 B for
   INIT. The worst case is 1 823 B.
-- **AXI really free** is 125 732 B on the largest build (`bench,orbit`,
-  `rust-size`). The paper model, `AXI_RESIDENT` with its 64 KiB `UI_RESERVE`
+- **AXI really free** (`rust-size`, `main` at cf50ee74) is 140 024 B on
+  the largest shipping build (`orbit`), and 104 188 B on the largest build
+  of all (`bench,master-tape`, whose diagnostics hold 31 KB). The paper model, `AXI_RESIDENT` with its 64 KiB `UI_RESERVE`
   and its `≥ 64 KiB` spare assert, binds well before the chip does. The
   reserve was sized (ADR 0014) for a stack that ADR 0025 has since moved to
   DTCM, and it now quietly covers `ENGINE`, the USB statics and `UiState`.
 - **D2's 121 504 B free is TAPE's streaming rings and VA.**
-- **Flash has 100 036 B free** on `bench,orbit`.
+- **Flash has 120 304 B free** on `bench,orbit`, the largest image.
 
 Even all the free AXI, with the delay line halved (ADR 0090), holds only
-about 5.6 s of 24 kHz 12-bit audio. A RAM-only TAPE would be a one-source
+about 5.9 s of 24 kHz 12-bit audio. A RAM-only TAPE would be a one-source
 engine.
 
 ## Decision
 - **The linker enforces the AXI margin, not a paper sum.**
-  - `memory.x` asserts at least 32 KiB between `__sheap` and the end of
-    AXI, checked on every feature set `just check` builds.
+  - A linker fragment from `build.rs` asserts the gap between `__sheap`
+    and the end of AXI on every feature set `just check` builds:
+    32 KiB on shipping builds, and 8 KiB on bench builds, which are
+    diagnostics.
   - `UI_RESERVE` and the 64 KiB const assert go. `axi_residents_fit`
     becomes a report.
   - This supersedes ADR 0014's AXI accounting in part.
@@ -44,9 +47,12 @@ engine.
   slots.
   - It is sized after ADR 0090 stores the master delay line as `i16`
     (owner, 2026-10-04), which frees 48 128 B.
-  - On `bench,orbit`: 398 556 − 48 128 − 28 672 + 2 176 (index) + 392
-    (`SourceTable`) + 163 840 = 488 164 B used, leaving 36 124 B, above
-    the 32 KiB margin.
+  - On `orbit`: 384 264 − 48 128 − 28 672 + 2 176 (index) + 392
+    (`SourceTable`) + 163 840 = 473 872 B used, leaving 50 416 B against
+    32 KiB.
+  - On `bench,master-tape`: 509 708 B used, leaving 14 580 B against
+    8 KiB.
+  - 160 KiB is the largest 16 KiB multiple both allow.
   - Without ADR 0090 the same arithmetic stops at 112 KiB.
   - ADR 0090 is step 1 of the build, before the arena.
   - Sources pack up from 0, Sounds pack down from the top, and free space
