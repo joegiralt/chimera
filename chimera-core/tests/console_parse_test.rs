@@ -29,7 +29,13 @@ fn every_name_parses_in_any_case() {
         ] {
             let got = feed(&mut Console::new(), format!("{name}\n").as_bytes());
             assert_eq!(got.len(), 1, "{name}");
-            assert_eq!(got[0].map(|r| r.command()), Ok(c), "{name}");
+            // `ls` and `put` need their arguments: refused, but by name.
+            let named = match got[0] {
+                Ok(r) => r.command(),
+                Err(Refusal::Arguments(c)) => c,
+                Err(e) => panic!("{name}: {e:?}"),
+            };
+            assert_eq!(named, c, "{name}");
         }
     }
 }
@@ -164,7 +170,9 @@ fn the_table_is_the_one_list() {
     let names: Vec<_> = Command::ALL.iter().map(|c| c.name()).collect();
     assert_eq!(
         names,
-        ["help", "status", "stats", "bench", "card", "shot", "dfu"]
+        [
+            "help", "status", "stats", "bench", "card", "shot", "dfu", "ls", "put"
+        ]
     );
     for c in Command::ALL {
         assert!(!c.about().is_empty() && c.about().len() <= 60, "{c:?}");
@@ -198,5 +206,69 @@ fn every_byte_value_is_safe() {
                 }
             }
         }
+    }
+}
+
+#[test]
+fn put_takes_a_path_a_size_and_a_crc() {
+    use chimera_hal::store::{Dir, FileName};
+    let one = |s: &str| feed(&mut Console::new(), s.as_bytes()).remove(0);
+    let to = FileName::new(Dir::Projects, b"AVRIL14", b"A").unwrap();
+    let want = Ok(Request::Put(PutArg {
+        to,
+        size: 131_072,
+        crc: 0xDEAD_BEEF,
+    }));
+    assert_eq!(
+        one("put /CHIMERA/PROJECTS/AVRIL14.A 131072 deadbeef\n"),
+        want
+    );
+    assert_eq!(
+        one("PUT /chimera/projects/avril14.a 131072 DEADBEEF\n"),
+        want
+    );
+    let s = FileName::new(Dir::Sounds, b"S0000001", b"").unwrap();
+    assert_eq!(
+        one("put /CHIMERA/SOUNDS/S0000001 0 0\n"),
+        Ok(Request::Put(PutArg {
+            to: s,
+            size: 0,
+            crc: 0
+        }))
+    );
+    for bad in [
+        "put /CHIMERA/SYSTEM.A 1 0",
+        "put /CHIMERA/PROJECTS/../SYSTEM.A 1 0",
+        "put /CHIMERA/PROJECTS/PUT.TMP 1 0",
+        "put /CHIMERA/PROJECTS/A.B 4294967296 0",
+        "put /CHIMERA/PROJECTS/A.B 1 -1",
+        "put /CHIMERA/PROJECTS/A.B 1 0x10",
+    ] {
+        assert_eq!(
+            one(&format!("{bad}\n")),
+            Err(Refusal::Arguments(Command::Put)),
+            "{bad}"
+        );
+    }
+    // The longest request fits the line.
+    let longest = "put /CHIMERA/PROJECTS/P0000001.A 1048576 ffffffff";
+    assert!(longest.len() <= MAX_LINE);
+}
+
+#[test]
+fn ls_takes_one_directory() {
+    use chimera_hal::store::Dir;
+    let one = |s: &str| feed(&mut Console::new(), s.as_bytes()).remove(0);
+    assert_eq!(one("ls /CHIMERA\n"), Ok(Request::Ls(LsArg(Dir::Chimera))));
+    assert_eq!(
+        one("ls /chimera/sounds/\n"),
+        Ok(Request::Ls(LsArg(Dir::Sounds)))
+    );
+    for bad in ["ls", "ls /", "ls /CHIMERA/X", "ls /CHIMERA /CHIMERA"] {
+        assert_eq!(
+            one(&format!("{bad}\n")),
+            Err(Refusal::Arguments(Command::Ls)),
+            "{bad}"
+        );
     }
 }

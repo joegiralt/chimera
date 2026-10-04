@@ -434,14 +434,14 @@ fn synth(board: Board) -> ! {
         #[cfg(feature = "usb-console")]
         tend_usb(&mut usb, ui, &marker, &clocks, clk.cpu_hz, &mut usb_snap);
         #[cfg(all(feature = "usb-console", feature = "bench"))]
-        let card_run: usb::CardRun = &mut |arg, s| Some(card_bench.answer(arg, store, s));
+        let card_run: usb::CardRun = &mut |arg, s, store| Some(card_bench.answer(arg, store, s));
         #[cfg(all(feature = "usb-console", not(feature = "bench")))]
-        let card_run: usb::CardRun = &mut |_, _| None;
+        let card_run: usb::CardRun = &mut |_, _, _| None;
         #[cfg(feature = "usb-console")]
-        if let Some(asked) = usb
-            .up()
-            .and_then(|u| u.service(ui, stats_r.as_mut(), bench_text, display.frame(), card_run))
-        {
+        if let Some(asked) = usb.up().and_then(|u| {
+            let frame = display.frame();
+            u.service(ui, stats_r.as_mut(), bench_text, frame, card_run, store)
+        }) {
             // As the menu's path: a THEME change in this visit is kept.
             ui.sync_system_now(&mut sync, &mut card, store, &mut settings);
             dfu::enter(&marker, dfu::DfuFrom::Console(asked));

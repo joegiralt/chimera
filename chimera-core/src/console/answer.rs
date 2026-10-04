@@ -3,13 +3,14 @@
 use core::fmt::{self, Write};
 
 use super::{
-    CardAnswer, Command, Frame, MAX_LINE, NoArg, Out, PROTOCOL, Refusal, Request, Stalled,
-    write_card, write_shot, write_status,
+    CardAnswer, Command, Frame, LsArg, MAX_LINE, NoArg, Out, PROTOCOL, Refusal, Request, Stalled,
+    put, write_card, write_ls, write_shot, write_status,
 };
 use crate::boot::{BootSeen, UsbRegs};
 use crate::hw::MAX_VOICES;
 use crate::perf::load::AudioStats;
 use crate::ui::UiState;
+use chimera_hal::store::Files;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Stats {
@@ -36,6 +37,8 @@ pub trait Unit {
     /// The OTG and PWR registers now: `status`'s `usb_regs` line, last
     /// before `OK`. `None`: no line.
     fn usb_regs(&self) -> Option<UsbRegs>;
+    /// The card, for `ls` and `put`. `None`: not in this build.
+    fn files(&mut self) -> Option<&mut dyn Files>;
 }
 
 /// Why an answer is a single `ERR` line.
@@ -57,7 +60,7 @@ impl fmt::Display for Why {
 
 /// Text straight to `out`: no response buffer. The only `fmt::Error` source is `put`,
 /// so a `fmt::Error` here always means `Stalled`.
-struct Text<'a, O: Out>(&'a mut O);
+pub(super) struct Text<'a, O: Out>(pub(super) &'a mut O);
 
 impl<O: Out> Write for Text<'_, O> {
     fn write_str(&mut self, s: &str) -> fmt::Result {
@@ -111,6 +114,26 @@ pub fn answer(
         },
         Ok(Request::Shot(c)) => return write_shot(unit.frame(), c, t.0),
         Ok(r @ Request::Dfu(NoArg)) => unit.dfu().map(Ok).ok_or(Why::Absent(r.command())),
+        Ok(r @ Request::Ls(LsArg(dir))) => match unit.files() {
+            None => Err(Why::Absent(r.command())),
+            Some(f) => {
+                let listed = f.mount().and_then(|vol| {
+                    t.0.fresh();
+                    write_ls(f, vol, dir, &mut t)
+                });
+                match listed {
+                    Ok(wrote) => Ok(wrote),
+                    Err(e) => {
+                        return writeln!(t, "ERR ls: {}", e.message())
+                            .map_err(|fmt::Error| Stalled);
+                    }
+                }
+            }
+        },
+        Ok(r @ Request::Put(arg)) => match unit.files() {
+            None => Err(Why::Absent(r.command())),
+            Some(f) => return put(arg, f, t.0),
+        },
     };
     match body {
         Ok(wrote) => wrote.and_then(|()| t.write_str("OK\n")),

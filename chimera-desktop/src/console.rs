@@ -120,6 +120,9 @@ impl Unit for DeskUnit<'_> {
     fn usb_regs(&self) -> Option<chimera_core::boot::UsbRegs> {
         None
     }
+    fn files(&mut self) -> Option<&mut dyn chimera_hal::store::Files> {
+        None
+    }
 }
 
 /// A non-blocking stream as `Out`, for one answer: `WouldBlock` retries

@@ -78,6 +78,9 @@ impl Unit for Fake {
     fn usb_regs(&self) -> Option<UsbRegs> {
         self.usb_regs
     }
+    fn files(&mut self) -> Option<&mut dyn chimera_hal::store::Files> {
+        None
+    }
 }
 
 fn audio() -> AudioStats {
@@ -120,6 +123,8 @@ fn help_is_the_specs_text() {
          card    SD speed and streams, a chord playing; clean (bench builds)\n\
          shot    the screen in THEME's colours; shot raw: canonical\n\
          dfu     restart into the ROM loader for just flash\n\
+         ls      a card directory's names and sizes\n\
+         put     a file onto the card: <path> <size> <crc32>, base64\n\
          OK\n"
     );
 }
