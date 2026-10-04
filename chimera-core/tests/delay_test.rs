@@ -113,10 +113,8 @@ fn tail_reaches_exact_zero() {
         d.is_silent()
     });
     let ended = ended.expect("the tail never reached zero");
-    eprintln!(
-        "tail silent after {:.2} s",
-        (ended + 2) as f32 * BLOCK_SIZE as f32 / 48_000.0
-    );
+    let ended_s = (ended + 2) as f32 * BLOCK_SIZE as f32 / 48_000.0;
+    assert!(ended_s <= 17.0, "tail silent after {ended_s:.2} s");
 }
 
 /// The `f32` loop the line replaced, for one constant setting with no
@@ -153,11 +151,12 @@ impl F32Line {
 /// `i16` loop is fitted to the `f32` loop's by one gain, which takes out
 /// the repeat and the level truncation costs it; what is left over
 /// `passes` is the grain.
-fn grain_db(feedback: f32, passes: core::ops::Range<usize>) -> f64 {
+fn grain_db(feedback: f32, tone: f32, passes: core::ops::Range<usize>) -> f64 {
     const PASS: usize = 480;
     let p = DelayParams {
         time_ms: 10.0,
         feedback,
+        tone,
         wow_flutter: 0.0,
         mix: 1.0,
         ..DelayParams::default()
@@ -195,16 +194,21 @@ fn grain_db(feedback: f32, passes: core::ops::Range<usize>) -> f64 {
 }
 
 /// The grain once feedback has summed it, with the tail still far above
-/// it, at the default TONE. FDBK 0.9 lands on ADR 0090's −82 dBFS. At 0.99
-/// TONE's low-pass keeps the grain's highs from summing to the ADR's flat
-/// −72: measured −77 here (−65 to −69 at TONE 1, −82 at TONE 0.2).
+/// it (ADR 0090): −83 dBFS at FDBK 0.9; at 0.99 −77 at the default TONE,
+/// whose low-pass keeps the grain's highs from summing, and −65 to −69 at
+/// TONE 1, the worst case.
 #[test]
 fn noise_floor_tracks_feedback() {
-    let at_09 = grain_db(0.9, 10..40);
-    let at_099 = grain_db(0.99, 50..200);
-    eprintln!("grain: FDBK 0.9 {at_09:.1} dBFS, FDBK 0.99 {at_099:.1} dBFS");
-    assert!((at_09 + 82.0).abs() <= 3.0, "FDBK 0.9: {at_09:.1} dBFS");
+    let at_09 = grain_db(0.9, 0.6, 10..40);
+    let at_099 = grain_db(0.99, 0.6, 50..200);
+    let bright = grain_db(0.99, 1.0, 50..200);
+    eprintln!("grain: FDBK 0.9 {at_09:.1}, 0.99 {at_099:.1}, 0.99 TONE 1 {bright:.1} dBFS");
+    assert!((at_09 + 83.0).abs() <= 3.0, "FDBK 0.9: {at_09:.1} dBFS");
     assert!((at_099 + 77.0).abs() <= 3.0, "FDBK 0.99: {at_099:.1} dBFS");
+    assert!(
+        (bright + 66.0).abs() <= 3.0,
+        "FDBK 0.99 TONE 1: {bright:.1} dBFS"
+    );
 }
 
 /// ADR 0090: a +6 dB send hard-clips at ±2.0 on the write; the cast

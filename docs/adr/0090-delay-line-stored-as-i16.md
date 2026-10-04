@@ -27,8 +27,8 @@ that the delay line goes to `i16`, so the arena can grow.
     0028, Q3): a rounded loop can hold a limit cycle of a few LSB forever,
     and a truncated one decays to exact zero.
 - **Read:** `read` loads two `i16` taps (four during a TIME crossfade) and
-  converts each to `f32`. The 2⁻¹⁴ scale is folded into the interpolation
-  weights, so it costs no extra multiply.
+  converts each to `f32`. It interpolates as `(a + (b − a)·frac)·2⁻¹⁴`:
+  two multiplies, as many as the `f32` read.
 - **SAT is unchanged.** `tanhf(g·x)/g` stays in the loop at every SAT (ADR
   0038). It bounds a write at |dry| + FDBK, which is ≤ 2.0 for any send at
   or below unity, so in normal use nothing reaches the cast's clamp. A
@@ -41,15 +41,29 @@ that the delay line goes to `i16`, so the arena can grow.
 - **Grain on the repeats.** Each pass through the loop adds truncation
   noise of about 1 LSB, −84 dBFS against 1.0. That is about −89 dBFS RMS
   with a sign-correlated bias of ½ LSB.
-- **Feedback accumulates it,** as noise power over 1 − FDBK²:
-  - about −82 dBFS at FDBK 0.9 (+7 dB);
-  - about −72 dBFS at FDBK 0.99 (+17 dB).
+- **Feedback sums it, and TONE decides how much.** Measured on the host
+  as the deviation from the `f32` loop, with the repeat fitted out, under
+  a 1 kHz tail:
+  - at FDBK 0.9, about −83 dBFS;
+  - at FDBK 0.99, about −77 dBFS at the default TONE (0.6). TONE's
+    low-pass keeps the grain's highs from summing;
+  - at FDBK 0.99 and TONE 1, −65 to −69 dBFS. That is the worst case, a
+    flat loop, louder than the white estimate of power over 1 − FDBK²
+    (−72), because truncation's error follows the signal's sign and sums
+    partly in step from pass to pass.
 
   It is inaudible under a playing repeat. It shows as hiss only on a
   long, high-feedback tail, as on the tape delays the stage imitates.
-- **Tails end.** A repeat decays until it sinks under the grain, and
-  truncation then takes it to exact zero, where the `f32` line decayed
-  toward denormals.
+- **Truncation is a dead zone.** Each pass shrinks a quiet repeat by
+  about ½–1 LSB as well as by FDBK. Above about 60 LSB (−48 dBFS) a tail
+  decays as on the `f32` line. Below it, a tail shrinks linearly to exact
+  zero, and its last step is 1 LSB, −84 dBFS.
+  - At FDBK 0.9, a 0.5 impulse at TIME 375 ms leaves the line all zeros
+    after 16.25 s.
+  - At FDBK 0.99, a tail ends early: a −12 dBFS burst stops where the
+    `f32` tail would still be at −55 to −60 dBFS, about 100 repeats in at
+    375 ms.
+  - The `f32` line decayed toward denormals instead.
 - **SAT doesn't hide the grain.** `tanh` has slope 1 at small signals, so
   the grain's level doesn't depend on SAT. A high SAT lowers the repeats'
   level, so the grain sits relatively closer under a decaying tail.
@@ -77,28 +91,35 @@ that the delay line goes to `i16`, so the arena can grow.
 ## Alternatives considered
 - **Keep `f32`.** The arena stays at 112 KiB: 2.9 s at 24 kHz in place of
   4.3 s.
-- **Rounding on the write.** Its noise is unbiased, but a high-feedback
-  loop can hold a limit cycle of a few LSB, the failure ADR 0028 measured
-  on the reverb.
+- **Rounding on the write.** Its noise is unbiased, but a quiet tail
+  stops shrinking at around a few LSB. That is the limit cycle ADR 0028
+  measured on the reverb.
+  - Measured on this loop at FDBK 0.99, a −12 dBFS burst still plays at
+    −70 to −83 dBFS two minutes later, where truncation has reached
+    exact zero.
+  - That level is a residual tone, not a fade.
 - **Full scale ±1.0.** Twice the resolution, but a loop bounded at |dry| +
   FDBK would clip at FDBK near 1 with a unity send.
 - **A shorter line,** for example 250 ms as `f32`. Same bytes, but half the
   delay's range, and the owner kept 500 ms.
 - **TPDF dither on the write.** It whitens the bias, but costs a random
-  number per sample, and the tail would never reach zero.
+  number per sample. The tail would never reach zero: a permanent hiss
+  at the grain's level, under every pause, at any FDBK.
 
 ## Consequences
 - AXI frees 48 128 B. ADR 0087's arena becomes 160 KiB, and this change
   is step 1 of its build order.
 - Every delay golden changes once.
-- A long FDBK ≈ 1 tail carries a hiss floor of about −72 dBFS.
+- A long FDBK ≈ 1 tail carries grain of about −77 dBFS at the default
+  TONE, and −65 to −69 dBFS at TONE 1. A quiet tail ends at exact zero,
+  sooner than on the `f32` line.
 - Tests:
   - `full_feedback_with_no_saturation_stays_bounded` (ADR 0038) still
     passes;
   - a FDBK 0.9 tail reaches exact zero within a measured time;
   - a +6 dB send clips at ±2.0 and never wraps;
-  - the noise floor at FDBK 0.9 and 0.99 is within 3 dB of the figures
-    above.
+  - the grain at FDBK 0.9, at 0.99 and at 0.99 with TONE 1 is within
+    3 dB of the measured figures above.
 
 ## Sources
 - Owner ruling, 2026-10-04 (via the #337 review).

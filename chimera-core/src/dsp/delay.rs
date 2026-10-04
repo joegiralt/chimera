@@ -355,6 +355,7 @@ impl TapeDelay {
     }
 
     /// The line holds exact zeros: its tail has ended (ADR 0090).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn is_silent(&self) -> bool {
         self.buffer.iter().all(|&s| s == 0)
     }
@@ -508,7 +509,7 @@ impl TapeDelay {
 }
 
 /// The line read `delay` samples behind `write_pos`, linearly interpolated,
-/// back to ±2.0: the weights carry the 1 / `LINE_SCALE`.
+/// back to ±2.0.
 #[inline(always)]
 fn read(buffer: &[i16; MAX_DELAY_SAMPLES], write_pos: usize, delay: f32) -> f32 {
     let d_int = delay as usize;
@@ -523,10 +524,9 @@ fn read(buffer: &[i16; MAX_DELAY_SAMPLES], write_pos: usize, delay: f32) -> f32 
     } else {
         pos_a - 1
     };
-    // One multiply more than the f32 line's: `1 − d_frac` becomes `INV − b`.
-    const INV: f32 = 1.0 / LINE_SCALE;
-    let b = d_frac * INV;
-    f32::from(buffer[pos_a]) * (INV - b) + f32::from(buffer[pos_b]) * b
+    let (a, b) = (f32::from(buffer[pos_a]), f32::from(buffer[pos_b]));
+    // Two multiplies, as the f32 line's.
+    (a + (b - a) * d_frac) * (1.0 / LINE_SCALE)
 }
 
 #[cfg(test)]
