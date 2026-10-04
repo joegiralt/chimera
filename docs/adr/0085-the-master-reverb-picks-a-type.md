@@ -107,16 +107,23 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
     write, so no ±Δ limit cycle survives.
   - ROOM couples its loops through an energy-preserving rotation.
   - New engines cap a stage gain at 0.985 (QUAD keeps 0.97).
-  - **Input gain is ½ in every engine, as in QUAD**, so every TYPE keeps
-    QUAD's resolution in the i16 arena and its output noise floor (within
-    ±2 dB of QUAD's estimated −66 dBFS at GRIT 0 and −55 at GRIT 0.3).
-    - Each loop's re-entry passes a branch-free soft clip instead. It is
-      transparent below half of full scale and reaches 2.0 with zero slope,
-      so a coherent build-up on a loop mode (HALL's G is 12.5) saturates
-      gently rather than hitting the i16 clamp.
-    - The cost is about 6 instructions per loop.
-    - A held loop-mode sine must stay ≤ 3 % THD, and a −12 dBFS program is
-      bit-identical to an unclipped build.
+  - **Input gain is ½ in every engine, as in QUAD.** A level plan keeps
+    every stored value inside ±2.0 at maximum DECAY, by four rules:
+    1. a branch-free soft clip (knee 1.0, reaching 2.0 with zero slope) at
+       every loop's re-entry;
+    2. normalised state storage, w = (1 − g)·v, for every allpass inside a
+       loop, with in-loop g held to 0.5–0.6;
+    3. diffuser g capped at 0.74 outside loops;
+    4. f32 output decorrelators, in the arena's free slots, after sums that
+       can exceed 2.0.
+
+    The bounds are H∞ (held-sine) bounds. Transient overshoot is caught by
+    the saturating store and bounded by a clamp-hit test.
+    - At the default DECAY a −12 dBFS program is bit-identical to an
+      unclipped build. At maximum DECAY the clip shaves peaks at ≤ −40 dB.
+      A held loop-mode tone stays ≤ 3 % THD, with aliases ≤ −40 dB.
+    - The noise floor stays within +4 dB of QUAD's estimated −66 dBFS at
+      GRIT 0 (−55 at GRIT 0.3).
     - Scaling the send down instead (HALL to 0.16) was rejected: about
       10 dB more audible grain in quiet tails.
   - GRIT's step scales by IN/0.5, which is 1 for every TYPE today, so
@@ -229,8 +236,8 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
     and slowing the glide only spreads the shift out;
   - every moving read pays 17–20 instructions all the time, and gliding
     every BURST tap reached about 330 instructions against QUAD's 239.
-- **SIZE-scaled LOOP taps:** about +81 cycles over QUAD in ROOM. That fits
-  the default headroom but not `master-tape`'s; the ear judges the fixed
+- **SIZE-scaled LOOP taps:** about +96 cycles over QUAD in ROOM, at the
+  default headroom's limit and over `master-tape`'s; the ear judges the fixed
   taps at A/B.
 - **Running both engines through a switch crossfade:** twice the cost for
   20 ms. Fading out, clearing and fading in costs one engine.
@@ -244,13 +251,16 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
 
   | TYPE | Instructions (pair +7 / +10) | Cycles |
   |---|---|---|
-  | ROOM | 235 / 241 | 477 / 488 |
-  | HALL | 225 / 231 | 459 / 470 |
-  | GATE, REVERSE | 204 / 210 | 419 / 431 |
-  | BLOOM | 216 / 225 | 442 / 459 |
+  | ROOM | 243 / 249 | 492 / 503 |
+  | HALL | 233 / 239 | 473 / 485 |
+  | GATE, REVERSE | 207 / 213 | 425 / 436 |
+  | BLOOM | 236 / 245 | 479 / 496 |
 
-  These include the soft clips. Every TYPE is under QUAD, except ROOM if a
-  pair costs +10: about +3 cycles, which fits both headrooms.
+  These include the soft clips and the normalised states. Over QUAD:
+  - ROOM by +7 to +18 cycles;
+  - BLOOM by up to +11 cycles.
+
+  Both fit both headrooms (96, and 23 with the tape).
   `FxBus::COST` changes only if the bench confirms it.
 
   Step 0 comes before any TYPE work. It:

@@ -158,22 +158,78 @@ That makes it a preset, and the MV2 itself had no plate topology. So:
   - Its moved reads run 90° apart, so the left and right tails move differently.
   - It is computed at the block's ends and interpolated linearly across the block's 32 ring samples. At its fastest rate, 2 Hz, the error is under 10⁻⁴ of the depth.
   - The pitch it can cause is bounded (§ Pitch bounds).
-- **Input gain: ½ everywhere, with a soft clip in each loop.** Every engine injects the send at ½, as QUAD does, so every TYPE has QUAD's resolution in the i16 arena.
-  - **Why not a lower gain.** Scaling the send by the worst-case gain 2/G (HALL's G is 12.5) would set HALL's input at 0.16. Its output noise would then sit at about −56 dBFS at MIX 1 against QUAD's −66, and at −45 against −55 at GRIT 0.3: audible grain in quiet tails.
-  - **Where headroom comes from instead.** Each loop's re-entry sum passes through a soft clip before it is written:
-    - `s(x) = x` for |x| ≤ 1.0, in line units where ±2.0 is full scale;
-    - `s(x) = sign(x)·(1 + u − u²/4)` with u = min(|x| − 1, 2), above 1.0. It reaches exactly 2.0, with slope 0, at |x| = 3, so the i16 saturation is never hit;
-    - it is branch-free, about 6 instructions.
-  - **Where the clips sit.** One per loop: ROOM's two rotation outputs, HALL's loop re-entry, BLOOM's re-entry, BURST's REGEN write and GATE's TAIL re-entry. BURST's single code path pays for both of its clips.
-  - **Transparent at normal levels.** The clip only engages above half of full scale. That happens only under a coherent build-up on a loop mode: HALL's G is 12.5 at DECAY 10 s on its 120 ms loop, BURST's REGEN × Σ|w| is about 11.8, and BLOOM's G is about 7.5. A −12 dBFS program never reaches it (§ Tests).
-  - **GRIT means the same on every TYPE.** GRIT's grid step is `Δ = 2^(6·GRIT)` LSBs × IN/0.5. With IN ½ everywhere the factor is 1, but the rule stands for any future TYPE whose input gain differs.
-  - **Output noise floor**, at MIX 1 against QUAD's estimated −66 dBFS at GRIT 0 and −55 at GRIT 0.3:
-    - ROOM and HALL, with 3 taps a side like QUAD: within ±1 dB of QUAD;
-    - GATE and REVERSE, with 12 taps summed at constant Σw² and no tap louder than QUAD's: within ±2 dB;
-    - BLOOM, whose taps are register values with no extra read noise: within ±1 dB.
-
-    A test measures each against QUAD (§ Tests).
+- **Input gain is ½ in every engine**, as in QUAD, so every TYPE keeps QUAD's resolution. Headroom comes from the level plan instead (§ Level plan).
 - **Output.** The return is ×`WET[type]` × MIX, eased as today. Each TYPE's `WET` is set so its default return's RMS matches QUAD's default within ±1 dB. A test pins this (§ Tests). QUAD's `WET_GAIN`, 4.54, is unchanged.
+
+### Level plan
+
+Every stored value must stay inside the i16 full scale, ±2.0 in line units, at maximum DECAY and with the worst-case signal. This section derives each bound end to end. Tests hold each one (§ Tests).
+
+**Terms.**
+- **The send.** A full-scale (0 dBFS) send sample is 1.0. It is injected at ½, so the line-unit send peak is **A = 0.5**.
+- **Bounds are H∞ bounds.** A bound is the peak gain for a steady sine at the worst frequency (the H∞ norm). That is the standard bound for a level plan, and it is what a held tone on a loop mode reaches.
+  - An allpass has output gain 1 and state gain 1/(1 − g).
+  - A one-pole lowpass has gain 1.
+  - A loop at maximum DECAY has G = 1/(1 − round-trip gain): 12.5 for HALL (0.92 at 10 s on its 120 ms loop), about 7.5 for BLOOM, and 2.7 for ROOM.
+- **Transients** can briefly exceed an H∞ bound: an allpass's output can overshoot to (1 + g)/(1 − g) of its input for a few samples. § Transients covers that case.
+
+**The four rules.**
+1. **R1: every loop's re-entry passes a soft clip.**
+   - The clip is `s(x) = x` for |x| ≤ 1.0, and `s(x) = sign(x)·(1 + u − u²/4)` with u = min(|x| − 1, 2) above that. It reaches exactly 2.0, with slope 0, at |x| = 3.
+   - It is branch-free, about 6 instructions.
+   - The clips sit at ROOM's two rotation outputs, HALL's re-entry, BLOOM's re-entry, BURST's line write (which carries REGEN) and GATE's TAIL re-entry.
+   - So every signal written inside a loop is ≤ 2.0: delays, dampers (gain 1) and re-entries.
+2. **R2: every allpass inside a loop stores its state normalised.**
+   - It writes `w = (1 − g)·v` and reads back `v = w · 1/(1 − g)`, with 1/(1 − g) computed once a block.
+   - Because |v| ≤ |x|/(1 − g), it follows that |w| ≤ |x| ≤ 2.0, whatever g is.
+   - Its output, at gain 1, is ≤ 2.0.
+   - Cost: 2 multiplies per in-loop allpass.
+   - Noise: the stored error comes back ×1/(1 − g). In-loop g is held at 0.5 (ROOM and HALL stage APs, GATE's TAIL AP) and at most 0.6 (BLOOM), which costs +6 and +8 dB on those states' error.
+3. **R3: allpasses outside loops are plain.** Their input is the send (≤ A = 0.5) through gain-1 stages, so their state stays ≤ 0.5/(1 − g).
+   - The diffusers' g is capped at **0.74**, which gives a state ≤ 1.92.
+   - BURST's pre-diffuser is capped at 0.7, which gives a state ≤ 1.67.
+4. **R4: output decorrelators are f32.** BURST's and BLOOM's decorrelators sit after a sum that can exceed 2.0. BURST's tap sum Σ is ≤ Σ|w| × 2.0 = 6.9, and a decorrelator at g 0.6 raises a state to 2.5 × its input. So they store f32, in the arena's own free slots, at 2 i16 slots per sample (§ Arena). There is no i16 bound to break, and no quantisation noise there.
+
+**Every stored quantity, at maximum DECAY:**
+
+| Stored quantity | TYPEs | Bound | By |
+|---|---|---|---|
+| PRE-DLY line | ROOM, HALL, BLOOM | 0.5 (the send, through TONE at gain 1) | — |
+| Diffuser AP states | ROOM, HALL | 0.5 / (1 − 0.74) = 1.92 | R3 |
+| Pre-diffuser AP states | GATE, REVERSE | 0.5 / (1 − 0.7) = 1.67 | R3 |
+| Burst line (input + REGEN) | GATE, REVERSE | 2.0 | R1 |
+| Stage delays, SWELL delay | ROOM, HALL, BLOOM | 2.0 | R1 |
+| Dampers, REGEN smoothing | all loops | 2.0 | R1, gain 1 |
+| In-loop AP states (stage APs, BLOOM's ten, TAIL's AP) | ROOM, HALL, BLOOM, GATE | 2.0 | R2 |
+| TAIL delay | GATE | 2.0: its input is Σ/Σ\|w\| (≤ 2.0), clipped at re-entry; it returns ×Σ\|w\| in float | R1 |
+| Decorrelator states | GATE, REVERSE, BLOOM | f32 | R4 |
+| Output tap sums (LOOP L/R, BLOOM AP5/AP10) | all | float, never stored as i16 | — |
+
+**Transients.** H∞ bounds hold for steady signals. A transient can overshoot an allpass output by up to (1 + g)/(1 − g) for a few samples: 3× at g 0.5. In a loop that output is written to the next stage's delay before the re-entry clip.
+- **What catches it.** The i16 store saturates, as QUAD's always has.
+- **How it is bounded.** By test, not by assumption: zero clamp hits for a held loop-mode sine and for −12 dBFS pink noise, and ≤ 0.1 % of writes for a full-scale swept sine at maximum DECAY (§ Tests).
+- **Why not more clips.** Clipping every write would cost about 6 instructions per write, 78 a sample in ROOM.
+
+**Transparency.**
+- **At the default DECAY**, a −12 dBFS RMS pink send peaks near 0 dBFS, which is 0.5 in line units. Recirculation adds about +3 dB, to about 0.7, under the 1.0 knee. The clip never engages, and the output is bit-identical to an unclipped build.
+- **At maximum DECAY**, recirculation adds about +8 dB, so pink-noise peaks cross the knee. The clip shaves those peaks only: a few percent of samples, with distortion ≤ −40 dB against an unclipped f32 reference.
+- **A held full-scale tone on a loop mode** saturates softly. Its THD is bounded at 3 %.
+
+**Aliasing.** The clip is odd-symmetric, so it makes odd harmonics, at the 24 kHz rate. A held 5 kHz tone's 3rd harmonic, at 15 kHz, folds to 9 kHz.
+- The clip only engages under coherent build-up, and its 3rd harmonic is bounded by the 3 % THD.
+- Alias energy is bounded by test at −40 dB, on a held loop mode near 5 kHz.
+- Oversampling the clip was rejected: it would double the clip's cost on every loop.
+
+**Noise floor**, at MIX 1, against QUAD's estimated −66 dBFS at GRIT 0 and −55 at GRIT 0.3:
+
+| TYPE | Estimate | Why |
+|---|---|---|
+| ROOM, HALL | +2 to +3 dB | 4 normalised stage APs at g 0.5 (+6 dB on their error), against delays and diffusers at QUAD's resolution |
+| GATE, REVERSE | ±2 dB | f32 decorrelators (no noise); the TAIL path alone runs up to 10.8 dB lower, inside a tail ≥ 20 dB below the burst |
+| BLOOM | +3 to +4 dB | ten normalised loop APs at g ≤ 0.6 (+8 dB on their error) |
+
+- **GRIT means the same on every TYPE.** Its step is `2^(6·GRIT)` LSBs × IN/0.5, which is 1 today, since IN is ½ everywhere.
+- **The noise test bound** is QUAD's measured floor + 4 dB.
 
 ### Moving a length
 
@@ -256,7 +312,7 @@ Fractions without a mark are of the line's **maximum** length.
 - **The early tap.** Each side's first tap is a fraction of its line's SIZE-0 length: about 2–3 ms in ROOM and about 4 ms in HALL. That keeps the plate corner's onset short.
 - **Why the maximum, for the other two.** A line owns its maximum length's slots, and the shared write head writes every one of them each pass. So a tap anywhere inside the maximum reads written data at any SIZE, at the same cost. At a small SIZE, a tap past the current read point reads the line's input from an earlier pass: still the decaying tail, just older.
 - **Why not the minimum.** Fractions of the SIZE-0 length would read only the first 11 % of HALL's 540 ms stages at SIZE 1, and the output could pulse once per pass.
-- **The trade.** The pattern stays put as SIZE moves, and the ear judges it at A/B. SIZE-scaled taps would add 6 crossfading reads to every SIZE move: about +81 cycles over QUAD for ROOM. That fits the default build's headroom (96), but not `master-tape`'s (23), so while the tape ships they need an owner ruling (§ CPU budget).
+- **The trade.** The pattern stays put as SIZE moves, and the ear judges it at A/B. SIZE-scaled taps would add 6 crossfading reads to every SIZE move: about +96 cycles over QUAD for ROOM. That is at the default build's limit (96) and over `master-tape`'s (23), so they need an owner ruling (§ CPU budget).
 
 ### BURST engine: GATE and REVERSE
 
@@ -290,7 +346,7 @@ send → TONE → pre-diffuser (2 AP) → burst line ──► 12 taps over [0, 
 - **TAIL (GATE).** The burst sum also feeds one fixed loop stage: a 37 ms delay, then an 11 ms AP. Its output is ×g and added back into the sum. g comes from TAIL's RT60 and is scaled by `min(1, TAIL/0.05)`, so TAIL 0 is exactly the fast gate, with no step.
 - **REGEN (REVERSE).** Tap 11 is fed back into the burst line's input through a one-pole at about 6 kHz, so each pass darkens. The gain is g = 0.708·REGEN, up to −3 dB per pass. The line write that carries it truncates (§ Shared machinery).
 - **Decorrelators.**
-  - Two APs per side, at g 0.6: L 3.1 and 8.3 ms, R 4.7 and 6.1 ms.
+  - Two APs per side, at g 0.6: L 3.1 and 8.3 ms, R 4.7 and 6.1 ms, stored f32 (§ Level plan).
   - Each side's second AP is the one the wobble moves. They sit outside every loop, so their wobble is a single-pass vibrato (§ Pitch bounds).
   - The taps sum mono first (the MV2 shape), and the decorrelators make the stereo.
 
@@ -309,9 +365,9 @@ L = AP5's output → decorrelator L (2 AP) ;  R = AP10's output → decorrelator
   - The A/B checks this explicitly.
   - **Fallback:** split the SWELL delay in two, with one fixed allpass between the halves (17 ms, g 0.5). That costs 2 fixed accesses, +10 instructions, about +19 cycles per output sample, and fits the headroom (§ CPU budget).
 - **TONE** is the in-loop damper here, fc 10 kHz → 1.5 kHz. The bloom's darkness lives in the loop, as the spike measured: HF RT60 about 0.9× LF.
-- **DIFFUSE** sets the loop APs' g, 0.45 → 0.65.
+- **DIFFUSE** sets the loop APs' g, 0.45 → 0.6. Their states are stored normalised (§ Level plan).
 - **Taps.** The outputs are values already in registers (AP5's and AP10's outputs), not reads, so they cost nothing.
-- **Decorrelators:** L 4.1 and 9.7 ms, R 5.3 and 7.9 ms, at g 0.6.
+- **Decorrelators:** L 4.1 and 9.7 ms, R 5.3 and 7.9 ms, at g 0.6, stored f32 (§ Level plan).
 - **Wobble** moves APs 3, 6 and 9 (moving reads), at 0°, 90° and 180°.
 
 ### QUAD
@@ -336,10 +392,15 @@ Owner ruling (2026-10-04): leave QUAD exactly as it is.
 | QUAD | 12 lines (`RING_LEN`) | 23,220 | 0 |
 | ROOM | PRE 1,200 · diffuser 498 · delays at k = 1 7,872 · stage APs 1,728 · wobble 48 | 11,346 | 11,874 |
 | HALL | PRE 3,000 · diffuser 456 · delays at k = 1 12,960 · stage APs 1,440 · wobble 96 | 17,952 | 5,268 |
-| GATE, REVERSE | pre-diffuser 274 · burst line 19,200 (REVERSE's 800 ms) · TAIL loop 1,152 · decorrelators 533 · wobble 48 | 21,207 | 2,013 |
-| BLOOM | PRE 3,000 · loop APs 6,096 · SWELL delay 10,704 · decorrelators 648 · wobble 144 | 20,592 | 2,628 |
+| GATE, REVERSE | pre-diffuser 274 · burst line 19,200 (REVERSE's 800 ms) · TAIL loop 1,152 · decorrelators 533 f32 = 1,066 slots · wobble 48 | 21,740 | 1,480 |
+| BLOOM | PRE 3,000 · loop APs 6,096 · SWELL delay 10,704 · decorrelators 648 f32 = 1,296 slots · wobble 144 | 21,240 | 1,980 |
 
 Each line also takes its 2 guard slots, under 50 per TYPE, inside the headroom shown. The arena and `RING_LEN` do not change.
+
+**f32 regions.** BURST's and BLOOM's decorrelators (R4) are f32 regions inside the i16 arena.
+- `ReverbArena` is `#[repr(C, align(4))]`, and each f32 region starts on an even slot.
+- One function, `ReverbArena::f32_region(offset, len) -> &mut [f32]`, gives access to them, with a `// SAFETY:` comment: alignment holds by the type and the even offset, the region is in bounds by the `const` layout, and no i16 view of it is alive while it is used.
+- CLEAR's zeroing makes them +0.0.
 
 **State beside the arena.**
 - Each engine's small state lives in one `#[repr(C, u8)] enum EngineState`, sized to the largest variant. That state is the dampers, the tone filter, the LFO phase, the current and target lengths, the crossfade counter, the tap scheduler and the gains.
@@ -390,7 +451,7 @@ Values are p (0..1) → quantity. The main page holds cells 2–5, and REV › M
 | SIZE | 3 | exp | loop 100–200 ms | 0.5 → 141 ms |
 | DECAY | 1 | exp | RT60 0.2–1.5 s (floor `t_min`) | 0.5 → 0.55 s |
 | TONE | 7 | exp | input fc 10 → 2.5 kHz | 0.3 → 6.6 kHz |
-| DIFFUSE | 8 | lin | AP g 0.5–0.75 | 0.4 → 0.60 |
+| DIFFUSE | 8 | lin | diffuser AP g 0.5–0.74 (stage APs fixed at 0.5, § Level plan) | 0.4 → 0.60 |
 | PRE-DLY | 9 | lin | 0–50 ms | 0.1 → 5 ms |
 | WOBBLE | 11 | lin | ±0–1 ms, capped at 0.72 % of the loop (§ Pitch bounds) | 0.3 → ±0.3 ms |
 | RATE | 12 | exp | 0.1–1 Hz | 0.5 → 0.32 Hz |
@@ -402,13 +463,13 @@ Values are p (0..1) → quantity. The main page holds cells 2–5, and REV › M
 | SIZE | 3 | exp | loop 120–600 ms; 0–0.15 is the plate zone | 0.65 → 342 ms |
 | DECAY | 1 | exp | RT60 0.8–10 s (floor `t_min`) | 0.45 → 2.5 s |
 | TONE | 7 | exp | input fc 10 → 2.5 kHz | 0.3 → 6.6 kHz |
-| DIFFUSE | 8 | lin | diffuser and stage AP g 0.5–0.75 | 0.4 → 0.60 |
+| DIFFUSE | 8 | lin | diffuser AP g 0.5–0.74 (stage APs fixed at 0.5) | 0.4 → 0.60 |
 | DAMP | 2 | exp | in-loop fc 11 → 1.5 kHz (QUAD's `damp_coef` law) | 0.3 → 6.1 kHz |
 | PRE-DLY | 9 | lin | 0–125 ms | 0.15 → 19 ms |
 | WOBBLE | 11 | lin | ±0–2 ms, capped at 0.51 % of the loop | 0.35 → ±0.7 ms |
 | RATE | 12 | exp | 0.1–1.5 Hz | 0.4 → 0.30 Hz |
 
-The plate corner is SIZE 0 (120 ms), DECAY 0.35 (1.9 s), TONE 0 (10 kHz), DIFFUSE 1 (0.75), DAMP 0.1, PRE-DLY 0, WOBBLE 0.5 (±1 ms set, ±0.62 ms played under the cap) and RATE 0.6 (0.51 Hz).
+The plate corner is SIZE 0 (120 ms), DECAY 0.35 (1.9 s), TONE 0 (10 kHz), DIFFUSE 1 (0.74), DAMP 0.1, PRE-DLY 0, WOBBLE 0.5 (±1 ms set, ±0.62 ms played under the cap) and RATE 0.6 (0.51 Hz).
 
 **GATE** (main: LENGTH · TAIL · TONE · DENSITY; MORE: — · SHAPE · WOBBLE · RATE · SYNC · GRIT)
 
@@ -441,7 +502,7 @@ The plate corner is SIZE 0 (120 ms), DECAY 0.35 (1.9 s), TONE 0 (10 kHz), DIFFUS
 | SWELL | 3 | exp | loop 250–700 ms (time to peak about 0.3–0.75 s) | 0.7 → 514 ms |
 | DECAY | 1 | exp | RT60 2–12 s | 0.6 → 5.9 s |
 | TONE | 7 | exp | in-loop fc 10 → 1.5 kHz | 0.35 → 5.1 kHz |
-| DIFFUSE | 8 | lin | loop AP g 0.45–0.65 | 0.5 → 0.55 |
+| DIFFUSE | 8 | lin | loop AP g 0.45–0.6 (normalised states, § Level plan) | 0.5 → 0.53 |
 | PRE-DLY | 9 | lin | 0–125 ms | 0 → 0 ms |
 | WOBBLE | 11 | lin | ±0–2 ms, capped at 0.72 % of the loop | 0.3 → ±0.6 ms |
 | RATE | 12 | exp | 0.05–0.5 Hz | 0.4 → 0.13 Hz |
@@ -683,20 +744,24 @@ Worst case: every crossfadable line crossfading, wobble at its maximum.
 | TYPE | Fixed accesses, worst (writes + reads + crossfade reads) | Moving pairs | Blends and extras | Instructions, pair +7 / +10 | Cycles, +7 / +10 |
 |---|---|---|---|---|---|
 | QUAD | 30 steady / 48 crossfading | 0 | — | 158 / **239 measured** | 320 / **485 measured** |
-| ROOM | 13 + 17 + 5 (PRE, 4 delays) = 35 | 2 (wobbled APs) | 10 + 4 (rotation) + 12 (2 soft clips) | **235 / 241** | 477 / 488 |
-| HALL | 13 + 17 + 5 = 35 | 2 | 10 + 6 (soft clip) | **225 / 231** | 459 / 470 |
-| GATE, REVERSE | 9 + 17 + 4 (crossfading taps) = 30 | 2 (wobbled decorrelator APs) | 8 + 12 (2 soft clips) | **204 / 210** | 419 / 431 |
-| BLOOM | 16 + 13 + 2 (PRE, SWELL) = 31 | 3 (wobbled loop APs) | 4 + 6 (soft clip) | **216 / 225** | 442 / 459 |
+| ROOM | 13 + 17 + 5 (PRE, 4 delays) = 35 | 2 (wobbled APs) | 10 + 4 (rotation) + 12 (2 soft clips) + 8 (4 normalised APs) | **243 / 249** | 492 / 503 |
+| HALL | 13 + 17 + 5 = 35 | 2 | 10 + 6 (soft clip) + 8 (4 normalised APs) | **233 / 239** | 473 / 485 |
+| GATE, REVERSE | 9 + 17 + 4 (crossfading taps) = 30 | 2 (wobbled decorrelator APs) | 8 + 12 (2 soft clips) + 3 (TAIL's normalised AP, Σ scale) | **207 / 213** | 425 / 436 |
+| BLOOM | 16 + 13 + 2 (PRE, SWELL) = 31 | 3 (wobbled loop APs) | 4 + 6 (soft clip) + 20 (10 normalised APs) | **236 / 245** | 479 / 496 |
 
-- **Every TYPE is under QUAD except ROOM at +10**, which reads about 488 cycles, ΔCOST ≈ +3. That fits both headrooms, 96 and 23 ("sound first": the soft clips buy the noise floor).
+- **Where TYPEs exceed QUAD.**
+  - ROOM is over QUAD at either pair cost: about +7 / +18 cycles.
+  - BLOOM is over at +10: about +11.
+  - HALL is at QUAD.
+  - All of these fit both headrooms, 96 and 23. This is "sound first": the level plan's clips and normalised states buy QUAD's noise floor at full input gain.
 - **Why it is cheaper than the earlier draft.** Crossfades replaced every moving read except the wobble's. A crossfading line costs 5 + 2 instructions only while it moves; a glide's moving pair cost 17–20 all the time.
-- **The tightest is ROOM**, at 241 instructions (488 cycles) if a pair costs +10. Step 0 benches it.
+- **The tightest is ROOM**, at 249 instructions (503 cycles, ΔCOST ≈ +18 of the tape build's 23) if a pair costs +10. Step 0 benches it.
 - **What fits if the A/B asks for it:**
-  - BLOOM's split SWELL delay (+10 instructions, ≈ +19 cycles). By this table BLOOM stays under QUAD. The review's cache-aware estimate puts BLOOM's base design about **+14** over QUAD, which fits both builds, and the split about **+33**:
+  - BLOOM's split SWELL delay (+10 instructions, ≈ +19 cycles). It takes BLOOM to about +30 by this table. The review's cache-aware estimate puts BLOOM's base design about **+14** and the split about **+33**:
     - it **fits the default build** (96);
     - in the **`master-tape` build it does not fit** (23). There, the split is not offered unless the owner rules to give up a voice guarantee.
   - 14 BURST taps (+2 fixed reads, +10 instructions): **fits**.
-  - SIZE-scaled LOOP taps (+6 crossfading reads, +42 instructions, ≈ +78 cycles, taking ROOM to about 566, ΔCOST ≈ +81): **fits the default build** (96), but **not `master-tape`** (23). While the tape ships, they need an owner ruling.
+  - SIZE-scaled LOOP taps (+6 crossfading reads, +42 instructions, ≈ +78 cycles, taking ROOM to about 581, ΔCOST ≈ +96): this is **at the default build's limit** (96) and over `master-tape`'s (23). It needs an owner ruling in either build.
 - **Fallbacks are a last resort**, not the plan ("sound first").
   - A fallback is taken only when ΔCOST would breach the headroom or the stress run fails, or when the A/B shows the cheaper design sounds the same.
   - A TYPE over the 485 target alone is no reason to take one.
@@ -829,12 +894,15 @@ The usual battery, per TYPE, on the host first (owner's rule: QA before UAT).
 - **Loudness parity.** Each TYPE's default return RMS is within ±1 dB of QUAD's default, on the same noise burst at MIX 0.5. This sets `WET[type]`.
 - **Wobble.** At WOBBLE 0, the output equals the output with the LFO frozen. At WOBBLE 1, a short-time spectrum shows the spectral peaks of a sustained tail moving.
 - **Crossfades don't click.** A full SIZE, SWELL or LENGTH sweep, and a SYNC 1/8 → 1/4 step mid-tail, keep the max second difference within `click_free_test`'s bound.
-- **Hot send.** Every TYPE at its maximum feedback (REGEN 1, DECAY 1, smallest SIZE) takes three stimuli:
-  - a full-scale sine swept from 50 Hz to 10 kHz over 10 s. Clamp hits are counted on every line write, and must be ≤ 0.1 % of writes;
+- **Hot send.** Every TYPE at its maximum feedback (REGEN 1, DECAY 1, smallest SIZE) takes these stimuli:
+  - a full-scale sine swept from 50 Hz to 10 kHz over 10 s. Clamp hits are counted on every line write, and must be ≤ 0.1 % of writes. These are the transients of § Level plan;
   - a full-scale sine **held on a loop mode**: at k / round trip, the k whose frequency is nearest 500 Hz, held for 3 × RT60 so the coherent build-up peaks. The soft clip engages here. The return's **THD must stay ≤ 3 %** (−30 dB), and there must be **zero** i16 clamp hits.
     - **Why 3 %.** It is the level of light tape saturation, and it applies only to a pathological input: a pure tone held exactly on a loop mode for seconds at maximum decay. Anything below it sits under the reverb's own diffusion smear. A tighter bound would need a lower input gain, which costs the noise floor above;
-  - a −12 dBFS pink-noise pad held for 10 s: the soft clip never engages, so the output is **bit-identical** to the same engine built without the clip.
-- **Noise floor.** At GRIT 0 and 0.3, each TYPE's quantisation noise is measured as its i16 engine's output minus an f32-line build of the same engine, on the same noise-burst tail at MIX 1. It must lie within ±2 dB of QUAD's measured the same way.
+  - a full-scale sine **held on the loop mode nearest 5 kHz**, for 3 × RT60. The energy at non-harmonic frequencies (aliases such as 9 kHz) must stay ≤ **−40 dB** against the fundamental. That is a third of the 3 % THD bound, and below the diffusion smear at that level;
+  - a −12 dBFS RMS pink-noise pad held for 10 s, at the **default DECAY**. The soft clip never engages, so the output is **bit-identical** to the same engine built without the clip, with zero clamp hits;
+  - the same pad at **maximum DECAY**. The clip shaves peaks, and the return's difference from an unclipped f32 reference must stay ≤ −40 dB, with zero clamp hits;
+  - **every bound in § Level plan's table**, as an assertion: the engine records each stored quantity's peak magnitude through all of the stimuli above. Each must stay within its bound, or show only the counted transient clamp hits.
+- **Noise floor.** At GRIT 0 and 0.3, each TYPE's quantisation noise is measured as its i16 engine's output minus an f32-line build of the same engine, on the same noise-burst tail at MIX 1. It must lie no more than **4 dB** above QUAD's, measured the same way (§ Level plan's estimates: +2 to +4).
 - **Sanitising.** NaN and out-of-range knobs render finite and recover, as QUAD's do.
 
 ### Switch
@@ -968,7 +1036,7 @@ Each plan task's review grades quality, efficiency, performance and principled-n
   - No new gesture or page type.
 - **Performance.**
   - Moving reads are costed and limited to the wobble.
-  - Every TYPE estimates at or under QUAD + 3 cycles at either pair cost, inside both headrooms.
+  - Every TYPE estimates within +18 cycles of QUAD at either pair cost, inside both headrooms.
   - Step 0 benches the tightest kernels on the chip before any TYPE work.
   - `cost_test`'s voice counts are the gate, and so is the stress run.
 - **Principled-ness.**
