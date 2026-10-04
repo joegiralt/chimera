@@ -358,7 +358,11 @@ impl Sim {
         let a = *self.acks.read();
         // The UI's u32 epoch gate, and the seq window that agrees with it.
         let fresh = a.epoch == self.epoch;
+        #[cfg(debug_assertions)]
         let admits = self.ui.admits(a.acked);
+        // The window is a debug check: a release build has only the gate.
+        #[cfg(not(debug_assertions))]
+        let admits = fresh;
         if fresh {
             self.ui.ack(a.acked);
             self.model.acked = a.at;
