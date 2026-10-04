@@ -703,7 +703,7 @@ where
             }
         }
     }
-    for (op, label) in ["1", "2", "3", "4", "5", "6"].into_iter().enumerate() {
+    for (op, &label) in crate::part::NUMERALS[1..=OPS].iter().enumerate() {
         let (x, y) = l.pos[op];
         let c = blend(
             on(a.carriers & (1 << op) != 0),

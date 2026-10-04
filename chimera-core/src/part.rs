@@ -266,11 +266,12 @@ pub static PART_SPECS: [ParamSpec; 10] = [
         .glyph(crate::ui::glyph::FocusGlyph::None),
 ];
 
-/// CH's values, by channel number (the byte is the meaning).
-const CHANNEL_IDENTS: [&str; 16] = [
+/// 0 to 15 as text: CH's values by channel number (the byte is the
+/// meaning), and the digits ORB and the algorithm's operators draw.
+pub(crate) const NUMERALS: [&str; 16] = [
     "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15",
 ];
-const _: () = assert!(CHANNEL_IDENTS.len() == PART_SPECS[0].max as usize + 1);
+const _: () = assert!(NUMERALS.len() == PART_SPECS[0].max as usize + 1);
 
 impl Block for PartParams {
     fn specs(&self) -> &'static [ParamSpec] {
@@ -326,7 +327,7 @@ impl Block for PartParams {
 
     fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
         match id {
-            Self::CHANNEL => CHANNEL_IDENTS.get(usize::from(self.channel.get())).copied(),
+            Self::CHANNEL => NUMERALS.get(usize::from(self.channel.get())).copied(),
             Self::MODE => Some(self.mode.disk_ident()),
             Self::OUTPUT => Some(self.output.disk_ident()),
             Self::SNAP => Some(self.snap.disk_ident()),

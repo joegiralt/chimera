@@ -21,6 +21,7 @@ use crate::orbit::ring::{ACCENT_BOOST, NoteMode, Ring};
 use crate::orbit::runner::Capture;
 use crate::orbit::scene::{OrbitSong, Scene, SceneIdx, SceneRing};
 use crate::orbit::{RINGS, RingIdx};
+use crate::part::NUMERALS;
 use crate::ui::block_def::{BlockDef, VizType};
 use crate::ui::draw;
 use crate::ui::fmt::{FmtBuf, fmt_val};
@@ -476,7 +477,7 @@ where
     // Its Part by where it starts, dimmed with it: rings 1 and 3 left, 2
     // and 4 right, so the column breathes; ring 5's under its top, in the
     // middle, clear of its own last steps.
-    let s = PART_DIGITS[part_of(f, r) - 1];
+    let s = NUMERALS[part_of(f, r)];
     let ink = if ring.mute {
         theme::PILL_EDGE
     } else {
@@ -766,9 +767,6 @@ fn cursor_note(f: &OrbitFrame) -> FmtBuf {
     FmtBuf::of(format_args!("{}", f.chords().tonic.up(f.ui.interval())))
 }
 
-/// The Parts' numbers as ORB draws them: no formatting in flash.
-const PART_DIGITS: [&str; crate::hw::MAX_PARTS] = ["1", "2", "3", "4", "5", "6"];
-
 /// Ring `r`'s Part, one-based.
 fn part_of(f: &OrbitFrame, r: RingIdx) -> usize {
     f.scene().rings[r.get() as usize].target.part().index() + 1
@@ -779,12 +777,15 @@ pub fn cell_text(cell: OrbitCell, f: &OrbitFrame, ring: RingIdx) -> FmtBuf {
     let c = f.chords();
     match cell {
         // The ring and its Part: "3 › P3".
-        OrbitCell::Ring => FmtBuf::of(format_args!(
-            "{} {} P{}",
-            ring.get() + 1,
-            draw::CHEVRON,
-            part_of(f, ring)
-        )),
+        OrbitCell::Ring => {
+            let mut b = FmtBuf::new();
+            let _ = b.write_str(NUMERALS[usize::from(ring.get()) + 1]);
+            let _ = b.write_char(' ');
+            let _ = b.write_char(draw::CHEVRON);
+            let _ = b.write_str(" P");
+            let _ = b.write_str(NUMERALS[part_of(f, ring)]);
+            b
+        }
         // As the cell's format shows its value: SCENE one-based, LEARN OFF
         // or ON, SWITCH LOOP.
         OrbitCell::Scene | OrbitCell::Learn | OrbitCell::Switch => {
