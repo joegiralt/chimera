@@ -347,7 +347,7 @@ These are estimates, to be measured with `rust-size` on `bench,orbit` (the large
 | **Card pulled during an add or a project load's pass 2** | The add abandons its staged bytes, with no index entry and the meter unchanged: `CARD READ FAILED`. A load fails and falls back to NEW, as today. |
 | **Card swapped** | `Card::run`'s volume check refuses it (ADR 0043/0046), with the same outcome. |
 | **Slow card** | A source read is 4 KiB a UI pass, behind `ui::busy`. 154 KB at 1.3 MB/s (#279's measurement) is 120 ms of card time. At full audio load, with UI passes of 22–26 ms (stress test 2026-10-02), it takes about 1 s on screen. MENU cancels an add. A project load's sources read inside its existing fade. |
-| **A source missing from the card at load** | Its `PoolSource` loads as an empty slot. A Part that resolved to it loads silent, with `SOURCE MISSING`. The note names the count. |
+| **A source missing from the card at load** | Its `PoolSource` loads as an **absent** entry: it keeps its `SourceRef`, costs 0 B, and its row reads `MISSING`. A Part that resolves to it loads silent, with `SOURCE MISSING`, and the note names the count. A save writes the ref back unchanged, so a card missing a file for a while never loses the project's reference to it. PURGE removes an absent entry only when nothing uses it. |
 | **Project over the budget** | It loads in priority order, with a note. |
 | **A purged or cleared source still sounding** | It is retired, its bytes stay pending until the note ends, and the meter shows them in `FAINT`. |
 
