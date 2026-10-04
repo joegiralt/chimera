@@ -123,12 +123,16 @@ const FX: [FxRow; FX_ROWS] = [
     ("MIX", |_, _| {}),
     ("CHORUS", |s, _| worst_chorus(s)),
     ("DELAY", |s, _| worst_delay(s)),
-    ("REVERB", worst_reverb),
+    ("REV QUAD", worst_reverb),
     #[cfg(feature = "master-tape")]
     ("TAPE", |s, _| worst_tape(s)),
     ("COMP", |s, _| worst_comp(s)),
     ("BUS", worst_bus),
 ];
+
+/// The REVERB screen's rows, each timed as an FX row is, less MIX.
+const REV_ROWS: usize = 1;
+const REV: [FxRow; REV_ROWS] = [("REV QUAD", worst_reverb)];
 
 /// The STRESS rows' blocks: 10 s, past NEW's four bars at its BPM.
 const STRESS_BLOCKS: u32 = 7_500;
@@ -610,6 +614,14 @@ pub fn run(
     let kernel = time_kernel();
     show(rec, clocks, &rows, kernel, &fx);
     hold(clocks);
+    let rev: [u32; REV_ROWS] = core::array::from_fn(|i| rig.time_bus(REV[i].1));
+    let bus_v = rig.time_bus_with_voices(worst_bus);
+    let stress = (
+        [rig.stress(true).0.0, rig.stress(false).0.0],
+        BlockBudget::for_cpu(clocks.cpu_hz).budget_cycles(),
+    );
+    show_reverb(rec, &rev, fx[0], bus_v, stress);
+    hold(clocks);
     let mut routing = [Counts::default(); ROUTING_ROWS];
     for (row, &(_, part, each)) in routing.iter_mut().zip(&ROUTING) {
         for n in 1..=MAX_VOICES {
@@ -938,11 +950,33 @@ impl Rig<'_> {
     /// sets the FX before every block.
     #[inline(never)]
     fn time_bus(&mut self, each: fn(&mut AudioShared, u32)) -> u32 {
+        self.bus(each, false)
+    }
+
+    /// `time_bus` with six `a16_a17` voices on Part 1 rendered, untimed,
+    /// by `Instrument::render` before every block: their cache traffic
+    /// sits between the FX blocks, as in the running synth.
+    #[inline(never)]
+    fn time_bus_with_voices(&mut self, each: fn(&mut AudioShared, u32)) -> u32 {
+        self.bus(each, true)
+    }
+
+    fn bus(&mut self, each: fn(&mut AudioShared, u32), voices: bool) -> u32 {
         let fx = FxBus::init_in_place(self.fx_slot);
         let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
-        for part in shared.parts.iter_mut() {
+        for (i, part) in shared.parts.iter_mut().enumerate() {
             part.mix.sends = [0.5; FX_SENDS];
+            // One Part to a channel: only Part 1 plays the notes.
+            part.mix.channel = MidiChannel::clamped(i as u8);
         }
+        let mut inst = voices.then(|| {
+            // The allocator must not refuse what the bench wants to measure.
+            let budget = SampleBudget::for_cpu(u32::MAX);
+            let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
+            shared.parts[0].params = a16_a17();
+            hold_notes(inst, shared, 0);
+            inst
+        });
         let mut x = 0x1234_5678u32;
         let noise: [f32; BLOCK_SIZE] = core::array::from_fn(|_| {
             x ^= x << 13;
@@ -954,7 +988,13 @@ impl Rig<'_> {
         let written = [true; MAX_PARTS];
         let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
         let mut pans = MixState::default();
+        let scope = &mut self.scope;
+        // Its cycles: the voices' render before it is not counted.
         let mut block = |shared: &mut AudioShared, fx: &mut FxBus, dac: &mut DacBlocks, b: u32| {
+            if let Some(inst) = inst.as_deref_mut() {
+                inst.render(fx, dac, shared, scope);
+            }
+            let start = DWT::cycle_count();
             each(shared, b);
             black_box(mix_parts(
                 black_box(&buses),
@@ -966,15 +1006,16 @@ impl Rig<'_> {
                 SAMPLE_RATE,
                 dac,
             ));
+            DWT::cycle_count().wrapping_sub(start)
         };
         for b in 0..WARM_BLOCKS {
             block(shared, fx, &mut self.dac, b);
         }
-        let start = DWT::cycle_count();
+        let mut cycles = 0u32;
         for b in 0..TIMED_BLOCKS {
-            block(shared, fx, &mut self.dac, WARM_BLOCKS + b);
+            cycles = cycles.wrapping_add(block(shared, fx, &mut self.dac, WARM_BLOCKS + b));
         }
-        DWT::cycle_count().wrapping_sub(start) / (TIMED_BLOCKS * BLOCK_SIZE as u32)
+        cycles / (TIMED_BLOCKS * BLOCK_SIZE as u32)
     }
 
     /// The costliest whole callback block over `STRESS_BLOCKS` and the most
@@ -1355,6 +1396,38 @@ fn show(
             (4 + col * 78, y + row * 10),
         );
     }
+    rec.flush();
+}
+
+/// The REVERB screen: each `REV` row less MIX and BUS+V as read, three to
+/// a line as the FX screen's, then the costliest block against its budget.
+fn show_reverb(
+    rec: &mut Recorder<'_, impl ChimeraDisplay>,
+    rev: &[u32; REV_ROWS],
+    mix: u32,
+    bus_v: u32,
+    ([first, after], budget): ([u32; 2], u32),
+) {
+    rec.clear();
+    rec.heading("REVERB");
+    let mut line = FmtBuf::new();
+    let rows = REV
+        .iter()
+        .map(|&(label, _)| label)
+        .zip(rev.iter().map(|&c| c.saturating_sub(mix)));
+    let cells = rows.chain([("BUS+V", bus_v)]);
+    let mut y = 46;
+    for (i, (label, c)) in cells.enumerate() {
+        line.clear();
+        let _ = write!(line, "{label} {c}");
+        let (col, row) = ((i % 3) as i32, (i / 3) as i32);
+        y = 46 + row * 10;
+        rec.line(Face::Label(theme::INK2), line.as_str(), (4 + col * 78, y));
+    }
+    line.clear();
+    // Keys before ORBIT starts, then after, as MEMORY's STRESS.
+    let _ = write!(line, "STRESS {first}/{after}/{budget}");
+    rec.line(Face::Label(theme::INK2), line.as_str(), (4, y + 10));
     rec.flush();
 }
 
