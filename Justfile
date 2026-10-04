@@ -53,7 +53,8 @@ check:
 # the stack instead of in a static); then `tools/stack_depth.py` sums nested
 # frames from `main` and from each interrupt entry (the audio's DMA1_STR0,
 # render_half and the FX bus under it, MIDI's USART1, SysTick, HardFault),
-# all nested at once, against the stack. Checked for the default,
+# all nested at once, against the stack, each call through a pointer
+# charged the deepest address-taken function, three deep. Checked for the default,
 # no-default, bench, bench with the master tape, orbit, bench with orbit
 # and sd-probe feature sets (sd-probe has no interrupts: frames only).
 # Needs the llvm-tools rustup component; a missing llvm-objdump or an
@@ -70,6 +71,7 @@ stack-check:
         cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf $features
         test -r "$elf"
         dis="$("$objdump" -d --no-show-raw-insn -C "$elf")"
+        data="$("$objdump" -s -j .rodata -j .data "$elf")"
         if grep -E -e '^[0-9a-f]{8} <' -e 'sub(\.w)?[[:space:]]+sp, (sp, )?(#0x([2-9a-f][0-9a-f]{3}|[0-9a-f]{5,})$|r[0-9])' <<<"$dis" \
             | grep -B1 -E '^[[:space:]]' \
             | grep -v -e '^--$'; then
@@ -79,7 +81,7 @@ stack-check:
         if [[ "$features" != *sd-probe* ]]; then
             addr() { "$nm" "$elf" | awk -v s="$1" '$3 == s { print strtonum("0x" $1) }'; }
             echo "stack-depth (features: ${features:-default})"
-            python3 tools/stack_depth.py "$(( $(addr _stack_start) - $(addr _stack_end) ))" <<<"$dis"
+            python3 tools/stack_depth.py "$(( $(addr _stack_start) - $(addr _stack_end) ))" <<<"$dis"$'\n'"$data"
         fi
     done
 

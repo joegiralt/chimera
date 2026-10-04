@@ -52,9 +52,12 @@ copy.
   flash alone: inlined, `synth` fits the stack (4.8 KB) but the release
   `--features orbit` text grows 6.3 KB.
 - The stack check now also sums nested frames (`tools/stack_depth.py`):
-  `main` plus every interrupt entry nested at once is 10–13 KB across the
-  feature sets, a lower bound since calls through a pointer aren't
-  followed. Note for later: ADR 0025's stack budget is to be superseded by
+  `main` plus every interrupt entry nested at once. Direct calls alone
+  give `main` 21.9 KB and the audio interrupt 4.8 KB (bench with ORBIT).
+  Each call through a pointer is charged the deepest address-taken
+  function, nested three deep (about 17 KB), which brings the sum to
+  47–54 KB of the 63,232 B allowed across the feature sets. That charge
+  is a coarse upper bound resting on the stated nesting assumption. Note for later: ADR 0025's stack budget is to be superseded by
   an ADR once the painted high-water mark is re-measured on the unit
   under fat LTO; not written yet.
 - Debug builds are untouched.
