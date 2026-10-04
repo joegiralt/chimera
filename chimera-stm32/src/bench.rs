@@ -16,7 +16,7 @@ use chimera_core::dsp::algo::tx::FEEDBACK_CYCLES;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::engines::{EngineSlot, SlotKind};
 use chimera_core::dsp::filter::FilterMode;
-use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
+use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use chimera_core::dsp::modal::{
     BankModes, CHORD_COUNT, ModalEngine, ModalParams, ResonatorMode, SymPool,
 };
@@ -964,6 +964,9 @@ impl Rig<'_> {
     fn bus(&mut self, each: fn(&mut AudioShared, u32), voices: bool) -> u32 {
         let fx = FxBus::init_in_place(self.fx_slot);
         let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
+        // Every effect off but the row's: the boot project's FX would sit
+        // in MIX and every row less it.
+        shared.fx = FxParams::default();
         for (i, part) in shared.parts.iter_mut().enumerate() {
             part.mix.sends = [0.5; FX_SENDS];
             // One Part to a channel: only Part 1 plays the notes.
@@ -1034,6 +1037,7 @@ impl Rig<'_> {
         let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
         let fx = FxBus::init_in_place(self.fx_slot);
         let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
+        shared.fx = FxParams::default();
         for (i, part) in shared.parts.iter_mut().enumerate() {
             part.mix = PartParams::for_part(i);
             part.mix.sends = [0.5; FX_SENDS];
