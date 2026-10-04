@@ -44,7 +44,7 @@ fn every_mutation_bumps_the_revision() {
     bumps!(
         p,
         "pool_store",
-        p.pool_store(free, Sound::init(EngineType::Algo))
+        p.pool_store(free, &Sound::init(EngineType::Algo)).unwrap()
     );
     bumps!(p, "pool_clear", {
         let _ = p.pool_clear(free);

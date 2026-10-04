@@ -349,7 +349,8 @@ pub(crate) mod tests {
             .params
             .filter
             .set(FilterParams::RESONANCE, 0.7);
-        p.pool_store(SlotId::ALL[20], Sound::init(EngineType::Modal));
+        p.pool_store(SlotId::ALL[20], &Sound::init(EngineType::Modal))
+            .unwrap();
         p.edit_fx().reverb.mix = 0.6;
         p.set_name(ProjectName::new("RELAUNCH").unwrap());
         let file = new_project_id(&mut card, &mut store).out.unwrap();

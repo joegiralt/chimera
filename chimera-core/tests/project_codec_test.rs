@@ -214,7 +214,7 @@ fn record_order_is_fx_then_slots_then_parts() {
         .map(|(t, b)| (*t, b.first().copied().unwrap_or(0)))
         .collect();
     let mut want = vec![(FX, 0)];
-    want.extend((0..32).map(|s| (SLOT, s)));
+    want.extend((0..128).map(|s| (SLOT, s)));
     want.extend((0..6).map(|n| (PART, n)));
     assert_eq!(contexts, want);
     assert_eq!(recs[0], (FX, vec![]));
@@ -235,7 +235,7 @@ fn slot_and_part_names_round_trip() {
     let (mut p, t) = Project::boxed();
     let mut s = factory_sound(0).unwrap();
     s.name = SoundName::new("DUB-042").unwrap();
-    p.pool_store(SlotId::ALL[12], s);
+    p.pool_store(SlotId::ALL[12], &s).unwrap();
     load(
         &mut p,
         t,
@@ -249,12 +249,12 @@ fn slot_and_part_names_round_trip() {
     let (mut q, _) = Project::boxed();
     decode(&encode(&p), &mut q).unwrap();
     assert_eq!(
-        q.pool().get(SlotId::ALL[12]).unwrap().name.as_str(),
+        q.pool().get(SlotId::ALL[12]).unwrap().name().as_str(),
         "DUB-042"
     );
     assert_eq!(q.part(PartId::ALL[1]).sound.name.as_str(), "DUB-043");
     assert_eq!(
-        q.pool().get(SlotId::ALL[0]).unwrap().name,
+        q.pool().get(SlotId::ALL[0]).unwrap().name(),
         factory_sound(0).unwrap().name
     );
 }
@@ -291,7 +291,7 @@ fn origins_resolve_against_the_loaded_pool() {
             } => {
                 let s = q.pool().get(slot).expect("a filled slot");
                 assert_eq!(generation, q.pool().generation(slot));
-                assert_eq!(crc, chimera_core::storage::sound_crc(s));
+                assert_eq!(crc, s.crc());
             }
             Origin::Init(e) => assert_eq!(p.part(id).origin(), Origin::Init(e)),
         }
@@ -362,7 +362,7 @@ fn structure_errors() {
         decode_err(&duplicate_slot(SlotId::ALL[2])),
         FileError::Corrupt
     );
-    assert_eq!(decode_err(&slot_index(32)), FileError::Bounds);
+    assert_eq!(decode_err(&slot_index(128)), FileError::Bounds);
     assert_eq!(decode_err(&part_index(6)), FileError::Bounds);
     assert_eq!(decode_err(&block_before_context()), FileError::Corrupt);
     assert_eq!(decode_err(&nameless_header()), FileError::Corrupt);
@@ -517,7 +517,8 @@ fn crc_sees_name_pool_fx_and_mix() {
     assert_ne!(project_crc(&p), base);
     p.edit_part(PartId::ALL[0]).mix.pan = 0.0;
     assert_eq!(project_crc(&p), base);
-    p.pool_store(SlotId::ALL[20], Sound::init(EngineType::Algo));
+    p.pool_store(SlotId::ALL[20], &Sound::init(EngineType::Algo))
+        .unwrap();
     assert_ne!(project_crc(&p), base);
     p.pool_clear(SlotId::ALL[20]).unwrap();
     assert_eq!(project_crc(&p), base); // content, not generations
@@ -531,4 +532,78 @@ fn new_loaded_over_anything_is_the_template() {
     decode(&encode(&new), &mut p).unwrap();
     assert_eq!(project_crc(&p), t.get());
     same(&p, &new);
+}
+
+/// A context's Sound as its records alone decode, through a Sound file
+/// (the mix, Origin and ORBIT's records dropped); and those records' bytes.
+fn alone(recs: &[(u16, Vec<u8>)], r: std::ops::Range<usize>) -> (Sound, usize) {
+    let sound_tag = |t: u16, p: &[u8]| match t {
+        BLOCK => p[0] != PART_BLOCK,
+        _ => matches!(t, ENGINE | 0x0003 | 0x0004 | 0x0005),
+    };
+    let body: Vec<_> = recs[r.start + 1..r.end]
+        .iter()
+        .filter(|(t, p)| sound_tag(*t, p))
+        .cloned()
+        .collect();
+    let (h, _) = records(&common::codec_util::encode(&Sound::init(EngineType::Algo)));
+    let mut s = decode_sound(&rebuild(&h, &body)).unwrap();
+    s.name = SoundName::from_padded(recs[r.start].1[1..].try_into().unwrap()).unwrap();
+    (s, body.iter().map(|(_, p)| 4 + p.len()).sum())
+}
+
+/// `s`'s records as `encode_sound` writes them now.
+fn sparse(s: &Sound) -> Vec<u8> {
+    let f = common::codec_util::encode(s);
+    f[28..f.len() - 4].to_vec()
+}
+
+/// The v1 fixture, written before sparse Sounds: every Part decodes as its
+/// records alone do, and every slot holds its Sound re-encoded sparse.
+#[test]
+fn v1_project_fixture_loads_same() {
+    let f = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/v1/project.prj"
+    ))
+    .unwrap();
+    let (mut q, _) = Project::boxed();
+    decode(&f, &mut q).unwrap();
+    let (_, recs) = records(&f);
+    for id in PartId::ALL {
+        let (want, _) = alone(&recs, part_ctx(&recs, id));
+        assert!(q.part(id).sound.bits_eq(&want), "Part {}", id.index());
+    }
+    let mut slots = 0;
+    for s in SlotId::ALL {
+        let Some(e) = q.pool().get(s) else { continue };
+        slots += 1;
+        let (want, dense_len) = alone(&recs, context(&recs, SLOT, s.index() as u8));
+        assert!(e.to_sound().bits_eq(&want), "slot {}", s.index());
+        assert_eq!(e.bytes()[..16], want.name.padded());
+        assert_eq!(e.bytes()[16..], sparse(&want), "slot {}", s.index());
+        assert!(e.bytes().len() < 16 + dense_len, "slot {}", s.index());
+    }
+    assert_eq!(slots, 11);
+}
+
+/// The last slot round-trips; past it is out of bounds.
+#[test]
+fn slot_index_127_round_trips() {
+    let (mut p, _) = Project::boxed();
+    let last = SlotId::ALL[127];
+    let mut s = factory_sound(3).unwrap();
+    s.name = SoundName::new("LAST").unwrap();
+    p.pool_store(last, &s).unwrap();
+    let (mut q, _) = Project::boxed();
+    decode(&encode(&p), &mut q).unwrap();
+    same(&p, &q);
+    assert!(q.pool().get(last).unwrap().to_sound().bits_eq(&s));
+    // NEW's slot 0 renumbered 127: it lands there.
+    let mut q = new_project();
+    decode(&slot_index(127), &mut q).unwrap();
+    assert!(q.pool().get(SlotId::ALL[0]).is_none());
+    let moved = q.pool().get(last).unwrap().to_sound();
+    assert!(moved.bits_eq(&factory_sound(0).unwrap()));
+    assert_eq!(decode_err(&slot_index(128)), FileError::Bounds);
 }

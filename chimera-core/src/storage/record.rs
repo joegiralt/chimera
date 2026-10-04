@@ -185,15 +185,19 @@ impl<'s> RecordWriter<'s> {
         }
     }
 
+    /// A writer of records alone, no header: a pool entry's.
+    pub(crate) fn over(sink: &'s mut dyn ByteSink) -> Self {
+        Self::new(sink)
+    }
+
     fn raw(&mut self, b: &[u8]) -> Result<(), StoreError> {
         self.crc.update(b);
         self.sink.put(b)
     }
 
-    /// Records copied as they are from a whole file the console was sent,
-    /// hashed into this file's CRC like any other. The kind's check judges
-    /// them once they are on the card.
-    #[cfg(feature = "card-put")]
+    /// Records copied as they are, hashed into this file's CRC like any
+    /// other: a pool entry's, or a whole file the console was sent. The
+    /// kind's check judges them once they are on the card.
     pub(crate) fn copy(&mut self, records: &[u8]) -> Result<(), StoreError> {
         self.raw(records)
     }

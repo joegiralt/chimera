@@ -57,7 +57,8 @@ use crate::orbit::runner::{OrbitShared, OrbitView};
 use crate::orbit::scene::{OrbitSong, Refused, SceneIdx, SceneSave};
 use crate::params::{EngineType, ParamSnapshot};
 use crate::perf::load::AudioStats;
-use crate::preset::POOL_SIZE;
+use crate::preset::MAX_SOUNDS;
+use crate::project::arena::ArenaWriter;
 use crate::project::{
     self, CardOut, Confirmed, DeleteTarget, Line, LoadLink, PartEdit, PartFrom, PartId, PartSource,
     Project, ProjectFile, ProjectNote, ProjectSource, ProjectStatus, ReplaceGuard, SaveTo,
@@ -261,6 +262,7 @@ crate::in_place::field_list!(UiState => UiState {
     dfu,
 });
 
+#[cfg(any(test, feature = "test-support"))]
 impl Default for UiState {
     fn default() -> Self {
         Self::new()
@@ -268,20 +270,26 @@ impl Default for UiState {
 }
 
 impl UiState {
+    /// On an arena of its own, leaked (host tests).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn new() -> Self {
-        // SAFETY: `init_in_place` writes every field of the slot.
-        unsafe { by_value(Self::init_in_place) }
+        Self::with_arena(ArenaWriter::leaked())
     }
 
-    // In place so the ~34 KB state (the 28 KB pool) never passes through
-    // the firmware's stack.
-    pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
+    /// By value, its pool's Sounds in `arena`: the desktop's.
+    pub fn with_arena(arena: ArenaWriter) -> Self {
+        // SAFETY: `init_in_place` writes every field of the slot.
+        unsafe { by_value(|s| Self::init_in_place(s, arena)) }
+    }
+
+    // In place so the state never passes through the firmware's stack.
+    pub fn init_in_place(slot: &mut MaybeUninit<Self>, arena: ArenaWriter) -> &mut Self {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; the project is built in
         // place before it is borrowed, and every other field is written
         // once, all before `assume_init_mut`.
         unsafe {
-            let template = Project::init_in_place(uninit_at(addr_of_mut!((*p).project)));
+            let template = Project::init_in_place(uninit_at(addr_of_mut!((*p).project)), arena);
             let project = &mut *addr_of_mut!((*p).project);
             let cx = nav_cx(project);
             let loc = Location::home(&cx);
@@ -934,7 +942,7 @@ impl UiState {
         // Init entries follow the pool slots.
         let from = browser::slot_at(cursor).map(PartFrom::Slot).or_else(|| {
             cursor
-                .checked_sub(POOL_SIZE)
+                .checked_sub(MAX_SOUNDS)
                 .and_then(|j| browser::INIT_TYPES.get(j))
                 .map(|&e| PartFrom::Init(e))
         });

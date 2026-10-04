@@ -5,7 +5,7 @@
 use crate::preset::Sound;
 use crate::storage::sound_crc;
 
-use super::{Origin, Part, PartFrom, PartId, PartSet, PartSource, Pool, Project, SlotId};
+use super::{Origin, Part, PartFrom, PartId, PartSet, PartSource, Pool, PoolFull, Project, SlotId};
 use super::{TemplateCrc, project_crc};
 
 /// A Part against its slot: `Edited` is `*`, `Stale` is `◦`.
@@ -27,7 +27,7 @@ pub fn part_status(part: &Part, pool: &Pool) -> PartStatus {
             crc,
         } => (slot, generation, crc),
     };
-    if pool.get(slot).is_some_and(|s| part.sound.bits_eq(s)) {
+    if pool.get(slot).is_some_and(|s| s.matches(&part.sound)) {
         PartStatus::Clean
     } else if pool.generation(slot) == generation || sound_crc(&part.sound) != crc {
         PartStatus::Edited
@@ -209,36 +209,43 @@ pub fn part_actions(p: &Project, part: PartId) -> PartActions {
     }
 }
 
-/// The action no longer applies: its Part's status, Origin or Sound changed,
-/// its new slot filled, or its revert slot emptied.
+/// Why a Part action didn't run.
 #[derive(Debug, PartialEq)]
-pub struct ActionGone;
+pub enum ActionRefused {
+    /// It no longer applies: its Part's status, Origin or Sound changed,
+    /// its new slot filled, or its revert slot emptied.
+    Gone,
+    /// The Sound won't fit the pool's free bytes.
+    Full(PoolFull),
+}
 
 impl Project {
     /// Ok: the other users of the slot that now derive Stale (as `save_part_to`).
-    pub fn apply_part_action(&mut self, a: PartAction) -> Result<PartSet, ActionGone> {
+    pub fn apply_part_action(&mut self, a: PartAction) -> Result<PartSet, ActionRefused> {
         self.bump();
         let x = self.part(a.part);
         if x.origin != a.origin
             || part_status(x, &self.pool) != a.status
             || sound_crc(&x.sound) != a.crc
         {
-            return Err(ActionGone);
+            return Err(ActionRefused::Gone);
         }
         match a.kind {
-            PartActionKind::OverSlot(s) => Ok(self.save_part_to(a.part, s)),
+            PartActionKind::OverSlot(s) => {
+                self.save_part_to(a.part, s).map_err(ActionRefused::Full)
+            }
             PartActionKind::NewSlot(s) if self.pool.get(s).is_none() => {
-                Ok(self.save_part_to(a.part, s))
+                self.save_part_to(a.part, s).map_err(ActionRefused::Full)
             }
             PartActionKind::Revert(s) => {
                 let src = PartSource {
                     part: a.part,
                     from: PartFrom::Slot(s),
                 };
-                self.load_part(src).map_err(|_| ActionGone)?;
+                self.load_part(src).map_err(|_| ActionRefused::Gone)?;
                 Ok(PartSet::EMPTY)
             }
-            PartActionKind::NewSlot(_) => Err(ActionGone),
+            PartActionKind::NewSlot(_) => Err(ActionRefused::Gone),
         }
     }
 

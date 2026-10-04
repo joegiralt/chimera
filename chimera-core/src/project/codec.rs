@@ -3,6 +3,10 @@
 //! Sound, `Block(Part)` (the mix) and `Origin`; then ORBIT's records
 //! (`orbit::records`). `Slot`, `Part` and `Fx` open a context; the records
 //! after one belong to it. An ORBIT record closes the last Part's.
+//!
+//! A slot's Sound is decoded whole, then encoded into the pool's arena as
+//! `encode_sound` writes it today (ADR 0087): a file from before sparse
+//! Sounds loads sparse.
 
 use chimera_hal::store::StoreError;
 
@@ -18,11 +22,12 @@ use crate::preset::Sound;
 use crate::storage::{
     Check, DecodeInPlace, Event, FileError, FileKind, MIGRATIONS, ReadTag, RecordBuf, RecordTag,
     RecordWriter, SoundCheck, TRANSLATIONS, decode_block, encode_block, encode_sound, records_crc,
-    sound_crc,
 };
 
+use super::arena::{ARENA_BYTES, Cost};
+use super::pool::entry_len;
 use super::template::{new_project_part, new_slot};
-use super::{Origin, Part, PartId, PartSet, Project, SlotId};
+use super::{EncodedSound, Origin, Part, PartId, PartSet, Project, SlotId};
 
 const FX_BLOCKS: [BlockRef; 5] = [
     BlockRef::Chorus,
@@ -125,6 +130,16 @@ fn put_slot(w: &mut RecordWriter<'_>, s: SlotId, sound: &Sound) -> Result<(), St
     encode_sound(sound, w)
 }
 
+/// A pool slot: its bytes are the records `put_slot` would write.
+fn put_encoded(
+    w: &mut RecordWriter<'_>,
+    s: SlotId,
+    sound: EncodedSound<'_>,
+) -> Result<(), StoreError> {
+    put_context(w, RecordTag::Slot, s.index(), sound.name())?;
+    w.copy(sound.records())
+}
+
 fn put_part(w: &mut RecordWriter<'_>, i: usize, part: &Part) -> Result<(), StoreError> {
     put_context(w, RecordTag::Part, i, part.sound.name)?;
     encode_sound(&part.sound, w)?;
@@ -141,7 +156,7 @@ pub fn encode_project(p: &Project, w: &mut RecordWriter<'_>) -> Result<(), Store
     put_fx(w, &p.perf.fx)?;
     for s in SlotId::ALL {
         if let Some(sound) = p.pool.get(s) {
-            put_slot(w, s, sound)?;
+            put_encoded(w, s, sound)?;
         }
     }
     for (i, part) in p.perf.parts.iter().enumerate() {
@@ -196,8 +211,12 @@ enum ReadOrigin {
 pub struct ProjectCheck {
     /// The open context's Sound: a fresh one per `Slot` and `Part`.
     sound: SoundCheck,
+    /// The slots' arena bytes so far, when a stage costs them: past
+    /// `ARENA_BYTES`, a load refuses the file in pass 1, before anything is
+    /// touched.
+    cost: u32,
     context: Context,
-    slots: u32,
+    slots: u128,
     parts: PartSet,
     fx: bool,
     /// The FX blocks read, a bit each in `FX_BLOCKS` order.
@@ -212,7 +231,7 @@ pub struct ProjectCheck {
     lossy: bool,
 }
 
-const _: () = assert!(SlotId::ALL.len() <= u32::BITS as usize);
+const _: () = assert!(SlotId::ALL.len() <= u128::BITS as usize);
 
 impl Default for ProjectCheck {
     fn default() -> Self {
@@ -224,6 +243,7 @@ impl ProjectCheck {
     pub fn new() -> Self {
         ProjectCheck {
             sound: SoundCheck::begin(None),
+            cost: 0,
             context: Context::None,
             slots: 0,
             parts: PartSet::EMPTY,
@@ -245,7 +265,15 @@ impl ProjectCheck {
     /// one. `Bounds`: an index out of range or a payload of the wrong
     /// shape. `BadName`: a context's name. An ORBIT record is never an
     /// error past its place: a bad one keeps the neutral base.
-    fn step(&mut self, e: Event<'_>, target: Option<&mut Project>) -> Result<(), FileError> {
+    ///
+    /// `stage`, a load's own: each `Slot`'s Sound decoded whole, to cost it
+    /// and, in pass 2, store it. A check alone holds no Sound.
+    fn step(
+        &mut self,
+        e: Event<'_>,
+        target: Option<&mut Project>,
+        stage: Option<&mut Sound>,
+    ) -> Result<(), FileError> {
         let (tag, p) = match e {
             Event::Header(h) => {
                 if h.kind != FileKind::Project {
@@ -254,10 +282,8 @@ impl ProjectCheck {
                 let name = h.name.ok_or(FileError::Corrupt)?;
                 *self = ProjectCheck::new();
                 if let Some(t) = target {
-                    // Every slot through `clear`: generations only move.
-                    for s in SlotId::ALL {
-                        t.pool.clear(s);
-                    }
+                    // Every slot cleared: generations only move.
+                    t.pool.clear_all();
                     t.perf.fx = FxParams::default();
                     t.meta.name = name;
                     t.orbit.clear_for_load();
@@ -267,20 +293,17 @@ impl ProjectCheck {
             Event::Record(tag, p) => (tag, p),
         };
         match (tag, self.context) {
-            (ReadTag::Known(t), _) if t.is_orbit() => self.orbit(t, p, target),
+            (ReadTag::Known(t), _) if t.is_orbit() => self.orbit(t, p, target, stage),
             (ReadTag::Unknown(_), Context::Orbit) => Ok(()),
             (ReadTag::Known(_), Context::Orbit) => Err(FileError::Corrupt),
             (ReadTag::Known(t @ (RecordTag::Fx | RecordTag::Slot | RecordTag::Part)), _) => {
-                self.open(t, p, target)
+                self.open(t, p, target, stage)
             }
             (ReadTag::Unknown(_), Context::None | Context::Fx) => Ok(()),
             (ReadTag::Known(_), Context::None) => Err(FileError::Corrupt),
             (ReadTag::Known(RecordTag::Block), Context::Fx) => self.fx_block(p, target),
             (ReadTag::Known(_), Context::Fx) => Err(FileError::Corrupt),
-            (_, Context::Slot(s)) => {
-                let staged = target.and_then(|t| t.pool.slots[s.index()].as_mut());
-                self.sound.step(e, staged)
-            }
+            (_, Context::Slot(_)) => self.sound.step(e, stage),
             (ReadTag::Known(RecordTag::Block), Context::Part(n))
                 if p.first() == Some(&PART_CODE) =>
             {
@@ -321,12 +344,13 @@ impl ProjectCheck {
         tag: RecordTag,
         p: &[u8],
         mut target: Option<&mut Project>,
+        stage: Option<&mut Sound>,
     ) -> Result<(), FileError> {
         if self.context != Context::Orbit {
             if PartId::ALL.iter().any(|&n| !self.parts.contains(n)) {
                 return Err(FileError::Corrupt);
             }
-            self.close(target.as_deref_mut())?;
+            self.close(target.as_deref_mut(), stage)?;
             self.context = Context::Orbit;
         }
         if !read_orbit(tag, p, target.map(|t| &mut t.orbit)) {
@@ -341,8 +365,9 @@ impl ProjectCheck {
         tag: RecordTag,
         p: &[u8],
         mut target: Option<&mut Project>,
+        stage: Option<&mut Sound>,
     ) -> Result<(), FileError> {
-        self.close(target.as_deref_mut())?;
+        self.close(target.as_deref_mut(), stage)?;
         if tag == RecordTag::Fx {
             if !p.is_empty() {
                 return Err(FileError::Bounds);
@@ -364,9 +389,6 @@ impl ProjectCheck {
                 return Err(FileError::Corrupt);
             }
             self.slots |= bit;
-            if let Some(t) = target {
-                t.pool.store(s, Sound::neutral(EngineType::Algo));
-            }
             self.context = Context::Slot(s);
         } else {
             let n = PartId::new(index).ok_or(FileError::Bounds)?;
@@ -412,11 +434,26 @@ impl ProjectCheck {
     }
 
     /// Ends a `Slot` or `Part`: its Sound's `finish`, which adds the routes.
-    fn close(&mut self, target: Option<&mut Project>) -> Result<(), FileError> {
+    fn close(
+        &mut self,
+        target: Option<&mut Project>,
+        stage: Option<&mut Sound>,
+    ) -> Result<(), FileError> {
         match self.context {
             Context::Slot(s) => {
-                let staged = target.and_then(|t| t.pool.slots[s.index()].as_mut());
-                self.sound.finish(staged)
+                let Some(stage) = stage else {
+                    return self.sound.finish(None);
+                };
+                self.sound.finish(Some(&mut *stage))?;
+                self.cost += Cost::of(entry_len(stage)).bytes();
+                if self.cost as usize > ARENA_BYTES {
+                    return Err(FileError::Bounds);
+                }
+                match target {
+                    // Pass 1 costed every slot against the whole arena.
+                    Some(t) => t.pool.store(s, stage).map_err(|_| FileError::Bounds),
+                    None => Ok(()),
+                }
             }
             Context::Part(n) => {
                 let staged = target.map(|t| &mut t.perf.parts[n.index()].sound);
@@ -428,8 +465,12 @@ impl ProjectCheck {
 
     /// Closes the last context; `Corrupt` unless all six Parts were read.
     /// Then resolves each Part's Origin against the pool as loaded.
-    fn finish(&mut self, mut target: Option<&mut Project>) -> Result<(), FileError> {
-        self.close(target.as_deref_mut())?;
+    fn finish(
+        &mut self,
+        mut target: Option<&mut Project>,
+        stage: Option<&mut Sound>,
+    ) -> Result<(), FileError> {
+        self.close(target.as_deref_mut(), stage)?;
         // A file from before ORBIT: a save adds its records.
         self.lossy |= self.context != Context::Orbit;
         self.context = Context::None;
@@ -445,7 +486,7 @@ impl ProjectCheck {
                     Some(s) => Origin::Slot {
                         slot,
                         generation: t.pool.generation(slot),
-                        crc: sound_crc(s),
+                        crc: s.crc(),
                     },
                     None => Origin::Init(engine),
                 },
@@ -461,11 +502,11 @@ impl Check for ProjectCheck {
     const KIND: FileKind = FileKind::Project;
 
     fn event(&mut self, e: Event<'_>) -> Result<(), FileError> {
-        self.step(e, None)
+        self.step(e, None, None)
     }
 
     fn end(&mut self) -> Result<(), FileError> {
-        self.finish(None)
+        self.finish(None, None)
     }
 }
 
@@ -484,6 +525,8 @@ impl Check for ProjectCheck {
 pub struct ProjectDecoder<'a> {
     check: ProjectCheck,
     target: &'a mut Project,
+    /// Each slot's Sound, decoded whole: costed in pass 1, stored in pass 2.
+    stage: Sound,
 }
 
 impl<'a> ProjectDecoder<'a> {
@@ -492,6 +535,7 @@ impl<'a> ProjectDecoder<'a> {
         ProjectDecoder {
             check: ProjectCheck::new(),
             target,
+            stage: Sound::neutral(EngineType::Algo),
         }
     }
 
@@ -512,20 +556,20 @@ impl Check for ProjectDecoder<'_> {
     const KIND: FileKind = FileKind::Project;
 
     fn event(&mut self, e: Event<'_>) -> Result<(), FileError> {
-        self.check.event(e)
+        self.check.step(e, None, Some(&mut self.stage))
     }
 
     fn end(&mut self) -> Result<(), FileError> {
-        self.check.end()
+        self.check.finish(None, Some(&mut self.stage))
     }
 }
 
 impl DecodeInPlace for ProjectDecoder<'_> {
     fn apply(&mut self, e: Event<'_>) -> Result<(), FileError> {
-        self.check.step(e, Some(self.target))
+        self.check.step(e, Some(self.target), Some(&mut self.stage))
     }
 
     fn finish(&mut self) -> Result<(), FileError> {
-        self.check.finish(Some(self.target))
+        self.check.finish(Some(self.target), Some(&mut self.stage))
     }
 }

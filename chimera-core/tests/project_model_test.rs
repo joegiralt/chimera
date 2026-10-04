@@ -6,10 +6,11 @@ use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::name::SoundName;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
-use chimera_core::project::test_support::save_part_to;
+use chimera_core::project::arena::{ARENA_BYTES, Cost};
+use chimera_core::project::test_support::{dense, save_part_to};
 use chimera_core::project::{
-    InUse, NEW_PARTS, Origin, PartFrom, PartId, PartSet, PartSource, Project, ReplaceError,
-    ReplaceGuard, SlotId, TemplateCrc,
+    InUse, NEW_PARTS, Origin, PartFrom, PartId, PartSet, PartSource, PoolFull, Project,
+    ReplaceError, ReplaceGuard, SlotId, TemplateCrc,
 };
 use chimera_core::storage::sound_crc;
 
@@ -23,9 +24,9 @@ fn load(p: &mut Project, t: TemplateCrc, src: PartSource) -> Result<(), ReplaceE
 fn ids_are_bounded() {
     assert_eq!(PartId::new(5).map(PartId::index), Some(5));
     assert_eq!(PartId::new(6), None);
-    assert_eq!(SlotId::new(31).map(SlotId::index), Some(31));
-    assert_eq!(SlotId::new(32), None);
-    assert_eq!((PartId::ALL.len(), SlotId::ALL.len()), (6, 32));
+    assert_eq!(SlotId::new(127).map(SlotId::index), Some(127));
+    assert_eq!(SlotId::new(128), None);
+    assert_eq!((PartId::ALL.len(), SlotId::ALL.len()), (6, 128));
 }
 
 #[test]
@@ -48,6 +49,7 @@ fn new_project_contents() {
             p.pool()
                 .get(SlotId::ALL[i])
                 .unwrap()
+                .to_sound()
                 .bits_eq(&factory_sound(i).unwrap())
         );
     }
@@ -55,15 +57,17 @@ fn new_project_contents() {
         p.pool()
             .get(SlotId::ALL[8])
             .unwrap()
+            .to_sound()
             .bits_eq(&Sound::init(EngineType::Algo))
     );
     assert!(
         p.pool()
             .get(SlotId::ALL[9])
             .unwrap()
+            .to_sound()
             .bits_eq(&Sound::init(EngineType::Modal))
     );
-    assert_eq!(p.pool().used(), 10);
+    assert_eq!(p.pool().sound_count(), 10);
     assert_eq!(p.pool().first_free(), SlotId::new(10));
     // Parts 1–5 on the init scene's factory Sounds, from their slots;
     // Part 6 on INIT Algo.
@@ -72,7 +76,11 @@ fn new_project_contents() {
             panic!("{id:?} from INIT");
         };
         assert_eq!(from, slot);
-        assert!(p.part(id).sound.bits_eq(p.pool().get(slot).unwrap()));
+        assert!(
+            p.part(id)
+                .sound
+                .bits_eq(&p.pool().get(slot).unwrap().to_sound())
+        );
     }
     let six = p.part(PartId::ALL[5]);
     assert_eq!(six.origin(), Origin::Init(EngineType::Algo));
@@ -84,7 +92,7 @@ fn store_and_clear_bump_the_generation() {
     let mut p = Project::boxed().0;
     let s = SlotId::ALL[20];
     let g = p.pool().generation(s);
-    p.pool_store(s, Sound::init(EngineType::Modal));
+    p.pool_store(s, &Sound::init(EngineType::Modal)).unwrap();
     assert_eq!(p.pool().generation(s), g.wrapping_add(1));
     assert_eq!(p.pool_clear(s), Ok(()));
     assert_eq!(p.pool().generation(s), g.wrapping_add(2));
@@ -130,7 +138,7 @@ fn load_sets_origin_from_the_slot() {
         },
     )
     .unwrap();
-    let crc = sound_crc(p.pool().get(s).unwrap());
+    let crc = p.pool().get(s).unwrap().crc();
     assert_eq!(
         p.part(part).origin(),
         Origin::Slot {
@@ -139,7 +147,11 @@ fn load_sets_origin_from_the_slot() {
             crc
         }
     );
-    assert!(p.part(part).sound.bits_eq(p.pool().get(s).unwrap()));
+    assert!(
+        p.part(part)
+            .sound
+            .bits_eq(&p.pool().get(s).unwrap().to_sound())
+    );
     let empty = PartSource {
         part,
         from: PartFrom::Slot(SlotId::ALL[30]),
@@ -195,7 +207,7 @@ fn save_part_to_returns_only_the_parts_now_stale() {
     p.edit_part(c).sound.params.filter.cutoff *= 0.5; // c is Edited
     p.edit_part(a).sound.params.filter.cutoff *= 0.25;
     assert_eq!(save_part_to(&mut p, a, s), PartSet::EMPTY.with(b)); // c, edited, isn't Stale
-    let crc = sound_crc(p.pool().get(s).unwrap());
+    let crc = p.pool().get(s).unwrap().crc();
     assert_eq!(
         p.part(a).origin(),
         Origin::Slot {
@@ -204,7 +216,11 @@ fn save_part_to_returns_only_the_parts_now_stale() {
             crc
         }
     );
-    assert!(p.part(a).sound.bits_eq(p.pool().get(s).unwrap()));
+    assert!(
+        p.part(a)
+            .sound
+            .bits_eq(&p.pool().get(s).unwrap().to_sound())
+    );
 }
 
 #[test]
@@ -213,7 +229,13 @@ fn save_part_to_an_empty_slot_has_no_other_users() {
     let (a, s) = (PartId::ALL[5], SlotId::ALL[17]);
     assert_eq!(save_part_to(&mut p, a, s), PartSet::EMPTY);
     assert_eq!(p.users(s), PartSet::EMPTY.with(a));
-    assert!(p.pool().get(s).unwrap().bits_eq(&p.part(a).sound));
+    assert!(
+        p.pool()
+            .get(s)
+            .unwrap()
+            .to_sound()
+            .bits_eq(&p.part(a).sound)
+    );
 }
 
 #[test]
@@ -241,4 +263,146 @@ fn sound_crc_sees_a_param() {
     assert_eq!(sound_crc(&s.clone()), before);
     s.params.filter.cutoff *= 0.5;
     assert_ne!(sound_crc(&s), before);
+}
+
+/// A Sound's records as `encode_sound` writes them: a file's body.
+fn records_len(s: &Sound) -> usize {
+    use chimera_core::storage::{
+        FileKind, Generation, HEADER_LEN, Header, TRAILER_LEN, encode_sound, write_file,
+    };
+    struct Count(usize);
+    impl chimera_hal::store::ByteSink for Count {
+        fn put(&mut self, b: &[u8]) -> Result<(), chimera_hal::store::StoreError> {
+            self.0 += b.len();
+            Ok(())
+        }
+    }
+    let h = Header {
+        kind: FileKind::Sound,
+        generation: Generation::FIRST,
+        name: Some(s.name),
+    };
+    let mut c = Count(0);
+    write_file(&mut c, &h, &mut |w| encode_sound(s, w)).unwrap();
+    c.0 - HEADER_LEN - TRAILER_LEN
+}
+
+/// NEW's 8 factory Sounds and 2 INITs, each its 16 B name and its sparse
+/// records, granule-rounded.
+#[test]
+fn new_pool_reads_its_cost() {
+    let p = Project::boxed().0;
+    assert_eq!(p.pool().sound_count(), 10);
+    let want: u32 = SlotId::ALL
+        .into_iter()
+        .filter_map(|s| p.pool().get(s))
+        .map(|e| Cost::of(16 + records_len(&e.to_sound())).bytes())
+        .sum();
+    assert_eq!(p.pool().used().bytes(), want);
+    assert_eq!(
+        p.pool().free().bytes() as usize,
+        ARENA_BYTES - want as usize
+    );
+    for s in SlotId::ALL.into_iter().take(10) {
+        let e = p.pool().get(s).unwrap();
+        assert_eq!(e.cost(), Cost::of(16 + records_len(&e.to_sound())));
+        assert_eq!(e.crc(), sound_crc(&e.to_sound()));
+        assert_eq!(e.name(), e.to_sound().name);
+        assert_eq!(e.engine(), e.to_sound().engine());
+    }
+}
+
+/// Worst-case Sounds until the arena refuses one: `PoolFull` says what it
+/// needed and what was free, and the pool is as it was.
+#[test]
+fn store_refuses_past_budget() {
+    let mut p = Project::boxed().0;
+    let mut refused = None;
+    for s in SlotId::ALL.into_iter().skip(10) {
+        let mut x = Sound::init(EngineType::Algo);
+        dense(&mut x, s.index() as u64);
+        let before: Vec<_> = SlotId::ALL
+            .iter()
+            .map(|&s| p.pool().get(s).map(|e| e.to_sound()))
+            .collect();
+        let (used, g) = (p.pool().used(), p.pool().generation(s));
+        assert_eq!(p.pool().fits(x_cost(&x)), x_cost(&x) <= p.pool().free());
+        match p.pool_store(s, &x) {
+            Ok(()) => assert!(p.pool().get(s).unwrap().to_sound().bits_eq(&x)),
+            Err(PoolFull { needs, free }) => {
+                assert!(free < needs, "{free:?} < {needs:?}");
+                assert_eq!(needs, x_cost(&x));
+                assert_eq!(free, p.pool().free());
+                assert!(!p.pool().fits(needs));
+                assert_eq!(p.pool().used(), used);
+                assert_eq!(p.pool().generation(s), g);
+                for (slot, was) in SlotId::ALL.iter().zip(&before) {
+                    let now = p.pool().get(*slot).map(|e| e.to_sound());
+                    match (now, was) {
+                        (None, None) => {}
+                        (Some(a), Some(b)) => assert!(a.bits_eq(b)),
+                        _ => panic!("slot {} changed", slot.index()),
+                    }
+                }
+                refused = Some(s);
+                break;
+            }
+        }
+    }
+    let s = refused.expect("the arena fills before 128 dense Sounds");
+    assert!(s.index() > 60, "refused at slot {}", s.index());
+}
+
+fn x_cost(x: &Sound) -> Cost {
+    Cost::of(16 + records_len(x))
+}
+
+/// A clear gives its cost back at once, moves the generation, and every
+/// other slot still decodes as it did.
+#[test]
+fn clear_compacts_and_moves_gen() {
+    let mut p = Project::boxed().0;
+    for (i, s) in SlotId::ALL.into_iter().enumerate().skip(10).take(30) {
+        let mut x = factory_sound(i % FACTORY_LEN).unwrap();
+        dense(&mut x, i as u64);
+        p.pool_store(s, &x).unwrap();
+    }
+    for s in [SlotId::ALL[25], SlotId::ALL[2], SlotId::ALL[39]] {
+        let before: Vec<_> = SlotId::ALL
+            .iter()
+            .map(|&s| p.pool().get(s).map(|e| e.to_sound()))
+            .collect();
+        let (free, g) = (p.pool().free(), p.pool().generation(s));
+        let cost = p.pool().get(s).unwrap().cost();
+        assert_eq!(p.pool_clear(s), Ok(()));
+        assert_eq!(p.pool().free().bytes(), free.bytes() + cost.bytes());
+        assert_eq!(p.pool().generation(s), g.wrapping_add(1));
+        assert!(p.pool().get(s).is_none());
+        for (slot, was) in SlotId::ALL.iter().zip(&before) {
+            if *slot == s {
+                continue;
+            }
+            let now = p.pool().get(*slot).map(|e| e.to_sound());
+            match (now, was) {
+                (None, None) => {}
+                (Some(a), Some(b)) => assert!(a.bits_eq(b), "slot {}", slot.index()),
+                _ => panic!("slot {} changed", slot.index()),
+            }
+        }
+    }
+}
+
+/// A slot a Part plays is never cleared, at any of the 128.
+#[test]
+fn in_use_clear_still_refused() {
+    let (mut p, t) = Project::boxed();
+    assert_eq!(SlotId::ALL.len(), 128);
+    let (part, s) = (PartId::ALL[4], SlotId::ALL[100]);
+    p.pool_store(s, &Sound::init(EngineType::Modal)).unwrap();
+    let from = PartFrom::Slot(s);
+    load(&mut p, t, PartSource { part, from }).unwrap();
+    let (g, free) = (p.pool().generation(s), p.pool().free());
+    assert_eq!(p.pool_clear(s), Err(InUse(PartSet::EMPTY.with(part))));
+    assert!(p.pool().get(s).is_some());
+    assert_eq!((p.pool().generation(s), p.pool().free()), (g, free));
 }

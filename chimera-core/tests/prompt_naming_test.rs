@@ -168,7 +168,12 @@ fn each_answer_does_what_it_says() {
     let free = ui.project().pool().first_free().unwrap();
     answer(&mut ui, 0);
     assert!(
-        ui.project().pool().get(free).unwrap().bits_eq(&before),
+        ui.project()
+            .pool()
+            .get(free)
+            .unwrap()
+            .to_sound()
+            .bits_eq(&before),
         "SAVE PART FIRST saves the edit"
     );
     assert!(!kept(&ui, &before), "then replaces");

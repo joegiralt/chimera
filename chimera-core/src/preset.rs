@@ -6,7 +6,8 @@ use crate::params::{EngineType, ParamSnapshot};
 
 pub use crate::project::{Part, PartEdit, Performance, part_block, part_block_mut};
 
-pub const POOL_SIZE: usize = 32;
+/// The project pool's slots (ADR 0087): its bytes, not this, are the budget.
+pub const MAX_SOUNDS: usize = 128;
 
 #[derive(Clone, Debug)]
 #[repr(C)]

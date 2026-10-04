@@ -56,7 +56,8 @@ fn the_selected_row_is_an_accent_pill() {
 #[test]
 fn empty_slots_are_dimmed_and_saved_ones_bright() {
     let mut p = empty();
-    p.pool_store(SlotId::ALL[0], Sound::init(EngineType::Algo));
+    p.pool_store(SlotId::ALL[0], &Sound::init(EngineType::Algo))
+        .unwrap();
     let fb = drawn(p.pool(), 5, 0);
     assert!(row_has(&fb, 0, theme::INK), "saved slot name in ink");
     assert!(
@@ -102,6 +103,7 @@ fn the_scroll_thumb_follows_the_list() {
 fn init_rows_end_the_list_and_load() {
     let mut ui = chimera_core::ui::UiState::new();
     feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B2));
+    feed(&mut ui, Input::turn(EncoderId::A, 100));
     feed(&mut ui, Input::turn(EncoderId::A, 100)); // clamps to the last row
     assert_eq!(
         ui.location(),
@@ -189,7 +191,7 @@ fn the_longest_sound_name_is_not_truncated() {
     let mut s = Sound::init(EngineType::Algo);
     s.name = chimera_core::name::SoundName::new("ABCDEFGHIJKLMNOP").unwrap();
     assert_eq!(s.name.as_str().len(), 16);
-    p.pool_store(SlotId::ALL[0], s);
+    p.pool_store(SlotId::ALL[0], &s).unwrap();
     let fb = drawn(p.pool(), 5, 0); // drawn() asserts fb.oob == 0 (nothing clipped off-screen)
     assert!(row_has(&fb, 0, theme::INK), "16-char name drawn in full");
 }
@@ -221,7 +223,7 @@ fn browser_input_moves_the_cursor() {
     assert_eq!(input(&Input::turn(EncoderId::A, 3), at(0, 0)), at(3, 0));
     // The list clamps, and scrolling keeps the cursor on screen.
     assert_eq!(
-        input(&Input::turn(EncoderId::A, 100), at(0, 0)),
+        input(&Input::turn(EncoderId::A, 127), at(10, 0)),
         at(last, last + 1 - VISIBLE_ROWS)
     );
     assert_eq!(input(&Input::turn(EncoderId::A, -2), at(5, 5)), at(3, 3));

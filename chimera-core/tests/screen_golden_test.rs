@@ -108,7 +108,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("algo_out_p3", 0x3e91d6b588f4ebfa),
     ("mod_matrix", 0x908cc3655fdaf8ee),
     ("mod_matrix_wide", 0xc34ca17250bc0e55),
-    ("sound_browser", 0xc5fad13cf6ddc71f),
+    ("sound_browser", 0xd71639989ee67012),
     // Re-recorded: a fresh project's footer drops NEW (#286).
     ("settings_personal_theme", 0xc35039e65219cdc2),
     ("settings_midi_sync", 0x0e26ce69d0f54980),

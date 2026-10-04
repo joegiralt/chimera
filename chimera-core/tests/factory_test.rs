@@ -153,10 +153,15 @@ fn the_ui_starts_with_the_bank_in_the_pool() {
     let ui = UiState::new();
     for i in 0..FACTORY_LEN {
         let want = factory_sound(i).unwrap();
-        let got = ui.project().pool().get(SlotId::ALL[i]).unwrap();
+        let got = ui.project().pool().get(SlotId::ALL[i]).unwrap().to_sound();
         assert!(got.bits_eq(&want), "slot {i}");
     }
-    let after = ui.project().pool().get(SlotId::ALL[FACTORY_LEN]).unwrap();
+    let after = ui
+        .project()
+        .pool()
+        .get(SlotId::ALL[FACTORY_LEN])
+        .unwrap()
+        .to_sound();
     assert!(
         after.bits_eq(&Sound::init(EngineType::Algo)),
         "INIT follows the bank"

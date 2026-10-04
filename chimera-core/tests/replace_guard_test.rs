@@ -58,7 +58,7 @@ fn part_replace_prompts_only_when_edited() {
     assert!(
         p.part(a)
             .sound
-            .bits_eq(p.pool().get(SlotId::ALL[5]).unwrap())
+            .bits_eq(&p.pool().get(SlotId::ALL[5]).unwrap().to_sound())
     );
 }
 
@@ -104,11 +104,15 @@ fn each_answer_does_what_it_says() {
     p.apply_part_action(new).unwrap();
     let c = pending.save_then(&p, t).unwrap();
     p.replace_part(c).unwrap();
-    assert!(p.part(a).sound.bits_eq(p.pool().get(s).unwrap()));
+    assert!(
+        p.part(a)
+            .sound
+            .bits_eq(&p.pool().get(s).unwrap().to_sound())
+    );
     let PartActionKind::NewSlot(saved) = new.kind() else {
         unreachable!()
     };
-    assert!(p.pool().get(saved).unwrap().bits_eq(&edited));
+    assert!(p.pool().get(saved).unwrap().to_sound().bits_eq(&edited));
 
     // REPLACE
     edit(&mut p, a);
@@ -117,7 +121,11 @@ fn each_answer_does_what_it_says() {
         .into_pending()
         .anyway(&p);
     p.replace_part(c).unwrap();
-    assert!(p.part(a).sound.bits_eq(p.pool().get(s).unwrap()));
+    assert!(
+        p.part(a)
+            .sound
+            .bits_eq(&p.pool().get(s).unwrap().to_sound())
+    );
 
     // CANCEL
     edit(&mut p, a);
@@ -164,7 +172,7 @@ fn confirmed_slot_emptied_before_replace() {
     let (mut p, t) = Project::boxed();
     let s = SlotId::ALL[20];
     let a = PartId::ALL[1];
-    p.pool_store(s, Sound::init(EngineType::Modal));
+    p.pool_store(s, &Sound::init(EngineType::Modal)).unwrap();
     let c = ReplaceGuard::check(&p, t, slot(a, s)).unwrap();
     p.pool_clear(s).unwrap();
     let before = p.part(a).sound.clone();
@@ -198,7 +206,7 @@ fn a_confirmation_from_before_a_load_is_refused() {
     let (mut q, tq) = Project::boxed();
     let c = ReplaceGuard::check(&q, tq, slot(a, s)).unwrap();
     q.replace_part(c).unwrap();
-    q.pool_store(s, Sound::init(EngineType::Modal));
+    q.pool_store(s, &Sound::init(EngineType::Modal)).unwrap();
     let (mut p, t) = Project::boxed();
     let c = ReplaceGuard::check(&p, t, slot(a, s)).unwrap();
     p.replace_part(c).unwrap();

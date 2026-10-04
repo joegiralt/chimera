@@ -132,6 +132,14 @@ impl ArenaWriter {
         }
     }
 
+    /// An arena of its own on the heap, leaked (host tests).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn leaked() -> ArenaWriter {
+        ArenaWriter::new(alloc::boxed::Box::leak(
+            alloc::vec![0; ARENA_BYTES].into_boxed_slice(),
+        ))
+    }
+
     /// Bytes held by Sounds and sources, pending holes included.
     pub fn used(&self) -> Cost {
         Cost(ARENA_BYTES as u32 - self.gap().0)
@@ -172,6 +180,12 @@ impl ArenaWriter {
         self.shift(lo, lo + by as usize, end - lo);
         self.snd_start += by;
         Shift { from: offset, by }
+    }
+
+    /// Frees every Sound at once: a load or NEW refilling the pool. The
+    /// sources stay.
+    pub fn sounds_clear(&mut self) {
+        self.snd_start = ARENA_BYTES as u32;
     }
 
     /// Where the next source goes: `len` bytes at the bottom of the gap to

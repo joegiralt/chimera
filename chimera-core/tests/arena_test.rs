@@ -171,6 +171,20 @@ fn sound_free_compacts_at_once() {
     assert_eq!(crc(a.bytes(z + 48, 20)), cz);
 }
 
+/// A load's refill: every Sound goes, every source stays where it was.
+#[test]
+fn sounds_clear_keeps_the_sources() {
+    let mut a = arena();
+    let (at, c) = add_source(&mut a, 300, 9).unwrap();
+    a.sound_alloc(100).unwrap();
+    a.sound_alloc(MAX_SOUND_COST).unwrap();
+    a.sounds_clear();
+    assert_eq!(a.used(), Cost::of(300));
+    assert_eq!(a.gap().bytes() as usize, ARENA_BYTES - 304);
+    assert_eq!(crc(a.bytes(at, 300)), c);
+    assert_eq!(a.sound_alloc(16), Some(ARENA_BYTES as u32 - 16));
+}
+
 #[test]
 fn compact_waits_while_not_ready() {
     let mut a = arena();

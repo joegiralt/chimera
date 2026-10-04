@@ -14,7 +14,7 @@ use chimera_core::orbit::engine::OrbitEvent;
 use chimera_core::orbit::runner::{OrbitRunner, OrbitView, orbit_buffer};
 use chimera_core::params::EngineType;
 use chimera_core::perf::load::AudioStats;
-use chimera_core::preset::{POOL_SIZE, Sound};
+use chimera_core::preset::{MAX_SOUNDS, Sound};
 use chimera_core::project::SlotId;
 use chimera_core::project::{
     LoadLink, PartFrom, PartId, PartSource, Project, ProjectFile, ProjectNote, ProjectSource,
@@ -698,9 +698,10 @@ const PART_KEYS: [ButtonId; 5] = [
 /// scroll to the init row, EDIT), then MINUS from the engine's home to its
 /// first node.
 pub fn load_init(ui: &mut UiState, engine: EngineType) {
-    let row = POOL_SIZE + EngineType::ALL.iter().position(|&c| c == engine).unwrap();
+    let row = MAX_SOUNDS + EngineType::ALL.iter().position(|&c| c == engine).unwrap();
     feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
-    feed(ui, Input::turn(EncoderId::A, row as i8));
+    feed(ui, Input::turn(EncoderId::A, 100));
+    feed(ui, Input::turn(EncoderId::A, (row - 100) as i8));
     feed(ui, Input::press(ButtonId::Edit));
     let home = chimera_core::ui::nav::chain_def_for(engine).home();
     assert_eq!(
@@ -1132,10 +1133,10 @@ pub const CASES: &[ScreenCase] = &[
     ("sound_browser", |ui| {
         let mut s = Sound::init(EngineType::Algo);
         s.name = chimera_core::name::Name::new("WARM BASS").unwrap();
-        ui.project_mut().pool_store(SlotId::ALL[0], s);
+        ui.project_mut().pool_store(SlotId::ALL[0], &s).unwrap();
         let mut s = Sound::init(EngineType::Modal);
         s.name = chimera_core::name::Name::new("GLASS PLUCK").unwrap();
-        ui.project_mut().pool_store(SlotId::ALL[1], s);
+        ui.project_mut().pool_store(SlotId::ALL[1], &s).unwrap();
         feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
         feed(ui, Input::turn(EncoderId::A, 1));
     }),

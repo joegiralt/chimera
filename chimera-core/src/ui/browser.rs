@@ -10,7 +10,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use chimera_hal::{Controls, EncoderId};
 
 use crate::params::EngineType;
-use crate::preset::POOL_SIZE;
+use crate::preset::MAX_SOUNDS;
 use crate::project::{PartId, Pool, SlotId};
 use crate::ui::components;
 use crate::ui::draw;
@@ -24,7 +24,7 @@ pub const VISIBLE_ROWS: usize = 8;
 /// The pool's slots, then one init Sound per engine, in `EngineType::ALL`
 /// order.
 pub const INIT_TYPES: [EngineType; EngineType::ALL.len()] = EngineType::ALL;
-pub const TOTAL_ENTRIES: usize = POOL_SIZE + INIT_TYPES.len();
+pub const TOTAL_ENTRIES: usize = MAX_SOUNDS + INIT_TYPES.len();
 
 /// The Sound rung's browser: its cursor and the first row shown. Only
 /// `input` moves it; it opens at the top.
@@ -127,7 +127,7 @@ where
         hint::draw(d, CLEAR_HINT, theme::MARGIN_X, CLEAR_Y);
     }
     let mut info = FmtBuf::new();
-    let _ = write!(info, "{} INIT + {} SLOTS", INIT_TYPES.len(), POOL_SIZE);
+    let _ = write!(info, "{} INIT + {} SLOTS", INIT_TYPES.len(), MAX_SOUNDS);
     draw::text_right(
         d,
         &theme::FONT_LABEL,
@@ -147,12 +147,12 @@ where
     let (name, chain, saved) = if let Some(s) = slot_at(entry) {
         let _ = write!(slot, "{:02}", entry + 1);
         match pool.get(s) {
-            Some(s) => (components::upper(s.name.as_str()), Some(s.engine()), true),
+            Some(s) => (components::upper(s.name().as_str()), Some(s.engine()), true),
             None => (FmtBuf::new(), None, false),
         }
     } else {
         let _ = slot.write_str("INIT");
-        let engine = INIT_TYPES[entry - POOL_SIZE];
+        let engine = INIT_TYPES[entry - MAX_SOUNDS];
         (components::upper(engine.label()), Some(engine), false)
     };
     let empty = chain.is_none();

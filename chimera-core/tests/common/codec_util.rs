@@ -17,7 +17,7 @@ use chimera_core::project::{
 };
 use chimera_core::storage::{
     Check, Crc32, Decode, DecodeInPlace, FileError, FileKind, Framer, Generation, Header,
-    ProjectId, SoundDecoder, SystemSettings, encode_sound, encode_system, sound_crc, write_file,
+    ProjectId, SoundDecoder, SystemSettings, encode_sound, encode_system, write_file,
 };
 use chimera_core::ui::midi_settings::MidiSettings;
 use chimera_core::ui::theme_settings::{Accent, Black, Bright, Gamma, ThemeSettings};
@@ -107,7 +107,7 @@ pub fn check_project_decode(bytes: &[u8], target: &mut Project) -> bool {
     assert!(SoundName::from_padded(&p.meta().name().padded()).is_ok());
     for s in SlotId::ALL {
         if let Some(sound) = p.pool().get(s) {
-            check_sound(sound);
+            check_sound(&sound.to_sound());
         }
     }
     let fx = &p.perf().fx;
@@ -140,7 +140,7 @@ pub fn check_project_decode(bytes: &[u8], target: &mut Project) -> bool {
         {
             let s = p.pool().get(slot).expect("an Origin names a filled slot");
             assert_eq!(generation, p.pool().generation(slot));
-            assert_eq!(crc, sound_crc(s));
+            assert_eq!(crc, s.crc());
         }
     }
     true
