@@ -144,6 +144,7 @@ pub mod lfo;
 pub mod limiter;
 pub mod modal;
 pub mod modulator;
+pub mod rev;
 pub mod reverb;
 pub mod ring;
 pub mod tape;

@@ -11,6 +11,7 @@ pub mod golden;
 pub mod inst_rig;
 pub mod orbit;
 pub mod project;
+pub mod rev;
 pub mod rig;
 pub mod sweep;
 
