@@ -166,15 +166,18 @@ code 23, ident `"TAPE"`, ADR 0055).
   with its hint (ADR 0086): `MIX + PLUS LOADS · 41K`, or `WON'T FIT ·
   NEEDS 41K, 12K FREE`.
 - **CPU,** in cycles a sample. These are host estimates, with one head at
-  about 55 instructions and the cache misses of `inc` 16 (+12 a head):
+  88 instructions (measured on `SourceView::read`, TAPE Task 2) and the
+  cache misses of `inc` 16 (+12 a head). The bench at build step 3
+  replaces them:
 
-  | | LOOP, REVERSE, PING-PONG, SCRUB | TRANSWAVE | TRANSWAVE, pitch moving > ±6.2 st | STRETCH | AGE on |
-  |---|---|---|---|---|---|
-  | Billed | 230 | 240 | 450 | 240 | +20 |
+  | | LOOP, REVERSE, PING-PONG | SCRUB | TRANSWAVE | TRANSWAVE, pitch moving > ±6.2 st | STRETCH | AGE on |
+  |---|---|---|---|---|---|---|
+  | Billed | 340 | 350 | 350 | 680 | 350 | +20 |
 
-  - **Admission.** A plain TAPE voice (337 at worst) is admitted 8 on rev
-    V, on rev Y, with ORBIT and with the master tape. A TRANSWAVE whose
-    pitch can move past ±6.2 semitones (547) is admitted 6 on rev Y.
+  - **Admission.** A plain TAPE voice (447 at worst) is admitted 8 on rev
+    V, on rev Y, with ORBIT and with the master tape (6 on rev Y with
+    DRIVE and FOLD). A TRANSWAVE whose pitch can move past ±6.2
+    semitones (777) is admitted 4 on rev Y and 6 on rev V.
   - **Eight voices hold while the benched engine stays under 546 on rev V
     and 400 on rev Y.**
   - **The bench rows are build step 3:** cold-cache worst blocks with
