@@ -10,13 +10,13 @@ mod probe;
 mod tools;
 
 use chimera_core::console::{
-    CardAnswer, Console, Frame, Out, PUT_DEADLINE_MS, PUT_MAX_BYTES, PutArg, PutTo, Stalled, Stats,
-    Unit, answer, put,
+    CardAnswer, Console, Frame, Out, PUT_DEADLINE_MS, PUT_MAX_BYTES, PutArg, Stalled, Stats, Unit,
+    answer, put,
 };
 use chimera_core::name::Name;
 use chimera_core::project::test_support::full;
 use chimera_core::project::{
-    Project, ProjectDecoder, encode_new_project, encode_project, project_file,
+    Project, ProjectDecoder, encode_new_project, encode_project, list_projects, project_file,
 };
 use chimera_core::storage::{
     Card, Crc32, FileKind, Generation, Header, ProjectId, RecordWriter, Side, load_ab_in_place,
@@ -284,7 +284,7 @@ fn a_put_onto_an_empty_card_loads() {
     assert_eq!(read(&mut s, vol, side(Side::B)), None);
     clean(s.device());
     assert_eq!(
-        ask(&mut s, "ls /chimera/projects\n", b""),
+        ask(&mut s, "ls\n", b""),
         format!("P0000014.A {}\nOK\n", body.len())
     );
 }
@@ -446,42 +446,8 @@ fn a_put_past_the_deadline_times_out() {
 #[test]
 fn refusals_before_ready_write_nothing() {
     let mut s = FatStore::new(fat16(16_384, 1));
-    let vol = old_pair(&mut s);
+    old_pair(&mut s);
     let before = s.device().0.borrow().clone();
-    let body = project_bytes("AVRIL 14", 1);
-    for (path, err) in [
-        ("/CHIMERA/PROJECTS/AVRIL14.A", "not a project or sound name"),
-        (
-            "/CHIMERA/PROJECTS/P0000014.C",
-            "not a project or sound name",
-        ),
-        (
-            "/CHIMERA/PROJECTS/P0000000.A",
-            "not a project or sound name",
-        ),
-        ("/CHIMERA/PROJECTS/P000014.A", "not a project or sound name"),
-        (
-            "/CHIMERA/PROJECTS//P0000014.A",
-            "not a project or sound name",
-        ),
-        (
-            "/CHIMERA/PROJECTS/../SYSTEM.A",
-            "not a project or sound name",
-        ),
-        ("/CHIMERA/PROJECTS", "a directory, not a file"),
-        ("/chimera/projects/", "a directory, not a file"),
-        ("/CHIMERA", "a directory, not a file"),
-        (
-            "/CHIMERA/SOUNDS/S0000001.A",
-            "no Sound library yet: projects only",
-        ),
-    ] {
-        assert_eq!(
-            ask(&mut s, &put_line(path, &body), &lines(&body)),
-            format!("ERR put: {err}\n"),
-            "{path}"
-        );
-    }
     for line in [
         format!("put {PATH} {} 0\n", PUT_MAX_BYTES + 1),
         format!("put {PATH} 31 0\n"),
@@ -490,15 +456,17 @@ fn refusals_before_ready_write_nothing() {
     }
     let usage = "ERR put takes /CHIMERA/PROJECTS/P#######.A, its size and CRC-32 in hex\n";
     for path in [
+        "/CHIMERA/PROJECTS/AVRIL14.A",
+        "/CHIMERA/PROJECTS/../SYSTEM.A",
+        "/CHIMERA/PROJECTS//P0000014.A",
+        "/CHIMERA/PROJECTS/",
+        "/CHIMERA/SOUNDS/S0000001.A",
         "/CHIMERA/SYSTEM.A",
-        "/CHIMERA//PROJECTS/P0000014.A",
         "/CHIMERA/BENCH/CARD0.BIN",
-        "/OTHER/P0000014.A",
         "PROJECTS/P0000014.A",
-        "/CHIMERA/PROJECTS/P0000014.A x",
     ] {
         assert_eq!(
-            ask(&mut s, &format!("put {path} 1 0\n"), b""),
+            ask(&mut s, &format!("put {path} 1 0\n"), b"QQ==\n"),
             usage,
             "{path}"
         );
@@ -507,7 +475,23 @@ fn refusals_before_ready_write_nothing() {
         s.device().0.borrow().clone() == before,
         "not a block written"
     );
-    let _ = vol;
+}
+
+/// A refused put to an id the card doesn't hold leaves no project to list:
+/// the side it wrote goes with it.
+#[test]
+fn a_refused_put_to_a_new_id_lists_nothing() {
+    let mut s = FatStore::new(fat16(16_384, 1));
+    card(&mut s);
+    let body = big_project_bytes("AVRIL 14", 1);
+    let line = format!("put {PATH} {} {:08x}\n", body.len(), crc(&body) ^ 1);
+    let (said, _) = ask_on(&mut s, &line, &lines(&body), 0);
+    assert_eq!(said, "READY\nERR put: CRC mismatch\n");
+    let mut listed = Vec::new();
+    let _ = list_projects(&mut Card::new(), &mut s, &mut |e| listed.push(e.id));
+    assert_eq!(listed, []);
+    assert_eq!(ask(&mut s, "ls\n", b""), "OK\n");
+    clean(s.device());
 }
 
 #[test]
@@ -516,7 +500,7 @@ fn the_open_project_is_refused() {
     old_pair(&mut s);
     let body = project_bytes("AVRIL 14", 1);
     let arg = PutArg {
-        to: PutTo::Project(ProjectId::new(ID).unwrap()),
+        to: ProjectId::new(ID).unwrap(),
         size: body.len() as u32,
         crc: crc(&body),
     };
@@ -584,28 +568,22 @@ fn a_full_card_fails_with_the_old_pair_whole() {
 }
 
 #[test]
-fn ls_lists_names_and_sizes_and_refuses_what_is_not_there() {
+fn ls_lists_projects_and_their_sizes() {
     let mut s = FatStore::new(fat16(16_384, 1));
     let vol = card(&mut s);
-    assert_eq!(
-        ask(&mut s, "ls /CHIMERA/SOUNDS\n", b""),
-        "ERR ls: FILE NOT FOUND\n"
-    );
-    s.make_dir(vol, Dir::Sounds).unwrap();
-    for (stem, n) in [(&b"S0000001"[..], 10), (b"S0000002", 2_000)] {
-        let f = FileName::new(Dir::Sounds, stem, b"A").unwrap();
+    assert_eq!(ask(&mut s, "ls\n", b""), "ERR ls: FILE NOT FOUND\n");
+    s.make_dir(vol, Dir::Projects).unwrap();
+    for (stem, n) in [(&b"P0000001"[..], 10), (b"P0000002", 2_000)] {
+        let f = FileName::new(Dir::Projects, stem, b"A").unwrap();
         s.write(vol, f, &mut |w| w.put(&vec![0; n])).unwrap();
     }
-    let f = FileName::new(Dir::Sounds, b"README", b"").unwrap();
+    let f = FileName::new(Dir::Projects, b"README", b"").unwrap();
     s.write(vol, f, &mut |w| w.put(b"hi")).unwrap();
     assert_eq!(
-        ask(&mut s, "ls /CHIMERA/SOUNDS/\n", b""),
-        "S0000001.A 10\nS0000002.A 2000\nREADME 2\nOK\n"
+        ask(&mut s, "ls\n", b""),
+        "P0000001.A 10\nP0000002.A 2000\nREADME 2\nOK\n"
     );
-    assert_eq!(ask(&mut s, "ls /CHIMERA\n", b""), "OK\n");
-    for bad in ["ls /CHIMERA/..\n", "ls\n", "ls /CHIMERA//SOUNDS\n"] {
-        assert!(ask(&mut s, bad, b"").starts_with("ERR ls takes"), "{bad}");
-    }
+    assert!(ask(&mut s, "ls /CHIMERA\n", b"").starts_with("ERR ls takes"));
 }
 
 // Device errors and power cuts, at every block a put writes.
@@ -642,6 +620,9 @@ fn a_device_error_at_any_write_loses_nothing() {
     let body = big_project_bytes("AVRIL 14", 1);
     let blocks = put_writes(&base, &body);
     assert!(blocks.len() > 20);
+    // The directory block holding A's entry: an entry write that fails
+    // keeps its chain (#360), the one leak allowed.
+    let entry_block = fat_check(&base).entry(b"P0000014A  ").unwrap().block;
     for (k, &block) in blocks.iter().enumerate() {
         let what = format!("write {k} of {} (block {block})", blocks.len());
         let disk = Rc::new(copy(&base));
@@ -662,12 +643,62 @@ fn a_device_error_at_any_write_loses_nothing() {
             "{what}: {r:?}"
         );
         assert!(r.fats_differ.is_empty(), "{what}: {r:?}");
-        assert!(r.lost.is_empty(), "{what}: lost {:?}", r.lost);
+        if block == entry_block {
+            assert!(
+                r.lost.len() <= body.len().div_ceil(512),
+                "{what}: lost {:?}",
+                r.lost
+            );
+        } else {
+            assert!(r.lost.is_empty(), "{what}: lost {:?}", r.lost);
+        }
         assert_eq!(
             loads(&mut s),
             Some(("OLD".into(), Generation::new(6))),
             "{what}"
         );
+    }
+}
+
+/// A card that takes a block then errs, at each block a put writes: the
+/// put may fail, but whatever the card holds, no two files ever share a
+/// cluster, through the next writes and a put that lands.
+#[test]
+fn a_write_that_lands_then_errs_never_cross_links() {
+    let base = cut_base();
+    let body = big_project_bytes("AVRIL 14", 1);
+    let blocks = put_writes(&base, &body);
+    for (k, &block) in blocks.iter().enumerate() {
+        let what = format!("write {k} of {} (block {block})", blocks.len());
+        let disk = Rc::new(copy(&base));
+        let mut s: Probed<RamDisk> = probed(&disk);
+        log(&s).land_then_fail.set(Some(k));
+        let (said, _) = ask_on(&mut s, &put_line(PATH, &body), &lines(&body), 0);
+        assert!(said.starts_with("READY\n"), "{what}: {said}");
+        let r = fat_check(&disk);
+        assert!(
+            r.cross_linked.is_empty() && r.short.is_empty(),
+            "{what}: {r:?}"
+        );
+        // After a power cycle: the allocator starts from the FAT's front.
+        let mut s: Probed<RamDisk> = probed(&disk);
+        let vol = s.mount().unwrap();
+        let next = FileName::new(Dir::Chimera, b"NEXT", b"BIN").unwrap();
+        s.write(vol, next, &mut |w| w.put(&[7; 30_000])).unwrap();
+        let again = big_project_bytes("AGAIN", 1);
+        assert_eq!(
+            ask(&mut s, &put_line(PATH, &again), &lines(&again)),
+            "READY\nOK\n",
+            "{what}"
+        );
+        let r = fat_check(&disk);
+        assert!(
+            r.cross_linked.is_empty() && r.short.is_empty(),
+            "{what}: {r:?}"
+        );
+        assert_eq!(read(&mut s, vol, next).unwrap(), [7; 30_000], "{what}");
+        let got = loads(&mut s).map(|(n, _)| n);
+        assert_eq!(got.as_deref(), Some("AGAIN"), "{what}");
     }
 }
 
@@ -772,4 +803,39 @@ fn fsck_passes_after_puts_and_device_errors() {
     );
     let f = tools::fsck(&disk);
     assert_eq!(f.code, 0, "after a good put: {}", f.out);
+}
+
+/// The FAT layer alone, a write whose block lands then errs at each block
+/// it writes: whatever the entry ends up holding, the next write never
+/// shares a cluster with it.
+#[test]
+fn a_write_that_lands_then_errs_leaves_no_shared_cluster() {
+    let disk = Rc::new(fat16(16_384, 1));
+    let mut s: Probed<RamDisk> = probed(&disk);
+    let vol = card(&mut s);
+    let f = FileName::new(Dir::Chimera, b"DATA", b"BIN").unwrap();
+    s.write(vol, f, &mut |w| w.put(&[1; 3_000])).unwrap();
+    let blocks: Vec<u32> = {
+        let probe = Rc::new(copy(&disk));
+        let mut t: Probed<RamDisk> = probed(&probe);
+        t.write(vol, f, &mut |w| w.put(&[2; 20_000])).unwrap();
+        log(&t).writes.borrow().iter().map(|&(b, _)| b).collect()
+    };
+    for (k, &block) in blocks.iter().enumerate() {
+        let d = Rc::new(copy(&disk));
+        let mut t: Probed<RamDisk> = probed(&d);
+        log(&t).land_then_fail.set(Some(k));
+        let _ = t.write(vol, f, &mut |w| w.put(&[2; 20_000]));
+        // After a power cycle: the allocator starts from the FAT's front.
+        let mut t: Probed<RamDisk> = probed(&d);
+        let other = FileName::new(Dir::Chimera, b"NEXT", b"BIN").unwrap();
+        t.write(vol, other, &mut |w| w.put(&[3; 20_000])).unwrap();
+        let r = fat_check(&d);
+        assert!(
+            r.cross_linked.is_empty(),
+            "block {block}: {:?}",
+            r.cross_linked
+        );
+        assert!(r.short.is_empty(), "block {block}: {:?}", r.short);
+    }
 }

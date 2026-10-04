@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Read the unit over its USB console (or the desktop sim's socket).
 
-    python3 tools/chimera-usb.py <cmd> [<arg>]     help, status, stats, bench, card [clean|seed=N], shot [raw], dfu, ls <dir>
+    python3 tools/chimera-usb.py <cmd> [<arg>]     help, status, stats, bench, card [clean|seed=N], shot [raw], dfu, ls
     python3 tools/chimera-usb.py put <local> <remote>  a project file onto the card as /CHIMERA/PROJECTS/P#######.A
                                                        (<remote> ending in / takes the local name)
     python3 tools/chimera-usb.py to-dfu            the unit into ROM DFU, for just flash

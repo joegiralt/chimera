@@ -603,8 +603,7 @@ pub fn save_ab<S: Store, C: Check>(
     name: Option<Name<16>>,
     body: &mut dyn FnMut(&mut RecordWriter<'_>) -> Result<(), StoreError>,
 ) -> Result<Generation, SaveError> {
-    let [a, b] = sides(s, r, f, c)?;
-    let (side, generation) = write_target(a.state(), b.state()).map_err(SaveError::File)?;
+    let (side, generation) = save_target(s, r, f, c)?;
     let h = Header {
         kind: C::KIND,
         generation,
@@ -614,6 +613,18 @@ pub fn save_ab<S: Store, C: Check>(
         write_file(sink, &h, body)
     })?;
     Ok(generation)
+}
+
+/// The side a save of `f` writes and its generation: `write_target` on
+/// both sides as `c` judges them, the pass 1 `load_ab` runs.
+pub fn save_target<S: Store, C: Check>(
+    s: &mut S,
+    r: &Ready,
+    f: AbFile,
+    c: &mut C,
+) -> Result<(Side, Generation), SaveError> {
+    let [a, b] = sides(s, r, f, c)?;
+    write_target(a.state(), b.state()).map_err(SaveError::File)
 }
 
 /// Deletes the sides there are in `delete_order`, judged by `c` as

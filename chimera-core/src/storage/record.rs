@@ -193,6 +193,7 @@ impl<'s> RecordWriter<'s> {
     /// Records copied as they are from a whole file the console was sent,
     /// hashed into this file's CRC like any other. The kind's check judges
     /// them once they are on the card.
+    #[cfg(feature = "card-put")]
     pub(crate) fn copy(&mut self, records: &[u8]) -> Result<(), StoreError> {
         self.raw(records)
     }

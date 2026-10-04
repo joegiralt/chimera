@@ -144,9 +144,9 @@ card *args:
 # `just put avril14.prj /CHIMERA/PROJECTS/P0000014.A`. 1 MiB at most; never the open project.
 put local remote:
     python3 tools/chimera-usb.py put "{{local}}" "{{remote}}"
-# A card directory's names and sizes
-ls dir="/CHIMERA/PROJECTS":
-    python3 tools/chimera-usb.py ls "{{dir}}"
+# The project files on the card and their sizes
+ls:
+    python3 tools/chimera-usb.py ls
 
 # Flash firmware to PreenFM3 via DFU. With the console up, `to-dfu` sends
 # `dfu` and waits for the ROM loader; without it, bridge BOOT0 and re-plug.

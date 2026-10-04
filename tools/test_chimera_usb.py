@@ -583,13 +583,13 @@ class Put(unittest.TestCase):
         self.assertEqual(b"".join(base64.b64decode(x) for x in lines), data)
 
     def test_ls_prints_the_listing_and_waits_for_the_card(self):
-        self.assertEqual(tool.first_wait("ls /CHIMERA/PROJECTS"), tool.LS_WAIT_S)
+        self.assertEqual(tool.first_wait("ls"), tool.LS_WAIT_S)
         self.assertEqual(tool.first_wait("status"), tool.SILENCE_S)
         with PutUnit(listing=b"P0000014.A 130000\nOK\n") as u:
-            r = run_tool(["ls", "/CHIMERA/PROJECTS"], u.target)
+            r = run_tool(["ls"], u.target)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout, b"P0000014.A 130000\n")
-        self.assertEqual(u.requests, [b"ls /CHIMERA/PROJECTS"])
+        self.assertEqual(u.requests, [b"ls"])
 
 
 if __name__ == "__main__":

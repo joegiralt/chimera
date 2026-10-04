@@ -1,21 +1,21 @@
-//! `ls` and `put`: files onto a card that can't leave the unit. `put` takes
-//! a whole project file and saves it the way the unit saves (ADR 0045): to
-//! the side a load doesn't keep, with the next generation and its own CRC,
-//! so the old side stays loadable until the new one is whole. Every card
-//! operation runs under what is left of `PUT_DEADLINE_MS`.
+//! `ls` and `put`: project files onto a card that can't leave the unit.
+//! `put` takes a whole project file and saves it the way the unit saves
+//! (ADR 0045): to the side a load doesn't keep, with the next generation
+//! and its own CRC, so the old side stays loadable until the new one is
+//! whole. A side a failed `put` wrote is deleted, so the list shows the
+//! pair as it was. Every card operation runs under what is left of
+//! `PUT_DEADLINE_MS`.
 
 use core::fmt::{self, Write};
 
 use chimera_hal::Ms;
-use chimera_hal::store::{
-    ByteSink, CHUNK, Dir, FileName, Files, ReadSink, Store, StoreError, VolumeId,
-};
+use chimera_hal::store::{CHUNK, Dir, FileName, Files, StoreError};
 
 use super::{Arg, Out, Stalled, Words};
 use crate::project::{ProjectCheck, peek_entry, project_file};
 use crate::storage::{
-    Card, CardFault, Check, Crc32, Event, FileError, Framer, Generation, HEADER_LEN, ProjectId,
-    Ready, SaveError, peek_header, save_ab,
+    Card, CardFault, Check, Crc32, Event, FileError, Framer, Generation, HEADER_LEN, Header,
+    ProjectId, Ready, SaveError, peek_header, save_target, write_file,
 };
 
 /// The largest file `put` takes: a project is about 130 KB.
@@ -30,7 +30,8 @@ pub const PUT_LINE: usize = 64;
 pub const ABORT: &[u8] = b"abort";
 /// What the unit says once it will take the data.
 pub const READY: &str = "READY\n";
-/// Kept back from the write for judging both sides after it.
+/// Kept back from the write for judging the pair, or deleting the side,
+/// after it.
 const VERIFY_MS: u32 = 3_000;
 /// The data stops this long before the write's own cap, so the write ends
 /// as `put` decides, its chain linked or freed, never cut by the card's.
@@ -42,40 +43,10 @@ const DRAIN_MS: u32 = 5_000;
 /// A header and a trailer: the smallest Chimera file.
 const MIN_FILE: u32 = 32;
 const DECODED: usize = PUT_LINE / 4 * 3;
+const PROJECTS: &[u8] = b"/CHIMERA/PROJECTS/";
 
 const _: () = assert!(PUT_LINE.is_multiple_of(4));
 const _: () = assert!(PUT_LINE <= super::MAX_LINE);
-
-/// The directories `ls` lists, as paths, longest first.
-const DIRS: [(&[u8], Dir); 4] = [
-    (b"/CHIMERA/PROJECTS", Dir::Projects),
-    (b"/CHIMERA/SOUNDS", Dir::Sounds),
-    (b"/CHIMERA/BENCH", Dir::Bench),
-    (b"/CHIMERA", Dir::Chimera),
-];
-
-/// A directory's path, any case, a trailing `/` allowed.
-fn dir(p: &[u8]) -> Option<Dir> {
-    let p = p.strip_suffix(b"/").unwrap_or(p);
-    DIRS.iter()
-        .find(|(path, _)| after(p, path) == Some(&[]))
-        .map(|&(_, d)| d)
-}
-
-/// `p` after `prefix` (upper case), which it starts with in any case. One
-/// plain loop, out of line: every path test shares it.
-#[inline(never)]
-fn after<'a>(p: &'a [u8], prefix: &[u8]) -> Option<&'a [u8]> {
-    let (head, rest) = p.split_at_checked(prefix.len())?;
-    let mut i = 0;
-    while i < head.len() {
-        if head[i].to_ascii_uppercase() != prefix[i] {
-            return None;
-        }
-        i += 1;
-    }
-    Some(rest)
-}
 
 /// Digits only, at most `max` of them, in `radix`.
 fn number(w: &[u8], radix: u32, max: usize) -> Option<u32> {
@@ -88,46 +59,25 @@ fn number(w: &[u8], radix: u32, max: usize) -> Option<u32> {
     })
 }
 
-/// `ls`'s argument: a directory under `/CHIMERA`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LsArg(pub Dir);
-
-impl Arg for LsArg {
-    const USAGE: &'static str = "/CHIMERA, /CHIMERA/PROJECTS, /CHIMERA/SOUNDS or /CHIMERA/BENCH";
-    fn parse(mut words: Words<'_>) -> Option<Self> {
-        let d = dir(words.next()?)?;
-        words.next().is_none().then_some(LsArg(d))
-    }
-}
-
-/// `P0000014.A` (or `.B`: the letter names the pair; the unit picks the
-/// side it writes), any case.
-fn project(name: &[u8]) -> Option<ProjectId> {
+/// `/CHIMERA/PROJECTS/P0000014.A` (or `.B`: the letter names the pair; the
+/// unit picks the side it writes), any case. Nothing else parses: no other
+/// directory, no `..`, no `//`.
+fn project(p: &[u8]) -> Option<ProjectId> {
+    let (dir, name) = p.split_at_checked(PROJECTS.len())?;
     let [b'P' | b'p', digits @ .., b'.', b'A' | b'B' | b'a' | b'b'] = name else {
         return None;
     };
-    if digits.len() != 7 {
+    if !dir.eq_ignore_ascii_case(PROJECTS) || digits.len() != 7 {
         return None;
     }
     ProjectId::new(number(digits, 10, 7)?)
 }
 
-/// What a `put` names.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PutTo {
-    Project(ProjectId),
-    /// A file in SOUNDS: there is no Sound library to load it yet.
-    Sound,
-    /// A directory under `/CHIMERA`, not a file.
-    Directory,
-    /// A file in PROJECTS that is not a project's.
-    NotAPair,
-}
-
-/// `put`'s argument: what, how many bytes and their CRC-32/ISO-HDLC.
+/// `put`'s argument: the project, how many bytes and their
+/// CRC-32/ISO-HDLC.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PutArg {
-    pub to: PutTo,
+    pub to: ProjectId,
     pub size: u32,
     pub crc: u32,
 }
@@ -135,16 +85,7 @@ pub struct PutArg {
 impl Arg for PutArg {
     const USAGE: &'static str = "/CHIMERA/PROJECTS/P#######.A, its size and CRC-32 in hex";
     fn parse(mut words: Words<'_>) -> Option<Self> {
-        let w = words.next()?;
-        let to = if dir(w).is_some() {
-            PutTo::Directory
-        } else if let Some(name) = after(w, b"/CHIMERA/PROJECTS/") {
-            project(name).map_or(PutTo::NotAPair, PutTo::Project)
-        } else if after(w, b"/CHIMERA/SOUNDS/").is_some() {
-            PutTo::Sound
-        } else {
-            return None;
-        };
+        let to = project(words.next()?)?;
         let size = number(words.next()?, 10, 10)?;
         let crc = number(words.next()?, 16, 8)?;
         words.next().is_none().then_some(PutArg { to, size, crc })
@@ -154,9 +95,6 @@ impl Arg for PutArg {
 /// Why a `put` failed: `ERR put: <message>`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PutFail {
-    NotAPair,
-    Sound,
-    Directory,
     ProjectOpen,
     TooBig,
     Timeout,
@@ -177,9 +115,6 @@ pub enum PutFail {
 impl PutFail {
     pub fn message(self) -> &'static str {
         match self {
-            PutFail::NotAPair => "not a project or sound name",
-            PutFail::Sound => "no Sound library yet: projects only",
-            PutFail::Directory => "a directory, not a file",
             PutFail::ProjectOpen => "project is open",
             PutFail::TooBig => "over 1 MiB",
             PutFail::Timeout => "timeout",
@@ -231,8 +166,7 @@ impl Due {
     }
 }
 
-/// `put`'s whole answer: `READY` once the pair is known and its directory
-/// made, then `OK`, or `ERR put: <why>` with the pair loading as before.
+/// `put`'s whole answer: `READY` once its directory is made, then `OK`, or `ERR put: <why>` with the pair loading as before.
 /// `open`: the project the UI holds, which `put` never writes under it.
 /// Out of line, like `save`: 460 B smaller under fat LTO, measured.
 #[inline(never)]
@@ -261,12 +195,7 @@ fn transfer<F: Files, P: Out>(
     port: &mut P,
     due: Due,
 ) -> Result<(), PutFail> {
-    let id = match arg.to {
-        PutTo::Project(id) => id,
-        PutTo::Sound => return Err(PutFail::Sound),
-        PutTo::Directory => return Err(PutFail::Directory),
-        PutTo::NotAPair => return Err(PutFail::NotAPair),
-    };
+    let id = arg.to;
     if arg.size > PUT_MAX_BYTES {
         return Err(PutFail::TooBig);
     }
@@ -334,25 +263,35 @@ fn save<F: Files, P: Out>(
     framer
         .push(&head, &mut |e: Event<'_>| check.event(e))
         .map_err(PutFail::File)?;
+    let (side, generation) =
+        save_target(s, r, file, &mut ProjectCheck::new()).map_err(|e| match e {
+            SaveError::Store(e) => PutFail::Store(e),
+            SaveError::File(e) => PutFail::File(e),
+        })?;
+    let h = Header { generation, ..h };
     src.due.arm(s, src.port, VERIFY_MS)?;
     let mut why = None;
-    let saved = save_ab(s, r, file, &mut ProjectCheck::new(), h.name, &mut |w| {
-        src.body(&mut |b| w.copy(b), &mut framer, &mut |e| check.event(e))
-            .and_then(|()| check.end().map_err(PutFail::File))
-            .map_err(|e| match e {
-                PutFail::Store(e) => e,
-                e => {
-                    why = Some(e);
-                    StoreError::Io
-                }
-            })
+    let wrote = s.write(r.volume(), file.side(side), &mut |sink| {
+        write_file(sink, &h, &mut |w| {
+            src.body(&mut |b| w.copy(b), &mut framer, &mut |e| check.event(e))
+                .and_then(|()| check.end().map_err(PutFail::File))
+                .map_err(|e| match e {
+                    PutFail::Store(e) => e,
+                    e => {
+                        why = Some(e);
+                        StoreError::Io
+                    }
+                })
+        })
     });
-    let generation = match (why, saved) {
-        (Some(e), _) => return Err(e),
-        (None, Ok(g)) => g,
-        (None, Err(SaveError::Store(e))) => return Err(PutFail::Store(e)),
-        (None, Err(SaveError::File(e))) => return Err(PutFail::File(e)),
-    };
+    if let Err(e) = wrote {
+        // The side is torn, or never got its trailer: gone, the list shows
+        // the pair as it was.
+        if src.due.arm(s, src.port, 0).is_ok() {
+            let _ = s.delete(r.volume(), file.side(side));
+        }
+        return Err(why.unwrap_or(PutFail::Store(e)));
+    }
     src.due.arm(s, src.port, 0)?;
     judge(s, r, id, generation)
 }
@@ -495,16 +434,20 @@ impl<'p, P: Out> Incoming<'p, P> {
     }
 }
 
+/// Each byte's base64 value, 64 where it is not one.
+static B64: [u8; 256] = {
+    let mut t = [64u8; 256];
+    let mut i = 0;
+    while i < 64 {
+        let c = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"[i];
+        t[c as usize] = i as u8;
+        i += 1;
+    }
+    t
+};
+
 /// One base64 quad: its bytes and how many. Padding only in the last.
 fn quad(q: &[u8; 4], last: bool) -> Option<([u8; 3], usize)> {
-    let v = |c: u8| match c {
-        b'A'..=b'Z' => Some(c - b'A'),
-        b'a'..=b'z' => Some(c - b'a' + 26),
-        b'0'..=b'9' => Some(c - b'0' + 52),
-        b'+' => Some(62),
-        b'/' => Some(63),
-        _ => None,
-    };
     let pad = match q {
         [_, _, b'=', b'='] => 2,
         [_, _, _, b'='] => 1,
@@ -515,7 +458,10 @@ fn quad(q: &[u8; 4], last: bool) -> Option<([u8; 3], usize)> {
     }
     let mut n = 0u32;
     for (i, &c) in q.iter().enumerate() {
-        let x = if i >= 4 - pad { 0 } else { v(c)? };
+        let x = if i >= 4 - pad { 0 } else { B64[usize::from(c)] };
+        if x == 64 {
+            return None;
+        }
         n = n << 6 | u32::from(x);
     }
     let [_, a, b, c] = n.to_be_bytes();
@@ -523,7 +469,7 @@ fn quad(q: &[u8; 4], last: bool) -> Option<([u8; 3], usize)> {
 }
 
 /// A name as the card shows it: `STEM.EXT`, or `STEM`.
-pub struct Shown(pub FileName);
+struct Shown(FileName);
 
 impl fmt::Display for Shown {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -536,61 +482,24 @@ impl fmt::Display for Shown {
     }
 }
 
-/// `ls`'s body on `vol`: one `NAME size` line a file. A write that
-/// stalls is kept and returned once the listing ends.
-pub fn write_ls<F: Store>(
-    files: &mut F,
-    vol: VolumeId,
-    dir: Dir,
-    t: &mut impl Write,
-) -> Result<fmt::Result, StoreError> {
+/// `ls`'s whole answer: one `NAME size` line a file in PROJECTS, then
+/// `OK`, or `ERR ls: <why>`. A write that stalls ends the listing's text,
+/// not the card operation.
+#[inline(never)]
+pub fn ls<F: Files>(f: &mut F, out: &mut impl Out) -> Result<(), Stalled> {
+    let mut t = super::Text(out);
     let mut wrote = Ok(());
-    files.list(vol, dir, &mut |name, len| {
-        if wrote.is_ok() {
-            wrote = writeln!(t, "{} {len}", Shown(name));
-        }
-    })?;
-    Ok(wrote)
-}
-
-/// A unit with no card behind the console: `ls` and `put` are not in its
-/// build.
-#[derive(Debug)]
-pub enum NoCard {}
-
-impl Store for NoCard {
-    fn mount(&mut self) -> Result<VolumeId, StoreError> {
-        match *self {}
+    let listed = f.mount().and_then(|vol| {
+        t.0.fresh();
+        f.list(vol, Dir::Projects, &mut |name, len| {
+            if wrote.is_ok() {
+                wrote = writeln!(t, "{} {len}", Shown(name));
+            }
+        })
+    });
+    match listed {
+        Ok(()) => wrote.and_then(|()| t.write_str("OK\n")),
+        Err(e) => writeln!(t, "ERR ls: {}", e.message()),
     }
-    fn list(
-        &mut self,
-        _: VolumeId,
-        _: Dir,
-        _: &mut dyn FnMut(FileName, u32),
-    ) -> Result<(), StoreError> {
-        match *self {}
-    }
-    fn read(&mut self, _: VolumeId, _: FileName, _: &mut dyn ReadSink) -> Result<(), StoreError> {
-        match *self {}
-    }
-    fn write(
-        &mut self,
-        _: VolumeId,
-        _: FileName,
-        _: &mut dyn FnMut(&mut dyn ByteSink) -> Result<(), StoreError>,
-    ) -> Result<u32, StoreError> {
-        match *self {}
-    }
-    fn delete(&mut self, _: VolumeId, _: FileName) -> Result<(), StoreError> {
-        match *self {}
-    }
-    fn make_dir(&mut self, _: VolumeId, _: Dir) -> Result<(), StoreError> {
-        match *self {}
-    }
-}
-
-impl Files for NoCard {
-    fn cap(&mut self, _: Option<u32>) {
-        match *self {}
-    }
+    .map_err(|fmt::Error| Stalled)
 }

@@ -13,9 +13,11 @@ embedded-graphics-core = "0.4"
 u8g2-fonts = "=0.8.0"
 
 [features]
-default = ["orbit"]
+default = ["orbit", "card-put"]
 # ORBIT, the ring sequencer: SEQ hold opens it. Off, SEQ hold does nothing.
 orbit = []
+# The console's `ls` and `put` (ADR 0092): project files onto the card.
+card-put = []
 # The master tape stage on DAC pair 1 (ADR 0055: off the chain by default;
 # its parameters and disk codes stay either way).
 master-tape = []

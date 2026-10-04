@@ -23,7 +23,7 @@ usb-console = [
     "dep:synopsys-usb-otg",
 ]
 # The console's `ls` and `put` (ADR 0092): files onto the card over USB.
-card-put = ["usb-console"]
+card-put = ["usb-console", "chimera-core/card-put"]
 
 [dependencies]
 chimera-core = { path = "../chimera-core", default-features = false }

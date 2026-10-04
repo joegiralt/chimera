@@ -3,8 +3,8 @@
 use core::fmt::{self, Write};
 
 use super::{
-    CardAnswer, Command, Frame, LsArg, MAX_LINE, NoArg, Out, PROTOCOL, Refusal, Request, Stalled,
-    put, write_card, write_ls, write_shot, write_status,
+    CardAnswer, Command, Frame, MAX_LINE, NoArg, Out, PROTOCOL, Refusal, Request, Stalled,
+    write_card, write_shot, write_status,
 };
 use crate::boot::{BootSeen, UsbRegs};
 use crate::hw::MAX_VOICES;
@@ -116,15 +116,17 @@ pub fn answer(
         },
         Ok(Request::Shot(c)) => return write_shot(unit.frame(), c, t.0),
         Ok(r @ Request::Dfu(NoArg)) => unit.dfu().map(Ok).ok_or(Why::Absent(r.command())),
-        Ok(r @ Request::Ls(LsArg(dir))) => match unit.files() {
+        #[cfg(feature = "card-put")]
+        Ok(r @ Request::Ls(NoArg)) => match unit.files() {
             None => Err(Why::Absent(r.command())),
-            Some(f) => return ls(f, dir, t.0),
+            Some(f) => return super::ls(f, t.0),
         },
+        #[cfg(feature = "card-put")]
         Ok(r @ Request::Put(arg)) => {
             let open = unit.ui().project().meta().id();
             match unit.files() {
                 None => Err(Why::Absent(r.command())),
-                Some(f) => return put(arg, open, f, t.0),
+                Some(f) => return super::put(arg, open, f, t.0),
             }
         }
     };
@@ -167,23 +169,4 @@ fn bench(b: &str, t: &mut impl Write) -> fmt::Result {
     } else {
         t.write_str("\n")
     }
-}
-
-/// `ls`'s whole answer: the listing then `OK`, or `ERR ls: <why>`.
-#[inline(never)]
-fn ls<F: Files>(
-    f: &mut F,
-    dir: chimera_hal::store::Dir,
-    out: &mut impl Out,
-) -> Result<(), Stalled> {
-    let mut t = Text(out);
-    let listed = f.mount().and_then(|vol| {
-        t.0.fresh();
-        write_ls(f, vol, dir, &mut t)
-    });
-    match listed {
-        Ok(wrote) => wrote.and_then(|()| t.write_str("OK\n")),
-        Err(e) => writeln!(t, "ERR ls: {}", e.message()),
-    }
-    .map_err(|fmt::Error| Stalled)
 }

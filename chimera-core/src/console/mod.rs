@@ -110,17 +110,29 @@ macro_rules! commands {
     };
 }
 
-commands! {
-    Help   (NoArg)   => "help",   "this list",
-    Status (NoArg)   => "status", "firmware, project, Part and where the UI is",
-    Stats  (NoArg)   => "stats",  "AUDIO LOAD and the UI loop's time",
-    Bench  (NoArg)   => "bench",  "the bench's numbers (bench builds)",
-    Card   (CardArg) => "card",   "SD speed and streams, a chord playing; clean (bench builds)",
-    Shot   (Colours) => "shot",   "the screen in THEME's colours; shot raw: canonical",
-    Dfu    (NoArg)   => "dfu",    "restart into the ROM loader for just flash",
-    Ls     (LsArg)   => "ls",     "a card directory's names and sizes",
+/// The table: one row per command. `ls` and `put` only with `card-put`.
+macro_rules! table {
+    ($($card:tt)*) => {
+        commands! {
+            Help   (NoArg)   => "help",   "this list",
+            Status (NoArg)   => "status", "firmware, project, Part and where the UI is",
+            Stats  (NoArg)   => "stats",  "AUDIO LOAD and the UI loop's time",
+            Bench  (NoArg)   => "bench",  "the bench's numbers (bench builds)",
+            Card   (CardArg) => "card",   "SD speed and streams, a chord playing; clean (bench builds)",
+            Shot   (Colours) => "shot",   "the screen in THEME's colours; shot raw: canonical",
+            Dfu    (NoArg)   => "dfu",    "restart into the ROM loader for just flash",
+            $($card)*
+        }
+    };
+}
+
+#[cfg(feature = "card-put")]
+table! {
+    Ls     (NoArg)   => "ls",     "the project files on the card and their sizes",
     Put    (PutArg)  => "put",    "a project file onto the card: <path> <size> <crc32>",
 }
+#[cfg(not(feature = "card-put"))]
+table! {}
 
 /// Printable ASCII only (anything else is stored as `?`), at most `WORD_MAX`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -215,5 +227,9 @@ mod shell;
 pub use shell::*;
 mod card;
 pub use card::*;
+#[cfg(feature = "card-put")]
 mod put;
+#[cfg(feature = "card-put")]
 pub use put::*;
+mod nocard;
+pub use nocard::NoCard;

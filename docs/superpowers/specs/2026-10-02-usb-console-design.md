@@ -77,7 +77,7 @@ bench   the bench's numbers (bench builds)
 card    SD speed and streams, a chord playing; clean (bench builds)
 shot    the screen in THEME's colours; shot raw: canonical
 dfu     restart into the ROM loader for just flash
-ls      a card directory's names and sizes
+ls      the project files on the card and their sizes
 put     a project file onto the card: <path> <size> <crc32>
 OK
 ```
