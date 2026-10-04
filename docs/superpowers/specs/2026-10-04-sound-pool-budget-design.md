@@ -184,10 +184,11 @@ A source delete leaves a hole below the sources above it. Compaction slides them
 2. **Close the gate.** The UI stores `gate = 1` (`Release`), then waits until the audio acknowledges a block that began after the store. This is the epoch-ack pattern of `Swap::ack` (ADR 0046), at most one block, 1.33 ms. While the gate is closed:
    - a note-on whose source is among `above` is **held for the block**: the voice is allocated and latched, its envelope waits, and it starts on the first block after the gate opens;
    - every other source plays normally.
-3. **Move.** `copy_within` the sources above the hole down, and rewrite their rows' `base` (`Relaxed`). The largest possible move, every source byte, is 104 KB, about 0.2 ms at 480 MHz.
-4. **Open the gate:** `gate = 0` with `Release`. The audio's next `Acquire` sees the new bases.
+3. **Re-check after the ack.** A note-on in the block just before the gate closed may have started a voice on a source in `above`: that block's `sounding` already has its bit. The UI re-reads `sounding & above` from a block that began after the ack. If any bit is set, it reopens the gate (`gate = 0`, `Release`) and goes back to step 1. Only with the mask clear, under a closed and acknowledged gate, does it move. No voice can start on `above` after that, so nothing reads a moving byte.
+4. **Move.** `copy_within` the sources above the hole down, and rewrite their rows' `base` (`Relaxed`). The largest possible move, every source byte, is 104 KB, about 0.2 ms at 480 MHz.
+5. **Open the gate:** `gate = 0` with `Release`. The audio's next `Acquire` sees the new bases.
 
-**The cost** is that a note on a moving source can start up to two blocks (2.7 ms) late, once per source delete, which is a deliberate user action. The audio never reads a byte mid-move, and never takes a branch per sample. There is no per-read mapping (owner question 2 asks if the latency is acceptable).
+**The cost** is that a note on a moving source can start up to two blocks (2.7 ms) late, once per source delete, which is a deliberate user action. The audio never reads a byte mid-move, and never takes a branch per sample. There is no per-read mapping The latency is accepted, not asked: 2.7 ms is far below the 10–20 ms at which two onsets are heard as a flam, and every note already lands on a 1.33 ms block edge.
 
 ### Deleting a source
 
@@ -373,6 +374,7 @@ All host-side (`just test`). Hardware checks wait for the ship flash.
   - a per-entry CRC is unchanged by every move;
   - `used()` is the sum of costs and pending holes.
 - `compaction_waits_for_silence`: no source byte moves while its `sounding` bit is set. The hole stays pending and shows on the meter.
+- `gate_recheck_catches_late_note_on`: a note-on on a source in `above` arrives in the block just before the gate closes. The re-check after the ack sees its `sounding` bit, reopens the gate, and moves nothing until the note ends. Then compaction runs, and the voice's samples match the unmoved source throughout.
 - `gate_holds_note_on`: a note-on on a moving source during a closed gate starts on the first block after the gate opens, with its first sample unchanged. A note-on on any other source starts at once.
 - `retire_never_cuts`: a retired source's row stays live until its bit clears.
 - **`memory_budget_test`:**
@@ -431,7 +433,6 @@ Step 3 merges after ORBIT, since both touch the project codec and `template.rs` 
 ## Owner questions
 
 1. **The delay line as `i16`, for a 160 KiB arena?** It frees 48 128 B, which takes 24 kHz audio beside NEW from 2.9 s to 4.3 s. It puts 16-bit grain on every delay repeat, compounding with feedback, as ADR 0028 accepted for the reverb. It needs a new ADR, superseding ADR 0014's delay storage in part. Kept f32, the arena stays 112 KiB.
-2. **Is a note-on held up to 2.7 ms acceptable, once per source delete?** It applies only to notes on sources being compacted. The alternative is a per-sample address branch in every TAPE voice, which is what the first draft had.
 
 Settled by precedent or the code, and no longer asked:
 - **The budget size** comes from the arithmetic (§ The budget).
@@ -439,3 +440,4 @@ Settled by precedent or the code, and no longer asked:
 - **Factory sources are card-only,** because of flash.
 - **24 kHz is the default import rate,** per #279.
 - **The meter shows a percentage only,** as on the Play.
+- **The compaction gate's 2.7 ms worst-case note-on delay is accepted.** It is far below the 10–20 ms flam threshold, and notes already land on 1.33 ms block edges.

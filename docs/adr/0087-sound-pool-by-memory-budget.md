@@ -71,7 +71,12 @@ RAM-only TAPE would be a one-source engine.
   - A source hole compacts only when no source above it is sounding (an
     audio-written mask). It then closes a gate the audio acks within one
     block, moves the bytes, and reopens the gate with `Release`. Note-ons
-    on the moving sources start after it, at most 2.7 ms late.
+    on the moving sources start after it, at most 2.7 ms late. That is
+    far below the 10–20 ms flam threshold, and notes already land on
+    1.33 ms block edges.
+  - After the ack, the UI re-checks the mask, because a note-on in the
+    block before the gate closed may already sound a moving source. If a
+    bit is set, it reopens the gate and waits.
   - Until compaction, the hole is shown as pending and counted as used, so
     free always equals the gap.
   - A deleted source still sounding is retired, never cut.
