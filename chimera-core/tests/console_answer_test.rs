@@ -166,12 +166,17 @@ fn full() -> CardSpeed {
         card: Some(CardInfo {
             kind: CardKind::Sdhc,
             bytes: 15_931_539_456,
-            free_bytes: 15_000_000_000,
+            free_bytes: Some(15_000_000_000),
         }),
         files: Some(Files::default()),
         seq: [tp; 3],
         random: Some(Latency::default()),
         interleaved: tp,
+        // A p95 round of 8 × 4 KB in 1 ms: 32.8 MB/s, 455 streams at half.
+        rounds: Some(Latency {
+            p95_us: 1_000,
+            ..Latency::default()
+        }),
         load: Some(Load::default()),
         overruns: 0,
     }
@@ -192,7 +197,7 @@ fn card_fails_as_one_err_line() {
 fn a_card_stopped_short_keeps_what_came_before() {
     let mut u = Fake::new();
     let mut s = full();
-    (s.random, s.interleaved, s.load) = (None, None, None);
+    (s.random, s.interleaved, s.rounds, s.load) = (None, None, None, None);
     u.card = Some(CardAnswer::Measured(s, Some(CardFail::Timeout)));
     let got = ask(&mut u, "card seed=7\n");
     assert!(
@@ -218,7 +223,7 @@ fn card_is_key_value_lines_then_ok() {
     u.card = Some(CardAnswer::Measured(full(), None));
     let got = ask(&mut u, "card\n");
     assert!(
-        got.starts_with("seed 7\n") && got.ends_with("streams 20\nOK\n"),
+        got.starts_with("seed 7\n") && got.ends_with("streams 455\nOK\n"),
         "{got}"
     );
     assert!(

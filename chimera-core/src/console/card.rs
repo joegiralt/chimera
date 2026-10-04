@@ -8,7 +8,6 @@ use core::fmt::{self, Write};
 use chimera_hal::store::StoreError;
 
 use super::{Arg, Words};
-use crate::dsp::xorshift32;
 
 /// One 24 kHz 12-bit stream, in bytes a second.
 pub const STREAM_BYTES_PER_S: u32 = 24_000 * 3 / 2;
@@ -32,7 +31,10 @@ pub const RANDOM_READS: usize = 1_024;
 /// TRON's pattern: this many streams, each refilled 4 KB in turn, each
 /// from its own place, half in each file.
 pub const STREAMS: u32 = 8;
-pub const STREAM_ROUNDS: u32 = 24;
+pub const STREAM_ROUNDS: u32 = 100;
+/// The test files must start at least this far apart (per mille of the
+/// card), or `card` fails with `TooClose`; it doesn't retry placement.
+pub const MIN_APART_PER_MILLE: u64 = 250;
 /// Runs `Extents` keeps per file; a file in more is `CardFail::Fragmented`.
 pub const MAX_RUNS: usize = 32;
 /// The whole `card`, files written included: well inside the host's 60 s.
@@ -125,6 +127,12 @@ pub fn span_us(cycles: u32, cpu_hz: u32, ms: u32) -> Option<u32> {
     (ms < CYCLE_SPAN_MS).then(|| cycles / (cpu_hz / 1_000_000).max(1))
 }
 
+/// How far apart two device blocks are, per mille of a card of `bytes`.
+pub fn apart_per_mille(a: u32, b: u32, bytes: u64) -> u32 {
+    let blocks = (bytes / 512).max(1);
+    (u64::from(a.abs_diff(b)) * 1_000 / blocks) as u32
+}
+
 /// The card's class, from its addressing and size (SD spec: SDHC is block
 /// addressed up to 32 GB, SDXC past it).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -158,8 +166,9 @@ impl CardKind {
 pub struct CardInfo {
     pub kind: CardKind,
     pub bytes: u64,
-    /// Free once the test files are on it.
-    pub free_bytes: u64,
+    /// Free once the test files are on it; `None` when both were there
+    /// already and the FAT wasn't scanned.
+    pub free_bytes: Option<u64>,
 }
 
 /// The test files as found or written.
@@ -171,6 +180,8 @@ pub struct Files {
     pub created: u8,
     /// How far apart they start on the card, in MiB.
     pub apart_mib: u32,
+    /// The same, per mille of the card.
+    pub apart_per_mille: u32,
 }
 
 /// Audio while the chord played.
@@ -191,19 +202,24 @@ pub struct CardSpeed {
     pub seq: [Option<Throughput>; SEQ_BLOCKS.len()],
     /// `RANDOM_READS` 4 KB reads across both files, the chord playing.
     pub random: Option<Latency>,
-    /// TRON's pattern (`streams`), the chord playing.
+    /// TRON's pattern, the chord playing: the mean rate, and the spread of
+    /// a round's time (every stream refilled once).
     pub interleaved: Option<Throughput>,
+    pub rounds: Option<Latency>,
     pub load: Option<Load>,
     /// Audio blocks missed while `card` ran.
     pub overruns: u32,
 }
 
 impl CardSpeed {
-    /// 24 kHz 12-bit streams at half the interleaved rate: TRON's pattern
-    /// under load, with a 50 % margin.
+    /// 24 kHz 12-bit streams at half the rate of a p95 round: TRON's
+    /// pattern under load, its tail with a 50 % margin, not its mean.
     pub fn streams(&self) -> Option<u32> {
-        self.interleaved
-            .map(|t| t.bytes_per_s() / 2 / STREAM_BYTES_PER_S)
+        let round = Throughput {
+            bytes: STREAMS * READ_BLOCKS * 512,
+            us: self.rounds?.p95_us,
+        };
+        Some(round.bytes_per_s() / 2 / STREAM_BYTES_PER_S)
     }
 }
 
@@ -224,6 +240,8 @@ pub enum CardFail {
     ClockWrap,
     /// `card clean` left `/CHIMERA/BENCH` holding files it can't name.
     NotEmpty,
+    /// The test files start under `MIN_APART_PER_MILLE` of the card apart.
+    TooClose,
     Store(StoreError),
 }
 
@@ -237,6 +255,7 @@ impl CardFail {
             CardFail::SlowWrite => "card too slow to write a test file: deleted",
             CardFail::Timeout => "timeout",
             CardFail::ClockWrap => "a timed span outran the cycle counter",
+            CardFail::TooClose => "test files under a quarter of the card apart: run card clean",
             CardFail::NotEmpty => "BENCH holds other files: delete them on a computer",
             CardFail::Store(e) => e.message(),
         }
@@ -263,13 +282,16 @@ pub fn write_card(s: &CardSpeed, t: &mut impl Write) -> fmt::Result {
     if let Some(c) = &s.card {
         writeln!(t, "card_type {}", c.kind.name())?;
         writeln!(t, "card_mb {}", c.bytes / 1_000_000)?;
-        writeln!(t, "free_mb {}", c.free_bytes / 1_000_000)?;
+        if let Some(free) = c.free_bytes {
+            writeln!(t, "free_mb {}", free / 1_000_000)?;
+        }
     }
     if let Some(f) = &s.files {
         writeln!(t, "file_kb {}", FILES as u32 * FILE_BYTES / 1_000)?;
         writeln!(t, "file_runs {}", f.runs)?;
         writeln!(t, "file_created {}", f.created)?;
         writeln!(t, "file_apart_mib {}", f.apart_mib)?;
+        writeln!(t, "file_apart_per_mille {}", f.apart_per_mille)?;
     }
     for (blocks, tp) in SEQ_BLOCKS.iter().zip(&s.seq) {
         if let Some(tp) = tp {
@@ -285,6 +307,11 @@ pub fn write_card(s: &CardSpeed, t: &mut impl Write) -> fmt::Result {
     }
     if let Some(i) = s.interleaved {
         writeln!(t, "streams_kb_s {}", i.kb_per_s())?;
+    }
+    if let Some(r) = &s.rounds {
+        writeln!(t, "round_median_us {}", r.median_us)?;
+        writeln!(t, "round_p95_us {}", r.p95_us)?;
+        writeln!(t, "round_max_us {}", r.max_us)?;
     }
     if let Some(l) = &s.load {
         writeln!(t, "loaded_voices {}", l.voices)?;
@@ -404,11 +431,15 @@ impl Iterator for Transfers<'_> {
 /// `RANDOM_READS` 4 KB reads from `seed`: (file, its 4 KB-aligned first
 /// block), spread over both files.
 pub fn random_reads(seed: u32) -> impl Iterator<Item = (usize, u32)> {
-    // Spread by an odd constant first: no two seeds share a state.
-    let mut state = seed.wrapping_mul(0x9E37_79B9) | 1;
+    // Xorshift64 (13, 7, 17) from the seed in the low word and 1 above
+    // it: never zero, and no two seeds share a state.
+    let mut state = 1 << 32 | u64::from(seed);
     let slots = FILE_BLOCKS / READ_BLOCKS;
     (0..RANDOM_READS).map(move |_| {
-        let r = xorshift32(&mut state);
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        let r = (state >> 32) as u32;
         ((r >> 31) as usize, (r % slots) * READ_BLOCKS)
     })
 }

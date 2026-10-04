@@ -1,7 +1,7 @@
 use chimera_core::console::{
     CYCLE_SPAN_MS, CardArg, CardKind, CardSpeed, Console, Extents, FILE_BLOCKS, FILES, Latency,
-    MAX_RUNS, RANDOM_READS, READ_BLOCKS, Refusal, Request, STREAM_BYTES_PER_S, STREAM_ROUNDS,
-    STREAMS, Throughput, interleaved, random_reads, span_us,
+    MAX_RUNS, MIN_APART_PER_MILLE, RANDOM_READS, READ_BLOCKS, Refusal, Request, STREAM_BYTES_PER_S,
+    STREAM_ROUNDS, STREAMS, Throughput, apart_per_mille, interleaved, random_reads, span_us,
 };
 
 #[test]
@@ -63,14 +63,35 @@ fn throughput_never_divides_by_zero() {
 }
 
 #[test]
-fn streams_are_half_the_interleaved_rate() {
-    let mut s = CardSpeed::default();
-    assert_eq!(s.streams(), None, "nothing interleaved, no count");
-    s.interleaved = Some(Throughput {
-        bytes: 1_440_000,
-        us: 1_000_000,
+fn streams_come_from_a_p95_round_at_half_rate() {
+    let mut s = CardSpeed {
+        interleaved: Some(Throughput {
+            bytes: 10_000_000,
+            us: 1_000_000,
+        }),
+        ..CardSpeed::default()
+    };
+    assert_eq!(s.streams(), None, "no rounds timed, no count");
+    // 8 streams × 4096 B a round, p95 at 45.5 ms: 720 KB/s, 10 at half.
+    s.rounds = Some(Latency {
+        median_us: 1_000,
+        p95_us: 45_511,
+        ..Latency::default()
     });
-    assert_eq!(s.streams(), Some(20));
+    assert_eq!(s.streams(), Some(10), "the tail, not the mean or median");
+}
+
+#[test]
+fn files_apart_is_per_mille_of_the_card() {
+    let card = 8_000_000_000u64; // 15,625,000 blocks
+    assert_eq!(apart_per_mille(0, 7_812_500, card), 500);
+    assert_eq!(apart_per_mille(7_812_500, 0, card), 500);
+    assert!(u64::from(apart_per_mille(100, 3_000_000, card)) < MIN_APART_PER_MILLE);
+    assert_eq!(
+        apart_per_mille(1, 2, 0),
+        1_000,
+        "no size: never divides by zero"
+    );
 }
 
 #[test]
@@ -121,7 +142,7 @@ fn random_reads_cover_both_files_and_repeat_by_seed() {
         reads == random_reads(42).collect::<Vec<_>>(),
         "a seed repeats"
     );
-    for other in [0, 1, 43] {
+    for other in [0, 1, 43, 42 ^ 1, u32::MAX] {
         assert!(
             reads != random_reads(other).collect::<Vec<_>>(),
             "seed {other}"
