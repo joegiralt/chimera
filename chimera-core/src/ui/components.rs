@@ -997,13 +997,15 @@ where
         (false, true) => theme::INK,
         (false, false) => theme::INK2,
     };
-    draw::text(
+    // Tracked by 0: the same glyphs, and the marks (RING's "3 › P3").
+    draw::text_tracked(
         d,
         &theme::FONT_VALUE,
         c.text,
         x,
         y + theme::CELL_VALUE_DY,
         value_color,
+        0,
     );
     if !c.fmt.is_discrete() && !dim {
         let fill = if c.active {

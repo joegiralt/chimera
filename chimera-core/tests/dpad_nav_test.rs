@@ -29,10 +29,7 @@ fn cx(engine: EngineType) -> NavCtx {
     NavCtx {
         engines: [engine; 6],
         dyn_rows: 3,
-        orbit: OrbitCx {
-            custom: true,
-            ..OrbitCx::NONE
-        },
+        orbit: OrbitCx::NONE,
     }
 }
 
@@ -240,7 +237,7 @@ fn edit_runs_inside_a_screen() {
     );
 }
 
-/// Every ORBIT page, reached by its own keys, SCALE on CUSTOM.
+/// Every ORBIT page, reached by its own keys.
 fn orbit_places(cx: &NavCtx) -> Vec<OrbitAt> {
     let mut seen = vec![OrbitAt::HOME];
     let mut i = 0;

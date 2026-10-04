@@ -1684,10 +1684,11 @@ impl UiState {
         }
         // SEGS shrunk under an armed segment drops the capture.
         self.orbit.fit(&self.project.orbit().live().chords);
-        // SCALE turned to CUSTOM opens its circle.
+        // SCALE turned to CUSTOM opens its circle; a toggle on it stays.
         if !was_custom
             && custom(&self.project)
             && let Some(o) = self.loc.orbit()
+            && o != o.custom()
         {
             self.go(o.custom().into());
         }
@@ -2611,7 +2612,6 @@ fn nav_cx(project: &Project) -> NavCtx {
         dyn_rows: 0,
         orbit: OrbitCx {
             targets: live.rings.map(|r| r.target.part()),
-            custom: live.chords.scale == ScaleKind::Custom,
         },
     }
 }

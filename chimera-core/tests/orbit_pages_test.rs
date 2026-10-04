@@ -57,8 +57,7 @@ fn ring_rhythm_golden() {
 /// ORB › CUSTOM, the controller ruling (ADR 0079, amended 2026-10-03):
 /// SCALE (C) turned to CUSTOM opens the circle on the scale it was; A
 /// walks the cursor, B sets and clears; the root stays; EDIT on ORB opens
-/// it whenever SCALE is CUSTOM, whichever cell was turned last, and does
-/// nothing otherwise.
+/// it whichever cell was turned last (named: ADR 0084).
 #[test]
 fn orb_custom_circle() {
     let mut ui = Box::new(UiState::new());
@@ -67,14 +66,6 @@ fn orb_custom_circle() {
     hold(&mut ui, Seq);
     assert_eq!(page(&ui), ORBIT_ORB.id);
     assert_eq!(chords(&ui).scale, ScaleKind::Minor);
-
-    // A named scale: EDIT does nothing, SCALE in focus or not.
-    tap(&mut ui, Edit);
-    assert_eq!(page(&ui), ORBIT_ORB.id);
-    feed(&mut ui, Input::turn(C, -1));
-    feed(&mut ui, Input::turn(C, 1));
-    tap(&mut ui, Edit);
-    assert_eq!(page(&ui), ORBIT_ORB.id);
 
     // SCALE (C) from MINOR up to CUSTOM: the circle, holding MINOR.
     feed(&mut ui, Input::turn(C, 9));
@@ -149,12 +140,6 @@ fn orb_custom_circle() {
     feed(&mut ui, Input::turn(C, 2));
     assert_eq!(page(&ui), ORBIT_CUSTOM.id);
     assert_eq!(chords(&ui).custom, own);
-
-    // Turned off CUSTOM, EDIT on ORB does nothing again.
-    tap(&mut ui, Edit);
-    feed(&mut ui, Input::turn(C, -1));
-    tap(&mut ui, Edit);
-    assert_eq!(page(&ui), ORBIT_ORB.id);
 
     // The screen: `orbit_custom` in `screen_golden_test`.
     let ui = screen::ui_for("orbit_custom");
@@ -374,7 +359,11 @@ fn custom_edit_returns_with_scale_named() {
     tap(&mut ui, Edit);
     assert_eq!(ui.page_def().id, ORBIT_ORB.id);
     tap(&mut ui, Edit);
-    assert_eq!(ui.page_def().id, ORBIT_ORB.id, "named: no CUSTOM");
+    assert_eq!(
+        ui.page_def().id,
+        ORBIT_CUSTOM.id,
+        "named: CUSTOM all the same"
+    );
 }
 
 /// CUSTOM's cursor eases the short way: across 11 and 0 it moves one
@@ -1088,4 +1077,101 @@ fn clear_down_rolls_new_dice_through_the_runner() {
         pools[9],
         "the runner plays the last"
     );
+}
+
+/// EDIT on ORB always opens CUSTOM (ADR 0084): with SCALE named the
+/// circle shows its notes and SCALE stays named until a note is toggled;
+/// the first toggle makes it CUSTOM from those notes, the toggle applied.
+#[test]
+fn edit_opens_custom_on_a_named_scale() {
+    let mut ui = Box::new(UiState::new());
+    let chords = |ui: &UiState| ui.project().orbit().live().chords;
+    let page = |ui: &UiState| ui.page_def().id;
+    hold(&mut ui, Seq);
+    assert_eq!(chords(&ui).scale, ScaleKind::Minor);
+
+    // Down to CUSTOM and back, nothing toggled: SCALE stays MINOR.
+    tap(&mut ui, Edit);
+    assert_eq!(page(&ui), ORBIT_CUSTOM.id);
+    assert_eq!(chords(&ui).set(), Scale::MINOR, "the circle shows MINOR");
+    feed(&mut ui, Input::turn(A, 1));
+    tap(&mut ui, Edit);
+    assert_eq!(page(&ui), ORBIT_ORB.id);
+    assert_eq!(chords(&ui).scale, ScaleKind::Minor);
+    // SEQ is up: back to ORB too.
+    tap(&mut ui, Edit);
+    assert_eq!(page(&ui), ORBIT_CUSTOM.id);
+    tap(&mut ui, Seq);
+    assert_eq!(page(&ui), ORBIT_ORB.id);
+    assert_eq!(chords(&ui).scale, ScaleKind::Minor);
+
+    // A note already out, turned left: no toggle, still MINOR.
+    tap(&mut ui, Edit);
+    assert_eq!(ui.orbit().cursor, 1);
+    feed(&mut ui, Input::turn(B, -1));
+    assert_eq!(chords(&ui).scale, ScaleKind::Minor);
+
+    // The first toggle: CUSTOM, MINOR's other eleven kept, the minor
+    // second in; on `live` and its slot alike.
+    feed(&mut ui, Input::turn(B, 1));
+    let want = Scale::MINOR.toggle(Interval::ALL[1]);
+    assert_eq!(chords(&ui).scale, ScaleKind::Custom);
+    assert_eq!(chords(&ui).custom, want);
+    let slot = ui.project().orbit().current();
+    assert_eq!(ui.project().orbit().scene(slot).chords.custom, want);
+    assert_eq!(page(&ui), ORBIT_CUSTOM.id);
+    tap(&mut ui, Edit);
+    assert_eq!(page(&ui), ORBIT_ORB.id);
+
+    // The screen: `orbit_custom_named` in `screen_golden_test`.
+    let ui = screen::ui_for("orbit_custom_named");
+    assert_eq!(page(&ui), ORBIT_CUSTOM.id);
+    assert_eq!(chords(&ui).scale, ScaleKind::Minor);
+}
+
+/// ORB's RING cell names the ring's Part (ADR 0084): NEW puts rings 3
+/// and 4 on Part 3.
+#[test]
+fn ring_cell_names_its_part() {
+    use chimera_core::orbit::RingIdx;
+    use chimera_core::ui::orbit::OrbitCell;
+    use chimera_core::ui::orbit::draw::{OrbitFrame, cell_text};
+    let mut ui = Box::new(UiState::new());
+    hold(&mut ui, Seq);
+    let f = OrbitFrame::new(ui.project().orbit(), ui.orbit());
+    let text = |r: usize| {
+        cell_text(OrbitCell::Ring, &f, RingIdx::ALL[r])
+            .as_str()
+            .to_owned()
+    };
+    assert_eq!(text(0), "1 › P1");
+    assert_eq!(text(2), "3 › P3");
+    assert_eq!(text(3), "4 › P3");
+}
+
+/// A TARGET change redraws ORB: its circle's labels and the RING cell.
+#[test]
+fn a_target_change_redraws_orb() {
+    use chimera_core::orbit::scene::Target;
+    use chimera_core::project::PartId;
+    use chimera_core::ui::region::RegionKind;
+    let mut ui = Box::new(screen::ui_for("orbit_orb"));
+    let mut fb = screen::Fb::new();
+    let perf = chimera_core::ui::perf::PerfStats::zero();
+    ui.render_dirty_with_scope(&mut fb, &perf, &screen::scope_fixture());
+    let keys = |ui: &UiState| {
+        (
+            ui.drawn_key(RegionKind::Viz),
+            ui.drawn_key(RegionKind::Cells),
+        )
+    };
+    let before = keys(&ui);
+    let ring = ui.location().orbit().unwrap().ring().get() as usize;
+    ui.project_mut().orbit_mut().live_mut_for_test().rings[ring].target =
+        Target::Part(PartId::ALL[5]);
+    screen::settle(&mut ui);
+    ui.render_dirty_with_scope(&mut fb, &perf, &screen::scope_fixture());
+    let after = keys(&ui);
+    assert_ne!(after.0, before.0, "the circle redraws");
+    assert_ne!(after.1, before.1, "the RING cell redraws");
 }

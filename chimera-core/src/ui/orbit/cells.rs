@@ -83,13 +83,18 @@ impl OrbitCell {
             OrbitCell::Scene => slot(song.queued().unwrap_or(song.current())),
             OrbitCell::Save => slot(ui.save_slot(song)),
             OrbitCell::Switch => 0.0,
-            OrbitCell::Ring => ring.get() as f32 / (RINGS - 1) as f32,
+            // The ring, and its Part a sixteenth of a ring past it: a
+            // TARGET change redraws the cell, its text "3 › P3".
+            OrbitCell::Ring => {
+                let part = s.rings[ring.get() as usize].target.part().index() as f32;
+                (ring.get() as f32 + part / 16.0) / (RINGS - 1) as f32
+            }
             OrbitCell::Degree => {
                 let last = c.key().degree_count().saturating_sub(1).max(1);
                 c.degrees[ui.seg_of(c)].index().min(last) as f32 / last as f32
             }
             OrbitCell::Cursor => ui.cursor as f32 / 11.0,
-            OrbitCell::Set => f32::from(c.custom.contains(ui.interval())),
+            OrbitCell::Set => f32::from(c.set().contains(ui.interval())),
             OrbitCell::Note => {
                 let r = &s.rings[ring.get() as usize];
                 r.chip(ui.chip_of(r)).get() as f32 / 127.0
@@ -155,12 +160,12 @@ impl OrbitCell {
                 song.edit(&mut |s| s.chords.degrees[seg] = to);
             }
             OrbitCell::Cursor => ui.cursor = step_wrapped(ui.cursor as i32, delta as i32, 12) as u8,
-            // Right sets, left clears, however far; `toggle` keeps the root.
+            // Right sets, left clears, however far; `toggle` keeps the root
+            // and makes a named scale CUSTOM.
             OrbitCell::Set => {
                 let i = ui.interval();
-                if (delta > 0) != c.custom.contains(i) {
-                    let to = c.custom.toggle(i);
-                    song.edit(&mut |s| s.chords.custom = to);
+                if (delta > 0) != c.set().contains(i) {
+                    song.edit(&mut |s| s.chords.toggle(i));
                 }
             }
             // MIX picks the chip NOTE edits.

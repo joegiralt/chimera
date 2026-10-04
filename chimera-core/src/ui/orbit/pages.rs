@@ -68,7 +68,7 @@ pub static ORBIT_CHRD: BlockDef = BlockDef {
     ],
 };
 
-/// The CUSTOM set round its circle, shown while SCALE is CUSTOM.
+/// The notes SCALE plays round a circle: a turn makes them CUSTOM.
 pub static ORBIT_CUSTOM: BlockDef = BlockDef {
     id: 81,
     name: "Custom",

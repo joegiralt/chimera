@@ -1231,6 +1231,14 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::A, 6));
         feed(ui, Input::turn(EncoderId::B, 1));
     }),
+    // ORB › CUSTOM by EDIT, SCALE still MINOR: its notes, the tritone
+    // under the cursor, nothing toggled.
+    ("orbit_custom_named", |ui| {
+        to_ring(ui, 3);
+        feed(ui, Input::press(ButtonId::Minus));
+        tap(ui, ButtonId::Edit);
+        feed(ui, Input::turn(EncoderId::A, 6));
+    }),
     // RING 3's VOICE, its pad note made E(5,8) on RHYTHM: GATE 60, two
     // accents, a third into the bar, playing.
     ("orbit_voice", |ui| {

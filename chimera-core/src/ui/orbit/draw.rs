@@ -14,13 +14,13 @@ use embedded_graphics::pixelcolor::Rgb565;
 use super::{OrbitCell, OrbitUi};
 use crate::addr::{BlockRef, ParamAddr};
 use crate::block::OFF_ON;
-use crate::orbit::RingIdx;
 use crate::orbit::chords::{ChordRing, harmony};
 use crate::orbit::clock::{Bpm, ClockSource};
 use crate::orbit::euclid::HitMask;
 use crate::orbit::ring::{ACCENT_BOOST, NoteMode, Ring};
 use crate::orbit::runner::Capture;
 use crate::orbit::scene::{OrbitSong, Scene, SceneIdx, SceneRing};
+use crate::orbit::{RINGS, RingIdx};
 use crate::ui::block_def::{BlockDef, VizType};
 use crate::ui::draw;
 use crate::ui::fmt::{FmtBuf, fmt_val};
@@ -375,7 +375,8 @@ const HAND_IN: f32 = 10.0;
 /// round the outside, the segment playing lit; the selected ring's track;
 /// the sweep at the bar's phase; inside, each ring's steps round its own
 /// circle (ring 1 outermost), a hit filled, an accent ringed, the step
-/// under the clock lit and flashing as it fires; a muted ring dark.
+/// under the clock lit and flashing as it fires, its Part at its top; a
+/// muted ring dark.
 pub fn orb<D>(d: &mut D, f: &OrbitFrame, sel: RingIdx)
 where
     D: DrawTarget<Color = Rgb565>,
@@ -428,7 +429,13 @@ where
     }
 }
 
-/// One ring's steps round its circle on ORB.
+/// A ring's Part label: this far beside the ring's top, its baseline this
+/// far under it; the innermost's baseline this far under, in the middle.
+const PART_GAP: i32 = 4;
+const PART_DY: i32 = 3;
+const PART_IN: i32 = 12;
+
+/// One ring's steps round its circle on ORB, its Part by where it starts.
 fn orb_ring<D>(d: &mut D, f: &OrbitFrame, r: RingIdx)
 where
     D: DrawTarget<Color = Rgb565>,
@@ -445,6 +452,24 @@ where
         (theme::ACCENT, theme::BAR_REST, theme::INK2)
     };
     let radius = ring_r(r) as f32;
+    // Its Part by where it starts, dimmed with it: rings 1 and 3 left, 2
+    // and 4 right, so the column breathes; ring 5's under its top, in the
+    // middle, clear of its own last steps.
+    let part = FmtBuf::of(format_args!("{}", part_of(f, r)));
+    let ink = if ring.mute {
+        theme::PILL_EDGE
+    } else {
+        theme::MID
+    };
+    let (s, top) = (part.as_str(), ORB_CY - ring_r(r));
+    let font = &theme::FONT_LABEL;
+    match r.get() as usize {
+        n if n == RINGS - 1 => draw::text_center(d, font, s, ORB_CX, top + PART_IN, ink, 0),
+        n if n % 2 == 0 => draw::text_right(d, font, s, ORB_CX - PART_GAP, top + PART_DY, ink, 0),
+        _ => {
+            draw::text(d, font, s, ORB_CX + PART_GAP + 1, top + PART_DY, ink);
+        }
+    }
     for i in 0..n {
         let (x, y) = orb_xy(i as f32 / n as f32, radius);
         if !mask.is_hit(i) {
@@ -631,7 +656,7 @@ fn round(at: f32, r: f32) -> (i32, i32) {
     draw::polar(CIRCLE_X, CIRCLE_Y, r, at / 12.0)
 }
 
-/// CHRD › CUSTOM: the twelve notes from the tonic round a circle, named;
+/// ORB › CUSTOM: the twelve notes from the tonic round a circle, named;
 /// the set's lit and joined into its shape, the root locked on; the cursor
 /// ringed at `cursor` (twelfths from the root, eased, any turn); the set's
 /// name and size in the middle.
@@ -640,7 +665,7 @@ where
     D: DrawTarget<Color = Rgb565>,
 {
     let c = f.chords();
-    let set = c.custom;
+    let set = c.set();
     let ins = || (0..12).filter(move |&i| set.contains(Interval::ALL[i]));
     let count = ins().count();
     if count > 1 {
@@ -720,13 +745,25 @@ fn cursor_note(f: &OrbitFrame) -> FmtBuf {
     FmtBuf::of(format_args!("{}", f.chords().tonic.up(f.ui.interval())))
 }
 
+/// Ring `r`'s Part, one-based.
+fn part_of(f: &OrbitFrame, r: RingIdx) -> usize {
+    f.scene().rings[r.get() as usize].target.part().index() + 1
+}
+
 /// An ORBIT cell's value as its cell shows it, on ring `ring`.
 pub fn cell_text(cell: OrbitCell, f: &OrbitFrame, ring: RingIdx) -> FmtBuf {
     let c = f.chords();
     match cell {
-        // As the cell's format shows its value: RING and SCENE one-based,
-        // LEARN OFF or ON, SWITCH LOOP.
-        OrbitCell::Ring | OrbitCell::Scene | OrbitCell::Learn | OrbitCell::Switch => {
+        // The ring and its Part: "3 › P3".
+        OrbitCell::Ring => FmtBuf::of(format_args!(
+            "{} {} P{}",
+            ring.get() + 1,
+            draw::CHEVRON,
+            part_of(f, ring)
+        )),
+        // As the cell's format shows its value: SCENE one-based, LEARN OFF
+        // or ON, SWITCH LOOP.
+        OrbitCell::Scene | OrbitCell::Learn | OrbitCell::Switch => {
             let mut b = FmtBuf::new();
             fmt_val(&mut b, cell.value(f.song, f.ui, ring), cell.fmt());
             b
@@ -744,7 +781,7 @@ pub fn cell_text(cell: OrbitCell, f: &OrbitFrame, ring: RingIdx) -> FmtBuf {
         OrbitCell::Cursor => cursor_note(f),
         OrbitCell::Set => FmtBuf::of(format_args!(
             "{}",
-            match (f.ui.interval(), c.custom.contains(f.ui.interval())) {
+            match (f.ui.interval(), c.set().contains(f.ui.interval())) {
                 (Interval::UNISON, _) => "ROOT",
                 (_, on) => OFF_ON[on as usize],
             }
@@ -921,6 +958,7 @@ pub fn viz_key(def: &BlockDef, f: &OrbitFrame, r: RingIdx, cursor: f32) -> u32 {
         VizType::Orbit => {
             for ring in RingIdx::ALL {
                 ring_key(&mut h, f, ring);
+                part_of(f, ring).hash(&mut h);
                 f.ui.anim.flash(ring).hash(&mut h);
             }
             f.chords().hash(&mut h);

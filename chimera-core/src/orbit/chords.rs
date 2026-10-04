@@ -3,7 +3,7 @@
 use super::MAX_SEGS;
 use super::clock::Phase;
 use super::ring::Harmony;
-use chimera_theory::{Chord, Degree, Key, PitchClass, Scale};
+use chimera_theory::{Chord, Degree, Interval, Key, PitchClass, Scale};
 
 /// Loop length in bars, 1..=8.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -114,7 +114,19 @@ impl ChordRing {
     };
 
     pub const fn key(&self) -> Key {
-        Key::new(self.tonic, self.scale.scale(self.custom))
+        Key::new(self.tonic, self.set())
+    }
+
+    /// The notes SCALE plays: the named scale's, or the CUSTOM set.
+    pub const fn set(&self) -> Scale {
+        self.scale.scale(self.custom)
+    }
+
+    /// `i` flipped in the notes SCALE plays: a named scale becomes CUSTOM,
+    /// seeded from its own notes (ADR 0084).
+    pub fn toggle(&mut self, i: Interval) {
+        self.custom = self.set().toggle(i);
+        self.scale = ScaleKind::Custom;
     }
 }
 

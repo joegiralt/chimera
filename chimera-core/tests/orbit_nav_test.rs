@@ -71,16 +71,9 @@ fn all_keys() -> Vec<OrbitKey> {
     ks
 }
 
-/// Every ORBIT page on every ring, reached by its own keys (CUSTOM with
-/// SCALE on CUSTOM).
+/// Every ORBIT page on every ring, reached by its own keys.
 fn every_orbit_place() -> Vec<OrbitAt> {
-    let cx = NavCtx {
-        orbit: OrbitCx {
-            custom: true,
-            ..OrbitCx::NONE
-        },
-        ..cx()
-    };
+    let cx = cx();
     let mut seen = vec![OrbitAt::HOME];
     let mut i = 0;
     while i < seen.len() {
@@ -160,25 +153,17 @@ fn seq_hold_enters_orbit() {
 
 #[test]
 fn orbit_keys_never_leave_but_cross_and_menu() {
-    for custom in [false, true] {
-        let cx = NavCtx {
-            orbit: OrbitCx {
-                custom,
-                ..OrbitCx::NONE
-            },
-            ..cx()
-        };
-        for o in every_orbit_place() {
-            for k in all_keys() {
-                if matches!(k, OrbitKey::Cross(_) | OrbitKey::MenuTap) {
-                    continue;
-                }
-                let mut r = Recall::new();
-                match orbit(o).step_orbit(k, &cx, &mut r) {
-                    Step::Go(to) => assert!(to.orbit().is_some(), "{o:?} {k:?} → {to:?}"),
-                    Step::Stay | Step::Orbit(_) => {}
-                    s => panic!("{o:?} {k:?} → {s:?}"),
-                }
+    let cx = cx();
+    for o in every_orbit_place() {
+        for k in all_keys() {
+            if matches!(k, OrbitKey::Cross(_) | OrbitKey::MenuTap) {
+                continue;
+            }
+            let mut r = Recall::new();
+            match orbit(o).step_orbit(k, &cx, &mut r) {
+                Step::Go(to) => assert!(to.orbit().is_some(), "{o:?} {k:?} → {to:?}"),
+                Step::Stay | Step::Orbit(_) => {}
+                s => panic!("{o:?} {k:?} → {s:?}"),
             }
         }
     }
@@ -222,30 +207,16 @@ fn cross_lands_on_the_target_part() {
 #[test]
 fn edit_cycles_only_inside() {
     let plain = cx();
-    let custom = NavCtx {
-        orbit: OrbitCx {
-            custom: true,
-            ..OrbitCx::NONE
-        },
-        ..cx()
-    };
     let mut r = Recall::new();
 
-    // ORB opens CUSTOM only while SCALE is CUSTOM and in focus; CUSTOM
-    // always returns to ORB (ADR 0079), even with SCALE named under it (a
-    // load, a scene switch).
+    // ORB always opens CUSTOM, SCALE named or not (ADR 0084); CUSTOM
+    // returns to ORB.
     let home = orbit(OrbitAt::HOME);
-    assert_eq!(home.step_orbit(OrbitKey::Edit, &plain, &mut r), Step::Stay);
     let mut l = home;
-    okey(&mut l, OrbitKey::Edit, &custom, &mut r);
+    okey(&mut l, OrbitKey::Edit, &plain, &mut r);
     assert_eq!(l, orbit(OrbitAt::HOME.custom()));
     assert_eq!(l.orbit().unwrap().page().node() as usize, ORB_NODE);
-    assert_eq!(
-        l.step_orbit(OrbitKey::Edit, &plain, &mut r),
-        Step::Go(home),
-        "SCALE named"
-    );
-    okey(&mut l, OrbitKey::Edit, &custom, &mut r);
+    okey(&mut l, OrbitKey::Edit, &plain, &mut r);
     assert_eq!(l, home);
 
     // RING: wraps over its sub-pages.
@@ -269,14 +240,12 @@ fn edit_cycles_only_inside() {
     shown.dedup();
     assert_eq!(shown.len(), subs, "each sub-page once");
 
-    // CHRD: nothing, SCALE CUSTOM or not.
+    // CHRD: nothing.
     let mut l = home;
     while l.orbit().unwrap().page().node() as usize != CHRD_NODE {
         okey(&mut l, OrbitKey::Plus, &plain, &mut r);
     }
-    for cx in [&plain, &custom] {
-        assert_eq!(l.step_orbit(OrbitKey::Edit, cx, &mut r), Step::Stay);
-    }
+    assert_eq!(l.step_orbit(OrbitKey::Edit, &plain, &mut r), Step::Stay);
 }
 
 #[test]
@@ -351,7 +320,6 @@ fn outside_is_never_orbit_or_settings() {
     for _ in 0..10_000 {
         let mut cx = cx();
         cx.engines[(rand() % 6) as usize] = EngineType::Modal;
-        cx.orbit.custom = rand() % 2 == 0;
         cx.orbit.targets = R.map(|_| P[(rand() % 6) as usize]);
         let mut r = Recall::new();
         let mut l = Location::home(&cx);
@@ -668,11 +636,11 @@ fn orbit_buttons() {
     hold(&mut ui, Seq);
     assert_eq!(ui.location(), ring3);
 
-    // EDIT on ORB does nothing; on RING it cycles RING's sub-pages
-    // (ADR 0044) and stays on the ring.
+    // EDIT on ORB opens CUSTOM (ADR 0084); on RING it cycles RING's
+    // sub-pages (ADR 0044) and stays on the ring.
     ui.go_for_test(orb);
     tap(&mut ui, Edit);
-    assert_eq!(ui.location(), orb);
+    assert_eq!(ui.location(), orb.orbit().unwrap().custom().into());
     ui.go_for_test(ring3);
     tap(&mut ui, Edit);
     let o = ui.location().orbit().unwrap();
