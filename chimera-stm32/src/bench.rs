@@ -947,7 +947,7 @@ impl Rig<'_> {
     /// `render_half` runs: ORBIT's block and view, the render and the three
     /// pairs' interleave; the note queues are empty.
     #[inline(never)]
-    fn stress(&mut self, keys_first: bool) -> (u32, usize) {
+    fn stress(&mut self, keys_first: bool) -> (u32, usize, u32) {
         let budget = SampleBudget::for_cpu(self.cpu_hz);
         let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
         let fx = FxBus::init_in_place(self.fx_slot);
@@ -973,7 +973,7 @@ impl Rig<'_> {
             (runner, view)
         };
         let mut out = [[DacSample::ZERO; BLOCK_SIZE * 2]; DacPair::ALL.len()];
-        let (mut worst, mut most) = (0u32, 0usize);
+        let (mut worst, mut most, mut orbit) = (0u32, 0usize, 0u32);
         for b in 0..WARM_BLOCKS + STRESS_BLOCKS {
             if b == 1 && !keys_first {
                 hold_notes(inst, shared, MAX_PARTS - 1);
@@ -985,6 +985,7 @@ impl Rig<'_> {
                 black_box(runner.block(inst, shared));
                 runner.fill_view(black_box(&mut view));
             }
+            let ran = DWT::cycle_count().wrapping_sub(start);
             inst.render(fx, &mut self.dac, shared, &mut self.scope);
             for (pair, o) in DacPair::ALL.into_iter().zip(out.iter_mut()) {
                 interleave(self.dac.out(), pair, o);
@@ -994,9 +995,10 @@ impl Rig<'_> {
             if b >= WARM_BLOCKS {
                 worst = worst.max(c);
                 most = most.max(inst.sounding());
+                orbit = orbit.max(ran);
             }
         }
-        (worst, most)
+        (worst, most, orbit)
     }
 }
 
@@ -1235,7 +1237,7 @@ fn show_memory(
     note_on: u32,
     (lowest, dark, light): (u32, u32, u32),
     orbit: Option<(u32, u32)>,
-    ([(first, v1), (after, v2)], budget): ([(u32, usize); 2], u32),
+    ([(first, v1, o1), (after, v2, o2)], budget): ([(u32, usize, u32); 2], u32),
 ) {
     use core::mem::size_of;
     rec.clear();
@@ -1262,13 +1264,16 @@ fn show_memory(
     let orbit_line = format_args!("ORBIT {mean}/{worst} CYC/BLK");
     // The costliest block of each STRESS run (keys before ORBIT, then
     // after) against the block budget, and the most voices it sounded.
+    // Each run's costliest ORBIT block within it.
     let stress_line = format_args!("STRESS {first}/{after}/{budget} {v1}/{v2}V");
+    let stress_orbit = format_args!("STRESS ORBIT {o1}/{o2} CYC");
     let lines = lines
         .into_iter()
         .chain(orbit.map(|_| orbit_line))
-        .chain([stress_line]);
-    // Thirteen lines at 21 px end at 298, under 320; twelve fit at 22.
-    let row_h = if orbit.is_some() { 21 } else { 22 };
+        .chain([stress_line])
+        .chain(orbit.map(|_| stress_orbit));
+    // Fourteen lines at 19 px end at 293, under 320; twelve fit at 22.
+    let row_h = if orbit.is_some() { 19 } else { 22 };
     let mut line = FmtBuf::new();
     for (i, args) in lines.enumerate() {
         line.clear();
