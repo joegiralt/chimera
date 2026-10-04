@@ -980,13 +980,15 @@ impl Rig<'_> {
     /// The costliest whole callback block over `STRESS_BLOCKS` and the most
     /// voices sounding: six `a16_a17` keys on Part 6, every effect at its
     /// worst, and (with `orbit`) ORBIT playing NEW's groove on Parts 1–5
-    /// with NEW's Sounds (ADR 0073). The keys go down before ORBIT starts
-    /// if `keys_first`, else a block after. The allocator keeps the unit's
-    /// real budget, so it refuses what the unit would. Timed as
-    /// `render_half` runs: ORBIT's block and view, the render and the three
-    /// pairs' interleave; the note queues are empty.
+    /// with NEW's Sounds (ADR 0073). ORBIT starts at the first timed block,
+    /// whose cycles come back on their own too (T0); the keys go down
+    /// before the warm blocks if `keys_first`, else a block after ORBIT
+    /// starts. The allocator keeps the unit's real budget, so it refuses
+    /// what the unit would. Timed as `render_half` runs: ORBIT's block and
+    /// view, the render and the three pairs' interleave; the note queues
+    /// are empty.
     #[inline(never)]
-    fn stress(&mut self, keys_first: bool) -> ((u32, usize, u32), Phases) {
+    fn stress(&mut self, keys_first: bool) -> ((u32, usize, u32, u32), Phases) {
         let budget = SampleBudget::for_cpu(self.cpu_hz);
         let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
         let fx = FxBus::init_in_place(self.fx_slot);
@@ -1004,18 +1006,21 @@ impl Rig<'_> {
         }
         #[cfg(feature = "orbit")]
         let (mut runner, mut view) = {
-            shared
-                .orbit
-                .push(chimera_core::orbit::channel::Cmd::TogglePlay);
             let runner = OrbitRunner::new(engine::SAMPLE_RATE_NZ);
             let view = runner.view();
             (runner, view)
         };
         let mut out = [[DacSample::ZERO; BLOCK_SIZE * 2]; DacPair::ALL.len()];
-        let (mut worst, mut most, mut orbit) = (0u32, 0usize, 0u32);
+        let (mut worst, mut most, mut orbit, mut t0) = (0u32, 0usize, 0u32, 0u32);
         let mut ph = Phases::default();
         for b in 0..WARM_BLOCKS + STRESS_BLOCKS {
-            if b == 1 && !keys_first {
+            #[cfg(feature = "orbit")]
+            if b == WARM_BLOCKS {
+                shared
+                    .orbit
+                    .push(chimera_core::orbit::channel::Cmd::TogglePlay);
+            }
+            if b == WARM_BLOCKS + 1 && !keys_first {
                 hold_notes(inst, shared, MAX_PARTS - 1);
             }
             worst_bus(shared, b);
@@ -1039,13 +1044,16 @@ impl Rig<'_> {
             }
             let c = DWT::cycle_count().wrapping_sub(start);
             black_box(&out);
+            if b == WARM_BLOCKS {
+                t0 = c;
+            }
             if b >= WARM_BLOCKS {
                 worst = worst.max(c);
                 most = most.max(inst.sounding());
                 orbit = orbit.max(ran);
             }
         }
-        ((worst, most, orbit), ph)
+        ((worst, most, orbit, t0), ph)
     }
 }
 
@@ -1376,7 +1384,7 @@ fn show_memory(
     note_on: u32,
     (lowest, dark, light): (u32, u32, u32),
     orbit: Option<(u32, u32)>,
-    ([(first, v1, o1), (after, v2, o2)], budget): ([(u32, usize, u32); 2], u32),
+    ([(first, v1, o1, t1), (after, v2, o2, t2)], budget): ([(u32, usize, u32, u32); 2], u32),
 ) {
     use core::mem::size_of;
     rec.clear();
@@ -1406,13 +1414,16 @@ fn show_memory(
     // Each run's costliest ORBIT block within it.
     let stress_line = format_args!("STRESS {first}/{after}/{budget} {v1}/{v2}V");
     let stress_orbit = format_args!("STRESS ORBIT {o1}/{o2} CYC");
+    // The block ORBIT starts in, whole, in each run.
+    let stress_t0 = format_args!("STRESS T0 {t1}/{t2}");
     let lines = lines
         .into_iter()
         .chain(orbit.map(|_| orbit_line))
         .chain([stress_line])
-        .chain(orbit.map(|_| stress_orbit));
-    // Fourteen lines at 19 px end at 293, under 320; twelve fit at 22.
-    let row_h = if orbit.is_some() { 19 } else { 22 };
+        .chain(orbit.map(|_| stress_orbit))
+        .chain(orbit.map(|_| stress_t0));
+    // Fifteen lines at 18 px end at 298, under 320; twelve fit at 22.
+    let row_h = if orbit.is_some() { 18 } else { 22 };
     let mut line = FmtBuf::new();
     for (i, args) in lines.enumerate() {
         line.clear();
