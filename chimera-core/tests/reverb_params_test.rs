@@ -173,7 +173,8 @@ fn unknown_type_code_and_nan_slots_load_as_safe_quad() {
                 k.tail,
                 k.regen,
                 k.taps,
-                k.pre_g,
+                k.diffuse_g,
+                k.predelay_ms,
                 k.shape_db,
             ];
             for v in all {
@@ -269,8 +270,8 @@ fn knob_memory_zeroed_is_clear() {
     assert!((back[1] - 0.3).abs() <= 0.5 / 65_534.0);
 }
 
-/// GATE's and REVERSE's rows (spec § Each TYPE's knobs): every range's
-/// ends and the starting knobs' values, to 1e-3.
+/// ROOM's, GATE's and REVERSE's rows (spec § Each TYPE's knobs): every
+/// range's ends and the starting knobs' values, to 1e-3.
 #[test]
 fn knobs_hit_the_spec_endpoints() {
     let at = |t: ReverbType, f: &dyn Fn(&mut ReverbParams)| {
@@ -284,8 +285,8 @@ fn knobs_hit_the_spec_endpoints() {
         close(k(&|p| p.tone = 1.0).tone_hz, 2_500.0, "tone 1");
         close(k(&|p| p.diffuse = 0.0).taps, 6.0, "taps 0");
         close(k(&|p| p.diffuse = 1.0).taps, 12.0, "taps 1");
-        close(k(&|p| p.diffuse = 0.0).pre_g, 0.5, "g 0");
-        close(k(&|p| p.diffuse = 1.0).pre_g, 0.7, "g 1");
+        close(k(&|p| p.diffuse = 0.0).diffuse_g, 0.5, "g 0");
+        close(k(&|p| p.diffuse = 1.0).diffuse_g, 0.7, "g 1");
         close(k(&|p| p.smear = 1.0).smear_ms, 1.0, "smear 1");
         assert_eq!(k(&|p| p.smear = 0.0).smear_ms, 0.0);
         close(k(&|p| p.rate = 0.0).rate_hz, 0.1, "rate 0");
@@ -308,7 +309,7 @@ fn knobs_hit_the_spec_endpoints() {
     close(d.rt60_s, 0.2479, "tail default");
     close(d.tone_hz, 7_578.6, "gate tone default");
     close(d.taps, 10.2, "gate taps default");
-    close(d.pre_g, 0.64, "gate g default");
+    close(d.diffuse_g, 0.64, "gate g default");
     close(d.shape_db, -3.6, "shape default");
     assert!(!d.rising);
     let r = |f: &dyn Fn(&mut ReverbParams)| at(ReverbType::Reverse, f);
@@ -330,7 +331,61 @@ fn knobs_hit_the_spec_endpoints() {
     assert_eq!((d.regen, d.rt60_s), (0.0, 0.0));
     close(d.tone_hz, 10_000.0, "reverse tone default");
     close(d.taps, 10.8, "reverse taps default");
-    close(d.pre_g, 0.66, "reverse g default");
+    close(d.diffuse_g, 0.66, "reverse g default");
     close(d.shape_db, 24.06, "curve default");
     assert!(d.rising);
+    let m = |f: &dyn Fn(&mut ReverbParams)| at(ReverbType::Room, f);
+    close(m(&|p| p.size = 0.0).length_ms, 100.0, "room size 0");
+    close(m(&|p| p.size = 1.0).length_ms, 200.0, "room size 1");
+    close(m(&|p| p.time = 0.0).rt60_s, 0.2, "decay 0");
+    close(m(&|p| p.time = 1.0).rt60_s, 1.5, "decay 1");
+    close(m(&|p| p.tone = 0.0).tone_hz, 10_000.0, "room tone 0");
+    close(m(&|p| p.tone = 1.0).tone_hz, 2_500.0, "room tone 1");
+    close(m(&|p| p.diffuse = 0.0).diffuse_g, 0.5, "diffuse 0");
+    close(m(&|p| p.diffuse = 1.0).diffuse_g, 0.75, "diffuse 1");
+    close(m(&|p| p.predelay = 0.0).predelay_ms, 0.0, "pre 0");
+    close(m(&|p| p.predelay = 1.0).predelay_ms, 50.0, "pre 1");
+    close(
+        m(&|p| (p.smear, p.size) = (1.0, 1.0)).smear_ms,
+        1.0,
+        "smear 1",
+    );
+    close(m(&|p| p.rate = 0.0).rate_hz, 0.1, "room rate 0");
+    close(m(&|p| p.rate = 1.0).rate_hz, 1.0, "room rate 1");
+    let d = m(&|_| {});
+    close(d.length_ms, 141.42, "room size default");
+    close(d.rt60_s, 0.5477, "room decay default");
+    close(d.tone_hz, 6_597.5, "room tone default");
+    close(d.diffuse_g, 0.6, "room diffuse default");
+    close(d.predelay_ms, 5.0, "room pre default");
+    close(d.smear_ms, 0.3, "room smear default");
+    close(d.rate_hz, 0.3162, "room rate default");
+    // Its one damper is fixed (no DAMP cell): DAMP's slot moves nothing.
+    close(d.damp_hz, 8_000.0, "room damper");
+    close(
+        m(&|p| p.damping = 1.0).damp_hz,
+        8_000.0,
+        "room damper, DAMP 1",
+    );
+}
+
+/// SMEAR 1 never passes its TYPE's cap at any SIZE (§ The SMEAR bound):
+/// D ≤ 0.72 % of ROOM's loop, 0.18 % of QUAD's ring.
+#[test]
+fn smear_caps_hold_at_every_size() {
+    for (t, cap) in [(ReverbType::Room, 0.0072), (ReverbType::Quad, 0.0018)] {
+        let mut p = ReverbParams::default().with_type(t, &KnobMemory::new());
+        p.smear = 1.0;
+        for i in 0..=128 {
+            p.size = i as f32 / 128.0;
+            let k = knobs(&p);
+            assert!(
+                k.smear_ms <= cap * k.length_ms * (1.0 + 1e-6),
+                "{t:?} SIZE {}: {} ms of {} ms",
+                p.size,
+                k.smear_ms,
+                k.length_ms
+            );
+        }
+    }
 }

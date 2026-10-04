@@ -16,7 +16,12 @@ use common::SR;
 use common::rev::{Noise, max_d2};
 
 /// The TYPEs with an engine. Tasks 8–11 each append theirs.
-const TYPES: &[ReverbType] = &[ReverbType::Quad, ReverbType::Gate, ReverbType::Reverse];
+const TYPES: &[ReverbType] = &[
+    ReverbType::Quad,
+    ReverbType::Room,
+    ReverbType::Gate,
+    ReverbType::Reverse,
+];
 
 /// The switch's blocks: FADE OUT, CLEAR, FADE IN.
 const SWITCH: usize = 2 * FADE_BLOCKS as usize + CLEAR_BLOCKS as usize;
@@ -43,6 +48,13 @@ const BEFORE: usize = 30;
 /// The tone burst's blocks, and the switch's first block: mid-tail, its
 /// `BEFORE` window all tail.
 const BURST: usize = 20;
+/// Blocks ROOM's burst comes earlier: its longest fixed tap (84 ms)
+/// replays the burst until about 110 ms (block 85), its tail up to 3×
+/// rougher while that ends. Its `BEFORE` window then starts at block 95.
+fn lead(t: ReverbType) -> usize {
+    if t == ReverbType::Room { LEAD } else { 0 }
+}
+const LEAD: usize = 70;
 const AT: usize = BURST + 5 + BEFORE;
 
 type Block = [f32; BLOCK_SIZE];
@@ -205,11 +217,15 @@ fn render(a: ReverbType, b: ReverbType, after: usize) -> (Sides, Box<Reverb>) {
     let mut rv = Box::new(Reverb::of_type(a));
     let mut p = params(a);
     let mut out = Sides::default();
-    for blk in 0..AT + after {
-        if blk == AT {
+    let lead = lead(a);
+    for blk in 0..lead + AT + after {
+        if blk == lead + AT {
             p = switch(&mut rv, &p, b);
         }
-        out.push(&tick(&mut rv, &burst(blk), &p));
+        let o = tick(&mut rv, &burst(blk), &p);
+        if blk >= lead {
+            out.push(&o);
+        }
     }
     (out, rv)
 }

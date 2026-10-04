@@ -363,6 +363,7 @@ pub fn check_no_slap(moved: &[f32], fixed: &[f32]) {
         rho_peak_db(&whiten(moved), (1.0, 10.0)),
         rho_peak_db(&whiten(fixed), (1.0, 10.0)),
     );
+    println!("whitened autocorrelation, 1–10 ms: moved {m:.1} dB, static {f:.1} dB");
     assert!(m <= -20.0, "slap: autocorrelation {m} dB");
     assert!(m <= f + 3.0, "slap: autocorrelation {m} dB, static {f} dB");
     let deepest = off_trend_db(fixed).into_iter().fold(0.0, f64::min);

@@ -9,7 +9,7 @@ use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 use crate::dsp::algo::math::exp2;
 use crate::dsp::clampf;
 use crate::dsp::halfband::HALF;
-use crate::dsp::ring::{RING_LEN, rnd};
+use crate::dsp::ring::{RING_LEN, is_prime, rnd};
 use crate::dsp::xorshift_noise;
 
 /// R1's re-entry clip: `x` to the knee at 1.0, then `1 + u − u²/4` with
@@ -229,11 +229,177 @@ pub fn lg2(x: f32) -> f32 {
     crate::dsp::algo::math::log2(x)
 }
 
+/// `ms` at 24 kHz, to the nearest prime (the lower on a tie): the
+/// engines' lengths, by `ring.rs`'s rule.
+pub(crate) const fn prime_ms(ms: f32) -> usize {
+    let want = (ms * 24.0 + 0.5) as u32;
+    let mut d = 0;
+    loop {
+        if is_prime(want - d) {
+            return (want - d) as usize;
+        }
+        if is_prime(want + d) {
+            return (want + d) as usize;
+        }
+        d += 1;
+    }
+}
+
+/// Each line's write offset from the shared head, and the slots taken:
+/// line j owns `len[j] + 2` (a pair's second read, and the guard), so a
+/// read d back, 2 ≤ d ≤ `len[j]` + 1, is what line j wrote d samples
+/// ago. The total is even, so the f32 region may follow.
+pub(crate) const fn heads<const N: usize>(len: [usize; N]) -> ([usize; N], usize) {
+    let mut w = [0; N];
+    let mut o = 0;
+    let mut j = 0;
+    while j < N {
+        o += len[j] + 2;
+        w[j] = o - 1;
+        j += 1;
+    }
+    (w, o + o % 2)
+}
+
+#[inline(always)]
+pub(crate) fn wrap(i: usize, m: usize) -> usize {
+    if i >= m { i - m } else { i }
+}
+
+/// Each access's slot at head `h` (mod `m`) into `base`, and how many
+/// samples from `len` run before any of them wraps. Out of line: one copy
+/// serves both regions.
+#[inline(never)]
+pub(crate) fn segment(h: usize, m: usize, off: &[usize], base: &mut [usize], len: usize) -> usize {
+    let mut len = len;
+    for (b, &o) in base.iter_mut().zip(off) {
+        *b = wrap(h + o, m);
+        len = len.min(m - *b);
+    }
+    len
+}
+
+/// Where the i16 lines live: the arena, or (tests) plain floats for the
+/// level plan's unquantised reference.
+pub(crate) trait Lines {
+    fn len(&self) -> usize;
+    /// # Safety
+    /// `i` < `len()`.
+    unsafe fn rd(&self, i: usize) -> f32;
+    /// A truncating write (allpass states, a feedback line).
+    /// # Safety
+    /// `i` < `len()`.
+    unsafe fn trunc(&mut self, i: usize, x: f32);
+    /// A rounding write (delays).
+    /// # Safety
+    /// `i` < `len()`.
+    unsafe fn round(&mut self, i: usize, x: f32);
+    /// A re-entry write: rounding, but under 1 LSB to 0, so no ±1 LSB
+    /// cycle can outlive the loop (`store_settle`).
+    /// # Safety
+    /// `i` < `len()`.
+    unsafe fn settle(&mut self, i: usize, x: f32);
+    /// A value held beside the lines (a damper), as a rounding write
+    /// would store it.
+    fn held(x: f32) -> f32;
+}
+
+impl Lines for [i16] {
+    fn len(&self) -> usize {
+        <[i16]>::len(self)
+    }
+
+    #[inline(always)]
+    unsafe fn rd(&self, i: usize) -> f32 {
+        // SAFETY: the caller keeps `i` < `len()`.
+        (unsafe { *self.get_unchecked(i) }) as f32
+    }
+
+    #[inline(always)]
+    unsafe fn trunc(&mut self, i: usize, x: f32) {
+        // SAFETY: the caller keeps `i` < `len()`.
+        unsafe { *self.get_unchecked_mut(i) = store_trunc(x) }
+    }
+
+    #[inline(always)]
+    unsafe fn round(&mut self, i: usize, x: f32) {
+        // SAFETY: the caller keeps `i` < `len()`.
+        unsafe { *self.get_unchecked_mut(i) = store_round(x) }
+    }
+
+    #[inline(always)]
+    unsafe fn settle(&mut self, i: usize, x: f32) {
+        // SAFETY: the caller keeps `i` < `len()`.
+        unsafe { *self.get_unchecked_mut(i) = store_settle(x) }
+    }
+
+    #[inline(always)]
+    fn held(x: f32) -> f32 {
+        store_round(x) as f32
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl Lines for [f32] {
+    fn len(&self) -> usize {
+        <[f32]>::len(self)
+    }
+
+    unsafe fn rd(&self, i: usize) -> f32 {
+        self[i]
+    }
+
+    unsafe fn trunc(&mut self, i: usize, x: f32) {
+        self[i] = x;
+    }
+
+    unsafe fn round(&mut self, i: usize, x: f32) {
+        self[i] = x;
+    }
+
+    unsafe fn settle(&mut self, i: usize, x: f32) {
+        self[i] = x;
+    }
+
+    fn held(x: f32) -> f32 {
+        x
+    }
+}
+
+/// SMEAR's moving read on `lines`' first `n` slots: `pair`'s form, `d`
+/// (2 ≤ d < n) behind `base` (< n).
+#[inline(always)]
+pub(crate) fn pair_in<L: Lines + ?Sized>(lines: &L, n: usize, base: usize, d: f32) -> f32 {
+    debug_assert!(n <= lines.len());
+    let n = n.min(lines.len());
+    let base = base.min(n - 1);
+    let di = (d as usize).min(n - 1);
+    let f = d - di as f32;
+    let i0 = wrap(base + n - di, n);
+    let i1 = wrap(i0 + n - 1, n);
+    // SAFETY: `base` and `di` are below n ≤ `len()`, so `wrap` puts both
+    // indices below n.
+    let (x0, x1) = unsafe { (lines.rd(i0), lines.rd(i1)) };
+    x0 + f * (x1 - x0)
+}
+
 /// A delay or damper write: `x` (LSBs) rounded, ties away from zero, and
 /// saturated to i16.
 #[inline(always)]
 pub fn store_round(x: f32) -> i16 {
     saturate(rnd(x))
+}
+
+/// A loop's re-entry write: `store_round`, but 0 under 1 LSB. At the
+/// LSB a loop's gains hand a rounded ±1 back to itself (0.6 rounds up),
+/// and its normalised allpasses truncate only their scaled state: ROOM
+/// held a 1080 Hz cycle at −86 dB for good. Truncating the whole write
+/// instead kills it too, but its error is then a square wave on a held
+/// tone's sign (+1.4 dB on the floor).
+#[inline(always)]
+pub fn store_settle(x: f32) -> i16 {
+    let r = store_round(x);
+    if x.abs() < 1.0 { 0 } else { r }
 }
 
 /// An allpass state or REGEN write: `x` (LSBs) truncated toward zero, and

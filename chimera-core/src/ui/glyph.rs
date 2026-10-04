@@ -323,7 +323,10 @@ pub fn tail_shape(t: ReverbType, k: &EngineKnobs) -> [u8; TAIL_COLS] {
             ReverbType::Gate if pass == 0 => -curve * at - tap,
             ReverbType::Gate => tail + fall * (ms - len),
             ReverbType::Reverse => pass as f32 * echo - curve * (1.0 - at) - tap,
-            ReverbType::Quad | ReverbType::Room | ReverbType::Hall | ReverbType::Bloom => fall * ms,
+            // ROOM: a pre-delay gap, then the fall.
+            ReverbType::Room if ms < k.predelay_ms => -2.0 * TAIL_DB,
+            ReverbType::Room => fall * (ms - k.predelay_ms),
+            ReverbType::Quad | ReverbType::Hall | ReverbType::Bloom => fall * ms,
         };
         let ripple = 3.0 * k.smear_ms * (2.0 * tri(4e-3 * k.rate_hz * ms) - 1.0);
         *o = (clampf((level - dim + ripple) / TAIL_DB + 1.0, 0.0, 1.0) * 255.0 + 0.5) as u8;

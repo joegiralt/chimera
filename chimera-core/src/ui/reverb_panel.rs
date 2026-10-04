@@ -61,9 +61,19 @@ static DENSITY: RevKnob = RevKnob {
 };
 static SHAPE: RevKnob = k(P::SHAPE, "SHAPE");
 static CURVE: RevKnob = k(P::SHAPE, "CURVE");
+static SIZE: RevKnob = k(P::SIZE, "SIZE");
+static DECAY: RevKnob = k(P::TIME, "DECAY");
+static DIFFUSE: RevKnob = RevKnob {
+    short: Some("DIFF"),
+    ..k(P::DIFFUSE, "DIFFUSE")
+};
+static PREDELAY: RevKnob = RevKnob {
+    short: Some("PRE"),
+    ..k(P::PREDELAY, "PRE-DLY")
+};
 
-/// SIZE · TIME · DAMP · SMEAR; MORE: RATE. ROOM's, HALL's and BLOOM's
-/// land with their engines (Tasks 9–11).
+/// SIZE · TIME · DAMP · SMEAR; MORE: RATE. HALL's and BLOOM's land with
+/// their engines (Tasks 10–11).
 static QUAD: Panel = [
     Some(&QUAD_SIZE),
     Some(&TIME),
@@ -77,8 +87,22 @@ static QUAD: Panel = [
     None,
 ];
 
-/// LENGTH · TAIL · TONE · DENSITY; MORE: — · SHAPE · SMEAR · RATE. SYNC
+/// SIZE · DECAY · TONE · DIFFUSE; MORE: PRE-DLY · — · SMEAR · RATE. SYNC
 /// joins with tempo sync (Task 12).
+static ROOM: Panel = [
+    Some(&SIZE),
+    Some(&DECAY),
+    Some(&TONE),
+    Some(&DIFFUSE),
+    Some(&PREDELAY),
+    None,
+    Some(&SMEAR),
+    Some(&RATE),
+    None,
+    None,
+];
+
+/// LENGTH · TAIL · TONE · DENSITY; MORE: — · SHAPE · SMEAR · RATE.
 static GATE: Panel = [
     Some(&LENGTH),
     Some(&TAIL),
@@ -108,16 +132,22 @@ static REVERSE: Panel = [
 
 fn panel(t: ReverbType) -> &'static Panel {
     match t {
+        ReverbType::Room => &ROOM,
         ReverbType::Gate => &GATE,
         ReverbType::Reverse => &REVERSE,
-        ReverbType::Quad | ReverbType::Room | ReverbType::Hall | ReverbType::Bloom => &QUAD,
+        ReverbType::Quad | ReverbType::Hall | ReverbType::Bloom => &QUAD,
     }
 }
 
 /// The TYPEs TYPE walks, in screen order: each joins with its engine
-/// (ROOM, HALL and BLOOM with Tasks 9–11).
+/// (HALL and BLOOM with Tasks 10–11).
 pub fn types_on_screen() -> &'static [ReverbType] {
-    &[ReverbType::Quad, ReverbType::Gate, ReverbType::Reverse]
+    &[
+        ReverbType::Quad,
+        ReverbType::Room,
+        ReverbType::Gate,
+        ReverbType::Reverse,
+    ]
 }
 
 /// The panel `t` shows: its own once its engine runs, else QUAD's, which
@@ -208,9 +238,11 @@ pub fn value_text(id: ParamId, p: &ReverbParams) -> FmtBuf {
         ),
         // A cutoff: `6.1k`, `11k`.
         P::DAMPING => khz(k.damp_hz),
-        P::TONE if burst => khz(k.tone_hz),
-        // Taps: `10.2`.
+        P::TONE => khz(k.tone_hz),
+        // Taps: `10.2`; else the allpass g, `0.60`.
         P::DIFFUSE if burst => (k.taps, 1, ""),
+        P::DIFFUSE => (k.diffuse_g, 2, ""),
+        P::PREDELAY => (k.predelay_ms, 0, "ms"),
         // The curve end to end, whole dB: `-4dB`, `24dB` (tenths outrun
         // the focus band).
         P::SHAPE if burst => (k.shape_db, 0, "dB"),

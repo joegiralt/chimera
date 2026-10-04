@@ -42,9 +42,11 @@ fn every_type_shows_its_cells() {
     assert_eq!(more(Gate), s(&["-", "SHAPE", "SMEAR", "RATE", "-", "-"]));
     assert_eq!(main(Reverse), s(&["LENGTH", "REGEN", "TONE", "DENSITY"]));
     assert_eq!(more(Reverse), s(&["-", "CURVE", "SMEAR", "RATE", "-", "-"]));
-    // ROOM's, HALL's and BLOOM's land with their engines (Tasks 9–11):
-    // until then each is QUAD's, which is what plays.
-    for t in [Room, Hall, Bloom] {
+    assert_eq!(main(Room), s(&["SIZE", "DECAY", "TONE", "DIFFUSE"]));
+    assert_eq!(more(Room), s(&["PRE-DLY", "-", "SMEAR", "RATE", "-", "-"]));
+    // HALL's and BLOOM's land with their engines (Tasks 10–11): until
+    // then each is QUAD's, which is what plays.
+    for t in [Hall, Bloom] {
         assert_eq!((main(t), more(t)), (main(Quad), more(Quad)), "{t:?}");
     }
     // Each label sits on its slot: a cell's id is the spec table's.
@@ -56,6 +58,8 @@ fn every_type_shows_its_cells() {
     assert_eq!(id(Gate, RevPage::Main, 1), ReverbParams::TIME);
     assert_eq!(id(Reverse, RevPage::Main, 3), ReverbParams::DIFFUSE);
     assert_eq!(id(Reverse, RevPage::More, 1), ReverbParams::SHAPE);
+    assert_eq!(id(Room, RevPage::Main, 1), ReverbParams::TIME);
+    assert_eq!(id(Room, RevPage::More, 0), ReverbParams::PREDELAY);
     // REV: TYPE, the panel's four, then MIX on every TYPE.
     for t in ALL {
         let v = |def: &BlockDef, i| view(def, i, &ctx(t));
@@ -98,6 +102,9 @@ fn label_follows_the_type() {
     assert_eq!(label(ReverbType::Reverse, ParamId(1)), "REGEN");
     assert_eq!(label(ReverbType::Reverse, ParamId(10)), "CURVE");
     assert_eq!(label(ReverbType::Gate, ParamId(8)), "DENSITY");
+    assert_eq!(label(ReverbType::Room, ParamId(3)), "SIZE");
+    assert_eq!(label(ReverbType::Room, ParamId(1)), "DECAY");
+    assert_eq!(label(ReverbType::Room, ParamId(8)), "DIFFUSE");
     assert_eq!(label(ReverbType::Quad, ParamId(3)), "SIZE");
     assert_eq!(label(ReverbType::Quad, ParamId(1)), "TIME");
     assert_eq!(label(ReverbType::Quad, ParamId(6)), "TYPE");
@@ -177,7 +184,8 @@ fn labels_and_values_fit_their_cells() {
     }
     for want in [
         "663ms", "1.9s", "6.1k", "OFF", "0.22Hz", "40ms", "800ms", "0.80s", "2.5k", "12.0",
-        "-18dB", "30dB", "2.00Hz", "1.0ms", "16s",
+        "-18dB", "30dB", "2.00Hz", "1.0ms", "16s", "100ms", "200ms", "0.20s", "1.5s", "0.50",
+        "0.75", "50ms", "0.7ms", "1.00Hz",
     ] {
         assert!(seen.iter().any(|s| s == want), "no cell shows {want}");
     }
@@ -227,15 +235,22 @@ fn a_type_nudge_keeps_the_tweaks() {
     assert!((back.size - 0.9).abs() <= 1.0 / 65_534.0);
     assert!((back.tone - 0.8).abs() <= 1.0 / 65_534.0);
     assert_eq!(back.mix, 0.6);
-    // QUAD, GATE and REVERSE are on screen, in screen order: TYPE walks
-    // them and stops at either end.
+    // QUAD, ROOM, GATE and REVERSE are on screen, in screen order: TYPE
+    // walks them and stops at either end.
     assert_eq!(
         types_on_screen(),
-        &[ReverbType::Quad, ReverbType::Gate, ReverbType::Reverse]
+        &[
+            ReverbType::Quad,
+            ReverbType::Room,
+            ReverbType::Gate,
+            ReverbType::Reverse
+        ]
     );
     let q = ReverbParams::default();
     assert_eq!(turn(&q, ReverbParams::TYPE, -1, &mut mem), q);
-    let g = turn(&q, ReverbParams::TYPE, 1, &mut mem);
+    let room = turn(&q, ReverbParams::TYPE, 1, &mut mem);
+    assert_eq!(room.kind, ReverbType::Room);
+    let g = turn(&room, ReverbParams::TYPE, 1, &mut mem);
     assert_eq!(g.kind, ReverbType::Gate);
     assert_eq!((g.size, g.time), (0.55, 0.3), "GATE's starting knobs");
     let r = turn(&g, ReverbParams::TYPE, 5, &mut mem);
@@ -249,10 +264,10 @@ fn a_type_nudge_keeps_the_tweaks() {
     assert_eq!(turn(&h, ReverbParams::TYPE, -1, &mut mem), h);
 }
 
-/// GATE's and REVERSE's starting knobs, as their cells read (spec § Each
-/// TYPE's knobs).
+/// GATE's, REVERSE's and ROOM's starting knobs, as their cells read
+/// (spec § Each TYPE's knobs).
 #[test]
-fn burst_cells_read_their_starting_values() {
+fn cells_read_their_starting_values() {
     let shows = |t: ReverbType, want: [(ParamId, &str); 7]| {
         let p = ReverbParams::default().with_type(t, &KnobMemory::new());
         for (id, w) in want {
@@ -284,6 +299,18 @@ fn burst_cells_read_their_starting_values() {
             (P::RATE, "0.45Hz"),
         ],
     );
+    let p = ReverbParams::default().with_type(ReverbType::Room, &KnobMemory::new());
+    for (id, w) in [
+        (P::SIZE, "141ms"),
+        (P::TIME, "0.55s"),
+        (P::TONE, "6.6k"),
+        (P::DIFFUSE, "0.60"),
+        (P::PREDELAY, "5ms"),
+        (P::SMEAR, "0.3ms"),
+        (P::RATE, "0.32Hz"),
+    ] {
+        assert_eq!(value_text(id, &p).as_str(), w, "ROOM {id:?}");
+    }
     // TAIL 0 is the fast gate.
     let mut g = ReverbParams::default().with_type(ReverbType::Gate, &KnobMemory::new());
     g.time = 0.0;

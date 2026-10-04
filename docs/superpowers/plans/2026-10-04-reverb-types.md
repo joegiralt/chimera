@@ -1198,6 +1198,32 @@ BUS+V's frame is QUAD_BUS_V + ΔCOST, so ΔCOST = that row − QUAD_BUS_V.
   fixed 24 kHz layout, whole-dB SHAPE/CURVE, and loudness by sustained
   input.
 
+### Task 9: ROOM on the LOOP engine (2026-10-05, host; unit deferred)
+
+- **Bench: not read.** The unit was held by another task. The build
+  carries REV ROOM (SIZE and PRE-DLY between their ends every block,
+  DECAY, DIFFUSE, SMEAR and RATE at 1), `STRESS ROOM`, and REV SWITCH MAX
+  stepping QUAD → GATE → ROOM. Host estimate, not a gate: the per-sample
+  body is 386 Thumb instructions against QUAD's crossfading 361 and
+  BURST's 263–318; BURST's −43 instructions read −34 cycles on the chip,
+  so ROOM is about **+20 over REV QUAD**: inside the default 76, at the
+  tape build's 23. ROOM-T is the fallback if the unit reads it over.
+- **Flash:** plain release `text` 720,404 B (+5,220 over `13b55276`'s
+  715,184); `--features orbit` `.text` +4,656, `.rodata` +396. The
+  engine is 4.3 KB of it (`run` 3.1 KB, unrolled).
+- **WET_ROOM 10.8:** short-term loudness −6.73 dB against QUAD's −6.73,
+  peak +5.36 dBFS against +5.95 (`check_sustained_loudness`). ROOM's
+  0.55 s holds less than QUAD's 1.9 s: 7.5 dB over QUAD's 4.54.
+- **Host readings** (`reverb_loop_test`): RT60 from the last tap (100 ms
+  after the burst) 0.60 s at defaults (0.548 target), 0.18, 0.26, 0.60,
+  0.88 and 1.48 s at DECAY 0–1, 0.23 s at DECAY 0 DIFFUSE 1; onset 7 ms.
+  Noise floor 15.4 dB (QUAD 12.1), 15.5 at DIFFUSE 1. SIZE 0 → 1 lands
+  in 22 crossfades (0.67 s); after it and PRE-DLY 0 → 1 the tail's peak
+  sits within 5 Hz of 1 kHz, 3.9 cents at most while moving. Slap −21.7
+  dB moved, −21.6 static. Level plan: PRE 0.50, delays 0.50, allpass
+  states 0.52 of full scale at most.
+- **Goldens:** `rev_room` (MIX 0.3); every other hash unchanged.
+
 ---
 
 ## Self-review

@@ -25,7 +25,7 @@ enum Fx {
     Reverb(ReverbParams),
 }
 
-fn cases() -> [(&'static str, Fx); 11] {
+fn cases() -> [(&'static str, Fx); 12] {
     let reverb = |smear: f32, size: f32| ReverbParams {
         time: 0.7,
         damping: 0.3,
@@ -35,8 +35,8 @@ fn cases() -> [(&'static str, Fx); 11] {
         rate: 1.0,
         ..Default::default()
     };
-    // A BURST TYPE on its starting knobs, `f` tweaking them. MIX 0.3: at
-    // QUAD's loudness its burst, and REGEN's, peak over 1.0 at 0.5.
+    // A TYPE on its starting knobs, `f` tweaking them. MIX 0.3: at QUAD's
+    // loudness a burst, and REGEN's, peak over 1.0 at 0.5.
     let burst = |t: ReverbType, f: fn(&mut ReverbParams)| {
         let mut p = ReverbParams {
             mix: 0.3,
@@ -87,6 +87,7 @@ fn cases() -> [(&'static str, Fx); 11] {
         ("reverb_ring", Fx::Reverb(reverb(0.0, 0.5))),
         ("reverb_ring_max_size", Fx::Reverb(reverb(0.0, 1.0))),
         ("reverb_ring_smear", Fx::Reverb(reverb(1.0, 0.5))),
+        ("rev_room", burst(ReverbType::Room, |_| {})),
         ("rev_gate", burst(ReverbType::Gate, |_| {})),
         // Fast Gate: a hard cut, no TAIL.
         (
@@ -156,6 +157,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("reverb_ring", 0xd17b7769e13816bf),
     ("reverb_ring_max_size", 0x83591bf24cab49f6),
     ("reverb_ring_smear", 0xa7e01c103cc02150),
+    // ROOM on the LOOP engine (reverb TYPEs T9).
+    ("rev_room", 0x011f8465c119da63),
     // GATE and REVERSE on the BURST engine (reverb TYPEs T8).
     ("rev_gate", 0xf58be0a4e64aeddf),
     ("rev_gate_flat_tail0", 0x951817e3e86edf28),

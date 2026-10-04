@@ -10,10 +10,11 @@
 //!   send on both sides plus the return, 6 dB down) and `<name>_s<smear>.txt`
 //!   (the figures).
 //!
-//! - `render_bursts` (Task 8) runs the snare, kick, bowed and plucked
-//!   strings and the IDM phrase through GATE and REVERSE, each at its
-//!   starting knobs and two contrasting settings, into `$AB_OUT` (default
-//!   `$AB_DIR/burst`): `<source>_<type>_<setting>.wav` and `manifest.json`.
+//! - `render_bursts` (Tasks 8–9) runs the snare, kick, bowed and plucked
+//!   strings and the IDM phrase through ROOM, GATE and REVERSE (or those
+//!   named in `$AB_TYPES`, e.g. `room`), each at its starting knobs and two
+//!   contrasting settings, into `$AB_OUT` (default `$AB_DIR/burst`):
+//!   `<source>_<type>_<setting>.wav` and `manifest.json`.
 //!
 //! It sets the reverb through its `Block` ids, so it builds at the T4
 //! reference (a2abe82f) too: id 5 (GRIT there, retired here) to 0; ids 11
@@ -340,17 +341,39 @@ fn render() {
     .expect("the figures");
 }
 
-/// GATE and REVERSE at their starting knobs and two contrasting settings,
-/// each a (name, knobs over the starting ones) pair.
+/// ROOM, GATE and REVERSE at their starting knobs and two contrasting
+/// settings, each a (name, knobs over the starting ones) pair.
 type Setting = (
     &'static str,
     &'static str,
     fn(&mut chimera_core::dsp::reverb::ReverbParams),
 );
 
-const BURST_SETTINGS: [(chimera_core::dsp::reverb::ReverbType, [Setting; 3]); 2] = {
-    use chimera_core::dsp::reverb::ReverbType::{Gate, Reverse};
+const BURST_SETTINGS: [(chimera_core::dsp::reverb::ReverbType, [Setting; 3]); 3] = {
+    use chimera_core::dsp::reverb::ReverbType::{Gate, Reverse, Room};
     [
+        (
+            Room,
+            [
+                (
+                    "default",
+                    "starting knobs: SIZE 141 ms, DECAY 0.55 s, TONE 6.6 kHz, DIFFUSE 0.60, PRE-DLY 5 ms, SMEAR 0.3 ms",
+                    |_| {},
+                ),
+                (
+                    "small_bright",
+                    "small and bright: SIZE 100 ms, DECAY 0.33 s, TONE 10 kHz, DIFFUSE 0.75, PRE-DLY 0",
+                    |p| {
+                        (p.size, p.time, p.tone, p.diffuse, p.predelay) = (0.0, 0.25, 0.0, 1.0, 0.0)
+                    },
+                ),
+                (
+                    "large_dark",
+                    "large and dark: SIZE 200 ms, DECAY 1.5 s, TONE 3.3 kHz, PRE-DLY 30 ms, SMEAR 0.5 ms",
+                    |p| (p.size, p.time, p.tone, p.predelay, p.smear) = (1.0, 1.0, 0.8, 0.6, 0.5),
+                ),
+            ],
+        ),
         (
             Gate,
             [
@@ -401,11 +424,18 @@ fn render_bursts() {
     std::fs::create_dir_all(&out_dir).expect("AB_OUT");
     let gain_db: f32 = std::env::var("AB_GAIN_DB").map_or(-9.0, |v| v.parse().expect("dB"));
     let gain = 10f32.powf(gain_db / 20.0);
+    let only = std::env::var("AB_TYPES").ok();
     let mut manifest = Vec::new();
     for source in ["snare", "kick", "strings", "plucked", "idm"] {
         let x = read_wav(&d.join("stimuli").join(format!("{source}.wav")));
         for (kind, settings) in BURST_SETTINGS {
             let name = chimera_core::dsp::reverb::ReverbType::NAMES[kind.index()];
+            if only
+                .as_deref()
+                .is_some_and(|o| !o.split(',').any(|t| t.eq_ignore_ascii_case(name)))
+            {
+                continue;
+            }
             for (tag, what, set) in settings {
                 let mut fx = FxParams::default();
                 fx.reverb = fx.reverb.with_type(kind, &KnobMemory::new());

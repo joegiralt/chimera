@@ -1,9 +1,9 @@
 //! Throwaway worst-case reverb kernels (reverb TYPEs plan Task 3, spec
-//! § CPU budget): ROOM's and HALL's inner loops fixed at their worst, and
+//! § CPU budget): HALL's inner loop fixed at its worst, and
 //! one moving pair against two fixed reads, each timed beside QUAD's
 //! crossfading ring on the same bench. No knobs: constants only. Task 8
-//! took BURST's out for the real engine (REV GATE, REV RVRS); Tasks 9–10
-//! delete this file.
+//! took BURST's out for the real engine (REV GATE, REV RVRS), Task 9
+//! ROOM's (REV ROOM); Task 10 deletes this file.
 //!
 //! Each kernel lays its lines out as `ring.rs` does (one shared write
 //! head, wrap-free segments for the fixed reads), its f32 lines likewise
@@ -39,16 +39,15 @@ pub trait RevKernel {
 /// PAIR's 32 fixed reads: (K PAIR − K FIX) / 16 is a pair's marginal
 /// cost. K CONV is the converter stubs alone, which every kernel but K
 /// QUAD carries (GRIT has since left: the kernels are pessimistic by it).
-pub const ROWS: [&str; 6] = ["K QUAD", "K ROOM", "K HALL", "K PAIR", "K FIX", "K CONV"];
+pub const ROWS: [&str; 5] = ["K QUAD", "K HALL", "K PAIR", "K FIX", "K CONV"];
 
 /// `f` on row `i`'s kernel, fresh.
 pub fn with_kernel(i: usize, f: impl FnOnce(&mut dyn RevKernel) -> u32) -> u32 {
     match i {
         0 => f(&mut KQuad::default()),
-        1 => f(&mut KRoom::new()),
-        2 => f(&mut KHall::new()),
-        3 => f(&mut KPair::<true>::new()),
-        4 => f(&mut KPair::<false>::new()),
+        1 => f(&mut KHall::new()),
+        2 => f(&mut KPair::<true>::new()),
+        3 => f(&mut KPair::<false>::new()),
         _ => f(&mut KConv(Conv::new())),
     }
 }
@@ -296,21 +295,11 @@ impl RevKernel for KConv {
     }
 }
 
-// ---- K ROOM ------------------------------------------------------------------
-
-/// ROOM's lines at SIZE 1 (24 kHz): PRE, delays A1 A2 B1 B2, stage APs
-/// A1 A2 B1 B2; the diffuser's four f32 APs.
-const ROOM_LEN: [usize; 9] = [1200, 1416, 2424, 1752, 2280, 408, 552, 312, 456];
-const ROOM_DIF: [usize; 4] = [55, 89, 142, 214];
-const ROOM: ([usize; 9], usize) = heads(ROOM_LEN);
-const ROOM_F: ([usize; 4], usize) = heads(ROOM_DIF);
-const ROOM_M: usize = ROOM.1;
-const ROOM_FN: usize = ROOM_F.1;
-const _: () = assert!(ROOM_M + 2 * ROOM_FN <= RING_LEN);
+// ---- crossfading reads ------------------------------------------------------
 
 /// The crossfading lines (PRE, 4 delays) at their far and near lengths:
 /// one crossfade moves the round trip 120 samples (5 ms), PRE 120.
-const ROOM_XF: [usize; 5] = [1, 2, 3, 4, 0];
+const XF_LINES: [usize; 5] = [1, 2, 3, 4, 0];
 const fn xf_reads<const N: usize, const X: usize>(
     w: &[usize; N],
     len: &[usize; N],
@@ -328,194 +317,6 @@ const fn xf_reads<const N: usize, const X: usize>(
     }
     o
 }
-const ROOM_FAR: [usize; 5] = xf_reads(&ROOM.0, &ROOM_LEN, ROOM_XF, 0);
-const ROOM_NEAR: [usize; 5] = xf_reads(&ROOM.0, &ROOM_LEN, ROOM_XF, 1);
-/// The fixed stage-AP reads (A1, B2) and the six output taps: L (A1 at
-/// 0.10 of SIZE 0, +), (B2 0.57, −), (A2 0.83, +); R (B1 0.12 of SIZE 0,
-/// +), (A2 0.53, −), (B2 0.79, +).
-const ROOM_AP: [usize; 2] = [back(&ROOM.0, 5, 409), back(&ROOM.0, 8, 457)];
-const ROOM_TAP: [usize; 6] = [
-    back(&ROOM.0, 1, 53),
-    back(&ROOM.0, 4, 1299),
-    back(&ROOM.0, 2, 2011),
-    back(&ROOM.0, 3, 79),
-    back(&ROOM.0, 2, 1284),
-    back(&ROOM.0, 4, 1801),
-];
-const ROOM_DIF_RD: [usize; 4] = [
-    back(&ROOM_F.0, 0, 56),
-    back(&ROOM_F.0, 1, 90),
-    back(&ROOM_F.0, 2, 143),
-    back(&ROOM_F.0, 3, 215),
-];
-
-/// ROOM's worst: PRE-DLY and the 4 stage delays always crossfading; stage
-/// APs A2 and B1 smeared (moving pairs), A1 and B2 fixed, all normalised;
-/// the 4-AP f32 diffuser, the rotation, 2 soft clips, 6 fixed taps and the
-/// converter stubs.
-pub struct KRoom {
-    h: usize,
-    hf: usize,
-    flip: Flip,
-    conv: Conv,
-    tone: f32,
-    ta: f32,
-    lp: [f32; 2],
-    damp: [f32; 2],
-    gains: [f32; 4],
-    g_dif: f32,
-    g_ap: f32,
-    rot: (f32, f32),
-    smear: [Smear; 2],
-}
-
-impl KRoom {
-    fn new() -> Self {
-        let seeds = wander_seeds::<2>(0x5EED_0001);
-        Self {
-            h: 0,
-            hf: 0,
-            flip: Flip::default(),
-            conv: Conv::new(),
-            tone: 0.0,
-            ta: black_box(0.5),
-            lp: [0.0; 2],
-            damp: black_box([0.4, 0.4]),
-            gains: black_box([0.985; 4]),
-            g_dif: black_box(0.75),
-            g_ap: black_box(0.75),
-            rot: black_box((0.968_912_4, 0.247_404)),
-            smear: [
-                Smear::new(seeds[0], 0.0, 17.0),
-                Smear::new(seeds[1], 0.5, 17.0),
-            ],
-        }
-    }
-}
-
-impl RevKernel for KRoom {
-    fn run(
-        &mut self,
-        arena: &mut ReverbArena,
-        u: &[f32; HALF],
-        l: &mut [f32; HALF],
-        r: &mut [f32; HALF],
-    ) {
-        let (li, lf) = regions::<ROOM_M, ROOM_FN>(arena);
-        let (near, mut xf) = self.flip.block(720);
-        let (kn, ko) = if near {
-            (ROOM_NEAR, ROOM_FAR)
-        } else {
-            (ROOM_FAR, ROOM_NEAR)
-        };
-        let n = HALF as f32;
-        // Gains and DAMP ramp across the block, as QUAD's.
-        let mut g = self.gains;
-        let dg = g.map(|g| (black_box(g) - g) / n);
-        let mut a = self.damp[0];
-        let da = (self.damp[1] - a) / n;
-        let (ga, inv) = (self.g_ap, 1.0 / (1.0 - self.g_ap));
-        let gd = self.g_dif;
-        let (c, s) = self.rot;
-        let (mut oa, doa) = self.smear[0].block();
-        let (mut ob, dob) = self.smear[1].block();
-        let nom = [ROOM_LEN[6] as f32, ROOM_LEN[7] as f32];
-        let (mut lp, mut tone, ta) = (self.lp, self.tone, self.ta);
-        let (mut h, mut hf) = (self.h, self.hf);
-        let mut i = 0;
-        while i < HALF {
-            let mut len = HALF - i;
-            let bw = seg(h, ROOM_M, &ROOM.0, &mut len);
-            let bn = seg(h, ROOM_M, &kn, &mut len);
-            let bo = seg(h, ROOM_M, &ko, &mut len);
-            let bap = seg(h, ROOM_M, &ROOM_AP, &mut len);
-            let bt = seg(h, ROOM_M, &ROOM_TAP, &mut len);
-            let fw = seg(hf, ROOM_FN, &ROOM_F.0, &mut len);
-            let fr = seg(hf, ROOM_FN, &ROOM_DIF_RD, &mut len);
-            for t in 0..len {
-                macro_rules! rd {
-                    ($b:expr) => {
-                        // SAFETY: each base b is below its region's length
-                        // m, `len` ≤ m − b and `t` < `len`.
-                        (unsafe { *li.get_unchecked($b + t) }) as f32
-                    };
-                }
-                macro_rules! wr {
-                    ($b:expr, $v:expr) => {
-                        // SAFETY: each base b is below its region's length
-                        // m, `len` ≤ m − b and `t` < `len`.
-                        unsafe { *li.get_unchecked_mut($b + t) = $v }
-                    };
-                }
-                macro_rules! frd {
-                    ($b:expr) => {
-                        // SAFETY: each base b is below its region's length
-                        // m, `len` ≤ m − b and `t` < `len`.
-                        unsafe { *lf.get_unchecked($b + t) }
-                    };
-                }
-                macro_rules! fwr {
-                    ($b:expr, $v:expr) => {
-                        // SAFETY: each base b is below its region's length
-                        // m, `len` ≤ m − b and `t` < `len`.
-                        unsafe { *lf.get_unchecked_mut($b + t) = $v }
-                    };
-                }
-                let w = 1.0 - xf as f32 * (1.0 / 720.0);
-                xf = xf.saturating_sub(1);
-                macro_rules! blend {
-                    ($k:expr) => {{
-                        let (v, o) = (rd!(bn[$k]), rd!(bo[$k]));
-                        o + w * (v - o)
-                    }};
-                }
-                let x = self.conv.adc(u[i + t] * FULL_SCALE);
-                tone += ta * (x - tone);
-                wr!(bw[0], store_round(tone));
-                // PRE-DLY, then the diffuser.
-                let mut d = blend!(4);
-                for k in 0..4 {
-                    let (y, v) = ap_f32(d, frd!(fr[k]), gd);
-                    fwr!(fw[k], v);
-                    d = y;
-                }
-                // Loop A: delay A1 → AP A1 (fixed) → delay A2 → AP A2 (smeared) → DAMP.
-                let (y, wn) = ap_norm(blend!(0), rd!(bap[0]), ga, inv);
-                wr!(bw[5], store_trunc(wn));
-                wr!(bw[2], store_round(g[0] * y));
-                let (y, wn) = ap_norm(blend!(1), pair_m(li, bw[6] + t, nom[0] - oa), ga, inv);
-                wr!(bw[6], store_trunc(wn));
-                lp[0] = store_round(lp[0] + a * (y - lp[0])) as f32;
-                let xa = g[1] * lp[0];
-                // Loop B: delay B1 → AP B1 (smeared) → delay B2 → AP B2 (fixed) → DAMP.
-                let (y, wn) = ap_norm(blend!(2), pair_m(li, bw[7] + t, nom[1] - ob), ga, inv);
-                wr!(bw[7], store_trunc(wn));
-                wr!(bw[4], store_round(g[2] * y));
-                let (y, wn) = ap_norm(blend!(3), rd!(bap[1]), ga, inv);
-                wr!(bw[8], store_trunc(wn));
-                lp[1] = store_round(lp[1] + a * (y - lp[1])) as f32;
-                let xb = g[3] * lp[1];
-                // The rotation, the send at ±½, the clips at re-entry.
-                wr!(bw[1], store_round(clip(c * xa + s * xb + 0.5 * d)));
-                wr!(bw[3], store_round(clip(c * xb - s * xa - 0.5 * d)));
-                let ol = rd!(bt[0]) - rd!(bt[1]) + rd!(bt[2]);
-                let or = rd!(bt[3]) - rd!(bt[4]) + rd!(bt[5]);
-                (l[i + t], r[i + t]) = self.conv.dac(ol, or);
-                for k in 0..4 {
-                    g[k] += dg[k];
-                }
-                a += da;
-                oa += doa;
-                ob += dob;
-            }
-            i += len;
-            h = wrap(h + len, ROOM_M);
-            hf = wrap(hf + len, ROOM_FN);
-        }
-        (self.lp, self.tone, self.h, self.hf) = (lp, tone, h, hf);
-        self.flip.left = xf;
-    }
-}
 
 // ---- K HALL ------------------------------------------------------------------
 
@@ -528,8 +329,8 @@ const HALL_F: ([usize; 4], usize) = heads(HALL_DIF);
 const HALL_M: usize = HALL.1;
 const HALL_FN: usize = HALL_F.1;
 const _: () = assert!(HALL_M + 2 * HALL_FN <= RING_LEN);
-const HALL_FAR: [usize; 5] = xf_reads(&HALL.0, &HALL_LEN, ROOM_XF, 0);
-const HALL_NEAR: [usize; 5] = xf_reads(&HALL.0, &HALL_LEN, ROOM_XF, 1);
+const HALL_FAR: [usize; 5] = xf_reads(&HALL.0, &HALL_LEN, XF_LINES, 0);
+const HALL_NEAR: [usize; 5] = xf_reads(&HALL.0, &HALL_LEN, XF_LINES, 1);
 /// The fixed stage-AP reads (2, 4) and the taps: L (S1 0.30 of SIZE 0,
 /// +), (S3 0.61, −), (S2 0.83, +); R (S2 0.25 of SIZE 0, +), (S4 0.49, −),
 /// (S1 0.91, +).

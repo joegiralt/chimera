@@ -196,8 +196,8 @@ fn unit(p: f32) -> f32 {
 const RING_MS: f32 = 1000.0 / 24_000.0;
 
 /// What the engine plays, from the knobs (spec § Each TYPE's knobs):
-/// QUAD's laws, or the TYPE's `Ranges` row. ROOM, HALL and BLOOM play
-/// QUAD's until their engines land (Tasks 9–11).
+/// QUAD's laws, or the TYPE's `Ranges` row. HALL and BLOOM play QUAD's
+/// until their engines land (Tasks 10–11).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct EngineKnobs {
     /// SIZE or LENGTH: the loop's round trip, or the burst, ms.
@@ -218,17 +218,21 @@ pub struct EngineKnobs {
     pub regen: f32,
     /// DENSITY as taps, 6 → 12.
     pub taps: f32,
-    /// DENSITY's pre-diffuser g.
-    pub pre_g: f32,
+    /// DIFFUSE's diffuser and stage-allpass g; DENSITY's pre-diffuser g.
+    pub diffuse_g: f32,
+    /// PRE-DLY, ms.
+    pub predelay_ms: f32,
     /// The burst's curve end to end, dB: GATE falls (≤ 0), REVERSE rises.
     pub shape_db: f32,
     /// The curve rises to the end (REVERSE).
     pub rising: bool,
 }
 
-/// How TIME maps on a BURST TYPE.
+/// How TIME maps on a row's TYPE.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TimeLaw {
+    /// A LOOP TYPE's DECAY: RT60 `exp` over the range.
+    Decay { rt60_s: Exp },
     /// GATE's TAIL: RT60 `exp` over the range, its gain faded in over
     /// the knob's first `fade` (TAIL 0 is exactly the fast gate).
     Tail { rt60_s: Exp, fade: f32 },
@@ -263,14 +267,21 @@ pub struct Ranges {
     pub time: TimeLaw,
     /// TONE's input corner, bright → dark, Hz, `exp`.
     pub tone_hz: Exp,
-    /// DENSITY's taps and pre-diffuser g, `lin`.
+    /// DENSITY's taps, `lin`.
     pub taps: (f32, f32),
-    pub pre_g: (f32, f32),
+    /// DIFFUSE's or DENSITY's allpass g, `lin`.
+    pub diffuse_g: (f32, f32),
+    /// PRE-DLY, ms, `lin`.
+    pub predelay_ms: (f32, f32),
     /// SHAPE or CURVE, dB, `lin`: negative falls.
     pub shape_db: (f32, f32),
     pub rising: bool,
-    /// SMEAR's depth at 1, ms, `lin` (the decorrelators: no cap).
+    /// SMEAR's depth at 1, ms, `lin`, capped at `smear_cap` of the loop
+    /// (§ The SMEAR bound; the decorrelators sit in none: ∞).
     pub smear_ms: f32,
+    pub smear_cap: f32,
+    /// The in-loop damper's corner, Hz, `exp` (0: none).
+    pub damp_hz: Exp,
     /// RATE, Hz, `exp`.
     pub rate_hz: Exp,
 }
@@ -283,10 +294,16 @@ pub const GATE: Ranges = Ranges {
     },
     tone_hz: Exp::new(10_000.0, 2_500.0),
     taps: (6.0, 12.0),
-    pre_g: (0.5, 0.7),
+    diffuse_g: (0.5, 0.7),
+    predelay_ms: (0.0, 0.0),
     shape_db: (0.0, -18.0),
     rising: false,
     smear_ms: 1.0,
+    smear_cap: f32::INFINITY,
+    damp_hz: Exp {
+        lo: 0.0,
+        log2_ratio: 0.0,
+    },
     rate_hz: Exp::new(0.1, 2.0),
 };
 
@@ -298,12 +315,32 @@ pub const REVERSE: Ranges = Ranges {
     ..GATE
 };
 
+/// ROOM's loop is LOOP A's round trip. Its one damper is fixed and mild
+/// (no DAMP cell): the input's TONE darkens it.
+pub const ROOM: Ranges = Ranges {
+    length_ms: Exp::new(100.0, 200.0),
+    time: TimeLaw::Decay {
+        rt60_s: Exp::new(0.2, 1.5),
+    },
+    tone_hz: Exp::new(10_000.0, 2_500.0),
+    taps: (0.0, 0.0),
+    diffuse_g: (0.5, 0.75),
+    predelay_ms: (0.0, 50.0),
+    shape_db: (0.0, 0.0),
+    rising: false,
+    smear_ms: 1.0,
+    smear_cap: 0.0072,
+    damp_hz: Exp::new(8_000.0, 8_000.0),
+    rate_hz: Exp::new(0.1, 1.0),
+};
+
 /// `t`'s row; `None` plays QUAD's laws.
 pub fn ranges(t: ReverbType) -> Option<&'static Ranges> {
     match t {
+        ReverbType::Room => Some(&ROOM),
         ReverbType::Gate => Some(&GATE),
         ReverbType::Reverse => Some(&REVERSE),
-        ReverbType::Quad | ReverbType::Room | ReverbType::Hall | ReverbType::Bloom => None,
+        ReverbType::Quad | ReverbType::Hall | ReverbType::Bloom => None,
     }
 }
 
@@ -352,6 +389,7 @@ fn quad_knobs(p: &ReverbParams) -> EngineKnobs {
 fn row_knobs(r: &Ranges, p: &ReverbParams) -> EngineKnobs {
     let length_ms = exp_law(r.length_ms, p.size);
     let (rt60_s, tail, regen) = match r.time {
+        TimeLaw::Decay { rt60_s } => (exp_law(rt60_s, p.time), 0.0, 0.0),
         TimeLaw::Tail { rt60_s, fade } => (
             exp_law(rt60_s, p.time),
             clampf(unit(p.time) / fade, 0.0, 1.0),
@@ -371,17 +409,17 @@ fn row_knobs(r: &Ranges, p: &ReverbParams) -> EngineKnobs {
     EngineKnobs {
         length_ms,
         rt60_s,
-        smear_ms: r.smear_ms * unit(p.smear),
+        smear_ms: (r.smear_ms * unit(p.smear)).min(r.smear_cap * length_ms),
         rate_hz: exp_law(r.rate_hz, p.rate),
         tone_hz: exp_law(r.tone_hz, p.tone),
         tail,
         regen,
         taps: lin(r.taps, p.diffuse),
-        pre_g: lin(r.pre_g, p.diffuse),
+        diffuse_g: lin(r.diffuse_g, p.diffuse),
+        predelay_ms: lin(r.predelay_ms, p.predelay),
         shape_db: lin(r.shape_db, p.shape),
         rising: r.rising,
-        // No BURST TYPE damps in a loop.
-        damp_hz: 0.0,
+        damp_hz: exp_law(r.damp_hz, p.damping),
     }
 }
 

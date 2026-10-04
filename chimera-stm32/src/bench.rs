@@ -136,12 +136,13 @@ const FX: [FxRow; FX_ROWS] = [
 ];
 
 /// The REVERB screen's rows, each timed as an FX row is, less MIX.
-const REV_ROWS: usize = 4;
+const REV_ROWS: usize = 5;
 const REV: [FxRow; REV_ROWS] = [
     ("REV QUAD", worst_reverb),
     ("REV QUAD S", smear_reverb),
     ("REV GATE", |s, b| worst_burst(s, b, ReverbType::Gate)),
     ("REV RVRS", |s, b| worst_burst(s, b, ReverbType::Reverse)),
+    ("REV ROOM", worst_room),
 ];
 
 /// The STRESS rows' blocks: 10 s, past NEW's four bars at its BPM.
@@ -197,6 +198,17 @@ fn worst_burst(s: &mut AudioShared, block: u32, kind: ReverbType) {
     let size = [0.0, 1.0][block as usize % 2];
     (r.kind, r.size, r.time, r.diffuse, r.smear, r.rate, r.mix) =
         (kind, size, 1.0, 1.0, 1.0, 1.0, 0.5);
+}
+
+/// ROOM at its worst (reverb TYPEs spec § Bench rows): SIZE and PRE-DLY
+/// between their ends every block, so a crossfade always runs; DECAY,
+/// DIFFUSE, SMEAR and RATE at 1.
+fn worst_room(s: &mut AudioShared, block: u32) {
+    let r = &mut s.fx.reverb;
+    let size = [0.0, 1.0][block as usize % 2];
+    (
+        r.kind, r.size, r.predelay, r.time, r.diffuse, r.smear, r.rate, r.mix,
+    ) = (ReverbType::Room, size, size, 1.0, 1.0, 1.0, 1.0, 0.5);
 }
 
 /// Full DRIVE and WOW (its interpolated, most expensive tap), full MIX:
@@ -652,7 +664,7 @@ pub fn run(
     // Each TYPE's STRESS, keys before ORBIT starts, then after.
     let mut st = |rev| [rig.stress(true, rev).0.0, rig.stress(false, rev).0.0];
     let stress = (
-        (st(worst_reverb), st(REV[2].1)),
+        [st(worst_reverb), st(REV[2].1), st(worst_room)],
         BlockBudget::for_cpu(clocks.cpu_hz).budget_cycles(),
     );
     let switch = rig.switch_max();
@@ -1104,8 +1116,8 @@ impl Rig<'_> {
 
     /// The costliest whole callback block over `STRESS_BLOCKS` and the most
     /// voices sounding: six `a16_a17` keys on Part 6, every effect at its
-    /// worst (the reverb as `rev` sets it: QUAD's, or GATE's for STRESS's
-    /// GATE reading), and (with `orbit`) ORBIT playing NEW's groove on Parts 1–5
+    /// worst (the reverb as `rev` sets it: QUAD's, or GATE's or ROOM's for
+    /// those STRESS readings), and (with `orbit`) ORBIT playing NEW's groove on Parts 1–5
     /// with NEW's Sounds (ADR 0073). ORBIT starts at the first timed block,
     /// whose cycles come back on their own too (T0); the keys go down
     /// before the warm blocks if `keys_first`, else a block after ORBIT
@@ -1193,8 +1205,8 @@ impl Rig<'_> {
     /// REV SWITCH MAX (reverb TYPEs spec § Bench rows): the costliest whole
     /// callback block over `SWITCH_BLOCKS`, and the block budget it must
     /// stay under: six `a16_a17` voices held on Part 1, every effect at its
-    /// worst, the reverb's TYPE stepping QUAD ↔ GATE every `SWITCH_EVERY`
-    /// blocks (Tasks 9–11 add theirs); TAPE too in the master-tape build,
+    /// worst, the reverb's TYPE stepping QUAD → GATE → ROOM every
+    /// `SWITCH_EVERY` blocks (Tasks 10–11 add theirs); TAPE too in the master-tape build,
     /// by `worst_bus`. The four CLEAR blocks,
     /// 11.6 KB zeroed each, and the voices' refill after them are what a
     /// mean would hide.
@@ -1215,9 +1227,8 @@ impl Rig<'_> {
         let mut worst = 0u32;
         for b in 0..WARM_BLOCKS + SWITCH_BLOCKS {
             worst_bus(shared, b);
-            if (b / SWITCH_EVERY) % 2 == 1 {
-                shared.fx.reverb.kind = ReverbType::Gate;
-            }
+            shared.fx.reverb.kind = [ReverbType::Quad, ReverbType::Gate, ReverbType::Room]
+                [(b / SWITCH_EVERY) as usize % 3];
             let start = DWT::cycle_count();
             inst.render(fx, &mut self.dac, shared, &mut self.scope);
             for (pair, o) in DacPair::ALL.into_iter().zip(out.iter_mut()) {
@@ -1542,7 +1553,7 @@ fn show_reverb(
     rev: &[u32; REV_ROWS],
     mix: u32,
     bus_v: u32,
-    (([first, after], [gate1, gate2]), budget): (([u32; 2], [u32; 2]), u32),
+    ([[first, after], [gate1, gate2], [room1, room2]], budget): ([[u32; 2]; 3], u32),
     (switch, switch_budget): (u32, u32),
     kernels: &[u32; bench_rev::ROWS.len()],
 ) {
@@ -1567,8 +1578,11 @@ fn show_reverb(
     let _ = write!(line, "STRESS {first}/{after}/{budget} GATE {gate1}/{gate2}");
     rec.line(Face::Label(theme::INK2), line.as_str(), (4, y + 10));
     line.clear();
-    let _ = write!(line, "REV SWITCH MAX {switch}/{switch_budget}");
+    let _ = write!(line, "STRESS ROOM {room1}/{room2}");
     rec.line(Face::Label(theme::INK2), line.as_str(), (4, y + 20));
+    line.clear();
+    let _ = write!(line, "REV SWITCH MAX {switch}/{switch_budget}");
+    rec.line(Face::Label(theme::INK2), line.as_str(), (4, y + 30));
     // Task 3's throwaway kernels, cycles per output sample as timed.
     for (i, (label, c)) in bench_rev::ROWS.iter().zip(kernels).enumerate() {
         line.clear();
@@ -1577,7 +1591,7 @@ fn show_reverb(
         rec.line(
             Face::Label(theme::INK2),
             line.as_str(),
-            (4 + col * 78, y + 30 + row * 10),
+            (4 + col * 78, y + 40 + row * 10),
         );
     }
     rec.flush();

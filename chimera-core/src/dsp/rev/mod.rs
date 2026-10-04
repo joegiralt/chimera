@@ -7,6 +7,7 @@
 
 pub mod arena;
 pub mod burst;
+pub mod loop_engine;
 pub mod parts;
 pub mod sync;
 
@@ -22,6 +23,7 @@ use crate::dsp::reverb::{ReverbParams, ReverbType, knobs, ranges};
 use crate::dsp::ring::{FULL_SCALE, STAGES, WET_GAIN, smear_depth, smear_hz};
 use arena::ReverbArena;
 use burst::BurstEngine;
+use loop_engine::Room;
 use parts::{Wander, wander_seeds};
 use sync::Tempo;
 
@@ -36,20 +38,24 @@ pub enum EngineState {
     Quad(QuadState),
     /// GATE and REVERSE.
     Burst(BurstEngine),
+    Room(Room),
 }
 
-/// Each TYPE's return gain. GATE's and REVERSE's match QUAD's short-term
-/// loudness on a held −12 dBFS pink pad at MIX 0.5 (the loudest 400 ms),
-/// their peaks within 0.6 dB of QUAD's: a TYPE switch under a held note
-/// neither jumps nor clips (`check_sustained_loudness`).
+/// Each TYPE's return gain. ROOM's, GATE's and REVERSE's match QUAD's
+/// short-term loudness on a held −12 dBFS pink pad at MIX 0.5 (the loudest
+/// 400 ms), their peaks within 0.6 dB of QUAD's: a TYPE switch under a
+/// held note neither jumps nor clips (`check_sustained_loudness`). ROOM's
+/// 0.55 s holds less than QUAD's 1.9 s, so it takes 7.5 dB more.
 pub fn wet_gain(t: ReverbType) -> f32 {
     match t {
+        ReverbType::Room => WET_ROOM,
         ReverbType::Gate => WET_GATE,
         ReverbType::Reverse => WET_REVERSE,
-        ReverbType::Quad | ReverbType::Room | ReverbType::Hall | ReverbType::Bloom => WET_GAIN,
+        ReverbType::Quad | ReverbType::Hall | ReverbType::Bloom => WET_GAIN,
     }
 }
 
+const WET_ROOM: f32 = 10.8;
 const WET_GATE: f32 = 6.75;
 const WET_REVERSE: f32 = 7.05;
 
@@ -333,11 +339,12 @@ impl Reverb {
     /// easing: it is the player's.
     fn reset(&mut self, kind: ReverbType) {
         self.kind = kind;
-        // ROOM, HALL and BLOOM play QUAD's engine until theirs land
-        // (Tasks 9–11).
+        // HALL and BLOOM play QUAD's engine until theirs land (Tasks
+        // 10–11).
         self.state = match kind {
             ReverbType::Gate | ReverbType::Reverse => EngineState::Burst(BurstEngine::default()),
-            ReverbType::Quad | ReverbType::Room | ReverbType::Hall | ReverbType::Bloom => {
+            ReverbType::Room => EngineState::Room(Room::default()),
+            ReverbType::Quad | ReverbType::Hall | ReverbType::Bloom => {
                 EngineState::Quad(QuadState::default())
             }
         };
@@ -355,7 +362,7 @@ impl Reverb {
     pub fn quad(&self) -> Option<&QuadState> {
         match &self.state {
             EngineState::Quad(q) => Some(q),
-            EngineState::Burst(_) => None,
+            _ => None,
         }
     }
 
@@ -363,7 +370,15 @@ impl Reverb {
     pub fn burst(&self) -> Option<&BurstEngine> {
         match &self.state {
             EngineState::Burst(b) => Some(b),
-            EngineState::Quad(_) => None,
+            _ => None,
+        }
+    }
+
+    /// ROOM's state, while ROOM runs.
+    pub fn room(&self) -> Option<&Room> {
+        match &self.state {
+            EngineState::Room(e) => Some(e),
+            _ => None,
         }
     }
 
@@ -403,9 +418,9 @@ impl Reverb {
             return;
         }
         let p = &self.latched;
-        // A BURST TYPE's knobs, mapped once a block (fast `exp2`/`log2`).
+        // A row TYPE's knobs, mapped once a block (fast `exp2`/`log2`).
         let kn = match self.state {
-            EngineState::Burst(_) => Some(knobs(p)),
+            EngineState::Burst(_) | EngineState::Room(_) => Some(knobs(p)),
             EngineState::Quad(_) => None,
         };
         let mut u = [0.0f32; HALF];
@@ -473,6 +488,20 @@ impl Reverb {
                 (self.paths, self.depth) = ((false, d0 != 0.0 || d1 != 0.0), d1);
                 let [l, r] = &mut lr;
                 b.run(&mut self.arena, &u, &kn.unwrap_or_default(), l, r);
+            }
+            EngineState::Room(e) => {
+                // Its smeared allpasses never crossfade: no SIZE move to
+                // rest for. The cap is in the knobs, and each loop's in the
+                // engine.
+                let kn = kn.unwrap_or_default();
+                let full = kn.smear_ms * loop_engine::PER_MS;
+                let (d0, d1) = (s0 * full, s1 * full);
+                e.set_smear(core::array::from_fn(|k| {
+                    (d0 * (1.0 + x0[k]), d1 * (1.0 + x1[k]))
+                }));
+                (self.paths, self.depth) = ((e.crossfade().is_some(), d0 != 0.0 || d1 != 0.0), d1);
+                let [l, r] = &mut lr;
+                e.run(&mut self.arena, &u, &kn, l, r);
             }
         }
         self.up_l.process(&lr[0], &mut out.l);
