@@ -1073,6 +1073,7 @@ impl Phases {
         p
     }
 
+    #[cfg(feature = "orbit")]
     fn add(&mut self, o: &Phases) {
         self.total += o.total;
         self.boundary += o.boundary;
@@ -1085,6 +1086,7 @@ impl Phases {
     }
 
     /// The mean of `n` added; `block` is the count, `acc[6]` stays a sum.
+    #[cfg(feature = "orbit")]
     fn div(&mut self, n: u32) {
         self.block = n;
         self.total /= n;
