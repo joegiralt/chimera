@@ -99,7 +99,7 @@ ADR 0087's `Source` file is `FileKind` 6, at `/CHIMERA/TAPES/<CRC>.SRC`: a heade
 
 ### What the arena holds
 
-**`held` begins with a 16 B descriptor:** `shape`, `count`, the rate and `head_frames` (`u32`: for a `ZoneSet`, the frames of each zone's head held in RAM; 0 for a source held whole), the rest reserved. Head length is data, so the format never freezes one. A `ZoneSet`'s zone table follows it (§ 8). The packed samples come after that. The descriptor is inside `held`, so it is on the meter. The audio reads a source's description from the same bytes it plays, and ADR 0087's 12 B `SourceRow` stays as it is.
+**`held` begins with a 16 B descriptor:** `shape`, `count`, the rate (4 000–48 000 Hz, the pool spec's range; anything else is refused) and `head_frames` (`u32`: for a `ZoneSet`, the frames of each zone's head held in RAM; 0 for a source held whole, and refused otherwise), the rest reserved. Head length is data, so the format never freezes one. A `ZoneSet`'s zone table follows it (§ 8). The packed samples come after that. The descriptor is inside `held`, so it is on the meter. The audio reads a source's description from the same bytes it plays, and ADR 0087's 12 B `SourceRow` stays as it is.
 
 ## 2. The engine
 
