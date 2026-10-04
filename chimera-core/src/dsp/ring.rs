@@ -201,40 +201,27 @@ pub fn first_reflection(step: u8) -> usize {
         .unwrap_or(0)
 }
 
-/// GRIT's grid: a step of Δ = 2^(6·GRIT) i16 LSBs.
+/// The lines' storage: plain i16, a fixed 1-LSB grid (Q3 over ±2.0).
+/// GRIT is the converters outside the ring (`rev::grit`), never this.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Grid {
-    delta: f32,
-    inv: f32,
-}
+pub struct Grid;
 
 impl Grid {
-    pub fn new(grit: f32) -> Self {
-        let delta = exp2(6.0 * clampf(grit, 0.0, 1.0));
-        Self {
-            delta,
-            inv: 1.0 / delta,
-        }
-    }
+    pub const FIXED: Grid = Grid;
 
-    pub fn delta(self) -> f32 {
-        self.delta
-    }
-
-    /// `x` (in LSBs) rounded to the nearest grid point, and that to the
-    /// nearest LSB, both ties away from zero; saturates at the i16 range.
+    /// `x` (in LSBs) rounded to the nearest LSB, ties away from zero;
+    /// saturates at the i16 range.
     #[inline(always)]
     pub fn q_round(self, x: f32) -> i16 {
-        rnd(rint(x * self.inv) * self.delta).clamp(i16::MIN as i32, i16::MAX as i32) as i16
+        rnd(x).clamp(i16::MIN as i32, i16::MAX as i32) as i16
     }
 
-    /// `x` (in LSBs) truncated toward zero onto the grid, then onto the
-    /// LSB; saturates at the i16 range. The allpass states use it: rounding
-    /// there sustains a deadband tail.
+    /// `x` (in LSBs) truncated toward zero onto the LSB; saturates at the
+    /// i16 range. The allpass states use it: rounding there sustains a
+    /// deadband tail.
     #[inline(always)]
     pub fn q_trunc(self, x: f32) -> i16 {
-        (((x * self.inv) as i32 as f32 * self.delta) as i32).clamp(i16::MIN as i32, i16::MAX as i32)
-            as i16
+        (x as i32).clamp(i16::MIN as i32, i16::MAX as i32) as i16
     }
 }
 
@@ -568,7 +555,6 @@ impl RingControls {
 /// One-pole smoothing time constants, in seconds.
 const TIME_TAU: f32 = 0.050;
 const DAMP_TAU: f32 = 0.020;
-const GRIT_TAU: f32 = 0.020;
 
 /// A once-per-block one-pole's coefficient for time constant `tau`.
 fn smoothing(tau: f32, sample_rate: u32) -> f32 {
@@ -576,21 +562,21 @@ fn smoothing(tau: f32, sample_rate: u32) -> f32 {
 }
 
 /// QUAD's state: the ring and its smoothed controls, at the ring's rate.
-/// The rate change and MIX are `Reverb`'s. Zero bytes are the default.
+/// The rate change, GRIT's converters and MIX are `Reverb`'s. Zero bytes
+/// are the default.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct QuadState {
     ring: Ring,
-    /// Smoothed TIME, DAMP and GRIT.
+    /// Smoothed TIME and DAMP.
     time: f32,
     damp: f32,
-    grit: f32,
     /// Last block's gains and DAMP coefficient: this block's ramp start.
     gains: [f32; STAGES],
     damp_coef: f32,
     primed: bool,
 }
 
-crate::in_place::field_list!(QuadState => QuadState { ring, time, damp, grit, gains, damp_coef, primed });
+crate::in_place::field_list!(QuadState => QuadState { ring, time, damp, gains, damp_coef, primed });
 
 impl QuadState {
     pub fn ring(&self) -> &Ring {
@@ -615,10 +601,9 @@ impl QuadState {
             let k = |tau| smoothing(tau, sample_rate);
             self.time += k(TIME_TAU) * (ctl.time - self.time);
             self.damp += k(DAMP_TAU) * (ctl.damp - self.damp);
-            self.grit += k(GRIT_TAU) * (ctl.grit - self.grit);
             self.ring.request(step);
         } else {
-            (self.time, self.damp, self.grit) = (ctl.time, ctl.damp, ctl.grit);
+            (self.time, self.damp) = (ctl.time, ctl.damp);
             self.ring.snap(step);
         }
         let now = self.ring.step();
@@ -632,7 +617,7 @@ impl QuadState {
             gains_to: gains,
             damp_from: self.damp_coef,
             damp_to: damp,
-            grid: Grid::new(self.grit),
+            grid: Grid::FIXED,
         };
         (self.gains, self.damp_coef) = (gains, damp);
         self.ring.process(arena, u, &blk, l, r);

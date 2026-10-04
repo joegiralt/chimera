@@ -1,6 +1,8 @@
 //! The reverb's dispatcher (reverb TYPEs plan, Task 4): QUAD through
 //! `Reverb` is bit for bit what `RingReverb` was. The goldens were recorded
-//! from `RingReverb` (695a6ef3), before the arena moved out of the ring.
+//! from `RingReverb` (695a6ef3), before the arena moved out of the ring,
+//! and re-recorded when GRIT became the converters (Task 5): the sweep
+//! walks GRIT.
 
 mod common;
 
@@ -83,9 +85,9 @@ fn render_bus() -> Vec<f32> {
 }
 
 const GOLDENS: &[(&str, u64)] = &[
-    ("quad_sweep_48k", 0xf18aa52b6d409e39), // RingReverb, 695a6ef3
-    ("quad_sweep_44k1", 0xc8e840208ed55df2), // RingReverb, 695a6ef3
-    ("quad_bus", 0xecc74d1088b8106a),       // RingReverb, 695a6ef3
+    ("quad_sweep_48k", 0x11c773129fc135db), // GRIT as converters (T5)
+    ("quad_sweep_44k1", 0x7105f2d3fad91f8f), // GRIT as converters (T5)
+    ("quad_bus", 0x4628c4c66d38ea33),       // GRIT as converters (T5)
 ];
 
 #[test]

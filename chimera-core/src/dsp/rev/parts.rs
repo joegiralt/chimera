@@ -126,7 +126,7 @@ impl Wobble {
 /// err up to 5e-4 near a half turn, past the lerp's 1e-4 budget. Goes
 /// when private issue #352 fixes the table.
 #[inline(always)]
-fn sin_turn(t: f32) -> f32 {
+pub(crate) fn sin_turn(t: f32) -> f32 {
     let mut x = t - (t as i32) as f32;
     x -= (x > 0.5) as i32 as f32;
     x += (x < -0.5) as i32 as f32;

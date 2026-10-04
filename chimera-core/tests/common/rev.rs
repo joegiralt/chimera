@@ -264,6 +264,72 @@ fn whiten(x: &[f32]) -> Vec<f64> {
         .collect()
 }
 
+/// The return's noise under a steady −12 dBFS 1 kHz sine, 2 s in: every
+/// bin from 20 Hz to 10.5 kHz (under the half-band's image) but 1 kHz
+/// ± 50 Hz, as a level in dBFS (against a full-scale sine). The arena's
+/// own rounding is in it, and GRIT's converters, which the send keeps
+/// awake.
+pub fn sine_floor_dbfs(r: Render) -> f32 {
+    let (l, _) = run(r, &mut tone(1_000.0, 0.251), 3.5);
+    let n = 1 << 16;
+    let p = power(&l[2 * SR as usize..][..n], n);
+    let noise: f64 = p[bin_of(20.0, n)..bin_of(950.0, n)]
+        .iter()
+        .chain(&p[bin_of(1_050.0, n)..bin_of(10_500.0, n)])
+        .sum();
+    // Hann frames: Σ over the positive bins is 3n²/16 · σ².
+    let var = noise / (0.1875 * (n * n) as f64);
+    (10.0 * (var / 0.5).log10()) as f32
+}
+
+/// `products_db` on `r`'s tail: a 1 kHz burst at −12 dBFS for 0.5 s, then
+/// 4 s of decay, measured at 2 and 3 kHz on the left.
+pub fn burst_products_db(r: Render) -> (f32, f32) {
+    let burst = tone(1_000.0, 0.251);
+    let (l, _) = run(
+        r,
+        &mut |i| if i < SR as usize / 2 { burst(i) } else { 0.0 },
+        4.5,
+    );
+    products_db(&l[SR as usize / 2..], &[2_000.0, 3_000.0])
+}
+
+/// The correlated-product figure (§ Tests, GRIT): over `x`'s 100 ms
+/// windows, each of `at`'s bins (±1) against 3× the median bin within
+/// ±200 Hz of it (its own ±2 bins left out). Each window is a Welch
+/// average of 1024-point frames, and both sides are summed over the
+/// windows before they are compared: one noisy bin sits above its median
+/// by +3 dB a quarter of the time, a product in every window. Returns
+/// (summed, worst single window) for the worst of `at`, in dB.
+pub fn products_db(x: &[f32], at: &[f32]) -> (f32, f32) {
+    const N: usize = 1024;
+    let hz = SR as f64 / N as f64;
+    let span = (200.0 / hz).round() as usize;
+    let (mut sums, mut worst) = (vec![(0.0f64, 0.0f64); at.len()], f64::NEG_INFINITY);
+    for w in x.as_chunks::<{ 100 * MS }>().0 {
+        let p = power(w, N);
+        for (s, &f) in sums.iter_mut().zip(at) {
+            let k = bin_of(f as f64, N);
+            let e: f64 = p[k - 1..=k + 1].iter().sum();
+            let mut near: Vec<f64> = (k - span..=k + span)
+                .filter(|&j| j.abs_diff(k) > 2)
+                .map(|j| p[j])
+                .collect();
+            near.sort_by(f64::total_cmp);
+            let m = 3.0 * near[near.len() / 2];
+            (s.0, s.1) = (s.0 + e, s.1 + m);
+            if m > 0.0 {
+                worst = worst.max(10.0 * (e / m).log10());
+            }
+        }
+    }
+    let summed = sums
+        .iter()
+        .map(|&(e, m)| 10.0 * (e / m).log10())
+        .fold(f64::NEG_INFINITY, f64::max);
+    (summed as f32, worst as f32)
+}
+
 /// Zero-crossing frequency over `x`: rising crossings, interpolated.
 fn zc_hz(x: &[f32]) -> Option<f64> {
     let t: Vec<f64> = x
@@ -531,7 +597,7 @@ pub fn check_level_plan(
 /// Energy from 20 Hz to 10.5 kHz outside 1 kHz ± 50 Hz, 2 s into a steady
 /// −12 dB 1 kHz sine, in dB: the storage noise floor, as `reverb_test`'s
 /// `floor_db`.
-fn floor_db(r: Render) -> f64 {
+pub fn floor_db(r: Render) -> f64 {
     let (l, _) = run(r, &mut tone(1_000.0, 0.251), 3.4);
     let n = 1 << 16;
     let p = power(&l[2 * SR as usize..][..n], n);

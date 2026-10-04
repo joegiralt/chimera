@@ -1,8 +1,9 @@
 //! The master reverb TYPEs (reverb TYPEs spec, ADR 0085): `Reverb` runs
-//! the half-band rate change and MIX, and dispatches the block to the
-//! TYPE's engine over the one shared arena.
+//! the half-band rate change, GRIT's converters and MIX, and dispatches
+//! the block to the TYPE's engine over the one shared arena.
 
 pub mod arena;
+pub mod grit;
 pub mod parts;
 pub mod sync;
 
@@ -16,6 +17,7 @@ use crate::dsp::halfband::{Decimator, HALF, Interpolator};
 use crate::dsp::reverb::ReverbParams;
 use crate::dsp::ring::{FULL_SCALE, WET_GAIN};
 use arena::ReverbArena;
+use grit::Converters;
 use sync::Tempo;
 
 pub use crate::dsp::ring::QuadState;
@@ -37,11 +39,14 @@ pub struct Reverb {
     dec: Decimator,
     up_l: Interpolator,
     up_r: Interpolator,
+    /// GRIT, eased (never snap); at exactly 0 the converters rest.
+    grit: Ease,
+    conv: Converters,
     /// MIX, eased (never snap).
     mix: Ease,
 }
 
-crate::in_place::field_list!(Reverb => Reverb { arena, state, dec, up_l, up_r, mix });
+crate::in_place::field_list!(Reverb => Reverb { arena, state, dec, up_l, up_r, grit, conv, mix });
 
 impl Reverb {
     pub fn new() -> Self {
@@ -51,6 +56,8 @@ impl Reverb {
             dec: Decimator::new(),
             up_l: Interpolator::new(),
             up_r: Interpolator::new(),
+            grit: Ease::default(),
+            conv: Converters::new(),
             mix: Ease::default(),
         }
     }
@@ -59,16 +66,24 @@ impl Reverb {
         // SAFETY: the arena and half-bands are integer and float arrays and
         // integers; `state` is `EngineState`, whose variant 0 is `Quad` and
         // every field of every variant an integer, a float or a `bool`
-        // (`false`); `mix` an `Ease` of a float and a `bool`. All are valid
-        // as zero bytes, and zero is exactly `new()`'s state.
-        unsafe {
+        // (`false`); `grit` and `mix` are `Ease`s of a float and a `bool`;
+        // `conv` is integers, floats and `bool`s. All are valid as zero
+        // bytes, and zero is `new()`'s state but for the converters' noise
+        // seed, set below.
+        let r = unsafe {
             slot.as_mut_ptr().write_bytes(0, 1);
             slot.assume_init_mut()
-        }
+        };
+        r.conv = Converters::new();
+        r
     }
 
     pub fn arena(&self) -> &ReverbArena {
         &self.arena
+    }
+
+    pub fn converters(&self) -> &Converters {
+        &self.conv
     }
 
     /// QUAD's state, while QUAD runs.
@@ -89,18 +104,29 @@ impl Reverb {
         sample_rate: u32,
         out: &mut Stereo,
     ) {
+        let ctl = p.controls().sanitised();
         let mut u = [0.0f32; HALF];
         self.dec.process(send, &mut u);
+        let (_, grit) = self.grit.step(ctl.grit, ease_coeff(sample_rate));
+        if grit == 0.0 {
+            self.conv.bypass();
+        } else {
+            self.conv.adc(&mut u, grit);
+        }
         let (mut l, mut r) = ([0.0f32; HALF], [0.0f32; HALF]);
         match &mut self.state {
-            EngineState::Quad(q) => q.process(
-                &mut self.arena,
-                &u,
-                &p.controls(),
-                sample_rate,
-                &mut l,
-                &mut r,
-            ),
+            EngineState::Quad(q) => {
+                q.process(&mut self.arena, &u, &ctl, sample_rate, &mut l, &mut r)
+            }
+        }
+        if grit != 0.0 {
+            // The DAC works in output units; MIX below applies `WET`
+            // again, so back to LSBs after it.
+            const OUT: f32 = WET_GAIN / FULL_SCALE;
+            const IN: f32 = FULL_SCALE / WET_GAIN;
+            l.iter_mut().chain(r.iter_mut()).for_each(|s| *s *= OUT);
+            self.conv.dac(&mut l, &mut r, grit);
+            l.iter_mut().chain(r.iter_mut()).for_each(|s| *s *= IN);
         }
         self.up_l.process(&l, &mut out.l);
         self.up_r.process(&r, &mut out.r);

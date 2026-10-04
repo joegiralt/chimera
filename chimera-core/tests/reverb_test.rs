@@ -7,6 +7,7 @@ use chimera_core::dsp::Stereo;
 use chimera_core::dsp::halfband::HALF;
 use chimera_core::dsp::rev::Reverb;
 use chimera_core::dsp::rev::arena::ReverbArena;
+use chimera_core::dsp::rev::grit::{IDLE_FADE, IDLE_HOLD};
 use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::reverb::{REVERB_SPECS, ReverbParams};
 use chimera_core::dsp::ring::*;
@@ -143,81 +144,29 @@ fn damp_is_a_stable_one_pole_from_11_khz_to_1_5_khz() {
 }
 
 #[test]
-fn grit_rounds_onto_its_grid() {
-    let g0 = Grid::new(0.0);
-    assert_eq!(g0.delta(), 1.0);
-    for v in i16::MIN..=i16::MAX {
-        assert_eq!(g0.q_round(v as f32), v);
-    }
-    assert_eq!(g0.q_round(-100.7), -101);
-    assert_eq!(g0.q_round(100.7), 101);
-    assert_eq!(g0.q_round(-0.5), -1);
-    assert_eq!(g0.q_round(0.5), 1);
-    let g1 = Grid::new(1.0);
-    assert_eq!(g1.delta(), 64.0);
-    assert_eq!(g1.q_round(32.0), 64);
-    assert_eq!(g1.q_round(-32.0), -64);
-    assert_eq!(g1.q_round(31.9), 0);
-    assert_eq!(g1.q_round(-31.9), 0);
-    assert_eq!(Grid::new(0.5).delta(), 8.0);
-    for i in 0..=100 {
-        let g = Grid::new(i as f32 / 100.0);
-        for x in [-30_000.3f32, -777.7, -1.5, 0.0, 2.5, 999.9, 30_000.1] {
-            // The grid point, rounded (never truncated) to an LSB.
-            let p = (x / g.delta()).round() * g.delta();
-            assert!((g.q_round(x) as f32 - p).abs() <= 0.501, "GRIT {i}: {x}");
-            assert!(
-                (g.q_round(x) as f32 - x).abs() <= g.delta() / 2.0 + 0.501,
-                "GRIT {i}: {x}"
-            );
-        }
-    }
-}
-
-#[test]
-fn grit_truncates_toward_zero_onto_its_grid() {
-    let g0 = Grid::new(0.0);
-    for v in i16::MIN..=i16::MAX {
-        assert_eq!(g0.q_trunc(v as f32), v);
-    }
-    assert_eq!(g0.q_trunc(-100.7), -100);
-    assert_eq!(g0.q_trunc(100.7), 100);
-    assert_eq!(g0.q_trunc(0.99), 0);
-    assert_eq!(g0.q_trunc(-0.99), 0);
-    let g1 = Grid::new(1.0);
-    assert_eq!(g1.q_trunc(64.0), 64);
-    assert_eq!(g1.q_trunc(127.9), 64);
-    assert_eq!(g1.q_trunc(-127.9), -64);
-    assert_eq!(g1.q_trunc(63.9), 0);
-    assert_eq!(g1.q_trunc(-63.9), 0);
-    for i in 0..=100 {
-        let g = Grid::new(i as f32 / 100.0);
-        for x in [-30_000.3f32, -777.7, -1.5, 0.0, 2.5, 999.9, 30_000.1] {
-            let q = g.q_trunc(x) as f32;
-            // Never grows, never flips sign, loses under a step plus an LSB.
-            assert!(q.abs() <= x.abs() && q * x >= 0.0, "GRIT {i}: {x} → {q}");
-            assert!(x.abs() - q.abs() < g.delta() + 1.0, "GRIT {i}: {x} → {q}");
-        }
-    }
-}
-
-#[test]
 fn the_first_reflection_is_the_shortest_tap_at_twice_the_rate() {
     assert_eq!(first_reflection(0), 240);
     assert_eq!(first_reflection(16), 470);
     assert_eq!(first_reflection(31), 686);
 }
 
+/// The lines' fixed 1-LSB storage: GRIT no longer reaches it.
 #[test]
-fn grit_saturates_past_the_i16_range() {
-    for grit in [0.0, 0.5, 1.0] {
-        let g = Grid::new(grit);
-        for q in [Grid::q_round, Grid::q_trunc] {
-            assert_eq!(q(g, 33_000.0), i16::MAX, "grit {grit}");
-            assert_eq!(q(g, 2_100_000.0), i16::MAX, "grit {grit}");
-            assert_eq!(q(g, -40_000.0), i16::MIN, "grit {grit}");
-            assert_eq!(q(g, -2_100_000.0), i16::MIN, "grit {grit}");
-        }
+fn storage_rounds_truncates_and_saturates_on_the_lsb() {
+    let g = Grid::FIXED;
+    for v in i16::MIN..=i16::MAX {
+        assert_eq!((g.q_round(v as f32), g.q_trunc(v as f32)), (v, v));
+    }
+    assert_eq!((g.q_round(-100.7), g.q_round(100.7)), (-101, 101));
+    assert_eq!((g.q_round(-0.5), g.q_round(0.5)), (-1, 1));
+    assert_eq!((g.q_trunc(-100.7), g.q_trunc(100.7)), (-100, 100));
+    assert_eq!((g.q_trunc(-0.99), g.q_trunc(0.99)), (0, 0));
+    for q in [Grid::q_round, Grid::q_trunc] {
+        assert_eq!(q(g, 33_000.0), i16::MAX);
+        assert_eq!(q(g, 2_100_000.0), i16::MAX);
+        assert_eq!(q(g, -40_000.0), i16::MIN);
+        assert_eq!(q(g, -2_100_000.0), i16::MIN);
+        assert_eq!(q(g, f32::NAN), 0);
     }
 }
 
@@ -317,7 +266,8 @@ fn stable_at_grit_1() {
 }
 
 /// Truncation in the allpasses leaves no limit cycle: silence in reaches
-/// exact zeros out, with no gate.
+/// exact zeros out, with no gate but the converters' idle mute, which
+/// ends `IDLE_HOLD` + `IDLE_FADE` after the ring falls silent.
 fn falls_silent_within(grit: f32, seconds: f32) {
     let mut rv = Box::new(Reverb::new());
     let mut n = Noise(0xdead_beef);
@@ -337,6 +287,10 @@ fn falls_silent_within(grit: f32, seconds: f32) {
             "GRIT {grit}: still ringing after {seconds} s"
         );
     }
+    let mute = 2 * (IDLE_HOLD + IDLE_FADE) as usize;
+    for _ in 0..mute.div_ceil(BLOCK_SIZE) {
+        run(&mut rv, &silence, &c, 1.0, SR, &mut out);
+    }
     for _ in 0..blocks(0.1) {
         run(&mut rv, &silence, &c, 1.0, SR, &mut out);
         assert!(out.l.iter().chain(&out.r).all(|&s| s == 0.0));
@@ -344,8 +298,8 @@ fn falls_silent_within(grit: f32, seconds: f32) {
 }
 
 #[test]
-fn no_limit_cycle_at_grit_1() {
-    falls_silent_within(1.0, 15.0);
+fn falls_silent_at_grit_1_after_the_idle_mute() {
+    falls_silent_within(1.0, 20.0);
 }
 
 #[test]
@@ -450,57 +404,6 @@ fn the_return_is_band_limited() {
         let db = 10.0 * (band / top).log10();
         assert!(db >= 40.0, "{db} dB");
     }
-}
-
-#[test]
-fn grit_1_stores_only_multiples_of_64() {
-    let mut ring = Lone::new();
-    ring.snap(31);
-    let blk = RingBlock {
-        gains_from: [0.9; STAGES],
-        gains_to: [0.9; STAGES],
-        damp_from: 0.5,
-        damp_to: 0.5,
-        grid: Grid::new(1.0),
-    };
-    let mut n = Noise(99);
-    let (mut l, mut r) = ([0.0; HALF], [0.0; HALF]);
-    for _ in 0..2_000 {
-        let u = core::array::from_fn(|_| n.next());
-        ring.process(&u, &blk, &mut l, &mut r);
-    }
-    assert!(ring.arena.lines().iter().any(|&s| s != 0));
-    assert!(ring.arena.lines().iter().all(|&s| s % 64 == 0));
-    assert!(ring.damp_state().iter().all(|&s| s % 64.0 == 0.0));
-}
-
-/// Energy from 20 Hz to 10.5 kHz outside 1 kHz ± 50 Hz, 2 s into a steady
-/// −12 dB 1 kHz sine, in dB.
-fn floor_db(grit: f32) -> f64 {
-    let sine =
-        |i: usize| 0.251 * (2.0 * core::f32::consts::PI * 1_000.0 * i as f32 / SR as f32).sin();
-    let c = RingControls {
-        grit,
-        ..RingControls::default()
-    };
-    let (l, _) = render(blocks(3.4), sine, |_| c);
-    let n = 1 << 16;
-    let p = power(&l[2 * SR as usize..][..n]);
-    let (lo, hi) = (bin(950.0, n), bin(1_050.0, n));
-    let floor: f64 = p[bin(20.0, n)..lo]
-        .iter()
-        .chain(&p[hi..bin(10_500.0, n)])
-        .sum();
-    10.0 * floor.log10()
-}
-
-#[test]
-fn grit_raises_the_noise_floor() {
-    let floors: Vec<f64> = (0..=10).map(|i| floor_db(i as f32 / 10.0)).collect();
-    for w in floors.windows(2) {
-        assert!(w[1] >= w[0] - 0.5, "{floors:?}");
-    }
-    assert!(floors[10] - floors[0] >= 24.0, "{floors:?}");
 }
 
 /// `x` band-passed to 500 Hz–4 kHz by FFT.
@@ -667,7 +570,7 @@ fn held_block() -> RingBlock {
         gains_to: [0.9; STAGES],
         damp_from: 0.5,
         damp_to: 0.5,
-        grid: Grid::new(0.0),
+        grid: Grid::FIXED,
     }
 }
 
@@ -800,13 +703,19 @@ fn calibration_send(n: &mut Noise, i: usize) -> f32 {
     if i < 24_000 { n.next() } else { 0.0 }
 }
 
+/// At GRIT 0: `WET_GAIN` calibrates the ring, and the plate had no
+/// converters. GRIT's high cuts take 1.2 dB off this white send at the
+/// default 0.3 (`reverb_grit_test`'s cutoffs), which is GRIT's sound.
 #[test]
 fn wet_gain_matches_the_plate_within_1_db() {
     let mut n = Noise(0x5eed);
     let (l, r) = render(
         blocks(2.0),
         |i| calibration_send(&mut n, i),
-        |_| RingControls::default(),
+        |_| RingControls {
+            grit: 0.0,
+            ..RingControls::default()
+        },
     );
     let ring = ((energy(&l) + energy(&r)) / (2.0 * l.len() as f64)).sqrt();
     let db = 20.0 * (ring / PLATE_RMS as f64).log10();

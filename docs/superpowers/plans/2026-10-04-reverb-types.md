@@ -968,6 +968,33 @@ against `BlockBudget::budget_cycles` (448,000).
 - **REV QUAD bench:** deferred to the next unit session (the unit was
   busy); gate REV QUAD ≤ QUAD_REV + 1 %.
 
+### Task 5: the converters (2026-10-04, host)
+
+- **GRIT 0 is bit for bit the T4 reference:** `reverb_grit_test`'s
+  `grit_0_bypasses_bit_for_bit` holds `fx_golden_test`'s two reverb renders
+  at GRIT 0 to their `a2abe82f` hashes, and the A/B's GRIT 0 WAVs are
+  byte-identical before and after.
+- **Re-recorded** (every one at GRIT ≠ 0): `fx_golden_test`'s
+  `reverb_ring`, `reverb_ring_max_size`, `reverb_ring_full_grit`;
+  `reverb_dispatch_test`'s `quad_sweep_48k`, `quad_sweep_44k1`, `quad_bus`
+  (the sweep walks GRIT); `instrument_test`'s `reverb_send_on` and its
+  pre-limiter row (the default GRIT 0.3).
+- **Floor** (QUAD defaults, MIX 1, under a steady −12 dBFS 1 kHz sine,
+  20 Hz–10.5 kHz): GRIT 0 −68.1, 0.3 −67.5, 0.6 −61.1, 1 −47.8 dBFS.
+  The § GRIT table's −64 and −54 assumed the ADC's noise reaches the return
+  at unity; QUAD's steady-state gain to white noise at its defaults is
+  about +8.5 dB. The old grid read −57.3, −46.8 and −33.1.
+- **Products** (2 and 3 kHz in a 1 kHz burst's 4 s tail, summed over
+  100 ms windows): new 0.0 dB at GRIT 1; old 3.6, 7.7 and 12.5 dB at 0.3,
+  0.6 and 1.
+- **The high cut** is a prewarped bilinear one-pole: the brief's one-pole
+  `y += a·(x − y)` cannot reach −3 dB near 11 kHz at 24 kHz without
+  shelving 1.4 dB off 5 kHz.
+- **AXI:** 442,220 B (+88; the ratchet moves with it).
+- **Flash:** plain release `text` 702,860 B (+1,848 over T4's 701,012);
+  `--features orbit` 722,436 B (+1,840 over 720,596).
+- **REV QUAD bench:** deferred (the unit was busy).
+
 ---
 
 ## Self-review
