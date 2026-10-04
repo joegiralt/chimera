@@ -1,8 +1,8 @@
 use chimera_core::boot::{BootAction, BootSeen, UsbRegs};
 use chimera_core::clock_plan::SiliconRev;
 use chimera_core::console::{
-    Colours, Command, Console, Frame, NoArg, Out, Request, SHOT_HEADER, Stalled, Stats, Unit,
-    answer,
+    CardAnswer, CardFail, CardSpeed, Colours, Command, Console, Frame, NoArg, Out, Request,
+    SHOT_HEADER, Stalled, Stats, Unit, answer,
 };
 use chimera_core::perf::load::AudioStats;
 use chimera_core::reset::ResetCause;
@@ -23,6 +23,7 @@ struct Fake {
     fb: Box<[u16; FB_SIZE]>,
     stats: Option<Stats>,
     bench: Option<String>,
+    card: Option<CardAnswer>,
     stats_reads: usize,
     dfu: Option<()>,
     dfu_calls: usize,
@@ -37,6 +38,7 @@ impl Fake {
             fb: Box::new([0xBEEF; FB_SIZE]),
             stats: None,
             bench: None,
+            card: None,
             stats_reads: 0,
             dfu: None,
             dfu_calls: 0,
@@ -56,6 +58,9 @@ impl Unit for Fake {
     }
     fn bench(&self) -> Option<&str> {
         self.bench.as_deref()
+    }
+    fn card(&mut self) -> Option<CardAnswer> {
+        self.card
     }
     fn frame(&self) -> Frame<'_> {
         Frame {
@@ -112,6 +117,7 @@ fn help_is_the_specs_text() {
          status  firmware, project, Part and where the UI is\n\
          stats   AUDIO LOAD and the UI loop's time\n\
          bench   the bench's numbers (bench builds)\n\
+         card    SD speed and streams, a chord playing; clean (bench builds)\n\
          shot    the screen in THEME's colours; shot raw: canonical\n\
          dfu     restart into the ROM loader for just flash\n\
          OK\n"
@@ -145,6 +151,85 @@ fn none_from_the_unit_is_one_err_line() {
     let mut u = Fake::new();
     assert_eq!(ask(&mut u, "stats\n"), "ERR stats is not in this build\n");
     assert_eq!(ask(&mut u, "bench\n"), "ERR bench is not in this build\n");
+    assert_eq!(ask(&mut u, "card\n"), "ERR card is not in this build\n");
+}
+
+/// Every phase measured.
+fn full() -> CardSpeed {
+    use chimera_core::console::{CardInfo, CardKind, Files, Latency, Load, Throughput};
+    let tp = Some(Throughput {
+        bytes: 1_440_000,
+        us: 1_000_000,
+    });
+    CardSpeed {
+        seed: 7,
+        card: Some(CardInfo {
+            kind: CardKind::Sdhc,
+            bytes: 15_931_539_456,
+            free_bytes: Some(15_000_000_000),
+        }),
+        files: Some(Files::default()),
+        seq: [tp; 3],
+        random: Some(Latency::default()),
+        interleaved: tp,
+        // A p95 round of 8 × 4 KB in 1 ms: 32.8 MB/s, 455 streams at half.
+        rounds: Some(Latency {
+            p95_us: 1_000,
+            ..Latency::default()
+        }),
+        load: Some(Load::default()),
+        overruns: 0,
+    }
+}
+
+#[test]
+fn card_fails_as_one_err_line() {
+    let mut u = Fake::new();
+    u.card = Some(CardAnswer::Cleaned(Err(CardFail::Store(
+        chimera_hal::store::StoreError::Timeout,
+    ))));
+    assert_eq!(ask(&mut u, "card clean\n"), "ERR card: CARD TIMEOUT\n");
+    u.card = Some(CardAnswer::Cleaned(Ok(())));
+    assert_eq!(ask(&mut u, "card clean\n"), "OK\n");
+}
+
+#[test]
+fn a_card_stopped_short_keeps_what_came_before() {
+    let mut u = Fake::new();
+    let mut s = full();
+    (s.random, s.interleaved, s.rounds, s.load) = (None, None, None, None);
+    u.card = Some(CardAnswer::Measured(s, Some(CardFail::Timeout)));
+    let got = ask(&mut u, "card seed=7\n");
+    assert!(
+        got.starts_with("seed 7\ncard_type SDHC\ncard_mb 15931\nfree_mb 15000\nfile_kb 8388\n"),
+        "{got}"
+    );
+    assert!(got.contains("seq_16k_kb_s 1440\n"), "{got}");
+    assert!(!got.contains("rand_") && !got.contains("streams"), "{got}");
+    assert!(got.ends_with("overruns 0\nERR card: timeout\n"), "{got}");
+    u.card = Some(CardAnswer::Measured(
+        CardSpeed::default(),
+        Some(CardFail::NoAudio),
+    ));
+    assert_eq!(
+        ask(&mut u, "card\n"),
+        "seed 0\noverruns 0\nERR card: audio is not running\n"
+    );
+}
+
+#[test]
+fn card_is_key_value_lines_then_ok() {
+    let mut u = Fake::new();
+    u.card = Some(CardAnswer::Measured(full(), None));
+    let got = ask(&mut u, "card\n");
+    assert!(
+        got.starts_with("seed 7\n") && got.ends_with("streams 455\nOK\n"),
+        "{got}"
+    );
+    assert!(
+        got.lines().all(|l| l == "OK" || l.split(' ').count() == 2),
+        "{got}"
+    );
 }
 
 #[test]
@@ -291,7 +376,8 @@ fn a_stall_is_returned_from_every_answer() {
         loop_peak_us: 2,
     });
     let mut c = Console::new();
-    for &b in b"help\nstatus\nstats\nbench\nshot\nfrob\n" {
+    u.card = Some(CardAnswer::Measured(full(), None));
+    for &b in b"help\nstatus\nstats\nbench\ncard\nshot\nfrob\n" {
         if let Some(r) = c.push(b) {
             assert_eq!(answer(r, &mut u, &mut Wall), Err(Stalled));
         }
@@ -369,9 +455,9 @@ impl Rng {
 
     /// Up to 200 bytes: 70 % command words, `raw`, spaces, CR and LF; 30 % any byte.
     fn stream(&mut self) -> Vec<u8> {
-        const PIECES: [&[u8]; 11] = [
-            b"help", b"status", b"stats", b"bench", b"shot", b"dfu", b"raw", b" ", b"\r", b"\n",
-            b"\n",
+        const PIECES: [&[u8]; 12] = [
+            b"help", b"status", b"stats", b"bench", b"card", b"shot", b"dfu", b"raw", b" ", b"\r",
+            b"\n", b"\n",
         ];
         let len = self.below(201);
         let mut v = Vec::with_capacity(len + 8);
@@ -467,4 +553,14 @@ fn the_specs_help_is_what_help_writes() {
     let mut u = Fake::new();
     let spec = spec_block("help").join("\n") + "\n";
     assert_eq!(ask(&mut u, "help\n"), spec);
+}
+
+#[test]
+fn the_specs_card_has_every_line_card_writes() {
+    let mut u = Fake::new();
+    u.card = Some(CardAnswer::Measured(full(), None));
+    let key = |l: &str| l.split(' ').next().unwrap().to_owned();
+    let got: Vec<_> = ask(&mut u, "card\n").lines().map(key).collect();
+    let spec: Vec<_> = spec_block("card").into_iter().map(key).collect();
+    assert_eq!(got, spec);
 }

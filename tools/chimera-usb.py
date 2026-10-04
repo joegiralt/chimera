@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Read the unit over its USB console (or the desktop sim's socket).
 
-    python3 tools/chimera-usb.py <cmd> [<arg>]     help, status, stats, bench, shot [raw], dfu
+    python3 tools/chimera-usb.py <cmd> [<arg>]     help, status, stats, bench, card [clean|seed=N], shot [raw], dfu
     python3 tools/chimera-usb.py to-dfu            the unit into ROM DFU, for just flash
     python3 tools/chimera-usb.py wait-console [s]  wait (default 10 s) for the console on the bus
 
-Exit 0 on OK, 1 on ERR (to stderr) or 2 s of silence. Bodies go to stdout;
+Exit 0 on OK, 1 on ERR (to stderr) or 2 s of silence (60 s before `card`'s
+first line: it measures before it answers). Bodies go to stdout;
 `shot` writes a PNG and prints its path. Standard library only.
 
 Environment: CHIMERA_USB picks the target (unset: /dev/chimera if present,
@@ -31,6 +32,7 @@ from typing import NamedTuple, Union
 
 SIM = ("127.0.0.1", 7341)  # chimera-desktop/src/console.rs ADDR
 SILENCE_S = 2.0
+CARD_WAIT_S = 60.0  # `card` measures before it answers: ~5 s, ~15 s writing its test file
 DRAIN_S = 0.05
 MAX_SHOT = 1 << 20  # well over 240 x 320 x 2; a garbled header can't ask for gigabytes
 UDEV_HINT = "sudo cp tools/70-chimera.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger"
@@ -129,16 +131,18 @@ class Conn:
 
 
 class Reader:
-    """Lines and exact byte counts over a Conn, failing after 2 s of silence."""
+    """Lines and exact byte counts over a Conn, failing after `first` s of
+    silence before the first byte and 2 s after."""
 
-    def __init__(self, conn: Conn):
-        self.conn, self.buf = conn, b""
+    def __init__(self, conn: Conn, first=SILENCE_S):
+        self.conn, self.buf, self.wait = conn, b"", first
 
     def _more(self):
-        data = self.conn.read(SILENCE_S)
+        data = self.conn.read(self.wait)
         if not data:
             raise NoAnswer()
         self.buf += data
+        self.wait = SILENCE_S
 
     def line(self) -> bytes:
         while b"\n" not in self.buf:
@@ -166,27 +170,43 @@ def send(conn: Conn, line):
     conn.write(line.encode() + b"\n" if isinstance(line, str) else line + b"\n")
 
 
-def answer(conn: Conn) -> tuple:
-    """(Status.OK, body) or (Status.ERR, the ERR line).
+class ErrLine(bytes):
+    """An ERR line; `before` holds the lines the answer sent ahead of it
+    (what a `card` measured before it stopped)."""
+
+    before = b""
+
+
+def answer(conn: Conn, first=SILENCE_S) -> tuple:
+    """(Status.OK, body) or (Status.ERR, the ERR line), the first byte
+    waited for up to `first` s.
 
     A `SHOT` header line stays in the body, followed by exactly its length
     of pixel bytes. Raises NoAnswer, Vanished or BadShot."""
-    rd, body = Reader(conn), b""
+    rd, body = Reader(conn, first), b""
     while True:
         ln = rd.line()
         if ln == b"OK":
             return Status.OK, body
         if ln == b"ERR" or ln.startswith(b"ERR "):
-            return Status.ERR, ln
+            err = ErrLine(ln)
+            err.before = body
+            return Status.ERR, err
         body += ln + b"\n"
         if ln.startswith(b"SHOT "):
             body += rd.exactly(Shot.declared_length(ln))
 
 
+def first_wait(line: str) -> float:
+    """How long a request's first byte may take."""
+    return CARD_WAIT_S if line.split()[:1] == ["card"] else SILENCE_S
+
+
 def request(conn: Conn, line) -> tuple:
     """`send`, then `answer`."""
     send(conn, line)
-    return answer(conn)
+    text = line if isinstance(line, str) else line.decode(errors="replace")
+    return answer(conn, first_wait(text.lower()))
 
 
 class BadShot(Exception):
@@ -368,6 +388,8 @@ def main(argv, env) -> int:
     finally:
         conn.close()
     if status is Status.ERR:
+        sys.stdout.buffer.write(getattr(body, "before", b""))
+        sys.stdout.flush()
         return fail(body.decode(errors="replace"))
     if argv[0].lower() == "shot":
         try:

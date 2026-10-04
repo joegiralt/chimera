@@ -175,6 +175,37 @@ impl<D: Medium> FatStore<D> {
         &self.dev
     }
 
+    /// `Fs::remove_dir` on the card, if it is still `vol`.
+    pub fn remove_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<bool, StoreError> {
+        self.run(vol, |fs, _| fs.remove_dir(dir))
+    }
+
+    /// `Fs::free_bytes` on the card, if it is still `vol`.
+    pub fn free_bytes(&mut self, vol: VolumeId) -> Result<u64, StoreError> {
+        self.run(vol, |fs, _| fs.free_bytes())
+    }
+
+    /// `Fs::aim` on the card, if it is still `vol`: kept for its next write.
+    pub fn aim(&mut self, vol: VolumeId, per_mille: u16) -> Result<(), StoreError> {
+        self.run(vol, |fs, _| {
+            fs.aim(per_mille);
+            Ok(())
+        })
+    }
+
+    /// `Fs::runs` on the card, if it is still `vol`, each run's first block
+    /// on the device: for raw reads that bypass the FAT.
+    pub fn runs(
+        &mut self,
+        vol: VolumeId,
+        file: FileName,
+        f: &mut dyn FnMut(u32, u32),
+    ) -> Result<u32, StoreError> {
+        self.run(vol, |fs, lba| {
+            fs.runs(file, &mut |at, n| f(lba.saturating_add(at), n))
+        })
+    }
+
     /// A device error: classified by the medium, which re-inits.
     fn fault(&self, e: &D::Error) -> StoreError {
         let err = self.dev.classify(e);
@@ -199,7 +230,8 @@ impl<D: Medium> FatStore<D> {
         Ok((p.lba, l, id))
     }
 
-    /// Runs `op` on the card, if it is still `vol`.
+    /// Runs `op` on the card, if it is still `vol`, with the partition's
+    /// first block.
     ///
     /// Error mapping. `FsError::Dev` is fatal for the whole operation: the
     /// `Fs` has stopped where it failed and dropped any unflushed FAT
@@ -212,7 +244,7 @@ impl<D: Medium> FatStore<D> {
     fn run<T>(
         &mut self,
         vol: VolumeId,
-        op: impl FnOnce(&mut Fs<'_, Part<'_, D>>) -> FsResult<T, D>,
+        op: impl FnOnce(&mut Fs<'_, Part<'_, D>>, u32) -> FsResult<T, D>,
     ) -> Result<T, StoreError> {
         self.dev.start_op();
         self.read(0).map_err(|e| self.fault(&e))?;
@@ -227,13 +259,10 @@ impl<D: Medium> FatStore<D> {
             lba,
             blocks: layout.blocks(),
         };
-        let r = op(&mut Fs::new(
-            &mut part,
-            layout,
-            &mut self.fat,
-            &mut self.buf,
-            &mut hint,
-        ));
+        let r = op(
+            &mut Fs::new(&mut part, layout, &mut self.fat, &mut self.buf, &mut hint),
+            lba,
+        );
         if let Some(c) = hint {
             self.hint.set(now, c);
         }
@@ -272,7 +301,7 @@ impl<D: Medium> Store for FatStore<D> {
         dir: Dir,
         f: &mut dyn FnMut(FileName, u32),
     ) -> Result<(), StoreError> {
-        self.run(vol, |fs| fs.list(dir, f))
+        self.run(vol, |fs, _| fs.list(dir, f))
     }
 
     fn read(
@@ -281,7 +310,7 @@ impl<D: Medium> Store for FatStore<D> {
         file: FileName,
         sink: &mut dyn ReadSink,
     ) -> Result<(), StoreError> {
-        self.run(vol, |fs| fs.read(file, sink))
+        self.run(vol, |fs, _| fs.read(file, sink))
     }
 
     fn write(
@@ -290,14 +319,14 @@ impl<D: Medium> Store for FatStore<D> {
         file: FileName,
         body: &mut dyn FnMut(&mut dyn ByteSink) -> Result<(), StoreError>,
     ) -> Result<u32, StoreError> {
-        self.run(vol, |fs| fs.write(file, body))
+        self.run(vol, |fs, _| fs.write(file, body))
     }
 
     fn delete(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
-        self.run(vol, |fs| fs.delete(file))
+        self.run(vol, |fs, _| fs.delete(file))
     }
 
     fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError> {
-        self.run(vol, |fs| fs.make_dir(dir))
+        self.run(vol, |fs, _| fs.make_dir(dir))
     }
 }

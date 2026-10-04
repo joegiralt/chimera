@@ -2380,6 +2380,7 @@ impl UiState {
     ) {
         self.region_set
             .set_screen(self.layout(), self.prompt_open());
+        self.region_set.drawn_hints = Some(self.theme.hints);
         let mut data = [region::RegionData::sentinel_header(); region::MAX_REGIONS];
         {
             let f = self.frame(perf, audio, scope);
@@ -2391,6 +2392,13 @@ impl UiState {
         for (r, d) in self.region_set.active_regions_mut().iter_mut().zip(data) {
             r.prev_data = d;
         }
+    }
+
+    /// THEME's HINTS moved since the bands were drawn, noted as drawn now:
+    /// every band and the browser redraw, so no page keys its band on it.
+    fn hints_moved(&mut self) -> bool {
+        let now = Some(self.theme.hints);
+        core::mem::replace(&mut self.region_set.drawn_hints, now) != now
     }
 
     /// The key region `kind` was last drawn with, if the page has it.
@@ -2417,11 +2425,12 @@ impl UiState {
                 Color = embedded_graphics::pixelcolor::Rgb565,
             > + chimera_hal::ChimeraDisplay,
     {
+        let hints_moved = self.hints_moved();
         // The Sound rung's browser: one flush region, redrawn only while
         // dirty (opened, cursor/scroll moved; #7).
         if let Some((part, b)) = self.loc.browse() {
             let mut flush_list = [(0u16, 0u16); region::MAX_REGIONS];
-            if self.browser_dirty {
+            if self.browser_dirty || hints_moved {
                 let fb = display.pixel_buffer();
                 Renderer::clear_region_fb(fb, 0, chimera_hal::SCREEN_HEIGHT);
                 let (cursor, scroll) = (b.cursor(), b.scroll());
@@ -2448,7 +2457,7 @@ impl UiState {
 
         // Rebuild regions if layout changed
         let screen = (layout, self.prompt_open());
-        let fresh = self.region_set.prev_screen != Some(screen);
+        let fresh = self.region_set.prev_screen != Some(screen) || hints_moved;
         if fresh {
             self.region_set.set_screen(layout, screen.1);
         }

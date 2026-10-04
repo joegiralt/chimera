@@ -3,8 +3,8 @@
 use core::fmt::{self, Write};
 
 use super::{
-    Command, Frame, MAX_LINE, NoArg, Out, PROTOCOL, Refusal, Request, Stalled, write_shot,
-    write_status,
+    CardAnswer, Command, Frame, MAX_LINE, NoArg, Out, PROTOCOL, Refusal, Request, Stalled,
+    write_card, write_shot, write_status,
 };
 use crate::boot::{BootSeen, UsbRegs};
 use crate::hw::MAX_VOICES;
@@ -24,6 +24,9 @@ pub trait Unit {
     /// Reading resets the loop timer.
     fn stats(&mut self) -> Option<Stats>;
     fn bench(&self) -> Option<&str>;
+    /// `card`'s outcome, reached before the answer starts. `None`: not in
+    /// this build.
+    fn card(&mut self) -> Option<CardAnswer>;
     fn frame(&self) -> Frame<'_>;
     /// Arms the restart, made once `OK` is out. `None`: not in this build.
     fn dfu(&mut self) -> Option<()>;
@@ -86,6 +89,26 @@ pub fn answer(
             .bench()
             .map(|b| bench(b, &mut t))
             .ok_or(Why::Absent(r.command())),
+        // Its ERR is its own line, not a `Why`: a build that never
+        // measures links none of it. A stop keeps what came before.
+        Ok(r @ Request::Card(_)) => match unit.card() {
+            None => Err(Why::Absent(r.command())),
+            Some(CardAnswer::Cleaned(Ok(()))) => Ok(Ok(())),
+            Some(CardAnswer::Cleaned(Err(e))) => {
+                return writeln!(t, "ERR card: {}", e.message()).map_err(|fmt::Error| Stalled);
+            }
+            Some(CardAnswer::Measured(s, fail)) => {
+                let wrote = write_card(&s, &mut t);
+                match fail {
+                    None => Ok(wrote),
+                    Some(e) => {
+                        return wrote
+                            .and_then(|()| writeln!(t, "ERR card: {}", e.message()))
+                            .map_err(|fmt::Error| Stalled);
+                    }
+                }
+            }
+        },
         Ok(Request::Shot(c)) => return write_shot(unit.frame(), c, t.0),
         Ok(r @ Request::Dfu(NoArg)) => unit.dfu().map(Ok).ok_or(Why::Absent(r.command())),
     };

@@ -14,6 +14,8 @@ mod audio;
 #[cfg(all(feature = "bench", not(feature = "sd-probe")))]
 mod bench;
 mod cache;
+#[cfg(all(feature = "bench", feature = "usb-console"))]
+mod card_speed;
 mod clocks;
 #[cfg(not(feature = "sd-probe"))]
 mod controls;
@@ -358,8 +360,11 @@ fn synth(board: Board) -> ! {
     let (scope_w, mut scope_r) = shared::take_scope().expect("scope buffer taken once");
     let (mut shared_w, shared_r) =
         shared::take_audio(ui.project().perf()).expect("audio buffer taken once");
-    // Without MIDI DIN nothing takes a producer.
-    #[cfg_attr(not(feature = "midi-din"), allow(unused_mut, unused_variables))]
+    // Without MIDI DIN or `card` nothing takes a producer.
+    #[cfg_attr(
+        not(any(feature = "midi-din", all(feature = "bench", feature = "usb-console"))),
+        allow(unused_mut, unused_variables)
+    )]
     let (mut producers, notes) = audio::engine::NOTES
         .split()
         .expect("note sources split once");
@@ -392,6 +397,17 @@ fn synth(board: Board) -> ! {
 
     marker.stage(BootStage::Audio);
 
+    // The console's `card`: the measurement over the card, its chord on
+    // the `CARD` note source.
+    #[cfg(all(feature = "bench", feature = "usb-console"))]
+    let mut card_bench = card_speed::take(
+        producers
+            .take(audio::engine::CARD)
+            .expect("card producer taken once"),
+        clk.cpu_hz,
+    )
+    .expect("card bench taken once");
+
     // Step 3: PART 1 replaces the splash.
     let (mut pacer, first) = chimera_core::ui::animation::Pacer::start(controls::now_ms());
     ui.update(first);
@@ -417,10 +433,14 @@ fn synth(board: Board) -> ! {
         // The snapshot point: every path through the last iteration flushed.
         #[cfg(feature = "usb-console")]
         tend_usb(&mut usb, ui, &marker, &clocks, clk.cpu_hz, &mut usb_snap);
+        #[cfg(all(feature = "usb-console", feature = "bench"))]
+        let card_run: usb::CardRun = &mut |arg, s| Some(card_bench.answer(arg, store, s));
+        #[cfg(all(feature = "usb-console", not(feature = "bench")))]
+        let card_run: usb::CardRun = &mut |_, _| None;
         #[cfg(feature = "usb-console")]
         if let Some(asked) = usb
             .up()
-            .and_then(|u| u.service(ui, stats_r.as_mut(), bench_text, display.frame()))
+            .and_then(|u| u.service(ui, stats_r.as_mut(), bench_text, display.frame(), card_run))
         {
             // As the menu's path: a THEME change in this visit is kept.
             ui.sync_system_now(&mut sync, &mut card, store, &mut settings);

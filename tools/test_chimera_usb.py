@@ -197,6 +197,32 @@ class Tool(unittest.TestCase):
         self.assertIn(b"no answer from", r.stderr)
         self.assertTrue(1.8 < took < 4.0, took)
 
+    def test_card_waits_longer_for_its_first_line_only(self):
+        class Scripted:
+            def __init__(self, chunks):
+                self.chunks, self.waits = list(chunks), []
+
+            def read(self, timeout):
+                self.waits.append(timeout)
+                return self.chunks.pop(0) if self.chunks else b""
+
+        c = Scripted([b"streams 12\n", b"OK\n"])
+        self.assertEqual(tool.answer(c, tool.first_wait("card")), (tool.Status.OK, b"streams 12\n"))
+        self.assertEqual(c.waits, [tool.CARD_WAIT_S, tool.SILENCE_S])
+        self.assertEqual(tool.first_wait("stats"), tool.SILENCE_S)
+        self.assertGreaterEqual(tool.CARD_WAIT_S, 30)
+
+    def test_a_card_stopped_short_prints_what_it_measured(self):
+        with FakeUnit({b"card seed=7\n": b"seed 7\noverruns 0\nERR card: timeout\n"}) as u:
+            r = run_tool(["card", "seed=7"], u.target)
+        self.assertEqual((r.returncode, r.stdout), (1, b"seed 7\noverruns 0\n"))
+        self.assertIn(b"ERR card: timeout", r.stderr)
+
+    def test_card_prints_its_body(self):
+        with FakeUnit({b"card\n": b"streams 12\nOK\n"}) as u:
+            r = run_tool(["card"], u.target)
+        self.assertEqual((r.returncode, r.stdout), (0, b"streams 12\n"))
+
     def test_shot_writes_a_png_of_the_pixels(self):
         px = bytes(range(256)) * 600  # 153 600 bytes
         with FakeUnit({b"shot\n": b"SHOT 240 320 rgb565be 153600\n" + px + b"OK\n"}) as u, tempfile.TemporaryDirectory() as d:

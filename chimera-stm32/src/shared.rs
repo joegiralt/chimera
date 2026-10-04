@@ -43,6 +43,10 @@ pub fn copy_waves() {
 static mut UI: MaybeUninit<UiState> = MaybeUninit::uninit();
 static UI_TAKEN: AtomicBool = AtomicBool::new(false);
 
+/// Out of line for flash, not the stack: built in place, its frame is
+/// 1 KB, but inlined into `synth` fat LTO reshuffles the UI loop's
+/// inlining for 6.3 KB more `.text` (ADR 0089).
+#[inline(never)]
 pub fn take_ui() -> Option<&'static mut UiState> {
     if UI_TAKEN.swap(true, Ordering::AcqRel) {
         return None;

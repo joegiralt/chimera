@@ -50,25 +50,38 @@ check:
 
 # The stack is the 63.75 KB of DTCM below the wave tables (ADR 0025): fail if any release function moves
 # SP by 8 KB or more in one step, or by a register (a large value built on
-# the stack instead of in a static), checked for the default, no-default,
-# bench, orbit, bench with orbit and sd-probe feature sets. Needs the llvm-tools rustup component; a
-# missing llvm-objdump or an unreadable ELF fails the recipe instead of
-# passing silently.
+# the stack instead of in a static); then `tools/stack_depth.py` sums nested
+# frames from `main` and from each interrupt entry (the audio's DMA1_STR0,
+# render_half and the FX bus under it, MIDI's USART1, SysTick, HardFault),
+# all nested at once, against the stack, each call through a pointer
+# charged the deepest address-taken function, three deep. Checked for the default,
+# no-default, bench, bench with the master tape, orbit, bench with orbit
+# and sd-probe feature sets (sd-probe has no interrupts: frames only).
+# Needs the llvm-tools rustup component; a missing llvm-objdump or an
+# unreadable ELF fails the recipe instead of passing silently.
 stack-check:
     #!/usr/bin/env bash
     set -euo pipefail
-    objdump="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/llvm-objdump"
-    test -x "$objdump"
+    bin="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin"
+    objdump="$bin/llvm-objdump"
+    nm="$bin/llvm-nm"
+    test -x "$objdump" && test -x "$nm"
     elf=target/thumbv7em-none-eabihf/release/chimera-stm32
-    for features in "" "--no-default-features" "--features bench" "--features orbit" "--features bench,orbit" "--no-default-features --features sd-probe"; do
+    for features in "" "--no-default-features" "--features bench" "--features bench,master-tape" "--features orbit" "--features bench,orbit" "--no-default-features --features sd-probe"; do
         cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf $features
         test -r "$elf"
-        if "$objdump" -d --no-show-raw-insn -C "$elf" \
-            | grep -E -e '^[0-9a-f]{8} <' -e 'sub(\.w)?[[:space:]]+sp, (sp, )?(#0x([2-9a-f][0-9a-f]{3}|[0-9a-f]{5,})$|r[0-9])' \
+        dis="$("$objdump" -d --no-show-raw-insn -C "$elf")"
+        data="$("$objdump" -s -j .rodata -j .data "$elf")"
+        if grep -E -e '^[0-9a-f]{8} <' -e 'sub(\.w)?[[:space:]]+sp, (sp, )?(#0x([2-9a-f][0-9a-f]{3}|[0-9a-f]{5,})$|r[0-9])' <<<"$dis" \
             | grep -B1 -E '^[[:space:]]' \
             | grep -v -e '^--$'; then
             echo "stack-check: large stack frame (features: ${features:-default})" >&2
             exit 1
+        fi
+        if [[ "$features" != *sd-probe* ]]; then
+            addr() { "$nm" "$elf" | awk -v s="$1" '$3 == s { print strtonum("0x" $1) }'; }
+            echo "stack-depth (features: ${features:-default})"
+            python3 tools/stack_depth.py "$(( $(addr _stack_start) - $(addr _stack_end) ))" <<<"$dis"$'\n'"$data"
         fi
     done
 
@@ -120,6 +133,12 @@ stats:
     python3 tools/chimera-usb.py stats
 status:
     python3 tools/chimera-usb.py status
+# About 10 s, up to 45 the first time while it writes two 4 MiB files in
+# /CHIMERA/BENCH; it plays a chord on channel 1. `just card seed=N` repeats
+# a run's random reads; `just card clean` removes /CHIMERA/BENCH.
+# The card's read speed beside audio and the streams it holds (just flash-bench first)
+card *args:
+    python3 tools/chimera-usb.py card {{args}}
 
 # Flash firmware to PreenFM3 via DFU. With the console up, `to-dfu` sends
 # `dfu` and waits for the ROM loader; without it, bridge BOOT0 and re-plug.

@@ -527,6 +527,7 @@ pub fn sdmmc_write(disk: RamDisk, files: &[(Dir, &str, &[u8])]) -> RamDisk {
                 Dir::Chimera => None,
                 Dir::Projects => Some("PROJECTS"),
                 Dir::Sounds => Some("SOUNDS"),
+                Dir::Bench => Some("BENCH"),
             };
             if let Some(sub) = sub {
                 let _ = d.make_dir_in_dir(sub);

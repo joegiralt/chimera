@@ -26,7 +26,7 @@ pub enum Unsupported {
 /// Bytes per `ReadSink::chunk`, one SD block.
 pub const CHUNK: usize = 512;
 
-/// The three directories Chimera keeps on the card.
+/// The directories Chimera keeps on the card.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Dir {
     /// `/CHIMERA`
@@ -35,6 +35,8 @@ pub enum Dir {
     Projects,
     /// `/CHIMERA/SOUNDS`
     Sounds,
+    /// `/CHIMERA/BENCH`: the bench build's card test file.
+    Bench,
 }
 
 /// An 8.3 name in one of the `Dir`s: A-Z and 0-9 only, so it is valid on any
@@ -168,7 +170,7 @@ pub trait Store {
         body: &mut dyn FnMut(&mut dyn ByteSink) -> Result<(), StoreError>,
     ) -> Result<u32, StoreError>;
     fn delete(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError>;
-    /// An existing directory is `Ok`. Making `Projects` or `Sounds` before `Chimera`
+    /// An existing directory is `Ok`. Making any other `Dir` before `Chimera`
     /// exists is `NotFound`.
     fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError>;
 }

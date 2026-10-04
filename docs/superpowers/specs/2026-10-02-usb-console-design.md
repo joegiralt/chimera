@@ -74,6 +74,7 @@ help    this list
 status  firmware, project, Part and where the UI is
 stats   AUDIO LOAD and the UI loop's time
 bench   the bench's numbers (bench builds)
+card    SD speed and streams, a chord playing; clean (bench builds)
 shot    the screen in THEME's colours; shot raw: canonical
 dfu     restart into the ROM loader for just flash
 OK
@@ -139,6 +140,43 @@ OK
 A bench build's numbers as text: the text the bench screens draw, one screen line per answer line, in the order the screens show them. That covers the voice rows, KERNEL, the FX row, the routing pages and the MEMORY screen's `PROJ CRC`, rebuild and note-on rows. Each screen starts with a line `# <screen title>`, and the answer ends with `OK`. This reads B1 to B3 of the checklist (`docs/superpowers/plans/2026-10-01-settings-navigation.md` § Ship flash checklist).
 
 `bench::run` still shows its screens and holds each one, then falls through to the synth as today. It also writes the same lines into `BENCH_TEXT`, a static `[u8; 6144]` that exists only in bench builds. The console serves that text once the UI loop runs. If the text outgrows the buffer, its last line is `# TRUNCATED`, and the bench's text is estimated at about 4 KB (about 60 lines).
+
+**`card`**
+
+```
+seed 2864434397
+card_type SDHC
+card_mb 15931
+free_mb 15012
+file_kb 8388
+file_runs 2
+file_created 0
+file_apart_mib 7450
+file_apart_per_mille 500
+seq_512_kb_s 610
+seq_4k_kb_s 1290
+seq_16k_kb_s 1410
+rand_4k_min_us 2810
+rand_4k_median_us 3020
+rand_4k_p95_us 3900
+rand_4k_p99_us 4630
+rand_4k_max_us 9870
+streams_kb_s 1180
+round_median_us 26000
+round_p95_us 31000
+round_max_us 44000
+loaded_voices 8
+loaded_load_pct 31
+overruns 0
+streams 14
+OK
+```
+
+(Added 2026-10-04, bench builds only; the numbers above are made up.) How fast the card reads while audio runs, for sizing TAPE's and TRON's streams. KB is 1000 B. It times raw multi-block reads (the SD driver's own, CMD18) over the runs of two 4 MiB test files, `/CHIMERA/BENCH/CARD0.BIN` and `CARD1.BIN`, which it writes on first use aimed a quarter and three quarters into the card (`FatStore::aim`), so reads that switch between them cross half the card (`file_apart_mib`, `file_apart_per_mille`). Files that start under a quarter of the card apart (free space split up, or files from an older run) fail with `test files under a quarter of the card apart: run card clean`; placement isn't retried. A file is written only with 5 MiB free, counted from the FAT (`FatStore::free_bytes`, a read of the whole FAT: a few seconds on a 32 GB card), so the card never fills; a write that fails is deleted, with 3 s of the deadline kept back for that. The scan runs only when a file must be written. `card_type` (SDSC, or SDHC up to 32 GB and SDXC past it), `card_mb` and `free_mb` (after the test files; absent when nothing was written) describe the card; the driver doesn't read the CID, so there is no maker or product name. The runs come from `FatStore::runs`, so a TAPE that streams from blocks it looked up once is what is measured.
+
+`seq_*` read 768 KiB each of the first file in 512 B, 4 KB and 16 KB transfers, no chord. Then an eight-note chord sounds on channel 1 (`loaded_voices`, `loaded_load_pct` say how much load that was) while `rand_4k_*` time 1024 reads of 4 KB at random 4 KB-aligned places in either file, and `streams_kb_s` times TRON's pattern: eight streams, four in each file, each refilling 4 KB in turn, 100 rounds; `round_*_us` spread a round's time (every stream refilled once). `streams` is the number of 24 kHz 12-bit streams (36 KB/s each) at half the rate of a p95 round: the tail, not the mean. `overruns` counts audio blocks missed while `card` ran. `seed` names the random reads (an xorshift64 state, the seed below a 1: every seed its own); `card seed=N` repeats them. `card clean` deletes the test files and `/CHIMERA/BENCH`'s contents.
+
+It runs in the UI loop before the answer starts, so the answer's 1 s clock starts after it, and it ends within 45 s, files written included: every card operation (`mount`, `make_dir`, the size, `runs`, `aim`, the FAT scan, the write and its delete, each read, and all of `card clean`) is capped by what is left of it. A stop (`timeout`, a card error, no room) prints what was measured before it, then `ERR card: <why>`. A span the cycle counter times is refused, not misread, once it passes 8 s (the counter wraps at 8.9 s). The UI and the port hold still meanwhile; audio, MIDI and the watchdog's kicks go on, and every card transaction keeps its `SD_IDLE_MS` deadline. With no audio block rendered in 10 ms it answers `ERR card: audio is not running`. The host tool waits up to 60 s for its first line.
 
 **`shot`**
 

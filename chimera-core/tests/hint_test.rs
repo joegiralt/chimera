@@ -372,3 +372,34 @@ fn hints_off_redraws_through_the_dirty_regions() {
     let fo = focus(&ORBIT_NOTES, 4, &ctx, &f, false, |_| 0.0).unwrap();
     assert_eq!(fo.label.as_str(), "MIX + CLEAR");
 }
+
+/// HINTS turned either way between frames redraws every page's focus band
+/// and hint through the dirty-region path, as a full render draws them:
+/// no page has to key its band on HINTS itself.
+#[test]
+fn a_hints_change_redraws_every_page() {
+    use chimera_core::ui::perf::PerfStats;
+    use chimera_core::ui::theme_settings::ThemeSettings;
+    let frame = |ui: &mut UiState, fb: &mut screen::Fb| {
+        let audio = screen::audio_fixture();
+        ui.render_dirty_with_audio(
+            fb,
+            &PerfStats::zero(),
+            Some(&audio),
+            &screen::scope_fixture(),
+        );
+    };
+    for &(name, _) in screen::CASES {
+        let mut ui = Box::new(ui_for(name));
+        let mut fb = screen::Fb::new();
+        frame(&mut ui, &mut fb);
+        for hints in [false, true] {
+            ui.set_theme(ThemeSettings {
+                hints,
+                ..ThemeSettings::DEFAULT
+            });
+            frame(&mut ui, &mut fb);
+            assert_eq!(fb.hash(), render_ui(&ui).hash(), "{name}: hints {hints}");
+        }
+    }
+}
