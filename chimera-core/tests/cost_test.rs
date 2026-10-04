@@ -628,11 +628,11 @@ fn a16_a17() -> AlgoParams {
 /// some counts below are one fewer.
 const TAPE: bool = cfg!(feature = "master-tape");
 
-/// FX diet spec § Intent and ADR 0031: with the bus at 1,180 (ADR 0055,
-/// ADR 0061; 1,490 with the master tape) and the modulator pool's floor
+/// FX diet spec § Intent and ADR 0031: with the bus at 1,188 (BUS+V,
+/// 2026-10-04; 1,490 with the master tape) and the modulator pool's floor
 /// (`ModRouting::BASE`, 47) added, the costliest patch gets six voices on
-/// rev V (6 × 909 + 1,180 = 6,634 ≤ 7,000; a seventh would be 7,543), and
-/// five on rev Y ((5,833 − 1,180) / 909 = 5.12; four with the tape),
+/// rev V (6 × 909 + 1,188 = 6,642 ≤ 7,000; a seventh would be 7,551), and
+/// five on rev Y ((5,833 − 1,188) / 909 = 5.11; four with the tape),
 /// without FOLD or DRIVE, at LP24 (its SVF term 0). ADR 0040: the budget,
 /// not the eight-voice pool, is what stops it.
 #[test]
@@ -642,7 +642,7 @@ fn the_costliest_patch_gets_six_voices_on_rev_v() {
     assert_eq!(Voice::CHAIN_COST.0 + ModRouting::BASE.0 + cost(&p), 909);
     let plain = 909 + LP24.0;
     assert_eq!(cost(&costliest()), cost(&p), "no pair has more links");
-    let bus = if TAPE { 1_490 } else { 1_180 };
+    let bus = if TAPE { 1_490 } else { 1_188 };
     assert_eq!(FxBus::COST.0, bus, "{:?}", FxBus::COST);
     assert_eq!(voices_at(CPU_HZ_REV_V, &p), 6);
     assert_eq!(MAX_VOICES, 8, "the budget stops it short of the pool");

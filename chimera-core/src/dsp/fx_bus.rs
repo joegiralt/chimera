@@ -92,8 +92,10 @@ impl FxBus {
     /// moving is the UI's doing, never a route's, so what its ease costs
     /// while it moves (up to 50 instructions a sample, a delay TIME
     /// crossfade under a MIX ramp) is brief and sits in the headroom.
+    /// Without the tape it is the BUS+V row as read: BUS with six voices
+    /// rendered between its blocks, its eases running.
     #[cfg(not(feature = "master-tape"))]
-    pub const COST: Cost = Cost(1180); // BUS 1155, measured 2026-09-29, bench, rev V at 480 MHz, b34a66a; + 10.4 (ADR 0061); rounded up
+    pub const COST: Cost = Cost(1188); // BUS+V 1188, measured 2026-10-04, bench, rev V at 480 MHz, 2431fedc (BUS 1118: six A16+17 voices' cache traffic between its blocks)
     #[cfg(feature = "master-tape")]
     pub const COST: Cost = Cost(1490); // BUS 1468, measured 2026-09-29, bench, rev V at 480 MHz, 87c2930 (tape in); + 10.4 (ADR 0061); rounded up
 
