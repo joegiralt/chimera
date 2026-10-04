@@ -29,21 +29,39 @@ The precedent says two things:
 - **Each slot is its scene's working copy: the user's edits, never
   MUTATE's drift.** `OrbitSong.live` is private: the one way to change
   it is `OrbitSong::edit`, which runs the edit on the playing slot
-  (`scenes[current]`) and then on `live`. The cells, MIX + B*n*'s MUTE
-  and a capture call it; a scene param's encoder calls `OrbitSong::turn`,
-  the same edit replaying the nudge or snap on each, so OCTAVE moves the
-  slot's own notes and HITS re-lays its own hits. `UiBlocks` hands out no
-  `&mut` to a scene's blocks, so a new path (a CC on an ORBIT param) has
-  to go through `edit` to compile. Readers take `live()`; tests alone
-  reach past it (`live_mut_for_test`, behind `test-support`). While a
-  switch waits, edits still go to the playing scene. `absorb` writes the
-  drift into `live` alone.
+  (`scenes[current]`) and then on `live`. The cells and MIX + B*n*'s
+  MUTE call it; a scene param's encoder calls `OrbitSong::turn`, the same
+  edit replaying the nudge or snap on each, so OCTAVE moves the slot's
+  own notes and HITS re-lays its own hits. Readers take `live()`; tests
+  alone reach past it (`live_mut_for_test`, behind `test-support`).
+  While a switch waits, edits still go to the playing scene. `absorb`
+  writes the drift into `live` alone, and never while `live` holds an
+  edit not yet sent.
+- **The `Blocks` path is guarded at run time, not at compile time.**
+  `BlockRef::OrbitChords` and `OrbitRing` stay ordinary `BlockRef`s (the
+  pages, the codec and the renderer name them), so a new writer through
+  `Blocks` (a per-Part MIDI MAP aimed at an ORBIT param) still compiles.
+  `UiBlocks::block_mut` refuses them: `None`, and a `debug_assert` that
+  fails every debug test reaching it. A separate `BlockRef` family that
+  `Blocks` could not name would make that a compile error; it touches
+  the pages' bindings, the codec's block codes and the renderer, and was
+  judged out of proportion for this fix.
+- **A capture goes into the scene it was played in**, as an Elektron
+  recording goes into the pattern it was recorded in. `Captured` carries
+  the scene the runner was playing when the take ended;
+  `OrbitSong::capture` writes it into that slot, and into `live` while
+  that scene plays. A capture into a slot that is not yet `live` keeps
+  its touched marks, so they are sent when it lands: the runner may have
+  adopted the slot before the capture reached it.
 - **Leaving a scene keeps its edits.** `land(s)` still copies the slot
   into `live`: the scene comes back with its edits, its drift restarted
   from them.
 - **SAVE locks the drift in.** SCN's SAVE, SETTINGS › ORBIT › SAVE TO
   PROJ and SAVE OVER write `live`, drift included, over a slot, as
   before. That is the deliberate act.
+- **A CLEAR or RELOAD waiting on the loop stays due** when SCENE is
+  turned away and back (`reland_due`): cancelling it would leave `live`
+  and its slot on different bases.
 - **RELOAD FROM PROJ restarts the scene from its slot** (option (i)):
   `live` becomes the slot again on the loop, its edits kept and its drift
   dropped. Its prompt says so: RELOAD SCENE n? / ITS DRIFT RESTARTS, ITS
@@ -56,6 +74,12 @@ The precedent says two things:
   `live`'s to send.
 - **A project save carries every slot's edits**: slots 0–7 and `live`
   are written as before (§ 8), and the slots now hold the edits.
+- **A file from before this ADR is locked in once.** It can hold `live`
+  edited past its slot. At the load, where `live` differs from the
+  playing slot in more than drift (each ring's hits, notes and pool), it
+  is written over the slot, so the edits stay. A note edit cannot be
+  told from drift there, and restarts with it. A file saved after this
+  ADR differs only by drift, and is left as it is.
 - **The command channel (ADR 0082) is unchanged.** The UI owns `live` and
   the slots, the runner `working`; the epoch and ack gates stand. A
   switch's `Cue` adopts `next`, the slot as the latest publish carries
@@ -92,7 +116,11 @@ The precedent says two things:
   `keep` copy after a `Blocks` edit) 721,904 B (+768); `live` private
   with `edit` and `turn` 721,656 B (+520). A closure built round
   `part_page::apply_under` over `Scene` measured 725,916 B and was
-  dropped. The base was already over the 715,428 B gate.
+  dropped. The base was already over the 715,428 B gate. The review
+  round (capture by scene, the reland kept due, the load's lock-in, the
+  HINTS-off CLEAR label) measured 725,376 B against 724,088 B at
+  43d59110 (+1,288), most of it the load's comparison of `live` with its
+  slot.
 
 ## Sources
 - Elektron Digitakt manual, OS 1.51, p. 35: FUNC + YES / FUNC + NO, SAVE
