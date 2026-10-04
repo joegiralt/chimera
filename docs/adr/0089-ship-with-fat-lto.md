@@ -44,9 +44,19 @@ copy.
   the release build; their numbers compare directly with release builds
   from here on.
 - Fat LTO inlines across crates more freely: it pulled the project's
-  build-up (six Sounds, the scenes) into `synth`, a 14.2 KB frame, which
-  the stack check refuses. `shared::take_ui` is `#[inline(never)]` so it
-  stays on its own frame; every feature set passes again.
+  build-up into `synth`, a 14.2 KB frame, which the stack check refuses.
+  The cause was a 7,424 B temporary: `Performance::new()` built six Parts
+  by value before `Project::init_in_place` copied them in.
+  `Performance::init_in_place` now writes a Part at a time: `take_ui`'s
+  frame is 1 KB and `synth`'s 5.6 KB. `take_ui` stays out of line for
+  flash alone: inlined, `synth` fits the stack (4.8 KB) but the release
+  `--features orbit` text grows 6.3 KB.
+- The stack check now also sums nested frames (`tools/stack_depth.py`):
+  `main` plus every interrupt entry nested at once is 10–13 KB across the
+  feature sets, a lower bound since calls through a pointer aren't
+  followed. Note for later: ADR 0025's stack budget is to be superseded by
+  an ADR once the painted high-water mark is re-measured on the unit
+  under fat LTO; not written yet.
 - Debug builds are untouched.
 
 ## Sources

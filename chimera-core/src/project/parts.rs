@@ -87,6 +87,23 @@ impl Performance {
         }
     }
 
+    /// `new`, built in place a Part at a time: no 6 KB temporary on the
+    /// stack, one Part's at most.
+    pub fn init_in_place(slot: &mut core::mem::MaybeUninit<Self>) -> &mut Self {
+        let p = slot.as_mut_ptr();
+        // SAFETY: `p` is valid and unaliased; each of the `MAX_PARTS` Parts
+        // and `fx` is written once, through raw pointers into the slot,
+        // before `assume_init_mut`.
+        unsafe {
+            let parts = core::ptr::addr_of_mut!((*p).parts).cast::<Part>();
+            for i in 0..MAX_PARTS {
+                parts.add(i).write(new_part(i));
+            }
+            core::ptr::addr_of_mut!((*p).fx).write(FxParams::default());
+            slot.assume_init_mut()
+        }
+    }
+
     /// `new`, a Part at a time: no 6 KB temporary on the stack.
     pub(in crate::project) fn reset(&mut self) {
         for (i, p) in self.parts.iter_mut().enumerate() {
