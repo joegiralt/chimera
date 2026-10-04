@@ -88,6 +88,7 @@ fn mark_adv(ch: char) -> Option<i32> {
     }
 }
 
+#[inline(never)]
 fn draw_mark<D>(d: &mut D, ch: char, x: i32, y: i32, color: Rgb565)
 where
     D: DrawTarget<Color = Rgb565>,
@@ -100,16 +101,15 @@ where
         }
         BULLET => dot(d, x + 2, y - 4, 2, color),
         RING => ring(d, x + 2, y - 4, 2, color, 1),
-        LEFT | RIGHT => {
+        LEFT | RIGHT | UP | DOWN => {
             for i in 0..3 {
-                let c = if ch == RIGHT { x + i } else { x + 2 - i };
-                fill_rect(d, c, y - 6 + i, 1, 5 - 2 * i, color);
-            }
-        }
-        UP | DOWN => {
-            for i in 0..3 {
-                let r = if ch == UP { y - 3 - i } else { y - 5 + i };
-                fill_rect(d, x + i, r, 5 - 2 * i, 1, color);
+                let (x, y, w, h) = match ch {
+                    RIGHT => (x + i, y - 6 + i, 1, 5 - 2 * i),
+                    LEFT => (x + 2 - i, y - 6 + i, 1, 5 - 2 * i),
+                    UP => (x + i, y - 3 - i, 5 - 2 * i, 1),
+                    _ => (x + i, y - 5 + i, 5 - 2 * i, 1),
+                };
+                fill_rect(d, x, y, w, h, color);
             }
         }
         _ => debug_assert!(false, "{ch:?} is not a mark"),

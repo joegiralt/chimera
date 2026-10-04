@@ -38,7 +38,8 @@ pub fn width(hint: Hint) -> i32 {
     (w - GAP).max(0)
 }
 
-/// `hint` from `x`, its baseline at `y`.
+/// `hint` from `x`, its baseline at `y`. Out of line: three callers.
+#[inline(never)]
 pub fn draw<D>(d: &mut D, hint: Hint, x: i32, y: i32)
 where
     D: DrawTarget<Color = Rgb565>,
