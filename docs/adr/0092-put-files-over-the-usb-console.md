@@ -22,23 +22,20 @@ power cut mid-rename could lose the target, and the rename and its tests
 cost 2.7 KB. It is replaced by this.
 
 ## Decision
-- **`ls <dir>`:** `/CHIMERA`, `/CHIMERA/PROJECTS`, `/CHIMERA/SOUNDS` or
-  `/CHIMERA/BENCH`, any case, a trailing `/` allowed. One `NAME size`
-  line a file the FAT layer can name (8.3, A-Z 0-9), then `OK`. A missing
-  directory is `ERR ls: FILE NOT FOUND`.
+- **`ls`:** no argument. One `NAME size` line for each file in
+  `/CHIMERA/PROJECTS` that the FAT layer can name (8.3, A-Z 0-9), then
+  `OK`. A card without the directory answers `ERR ls: FILE NOT FOUND`.
 - **`put <path> <size> <crc32>`:** three arguments, the first command to
   take more than one. `<size>` is decimal and `<crc32>` up to 8 hex
   digits of CRC-32/ISO-HDLC (`zlib.crc32`) over the bytes sent.
   - `<path>` is `/CHIMERA/PROJECTS/P#######.A` or `.B`, any case. The
     letter names the pair; the unit picks the side, as a save does.
-  - Before anything is read, the unit answers `ERR put: not a project or
-    sound name`, `ERR put: a directory, not a file`, or, for any file in
-    `/CHIMERA/SOUNDS`, `ERR put: no Sound library yet: projects only`
-    (no firmware loads `S#######` files yet; they join with the library).
+  - Nothing else parses: another name, a directory, `..`, `//`, SYSTEM,
+    the bench files, and Sounds all get the one usage line,
+    `ERR put takes …`. No firmware loads `S#######` files yet; they join
+    with the Sound library.
   - Over 1 MiB (`PUT_MAX_BYTES`) or under 32 bytes is refused. So is the
     project the UI holds: `ERR put: project is open`.
-  - Any other path, `//` after `/CHIMERA`, `/CHIMERA/SYSTEM.A` and the
-    bench files never parse: `ERR put takes …`.
 - **Then the unit's own save.** Every card operation is capped at what is
   left of `PUT_DEADLINE_MS` (30 s, from the request line to the answer).
   1. Mount, make `/CHIMERA` and `/CHIMERA/PROJECTS`, then `READY`.
@@ -48,9 +45,9 @@ cost 2.7 KB. It is replaced by this.
   3. The first 28 bytes must be a project header this firmware reads
      (`peek_header`): `WRONG FILE TYPE`, `NEEDS NEWER FIRMWARE` and the
      like are refused before a byte is written.
-  4. `save_ab` writes the side a load doesn't keep. It judges the pair
-     with `ProjectCheck`, and a pair a load refuses as needing newer
-     firmware is never written. The new side gets the newest generation
+  4. `save_target`, the judgement `save_ab` makes, picks the side a load
+     doesn't keep. It judges the pair with `ProjectCheck`, and a pair a
+     load refuses as needing newer firmware is never written. The new side gets the newest generation
      plus 1 and the header's name, so it is the one that loads; the
      file's own generation is dropped. The records are copied as sent,
      and the unit writes its own trailer.
@@ -59,21 +56,33 @@ cost 2.7 KB. It is replaced by this.
      check fails, the side ends before its trailer: torn, and never
      loaded. The old side still loads, and nothing that needs newer
      firmware can shadow it.
-  6. The records go to the card a 512-byte block at a time. Each block
+  6. A side a failed `put` wrote is deleted. The project list reads
+     headers only (`peek_entry`), so a torn side would otherwise list as
+     the newest, with the file's name; an id the card didn't hold would
+     list a project that can't load. Holding the name back until the
+     file is accepted would need its header block rewritten in place,
+     which the FAT layer can't do. A trailer check in the list would
+     read every project's whole file.
+  7. The records go to the card a 512-byte block at a time. Each block
      must arrive within `PUT_STALL_MS` (500 ms) of the last block, so
      the wait for the host never sits inside the card's 600 ms idle
      limit. The data stops 1 s before the write's own cap, and the
      write keeps 3 s back for the check after it.
-  7. `peek_entry` reads both headers as the project list does. The answer
+  8. `peek_entry` reads both headers as the project list does. The answer
      is `OK` only if they show the new generation as the one that loads.
 - **Any failure after `READY`** reads and drops the host's remaining data
   until 100 ms of quiet (5 s at most), then answers `ERR put: <why>`. The
   pair loads as before, and its kept side is untouched.
 - **A write a device error stops frees its chain** (fixed in `Fs::write`
-  for every save, not only `put`). This covers the new chain and the old
-  one the entry no longer holds. `Table::drop_chain` frees it at once.
-  If the card refuses that write too, the chain is kept with the volume,
-  like a stale FAT 2 sector, and freed by the next change on that card.
+  for every save, not only `put`). This covers the new chain when the
+  error comes before the entry is written, and the old chain the entry
+  no longer holds. `Table::drop_chain` frees it at once. If the card
+  refuses that write too, the chain is kept with the volume, like a
+  stale FAT 2 sector, and freed by the next change on that card.
+  - A failed write of the entry itself never frees: a card that took
+    the block and then timed out busy holds an entry that names the
+    chain, and freeing it would cross-link the next file. It may leak
+    instead (private issue #360).
 - **Read-only files:** a file entry with the read-only attribute is never
   rewritten or deleted: `StoreError::ReadOnly`, `FILE IS READ-ONLY`.
 - **Types:** `Unit` names its card as an associated type
@@ -89,7 +98,8 @@ cost 2.7 KB. It is replaced by this.
   `ERR` reason, exit 1. `ls` waits 15 s for a cold card. `just put` and
   `just ls` run them.
 - **Shipping:** in the default firmware behind `card-put`, a default
-  feature of `chimera-stm32`. On a sealed card it is the only way a file
+  feature of `chimera-stm32` and of `chimera-core`. Without it, the `ls`
+  and `put` rows, their parsers and their answers are not compiled. On a sealed card it is the only way a file
   gets on.
 
 ## Alternatives considered
@@ -98,9 +108,8 @@ cost 2.7 KB. It is replaced by this.
   and the rename cost 2.7 KB the A/B save makes unnecessary.
 - **Keep the file's own generation:** an older file would sit hidden
   behind its sibling and never load.
-- **Delete a new side the check refuses, after the write:** it keeps
-  `delete` out of line for 2 KB. Ending the side before its trailer does
-  the same with nothing to undo.
+- **Leave a refused side on the card:** it never loads, but the list,
+  which reads headers only, would show it as the newest project.
 - **Count free space first:** a whole-FAT read, about 3 s on a 32 GB
   card and 1 KB of flash. `Full` from the write leaves a torn side, and
   the old one loads.
@@ -114,15 +123,12 @@ cost 2.7 KB. It is replaced by this.
   card mounted by the host while the synth writes it.
 
 ## Consequences
-- In the release firmware (fat LTO), against main: 9,992 B of `.text` and
-  852 B of `.rodata`. Without `card-put`: 5,000 B and 444 B. Of that, about
-  900 B is the chain fix and the read-only refusal in the FAT layer,
-  which every save carries. The rest is the `ls` and `put` rows of the
-  command table, which `chimera-core` keeps in every build. `card-put`
-  itself is about 5.4 KB. This is over the review's 6 KB target: the
-  save path reused, the check while streaming, and `ls` (about 0.9 KB)
-  are where it goes. Nothing is in static RAM. The put session's buffers
-  (a block, a line, a `Framer`) are on the UI loop's stack.
+- In the release firmware (fat LTO), against main: 5,744 B of `.text` and
+  820 B of `.rodata`. Without `card-put`: 1,560 B and 32 B, which is the
+  FAT layer's chain fix and read-only refusal that every save carries,
+  plus the console's card hook. Nothing is in static RAM. The put
+  session's buffers (a block, a line, a `Framer`) are on the UI loop's
+  stack.
 - **A power cut mid-write still loses clusters.** Up to all of the new
   side's clusters can be lost (ADR 0048: no entry holds them until the
   write ends). This is true of every save, and only fsck or a
