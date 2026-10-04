@@ -157,10 +157,10 @@ const GOLDENS: &[(&str, u64)] = &[
     ("reverb_ring_max_size", 0x83591bf24cab49f6),
     ("reverb_ring_smear", 0xa7e01c103cc02150),
     // GATE and REVERSE on the BURST engine (reverb TYPEs T8).
-    ("rev_gate", 0x045c62c463f246e5),
-    ("rev_gate_flat_tail0", 0x928dfe0377bd36d8),
-    ("rev_reverse", 0x9ac7cb7d5c71d84c),
-    ("rev_reverse_regen", 0xef4c6a52139b6c56),
+    ("rev_gate", 0xf58be0a4e64aeddf),
+    ("rev_gate_flat_tail0", 0x951817e3e86edf28),
+    ("rev_reverse", 0x6556c8e280534d44),
+    ("rev_reverse_regen", 0x510ced0081cb2515),
 ];
 
 #[test]

@@ -1159,36 +1159,44 @@ BUS+V's frame is QUAD_BUS_V + ΔCOST, so ΔCOST = that row − QUAD_BUS_V.
   master-tape build); gate ≤ `BlockBudget::budget_cycles`, run on both
   `bench` and `bench,master-tape`.
 
-### Task 8: GATE and REVERSE on the BURST engine (2026-10-04, host; unit deferred)
+### Task 8: GATE and REVERSE on the BURST engine (2026-10-05, rev V at 480 MHz, unit)
 
-- **Unit rows, deferred** to the next unit session (no unit this task):
-  REV GATE, REV RVRS (LENGTH between its ends every block, DENSITY, TAIL
-  or REGEN and SMEAR at 1), STRESS's GATE reading (the STRESS row run a
-  second time with the reverb as REV GATE sets it), and REV SWITCH MAX,
-  which now steps QUAD ↔ GATE every 40 blocks. Gates: ΔCOST ≤ headroom on
-  both builds, STRESS < budget. Task 3's K BURST was 63 / 61 under K QUAD.
+- **Bench** at this task's second commit, builds `bench,orbit` ("default")
+  and `bench,orbit,master-tape` ("tape"). Rows are cycles per sample less
+  MIX. Each FX row now warms through the switch to its TYPE (34 blocks)
+  before it is timed (`.superpowers/sdd/2026-10-04-reverb-types/t8-bench-orbit.txt`, `t8-bench-tape.txt`).
+
+| Row | default | tape |
+|---|---|---|
+| REV QUAD | 50 | 67 |
+| REV QUAD S | 50 | 49 |
+| REV GATE | **16** (ΔCOST −34) | **38** (−29) |
+| REV RVRS | **16** (−34) | **39** (−28) |
+| BUS+V | 1,076 | 1,386 |
+| STRESS (max / 448,000), QUAD | 527,408: over | 491,126: over |
+| STRESS with GATE | 526,596: over | 489,250: over |
+| REV SWITCH MAX (QUAD ↔ GATE) | **411,261: passes** | **432,894: passes** |
+
+- **ΔCOST ≤ headroom** on both builds: GATE and REVERSE cost less than QUAD.
+  STRESS is over budget with ORBIT on both builds, with QUAD and with GATE
+  alike: that is #355, not this task (GATE reads under QUAD).
 - **Flash** (`--features orbit`, release, against `fbeb4f8a`): `.text`
-  574,848 → 584,304 (**+9,456**), `.rodata` 150,112 → 150,992 (+880):
-  **+10,336, over the 6 KB gate.** By symbol: `BurstEngine::run` 2,724,
-  `schedule` 684, `ease_to` 540, `weights` 528, `tap_targets` 292,
-  `segment` 268, `pow2` 196, `prime` 84 (engine 5.3 KB); `knobs` 1,488
-  with `exp_law` 184 (QUAD's laws moved out of `param_text`, −724);
-  `tail_shape` 880 and `Tail::from_set` 376, the TAIL's drawing +296; the
-  panels, value texts and `View::short` about +1.5 KB in `UiState::input`,
-  `cell_label` and constants; `FxBus::process` +380.
-- **AXI:** `FxBus` +88 B: `BurstEngine` (152 B) is `EngineState`'s largest
-  variant. `memory_budget_test`'s bound is 442,452.
-- **WET:** GATE and REVERSE share `WET_BURST` = 7.47: each default return
-  within 0.03 dB of QUAD's on the 0.5 s noise burst at MIX 0.5.
+  +8,680, `.rodata` +1,000.
+- **AXI:** `FxBus` +88 B (`BurstEngine`, 152 B, is `EngineState`'s largest).
+- **WET:** GATE 6.75, REVERSE 7.05: QUAD's short-term loudness (the loudest
+  400 ms) on a held −12 dBFS pink pad at MIX 0.5, peaks within 0.6 dB of
+  QUAD's (`check_sustained_loudness`).
 - **Host readings** (`reverb_burst_test`): GATE at 177 ms, TAIL 0, SHAPE 0:
-  −20 dB end at 250 ms, the 50 ms after it 24.9 dB under the plateau.
-  REVERSE at defaults: peak at 375 ms (346 ± 15 %), |ρ| 0.38. Noise floor
-  (QUAD 12.0 dB in `floor_db`'s frame): GATE 10.2, REVERSE 5.5. LENGTH
-  40 → 600 ms lands every tap in 901 ms (169 crossfades). REGEN's settled
-  peak within 1/L of 1 kHz; in-crossfade deviation 0.1 cents.
+  −20 dB end at 250 ms, the 50 ms after it 24.8 dB under the plateau.
+  REVERSE at defaults: peak at 375 ms, |ρ| 0.38. Noise floor (QUAD 12.1 dB
+  in `floor_db`'s frame): GATE 9.3, REVERSE 5.0. LENGTH 40 → 600 ms lands
+  every tap in 901 ms. REGEN settles within 1/L of 1 kHz.
 - **Goldens:** `rev_gate`, `rev_gate_flat_tail0`, `rev_reverse`,
-  `rev_reverse_regen` at MIX 0.3 (at QUAD's loudness the 110 Hz saw's
-  burst, and REGEN's, peak over 1.0 at MIX 0.5); QUAD's unchanged.
+  `rev_reverse_regen` at MIX 0.3; QUAD's unchanged.
+- **Deviations accepted** (ADR 0085 § Consequences, BURST as built):
+  DENSITY's fade, the shared decorrelator, the per-block eased weights, the
+  fixed 24 kHz layout, whole-dB SHAPE/CURVE, and loudness by sustained
+  input.
 
 ---
 

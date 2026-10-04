@@ -634,11 +634,46 @@ fn burst_db(r: Render) -> f32 {
 pub fn check_noise_and_loudness(r: Render, quad: Render, extra_db: f32) {
     let (a, q) = (burst_db(&mut *r), burst_db(&mut *quad));
     assert!((a - q).abs() <= 1.0, "loudness {a:.2} dB, QUAD {q:.2} dB");
+    check_noise_floor(r, quad, extra_db);
+}
+
+/// `r`'s storage noise floor no more than `extra_db` above QUAD's.
+pub fn check_noise_floor(r: Render, quad: Render, extra_db: f32) {
     let (a, q) = (floor_db(&mut *r), floor_db(&mut *quad));
     println!("noise floor {a:.1} dB, QUAD {q:.1} dB");
     assert!(
         a <= q + extra_db as f64,
         "noise floor {a:.1} dB, QUAD {q:.1} + {extra_db} dB"
+    );
+}
+
+/// The return on a sustained input, −12 dBFS RMS pink held 4 s, both
+/// sides: (its loudest 400 ms window's RMS in dB, i.e. short-term
+/// loudness, unweighted; its peak in dBFS).
+pub fn sustained_db(r: Render) -> (f32, f32) {
+    let pad = pink(0x400d, 4.0, -12.0);
+    let (l, rr) = run(r, &mut |i| pad.get(i).copied().unwrap_or(0.0), 4.0);
+    let w = 400 * MS;
+    let st = l
+        .chunks_exact(w)
+        .zip(rr.chunks_exact(w))
+        .map(|(a, b)| rms_db(&[a, b].concat()))
+        .fold(f32::NEG_INFINITY, f32::max);
+    let peak = l.iter().chain(&rr).fold(0.0f32, |m, x| m.max(x.abs()));
+    (st, 20.0 * peak.log10())
+}
+
+/// A TYPE that holds no longer tail than QUAD's, matched by what a held
+/// note hears: its short-term loudness on a sustained input within ±1 dB
+/// of QUAD's, or under it where its peak would pass QUAD's; its peak never
+/// more than 1 dB over QUAD's. A TYPE switch then neither jumps nor clips.
+pub fn check_sustained_loudness(r: Render, quad: Render) {
+    let ((a, ap), (q, qp)) = (sustained_db(&mut *r), sustained_db(&mut *quad));
+    println!("sustained: {a:.2} dB, peak {ap:.2} dBFS; QUAD {q:.2} dB, peak {qp:.2} dBFS");
+    assert!(ap <= qp + 1.0, "peak {ap:.2} dBFS over QUAD's {qp:.2}");
+    assert!(
+        (a - q).abs() <= 1.0 || (a < q && ap >= qp - 1.0),
+        "short-term loudness {a:.2} dB, QUAD {q:.2} dB"
     );
 }
 

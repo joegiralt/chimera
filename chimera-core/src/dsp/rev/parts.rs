@@ -223,6 +223,12 @@ pub fn pow2(x: f32) -> f32 {
     exp2(x)
 }
 
+/// `log2`, out of line: one copy for the knobs' laws and the TAIL.
+#[inline(never)]
+pub fn lg2(x: f32) -> f32 {
+    crate::dsp::algo::math::log2(x)
+}
+
 /// A delay or damper write: `x` (LSBs) rounded, ties away from zero, and
 /// saturated to i16.
 #[inline(always)]

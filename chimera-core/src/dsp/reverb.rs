@@ -8,7 +8,7 @@ use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
 use crate::dsp::algo::math::log2;
 use crate::dsp::clampf;
 use crate::dsp::modulator::law::Law;
-use crate::dsp::rev::parts::pow2;
+use crate::dsp::rev::parts::{lg2, pow2};
 use crate::dsp::ring::{self, RingControls, STAGES, size_step, stage_len};
 use crate::ui::glyph::{CompositeId, FocusGlyph};
 
@@ -231,9 +231,26 @@ pub struct EngineKnobs {
 pub enum TimeLaw {
     /// GATE's TAIL: RT60 `exp` over the range, its gain faded in over
     /// the knob's first `fade` (TAIL 0 is exactly the fast gate).
-    Tail { rt60_s: (f32, f32), fade: f32 },
+    Tail { rt60_s: Exp, fade: f32 },
     /// REVERSE's REGEN: feedback `lin` 0 → `max`.
     Regen { max: f32 },
+}
+
+/// An `exp` law's range, `lo` and log2(`hi`/`lo`) worked out at compile
+/// time: `lo·(hi/lo)^p`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Exp {
+    pub lo: f32,
+    pub log2_ratio: f32,
+}
+
+impl Exp {
+    pub const fn new(lo: f32, hi: f32) -> Self {
+        Self {
+            lo,
+            log2_ratio: log2(hi / lo),
+        }
+    }
 }
 
 /// A TYPE's knob ranges (spec § Each TYPE's knobs): `exp` laws for the
@@ -242,10 +259,10 @@ pub enum TimeLaw {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Ranges {
     /// LENGTH, ms, `exp`.
-    pub length_ms: (f32, f32),
+    pub length_ms: Exp,
     pub time: TimeLaw,
     /// TONE's input corner, bright → dark, Hz, `exp`.
-    pub tone_hz: (f32, f32),
+    pub tone_hz: Exp,
     /// DENSITY's taps and pre-diffuser g, `lin`.
     pub taps: (f32, f32),
     pub pre_g: (f32, f32),
@@ -255,26 +272,26 @@ pub struct Ranges {
     /// SMEAR's depth at 1, ms, `lin` (the decorrelators: no cap).
     pub smear_ms: f32,
     /// RATE, Hz, `exp`.
-    pub rate_hz: (f32, f32),
+    pub rate_hz: Exp,
 }
 
 pub const GATE: Ranges = Ranges {
-    length_ms: (40.0, 600.0),
+    length_ms: Exp::new(40.0, 600.0),
     time: TimeLaw::Tail {
-        rt60_s: (0.15, 0.8),
+        rt60_s: Exp::new(0.15, 0.8),
         fade: 0.05,
     },
-    tone_hz: (10_000.0, 2_500.0),
+    tone_hz: Exp::new(10_000.0, 2_500.0),
     taps: (6.0, 12.0),
     pre_g: (0.5, 0.7),
     shape_db: (0.0, -18.0),
     rising: false,
     smear_ms: 1.0,
-    rate_hz: (0.1, 2.0),
+    rate_hz: Exp::new(0.1, 2.0),
 };
 
 pub const REVERSE: Ranges = Ranges {
-    length_ms: (150.0, 800.0),
+    length_ms: Exp::new(150.0, 800.0),
     time: TimeLaw::Regen { max: 0.708 },
     shape_db: (12.0, 30.0),
     rising: true,
@@ -292,8 +309,8 @@ pub fn ranges(t: ReverbType) -> Option<&'static Ranges> {
 
 /// `lo·(hi/lo)^p`, `p` in 0..=1 (NaN reads 0).
 #[inline(never)]
-pub fn exp_law((lo, hi): (f32, f32), p: f32) -> f32 {
-    lo * pow2(unit(p) * log2(hi / lo))
+pub fn exp_law(e: Exp, p: f32) -> f32 {
+    e.lo * pow2(unit(p) * e.log2_ratio)
 }
 
 /// `lo + (hi − lo)·p`, `p` in 0..=1 (NaN reads 0).
@@ -344,7 +361,7 @@ fn row_knobs(r: &Ranges, p: &ReverbParams) -> EngineKnobs {
             let g = max * unit(p.time);
             // −60 dB at 20·log10 g a pass.
             let rt = if g > 0.0 {
-                length_ms * 1e-3 * -3.0 * LOG2_10 / log2(g)
+                length_ms * 1e-3 * -3.0 * LOG2_10 / lg2(g)
             } else {
                 0.0
             };

@@ -7,7 +7,7 @@ use crate::dsp::algo::waves::{WAVE_LEN, WaveId};
 use crate::dsp::chorus::{ChorusMode, ChorusParams};
 use crate::dsp::clampf;
 use crate::dsp::delay::DelayParams;
-use crate::dsp::reverb::{EngineKnobs, ReverbParams, ReverbType, knobs};
+use crate::dsp::reverb::{EngineKnobs, RevSync, ReverbParams, ReverbType, knobs};
 
 /// The gauge a parameter's focus band shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -304,7 +304,7 @@ pub fn tail_shape(t: ReverbType, k: &EngineKnobs) -> [u8; TAIL_COLS] {
     let fall = -60.0e-3 / k.rt60_s.max(0.01);
     let curve = libm::fabsf(k.shape_db);
     let notch = (12.0 - k.taps).max(0.0) * 0.75;
-    let db = |x: f32| 6.02 * crate::dsp::fast_log2(x);
+    let db = |x: f32| 6.02 * crate::dsp::rev::parts::lg2(x);
     let echo = if k.regen > 0.0 { db(k.regen) } else { -TAIL_DB };
     let tail = if k.tail > 0.0 {
         db(k.tail) - curve - 12.0
@@ -359,7 +359,7 @@ impl Tail {
             diffuse: set[7],
             predelay: set[8],
             shape: set[9],
-            ..ReverbParams::default()
+            sync: RevSync::Off,
         };
         let k = knobs(&p);
         let span = tail_span_ms(t);
@@ -374,8 +374,8 @@ impl Tail {
             Some(_) => (0, all),
             None => (0, 0),
         };
-        // A pass over the span, then 0.4 s at rest.
-        let at = wrap(frame as f64 * 50.0, (span + 400.0) as f64);
+        // A pass over the span, then 0.4 s at rest, at 20 fps.
+        let at = (frame % ((span as u32 + 400) / 50)) as f32 * 50.0;
         let head = (at < span).then(|| (at / span * n) as u8);
         Self {
             shape: tail_shape(t, &k),

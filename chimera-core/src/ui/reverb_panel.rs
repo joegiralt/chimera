@@ -120,16 +120,6 @@ pub fn types_on_screen() -> &'static [ReverbType] {
     &[ReverbType::Quad, ReverbType::Gate, ReverbType::Reverse]
 }
 
-/// A panel word's short form: `DENS` for DENSITY, which no spec carries.
-pub fn short_of(label: &str) -> Option<&'static str> {
-    [&GATE, &REVERSE]
-        .into_iter()
-        .flatten()
-        .flatten()
-        .find(|c| c.label == label)
-        .and_then(|c| c.short)
-}
-
 /// The panel `t` shows: its own once its engine runs, else QUAD's, which
 /// is what plays. A TYPE a CC or a newer project set stays stored.
 pub fn shown(t: ReverbType) -> ReverbType {

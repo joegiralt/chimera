@@ -422,7 +422,7 @@ fn render_bursts() {
                     }
                 }
                 // The dry send plus the return, `$AB_GAIN_DB` down (9 by
-                // default: a held string through the dying gate peaks over
+                // default: the IDM phrase through the dying gate peaks over
                 // 0 dBFS at the SMEAR set's 6).
                 let out: Vec<f32> = out.iter().map(|&s| gain * s).collect();
                 assert!(out.iter().all(|s| s.is_finite()), "{source} {name} {tag}");

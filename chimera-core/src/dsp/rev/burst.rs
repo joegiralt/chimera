@@ -13,9 +13,9 @@
 // Indexed loops over the taps read as the spec's sums do.
 #![allow(clippy::needless_range_loop)]
 
-use core::f32::consts::LOG2_10;
+use core::f32::consts::{LOG2_10, LOG2_E, TAU};
 
-use crate::dsp::algo::math::inv_sqrt;
+use crate::dsp::algo::math::{exp2, inv_sqrt};
 use crate::dsp::clampf;
 use crate::dsp::halfband::HALF;
 use crate::dsp::reverb::EngineKnobs;
@@ -149,8 +149,11 @@ const TAIL_RD: [usize; 2] = [I.0[1] - TAIL_D, I.0[2] - TAIL_AP];
 const F_RD: [usize; 3] = [F.0[0] - FLINES[0], F.0[1] - FLINES[1], F.0[2] - FLINES[2]];
 /// Each side's smeared decorrelator, its nominal length.
 const NOM: [f32; 2] = [FLINES[3] as f32, FLINES[4] as f32];
-/// SMEAR's depth at 1: ±1 ms. Its reads only shorten, by 2D at most.
-pub const SMEAR_MAX: f32 = 24.0;
+/// Ring samples a millisecond.
+pub const PER_MS: f32 = FS / 1000.0;
+/// SMEAR's deepest D, ring samples: GATE's and REVERSE's 1 ms. Its reads
+/// only shorten, by 2D at most.
+pub const SMEAR_MAX: f32 = crate::dsp::reverb::GATE.smear_ms * PER_MS;
 const _: () = assert!(FLINES[3] as f32 - 2.0 * SMEAR_MAX >= 2.0);
 const _: () = assert!(FLINES[4] as f32 - 2.0 * SMEAR_MAX >= 2.0);
 
@@ -162,8 +165,8 @@ const MAX_GAIN: f32 = 0.985;
 /// The send's injection, ½ (§ Shared machinery), in LSBs.
 const IN_GAIN: f32 = 0.5 * FULL_SCALE;
 const INV_FS: f32 = 1.0 / FULL_SCALE;
-/// REGEN's darkening one-pole, about 6 kHz.
-const REGEN_HZ: f32 = 6_000.0;
+/// REGEN's darkening one-pole, about 6 kHz: its coefficient.
+const REGEN_A: f32 = 1.0 - exp2(-LOG2_E * TAU * 6_000.0 / FS);
 
 /// Ring samples a tap crossfade takes (4 blocks), the most one moves a
 /// tap (5 ms, QUAD's step), and the most that move at once.
@@ -580,7 +583,7 @@ impl BurstEngine {
         let cm: [f32; MOVERS] = core::array::from_fn(|m| c[slot(m)]);
         // Tap 11's blend reaches REGEN only when it moves.
         let e0 = (movers > 0 && self.mv[0] == 11) as u8 as f32;
-        let ra = one_pole(REGEN_HZ, FS);
+        let ra = REGEN_A;
         // Each read's offset from the head.
         let w = I.0[0];
         let mut off = [0usize; ACCESS];

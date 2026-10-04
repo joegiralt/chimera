@@ -76,6 +76,9 @@ pub fn take_report() -> Option<&'static mut Text> {
 }
 
 const WARM_BLOCKS: u32 = 8;
+/// A row that sets another reverb TYPE than the fresh bus's QUAD warms
+/// through the switch to it (15 + 4 + 15 blocks) before it is timed.
+const SWITCH_WARM: u32 = 34;
 const TIMED_BLOCKS: u32 = 64;
 const HOLD_SECONDS: u32 = 30;
 const ROWS: usize = 9;
@@ -1049,12 +1052,13 @@ impl Rig<'_> {
             ));
             DWT::cycle_count().wrapping_sub(start)
         };
-        for b in 0..WARM_BLOCKS {
+        for b in 0..WARM_BLOCKS + SWITCH_WARM {
             block(shared, fx, &mut self.dac, b);
         }
         let mut cycles = 0u32;
         for b in 0..TIMED_BLOCKS {
-            cycles = cycles.wrapping_add(block(shared, fx, &mut self.dac, WARM_BLOCKS + b));
+            let b = WARM_BLOCKS + SWITCH_WARM + b;
+            cycles = cycles.wrapping_add(block(shared, fx, &mut self.dac, b));
         }
         cycles / (TIMED_BLOCKS * BLOCK_SIZE as u32)
     }
@@ -1138,16 +1142,18 @@ impl Rig<'_> {
             (runner, view)
         };
         let mut out = [[DacSample::ZERO; BLOCK_SIZE * 2]; DacPair::ALL.len()];
+        // A TYPE other than QUAD warms through the switch to it.
+        let warm = WARM_BLOCKS + SWITCH_WARM;
         let (mut worst, mut most, mut orbit, mut t0) = (0u32, 0usize, 0u32, 0u32);
         let mut ph = Phases::default();
-        for b in 0..WARM_BLOCKS + STRESS_BLOCKS {
+        for b in 0..warm + STRESS_BLOCKS {
             #[cfg(feature = "orbit")]
-            if b == WARM_BLOCKS {
+            if b == warm {
                 shared
                     .orbit
                     .push(chimera_core::orbit::channel::Cmd::TogglePlay);
             }
-            if b == WARM_BLOCKS + 1 && !keys_first {
+            if b == warm + 1 && !keys_first {
                 hold_notes(inst, shared, MAX_PARTS - 1);
             }
             worst_bus(shared, b);
@@ -1163,7 +1169,7 @@ impl Rig<'_> {
             #[cfg(not(feature = "orbit"))]
             let boundary = false;
             let ran = DWT::cycle_count().wrapping_sub(start);
-            if b >= WARM_BLOCKS && ran > ph.total {
+            if b >= warm && ran > ph.total {
                 ph = Phases::read(b, ran, boundary);
             }
             inst.render(fx, &mut self.dac, shared, &mut self.scope);
@@ -1172,10 +1178,10 @@ impl Rig<'_> {
             }
             let c = DWT::cycle_count().wrapping_sub(start);
             black_box(&out);
-            if b == WARM_BLOCKS {
+            if b == warm {
                 t0 = c;
             }
-            if b >= WARM_BLOCKS {
+            if b >= warm {
                 worst = worst.max(c);
                 most = most.max(inst.sounding());
                 orbit = orbit.max(ran);

@@ -19,8 +19,8 @@ use chimera_core::ui::glyph::tail_shape;
 use chimera_hal::BLOCK_SIZE;
 use common::SR;
 use common::rev::{
-    MS, Noise, blocks, check_knobs_ease, check_level_plan, check_no_slap, check_noise_and_loudness,
-    check_settles_on_pitch, corr, end_20db_ms, peak_ms, rms_db, run,
+    MS, Noise, blocks, check_knobs_ease, check_level_plan, check_no_slap, check_noise_floor,
+    check_settles_on_pitch, check_sustained_loudness, corr, end_20db_ms, peak_ms, rms_db, run,
 };
 
 type Blk = [f32; BLOCK_SIZE];
@@ -359,7 +359,8 @@ fn burst_noise_and_loudness() {
         let (rv, pc) = (fresh(&p), RefCell::new(p));
         let (qv, qc) = (fresh(&q), RefCell::new(q));
         println!("{t:?}");
-        check_noise_and_loudness(&mut bus(&rv, &pc), &mut bus(&qv, &qc), 4.0);
+        check_sustained_loudness(&mut bus(&rv, &pc), &mut bus(&qv, &qc));
+        check_noise_floor(&mut bus(&rv, &pc), &mut bus(&qv, &qc), 4.0);
     }
 }
 

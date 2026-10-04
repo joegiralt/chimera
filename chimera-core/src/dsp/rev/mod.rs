@@ -38,18 +38,20 @@ pub enum EngineState {
     Burst(BurstEngine),
 }
 
-/// Each TYPE's return gain: its default return's RMS within 1 dB of
-/// QUAD's (spec § Shared machinery, `burst_noise_and_loudness`).
+/// Each TYPE's return gain. GATE's and REVERSE's match QUAD's short-term
+/// loudness on a held −12 dBFS pink pad at MIX 0.5 (the loudest 400 ms),
+/// their peaks within 0.6 dB of QUAD's: a TYPE switch under a held note
+/// neither jumps nor clips (`check_sustained_loudness`).
 pub fn wet_gain(t: ReverbType) -> f32 {
     match t {
-        ReverbType::Gate | ReverbType::Reverse => WET_BURST,
+        ReverbType::Gate => WET_GATE,
+        ReverbType::Reverse => WET_REVERSE,
         ReverbType::Quad | ReverbType::Room | ReverbType::Hall | ReverbType::Bloom => WET_GAIN,
     }
 }
 
-/// GATE's and REVERSE's: their defaults measure within 0.03 dB of each
-/// other, both at QUAD's on the 0.5 s noise burst at MIX 0.5.
-const WET_BURST: f32 = 7.47;
+const WET_GATE: f32 = 6.75;
+const WET_REVERSE: f32 = 7.05;
 
 const _: () = assert!(core::mem::size_of::<EngineState>() <= 160);
 
@@ -463,7 +465,7 @@ impl Reverb {
             EngineState::Burst(b) => {
                 // Its two smeared decorrelators sit outside every loop:
                 // no SIZE crossfade to rest for, no cap.
-                let full = ranges(self.kind).map_or(0.0, |r| r.smear_ms) * burst::SMEAR_MAX;
+                let full = ranges(self.kind).map_or(0.0, |r| r.smear_ms) * burst::PER_MS;
                 let (d0, d1) = (s0 * full, s1 * full);
                 b.set_smear(core::array::from_fn(|k| {
                     (d0 * (1.0 + x0[k]), d1 * (1.0 + x1[k]))

@@ -341,6 +341,29 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
 - **Flash.** Estimated at 9.5–12.5 KB in all: about 3–4 KB of shared
   scaffold, then 1–2.5 KB per TYPE. Each step's fat-LTO delta is recorded,
   and a TYPE over 3 KB is cut back before the next one starts.
+- **BURST, as built (Task 8, 2026-10-04).** The following departures from
+  the spec are accepted.
+  - **DENSITY keeps taps {0, 2, 4, 7, 9, 11} and fades {5, 6, 3, 8, 1, 10}
+    in, each over a third of the knob.** The spec faded taps 6–11 at
+    `clamp(6·D − i)`. That moved a weight 3/64 a tick, against its own
+    1/64 bound. It also faded REVERSE's loudest taps, and it muted
+    GATE's tap 11 at the default DENSITY, so the burst ended before LENGTH.
+  - **The decorrelators share their first allpass** (3.1 ms), then L 8.3
+    and R 6.1 ms; the 4.7 ms allpass is dropped. Two independent g 0.6
+    chains correlate at about g⁴ (0.13), under the spike's 0.4–0.65.
+    Sharing the first gives about g² (measured 0.38), and each side stays
+    an allpass of the sum. A dry share in each side echoed it at 3–8 ms.
+  - **The tap weights step once a block, eased over 20 ms, not ramped
+    across it.** That saves about 400 B, and a load, an add and a store
+    per weight per ring sample. The knob-ease test holds.
+  - **BURST is laid out for the 24 kHz ring.** At another bus rate its times
+    scale with the rate, as QUAD's lengths do.
+  - **SHAPE and CURVE read in whole dB.** Tenths outran the focus band.
+  - **Level: GATE and REVERSE match QUAD by short-term loudness on a held
+    input,** not by the RMS of a burst's 3 s. Matching the burst's RMS left
+    them hot on sustained notes. The test is the loudest 400 ms of a held
+    −12 dBFS pink pad at MIX 0.5, within ±1 dB, with the peak at most 1 dB
+    over QUAD's. WET is 6.75 for GATE and 7.05 for REVERSE.
 - **Interactions.**
   - A TYPE switch drops about 5.3 ms of send and dips the return for about
     45 ms; sweeps list this as by design.

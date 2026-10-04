@@ -538,6 +538,7 @@ fn a_view_reads_its_spec_glyph() {
         addr,
         label: "PAN",
         fmt: ValFmt::Pan,
+        short: None,
     };
     assert_eq!(v.glyph(), addr.spec().unwrap().glyph);
     let legacy = View::Legacy {

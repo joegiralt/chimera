@@ -130,6 +130,8 @@ pub enum View {
         addr: ParamAddr,
         label: &'static str,
         fmt: ValFmt,
+        /// What the cell shows when `label` outruns its bar (ADR 0053).
+        short: Option<&'static str>,
     },
     /// The route `source → CUTOFF` (spec § 6).
     Route {
@@ -158,15 +160,11 @@ impl View {
         }
     }
 
-    /// The spec's short form, for a param shown under its own label; a
-    /// reverb panel's word's own (`DENS`).
+    /// The cell's short form: the spec's, for a param shown under its own
+    /// label; a reverb panel word's own (`DENS`).
     pub fn short(&self) -> Option<&'static str> {
         match *self {
-            View::Param { addr, label, .. } => match addr.spec() {
-                Some(s) if s.label == label => s.short,
-                _ if addr.block == BlockRef::Reverb => reverb_panel::short_of(label),
-                _ => None,
-            },
+            View::Param { short, .. } => short,
             _ => None,
         }
     }
@@ -211,7 +209,16 @@ impl View {
 const MUTE_HINT: Hint = &[Gesture("MIX + B1-5", "MUTES THAT RING")];
 
 fn param(addr: ParamAddr, label: &'static str, fmt: ValFmt) -> View {
-    View::Param { addr, label, fmt }
+    let short = addr
+        .spec()
+        .filter(|s| s.label == label)
+        .and_then(|s| s.short);
+    View::Param {
+        addr,
+        label,
+        fmt,
+        short,
+    }
 }
 
 /// Slot `i` of `def` as it reads under `ctx`.
@@ -281,7 +288,22 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
         SlotBinding::ReverbPanel(page, k) => match reverb_panel::knob(ctx.rev, page, k) {
             Some(c) => {
                 let addr = ParamAddr::new(BlockRef::Reverb, c.id);
-                param(addr, c.label, addr.spec().map_or(ValFmt::Uni, |s| s.fmt))
+                let fmt = addr.spec().map_or(ValFmt::Uni, |s| s.fmt);
+                // A panel word's own short (`DENS`) over the spec's.
+                match (param(addr, c.label, fmt), c.short) {
+                    (
+                        View::Param {
+                            addr, label, fmt, ..
+                        },
+                        Some(s),
+                    ) => View::Param {
+                        addr,
+                        label,
+                        fmt,
+                        short: Some(s),
+                    },
+                    (v, _) => v,
+                }
             }
             None => View::Empty,
         },
