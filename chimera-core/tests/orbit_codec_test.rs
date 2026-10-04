@@ -123,7 +123,7 @@ fn rich() -> Box<Project> {
             r.set(SceneRing::MUTE, 0.0);
         }
     });
-    rig.ui.flush(rig.project.orbit_mut());
+    rig.ui.flush(&mut rig.project);
     let start = scene_drift(rig.project.orbit().live());
     rig.play(true);
     rig.run_loops(3);

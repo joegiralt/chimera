@@ -257,22 +257,19 @@ impl OrbitUi {
         *synced = self.chan.synced();
     }
 
-    /// `live`'s edits since the last harvest, into the outbox.
+    /// `live`'s edits since the last harvest, into the outbox. The song
+    /// is taken `&mut` only with one: that re-keys the project.
     #[inline(never)]
-    fn harvest(&mut self, song: &mut OrbitSong) {
-        let (rhythm, notes) = song.harvest();
-        self.chan.edit(rhythm, notes);
+    fn harvest(&mut self, project: &mut Project) {
+        if !project.orbit().live().untouched() {
+            let (rhythm, notes) = project.orbit_mut().harvest();
+            self.chan.edit(rhythm, notes);
+        }
     }
 
     /// The frame's edits and commands into the log, before its publish.
-    pub fn flush(&mut self, song: &mut OrbitSong) {
-        self.harvest(song);
-        self.chan.flush();
-    }
-
-    /// `flush` with no edit to harvest: the caller knows `live` is
-    /// untouched, and saves the `&mut` that would re-key the project.
-    pub fn flush_log(&mut self) {
+    pub fn flush(&mut self, project: &mut Project) {
+        self.harvest(project);
         self.chan.flush();
     }
 
@@ -387,23 +384,17 @@ impl OrbitUi {
     /// 0082): the load gate and the ack, the view kept for the pages, a
     /// capture taken into the song, LEARN and PLAY shown as the runner is
     /// armed once every command is applied, the newest scene command landed once
-    /// the runner has adopted it, and the drift absorbed once a loop
-    /// while every command is applied.
+    /// the runner has adopted it, the drift absorbed once a loop while
+    /// every command is applied, and last `live`'s edits harvested.
     pub fn sync(&mut self, v: &OrbitView, project: &mut Project) {
         if v.epoch != self.epoch {
             return;
         }
         self.chan.ack(v.acked);
         self.status = OrbitStatus::of(v);
-        // An edit since the last flush counts as unapplied.
-        if !project.orbit().live().untouched() {
-            self.harvest(project.orbit_mut());
-        }
         let idle = self.chan.idle();
         if let Some(c) = self.take(v) {
-            let song = project.orbit_mut();
-            song.capture(&c);
-            self.harvest(song);
+            project.orbit_mut().capture(&c);
         }
         // Every arm applied: the runner's armed target is the truth, a
         // capture taken or a re-arm since included.
@@ -421,17 +412,18 @@ impl OrbitUi {
             }
             self.chan.landed(c);
         }
-        // `idle()` again, not step 3's: a capture taken above is an edit
-        // the runner hasn't applied, and drift would overwrite it; so is a
-        // landed slot's marked ring, not yet sent.
+        // A capture taken above, a landed slot's marked rings and an edit
+        // since the last flush are all `live`'s touched marks, unharvested
+        // till below: unapplied edits, which drift would overwrite.
         if self.chan.synced()
-            && self.chan.idle()
+            && idle
             && project.orbit().live().untouched()
             && v.loops as u8 != self.loops_seen
         {
             self.loops_seen = v.loops as u8;
             project.orbit_mut().absorb(v);
         }
+        self.harvest(project);
     }
 
     /// One `UiTick` of ORB's and the header's animation; the beat that

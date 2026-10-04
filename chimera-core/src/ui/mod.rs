@@ -1719,12 +1719,7 @@ impl UiState {
     /// ORBIT's edits and commands into the log, ready for the publish:
     /// the end of every frame's input (ADR 0082).
     pub fn flush_orbit(&mut self) {
-        // `orbit_mut` only with an edit to take: it re-keys the status.
-        if self.project.orbit().live().untouched() {
-            self.orbit.flush_log();
-        } else {
-            self.orbit.flush(self.project.orbit_mut());
-        }
+        self.orbit.flush(&mut self.project);
     }
 
     /// The runner's latest view, each loop before `handle_input`: a

@@ -259,7 +259,7 @@ impl OrbitRig {
         let b = self.blocks();
         self.shared
             .update_from(self.project.perf(), self.link.epoch());
-        self.ui.flush(self.project.orbit_mut());
+        self.ui.flush(&mut self.project);
         self.ui
             .publish(self.project.orbit(), self.sync, &mut self.shared.orbit);
         let bpm_before = self.last_view.bpm;
