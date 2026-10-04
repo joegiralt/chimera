@@ -1,6 +1,6 @@
 # TAPE core: 12-bit card sources played from the pool by six RAM models
 
-Status: draft for owner review (2026-10-04), revised the same day after an adversarial review. Issue: private issue #279. ADR 0093 (Proposed) records the decision.
+Status: draft for owner review (2026-10-04), revised the same day after two adversarial reviews. Issue: private issue #279. ADR 0093 (Proposed) records the decision.
 
 It builds on:
 - the sound pool budget (private issue #337): ADR 0087, ADR 0090 and the plan at `sound-pool-budget` 4b7ac2c1, all unmerged;
@@ -55,7 +55,7 @@ Sources:
 - **The budget (`hw.rs`, ADR 0091):** 7 000 cycles/sample on rev V and 5 833 on rev Y, at 70 %.
   - `Instrument::RESERVED` is the bus's 1 180 plus a note-on burst of 836, 2 016 in all (2 326 with the master tape).
   - ORBIT adds 171 while it plays.
-- **The master tape stage owns the name in code today:** `BlockRef::Tape` (disk code 23, ident `"TAPE"`), `dsp/tape/`, `TapeParams`, the page short `TAPE` and the matrix labels `TPE` and `TAPE` (ADR 0055; off the chain, behind `master-tape`). § 3 renames it.
+- **The master tape stage owns the name in code today:** `BlockRef::Tape` (disk code 23, ident `"TAPE"`), `dsp/tape/`, `TapeParams`, the page short `TAPE` and the matrix labels `TPE` and `TAPE` (ADR 0055; off the chain, behind `master-tape`). Three unmerged branches use `BlockRef::Tape` 54 times, so it keeps the name; § 3 gives the engine its own and changes only the stage's on-screen word.
 - **The pool (ADR 0087 and its plan, unmerged):**
   - a 160 KiB arena in AXI, where NEW's 32 Sounds leave **153 600 B for sources**: 4.3 s at 24 kHz, 6.4 s at 16 kHz;
   - `SourceId`, `SourceRef { crc, frames, rate }`, `MAX_SOURCES` = 32;
@@ -83,21 +83,23 @@ ADR 0087's `Source` file is `FileKind` 6, at `/CHIMERA/TAPES/<CRC>.SRC`: a heade
 | `SourceRef` (crc, frames, rate) | 10 | n/a | the identity |
 | `shape` | 1 | **yes** | 0 `Plain`, 1 `Transwave`, 2 `ZoneSet` (TRON, § 8) |
 | `count` | 1 | **yes** | Transwave: frames (1–32). ZoneSet: zones (1–24). Plain: 1 |
-| `root` | 2 | no | the import's pitch estimate, MIDI cents (6 000 is C4) |
-| `period` | 4 | no | the import's YIN period in frames, Q16.16. 0 means unpitched |
+| `root` | 2 | no | the import's pitch estimate, MIDI cents (6 000 is C4): copied into a Sound when SOURCE is picked |
+| `period` | 4 | no | the import's YIN period in frames, Q16.16; 0 means unpitched: copied into a Sound when SOURCE is picked |
 | name | 16 | no | |
 
 **34 B.** A `ZoneSet`'s `SourceZones` record (0x0019) follows its head (§ 8).
 
-- **The CRC covers `shape`, `count`, any zone table and the packed bytes.** These are what the audio's reads depend on. The name, root and period are labels.
+- **The CRC covers `shape`, `count`, any zone table's layout and the packed bytes:** what the audio's reads depend on. The name, root and period are labels, and every root and period, a zone's included, stays out of it.
   - Re-importing the same audio with a better root therefore makes **the same file**: `write_source` answers `Present`, and nothing is duplicated.
-  - A wrong root is fixed in the Sound, by PIT's PITCH and FINE (ADR 0042). The file is never edited.
+- **Playback identity lives in the Sound.** When SOURCE is picked, the UI copies the file's `root` and `period` into the Sound's `TapeEngineParams` (ROOT and PERIOD, § 3), and a zone set's per-zone roots and periods into the Sound's `ZoneTune` record (§ 8). The voice reads them from the Sound, never from the file.
+  - So a project tunes the same on every card, whatever label a copy of the source carries.
+  - A wrong root is fixed in the Sound: re-pick the source after a re-import, or turn PIT's PITCH and FINE (ADR 0042). The file is never edited.
 - **Mono only.** The S950 and the original Digitakt are mono. A stereo source would double every cost on the meter, and voices are panned by their Part.
 - **Loops are not attributes of a source.** They are Sound parameters, as on the Digitakt, so one source serves many Sounds. A WAV's `smpl` loop is printed by the importer as a suggested POSITION and SIZE (§ 6).
 
 ### What the arena holds
 
-**`held` begins with a 16 B descriptor:** `shape`, `count`, `root`, `period` and the rate. A `ZoneSet`'s zone table follows it (§ 8). The packed samples come after that. The descriptor is inside `held`, so it is on the meter. The audio reads a source's description from the same bytes it plays, and ADR 0087's 12 B `SourceRow` stays as it is.
+**`held` begins with a 16 B descriptor:** `shape`, `count` and the rate (the rest reserved). A `ZoneSet`'s zone table follows it (§ 8). The packed samples come after that. The descriptor is inside `held`, so it is on the meter. The audio reads a source's description from the same bytes it plays, and ADR 0087's 12 B `SourceRow` stays as it is.
 
 ## 2. The engine
 
@@ -106,7 +108,7 @@ ADR 0087's `Source` file is `FileKind` 6, at `/CHIMERA/TAPES/<CRC>.SRC`: a heade
 ```rust
 pub enum EngineType { Algo = 0, Modal = 1, Tape = 2 }
 pub enum SlotKind   { Algo, Modal(ResonatorMode), Tape }   // one kind: every model has the same state
-in_place_enum! { pub enum EngineSlot { Algo(AlgoEngine), Modal(ModalEngine), Tape(TapeEngine) } }
+in_place_enum! { pub enum EngineSlot { Algo(AlgoEngine), Modal(ModalEngine), Tape(TapeEngine) } }   // dsp/tape_engine/
 
 pub enum TapeModel { Loop, Reverse, PingPong, Transwave, Scrub, Stretch }   // disk codes 0..5; TRON takes 6
 
@@ -135,7 +137,7 @@ pub struct TapeEngine {
 
 - **The voice calls TAPE as it calls the others,** with a context in place of today's bare `&mut SymPool`: `EngineCtx { sym: &mut SymPool, src: &SourceTableView }`. ALGO and MODAL ignore `src`.
 - **`TapeEngine` is about 200 B.** It sits in an `EngineSlot` sized by `ModalEngine`, so the engine adds nothing to D2. A test pins `size_of::<TapeEngine>() < size_of::<ModalEngine>()`.
-  - **D2 still grows by 384 B:** `ParamSnapshot` gains `TapeParams` (about 48 B), and each of the eight voices keeps a `played` snapshot. It is measured against `VOICE_CHAIN_BYTES` at build step 3.
+  - **D2 still grows by 448 B:** `ParamSnapshot` gains `TapeEngineParams` (about 56 B), and each of the eight voices keeps a `played` snapshot. It is measured against `VOICE_CHAIN_BYTES` at build step 3.
 - **A note-on with no playable source is refused before voice allocation.** That covers no source picked, `SOURCE MISSING`, and TRANSWAVE on a source that isn't a `Transwave`.
   - The Instrument checks the Part's `SourceId` and its row before it asks the allocator.
   - So no voice is stolen and nothing fades, for a note that can't sound.
@@ -146,8 +148,10 @@ pub struct TapeEngine {
 **Position and pitch.** A head holds its position as 32.32 fixed-point frames, which is exact over any source the arena can hold. It advances by `inc` each sample:
 
 ```
-inc = rate / 48 000 · 2^((note·100 + pitch_cents − root) / 1200)
+inc = rate / 48 000 · 2^((note·100 + pitch_cents − ROOT) / 1200)
 ```
+
+`ROOT` is the Sound's copy (§ 1).
 
 - `pitch_cents` is PIT's PITCH and FINE, with their routes (ADR 0042).
 - `inc` is recomputed once a block (one `exp2f`) and ramped linearly across it, so a pitch route or a glide never steps. STEAL GLIDE (ADR 0065) glides `inc`.
@@ -234,13 +238,17 @@ Every model plays inside the **window** `[START, END]`, as fractions of the sour
 - XFADE dims. One head, two during a clamp; billed at two.
 
 **TRANSWAVE.** Plays only a `Transwave` source (§ 6); on any other, the note-on is refused, and SRC reads `NOT A TRANSWAVE`.
-- **A transwave is `count` frames, each one cycle,** stored at seven **octave mip levels** of 1 024, 512, …, 16 samples. Each level is band-limited to ⌊0.35 · N⌋ harmonics: the PPG and Waldorf approach, computed by the importer.
+- **A transwave is `count` frames, each one cycle,** stored at **octave mip levels** from a top level down to 16 samples. Each level is band-limited to ⌊0.35 · N⌋ harmonics: the PPG and Waldorf approach, computed by the importer.
+  - **The top level is 512 by default** (six levels, 512 → 16; 1 008 samples a frame). `--top 1024` adds a seventh (2 032 a frame), at twice the bytes.
+  - What 512 loses: below about 94 Hz (F♯2), where 1 024 would serve, the harmonics stop at 179 in place of 358. C1 then reaches 5.9 kHz in place of 11.7 kHz; the loss shrinks to nothing at 94 Hz, where level 512 already reaches 16.8 kHz. Notes above 94 Hz are unchanged. A dark top on bass notes suits tape; a bright sub-bass transwave imports with `--top 1024`.
 - **The frame position** is `p = POSITION · (n − 1) + SIZE · (n − 1) · tri(MOTION's phase)`, clamped to `[0, n − 1]`. It is ramped **per sample** across the block, so a scan never zippers at the block rate (750 Hz).
 - **Two heads** at one phase `φ` read frames `⌊p⌋` and `⌊p⌋ + 1` at the same level. The output is their lerp by `p`'s fraction. `φ` advances `N_ℓ · f_note / 48 000` a sample: a frame is one cycle at the note's pitch, and the source's rate and root don't enter.
-- **The level** is the smallest one whose step is at most 1. A level's content stops at 0.35 N, so a step up to 1.43 is still alias-free. The level changes with hysteresis: down a level when the step passes 1.25, up when it falls under 0.6. Wow (at most 33 cents) never crosses either.
+- **The level** at note-on is the **largest** one whose step `N · f / 48 000` is at most 1, so the step starts in (0.5, 1]. A level's content stops at 0.35 N, so a step up to 1.43 is still alias-free.
+- **Hysteresis at the alias limit.** The level drops (to a smaller N) only when the step passes 1.43, and rises only when it falls under 0.35. From any note-on step, that is a pitch move of more than **±6.2 semitones** (`12·log2(1.43)`). Vibrato, wow (at most 33 cents) and ordinary bends never change the level.
+- **The top notes.** The smallest level, 16 samples, holds 5 harmonics. It is alias-free up to a step of 1.43: a fundamental of **4.3 kHz, just above C8 (4 186 Hz)**. Above that, MIDI 109–127 fold even level 16's harmonics back down, as a plain source folds on pitch-up (§ 2): the SP-1200 character, at notes nobody plays as a wavetable. From about F♯6 (1.5 kHz) up, a note plays level 16's 5 harmonics, which is the price of no aliasing.
 - **A level change crossfades over one block,** reading both levels for both frames: four heads in that block.
-  - With no pitch route and no STEAL GLIDE, the level is chosen at note-on and never changes.
-  - So the two extra heads are billed only when pitch can move, as MODAL's `PITCH` term is (`glide_cost`).
+  - It can happen only when the Sound's pitch can move more than ±6.2 semitones within a note: STEAL GLIDE, or PITCH and FINE routes whose summed depth (|amount| × the destination's range) can pass it.
+  - **Only then are the two extra heads billed,** as MODAL's `PITCH` term is (`glide_cost`). A vibrato route costs nothing extra.
 - This is the Ensoniq transwave and the Tracker's wavetable mode, band-limited.
 
 **SCRUB.** The finger `F` follows POSITION through a one-pole of DRAG (10–500 ms, the tape's inertia). It is computed once a block and ramped.
@@ -289,7 +297,7 @@ Every model plays inside the **window** `[START, END]`, as fractions of the sour
 
 ## 3. Parameters, pages, the chain and names
 
-**`TapeParams`** (block `BlockRef::Tape`, code 34, ident `"TAPE_ENG"`; ids frozen once written):
+**`TapeEngineParams`** (block `BlockRef::TapeEngine`, code 34, ident `"TAPE_ENG"`; ids frozen once written):
 
 | Id | Param | Range, law | Read | Mod |
 |---|---|---|---|---|
@@ -304,6 +312,8 @@ Every model plays inside the **window** `[START, END]`, as fractions of the sour
 | 8 | XFADE | 0–0.5 of the loop | each wrap | no |
 | 9 | DRAG | 10–500 ms, exponential | block | no |
 | 10 | TYPE | MONO, POLY | note-on | no |
+| 11 | ROOT | MIDI cents, copied from the source at pick; no cell | note-on | no |
+| 12 | PERIOD | frames, Q16.16, copied at pick; 0 unpitched; no cell | note-on | no |
 
 - **SOURCE is not a param.** It is the Sound's `SourceRef` record (0x0016, ADR 0087), and its cell is a `ParamSlot::source()`, as MODAL's panel cells are `modal_panel`.
 - **Neutral** (`Sound::neutral(Tape)`, a format contract under ADR 0087) is LOOP, START 0, END 1, POSITION 0, MOTION 0, TAPE 0, AGE 0, SIZE 1, XFADE 0.1, DRAG 0.3, TYPE MONO. It loops the whole source with a folded 10 % crossfade, so it never hard-wraps.
@@ -320,7 +330,7 @@ Every model plays inside the **window** `[START, END]`, as fractions of the sour
 
 - **The home page is MODAL's RES pattern exactly:** MODEL, the four macros, then SPACE (the Part's reverb send). Owner question 1 of the first draft is closed: #279's four macros fit.
 - Block ids 92–94 follow main's highest (91). They are checked against the other branches when built.
-- **A control the model ignores is dimmed,** with its matrix column, from one `tape::reads` table, as MODAL's `modal::reads` does. PING-PONG and STRETCH dim XFADE.
+- **A control the model ignores is dimmed,** with its matrix column, from one `tape_engine::reads` table, as MODAL's `modal::reads` does. PING-PONG and STRETCH dim XFADE.
 - **The strip** is how a page shows what it does to the sound: a 216 × 40 px view of the window, the source's min/max per column in `MID`, with START and END marks. Over it, per model:
   - **LOOP and REVERSE:** the loop shaded in `ACCENT_DIM`, the crossfade as a ramp (drawn inside the loop when folded), and the head as a line in `ACCENT` with an arrow for direction. MOTION's walk moves the shading.
   - **PING-PONG:** the loop with `◂▸` at its edges, and the head bouncing.
@@ -341,14 +351,17 @@ Every model plays inside the **window** `[START, END]`, as fractions of the sour
 
   MIX + PLUS adds, as it primes a route in the matrix. The load reads 4 KiB a UI pass behind `ui::busy`, and MENU cancels it (ADR 0087). Once loaded, the row moves above the divider and the Part plays it. Nothing else in TAPE is a MIX or hold gesture.
 
-**Names.** The engine takes `Tape`, and the master stage is renamed to free it. This is one rename-only commit, with **no code, ident or sound change**: ADR 0045 makes disk codes and idents explicit literals, independent of Rust names. About 20 sites in 7 files:
-- `BlockRef::Tape` → `BlockRef::MasterTape`, keeping code 23 and ident `"TAPE"`;
-- `dsp/tape/` → `dsp/master_tape/`, and `TapeParams` → `MasterTapeParams`;
-- the stage's page short `TAPE` → **`REEL`** (its name `"Master reel"`);
+**Names.** `BlockRef::Tape` stays the master stage: three unmerged branches use it 54 times, and renaming it buys nothing on disk. The engine's names are new:
+- `BlockRef::TapeEngine`, block code 34, ident `"TAPE_ENG"` (`"TAPE"` is the stage's frozen ident);
+- `dsp/tape_engine/`, `TapeEngine`, `TapeEngineParams`, `TapeModel`;
+- `EngineType::Tape`, engine code 2, ident `"TAPE"` (the engine namespace, not the block one).
+
+**On screen, the master stage gets its own word, REEL.** These are UI strings only, with no code, ident or Rust name changed:
+- its page short `TAPE` → `REEL` (name `"Reel"`);
 - its matrix labels `TPE` / `TAPE` → `REL` / `REEL`;
 - the bench row `"TAPE"` → `"REEL"`.
 
-The engine then takes `BlockRef::Tape` with a **new** code (34) and ident (`"TAPE_ENG"`), because `"TAPE"` stays the master stage's frozen ident. On screen, TAPE then means two things only: the engine, in the browser's engine tag and the chain's title, and its TAPE macro (#279). The home page is DECK, and the master stage is REEL.
+TAPE then means two things only on screen: the engine (the browser's engine tag and the chain's title), and its TAPE macro (#279). The home page is DECK.
 
 ## 4. With the pool (#337)
 
@@ -368,13 +381,14 @@ The engine then takes `BlockRef::Tape` with a **new** code (34) and ident (`"TAP
 |---|---|---|
 | 1 s at 24 kHz | 36 016 | 29 % |
 | 1 s at 16 kHz | 24 016 | 21 % |
-| a 16-frame transwave (7 levels, 1 024 → 16) | 48 784 | 37 % |
-| a 32-frame transwave | 97 552 | 66 % |
+| a 16-frame transwave (6 levels, 512 → 16, the default) | 24 208 | 22 % |
+| a 32-frame transwave, default | 48 400 | 36 % |
+| a 16-frame transwave, `--top 1024` | 48 784 | 37 % |
 | six Parts, each on its own 1 s source, at 24 kHz | 216 096 | **won't fit** |
 | the same at 16 kHz | 144 096 | 95 % |
 | the same at 24 kHz, 0.7 s each | 151 296 | 99 % |
 
-  A transwave costs the same whatever its rate. Its levels sum to `count · 2 032` samples.
+  A transwave costs the same whatever its rate. Its levels sum to `count · 1 008` samples by default.
 
   The rate per source is the S950's trade, quality against time, and the factory set uses it (§ 7). 24 kHz stays the import default (#279).
 
@@ -409,11 +423,11 @@ Host estimates, in the house manner (instructions × 1.46 × 1.1, as `ModalEngin
 | PING-PONG | 2 (one, two in a clamp) | 119 | 215 | **230** |
 | SCRUB | 2 (+ the finger, 2) | 121 | 218 | **230** |
 | TRANSWAVE | 2 (+ `p`'s ramp and the scan, 4) | 123 | 222 | **240** |
-| TRANSWAVE, pitch routed or STEAL GLIDE | 4 in a level change | 233 | 422 | **450** |
+| TRANSWAVE, pitch able to move > ±6.2 st (STEAL GLIDE, or deep PITCH/FINE routes) | 4 in a level change | 233 | 422 | **450** |
 | STRETCH | 2 (+ two gains, the grain clock, 5) | 124 | 223 | **240** |
 | AGE stored above 0 or routed, on any model | (one-pole 3, hiss 5, gain 2) | 10 | 16 | **+20** |
 
-`TapeEngine::cost(&TapeParams, &ModState)` returns the model's figure plus AGE's, and `playing_cost` returns the latched model's, as MODAL's does. TRANSWAVE's level-change term is TAPE's `glide_cost`, billed exactly where MODAL's `PITCH` is.
+`TapeEngine::cost(&TapeEngineParams, &ModState)` returns the model's figure plus AGE's, and `playing_cost` returns the latched model's, as MODAL's does. TRANSWAVE's level-change term is TAPE's `glide_cost`, billed exactly where MODAL's `PITCH` is.
 
 **The voice, and what it is admitted.** The voice is the engine + 30 (chain) + 47 (`ModRouting::BASE`), at LP24 with no DRIVE or FOLD:
 
@@ -421,19 +435,19 @@ Host estimates, in the house manner (instructions × 1.46 × 1.1, as `ModalEngin
 |---|---|---|---|---|---|
 | STRETCH or TRANSWAVE with AGE | 337 | 14 → **8** | 11 → **8** | 14 → **8** | 13 → **8** |
 | … with DRIVE and FOLD (+102) | 439 | 11 → **8** | 8 → **8** | 10 → **8** | 10 → **8** |
-| TRANSWAVE, pitch routed, with AGE | 547 | 9 → **8** | **6** | 8 → **8** | 8 → **8** |
+| TRANSWAVE, pitch able to move > ±6.2 st, with AGE | 547 | 9 → **8** | **6** | 8 → **8** | 8 → **8** |
 | … with the worst routing (633 in place of 47) | 1 133 | **4** | **3** | **4** | **4** |
 | STRETCH with AGE and the worst routing | 923 | **5** | **4** | **5** | **5** |
 
 **What these numbers support, and no more.**
 - Eight voices of any plain TAPE Sound hold on rev V while the benched engine stays under **546** (4 984 / 8 − 77), and on rev Y under **400** (3 817 / 8 − 77). The estimates sit at 260, with room for the bench to come in up to 54 % higher before rev Y loses a voice.
-- A pitch-routed TRANSWAVE gets 6 voices on rev Y, and the heaviest routing matches the heaviest ALGO.
+- A TRANSWAVE whose pitch can move more than ±6.2 semitones gets 6 voices on rev Y (a vibrato route doesn't count), and the heaviest routing matches the heaviest ALGO.
 - These are counts of the **billed** figures. The guarantee holds only once the bench's cold-cache rows confirm them. Until then they are stated as estimates.
 
 **The bench rows** (build step 3, `--features bench`), each the worst block over four runs, cold cache:
 - `TAPE LOOP /VOICE`: eight voices, each on its own source, at `inc` 16;
 - `TAPE STRETCH /VOICE`: the same, at the shortest D-TIME, TYPE MONO;
-- `TAPE WAVE C7 /VOICE`: TRANSWAVE at C7 with a pitch LFO forcing a level change every block;
+- `TAPE WAVE C7 /VOICE`: TRANSWAVE at C7 with a ±12-semitone pitch LFO forcing a level change every block;
 - `TAPE 8 VOICES`: the whole render.
 
 `the_model_bills_every_bench_row_high` holds them. If a row exceeds its bill, the bill rises to it, and the table above is redone in the same commit.
@@ -448,7 +462,7 @@ Host estimates, in the house manner (instructions × 1.46 × 1.1, as `ModalEngin
 
 **Host only,** as ADR 0088's patch importer is. The firmware links no WAV parser, resampler, dither or mip builder. On-device conversion arrives with RESAMPLE (§ 8). The #337 plan still budgets an on-device importer (its Task 9 puts `quantise_tpdf` in `chimera-core/src/storage/twelve.rs`, and its spec's flash table counts an "importer with dither and decimator" in its 8 KB line). That should move to the host.
 
-`just tape <file.wav> [--rate 24k] [--root C3] [--transwave <cycle>] [--name CHOIR] [--channel mix|L|R]` runs `chimera-import tape` (in `chimera-desktop`, beside ADR 0088's binary):
+`just tape <file.wav> [--rate 24k] [--root C3] [--transwave <cycle> [--top 1024]] [--name CHOIR] [--channel mix|L|R]` runs `chimera-import tape` (in `chimera-desktop`, beside ADR 0088's binary):
 
 1. **Read** PCM 8/16/24/32-bit or float WAV with `hound` (MIT/Apache-2.0, host only). Stereo is mixed `(L + R)/2` unless `--channel` picks a side.
 2. **Clean.** A 5 Hz high-pass takes out DC. Leading and trailing silence under −60 dBFS is trimmed. The peak is normalised to −0.5 dBFS, so the 12 bits are used whole; the Sound sets the level.
@@ -456,8 +470,8 @@ Host estimates, in the house manner (instructions × 1.46 × 1.1, as `ModalEngin
 4. **Resample** to the chosen rate (48, 32, 24, 16, 12 or 8 kHz; 24 by default, #279) with `rubato`'s windowed-sinc resampler (MIT, host only), with its cut-off at **0.35 × rate** and 80 dB of stop band from 0.5 × rate.
 5. **Transwave** (`--transwave <cycle>`, the cycle length in input samples):
    - cut the input into whole cycles, at most 32;
-   - resample each to 1 024 samples;
-   - build seven levels, 1 024 down to 16, each keeping ⌊0.35 · N⌋ harmonics by FFT truncation (`rustfft`, MIT/Apache-2.0, host only).
+   - resample each to the top level's length (512, or 1 024 with `--top 1024`);
+   - build the levels down to 16, each keeping ⌊0.35 · N⌋ harmonics by FFT truncation (`rustfft`, MIT/Apache-2.0, host only).
 
    `shape` 1, `count` frames, rate 48 000 nominal.
 6. **Quantise** to 12 bits with TPDF dither and pack two samples in three bytes. This is `chimera-core`'s own `pack12`, so host and unit share the bytes. Dither is host code.
@@ -465,7 +479,7 @@ Host estimates, in the house manner (instructions × 1.46 × 1.1, as `ModalEngin
 8. **Report:** the name, rate, frames, seconds, root, period or `UNPITCHED`, the cost on the meter, any `smpl` loop as a suggested POSITION and SIZE, and a warning if it won't fit beside NEW.
 9. **Send:** `just put-tape <file>` runs `chimera-usb.py put <file> /CHIMERA/TAPES/`.
 
-A file is capped at 1 MiB, the `put` limit: 29 s at 24 kHz, 87 s at 8 kHz. RAM models use only what fits the arena; longer files are for TRON.
+A file is capped at 1 MiB, the `put` limit: 29 s at 24 kHz, 87 s at 8 kHz. RAM models use only what fits the arena. A TRON zone set is larger (12 zones × 8 s at 24 kHz is about 3.5 MB), so it needs the chunked `put` below; this core doesn't send one.
 
 **What TAPE needs from the USB `put` (ADR 0092), as a dependency.** It is built as ADR 0092's extension, under its own ADR (0092 § Consequences says so):
 - **A second path class:** `/CHIMERA/TAPES/XXXXXXXX.SRC`, eight hex digits, any case. `ls` takes `tapes`.
@@ -476,7 +490,13 @@ A file is capped at 1 MiB, the `put` limit: 29 s at 24 kHz, 87 s at 8 kHz. RAM m
   - a sealed file that fails its check answers `ERR put: damaged`, is never rewritten, and reads as missing (card cleanup is #267);
   - a failed `put` deletes its unsealed file;
   - only a verified file is sealed.
-- **The limit stays 1 MiB.** The deadline scales with size: 30 s plus 30 s a MiB, measured on the unit when built.
+- **The limit stays 1 MiB** for this core. The deadline scales with size: 30 s plus 30 s a MiB, measured on the unit when built.
+- **A chunked, resumable `put` for TRON,** a further dependency under its own future ADR, before TRON ships:
+  - `put <path> <size> <crc32>` opens a source of any size up to 8 MiB, unsealed;
+  - the data goes in 256 KiB chunks, each with its own CRC and its own 30 s deadline;
+  - a broken transfer resumes with `put <path> <size> <crc32> resume`, which answers the bytes already on the card (the unsealed file's length, checked against the chunks' CRCs) and continues from there;
+  - only when the whole file verifies is it sealed;
+  - an abandoned unsealed file is a torn one, and `write_source`'s rule replaces it.
 
 ## 7. The factory set
 
@@ -504,12 +524,18 @@ A file is capped at 1 MiB, the `put` limit: 29 s at 24 kHz, 87 s at 8 kHz. RAM m
 
 **TRON's zones** (#279: two zones an octave; 12 an instrument; six Parts):
 - **One `SourceRef` per TRON instrument: a `ZoneSet`,** not one per zone.
-  - Its file holds all its zones, contiguous, in one `<CRC>.SRC`, with a `SourceZones` record (0x0019, defined now) after its head: per zone `start: u32`, `frames: u32`, `root: u16` and `period: u32`, 14 B each, up to 24 zones (`count`).
-  - The zone table is in the CRC, because a voice's reads depend on it.
-- **In the arena,** `held` is the descriptor, the zone table, then each zone's 100 ms head, in zone order. The voice picks its zone at note-on from the table it reads in its own row. That is 12 × 2 400 frames × 1.5 = 43 200 B a 24 kHz instrument, as ADR 0087 counted.
+  - Its file holds all its zones, contiguous, in one `<CRC>.SRC`, with a `SourceZones` record (0x0019, defined now) after its head: per zone `start: u32`, `frames: u32`, `key: u8` (the MIDI note it serves), `root: u16` and `period: u32`, 15 B each, up to 24 zones (`count`).
+  - **The layout (`start`, `frames`, `key`) is in the CRC,** because a voice's reads and zone choice depend on it. **Each zone's `root` and `period` are labels,** out of the CRC, as a plain source's are.
+  - When SOURCE picks a zone set, they are copied into the Sound's **`ZoneTune` record** (0x001A, defined now: per zone `root: u16`, `period: u32`, 6 B each, 72 B for 12). The voice reads them from the Sound, so a TRON project tunes the same on every card. This is the same rule as § 1's.
+- **In the arena,** `held` is the descriptor, the zone layout (9 B a zone), then each zone's head, in zone order. The voice picks its zone at note-on from the layout it reads in its own row.
+- **A head covers only the time until the first refill lands,** not a fixed 100 ms: the slowest UI pass under load (26 ms, 2026-10-02) plus a card stall (p95 5.4 ms, with margin to 9 ms), about **35 ms of audio**.
+  - At 24 kHz played 3 semitones up, that is 35 ms × 28 540 frames/s ≈ 1 000 frames, rounded to **1 024 frames: 1 536 B a zone.**
+  - An instrument is 16 + 108 (layout) + 12 × 1 536 = **18 556 B**, about 11 % of the arena, in place of the 43 200 B ADR 0087 counted.
+  - **Six TRON Parts:** 6 × 18 576 (rounded to the granule, with the 16 B entry) = **111 456 B, 75 % with NEW**, leaving about 42 KB for RAM sources.
+  - The streaming ring that follows a head is TRON's, in D2, refilled from the card. Its size is set by TRON's spec from the bench's measured stall.
 - **So `MAX_SOURCES` = 32 and the `u32` `sounding` mask suffice.** Six TRON Parts are six sources, not 72. A zone set is one row, one bit and one meter entry.
 - **`SourceRef` (0x0016) freezes as ADR 0087 has it,** `{ crc, frames, rate }`, with `frames` the set's total. A zone set needs nothing from it.
-- `TapeModel` leaves code 6 for TRON. A source's `held` is the most its users need: all of it for a RAM model, the heads for TRON. A Part switching a zone set to a RAM model is then a pool add, refusable, and TRON's spec states it.
+- `TapeModel` leaves code 6 for TRON. A source's `held` is the most its users need: all of it for a RAM model, the layout and the heads for TRON. A Part switching a zone set to a RAM model is then a pool add, refusable, and TRON's spec states it.
 - Refill stays in the UI loop. TRON's rings go in D2 (121.5 KB free) and must cover the slowest UI pass under load (26 ms) plus a card stall. At 43 KB/s a note (24 kHz pitched up 3 semitones), #279's estimate of about 10 KB a note holds.
 
 **RESAMPLE and PROCESS** write new sources through `write_source`. A file is named by its CRC, and the FAT layer has no rename, so an on-device writer needs the CRC before it opens the file. Renders are pure functions, so RESAMPLE renders twice: once for the CRC, once to write. Their spec decides, along with on-device dither.
@@ -528,7 +554,9 @@ All host-side (`just test`). Hardware waits for the ship flash.
 
 **Pitch, time and aliasing**
 - **`plays_in_tune`:** a source of known period at root, played at C2–C6 at each rate, measures within 0.1 cent (zero-crossing estimator over 1 s). TRANSWAVE's cycle plays at the note's frequency.
-- **`transwave_is_alias_free`:** a 16-frame saw transwave swept C1 → C8 with a pitch route. Energy that isn't a harmonic of the note stays under −60 dB relative at every level and in every level change.
+- **`transwave_is_alias_free`:** a 16-frame saw transwave swept C1 → C8 with a pitch route. Energy that isn't a harmonic of the note stays under −60 dB relative at every level and in every level change. Above C8 the test asserts nothing.
+- **`transwave_level_is_largest`:** at note-on the level is the largest whose step is ≤ 1, at every note, for `--top` 512 and 1 024. A ±1-semitone vibrato never changes it, and a ±7-semitone route does.
+- **`vibrato_costs_no_level_heads`:** a transwave Sound with a shallow PITCH route bills 240, and one with a ±12-semitone route bills 450.
 - **`stretch_keeps_pitch`:** at MOTION 0.5, 1 and 2, STRETCH's pitch is the note's within 1 cent, and a marked event in the source arrives at `t / MOTION` within one D-TIME.
 - **`stretch_fades_are_complementary`:** the two gains sum to 1 at every sample while SIZE is swept 0 → 1 → 0 in 50 ms. MONO's splices of a sine are click-free by the rule below. POLY on white noise wobbles under 3 dB: the S950's tremolo, measured, not hidden.
 - **`unpitched_mono_is_poly`:** a `period` 0 source renders bit-identically under MONO and POLY.
@@ -541,30 +569,32 @@ All host-side (`just test`). Hardware waits for the ship flash.
 - **`scrub_finger_is_bounded`:** POSITION stepped 0 → 1, and the head's speed never passes 16.
 - **`source_switch_leaves_the_ringing_note`:** a Part changes SOURCE mid-note, and the voice's output is bit-identical to an unchanged run until its note-off.
 
-**Model sweeps.** `param_sweep_test` gains `TapeParams`: every param, per model, at 11 values, at notes 24–108. No NaN or infinity, a peak under +6 dBFS before the chain, and silence within 1 s of the VCA letting go.
+**Model sweeps.** `param_sweep_test` gains `TapeEngineParams`: every param, per model, at 11 values, at notes 24–108. No NaN or infinity, a peak under +6 dBFS before the chain, and silence within 1 s of the VCA letting go.
 
 **Goldens (ADR 0011).** One per model, plus AGE 0.5 and TAPE 0.5 on LOOP. Each is 2 s of C3, C4 and C5 on synthetic sources built in the test: a saw with a noise burst at 24 and 8 kHz, and a 4-frame saw-to-square transwave. They lock the refactor, not the sound.
 
 **Memory, the pool and admission**
-- `size_of::<TapeEngine>() < size_of::<ModalEngine>()`, and `[Voice; MAX_VOICES]` still fits D2 (ADR 0013), with the 384 B of `played` snapshots.
+- `size_of::<TapeEngine>() < size_of::<ModalEngine>()`, and `[Voice; MAX_VOICES]` still fits D2 (ADR 0013), with the 448 B of `played` snapshots.
 - A TAPE voice's latched id sets its `sounding` bit, and the bit clears on the block after the voice ends.
 - **`gate_holds_tape_note_on`:** ADR 0087's gate test on a TAPE voice. Its first sample after the move equals the unmoved source's.
 - Retire never cuts a TAPE note.
 - **`missing_source_refused_before_allocation`:** a note-on with no source, a missing one, or TRANSWAVE on a `Plain` source steals no voice and changes no allocator state.
 - A TAPE Sound's project round-trip carries its `SourceRef` and no audio. A missing source loads silent, reading `SOURCE MISSING`.
-- **`zone_set_is_one_source`:** a hand-built 12-zone `ZoneSet` takes one `SourceId`, one bit and one meter entry.
+- **`zone_set_is_one_source`:** a hand-built 12-zone `ZoneSet` with 1 024-frame heads takes one `SourceId`, one bit and 18 576 B on the meter. Six fit beside NEW.
+- **`tuning_lives_in_the_sound`:** a project whose source file has a different `root` label (re-imported) plays bit-identically. A zone set's `ZoneTune` does the same.
 
 **Cost and UI**
 - `tape_bills_each_model` (§ 5), including AGE routed at 0 and TRANSWAVE's pitch term. The bench rows are held high.
 - `hint_fits` holds the LOADS and WON'T FIT hints within 216 px.
 - Screen goldens (`docs/screens`): the strip for each model, and SRC on a pool row and a card row.
-- `no_four_tapes`: no page short or matrix label but the engine's reads `TAPE`.
+- `no_four_tapes`: no page short or matrix label but the engine's reads `TAPE`; the master stage reads `REEL`.
 
 **Importer**
 - Fuzz the WAV reader.
 - A sweep above 0.35 × rate comes out at least 60 dB down.
 - The CRC is deterministic across runs.
 - `smpl` roots are read. Re-importing with another `--root` writes the same file (`Present`).
+- A transwave's levels: 1 008 samples a frame by default, 2 032 with `--top 1024`.
 - Each transwave level holds no harmonic above ⌊0.35 · N⌋.
 - The `tapes-v1` manifest's CRCs are pinned.
 
@@ -581,11 +611,11 @@ Each step ships on its own.
 
 TAPE's steps 1–3 can be built on the host beside that, against a boxed arena.
 
-1. **Names:** the master stage's rename (§ 3), one commit, every test green and every golden bit-identical.
+1. **Names:** the master stage's on-screen word becomes REEL (§ 3), UI strings only, every golden but the screens bit-identical.
 2. **The source format:** `SourceHead`'s fields, the descriptor, `SourceZones`, `SourceView`, `SourceCheck`, the Hermite read. Then the importer (`chimera-import tape`, `just tape`), plain and transwave, writing to the simulator's card.
 3. **The engine with LOOP, and the bench:**
    - `EngineType::Tape`, `SlotKind::Tape`, `EngineSlot::Tape`, `EngineCtx`;
-   - `TapeParams` (block 34), neutral and INIT;
+   - `TapeEngineParams` (block 34), with ROOT and PERIOD copied at pick, neutral and INIT;
    - latching, `sounding`, refusal before allocation;
    - the SRC, DECK and model pages (no strip yet);
    - the cost and its `cost_test` row;
@@ -610,11 +640,11 @@ TAPE's steps 1–3 can be built on the host beside that, against a boxed arena.
 
 **RAM:**
 - **AXI, about 2 KB of the 36 KB margin:**
-  - `TapeParams` in each `ParamSnapshot`, about 48 B: six Parts and the triple buffer's copies, about 1 KB;
+  - `TapeEngineParams` in each `ParamSnapshot`, about 56 B: six Parts and the triple buffer's copies, about 1 KB;
   - the strip's cache, 432 B;
   - the head atomics, 48 B;
   - the head cache, 512 B.
-- **D2: 384 B,** for the eight `played` snapshots. The engine state fits the slot MODAL already sizes.
+- **D2: 448 B,** for the eight `played` snapshots. The engine state fits the slot MODAL already sizes.
 - **The arena:** the sources the user loads (§ 4).
 
 ## Owner questions
@@ -625,12 +655,12 @@ Settled by precedent or the code, not asked:
 - **#279's four macros are the home page, with SPACE,** as on MODAL's RES. SIZE is on the model page.
 - **Mono sources** (the S950, the original Digitakt; stereo doubles the meter).
 - **Hermite interpolation with a 0.35 × rate cut-off,** and folding on pitch-up (the SP-1200's character, bounded).
-- **TRANSWAVE's octave levels** (PPG, Waldorf). Its level-change heads are billed only where pitch can move.
+- **TRANSWAVE's octave levels** (PPG, Waldorf), top level 512 by default. The largest level whose step is ≤ 1; hysteresis at the alias limit (±6.2 st); level-change heads billed only where pitch can move that far.
 - **A real-time STRETCH with one complementary fade per splice,** period-locked for MONO. WSOLA is kept as a costed follow-up.
 - **Linear crossfades,** folded inside the loop when needed (an oscillator's loop is correlated).
 - **No one-shot model:** KIT and DRUM are the one-shot path (#214, #215; #279's own note).
 - **Loops are Sound parameters,** not source attributes (the Digitakt).
-- **The root is a label, not identity.** It is fixed in the Sound.
-- **TRON is one zone-set source an instrument.**
-- **The master stage is REEL on screen,** and the engine takes `Tape` in code.
+- **Root and period are labels in the file and identity in the Sound,** copied at pick. A zone set's go in `ZoneTune`.
+- **TRON is one zone-set source an instrument,** with 35 ms heads (18.6 KB an instrument). Its files need a chunked `put`, under its own ADR.
+- **The master stage keeps `BlockRef::Tape` and reads REEL on screen.** The engine is `BlockRef::TapeEngine`.
 - **The import default stays 24 kHz** (#279). The factory set picks a rate per source.
