@@ -1,7 +1,7 @@
 # 0085. The master reverb picks a TYPE: QUAD plus ROOM, HALL, GATE, REVERSE, BLOOM and ECHO
 
 - **Status:** Proposed; supersedes in part [0028](0028-one-alesis-style-reverb.md) (its "one reverb" and "TYPE retires"); amends [0067](0067-focus-glyphs.md) (the reverb composite)
-- **Deciders:** project owner (2026-10-03 rulings on #343; 2026-10-04: QUAD stays exactly as it is and keeps its name; modulation deferred to #345); firmware
+- **Deciders:** project owner (2026-10-03 rulings on #343; 2026-10-04: QUAD stays exactly as it is and keeps its name; modulation deferred to #345; "sound first" on CPU); firmware
 
 ## Context
 ADR 0028 cut the FX bus to one reverb, the Alesis-style ring, and retired
@@ -13,7 +13,7 @@ The owner now wants more spaces, though not at that price. The rulings of
 2026-10-03:
 - a TYPE setting, with only the selected model running;
 - TYPEs that are families, not presets;
-- no TYPE costing more CPU than the ring's worst case;
+- no TYPE costing more CPU than the ring's worst case. This was amended on 2026-10-04 by "sound first": that cost became the target, and the hard limit became the system worst case;
 - one shared delay arena that does not grow;
 - about 1–3 KB of flash per TYPE;
 - a switch with no click and no stale echo;
@@ -54,6 +54,19 @@ against the ring's 48 while crossfading.
   through linearly interpolated read pointers. The glide is a 100 ms
   one-pole, slew-limited to ⅛ sample per sample. Its slight pitch bend is
   part of their vintage character.
+- **CPU: "sound first"** (owner, 2026-10-04).
+  - QUAD's worst case is the **target**: 485 cycles per output sample,
+    239 instructions per ring sample.
+  - The **hard limit** is the measured system worst case: 8 voices of the
+    costliest patch, every FX at its worst, ORBIT running and the UI. It
+    must stay inside the audio budget, 70 % of the CPU
+    (`AUDIO_BUDGET_PERCENT` in `hw.rs`, ADR 0020), which is 7,000 cycles
+    per sample on rev V. That keeps the **30 % reserve** for UI, MIDI and
+    interrupts whole.
+  - A TYPE may exceed the target when the A/B shows its cheaper design
+    sounds wrong and the system worst case still keeps the reserve.
+  - Cheaper fallback designs are a last resort: they are used only if the
+    reserve would be breached, or the A/B hears no difference.
 - **Moving reads are few and costed.** A read whose length changes within a
   block costs about 7 instructions more than two fixed reads, because it
   works out its index per sample instead of using `ring.rs`'s wrap-free
@@ -174,18 +187,30 @@ against the ring's 48 while crossfading.
   | BLOOM | 220 | 235 |
   | ECHO | 147 | 165 |
 
-  Each TYPE has a concrete fallback design that saves 12–30 instructions:
+  All of them meet the target by estimate. As a last resort, each TYPE has
+  a concrete fallback design that saves 12–30 instructions:
   - ROOM and HALL glide SIZE on two delays only;
   - BURST moves 3 taps;
   - BLOOM wobbles 2 allpasses.
 
-  PRE-DLY always glides. Both ceiling figures date from
-  2026-09-27, and step 0 re-measures them as an absolute baseline: after
-  the refactor, REV QUAD must read ≤ that baseline + 1 %. Step 0 also
-  measures a moving pair's cost and benches the worst-case BURST, ROOM-loop
-  and HALL-loop kernels on the chip before any TYPE work. The
-  gate is then a bench row per TYPE, each ≤ REV QUAD on the same build. `FxBus::COST` is unchanged while every TYPE ≤ QUAD. The
-  BUS row runs the costliest TYPE.
+  PRE-DLY always glides.
+
+  The target figures date from 2026-09-27, and step 0 re-measures them as
+  an absolute baseline: after the refactor, REV QUAD must read ≤ that
+  baseline + 1 %. Step 0 also:
+  - measures a moving pair's cost;
+  - benches the worst-case BURST, ROOM-loop and HALL-loop kernels on the
+    chip, before any TYPE work;
+  - measures the system worst case on the unit with QUAD, which gives the
+    headroom.
+
+  The gates are absolute:
+  - the system worst case, re-measured as each TYPE lands, must keep the
+    reserve;
+  - each TYPE's bench row is recorded against the target.
+
+  `FxBus::COST` is unchanged while every TYPE ≤ QUAD. A dearer TYPE raises
+  it to the new BUS reading, and the voice counts are re-checked.
 - **Memory.** The arena does not grow. `FxBus` gains one engine-state enum
   (≤ 160 B), and `FxParams` about 28 B.
 - **Flash.** Estimated 11–13.5 KB in all: about 3–4 KB of shared scaffold,
@@ -196,7 +221,7 @@ against the ring's 48 while crossfading.
   loss applies to every TYPE alike.
 - **Order.** Step 0 (the baseline and the BURST spike) comes first, and
   tempo sync waits for ORBIT on `main`. ADR 0085 is accepted once every
-  A/B pair passes the spec's criterion (each time metric within ±30 % of
+  A/B pair passes the spec's criterion, the system worst case with every TYPE keeps the 30 % reserve, (each time metric within ±30 % of
   the named Midiverb plugin's, or an owner-signed ear exception) and UAT
   passes, with measured CPU and flash recorded here.
 - **What it rules out.** FREEZE, per-TYPE knob memory and external
