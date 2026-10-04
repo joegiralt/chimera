@@ -470,13 +470,12 @@ impl OrbitSong {
     /// stay with it: the runner may have adopted that slot already, so they
     /// go out when it lands.
     pub(crate) fn capture(&mut self, c: &Captured) {
-        let i = c.scene.0 as usize;
-        self.scenes[i].take(c);
         if c.scene == self.current {
-            self.scenes[i].harvest();
-            self.live.take(c);
+            self.edit(&mut |s| s.take(c));
+        } else {
+            self.scenes[c.scene.0 as usize].take(c);
+            self.moved(c.scene);
         }
-        self.wrote(c.scene);
     }
 
     /// An edit to the playing scene: `f` on its slot, then on `live`, so
@@ -485,7 +484,9 @@ impl OrbitSong {
     /// copy in flash.
     #[inline(never)]
     pub fn edit(&mut self, f: &mut dyn FnMut(&mut Scene)) {
-        self.edit_slot(&mut *f);
+        let n = self.current;
+        f(&mut self.scenes[n.0 as usize]);
+        self.wrote(n);
         f(&mut self.live);
     }
 
@@ -522,16 +523,6 @@ impl OrbitSong {
         &mut self.live
     }
 
-    /// `f` on the playing slot, its rev moved; its touched marks are
-    /// `live`'s to send, so dropped.
-    fn edit_slot(&mut self, f: &mut dyn FnMut(&mut Scene)) {
-        let n = self.current;
-        let s = &mut self.scenes[n.0 as usize];
-        f(s);
-        s.harvest();
-        self.wrote(n);
-    }
-
     /// `live` over slot `n`.
     fn write(&mut self, n: SceneIdx) {
         self.put(n, self.live);
@@ -540,12 +531,18 @@ impl OrbitSong {
     /// `s` into slot `n`, its rev moved and `saved` kept.
     fn put(&mut self, n: SceneIdx, s: Scene) {
         self.scenes[n.0 as usize] = s;
-        self.scenes[n.0 as usize].harvest();
         self.wrote(n);
     }
 
-    /// Slot `n` written: its rev moved, `saved` kept.
+    /// Slot `n` written: `moved`, and its touched marks dropped, as they
+    /// are `live`'s to send.
     fn wrote(&mut self, n: SceneIdx) {
+        self.scenes[n.0 as usize].harvest();
+        self.moved(n);
+    }
+
+    /// Slot `n` changed: its rev moved, `saved` kept.
+    fn moved(&mut self, n: SceneIdx) {
         let i = n.0 as usize;
         self.slot_revs[i] = self.slot_revs[i].wrapping_add(1);
         self.saved = if self.scenes[i].is_neutral() {
