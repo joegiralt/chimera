@@ -2,11 +2,11 @@
 
 - **Status:** Proposed
 - **Deciders:** owner (#279 rulings, 2026-10-01 to 2026-10-04), firmware;
-  revised after an adversarial review (2026-10-04)
+  revised after two adversarial reviews (2026-10-04)
 - **Amends:** [0087](0087-sound-pool-by-memory-budget.md) (Proposed, on
   `sound-pool-budget`):
   - `SourceHead`'s payload is fixed: shape, count, root, period;
-  - the CRC covers the structure and the bytes, not the root;
+  - the CRC covers the structure and the bytes, never a root or period;
   - `held` starts with a 16 B descriptor;
   - a TRON instrument is one `ZoneSet` source.
 
@@ -32,13 +32,14 @@ The master tape stage holds the name `Tape` in code (`BlockRef::Tape`,
 code 23, ident `"TAPE"`, ADR 0055).
 
 ## Decision
-- **Names.** In one rename-only commit, the master stage becomes
-  `BlockRef::MasterTape` and `dsp/master_tape/`. Its code and ident are
-  unchanged (ADR 0045 decouples them from Rust names), and on screen it
-  reads **REEL**.
-  - The engine is `EngineType::Tape` (engine code 2) with block
-    `BlockRef::Tape`: a new code 34 and ident `"TAPE_ENG"`.
-  - Its home page is **DECK**.
+- **Names.** `BlockRef::Tape` stays the master stage: three unmerged
+  branches use it 54 times.
+  - The engine is `EngineType::Tape` (engine code 2), with block
+    `BlockRef::TapeEngine` (code 34, ident `"TAPE_ENG"`), `dsp/tape_engine/`
+    and `TapeEngineParams`.
+  - The master stage's on-screen word becomes **REEL** (page short, matrix
+    labels, bench row; UI strings only).
+  - The engine's home page is **DECK**.
   - On screen, TAPE names only the engine and its macro.
 - **The engine:** one `SlotKind::Tape`, about 200 B, inside the slot
   `ModalEngine` already sizes. `TapeModel` codes 0–5; 6 is TRON's.
@@ -46,11 +47,15 @@ code 23, ident `"TAPE"`, ADR 0055).
   - `SourceHead` holds the `SourceRef`, `shape` (`Plain`, `Transwave` or
     `ZoneSet`), `count`, `root` (MIDI cents), `period` (YIN, Q16.16; 0 is
     unpitched) and a name: 34 B.
-  - The CRC covers shape, count, any zone table and the bytes. The root is
-    a label, so re-importing with a corrected root is the same file, and a
-    wrong root is fixed by the Sound's PITCH and FINE.
-  - `held` begins with a 16 B descriptor, so the audio reads a source's
-    shape from its own bytes.
+  - The CRC covers shape, count, any zone layout and the bytes. Root and
+    period are labels in the file, so re-importing with a corrected root
+    makes the same file.
+  - **Playback identity lives in the Sound:** picking SOURCE copies the
+    root and period into the Sound (ROOT, PERIOD; a zone set's into a
+    `ZoneTune` record, 0x001A). A project then tunes the same on every
+    card.
+  - `held` begins with a 16 B descriptor (shape, count, rate), so the audio
+    reads a source's shape from its own bytes.
   - Files are written by ADR 0087's `write_source`: verified, then sealed.
     A sealed failing file reads as missing and is never rewritten. A torn,
     unsealed one is replaced.
@@ -58,9 +63,17 @@ code 23, ident `"TAPE"`, ADR 0055).
 - **TRON** (decided now, before 0x0016 freezes): **one `ZoneSet` source per
   instrument.**
   - It is a single file with up to 24 contiguous zones, described by a
-    `SourceZones` record (0x0019) that is in the CRC.
-  - In the arena: the descriptor, the zone table, then each zone's 100 ms
-    head.
+    `SourceZones` record (0x0019). Its layout (start, frames, key) is in
+    the CRC; each zone's root and period are labels, copied into the
+    Sound's `ZoneTune`.
+  - In the arena: the descriptor, the layout, then each zone's head.
+  - **A head covers only the slowest UI pass plus a card stall, about
+    35 ms:** 1 024 frames at 24 kHz, 18 576 B an instrument. Six TRON Parts
+    take 111 456 B, 75 % with NEW.
+  - At about 3.5 MB, a zone set is past `put`'s 1 MiB. It needs a chunked,
+    resumable `put` (256 KiB chunks, each with its own CRC and deadline,
+    resumed from the unsealed file's length, sealed when whole), under its
+    own future ADR, before TRON ships.
   - Six TRON Parts are six sources, so `MAX_SOURCES` = 32 and the `u32`
     `sounding` mask stand, and `SourceRef` freezes unchanged.
 - **The voice:**
@@ -106,15 +119,22 @@ code 23, ident `"TAPE"`, ADR 0055).
     crossfade.
   - **TRANSWAVE:** plays only `Transwave` sources (on others the note-on is
     refused).
-    - A transwave is up to 32 single-cycle frames, stored at seven octave
-      mip levels (1 024 → 16 samples), each band-limited to ⌊0.35 N⌋
-      harmonics by the importer: the PPG and Waldorf approach.
+    - A transwave is up to 32 single-cycle frames, stored at octave mip
+      levels from 512 (by default; `--top 1024` doubles the bytes) down to
+      16 samples. Each level is band-limited to ⌊0.35 N⌋ harmonics by the
+      importer: the PPG and Waldorf approach.
+    - The 512 default costs only notes below about 94 Hz half their
+      harmonics: C1 tops out at 5.9 kHz, not 11.7.
     - Two heads lerp adjacent frames, and the position `p` is ramped per
       sample.
-    - The level is chosen with hysteresis (down past a step of 1.25, up
-      under 0.6). A change crossfades over one block, reading four heads.
-      That is billed only when pitch can move (a PITCH route or STEAL
-      GLIDE), as MODAL's `PITCH` term is.
+    - At note-on the level is the **largest** whose step is ≤ 1. It changes
+      only past the alias limit (a step over 1.43 or under 0.35), a move
+      of more than ±6.2 semitones. Level 16 is alias-free up to a 4.3 kHz
+      fundamental, just above C8; higher notes fold.
+    - A change crossfades over one block, reading four heads. That is
+      billed only when pitch can move more than ±6.2 semitones (STEAL
+      GLIDE, or deep PITCH/FINE routes), as MODAL's `PITCH` term is. A
+      vibrato costs nothing.
   - **SCRUB:** a finger, slewed by DRAG, drags a head that loops at
     MOTION's bipolar vari-speed (Morphagene's Slide and Vari-Speed). The
     finger's speed is bounded so the head's never passes `inc`'s clamp.
@@ -143,13 +163,13 @@ code 23, ident `"TAPE"`, ADR 0055).
 - **CPU,** in cycles a sample. These are host estimates, with one head at
   about 55 instructions and the cache misses of `inc` 16 (+12 a head):
 
-  | | LOOP, REVERSE, PING-PONG, SCRUB | TRANSWAVE | TRANSWAVE, pitch moving | STRETCH | AGE on |
+  | | LOOP, REVERSE, PING-PONG, SCRUB | TRANSWAVE | TRANSWAVE, pitch moving > ±6.2 st | STRETCH | AGE on |
   |---|---|---|---|---|---|
   | Billed | 230 | 240 | 450 | 240 | +20 |
 
   - **Admission.** A plain TAPE voice (337 at worst) is admitted 8 on rev
-    V, on rev Y, with ORBIT and with the master tape. A pitch-routed
-    TRANSWAVE (547) is admitted 6 on rev Y.
+    V, on rev Y, with ORBIT and with the master tape. A TRANSWAVE whose
+    pitch can move past ±6.2 semitones (547) is admitted 6 on rev Y.
   - **Eight voices hold while the benched engine stays under 546 on rev V
     and 400 on rev Y.**
   - **The bench rows are build step 3:** cold-cache worst blocks with
@@ -164,7 +184,8 @@ code 23, ident `"TAPE"`, ADR 0055).
   - the root from `--root`, the `smpl` chunk or YIN, and the period from
     YIN;
   - `rubato` resamples at a 0.35 × rate cut-off (24 kHz by default);
-  - `--transwave` builds the mip levels with `rustfft`;
+  - `--transwave` builds the mip levels with `rustfft` (top 512, or
+    `--top 1024`);
   - TPDF dither, then `pack12` and `write_source`.
 
   The firmware links no importer, dither or resampler.
@@ -185,9 +206,10 @@ code 23, ident `"TAPE"`, ADR 0055).
   - The audio follows #282's dataset rule. None is committed.
 
 ## Alternatives considered
-- **Keep `Tape` for the master stage and name the engine `Reel`** (the
-  first draft). The user-facing name and the code would disagree. The
-  rename is about 20 sites and changes no byte on disk.
+- **Rename the master stage to `MasterTape`** (the second draft). It
+  touches 54 uses on three unmerged branches for no change on disk.
+- **Name the engine `Reel`** (the first draft). The user-facing name and
+  the code would disagree.
 - **Linear interpolation.** It is 1–2 dB more droop and 6–13 dB more
   imaging below 0.2 fs, to save about 20 instructions a head.
 - **A 0.45 × rate cut-off.** At 0.45 fs, either kernel's image is within
@@ -207,6 +229,13 @@ code 23, ident `"TAPE"`, ADR 0055).
   duplicated the source.
 - **One `SourceRef` per TRON zone.** 72 sources for six instruments, past
   `MAX_SOURCES` and the `u32` mask.
+- **100 ms TRON heads** (ADR 0087's count). 43 200 B an instrument; six
+  wouldn't fit beside NEW. A head only has to outlast the first refill.
+- **Root and period read from the file.** A re-labelled copy on another
+  card would retune a project.
+- **A TRANSWAVE top level of 1 024 by default.** It doubles every
+  transwave (37 % of the meter for 16 frames, against 22 %) for brightness
+  below 94 Hz.
 - **SPACE off the home page, with SIZE on it** (the first draft). #279
   rules four macros, and MODAL's RES pattern fits them.
 - **Stereo sources.** They double every cost on the meter.
@@ -215,10 +244,11 @@ code 23, ident `"TAPE"`, ADR 0055).
 
 ## Consequences
 - A third engine at about 10 KB of flash (leaving about 87 KB) and about
-  2 KB of AXI. **D2: 384 B** for the voices' `played` snapshots. The engine
+  2 KB of AXI. **D2: 448 B** for the voices' `played` snapshots. The engine
   state itself fits the existing slot.
 - Six one-second 24 kHz sources don't fit beside NEW. At 16 kHz, or at
-  0.7 s each, they do. A 16-frame transwave costs 37 % of the meter.
+  0.7 s each, they do. A 16-frame transwave costs 22 % of the meter, and six
+  TRON instruments 75 %.
 - The voice guarantees are host estimates until build step 3's bench. If
   the bench comes in higher, the counts are restated.
 - MONO is smooth only on pitched sources. POLY keeps the S950's tremolo
@@ -231,7 +261,9 @@ code 23, ident `"TAPE"`, ADR 0055).
   - Hermite's measured response;
   - reads stay in the row (proptest);
   - pitch within 0.1 cent;
-  - TRANSWAVE alias-free from C1 to C8;
+  - TRANSWAVE alias-free from C1 to C8, its level the largest with step
+    ≤ 1, and vibrato billing no level heads;
+  - tuning lives in the Sound;
   - STRETCH keeps pitch, scales time, and its fades are complementary;
   - INIT never hard-wraps;
   - PING-PONG clamps with a fade;
@@ -247,7 +279,7 @@ code 23, ident `"TAPE"`, ADR 0055).
 - ADRs: 0011, 0013, 0040, 0042, 0045, 0051, 0053, 0055, 0056, 0060, 0063,
   0065, 0066, 0070, 0086, 0087, 0088, 0090, 0091, 0092.
 - Code: `chimera-core/src/dsp/engines.rs`, `dsp/voice.rs`, `dsp/delay.rs`
-  (`Transport`), `dsp/tape/`, `params.rs`, `addr.rs`, `hw.rs`,
+  (`Transport`), `dsp/tape/` (the master stage), `params.rs`, `addr.rs`, `hw.rs`,
   `storage/codes.rs`, `ui/block_registry.rs`, `ui/mod_grid.rs`,
   `project/codec.rs`, `project/parts.rs`; `chimera-core/tests/cost_test.rs`.
 - Akai S950 Operator's Manual, p. 32 (TIMESTRETCH: D-TIME, AUTO-D, MONO and
