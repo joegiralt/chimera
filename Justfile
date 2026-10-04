@@ -139,6 +139,13 @@ status:
 # The card's read speed beside audio and the streams it holds (just flash-bench first)
 card *args:
     python3 tools/chimera-usb.py card {{args}}
+# A file onto the card over USB (ADR 0092): `just put AVRIL14.A /CHIMERA/PROJECTS/P0000014.A`;
+# a remote ending in / takes the local name. Projects and Sounds only, 1 MiB at most.
+put local remote:
+    python3 tools/chimera-usb.py put "{{local}}" "{{remote}}"
+# A card directory's names and sizes
+ls dir="/CHIMERA/PROJECTS":
+    python3 tools/chimera-usb.py ls "{{dir}}"
 
 # Flash firmware to PreenFM3 via DFU. With the console up, `to-dfu` sends
 # `dfu` and waits for the ROM loader; without it, bridge BOOT0 and re-plug.
