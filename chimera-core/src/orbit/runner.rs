@@ -406,17 +406,9 @@ impl OrbitRunner {
             .into_iter()
             .zip(w.rings.iter_mut().zip(&settings.rings))
         {
-            let mut sr = *s;
-            let old = w.ring;
-            if !rhythm.contains(r) {
-                // `None`: the fill changed with no edit, so the fresh one stands.
-                sr.ring = sr.ring.with_mask(old.hits_mask()).unwrap_or(sr.ring);
-            }
-            if !notes.contains(r) {
-                sr.ring.notes = old.notes;
-                sr.ring.pool = old.pool;
-            }
-            *w = sr;
+            w.target = s.target;
+            w.ring
+                .take_knobs(&s.ring, rhythm.contains(r), notes.contains(r));
         }
     }
 
@@ -771,7 +763,8 @@ impl OrbitRunner {
         *cue = self.cue.map(Incoming::scene);
         *armed = self.take.armed;
         *seg = self.state.seg();
-        *chord = self.state.harmony(w).chord;
+        // Running, the block's; stopped, built here.
+        *chord = self.harmony.unwrap_or_else(|| self.state.harmony(w)).chord;
         for ((rv, s), &fired) in rings.iter_mut().zip(&w.rings).zip(&self.fired) {
             *rv = RingView::of(&s.ring, self.edge, fired);
         }

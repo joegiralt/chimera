@@ -197,6 +197,47 @@ impl Ring {
         self.with_hits(fill.mask())
     }
 
+    /// `s`'s knobs over `self`; its hits only with `rhythm`, its notes and
+    /// pool only with `notes`, so drift stands otherwise. Kept hits are
+    /// laid again only when STEPS, HITS, ROTATE or ACCENT moved: as
+    /// `s.with_mask(self's hits)`, or `s`'s hits where they no longer fit.
+    pub(crate) fn take_knobs(&mut self, s: &Ring, rhythm: bool, notes: bool) {
+        let &Ring {
+            fill,
+            hits_mask: _,
+            accented: _,
+            chance,
+            mutate,
+            mute,
+            gate,
+            velocity,
+            accent,
+            octave,
+            range,
+            snap,
+            mode,
+            walk,
+            notes: _,
+            pool: _,
+        } = s;
+        let relay = rhythm || fill != self.fill || accent != self.accent;
+        if relay {
+            let laid = if rhythm {
+                *s
+            } else {
+                s.with_mask(self.hits_mask).unwrap_or(*s)
+            };
+            (self.hits_mask, self.accented) = (laid.hits_mask, laid.accented);
+        }
+        if notes {
+            (self.notes, self.pool) = (s.notes, s.pool);
+        }
+        (self.fill, self.chance, self.mutate, self.mute, self.gate) =
+            (fill, chance, mutate, mute, gate);
+        (self.velocity, self.accent, self.octave, self.range) = (velocity, accent, octave, range);
+        (self.snap, self.mode, self.walk) = (snap, mode, walk);
+    }
+
     /// `m` as the hits, if it keeps STEPS and the hit count: a nudge.
     pub fn with_mask(self, m: HitMask) -> Option<Ring> {
         let cur = self.hits_mask;
