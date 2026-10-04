@@ -33,8 +33,8 @@
   - All are frozen in `chimera-core/tests/fixtures/disk_codes_v1.txt` (ADR 0045).
 - **Provenance.** No code, instruction listing, or ROM coefficient, offset or tap table may come from github.com/thement/midiverb_emulator or commit 7119f7ad, whole or in part. Every engine task writes a provenance report: each table, its spec source, and each ear change.
 - **CPU.**
-  - The target is the pre-refactor REV QUAD row (485 cycles per output sample, re-measured in Task 1).
-  - The per-TYPE gate is ΔCOST ≤ headroom: **96** in the default build, **23** with `master-tape`.
+  - The target is a TYPE's REV row against REV QUAD on the same bench (Task 1: QUAD reads 66 as a delta over the MIX-0 default; ADR 0031's absolute 485 is the old frame).
+  - The per-TYPE gate is ΔCOST ≤ headroom: **76** in the default build (BOWED 8 × 717 on rev V), **23** with `master-tape` (Task 1, § Measured).
   - The final gate is `cost_test` passing with `FxBus::COST` at the costliest TYPE's BUS+V reading.
   - The STRESS row is a second gate.
 - **Flash.** Measure the plain release build's `text`: `rust-size target/thumbv7em-none-eabihf/release/chimera-stm32`, column `text` (ADR 0089, which replaces the spec's git-archive method). A TYPE may add at most 3 KB.
