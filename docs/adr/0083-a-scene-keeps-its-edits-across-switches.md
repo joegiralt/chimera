@@ -27,12 +27,17 @@ The precedent says two things:
 
 ## Decision
 - **Each slot is its scene's working copy: the user's edits, never
-  MUTATE's drift.** Every edit to `live` also goes to the playing slot
-  (`scenes[current]`), through `OrbitSong::edit` (cells, MIX + B*n*'s
-  MUTE, a capture taken) or `OrbitSong::keep` (a param turned through
-  `Blocks`, copied as `live` has it, so OCTAVE moves the slot's own notes
-  and HITS re-lays its own hits). While a switch waits, edits still go
-  to the playing scene. `absorb` writes the drift into `live` alone.
+  MUTATE's drift.** `OrbitSong.live` is private: the one way to change
+  it is `OrbitSong::edit`, which runs the edit on the playing slot
+  (`scenes[current]`) and then on `live`. The cells, MIX + B*n*'s MUTE
+  and a capture call it; a scene param's encoder calls `OrbitSong::turn`,
+  the same edit replaying the nudge or snap on each, so OCTAVE moves the
+  slot's own notes and HITS re-lays its own hits. `UiBlocks` hands out no
+  `&mut` to a scene's blocks, so a new path (a CC on an ORBIT param) has
+  to go through `edit` to compile. Readers take `live()`; tests alone
+  reach past it (`live_mut_for_test`, behind `test-support`). While a
+  switch waits, edits still go to the playing scene. `absorb` writes the
+  drift into `live` alone.
 - **Leaving a scene keeps its edits.** `land(s)` still copies the slot
   into `live`: the scene comes back with its edits, its drift restarted
   from them.
@@ -82,6 +87,12 @@ The precedent says two things:
   drift since.
 - An edit costs a second write on the UI thread; nothing on the audio
   thread, no heap.
+- Flash, fat-LTO release text, `--features orbit`, each on a git-archive
+  copy: the merged base 44f6d786 721,136 B; 55d9ca62 (first cut, a
+  `keep` copy after a `Blocks` edit) 721,904 B (+768); `live` private
+  with `edit` and `turn` 721,656 B (+520). A closure built round
+  `part_page::apply_under` over `Scene` measured 725,916 B and was
+  dropped. The base was already over the 715,428 B gate.
 
 ## Sources
 - Elektron Digitakt manual, OS 1.51, p. 35: FUNC + YES / FUNC + NO, SAVE
