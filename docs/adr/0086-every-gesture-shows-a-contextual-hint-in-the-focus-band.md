@@ -123,6 +123,9 @@ The owner's rulings:
   hint that varies with other state must be added to the key, or its
   band won't redraw when it changes. The matrix's hint is safe: its
   region key holds the cursor and the matrix's revision.
+- HINTS itself is in no band's key: a change to it redraws every band
+  and the browser at once (`UiState::hints_moved`), so a new page's
+  hint can't be left on screen or missing.
 - The same round makes RING's value, its redraw key, well formed. It is
   `(ring × 6 + part) / (RINGS × 6 − 1)`, one value per ring and Part
   within 0..=1. Before, `(ring + part / 16) / 4` reached 1.08 for ring 5
