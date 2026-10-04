@@ -16,7 +16,7 @@
 
 - **Code rules (CLAUDE.md):** no `unsafe` without a `// SAFETY:` comment; no heap in the audio callback; no libc; the audio thread never blocks or allocates; parameter changes lerp and never snap.
 - **Commits:** a terse subject with no type prefix. Stage by path, never `git add -A`.
-- **Arena constants:** `ARENA_BYTES = 160 * 1024`, `GRANULE = 16`, `MAX_SOUNDS = 128`, `MAX_SOURCES = 32`, `MAX_SOUND_COST = 1824`.
+- **Arena constants:** `ARENA_BYTES = 160 * 1024`, `GRANULE = 16`, `MAX_SOUNDS = 128`, `MAX_SOURCES = 32`, `MAX_SOUND_COST = 1872`.
 - **AXI margin:** a linker `ASSERT` keeps the gap between `__sheap` and the end of AXI at ≥ 32 KiB on shipping builds and ≥ 8 KiB on `bench` builds. It must hold on every feature set `just check` builds.
 - **Delay line (ADR 0090):** `i16`, full scale ±2.0, write `(x * 16384.0) as i16` (truncates toward zero, saturates), `MAX_DELAY_SAMPLES` unchanged at 24 064.
 - **Sparse Sounds:** `encode_sound` writes only params whose disk value differs from `Sound::neutral(engine)`. `neutral` is a format contract: a change to it needs a migration in the same commit.
@@ -126,7 +126,7 @@ Run: `cargo test -p chimera-core delay`. Expected: FAIL, because `to_line` is no
 **Interfaces:**
 - Produces:
   - `pub fn encode_block(b: BlockRef, blk: &dyn Block, base: Option<&dyn Block>, out: &mut RecordBuf) -> usize`: the params written; with `base`, only those whose disk value differs. Every non-Sound caller passes `None`.
-  - `pub const MAX_SOUND_COST: usize = 1824`
+  - `pub const MAX_SOUND_COST: usize = 1872`
   - `encode_sound` keeps its signature and skips a block whose count is 0
 
 - [ ] **Step 1: Write the failing tests** in `sound_codec_test.rs`:
@@ -135,7 +135,7 @@ Run: `cargo test -p chimera-core delay`. Expected: FAIL, because `to_line` is no
 #[test] fn sparse_round_trip()      // factory 0..8, INIT ×2, 1000 seeded random Sounds: pass(decode, encode(s)).bits_eq(s)
 #[test] fn sparse_byte_identity()   // encode(decode(encode(s))) == encode(s); and encode(decode(fixture v1 .snd)) == encode(original)
 #[test] fn sparse_is_canonical()    // for 1000 pairs (s, s with one param moved one step): (encode(a) == encode(b)) == a.bits_eq(&b)
-#[test] fn sparse_sizes()           // 16 + records: factory_0 ≤ 273 B; INIT == 58 B
+#[test] fn sparse_sizes()           // 16 + records: factory_0 ≤ 273 B; INIT == 128 B
 #[test] fn sparse_bound()           // every param off neutral, full registry, 128 routes: 16 + records ≤ MAX_SOUND_COST
 #[test] fn neutral_is_a_contract()  // Sound::neutral matches fixtures/neutral_v1.txt; message: "changing neutral needs a migration (ADR 0087)"
 ```

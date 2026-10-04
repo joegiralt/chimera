@@ -104,6 +104,9 @@ fn writes_of(disk: &RamDisk, n: u32) -> Vec<u32> {
 #[test]
 fn cut_at_every_block_write_keeps_a_generation() {
     let base = slot(first_card());
+    // A `dense` Sound spans clusters: a cut lands mid-chain.
+    let a = kept(&base);
+    assert!(a.chain.len() >= 2, "{} clusters", a.chain.len());
     // Save 2 creates B, 3 truncates A, 4 truncates B.
     for n in 2..=4 {
         let before = copy(&base.inner);
@@ -450,6 +453,19 @@ fn project_gen(n: u32) -> Box<Project> {
     p
 }
 
+/// The cluster count of each side of the project pair on `disk`, A then B
+/// (0: absent).
+fn project_chains(disk: &RamDisk) -> [usize; 2] {
+    let r = fat_check(disk);
+    let stem = project_id().stem();
+    b"AB".map(|ext| {
+        r.entries
+            .iter()
+            .find(|e| e.name[..8] == stem[..] && e.name[8] == ext)
+            .map_or(0, |e| e.chain.len())
+    })
+}
+
 fn project_id() -> ProjectId {
     ProjectId::new(1).unwrap()
 }
@@ -482,7 +498,7 @@ fn load_project_in_place(slot: &Slot) -> Result<Box<Project>, InPlaceError> {
     Ok(q)
 }
 
-/// A project (`project_gen`'s: 75 block writes a save) cut at every block
+/// A project (`project_gen`'s, 69 clusters a side) cut at every block
 /// write of its third save: the in-place load always gets save 2 or 3
 /// whole, never an error, and the next save lands.
 #[test]
@@ -493,6 +509,9 @@ fn project_cut_keeps_a_generation() {
         assert!(matches!(note, ProjectNote::Saved(_)), "save {n}: {note:?}");
     }
     let before = copy(&base.inner);
+    // Both sides span many clusters: a cut lands mid-chain.
+    let chains = project_chains(&before);
+    assert!(chains.iter().all(|&n| n >= 60), "chains {chains:?}");
     let blocks = {
         let dry = slot(copy(&before));
         let mut s = probed(&dry);
@@ -500,7 +519,6 @@ fn project_cut_keeps_a_generation() {
         let blocks: Vec<u32> = log(&s).writes.borrow().iter().map(|&(b, _)| b).collect();
         blocks
     };
-    assert!(blocks.len() > 60, "{} writes", blocks.len());
     let (two, three) = (project_gen(2), project_gen(3));
     let (crc2, crc3) = (project_crc(&two), project_crc(&three));
     assert_ne!(crc2, crc3);
@@ -554,11 +572,12 @@ fn project_clear_cut_keeps_a_generation() {
         let dry = slot(copy(&before));
         let mut s = probed(&dry);
         assert_eq!(clear_project_on(&mut s), Ok(()));
+        // NEW, as CLEAR writes it, spans several clusters.
+        let chains = project_chains(&dry.inner);
+        assert!(chains.iter().any(|&n| n >= 8), "chains {chains:?}");
         let blocks: Vec<u32> = log(&s).writes.borrow().iter().map(|&(b, _)| b).collect();
         blocks
     };
-    // NEW, sparse (ADR 0087): 17 writes.
-    assert!(blocks.len() > 12, "{} writes", blocks.len());
     let (new, t) = Project::boxed();
     let two = project_gen(2);
     let mut loaded = [0; 2];

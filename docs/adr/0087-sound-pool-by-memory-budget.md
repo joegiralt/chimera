@@ -19,8 +19,8 @@ Measured on `orbit` (43d59110), which merges first:
 
 - **`encode_sound` writes all 19 voice blocks of both engines,** 1 143 B a
   Sound, more than the struct. Writing only params that differ from
-  `Sound::neutral` gives 153–273 B for the factory Sounds and 58 B for
-  INIT. The worst case is 1 823 B.
+  `Sound::neutral` gives 153–273 B for the factory Sounds and 128 B for
+  INIT. The worst case is 1 858 B.
 - **AXI really free** (`rust-size`, `main` at cf50ee74) is 140 024 B on
   the largest shipping build (`orbit`), and 104 188 B on the largest build
   of all (`bench,master-tape`, whose diagnostics hold 31 KB). The paper model, `AXI_RESIDENT` with its 64 KiB `UI_RESERVE`
@@ -66,6 +66,8 @@ engine.
   - Today's decoder reads it, and the encoding is canonical.
   - `neutral` becomes a format contract: changing a default needs a
     migration.
+  - `sound_crc` changes for every Sound, once. After the upgrade a Stale
+    Part shows as Edited; acceptable with no users yet.
   - One encoder writes the arena, project files, library files and the
     factory blob.
 - **A Part decodes on load into its own `Sound`, as today.** The audio
