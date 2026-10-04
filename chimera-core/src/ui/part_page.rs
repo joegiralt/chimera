@@ -54,7 +54,14 @@ pub fn apply_under(
     } else if let Some(a) = slot_addr(def, slot, ctx)
         && let Some(b) = params.block_mut(a.block)
     {
-        b.nudge(a.param, delta);
+        if crate::ui::view::is_reverb_panel(def, slot) {
+            // The TYPE's tick: QUAD's SIZE a table step, a synced knob a
+            // division (`reverb_panel::step`).
+            let s = crate::ui::reverb_panel::step_in(b, a.param);
+            b.set(a.param, b.get(a.param) + delta as f32 * s);
+        } else {
+            b.nudge(a.param, delta);
+        }
     }
 }
 

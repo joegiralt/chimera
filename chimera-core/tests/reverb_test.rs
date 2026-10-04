@@ -791,14 +791,16 @@ fn reverb_params_default_to_the_spec_and_retire_type() {
     let p = ReverbParams::default();
     for s in REVERB_SPECS.iter() {
         assert_eq!(p.get(s.id), s.default, "{}", s.label);
-        assert_ne!(s.id, ParamId(0), "TYPE's id is retired (ADR 0009)");
+        assert_ne!(s.id, ParamId(0), "the old TYPE's id is retired (ADR 0009)");
     }
     assert_eq!(p.mix, 0.0);
+    // Slot 3 ticks 1/128 (GATE's LENGTH); QUAD's panel keeps its 1/31
+    // (`reverb_panel_test`).
     let size = REVERB_SPECS
         .iter()
         .find(|s| s.id == ReverbParams::SIZE)
         .unwrap();
-    assert_eq!(size.step, 1.0 / 31.0);
+    assert_eq!(size.step, 1.0 / 128.0);
     assert_eq!(p.controls(), RingControls::default());
 }
 
@@ -820,18 +822,15 @@ fn smear_and_rate_are_params_11_and_12() {
     assert_eq!((p.smear, p.rate), (0.8, 0.2));
     assert_eq!(p.get(ParamId(5)), 0.0);
     let ids: Vec<ParamId> = REVERB_SPECS.iter().map(|s| s.id).collect();
-    assert_eq!(
-        ids,
-        [
-            ReverbParams::TIME,
-            ReverbParams::DAMPING,
-            ReverbParams::SIZE,
-            ReverbParams::MIX,
-            ReverbParams::SMEAR,
-            ReverbParams::RATE,
-        ]
-    );
-    for (s, label) in REVERB_SPECS[4..].iter().zip(["SMEAR", "RATE"]) {
+    assert!(!ids.contains(&ParamId(5)));
+    let at = |id| REVERB_SPECS.iter().position(|s| s.id == id).unwrap();
+    for (s, label) in [
+        &REVERB_SPECS[at(ReverbParams::SMEAR)],
+        &REVERB_SPECS[at(ReverbParams::RATE)],
+    ]
+    .into_iter()
+    .zip(["SMEAR", "RATE"])
+    {
         assert_eq!(
             (s.label, s.min, s.max, s.step),
             (label, 0.0, 1.0, 1.0 / 128.0)

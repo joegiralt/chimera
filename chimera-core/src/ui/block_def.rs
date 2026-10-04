@@ -79,6 +79,9 @@ pub enum SlotBinding {
     LfoPanel(crate::dsp::modulator::LfoSlot, u8),
     /// Cell k of EXC or MDL2, per MODEL (`modal::page_cells`).
     ModalPanel(crate::dsp::modal::ModalPage, u8),
+    /// Cell k of REV's knobs 1–4 or of REV › MORE, per the reverb's TYPE
+    /// (`reverb_panel::knob`).
+    ReverbPanel(crate::ui::reverb_panel::RevPage, u8),
     /// A param of the ORBIT ring the location selects.
     SelectedRing(ParamId),
     /// One of ORBIT's own cells.
@@ -162,6 +165,13 @@ impl ParamSlot {
         }
     }
 
+    pub const fn reverb_panel(page: crate::ui::reverb_panel::RevPage, k: u8) -> Self {
+        Self {
+            binding: SlotBinding::ReverbPanel(page, k),
+            label_override: None,
+        }
+    }
+
     pub const fn orbit(cell: crate::ui::orbit::OrbitCell) -> Self {
         Self {
             binding: SlotBinding::Orbit(cell),
@@ -192,7 +202,8 @@ impl ParamSlot {
             | SlotBinding::FilterPanel(_)
             | SlotBinding::EnvPanel(..)
             | SlotBinding::LfoPanel(..)
-            | SlotBinding::ModalPanel(..) => None,
+            | SlotBinding::ModalPanel(..)
+            | SlotBinding::ReverbPanel(..) => None,
         }
     }
 
@@ -207,7 +218,8 @@ impl ParamSlot {
             | SlotBinding::FilterPanel(_)
             | SlotBinding::EnvPanel(..)
             | SlotBinding::LfoPanel(..)
-            | SlotBinding::ModalPanel(..) => "--",
+            | SlotBinding::ModalPanel(..)
+            | SlotBinding::ReverbPanel(..) => "--",
             SlotBinding::SelectOp => "OP",
             SlotBinding::Legacy { label, .. } => label,
             SlotBinding::Param(_) | SlotBinding::SelectedOp(_) | SlotBinding::SelectedRing(_) => {
@@ -223,7 +235,8 @@ impl ParamSlot {
             | SlotBinding::FilterPanel(_)
             | SlotBinding::EnvPanel(..)
             | SlotBinding::LfoPanel(..)
-            | SlotBinding::ModalPanel(..) => ValFmt::Uni,
+            | SlotBinding::ModalPanel(..)
+            | SlotBinding::ReverbPanel(..) => ValFmt::Uni,
             SlotBinding::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
             SlotBinding::Legacy { fmt, .. } => fmt,
             SlotBinding::Param(_) | SlotBinding::SelectedOp(_) | SlotBinding::SelectedRing(_) => {

@@ -26,6 +26,7 @@ pub mod part_page;
 pub mod perf;
 pub mod region;
 pub mod renderer;
+pub mod reverb_panel;
 pub mod settings;
 pub mod splash;
 pub mod theme;
@@ -47,6 +48,8 @@ use crate::block::Block;
 use crate::boot::RomDfu;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
+use crate::dsp::rev::sync::Tempo;
+use crate::dsp::reverb::{KnobMemory, ReverbParams};
 use crate::in_place::{by_value, uninit_at};
 use crate::mod_path::{LABEL_LEN, RegistryError};
 use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModState};
@@ -228,6 +231,9 @@ pub struct UiState {
     led: led::Led,
     /// OS UPGRADE's yes, until the shell takes it.
     dfu: Option<Said<RomDfu>>,
+    /// Each reverb TYPE's knobs as last left: a TYPE nudge away and back
+    /// loses nothing. RAM only; a project load clears it.
+    rev_knobs: KnobMemory,
 }
 
 crate::in_place::field_list!(UiState => UiState {
@@ -259,6 +265,7 @@ crate::in_place::field_list!(UiState => UiState {
     orbit,
     led,
     dfu,
+    rev_knobs,
 });
 
 impl Default for UiState {
@@ -324,6 +331,7 @@ impl UiState {
             addr_of_mut!((*p).orbit).write(orbit::OrbitUi::new());
             addr_of_mut!((*p).led).write(led::Led::OFF);
             addr_of_mut!((*p).dfu).write(None);
+            addr_of_mut!((*p).rev_knobs).write(KnobMemory::new());
             let ui = slot.assume_init_mut();
             ui.load_matrix(PartId::ALL[0]);
             ui
@@ -480,6 +488,7 @@ impl UiState {
             self.show_note(n);
         }
         self.orbit.booted(self.project.orbit_mut());
+        self.rev_knobs.clear();
         self.project_replaced(was);
     }
 
@@ -575,6 +584,9 @@ impl UiState {
         // Before the publish: it carries the load to the runner.
         self.orbit.loaded(link.epoch(), self.project.orbit_mut());
         let published = publish(swap, self);
+        // A project stores only its TYPE's knobs (reverb TYPEs spec § A
+        // TYPE change loads that TYPE's knobs).
+        self.rev_knobs.clear();
         self.project_replaced(was);
         // Only a file load sets it: NEW, loaded or fallen back to, has none.
         if let Some(f) = self.project.meta().file() {
@@ -802,7 +814,8 @@ impl UiState {
             &self.project.part(self.active_part).sound.params,
             self.sel_op,
         )
-        .on_clock(self.orbit.status.source);
+        .on_clock(self.orbit.status.source)
+        .on_rev(self.project.perf().fx.reverb.kind);
         match self.loc.orbit() {
             Some(o) => ctx.on_ring(o.ring()),
             None => ctx,
@@ -1928,6 +1941,23 @@ impl UiState {
                 }
                 if view::is_dimmed(&v, &self.project.part(at).sound, &self.ctx()) {
                     continue; // dimmed: the encoder is ignored
+                }
+                // The reverb turns by its TYPE's panel: TYPE keeps the knobs
+                // it leaves, SYNC converts its slots (reverb TYPEs spec § Pages).
+                if let Some(a) = v.addr()
+                    && a.block == BlockRef::Reverb
+                    && (!shift || matches!(a.param, ReverbParams::TYPE | ReverbParams::SYNC))
+                {
+                    let rev = &mut self.project.edit_part(at).fx.reverb;
+                    // 120 BPM until the clock reaches the reverb (Task 12).
+                    *rev = reverb_panel::turn(
+                        rev,
+                        a.param,
+                        delta,
+                        Tempo::DEFAULT,
+                        &mut self.rev_knobs,
+                    );
+                    continue;
                 }
                 let params = &mut UiBlocks {
                     project: &mut self.project,

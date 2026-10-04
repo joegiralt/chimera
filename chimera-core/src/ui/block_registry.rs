@@ -16,6 +16,7 @@ use crate::part::PartParams;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, ParamSlot, VizType};
 use crate::ui::midi_settings::MidiSettings;
 use crate::ui::page::{PageLayout, ValFmt};
+use crate::ui::reverb_panel::RevPage;
 use crate::ui::settings::leaves::{
     ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, DEMO_LEAVES, LIVE_SNAP_LEAF, OUTPUTS_LEAF,
     SYNC_LEAF, THEME_LEAF, TUNING_LEAF,
@@ -261,17 +262,37 @@ pub static EFX: BlockDef = BlockDef {
     short: "REV",
     layout: PageLayout::CellGrid,
     viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Reverb)),
-    // QUAD's main page (reverb TYPEs spec § Pages): SIZE · TIME · DAMP ·
-    // SMEAR, then MIX. RATE goes on QUAD's MORE page (Task 6).
+    // TYPE · the TYPE's four knobs · MIX (reverb TYPEs spec § Pages):
+    // the level always in the same place.
     params: [
-        ParamSlot::param(BlockRef::Reverb, ReverbParams::SIZE),
-        ParamSlot::param(BlockRef::Reverb, ReverbParams::TIME),
-        ParamSlot::param(BlockRef::Reverb, ReverbParams::DAMPING),
-        ParamSlot::param(BlockRef::Reverb, ReverbParams::SMEAR),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::TYPE),
+        ParamSlot::reverb_panel(RevPage::Main, 0),
+        ParamSlot::reverb_panel(RevPage::Main, 1),
+        ParamSlot::reverb_panel(RevPage::Main, 2),
+        ParamSlot::reverb_panel(RevPage::Main, 3),
         ParamSlot::param(BlockRef::Reverb, ReverbParams::MIX),
-        EMPTY,
     ],
 };
+
+/// REV › MORE: PRE-DLY · DAMP, SHAPE or CURVE · SMEAR · RATE · SYNC, by
+/// the TYPE's panel; QUAD shows RATE only.
+pub static EFX_MORE: BlockDef = BlockDef {
+    id: 92,
+    name: "Reverb More",
+    short: "MORE",
+    layout: PageLayout::CellGrid,
+    viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Reverb)),
+    params: [
+        ParamSlot::reverb_panel(RevPage::More, 0),
+        ParamSlot::reverb_panel(RevPage::More, 1),
+        ParamSlot::reverb_panel(RevPage::More, 2),
+        ParamSlot::reverb_panel(RevPage::More, 3),
+        ParamSlot::reverb_panel(RevPage::More, 4),
+        ParamSlot::reverb_panel(RevPage::More, 5),
+    ],
+};
+
+static EFX_SUB_PAGES: [&BlockDef; 1] = [&EFX_MORE];
 
 pub static CHORUS: BlockDef = BlockDef {
     id: 18,
@@ -572,7 +593,7 @@ static MIXER_CHANNEL_BLOCKS: &[ChainBlock] = &[
     ChainBlock::page(&SENDS),
     ChainBlock::page(&CHORUS),
     ChainBlock::with_subs(&DELAY, &DELAY_SUB_PAGES),
-    ChainBlock::page(&EFX),
+    ChainBlock::with_subs(&EFX, &EFX_SUB_PAGES),
     #[cfg(feature = "master-tape")]
     ChainBlock::page(&TAPE),
     ChainBlock::with_subs(&MASTER, &MASTER_SUB_PAGES),

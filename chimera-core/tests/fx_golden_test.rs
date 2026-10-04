@@ -33,6 +33,7 @@ fn cases() -> [(&'static str, Fx); 7] {
         mix: 0.5,
         smear,
         rate: 1.0,
+        ..Default::default()
     };
     [
         (

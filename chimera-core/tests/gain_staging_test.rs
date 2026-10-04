@@ -70,6 +70,7 @@ fn max() -> FxParams {
             damping: 0.0,
             smear: 1.0,
             rate: 1.0,
+            ..Default::default()
         },
         tape: TapeParams {
             mix: 1.0,

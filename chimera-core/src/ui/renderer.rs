@@ -593,9 +593,9 @@ impl Renderer {
                     focus.map(|i| RingsPart::ALL[i]),
                     frame,
                 )),
-                CompositeId::ReverbCube => Gauge::Cube(Cube::from_set(
+                CompositeId::Reverb => Gauge::Cube(Cube::from_set(
                     self.eased_set(f, CUBE_PARAMS),
-                    focus.map(|i| CubePart::ALL[i]),
+                    focus.and_then(|i| CubePart::ALL.get(i).copied()),
                     frame,
                 )),
             }
@@ -667,7 +667,7 @@ impl Renderer {
                     let _ = core::fmt::Write::write_str(&mut buf, text);
                 }
                 View::Orbit(cell) => buf = orbit::cell_text(cell, &f.orbit, f.ctx.ring),
-                _ => fmt::fmt_val(&mut buf, value, v.fmt()),
+                _ => buf = param_text(f, i, &v, value),
             }
             let c = components::Cell {
                 label: cell_label(&v),
@@ -809,8 +809,30 @@ fn value_text(f: &Frame, i: usize, v: f32) -> FmtBuf {
         _ if look(f, i) == components::Look::Absent => {
             let _ = core::fmt::Write::write_str(&mut buf, "--");
         }
-        view => fmt::fmt_val(&mut buf, v, view.fmt()),
+        view => buf = param_text(f, i, &view, v),
     }
+    buf
+}
+
+/// A param's text at display value `v`: a reverb panel cell's from its
+/// TYPE's maps (`reverb_panel::value_text`), any other by its format.
+fn param_text(f: &Frame, i: usize, view: &View, v: f32) -> FmtBuf {
+    if let Some(a) = view.addr().filter(|_| view::is_reverb_panel(f.def, i))
+        && let Some(s) = a.spec()
+    {
+        let mut p = f.fx.reverb;
+        crate::block::Block::set(&mut p, a.param, s.min + v * (s.max - s.min));
+        // Tempo is 120 BPM until the clock reaches the reverb (Task 12).
+        return crate::ui::reverb_panel::value_text(
+            f.ctx.rev,
+            a.param,
+            &p,
+            crate::dsp::rev::sync::Tempo::DEFAULT,
+            crate::dsp::rev::sync::FoldState::default(),
+        );
+    }
+    let mut buf = FmtBuf::new();
+    fmt::fmt_val(&mut buf, v, view.fmt());
     buf
 }
 

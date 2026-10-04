@@ -208,6 +208,7 @@ fn project_a() -> FxParams {
             // just under half: a coincidence of the reference.
             smear: 0.5,
             rate: 0.5,
+            ..Default::default()
         },
         comp: CompParams {
             thresh: 0.5,
@@ -251,6 +252,7 @@ fn project_b() -> FxParams {
             mix: 0.4,
             smear: 0.8,
             rate: 0.9,
+            ..Default::default()
         },
         comp: CompParams {
             thresh: 0.3,

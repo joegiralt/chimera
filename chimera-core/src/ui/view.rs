@@ -11,6 +11,7 @@ use crate::dsp::modal::{self, ModalParams, ResonatorMode};
 use crate::dsp::modulator::{
     EnvForm, EnvSlot, EnvSpeed, EnvType, Func, FuncMode, LfoForm, LfoSlot, LfoType, pick,
 };
+use crate::dsp::reverb::{ReverbParams, ReverbType};
 use crate::modulation::{ModSource, VCA};
 use crate::orbit::RingIdx;
 use crate::orbit::clock::ClockSource;
@@ -23,6 +24,7 @@ use crate::ui::glyph::FocusGlyph;
 use crate::ui::hint::{self, Gesture, Hint};
 use crate::ui::mod_panel::{self, PanelSlot};
 use crate::ui::orbit::OrbitCell;
+use crate::ui::reverb_panel;
 
 /// What an ENV slot's page resolves against: type A's panel follows its
 /// SPEED, type B's its MODE and that MODE's FORM.
@@ -58,6 +60,8 @@ pub struct SlotCtx {
     pub lfos: [LfoKind; 3],
     /// MODEL: which cells MDL2 shows.
     pub model: ResonatorMode,
+    /// The reverb's TYPE: which panel REV and REV › MORE show.
+    pub rev: ReverbType,
     /// The ORBIT ring the location selects: what `SelectedRing` edits.
     pub ring: RingIdx,
     /// ORBIT's clock: BPM is inert while MIDI leads.
@@ -86,6 +90,7 @@ impl SlotCtx {
                 }
             }),
             model: ResonatorMode::from_u8(get(BlockRef::Modal, ModalParams::MODE) as u8),
+            rev: ReverbType::at(get(BlockRef::Reverb, ReverbParams::TYPE)),
             ring: RingIdx::ALL[0],
             clock: ClockSource::Internal,
         }
@@ -94,6 +99,11 @@ impl SlotCtx {
     /// This context on ORBIT ring `ring`.
     pub fn on_ring(self, ring: RingIdx) -> Self {
         Self { ring, ..self }
+    }
+
+    /// This context under reverb TYPE `rev`: a Sound's params hold no FX.
+    pub fn on_rev(self, rev: ReverbType) -> Self {
+        Self { rev, ..self }
     }
 
     /// This context under ORBIT's `clock`.
@@ -144,9 +154,13 @@ impl View {
         }
     }
 
-    /// The spec's short form, for a param shown under its own label.
+    /// The spec's short form, for a param shown under its own label; a
+    /// reverb panel's, under the TYPE's.
     pub fn short(&self) -> Option<&'static str> {
         match *self {
+            View::Param { addr, label, .. } if addr.block == BlockRef::Reverb => {
+                reverb_panel::short_of(label)
+            }
             View::Param { addr, label, .. } => addr
                 .spec()
                 .filter(|s| s.label == label)
@@ -262,7 +276,23 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
                 _ => View::Empty,
             }
         }
+        SlotBinding::ReverbPanel(page, k) => match reverb_panel::knob(ctx.rev, page, k) {
+            Some(c) => {
+                let addr = ParamAddr::new(BlockRef::Reverb, c.id);
+                param(addr, c.label, addr.spec().map_or(ValFmt::Uni, |s| s.fmt))
+            }
+            None => View::Empty,
+        },
     }
+}
+
+/// Whether slot `i` of `def` is a reverb panel cell: its text and step
+/// are the TYPE's (`reverb_panel`).
+pub fn is_reverb_panel(def: &BlockDef, i: usize) -> bool {
+    matches!(
+        def.params.get(i).map(|s| s.binding),
+        Some(SlotBinding::ReverbPanel(..))
+    )
 }
 
 /// Cell `k` of a modulator panel, its params in `block`.

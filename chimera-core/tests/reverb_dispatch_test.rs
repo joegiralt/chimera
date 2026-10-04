@@ -29,6 +29,7 @@ fn sweep(b: usize, smear: bool) -> (ReverbParams, f32) {
         damping: (3.0 * t).fract(),
         size: [0.5, 1.0, 0.0, 0.8, 0.3, 0.9][(b / 37) % 6],
         mix: 0.5,
+        ..Default::default()
     };
     let mix = match b {
         0..200 => 0.5,

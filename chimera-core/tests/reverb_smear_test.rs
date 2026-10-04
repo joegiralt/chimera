@@ -183,6 +183,7 @@ fn smeared_quad(frozen: bool) -> (Box<Reverb>, ReverbParams) {
         mix: 1.0,
         smear: 1.0,
         rate: 1.0,
+        ..Default::default()
     };
     let mut rv = Box::new(Reverb::new());
     if frozen {
@@ -329,6 +330,7 @@ fn quad_falls_silent_with_smear() {
         mix: 1.0,
         smear: 1.0,
         rate: 1.0,
+        ..Default::default()
     };
     let mut rv = Box::new(Reverb::new());
     let mut n = Noise(0xdead_beef);

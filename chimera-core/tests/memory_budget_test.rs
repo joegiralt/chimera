@@ -124,10 +124,14 @@ fn axi_residents_fit() {
     eprintln!("{:>15} {total:>7} B of {} B", "AXI", hw::AXI_SRAM);
     assert_eq!(total, AXI_RESIDENT);
     // The default build's, at 2dc9eefd, plus 96 B for QUAD's SMEAR (its
-    // four wanders and depth, reverb TYPEs T5); the master tape adds its
-    // own.
+    // four wanders and depth, reverb TYPEs T5) and 88 B for the reverb's
+    // slots 6–13 (T6: `ReverbParams` in the Project and in each of three
+    // `AudioShared`s); the master tape adds its own.
     if !cfg!(feature = "master-tape") {
-        assert!(total <= 442_228, "AXI grew past 2dc9eefd's and SMEAR's");
+        assert!(
+            total <= 442_316,
+            "AXI grew past 2dc9eefd's, SMEAR's and the slots'"
+        );
     }
     assert!(
         hw::AXI_SRAM - total >= 64 * 1024,

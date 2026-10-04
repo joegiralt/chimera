@@ -234,24 +234,25 @@ pub fn store_trunc(x: f32) -> i16 {
 #[inline(always)]
 fn saturate(r: i32) -> i16 {
     let s = r.clamp(i16::MIN as i32, i16::MAX as i32);
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "clamp-probe"))]
     probe::note(s != r);
     s as i16
 }
 
 /// Clamp hits and writes through `store_*` on this thread since the last
-/// reset (§ Level plan's transients). Host tests only.
-#[cfg(any(test, feature = "test-support"))]
+/// reset (§ Level plan's transients). Its own feature, which only this
+/// crate's tests turn on: the simulator's audio path never pays for it.
+#[cfg(any(test, feature = "clamp-probe"))]
 pub fn clamp_counts() -> (u64, u64) {
     probe::COUNTS.with(|c| c.get())
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "clamp-probe"))]
 pub fn reset_clamp_counts() {
     probe::COUNTS.with(|c| c.set((0, 0)));
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "clamp-probe"))]
 mod probe {
     extern crate std;
     use core::cell::Cell;

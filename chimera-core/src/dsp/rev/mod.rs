@@ -52,8 +52,9 @@ pub struct Reverb {
     wanders_set: bool,
     /// The wanders held at their centre (tests only).
     frozen: bool,
-    /// SMEAR's depth snaps off and on, with no 20 ms gate (tests only: the
-    /// click test's negative control).
+    /// SMEAR's depth snaps off and on, with no 20 ms gate (the click
+    /// test's negative control): never in firmware.
+    #[cfg(any(test, feature = "smear-probe"))]
     hard_gate: bool,
     /// Last block's (SIZE crossfade, SMEAR) paths, and its end's depth.
     paths: (bool, bool),
@@ -62,8 +63,13 @@ pub struct Reverb {
     mix: Ease,
 }
 
+#[cfg(any(test, feature = "smear-probe"))]
 crate::in_place::field_list!(Reverb => Reverb {
     arena, state, dec, up_l, up_r, smear, smear_on, wander, wanders_rate, wanders_set, frozen, hard_gate, paths, depth, mix
+});
+#[cfg(not(any(test, feature = "smear-probe")))]
+crate::in_place::field_list!(Reverb => Reverb {
+    arena, state, dec, up_l, up_r, smear, smear_on, wander, wanders_rate, wanders_set, frozen, paths, depth, mix
 });
 
 /// QUAD's SMEAR seed: its four lines' wanders hash it.
@@ -96,6 +102,7 @@ impl Reverb {
             wanders_rate: 0,
             wanders_set: false,
             frozen: false,
+            #[cfg(any(test, feature = "smear-probe"))]
             hard_gate: false,
             paths: (false, false),
             depth: 0.0,
@@ -129,7 +136,7 @@ impl Reverb {
 
     /// Snap SMEAR's depth to 0 for a SIZE move, and back, in one block:
     /// what the gate prevents, for the click test to catch.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "smear-probe"))]
     pub fn hard_smear_gate(&mut self) {
         self.hard_gate = true;
     }
@@ -193,11 +200,14 @@ impl Reverb {
         match &mut self.state {
             EngineState::Quad(q) => {
                 let on = !q.wants_size(p.size);
+                #[cfg(any(test, feature = "smear-probe"))]
                 let (g0, g1) = if self.hard_gate {
                     (on as u8 as f32, on as u8 as f32)
                 } else {
                     self.smear_on.step(on)
                 };
+                #[cfg(not(any(test, feature = "smear-probe")))]
+                let (g0, g1) = self.smear_on.step(on);
                 let full = smear_depth(1.0, q.ring().step());
                 let (d0, d1) = (s0 * g0 * full, s1 * g1 * full);
                 let smear = (d0 != 0.0 || d1 != 0.0)

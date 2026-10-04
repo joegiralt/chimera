@@ -92,6 +92,8 @@ fn every_mixer_slot_is_bound() {
             match slot.binding {
                 SlotBinding::Empty => {}
                 SlotBinding::Param(a) => assert!(a.spec().is_some(), "{} slot {i}", block.def.name),
+                // The reverb's TYPE names the slot (`reverb_panel_test`).
+                SlotBinding::ReverbPanel(..) if block.def.id == reg::EFX.id => {}
                 other => panic!("{} slot {i}: {other:?}", block.def.name),
             }
         }
@@ -171,14 +173,16 @@ fn fx_encoders_step_like_before() {
     assert_eq!(perf.fx.delay.time_ms, 375.0 + 2.0 * 8.0);
     turn_def(&reg::CHORUS, 0, 5, &mut perf);
     assert_eq!(perf.fx.chorus.mode, 3);
-    turn_def(&reg::EFX, 4, -1, &mut perf);
+    turn_def(&reg::EFX, 5, -1, &mut perf);
     assert_eq!(perf.fx.reverb.mix, 0.0);
-    turn_def(&reg::EFX, 4, 1, &mut perf);
+    turn_def(&reg::EFX, 5, 1, &mut perf);
     assert_eq!(perf.fx.reverb.mix, 1.0 / 128.0);
-    turn_def(&reg::EFX, 3, 5, &mut perf);
+    turn_def(&reg::EFX, 4, 5, &mut perf);
     assert!((perf.fx.reverb.smear - 5.0 / 128.0).abs() < 1e-6);
-    turn_def(&reg::EFX, 0, 1, &mut perf);
+    turn_def(&reg::EFX, 1, 1, &mut perf);
     assert!((perf.fx.reverb.size - (0.5 + 1.0 / 31.0)).abs() < 1e-6);
+    turn_def(&reg::EFX_MORE, 3, 2, &mut perf);
+    assert!((perf.fx.reverb.rate - (0.5 + 2.0 / 128.0)).abs() < 1e-6);
     turn_def(&reg::DELAY, 3, 64, &mut perf);
     assert_eq!(perf.fx.delay.rev_send, 0.5);
     turn_def(&reg::DELAY_CHAR, 0, 1, &mut perf);
@@ -391,27 +395,67 @@ fn the_delay_page_is_time_fdbk_tone_rev_mix_with_char_below() {
     assert_eq!(subs, [reg::DELAY_CHAR.id], "{}", chain.name);
 }
 
-/// Reverb TYPEs spec § Pages: QUAD's main page is SIZE · TIME · DAMP ·
-/// SMEAR, then MIX. (RATE is on QUAD's MORE page, Task 6.)
+/// Reverb TYPEs spec § Pages: REV is TYPE · the TYPE's four · MIX, and
+/// QUAD's four are SIZE · TIME · DAMP · SMEAR; REV › MORE hangs under it
+/// with RATE.
 #[test]
-fn the_reverb_page_is_size_time_damp_smear_mix() {
+fn the_reverb_page_is_type_size_time_damp_smear_mix() {
     use chimera_core::dsp::reverb::ReverbParams;
+    use chimera_core::ui::view::{SlotCtx, view};
+    let ctx = SlotCtx::read(&chimera_core::params::ParamSnapshot::default(), Op::A);
     let at = |p| Some(ParamAddr::new(BlockRef::Reverb, p));
+    let shown = |def: &BlockDef| {
+        (0..6)
+            .map(|i| view(def, i, &ctx).addr())
+            .collect::<Vec<_>>()
+    };
     assert_eq!(
-        bound(&reg::EFX),
+        shown(&reg::EFX),
         [
+            at(ReverbParams::TYPE),
             at(ReverbParams::SIZE),
             at(ReverbParams::TIME),
             at(ReverbParams::DAMPING),
             at(ReverbParams::SMEAR),
             at(ReverbParams::MIX),
-            None
         ]
+    );
+    assert_eq!(
+        shown(&reg::EFX_MORE),
+        [None, None, None, at(ReverbParams::RATE), None, None]
     );
     assert_eq!(
         reg::EFX.viz,
         VizType::EffectsFlow(FxFlow::Effect(FxNode::Reverb))
     );
+    let rev = reg::MIXER_CHANNEL_CHAIN
+        .blocks
+        .iter()
+        .find(|b| b.def.id == reg::EFX.id)
+        .unwrap();
+    let subs: Vec<(u16, &str)> = rev.sub_pages.iter().map(|d| (d.id, d.short)).collect();
+    assert_eq!(subs, [(92, "MORE")]);
+}
+
+/// On the unit: REV's B ticks QUAD's SIZE a table step, A keeps QUAD (the
+/// only TYPE on screen yet), and REV › MORE's D turns RATE.
+#[test]
+fn the_reverb_pages_turn_by_the_panel() {
+    let mut ui = UiState::new();
+    open_mixer(&mut ui, ButtonId::B1);
+    for _ in 0..3 {
+        ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Pressed));
+    }
+    assert_eq!(ui.page_def().id, reg::EFX.id);
+    let rev = |ui: &UiState| ui.project().perf().fx.reverb;
+    turn(&mut ui, EncoderId::B, 1);
+    assert!((rev(&ui).size - (0.5 + 1.0 / 31.0)).abs() < 1e-6);
+    turn(&mut ui, EncoderId::A, 1);
+    assert_eq!(rev(&ui).kind, chimera_core::dsp::reverb::ReverbType::Quad);
+    ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
+    assert_eq!(ui.page_def().id, reg::EFX_MORE.id);
+    turn(&mut ui, EncoderId::D, 4);
+    assert!((rev(&ui).rate - (0.5 + 4.0 / 128.0)).abs() < 1e-6);
 }
 
 #[test]

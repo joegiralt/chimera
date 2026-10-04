@@ -218,6 +218,9 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
     alone.
   - MIDI MAP shows the current TYPE's panel labels. Labels of 7 characters
     get short forms of ≤ 6 (ADR 0053's rule).
+  - Value texts are in units, QUAD's included (`663ms`, `1.9s`, `6.1k`). A
+    text too wide for its face steps down: a cell's to the label face, the
+    focus band's to the readout's, then the value's (`PLATE 120ms`).
 - **The switch.**
   1. The old engine runs on knobs latched when the switch starts. Its
      return ramps linearly to 0 over 20 ms.

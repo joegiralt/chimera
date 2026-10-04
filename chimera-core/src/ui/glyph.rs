@@ -36,8 +36,8 @@ pub enum FocusGlyph {
 /// The composites, each shared by its effect's params.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompositeId {
-    /// SIZE, TIME, AMOUNT.
-    ReverbCube,
+    /// The reverb's knobs: the cube under QUAD (ADR 0067, 0085).
+    Reverb,
     /// TIME, FEEDBACK, TONE.
     DelayRings,
     /// RATE, DEPTH, MIX; MODE is the strand count.
@@ -51,7 +51,7 @@ impl CompositeId {
         match self {
             CompositeId::ChorusBraid => &BRAID_PARAMS,
             CompositeId::DelayRings => &RINGS_PARAMS,
-            CompositeId::ReverbCube => &CUBE_PARAMS,
+            CompositeId::Reverb => &REVERB_PARAMS,
         }
     }
 }
@@ -80,7 +80,7 @@ pub enum Gauge {
     Braid(Braid),
     /// The delay's rings (`CompositeId::DelayRings`).
     Rings(Rings),
-    /// The reverb's cube (`CompositeId::ReverbCube`).
+    /// The reverb's cube (`CompositeId::Reverb`).
     Cube(Cube),
 }
 
@@ -164,6 +164,21 @@ pub const CUBE_PARAMS: [ParamAddr; 6] = [
     ParamAddr::new(BlockRef::Reverb, ReverbParams::MIX),
     ParamAddr::new(BlockRef::Reverb, ReverbParams::SMEAR),
     ParamAddr::new(BlockRef::Reverb, ReverbParams::RATE),
+];
+
+/// Every reverb param that shows the composite: the cube's six, then the
+/// slots only the other TYPEs read (their glyph lands with them).
+pub const REVERB_PARAMS: [ParamAddr; 10] = [
+    CUBE_PARAMS[0],
+    CUBE_PARAMS[1],
+    CUBE_PARAMS[2],
+    CUBE_PARAMS[3],
+    CUBE_PARAMS[4],
+    CUBE_PARAMS[5],
+    ParamAddr::new(BlockRef::Reverb, ReverbParams::TONE),
+    ParamAddr::new(BlockRef::Reverb, ReverbParams::DIFFUSE),
+    ParamAddr::new(BlockRef::Reverb, ReverbParams::PREDELAY),
+    ParamAddr::new(BlockRef::Reverb, ReverbParams::SHAPE),
 ];
 
 /// The cube's param in focus, emphasised.
@@ -467,7 +482,7 @@ impl FocusGlyph {
         FocusGlyph::Crossfader,
         FocusGlyph::Staff,
         FocusGlyph::Wave,
-        FocusGlyph::Composite(CompositeId::ReverbCube),
+        FocusGlyph::Composite(CompositeId::Reverb),
         FocusGlyph::Composite(CompositeId::DelayRings),
         FocusGlyph::Composite(CompositeId::ChorusBraid),
     ];
@@ -483,7 +498,7 @@ impl FocusGlyph {
             FocusGlyph::Crossfader => 4,
             FocusGlyph::Staff => 5,
             FocusGlyph::Wave => 6,
-            FocusGlyph::Composite(CompositeId::ReverbCube) => 7,
+            FocusGlyph::Composite(CompositeId::Reverb) => 7,
             FocusGlyph::Composite(CompositeId::DelayRings) => 8,
             FocusGlyph::Composite(CompositeId::ChorusBraid) => 9,
         }
@@ -516,7 +531,7 @@ impl FocusGlyph {
             ) as u8)),
             FocusGlyph::Composite(CompositeId::ChorusBraid) => composite(CompositeId::ChorusBraid),
             FocusGlyph::Composite(CompositeId::DelayRings) => composite(CompositeId::DelayRings),
-            FocusGlyph::Composite(CompositeId::ReverbCube) => composite(CompositeId::ReverbCube),
+            FocusGlyph::Composite(CompositeId::Reverb) => composite(CompositeId::Reverb),
             FocusGlyph::Arc => Gauge::Arc { value, bipolar },
         }
     }

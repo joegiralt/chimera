@@ -28,10 +28,13 @@ test-support = []
 probe = []
 # `ring::smear_probe`: SMEAR's reads, recorded per thread. Tests only.
 smear-probe = []
+# `rev::parts::clamp_counts`: the reverb's clamp hits, counted per thread.
+# Tests only.
+clamp-probe = []
 
 [dev-dependencies]
 # No default features: `--no-default-features` must reach the library too.
-chimera-core = { path = ".", default-features = false, features = ["test-support", "smear-probe"] }
+chimera-core = { path = ".", default-features = false, features = ["test-support", "smear-probe", "clamp-probe"] }
 chimera-hal = { path = "../chimera-hal", features = ["testkit"] }
 
 [build-dependencies]
