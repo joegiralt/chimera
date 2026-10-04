@@ -6,7 +6,7 @@
 use core::fmt::Write as _;
 use core::ops::ControlFlow;
 
-use chimera_core::hw::{AXI_SRAM, VOICE_RAM_BUDGET};
+use chimera_core::hw::VOICE_RAM_BUDGET;
 use chimera_core::instrument::{AudioShared, Instrument};
 use chimera_core::preset::{Performance, Sound};
 use chimera_core::project::Pool;
@@ -22,9 +22,6 @@ use cortex_m::peripheral::DWT;
 use embedded_sdmmc::{Block, BlockDevice, BlockIdx, SdCardError};
 use stm32h7xx_hal::spi;
 use stm32h7xx_hal::time::Hertz;
-
-/// AXI SRAM base (memory.x RAM).
-const AXI_ORIGIN: usize = 0x2400_0000;
 
 use crate::clocks::{self, Clocks};
 use crate::sd::{SD_ACQUIRE_MS, SD_INIT_HZ, SdDevice, SdStore};
@@ -341,12 +338,15 @@ fn sizes<D: ChimeraDisplay>(c: &mut Console<D>) {
         "AUDIO3 {}",
         size_of::<TripleBuffer<AudioShared>>()
     ));
-    // SAFETY: the symbol's address is the end of AXI statics; never read.
+    // SAFETY: linker symbols whose addresses are the end of AXI statics
+    // and the end of AXI (axi_margin.x); never read.
     unsafe extern "C" {
         static __sheap: u8;
+        static AXI_END: u8;
     }
     let sheap = core::ptr::addr_of!(__sheap) as usize;
-    c.line(format_args!("AXI FREE {}", AXI_ORIGIN + AXI_SRAM - sheap));
+    let end = core::ptr::addr_of!(AXI_END) as usize;
+    c.line(format_args!("AXI FREE {}", end - sheap));
     c.line(format_args!(
         "VOICE FREE {}",
         VOICE_RAM_BUDGET - size_of::<Instrument>()

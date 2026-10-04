@@ -66,7 +66,7 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
     fs::write(
         out_dir.join("axi_margin.x"),
         format!(
-            "AXI_MARGIN = {margin};\nASSERT(ORIGIN(RAM) + LENGTH(RAM) - __sheap >= AXI_MARGIN, \"AXI: under the margin (ADR 0087)\");\n"
+            "AXI_MARGIN = {margin};\nAXI_END = ORIGIN(RAM) + LENGTH(RAM);\nASSERT(AXI_END - __sheap >= AXI_MARGIN, \"AXI: under the margin (ADR 0087)\");\n"
         ),
     )
     .unwrap();
