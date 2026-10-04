@@ -830,11 +830,13 @@ fn grain(frame: u32, edge: usize, piece: i32) -> u32 {
 /// show its top, turning once in 16 s. Near edges (towards the viewer) in
 /// ACCENT, 1 to 3 px by MIX; far edges 1 px, by DAMP ACCENT, MID, then
 /// dotted MID, so the highs die in the back of the room. TIME trails up
-/// to three afterimages behind the turn in FAINT; GRIT drops grains from
-/// every edge, new each frame. The focused param is marked: SIZE dots the
-/// corners, TIME draws the afterimages in MID, DAMP the far edges in INK,
-/// MIX the near edges in INK, GRIT specks the room. Palette colours only,
-/// so the theme's ACCENT swap applies.
+/// to three afterimages behind the turn in FAINT; SMEAR jitters the far
+/// corners by up to 2 px, a new random offset every 16 frames at RATE 0
+/// down to every 4 at 1, so the back of the room wanders. The focused
+/// param is marked: SIZE dots the corners, TIME draws the afterimages in
+/// MID, DAMP the far edges in INK, MIX the near edges in INK, SMEAR dots
+/// the far corners in INK and RATE in MID. Palette colours only, so the
+/// theme's ACCENT swap applies.
 fn cube<D>(d: &mut D, c: &Cube)
 where
     D: DrawTarget<Color = Rgb565>,
@@ -865,18 +867,17 @@ where
             )
         })
     };
-    // An edge in pieces of about 3 px: GRIT drops some, `dotted` every other.
+    // An edge, or with `dotted` every other piece of about 3 px.
     let edge =
         |d: &mut D, p: &[(i32, i32, f32); 8], e: usize, color: Rgb565, width: u32, dotted: bool| {
             let ((ax, ay, _), (bx, by, _)) = (p[CUBE_EDGES[e].0], p[CUBE_EDGES[e].1]);
-            let drop = (c.grit * 128.0) as u32;
-            if drop == 0 && !dotted {
+            if !dotted {
                 draw::line(d, ax, ay, bx, by, color, width);
                 return;
             }
             let n = ((ax - bx).abs().max((ay - by).abs()) / 3).max(1);
             for i in 0..n {
-                if (dotted && i % 2 == 1) || grain(c.frame, e, i) < drop {
+                if i % 2 == 1 {
                     continue;
                 }
                 let at = |t: i32| (ax + (bx - ax) * t / n, ay + (by - ay) * t / n);
@@ -895,15 +896,27 @@ where
             edge(d, &p, e, ghost, 1, false);
         }
     }
-    let p = project(c.turn());
-    let near = |e: usize| p[CUBE_EDGES[e].0].2 + p[CUBE_EDGES[e].1].2 >= 0.0;
+    let mut p = project(c.turn());
+    let near =
+        |p: &[(i32, i32, f32); 8], e: usize| p[CUBE_EDGES[e].0].2 + p[CUBE_EDGES[e].1].2 >= 0.0;
+    let reach = 2.0 * c.smear;
+    let hold = 16 - (12.0 * c.rate) as u32;
+    if reach > 0.0 {
+        for (i, v) in p.iter_mut().enumerate().filter(|(_, v)| v.2 < 0.0) {
+            let jitter = |k: usize| {
+                let g = grain(c.frame / hold, 14 + k, i as i32) as f32 / 127.5 - 1.0;
+                libm::roundf(reach * g) as i32
+            };
+            (v.0, v.1) = (v.0 + jitter(0), v.1 + jitter(1));
+        }
+    }
     let damp = ((c.damp * 3.0) as usize).min(2);
     let far = match (c.focus, damp) {
         (Some(CubePart::Damp), _) => theme::INK,
         (_, 0) => theme::ACCENT,
         _ => theme::MID,
     };
-    for e in (0..CUBE_EDGES.len()).filter(|&e| !near(e)) {
+    for e in (0..CUBE_EDGES.len()).filter(|&e| !near(&p, e)) {
         edge(d, &p, e, far, 1, damp == 2);
     }
     let weight = ((c.mix * 3.0) as u32).min(2) + 1;
@@ -912,7 +925,7 @@ where
     } else {
         theme::ACCENT
     };
-    for e in (0..CUBE_EDGES.len()).filter(|&e| near(e)) {
+    for e in (0..CUBE_EDGES.len()).filter(|&e| near(&p, e)) {
         edge(d, &p, e, front, weight, false);
     }
     match c.focus {
@@ -921,13 +934,14 @@ where
                 draw::fill_rect(d, x - 1, y - 1, 2, 2, theme::INK);
             }
         }
-        Some(CubePart::Grit) => {
-            let n = 3 + (c.grit * 10.0) as i32;
-            for i in 0..n {
-                let g = grain(c.frame, 12, i) as i32 | (grain(c.frame, 13, i) as i32) << 8;
-                let x = theme::CUBE_X + 2 + (g & 0xff) % (theme::CUBE_W - 4);
-                let y = theme::CUBE_Y + 2 + (g >> 8) % (theme::CUBE_H - 4);
-                draw::fill_rect(d, x, y, 1, 1, theme::INK);
+        Some(part @ (CubePart::Smear | CubePart::Rate)) => {
+            let dot = if part == CubePart::Smear {
+                theme::INK
+            } else {
+                theme::MID
+            };
+            for &(x, y, _) in p.iter().filter(|v| v.2 < 0.0) {
+                draw::fill_rect(d, x - 1, y - 1, 2, 2, dot);
             }
         }
         _ => {}

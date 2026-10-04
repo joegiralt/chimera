@@ -157,12 +157,13 @@ pub fn wave_trace<const N: usize>(wave: WaveId, half: i32) -> [i32; N] {
 }
 
 /// The reverb params the cube reads, in `Cube::from_set`'s order.
-pub const CUBE_PARAMS: [ParamAddr; 5] = [
+pub const CUBE_PARAMS: [ParamAddr; 6] = [
     ParamAddr::new(BlockRef::Reverb, ReverbParams::SIZE),
     ParamAddr::new(BlockRef::Reverb, ReverbParams::TIME),
     ParamAddr::new(BlockRef::Reverb, ReverbParams::DAMPING),
     ParamAddr::new(BlockRef::Reverb, ReverbParams::MIX),
-    ParamAddr::new(BlockRef::Reverb, ReverbParams::GRIT),
+    ParamAddr::new(BlockRef::Reverb, ReverbParams::SMEAR),
+    ParamAddr::new(BlockRef::Reverb, ReverbParams::RATE),
 ];
 
 /// The cube's param in focus, emphasised.
@@ -172,17 +173,19 @@ pub enum CubePart {
     Time,
     Damp,
     Mix,
-    Grit,
+    Smear,
+    Rate,
 }
 
 impl CubePart {
     /// In `CUBE_PARAMS`' order.
-    pub const ALL: [CubePart; 5] = [
+    pub const ALL: [CubePart; 6] = [
         CubePart::Size,
         CubePart::Time,
         CubePart::Damp,
         CubePart::Mix,
-        CubePart::Grit,
+        CubePart::Smear,
+        CubePart::Rate,
     ];
 }
 
@@ -198,22 +201,25 @@ pub struct Cube {
     pub damp: f32,
     /// Edge weight.
     pub mix: f32,
-    /// The lo-fi dirt: edges crackle.
-    pub grit: f32,
+    /// The random wander: the far edges jitter, slowly.
+    pub smear: f32,
+    /// How often the jitter moves.
+    pub rate: f32,
     pub focus: Option<CubePart>,
     pub frame: u32,
 }
 
 impl Cube {
     /// From `CUBE_PARAMS`' set values, normalized.
-    pub fn from_set(set: [f32; 5], focus: Option<CubePart>, frame: u32) -> Self {
+    pub fn from_set(set: [f32; 6], focus: Option<CubePart>, frame: u32) -> Self {
         let n = |i: usize| clampf(set[i], 0.0, 1.0);
         Self {
             size: n(0),
             time: n(1),
             damp: n(2),
             mix: n(3),
-            grit: n(4),
+            smear: n(4),
+            rate: n(5),
             focus,
             frame,
         }

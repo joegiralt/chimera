@@ -1026,6 +1026,37 @@ against `BlockBudget::budget_cycles` (448,000).
   on the per-sample helpers builds a byte-identical binary.
 - **REV QUAD bench:** deferred (the unit was busy).
 
+### Task 5: GRIT out, SMEAR into QUAD (2026-10-04, host)
+
+- **SMEAR 0 is the T4 reference at GRIT 0, bit for bit:** `fx_golden_test`'s
+  `reverb_ring` and `reverb_ring_max_size` hash as `a2abe82f` did at GRIT 0,
+  and `reverb_dispatch_test`'s three sweeps at SMEAR 0 as its GRIT-0
+  sweeps there (`quad_*_smear_0`). The A/B's SMEAR 0 WAVs are
+  byte-identical to `a2abe82f`'s GRIT 0 renders.
+- **Re-recorded** (each ran at GRIT ≠ 0): `fx_golden_test`'s
+  `reverb_ring_full_grit` (now `reverb_ring_smear`, SMEAR 1);
+  `reverb_dispatch_test`'s `quad_sweep_48k`, `quad_sweep_44k1`, `quad_bus`
+  (they walk SMEAR now); `instrument_test`'s `reverb_send_on` and its
+  pre-limiter row (the old default GRIT 0.3); `screen_golden_test`'s
+  `mixer_fx_reverb` (the page now reads SIZE · TIME · DAMP · SMEAR).
+  `fx_golden_test`'s `reverb_ring` and `reverb_ring_max_size` ran at GRIT
+  0.3 and now hold the GRIT 0 hashes above.
+- **Pitch** (QUAD at SIZE 0, TIME 1, SMEAR 1, RATE 1): every pass within
+  ±25 cents of the frozen wander's tail; one 4 s window's mean within
+  ±1 cent; one sinusoid explains 13 % of the pitch trace (a 2 Hz vibrato
+  on the test comb: 85 %). A 1 kHz probe's per-pass spread: 0.1 cents at
+  SMEAR 0, 4.9 at 0.3, 17.0 at 1 (RATE 0.5).
+- **Spread of a held 1 kHz tone** (−20 dB width): 1.5 Hz at SMEAR 0,
+  3.3 Hz at SMEAR 1 with RATE 1; 2.2 Hz at the default RATE.
+- **AXI:** 442,228 B (+96 over 2dc9eefd's 442,132: four wanders and the
+  depth; the ratchet moves with it).
+- **Flash:** plain release `text` 705,336 B (+4,324 over T4's 701,012);
+  `--features orbit` 724,816 B (+4,220 over 720,596; +2,484 over the
+  converters' 722,332, not the negative the plan expected): the third
+  `run` monomorph is a whole unrolled ring loop.
+- **REV QUAD, REV QUAD S bench:** deferred (the unit was busy). The bench
+  build carries the REV QUAD S row.
+
 ---
 
 ## Self-review

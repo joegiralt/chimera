@@ -26,12 +26,13 @@ enum Fx {
 }
 
 fn cases() -> [(&'static str, Fx); 7] {
-    let reverb = |grit: f32, size: f32| ReverbParams {
-        grit,
+    let reverb = |smear: f32, size: f32| ReverbParams {
         time: 0.7,
         damping: 0.3,
         size,
         mix: 0.5,
+        smear,
+        rate: 1.0,
     };
     [
         (
@@ -71,9 +72,9 @@ fn cases() -> [(&'static str, Fx); 7] {
                 ..DelayParams::default()
             }),
         ),
-        ("reverb_ring", Fx::Reverb(reverb(0.3, 0.5))),
-        ("reverb_ring_max_size", Fx::Reverb(reverb(0.3, 1.0))),
-        ("reverb_ring_full_grit", Fx::Reverb(reverb(1.0, 0.5))),
+        ("reverb_ring", Fx::Reverb(reverb(0.0, 0.5))),
+        ("reverb_ring_max_size", Fx::Reverb(reverb(0.0, 1.0))),
+        ("reverb_ring_smear", Fx::Reverb(reverb(1.0, 0.5))),
     ]
 }
 
@@ -121,13 +122,14 @@ fn render(fx: Fx) -> Vec<f32> {
 }
 
 const GOLDENS: &[(&str, u64)] = &[
-    ("chorus_both", 0x666b43969f8ed31a),           // u32 LFO phase
-    ("delay_375ms", 0x036a3a3f29f429c6),           // MECHANICS (ADR 0053)
-    ("delay_500ms", 0x40eb96efc0f4fefe),           // MECHANICS (ADR 0053)
-    ("delay_feedback_100ms", 0x07e67081e5f28449),  // SAT × 1/gain, not ÷ gain (ADR 0053)
-    ("reverb_ring", 0x693f2d19b8bddc6c),           // GRIT as converters (reverb TYPEs T5)
-    ("reverb_ring_max_size", 0x5fd54d0a83f032de),  // GRIT as converters (reverb TYPEs T5)
-    ("reverb_ring_full_grit", 0x4fdf427d2d0f8310), // GRIT as converters (reverb TYPEs T5)
+    ("chorus_both", 0x666b43969f8ed31a),          // u32 LFO phase
+    ("delay_375ms", 0x036a3a3f29f429c6),          // MECHANICS (ADR 0053)
+    ("delay_500ms", 0x40eb96efc0f4fefe),          // MECHANICS (ADR 0053)
+    ("delay_feedback_100ms", 0x07e67081e5f28449), // SAT × 1/gain, not ÷ gain (ADR 0053)
+    // GRIT out (reverb TYPEs T5): SMEAR 0 is the T4 reference's GRIT 0.
+    ("reverb_ring", 0xd17b7769e13816bf),
+    ("reverb_ring_max_size", 0x83591bf24cab49f6),
+    ("reverb_ring_smear", 0xa7e01c103cc02150),
 ];
 
 #[test]

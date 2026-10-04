@@ -12,8 +12,8 @@ use chimera_hal::BLOCK_SIZE;
 use common::SR;
 use common::rev::{
     autocorr_peak_db, check_knobs_ease, check_level_plan, check_no_slap, check_noise_and_loudness,
-    check_settles_on_pitch, check_wobble_bound, corr, rt60_t20, settled_peak_hz, tail_pitch_hz,
-    thd,
+    check_settles_on_pitch, check_smear_bound, corr, line_db, rt60_t20, settled_peak_hz,
+    tail_pitch_hz, thd,
 };
 use std::cell::RefCell;
 use std::f64::consts::TAU;
@@ -143,39 +143,43 @@ fn xfade_blends_linearly_over_720_and_lands() {
 }
 
 #[test]
-fn wobble_is_quadrature_and_its_block_lerp_errs_under_1e4_at_2_hz() {
-    const RING: f64 = 24_000.0;
+fn wander_is_smooth_bounded_and_decorrelated() {
+    const RING: f32 = 24_000.0;
     const HALF: usize = 32;
-    let mut w = Wobble::default();
-    w.set_rate(2.0, RING as f32);
-    let ends: Vec<[f32; 2]> = (0..=750).map(|_| w.block()).collect();
-    for side in 0..2 {
-        let m = ends.iter().map(|e| e[side].abs()).fold(0.0, f32::max);
-        assert!((m - 1.0).abs() <= 1e-3, "side {side}: {m}");
+    let seeds = wander_seeds::<4>(0x5EED_0343);
+    let blocks = (120.0 * RING) as usize / HALF;
+    let traces: Vec<Vec<f32>> = (0..4)
+        .map(|k| {
+            let mut w = Wander::new(seeds[k], k as f32 / 4.0);
+            w.set_rate(1.0, RING);
+            (0..blocks).map(|_| w.block()).collect()
+        })
+        .collect();
+    let max_step = TAU as f32 * 1.0 * (HALF as f32 / RING) * 1.1;
+    for (k, t) in traces.iter().enumerate() {
+        assert!(
+            t.iter().all(|v| (-1.0..=1.0).contains(v)),
+            "line {k}: out of −1..1"
+        );
+        let step = t
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0, f32::max);
+        assert!(step <= max_step, "line {k}: a block step of {step}");
+        let line = line_db(t, 1.0);
+        assert!(line <= 10.0, "line {k}: a {line:.1} dB spectral line");
     }
-    // Each side's phase at 2 Hz over the second's two whole cycles.
-    let phase = |side: usize| {
-        let (mut re, mut im) = (0.0f64, 0.0f64);
-        for (b, e) in ends[..750].iter().enumerate() {
-            let t = (b * HALF) as f64 / RING;
-            re += e[side] as f64 * (TAU * 2.0 * t).cos();
-            im += e[side] as f64 * (TAU * 2.0 * t).sin();
-        }
-        // sin(ωt + φ) against cos and sin: (sin φ, cos φ), halved.
-        re.atan2(im).to_degrees()
-    };
-    let lead = (phase(0) - phase(1)).rem_euclid(360.0);
-    assert!((lead - 90.0).abs() <= 1.0, "L leads R by {lead}°");
-    let mut worst = 0.0f64;
-    for (b, e) in ends.windows(2).enumerate() {
-        for k in 0..HALF {
-            let t = (b * HALF + k) as f64 / RING;
-            let f = k as f32 / HALF as f32;
-            let lerp = e[0][0] + f * (e[1][0] - e[0][0]);
-            worst = worst.max((lerp as f64 - (TAU * 2.0 * t).sin()).abs());
+    for i in 0..4 {
+        for j in i + 1..4 {
+            let c = corr(&traces[i], &traces[j]);
+            assert!(c.abs() <= 0.2, "lines {i} and {j}: corr {c}");
         }
     }
-    assert!(worst < 1e-4, "{worst}");
+    // The control: a 1 Hz sine is a line.
+    let sine: Vec<f32> = (0..blocks)
+        .map(|b| (TAU * (b * HALF) as f64 / RING as f64).sin() as f32)
+        .collect();
+    assert!(line_db(&sine, 1.0) > 10.0);
 }
 
 #[test]
@@ -341,7 +345,9 @@ fn no_slap_passes_plain_and_dark_tails_and_catches_an_echo() {
 /// A test feedback comb at the bus rate: one i16 line, gain 0.9, read
 /// `len` back. A new `target` crossfades there in steps of ≤ 240 samples,
 /// or with `glide` slides there at 1,200 samples a second. `depth` moves
-/// the read by a 2 Hz `Wobble`; the output is two-poled by `dark` (a
+/// the read shorter by `depth`·(1 + x), x a 2 Hz `Wander`, or with `lfo`
+/// a 2 Hz sine (the vibrato control), or with `freeze` still at the
+/// centre; the output is two-poled by `dark` (a
 /// one-pole's own second difference is white) and
 /// scaled by `level`, eased or not.
 struct Comb {
@@ -350,7 +356,10 @@ struct Comb {
     xf: Xfade,
     target: u16,
     glide: Option<f32>,
-    wob: Wobble,
+    wob: Wander,
+    lfo: bool,
+    freeze: bool,
+    t: f32,
     w: f32,
     depth: f32,
     level: f32,
@@ -362,7 +371,7 @@ struct Comb {
 
 impl Comb {
     fn new(len: u16) -> Self {
-        let (mut xf, mut wob) = (Xfade::default(), Wobble::default());
+        let (mut xf, mut wob) = (Xfade::default(), Wander::new(wander_seeds::<1>(7)[0], 0.0));
         (xf.from, xf.to) = (len, len);
         wob.set_rate(2.0, 24_000.0);
         let line = vec![0; 6_100];
@@ -373,6 +382,9 @@ impl Comb {
             target: len,
             glide: None,
             wob,
+            lfo: false,
+            freeze: false,
+            t: 0.0,
             w: 0.0,
             depth: 0.0,
             level: 1.0,
@@ -391,7 +403,14 @@ impl Comb {
     }
 
     fn block(&mut self, send: &[f32; BLOCK_SIZE]) -> [f32; BLOCK_SIZE] {
-        let w1 = self.wob.block()[0];
+        let w1 = if self.freeze {
+            0.0
+        } else if self.lfo {
+            self.t += BLOCK_SIZE as f32 / SR as f32;
+            (TAU * 2.0 * self.t as f64).sin() as f32
+        } else {
+            self.wob.block()
+        };
         let w0 = core::mem::replace(&mut self.w, w1);
         let (g0, g1) = match self.ease {
             true => self.gain.step(self.level, ease_k(0.02)),
@@ -399,7 +418,7 @@ impl Comb {
         };
         core::array::from_fn(|k| {
             let f = k as f32 / BLOCK_SIZE as f32;
-            let m = self.depth * (w0 + f * (w1 - w0));
+            let m = -self.depth * (1.0 + w0 + f * (w1 - w0));
             let rd = |d: f32| pair(&self.line, self.head, d) / 8192.0;
             let fb = if let Some(d) = self.glide {
                 self.glide = Some((d + 0.025).min(self.target as f32));
@@ -457,22 +476,29 @@ fn a_crossfaded_move_settles_on_pitch_and_a_glide_does_not() {
 }
 
 #[test]
-fn the_wobble_bound_holds_on_the_comb_and_catches_an_offset() {
-    let still = RefCell::new(Comb::new(4_800));
+fn the_smear_bound_holds_on_the_comb_and_catches_an_offset_and_a_vibrato() {
+    // 30 samples of depth centre the read on 4,800, where 1 kHz is a mode.
+    let still = RefCell::new(Comb::new(4_830));
+    (still.borrow_mut().depth, still.borrow_mut().freeze) = (30.0, true);
     let f_ref = tail_pitch_hz(&mut render(&still));
-    let wobbled = || {
-        let c = RefCell::new(Comb::new(4_800));
-        c.borrow_mut().depth = 30.0;
+    let smeared = |lfo: bool| {
+        let c = RefCell::new(Comb::new(4_830));
+        (c.borrow_mut().depth, c.borrow_mut().lfo) = (30.0, lfo);
         c
     };
-    let c = wobbled();
-    check_wobble_bound(&mut render(&c), 0.1, f_ref);
-    let c = wobbled();
+    let c = smeared(false);
+    check_smear_bound(&mut render(&c), 0.1, f_ref, 2.0);
+    let c = smeared(false);
     let sharp = f_ref * 2f32.powf(5.0 / 1_200.0);
     let caught = catch_unwind(AssertUnwindSafe(|| {
-        check_wobble_bound(&mut render(&c), 0.1, sharp)
+        check_smear_bound(&mut render(&c), 0.1, sharp, 2.0)
     }));
     assert!(caught.is_err(), "a 5-cent offset passes");
+    let c = smeared(true);
+    let caught = catch_unwind(AssertUnwindSafe(|| {
+        check_smear_bound(&mut render(&c), 0.1, f_ref, 2.0)
+    }));
+    assert!(caught.is_err(), "a 2 Hz vibrato passes");
 }
 
 #[test]

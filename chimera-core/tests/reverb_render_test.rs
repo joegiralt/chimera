@@ -1,30 +1,245 @@
-//! The owner's A/B renderer (reverb TYPEs spec § A/B): one stimulus from
-//! `tools/ab/stimuli.py` through the real bus (`FxBus`), QUAD at its
-//! defaults but GRIT, MIX 1, dry off. `tools/ab/render.sh` drives it.
+//! The owner's SMEAR A/B renderer (reverb TYPEs spec § A/B):
+//! `tools/ab/render.sh` drives it.
 //!
-//! `AB_STIMULUS` names `$AB_DIR/stimuli/<name>.wav`; `AB_GRIT` is GRIT;
-//! `AB_DIR` defaults to the workspace's `target/ab`. Writes
-//! `<name>_g<grit>.wav` there, 6 dB down, and `<name>_g<grit>.txt`: the
-//! GRIT's noise floor and correlated-product figure (`reverb_grit_test`'s
-//! measures, through the same bus), the render's peak and its last 2 s, in
-//! dBFS before the 6 dB.
+//! - `stimuli` plays the strings (Modal BOWED), the pad (factory MORPH PAD)
+//!   and an IDM phrase (those two over `stimuli.py`'s kick, snare and hat)
+//!   on Chimera's own voices, into `$AB_DIR/stimuli/`.
+//! - `render` runs `$AB_DIR/stimuli/$AB_STIMULUS.wav` through the real bus
+//!   (`FxBus`), the reverb alone, QUAD at its defaults and MIX 1, at SMEAR
+//!   `$AB_SMEAR`. It writes `<name>_s<smear>.wav` (16-bit stereo: the dry
+//!   send on both sides plus the return, 6 dB down) and `<name>_s<smear>.txt`
+//!   (the figures).
+//!
+//! It sets the reverb through its `Block` ids, so it builds at the T4
+//! reference (a2abe82f) too: id 5 (GRIT there, retired here) to 0; ids 11
+//! and 12 (SMEAR, RATE here) that build ignores. `$AB_DIR` defaults to the
+//! workspace's `target/ab`.
 
 mod common;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use chimera_core::block::{Block, ParamId};
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
+use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::rev::sync::Tempo;
+use chimera_core::modulation::ModState;
+use chimera_core::params::{EngineType, ParamSnapshot};
+use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
-use common::SR;
 use common::orbit::write_wav;
-use common::rev::{burst_products_db, sine_floor_dbfs};
+use common::rev::{pitch_per_pass_cents, run, tone};
+use common::{Rig, SR};
 
-/// A fresh bus with only the reverb on, QUAD's defaults at `grit`, MIX 1.
-fn bus(grit: f32) -> (Box<FxBus>, FxParams) {
+fn dir() -> PathBuf {
+    std::env::var_os("AB_DIR").map_or_else(
+        || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/ab"),
+        PathBuf::from,
+    )
+}
+
+/// A mono 32-bit float WAV's samples (`stimuli.py`'s format).
+fn read_wav(path: &Path) -> Vec<f32> {
+    let b = std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    assert_eq!(&b[..4], b"RIFF");
+    assert_eq!(u16::from_le_bytes([b[20], b[21]]), 3, "not float");
+    assert_eq!(u16::from_le_bytes([b[22], b[23]]), 1, "not mono");
+    let at = b.windows(4).position(|w| w == b"data").expect("no data") + 8;
+    b[at..]
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|&c| f32::from_le_bytes(c))
+        .collect()
+}
+
+/// `x` as `read_wav` reads it.
+fn write_float_wav(path: &Path, x: &[f32]) {
+    let data = (x.len() * 4) as u32;
+    let mut b = Vec::with_capacity(44 + data as usize);
+    b.extend_from_slice(b"RIFF");
+    b.extend_from_slice(&(36 + data).to_le_bytes());
+    b.extend_from_slice(b"WAVEfmt ");
+    b.extend_from_slice(&16u32.to_le_bytes());
+    b.extend_from_slice(&3u16.to_le_bytes()); // IEEE float
+    b.extend_from_slice(&1u16.to_le_bytes()); // mono
+    b.extend_from_slice(&SR.to_le_bytes());
+    b.extend_from_slice(&(SR * 4).to_le_bytes());
+    b.extend_from_slice(&4u16.to_le_bytes());
+    b.extend_from_slice(&32u16.to_le_bytes());
+    b.extend_from_slice(b"data");
+    b.extend_from_slice(&data.to_le_bytes());
+    for s in x {
+        b.extend_from_slice(&s.to_le_bytes());
+    }
+    std::fs::write(path, b).expect("the WAV");
+}
+
+// ── the stimuli ──
+
+/// One note: (start s, length s, MIDI note, velocity).
+type Note = (f32, f32, u8, u8);
+
+/// `notes` on `p`, one voice each, mono, `seconds` long.
+fn play(p: &ParamSnapshot, notes: &[Note], seconds: f32) -> Vec<f32> {
+    let mods = ModState::new();
+    let blocks = (seconds * SR as f32) as usize / BLOCK_SIZE;
+    let mut out = vec![0.0f32; blocks * BLOCK_SIZE];
+    for &(start, len, note, vel) in notes {
+        let (on, off) = (
+            (start * SR as f32) as usize / BLOCK_SIZE,
+            ((start + len) * SR as f32) as usize / BLOCK_SIZE,
+        );
+        let mut rig = Rig::new(SR);
+        let mut block = [0.0; BLOCK_SIZE];
+        for b in on..blocks {
+            if b == on {
+                let (n, v) = (MidiNote::new(note).unwrap(), Velocity::new(vel).unwrap());
+                rig.note_on(n, v, p);
+            }
+            if b == off {
+                rig.note_off();
+            }
+            rig.render(&mut block, p, &mods);
+            for (o, s) in out[b * BLOCK_SIZE..].iter_mut().zip(&block) {
+                *o += s;
+            }
+        }
+    }
+    out
+}
+
+fn peak(x: &[f32]) -> f32 {
+    x.iter().fold(0.0f32, |m, s| m.max(s.abs()))
+}
+
+/// `x` scaled to peak at `dbfs`.
+fn peak_to(mut x: Vec<f32>, dbfs: f32) -> Vec<f32> {
+    let g = 10f32.powf(dbfs / 20.0) / peak(&x);
+    x.iter_mut().for_each(|s| *s *= g);
+    x
+}
+
+fn bowed() -> ParamSnapshot {
+    let mut p = ParamSnapshot::for_engine(EngineType::Modal);
+    p.modal.mode = ResonatorMode::Bowed;
+    p
+}
+
+fn pad() -> ParamSnapshot {
+    let s = chimera_core::factory::factory_sound(6).expect("MORPH PAD");
+    assert_eq!(s.name.as_str(), "MORPH PAD");
+    s.params
+}
+
+/// `x` from `at` seconds into `into`, scaled by `g`.
+fn mix_in(into: &mut [f32], x: &[f32], at: f32, g: f32) {
+    let i = (at * SR as f32) as usize;
+    for (o, s) in into[i..].iter_mut().zip(x) {
+        *o += g * s;
+    }
+}
+
+/// An early-'90s IDM phrase, 12 s at 120 BPM (six bars): a broken beat on
+/// the kick, snare and hat, a pad of four-bar chords and a bowed line over
+/// it. Then 6 s of tail room.
+fn idm(kick: &[f32], snare: &[f32], hat: &[f32]) -> Vec<f32> {
+    const STEP: f32 = 0.125; // a 16th at 120 BPM
+    let mut x = vec![0.0f32; 18 * SR as usize];
+    // Per bar of 16 steps: kick, snare (velocity) and hat steps. Bars 3
+    // and 6 break up, with a 32nd snare roll into the turnaround.
+    let kicks: [&[usize]; 2] = [&[0, 3, 7, 10], &[0, 6, 9, 11, 14]];
+    let snares: [&[(usize, f32)]; 2] = [
+        &[(4, 1.0), (12, 1.0), (15, 0.35)],
+        &[(4, 1.0), (7, 0.3), (12, 1.0), (13, 0.4)],
+    ];
+    let hats: &[usize] = &[2, 3, 6, 8, 10, 11, 14];
+    for bar in 0..6 {
+        let alt = (bar % 3 == 2) as usize;
+        let t0 = bar as f32 * 16.0 * STEP;
+        for &k in kicks[alt] {
+            mix_in(&mut x, kick, t0 + k as f32 * STEP, 1.0);
+        }
+        for &(s, v) in snares[alt] {
+            mix_in(&mut x, snare, t0 + s as f32 * STEP, v);
+        }
+        for &h in hats {
+            mix_in(&mut x, hat, t0 + h as f32 * STEP, 0.7);
+        }
+        if bar == 5 {
+            for r in 0..8 {
+                let at = t0 + 14.0 * STEP + r as f32 * STEP / 4.0;
+                mix_in(&mut x, snare, at, 0.25 + 0.08 * r as f32);
+            }
+        }
+    }
+    // Am9, Fmaj9 and Em9 under the beat, two bars each.
+    let chords: [&[u8]; 3] = [
+        &[57, 60, 64, 67, 71],
+        &[53, 57, 60, 64, 67],
+        &[52, 55, 59, 62, 66],
+    ];
+    let pad_notes: Vec<Note> = chords
+        .iter()
+        .enumerate()
+        .flat_map(|(i, c)| c.iter().map(move |&n| (i as f32 * 4.0, 4.0, n, 80)))
+        .collect();
+    let pad = peak_to(play(&pad(), &pad_notes, 18.0), -14.0);
+    mix_in(&mut x, &pad, 0.0, 1.0);
+    // The line: half notes and a few quarters, E5 down to B4 and back.
+    let line: &[(f32, f32, u8)] = &[
+        (0.0, 1.0, 76),
+        (1.0, 1.0, 74),
+        (2.0, 2.0, 72),
+        (4.0, 1.0, 77),
+        (5.0, 0.5, 76),
+        (5.5, 0.5, 74),
+        (6.0, 2.0, 72),
+        (8.0, 1.0, 71),
+        (9.0, 1.0, 74),
+        (10.0, 2.0, 76),
+    ];
+    let line: Vec<Note> = line.iter().map(|&(t, l, n)| (t, l, n, 90)).collect();
+    let strings = peak_to(play(&bowed(), &line, 18.0), -16.0);
+    mix_in(&mut x, &strings, 0.0, 1.0);
+    peak_to(x, -6.0)
+}
+
+#[test]
+#[ignore]
+fn stimuli() {
+    let d = dir().join("stimuli");
+    let read = |n: &str| read_wav(&d.join(format!("{n}.wav")));
+    let (kick, snare, hat) = (read("kick"), read("snare"), read("hat"));
+    let trim = |x: Vec<f32>| -> Vec<f32> {
+        let end = x.iter().rposition(|s| s.abs() > 1e-6).unwrap_or(0) + 1;
+        x[..end].to_vec()
+    };
+    let (kick, snare, hat) = (trim(kick), trim(snare), trim(hat));
+    // Strings and pad alone: a chord held 3 s, released, 12 s of room.
+    let chord = |notes: &[u8]| -> Vec<Note> { notes.iter().map(|&n| (0.0, 3.0, n, 90)).collect() };
+    let strings = peak_to(play(&bowed(), &chord(&[57, 64, 69, 72]), 15.0), -12.0);
+    let pad = peak_to(play(&pad(), &chord(&[57, 60, 64, 67, 71]), 15.0), -12.0);
+    for (name, x) in [
+        ("strings", strings),
+        ("pad", pad),
+        ("idm", idm(&kick, &snare, &hat)),
+    ] {
+        assert!(x.iter().all(|s| s.is_finite()), "{name}");
+        write_float_wav(&d.join(format!("{name}.wav")), &x);
+    }
+}
+
+// ── the renders ──
+
+/// A fresh bus with only the reverb on: QUAD's defaults, MIX 1, SMEAR
+/// `smear` (through the ids, so either build takes it).
+fn bus(smear: f32) -> (Box<FxBus>, FxParams) {
     let mut fx = FxParams::default();
-    (fx.reverb.grit, fx.reverb.mix) = (grit, 1.0);
+    fx.reverb.mix = 1.0;
+    fx.reverb.write(ParamId(5), 0.0);
+    fx.reverb.write(ParamId(11), smear);
     (Box::new(FxBus::new()), fx)
 }
 
@@ -40,21 +255,6 @@ fn tick(
     (ret.l, ret.r)
 }
 
-/// A mono 32-bit float WAV's samples (`stimuli.py`'s format).
-fn read_wav(path: &std::path::Path) -> Vec<f32> {
-    let b = std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    assert_eq!(&b[..4], b"RIFF");
-    assert_eq!(u16::from_le_bytes([b[20], b[21]]), 3, "not float");
-    assert_eq!(u16::from_le_bytes([b[22], b[23]]), 1, "not mono");
-    let at = b.windows(4).position(|w| w == b"data").expect("no data") + 8;
-    b[at..]
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .map(|&c| f32::from_le_bytes(c))
-        .collect()
-}
-
 fn dbfs(x: &[f32]) -> f32 {
     let ms = x.iter().map(|&s| s as f64 * s as f64).sum::<f64>() / x.len() as f64;
     (10.0 * (ms / 0.5).log10()) as f32
@@ -64,45 +264,57 @@ fn dbfs(x: &[f32]) -> f32 {
 #[ignore]
 fn render() {
     let name = std::env::var("AB_STIMULUS").expect("AB_STIMULUS");
-    let grit: f32 = std::env::var("AB_GRIT")
-        .expect("AB_GRIT")
+    let smear: f32 = std::env::var("AB_SMEAR")
+        .expect("AB_SMEAR")
         .parse()
-        .expect("GRIT");
-    let dir = std::env::var_os("AB_DIR").map_or_else(
-        || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/ab"),
-        PathBuf::from,
-    );
-    let x = read_wav(&dir.join("stimuli").join(format!("{name}.wav")));
-    let (mut b, fx) = bus(grit);
+        .expect("SMEAR");
+    let d = dir();
+    let x = read_wav(&d.join("stimuli").join(format!("{name}.wav")));
+    let (mut b, fx) = bus(smear);
     let mut out = Vec::with_capacity(2 * x.len());
     for blk in x.chunks(BLOCK_SIZE) {
         let mut send = [0.0; BLOCK_SIZE];
         send[..blk.len()].copy_from_slice(blk);
         let (l, r) = tick(&mut b, &fx, &send);
-        out.extend(l.iter().zip(&r).flat_map(|(&l, &r)| [l, r]));
+        for i in 0..BLOCK_SIZE {
+            out.extend([send[i] + l[i], send[i] + r[i]]);
+        }
     }
     assert!(out.iter().all(|s| s.is_finite()), "non-finite");
-    let stem = format!("{name}_g{grit}");
-    let wav = dir.join(format!("{stem}.wav"));
-    // 6 dB down: at MIX 1 the return peaks at 0 dBFS, and the WAV clips.
-    write_wav(&wav, &out.iter().map(|&s| 0.5 * s).collect::<Vec<_>>());
+    let stem = format!("{name}_s{smear}");
+    let wav = d.join(format!("{stem}.wav"));
+    // 6 dB down: the send and a MIX 1 return together peak near 0 dBFS.
+    let out: Vec<f32> = out.iter().map(|&s| 0.5 * s).collect();
+    write_wav(&wav, &out);
     assert!(wav.exists());
-
-    let floor = {
-        let (mut b, fx) = bus(grit);
-        sine_floor_dbfs(&mut |s| tick(&mut b, &fx, s))
-    };
-    let (products, worst) = {
-        let (mut b, fx) = bus(grit);
-        burst_products_db(&mut |s| tick(&mut b, &fx, s))
-    };
-    let peak = out.iter().fold(0.0f32, |m, s| m.max(s.abs()));
-    let last = dbfs(&out[out.len() - 4 * SR as usize..]);
+    // The figures: the pitch spread on a 1 kHz probe's tail, per pass, in
+    // cents from its own mean, and the render's peak and last 2 s. The
+    // probe runs QUAD at SIZE 0 (a 0.338 s round trip, whose tail barely
+    // beats) and TIME 1 (a long one), as `reverb_smear_test`'s bound does.
+    let (mut b, mut fx) = bus(smear);
+    (fx.reverb.time, fx.reverb.size) = (1.0, 0.0);
+    let sine = tone(1_000.0, 0.25);
+    let (l, _) = run(
+        &mut |s| tick(&mut b, &fx, s),
+        &mut |i| if i < SR as usize / 2 { sine(i) } else { 0.0 },
+        10.0,
+    );
+    // Cut where the tail falls 40 dB: below, the LSBs scatter the crossings.
+    let tail = &l[3 * SR as usize / 2..];
+    let first = common::rms(&tail[..SR as usize / 100]);
+    let end = tail
+        .chunks(SR as usize / 100)
+        .position(|w| common::rms(w) < 1e-2 * first)
+        .map_or(tail.len(), |w| w * SR as usize / 100);
+    let passes = pitch_per_pass_cents(&tail[..end], 1_000.0, 0.338);
+    let mean = passes.iter().sum::<f32>() / passes.len() as f32;
+    let spread = passes.iter().map(|c| (c - mean).abs()).fold(0.0, f32::max);
     std::fs::write(
-        dir.join(format!("{stem}.txt")),
+        d.join(format!("{stem}.txt")),
         format!(
-            "{name}\t{grit}\t{floor:.1}\t{products:.1}\t{worst:.1}\t{:.1}\t{last:.1}\n",
-            20.0 * peak.log10()
+            "{name}\t{smear}\t{spread:.1}\t{:.1}\t{:.1}\n",
+            20.0 * peak(&out).log10(),
+            dbfs(&out[out.len() - 4 * SR as usize..]),
         ),
     )
     .expect("the figures");

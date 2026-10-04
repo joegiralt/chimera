@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """The A/B stimuli (reverb TYPEs spec § A/B): 48 kHz mono float WAVs, each
-followed by 12 s of silence, from seed 343. Writes <dir>/<name>.wav."""
+followed by 12 s of silence, from seed 343. Writes <dir>/<name>.wav. The
+drums are synthesised here (Chimera has no drum engine yet); the strings,
+the pad and the IDM phrase are played on Chimera's own engines by
+`reverb_render_test`'s `stimuli`, which reads the kick, snare and hat."""
 
 import math
 import random
@@ -52,6 +55,26 @@ def snare(rng):
     return peak_to(x, -12)
 
 
+def kick(_rng):
+    # A dry kick: a sine falling 150 → 45 Hz, 350 ms, and a 2 ms click.
+    n = int(0.35 * SR)
+    x, ph = [], 0.0
+    for i in range(n):
+        t = i / SR
+        ph += 2 * math.pi * (45 + 105 * math.exp(-t / 0.03)) / SR
+        click = math.exp(-t / 0.002) * 0.5
+        x.append(math.sin(ph) * math.exp(-t / 0.12) + click)
+    return peak_to(x, -12)
+
+
+def hat(rng):
+    # A closed hat: white noise, differenced twice (a crude high-pass), 50 ms.
+    n = int(0.05 * SR)
+    w = [rng.uniform(-1, 1) for _ in range(n + 2)]
+    x = [(w[i + 2] - 2 * w[i + 1] + w[i]) * math.exp(-i / SR / 0.012) for i in range(n)]
+    return peak_to(x, -18)
+
+
 def saw_chord(_rng):
     # C3, E♭3, G3, C4: band-limited saws, 0.6 s with 5 ms edges.
     n = int(0.6 * SR)
@@ -68,7 +91,14 @@ def saw_chord(_rng):
     return peak_to(x, -12)
 
 
-STIMULI = {"impulse": impulse, "pink": pink, "snare": snare, "saw_chord": saw_chord}
+STIMULI = {
+    "impulse": impulse,
+    "pink": pink,
+    "snare": snare,
+    "kick": kick,
+    "hat": hat,
+    "saw_chord": saw_chord,
+}
 
 
 def write(path, x):

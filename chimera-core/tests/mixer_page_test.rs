@@ -175,9 +175,9 @@ fn fx_encoders_step_like_before() {
     assert_eq!(perf.fx.reverb.mix, 0.0);
     turn_def(&reg::EFX, 4, 1, &mut perf);
     assert_eq!(perf.fx.reverb.mix, 1.0 / 128.0);
-    turn_def(&reg::EFX, 0, 5, &mut perf);
-    assert!((perf.fx.reverb.grit - (0.3 + 5.0 / 128.0)).abs() < 1e-6);
-    turn_def(&reg::EFX, 3, 1, &mut perf);
+    turn_def(&reg::EFX, 3, 5, &mut perf);
+    assert!((perf.fx.reverb.smear - 5.0 / 128.0).abs() < 1e-6);
+    turn_def(&reg::EFX, 0, 1, &mut perf);
     assert!((perf.fx.reverb.size - (0.5 + 1.0 / 31.0)).abs() < 1e-6);
     turn_def(&reg::DELAY, 3, 64, &mut perf);
     assert_eq!(perf.fx.delay.rev_send, 0.5);
@@ -391,18 +391,19 @@ fn the_delay_page_is_time_fdbk_tone_rev_mix_with_char_below() {
     assert_eq!(subs, [reg::DELAY_CHAR.id], "{}", chain.name);
 }
 
-/// FX diet spec § UI: TYPE's slot is GRIT; the rest keep their order.
+/// Reverb TYPEs spec § Pages: QUAD's main page is SIZE · TIME · DAMP ·
+/// SMEAR, then MIX. (RATE is on QUAD's MORE page, Task 6.)
 #[test]
-fn the_reverb_page_is_grit_time_damp_size_mix() {
+fn the_reverb_page_is_size_time_damp_smear_mix() {
     use chimera_core::dsp::reverb::ReverbParams;
     let at = |p| Some(ParamAddr::new(BlockRef::Reverb, p));
     assert_eq!(
         bound(&reg::EFX),
         [
-            at(ReverbParams::GRIT),
+            at(ReverbParams::SIZE),
             at(ReverbParams::TIME),
             at(ReverbParams::DAMPING),
-            at(ReverbParams::SIZE),
+            at(ReverbParams::SMEAR),
             at(ReverbParams::MIX),
             None
         ]

@@ -68,7 +68,8 @@ fn max() -> FxParams {
             time: 1.0,
             size: 1.0,
             damping: 0.0,
-            grit: 0.3,
+            smear: 1.0,
+            rate: 1.0,
         },
         tape: TapeParams {
             mix: 1.0,

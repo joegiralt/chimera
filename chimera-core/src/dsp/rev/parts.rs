@@ -10,6 +10,7 @@ use crate::dsp::algo::math::exp2;
 use crate::dsp::clampf;
 use crate::dsp::halfband::HALF;
 use crate::dsp::ring::rnd;
+use crate::dsp::xorshift_noise;
 
 /// R1's re-entry clip: `x` to the knee at 1.0, then `1 + u − u²/4` with
 /// `u = min(|x| − 1, 2)`, reaching 2.0 with slope 0 at |x| = 3.
@@ -39,7 +40,7 @@ pub fn ap_f32(x: f32, z: f32, g: f32) -> (f32, f32) {
     (z + g * v, v)
 }
 
-/// The wobble's moving read: `d` (≥ 2) samples behind `base` in `lines`,
+/// SMEAR's moving read: `d` (≥ 2) samples behind `base` in `lines`,
 /// a linear pair `x0 + f·(x1 − x0)`, both slots wrapped. In LSBs.
 #[inline(always)]
 pub fn pair(lines: &[i16], base: usize, d: f32) -> f32 {
@@ -97,43 +98,80 @@ impl Xfade {
     }
 }
 
-/// The wobble LFO: a `u32` phase at the ring rate, read once a block and
-/// lerped across its `HALF` ring samples by the engine. Zero bytes stop it.
+/// SMEAR's source (§ SMEAR), one per smeared line: a new random target
+/// in −1..1 every `period` ring samples, smoothed by two one-poles at the
+/// rate, stepped once a block. The engine lerps `value()` to `block()`
+/// across the block. Zero bytes hold still at 0.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Wobble {
-    phase: u32,
-    inc: u32,
+pub struct Wander {
+    rng: u32,
+    target: f32,
+    lp1: f32,
+    lp2: f32,
+    /// Ring samples to the next target.
+    left: u32,
+    period: u32,
+    a: f32,
 }
 
-impl Wobble {
-    /// `hz` at the ring rate `fs`.
+/// `new`'s period until the first `set_rate`, which scales `left` with it.
+const PHASE_UNIT: u32 = 1 << 16;
+
+impl Wander {
+    /// `seed` from `wander_seeds`; `phase` in 0..1, the share of a period
+    /// before its first target (line k of n at k/n).
+    pub fn new(seed: u32, phase: f32) -> Self {
+        Self {
+            rng: seed,
+            left: (clampf(phase, 0.0, 1.0) * PHASE_UNIT as f32) as u32,
+            period: PHASE_UNIT,
+            ..Self::default()
+        }
+    }
+
+    /// A target every 1/(2·`hz`) s and the smoothing at `hz`, at the ring
+    /// rate `fs`. The wait in progress keeps its share of the period.
     pub fn set_rate(&mut self, hz: f32, fs: f32) {
-        self.inc = (clampf(hz / fs, 0.0, 0.5) * 4_294_967_296.0 + 0.5) as u32;
+        let period = ((fs / (2.0 * hz)) as u32).max(HALF as u32);
+        if period != self.period && self.period > 0 {
+            self.left = (self.left as u64 * period as u64 / self.period as u64) as u32;
+        }
+        self.period = period;
+        self.a = one_pole(hz, fs / HALF as f32);
     }
 
-    /// This block's start, L and R 90° apart (L leads), in −1..1; then a
-    /// block on.
-    pub fn block(&mut self) -> [f32; 2] {
-        let turn = self.phase as f32 * (1.0 / 4_294_967_296.0);
-        self.phase = self.phase.wrapping_add(self.inc.wrapping_mul(HALF as u32));
-        [sin_turn(turn), sin_turn(turn - 0.25)]
+    /// The drift at the last block's end.
+    #[inline(always)]
+    pub fn value(&self) -> f32 {
+        self.lp2
+    }
+
+    /// One block on: the drift at its end, in −1..1.
+    pub fn block(&mut self) -> f32 {
+        self.left = self.left.saturating_sub(HALF as u32);
+        if self.left == 0 {
+            self.target = xorshift_noise(&mut self.rng);
+            self.left = self.period;
+        }
+        self.lp1 += self.a * (self.target - self.lp1);
+        self.lp2 += self.a * (self.lp1 - self.lp2);
+        self.lp2
     }
 }
 
-/// sin(2π·`t`), `t` in −1..1, to under 4e-6: folded to a quarter turn,
-/// then Taylor to the 9th power. Not `fast_sin_turns`: `SINE_LUT` is built
-/// by a Taylor series over ±π with no quarter-wave fold, so its entries
-/// err up to 5e-4 near a half turn, past the lerp's 1e-4 budget. Goes
-/// when private issue #352 fixes the table.
-#[inline(always)]
-pub(crate) fn sin_turn(t: f32) -> f32 {
-    let mut x = t - (t as i32) as f32;
-    x -= (x > 0.5) as i32 as f32;
-    x += (x < -0.5) as i32 as f32;
-    let a = x.abs();
-    let th = TAU * a.min(0.5 - a).copysign(x);
-    let t2 = th * th;
-    th * (1.0 - t2 / 6.0 * (1.0 - t2 / 20.0 * (1.0 - t2 / 42.0 * (1.0 - t2 / 72.0))))
+/// One xorshift32 seed per line from `engine_seed`, each a hash of the
+/// seed and its line (murmur3's finaliser): far apart on the generator's
+/// cycle, so no line replays another's targets late. Never 0.
+pub fn wander_seeds<const N: usize>(engine_seed: u32) -> [u32; N] {
+    core::array::from_fn(|k| {
+        let mut h = engine_seed ^ (k as u32 + 1).wrapping_mul(0x9e37_79b9);
+        h ^= h >> 16;
+        h = h.wrapping_mul(0x85eb_ca6b);
+        h ^= h >> 13;
+        h = h.wrapping_mul(0xc2b2_ae35);
+        h ^= h >> 16;
+        h.max(1)
+    })
 }
 
 /// The per-block one-pole every continuous knob eases by, as

@@ -261,11 +261,13 @@ pub static EFX: BlockDef = BlockDef {
     short: "REV",
     layout: PageLayout::CellGrid,
     viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Reverb)),
+    // QUAD's main page (reverb TYPEs spec § Pages): SIZE · TIME · DAMP ·
+    // SMEAR, then MIX. RATE goes on QUAD's MORE page (Task 6).
     params: [
-        ParamSlot::param(BlockRef::Reverb, ReverbParams::GRIT),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::SIZE),
         ParamSlot::param(BlockRef::Reverb, ReverbParams::TIME),
         ParamSlot::param(BlockRef::Reverb, ReverbParams::DAMPING),
-        ParamSlot::param(BlockRef::Reverb, ReverbParams::SIZE),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::SMEAR),
         ParamSlot::param(BlockRef::Reverb, ReverbParams::MIX),
         EMPTY,
     ],
@@ -882,7 +884,7 @@ pub static DEMO_GLYPH_RINGS: BlockDef = BlockDef {
 };
 
 /// GLYPH: CUBE, the reverb cube (the reverb specs carry it): a SIZE,
-/// b TIME, c DAMP, d MIX, e GRIT, each emphasised when focused.
+/// b TIME, c DAMP, d MIX, e SMEAR, f RATE, each emphasised when focused.
 pub static DEMO_GLYPH_CUBE: BlockDef = BlockDef {
     id: 77,
     name: "Glyph: Cube",
@@ -894,8 +896,8 @@ pub static DEMO_GLYPH_CUBE: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Reverb, ReverbParams::TIME),
         ParamSlot::param(BlockRef::Reverb, ReverbParams::DAMPING),
         ParamSlot::param(BlockRef::Reverb, ReverbParams::MIX),
-        ParamSlot::param(BlockRef::Reverb, ReverbParams::GRIT),
-        EMPTY,
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::SMEAR),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::RATE),
     ],
 };
 

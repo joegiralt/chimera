@@ -1,5 +1,5 @@
-//! The reverb (FX diet spec § Reverb, § Testing). GRIT 0 wherever RT60
-//! or stereo is measured.
+//! The reverb (FX diet spec § Reverb, § Testing), QUAD at SMEAR 0. SMEAR
+//! is `reverb_smear_test`'s; GRIT is retired.
 
 mod common;
 use chimera_core::block::{Block, ParamId};
@@ -7,7 +7,6 @@ use chimera_core::dsp::Stereo;
 use chimera_core::dsp::halfband::HALF;
 use chimera_core::dsp::rev::Reverb;
 use chimera_core::dsp::rev::arena::ReverbArena;
-use chimera_core::dsp::rev::grit::{IDLE_FADE, IDLE_HOLD};
 use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::reverb::{REVERB_SPECS, ReverbParams};
 use chimera_core::dsp::ring::*;
@@ -27,11 +26,11 @@ fn run(
     out: &mut Stereo,
 ) {
     let p = ReverbParams {
-        grit: c.grit,
         time: c.time,
         damping: c.damp,
         size: c.size,
         mix,
+        ..ReverbParams::default()
     };
     rv.process(send, &p, mix, Tempo::DEFAULT, sample_rate, out);
 }
@@ -150,23 +149,23 @@ fn the_first_reflection_is_the_shortest_tap_at_twice_the_rate() {
     assert_eq!(first_reflection(31), 686);
 }
 
-/// The lines' fixed 1-LSB storage: GRIT no longer reaches it.
+/// The lines' storage: plain i16 at a fixed 1 LSB, rounding (delays and
+/// dampers) or truncating (allpasses), saturating at the range.
 #[test]
 fn storage_rounds_truncates_and_saturates_on_the_lsb() {
-    let g = Grid::FIXED;
     for v in i16::MIN..=i16::MAX {
-        assert_eq!((g.q_round(v as f32), g.q_trunc(v as f32)), (v, v));
+        assert_eq!((q_round_fixed(v as f32), q_trunc_fixed(v as f32)), (v, v));
     }
-    assert_eq!((g.q_round(-100.7), g.q_round(100.7)), (-101, 101));
-    assert_eq!((g.q_round(-0.5), g.q_round(0.5)), (-1, 1));
-    assert_eq!((g.q_trunc(-100.7), g.q_trunc(100.7)), (-100, 100));
-    assert_eq!((g.q_trunc(-0.99), g.q_trunc(0.99)), (0, 0));
-    for q in [Grid::q_round, Grid::q_trunc] {
-        assert_eq!(q(g, 33_000.0), i16::MAX);
-        assert_eq!(q(g, 2_100_000.0), i16::MAX);
-        assert_eq!(q(g, -40_000.0), i16::MIN);
-        assert_eq!(q(g, -2_100_000.0), i16::MIN);
-        assert_eq!(q(g, f32::NAN), 0);
+    assert_eq!((q_round_fixed(-100.7), q_round_fixed(100.7)), (-101, 101));
+    assert_eq!((q_round_fixed(-0.5), q_round_fixed(0.5)), (-1, 1));
+    assert_eq!((q_trunc_fixed(-100.7), q_trunc_fixed(100.7)), (-100, 100));
+    assert_eq!((q_trunc_fixed(-0.99), q_trunc_fixed(0.99)), (0, 0));
+    for q in [q_round_fixed, q_trunc_fixed] {
+        assert_eq!(q(33_000.0), i16::MAX);
+        assert_eq!(q(2_100_000.0), i16::MAX);
+        assert_eq!(q(-40_000.0), i16::MIN);
+        assert_eq!(q(-2_100_000.0), i16::MIN);
+        assert_eq!(q(f32::NAN), 0);
     }
 }
 
@@ -206,13 +205,8 @@ fn render(
     (l, r)
 }
 
-fn at(grit: f32, time: f32, damp: f32, size: f32) -> RingControls {
-    RingControls {
-        grit,
-        time,
-        damp,
-        size,
-    }
+fn at(time: f32, damp: f32, size: f32) -> RingControls {
+    RingControls { time, damp, size }
 }
 
 fn impulse(n: usize) -> f32 {
@@ -226,13 +220,14 @@ fn energy(x: &[f32]) -> f64 {
 /// 1 s of noise, 3 s of silence: finite, within ±12·`WET_GAIN`, and the
 /// last 0.5 s at least half the target's drop below the first 0.5 s after
 /// the input stops (2.5 s apart).
-fn stable(grit: f32) {
+#[test]
+fn stable_at_every_setting() {
     for time in [0.0, 0.5, 1.0] {
         for size in [0.0, 0.5, 1.0] {
             for damp in [0.0, 0.5, 1.0] {
-                let what = format!("GRIT {grit} TIME {time} SIZE {size} DAMP {damp}");
+                let what = format!("TIME {time} SIZE {size} DAMP {damp}");
                 let mut n = Noise(0x1234_5678);
-                let c = at(grit, time, damp, size);
+                let c = at(time, damp, size);
                 let (l, r) = render(
                     blocks(4.0),
                     |i| if i < SR as usize { n.next() } else { 0.0 },
@@ -255,23 +250,12 @@ fn stable(grit: f32) {
     }
 }
 
-#[test]
-fn stable_at_grit_0() {
-    stable(0.0);
-}
-
-#[test]
-fn stable_at_grit_1() {
-    stable(1.0);
-}
-
 /// Truncation in the allpasses leaves no limit cycle: silence in reaches
-/// exact zeros out, with no gate but the converters' idle mute, which
-/// ends `IDLE_HOLD` + `IDLE_FADE` after the ring falls silent.
-fn falls_silent_within(grit: f32, seconds: f32) {
+/// exact zeros out, with no gate.
+fn falls_silent_within(seconds: f32) {
     let mut rv = Box::new(Reverb::new());
     let mut n = Noise(0xdead_beef);
-    let c = at(grit, 1.0, 0.0, 1.0);
+    let c = at(1.0, 0.0, 1.0);
     let mut out = Stereo::SILENT;
     for _ in 0..blocks(1.0) {
         let send = core::array::from_fn(|_| n.next());
@@ -282,14 +266,7 @@ fn falls_silent_within(grit: f32, seconds: f32) {
     while !rv.quad().unwrap().ring().is_silent(rv.arena()) {
         run(&mut rv, &silence, &c, 1.0, SR, &mut out);
         b += 1;
-        assert!(
-            b <= blocks(seconds),
-            "GRIT {grit}: still ringing after {seconds} s"
-        );
-    }
-    let mute = 2 * (IDLE_HOLD + IDLE_FADE) as usize;
-    for _ in 0..mute.div_ceil(BLOCK_SIZE) {
-        run(&mut rv, &silence, &c, 1.0, SR, &mut out);
+        assert!(b <= blocks(seconds), "still ringing after {seconds} s");
     }
     for _ in 0..blocks(0.1) {
         run(&mut rv, &silence, &c, 1.0, SR, &mut out);
@@ -298,13 +275,8 @@ fn falls_silent_within(grit: f32, seconds: f32) {
 }
 
 #[test]
-fn falls_silent_at_grit_1_after_the_idle_mute() {
-    falls_silent_within(1.0, 20.0);
-}
-
-#[test]
-fn no_limit_cycle_at_grit_0() {
-    falls_silent_within(0.0, 25.0);
+fn no_limit_cycle() {
+    falls_silent_within(25.0);
 }
 
 /// −6 dBFS noise (uniform, 0.5 RMS) for `seconds`, then silence.
@@ -318,20 +290,14 @@ fn noise_burst(seed: u32, seconds: f32) -> impl FnMut(usize) -> f32 {
 /// input, and for at least half the target RT60 at TIME 0.5 after it.
 #[test]
 fn a_normal_tail_is_never_zeroed_early() {
-    for grit in [0.0, 0.3, 1.0] {
-        let c = RingControls {
-            grit,
-            ..RingControls::default()
-        };
+    {
+        let c = RingControls::default();
         let hold = 0.5 * rt60(0.5, size_step(c.size), FS_RING);
         let (l, r) = render(blocks(0.5 + hold), noise_burst(3, 0.5), |_| c);
         let first = blocks(0.05);
         for (b, (bl, br)) in l.chunks(BLOCK_SIZE).zip(r.chunks(BLOCK_SIZE)).enumerate() {
             if b >= first {
-                assert!(
-                    bl.iter().chain(br).any(|&s| s != 0.0),
-                    "GRIT {grit}: block {b} silent"
-                );
+                assert!(bl.iter().chain(br).any(|&s| s != 0.0), "block {b} silent");
             }
         }
     }
@@ -395,7 +361,7 @@ fn mean(p: &[f64]) -> f64 {
 #[test]
 fn the_return_is_band_limited() {
     let mut n = Noise(7);
-    let (l, r) = render(blocks(2.0), |_| n.next(), |_| at(0.0, 0.5, 0.0, 0.5));
+    let (l, r) = render(blocks(2.0), |_| n.next(), |_| at(0.5, 0.0, 0.5));
     let n = 1 << 16;
     for x in [&l, &r] {
         let p = power(&x[x.len() - n..]);
@@ -454,7 +420,7 @@ fn rt60_follows_time() {
         let mut last = 0.0;
         for time in [0.25, 0.5, 0.75, 1.0] {
             let target = rt60(time, step, FS_RING);
-            let c = at(0.0, time, 0.0, step as f32 / 31.0);
+            let c = at(time, 0.0, step as f32 / 31.0);
             let (l, r) = render(
                 blocks(0.5 + (1.3 * target).max(1.5)),
                 noise_burst(0x5eed, 0.5),
@@ -474,10 +440,7 @@ fn rt60_follows_time() {
 
 #[test]
 fn each_side_arrives_early_and_the_sides_decorrelate() {
-    let c = RingControls {
-        grit: 0.0,
-        ..RingControls::default()
-    };
+    let c = RingControls::default();
     let (l, r) = render(blocks(1.0), impulse, |_| c);
     let w = SR as usize / 100;
     for (side, x) in [("L", &l), ("R", &r)] {
@@ -524,10 +487,9 @@ fn no_click(what: &str, from: RingControls, to: RingControls) {
 #[test]
 fn moving_a_control_mid_tail_does_not_click() {
     type Set = fn(&mut RingControls, f32);
-    let sets: [(&str, Set, f32); 4] = [
+    let sets: [(&str, Set, f32); 3] = [
         ("TIME", |c, v| c.time = v, 1.0 / 128.0),
         ("DAMP", |c, v| c.damp = v, 1.0 / 128.0),
-        ("GRIT", |c, v| c.grit = v, 1.0 / 128.0),
         ("SIZE", |c, v| c.size = v, 1.0 / 31.0),
     ];
     for (name, set, step) in sets {
@@ -570,7 +532,7 @@ fn held_block() -> RingBlock {
         gains_to: [0.9; STAGES],
         damp_from: 0.5,
         damp_to: 0.5,
-        grid: Grid::FIXED,
+        smear: None,
     }
 }
 
@@ -658,7 +620,7 @@ fn a_request_mid_fade_neither_restarts_nor_reverses_it() {
 /// The share of 4–10 kHz in the tail's 20 Hz–10 kHz energy, in dB, 0.2 s
 /// after 0.5 s of noise stops.
 fn high_share_db(damp: f32) -> f64 {
-    let c = at(0.0, 0.5, damp, 0.5);
+    let c = at(0.5, damp, 0.5);
     let (l, _) = render(blocks(0.5 + 0.2 + 0.35), noise_burst(21, 0.5), |_| c);
     let n = 1 << 14;
     let p = power(&l[(0.7 * SR as f32) as usize..][..n]);
@@ -703,19 +665,13 @@ fn calibration_send(n: &mut Noise, i: usize) -> f32 {
     if i < 24_000 { n.next() } else { 0.0 }
 }
 
-/// At GRIT 0: `WET_GAIN` calibrates the ring, and the plate had no
-/// converters. GRIT's high cuts take 1.2 dB off this white send at the
-/// default 0.3 (`reverb_grit_test`'s cutoffs), which is GRIT's sound.
 #[test]
 fn wet_gain_matches_the_plate_within_1_db() {
     let mut n = Noise(0x5eed);
     let (l, r) = render(
         blocks(2.0),
         |i| calibration_send(&mut n, i),
-        |_| RingControls {
-            grit: 0.0,
-            ..RingControls::default()
-        },
+        |_| RingControls::default(),
     );
     let ring = ((energy(&l) + energy(&r)) / (2.0 * l.len() as f64)).sqrt();
     let db = 20.0 * (ring / PLATE_RMS as f64).log10();
@@ -752,7 +708,7 @@ fn a_size_spin_settles_on_the_last_step() {
 #[test]
 fn six_full_scale_parts_saturate_without_wrapping() {
     let mut n = Noise(17);
-    let c = at(0.0, 1.0, 0.0, 1.0);
+    let c = at(1.0, 0.0, 1.0);
     let (l, r) = render(
         blocks(3.0),
         |i| {
@@ -777,14 +733,9 @@ fn six_full_scale_parts_saturate_without_wrapping() {
 #[test]
 fn nan_and_out_of_range_controls_render_finite() {
     let wild = [
-        at(f32::NAN, f32::NAN, f32::NAN, f32::NAN),
-        at(-3.0, 9.0, -1.0, 7.0),
-        at(
-            f32::INFINITY,
-            f32::NEG_INFINITY,
-            f32::INFINITY,
-            f32::NEG_INFINITY,
-        ),
+        at(f32::NAN, f32::NAN, f32::NAN),
+        at(9.0, -1.0, 7.0),
+        at(f32::NEG_INFINITY, f32::INFINITY, f32::NEG_INFINITY),
     ];
     for c in wild {
         let mut n = Noise(11);
@@ -816,7 +767,7 @@ fn nan_and_out_of_range_controls_render_finite() {
 fn runs_at_44_1_khz() {
     let mut rv = Box::new(Reverb::new());
     let mut n = Noise(13);
-    let c = at(0.0, 0.5, 0.3, 1.0);
+    let c = at(0.5, 0.3, 1.0);
     let mut out = Stereo::SILENT;
     let (mut first, mut last) = (0.0, 0.0);
     let second = 44_100 / BLOCK_SIZE;
@@ -851,30 +802,41 @@ fn reverb_params_default_to_the_spec_and_retire_type() {
     assert_eq!(p.controls(), RingControls::default());
 }
 
+/// GRIT (id 5) is retired; SMEAR (11) and RATE (12) are QUAD's new knobs
+/// (reverb TYPEs spec § Parameters).
 #[test]
-fn grit_is_param_5_and_reaches_the_ring() {
+fn smear_and_rate_are_params_11_and_12() {
     let mut p = ReverbParams::default();
-    assert_eq!(ReverbParams::GRIT, ParamId(5));
-    assert_eq!(p.get(ReverbParams::GRIT), 0.3);
-    p.write(ReverbParams::GRIT, 0.8);
-    assert_eq!(p.grit, 0.8);
-    assert_eq!(p.controls().grit, 0.8);
+    assert_eq!(
+        (ReverbParams::SMEAR, ReverbParams::RATE),
+        (ParamId(11), ParamId(12))
+    );
+    assert_eq!(
+        (p.get(ReverbParams::SMEAR), p.get(ReverbParams::RATE)),
+        (0.0, 0.5)
+    );
+    p.write(ReverbParams::SMEAR, 0.8);
+    p.write(ReverbParams::RATE, 0.2);
+    assert_eq!((p.smear, p.rate), (0.8, 0.2));
+    assert_eq!(p.get(ParamId(5)), 0.0);
     let ids: Vec<ParamId> = REVERB_SPECS.iter().map(|s| s.id).collect();
     assert_eq!(
         ids,
         [
-            ReverbParams::GRIT,
             ReverbParams::TIME,
             ReverbParams::DAMPING,
             ReverbParams::SIZE,
-            ReverbParams::MIX
+            ReverbParams::MIX,
+            ReverbParams::SMEAR,
+            ReverbParams::RATE,
         ]
     );
-    let grit = &REVERB_SPECS[0];
-    assert_eq!(
-        (grit.label, grit.min, grit.max, grit.step),
-        ("GRIT", 0.0, 1.0, 1.0 / 128.0)
-    );
+    for (s, label) in REVERB_SPECS[4..].iter().zip(["SMEAR", "RATE"]) {
+        assert_eq!(
+            (s.label, s.min, s.max, s.step),
+            (label, 0.0, 1.0, 1.0 / 128.0)
+        );
+    }
 }
 
 #[test]

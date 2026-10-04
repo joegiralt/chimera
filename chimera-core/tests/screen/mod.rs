@@ -1049,7 +1049,7 @@ pub const CASES: &[ScreenCase] = &[
     ("mixer_fx_delay", |ui| to_fx(ui, DLY)),
     ("mixer_fx_reverb", |ui| {
         to_fx(ui, REV);
-        feed(ui, Input::turn(EncoderId::A, 20)); // GRIT
+        feed(ui, Input::turn(EncoderId::D, 40)); // SMEAR
     }),
     ("mixer_fx_delay_char", |ui| {
         to_fx(ui, DLY);

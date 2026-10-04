@@ -681,8 +681,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // then the free ring on release (ADR 0062).
     ("two_parts_two_pairs", 0xd461a92a9542074a),
     ("reverb_send_off", 0xb7ff733538f39db9), // ADR 0049 INIT, then the ADR 0050 output trim
-    // ADR 0049 INIT, the ADR 0050 output trim, then GRIT as converters (reverb TYPEs T5).
-    ("reverb_send_on", 0x3d642ae25ebe1ebd),
+    // ADR 0049 INIT, the ADR 0050 output trim, then GRIT out (reverb TYPEs T5).
+    ("reverb_send_on", 0xcf9ed98fbcec1291),
     ("six_voice_chord", 0xb3bb31dbc471cf01), // ADR 0049 INIT, then the ADR 0050 output trim
 ];
 
@@ -697,7 +697,7 @@ const PRE_LIMITER: &[(&str, u64)] = &[
     // then the free ring on release (ADR 0062).
     ("two_parts_two_pairs", 0x5505c654fb526b21),
     ("reverb_send_off", 0x8180167de55cf955),
-    ("reverb_send_on", 0x62d702b12fb1258b), // GRIT as converters (reverb TYPEs T5)
+    ("reverb_send_on", 0x2360e85cad0d113d), // GRIT out (reverb TYPEs T5)
     ("six_voice_chord", 0x5efd58ea3b91d3bd),
 ];
 

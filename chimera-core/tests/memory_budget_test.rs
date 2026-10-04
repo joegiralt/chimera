@@ -123,10 +123,11 @@ fn axi_residents_fit() {
     let total: usize = parts.iter().map(|p| p.1).sum();
     eprintln!("{:>15} {total:>7} B of {} B", "AXI", hw::AXI_SRAM);
     assert_eq!(total, AXI_RESIDENT);
-    // The default build's, at 2dc9eefd, plus 24 B for GRIT's converters
-    // (reverb TYPEs, Task 5); the master tape adds its own.
+    // The default build's, at 2dc9eefd, plus 96 B for QUAD's SMEAR (its
+    // four wanders and depth, reverb TYPEs T5); the master tape adds its
+    // own.
     if !cfg!(feature = "master-tape") {
-        assert!(total <= 442_156, "AXI grew past 2dc9eefd's and GRIT's");
+        assert!(total <= 442_228, "AXI grew past 2dc9eefd's and SMEAR's");
     }
     assert!(
         hw::AXI_SRAM - total >= 64 * 1024,

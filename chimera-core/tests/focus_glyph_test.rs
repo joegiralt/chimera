@@ -86,12 +86,13 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Delay", "TONE", RINGS),
     ("Delay", "MIX", RINGS),
     ("Delay", "REV", RINGS),
-    // The reverb, all five params: the cube.
-    ("Reverb", "GRIT", CUBE),
+    // The reverb, all six params: the cube.
     ("Reverb", "TIME", CUBE),
     ("Reverb", "DAMP", CUBE),
     ("Reverb", "SIZE", CUBE),
     ("Reverb", "MIX", CUBE),
+    ("Reverb", "SMEAR", CUBE),
+    ("Reverb", "RATE", CUBE),
     // Blends between two ends: a crossfader.
     ("Algo", "MORPH", XF),
     ("Drive", "MIX", XF),
@@ -1285,9 +1286,13 @@ fn composites_draw_inside_their_boxes() {
                 )));
             }
             for focus in CubePart::ALL.map(Some).into_iter().chain([None]) {
-                check(Gauge::Cube(Cube::from_set([v, v, v, 1.0, v], focus, frame)));
                 check(Gauge::Cube(Cube::from_set(
-                    [1.0, 1.0 - v, 1.0, 1.0, 1.0],
+                    [v, v, v, 1.0, v, v],
+                    focus,
+                    frame,
+                )));
+                check(Gauge::Cube(Cube::from_set(
+                    [1.0, 1.0 - v, 1.0, 1.0, 1.0, 1.0],
                     focus,
                     frame,
                 )));
@@ -1302,15 +1307,15 @@ fn composites_draw_inside_their_boxes() {
 #[test]
 fn cube_reads_its_set_values() {
     use chimera_core::ui::glyph::Cube;
-    // SIZE, TIME, DAMP, MIX, GRIT.
-    let c = |size: f32, time: f32| Cube::from_set([size, time, 0.5, 0.5, 0.0], None, 0);
+    // SIZE, TIME, DAMP, MIX, SMEAR, RATE.
+    let c = |size: f32, time: f32| Cube::from_set([size, time, 0.5, 0.5, 0.0, 0.5], None, 0);
     // SIZE grows the room.
     assert!(c(1.0, 0.5).half() > c(0.0, 0.5).half());
     // TIME: how long the afterimage trails; none at 0.
     assert_eq!(c(0.5, 0.0).trails(), 0);
     assert!(c(0.5, 1.0).trails() > c(0.5, 0.4).trails());
     // It turns on the clock.
-    let at = |frame| Cube::from_set([0.5; 5], None, frame).turn();
+    let at = |frame| Cube::from_set([0.5; 6], None, frame).turn();
     assert_ne!(at(0), at(20));
     assert!(Gauge::Cube(c(0.5, 0.5)).animates());
 }
@@ -1320,7 +1325,7 @@ fn cube_box(x: i32, y: i32) -> bool {
         && (theme::CUBE_Y..theme::CUBE_Y + theme::CUBE_H).contains(&y)
 }
 
-/// MIX and GRIT up a little, DAMP up, `slot` focused.
+/// MIX and SMEAR up a little, DAMP up, `slot` focused.
 fn cube_ui(slot: EncoderId) -> UiState {
     let mut ui = UiState::new();
     to_demo(&mut ui, &reg::DEMO_GLYPH_CUBE);

@@ -264,72 +264,6 @@ fn whiten(x: &[f32]) -> Vec<f64> {
         .collect()
 }
 
-/// The return's noise under a steady −12 dBFS 1 kHz sine, 2 s in: every
-/// bin from 20 Hz to 10.5 kHz (under the half-band's image) but 1 kHz
-/// ± 50 Hz, as a level in dBFS (against a full-scale sine). The arena's
-/// own rounding is in it, and GRIT's converters, which the send keeps
-/// awake.
-pub fn sine_floor_dbfs(r: Render) -> f32 {
-    let (l, _) = run(r, &mut tone(1_000.0, 0.251), 3.5);
-    let n = 1 << 16;
-    let p = power(&l[2 * SR as usize..][..n], n);
-    let noise: f64 = p[bin_of(20.0, n)..bin_of(950.0, n)]
-        .iter()
-        .chain(&p[bin_of(1_050.0, n)..bin_of(10_500.0, n)])
-        .sum();
-    // Hann frames: Σ over the positive bins is 3n²/16 · σ².
-    let var = noise / (0.1875 * (n * n) as f64);
-    (10.0 * (var / 0.5).log10()) as f32
-}
-
-/// `products_db` on `r`'s tail: a 1 kHz burst at −12 dBFS for 0.5 s, then
-/// 4 s of decay, measured at 2 and 3 kHz on the left.
-pub fn burst_products_db(r: Render) -> (f32, f32) {
-    let burst = tone(1_000.0, 0.251);
-    let (l, _) = run(
-        r,
-        &mut |i| if i < SR as usize / 2 { burst(i) } else { 0.0 },
-        4.5,
-    );
-    products_db(&l[SR as usize / 2..], &[2_000.0, 3_000.0])
-}
-
-/// The correlated-product figure (§ Tests, GRIT): over `x`'s 100 ms
-/// windows, each of `at`'s bins (±1) against 3× the median bin within
-/// ±200 Hz of it (its own ±2 bins left out). Each window is a Welch
-/// average of 1024-point frames, and both sides are summed over the
-/// windows before they are compared: one noisy bin sits above its median
-/// by +3 dB a quarter of the time, a product in every window. Returns
-/// (summed, worst single window) for the worst of `at`, in dB.
-pub fn products_db(x: &[f32], at: &[f32]) -> (f32, f32) {
-    const N: usize = 1024;
-    let hz = SR as f64 / N as f64;
-    let span = (200.0 / hz).round() as usize;
-    let (mut sums, mut worst) = (vec![(0.0f64, 0.0f64); at.len()], f64::NEG_INFINITY);
-    for w in x.as_chunks::<{ 100 * MS }>().0 {
-        let p = power(w, N);
-        for (s, &f) in sums.iter_mut().zip(at) {
-            let k = bin_of(f as f64, N);
-            let e: f64 = p[k - 1..=k + 1].iter().sum();
-            let mut near: Vec<f64> = (k - span..=k + span)
-                .filter(|&j| j.abs_diff(k) > 2)
-                .map(|j| p[j])
-                .collect();
-            near.sort_by(f64::total_cmp);
-            let m = 3.0 * near[near.len() / 2];
-            (s.0, s.1) = (s.0 + e, s.1 + m);
-            if m > 0.0 {
-                worst = worst.max(10.0 * (e / m).log10());
-            }
-        }
-    }
-    let summed = sums
-        .iter()
-        .map(|&(e, m)| 10.0 * (e / m).log10())
-        .fold(f64::NEG_INFINITY, f64::max);
-    (summed as f32, worst as f32)
-}
-
 /// Zero-crossing frequency over `x`: rising crossings, interpolated.
 fn zc_hz(x: &[f32]) -> Option<f64> {
     let t: Vec<f64> = x
@@ -441,53 +375,121 @@ pub fn check_no_slap(moved: &[f32], fixed: &[f32]) {
     }
 }
 
-/// The tail `check_wobble_bound` judges: a 1 kHz sine for 0.5 s, then
-/// from 1.5 s to 5.5 s, cut where it falls 60 dB, in whole 0.5 s cycles.
-fn wobble_tail(r: Render) -> Vec<f32> {
+/// The tail `check_smear_bound` judges: a 1 kHz sine for 0.5 s, then
+/// from 1.5 s to `seconds`, cut where it falls 40 dB: below that the
+/// lines' own LSBs scatter the zero crossings.
+fn smear_tail(r: Render, seconds: f32) -> Vec<f32> {
     let sine = tone(1_000.0, 0.25);
     let (l, _) = run(
         r,
         &mut |i| if i < SR as usize / 2 { sine(i) } else { 0.0 },
-        5.5,
+        seconds,
     );
-    let mut tail = &l[3 * SR as usize / 2..];
+    let tail = &l[3 * SR as usize / 2..];
     let first = rms(&tail[..10 * MS]);
-    if let Some(end) = windows(tail, 10 * MS)
+    let end = windows(tail, 10 * MS)
         .iter()
-        .position(|&v| v < 1e-3 * first)
-    {
-        tail = &tail[..end * 10 * MS];
+        .position(|&v| v < 1e-2 * first)
+        .map_or(tail.len(), |w| w * 10 * MS);
+    tail[..end].to_vec()
+}
+
+/// The pitch `check_smear_bound` judges against: the same engine's tail
+/// with its wander frozen at the centre, from zero crossings.
+pub fn tail_pitch_hz(r: Render) -> f32 {
+    zc_hz(&smear_tail(r, 5.5)).expect("a tail") as f32
+}
+
+/// How far the strongest line in `x`'s spectrum stands over the median of
+/// the bins around it (±8 above DC, its own ±1 left out), in dB, from
+/// bin 2 up:
+/// a period shows as a line, a random drift's smooth spectrum as none.
+/// Bins up to `top` (of `x`'s length / 2) only. Welch frames of half `x`,
+/// its mean taken out.
+pub fn line_db(x: &[f32], top: f32) -> f32 {
+    let mean = x.iter().sum::<f32>() / x.len() as f32;
+    let x: Vec<f32> = x.iter().map(|&v| v - mean).collect();
+    let n = pow2_in(x.len() / 2);
+    let p = power(&x, n);
+    let top = ((top * p.len() as f32) as usize).min(p.len() - 9);
+    (2..top)
+        .map(|k| {
+            let mut near: Vec<f64> = (k.saturating_sub(8).max(1)..=k + 8)
+                .filter(|&j| j.abs_diff(k) > 1)
+                .map(|j| p[j])
+                .collect();
+            near.sort_by(f64::total_cmp);
+            10.0 * (p[k] / near[near.len() / 2]).log10()
+        })
+        .fold(f64::NEG_INFINITY, f64::max) as f32
+}
+
+/// The largest share of `x`'s variance one sinusoid explains, at any
+/// frequency from 0.2 Hz to `max_hz` (`x` sampled at `fs`), Hann-windowed:
+/// 1 for a pure vibrato, small for a drift spread over many frequencies.
+pub fn vibrato_share(x: &[f32], fs: f32, max_hz: f32) -> f32 {
+    let n = x.len() as f64;
+    let mean = x.iter().map(|&v| v as f64).sum::<f64>() / n;
+    let xw: Vec<f64> = x
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| (v as f64 - mean) * (0.5 - 0.5 * (TAU * i as f64 / n).cos()))
+        .collect();
+    let total: f64 = xw.iter().map(|v| v * v).sum();
+    let mut best = 0.0f64;
+    let mut f = 0.2;
+    while f <= max_hz as f64 {
+        let w = TAU * f / fs as f64;
+        let (re, im) = xw.iter().enumerate().fold((0.0, 0.0), |(re, im), (i, v)| {
+            (re + v * (w * i as f64).cos(), im + v * (w * i as f64).sin())
+        });
+        best = best.max(3.0 * (re * re + im * im) / (n * total));
+        f += fs as f64 / (8.0 * n);
     }
-    let cycle = SR as usize / 2;
+    best as f32
+}
+
+/// SMEAR at its maximum, set by the caller at a wander of `rate_hz`: a
+/// 1 kHz sine for 0.5 s circulates, and its tail from 1.5 s is judged
+/// (§ Pitch bounds).
+/// - Every `loop_s` pass is within ±25 cents of `f_ref`: `tail_pitch_hz`
+///   at the same SMEAR with the wander frozen at its centre, so the reads
+///   sit `D` short, still (SMEAR only shortens a read, so its centre is a
+///   slightly shorter loop, on its own modes).
+/// - Each 4/`rate_hz` window's mean is within ±1 cent of it: no drift.
+/// - No one sinusoid below half the loop's rate explains half the pitch
+///   trace's variance (20 ms windows): no vibrato. (A tail repeats each
+///   pass, so the trace has lines at 1/`loop_s` and up.)
+pub fn check_smear_bound(r: Render, loop_s: f32, f_ref: f32, rate_hz: f32) {
+    let window = (4.0 / rate_hz * SR as f32) as usize;
+    let tail = smear_tail(r, 1.5 + 2.0 * window as f32 / SR as f32 + 0.5);
     assert!(
-        tail.len() >= 2 * cycle,
+        tail.len() >= window,
         "the tail dies in {} ms",
         tail.len() / MS
     );
-    tail[..tail.len() / cycle * cycle].to_vec()
-}
-
-/// The pitch `check_wobble_bound` judges against: the same engine's tail
-/// at WOBBLE 0, from zero crossings.
-pub fn tail_pitch_hz(r: Render) -> f32 {
-    zc_hz(&wobble_tail(r)).expect("a tail") as f32
-}
-
-/// At WOBBLE 1 and RATE 1 (2 Hz), set by the caller: a 1 kHz sine for
-/// 0.5 s circulates; from 1.5 s, every `loop_s` pass is within ±25 cents
-/// of `f_ref` (`tail_pitch_hz` at WOBBLE 0), and each 0.5 s LFO cycle's
-/// mean within ±1 cent of it: no drift and no offset.
-pub fn check_wobble_bound(r: Render, loop_s: f32, f_ref: f32) {
-    let tail = wobble_tail(r);
     let passes = pitch_per_pass_cents(&tail, f_ref, loop_s);
     assert!(!passes.is_empty());
     for (i, c) in passes.iter().enumerate() {
         assert!(c.abs() <= 25.0, "pass {i}: {c} cents");
     }
-    for (i, w) in tail.as_chunks::<{ SR as usize / 2 }>().0.iter().enumerate() {
-        let c = cents(zc_hz(w).expect("a cycle"), f_ref as f64);
-        assert!(c.abs() <= 1.0, "LFO cycle {i}: mean {c} cents");
+    for (i, w) in tail.chunks_exact(window).enumerate() {
+        let c = cents(zc_hz(w).expect("a window"), f_ref as f64);
+        assert!(c.abs() <= 1.0, "window {i}: mean {c} cents");
     }
+    let trace: Vec<f32> = tail
+        .as_chunks::<{ 20 * MS }>()
+        .0
+        .iter()
+        .map_while(|w| zc_hz(w))
+        .map(|f| cents(f, f_ref as f64))
+        .collect();
+    let share = vibrato_share(&trace, 50.0, 0.5 / loop_s);
+    println!("pitch trace: one sinusoid explains {:.0} %", 100.0 * share);
+    assert!(
+        share <= 0.5,
+        "one sinusoid explains {share} of the pitch: vibrato"
+    );
 }
 
 /// `r`'s block with the clamp hits and writes its own stores made.
@@ -597,7 +599,7 @@ pub fn check_level_plan(
 /// Energy from 20 Hz to 10.5 kHz outside 1 kHz ± 50 Hz, 2 s into a steady
 /// −12 dB 1 kHz sine, in dB: the storage noise floor, as `reverb_test`'s
 /// `floor_db`.
-pub fn floor_db(r: Render) -> f64 {
+fn floor_db(r: Render) -> f64 {
     let (l, _) = run(r, &mut tone(1_000.0, 0.251), 3.4);
     let n = 1 << 16;
     let p = power(&l[2 * SR as usize..][..n], n);

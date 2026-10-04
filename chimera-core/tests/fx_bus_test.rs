@@ -250,15 +250,16 @@ fn a_rev_send_jump_does_not_click() {
     }
 }
 
-/// GRIT reaches the ring through the bus: at 1 the return differs.
+/// SMEAR reaches the ring through the bus: at 1 the return differs once
+/// the burst has been round a stage delay (about 100 blocks at SIZE 0.5).
 #[test]
-fn grit_changes_the_return() {
-    let render = |grit: f32| {
+fn smear_changes_the_return() {
+    let render = |smear: f32| {
         let mut p = FxParams::default();
-        (p.reverb.mix, p.reverb.grit) = (0.5, grit);
+        (p.reverb.mix, p.reverb.smear, p.reverb.rate) = (0.5, smear, 1.0);
         let mut bus = Box::new(FxBus::new());
         let mut out = Vec::new();
-        for b in 0..40 {
+        for b in 0..200 {
             let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
             sends[2] = if b < 4 { burst() } else { [0.0; BLOCK_SIZE] };
             let mut ret = Stereo::SILENT;
@@ -267,7 +268,7 @@ fn grit_changes_the_return() {
         }
         out
     };
-    assert_ne!(render(0.0), render(1.0));
+    assert!(render(0.0) != render(1.0));
 }
 
 /// FX diet spec § Master section: off by default, the master section

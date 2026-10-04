@@ -78,7 +78,7 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_delay", 0x57508228791992f2),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb", 0xd831539df40c3730),
+    ("mixer_fx_reverb", 0xb20211c6bd3ab885), // SMEAR for GRIT (reverb TYPEs T5)
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_delay_char", 0xc6fd6e6be7eb22e8),
     #[cfg(not(feature = "master-tape"))]
@@ -92,7 +92,7 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_fx_delay", 0x03c136cb5bd76c30),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb", 0xa0a7d29cf2586a8e),
+    ("mixer_fx_reverb", 0xb406be55f1c34a17), // SMEAR for GRIT (reverb TYPEs T5)
     #[cfg(feature = "master-tape")]
     ("mixer_fx_delay_char", 0x53eccd58242c222e),
     #[cfg(feature = "master-tape")]

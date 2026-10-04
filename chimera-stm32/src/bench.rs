@@ -131,8 +131,8 @@ const FX: [FxRow; FX_ROWS] = [
 ];
 
 /// The REVERB screen's rows, each timed as an FX row is, less MIX.
-const REV_ROWS: usize = 1;
-const REV: [FxRow; REV_ROWS] = [("REV QUAD", worst_reverb)];
+const REV_ROWS: usize = 2;
+const REV: [FxRow; REV_ROWS] = [("REV QUAD", worst_reverb), ("REV QUAD S", smear_reverb)];
 
 /// The STRESS rows' blocks: 10 s, past NEW's four bars at its BPM.
 const STRESS_BLOCKS: u32 = 7_500;
@@ -158,12 +158,20 @@ fn worst_delay(s: &mut AudioShared) {
     (d.time_ms, d.wow_flutter, d.saturation, d.mix, d.rev_send) = (500.0, 1.0, 1.0, 0.5, 1.0);
 }
 
-/// The ring at its costliest: full GRIT, longest TIME and SIZE, with a
-/// SIZE crossfade always running (steps 31 and 30 in turn).
+/// The ring at its costliest: longest TIME and SIZE, with a SIZE
+/// crossfade always running (steps 31 and 30 in turn), SMEAR off.
 fn worst_reverb(s: &mut AudioShared, block: u32) {
     let r = &mut s.fx.reverb;
     let size = [1.0, 30.0 / 31.0][block as usize % 2];
-    (r.grit, r.time, r.size, r.damping, r.mix) = (1.0, 1.0, size, 0.5, 0.5);
+    (r.time, r.size, r.damping, r.mix, r.smear) = (1.0, size, 0.5, 0.5, 0.0);
+}
+
+/// QUAD's SMEAR path: SMEAR 1 and RATE 1 with SIZE still, so the four
+/// stage delays read moving pairs every block (reverb TYPEs spec § Bench
+/// rows: gate ≤ REV QUAD).
+fn smear_reverb(s: &mut AudioShared, _block: u32) {
+    let r = &mut s.fx.reverb;
+    (r.time, r.size, r.damping, r.mix, r.smear, r.rate) = (1.0, 1.0, 0.5, 0.5, 1.0, 1.0);
 }
 
 /// Full DRIVE and WOW (its interpolated, most expensive tap), full MIX:

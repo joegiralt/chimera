@@ -197,11 +197,12 @@ fn project_a() -> FxParams {
             rev_send: 0.3,
         },
         reverb: ReverbParams {
-            grit: 0.3,
             time: 0.7,
             damping: 0.3,
             size: 0.5,
             mix: 0.7,
+            smear: 0.3,
+            rate: 0.5,
         },
         comp: CompParams {
             thresh: 0.5,
@@ -239,11 +240,12 @@ fn project_b() -> FxParams {
             rev_send: 0.0,
         },
         reverb: ReverbParams {
-            grit: 0.8,
             time: 0.4,
             damping: 0.7,
             size: 0.9,
             mix: 0.4,
+            smear: 0.8,
+            rate: 0.9,
         },
         comp: CompParams {
             thresh: 0.3,
