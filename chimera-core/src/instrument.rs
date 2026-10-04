@@ -496,9 +496,21 @@ impl Instrument {
         self.voices.iter().filter(|v| v.is_active()).count()
     }
 
-    /// The voice budget booked, FX bus included, in percent: for `stats`.
+    /// The voice budget booked, FX bus and ORBIT included, in percent: for
+    /// `stats`.
     pub fn cost_pct(&self) -> u8 {
-        self.alloc.cost_pct(FxBus::COST)
+        self.alloc.cost_pct(self.reserved())
+    }
+
+    /// Spent outside the pool each block, so a new voice must fit beside
+    /// it: the FX bus, and ORBIT's worst block while it plays (ADR 0091),
+    /// which is exactly while it hands a harmony.
+    fn reserved(&self) -> Cost {
+        let orbit = match self.harmony {
+            Some(_) => OrbitRunner::COST,
+            None => Cost::ZERO,
+        };
+        FxBus::COST + orbit
     }
 
     /// Voices that ring a pool set, at most `SYM_SLOTS`: for the bench,
@@ -529,6 +541,12 @@ impl Instrument {
     #[cfg(any(test, feature = "test-support"))]
     pub fn slides(&self) -> [f32; MAX_VOICES] {
         core::array::from_fn(|v| self.voices[v].slide())
+    }
+
+    /// The Part whose Sound each voice renders: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn sounding_parts(&self) -> [u8; MAX_VOICES] {
+        self.sounding
     }
 
     /// Whether each voice sounds: for the tests.
@@ -586,10 +604,11 @@ impl Instrument {
                         NoteOrigin::Orbit(_) => ev.note,
                     };
                     let cost = part.voice_cost();
+                    let reserved = self.reserved();
                     let origins = &self.note_origin;
                     let Some(v) = self
                         .alloc
-                        .pick_where(q, mode, note, cost, FxBus::COST, &|v| origins[v] == from)
+                        .pick_where(q, mode, note, cost, reserved, &|v| origins[v] == from)
                     else {
                         self.alloc.refuse();
                         continue;
@@ -618,6 +637,15 @@ impl Instrument {
                     self.held_keys[v] = base.with(ev.note);
                     self.alloc.book(v, q, mode, note, cost);
                     let waits = self.sounding[v] as usize != p && self.voices[v].is_active();
+                    // A voice taken from another Part fades out on that
+                    // Part's Sound before the note starts: billed till then
+                    // (ADR 0091). A shed one's fade was never billed (ADR
+                    // 0027).
+                    if waits && !was.dying() {
+                        let fading =
+                            shared.parts[self.sounding[v] as usize % MAX_PARTS].voice_cost();
+                        self.alloc.fade_from(v, fading);
+                    }
                     // Sympathetic starts now only if the block's clear
                     // budget takes it and no note waits on it before; else
                     // it waits, as a steal does (spec § 4.8).
@@ -778,6 +806,7 @@ impl Instrument {
         if !self.admit(v, params, note) {
             return false;
         }
+        self.alloc.fade_from(v, Cost::ZERO);
         let voice = &mut self.voices[v];
         let _ = voice.note_on(note, vel, params, &mut self.sym);
         if !held {
@@ -820,6 +849,8 @@ impl Instrument {
                 self.alloc.recost(v, costs[p] + held);
             }
         }
+        // Only the bus: ORBIT's reserve refuses new voices, it never fades
+        // out sounding ones (ADR 0091).
         while let Some(v) = self.alloc.shed(FxBus::COST) {
             self.shed(v);
         }

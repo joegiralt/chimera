@@ -14,7 +14,7 @@ use super::scene::{Scene, SceneIdx, SceneRing};
 use super::walk::Pool;
 use super::{MAX_POOL, MAX_STEPS, RINGS, RingIdx};
 use crate::MidiNote;
-use crate::hw::{BLOCK_SIZE, MAX_PARTS};
+use crate::hw::{BLOCK_SIZE, Cost, MAX_PARTS};
 use crate::instrument::{AudioShared, Instrument, NoteOrigin, NoteSet};
 use crate::note_queue::{NoteEvent, NoteKind, RealTime};
 use crate::triple::TripleBuffer;
@@ -337,6 +337,13 @@ pub struct OrbitRunner {
 const _: () = assert!(size_of::<OrbitRunner>() <= 1024);
 
 impl OrbitRunner {
+    /// Reserved from the voice budget while ORBIT plays, as `FxBus::COST`
+    /// is (ADR 0091): its worst block, the bench's ORBIT row (five rings
+    /// firing at once, MUTATE and GATE 100 %, every note admitted), over
+    /// the block's samples, so a block of it and the voices admitted
+    /// beside it fit the budget.
+    pub const COST: Cost = Cost(1_519); // ORBIT row worst 97,153 (2026-10-04, bench, rev V at 480 MHz, reverb-types 2431fedc; 88,466 at cf50ee74) / 64, rounded up
+
     pub fn new(sample_rate: NonZeroU32) -> Self {
         let working = Scene::init();
         OrbitRunner {
@@ -538,9 +545,11 @@ impl OrbitRunner {
     /// scene, a start or a MIDI Start back to bar 0, a chord played in.
     pub fn block(&mut self, inst: &mut Instrument, shared: &AudioShared) -> Events {
         let sent = self.advance(shared);
-        Self::send(inst, shared, &sent, &mut self.fired);
+        // Before the notes: while ORBIT plays, its reserve judges them too
+        // (ADR 0091).
         let h = self.transport.then(|| self.state.harmony(&self.working));
         inst.set_harmony(h);
+        Self::send(inst, shared, &sent, &mut self.fired);
         if h.is_some() && h != self.harmony {
             inst.resnap(shared);
         }
