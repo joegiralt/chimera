@@ -1,13 +1,18 @@
-//! 12-bit samples, two in three bytes (ADR 0087): a little-endian 12-bit
+//! 12-bit samples, two in three bytes (the sound-pool spec's "12-bit
+//! packing", 2026-10-04-sound-pool-budget-design): a little-endian 12-bit
 //! stream. `b0 = s0[7:0]`, `b1 = s0[11:8] | s1[3:0] << 4`, `b2 = s1[11:4]`.
-//! The S950 stored its samples at 12 bits too.
+//! This is the canonical layout: the host importer writes it, the pool's
+//! `SourceData` records and the arena hold it, and TAPE reads it. The S950
+//! stored its samples at 12 bits too.
 
-/// Packs `samples` (each in −2048..=2047; higher bits are dropped) into
-/// `out`, three bytes a pair, and returns the bytes written. An odd count's
-/// last pair takes a 0 for its second sample. Panics if `out` is short.
+/// Packs `samples` into `out`, three bytes a pair, and returns the bytes
+/// written. Each sample is in −2048..=2047: a debug build asserts it, and
+/// a release build drops the higher bits. An odd count's last pair takes
+/// a 0 for its second sample. Panics if `out` is short.
 pub fn pack12(samples: &[i16], out: &mut [u8]) -> usize {
     let mut n = 0;
     for (pair, o) in samples.chunks(2).zip(out.as_chunks_mut::<3>().0) {
+        debug_assert!(pair.iter().all(|s| (-2048..=2047).contains(s)));
         let a = pair[0] as u16 & 0xFFF;
         let b = pair.get(1).map_or(0, |&s| s as u16 & 0xFFF);
         *o = [a as u8, (a >> 8) as u8 | (b << 4) as u8, (b >> 4) as u8];

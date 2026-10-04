@@ -64,7 +64,8 @@ impl Descriptor {
     }
 
     /// `None` for a short slice, an unknown shape, a count outside its
-    /// shape's `1..=max` (a `Plain` holds exactly 1), rate 0, or a set
+    /// shape's `1..=max` (a `Plain` holds exactly 1), a rate of 0 or over
+    /// 48 000, `head_frames` set on anything but a `ZoneSet`, or a set
     /// reserved byte.
     pub fn from_bytes(b: &[u8]) -> Option<Descriptor> {
         let b: &[u8; DESC_LEN] = b.get(..DESC_LEN)?.try_into().ok()?;
@@ -76,7 +77,8 @@ impl Descriptor {
             head_frames: u32::from_le_bytes([b[4], b[5], b[6], b[7]]),
         };
         let ok = (1..=shape.max_count()).contains(&d.count)
-            && d.rate != 0
+            && (1..=48_000).contains(&d.rate)
+            && (d.head_frames == 0 || shape == Shape::ZoneSet)
             && b[8..].iter().all(|&x| x == 0);
         ok.then_some(d)
     }
@@ -142,13 +144,12 @@ pub fn hermite(y: [i32; 4], t: f32) -> f32 {
 /// What a voice reads a source through: one block's copy of its row.
 #[derive(Clone, Copy, Debug)]
 pub struct SourceView<'a> {
-    /// Exactly `held`.
-    bytes: &'a [u8],
+    /// `held`'s whole pairs of packed samples: exactly `3 · frames / 2` B.
+    samples: &'a [u8],
     desc: Descriptor,
-    /// Where the samples start in `bytes`.
-    data: usize,
+    /// Even, at least 2.
     frames: u32,
-    /// Panic on a tap outside `[0, frames)` rather than clamp it.
+    /// Panic on a tap outside `[0, frames)`, or a frame past the row.
     #[cfg(any(test, feature = "test-support"))]
     strict: bool,
 }
@@ -159,21 +160,22 @@ impl<'a> SourceView<'a> {
     /// odd source reads one silent frame at its end.
     pub fn new(held: &'a [u8]) -> Option<SourceView<'a>> {
         let desc = Descriptor::from_bytes(held)?;
-        let data = desc.data_start();
-        let pairs = held.len().checked_sub(data)? / 3;
+        let data = held.get(desc.data_start()..)?;
+        let pairs = data.len() / 3;
         let frames = u32::try_from(2 * pairs).ok().filter(|&f| f > 0)?;
         Some(SourceView {
-            bytes: held,
+            samples: &data[..3 * pairs],
             desc,
-            data,
             frames,
             #[cfg(any(test, feature = "test-support"))]
             strict: false,
         })
     }
 
-    /// The same view, panicking on any tap outside `[0, frames)` before the
-    /// decode's own clamp would hide it: the models' bounds, checked.
+    /// The same view, checking the models' bounds: `read_cycle` panics on a
+    /// frame past the row (`base + N > frames`), and any tap outside
+    /// `[0, frames)` panics. `read`'s taps are clamped before the check
+    /// sees them, so in `read` it guards the clamp itself.
     #[cfg(any(test, feature = "test-support"))]
     pub fn strict(held: &'a [u8]) -> Option<SourceView<'a>> {
         Self::new(held).map(|v| SourceView { strict: true, ..v })
@@ -187,27 +189,32 @@ impl<'a> SourceView<'a> {
         self.frames
     }
 
-    /// Sample `i` (clamped to the last frame), sign-extended, unscaled. A
-    /// sample is 12 bits at bit `12·i` of the stream: one halfword load at
-    /// byte `3·(i >> 1) + (i & 1)`, shifted by 0 or 4 for its parity. The
-    /// pair's three bytes hold both halfwords, so it never reads past them.
+    /// Sample `i` (clamped to the last frame), sign-extended, unscaled.
     #[inline]
     pub fn sample(&self, i: u32) -> i32 {
-        let i = i.min(self.frames - 1) as usize;
-        let o = self.data + 3 * (i >> 1) + (i & 1);
-        let h = u16::from_le_bytes([self.bytes[o], self.bytes[o + 1]]) as i32;
-        ((h >> (4 * (i & 1))) << 20) >> 20
+        self.decode(i.min(self.frames - 1))
     }
 
-    #[inline]
-    fn tap(&self, j: u32) -> i32 {
+    /// Sample `i < frames`. It is 12 bits at bit `12·i` of the stream: one
+    /// unaligned halfword load at byte `3·(i >> 1) + (i & 1)`, shifted by 0
+    /// or 4 for its parity. The pair's three bytes hold both halfwords.
+    #[inline(always)]
+    fn decode(&self, i: u32) -> i32 {
         #[cfg(any(test, feature = "test-support"))]
         assert!(
-            !self.strict || j < self.frames,
-            "tap {j} outside {} frames",
+            !self.strict || i < self.frames,
+            "tap {i} outside {} frames",
             self.frames
         );
-        self.sample(j)
+        let i = i as usize;
+        debug_assert!(i < self.frames as usize);
+        let o = (3 * i) >> 1; // 3·(i >> 1) + (i & 1)
+        // SAFETY: every caller holds `i ≤ frames − 1` (`sample`, `read` and
+        // `read_cycle` clamp with `min(frames − 1)`), and `samples` is
+        // `3 · frames / 2` bytes, so `o + 1 ≤ 3 · frames / 2 − 1`: both
+        // bytes are inside it. `read_unaligned` takes any alignment.
+        let h = unsafe { core::ptr::read_unaligned(self.samples.as_ptr().add(o).cast::<u16>()) };
+        ((u16::from_le(h) as i32) << (20 - 4 * (i & 1))) >> 20
     }
 
     /// The source at `p`: taps `p.whole() − 1 ..= p.whole() + 2`, each
@@ -215,16 +222,24 @@ impl<'a> SourceView<'a> {
     #[inline]
     pub fn read(&self, p: Pos) -> f32 {
         let (w, last) = (p.whole() as i32, self.frames as i32 - 1);
-        let tap = |k: i32| self.tap(w.saturating_add(k).max(0).min(last) as u32);
+        let tap = |k: i32| self.decode(w.saturating_add(k).max(0).min(last) as u32);
         hermite([tap(-1), tap(0), tap(1), tap(2)], p.frac())
     }
 
     /// A transwave frame of `N = 2^log2_n` samples from `base`, at `phase`:
-    /// the taps wrap `& (N − 1)` inside `[base, base + N)`.
+    /// the taps wrap `& (N − 1)` inside `[base, base + N)`. A frame past
+    /// the row reads its last sample there (and panics when `strict`).
     #[inline]
     pub fn read_cycle(&self, base: u32, log2_n: u32, phase: Pos) -> f32 {
-        let (w, mask) = (phase.whole(), (1u32 << (log2_n & 31)).wrapping_sub(1));
-        let tap = |k: u32| self.tap(base.wrapping_add(w.wrapping_add(k) & mask));
+        let n = 1u32 << (log2_n & 31);
+        #[cfg(any(test, feature = "test-support"))]
+        assert!(
+            !self.strict || base as u64 + n as u64 <= self.frames as u64,
+            "frame {base} + {n} past {} frames",
+            self.frames
+        );
+        let (w, mask, last) = (phase.whole(), n.wrapping_sub(1), self.frames - 1);
+        let tap = |k: u32| self.decode(base.wrapping_add(w.wrapping_add(k) & mask).min(last));
         hermite([tap(u32::MAX), tap(0), tap(1), tap(2)], phase.frac())
     }
 }

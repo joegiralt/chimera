@@ -59,16 +59,21 @@ fn descriptor_round_trips() {
     ];
     for (shape, count) in ok {
         for rate in (8_000..=48_000).step_by(4_000) {
+            let head_frames = if shape == Shape::ZoneSet {
+                0x0102_0304
+            } else {
+                0
+            };
             let d = Descriptor {
                 shape,
                 count,
                 rate,
-                head_frames: 0x0102_0304,
+                head_frames,
             };
             let b = d.to_bytes();
             assert_eq!(b[0], shape as u8);
             assert_eq!(b[2..4], rate.to_le_bytes());
-            assert_eq!(b[4..8], 0x0102_0304u32.to_le_bytes());
+            assert_eq!(b[4..8], head_frames.to_le_bytes());
             assert_eq!(b[8..], [0; 8]);
             assert_eq!(Descriptor::from_bytes(&b), Some(d));
         }
@@ -87,6 +92,16 @@ fn descriptor_round_trips() {
         desc(Shape::Transwave, 33, 48_000),
         desc(Shape::ZoneSet, 25, 48_000),
         desc(Shape::Plain, 1, 0),
+        desc(Shape::Plain, 1, 48_001),
+        desc(Shape::ZoneSet, 1, u16::MAX),
+        Descriptor {
+            head_frames: 1,
+            ..desc(Shape::Plain, 1, 48_000)
+        },
+        Descriptor {
+            head_frames: 4_096,
+            ..desc(Shape::Transwave, 4, 48_000)
+        },
     ];
     for d in bad {
         assert_eq!(Descriptor::from_bytes(&d.to_bytes()), None, "{d:?}");
@@ -121,54 +136,132 @@ fn hermite_exact_on_constant_and_ramp() {
             let got = hermite(y, t);
             assert!((got - want).abs() <= 1e-6, "{y:?} t {t}: {got} vs {want}");
         }
+        // A quadratic exercises c2 and c3: t² through x = −1, 0, 1, 2.
+        let sq = 2048.0 * hermite([1, 0, 1, 4], t);
+        assert!((sq - t * t).abs() <= 1e-6, "t² at {t}: {sq}");
+        let sq = hermite([500, 0, 500, 2000], t);
+        assert!((sq - 500.0 * t * t / 2048.0).abs() <= 1e-6, "500 t² at {t}");
+    }
+    // Random taps and t against Catmull-Rom's matrix form, in f64.
+    let mut rng = XorShift(0x7A9E_0204);
+    for _ in 0..100_000 {
+        let y = [(); 4].map(|_| random12(&mut rng) as i32);
+        let t = rng.next_u32() as f64 / 4_294_967_296.0;
+        let m = [
+            [0.0, 2.0, 0.0, 0.0],
+            [-1.0, 0.0, 1.0, 0.0],
+            [2.0, -5.0, 4.0, -1.0],
+            [-1.0, 3.0, -3.0, 1.0],
+        ];
+        let want: f64 = (0..4)
+            .map(|p| t.powi(p as i32) * (0..4).map(|k| m[p][k] * y[k] as f64).sum::<f64>())
+            .sum::<f64>()
+            * 0.5
+            / 2048.0;
+        let got = hermite(y, t as f32) as f64;
+        assert!((got - want).abs() <= 1e-6, "{y:?} t {t}: {got} vs {want}");
     }
 }
 
-/// The magnitude of `x` at `f` cycles a sample, over whole cycles.
+/// The magnitude of `x` at `f` cycles a sample under a 4-term
+/// Blackman-Harris window (sidelobes −92 dB), so `f` needn't fit whole
+/// cycles.
 fn bin(x: &[f32], f: f64) -> f64 {
-    let (mut re, mut im) = (0.0, 0.0);
-    for (n, &s) in x.iter().enumerate() {
-        let w = core::f64::consts::TAU * f * n as f64;
-        (re, im) = (re + s as f64 * w.cos(), im + s as f64 * w.sin());
+    use core::f64::consts::TAU;
+    let n = x.len() as f64;
+    let (mut re, mut im, mut sw) = (0.0, 0.0, 0.0);
+    for (i, &s) in x.iter().enumerate() {
+        let u = TAU * i as f64 / n;
+        let h = 0.35875 - 0.48829 * u.cos() + 0.14128 * (2.0 * u).cos() - 0.01168 * (3.0 * u).cos();
+        let w = TAU * f * i as f64;
+        (re, im, sw) = (
+            re + s as f64 * h * w.cos(),
+            im + s as f64 * h * w.sin(),
+            sw + h,
+        );
     }
-    2.0 * re.hypot(im) / x.len() as f64
+    2.0 * re.hypot(im) / sw
 }
 
 fn db(x: f64) -> f64 {
     20.0 * x.log10()
 }
 
+/// `f` cycles a sample, folded into [0, 0.5].
+fn fold(f: f64) -> f64 {
+    let g = f.rem_euclid(1.0);
+    g.min(1.0 - g)
+}
+
+/// A 0.9 sine at `f` of the source's rate read at `inc`: its passband and
+/// its images at `fs ∓ f`, in dB (the images relative to the signal).
+fn response(f: f64, inc: f32) -> (f64, f64, f64) {
+    let out_n = 16_384;
+    let frames = (out_n as f32 * inc) as u32 + 8;
+    let src = sine(48_000, (1.0 / f) as f32, frames);
+    let h = held_plain(&src.iter().map(|x| 0.9 * x).collect::<Vec<_>>(), 48_000);
+    let v = SourceView::new(&h).unwrap();
+    let decoded: Vec<f32> = (0..frames).map(|i| v.sample(i) as f32 / 2048.0).collect();
+    let (step, mut p) = (Pos::from_f32(inc), Pos(0));
+    let out: Vec<f32> = (0..out_n)
+        .map(|_| {
+            let y = v.read(p);
+            p = p + step;
+            y
+        })
+        .collect();
+    let inc = inc as f64;
+    let a_out = bin(&out, f * inc);
+    let image = |g: f64| db(bin(&out, fold(g * inc)) / a_out);
+    (db(a_out / bin(&decoded, f)), image(1.0 - f), image(1.0 + f))
+}
+
 #[test]
 fn hermite_response() {
-    // (signal in fs, passband dB, worst image dB rel): spec § 2's table.
-    for (f, pass, image) in [
-        (0.05, 0.00, -69.0),
-        (0.1, -0.02, -50.0),
-        (0.2, -0.24, -29.0),
+    // Spec § 2's table: (signal in fs, passband dB, worst image dB rel).
+    // An irrational inc samples every t, so it meets the kernel's whole
+    // response; inc 0.5 samples only t = 0.5 ([−1, 9, 9, −1] / 16), which
+    // is cleaner, so its bounds are tighter.
+    for (f, pass, image, half_image) in [
+        (0.05, 0.00, -69.0, -78.0),
+        (0.1, -0.02, -50.0, -54.0),
+        (0.2, -0.24, -29.0, -31.0),
     ] {
-        let src = sine(48_000, (1.0 / f) as f32, 4_100);
-        let h = held_plain(&src.iter().map(|x| 0.9 * x).collect::<Vec<_>>(), 48_000);
-        let v = SourceView::new(&h).unwrap();
-        let (frames, out_n) = (4_000, 8_000);
-        let decoded: Vec<f32> = (0..frames).map(|i| v.sample(i) as f32 / 2048.0).collect();
-        let (step, mut p) = (Pos::from_f32(0.5), Pos::from_f32(0.0));
-        let out: Vec<f32> = (0..out_n)
-            .map(|_| {
-                let y = v.read(p);
-                p = p + step;
-                y
-            })
-            .collect();
-        let a_src = bin(&decoded, f);
-        let a_out = bin(&out, f / 2.0);
-        let a_img = bin(&out, (1.0 - f) / 2.0);
-        let (got_pass, got_img) = (db(a_out / a_src), db(a_img / a_out));
+        let (_, below, above) = response(f, 0.618_033_9);
+        let worst = below.max(above);
+        assert!(worst <= image, "{f} fs at inc 0.618: image {worst:.1} dB");
+        let (got_pass, below, above) = response(f, 0.5);
         assert!(
-            (got_pass - pass).abs() <= 0.5,
+            (got_pass - pass).abs() <= 0.05,
             "{f} fs: passband {got_pass:.3} dB"
         );
-        assert!(got_img <= image, "{f} fs: image {got_img:.1} dB");
+        let worst = below.max(above);
+        assert!(
+            worst <= half_image,
+            "{f} fs at inc 0.5: image {worst:.1} dB"
+        );
     }
+}
+
+#[test]
+fn pos_and_edges() {
+    let p = Pos::from_f32(-0.5);
+    assert_eq!((p.whole(), p.frac()), (u32::MAX, 0.5));
+    assert_eq!(Pos::from_f32(-1e-10), Pos(0));
+    assert_eq!((Pos(0) - Pos(1 << 32)).whole(), u32::MAX);
+    assert_eq!(
+        Pos::from_f32(2.25) + Pos::from_f32(0.75),
+        Pos::from_f32(3.0)
+    );
+    let h = held_plain(&sine(48_000, 7.0, 10)[1..], 48_000);
+    let v = SourceView::new(&h).unwrap();
+    let last = v.frames() - 1;
+    assert_eq!(v.read(Pos::from_f32(-5.0)), v.sample(0) as f32 / 2048.0);
+    assert_eq!(
+        v.read(Pos::from_f32((v.frames() + 3) as f32)),
+        v.sample(last) as f32 / 2048.0
+    );
+    assert_eq!(v.sample(last + 100), v.sample(last));
 }
 
 #[test]
