@@ -150,8 +150,12 @@ fn axi_counts_the_project() {
         size_of::<Pool>(),
         size_of::<OrbitSong>(),
     );
-    eprintln!("Project = {project} B: Performance {perf} B, pool index {pool} B, ORBIT {orbit} B");
-    assert!(pool <= 2304, "the pool's index is {pool} B");
+    eprintln!(
+        "Project = {project} B: Performance {perf} B, pool index and scratch {pool} B, ORBIT {orbit} B"
+    );
+    // The index, the arena's writer and a load's scratch Sound.
+    let scratch = size_of::<chimera_core::preset::Sound>();
+    assert!(pool - scratch <= 2304, "the pool's index is {pool} B");
     let parts = perf + pool + orbit;
     assert!(
         project - parts <= 128,

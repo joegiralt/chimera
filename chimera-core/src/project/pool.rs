@@ -3,6 +3,9 @@
 //! Part can tell its slot was replaced. A Part decodes its Sound into its
 //! own state; the pool keeps only the bytes.
 
+use core::mem::MaybeUninit;
+use core::ptr::addr_of_mut;
+
 use chimera_hal::store::{ByteSink, StoreError};
 
 use crate::block::DiskCode;
@@ -47,42 +50,59 @@ pub struct PoolFull {
 /// }
 /// ```
 pub struct Pool {
+    index: Index,
+    arena: ArenaWriter,
+    /// A load's slot, decoded whole before it is encoded in: here, in
+    /// AXI, not on the stack. Nothing reads it but the load.
+    scratch: Sound,
+}
+
+/// Where each slot's bytes sit, and its generation.
+struct Index {
     slots: [Option<SoundEntry>; MAX_SOUNDS],
     gens: [u16; MAX_SOUNDS],
-    arena: ArenaWriter,
 }
 
 impl Pool {
-    /// Empty, every generation 0. The arena's Sounds are dropped; its
-    /// sources stay.
-    pub fn new(mut arena: ArenaWriter) -> Pool {
+    /// Empty, every generation 0, built in place: no `Pool` passes
+    /// through the stack. The arena's Sounds are dropped; its sources stay.
+    pub fn init_in_place(slot: &mut MaybeUninit<Pool>, mut arena: ArenaWriter) -> &mut Pool {
         arena.sounds_clear();
-        Pool {
-            slots: [None; MAX_SOUNDS],
-            gens: [0; MAX_SOUNDS],
-            arena,
+        let p = slot.as_mut_ptr();
+        // SAFETY: `p` is valid and unaliased; every slot, the generations,
+        // the arena and the scratch are written once before
+        // `assume_init_mut`.
+        unsafe {
+            let slots = addr_of_mut!((*p).index.slots).cast::<Option<SoundEntry>>();
+            for i in 0..MAX_SOUNDS {
+                slots.add(i).write(None);
+            }
+            addr_of_mut!((*p).index.gens).write([0; MAX_SOUNDS]);
+            addr_of_mut!((*p).arena).write(arena);
+            addr_of_mut!((*p).scratch).write(Sound::neutral(EngineType::Algo));
+            slot.assume_init_mut()
         }
     }
 
     pub fn get(&self, s: SlotId) -> Option<EncodedSound<'_>> {
-        let e = self.slots[s.index()]?;
+        let e = self.index.slots[s.index()]?;
         Some(EncodedSound {
             bytes: self.arena.bytes(e.offset, e.len as usize),
         })
     }
 
     pub fn generation(&self, s: SlotId) -> u16 {
-        self.gens[s.index()]
+        self.index.gens[s.index()]
     }
 
     pub fn first_free(&self) -> Option<SlotId> {
         SlotId::ALL
             .into_iter()
-            .find(|s| self.slots[s.index()].is_none())
+            .find(|s| self.index.slots[s.index()].is_none())
     }
 
     pub fn sound_count(&self) -> usize {
-        self.slots.iter().filter(|s| s.is_some()).count()
+        self.index.slots.iter().filter(|s| s.is_some()).count()
     }
 
     /// The arena's bytes in use: Sounds and sources.
@@ -103,61 +123,80 @@ impl Pool {
     /// nothing moved, when it won't fit even with the old Sound's bytes
     /// given back.
     pub(in crate::project) fn store(&mut self, s: SlotId, sound: &Sound) -> Result<(), PoolFull> {
-        let len = entry_len(sound);
-        let old = self.slots[s.index()].map_or(0, |e| Cost::of(e.len as usize).bytes());
-        let needs = Cost::of(len).bytes().saturating_sub(old);
-        if needs > self.free().bytes() {
-            return Err(PoolFull {
-                needs: Cost::of(needs as usize),
-                free: self.free(),
-            });
-        }
-        self.drop_entry(s);
-        let offset = self
-            .arena
-            .sound_alloc(len)
-            .expect("checked against the gap");
-        let bytes = self.arena.bytes_mut(offset, len);
-        let (name, records) = bytes.split_at_mut(NAME_LEN);
-        name.copy_from_slice(&sound.name.padded());
-        let mut w = Fill(records);
-        let wrote = encode_sound(sound, &mut RecordWriter::over(&mut w));
-        assert!(wrote.is_ok() && w.0.is_empty(), "the count's length");
-        let e = SoundEntry {
-            offset,
-            len: len as u32,
-        };
-        let check = EncodedSound {
-            bytes: self.arena.bytes(offset, len),
-        }
-        .check();
-        assert_eq!(check, Ok(()), "encode_sound wrote a Sound it refuses");
-        self.slots[s.index()] = Some(e);
-        self.bump(s);
-        Ok(())
+        self.index.store(&mut self.arena, s, sound)
+    }
+
+    /// The load's scratch Sound.
+    pub(in crate::project) fn scratch(&mut self) -> &mut Sound {
+        &mut self.scratch
+    }
+
+    /// `store` of the scratch Sound.
+    pub(in crate::project) fn store_scratch(&mut self, s: SlotId) -> Result<(), PoolFull> {
+        self.index.store(&mut self.arena, s, &self.scratch)
     }
 
     /// Moves the generation even when the slot is already empty.
     pub(in crate::project) fn clear(&mut self, s: SlotId) {
-        self.drop_entry(s);
-        self.bump(s);
+        self.index.drop_entry(&mut self.arena, s);
+        self.index.bump(s);
     }
 
     /// Every slot cleared at once: a load or NEW about to refill.
     pub(in crate::project) fn clear_all(&mut self) {
         self.arena.sounds_clear();
-        self.slots = [None; MAX_SOUNDS];
+        self.index.slots = [None; MAX_SOUNDS];
         for s in SlotId::ALL {
-            self.bump(s);
+            self.index.bump(s);
         }
+    }
+}
+
+impl Index {
+    fn store(&mut self, arena: &mut ArenaWriter, s: SlotId, sound: &Sound) -> Result<(), PoolFull> {
+        let len = entry_len(sound);
+        let old = self.slots[s.index()].map_or(0, |e| Cost::of(e.len as usize).bytes());
+        let needs = Cost::of(len).bytes().saturating_sub(old);
+        let full = PoolFull {
+            needs: Cost::of(needs as usize),
+            free: arena.gap(),
+        };
+        if needs > arena.gap().bytes() {
+            return Err(full);
+        }
+        self.drop_entry(arena, s);
+        // Checked against the gap above, the old Sound's bytes given back.
+        let Some(offset) = arena.sound_alloc(len) else {
+            return Err(full);
+        };
+        let bytes = arena.bytes_mut(offset, len);
+        let (name, records) = bytes.split_at_mut(NAME_LEN);
+        name.copy_from_slice(&sound.name.padded());
+        let mut w = Fill(records);
+        let wrote = encode_sound(sound, &mut RecordWriter::over(&mut w));
+        debug_assert!(wrote.is_ok() && w.0.is_empty(), "the count's length");
+        debug_assert_eq!(
+            EncodedSound {
+                bytes: arena.bytes(offset, len),
+            }
+            .check(),
+            Ok(()),
+            "encode_sound wrote a Sound it refuses"
+        );
+        self.slots[s.index()] = Some(SoundEntry {
+            offset,
+            len: len as u32,
+        });
+        self.bump(s);
+        Ok(())
     }
 
     /// Frees the slot's bytes; the Sounds below move up over them.
-    fn drop_entry(&mut self, s: SlotId) {
+    fn drop_entry(&mut self, arena: &mut ArenaWriter, s: SlotId) {
         let Some(e) = self.slots[s.index()].take() else {
             return;
         };
-        let shift = self.arena.sound_free(e.offset, e.len as usize);
+        let shift = arena.sound_free(e.offset, e.len as usize);
         for x in self.slots.iter_mut().flatten() {
             if x.offset < shift.from {
                 x.offset += shift.by;

@@ -42,11 +42,11 @@ impl Project {
     pub fn init_in_place(slot: &mut MaybeUninit<Project>, arena: ArenaWriter) -> TemplateCrc {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; `meta`, `pool`, `perf` and
-        // `orbit` (the last two in place) and `rev` are each written once
+        // `orbit` (the last three in place) and `rev` are each written once
         // before `assume_init_mut`.
         let project = unsafe {
             addr_of_mut!((*p).meta).write(ProjectMeta::new_project());
-            addr_of_mut!((*p).pool).write(Pool::new(arena));
+            Pool::init_in_place(uninit_at(addr_of_mut!((*p).pool)), arena);
             Performance::init_in_place(uninit_at(addr_of_mut!((*p).perf)));
             OrbitSong::init_in_place(uninit_at(addr_of_mut!((*p).orbit)));
             addr_of_mut!((*p).rev).write(0);

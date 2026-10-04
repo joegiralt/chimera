@@ -266,8 +266,9 @@ impl ProjectCheck {
     /// shape. `BadName`: a context's name. An ORBIT record is never an
     /// error past its place: a bad one keeps the neutral base.
     ///
-    /// `stage`, a load's own: each `Slot`'s Sound decoded whole, to cost it
-    /// and, in pass 2, store it. A check alone holds no Sound.
+    /// `stage`: where pass 1 of a load decodes each `Slot`'s Sound whole,
+    /// to cost it. Pass 2 decodes into `target`'s pool scratch and stores
+    /// it. A check alone holds no Sound.
     fn step(
         &mut self,
         e: Event<'_>,
@@ -303,7 +304,10 @@ impl ProjectCheck {
             (ReadTag::Known(_), Context::None) => Err(FileError::Corrupt),
             (ReadTag::Known(RecordTag::Block), Context::Fx) => self.fx_block(p, target),
             (ReadTag::Known(_), Context::Fx) => Err(FileError::Corrupt),
-            (_, Context::Slot(_)) => self.sound.step(e, stage),
+            (_, Context::Slot(_)) => {
+                let staged = stage.or(target.map(|t| t.pool.scratch()));
+                self.sound.step(e, staged)
+            }
             (ReadTag::Known(RecordTag::Block), Context::Part(n))
                 if p.first() == Some(&PART_CODE) =>
             {
@@ -440,27 +444,34 @@ impl ProjectCheck {
         stage: Option<&mut Sound>,
     ) -> Result<(), FileError> {
         match self.context {
-            Context::Slot(s) => {
-                let Some(stage) = stage else {
-                    return self.sound.finish(None);
-                };
-                self.sound.finish(Some(&mut *stage))?;
-                self.cost += Cost::of(entry_len(stage)).bytes();
-                if self.cost as usize > ARENA_BYTES {
-                    return Err(FileError::Bounds);
-                }
-                match target {
+            Context::Slot(s) => match (target, stage) {
+                (Some(t), _) => {
+                    self.sound.finish(Some(t.pool.scratch()))?;
+                    self.cost_slot(entry_len(t.pool.scratch()))?;
                     // Pass 1 costed every slot against the whole arena.
-                    Some(t) => t.pool.store(s, stage).map_err(|_| FileError::Bounds),
-                    None => Ok(()),
+                    t.pool.store_scratch(s).map_err(|_| FileError::Bounds)
                 }
-            }
+                (None, Some(stage)) => {
+                    self.sound.finish(Some(&mut *stage))?;
+                    self.cost_slot(entry_len(stage))
+                }
+                (None, None) => self.sound.finish(None),
+            },
             Context::Part(n) => {
                 let staged = target.map(|t| &mut t.perf.parts[n.index()].sound);
                 self.sound.finish(staged)
             }
             Context::None | Context::Fx | Context::Orbit => Ok(()),
         }
+    }
+
+    /// Adds a slot's arena bytes: `Bounds` past the arena.
+    fn cost_slot(&mut self, len: usize) -> Result<(), FileError> {
+        self.cost += Cost::of(len).bytes();
+        if self.cost as usize > ARENA_BYTES {
+            return Err(FileError::Bounds);
+        }
+        Ok(())
     }
 
     /// Closes the last context; `Corrupt` unless all six Parts were read.
@@ -525,8 +536,6 @@ impl Check for ProjectCheck {
 pub struct ProjectDecoder<'a> {
     check: ProjectCheck,
     target: &'a mut Project,
-    /// Each slot's Sound, decoded whole: costed in pass 1, stored in pass 2.
-    stage: Sound,
 }
 
 impl<'a> ProjectDecoder<'a> {
@@ -535,7 +544,6 @@ impl<'a> ProjectDecoder<'a> {
         ProjectDecoder {
             check: ProjectCheck::new(),
             target,
-            stage: Sound::neutral(EngineType::Algo),
         }
     }
 
@@ -556,20 +564,21 @@ impl Check for ProjectDecoder<'_> {
     const KIND: FileKind = FileKind::Project;
 
     fn event(&mut self, e: Event<'_>) -> Result<(), FileError> {
-        self.check.step(e, None, Some(&mut self.stage))
+        // The pool's scratch only: nothing a pass 1 refusal could leave.
+        self.check.step(e, None, Some(self.target.pool.scratch()))
     }
 
     fn end(&mut self) -> Result<(), FileError> {
-        self.check.finish(None, Some(&mut self.stage))
+        self.check.finish(None, Some(self.target.pool.scratch()))
     }
 }
 
 impl DecodeInPlace for ProjectDecoder<'_> {
     fn apply(&mut self, e: Event<'_>) -> Result<(), FileError> {
-        self.check.step(e, Some(self.target), Some(&mut self.stage))
+        self.check.step(e, Some(self.target), None)
     }
 
     fn finish(&mut self) -> Result<(), FileError> {
-        self.check.finish(Some(self.target), Some(&mut self.stage))
+        self.check.finish(Some(self.target), None)
     }
 }

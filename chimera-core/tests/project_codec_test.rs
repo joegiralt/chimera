@@ -607,3 +607,70 @@ fn slot_index_127_round_trips() {
     assert!(moved.bits_eq(&factory_sound(0).unwrap()));
     assert_eq!(decode_err(&slot_index(128)), FileError::Bounds);
 }
+
+/// A file whose slots, each a worst-case Sound, sum past the arena: the
+/// load refuses it in pass 1 with `Bounds`, and the project in RAM, its
+/// pool's bytes too, is as it was.
+#[test]
+fn slots_past_the_arena_refused_in_pass_one() {
+    use chimera_core::project::arena::ARENA_BYTES;
+    use chimera_core::project::test_support::dense;
+    use chimera_core::project::{ProjectDecoder, project_file};
+    use chimera_core::storage::{Card, InPlaceError, LoadError, ProjectId, Side, load_ab_in_place};
+    use chimera_hal::store::{Dir, Store};
+    use chimera_hal::testkit::MemStore;
+
+    let (p, _) = full();
+    let (h, recs) = records(&encode(&p));
+    let first_slot = recs.iter().position(|(t, _)| *t == SLOT).unwrap();
+    let first_part = recs.iter().position(|(t, _)| *t == PART).unwrap();
+    let mut out: Vec<(u16, Vec<u8>)> = recs[..first_slot].to_vec();
+    let mut sum = 0;
+    for i in 0..128u8 {
+        let mut s = factory_sound(usize::from(i) % 8).unwrap();
+        dense(&mut s, u64::from(i));
+        let (_, sound) = records(&common::codec_util::encode(&s));
+        let mut ctx = vec![i];
+        ctx.extend_from_slice(&s.name.padded());
+        out.push((SLOT, ctx));
+        sum += (16 + sound.iter().map(|(_, b)| 4 + b.len()).sum::<usize>()).next_multiple_of(16);
+        out.extend(sound);
+    }
+    assert!(sum > ARENA_BYTES, "{sum} B of slots");
+    out.extend_from_slice(&recs[first_part..]);
+    let file = rebuild(&h, &out);
+
+    let id = ProjectId::new(1).unwrap();
+    let mut store = MemStore::new(1);
+    let vol = store.mount().unwrap();
+    store.make_dir(vol, Dir::Chimera).unwrap();
+    store.make_dir(vol, Dir::Projects).unwrap();
+    store
+        .write(vol, project_file(id).side(Side::A), &mut |w| w.put(&file))
+        .unwrap();
+
+    let (mut q, _) = full();
+    let (crc, used) = (project_crc(&q), q.pool().used());
+    let got = Card::new()
+        .run(&mut store, |s, r| {
+            load_ab_in_place(
+                s,
+                r,
+                project_file(id),
+                &mut ProjectDecoder::new_for_test(&mut q),
+            )
+        })
+        .unwrap()
+        .result
+        .map(|_| ());
+    assert_eq!(
+        got,
+        Err(InPlaceError {
+            err: LoadError::File(FileError::Bounds),
+            clobbered: false,
+        })
+    );
+    same(&full().0, &q);
+    assert_eq!(project_crc(&q), crc);
+    assert_eq!(q.pool().used(), used);
+}
