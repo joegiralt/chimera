@@ -87,6 +87,9 @@ pub enum Capture {
 pub struct Captured {
     pub count: u8,
     pub target: Capture,
+    /// The scene playing when the take ended: the one it goes into, as a
+    /// recording goes into the pattern it was made in (ADR 0083).
+    pub scene: SceneIdx,
     /// In the order played, each once (a STEP ring's may repeat).
     pub notes: [Note; MAX_POOL],
     pub len: u8,
@@ -96,6 +99,7 @@ impl Captured {
     const NONE: Captured = Captured {
         count: 0,
         target: Capture::Off,
+        scene: SceneIdx::ALL[0],
         notes: [Note::MIN; MAX_POOL],
         len: 0,
     };
@@ -143,15 +147,16 @@ impl Take {
         &self.notes[..self.len as usize]
     }
 
-    /// The notes taken: a segment's only if they make a chord, else it
-    /// stays armed for the next.
-    fn finish(&mut self) {
+    /// The notes taken, into `scene`: a segment's only if they make a
+    /// chord, else it stays armed for the next.
+    fn finish(&mut self, scene: SceneIdx) {
         if matches!(self.armed, Capture::Segment(_)) && Chord::from_notes(self.played()).is_none() {
             return self.restart();
         }
         self.done = Captured {
             count: self.done.count.wrapping_add(1),
             target: self.armed,
+            scene,
             notes: self.notes,
             len: self.len,
         };
@@ -498,6 +503,7 @@ impl OrbitRunner {
                     .then(|| ring.hits_mask().hits().clamp(1, MAX_POOL as u8))
             }
         };
+        let playing = self.playing;
         let t = &mut self.take;
         let Some(note) = Note::new(ev.note.get()) else {
             return;
@@ -511,7 +517,7 @@ impl OrbitRunner {
                     t.len += 1;
                 }
                 if step.is_some_and(|n| t.len >= n) {
-                    t.finish();
+                    t.finish(playing);
                 }
             }
             NoteKind::Off => {
@@ -520,7 +526,7 @@ impl OrbitRunner {
                 }
                 t.held = t.held.without(ev.note);
                 if t.held.is_empty() && step.is_none() {
-                    t.finish();
+                    t.finish(playing);
                 }
             }
         }

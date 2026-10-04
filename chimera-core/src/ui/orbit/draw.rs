@@ -476,13 +476,13 @@ where
     // Its Part by where it starts, dimmed with it: rings 1 and 3 left, 2
     // and 4 right, so the column breathes; ring 5's under its top, in the
     // middle, clear of its own last steps.
-    let part = FmtBuf::of(format_args!("{}", part_of(f, r)));
+    let s = PART_DIGITS[part_of(f, r) - 1];
     let ink = if ring.mute {
         theme::PILL_EDGE
     } else {
         theme::MID
     };
-    let (s, top) = (part.as_str(), ORB_CY - ring_r(r));
+    let top = ORB_CY - ring_r(r);
     let font = &theme::FONT_LABEL;
     match r.get() as usize {
         n if n == RINGS - 1 => draw::text_center(d, font, s, ORB_CX, top + PART_IN, ink, 0),
@@ -766,6 +766,9 @@ fn cursor_note(f: &OrbitFrame) -> FmtBuf {
     FmtBuf::of(format_args!("{}", f.chords().tonic.up(f.ui.interval())))
 }
 
+/// The Parts' numbers as ORB draws them: no formatting in flash.
+const PART_DIGITS: [&str; crate::hw::MAX_PARTS] = ["1", "2", "3", "4", "5", "6"];
+
 /// Ring `r`'s Part, one-based.
 fn part_of(f: &OrbitFrame, r: RingIdx) -> usize {
     f.scene().rings[r.get() as usize].target.part().index() + 1
@@ -859,12 +862,14 @@ impl Focus {
 /// ORBIT's reading of `slot` on `def`, from the slots' eased `values`:
 /// HITS as HITS/STEPS, its arc the fill; DEGREE as its segment's chord;
 /// CUSTOM's note and whether it is in; NOTES' chip, LEARN and CLEAR; SCN's
-/// cells. `None` elsewhere.
+/// cells. `None` elsewhere. With THEME's HINTS off, CLEAR's label keeps
+/// its one sign that it wants MIX.
 pub fn focus(
     def: &BlockDef,
     slot: usize,
     ctx: &SlotCtx,
     f: &OrbitFrame,
+    hints: bool,
     values: impl Fn(usize) -> f32,
 ) -> Option<Focus> {
     let mut label = FmtBuf::new();
@@ -905,6 +910,9 @@ pub fn focus(
             Gauge::None
         }
         View::Orbit(OrbitCell::Clear) => {
+            if !hints {
+                let _ = label.write_str("MIX + ");
+            }
             let _ = label.write_str(OrbitCell::Clear.label());
             text = cell_text(OrbitCell::Clear, f, ctx.ring);
             Gauge::None

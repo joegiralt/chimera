@@ -1003,7 +1003,7 @@ fn clear_needs_mix() {
         chimera_core::addr::Op::A,
     )
     .on_ring(r);
-    let fo = focus(&ORBIT_NOTES, 4, &ctx, &f, |_| 0.0).unwrap();
+    let fo = focus(&ORBIT_NOTES, 4, &ctx, &f, true, |_| 0.0).unwrap();
     assert_eq!((fo.label.as_str(), fo.text.as_str()), ("CLEAR", "C4 / RND"));
     assert_eq!(fo.hint, OrbitCell::Clear.hint(true));
 }

@@ -857,18 +857,14 @@ fn new_plays_v4_as_scene_1() {
 }
 
 /// CLEAR on the playing slot adopted by the runner, unseen, then SCENE
-/// away and back (a cancel to the UI): `live` keeps its notes. The
-/// cleared scene's drift is never absorbed into it.
+/// away and back: the CLEAR stays due (ADR 0083; it used to cancel, and
+/// left `live` on its old notes over a neutral slot). It lands, `live`
+/// is the cleared slot, and the runner plays it.
 #[test]
-fn a_clear_adopted_then_cancelled_leaves_live_alone() {
+fn a_clear_adopted_then_turned_back_still_lands() {
     let mut rig = OrbitRig::new();
-    // No drift of its own: whatever moves came from elsewhere.
-    for r in &mut rig.song().live_mut_for_test().rings {
-        r.set(SceneRing::MUTATE, 0.0);
-    }
     rig.play(true);
     rig.run_loops(1);
-    let live = *rig.project.orbit().live();
     let yes = Confirmed::<SceneSlot>::unasked(rig.project.orbit(), S[0]);
     rig.song().clear_scene(yes).expect("nothing queued");
     rig.ui.issue_scene(rig.project.orbit());
@@ -879,14 +875,28 @@ fn a_clear_adopted_then_cancelled_leaves_live_alone() {
     rig.ui.queue(S[1], rig.project.orbit_mut());
     rig.ui.queue(S[0], rig.project.orbit_mut());
     let song = rig.project.orbit();
-    assert_eq!((song.current(), song.queued()), (S[0], None), "cancelled");
+    assert_eq!(
+        (song.current(), song.queued()),
+        (S[0], Some(S[0])),
+        "still due"
+    );
     rig.run(secs(10.0));
     let song = rig.project.orbit();
     assert_eq!((song.current(), song.queued()), (S[0], None));
-    for (a, b) in song.live().rings.iter().zip(&live.rings) {
-        assert_eq!(a.ring.pool, b.ring.pool, "no foreign pool");
-        assert_eq!(a.ring.notes, b.ring.notes, "no foreign notes");
+    assert_eq!(*song.live(), Scene::neutral(), "the cleared slot");
+    assert_eq!(*song.scene(S[0]), Scene::neutral());
+    assert_eq!(drift(rig.view()), scene_drift(&Scene::neutral()), "played");
+}
+
+/// `s` with `base`'s hits, notes and pools: `s` apart from its drift.
+fn sans_drift(s: &Scene, base: &Scene) -> Scene {
+    let mut s = *s;
+    for (r, b) in s.rings.iter_mut().zip(&base.rings) {
+        r.ring = r.ring.with_mask(b.ring.hits_mask()).unwrap_or(r.ring);
+        r.ring.notes = b.ring.notes;
+        r.ring.pool = b.ring.pool;
     }
+    s
 }
 
 /// A frame's blocks in the property tests: a few, so the runner keeps up.
@@ -914,26 +924,30 @@ fn settings_scene_act(rig: &mut ShellRig, row: usize) {
     assert_eq!(rig.ui.page_def().id, ORBIT_ORB.id);
 }
 
-/// § 4.3: random SCENE, CLEAR, RELOAD and B6, at random frame-to-block
-/// ratios and with the audio interrupting frames. With no drift (MUTATE
-/// 0), `live` changes only by the UI's own acts; after two quiet loops
-/// the song plays what the runner plays, nothing waits, the runner is in
-/// sync (a knob reaches it) and `live`'s rings are the runner's.
+/// § 4.3: random SCENE, KEY, CLEAR, RELOAD and B6, at random
+/// frame-to-block ratios and with the audio interrupting frames, every
+/// edit through the page. With no drift (MUTATE 0), `live` changes only by
+/// the UI's own acts; after two quiet loops the song plays what the runner
+/// plays, nothing waits, the runner is in sync (a knob reaches it),
+/// `live`'s rings are the runner's, and the playing slot is `live` but for
+/// drift (ADR 0083).
 #[test]
 fn scenes_converge_after_any_interleaving() {
     const STEPS: usize = 300;
     for seed in 1..=4u32 {
         let mut ui = in_orbit();
         {
+            // Slot 2: scene 1 in C, ring 1 of 8 steps, saved by SCN's
+            // SAVE's own call; then scene 1's edits undone.
             let song = ui.project_mut().orbit_mut();
             song.bpm = Bpm::clamped(Bpm::MAX);
-            let mut b = *song.live();
-            b.chords.tonic = PitchClass::C;
-            b.rings[0].set(SceneRing::STEPS, 7.0);
-            *song.live_mut_for_test() = b;
-            let c = Confirmed::<SceneSlot>::unasked(song, S[1]);
-            song.overwrite_scene(c).expect("nothing queued");
-            *song.live_mut_for_test() = *song.scene(S[0]);
+            let a = *song.live();
+            song.edit(&mut |s| {
+                s.chords.tonic = PitchClass::C;
+                s.rings[0].set(SceneRing::STEPS, 7.0);
+            });
+            song.save_to(S[1]).expect("nothing queued");
+            song.edit(&mut |s| *s = a);
         }
         let mut rig = ShellRig::new(ui);
         let mut rng = Rng::new(seed);
@@ -942,7 +956,9 @@ fn scenes_converge_after_any_interleaving() {
             match rng.below(10) {
                 0..=4 => {
                     let d = [-2, -1, 1, 2][rng.below(4) as usize];
-                    rig.late(first, Input::turn(E, d), then);
+                    // SCENE, or KEY: an edit through the page.
+                    let enc = if rng.below(3) == 0 { B } else { E };
+                    rig.late(first, Input::turn(enc, d), then);
                 }
                 5 => {
                     rig.late(first, Input::press(B6), then);
@@ -981,13 +997,15 @@ fn scenes_converge_after_any_interleaving() {
         assert_eq!((song.queued(), v.cue), (None, None), "seed {seed}");
         assert_eq!(rig.ui.orbit().awaiting(), None, "seed {seed}");
         assert_eq!(scene_drift(song.live()), drift(&v), "seed {seed}");
-        // In sync: a knob reaches the runner.
-        let live = &mut rig.ui.project_mut().orbit_mut().live_mut_for_test();
-        live.chords.tonic = if live.chords.tonic == PitchClass::E {
-            PitchClass::G
+        let slot = song.scene(song.current());
+        assert_eq!(sans_drift(song.live(), slot), *slot, "seed {seed}");
+        // In sync: a knob, KEY, reaches the runner.
+        let d = if song.live().chords.tonic == PitchClass::B {
+            -1
         } else {
-            PitchClass::E
+            1
         };
+        rig.frame(Input::turn(B, d), 1);
         rig.idle(1);
         rig.idle(1);
         let v = rig.view();
@@ -1549,6 +1567,7 @@ fn every_note_edit_reaches_the_slot() {
                 captured: Captured {
                     count: 1,
                     target: Capture::Ring(RingIdx::ALL[1]),
+                    scene: chimera_core::orbit::scene::SceneIdx::ALL[0],
                     notes,
                     len: 3,
                 },
@@ -1580,4 +1599,65 @@ fn every_note_edit_reaches_the_slot() {
         "OCTAVE: an edit"
     );
     assert_eq!(*song.live(), *song.scene(S[0]), "OCTAVE: in the slot");
+}
+
+/// A capture the runner finishes in scene 2, before the UI has landed the
+/// switch, goes into scene 2, where it was played: its slot, then `live`
+/// as it lands, and the runner plays it. Scene 1 is untouched.
+#[test]
+fn a_capture_across_a_switch_goes_to_the_scene_it_was_played_in() {
+    use chimera_core::orbit::channel::ArmTarget;
+    let mut rig = OrbitRig::new();
+    rig.play(true);
+    rig.run_loops(1);
+    let one = *rig.project.orbit().scene(S[0]);
+    rig.ui.queue(S[1], rig.project.orbit_mut());
+    rig.ui.arm(Some(ArmTarget::Ring(RingIdx::ALL[1])));
+    rig.block();
+    while rig.view().playing != S[1] {
+        rig.card_read(1);
+    }
+    for n in [50, 55, 62] {
+        rig.key(0, n, true);
+    }
+    rig.card_read(1);
+    for n in [50, 55, 62] {
+        rig.key(0, n, false);
+    }
+    rig.card_read(1);
+    assert_eq!(rig.project.orbit().current(), S[0], "not landed yet");
+    rig.run(4);
+    let want = [50, 55, 62].map(|n| Note::new(n).unwrap());
+    let song = rig.project.orbit();
+    assert_eq!(song.current(), S[1]);
+    assert_eq!(song.scene(S[1]).rings[1].ring.pool.notes(), want);
+    assert_eq!(song.live().rings[1].ring.pool.notes(), want);
+    assert_eq!(*song.scene(S[0]), one, "scene 1 untouched");
+    assert_eq!(
+        rig.view().rings[1].pool.notes(),
+        want,
+        "the runner plays it"
+    );
+}
+
+/// A CLEAR or RELOAD waiting on the loop survives SCENE turned away and
+/// back: the reland stays queued, so `live` and the slot meet again.
+#[test]
+fn turning_back_keeps_a_pending_reland() {
+    use chimera_core::orbit::scene::OrbitSong;
+    for clear in [false, true] {
+        let mut song = OrbitSong::NEW;
+        // A drift's stand-in: `live` off its slot.
+        song.live_mut_for_test().rings[0].ring.mute = true;
+        let yes = Confirmed::<SceneSlot>::unasked(&song, S[0]);
+        if clear {
+            song.clear_scene(yes)
+        } else {
+            song.reload_scene(yes)
+        }
+        .expect("nothing queued");
+        song.queue(S[1]);
+        song.queue(S[0]);
+        assert_eq!(song.queued(), Some(S[0]), "clear {clear}: still due");
+    }
 }

@@ -117,10 +117,13 @@ fn notes(n: &[u8]) -> Vec<Note> {
 /// BPM, slot 6 playing.
 fn rich() -> Box<Project> {
     let mut rig = OrbitRig::new();
-    for r in &mut rig.song().live_mut_for_test().rings {
-        r.set(SceneRing::MUTATE, 100.0);
-        r.set(SceneRing::MUTE, 0.0);
-    }
+    rig.song().edit(&mut |s| {
+        for r in &mut s.rings {
+            r.set(SceneRing::MUTATE, 100.0);
+            r.set(SceneRing::MUTE, 0.0);
+        }
+    });
+    rig.ui.flush(rig.project.orbit_mut());
     let start = scene_drift(rig.project.orbit().live());
     rig.play(true);
     rig.run_loops(3);
@@ -154,7 +157,12 @@ fn rich() -> Box<Project> {
         *song.live_mut_for_test() = was;
     }
     let song = p.orbit_mut();
-    song.live_mut_for_test().chords.played[1] = Chord::from_notes(&notes(&[60, 61, 62]));
+    // Edits, so in slot 1 too (ADR 0083); the notes below are drift.
+    let played = Chord::from_notes(&notes(&[60, 61, 62]));
+    song.edit(&mut |s| {
+        s.chords.played[1] = played;
+        s.seed = 0xCAFE_F00D;
+    });
     // Rings 1 and 2 with their own uneven steps, so no step can stand in
     // for another.
     for (r, base) in [(0, 36u8), (1, 60)] {
@@ -167,7 +175,6 @@ fn rich() -> Box<Project> {
             *n = Note::new(base + (i as u8 * 5 + r as u8) % 19).unwrap();
         }
     }
-    song.live_mut_for_test().seed = 0xCAFE_F00D;
     song.bpm = Bpm::new(97).unwrap();
     song.queue(S[5]);
     p
@@ -600,6 +607,7 @@ fn a_captured_chord_saves_as_its_tones() {
     let mut c = Captured {
         count: 1,
         target: chimera_core::orbit::runner::Capture::Segment(2),
+        scene: chimera_core::orbit::scene::SceneIdx::ALL[0],
         notes: [Note::new(0).unwrap(); 8],
         len: 4,
     };
@@ -1025,6 +1033,9 @@ fn the_orbit_fixture_loads_as_frozen() {
         live.chords.played[1],
         Chord::from_notes(&notes(&[60, 61, 62]))
     );
+    // A file from before ADR 0083: `live`'s seed and chord, edits past
+    // slot 1, are written over it at the load.
+    assert_eq!(o.scene(S[0]).chords, live.chords);
     let seeds: Vec<u32> = S
         .iter()
         .map(|&n| o.scene(n).seed)
@@ -1033,7 +1044,7 @@ fn the_orbit_fixture_loads_as_frozen() {
     assert_eq!(
         seeds,
         [
-            0x0B17_0001,
+            0xCAFE_F00D,
             0x5EED_0001,
             0x5EED_0002,
             0x5EED_0003,
@@ -1052,8 +1063,13 @@ fn the_orbit_fixture_loads_as_frozen() {
     assert_eq!(r2.pool.notes(), notes(&[62, 69, 72]));
     assert_eq!(o.scene(S[3]).chords.scale, ScaleKind::Custom);
     assert_eq!(o.scene(S[6]).chords.tonic, PitchClass::ALL[6]);
-    // Written back: the same ORBIT bytes.
-    assert_eq!(orbit_records(&encode(&q)), recs);
+    // Written back: the same ORBIT bytes but slot 1's and the seeds'.
+    let kept = |r: Vec<(u16, Vec<u8>)>| -> Vec<_> {
+        r.into_iter()
+            .filter(|(t, p)| *t != RecordTag::Orbit.code() && p.first() != Some(&0))
+            .collect()
+    };
+    assert_eq!(kept(orbit_records(&encode(&q))), kept(recs.clone()));
 }
 
 /// `bytes` decoded over a fresh NEW, and whether the load was lossy.
@@ -1157,4 +1173,22 @@ fn a_left_scenes_edits_round_trip() {
     assert_eq!(q.orbit().current(), S[1]);
     assert_eq!(q.orbit().scene(S[0]).chords.tonic, PitchClass::C);
     assert_eq!(*q.orbit().scene(S[0]), *ui.project().orbit().scene(S[0]));
+}
+
+/// A file from before ADR 0083 can hold `live` edited past its slot: the
+/// load writes `live` over the playing slot once, so the edits stay. A
+/// `live` off its slot only by drift (hits, notes, pools) leaves it.
+#[test]
+fn an_old_files_edits_are_locked_into_the_slot() {
+    let mut p = new_project();
+    p.orbit_mut().live_mut_for_test().chords.tonic = PitchClass::G;
+    let q = loaded(&encode(&p));
+    assert_eq!(q.orbit().scene(S[0]).chords.tonic, PitchClass::G);
+    assert_eq!(*q.orbit().scene(S[0]), *q.orbit().live());
+
+    let mut p = new_project();
+    p.orbit_mut().live_mut_for_test().rings[1].ring.notes[0] = Note::new(40).unwrap();
+    let q = loaded(&encode(&p));
+    assert_eq!(*q.orbit().scene(S[0]), Scene::init(), "drift stays out");
+    assert_ne!(*q.orbit().live(), Scene::init());
 }

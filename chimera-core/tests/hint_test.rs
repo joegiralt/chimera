@@ -31,7 +31,7 @@ fn band(ui: &UiState, def: &BlockDef, slot: usize) -> (String, Hint) {
     let r = ui.location().orbit().unwrap().ring();
     let f = OrbitFrame::new(ui.project().orbit(), ui.orbit());
     let ctx = SlotCtx::read(&ui.project().part(ui.active_part).sound.params, Op::A).on_ring(r);
-    match focus(def, slot, &ctx, &f, |_| 0.0) {
+    match focus(def, slot, &ctx, &f, true, |_| 0.0) {
         Some(fo) => (fo.label.as_str().into(), fo.hint),
         None => (
             view(def, slot, &ctx).label().into(),
@@ -337,4 +337,34 @@ fn hints_off_shows_no_hint() {
     browser::draw(&mut a, ui.project().pool(), PartId::ALL[0], 0, 0, true);
     browser::draw(&mut b, ui.project().pool(), PartId::ALL[0], 0, 0, false);
     assert_ne!(a.hash(), b.hash(), "the browser's go too");
+}
+
+/// HINTS turned off between frames, through the dirty-region path: the
+/// focus band redraws at once, as a full render draws it; NOTE's hint goes,
+/// and CLEAR's label keeps `MIX +`.
+#[test]
+fn hints_off_redraws_through_the_dirty_regions() {
+    use chimera_core::ui::perf::PerfStats;
+    use chimera_core::ui::theme_settings::ThemeSettings;
+    let mut ui = Box::new(ui_for("orbit_notes_step"));
+    let mut fb = screen::Fb::new();
+    let frame = |ui: &mut UiState, fb: &mut screen::Fb| {
+        ui.render_dirty_with_scope(fb, &PerfStats::zero(), &screen::scope_fixture());
+    };
+    frame(&mut ui, &mut fb);
+    assert_eq!(fb.hash(), render_ui(&ui).hash(), "hints on");
+    ui.set_theme(ThemeSettings {
+        hints: false,
+        ..ThemeSettings::DEFAULT
+    });
+    frame(&mut ui, &mut fb);
+    assert_eq!(fb.hash(), render_ui(&ui).hash(), "NOTE's hint gone at once");
+    feed(&mut ui, Input::turn(E, 1)); // CLEAR touched; no MIX, no change
+    frame(&mut ui, &mut fb);
+    assert_eq!(fb.hash(), render_ui(&ui).hash(), "CLEAR");
+    let r = ui.location().orbit().unwrap().ring();
+    let f = OrbitFrame::new(ui.project().orbit(), ui.orbit());
+    let ctx = SlotCtx::read(&ui.project().part(ui.active_part).sound.params, Op::A).on_ring(r);
+    let fo = focus(&ORBIT_NOTES, 4, &ctx, &f, false, |_| 0.0).unwrap();
+    assert_eq!(fo.label.as_str(), "MIX + CLEAR");
 }

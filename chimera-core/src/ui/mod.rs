@@ -2219,7 +2219,9 @@ impl UiState {
             perf,
             matrix: &self.matrix_state,
             sel_op: self.sel_op,
-            orbit_focus: orbit::draw::focus(def, focus, &ctx, &orbit, |i| anim[i].current()),
+            orbit_focus: orbit::draw::focus(def, focus, &ctx, &orbit, self.theme.hints, |i| {
+                anim[i].current()
+            }),
             hints: self.theme.hints,
             ctx,
             focus,
@@ -2314,7 +2316,8 @@ impl UiState {
                 self.prime_status,
             )
             .with_set(region::quantize(self.renderer.set[f.focus].current()))
-            .with_text(f.orbit_focus.as_ref().map_or(0, |o| o.key()))
+            // HINTS draws or drops the band's hint: a change redraws it.
+            .with_text(f.orbit_focus.as_ref().map_or(0, |o| o.key()) ^ u32::from(f.hints))
             .animated(glyph::anim_key(
                 shown.is_some_and(|g| g.animates()),
                 f.clock.frame(),
@@ -2595,8 +2598,12 @@ impl Blocks for UiBlocks<'_> {
             BlockRef::Midi => Some(self.midi),
             BlockRef::PartMix(p) => Some(self.project.edit_part(p).mix),
             // A scene's params change through `OrbitSong::edit`, which
-            // writes its slot too (ADR 0083): never from here.
-            BlockRef::OrbitChords | BlockRef::OrbitRing(_) => None,
+            // writes its slot too (ADR 0083): never from here. A caller
+            // naming one is a bug the tests catch; release reads nothing.
+            BlockRef::OrbitChords | BlockRef::OrbitRing(_) => {
+                debug_assert!(false, "{b:?} edits through OrbitSong::edit");
+                None
+            }
             BlockRef::Tempo => Some(&mut self.project.orbit_mut().bpm),
             _ => {
                 let PartEdit { sound, mix, fx } = self.project.edit_part(self.part);

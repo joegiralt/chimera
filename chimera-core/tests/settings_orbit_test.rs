@@ -483,3 +483,43 @@ fn reload_keeps_the_edits_and_drops_the_drift() {
     assert_eq!(*song.live(), base, "the edits, no drift");
     assert_eq!(*song.scene(S[0]), base);
 }
+
+/// A capture landing while CLEAR or RELOAD asks writes the slot, so YES
+/// refuses: SCENE CHANGED, and the slot keeps the capture.
+#[test]
+fn a_capture_under_a_scene_prompt_refuses_it() {
+    use chimera_core::orbit::RingIdx;
+    use chimera_core::orbit::runner::{Capture, Captured, OrbitView};
+    use chimera_theory::Note;
+    for row in [CLEAR, RELOAD] {
+        let mut ui = Box::new(UiState::new());
+        // Drift's stand-in, so RELOAD asks.
+        ui.project_mut().orbit_mut().live_mut_for_test().rings[1]
+            .ring
+            .notes[0] = Note::new(40).unwrap();
+        orbit_row(&mut ui, row);
+        tap(&mut ui, Edit);
+        assert!(ui.prompt_open(), "row {row} asks");
+        let mut notes = [Note::new(0).unwrap(); 8];
+        notes[..3].copy_from_slice(&[50, 55, 62].map(|n| Note::new(n).unwrap()));
+        let v = OrbitView {
+            captured: Captured {
+                count: ui.orbit().took.wrapping_add(1),
+                target: Capture::Ring(RingIdx::ALL[1]),
+                scene: S[0],
+                notes,
+                len: 3,
+            },
+            acked: ui.orbit().log().head(),
+            ..OrbitView::default()
+        };
+        ui.set_orbit_view(&v);
+        let taken = slot(&ui, 0);
+        assert_eq!(taken.rings[1].ring.pool.notes(), &notes[..3]);
+        tap(&mut ui, Seq); // YES
+        assert!(!ui.prompt_open());
+        assert_eq!(toast(&mut ui), "SCENE CHANGED", "row {row}");
+        assert_eq!(slot(&ui, 0), taken, "row {row}: the capture stands");
+        assert_eq!(ui.project().orbit().queued(), None);
+    }
+}

@@ -638,6 +638,7 @@ pub fn played(ui: &mut UiState, count: u8, notes: &[u8]) {
     let mut c = Captured {
         count,
         target: Capture::Segment(seg),
+        scene: ui.project().orbit().current(),
         notes: [chimera_theory::Note::MIN; 8],
         len: notes.len() as u8,
     };

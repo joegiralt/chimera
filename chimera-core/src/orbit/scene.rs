@@ -267,6 +267,15 @@ impl Scene {
         }
     }
 
+    /// `self` with `base`'s hits, notes and pools: `self` apart from its
+    /// drift.
+    fn sans_drift(mut self, base: &Scene) -> Scene {
+        for (s, b) in self.rings.iter_mut().zip(&base.rings) {
+            s.ring = s.ring.sans_drift(&b.ring);
+        }
+        self
+    }
+
     /// `neutral()`'s, compared out of line: one copy of `==` in flash.
     #[inline(never)]
     pub fn is_neutral(&self) -> bool {
@@ -321,9 +330,12 @@ pub struct OrbitSong {
     current: SceneIdx,
     /// A switch waiting on the runner: it lands on the loop.
     queued: Option<SceneIdx>,
+    /// A CLEAR or RELOAD waits to land the playing slot again: SCENE
+    /// turned away and back keeps it queued. Run-time only.
+    reland_due: bool,
 }
 
-crate::in_place::field_list!(OrbitSong => OrbitSong { live, bpm, scenes, slot_revs, saved, current, queued });
+crate::in_place::field_list!(OrbitSong => OrbitSong { live, bpm, scenes, slot_revs, saved, current, queued, reland_due });
 
 /// Equal as a project keeps it: the slots' revs are run-time only, and
 /// `saved` follows from the slots.
@@ -377,6 +389,7 @@ impl OrbitSong {
         saved: SceneSet::EMPTY.with(SceneIdx(0)),
         current: SceneIdx(0),
         queued: None,
+        reland_due: false,
     };
 
     /// NEW (`NEW`'s value), built in place a scene at a time: the firmware
@@ -396,6 +409,7 @@ impl OrbitSong {
             addr_of_mut!((*p).saved).write(SceneSet::EMPTY.with(SceneIdx(0)));
             addr_of_mut!((*p).current).write(SceneIdx(0));
             addr_of_mut!((*p).queued).write(None);
+            addr_of_mut!((*p).reland_due).write(false);
             slot.assume_init_mut()
         }
     }
@@ -434,10 +448,11 @@ impl OrbitSong {
     }
 
     /// SCENE turned to `s`: queued, to land on the loop; `live` stays the
-    /// playing scene till then. Back to the playing scene cancels it, a
-    /// re-landing (`reland`) too.
+    /// playing scene till then. Back to the playing scene cancels it,
+    /// unless a CLEAR or RELOAD is due: that stays queued, so `live` and
+    /// the slot meet again.
     pub fn queue(&mut self, s: SceneIdx) {
-        self.queued = (s != self.current).then_some(s);
+        self.queued = (s != self.current || self.reland_due).then_some(s);
     }
 
     /// The runner adopted `s` (the view says so): it plays, and `live`
@@ -455,7 +470,22 @@ impl OrbitSong {
             }
             self.current = s;
             self.queued = None;
+            self.reland_due = false;
         }
+    }
+
+    /// A capture into the scene it was played in (ADR 0083): its slot, and
+    /// `live` while that scene plays. Into another slot its touched marks
+    /// stay with it: the runner may have adopted that slot already, so they
+    /// go out when it lands.
+    pub(crate) fn capture(&mut self, c: &Captured) {
+        let i = c.scene.0 as usize;
+        self.scenes[i].take(c);
+        if c.scene == self.current {
+            self.scenes[i].harvest();
+            self.live.take(c);
+        }
+        self.wrote(c.scene);
     }
 
     /// An edit to the playing scene: `f` on its slot, then on `live`, so
@@ -544,6 +574,7 @@ impl OrbitSong {
     /// its copy on the loop.
     fn reland(&mut self) {
         self.queued = Some(self.current);
+        self.reland_due = true;
     }
 
     /// SETTINGS › ORBIT's CLEAR, answered: the slot it asked about to
@@ -642,6 +673,7 @@ impl OrbitSong {
         self.bpm = Bpm::DEFAULT;
         self.current = SceneIdx(0);
         self.queued = None;
+        self.reland_due = false;
     }
 
     /// Scene `i` as a project file numbers it: the slots 0–7, `live` 8.
@@ -667,7 +699,17 @@ impl OrbitSong {
     }
 
     /// A load done: `saved` from the slots as read.
+    ///
+    /// A file from before ADR 0083 may hold `live` edited past its slot:
+    /// where `live` differs from the playing slot in more than drift (each
+    /// ring's hits, notes and pool), it is written over the slot once, so
+    /// the edits stay. A note edit is drift's twin and restarts.
     pub(crate) fn loaded(&mut self) {
+        let n = self.current;
+        let slot = &self.scenes[n.0 as usize];
+        if self.live.sans_drift(slot) != *slot {
+            self.put(n, self.live);
+        }
         self.saved = SceneIdx::ALL
             .into_iter()
             .filter(|n| !self.scenes[n.0 as usize].is_neutral())

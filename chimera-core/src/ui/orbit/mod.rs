@@ -402,7 +402,7 @@ impl OrbitUi {
         let idle = self.chan.idle();
         if let Some(c) = self.take(v) {
             let song = project.orbit_mut();
-            song.edit(&mut |s| s.take(&c));
+            song.capture(&c);
             self.harvest(song);
         }
         // Every arm applied: the runner's armed target is the truth, a
@@ -422,8 +422,13 @@ impl OrbitUi {
             self.chan.landed(c);
         }
         // `idle()` again, not step 3's: a capture taken above is an edit
-        // the runner hasn't applied, and drift would overwrite it.
-        if self.chan.synced() && self.chan.idle() && v.loops as u8 != self.loops_seen {
+        // the runner hasn't applied, and drift would overwrite it; so is a
+        // landed slot's marked ring, not yet sent.
+        if self.chan.synced()
+            && self.chan.idle()
+            && project.orbit().live().untouched()
+            && v.loops as u8 != self.loops_seen
+        {
             self.loops_seen = v.loops as u8;
             project.orbit_mut().absorb(v);
         }
