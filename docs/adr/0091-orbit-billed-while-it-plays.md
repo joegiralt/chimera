@@ -1,12 +1,12 @@
-# 0091. Reserve a note-on burst and ORBIT's own block; cost the Parts once a block; bill a stolen voice until its fade ends
+# 0091. While ORBIT plays, reserve its own block and a note-on burst; cost the Parts once a block; bill a stolen voice until its fade ends
 
 - **Status:** Proposed (2026-10-04)
-- **Deciders:** owner (A, B and the rebill, 2026-10-04), firmware
-- Supersedes in part [0031](0031-six-voices-on-rev-v.md) (six voices for
-  every patch on rev V) and [0040](0040-eight-voices-modal-strings-to-g1.md)
-  ("admission is unchanged" and its voice counts); amends
-  [0027](0027-shedding-fades-tails-first.md) (a steal from another Part,
-  and what a shed leaves room for).
+- **Deciders:** owner (A, B and the rebill, 2026-10-04; the burst only
+  while ORBIT plays, 2026-10-05), firmware
+- Supersedes in part [0040](0040-eight-voices-modal-strings-to-g1.md)
+  ("admission is unchanged" and its voice counts, while ORBIT plays);
+  amends [0027](0027-shedding-fades-tails-first.md) (a steal from another
+  Part).
 
 ## Context
 private issue #355: with ORBIT
@@ -50,35 +50,42 @@ operators' envelope coefficients with `exp2` and divisions.
   B of flash, nothing to invalidate. Any other rate computes as before.
   This serves every Sound and note, where a per-Part cache keyed by Sound
   would miss across key-scaling codes (up to 32 per operator).
-- **`Instrument::BURST` = 836 cycles/sample is reserved always**: five
-  note-ons in one block, the most ORBIT sends (one step per ring per
-  block, five rings) and a hand's chord, at their measured worst, 53,468
-  (ORBIT's first block, every voice cold; the worst of four runs) / 64.
-  A bigger burst, a USB chord of eight, runs into the 30 % headroom, about
-  6–9k a note.
+- **`Instrument::BURST` = 836 cycles/sample is reserved while ORBIT
+  plays**: five note-ons in one block, the most ORBIT sends (one step per
+  ring per block, five rings), at their measured worst, 53,468 (ORBIT's
+  first block, every voice cold; the worst of four runs) / 64; a hand's
+  chord played beside it shares it. With ORBIT stopped nothing is
+  reserved for bursts: a DIN chord arrives a note about every millisecond
+  (a note-on is 0.64–0.96 ms at 31,250 baud), so it spreads across blocks
+  of 1.33 ms, and STRESS without ORBIT passed with no reserve. A
+  bigger burst runs into the 30 % headroom, about 6–9k a note.
 - **`OrbitRunner::COST` = 171 cycles/sample is reserved while ORBIT
   plays**: its own worst block without the notes it hands on (`BURST`
   bills those, as anyone's), 10,913 / 64. ORBIT plays exactly while it
   hands the `Instrument` a harmony, and it hands it before its notes.
-- **`Instrument::RESERVED` (bus + burst) is what a patch edit sheds down
-  to;** ORBIT's reserve refuses new voices and never sheds sounding ones.
+- **A patch edit sheds down to the bus alone, as before;** ORBIT's
+  reserve and the burst refuse new voices and never shed sounding ones.
 - **A stolen voice bills the costlier of its two Sounds until its note
   starts** (`VoiceSlot::cost()` = `max(cost, fading)`, `fade_from`). A
   shed voice's fade stays unbilled against a note-on, as ADR 0027 has it.
 
 Voices admitted on rev V, no tape (with the master tape):
 
-| Sound | before | ORBIT stopped | ORBIT playing |
-|---|---|---|---|
-| TX Sounds (703–712), ALGO INIT (711) | 8 (7) | 7 (6) | 6 (6) |
-| SAW LEAD, SQR BASS (572–575) | 8 (8) | 8 (8) | 8 (7) |
-| MORPH PAD (853), MORPH KEYS (864) | 6 (6) | 5 (5) | 5 (5) |
-| A16 ∪ A17 (909) | 6 (6) | 5 (5) | 5 (4) |
+| Sound | ORBIT stopped (as before) | ORBIT playing |
+|---|---|---|
+| TX Sounds (703–712), ALGO INIT (711) | 8 (7) | 6 (6) |
+| SAW LEAD, SQR BASS (572–575) | 8 (8) | 8 (7) |
+| MORPH PAD (853), MORPH KEYS (864) | 6 (6) | 5 (5) |
+| A16 ∪ A17 (909) | 6 (6) | 5 (4) |
 
 ## Alternatives considered
 - **Bill ORBIT's whole worst block (97k, 1,519/sample), no burst** (this
   ADR's first draft). Four A16 ∪ A17 voices with ORBIT playing, and a
   live chord stays unbilled.
+- **The burst reserved always** (this ADR's second draft). Covers a USB
+  chord with ORBIT stopped, but costs every Sound heavier than about 620
+  a voice (TX 8 → 7, MORPH and A16 ∪ A17 6 → 5) for bursts DIN spreads
+  over blocks anyway.
 - **A burst of two**, DIN's line rate (a note-on is 0.64–0.96 ms of a
   1.33 ms block). Keeps six A16 ∪ A17 voices with ORBIT stopped, but
   ORBIT's five-note blocks and a USB chord spill into the headroom. Any
@@ -88,16 +95,20 @@ Voices admitted on rev V, no tape (with the master tape):
   player's hands; admission refuses, it doesn't cut.
 
 ## Consequences
-- Every Sound heavier than about 620 loses a voice on rev V, ORBIT or
-  not: the spec's "six on rev V" is five for MORPH PAD, MORPH KEYS and
-  A16 ∪ A17. A cheaper voice start, or a burst re-measured lower, gives
-  them back; `cost_test` pins the counts.
+- With ORBIT stopped the voice counts are as ADR 0031 and 0040 have
+  them. While it plays, most Sounds lose one or two: the spec's "six on
+  rev V" is five for MORPH PAD, MORPH KEYS and A16 ∪ A17. A cheaper voice
+  start, or a burst re-measured lower, gives them back; `cost_test` pins
+  both.
+- A USB chord of more than a few notes landing in one block with ORBIT
+  stopped is unbilled; it runs into the headroom.
 - Keys held before ORBIT starts can sound past its reserve until let go.
 - On the unit (bench, rev V at 480 MHz), ORBIT's worst block 91,648 →
   64,188 (first block, cold) and 81,577 → 47,883 after it; recost in a
   five-note block 28,434 → 7,067; voice starts 36,158 → 30,318. STRESS
   (keys first / a block after ORBIT): 534,142 / 532,820, seven voices,
-  before #355; 393,780 / 394,058, five voices, now.
+  before #355; 393,780 / 394,058, five voices, with the burst reserved
+  always (the second draft).
 
 ## Sources
 - `chimera-core/tests/cost_test.rs` (`a_stolen_voice_is_billed_until_its_fade_ends`,
