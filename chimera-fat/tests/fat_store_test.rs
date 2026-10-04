@@ -6,12 +6,12 @@ mod probe;
 use chimera_fat::FatStore;
 use chimera_fat::dir::{ShortName, Slot, lfn_checksum, parse};
 use chimera_fat::volume::{FsKind, Layout, Link, Root, first_partition, layout};
-use chimera_hal::store::{Dir, FileName, Store, StoreError, Unsupported, VolumeId};
+use chimera_hal::store::{Dir, FileName, Files, Store, StoreError, Unsupported, VolumeId};
 use core::cell::RefCell;
 use embedded_sdmmc::BlockDevice;
 use image::{
-    Cut, CutDisk, DiskError, Overlay, PART_LBA, RamDisk, exfat, exfat_superfloppy, fat16, fat32,
-    layout_of, pattern, superfloppy, with_clusters,
+    Cut, CutDisk, DiskError, Overlay, PART_LBA, RamDisk, exfat, exfat_superfloppy, fat_check,
+    fat16, fat32, layout_of, pattern, superfloppy, with_clusters,
 };
 use probe::{Probed, Sink, XorShift, consistent, fats, fats_equal, free, log, probed, suite};
 use std::collections::HashSet;
@@ -1219,4 +1219,106 @@ fn remove_dir_takes_only_an_empty_one() {
         s.write(vol, f, &mut |w| w.put(b"again")).unwrap();
         assert_eq!(read_back(&mut s, vol, f), b"again", "{what}");
     }
+}
+
+/// The directory blocks a step wrote, in order.
+fn dir_writes(s: &Probed<RamDisk>, from: usize, dir_blocks: &[u32]) -> Vec<u32> {
+    log(s).writes.borrow()[from..]
+        .iter()
+        .map(|w| w.0)
+        .filter(|b| dir_blocks.contains(b))
+        .collect()
+}
+
+/// Over a file in the same block: one write swaps the two entries, then the
+/// old chain is freed in both FATs.
+#[test]
+fn rename_over_a_file_in_its_block_is_one_write() {
+    let (disk, vol) = card();
+    let mut s = probed(&disk);
+    let before = free(&disk);
+    s.write(vol, name(b"NEW"), &mut |w| w.put(&pattern(1, 1_500)))
+        .unwrap();
+    s.write(vol, name(b"OLD"), &mut |w| w.put(&pattern(2, 5_000)))
+        .unwrap();
+    let (new_at, old_at) = (entry(&disk, b"NEW     BIN"), entry(&disk, b"OLD     BIN"));
+    assert_eq!(new_at.0, old_at.0);
+    let mark = log(&s).writes.borrow().len();
+    s.rename(vol, name(b"NEW"), name(b"OLD")).unwrap();
+    assert_eq!(dir_writes(&s, mark, &[new_at.0]), [new_at.0], "one write");
+    assert_eq!(read_back(&mut s, vol, name(b"OLD")), pattern(1, 1_500));
+    assert_eq!(
+        s.read(vol, name(b"NEW"), &mut Sink::default()),
+        Err(StoreError::NotFound)
+    );
+    assert_eq!(free(&disk), (before.0 - 3, before.1 - 3));
+    consistent(&s);
+    let r = fat_check(&disk);
+    assert!(r.cross_linked.is_empty() && r.short.is_empty());
+}
+
+/// Over a file in another block: the target's entry goes first, so a cut
+/// between leaves the new bytes under their own name.
+#[test]
+fn rename_over_a_file_in_another_block_frees_the_target_first() {
+    let (disk, vol) = card();
+    let mut s = probed(&disk);
+    s.write(vol, name(b"NEW"), &mut |w| w.put(b"new")).unwrap();
+    // `.`, `..` and NEW, then 13 more fill the first block.
+    for i in 0..13 {
+        s.write(vol, name(format!("F{i}").as_bytes()), &mut |_| Ok(()))
+            .unwrap();
+    }
+    s.write(vol, name(b"OLD"), &mut |w| w.put(b"old")).unwrap();
+    let (new_at, old_at) = (entry(&disk, b"NEW     BIN"), entry(&disk, b"OLD     BIN"));
+    assert_ne!(new_at.0, old_at.0);
+    let mark = log(&s).writes.borrow().len();
+    s.rename(vol, name(b"NEW"), name(b"OLD")).unwrap();
+    assert_eq!(
+        dir_writes(&s, mark, &[new_at.0, old_at.0]),
+        [old_at.0, new_at.0]
+    );
+    assert_eq!(read_back(&mut s, vol, name(b"OLD")), b"new");
+    consistent(&s);
+}
+
+#[test]
+fn rename_to_a_free_name_rewrites_the_entry_alone() {
+    let (disk, vol) = card();
+    let mut s = probed(&disk);
+    s.write(vol, name(b"TMP"), &mut |w| w.put(b"body")).unwrap();
+    let before = free(&disk);
+    s.rename(vol, name(b"TMP"), name(b"KEPT")).unwrap();
+    assert_eq!(read_back(&mut s, vol, name(b"KEPT")), b"body");
+    assert_eq!(free(&disk), before);
+    assert_eq!(
+        s.rename(vol, name(b"TMP"), name(b"KEPT")),
+        Err(StoreError::NotFound)
+    );
+    let elsewhere = FileName::new(Dir::Projects, b"KEPT", b"BIN").unwrap();
+    assert_eq!(
+        s.rename(vol, name(b"KEPT"), elsewhere),
+        Err(StoreError::NotFound),
+        "across directories"
+    );
+    consistent(&s);
+}
+
+/// A long name that spoke for the old target goes with it.
+#[test]
+fn rename_over_deletes_the_targets_long_name() {
+    let (disk, vol) = card();
+    let mut s = probed(&disk);
+    let file = FileName::new(Dir::Chimera, b"P0000001", b"A").unwrap();
+    let sum = lfn_checksum(&ShortName::file(&file));
+    s.write(vol, name(b"PAD"), &mut |_| Ok(())).unwrap();
+    s.write(vol, file, &mut |w| w.put(b"old")).unwrap();
+    s.write(vol, name(b"NEW"), &mut |w| w.put(b"new")).unwrap();
+    let pad = entry(&disk, b"PAD     BIN");
+    s.delete(vol, name(b"PAD")).unwrap();
+    poke(&disk, pad.0, pad.1, &lfn(0x41, sum));
+    s.rename(vol, name(b"NEW"), file).unwrap();
+    assert_eq!(disk.block(pad.0)[pad.1], 0xE5, "the run");
+    assert_eq!(read_back(&mut s, vol, file), b"new");
+    consistent(&s);
 }

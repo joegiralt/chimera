@@ -65,8 +65,8 @@ pub struct SdSpi {
     mode: spi::Mode,
     phase: BusPhase,
     deadline: Deadline,
-    /// Each operation's cap: `SD_OP_CAP_MS` but while the bench writes its
-    /// card test file.
+    /// Each operation's cap: `SD_OP_CAP_MS` but while the bench's `card` or
+    /// a console `put` runs under its own deadline.
     cap_ms: u32,
 }
 
@@ -269,6 +269,10 @@ impl SdBus for SdSpi {
 
     fn timed_out(&self) -> bool {
         SdSpi::timed_out(self)
+    }
+
+    fn set_cap(&mut self, ms: Option<u32>) {
+        self.cap_ms = ms.unwrap_or(SD_OP_CAP_MS);
     }
 }
 
