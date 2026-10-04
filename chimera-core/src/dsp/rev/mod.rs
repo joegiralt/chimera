@@ -6,6 +6,7 @@
 //! the new TYPE fades in as a fresh engine.
 
 pub mod arena;
+pub mod burst;
 pub mod parts;
 pub mod sync;
 
@@ -17,9 +18,10 @@ use crate::dsp::Stereo;
 use crate::dsp::clampf;
 use crate::dsp::ease::{Ease, Gate, at, ease_coeff, step_of};
 use crate::dsp::halfband::{Decimator, HALF, Interpolator};
-use crate::dsp::reverb::{ReverbParams, ReverbType};
+use crate::dsp::reverb::{ReverbParams, ReverbType, knobs, ranges};
 use crate::dsp::ring::{FULL_SCALE, STAGES, WET_GAIN, smear_depth, smear_hz};
 use arena::ReverbArena;
+use burst::BurstEngine;
 use parts::{Wander, wander_seeds};
 use sync::Tempo;
 
@@ -32,7 +34,22 @@ pub use crate::dsp::ring::QuadState;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum EngineState {
     Quad(QuadState),
+    /// GATE and REVERSE.
+    Burst(BurstEngine),
 }
+
+/// Each TYPE's return gain: its default return's RMS within 1 dB of
+/// QUAD's (spec § Shared machinery, `burst_noise_and_loudness`).
+pub fn wet_gain(t: ReverbType) -> f32 {
+    match t {
+        ReverbType::Gate | ReverbType::Reverse => WET_BURST,
+        ReverbType::Quad | ReverbType::Room | ReverbType::Hall | ReverbType::Bloom => WET_GAIN,
+    }
+}
+
+/// GATE's and REVERSE's: their defaults measure within 0.03 dB of each
+/// other, both at QUAD's on the 0.5 s noise burst at MIX 0.5.
+const WET_BURST: f32 = 7.47;
 
 const _: () = assert!(core::mem::size_of::<EngineState>() <= 160);
 
@@ -314,8 +331,14 @@ impl Reverb {
     /// easing: it is the player's.
     fn reset(&mut self, kind: ReverbType) {
         self.kind = kind;
-        // Every TYPE plays QUAD's engine until its own lands (Tasks 8–11).
-        self.state = EngineState::Quad(QuadState::default());
+        // ROOM, HALL and BLOOM play QUAD's engine until theirs land
+        // (Tasks 9–11).
+        self.state = match kind {
+            ReverbType::Gate | ReverbType::Reverse => EngineState::Burst(BurstEngine::default()),
+            ReverbType::Quad | ReverbType::Room | ReverbType::Hall | ReverbType::Bloom => {
+                EngineState::Quad(QuadState::default())
+            }
+        };
         self.dec = Decimator::new();
         self.up_l = Interpolator::new();
         self.up_r = Interpolator::new();
@@ -330,6 +353,15 @@ impl Reverb {
     pub fn quad(&self) -> Option<&QuadState> {
         match &self.state {
             EngineState::Quad(q) => Some(q),
+            EngineState::Burst(_) => None,
+        }
+    }
+
+    /// BURST's state, while GATE or REVERSE runs.
+    pub fn burst(&self) -> Option<&BurstEngine> {
+        match &self.state {
+            EngineState::Burst(b) => Some(b),
+            EngineState::Quad(_) => None,
         }
     }
 
@@ -369,6 +401,11 @@ impl Reverb {
             return;
         }
         let p = &self.latched;
+        // A BURST TYPE's knobs, mapped once a block (fast `exp2`/`log2`).
+        let kn = match self.state {
+            EngineState::Burst(_) => Some(knobs(p)),
+            EngineState::Quad(_) => None,
+        };
         let mut u = [0.0f32; HALF];
         self.dec.process(send, &mut u);
         let mut lr = [[0.0f32; HALF]; 2];
@@ -376,7 +413,8 @@ impl Reverb {
         let rate = if p.rate.is_nan() { 0.5 } else { p.rate };
         if !self.wanders_set || self.wanders_rate != rate.to_bits() {
             (self.wanders_rate, self.wanders_set) = (rate.to_bits(), true);
-            let coefs = Wander::rate(smear_hz(rate), fs);
+            let hz = kn.map_or_else(|| smear_hz(rate), |k| k.rate_hz);
+            let coefs = Wander::rate(hz, fs);
             for w in &mut self.wander {
                 w.set(coefs);
             }
@@ -422,10 +460,23 @@ impl Reverb {
                     self.paths.0 = true;
                 }
             }
+            EngineState::Burst(b) => {
+                // Its two smeared decorrelators sit outside every loop:
+                // no SIZE crossfade to rest for, no cap.
+                let full = ranges(self.kind).map_or(0.0, |r| r.smear_ms) * burst::SMEAR_MAX;
+                let (d0, d1) = (s0 * full, s1 * full);
+                b.set_smear(core::array::from_fn(|k| {
+                    (d0 * (1.0 + x0[k]), d1 * (1.0 + x1[k]))
+                }));
+                (self.paths, self.depth) = ((false, d0 != 0.0 || d1 != 0.0), d1);
+                let [l, r] = &mut lr;
+                b.run(&mut self.arena, &u, &kn.unwrap_or_default(), l, r);
+            }
         }
         self.up_l.process(&lr[0], &mut out.l);
         self.up_r.process(&lr[1], &mut out.r);
-        let gain = WET_GAIN * to / FULL_SCALE;
+        let wet = wet_gain(self.kind);
+        let gain = wet * to / FULL_SCALE;
         if from == to {
             for s in out.l.iter_mut().chain(out.r.iter_mut()) {
                 *s *= gain;
@@ -433,8 +484,8 @@ impl Reverb {
         } else {
             ramp(
                 out,
-                WET_GAIN * from / FULL_SCALE,
-                step_of((from, to), BLOCK_SIZE) * WET_GAIN / FULL_SCALE,
+                wet * from / FULL_SCALE,
+                step_of((from, to), BLOCK_SIZE) * wet / FULL_SCALE,
             );
         }
         // The switch's ramp: its own pass, so FADE IN is a fresh engine's

@@ -51,9 +51,19 @@ static TIME: RevKnob = k(P::TIME, "TIME");
 static DAMP: RevKnob = k(P::DAMPING, "DAMP");
 static SMEAR: RevKnob = k(P::SMEAR, "SMEAR");
 static RATE: RevKnob = k(P::RATE, "RATE");
+static LENGTH: RevKnob = k(P::SIZE, "LENGTH");
+static TAIL: RevKnob = k(P::TIME, "TAIL");
+static REGEN: RevKnob = k(P::TIME, "REGEN");
+static TONE: RevKnob = k(P::TONE, "TONE");
+static DENSITY: RevKnob = RevKnob {
+    short: Some("DENS"),
+    ..k(P::DIFFUSE, "DENSITY")
+};
+static SHAPE: RevKnob = k(P::SHAPE, "SHAPE");
+static CURVE: RevKnob = k(P::SHAPE, "CURVE");
 
-/// SIZE · TIME · DAMP · SMEAR; MORE: RATE. Each other TYPE's panel lands
-/// with its engine (Tasks 8–11).
+/// SIZE · TIME · DAMP · SMEAR; MORE: RATE. ROOM's, HALL's and BLOOM's
+/// land with their engines (Tasks 9–11).
 static QUAD: Panel = [
     Some(&QUAD_SIZE),
     Some(&TIME),
@@ -67,20 +77,57 @@ static QUAD: Panel = [
     None,
 ];
 
+/// LENGTH · TAIL · TONE · DENSITY; MORE: — · SHAPE · SMEAR · RATE. SYNC
+/// joins with tempo sync (Task 12).
+static GATE: Panel = [
+    Some(&LENGTH),
+    Some(&TAIL),
+    Some(&TONE),
+    Some(&DENSITY),
+    None,
+    Some(&SHAPE),
+    Some(&SMEAR),
+    Some(&RATE),
+    None,
+    None,
+];
+
+/// LENGTH · REGEN · TONE · DENSITY; MORE: — · CURVE · SMEAR · RATE.
+static REVERSE: Panel = [
+    Some(&LENGTH),
+    Some(&REGEN),
+    Some(&TONE),
+    Some(&DENSITY),
+    None,
+    Some(&CURVE),
+    Some(&SMEAR),
+    Some(&RATE),
+    None,
+    None,
+];
+
 fn panel(t: ReverbType) -> &'static Panel {
     match t {
-        ReverbType::Quad
-        | ReverbType::Room
-        | ReverbType::Hall
-        | ReverbType::Bloom
-        | ReverbType::Gate
-        | ReverbType::Reverse => &QUAD,
+        ReverbType::Gate => &GATE,
+        ReverbType::Reverse => &REVERSE,
+        ReverbType::Quad | ReverbType::Room | ReverbType::Hall | ReverbType::Bloom => &QUAD,
     }
 }
 
-/// The TYPEs TYPE walks: each joins with its engine (Tasks 8–11).
+/// The TYPEs TYPE walks, in screen order: each joins with its engine
+/// (ROOM, HALL and BLOOM with Tasks 9–11).
 pub fn types_on_screen() -> &'static [ReverbType] {
-    &[ReverbType::Quad]
+    &[ReverbType::Quad, ReverbType::Gate, ReverbType::Reverse]
+}
+
+/// A panel word's short form: `DENS` for DENSITY, which no spec carries.
+pub fn short_of(label: &str) -> Option<&'static str> {
+    [&GATE, &REVERSE]
+        .into_iter()
+        .flatten()
+        .flatten()
+        .find(|c| c.label == label)
+        .and_then(|c| c.short)
 }
 
 /// The panel `t` shows: its own once its engine runs, else QUAD's, which
@@ -150,11 +197,17 @@ pub fn turn(p: &ReverbParams, id: ParamId, delta: i8, mem: &mut KnobMemory) -> R
     q
 }
 
-/// Slot `id`'s value as QUAD's panel shows it, in units, from the maps the
-/// engine plays (`dsp::reverb::knobs`). The other TYPEs' texts land with
-/// their engines.
+/// Slot `id`'s value as `p`'s panel shows it, in units, from the maps
+/// the engine plays (`dsp::reverb::knobs`).
 pub fn value_text(id: ParamId, p: &ReverbParams) -> FmtBuf {
     let k = knobs(p);
+    let burst = matches!(p.kind, ReverbType::Gate | ReverbType::Reverse);
+    let off = match id {
+        P::SMEAR => k.smear_ms == 0.0,
+        // TAIL 0 is the fast gate; REGEN 0 none.
+        P::TIME if burst => k.tail == 0.0 && k.regen == 0.0,
+        _ => false,
+    };
     let (x, places, unit) = match id {
         P::SIZE => (k.length_ms, 0, "ms"),
         // Seconds: `0.55s`, `2.5s`, `10s`.
@@ -164,17 +217,28 @@ pub fn value_text(id: ParamId, p: &ReverbParams) -> FmtBuf {
             "s",
         ),
         // A cutoff: `6.1k`, `11k`.
-        P::DAMPING => (k.damp_hz / 1000.0, (k.damp_hz < 9_950.0) as u32, "k"),
+        P::DAMPING => khz(k.damp_hz),
+        P::TONE if burst => khz(k.tone_hz),
+        // Taps: `10.2`.
+        P::DIFFUSE if burst => (k.taps, 1, ""),
+        // The curve end to end, whole dB: `-4dB`, `24dB` (tenths outrun
+        // the focus band).
+        P::SHAPE if burst => (k.shape_db, 0, "dB"),
         // Tenths: hundredths would run into the cube.
         P::SMEAR => (k.smear_ms, 1, "ms"),
         P::RATE => (k.rate_hz, 2, "Hz"),
         _ => (0.0, 0, ""),
     };
     let mut b = FmtBuf::new();
-    if id == P::SMEAR && k.smear_ms == 0.0 {
+    if off {
         let _ = core::fmt::Write::write_str(&mut b, "OFF");
-    } else if !unit.is_empty() {
+    } else if places > 0 || !unit.is_empty() {
         fixed(&mut b, x, places, unit);
     }
     b
+}
+
+/// `hz` as kHz: `6.1k`, `11k`.
+fn khz(hz: f32) -> (f32, u32, &'static str) {
+    (hz / 1000.0, (hz < 9_950.0) as u32, "k")
 }

@@ -16,7 +16,7 @@ use common::SR;
 use common::rev::{Noise, max_d2};
 
 /// The TYPEs with an engine. Tasks 8–11 each append theirs.
-const TYPES: &[ReverbType] = &[ReverbType::Quad];
+const TYPES: &[ReverbType] = &[ReverbType::Quad, ReverbType::Gate, ReverbType::Reverse];
 
 /// The switch's blocks: FADE OUT, CLEAR, FADE IN.
 const SWITCH: usize = 2 * FADE_BLOCKS as usize + CLEAR_BLOCKS as usize;
@@ -69,7 +69,12 @@ fn params(t: ReverbType) -> ReverbParams {
         ..Default::default()
     };
     let mut p = p.with_type(t, &KnobMemory::new());
-    (p.time, p.damping) = (1.0, 0.9);
+    // DAMP darkens QUAD's loop, TONE a BURST's input; a BURST at its
+    // shortest LENGTH is in its TAIL or REGEN loop by the switch.
+    (p.time, p.damping, p.tone) = (1.0, 0.9, 1.0);
+    if matches!(t, ReverbType::Gate | ReverbType::Reverse) {
+        p.size = 0.0;
+    }
     p
 }
 

@@ -15,7 +15,9 @@ use crate::ui::PrimeStatus;
 use crate::ui::block_def::{BlockDef, SlotBinding};
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
-use crate::ui::glyph::{Accidental, Braid, BraidPart, Cube, CubePart, Gauge, Rings, RingsPart};
+use crate::ui::glyph::{
+    Accidental, Braid, BraidPart, Cube, CubePart, Gauge, Rings, RingsPart, TAIL_COLS, Tail,
+};
 use crate::ui::theme;
 
 /// `s` in upper case (names are stored mixed case: "Filter", "4opFM").
@@ -381,7 +383,9 @@ pub fn gauge_rect(gauge: &Gauge) -> Option<(i32, i32, i32, i32)> {
             theme::RINGS_W,
             theme::RINGS_H,
         )),
-        Gauge::Cube(_) => Some((theme::CUBE_X, theme::CUBE_Y, theme::CUBE_W, theme::CUBE_H)),
+        Gauge::Cube(_) | Gauge::Tail(_) => {
+            Some((theme::CUBE_X, theme::CUBE_Y, theme::CUBE_W, theme::CUBE_H))
+        }
         Gauge::Arc { .. }
         | Gauge::None
         | Gauge::Switch { .. }
@@ -402,6 +406,7 @@ where
         Gauge::Braid(b) => braid(d, &b),
         Gauge::Rings(r) => rings(d, &r),
         Gauge::Cube(c) => cube(d, &c),
+        Gauge::Tail(t) => tail(d, &t),
         Gauge::Switch { on } => switch(d, on),
         Gauge::LevelBar { value, ticks } => level_bar(d, value, ticks),
         Gauge::Crossfader { value } => crossfader(d, value),
@@ -836,6 +841,28 @@ fn grain(frame: u32, edge: usize, piece: i32) -> u32 {
 /// param is marked: SIZE dots the corners, TIME draws the afterimages in
 /// MID, DAMP the far edges in INK, MIX the near edges in INK, SMEAR dots
 /// the far corners in INK and RATE in MID. Palette colours only, so the
+/// The reverb's TAIL in the cube's box: a polyline of `tail_shape`, the
+/// focused knob's columns in the accent, the playhead a dot on it.
+fn tail<D>(d: &mut D, t: &Tail)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let x0 = theme::CUBE_X + (theme::CUBE_W - TAIL_COLS as i32) / 2;
+    let base = theme::CUBE_Y + theme::CUBE_H - 4;
+    let h = theme::CUBE_H - 8;
+    let at = |c: usize| (x0 + c as i32, base - t.shape[c] as i32 * h / 255);
+    for c in 1..TAIL_COLS {
+        let ((ax, ay), (bx, by)) = (at(c - 1), at(c));
+        let lit = (t.accent.0 as usize..t.accent.1 as usize).contains(&c);
+        let color = if lit { theme::ACCENT } else { theme::MID };
+        draw::line(d, ax, ay, bx, by, color, 1);
+    }
+    if let Some(c) = t.head {
+        let (x, y) = at((c as usize).min(TAIL_COLS - 1));
+        draw::dot(d, x, y, 2, theme::INK);
+    }
+}
+
 /// theme's ACCENT swap applies.
 fn cube<D>(d: &mut D, c: &Cube)
 where

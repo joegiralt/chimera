@@ -79,7 +79,7 @@ macro_rules! unroll {
     };
 }
 
-const fn is_prime(n: u32) -> bool {
+pub(crate) const fn is_prime(n: u32) -> bool {
     if n < 2 {
         return false;
     }

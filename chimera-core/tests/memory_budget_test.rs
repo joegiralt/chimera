@@ -126,12 +126,13 @@ fn axi_residents_fit() {
     // The default build's, at 2dc9eefd, plus 96 B for QUAD's SMEAR (its
     // four wanders and depth, reverb TYPEs T5) and 88 B for the reverb's
     // slots 6–13 (T6: `ReverbParams` in the Project and in each of three
-    // `AudioShared`s), and 48 B for the TYPE switch's latched knobs (T7);
-    // the master tape adds its own.
+    // `AudioShared`s), 48 B for the TYPE switch's latched knobs (T7), and
+    // 88 B for BURST's state, `EngineState`'s largest (T8); the master
+    // tape adds its own.
     if !cfg!(feature = "master-tape") {
         assert!(
-            total <= 442_364,
-            "AXI grew past 2dc9eefd's, SMEAR's, the slots' and the switch's"
+            total <= 442_452,
+            "AXI grew past 2dc9eefd's, SMEAR's, the slots', the switch's and BURST's"
         );
     }
     assert!(

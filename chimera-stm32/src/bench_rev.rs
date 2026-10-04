@@ -1,8 +1,9 @@
 //! Throwaway worst-case reverb kernels (reverb TYPEs plan Task 3, spec
-//! § CPU budget): BURST's, ROOM's and HALL's inner loops fixed at their
-//! worst, and one moving pair against two fixed reads, each timed beside
-//! QUAD's crossfading ring on the same bench. No knobs: constants only.
-//! Tasks 8–10 delete this file.
+//! § CPU budget): ROOM's and HALL's inner loops fixed at their worst, and
+//! one moving pair against two fixed reads, each timed beside QUAD's
+//! crossfading ring on the same bench. No knobs: constants only. Task 8
+//! took BURST's out for the real engine (REV GATE, REV RVRS); Tasks 9–10
+//! delete this file.
 //!
 //! Each kernel lays its lines out as `ring.rs` does (one shared write
 //! head, wrap-free segments for the fixed reads), its f32 lines likewise
@@ -38,9 +39,7 @@ pub trait RevKernel {
 /// PAIR's 32 fixed reads: (K PAIR − K FIX) / 16 is a pair's marginal
 /// cost. K CONV is the converter stubs alone, which every kernel but K
 /// QUAD carries (GRIT has since left: the kernels are pessimistic by it).
-pub const ROWS: [&str; 7] = [
-    "K QUAD", "K ROOM", "K HALL", "K BURST", "K PAIR", "K FIX", "K CONV",
-];
+pub const ROWS: [&str; 6] = ["K QUAD", "K ROOM", "K HALL", "K PAIR", "K FIX", "K CONV"];
 
 /// `f` on row `i`'s kernel, fresh.
 pub fn with_kernel(i: usize, f: impl FnOnce(&mut dyn RevKernel) -> u32) -> u32 {
@@ -48,9 +47,8 @@ pub fn with_kernel(i: usize, f: impl FnOnce(&mut dyn RevKernel) -> u32) -> u32 {
         0 => f(&mut KQuad::default()),
         1 => f(&mut KRoom::new()),
         2 => f(&mut KHall::new()),
-        3 => f(&mut KBurst::new()),
-        4 => f(&mut KPair::<true>::new()),
-        5 => f(&mut KPair::<false>::new()),
+        3 => f(&mut KPair::<true>::new()),
+        4 => f(&mut KPair::<false>::new()),
         _ => f(&mut KConv(Conv::new())),
     }
 }
@@ -704,223 +702,6 @@ impl RevKernel for KHall {
             hf = wrap(hf + len, HALL_FN);
         }
         (self.lp, self.tone, self.h, self.hf) = (lp, tone, h, hf);
-        self.flip.left = xf;
-    }
-}
-
-// ---- K BURST -----------------------------------------------------------------
-
-/// BURST's lines: the burst line (REVERSE's 800 ms), TAIL's delay (37 ms)
-/// and AP (11 ms); f32: the pre-diffuser's 2 APs, then the decorrelators,
-/// L 3.1 and 8.3 ms, R 4.7 and 6.1 ms.
-const BURST_LEN: [usize; 3] = [19_200, 888, 264];
-const BURST_FL: [usize; 6] = [113, 161, 74, 199, 113, 146];
-const BURST: ([usize; 3], usize) = heads(BURST_LEN);
-const BURST_F: ([usize; 6], usize) = heads(BURST_FL);
-const BURST_M: usize = BURST.1;
-const BURST_FN: usize = BURST_F.1;
-const _: () = assert!(BURST_M + 2 * BURST_FN <= RING_LEN);
-/// Taps 1–11 at `LENGTH·(k + j_k)/11`, LENGTH 800 ms, a fixed jitter.
-const BURST_D: [usize; 11] = [
-    1_990, 3_310, 5_400, 7_120, 8_610, 10_700, 12_330, 14_100, 15_520, 17_640, 19_200,
-];
-const fn burst_taps(near: usize) -> [usize; 11] {
-    let mut o = [0; 11];
-    let mut k = 0;
-    while k < 11 {
-        // Taps 8–11 (k 7–10) crossfade, 120 samples a move.
-        let d = if k >= 7 {
-            BURST_D[k] - near * 120
-        } else {
-            BURST_D[k]
-        };
-        o[k] = back(&BURST.0, 0, d);
-        k += 1;
-    }
-    o
-}
-const BURST_FAR: [usize; 11] = burst_taps(0);
-const BURST_NEAR: [usize; 11] = burst_taps(1);
-/// The four crossfading taps' old reads.
-const fn burst_old(t: [usize; 11]) -> [usize; 4] {
-    [t[7], t[8], t[9], t[10]]
-}
-const BURST_FIX: [usize; 2] = [back(&BURST.0, 1, 889), back(&BURST.0, 2, 265)];
-/// The f32 fixed reads: the pre-diffuser's two, each side's first
-/// decorrelator.
-const BURST_FRD: [usize; 4] = [
-    back(&BURST_F.0, 0, 114),
-    back(&BURST_F.0, 1, 162),
-    back(&BURST_F.0, 2, 75),
-    back(&BURST_F.0, 4, 114),
-];
-
-/// BURST's worst: 12 taps (tap 0 the register, tap 11 REGEN's read too,
-/// taps 8–11 always crossfading, 128 samples each); REGEN through its
-/// one-pole into a clipped, truncating line write; TAIL's delay and
-/// normalised AP with its clip; the 2-AP f32 pre-diffuser; 2 f32
-/// decorrelator APs a side, each side's second smeared; the converter
-/// stubs. GATE's and REVERSE's paths both run, as in the engine.
-pub struct KBurst {
-    h: usize,
-    hf: usize,
-    flip: Flip,
-    conv: Conv,
-    tone: f32,
-    ta: f32,
-    regen: f32,
-    ra: f32,
-    g_regen: f32,
-    g_tail: f32,
-    weights: [f32; 12],
-    sum_w: f32,
-    g_pre: f32,
-    g_dec: f32,
-    smear: [Smear; 2],
-}
-
-impl KBurst {
-    fn new() -> Self {
-        let seeds = wander_seeds::<2>(0x5EED_0003);
-        Self {
-            h: 0,
-            hf: 0,
-            flip: Flip::default(),
-            conv: Conv::new(),
-            tone: 0.0,
-            ta: black_box(0.5),
-            regen: 0.0,
-            ra: black_box(0.8),
-            g_regen: black_box(0.708),
-            g_tail: black_box(0.6),
-            weights: black_box([
-                0.31, -0.29, 0.28, -0.27, 0.3, 0.26, -0.29, 0.28, -0.3, 0.27, 0.29, -0.28,
-            ]),
-            sum_w: black_box(3.42),
-            g_pre: black_box(0.7),
-            g_dec: black_box(0.6),
-            smear: [
-                Smear::new(seeds[0], 0.0, 24.0),
-                Smear::new(seeds[1], 0.5, 24.0),
-            ],
-        }
-    }
-}
-
-impl RevKernel for KBurst {
-    fn run(
-        &mut self,
-        arena: &mut ReverbArena,
-        u: &[f32; HALF],
-        l: &mut [f32; HALF],
-        r: &mut [f32; HALF],
-    ) {
-        let (li, lf) = regions::<BURST_M, BURST_FN>(arena);
-        let (near, mut xf) = self.flip.block(128);
-        let (kn, ko) = if near {
-            (BURST_NEAR, burst_old(BURST_FAR))
-        } else {
-            (BURST_FAR, burst_old(BURST_NEAR))
-        };
-        let wt = self.weights;
-        let (gr, gt, ra) = (self.g_regen, self.g_tail, self.ra);
-        let (sw, inv_sw) = (self.sum_w, 1.0 / self.sum_w);
-        let (gp, gdc) = (self.g_pre, self.g_dec);
-        let inv_t = 1.0 / (1.0 - 0.5);
-        let (mut ol, dol) = self.smear[0].block();
-        let (mut or, dor) = self.smear[1].block();
-        let nom = [BURST_FL[3] as f32, BURST_FL[5] as f32];
-        let (mut regen, mut tone, ta) = (self.regen, self.tone, self.ta);
-        let (mut h, mut hf) = (self.h, self.hf);
-        let mut i = 0;
-        while i < HALF {
-            let mut len = HALF - i;
-            let bw = seg(h, BURST_M, &BURST.0, &mut len);
-            let bn = seg(h, BURST_M, &kn, &mut len);
-            let bo = seg(h, BURST_M, &ko, &mut len);
-            let bx = seg(h, BURST_M, &BURST_FIX, &mut len);
-            let fw = seg(hf, BURST_FN, &BURST_F.0, &mut len);
-            let fr = seg(hf, BURST_FN, &BURST_FRD, &mut len);
-            for t in 0..len {
-                macro_rules! rd {
-                    ($b:expr) => {
-                        // SAFETY: each base b is below its region's length
-                        // m, `len` ≤ m − b and `t` < `len`.
-                        (unsafe { *li.get_unchecked($b + t) }) as f32
-                    };
-                }
-                macro_rules! wr {
-                    ($b:expr, $v:expr) => {
-                        // SAFETY: each base b is below its region's length
-                        // m, `len` ≤ m − b and `t` < `len`.
-                        unsafe { *li.get_unchecked_mut($b + t) = $v }
-                    };
-                }
-                macro_rules! frd {
-                    ($b:expr) => {
-                        // SAFETY: each base b is below its region's length
-                        // m, `len` ≤ m − b and `t` < `len`.
-                        unsafe { *lf.get_unchecked($b + t) }
-                    };
-                }
-                macro_rules! fwr {
-                    ($b:expr, $v:expr) => {
-                        // SAFETY: each base b is below its region's length
-                        // m, `len` ≤ m − b and `t` < `len`.
-                        unsafe { *lf.get_unchecked_mut($b + t) = $v }
-                    };
-                }
-                let w = 1.0 - xf as f32 * (1.0 / 128.0);
-                xf = xf.saturating_sub(1);
-                macro_rules! blend {
-                    ($k:expr) => {{
-                        let (v, o) = (rd!(bn[7 + $k]), rd!(bo[$k]));
-                        o + w * (v - o)
-                    }};
-                }
-                let x = self.conv.adc(u[i + t] * FULL_SCALE);
-                tone += ta * (x - tone);
-                // The pre-diffuser.
-                let (y, v) = ap_f32(tone, frd!(fr[0]), gp);
-                fwr!(fw[0], v);
-                let (p, v) = ap_f32(y, frd!(fr[1]), gp);
-                fwr!(fw[1], v);
-                // Tap 11 is REGEN's read: its one-pole, into the clipped,
-                // truncating line write; tap 0 is that value.
-                let t11 = blend!(3);
-                regen += ra * (t11 - regen);
-                let x0 = clip(p + gr * regen);
-                wr!(bw[0], store_trunc(x0));
-                let mut sum = wt[0] * x0 + wt[11] * t11;
-                for k in 0..7 {
-                    sum += wt[k + 1] * rd!(bn[k]);
-                }
-                for k in 0..3 {
-                    sum += wt[k + 8] * blend!(k);
-                }
-                // TAIL: delay → normalised AP → ×g, back into the sum.
-                let (y, wn) = ap_norm(rd!(bx[0]), rd!(bx[1]), 0.5, inv_t);
-                wr!(bw[2], store_trunc(wn));
-                wr!(bw[1], store_round(clip(sum * inv_sw)));
-                sum += gt * sw * y;
-                // The decorrelators: each side's second AP smeared.
-                let (y, v) = ap_f32(sum, frd!(fr[2]), gdc);
-                fwr!(fw[2], v);
-                let (yl, v) = ap_f32(y, pair_m(lf, fw[3] + t, nom[0] - ol), gdc);
-                fwr!(fw[3], v);
-                let (y, v) = ap_f32(sum, frd!(fr[3]), gdc);
-                fwr!(fw[4], v);
-                let (yr, v) = ap_f32(y, pair_m(lf, fw[5] + t, nom[1] - or), gdc);
-                fwr!(fw[5], v);
-                (l[i + t], r[i + t]) = self.conv.dac(yl, yr);
-                ol += dol;
-                or += dor;
-            }
-            i += len;
-            h = wrap(h + len, BURST_M);
-            hf = wrap(hf + len, BURST_FN);
-        }
-        (self.regen, self.tone, self.h, self.hf) = (regen, tone, h, hf);
         self.flip.left = xf;
     }
 }

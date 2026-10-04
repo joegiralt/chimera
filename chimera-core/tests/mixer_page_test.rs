@@ -437,8 +437,9 @@ fn the_reverb_page_is_type_size_time_damp_smear_mix() {
     assert_eq!(subs, [(92, "MORE")]);
 }
 
-/// On the unit: REV's B ticks QUAD's SIZE a table step, A keeps QUAD (the
-/// only TYPE on screen yet), and REV › MORE's D turns RATE.
+/// On the unit: REV's B ticks QUAD's SIZE a table step, A turns to GATE
+/// on its knobs and back to QUAD on its tweaked ones, and REV › MORE's D
+/// turns RATE.
 #[test]
 fn the_reverb_pages_turn_by_the_panel() {
     let mut ui = UiState::new();
@@ -450,8 +451,12 @@ fn the_reverb_pages_turn_by_the_panel() {
     let rev = |ui: &UiState| ui.project().perf().fx.reverb;
     turn(&mut ui, EncoderId::B, 1);
     assert!((rev(&ui).size - (0.5 + 1.0 / 31.0)).abs() < 1e-6);
+    use chimera_core::dsp::reverb::ReverbType;
     turn(&mut ui, EncoderId::A, 1);
-    assert_eq!(rev(&ui).kind, chimera_core::dsp::reverb::ReverbType::Quad);
+    assert_eq!((rev(&ui).kind, rev(&ui).size), (ReverbType::Gate, 0.55));
+    turn(&mut ui, EncoderId::A, -1);
+    assert_eq!(rev(&ui).kind, ReverbType::Quad);
+    assert!((rev(&ui).size - (0.5 + 1.0 / 31.0)).abs() < 1e-4);
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
     assert_eq!(ui.page_def().id, reg::EFX_MORE.id);
     turn(&mut ui, EncoderId::D, 4);

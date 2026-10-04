@@ -163,7 +163,20 @@ fn unknown_type_code_and_nan_slots_load_as_safe_quad() {
                 p.write(ParamId(id), f32::NAN);
             }
             let k = knobs(&p);
-            for v in [k.length_ms, k.rt60_s, k.damp_hz, k.smear_ms, k.rate_hz] {
+            let all = [
+                k.length_ms,
+                k.rt60_s,
+                k.damp_hz,
+                k.smear_ms,
+                k.rate_hz,
+                k.tone_hz,
+                k.tail,
+                k.regen,
+                k.taps,
+                k.pre_g,
+                k.shape_db,
+            ];
+            for v in all {
                 assert!(v.is_finite(), "{t:?}");
             }
             p
@@ -254,4 +267,70 @@ fn knob_memory_zeroed_is_clear() {
     let back = m.recall(ReverbType::Quad).unwrap();
     assert_eq!((back[0], back[2]), (1.0, 0.0), "the ends are exact");
     assert!((back[1] - 0.3).abs() <= 0.5 / 65_534.0);
+}
+
+/// GATE's and REVERSE's rows (spec § Each TYPE's knobs): every range's
+/// ends and the starting knobs' values, to 1e-3.
+#[test]
+fn knobs_hit_the_spec_endpoints() {
+    let at = |t: ReverbType, f: &dyn Fn(&mut ReverbParams)| {
+        let mut p = ReverbParams::default().with_type(t, &KnobMemory::new());
+        f(&mut p);
+        knobs(&p)
+    };
+    for t in [ReverbType::Gate, ReverbType::Reverse] {
+        let k = |f: &dyn Fn(&mut ReverbParams)| at(t, f);
+        close(k(&|p| p.tone = 0.0).tone_hz, 10_000.0, "tone 0");
+        close(k(&|p| p.tone = 1.0).tone_hz, 2_500.0, "tone 1");
+        close(k(&|p| p.diffuse = 0.0).taps, 6.0, "taps 0");
+        close(k(&|p| p.diffuse = 1.0).taps, 12.0, "taps 1");
+        close(k(&|p| p.diffuse = 0.0).pre_g, 0.5, "g 0");
+        close(k(&|p| p.diffuse = 1.0).pre_g, 0.7, "g 1");
+        close(k(&|p| p.smear = 1.0).smear_ms, 1.0, "smear 1");
+        assert_eq!(k(&|p| p.smear = 0.0).smear_ms, 0.0);
+        close(k(&|p| p.rate = 0.0).rate_hz, 0.1, "rate 0");
+        close(k(&|p| p.rate = 1.0).rate_hz, 2.0, "rate 1");
+        close(k(&|_| {}).rate_hz, 0.4472, "rate default");
+    }
+    let g = |f: &dyn Fn(&mut ReverbParams)| at(ReverbType::Gate, f);
+    close(g(&|p| p.size = 0.0).length_ms, 40.0, "gate length 0");
+    close(g(&|p| p.size = 1.0).length_ms, 600.0, "gate length 1");
+    close(g(&|p| p.time = 0.0).rt60_s, 0.15, "tail 0");
+    close(g(&|p| p.time = 1.0).rt60_s, 0.8, "tail 1");
+    assert_eq!(g(&|p| p.time = 0.0).tail, 0.0, "TAIL 0 is the fast gate");
+    close(g(&|p| p.time = 0.025).tail, 0.5, "tail fades in");
+    close(g(&|p| p.time = 0.05).tail, 1.0, "tail in by 0.05");
+    close(g(&|p| p.shape = 0.0).shape_db, 0.0, "shape 0");
+    close(g(&|p| p.shape = 1.0).shape_db, -18.0, "shape 1");
+    assert_eq!(g(&|_| {}).regen, 0.0, "GATE has no REGEN");
+    let d = g(&|_| {});
+    close(d.length_ms, 177.27, "gate length default");
+    close(d.rt60_s, 0.2479, "tail default");
+    close(d.tone_hz, 7_578.6, "gate tone default");
+    close(d.taps, 10.2, "gate taps default");
+    close(d.pre_g, 0.64, "gate g default");
+    close(d.shape_db, -3.6, "shape default");
+    assert!(!d.rising);
+    let r = |f: &dyn Fn(&mut ReverbParams)| at(ReverbType::Reverse, f);
+    close(r(&|p| p.size = 0.0).length_ms, 150.0, "reverse length 0");
+    close(r(&|p| p.size = 1.0).length_ms, 800.0, "reverse length 1");
+    assert_eq!(r(&|p| p.time = 0.0).regen, 0.0);
+    close(r(&|p| p.time = 1.0).regen, 0.708, "regen 1");
+    // −3 dB a pass: 16 s at 800 ms.
+    close(
+        r(&|p| (p.time, p.size) = (1.0, 1.0)).rt60_s,
+        16.0,
+        "regen rt60",
+    );
+    close(r(&|p| p.shape = 0.0).shape_db, 12.0, "curve 0");
+    close(r(&|p| p.shape = 1.0).shape_db, 30.0, "curve 1");
+    assert_eq!(r(&|_| {}).tail, 0.0, "REVERSE has no TAIL");
+    let d = r(&|_| {});
+    close(d.length_ms, 346.41, "reverse length default");
+    assert_eq!((d.regen, d.rt60_s), (0.0, 0.0));
+    close(d.tone_hz, 10_000.0, "reverse tone default");
+    close(d.taps, 10.8, "reverse taps default");
+    close(d.pre_g, 0.66, "reverse g default");
+    close(d.shape_db, 24.06, "curve default");
+    assert!(d.rising);
 }

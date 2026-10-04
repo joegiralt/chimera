@@ -21,6 +21,7 @@ use chimera_core::dsp::modal::{
     BankModes, CHORD_COUNT, ModalEngine, ModalParams, ResonatorMode, SymPool,
 };
 use chimera_core::dsp::modulator::{EnvForm, EnvSlot, EnvType, Func, Glide, LfoForm, LfoType};
+use chimera_core::dsp::reverb::ReverbType;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::hw::{
@@ -132,8 +133,13 @@ const FX: [FxRow; FX_ROWS] = [
 ];
 
 /// The REVERB screen's rows, each timed as an FX row is, less MIX.
-const REV_ROWS: usize = 2;
-const REV: [FxRow; REV_ROWS] = [("REV QUAD", worst_reverb), ("REV QUAD S", smear_reverb)];
+const REV_ROWS: usize = 4;
+const REV: [FxRow; REV_ROWS] = [
+    ("REV QUAD", worst_reverb),
+    ("REV QUAD S", smear_reverb),
+    ("REV GATE", |s, b| worst_burst(s, b, ReverbType::Gate)),
+    ("REV RVRS", |s, b| worst_burst(s, b, ReverbType::Reverse)),
+];
 
 /// The STRESS rows' blocks: 10 s, past NEW's four bars at its BPM.
 const STRESS_BLOCKS: u32 = 7_500;
@@ -178,6 +184,16 @@ fn worst_reverb(s: &mut AudioShared, block: u32) {
 fn smear_reverb(s: &mut AudioShared, _block: u32) {
     let r = &mut s.fx.reverb;
     (r.time, r.size, r.damping, r.mix, r.smear, r.rate) = (1.0, 1.0, 0.5, 0.5, 1.0, 1.0);
+}
+
+/// GATE or REVERSE at its worst (reverb TYPEs spec § Bench rows): LENGTH
+/// between its ends every block, so four taps always crossfade; DENSITY,
+/// TAIL or REGEN, and SMEAR at 1. Both TYPEs run both paths.
+fn worst_burst(s: &mut AudioShared, block: u32, kind: ReverbType) {
+    let r = &mut s.fx.reverb;
+    let size = [0.0, 1.0][block as usize % 2];
+    (r.kind, r.size, r.time, r.diffuse, r.smear, r.rate, r.mix) =
+        (kind, size, 1.0, 1.0, 1.0, 1.0, 0.5);
 }
 
 /// Full DRIVE and WOW (its interpolated, most expensive tap), full MIX:
@@ -630,8 +646,10 @@ pub fn run(
     hold(clocks);
     let rev: [u32; REV_ROWS] = core::array::from_fn(|i| rig.time_bus(REV[i].1));
     let bus_v = rig.time_bus_with_voices(worst_bus);
+    // Each TYPE's STRESS, keys before ORBIT starts, then after.
+    let mut st = |rev| [rig.stress(true, rev).0.0, rig.stress(false, rev).0.0];
     let stress = (
-        [rig.stress(true).0.0, rig.stress(false).0.0],
+        (st(worst_reverb), st(REV[2].1)),
         BlockBudget::for_cpu(clocks.cpu_hz).budget_cycles(),
     );
     let switch = rig.switch_max();
@@ -694,7 +712,10 @@ fn memory_pages(
     };
     #[cfg(not(feature = "orbit"))]
     let (orbit, [ow, ow1, omean]) = (None, [Phases::default(); 3]);
-    let ((s1, sp1), (s2, sp2)) = (rig.stress(true), rig.stress(false));
+    let ((s1, sp1), (s2, sp2)) = (
+        rig.stress(true, worst_reverb),
+        rig.stress(false, worst_reverb),
+    );
     let stress = (
         [s1, s2],
         BlockBudget::for_cpu(clocks.cpu_hz).budget_cycles(),
@@ -1079,7 +1100,8 @@ impl Rig<'_> {
 
     /// The costliest whole callback block over `STRESS_BLOCKS` and the most
     /// voices sounding: six `a16_a17` keys on Part 6, every effect at its
-    /// worst, and (with `orbit`) ORBIT playing NEW's groove on Parts 1–5
+    /// worst (the reverb as `rev` sets it: QUAD's, or GATE's for STRESS's
+    /// GATE reading), and (with `orbit`) ORBIT playing NEW's groove on Parts 1–5
     /// with NEW's Sounds (ADR 0073). ORBIT starts at the first timed block,
     /// whose cycles come back on their own too (T0); the keys go down
     /// before the warm blocks if `keys_first`, else a block after ORBIT
@@ -1088,7 +1110,11 @@ impl Rig<'_> {
     /// view, the render and the three pairs' interleave; the note queues
     /// are empty.
     #[inline(never)]
-    fn stress(&mut self, keys_first: bool) -> ((u32, usize, u32, u32), Phases) {
+    fn stress(
+        &mut self,
+        keys_first: bool,
+        rev: fn(&mut AudioShared, u32),
+    ) -> ((u32, usize, u32, u32), Phases) {
         let budget = SampleBudget::for_cpu(self.cpu_hz);
         let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
         let fx = FxBus::init_in_place(self.fx_slot);
@@ -1125,6 +1151,7 @@ impl Rig<'_> {
                 hold_notes(inst, shared, MAX_PARTS - 1);
             }
             worst_bus(shared, b);
+            rev(shared, b);
             let start = DWT::cycle_count();
             #[cfg(feature = "orbit")]
             let boundary = {
@@ -1160,9 +1187,9 @@ impl Rig<'_> {
     /// REV SWITCH MAX (reverb TYPEs spec § Bench rows): the costliest whole
     /// callback block over `SWITCH_BLOCKS`, and the block budget it must
     /// stay under: six `a16_a17` voices held on Part 1, every effect at its
-    /// worst, the reverb forced through a switch every `SWITCH_EVERY`
-    /// blocks, QUAD → QUAD (Tasks 8–11 step through their TYPEs); TAPE
-    /// too in the master-tape build, by `worst_bus`. The four CLEAR blocks,
+    /// worst, the reverb's TYPE stepping QUAD ↔ GATE every `SWITCH_EVERY`
+    /// blocks (Tasks 9–11 add theirs); TAPE too in the master-tape build,
+    /// by `worst_bus`. The four CLEAR blocks,
     /// 11.6 KB zeroed each, and the voices' refill after them are what a
     /// mean would hide.
     #[inline(never)]
@@ -1182,8 +1209,8 @@ impl Rig<'_> {
         let mut worst = 0u32;
         for b in 0..WARM_BLOCKS + SWITCH_BLOCKS {
             worst_bus(shared, b);
-            if b % SWITCH_EVERY == 0 {
-                fx.force_reverb_restart();
+            if (b / SWITCH_EVERY) % 2 == 1 {
+                shared.fx.reverb.kind = ReverbType::Gate;
             }
             let start = DWT::cycle_count();
             inst.render(fx, &mut self.dac, shared, &mut self.scope);
@@ -1509,7 +1536,7 @@ fn show_reverb(
     rev: &[u32; REV_ROWS],
     mix: u32,
     bus_v: u32,
-    ([first, after], budget): ([u32; 2], u32),
+    (([first, after], [gate1, gate2]), budget): (([u32; 2], [u32; 2]), u32),
     (switch, switch_budget): (u32, u32),
     kernels: &[u32; bench_rev::ROWS.len()],
 ) {
@@ -1531,7 +1558,7 @@ fn show_reverb(
     }
     line.clear();
     // Keys before ORBIT starts, then after, as MEMORY's STRESS.
-    let _ = write!(line, "STRESS {first}/{after}/{budget}");
+    let _ = write!(line, "STRESS {first}/{after}/{budget} GATE {gate1}/{gate2}");
     rec.line(Face::Label(theme::INK2), line.as_str(), (4, y + 10));
     line.clear();
     let _ = write!(line, "REV SWITCH MAX {switch}/{switch_budget}");

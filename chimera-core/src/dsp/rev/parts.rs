@@ -208,13 +208,19 @@ pub const fn wander_seeds<const N: usize>(engine_seed: u32) -> [u32; N] {
 /// The per-block one-pole every continuous knob eases by, as
 /// `dsp::ease::Ease::step`'s `k`: the share kept each 64-sample block at
 /// 48 kHz, for a time constant of `tau_s`.
-pub fn ease_k(tau_s: f32) -> f32 {
+pub const fn ease_k(tau_s: f32) -> f32 {
     exp2(-LOG2_E * BLOCK_SIZE as f32 / (tau_s * SAMPLE_RATE as f32))
 }
 
 /// `y += a·(x − y)`'s `a` for a corner at `fc` and rate `fs`.
 pub fn one_pole(fc: f32, fs: f32) -> f32 {
-    1.0 - exp2(-LOG2_E * TAU * fc / fs)
+    1.0 - pow2(-LOG2_E * TAU * fc / fs)
+}
+
+/// `exp2`, out of line: one copy for the engines' per-block maths.
+#[inline(never)]
+pub fn pow2(x: f32) -> f32 {
+    exp2(x)
 }
 
 /// A delay or damper write: `x` (LSBs) rounded, ties away from zero, and

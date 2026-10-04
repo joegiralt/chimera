@@ -9,7 +9,7 @@ use chimera_core::dsp::chorus::{ChorusParams, JunoChorus};
 use chimera_core::dsp::delay::{DelayParams, TapeDelay};
 use chimera_core::dsp::rev::Reverb;
 use chimera_core::dsp::rev::sync::Tempo;
-use chimera_core::dsp::reverb::ReverbParams;
+use chimera_core::dsp::reverb::{KnobMemory, ReverbParams, ReverbType};
 use chimera_hal::BLOCK_SIZE;
 use common::{SR, fnv1a};
 
@@ -25,7 +25,7 @@ enum Fx {
     Reverb(ReverbParams),
 }
 
-fn cases() -> [(&'static str, Fx); 7] {
+fn cases() -> [(&'static str, Fx); 11] {
     let reverb = |smear: f32, size: f32| ReverbParams {
         time: 0.7,
         damping: 0.3,
@@ -34,6 +34,17 @@ fn cases() -> [(&'static str, Fx); 7] {
         smear,
         rate: 1.0,
         ..Default::default()
+    };
+    // A BURST TYPE on its starting knobs, `f` tweaking them. MIX 0.3: at
+    // QUAD's loudness its burst, and REGEN's, peak over 1.0 at 0.5.
+    let burst = |t: ReverbType, f: fn(&mut ReverbParams)| {
+        let mut p = ReverbParams {
+            mix: 0.3,
+            ..Default::default()
+        }
+        .with_type(t, &KnobMemory::new());
+        f(&mut p);
+        Fx::Reverb(p)
     };
     [
         (
@@ -76,6 +87,17 @@ fn cases() -> [(&'static str, Fx); 7] {
         ("reverb_ring", Fx::Reverb(reverb(0.0, 0.5))),
         ("reverb_ring_max_size", Fx::Reverb(reverb(0.0, 1.0))),
         ("reverb_ring_smear", Fx::Reverb(reverb(1.0, 0.5))),
+        ("rev_gate", burst(ReverbType::Gate, |_| {})),
+        // Fast Gate: a hard cut, no TAIL.
+        (
+            "rev_gate_flat_tail0",
+            burst(ReverbType::Gate, |p| (p.time, p.shape) = (0.0, 0.0)),
+        ),
+        ("rev_reverse", burst(ReverbType::Reverse, |_| {})),
+        (
+            "rev_reverse_regen",
+            burst(ReverbType::Reverse, |p| p.time = 0.7),
+        ),
     ]
 }
 
@@ -95,7 +117,10 @@ fn input(b: usize, phase: &mut f32) -> [f32; BLOCK_SIZE] {
 fn render(fx: Fx) -> Vec<f32> {
     let mut chorus = Box::new(JunoChorus::new());
     let mut delay = Box::new(TapeDelay::new());
-    let mut reverb = Box::new(Reverb::new());
+    let mut reverb = Box::new(match fx {
+        Fx::Reverb(p) => Reverb::of_type(p.kind),
+        _ => Reverb::new(),
+    });
     let mut out = Vec::with_capacity(2 * FX_BLOCKS * BLOCK_SIZE);
     let mut phase = 0.0f32;
     for b in 0..FX_BLOCKS {
@@ -131,6 +156,11 @@ const GOLDENS: &[(&str, u64)] = &[
     ("reverb_ring", 0xd17b7769e13816bf),
     ("reverb_ring_max_size", 0x83591bf24cab49f6),
     ("reverb_ring_smear", 0xa7e01c103cc02150),
+    // GATE and REVERSE on the BURST engine (reverb TYPEs T8).
+    ("rev_gate", 0x045c62c463f246e5),
+    ("rev_gate_flat_tail0", 0x928dfe0377bd36d8),
+    ("rev_reverse", 0x9ac7cb7d5c71d84c),
+    ("rev_reverse_regen", 0xef4c6a52139b6c56),
 ];
 
 #[test]

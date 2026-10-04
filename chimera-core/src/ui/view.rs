@@ -158,13 +158,15 @@ impl View {
         }
     }
 
-    /// The spec's short form, for a param shown under its own label.
+    /// The spec's short form, for a param shown under its own label; a
+    /// reverb panel's word's own (`DENS`).
     pub fn short(&self) -> Option<&'static str> {
         match *self {
-            View::Param { addr, label, .. } => addr
-                .spec()
-                .filter(|s| s.label == label)
-                .and_then(|s| s.short),
+            View::Param { addr, label, .. } => match addr.spec() {
+                Some(s) if s.label == label => s.short,
+                _ if addr.block == BlockRef::Reverb => reverb_panel::short_of(label),
+                _ => None,
+            },
             _ => None,
         }
     }

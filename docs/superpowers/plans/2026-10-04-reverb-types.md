@@ -1159,6 +1159,37 @@ BUS+V's frame is QUAD_BUS_V + ΔCOST, so ΔCOST = that row − QUAD_BUS_V.
   master-tape build); gate ≤ `BlockBudget::budget_cycles`, run on both
   `bench` and `bench,master-tape`.
 
+### Task 8: GATE and REVERSE on the BURST engine (2026-10-04, host; unit deferred)
+
+- **Unit rows, deferred** to the next unit session (no unit this task):
+  REV GATE, REV RVRS (LENGTH between its ends every block, DENSITY, TAIL
+  or REGEN and SMEAR at 1), STRESS's GATE reading (the STRESS row run a
+  second time with the reverb as REV GATE sets it), and REV SWITCH MAX,
+  which now steps QUAD ↔ GATE every 40 blocks. Gates: ΔCOST ≤ headroom on
+  both builds, STRESS < budget. Task 3's K BURST was 63 / 61 under K QUAD.
+- **Flash** (`--features orbit`, release, against `fbeb4f8a`): `.text`
+  574,848 → 584,304 (**+9,456**), `.rodata` 150,112 → 150,992 (+880):
+  **+10,336, over the 6 KB gate.** By symbol: `BurstEngine::run` 2,724,
+  `schedule` 684, `ease_to` 540, `weights` 528, `tap_targets` 292,
+  `segment` 268, `pow2` 196, `prime` 84 (engine 5.3 KB); `knobs` 1,488
+  with `exp_law` 184 (QUAD's laws moved out of `param_text`, −724);
+  `tail_shape` 880 and `Tail::from_set` 376, the TAIL's drawing +296; the
+  panels, value texts and `View::short` about +1.5 KB in `UiState::input`,
+  `cell_label` and constants; `FxBus::process` +380.
+- **AXI:** `FxBus` +88 B: `BurstEngine` (152 B) is `EngineState`'s largest
+  variant. `memory_budget_test`'s bound is 442,452.
+- **WET:** GATE and REVERSE share `WET_BURST` = 7.47: each default return
+  within 0.03 dB of QUAD's on the 0.5 s noise burst at MIX 0.5.
+- **Host readings** (`reverb_burst_test`): GATE at 177 ms, TAIL 0, SHAPE 0:
+  −20 dB end at 250 ms, the 50 ms after it 24.9 dB under the plateau.
+  REVERSE at defaults: peak at 375 ms (346 ± 15 %), |ρ| 0.38. Noise floor
+  (QUAD 12.0 dB in `floor_db`'s frame): GATE 10.2, REVERSE 5.5. LENGTH
+  40 → 600 ms lands every tap in 901 ms (169 crossfades). REGEN's settled
+  peak within 1/L of 1 kHz; in-crossfade deviation 0.1 cents.
+- **Goldens:** `rev_gate`, `rev_gate_flat_tail0`, `rev_reverse`,
+  `rev_reverse_regen` at MIX 0.3 (at QUAD's loudness the 110 Hz saw's
+  burst, and REGEN's, peak over 1.0 at MIX 0.5); QUAD's unchanged.
+
 ---
 
 ## Self-review

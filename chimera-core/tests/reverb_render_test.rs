@@ -10,6 +10,11 @@
 //!   send on both sides plus the return, 6 dB down) and `<name>_s<smear>.txt`
 //!   (the figures).
 //!
+//! - `render_bursts` (Task 8) runs the snare, kick, bowed and plucked
+//!   strings and the IDM phrase through GATE and REVERSE, each at its
+//!   starting knobs and two contrasting settings, into `$AB_OUT` (default
+//!   `$AB_DIR/burst`): `<source>_<type>_<setting>.wav` and `manifest.json`.
+//!
 //! It sets the reverb through its `Block` ids, so it builds at the T4
 //! reference (a2abe82f) too: id 5 (GRIT there, retired here) to 0; ids 11
 //! and 12 (SMEAR, RATE here) that build ignores. `$AB_DIR` defaults to the
@@ -121,6 +126,12 @@ fn peak_to(mut x: Vec<f32>, dbfs: f32) -> Vec<f32> {
     x
 }
 
+fn plucked() -> ParamSnapshot {
+    let mut p = ParamSnapshot::for_engine(EngineType::Modal);
+    p.modal.mode = ResonatorMode::String;
+    p
+}
+
 fn bowed() -> ParamSnapshot {
     let mut p = ParamSnapshot::for_engine(EngineType::Modal);
     p.modal.mode = ResonatorMode::Bowed;
@@ -221,8 +232,17 @@ fn stimuli() {
     let chord = |notes: &[u8]| -> Vec<Note> { notes.iter().map(|&n| (0.0, 3.0, n, 90)).collect() };
     let strings = peak_to(play(&bowed(), &chord(&[57, 64, 69, 72]), 15.0), -12.0);
     let pad = peak_to(play(&pad(), &chord(&[57, 60, 64, 67, 71]), 15.0), -12.0);
+    // Plucks: an A minor arpeggio, an eighth apart at 120 BPM, then a chord.
+    let arp: Vec<Note> = [57u8, 64, 69, 72, 76, 72, 69, 64]
+        .iter()
+        .enumerate()
+        .map(|(i, &n)| (i as f32 * 0.25, 0.25, n, 100))
+        .chain([57u8, 64, 69, 72].map(|n| (2.0, 1.0, n, 100)))
+        .collect();
+    let plucked = peak_to(play(&plucked(), &arp, 15.0), -12.0);
     for (name, x) in [
         ("strings", strings),
+        ("plucked", plucked),
         ("pad", pad),
         ("idm", idm(&kick, &snare, &hat)),
     ] {
@@ -318,4 +338,107 @@ fn render() {
         ),
     )
     .expect("the figures");
+}
+
+/// GATE and REVERSE at their starting knobs and two contrasting settings,
+/// each a (name, knobs over the starting ones) pair.
+type Setting = (
+    &'static str,
+    &'static str,
+    fn(&mut chimera_core::dsp::reverb::ReverbParams),
+);
+
+const BURST_SETTINGS: [(chimera_core::dsp::reverb::ReverbType, [Setting; 3]); 2] = {
+    use chimera_core::dsp::reverb::ReverbType::{Gate, Reverse};
+    [
+        (
+            Gate,
+            [
+                (
+                    "default",
+                    "starting knobs: LENGTH 177 ms, TAIL 0.25 s, SHAPE -4 dB",
+                    |_| {},
+                ),
+                (
+                    "fast",
+                    "fast gate: LENGTH 150 ms, TAIL 0, SHAPE 0 (flat)",
+                    |p| (p.size, p.time, p.shape) = (0.488, 0.0, 0.0),
+                ),
+                (
+                    "dying",
+                    "slow dying gate: LENGTH 600 ms, TAIL 0.8 s, SHAPE -18 dB, DENSITY 1",
+                    |p| (p.size, p.time, p.shape, p.diffuse) = (1.0, 1.0, 1.0, 1.0),
+                ),
+            ],
+        ),
+        (
+            Reverse,
+            [
+                (
+                    "default",
+                    "starting knobs: LENGTH 346 ms, REGEN 0, CURVE 24 dB",
+                    |_| {},
+                ),
+                ("regen", "regenerating: REGEN 0.7 (-6 dB a pass)", |p| {
+                    p.time = 0.7
+                }),
+                (
+                    "swell",
+                    "long dark swell: LENGTH 800 ms, CURVE 30 dB, TONE 4.4 kHz, DENSITY 1",
+                    |p| (p.size, p.shape, p.tone, p.diffuse) = (1.0, 1.0, 0.6, 1.0),
+                ),
+            ],
+        ),
+    ]
+};
+
+#[test]
+#[ignore]
+fn render_bursts() {
+    use chimera_core::dsp::reverb::KnobMemory;
+    let d = dir();
+    let out_dir = std::env::var_os("AB_OUT").map_or_else(|| d.join("burst"), PathBuf::from);
+    std::fs::create_dir_all(&out_dir).expect("AB_OUT");
+    let gain_db: f32 = std::env::var("AB_GAIN_DB").map_or(-9.0, |v| v.parse().expect("dB"));
+    let gain = 10f32.powf(gain_db / 20.0);
+    let mut manifest = Vec::new();
+    for source in ["snare", "kick", "strings", "plucked", "idm"] {
+        let x = read_wav(&d.join("stimuli").join(format!("{source}.wav")));
+        for (kind, settings) in BURST_SETTINGS {
+            let name = chimera_core::dsp::reverb::ReverbType::NAMES[kind.index()];
+            for (tag, what, set) in settings {
+                let mut fx = FxParams::default();
+                fx.reverb = fx.reverb.with_type(kind, &KnobMemory::new());
+                fx.reverb.mix = 1.0;
+                set(&mut fx.reverb);
+                let mut b = Box::new(FxBus::new());
+                let mut out = Vec::with_capacity(2 * x.len());
+                for blk in x.chunks(BLOCK_SIZE) {
+                    let mut send = [0.0; BLOCK_SIZE];
+                    send[..blk.len()].copy_from_slice(blk);
+                    let (l, r) = tick(&mut b, &fx, &send);
+                    for i in 0..BLOCK_SIZE {
+                        out.extend([send[i] + l[i], send[i] + r[i]]);
+                    }
+                }
+                // The dry send plus the return, `$AB_GAIN_DB` down (9 by
+                // default: a held string through the dying gate peaks over
+                // 0 dBFS at the SMEAR set's 6).
+                let out: Vec<f32> = out.iter().map(|&s| gain * s).collect();
+                assert!(out.iter().all(|s| s.is_finite()), "{source} {name} {tag}");
+                let pk = 20.0 * peak(&out).log10();
+                assert!(pk <= 0.0, "{source} {name} {tag} clips: {pk:.1} dBFS");
+                let file = format!("{source}_{}_{tag}.wav", name.to_lowercase());
+                write_wav(&out_dir.join(&file), &out);
+                manifest.push(format!(
+                    "  {{\"source\": \"{source}\", \"type\": \"{name}\", \"setting\": \"{what}\", \"file\": \"{file}\", \"peak_dbfs\": {pk:.1}}}"
+                ));
+            }
+        }
+    }
+    std::fs::write(
+        out_dir.join("manifest.json"),
+        format!("[\n{}\n]\n", manifest.join(",\n")),
+    )
+    .expect("the manifest");
 }
