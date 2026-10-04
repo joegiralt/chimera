@@ -61,7 +61,9 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
   only in constants, so by the owner's rule it is a preset.
   - HALL's SIZE reaches a 120 ms loop.
   - Below SIZE 0.15, a plate zone pulls DIFFUSE up, and TONE and PRE-DLY to
-    the plate's values. That is three lerps a block, about 150 B of flash.
+    the plate's values. DIFFUSE and TONE ease per block, and PRE-DLY moves
+    through the same 5 ms crossfades as SIZE. The zone is about 150 B of
+    flash.
   - The plate corner is a tested golden.
 - **QUAD stays exactly as it is** (owner, 2026-10-04): the same sound, the
   same cost, and its double-read SIZE crossfade.
@@ -75,9 +77,13 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
     LENGTH, SWELL, PRE-DLY) crossfades between two fixed integer reads,
     as QUAD's do.
     - In LOOP, all stage delays switch in one crossfade, so the round-trip
-      sum moves together, at most ⅛ of the SIZE range per 30 ms crossfade.
+      sum moves together. Each 30 ms crossfade moves it at most 5 ms, as
+      QUAD's steps do, so a long move is many steps. A larger step would
+      duplicate or drop a slice of the tail on every pass, which is a ghost
+      slap.
     - In BURST, at most 4 taps crossfade at a time. Tap 11 is REGEN's
-      feedback read, and it crossfades like the others.
+      feedback read, and it crossfades like the others, in steps of at most
+    5 ms.
   - **The bounds.** Moves, and REGEN during them, shift 0 cents per pass
     and 0 cents cumulatively.
   - **The wobble** is the only continuous motion. Inside a loop it is
@@ -99,8 +105,12 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
   - ROOM couples its loops through an energy-preserving rotation.
   - New engines cap a stage gain at 0.985 (QUAD keeps 0.97).
   - Each engine scales its send by 2 / G, where G is its worst-case
-    send-to-line gain. A full-scale send then never clips the ±2.0 lines.
-    QUAD keeps ½.
+    send-to-line gain, including a sine held on a loop mode. A full-scale
+    send then never clips the ±2.0 lines. The values are about 0.16 for
+    HALL (G 12.5 at 10 s on its 120 ms loop), 0.17 for BURST and 0.27 for
+    BLOOM; ROOM keeps ½, as QUAD does. The cost is the i16 noise floor: up
+    to 9.9 dB less resolution than QUAD's, which `WET` makes up in level,
+    not in noise.
 - **CPU: "sound first"** (owner, 2026-10-04).
   - **The target** is QUAD's worst case, 485 cycles per output sample.
   - **The hard limit** is the cost model's headroom inside the audio
@@ -114,8 +124,14 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
       default build** (A16 ∪ A17 with FOLD, 954, six voices on rev V) and
       **23 with `master-tape`** (MORPH KEYS, 864, five voices on rev Y).
   - **The gate is ΔCOST ≤ headroom**, where ΔCOST is the costliest TYPE's
-    BUS row above QUAD's. A `reverb_headroom` test derives the headroom from
-    `cost_test`'s own constants.
+    BUS row above QUAD's. `cost_test` itself is the gate, so the margin is
+    never duplicated or halved: `FxBus::COST` takes the costliest TYPE's BUS
+    reading, and the voice-count assertions must still pass on both builds.
+  - **If step 0's QUAD re-baseline**, measured with voices, alone breaks the
+    tape build's 23, it goes to the owner before any TYPE work.
+  - **BLOOM's split-SWELL fallback**, about +33 by the review's cache-aware
+    estimate, fits the default build but not the tape build. There it needs
+    an owner ruling. BLOOM's base design, about +14, fits both.
   - **The stress run is a second, real gate:** six admitted voices, every
     FX, ORBIT and the UI, with OVER 0, DROPS 0 and a peak block load under
     100 %.
@@ -227,7 +243,7 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
 
   Step 0 comes before any TYPE work. It:
   - re-measures the baselines, with voice traffic;
-  - lands the headroom test;
+  - records the headroom from `cost_test`;
   - runs the stress run with QUAD;
   - measures a moving pair's cost;
   - benches the worst-case BURST, ROOM-loop and HALL-loop kernels on the
