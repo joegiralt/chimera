@@ -74,12 +74,10 @@ The precedent says two things:
   `live`'s to send.
 - **A project save carries every slot's edits**: slots 0–7 and `live`
   are written as before (§ 8), and the slots now hold the edits.
-- **A file from before this ADR is locked in once.** It can hold `live`
-  edited past its slot. At the load, where `live` differs from the
-  playing slot in more than drift (each ring's hits, notes and pool), it
-  is written over the slot, so the edits stay. A note edit cannot be
-  told from drift there, and restarts with it. A file saved after this
-  ADR differs only by drift, and is left as it is.
+- **A file from before this ADR loads as stored.** It can hold `live`
+  edited past its slot; `live` and the slot load as written, and the
+  unsaved edits restart when the slot lands. No users yet, so no
+  migration: an old file loads safely, it need not sound the same.
 - **The command channel (ADR 0082) is unchanged.** The UI owns `live` and
   the slots, the runner `working`; the epoch and ack gates stand. A
   switch's `Cue` adopts `next`, the slot as the latest publish carries
@@ -117,10 +115,10 @@ The precedent says two things:
   with `edit` and `turn` 721,656 B (+520). A closure built round
   `part_page::apply_under` over `Scene` measured 725,916 B and was
   dropped. The base was already over the 715,428 B gate. The review
-  round (capture by scene, the reland kept due, the load's lock-in, the
-  HINTS-off CLEAR label) measured 725,376 B against 724,088 B at
-  43d59110 (+1,288), most of it the load's comparison of `live` with its
-  slot.
+  round (capture by scene, the reland kept due, a load-time lock-in of
+  old files' edits, the HINTS-off CLEAR label) measured 725,376 B against
+  724,088 B at 43d59110 (+1,288), most of it the lock-in's comparison of
+  `live` with its slot; the lock-in was then dropped.
 
 ## Sources
 - Elektron Digitakt manual, OS 1.51, p. 35: FUNC + YES / FUNC + NO, SAVE

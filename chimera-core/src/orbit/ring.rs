@@ -197,16 +197,6 @@ impl Ring {
         self.with_hits(fill.mask())
     }
 
-    /// `self` with `base`'s hits, notes and pool: what MUTATE drifts. The
-    /// accents follow the hits, from the same ACCENT.
-    pub(crate) fn sans_drift(mut self, base: &Ring) -> Ring {
-        self.hits_mask = base.hits_mask;
-        self.accented = base.accented;
-        self.notes = base.notes;
-        self.pool = base.pool;
-        self
-    }
-
     /// `m` as the hits, if it keeps STEPS and the hit count: a nudge.
     pub fn with_mask(self, m: HitMask) -> Option<Ring> {
         let cur = self.hits_mask;

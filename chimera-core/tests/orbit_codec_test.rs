@@ -1033,9 +1033,8 @@ fn the_orbit_fixture_loads_as_frozen() {
         live.chords.played[1],
         Chord::from_notes(&notes(&[60, 61, 62]))
     );
-    // A file from before ADR 0083: `live`'s seed and chord, edits past
-    // slot 1, are written over it at the load.
-    assert_eq!(o.scene(S[0]).chords, live.chords);
+    // A file from before ADR 0083: `live` loads past slot 1 as stored,
+    // and slot 1 stays as stored (its edits restart on a landing).
     let seeds: Vec<u32> = S
         .iter()
         .map(|&n| o.scene(n).seed)
@@ -1044,7 +1043,7 @@ fn the_orbit_fixture_loads_as_frozen() {
     assert_eq!(
         seeds,
         [
-            0xCAFE_F00D,
+            0x0B17_0001,
             0x5EED_0001,
             0x5EED_0002,
             0x5EED_0003,
@@ -1175,20 +1174,14 @@ fn a_left_scenes_edits_round_trip() {
     assert_eq!(*q.orbit().scene(S[0]), *ui.project().orbit().scene(S[0]));
 }
 
-/// A file from before ADR 0083 can hold `live` edited past its slot: the
-/// load writes `live` over the playing slot once, so the edits stay. A
-/// `live` off its slot only by drift (hits, notes, pools) leaves it.
+/// A file from before ADR 0083 can hold `live` edited past its slot: it
+/// loads as stored, `live` and the slot each as written (no legacy
+/// compat: the edits restart when the slot lands).
 #[test]
-fn an_old_files_edits_are_locked_into_the_slot() {
+fn an_old_files_live_loads_as_stored() {
     let mut p = new_project();
     p.orbit_mut().live_mut_for_test().chords.tonic = PitchClass::G;
     let q = loaded(&encode(&p));
-    assert_eq!(q.orbit().scene(S[0]).chords.tonic, PitchClass::G);
-    assert_eq!(*q.orbit().scene(S[0]), *q.orbit().live());
-
-    let mut p = new_project();
-    p.orbit_mut().live_mut_for_test().rings[1].ring.notes[0] = Note::new(40).unwrap();
-    let q = loaded(&encode(&p));
-    assert_eq!(*q.orbit().scene(S[0]), Scene::init(), "drift stays out");
-    assert_ne!(*q.orbit().live(), Scene::init());
+    assert_eq!(*q.orbit().scene(S[0]), Scene::init());
+    assert_eq!(q.orbit().live().chords.tonic, PitchClass::G);
 }

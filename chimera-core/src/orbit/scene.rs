@@ -267,15 +267,6 @@ impl Scene {
         }
     }
 
-    /// `self` with `base`'s hits, notes and pools: `self` apart from its
-    /// drift.
-    fn sans_drift(mut self, base: &Scene) -> Scene {
-        for (s, b) in self.rings.iter_mut().zip(&base.rings) {
-            s.ring = s.ring.sans_drift(&b.ring);
-        }
-        self
-    }
-
     /// `neutral()`'s, compared out of line: one copy of `==` in flash.
     #[inline(never)]
     pub fn is_neutral(&self) -> bool {
@@ -699,17 +690,7 @@ impl OrbitSong {
     }
 
     /// A load done: `saved` from the slots as read.
-    ///
-    /// A file from before ADR 0083 may hold `live` edited past its slot:
-    /// where `live` differs from the playing slot in more than drift (each
-    /// ring's hits, notes and pool), it is written over the slot once, so
-    /// the edits stay. A note edit is drift's twin and restarts.
     pub(crate) fn loaded(&mut self) {
-        let n = self.current;
-        let slot = &self.scenes[n.0 as usize];
-        if self.live.sans_drift(slot) != *slot {
-            self.put(n, self.live);
-        }
         self.saved = SceneIdx::ALL
             .into_iter()
             .filter(|n| !self.scenes[n.0 as usize].is_neutral())
