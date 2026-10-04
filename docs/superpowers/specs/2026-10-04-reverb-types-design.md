@@ -1,6 +1,6 @@
 # Reverb TYPEs: QUAD plus ROOM, HALL, GATE, REVERSE, BLOOM and ECHO
 
-Status: approved pending owner read (2026-10-04). ADR [0085](../../adr/0085-the-master-reverb-picks-a-type.md) (Proposed) records the decision. The owner's answers of 2026-10-04 are folded in: modulation is deferred to private issue #345, and QUAD keeps its name. Issue: private issue #343. It is queued after ORBIT ships (owner, 2026-10-03).
+Status: Approved by owner pending read; reviewed 8/8/8/8 (2026-10-04). ADR [0085](../../adr/0085-the-master-reverb-picks-a-type.md) (Proposed) records the decision. The owner's answers of 2026-10-04 are folded in: modulation is deferred to private issue #345, and QUAD keeps its name. Issue: private issue #343. It is queued after ORBIT ships (owner, 2026-10-03).
 
 ## Intent
 
@@ -173,10 +173,11 @@ Starting lengths in ms at SIZE 1. Each becomes the nearest distinct prime in sam
 | HALL | 1.7, 3.1, 5.3, 8.9 | 113 / 11 | 157 / 17 | 124 / 13 | 146 / 19 | 0.111 → 1 (round trip 120 → 600 ms) |
 
 Output taps are (line, fraction of the line's **maximum** length, sign). They are fixed reads:
-- **ROOM:** L = (A1, 0.31, +), (B2, 0.57, −), (A2, 0.83, +). R = (B1, 0.29, +), (A2, 0.53, −), (B2, 0.79, +).
-- **HALL:** L = (S1, 0.37, +), (S3, 0.61, −), (S2, 0.83, +). R = (S2, 0.23, +), (S4, 0.49, −), (S1, 0.91, +).
+- **ROOM:** L = (A1, **0.10 of SIZE 0**, +), (B2, 0.57, −), (A2, 0.83, +). R = (B1, **0.12 of SIZE 0**, +), (A2, 0.53, −), (B2, 0.79, +).
+- **HALL:** L = (S1, **0.30 of SIZE 0**, +), (S3, 0.61, −), (S2, 0.83, +). R = (S2, **0.25 of SIZE 0**, +), (S4, 0.49, −), (S1, 0.91, +).
+- **The early tap.** Each side's first tap is a fraction of its line's SIZE-0 length, not its maximum: about 2–3 ms in ROOM and about 4 ms in HALL. With every tap at the maximum's fractions, the plate corner's earliest tap would be about 36 ms late. The early tap replaces a maximum-length tap, so the count and the cost do not change.
 
-- **Why the maximum.** A line owns its maximum length's slots, and the shared write head writes every one of them each pass. So a tap anywhere inside the maximum reads written data at any SIZE, at the same cost.
+- **Why the maximum** (the other two taps). A line owns its maximum length's slots, and the shared write head writes every one of them each pass. So a tap anywhere inside the maximum reads written data at any SIZE, at the same cost.
 - **What a tap reads.** At SIZE 1 the taps spread across each whole stage. At a small SIZE a tap past the current read point reads the line's input from an earlier pass: still the decaying tail, just older.
 - **Why not the minimum.** Fractions of the SIZE-0 length would read only the first 11 % of HALL's 540 ms stages at SIZE 1, and the output could pulse once per pass.
 - **The trade.** The early pattern stays put as SIZE moves. The ear judges it at A/B. SIZE-scaled taps would cost 6 more moving pairs, well over the target. They are allowed if the A/B asks for them and the system worst case keeps the reserve (§ CPU budget, "sound first").
@@ -584,16 +585,23 @@ Hints follow ADR **0086** ("Every gesture shows a contextual hint in the focus b
 The owner, 2026-10-04: **"sound first."**
 
 - **The target** is QUAD's worst case: 485 cycles per output sample on the REVERB row, and 239 instructions per ring sample on the host (ADR 0031, 2026-09-27; re-measured at step 0). Every TYPE is designed to it, and the table below shows they all meet it by estimate.
-- **The hard limit is the system worst case.**
-  - The audio thread may use **70 % of the CPU**: `AUDIO_BUDGET_PERCENT` = 70 in `chimera-core/src/hw.rs` ("30% is left for UI, MIDI and interrupt overhead"). `SampleBudget::for_cpu` builds it from the real clock (ADR 0020): **7,000 cycles per sample on rev V** (480 MHz) and 5,833 on rev Y (400 MHz).
-  - The worst case is:
-    - 8 voices (`MAX_VOICES`) of the costliest patch the bench names (A16 ∪ A17 today, ADR 0031);
-    - every FX on at its bench worst settings, with the reverb TYPE under test;
+- **The hard limit is the cost model's headroom.**
+  - **The budget.** The audio thread may use **70 % of the CPU**: `AUDIO_BUDGET_PERCENT` = 70 in `chimera-core/src/hw.rs` ("30% is left for UI, MIDI and interrupt overhead"). `SampleBudget::for_cpu` builds it from the real clock (ADR 0020): **7,000 cycles per sample on rev V** (480 MHz) and 5,833 on rev Y (400 MHz).
+  - **Why not a stress run.** Admission bills voices by cost, so the costliest patch never gets 8 voices. ADR 0040 gives A16 ∪ A17 (889 cycles a voice) six. A stress run therefore passes by construction, and the real gate is the bill.
+  - **The headroom**, on rev V: 7,000 − 6 × 889 − `FxBus::COST`. Checked against the code on 2026-10-04:
+    - default build (`COST` 1,180): 7,000 − 5,334 − 1,180 = **486 cycles per sample**;
+    - with `master-tape` (`COST` 1,490): **176**.
+  - **The gate: ΔCOST ≤ headroom.** ΔCOST is how far the costliest TYPE's BUS row reads above today's (QUAD's). `FxBus::COST` rises by that amount, and `cost_test` must still give A16 ∪ A17 six voices.
+    - The plan re-reads 889 and `COST` from `cost_test` and `fx_bus.rs` at step 0, and recomputes the headroom.
+    - The tighter `master-tape` figure binds only while that feature ships (ADR 0055).
+  - **The stress run only confirms.** On the unit, with the TYPE under test, it runs:
+    - six admitted voices of A16 ∪ A17;
+    - every FX at its bench worst;
     - ORBIT running all five rings;
     - the UI editing, with an animated glyph in focus.
-  - The run must keep the audio thread's measured sustained cost within the 7,000-cycle sample budget, so the 30 % reserve stays whole, and show OVER 0 and DROPS 0. ADR 0040's stress run (87 % peak block load, OVER 0) is the precedent for how it is read.
-  - The cost model must still give the heaviest patch its current voice count. If a TYPE's row exceeds QUAD's, `FxBus::COST` rises by the difference, and `cost_test` re-checks the voice counts (ADR 0031's arithmetic).
-- **A TYPE may exceed the target** when the A/B shows its cheaper design sounds wrong, provided the measured system worst case with that TYPE still keeps the reserve.
+
+    It must show OVER 0 and DROPS 0, read as ADR 0040's run was (87 % peak block load, OVER 0). It confirms the bill; it does not replace it.
+- **A TYPE may exceed the target** when the A/B shows its cheaper design sounds wrong, provided its ΔCOST fits the headroom.
 - **The QUAD regression check stays.** After step 1a, REV QUAD must read ≤ step 0's baseline + 1 %. QUAD's cost is unchanged by ruling, and the dispatcher must not hide a regression.
 - **Why re-measure.** Since 2026-09-27 the bench subtracts the MIX row, and MIX now includes the limiter.
 
@@ -646,7 +654,7 @@ QUAD measured 158 instructions fixed and 239 crossfading, for 30 and 48 accesses
   - **BLOOM**: SWELL alternating; DECAY 1; WOBBLE 1.
   - **ECHO**: TIME alternating; WOBBLE 1; RATE 1; DIFFUSE 1; PATTERN CLOUD.
 - **The gates are absolute.**
-  - **The system worst case** (§ Target and hard limit) is re-measured on the unit with each new TYPE as it lands, and must keep the reserve.
+  - **ΔCOST ≤ headroom** (§ Target and hard limit), recomputed from the BUS row as each new TYPE lands. The stress run confirms it on the unit.
   - **Each REV row** is recorded against the 485 target. A row over the target is reported, and is allowed when the A/B justifies it.
 - **The switch has no bench row.** A row averages 64 blocks and would hide the one CLEAR block. A host test instead checks the peak *block*'s instruction count under the emulator (§ Tests).
 - The plan records every row's reading, the build and the date, as ADR 0031 did.
@@ -729,6 +737,7 @@ The usual battery, per TYPE, on the host first (owner's rule: QA before UAT).
 - **The spike's windows (±30 %).**
   - ROOM at defaults: RT60 0.55 s and onset ≤ 34 ms.
   - HALL at defaults: L/R correlation |ρ| ≤ 0.2.
+  - HALL plate corner: onset ≤ 8 ms, with the onset measured as in the A/B (1 ms RMS above −40 dB relative to the peak).
   - GATE at 177 ms: −20 dB end between 185 and 660 ms, and a cliff, the energy in the 50 ms after the end at least 20 dB under the plateau's at TAIL 0.
   - REVERSE: envelope peak within ±15 % of LENGTH, and |ρ| between 0.3 and 0.75.
   - BLOOM at defaults: onset 140–300 ms, peak 450–750 ms.
@@ -828,9 +837,9 @@ The CPU risk comes first. Each step after step 0 is a mergeable slice with its t
      - **ROOM loop**, the tightest: PRE-DLY, the diffuser, 2 × 2 stages with all four delays gliding and two wobbled, the rotation and 6 fixed taps;
      - **HALL loop:** PRE-DLY, the diffuser, 1 × 4 stages with all four delays gliding and two wobbled, and 6 fixed taps.
    - BLOOM and ECHO are estimated from the measured pair cost, since BLOOM's count equals HALL's.
-   - **Measure the system worst case on the unit, with QUAD as today's reverb**: 8 voices of the costliest patch, every FX at its bench worst, ORBIT running and the UI editing (§ Target and hard limit). Record the sustained and peak block load, OVER and DROPS. The **headroom** is the 7,000-cycle sample budget less this reading.
+   - **Compute the headroom**: 7,000 − 6 × the costliest patch's voice cost − `FxBus::COST`, from `cost_test` and `fx_bus.rs` as they stand (486 default, 176 with `master-tape`, on 2026-10-04's numbers). Run the confirming stress run with QUAD (six admitted voices, every FX, ORBIT and the UI) and record OVER and DROPS.
    - **Gate ("sound first"):**
-     - each kernel's excess over the baseline QUAD must fit the measured headroom;
+     - each kernel's excess over the baseline QUAD (its ΔCOST) must fit the headroom;
      - a kernel over the 485 target is recorded and kept, and the A/B decides;
      - a kernel whose excess would breach the reserve takes its TYPE's fallback design and is benched again before any TYPE work.
 
@@ -860,7 +869,7 @@ Each plan task's review grades quality, efficiency, performance and principled-n
   - No new gesture or page type.
 - **Performance.**
   - Moving reads are costed, kept to five or six per TYPE, and benched on the chip at step 0 before any TYPE work.
-  - Every TYPE aims at QUAD's cost and the estimates meet it. The hard gate is the measured system worst case inside the 30 % reserve ("sound first"), and QUAD itself stays ≤ the absolute baseline.
+  - Every TYPE aims at QUAD's cost and the estimates meet it. The hard gate is ΔCOST ≤ the cost model's headroom inside the 30 % reserve ("sound first"), and QUAD itself stays ≤ the absolute baseline.
 - **Principled-ness.**
   - The provenance rule is checked per task.
   - Families are graphs, so PLATE is a corner, not a TYPE.

@@ -57,21 +57,31 @@ against the ring's 48 while crossfading.
 - **CPU: "sound first"** (owner, 2026-10-04).
   - QUAD's worst case is the **target**: 485 cycles per output sample,
     239 instructions per ring sample.
-  - The **hard limit** is the measured system worst case: 8 voices of the
-    costliest patch, every FX at its worst, ORBIT running and the UI. It
-    must stay inside the audio budget, 70 % of the CPU
-    (`AUDIO_BUDGET_PERCENT` in `hw.rs`, ADR 0020), which is 7,000 cycles
-    per sample on rev V. That keeps the **30 % reserve** for UI, MIDI and
-    interrupts whole.
+  - The **hard limit** is the cost model's headroom inside the audio
+    budget, which is 70 % of the CPU (`AUDIO_BUDGET_PERCENT` in `hw.rs`,
+    ADR 0020): 7,000 cycles per sample on rev V. That keeps the **30 %
+    reserve** for UI, MIDI and interrupts whole.
+    - Admission bills voices by cost, and ADR 0040 gives the costliest
+      patch, A16 ∪ A17 at 889, six voices.
+    - So the headroom is 7,000 − 6 × 889 − `FxBus::COST`: **486** cycles
+      per sample in the default build (`COST` 1,180), and **176** with
+      `master-tape` (1,490), checked against the code on 2026-10-04.
+    - **The gate is ΔCOST ≤ headroom**, where ΔCOST is the costliest TYPE's
+      BUS row above QUAD's.
+    - A stress run (six admitted voices, every FX, ORBIT, the UI) only
+      confirms it, with OVER 0 and DROPS 0. It would pass by construction,
+      so it cannot be the gate.
   - A TYPE may exceed the target when the A/B shows its cheaper design
-    sounds wrong and the system worst case still keeps the reserve.
+    sounds wrong and its ΔCOST fits the headroom.
   - Cheaper fallback designs are a last resort: they are used only if the
     reserve would be breached, or the A/B hears no difference.
 - **Moving reads are few and costed.** A read whose length changes within a
   block costs about 7 instructions more than two fixed reads, because it
   works out its index per sample instead of using `ring.rs`'s wrap-free
   segments. So each new TYPE keeps 5–6 of them:
-  - output taps are fixed, at fractions of each line's maximum length;
+  - output taps are fixed, at fractions of each line's maximum length,
+    except one early tap per side at a fraction of the SIZE-0 length, which
+    keeps the plate corner's onset short;
   - BURST moves at most 4 of its taps a block, by a scheduler (tap 0 is
     the input register, and tap 11 doubles as REGEN's read). Taps 1–10
     slide at up to ½ sample per sample, and tap 11 at ⅛, so REGEN's tail
@@ -201,12 +211,11 @@ against the ring's 48 while crossfading.
   - measures a moving pair's cost;
   - benches the worst-case BURST, ROOM-loop and HALL-loop kernels on the
     chip, before any TYPE work;
-  - measures the system worst case on the unit with QUAD, which gives the
-    headroom.
+  - recomputes the headroom from `cost_test` and `fx_bus.rs`, and runs the
+    confirming stress run with QUAD.
 
   The gates are absolute:
-  - the system worst case, re-measured as each TYPE lands, must keep the
-    reserve;
+  - ΔCOST ≤ headroom, recomputed as each TYPE lands;
   - each TYPE's bench row is recorded against the target.
 
   `FxBus::COST` is unchanged while every TYPE ≤ QUAD. A dearer TYPE raises
@@ -221,8 +230,8 @@ against the ring's 48 while crossfading.
   loss applies to every TYPE alike.
 - **Order.** Step 0 (the baseline and the BURST spike) comes first, and
   tempo sync waits for ORBIT on `main`. ADR 0085 is accepted once every
-  A/B pair passes the spec's criterion, the system worst case with every TYPE keeps the 30 % reserve, (each time metric within ±30 % of
-  the named Midiverb plugin's, or an owner-signed ear exception) and UAT
+  A/B pair passes the spec's criterion, (each time metric within ±30 % of the named Midiverb plugin's, or an
+  owner-signed ear exception), every TYPE's ΔCOST fits the headroom, and UAT
   passes, with measured CPU and flash recorded here.
 - **What it rules out.** FREEZE, per-TYPE knob memory and external
   modulation of the reverb, unless a later ADR adds them (#345 for the
