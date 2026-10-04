@@ -647,15 +647,14 @@ fn the_costliest_patch_gets_six_voices_on_rev_v() {
     assert_eq!(voices_at(CPU_HZ_REV_V, &p), 6);
     assert_eq!(MAX_VOICES, 8, "the budget stops it short of the pool");
     assert_eq!(voices_at(CPU_HZ_REV_Y, &p), if TAPE { 4 } else { 5 });
-    // ADR 0091's note-on burst (836) beside the bus admits five on rev V
-    // ((7,000 − 2,016) / 909 = 5.5), with the tape too; with ORBIT's own
-    // 171 on top, five (four with the tape).
+    // ADR 0091: while ORBIT plays, its own block (171) and a five-note
+    // burst (836) are reserved beside the bus: five on rev V
+    // ((7,000 − 2,187) / 909 = 5.3; four with the tape). Stopped, six.
     use chimera_core::instrument::Instrument;
     use chimera_core::orbit::runner::OrbitRunner;
     let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
-    assert_eq!((budget - Instrument::RESERVED.0) / 909, 5);
-    let orbit = (budget - Instrument::RESERVED.0 - OrbitRunner::COST.0) / 909;
-    assert_eq!(orbit, if TAPE { 4 } else { 5 });
+    let playing = FxBus::COST.0 + Instrument::BURST.0 + OrbitRunner::COST.0;
+    assert_eq!((budget - playing) / 909, if TAPE { 4 } else { 5 });
     // With the folder on, unrouted (45, ADR 0060): 954, six on rev V and
     // four on rev Y (five and four with the tape); the drive stage too
     // (1,011): five on rev V, four on rev Y, with the tape too. No factory
@@ -672,23 +671,18 @@ fn the_costliest_patch_gets_six_voices_on_rev_v() {
 /// and DRIVE in; all at LP24) beside the bus alone, every factory Sound
 /// fits six voices on rev V and five on rev Y; the TX and single-oscillator
 /// Sounds all eight on rev V (seven with the master tape for the TX).
-/// ADR 0091 admits beside the bus and a five-note burst (836), and ORBIT's
-/// own block (171) while it plays: on rev V the TX Sounds get seven (six
-/// with ORBIT or the tape), MORPH PAD and MORPH KEYS five, SAW LEAD and
-/// SQR BASS eight (seven with ORBIT and the tape).
+/// That is what ORBIT stopped admits. ADR 0091: while ORBIT plays, its own
+/// block (171) and a five-note burst (836) are reserved too: on rev V the
+/// TX Sounds get six, MORPH PAD and MORPH KEYS five, SAW LEAD and SQR BASS
+/// eight (seven with the tape).
 #[test]
-fn every_factory_sound_fits_six_voices_on_rev_v_and_is_admitted_five() {
+fn every_factory_sound_gets_at_least_six_voices_on_rev_v() {
     use chimera_core::instrument::Instrument;
     use chimera_core::orbit::runner::OrbitRunner;
     const FITS: [u32; 8] = if TAPE {
         [7, 7, 7, 7, 8, 8, 6, 6]
     } else {
         [8, 8, 8, 8, 8, 8, 6, 6]
-    };
-    const ADMITTED: [u32; 8] = if TAPE {
-        [6, 6, 6, 6, 8, 8, 5, 5]
-    } else {
-        [7, 7, 7, 7, 8, 8, 5, 5]
     };
     const ORBIT: [u32; 8] = if TAPE {
         [6, 6, 6, 6, 7, 7, 5, 5]
@@ -704,12 +698,7 @@ fn every_factory_sound_fits_six_voices_on_rev_v_and_is_admitted_five() {
         };
         assert_eq!(at(CPU_HZ_REV_V, FxBus::COST), FITS[i], "factory {i}");
         assert!(at(CPU_HZ_REV_Y, FxBus::COST) >= 5, "factory {i} on rev Y");
-        assert_eq!(
-            at(CPU_HZ_REV_V, Instrument::RESERVED),
-            ADMITTED[i],
-            "factory {i}"
-        );
-        let playing = Instrument::RESERVED + OrbitRunner::COST;
+        let playing = FxBus::COST + Instrument::BURST + OrbitRunner::COST;
         assert_eq!(at(CPU_HZ_REV_V, playing), ORBIT[i], "factory {i}, ORBIT");
     }
 }
@@ -1091,10 +1080,10 @@ fn stress(keys_first: bool, blocks: usize) -> (usize, u32) {
 /// The bench's STRESS run: 10 s, past NEW's four bars.
 const STRESS_BLOCKS: usize = 7_500;
 
-/// ADR 0091: in the STRESS scene, what the voices and bus render leaves
-/// room for a burst in every block, and with the keys down a block after
-/// ORBIT starts, for ORBIT's own block too. Keys down before it keep
-/// sounding past that (its reserve refuses, it never sheds).
+/// ADR 0091: in the STRESS scene with the keys down a block after ORBIT
+/// starts, what the voices and bus render leaves room for ORBIT's own
+/// block and a burst in every block. Keys down before it keep sounding
+/// past that (its reserve refuses, it never sheds), within the budget.
 #[test]
 fn orbit_and_a_burst_fit_beside_what_renders() {
     use chimera_core::instrument::Instrument;
@@ -1102,8 +1091,10 @@ fn orbit_and_a_burst_fit_beside_what_renders() {
     let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
     for keys_first in [true, false] {
         let (voices, most) = stress(keys_first, STRESS_BLOCKS);
-        let orbit = if keys_first { 0 } else { OrbitRunner::COST.0 };
-        let room = Instrument::BURST.0 + orbit;
+        let room = match keys_first {
+            true => 0,
+            false => Instrument::BURST.0 + OrbitRunner::COST.0,
+        };
         assert!(
             most + room <= budget,
             "keys first {keys_first}: {most} + {room} of {budget}, {voices} voices"

@@ -442,15 +442,12 @@ const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
 impl Instrument {
     /// Reserved from the voice budget for a block's burst of note-ons
-    /// (ADR 0091): five, ORBIT's five rings striking in one block, the most
-    /// it sends, and a hand's chord; each costs the pick and a voice
-    /// start, and the first the block's `recost`. A bigger burst runs into
-    /// the 30 % headroom, a few thousand cycles a note.
+    /// while ORBIT plays (ADR 0091): five, its five rings striking in one
+    /// block, the most it sends, with a hand's chord beside them; each
+    /// costs the pick and a voice start, and the first the block's
+    /// `recost`. With ORBIT stopped nothing is reserved: a DIN chord comes
+    /// a note a millisecond, spread over blocks, and the headroom takes it.
     pub const BURST: Cost = Cost(836); // 5 note-ons in one block, 53,468 worst over four runs (ORBIT's first block, every voice cold), measured 2026-10-04, bench ORBIT PHASES, rev V at 480 MHz; / 64, rounded up
-
-    /// Spent outside the pool every block, ORBIT aside: the FX bus and a
-    /// burst of note-ons. A patch edit sheds down to it (ADR 0027).
-    pub const RESERVED: Cost = Cost(FxBus::COST.0 + Self::BURST.0);
 
     pub fn new(sample_rate: u32, budget: SampleBudget) -> Self {
         // SAFETY: `init_in_place` writes every field of the slot.
@@ -524,14 +521,14 @@ impl Instrument {
     }
 
     /// Spent outside the pool each block, so a new voice must fit beside
-    /// it: the FX bus, a burst of note-ons, and ORBIT's own block while it
-    /// plays (ADR 0091), which is exactly while it hands a harmony.
+    /// it: the FX bus, and while ORBIT plays its own block and a burst of
+    /// note-ons (ADR 0091). It plays exactly while it hands a harmony.
     fn reserved(&self) -> Cost {
         let orbit = match self.harmony {
-            Some(_) => OrbitRunner::COST,
+            Some(_) => OrbitRunner::COST + Self::BURST,
             None => Cost::ZERO,
         };
-        Self::RESERVED + orbit
+        FxBus::COST + orbit
     }
 
     /// Voices that ring a pool set, at most `SYM_SLOTS`: for the bench,
@@ -903,9 +900,9 @@ impl Instrument {
                 self.alloc.recost(v, costs[p] + held);
             }
         }
-        // Not ORBIT's: its reserve refuses new voices, it never fades out
-        // sounding ones (ADR 0091).
-        while let Some(v) = self.alloc.shed(Self::RESERVED) {
+        // Only the bus: ORBIT's reserve refuses new voices, it never fades
+        // out sounding ones (ADR 0091).
+        while let Some(v) = self.alloc.shed(FxBus::COST) {
             self.shed(v);
         }
     }

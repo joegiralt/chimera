@@ -4,6 +4,7 @@
 
 mod common;
 
+use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::modal::{ResonatorMode, out_gain};
 use chimera_core::dsp::note_to_freq;
 use chimera_core::dsp::voice::Voice;
@@ -33,10 +34,7 @@ fn off(ch: u8, note: u8) -> NoteEvent {
 
 /// A budget with room for `voices` voices of `cost` beside the whole FX bus.
 fn budget(cost: u32) -> SampleBudget {
-    SampleBudget::for_cpu(
-        ((chimera_core::instrument::Instrument::RESERVED.0 + cost) as u64 * 480_000).div_ceil(7)
-            as u32,
-    )
+    SampleBudget::for_cpu(((FxBus::COST.0 + cost) as u64 * 480_000).div_ceil(7) as u32)
 }
 
 use common::InstRig as Rig;
