@@ -1072,6 +1072,26 @@ against `BlockBudget::budget_cycles` (448,000).
 - **REV QUAD, REV QUAD S bench:** deferred (the unit was busy). The bench
   build carries the REV QUAD S row.
 
+### Task 7: the switch (2026-10-04, host)
+
+- **Phases:** FADE OUT 15, CLEAR 1, FADE IN 15, as specified. CLEAR
+  zeroes the arena in one block and also resets the decimator, so FADE IN
+  is bit for bit a fresh engine fed the send from its first block, whatever
+  the send (the spec kept the decimator; the dropped CLEAR block would
+  leave a gap in its history anyway).
+- **AXI:** `FxBus` +48 B (the latched `ReverbParams`; the TYPE and the
+  phase sit in padding).
+- **Flash:** `--features orbit` `.text` 575,016 → 574,704 (**−312**),
+  `.rodata` 150,112 (±0), `text` 725,792 → 725,480; plain release `text`
+  705,976 → 705,664 (−312), against `9aba0a0b`. MIX's ramp and the
+  switch's share one out-of-line loop, which more than pays for the
+  switch.
+- **REV SWITCH MAX bench:** deferred to the next unit session. The bench
+  build carries the row (QUAD → QUAD every 40 blocks over 2,000, six
+  A16+17 voices, every effect at its worst); gate ≤
+  `BlockBudget::budget_cycles`. If it fails, CLEAR becomes 4
+  quarter-arena blocks and `the_phases_run_15_1_15` becomes 15/4/15.
+
 ---
 
 ## Self-review

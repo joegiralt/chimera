@@ -196,6 +196,13 @@ impl FxBus {
         &self.reverb
     }
 
+    /// Start a reverb TYPE switch now, QUAD → QUAD: the bench's REV SWITCH
+    /// MAX.
+    #[doc(hidden)]
+    pub fn force_reverb_restart(&mut self) {
+        self.reverb.force_restart();
+    }
+
     /// The compressor's gain reduction, dB, for the GR meter.
     pub fn master_gr_db(&self) -> f32 {
         self.comp.gr_db()

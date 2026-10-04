@@ -1,6 +1,9 @@
 //! The master reverb TYPEs (reverb TYPEs spec, ADR 0085): `Reverb` runs
 //! the half-band rate change, SMEAR's source and depth, and MIX, and
-//! dispatches the block to the TYPE's engine over the one shared arena.
+//! dispatches the block to the TYPE's engine over the one shared arena. A
+//! TYPE change runs the switch (§ Switching TYPE): the old tail fades out
+//! on its latched knobs, one block clears the arena, and the new TYPE
+//! fades in as a fresh engine.
 
 pub mod arena;
 pub mod parts;
@@ -14,7 +17,7 @@ use crate::dsp::Stereo;
 use crate::dsp::clampf;
 use crate::dsp::ease::{Ease, Gate, at, ease_coeff, step_of};
 use crate::dsp::halfband::{Decimator, HALF, Interpolator};
-use crate::dsp::reverb::ReverbParams;
+use crate::dsp::reverb::{ReverbParams, ReverbType};
 use crate::dsp::ring::{FULL_SCALE, STAGES, WET_GAIN, smear_depth, smear_hz};
 use arena::ReverbArena;
 use parts::{Wander, wander_seeds};
@@ -33,9 +36,60 @@ pub enum EngineState {
 
 const _: () = assert!(core::mem::size_of::<EngineState>() <= 160);
 
+/// Blocks each fade of the switch takes: 20 ms at 48 kHz.
+pub const FADE_BLOCKS: u8 = 15;
+
+/// Where a TYPE switch is: the phase the next block runs. Zero bytes are
+/// `Running`.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SwitchPhase {
+    Running,
+    /// The old TYPE on its latched knobs, its return ramping to 0: `left`
+    /// blocks of it, the ramp at `left / FADE_BLOCKS`.
+    FadeOut {
+        left: u8,
+    },
+    /// No engine: the arena, the state and the half-bands cleared, the
+    /// return exactly 0.
+    Clear,
+    /// The new TYPE, fresh, its return ramping from 0: `left` blocks of it.
+    FadeIn {
+        left: u8,
+    },
+}
+
+impl SwitchPhase {
+    /// This block's return ramp `(from, to)`; `None` without one.
+    pub fn gains(self) -> Option<(f32, f32)> {
+        let g = |n: u8| f32::from(n) / f32::from(FADE_BLOCKS);
+        match self {
+            Self::FadeOut { left } => Some((g(left), g(left - 1))),
+            Self::FadeIn { left } => Some((g(FADE_BLOCKS - left), g(FADE_BLOCKS + 1 - left))),
+            Self::Running | Self::Clear => None,
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Self::FadeOut { left: 1 } => Self::Clear,
+            Self::FadeOut { left } => Self::FadeOut { left: left - 1 },
+            Self::Clear => Self::FadeIn { left: FADE_BLOCKS },
+            Self::FadeIn { left: 1 } | Self::Running => Self::Running,
+            Self::FadeIn { left } => Self::FadeIn { left: left - 1 },
+        }
+    }
+}
+
 pub struct Reverb {
     arena: ReverbArena,
+    /// The TYPE `state` runs.
+    kind: ReverbType,
     state: EngineState,
+    phase: SwitchPhase,
+    /// The knobs the engine runs: each block's, until a switch starts;
+    /// then held, so FADE OUT never plays the new TYPE's.
+    latched: ReverbParams,
     dec: Decimator,
     up_l: Interpolator,
     up_r: Interpolator,
@@ -65,11 +119,11 @@ pub struct Reverb {
 
 #[cfg(any(test, feature = "smear-probe"))]
 crate::in_place::field_list!(Reverb => Reverb {
-    arena, state, dec, up_l, up_r, smear, smear_on, wander, wanders_rate, wanders_set, frozen, hard_gate, paths, depth, mix
+    arena, kind, state, phase, latched, dec, up_l, up_r, smear, smear_on, wander, wanders_rate, wanders_set, frozen, hard_gate, paths, depth, mix
 });
 #[cfg(not(any(test, feature = "smear-probe")))]
 crate::in_place::field_list!(Reverb => Reverb {
-    arena, state, dec, up_l, up_r, smear, smear_on, wander, wanders_rate, wanders_set, frozen, paths, depth, mix
+    arena, kind, state, phase, latched, dec, up_l, up_r, smear, smear_on, wander, wanders_rate, wanders_set, frozen, paths, depth, mix
 });
 
 /// QUAD's SMEAR seed: its four lines' wanders hash it.
@@ -92,7 +146,10 @@ impl Reverb {
     pub fn new() -> Self {
         Self {
             arena: ReverbArena::new(),
+            kind: ReverbType::Quad,
             state: EngineState::Quad(QuadState::default()),
+            phase: SwitchPhase::Running,
+            latched: ReverbParams::default(),
             dec: Decimator::new(),
             up_l: Interpolator::new(),
             up_r: Interpolator::new(),
@@ -114,11 +171,15 @@ impl Reverb {
         // SAFETY: the arena and half-bands are integer and float arrays and
         // integers; `state` is `EngineState`, whose variant 0 is `Quad` and
         // every field of every variant an integer, a float or a `bool`
-        // (`false`); `smear` and `mix` are `Ease`s of a float and a
-        // `bool`, `smear_on` a `Gate` of a `u8` and a `bool`, `wander`
-        // integers and floats, the rest integers and `bool`s. All are valid
-        // as zero bytes, and zero is `new()`'s state but for the wanders'
-        // seeds and phases, set below.
+        // (`false`); `kind` and `phase` are `repr(u8)` enums whose 0 is
+        // `Quad` and `Running`, `latched` floats and two `repr(u8)` enums
+        // (0 is `Quad`, `Off`); `smear` and `mix` are `Ease`s of a float
+        // and a `bool`, `smear_on` a `Gate` of a `u8` and a `bool`,
+        // `wander` integers and floats, the rest integers and `bool`s. All
+        // are valid as zero bytes, and zero is `new()`'s state but for the
+        // wanders' seeds and phases, set below, and `latched`'s knobs,
+        // which a block writes before it reads them unless the first
+        // block already switches: that FADE OUT plays an empty arena.
         let r = unsafe {
             slot.as_mut_ptr().write_bytes(0, 1);
             slot.assume_init_mut()
@@ -155,6 +216,62 @@ impl Reverb {
         &self.arena
     }
 
+    /// Where a TYPE switch is.
+    pub fn phase(&self) -> SwitchPhase {
+        self.phase
+    }
+
+    /// The TYPE the engine runs: the old one until CLEAR.
+    pub fn running(&self) -> ReverbType {
+        self.kind
+    }
+
+    /// A fresh reverb running `kind`, as CLEAR leaves it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn of_type(kind: ReverbType) -> Self {
+        let mut r = Self::new();
+        r.clear(kind);
+        r
+    }
+
+    /// Start a switch, as a TYPE change does, to whatever TYPE is set at
+    /// CLEAR: from RUNNING, FADE OUT from 1; from FADE IN, FADE OUT from
+    /// the gain it reached (from none, straight to CLEAR); in FADE OUT or
+    /// CLEAR, the switch runs on. The bench's REV SWITCH MAX and the tests
+    /// run QUAD → QUAD by it.
+    #[doc(hidden)]
+    pub fn force_restart(&mut self) {
+        self.phase = match self.phase {
+            SwitchPhase::Running => SwitchPhase::FadeOut { left: FADE_BLOCKS },
+            SwitchPhase::FadeIn { left: FADE_BLOCKS } => SwitchPhase::Clear,
+            SwitchPhase::FadeIn { left } => SwitchPhase::FadeOut {
+                left: FADE_BLOCKS - left,
+            },
+            s => s,
+        };
+    }
+
+    /// CLEAR: no sample of the old tail survives. The arena, `kind`'s
+    /// fresh state, SMEAR's eases and wanders, and the half-bands'
+    /// histories: the decimator's too, so the new TYPE is bit for bit a
+    /// fresh engine fed the send from FADE IN's first block (the send
+    /// CLEAR drops would leave a 64-sample gap in it anyway). MIX keeps
+    /// easing: it is the player's.
+    fn clear(&mut self, kind: ReverbType) {
+        self.arena.clear();
+        self.kind = kind;
+        // Every TYPE plays QUAD's engine until its own lands (Tasks 8–11).
+        self.state = EngineState::Quad(QuadState::default());
+        self.dec = Decimator::new();
+        self.up_l = Interpolator::new();
+        self.up_r = Interpolator::new();
+        self.smear = Ease::default();
+        self.smear_on = Gate::default();
+        self.wander = QUAD_WANDERS;
+        (self.wanders_rate, self.wanders_set) = (0, false);
+        (self.paths, self.depth) = ((false, false), 0.0);
+    }
+
     /// QUAD's state, while QUAD runs.
     pub fn quad(&self) -> Option<&QuadState> {
         match &self.state {
@@ -173,6 +290,24 @@ impl Reverb {
         sample_rate: u32,
         out: &mut Stereo,
     ) {
+        let switching = matches!(self.phase, SwitchPhase::FadeOut { .. } | SwitchPhase::Clear);
+        if !switching {
+            if p.kind != self.kind {
+                self.force_restart();
+            } else {
+                self.latched = *p;
+            }
+        }
+        let phase = self.phase;
+        self.phase = phase.next();
+        let (from, to) = self.mix.step(mix, ease_coeff(sample_rate));
+        if phase == SwitchPhase::Clear {
+            self.clear(p.kind);
+            out.l.fill(0.0);
+            out.r.fill(0.0);
+            return;
+        }
+        let p = &self.latched;
         let mut u = [0.0f32; HALF];
         self.dec.process(send, &mut u);
         let mut lr = [[0.0f32; HALF]; 2];
@@ -229,23 +364,33 @@ impl Reverb {
         }
         self.up_l.process(&lr[0], &mut out.l);
         self.up_r.process(&lr[1], &mut out.r);
-        let (from, to) = self.mix.step(mix, ease_coeff(sample_rate));
         let gain = WET_GAIN * to / FULL_SCALE;
         if from == to {
             for s in out.l.iter_mut().chain(out.r.iter_mut()) {
                 *s *= gain;
             }
         } else {
-            let (g0, step) = (
+            ramp(
+                out,
                 WET_GAIN * from / FULL_SCALE,
                 step_of((from, to), BLOCK_SIZE) * WET_GAIN / FULL_SCALE,
             );
-            for side in [&mut out.l, &mut out.r] {
-                for (i, s) in side.iter_mut().enumerate() {
-                    *s *= at(g0, step, i);
-                }
-            }
         }
+        // The switch's ramp: its own pass, so FADE IN is a fresh engine's
+        // return times the ramp, bit for bit.
+        if let Some(r) = phase.gains() {
+            ramp(out, r.0, step_of(r, BLOCK_SIZE));
+        }
+    }
+}
+
+/// Both sides × a ramp from `g0` by `step` a sample: MIX's, and the
+/// switch's. Out of line: one copy of the loop for both.
+#[inline(never)]
+fn ramp(out: &mut Stereo, g0: f32, step: f32) {
+    for (i, (l, r)) in out.l.iter_mut().zip(out.r.iter_mut()).enumerate() {
+        let g = at(g0, step, i);
+        (*l, *r) = (*l * g, *r * g);
     }
 }
 

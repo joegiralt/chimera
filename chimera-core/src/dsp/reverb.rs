@@ -9,8 +9,9 @@ use crate::dsp::ring::{self, RingControls, STAGES, size_step, stage_len};
 use crate::ui::glyph::{CompositeId, FocusGlyph};
 
 /// A reverb TYPE, in screen order (spec § The TYPE list). Its disk code
-/// is `DiskCode`'s, never its place here.
+/// is `DiskCode`'s, never its place here. Zero bytes are QUAD.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
 pub enum ReverbType {
     #[default]
     Quad,
@@ -44,7 +45,9 @@ impl ReverbType {
 }
 
 /// Which lengths follow the tempo (spec § Tempo sync; Task 12 reads it).
+/// Zero bytes are OFF.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
 pub enum RevSync {
     #[default]
     Off,

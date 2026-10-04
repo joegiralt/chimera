@@ -137,6 +137,11 @@ const REV: [FxRow; REV_ROWS] = [("REV QUAD", worst_reverb), ("REV QUAD S", smear
 /// The STRESS rows' blocks: 10 s, past NEW's four bars at its BPM.
 const STRESS_BLOCKS: u32 = 7_500;
 
+/// REV SWITCH MAX's blocks, and a switch every `SWITCH_EVERY` of them:
+/// FADE OUT, CLEAR, the refill after it and FADE IN all land inside.
+const SWITCH_BLOCKS: u32 = 2_000;
+const SWITCH_EVERY: u32 = 40;
+
 /// Every effect at its worst: the BUS row's.
 fn worst_bus(s: &mut AudioShared, b: u32) {
     worst_chorus(s);
@@ -628,7 +633,8 @@ pub fn run(
         [rig.stress(true).0.0, rig.stress(false).0.0],
         BlockBudget::for_cpu(clocks.cpu_hz).budget_cycles(),
     );
-    show_reverb(rec, &rev, fx[0], bus_v, stress);
+    let switch = rig.switch_max();
+    show_reverb(rec, &rev, fx[0], bus_v, stress, switch);
     hold(clocks);
     let mut routing = [Counts::default(); ROUTING_ROWS];
     for (row, &(_, part, each)) in routing.iter_mut().zip(&ROUTING) {
@@ -1108,6 +1114,47 @@ impl Rig<'_> {
         }
         ((worst, most, orbit, t0), ph)
     }
+
+    /// REV SWITCH MAX (reverb TYPEs spec § Bench rows): the costliest whole
+    /// callback block over `SWITCH_BLOCKS`, and the block budget it must
+    /// stay under: six `a16_a17` voices held on Part 1, every effect at its
+    /// worst, the reverb forced through a switch every `SWITCH_EVERY`
+    /// blocks, QUAD → QUAD (Tasks 8–11 step through their TYPEs). The one
+    /// CLEAR block, 46 KB zeroed, and the voices' refill after it are what
+    /// a mean would hide.
+    #[inline(never)]
+    fn switch_max(&mut self) -> (u32, u32) {
+        let budget = SampleBudget::for_cpu(u32::MAX);
+        let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
+        let fx = FxBus::init_in_place(self.fx_slot);
+        let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
+        shared.fx = FxParams::default();
+        for (i, part) in shared.parts.iter_mut().enumerate() {
+            part.mix.sends = [0.5; FX_SENDS];
+            part.mix.channel = MidiChannel::clamped(i as u8);
+        }
+        shared.parts[0].params = a16_a17();
+        hold_notes(inst, shared, 0);
+        let mut out = [[DacSample::ZERO; BLOCK_SIZE * 2]; DacPair::ALL.len()];
+        let mut worst = 0u32;
+        for b in 0..WARM_BLOCKS + SWITCH_BLOCKS {
+            worst_bus(shared, b);
+            if b % SWITCH_EVERY == 0 {
+                fx.force_reverb_restart();
+            }
+            let start = DWT::cycle_count();
+            inst.render(fx, &mut self.dac, shared, &mut self.scope);
+            for (pair, o) in DacPair::ALL.into_iter().zip(out.iter_mut()) {
+                interleave(self.dac.out(), pair, o);
+            }
+            let c = DWT::cycle_count().wrapping_sub(start);
+            black_box(&out);
+            if b >= WARM_BLOCKS {
+                worst = worst.max(c);
+            }
+        }
+        (worst, BlockBudget::for_cpu(self.cpu_hz).budget_cycles())
+    }
 }
 
 /// One ORBIT block's phases from `chimera_core::probe`'s stamps: 1 intake,
@@ -1412,13 +1459,15 @@ fn show(
 }
 
 /// The REVERB screen: each `REV` row less MIX and BUS+V as read, three to
-/// a line as the FX screen's, then the costliest block against its budget.
+/// a line as the FX screen's, then STRESS's and REV SWITCH MAX's costliest
+/// blocks against their budget.
 fn show_reverb(
     rec: &mut Recorder<'_, impl ChimeraDisplay>,
     rev: &[u32; REV_ROWS],
     mix: u32,
     bus_v: u32,
     ([first, after], budget): ([u32; 2], u32),
+    (switch, switch_budget): (u32, u32),
 ) {
     rec.clear();
     rec.heading("REVERB");
@@ -1440,6 +1489,9 @@ fn show_reverb(
     // Keys before ORBIT starts, then after, as MEMORY's STRESS.
     let _ = write!(line, "STRESS {first}/{after}/{budget}");
     rec.line(Face::Label(theme::INK2), line.as_str(), (4, y + 10));
+    line.clear();
+    let _ = write!(line, "REV SWITCH MAX {switch}/{switch_budget}");
+    rec.line(Face::Label(theme::INK2), line.as_str(), (4, y + 20));
     rec.flush();
 }
 
