@@ -145,6 +145,9 @@ A bench build's numbers as text: the text the bench screens draw, one screen lin
 
 ```
 seed 2864434397
+card_type SDHC
+card_mb 15931
+free_mb 15012
 file_kb 8388
 file_runs 2
 file_created 0
@@ -165,7 +168,7 @@ streams 16
 OK
 ```
 
-(Added 2026-10-04, bench builds only; the numbers above are made up.) How fast the card reads while audio runs, for sizing TAPE's and TRON's streams. KB is 1000 B. It times raw multi-block reads (the SD driver's own, CMD18) over the runs of two 4 MiB test files, `/CHIMERA/BENCH/CARD0.BIN` and `CARD1.BIN`, which it writes on first use aimed a quarter and three quarters into the card (`FatStore::aim`), so reads that switch between them cross half the card (`file_apart_mib`). A file is written only with 5 MiB free (`FatStore::has_room`), so the card never fills; a write that fails is deleted. The runs come from `FatStore::runs`, so a TAPE that streams from blocks it looked up once is what is measured.
+(Added 2026-10-04, bench builds only; the numbers above are made up.) How fast the card reads while audio runs, for sizing TAPE's and TRON's streams. KB is 1000 B. It times raw multi-block reads (the SD driver's own, CMD18) over the runs of two 4 MiB test files, `/CHIMERA/BENCH/CARD0.BIN` and `CARD1.BIN`, which it writes on first use aimed a quarter and three quarters into the card (`FatStore::aim`), so reads that switch between them cross half the card (`file_apart_mib`). A file is written only with 5 MiB free, counted from the FAT (`FatStore::free_bytes`, a read of the whole FAT: a few seconds on a 32 GB card, inside the deadline), so the card never fills; a write that fails is deleted. `card_type` (SDSC, or SDHC up to 32 GB and SDXC past it), `card_mb` and `free_mb` (after the test files) describe the card; the driver doesn't read the CID, so there is no maker or product name. The runs come from `FatStore::runs`, so a TAPE that streams from blocks it looked up once is what is measured.
 
 `seq_*` read 768 KiB each of the first file in 512 B, 4 KB and 16 KB transfers, no chord. Then an eight-note chord sounds on channel 1 (`loaded_voices`, `loaded_load_pct` say how much load that was) while `rand_4k_*` time 1024 reads of 4 KB at random 4 KB-aligned places in either file, and `streams_kb_s` times TRON's pattern: eight streams, four in each file, each refilling 4 KB in turn, 24 rounds. `streams` is the number of 24 kHz 12-bit streams (36 KB/s each) at half that interleaved rate. `overruns` counts audio blocks missed while `card` ran. `seed` names the random reads; `card seed=N` repeats them. `card clean` deletes the test files and `/CHIMERA/BENCH`'s contents.
 

@@ -192,10 +192,11 @@ impl<'a, B: Blocks> Fs<'a, B> {
         Ok(e.len)
     }
 
-    /// Whether `bytes` fit in free clusters (a new file's entry aside).
-    pub fn has_room(&mut self, bytes: u32) -> Result<bool, FsError<B::Error>> {
-        let clusters = bytes.div_ceil(self.table.layout().cluster_bytes());
-        self.table.has_free(clusters)
+    /// Bytes in free clusters, counted from the FAT (FSInfo's count is
+    /// only a hint): one read of the whole FAT.
+    pub fn free_bytes(&mut self) -> Result<u64, FsError<B::Error>> {
+        let per = u64::from(self.table.layout().cluster_bytes());
+        Ok(u64::from(self.table.free_count()?) * per)
     }
 
     /// The allocator's next search starts `per_mille` of the way into the

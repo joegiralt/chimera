@@ -125,6 +125,43 @@ pub fn span_us(cycles: u32, cpu_hz: u32, ms: u32) -> Option<u32> {
     (ms < CYCLE_SPAN_MS).then(|| cycles / (cpu_hz / 1_000_000).max(1))
 }
 
+/// The card's class, from its addressing and size (SD spec: SDHC is block
+/// addressed up to 32 GB, SDXC past it).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CardKind {
+    Sdsc,
+    Sdhc,
+    Sdxc,
+}
+
+impl CardKind {
+    pub fn of(block_addressed: bool, bytes: u64) -> CardKind {
+        match (block_addressed, bytes) {
+            (false, _) => CardKind::Sdsc,
+            (true, b) if b <= 32_000_000_000 => CardKind::Sdhc,
+            (true, _) => CardKind::Sdxc,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            CardKind::Sdsc => "SDSC",
+            CardKind::Sdhc => "SDHC",
+            CardKind::Sdxc => "SDXC",
+        }
+    }
+}
+
+/// The card itself. The driver doesn't read the CID, so no maker or
+/// product name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CardInfo {
+    pub kind: CardKind,
+    pub bytes: u64,
+    /// Free once the test files are on it.
+    pub free_bytes: u64,
+}
+
 /// The test files as found or written.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Files {
@@ -148,6 +185,7 @@ pub struct Load {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CardSpeed {
     pub seed: u32,
+    pub card: Option<CardInfo>,
     pub files: Option<Files>,
     /// Per `SEQ_BLOCKS`, no chord.
     pub seq: [Option<Throughput>; SEQ_BLOCKS.len()],
@@ -195,7 +233,7 @@ impl CardFail {
         match self {
             CardFail::NoAudio => "audio is not running",
             CardFail::Fragmented => "test file too fragmented: run card clean",
-            CardFail::NoRoom => "under 5 MiB free: nothing written",
+            CardFail::NoRoom => "under 5 MiB free: no test file written",
             CardFail::SlowWrite => "card too slow to write a test file: deleted",
             CardFail::Timeout => "timeout",
             CardFail::ClockWrap => "a timed span outran the cycle counter",
@@ -222,6 +260,11 @@ pub enum CardAnswer {
 /// `card`'s body: `key value` lines, for the phases that completed.
 pub fn write_card(s: &CardSpeed, t: &mut impl Write) -> fmt::Result {
     writeln!(t, "seed {}", s.seed)?;
+    if let Some(c) = &s.card {
+        writeln!(t, "card_type {}", c.kind.name())?;
+        writeln!(t, "card_mb {}", c.bytes / 1_000_000)?;
+        writeln!(t, "free_mb {}", c.free_bytes / 1_000_000)?;
+    }
     if let Some(f) = &s.files {
         writeln!(t, "file_kb {}", FILES as u32 * FILE_BYTES / 1_000)?;
         writeln!(t, "file_runs {}", f.runs)?;

@@ -244,20 +244,6 @@ impl<'a, B: Blocks> Table<'a, B> {
         Ok(n)
     }
 
-    /// Whether `n` clusters are free, scanning only until they are found.
-    pub fn has_free(&mut self, n: u32) -> Result<bool, FsError<B::Error>> {
-        let mut found = 0;
-        for c in FIRST_CLUSTER..FIRST_CLUSTER + self.layout.clusters() {
-            if found >= n {
-                break;
-            }
-            if self.entry(c)? == FREE {
-                found += 1;
-            }
-        }
-        Ok(found >= n)
-    }
-
     /// Free clusters in `2..clusters + 2`.
     pub fn free_count(&mut self) -> Result<u32, FsError<B::Error>> {
         let mut n = 0;

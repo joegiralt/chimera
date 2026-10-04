@@ -1,7 +1,7 @@
 use chimera_core::console::{
-    CYCLE_SPAN_MS, CardArg, CardSpeed, Console, Extents, FILE_BLOCKS, FILES, Latency, MAX_RUNS,
-    RANDOM_READS, READ_BLOCKS, Refusal, Request, STREAM_BYTES_PER_S, STREAM_ROUNDS, STREAMS,
-    Throughput, interleaved, random_reads, span_us,
+    CYCLE_SPAN_MS, CardArg, CardKind, CardSpeed, Console, Extents, FILE_BLOCKS, FILES, Latency,
+    MAX_RUNS, RANDOM_READS, READ_BLOCKS, Refusal, Request, STREAM_BYTES_PER_S, STREAM_ROUNDS,
+    STREAMS, Throughput, interleaved, random_reads, span_us,
 };
 
 #[test]
@@ -169,4 +169,11 @@ fn interleaved_turns_through_every_stream_each_round() {
         );
         assert!(b + READ_BLOCKS <= FILE_BLOCKS);
     }
+}
+
+#[test]
+fn the_card_kind_follows_addressing_and_size() {
+    assert_eq!(CardKind::of(false, 2_000_000_000).name(), "SDSC");
+    assert_eq!(CardKind::of(true, 31_914_983_424).name(), "SDHC");
+    assert_eq!(CardKind::of(true, 63_864_569_856).name(), "SDXC");
 }

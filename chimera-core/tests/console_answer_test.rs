@@ -156,13 +156,18 @@ fn none_from_the_unit_is_one_err_line() {
 
 /// Every phase measured.
 fn full() -> CardSpeed {
-    use chimera_core::console::{Files, Latency, Load, Throughput};
+    use chimera_core::console::{CardInfo, CardKind, Files, Latency, Load, Throughput};
     let tp = Some(Throughput {
         bytes: 1_440_000,
         us: 1_000_000,
     });
     CardSpeed {
         seed: 7,
+        card: Some(CardInfo {
+            kind: CardKind::Sdhc,
+            bytes: 15_931_539_456,
+            free_bytes: 15_000_000_000,
+        }),
         files: Some(Files::default()),
         seq: [tp; 3],
         random: Some(Latency::default()),
@@ -190,7 +195,10 @@ fn a_card_stopped_short_keeps_what_came_before() {
     (s.random, s.interleaved, s.load) = (None, None, None);
     u.card = Some(CardAnswer::Measured(s, Some(CardFail::Timeout)));
     let got = ask(&mut u, "card seed=7\n");
-    assert!(got.starts_with("seed 7\nfile_kb 8388\n"), "{got}");
+    assert!(
+        got.starts_with("seed 7\ncard_type SDHC\ncard_mb 15931\nfree_mb 15000\nfile_kb 8388\n"),
+        "{got}"
+    );
     assert!(got.contains("seq_16k_kb_s 1440\n"), "{got}");
     assert!(!got.contains("rand_") && !got.contains("streams"), "{got}");
     assert!(got.ends_with("overruns 0\nERR card: timeout\n"), "{got}");

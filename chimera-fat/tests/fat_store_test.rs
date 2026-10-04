@@ -1158,14 +1158,13 @@ fn the_bench_dir_lives_under_chimera() {
 }
 
 #[test]
-fn has_room_counts_free_clusters() {
+fn free_bytes_counts_free_clusters() {
     let (disk, vol) = card();
-    let cluster = layout_of(&disk).cluster_bytes();
-    fill(&disk, 3);
+    let cluster = u64::from(layout_of(&disk).cluster_bytes());
     let mut s = probed(&disk);
-    assert_eq!(s.has_room(vol, 3 * cluster), Ok(true));
-    assert_eq!(s.has_room(vol, 3 * cluster + 1), Ok(false));
-    assert_eq!(s.has_room(vol, 0), Ok(true));
+    assert_eq!(s.free_bytes(vol), Ok(u64::from(free(&disk).0) * cluster));
+    fill(&disk, 3);
+    assert_eq!(s.free_bytes(vol), Ok(3 * cluster));
 }
 
 #[test]

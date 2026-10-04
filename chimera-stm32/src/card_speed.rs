@@ -9,9 +9,9 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use chimera_core::boot::wait_until;
 use chimera_core::console::{
-    CardAnswer, CardArg, CardFail, CardSpeed, DEADLINE_MS, Extents, FILE_AIMS, FILE_BYTES, FILES,
-    Files, Latency, Load, RANDOM_READS, READ_BLOCKS, ROOM_MARGIN_BYTES, SEQ_BLOCKS, SPAN_BLOCKS,
-    Throughput, interleaved, random_reads, span_start, span_us,
+    CardAnswer, CardArg, CardFail, CardInfo, CardKind, CardSpeed, DEADLINE_MS, Extents, FILE_AIMS,
+    FILE_BYTES, FILES, Files, Latency, Load, RANDOM_READS, READ_BLOCKS, ROOM_MARGIN_BYTES,
+    SEQ_BLOCKS, SPAN_BLOCKS, Throughput, interleaved, random_reads, span_start, span_us,
 };
 use chimera_core::note_queue::{NoteEvent, NoteKind, NoteProducer};
 use chimera_core::perf::load::AudioStats;
@@ -21,6 +21,7 @@ use chimera_fat::Medium;
 use chimera_hal::Ms;
 use chimera_hal::store::{ByteSink, CHUNK, Dir, FileName, Store, StoreError, VolumeId};
 use cortex_m::peripheral::DWT;
+use embedded_sdmmc::embedded_sdmmc_types::sdcard::CardType;
 use embedded_sdmmc::{Block, BlockDevice, BlockIdx};
 
 use crate::audio::dma::{BLOCKS, OVERRUNS};
@@ -151,7 +152,23 @@ impl CardBench {
         let vol = store.mount()?;
         store.make_dir(vol, Dir::Chimera)?;
         store.make_dir(vol, Dir::Bench)?;
-        let (ext, files) = test_files(store, vol, due)?;
+        let dev = store.device();
+        let bytes = dev
+            .num_bytes()
+            .map_err(|e| CardFail::Store(dev.classify(&e)))?;
+        let block_addressed = dev.get_card_type() == Some(CardType::SdhcSdxc);
+        // The whole FAT read (a few s on a 32 GB card): under the run's
+        // deadline, not the 10 s operation cap.
+        store.device().spi(|s| s.set_cap_ms(due.left_ms()));
+        let free = store.free_bytes(vol);
+        store.device().spi(|s| s.set_cap_ms(SD_OP_CAP_MS));
+        let mut free = free?;
+        let (ext, files) = test_files(store, vol, &mut free, due)?;
+        s.card = Some(CardInfo {
+            kind: CardKind::of(block_addressed, bytes),
+            bytes,
+            free_bytes: free,
+        });
         s.files = Some(files);
         for ((i, &n), out) in (0..).zip(&SEQ_BLOCKS).zip(&mut s.seq) {
             *out = Some(self.sequential(store, &ext[0], span_start(i), n, due)?);
@@ -286,10 +303,12 @@ fn load(stats: Option<&mut Reader<AudioStats>>) -> Option<Load> {
     })
 }
 
-/// Both test files' runs, each written first if missing or short.
+/// Both test files' runs, each written first if missing or short; `free`
+/// goes down by what was written.
 fn test_files(
     store: &mut SdStore,
     vol: VolumeId,
+    free: &mut u64,
     due: &Deadline,
 ) -> Result<([Extents; FILES], Files), CardFail> {
     let mut ext = [Extents::new(); FILES];
@@ -299,7 +318,8 @@ fn test_files(
         *e = match whole_file(store, vol, name)? {
             Some(e) => e,
             None => {
-                write_test_file(store, vol, name, FILE_AIMS[i], due)?;
+                write_test_file(store, vol, name, FILE_AIMS[i], *free, due)?;
+                *free = free.saturating_sub(u64::from(FILE_BYTES));
                 files.created += 1;
                 whole_file(store, vol, name)?.ok_or(StoreError::Corrupt)?
             }
@@ -329,20 +349,21 @@ fn whole_file(
     }
 }
 
-/// A test file, aimed `aim` per mille into the card: only with room for it
-/// and `ROOM_MARGIN_BYTES` after, and within the deadline. One that
-/// doesn't complete is deleted.
+/// A test file, aimed `aim` per mille into the card: only with `free`
+/// holding it and `ROOM_MARGIN_BYTES` after, and within the deadline. One
+/// that doesn't complete is deleted.
 fn write_test_file(
     store: &mut SdStore,
     vol: VolumeId,
     name: FileName,
     aim: u16,
+    free: u64,
     due: &Deadline,
 ) -> Result<(), CardFail> {
     if due.left_ms() < WRITE_MIN_MS {
         return Err(CardFail::Timeout);
     }
-    if !store.has_room(vol, FILE_BYTES + ROOM_MARGIN_BYTES)? {
+    if free < u64::from(FILE_BYTES + ROOM_MARGIN_BYTES) {
         return Err(CardFail::NoRoom);
     }
     store.aim(vol, aim)?;

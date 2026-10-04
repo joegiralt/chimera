@@ -180,9 +180,9 @@ impl<D: Medium> FatStore<D> {
         self.run(vol, |fs, _| fs.remove_dir(dir))
     }
 
-    /// `Fs::has_room` on the card, if it is still `vol`.
-    pub fn has_room(&mut self, vol: VolumeId, bytes: u32) -> Result<bool, StoreError> {
-        self.run(vol, |fs, _| fs.has_room(bytes))
+    /// `Fs::free_bytes` on the card, if it is still `vol`.
+    pub fn free_bytes(&mut self, vol: VolumeId) -> Result<u64, StoreError> {
+        self.run(vol, |fs, _| fs.free_bytes())
     }
 
     /// `Fs::aim` on the card, if it is still `vol`: kept for its next write.
