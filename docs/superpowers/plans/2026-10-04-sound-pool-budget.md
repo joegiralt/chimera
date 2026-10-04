@@ -376,7 +376,7 @@ The random generator draws each param uniformly from its spec range, quantised a
 **Precondition:** console-put is merged; this task rebases onto it and uses its #359 chain free and `writable()` as they are. Until #360's sweep is also on `main`, the writer stays behind `#[cfg(test)]`, and nothing ships that writes `/CHIMERA/TAPES`.
 
 **Files:**
-- Create: `chimera-core/src/storage/source_file.rs` (`FileKind::Source` read and write, `SourceHead`/`SourceData`), `chimera-core/src/storage/twelve.rs` (pack, unpack, `quantise_tpdf`)
+- Create: `chimera-core/src/storage/source_file.rs` (`FileKind::Source` read and write, `SourceHead`/`SourceData`), `chimera-core/src/storage/twelve.rs` (pack, unpack). Conversion, decimation and dither are host-only (ADR 0093), and are not in `chimera-core`.
 - Modify:
   - `chimera-hal/src/store.rs`: `Dir::Tapes`, and `Store::seal(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError>`, which sets the FAT read-only attribute;
   - `chimera-fat/src/fs.rs`: `seal` writes the entry's attribute byte through `put_entry`, and `add_dir` makes `/CHIMERA/TAPES` as it does `SOUNDS`;
@@ -391,8 +391,6 @@ The random generator draws each param uniformly from its spec range, quantised a
 - Produces:
   - `pub fn pack12(samples: &[i16], out: &mut [u8]) -> usize`
   - `pub fn unpack12(bytes: &[u8], pair: usize) -> (i16, i16)`
-  - `pub struct Tpdf(u32)`, an xorshift32 seeded by the caller
-  - `pub fn quantise_tpdf(x: f32, rng: &mut Tpdf) -> i16` (12-bit range, −2048..=2047)
   - `pub fn source_file(r: SourceRef) -> FileName` (`Dir::Tapes`, stem = CRC hex, ext `SRC`)
   - `pub fn read_source_into<S: Store>(s, r: &Ready, sref: SourceRef, out: &mut [u8]) -> Result<usize, LoadError>`, which checks the header's frames and rate against `sref`
   - `pub fn write_source<S: Store>(s: &mut S, r: &Ready, sref: SourceRef, name: SoundName, data: &[u8]) -> Result<Wrote, SaveError>`, where `enum Wrote { New, Present, Replaced }`. It writes, reads back, checks the header and CRC, then seals.
@@ -406,7 +404,6 @@ The random generator draws each param uniformly from its spec range, quantised a
 // twelve_test.rs
 #[test] fn pack_unpack_all_values()  // release: all 4096×4096 pairs; debug: 100 000 seeded
 #[test] fn odd_tail_pads()           // 3 frames → 6 B, last sample 0
-#[test] fn dither_keeps_peak_flat_floor() // −60 dBFS 1 kHz sine: peak bin within 0.5 dB; floor flat within 3 dB
 // source_codec_test.rs
 #[test] fn pool_source_round_trips()     // save → load byte-equal; file contains no SourceData record
 #[test] fn over_budget_loads_in_order()  // Part-used sources, then slots by index, then other sources; note "LOADED · a SOUNDS, b SRC DIDN'T FIT"

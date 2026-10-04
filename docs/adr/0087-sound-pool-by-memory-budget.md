@@ -99,7 +99,8 @@ engine.
     after retirement, when no voice holds it.
 - **12-bit packing:** two samples in three bytes, two's complement. The
   rate is set per source, 4–48 kHz, with 24 kHz the default (#279).
-  Imports are TPDF-dithered offline.
+  Conversion is host-only (ADR 0093): the unit stores and plays
+  verified `.SRC` files.
 - **One meter, a percentage only, as on the Play:**
   - a 216 × 4 px bar on the browser's info line and on SETTINGS ›
     PROJECT › POOL;
@@ -159,7 +160,8 @@ engine.
   read 27 %.
 - The arena depends on ADR 0090. The delay's repeats carry 16-bit grain,
   and that is the price of the extra 48 KB.
-- About 23 KB of flash across the build steps, measured at each.
+- About 20 KB of flash across the build steps, measured at each, of
+  120 304 B free on the largest image.
 - A project needs its card's `/CHIMERA/TAPES` to sound its TAPE Parts.
   Orphaned card sources wait for SETTINGS › SYSTEM › STORAGE (#267).
 

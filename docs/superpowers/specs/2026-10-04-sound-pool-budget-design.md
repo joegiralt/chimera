@@ -229,8 +229,8 @@ A source delete leaves a hole below the sources above it. Compaction slides them
 
 - **Two samples in three bytes**, little-endian: `b0 = s0[7:0]`, `b1 = s0[11:8] | s1[3:0] << 4`, `b2 = s1[11:4]`. Samples are 12-bit two's complement. An odd frame count pads the last pair with 0. A card source file and the arena hold the same bytes, so a load is a copy.
 - **The audio reads** by sign-extending `(x << 20) >> 20` on an `i32` and scaling by `1/2048`. Unaligned byte loads are free on the Cortex-M7.
-- **Import quantises with TPDF dither**, offline on the UI thread: a WAV import, a RESAMPLE render, or a PROCESS step.
-- **The rate is per source,** `rate` in Hz, 4 000–48 000. The UI offers 48, 32, 24, 16, 12 and 8 kHz, and **24 kHz is the default, per #279** (honest to tape's ~10 kHz top). The importer band-limits to 0.45 × rate before decimating. The voice steps through the source at `rate / 48 000 × pitch ratio`.
+- **Conversion is host-only** (ADR 0093, the TAPE spec). The host tool resamples a WAV, band-limits it, dithers it to 12 bits and writes the `.SRC` file. The unit only stores and plays verified `.SRC` files. `chimera-core` carries no importer, decimator or dither.
+- **The rate is per source,** `rate` in Hz, 4 000–48 000. The UI offers 48, 32, 24, 16, 12 and 8 kHz, and **24 kHz is the default, per #279** (honest to tape's ~10 kHz top). The host tool band-limits to 0.45 × rate before decimating. The voice steps through the source at `rate / 48 000 × pitch ratio`.
 
 ## The meter, and the UI
 
@@ -265,7 +265,7 @@ A source delete leaves a hole below the sources above it. Compaction slides them
 
 ## When the budget is full
 
-- **An add that won't fit is refused before anything is read or written.** That covers library → pool, a save to a new slot, a save over a slot that grows, a source import, and a TAPE Sound whose source isn't in the pool yet.
+- **An add that won't fit is refused before anything is read or written.** That covers library → pool, a save to a new slot, a save over a slot that grows, a source added from the card, and a TAPE Sound whose source isn't in the pool yet.
   - Every cost is known up front: from a library file's size, from encoding the Part through a counting sink, or from a `SourceRef`'s frames and the model's `held`.
   - The focus band reads `POOL FULL · NEEDS 41K, 12K FREE` in `ALERT` until the next input. Nothing changes.
 - **PURGE UNUSED SOURCES removes samples only**, as the Play, the Digitakt and the Octatrack do. It takes every source for which `source_users` is empty, recounted from the project when the purge runs. Never a cached count.
@@ -312,7 +312,7 @@ A source delete leaves a hole below the sources above it. Compaction slides them
 - **Library Sounds** (`/CHIMERA/SOUNDS`, #317) are written sparse. A row's cost is the file size − 28 (header) − 4 (CRC) + 16 (name), rounded up to 16, read from the listing with no extra card I/O.
 - **Sources live only on the card,** in a new `Dir::Tapes` (`/CHIMERA/TAPES`), as `FileKind` 6 `Source` files: a header, a `SourceHead` record (`0x8017`: the `SourceRef` and a 16 B name), then `SourceData` records (`0x0018`) of up to 504 B of packed pairs (168 pairs). Both are refused (`Corrupt`) outside a `Source` file.
   - **The 8.3 name is the CRC in hex, with `.SRC`** (`1A2B3C4D.SRC`), so a `SourceRef` finds its file by name, with no index. Identical sources share one file. It is a single file, not an A/B pair: it never changes once written.
-  - **Write-once, by sealing.** An import, a RESAMPLE or a PROCESS writes the file. The writer reads it back, checks the header and CRC, and only then sets the FAT read-only attribute. From then on, the FAT layer's `writable()` check (console-put, #359) refuses any rewrite or delete.
+  - **Write-once, by sealing.** A file arriving from the host tool (ADR 0093) is written once. The writer reads it back, checks the header and CRC, and only then sets the FAT read-only attribute. From then on, the FAT layer's `writable()` check (console-put, #359) refuses any rewrite or delete.
   - **A torn file is replaced.** An unsealed `<CRC>.SRC` is a write a power cut interrupted. The next write of the same source deletes it and writes it again. A sealed file whose check fails reads as missing, and is never rewritten in place; card cleanup is #267.
   - The `SourceRef`'s `frames` and `rate` are checked against the header, and a mismatch reads as missing.
 - **Adding a library TAPE Sound** brings its source's `held` bytes into the pool too, unless the pool already holds that source. The preview and the refusal count both. A source not on the card refuses the add: `SOURCE NOT ON CARD`.
@@ -336,8 +336,8 @@ These are estimates, to be measured with `rust-size` on `bench,orbit` (the large
 | Arena, index, Sound compaction, `EncodedSound`, encoded marks | ~4 KB | | +4 KB |
 | Meter, row costs, preview, POOL leaf, PURGE row and prompt, hint text | ~3 KB | | +3 KB |
 | Factory blob, 32 Sounds | ~10 KB | today's code-built 8 Sounds (`factory.rs`), ~3 KB | +7 KB |
-| Sources: table, gate, retire, 12-bit read, importer with dither and decimator, `Dir::Tapes`, records | ~8 KB | | +8 KB |
-| **Total** | | | **≈ 23 KB**, leaving ≈ 97 KB |
+| Sources: table, gate, retire, 12-bit read, seal and verify, `Dir::Tapes`, records | ~5 KB | | +5 KB |
+| **Total** | | | **≈ 20 KB**, leaving ≈ 100 KB |
 
 ## Failure modes
 
@@ -394,7 +394,6 @@ All host-side (`just test`). Hardware checks wait for the ship flash.
 
 **12-bit**
 - `pack_unpack_all_values`: all 4 096 × 4 096 pairs round-trip in release, or a seeded 100 000 in debug. Odd frame counts pad.
-- Dither: a −60 dBFS sine quantised to 12 bits keeps its peak, and its noise floor is flat within 3 dB.
 
 **Meter and UI**
 - `meter_percent`: 0 B is 0 %, 1 B is 1 %, `ARENA_BYTES − 1` is 100 %, and half is 50 %.
@@ -424,7 +423,7 @@ Each step ships on its own, and the meter is right at each.
 7. **Sources,** with the TAPE core (#279):
    - `SourceId`, the source end, the table, the gate, retirement, `source_users`;
    - PURGE UNUSED SOURCES;
-   - 12-bit packing, the importer and `Dir::Tapes`;
+   - 12-bit packing and `Dir::Tapes` (the importer is host-only, ADR 0093);
    - `PoolSource` and `SourceRef`;
    - the over-budget load order.
 
