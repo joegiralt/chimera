@@ -210,39 +210,41 @@ fn every_byte_value_is_safe() {
 }
 
 #[test]
-fn put_takes_a_path_a_size_and_a_crc() {
-    use chimera_hal::store::{Dir, FileName};
+fn put_takes_a_project_path_a_size_and_a_crc() {
+    use chimera_core::storage::ProjectId;
     let one = |s: &str| feed(&mut Console::new(), s.as_bytes()).remove(0);
-    let to = FileName::new(Dir::Projects, b"AVRIL14", b"A").unwrap();
-    let want = Ok(Request::Put(PutArg {
-        to,
-        size: 131_072,
-        crc: 0xDEAD_BEEF,
-    }));
+    let put = |to, size, crc| Ok(Request::Put(PutArg { to, size, crc }));
+    let p14 = PutTo::Project(ProjectId::new(14).unwrap());
+    let want = put(p14, 131_072, 0xDEAD_BEEF);
     assert_eq!(
-        one("put /CHIMERA/PROJECTS/AVRIL14.A 131072 deadbeef\n"),
+        one("put /CHIMERA/PROJECTS/P0000014.A 131072 deadbeef\n"),
         want
     );
     assert_eq!(
-        one("PUT /chimera/projects/avril14.a 131072 DEADBEEF\n"),
+        one("PUT /chimera/projects/p0000014.b 131072 DEADBEEF\n"),
         want
     );
-    let s = FileName::new(Dir::Sounds, b"S0000001", b"").unwrap();
-    assert_eq!(
-        one("put /CHIMERA/SOUNDS/S0000001 0 0\n"),
-        Ok(Request::Put(PutArg {
-            to: s,
-            size: 0,
-            crc: 0
-        }))
-    );
+    for (path, to) in [
+        ("/CHIMERA/PROJECTS/AVRIL14.A", PutTo::NotAPair),
+        ("/CHIMERA/PROJECTS/P0000000.A", PutTo::NotAPair),
+        ("/CHIMERA/PROJECTS/P00000014.A", PutTo::NotAPair),
+        ("/CHIMERA/PROJECTS/P0000014", PutTo::NotAPair),
+        ("/CHIMERA/PROJECTS/../SYSTEM.A", PutTo::NotAPair),
+        ("/CHIMERA/PROJECTS//P0000014.A", PutTo::NotAPair),
+        ("/CHIMERA/PROJECTS/", PutTo::Directory),
+        ("/CHIMERA", PutTo::Directory),
+        ("/CHIMERA/SOUNDS/S0000001.A", PutTo::Sound),
+    ] {
+        assert_eq!(one(&format!("put {path} 1 0\n")), put(to, 1, 0), "{path}");
+    }
     for bad in [
         "put /CHIMERA/SYSTEM.A 1 0",
-        "put /CHIMERA/PROJECTS/../SYSTEM.A 1 0",
-        "put /CHIMERA/PROJECTS/PUT.TMP 1 0",
-        "put /CHIMERA/PROJECTS/A.B 4294967296 0",
-        "put /CHIMERA/PROJECTS/A.B 1 -1",
-        "put /CHIMERA/PROJECTS/A.B 1 0x10",
+        "put /CHIMERA//PROJECTS/P0000014.A 1 0",
+        "put /CHIMERA/PROJECTS/P0000014.A 4294967296 0",
+        "put /CHIMERA/PROJECTS/P0000014.A 1 -1",
+        "put /CHIMERA/PROJECTS/P0000014.A 1 0x10",
+        "put /CHIMERA/PROJECTS/P0000014.A 1 123456789",
+        "put /CHIMERA/PROJECTS/P0000014.A 1",
     ] {
         assert_eq!(
             one(&format!("{bad}\n")),
@@ -264,7 +266,13 @@ fn ls_takes_one_directory() {
         one("ls /chimera/sounds/\n"),
         Ok(Request::Ls(LsArg(Dir::Sounds)))
     );
-    for bad in ["ls", "ls /", "ls /CHIMERA/X", "ls /CHIMERA /CHIMERA"] {
+    for bad in [
+        "ls",
+        "ls /",
+        "ls /CHIMERA/X",
+        "ls /CHIMERA /CHIMERA",
+        "ls /CHIMERA//SOUNDS",
+    ] {
         assert_eq!(
             one(&format!("{bad}\n")),
             Err(Refusal::Arguments(Command::Ls)),

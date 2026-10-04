@@ -158,13 +158,14 @@ impl<T> Keyed<T> {
 
 /// A FAT16/FAT32 card behind `Store`. Its RAM: one block buffer, the FAT
 /// cache, and, each for the volume it was taken on, the allocator's hint
-/// and a FAT sector FAT 2 missed.
+/// a FAT sector FAT 2 missed, and a chain a failed write left.
 pub struct FatStore<D: Medium> {
     dev: D,
     buf: [u8; BLOCK],
     fat: FatCache,
     hint: Keyed<u32>,
     stale: Keyed<Stale>,
+    orphan: Keyed<u32>,
 }
 
 type FsResult<T, D> = Result<T, FsError<PartError<<D as BlockDevice>::Error>>>;
@@ -177,6 +178,7 @@ impl<D: Medium> FatStore<D> {
             fat: FatCache::new(),
             hint: Keyed::new(),
             stale: Keyed::new(),
+            orphan: Keyed::new(),
         }
     }
 
@@ -263,6 +265,7 @@ impl<D: Medium> FatStore<D> {
         }
         let mut hint = self.hint.for_volume(now);
         self.fat.keep_stale(self.stale.for_volume(now));
+        self.fat.keep_orphan(self.orphan.for_volume(now));
         let mut part = Part {
             dev: &self.dev,
             lba,
@@ -274,6 +277,9 @@ impl<D: Medium> FatStore<D> {
         );
         if let Some(c) = hint {
             self.hint.set(now, c);
+        }
+        if let Some(c) = self.fat.take_orphan() {
+            self.orphan.set(now, c);
         }
         if let Some(s) = self.fat.take_stale() {
             self.stale.set(now, s);
@@ -341,14 +347,6 @@ impl<D: Medium> Store for FatStore<D> {
 }
 
 impl<D: Medium> Files for FatStore<D> {
-    fn free_bytes(&mut self, vol: VolumeId) -> Result<u64, StoreError> {
-        FatStore::free_bytes(self, vol)
-    }
-
-    fn rename(&mut self, vol: VolumeId, from: FileName, to: FileName) -> Result<(), StoreError> {
-        self.run(vol, |fs, _| fs.rename(from, to))
-    }
-
     fn cap(&mut self, ms: Option<u32>) {
         self.dev.cap(ms);
     }

@@ -91,11 +91,12 @@ test:
     just test-fat-tools
 
 # The FAT layer checked by dosfstools (ADR 0048): mkfs.fat images must read
-# back and fsck.fat -n must pass. The tests are #[ignore]d so a plain
+# back and fsck.fat -n must pass, after the suite and after console puts
+# that a device error stopped. The tests are #[ignore]d so a plain
 # `cargo test` stays hermetic; without dosfstools this fails with an install
 # message, it never skips.
 test-fat-tools:
-    cargo test -p chimera-fat --features chimera-hal/testkit --test dosfstools_test -- --ignored
+    cargo test -p chimera-fat --features chimera-hal/testkit --test dosfstools_test --test console_put_test -- --ignored
 
 # Clippy on every target and feature set `check` builds, test targets included
 clippy:
@@ -139,8 +140,8 @@ status:
 # The card's read speed beside audio and the streams it holds (just flash-bench first)
 card *args:
     python3 tools/chimera-usb.py card {{args}}
-# A file onto the card over USB (ADR 0092): `just put AVRIL14.A /CHIMERA/PROJECTS/P0000014.A`;
-# a remote ending in / takes the local name. Projects and Sounds only, 1 MiB at most.
+# A project file onto the card over USB (ADR 0092), saved as the unit saves:
+# `just put avril14.prj /CHIMERA/PROJECTS/P0000014.A`. 1 MiB at most; never the open project.
 put local remote:
     python3 tools/chimera-usb.py put "{{local}}" "{{remote}}"
 # A card directory's names and sizes

@@ -119,7 +119,7 @@ commands! {
     Shot   (Colours) => "shot",   "the screen in THEME's colours; shot raw: canonical",
     Dfu    (NoArg)   => "dfu",    "restart into the ROM loader for just flash",
     Ls     (LsArg)   => "ls",     "a card directory's names and sizes",
-    Put    (PutArg)  => "put",    "a file onto the card: <path> <size> <crc32>, base64",
+    Put    (PutArg)  => "put",    "a project file onto the card: <path> <size> <crc32>",
 }
 
 /// Printable ASCII only (anything else is stored as `?`), at most `WORD_MAX`.

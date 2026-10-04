@@ -254,64 +254,6 @@ impl<'a, B: Blocks> Fs<'a, B> {
         self.settle(r)
     }
 
-    /// Gives `from` the name `to` in their one directory, over a file `to`
-    /// that is deleted. When the two entries share a block, one write
-    /// swaps them. Otherwise `to`'s entry goes first, so a cut leaves the
-    /// new bytes whole under `from` and never two entries under one name.
-    /// Then `to`'s old chain is freed. Different directories are `NotFound`.
-    pub fn rename(&mut self, from: FileName, to: FileName) -> Result<(), FsError<B::Error>> {
-        let r = self.rename_over(from, to);
-        self.settle(r)
-    }
-
-    fn rename_over(&mut self, from: FileName, to: FileName) -> Result<(), FsError<B::Error>> {
-        if from.dir() != to.dir() {
-            return Err(FsError::NotFound);
-        }
-        let dir = self.open(from.dir())?;
-        let src = self.lookup(dir, ShortName::file(&from))?;
-        let Some((Slot::File(e), at)) = src.hit else {
-            return Err(FsError::NotFound);
-        };
-        let renamed = Entry {
-            name: ShortName::file(&to),
-            ..e
-        };
-        let dst = self.lookup(dir, renamed.name)?;
-        let old = match dst.hit {
-            Some((Slot::File(o), loc)) if loc != at => Some((o.start, loc)),
-            None => None,
-            Some(_) => return Err(FsError::Corrupt),
-        };
-        self.will_change()?;
-        if let Some((_, loc)) = old {
-            if loc.block == at.block {
-                let kind = self.table.layout().kind();
-                let blocks = self.table.blocks();
-                blocks.read(at.block, self.buf).map_err(FsError::Dev)?;
-                let slots = self.buf.as_chunks_mut::<ENTRY>().0;
-                dir::free(&mut slots[loc.slot]);
-                encode(&renamed, false, kind, &mut slots[at.slot]);
-                blocks.write(at.block, self.buf).map_err(FsError::Dev)?;
-            } else {
-                self.mark_free(loc, &[])?;
-            }
-        }
-        self.put_entry(at, &renamed, false)?;
-        // Long names that spoke for either old short name.
-        let gone = if old.is_some() { dst.run.n } else { 0 };
-        for run in [&dst.run.at[..gone], &src.run.at[..src.run.n]] {
-            if let [first, rest @ ..] = run {
-                self.mark_free(*first, rest)?;
-            }
-        }
-        if let Some((start, _)) = old {
-            self.table.free_chain(start)?;
-            self.table.flush()?;
-        }
-        Ok(())
-    }
-
     /// Removes `dir` if it holds nothing but `.` and `..`: its entry, and
     /// a matching long-name run, become 0xE5, then its chain is freed.
     /// `false`, nothing written, if it holds anything else; a missing one
@@ -380,7 +322,10 @@ impl<'a, B: Blocks> Fs<'a, B> {
         let name = ShortName::file(&file);
         let found = self.lookup(dir, name)?;
         let (space, old) = match found.hit {
-            Some((Slot::File(e), at)) => (Space::Slot(at), Some(e.start)),
+            Some((Slot::File(e), at)) => {
+                self.writable(at)?;
+                (Space::Slot(at), Some(e.start))
+            }
             Some(_) => return Err(FsError::Corrupt),
             None => (Space::find(found.free, dir)?, None),
         };
@@ -393,8 +338,12 @@ impl<'a, B: Blocks> Fs<'a, B> {
         };
         self.put_entry(at, &empty, false)?;
         if let Some(old) = old {
-            self.table.free_chain(old)?;
-            self.table.flush()?;
+            // The entry no longer holds it: freed now, or at the next change.
+            let freed = self.table.free_chain(old).and_then(|_| self.table.flush());
+            if let Err(e) = freed {
+                self.table.drop_chain(old);
+                return Err(e);
+            }
         }
 
         let mut out = Stream {
@@ -413,19 +362,31 @@ impl<'a, B: Blocks> Fs<'a, B> {
         let Stream {
             first, len, failed, ..
         } = out;
-        if let Some(e @ FsError::Dev(_)) = failed {
+        let (dev, failed) = match failed {
+            Some(e @ FsError::Dev(_)) => (Some(e), None),
+            f => (None, f),
+        };
+        let linked = match dev {
+            Some(e) => Err(e),
+            None => self.table.flush().and_then(|()| {
+                self.put_entry(
+                    at,
+                    &Entry {
+                        start: first,
+                        len,
+                        ..empty
+                    },
+                    false,
+                )
+            }),
+        };
+        if let Err(e) = linked {
+            // No entry holds the chain: free it now, or at the next change.
+            if first != 0 {
+                self.table.drop_chain(first);
+            }
             return Err(e);
         }
-        self.table.flush()?;
-        self.put_entry(
-            at,
-            &Entry {
-                start: first,
-                len,
-                ..empty
-            },
-            false,
-        )?;
         match (failed, r) {
             (Some(e), _) => Err(e),
             (None, Err(e)) => Err(FsError::Body(e)),
@@ -439,10 +400,24 @@ impl<'a, B: Blocks> Fs<'a, B> {
         let Some((Slot::File(e), at)) = found.hit else {
             return Err(FsError::NotFound);
         };
+        self.writable(at)?;
         self.will_change()?;
         self.mark_free(at, &found.run.at[..found.run.n])?;
         self.table.free_chain(e.start)?;
         self.table.flush()
+    }
+
+    /// A file entry marked read-only is `ReadOnly`, before anything is
+    /// written.
+    fn writable(&mut self, at: Loc) -> Result<(), FsError<B::Error>> {
+        self.table
+            .blocks()
+            .read(at.block, self.buf)
+            .map_err(FsError::Dev)?;
+        match dir::read_only(&self.buf.as_chunks::<ENTRY>().0[at.slot]) {
+            true => Err(FsError::Body(StoreError::ReadOnly)),
+            false => Ok(()),
+        }
     }
 
     fn add_dir(&mut self, dir: Dir) -> Result<(), FsError<B::Error>> {

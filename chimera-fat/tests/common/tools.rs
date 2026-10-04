@@ -1,5 +1,7 @@
 //! dosfstools as a second opinion: `mkfs.fat` makes images, `fsck.fat -n`
 //! checks them. A missing tool fails the test; it never skips.
+// Each test binary uses its own part of this module.
+#![allow(dead_code)]
 
 use crate::image::{PART_LBA, RamDisk, mbr};
 use chimera_fat::volume::FsKind;

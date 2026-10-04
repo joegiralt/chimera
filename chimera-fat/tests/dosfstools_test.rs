@@ -17,7 +17,7 @@ use chimera_fat::blocks::BLOCK;
 use chimera_fat::fat::FatCache;
 use chimera_fat::fs::Fs;
 use chimera_fat::volume::{FsKind, first_partition, layout};
-use chimera_hal::store::{Dir, FileName, Files, Store, StoreError, VolumeId};
+use chimera_hal::store::{Dir, FileName, Store, StoreError, VolumeId};
 use core::cell::RefCell;
 use embedded_sdmmc::{Mode, VolumeIdx};
 use image::{
@@ -271,20 +271,6 @@ fn workload(what: &str, disk: RamDisk, seed: u64) {
         model.remove(&f);
     }
     verify(&format!("{what}, every third deleted"), &disk, &model);
-
-    // A file renamed over another, near and far in the directory, and one
-    // to a free name.
-    let moved = FileName::new(Dir::Projects, b"MOVED", b"DAT").unwrap();
-    for (from, to) in [
-        (files[4], files[1]),
-        (files[38], files[2]),
-        (files[7], moved),
-    ] {
-        s.rename(vol, from, to).unwrap();
-        let body = model.remove(&from).unwrap();
-        model.insert(to, body);
-    }
-    verify(&format!("{what}, renamed"), &disk, &model);
 
     for i in 0.. {
         let f = FileName::new(Dir::Sounds, format!("FULL{i}").as_bytes(), b"DAT").unwrap();

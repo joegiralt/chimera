@@ -18,10 +18,8 @@ pub trait Out {
     fn recv(&mut self, _wait_ms: u32) -> Option<u8> {
         None
     }
-    /// The shell's clock.
-    fn now(&self) -> chimera_hal::Ms {
-        chimera_hal::Ms(0)
-    }
+    /// The shell's clock. Required: a `put` times its waits by it.
+    fn now(&self) -> chimera_hal::Ms;
 }
 
 /// The screen as the display holds it, and the palette it flushes through.

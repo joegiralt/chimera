@@ -82,13 +82,17 @@ pub fn save_on(
     })
 }
 
-/// Save `n`, and the block its failed write was aimed at, if one failed.
+/// Save `n`, and the block its first failed write was aimed at, if one
+/// failed. A store may try more writes after it (freeing a chain no entry
+/// holds); those fail too once the card is cut.
 pub fn save(slot: &Slot, n: u32) -> (Result<Generation, SaveError>, Option<u32>) {
     let mut s = probed(slot);
+    let landed = slot.writes.get();
     let r = save_on(&mut s, n, &|_| Ok(()));
+    let first_failed = (slot.writes.get() - landed) as usize;
     let failed = r
         .is_err()
-        .then(|| log(&s).writes.borrow().last().map(|&(b, _)| b))
+        .then(|| log(&s).writes.borrow().get(first_failed).map(|&(b, _)| b))
         .flatten();
     (r, failed)
 }

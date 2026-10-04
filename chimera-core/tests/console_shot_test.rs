@@ -6,6 +6,9 @@ use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
 
 struct Sink(Vec<u8>);
 impl Out for Sink {
+    fn now(&self) -> chimera_hal::Ms {
+        chimera_hal::Ms(0)
+    }
     fn put(&mut self, b: &[u8]) -> Result<(), Stalled> {
         self.0.extend_from_slice(b);
         Ok(())
@@ -19,6 +22,9 @@ struct Stalls {
     after: usize,
 }
 impl Out for Stalls {
+    fn now(&self) -> chimera_hal::Ms {
+        chimera_hal::Ms(0)
+    }
     fn put(&mut self, b: &[u8]) -> Result<(), Stalled> {
         if self.stalled {
             self.after += 1;

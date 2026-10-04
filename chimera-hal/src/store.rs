@@ -106,6 +106,9 @@ pub enum StoreError {
     VolumeChanged(VolumeId),
     /// The file's chain or length is inconsistent: a file error, not a card fault.
     Corrupt,
+    /// The file is marked read-only on the card: nothing rewrites or
+    /// deletes it. A file error, not a card fault.
+    ReadOnly,
     Io,
 }
 
@@ -126,6 +129,7 @@ impl StoreError {
             StoreError::Timeout => "CARD TIMEOUT",
             StoreError::VolumeChanged(_) => "CARD CHANGED",
             StoreError::Corrupt => "FILE IS DAMAGED",
+            StoreError::ReadOnly => "FILE IS READ-ONLY",
             StoreError::Io => "CARD ERROR",
         }
     }
@@ -175,14 +179,9 @@ pub trait Store {
     fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError>;
 }
 
-/// A `Store` files can be moved onto over the console: its free space, a
-/// rename, and a cap on each operation's time.
+/// A `Store` whose operations' time can be capped: the console's `put`
+/// holds each to what is left of its own deadline.
 pub trait Files: Store {
-    /// Bytes in free clusters.
-    fn free_bytes(&mut self, vol: VolumeId) -> Result<u64, StoreError>;
-    /// `from` takes `to`'s name in their one directory, over a `to` that is
-    /// deleted. Different directories are `NotFound`.
-    fn rename(&mut self, vol: VolumeId, from: FileName, to: FileName) -> Result<(), StoreError>;
     /// Each operation armed from now on ends after `ms` in all; `None`: the
     /// medium's own cap.
     fn cap(&mut self, ms: Option<u32>);

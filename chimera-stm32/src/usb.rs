@@ -11,7 +11,6 @@ use chimera_core::perf::load::AudioStats;
 use chimera_core::triple::Reader;
 use chimera_core::ui::UiState;
 use chimera_hal::Ms;
-use chimera_hal::store::Files;
 use cortex_m::peripheral::DWT;
 use stm32h7xx_hal::gpio::{Alternate, PA11, PA12};
 use stm32h7xx_hal::pac;
@@ -388,6 +387,8 @@ struct ChipUnit<'a> {
     /// `dfu` asked: the restart waits for the `OK` to be out.
     dfu: bool,
     boot: BootSeen,
+    /// `ls` and `put`'s card: unread without `card-put`.
+    #[cfg_attr(not(feature = "card-put"), allow(dead_code))]
     files: &'a mut SdStore,
 }
 
@@ -433,8 +434,20 @@ impl Unit for ChipUnit<'_> {
         Some(regs())
     }
 
-    fn files(&mut self) -> Option<&mut dyn Files> {
+    #[cfg(feature = "card-put")]
+    type Files = SdStore;
+    #[cfg(not(feature = "card-put"))]
+    type Files = chimera_core::console::NoCard;
+
+    #[cfg(feature = "card-put")]
+    fn files(&mut self) -> Option<&mut SdStore> {
         Some(&mut *self.files)
+    }
+
+    /// `ls` and `put` are not in this build.
+    #[cfg(not(feature = "card-put"))]
+    fn files(&mut self) -> Option<&mut Self::Files> {
+        None
     }
 }
 

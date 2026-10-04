@@ -12,6 +12,9 @@ use chimera_hal::FB_SIZE;
 
 struct Sink(Vec<u8>);
 impl Out for Sink {
+    fn now(&self) -> chimera_hal::Ms {
+        chimera_hal::Ms(0)
+    }
     fn put(&mut self, b: &[u8]) -> Result<(), Stalled> {
         self.0.extend_from_slice(b);
         Ok(())
@@ -78,7 +81,8 @@ impl Unit for Fake {
     fn usb_regs(&self) -> Option<UsbRegs> {
         self.usb_regs
     }
-    fn files(&mut self) -> Option<&mut dyn chimera_hal::store::Files> {
+    type Files = chimera_core::console::NoCard;
+    fn files(&mut self) -> Option<&mut Self::Files> {
         None
     }
 }
@@ -124,7 +128,7 @@ fn help_is_the_specs_text() {
          shot    the screen in THEME's colours; shot raw: canonical\n\
          dfu     restart into the ROM loader for just flash\n\
          ls      a card directory's names and sizes\n\
-         put     a file onto the card: <path> <size> <crc32>, base64\n\
+         put     a project file onto the card: <path> <size> <crc32>\n\
          OK\n"
     );
 }
@@ -366,6 +370,9 @@ fn shot_answers_through_the_units_frame() {
 /// Takes nothing: every put stalls.
 struct Wall;
 impl Out for Wall {
+    fn now(&self) -> chimera_hal::Ms {
+        chimera_hal::Ms(0)
+    }
     fn put(&mut self, _: &[u8]) -> Result<(), Stalled> {
         Err(Stalled)
     }
@@ -397,6 +404,9 @@ struct Stalls {
     after: usize,
 }
 impl Out for Stalls {
+    fn now(&self) -> chimera_hal::Ms {
+        chimera_hal::Ms(0)
+    }
     fn put(&mut self, b: &[u8]) -> Result<(), Stalled> {
         if self.stalled {
             self.after += 1;

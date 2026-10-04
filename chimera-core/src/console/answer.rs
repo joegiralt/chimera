@@ -37,8 +37,10 @@ pub trait Unit {
     /// The OTG and PWR registers now: `status`'s `usb_regs` line, last
     /// before `OK`. `None`: no line.
     fn usb_regs(&self) -> Option<UsbRegs>;
+    /// The card behind `ls` and `put`; `NoCard` where there is none.
+    type Files: Files;
     /// The card, for `ls` and `put`. `None`: not in this build.
-    fn files(&mut self) -> Option<&mut dyn Files>;
+    fn files(&mut self) -> Option<&mut Self::Files>;
 }
 
 /// Why an answer is a single `ERR` line.
@@ -116,24 +118,15 @@ pub fn answer(
         Ok(r @ Request::Dfu(NoArg)) => unit.dfu().map(Ok).ok_or(Why::Absent(r.command())),
         Ok(r @ Request::Ls(LsArg(dir))) => match unit.files() {
             None => Err(Why::Absent(r.command())),
-            Some(f) => {
-                let listed = f.mount().and_then(|vol| {
-                    t.0.fresh();
-                    write_ls(f, vol, dir, &mut t)
-                });
-                match listed {
-                    Ok(wrote) => Ok(wrote),
-                    Err(e) => {
-                        return writeln!(t, "ERR ls: {}", e.message())
-                            .map_err(|fmt::Error| Stalled);
-                    }
-                }
+            Some(f) => return ls(f, dir, t.0),
+        },
+        Ok(r @ Request::Put(arg)) => {
+            let open = unit.ui().project().meta().id();
+            match unit.files() {
+                None => Err(Why::Absent(r.command())),
+                Some(f) => return put(arg, open, f, t.0),
             }
-        },
-        Ok(r @ Request::Put(arg)) => match unit.files() {
-            None => Err(Why::Absent(r.command())),
-            Some(f) => return put(arg, f, t.0),
-        },
+        }
     };
     match body {
         Ok(wrote) => wrote.and_then(|()| t.write_str("OK\n")),
@@ -174,4 +167,23 @@ fn bench(b: &str, t: &mut impl Write) -> fmt::Result {
     } else {
         t.write_str("\n")
     }
+}
+
+/// `ls`'s whole answer: the listing then `OK`, or `ERR ls: <why>`.
+#[inline(never)]
+fn ls<F: Files>(
+    f: &mut F,
+    dir: chimera_hal::store::Dir,
+    out: &mut impl Out,
+) -> Result<(), Stalled> {
+    let mut t = Text(out);
+    let listed = f.mount().and_then(|vol| {
+        t.0.fresh();
+        write_ls(f, vol, dir, &mut t)
+    });
+    match listed {
+        Ok(wrote) => wrote.and_then(|()| t.write_str("OK\n")),
+        Err(e) => writeln!(t, "ERR ls: {}", e.message()),
+    }
+    .map_err(|fmt::Error| Stalled)
 }

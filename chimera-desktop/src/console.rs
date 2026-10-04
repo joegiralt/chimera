@@ -120,7 +120,8 @@ impl Unit for DeskUnit<'_> {
     fn usb_regs(&self) -> Option<chimera_core::boot::UsbRegs> {
         None
     }
-    fn files(&mut self) -> Option<&mut dyn chimera_hal::store::Files> {
+    type Files = chimera_core::console::NoCard;
+    fn files(&mut self) -> Option<&mut Self::Files> {
         None
     }
 }
@@ -148,6 +149,10 @@ impl<'a> StreamOut<'a> {
 }
 
 impl Out for StreamOut<'_> {
+    fn now(&self) -> Ms {
+        StreamOut::now(self)
+    }
+
     fn put(&mut self, mut bytes: &[u8]) -> Result<(), Stalled> {
         while !bytes.is_empty() {
             match self.s.write(bytes) {

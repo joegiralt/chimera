@@ -611,7 +611,7 @@ fn entry(
 }
 
 /// `id`'s entry from its headers; `None` when neither side exists.
-fn peek_entry<S: Store>(
+pub(crate) fn peek_entry<S: Store>(
     s: &mut S,
     vol: VolumeId,
     id: ProjectId,
