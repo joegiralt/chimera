@@ -117,16 +117,16 @@ fn notes(n: &[u8]) -> Vec<Note> {
 /// BPM, slot 6 playing.
 fn rich() -> Box<Project> {
     let mut rig = OrbitRig::new();
-    for r in &mut rig.song().live.rings {
+    for r in &mut rig.song().live_mut_for_test().rings {
         r.set(SceneRing::MUTATE, 100.0);
         r.set(SceneRing::MUTE, 0.0);
     }
-    let start = scene_drift(&rig.project.orbit().live);
+    let start = scene_drift(rig.project.orbit().live());
     rig.play(true);
     rig.run_loops(3);
     rig.play(false);
     rig.run(4);
-    let live = rig.project.orbit().live;
+    let live = *rig.project.orbit().live();
     // Rings 1, 2 and 5 can drift; 3 and 4 are one hit of one note.
     let drifted = scene_drift(&live);
     for r in [0, 1, 4] {
@@ -147,22 +147,27 @@ fn rich() -> Box<Project> {
             ]);
         }
         let song = p.orbit_mut();
-        let was = song.live;
-        song.live = s;
+        let was = *song.live();
+        *song.live_mut_for_test() = s;
         let c = Confirmed::<SceneSlot>::unasked(song, S[n]);
         song.overwrite_scene(c).expect("nothing queued");
-        song.live = was;
+        *song.live_mut_for_test() = was;
     }
     let song = p.orbit_mut();
-    song.live.chords.played[1] = Chord::from_notes(&notes(&[60, 61, 62]));
+    song.live_mut_for_test().chords.played[1] = Chord::from_notes(&notes(&[60, 61, 62]));
     // Rings 1 and 2 with their own uneven steps, so no step can stand in
     // for another.
     for (r, base) in [(0, 36u8), (1, 60)] {
-        for (i, n) in song.live.rings[r].ring.notes.iter_mut().enumerate() {
+        for (i, n) in song.live_mut_for_test().rings[r]
+            .ring
+            .notes
+            .iter_mut()
+            .enumerate()
+        {
             *n = Note::new(base + (i as u8 * 5 + r as u8) % 19).unwrap();
         }
     }
-    song.live.seed = 0xCAFE_F00D;
+    song.live_mut_for_test().seed = 0xCAFE_F00D;
     song.bpm = Bpm::new(97).unwrap();
     song.queue(S[5]);
     p
@@ -183,7 +188,7 @@ fn orbit_records_round_trip() {
     // Saved as landed: slot 6 playing, `live` its copy.
     assert_eq!(b.current(), S[5]);
     assert_eq!(b.queued(), None);
-    assert_eq!(b.live, *a.scene(S[5]));
+    assert_eq!(*b.live(), *a.scene(S[5]));
     for n in S {
         assert_eq!(b.scene(n), a.scene(n), "slot {}", n.get() + 1);
     }
@@ -196,16 +201,16 @@ fn orbit_records_round_trip() {
     let current = a.current();
     let mut p = p;
     p.orbit_mut().queue(current);
-    let live = p.orbit().live;
+    let live = *p.orbit().live();
     let q = loaded(&encode(&p));
     same(&p, &q);
-    assert_eq!(q.orbit().live, live);
+    assert_eq!(*q.orbit().live(), live);
     assert_eq!(
-        q.orbit().live.chords.played[1],
+        q.orbit().live().chords.played[1],
         Chord::from_notes(&notes(&[60, 61, 62]))
     );
-    assert_eq!(q.orbit().live.seed, 0xCAFE_F00D);
-    assert_eq!(scene_drift(&q.orbit().live), scene_drift(&live));
+    assert_eq!(q.orbit().live().seed, 0xCAFE_F00D);
+    assert_eq!(scene_drift(q.orbit().live()), scene_drift(&live));
 }
 
 /// The records follow Part 6, land in the song and leave Part 6's Sound
@@ -296,7 +301,7 @@ fn a_file_without_orbit_loads_neutral() {
     assert!(orbit_records(&f).is_empty());
     let q = loaded(&f);
     let o = q.orbit();
-    assert_eq!(o.live, Scene::neutral());
+    assert_eq!(*o.live(), Scene::neutral());
     for n in S {
         assert_eq!(*o.scene(n), Scene::neutral());
     }
@@ -309,22 +314,22 @@ fn a_file_without_orbit_loads_neutral() {
 #[test]
 fn bad_pool_mask_and_chord_take_defaults() {
     let p = new_project();
-    let want = p.orbit().live;
+    let want = *p.orbit().live();
     let without = |tag: RecordTag, head: &[u8]| {
-        loaded(&edited(&p, |r| {
+        *loaded(&edited(&p, |r| {
             let i = find(r, tag, head);
             r.remove(i);
         }))
         .orbit()
-        .live
+        .live()
     };
     let with = |tag: RecordTag, head: &[u8], change: &dyn Fn(&mut Vec<u8>)| {
-        loaded(&edited(&p, |r| {
+        *loaded(&edited(&p, |r| {
             let i = find(r, tag, head);
             change(&mut r[i].1);
         }))
         .orbit()
-        .live
+        .live()
     };
     // Ring 1's notes: scene, ring, mask u32, pool length, pool, 32 steps.
     let ring1 = [LIVE, 0];
@@ -411,7 +416,7 @@ fn bad_pool_mask_and_chord_take_defaults() {
         let i = find(r, RecordTag::OrbitBlock, &[LIVE]);
         r[i].1[0] = 9;
     }));
-    let (c, n) = (got.orbit().live.chords, Scene::neutral().chords);
+    let (c, n) = (got.orbit().live().chords, Scene::neutral().chords);
     assert_eq!(
         (c.tonic, c.scale, c.bars, c.segs),
         (n.tonic, n.scale, n.bars, n.segs)
@@ -451,14 +456,14 @@ fn tempo_decodes_by_rounding() {
 fn a_custom_set_equal_to_a_named_scale_survives() {
     let dorian = ScaleKind::Dorian.scale(Scale::MAJOR);
     let mut p = new_project();
-    let c = &mut p.orbit_mut().live.chords;
+    let c = &mut p.orbit_mut().live_mut_for_test().chords;
     c.scale = ScaleKind::Minor;
     c.set(chimera_core::orbit::chords::ChordRing::SCALE, 10.0);
     assert_eq!((c.scale, c.custom), (ScaleKind::Custom, Scale::MINOR));
     c.custom = dorian;
     let q = loaded(&encode(&p));
-    assert_eq!(q.orbit().live.chords.scale, ScaleKind::Custom);
-    assert_eq!(q.orbit().live.chords.custom, dorian);
+    assert_eq!(q.orbit().live().chords.scale, ScaleKind::Custom);
+    assert_eq!(q.orbit().live().chords.custom, dorian);
     // The set first, then the block.
     let f = edited(&p, |r| {
         let s = find(r, RecordTag::OrbitScale, &[LIVE]);
@@ -466,7 +471,7 @@ fn a_custom_set_equal_to_a_named_scale_survives() {
         let set = r.remove(s);
         r.insert(b, set);
     });
-    assert_eq!(loaded(&f).orbit().live.chords.custom, dorian);
+    assert_eq!(loaded(&f).orbit().live().chords.custom, dorian);
 }
 
 /// A load writes every slot: a confirmation from before it refuses, and
@@ -601,12 +606,12 @@ fn a_captured_chord_saves_as_its_tones() {
     for (i, n) in [50u8, 64, 67, 73].into_iter().enumerate() {
         c.notes[i] = Note::new(n).unwrap();
     }
-    p.orbit_mut().live.take(&c);
-    let played = p.orbit().live.chords.played[2].expect("taken");
+    p.orbit_mut().live_mut_for_test().take(&c);
+    let played = p.orbit().live().chords.played[2].expect("taken");
     let q = loaded(&encode(&p));
-    assert_eq!(q.orbit().live.chords.played[2], Some(played));
+    assert_eq!(q.orbit().live().chords.played[2], Some(played));
     assert_eq!(
-        q.orbit().live.chords.played[2].unwrap().bass(),
+        q.orbit().live().chords.played[2].unwrap().bass(),
         PitchClass::D
     );
 }
@@ -702,8 +707,8 @@ mod unit {
         rig.load(f);
         let song = rig.ui.project_mut().orbit_mut();
         song.bpm = Bpm::clamped(Bpm::MAX);
-        song.live.chords.bars = chimera_core::orbit::chords::Bars::ONE;
-        for r in &mut song.live.rings {
+        song.live_mut_for_test().chords.bars = chimera_core::orbit::chords::Bars::ONE;
+        for r in &mut song.live_mut_for_test().rings {
             r.set(SceneRing::MUTATE, 100.0);
             r.set(SceneRing::MUTE, 0.0);
         }
@@ -764,7 +769,7 @@ mod unit {
         assert!(audio.view().running);
         audio.loops(&mut rig, 20);
         let playing = view_drift(&audio.view());
-        assert_eq!(scene_drift(&rig.ui.project().orbit().live), playing);
+        assert_eq!(scene_drift(rig.ui.project().orbit().live()), playing);
         audio.quick_save(&mut rig);
         assert_eq!(rig.ui.project_status(), ProjectStatus::Saved);
 
@@ -778,7 +783,7 @@ mod unit {
             "drift absorbed"
         );
         reload(&mut rig, &mut audio, f);
-        assert_eq!(scene_drift(&rig.ui.project().orbit().live), playing);
+        assert_eq!(scene_drift(rig.ui.project().orbit().live()), playing);
         assert!(!audio.view().running, "a load stops ORBIT");
         assert_eq!(view_drift(&audio.view()), playing, "the runner took it");
         audio.frame(&mut rig, Input::press(B6), 1);
@@ -792,14 +797,14 @@ mod unit {
     fn quick_save_while_queued_saves_the_landing() {
         let mut ui = Box::new(UiState::new());
         let (mut rig, mut audio, f) = unit(&mut ui);
-        let mut three = rig.ui.project().orbit().live;
+        let mut three = *rig.ui.project().orbit().live();
         three.chords.tonic = PitchClass::E;
         let song = rig.ui.project_mut().orbit_mut();
-        let was = song.live;
-        song.live = three;
+        let was = *song.live();
+        *song.live_mut_for_test() = three;
         let c = Confirmed::<SceneSlot>::unasked(song, S[2]);
         song.overwrite_scene(c).unwrap();
-        song.live = was;
+        *song.live_mut_for_test() = was;
         audio.frame(&mut rig, Input::press(B6), 1);
         audio.frame(&mut rig, Input::release(B6), 1);
         audio.loops(&mut rig, 1);
@@ -817,7 +822,7 @@ mod unit {
         reload(&mut rig, &mut audio, f);
         let o = rig.ui.project().orbit();
         assert_eq!((o.current(), o.queued()), (S[2], None));
-        assert_eq!(o.live, three);
+        assert_eq!(*o.live(), three);
         assert_eq!(audio.view().playing, S[2]);
     }
 
@@ -852,7 +857,12 @@ mod unit {
         assert_eq!(audio.view().playing, S[2]);
         assert_eq!(rig.ui.project().orbit().queued(), None);
         assert_eq!(audio.view().chord.root(), PitchClass::A);
-        rig.ui.project_mut().orbit_mut().live.chords.tonic = PitchClass::E;
+        rig.ui
+            .project_mut()
+            .orbit_mut()
+            .live_mut_for_test()
+            .chords
+            .tonic = PitchClass::E;
         audio.idle(&mut rig, 1);
         assert_eq!(audio.view().chord.root(), PitchClass::E, "KEY reached it");
     }
@@ -902,7 +912,7 @@ mod unit {
         // RING 2's RHYTHM: encoder A is STEPS, 8 → 7.
         tap(&mut ui, B2);
         feed(&mut ui, Input::turn(A, -1));
-        let steps = ui.project().orbit().live.rings[1].ring.fill().steps();
+        let steps = ui.project().orbit().live().rings[1].ring.fill().steps();
         assert_eq!(steps.get(), 7, "the turn reached STEPS");
         ui.update(UiTick::for_test());
         assert_eq!(ui.project_status(), ProjectStatus::Modified, "STEPS");
@@ -1006,7 +1016,7 @@ fn the_orbit_fixture_loads_as_frozen() {
         (o.current(), o.queued(), o.saved().bits(), o.bpm.get()),
         (S[0], None, 0xFF, 97)
     );
-    let live = &o.live;
+    let live = o.live();
     assert_eq!(
         (live.chords.tonic, live.chords.scale),
         (PitchClass::A, ScaleKind::Minor)

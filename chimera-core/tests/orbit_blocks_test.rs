@@ -48,9 +48,9 @@ fn ring_cells_edit_the_selected_ring() {
     let mut ui = in_orbit();
     screen::tap(&mut ui, ButtonId::B3);
     assert_eq!(ui.location().orbit().map(|o| o.ring()), Some(R[2]));
-    let before = ui.project().orbit().live;
+    let before = *ui.project().orbit().live();
     screen::feed(&mut ui, Input::turn(EncoderId::A, 1));
-    let after = ui.project().orbit().live;
+    let after = *ui.project().orbit().live();
     for i in 0..5 {
         let (b, a) = (&before.rings[i], &after.rings[i]);
         if i == 2 {
@@ -141,7 +141,7 @@ fn octave_moves_the_notes() {
 #[test]
 fn target_steers_the_cross() {
     let mut ui = in_orbit();
-    ui.project_mut().orbit_mut().live.rings[1].set(SceneRing::TARGET, 4.0);
+    ui.project_mut().orbit_mut().live_mut_for_test().rings[1].set(SceneRing::TARGET, 4.0);
     screen::hold(&mut ui, ButtonId::B2);
     assert_eq!(ui.location().part(), Some(P[4]));
     assert_eq!(ui.active_part, P[4]);
@@ -220,12 +220,12 @@ fn orbit_codes_pinned() {
 
 #[test]
 fn new_project_orbit_is_init_and_reset_restores_it() {
-    assert_eq!(OrbitSong::NEW.live, Scene::init());
+    assert_eq!(*OrbitSong::NEW.live(), Scene::init());
     assert_eq!(OrbitSong::NEW.bpm, Bpm::DEFAULT);
     let mut ui = Box::new(UiState::new());
     assert_eq!(*ui.project().orbit(), OrbitSong::NEW);
     let song = ui.project_mut().orbit_mut();
-    song.live.rings[0].set(SceneRing::STEPS, 6.0);
+    song.live_mut_for_test().rings[0].set(SceneRing::STEPS, 6.0);
     song.bpm = Bpm::new(90).unwrap();
     assert_ne!(*ui.project().orbit(), OrbitSong::NEW);
     // No card file: boot falls back to NEW through `reset_new`.
@@ -371,10 +371,10 @@ fn live_drift(s: &Scene) -> Vec<(u32, Vec<u8>, Vec<u8>)> {
 #[test]
 fn stop_play_keeps_the_drift() {
     let mut ui = in_orbit();
-    for r in &mut ui.project_mut().orbit_mut().live.rings {
+    for r in &mut ui.project_mut().orbit_mut().live_mut_for_test().rings {
         r.set(SceneRing::MUTATE, 100.0);
     }
-    let init = live_drift(&ui.project().orbit().live);
+    let init = live_drift(ui.project().orbit().live());
     let mut rig = Rig::new(ui);
     rig.b6();
     while rig.runner.view().loops < 10 {
@@ -384,7 +384,7 @@ fn stop_play_keeps_the_drift() {
     rig.idle(1);
     assert!(!rig.running());
     let stopped = rig.runner.view();
-    let live = live_drift(&rig.ui.project().orbit().live);
+    let live = live_drift(rig.ui.project().orbit().live());
     assert_eq!(live, drift(&stopped), "live holds the view's drift");
     assert_ne!(live, init, "10 loops at MUTATE 100 % drift");
 
@@ -539,17 +539,17 @@ fn a_view_from_before_a_load_brings_no_drift() {
     let (mut p, _) = chimera_core::project::Project::boxed();
     let mut o = OrbitUi::new();
     o.loaded(1, p.orbit_mut());
-    let live = p.orbit().live;
+    let live = *p.orbit().live();
     let drift = |n: u8| Pool::one(Note::new(n).unwrap());
     let mut v = OrbitView {
         loops: 5,
         ..OrbitView::default()
     };
     v.rings[1].pool = drift(70);
-    let absorbed = |p: &chimera_core::project::Project| p.orbit().live.rings[1].ring.pool;
+    let absorbed = |p: &chimera_core::project::Project| p.orbit().live().rings[1].ring.pool;
     // The old project's epoch.
     o.sync(&v, &mut p);
-    assert_eq!(p.orbit().live, live, "epoch 0, the old project's");
+    assert_eq!(*p.orbit().live(), live, "epoch 0, the old project's");
     v.epoch = 1;
     v.acked = o.log().head();
     o.sync(&v, &mut p);
@@ -625,14 +625,14 @@ fn only_a_ring_with_an_unacked_edit_draws_live() {
             r.get() + 1
         );
     }
-    let ring = &mut ui.project_mut().orbit_mut().live.rings[1];
+    let ring = &mut ui.project_mut().orbit_mut().live_mut_for_test().rings[1];
     let h = ring.ring.fill().hits();
     ring.set(
         SceneRing::HITS,
         f32::from(if h >= 2 { h - 1 } else { h + 1 }),
     );
     screen::feed(&mut ui, Input::default());
-    let live = ui.project().orbit().live.rings[1].ring.hits_mask();
+    let live = ui.project().orbit().live().rings[1].ring.hits_mask();
     assert_ne!(live, runner(R[1]));
     for r in R {
         let want = if r == R[1] { live } else { runner(r) };

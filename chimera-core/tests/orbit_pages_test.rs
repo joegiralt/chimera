@@ -62,7 +62,7 @@ fn ring_rhythm_golden() {
 #[test]
 fn orb_custom_circle() {
     let mut ui = Box::new(UiState::new());
-    let chords = |ui: &UiState| ui.project().orbit().live.chords;
+    let chords = |ui: &UiState| ui.project().orbit().live().chords;
     let page = |ui: &UiState| ui.page_def().id;
     hold(&mut ui, Seq);
     assert_eq!(page(&ui), ORBIT_ORB.id);
@@ -179,23 +179,31 @@ fn chrd_is_the_progression_only() {
         !matches!(ORBIT_CHRD.params[0].binding, SlotBinding::Empty),
         "the focus starts on SEGS"
     );
-    let before = ui.project().orbit().live.chords;
+    let before = ui.project().orbit().live().chords;
     for e in [D, E, F] {
         feed(&mut ui, Input::turn(e, 3));
         feed(&mut ui, Input::turn(e, -1));
     }
-    assert_eq!(ui.project().orbit().live.chords, before, "D to F: nothing");
+    assert_eq!(
+        ui.project().orbit().live().chords,
+        before,
+        "D to F: nothing"
+    );
     assert_eq!(ui.orbit().capture, Capture::Off);
     // SEGS on A, DEGREE on B, PLAY on C.
     feed(&mut ui, Input::turn(A, -1));
-    assert_ne!(ui.project().orbit().live.chords.segs, before.segs);
+    assert_ne!(ui.project().orbit().live().chords.segs, before.segs);
     feed(&mut ui, Input::turn(B, 1));
-    assert_ne!(ui.project().orbit().live.chords.degrees, before.degrees);
+    assert_ne!(ui.project().orbit().live().chords.degrees, before.degrees);
     feed(&mut ui, Input::turn(C, 1));
     assert!(matches!(ui.orbit().capture, Capture::Segment(_)));
 
     // SCALE CUSTOM, from ORB: CHRD's EDIT stays.
-    ui.project_mut().orbit_mut().live.chords.scale = ScaleKind::Custom;
+    ui.project_mut()
+        .orbit_mut()
+        .live_mut_for_test()
+        .chords
+        .scale = ScaleKind::Custom;
     tap(&mut ui, Edit);
     assert_eq!(ui.page_def().id, ORBIT_CHRD.id);
 }
@@ -339,15 +347,15 @@ fn degree_turns_from_the_sets_last() {
     feed(&mut ui, Input::press(Plus));
     feed(&mut ui, Input::press(Plus));
     assert_eq!(ui.page_def().id, ORBIT_CHRD.id);
-    let c = &mut ui.project_mut().orbit_mut().live.chords;
+    let c = &mut ui.project_mut().orbit_mut().live_mut_for_test().chords;
     c.scale = ScaleKind::PentatonicMinor;
     c.degrees[0] = Degree::ALL[11];
     feed(&mut ui, Input::turn(B, -1));
-    assert_eq!(ui.project().orbit().live.chords.degrees[0], Degree::IV);
-    let c = &mut ui.project_mut().orbit_mut().live.chords;
+    assert_eq!(ui.project().orbit().live().chords.degrees[0], Degree::IV);
+    let c = &mut ui.project_mut().orbit_mut().live_mut_for_test().chords;
     c.degrees[0] = Degree::ALL[11];
     feed(&mut ui, Input::turn(B, 1));
-    assert_eq!(ui.project().orbit().live.chords.degrees[0], Degree::V);
+    assert_eq!(ui.project().orbit().live().chords.degrees[0], Degree::V);
 }
 
 /// EDIT on CUSTOM returns to ORB even when SCALE is named under it (a
@@ -358,7 +366,11 @@ fn custom_edit_returns_with_scale_named() {
     hold(&mut ui, Seq);
     feed(&mut ui, Input::turn(C, 9));
     assert_eq!(ui.page_def().id, ORBIT_CUSTOM.id);
-    ui.project_mut().orbit_mut().live.chords.scale = ScaleKind::Dorian;
+    ui.project_mut()
+        .orbit_mut()
+        .live_mut_for_test()
+        .chords
+        .scale = ScaleKind::Dorian;
     tap(&mut ui, Edit);
     assert_eq!(ui.page_def().id, ORBIT_ORB.id);
     tap(&mut ui, Edit);
@@ -657,7 +669,7 @@ fn sel(ui: &UiState) -> chimera_core::orbit::RingIdx {
 /// The selected ring as the project holds it.
 fn sel_ring(ui: &UiState) -> chimera_core::orbit::scene::SceneRing {
     let r = ui.location().orbit().unwrap().ring();
-    ui.project().orbit().live.rings[r.get() as usize]
+    ui.project().orbit().live().rings[r.get() as usize]
 }
 
 /// RING · VOICE and RING · NOTES: each cell's label, range and format,
@@ -748,7 +760,7 @@ fn voice_and_notes_pages() {
     assert_eq!(text(&ui, OrbitCell::Learn), "OFF");
     // OCTAVE 3 names CLEAR's C.
     let r = ui.location().orbit().unwrap().ring();
-    ui.project_mut().orbit_mut().live.rings[r.get() as usize]
+    ui.project_mut().orbit_mut().live_mut_for_test().rings[r.get() as usize]
         .ring
         .octave = chimera_core::orbit::ring::Octave::new(3).unwrap();
     assert_eq!(text(&ui, OrbitCell::Clear), "C3 / RND");
@@ -928,7 +940,7 @@ fn clear_down_randomises_in_key() {
     use chimera_hal::EncoderId::E;
     let mut ui = Box::new(UiState::new());
     to_notes(&mut ui, 2);
-    let key = ui.project().orbit().live.chords.key();
+    let key = ui.project().orbit().live().chords.key();
     let in_register = |ui: &UiState, n: u8| {
         let r = sel_ring(ui).ring;
         let lo = r.octave.low().get();
@@ -938,7 +950,7 @@ fn clear_down_randomises_in_key() {
     let mut seen = Vec::new();
     for range in [Range::Zero, Range::Two] {
         let r = ui.location().orbit().unwrap().ring();
-        ui.project_mut().orbit_mut().live.rings[r.get() as usize]
+        ui.project_mut().orbit_mut().live_mut_for_test().rings[r.get() as usize]
             .ring
             .range = range;
         for _ in 0..3 {
@@ -1019,7 +1031,7 @@ fn orb_owns_the_songs_frame() {
         hold(&mut ui, Seq);
         ui
     };
-    let chords = |ui: &UiState| ui.project().orbit().live.chords;
+    let chords = |ui: &UiState| ui.project().orbit().live().chords;
     let mut ui = fresh();
     let c0 = chords(&ui);
     feed(&mut ui, Input::turn(B, 2));

@@ -12,7 +12,7 @@ use super::runner::{Capture, Captured, OrbitView};
 use super::walk::{Pool, Walk};
 use super::{MAX_POOL, MAX_SEGS, RINGS, RingIdx};
 use crate::Velocity;
-use crate::addr::{BlockRead, BlockRef, Blocks};
+use crate::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use crate::block::{Block, DiskCode, OFF_ON, ParamId, ParamSpec, ValFmt, apply_code};
 use crate::dsp::modulator::law::Law;
 use crate::dsp::modulator::pick;
@@ -300,16 +300,17 @@ pub static NEUTRAL: Scene = Scene::neutral();
 /// absorbed), and the tempo.
 ///
 /// Each slot is its scene's working copy: the user's edits, never the
-/// drift (ADR 0083). The slots are written only here: `edit` and `keep`
-/// into the playing one, `save_to`, and a confirmed `overwrite_scene` or
+/// drift (ADR 0083). The slots are written only here: `edit` into the
+/// playing one, `save_to`, and a confirmed `overwrite_scene` or
 /// `clear_scene`, each moving the slot's rev, which is what a
 /// `Confirmed<SceneSlot>` witnesses.
 #[derive(Clone, Copy, Debug)]
 pub struct OrbitSong {
     /// The playing scene: what the pages show and the runner plays, its
     /// slot plus the drift. A switch replaces it with the slot when it
-    /// lands (ADR 0077, 0083).
-    pub live: Scene,
+    /// lands (ADR 0077, 0083). Private: `edit` is the one way to change
+    /// it, and writes the slot too.
+    live: Scene,
     pub bpm: Bpm,
     scenes: [Scene; SCENES],
     /// Moves on every write to its slot; run-time only, never saved.
@@ -467,21 +468,37 @@ impl OrbitSong {
         f(&mut self.live);
     }
 
-    /// Block `b`'s param `id`, edited on `live` through `Blocks`, into
-    /// the playing slot as `live` has it: a new OCTAVE moves the slot's own
-    /// notes, a new HITS re-lays its own hits.
-    pub fn keep(&mut self, b: BlockRef, id: ParamId) {
-        let Some(v) = self.live.block(b).map(|x| x.get(id)) else {
-            return;
-        };
-        let slot = &self.scenes[self.current.0 as usize];
-        if slot.block(b).is_some_and(|x| x.get(id) != v) {
-            self.edit_slot(&mut |s: &mut Scene| {
-                if let Some(x) = s.block_mut(b) {
-                    x.write(id, v);
+    /// A scene param's encoder turned by `delta` (snapped, with MIX):
+    /// an `edit`, so on `live` and its slot alike.
+    #[inline(never)]
+    pub fn turn(&mut self, a: ParamAddr, delta: i8, snap: bool) {
+        self.edit(&mut |s| {
+            if let Some(b) = s.block_mut(a.block) {
+                if snap {
+                    b.snap(a.param, delta);
+                } else {
+                    b.nudge(a.param, delta);
                 }
-            });
-        }
+            }
+        });
+    }
+
+    /// The playing scene as it plays: its slot plus the drift.
+    pub fn live(&self) -> &Scene {
+        &self.live
+    }
+
+    /// `live`'s edits since the last harvest (`Scene::harvest`).
+    pub(crate) fn harvest(&mut self) -> (RingMask, RingMask) {
+        self.live.harvest()
+    }
+
+    /// `live` past its slot: a test's drift, or a `live` that differs
+    /// from its slot as a load can leave it. Never the firmware's.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn live_mut_for_test(&mut self) -> &mut Scene {
+        &mut self.live
     }
 
     /// `f` on the playing slot, its rev moved; its touched marks are

@@ -115,10 +115,10 @@ fn fill(n: u8) -> Fill {
 fn rig(steps: [u8; RINGS], gate: u8, bpm: u16) -> OrbitRig {
     let mut r = OrbitRig::new();
     let song = r.song();
-    song.live = Scene::neutral();
+    *song.live_mut_for_test() = Scene::neutral();
     song.bpm = chimera_core::orbit::clock::Bpm::new(bpm).unwrap();
     for (i, &n) in steps.iter().enumerate() {
-        let s = &mut song.live.rings[i];
+        let s = &mut song.live_mut_for_test().rings[i];
         s.ring = Ring::new(fill(n), Octave::new(4).unwrap());
         s.ring.gate = Pct::clamped(gate);
     }

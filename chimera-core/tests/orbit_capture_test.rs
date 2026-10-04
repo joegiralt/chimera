@@ -36,7 +36,7 @@ fn notes(ns: &[u8]) -> Vec<Note> {
 }
 
 fn pool(rig: &mut OrbitRig, r: usize) -> Vec<u8> {
-    let p = rig.song().live.rings[r].ring.pool;
+    let p = rig.song().live_mut_for_test().rings[r].ring.pool;
     p.notes().iter().map(|n| n.get()).collect()
 }
 
@@ -62,7 +62,7 @@ fn capture_chord_over_300_ms() {
     rig.run(1);
     chord(&mut rig, &[64, 60, 57], secs(0.1));
     let want = Chord::from_notes(&notes(&[57, 60, 64])).unwrap();
-    let c = rig.song().live.chords;
+    let c = rig.song().live_mut_for_test().chords;
     assert_eq!(c.played[1], Some(want));
     assert_eq!(want.bass(), PitchClass::A);
     assert_eq!(want.to_string(), "Am");
@@ -85,11 +85,11 @@ fn capture_single_note_ignored() {
     rig.run(1);
     chord(&mut rig, &[60], 4);
     chord(&mut rig, &[60, 72], 4);
-    assert_eq!(rig.song().live.chords.played[0], None);
+    assert_eq!(rig.song().live_mut_for_test().chords.played[0], None);
     assert_eq!(rig.ui.capture, Capture::Segment(0), "still armed");
     assert_eq!(rig.view().captured.count, 0);
     chord(&mut rig, &[60, 64, 67], 4);
-    let c = rig.song().live.chords.played[0].expect("the next chord taken");
+    let c = rig.song().live_mut_for_test().chords.played[0].expect("the next chord taken");
     assert_eq!(c.to_string(), "C");
 }
 
@@ -114,7 +114,7 @@ fn capture_ninth_note_dropped() {
 #[test]
 fn capture_pool_sets_octave() {
     let mut rig = OrbitRig::new();
-    assert_eq!(rig.song().live.rings[1].ring.octave.get(), 4);
+    assert_eq!(rig.song().live_mut_for_test().rings[1].ring.octave.get(), 4);
     rig.ui.arm(Some(ArmTarget::Ring(R[1])));
     rig.run(1);
     rig.key(0, 50, true);
@@ -132,11 +132,16 @@ fn capture_pool_sets_octave() {
     }
     rig.run(2);
     assert_eq!(pool(&mut rig, 1), [45, 50, 57]);
-    assert_eq!(rig.song().live.rings[1].ring.octave.get(), 2);
+    assert_eq!(rig.song().live_mut_for_test().rings[1].ring.octave.get(), 2);
     // The other rings are untouched.
     let init = chimera_core::orbit::scene::Scene::init();
     for i in [0, 2, 3, 4] {
-        assert_eq!(rig.song().live.rings[i], init.rings[i], "ring {}", i + 1);
+        assert_eq!(
+            rig.song().live_mut_for_test().rings[i],
+            init.rings[i],
+            "ring {}",
+            i + 1
+        );
     }
 }
 
@@ -149,13 +154,13 @@ fn capture_step_fills_hits_in_order() {
     for rotate in [0, 1] {
         let mut rig = OrbitRig::new();
         {
-            let s = &mut rig.song().live.rings[1];
+            let s = &mut rig.song().live_mut_for_test().rings[1];
             s.ring.mode = NoteMode::Step;
             let fill = Fill::new(Steps::new(8).unwrap(), 3, rotate).unwrap();
             s.ring = s.ring.with_fill(fill);
             s.touched = s.touched.with(Touched::RHYTHM);
         }
-        let mask = rig.song().live.rings[1].ring.hits_mask();
+        let mask = rig.song().live_mut_for_test().rings[1].ring.hits_mask();
         rig.ui.arm(Some(ArmTarget::Ring(R[1])));
         rig.run(1);
         for k in [64, 60, 67, 71] {
@@ -177,12 +182,16 @@ fn capture_step_fills_hits_in_order() {
         } else {
             assert!(!mask.is_hit(0), "step 1 rests");
         }
-        let got: Vec<u8> = rig.song().live.rings[1].ring.notes[..8]
+        let got: Vec<u8> = rig.song().live_mut_for_test().rings[1].ring.notes[..8]
             .iter()
             .map(|n| n.get())
             .collect();
         assert_eq!(got, want, "ROTATE {rotate}");
-        assert_eq!(rig.song().live.rings[1].ring.octave.get(), 4, "C4's octave");
+        assert_eq!(
+            rig.song().live_mut_for_test().rings[1].ring.octave.get(),
+            4,
+            "C4's octave"
+        );
         assert_eq!(rig.view().captured.count, 1, "the fourth note took nothing");
         assert_eq!(rig.ui.capture, Capture::Off);
     }
@@ -206,7 +215,11 @@ fn capture_notes_still_sound() {
         }
         rig.run(secs(0.2));
         assert!(rig.stuck_notes().is_empty(), "{:?}", rig.stuck_notes());
-        (held, rig.sum.clone(), rig.song().live.chords.played[0])
+        (
+            held,
+            rig.sum.clone(),
+            rig.song().live_mut_for_test().chords.played[0],
+        )
     };
     let (held, armed, took) = render(Some(ArmTarget::Segment(0)));
     let (_, plain, none) = render(None);
@@ -397,7 +410,7 @@ fn capture_survives_the_triple_buffer() {
     }
     assert_eq!(ui.orbit().capture, Capture::Off);
     assert_eq!(text(&ui), "Am");
-    let am = ui.project().orbit().live.chords.played[0];
+    let am = ui.project().orbit().live().chords.played[0];
     let count = frame(
         &mut ui,
         Input::default(),
@@ -412,7 +425,7 @@ fn capture_survives_the_triple_buffer() {
     );
     assert_eq!(count, 1, "disarmed: C major is no capture");
     frame(&mut ui, Input::default(), &[]);
-    assert_eq!(ui.project().orbit().live.chords.played[0], am);
+    assert_eq!(ui.project().orbit().live().chords.played[0], am);
     // PLAY armed over the played chord, then a quick two-detent flick
     // down over two frames: disarmed, the chord kept.
     frame(&mut ui, Input::turn(C, 1), &[]);
@@ -420,11 +433,11 @@ fn capture_survives_the_triple_buffer() {
     frame(&mut ui, Input::turn(C, -1), &[]);
     frame(&mut ui, Input::turn(C, -1), &[]);
     assert_eq!(ui.orbit().capture, Capture::Off);
-    assert_eq!(ui.project().orbit().live.chords.played[0], am);
+    assert_eq!(ui.project().orbit().live().chords.played[0], am);
     assert_eq!(text(&ui), "Am");
     // MIX + down clears it: the degree plays again.
     frame(&mut ui, Input::turn(C, -1).and_held(ButtonId::Mix), &[]);
-    assert_eq!(ui.project().orbit().live.chords.played[0], None);
+    assert_eq!(ui.project().orbit().live().chords.played[0], None);
     assert_eq!(text(&ui), "-");
 
     // A capture taken in the frame PLAY is turned up again: the take's
@@ -465,7 +478,7 @@ fn capture_survives_the_triple_buffer() {
     );
     assert_eq!(n, 3, "the next chord is captured");
     frame(&mut ui, Input::default(), &[]);
-    let c = ui.project().orbit().live.chords.played[0].unwrap();
+    let c = ui.project().orbit().live().chords.played[0].unwrap();
     assert_eq!(c.to_string(), "C");
 }
 
@@ -482,16 +495,16 @@ fn segs_shrinking_disarms_a_segment() {
     assert_eq!(ui.orbit().capture, Capture::Segment(3));
     // SEGS (A) from 4 to 3.
     feed(&mut ui, Input::turn(A, -1));
-    assert_eq!(ui.project().orbit().live.chords.segs.get(), 3);
+    assert_eq!(ui.project().orbit().live().chords.segs.get(), 3);
     assert_eq!(ui.orbit().capture, Capture::Off);
     // A capture already reported into it is not written past SEGS.
-    let mut s = ui.project().orbit().live;
+    let mut s = *ui.project().orbit().live();
     let mut c = chimera_core::orbit::runner::OrbitView::default().captured;
     c.target = Capture::Segment(3);
     c.len = 3;
     c.notes[..3].copy_from_slice(&notes(&[57, 60, 64]));
     s.take(&c);
-    assert_eq!(s.chords.played, ui.project().orbit().live.chords.played);
+    assert_eq!(s.chords.played, ui.project().orbit().live().chords.played);
 }
 
 /// LEARN arms the ring it is turned on, shows ON there and OFF on the
@@ -506,14 +519,14 @@ fn learn_arms_the_selected_ring() {
         let f = OrbitFrame::new(ui.project().orbit(), ui.orbit());
         cell_text(OrbitCell::Learn, &f, r).as_str().to_string()
     };
-    let before = ui.project().orbit().live;
+    let before = *ui.project().orbit().live();
     feed(&mut ui, Input::turn(D, 1));
     assert_eq!(ui.orbit().capture, Capture::Ring(R[1]));
     assert_eq!(
         (text(&ui, R[1]), text(&ui, R[2])),
         ("ON".into(), "OFF".into())
     );
-    assert_eq!(ui.project().orbit().live, before, "arming edits nothing");
+    assert_eq!(*ui.project().orbit().live(), before, "arming edits nothing");
     feed(&mut ui, Input::turn(D, -1));
     assert_eq!(ui.orbit().capture, Capture::Off);
     feed(&mut ui, Input::turn(D, 2));
@@ -532,7 +545,7 @@ fn a_load_drops_the_capture() {
     ui.arm(Some(ArmTarget::Ring(R[0])));
     ui.loaded(1, p.orbit_mut());
     assert_eq!(ui.capture, Capture::Off);
-    let ring = p.orbit().live.rings[0];
+    let ring = p.orbit().live().rings[0];
     let mut v = OrbitView::default();
     v.captured.count = 1;
     v.captured.target = Capture::Ring(R[0]);
@@ -540,26 +553,26 @@ fn a_load_drops_the_capture() {
     v.captured.len = 1;
     // A view with `acked` before the load's seq, on the old project.
     ui.sync(&v, &mut p);
-    assert_eq!(p.orbit().live.rings[0], ring, "from before the load");
+    assert_eq!(p.orbit().live().rings[0], ring, "from before the load");
     // The load's runner reports the old capture with its target cleared.
     (v.epoch, v.acked) = (1, ui.log().head());
     v.captured.target = Capture::Off;
     ui.sync(&v, &mut p);
-    assert_eq!(p.orbit().live.rings[0], ring, "taken once, never again");
+    assert_eq!(p.orbit().live().rings[0], ring, "taken once, never again");
     v.captured.count = 2;
     v.captured.target = Capture::Ring(R[0]);
     ui.sync(&v, &mut p);
-    let taken = p.orbit().live.rings[0];
+    let taken = p.orbit().live().rings[0];
     assert_ne!(taken, ring);
     // The same count again, other notes: a capture is taken once.
     v.captured.notes[0] = Note::new(74).unwrap();
     ui.sync(&v, &mut p);
-    assert_eq!(p.orbit().live.rings[0], taken, "never twice");
+    assert_eq!(p.orbit().live().rings[0], taken, "never twice");
 }
 
 /// Ring 2 as STEP with one hit, LEARN armed on it: one key-down takes it.
 fn armed_step(rig: &mut OrbitRig) {
-    let s = &mut rig.song().live.rings[1];
+    let s = &mut rig.song().live_mut_for_test().rings[1];
     s.ring.mode = NoteMode::Step;
     let fill = Fill::new(Steps::new(8).unwrap(), 1, 0).unwrap();
     s.ring = s.ring.with_fill(fill);
@@ -575,7 +588,7 @@ fn armed_step(rig: &mut OrbitRig) {
 fn a_load_disarms_the_runner() {
     let mut rig = OrbitRig::new();
     armed_step(&mut rig);
-    let ring = rig.song().live.rings[1];
+    let ring = rig.song().live_mut_for_test().rings[1];
     rig.load();
     rig.key(0, 72, true);
     rig.run(2);
@@ -583,7 +596,11 @@ fn a_load_disarms_the_runner() {
     rig.run(4);
     let v = rig.view();
     assert_eq!(v.captured.target, Capture::Off, "the old project's, if any");
-    assert_eq!(rig.song().live.rings[1], ring, "the loaded ring untouched");
+    assert_eq!(
+        rig.song().live_mut_for_test().rings[1],
+        ring,
+        "the loaded ring untouched"
+    );
 }
 
 /// Keys held through a load end no capture when they come up after it,
@@ -596,14 +613,18 @@ fn a_key_held_through_a_load_ends_nothing() {
     rig.key(0, 60, true);
     rig.key(0, 64, true);
     rig.run(2);
-    let ring = rig.song().live.rings[1];
+    let ring = rig.song().live_mut_for_test().rings[1];
     rig.load();
     rig.key(0, 60, false);
     rig.key(0, 64, false);
     rig.run(4);
     let v = rig.view();
     assert_eq!(v.captured.target, Capture::Off, "the old project's, if any");
-    assert_eq!(rig.song().live.rings[1], ring, "the loaded ring untouched");
+    assert_eq!(
+        rig.song().live_mut_for_test().rings[1],
+        ring,
+        "the loaded ring untouched"
+    );
 }
 
 /// A capture ended while the UI reads the card for a load, so on the old
@@ -612,7 +633,7 @@ fn a_key_held_through_a_load_ends_nothing() {
 fn a_capture_in_the_card_read_is_dropped() {
     let mut rig = OrbitRig::new();
     armed_step(&mut rig);
-    let ring = rig.song().live.rings[1];
+    let ring = rig.song().live_mut_for_test().rings[1];
     rig.key(0, 72, true);
     rig.card_read(2);
     rig.key(0, 72, false);
@@ -620,7 +641,11 @@ fn a_capture_in_the_card_read_is_dropped() {
     assert_eq!(rig.view().captured.count, 1, "taken on the old project");
     rig.load();
     rig.run(4);
-    assert_eq!(rig.song().live.rings[1], ring, "the loaded ring untouched");
+    assert_eq!(
+        rig.song().live_mut_for_test().rings[1],
+        ring,
+        "the loaded ring untouched"
+    );
 }
 
 /// LEARN re-armed on the same ring before the UI sees the capture just
@@ -669,7 +694,7 @@ impl Captures {
         use chimera_core::orbit::channel::{Cmd, receive_each};
         let read = rig.views.last().copied().unwrap_or_default();
         let ui = rig.ui.orbit();
-        let (live, head, took) = (rig.ui.project().orbit().live, ui.log().head(), ui.took);
+        let (live, head, took) = (*rig.ui.project().orbit().live(), ui.log().head(), ui.took);
         let before = rig.views.len();
         rig.late(first, input, then);
         let (mut at, mut s) = (head, head);
@@ -689,7 +714,7 @@ impl Captures {
             want.take(&c);
             let seed = self.seed;
             assert_eq!(
-                rig.ui.project().orbit().live,
+                *rig.ui.project().orbit().live(),
                 want,
                 "seed {seed}: taken into live"
             );

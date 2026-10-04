@@ -47,7 +47,7 @@ impl<'a> OrbitFrame<'a> {
 
     /// The scene being edited and played.
     pub fn scene(&self) -> &'a Scene {
-        &self.song.live
+        self.song.live()
     }
 
     /// Ring `r`'s pattern: the runner's, drift and all, while it has

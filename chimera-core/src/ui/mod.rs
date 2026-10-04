@@ -1638,7 +1638,7 @@ impl UiState {
         }
         let (def, ctx) = (self.page_def(), self.ctx());
         let shift = c.edges(ButtonId::Mix).down;
-        let custom = |p: &Project| p.orbit().live.chords.scale == ScaleKind::Custom;
+        let custom = |p: &Project| p.orbit().live().chords.scale == ScaleKind::Custom;
         let was_custom = custom(&self.project);
         for (i, &enc) in ALL_ENCODERS.iter().enumerate() {
             let delta = c.encoder_delta(enc);
@@ -1663,6 +1663,13 @@ impl UiState {
             if view::is_dimmed(&v, &self.project.part(self.active_part).sound, &ctx) {
                 continue;
             }
+            // A scene's param: on `live` and its slot alike (ADR 0083).
+            if let Some(a) = slot_addr(def, i, &ctx)
+                && matches!(a.block, BlockRef::OrbitChords | BlockRef::OrbitRing(_))
+            {
+                self.project.orbit_mut().turn(a, delta, shift);
+                continue;
+            }
             let params = &mut UiBlocks {
                 project: &mut self.project,
                 part: self.active_part,
@@ -1674,15 +1681,9 @@ impl UiState {
             } else {
                 part_page::apply_under(def, i, delta, params, &ctx, &mut self.sel_op);
             }
-            // A scene's param into its slot too (ADR 0083).
-            if let Some(a) = slot_addr(def, i, &ctx)
-                && matches!(a.block, BlockRef::OrbitChords | BlockRef::OrbitRing(_))
-            {
-                self.project.orbit_mut().keep(a.block, a.param);
-            }
         }
         // SEGS shrunk under an armed segment drops the capture.
-        self.orbit.fit(&self.project.orbit().live.chords);
+        self.orbit.fit(&self.project.orbit().live().chords);
         // SCALE turned to CUSTOM opens its circle.
         if !was_custom
             && custom(&self.project)
@@ -1717,7 +1718,7 @@ impl UiState {
     /// the end of every frame's input (ADR 0082).
     pub fn flush_orbit(&mut self) {
         // `orbit_mut` only with an edit to take: it re-keys the status.
-        if self.project.orbit().live.untouched() {
+        if self.project.orbit().live().untouched() {
             self.orbit.flush_log();
         } else {
             self.orbit.flush(self.project.orbit_mut());
@@ -2557,8 +2558,8 @@ fn read_block<'a>(
         BlockRef::Theme => Some(theme),
         BlockRef::Midi => Some(midi),
         BlockRef::PartMix(p) => Some(project.read_part(p).mix),
-        BlockRef::OrbitChords => Some(&song.live.chords),
-        BlockRef::OrbitRing(r) => Some(&song.live.rings[r.get() as usize]),
+        BlockRef::OrbitChords => Some(&song.live().chords),
+        BlockRef::OrbitRing(r) => Some(&song.live().rings[r.get() as usize]),
         BlockRef::Tempo => Some(&song.bpm),
         _ => project.read_part(part).block(b),
     }
@@ -2576,10 +2577,9 @@ impl Blocks for UiBlocks<'_> {
             BlockRef::Theme => Some(self.theme),
             BlockRef::Midi => Some(self.midi),
             BlockRef::PartMix(p) => Some(self.project.edit_part(p).mix),
-            BlockRef::OrbitChords => Some(&mut self.project.orbit_mut().live.chords),
-            BlockRef::OrbitRing(r) => {
-                Some(&mut self.project.orbit_mut().live.rings[r.get() as usize])
-            }
+            // A scene's params change through `OrbitSong::edit`, which
+            // writes its slot too (ADR 0083): never from here.
+            BlockRef::OrbitChords | BlockRef::OrbitRing(_) => None,
             BlockRef::Tempo => Some(&mut self.project.orbit_mut().bpm),
             _ => {
                 let PartEdit { sound, mix, fx } = self.project.edit_part(self.part);
@@ -2605,7 +2605,7 @@ fn page_values(page: PageKey, def: &BlockDef, params: &impl BlockRead, ctx: &Slo
 }
 
 fn nav_cx(project: &Project) -> NavCtx {
-    let live = &project.orbit().live;
+    let live = project.orbit().live();
     NavCtx {
         engines: PartId::ALL.map(|p| project.part(p).sound.engine()),
         dyn_rows: 0,

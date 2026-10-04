@@ -238,7 +238,7 @@ impl OrbitUi {
     /// blocks (a false START or STOP). The destructure fails to compile
     /// when `OrbitShared` gains a field.
     pub fn publish(&self, song: &OrbitSong, sync_mode: SyncMode, out: &mut OrbitShared) {
-        debug_assert!(song.live.untouched(), "an edit not flushed");
+        debug_assert!(song.live().untouched(), "an edit not flushed");
         let OrbitShared {
             bpm,
             sync,
@@ -250,7 +250,7 @@ impl OrbitUi {
         } = out;
         *bpm = song.bpm;
         *sync = sync_mode;
-        *settings = song.live;
+        *settings = *song.live();
         *next = *song.scene(song.queued().unwrap_or(song.current()));
         *log = *self.chan.log();
         *load = self.chan.load();
@@ -260,7 +260,7 @@ impl OrbitUi {
     /// `live`'s edits since the last harvest, into the outbox.
     #[inline(never)]
     fn harvest(&mut self, song: &mut OrbitSong) {
-        let (rhythm, notes) = song.live.harvest();
+        let (rhythm, notes) = song.harvest();
         self.chan.edit(rhythm, notes);
     }
 
@@ -323,7 +323,7 @@ impl OrbitUi {
     /// edits, and the runner, which starts on slot 1, is told the playing
     /// slot with a `Keep` in the next publish.
     pub fn booted(&mut self, song: &mut OrbitSong) {
-        song.live.harvest();
+        song.harvest();
         self.chan.scene(SceneCmd::Keep(song.current()));
         self.chan.flush();
     }
@@ -396,7 +396,7 @@ impl OrbitUi {
         self.chan.ack(v.acked);
         self.status = OrbitStatus::of(v);
         // An edit since the last flush counts as unapplied.
-        if !project.orbit().live.untouched() {
+        if !project.orbit().live().untouched() {
             self.harvest(project.orbit_mut());
         }
         let idle = self.chan.idle();
@@ -445,7 +445,7 @@ impl OrbitUi {
     /// MIX + B*n*: ring `r`'s MUTE, in the project (so marked).
     pub fn mute(r: RingIdx, project: &mut Project) {
         let song = project.orbit_mut();
-        let was = song.live.rings[r.get() as usize].get(SceneRing::MUTE) != 0.0;
+        let was = song.live().rings[r.get() as usize].get(SceneRing::MUTE) != 0.0;
         song.edit(&mut |s| s.rings[r.get() as usize].set(SceneRing::MUTE, f32::from(!was)));
     }
 }

@@ -136,7 +136,7 @@ fn init_scene_is_clean() {
 fn render_levels(solo: Option<usize>, loops: u32) -> Report {
     let mut rig = OrbitRig::new();
     if let Some(s) = solo {
-        for (i, sr) in rig.song().live.rings.iter_mut().enumerate() {
+        for (i, sr) in rig.song().live_mut_for_test().rings.iter_mut().enumerate() {
             sr.ring.mute = i != s;
         }
     }
@@ -234,7 +234,7 @@ fn stress_is_clean() {
     {
         let song = rig.song();
         song.bpm = Bpm::new(300).unwrap();
-        for sr in &mut song.live.rings {
+        for sr in &mut song.live_mut_for_test().rings {
             let r = &mut sr.ring;
             *r = r.with_fill(Fill::new(Steps::MAX, 32, 0).unwrap());
             r.mute = false;
@@ -466,11 +466,13 @@ impl Case {
             Case::Param(b, s) => orbit_block(song, b).set(s.id, v),
             Case::Note(r, _) => {
                 let note = Note::new(v as u8).expect("a note");
-                song.live.rings[r.get() as usize].set_chip(0, note);
+                song.live_mut_for_test().rings[r.get() as usize].set_chip(0, note);
             }
             // The scene's own: the UI's MIX gate is `clear_needs_mix`'s.
-            Case::Clear(r, _) if v > 0.0 => song.live.rings[r.get() as usize].clear(),
-            Case::Clear(r, _) => song.live.scatter(r, salt),
+            Case::Clear(r, _) if v > 0.0 => {
+                song.live_mut_for_test().rings[r.get() as usize].clear()
+            }
+            Case::Clear(r, _) => song.live_mut_for_test().scatter(r, salt),
         }
     }
 
@@ -518,15 +520,15 @@ fn orbit_params() -> Vec<Case> {
 fn sweep_param(case: Case) -> (String, Vec<String>, [usize; 5]) {
     let mut rig = OrbitRig::on_init();
     let song = rig.song();
-    song.live.chords.bars = Bars::ONE;
-    for (i, sr) in song.live.rings.iter_mut().enumerate() {
+    song.live_mut_for_test().chords.bars = Bars::ONE;
+    for (i, sr) in song.live_mut_for_test().rings.iter_mut().enumerate() {
         sr.ring.mutate = Pct::clamped(30);
         if let Some(r) = case.ring() {
             sr.ring.mute = i != r.get() as usize;
         }
     }
     if let Case::Note(r, m) | Case::Clear(r, m) = case {
-        song.live.rings[r.get() as usize].ring.mode = m;
+        song.live_mut_for_test().rings[r.get() as usize].ring.mode = m;
     }
     let set = |rig: &mut OrbitRig, v: f32| {
         let salt = rig.ui.clear_salt();

@@ -17,8 +17,8 @@ use chimera_core::ui::settings::prompt::{
 use chimera_core::ui::settings::replace::Commits;
 use chimera_core::ui::settings::view::{OrbitBand, RowLook};
 use chimera_core::ui::settings::{Kind, Screen, rows, screen_path};
-use chimera_hal::ButtonId::{B2, B6, Edit, Menu, Plus, Seq};
-use chimera_hal::EncoderId::A;
+use chimera_hal::ButtonId::{B2, B6, Edit, Menu, Minus, Plus, Seq};
+use chimera_hal::EncoderId::{A, B, E};
 use screen::{Input, ShellRig, feed, hold, plus, tap, to_leaf};
 
 const S: [SceneIdx; 8] = SceneIdx::ALL;
@@ -149,14 +149,14 @@ fn clear_asks_and_clears() {
         assert_eq!(slot(&rig.ui, 0), one, "{cancel:?} leaves it");
         assert_eq!(rig.ui.project().orbit().queued(), None);
     }
-    let live = rig.ui.project().orbit().live;
+    let live = *rig.ui.project().orbit().live();
     rig.tap(Edit);
     rig.tap(Seq); // CLEAR
     assert!(!rig.ui.prompt_open());
     let song = rig.ui.project().orbit();
     assert_eq!(slot(&rig.ui, 0), Scene::neutral());
     assert_eq!(song.saved().bits() & 1, 0);
-    assert_eq!(song.live, live, "live waits for the loop");
+    assert_eq!(*song.live(), live, "live waits for the loop");
     assert_eq!(song.queued(), Some(S[0]));
     assert_eq!(rig.view().cue, Some(S[0]), "the runner holds it");
     assert_eq!(rig.view().playing, S[0]);
@@ -164,7 +164,7 @@ fn clear_asks_and_clears() {
     past_the_loop(&mut rig);
     let song = rig.ui.project().orbit();
     assert_eq!((song.current(), song.queued()), (S[0], None));
-    assert_eq!(song.live, Scene::neutral(), "landed");
+    assert_eq!(*song.live(), Scene::neutral(), "landed");
     let from = rig.sent.len();
     past_the_loop(&mut rig);
     let ons = rig.sent[from..]
@@ -191,7 +191,7 @@ fn save_to_lists_eight_slots() {
     want[0] = "OVER SCENE 1".into();
     assert_eq!(labels(&ui), want);
     // Slot 5 saved.
-    ui.project_mut().orbit_mut().live.rings[0].set(SceneRing::MUTE, 1.0);
+    ui.project_mut().orbit_mut().live_mut_for_test().rings[0].set(SceneRing::MUTE, 1.0);
     let c = Confirmed::<SceneSlot>::unasked(ui.project().orbit(), S[4]);
     ui.project_mut().orbit_mut().overwrite_scene(c).unwrap();
     want[4] = "OVER SCENE 5".into();
@@ -216,24 +216,24 @@ fn save_to_lists_eight_slots() {
     tap(&mut ui, Edit);
     assert!(!ui.prompt_open());
     assert_eq!(toast(&mut ui), "SCENE 3 SAVED");
-    assert_eq!(slot(&ui, 2), ui.project().orbit().live);
+    assert_eq!(slot(&ui, 2), *ui.project().orbit().live());
     want[2] = "OVER SCENE 3".into();
     assert_eq!(labels(&ui), want);
     // Another saved slot: it asks.
-    ui.project_mut().orbit_mut().live.rings[2].set(SceneRing::MUTE, 1.0);
+    ui.project_mut().orbit_mut().live_mut_for_test().rings[2].set(SceneRing::MUTE, 1.0);
     plus(&mut ui, 2);
     tap(&mut ui, Edit);
     assert_eq!(question(&ui), "SAVE OVER SCENE 5?");
     tap(&mut ui, Menu);
     assert!(!ui.prompt_open());
-    assert_ne!(slot(&ui, 4), ui.project().orbit().live);
+    assert_ne!(slot(&ui, 4), *ui.project().orbit().live());
     // The playing slot: at once.
     plus(&mut ui, 4);
     assert_eq!(ui.location().settings().unwrap().row(), 0);
     tap(&mut ui, Edit);
     assert!(!ui.prompt_open());
     assert_eq!(toast(&mut ui), "SCENE 1 SAVED");
-    assert_eq!(slot(&ui, 0), ui.project().orbit().live);
+    assert_eq!(slot(&ui, 0), *ui.project().orbit().live());
 }
 
 /// Ten loops of MUTATE drift `live` from its slot; RELOAD drops the drift
@@ -248,7 +248,7 @@ fn reload_drops_the_drift() {
     assert!(!ui.prompt_open());
 
     let mut ui = Box::new(UiState::new());
-    for r in &mut ui.project_mut().orbit_mut().live.rings {
+    for r in &mut ui.project_mut().orbit_mut().live_mut_for_test().rings {
         r.set(SceneRing::MUTATE, 100.0);
     }
     let playing = ui.project().orbit().current();
@@ -259,7 +259,7 @@ fn reload_drops_the_drift() {
     rig.b6();
     rig.until(|v| v.loops >= 10);
     rig.idle(1);
-    assert_ne!(rig.ui.project().orbit().live, saved, "drifted");
+    assert_ne!(*rig.ui.project().orbit().live(), saved, "drifted");
     orbit_row(&mut rig.ui, RELOAD);
     assert_eq!(look(&rig.ui, RELOAD), RowLook::Normal);
     rig.tap(Edit);
@@ -271,7 +271,7 @@ fn reload_drops_the_drift() {
     past_the_loop(&mut rig);
     let song = rig.ui.project().orbit();
     assert_eq!((song.current(), song.queued()), (S[0], None));
-    assert_eq!(song.live, saved, "the drift is dropped");
+    assert_eq!(*song.live(), saved, "the drift is dropped");
     let masks = |s: &Scene| s.rings.map(|r| r.ring.hits_mask().bits());
     let heard = rig.view().rings.map(|r| r.hits.bits());
     assert_eq!(heard, masks(&saved), "the saved masks play");
@@ -358,7 +358,7 @@ fn scene_prompts_answer_by_meaning() {
             .position(|&x| x == a)
     };
     let mut ui = UiState::new();
-    ui.project_mut().orbit_mut().live.rings[0].set(SceneRing::MUTE, 1.0);
+    ui.project_mut().orbit_mut().live_mut_for_test().rings[0].set(SceneRing::MUTE, 1.0);
     orbit_row(&mut ui, RELOAD);
     tap(&mut ui, Edit);
     pick(&mut ui, place(ReloadSceneAnswer::Cancel).unwrap());
@@ -439,7 +439,7 @@ fn clear_and_reload_wait_for_a_switch() {
     let c = Confirmed::<SceneSlot>::unasked(ui.project().orbit(), S[0]);
     feed(&mut ui, Input::turn(A, 1));
     assert_eq!(ui.project().orbit().queued(), Some(S[1]));
-    ui.project_mut().orbit_mut().live.rings[0].set(SceneRing::MUTE, 1.0);
+    ui.project_mut().orbit_mut().live_mut_for_test().rings[0].set(SceneRing::MUTE, 1.0);
     for row in [CLEAR, RELOAD] {
         orbit_row(&mut ui, row);
         assert_eq!(look(&ui, row), RowLook::Normal);
@@ -453,4 +453,33 @@ fn clear_and_reload_wait_for_a_switch() {
     );
     assert_eq!(slot(&ui, 0), before);
     assert_eq!(ui.project().orbit().queued(), Some(S[1]));
+}
+
+/// ADR 0083: RELOAD restarts the scene from its slot. KEY and ring 1's
+/// MUTATE, edited on the pages, stay; the drift since goes.
+#[test]
+fn reload_keeps_the_edits_and_drops_the_drift() {
+    let mut ui = Box::new(UiState::new());
+    hold(&mut ui, Seq);
+    feed(&mut ui, Input::press(Plus)); // RHYTHM
+    feed(&mut ui, Input::turn(E, 100)); // ring 1's MUTATE
+    feed(&mut ui, Input::press(Minus)); // ORB
+    feed(&mut ui, Input::turn(B, -9)); // KEY A → C
+    let base = slot(&ui, 0);
+    assert_eq!(base.rings[0].ring.mutate.get(), 100);
+    assert_eq!(base.chords.tonic, chimera_theory::PitchClass::C);
+    let mut rig = ShellRig::new(ui);
+    rig.b6();
+    rig.until(|v| v.loops >= 10);
+    rig.idle(1);
+    assert_ne!(*rig.ui.project().orbit().live(), base, "drifted");
+    orbit_row(&mut rig.ui, RELOAD);
+    rig.tap(Edit);
+    assert_eq!(question(&rig.ui), "RELOAD SCENE 1?");
+    rig.tap(Seq); // RELOAD
+    past_the_loop(&mut rig);
+    let song = rig.ui.project().orbit();
+    assert_eq!(song.queued(), None);
+    assert_eq!(*song.live(), base, "the edits, no drift");
+    assert_eq!(*song.scene(S[0]), base);
 }

@@ -497,7 +497,11 @@ fn prompt(k: AskKind, ui: &mut UiState) {
             tap(ui, ButtonId::Edit);
         }
         AskKind::ReloadScene => {
-            ui.project_mut().orbit_mut().live.chords.tonic = chimera_theory::PitchClass::E;
+            ui.project_mut()
+                .orbit_mut()
+                .live_mut_for_test()
+                .chords
+                .tonic = chimera_theory::PitchClass::E;
             to_leaf(ui, &["ORBIT"]);
             plus(ui, 3);
             tap(ui, ButtonId::Edit);

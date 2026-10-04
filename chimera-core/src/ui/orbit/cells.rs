@@ -76,7 +76,7 @@ impl OrbitCell {
 
     /// The cell's value, 0..1, on ring `ring`: what it eases toward.
     pub fn value(self, song: &OrbitSong, ui: &OrbitUi, ring: RingIdx) -> f32 {
-        let s = &song.live;
+        let s = song.live();
         let c = &s.chords;
         let slot = |n: SceneIdx| n.get() as f32 / (SCENES - 1) as f32;
         match self {
@@ -139,7 +139,7 @@ impl OrbitCell {
         }
         // What the turn reads, from `live`; what it changes, through
         // `edit`, into the slot too (ADR 0083).
-        let s = &song.live;
+        let s = song.live();
         let c = &s.chords;
         let ri = ring.get() as usize;
         let r = &s.rings[ri];

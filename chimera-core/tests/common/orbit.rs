@@ -78,8 +78,8 @@ impl Mark {
 /// The ORBIT block of `song` the UI edits as `b`.
 pub fn orbit_block(song: &mut OrbitSong, b: BlockRef) -> &mut dyn Block {
     match b {
-        BlockRef::OrbitChords => &mut song.live.chords,
-        BlockRef::OrbitRing(r) => &mut song.live.rings[r.get() as usize],
+        BlockRef::OrbitChords => &mut song.live_mut_for_test().chords,
+        BlockRef::OrbitRing(r) => &mut song.live_mut_for_test().rings[r.get() as usize],
         BlockRef::Tempo => &mut song.bpm,
         _ => panic!("{b:?} is not ORBIT's"),
     }

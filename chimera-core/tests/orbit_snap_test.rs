@@ -117,7 +117,7 @@ fn live_does_not_snap_when_stopped() {
 
     // Through the runner: stopped, then playing, then stopped again.
     let mut rig = OrbitRig::on_init();
-    for ring in &mut rig.song().live.rings {
+    for ring in &mut rig.song().live_mut_for_test().rings {
         ring.ring.mute = true;
     }
     rig.project.edit_part(P1).mix.snap = LiveSnap::Chord;
@@ -221,7 +221,7 @@ fn held_stay_and_resnap() {
 #[test]
 fn the_runner_resnaps_at_a_segment_change() {
     let mut rig = OrbitRig::on_init();
-    for ring in &mut rig.song().live.rings {
+    for ring in &mut rig.song().live_mut_for_test().rings {
         ring.ring.mute = true;
     }
     for (p, held) in [(P1, Held::Resnap), (P2, Held::Stay)] {
@@ -254,7 +254,7 @@ fn the_runner_resnaps_at_a_segment_change() {
 /// the held note.
 fn held_into_segment_1() -> (OrbitRig, Chord, u8) {
     let mut rig = OrbitRig::on_init();
-    for ring in &mut rig.song().live.rings {
+    for ring in &mut rig.song().live_mut_for_test().rings {
         ring.ring.mute = true;
     }
     let mix = &mut rig.project.edit_part(P1).mix;
