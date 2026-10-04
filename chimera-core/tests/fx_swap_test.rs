@@ -12,6 +12,7 @@ use chimera_core::dsp::chorus::{CHORUS_SPECS, ChorusParams};
 use chimera_core::dsp::comp::{COMP_SPECS, CompParams};
 use chimera_core::dsp::delay::{DELAY_SPECS, DelayParams};
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
+use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::reverb::{REVERB_SPECS, ReverbParams};
 use chimera_core::dsp::tape::{TAPE_SPECS, TapeParams};
 use chimera_core::dsp::voice::Voice;
@@ -72,7 +73,7 @@ fn render(sig: Sig, a: &FxParams, b: &FxParams) -> Sides {
         let x: [f32; BLOCK_SIZE] = core::array::from_fn(|i| send(sig, n0 + i));
         let mut sends = [x; FX_SENDS];
         let mut ret = Stereo::SILENT;
-        bus.process(&mut sends, p, SR, &mut ret);
+        bus.process(&mut sends, p, Tempo::DEFAULT, SR, &mut ret);
         let mut out = [[0.0f32; 2 * BLOCK_SIZE]; DAC_PAIRS];
         for i in 0..BLOCK_SIZE {
             (out[0][2 * i], out[0][2 * i + 1]) = (ret.l[i], ret.r[i]);

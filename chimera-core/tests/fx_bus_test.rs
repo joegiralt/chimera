@@ -8,7 +8,9 @@ use chimera_core::dsp::Stereo;
 use chimera_core::dsp::chorus::{ChorusParams, JunoChorus};
 use chimera_core::dsp::delay::{DelayParams, TapeDelay};
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
-use chimera_core::dsp::ring::{RingReverb, first_reflection, size_step};
+use chimera_core::dsp::rev::Reverb;
+use chimera_core::dsp::rev::sync::Tempo;
+use chimera_core::dsp::ring::{first_reflection, size_step};
 use chimera_core::hw::DAC_PAIRS;
 use chimera_hal::BLOCK_SIZE;
 
@@ -44,7 +46,13 @@ fn effects_that_are_off_return_nothing() {
     let mut bus = Box::new(FxBus::new());
     let mut sends = [burst(); FX_SENDS];
     let mut ret = full();
-    bus.process(&mut sends, &FxParams::default(), SR, &mut ret);
+    bus.process(
+        &mut sends,
+        &FxParams::default(),
+        Tempo::DEFAULT,
+        SR,
+        &mut ret,
+    );
     assert_eq!(ret, Stereo::SILENT);
 }
 
@@ -80,7 +88,7 @@ fn return_is_each_effects_wet_output() {
         let (mut c, mut d, mut r) = (
             Box::new(JunoChorus::new()),
             Box::new(TapeDelay::new()),
-            Box::new(RingReverb::new()),
+            Box::new(Reverb::new()),
         );
         let mut heard = 0.0f32;
         for b in 0..80 {
@@ -88,7 +96,7 @@ fn return_is_each_effects_wet_output() {
             let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
             sends[slot] = input;
             let mut ret = Stereo::SILENT;
-            bus.process(&mut sends, &params, SR, &mut ret);
+            bus.process(&mut sends, &params, Tempo::DEFAULT, SR, &mut ret);
             let want = match slot {
                 0 => {
                     let mut w = Stereo::SILENT;
@@ -100,8 +108,9 @@ fn return_is_each_effects_wet_output() {
                     let mut w = Stereo::SILENT;
                     r.process(
                         &input,
-                        &params.reverb.controls(),
+                        &params.reverb,
                         params.reverb.mix,
+                        Tempo::DEFAULT,
                         SR,
                         &mut w,
                     );
@@ -129,7 +138,7 @@ fn reverb_return_is_silent_before_its_first_reflection() {
     for b in 0..first_reflection(size_step(p.reverb.size)) / BLOCK_SIZE {
         let mut sends = [[0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE], burst()];
         let mut ret = full();
-        bus.process(&mut sends, &p, SR, &mut ret);
+        bus.process(&mut sends, &p, Tempo::DEFAULT, SR, &mut ret);
         assert_eq!(ret, Stereo::SILENT, "block {b}");
     }
 }
@@ -150,7 +159,7 @@ fn with_rev_send(blocks: usize, own: bool, send: impl Fn(usize) -> f32) -> Vec<f
         let own = if own { x } else { [0.0; BLOCK_SIZE] };
         let mut sends = [[0.0; BLOCK_SIZE], x, own];
         let mut ret = Stereo::SILENT;
-        bus.process(&mut sends, &p, SR, &mut ret);
+        bus.process(&mut sends, &p, Tempo::DEFAULT, SR, &mut ret);
         out.extend(ret.l);
     }
     out
@@ -165,16 +174,16 @@ fn rev_send_0_leaves_the_reverb_its_own_send() {
     (p.delay.time_ms, p.delay.feedback, p.delay.mix) = (120.0, 0.5, 0.5);
     p.reverb.mix = 0.5;
     let mut bus = Box::new(FxBus::new());
-    let (mut d, mut r) = (Box::new(TapeDelay::new()), Box::new(RingReverb::new()));
+    let (mut d, mut r) = (Box::new(TapeDelay::new()), Box::new(Reverb::new()));
     for b in 0..64 {
         let x = if b < 8 { burst() } else { [0.0; BLOCK_SIZE] };
         let mut sends = [[0.0; BLOCK_SIZE], x, x];
         let mut ret = Stereo::SILENT;
-        bus.process(&mut sends, &p, SR, &mut ret);
+        bus.process(&mut sends, &p, Tempo::DEFAULT, SR, &mut ret);
         let mut dw = x;
         d.process_wet(&mut dw, &p.delay, SR);
         let mut rw = Stereo::SILENT;
-        r.process(&x, &p.reverb.controls(), p.reverb.mix, SR, &mut rw);
+        r.process(&x, &p.reverb, p.reverb.mix, Tempo::DEFAULT, SR, &mut rw);
         let want = Stereo {
             l: core::array::from_fn(|i| dw[i] + rw.l[i]),
             r: core::array::from_fn(|i| dw[i] + rw.r[i]),
@@ -211,7 +220,7 @@ fn rev_send_feeds_nothing_while_the_delay_is_off() {
     for b in 0..first_reflection(size_step(p.reverb.size)) / BLOCK_SIZE + 64 {
         let mut sends = [[0.0; BLOCK_SIZE], burst(), [0.0; BLOCK_SIZE]];
         let mut ret = full();
-        bus.process(&mut sends, &p, SR, &mut ret);
+        bus.process(&mut sends, &p, Tempo::DEFAULT, SR, &mut ret);
         assert_eq!(ret, Stereo::SILENT, "block {b}");
     }
 }
@@ -253,7 +262,7 @@ fn grit_changes_the_return() {
             let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
             sends[2] = if b < 4 { burst() } else { [0.0; BLOCK_SIZE] };
             let mut ret = Stereo::SILENT;
-            bus.process(&mut sends, &p, SR, &mut ret);
+            bus.process(&mut sends, &p, Tempo::DEFAULT, SR, &mut ret);
             out.extend(ret.l);
         }
         out
@@ -298,7 +307,7 @@ fn an_effect_at_mix_0_never_replays_a_stale_tail() {
         let x = if b < 4 { burst() } else { [0.0; BLOCK_SIZE] };
         let mut sends = [x, x, x];
         let mut ret = Stereo::SILENT;
-        bus.process(&mut sends, &p, SR, &mut ret);
+        bus.process(&mut sends, &p, Tempo::DEFAULT, SR, &mut ret);
         if b >= 1500 {
             peak_after = ret
                 .l
@@ -325,7 +334,7 @@ fn an_effect_switched_off_fades_its_return() {
         }
         let mut sends = [[0.0; BLOCK_SIZE], [0.25; BLOCK_SIZE], [0.0; BLOCK_SIZE]];
         let mut ret = Stereo::SILENT;
-        bus.process(&mut sends, &p, SR, &mut ret);
+        bus.process(&mut sends, &p, Tempo::DEFAULT, SR, &mut ret);
         rets.extend(ret.l);
     }
     let at = 20 * BLOCK_SIZE;

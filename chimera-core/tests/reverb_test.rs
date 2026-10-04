@@ -5,6 +5,9 @@ mod common;
 use chimera_core::block::{Block, ParamId};
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::halfband::HALF;
+use chimera_core::dsp::rev::Reverb;
+use chimera_core::dsp::rev::arena::ReverbArena;
+use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::reverb::{REVERB_SPECS, ReverbParams};
 use chimera_core::dsp::ring::*;
 use chimera_hal::BLOCK_SIZE;
@@ -12,6 +15,63 @@ use common::Rig;
 use common::{SR, rms};
 
 const FS_RING: f32 = 24_000.0;
+
+/// QUAD through the dispatcher, on the ring's controls.
+fn run(
+    rv: &mut Reverb,
+    send: &[f32; BLOCK_SIZE],
+    c: &RingControls,
+    mix: f32,
+    sample_rate: u32,
+    out: &mut Stereo,
+) {
+    let p = ReverbParams {
+        grit: c.grit,
+        time: c.time,
+        damping: c.damp,
+        size: c.size,
+        mix,
+    };
+    rv.process(send, &p, mix, Tempo::DEFAULT, sample_rate, out);
+}
+
+/// A ring on an arena of its own.
+struct Lone {
+    ring: Ring,
+    arena: ReverbArena,
+}
+
+impl Lone {
+    fn new() -> Box<Self> {
+        Box::new(Self {
+            ring: Ring::new(),
+            arena: ReverbArena::new(),
+        })
+    }
+
+    fn process(
+        &mut self,
+        u: &[f32; HALF],
+        blk: &RingBlock,
+        l: &mut [f32; HALF],
+        r: &mut [f32; HALF],
+    ) {
+        self.ring.process(&mut self.arena, u, blk, l, r);
+    }
+}
+
+impl core::ops::Deref for Lone {
+    type Target = Ring;
+    fn deref(&self) -> &Ring {
+        &self.ring
+    }
+}
+
+impl core::ops::DerefMut for Lone {
+    fn deref_mut(&mut self) -> &mut Ring {
+        &mut self.ring
+    }
+}
 
 #[test]
 fn every_size_step_is_distinct_primes_that_fit_their_lines() {
@@ -185,12 +245,12 @@ fn render(
     mut input: impl FnMut(usize) -> f32,
     mut ctl: impl FnMut(usize) -> RingControls,
 ) -> (Vec<f32>, Vec<f32>) {
-    let mut rv = Box::new(RingReverb::new());
+    let mut rv = Box::new(Reverb::new());
     let (mut l, mut r) = (Vec::new(), Vec::new());
     let mut out = Stereo::SILENT;
     for b in 0..n_blocks {
         let send: [f32; BLOCK_SIZE] = core::array::from_fn(|i| input(b * BLOCK_SIZE + i));
-        rv.process(&send, &ctl(b), 1.0, SR, &mut out);
+        run(&mut rv, &send, &ctl(b), 1.0, SR, &mut out);
         l.extend_from_slice(&out.l);
         r.extend_from_slice(&out.r);
     }
@@ -259,18 +319,18 @@ fn stable_at_grit_1() {
 /// Truncation in the allpasses leaves no limit cycle: silence in reaches
 /// exact zeros out, with no gate.
 fn falls_silent_within(grit: f32, seconds: f32) {
-    let mut rv = Box::new(RingReverb::new());
+    let mut rv = Box::new(Reverb::new());
     let mut n = Noise(0xdead_beef);
     let c = at(grit, 1.0, 0.0, 1.0);
     let mut out = Stereo::SILENT;
     for _ in 0..blocks(1.0) {
         let send = core::array::from_fn(|_| n.next());
-        rv.process(&send, &c, 1.0, SR, &mut out);
+        run(&mut rv, &send, &c, 1.0, SR, &mut out);
     }
     let silence = [0.0; BLOCK_SIZE];
     let mut b = 0;
-    while !rv.ring().is_silent() {
-        rv.process(&silence, &c, 1.0, SR, &mut out);
+    while !rv.quad().unwrap().ring().is_silent(rv.arena()) {
+        run(&mut rv, &silence, &c, 1.0, SR, &mut out);
         b += 1;
         assert!(
             b <= blocks(seconds),
@@ -278,7 +338,7 @@ fn falls_silent_within(grit: f32, seconds: f32) {
         );
     }
     for _ in 0..blocks(0.1) {
-        rv.process(&silence, &c, 1.0, SR, &mut out);
+        run(&mut rv, &silence, &c, 1.0, SR, &mut out);
         assert!(out.l.iter().chain(&out.r).all(|&s| s == 0.0));
     }
 }
@@ -394,7 +454,7 @@ fn the_return_is_band_limited() {
 
 #[test]
 fn grit_1_stores_only_multiples_of_64() {
-    let mut ring = Box::new(Ring::new());
+    let mut ring = Lone::new();
     ring.snap(31);
     let blk = RingBlock {
         gains_from: [0.9; STAGES],
@@ -409,8 +469,8 @@ fn grit_1_stores_only_multiples_of_64() {
         let u = core::array::from_fn(|_| n.next());
         ring.process(&u, &blk, &mut l, &mut r);
     }
-    assert!(ring.lines().iter().any(|&s| s != 0));
-    assert!(ring.lines().iter().all(|&s| s % 64 == 0));
+    assert!(ring.arena.lines().iter().any(|&s| s != 0));
+    assert!(ring.arena.lines().iter().all(|&s| s % 64 == 0));
     assert!(ring.damp_state().iter().all(|&s| s % 64.0 == 0.0));
 }
 
@@ -613,8 +673,8 @@ fn held_block() -> RingBlock {
 
 /// A ring at SIZE step 20 after 1 s of loud noise: twins built by this are
 /// in the same state.
-fn filled() -> Box<Ring> {
-    let mut ring = Box::new(Ring::new());
+fn filled() -> Box<Lone> {
+    let mut ring = Lone::new();
     ring.snap(20);
     let mut n = Noise(0xface);
     let (mut l, mut r) = ([0.0; HALF], [0.0; HALF]);
@@ -626,7 +686,7 @@ fn filled() -> Box<Ring> {
 }
 
 /// One silent block: (L, R).
-fn tick(ring: &mut Ring) -> ([f32; HALF], [f32; HALF]) {
+fn tick(ring: &mut Lone) -> ([f32; HALF], [f32; HALF]) {
     let (mut l, mut r) = ([0.0; HALF], [0.0; HALF]);
     ring.process(&[0.0; HALF], &held_block(), &mut l, &mut r);
     (l, r)
@@ -757,7 +817,7 @@ fn wet_gain_matches_the_plate_within_1_db() {
 
 #[test]
 fn a_size_spin_settles_on_the_last_step() {
-    let mut rv = Box::new(RingReverb::new());
+    let mut rv = Box::new(Reverb::new());
     let mut n = Noise(5);
     let mut out = Stereo::SILENT;
     for b in 0..200usize {
@@ -766,7 +826,7 @@ fn a_size_spin_settles_on_the_last_step() {
             ..RingControls::default()
         };
         let send = core::array::from_fn(|_| n.next());
-        rv.process(&send, &c, 1.0, SR, &mut out);
+        run(&mut rv, &send, &c, 1.0, SR, &mut out);
         assert!(out.l.iter().chain(&out.r).all(|s| s.is_finite()));
     }
     let last = RingControls {
@@ -774,10 +834,10 @@ fn a_size_spin_settles_on_the_last_step() {
         ..RingControls::default()
     };
     for _ in 0..2 * (XFADE as usize / HALF + 1) {
-        rv.process(&[0.0; BLOCK_SIZE], &last, 1.0, SR, &mut out);
+        run(&mut rv, &[0.0; BLOCK_SIZE], &last, 1.0, SR, &mut out);
     }
-    assert_eq!(rv.ring().step(), 7);
-    assert!(!rv.ring().crossfading());
+    assert_eq!(rv.quad().unwrap().ring().step(), 7);
+    assert!(!rv.quad().unwrap().ring().crossfading());
 }
 
 #[test]
@@ -845,7 +905,7 @@ fn nan_and_out_of_range_controls_render_finite() {
 
 #[test]
 fn runs_at_44_1_khz() {
-    let mut rv = Box::new(RingReverb::new());
+    let mut rv = Box::new(Reverb::new());
     let mut n = Noise(13);
     let c = at(0.0, 0.5, 0.3, 1.0);
     let mut out = Stereo::SILENT;
@@ -853,7 +913,7 @@ fn runs_at_44_1_khz() {
     let second = 44_100 / BLOCK_SIZE;
     for b in 0..4 * second {
         let send = core::array::from_fn(|_| if b < second { n.next() } else { 0.0 });
-        rv.process(&send, &c, 1.0, 44_100, &mut out);
+        run(&mut rv, &send, &c, 1.0, 44_100, &mut out);
         assert!(out.l.iter().chain(&out.r).all(|s| s.is_finite()));
         let e = energy(&out.l) + energy(&out.r);
         if b == second + 5 {
@@ -919,7 +979,7 @@ fn a_voice_through_the_reverb_leaves_a_tail() {
     p.algo = AlgoParams::single(WaveId::TRI);
     let m = ModState::new();
     let mut voice = Rig::new(SR);
-    let mut rv = Box::new(RingReverb::new());
+    let mut rv = Box::new(Reverb::new());
     let c = RingControls {
         time: 0.7,
         ..RingControls::default()
@@ -928,13 +988,13 @@ fn a_voice_through_the_reverb_leaves_a_tail() {
     voice.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &p);
     for _ in 0..8 {
         voice.render(&mut block, &p, &m);
-        rv.process(&block, &c, 0.5, SR, &mut out);
+        run(&mut rv, &block, &c, 0.5, SR, &mut out);
     }
     voice.note_off();
     let mut tail = 0.0;
     for _ in 0..64 {
         voice.render(&mut block, &p, &m);
-        rv.process(&block, &c, 0.5, SR, &mut out);
+        run(&mut rv, &block, &c, 0.5, SR, &mut out);
         tail += energy(&out.l) + energy(&out.r);
     }
     assert!(tail > 0.01, "{tail}");

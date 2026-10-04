@@ -8,8 +8,9 @@ use common::{SR, at_model_level, clicks, tri};
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::modal::ResonatorMode;
+use chimera_core::dsp::rev::Reverb;
+use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::reverb::ReverbParams;
-use chimera_core::dsp::ring::RingReverb;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -25,7 +26,7 @@ fn check_no_clicks(
 ) {
     let empty_mod = ModState::new();
     let mut voice = Rig::new(SR);
-    let mut reverb = Box::new(RingReverb::new());
+    let mut reverb = Box::new(Reverb::new());
     let mut params = ParamSnapshot::default();
     let mut rv = FxParams::default().reverb;
     setup(&mut params, &mut rv);
@@ -48,7 +49,7 @@ fn check_no_clicks(
                 voice.render(&mut block, &params, &empty_mod);
                 if rv.is_on() {
                     let mut wet = Stereo::SILENT;
-                    reverb.process(&block, &rv.controls(), rv.mix, SR, &mut wet);
+                    reverb.process(&block, &rv, rv.mix, Tempo::DEFAULT, SR, &mut wet);
                     for (b, w) in block.iter_mut().zip(&wet.l) {
                         *b += w;
                     }

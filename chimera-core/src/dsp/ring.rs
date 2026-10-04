@@ -3,14 +3,12 @@
 //! loops (2 x AP + 1 delay), outputs from delay taps", each loop feeding the
 //! next. Half rate, stored as i16 (FX diet spec § Reverb, ADR 0028).
 
-use crate::dsp::Stereo;
 use crate::dsp::algo::math::exp2;
 use crate::dsp::clampf;
-use crate::dsp::ease::{Ease, at, ease_coeff, step_of};
-use crate::dsp::halfband::{Decimator, HALF, Interpolator};
+use crate::dsp::halfband::HALF;
+use crate::dsp::rev::arena::ReverbArena;
 use chimera_hal::BLOCK_SIZE;
 use core::f32::consts::{LOG2_10, LOG2_E, PI};
-use core::mem::MaybeUninit;
 
 pub const STAGES: usize = 4;
 /// Per stage: allpass 1, allpass 2, delay.
@@ -322,8 +320,10 @@ pub struct RingBlock {
     pub grid: Grid,
 }
 
+/// The ring's state; its lines are the `ReverbArena`'s slots. Zero bytes
+/// are `new()`'s state.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Ring {
-    lines: [i16; RING_LEN],
     /// The shared write head, below `RING_LEN`.
     head: u16,
     lp: [f32; STAGES],
@@ -332,7 +332,7 @@ pub struct Ring {
     xf: u16,
 }
 
-crate::in_place::field_list!(Ring => Ring { lines, head, lp, step, from, xf });
+crate::in_place::field_list!(Ring => Ring { head, lp, step, from, xf });
 
 /// `i` below 2·`RING_LEN`, wrapped under it.
 #[inline(always)]
@@ -341,23 +341,13 @@ fn wrap(i: usize) -> usize {
 }
 
 impl Ring {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
-            lines: [0; RING_LEN],
             head: 0,
             lp: [0.0; STAGES],
             step: 0,
             from: 0,
             xf: 0,
-        }
-    }
-
-    pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
-        // SAFETY: every field is an integer or float array or an integer,
-        // valid as zero bytes; zero is exactly `new()`'s state.
-        unsafe {
-            slot.as_mut_ptr().write_bytes(0, 1);
-            slot.assume_init_mut()
         }
     }
 
@@ -385,10 +375,6 @@ impl Ring {
         (self.from, self.step, self.xf) = (step, step, 0);
     }
 
-    pub fn lines(&self) -> &[i16; RING_LEN] {
-        &self.lines
-    }
-
     pub fn damp_state(&self) -> [f32; STAGES] {
         self.lp
     }
@@ -396,28 +382,31 @@ impl Ring {
     /// Every line and state is exactly zero. At high DAMP (a < ½) the
     /// rounded DAMP state can hold ±Δ for good while the return is already
     /// exactly zero, so this may never become true: gate nothing on it.
-    pub fn is_silent(&self) -> bool {
-        self.lp.iter().all(|&s| s == 0.0) && self.lines.iter().all(|&s| s == 0)
+    pub fn is_silent(&self, arena: &ReverbArena) -> bool {
+        self.lp.iter().all(|&s| s == 0.0) && arena.lines().iter().all(|&s| s == 0)
     }
 
     /// `u` is the decimated send (1.0 full scale); `l` and `r` get the tap
-    /// sums in LSBs.
+    /// sums in LSBs. The lines span the whole arena.
     pub fn process(
         &mut self,
+        arena: &mut ReverbArena,
         u: &[f32; HALF],
         blk: &RingBlock,
         l: &mut [f32; HALF],
         r: &mut [f32; HALF],
     ) {
+        let lines = arena.lines_mut();
         if self.xf > 0 {
-            self.run::<true>(u, blk, l, r);
+            self.run::<true>(lines, u, blk, l, r);
         } else {
-            self.run::<false>(u, blk, l, r);
+            self.run::<false>(lines, u, blk, l, r);
         }
     }
 
     fn run<const XF: bool>(
         &mut self,
+        lines: &mut [i16; RING_LEN],
         u: &[f32; HALF],
         blk: &RingBlock,
         l: &mut [f32; HALF],
@@ -452,7 +441,6 @@ impl Ring {
         let mut lp = self.lp;
         let mut xf = self.xf;
         let mut h = (self.head as usize).min(RING_LEN - 1);
-        let lines = &mut self.lines;
         let mut i = 0;
         // In segments that no access wraps in: each access's slot at the
         // segment's start, plus the sample's index in it.
@@ -543,12 +531,6 @@ impl Ring {
     }
 }
 
-impl Default for Ring {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// The reverb's four controls, each 0..1.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RingControls {
@@ -593,12 +575,11 @@ fn smoothing(tau: f32, sample_rate: u32) -> f32 {
     1.0 - exp2(-(BLOCK_SIZE as f32) / (tau * sample_rate as f32) * LOG2_E)
 }
 
-/// The ring with its rate change and smoothing: what the FX bus runs.
-pub struct RingReverb {
+/// QUAD's state: the ring and its smoothed controls, at the ring's rate.
+/// The rate change and MIX are `Reverb`'s. Zero bytes are the default.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct QuadState {
     ring: Ring,
-    dec: Decimator,
-    up_l: Interpolator,
-    up_r: Interpolator,
     /// Smoothed TIME, DAMP and GRIT.
     time: f32,
     damp: f32,
@@ -607,51 +588,25 @@ pub struct RingReverb {
     gains: [f32; STAGES],
     damp_coef: f32,
     primed: bool,
-    /// MIX, eased (never snap).
-    mix: Ease,
 }
 
-crate::in_place::field_list!(RingReverb => RingReverb { ring, dec, up_l, up_r, time, damp, grit, gains, damp_coef, primed, mix });
+crate::in_place::field_list!(QuadState => QuadState { ring, time, damp, grit, gains, damp_coef, primed });
 
-impl RingReverb {
-    pub fn new() -> Self {
-        Self {
-            ring: Ring::new(),
-            dec: Decimator::new(),
-            up_l: Interpolator::new(),
-            up_r: Interpolator::new(),
-            time: 0.0,
-            damp: 0.0,
-            grit: 0.0,
-            gains: [0.0; STAGES],
-            damp_coef: 0.0,
-            primed: false,
-            mix: Ease::default(),
-        }
-    }
-
-    pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
-        // SAFETY: every field is an integer or float array, a float, an
-        // integer, a `bool` (`false`) or an `Ease` of the two, all valid as
-        // zero bytes; zero is exactly `new()`'s state.
-        unsafe {
-            slot.as_mut_ptr().write_bytes(0, 1);
-            slot.assume_init_mut()
-        }
-    }
-
+impl QuadState {
     pub fn ring(&self) -> &Ring {
         &self.ring
     }
 
-    /// Wet only: the ring's return × `WET_GAIN` × `mix`, into `out`.
+    /// One block of the decimated send `u` through the ring in `arena`;
+    /// `l` and `r` get the tap sums in LSBs.
     pub fn process(
         &mut self,
-        send: &[f32; BLOCK_SIZE],
+        arena: &mut ReverbArena,
+        u: &[f32; HALF],
         ctl: &RingControls,
-        mix: f32,
         sample_rate: u32,
-        out: &mut Stereo,
+        l: &mut [f32; HALF],
+        r: &mut [f32; HALF],
     ) {
         let ctl = ctl.sanitised();
         let fs = sample_rate as f32 * 0.5;
@@ -680,34 +635,6 @@ impl RingReverb {
             grid: Grid::new(self.grit),
         };
         (self.gains, self.damp_coef) = (gains, damp);
-        let mut u = [0.0f32; HALF];
-        self.dec.process(send, &mut u);
-        let (mut l, mut r) = ([0.0f32; HALF], [0.0f32; HALF]);
-        self.ring.process(&u, &blk, &mut l, &mut r);
-        self.up_l.process(&l, &mut out.l);
-        self.up_r.process(&r, &mut out.r);
-        let (from, to) = self.mix.step(mix, ease_coeff(sample_rate));
-        let gain = WET_GAIN * to / FULL_SCALE;
-        if from == to {
-            for s in out.l.iter_mut().chain(out.r.iter_mut()) {
-                *s *= gain;
-            }
-        } else {
-            let (g0, step) = (
-                WET_GAIN * from / FULL_SCALE,
-                step_of((from, to), BLOCK_SIZE) * WET_GAIN / FULL_SCALE,
-            );
-            for side in [&mut out.l, &mut out.r] {
-                for (i, s) in side.iter_mut().enumerate() {
-                    *s *= at(g0, step, i);
-                }
-            }
-        }
-    }
-}
-
-impl Default for RingReverb {
-    fn default() -> Self {
-        Self::new()
+        self.ring.process(arena, u, &blk, l, r);
     }
 }

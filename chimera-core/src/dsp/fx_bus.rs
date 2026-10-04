@@ -21,8 +21,9 @@ use crate::dsp::comp::{CompParams, MasterComp};
 use crate::dsp::delay::{DelayParams, TapeDelay};
 use crate::dsp::ease::{Ease, ease_coeff};
 use crate::dsp::limiter::{DacBlocks, Limiter};
+use crate::dsp::rev::Reverb;
+use crate::dsp::rev::sync::Tempo;
 use crate::dsp::reverb::ReverbParams;
-use crate::dsp::ring::RingReverb;
 #[cfg(feature = "master-tape")]
 use crate::dsp::tape::Tape;
 use crate::dsp::tape::TapeParams;
@@ -61,7 +62,7 @@ impl Default for FxParams {
 pub struct FxBus {
     chorus: JunoChorus,
     delay: TapeDelay,
-    reverb: RingReverb,
+    reverb: Reverb,
     #[cfg(feature = "master-tape")]
     tape: Tape,
     comp: MasterComp,
@@ -103,7 +104,7 @@ impl FxBus {
         Self {
             chorus: JunoChorus::new(),
             delay: TapeDelay::new(),
-            reverb: RingReverb::new(),
+            reverb: Reverb::new(),
             #[cfg(feature = "master-tape")]
             tape: Tape::new(),
             comp: MasterComp::new(),
@@ -120,7 +121,7 @@ impl FxBus {
         unsafe {
             JunoChorus::init_in_place(uninit_at(addr_of_mut!((*p).chorus)));
             TapeDelay::init_in_place(uninit_at(addr_of_mut!((*p).delay)));
-            RingReverb::init_in_place(uninit_at(addr_of_mut!((*p).reverb)));
+            Reverb::init_in_place(uninit_at(addr_of_mut!((*p).reverb)));
             #[cfg(feature = "master-tape")]
             Tape::init_in_place(uninit_at(addr_of_mut!((*p).tape)));
             MasterComp::init_in_place(uninit_at(addr_of_mut!((*p).comp)));
@@ -138,6 +139,7 @@ impl FxBus {
         &mut self,
         sends: &mut [[f32; BLOCK_SIZE]; FX_SENDS],
         params: &FxParams,
+        tempo: Tempo,
         sample_rate: u32,
         ret: &mut Stereo,
     ) {
@@ -163,13 +165,8 @@ impl FxBus {
         } else {
             0.0
         };
-        self.reverb.process(
-            reverb,
-            &params.reverb.controls(),
-            mix,
-            sample_rate,
-            &mut wet,
-        );
+        self.reverb
+            .process(reverb, &params.reverb, mix, tempo, sample_rate, &mut wet);
         add(&mut ret.l, &wet.l);
         add(&mut ret.r, &wet.r);
     }
@@ -194,8 +191,8 @@ impl FxBus {
         self.limiter.process(dac, sample_rate);
     }
 
-    /// The reverb, for reading its ring.
-    pub fn reverb(&self) -> &RingReverb {
+    /// The reverb, for reading its arena and state.
+    pub fn reverb(&self) -> &Reverb {
         &self.reverb
     }
 

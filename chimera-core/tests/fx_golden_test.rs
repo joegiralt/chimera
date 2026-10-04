@@ -7,8 +7,9 @@ mod common;
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::chorus::{ChorusParams, JunoChorus};
 use chimera_core::dsp::delay::{DelayParams, TapeDelay};
+use chimera_core::dsp::rev::Reverb;
+use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::reverb::ReverbParams;
-use chimera_core::dsp::ring::RingReverb;
 use chimera_hal::BLOCK_SIZE;
 use common::{SR, fnv1a};
 
@@ -92,7 +93,7 @@ fn input(b: usize, phase: &mut f32) -> [f32; BLOCK_SIZE] {
 fn render(fx: Fx) -> Vec<f32> {
     let mut chorus = Box::new(JunoChorus::new());
     let mut delay = Box::new(TapeDelay::new());
-    let mut reverb = Box::new(RingReverb::new());
+    let mut reverb = Box::new(Reverb::new());
     let mut out = Vec::with_capacity(2 * FX_BLOCKS * BLOCK_SIZE);
     let mut phase = 0.0f32;
     for b in 0..FX_BLOCKS {
@@ -110,7 +111,7 @@ fn render(fx: Fx) -> Vec<f32> {
             }
             Fx::Reverb(p) => {
                 let mut wet = Stereo::SILENT;
-                reverb.process(&block, &p.controls(), p.mix, SR, &mut wet);
+                reverb.process(&block, &p, p.mix, Tempo::DEFAULT, SR, &mut wet);
                 out.extend_from_slice(&wet.l);
                 out.extend_from_slice(&wet.r);
             }

@@ -14,6 +14,7 @@ use crate::dsp::ease::{Ease, ease_coeff, step_of};
 use crate::dsp::engines::SlotKind;
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use crate::dsp::modal::{ResonatorMode, SYM_NOTE_ON_CLEAR_MAX, SymPool};
+use crate::dsp::rev::sync::Tempo;
 use crate::dsp::voice::Voice;
 use crate::hw::{
     AXI_SRAM, Cost, DAC_PAIRS, FB_BYTES, MAX_PARTS, MAX_VOICES, STORE_RESERVE, SampleBudget,
@@ -324,7 +325,7 @@ pub fn mix_parts(
 
     // The FX bus once; its return lands on pair 1, L and R.
     let mut ret = Stereo::SILENT;
-    fx.process(sends, &shared.fx, sample_rate, &mut ret);
+    fx.process(sends, &shared.fx, Tempo::DEFAULT, sample_rate, &mut ret);
 
     let out = dac.mix();
     for (k, pair) in out.iter_mut().enumerate() {

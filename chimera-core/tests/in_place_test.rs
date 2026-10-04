@@ -7,6 +7,7 @@ use chimera_core::dsp::Stereo;
 use chimera_core::dsp::algo::algorithms::AlgoId;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::dsp::modal::{ResonatorMode, SymPool};
+use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{BLOCK_SIZE, CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
@@ -110,8 +111,8 @@ fn fx_bus_built_in_place_processes_like_new() {
         }
         let mut sends_b = sends;
         let (mut ret_a, mut ret_b) = (Stereo::SILENT, Stereo::SILENT);
-        a.process(&mut sends, &params, SR, &mut ret_a);
-        b.process(&mut sends_b, &params, SR, &mut ret_b);
+        a.process(&mut sends, &params, Tempo::DEFAULT, SR, &mut ret_a);
+        b.process(&mut sends_b, &params, Tempo::DEFAULT, SR, &mut ret_b);
         assert_eq!(
             [ret_a.l, ret_a.r].map(|x| x.map(f32::to_bits)),
             [ret_b.l, ret_b.r].map(|x| x.map(f32::to_bits)),
