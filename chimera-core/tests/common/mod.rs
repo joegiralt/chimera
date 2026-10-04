@@ -13,6 +13,7 @@ pub mod orbit;
 pub mod project;
 pub mod rig;
 pub mod sweep;
+pub mod tape;
 
 #[allow(unused_imports)] // each test binary uses some of these
 pub use inst_rig::InstRig;
