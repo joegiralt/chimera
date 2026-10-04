@@ -63,6 +63,8 @@ pub enum RegionData {
         set: u16,
         /// What the band shows from outside its slot (ORBIT's readings).
         text: u32,
+        /// HINTS on: the band draws its hint.
+        hints: bool,
     },
     /// The mod matrix readout: the selected route, its animated amount and
     /// the route count.
@@ -169,6 +171,7 @@ impl RegionData {
             anim: 0,
             set: 0,
             text: 0,
+            hints: false,
         }
     }
 
@@ -186,10 +189,12 @@ impl RegionData {
         self
     }
 
-    /// A focus band keyed on the text it shows from outside its slot too.
-    pub fn with_text(mut self, key: u32) -> Self {
-        if let Self::Focus { text, .. } = &mut self {
+    /// A focus band keyed on the text it shows from outside its slot,
+    /// and on HINTS, too.
+    pub fn with_text(mut self, key: u32, hints_on: bool) -> Self {
+        if let Self::Focus { text, hints, .. } = &mut self {
             *text = key;
+            *hints = hints_on;
         }
         self
     }
@@ -284,6 +289,7 @@ impl RegionData {
             anim: u32::MAX,
             set: SENTINEL,
             text: u32::MAX,
+            hints: false,
         }
     }
 

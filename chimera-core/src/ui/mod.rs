@@ -2311,8 +2311,7 @@ impl UiState {
                 self.prime_status,
             )
             .with_set(region::quantize(self.renderer.set[f.focus].current()))
-            // HINTS draws or drops the band's hint: a change redraws it.
-            .with_text(f.orbit_focus.as_ref().map_or(0, |o| o.key()) ^ u32::from(f.hints))
+            .with_text(f.orbit_focus.as_ref().map_or(0, |o| o.key()), f.hints)
             .animated(glyph::anim_key(
                 shown.is_some_and(|g| g.animates()),
                 f.clock.frame(),
