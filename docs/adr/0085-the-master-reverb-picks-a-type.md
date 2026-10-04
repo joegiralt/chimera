@@ -47,28 +47,51 @@ against the ring's 48 while crossfading.
   existing half-bands, with GRIT's grid and ADR 0028's Q3 quantiser.
 - **PLATE is not a TYPE.** It is HALL's corner: the same graph and only
   other constants, so by the owner's own rule it is a preset. HALL's SIZE
-  reaches down to a 120 ms loop. The corner is a tested golden, and a
-  focus-band hint names it.
+  reaches down to a 120 ms loop. The corner is a tested golden.
 - **QUAD stays exactly as it is** (owner, 2026-10-04): the same sound, the
   same cost, and its double-read SIZE crossfade, which is clean and
   pitch-free. Only the new TYPEs glide SIZE (and every other moving length)
   through linearly interpolated read pointers. The glide is a 100 ms
   one-pole, slew-limited to ⅛ sample per sample. Its slight pitch bend is
-  part of their vintage character. The new engines always read
-  interpolated, so their steady cost equals their worst.
+  part of their vintage character.
+- **Moving reads are few and costed.** A read whose length changes within a
+  block costs about 7 instructions more than two fixed reads, because it
+  works out its index per sample instead of using `ring.rs`'s wrap-free
+  segments. So each new TYPE keeps 5–6 of them:
+  - output taps are fixed;
+  - BURST moves at most 4 of its taps a block, by a scheduler (tap 0 is
+    the input register, and tap 11 doubles as REGEN's read);
+  - BLOOM's SWELL moves one loop delay, not its ten allpasses.
+
+  Every read stays ≥ 2 samples behind the write head, and wobble depth is
+  capped at half the shortest length it moves.
+- **Loops decay by construction.**
+  - Any loop without an allpass (ECHO, REVERSE's REGEN) truncates its
+    feedback write, so no ±Δ limit cycle survives.
+  - ROOM couples its two loops through an energy-preserving rotation.
+  - New engines cap a stage gain at 0.985 (QUAD keeps 0.97), so HALL
+    reaches 10 s at its smallest SIZE.
 - **One block, semantic slots.**
   - The Reverb block stays one static table, of 14 ids out of the codec's 32.
   - Ids 1–5 keep their idents. Ids 7–14 are TONE, DIFFUSE, PREDELAY, SHAPE,
     WOBBLE, RATE, SYNC and PATTERN.
-  - A per-TYPE `const` panel gives each slot its label, range and unit,
-    or marks it absent (ADR 0037's pattern).
+  - A per-TYPE `const` panel gives each slot its label, range, unit and
+    encoder step, or marks it absent (ADR 0037's pattern).
+  - Slot 3's static step is 1/128. QUAD's panel keeps its 1/31 tick, and
+    `size_step` still rounds to 32, so QUAD's goldens hold.
   - A UI edit of TYPE loads that TYPE's starting knobs and keeps MIX, GRIT
     and SYNC. Decode and CC writes store TYPE alone.
-- **The switch.** The old engine's return ramps linearly to 0 over 20 ms.
-  No engine runs while the arena clears a quarter per block, over 4 blocks,
-  with the engine state and the interpolators' histories cleared too. The
-  new engine starts fresh and ramps in over 20 ms. A test holds it bit-equal
-  to a fresh engine from its first block.
+- **The switch.**
+  1. The old engine runs on knobs latched when the switch starts, since
+     the UI has already written the new TYPE's knobs. Its return ramps
+     linearly to 0 over 20 ms.
+  2. One block clears the whole arena (about 12 k cycles, under the
+     reverb's 31 k per-block share) with no engine running. The engine
+     state and the interpolators' histories are cleared too.
+  3. The new engine starts fresh and ramps in over 20 ms.
+
+  A test holds the new engine bit-equal to a fresh engine from its first
+  block, and a host test bounds the peak block's cost.
 - **The extensions.**
   - A wobble LFO on every new TYPE.
   - No external mod destinations (owner, 2026-10-04). Every mod source
@@ -76,15 +99,27 @@ against the ring's 48 while crossfading.
     mixer-level LFO or matrix is
     private issue #345. Matrix routes,
     a send DUCK and MIX+PLUS priming on reverb cells are deferred there.
-    ADR 0010 is unchanged. Adding destinations later changes no disk code:
-    modulatability is a spec flag, and the target slots already exist.
+    Adding destinations later changes no disk code, since routes are stored
+    by `ParamAddr`. #345 must still:
+    - supersede ADR 0010, which allows only params `Voice` reads per block;
+    - decide what a semantic slot means as a destination (SIZE under one
+      TYPE, LENGTH under another).
   - SYNC (OFF, TIME, ALL), on ORBIT's clock: PRE-DLY, LENGTH and ECHO TIME
     in note values, and DECAY in beats under ALL. A synced time halves or
-    doubles to fit its TYPE's range, so the arena never grows. QUAD takes
-    none of these.
+    doubles to fit its TYPE's range, so the arena never grows.
+    - The fold has 2 % hysteresis.
+    - The tempo is quantised to 0.25 BPM.
+    - A division is stored as its index over the slot's 0..1, and a UI
+      SYNC toggle converts the slot so the sound stays close.
+    - ROOM has no ALL.
+
+    QUAD takes none of these.
 - **The glyph.** `CompositeId::ReverbCube` becomes `CompositeId::Reverb`.
   It draws the cube under QUAD and a TAIL envelope under the other TYPEs,
   from set values only. This amends ADR 0067's "the reverb shows the cube".
+- **No hints.** The reverb adds no gesture, so under ADR 0086 (Proposed,
+  on the ORBIT branch) no reverb cell has a hint. A folded synced time is
+  marked in its value text.
 - **Projects.** Old projects lack id 6 and load as QUAD, sounding as
   before. New projects default to QUAD.
 - **Provenance.** No code, instruction listing or ROM coefficient, offset or
@@ -109,34 +144,48 @@ against the ring's 48 while crossfading.
   over QUAD's worst. QUAD alone keeps it, by the owner's ruling.
 - **Running both engines through a switch crossfade:** twice the cost for
   20 ms, over budget. Fading out, clearing and fading in costs one engine.
-- **Clearing the arena in one block:** about 12 k cycles in one block,
-  over the reverb's per-block share. Four quarters stay inside it.
+- **Gliding every tap and every allpass:** about 15 moving pairs in BURST
+  (≈ 330 instructions) and 10 in BLOOM (≈ 282), both against QUAD's 239.
+- **SIZE-scaled output taps in ROOM and HALL:** 6 more moving pairs, over
+  budget. The ear judges the fixed taps at A/B.
+- **Clearing the arena in quarters over 4 blocks:** it was meant to keep
+  the per-block cost down, but one block (≈ 12 k cycles) is already under
+  the reverb's per-block share, and one block means fewer blocks of
+  silence.
 - **Growing the arena by about 800 samples, so ECHO fits a quarter note at
   60 BPM:** the owner ruled that nothing grows. Halving to fit stays on the
   grid.
 
 ## Consequences
-- **CPU.** Estimated worst cases in cycles per output sample, against
-  QUAD's measured 485:
-  - ROOM and HALL ≈ 440;
-  - GATE and REVERSE ≈ 460;
-  - BLOOM ≈ 420;
-  - ECHO ≈ 235.
+- **CPU.** The estimates count moving reads at about 17 instructions a
+  pair. Host instructions per ring sample, against QUAD's 239 (ADR 0031),
+  with cycles per output sample in brackets, against 485:
+  - ROOM 224 (≈ 457);
+  - HALL 220 (≈ 449);
+  - GATE and REVERSE 212 (≈ 434);
+  - BLOOM 220 (≈ 449);
+  - ECHO 147 (≈ 313).
 
-  The gate is a bench row per TYPE (REV QUAD … REV ECHO, plus REV SWITCH),
-  each ≤ REV QUAD on the same build. The spec orders fallbacks (fewer taps)
-  if one reads over. `FxBus::COST` is unchanged while every TYPE ≤ QUAD. The
+  All of them are under the ceiling. Both ceiling figures date from
+  2026-09-27, and step 0 re-measures them as an absolute baseline: after
+  the refactor, REV QUAD must read ≤ that baseline + 1 %. Step 0 also
+  benches a worst-case BURST kernel on the chip before any TYPE work, and
+  the spec pre-plans a fallback for every TYPE (fewer moving reads). The
+  gate is then a bench row per TYPE, each ≤ REV QUAD on the same build. `FxBus::COST` is unchanged while every TYPE ≤ QUAD. The
   BUS row runs the costliest TYPE.
 - **Memory.** The arena does not grow. `FxBus` gains one engine-state enum
   (≤ 160 B), and `FxParams` about 28 B.
 - **Flash.** Estimated 11–13.5 KB in all: about 3–4 KB of shared scaffold,
   then 1–2.5 KB per TYPE. Each step's fat-LTO delta is recorded, and a TYPE
   over 3 KB is cut back before the next one starts.
-- **Interactions.** A TYPE switch drops about 5 ms of send and dips the
-  return for 45 ms. Sweeps list this as by design. #142's quiet-send tail
+- **Interactions.** A TYPE switch drops about 1.3 ms of send and dips the
+  return for about 41 ms. Sweeps list this as by design. #142's quiet-send tail
   loss applies to every TYPE alike.
-- **Order.** Tempo sync waits for ORBIT on `main`. ADR 0085 is accepted after the A/B and
-  UAT pass, with measured CPU and flash recorded here.
+- **Order.** Step 0 (the baseline and the BURST spike) comes first, and
+  tempo sync waits for ORBIT on `main`. ADR 0085 is accepted once every
+  A/B pair passes the spec's criterion (each time metric within ±30 % of
+  the named Midiverb plugin's, or an owner-signed ear exception) and UAT
+  passes, with measured CPU and flash recorded here.
 - **What it rules out.** FREEZE, per-TYPE knob memory and external
   modulation of the reverb, unless a later ADR adds them (#345 for the
   last).
@@ -149,5 +198,5 @@ against the ring's 48 while crossfading.
 - M. R. Schroeder, "Natural sounding artificial reverberation", JAES, 1962.
 - W. G. Gardner, "A realtime multichannel room simulator", 1992.
 - J. Dattorro, "Effect Design, Part 1: Reverberator and Other Filters", JAES, 1997.
-- ADRs 0009, 0010, 0011, 0028, 0031, 0037, 0045, 0061, 0067; ORBIT's 0071, 0072, 0080 (orbit branch).
+- ADRs 0009, 0010, 0011, 0028, 0031, 0037, 0045, 0061, 0067; ORBIT's 0071, 0072, 0080, 0081, 0083, 0086 (orbit branch).
 - `chimera-core/src/dsp/ring.rs`, `reverb.rs`, `fx_bus.rs`; `chimera-stm32/src/bench.rs`.
