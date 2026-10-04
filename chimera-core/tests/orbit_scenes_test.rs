@@ -1698,3 +1698,21 @@ fn an_edit_leaves_its_slot_untouched() {
     assert!(!song.live().untouched());
     assert!(song.scene(S[0]).untouched());
 }
+
+/// A project's ORBIT compares as it is kept: `live` counts, apart from the
+/// slots; the slots' revs don't.
+#[test]
+fn songs_differ_by_live_alone() {
+    use chimera_core::orbit::scene::OrbitSong;
+    let a = OrbitSong::NEW;
+    let mut b = a;
+    assert_eq!(a, b);
+    b.live_mut_for_test().chords.tonic = PitchClass::E;
+    assert_ne!(a, b, "live alone differs");
+    let mut c = a;
+    c.edit(&mut |s| s.chords.tonic = PitchClass::E);
+    assert_ne!(a, c, "an edit, slot and live");
+    let mut d = c;
+    d.live_mut_for_test().chords.tonic = a.live().chords.tonic;
+    assert_ne!(c, d, "the slot matches, live does not");
+}
