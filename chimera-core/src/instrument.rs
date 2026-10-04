@@ -442,12 +442,13 @@ const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
 impl Instrument {
     /// Reserved from the voice budget for a block's burst of note-ons
-    /// while ORBIT plays (ADR 0091): five, its five rings striking in one
-    /// block, the most it sends, with a hand's chord beside them; each
-    /// costs the pick and a voice start, and the first the block's
-    /// `recost`. With ORBIT stopped nothing is reserved: a DIN chord comes
-    /// a note a millisecond, spread over blocks, and the headroom takes it.
-    pub const BURST: Cost = Cost(836); // 5 note-ons in one block, 53,468 worst over four runs (ORBIT's first block, every voice cold), measured 2026-10-04, bench ORBIT PHASES, rev V at 480 MHz; / 64, rounded up
+    /// while ORBIT plays (ADR 0091): five voice starts, its five rings
+    /// striking in one block, the most it sends; each costs the pick and a
+    /// voice start, and the first the block's `recost`. Layered Parts on
+    /// one channel, or a live chord in the same block, start more and run
+    /// into the headroom. With ORBIT stopped nothing is reserved: a DIN
+    /// chord comes a note a millisecond, spread over blocks.
+    pub const BURST: Cost = Cost(857); // 5 note-ons in one block, 54,810 (ORBIT's first block, every voice cold; its own work 10,577, under `OrbitRunner::COST`, so the pair covers the 65,387 block), measured 2026-10-05, bench ORBIT PHASES, rev V at 480 MHz, 785a028a; / 64, rounded up
 
     pub fn new(sample_rate: u32, budget: SampleBudget) -> Self {
         // SAFETY: `init_in_place` writes every field of the slot.

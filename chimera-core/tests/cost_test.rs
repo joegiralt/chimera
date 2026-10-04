@@ -648,8 +648,8 @@ fn the_costliest_patch_gets_six_voices_on_rev_v() {
     assert_eq!(MAX_VOICES, 8, "the budget stops it short of the pool");
     assert_eq!(voices_at(CPU_HZ_REV_Y, &p), if TAPE { 4 } else { 5 });
     // ADR 0091: while ORBIT plays, its own block (171) and a five-note
-    // burst (836) are reserved beside the bus: five on rev V
-    // ((7,000 − 2,187) / 909 = 5.3; four with the tape). Stopped, six.
+    // burst (857) are reserved beside the bus: five on rev V
+    // ((7,000 − 2,208) / 909 = 5.3; four with the tape). Stopped, six.
     use chimera_core::instrument::Instrument;
     use chimera_core::orbit::runner::OrbitRunner;
     let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
@@ -672,7 +672,7 @@ fn the_costliest_patch_gets_six_voices_on_rev_v() {
 /// fits six voices on rev V and five on rev Y; the TX and single-oscillator
 /// Sounds all eight on rev V (seven with the master tape for the TX).
 /// That is what ORBIT stopped admits. ADR 0091: while ORBIT plays, its own
-/// block (171) and a five-note burst (836) are reserved too: on rev V the
+/// block (171) and a five-note burst (857) are reserved too: on rev V the
 /// TX Sounds get six, MORPH PAD and MORPH KEYS five, SAW LEAD and SQR BASS
 /// eight (seven with the tape).
 #[test]
