@@ -112,10 +112,14 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
     1. a branch-free soft clip (knee 1.0, reaching 2.0 with zero slope) at
        every loop's re-entry;
     2. normalised state storage, w = (1 − g)·v, for every allpass inside a
-       loop, with in-loop g held to 0.5–0.6;
-    3. diffuser g capped at 0.74 outside loops;
-    4. f32 output decorrelators, in the arena's free slots, after sums that
-       can exceed 2.0.
+       loop. Its bound holds at any g, so in-loop g runs up to 0.75 again,
+       the Midiverb's ¾ density, by DIFFUSE;
+    3. f32 diffusers outside loops. Their worst-case gain compounds at
+       1 + 2g per allpass, and an f32 store costs nothing over the
+       quantise it replaces;
+    4. f32 output decorrelators, after sums that can exceed 2.0.
+
+    Both f32 kinds live in the arena's own free slots.
 
     The bounds are H∞ (held-sine) bounds. Transient overshoot is caught by
     the saturating store and bounded by a clamp-hit test.
@@ -123,7 +127,8 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
       unclipped build. At maximum DECAY the clip shaves peaks at ≤ −40 dB.
       A held loop-mode tone stays ≤ 3 % THD, with aliases ≤ −40 dB.
     - The noise floor stays within +4 dB of QUAD's estimated −66 dBFS at
-      GRIT 0 (−55 at GRIT 0.3).
+      GRIT 0 (−55 at GRIT 0.3) at the defaults, and within +6 dB at
+      DIFFUSE 1. That density-against-grain trade is an A/B item.
     - Scaling the send down instead (HALL to 0.16) was rejected: about
       10 dB more audible grain in quiet tails.
   - GRIT's step scales by IN/0.5, which is 1 for every TYPE today, so
@@ -260,7 +265,12 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
   - ROOM by +7 to +18 cycles;
   - BLOOM by up to +11 cycles.
 
-  Both fit both headrooms (96, and 23 with the tape).
+  Both fit both headrooms by estimate (96, and 23 with the tape). A
+  pessimistic estimate puts ROOM near +43, over the tape build's 23. Step 0's
+  ROOM-kernel bench decides. A fail there takes ROOM-T, a pre-written
+  constant change, not a redesign:
+  1. wobble loop B's allpass only, saving about 22–28 cycles;
+  2. then 2 output taps a side, about 19 more.
   `FxBus::COST` changes only if the bench confirms it.
 
   Step 0 comes before any TYPE work. It:
