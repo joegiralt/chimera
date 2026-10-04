@@ -125,9 +125,9 @@ const GOLDENS: &[(&str, u64)] = &[
     ("delay_375ms", 0x036a3a3f29f429c6),           // MECHANICS (ADR 0053)
     ("delay_500ms", 0x40eb96efc0f4fefe),           // MECHANICS (ADR 0053)
     ("delay_feedback_100ms", 0x07e67081e5f28449),  // SAT × 1/gain, not ÷ gain (ADR 0053)
-    ("reverb_ring", 0xb1ea540211b67001),           // GRIT as converters (reverb TYPEs T5)
-    ("reverb_ring_max_size", 0xcfef9472b0313f1f),  // GRIT as converters (reverb TYPEs T5)
-    ("reverb_ring_full_grit", 0x5f26ef8770eca2be), // GRIT as converters (reverb TYPEs T5)
+    ("reverb_ring", 0x693f2d19b8bddc6c),           // GRIT as converters (reverb TYPEs T5)
+    ("reverb_ring_max_size", 0x5fd54d0a83f032de),  // GRIT as converters (reverb TYPEs T5)
+    ("reverb_ring_full_grit", 0x4fdf427d2d0f8310), // GRIT as converters (reverb TYPEs T5)
 ];
 
 #[test]

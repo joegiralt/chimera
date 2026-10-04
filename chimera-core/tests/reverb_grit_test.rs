@@ -4,6 +4,7 @@
 mod common;
 
 use chimera_core::dsp::Stereo;
+use chimera_core::dsp::ease::{Ease, ease_coeff};
 use chimera_core::dsp::halfband::HALF;
 use chimera_core::dsp::rev::Reverb;
 use chimera_core::dsp::rev::grit::{Converters, IDLE_FADE, IDLE_HOLD, bits, cutoff_hz, step};
@@ -11,7 +12,7 @@ use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::reverb::ReverbParams;
 use chimera_core::dsp::ring::{size_step, stage_len};
 use chimera_hal::BLOCK_SIZE;
-use common::rev::{Noise, blocks, burst_products_db, max_d2, sine_floor_dbfs};
+use common::rev::{Noise, blocks, burst_products_db, max_d2, sine_floor_dbfs, tone};
 use common::sweep::power;
 use common::{SR, fnv1a};
 use std::f64::consts::TAU;
@@ -104,7 +105,7 @@ fn dac_all(c: &mut Converters, x: &[f32], grit: f32) -> Vec<f32> {
         .iter()
         .flat_map(|&b| {
             let (mut l, mut r) = (b, [0.0; HALF]);
-            c.dac(&mut l, &mut r, grit);
+            c.dac(&mut l, &mut r, grit, 1.0);
             l
         })
         .collect()
@@ -253,6 +254,8 @@ fn a_grit_1_tail_has_no_correlated_products() {
 
 #[test]
 fn idle_mute_lets_the_tail_reach_zero() {
+    // 100 ms of hold and 50 ms of fade at the ring's 24 kHz.
+    assert_eq!((IDLE_HOLD, IDLE_FADE), (2_400, 1_200));
     let (mut rv, p) = quad(1.0);
     let mut n = Noise(0xdead_beef);
     for _ in 0..blocks(1.0) {
@@ -281,43 +284,95 @@ fn idle_mute_lets_the_tail_reach_zero() {
     }
 }
 
+/// Review Focus 4. Noise for 0.5 s, then silence until the return sits
+/// within one converter step at GRIT 1: what the DAC returns from then on
+/// is its dither over the tail's last LSBs, through its hold and its
+/// fade. GRIT moves to 0.3 for 50 ms, then back to 1 into the fade. The
+/// return's largest second difference stays within what ±1 step of
+/// dither makes at GRIT 1 (4 steps), and it ends on exact zeros.
 #[test]
 fn dither_mute_fades_without_a_step() {
-    // Noise for 0.5 s, then silence; GRIT 1, down to 0.3 halfway through
-    // the hold, back to 1 as the fade begins.
-    let stop = blocks(0.5);
-    let hold = (2 * IDLE_HOLD) as usize / BLOCK_SIZE;
-    let fade = (2 * IDLE_FADE) as usize / BLOCK_SIZE;
-    let render = |grit: &dyn Fn(usize) -> f32| {
-        let (mut rv, mut p) = quad(1.0);
-        let mut n = Noise(4242);
-        let mut out = (Vec::new(), Vec::new());
-        for b in 0..stop + hold + fade + blocks(0.05) {
-            p.grit = grit(b);
-            let send = if b < stop {
-                core::array::from_fn(|_| n.next())
-            } else {
-                [0.0; BLOCK_SIZE]
-            };
-            let (l, r) = tick(&mut rv, &p, &send);
-            out.0.extend_from_slice(&l);
-            out.1.extend_from_slice(&r);
+    let (mut rv, mut p) = quad(1.0);
+    let mut n = Noise(4242);
+    for _ in 0..blocks(0.5) {
+        tick(&mut rv, &p, &core::array::from_fn(|_| n.next()));
+    }
+    let silence = [0.0; BLOCK_SIZE];
+    let quiet = |x: &[f32]| x.iter().all(|s| s.abs() <= step(1.0));
+    loop {
+        let (l, r) = tick(&mut rv, &p, &silence);
+        if quiet(&l) && quiet(&r) {
+            break;
         }
-        let s = stop * BLOCK_SIZE - 2;
-        max_d2(&out.0[s..]).max(max_d2(&out.1[s..]))
-    };
-    let (high, low) = (render(&|_| 1.0), render(&|_| 0.3));
-    let moved = render(&|b| {
-        if b < stop + hold / 2 || b >= stop + hold {
-            1.0
-        } else {
-            0.3
+    }
+    assert_eq!(rv.converters().gains().1, 1.0, "the DAC is awake");
+    let move_end = blocks(0.05);
+    let (mut l, mut r) = (Vec::new(), Vec::new());
+    let mut b = 0;
+    while rv.converters().gains().1 > 0.0 || b < move_end {
+        p.grit = if b < move_end { 0.3 } else { 1.0 };
+        let (bl, br) = tick(&mut rv, &p, &silence);
+        l.extend_from_slice(&bl);
+        r.extend_from_slice(&br);
+        b += 1;
+        assert!(b <= blocks(20.0), "the DAC never mutes");
+    }
+    let d2 = max_d2(&l).max(max_d2(&r));
+    let bound = 4.0 * step(1.0);
+    println!("d2 {d2:e}, bound {bound:e}, {b} blocks");
+    assert!(d2 > 0.0, "no dither: the test measures nothing");
+    assert!(d2 <= bound, "d2 {d2} over {bound}");
+    let (l, r) = tick(&mut rv, &p, &silence);
+    assert!(l.iter().chain(&r).all(|&s| s == 0.0));
+}
+
+/// A held 1 kHz sine at −12 dBFS, GRIT `grit(block)`: the return from
+/// `from` blocks on.
+fn held_tone(grit: &dyn Fn(usize) -> f32, from: usize, to: usize) -> Vec<f32> {
+    let (mut rv, mut p) = quad(0.3);
+    let sine = tone(1_000.0, 0.251);
+    let mut out = Vec::new();
+    for b in 0..to {
+        p.grit = grit(b);
+        let (l, r) = tick(
+            &mut rv,
+            &p,
+            &core::array::from_fn(|i| sine(b * BLOCK_SIZE + i)),
+        );
+        if b >= from {
+            out.extend(l.iter().zip(&r).flat_map(|(&l, &r)| [l, r]));
         }
-    });
-    assert!(
-        moved <= 1.5 * high.max(low),
-        "{moved} vs held {high} / {low}"
-    );
+    }
+    out
+}
+
+/// GRIT eased from 0.3 to 0 on a settled tone: the block it lands on 0
+/// fades from the converters to the raw return, so the bypass adds no
+/// step. The tone (1 kHz) and the half-band's image (23 kHz) both repeat
+/// every 48 samples, so `r[n] = x[n] − x[n − 48]` leaves only what
+/// changed, and a step shows as a kink in it. Over the landing, ±3
+/// blocks, r's largest second difference stays under 1.5e−3: the 16-bit
+/// dither alone reads about 5e−4 before it, the fade 1.0e−3, and a hard
+/// switch 3.7e−3.
+#[test]
+fn landing_on_grit_0_does_not_step() {
+    let settle = blocks(3.0);
+    let k = ease_coeff(SR);
+    let mut e = Ease::default();
+    e.step(0.3, k);
+    let mut land = 1;
+    while e.step(0.0, k).1 != 0.0 {
+        land += 1;
+    }
+    let land = settle + land;
+    let out = held_tone(&|b| if b < settle { 0.3 } else { 0.0 }, land - 3, land + 3);
+    for s in 0..2 {
+        let x: Vec<f32> = out.iter().skip(s).step_by(2).copied().collect();
+        let r: Vec<f32> = x.windows(49).map(|w| w[48] - w[0]).collect();
+        let step = max_d2(&r);
+        println!("side {s}: step {step:e}");
+        assert!(step <= 1.5e-3, "side {s}: {step} over the landing");
+    }
 }
 
 fn floor_dbfs(grit: f32) -> f32 {

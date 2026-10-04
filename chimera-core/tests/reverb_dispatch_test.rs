@@ -85,9 +85,9 @@ fn render_bus() -> Vec<f32> {
 }
 
 const GOLDENS: &[(&str, u64)] = &[
-    ("quad_sweep_48k", 0x11c773129fc135db), // GRIT as converters (T5)
-    ("quad_sweep_44k1", 0x7105f2d3fad91f8f), // GRIT as converters (T5)
-    ("quad_bus", 0x4628c4c66d38ea33),       // GRIT as converters (T5)
+    ("quad_sweep_48k", 0xe090862e29d8ad54), // GRIT as converters (T5)
+    ("quad_sweep_44k1", 0xced1afedd0192a35), // GRIT as converters (T5)
+    ("quad_bus", 0x2ea2e51c6e1cf536),       // GRIT as converters (T5)
 ];
 
 #[test]

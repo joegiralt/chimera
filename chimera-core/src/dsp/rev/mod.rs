@@ -107,11 +107,18 @@ impl Reverb {
         let ctl = p.controls().sanitised();
         let mut u = [0.0f32; HALF];
         self.dec.process(send, &mut u);
-        let (_, grit) = self.grit.step(ctl.grit, ease_coeff(sample_rate));
-        if grit == 0.0 {
-            self.conv.bypass();
-        } else {
+        let (from, to) = self.grit.step(ctl.grit, ease_coeff(sample_rate));
+        // Landing on 0 with the converters running: run them once more at
+        // `from` and fade to the raw block across it, so the bypass never
+        // steps.
+        let land = to == 0.0 && self.conv.live();
+        let grit = if land { from } else { to };
+        if grit != 0.0 {
+            let raw = u;
             self.conv.adc(&mut u, grit);
+            if land {
+                fade_to(&mut u, &raw);
+            }
         }
         let (mut l, mut r) = ([0.0f32; HALF], [0.0f32; HALF]);
         match &mut self.state {
@@ -120,13 +127,17 @@ impl Reverb {
             }
         }
         if grit != 0.0 {
-            // The DAC works in output units; MIX below applies `WET`
-            // again, so back to LSBs after it.
-            const OUT: f32 = WET_GAIN / FULL_SCALE;
-            const IN: f32 = FULL_SCALE / WET_GAIN;
-            l.iter_mut().chain(r.iter_mut()).for_each(|s| *s *= OUT);
-            self.conv.dac(&mut l, &mut r, grit);
-            l.iter_mut().chain(r.iter_mut()).for_each(|s| *s *= IN);
+            // The DAC works in output units: `WET` LSBs, applied with MIX
+            // below.
+            let raw = (l, r);
+            self.conv.dac(&mut l, &mut r, grit, WET_GAIN / FULL_SCALE);
+            if land {
+                fade_to(&mut l, &raw.0);
+                fade_to(&mut r, &raw.1);
+            }
+        }
+        if to == 0.0 {
+            self.conv.bypass();
         }
         self.up_l.process(&l, &mut out.l);
         self.up_r.process(&r, &mut out.r);
@@ -147,6 +158,13 @@ impl Reverb {
                 }
             }
         }
+    }
+}
+
+/// `x` faded linearly to `raw` across the block, landing on it.
+fn fade_to(x: &mut [f32; HALF], raw: &[f32; HALF]) {
+    for (i, (x, &r)) in x.iter_mut().zip(raw).enumerate() {
+        *x += (r - *x) * ((i + 1) as f32 * (1.0 / HALF as f32));
     }
 }
 

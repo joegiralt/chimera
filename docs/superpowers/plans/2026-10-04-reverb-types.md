@@ -985,14 +985,20 @@ against `BlockBudget::budget_cycles` (448,000).
   at unity; QUAD's steady-state gain to white noise at its defaults is
   about +8.5 dB. The old grid read −57.3, −46.8 and −33.1.
 - **Products** (2 and 3 kHz in a 1 kHz burst's 4 s tail, summed over
-  100 ms windows): new 0.0 dB at GRIT 1; old 3.6, 7.7 and 12.5 dB at 0.3,
+  100 ms windows): new 0.2 dB at GRIT 1; old 3.6, 7.7 and 12.5 dB at 0.3,
   0.6 and 1.
+- **Landing on GRIT 0** fades the converters out across that block: the
+  kink in a settled tone's period-to-period residual reads 1.0e−3 against
+  3.7e−3 for a hard switch (16-bit dither alone, 5e−4).
 - **The high cut** is a prewarped bilinear one-pole: the brief's one-pole
   `y += a·(x − y)` cannot reach −3 dB near 11 kHz at 24 kHz without
   shelving 1.4 dB off 5 kHz.
-- **AXI:** 442,220 B (+88; the ratchet moves with it).
-- **Flash:** plain release `text` 702,860 B (+1,848 over T4's 701,012);
-  `--features orbit` 722,436 B (+1,840 over 720,596).
+- **AXI:** 442,156 B (+24; the ratchet moves with it). The DAC dithers
+  from its own noise word, so no per-block byte buffer.
+- **Flash:** plain release `text` 702,948 B (+1,936 over T4's 701,012);
+  `--features orbit` 722,332 B (+1,736 over 720,596).
+  `Converters::set` is 784 B of it. `#[inline]` for `#[inline(always)]`
+  on the per-sample helpers builds a byte-identical binary.
 - **REV QUAD bench:** deferred (the unit was busy).
 
 ---

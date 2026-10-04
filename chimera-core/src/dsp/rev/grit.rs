@@ -107,11 +107,9 @@ impl Idle {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Converters {
     /// The noise state, xorshift32, stepped twice a ring sample: the
-    /// first word's bytes 0–1 dither the ADC and 2–3 the DAC's left, the
-    /// second word's bytes 0–1 the DAC's right. 0 is silent.
+    /// ADC's word's bytes 0–1 dither the ADC, the DAC's word's bytes 0–1
+    /// its left and 2–3 its right. 0 is silent.
     noise: u32,
-    /// The DAC's left dither bytes, from the ADC's words this block.
-    dl: [u16; HALF],
     /// The high cuts: ADC, DAC L, DAC R.
     cut: [Cut; 3],
     idle: [Idle; 2],
@@ -126,7 +124,7 @@ pub struct Converters {
     inv: f32,
 }
 
-crate::in_place::field_list!(Converters => Converters { noise, dl, cut, idle, live, key, bp, delta, inv });
+crate::in_place::field_list!(Converters => Converters { noise, cut, idle, live, key, bp, delta, inv });
 
 impl Converters {
     pub fn new() -> Self {
@@ -140,7 +138,6 @@ impl Converters {
     pub fn undithered() -> Self {
         Self {
             noise: 0,
-            dl: [0; HALF],
             cut: [Cut::default(); 3],
             idle: [Idle::default(); 2],
             live: [false; 2],
@@ -154,6 +151,11 @@ impl Converters {
     /// The ADC's and the DAC's dither gains.
     pub fn gains(&self) -> (f32, f32) {
         (self.idle[0].gain(), self.idle[1].gain())
+    }
+
+    /// Whether either side ran last block.
+    pub fn live(&self) -> bool {
+        self.live[0] || self.live[1]
     }
 
     /// GRIT is 0 this block: both sides rest, and the next to run starts
@@ -186,31 +188,32 @@ impl Converters {
         }
         let (bp, inv, delta, dither) = (self.bp, self.inv, self.delta, self.dither());
         let mut cut = self.cut[0];
-        for (x, dl) in x.iter_mut().zip(&mut self.dl) {
+        for x in x.iter_mut() {
             let w = xorshift32(&mut self.noise);
-            *dl = (w >> 16) as u16;
             let g = self.idle[0].tick(*x != 0.0) * dither;
             *x = rint(cut.run(*x, bp) * inv + tpdf(w as u16) * g) * delta;
         }
         self.cut[0] = cut;
     }
 
-    /// The return, L and R, in output dBFS units (after `WET`, before MIX).
-    /// Runs after `adc` in the same block, for the DAC's left bytes.
-    pub fn dac(&mut self, l: &mut [f32; HALF], r: &mut [f32; HALF], grit: f32) {
+    /// The return, L and R, `unit` output dBFS units (after `WET`, before
+    /// MIX) to one of theirs: the high cut is linear, so the quantiser's
+    /// step carries the scale and the samples stay in the engine's units.
+    pub fn dac(&mut self, l: &mut [f32; HALF], r: &mut [f32; HALF], grit: f32, unit: f32) {
         self.set(grit);
         if !self.live[1] {
             self.cut[1].prime(l[0]);
             self.cut[2].prime(r[0]);
             self.live[1] = true;
         }
-        let (bp, inv, delta, dither) = (self.bp, self.inv, self.delta, self.dither());
+        let (bp, dither) = (self.bp, self.dither());
+        let (inv, delta) = (self.inv * unit, self.delta / unit);
         let (mut cl, mut cr) = (self.cut[1], self.cut[2]);
-        for ((l, r), &dl) in l.iter_mut().zip(r.iter_mut()).zip(&self.dl) {
+        for (l, r) in l.iter_mut().zip(r.iter_mut()) {
             let w = xorshift32(&mut self.noise);
             let g = self.idle[1].tick(*l != 0.0 || *r != 0.0) * dither;
-            *l = rint(cl.run(*l, bp) * inv + tpdf(dl) * g) * delta;
-            *r = rint(cr.run(*r, bp) * inv + tpdf(w as u16) * g) * delta;
+            *l = rint(cl.run(*l, bp) * inv + tpdf(w as u16) * g) * delta;
+            *r = rint(cr.run(*r, bp) * inv + tpdf((w >> 16) as u16) * g) * delta;
         }
         (self.cut[1], self.cut[2]) = (cl, cr);
     }
