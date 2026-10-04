@@ -9,7 +9,7 @@ use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 use crate::dsp::algo::math::exp2;
 use crate::dsp::clampf;
 use crate::dsp::halfband::HALF;
-use crate::dsp::ring::rnd;
+use crate::dsp::ring::{RING_LEN, rnd};
 use crate::dsp::xorshift_noise;
 
 /// R1's re-entry clip: `x` to the knee at 1.0, then `1 + u − u²/4` with
@@ -40,12 +40,14 @@ pub fn ap_f32(x: f32, z: f32, g: f32) -> (f32, f32) {
     (z + g * v, v)
 }
 
-/// SMEAR's moving read: `d` (≥ 2) samples behind `base` in `lines`,
-/// a linear pair `x0 + f·(x1 − x0)`, both slots wrapped. In LSBs.
+/// SMEAR's moving read: `d` (≥ 2) samples behind `base` in the arena's
+/// `lines`, a linear pair `x0 + f·(x1 − x0)`, both slots wrapped. In LSBs.
+/// The arena's fixed length makes the bounds below hold for any input.
 #[inline(always)]
-pub fn pair(lines: &[i16], base: usize, d: f32) -> f32 {
-    debug_assert!(d >= 2.0 && (d as usize) < lines.len() && base < lines.len());
-    let n = lines.len();
+pub fn pair(lines: &[i16; RING_LEN], base: usize, d: f32) -> f32 {
+    debug_assert!(d >= 2.0 && (d as usize) < RING_LEN && base < RING_LEN);
+    const _: () = assert!(RING_LEN > 0);
+    let n = RING_LEN;
     let base = base.min(n - 1);
     let di = (d as usize).min(n - 1);
     let f = d - di as f32;

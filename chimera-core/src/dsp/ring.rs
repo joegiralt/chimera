@@ -219,19 +219,19 @@ pub fn q_trunc_fixed(x: f32) -> i16 {
 }
 
 /// SMEAR's depth D at `step`, in ring samples: SMEAR × 0.18 % of the
-/// ring's round trip, so SMEAR 1 is the cap at every SIZE and the four
-/// stage delays together move the loop by at most 1.45 % (§ Pitch bounds:
-/// 25 cents). Scaled to the loop, the whole knob always does something;
-/// the spec's ±2 ms ceiling never binds on QUAD, whose cap is 0.61 ms at
-/// SIZE 0 and 1.74 ms at SIZE 1.
+/// ring's round trip (spec § The SMEAR bound, ADR 0085), so SMEAR 1 is the
+/// cap at every SIZE, the four stage delays together move the loop by at
+/// most 1.45 % (25 cents), and the whole knob always does something.
 pub fn smear_depth(smear: f32, step: u8) -> f32 {
     let trip: u32 = (0..STAGES).map(|k| stage_len(step, k) as u32).sum();
     clampf(smear, 0.0, 1.0) * 0.0018 * trip as f32
 }
 
 /// The SMEAR reads each stage delay made on this thread since the last
-/// reset: (shortest, longest), in ring samples back. Host tests only.
-#[cfg(any(test, feature = "test-support"))]
+/// reset: (shortest, longest), in ring samples back. Its own feature, which
+/// only this crate's tests turn on: the simulator's audio path, built with
+/// `test-support`, never pays for it.
+#[cfg(any(test, feature = "smear-probe"))]
 pub mod smear_probe {
     extern crate std;
     use super::STAGES;
@@ -533,9 +533,9 @@ impl Ring {
                         // `bw[j] + t` is line j's write slot, below
                         // `RING_LEN`; the read is 2 ≤ d ≤ `BASE[j]` back.
                         let back = nominal[K] - off[K];
-                        #[cfg(any(test, feature = "test-support"))]
+                        #[cfg(any(test, feature = "smear-probe"))]
                         smear_probe::note(K, back);
-                        pair(&lines[..], bw[j] + t, back)
+                        pair(lines, bw[j] + t, back)
                     } else {
                         blend!(bn[j], bo[j])
                     };

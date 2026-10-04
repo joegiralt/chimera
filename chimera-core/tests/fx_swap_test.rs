@@ -201,10 +201,11 @@ fn project_a() -> FxParams {
             damping: 0.3,
             size: 0.5,
             mix: 0.7,
-            // Not 0.3: there NEW → A's +0 ms window reads 2.02× the
-            // projects' own steps on Sine1k's right side (0.054 against
-            // 0.027), where 0.2, 0.31 and 0.5 pass; the swap is the same
-            // ease at every value, so it is the reference's coincidence.
+            // Not 0.3. NEW → A's swapped step at +0 ms is 0.0536 at every
+            // SMEAR: SMEAR reaches the return only after a stage pass, so
+            // the swap itself does not see it. The A-only reference does
+            // vary with SMEAR, and at 0.3 its own step there is 0.027,
+            // just under half: a coincidence of the reference.
             smear: 0.5,
             rate: 0.5,
         },

@@ -90,7 +90,11 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
     moving read's pair.
   - **The knobs.** SMEAR takes slot 11 (ident `SMEAR`), and RATE stays at
     12 as the wander speed.
-  - **QUAD gets SMEAR** on its four stage delays.
+  - **QUAD gets SMEAR** on its four stage delays, its depth scaled to the
+    ring: D = SMEAR × 0.18 % of the round trip, so SMEAR 1 is the 25-cent
+    cap at every SIZE and the whole knob does something. A ±0–2 ms law
+    capped there went flat from SMEAR 0.3 at SIZE 0, since the cap is
+    only 0.61 ms there (1.74 ms at SIZE 1).
     - Its main page becomes SIZE · TIME · DAMP · SMEAR, with RATE on its
       MORE page, so RATE sits in the same place on every TYPE.
     - At SMEAR 0, QUAD runs its existing code path and is bit-identical to

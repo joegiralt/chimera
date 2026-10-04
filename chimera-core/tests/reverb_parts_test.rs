@@ -106,8 +106,11 @@ fn ap_norm_matches_the_plain_allpass_and_bounds_its_state() {
 
 #[test]
 fn pair_reads_fixed_at_fraction_0_and_the_mean_at_half_across_the_wrap() {
-    const N: usize = 50;
-    let lines: Vec<i16> = (0..N as i16).map(|i| i * 100).collect();
+    const N: usize = RING_LEN;
+    let mut lines = Box::new([0i16; N]);
+    for (i, s) in lines.iter_mut().enumerate() {
+        *s = (i % 300) as i16 * 100;
+    }
     assert_eq!(pair(&lines, 3, 2.0), lines[1] as f32);
     assert_eq!(
         pair(&lines, 3, 2.5),
@@ -351,7 +354,7 @@ fn no_slap_passes_plain_and_dark_tails_and_catches_an_echo() {
 /// one-pole's own second difference is white) and
 /// scaled by `level`, eased or not.
 struct Comb {
-    line: Vec<i16>,
+    line: Box<[i16; RING_LEN]>,
     head: usize,
     xf: Xfade,
     target: u16,
@@ -374,7 +377,7 @@ impl Comb {
         let (mut xf, mut wob) = (Xfade::default(), Wander::new(wander_seeds::<1>(7)[0], 0.0));
         (xf.from, xf.to) = (len, len);
         wob.set_rate(2.0, 24_000.0);
-        let line = vec![0; 6_100];
+        let line = Box::new([0; RING_LEN]);
         Comb {
             line,
             head: 0,

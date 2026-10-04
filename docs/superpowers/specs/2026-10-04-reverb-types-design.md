@@ -338,6 +338,7 @@ The bound, stated per pass and cumulatively, for every TYPE:
   - **BLOOM:** 3 lines, D ≤ 0.24 % of L: 0.6 ms at 250 ms.
   - **QUAD:** 4 lines, D ≤ 0.18 % of the ring's round trip: 0.61 ms at SIZE 0 (0.338 s), 1.74 ms at SIZE 1 (0.967 s).
 - **Where it applies.** The cap applies after SMEAR's mapping, and the panel's value text shows the depth that plays.
+- **QUAD scales to its loop** (ruling, 2026-10-04, after Task 5's review). QUAD's SMEAR is `D = SMEAR × 0.18 % of the round trip`, not ±0–2 ms capped: the cap is under 2 ms at every SIZE (0.61–1.74 ms), so the capped law went flat from SMEAR 0.3 at SIZE 0 and most of the knob did nothing. Scaled, SMEAR 1 is still the cap at every SIZE, and the whole travel always means something, as the owner asks of every control.
 - **No drift and no vibrato.** The drift is bounded and has no period, so it has no mean shift and no single LFO frequency. Two tests pin this (§ Tests): the mean pitch over a window of 4/RATE stays within ±1 cent, and the pitch-deviation trace's spectrum has no line above its median + 10 dB.
 
 ### LOOP engine: ROOM and HALL
@@ -577,7 +578,7 @@ The plate corner is SIZE 0 (120 ms), DECAY 0.35 (1.9 s), TONE 0 (10 kHz), DIFFUS
 
 | Knob | Slot | Law | Range | Default p → value |
 |---|---|---|---|---|
-| SMEAR | 11 | lin | ±0–2 ms, capped at 0.18 % of the ring's round trip | 0 → off |
+| SMEAR | 11 | lin | D = SMEAR × 0.18 % of the ring's round trip: ±0.61 ms at SIZE 0, ±1.74 ms at SIZE 1, at SMEAR 1 | 0 → off |
 | RATE | 12 | exp | 0.05–1 Hz | 0.5 → 0.22 Hz |
 
 ### A TYPE change loads that TYPE's knobs

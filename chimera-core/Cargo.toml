@@ -26,10 +26,12 @@ master-tape = []
 test-support = []
 # Bench-only phase stamps inside ORBIT's block and the note handling.
 probe = []
+# `ring::smear_probe`: SMEAR's reads, recorded per thread. Tests only.
+smear-probe = []
 
 [dev-dependencies]
 # No default features: `--no-default-features` must reach the library too.
-chimera-core = { path = ".", default-features = false, features = ["test-support"] }
+chimera-core = { path = ".", default-features = false, features = ["test-support", "smear-probe"] }
 chimera-hal = { path = "../chimera-hal", features = ["testkit"] }
 
 [build-dependencies]

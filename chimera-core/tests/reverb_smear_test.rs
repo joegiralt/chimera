@@ -14,7 +14,7 @@ use chimera_core::dsp::ring::{
 };
 use chimera_core::storage::RETIRED;
 use chimera_hal::BLOCK_SIZE;
-use common::rev::{Noise, blocks, check_smear_bound, run, tail_pitch_hz, tone};
+use common::rev::{Noise, blocks, check_smear_bound, max_d2, run, tail_pitch_hz, tone};
 use common::{SR, fnv1a};
 
 const FS_RING: f32 = 24_000.0;
@@ -242,33 +242,39 @@ fn smear_spreads_a_held_tone() {
 
 // ── SIZE under SMEAR (Review Focus 4) ──
 
-/// SMEAR 1, noise (±0.25) for 0.5 s, then SIZE 0.2 → `to` at 0.7 s: the return
-/// over the 0.5 s after the move, and each block's paths.
-fn size_move(to: f32) -> (Vec<f32>, Vec<(bool, bool, f32)>) {
+/// SMEAR 1, RATE 1: a 1 kHz tone at −12 dBFS for 0.5 s, then SIZE `from`
+/// → `to` at 0.7 s (`from` = `to` holds it), the depth gated or, with
+/// `hard`, snapped. The left return over the 0.5 s from the move, and each
+/// block's paths.
+fn size_move(from: f32, to: f32, hard: bool) -> (Vec<f32>, Vec<(bool, bool, f32)>) {
     let mut p = ReverbParams {
-        size: 0.2,
+        size: from,
         smear: 1.0,
         rate: 1.0,
         mix: 1.0,
         ..ReverbParams::default()
     };
     let mut rv = Box::new(Reverb::new());
-    let mut n = Noise(4242);
+    if hard {
+        rv.hard_smear_gate();
+    }
+    let sine = tone(1_000.0, 0.25);
     let (at, end) = (blocks(0.7), blocks(1.2));
     let (mut out, mut paths) = (Vec::new(), Vec::new());
     for b in 0..end {
         if b == at {
             p.size = to;
         }
-        // −12 dB: a tail the click detector passes held.
-        let send = if b < blocks(0.5) {
-            core::array::from_fn(|_| 0.25 * n.next())
-        } else {
-            [0.0; BLOCK_SIZE]
-        };
-        let (l, r) = tick(&mut rv, &p, &send);
+        let send = core::array::from_fn(|i| {
+            if b < blocks(0.5) {
+                sine(b * BLOCK_SIZE + i)
+            } else {
+                0.0
+            }
+        });
+        let (l, _) = tick(&mut rv, &p, &send);
         if b >= at - 1 {
-            out.extend(l.iter().zip(&r).flat_map(|(&l, &r)| [l, r]));
+            out.extend_from_slice(&l);
         }
         let (xf, sm) = rv.debug_paths();
         paths.push((xf, sm, rv.debug_depth()));
@@ -276,9 +282,19 @@ fn size_move(to: f32) -> (Vec<f32>, Vec<(bool, bool, f32)>) {
     (out, paths)
 }
 
+/// Review Focus 4. The depth eases to 0 before the crossfade and back
+/// after it, never together; the tone's tail through the move is no
+/// rougher than held at either SIZE.
+///
+/// The judge is the largest second difference against those genuinely
+/// held tails (SIZE 0.2 and 0.8 throughout), within 1.25×. The absolute
+/// `click_free_test` detector cannot judge this: a hard-switched depth
+/// moves its largest step only 0.022 → 0.027 at −12 dBFS (0.087 → 0.104 at
+/// 0 dBFS), under its 0.15, while it doubles the second difference. The
+/// hard switch is the negative control.
 #[test]
 fn quad_size_move_under_smear_does_not_click() {
-    let (moved, paths) = size_move(0.8);
+    let (moved, paths) = size_move(0.2, 0.8, false);
     assert!(paths.iter().all(|p| !(p.0 && p.1)), "XF and SMEAR together");
     let first_xf = paths.iter().position(|p| p.0).expect("a crossfade");
     assert!(first_xf > blocks(0.7), "the crossfade waits for the depth");
@@ -292,20 +308,14 @@ fn quad_size_move_under_smear_does_not_click() {
         "the depth is 0 before the crossfade"
     );
     assert!(paths.last().unwrap().1, "SMEAR comes back after it");
-    // `click_free_test`'s detector, absolute: no step over 0.15 after the
-    // output's soft clip, on either side; the held tails pass it too, so
-    // it judges the move, not the tail.
-    let side = |x: &[f32], s: usize| -> Vec<f32> { x.iter().skip(s).step_by(2).copied().collect() };
-    for (what, out) in [
-        ("held at 0.2", size_move(0.2).0),
-        ("held at 0.8", size_move(0.8).0),
-        ("moved", moved),
-    ] {
-        for s in 0..2 {
-            let c = common::clicks(&side(&out, s));
-            assert!(c.is_empty(), "{what}, side {s}: {:?}", &c[..c.len().min(5)]);
-        }
-    }
+    let held = max_d2(&size_move(0.2, 0.2, false).0).max(max_d2(&size_move(0.8, 0.8, false).0));
+    let (got, hard) = (max_d2(&moved), max_d2(&size_move(0.2, 0.8, true).0));
+    println!("d2: moved {got}, hard {hard}, held {held}");
+    assert!(got <= 1.25 * held, "d2 {got} against held {held}");
+    assert!(
+        hard > 1.25 * held,
+        "the snapped depth passes: d2 {hard}, held {held}"
+    );
 }
 
 // ── silence ──
