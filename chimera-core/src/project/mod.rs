@@ -2,6 +2,7 @@
 //! (projects spec § Model). The fields are private, so only this module
 //! sets an `Origin` or moves a slot's generation.
 
+pub mod arena;
 mod codec;
 mod guard;
 mod ids;
