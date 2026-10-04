@@ -1,7 +1,9 @@
 //! The pool arena (ADR 0087): Sounds down from the top, sources up from 0,
 //! one gap; no source byte moves under a sounding voice.
 
-use chimera_core::project::arena::{ARENA_BYTES, ArenaWriter, Cost, GRANULE, MAX_SOURCES, Shift};
+use chimera_core::project::arena::{
+    ARENA_BYTES, ArenaWriter, Cost, GRANULE, GateAcked, Hole, MAX_SOURCES, Refused, Shift,
+};
 use chimera_core::storage::{Crc32, MAX_SOUND_COST};
 
 fn arena() -> ArenaWriter {
@@ -65,6 +67,25 @@ fn new_arena_is_all_gap() {
     assert_eq!(a.gap().bytes() as usize, ARENA_BYTES);
 }
 
+/// A source staged at the gap's bottom with a pattern unique to `tag`, then
+/// taken: its offset and CRC.
+fn add_source(a: &mut ArenaWriter, len: usize, tag: u64) -> Result<(u32, u32), Refused> {
+    let mut r = Rng(tag | 1);
+    for b in a.source_stage(len)? {
+        *b = r.next() as u8;
+    }
+    let o = a.source_alloc(len)?;
+    Ok((o, crc(a.bytes(o, len))))
+}
+
+fn ready_unless(sounding: &[u32]) -> GateAcked<impl Fn(u32) -> bool + '_> {
+    GateAcked::assumed(move |o| !sounding.contains(&o))
+}
+
+fn all_ready() -> GateAcked<fn(u32) -> bool> {
+    GateAcked::assumed(|_| true)
+}
+
 #[test]
 fn ends_never_meet() {
     let mut a = arena();
@@ -83,8 +104,9 @@ fn ends_never_meet() {
         if srcs.len() < MAX_SOURCES {
             let len = 1 + rng.below(4096);
             match a.source_alloc(len) {
-                Some(o) => srcs.push((o, Cost::of(len).bytes())),
-                None => {
+                Ok(o) => srcs.push((o, Cost::of(len).bytes())),
+                Err(e) => {
+                    assert_eq!(e, Refused::Full);
                     assert!(a.gap().bytes() < Cost::of(len).bytes());
                     break;
                 }
@@ -102,12 +124,36 @@ fn ends_never_meet() {
 }
 
 #[test]
-fn source_count_is_capped() {
+fn rows_busy_is_not_full() {
     let mut a = arena();
-    for _ in 0..MAX_SOURCES {
-        assert!(a.source_alloc(1).is_some());
+    let mut first = 0;
+    for i in 0..MAX_SOURCES {
+        let (o, _) = add_source(&mut a, 64, i as u64).unwrap();
+        if i == 0 {
+            first = o;
+        }
     }
-    assert_eq!(a.source_alloc(1), None);
+    // A retired source still ringing holds its row: the gap is wide, but
+    // no source gets a place until the note ends.
+    a.source_free_pending(first, 64);
+    assert!(a.gap() > Cost::of(64));
+    assert_eq!(a.source_alloc(64), Err(Refused::RowsBusy));
+    assert_eq!(a.source_stage(64).err(), Some(Refused::RowsBusy));
+    assert_eq!(a.source_compact(ready_unless(&[first])), None);
+    assert!(a.source_compact(all_ready()).is_some());
+    assert!(add_source(&mut a, 64, 99).is_ok());
+    // Full still wins when the bytes aren't there either.
+    assert_eq!(a.source_alloc(ARENA_BYTES), Err(Refused::Full));
+}
+
+#[test]
+fn published_sources_take_no_writes() {
+    let mut a = arena();
+    let (o, _) = add_source(&mut a, 64, 1).unwrap();
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        a.bytes_mut(o, 1)[0] = 0;
+    }));
+    assert!(r.is_err());
 }
 
 #[test]
@@ -128,20 +174,19 @@ fn sound_free_compacts_at_once() {
 #[test]
 fn compact_waits_while_not_ready() {
     let mut a = arena();
-    let hole = a.source_alloc(1000).unwrap();
-    let above = a.source_alloc(500).unwrap();
-    let c = stamp(&mut a, above, 500, 9);
+    let (hole, _) = add_source(&mut a, 1000, 1).unwrap();
+    let (above, c) = add_source(&mut a, 500, 9).unwrap();
     a.source_free_pending(hole, 1000);
     let gap = a.gap().bytes();
     assert_eq!(a.pending(), Cost::of(1000));
-    assert_eq!(a.source_compact(|o| o != above), None);
+    assert_eq!(a.source_compact(ready_unless(&[above])), None);
     assert_eq!(a.gap().bytes(), gap);
     assert_eq!(a.pending(), Cost::of(1000));
     assert_eq!(crc(a.bytes(above, 500)), c);
     // The hole itself may still be sounding (a retired source's last note).
-    assert_eq!(a.source_compact(|o| o != hole), None);
+    assert_eq!(a.source_compact(ready_unless(&[hole])), None);
     assert_eq!(a.gap().bytes(), gap);
-    let s = a.source_compact(|_| true).unwrap();
+    let s = a.source_compact(all_ready()).unwrap();
     assert_eq!(
         s,
         Shift {
@@ -152,23 +197,48 @@ fn compact_waits_while_not_ready() {
     assert_eq!(a.pending().bytes(), 0);
     assert_eq!(a.gap().bytes(), gap + Cost::of(1000).bytes());
     assert_eq!(crc(a.bytes(hole, 500)), c);
-    assert_eq!(a.source_compact(|_| true), None);
+    assert_eq!(a.source_compact(all_ready()), None);
 }
 
 #[test]
-fn a_higher_hole_compacts_past_a_held_lower_one() {
+fn compaction_takes_the_lowest_hole() {
     let mut a = arena();
-    let h0 = a.source_alloc(64).unwrap();
-    let held = a.source_alloc(64).unwrap();
-    let h1 = a.source_alloc(64).unwrap();
-    let top = a.source_alloc(64).unwrap();
-    let c = stamp(&mut a, top, 64, 4);
-    a.source_free_pending(h0, 64);
+    let (h0, _) = add_source(&mut a, 64, 1).unwrap();
+    let (mid, _) = add_source(&mut a, 64, 2).unwrap();
+    let (h1, _) = add_source(&mut a, 64, 3).unwrap();
+    let (top, c) = add_source(&mut a, 64, 4).unwrap();
+    assert_eq!(a.next_compaction(), None);
     a.source_free_pending(h1, 64);
-    let s = a.source_compact(|o| o != held).unwrap();
-    assert_eq!(s, Shift { from: h1, by: 64 });
-    assert_eq!(crc(a.bytes(h1, 64)), c);
-    assert_eq!(a.pending().bytes(), 64);
+    a.source_free_pending(h0, 64);
+    let lowest = Hole {
+        offset: h0,
+        cost: Cost::of(64),
+    };
+    assert_eq!(a.next_compaction(), Some(lowest));
+    // A voice on a source above the lowest hole holds every hole: the
+    // higher one waits its turn rather than jumping the `above` mask.
+    assert_eq!(a.source_compact(ready_unless(&[mid])), None);
+    assert_eq!(a.next_compaction(), Some(lowest));
+    assert_eq!(
+        a.source_compact(all_ready()),
+        Some(Shift { from: h0, by: 64 })
+    );
+    // h1 slid down with everything else above h0.
+    let next = Hole {
+        offset: h1 - 64,
+        cost: Cost::of(64),
+    };
+    assert_eq!(a.next_compaction(), Some(next));
+    assert_eq!(
+        a.source_compact(all_ready()),
+        Some(Shift {
+            from: next.offset,
+            by: 64
+        })
+    );
+    assert_eq!(crc(a.bytes(top - 128, 64)), c);
+    assert_eq!(a.next_compaction(), None);
+    assert_eq!(a.pending().bytes(), 0);
 }
 
 #[derive(Clone, Debug)]
@@ -196,6 +266,14 @@ fn check(a: &ArenaWriter, snds: &[Entry], srcs: &[Entry]) {
         at += Cost::of(e.len).bytes();
     }
     let src_end = at;
+    let lowest = srcs.iter().find(|e| e.pending);
+    assert_eq!(
+        a.next_compaction(),
+        lowest.map(|e| Hole {
+            offset: e.offset,
+            cost: Cost::of(e.len)
+        })
+    );
     // Sounds contiguous to the top.
     let mut sorted: Vec<&Entry> = snds.iter().collect();
     sorted.sort_by_key(|e| e.offset);
@@ -220,7 +298,7 @@ fn model_10k_ops() {
     let mut snds: Vec<Entry> = Vec::new();
     let mut srcs: Vec<Entry> = Vec::new();
     let mut tag = 1u64;
-    let (mut refused, mut held, mut moved) = (0, 0, 0);
+    let (mut full, mut busy, mut held, mut moved) = (0, 0, 0, 0);
     for _ in 0..10_000 {
         tag += 1;
         match rng.below(6) {
@@ -238,7 +316,7 @@ fn model_10k_ops() {
                     }
                     None => {
                         assert!(a.gap() < Cost::of(len));
-                        refused += 1;
+                        full += 1;
                     }
                 }
             }
@@ -253,19 +331,20 @@ fn model_10k_ops() {
             }
             3 => {
                 let len = 1 + rng.below(12_000);
-                match a.source_alloc(len) {
-                    Some(offset) => {
-                        let crc = stamp(&mut a, offset, len, tag);
-                        srcs.push(Entry {
-                            offset,
-                            len,
-                            crc,
-                            pending: false,
-                        });
+                match add_source(&mut a, len, tag) {
+                    Ok((offset, crc)) => srcs.push(Entry {
+                        offset,
+                        len,
+                        crc,
+                        pending: false,
+                    }),
+                    Err(Refused::Full) => {
+                        assert!(a.gap() < Cost::of(len));
+                        full += 1;
                     }
-                    None => {
-                        assert!(a.gap() < Cost::of(len) || srcs.len() == MAX_SOURCES);
-                        refused += 1;
+                    Err(Refused::RowsBusy) => {
+                        assert_eq!(srcs.len(), MAX_SOURCES);
+                        busy += 1;
                     }
                 }
             }
@@ -284,20 +363,27 @@ fn model_10k_ops() {
                     .filter(|_| rng.below(4) == 0)
                     .map(|e| e.offset)
                     .collect();
-                let before: Vec<Entry> = srcs.clone();
-                match a.source_compact(|o| !sounding.contains(&o)) {
+                let (gap, pending, next) = (a.gap(), a.pending(), a.next_compaction());
+                match a.source_compact(ready_unless(&sounding)) {
                     None => {
-                        held += srcs.iter().any(|e| e.pending) as u32;
-                        for (x, y) in before.iter().zip(&srcs) {
-                            assert_eq!(x.offset, y.offset);
-                        }
+                        held += next.is_some() as u32;
+                        // A refusal touches nothing in the arena.
+                        assert_eq!(
+                            (a.gap(), a.pending(), a.next_compaction()),
+                            (gap, pending, next)
+                        );
                     }
                     Some(s) => {
                         moved += 1;
                         let i = srcs.iter().position(|e| e.offset == s.from).unwrap();
-                        assert!(srcs[i].pending);
+                        assert_eq!(
+                            next.map(|h| (h.offset, h.cost.bytes())),
+                            Some((s.from, s.by))
+                        );
                         assert_eq!(s.by, Cost::of(srcs[i].len).bytes());
-                        // No voice reads the hole or anything that moved.
+                        assert_eq!(a.gap().bytes(), gap.bytes() + s.by);
+                        assert_eq!(a.pending().bytes(), pending.bytes() - s.by);
+                        // No voice was on the hole or anything that moved.
                         for e in &srcs[i..] {
                             assert!(!sounding.contains(&e.offset), "moved under a voice");
                         }
@@ -309,107 +395,51 @@ fn model_10k_ops() {
                 }
             }
         }
+        // `check` compares the arena with the model: offsets, next hole,
+        // gap, pending and every entry's CRC.
         check(&a, &snds, &srcs);
     }
     // The run reached every branch.
     assert!(
-        refused > 0 && held > 0 && moved > 0,
-        "{refused} {held} {moved}"
+        full > 0 && busy > 0 && held > 0 && moved > 0,
+        "{full} {busy} {held} {moved}"
     );
 }
 
-/// The audio, as far as compaction sees it: voices latched to a source's
-/// offset at note-on, and the `sounding` set it publishes each block.
-struct Audio {
-    voices: Vec<(u32, u32)>, // (offset, crc at note-on)
-}
-
-impl Audio {
-    fn sounding(&self) -> Vec<u32> {
-        self.voices.iter().map(|v| v.0).collect()
-    }
-    /// One block: every voice reads its source's bytes as they were.
-    fn block(&self, a: &ArenaWriter, len: usize) {
-        for &(o, c) in &self.voices {
-            assert_eq!(crc(a.bytes(o, len)), c, "a voice read moved bytes");
-        }
-    }
-}
-
-/// ADR 0087's gate, as Task 8 runs it: wait for `sounding & above == 0`,
-/// close, ack, re-check from a block after the ack, then move.
+/// Why the gate must re-check after its ack (ADR 0087 step 3): compaction
+/// trusts `GateAcked`'s answer as of the call. An answer read before a late
+/// note-on moves that voice's source; the fresh one moves nothing. The
+/// race itself, with the audio thread, is Task 8's test.
 #[test]
-fn no_move_under_a_sounding_voice() {
-    let mut a = arena();
-    let hole = a.source_alloc(256).unwrap();
-    let b = a.source_alloc(256).unwrap();
-    let cb = stamp(&mut a, b, 256, 7);
-    a.source_free_pending(hole, 256);
-    let mut audio = Audio {
-        voices: vec![(b, cb)],
-    };
-    // A drone holds B: the hole stays pending for as long as it sounds.
-    for _ in 0..100 {
-        let sounding = audio.sounding();
-        assert_eq!(a.source_compact(|o| !sounding.contains(&o)), None);
-        audio.block(&a, 256);
-    }
-    assert_eq!(a.pending().bytes(), 256);
-    audio.voices.clear();
-    let sounding = audio.sounding();
-    let s = a.source_compact(|o| !sounding.contains(&o)).unwrap();
-    assert_eq!(
-        s,
-        Shift {
-            from: hole,
-            by: 256
-        }
-    );
-    assert_eq!(crc(a.bytes(hole, 256)), cb);
-}
-
-/// The late note-on: a voice starts on B in the block just before the gate
-/// closes. A move gated on the check from before the close would move B
-/// under it; the re-check after the ack sees its bit and moves nothing.
-#[test]
-fn late_note_on_caught_by_recheck() {
+fn compaction_trusts_the_answer_it_is_given() {
     let setup = || {
         let mut a = arena();
-        let hole = a.source_alloc(256).unwrap();
-        let b = a.source_alloc(256).unwrap();
-        let cb = stamp(&mut a, b, 256, 7);
+        let (hole, _) = add_source(&mut a, 256, 1).unwrap();
+        let (b, cb) = add_source(&mut a, 256, 7).unwrap();
         a.source_free_pending(hole, 256);
-        (a, b, cb)
+        (a, hole, b, cb)
     };
 
-    // Without the re-check: the pre-close snapshot is clear, so it moves.
-    let (mut a, b, cb) = setup();
-    let mut audio = Audio { voices: vec![] };
-    let before_close = audio.sounding();
-    audio.voices.push((b, cb)); // note-on, block before the close
-    assert!(a.source_compact(|o| !before_close.contains(&o)).is_some());
-    // B's old bytes are gap now; the next add lands on them.
-    assert_eq!(a.source_alloc(256), Some(b));
-    stamp(&mut a, b, 256, 8);
-    assert_ne!(
-        crc(a.bytes(b, 256)),
-        cb,
-        "the stale check let B move under its voice"
-    );
+    // Stale: read before the note-on on B, so B moves, and its old bytes
+    // are gap the next add overwrites.
+    let (mut a, _, b, cb) = setup();
+    let stale: Vec<u32> = vec![];
+    assert!(a.source_compact(ready_unless(&stale)).is_some());
+    assert_eq!(add_source(&mut a, 256, 8).unwrap().0, b);
+    assert_ne!(crc(a.bytes(b, 256)), cb);
 
-    // With it: the gate closed and acked, the UI reads `sounding` again.
-    let (mut a, b, cb) = setup();
-    let mut audio = Audio { voices: vec![] };
-    assert!(audio.sounding().is_empty()); // step 1: clear
-    audio.voices.push((b, cb)); // the late note-on
-    audio.block(&a, 256); // the block that acks the close
-    let after_ack = audio.sounding();
-    assert_eq!(a.source_compact(|o| !after_ack.contains(&o)), None);
-    for _ in 0..10 {
-        audio.block(&a, 256); // the gate reopened; the note plays on
+    // Fresh: B is sounding, nothing moves until its note ends.
+    let (mut a, hole, b, cb) = setup();
+    for _ in 0..100 {
+        assert_eq!(a.source_compact(ready_unless(&[b])), None);
+        assert_eq!(crc(a.bytes(b, 256)), cb);
     }
-    audio.voices.clear(); // the note ends
-    let after_ack = audio.sounding();
-    assert!(a.source_compact(|o| !after_ack.contains(&o)).is_some());
-    assert_eq!(a.pending().bytes(), 0);
+    assert_eq!(
+        a.source_compact(all_ready()),
+        Some(Shift {
+            from: hole,
+            by: 256
+        })
+    );
+    assert_eq!(crc(a.bytes(hole, 256)), cb);
 }
