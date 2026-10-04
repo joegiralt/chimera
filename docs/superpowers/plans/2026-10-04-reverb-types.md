@@ -920,6 +920,42 @@ git commit -m "Reverb TYPEs: sweeps, screens, A/B renders, measured costs"
 
 (Filled in by Tasks 1, 3, 4, 5 and 7–13: row, value, build, commit, date. Task 4 also records the T4 golden reference commit here.)
 
+### Task 1: baselines (2026-10-04, rev V at 480 MHz)
+
+Bench at `2431fedc` (FX rows from every effect off). FX rows are cycles per
+sample less MIX; MIX, BUS and BUS+V as read; STRESS in cycles per block
+against `BlockBudget::budget_cycles` (448,000).
+
+| Row | default (`bench`) | tape (`bench,master-tape`) | ORBIT (`bench,orbit`) |
+|---|---|---|---|
+| MIX | 868 | 861 | 871 |
+| REV QUAD (QUAD_REV) | **66** | 57 | 61 |
+| BUS (QUAD_BUS) | **1118** | 1430 | 1117 |
+| BUS+V (QUAD_BUS_V) | **1188** | **1483** | 1186 |
+| STRESS (max/budget) | **419,471 / 448,000** | **438,953 / 448,000** | **536,475 / 448,000: over** |
+| `stats` OVER after | 0 | 0 | 0 |
+
+- **REV QUAD is 66, not 485.** Since `9e004b98` every effect runs at MIX 0,
+  so MIX already holds the reverb at its defaults and the row is QUAD's
+  worst less QUAD's default. ADR 0031's 485 was the whole reverb, read
+  when an effect off was skipped. ΔCOST between TYPE rows stays valid; the
+  485 target is in the old frame.
+- **BUS+V 1188 > `FxBus::COST` 1180:** COST is now 1188 (`f23499a2`); every
+  `cost_test` assertion passes. Tape 1483 ≤ 1490: unchanged.
+- **STRESS with ORBIT is over budget.** A diagnostic run (not committed):
+  1,432 of 7,500 blocks over; the worst block had 7 voices sounding, ORBIT's
+  block 77,986 and the render 458,419 alone, over budget by itself. The
+  allocator bills neither ORBIT's block nor enough for the seventh voice.
+  Without ORBIT both builds hold.
+- **Headroom** (min over `cost_test`'s voice-count assertions, host,
+  `f23499a2`): default **76** (Modal BOWED, BODY 0.3, ENS 0.5: 8 × 717 on
+  rev V; FOLD 6 × 954 is 88); at the old COST 1180 it was 84, not 96. Tape
+  **23** (MORPH KEYS 5 × 864 on rev Y).
+- **Flash:** plain release `text` 701,428 B at `f23499a2`.
+- **Card** (`card`, bench build): streams 10, seq_16k 2,281 KB/s,
+  rand_4k p95 5,410 µs, card 15,931 MB, free 15,912 MB
+  (`.superpowers/sdd/2026-10-04-reverb-types/card-run.txt`).
+
 ---
 
 ## Self-review
