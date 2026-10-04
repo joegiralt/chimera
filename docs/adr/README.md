@@ -49,6 +49,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0041](0041-mod-matrix-amount-grid.md) | The mod matrix is an amount grid of outlined cells (supersedes in part 0016) | Accepted |
 | [0042](0042-voice-pitch-is-a-matrix-destination.md) | Voice pitch is a matrix destination on each engine's PITCH page | Accepted; `ModalEngine::PITCH` superseded in part by [0056](0056-modal-resonators-share-four-macros.md) |
 | [0043](0043-projects-own-their-sounds.md) | Projects own their sounds; marks are derived; one typed replace guard | Proposed; template amended by [0073](0073-new-plays-the-sparse-groove-on-factory-sounds.md) |
+| [0043](0043-projects-own-their-sounds.md) | Projects own their sounds; marks are derived; one typed replace guard | Proposed; fixed 32-slot `Pool` superseded in part by [0087](0087-sound-pool-by-memory-budget.md) |
 | [0044](0044-one-ladder-one-button-map.md) | One ladder and one button map for Parts, the mixer and ORBIT (absorbs 0057; amended by 0066 for SETTINGS) | Proposed |
 | [0045](0045-card-format.md) | Store cards in 8.3 A/B files of versioned TLV records | Accepted; load staging superseded in part by [0046](0046-project-load-protocol.md) |
 | [0046](0046-project-load-protocol.md) | Swap projects by epoch: fade the voices, then publish (supersedes in part [0045](0045-card-format.md)) | Proposed |
@@ -92,3 +93,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0086](0086-every-gesture-shows-a-contextual-hint-in-the-focus-band.md) | Every gesture shows a contextual hint in the focus band, one shared component, HINTS ON/OFF in THEME (amends 0074, 0081; supersedes 0017's hint text) | Proposed |
 | [0089](0089-ship-with-fat-lto.md) | Ship the firmware with fat LTO in one codegen unit | Proposed |
 | [0092](0092-put-files-over-the-usb-console.md) | Put project files onto the card over the USB console: `ls`, and `put` through the unit's own A/B save, checked as it streams, a refused side deleted (amends 0068) | Proposed |
+| [0087](0087-sound-pool-by-memory-budget.md) | Budget the sound pool by memory: one arena for sparse Sounds and 12-bit sources, one meter (supersedes in part 0043) | Proposed |
