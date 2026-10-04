@@ -46,12 +46,20 @@ pub fn ap_f32(x: f32, z: f32, g: f32) -> (f32, f32) {
 pub fn pair(lines: &[i16], base: usize, d: f32) -> f32 {
     debug_assert!(d >= 2.0 && (d as usize) < lines.len() && base < lines.len());
     let n = lines.len();
-    let di = d as usize;
+    let base = base.min(n - 1);
+    let di = (d as usize).min(n - 1);
     let f = d - di as f32;
     let wrap = |i: usize| if i >= n { i - n } else { i };
     let i0 = wrap(base + n - di);
     let i1 = wrap(i0 + n - 1);
-    let (x0, x1) = (lines[i0] as f32, lines[i1] as f32);
+    // SAFETY: `base` and `di` are below n, so `base + n − di` is below 2n
+    // and `wrap` puts it below n; `i0 + n − 1` likewise.
+    let (x0, x1) = unsafe {
+        (
+            *lines.get_unchecked(i0) as f32,
+            *lines.get_unchecked(i1) as f32,
+        )
+    };
     x0 + f * (x1 - x0)
 }
 
@@ -120,24 +128,39 @@ const PHASE_UNIT: u32 = 1 << 16;
 impl Wander {
     /// `seed` from `wander_seeds`; `phase` in 0..1, the share of a period
     /// before its first target (line k of n at k/n).
-    pub fn new(seed: u32, phase: f32) -> Self {
+    pub const fn new(seed: u32, phase: f32) -> Self {
         Self {
             rng: seed,
+            target: 0.0,
+            lp1: 0.0,
+            lp2: 0.0,
             left: (clampf(phase, 0.0, 1.0) * PHASE_UNIT as f32) as u32,
             period: PHASE_UNIT,
-            ..Self::default()
+            a: 0.0,
         }
     }
 
     /// A target every 1/(2·`hz`) s and the smoothing at `hz`, at the ring
     /// rate `fs`. The wait in progress keeps its share of the period.
     pub fn set_rate(&mut self, hz: f32, fs: f32) {
-        let period = ((fs / (2.0 * hz)) as u32).max(HALF as u32);
+        self.set(Self::rate(hz, fs));
+    }
+
+    /// `set_rate`'s (period, smoothing) for `hz` at `fs`: worked out once
+    /// for every line that shares a rate.
+    pub fn rate(hz: f32, fs: f32) -> (u32, f32) {
+        (
+            ((fs / (2.0 * hz)) as u32).max(HALF as u32),
+            one_pole(hz, fs / HALF as f32),
+        )
+    }
+
+    /// `rate`'s result on this line.
+    pub fn set(&mut self, (period, a): (u32, f32)) {
         if period != self.period && self.period > 0 {
             self.left = (self.left as u64 * period as u64 / self.period as u64) as u32;
         }
-        self.period = period;
-        self.a = one_pole(hz, fs / HALF as f32);
+        (self.period, self.a) = (period, a);
     }
 
     /// The drift at the last block's end.
@@ -146,7 +169,9 @@ impl Wander {
         self.lp2
     }
 
-    /// One block on: the drift at its end, in −1..1.
+    /// One block on: the drift at its end, in −1..1. Not inlined: every
+    /// line's copy would cost flash for nothing.
+    #[inline(never)]
     pub fn block(&mut self) -> f32 {
         self.left = self.left.saturating_sub(HALF as u32);
         if self.left == 0 {
@@ -162,16 +187,20 @@ impl Wander {
 /// One xorshift32 seed per line from `engine_seed`, each a hash of the
 /// seed and its line (murmur3's finaliser): far apart on the generator's
 /// cycle, so no line replays another's targets late. Never 0.
-pub fn wander_seeds<const N: usize>(engine_seed: u32) -> [u32; N] {
-    core::array::from_fn(|k| {
+pub const fn wander_seeds<const N: usize>(engine_seed: u32) -> [u32; N] {
+    let mut out = [0; N];
+    let mut k = 0;
+    while k < N {
         let mut h = engine_seed ^ (k as u32 + 1).wrapping_mul(0x9e37_79b9);
         h ^= h >> 16;
         h = h.wrapping_mul(0x85eb_ca6b);
         h ^= h >> 13;
         h = h.wrapping_mul(0xc2b2_ae35);
         h ^= h >> 16;
-        h.max(1)
-    })
+        out[k] = if h == 0 { 1 } else { h };
+        k += 1;
+    }
+    out
 }
 
 /// The per-block one-pole every continuous knob eases by, as

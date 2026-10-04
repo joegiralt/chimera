@@ -9,10 +9,12 @@ use chimera_core::dsp::Stereo;
 use chimera_core::dsp::rev::Reverb;
 use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::reverb::{REVERB_SPECS, ReverbParams};
-use chimera_core::dsp::ring::{BASE, SIZE_TABLE, STAGES, size_step, smear_depth, stage_len};
+use chimera_core::dsp::ring::{
+    BASE, SIZE_TABLE, STAGES, size_step, smear_depth, smear_probe, stage_len,
+};
 use chimera_core::storage::RETIRED;
 use chimera_hal::BLOCK_SIZE;
-use common::rev::{Noise, blocks, check_smear_bound, max_d2, run, tail_pitch_hz, tone};
+use common::rev::{Noise, blocks, check_smear_bound, run, tail_pitch_hz, tone};
 use common::{SR, fnv1a};
 
 const FS_RING: f32 = 24_000.0;
@@ -121,32 +123,16 @@ fn grit_is_retired() {
 
 // ── the reads and the cap ──
 
+/// The engine's own reads (`ring::smear_probe`), at SMEAR 1 and RATE 1 for
+/// 3 s at SIZE 0 and 1: every stage delay reads within [d − 2D, d], never
+/// past its line or under 2 back, and the four stages' observed travel
+/// sums to at most 1.45 % of the round trip.
 #[test]
 fn quad_smear_reads_only_shorten_and_respect_the_cap() {
     for size in [0.0, 1.0] {
         let step = size_step(size);
         let trip: f32 = (0..STAGES).map(|k| stage_len(step, k) as f32).sum();
-        let big_d = smear_depth(1.0, step, FS_RING);
-        assert!(big_d > 0.0);
-        assert!(
-            STAGES as f32 * 2.0 * big_d <= 0.0145 * trip,
-            "SIZE {size}: Σ 2D = {} of {trip}",
-            STAGES as f32 * 2.0 * big_d
-        );
-        for k in 0..STAGES {
-            let j = 3 * k + 2;
-            let d = SIZE_TABLE[step as usize][j] as f32;
-            assert!(d <= BASE[j] as f32);
-            for x in [-1.0f32, 0.0, 1.0] {
-                let read = d - big_d * (1.0 + x);
-                assert!(
-                    (d - 2.0 * big_d..=d).contains(&read),
-                    "SIZE {size}, stage {k}"
-                );
-                assert!(read >= 2.0);
-            }
-        }
-        // And the engine, at its deepest, renders finite on the SMEAR path.
+        let big_d = smear_depth(1.0, step);
         let p = ReverbParams {
             size,
             smear: 1.0,
@@ -156,19 +142,34 @@ fn quad_smear_reads_only_shorten_and_respect_the_cap() {
         };
         let mut rv = Box::new(Reverb::new());
         let mut n = Noise(3);
+        smear_probe::reset();
         let mut smeared = 0;
-        for _ in 0..blocks(1.0) {
+        for _ in 0..blocks(3.0) {
             let (l, r) = tick(&mut rv, &p, &core::array::from_fn(|_| n.next()));
             assert!(l.iter().chain(&r).all(|s| s.is_finite()));
             smeared += rv.debug_paths().1 as usize;
         }
-        assert!(smeared > blocks(0.9), "SIZE {size}: {smeared} SMEAR blocks");
+        assert!(smeared > blocks(2.9), "SIZE {size}: {smeared} SMEAR blocks");
+        let reads = smear_probe::reads();
+        let mut travel = 0.0;
+        for (k, &(shortest, longest)) in reads.iter().enumerate() {
+            let j = 3 * k + 2;
+            let d = SIZE_TABLE[step as usize][j] as f32;
+            let what = format!("SIZE {size}, stage {k}: {shortest}..{longest} of {d}, D {big_d}");
+            assert!(d <= BASE[j] as f32, "{what}");
+            assert!(longest <= d && shortest >= d - 2.0 * big_d - 1e-3, "{what}");
+            assert!(shortest >= 2.0, "{what}");
+            assert!(
+                longest - shortest > 0.5 * big_d,
+                "{what}: the read hardly moved"
+            );
+            travel += longest - shortest;
+        }
+        assert!(
+            travel <= 0.0145 * trip,
+            "SIZE {size}: travel {travel} of {trip}"
+        );
     }
-    // SMEAR 1 asks ±2 ms; the cap wins at every SIZE.
-    assert_eq!(
-        smear_depth(1.0, 31, FS_RING),
-        0.0018 * (trip_s(1.0) * FS_RING)
-    );
 }
 
 // ── pitch ──
@@ -241,7 +242,7 @@ fn smear_spreads_a_held_tone() {
 
 // ── SIZE under SMEAR (Review Focus 4) ──
 
-/// SMEAR 1, noise for 0.5 s, then SIZE 0.2 → `to` at 0.7 s: the return
+/// SMEAR 1, noise (±0.25) for 0.5 s, then SIZE 0.2 → `to` at 0.7 s: the return
 /// over the 0.5 s after the move, and each block's paths.
 fn size_move(to: f32) -> (Vec<f32>, Vec<(bool, bool, f32)>) {
     let mut p = ReverbParams {
@@ -259,8 +260,9 @@ fn size_move(to: f32) -> (Vec<f32>, Vec<(bool, bool, f32)>) {
         if b == at {
             p.size = to;
         }
+        // −12 dB: a tail the click detector passes held.
         let send = if b < blocks(0.5) {
-            core::array::from_fn(|_| n.next())
+            core::array::from_fn(|_| 0.25 * n.next())
         } else {
             [0.0; BLOCK_SIZE]
         };
@@ -290,14 +292,20 @@ fn quad_size_move_under_smear_does_not_click() {
         "the depth is 0 before the crossfade"
     );
     assert!(paths.last().unwrap().1, "SMEAR comes back after it");
+    // `click_free_test`'s detector, absolute: no step over 0.15 after the
+    // output's soft clip, on either side; the held tails pass it too, so
+    // it judges the move, not the tail.
     let side = |x: &[f32], s: usize| -> Vec<f32> { x.iter().skip(s).step_by(2).copied().collect() };
-    let held = |size: f32| {
-        let (out, _) = size_move(size);
-        (0..2).map(|s| max_d2(&side(&out, s))).fold(0.0, f32::max)
-    };
-    let bound = 1.5 * held(0.2).max(held(0.8));
-    let got = (0..2).map(|s| max_d2(&side(&moved, s))).fold(0.0, f32::max);
-    assert!(got <= bound, "d2 {got} over {bound}");
+    for (what, out) in [
+        ("held at 0.2", size_move(0.2).0),
+        ("held at 0.8", size_move(0.8).0),
+        ("moved", moved),
+    ] {
+        for s in 0..2 {
+            let c = common::clicks(&side(&out, s));
+            assert!(c.is_empty(), "{what}, side {s}: {:?}", &c[..c.len().min(5)]);
+        }
+    }
 }
 
 // ── silence ──

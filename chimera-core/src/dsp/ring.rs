@@ -218,12 +218,46 @@ pub fn q_trunc_fixed(x: f32) -> i16 {
     (x as i32).clamp(i16::MIN as i32, i16::MAX as i32) as i16
 }
 
-/// SMEAR's depth D at `step`, in ring samples: ±2 ms at SMEAR 1, capped at
-/// 0.18 % of the ring's round trip, so the four stage delays together move
-/// it by at most 1.45 % (§ Pitch bounds: 25 cents).
-pub fn smear_depth(smear: f32, step: u8, fs_ring: f32) -> f32 {
+/// SMEAR's depth D at `step`, in ring samples: SMEAR × 0.18 % of the
+/// ring's round trip, so SMEAR 1 is the cap at every SIZE and the four
+/// stage delays together move the loop by at most 1.45 % (§ Pitch bounds:
+/// 25 cents). Scaled to the loop, the whole knob always does something;
+/// the spec's ±2 ms ceiling never binds on QUAD, whose cap is 0.61 ms at
+/// SIZE 0 and 1.74 ms at SIZE 1.
+pub fn smear_depth(smear: f32, step: u8) -> f32 {
     let trip: u32 = (0..STAGES).map(|k| stage_len(step, k) as u32).sum();
-    (clampf(smear, 0.0, 1.0) * 0.002 * fs_ring).min(0.0018 * trip as f32)
+    clampf(smear, 0.0, 1.0) * 0.0018 * trip as f32
+}
+
+/// The SMEAR reads each stage delay made on this thread since the last
+/// reset: (shortest, longest), in ring samples back. Host tests only.
+#[cfg(any(test, feature = "test-support"))]
+pub mod smear_probe {
+    extern crate std;
+    use super::STAGES;
+    use core::cell::Cell;
+
+    const NONE: [(f32, f32); STAGES] = [(f32::INFINITY, f32::NEG_INFINITY); STAGES];
+
+    std::thread_local! {
+        static READS: Cell<[(f32, f32); STAGES]> = const { Cell::new(NONE) };
+    }
+
+    pub(super) fn note(k: usize, back: f32) {
+        READS.with(|r| {
+            let mut v = r.get();
+            v[k] = (v[k].0.min(back), v[k].1.max(back));
+            r.set(v);
+        });
+    }
+
+    pub fn reads() -> [(f32, f32); STAGES] {
+        READS.with(|r| r.get())
+    }
+
+    pub fn reset() {
+        READS.with(|r| r.set(NONE));
+    }
 }
 
 /// RATE's wander speed: 0.05 Hz at 0 to 1 Hz at 1, exponential.
@@ -394,18 +428,18 @@ impl Ring {
     ) {
         let lines = arena.lines_mut();
         // A SIZE crossfade never runs under SMEAR: `QuadState` asks for
-        // one only with SMEAR at rest, so `<true, true>` never exists.
+        // one only with SMEAR at rest.
         if self.xf > 0 {
             debug_assert!(blk.smear.is_none());
-            self.run::<true, false>(lines, u, blk, l, r);
-        } else if blk.smear.is_some() {
-            self.run::<false, true>(lines, u, blk, l, r);
+            self.run::<true>(lines, u, blk, l, r);
         } else {
-            self.run::<false, false>(lines, u, blk, l, r);
+            self.run::<false>(lines, u, blk, l, r);
         }
     }
 
-    fn run<const XF: bool, const SMEAR: bool>(
+    /// SMEAR is a runtime branch at the four stage-delay reads, not a
+    /// third copy of this loop: a monomorph costs about 4 KB of flash.
+    fn run<const XF: bool>(
         &mut self,
         lines: &mut [i16; RING_LEN],
         u: &[f32; HALF],
@@ -439,6 +473,7 @@ impl Ring {
         let mut g = blk.gains_from;
         let mut a = blk.damp_from;
         // SMEAR: each stage delay's nominal length, and its offset ramp.
+        let smear = !XF && blk.smear.is_some();
         let sm = blk.smear.unwrap_or_default();
         let nominal: [f32; STAGES] = core::array::from_fn(|k| new[3 * k + 2] as f32);
         let doff: [f32; STAGES] = core::array::from_fn(|k| (sm[k].1 - sm[k].0) / n);
@@ -494,10 +529,13 @@ impl Ring {
                 let mut out = [0.0f32; STAGES];
                 unroll!(K in [0, 1, 2, 3] {
                     let j = 3 * K + 2;
-                    let d = if SMEAR {
+                    let d = if smear {
                         // `bw[j] + t` is line j's write slot, below
                         // `RING_LEN`; the read is 2 ≤ d ≤ `BASE[j]` back.
-                        pair(&lines[..], bw[j] + t, nominal[K] - off[K])
+                        let back = nominal[K] - off[K];
+                        #[cfg(any(test, feature = "test-support"))]
+                        smear_probe::note(K, back);
+                        pair(&lines[..], bw[j] + t, back)
                     } else {
                         blend!(bn[j], bo[j])
                     };
@@ -530,7 +568,7 @@ impl Ring {
                 });
                 unroll!(K in [0, 1, 2, 3] {
                     g[K] += dg[K];
-                    if SMEAR {
+                    if smear {
                         off[K] += doff[K];
                     }
                 });

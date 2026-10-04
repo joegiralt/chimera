@@ -46,8 +46,10 @@ pub struct Reverb {
     smear_on: Gate,
     /// One wander per smeared line.
     wander: [Wander; STAGES],
-    /// !RATE's bits the wanders were set for (zero bytes match none).
-    rate_key: u32,
+    /// The RATE (its bits) the wanders were last set for, once
+    /// `wanders_set`.
+    wanders_rate: u32,
+    wanders_set: bool,
     /// The wanders held at their centre (tests only).
     frozen: bool,
     /// Last block's (SIZE crossfade, SMEAR) paths, and its end's depth.
@@ -58,17 +60,24 @@ pub struct Reverb {
 }
 
 crate::in_place::field_list!(Reverb => Reverb {
-    arena, state, dec, up_l, up_r, smear, smear_on, wander, rate_key, frozen, paths, depth, mix
+    arena, state, dec, up_l, up_r, smear, smear_on, wander, wanders_rate, wanders_set, frozen, paths, depth, mix
 });
 
 /// QUAD's SMEAR seed: its four lines' wanders hash it.
 const QUAD_SEED: u32 = 0x5EED_0343;
 
-/// QUAD's wanders, line k starting k/4 of a period in.
-fn quad_wanders() -> [Wander; STAGES] {
+/// QUAD's wanders, line k starting k/4 of a period in: built at compile
+/// time, so a reset copies them.
+const QUAD_WANDERS: [Wander; STAGES] = {
     let seeds = wander_seeds::<STAGES>(QUAD_SEED);
-    core::array::from_fn(|k| Wander::new(seeds[k], k as f32 / STAGES as f32))
-}
+    let mut w = [Wander::new(0, 0.0); STAGES];
+    let mut k = 0;
+    while k < STAGES {
+        w[k] = Wander::new(seeds[k], k as f32 / STAGES as f32);
+        k += 1;
+    }
+    w
+};
 
 impl Reverb {
     pub fn new() -> Self {
@@ -80,8 +89,9 @@ impl Reverb {
             up_r: Interpolator::new(),
             smear: Ease::default(),
             smear_on: Gate::default(),
-            wander: quad_wanders(),
-            rate_key: 0,
+            wander: QUAD_WANDERS,
+            wanders_rate: 0,
+            wanders_set: false,
             frozen: false,
             paths: (false, false),
             depth: 0.0,
@@ -102,7 +112,7 @@ impl Reverb {
             slot.as_mut_ptr().write_bytes(0, 1);
             slot.assume_init_mut()
         };
-        r.wander = quad_wanders();
+        r.wander = QUAD_WANDERS;
         r
     }
 
@@ -150,10 +160,11 @@ impl Reverb {
         let mut lr = [[0.0f32; HALF]; 2];
         let fs = sample_rate as f32 * 0.5;
         let rate = if p.rate.is_nan() { 0.5 } else { p.rate };
-        if !rate.to_bits() != self.rate_key {
-            self.rate_key = !rate.to_bits();
+        if !self.wanders_set || self.wanders_rate != rate.to_bits() {
+            (self.wanders_rate, self.wanders_set) = (rate.to_bits(), true);
+            let coefs = Wander::rate(smear_hz(rate), fs);
             for w in &mut self.wander {
-                w.set_rate(smear_hz(rate), fs);
+                w.set(coefs);
             }
         }
         let x0 = self.wander.map(|w| w.value());
@@ -171,11 +182,8 @@ impl Reverb {
         match &mut self.state {
             EngineState::Quad(q) => {
                 let (g0, g1) = self.smear_on.step(!q.wants_size(p.size));
-                let step = q.ring().step();
-                let (d0, d1) = (
-                    smear_depth(s0, step, fs) * g0,
-                    smear_depth(s1, step, fs) * g1,
-                );
+                let full = smear_depth(1.0, q.ring().step());
+                let (d0, d1) = (s0 * g0 * full, s1 * g1 * full);
                 let smear = (d0 != 0.0 || d1 != 0.0)
                     .then(|| core::array::from_fn(|k| (d0 * (1.0 + x0[k]), d1 * (1.0 + x1[k]))));
                 self.paths = (q.ring().crossfading(), smear.is_some());

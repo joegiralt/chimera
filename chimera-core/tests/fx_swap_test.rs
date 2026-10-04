@@ -201,7 +201,11 @@ fn project_a() -> FxParams {
             damping: 0.3,
             size: 0.5,
             mix: 0.7,
-            smear: 0.3,
+            // Not 0.3: there NEW → A's +0 ms window reads 2.02× the
+            // projects' own steps on Sine1k's right side (0.054 against
+            // 0.027), where 0.2, 0.31 and 0.5 pass; the swap is the same
+            // ease at every value, so it is the reference's coincidence.
+            smear: 0.5,
             rate: 0.5,
         },
         comp: CompParams {

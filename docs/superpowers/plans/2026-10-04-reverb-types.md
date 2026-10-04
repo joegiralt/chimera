@@ -1044,16 +1044,19 @@ against `BlockBudget::budget_cycles` (448,000).
 - **Pitch** (QUAD at SIZE 0, TIME 1, SMEAR 1, RATE 1): every pass within
   ±25 cents of the frozen wander's tail; one 4 s window's mean within
   ±1 cent; one sinusoid explains 13 % of the pitch trace (a 2 Hz vibrato
-  on the test comb: 85 %). A 1 kHz probe's per-pass spread: 0.1 cents at
-  SMEAR 0, 4.9 at 0.3, 17.0 at 1 (RATE 0.5).
+  on the test comb: 85 %).
 - **Spread of a held 1 kHz tone** (−20 dB width): 1.5 Hz at SMEAR 0,
   3.3 Hz at SMEAR 1 with RATE 1; 2.2 Hz at the default RATE.
 - **AXI:** 442,228 B (+96 over 2dc9eefd's 442,132: four wanders and the
   depth; the ratchet moves with it).
-- **Flash:** plain release `text` 705,336 B (+4,324 over T4's 701,012);
-  `--features orbit` 724,816 B (+4,220 over 720,596; +2,484 over the
-  converters' 722,332, not the negative the plan expected): the third
-  `run` monomorph is a whole unrolled ring loop.
+- **SMEAR scales to the loop:** D = SMEAR × 0.18 % of the round trip, so
+  1 is the cap at every SIZE and the whole knob does something (the
+  ±2 ms law capped at SMEAR 0.3 at SIZE 0; the cap is under 2 ms at
+  every SIZE, so ±2 ms never binds on QUAD).
+- **Flash:** plain release `text` 702,584 B (+1,572 over T4's 701,012);
+  `--features orbit` 721,968 B (+1,372 over 720,596). SMEAR is a runtime
+  branch at the four stage reads (a third `run` monomorph cost +4.3 KB);
+  the cube's jitter is about 300 B of it.
 - **REV QUAD, REV QUAD S bench:** deferred (the unit was busy). The bench
   build carries the REV QUAD S row.
 
