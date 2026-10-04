@@ -21,7 +21,7 @@
 - **Delay line (ADR 0090):** `i16`, full scale ±2.0, write `(x * 16384.0) as i16` (truncates toward zero, saturates), `MAX_DELAY_SAMPLES` unchanged at 24 064.
 - **Sparse Sounds:** `encode_sound` writes only params whose disk value differs from `Sound::neutral(engine)`. `neutral` is a format contract: a change to it needs a migration in the same commit.
 - **Record tags** (frozen once written): `PoolSource` `0x8015`, `SourceRef` `0x0016`, `SourceHead` `0x8017`, `SourceData` `0x0018`; `FileKind::Source = 6`; `Dir::Tapes` = `/CHIMERA/TAPES`; `FORMAT_VERSION` stays 1.
-- **`SourceRef`:** `{ crc: u32, frames: u32, rate: u16 }`, 10 B on disk. A source file's 8.3 stem is its CRC in upper-case hex.
+- **`SourceRef`:** `{ crc: u32, frames: u32, rate: u16 }`, 10 B on disk. Task 8 defines the type and its record codec; Task 9 consumes them. A source file is `/CHIMERA/TAPES/<CRC>.SRC`, with the CRC in upper-case hex, sealed read-only once verified.
 - **12-bit packing:** `b0 = s0[7:0]`, `b1 = s0[11:8] | s1[3:0] << 4`, `b2 = s1[11:4]`; an odd tail pads with 0; `SourceData` carries up to 504 B (168 pairs).
 - **Meter:** a bar 216 × 4 px. Sounds `INK`, sources `MID`, pending `FAINT`, free `BAR_REST`, preview `ACCENT` or `ALERT`. It reads `⌈used × 100 / ARENA_BYTES⌉ %`, a percentage only.
 - **Copy:**
@@ -41,9 +41,11 @@
   - No task may leak or cross-link clusters.
   - Every card-writing or project path is tested with:
     - the power-cut harness (`chimera-fat/tests/power_cut_test.rs`: `Cut::After(k)`, `fat_check` → no `cross_linked`, no `short`, the kept side intact);
-    - the device-error probe (`probe::Log::fail_write`, and `land_then_fail` once console-put merges).
-  - Card writes that can leave lost clusters wait on #359 (device-error chain leak) and #360 (the power-cut lost-cluster sweep). See Task 9.
-- **Verification:** `just test`, `just clippy`, `just check` (every firmware feature set). On-unit checks are marked **(unit)**, and use a scratch card, never the owner's sealed card.
+    - the device-error probes in `chimera-fat/tests/common/probe.rs`: `Log::fail_write` (every write to one block errs; on `main`), and console-put's write-then-error fault, `Log::land_then_fail` (the write lands, then errs, as a card that timed out busy; added on console-put).
+  - Under either fault, `fat_check` must show no `cross_linked` and no `short`. Its `lost` list (console-put) must be unchanged, except when the failed write is the file's `put_entry`. That write may have landed, so #359's rule leaves its chain for #360's sweep.
+  - **console-put merges first.** It already changes `chimera-fat/src/fs.rs` (#359's chain free, `drop_chain`, `writable()`), `chimera-hal/src/store.rs`, `chimera-core/src/storage/record.rs` and the probe. Tasks 5–9 rebase onto it and never re-fix #359.
+- **Verification:** `just test`, `just clippy`, `just check` (every firmware feature set). **(unit)** marks an on-unit check.
+- **The owner's card is sealed, and there is no other card.** An on-unit check is a read-only boot. No project save, quick-save or source write runs on the unit from this branch until #359 and #360 are both on `main`.
 
 ## Review Focus
 
@@ -60,6 +62,7 @@
 **Files:**
 - Modify: `chimera-core/src/dsp/delay.rs` (`TapeDelay::buffer` at line 274, its init at 328, the write at ~465, `read` at ~488)
 - Test: `chimera-core/src/dsp/delay.rs` (`#[cfg(test)]`), `chimera-core/tests/delay_test.rs`, `chimera-core/tests/memory_budget_test.rs`
+- Runs now: Tasks 1–4 need nothing from console-put.
 - Modify: the delay goldens (`chimera-core/tests/fx_golden_test.rs` tables, re-recorded)
 
 **Interfaces:**
@@ -85,7 +88,16 @@
 #[test] fn noise_floor_tracks_feedback() // a 0.25-peak 1 kHz burst, then silence: the tail's RMS above the repeat at FDBK 0.9 is within 3 dB of −82 dBFS, and at 0.99 within 3 dB of −72 dBFS
 #[test] fn hot_send_clips_never_wraps() // a +6 dB send: every output sample is finite and |y| ≤ 2.0 + 1e-3
 // memory_budget_test.rs
-#[test] fn delay_line_is_i16() { assert_eq!(size_of::<[i16; MAX_DELAY_SAMPLES]>(), 48_128); } // and FxBus shrinks by 48_128 from 159_784
+/// FxBus as measured at cf50ee74, with the f32 line; the orbit firmware's real AXI use there (`rust-size`).
+const FXBUS_F32: usize = 159_784;
+const ORBIT_AXI_USED: usize = 384_264;
+#[test] fn delay_line_frees_48128() { assert_eq!(FXBUS_F32 - size_of::<FxBus>(), 48_128); }
+#[test] fn arena_needs_the_delay() {
+    let freed = FXBUS_F32 - size_of::<FxBus>();
+    let after = |freed: usize| ORBIT_AXI_USED - freed - 28_672 + 2_568 + 160 * 1024;
+    assert!(after(freed) <= hw::AXI_SRAM - 32 * 1024, "160 KiB fits the 32 KiB margin with the i16 line");
+    assert!(after(0) > hw::AXI_SRAM - 32 * 1024, "and would not with the f32 line (ADR 0087)");
+}
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -123,12 +135,12 @@ Run: `cargo test -p chimera-core delay`. Expected: FAIL, because `to_line` is no
 #[test] fn sparse_round_trip()      // factory 0..8, INIT ×2, 1000 seeded random Sounds: pass(decode, encode(s)).bits_eq(s)
 #[test] fn sparse_byte_identity()   // encode(decode(encode(s))) == encode(s); and encode(decode(fixture v1 .snd)) == encode(original)
 #[test] fn sparse_is_canonical()    // for 1000 pairs (s, s with one param moved one step): (encode(a) == encode(b)) == a.bits_eq(&b)
-#[test] fn sparse_sizes()           // factory_0 encodes to ≤ 273 B of records + 16; INIT to 58 − 16 = 42 B of records
+#[test] fn sparse_sizes()           // 16 + records: factory_0 ≤ 273 B; INIT == 58 B
 #[test] fn sparse_bound()           // every param off neutral, full registry, 128 routes: 16 + records ≤ MAX_SOUND_COST
 #[test] fn neutral_is_a_contract()  // Sound::neutral matches fixtures/neutral_v1.txt; message: "changing neutral needs a migration (ADR 0087)"
 ```
 
-The random generator draws each param uniformly from its spec range, quantised as its spec does, with 0–128 routes and 0–16 registry entries, from `XorShift`.
+The random generator draws each param uniformly from its spec range, quantised as its spec does, with 0–128 routes and 0–16 registry entries. It runs on a new `pub struct XorShift(u64)` in `chimera-core/tests/common/mod.rs` (`next_u32`, `below(n)`), because `chimera-fat`'s test copy can't be imported here. Add that file to this task's Files.
 
 - [ ] **Step 2: Run them to see them fail.** Run `cargo test -p chimera-core --test sound_codec_test`. Expected: FAIL in `sparse_sizes` and `sparse_bound`.
 
@@ -143,8 +155,11 @@ The random generator draws each param uniformly from its spec range, quantised a
 **Files:**
 - Modify: `chimera-stm32/build.rs` (write `axi_margin.x`, add `-Taxi_margin.x`)
 - Modify: `chimera-core/src/hw.rs` (delete `UI_RESERVE`)
-- Modify: `chimera-core/src/instrument.rs:37-48` (`AXI_RESIDENT` and its two asserts)
-- Test: `chimera-core/tests/memory_budget_test.rs` (`axi_residents_fit` → `axi_report`, `ui_state_fits_the_ui_reserve` keeps its 4 KiB cap)
+- Modify: `chimera-core/src/instrument.rs:20,44-57` (the `UI_RESERVE` import, `AXI_RESIDENT` and its two asserts)
+- Modify: `chimera-stm32/src/sd_probe.rs:9-10,341`. Its `AXI FREE` line uses `AXI_RESIDENT`; it now prints the real gap, `0x2408_0000 − addr_of!(__sheap)`, from `extern "C" { static __sheap: u8; }`, with a `// SAFETY:` comment (address only, never read).
+- Test: `chimera-core/tests/memory_budget_test.rs`:
+  - `axi_residents_fit` becomes `axi_report`;
+  - `ui_state_fits_the_ui_reserve` (lines 170–180) becomes `ui_state_rest_under_4k`, asserting `size_of::<UiState>() − size_of::<Project>() ≤ 4096` with no `UI_RESERVE`.
 
 **Interfaces:**
 - Produces:
@@ -157,7 +172,7 @@ The random generator draws each param uniformly from its spec range, quantised a
 
 - [ ] **Step 3: Implement it.** Use the real margins. Delete `UI_RESERVE`, the `AXI_RESIDENT` const assert and the `≥ 64 KiB` assert. `axi_report` prints the parts and asserts nothing about spare.
 
-- [ ] **Step 4: Verify.** Run `just check` and `just test`. Expected: every feature set links. Record `rust-size` free AXI for `orbit` (140 024 today) and `bench,master-tape` (104 188) in the commit message.
+- [ ] **Step 4: Verify.** Run `just check` and `just test`. Expected: every feature set links, and `just flash-sd-probe`'s build prints `AXI FREE`. Record `rust-size` free AXI for `orbit` (140 024 today) and `bench,master-tape` (104 188) in the commit message.
 
 - [ ] **Step 5: Commit** with `git commit -m "AXI margin enforced by the linker, not a paper sum"`.
 
@@ -170,13 +185,14 @@ The random generator draws each param uniformly from its spec range, quantised a
 
 **Interfaces:**
 - Produces:
-  - `pub struct Cost(u32)` with `Cost::of(len: usize) -> Cost` (16 B granule, rounded up), `bytes() -> u32`, and `kib_label() -> FmtBuf` (`0.3K`, `41K`)
-  - `pub struct ArenaWriter`, built by `ArenaWriter::new(bytes: &'static mut [u8]) -> ArenaWriter` (the static) or `ArenaWriter::boxed() -> ArenaWriter` (tests and desktop), with:
+  - `pub struct Cost(u32)` with `Cost::of(len: usize) -> Cost` (16 B granule, rounded up), `bytes() -> u32`, and `kib_label() -> FmtBuf`. The label is `bytes / 1024` rounded **up**, with one decimal under 10 (`0.3K`, `9.9K`) and a whole number from 10 (`10K`, `41K`).
+  - `pub struct Shift { pub from: u32, pub by: u32 }`: every entry on the moving side of `from` moved `by` bytes toward its own end. Sounds above the freed offset move up; sources above the hole move down. The caller rewrites its index from it, so no list of moves exists.
+  - `pub struct ArenaWriter`, built only by `ArenaWriter::new(bytes: &'static mut [u8]) -> ArenaWriter`: the AXI static on the chip, and `Box::leak(vec![0; ARENA_BYTES].into_boxed_slice())` in tests and on the desktop, so it needs no `alloc` cfg. It provides:
     - `sound_alloc(len) -> Option<u32>`
-    - `sound_free(offset, len)`, which compacts at once and returns the moves as `(old, new)` pairs
+    - `sound_free(offset, len) -> Shift`, which compacts at once
     - `source_alloc(len) -> Option<u32>`
     - `source_free_pending(offset, len)`
-    - `source_compact(&mut self, ready: impl Fn(u32 /*offset*/) -> bool) -> Moves`
+    - `source_compact(&mut self, ready: impl Fn(u32 /*offset*/) -> bool) -> Option<Shift>`: `None` while any source above the lowest hole isn't `ready`
     - `used() -> Cost`, `pending() -> Cost`, `gap() -> Cost`, `bytes(offset, len) -> &[u8]`, `bytes_mut(offset, len) -> &mut [u8]`
   - Invariant: `ARENA_BYTES - used() == gap()`, with pending counted as used.
 
@@ -198,12 +214,19 @@ The random generator draws each param uniformly from its spec range, quantised a
 
 - [ ] **Step 5: Commit** with `git commit -m "Pool arena: two ends, one gap"`.
 
-### Task 5: The pool on the arena, Sounds only (unit)
+### Task 5: The pool on the arena, Sounds only (unit) — after console-put merges
 
 **Files:**
-- Modify: `chimera-core/src/project/pool.rs` (rewrite), `ids.rs` (`SlotId` < 128), `marks.rs` (encoded compare), `mod.rs` (`replace_part`, `pool_store`, `pool_clear`), `codec.rs` (`Slot` index 0..128, slots from the arena), `template.rs` (`fill_new_pool`)
+- Modify:
+  - `chimera-core/src/project/pool.rs` (rewrite)
+  - `ids.rs` (`SlotId` < 128)
+  - `marks.rs` (encoded compare; `apply_part_action` at :229–231 maps `PoolFull`)
+  - `mod.rs` (`replace_part`; `pool_store`, `pool_clear`, `save_part_to` now return `Result<_, PoolFull>`)
+  - `codec.rs` (`Slot` index 0..128, slots from the arena)
+  - `template.rs` (`Project::fill_new` at :79 and `new_slot` at :120; `reset_new` resets the arena)
+- Modify the `pool_store` and `save_part_to` callers: `chimera-core/src/project/test_support.rs:31-33,83`, `chimera-core/src/project/template.rs:167` (test), `chimera-core/src/ui/mod.rs` (its `pool().get` and `pool_clear` sites), `chimera-desktop/src/store.rs:352`, `chimera-stm32/src/bench.rs:669`
 - Modify: `chimera-core/src/preset.rs` (`POOL_SIZE` → `MAX_SOUNDS = 128`), `chimera-core/src/ui/browser.rs` (`TOTAL_ENTRIES`)
-- Modify: `chimera-stm32/src/shared.rs` (the `POOL_ARENA` static, its `ArenaWriter` taken once), `chimera-desktop/src/main.rs` and `chimera-desktop/src/qa.rs` (a boxed arena), `chimera-stm32/src/bench.rs` (its `Project`)
+- Modify: `chimera-stm32/src/shared.rs` (the `POOL_ARENA` static, its `ArenaWriter` taken once), `chimera-desktop/src/main.rs` and `chimera-desktop/src/qa.rs` (a leaked boxed arena), `chimera-stm32/src/bench.rs` (its `Project`)
 - Test: `chimera-core/tests/project_model_test.rs`, `project_marks_test.rs`, `project_codec_test.rs`, `memory_budget_test.rs`; `chimera-fat/tests/pool_card_test.rs` (new)
 
 **Interfaces:**
@@ -228,9 +251,9 @@ The random generator draws each param uniformly from its spec range, quantised a
 #[test] fn v1_project_fixture_loads_same() // fixtures/v1/project.prj: every Part bits_eq as before; slots re-encoded sparse
 #[test] fn slot_index_127_round_trips()    // and 128 is Bounds
 // chimera-fat/tests/pool_card_test.rs
-#[test] fn load_device_error_leaves_new_arena() // fail_write/fail_reads mid pass 2: load errs; project == NEW; pool.used() == NEW's; gap == ARENA_BYTES − used
+#[test] fn load_device_error_leaves_new_arena() // Log::fail_reads and Log::absent mid pass 2: load errs; project == NEW; pool.used() == NEW's; gap == ARENA_BYTES − used
 #[test] fn project_save_cut_at_every_write()    // power_cut pattern: cut at each write of a 128-slot project save: kept side loads, no cross_linked, no short
-#[test] fn project_save_device_error_frees()    // fail_write on each data block: fat_check shows no new lost chain once #359's fix is on main (until then: no cross_linked, no short)
+#[test] fn project_save_device_error_no_leak()  // Log::fail_write and Log::land_then_fail at each write: no cross_linked, no short; `lost` unchanged unless the failed write is the put_entry
 ```
 
 - [ ] **Step 2: Run them to see them fail:** `cargo test -p chimera-core --test project_model_test` and `cargo test -p chimera-fat --features chimera-hal/testkit --test pool_card_test`. Expected: FAIL to compile, since `Pool::fits` is not defined.
@@ -243,14 +266,14 @@ The random generator draws each param uniformly from its spec range, quantised a
 
 - [ ] **Step 4: Run** `just test` and `just check`. Expected: PASS, and every build links under the margin.
 
-- [ ] **Step 5: (unit), on a scratch card:**
-  - Run `just flash`. `status` boots, and NEW shows its 10 Sounds.
-  - Save a project, power-cycle, and load it. Its Parts sound as before.
-  - Take the scratch card to the host and run `fsck.fat -n`: clean, with no lost clusters.
+- [ ] **Step 5: (unit) A read-only boot on the owner's card:**
+  - Run `just flash`, then `python3 tools/chimera-usb.py status` and `shot`.
+  - It boots, and the last project loads. The browser lists its Sounds, and the meter reads its percentage.
+  - **No save, no quick-save (MENU hold), no `card` command.** Project saves on the unit wait for #359 and #360 on `main`.
 
 - [ ] **Step 6: Commit** with `git commit -m "Pool on the arena: 128 slots, sparse Sounds, encoded marks"`.
 
-### Task 6: The meter, row costs and refusals
+### Task 6: The meter, row costs and refusals — after console-put merges
 
 **Files:**
 - Create: `chimera-core/src/ui/meter.rs`
@@ -273,23 +296,23 @@ The random generator draws each param uniformly from its spec range, quantised a
 #[test] fn preview_alert_when_it_wont_fit() // preview > free: ALERT pixels from the used edge to x+216
 #[test] fn save_over_growth_refused_keeps_part() // Review Focus 2: fill to free < growth; MIX+EDIT: band reads "POOL FULL · NEEDS …"; part sound bits unchanged; project_crc unchanged
 #[test] fn clear_hint_names_bytes()   // filled slot: "MIX + MINUS CLEARS · FREES 0.3K"
-#[test] fn every_pool_hint_fits()     // hint::width ≤ 216 for each copy line in Global Constraints at its longest (16-char names, 999K)
+#[test] fn every_pool_hint_fits()     // hint::width ≤ 216 for this task's lines at their longest (999K): POOL FULL, CLEARS · FREES, EDIT SAVES, WON'T FIT. Task 8 adds UNUSED and PURGE to the same test
 #[test] fn pool_leaf_lists_breakdown() // SETTINGS › PROJECT › POOL: bar, "SOUNDS n · xK", "FREE yK"
 ```
 
 - [ ] **Step 2: Run them to see them fail:** `cargo test -p chimera-core --test meter_test`. Expected: FAIL (no module).
 
-- [ ] **Step 3: Implement it.** Draw the four segments in the theme tokens from Global Constraints. The refusal band persists until the next input (ADR 0017's convention). Record the snapshots with `just screens`.
+- [ ] **Step 3: Implement it.** Draw the four segments in the theme tokens from Global Constraints. The bar is a readout of pool state, not a parameter, so it redraws at its new width with no lerp, as the CPU bar does. The refusal band persists until the next input (ADR 0017's convention). Record the snapshots with `just screens`.
 
 - [ ] **Step 4: Run** `just test` and `just clippy`. Expected: PASS.
 
 - [ ] **Step 5: Commit** with `git commit -m "One pool meter, row costs, POOL FULL refusals"`.
 
-### Task 7: NEW from a sparse factory blob
+### Task 7: NEW from a sparse factory blob — after console-put merges
 
 **Files:**
-- Create: `chimera-core/src/factory.bin` (generated), `chimera-desktop/src/bin/factory_blob.rs` (the generator)
-- Modify: `chimera-core/src/factory.rs` (the blob reader replaces the code-built Sounds; the authored Sounds stay under `#[cfg(test)]` for the check), `chimera-core/src/project/template.rs` (`fill_new_pool` copies the blob)
+- Create: `chimera-core/src/factory.bin` (generated by the test below, no separate tool)
+- Modify: `chimera-core/src/factory.rs` (the blob reader replaces the code-built Sounds; the authored Sounds move under `#[cfg(any(test, feature = "test-support"))]` for the check), `chimera-core/src/project/template.rs` (`Project::fill_new` copies the blob)
 - Test: `chimera-core/tests/factory_test.rs`
 
 **Interfaces:**
@@ -299,24 +322,24 @@ The random generator draws each param uniformly from its spec range, quantised a
 
   The blob format is a `u16` count, then a `u16` length followed by the name (16 B) and records for each entry.
 
-- [ ] **Step 1: Write the failing tests.** `blob_matches_authored`: every entry decodes `bits_eq` to its authored Sound. `new_copies_without_decode`: NEW's slot bytes `==` the blob's bytes. `new_is_pristine`: `project_status == Pristine`.
+- [ ] **Step 1: Write the failing tests.** `blob_matches_authored`: every entry decodes `bits_eq` to its authored Sound, and with `GOLDEN_RECORD=1` (the golden convention, `tests/common/golden.rs`) it writes `factory.bin` from the authored Sounds. `just test` is the drift check. `new_copies_without_decode`: NEW's slot bytes `==` the blob's bytes. `new_is_pristine`: `project_status == Pristine`.
 - [ ] **Step 2: Run** `cargo test -p chimera-core --test factory_test`. Expected: FAIL.
-- [ ] **Step 3: Implement it.** The generator writes `factory.bin` from the authored Sounds (today's 8 plus 2 INITs; #317 swaps in the curated 32). `fill_new_pool` copies the bytes into the arena. Record the flash delta from `rust-size` on `bench,orbit` in the commit message.
+- [ ] **Step 3: Implement it.** Run `GOLDEN_RECORD=1 cargo test -p chimera-core --features test-support --test factory_test` to write the blob: today's 8 plus 2 INITs, and #317 swaps in the curated 32. `Project::fill_new` copies its bytes into the arena. Record the flash delta from `rust-size` on `bench,orbit` in the commit message.
 - [ ] **Step 4: Run** `just test` and `just check`. Expected: PASS.
 - [ ] **Step 5: Commit** with `git commit -m "NEW copies a sparse factory blob"`.
 
-### Task 8: Sources in RAM: table, gate, retirement, purge
+### Task 8: Sources in RAM: table, gate, retirement, purge — after console-put merges
 
 **Files:**
-- Create: `chimera-core/src/project/sources.rs` (`SourceId`, `SourceEntry`, `source_users`), `chimera-core/src/instrument/source_table.rs` (`SourceTable`, `SourceRow`, gate and `sounding`)
-- Modify: `chimera-core/src/project/pool.rs` (the source slots), `chimera-core/src/ui/settings/tree.rs` (`Act::PurgeUnusedSources` under PROJECT), `chimera-core/src/ui/settings/prompt.rs`
+- Create: `chimera-core/src/project/sources.rs` (`SourceId`, `SourceRef` and its `SourceRef` record codec, tag `0x0016`, inside a Sound; `SourceEntry`, `source_users`), `chimera-core/src/source_table.rs` (`SourceTable`, `SourceRow`, gate and `sounding`)
+- Modify: `chimera-core/src/lib.rs` (`pub mod source_table;`), `chimera-core/src/storage/record.rs` (`RecordTag::SourceRef`), `chimera-core/src/storage/sound.rs` (read and write `SourceRef` in a Sound), `chimera-core/src/project/pool.rs` (the source slots), `chimera-core/src/ui/settings/tree.rs` (`Act::PurgeUnusedSources` under PROJECT), `chimera-core/src/ui/settings/prompt.rs`
 - Test: `chimera-core/tests/source_pool_test.rs`
 
 **Interfaces:**
 - Consumes: `ArenaWriter::source_*` (Task 4); `Pool` (Task 5); `MeterView` (Task 6).
 - Produces:
   - `pub struct SourceId(u8)` (< 32)
-  - `pub struct SourceRef { pub crc: u32, pub frames: u32, pub rate: u16 }`
+  - `pub struct SourceRef { pub crc: u32, pub frames: u32, pub rate: u16 }`, with `to_bytes(&self) -> [u8; 10]` and `from_bytes(&[u8]) -> Option<SourceRef>`. This is its only definition.
   - `Pool::source_store(SourceRef, held: &[u8]) -> Result<SourceId, PoolFull>`
   - `Pool::source_absent(SourceRef) -> SourceId` (cost 0)
   - `pub struct Users { pub parts: PartSet, pub sounds: [u64; 2] }`, with one bit per `SlotId` and `is_empty()`
@@ -333,6 +356,8 @@ The random generator draws each param uniformly from its spec range, quantised a
 #[test] fn gate_recheck_catches_late_note_on() // note-on on a source in `above` in the block before close: post-ack re-check sees its bit, reopens, moves nothing; after the note ends compaction runs; the voice's samples equal the unmoved source throughout
 #[test] fn gate_holds_note_on() // closed gate: a note-on on a moving source starts on the first block after open, first sample unchanged; others start at once
 #[test] fn retire_never_cuts()  // a retired source's row stays live until its sounding bit clears
+#[test] fn source_ref_round_trips() // to_bytes/from_bytes; a Sound with a SourceRef encodes and decodes bits_eq; a 9-byte payload is Bounds
+// hint_test.rs: every_pool_hint_fits gains "MIX + MINUS CLEARS · {16-char NAME} 999K UNUSED" and "PURGE 32 SOURCES? FREES 999K"
 ```
 
 - [ ] **Step 2: Run** `cargo test -p chimera-core --test source_pool_test`. Expected: FAIL.
@@ -346,25 +371,34 @@ The random generator draws each param uniformly from its spec range, quantised a
 
 - [ ] **Step 5: Commit** with `git commit -m "Pool sources: gated compaction, retirement, purge unused"`.
 
-### Task 9: Source files on the card, `PoolSource` and `SourceRef` records
+### Task 9: Source files on the card and `PoolSource` records — after console-put merges
 
-**Precondition:** the console-put fix for #359 (a device error frees its chain) and the #360 sweep (lost clusters freed at mount) are on `main`. Until then, this task's writer stays behind `#[cfg(test)]`, and nothing ships that writes `/CHIMERA/TAPES`.
+**Precondition:** console-put is merged; this task rebases onto it and uses its #359 chain free and `writable()` as they are. Until #360's sweep is also on `main`, the writer stays behind `#[cfg(test)]`, and nothing ships that writes `/CHIMERA/TAPES`.
 
 **Files:**
 - Create: `chimera-core/src/storage/source_file.rs` (`FileKind::Source` read and write, `SourceHead`/`SourceData`), `chimera-core/src/storage/twelve.rs` (pack, unpack, `quantise_tpdf`)
-- Modify: `chimera-hal/src/store.rs` (`Dir::Tapes`), `chimera-fat` (create `/CHIMERA/TAPES` as it does `SOUNDS`), `chimera-core/src/storage/frame.rs` (`FileKind::Source = 6`), `chimera-core/src/storage/record.rs` (the four tags), `chimera-core/src/project/codec.rs` (`PoolSource` records, pass-1 costs, over-budget order), `chimera-core/src/storage/sound.rs` (`SourceRef` inside a Sound)
+- Modify:
+  - `chimera-hal/src/store.rs`: `Dir::Tapes`, and `Store::seal(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError>`, which sets the FAT read-only attribute;
+  - `chimera-fat/src/fs.rs`: `seal` writes the entry's attribute byte through `put_entry`, and `add_dir` makes `/CHIMERA/TAPES` as it does `SOUNDS`;
+  - `chimera-core/src/storage/frame.rs` (`FileKind::Source = 6`);
+  - `chimera-core/src/storage/file.rs` (`SaveError::Damaged`);
+  - `chimera-core/src/storage/record.rs` (`PoolSource` `0x8015`, `SourceHead` `0x8017`, `SourceData` `0x0018`);
+  - `chimera-core/src/project/codec.rs` (`PoolSource` records, pass-1 costs, over-budget order).
 - Test: `chimera-core/tests/twelve_test.rs`, `chimera-core/tests/source_codec_test.rs`, `chimera-fat/tests/source_card_test.rs`
 
 **Interfaces:**
-- Consumes: `SourceRef`, `Pool::source_store` and `source_absent` (Task 8).
+- Consumes: `SourceRef` and its codec, `Pool::source_store` and `source_absent` (Task 8); `writable()` and `StoreError::ReadOnly` (console-put).
 - Produces:
   - `pub fn pack12(samples: &[i16], out: &mut [u8]) -> usize`
   - `pub fn unpack12(bytes: &[u8], pair: usize) -> (i16, i16)`
   - `pub struct Tpdf(u32)`, an xorshift32 seeded by the caller
   - `pub fn quantise_tpdf(x: f32, rng: &mut Tpdf) -> i16` (12-bit range, −2048..=2047)
-  - `pub fn source_file(r: SourceRef) -> AbFile` (stem = CRC hex)
+  - `pub fn source_file(r: SourceRef) -> FileName` (`Dir::Tapes`, stem = CRC hex, ext `SRC`)
   - `pub fn read_source_into<S: Store>(s, r: &Ready, sref: SourceRef, out: &mut [u8]) -> Result<usize, LoadError>`, which checks the header's frames and rate against `sref`
-  - `pub fn write_source<S: Store>(…, sref: SourceRef, name: SoundName, data: &[u8]) -> Result<(), SaveError>`, which refuses if the file already exists (write-once)
+  - `pub fn write_source<S: Store>(s: &mut S, r: &Ready, sref: SourceRef, name: SoundName, data: &[u8]) -> Result<Wrote, SaveError>`, where `enum Wrote { New, Present, Replaced }`. It writes, reads back, checks the header and CRC, then seals.
+    - **Present:** a sealed file that verifies; nothing is written.
+    - **Replaced:** an unsealed file, the torn remains of a cut write, which is deleted and written again.
+    - A sealed file that fails its check is `Err(SaveError::Damaged)`, with nothing written: `writable()` refuses it anyway.
 
 - [ ] **Step 1: Write the failing tests:**
 
@@ -380,9 +414,10 @@ The random generator draws each param uniformly from its spec range, quantised a
 // chimera-fat/tests/source_card_test.rs
 #[test] fn truncated_source_reads_missing()   // Review Focus 4: a source write cut at every block: the ref reads missing, never shorter audio; no cross_linked, no short
 #[test] fn card_swap_between_passes_reads_missing() // VolumeChanged between pass 1 and 2: load refuses as today; no source bytes enter the arena
-#[test] fn source_write_device_error_no_leak() // fail_write and land_then_fail on each block: fat_check lost clusters unchanged (#359)
-#[test] fn source_write_power_cut_swept()      // cut at each block, remount: #360's sweep leaves zero lost clusters
-#[test] fn source_is_write_once()              // a second write_source to the same ref: Err, file unchanged
+#[test] fn source_write_device_error_no_leak() // Log::fail_write and Log::land_then_fail at each write: no cross_linked, no short; `lost` unchanged unless the failed write is the put_entry (#359's rule)
+#[test] fn source_write_power_cut_safe()       // Cut::After(k) at each write: no cross_linked, no short. Lost clusters are #360's sweep (private issue #360), not asserted here
+#[test] fn source_is_write_once()              // a sealed source: write_source returns Present and writes no block; a raw Store::write to it is Err(ReadOnly), file unchanged
+#[test] fn torn_source_is_replaced()           // cut the first write at each block, then write_source again: Replaced (or New if no entry landed), reads back verified, sealed; no cross_linked, no short
 #[test] fn quick_save_writes_no_audio()        // a project with 3 sources: MENU-hold save's bytes written independent of source sizes
 ```
 
@@ -400,5 +435,6 @@ The random generator draws each param uniformly from its spec range, quantised a
 ---
 
 **Order and gates:**
-- Tasks 1 → 9 in order. Task 3 must land before Task 5 links. Task 9 waits on #359 and #360.
-- **(unit)** marks Tasks 1 and 5. Task 9's card behaviour is host-proven through the harnesses. Its first on-unit run goes with TAPE's first voice (#279).
+- **Tasks 1–4 run now.** Tasks 5–9 run after console-put merges, rebased onto it. Task 3 must land before Task 5 links.
+- Task 9 ships its writer only once #360 is on `main`.
+- **(unit)** marks Tasks 1 and 5. Task 5's check is a read-only boot. Task 9's card behaviour is proven on the host through the harnesses. Its first on-unit run goes with TAPE's first voice (#279), after #359 and #360 are on `main`.

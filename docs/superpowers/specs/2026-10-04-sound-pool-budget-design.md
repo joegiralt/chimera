@@ -311,8 +311,9 @@ A source delete leaves a hole below the sources above it. Compaction slides them
 
 - **Library Sounds** (`/CHIMERA/SOUNDS`, #317) are written sparse. A row's cost is the file size − 28 (header) − 4 (CRC) + 16 (name), rounded up to 16, read from the listing with no extra card I/O.
 - **Sources live only on the card,** in a new `Dir::Tapes` (`/CHIMERA/TAPES`), as `FileKind` 6 `Source` files: a header, a `SourceHead` record (`0x8017`: the `SourceRef` and a 16 B name), then `SourceData` records (`0x0018`) of up to 504 B of packed pairs (168 pairs). Both are refused (`Corrupt`) outside a `Source` file.
-  - **The 8.3 stem is the CRC in hex** (`1A2B3C4D.A`), so a `SourceRef` finds its file by name, with no index. Identical sources share one file.
-  - **Write-once:** an import, a RESAMPLE or a PROCESS writes a new file. Nothing rewrites one.
+  - **The 8.3 name is the CRC in hex, with `.SRC`** (`1A2B3C4D.SRC`), so a `SourceRef` finds its file by name, with no index. Identical sources share one file. It is a single file, not an A/B pair: it never changes once written.
+  - **Write-once, by sealing.** An import, a RESAMPLE or a PROCESS writes the file. The writer reads it back, checks the header and CRC, and only then sets the FAT read-only attribute. From then on, the FAT layer's `writable()` check (console-put, #359) refuses any rewrite or delete.
+  - **A torn file is replaced.** An unsealed `<CRC>.SRC` is a write a power cut interrupted. The next write of the same source deletes it and writes it again. A sealed file whose check fails reads as missing, and is never rewritten in place; card cleanup is #267.
   - The `SourceRef`'s `frames` and `rate` are checked against the header, and a mismatch reads as missing.
 - **Adding a library TAPE Sound** brings its source's `held` bytes into the pool too, unless the pool already holds that source. The preview and the refusal count both. A source not on the card refuses the add: `SOURCE NOT ON CARD`.
 - **Purge never touches the card.** Orphaned `/CHIMERA/TAPES` files are a card-cleanup job for SETTINGS › SYSTEM › STORAGE (#267), outside this spec.

@@ -70,8 +70,9 @@ engine.
     factory blob.
 - **A Part decodes on load into its own `Sound`, as today.** The audio
   never decodes. Marks compare encodings.
-- **Sources live on the card, write-once,** in `/CHIMERA/TAPES`, named by
-  their CRC.
+- **Sources live on the card, write-once,** in `/CHIMERA/TAPES`, as
+  `<CRC>.SRC`. Each is sealed read-only once verified, and a torn,
+  unsealed file is replaced.
   - The arena holds a whole short source (the random-access TAPE models)
     or a streamed source's head (TRON). Both count on the meter.
   - Projects carry only a `SourceRef { crc, frames, rate }` (`PoolSource`
