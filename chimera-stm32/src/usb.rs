@@ -26,6 +26,8 @@ use usb_device::device::{
 };
 use usbd_serial::{SerialPort, USB_CLASS_CDC};
 
+use crate::sd::SdStore;
+
 /// The stock PreenFM3's ID: Ixox/preenfm3 firmware/Src/usbd_desc.c.
 pub const VID_PID: (u16, u16) = (0x0483, 0x5740);
 // Never the ROM's DFU ID, so `dfu-util -d 0x0483:0xdf11` cannot match the
@@ -122,7 +124,7 @@ pub struct DfuAsked(());
 /// `card`'s measurement, run before its answer starts: `None` without one
 /// in this build.
 pub type CardRun<'a> =
-    &'a mut dyn FnMut(CardArg, Option<&mut Reader<AudioStats>>) -> Option<CardAnswer>;
+    &'a mut dyn FnMut(CardArg, Option<&mut Reader<AudioStats>>, &mut SdStore) -> Option<CardAnswer>;
 
 /// The port, the half-read request line, and the loop's time between tops.
 pub struct Usb {
@@ -293,7 +295,7 @@ impl Usb {
     /// answered one is not counted), polls, reads into the line, and
     /// answers at most one request: `Some` for a `dfu` the host was told
     /// `OK` to. A `card` runs `card` first, so its seconds come before the
-    /// answer's clock starts.
+    /// answer's clock starts. `ls` and `put` work on `store`.
     pub fn service(
         &mut self,
         ui: &UiState,
@@ -301,6 +303,7 @@ impl Usb {
         bench: Option<&str>,
         frame: Frame<'_>,
         card: CardRun<'_>,
+        store: &mut SdStore,
     ) -> Option<DfuAsked> {
         let now = DWT::cycle_count();
         let us = now.wrapping_sub(self.top) / self.cycles_per_us;
@@ -335,7 +338,7 @@ impl Usb {
             // Outside a bench build nothing measures, and none of it links.
             let card = match req {
                 Ok(Request::Card(arg)) if cfg!(feature = "bench") => {
-                    card(arg, stats.as_deref_mut())
+                    card(arg, stats.as_deref_mut(), store)
                 }
                 _ => None,
             };
@@ -348,6 +351,7 @@ impl Usb {
                 frame,
                 dfu: false,
                 boot: *boot,
+                files: store,
             };
             let out = &mut UsbOut {
                 dev,
@@ -383,6 +387,9 @@ struct ChipUnit<'a> {
     /// `dfu` asked: the restart waits for the `OK` to be out.
     dfu: bool,
     boot: BootSeen,
+    /// `ls` and `put`'s card: unread without `card-put`.
+    #[cfg_attr(not(feature = "card-put"), allow(dead_code))]
+    files: &'a mut SdStore,
 }
 
 impl Unit for ChipUnit<'_> {
@@ -425,6 +432,22 @@ impl Unit for ChipUnit<'_> {
 
     fn usb_regs(&self) -> Option<UsbRegs> {
         Some(regs())
+    }
+
+    #[cfg(feature = "card-put")]
+    type Files = SdStore;
+    #[cfg(not(feature = "card-put"))]
+    type Files = chimera_core::console::NoCard;
+
+    #[cfg(feature = "card-put")]
+    fn files(&mut self) -> Option<&mut SdStore> {
+        Some(&mut *self.files)
+    }
+
+    /// `ls` and `put` are not in this build.
+    #[cfg(not(feature = "card-put"))]
+    fn files(&mut self) -> Option<&mut Self::Files> {
+        None
     }
 }
 
@@ -472,6 +495,30 @@ impl Out for UsbOut<'_> {
             }
         }
         Ok(())
+    }
+
+    fn fresh(&mut self) {
+        self.clock = AnswerClock::start(crate::controls::now_ms());
+    }
+
+    /// Polls until a byte comes or `wait_ms` pass: `put`'s data, read in
+    /// the UI loop while audio and MIDI run above it.
+    fn recv(&mut self, wait_ms: u32) -> Option<u8> {
+        let start = crate::controls::now_ms();
+        let mut byte = [0u8; 1];
+        loop {
+            if let Ok(1) = self.serial.read(&mut byte) {
+                return Some(byte[0]);
+            }
+            if crate::controls::now_ms().since(start) >= wait_ms {
+                return None;
+            }
+            self.dev.poll(&mut [&mut *self.serial]);
+        }
+    }
+
+    fn now(&self) -> Ms {
+        crate::controls::now_ms()
     }
 }
 

@@ -17,9 +17,11 @@ impl CardError {
     /// room on.
     pub fn from_store(e: StoreError) -> Option<CardError> {
         match e {
-            StoreError::NoCard | StoreError::NotFound | StoreError::Corrupt | StoreError::Full => {
-                None
-            }
+            StoreError::NoCard
+            | StoreError::NotFound
+            | StoreError::Corrupt
+            | StoreError::Full
+            | StoreError::ReadOnly => None,
             StoreError::Unsupported(u) => Some(CardError::Unsupported(u)),
             StoreError::Timeout => Some(CardError::Timeout),
             StoreError::VolumeChanged(v) => Some(CardError::VolumeChanged(v)),

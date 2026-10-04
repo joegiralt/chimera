@@ -29,7 +29,13 @@ fn every_name_parses_in_any_case() {
         ] {
             let got = feed(&mut Console::new(), format!("{name}\n").as_bytes());
             assert_eq!(got.len(), 1, "{name}");
-            assert_eq!(got[0].map(|r| r.command()), Ok(c), "{name}");
+            // `ls` and `put` need their arguments: refused, but by name.
+            let named = match got[0] {
+                Ok(r) => r.command(),
+                Err(Refusal::Arguments(c)) => c,
+                Err(e) => panic!("{name}: {e:?}"),
+            };
+            assert_eq!(named, c, "{name}");
         }
     }
 }
@@ -162,10 +168,11 @@ fn a_line_split_anywhere_parses_once() {
 #[test]
 fn the_table_is_the_one_list() {
     let names: Vec<_> = Command::ALL.iter().map(|c| c.name()).collect();
-    assert_eq!(
-        names,
-        ["help", "status", "stats", "bench", "card", "shot", "dfu"]
-    );
+    let mut want = vec!["help", "status", "stats", "bench", "card", "shot", "dfu"];
+    if cfg!(feature = "card-put") {
+        want.extend(["ls", "put"]);
+    }
+    assert_eq!(names, want);
     for c in Command::ALL {
         assert!(!c.about().is_empty() && c.about().len() <= 60, "{c:?}");
         assert!(c.name().len() <= 7, "help's column is 8 wide");
@@ -199,4 +206,69 @@ fn every_byte_value_is_safe() {
             }
         }
     }
+}
+
+#[cfg(feature = "card-put")]
+#[test]
+fn put_takes_a_project_path_a_size_and_a_crc() {
+    use chimera_core::storage::ProjectId;
+    let one = |s: &str| feed(&mut Console::new(), s.as_bytes()).remove(0);
+    let want = Ok(Request::Put(PutArg {
+        to: ProjectId::new(14).unwrap(),
+        size: 131_072,
+        crc: 0xDEAD_BEEF,
+    }));
+    assert_eq!(
+        one("put /CHIMERA/PROJECTS/P0000014.A 131072 deadbeef\n"),
+        want
+    );
+    assert_eq!(
+        one("PUT /chimera/projects/p0000014.b 131072 DEADBEEF\n"),
+        want
+    );
+    for bad in [
+        "put /CHIMERA/PROJECTS/AVRIL14.A 1 0",
+        "put /CHIMERA/PROJECTS/P0000000.A 1 0",
+        "put /CHIMERA/PROJECTS/P00000014.A 1 0",
+        "put /CHIMERA/PROJECTS/P0000014 1 0",
+        "put /CHIMERA/PROJECTS/P0000014.C 1 0",
+        "put /CHIMERA/PROJECTS/../SYSTEM.A 1 0",
+        "put /CHIMERA/PROJECTS//P0000014.A 1 0",
+        "put /CHIMERA//PROJECTS/P0000014.A 1 0",
+        "put /CHIMERA/PROJECTS/ 1 0",
+        "put /CHIMERA 1 0",
+        "put /CHIMERA/SOUNDS/S0000001.A 1 0",
+        "put /CHIMERA/SYSTEM.A 1 0",
+        "put /CHIMERA/PROJECTS/P0000014.A 4294967296 0",
+        "put /CHIMERA/PROJECTS/P0000014.A 1 -1",
+        "put /CHIMERA/PROJECTS/P0000014.A 1 0x10",
+        "put /CHIMERA/PROJECTS/P0000014.A 1 123456789",
+        "put /CHIMERA/PROJECTS/P0000014.A 1",
+        "put /CHIMERA/PROJECTS/P0000014.A 1 0 more",
+    ] {
+        assert_eq!(
+            one(&format!("{bad}\n")),
+            Err(Refusal::Arguments(Command::Put)),
+            "{bad}"
+        );
+    }
+    // The longest request fits the line.
+    let longest = "put /CHIMERA/PROJECTS/P0000001.A 1048576 ffffffff";
+    assert!(longest.len() <= MAX_LINE);
+}
+
+#[cfg(feature = "card-put")]
+#[test]
+fn ls_takes_nothing() {
+    let one = |s: &str| feed(&mut Console::new(), s.as_bytes()).remove(0);
+    assert_eq!(one("ls\n"), Ok(Request::Ls(NoArg)));
+    assert_eq!(one("ls /CHIMERA\n"), Err(Refusal::Arguments(Command::Ls)));
+}
+
+#[cfg(not(feature = "card-put"))]
+#[test]
+fn without_card_put_ls_and_put_are_unknown() {
+    let got = feed(&mut Console::new(), b"put x 1 0\nls\n");
+    assert!(matches!(got[0], Err(Refusal::Unknown(_))));
+    assert!(matches!(got[1], Err(Refusal::Unknown(_))));
 }

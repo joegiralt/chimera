@@ -22,6 +22,7 @@ const SIZE: usize = 28;
 
 const END: u8 = 0x00;
 const FREE: u8 = 0xE5;
+const ATTR_READ_ONLY: u8 = 0x01;
 const ATTR_LABEL: u8 = 0x08;
 const ATTR_DIR: u8 = 0x10;
 const ATTR_FILE: u8 = 0x20;
@@ -158,6 +159,11 @@ pub fn encode(e: &Entry, is_dir: bool, kind: FsKind, raw: &mut [u8; ENTRY]) {
     put16(raw, CLUSTER_LO, e.start as u16);
     let len = if is_dir { 0 } else { e.len };
     raw[SIZE..].copy_from_slice(&len.to_le_bytes());
+}
+
+/// Whether the entry is marked read-only: Chimera never rewrites it.
+pub fn read_only(raw: &[u8; ENTRY]) -> bool {
+    raw[ATTR] & ATTR_READ_ONLY != 0
 }
 
 /// Marks the slot deleted.

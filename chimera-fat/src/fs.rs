@@ -322,7 +322,10 @@ impl<'a, B: Blocks> Fs<'a, B> {
         let name = ShortName::file(&file);
         let found = self.lookup(dir, name)?;
         let (space, old) = match found.hit {
-            Some((Slot::File(e), at)) => (Space::Slot(at), Some(e.start)),
+            Some((Slot::File(e), at)) => {
+                self.writable(at)?;
+                (Space::Slot(at), Some(e.start))
+            }
             Some(_) => return Err(FsError::Corrupt),
             None => (Space::find(found.free, dir)?, None),
         };
@@ -335,8 +338,12 @@ impl<'a, B: Blocks> Fs<'a, B> {
         };
         self.put_entry(at, &empty, false)?;
         if let Some(old) = old {
-            self.table.free_chain(old)?;
-            self.table.flush()?;
+            // The entry no longer holds it: freed now, or at the next change.
+            let freed = self.table.free_chain(old).and_then(|_| self.table.flush());
+            if let Err(e) = freed {
+                self.table.drop_chain(old);
+                return Err(e);
+            }
         }
 
         let mut out = Stream {
@@ -355,10 +362,25 @@ impl<'a, B: Blocks> Fs<'a, B> {
         let Stream {
             first, len, failed, ..
         } = out;
-        if let Some(e @ FsError::Dev(_)) = failed {
+        let (dev, failed) = match failed {
+            Some(e @ FsError::Dev(_)) => (Some(e), None),
+            f => (None, f),
+        };
+        let flushed = match dev {
+            Some(e) => Err(e),
+            None => self.table.flush(),
+        };
+        if let Err(e) = flushed {
+            // No entry holds the chain: free it now, or at the next change.
+            if first != 0 {
+                self.table.drop_chain(first);
+            }
             return Err(e);
         }
-        self.table.flush()?;
+        // A failed entry write may still have landed (a card that took the
+        // block, then timed out busy), so its chain is never freed here: a
+        // leak at worst, never a cross-link.
+        // private issue #360
         self.put_entry(
             at,
             &Entry {
@@ -381,10 +403,24 @@ impl<'a, B: Blocks> Fs<'a, B> {
         let Some((Slot::File(e), at)) = found.hit else {
             return Err(FsError::NotFound);
         };
+        self.writable(at)?;
         self.will_change()?;
         self.mark_free(at, &found.run.at[..found.run.n])?;
         self.table.free_chain(e.start)?;
         self.table.flush()
+    }
+
+    /// A file entry marked read-only is `ReadOnly`, before anything is
+    /// written.
+    fn writable(&mut self, at: Loc) -> Result<(), FsError<B::Error>> {
+        self.table
+            .blocks()
+            .read(at.block, self.buf)
+            .map_err(FsError::Dev)?;
+        match dir::read_only(&self.buf.as_chunks::<ENTRY>().0[at.slot]) {
+            true => Err(FsError::Body(StoreError::ReadOnly)),
+            false => Ok(()),
+        }
     }
 
     fn add_dir(&mut self, dir: Dir) -> Result<(), FsError<B::Error>> {

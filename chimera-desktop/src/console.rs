@@ -120,6 +120,10 @@ impl Unit for DeskUnit<'_> {
     fn usb_regs(&self) -> Option<chimera_core::boot::UsbRegs> {
         None
     }
+    type Files = chimera_core::console::NoCard;
+    fn files(&mut self) -> Option<&mut Self::Files> {
+        None
+    }
 }
 
 /// A non-blocking stream as `Out`, for one answer: `WouldBlock` retries
@@ -145,6 +149,10 @@ impl<'a> StreamOut<'a> {
 }
 
 impl Out for StreamOut<'_> {
+    fn now(&self) -> Ms {
+        StreamOut::now(self)
+    }
+
     fn put(&mut self, mut bytes: &[u8]) -> Result<(), Stalled> {
         while !bytes.is_empty() {
             match self.s.write(bytes) {

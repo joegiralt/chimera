@@ -3,6 +3,7 @@
 Run: python3 -m unittest discover -s tools -p 'test_*.py'
 """
 
+import base64
 import datetime
 import importlib.util
 import os
@@ -426,6 +427,169 @@ class Tool(unittest.TestCase):
             self.assertIn(b"not overwriting", r.stderr)
             self.assertEqual(old.read_bytes(), b"keep me")
             self.assertFalse(ran.exists())
+
+
+class PutUnit:
+    """A console that speaks `put` as the unit does: `READY` (or `refuse`
+    first), base64 lines until the size is in, then `OK` if the CRC
+    matches, else `ERR put: CRC mismatch`; `after` replaces that answer.
+    `silent` says nothing after READY. Also answers `ls` with `listing`."""
+
+    def __init__(self, refuse=None, after=None, silent=False, listing=b"OK\n"):
+        self.refuse, self.after, self.silent, self.listing = refuse, after, silent, listing
+        self.requests, self.data = [], b""
+        self.server = socket.create_server(("127.0.0.1", 0))
+        self.server.settimeout(0.1)
+        self.target = "tcp:127.0.0.1:%d" % self.server.getsockname()[1]
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self._serve, daemon=True)
+
+    def _lines(self, conn):
+        buf = b""
+        while not self.stop.is_set():
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                yield line
+            try:
+                data = conn.recv(65536)
+            except TimeoutError:
+                continue
+            if not data:
+                return
+            buf += data
+
+    def _serve(self):
+        while not self.stop.is_set():
+            try:
+                conn, _ = self.server.accept()
+            except TimeoutError:
+                continue
+            with conn:
+                conn.settimeout(0.1)
+                lines = self._lines(conn)
+                for line in lines:
+                    self.requests.append(line)
+                    words = line.split()
+                    if words[:1] == [b"ls"]:
+                        conn.sendall(self.listing)
+                    if words[:1] != [b"put"]:
+                        continue
+                    if self.refuse:
+                        conn.sendall(self.refuse)
+                        continue
+                    size, crc = int(words[2]), int(words[3], 16)
+                    conn.sendall(b"READY\n")
+                    while len(self.data) < size:
+                        ln = next(lines)
+                        assert len(ln) <= 64 and len(ln) % 4 == 0, ln
+                        self.data += base64.b64decode(ln, validate=True)
+                    if self.silent:
+                        continue
+                    ok = zlib.crc32(self.data) == crc and len(self.data) == size
+                    conn.sendall(self.after or (b"OK\n" if ok else b"ERR put: CRC mismatch\n"))
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.stop.set()
+        self.thread.join()
+        self.server.close()
+
+
+class Put(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def local(self, name, data):
+        p = pathlib.Path(self.tmp.name, name)
+        p.write_bytes(data)
+        return str(p)
+
+    def test_put_sends_size_crc_and_the_data_once(self):
+        data = bytes((i * 7) % 251 for i in range(130_000))
+        f = self.local("AVRIL14.A", data)
+        with PutUnit() as u:
+            r = run_tool(["put", f, "/CHIMERA/PROJECTS/P0000014.A"], u.target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(u.data, data)
+        self.assertEqual(u.requests[0], b"put /CHIMERA/PROJECTS/P0000014.A 130000 %08x" % zlib.crc32(data))
+        self.assertEqual(sum(1 for x in u.requests if x.startswith(b"put ")), 1)
+        self.assertEqual(r.stdout, b"/CHIMERA/PROJECTS/P0000014.A 130000\n")
+        self.assertIn(b"100% 130000 of 130000 bytes", r.stderr)
+
+    def test_a_remote_directory_takes_the_local_name(self):
+        f = self.local("avril14.a", b"abc")
+        with PutUnit() as u:
+            r = run_tool(["put", f, "/CHIMERA/PROJECTS/"], u.target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(u.requests[0].startswith(b"put /CHIMERA/PROJECTS/AVRIL14.A 3 "))
+
+    def test_an_empty_file_puts(self):
+        f = self.local("E.A", b"")
+        with PutUnit() as u:
+            r = run_tool(["put", f, "/CHIMERA/PROJECTS/E.A"], u.target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(u.requests, [b"put /CHIMERA/PROJECTS/E.A 0 00000000"])
+
+    def test_a_refusal_before_ready_sends_no_data(self):
+        f = self.local("S.A", b"x" * 1000)
+        refusal = b"ERR put: would leave under 1 MiB free\n"
+        with PutUnit(refuse=refusal) as u:
+            r = run_tool(["put", f, "/CHIMERA/SOUNDS/S.A"], u.target)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn(b"ERR put: would leave under 1 MiB free", r.stderr)
+        self.assertEqual(len(u.requests), 1, "no data, no retry")
+
+    def test_an_err_after_the_data_fails_without_retry(self):
+        f = self.local("S.A", b"y" * 5000)
+        with PutUnit(after=b"ERR put: CARD TIMEOUT\n") as u:
+            r = run_tool(["put", f, "/CHIMERA/SOUNDS/S.A"], u.target)
+        self.assertEqual(r.returncode, 1)
+        self.assertTrue(r.stderr.endswith(b"ERR put: CARD TIMEOUT\n"), r.stderr)
+        self.assertEqual(sum(1 for x in u.requests if x.startswith(b"put ")), 1)
+
+    def test_a_file_over_the_limit_is_refused_here(self):
+        f = self.local("BIG.A", bytes(tool.PUT_MAX + 1))
+        with PutUnit() as u:
+            r = run_tool(["put", f, "/CHIMERA/SOUNDS/BIG.A"], u.target)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn(b"put takes at most 1048576", r.stderr)
+        self.assertEqual(u.requests, [])
+
+    def test_a_missing_local_file_fails(self):
+        r = run_tool(["put", str(pathlib.Path(self.tmp.name, "NOPE.A")), "/CHIMERA/SOUNDS/"], "tcp:127.0.0.1:9")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn(b"put: ", r.stderr)
+
+    def test_silence_after_the_data_is_no_answer(self):
+        with PutUnit(silent=True) as u:
+            conn = tool.Conn(tool.target({"CHIMERA_USB": u.target}))
+            saved = tool.PUT_WAIT_S
+            tool.PUT_WAIT_S = 0.3
+            try:
+                with self.assertRaises(tool.NoAnswer):
+                    tool.put(conn, b"z" * 100, "/CHIMERA/SOUNDS/Z.A")
+            finally:
+                tool.PUT_WAIT_S = saved
+                conn.close()
+
+    def test_lines_carry_48_bytes_in_base64(self):
+        data = os.urandom(1000)
+        lines = list(tool.put_lines(data))
+        self.assertTrue(all(len(x) <= 65 and x.endswith(b"\n") for x in lines))
+        self.assertEqual(b"".join(base64.b64decode(x) for x in lines), data)
+
+    def test_ls_prints_the_listing_and_waits_for_the_card(self):
+        self.assertEqual(tool.first_wait("ls"), tool.LS_WAIT_S)
+        self.assertEqual(tool.first_wait("status"), tool.SILENCE_S)
+        with PutUnit(listing=b"P0000014.A 130000\nOK\n") as u:
+            r = run_tool(["ls"], u.target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, b"P0000014.A 130000\n")
+        self.assertEqual(u.requests, [b"ls"])
 
 
 if __name__ == "__main__":

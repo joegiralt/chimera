@@ -20,7 +20,7 @@ pub use crc::Crc32;
 pub use file::{
     AbFile, Check, Decode, DecodeInPlace, InPlaceError, LoadError, Pick, SaveError, SideState,
     check_file, check_frame, delete_ab, delete_order, load_ab, load_ab_in_place, load_file, pick,
-    save_ab, write_target,
+    save_ab, save_target, write_target,
 };
 pub use frame::{
     Event, FORMAT_VERSION, FileError, FileKind, Framer, Generation, HEADER_LEN, Header, MAGIC,

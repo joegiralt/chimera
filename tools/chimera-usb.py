@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """Read the unit over its USB console (or the desktop sim's socket).
 
-    python3 tools/chimera-usb.py <cmd> [<arg>]     help, status, stats, bench, card [clean|seed=N], shot [raw], dfu
+    python3 tools/chimera-usb.py <cmd> [<arg>]     help, status, stats, bench, card [clean|seed=N], shot [raw], dfu, ls
+    python3 tools/chimera-usb.py put <local> <remote>  a project file onto the card as /CHIMERA/PROJECTS/P#######.A
+                                                       (<remote> ending in / takes the local name)
     python3 tools/chimera-usb.py to-dfu            the unit into ROM DFU, for just flash
     python3 tools/chimera-usb.py wait-console [s]  wait (default 10 s) for the console on the bus
 
 Exit 0 on OK, 1 on ERR (to stderr) or 2 s of silence (60 s before `card`'s
-first line: it measures before it answers). Bodies go to stdout;
-`shot` writes a PNG and prints its path. Standard library only.
+first line: it measures before it answers; 15 s before `ls`'s, 35 s
+before `put`'s). Bodies go to stdout; `shot` writes a PNG and prints its
+path; `put` shows its progress on stderr and never retries. Standard
+library only.
 
 Environment: CHIMERA_USB picks the target (unset: /dev/chimera if present,
 else /dev/ttyACM0; `sim`: the desktop sim; `tcp:HOST:PORT`; else a device
@@ -15,6 +19,7 @@ path). CHIMERA_SHOTS overrides target/shots. CHIMERA_SYSFS and
 CHIMERA_DFU_WAIT (s, default 10) are for to-dfu and wait-console.
 """
 
+import base64
 import datetime
 import enum
 import errno
@@ -33,6 +38,10 @@ from typing import NamedTuple, Union
 SIM = ("127.0.0.1", 7341)  # chimera-desktop/src/console.rs ADDR
 SILENCE_S = 2.0
 CARD_WAIT_S = 60.0  # `card` measures before it answers: ~5 s, ~15 s writing its test file
+LS_WAIT_S = 15.0  # a cold card acquire, then one listing under the card's 10 s cap
+PUT_WAIT_S = 35.0  # the unit's whole put is 30 s (PUT_DEADLINE_MS), card work included
+PUT_MAX = 1 << 20  # chimera-core/src/console/put.rs PUT_MAX_BYTES
+PUT_LINE = 48  # bytes a data line carries: 64 base64 characters
 DRAIN_S = 0.05
 MAX_SHOT = 1 << 20  # well over 240 x 320 x 2; a garbled header can't ask for gigabytes
 UDEV_HINT = "sudo cp tools/70-chimera.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger"
@@ -199,7 +208,7 @@ def answer(conn: Conn, first=SILENCE_S) -> tuple:
 
 def first_wait(line: str) -> float:
     """How long a request's first byte may take."""
-    return CARD_WAIT_S if line.split()[:1] == ["card"] else SILENCE_S
+    return {"card": CARD_WAIT_S, "ls": LS_WAIT_S}.get((line.split() or [""])[0], SILENCE_S)
 
 
 def request(conn: Conn, line) -> tuple:
@@ -211,6 +220,79 @@ def request(conn: Conn, line) -> tuple:
 
 class BadShot(Exception):
     pass
+
+
+class PutRefused(Exception):
+    """The file can't go: the reason, before anything was sent."""
+
+
+def remote_path(local: str, remote: str) -> str:
+    """`remote`, or the local file's name under it if it ends in `/`."""
+    return remote + pathlib.Path(local).name.upper() if remote.endswith("/") else remote
+
+
+def put_lines(data: bytes):
+    """The data lines: `PUT_LINE` bytes each, base64, one per line."""
+    for i in range(0, len(data), PUT_LINE):
+        yield base64.b64encode(data[i : i + PUT_LINE]) + b"\n"
+
+
+def put(conn: Conn, data: bytes, remote: str, progress=lambda sent, total: None) -> tuple:
+    """`put <remote> <size> <crc32>`, the data once the unit says READY,
+    then its OK or ERR as `answer` gives it. `progress(sent, total)` after
+    each batch of lines. Raises NoAnswer, Vanished or PutRefused."""
+    if len(data) > PUT_MAX:
+        raise PutRefused("%d bytes: put takes at most %d" % (len(data), PUT_MAX))
+    send(conn, "put %s %d %08x" % (remote, len(data), zlib.crc32(data)))
+    rd = Reader(conn, PUT_WAIT_S)
+    first = rd.line()
+    if first == b"ERR" or first.startswith(b"ERR "):
+        return Status.ERR, ErrLine(first)
+    if first != b"READY":
+        raise PutRefused("put: expected READY, got %r" % first)
+    lines = list(put_lines(data))
+    batch, sent = 256, 0
+    for i in range(0, len(lines), batch):
+        conn.write(b"".join(lines[i : i + batch]))
+        sent = min(len(data), (i + batch) * PUT_LINE)
+        progress(sent, len(data))
+    if not lines:
+        progress(0, 0)
+    rd.wait = PUT_WAIT_S
+    ln = rd.line()
+    if ln == b"OK":
+        return Status.OK, b""
+    return Status.ERR, ErrLine(ln)
+
+
+def show_progress(sent, total):
+    pct = 100 if total == 0 else sent * 100 // total
+    print("\rput: %3d%% %d of %d bytes" % (pct, sent, total), end="", file=sys.stderr, flush=True)
+
+
+def put_file(t: Target, local: str, remote: str) -> int:
+    """`put` with progress on stderr: 0 on OK, 1 with the reason."""
+    try:
+        data = pathlib.Path(local).read_bytes()
+    except OSError as e:
+        return fail("put: %s: %s" % (local, e.strerror or e))
+    remote = remote_path(local, remote)
+    conn = open_conn(t)
+    try:
+        status, body = put(conn, data, remote, show_progress)
+    except PutRefused as e:
+        return fail(str(e))
+    except NoAnswer:
+        return fail("\nput: no answer from %s" % describe(t))
+    except Vanished:
+        return fail("\nput: %s went away" % describe(t))
+    finally:
+        conn.close()
+    print(file=sys.stderr)
+    if status is Status.ERR:
+        return fail(body.decode(errors="replace"))
+    print("%s %d" % (remote, len(data)))
+    return 0
 
 
 class Shot(NamedTuple):
@@ -376,6 +458,10 @@ def main(argv, env) -> int:
         return to_dfu(t, env)
     if argv[0] == "wait-console":
         return wait_console(env, float(argv[1]) if len(argv) > 1 else 10.0)
+    if argv[0] == "put":
+        if len(argv) != 3:
+            return fail("put takes <local> <remote>")
+        return put_file(t, argv[1], argv[2])
     conn = open_conn(t)
     try:
         status, body = request(conn, " ".join(argv))

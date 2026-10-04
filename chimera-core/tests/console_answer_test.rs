@@ -12,6 +12,9 @@ use chimera_hal::FB_SIZE;
 
 struct Sink(Vec<u8>);
 impl Out for Sink {
+    fn now(&self) -> chimera_hal::Ms {
+        chimera_hal::Ms(0)
+    }
     fn put(&mut self, b: &[u8]) -> Result<(), Stalled> {
         self.0.extend_from_slice(b);
         Ok(())
@@ -78,6 +81,10 @@ impl Unit for Fake {
     fn usb_regs(&self) -> Option<UsbRegs> {
         self.usb_regs
     }
+    type Files = chimera_core::console::NoCard;
+    fn files(&mut self) -> Option<&mut Self::Files> {
+        None
+    }
 }
 
 fn audio() -> AudioStats {
@@ -107,6 +114,7 @@ fn help_lists_the_table_in_order() {
     assert_eq!(ask(&mut u, "help\n"), want);
 }
 
+#[cfg(feature = "card-put")]
 #[test]
 fn help_is_the_specs_text() {
     let mut u = Fake::new();
@@ -120,6 +128,8 @@ fn help_is_the_specs_text() {
          card    SD speed and streams, a chord playing; clean (bench builds)\n\
          shot    the screen in THEME's colours; shot raw: canonical\n\
          dfu     restart into the ROM loader for just flash\n\
+         ls      the project files on the card and their sizes\n\
+         put     a project file onto the card: <path> <size> <crc32>\n\
          OK\n"
     );
 }
@@ -361,6 +371,9 @@ fn shot_answers_through_the_units_frame() {
 /// Takes nothing: every put stalls.
 struct Wall;
 impl Out for Wall {
+    fn now(&self) -> chimera_hal::Ms {
+        chimera_hal::Ms(0)
+    }
     fn put(&mut self, _: &[u8]) -> Result<(), Stalled> {
         Err(Stalled)
     }
@@ -392,6 +405,9 @@ struct Stalls {
     after: usize,
 }
 impl Out for Stalls {
+    fn now(&self) -> chimera_hal::Ms {
+        chimera_hal::Ms(0)
+    }
     fn put(&mut self, b: &[u8]) -> Result<(), Stalled> {
         if self.stalled {
             self.after += 1;
@@ -548,6 +564,7 @@ fn the_specs_stats_has_every_line_stats_writes() {
     assert_eq!(words[3..], ["of", "8"], "voices <now> <peak> of MAX_VOICES");
 }
 
+#[cfg(feature = "card-put")]
 #[test]
 fn the_specs_help_is_what_help_writes() {
     let mut u = Fake::new();

@@ -10,6 +10,7 @@ use crate::boot::{BootSeen, UsbRegs};
 use crate::hw::MAX_VOICES;
 use crate::perf::load::AudioStats;
 use crate::ui::UiState;
+use chimera_hal::store::Files;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Stats {
@@ -36,6 +37,10 @@ pub trait Unit {
     /// The OTG and PWR registers now: `status`'s `usb_regs` line, last
     /// before `OK`. `None`: no line.
     fn usb_regs(&self) -> Option<UsbRegs>;
+    /// The card behind `ls` and `put`; `NoCard` where there is none.
+    type Files: Files;
+    /// The card, for `ls` and `put`. `None`: not in this build.
+    fn files(&mut self) -> Option<&mut Self::Files>;
 }
 
 /// Why an answer is a single `ERR` line.
@@ -57,7 +62,7 @@ impl fmt::Display for Why {
 
 /// Text straight to `out`: no response buffer. The only `fmt::Error` source is `put`,
 /// so a `fmt::Error` here always means `Stalled`.
-struct Text<'a, O: Out>(&'a mut O);
+pub(super) struct Text<'a, O: Out>(pub(super) &'a mut O);
 
 impl<O: Out> Write for Text<'_, O> {
     fn write_str(&mut self, s: &str) -> fmt::Result {
@@ -111,6 +116,19 @@ pub fn answer(
         },
         Ok(Request::Shot(c)) => return write_shot(unit.frame(), c, t.0),
         Ok(r @ Request::Dfu(NoArg)) => unit.dfu().map(Ok).ok_or(Why::Absent(r.command())),
+        #[cfg(feature = "card-put")]
+        Ok(r @ Request::Ls(NoArg)) => match unit.files() {
+            None => Err(Why::Absent(r.command())),
+            Some(f) => return super::ls(f, t.0),
+        },
+        #[cfg(feature = "card-put")]
+        Ok(r @ Request::Put(arg)) => {
+            let open = unit.ui().project().meta().id();
+            match unit.files() {
+                None => Err(Why::Absent(r.command())),
+                Some(f) => return super::put(arg, open, f, t.0),
+            }
+        }
     };
     match body {
         Ok(wrote) => wrote.and_then(|()| t.write_str("OK\n")),

@@ -29,6 +29,8 @@ pub use marks::{
 pub use note::{Differ, LINE_LEN, Line, ProjectNote, Subject};
 pub use parts::{Origin, Part, PartEdit, PartRead, Performance, part_block, part_block_mut};
 pub use pool::Pool;
+#[cfg(feature = "card-put")]
+pub(crate) use store::peek_entry;
 pub(crate) use store::still_over;
 pub use store::{
     CardOut, FreshFile, ListOutcome, LoadOutcome, MAX_LISTED, ProjectEntry, SaveTo, boot_project,

@@ -6,7 +6,7 @@ use crate::blocks::{BLOCK, Blocks, FsError};
 use crate::fat::{FatCache, Stale};
 use crate::fs::Fs;
 use crate::volume::{Layout, first_partition, layout};
-use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
+use chimera_hal::store::{ByteSink, Dir, FileName, Files, ReadSink, Store, StoreError, VolumeId};
 use embedded_hal::delay::DelayNs;
 use embedded_hal::spi::SpiDevice;
 use embedded_sdmmc::{Block, BlockDevice, BlockIdx, SdCard, SdCardError};
@@ -20,6 +20,9 @@ pub trait Medium: BlockDevice {
     fn reinit(&self) {}
     /// The volume opened: fast clock.
     fn mounted(&self) {}
+    /// Each operation armed from now on ends after `ms` in all; `None`:
+    /// the medium's own cap.
+    fn cap(&self, _ms: Option<u32>) {}
     fn classify(&self, _e: &Self::Error) -> StoreError {
         StoreError::Io
     }
@@ -41,6 +44,8 @@ pub trait SdBus {
     fn phase(&self) -> BusPhase;
     /// Arm the phase's deadline.
     fn start_op(&mut self);
+    /// `Medium::cap`.
+    fn set_cap(&mut self, _ms: Option<u32>) {}
     fn timed_out(&self) -> bool;
 }
 
@@ -69,6 +74,10 @@ impl<S: SpiDevice<u8> + SdBus, D: DelayNs> Medium for SdCard<S, D> {
 
     fn mounted(&self) {
         self.spi(|s| s.set_phase(BusPhase::Data));
+    }
+
+    fn cap(&self, ms: Option<u32>) {
+        self.spi(|s| s.set_cap(ms));
     }
 
     fn classify(&self, e: &SdCardError) -> StoreError {
@@ -149,13 +158,14 @@ impl<T> Keyed<T> {
 
 /// A FAT16/FAT32 card behind `Store`. Its RAM: one block buffer, the FAT
 /// cache, and, each for the volume it was taken on, the allocator's hint
-/// and a FAT sector FAT 2 missed.
+/// a FAT sector FAT 2 missed, and a chain a failed write left.
 pub struct FatStore<D: Medium> {
     dev: D,
     buf: [u8; BLOCK],
     fat: FatCache,
     hint: Keyed<u32>,
     stale: Keyed<Stale>,
+    orphan: Keyed<u32>,
 }
 
 type FsResult<T, D> = Result<T, FsError<PartError<<D as BlockDevice>::Error>>>;
@@ -168,6 +178,7 @@ impl<D: Medium> FatStore<D> {
             fat: FatCache::new(),
             hint: Keyed::new(),
             stale: Keyed::new(),
+            orphan: Keyed::new(),
         }
     }
 
@@ -254,6 +265,7 @@ impl<D: Medium> FatStore<D> {
         }
         let mut hint = self.hint.for_volume(now);
         self.fat.keep_stale(self.stale.for_volume(now));
+        self.fat.keep_orphan(self.orphan.for_volume(now));
         let mut part = Part {
             dev: &self.dev,
             lba,
@@ -265,6 +277,9 @@ impl<D: Medium> FatStore<D> {
         );
         if let Some(c) = hint {
             self.hint.set(now, c);
+        }
+        if let Some(c) = self.fat.take_orphan() {
+            self.orphan.set(now, c);
         }
         if let Some(s) = self.fat.take_stale() {
             self.stale.set(now, s);
@@ -328,5 +343,11 @@ impl<D: Medium> Store for FatStore<D> {
 
     fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError> {
         self.run(vol, |fs, _| fs.make_dir(dir))
+    }
+}
+
+impl<D: Medium> Files for FatStore<D> {
+    fn cap(&mut self, ms: Option<u32>) {
+        self.dev.cap(ms);
     }
 }

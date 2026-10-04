@@ -22,6 +22,9 @@ pub struct FatCache {
     /// Outlives the operation: the store carries it for its volume, and the
     /// next change there copies it over first (`Table::heal`).
     stale: Option<Stale>,
+    /// The first cluster of a chain no entry holds, which a write a device
+    /// error stopped left allocated: carried the same way, freed by `heal`.
+    orphan: Option<u32>,
 }
 
 impl FatCache {
@@ -31,6 +34,7 @@ impl FatCache {
             dirty: false,
             buf: [0; BLOCK],
             stale: None,
+            orphan: None,
         }
     }
 }
@@ -44,6 +48,16 @@ impl FatCache {
     /// Hands back what `take_stale` gave, for the volume it came from.
     pub fn keep_stale(&mut self, stale: Option<Stale>) {
         self.stale = stale;
+    }
+
+    /// The chain a failed write left, for the store to keep.
+    pub fn take_orphan(&mut self) -> Option<u32> {
+        self.orphan.take()
+    }
+
+    /// Hands back what `take_orphan` gave, for the volume it came from.
+    pub fn keep_orphan(&mut self, orphan: Option<u32>) {
+        self.orphan = orphan;
     }
 }
 
@@ -154,6 +168,11 @@ impl<'a, B: Blocks> Table<'a, B> {
     /// forgets it; before an operation's first FAT change. A sector outside
     /// this volume's FAT 1 is forgotten unwritten. A failed write keeps it.
     pub fn heal(&mut self) -> Result<(), FsError<B::Error>> {
+        if let Some(start) = self.cache.orphan {
+            self.free_chain(start)?;
+            self.flush()?;
+            self.cache.orphan = None;
+        }
         let Some(Stale(sector)) = self.cache.stale else {
             return Ok(());
         };
@@ -175,6 +194,18 @@ impl<'a, B: Blocks> Table<'a, B> {
         }
         self.cache.stale = None;
         Ok(())
+    }
+
+    /// Frees the chain from `start`, which no entry holds since a device
+    /// error stopped its write, as far as the card has it: what the cache
+    /// held unflushed is dropped first, so the walk ends where the card's
+    /// copy does. A card that refuses keeps it for the next `heal`.
+    pub fn drop_chain(&mut self, start: u32) {
+        self.discard();
+        if self.free_chain(start).and_then(|_| self.flush()).is_err() {
+            self.discard();
+            self.cache.orphan = Some(start);
+        }
     }
 
     /// Drops an unflushed change: after a device error the operation is

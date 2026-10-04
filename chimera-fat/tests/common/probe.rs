@@ -25,6 +25,9 @@ pub struct Log {
     pub fail_reads: Cell<u32>,
     /// Every write to this block fails.
     pub fail_write: Cell<Option<u32>>,
+    /// The write with this index in `writes` lands, then errs: a card that
+    /// took the block and timed out busy.
+    pub land_then_fail: Cell<Option<usize>>,
     pub reads: Cell<u32>,
     pub calls: Cell<u32>,
     pub reinits: Cell<u32>,
@@ -72,8 +75,13 @@ impl<D: BlockDevice<Error = DiskError>> BlockDevice for Probe<D> {
         let mut was = [Block::new()];
         self.disk.read(&mut was, start)?;
         let same = was[0].contents == blocks[0].contents;
+        let index = self.log.writes.borrow().len();
         self.log.writes.borrow_mut().push((start.0, same));
-        self.disk.write(blocks, start)
+        self.disk.write(blocks, start)?;
+        if self.log.land_then_fail.get() == Some(index) {
+            return Err(DiskError);
+        }
+        Ok(())
     }
 
     fn num_blocks(&self) -> Result<BlockCount, DiskError> {

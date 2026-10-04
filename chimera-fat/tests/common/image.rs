@@ -567,6 +567,9 @@ pub struct FatReport {
     pub short: Vec<[u8; 11]>,
     /// Absolute blocks of FAT 2 that differ from FAT 1's.
     pub fats_differ: Vec<u32>,
+    /// Clusters FAT 1 links or ends that no chain from the root, `/CHIMERA`
+    /// or its directories reaches.
+    pub lost: Vec<u32>,
     pub entries: Vec<FatEntry>,
     /// Absolute first blocks of FAT 1 and FAT 2, and bytes per FAT entry.
     fats: [u32; 2],
@@ -590,7 +593,8 @@ impl FatReport {
     }
 }
 
-/// Walks `disk`'s FATs, root and `/CHIMERA`: see `FatReport`.
+/// Walks `disk`'s FATs, root, `/CHIMERA` and the directories in it: see
+/// `FatReport`.
 pub fn fat_check(disk: &RamDisk) -> FatReport {
     let u16_at = |b: &[u8; 512], at: usize| u32::from(u16::from_le_bytes([b[at], b[at + 1]]));
     let u32_at = |b: &[u8; 512], at: usize| u32::from_le_bytes(b[at..at + 4].try_into().unwrap());
@@ -701,7 +705,16 @@ pub fn fat_check(disk: &RamDisk) -> FatReport {
     if let Some((_, dir)) = chimera {
         let (dir_chain, _) = walk(start_of(&dir));
         count(&dir_chain);
-        for (block, raw) in entries_in(&blocks_of(&dir_chain)) {
+        let mut found = entries_in(&blocks_of(&dir_chain));
+        let subdirs: Vec<u32> = found
+            .iter()
+            .filter(|(_, e)| e[11] & 0x10 != 0)
+            .map(|(_, e)| start_of(e))
+            .collect();
+        for start in subdirs {
+            found.extend(entries_in(&blocks_of(&walk(start).0)));
+        }
+        for (block, raw) in found {
             let name: [u8; 11] = raw[..11].try_into().unwrap();
             let (chain, ended) = walk(start_of(&raw));
             count(&chain);
@@ -719,6 +732,12 @@ pub fn fat_check(disk: &RamDisk) -> FatReport {
             });
         }
     }
+    let lost = (2..clusters + 2)
+        .filter(|&c| {
+            let v = link(c);
+            v != 0 && (v < clusters + 2 || v >= end_mark) && !used.contains_key(&c)
+        })
+        .collect();
     let mut cross_linked: Vec<u32> = used
         .into_iter()
         .filter(|&(_, n)| n > 1)
@@ -733,6 +752,7 @@ pub fn fat_check(disk: &RamDisk) -> FatReport {
         cross_linked,
         short,
         fats_differ,
+        lost,
         entries,
         fats,
         entry_bytes,
