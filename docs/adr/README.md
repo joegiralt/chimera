@@ -95,4 +95,5 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0092](0092-put-files-over-the-usb-console.md) | Put project files onto the card over the USB console: `ls`, and `put` through the unit's own A/B save, checked as it streams, a refused side deleted (amends 0068) | Proposed |
 | [0087](0087-sound-pool-by-memory-budget.md) | Budget the sound pool by memory: one arena for sparse Sounds and 12-bit sources, one meter (supersedes in part 0043) | Proposed |
 | [0087](0087-sound-pool-by-memory-budget.md) | Budget the sound pool by memory: one arena for sparse Sounds and card-backed 12-bit sources, one meter (supersedes in part 0043 and 0014) | Proposed |
+| [0089](0089-ship-with-fat-lto.md) | Ship the firmware with fat LTO in one codegen unit | Proposed |
 | [0090](0090-delay-line-stored-as-i16.md) | Store the master delay line as i16, full scale ±2.0 (supersedes in part 0014) | Proposed |
