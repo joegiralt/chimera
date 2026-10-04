@@ -46,16 +46,16 @@ pub fn effective_release(rr: u8, ks: u8) -> u8 {
 }
 
 /// Seconds a full attack (0 to 1) takes at effective rate `r`.
-pub fn attack_seconds(r: u8) -> f32 {
+pub const fn attack_seconds(r: u8) -> f32 {
     ATTACK_SECONDS * exp2(-(r as f32) / 4.0)
 }
 
 /// Seconds a decay at effective rate `r` takes to fall `DECAY_OCTAVES`.
-pub fn decay_seconds(r: u8) -> f32 {
+pub const fn decay_seconds(r: u8) -> f32 {
     DECAY_SECONDS * exp2(-(r as f32) / 4.0)
 }
 
-pub fn attack_add(r: u8, sample_rate: f32) -> f32 {
+pub const fn attack_add(r: u8, sample_rate: f32) -> f32 {
     if r == 0 {
         return 0.0;
     }
@@ -64,12 +64,40 @@ pub fn attack_add(r: u8, sample_rate: f32) -> f32 {
 
 /// `log2` of the per-sample decay factor (0: holds). Kept as a log so a
 /// stage's length is one division, exact even for the slowest rates.
-pub fn decay_log2(r: u8, sample_rate: f32) -> f32 {
+pub const fn decay_log2(r: u8, sample_rate: f32) -> f32 {
     if r == 0 {
         return 0.0;
     }
     -DECAY_OCTAVES / (decay_seconds(r) * sample_rate)
 }
+
+/// Effective rates, 0–63.
+const RATES: usize = 64;
+
+/// `attack_add` and `decay_log2` of every effective rate at the build's
+/// `SAMPLE_RATE`, computed at compile time by the same `const fn`s, so a
+/// note-on reads them bit for bit instead of running `exp2` and a division
+/// per stage (#355). 512 B of flash.
+struct RateTables {
+    attack_add: [f32; RATES],
+    decay_log2: [f32; RATES],
+}
+
+const SR: f32 = crate::hw::SAMPLE_RATE as f32;
+
+static TABLES: RateTables = {
+    let mut t = RateTables {
+        attack_add: [0.0; RATES],
+        decay_log2: [0.0; RATES],
+    };
+    let mut r = 0;
+    while r < RATES {
+        t.attack_add[r] = attack_add(r as u8, SR);
+        t.decay_log2[r] = decay_log2(r as u8, SR);
+        r += 1;
+    }
+    t
+};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EnvCoefs {
@@ -81,7 +109,28 @@ pub struct EnvCoefs {
 }
 
 impl EnvCoefs {
+    /// From the tables at `SAMPLE_RATE` (every build's rate), else computed.
     pub fn new(r: EnvRates, note: MidiNote, sample_rate: f32) -> Self {
+        if sample_rate.to_bits() != SR.to_bits() {
+            return Self::compute(r, note, sample_rate);
+        }
+        let ks = key_scale(r.rs, note);
+        let t = &TABLES;
+        let at = |e: u8| e as usize % RATES;
+        Self {
+            attack_add: t.attack_add[at(effective(r.ar, ks))],
+            d1_log2: t.decay_log2[at(effective(r.d1r, ks))],
+            d1_level: d1l_level(r.d1l),
+            d2_log2: t.decay_log2[at(effective(r.d2r, ks))],
+            rr_log2: t.decay_log2[at(effective_release(r.rr, ks))],
+        }
+    }
+
+    /// `new` worked out with `exp2` and divisions: any rate. Counted under
+    /// `test-support`, so a test can tell the tables served a note.
+    pub fn compute(r: EnvRates, note: MidiNote, sample_rate: f32) -> Self {
+        #[cfg(feature = "test-support")]
+        COMPUTED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         let ks = key_scale(r.rs, note);
         Self {
             attack_add: attack_add(effective(r.ar, ks), sample_rate),
@@ -92,6 +141,10 @@ impl EnvCoefs {
         }
     }
 }
+
+/// `EnvCoefs::compute` calls: for the tests.
+#[cfg(feature = "test-support")]
+pub static COMPUTED: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage {
