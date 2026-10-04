@@ -1,99 +1,125 @@
-# Sound pool by memory budget: variable-size Sounds and sources, one meter
+# Sound pool by memory budget: sparse Sounds, card-backed sources, one meter
 
-Status: draft for owner review (2026-10-04). Issue: private issue #337. ADR 0087 (Proposed) records the decision. It supersedes, in part, ADR 0043's fixed 32-slot `Pool`. TAPE (private issue #279) builds on it. The factory library (private issue #317) fills it.
+Status: draft for owner review (2026-10-04), revised after an adversarial review the same day. Issue: private issue #337. ADR 0087 (Proposed) records the decision. It supersedes ADR 0043's fixed 32-slot `Pool` in part, and ADR 0014's AXI accounting in part. TAPE (private issue #279) builds on it. The factory library (private issue #317) fills it.
 
 ## Intent
 
 The owner, 2026-10-03: the project's sound pool is budgeted by **memory**, not by 32 slots, as on the Polyend Play. The rulings this spec builds on:
 
-- **One byte budget** holds the project's Sounds and its TAPE sample data together. TAPE's separate sample pool from #279 merges into it.
-- **There is one meter**, a single bar like the Play's.
+- **One byte budget** covers the project's Sounds and the TAPE sample data held in RAM. TAPE's separate sample pool from #279 merges into it.
+- **One meter**, a single bar like the Play's.
 - **Sounds are stored encoded and variable-size.** A Sound is decoded only when a Part loads it. Library → pool → Part stays a copy at each step (ADR 0043).
-- **TAPE sources are stored S950-style:** 12-bit, with a sample rate per source.
+- **TAPE sources are stored S950-style:** 12-bit, with a rate per source.
 - **NEW fills its pool with 32 curated built-in factory Sounds.** About 250 more live in the card library (#317).
 - **No users yet.** Old projects must load safely; they need not sound identical.
 - **Few controls.** Every MIX or hold gesture gets a contextual focus-band hint (ADR 0086).
 - **Never snap parameters, and never allocate in the audio thread.**
 
-## What exists today (measured 2026-10-04)
+**The frame this revision adds.** RAM can't hold TAPE's sources; the card can. The honest ceiling for the arena is about 152 KB (148 KiB), and 200 KB (195 KiB) with the delay trade (owner question 1). That is 4.2–5.6 s of 24 kHz 12-bit audio for the whole project, which would make a RAM-only TAPE a one-source engine. So:
 
-| Thing | Bytes | Where it comes from |
+- **Every source lives on the card**, written once, under `/CHIMERA/TAPES`.
+- **The arena holds, per source, either the whole of a short source** (a microsample, for the random-access models: TRANSWAVE, LOOP, GRAIN, SCRUB and the rest) **or the first slice of a streamed one** (TRON, #279). Both count on the one meter.
+- **Projects carry only a `SourceRef` to each source, never audio.** That is the Octatrack's and the Digitakt's model: a project's sample list points into the card's audio pool. Quick-save never rewrites sample data.
+
+## What exists (measured 2026-10-04 on `orbit` at 43d59110)
+
+`orbit` is measured, not `main`, because ORBIT merges before this work (roadmap: ORBIT unit QA → #337 → TAPE core).
+
+| Thing | Bytes | Source of the figure |
 |---|---|---|
 | `Option<Sound>` in RAM | **896** | `memory_budget_test::axi_counts_the_project`: 32 slots = 28 672 B |
-| `Project` (6-Part `Performance` 5 672 B + the 32 slots + meta) | 34 464 | same test |
-| A Sound as card records today (`encode_sound`, every block of both engines) | **1 127** records + 16 name = **1 143** | the `tests/fixtures/v1/*.snd` files, 1 159 B with the 28 B header and the 4 B CRC |
-| The same Sounds, encoding only params that differ from `Sound::neutral` | **153–273, mean 211** (INIT: 58) | the 8 factory fixtures, re-encoded by hand (§ Sparse encoding) |
-| Worst case, sparse (all 198 params, a full registry, 128 routes) | 1 823 | § Sparse encoding |
-| AXI really used (`.data` + `.bss`) | 375 564 of 524 288; **148 724 free** | `rust-size -A` on the latest release ELF |
-| AXI by the accounting model (`AXI_RESIDENT`) | 433 712; 90 576 spare (64 KB required) | `axi_residents_fit` |
-| D2 used (`.ram_d2` + `.ram_d2_dma`) | 168 364 of 294 912; **126 548 free** | `rust-size`; earmarked for TAPE streaming and VA |
-| `SymPool` (D2) | 112 200 | `sympathetic_pool_fits_d2` |
-| Flash used (vectors + `.text` + `.rodata` + `.data`) | 747 144 of 917 504; **170 360 free** | `rust-size` |
+| `Project` on orbit (Performance 5 720 + slots 28 672 + ORBIT 3 912 + meta) | 38 424 | same test |
+| A Sound as card records today (`encode_sound`, every block of both engines) | **1 143** (1 127 records + 16 name) | `tests/fixtures/v1/*.snd`, 1 159 B with the 28 B header and 4 B CRC |
+| The same Sounds, sparse (§ Sparse encoding) | **153–273, mean 211**; INIT 58 | the 8 factory fixtures, re-encoded by hand |
+| Worst case, sparse | 1 823 | § Sparse encoding |
+| AXI by the paper model (`AXI_RESIDENT`) | 442 072 (64 KiB spare required, 82 216 spare) | `axi_residents_fit` |
+| AXI really used, `--features orbit` | 384 248 (`.data` 3 092 + `.bss` 381 156); 140 040 free | `rust-size -A`, release ELF |
+| AXI really used, `--features bench,orbit` (the largest build `just` makes) | 398 556 (`.data` 5 976 + `.bss` 392 580); **125 732 free** | same |
+| What `UI_RESERVE` (65 536) actually covers | `UiState` less its `Project` 3 840, `ENGINE` 5 864, the USB console's statics 1 456, plus others it was never sized for | `ui_state_fits_the_ui_reserve`; `rust-nm -S` |
+| Master delay line (`[f32; 24 064]`, `dsp/delay.rs`) | 96 256; as `i16`, 48 128 | `MAX_DELAY_SAMPLES` |
+| D2 free | **121 504** of 286 720 | `instrument_fits_d2` |
+| `SymPool` (D2) | 112 200: Sympathetic's string state, DSP not Sounds, so encoding Sounds frees none of it | `sympathetic_pool_fits_d2` |
+| Flash free, `--features orbit` | 128 832 of 917 504 | `rust-size` |
+| Flash free, `--features bench,orbit` | **100 036** | same |
 
-Two findings shape the design:
+Three findings shape the design:
 
-1. **Today's encoding is bigger than the RAM struct.** `encode_sound` writes all 19 voice blocks, MODAL's on an ALGO Sound and ALGO's on a MODAL Sound, at 5 B a param. So "store the Sounds encoded" saves nothing until the encoding is sparse. Sparse encoding is the first step of the build (§ Build order).
-2. **The fixed pool lives in `Project`, in AXI, behind `UiState`.** The audio thread never reads it: Parts carry decoded Sounds, which reach the audio through `AudioShared` (ADR 0021). Sources change that, because a TAPE voice must read sample bytes from the pool (§ How a Part plays).
+1. **Today's encoding is bigger than the RAM struct.** `encode_sound` writes all 19 voice blocks, MODAL's on an ALGO Sound and ALGO's on a MODAL Sound, at 5 B a param. "Store Sounds encoded" saves nothing until the encoding is sparse, which is step 1 of the build.
+2. **The paper AXI rule binds before the chip does.** `AXI_RESIDENT` counts `UI_RESERVE` at 64 KiB. ADR 0014 sized that reserve from `main`'s measured stack, and ADR 0025 has since moved the stack to DTCM. The reserve now quietly covers statics no one budgeted (the row above). On orbit's figure, a 96 KiB arena would fail the `≥ 64 KiB` const assert (about 59 KB spare), even with the chip holding 125 KB free. The rule is replaced (§ The budget).
+3. **D2 is TAPE's streaming memory.** Its 121.5 KB free is the TRON ring buffers (#279: about 10 KB a note, about 60 KB for six) and VA's state. The arena does not go there.
 
 ## Prior art, and what we take
 
 | Instrument | What it does | What we take |
 |---|---|---|
-| **Polyend Play** | "On the bottom of the Main menu Samples screen, you can see a Memory bar that indicates the remaining sample pool space percentage." Up to 255 samples per project, in about 6 minutes of 16-bit 44.1 kHz mono. "Delete Unused Samples" removes samples not placed on the grid. "A sample played back at half the sample rate will use half the Pool memory." (Play manual, § Samples, § Sample Pool.) | One bar with a percentage, in the browser. A count cap well above what the bytes allow. A purge of unused entries. A lower sample rate costs proportionally less. |
-| **Polyend Tracker** | The Sample Loader's memory bar previews the highlighted file: a red segment for the memory it would add, green for what it would free. "Delete unused" purges instruments the project doesn't use. Per-project memory is about 133 s of mono; the low-quality import doubles it. (Tracker manual v1.5, § Sample Loader, § Instrument.) | **The preview segment:** the bar shows what the highlighted library Sound would cost before you load it. |
-| **Elektron Digitakt** | 64 MB of sample RAM per project. SETTINGS › SAMPLES › VIEW RAM › SELECT UNUSED › UNLOAD removes samples no pattern uses from RAM. They stay on the +Drive. (Digitakt manual, § Samples.) | Purge is a selection, then a confirm. It never deletes from the card. |
-| **Elektron Octatrack** | 85.5 MB of RAM, shared between Flex samples and the track recorders. Every sample in the slot list counts "whether they are used or not". PURGE SAMPLES drops the samples no trig uses from the slot lists, not from the card. A load that won't fit is refused with a memory-full error. (Octatrack manual, § Project › Samples, § Memory.) | A refusal names the shortfall. Purge leaves the card alone. Holding an unused entry costs the same as using it. |
-| **Akai S950** | 12-bit samples, sample rate chosen per sample, from 7.5 to 48 kHz. Standard memory 750 KB, about 63 s at the lowest rate. (S950 specifications; S900 history.) | 12-bit storage with a rate per source. The rate is the user's quality-for-time trade. |
+| **Polyend Play** | "On the bottom of the Main menu Samples screen, you can see a Memory bar that indicates the remaining sample pool space percentage." Up to 255 samples a project. "Delete Unused Samples" removes samples not placed on the grid. "A sample played back at half the sample rate will use half the Pool memory." (Play manual, § Samples, § Sample Pool.) | **One bar, labelled with a percentage only.** A count cap above what the bytes allow. Purge removes unused samples. A lower rate costs proportionally less. |
+| **Polyend Tracker** | The Sample Loader's memory bar previews the highlighted file: a red segment for what it would add. "Delete unused" purges instruments the project doesn't use. (Tracker manual v1.5, § Sample Loader, § Instrument.) | **The preview segment** for the highlighted library entry. |
+| **Elektron Digitakt** | 64 MB of sample RAM a project. SETTINGS › SAMPLES › VIEW RAM › SELECT UNUSED › UNLOAD removes samples no pattern uses from RAM. They stay on the +Drive. The project references samples on the +Drive. (Digitakt manual, § Samples.) | Purge is a selection, then a confirm. It removes samples only, and never touches the card. Projects reference card audio. |
+| **Elektron Octatrack** | 85.5 MB of RAM, shared by Flex samples and the track recorders. Every sample in the slot list counts "whether they are used or not". PURGE SAMPLES drops unused samples from the slot lists, "not … from the audio pool" on the card. Static machines stream from the card. A load that won't fit is refused with a memory-full error. (Octatrack manual OS 1.25, § Memory, § Samples.) | **RAM-resident and streamed samples side by side** (Flex and Static). Projects point at card files. A refusal names the shortfall. Purge leaves the card alone. |
+| **Akai S950** | 12-bit, rate chosen per sample, 7.5–48 kHz. 750 KB is about 63 s at the lowest rate. (S950 specifications.) | 12-bit storage with a rate per source, as the quality-for-time trade. |
 
 Sources:
 - Polyend Play manual: https://polyend.com/manuals/play/
 - Polyend Tracker manual v1.5: https://files.kraftmusic.com/media/ownersmanual/Polyend_Tracker_Manual_v1_5.pdf
-- Digitakt purge: the Elektronauts threads "How to delete ONLY unused samples from +Drive?" and "How To: Remove Samples from Project?", which quote the manual's VIEW RAM › SELECT UNUSED › UNLOAD path
-- Octatrack manual OS 1.25: http://www.elektron.co.jp/wp-content/uploads/2015/01/octatrack_manual_OS1.25.pdf, and the SampleStack guide: https://samplestack.app/news/octatrack-sample-management-guide/
+- Digitakt purge: Elektronauts, "How To: Remove Samples from Project?" and "How to delete ONLY unused samples from +Drive?", which quote the manual's path
+- Octatrack manual OS 1.25: http://www.elektron.co.jp/wp-content/uploads/2015/01/octatrack_manual_OS1.25.pdf; the SampleStack guide: https://samplestack.app/news/octatrack-sample-management-guide/
 - Akai S950: https://www.vintagedigital.com.au/akai-s950/ and https://en.wikipedia.org/wiki/Akai_S900
 
-## The numbers
+## The budget
 
-**The budget: `ARENA_BYTES` = 96 KiB (98 304 B), in AXI.** It replaces the 28 672 B of fixed slots.
+**The rule changes from a paper sum to the linker.**
+
+- `memory.x` gains `ASSERT(ORIGIN(RAM) + LENGTH(RAM) - __sheap >= 32K, "AXI: under 32 KiB free")`. `__sheap` is cortex-m-rt's end of `.bss` and `.uninit`; there is no heap, so it is the real end of AXI statics.
+- Every firmware feature set `just check` builds is checked, and the largest, `bench,orbit`, is the one that binds.
+- `UI_RESERVE` and the const `≥ 64 KiB` assert go. `axi_residents_fit` stays as a host-side report: it prints the parts, but it no longer asserts spare.
+- **32 KiB is the stated margin.** It is room for the next features' UI state (TAPE's pages, VA's) without re-deciding the arena.
+
+**`ARENA_BYTES` = 112 KiB (114 688 B), in AXI.** It is sized from the `bench,orbit` measurement:
 
 | | Bytes |
 |---|---|
-| Arena | 98 304 |
-| Index (128 Sound entries × 12 B + 32 source entries × 20 B) | 2 176 |
-| `SourceTable` the audio reads (32 × 24 B) | 768 |
-| `Project` after (Performance + index + meta) | ≈ 8 000, from 34 464 |
-| AXI really free after | 148 724 − 98 304 − 768 + 26 464 ≈ **76 100** |
-| `AXI_RESIDENT` spare after, with `UI_RESERVE` 64 → 16 KiB | ≈ **67 100** (rule: ≥ 64 KiB) |
+| AXI used today, `bench,orbit` | 398 556 |
+| − the 32 fixed slots | − 28 672 |
+| + index (128 Sound entries × 12 B + 32 source entries × 20 B) | + 2 176 |
+| + `SourceTable` (32 rows × 12 B) and the gate and `sounding` words | + 392 |
+| + arena | + 114 688 |
+| **AXI used after** | **487 140** |
+| **Free, against the 32 KiB margin** | **37 148** (36.3 KiB) |
 
-`UI_RESERVE` can shrink because what it reserves for, `UiState` without its `Project`, measures 3 608 B, and `ui_state_fits_the_ui_reserve` already caps that at 4 KiB. A 128 KiB arena would leave about 34 KiB of model spare and break the 64 KiB rule (open question 1).
+The honest ceiling, with no margin at all, is 125 732 + 28 672 − 2 176 − 392 = **151 836 B** (148 KiB). The delay trade (owner question 1) adds 48 128 B: 199 964 B (195 KiB).
 
-**What fits.** A Sound costs its sparse encoding plus its 16 B name, rounded up to 16 B. The curated set is budgeted at 320 B a Sound, above the measured 211 B mean, because curated Sounds touch more params than the 8 test Sounds. NEW's 32 then take **10 240 B, 10 %**, and leave **88 064 B** for sources:
+**What fits.** A Sound costs its sparse encoding plus its 16 B name, rounded up to 16 B. The curated set is budgeted at 320 B a Sound, above the measured 211 B mean. NEW's 32 then take **10 240 B, 9 %**, and leave **104 448 B** for sources:
 
-| Source rate | 12-bit bytes/s | Seconds in 88 064 B | 16-bit, for comparison |
+| Source rate | 12-bit bytes/s | Seconds in 104 448 B (112 KiB arena) | With the delay trade (160 KiB arena: 153 600 B) |
 |---|---|---|---|
-| 48 kHz | 72 000 | **1.2 s** | 0.9 s |
-| 32 kHz | 48 000 | **1.8 s** | 1.4 s |
-| 24 kHz | 36 000 | **2.4 s** | 1.8 s |
-| 16 kHz | 24 000 | **3.7 s** | 2.8 s |
-| 12 kHz | 18 000 | **4.9 s** | 3.7 s |
-| 8 kHz | 12 000 | **7.3 s** | 5.5 s |
+| 48 kHz | 72 000 | 1.5 s | 2.1 s |
+| 32 kHz | 48 000 | 2.2 s | 3.2 s |
+| **24 kHz** (default) | 36 000 | **2.9 s** | **4.3 s** |
+| 16 kHz | 24 000 | 4.4 s | 6.4 s |
+| 8 kHz | 12 000 | 8.7 s | 12.8 s |
 
-12-bit storage buys a third more time than 16-bit at every rate. With no Sounds in the pool at all, 24 kHz gives 2.7 s. In Sounds alone, 96 KiB holds about 300 curated Sounds, so the 128-slot cap (§ The model) binds before the bytes do, unless sources are loaded.
+As 16-bit, each figure would be a quarter less.
 
-#279's estimate of 1–2 s per microsample source at 24 kHz fits: NEW plus one 2 s source at 24 kHz reads **84 %**.
+**What sources cost.**
+- **A TRON instrument's heads:** 12 zones × 100 ms at 24 kHz is 43 200 B, **38 %**. The rest of its 4–5 MB streams from the card into D2's rings.
+- **A 2 s microsample at 24 kHz:** 72 000 B, 63 %. NEW plus one reads **72 %**.
+
+In Sounds alone, 112 KiB holds about 350 curated Sounds, so the 128-slot cap binds first unless sources are loaded.
+
+**The delay trade, both ways.** The delay line as `i16` (full scale ±2.0, as ADR 0028 did for the reverb) frees 48 128 B, and the arena can grow to 160 KiB (163 840 B) at the same 32 KiB margin: 487 140 − 114 688 + 163 840 − 48 128 = 488 164 used, 36 124 free. It changes the delay's sound: 16-bit grain on every repeat, compounding with feedback. It needs its own ADR, superseding ADR 0014's delay storage in part. Kept as f32, the arena stays at 112 KiB. This is owner question 1.
 
 ## The model
 
 ```rust
 pub const MAX_SOUNDS: usize = 128;   // Sound slots: was POOL_SIZE = 32
 pub const MAX_SOURCES: usize = 32;   // source slots
-pub const ARENA_BYTES: usize = 96 * 1024;
+pub const ARENA_BYTES: usize = 112 * 1024;
 pub const GRANULE: usize = 16;
 
 pub struct SlotId(u8);    // < MAX_SOUNDS; built only by new / ALL, as today
 pub struct SourceId(u8);  // < MAX_SOURCES; the same pattern
 
-/// Arena bytes, always a multiple of GRANULE: what the meter adds up.
+/// Arena bytes, a multiple of GRANULE: what the meter adds up.
 pub struct Cost(u32);
 
 pub struct Pool {
@@ -101,252 +127,315 @@ pub struct Pool {
     sound_gens: [u16; MAX_SOUNDS],
     sources: [Option<SourceEntry>; MAX_SOURCES],
     source_gens: [u16; MAX_SOURCES],
-    arena: ArenaWriter,      // the only writer of the arena's bytes
+    arena: ArenaWriter,          // the only writer of the arena's bytes
 }
-struct SoundEntry  { offset: u32, len: u16, engine: EngineType, crc: u32 }       // 12 B
-struct SourceEntry { offset: u32, frames: u32, rate: Hz, refs: u8, crc: u32 }    // 20 B
+struct SoundEntry  { offset: u32, len: u16, engine: EngineType, crc: u32 }   // 12 B
+struct SourceEntry { offset: u32, held: u32, r: SourceRef }                  // 20 B
+pub struct SourceRef { crc: u32, frames: u32, rate: Hz }   // rate: u16 Hz; together, the source's identity
 ```
 
-- **Slots stay numbered and stable**, as the projects spec required for AFX. There are now 128 of them. Empty slots are free rows. The bytes are the real limit, and the count cap only bounds the index. The Play caps at 255 samples and the Digitakt at 128 slots, so 128 is in line.
-- **Generations are kept** exactly as ADR 0043 has them, one `u16` per Sound slot and per source slot. Every store and clear moves one.
-- **`Pool::get(SlotId) -> Option<EncodedSound<'_>>`** replaces `Option<&Sound>`. An `EncodedSound` is a borrowed view: its name (the first 16 B), its engine, its `Cost`, its CRC, and a `decode_into(&mut Sound)`. Nothing outside `project` sees the arena's offsets.
-- **`Cost` is a newtype.** `Pool::used() -> Cost`, `Pool::free() -> Cost`, and `Pool::fits(Cost) -> bool` are the only arithmetic. The meter, the refusals and the purge prompt all read them.
+- **Slots stay numbered and stable**, now 128 of them; empty slots are free rows. The bytes are the real limit, and the count cap only bounds the index. The Play caps at 255 samples and the Digitakt at 128 slots.
+- **Generations stay** exactly as ADR 0043 has them, one `u16` per Sound slot and per source slot.
+- **`Pool::get(SlotId) -> Option<EncodedSound<'_>>`** replaces `Option<&Sound>`. An `EncodedSound` is a borrowed view: its name (its first 16 B), its engine, its `Cost`, its CRC, and `decode_into(&mut Sound)`.
+- **`held` is how many bytes of the source the arena holds:** all of it (`3·⌈frames/2⌉`), or a head for a streamed source. A source's cost is `16 + held`, rounded up. The engine model decides which (§ How a Part plays).
+- **`Cost` is a newtype.** `Pool::used()`, `Pool::free()` and `Pool::fits(Cost)` are the only arithmetic. The meter, the refusals and the purge read them.
+- **References are derived, never stored.** `fn source_users(&Project, SourceId) -> Users` returns which pool Sounds and which Parts resolve to that source. It is computed when asked, the same way `users(SlotId)` is, so no count can drift. (The first draft's stored `refs` field could go stale between a Sound clear and a purge.)
 
 ## Memory layout and allocator
 
 ```
- POOL_ARENA (96 KiB, AXI)
+ POOL_ARENA (112 KiB, AXI)
  0                                                              ARENA_BYTES
  | src 0 | src 3 | src 1 |  ......... free gap .........  | snd 7 | snd 0 | snd 2 |
  ^ sources grow up from 0                       Sounds grow down from the top ^
 ```
 
-- **Two ends, one gap.** Sources are packed from offset 0 upward, Sounds from the top downward. Free space is exactly the gap between them.
-- **No holes at rest.** Every delete compacts its own end at once, on the UI thread. So `free() == gap` always holds outside a running move, a load fits if and only if `cost ≤ gap`, and fragmentation never builds up. A test asserts the invariant after every operation (§ Test plan).
-- **Why two ends.** Sounds and sources differ in who reads them:
-  - The audio thread never reads a Sound's bytes. Compacting the Sound end is a plain `copy_within` on the UI thread, with no protocol.
-  - The audio thread does read source bytes. Compacting the source end needs the move protocol below. Keeping the ends apart means a Sound delete never moves a source, and a source delete never moves a Sound.
-- **The granule is 16 B.** Each entry starts on a 16 B boundary, so a source's data starts aligned, and the rounding wastes 8 B per entry on average.
-- **Where the bytes live.** `POOL_ARENA` is one AXI static of `ARENA_BYTES`. The desktop and the tests take a boxed one. The UI holds the only `ArenaWriter`, built once from the static. The audio thread holds a `SourceReader`, which can read only through the `SourceTable` (§ How a Part plays). Both wrap a raw pointer. Their `// SAFETY:` argument is the move protocol: the audio thread reads only bytes the table publishes as live, and the UI writes those bytes only under the protocol.
-- **Staged writes go into the gap.** An add writes its bytes into the gap, verifies them (a CRC for a source, a decode for a Sound), and only then takes an index entry. The meter doesn't move until then. A failed or cancelled add leaves the gap as it was.
+- **Two ends, one gap.** Sources pack upward from offset 0, and Sounds pack downward from the top.
+- **Sounds compact at once.** The audio never reads Sound bytes, so a Sound delete is a `copy_within` on the UI thread, done immediately.
+- **Sources compact when nothing above the hole is sounding** (§ Compacting sources). Until then the hole is **pending**: the meter counts it as used, and draws it in `FAINT` (§ The meter). That keeps `free() == gap` true at every moment, so an add fits if and only if `cost ≤ gap`, and the meter never shows bytes a load can't use.
+- **The granule is 16 B.** Each entry starts on a 16 B boundary, and rounding wastes 8 B an entry on average.
+- **Where the bytes live.** `POOL_ARENA` is one AXI static. The desktop and the tests box one.
+  - The UI holds the only `ArenaWriter`. The audio holds a `SourceReader`, which reads only through the `SourceTable`. Both wrap a raw pointer.
+  - Their `// SAFETY:` argument: the audio reads only rows the table publishes as live, and the UI writes a live row's bytes only inside the gate below.
+- **Staged writes go into the gap.** An add writes its bytes into the gap and verifies them (a decode for a Sound, the CRC for a source). Only then does it take an index entry. Until then the meter doesn't move. A failed or cancelled add leaves the gap as it was.
 
-### Moving a source the audio may be reading
-
-A source delete slides every source above it down by the deleted cost `g`. That moves bytes a voice may be reading. Each source being moved has a `SourceTable` row that the UI updates:
+### The audio's view
 
 ```rust
-pub struct SourceView {             // all AtomicU32; UI writes, audio reads
-    base: AtomicU32,                // where the source now starts
-    from: AtomicU32,                // where it started before this move
-    done: AtomicU32,                // bytes already at `base`, a multiple of 3
-    len:  AtomicU32,                // data bytes
-    rate: AtomicU32,                // Hz
+pub struct SourceRow { base: AtomicU32, held: AtomicU32, rate: AtomicU32 }  // 12 B
+pub struct SourceTable {
+    rows: [SourceRow; MAX_SOURCES],
+    gate: AtomicU32,       // nonzero while the UI moves source bytes
+    sounding: AtomicU32,   // written by audio: bit n set if a voice reads source n
 }
 ```
 
-- **The UI copies front to back, in chunks of at most `g` bytes**, each a multiple of 3 (one 12-bit pair is 3 B, § 12-bit packing). After each chunk it stores `done` with `Release`.
-- **The audio resolves a pair's address once per read:** byte `i` (pair-aligned) is at `base + i` if `i < done`, otherwise at `from + i`. It loads the row with `Acquire` at the start of each block, and the UI can't run inside a block.
-- **Why it is safe, even if audio interrupts the UI mid-chunk.** Chunk `k` covers bytes `[k·c, (k+1)·c)`. Its writes land at `base + [k·c, (k+1)·c)`, which is `from + [k·c − g, (k+1)·c − g)`. With `c ≤ g`, every byte written has index below `k·c`, the `done` the audio last saw. The audio reads those bytes at `base`, where they are already complete. Bytes at or above `done` are read at `from`, and no write has reached them yet.
-- **Cost.** Moving all 88 KB of sources is one `memmove`'s worth of work, well under a millisecond at 480 MHz. The UI does it in one pass, so there is no partial state across passes.
-- `g ≥ GRANULE` (16 B), so each chunk is at least 15 B, and in practice 4 KiB.
+- **A voice latches its `SourceId` at note-on**, and its row's `base` and `held` at the start of each block. It never re-resolves the Part's ref mid-note, so a Part changing SOURCE doesn't touch a ringing note.
+- **No generation in a row.** A row is reused only after its source is retired, and retirement waits until no voice reads it (§ Deleting a source). So no latched id can outlive its source. A generation would guard against something the protocol already rules out.
+- **Writes by the UI** (row fields `Relaxed`, then the gate):
+  - **publish a new source:** write `base`, `held` and `rate`, then `fence(Release)`. Only after that is the `SourceId` written into a Part's `AudioShared` state, which is itself published by the triple buffer's `Release`.
+  - **audio reads:** `gate.load(Acquire)` at block start, then the rows.
 
-### Retiring a source
+### Compacting sources
 
-A source a Part still uses can't be deleted (`InUse`, as `pool_clear` today). A source no Part uses can still be sounding: a ringing voice from before the Part's SOURCE changed. So a delete is two steps:
+A source delete leaves a hole below the sources above it. Compaction slides them down. The design is the simple one: **never move bytes a voice is reading.**
 
-1. The UI marks the row `retired`. From then on, no new voice may start on it, and no Part can reach it, since no Part references it.
-2. The audio publishes a per-block `sounding: u32`, one bit per source, beside `AudioStats`. The UI frees the bytes and compacts only after a block reports the bit clear, and after the audio acknowledges an epoch at or after the retirement (the `Swap::ack` pattern, ADR 0046).
+1. **Wait.** Compaction starts only when `sounding & above == 0`, where `above` is the mask of the sources above the hole. The UI checks on each pass. While a drone holds one of them, the hole stays pending, and the meter shows it.
+2. **Close the gate.** The UI stores `gate = 1` (`Release`), then waits until the audio acknowledges a block that began after the store. This is the epoch-ack pattern of `Swap::ack` (ADR 0046), at most one block, 1.33 ms. While the gate is closed:
+   - a note-on whose source is among `above` is **held for the block**: the voice is allocated and latched, its envelope waits, and it starts on the first block after the gate opens;
+   - every other source plays normally.
+3. **Move.** `copy_within` the sources above the hole down, and rewrite their rows' `base` (`Relaxed`). The largest possible move, every source byte, is 104 KB, about 0.2 ms at 480 MHz.
+4. **Open the gate:** `gate = 0` with `Release`. The audio's next `Acquire` sees the new bases.
 
-If the note is held, the source stays, and PURGE reports `1 SOURCE STILL SOUNDING` (§ When the budget is full). The audio never cuts a note, and nothing snaps.
+**The cost** is that a note on a moving source can start up to two blocks (2.7 ms) late, once per source delete, which is a deliberate user action. The audio never reads a byte mid-move, and never takes a branch per sample. There is no per-read mapping (owner question 2 asks if the latency is acceptable).
+
+### Deleting a source
+
+- **A source a Part or a pool Sound resolves to can't be deleted** (`InUse`, as `pool_clear` is today). It can still be sounding after its last user left: a ringing note from before a Part changed SOURCE.
+- **So a delete retires it.** Its index entry goes at once, and it is out of the SOURCE lists. Its row stays live until its `sounding` bit is clear, and then the hole compacts as above.
+- **No note is ever cut.**
 
 ## Sparse encoding
 
-`encode_sound` becomes **sparse**: a `Block` record carries only the params whose disk value (the `f32` bits, or the enum code) differs from `Sound::neutral(engine)`'s. A block with none is omitted. `Engine`, `Registry`, `ModDests` and `Routes` are written as today.
+`encode_sound` becomes **sparse**. A `Block` record carries only the params whose disk value (the `f32` bits, or the enum's code) differs from `Sound::neutral(engine)`'s, and a block with none is omitted. `Engine`, `Registry`, `ModDests` and `Routes` are written as today.
 
-- **No format change, and today's decoder already reads it.** `decode_block` writes only the ids it is given, onto a `Sound::neutral` base, and an absent block keeps neutral's values. `neutral` is frozen (`neutral_v1.txt`). So a sparse file and a full file of the same Sound decode to the same bits.
-- **Canonical.** The bytes depend only on the Sound's bits, so two Sounds are bit-equal exactly when their encodings are byte-equal (§ Test plan). `sound_crc` stays the CRC of the padded name and the records. Its values change once, which is safe, because no CRC is stored on the card (`Origin` stores the slot; ADR 0043 recomputes `Origin.crc` at load).
-- **Sizes.** The 8 factory fixtures go from 1 143 B to 153–273 B. INIT goes to 58 B. The bound is 16 (name) + 5 (`Engine`) + 19 × 5 (block heads) + 198 × 5 (params) + 164 (`Registry`) + 37 (`ModDests`) + 516 (`Routes`) = **1 823 B**, which rounds to a `Cost` of 1 824. `MAX_SOUND_COST` is asserted against it.
-- **The same encoder writes everywhere:** the arena, the project file's `Slot` and `Part` records, library `.snd` files and the factory blob. One encoder, one canonical form.
+- **Today's decoder already reads it.** `decode_block` writes only the ids it is given, onto a `Sound::neutral` base, and an absent block keeps neutral's values.
+- **`neutral` becomes a format contract.** A full-encoded file never depended on neutral's values; a sparse file does, for every param it omits. So:
+  - changing any value in `Sound::neutral` changes the meaning of every sparse file on every card;
+  - it needs a migration (`codes.rs`'s `TRANSLATIONS`, keyed on a format bump) in the same commit;
+  - `neutral_v1.txt` already pins it, and its test comment says so from now on.
+
+  A param added later takes its neutral default at addition. Old sparse files omit it and get that default, just as old full files lacked it.
+- **Canonical.** The bytes depend only on the Sound's bits, so two Sounds are byte-equal exactly when they are bit-equal. `sound_crc` keeps its definition, and its values change once. No CRC is stored on the card: `Origin` stores the slot, and ADR 0043 recomputes `Origin.crc` at load.
+- **Sizes.** The 8 factory fixtures go from 1 143 B to 153–273 B, and INIT to 58 B. The bound is 16 (name) + 5 (`Engine`) + 19 × 5 (block heads) + 198 × 5 (params) + 164 (`Registry`) + 37 (`ModDests`) + 516 (`Routes`) = **1 823 B**. `MAX_SOUND_COST` (1 824) is asserted.
+- **A legacy file's previewed cost differs from its loaded cost.** A library `.snd` written full (before step 1) previews at about 1.1 K from its file size, and costs its sparse size, around 0.2 K, once loaded. The preview over-estimates, never under: a fitting load is never refused late. After a load, the meter shows the true cost.
+- **One encoder writes everywhere:** the arena, project `Slot` and `Part` records, library `.snd` files and the factory blob.
 
 ## How a Part plays from an encoded Sound
 
-- **A Part decodes on load into its own `Sound`, as today.** `Performance` keeps six decoded `Sound`s (896 B each). `replace_part` decodes the slot's bytes into the Part, in place, on the UI thread. That takes about 200 B through `SoundCheck`, a few microseconds. Parts are then published through `AudioShared` as now. The audio thread never decodes anything.
-- **Edits touch only the Part.** No edit reads or writes the arena, so editing can never fail on the budget.
-- **Marks compare encodings.** `part_status` encodes the Part's Sound through a comparing sink and checks it against the slot's bytes: `Clean` when they are byte-equal. This replaces `bits_eq` against a decoded slot, and needs no buffer. `project_crc` hashes slot bytes directly, which is cheaper than re-encoding 32 Sounds.
-- **A TAPE Part does not copy its source.** A TAPE Sound's records include `SourceRef { crc: u32, frames: u32, rate: u16 }`. When a Part loads it, the ref resolves to the pool's `SourceId` whose entry matches all three fields. The Part keeps that `SourceId` and its generation. `AudioShared` carries the `SourceId`, and the voice reads through the `SourceTable`.
-  - **Sharing an immutable source can't be told apart from copying it,** so ADR 0043's copy-at-each-step rule holds for what a user can observe. The one observable difference, deletion, is guarded by `InUse` and by retirement.
-  - **Sources are never edited in place.** #279's PROCESS step writes a new source, which matches its rule that a process never overwrites its input.
-- **An unresolved ref is not an error.** The Part loads, and its TAPE voice plays silence. Its TAPE page shows `SOURCE MISSING`.
-- **`refs` counts users.** It counts the pool Sounds and the Parts that resolve to a source. It is recomputed after every pool or Part change, never edited by hand: a `fn refs(&Project, SourceId)`, as `users(SlotId)` is today. Purge reads it.
+- **A Part decodes on load into its own `Sound`, as today.** `Performance` keeps six decoded `Sound`s (896 B each).
+  - `replace_part` decodes the slot's bytes into the Part in place, on the UI thread. That is about 200 B through `SoundCheck`, a few microseconds.
+  - Parts reach the audio through `AudioShared`, as now. The audio thread never decodes a Sound.
+- **Edits touch only the Part**, so editing can never fail on the budget.
+- **Marks compare encodings.** `part_status` encodes the Part's Sound through a comparing sink against the slot's bytes, and reads `Clean` when they are equal. It needs no buffer. `project_crc` hashes the slot bytes directly.
+- **A TAPE Sound carries a `SourceRef`, never audio.** When a Part loads it, the ref resolves to the pool `SourceId` whose entry has the same `crc`, `frames` and `rate`. The Part keeps that id and its generation, and `AudioShared` carries the id. Sharing an immutable source can't be told apart from copying it, so ADR 0043's copy rule holds for what a user can observe. Deletion, the one observable difference, is guarded by `InUse` and retirement. A source is never edited in place: #279's PROCESS writes a new card file.
+- **Whole or head.** The TAPE model decides how much of a source the arena holds:
+  - random-access models (TRANSWAVE, LOOP, GRAIN, SCRUB, PING-PONG, REVERSE, SPECTRAL, FORMANT) hold the whole source;
+  - TRON holds a 100 ms head per zone and streams the rest from the card into D2 rings (#279).
+
+  Both are the same pool entry with a different `held`.
+- **An unresolved ref is not an error.** The Part loads, its TAPE voice is silent, and its page reads `SOURCE MISSING`.
 
 ## 12-bit packing
 
-- **Two samples in three bytes**, little-endian: `b0 = s0[7:0]`, `b1 = s0[11:8] | s1[3:0] << 4`, `b2 = s1[11:4]`. The values are two's complement, 12 bits. An odd frame count pads the last pair with 0. A source of `n` frames takes `3·⌈n/2⌉` data bytes, after its 16 B name.
-- **The audio reads** by sign-extending `(x << 20) >> 20` on an `i32` and scaling by `1/2048`. Unaligned byte loads are free on the Cortex-M7, so no wider alignment is needed.
-- **Import quantises with TPDF dither**, offline, on the UI thread. That covers a WAV import, a RESAMPLE render and a PROCESS step (#279). Dither keeps 12-bit hiss benign; truncation gives the S900-style grit only on purpose, through a later AGE.
-- **A rate per source:** `rate` in Hz, 4 000–48 000. The UI offers 48, 32, 24, 16, 12 and 8 kHz, with 24 kHz as the default, the S950-style quality-for-time choice. The importer band-limits to 0.45 × rate before decimating. The voice steps through the source at `rate / 48 000 × pitch ratio`.
+- **Two samples in three bytes**, little-endian: `b0 = s0[7:0]`, `b1 = s0[11:8] | s1[3:0] << 4`, `b2 = s1[11:4]`. Samples are 12-bit two's complement. An odd frame count pads the last pair with 0. A card source file and the arena hold the same bytes, so a load is a copy.
+- **The audio reads** by sign-extending `(x << 20) >> 20` on an `i32` and scaling by `1/2048`. Unaligned byte loads are free on the Cortex-M7.
+- **Import quantises with TPDF dither**, offline on the UI thread: a WAV import, a RESAMPLE render, or a PROCESS step.
+- **The rate is per source,** `rate` in Hz, 4 000–48 000. The UI offers 48, 32, 24, 16, 12 and 8 kHz, and **24 kHz is the default, per #279** (honest to tape's ~10 kHz top). The importer band-limits to 0.45 × rate before decimating. The voice steps through the source at `rate / 48 000 × pitch ratio`.
 
 ## The meter, and the UI
 
-**One bar.** It sits on the Sound browser's info line, where `2 INIT + 32 SLOTS` is now, and on SETTINGS › PROJECT › POOL.
+**One bar, labelled with a percentage only, as on the Play.** It sits on the Sound browser's info line, where `2 INIT + 32 SLOTS` is now, and on SETTINGS › PROJECT › POOL.
 
 ```
- 32 SOUNDS · 2 SRC                          64%
- ███████████▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░░
- Sounds        sources      (preview)     free
+                                             64%
+ ███████████▓▓▓▓▓▓▓▓▓▓▓▓▓▒▒▒▒░░░░░░░░░░░░░░░░
+ Sounds       sources    pending      free
 ```
 
-- **Geometry.** The bar is 216 px wide (the screen less its margins, as ADR 0086 measures hints) and 4 px tall.
-- **Colours.** Sounds fill in `INK`, sources in `MID`, and free is `BAR_REST`. Two tones keep it one bar while showing the breakdown, which the issue asked for.
-- **What it counts:** arena bytes in use, `Pool::used()`, out of `ARENA_BYTES`. That is entry costs only. The index, the Parts and the `SourceTable` are fixed and never move, so the meter leaves them out.
-- **The percentage** is `⌈used × 100 / ARENA_BYTES⌉`. Rounding up means the bar never reads less full than it is, and a pool with one byte left reads 100 %. An empty pool reads 0 %.
-- **The preview.** On a library row, or on a source in a TAPE Part's SOURCE list, the bar adds that entry's cost as an `ACCENT` segment after the used part, as the Tracker previews a load. If the entry won't fit, the segment is drawn in `ALERT` from the used part to the end of the bar, and the focus band reads the shortfall (§ When the budget is full). A source the pool already holds (same CRC) previews as 0.
-- **Rows show their cost** on the right, as `0.3K` or `41K`: kibibytes, one decimal place under 10 KiB, rounded up.
-- **SETTINGS › PROJECT › POOL** is a leaf page (ADR 0066: one page). It has the bar, then two lines, `SOUNDS 12 · 9.8K` and `SOURCES 2 · 52K`, then `FREE 34K`. It is read-only.
-- **SETTINGS › PROJECT › PURGE UNUSED** is an `Act` row. EDIT opens a prompt (ADR 0066): `PURGE 3 SOURCES · 27 SOUNDS? FREES 61K`, with PURGE / CANCEL: SEQ confirms and MENU cancels, as in every prompt (ADR 0081). It is not a MIX gesture, so it needs no hint.
+- **Geometry.** The bar is 216 px wide (the screen less its margins, ADR 0086's measure) and 4 px tall.
+- **Colours.**
+  - Sounds are filled in `INK`, sources in `MID`, and free space is `BAR_REST`.
+  - A pending hole (§ Memory layout) is `FAINT`.
+  - The preview segment is `ACCENT`, or `ALERT` when it won't fit.
+- **It counts arena bytes in use** (`Pool::used()`, pending holes included) out of `ARENA_BYTES`. The index, the Parts and the `SourceTable` are fixed and never move, so it leaves them out.
+- **The percentage** is `⌈used × 100 / ARENA_BYTES⌉`. The bar never reads emptier than it is, and an empty pool reads 0 %.
+- **The preview.** On a library row, or on a card source in a TAPE Part's SOURCE list, the bar adds that entry's cost after the used part, as the Tracker does. If it won't fit, `ALERT` runs from the used part to the end, and the focus band reads the shortfall. A source the pool already holds previews as 0.
+- **Rows show their cost** on the right, as `0.3K` or `41K`: kibibytes, one decimal under 10, rounded up.
+- **SETTINGS › PROJECT › POOL** is a leaf (ADR 0066: one page). It shows the bar, `SOUNDS 12 · 9.8K`, `SOURCES 2 · 52K`, `PENDING 0K` (only while one is pending) and `FREE 34K`. It is read-only, and it is the breakdown the issue asked for.
+- **SETTINGS › PROJECT › PURGE UNUSED SOURCES** is an `Act` row. It opens a prompt: `PURGE 3 SOURCES? FREES 61K`. SEQ confirms and MENU cancels, as in every prompt (ADR 0081). It is reached by EDIT, not a MIX gesture, so it needs no hint.
 
-**Hints (ADR 0086).** This design adds no new MIX or hold gesture. It amends the text of two existing browser hints so they say what a gesture does to the budget:
+**Hints (ADR 0086).** No new MIX or hold gesture. Two existing browser hints gain the bytes their gesture moves:
 
 | Where | Touched | Hint |
 |---|---|---|
-| Sound browser, filled slot | always | `MIX + MINUS CLEARS · FREES 0.3K` |
-| Sound browser, Part's own row | always | `MIX + EDIT SAVES · +0.1K` (the save's cost against the slot it replaces, or `WON'T FIT` in `ALERT`) |
+| Sound browser, a filled slot | always | `MIX + MINUS CLEARS · FREES 0.3K`. If clearing it leaves a source with no user: `MIX + MINUS CLEARS · CHOIR 41K UNUSED` |
+| Sound browser, the Part's own row | always | `MIX + EDIT SAVES · +0.1K` (the save's cost against the slot it replaces), or `WON'T FIT` in `ALERT` |
+
+**After a clear that orphans a source,** the focus band reads `CHOIR 41K UNUSED · PURGE FREES IT` until the next input (ADR 0017's convention). The clear frees the Sound's bytes only. The source stays until a purge, as a sample stays in the Play's pool when its last step is erased.
 
 ## When the budget is full
 
-- **An add that won't fit is refused before anything is read or written.** That covers library → pool, a save to a new slot, a save over a slot that grows, and a source import. The cost is known up front:
-  - a library Sound's from its file size (sparse files are exact; a legacy full file over-estimates);
-  - a save's from encoding the Part through a counting sink;
-  - a source's from its frames.
-
-  The focus band shows `POOL FULL · NEEDS 41K, 12K FREE`, in `ALERT`, until the next input (ADR 0017's convention). Nothing changes.
-- **Purge unused** removes:
-  - every source with `refs == 0`;
-  - every Sound slot no Part's `Origin` names (`users(s).is_empty()`, as today), unless open question 2 rules otherwise.
-
-  It deletes nothing from the card. A source still sounding is skipped, and the prompt's result says so. Purge marks the project `Modified`, as any pool change does.
-- **Nothing else refuses.** Editing a Part, loading a slot into a Part, and changing a Part's SOURCE among the pool's sources cost no arena bytes.
+- **An add that won't fit is refused before anything is read or written.** That covers library → pool, a save to a new slot, a save over a slot that grows, a source import, and a TAPE Sound whose source isn't in the pool yet.
+  - Every cost is known up front: from a library file's size, from encoding the Part through a counting sink, or from a `SourceRef`'s frames and the model's `held`.
+  - The focus band reads `POOL FULL · NEEDS 41K, 12K FREE` in `ALERT` until the next input. Nothing changes.
+- **PURGE UNUSED SOURCES removes samples only**, as the Play, the Digitakt and the Octatrack do. It takes every source for which `source_users` is empty, recounted from the project when the purge runs. Never a cached count.
+  - A source still sounding is retired (§ Deleting a source). Its bytes come back when the note ends, shown as pending meanwhile.
+  - It deletes nothing from the card, and it marks the project `Modified`, as any pool change does.
+  - Sounds are never purged. A Sound costs about 0.3 K. Clearing one is the browser's `MIX + MINUS`.
+- **Nothing else refuses.** Editing a Part, loading a slot into a Part, and switching a Part's SOURCE among the pool's sources cost no arena bytes.
 
 ## Interactions
 
 ### Part copies and ADR 0043's guards
 
-- `Origin::Slot { slot, generation, crc }`, `part_status`, `part_actions`, `ReplaceGuard` and the witnesses are unchanged in meaning. `SlotId`'s range grows to 128.
-- `NEW SLOT` is offered when a slot is free **and** the Part's Sound fits. `SAVE OVER SLOT` is offered when the growth fits. An offer that can't apply isn't made (ADR 0043's rule), so a full pool shows `POOL FULL` in place of the action.
-- `ReplaceError::SlotEmpty` stays. A `Pending` whose slot was purged in the meantime is refused as today.
+- `Origin`, `part_status`, `part_actions`, `ReplaceGuard` and the witnesses keep their meaning. `SlotId`'s range grows to 128.
+- `NEW SLOT` is offered when a slot is free **and** the Part's Sound fits. `SAVE OVER SLOT` is offered when the growth fits. An offer that can't apply isn't made (ADR 0043's rule), so a full pool shows `POOL FULL` in its place.
+- `ReplaceError::SlotEmpty` stays.
 
 ### Project format and versioning
 
 - **`FORMAT_VERSION` stays 1.** The TLV records and the must-understand bit (ADR 0045) carry the change.
 - **`Slot` (0x8007)** keeps its shape. Its index range becomes 0..128. Its Sound is written sparse.
-- **`Part` (0x8008)** writes its Sound sparse. That is about 300 B in place of 1 143.
-- **New records**, numbered after ORBIT's 0x0010–0x0014. The numbers are proposed here, checked against `RecordTag` at implementation time, and frozen once written:
+- **`Part` (0x8008)** writes its Sound sparse: about 300 B where it was 1 143.
+- **New records,** after ORBIT's 0x0010–0x0014. The numbers are proposed here, checked against `RecordTag` when they are built, and frozen once written:
 
   | Tag | Record | Payload |
   |---|---|---|
-  | `0x8015` | `Source` | source `u8` (0..32), its name (16 B), `rate` `u16`, `frames` `u32`, `crc` `u32`; opens a context |
-  | `0x0016` | `SourceData` | up to 504 B of packed pairs (168 pairs), in order; only inside a `Source` context |
-  | `0x0017` | `SourceRef` | `crc` `u32`, `frames` `u32`, `rate` `u16`; inside a TAPE Sound |
+  | `0x8015` | `PoolSource` | source slot `u8` (0..32), then the `SourceRef` (crc `u32`, frames `u32`, rate `u16`): 11 B |
+  | `0x0016` | `SourceRef` | the `SourceRef`, 10 B; inside a TAPE Sound's records |
 
-- **Order:** `Fx`, then the `Source`s in slot order, then the `Slot`s, then the `Part`s, then ORBIT's records (ADR 0078). Sources come first, so a Sound's `SourceRef` resolves during the same pass.
-- **CRC.** A `Source` whose data CRC mismatches its record is dropped, as if absent. The file's own CRC already covers bit rot, so this catches only an encoder bug.
-- **Loading.** The load is two passes (ADR 0045/0046). Pass 1 adds up every entry's cost. Pass 2 runs after the epoch fade, so no voice reads the arena while it is rebuilt.
-  - **Old projects** (32 full-encoded `Slot`s) load and re-encode sparse. They sound the same, with no extra work.
-  - **A project bigger than the budget** loads in priority order: the sources a Part resolves to; then Sound slots in slot order, skipping any that won't fit; then the remaining sources in slot order. The note reads `LOADED · 4 SOUNDS, 1 SRC DIDN'T FIT`. The project reads `Modified`, because its CRC no longer matches the file's, and a later save drops what was skipped. The file on the card is untouched until then. Such a file can only come from a hand-made file or a future build with a bigger arena, so this is the "loads safely" rule, not a workflow.
-- **A project load fails as today** (a torn file, a card pulled mid-pass 2), and falls back to NEW (`reset_new`).
+  There is no audio in a project file, ever. Quick-save (MENU hold) writes records of a few KB and never sample data.
+- **Order:** `Fx`, then `PoolSource`s in slot order, then `Slot`s, then `Part`s, then ORBIT's records (ADR 0078).
+- **An older build reading a newer project:**
+  - a `Slot` index ≥ 32 is `Bounds`;
+  - a `PoolSource` is an unknown critical tag, so `NeedsNewerFirmware`.
+
+  Either fails the whole load, and the build falls back to NEW (`reset_new`), leaving the card file untouched. Nothing loads half. No users exist yet, so a down-flash losing its project view is acceptable.
+- **Loading.** The load runs in two passes (ADR 0045/0046).
+  - **Pass 1** adds up every Sound's cost and every `PoolSource`'s cost (its `held`, from the frames and the engine model, with no card read).
+  - **Pass 2** runs after the epoch fade, so no voice reads the arena while it is rebuilt. It reads each source's bytes, or its head, from `/CHIMERA/TAPES`.
+- **Old projects** (32 full-encoded `Slot`s) load and re-encode sparse. They sound the same.
+- **A project over the budget** loads in priority order: the sources a Part resolves to, then Sound slots in slot order (skipping any that won't fit), then the other sources. The note reads `LOADED · 4 SOUNDS, 1 SRC DIDN'T FIT`. The project reads `Modified`, and a later save drops the skipped entries. Until then the file on the card is untouched. Only a hand-made file or a future build with a bigger arena can produce one.
 
 ### The card library
 
-- **Library Sounds** (`/CHIMERA/SOUNDS`, #317) are written sparse. A row's cost is its file size − 28 (header) − 4 (CRC) + 16 (name), rounded up to 16. It is read from the listing, with no extra card I/O.
-- **Library sources** live in a new `Dir::Tapes` (`/CHIMERA/TAPES`), as `FileKind` 6 `Source` files: a header, then one `Source` record and its `SourceData`. The 8.3 stem is the source's CRC in hex (`1A2B3C4D.A`), so a TAPE Sound's `SourceRef` finds its file by name, with no index. Identical sources share one file. ADR 0045's A/B pair is kept for uniformity.
-- **Adding a library TAPE Sound** brings its source too, unless the pool already holds it (same `crc`, `frames` and `rate`). The preview and the refusal count both. A source missing from the card refuses the add: `SOURCE NOT ON CARD`.
-- **Purge never touches the card.** That is the Octatrack and Digitakt behaviour.
+- **Library Sounds** (`/CHIMERA/SOUNDS`, #317) are written sparse. A row's cost is the file size − 28 (header) − 4 (CRC) + 16 (name), rounded up to 16, read from the listing with no extra card I/O.
+- **Sources live only on the card,** in a new `Dir::Tapes` (`/CHIMERA/TAPES`), as `FileKind` 6 `Source` files: a header, a `SourceHead` record (`0x8017`: the `SourceRef` and a 16 B name), then `SourceData` records (`0x0018`) of up to 504 B of packed pairs (168 pairs). Both are refused (`Corrupt`) outside a `Source` file.
+  - **The 8.3 stem is the CRC in hex** (`1A2B3C4D.A`), so a `SourceRef` finds its file by name, with no index. Identical sources share one file.
+  - **Write-once:** an import, a RESAMPLE or a PROCESS writes a new file. Nothing rewrites one.
+  - The `SourceRef`'s `frames` and `rate` are checked against the header, and a mismatch reads as missing.
+- **Adding a library TAPE Sound** brings its source's `held` bytes into the pool too, unless the pool already holds that source. The preview and the refusal count both. A source not on the card refuses the add: `SOURCE NOT ON CARD`.
+- **Purge never touches the card.** Orphaned `/CHIMERA/TAPES` files are a card-cleanup job for SETTINGS › SYSTEM › STORAGE (#267), outside this spec.
 
 ### The factory set
 
-- **NEW's 32 curated Sounds are one encoded blob in flash** (`factory.bin`, about 10 KB against 170 KB free). A desktop tool generates it from the authored Sounds (#317), and a test decodes every entry and checks its bits against the authored form. NEW copies the blob's entries into the arena **without decoding**, since they are already canonical, so `fill_new_pool` is a `memcpy` and 32 index writes.
-- **NEW reads about 10 %** on the meter.
-- **`TemplateCrc`** is computed at run time from the arena as filled, as today. No CRC is pinned.
-- **ADR 0073's `NEW_PARTS`** (Parts 1–5 load named factory slots) carries over, with slot numbers from #317's curated list.
-- **Factory TAPE Sounds** need their sources in flash or on the card (open question 3). Until that is ruled, the 32 are ALGO and MODAL only.
+- **NEW's 32 curated Sounds are one sparse blob in flash** (`factory.bin`, about 10 KB). A desktop tool generates it from the authored Sounds (#317), and a test decodes every entry against its authored form. NEW copies the entries into the arena without decoding, since they are already canonical.
+- **Factory sources are card-only.** Flash has 100 KB free on the largest build, and one second of 16 kHz 12-bit audio is 24 KB. Until a card is present, the 32 are ALGO and MODAL Sounds. A factory TAPE Sound on the card library brings its source from `/CHIMERA/TAPES` like any other.
+- **NEW reads 9 %.**
+- **`TemplateCrc`** is computed at run time from the arena as filled.
+- **ADR 0073's `NEW_PARTS`** carries over, with slot numbers from #317's curated list.
+
+### Flash cost
+
+These are estimates, to be measured with `rust-size` on `bench,orbit` at each step, against 100 036 B free.
+
+| Step | Adds | Removes | Net |
+|---|---|---|---|
+| Sparse encoder | ~0.5 KB | | +0.5 KB |
+| Arena, index, Sound compaction, `EncodedSound`, encoded marks | ~4 KB | | +4 KB |
+| Meter, row costs, preview, POOL leaf, PURGE row and prompt, hint text | ~3 KB | | +3 KB |
+| Factory blob, 32 Sounds | ~10 KB | today's code-built 8 Sounds (`factory.rs`), ~3 KB | +7 KB |
+| Sources: table, gate, retire, 12-bit read, importer with dither and decimator, `Dir::Tapes`, records | ~8 KB | | +8 KB |
+| **Total** | | | **≈ 23 KB**, leaving ≈ 77 KB |
 
 ## Failure modes
 
 | Case | What happens |
 |---|---|
-| **No card at boot** | NEW from flash, 32 Sounds, 10 %. The library rows read `NO CARD`. Every pool operation that needs no card still works. |
-| **Card pulled during a library add** | The staged bytes in the gap are abandoned. No index entry is written, and the meter is unchanged. The note reads `CARD READ FAILED`. |
-| **Card swapped during an add** | `Card::run`'s volume check refuses it (ADR 0043/0046), with the same outcome as a pulled card. |
-| **Slow card (stalls)** | A source add reads in 4 KiB steps, one per UI pass, behind the busy indicator (`ui::busy`). At #279's measured 1.3 MB/s, 88 KB is about 70 ms of card time. Under full audio load, with UI passes of 22–26 ms (the 2026-10-02 stress test), it takes about 0.6 s on screen. MENU cancels the add, and the staged bytes are dropped. The audio is never involved. |
-| **A project bigger than the budget** | It loads in priority order, with a note (§ Project format). |
-| **A Part's source didn't load** | The Part loads. Its TAPE voice is silent, and its page reads `SOURCE MISSING`. |
-| **A source still sounding at purge** | It is skipped and reported. Purge again once the note ends. |
-| **A corrupt entry in a project file** | Handled as today: `Corrupt` or `Bounds` fails the load, which falls back to NEW. A `Source` with a bad data CRC is dropped alone. |
+| **No card at boot** | NEW from flash: 32 Sounds, 9 %. Library rows read `NO CARD`. Sound-only pool work goes on. |
+| **No card, project with TAPE Parts** | It can't be loaded without a card, since projects live on the card. A card pulled after load leaves whole sources playing. Streamed (TRON) notes play their heads, then fall silent per note, which is #279's rule. |
+| **Card pulled during an add or a project load's pass 2** | The add abandons its staged bytes, with no index entry and the meter unchanged: `CARD READ FAILED`. A load fails and falls back to NEW, as today. |
+| **Card swapped** | `Card::run`'s volume check refuses it (ADR 0043/0046), with the same outcome. |
+| **Slow card** | A source read is 4 KiB a UI pass, behind `ui::busy`. 104 KB at 1.3 MB/s (#279's measurement) is 80 ms of card time. At full audio load, with UI passes of 22–26 ms (stress test 2026-10-02), it takes about 0.7 s on screen. MENU cancels an add. A project load's sources read inside its existing fade. |
+| **A source missing from the card at load** | Its `PoolSource` loads as an empty slot. A Part that resolved to it loads silent, with `SOURCE MISSING`. The note names the count. |
+| **Project over the budget** | It loads in priority order, with a note. |
+| **A purged or cleared source still sounding** | It is retired, its bytes stay pending until the note ends, and the meter shows them in `FAINT`. |
 
 ## Test plan
 
-All host-side (`just test`), before any hardware. Hardware checks wait for the ship flash.
+All host-side (`just test`). Hardware checks wait for the ship flash.
 
 **Encoding**
-- `sparse_round_trip`: for every factory Sound, both INITs and 1 000 seeded random Sounds (an xorshift over each param's spec range, routes and registry), `decode(encode(s))` is `bits_eq` to `s`.
-- `sparse_is_canonical`: re-encoding a decoded full-encoded v1 fixture gives the same bytes as encoding the original. Two Sounds are byte-equal exactly when they are `bits_eq` (over the same random set, plus single-param mutations).
+- `sparse_round_trip`: for every factory Sound, both INITs and 1 000 seeded random Sounds (an xorshift over each param's spec range, the routes and the registry), `decode(encode(s))` is `bits_eq` to `s`.
+- `sparse_byte_identity`: `encode(decode(encode(s))) == encode(s)`, byte for byte, over the same set. Re-encoding a full-encoded v1 fixture gives the sparse bytes of the original.
+- `sparse_is_canonical`: two Sounds are byte-equal exactly when `bits_eq` (the random set, plus single-param mutations).
 - `v1_fixtures_still_load`: every `fixtures/v1` file decodes to the same bits as before.
-- `sparse_bound`: a Sound with every param off-neutral, a full registry and 128 routes encodes to at most `MAX_SOUND_COST`.
+- `neutral_is_a_contract`: `neutral_v1.txt` matches `Sound::neutral`, and the test's message says that a change needs a migration.
+- `sparse_bound`: a Sound with every param off neutral, a full registry and 128 routes is at most `MAX_SOUND_COST`.
 
 **Arena and allocator**
-- A model test drives 10 000 seeded add, delete and replace operations on Sounds and sources. After each one it checks:
+- **A seeded model test,** 10 000 operations (add, delete, replace, retire, compact), with a fake `sounding` mask flipping. After each operation:
   - entries are disjoint and granule-aligned;
-  - sources sit contiguously from 0, and Sounds contiguously to the top;
+  - the sources are contiguous from 0, apart from pending holes;
+  - the Sounds are contiguous to the top;
   - `free() == gap`;
-  - every entry's bytes are unchanged by moves (a CRC per entry);
-  - `used()` is the sum of costs.
-- `move_protocol_reads_never_tear`: a source is moved with a simulated audio reader. The reader takes the `done`, `from` and `base` snapshot at every chunk boundary, and at every byte inside a chunk, by splitting the copy. Every read returns the original pair. It runs with `g` = 16, 48 and 4 096 and odd lengths.
-- `retire_waits_for_silence`: a retired source's bytes are not reused while `sounding` has its bit set or before the ack.
-- `memory_budget_test` gains `pool_arena_fits_axi` and updates `axi_residents_fit` (arena + index + `SourceTable`; `UI_RESERVE` 16 KiB; spare ≥ 64 KiB) and `axi_counts_the_project`.
+  - a per-entry CRC is unchanged by every move;
+  - `used()` is the sum of costs and pending holes.
+- `compaction_waits_for_silence`: no source byte moves while its `sounding` bit is set. The hole stays pending and shows on the meter.
+- `gate_holds_note_on`: a note-on on a moving source during a closed gate starts on the first block after the gate opens, with its first sample unchanged. A note-on on any other source starts at once.
+- `retire_never_cuts`: a retired source's row stays live until its bit clears.
+- **`memory_budget_test`:**
+  - `axi_residents_fit` becomes a report;
+  - `pool_arena_fits_axi` prints the arena, the index and the table;
+  - the binding check is the linker `ASSERT`, exercised by `just check`'s `bench,orbit` firmware build.
+
+**Sources and `source_users`**
+- `choir_orphan`, the review's scenario:
+  1. Slot 5 holds CHOIR, a TAPE Sound on the CHOIR source.
+  2. Part 2 loads it, then loads another Sound.
+  3. The clear hint for slot 5 names `CHOIR 41K UNUSED`.
+  4. After the clear, `source_users(CHOIR)` is empty, and PURGE frees exactly CHOIR's bytes.
+  5. Before the clear, PURGE frees nothing.
+  6. With Part 2 still on CHOIR, the clear frees the Sound, PURGE keeps the source, and the hint doesn't say UNUSED.
+- `purge_recounts`: a purge after any sequence of clears and Part loads frees exactly the sources the model says are unreferenced at that moment.
+- `purge_never_writes_card`: the `MemStore` write count stays 0.
 
 **12-bit**
-- `pack_unpack_all_values`: all 4 096 × 4 096 pairs round-trip, about 16 M iterations, in under a second in release, or a seeded 100 000 in debug.
-- Odd frame counts pad, and the last real sample survives.
-- Dither: a −60 dBFS sine quantised to 12 bits keeps its spectral peak, and its noise floor is flat within 3 dB across the band.
+- `pack_unpack_all_values`: all 4 096 × 4 096 pairs round-trip in release, or a seeded 100 000 in debug. Odd frame counts pad.
+- Dither: a −60 dBFS sine quantised to 12 bits keeps its peak, and its noise floor is flat within 3 dB.
 
 **Meter and UI**
-- `meter_percent`: 0 B → 0 %, 1 B → 1 %, `ARENA_BYTES − 1` → 100 %, and exactly half → 50 %.
-- Renderer snapshots (`docs/screens`): the browser bar at NEW, at 64 %, with a fitting preview and with a refused preview, and the POOL leaf.
-- `hint_fits`: every amended hint within 216 px (ADR 0086's test).
-- The refusal leaves the project byte-identical (`project_crc` unchanged).
+- `meter_percent`: 0 B is 0 %, 1 B is 1 %, `ARENA_BYTES − 1` is 100 %, and half is 50 %.
+- Renderer snapshots (`docs/screens`): the bar at NEW, at 64 %, with a pending hole, with a fitting preview and with a refused one, and the POOL leaf.
+- `hint_fits`: every amended hint within 216 px.
+- A refusal leaves `project_crc` unchanged.
 
 **Project and library**
-- An old 32-slot project file loads and sounds the same: the six Parts render bit-identical audio to before the change, through the existing golden harness.
-- An over-budget fixture loads in priority order, and the note names the counts.
-- A project with a source round-trips save → load byte-equal.
-- A TAPE Sound's `SourceRef` resolves after a load; a missing one leaves the Part silent, with no panic.
-- `purge_unused`: frees exactly the unreferenced entries and never touches the card (`MemStore` write count 0).
-- NEW: 32 Sounds, about 10 %, `Pristine`, with every factory entry decode-equal to its authored form.
+- An old 32-slot project loads, and its Parts render bit-identical audio through the golden harness.
+- The over-budget fixture loads in priority order, with the counts in the note.
+- A project with `PoolSource`s round-trips save → load byte-equal. Its file holds no `SourceData`. A quick-save's bytes written are independent of source sizes.
+- A missing `/CHIMERA/TAPES` file leaves its Part silent, with no panic.
+- NEW: 32 Sounds, 9 %, `Pristine`, every factory entry decode-equal to its authored form.
 
-**Desktop QA** (the QA-before-UAT rule): sweep the browser and purge on the simulator, add and delete sources while a TAPE voice loops through them under the move protocol, and check by recording that the audio has no discontinuity at a move. The last waits for TAPE's first voice; until then the move test runs on a stub reader.
+**Desktop QA** (QA before UAT): browse, clear and purge on the simulator. Once TAPE's first voice exists, delete sources while other sources loop, and check the recordings for discontinuities.
 
 ## Build order
 
 Each step ships on its own, and the meter is right at each.
 
-1. **Sparse `encode_sound`.** It is a writer change only. Files, projects and the library shrink. Add the encoding tests and `MAX_SOUND_COST`.
-2. **The arena and the index, Sounds only.**
-   - `Pool` changes over: 128 `SlotId`s, `EncodedSound` views, the Sound end of the arena with compaction, and marks compared by encoding.
-   - The project codec's `Slot` range grows.
-   - `UI_RESERVE` drops to 16 KiB, the AXI static and budget tests are updated, and the 28 KB of fixed slots go.
-3. **The meter and the refusals:** the browser bar, row costs, the preview, the `POOL FULL` refusal, the amended hints, POOL and PURGE UNUSED under SETTINGS › PROJECT.
-4. **NEW from the factory blob,** once #317's 32 are curated. Until then, the blob holds today's 8 and the two INITs, and the meter reads about 2 %.
-5. **Sources,** with or just before the TAPE core (#279):
-   - `SourceId`, the source end, the move and retire protocols, the `SourceTable`, 12-bit packing and the importer;
-   - `Source` / `SourceData` / `SourceRef` records, `Dir::Tapes`;
+1. **Sparse `encode_sound`,** with the encoding tests, `MAX_SOUND_COST` and the neutral contract note. It is a writer change only.
+2. **The linker assert in place of the paper rule.** `UI_RESERVE` and the 64 KiB const go, and `axi_residents_fit` becomes a report. This lands first, on its own, because step 3 can't link without it.
+3. **The arena and the index, Sounds only.** `Pool` changes over to 128 `SlotId`s, `EncodedSound`, encoded marks and Sound compaction. The `Slot` range grows, and the 28 KB of fixed slots go.
+4. **The meter and the refusals:** the bar, row costs, the preview, `POOL FULL`, the amended hints, and SETTINGS › PROJECT › POOL. PURGE waits for sources.
+5. **NEW from the factory blob,** once #317's 32 are curated. Until then, the blob holds today's 8 and the two INITs: about 2 %.
+6. **Sources,** with the TAPE core (#279):
+   - `SourceId`, the source end, the table, the gate, retirement, `source_users`;
+   - PURGE UNUSED SOURCES;
+   - 12-bit packing, the importer and `Dir::Tapes`;
+   - `PoolSource` and `SourceRef`;
    - the over-budget load order.
 
-This follows the agreed roadmap: ORBIT unit QA → this → the TAPE core. Step 2 merges after ORBIT, since both touch the project codec and `template.rs` (ORBIT's ADR 0073 and 0078).
+Step 3 merges after ORBIT, since both touch the project codec and `template.rs` (ADR 0073, 0078).
 
-## Open questions for the owner
+## Owner questions
 
-1. **Budget size: 96 KiB or 128 KiB?** 96 KiB keeps the 64 KiB AXI spare rule and gives 2.4 s of 24 kHz audio beside NEW's 32 Sounds. 128 KiB gives 3.4 s, and the spare drops to about 34 KiB.
-2. **Does PURGE UNUSED take Sounds too, or sources only?** Sounds-too frees about 9 KB on NEW, but wipes the 27 curated Sounds no Part uses. Sources-only frees the bytes that matter and keeps the palette. This spec does Sounds too, behind the prompt. The Play, Digitakt and Octatrack purge samples only.
-3. **Factory TAPE Sounds:** should any source live in flash (24 KB per second at 16 kHz, from 170 KB free), or should TAPE factory Sounds be card-only, so a unit with no card has none?
-4. **Is 24 kHz the right default import rate?** 16 kHz gives half again as much time and matches #279's ~10 kHz "tape top".
-5. **Meter text:** is `32 SOUNDS · 2 SRC   64%` what you want on the browser line, or the percentage alone, as on the Play?
+1. **The delay line as `i16`, for a 160 KiB arena?** It frees 48 128 B, which takes 24 kHz audio beside NEW from 2.9 s to 4.3 s. It puts 16-bit grain on every delay repeat, compounding with feedback, as ADR 0028 accepted for the reverb. It needs a new ADR, superseding ADR 0014's delay storage in part. Kept f32, the arena stays 112 KiB.
+2. **Is a note-on held up to 2.7 ms acceptable, once per source delete?** It applies only to notes on sources being compacted. The alternative is a per-sample address branch in every TAPE voice, which is what the first draft had.
+
+Settled by precedent or the code, and no longer asked:
+- **The budget size** comes from the arithmetic (§ The budget).
+- **PURGE takes samples only,** as on the Play, the Digitakt and the Octatrack.
+- **Factory sources are card-only,** because of flash.
+- **24 kHz is the default import rate,** per #279.
+- **The meter shows a percentage only,** as on the Play.
