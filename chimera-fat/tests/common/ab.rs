@@ -5,13 +5,12 @@
 #![allow(dead_code)]
 
 use crate::image::{Cut, CutDisk, RamDisk};
-use crate::probe::{Probed, XorShift, log, probed};
-use chimera_core::addr::{BlockRef, Blocks};
-use chimera_core::block::ParamKind;
+use crate::probe::{Probed, log, probed};
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::name::Name;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
+use chimera_core::project::test_support;
 use chimera_core::storage::{
     AbFile, Card, CardFault, Generation, LoadError, Ready, RecordWriter, SaveError, Side,
     SoundCheck, SoundDecoder, check_file, encode_sound, load_ab, load_file, save_ab, write_target,
@@ -45,26 +44,8 @@ pub fn name83(side: Side) -> [u8; 11] {
 pub fn sound(n: u32) -> Sound {
     let mut s = factory_sound(n as usize % FACTORY_LEN).unwrap();
     s.name = Name::new(&format!("SAVE {n}")).unwrap();
-    dense(&mut s, n.into());
+    test_support::dense(&mut s, n.into());
     s
-}
-
-/// Every stored real of `s` drawn from its range: about the size a Sound
-/// was before sparse encoding (ADR 0087), so a cut still walks a chain of
-/// several clusters.
-pub fn dense(s: &mut Sound, seed: u64) {
-    let mut rng = XorShift(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
-    for b in BlockRef::ALL {
-        let Some(blk) = s.params.block_mut(b) else {
-            continue;
-        };
-        for sp in blk.specs() {
-            if sp.stored && sp.kind != ParamKind::Enum {
-                let u = (rng.next() >> 40) as f32 / (1 << 24) as f32;
-                blk.set(sp.id, sp.min + u * (sp.max - sp.min));
-            }
-        }
-    }
 }
 
 pub fn op<R, E: CardFault + From<StoreError>>(

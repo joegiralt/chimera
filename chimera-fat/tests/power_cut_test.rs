@@ -19,10 +19,10 @@ use chimera_core::mod_path::MAX_REGISTRY_DESTS;
 use chimera_core::params::EngineType;
 use chimera_core::part::PartParams;
 use chimera_core::preset::Sound;
-use chimera_core::project::test_support::{confirm_overwrite, full, same, save_at};
+use chimera_core::project::test_support::{confirm_overwrite, full_dense, same, save_at};
 use chimera_core::project::{
-    PartId, Project, ProjectDecoder, ProjectNote, SlotId, clear_project, list_projects,
-    project_crc, project_file,
+    PartId, Project, ProjectDecoder, ProjectNote, clear_project, list_projects, project_crc,
+    project_file,
 };
 use chimera_core::storage::{
     Card, CardError, CardEvent, FileKind, Generation, Header, InPlaceError, ProjectId, RecordTag,
@@ -106,7 +106,7 @@ fn cut_at_every_block_write_keeps_a_generation() {
     let base = slot(first_card());
     // A `dense` Sound spans clusters: a cut lands mid-chain.
     let a = kept(&base);
-    assert!(a.chain.len() >= 2, "{} clusters", a.chain.len());
+    assert!(a.chain.len() >= 3, "{} clusters", a.chain.len());
     // Save 2 creates B, 3 truncates A, 4 truncates B.
     for n in 2..=4 {
         let before = copy(&base.inner);
@@ -433,20 +433,10 @@ fn full_card_keeps_previous_generation() {
     assert!(load(&disk).unwrap().bits_eq(&sound(2)));
 }
 
-/// `full()` with every Part and every slot no Part came from `dense` (a
-/// Part's Origin keeps its slot's CRC), and Part 1's LEVEL at save `n`'s
-/// value: each save differs.
+/// `full_dense()` with Part 1's LEVEL at save `n`'s value: each save
+/// differs.
 fn project_gen(n: u32) -> Box<Project> {
-    let (mut p, _) = full();
-    for s in SlotId::ALL {
-        if let Some(mut x) = p.pool().get(s).filter(|_| p.users(s).is_empty()).cloned() {
-            ab::dense(&mut x, s.index() as u64);
-            p.pool_store(s, x);
-        }
-    }
-    for (i, id) in PartId::ALL.into_iter().enumerate() {
-        ab::dense(p.edit_part(id).sound, 100 + i as u64);
-    }
+    let (mut p, _) = full_dense();
     p.edit_part(PartId::ALL[0])
         .mix
         .set(PartParams::LEVEL, 0.1 * n as f32);
@@ -498,7 +488,7 @@ fn load_project_in_place(slot: &Slot) -> Result<Box<Project>, InPlaceError> {
     Ok(q)
 }
 
-/// A project (`project_gen`'s, 69 clusters a side) cut at every block
+/// A project (`project_gen`'s, 119 clusters a side) cut at every block
 /// write of its third save: the in-place load always gets save 2 or 3
 /// whole, never an error, and the next save lands.
 #[test]
@@ -511,7 +501,7 @@ fn project_cut_keeps_a_generation() {
     let before = copy(&base.inner);
     // Both sides span many clusters: a cut lands mid-chain.
     let chains = project_chains(&before);
-    assert!(chains.iter().all(|&n| n >= 60), "chains {chains:?}");
+    assert!(chains.iter().all(|&n| n >= 100), "chains {chains:?}");
     let blocks = {
         let dry = slot(copy(&before));
         let mut s = probed(&dry);

@@ -13,8 +13,11 @@ use crate::storage::{
     Card, CardEvent, FileError, FileKind, Generation, Header, ProjectId, Side, write_file,
 };
 
-use crate::block::Block;
+use crate::addr::{BlockRef, Blocks, ParamAddr};
+use crate::block::{Block, ParamKind};
 use crate::factory::{FACTORY_LEN, factory_sound};
+use crate::mod_path::LABEL_LEN;
+use crate::modulation::{MAX_MOD_SOURCES, ModState};
 use crate::name::{ProjectName, SoundName};
 use crate::params::{EngineType, FilterParams, OutParams};
 use crate::part::PartParams;
@@ -114,6 +117,64 @@ pub fn full() -> (Box<Project>, TemplateCrc) {
     fx.reverb.mix = 0.45;
     fx.chorus.mode = 2;
     p.set_name(ProjectName::new("FULL").expect("a valid name"));
+    (p, t)
+}
+
+/// Every stored param of `s` drawn by `seed` (a real from its range, an
+/// enum from codes 0..8), a full registry and every route: larger than a
+/// Sound was before sparse encoding (ADR 0087), so a card test still writes
+/// a chain of many clusters.
+pub fn dense(s: &mut Sound, seed: u64) {
+    let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+    for b in BlockRef::ALL {
+        let Some(blk) = s.params.block_mut(b) else {
+            continue;
+        };
+        for sp in blk.specs().iter().filter(|sp| sp.stored) {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            if sp.kind == ParamKind::Enum {
+                // A code this param takes now; a refused one writes nothing.
+                let _ = blk.set_enum_code(sp.id, (x >> 56) as u8 % 8);
+            } else {
+                let u = (x >> 40) as f32 / (1 << 24) as f32;
+                blk.set(sp.id, sp.min + u * (sp.max - sp.min));
+            }
+        }
+    }
+    // A full registry and every route.
+    let addrs = BlockRef::ALL
+        .into_iter()
+        .flat_map(|b| b.specs().iter().map(move |sp| ParamAddr::new(b, sp.id)))
+        .filter(|a| a.modulatable());
+    for (i, a) in addrs.enumerate() {
+        // Full, or already in: skipped.
+        let _ = s.dest_registry.add(a, [b'A' + (i % 26) as u8; LABEL_LEN]);
+    }
+    s.mod_state = ModState::from_registry(&s.dest_registry, MAX_MOD_SOURCES);
+    for src in 0..s.mod_state.num_sources() {
+        for d in 0..s.mod_state.num_dests() {
+            s.mod_state
+                .set_route(src, d, (seed as usize + src + d) as i8);
+        }
+    }
+}
+
+/// `full()` with every Part and every slot no Part came from `dense` (a
+/// Part's Origin keeps its slot's CRC): larger on the card than `full()`
+/// was before sparse encoding.
+pub fn full_dense() -> (Box<Project>, TemplateCrc) {
+    let (mut p, t) = full();
+    for s in SlotId::ALL {
+        if let Some(mut x) = p.pool().get(s).filter(|_| p.users(s).is_empty()).cloned() {
+            dense(&mut x, s.index() as u64);
+            p.pool_store(s, x);
+        }
+    }
+    for (i, id) in PartId::ALL.into_iter().enumerate() {
+        dense(p.edit_part(id).sound, 100 + i as u64);
+    }
     (p, t)
 }
 
