@@ -1,7 +1,7 @@
 # 0085. The master reverb picks a TYPE: QUAD plus ROOM, HALL, GATE, REVERSE, BLOOM and ECHO
 
 - **Status:** Proposed; supersedes in part [0028](0028-one-alesis-style-reverb.md) (its "one reverb" and "TYPE retires"); amends [0067](0067-focus-glyphs.md) (the reverb composite)
-- **Deciders:** project owner (2026-10-03 rulings on #343; 2026-10-04: QUAD stays exactly as it is); firmware
+- **Deciders:** project owner (2026-10-03 rulings on #343; 2026-10-04: QUAD stays exactly as it is and keeps its name; modulation deferred to #345); firmware
 
 ## Context
 ADR 0028 cut the FX bus to one reverb, the Alesis-style ring, and retired
@@ -38,7 +38,8 @@ against the ring's 48 while crossfading.
   - BLOOM 5: the BLOOM engine;
   - ECHO 6: the ECHO engine.
 
-  The screen lists them QUAD, ROOM, HALL, BLOOM, GATE, REVERSE, ECHO.
+  QUAD keeps the word QUAD on screen (the owner's name). The screen lists
+  them QUAD, ROOM, HALL, BLOOM, GATE, REVERSE, ECHO.
   ParamId 0 stays retired (ADR 0009).
 - **One engine runs at a time.** All TYPEs share the 23,220-sample i16
   arena (46,440 B), lifted out of `Ring` unchanged. Each TYPE's line layout
@@ -70,9 +71,13 @@ against the ring's 48 while crossfading.
   to a fresh engine from its first block.
 - **The extensions.**
   - A wobble LFO on every new TYPE.
-  - Four modulation inputs per new TYPE: size, decay, tone and wobble depth.
-    Their source is an owner question in the spec, and its wiring gets its
-    own ADR amending ADR 0010.
+  - No external mod destinations (owner, 2026-10-04). Every mod source
+    lives inside a Part, and nothing exists at the mixer level yet; a
+    mixer-level LFO or matrix is
+    private issue #345. Matrix routes,
+    a send DUCK and MIX+PLUS priming on reverb cells are deferred there.
+    ADR 0010 is unchanged. Adding destinations later changes no disk code:
+    modulatability is a spec flag, and the target slots already exist.
   - SYNC (OFF, TIME, ALL), on ORBIT's clock: PRE-DLY, LENGTH and ECHO TIME
     in note values, and DECAY in beats under ALL. A synced time halves or
     doubles to fit its TYPE's range, so the arena never grows. QUAD takes
@@ -124,17 +129,17 @@ against the ring's 48 while crossfading.
   BUS row runs the costliest TYPE.
 - **Memory.** The arena does not grow. `FxBus` gains one engine-state enum
   (≤ 160 B), and `FxParams` about 28 B.
-- **Flash.** Estimated 11–14 KB in all: about 3–4 KB of shared scaffold,
+- **Flash.** Estimated 11–13.5 KB in all: about 3–4 KB of shared scaffold,
   then 1–2.5 KB per TYPE. Each step's fat-LTO delta is recorded, and a TYPE
   over 3 KB is cut back before the next one starts.
 - **Interactions.** A TYPE switch drops about 5 ms of send and dips the
   return for 45 ms. Sweeps list this as by design. #142's quiet-send tail
   loss applies to every TYPE alike.
-- **Order.** Tempo sync waits for ORBIT on `main`, and modulation waits for
-  the owner's answer on its source. ADR 0085 is accepted after the A/B and
+- **Order.** Tempo sync waits for ORBIT on `main`. ADR 0085 is accepted after the A/B and
   UAT pass, with measured CPU and flash recorded here.
-- **What it rules out.** FREEZE and per-TYPE knob memory, unless a later ADR
-  adds them.
+- **What it rules out.** FREEZE, per-TYPE knob memory and external
+  modulation of the reverb, unless a later ADR adds them (#345 for the
+  last).
 
 ## Sources
 - `docs/superpowers/specs/2026-10-04-reverb-types-design.md`.

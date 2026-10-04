@@ -1,6 +1,6 @@
 # Reverb TYPEs: QUAD plus ROOM, HALL, GATE, REVERSE, BLOOM and ECHO
 
-Status: draft for the owner's review (2026-10-04). ADR [0085](../../adr/0085-the-master-reverb-picks-a-type.md) (Proposed) records the decision. The plan comes after the owner answers § Owner questions. Issue: private issue #343. It is queued after ORBIT ships (owner, 2026-10-03).
+Status: approved pending owner read (2026-10-04). ADR [0085](../../adr/0085-the-master-reverb-picks-a-type.md) (Proposed) records the decision. The owner's answers of 2026-10-04 are folded in: modulation is deferred to private issue #345, and QUAD keeps its name. Issue: private issue #343. It is queued after ORBIT ships (owner, 2026-10-03).
 
 ## Intent
 
@@ -20,7 +20,7 @@ This spec turns that into three engines plus an echo, six new TYPEs beside today
 | A TYPE setting. Only the selected model runs. | § Switching TYPE: one engine at a time, the fade included. |
 | TYPEs are families: QUAD, ROOM, HALL/PLATE, GATE, REVERSE, BLOOM, ECHO. The engines are LOOP, BURST and BLOOM, plus ECHO. | § Engines; § PLATE is HALL's corner, not a TYPE. |
 | Study github.com/thement/midiverb_emulator (GPL-3.0) as documentation only. Never copy its code or transcribe its ROM coefficient tables. Commit 7119f7ad is not revived. | § Provenance. |
-| Extend past the hardware: a loop LFO wobble, mod destinations, and tempo-synced PRE-DLY, GATE LENGTH, ECHO times and optionally DECAY. | § Wobble; § Modulation; § Tempo sync. |
+| Extend past the hardware: a loop LFO wobble, mod destinations, and tempo-synced PRE-DLY, GATE LENGTH, ECHO times and optionally DECAY. Mod destinations deferred to #345 (2026-10-04). | § Wobble; § Modulation (deferred); § Tempo sync. |
 | CPU never exceeds QUAD's worst case: 485 cycles per 48 kHz output sample on the bench's REVERB row. | § CPU budget. |
 | One 23,220-sample i16 arena (46,440 B), and nothing grows. About 1–3 KB of flash per TYPE. | § Arena; § Flash. |
 | SIZE glides through interpolated read pointers, not QUAD's double-read crossfade. QUAD stays exactly as it is, crossfade included (2026-10-04). | § Glide; § QUAD. |
@@ -78,7 +78,7 @@ The spike read the emulator's machine model and decompiled programs as documenta
 
 | # on screen | TYPE (word on screen) | Engine | Disk code | Ident |
 |---|---|---|---|---|
-| 1 | QUAD (see Q2) | today's ring (`dsp::ring`, ADR 0028) | 0 | `QUAD` |
+| 1 | QUAD (owner's name, 2026-10-04) | today's ring (`dsp::ring`, ADR 0028) | 0 | `QUAD` |
 | 2 | ROOM | LOOP, 2 loops × 2 stages | 1 | `ROOM` |
 | 3 | HALL | LOOP, 1 loop × 4 stages | 2 | `HALL` |
 | 4 | BLOOM | BLOOM | 5 | `BLOOM` |
@@ -135,7 +135,7 @@ Reversing this later is cheap. A PLATE TYPE would be a new disk code (7) mapped 
 
 New TYPEs never crossfade; QUAD always does (owner ruling, 2026-10-04: QUAD stays exactly as it is, with a clean, pitch-free crossfade; the new TYPEs' slight pitch bend is part of their vintage character).
 
-- **Targets.** Each line length is a target in f32 samples: SIZE's mapping, plus the tempo-synced value, plus the modulation offset.
+- **Targets.** Each line length is a target in f32 samples: SIZE's mapping or the tempo-synced value.
 - **Following.**
   1. The line's read length follows the target through a one-pole, τ = 100 ms, once a block.
   2. It is then slew-limited to at most **⅛ sample per sample**, which bounds the Doppler shift on a big twist to −2.3 / +2.0 semitones.
@@ -246,7 +246,7 @@ Owner ruling (2026-10-04): leave QUAD exactly as it is.
 - Its only change is internal: `Ring` borrows the arena instead of owning `lines`.
 - It keeps its 32-step double-read SIZE crossfade, which is clean and pitch-free. That crossfade is also its measured worst case, the 485 every other TYPE is held under.
 - Only the new TYPEs glide through interpolated read pointers (§ Glide). Their slight pitch bend is part of their vintage character.
-- QUAD shows no MORE knobs, takes no wobble, sync or modulation, and its goldens do not move (ADR 0011).
+- QUAD shows no MORE knobs, takes no wobble or sync, and its goldens do not move (ADR 0011).
 
 ## Arena
 
@@ -447,17 +447,12 @@ The owner asked for an LFO wobble on the loops. The MV2's reverbs were static, w
   - ECHO: all six taps.
 - The moved reads are interpolated already (§ Shared machinery), so the wobble adds the LFO's per-block maths and nothing per access.
 
-## Modulation
+## Modulation (deferred to #345)
 
-The owner asked for mod destinations "for depth, SIZE, DECAY and similar". The reverb runs outside `Voice`, and ADR 0010 makes only what `Voice` reads per block modulatable, so the reverb has none today.
-
-- **Destinations.** For every new TYPE: slot 3 (SIZE, LENGTH, SWELL or TIME), slot 1 (DECAY, TAIL, REGEN or REPEATS), slot 7 (TONE) and slot 11 (WOBBLE). Their specs gain `modulatable: true` with the linear law. QUAD takes none: an offset on its 32-step SIZE would crossfade without end, and its goldens stay locked.
-- **What the reverb does with an offset.**
-  - It adds the per-block offset to the stored value, clamps to 0..1 and maps.
-  - The offset ramps across the block (`Ramp`, ADR 0061).
-  - A synced slot rounds *after* the offset, so modulation steps through the divisions, each step gliding.
-  - Composites draw set values only (ADR 0067).
-- **Where offsets come from** is Q1. The reverb side is the same either way: `FxBus::process` takes `RevMod { offsets: [f32; 4] }` per block, zeroed when nothing routes. Everything above lands with the engines. Wiring a source lands last (§ Build order), after the owner answers.
+Owner, 2026-10-04: every mod source today lives inside a Part, and nothing exists at the mixer level. A mixer-level LFO or matrix gets its own thought before anything routes into shared FX (private issue #345).
+- **This build has no external mod destinations.** Every reverb spec stays `modulatable: false` (ADR 0010 unchanged). The only motion is each TYPE's own wobble (§ Wobble), set by its WOBBLE and RATE knobs.
+- **Out of scope, deferred to #345:** Part-matrix routes into the reverb, an envelope follower or DUCK on the send, and MIX+PLUS priming on reverb cells.
+- **Kept open at no cost.** Adding destinations later changes no disk code: modulatability is a spec flag, not stored, and the natural targets (slots 1, 3, 7 and 11) already exist as ids. Every knob maps through one pure function of its stored value, so an offset can later be added before the mapping without touching storage. No slot is reserved, because none is needed.
 
 ## Tempo sync
 
@@ -507,7 +502,7 @@ The owner asked for mod destinations "for depth, SIZE, DECAY and similar". The r
 
 - TYPE is a word choice, so it takes NONE (ADR 0067); SYNC and PATTERN do too.
 - The existing test that every NONE word fits the band at the focus size covers `REVERSE` and `PATTERN`'s `SINGLE`.
-- QUAD's on-screen word is Q2.
+- QUAD keeps the word `QUAD` on screen: the owner named it (2026-10-04).
 
 ### Glyph
 
@@ -528,15 +523,14 @@ The cube (ADR 0067) is QUAD's picture of a room. For the new TYPEs a cube is the
 ### Hints
 
 - **No new gesture.** Every new control is a knob, and navigation stays the D-pad (ADR 0081 on the ORBIT branch; the owner's rule of 2026-10-03).
-- **The only gesture that reaches a reverb cell is MIX+PLUS**, which primes a route on the current Part's matrix. It becomes possible on these cells only after Q1 lands, and it gets a hint.
-- **Where a hint shows.** The focus band's status line, where MIX+PLUS's `PrimeStatus` shows (ADR 0017). It shows while nothing is pending; a status replaces it until the next input.
+- **No reverb cell takes a gesture.** MIX+PLUS priming stays off them, since nothing routes into the reverb (§ Modulation, deferred to #345).
+- **Where a hint shows.** The focus band's status line, where `PrimeStatus` shows elsewhere (ADR 0017). It shows while nothing is pending; a status replaces it until the next input.
 - **One pure function** chooses the hint: `rev_hint(type, focused slot, values, tempo) -> Option<RevHint>`. A `RevHint` is either a static string or a fold (played division, BPM), formatted at draw time.
 - A test checks every hint fits the band at `FONT_LABEL`.
 
 | Focus | Condition | Hint |
 |---|---|---|
 | TYPE | always | `TURN: NEW SPACE, ITS OWN KNOBS` |
-| a modulatable reverb cell | the route source exists (Q1) | `MIX+PLUS: ROUTE A MOD HERE` |
 | HALL SIZE or DIFFUSE | SIZE ≤ 0.15 or DIFFUSE ≥ 0.85 | `SMALL SIZE + HIGH DIFFUSE = PLATE` |
 | a synced cell | the division folded | `PLAYS 1/8 AT 55 BPM` (the actual values) |
 | DECAY | the RT60 floor (`t_min`) is binding | `SHORTEST AT THIS SIZE` |
@@ -594,8 +588,7 @@ The cube (ADR 0067) is QUAD's picture of a room. For the new TYPEs a cube is the
 | BLOOM | `BloomEngine`, panel row | 1–1.5 KB |
 | ECHO | `EchoEngine`, PATTERN weights, panel row | 1–1.5 KB |
 | Tempo sync | division lists, fold | ≈ 0.5 KB |
-| Modulation | `RevMod` path | ≈ 0.3 KB |
-| **Total** | | **≈ 11–14 KB** |
+| **Total** | | **≈ 11–13.5 KB** |
 
 Every TYPE stays inside 1–3 KB. The memory map has 896 KB of flash for the firmware, and ORBIT's builds read about 715 KB.
 
@@ -728,8 +721,7 @@ Each step is a mergeable slice with its tests, goldens, bench row and flash delt
 5. **BLOOM**: the REV BLOOM row.
 6. **ECHO**: PATTERN and the REV ECHO row.
 7. **Tempo sync**, once ORBIT is on `main`: `Tempo` into `FxBus`, SYNC, the division lists, the fold and its hint.
-8. **Modulation**, once Q1 is answered: the source wiring for `RevMod`, plus the ADR that amends ADR 0010 for these four destinations.
-9. **A/B and UAT**: the owner's listening pass, the ear-tuned constants and goldens, the final bench readings and flash totals, then ADR 0085 to Accepted.
+8. **A/B and UAT**: the owner's listening pass, the ear-tuned constants and goldens, the final bench readings and flash totals, then ADR 0085 to Accepted.
 
 GATE's tempo-synced LENGTH is the owner's "big one". Step 7 lands right after ORBIT merges, even if steps 5–6 are still open, so the order of 5, 6 and 7 can swap to suit.
 
@@ -763,11 +755,4 @@ Each plan task's review grades quality, efficiency, performance and principled-n
 - **The glide's pitch smear.** It may be too obvious on HALL and BLOOM. Slower τ and slew constants are free; only the time to reach a new SIZE grows.
 - **ECHO's headroom** is 838 samples, less its guard slots. The wobble's ±5 ms is inside it. A longer TIME is not.
 - **#142** (quiet sends lose their tail to i16 truncation) applies to every TYPE alike. It is fixed or not for all of them at once, outside this spec.
-- **Flash.** ≈ 11–14 KB total. Each step's delta is gated (§ Flash).
-
-## Owner questions
-
-1. **Where do the reverb's mod offsets come from?**
-   - (a) **Recommended:** every Part's matrix gets the four REV destinations. A Part's offset for the block is its newest sounding voice's (its LFOs, ENVs, VEL, NOTE), and the bus sums the Parts' offsets and clamps. MIX+PLUS on a REV cell primes the route on the Part whose mixer page is open. This is cheap, about a dozen instructions per routed Part per block, and reuses the matrix, but a Sound's routes then move the shared reverb.
-   - (b) Only the reverb's own modulators: the wobble, plus an envelope follower on the send (a DUCK knob). No matrix change, and no cross-Part effect, but not the matrix the owner named.
-2. **QUAD's word on screen.** The naming ruling says users see sounds, not machines, and the ruling also names this TYPE QUAD. Keep `QUAD`, or a sound word? I suggest `GRAIN`, its signature. The disk ident stays `QUAD` either way.
+- **Flash.** ≈ 11–13.5 KB total. Each step's delta is gated (§ Flash).
