@@ -3,16 +3,9 @@
 //! REV › MORE's six, each slot's word, value text and encoder step under
 //! that TYPE. TYPE and MIX sit on REV outside the panel.
 
-use core::fmt::Write;
-
 use crate::block::{Block, ParamId, find_spec};
-use crate::dsp::clampf;
-use crate::dsp::rev::sync::{DECAY_BEATS, FoldState, Tempo, list_index};
-use crate::dsp::reverb::{
-    KnobMemory, PLATE_ZONE, REVERB_SPECS, RevSync, ReverbParams, ReverbType, damp_hz,
-    decay_in_beats, knobs, synced_list,
-};
-use crate::ui::fmt::FmtBuf;
+use crate::dsp::reverb::{KnobMemory, REVERB_SPECS, ReverbParams, ReverbType, knobs};
+use crate::ui::fmt::{FmtBuf, fixed};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RevPage {
@@ -174,7 +167,17 @@ pub fn types_on_screen() -> &'static [ReverbType] {
     &[ReverbType::Quad]
 }
 
-/// Cell `k` of `page` under `t`; `None` where the TYPE has none.
+/// The panel `t` shows: its own once its engine runs, else QUAD's, which
+/// is what plays. A TYPE a CC or a newer project set stays stored.
+pub fn shown(t: ReverbType) -> ReverbType {
+    if types_on_screen().contains(&t) {
+        t
+    } else {
+        ReverbType::Quad
+    }
+}
+
+/// Cell `k` of `page` under `t`'s panel; `None` where it has none.
 pub fn knob(t: ReverbType, page: RevPage, k: u8) -> Option<&'static RevKnob> {
     let (at, n) = match page {
         RevPage::Main => (0, 4),
@@ -207,28 +210,9 @@ pub fn short_of(label: &str) -> Option<&'static str> {
         .and_then(|c| c.short)
 }
 
-/// One encoder tick of `id` under `p`: one division where it is synced,
-/// one beat count for DECAY under ALL, else the panel's.
-#[inline(never)]
+/// One encoder tick of `id` under `p`'s panel.
 pub fn step(p: &ReverbParams, id: ParamId) -> f32 {
-    let of = |n: usize| 1.0 / n.saturating_sub(1).max(1) as f32;
-    if let Some(list) = synced_list(p, id) {
-        of(list.len())
-    } else if id == P::TIME && decay_in_beats(p) {
-        of(DECAY_BEATS.len())
-    } else {
-        find(p.kind, id).map_or(TICK, |c| c.step)
-    }
-}
-
-/// `step` for a reverb seen as a `Block`.
-pub fn step_in(b: &dyn Block, id: ParamId) -> f32 {
-    let p = ReverbParams {
-        kind: ReverbType::at(b.get(P::TYPE)),
-        sync: RevSync::at(b.get(P::SYNC)),
-        ..ReverbParams::default()
-    };
-    step(&p, id)
+    find(shown(p.kind), id).map_or(TICK, |c| c.step)
 }
 
 /// TYPE `t`, leaving `p`'s knobs in `mem` (spec § A TYPE change loads
@@ -238,150 +222,51 @@ pub fn retype(p: &ReverbParams, t: ReverbType, mem: &mut KnobMemory) -> ReverbPa
     p.with_type(t, mem)
 }
 
-/// One encoder turn of `id` under `p`: TYPE walks the TYPEs on screen,
-/// SYNC its TYPE's choices (ROOM has no ALL), a knob its `step`.
-#[inline(never)]
-pub fn turn(
-    p: &ReverbParams,
-    id: ParamId,
-    delta: i8,
-    tempo: Tempo,
-    mem: &mut KnobMemory,
-) -> ReverbParams {
-    let walk = |n: usize, i: usize| (i as i32 + delta as i32).clamp(0, n as i32 - 1) as usize;
-    match id {
-        P::TYPE => {
-            let list = types_on_screen();
-            let i = list.iter().position(|&t| t == p.kind).unwrap_or(0);
-            match list[walk(list.len(), i)] {
-                t if t == p.kind => *p,
-                t => retype(p, t, mem),
-            }
-        }
-        P::SYNC => {
-            let choices: &[RevSync] = match p.kind {
-                ReverbType::Quad => return *p,
-                ReverbType::Room => &[RevSync::Off, RevSync::Time],
-                _ => &RevSync::ALL,
-            };
-            let now = p.sync.under(p.kind);
-            let i = choices.iter().position(|&s| s == now).unwrap_or(0);
-            p.with_sync(choices[walk(choices.len(), i)], tempo)
-        }
-        _ => {
-            let mut q = *p;
-            q.set(id, q.get(id) + delta as f32 * step(p, id));
-            q
-        }
+/// One encoder turn of `id` under `p`: TYPE walks the TYPEs on screen (a
+/// TYPE off the list stays put), a knob its `step`.
+pub fn turn(p: &ReverbParams, id: ParamId, delta: i8, mem: &mut KnobMemory) -> ReverbParams {
+    if id == P::TYPE {
+        let list = types_on_screen();
+        let Some(i) = list.iter().position(|&t| t == p.kind) else {
+            return *p;
+        };
+        let j = (i as i32 + delta as i32).clamp(0, list.len() as i32 - 1) as usize;
+        return if list[j] == p.kind {
+            *p
+        } else {
+            retype(p, list[j], mem)
+        };
     }
+    let mut q = *p;
+    q.set(id, q.get(id) + delta as f32 * step(p, id));
+    q
 }
 
-/// Slot `id`'s value as a cell under `t` shows it, from the same maps the
-/// engine plays (`dsp::reverb::knobs`), at `tempo` from fold `fold`.
-#[inline(never)]
-pub fn value_text(
-    t: ReverbType,
-    id: ParamId,
-    p: &ReverbParams,
-    tempo: Tempo,
-    fold: FoldState,
-) -> FmtBuf {
-    let p = &ReverbParams { kind: t, ..*p };
-    let mut b = FmtBuf::new();
-    let mut st = fold;
-    let k = knobs(p, tempo, &mut st);
-    let word = |b: &mut FmtBuf, w: &str| {
-        let _ = b.write_str(w);
-    };
+/// Slot `id`'s value as QUAD's panel shows it, in units, from the maps the
+/// engine plays (`dsp::reverb::knobs`). The other TYPEs' texts land with
+/// their engines.
+pub fn value_text(id: ParamId, p: &ReverbParams) -> FmtBuf {
+    let k = knobs(p);
     let (x, places, unit) = match id {
-        P::TYPE => return text(ReverbType::NAMES[t.index()]),
-        P::SYNC => return text(RevSync::NAMES[p.sync.under(t) as usize]),
-        P::MIX => (clampf(p.mix, 0.0, 1.0) * 127.0, 0, ""),
-        P::SIZE | P::PREDELAY if synced_list(p, id).is_some() => {
-            let list = synced_list(p, id).unwrap_or(&[]);
-            let v = if id == P::SIZE { p.size } else { p.predelay };
-            let mark = match st.0 {
-                0 => "",
-                n if n > 0 => "▾",
-                _ => "▴",
-            };
-            if let Some(d) = list.get(list_index(v, list.len())) {
-                let _ = write!(b, "{mark}{}", d.folded(st.0));
-            }
-            return b;
-        }
-        P::SIZE => {
-            if t == ReverbType::Hall && p.size < PLATE_ZONE {
-                word(&mut b, "PLATE ");
-            }
-            (k.length_ms, 0, "ms")
-        }
-        P::PREDELAY => (k.predelay_ms, 0, "ms"),
-        P::TIME if decay_in_beats(p) => {
-            let n = DECAY_BEATS[list_index(p.time, DECAY_BEATS.len())];
-            (n as f32, 0, if n == 1 { " BEAT" } else { " BEATS" })
-        }
-        P::TIME => match t {
-            ReverbType::Gate if k.tail == 0.0 => return text("OFF"),
-            ReverbType::Reverse if k.regen == 0.0 => return text("OFF"),
-            ReverbType::Reverse => (k.regen * 100.0, 0, "%"),
-            _ => secs(k.rt60_s),
-        },
-        P::DAMPING => khz(damp_hz(p.damping)),
-        P::TONE => khz(k.tone_hz),
-        P::DIFFUSE if k.taps > 0.0 => (k.taps, 1, ""),
-        P::DIFFUSE => (k.diffuse_g, 2, ""),
-        P::SHAPE => (k.shape_db, (k.shape_db.abs() < 9.95) as u32, "dB"),
-        P::SMEAR if k.smear_ms == 0.0 => return text("OFF"),
-        P::SMEAR => (k.smear_ms, 2, "ms"),
+        P::SIZE => (k.length_ms, 0, "ms"),
+        // Seconds: `0.55s`, `2.5s`, `10s`.
+        P::TIME => (
+            k.rt60_s,
+            (k.rt60_s < 9.95) as u32 + (k.rt60_s < 0.995) as u32,
+            "s",
+        ),
+        // A cutoff: `6.1k`, `11k`.
+        P::DAMPING => (k.damp_hz / 1000.0, (k.damp_hz < 9_950.0) as u32, "k"),
+        // Tenths: hundredths would run into the cube.
+        P::SMEAR => (k.smear_ms, 1, "ms"),
         P::RATE => (k.rate_hz, 2, "Hz"),
-        _ => return b,
+        _ => (0.0, 0, ""),
     };
-    num(&mut b, x, places, unit);
-    b
-}
-
-fn text(w: &str) -> FmtBuf {
     let mut b = FmtBuf::new();
-    let _ = b.write_str(w);
+    if id == P::SMEAR && k.smear_ms == 0.0 {
+        let _ = core::fmt::Write::write_str(&mut b, "OFF");
+    } else if !unit.is_empty() {
+        fixed(&mut b, x, places, unit);
+    }
     b
-}
-
-/// `x` to `places` decimals, then `unit`, in integers: `{:.1}` would link
-/// core's float formatting, several KB.
-#[inline(never)]
-fn num(b: &mut FmtBuf, x: f32, places: u32, unit: &str) {
-    let k = 10u32.pow(places);
-    let n = libm::roundf(x * k as f32) as i32;
-    if n < 0 {
-        let _ = b.write_str("-");
-    }
-    let n = n.unsigned_abs();
-    let _ = write!(b, "{}", n / k);
-    if places > 0 {
-        let _ = b.write_char('.');
-        let mut d = k / 10;
-        while d > 0 {
-            let _ = b.write_char((b'0' + (n / d % 10) as u8) as char);
-            d /= 10;
-        }
-    }
-    let _ = b.write_str(unit);
-}
-
-/// Seconds: `0.55s`, `2.5s`, `10s`.
-fn secs(s: f32) -> (f32, u32, &'static str) {
-    let places = if s < 0.995 {
-        2
-    } else if s < 9.95 {
-        1
-    } else {
-        0
-    };
-    (s, places, "s")
-}
-
-/// A cutoff: `6.6k`, `10k`.
-fn khz(hz: f32) -> (f32, u32, &'static str) {
-    (hz / 1000.0, (hz < 9_950.0) as u32, "k")
 }

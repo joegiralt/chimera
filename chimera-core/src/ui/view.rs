@@ -60,7 +60,7 @@ pub struct SlotCtx {
     pub lfos: [LfoKind; 3],
     /// MODEL: which cells MDL2 shows.
     pub model: ResonatorMode,
-    /// The reverb's TYPE: which panel REV and REV › MORE show.
+    /// The reverb panel REV and REV › MORE show (`reverb_panel::shown`).
     pub rev: ReverbType,
     /// The ORBIT ring the location selects: what `SelectedRing` edits.
     pub ring: RingIdx,
@@ -90,7 +90,7 @@ impl SlotCtx {
                 }
             }),
             model: ResonatorMode::from_u8(get(BlockRef::Modal, ModalParams::MODE) as u8),
-            rev: ReverbType::at(get(BlockRef::Reverb, ReverbParams::TYPE)),
+            rev: reverb_panel::shown(ReverbType::at(get(BlockRef::Reverb, ReverbParams::TYPE))),
             ring: RingIdx::ALL[0],
             clock: ClockSource::Internal,
         }
@@ -101,9 +101,13 @@ impl SlotCtx {
         Self { ring, ..self }
     }
 
-    /// This context under reverb TYPE `rev`: a Sound's params hold no FX.
+    /// This context under reverb TYPE `rev` (its shown panel): a Sound's
+    /// params hold no FX.
     pub fn on_rev(self, rev: ReverbType) -> Self {
-        Self { rev, ..self }
+        Self {
+            rev: reverb_panel::shown(rev),
+            ..self
+        }
     }
 
     /// This context under ORBIT's `clock`.

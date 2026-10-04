@@ -814,26 +814,21 @@ fn value_text(f: &Frame, i: usize, v: f32) -> FmtBuf {
     buf
 }
 
-/// A param's text at display value `v`: a reverb panel cell's from its
-/// TYPE's maps (`reverb_panel::value_text`), any other by its format.
+/// A param's text at display value `v`: a reverb panel cell's in its
+/// units (`reverb_panel::value_text`), any other by its format.
 fn param_text(f: &Frame, i: usize, view: &View, v: f32) -> FmtBuf {
-    if let Some(a) = view.addr().filter(|_| view::is_reverb_panel(f.def, i))
-        && let Some(s) = a.spec()
-    {
-        let mut p = f.fx.reverb;
-        crate::block::Block::set(&mut p, a.param, s.min + v * (s.max - s.min));
-        // Tempo is 120 BPM until the clock reaches the reverb (Task 12).
-        return crate::ui::reverb_panel::value_text(
-            f.ctx.rev,
-            a.param,
-            &p,
-            crate::dsp::rev::sync::Tempo::DEFAULT,
-            crate::dsp::rev::sync::FoldState::default(),
-        );
+    match view.addr().filter(|_| view::is_reverb_panel(f.def, i)) {
+        Some(a) => {
+            let mut p = f.fx.reverb;
+            crate::block::Block::set(&mut p, a.param, v);
+            crate::ui::reverb_panel::value_text(a.param, &p)
+        }
+        None => {
+            let mut buf = FmtBuf::new();
+            fmt::fmt_val(&mut buf, v, view.fmt());
+            buf
+        }
     }
-    let mut buf = FmtBuf::new();
-    fmt::fmt_val(&mut buf, v, view.fmt());
-    buf
 }
 
 /// Fingerprint of the Mixer overview (quantized levels and pans, selection).

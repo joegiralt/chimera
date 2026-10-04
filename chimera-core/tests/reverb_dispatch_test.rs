@@ -131,8 +131,8 @@ fn engine_state_fits() {
 #[test]
 fn tempo_is_threaded_but_inert_for_quad() {
     let (slow, fast) = (
-        render(SR, Tempo(48_000.0), true),
-        render(SR, Tempo(12_000.0), true),
+        render(SR, Tempo(60.0), true),
+        render(SR, Tempo(240.0), true),
     );
     assert!(
         slow.iter()
@@ -142,6 +142,7 @@ fn tempo_is_threaded_but_inert_for_quad() {
 }
 
 #[test]
-fn tempo_default_is_120_bpm_at_48_khz() {
-    assert_eq!(Tempo::DEFAULT, Tempo(24_000.0));
+fn tempo_default_is_120_bpm_free_of_the_rate() {
+    assert_eq!(Tempo::DEFAULT, Tempo(120.0));
+    assert_eq!(Tempo::DEFAULT.beat_ms(), 500.0);
 }

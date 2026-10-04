@@ -8,9 +8,9 @@ use chimera_core::block::{Block, DiskCode, ParamId, find_spec};
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::rev::Reverb;
-use chimera_core::dsp::rev::sync::{FoldState, Tempo, fold};
+use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::reverb::{
-    EngineKnobs, KnobMemory, REVERB_SPECS, RevSync, ReverbParams, ReverbType, knobs,
+    KnobMemory, REVERB_SPECS, RevSync, ReverbParams, ReverbType, knobs,
 };
 use chimera_core::storage::decode_block;
 use common::SR;
@@ -43,10 +43,6 @@ fn record(entries: &[(u8, [u8; 4])]) -> Vec<u8> {
 
 fn real(id: u8, x: f32) -> (u8, [u8; 4]) {
     (id, x.to_le_bytes())
-}
-
-fn knobs_of(p: &ReverbParams) -> EngineKnobs {
-    knobs(p, Tempo::DEFAULT, &mut FoldState(0))
 }
 
 fn close(got: f32, want: f32, what: &str) {
@@ -120,45 +116,71 @@ fn an_old_project_loads_as_quad() {
     );
 }
 
-/// Review Focus 2: an unknown TYPE code and NaN in every new slot load as
-/// QUAD, and a second of noise through it stays finite.
+/// Review Focus 2: an unknown TYPE code and NaN in every new slot keep
+/// each TYPE's stored state, any TYPE code with NaN slots loads that TYPE,
+/// and a second of noise through each stays finite.
 #[test]
 fn unknown_type_code_and_nan_slots_load_as_safe_quad() {
-    let mut entries = vec![(6u8, 9u32.to_le_bytes())];
-    entries.extend((7..=12).map(|id| real(id, f32::NAN)));
-    entries.push((13, f32::NAN.to_le_bytes()));
-    entries.extend([real(1, 0.5), real(3, 0.5), real(4, 1.0)]);
-    let mut fx = FxParams::default();
-    decode_block(&record(&entries), &[], &[], Some(&mut Fx(&mut fx))).unwrap();
-    let p = fx.reverb;
-    assert_eq!(p.kind, ReverbType::Quad);
-    assert_eq!(p.sync, RevSync::Off);
-    for id in 7..=12 {
-        assert!(p.get(ParamId(id)).is_finite(), "slot {id}");
+    let nan_slots = || {
+        let mut e: Vec<(u8, [u8; 4])> = (7..=12).map(|id| real(id, f32::NAN)).collect();
+        e.push((13, f32::NAN.to_le_bytes()));
+        e.extend([real(1, 0.5), real(3, 0.5), real(4, 1.0)]);
+        e
+    };
+    let load = |base: ReverbParams, code: u32| {
+        let mut entries = vec![(6u8, code.to_le_bytes())];
+        entries.extend(nan_slots());
+        let mut fx = FxParams {
+            reverb: base,
+            ..FxParams::default()
+        };
+        decode_block(&record(&entries), &[], &[], Some(&mut Fx(&mut fx))).unwrap();
+        fx.reverb
+    };
+    // A file with no TYPE, or one this firmware lacks, is QUAD.
+    assert_eq!(load(ReverbParams::default(), 9).kind, ReverbType::Quad);
+    let mut loaded = Vec::new();
+    for t in ReverbType::ALL {
+        let base = ReverbParams::default().with_type(t, &KnobMemory::new());
+        let kept = load(base, 9);
+        assert_eq!(kept.kind, t, "an unknown code keeps {t:?}");
+        let named = load(ReverbParams::default(), t.disk_code().into());
+        assert_eq!(named.kind, t);
+        assert_eq!(named.sync, RevSync::Off);
+        loaded.extend([kept, named]);
+    }
+    for p in &loaded {
+        for id in 7..=12 {
+            assert!(p.get(ParamId(id)).is_finite(), "{:?} slot {id}", p.kind);
+        }
     }
     // NaN that got past the codec (a CC, a bug) still renders finite.
-    let mut raw = p;
-    for id in [1, 2, 3, 7, 8, 9, 10, 11, 12] {
-        raw.write(ParamId(id), f32::NAN);
-    }
-    let k = knobs_of(&raw);
-    for (what, v) in [
-        ("length", k.length_ms),
-        ("rt60", k.rt60_s),
-        ("tone", k.tone_hz),
-        ("smear", k.smear_ms),
-        ("rate", k.rate_hz),
-    ] {
-        assert!(v.is_finite(), "{what}");
-    }
-    for params in [p, raw] {
+    let raw: Vec<ReverbParams> = ReverbType::ALL
+        .iter()
+        .map(|&t| {
+            let mut p = ReverbParams::default().with_type(t, &KnobMemory::new());
+            for id in [1, 2, 3, 7, 8, 9, 10, 11, 12] {
+                p.write(ParamId(id), f32::NAN);
+            }
+            let k = knobs(&p);
+            for v in [k.length_ms, k.rt60_s, k.damp_hz, k.smear_ms, k.rate_hz] {
+                assert!(v.is_finite(), "{t:?}");
+            }
+            p
+        })
+        .collect();
+    for params in loaded.iter().chain(&raw) {
         let mut rv = Reverb::new();
         let mut n = Noise(0x5EED);
         for _ in 0..blocks(1.0) {
             let send = core::array::from_fn(|_| 0.5 * n.next());
             let mut out = Stereo::SILENT;
-            rv.process(&send, &params, 1.0, Tempo::DEFAULT, SR, &mut out);
-            assert!(out.l.iter().chain(&out.r).all(|s| s.is_finite()));
+            rv.process(&send, params, 1.0, Tempo::DEFAULT, SR, &mut out);
+            assert!(
+                out.l.iter().chain(&out.r).all(|s| s.is_finite()),
+                "{:?}",
+                params.kind
+            );
         }
     }
 }
@@ -198,207 +220,38 @@ fn knob_memory_is_108_bytes_restores_and_clears() {
     assert!(m.recall(ReverbType::Room).is_none());
 }
 
-fn on(t: ReverbType) -> ReverbParams {
-    ReverbParams::default().with_type(t, &KnobMemory::new())
-}
-
+/// QUAD's laws, as the ring plays them (ADR 0028): the other TYPEs' rows
+/// land with their engines (Tasks 8–11).
 #[test]
-fn knobs_hit_the_spec_endpoints() {
-    use ReverbType::*;
-    let at = |t, f: &dyn Fn(&mut ReverbParams)| {
-        let mut p = on(t);
+fn quad_knobs_are_the_rings_laws() {
+    let at = |f: &dyn Fn(&mut ReverbParams)| {
+        let mut p = ReverbParams::default();
         f(&mut p);
-        knobs_of(&p)
+        knobs(&p)
     };
-    for (s, ms) in [(0.0, 100.0), (0.5, 141.42), (1.0, 200.0)] {
-        close(at(Room, &|p| p.size = s).length_ms, ms, "Room size");
+    close(at(&|p| p.size = 0.0).length_ms, 338.583, "size 0");
+    close(at(&|p| p.time = 0.5).rt60_s, 0.3 * 40f32.sqrt(), "time .5");
+    close(at(&|p| p.damping = 0.3).damp_hz, 6_050.65, "damp .3");
+    close(at(&|p| p.rate = 0.5).rate_hz, 0.2236, "rate .5");
+    // SMEAR is 0.18 % of the round trip at 1, at every SIZE.
+    for i in 0..=31 {
+        let k = at(&|p| (p.size, p.smear) = (i as f32 / 31.0, 1.0));
+        close(k.smear_ms, 0.0018 * k.length_ms, "smear cap");
     }
-    close(at(Room, &|p| p.time = 0.5).rt60_s, 0.5477, "Room decay");
-    close(at(Hall, &|p| p.size = 0.65).length_ms, 341.595, "Hall size");
-    close(
-        at(Hall, &|p| p.time = 0.45).rt60_s,
-        2.4929,
-        "Hall decay .45",
-    );
-    close(at(Hall, &|p| p.time = 1.0).rt60_s, 10.0, "Hall decay 1");
-    close(at(Hall, &|p| p.damping = 0.3).damp_hz, 6_051.0, "Hall damp");
-    close(
-        at(Hall, &|p| p.predelay = 1.0).predelay_ms,
-        125.0,
-        "Hall pre",
-    );
-    close(
-        at(Gate, &|p| p.size = 0.55).length_ms,
-        177.38,
-        "Gate length",
-    );
-    close(at(Gate, &|p| p.time = 0.3).rt60_s, 0.2478, "Gate tail");
-    assert_eq!(at(Gate, &|p| p.time = 0.0).tail, 0.0, "TAIL 0 is none");
-    close(at(Gate, &|p| p.time = 0.025).tail, 0.5, "TAIL fades in");
-    close(at(Gate, &|p| p.shape = 0.2).shape_db, -3.6, "Gate shape");
-    close(at(Gate, &|p| p.diffuse = 0.7).taps, 10.2, "Gate taps");
-    close(at(Gate, &|p| p.diffuse = 0.7).diffuse_g, 0.64, "Gate g");
-    close(
-        at(Reverse, &|p| p.size = 0.5).length_ms,
-        346.4,
-        "Reverse len",
-    );
-    close(
-        at(Reverse, &|p| p.shape = 0.67).shape_db,
-        24.06,
-        "Reverse curve",
-    );
-    close(at(Reverse, &|p| p.time = 1.0).regen, 0.708, "Reverse regen");
-    close(
-        at(Bloom, &|p| p.size = 0.7).length_ms,
-        513.985,
-        "Bloom swell",
-    );
-    close(at(Bloom, &|p| p.time = 0.6).rt60_s, 5.8603, "Bloom decay");
-    close(at(Bloom, &|p| p.tone = 0.35).tone_hz, 5_147.9, "Bloom tone");
-    close(at(Bloom, &|p| p.rate = 0.4).rate_hz, 0.1256, "Bloom rate");
-    close(at(Room, &|p| p.tone = 0.0).tone_hz, 10_000.0, "tone 0");
-    close(at(Room, &|p| p.tone = 1.0).tone_hz, 2_500.0, "tone 1");
-    close(
-        at(Room, &|p| p.diffuse = 0.4).diffuse_g,
-        0.6,
-        "Room diffuse",
-    );
-    close(at(Room, &|p| p.rate = 0.5).rate_hz, 0.3162, "Room rate");
-    // QUAD keeps its own laws (ADR 0028).
-    close(at(Quad, &|p| p.rate = 0.5).rate_hz, 0.2236, "Quad rate");
-    close(
-        at(Quad, &|p| p.size = 0.0).length_ms,
-        338.583,
-        "Quad size 0",
-    );
 }
 
+/// `KnobMemory`'s zero bytes are a clear memory.
 #[test]
-fn plate_zone_pulls_diffuse_tone_predelay() {
-    let k = |size: f32| {
-        let mut p = on(ReverbType::Hall);
-        (p.size, p.diffuse, p.tone, p.predelay) = (size, 0.4, 0.6, 0.5);
-        knobs_of(&p)
-    };
-    let want = |d: f32, t: f32, pre: f32| {
-        let mut p = on(ReverbType::Hall);
-        (p.size, p.diffuse, p.tone, p.predelay) = (0.5, d, t, pre);
-        knobs_of(&p)
-    };
-    for (size, (d, t, pre)) in [
-        (0.0, (1.0, 0.0, 0.0)),
-        (0.15, (0.4, 0.6, 0.5)),
-        (0.5, (0.4, 0.6, 0.5)),
-        (0.075, (0.7, 0.3, 0.25)),
-    ] {
-        let (g, w) = (k(size), want(d, t, pre));
-        close(g.diffuse_g, w.diffuse_g, "diffuse");
-        close(g.tone_hz, w.tone_hz, "tone");
-        assert!(
-            (g.predelay_ms - w.predelay_ms).abs() < 1e-3,
-            "pre at {size}"
-        );
-    }
-    // The stored knobs never change.
-    let mut p = on(ReverbType::Hall);
-    p.size = 0.0;
-    let _ = knobs_of(&p);
-    assert_eq!((p.diffuse, p.tone), (0.4, 0.3));
-}
-
-#[test]
-fn smear_caps_hold_at_every_size() {
-    use ReverbType::*;
-    for (t, cap) in [
-        (Room, 0.0072),
-        (Hall, 0.0036),
-        (Bloom, 0.0024),
-        (Quad, 0.0018),
-    ] {
-        for i in 0..=128 {
-            let mut p = on(t);
-            (p.size, p.smear) = (i as f32 / 128.0, 1.0);
-            let k = knobs_of(&p);
-            assert!(
-                k.smear_ms <= cap * k.length_ms * (1.0 + 1e-5),
-                "{t:?} at size {i}/128: D {} vs L {}",
-                k.smear_ms,
-                k.length_ms
-            );
-        }
-    }
-    // Under the cap, the knob's own law: HALL ±2 ms at 1, 0.7 at .35.
-    let mut p = on(Hall);
-    (p.size, p.smear) = (1.0, 0.35);
-    close(knobs_of(&p).smear_ms, 0.7, "Hall smear .35");
-    // Outside every loop, no cap: GATE ±1 ms.
-    let mut p = on(Gate);
-    p.smear = 1.0;
-    close(knobs_of(&p).smear_ms, 1.0, "Gate smear 1");
-}
-
-#[test]
-fn fold_halves_doubles_and_holds() {
-    let mut st = FoldState(0);
-    assert_eq!(fold(667.0, 40.0, 600.0, &mut st), 333.5); // GATE 1/4 at 90 BPM plays 1/8
-    assert_eq!(fold(20.0, 40.0, 600.0, &mut st), 40.0); // doubled once
-    assert_eq!(st, FoldState(-1));
-    let mut st = FoldState(0);
-    for ms in [600.0, 606.0, 594.0, 611.0] {
-        let _ = fold(ms, 40.0, 600.0, &mut st);
-    }
-    assert_eq!(st, FoldState(0)); // within 2 %: no flip
-    assert_eq!(fold(613.0, 40.0, 600.0, &mut st), 306.5); // past 2 %: one halving
-    // Back inside by 2 % before it unfolds.
-    let _ = fold(590.0, 40.0, 600.0, &mut st);
-    assert_eq!(st, FoldState(1));
-    assert_eq!(fold(580.0, 40.0, 600.0, &mut st), 580.0);
-    assert_eq!(st, FoldState(0));
-    assert_eq!(fold(f32::NAN, 40.0, 600.0, &mut st), 40.0);
-}
-
-#[test]
-fn synced_lengths_walk_their_lists() {
-    // GATE, SYNC TIME: LENGTH's p picks a division; 1/8 at 120 is 250 ms.
-    let mut p = on(ReverbType::Gate);
-    p.sync = RevSync::Time;
-    p.size = 7.0 / 10.0; // GATE_LENGTH[7] = 1/8
-    close(knobs_of(&p).length_ms, 250.0, "Gate 1/8");
-    // 1/4 at 90 BPM (667 ms) folds to 1/8.
-    let slow = Tempo(Tempo::RATE * 60.0 / 90.0);
-    p.size = 1.0;
-    let mut st = FoldState(0);
-    close(knobs(&p, slow, &mut st).length_ms, 333.3, "Gate 1/4 at 90");
-    assert_eq!(st, FoldState(1));
-    // HALL, SYNC ALL: DECAY in beats, clamped to its seconds.
-    let mut h = on(ReverbType::Hall);
-    (h.sync, h.time) = (RevSync::All, 1.0); // 32 beats = 16 s
-    close(knobs_of(&h).rt60_s, 10.0, "Hall 32 beats");
-    h.time = 3.0 / 9.0; // 4 beats = 2 s
-    close(knobs_of(&h).rt60_s, 2.0, "Hall 4 beats");
-    // ROOM reads a stored ALL as TIME: DECAY stays in seconds.
-    let mut r = on(ReverbType::Room);
-    (r.sync, r.time) = (RevSync::All, 0.5);
-    close(knobs_of(&r).rt60_s, 0.5477, "Room decay under ALL");
-}
-
-#[test]
-fn with_sync_keeps_the_length_close() {
-    // GATE at 250 ms, OFF → TIME: the nearest division, 1/8.
-    let mut p = on(ReverbType::Gate);
-    p.size = (250.0f32 / 40.0).ln() / 15.0f32.ln();
-    let t = p.with_sync(RevSync::Time, Tempo::DEFAULT);
-    assert_eq!(t.sync, RevSync::Time);
-    close(knobs_of(&t).length_ms, 250.0, "to TIME");
-    // TIME → OFF: the p whose ms is the division that played.
-    let back = t.with_sync(RevSync::Off, Tempo::DEFAULT);
-    close(knobs_of(&back).length_ms, 250.0, "to OFF");
-    // HALL OFF → ALL: DECAY 2.5 s lands on 4 or 6 beats (2 or 3 s).
-    let h = on(ReverbType::Hall).with_sync(RevSync::All, Tempo::DEFAULT);
-    let s = knobs_of(&h).rt60_s;
-    assert!(s == 2.0 || s == 3.0, "{s}");
-    // QUAD takes no sync.
-    let q = ReverbParams::default().with_sync(RevSync::Time, Tempo::DEFAULT);
-    assert_eq!(q, ReverbParams::default());
+fn knob_memory_zeroed_is_clear() {
+    // SAFETY: `KnobMemory` is plain `u16`s; the test checks exactly that
+    // zero bytes read as `new()`.
+    let z: KnobMemory = unsafe { core::mem::MaybeUninit::zeroed().assume_init() };
+    assert_eq!(z, KnobMemory::new());
+    let mut m = KnobMemory::new();
+    let mut q = ReverbParams::default();
+    (q.size, q.time) = (0.0, 1.0);
+    m.store(&q);
+    let back = m.recall(ReverbType::Quad).unwrap();
+    assert_eq!((back[0], back[2]), (1.0, 0.0), "the ends are exact");
+    assert!((back[1] - 0.3).abs() <= 0.5 / 65_534.0);
 }

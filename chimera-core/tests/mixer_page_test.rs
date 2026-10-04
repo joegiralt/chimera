@@ -179,8 +179,8 @@ fn fx_encoders_step_like_before() {
     assert_eq!(perf.fx.reverb.mix, 1.0 / 128.0);
     turn_def(&reg::EFX, 4, 5, &mut perf);
     assert!((perf.fx.reverb.smear - 5.0 / 128.0).abs() < 1e-6);
-    turn_def(&reg::EFX, 1, 1, &mut perf);
-    assert!((perf.fx.reverb.size - (0.5 + 1.0 / 31.0)).abs() < 1e-6);
+    // QUAD's SIZE ticks its table step through the UI's panel turn
+    // (`the_reverb_pages_turn_by_the_panel`).
     turn_def(&reg::EFX_MORE, 3, 2, &mut perf);
     assert!((perf.fx.reverb.rate - (0.5 + 2.0 / 128.0)).abs() < 1e-6);
     turn_def(&reg::DELAY, 3, 64, &mut perf);

@@ -150,8 +150,6 @@ pub const CELL_LABEL_Y: i32 = 196;
 pub const CELL_ROW_H: i32 = 36;
 pub const CELL_COL_W: i32 = 74;
 pub const CELL_VALUE_DY: i32 = 17;
-/// The widest a cell's value runs: short of the next column.
-pub const CELL_VALUE_W: i32 = CELL_COL_W - 4;
 pub const CELL_BAR_DY: i32 = 22;
 pub const CELL_BAR_W: i32 = 62;
 pub const CELL_BAR_H: i32 = 2;

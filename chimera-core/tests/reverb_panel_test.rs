@@ -3,18 +3,15 @@
 
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::block::{Block, ParamId};
-use chimera_core::dsp::rev::sync::{FoldState, GATE_LENGTH, Tempo};
-use chimera_core::dsp::reverb::{KnobMemory, REVERB_SPECS, RevSync, ReverbParams, ReverbType};
+use chimera_core::dsp::reverb::{KnobMemory, REVERB_SPECS, ReverbParams, ReverbType};
 use chimera_core::params::ParamSnapshot;
-use chimera_core::preset::Performance;
-use chimera_core::project::PartId;
 use chimera_core::ui::block_def::BlockDef;
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::reverb_panel::{
-    RevPage, knob, label, retype, step, turn, types_on_screen, value_text,
+    RevPage, knob, label, retype, shown, turn, types_on_screen, value_text,
 };
 use chimera_core::ui::view::{SlotCtx, View, view};
-use chimera_core::ui::{components, draw, hint, part_page, theme};
+use chimera_core::ui::{draw, hint, theme};
 
 const ALL: [ReverbType; 6] = ReverbType::ALL;
 
@@ -93,139 +90,6 @@ fn every_type_shows_its_cells() {
 fn addr(id: ParamId) -> ParamAddr {
     ParamAddr::new(BlockRef::Reverb, id)
 }
-
-#[test]
-fn room_sync_steps_off_and_time_only() {
-    let mut mem = KnobMemory::new();
-    let r = ReverbParams::default().with_type(ReverbType::Room, &mem);
-    let a = turn(&r, ReverbParams::SYNC, 1, Tempo::DEFAULT, &mut mem);
-    assert_eq!(a.sync, RevSync::Time);
-    let b = turn(&a, ReverbParams::SYNC, 1, Tempo::DEFAULT, &mut mem);
-    assert_eq!(b.sync, RevSync::Time, "ROOM has no ALL");
-    let c = turn(&b, ReverbParams::SYNC, -1, Tempo::DEFAULT, &mut mem);
-    assert_eq!(c.sync, RevSync::Off);
-    let mut stored = r;
-    stored.sync = RevSync::All;
-    let text = value_text(
-        ReverbType::Room,
-        ReverbParams::SYNC,
-        &stored,
-        Tempo::DEFAULT,
-        FoldState(0),
-    );
-    assert_eq!(text.as_str(), "TIME");
-    // HALL walks all three.
-    let h = ReverbParams::default().with_type(ReverbType::Hall, &mem);
-    let h = turn(&h, ReverbParams::SYNC, 2, Tempo::DEFAULT, &mut mem);
-    assert_eq!(h.sync, RevSync::All);
-}
-
-/// Every word and value a reverb cell can show, under every TYPE, SYNC and
-/// a slow and a fast tempo.
-fn every_text() -> Vec<(ReverbType, ParamId, String)> {
-    let mut out = Vec::new();
-    let bpm = |b: f32| Tempo(Tempo::RATE * 60.0 / b);
-    for t in ALL {
-        for sync in [RevSync::Off, RevSync::Time, RevSync::All] {
-            for tempo in [bpm(30.0), Tempo::DEFAULT, bpm(90.0), bpm(300.0)] {
-                for page in [RevPage::Main, RevPage::More] {
-                    for k in 0..6 {
-                        let Some(c) = knob(t, page, k) else { continue };
-                        for i in 0..=128 {
-                            let mut p = ReverbParams::default().with_type(t, &KnobMemory::new());
-                            p.sync = sync;
-                            p.write(c.id, i as f32 / 128.0);
-                            if c.id == ReverbParams::SYNC {
-                                p.write(c.id, (i % 3) as f32);
-                            }
-                            let s = value_text(t, c.id, &p, tempo, FoldState(0));
-                            out.push((t, c.id, s.as_str().to_string()));
-                        }
-                    }
-                }
-            }
-        }
-    }
-    out
-}
-
-#[test]
-fn labels_and_values_fit_their_cells() {
-    // A label over 6 letters, or wider than the bar, has a short form
-    // that is neither (ADR 0053's rule).
-    for t in ALL {
-        for page in [RevPage::Main, RevPage::More] {
-            for k in 0..6 {
-                let Some(c) = knob(t, page, k) else { continue };
-                let w = |s| draw::text_width(&theme::FONT_LABEL, s, theme::LABEL_TRACKING);
-                let shown = match c.short {
-                    Some(s) if w(c.label) > theme::CELL_BAR_W => s,
-                    _ => c.label,
-                };
-                assert!(w(shown) <= theme::CELL_BAR_W, "{t:?} {}", c.label);
-                if c.label.len() > 6 {
-                    let s = c
-                        .short
-                        .unwrap_or_else(|| panic!("{} has no short", c.label));
-                    assert!(s.len() <= 6, "{s}");
-                }
-            }
-        }
-    }
-    let texts = every_text();
-    let room = theme::CUBE_X - 4 - theme::FOCUS_VALUE_X;
-    for (t, id, s) in &texts {
-        let cell = draw::text_width(components::cell_font(s), s, 0);
-        assert!(cell <= theme::CELL_VALUE_W, "{t:?} {id:?} {s}: {cell} px");
-        let focus = components::focus_font(s, room);
-        let fw = draw::text_width(focus, s, 0);
-        assert!(fw <= room, "{t:?} {id:?} {s}: {fw} of {room} px");
-    }
-    let has = |want: &str| texts.iter().any(|(_, _, s)| s == want);
-    for want in [
-        "▾1/8",
-        "PLATE 120ms",
-        "OFF",
-        "TIME",
-        "141ms",
-        "0.55s",
-        "6.6k",
-    ] {
-        assert!(has(want), "no cell shows {want}");
-    }
-    let shorts: Vec<_> = ALL
-        .iter()
-        .flat_map(|&t| {
-            (0..6).flat_map(move |k| [knob(t, RevPage::Main, k), knob(t, RevPage::More, k)])
-        })
-        .flatten()
-        .filter_map(|c| c.short)
-        .collect();
-    for short in ["PRE", "DENS", "DIFF"] {
-        assert!(shorts.contains(&short), "{short}");
-    }
-}
-
-/// The ▾ of a fold, from the spec's example: GATE's 1/4 at 90 BPM.
-#[test]
-fn a_folded_division_shows_its_mark() {
-    let mut p = ReverbParams::default().with_type(ReverbType::Gate, &KnobMemory::new());
-    p.sync = RevSync::Time;
-    p.size = 1.0; // GATE_LENGTH's last: 1/4
-    assert_eq!(GATE_LENGTH.len(), 11);
-    let slow = Tempo(Tempo::RATE * 60.0 / 90.0);
-    let text = value_text(ReverbType::Gate, ReverbParams::SIZE, &p, slow, FoldState(0));
-    assert_eq!(text.as_str(), "▾1/8");
-    let text = value_text(
-        ReverbType::Gate,
-        ReverbParams::SIZE,
-        &p,
-        Tempo::DEFAULT,
-        FoldState(0),
-    );
-    assert_eq!(text.as_str(), "1/4");
-}
-
 #[test]
 fn no_reverb_cell_has_a_hint() {
     for t in ALL {
@@ -260,31 +124,97 @@ fn quad_size_still_ticks_by_one_table_step() {
         knob(ReverbType::Quad, RevPage::Main, 0).unwrap().step,
         1.0 / 31.0
     );
-    let mut perf = Performance::new();
-    part_page::apply_encoder(&reg::EFX, 1, 1, &mut perf.edit(PartId::ALL[0]), &mut Op::A);
-    assert!((perf.fx.reverb.size - (0.5 + 1.0 / 31.0)).abs() < 1e-6);
-    // Through the panel's turn too.
     let p = ReverbParams::default();
-    let q = turn(
-        &p,
-        ReverbParams::SIZE,
-        1,
-        Tempo::DEFAULT,
-        &mut KnobMemory::new(),
-    );
+    let q = turn(&p, ReverbParams::SIZE, 1, &mut KnobMemory::new());
     assert!((q.size - (0.5 + 1.0 / 31.0)).abs() < 1e-6);
 }
 
+/// Every word on every panel fits its bar, or has a short of ≤ 6 that
+/// does (ADR 0053); every value QUAD's panel can show fits its cell and,
+/// large, the focus band beside the cube.
 #[test]
-fn a_synced_knob_steps_one_division() {
-    let mut p = ReverbParams::default().with_type(ReverbType::Gate, &KnobMemory::new());
-    assert_eq!(step(&p, ReverbParams::SIZE), 1.0 / 128.0);
-    p.sync = RevSync::Time;
-    assert_eq!(step(&p, ReverbParams::SIZE), 1.0 / 10.0);
-    let mut h = ReverbParams::default().with_type(ReverbType::Hall, &KnobMemory::new());
-    h.sync = RevSync::All;
-    assert_eq!(step(&h, ReverbParams::TIME), 1.0 / 9.0);
-    assert_eq!(step(&h, ReverbParams::PREDELAY), 1.0 / 8.0);
+fn labels_and_values_fit_their_cells() {
+    let w = |s: &str| draw::text_width(&theme::FONT_LABEL, s, theme::LABEL_TRACKING);
+    for t in ALL {
+        for (page, n) in [(RevPage::Main, 4), (RevPage::More, 6)] {
+            for k in 0..n {
+                let Some(c) = knob(t, page, k) else { continue };
+                let shown = match c.short {
+                    Some(s) if w(c.label) > theme::CELL_BAR_W => s,
+                    _ => c.label,
+                };
+                assert!(w(shown) <= theme::CELL_BAR_W, "{t:?} {}", c.label);
+                if c.label.len() > 6 {
+                    let s = c
+                        .short
+                        .unwrap_or_else(|| panic!("{} has no short", c.label));
+                    assert!(s.len() <= 6, "{s}");
+                }
+            }
+        }
+    }
+    let room = theme::CUBE_X - 4 - theme::FOCUS_VALUE_X;
+    let mut seen = Vec::new();
+    for &t in types_on_screen() {
+        for (page, n) in [(RevPage::Main, 4), (RevPage::More, 6)] {
+            for k in 0..n {
+                let Some(c) = knob(t, page, k) else { continue };
+                for size in [0.0, 0.5, 1.0] {
+                    for i in 0..=128 {
+                        let mut p = ReverbParams {
+                            size,
+                            ..ReverbParams::default()
+                        };
+                        p.write(c.id, i as f32 / 128.0);
+                        let s = value_text(c.id, &p).as_str().to_string();
+                        let cell = draw::text_width(&theme::FONT_VALUE, &s, 0);
+                        assert!(
+                            cell <= theme::CELL_BAR_W,
+                            "{t:?} {} {s}: {cell} px",
+                            c.label
+                        );
+                        let focus = draw::text_width(&theme::FONT_FOCUS, &s, 0);
+                        assert!(focus <= room, "{t:?} {} {s}: {focus} of {room} px", c.label);
+                        seen.push(s);
+                    }
+                }
+            }
+        }
+    }
+    for want in ["663ms", "1.9s", "6.1k", "OFF", "0.22Hz"] {
+        assert!(seen.iter().any(|s| s == want), "no cell shows {want}");
+    }
+}
+
+/// Until its engine lands, a TYPE a CC or a newer project set shows
+/// QUAD's panel, which is what plays; its code stays stored.
+#[test]
+fn an_off_screen_type_shows_quads_panel() {
+    use chimera_core::addr::BlockRead;
+    use chimera_core::block::Block as _;
+    struct One(ReverbParams);
+    impl BlockRead for One {
+        fn block(&self, b: BlockRef) -> Option<&dyn chimera_core::block::Block> {
+            (b == BlockRef::Reverb).then_some(&self.0 as &dyn chimera_core::block::Block)
+        }
+    }
+    for t in ALL {
+        let want = if types_on_screen().contains(&t) {
+            t
+        } else {
+            ReverbType::Quad
+        };
+        assert_eq!(shown(t), want);
+        let mut p = ReverbParams::default();
+        p.write(ReverbParams::TYPE, t.index() as f32);
+        assert_eq!(SlotCtx::read(&One(p), Op::A).rev, want);
+        assert_eq!(
+            SlotCtx::read(&ParamSnapshot::default(), Op::A)
+                .on_rev(t)
+                .rev,
+            want
+        );
+    }
 }
 
 /// An accidental TYPE nudge does not wipe the tweaks: leaving a TYPE
@@ -303,5 +233,8 @@ fn a_type_nudge_keeps_the_tweaks() {
     // Only QUAD is on screen yet: TYPE stays put.
     assert_eq!(types_on_screen(), &[ReverbType::Quad]);
     let q = ReverbParams::default();
-    assert_eq!(turn(&q, ReverbParams::TYPE, 1, Tempo::DEFAULT, &mut mem), q);
+    assert_eq!(turn(&q, ReverbParams::TYPE, 1, &mut mem), q);
+    // A TYPE off the list stays put, its knobs too.
+    let h = ReverbParams::default().with_type(ReverbType::Hall, &KnobMemory::new());
+    assert_eq!(turn(&h, ReverbParams::TYPE, -1, &mut mem), h);
 }

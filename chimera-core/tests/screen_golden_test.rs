@@ -79,7 +79,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_fx_delay", 0x57508228791992f2),
     // TYPE first, the panel's units, and REV › MORE (reverb TYPEs T6).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb", 0x7a256abcf34593f6),
+    ("mixer_fx_reverb", 0x68870c6de76ce43d),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_reverb_more", 0x796383a972c785b6),
     #[cfg(not(feature = "master-tape"))]
@@ -95,7 +95,7 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_fx_delay", 0x03c136cb5bd76c30),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb", 0x580923761bddff2c),
+    ("mixer_fx_reverb", 0xcd93522b3a8424f7),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb_more", 0x61c4a651bf259e74),
     #[cfg(feature = "master-tape")]

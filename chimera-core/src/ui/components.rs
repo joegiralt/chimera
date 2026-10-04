@@ -3,7 +3,6 @@
 
 use crate::dsp::clampf;
 use core::fmt::Write;
-use u8g2_fonts::FontRenderer;
 
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
@@ -350,28 +349,14 @@ where
     )
 }
 
-/// A cell value's face: the value font, or the label's where the value
-/// font would run into the next column (a reverb's `PLATE 120ms`).
-pub fn cell_font(text: &str) -> &'static FontRenderer {
-    draw::fit_font(&[&theme::FONT_VALUE], text, theme::CELL_VALUE_W).unwrap_or(&theme::FONT_LABEL)
-}
-
-/// The focus value's face: the largest that keeps it inside `room` px (a
-/// reverb's `PLATE 120ms` steps down).
-pub fn focus_font(text: &str, room: i32) -> &'static FontRenderer {
-    draw::fit_font(&[&theme::FONT_FOCUS, &theme::FONT_READOUT], text, room)
-        .unwrap_or(&theme::FONT_VALUE)
-}
-
 /// The value large and its gauge; with none, the text has the band.
 fn focus_value<D>(d: &mut D, value_text: &str, gauge: Gauge)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let room = gauge_rect(&gauge).map_or(theme::CONTENT_W, |(x, ..)| x - 4) - theme::FOCUS_VALUE_X;
     draw::text(
         d,
-        focus_font(value_text, room),
+        &theme::FONT_FOCUS,
         value_text,
         theme::FOCUS_VALUE_X,
         theme::FOCUS_VALUE_Y,
@@ -1029,7 +1014,7 @@ where
     // Tracked by 0: the same glyphs, and the marks (RING's "3 › P3").
     draw::text_tracked(
         d,
-        cell_font(c.text),
+        &theme::FONT_VALUE,
         c.text,
         x,
         y + theme::CELL_VALUE_DY,

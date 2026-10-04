@@ -48,7 +48,6 @@ use crate::block::Block;
 use crate::boot::RomDfu;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
-use crate::dsp::rev::sync::Tempo;
 use crate::dsp::reverb::{KnobMemory, ReverbParams};
 use crate::in_place::{by_value, uninit_at};
 use crate::mod_path::{LABEL_LEN, RegistryError};
@@ -719,6 +718,17 @@ impl UiState {
 
     pub fn project(&self) -> &Project {
         &self.project
+    }
+
+    /// Each reverb TYPE's knobs as last left.
+    pub fn rev_knobs(&self) -> &KnobMemory {
+        &self.rev_knobs
+    }
+
+    /// The knob memory, to fill before a load (tests only).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn rev_knobs_mut(&mut self) -> &mut KnobMemory {
+        &mut self.rev_knobs
     }
 
     /// The cache is dropped first: a whole project assigned through this
@@ -1942,21 +1952,14 @@ impl UiState {
                 if view::is_dimmed(&v, &self.project.part(at).sound, &self.ctx()) {
                     continue; // dimmed: the encoder is ignored
                 }
-                // The reverb turns by its TYPE's panel: TYPE keeps the knobs
-                // it leaves, SYNC converts its slots (reverb TYPEs spec § Pages).
+                // The reverb turns by its TYPE's panel, and TYPE keeps the
+                // knobs it leaves (reverb TYPEs spec § Pages).
                 if let Some(a) = v.addr()
                     && a.block == BlockRef::Reverb
                     && (!shift || matches!(a.param, ReverbParams::TYPE | ReverbParams::SYNC))
                 {
                     let rev = &mut self.project.edit_part(at).fx.reverb;
-                    // 120 BPM until the clock reaches the reverb (Task 12).
-                    *rev = reverb_panel::turn(
-                        rev,
-                        a.param,
-                        delta,
-                        Tempo::DEFAULT,
-                        &mut self.rev_knobs,
-                    );
+                    *rev = reverb_panel::turn(rev, a.param, delta, &mut self.rev_knobs);
                     continue;
                 }
                 let params = &mut UiBlocks {

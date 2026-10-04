@@ -101,13 +101,19 @@ pub fn fmt_val(buf: &mut FmtBuf, val: f32, fmt: ValFmt) {
     }
 }
 
-/// `x ≥ 0` to `places` decimals in integers: `{:.1}` would link core's
-/// float formatting, several KB of flash.
+/// `x` to `places` decimals (none: a whole number), then `unit` as given,
+/// in integers: `{:.1}` would link core's float formatting, several KB.
 pub(crate) fn fixed(buf: &mut FmtBuf, x: f32, places: u32, unit: &str) {
     use core::fmt::Write;
     let k = 10i32.pow(places);
     let n = libm::roundf(x * k as f32) as i32;
-    let _ = write!(buf, "{}.{:02$} {unit}", n / k, n % k, places as usize);
+    let sign = if n < 0 { "-" } else { "" };
+    let n = n.abs();
+    let _ = if places == 0 {
+        write!(buf, "{sign}{n}{unit}")
+    } else {
+        write!(buf, "{sign}{}.{:02$}{unit}", n / k, n % k, places as usize)
+    };
 }
 
 fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
@@ -136,9 +142,9 @@ fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
             // Each unit is picked from the value as it would print.
             let hz = law.range().map_or(0.0, |r| r.at(v));
             if round(hz * 100.0) < 1000 {
-                fixed(buf, hz, 2, "Hz");
+                fixed(buf, hz, 2, " Hz");
             } else if round(hz * 10.0) < 1000 {
-                fixed(buf, hz, 1, "Hz");
+                fixed(buf, hz, 1, " Hz");
             } else {
                 let _ = write!(buf, "{} Hz", round(hz));
             }
@@ -147,11 +153,11 @@ fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
             let s = law.range().map_or(0.0, |r| r.at(v));
             let ms = s * 1000.0;
             if round(ms * 10.0) < 100 {
-                fixed(buf, ms, 1, "ms");
+                fixed(buf, ms, 1, " ms");
             } else if round(ms) < 1000 {
                 let _ = write!(buf, "{} ms", round(ms));
             } else {
-                fixed(buf, s, 1, "s");
+                fixed(buf, s, 1, " s");
             }
         }
     }
