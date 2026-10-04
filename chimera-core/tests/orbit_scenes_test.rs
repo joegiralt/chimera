@@ -1661,3 +1661,40 @@ fn turning_back_keeps_a_pending_reland() {
         assert_eq!(song.queued(), Some(S[0]), "clear {clear}: still due");
     }
 }
+
+/// ACCENT marks no RHYTHM: the runner's knob copy lays the kept hits'
+/// accents again itself, and plays the new ACCENT.
+#[test]
+fn accent_alone_reaches_the_runner() {
+    let mut rig = OrbitRig::new();
+    rig.play(true);
+    rig.run_loops(1);
+    rig.song()
+        .edit(&mut |s| s.rings[1].set(SceneRing::ACCENT, 2.0));
+    rig.run(4);
+    let w = rig.working().rings[1].ring;
+    assert_eq!(w.accent(), 2);
+    assert_eq!(w, w.with_accent(2), "the accents laid over the hits");
+}
+
+/// TARGET reaches the runner with no edit mask: a knob.
+#[test]
+fn target_reaches_the_runner() {
+    let mut rig = OrbitRig::new();
+    rig.play(true);
+    rig.run_loops(1);
+    rig.song()
+        .edit(&mut |s| s.rings[1].set(SceneRing::TARGET, 3.0));
+    rig.run(4);
+    assert_eq!(rig.working().rings[1].target.part(), PartId::ALL[3]);
+}
+
+/// An edit's touched marks are `live`'s to send: the slot it also wrote
+/// keeps none, so landing it later sends nothing twice.
+#[test]
+fn an_edit_leaves_its_slot_untouched() {
+    let mut song = chimera_core::orbit::scene::OrbitSong::NEW;
+    song.edit(&mut |s| s.rings[0].set(SceneRing::STEPS, 7.0));
+    assert!(!song.live().untouched());
+    assert!(song.scene(S[0]).untouched());
+}

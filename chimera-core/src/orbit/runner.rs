@@ -10,7 +10,7 @@ use super::clock::{
 use super::engine::{Events, OrbitKind, OrbitState, Span, block};
 use super::euclid::HitMask;
 use super::ring::{Harmony, NoteMode, Ring};
-use super::scene::{Scene, SceneIdx};
+use super::scene::{Scene, SceneIdx, SceneRing};
 use super::walk::Pool;
 use super::{MAX_POOL, MAX_STEPS, RINGS, RingIdx};
 use crate::MidiNote;
@@ -406,9 +406,15 @@ impl OrbitRunner {
             .into_iter()
             .zip(w.rings.iter_mut().zip(&settings.rings))
         {
-            w.target = s.target;
+            // A new field fails to compile here until it is copied or left.
+            let SceneRing {
+                ring,
+                target,
+                touched: _,
+            } = s;
+            w.target = *target;
             w.ring
-                .take_knobs(&s.ring, rhythm.contains(r), notes.contains(r));
+                .take_knobs(ring, rhythm.contains(r), notes.contains(r));
         }
     }
 
@@ -709,6 +715,12 @@ impl OrbitRunner {
         self.loops += ev.boundary() as u32;
         self.edge = to;
         sent.then(&ev)
+    }
+
+    /// The scene as it plays, drift and all: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn working(&self) -> &Scene {
+        &self.working
     }
 
     /// Each ring's off still to send, a held ORBIT voice's: for the tests.

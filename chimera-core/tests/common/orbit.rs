@@ -232,6 +232,11 @@ impl OrbitRig {
     }
 
     /// Each ring's off still to send.
+    /// The runner's playing scene.
+    pub fn working(&self) -> &chimera_core::orbit::scene::Scene {
+        self.runner.working()
+    }
+
     pub fn runner_pending(&self) -> [Option<PendingOff>; RINGS] {
         self.runner.pending()
     }
