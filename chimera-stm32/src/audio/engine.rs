@@ -8,7 +8,7 @@ use chimera_core::audio_out::{Half, interleave};
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::hw::{SAMPLE_RATE, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
-#[cfg(feature = "midi-din")]
+#[cfg(any(feature = "midi-din", feature = "bench"))]
 use chimera_core::note_queue::SourceId;
 use chimera_core::note_queue::{InEvent, NoteDrain, NoteSources};
 use chimera_core::part::DacPair;
@@ -18,9 +18,12 @@ use chimera_core::triple::{Reader, Writer};
 
 use super::dma;
 
-pub const NOTE_SOURCES: usize = 1;
+/// MIDI DIN, and in a bench build the console's `card`, which plays a chord.
+pub const NOTE_SOURCES: usize = if cfg!(feature = "bench") { 2 } else { 1 };
 #[cfg(feature = "midi-din")]
 pub const DIN: SourceId<NOTE_SOURCES> = SourceId::new(0);
+#[cfg(feature = "bench")]
+pub const CARD: SourceId<NOTE_SOURCES> = SourceId::new(1);
 pub static NOTES: NoteSources<NOTE_SOURCES> = NoteSources::new();
 
 // SAFETY: ".ram_d2.voices" is real RAM_D2 SRAM (linker-defined) and NOLOAD,

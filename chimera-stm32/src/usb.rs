@@ -4,7 +4,8 @@
 
 use chimera_core::boot::{BootSeen, UsbOff, UsbRegs, UsbRetry, UsbState, UsbStep, wait_until};
 use chimera_core::console::{
-    AnswerClock, Console, Frame, LoopTimer, Out, Served, Stalled, Stats, Unit, answer, serial_hex,
+    AnswerClock, CardFail, CardSpeed, Console, Frame, LoopTimer, Out, Request, Served, Stalled,
+    Stats, Unit, answer, serial_hex,
 };
 use chimera_core::perf::load::AudioStats;
 use chimera_core::triple::Reader;
@@ -117,6 +118,11 @@ pub struct UsbParts {
 /// only `dfu::enter` takes one.
 #[must_use]
 pub struct DfuAsked(());
+
+/// `card`'s measurement, run before its answer starts: `None` without one
+/// in this build.
+pub type CardRun<'a> =
+    &'a mut dyn FnMut(Option<&mut Reader<AudioStats>>) -> Option<Result<CardSpeed, CardFail>>;
 
 /// The port, the half-read request line, and the loop's time between tops.
 pub struct Usb {
@@ -286,13 +292,15 @@ impl Usb {
     /// flushed, so `frame` is what the panel shows. Times the last lap (an
     /// answered one is not counted), polls, reads into the line, and
     /// answers at most one request: `Some` for a `dfu` the host was told
-    /// `OK` to.
+    /// `OK` to. A `card` runs `card` first, so its seconds come before the
+    /// answer's clock starts.
     pub fn service(
         &mut self,
         ui: &UiState,
-        stats: Option<&mut Reader<AudioStats>>,
+        mut stats: Option<&mut Reader<AudioStats>>,
         bench: Option<&str>,
         frame: Frame<'_>,
+        card: CardRun<'_>,
     ) -> Option<DfuAsked> {
         let now = DWT::cycle_count();
         let us = now.wrapping_sub(self.top) / self.cycles_per_us;
@@ -324,9 +332,15 @@ impl Usb {
             let Some(req) = line.push(byte[0]) else {
                 continue;
             };
+            // Outside a bench build nothing measures, and none of it links.
+            let card = match req {
+                Ok(Request::Card(_)) if cfg!(feature = "bench") => card(stats.as_deref_mut()),
+                _ => None,
+            };
             let unit = &mut ChipUnit {
                 ui,
                 stats,
+                card,
                 timer,
                 bench,
                 frame,
@@ -360,6 +374,7 @@ impl Usb {
 struct ChipUnit<'a> {
     ui: &'a UiState,
     stats: Option<&'a mut Reader<AudioStats>>,
+    card: Option<Result<CardSpeed, CardFail>>,
     timer: &'a mut LoopTimer,
     bench: Option<&'a str>,
     frame: Frame<'a>,
@@ -387,6 +402,10 @@ impl Unit for ChipUnit<'_> {
 
     fn bench(&self) -> Option<&str> {
         self.bench
+    }
+
+    fn card(&mut self) -> Option<Result<CardSpeed, CardFail>> {
+        self.card
     }
 
     fn frame(&self) -> Frame<'_> {

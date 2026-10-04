@@ -59,6 +59,7 @@ impl ShortName {
                 Dir::Chimera => b"CHIMERA",
                 Dir::Projects => b"PROJECTS",
                 Dir::Sounds => b"SOUNDS",
+                Dir::Bench => b"BENCH",
             },
             b"",
         )

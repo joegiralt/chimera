@@ -120,6 +120,11 @@ stats:
     python3 tools/chimera-usb.py stats
 status:
     python3 tools/chimera-usb.py status
+# A few seconds, about 15 the first time while it writes
+# /CHIMERA/BENCH/CARDTEST.BIN; it plays a chord on channel 1.
+# The card's read speed beside audio and the streams it holds (just flash-bench first)
+card:
+    python3 tools/chimera-usb.py card
 
 # Flash firmware to PreenFM3 via DFU. With the console up, `to-dfu` sends
 # `dfu` and waits for the ROM loader; without it, bridge BOOT0 and re-plug.

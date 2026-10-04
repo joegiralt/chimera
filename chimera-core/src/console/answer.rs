@@ -3,8 +3,8 @@
 use core::fmt::{self, Write};
 
 use super::{
-    Command, Frame, MAX_LINE, NoArg, Out, PROTOCOL, Refusal, Request, Stalled, write_shot,
-    write_status,
+    CardFail, CardSpeed, Command, Frame, MAX_LINE, NoArg, Out, PROTOCOL, Refusal, Request, Stalled,
+    write_card, write_shot, write_status,
 };
 use crate::boot::{BootSeen, UsbRegs};
 use crate::hw::MAX_VOICES;
@@ -24,6 +24,9 @@ pub trait Unit {
     /// Reading resets the loop timer.
     fn stats(&mut self) -> Option<Stats>;
     fn bench(&self) -> Option<&str>;
+    /// `card`'s numbers, measured before the answer starts. `None`: not in
+    /// this build.
+    fn card(&mut self) -> Option<Result<CardSpeed, CardFail>>;
     fn frame(&self) -> Frame<'_>;
     /// Arms the restart, made once `OK` is out. `None`: not in this build.
     fn dfu(&mut self) -> Option<()>;
@@ -86,6 +89,14 @@ pub fn answer(
             .bench()
             .map(|b| bench(b, &mut t))
             .ok_or(Why::Absent(r.command())),
+        Ok(r @ Request::Card(NoArg)) => match unit.card() {
+            None => Err(Why::Absent(r.command())),
+            // Its own line, not a `Why`: a build that never measures links none of it.
+            Some(Err(e)) => {
+                return writeln!(t, "ERR card: {}", e.message()).map_err(|fmt::Error| Stalled);
+            }
+            Some(Ok(s)) => Ok(write_card(&s, &mut t)),
+        },
         Ok(Request::Shot(c)) => return write_shot(unit.frame(), c, t.0),
         Ok(r @ Request::Dfu(NoArg)) => unit.dfu().map(Ok).ok_or(Why::Absent(r.command())),
     };

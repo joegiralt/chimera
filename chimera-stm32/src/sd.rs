@@ -65,6 +65,9 @@ pub struct SdSpi {
     mode: spi::Mode,
     phase: BusPhase,
     deadline: Deadline,
+    /// Each operation's cap: `SD_OP_CAP_MS` but while the bench writes its
+    /// card test file.
+    cap_ms: u32,
 }
 
 impl SdSpi {
@@ -88,6 +91,7 @@ impl SdSpi {
             mode,
             phase: BusPhase::Acquire,
             deadline: Deadline::arm_transfers(0, 0),
+            cap_ms: SD_OP_CAP_MS,
         };
         s.arm(SD_IDLE_MS);
         s
@@ -126,9 +130,9 @@ impl SdSpi {
     }
 
     /// Starts an operation at the current clock: `idle_ms` without a block
-    /// moved, or `SD_OP_CAP_MS` in all, is a timeout.
+    /// moved, or the cap (`SD_OP_CAP_MS`) in all, is a timeout.
     pub fn arm(&mut self, idle_ms: u32) {
-        let (idle, cap) = (u64::from(idle_ms), u64::from(SD_OP_CAP_MS));
+        let (idle, cap) = (u64::from(idle_ms), u64::from(self.cap_ms));
         self.deadline = if self.counting {
             let per_ms = u64::from(self.cpu_hz / 1_000);
             Deadline::arm(DWT::cycle_count(), idle * per_ms, cap * per_ms)
@@ -143,6 +147,14 @@ impl SdSpi {
 
     pub fn timed_out(&self) -> bool {
         self.deadline.is_over()
+    }
+
+    /// The cap of the operations armed from now on. Only the bench's test
+    /// file write raises it, and puts `SD_OP_CAP_MS` back; the idle limit
+    /// still ends a stalled card.
+    #[cfg(feature = "bench")]
+    pub fn set_cap_ms(&mut self, ms: u32) {
+        self.cap_ms = ms;
     }
 
     /// #186: CMD0 with CS low, `PRESENCE_TRIES` times at most; an R1 within

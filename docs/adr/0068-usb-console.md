@@ -56,6 +56,9 @@ is `docs/superpowers/specs/2026-10-02-usb-console-design.md`.
   `answer` matches exhaustively, so a new row does not build until it is
   answered. The commands are
   `help`, `status`, `stats`, `bench` and `shot`, all read-only, and `dfu`.
+  Bench builds add `card` (2026-10-04): it measures the SD card in the
+  UI loop before its answer's clock starts, writing its test file under
+  `/CHIMERA/BENCH` the first time (the spec's `card`).
 - **Enter DFU from the firmware** (the owner, 2026-10-02: no BOOT0
   jumper to flash). SETTINGS › SYSTEM › OS UPGRADE becomes an action
   row. Its prompt reads `ENTER DFU?` / `PLAY STOPS UNTIL FLASHED OR

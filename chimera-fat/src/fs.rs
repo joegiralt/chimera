@@ -21,6 +21,7 @@ fn path(dir: Dir) -> &'static [Dir] {
         Dir::Chimera => &[Dir::Chimera],
         Dir::Projects => &[Dir::Chimera, Dir::Projects],
         Dir::Sounds => &[Dir::Chimera, Dir::Sounds],
+        Dir::Bench => &[Dir::Chimera, Dir::Bench],
     }
 }
 
@@ -127,14 +128,8 @@ impl<'a, B: Blocks> Fs<'a, B> {
         file: FileName,
         sink: &mut dyn ReadSink,
     ) -> Result<(), FsError<B::Error>> {
-        let at = self.open(file.dir())?;
-        let Some((Slot::File(e), _)) = self.lookup(at, ShortName::file(&file))?.hit else {
-            return Err(FsError::NotFound);
-        };
+        let e = self.find(file)?;
         let layout = *self.table.layout();
-        if e.len > 0 && self.table.chain_len(e.start)? < e.len.div_ceil(layout.cluster_bytes()) {
-            return Err(FsError::Corrupt);
-        }
         if sink.begin(e.len).is_break() {
             return Ok(());
         }
@@ -158,6 +153,56 @@ impl<'a, B: Blocks> Fs<'a, B> {
             };
         }
         Ok(())
+    }
+
+    /// Calls `f` with each run of contiguous blocks that holds `file`'s
+    /// bytes, in order, as (first block, blocks), and returns its length.
+    /// The chain is checked as `read` checks it.
+    pub fn runs(
+        &mut self,
+        file: FileName,
+        f: &mut dyn FnMut(u32, u32),
+    ) -> Result<u32, FsError<B::Error>> {
+        let e = self.find(file)?;
+        let layout = *self.table.layout();
+        let (mut c, mut left) = (e.start, e.len.div_ceil(BLOCK as u32));
+        let mut run: Option<(u32, u32)> = None;
+        while left > 0 {
+            let first = layout.cluster_block(c).ok_or(FsError::Corrupt)?;
+            let n = left.min(layout.blocks_per_cluster());
+            run = match run {
+                Some((at, len)) if at + len == first => Some((at, len + n)),
+                Some((at, len)) => {
+                    f(at, len);
+                    Some((first, n))
+                }
+                None => Some((first, n)),
+            };
+            left -= n;
+            if left > 0 {
+                c = match self.table.link(c)? {
+                    Link::Next(next) => next,
+                    Link::End | Link::Broken => return Err(FsError::Corrupt),
+                };
+            }
+        }
+        if let Some((at, len)) = run {
+            f(at, len);
+        }
+        Ok(e.len)
+    }
+
+    /// `file`'s entry, its chain checked to hold its length.
+    fn find(&mut self, file: FileName) -> Result<Entry, FsError<B::Error>> {
+        let at = self.open(file.dir())?;
+        let Some((Slot::File(e), _)) = self.lookup(at, ShortName::file(&file))?.hit else {
+            return Err(FsError::NotFound);
+        };
+        let layout = *self.table.layout();
+        if e.len > 0 && self.table.chain_len(e.start)? < e.len.div_ceil(layout.cluster_bytes()) {
+            return Err(FsError::Corrupt);
+        }
+        Ok(e)
     }
 
     /// Replaces `file` with what `body` puts, and returns its length. In
@@ -290,7 +335,7 @@ impl<'a, B: Blocks> Fs<'a, B> {
         let root = self.table.layout().root();
         let parent = match dir {
             Dir::Chimera => root,
-            Dir::Projects | Dir::Sounds => self.open(Dir::Chimera)?,
+            Dir::Projects | Dir::Sounds | Dir::Bench => self.open(Dir::Chimera)?,
         };
         let name = ShortName::dir(dir);
         let found = self.lookup(parent, name)?;

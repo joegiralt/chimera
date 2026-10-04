@@ -74,6 +74,7 @@ help    this list
 status  firmware, project, Part and where the UI is
 stats   AUDIO LOAD and the UI loop's time
 bench   the bench's numbers (bench builds)
+card    SD read speed and streams, a chord playing (bench builds)
 shot    the screen in THEME's colours; shot raw: canonical
 dfu     restart into the ROM loader for just flash
 OK
@@ -139,6 +140,33 @@ OK
 A bench build's numbers as text: the text the bench screens draw, one screen line per answer line, in the order the screens show them. That covers the voice rows, KERNEL, the FX row, the routing pages and the MEMORY screen's `PROJ CRC`, rebuild and note-on rows. Each screen starts with a line `# <screen title>`, and the answer ends with `OK`. This reads B1 to B3 of the checklist (`docs/superpowers/plans/2026-10-01-settings-navigation.md` § Ship flash checklist).
 
 `bench::run` still shows its screens and holds each one, then falls through to the synth as today. It also writes the same lines into `BENCH_TEXT`, a static `[u8; 6144]` that exists only in bench builds. The console serves that text once the UI loop runs. If the text outgrows the buffer, its last line is `# TRUNCATED`, and the bench's text is estimated at about 4 KB (about 60 lines).
+
+**`card`**
+
+```
+file_kb 4194
+file_runs 1
+file_created 0
+seq_512_kb_s 610
+seq_4k_kb_s 1290
+seq_16k_kb_s 1410
+rand_4k_min_us 2810
+rand_4k_median_us 3020
+rand_4k_p99_us 4630
+rand_4k_max_us 9870
+loaded_16k_kb_s 1330
+loaded_voices 8
+loaded_load_pct 31
+overruns 0
+streams_seq 18
+streams_rand 12
+streams 12
+OK
+```
+
+(Added 2026-10-04, bench builds only; the numbers above are made up.) How fast the card reads while audio runs, for sizing TAPE's and TRON's streams. KB is 1000 B. It times raw multi-block reads (the SD driver's own, CMD18) over the runs of `/CHIMERA/BENCH/CARDTEST.BIN`, a 4 MiB file it writes on first use (about 12 s at the card's 363 KB/s). The runs come from `FatStore::runs`, so a TAPE that streams from the blocks it looked up once is what is measured. `seq_*` read 768 KiB each in 512 B, 4 KB and 16 KB transfers; `rand_4k_*` are 256 reads of 4 KB at random 4 KB-aligned places in the file; `loaded_16k_kb_s` reads another 768 KiB in 16 KB transfers with an eight-note chord on channel 1 sounding (its `loaded_voices` and `loaded_load_pct` say how much load that was), and `overruns` counts audio blocks missed while `card` ran. `streams` is the number of 24 kHz 12-bit streams (36 KB/s each) at half the card's rate: the lower of `streams_seq` (half the loaded rate) and `streams_rand` (half the rate of 4 KB refills that each wait the p99 latency).
+
+It runs in the UI loop before the answer starts, so the answer's 1 s clock starts after it. The UI and the port hold still for its few seconds (about 15 on first use); audio, MIDI and the watchdog's kicks go on, and every card transaction keeps its `SD_IDLE_MS` deadline (the file's write raises only the operation cap). With no audio block rendered in 10 ms it answers `ERR card: audio is not running`. The host tool waits up to 60 s for its first line.
 
 **`shot`**
 

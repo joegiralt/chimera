@@ -1,8 +1,8 @@
 use chimera_core::boot::{BootAction, BootSeen, UsbRegs};
 use chimera_core::clock_plan::SiliconRev;
 use chimera_core::console::{
-    Colours, Command, Console, Frame, NoArg, Out, Request, SHOT_HEADER, Stalled, Stats, Unit,
-    answer,
+    CardFail, CardSpeed, Colours, Command, Console, Frame, NoArg, Out, Request, SHOT_HEADER,
+    Stalled, Stats, Unit, answer,
 };
 use chimera_core::perf::load::AudioStats;
 use chimera_core::reset::ResetCause;
@@ -23,6 +23,7 @@ struct Fake {
     fb: Box<[u16; FB_SIZE]>,
     stats: Option<Stats>,
     bench: Option<String>,
+    card: Option<Result<CardSpeed, CardFail>>,
     stats_reads: usize,
     dfu: Option<()>,
     dfu_calls: usize,
@@ -37,6 +38,7 @@ impl Fake {
             fb: Box::new([0xBEEF; FB_SIZE]),
             stats: None,
             bench: None,
+            card: None,
             stats_reads: 0,
             dfu: None,
             dfu_calls: 0,
@@ -56,6 +58,9 @@ impl Unit for Fake {
     }
     fn bench(&self) -> Option<&str> {
         self.bench.as_deref()
+    }
+    fn card(&mut self) -> Option<Result<CardSpeed, CardFail>> {
+        self.card
     }
     fn frame(&self) -> Frame<'_> {
         Frame {
@@ -112,6 +117,7 @@ fn help_is_the_specs_text() {
          status  firmware, project, Part and where the UI is\n\
          stats   AUDIO LOAD and the UI loop's time\n\
          bench   the bench's numbers (bench builds)\n\
+         card    SD read speed and streams, a chord playing (bench builds)\n\
          shot    the screen in THEME's colours; shot raw: canonical\n\
          dfu     restart into the ROM loader for just flash\n\
          OK\n"
@@ -145,6 +151,33 @@ fn none_from_the_unit_is_one_err_line() {
     let mut u = Fake::new();
     assert_eq!(ask(&mut u, "stats\n"), "ERR stats is not in this build\n");
     assert_eq!(ask(&mut u, "bench\n"), "ERR bench is not in this build\n");
+    assert_eq!(ask(&mut u, "card\n"), "ERR card is not in this build\n");
+}
+
+#[test]
+fn card_fails_as_one_err_line() {
+    let mut u = Fake::new();
+    u.card = Some(Err(CardFail::NoAudio));
+    assert_eq!(ask(&mut u, "card\n"), "ERR card: audio is not running\n");
+    u.card = Some(Err(CardFail::Store(
+        chimera_hal::store::StoreError::Timeout,
+    )));
+    assert_eq!(ask(&mut u, "card\n"), "ERR card: CARD TIMEOUT\n");
+}
+
+#[test]
+fn card_is_key_value_lines_then_ok() {
+    let mut u = Fake::new();
+    u.card = Some(Ok(CardSpeed::default()));
+    let got = ask(&mut u, "card\n");
+    assert!(
+        got.starts_with("file_kb 0\n") && got.ends_with("streams 0\nOK\n"),
+        "{got}"
+    );
+    assert!(
+        got.lines().all(|l| l == "OK" || l.split(' ').count() == 2),
+        "{got}"
+    );
 }
 
 #[test]
@@ -291,7 +324,8 @@ fn a_stall_is_returned_from_every_answer() {
         loop_peak_us: 2,
     });
     let mut c = Console::new();
-    for &b in b"help\nstatus\nstats\nbench\nshot\nfrob\n" {
+    u.card = Some(Ok(CardSpeed::default()));
+    for &b in b"help\nstatus\nstats\nbench\ncard\nshot\nfrob\n" {
         if let Some(r) = c.push(b) {
             assert_eq!(answer(r, &mut u, &mut Wall), Err(Stalled));
         }
@@ -369,9 +403,9 @@ impl Rng {
 
     /// Up to 200 bytes: 70 % command words, `raw`, spaces, CR and LF; 30 % any byte.
     fn stream(&mut self) -> Vec<u8> {
-        const PIECES: [&[u8]; 11] = [
-            b"help", b"status", b"stats", b"bench", b"shot", b"dfu", b"raw", b" ", b"\r", b"\n",
-            b"\n",
+        const PIECES: [&[u8]; 12] = [
+            b"help", b"status", b"stats", b"bench", b"card", b"shot", b"dfu", b"raw", b" ", b"\r",
+            b"\n", b"\n",
         ];
         let len = self.below(201);
         let mut v = Vec::with_capacity(len + 8);
@@ -467,4 +501,14 @@ fn the_specs_help_is_what_help_writes() {
     let mut u = Fake::new();
     let spec = spec_block("help").join("\n") + "\n";
     assert_eq!(ask(&mut u, "help\n"), spec);
+}
+
+#[test]
+fn the_specs_card_has_every_line_card_writes() {
+    let mut u = Fake::new();
+    u.card = Some(Ok(CardSpeed::default()));
+    let key = |l: &str| l.split(' ').next().unwrap().to_owned();
+    let got: Vec<_> = ask(&mut u, "card\n").lines().map(key).collect();
+    let spec: Vec<_> = spec_block("card").into_iter().map(key).collect();
+    assert_eq!(got, spec);
 }
