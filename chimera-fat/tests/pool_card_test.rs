@@ -15,10 +15,10 @@ use ab::{copy, op, slot};
 use chimera_core::block::Block;
 use chimera_core::part::PartParams;
 use chimera_core::project::arena::ARENA_BYTES;
-use chimera_core::project::test_support::{full, same, save_at};
+use chimera_core::project::test_support::{full, full_dense_slots, same, save_at};
 use chimera_core::project::{
     LoadLink, PartId, Project, ProjectDecoder, ProjectNote, ProjectSource, ReplaceGuard,
-    list_projects, load_project, project_crc, project_file,
+    TemplateCrc, list_projects, load_project, project_crc, project_file,
 };
 use chimera_core::storage::{Card, InPlaceError, ProjectId, load_ab_in_place};
 use chimera_fat::FatStore;
@@ -35,9 +35,17 @@ fn id() -> ProjectId {
     ProjectId::new(1).unwrap()
 }
 
-/// `full()`, all 128 slots filled, told apart by Part 1's level.
-fn project_gen(n: u32) -> Box<Project> {
-    let (mut p, _) = full();
+/// What a test's saves start from: `full()`, or a dense variant.
+type Base = fn() -> (Box<Project>, TemplateCrc);
+
+/// `full_dense_slots(128)`: 175 KB, its chain crossing FAT sectors.
+fn dense_128() -> (Box<Project>, TemplateCrc) {
+    full_dense_slots(128)
+}
+
+/// `base`, all 128 slots filled, told apart by Part 1's level.
+fn project_gen(base: Base, n: u32) -> Box<Project> {
+    let (mut p, _) = base();
     p.edit_part(PartId::ALL[0])
         .mix
         .set(PartParams::LEVEL, 0.1 * n as f32);
@@ -49,8 +57,8 @@ fn saved(note: &ProjectNote) -> bool {
 }
 
 /// Save `n` over the pair as listed, or to it fresh.
-fn save_gen<S: Store>(s: &mut S, n: u32) -> ProjectNote {
-    save_at(&mut Card::new(), s, &mut project_gen(n), id().get())
+fn save_gen<S: Store>(base: Base, s: &mut S, n: u32) -> ProjectNote {
+    save_at(&mut Card::new(), s, &mut project_gen(base, n), id().get())
 }
 
 /// The pair loaded in place into a fresh project, as after a power cycle.
@@ -74,15 +82,16 @@ fn load_in_place<D: embedded_sdmmc::BlockDevice<Error = image::DiskError>>(
 
 /// Loads a 2 or a 3 whole, whichever the card kept.
 fn loads_two_or_three<D: embedded_sdmmc::BlockDevice<Error = image::DiskError>>(
+    base: Base,
     what: &str,
     disk: &Rc<D>,
 ) {
     let got = load_in_place(disk).unwrap_or_else(|e| panic!("{what}: {e:?}"));
-    let three = project_gen(3);
+    let three = project_gen(base, 3);
     if project_crc(&got) == project_crc(&three) {
         same(&three, &got);
     } else {
-        same(&project_gen(2), &got);
+        same(&project_gen(base, 2), &got);
     }
 }
 
@@ -192,8 +201,9 @@ impl Store for MidPass2 {
 /// back to NEW, and the arena holds NEW's Sounds and nothing else.
 #[test]
 fn load_device_error_leaves_new_arena() {
+    let base: Base = full;
     let disk = Rc::new(with_clusters(CLUSTERS, 0xC0DE));
-    assert!(saved(&save_gen(&mut probed(&disk), 1)));
+    assert!(saved(&save_gen(base, &mut probed(&disk), 1)));
     let (new, t) = Project::boxed();
     let new_used = new.pool().used();
     for fault in [Fault::Reads, Fault::Absent] {
@@ -242,10 +252,10 @@ fn load_device_error_leaves_new_arena() {
 // A 128-slot project save, cut or refused at every block write.
 
 /// A card holding saves 1 and 2 of the 128-slot project.
-fn two_saves() -> RamDisk {
+fn two_saves(base: Base) -> RamDisk {
     let mut s = FatStore::new(with_clusters(CLUSTERS, 0xC0DE));
     for n in 1..=2 {
-        let note = save_gen(&mut s, n);
+        let note = save_gen(base, &mut s, n);
         assert!(saved(&note), "save {n}: {note:?}");
     }
     let RamDisk(blocks) = s.device();
@@ -253,10 +263,10 @@ fn two_saves() -> RamDisk {
 }
 
 /// The blocks save 3 writes on `base`, in order.
-fn save_three_writes(base: &RamDisk) -> Vec<u32> {
-    let disk = Rc::new(copy(base));
+fn save_three_writes(base: Base, card: &RamDisk) -> Vec<u32> {
+    let disk = Rc::new(copy(card));
     let mut s = probed(&disk);
-    assert!(saved(&save_gen(&mut s, 3)));
+    assert!(saved(&save_gen(base, &mut s, 3)));
     log(&s).writes.borrow().iter().map(|&(b, _)| b).collect()
 }
 
@@ -277,10 +287,21 @@ fn entry_blocks(disk: &RamDisk) -> Vec<u32> {
 /// the next save lands.
 #[test]
 fn project_save_cut_at_every_write() {
-    let before = two_saves();
-    let p2 = project_gen(2);
+    cut_at_every_write(full);
+}
+
+/// The same on a 175 KB project whose chain crosses FAT sectors (#362 is
+/// a device error, not a cut).
+#[test]
+fn dense_project_save_cut_at_every_write() {
+    cut_at_every_write(dense_128);
+}
+
+fn cut_at_every_write(base: Base) {
+    let before = two_saves(base);
+    let p2 = project_gen(base, 2);
     assert_eq!(p2.pool().sound_count(), 128);
-    let blocks = save_three_writes(&before);
+    let blocks = save_three_writes(base, &before);
     let chains = fat_check(&before).entries.len();
     assert!(blocks.len() > 60, "{} writes", blocks.len());
     for k in 0..blocks.len() {
@@ -288,7 +309,7 @@ fn project_save_cut_at_every_write() {
         let cut = slot(copy(&before));
         cut.cut.set(Cut::After(k as u32));
         let note = op(&mut probed(&cut), |s, _| {
-            Ok::<_, StoreError>(save_gen(s, 3))
+            Ok::<_, StoreError>(save_gen(base, s, 3))
         })
         .unwrap();
         assert!(!saved(&note), "{what}: {note:?}");
@@ -299,9 +320,12 @@ fn project_save_cut_at_every_write() {
             "{what}: {r:?}"
         );
         assert!(r.entries.len() >= chains, "{what}: an entry lost");
-        loads_two_or_three(&what, &cut);
-        assert!(saved(&save_gen(&mut probed(&cut), 4)), "{what}: next save");
-        same(&project_gen(4), &load_in_place(&cut).unwrap());
+        loads_two_or_three(base, &what, &cut);
+        assert!(
+            saved(&save_gen(base, &mut probed(&cut), 4)),
+            "{what}: next save"
+        );
+        same(&project_gen(base, 4), &load_in_place(&cut).unwrap());
     }
 }
 
@@ -310,6 +334,7 @@ fn project_save_cut_at_every_write() {
 /// cross-linked or over its chain, and no cluster is lost unless the
 /// failed write was the entry's (#359 leaves that chain for #360).
 fn assert_no_leak(
+    base: Base,
     what: &str,
     s: &mut Probed<RamDisk>,
     disk: &Rc<RamDisk>,
@@ -328,37 +353,38 @@ fn assert_no_leak(
     if !entries.contains(&failed) {
         assert_eq!(r.lost, lost_before, "{what}: lost");
     }
-    loads_two_or_three(what, disk);
+    loads_two_or_three(base, what, disk);
 }
 
 /// A device error at each block save 3 writes, the card still powered:
 /// every write to that block refused, then a write that lands and errs.
 #[test]
 fn project_save_device_error_no_leak() {
-    let base = two_saves();
-    let blocks = save_three_writes(&base);
-    let entries = entry_blocks(&base);
-    let lost_before = fat_check(&base).lost;
+    let base: Base = full;
+    let card = two_saves(base);
+    let blocks = save_three_writes(base, &card);
+    let entries = entry_blocks(&card);
+    let lost_before = fat_check(&card).lost;
     assert!(lost_before.is_empty(), "{lost_before:?}");
     for (k, &block) in blocks.iter().enumerate() {
         let what = format!("write {k} of {} (block {block})", blocks.len());
 
-        let disk = Rc::new(copy(&base));
+        let disk = Rc::new(copy(&card));
         let mut s = probed(&disk);
         log(&s).fail_write.set(Some(block));
-        let note = save_gen(&mut s, 3);
+        let note = save_gen(base, &mut s, 3);
         assert!(!saved(&note), "fail_write {what}: {note:?}");
         log(&s).fail_write.set(None);
         let what = format!("fail_write {what}");
-        assert_no_leak(&what, &mut s, &disk, block, &entries, &lost_before);
+        assert_no_leak(base, &what, &mut s, &disk, block, &entries, &lost_before);
 
-        let disk = Rc::new(copy(&base));
+        let disk = Rc::new(copy(&card));
         let mut s = probed(&disk);
         log(&s).land_then_fail.set(Some(k));
-        let _ = save_gen(&mut s, 3);
+        let _ = save_gen(base, &mut s, 3);
         log(&s).land_then_fail.set(None);
         let what = format!("land_then_fail {what}");
-        assert_no_leak(&what, &mut s, &disk, block, &entries, &lost_before);
+        assert_no_leak(base, &what, &mut s, &disk, block, &entries, &lost_before);
     }
 }
 
@@ -368,11 +394,11 @@ fn project_save_device_error_no_leak() {
 #[test]
 #[ignore = "private issue #362"]
 fn sector_crossing_fat2_error_loses_a_cluster() {
-    use chimera_core::project::test_support::full_dense_slots;
-    let base = two_saves();
+    let base: Base = full;
+    let card = two_saves(base);
     let (mut big, _) = full_dense_slots(128);
     let body_writes = {
-        let disk = Rc::new(copy(&base));
+        let disk = Rc::new(copy(&card));
         let mut s = probed(&disk);
         assert!(saved(&save_at(
             &mut Card::new(),
@@ -387,9 +413,9 @@ fn sector_crossing_fat2_error_loses_a_cluster() {
             .map(|&(b, _)| b)
             .collect::<Vec<_>>()
     };
-    let entries = entry_blocks(&base);
+    let entries = entry_blocks(&card);
     for (k, &block) in body_writes.iter().enumerate() {
-        let disk = Rc::new(copy(&base));
+        let disk = Rc::new(copy(&card));
         let mut s = probed(&disk);
         log(&s).fail_write.set(Some(block));
         let (mut big, _) = full_dense_slots(128);

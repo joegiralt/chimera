@@ -406,3 +406,35 @@ fn in_use_clear_still_refused() {
     assert!(p.pool().get(s).is_some());
     assert_eq!((p.pool().generation(s), p.pool().free()), (g, free));
 }
+
+/// A filled slot overwritten with a larger Sound while the arena is full:
+/// refused, the old Sound's bytes and generation as they were.
+#[test]
+fn overwrite_with_growth_refused_when_full() {
+    let mut p = Project::boxed().0;
+    let target = SlotId::ALL[10];
+    let small = factory_sound(1).unwrap();
+    p.pool_store(target, &small).unwrap();
+    // Fill the rest with worst-case Sounds until one is refused.
+    for s in SlotId::ALL.into_iter().skip(11) {
+        let mut x = Sound::init(EngineType::Algo);
+        dense(&mut x, s.index() as u64);
+        if p.pool_store(s, &x).is_err() {
+            break;
+        }
+    }
+    let mut big = small.clone();
+    dense(&mut big, 7);
+    let grows = x_cost(&big).bytes() - p.pool().get(target).unwrap().cost().bytes();
+    assert!(grows > p.pool().free().bytes(), "the arena is full enough");
+    let (before, g, used) = (
+        p.pool().get(target).unwrap().bytes().to_vec(),
+        p.pool().generation(target),
+        p.pool().used(),
+    );
+    let refused = p.pool_store(target, &big).unwrap_err();
+    assert_eq!(refused.needs.bytes(), grows);
+    assert_eq!(p.pool().get(target).unwrap().bytes(), &before[..]);
+    assert_eq!(p.pool().generation(target), g);
+    assert_eq!(p.pool().used(), used);
+}
