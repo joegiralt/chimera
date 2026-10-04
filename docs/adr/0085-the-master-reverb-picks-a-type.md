@@ -58,10 +58,15 @@ against the ring's 48 while crossfading.
   block costs about 7 instructions more than two fixed reads, because it
   works out its index per sample instead of using `ring.rs`'s wrap-free
   segments. So each new TYPE keeps 5–6 of them:
-  - output taps are fixed;
+  - output taps are fixed, at fractions of each line's maximum length;
   - BURST moves at most 4 of its taps a block, by a scheduler (tap 0 is
-    the input register, and tap 11 doubles as REGEN's read);
-  - BLOOM's SWELL moves one loop delay, not its ten allpasses.
+    the input register, and tap 11 doubles as REGEN's read). Taps 1–10
+    slide at up to ½ sample per sample, and tap 11 at ⅛, so REGEN's tail
+    bends no more than the loops' glide does. A tap stops moving only on
+    an integer slot;
+  - BLOOM's SWELL moves one loop delay, not its ten allpasses. Whether
+    that long delay echoes instead of swelling is an A/B item, with a
+    fallback that puts an allpass inside it.
 
   Every read stays ≥ 2 samples behind the write head, and wobble depth is
   capped at half the shortest length it moves.
@@ -157,20 +162,28 @@ against the ring's 48 while crossfading.
   grid.
 
 ## Consequences
-- **CPU.** The estimates count moving reads at about 17 instructions a
-  pair. Host instructions per ring sample, against QUAD's 239 (ADR 0031),
-  with cycles per output sample in brackets, against 485:
-  - ROOM 224 (≈ 457);
-  - HALL 220 (≈ 449);
-  - GATE and REVERSE 212 (≈ 434);
-  - BLOOM 220 (≈ 449);
-  - ECHO 147 (≈ 313).
+- **CPU.** The estimates count a moving pair at 17–20 instructions
+  (index work of +7 to +10). Host instructions per ring sample, against
+  QUAD's 239 (ADR 0031):
 
-  All of them are under the ceiling. Both ceiling figures date from
+  | TYPE | Pair at +7 | Pair at +10 |
+  |---|---|---|
+  | ROOM | 224 | 239 (at the limit) |
+  | HALL | 220 | 235 |
+  | GATE, REVERSE | 212 | 230 |
+  | BLOOM | 220 | 235 |
+  | ECHO | 147 | 165 |
+
+  Each TYPE has a concrete fallback design that saves 12–30 instructions:
+  - ROOM and HALL glide SIZE on two delays only;
+  - BURST moves 3 taps;
+  - BLOOM wobbles 2 allpasses.
+
+  PRE-DLY always glides. Both ceiling figures date from
   2026-09-27, and step 0 re-measures them as an absolute baseline: after
   the refactor, REV QUAD must read ≤ that baseline + 1 %. Step 0 also
-  benches a worst-case BURST kernel on the chip before any TYPE work, and
-  the spec pre-plans a fallback for every TYPE (fewer moving reads). The
+  measures a moving pair's cost and benches the worst-case BURST, ROOM-loop
+  and HALL-loop kernels on the chip before any TYPE work. The
   gate is then a bench row per TYPE, each ≤ REV QUAD on the same build. `FxBus::COST` is unchanged while every TYPE ≤ QUAD. The
   BUS row runs the costliest TYPE.
 - **Memory.** The arena does not grow. `FxBus` gains one engine-state enum

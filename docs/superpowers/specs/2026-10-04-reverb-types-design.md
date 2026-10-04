@@ -172,11 +172,14 @@ Starting lengths in ms at SIZE 1. Each becomes the nearest distinct prime in sam
 | ROOM loop B | (shared) | 73 / 13 | 95 / 19 | | | same k |
 | HALL | 1.7, 3.1, 5.3, 8.9 | 113 / 11 | 157 / 17 | 124 / 13 | 146 / 19 | 0.111 → 1 (round trip 120 → 600 ms) |
 
-Output taps are (line, fraction of the line's length *at SIZE 0*, sign). They are fixed reads:
+Output taps are (line, fraction of the line's **maximum** length, sign). They are fixed reads:
 - **ROOM:** L = (A1, 0.31, +), (B2, 0.57, −), (A2, 0.83, +). R = (B1, 0.29, +), (A2, 0.53, −), (B2, 0.79, +).
 - **HALL:** L = (S1, 0.37, +), (S3, 0.61, −), (S2, 0.83, +). R = (S2, 0.23, +), (S4, 0.49, −), (S1, 0.91, +).
 
-The early pattern therefore stays put as SIZE grows, while the loop's spacing grows. The ear decides at A/B whether that or SIZE-scaled taps (moving reads, +6 pairs, over budget) sounds right. The budget allows only the first.
+- **Why the maximum.** A line owns its maximum length's slots, and the shared write head writes every one of them each pass. So a tap anywhere inside the maximum reads written data at any SIZE, at the same cost.
+- **What a tap reads.** At SIZE 1 the taps spread across each whole stage. At a small SIZE a tap past the current read point reads the line's input from an earlier pass: still the decaying tail, just older.
+- **Why not the minimum.** Fractions of the SIZE-0 length would read only the first 11 % of HALL's 540 ms stages at SIZE 1, and the output could pulse once per pass.
+- **The trade.** The early pattern stays put as SIZE moves. The ear judges it at A/B; SIZE-scaled taps would cost 6 more moving pairs, which is over budget.
 
 ### BURST engine: GATE and REVERSE
 
@@ -195,9 +198,11 @@ send → TONE → pre-diffuser (2 AP) → burst line ──► 12 taps over [0, 
   - **Tap 11 is also REGEN's feedback read**: one read serves both.
 - **How taps follow LENGTH.**
   - A tap glide would make every tap a moving read, about 15 pairs and roughly 330 instructions against QUAD's 239 (§ CPU budget). Instead taps 1–11 are fixed integer reads, and **at most 4 move at a time**.
-  - Each block, a scheduler picks the (up to) 4 taps farthest from their targets. Those read as moving pairs, sliding toward their targets at up to **½ sample per sample** (16 samples a block). The rest stay where they are.
+  - Each block, a scheduler picks the (up to) 4 taps farthest from their targets. Those read as moving pairs, sliding toward their targets. The rest stay where they are.
+  - **Speed.** Taps 1–10 move at up to **½ sample per sample** (16 samples a block). **Tap 11 moves at ⅛**, the glide's limit, because it is REGEN's feedback: a faster move would pitch-shift the regenerating tail by −12/+7 semitones on every LENGTH or tempo move. At ⅛ the bound is −2.3/+2.0 semitones, as for the loops.
+  - **Leaving the moving set.** A tap leaves only when it sits on an integer slot (fraction 0), so the next block's fixed read is the same sample and nothing steps.
   - Inside a diffused burst, a moving tap's Doppler is smear, not pitch, so the faster slew is safe here. The click test (§ Tests) holds it.
-  - Moving the burst 250 → 500 ms (1/8 → 1/4 at 120 BPM) moves the taps 36,000 samples in all, at 64 per block. That takes about 0.75 s.
+  - Moving the burst 250 → 500 ms (1/8 → 1/4 at 120 BPM) moves the taps 36,000 samples in all, at up to 64 per block: about 0.75 s for taps 1–10. Tap 11 moves 6,000 samples at ⅛ sample per sample, about 2 s; tap 0 and the rest of the burst are already in place.
 - **Curves.**
   - GATE: `w_k ∝ 10^(−SHAPE_dB·k/11/20)`, with SHAPE_dB = 18·SHAPE. Flat (a hard cut) to a falling 18 dB (the "dying" slow gate).
   - REVERSE: `w_k ∝ 10^(−CURVE_dB·(11−k)/11/20)`, with CURVE_dB = 12 + 18·CURVE. A rising ramp of 12–30 dB; the MV2 used about 24 in steps, ours is smooth.
@@ -224,6 +229,9 @@ L = AP5's output → decorrelator L (2 AP) ;  R = AP10's output → decorrelator
 - **The loop** is ten fixed allpasses and one plain delay. The density keeps building for several passes, and that is the swell.
 - **Allpass lengths:** 7, 11, 13, 19, 23, 29, 31, 37, 41 and 43 ms, about 254 ms in all. They are fixed reads.
 - **SWELL** sets the loop delay, 0 → 446 ms, so the round trip runs about 250 → 700 ms. That delay is the one read that glides. Scaling all ten allpasses instead would cost ten moving pairs, about 282 instructions against 239.
+- **Risk: an echo instead of a swell.** At SWELL 1, 446 ms of the 700 ms loop is plain delay. The loop may then repeat audibly once per pass instead of blooming.
+  - The A/B checks this explicitly (BLOOM at SWELL 1 against Bloom 1).
+  - **Fallback:** split the SWELL delay in two and put one fixed allpass between the halves (17 ms, g 0.5). That adds diffusion inside the long delay for 2 fixed accesses (+10 instructions). It is paid for by wobbling 2 APs instead of 3 (−1 pair, −15 to −20), as the CPU table shows.
 - **TONE** is the in-loop damper here (fc 10 kHz → 1.5 kHz). The bloom's darkness lives in the loop, as the spike measured: HF RT60 about 0.9× LF.
 - **DIFFUSE** sets the loop APs' g, 0.45 → 0.65.
 - **Taps.** The outputs are values already in registers (AP5's and AP10's outputs), not reads, so they cost nothing.
@@ -583,28 +591,34 @@ Hints follow ADR **0086** ("Every gesture shows a contextual hint in the focus b
 ### The model, with moving reads costed
 
 QUAD measured 158 instructions fixed and 239 crossfading, for 30 and 48 accesses: about **5.0 instructions per fixed access**, everything around it included.
-- A fixed access is QUAD's kind: one load or store at a segment offset.
-- A **moving pair** costs two loads plus the per-sample index work: integer part, fraction, the wrap of both slots, and the lerp. That is about 7 more, so about **17 instructions a pair**. ADR 0031's history shows why it matters: the ring's per-tap wrapping read 688 instructions, against 274 once segments removed it.
-- On the chip, cycles per output sample ≈ 40 + 1.86 × instructions per ring sample (QUAD: 40 + 1.86 × 239 = 485).
+- **A fixed access** is QUAD's kind: one load or store at a segment offset.
+- **A moving pair** costs two loads plus the per-sample index work: integer part, fraction, the wrap of both slots, and the lerp.
+  - That work is estimated at **+7** instructions (this spec's estimate) to **+10** (the review's), so 17 to 20 instructions a pair. Step 0 measures it.
+  - ADR 0031's history shows why it matters: the ring's per-tap wrapping read 688 instructions, against 274 once segments removed it.
+- **On the chip,** cycles per output sample ≈ 40 + 1.86 × instructions per ring sample (QUAD: 40 + 1.86 × 239 = 485).
 
-| TYPE | Fixed accesses (writes + reads) | Moving pairs | Instructions per ring sample | Est. cycles per output sample | Margin |
+| TYPE | Fixed accesses (writes + reads) | Moving pairs | Instructions, pair +7 | Instructions, pair +10 | Cycles, +7 / +10 |
 |---|---|---|---|---|---|
-| QUAD | 30 steady / 48 crossfading | 0 | 158 / **239 measured** | 320 / **485 measured** | 0 |
-| ROOM | 13 + 14 (taps fixed) | 5: PRE, 4 stage delays (2 of them wobbled) | 27 × 5 + 5 × 17 + 4 (rotation) = **224** | ≈ 457 | ≈ 6 % |
-| HALL | 13 + 14 (taps fixed) | 5: PRE, 4 stage delays (2 wobbled) | **220** | ≈ 449 | ≈ 7 % |
-| GATE, REVERSE | 9 + 13 (7 fixed taps; tap 0 from the register; REGEN shares tap 11) | 6: 4 scheduled taps, 2 wobbled decorrelator APs | 22 × 5 + 6 × 17 = **212** | ≈ 434 | ≈ 11 % |
-| BLOOM | 16 + 11 (7 fixed loop APs) | 5: PRE, SWELL delay, 3 wobbled APs | **220** | ≈ 449 | ≈ 7 % |
-| ECHO | 5 + 4 | 6: the taps | **147** | ≈ 313 | ≈ 35 % |
+| QUAD | 30 steady / 48 crossfading | 0 | 158 / **239 measured** | same | 320 / **485 measured** |
+| ROOM | 13 + 14 (taps fixed) | 5: PRE, 4 stage delays (2 wobbled) | 224 | **239** (at the limit) | 457 / 485 |
+| HALL | 13 + 14 (taps fixed) | 5: PRE, 4 stage delays (2 wobbled) | 220 | 235 | 449 / 477 |
+| GATE, REVERSE | 9 + 13 (7 fixed taps; tap 0 the register; REGEN shares tap 11) | 6: 4 scheduled taps, 2 wobbled decorrelator APs | 212 | 230 | 434 / 468 |
+| BLOOM | 16 + 11 (7 fixed loop APs) | 5: PRE, SWELL delay, 3 wobbled APs | 220 | 235 | 449 / 477 |
+| ECHO | 5 + 4 | 6: the taps | 147 | 165 | 313 / 347 |
 
-- **What a naive design cost.** GATE with all taps gliding was about 15 pairs, ≈ 330 instructions; BLOOM with all ten APs scaled was ≈ 282. Both were over the gate. That is why taps are fixed or scheduled, and SWELL moves one delay.
-- **Fallbacks, in case step 0 measures a moving pair dearer than 17.** Each removes moving pairs. Each is a constant in the engine and changes a golden, so the owner hears it at A/B.
+- **What a naive design cost.** GATE with all taps gliding was about 15 pairs, ≈ 330 instructions; BLOOM with all ten APs scaled was ≈ 282. That is why taps are fixed or scheduled, and SWELL moves one delay.
+- **ROOM, then HALL and BLOOM, are the tightest at +10.** Step 0 benches their worst-case kernels, not only BURST's.
+- **Fallbacks.** Each is a concrete design that drops moving pairs. Each is a constant in the engine and changes a golden, so the owner hears it at A/B. The saving is a pair less 5 for each fixed read that replaces it: 12 at +7, 15 at +10.
 
-| TYPE | First fallback | Second |
-|---|---|---|
-| ROOM, HALL | PRE-DLY steps by whole samples at block edges, a fixed read (−1 pair) | wobble one stage delay, not two (stays a moving read, so 0 pairs; the gain is ear-only), then 2 output taps per side (−2 fixed) |
-| GATE, REVERSE | 3 scheduled taps, not 4 (−1 pair; the 250 → 500 ms move takes about 1 s) | 10 taps, DENSITY 5 → 10 (−1 fixed) |
-| BLOOM | wobble 2 APs, not 3 (−1 pair) | 8 loop APs (−3 fixed) |
-| ECHO | none needed | — |
+| TYPE | Fallback design | Saving (+7 / +10) | Result at +10 |
+|---|---|---|---|
+| ROOM | **SIZE moves the stage-2 delays only** (A2, B2). A1 and B1 become fixed; A2 spans 1–101 ms and B2 0–95 ms, so the round trip still runs about 100 (105 for B) → 200 ms. The wobble moves A2 and B2. PRE-DLY still glides. | −2 pairs + 2 fixed: 24 / 30 | 209 |
+| HALL | **SIZE moves stages 2 and 4 only.** S1 and S3 are fixed at 13 and 14 ms; S2 + S4 span 33 → 513 ms, so the round trip is still 120 → 600 ms. The wobble moves S2 and S4. PRE-DLY still glides. | 24 / 30 | 205 |
+| GATE, REVERSE | **3 scheduled taps, not 4** (tap 11 still among them when moving). The 250 → 500 ms move takes about 1 s for taps 1–10. | 12 / 15 | 215 |
+| BLOOM | **Wobble 2 APs, not 3** (APs 3 and 9). If the A/B also wants the split SWELL delay (§ BLOOM engine), it costs +10 and lands at 230. | 12 / 15 | 220 (230 with the split) |
+| ECHO | none needed (165 at +10) | — | — |
+
+- **PRE-DLY is never stepped.** Every fallback keeps it a gliding moving read. Stepping it by whole samples at block edges would snap, against CLAUDE.md's rule.
 
 - **Per-sample maths** besides the accesses: tone and dampers (≤ 3 one-poles), gains, the grid quantiser and the lerps. They are in the 5.0 per access, as they are in QUAD's. The LFO, gain ramps and the tap scheduler are per block.
 - **`FxBus::COST` does not change while every TYPE ≤ QUAD.** The bench's BUS row runs the costliest TYPE's worst settings, chosen by name in `bench.rs` from the REV rows, so the bill stays honest if that ever flips.
@@ -678,6 +692,8 @@ The usual battery, per TYPE, on the host first (owner's rule: QA before UAT).
   - Weights are normalised (Σw² constant within 0.1 dB across SHAPE, CURVE and DENSITY).
   - DENSITY fades taps in continuously: no weight jumps more than 1/64 per 1/128 of the knob.
   - The scheduler never moves more than 4 taps in a block, and every tap reaches its target.
+  - Tap 11 never moves faster than ⅛ sample per sample, and the others never faster than ½.
+  - A tap leaves the moving set only at fraction 0.
 - **ECHO.** PATTERN's weights equal the table; a PATTERN change takes 20 ms with no step.
 - **Sync.**
   - `fold` halves and doubles to fit across 30–300 BPM, and every result is in its TYPE's range.
@@ -705,6 +721,7 @@ The usual battery, per TYPE, on the host first (owner's rule: QA before UAT).
 - **Loudness parity.** Each TYPE's default return RMS is within ±1 dB of QUAD's default on the same noise burst at MIX 0.5. This sets `WET[type]`.
 - **Wobble.** At WOBBLE 0 the output equals the output with the LFO frozen. At WOBBLE 1 the spectral peaks of a sustained tail move, as measured by a short-time spectrum.
 - **Moving taps don't click.** A full LENGTH sweep (40 → 600 ms) and a SYNC 1/8 → 1/4 step, mid-burst, keep the max second difference within `click_free_test`'s bound.
+- **REGEN's tail holds its pitch.** A 1 kHz sine regenerating through REVERSE at REGEN 1 keeps its instantaneous pitch within −2.4 / +2.1 semitones (zero crossings) through a LENGTH move of 150 → 800 ms.
 - **Sanitising.** NaN and out-of-range knobs render finite and recover, as QUAD's do.
 
 ### Switch
@@ -772,6 +789,7 @@ They lock refactors, not quality (ADR 0011). Ear tuning re-records them delibera
 | REVERSE defaults | Reverse 300 |
 | REVERSE, REGEN 0.7 | Reverse Regen 2 s |
 | BLOOM defaults | Bloom 1 |
+| BLOOM, SWELL 1 | Bloom 1: listen for a once-per-pass echo instead of a swell (fallback in § BLOOM engine) |
 | ECHO PAN | 3 Tap Pan |
 | ECHO CLOUD | Multitap |
 
@@ -788,13 +806,17 @@ The CPU risk comes first. Each step after step 0 is a mergeable slice with its t
 
 0. **Baseline and spike.** Nothing for the user yet; this step decides whether the CPU plan holds.
    - Re-measure the REVERB row and QUAD's host count on today's code. Record them as the absolute baseline.
-   - Write a worst-case BURST kernel: 12 taps (tap 0 from the register, tap 11 shared with REGEN), 4 scheduled moving taps, 2 wobbled decorrelator APs, the TAIL loop and the truncating write. Run it on a synthetic arena. Bench it on the chip as a temporary row, and count it on the host.
-   - Measure one moving pair's marginal cost.
-   - **Gate:** the kernel ≤ the baseline QUAD. If it fails, re-plan the tap mix from the fallback table before any TYPE work. The kernel becomes step 2's engine if it passes.
+   - Measure one moving pair's marginal cost (the +7 versus +10 question) with a microbench of fixed reads against moving pairs.
+   - Write three worst-case kernels, each run on a synthetic arena, benched on the chip as temporary rows and counted on the host:
+     - **BURST:** 12 taps (tap 0 from the register, tap 11 shared with REGEN), 4 scheduled moving taps, 2 wobbled decorrelator APs, the TAIL loop and the truncating write;
+     - **ROOM loop**, the tightest: PRE-DLY, the diffuser, 2 × 2 stages with all four delays gliding and two wobbled, the rotation and 6 fixed taps;
+     - **HALL loop:** PRE-DLY, the diffuser, 1 × 4 stages with all four delays gliding and two wobbled, and 6 fixed taps.
+   - BLOOM and ECHO are estimated from the measured pair cost, since BLOOM's count equals HALL's.
+   - **Gate:** each kernel ≤ the baseline QUAD. A kernel over the gate takes its TYPE's fallback design (§ CPU budget) and is benched again before any TYPE work. The kernels become steps 2–4's engines once they pass.
 1. **Scaffold, in two slices.**
    - **1a. The arena and the dispatcher.** `ReverbArena` comes out of `Ring`, and `dsp::reverb_bus::Reverb` replaces `RingReverb` in `FxBus`. QUAD stays bit-identical, and REV QUAD reads ≤ the step 0 baseline + 1 %. The `EngineState` enum and its zero test land here.
    - **1b. The parameters and the switch.** The new slots and disk codes; `ReverbType` with QUAD only selectable; `with_type` and the latch; the switch state machine, tested QUAD → QUAD by a forced restart, with the peak-block host test; the read kinds, allpass, tone, LFO and glide helpers, unit-tested alone; `reverb_panel.rs`, REV › MORE and `CompositeId::Reverb`.
-2. **GATE, then REVERSE**, on `BurstEngine` (the step 0 kernel): the tap scheduler, the curves, TAIL and REGEN, the TAIL glyph, the first A/B pairs, and the GATE and RVRS rows. The costliest engine lands first.
+2. **GATE, then REVERSE**, on `BurstEngine` (the step 0 kernel): the tap scheduler, the curves, TAIL and REGEN, the TAIL glyph, the first A/B pairs, and the GATE and RVRS rows. The step 0 kernels already settle CPU for steps 2–4, so this order follows the build's dependencies, not its cost.
 3. **ROOM**: `LoopEngine`, the rotation, the glide and the wobble; the ROOM row.
 4. **HALL** on the same engine: the plate corner and the HALL row.
 5. **BLOOM**: the BLOOM row.
@@ -825,11 +847,13 @@ Each plan task's review grades quality, efficiency, performance and principled-n
 
 ## Risks
 
-- **A moving pair's real cost.** The model's 17 instructions is an estimate, and step 0 measures it. The fallback table covers a dearer pair.
+- **A moving pair's real cost** is 17–20 instructions by estimate. Step 0 measures it, and the fallback table covers either end.
 - **BURST density with 12 taps.** Pre-diffusion should make 11 reads sound like the MV2's 47–90. If the A/B says grainy:
   - raise the pre-diffuser's g first (free);
   - the next step is 14 taps, +2 fixed reads (+10 instructions), still under.
-- **Fixed output taps in ROOM and HALL.** The early pattern no longer scales with SIZE, and the ear decides at A/B whether that matters. Scaling them would cost 6 moving pairs, which is over budget.
+- **Fixed output taps in ROOM and HALL.** The taps sit at fractions of each line's maximum length, so the early pattern no longer scales with SIZE. The ear decides at A/B whether that matters. Scaling them would cost 6 moving pairs, which is over budget.
+- **ROOM is at the limit if a pair costs +10.** Step 0 benches it, and its fallback design is ready (§ CPU budget).
+- **BLOOM's long delay** may echo rather than swell at SWELL 1. The A/B checks it, and the fallback is ready (§ BLOOM engine).
 - **The glide's pitch smear.** It may be too obvious on HALL and BLOOM. Slower τ and slew constants are free; only the time to reach a new SIZE grows.
 - **ECHO's headroom** is 838 samples, less its guard slots. The wobble's ±5 ms is inside it. A longer TIME is not.
 - **#142** (quiet sends lose their tail to i16 truncation) applies to every TYPE alike. It is fixed or not for all of them at once, outside this spec. The new truncating feedback writes add to it at low send levels; the silent-tail tests show how much.
