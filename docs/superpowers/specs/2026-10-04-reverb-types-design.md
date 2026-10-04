@@ -7,7 +7,8 @@ The owner's answers of 2026-10-04 are folded in:
 - QUAD keeps its name;
 - "sound first" on CPU;
 - ECHO is dropped, since the master tape delay covers it, and its design moves to a separate per-Part echo issue;
-- reverbs stay pitch-stable.
+- reverbs stay pitch-stable;
+- GRIT is redesigned everywhere, QUAD included, as a converter rather than an in-loop grid (§ GRIT).
 
 ## Intent
 
@@ -30,7 +31,7 @@ This spec turns that into three engines and five new TYPEs beside today's ring. 
 | Extend past the hardware: a loop LFO wobble, mod destinations, and tempo-synced PRE-DLY, GATE LENGTH and optionally DECAY. Mod destinations are deferred to #345 (2026-10-04). | § Wobble; § Modulation (deferred); § Tempo sync. |
 | "Sound first" (2026-10-04). QUAD's 485 cycles per output sample is the **target**. The **hard limit** is the cost model's headroom, enforced by a test, plus a stress run on the unit. | § CPU budget; § Build order, step 0. |
 | One 23,220-sample i16 arena (46,440 B), and nothing grows. About 1–3 KB of flash per TYPE. | § Arena; § Flash. |
-| QUAD stays exactly as it is, crossfade included (2026-10-04). | § QUAD. |
+| QUAD stays exactly as it is, crossfade included (2026-10-04). Amended the same day for GRIT only: GRIT is redesigned everywhere, QUAD included. | § QUAD; § GRIT. |
 | **Reverbs stay pitch-stable** (2026-10-04). In LOOP, the round-trip sum moves together and the tail is never re-pitched pass after pass. In BURST and REGEN, the cumulative shift per pass is bounded. The tape-echo pitch dive belongs to the future per-Part echo. This supersedes the earlier "SIZE glides via interpolated read pointers". | § Moving a length; § Pitch bounds. |
 | A switch fades the old tail out quickly while the arena clears, with no click and no stale echo. Parameter changes are lerped, never snapped. | § Switching TYPE; § Smoothing. |
 | No users yet: old projects load safely, as QUAD. | § Storage. |
@@ -132,9 +133,9 @@ That makes it a preset, and the MV2 itself had no plate topology. So:
 - **Rate.** Every engine runs at half rate, 24 kHz on the chip, behind today's half-band decimator and two interpolators (ADR 0028). They are shared and unchanged. The band limit stays the dark top every TYPE shares.
 - **Storage.**
   - Every line is i16, full scale ±2.0, in the one arena (§ Arena).
-  - GRIT's grid applies to every write in every TYPE: Δ = 2^(6·GRIT) LSBs (ADR 0028).
-  - ADR 0028's Q3 rule carries over: allpass state writes truncate toward zero, and delay and damper writes round.
-  - **A loop with no allpass in it truncates its feedback write.** That means BURST's line when REGEN is up. Rounding there would sustain a limit cycle: any gain above ½ holds ±Δ, as hum or DC, up to −48 dB at GRIT 1. Truncation toward zero always decays.
+  - **Storage quantisation is fixed**, at 1 LSB, whatever GRIT is: plain 16-bit memory, as the Midiverb's was. `Grid` is no longer GRIT's mechanism (§ GRIT).
+  - ADR 0028's Q3 rule carries over at that fixed step: allpass state writes truncate toward zero, and delay and damper writes round. Truncation is kept where ADR 0028 measured it necessary, because rounding everywhere sustains a 12–32 LSB tail.
+  - **A loop with no allpass in it truncates its feedback write.** That means BURST's line when REGEN is up. Rounding there would sustain a limit cycle: any gain above ½ holds ±Δ, as hum or DC, at the 1 LSB level. Truncation toward zero always decays.
   - FREEZE is not in this spec. No loop gain reaches 1.
 - **Two kinds of read.**
   - **Fixed reads** sit at an integer offset that changes only at a crossfade's start. These are QUAD's kind of read: they go through `ring.rs`'s wrap-free segments, one integer load each, with no per-sample index work.
@@ -142,10 +143,10 @@ That makes it a preset, and the MV2 itself had no plate topology. So:
   - **Every length that a knob or the tempo moves** (SIZE, LENGTH, SWELL, PRE-DLY) changes by a pitch-free crossfade between fixed reads (§ Moving a length), never by a moving read.
   - **Output taps never move.** They sit at fixed offsets behind their line's write point (§ LOOP engine).
 - **Reads never reach the write head.** Every read is at least 2 samples behind its line's write point (`d ≥ 2`, a clamp after each length is computed). The one exception is BURST's tap 0, which is the input value itself, taken from a register.
-- **Allpass.** `v = x − g·z` is written (truncated onto the grid), and `y = z + g·v`. It has the same form as QUAD's.
+- **Allpass.** `v = x − g·z` is written (truncated to the LSB), and `y = z + g·v`. It has the same form as QUAD's.
 - **Tone filter.** One one-pole lowpass per engine on the input, after the decimator: `y += a·(x − y)`, with `a = 1 − exp(−2π·fc / 24 000)`. TONE sets fc, from bright (0) to dark (1). This is where MV2's Bright, Warm and Dark live.
 - **Dampers.**
-  - One-pole lowpasses inside loops, written onto the grid with rounding, like QUAD's DAMP.
+  - One-pole lowpasses inside loops, written with rounding to the LSB, like QUAD's DAMP.
   - In ROOM, HALL, BLOOM and GATE's TAIL, each sits in a loop that also holds a truncating allpass.
   - REGEN's smoothing one-pole does not. That is harmless: its loop's feedback write truncates (the Storage bullet above), so the loop still decays to zero.
 - **Decay.**
@@ -160,6 +161,56 @@ That makes it a preset, and the MV2 itself had no plate topology. So:
   - The pitch it can cause is bounded (§ Pitch bounds).
 - **Input gain is ½ in every engine**, as in QUAD, so every TYPE keeps QUAD's resolution. Headroom comes from the level plan instead (§ Level plan).
 - **Output.** The return is ×`WET[type]` × MIX, eased as today. Each TYPE's `WET` is set so its default return's RMS matches QUAD's default within ±1 dB. A test pins this (§ Tests). QUAD's `WET_GAIN`, 4.54, is unchanged.
+
+### GRIT: a converter, not a grid
+
+Owner ruling, 2026-10-04: GRIT is redesigned everywhere, QUAD included.
+- **What was wrong.** Today's GRIT requantises every write *inside* the feedback loop (`Grid`, Δ = 2^(6·GRIT) LSBs, about 10 bits at GRIT 1, undithered). That error is correlated with the signal and recirculates, so decaying tails break into fizz. The owner hears it as "crinkling noise on top", not as old converters.
+- **What GRIT becomes:** the reverb's converters, at the two points where the signal enters and leaves the engine. The loop never quantises by GRIT again.
+
+**The two converter points** (both at the 24 kHz engine rate):
+- **ADC:** the decimated send, in dBFS units (1.0 = 0 dBFS), after the decimator and before TONE and the ½ injection. It is mono.
+- **DAC:** the engine's L and R return, after `WET` and before MIX and the interpolators, in output dBFS units. MIX follows it, so a lower MIX lowers the hiss with the wet level, as a return fader does.
+
+**At each point, in order:**
+1. **Bandwidth.** A one-pole lowpass per channel (ADC one, DAC two). Its cutoff is `fc = 11 kHz · (8/11)^GRIT`: 11 kHz at GRIT 0, about 8 kHz at GRIT 1. At the ADC it acts as the anti-alias filter, and at the DAC as the reconstruction filter.
+2. **Dither.** TPDF dither of ±1 converter LSB: the sum of two uniforms. Low levels become soft hiss, not granular distortion.
+3. **Bit depth.** Quantisation with rounding to `b = 16 − 6·GRIT` bits, continuous, with step `Δ_c = 2^(1−b)` over the ±1.0 range: 16 bits at GRIT 0, 14.2 at 0.3, 12.4 at 0.6 and 10 at 1.
+
+**The details.**
+- **GRIT 0 is a bypass.** When eased GRIT is exactly 0, the filters and both quantisers are skipped. QUAD at GRIT 0 is then bit-identical to today's QUAD at GRIT 0, since today's grid at GRIT 0 is the same 1 LSB Q3 storage.
+- **The noise source.** One xorshift32 state in the reverb, stepped twice per ring sample. Each step gives 4 bytes, and two bytes make one TPDF value (byte − byte, scaled to Δ_c), so the 6 bytes cover the ADC and both DAC channels. The 8-bit granularity is 1/256 of a converter LSB, far below audibility. It uses no heap and no libc.
+- **Idle mute.** Dither runs at a converter only while its input has been non-zero within the last 100 ms. After that it fades out over 50 ms. Real units' converters gated the same way.
+  - A silent reverb therefore still falls to exact zero, as ADR 0028 and the silent-tail tests require.
+  - The fade is a gain ramp, not a switch, so there is no click.
+- **GRIT eases**, with a 20 ms one-pole as before (ADR 0061). Δ_c and the cutoff follow the eased value once a block.
+
+**The noise floor.** A b-bit TPDF-dithered converter's noise is about −6.02·b + 3 dBFS. ADC noise reaches the output through the reverb at about unity broadband gain, since `WET` matches loudness, so the two converters together are about −6.02·b + 6 dBFS at MIX 1. Combined with the arena floor (QUAD's estimated −66 dBFS):
+
+| GRIT | Bits | Converters (ADC + DAC) | QUAD total | Today's QUAD |
+|---|---|---|---|---|
+| 0 | 16 | bypassed | −66 dBFS | −66 dBFS |
+| 0.3 | 14.2 | −79 | −66 | −55, as fizz |
+| 0.6 | 12.4 | −69 | −64 | about −45, as fizz |
+| 1 | 10 | −54 | −54, as hiss under an 8 kHz top | about −36, as fizz |
+
+The other TYPEs add their arena offsets from the table above at GRIT 0 and 0.3. From GRIT 0.6 up, the converters dominate, so every TYPE sits within about 1 dB of QUAD.
+
+- The default GRIT stays 0.3. It is now cleaner than before, and the owner's before-and-after A/B (§ Tests) decides whether the default should move.
+
+**Cost**, per ring sample at GRIT > 0 (billed at GRIT 1):
+- **Added:** 3 quantisations of about 3 instructions, 3 dither adds of about 2, TPDF extraction of about 6, 2 xorshift steps of 3, and 3 one-poles of 3. That is about **36 instructions**.
+- **Saved:** every in-loop write drops `Grid`'s scale and rescale. A truncating write saves about 4 instructions (`(x·inv) as i32 as f32 · Δ` becomes one convert), and a rounding write saves about 3 (`rint(x·inv)·Δ` becomes one VCVTA).
+
+| TYPE | i16 writes per ring sample (truncating + rounding) | Saved | Net |
+|---|---|---|---|
+| QUAD | 8 + 8 (4 delays, 4 dampers) | 56 | **−20** |
+| ROOM | 4 + 7 | 37 | **−1** |
+| HALL | 4 + 7 | 37 | **−1** |
+| GATE, REVERSE | 2 + 2 | 14 | **+22** |
+| BLOOM | 10 + 3 | 49 | **−13** |
+
+The CPU table (§ CPU budget) includes these.
 
 ### Level plan
 
@@ -194,7 +245,6 @@ Every stored value must stay inside the i16 full scale, ±2.0 in line units, at 
    - That is cheaper than normalising: an f32 store replaces the quantise-and-store, so the cost is +0 instructions, against about +8 for normalisation.
    - Their output, ≤ (1 + 2g)⁴ × 0.5 at worst, enters the loop sum or the burst line, and R1's clip bounds it there.
    - DIFFUSE's diffuser range goes back to 0.5–0.75.
-   - GRIT's grain lives in the lines and loops, as in QUAD. The f32 diffusers take none, a few ms of pre-echo density where grain is inaudible.
 4. **R4: output decorrelators are f32.** BURST's and BLOOM's decorrelators sit after a sum that can exceed 2.0. BURST's tap sum Σ is ≤ Σ|w| × 2.0 = 6.9, and a decorrelator at g 0.6 raises a state to 2.5 × its input. So they store f32, like R3's diffusers (§ Arena), with no i16 bound and no quantisation noise.
 
 **Every stored quantity, at maximum DECAY:**
@@ -226,7 +276,7 @@ Every stored value must stay inside the i16 full scale, ±2.0 in line units, at 
 - Alias energy is bounded by test at −40 dB, on a held loop mode near 5 kHz.
 - Oversampling the clip was rejected: it would double the clip's cost on every loop.
 
-**Noise floor**, at MIX 1, against QUAD's estimated −66 dBFS at GRIT 0 and −55 at GRIT 0.3:
+**Arena noise floor**, at MIX 1, against QUAD's estimated −66 dBFS. This is the fixed 1 LSB storage floor. GRIT's converter noise adds to it (§ GRIT):
 
 | TYPE | Estimate | Why |
 |---|---|---|
@@ -234,9 +284,9 @@ Every stored value must stay inside the i16 full scale, ±2.0 in line units, at 
 | GATE, REVERSE | ±2 dB | f32 decorrelators (no noise); the TAIL path alone runs up to 10.8 dB lower, inside a tail ≥ 20 dB below the burst |
 | BLOOM | +3 to +4 dB at the default (g 0.55); +4 to +5 dB at DIFFUSE 1 (g 0.65) | ten normalised loop APs, +7 to +9 dB on their error |
 
-- **GRIT means the same on every TYPE.** Its step is `2^(6·GRIT)` LSBs × IN/0.5, which is 1 today, since IN is ½ everywhere.
+- **GRIT means the same on every TYPE** by construction: its converters sit outside every engine (§ GRIT).
 - **The noise test bound** is QUAD's measured floor + 4 dB at each TYPE's defaults, and + 6 dB at DIFFUSE 1.
-- **Density against grain is an A/B item.** DIFFUSE 1 buys the Midiverb's ¾ density in ROOM and on the PLATE zone, at +4 to +6 dB of noise in quiet tails. The A/B compares DIFFUSE 0.4 and 1 on a quiet tail at GRIT 0. If the owner hears the grain, DIFFUSE's top stops lower, at the g the ear accepts.
+- **Density against grain is an A/B item.** DIFFUSE 1 buys the Midiverb's ¾ density in ROOM and on the PLATE zone, at +4 to +6 dB of noise in quiet tails. The A/B compares DIFFUSE 0.4 and 1 on a quiet tail at GRIT 0. If the owner hears the noise, DIFFUSE's top stops lower, at the g the ear accepts.
 
 ### Moving a length
 
@@ -379,12 +429,15 @@ L = AP5's output → decorrelator L (2 AP) ;  R = AP10's output → decorrelator
 
 ### QUAD
 
-Owner ruling (2026-10-04): leave QUAD exactly as it is.
-- QUAD is today's `dsp::ring`, bit for bit. Its sound and its cost are unchanged.
+Owner ruling (2026-10-04): leave QUAD exactly as it is, **except GRIT**, which the owner amended the same day.
+- QUAD is today's `dsp::ring`, except that GRIT becomes the converters (§ GRIT) and its storage quantises at a fixed 1 LSB.
+  - At GRIT 0, QUAD is bit for bit today's QUAD at GRIT 0.
+  - Its goldens at other GRIT values change, and are re-recorded deliberately (ADR 0011).
+  - It is pre-alpha with no users, so old patches only need to load safely, and they do.
 - Its only change is internal: `Ring` borrows the arena instead of owning `lines`.
 - It keeps its 32-step double-read SIZE crossfade, which is clean and pitch-free. The new TYPEs now move their lengths the same pitch-free way, on fewer lines (§ Moving a length).
 - That crossfade is QUAD's measured worst case, and the target the other TYPEs aim at (§ CPU budget).
-- QUAD shows no MORE knobs, takes no wobble or sync, and its goldens do not move (ADR 0011).
+- QUAD shows no MORE knobs and takes no wobble or sync.
 
 ## Arena
 
@@ -432,7 +485,7 @@ Each line also takes its 2 guard slots, under 50 per TYPE, inside the headroom s
 | 2 | `DAMP` | continuous 0..1 | in-loop HF damping: QUAD DAMP, HALL DAMP | 0.3 | no |
 | 3 | `SIZE` | continuous 0..1 | how big or how long the space is: SIZE, LENGTH, SWELL | 0.5 | no |
 | 4 | `MIX` | continuous 0..1 | return level | 0.0 | no |
-| 5 | `GRIT` | continuous 0..1 | the i16 grid | 0.3 | no |
+| 5 | `GRIT` | continuous 0..1 | the converters: bit depth, dither and bandwidth (§ GRIT) | 0.3 | no |
 | 6 | `TYPE` | Enum, `ReverbType` | the TYPE | QUAD | yes |
 | 7 | `TONE` | continuous 0..1 | input brightness (BLOOM: the in-loop damper) | 0.3 | yes |
 | 8 | `DIFFUSE` | continuous 0..1 | density: DIFFUSE, DENSITY | 0.4 | yes |
@@ -561,7 +614,7 @@ The audio thread runs one engine. When `params.reverb.kind` differs from the one
 - **Continuous knobs.** Every continuous knob eases:
   - lengths by pitch-free crossfades (§ Moving a length);
   - gains, TONE, DAMP, DIFFUSE, SHAPE and the curve weights by a per-block one-pole ramped across the block: τ 50 ms for DECAY (as QUAD's TIME), 20 ms for the rest;
-  - GRIT as in QUAD (20 ms);
+  - GRIT by a 20 ms one-pole, with Δ_c and the converter cutoff updated once a block (§ GRIT);
   - MIX by `Ease` (ADR 0061).
 - **Discrete choices.** SYNC changes a length's target, which crossfades. TYPE runs the switch.
 - **Nothing snaps** except a fresh engine's priming inside FADE IN, which no one can hear move.
@@ -750,19 +803,21 @@ Worst case: every crossfadable line crossfading, wobble at its maximum.
 
 | TYPE | Fixed accesses, worst (writes + reads + crossfade reads) | Moving pairs | Blends and extras | Instructions, pair +7 / +10 | Cycles, +7 / +10 |
 |---|---|---|---|---|---|
-| QUAD | 30 steady / 48 crossfading | 0 | — | 158 / **239 measured** | 320 / **485 measured** |
-| ROOM | 13 + 17 + 5 (PRE, 4 delays) = 35 | 2 (wobbled APs) | 10 + 4 (rotation) + 12 (2 soft clips) + 8 (4 normalised APs) | **243 / 249** | 492 / 503 |
-| HALL | 13 + 17 + 5 = 35 | 2 | 10 + 6 (soft clip) + 8 (4 normalised APs) | **233 / 239** | 473 / 485 |
-| GATE, REVERSE | 9 + 17 + 4 (crossfading taps) = 30 | 2 (wobbled decorrelator APs) | 8 + 12 (2 soft clips) + 3 (TAIL's normalised AP, Σ scale) | **207 / 213** | 425 / 436 |
-| BLOOM | 16 + 13 + 2 (PRE, SWELL) = 31 | 3 (wobbled loop APs) | 4 + 6 (soft clip) + 20 (10 normalised APs) | **236 / 245** | 479 / 496 |
+| QUAD, before (today, measured) | 30 steady / 48 crossfading | 0 | — | 158 / **239** | 320 / **485** |
+| QUAD, with the new GRIT | same | 0 | GRIT −20 | 138 / 219 | 297 / 447 |
+| ROOM | 13 + 17 + 5 (PRE, 4 delays) = 35 | 2 (wobbled APs) | 10 + 4 (rotation) + 12 (2 soft clips) + 8 (4 normalised APs), GRIT −1 | **242 / 248** | 490 / 501 |
+| HALL | 13 + 17 + 5 = 35 | 2 | 10 + 6 (soft clip) + 8 (4 normalised APs), GRIT −1 | **232 / 238** | 472 / 483 |
+| GATE, REVERSE | 9 + 17 + 4 (crossfading taps) = 30 | 2 (wobbled decorrelator APs) | 8 + 12 (2 soft clips) + 3 (TAIL's normalised AP, Σ scale), GRIT +22 | **229 / 235** | 466 / 477 |
+| BLOOM | 16 + 13 + 2 (PRE, SWELL) = 31 | 3 (wobbled loop APs) | 4 + 6 (soft clip) + 20 (10 normalised APs), GRIT −13 | **223 / 232** | 455 / 472 |
 
 - **Where TYPEs exceed QUAD.**
-  - ROOM is over QUAD at either pair cost: about +7 / +18 cycles.
-  - BLOOM is over at +10: about +11.
-  - HALL is at QUAD.
+  - ΔCOST is measured against the **pre-refactor** QUAD row (485), which is what `FxBus::COST` bills.
+  - Against it, ROOM is over by about +5 / +16 cycles.
+  - HALL, BURST and BLOOM are under.
+  - QUAD itself drops about 38 cycles with the new GRIT.
   - All of these fit both headrooms, 96 and 23. This is "sound first": the level plan's clips and normalised states buy QUAD's noise floor at full input gain.
 - **Why it is cheaper than the earlier draft.** Crossfades replaced every moving read except the wobble's. A crossfading line costs 5 + 2 instructions only while it moves; a glide's moving pair cost 17–20 all the time.
-- **The tightest is ROOM**, at 249 instructions (503 cycles, ΔCOST ≈ +18 of the tape build's 23) if a pair costs +10. Step 0 benches it.
+- **The tightest is ROOM**, at 248 instructions (501 cycles, ΔCOST ≈ +16 of the tape build's 23) if a pair costs +10. Step 0 benches it.
 - **What fits if the A/B asks for it:**
   - BLOOM's split SWELL delay (+10 instructions, ≈ +19 cycles). It takes BLOOM to about +30 by this table. The review's cache-aware estimate puts BLOOM's base design about **+14** and the split about **+33**:
     - it **fits the default build** (96);
@@ -782,7 +837,7 @@ Worst case: every crossfadable line crossfading, wobble at its maximum.
 | BLOOM | Wobble 2 APs (3 and 9), not 3 | 12 / 15 |
 
 - **ROOM-T, the pre-written tape-build fallback.**
-  - ROOM sits at about +18 cycles of the tape build's 23 headroom by this table. A pessimistic estimate puts it near +43. **Step 0's bench of the ROOM kernel decides.**
+  - ROOM sits at about +16 cycles of the tape build's 23 headroom by this table. A pessimistic estimate puts it near +41. **Step 0's bench of the ROOM kernel decides.**
   - If the kernel's ΔCOST exceeds 23, ROOM takes ROOM-T before any TYPE work, a constant change and not a redesign:
     1. **Wobble loop B's AP only** (B1's AP). Loop A's AP becomes a fixed read. This saves 12 / 15 instructions, about 22–28 cycles. Loop A stays static, B still moves, so the tail still drifts apart L/R.
     2. **If that is not enough, 2 output taps a side**: drop (A2, 0.83) on the left and (B2, 0.79) on the right, and keep the early tap and one mid tap. That saves 10 more instructions, about 19 cycles.
@@ -847,8 +902,29 @@ The usual battery, per TYPE, on the host first (owner's rule: QA before UAT).
 
 ### Refactor lock (QUAD)
 
-- `fx_golden_test`'s reverb cases, `reverb_test`, `gain_staging_test`, `fx_bus_test` and `mixer_page_test`'s SIZE nudge (+1/31) pass unchanged, bit for bit, with QUAD on the shared arena.
-- That proves the arena move, the dispatcher and slot 3's new 1/128 static step changed nothing. `size_step` still rounds to 32 steps, and the panel keeps QUAD's tick at 1/31.
+- **First commit: the arena move.** `fx_golden_test`'s reverb cases, `reverb_test`, `gain_staging_test`, `fx_bus_test` and `mixer_page_test`'s SIZE nudge (+1/31) pass unchanged, bit for bit, with QUAD on the shared arena. That proves the arena move, the dispatcher and slot 3's new 1/128 static step changed nothing. `size_step` still rounds to 32 steps, and the panel keeps QUAD's tick at 1/31.
+- **Second commit: the new GRIT.**
+  - The goldens at GRIT 0 still match bit for bit.
+  - The goldens at other GRIT values are re-recorded deliberately (ADR 0011).
+  - `reverb_test`'s grid tests are replaced by the converter tests below:
+    - `grit_rounds_onto_its_grid`;
+    - `grit_truncates_toward_zero_onto_its_grid`;
+    - `grit_1_stores_only_multiples_of_64`;
+    - `grit_raises_the_noise_floor`;
+    - `no_limit_cycle_at_grit_1`;
+    - `falls_silent_within` at GRIT 1.
+
+### GRIT (the converters)
+
+- **No correlated distortion.** A 1 kHz sine burst at −12 dBFS goes into each TYPE at GRIT 1, and its tail decays.
+  - Over the decay, in 100 ms windows, the energy at the harmonic and intermodulation product bins (2 and 3 kHz, and 1 kHz ± the loop's strongest mode spacing) may exceed the median of the surrounding bins (±200 Hz) by **no more than 3 dB**. The error must be noise, not products.
+  - The same test on today's in-loop GRIT is kept as a documented failing reference (`#[ignore]`), to show what changed.
+- **Bit depth.** At GRIT 0, 0.3, 0.6 and 1, a full-scale ramp through the ADC alone (dither off) lands on multiples of Δ_c = 2^(1−b), with b = 16, 14.2, 12.4 and 10.
+- **Dither.** With dither on, a −80 dBFS sine at GRIT 1 survives as a sine in noise: its bin stands ≥ 10 dB above the noise median, with no harmonic above the median + 3 dB.
+- **Bandwidth.** The converter one-pole's −3 dB point is 11 kHz ± 3 % at GRIT 0.01 and 8 kHz ± 3 % at GRIT 1.
+- **The bypass.** At GRIT exactly 0 the converters are skipped, and the output is bit-identical to a build without them.
+- **Idle mute.** 150 ms after the send goes to zero, the dither has faded out, and the silent-tail tests reach exact zero.
+- **The floor.** QUAD's measured output noise at GRIT 0.3, 0.6 and 1 lies within ±2 dB of the § GRIT table, and every other TYPE within ±1 dB of QUAD at GRIT ≥ 0.6.
 
 ### Pitch (the owner's per-pass test)
 
@@ -895,7 +971,7 @@ The usual battery, per TYPE, on the host first (owner's rule: QA before UAT).
 
 ### Sound (render)
 
-- **Stable and silent.** At GRIT 0 and 1, every TYPE's energy never grows after the send stops.
+- **Stable and silent.** At GRIT 0 and 1, every TYPE's energy never grows after the send stops. At GRIT 1 this holds after the converters' idle mute.
   - The return reaches exact zero within **1.5 × the TYPE's longest RT60 at the tested settings**. REVERSE at REGEN 1 and LENGTH 800 ms has an RT60 of about 16 s, so its deadline is 24 s.
   - Long tests run the engine alone at 24 kHz, not the whole bus.
   - REVERSE at REGEN 1 must reach zero with no ±Δ hum or DC, from its truncating write.
@@ -920,7 +996,7 @@ The usual battery, per TYPE, on the host first (owner's rule: QA before UAT).
   - a −12 dBFS RMS pink-noise pad held for 10 s, at the **default DECAY**. The soft clip never engages, so the output is **bit-identical** to the same engine built without the clip, with zero clamp hits;
   - the same pad at **maximum DECAY**. The clip shaves peaks, and the return's difference from an unclipped f32 reference must stay ≤ −40 dB, with zero clamp hits;
   - **every bound in § Level plan's table**, as an assertion: the engine records each stored quantity's peak magnitude through all of the stimuli above. Each must stay within its bound, or show only the counted transient clamp hits.
-- **Noise floor.** At GRIT 0 and 0.3, each TYPE's quantisation noise is measured as its i16 engine's output minus an f32-line build of the same engine, on the same noise-burst tail at MIX 1. It must lie no more than **4 dB** above QUAD's, measured the same way (§ Level plan's estimates: +2 to +4).
+- **Arena noise floor.** At GRIT 0, each TYPE's storage quantisation noise is measured as its i16 engine's output minus an f32-line build of the same engine, on the same noise-burst tail at MIX 1. It must lie no more than **4 dB** above QUAD's, measured the same way (§ Level plan's estimates: +2 to +4).
 - **Sanitising.** NaN and out-of-range knobs render finite and recover, as QUAD's do.
 
 ### Switch
@@ -993,6 +1069,8 @@ They lock refactors, not quality (ADR 0011). Ear tuning re-records them delibera
 | BLOOM defaults | Bloom 1 |
 | BLOOM, SWELL 1 | Bloom 1: listen for a once-per-pass echo instead of a swell (fallback in § BLOOM engine) |
 
+- **GRIT before and after**, for the owner. One patch (QUAD at its defaults, on the saw chord and the snare) is rendered at GRIT 0, 0.3, 0.6 and 1, twice: with today's in-loop grid and with the new converters. That makes eight WAVs, with the measured noise floor and the correlated-product figure of each. The owner judges by ear whether the new GRIT reads as old converters, and where its default should sit.
+
 - **The pass.**
   - Every time metric (RT60, onset, peak, −20 dB end) of every pair lies within ±30 % of the VST's value.
   - The tilt lies within ±3 dB, and the correlation within ±0.15.
@@ -1022,9 +1100,9 @@ The CPU risk comes first. Each step after step 0 is a mergeable slice with its t
 
      The kernels become steps 2–4's engines once they pass.
 1. **Scaffold, in two slices.**
-   - **1a. The arena and the dispatcher.**
-     - `ReverbArena` comes out of `Ring`, and `dsp::reverb_bus::Reverb` replaces `RingReverb` in `FxBus`.
-     - QUAD stays bit-identical, and REV QUAD reads ≤ the step 0 baseline + 1 %.
+   - **1a. The arena, the dispatcher and the new GRIT** (the QUAD refactor).
+     - `ReverbArena` comes out of `Ring`, and `dsp::reverb_bus::Reverb` replaces `RingReverb` in `FxBus`. QUAD stays bit-identical (the first commit), and REV QUAD reads ≤ the step 0 baseline + 1 %.
+     - Then the new GRIT lands, as a second commit: the converters, fixed 1 LSB storage, and `Grid` retired as GRIT's mechanism. The goldens away from GRIT 0 are re-recorded, the GRIT tests are replaced, and the before-and-after A/B is rendered. REV QUAD is re-read.
      - The `EngineState` enum and its zero test land here.
    - **1b. The parameters and the switch.**
      - The new slots and disk codes, with `ReverbType` allowing QUAD only.

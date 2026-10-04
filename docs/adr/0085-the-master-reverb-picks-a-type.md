@@ -1,12 +1,13 @@
 # 0085. The master reverb picks a TYPE: QUAD plus ROOM, HALL, GATE, REVERSE and BLOOM
 
-- **Status:** Proposed; supersedes in part [0028](0028-one-alesis-style-reverb.md) (its "one reverb" and "TYPE retires"); amends [0067](0067-focus-glyphs.md) (the reverb composite)
+- **Status:** Proposed; supersedes in part [0028](0028-one-alesis-style-reverb.md) (its "one reverb", "TYPE retires" and GRIT as a continuous bit depth inside the ring); amends [0067](0067-focus-glyphs.md) (the reverb composite)
 - **Deciders:** project owner. The rulings are those of 2026-10-03 on #343 and these of 2026-10-04:
   - QUAD stays exactly as it is, and keeps its name;
   - modulation is deferred to #345;
   - "sound first" on CPU;
   - ECHO is dropped;
-  - reverbs stay pitch-stable.
+  - reverbs stay pitch-stable;
+  - GRIT is redesigned everywhere, QUAD included.
 
   Firmware drafted it.
 
@@ -55,8 +56,31 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
   - All TYPEs share the 23,220-sample i16 arena (46,440 B), lifted out of
     `Ring` unchanged.
   - Each TYPE's line layout is a `const` asserted to fit.
-  - All TYPEs run at half rate behind the existing half-bands, with GRIT's
-    grid and ADR 0028's Q3 quantiser.
+  - All TYPEs run at half rate behind the existing half-bands, with ADR
+    0028's Q3 quantiser at a fixed 1 LSB.
+- **GRIT is a converter, not a grid** (owner, 2026-10-04, QUAD included).
+  - **Why.** Today's GRIT requantises every write inside the feedback loop,
+    undithered (up to Δ = 64 LSBs). The error is correlated with the
+    signal and recirculates, so tails break into "crinkling noise on top".
+  - **What it becomes.** GRIT now models the converters, and nothing inside
+    a loop quantises by it again. At the ADC (the decimated send) and the
+    DAC (the L/R return, before MIX) it applies, in order:
+    - a one-pole high cut per channel, 11 kHz at GRIT 0 down to about
+      8 kHz at GRIT 1;
+    - TPDF dither of ±1 converter LSB, from one xorshift32, gated off
+      150 ms after its input falls silent so tails still reach zero;
+    - rounding to 16 − 6·GRIT bits.
+  - The arena keeps plain 16-bit storage at a fixed 1 LSB.
+  - **GRIT 0 is a bypass.** QUAD at GRIT 0 stays bit-identical to today's;
+    its goldens at other GRIT values are re-recorded.
+  - **The noise floor** is hiss, not fizz. At MIX 1 it is about −66 dBFS
+    at GRIT 0 and 0.3, −64 at 0.6, and −54 at 1, under an 8 kHz top.
+  - **The cost.** The converters add about 36 instructions per ring sample;
+    the in-loop rescaling they retire saves 14–56. Net: QUAD −20, ROOM and
+    HALL −1, BURST +22, BLOOM −13.
+  - **The tests.** A decaying GRIT 1 tail must show no harmonic or
+    intermodulation product more than 3 dB above the neighbouring noise.
+    The owner hears before-and-after renders at GRIT 0, 0.3, 0.6 and 1.
 - **PLATE is a zone of HALL, not a TYPE.** A plate on HALL's graph differs
   only in constants, so by the owner's rule it is a preset.
   - HALL's SIZE reaches a 120 ms loop.
@@ -107,7 +131,8 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
     write, so no ±Δ limit cycle survives.
   - ROOM couples its loops through an energy-preserving rotation.
   - New engines cap a stage gain at 0.985 (QUAD keeps 0.97).
-  - **Input gain is ½ in every engine, as in QUAD.** A level plan keeps
+  - **Input gain is ½ in every engine, as in QUAD.** The level plan below
+    covers the arena; GRIT's converters sit outside it. A level plan keeps
     every stored value inside ±2.0 at maximum DECAY, by four rules:
     1. a branch-free soft clip (knee 1.0, reaching 2.0 with zero slope) at
        every loop's re-entry;
@@ -126,13 +151,11 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
     - At the default DECAY a −12 dBFS program is bit-identical to an
       unclipped build. At maximum DECAY the clip shaves peaks at ≤ −40 dB.
       A held loop-mode tone stays ≤ 3 % THD, with aliases ≤ −40 dB.
-    - The noise floor stays within +4 dB of QUAD's estimated −66 dBFS at
-      GRIT 0 (−55 at GRIT 0.3) at the defaults, and within +6 dB at
-      DIFFUSE 1. That density-against-grain trade is an A/B item.
+    - The arena's noise floor stays within +4 dB of QUAD's estimated
+      −66 dBFS at the defaults, and within +6 dB at DIFFUSE 1. That
+      density-against-noise trade is an A/B item.
     - Scaling the send down instead (HALL to 0.16) was rejected: about
       10 dB more audible grain in quiet tails.
-  - GRIT's step scales by IN/0.5, which is 1 for every TYPE today, so
-    GRIT means the same everywhere.
 - **CPU: "sound first"** (owner, 2026-10-04).
   - **The target** is QUAD's worst case, 485 cycles per output sample.
   - **The hard limit** is the cost model's headroom inside the audio
@@ -256,17 +279,17 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
 
   | TYPE | Instructions (pair +7 / +10) | Cycles |
   |---|---|---|
-  | ROOM | 243 / 249 | 492 / 503 |
-  | HALL | 233 / 239 | 473 / 485 |
-  | GATE, REVERSE | 207 / 213 | 425 / 436 |
-  | BLOOM | 236 / 245 | 479 / 496 |
+  | QUAD, new GRIT | 219 | 447 |
+  | ROOM | 242 / 248 | 490 / 501 |
+  | HALL | 232 / 238 | 472 / 483 |
+  | GATE, REVERSE | 229 / 235 | 466 / 477 |
+  | BLOOM | 223 / 232 | 455 / 472 |
 
-  These include the soft clips and the normalised states. Over QUAD:
-  - ROOM by +7 to +18 cycles;
-  - BLOOM by up to +11 cycles.
-
-  Both fit both headrooms by estimate (96, and 23 with the tape). A
-  pessimistic estimate puts ROOM near +43, over the tape build's 23. Step 0's
+  These include the soft clips, the normalised states and the new GRIT.
+  ΔCOST is taken against the pre-refactor QUAD row (485), which
+  `FxBus::COST` bills. Only ROOM is over it, by +5 to +16 cycles, which
+  fits both headrooms by estimate (96, and 23 with the tape). A pessimistic
+  estimate puts ROOM near +41, over the tape build's 23. Step 0's
   ROOM-kernel bench decides. A fail there takes ROOM-T, a pre-written
   constant change, not a redesign:
   1. wobble loop B's allpass only, saving about 22–28 cycles;
