@@ -5,6 +5,7 @@ use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use chimera_core::addr::{BlockRef, ParamAddr};
+use chimera_core::audio_out::{DacSample, interleave};
 use chimera_core::console::Report;
 use chimera_core::dsp::algo::algorithms::AlgoId;
 use chimera_core::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
@@ -23,7 +24,7 @@ use chimera_core::dsp::modulator::{EnvForm, EnvSlot, EnvType, Func, Glide, LfoFo
 use chimera_core::dsp::voice::Voice;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::hw::{
-    BLOCK_SIZE, MAX_PARTS, MAX_VOICES, SAMPLE_RATE, SampleBudget, VOICE_RAM_BUDGET,
+    BLOCK_SIZE, BlockBudget, MAX_PARTS, MAX_VOICES, SAMPLE_RATE, SampleBudget, VOICE_RAM_BUDGET,
 };
 use chimera_core::instrument::{
     AudioShared, DacBlocks, Instrument, MixState, PartAudio, mix_parts,
@@ -36,8 +37,9 @@ use chimera_core::orbit::runner::OrbitRunner;
 use chimera_core::params::{
     EngineType, EnvParams, FilterParams, FolderParams, OutParams, ParamSnapshot,
 };
+use chimera_core::part::{DacPair, PartParams};
 use chimera_core::preset::{Performance, Sound};
-use chimera_core::project::{Project, SlotId, project_crc};
+use chimera_core::project::{NEW_PARTS, Project, SlotId, project_crc};
 use chimera_core::scope::{ScopeFrame, ScopeWriter, scope_buffer};
 use chimera_core::sym_alloc::SymAlloc;
 use chimera_core::triple::TripleBuffer;
@@ -108,7 +110,7 @@ const PATCHES: [Row; ROWS] = [
     ("CHAIN", || algo(AlgoId::A17, ALL, 0), 36, 12),
     ("CHN FB", || algo(AlgoId::A17, ALL, 7), 36, 12),
     ("WC", || algo_pair(AlgoId::A14, AlgoId::A22), 36, 12),
-    ("A16+17", || algo_pair(AlgoId::A16, AlgoId::A17), 36, 12),
+    ("A16+17", a16_a17, 36, 12),
 ];
 
 /// Label and per-block FX setup of each FX row. Every row runs the same
@@ -125,15 +127,21 @@ const FX: [FxRow; FX_ROWS] = [
     #[cfg(feature = "master-tape")]
     ("TAPE", |s, _| worst_tape(s)),
     ("COMP", |s, _| worst_comp(s)),
-    ("BUS", |s, b| {
-        worst_chorus(s);
-        worst_delay(s);
-        worst_reverb(s, b);
-        #[cfg(feature = "master-tape")]
-        worst_tape(s);
-        worst_comp(s);
-    }),
+    ("BUS", worst_bus),
 ];
+
+/// The STRESS rows' blocks: 10 s, past NEW's four bars at its BPM.
+const STRESS_BLOCKS: u32 = 7_500;
+
+/// Every effect at its worst: the BUS row's.
+fn worst_bus(s: &mut AudioShared, b: u32) {
+    worst_chorus(s);
+    worst_delay(s);
+    worst_reverb(s, b);
+    #[cfg(feature = "master-tape")]
+    worst_tape(s);
+    worst_comp(s);
+}
 
 fn worst_chorus(s: &mut AudioShared) {
     let c = &mut s.fx.chorus;
@@ -554,6 +562,7 @@ const ROUNDS: u32 = 16;
 const IDLE_BLOCKS: u32 = 10 * SAMPLE_RATE / BLOCK_SIZE as u32;
 
 struct Rig<'p> {
+    cpu_hz: u32,
     inst_slot: &'static mut MaybeUninit<Instrument>,
     fx_slot: &'static mut MaybeUninit<FxBus>,
     shared_slot: &'static mut MaybeUninit<AudioShared>,
@@ -582,6 +591,7 @@ pub fn run(
         (i, f, &mut *addr_of_mut!(SHARED), w)
     };
     let mut rig = Rig {
+        cpu_hz: clocks.cpu_hz,
         inst_slot,
         fx_slot,
         shared_slot,
@@ -639,12 +649,17 @@ pub fn run(
     let orbit = Some(rig.time_orbit());
     #[cfg(not(feature = "orbit"))]
     let orbit = None;
+    let stress = (
+        [rig.stress(true), rig.stress(false)],
+        BlockBudget::for_cpu(clocks.cpu_hz).budget_cycles(),
+    );
     show_memory(
         rec,
         (rebuild, proj_crc),
         note_on,
         (lowest, dark, light),
         orbit,
+        stress,
     );
     hold(clocks);
 }
@@ -922,6 +937,67 @@ impl Rig<'_> {
         }
         DWT::cycle_count().wrapping_sub(start) / (TIMED_BLOCKS * BLOCK_SIZE as u32)
     }
+
+    /// The costliest whole callback block over `STRESS_BLOCKS` and the most
+    /// voices sounding: six `a16_a17` keys on Part 6, every effect at its
+    /// worst, and (with `orbit`) ORBIT playing NEW's groove on Parts 1–5
+    /// with NEW's Sounds (ADR 0073). The keys go down before ORBIT starts
+    /// if `keys_first`, else a block after. The allocator keeps the unit's
+    /// real budget, so it refuses what the unit would. Timed as
+    /// `render_half` runs: ORBIT's block and view, the render and the three
+    /// pairs' interleave; the note queues are empty.
+    #[inline(never)]
+    fn stress(&mut self, keys_first: bool) -> (u32, usize) {
+        let budget = SampleBudget::for_cpu(self.cpu_hz);
+        let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
+        let fx = FxBus::init_in_place(self.fx_slot);
+        let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
+        for (i, part) in shared.parts.iter_mut().enumerate() {
+            part.mix = PartParams::for_part(i);
+            part.mix.sends = [0.5; FX_SENDS];
+            let new = NEW_PARTS.get(i).and_then(|s| factory_sound(s.index()));
+            let sound = new.unwrap_or_else(|| Sound::init(EngineType::Algo));
+            (part.params, part.mod_state) = (sound.params, sound.mod_state);
+        }
+        shared.parts[MAX_PARTS - 1].params = a16_a17();
+        if keys_first {
+            hold_notes(inst, shared, MAX_PARTS - 1);
+        }
+        #[cfg(feature = "orbit")]
+        let (mut runner, mut view) = {
+            shared
+                .orbit
+                .push(chimera_core::orbit::channel::Cmd::TogglePlay);
+            let runner = OrbitRunner::new(engine::SAMPLE_RATE_NZ);
+            let view = runner.view();
+            (runner, view)
+        };
+        let mut out = [[DacSample::ZERO; BLOCK_SIZE * 2]; DacPair::ALL.len()];
+        let (mut worst, mut most) = (0u32, 0usize);
+        for b in 0..WARM_BLOCKS + STRESS_BLOCKS {
+            if b == 1 && !keys_first {
+                hold_notes(inst, shared, MAX_PARTS - 1);
+            }
+            worst_bus(shared, b);
+            let start = DWT::cycle_count();
+            #[cfg(feature = "orbit")]
+            {
+                black_box(runner.block(inst, shared));
+                runner.fill_view(black_box(&mut view));
+            }
+            inst.render(fx, &mut self.dac, shared, &mut self.scope);
+            for (pair, o) in DacPair::ALL.into_iter().zip(out.iter_mut()) {
+                interleave(self.dac.out(), pair, o);
+            }
+            let c = DWT::cycle_count().wrapping_sub(start);
+            black_box(&out);
+            if b >= WARM_BLOCKS {
+                worst = worst.max(c);
+                most = most.max(inst.sounding());
+            }
+        }
+        (worst, most)
+    }
 }
 
 /// Spec § Budget worst case, one kernel per voice: six operators, all with
@@ -1007,6 +1083,23 @@ fn algo(alg: AlgoId, lit: u8, feedback: u8) -> ParamSnapshot {
         (op.wave, op.coarse, op.level, op.feedback) = (WAVES[i].get(), COARSE[i], level, feedback);
     }
     p
+}
+
+/// ADR 0026's costliest pair, the bench's heaviest voice.
+fn a16_a17() -> ParamSnapshot {
+    algo_pair(AlgoId::A16, AlgoId::A17)
+}
+
+/// Six notes, C2 up in octaves, on Part `part`'s channel.
+fn hold_notes(inst: &mut Instrument, shared: &AudioShared, part: usize) {
+    for v in 0..6u8 {
+        let ev = NoteEvent {
+            channel: shared.parts[part].mix.channel,
+            note: MidiNote::new(36 + 12 * v).unwrap_or(MidiNote::A4),
+            kind: NoteKind::On(Velocity::DEFAULT),
+        };
+        inst.handle(ev, shared);
+    }
 }
 
 /// `a` ∪ `b` at MORPH 64, six audible operators, all with feedback: A14 ∪
@@ -1142,6 +1235,7 @@ fn show_memory(
     note_on: u32,
     (lowest, dark, light): (u32, u32, u32),
     orbit: Option<(u32, u32)>,
+    ([(first, v1), (after, v2)], budget): ([(u32, usize); 2], u32),
 ) {
     use core::mem::size_of;
     rec.clear();
@@ -1166,9 +1260,15 @@ fn show_memory(
     // A block's ORBIT, mean and worst (a step on every ring, MUTATE at
     // the loop), against `SampleBudget`'s cycles per block.
     let orbit_line = format_args!("ORBIT {mean}/{worst} CYC/BLK");
-    let lines = lines.into_iter().chain(orbit.map(|_| orbit_line));
-    // Twelve lines at 22 px end at 288, under 320; eleven fit at ROW_H.
-    let row_h = if orbit.is_some() { 22 } else { ROW_H };
+    // The costliest block of each STRESS run (keys before ORBIT, then
+    // after) against the block budget, and the most voices it sounded.
+    let stress_line = format_args!("STRESS {first}/{after}/{budget} {v1}/{v2}V");
+    let lines = lines
+        .into_iter()
+        .chain(orbit.map(|_| orbit_line))
+        .chain([stress_line]);
+    // Thirteen lines at 21 px end at 298, under 320; twelve fit at 22.
+    let row_h = if orbit.is_some() { 21 } else { 22 };
     let mut line = FmtBuf::new();
     for (i, args) in lines.enumerate() {
         line.clear();
