@@ -113,6 +113,9 @@ pub enum ReplaceError {
     SlotEmpty,
     /// The target moved since the replace was confirmed.
     Changed,
+    /// The slot's bytes didn't decode: never, as they were checked when
+    /// stored; the Part is left as it was.
+    Unreadable,
 }
 
 pub struct Project {
@@ -253,10 +256,9 @@ impl Project {
         match src.from {
             PartFrom::Slot(s) => {
                 let sound = self.pool.get(s).ok_or(ReplaceError::SlotEmpty)?;
-                // The pool's bytes passed this check when stored.
                 sound
                     .decode_into(&mut part.sound)
-                    .map_err(|_| ReplaceError::SlotEmpty)?;
+                    .map_err(|_| ReplaceError::Unreadable)?;
                 part.origin = Origin::Slot {
                     slot: s,
                     generation: self.pool.generation(s),

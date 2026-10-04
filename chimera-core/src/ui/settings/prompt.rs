@@ -511,6 +511,7 @@ pub fn refused(e: &ReplaceError) -> &'static str {
     match e {
         ReplaceError::SlotEmpty => "SLOT IS EMPTY",
         ReplaceError::Changed => "PART CHANGED",
+        ReplaceError::Unreadable => "SOUND UNREADABLE",
     }
 }
 

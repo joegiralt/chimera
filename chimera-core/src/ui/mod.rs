@@ -47,7 +47,7 @@ use crate::block::Block;
 use crate::boot::RomDfu;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
-use crate::in_place::{by_value, uninit_at};
+use crate::in_place::uninit_at;
 use crate::mod_path::{LABEL_LEN, RegistryError};
 use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::ProjectName;
@@ -276,10 +276,12 @@ impl UiState {
         Self::with_arena(ArenaWriter::leaked())
     }
 
-    /// By value, its pool's Sounds in `arena`: the desktop's.
+    /// By value, its pool's Sounds in `arena`: the desktop's. Host only:
+    /// the chip builds its state in place (`init_in_place`).
+    #[cfg(not(target_os = "none"))]
     pub fn with_arena(arena: ArenaWriter) -> Self {
         // SAFETY: `init_in_place` writes every field of the slot.
-        unsafe { by_value(|s| Self::init_in_place(s, arena)) }
+        unsafe { crate::in_place::by_value(|s| Self::init_in_place(s, arena)) }
     }
 
     // In place so the state never passes through the firmware's stack.
@@ -1013,7 +1015,15 @@ impl UiState {
     /// A save of a Part, said; what it leaves Stale, to ask about.
     fn save_sound(&mut self, a: project::PartAction) -> Option<Ask> {
         let slot = slot_of(a.kind());
-        let stale = self.project.apply_part_action(a).ok()?;
+        let stale = match self.project.apply_part_action(a) {
+            Ok(stale) => stale,
+            // Until the meter's copy (Task 6): the save didn't happen.
+            Err(project::ActionRefused::Full(_)) => {
+                self.error(Line::new("POOL FULL"));
+                return None;
+            }
+            Err(project::ActionRefused::Gone) => return None,
+        };
         self.toast.show(busy::Toast {
             text: prompt::saved_to(slot),
             ms: busy::Toast::SAVED_MS,
