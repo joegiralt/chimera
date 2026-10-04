@@ -161,7 +161,7 @@ inc = rate / 48 000 · 2^((note·100 + pitch_cents − ROOT) / 1200)
 **12-bit decode.** Sample `i` is in pair `i >> 1`, at byte `3·(i >> 1)`.
 - An even sample is `b0 | (b1 & 0xF) << 8`, and an odd one is `b1 >> 4 | b2 << 4`. Each is sign-extended with `(x << 20) >> 20` on an `i32`.
 - The `1/2048` scale is folded into the interpolator's weights.
-- Four consecutive samples take three unaligned word loads, which are free on the M7, and a select between the even and odd layouts for each tap.
+- The packing is a little-endian 12-bit stream, so each tap is one unaligned halfword load at byte `3·(i >> 1) + (i & 1)` (free on the M7), shifted by 0 or 4 for its parity. The halfword stays inside its pair's three bytes, so even the last frame's load never reads past the row, and clamped taps at the edges need no other path. (This amends the first draft's three word loads for four consecutive taps: a word load at the last pair overruns the row, and clamped taps aren't consecutive.)
 
 **Interpolation: the 4-point, 3rd-order Hermite** (Niemitalo's x-form). Its response, computed from the kernel's Fourier transform, against linear interpolation, with `fs` the source's rate:
 
@@ -401,11 +401,15 @@ Host estimates, in the house manner (instructions × 1.46 × 1.1, as `ModalEngin
 | | Instructions |
 |---|---|
 | 32.32 advance; integer and fraction split; the fraction's `vmov` and `vcvt` to float | 6 |
-| Four tap indices, each clamped (or wrapped in a frame) | 7 |
-| Four taps: address, word load, even/odd select, sign-extend | 22 |
+| Four tap indices, each clamped (or wrapped in a frame) | 20 |
+| Four taps: address, halfword load, parity shift, sign-extend | 28 |
 | Four `vmov` + `vcvt` to float | 8 |
-| Hermite, with the 1/2048 folded in | 12 |
-| **One head** | **≈ 55, 88 cycles** |
+| Hermite, with the 1/2048 folded in, and its constants | 22 |
+| **One head** | **≈ 88, 141 cycles** |
+
+- **Measured (TAPE Task 2), not estimated:** `SourceView::read` compiles to 96 instructions and `read_cycle` to 103, on `thumbv7em-none-eabihf` with `target-cpu=cortex-m7` at opt-level 2, as out-of-line functions. That includes about 8 for the call, the frame and two loads from the view, which inlining into a model's loop removes. The rows above split the measured `read`.
+- The first draft's 55 assumed one clamp instruction a tap and three word loads for four taps. A branch-free clamp is 5 on Thumb-2 (`qadd`, `bic`, `cmp`, `it`, `movlt`).
+- **The model rows below still carry the 55-instruction head.** Build step 3's bench replaces every bill anyway (§ 10). At 88 a head, a two-head model is about 66 instructions over its row.
 
 **Cache misses grow with `inc`.**
 - A 32 B line holds 21.3 packed samples.
