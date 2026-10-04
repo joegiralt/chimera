@@ -43,6 +43,9 @@ pub fn copy_waves() {
 static mut UI: MaybeUninit<UiState> = MaybeUninit::uninit();
 static UI_TAKEN: AtomicBool = AtomicBool::new(false);
 
+/// Out of line: the project's build-up (six Sounds, the scenes) stays on
+/// its own frame, not `synth`'s, under fat LTO (ADR 0089).
+#[inline(never)]
 pub fn take_ui() -> Option<&'static mut UiState> {
     if UI_TAKEN.swap(true, Ordering::AcqRel) {
         return None;
