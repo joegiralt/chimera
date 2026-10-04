@@ -24,6 +24,8 @@ master-tape = []
 # The by-value engine constructors (`AlgoEngine::new`, `ModalEngine::new`,
 # `EngineSlot::new`), for tests only: firmware builds every engine in place.
 test-support = []
+# Bench-only phase stamps inside ORBIT's block and the note handling.
+probe = []
 
 [dev-dependencies]
 # No default features: `--no-default-features` must reach the library too.

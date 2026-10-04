@@ -591,8 +591,14 @@ impl Instrument {
     pub fn handle_from(&mut self, ev: NoteEvent, shared: &AudioShared, from: NoteOrigin) {
         match ev.kind {
             NoteKind::On(vel) => {
+                #[cfg(feature = "probe")]
+                let t0 = crate::probe::now();
                 // Judge the note against this block's patches, not the last.
                 self.recost(shared);
+                #[cfg(feature = "probe")]
+                crate::probe::acc(0, crate::probe::now().wrapping_sub(t0));
+                #[cfg(feature = "probe")]
+                crate::probe::acc(3, 1);
                 for (p, part) in shared.parts.iter().enumerate() {
                     if part.mix.channel != ev.channel {
                         continue;
@@ -603,6 +609,8 @@ impl Instrument {
                         NoteOrigin::Live => part.live_note(ev.note, self.harmony),
                         NoteOrigin::Orbit(_) => ev.note,
                     };
+                    #[cfg(feature = "probe")]
+                    let t1 = crate::probe::now();
                     let cost = part.voice_cost();
                     let reserved = self.reserved();
                     let origins = &self.note_origin;
@@ -653,6 +661,10 @@ impl Instrument {
                         && SlotKind::of(&part.params) == SYMPATHETIC
                         && !(self.voices[v].starts_now(&part.params, &self.sym)
                             && self.admit(v, &part.params, note));
+                    #[cfg(feature = "probe")]
+                    let t2 = crate::probe::now();
+                    #[cfg(feature = "probe")]
+                    crate::probe::acc(1, t2.wrapping_sub(t1));
                     let voice = &mut self.voices[v];
                     let waited = self.waiting[v].take().is_some();
                     let queued = if waits || deferred {
@@ -665,6 +677,8 @@ impl Instrument {
                         self.sounding[v] = q;
                         voice.note_on(note, vel, &part.params, &mut self.sym)
                     };
+                    #[cfg(feature = "probe")]
+                    crate::probe::acc(2, crate::probe::now().wrapping_sub(t2));
                     // A note replaced before it sounded (ADR 0027).
                     if waited || queued {
                         self.alloc.dropped_unheard();
@@ -679,6 +693,8 @@ impl Instrument {
                 // By voice index: every held voice this channel and `from`
                 // hold the key on (one per layered Part), let go with the
                 // last of its keys.
+                #[cfg(feature = "probe")]
+                crate::probe::acc(5, 1);
                 for v in 0..MAX_VOICES {
                     let s = self.alloc.slots()[v];
                     if !(s.held()
@@ -841,7 +857,11 @@ impl Instrument {
     /// over the budget (ADR 0027). The slot stays taken until the fade ends
     /// and `render` step 5 frees it.
     fn recost(&mut self, shared: &AudioShared) {
+        #[cfg(feature = "probe")]
+        let t0 = crate::probe::now();
         let costs: [Cost; MAX_PARTS] = core::array::from_fn(|p| shared.parts[p].voice_cost());
+        #[cfg(feature = "probe")]
+        crate::probe::acc(8, crate::probe::now().wrapping_sub(t0));
         for v in 0..MAX_VOICES {
             if let Some(p) = self.alloc.slots()[v].part() {
                 let p = p as usize % MAX_PARTS;

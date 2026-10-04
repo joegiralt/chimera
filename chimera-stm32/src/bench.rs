@@ -55,7 +55,7 @@ use crate::audio::engine;
 use crate::clocks::Clocks;
 
 /// The bench's screens as text: about 4 KB today, `# TRUNCATED` past this.
-pub const BENCH_TEXT_LEN: usize = 6144;
+pub const BENCH_TEXT_LEN: usize = 8192;
 type Text = Report<BENCH_TEXT_LEN>;
 
 // A `static mut`, not a `singleton!`: that builds its value on the caller's
@@ -645,12 +645,17 @@ pub fn run(
     let g1 = MidiNote::new(31).unwrap_or(MidiNote::A4);
     let dark = rig.time_note_on(g1, dark_pluck, (true, silent));
     let light = rig.time_note_on(g1, short_string, (true, silent));
+    chimera_core::probe::set_clock(DWT::cycle_count);
     #[cfg(feature = "orbit")]
-    let orbit = Some(rig.time_orbit());
+    let (orbit, [ow, ow1, omean]) = {
+        let (o, p) = rig.time_orbit();
+        (Some(o), p)
+    };
     #[cfg(not(feature = "orbit"))]
-    let orbit = None;
+    let (orbit, [ow, ow1, omean]) = (None, [Phases::default(); 3]);
+    let ((s1, sp1), (s2, sp2)) = (rig.stress(true), rig.stress(false));
     let stress = (
-        [rig.stress(true), rig.stress(false)],
+        [s1, s2],
         BlockBudget::for_cpu(clocks.cpu_hz).budget_cycles(),
     );
     show_memory(
@@ -660,6 +665,17 @@ pub fn run(
         (lowest, dark, light),
         orbit,
         stress,
+    );
+    hold(clocks);
+    show_phases(
+        rec,
+        &[
+            ("WORST", ow),
+            ("WORST>0", ow1),
+            ("MEAN", omean),
+            ("ST1", sp1),
+            ("ST2", sp2),
+        ],
     );
     hold(clocks);
 }
@@ -863,7 +879,7 @@ impl Rig<'_> {
     /// notes' `handle` are inside the timing.
     #[cfg(feature = "orbit")]
     #[inline(never)]
-    fn time_orbit(&mut self) -> (u32, u32) {
+    fn time_orbit(&mut self) -> ((u32, u32), [Phases; 3]) {
         use chimera_core::block::Block;
         use chimera_core::orbit::clock::Bpm;
         use chimera_core::orbit::scene::SceneRing;
@@ -884,14 +900,25 @@ impl Rig<'_> {
         let mut runner = OrbitRunner::new(engine::SAMPLE_RATE_NZ);
         let mut view = runner.view();
         let (mut total, mut worst, mut blocks) = (0u32, 0u32, 0u32);
+        let (mut w, mut w1, mut sum) = (Phases::default(), Phases::default(), Phases::default());
         while view.loops < ORBIT_LOOPS && blocks < IDLE_BLOCKS {
             let start = DWT::cycle_count();
-            black_box(runner.block(inst, shared));
+            let ev = black_box(runner.block(inst, shared));
             runner.fill_view(black_box(&mut view));
+            chimera_core::probe::stamp(10);
             let c = DWT::cycle_count().wrapping_sub(start);
+            let p = Phases::read(blocks, c, ev.boundary());
+            sum.add(&p);
+            if c > w.total {
+                w = p;
+            }
+            if blocks > 0 && c > w1.total {
+                w1 = p;
+            }
             (total, worst, blocks) = (total.wrapping_add(c), worst.max(c), blocks + 1);
         }
-        (total / blocks.max(1), worst)
+        sum.div(blocks.max(1));
+        ((total / blocks.max(1), worst), [w, w1, sum])
     }
 
     /// Six Parts written with one noise block, sends 0.5, no voices:
@@ -947,7 +974,7 @@ impl Rig<'_> {
     /// `render_half` runs: ORBIT's block and view, the render and the three
     /// pairs' interleave; the note queues are empty.
     #[inline(never)]
-    fn stress(&mut self, keys_first: bool) -> (u32, usize, u32) {
+    fn stress(&mut self, keys_first: bool) -> ((u32, usize, u32), Phases) {
         let budget = SampleBudget::for_cpu(self.cpu_hz);
         let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
         let fx = FxBus::init_in_place(self.fx_slot);
@@ -974,6 +1001,7 @@ impl Rig<'_> {
         };
         let mut out = [[DacSample::ZERO; BLOCK_SIZE * 2]; DacPair::ALL.len()];
         let (mut worst, mut most, mut orbit) = (0u32, 0usize, 0u32);
+        let mut ph = Phases::default();
         for b in 0..WARM_BLOCKS + STRESS_BLOCKS {
             if b == 1 && !keys_first {
                 hold_notes(inst, shared, MAX_PARTS - 1);
@@ -981,11 +1009,18 @@ impl Rig<'_> {
             worst_bus(shared, b);
             let start = DWT::cycle_count();
             #[cfg(feature = "orbit")]
-            {
-                black_box(runner.block(inst, shared));
+            let boundary = {
+                let ev = black_box(runner.block(inst, shared));
                 runner.fill_view(black_box(&mut view));
-            }
+                chimera_core::probe::stamp(10);
+                ev.boundary()
+            };
+            #[cfg(not(feature = "orbit"))]
+            let boundary = false;
             let ran = DWT::cycle_count().wrapping_sub(start);
+            if b >= WARM_BLOCKS && ran > ph.total {
+                ph = Phases::read(b, ran, boundary);
+            }
             inst.render(fx, &mut self.dac, shared, &mut self.scope);
             for (pair, o) in DacPair::ALL.into_iter().zip(out.iter_mut()) {
                 interleave(self.dac.out(), pair, o);
@@ -998,8 +1033,98 @@ impl Rig<'_> {
                 orbit = orbit.max(ran);
             }
         }
-        (worst, most, orbit)
+        ((worst, most, orbit), ph)
     }
+}
+
+/// One ORBIT block's phases from `chimera_core::probe`'s stamps: 1 intake,
+/// 2 transport and adopt, 3 clock, 4 offs due, 5 loop boundary (MUTATE),
+/// 6 the rings' steps, 7 harmony, 8 the notes' `handle`, 9 resnap, 10 view.
+/// `acc`: 0 recost, 1 pick, 2 note-on, 3 ons, 5 offs, 6 costliest event.
+#[derive(Clone, Copy, Default)]
+struct Phases {
+    block: u32,
+    total: u32,
+    boundary: u32,
+    d: [u32; 11],
+    acc: [u32; chimera_core::probe::ACCS],
+}
+
+impl Phases {
+    fn read(block: u32, total: u32, boundary: bool) -> Self {
+        use chimera_core::probe::{ACC, AT, SEEN};
+        use core::sync::atomic::Ordering::Relaxed;
+        let seen = SEEN.load(Relaxed);
+        let mut p = Phases {
+            block,
+            total,
+            boundary: boundary as u32,
+            ..Default::default()
+        };
+        let mut last = AT[0].load(Relaxed);
+        for i in 1..p.d.len() {
+            if seen & 1 << i != 0 {
+                let t = AT[i].load(Relaxed);
+                p.d[i] = t.wrapping_sub(last);
+                last = t;
+            }
+        }
+        p.acc = core::array::from_fn(|i| ACC[i].load(Relaxed));
+        p
+    }
+
+    fn add(&mut self, o: &Phases) {
+        self.total += o.total;
+        self.boundary += o.boundary;
+        for (a, b) in self.d.iter_mut().zip(&o.d) {
+            *a += b;
+        }
+        for (a, b) in self.acc.iter_mut().zip(&o.acc) {
+            *a += b;
+        }
+    }
+
+    /// The mean of `n` added; `block` is the count, `acc[6]` stays a sum.
+    fn div(&mut self, n: u32) {
+        self.block = n;
+        self.total /= n;
+        for a in self.d.iter_mut().chain(self.acc.iter_mut()) {
+            *a /= n;
+        }
+    }
+}
+
+fn show_phases(rec: &mut Recorder<'_, impl ChimeraDisplay>, rows: &[(&str, Phases)]) {
+    rec.clear();
+    rec.heading("ORBIT PHASES");
+    let mut line = FmtBuf::new();
+    let mut y = 30;
+    for (tag, p) in rows {
+        let d = &p.d;
+        let a = &p.acc;
+        let lines = [
+            format_args!("{tag} #{} {} B{}", p.block, p.total, p.boundary),
+            format_args!("IN{} TR{} CK{} PO{}", d[1], d[2], d[3], d[4]),
+            format_args!("MU{} PL{} HA{}", d[5], d[6], d[7]),
+            format_args!("SN{} RS{} VW{}", d[8], d[9], d[10]),
+            format_args!("ON{} OF{} MX{}", a[3], a[5], a[6]),
+            format_args!("RC{} PK{} NO{}", a[0], a[1], a[2]),
+            format_args!(
+                "C6{} SL{} TL{} PS{}",
+                a[8],
+                a[4],
+                a[7],
+                core::mem::size_of::<ParamSnapshot>()
+            ),
+        ];
+        for args in lines {
+            line.clear();
+            let _ = line.write_fmt(args);
+            rec.line(Face::Label(theme::INK2), line.as_str(), (4, y));
+            y += 8;
+        }
+    }
+    rec.flush();
 }
 
 /// Spec § Budget worst case, one kernel per voice: six operators, all with
