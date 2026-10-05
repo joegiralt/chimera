@@ -95,7 +95,9 @@ impl Stereo {
 /// Fast tanh: the Padé approximant x(27 + x²) / (27 + 9x²), clamped to ±1
 /// beyond |x| = 3, where it meets ±1. One divide, no libm call. Measured
 /// against tanh it is off by up to 0.0236 absolute (near |x| = 1.57) and
-/// 2.6 % relative (near |x| = 1.45); within 0.004 for |x| ≤ 0.5.
+/// 2.6 % relative (near |x| = 1.45); within 0.004 for |x| ≤ 0.5. It is
+/// stmlib's `SoftClip` (`dsp/dsp.h`, Copyright 2012 Emilie Gillet, MIT;
+/// ADR 0096).
 #[inline(always)]
 pub fn fast_tanh(x: f32) -> f32 {
     if x > 3.0 {

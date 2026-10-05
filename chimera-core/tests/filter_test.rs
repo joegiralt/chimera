@@ -269,3 +269,64 @@ fn every_mode_renders_as_recorded() {
     });
     assert_eq!(got, WANT, "{got:#x?}");
 }
+
+/// At full resonance (k = 0.01) under a full-scale 110 Hz saw, LP12 and
+/// LP24 ring at the cutoff, held by `saturate` at a steady level: the last
+/// half second's RMS and the ring's own level (990 Hz, the harmonic at the cutoff), dBFS, at
+/// DRIVE 0 and 1, each within 1 dB of what they were, the level's two
+/// quarters within 0.5 dB of each other. ADR 0096 kept the curve: stmlib's
+/// rational clip in its place, scaled to the same slope and ceiling, put
+/// the ring 14 to 24 dB under these.
+#[test]
+fn full_resonance_rings_at_its_level() {
+    const WANT: [(FilterMode, f32, f32, f32); 4] = [
+        (FilterMode::Lp12, 0.0, -4.04, -14.55),
+        (FilterMode::Lp12, 1.0, 2.69, -29.15),
+        (FilterMode::Lp24, 0.0, -2.34, -7.04),
+        (FilterMode::Lp24, 1.0, 1.87, -25.35),
+    ];
+    let db = |x: &[f32]| 10.0 * (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).log10();
+    // The level at `hz`, a sine's RMS: the DFT bin over a whole number of
+    // its periods.
+    let at = |x: &[f32], hz: f32| {
+        let w = core::f32::consts::TAU * hz / SR as f32;
+        let (re, im) = x
+            .iter()
+            .enumerate()
+            .fold((0.0f32, 0.0f32), |(r, i), (n, v)| {
+                (r + v * (w * n as f32).cos(), i + v * (w * n as f32).sin())
+            });
+        20.0 * (re.hypot(im) * 2.0 / x.len() as f32 / 2f32.sqrt()).log10()
+    };
+    for (mode, drive, want, want_ring) in WANT {
+        let mut p = FilterParams::default();
+        p.set_mode(mode);
+        (p.cutoff, p.resonance, p.drive) = (1000.0, 1.0, drive);
+        let mut f = SvfFilter::new();
+        let mut out = Vec::new();
+        for b in 0..750 {
+            let mut buf: [f32; BLOCK_SIZE] = core::array::from_fn(|i| {
+                let n = b * BLOCK_SIZE + i;
+                (n as f32 * 110.0 / SR as f32).fract() * 2.0 - 1.0
+            });
+            f.process(&mut buf, &p, SR);
+            out.extend_from_slice(&buf);
+        }
+        let tail = &out[out.len() / 2..];
+        let (a, b) = tail.split_at(tail.len() / 2);
+        let (level, ring) = (db(tail), at(&tail[..24_000], 990.0));
+        println!("{mode:?} DRIVE {drive}: {level:.2} dBFS, the ring {ring:.2}");
+        assert!(
+            (level - want).abs() <= 1.0,
+            "{mode:?} DRIVE {drive}: {level:.2}, want {want:.2}"
+        );
+        assert!(
+            (ring - want_ring).abs() <= 1.0,
+            "{mode:?} DRIVE {drive}: ring {ring:.2}, want {want_ring:.2}"
+        );
+        assert!(
+            (db(a) - db(b)).abs() <= 0.5,
+            "{mode:?} DRIVE {drive}: unsteady"
+        );
+    }
+}
