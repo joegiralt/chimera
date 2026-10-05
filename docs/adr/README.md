@@ -93,7 +93,5 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0089](0089-ship-with-fat-lto.md) | Ship the firmware with fat LTO in one codegen unit | Proposed |
 | [0091](0091-orbit-billed-while-it-plays.md) | While ORBIT plays, reserve its own block and a note-on burst; cost the Parts once a block; bill a stolen voice until its fade ends (supersedes in part 0040; amends 0027) | Proposed |
 | [0092](0092-put-files-over-the-usb-console.md) | Put project files onto the card over the USB console: `ls`, and `put` through the unit's own A/B save, checked as it streams, a refused side deleted (amends 0068) | Proposed |
-| [0097](0097-bank-and-symp-clip-with-stmlibs-curve.md) | BANK and SYMP clip with stmlib's curve; the Elements stagger tried and dropped (amends 0063) | Proposed |
-| [0096](0096-three-filter-types-cascadia-home_prophet-dirty.md) | Three filter TYPEs: the SVF as a Cascadia-style home filter, PROPHET (SSM2040) and DIRTY (Chamberlin); per-type modes, labels and bills (amends 0037) | Proposed |
-| [0096](0096-filter-types-clean-2040-dirty-and-algo-taps.md) | Three filter TYPEs, CLEAN (Cascadia-style), 2040 (SSM2040) and DIRTY (Chamberlin), with per-type modes, labels and bills; ALGO OP 5/6 audio-rate taps to FREQ, Q, VCA and FOLD (amends 0037) | Proposed |
 | [0096](0096-filter-types-clean-2040-dirty-and-algo-taps.md) | Three filter TYPEs, CLEAN (Cascadia-style), 2040 (SSM2040) and DIRTY (Chamberlin), with per-type modes, labels and bills; ALGO OP 5/6 audio-rate taps to FREQ, Q, VCA and FOLD (supersedes 0037) | Proposed |
+| [0097](0097-bank-and-symp-clip-with-stmlibs-curve.md) | BANK and SYMP clip with stmlib's curve; the Elements stagger tried and dropped (amends 0063) | Proposed |
