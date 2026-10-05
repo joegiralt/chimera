@@ -7,6 +7,7 @@ use crate::project::ProjectStatus;
 use crate::ui::UiState;
 use crate::ui::about_page::{BUILD, VERSION};
 use crate::ui::nav::{MixPage, Rung};
+use chimera_hal::store::{Sweep, SweepSeen, SweepStats};
 
 /// The footer's word for `s`.
 pub fn state_word(s: ProjectStatus) -> &'static str {
@@ -56,4 +57,34 @@ fn write_at(ui: &UiState, w: &mut impl Write) -> fmt::Result {
             Ok(())
         }
     }
+}
+
+/// `status`'s `sweep` line: the boot's lost-cluster sweep (ADR 0094), its
+/// mode, what it found or the doubt that stopped it, the volume, and each
+/// phase's time.
+pub fn write_sweep(mode: Sweep, seen: &SweepSeen, w: &mut impl Write) -> fmt::Result {
+    let mode = match mode {
+        Sweep::DryRun => "dry-run",
+        Sweep::Free => "free",
+    };
+    let stats: &SweepStats = match seen {
+        Ok(s) => {
+            let healed = if s.healed { "yes" } else { "no" };
+            write!(
+                w,
+                "sweep {mode} lost {} freed {} healed {healed}",
+                s.lost, s.freed
+            )?;
+            &s.stats
+        }
+        Err((d, stats)) => {
+            write!(w, "sweep {mode} doubt {}", d.word())?;
+            stats
+        }
+    };
+    writeln!(
+        w,
+        " spc {} clusters {} fat {} compare {}ms mark {}ms count {}ms",
+        stats.spc, stats.clusters, stats.fat_bytes, stats.compare_ms, stats.mark_ms, stats.count_ms
+    )
 }

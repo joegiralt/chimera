@@ -9,6 +9,7 @@ use chimera_core::reset::ResetCause;
 use chimera_core::ui::UiState;
 use chimera_core::ui::theme_settings::ThemeSettings;
 use chimera_hal::FB_SIZE;
+use chimera_hal::store::{Doubt, StoreError, Sweep, SweepSeen, SweepStats, Swept};
 
 struct Sink(Vec<u8>);
 impl Out for Sink {
@@ -31,6 +32,7 @@ struct Fake {
     dfu: Option<()>,
     dfu_calls: usize,
     boot: Option<BootSeen>,
+    sweep: Option<(Sweep, SweepSeen)>,
     usb_regs: Option<UsbRegs>,
 }
 
@@ -46,6 +48,7 @@ impl Fake {
             dfu: None,
             dfu_calls: 0,
             boot: None,
+            sweep: None,
             usb_regs: None,
         }
     }
@@ -77,6 +80,9 @@ impl Unit for Fake {
     }
     fn boot(&self) -> Option<BootSeen> {
         self.boot
+    }
+    fn sweep(&self) -> Option<(Sweep, SweepSeen)> {
+        self.sweep
     }
     fn usb_regs(&self) -> Option<UsbRegs> {
         self.usb_regs
@@ -580,4 +586,53 @@ fn the_specs_card_has_every_line_card_writes() {
     let got: Vec<_> = ask(&mut u, "card\n").lines().map(key).collect();
     let spec: Vec<_> = spec_block("card").into_iter().map(key).collect();
     assert_eq!(got, spec);
+}
+
+/// The boot's sweep after `boot`, before `usb_regs`: what it found, or
+/// why it stopped, with the volume and each phase's time.
+#[test]
+fn status_has_the_sweep_after_boot() {
+    let mut u = Fake::new();
+    let stats = SweepStats {
+        spc: 64,
+        clusters: 488_281,
+        fat_bytes: 1_953_792,
+        compare_ms: 210,
+        mark_ms: 35,
+        count_ms: 104,
+    };
+    u.sweep = Some((
+        Sweep::DryRun,
+        Ok(Swept {
+            lost: 93,
+            freed: 0,
+            healed: true,
+            stats,
+        }),
+    ));
+    u.usb_regs = Some(UsbRegs::from_words([0; 6]));
+    let mut want = String::new();
+    chimera_core::console::write_status(&u.ui, &mut want).unwrap();
+    let got = ask(&mut u, "status\n");
+    let rest = got.strip_prefix(&want).unwrap();
+    assert_eq!(
+        rest.lines().next(),
+        Some(
+            "sweep dry-run lost 93 freed 0 healed yes spc 64 clusters 488281 fat 1953792 \
+             compare 210ms mark 35ms count 104ms"
+        )
+    );
+    assert!(rest.lines().nth(1).unwrap().starts_with("usb_regs "));
+    u.sweep = Some((
+        Sweep::DryRun,
+        Err((Doubt::Card(StoreError::Timeout), stats)),
+    ));
+    let got = ask(&mut u, "status\n");
+    assert!(
+        got.contains(
+            "\nsweep dry-run doubt timeout spc 64 clusters 488281 fat 1953792 \
+             compare 210ms mark 35ms count 104ms\n"
+        ),
+        "{got}"
+    );
 }

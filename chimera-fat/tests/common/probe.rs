@@ -3,10 +3,10 @@
 // Each test binary uses its own part of this module.
 #![allow(dead_code)]
 
-use crate::image::{DiskError, PART_LBA, RamDisk, layout_of};
+use crate::image::{DiskError, PART_LBA, RamDisk, fat_check, layout_of};
 use chimera_fat::volume::Layout;
 use chimera_fat::{FatStore, Medium};
-use chimera_hal::store::{ReadSink, StoreError};
+use chimera_hal::store::{ReadSink, Store, StoreError, Sweep, SweepSeen, Swept};
 use chimera_hal::testkit::store_suite;
 use core::cell::{Cell, RefCell};
 use core::ops::ControlFlow;
@@ -215,4 +215,50 @@ impl XorShift {
     pub fn below(&mut self, n: usize) -> usize {
         (self.next() % n as u64) as usize
     }
+}
+
+/// A bitmap with a bit for every cluster `disk` could hold.
+pub fn marks_for<D: BlockDevice<Error = DiskError>>(disk: &D) -> Vec<u8> {
+    vec![0; (disk.num_blocks().unwrap().0 as usize).div_ceil(8)]
+}
+
+/// The sweep in `mode` on a fresh store over `disk`, as at a boot.
+pub fn sweep_on<D: BlockDevice<Error = DiskError>>(disk: &Rc<D>, mode: Sweep) -> SweepSeen {
+    let mut s = probed(disk);
+    let vol = s.mount().expect("a card to sweep");
+    s.sweep(vol, mode, &mut marks_for(&**disk))
+}
+
+/// `Sweep::Free` at a boot, which must find no doubt.
+pub fn swept<D: BlockDevice<Error = DiskError>>(disk: &Rc<D>) -> Swept {
+    sweep_on(disk, Sweep::Free).unwrap_or_else(|e| panic!("the sweep: {e:?}"))
+}
+
+/// The next boots' sweeps (`Sweep::Free`) until one finds nothing, a FAT
+/// 2 sector a cut missed keeping what only FAT 1 holds for the boot after
+/// its copy; then `image`, the card's blocks, has nothing lost, crossed,
+/// short or differing. Returns what they freed.
+pub fn swept_clean<D: BlockDevice<Error = DiskError>>(
+    what: &str,
+    disk: &Rc<D>,
+    image: &RamDisk,
+) -> u32 {
+    let mut freed = 0;
+    for boot in 0.. {
+        assert!(boot < 3, "{what}: three sweeps and still finding");
+        let s = swept(disk);
+        freed += s.freed;
+        if s.freed == 0 && !s.healed {
+            break;
+        }
+    }
+    let r = fat_check(image);
+    assert!(
+        r.lost.is_empty()
+            && r.cross_linked.is_empty()
+            && r.short.is_empty()
+            && r.fats_differ.is_empty(),
+        "{what}, swept: {r:?}"
+    );
+    freed
 }

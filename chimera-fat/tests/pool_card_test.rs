@@ -25,7 +25,7 @@ use chimera_fat::FatStore;
 use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use core::ops::ControlFlow;
 use image::{Cut, RamDisk, fat_check, with_clusters};
-use probe::{Log, Probed, log, probed};
+use probe::{Log, Probed, log, probed, swept_clean};
 use std::rc::Rc;
 
 /// FAT16, 512 B clusters: a 128-slot project spans many.
@@ -325,6 +325,8 @@ fn cut_at_every_write(base: Base) {
             saved(&save_gen(base, &mut probed(&cut), 4)),
             "{what}: next save"
         );
+        same(&project_gen(base, 4), &load_in_place(&cut).unwrap());
+        swept_clean(&what, &cut, &cut.inner);
         same(&project_gen(base, 4), &load_in_place(&cut).unwrap());
     }
 }

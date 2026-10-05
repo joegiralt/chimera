@@ -31,7 +31,7 @@ use chimera_core::storage::{
 };
 use chimera_hal::store::{ByteSink, Dir, FileName, Store, StoreError};
 use image::{Cut, CutDisk, FatEntry, RamDisk, Tear, fat_check, with_clusters};
-use probe::{Probed, XorShift, free, log, probed};
+use probe::{Probed, XorShift, free, log, probed, swept_clean};
 use std::collections::HashSet;
 
 /// A FAT16 card of 512 B clusters: every file of the pair and `/CHIMERA`
@@ -79,7 +79,8 @@ fn assert_safe(what: &str, disk: &RamDisk, kept: &FatEntry, cuts: &[u32]) {
 }
 
 /// The next save after a cut lands and loads, and rewrites FAT sector 0,
-/// which the pair shares, so both FATs agree again.
+/// which the pair shares, so both FATs agree again; the next boot's sweep
+/// frees what the cut left lost.
 fn assert_recovers(what: &str, slot: &Slot, n: u32) {
     assert!(save(slot, n).0.is_ok(), "{what}: the next save");
     let got = load(slot).unwrap_or_else(|e| panic!("{what}: after the next save, {e:?}"));
@@ -89,6 +90,7 @@ fn assert_recovers(what: &str, slot: &Slot, n: u32) {
         r.cross_linked.is_empty() && r.short.is_empty() && r.fats_differ.is_empty(),
         "{what}: after the next save, {r:?}"
     );
+    swept_clean(what, slot, &slot.inner);
 }
 
 /// Blocks a save of `n` on `disk` writes, in order.
@@ -293,6 +295,8 @@ fn cut_then_reinsert_loads_previous_generation() {
     assert!(t.bits_eq(&sound(1)));
     assert_eq!(card, Card::Ready(v));
     assert_kept("reinserted", &disk, Side::A, Generation::FIRST, &sound(1));
+    swept_clean("reinserted", &disk, &disk.inner);
+    assert_kept("swept", &disk, Side::A, Generation::FIRST, &sound(1));
 }
 
 struct Bytes(Vec<u8>);
@@ -539,6 +543,8 @@ fn project_cut_keeps_a_generation() {
             "{what}: next save {note:?}"
         );
         same(&project_gen(4), &load_project_in_place(&cut).unwrap());
+        swept_clean(&what, &cut, &cut.inner);
+        same(&project_gen(4), &load_project_in_place(&cut).unwrap());
     }
     println!(
         "project cuts: {} writes; save 2 loads at {}, save 3 at {}",
@@ -593,6 +599,9 @@ fn project_clear_cut_keeps_a_generation() {
         assert_eq!(clear_project_on(&mut probed(&cut)), Ok(()), "{what}: again");
         let got = load_project_in_place(&cut).unwrap();
         assert_eq!(project_crc(&got), t.get(), "{what}: Pristine");
+        swept_clean(&what, &cut, &cut.inner);
+        let got = load_project_in_place(&cut).unwrap();
+        assert_eq!(project_crc(&got), t.get(), "{what}: swept");
     }
     println!(
         "clear cuts: {} writes; save 2 loads at {}, NEW at {}",

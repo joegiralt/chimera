@@ -11,19 +11,22 @@ mod image;
 mod probe;
 #[path = "common/tools.rs"]
 mod tools;
+#[path = "common/tree.rs"]
+mod tree;
 
 use chimera_core::storage::Generation;
 use chimera_fat::blocks::BLOCK;
 use chimera_fat::fat::FatCache;
+use chimera_fat::fat::Table;
 use chimera_fat::fs::Fs;
 use chimera_fat::volume::{FsKind, first_partition, layout};
-use chimera_hal::store::{Dir, FileName, Store, StoreError, VolumeId};
+use chimera_hal::store::{Dir, Doubt, FileName, Store, StoreError, Sweep, VolumeId};
 use core::cell::RefCell;
 use embedded_sdmmc::{Mode, VolumeIdx};
 use image::{
     PART_LBA, RamDisk, Rec, fat16, fat32, layout_of, pattern, sdmmc, sdmmc_write, with_clusters,
 };
-use probe::{Probed, Sink, XorShift, fats, free, log, probed, suite};
+use probe::{Probed, Sink, XorShift, fats, free, log, probed, suite, sweep_on, swept, swept_clean};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use tools::{fsck, mkfs};
@@ -425,8 +428,195 @@ fn cut_images_pass_fsck() {
                     assert!(ab::load(&cut).unwrap().bits_eq(&ab::sound(next)), "{what}");
                 }
             }
+            // The next boots' sweeps leave fsck nothing to find.
+            swept_clean(&what, &cut, &cut.inner);
+            let f = fsck(&cut.inner);
+            assert_eq!(f.code, 0, "{what}, swept: {}", f.out);
         }
         ab::save(&base, n).0.unwrap();
     }
     println!("cut images: {clean} clean, {findings} with lost clusters or a stale FAT 2");
+}
+
+/// What a seed of `sweep_matches_fsck` puts on its card beside the tree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Fault {
+    None,
+    CrossLink,
+    Loop,
+    DirLink,
+    Short,
+    Deep,
+    Wide,
+}
+
+/// The FAT's non-free clusters, by `Table::free_count`.
+fn non_free(disk: &RamDisk) -> u32 {
+    let l = layout_of(disk);
+    let mut rec = Rec::new(disk);
+    let mut cache = FatCache::new();
+    l.clusters() - Table::new(&mut rec, &l, &mut cache).free_count().unwrap()
+}
+
+/// Every block outside the FATs and FSInfo.
+fn outside_fats(disk: &RamDisk) -> Vec<[u8; 512]> {
+    let l = layout_of(disk);
+    let fats = l.fat1().start..l.fat1().start + 2 * l.fat1().len() as u32;
+    disk.0
+        .borrow()
+        .iter()
+        .enumerate()
+        .filter(|&(i, _)| {
+            let lba = (i as u32).wrapping_sub(PART_LBA);
+            !(fats.contains(&lba) || l.fs_info() == Some(lba))
+        })
+        .map(|(_, b)| *b)
+        .collect()
+}
+
+/// Random trees on `mkfs.fat` images, written raw, with lost chains
+/// injected: `fsck.fat -n` reclaims exactly them; after `Sweep::Free` it
+/// reclaims nothing, counts the same clusters used and finds nothing new,
+/// the FAT holds exactly that many fewer, and no data block or other FAT
+/// value moved. A seed with a cross-link, a loop, a broken directory link
+/// or a short file, or too deep or too many directories, is refused with
+/// the image untouched.
+#[test]
+#[ignore = "needs dosfstools: just test-fat-tools"]
+fn sweep_matches_fsck() {
+    const SEEDS: u64 = 210;
+    let bases = [
+        mkfs(FsKind::Fat16, 30_000, 1, 0x1600_5EED),
+        mkfs(FsKind::Fat16, 40_000, 4, 0x1604_5EED),
+        mkfs(FsKind::Fat32, 70_000, 1, 0x3200_5EED),
+    ];
+    let mut seen = BTreeMap::new();
+    for seed in 0..SEEDS {
+        let mut rng = XorShift(0x9E37_79B9_7F4A_7C15 ^ (seed + 1));
+        let base = &bases[seed as usize % bases.len()];
+        let fault = match seed % 12 {
+            7 => Fault::CrossLink,
+            8 => Fault::Loop,
+            9 => Fault::DirLink,
+            10 => Fault::Short,
+            11 => [Fault::Deep, Fault::Wide][(seed / 12 % 2) as usize],
+            _ => Fault::None,
+        };
+        let disk = Rc::new(copy(base));
+        let l = layout_of(&disk);
+        let what = format!(
+            "seed {seed} {:?} spc {} {fault:?}",
+            l.kind(),
+            l.blocks_per_cluster()
+        );
+        let mut t = tree::Tree::new(&disk);
+        let long = rng.below(2) == 0;
+        let (dirs, depth) = match fault {
+            Fault::Deep => (9 + rng.below(20), 9),
+            Fault::Wide => (257 + rng.below(44), 8),
+            _ => (1 + rng.below(256), 2 + rng.below(7)),
+        };
+        let built = tree::random_tree(&mut t, &mut rng, dirs, depth, long);
+        let mut lost = Vec::new();
+        for _ in 0..1 + rng.below(5) {
+            lost.extend(t.lose(1 + rng.below(20) as u32, Some(&mut rng)));
+        }
+        let files: Vec<tree::FileAt> = t
+            .files
+            .iter()
+            .filter(|f| !f.chain.is_empty())
+            .cloned()
+            .collect();
+        let pick = |rng: &mut XorShift| files[rng.below(files.len())].clone();
+        match fault {
+            Fault::CrossLink => {
+                let (a, mut root) = (pick(&mut rng), t.root());
+                t.put(&mut root, tree::raw(*b"TWIN    BIN", 0x20, a.chain[0], 1));
+            }
+            Fault::Loop => {
+                let a = pick(&mut rng);
+                t.set(*a.chain.last().unwrap(), a.chain[0]);
+            }
+            Fault::DirLink => {
+                let d = &t.dirs[rng.below(t.dirs.len())];
+                t.set(*d.chain.last().unwrap(), 0);
+            }
+            Fault::Short => {
+                let a = pick(&mut rng);
+                t.set(a.chain[0], l.end_mark());
+                let mut root = t.root();
+                let len = 2 * l.cluster_bytes();
+                t.put(&mut root, tree::raw(*b"SHORT   BIN", 0x20, a.chain[0], len));
+            }
+            _ => {}
+        }
+        if fault != Fault::None {
+            let want = match fault {
+                Fault::CrossLink | Fault::Loop => Doubt::CrossLinked,
+                Fault::DirLink => Doubt::DirBroken,
+                Fault::Short => Doubt::FileShort,
+                _ => Doubt::TooDeep,
+            };
+            let image = disk.0.borrow().clone();
+            let got = sweep_on(&disk, Sweep::Free).map_err(|(d, _)| d);
+            // A short file may share its chain, or a cross-link may meet a
+            // shorter file first: the first doubt found stands.
+            let allowed: &[Doubt] = match fault {
+                Fault::Short | Fault::CrossLink => &[Doubt::FileShort, Doubt::CrossLinked],
+                _ => &[want],
+            };
+            assert!(
+                matches!(got, Err(d) if allowed.contains(&d)),
+                "{what}: {got:?} (dirs {}, depth {})",
+                built.dirs,
+                built.depth
+            );
+            assert!(*disk.0.borrow() == image, "{what}: the image changed");
+            *seen.entry(format!("{fault:?}")).or_insert(0) += 1;
+            continue;
+        }
+        let before = fsck(&disk);
+        assert_eq!(
+            before.reclaimed,
+            lost.len() as u32,
+            "{what}: fsck before\n{}",
+            before.out
+        );
+        let (held, data) = (non_free(&disk), outside_fats(&disk));
+        let fat1: Vec<u32> = (2..2 + l.clusters()).map(|c| t.get(c)).collect();
+        let got = swept(&disk);
+        assert_eq!(
+            (got.lost, got.freed),
+            (lost.len() as u32, lost.len() as u32),
+            "{what}"
+        );
+        let after = fsck(&disk);
+        assert_eq!(after.reclaimed, 0, "{what}: fsck after\n{}", after.out);
+        assert_eq!(after.used, before.used, "{what}: fsck's used");
+        assert_eq!(
+            after.findings(),
+            before.findings(),
+            "{what}: fsck's findings"
+        );
+        if before.findings().is_empty() {
+            assert_eq!(after.code, 0, "{what}\n{}", after.out);
+        }
+        assert_eq!(
+            non_free(&disk),
+            held - lost.len() as u32,
+            "{what}: free_count"
+        );
+        assert!(outside_fats(&disk) == data, "{what}: a data block");
+        for (i, c) in (2..2 + l.clusters()).enumerate() {
+            let want = if lost.contains(&c) { 0 } else { fat1[i] };
+            assert_eq!(t.get(c), want, "{what}: cluster {c}");
+        }
+        *seen
+            .entry(format!(
+                "ok, {} files",
+                ["no", "some"][usize::from(built.files > 0)]
+            ))
+            .or_insert(0) += 1;
+    }
+    println!("sweep_matches_fsck: {SEEDS} seeds {seen:?}");
 }

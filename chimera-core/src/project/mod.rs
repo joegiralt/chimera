@@ -157,6 +157,12 @@ impl Project {
         &self.pool
     }
 
+    /// `Pool::sweep_scratch`: the boot's card sweep, before the project
+    /// loads.
+    pub fn sweep_scratch(&mut self) -> &mut [u8] {
+        self.pool.sweep_scratch()
+    }
+
     pub fn part(&self, p: PartId) -> &Part {
         self.perf.part(p)
     }

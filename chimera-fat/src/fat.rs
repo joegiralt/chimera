@@ -164,6 +164,11 @@ impl<'a, B: Blocks> Table<'a, B> {
         Ok(self.layout.as_link(v))
     }
 
+    /// `c`'s raw entry; `c` not held is `Corrupt`.
+    pub(crate) fn value(&mut self, c: u32) -> Result<u32, FsError<B::Error>> {
+        self.entry(self.held(c)?)
+    }
+
     /// Sets `c`'s entry. The sector turns dirty only if the value changes.
     pub fn set(&mut self, c: u32, v: u32) -> Result<(), FsError<B::Error>> {
         if self.entry(self.held(c)?)? != v {

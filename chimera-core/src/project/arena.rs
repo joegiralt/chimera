@@ -356,6 +356,18 @@ impl ArenaWriter {
         unsafe { core::slice::from_raw_parts_mut(self.base.as_ptr().add(o), len) }
     }
 
+    /// UI only: the whole gap, as scratch for a caller that hands it back
+    /// before the next add (the boot's card sweep). Its bytes are no
+    /// entry's; an add writes the bytes it takes.
+    pub fn gap_mut(&mut self) -> &mut [u8] {
+        let (o, len) = (self.src_end as usize, self.gap().bytes() as usize);
+        // SAFETY: `[o, o+len)` is the gap, inside the arena and at or
+        // above `src_end`: no source row points into it, so the audio
+        // never reads it. `&mut self` keeps every other Rust reference
+        // out for the borrow's life.
+        unsafe { core::slice::from_raw_parts_mut(self.base.as_ptr().add(o), len) }
+    }
+
     /// Moves `n` bytes from `src` to `dst`, overlapping allowed.
     fn shift(&mut self, src: usize, dst: usize, n: usize) {
         assert!(src.max(dst) + n <= ARENA_BYTES);

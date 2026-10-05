@@ -191,6 +191,17 @@ impl Pool {
         Cost::of(ARENA_BYTES - self.source_used().bytes() as usize)
     }
 
+    /// The arena's gap lent as scratch: the boot's card sweep keeps its
+    /// reachability bitmap here (ADR 0094). Only while no source is
+    /// published, so nothing the audio reads sits near it.
+    pub fn sweep_scratch(&mut self) -> &mut [u8] {
+        assert!(
+            self.arena.source_count() == 0 && self.arena.pending().bytes() == 0,
+            "a source is published"
+        );
+        self.arena.gap_mut()
+    }
+
     /// The audio's view of the arena.
     pub fn table(&self) -> &'static SourceTable {
         self.arena.table()

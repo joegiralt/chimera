@@ -3,10 +3,14 @@
 //! mapped here, and a device error re-inits the card.
 
 use crate::blocks::{BLOCK, Blocks, FsError};
-use crate::fat::{FatCache, Orphan, Stale};
+use crate::fat::{FatCache, Orphan, Stale, Table};
 use crate::fs::Fs;
+use crate::sweep::{self, Fail};
 use crate::volume::{Layout, first_partition, layout};
-use chimera_hal::store::{ByteSink, Dir, FileName, Files, ReadSink, Store, StoreError, VolumeId};
+use chimera_hal::store::{
+    ByteSink, Dir, Doubt, FileName, Files, ReadSink, Store, StoreError, Sweep, SweepSeen,
+    SweepStats, Swept, VolumeId,
+};
 use embedded_hal::delay::DelayNs;
 use embedded_hal::spi::SpiDevice;
 use embedded_sdmmc::{Block, BlockDevice, BlockIdx, SdCard, SdCardError};
@@ -25,6 +29,11 @@ pub trait Medium: BlockDevice {
     fn cap(&self, _ms: Option<u32>) {}
     fn classify(&self, _e: &Self::Error) -> StoreError {
         StoreError::Io
+    }
+    /// Ms since this operation's `start_op`, as of its last transaction:
+    /// the sweep's phase times. 0 where nothing counts.
+    fn elapsed_ms(&self) -> u32 {
+        0
     }
 }
 
@@ -47,6 +56,10 @@ pub trait SdBus {
     /// `Medium::cap`.
     fn set_cap(&mut self, _ms: Option<u32>) {}
     fn timed_out(&self) -> bool;
+    /// `Medium::elapsed_ms`.
+    fn elapsed_ms(&self) -> u32 {
+        0
+    }
 }
 
 /// The deadline, if it passed: no card while acquiring, a timeout after.
@@ -78,6 +91,10 @@ impl<S: SpiDevice<u8> + SdBus, D: DelayNs> Medium for SdCard<S, D> {
 
     fn cap(&self, ms: Option<u32>) {
         self.spi(|s| s.set_cap(ms));
+    }
+
+    fn elapsed_ms(&self) -> u32 {
+        self.spi(|s| s.elapsed_ms())
     }
 
     fn classify(&self, e: &SdCardError) -> StoreError {
@@ -135,6 +152,29 @@ impl<D: BlockDevice> Blocks for Part<'_, D> {
         self.dev
             .write(&[Block { contents: *buf }], at)
             .map_err(PartError::Dev)
+    }
+}
+
+/// Why a `ReadOnly` access failed.
+enum RoError<E> {
+    Dev(E),
+    /// A write: never sent.
+    Refused,
+}
+
+/// The sweep's blocks while it only reads, and for all of a dry run:
+/// every write is refused before it reaches the card.
+struct ReadOnly<B>(B);
+
+impl<B: Blocks> Blocks for ReadOnly<B> {
+    type Error = RoError<B::Error>;
+
+    fn read(&mut self, lba: u32, buf: &mut [u8; BLOCK]) -> Result<(), Self::Error> {
+        self.0.read(lba, buf).map_err(RoError::Dev)
+    }
+
+    fn write(&mut self, _lba: u32, _buf: &[u8; BLOCK]) -> Result<(), Self::Error> {
+        Err(RoError::Refused)
     }
 }
 
@@ -215,6 +255,95 @@ impl<D: Medium> FatStore<D> {
         self.run(vol, |fs, lba| {
             fs.runs(file, &mut |at, n| f(lba.saturating_add(at), n))
         })
+    }
+
+    /// The lost-cluster sweep (#360): `Store::sweep`, one operation under
+    /// the card's deadlines. `DryRun` reads through `ReadOnly` and never
+    /// heals: no stale sector or orphan is touched, no FSInfo patched.
+    pub fn sweep(&mut self, vol: VolumeId, mode: Sweep, marks: &mut [u8]) -> SweepSeen {
+        let mut stats = SweepStats::default();
+        self.dev.start_op();
+        if let Err(e) = self.read(0) {
+            return Err((self.read_doubt(&e), stats));
+        }
+        let (lba, layout, now) = self.identify().map_err(|e| (Doubt::Card(e), stats))?;
+        if now != vol {
+            return Err((Doubt::Card(StoreError::VolumeChanged(now)), stats));
+        }
+        stats.spc = layout.blocks_per_cluster();
+        stats.clusters = layout.clusters();
+        stats.fat_bytes = layout.fat1().len() as u32 * BLOCK as u32;
+        if !sweep::has_room(&layout, marks) {
+            return Err((Doubt::NoRoom, stats));
+        }
+        let mut ro = ReadOnly(Part {
+            dev: &self.dev,
+            lba,
+            blocks: layout.blocks(),
+        });
+        // FAT 2's copy of the one sector it differs in.
+        let mut d = [0; BLOCK];
+        let dev = &self.dev;
+        let found = sweep::survey(
+            &mut Table::new(&mut ro, &layout, &mut self.fat),
+            &mut self.buf,
+            marks,
+            &mut d,
+            &|| dev.elapsed_ms(),
+            &mut stats,
+        );
+        let found = match found {
+            Ok(f) => f,
+            Err(Fail::Doubt(d)) => return Err((d, stats)),
+            Err(Fail::Dev(RoError::Dev(PartError::Dev(e)))) => {
+                return Err((self.read_doubt(&e), stats));
+            }
+            Err(Fail::Dev(RoError::Dev(PartError::Outside))) => {
+                return Err((Doubt::Card(StoreError::Corrupt), stats));
+            }
+            Err(Fail::Dev(RoError::Refused)) => {
+                return Err((Doubt::Card(StoreError::ReadOnly), stats));
+            }
+        };
+        let mut swept = Swept {
+            lost: found.lost,
+            freed: 0,
+            healed: found.differs.is_some(),
+            stats,
+        };
+        if mode == Sweep::DryRun || (found.lost == 0 && found.differs.is_none()) {
+            return Ok(swept);
+        }
+        let ReadOnly(mut part) = ro;
+        let freed = sweep::free(
+            &mut part,
+            &layout,
+            &mut self.fat,
+            &mut self.buf,
+            marks,
+            &found,
+            &d,
+        );
+        if let Some(s) = self.fat.take_stale() {
+            self.stale.set(now, s);
+        }
+        swept.freed = freed.map_err(|e| {
+            let e = match e {
+                FsError::Dev(PartError::Dev(e)) => self.fault(&e),
+                _ => StoreError::Corrupt,
+            };
+            (Doubt::Card(e), stats)
+        })?;
+        Ok(swept)
+    }
+
+    /// A device error while the sweep reads: `Io` is `Unreadable`; a
+    /// timeout, an empty slot or a swap is the card's.
+    fn read_doubt(&self, e: &D::Error) -> Doubt {
+        match self.fault(e) {
+            StoreError::Io => Doubt::Unreadable,
+            e => Doubt::Card(e),
+        }
     }
 
     /// A device error: classified by the medium, which re-inits.
@@ -343,6 +472,10 @@ impl<D: Medium> Store for FatStore<D> {
 
     fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError> {
         self.run(vol, |fs, _| fs.make_dir(dir))
+    }
+
+    fn sweep(&mut self, vol: VolumeId, mode: Sweep, marks: &mut [u8]) -> SweepSeen {
+        FatStore::sweep(self, vol, mode, marks)
     }
 }
 

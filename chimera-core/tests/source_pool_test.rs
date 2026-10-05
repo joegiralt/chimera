@@ -1036,3 +1036,27 @@ fn partial_new_says_so() {
         text.as_str()
     );
 }
+
+/// The boot's card sweep borrows the gap: all of it, and only while no
+/// source is in the arena.
+#[test]
+fn sweep_scratch_is_the_gap() {
+    let (mut p, _) = Project::boxed();
+    let gap = p.pool().free().bytes() as usize;
+    let scratch = p.sweep_scratch();
+    assert_eq!(scratch.len(), gap);
+    scratch.fill(0xA5);
+    // An add writes the bytes it takes: the scratch left in the gap is no
+    // entry's.
+    let s = tape_sound(&mut p, "AFTER", CHOIR);
+    let got = p.pool().get(s).unwrap().to_sound();
+    assert_eq!((got.name.as_str(), got.source), ("AFTER", Some(CHOIR)));
+}
+
+#[test]
+#[should_panic(expected = "a source is published")]
+fn sweep_scratch_refuses_a_published_source() {
+    let (mut p, _) = Project::boxed();
+    store(&mut p, CHOIR);
+    p.sweep_scratch();
+}

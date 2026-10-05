@@ -11,6 +11,7 @@ use chimera_core::perf::load::AudioStats;
 use chimera_core::triple::Reader;
 use chimera_core::ui::UiState;
 use chimera_hal::Ms;
+use chimera_hal::store::{Sweep, SweepSeen};
 use cortex_m::peripheral::DWT;
 use stm32h7xx_hal::gpio::{Alternate, PA11, PA12};
 use stm32h7xx_hal::pac;
@@ -114,6 +115,8 @@ pub struct UsbParts {
     pub crs_rec: rec::Crs,
     /// What the top of `main` saw: `status`'s `boot` line.
     pub boot: BootSeen,
+    /// The boot's card sweep: `status`'s `sweep` line.
+    pub sweep: Option<(Sweep, SweepSeen)>,
 }
 
 /// `dfu` answered and its `OK` flushed: only `Usb::service` makes one, and
@@ -137,6 +140,7 @@ pub struct Usb {
     last: Served,
     cycles_per_us: u32,
     boot: BootSeen,
+    sweep: Option<(Sweep, SweepSeen)>,
 }
 
 /// The port set up but not on the bus: no pull-up, so the host sees
@@ -147,6 +151,7 @@ pub struct Unconnected {
     uid: &'static str,
     cpu_hz: u32,
     boot: BootSeen,
+    sweep: Option<(Sweep, SweepSeen)>,
 }
 
 /// The port's preconditions held, each checked with a bounded wait: only
@@ -217,6 +222,7 @@ pub fn init(ready: Ready, clocks: &CoreClocks, cpu_hz: u32) -> Unconnected {
         crs,
         crs_rec,
         boot,
+        sweep,
     } = parts;
     crs_rec.enable();
     // SAFETY: SYNCSRC is a 2-bit field and 0b11 is a defined value, USB2
@@ -254,6 +260,7 @@ pub fn init(ready: Ready, clocks: &CoreClocks, cpu_hz: u32) -> Unconnected {
         uid: uid.as_str(),
         cpu_hz,
         boot,
+        sweep,
     }
 }
 
@@ -285,6 +292,7 @@ impl Unconnected {
             last: Served::Idle,
             cycles_per_us: (self.cpu_hz / 1_000_000).max(1),
             boot: self.boot,
+            sweep: self.sweep,
         }
     }
 }
@@ -315,6 +323,7 @@ impl Usb {
             line,
             timer,
             boot,
+            sweep,
             ..
         } = self;
         dev.poll(&mut [&mut *serial]);
@@ -351,6 +360,7 @@ impl Usb {
                 frame,
                 dfu: false,
                 boot: *boot,
+                sweep: *sweep,
                 files: store,
             };
             let out = &mut UsbOut {
@@ -387,6 +397,7 @@ struct ChipUnit<'a> {
     /// `dfu` asked: the restart waits for the `OK` to be out.
     dfu: bool,
     boot: BootSeen,
+    sweep: Option<(Sweep, SweepSeen)>,
     /// `ls` and `put`'s card: unread without `card-put`.
     #[cfg_attr(not(feature = "card-put"), allow(dead_code))]
     files: &'a mut SdStore,
@@ -428,6 +439,10 @@ impl Unit for ChipUnit<'_> {
 
     fn boot(&self) -> Option<BootSeen> {
         Some(self.boot)
+    }
+
+    fn sweep(&self) -> Option<(Sweep, SweepSeen)> {
+        self.sweep
     }
 
     fn usb_regs(&self) -> Option<UsbRegs> {
