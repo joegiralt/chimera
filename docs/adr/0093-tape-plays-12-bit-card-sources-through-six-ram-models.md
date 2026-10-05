@@ -166,18 +166,22 @@ code 23, ident `"TAPE"`, ADR 0055).
   with its hint (ADR 0086): `MIX + PLUS LOADS · 41K`, or `WON'T FIT ·
   NEEDS 41K, 12K FREE`.
 - **CPU,** in cycles a sample. These are host estimates, with one head at
-  88 instructions (measured on `SourceView::read`, TAPE Task 2) and the
-  cache misses of `inc` 16 (+12 a head). The bench at build step 3
-  replaces them:
+  88 instructions (measured on `SourceView::read`, TAPE Task 2), a two-head
+  fade sample at 224 (measured on LOOP's loop, TAPE Task 3) and the cache
+  misses of `inc` 16 (+12 a head). The budget is checked a block at a time
+  and a whole block can lie inside a fade, so each two-head model bills
+  its fade sample. The bench at build step 3 replaces them:
 
   | | LOOP, REVERSE, PING-PONG | SCRUB | TRANSWAVE | TRANSWAVE, pitch moving > ±6.2 st | STRETCH | AGE on |
   |---|---|---|---|---|---|---|
-  | Billed | 340 | 350 | 350 | 680 | 350 | +20 |
+  | Billed | 390 | 390 | 400 | 770 | 400 | +20 |
 
-  - **Admission.** A plain TAPE voice (447 at worst) is admitted 8 on rev
-    V, on rev Y, with ORBIT and with the master tape (6 on rev Y with
-    DRIVE and FOLD). A TRANSWAVE whose pitch can move past ±6.2
-    semitones (777) is admitted 4 on rev Y and 6 on rev V.
+  - **Admission.** A plain TAPE voice is admitted 8 on rev V, with ORBIT
+    and with the master tape (497 at worst; 7 with the master tape when
+    DRIVE and FOLD are on). On rev Y, LOOP, REVERSE, PING-PONG and SCRUB
+    with AGE off (467) keep 8; with AGE, and STRETCH or TRANSWAVE with
+    AGE (497), 7; with DRIVE and FOLD, 6. A TRANSWAVE whose pitch can move
+    past ±6.2 semitones (867) is admitted 4 on rev Y and 5 on rev V.
   - **Eight voices hold while the benched engine stays under 546 on rev V
     and 400 on rev Y.**
   - **The bench rows are build step 3:** cold-cache worst blocks with
