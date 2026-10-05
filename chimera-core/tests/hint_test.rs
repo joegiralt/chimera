@@ -296,13 +296,12 @@ fn every_pool_hint_fits() {
     let k999 = Cost::of(999 * 1024);
     assert_eq!(k999.kib_label().as_str(), "999K");
     let w = theme::CONTENT_W;
-    let full = prompt::pool_full(PoolFull {
+    let needs = prompt::pool_needs(PoolFull {
         needs: k999,
         free: k999,
     });
-    let (head, why) = browser::refusal_lines(full.as_str());
-    assert_eq!(why, "NEEDS 999K, 999K FREE");
-    for line in [head, why] {
+    assert_eq!(needs.as_str(), "NEEDS 999K, 999K FREE");
+    for line in [prompt::POOL_FULL, needs.as_str()] {
         let text =
             chimera_core::ui::draw::text_width(&theme::FONT_LABEL, line, theme::LABEL_TRACKING);
         assert!(text <= w, "{line}: {text}");

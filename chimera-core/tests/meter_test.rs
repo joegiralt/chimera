@@ -189,16 +189,22 @@ fn save_over_growth_refused_keeps_part() {
     let crc = project_crc(ui.project());
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Edit));
 
-    let want = prompt::pool_full(PoolFull {
+    let want = prompt::pool_needs(PoolFull {
         needs: growth,
         free,
     });
-    assert!(
-        want.as_str().starts_with("POOL FULL · NEEDS "),
-        "{}",
-        want.as_str()
+    let why = want.as_str();
+    assert!(why.starts_with("NEEDS ") && why.ends_with(" FREE"), "{why}");
+    assert_eq!(
+        prompt::pool_full(Some(PoolFull {
+            needs: growth,
+            free
+        }))
+        .as_str(),
+        format!("POOL FULL · {why}"),
+        "the toast's one line"
     );
-    assert_eq!(ui.refusal(), Some(want.as_str()));
+    assert_eq!(ui.refusal(), Some(why));
     assert!(ui.project().part(part).sound.bits_eq(&sound));
     assert_eq!(project_crc(ui.project()), crc);
 
@@ -208,10 +214,7 @@ fn save_over_growth_refused_keeps_part() {
     // On two lines, tracked as every label: POOL FULL, then the bytes.
     let mut lines = Fb::new();
     let _ = lines.clear(theme::BG);
-    let (head, why) = browser::refusal_lines(want.as_str());
-    assert_eq!(head, "POOL FULL");
-    assert!(why.starts_with("NEEDS ") && why.ends_with(" FREE"), "{why}");
-    for (t, y) in [(head, browser::HINT_Y), (why, browser::SAVE_Y)] {
+    for (t, y) in [("POOL FULL", browser::HINT_Y), (why, browser::SAVE_Y)] {
         draw::text_tracked(
             &mut lines,
             &theme::FONT_LABEL,
@@ -309,7 +312,7 @@ fn free_never_reads_more_than_there_is() {
     let ui = browsing();
     let pool = ui.project().pool();
     let free = ARENA as u64 - pool.used().bytes() as u64;
-    let refusal = prompt::pool_full(PoolFull {
+    let refusal = prompt::pool_needs(PoolFull {
         needs: Cost::of(4096),
         free: pool.free(),
     });
@@ -337,7 +340,8 @@ fn all_slots_taken_reads_plain_pool_full() {
     assert!(ui.project().pool().fits(offer.save_needs()));
     assert_eq!(offer.save_cost(), None);
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Edit));
-    assert_eq!(ui.refusal(), Some("POOL FULL"));
+    assert_eq!(ui.refusal(), Some(""), "POOL FULL alone");
+    assert_eq!(prompt::pool_full(None).as_str(), "POOL FULL");
 }
 
 /// The save line, drawn: `WON'T FIT` in ALERT when no save fits.

@@ -384,7 +384,8 @@ impl UiState {
         self.prime_status
     }
 
-    /// The browser's refusal: `POOL FULL · NEEDS 1.2K, 0.4K FREE`.
+    /// The browser's refusal, the line under `POOL FULL`: `NEEDS 1.2K,
+    /// 0.4K FREE`, or empty with every slot taken.
     pub fn refusal(&self) -> Option<&str> {
         self.refusal.as_ref().map(Line::as_str)
     }
@@ -1009,7 +1010,7 @@ impl UiState {
         again: impl Fn(Asked<PartSource, A>) -> Ask,
     ) {
         let Some(a) = save(&Offer::of(&self.project, ask.source().part)) else {
-            self.error(self.pool_full(ask.source().part));
+            self.error(prompt::pool_full(self.pool_full(ask.source().part)));
             return self.ask(again(ask));
         };
         let stale = self.save_sound(a);
@@ -1030,7 +1031,7 @@ impl UiState {
         let stale = match self.project.apply_part_action(a) {
             Ok(stale) => stale,
             Err(project::ActionRefused::Full(f)) => {
-                self.refuse(prompt::pool_full(f));
+                self.refuse(Some(f));
                 return None;
             }
             Err(project::ActionRefused::Gone) => return None,
@@ -1081,25 +1082,21 @@ impl UiState {
         }
     }
 
-    /// Why `part`'s save isn't offered: what it needs against the gap,
-    /// else every slot taken.
-    fn pool_full(&self, part: PartId) -> Line {
+    /// Why `part`'s save isn't offered: what it needs against the gap;
+    /// `None`, every slot taken.
+    fn pool_full(&self, part: PartId) -> Option<project::PoolFull> {
         let needs = Offer::of(&self.project, part).save_needs();
         let free = self.project.pool().free();
-        if needs > free {
-            prompt::pool_full(project::PoolFull { needs, free })
-        } else {
-            Line::new(prompt::POOL_FULL)
-        }
+        (needs > free).then_some(project::PoolFull { needs, free })
     }
 
-    /// `why` in the browser's band until the next input; elsewhere
+    /// POOL FULL in the browser's band until the next input; elsewhere
     /// (SAVE TO PROJ), a toast.
-    fn refuse(&mut self, why: Line) {
+    fn refuse(&mut self, f: Option<project::PoolFull>) {
         if self.loc.browse().is_none() {
-            return self.error(why);
+            return self.error(prompt::pool_full(f));
         }
-        self.refusal = Some(why);
+        self.refusal = Some(f.map_or(Line::new(""), prompt::pool_needs));
         self.browser_dirty = true;
     }
 

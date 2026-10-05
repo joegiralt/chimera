@@ -499,15 +499,26 @@ impl Prompt for EnterDfu {
 /// A save with every slot taken.
 pub const POOL_FULL: &str = "POOL FULL";
 
-/// A save the arena has no room for: `POOL FULL · NEEDS 1.2K, 0.4K FREE`.
-pub fn pool_full(f: PoolFull) -> Line {
+/// What a save the arena has no room for needs: `NEEDS 1.2K, 0.4K FREE`,
+/// the line under `POOL_FULL`.
+pub fn pool_needs(f: PoolFull) -> Line {
     let mut l = Line::new("");
     let _ = write!(
         l,
-        "POOL FULL · NEEDS {}, {} FREE",
+        "NEEDS {}, {} FREE",
         f.needs.kib_label().as_str(),
         f.free.kib_floor_label().as_str()
     );
+    l
+}
+
+/// The refusal as one line, for a toast: `POOL FULL · NEEDS …`, or
+/// `POOL FULL` with every slot taken.
+pub fn pool_full(f: Option<PoolFull>) -> Line {
+    let mut l = Line::new(POOL_FULL);
+    if let Some(f) = f {
+        let _ = write!(l, " · {}", pool_needs(f).as_str());
+    }
     l
 }
 

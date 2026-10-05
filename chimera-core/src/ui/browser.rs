@@ -23,6 +23,7 @@ use crate::ui::hint::{self, Gesture};
 use crate::ui::meter::{self, MeterView};
 use crate::ui::nav::chain_def_for;
 use crate::ui::settings::part::Offer;
+use crate::ui::settings::prompt::POOL_FULL;
 use crate::ui::theme;
 
 /// Rows on screen.
@@ -169,8 +170,7 @@ pub fn draw<D>(
     draw::fill_rect(d, SCROLL_X, thumb_y, 2, thumb_h, theme::MID);
 
     if let Some(r) = refusal {
-        let (head, why) = refusal_lines(r);
-        for (line, y) in [(head, HINT_Y), (why, SAVE_Y)] {
+        for (line, y) in [(POOL_FULL, HINT_Y), (r, SAVE_Y)] {
             draw::text_tracked(
                 d,
                 &theme::FONT_LABEL,
@@ -214,11 +214,6 @@ pub fn draw<D>(
         0,
     );
     meter::draw(d, &MeterView::of(pool, None), theme::MARGIN_X, METER_Y);
-}
-
-/// A refusal on its two lines: `POOL FULL`, then `NEEDS 1.5K, 0.1K FREE`.
-pub fn refusal_lines(r: &str) -> (&str, &str) {
-    r.split_once(" · ").unwrap_or((r, ""))
 }
 
 /// The longest start of `s` that fits `w` px in `font`.
