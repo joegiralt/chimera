@@ -98,6 +98,8 @@ impl Fsck {
                     || l.starts_with("Reclaimed ")
                     || l.starts_with("Free cluster summary")
                     || l.starts_with("Leaving filesystem unchanged")
+                    || l.starts_with("FATs differ")
+                    || l.trim_start().starts_with("Using first FAT")
                     || l.ends_with(" clusters"))
             })
             .collect()

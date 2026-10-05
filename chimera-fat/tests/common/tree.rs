@@ -124,19 +124,24 @@ impl<'a> Tree<'a> {
     }
 
     /// `n` free clusters linked into a chain, its end marked; with `rng`,
-    /// scattered. Each search goes on from where the last stopped.
+    /// scattered. Each search goes on from where the last stopped, and
+    /// wraps once.
     pub fn take(&mut self, n: u32, mut rng: Option<&mut XorShift>) -> Vec<u32> {
         let mut chain = Vec::new();
         let end = 2 + self.l.clusters();
-        let mut c = self.next;
+        let (mut c, mut wrapped) = (self.next, false);
         while chain.len() < n as usize {
             if let Some(r) = rng.as_deref_mut()
                 && r.below(4) == 0
             {
                 c += r.below(40) as u32;
             }
-            assert!(c < end, "the image is full");
-            if self.get(c) == 0 {
+            if c >= end {
+                // Once round to the front: scattering skips clusters.
+                assert!(!wrapped, "the image is full");
+                (c, wrapped) = (2, true);
+            }
+            if self.get(c) == 0 && !(wrapped && chain.contains(&c)) {
                 chain.push(c);
             }
             c += 1;

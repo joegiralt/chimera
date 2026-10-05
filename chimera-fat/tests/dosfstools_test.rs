@@ -26,7 +26,10 @@ use embedded_sdmmc::{Mode, VolumeIdx};
 use image::{
     PART_LBA, RamDisk, Rec, fat16, fat32, layout_of, pattern, sdmmc, sdmmc_write, with_clusters,
 };
-use probe::{Probed, Sink, XorShift, fats, free, log, probed, suite, sweep_on, swept, swept_clean};
+use probe::{
+    Probed, Sink, XorShift, fats, fats_equal, free, log, probed, suite, sweep_on, swept,
+    swept_clean,
+};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use tools::{fsck, mkfs};
@@ -442,6 +445,8 @@ fn cut_images_pass_fsck() {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Fault {
     None,
+    /// No fault: a cut's FAT 2 sector behind FAT 1, through a live chain.
+    Stale,
     CrossLink,
     Loop,
     DirLink,
@@ -489,12 +494,14 @@ fn sweep_matches_fsck() {
         mkfs(FsKind::Fat16, 30_000, 1, 0x1600_5EED),
         mkfs(FsKind::Fat16, 40_000, 4, 0x1604_5EED),
         mkfs(FsKind::Fat32, 70_000, 1, 0x3200_5EED),
+        mkfs(FsKind::Fat16, 70_000, 16, 0x1610_5EED),
     ];
     let mut seen = BTreeMap::new();
     for seed in 0..SEEDS {
         let mut rng = XorShift(0x9E37_79B9_7F4A_7C15 ^ (seed + 1));
         let base = &bases[seed as usize % bases.len()];
         let fault = match seed % 12 {
+            5 | 6 => Fault::Stale,
             7 => Fault::CrossLink,
             8 => Fault::Loop,
             9 => Fault::DirLink,
@@ -550,7 +557,7 @@ fn sweep_matches_fsck() {
             }
             _ => {}
         }
-        if fault != Fault::None {
+        if !matches!(fault, Fault::None | Fault::Stale) {
             let want = match fault {
                 Fault::CrossLink | Fault::Loop => Doubt::CrossLinked,
                 Fault::DirLink => Doubt::DirBroken,
@@ -575,6 +582,28 @@ fn sweep_matches_fsck() {
             *seen.entry(format!("{fault:?}")).or_insert(0) += 1;
             continue;
         }
+        // A cut between FAT 1's and FAT 2's write of sector D: FAT 2 still
+        // ends a live chain one link short there, and holds none of the
+        // lost clusters in D, which wait for the boot after D's copy.
+        let mut only1 = 0;
+        if fault == Fault::Stale {
+            let link = files
+                .iter()
+                .flat_map(|f| f.chain.windows(2).map(|w| w[0]))
+                .nth(rng.below(8));
+            let d = l.fat_block(link.unwrap_or(lost[0]));
+            let fat2 = (PART_LBA + l.fat_copies(d).nth(1).unwrap()) as usize;
+            let mut blocks = disk.0.borrow_mut();
+            if let Some(c) = link {
+                l.put_entry(&mut blocks[fat2], c, l.end_mark());
+            }
+            for &c in lost.iter().filter(|&&c| l.fat_block(c) == d) {
+                l.put_entry(&mut blocks[fat2], c, 0);
+                only1 += 1;
+            }
+            let through = ["no live chain", "a live chain"][usize::from(link.is_some())];
+            *seen.entry(format!("stale, {through}")).or_insert(0) += 1;
+        }
         let before = fsck(&disk);
         assert_eq!(
             before.reclaimed,
@@ -585,11 +614,18 @@ fn sweep_matches_fsck() {
         let (held, data) = (non_free(&disk), outside_fats(&disk));
         let fat1: Vec<u32> = (2..2 + l.clusters()).map(|c| t.get(c)).collect();
         let got = swept(&disk);
-        assert_eq!(
-            (got.lost, got.freed),
-            (lost.len() as u32, lost.len() as u32),
-            "{what}"
-        );
+        let first = lost.len() as u32 - only1;
+        assert_eq!((got.lost, got.freed), (first, first), "{what}");
+        assert_eq!(got.healed, fault == Fault::Stale, "{what}");
+        if fault == Fault::Stale {
+            let next = swept(&disk);
+            assert_eq!(
+                (next.freed, next.healed),
+                (only1, false),
+                "{what}: the next boot"
+            );
+            assert!(fats_equal(&disk), "{what}: D copied");
+        }
         let after = fsck(&disk);
         assert_eq!(after.reclaimed, 0, "{what}: fsck after\n{}", after.out);
         assert_eq!(after.used, before.used, "{what}: fsck's used");
