@@ -179,11 +179,15 @@ code 23, ident `"TAPE"`, ADR 0055).
       as POLY. These are the S950's MONO and POLY types.
     - A grain starts at the time pointer wherever it is, so time always
       moves on; where time wraps the splice's fade carries the output
-      across. A grain that reaches the window's end wraps (MONO by the
+      across. The fade is a smoothstep, so splices have no corner. A grain
+      that reaches the window's end wraps in the render loop (MONO by the
       fewest whole periods a wrap's travel needs, re-reading its last
-      cycles) under a 5 ms lift, as PING-PONG's retargeted clamp. A window
-      under the floor (a source shorter than it) is a waveform loop,
-      wrapped inline with no division (TAPE Task 8).
+      cycles for at most one grain's life; POLY by the window) under a
+      one-pole lift (5 ms, or an eighth of the wrap's interval if shorter,
+      so repeated lifts leave little DC), as PING-PONG's retargeted clamp. Only a grain
+      wrapping more than once in 16 samples, a waveform loop, wraps bare.
+      The window is never under 64 frames, and no source is shorter (TAPE
+      Task 8).
 - **Pages:**
   - `SRC · DECK · DRV · FLT · AMP · MOD`, opening on DECK;
   - SRC holds SOURCE, START, END and VOL;
@@ -210,13 +214,13 @@ code 23, ident `"TAPE"`, ADR 0055).
 
   | | LOOP, REVERSE | PING-PONG | SCRUB | TRANSWAVE | TRANSWAVE, pitch moving > ±6.2 st | STRETCH | AGE on |
   |---|---|---|---|---|---|---|---|
-  | Billed | 450 | 490 | 480 | 400 | 770 | 410 | +20 |
+  | Billed | 450 | 490 | 480 | 400 | 770 | 430 | +20 |
 
   - **Admission.** Every plain TAPE voice is admitted 8 on rev V, with
     ORBIT and with the master tape (PING-PONG with AGE 7 with the master
     tape), and 7 or 6 with DRIVE and FOLD. On rev Y, TRANSWAVE with AGE off
-    (477) keeps 8 by one cycle; STRETCH (487, its waveform-loop worst,
-    TAPE Task 8) 7; LOOP and REVERSE with AGE off (527) 7; STRETCH and
+    (477) keeps 8 by one cycle; STRETCH (507, a short source's lifted
+    wraps, TAPE Task 8) 7; LOOP and REVERSE with AGE off (527) 7; STRETCH and
     TRANSWAVE with AGE 7; LOOP and REVERSE with AGE,
     SCRUB and PING-PONG 6; with DRIVE and FOLD, 5 or 6. A TRANSWAVE whose
     pitch can move past ±6.2 semitones (867) is admitted 4 on rev Y and 5
