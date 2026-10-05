@@ -455,8 +455,9 @@ impl Voice {
             pool.alloc_mut().cancel(self.id);
         }
         if !self.active {
-            // A fresh note: no ramp from the last note's settings.
-            self.filter.hold();
+            // A fresh note: no ramp from the last note's settings, and no
+            // ring left in the filter.
+            self.filter.reset();
             self.drive.hold();
             self.folder.hold();
             self.dc.reset();
@@ -786,6 +787,14 @@ impl Voice {
 
         // Check if done
         self.active = self.slot.is_active();
+        if !self.active && self.fade == 0 && self.filter.rings() {
+            // The engine ended, but a self-oscillating filter rings on
+            // (#374): fade it out over this block instead of cutting it.
+            // The next note starts it from rest (`trigger`).
+            for (i, sample) in output.iter_mut().enumerate() {
+                *sample *= (BLOCK_SIZE - 1 - i) as f32 / BLOCK_SIZE as f32;
+            }
+        }
 
         if self.fade > 0 {
             for sample in output.iter_mut() {

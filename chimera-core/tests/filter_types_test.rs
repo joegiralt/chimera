@@ -5,8 +5,11 @@ mod common;
 use chimera_core::dsp::filter::clean::{clean_k, clean_k2, trim};
 use chimera_core::dsp::filter::coef::{g_of, tan_accurate};
 use chimera_core::dsp::filter::{Clean, FilterMode, routed_cutoff};
-use chimera_core::params::FilterParams;
+use chimera_core::modulation::ModState;
+use chimera_core::params::{EngineType, FilterParams, ParamSnapshot};
+use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
+use common::Rig;
 use common::filter_ref::{OSC_BAND_DB, clean_ref, g_track, ramp_track, rms_db, trim_ref};
 
 const SR: u32 = 48_000;
@@ -424,5 +427,91 @@ fn clean_recovers_from_a_nan_block() {
         }
         assert!(b.iter().all(|v| v.is_finite()), "{mode:?}: {b:?}");
         assert!(b.iter().any(|&v| v != 0.0), "{mode:?}");
+    }
+}
+
+/// A voice at `res` and 500 Hz, C4 held 0.5 s, run until its engine ends:
+/// every sample, and the voice, idle again.
+fn ring_out(engine: EngineType, res: f32) -> (Vec<f32>, Rig, ParamSnapshot) {
+    let mut p = ParamSnapshot::for_engine(engine);
+    (p.filter.cutoff, p.filter.resonance) = (500.0, res);
+    let mut r = Rig::new(SR);
+    r.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &p);
+    let mut out = Vec::new();
+    let mut b = [0.0f32; BLOCK_SIZE];
+    for blk in 0..20_000 {
+        if blk == 375 {
+            r.note_off();
+        }
+        r.render(&mut b, &p, &ModState::new());
+        out.extend_from_slice(&b);
+        if !r.is_active() {
+            // One more block: the idle voice's silence.
+            r.render(&mut b, &p, &ModState::new());
+            out.extend_from_slice(&b);
+            return (out, r, p);
+        }
+    }
+    panic!("{engine:?}: never ended");
+}
+
+/// ALGO and MODAL INIT with no VCA route ring on after note-off, at RES 1,
+/// until the engine ends (#374): the voice then fades the ring over one
+/// block, so its end steps no more than the ring itself does.
+#[test]
+fn a_voice_ending_mid_oscillation_fades_without_a_click() {
+    for engine in [EngineType::Algo, EngineType::Modal] {
+        let (y, ..) = ring_out(engine, 1.0);
+        let step = |w: &[f32]| {
+            w.windows(2)
+                .map(|p| (p[1] - p[0]).abs())
+                .fold(0.0f32, f32::max)
+        };
+        let n = y.len();
+        // The ring before the end, and the end: the fade block and silence.
+        let (ring, end) = (
+            step(&y[n - 40 * BLOCK_SIZE..n - 2 * BLOCK_SIZE]),
+            step(&y[n - 2 * BLOCK_SIZE - 1..]),
+        );
+        println!("{engine:?}: ring step {ring:.4}, end step {end:.4}");
+        assert!(ring > 0.01, "{engine:?}: no ring ({ring})");
+        assert!(
+            end <= ring * 1.1,
+            "{engine:?}: the end steps {end}, the ring {ring}"
+        );
+    }
+}
+
+/// A voice that ended self-oscillating starts its next note from rest: bit
+/// for bit as a voice that ended at RES 0 does (the engine before the
+/// filter ran the same either way), and on ALGO as a fresh voice does.
+/// MODAL's engine itself doesn't restart bit for bit as a fresh one.
+#[test]
+fn a_voice_reused_after_oscillation_starts_from_rest() {
+    let first_block = |r: &mut Rig, p: &ParamSnapshot| {
+        let mut b = [0.0f32; BLOCK_SIZE];
+        r.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), p);
+        r.render(&mut b, p, &ModState::new());
+        b.map(f32::to_bits)
+    };
+    for engine in [EngineType::Algo, EngineType::Modal] {
+        for next_res in [1.0, 0.0] {
+            let (_, mut rang, mut p) = ring_out(engine, 1.0);
+            let (_, mut quiet, _) = ring_out(engine, 0.0);
+            p.filter.resonance = next_res;
+            let got = first_block(&mut rang, &p);
+            assert_eq!(
+                got,
+                first_block(&mut quiet, &p),
+                "{engine:?} next RES {next_res}"
+            );
+            if engine == EngineType::Algo {
+                assert_eq!(
+                    got,
+                    first_block(&mut Rig::new(SR), &p),
+                    "fresh, next RES {next_res}"
+                );
+            }
+        }
     }
 }

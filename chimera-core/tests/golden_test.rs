@@ -295,10 +295,12 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     ),
     // Then CLEAN's ACCURATE tan and exact divides (#57).
     // Then CLEAN's k law and trims (ADR 0096).
+    // Then the voice-end fade (ADR 0096): its filter tail, −65 dB, fades
+    // over the last block instead of cutting.
     (
         "factory_5",
         (
-            0x005325bcaf24fa19,
+            0xdb1cd08add369508,
             [
                 898824421, 3209678144, 3209854415, 1059992875, 3206492922, 3206485466, 0, 0,
             ],

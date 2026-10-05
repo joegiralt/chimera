@@ -195,6 +195,19 @@ impl Clean {
         (self.g, self.k, self.pre) = (None, None, None);
     }
 
+    /// A fresh voice's filter: at rest and unramped. Self-oscillation never
+    /// decays, so a voice ended mid-ring would start its next note from it.
+    pub fn reset(&mut self) {
+        (self.s1, self.s2) = ([0.0; 2], [0.0; 2]);
+        self.hold();
+    }
+
+    /// Still ringing: a state above −80 dB.
+    pub fn rings(&self) -> bool {
+        let m = |a: f32, b: f32| a.abs().max(b.abs());
+        m(m(self.s1[0], self.s1[1]), m(self.s2[0], self.s2[1])) > 1e-4
+    }
+
     /// The last block's `g` (`None`: no ramp next block). Test-only: nothing
     /// in the audio path needs to read the ramp state back.
     #[cfg(test)]

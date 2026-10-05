@@ -654,6 +654,7 @@ git commit -m "DIRTY: Chamberlin SVF at 2x, Jury-bounded f, hard clamps"
 }
 ```
 
+  - **Task 3's review (F2):** the first test must include a MODE switch at RES 1, in self-oscillation, not only RES 0.5. Today the switch steps 0.62–1.42 (BP24 → LP12, LP24 → PHASER, HP24 → LP6 at 500 Hz) against a ring step of about 0.04: the trim steps with the mode on top of the topology.
 - [ ] **Step 2: Run them and see them fail.** Expect FAIL (today a TYPE change zeroes the state, so the deviation is about 47 %).
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run them and see them pass.** Expect PASS. Mutation-check:
@@ -1346,3 +1347,24 @@ The moving, LEVEL and tap terms are deltas, not over `OLD_LP24`, and don't chang
 **Re-recorded goldens (Task 2, "ACCURATE tan, exact divides (#57)"):** every `golden_test` row (all 24: each case runs the voice's filter; the voice and instrument harnesses share the table), `filter_test::every_mode_renders_as_recorded` (all 8 modes), and `codec_compat_test::FIXTURE_RENDERS` (all 10 fixtures, which render through the same voice). `factory_level_test::KNOWN` gains a dB allowance for the six factory Sounds that matched the old norm to 1e-5: each moves 0.0003–0.09 dB.
 - **STRING's `out_gain` 5.95 → 5.7** (ADR 0063's peak rule): the brighter 20 kHz took its eight-note v127 chord from 2.8 to 3.2 dB of gain reduction, over the rule's 3; 5.7 puts it back at 2.8 (C4 now 5.7 dB under the reference, was 5.4). Re-recorded again for it: `golden_test` `modal_init`, `modal_lfo_cutoff`, `algo_to_modal_switch`; `instrument_test` `two_parts_two_pairs` (both tables); `codec_compat_test` `init_modal.snd`.
 - **`live_param_test::test_filter_resonance_mid_note`** read a triangle's absent 4th harmonic at 1 kHz, where only a snapped RES's step put energy; it now reads C4's 3rd and 5th either side of the cutoff and wants 2× (it gets 5×).
+
+### Task 3: CLEAN's k law, self-oscillation and trims (2026-10-05)
+
+- **`TRIM_OSC`** = `[1.0, 0.4756, 0.3949, 0.2374, 0.191, 0.3367, 1.0, 1.0]`: each mode's untrimmed RES 1 range over 100 Hz – 8 kHz centred on −8 dBFS.
+
+  | Mode | Untrimmed, dBFS | Trimmed, dBFS |
+  |---|---|---|
+  | LP12 | −2.35 to −0.74 | −8.80 to −7.20 |
+  | LP24 | −1.59 to +1.73 | −9.66 to −6.34 |
+  | BP12 | +3.70 to +5.28 | −8.79 to −7.21 |
+  | BP24 | +5.00 to +7.76 | −9.37 to −6.62 |
+  | HP24 | +0.62 to +2.29 | −8.84 to −7.17 |
+
+  LP6 (no `k`) and NOTCH (−21 dBFS) stay 1.0 until Task 4; PHASER (−8 to −10 dBFS, untrimmed) until Task 5. `OSC_BAND_DB` unchanged at (−12, −4).
+- **Above the band:** at the 0.497 clamp (24 kHz), RES 1 rings at −22.5 to −25 dBFS (NOTCH −37), about 16 dB under the band, and recovers when FREQ comes back down (Task 3's review, F4). The band test stops at 8 kHz, the spec's range; a sweep to the top dips audibly.
+- **Pinned bounds** (DRIVE 0): `CLEAN_BOUND` 13.8 (grid max 12.55, the ±10 impulses), `CLEAN_STATE_BOUND` 4.22 (3.84), `CLEAN_JUMP_BOUND` 0.81 (RES 1 jumps, 0.733 on the 0.8 saw).
+- **Probes:** steady 47 instructions (Task 2: 46), 0 `vdiv`, 80 / 145 cycles; moving 67 (63), 2 `vdiv`, 135 / 200. The trim is ramped end to end across a block with `k`. **`CLEAN_MOVE_COST` = 55** (was 50). The voice-end fade (fix round 1) runs once per voice end, outside the filter's loops: no per-sample bill.
+- **Flash:** `text` 708,552 → 709,240 (+688 B), default release build; fix round 1 below.
+- **Re-recorded goldens ("CLEAN's k law and trims, ADR 0096"):** all 24 `golden_test` rows (RES 0's `k` moved from 2.01 to 2); `filter_test::every_mode_renders_as_recorded` (7 of 8, not LP6) and `full_resonance_rings_at_its_level`'s four levels; `instrument_test` `GOLDENS` and `PRE_LIMITER` (5 each); `codec_compat_test::FIXTURE_RENDERS` (all 10); `factory_level_test::KNOWN` factory 4 0.001 → 0.07 dB and SQR BASS 0.56 → 0.74 (the law: +0.70 dB at its cutoff). STRING's 8-note v127 chord still takes 2.8 dB of gain reduction (ADR 0063's cap 3).
+- **Voice end (fix round 1):** a voice whose engine ends while its filter still rings (a state above −80 dB) fades that block to 0 instead of cutting; the next note starts the filter from rest (`Clean::reset`). Re-recorded for the fade: `golden_test` `factory_5` and `codec_compat_test` `factory_5.snd` (SQR BASS ends on a −65 dB filter tail). The ring after note-off itself is #374.
+

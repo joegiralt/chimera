@@ -113,12 +113,30 @@ fn test_filter_resonance_mid_note() {
     let near = |b: &[f32]| {
         (goertzel(b, 3.0 * 261.63, SR) + goertzel(b, 5.0 * 261.63, SR)) / goertzel(b, 261.63, SR)
     };
-    let (control, raised) = (near(&render(0.0)), near(&render(0.9)));
+    let (dead, live) = (render(0.0), render(0.9));
+    let (control, raised) = (near(&dead), near(&live));
     // Live, 1.89×; with RES left dead, 1.00×. The bar was 2× on the level
     // alone, before the trim.
     assert!(
         raised > 1.5 * control,
         "resonance should boost near the cutoff: {raised} vs {control} with RES 0"
+    );
+    // The level: the trim at RES 0.9 (0.586 on LP12, −4.64 dB) takes the
+    // fundamental down with it, less the lower `k`'s +1.18 dB there (the
+    // LP12 response at r = 0.26 of the cutoff, prewarped): −3.46 dB by the
+    // law, −3.06 measured over the RES ramp's block. Without the trim it
+    // would rise 1.2 dB.
+    use chimera_core::dsp::filter::FilterMode;
+    use chimera_core::dsp::filter::clean::{clean_k, trim};
+    let w = |f: f64| (core::f64::consts::PI * f / f64::from(SR)).tan();
+    let r = w(261.63) / w(1000.0);
+    let lp = |k: f64| 1.0 / (1.0 - r * r).hypot(k * r);
+    let k = f64::from(clean_k(0.9));
+    let law = 20.0 * (f64::from(trim(FilterMode::Lp12, clean_k(0.9))) * lp(k) / lp(2.0)).log10();
+    let drop = 20.0 * f64::from(goertzel(&live, 261.63, SR) / goertzel(&dead, 261.63, SR)).log10();
+    assert!(
+        (drop - law).abs() <= 1.0,
+        "fundamental {drop:+.2} dB at RES 0.9, the law {law:+.2}"
     );
 }
 

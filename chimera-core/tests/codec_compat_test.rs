@@ -439,7 +439,8 @@ const FIXTURE_RENDERS: &[(&str, u64)] = &[
     ("factory_2.snd", 0xfe00848f39d1981e),
     ("factory_3.snd", 0x901698e789a3ccf9),
     ("factory_4.snd", 0x68328532bf9779a7),
-    ("factory_5.snd", 0x005325bcaf24fa19),
+    // Then the voice-end fade (ADR 0096): SQR BASS's −65 dB filter tail.
+    ("factory_5.snd", 0xdb1cd08add369508),
     ("factory_6.snd", 0x144e8d10ce6ac51e),
     ("factory_7.snd", 0xcabe755163058e15),
     ("init_algo.snd", 0x889c731ceb1c7089),
