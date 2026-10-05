@@ -1,5 +1,5 @@
 //! Sources in the pool (ADR 0087): their table, the gate a compaction
-//! closes, retirement, purge, and pass 1's limit less the sources.
+//! closes, retirement, purge, NEW, and pass 1's limit less the sources.
 
 mod common;
 
@@ -9,13 +9,15 @@ use chimera_core::name::SoundName;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::arena::{ARENA_BYTES, Cost};
-use chimera_core::project::test_support::{full_dense_slots, save_part_to};
+use chimera_core::project::test_support::{
+    FlipOnSecondRead, full_dense_slots, save_at, save_part_to,
+};
 use chimera_core::project::{
     EncodedSound, LoadLink, PartFrom, PartId, PartSource, Project, ProjectNote, ProjectSource,
-    Purged, ReplaceGuard, SlotId, SourceId, SourceRef, Subject, TemplateCrc, load_project,
-    project_crc, project_file, source_users,
+    ProjectStatus, Purged, ReplaceGuard, SlotId, SourceId, SourceRef, Subject, TemplateCrc,
+    boot_project, load_project, project_crc, project_file, project_status, source_users,
 };
-use chimera_core::source_table::{GateView, SourceTable};
+use chimera_core::source_table::{Answer, AudioToken, GateView, SourceTable};
 use chimera_core::storage::{Card, FileError, ProjectId, Side};
 use chimera_core::ui::browser;
 use chimera_hal::store::{Dir, Store};
@@ -72,15 +74,637 @@ fn pending(p: &Project) -> Cost {
     p.pool().split().2
 }
 
-/// UI passes with an audio block after each, `sounding` reported: until
-/// nothing is pending, at most `n` rounds.
-fn settle(p: &mut Project, sounding: u32, n: usize) {
-    let table = p.pool().table();
-    for _ in 0..n {
+/// UI passes with no audio reader: a gate is answered at once.
+fn quiet(p: &mut Project) {
+    for _ in 0..3 {
         p.sources_pass();
-        let _ = table.begin_block();
-        table.store_sounding(sounding);
     }
+}
+
+const BLOCK: usize = 64;
+
+/// A stub TAPE voice: latched to a source at note-on, it plays its bytes
+/// a block at a time through the view. It waits while the gate moves its
+/// source, and ends when its row is gone.
+struct Voice {
+    id: SourceId,
+    pos: usize,
+    len: usize,
+    out: Vec<u8>,
+    /// The blocks it played in, and those it waited at the gate.
+    played: Vec<usize>,
+    held: usize,
+    gone: bool,
+}
+
+impl Voice {
+    fn on(id: SourceId, len: usize) -> Voice {
+        Voice {
+            id,
+            pos: 0,
+            len,
+            out: Vec::new(),
+            played: Vec::new(),
+            held: 0,
+            gone: false,
+        }
+    }
+
+    fn ended(&self) -> bool {
+        self.pos == self.len || self.gone
+    }
+
+    fn block(&mut self, v: &GateView<'_>, n: usize) {
+        if self.ended() {
+            return;
+        }
+        match v.bytes(self.id) {
+            Some(b) => {
+                let end = (self.pos + BLOCK).min(self.len);
+                self.out.extend_from_slice(&b[self.pos..end]);
+                self.pos = end;
+                self.played.push(n);
+            }
+            None if v.moving(self.id) => self.held += 1,
+            None => self.gone = true,
+        }
+    }
+
+    /// Latched and not ended, waiting at the gate included.
+    fn sounding(&self) -> u32 {
+        if self.ended() { 0 } else { self.id.bit() }
+    }
+}
+
+/// The audio side: the table's one reader, its voices, and note-ons
+/// that land at the next block.
+struct Audio {
+    tok: AudioToken,
+    voices: Vec<Voice>,
+    queued: Vec<Voice>,
+    n: usize,
+}
+
+impl Audio {
+    fn of(p: &Project) -> Audio {
+        Audio {
+            tok: p.pool().table().reader().expect("one reader"),
+            voices: Vec::new(),
+            queued: Vec::new(),
+            n: 0,
+        }
+    }
+
+    fn note_on(&mut self, id: SourceId, len: usize) {
+        self.queued.push(Voice::on(id, len));
+    }
+
+    fn block(&mut self) {
+        {
+            let v = self.tok.begin_block();
+            self.voices.append(&mut self.queued);
+            for voice in &mut self.voices {
+                voice.block(&v, self.n);
+            }
+        }
+        let mask = self.sounding();
+        self.tok.store_sounding(mask);
+        self.n += 1;
+    }
+
+    fn blocks(&mut self, n: usize) {
+        for _ in 0..n {
+            self.block();
+        }
+    }
+
+    fn sounding(&self) -> u32 {
+        self.voices.iter().fold(0, |m, x| m | x.sounding())
+    }
+}
+
+/// One UI pass while the audio runs: each wait for its answer is one
+/// block, two at most. The blocks it ran.
+fn pass(p: &mut Project, a: &mut Audio) -> usize {
+    let mut k = 0;
+    p.sources_pass_with(|| {
+        a.block();
+        k += 1;
+        k < 3
+    });
+    k
+}
+
+#[test]
+fn store_sounding_is_read() {
+    let t: &'static SourceTable = Box::leak(Box::new(SourceTable::new()));
+    let mut tok = t.reader().expect("one reader");
+    assert!(t.reader().is_none(), "only one");
+    assert_eq!(t.sounding(), 0);
+    for m in [1, 0x8000_0001, u32::MAX, 0] {
+        tok.store_sounding(m);
+        assert_eq!(t.sounding(), m);
+    }
+}
+
+#[test]
+fn gate_view_bytes_none_while_moving() {
+    let (mut p, _) = Project::boxed();
+    let (a, b) = (sref(1, 1000), sref(2, 2000));
+    let (ia, ib) = (store(&mut p, a), store(&mut p, b));
+    let table = p.pool().table();
+    let mut tok = table.reader().unwrap();
+    {
+        let open = tok.begin_block();
+        assert_eq!(open.bytes(ia), Some(&audio(a)[..]));
+        assert_eq!(open.bytes(ib), Some(&audio(b)[..]));
+    }
+    let e = table.close_gate_for_test(ia.bit());
+    assert_eq!(table.wait_for_test(e, || false), Answer::TimedOut);
+    {
+        let v = tok.begin_block();
+        assert_eq!(v.bytes(ia), None);
+        assert!(v.moving(ia));
+        assert_eq!(v.bytes(ib), Some(&audio(b)[..]));
+    }
+    assert_eq!(table.wait_for_test(e, || false), Answer::Acked);
+    table.open_gate_for_test();
+    assert_eq!(tok.begin_block().bytes(ia), Some(&audio(a)[..]));
+    // An empty row reads nothing.
+    assert_eq!(tok.begin_block().bytes(SourceId::ALL[31]), None);
+
+    // A voice on a moving id: the block nacks and reads on.
+    tok.store_sounding(ia.bit());
+    let e = table.close_gate_for_test(ia.bit());
+    assert_eq!(tok.begin_block().bytes(ia), Some(&audio(a)[..]));
+    assert_eq!(table.wait_for_test(e, || false), Answer::Nacked);
+    table.open_gate_for_test();
+}
+
+#[test]
+#[should_panic(expected = "one arena")]
+fn a_table_serves_one_arena() {
+    let t = SourceTable::new();
+    let mut a = [0u8; 4];
+    let mut b = [0u8; 4];
+    t.attach_for_test(a.as_mut_ptr());
+    t.attach_for_test(b.as_mut_ptr());
+}
+
+/// Review Focus 3: a purged source still sounding comes back by itself
+/// when its note ends.
+#[test]
+fn pending_hole_resolves_when_note_ends() {
+    let (mut p, _) = Project::boxed();
+    let r = sref(7, 9000);
+    let id = store(&mut p, r);
+    let cost = p.pool().source(id).unwrap().cost();
+    let mut a = Audio::of(&p);
+    a.note_on(id, audio(r).len());
+    a.block();
+    let gap = p.pool().free();
+    let purged = p.purge_unused_sources(p.pool().table().sounding());
+    assert_eq!(
+        purged,
+        Purged {
+            freed: cost,
+            retired: 1
+        }
+    );
+    for _ in 0..8 {
+        a.blocks(3);
+        assert!(!p.sources_pass_with(|| false));
+        assert_eq!(pending(&p), cost, "on the meter while it sounds");
+        assert_eq!(p.pool().free(), gap);
+    }
+    while a.sounding() != 0 {
+        a.block();
+    }
+    a.block();
+    assert!(pass(&mut p, &mut a) > 0);
+    assert_eq!(pending(&p), Cost::default());
+    assert_eq!(
+        p.pool().free(),
+        Cost::of((gap.bytes() + cost.bytes()) as usize)
+    );
+    assert_eq!(p.unused_sources().count, 0, "no second purge");
+    assert_eq!(a.voices[0].out, audio(r), "never cut");
+}
+
+#[test]
+fn retire_never_cuts() {
+    let (mut p, _) = Project::boxed();
+    let (a, b) = (sref(10, 3000), sref(11, 5000));
+    let ia = store(&mut p, a);
+    let ib = store(&mut p, b);
+    tape_sound(&mut p, "KEEP B", b);
+    let mut au = Audio::of(&p);
+    au.note_on(ia, audio(a).len());
+    au.block();
+    assert_eq!(
+        p.purge_unused_sources(p.pool().table().sounding()).retired,
+        1
+    );
+    assert!(p.pool().source(ia).is_none(), "out of the index at once");
+    while au.sounding() != 0 {
+        pass(&mut p, &mut au);
+        au.block();
+        let v = au.tok.begin_block();
+        assert_eq!(v.bytes(ib), Some(&audio(b)[..]));
+    }
+    assert_eq!(au.voices[0].out, audio(a), "played to its end");
+    au.blocks(2);
+    pass(&mut p, &mut au);
+    let v = au.tok.begin_block();
+    assert_eq!(v.bytes(ia), None);
+    assert_eq!(v.bytes(ib), Some(&audio(b)[..]), "moved, unchanged");
+}
+
+/// Retires the lowest source, `low`: the hole below the kept `above`.
+fn hole_below(p: &mut Project, low: SourceRef, above: &[SourceRef]) -> SourceId {
+    let id = store(p, low);
+    for &r in above {
+        store(p, r);
+        tape_sound(p, "KEEP", r);
+    }
+    assert_eq!(p.purge_unused_sources(0).retired, 0);
+    assert!(pending(p) > Cost::default());
+    id
+}
+
+/// A note-on in a block that began before the close: the next block's
+/// voices hold a moving id, so it nacks and reads on. Nothing moves, the
+/// voice never waits, and the hole closes once the note ends.
+#[test]
+fn gate_recheck_catches_late_note_on() {
+    let (mut p, _) = Project::boxed();
+    let (a, b) = (sref(20, 2000), sref(21, 4000));
+    let ia = hole_below(&mut p, a, &[b]);
+    let ib = p.pool().find_source(b).unwrap();
+    let table = p.pool().table();
+    let mut au = Audio::of(&p);
+    let (gap, held) = (p.pool().free(), pending(&p));
+    let mut voice = Voice::on(ib, audio(b).len());
+
+    // The block began open; the UI closes during it; the note starts.
+    let e = {
+        let v = au.tok.begin_block();
+        let e = table.close_gate_for_test(ia.bit() | ib.bit());
+        voice.block(&v, 0);
+        e
+    };
+    au.tok.store_sounding(voice.sounding());
+    // The next block's voices hold a moving id: a nack, and it reads on.
+    voice.block(&au.tok.begin_block(), 1);
+    au.tok.store_sounding(voice.sounding());
+    assert_eq!(table.wait_for_test(e, || false), Answer::Nacked);
+    table.open_gate_for_test();
+    assert_eq!((p.pool().free(), pending(&p)), (gap, held), "nothing moved");
+    assert_eq!(voice.held, 0);
+
+    // The pool's pass won't close while it sounds; then it closes the hole.
+    au.voices.push(voice);
+    while au.sounding() != 0 {
+        assert!(!p.sources_pass_with(|| false));
+        assert_eq!(pending(&p), held, "nothing moves under the voice");
+        au.block();
+    }
+    assert!(pass(&mut p, &mut au) > 0);
+    assert_eq!(pending(&p), Cost::default());
+    assert_eq!(au.voices[0].out, audio(b), "the unmoved source, throughout");
+    assert_eq!(au.tok.begin_block().bytes(ib), Some(&audio(b)[..]));
+}
+
+/// A note-on on a moving source in the block that acks waits that block
+/// only, and starts on the first block after the gate opens, its first
+/// sample unchanged. Another source starts at once.
+#[test]
+fn gate_holds_note_on() {
+    let (mut p, _) = Project::boxed();
+    let (c, a, b) = (sref(30, 1500), sref(31, 2000), sref(32, 3000));
+    let ic = store(&mut p, c);
+    tape_sound(&mut p, "KEEP C", c);
+    hole_below(&mut p, a, &[b]);
+    let ib = p.pool().find_source(b).unwrap();
+    let mut au = Audio::of(&p);
+    let mut k = 0;
+    assert!(p.sources_pass_with(|| {
+        au.note_on(ib, audio(b).len());
+        au.note_on(ic, audio(c).len());
+        au.block();
+        k += 1;
+        k < 3
+    }));
+    assert_eq!(k, 1, "one block under the gate");
+    let (moving, other) = (&au.voices[0], &au.voices[1]);
+    assert_eq!(other.played, [0], "another source starts at once");
+    assert!(
+        moving.played.is_empty() && moving.held == 1,
+        "held for the block"
+    );
+    au.block();
+    let moving = &au.voices[0];
+    assert_eq!(moving.played, [1], "the first block after open");
+    assert_eq!(moving.out, audio(b)[..BLOCK], "first sample unchanged");
+}
+
+/// F1: a UI pass every 37 blocks (a 50 ms frame), a note-on on the moving
+/// source landing with each close: none waits more than two blocks.
+#[test]
+fn held_blocks_at_most_two() {
+    let (mut p, _) = Project::boxed();
+    let mut au = Audio::of(&p);
+    let mut of = Vec::new();
+    let mut moves = 0;
+    for i in 0..24u32 {
+        // Each round a hole below a kept source B: L, then B above it,
+        // then L purged.
+        store(&mut p, sref(1000 + i, 300 + 50 * (i % 5)));
+        let b = sref(2000 + i, 600);
+        let ib = store(&mut p, b);
+        tape_sound(&mut p, "KEEP", b);
+        assert!(p.purge_unused_sources(0).freed > Cost::default());
+        for n in 0..37 {
+            if n % 9 == 0 {
+                au.note_on(ib, audio(b).len());
+                of.push(b);
+            }
+            au.block();
+        }
+        // The last note plays out: a pass skips while B sounds.
+        au.blocks(20);
+        let mut k = 0;
+        if p.sources_pass_with(|| {
+            au.note_on(ib, audio(b).len());
+            au.block();
+            k += 1;
+            k < 3
+        }) {
+            moves += 1;
+        }
+        of.push(b);
+        au.blocks(8);
+    }
+    let worst = au.voices.iter().map(|v| v.held).max().unwrap();
+    eprintln!(
+        "held blocks: at most {worst}, over {} voices, {moves} moves",
+        au.voices.len()
+    );
+    assert_eq!(moves, 24);
+    assert_eq!(worst, 1, "held {worst} blocks");
+    for (v, b) in au.voices.iter().zip(&of) {
+        assert_eq!(v.out, audio(*b)[..v.out.len()], "never a moved byte");
+    }
+}
+
+/// F5: a note-on reaches a retired id under the closed gate. It waits,
+/// finds its row gone, and ends; its id isn't reused while it is held.
+#[test]
+fn retired_id_never_reused_while_held() {
+    let (mut p, _) = Project::boxed();
+    let (a, b) = (sref(50, 2000), sref(51, 2000));
+    let ia = hole_below(&mut p, a, &[b]);
+    let mut au = Audio::of(&p);
+    let mut k = 0;
+    assert!(p.sources_pass_with(|| {
+        au.note_on(ia, audio(a).len());
+        au.block();
+        k += 1;
+        k < 3
+    }));
+    assert_eq!(au.voices[0].held, 1);
+    assert_eq!(au.sounding(), ia.bit(), "held, so it sounds");
+    let c = store(&mut p, sref(52, 100));
+    assert_ne!(c, ia, "not while it is held");
+    au.block();
+    assert!(
+        au.voices[0].gone && au.voices[0].out.is_empty(),
+        "its row is gone"
+    );
+    au.blocks(2);
+    p.sources_pass_with(|| false);
+    assert_eq!(store(&mut p, sref(53, 100)), ia, "free once it has ended");
+}
+
+/// The spec's `compaction_waits_for_silence`: no source byte moves while
+/// its bit is set; the hole stays pending, on the meter.
+#[test]
+fn compaction_waits_for_silence() {
+    let (mut p, _) = Project::boxed();
+    let (a, b) = (sref(60, 1000), sref(61, 60_000));
+    hole_below(&mut p, a, &[b]);
+    let ib = p.pool().find_source(b).unwrap();
+    let held = pending(&p);
+    let mut au = Audio::of(&p);
+    au.note_on(ib, audio(b).len());
+    au.block();
+    let base = au.tok.begin_block().bytes(ib).unwrap().as_ptr();
+    while au.sounding() != 0 {
+        assert!(!p.sources_pass_with(|| false));
+        assert_eq!(pending(&p), held);
+        assert_eq!(
+            au.tok.begin_block().bytes(ib).unwrap().as_ptr(),
+            base,
+            "unmoved"
+        );
+        au.block();
+    }
+    assert!(pass(&mut p, &mut au) > 0);
+    assert_eq!(pending(&p), Cost::default());
+    assert_ne!(au.tok.begin_block().bytes(ib).unwrap().as_ptr(), base);
+    assert_eq!(au.voices[0].out, audio(b));
+}
+
+/// The spec's seeded model: stores, uses, purges, voices and passes with
+/// the sounding mask flipping. After each step every live source reads
+/// its own bytes, free is the gap and the meter's parts sum to used;
+/// every voice played its own source's bytes, waiting two blocks at most.
+#[test]
+fn seeded_model_with_flipping_sounding() {
+    let (mut p, _) = Project::boxed();
+    let mut au = Audio::of(&p);
+    let mut held: Vec<SourceRef> = Vec::new();
+    let mut of: Vec<SourceRef> = Vec::new();
+    let mut seed = 0x2545_F491_4F6C_DD1D_u64;
+    let mut rnd = move |n: u64| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed % n
+    };
+    let mut next = 0x7000;
+    let mut moves = 0;
+    for _ in 0..3000 {
+        match rnd(8) {
+            0 => {
+                next += 1;
+                let r = sref(next, 200 + rnd(3000) as u32);
+                if p.source_store(r, &audio(r)).is_ok() {
+                    held.push(r);
+                }
+            }
+            1 if !held.is_empty() && p.pool().first_free().is_some() => {
+                let r = held[rnd(held.len() as u64) as usize];
+                tape_sound(&mut p, "USE", r);
+            }
+            2 => {
+                p.purge_unused_sources(p.pool().table().sounding());
+            }
+            3 if !held.is_empty() => {
+                let r = held[rnd(held.len() as u64) as usize];
+                let id = p.pool().find_source(r).unwrap();
+                au.note_on(id, audio(r).len().min(BLOCK * (1 + rnd(6) as usize)));
+                of.push(r);
+            }
+            4 => {
+                let before = pending(&p);
+                pass(&mut p, &mut au);
+                if pending(&p) < before {
+                    moves += 1;
+                }
+            }
+            5 => {
+                let s = SlotId::ALL[40 + rnd(80) as usize];
+                if p.users(s).is_empty() {
+                    let _ = p.pool_clear(s);
+                }
+            }
+            _ => au.blocks(1 + rnd(4) as usize),
+        }
+        held.retain(|r| p.pool().find_source(*r).is_some());
+        {
+            let v = au.tok.begin_block();
+            for r in &held {
+                let id = p.pool().find_source(*r).unwrap();
+                assert_eq!(v.bytes(id), Some(&audio(*r)[..]), "{r:?}");
+            }
+        }
+        let pool = p.pool();
+        let (snd, src, pend) = pool.split();
+        assert_eq!(snd + src + pend, pool.used());
+        assert_eq!(
+            pool.free().bytes() as usize,
+            ARENA_BYTES - pool.used().bytes() as usize
+        );
+    }
+    assert!(moves > 10, "{moves} compactions");
+    for (v, r) in au.voices.iter().zip(&of) {
+        assert!(v.held <= 2, "held {} blocks", v.held);
+        assert_eq!(v.out, audio(*r)[..v.out.len()], "{r:?}");
+    }
+}
+
+fn new_go(q: &Project, t: TemplateCrc) -> chimera_core::project::Confirmed<ProjectSource> {
+    ReplaceGuard::check(q, t, ProjectSource::New).expect("no prompt")
+}
+
+/// NEW frees the sources: three paths to `reset_new`, an arena full of
+/// sources, no panic, and NEW pristine with nothing left in `load_limit`.
+#[test]
+fn new_frees_the_sources() {
+    let fill = |q: &mut Project| {
+        let mut i = 0;
+        while q.pool().free() > Cost::of(2048) {
+            i += 1;
+            let room = q.pool().free().bytes() as usize - 16;
+            let r = sref(0x9000 + i, 0);
+            q.source_store(r, &vec![i as u8; room.min(20_000)]).unwrap();
+        }
+        assert!(q.pool().source_used() > Cost::of(140 * 1024));
+    };
+    let fresh = |q: &Project, t: TemplateCrc| {
+        assert_eq!(q.pool().source_used(), Cost::default());
+        assert_eq!(
+            q.pool().load_limit(),
+            Cost::of(ARENA_BYTES),
+            "no orphan left"
+        );
+        assert_eq!(project_status(q, t), ProjectStatus::Pristine);
+    };
+    let link = LoadLink::new();
+
+    // NEW.
+    let (mut q, t) = Project::boxed();
+    fill(&mut q);
+    let go = new_go(&q, t);
+    let out = load_project(&mut Card::new(), &mut MemStore::new(1), &mut q, go, &link);
+    assert!(out.swap.is_some());
+    fresh(&q, t);
+
+    // A failed load: pass 2 sees another card.
+    let (mut src, _) = Project::boxed();
+    let mut mem = MemStore::new(1);
+    let mut card = Card::new();
+    assert!(matches!(
+        save_at(&mut card, &mut mem, &mut src, 1),
+        ProjectNote::Saved(_)
+    ));
+    let id = ProjectId::new(1).unwrap();
+    let mut s = FlipOnSecondRead::new(mem, project_file(id).side(Side::A));
+    let (mut q, t) = Project::boxed();
+    fill(&mut q);
+    let vol = s.mount().unwrap();
+    let go = ReplaceGuard::check(&q, t, ProjectSource::File { id, vol }).expect("no prompt");
+    let out = load_project(&mut card, &mut s, &mut q, go, &link);
+    assert_eq!(out.note, Some(ProjectNote::LoadFailed(Subject::File(id))));
+    fresh(&q, t);
+
+    // Boot's fallback: the last project isn't on the card.
+    let (mut q, t) = Project::boxed();
+    fill(&mut q);
+    let mut s = MemStore::new(1);
+    let last = Some(ProjectId::new(7).unwrap());
+    assert!(boot_project(&mut Card::new(), &mut s, last, &mut q).is_some());
+    fresh(&q, t);
+}
+
+/// A source still sounding at NEW is retired, not freed under its voice.
+#[test]
+fn new_retires_a_sounding_source() {
+    let (mut q, t) = Project::boxed();
+    let r = sref(77, 8000);
+    let id = store(&mut q, r);
+    let cost = q.pool().source(id).unwrap().cost();
+    let mut au = Audio::of(&q);
+    au.note_on(id, audio(r).len());
+    au.block();
+    let go = new_go(&q, t);
+    let _ = load_project(
+        &mut Card::new(),
+        &mut MemStore::new(1),
+        &mut q,
+        go,
+        &LoadLink::new(),
+    );
+    assert!(q.pool().source(id).is_none(), "out of the index");
+    assert_eq!(pending(&q), cost, "its bytes kept");
+    assert_eq!(project_status(&q, t), ProjectStatus::Pristine);
+    while au.sounding() != 0 {
+        au.block();
+        q.sources_pass_with(|| false);
+    }
+    assert_eq!(au.voices[0].out, audio(r), "never cut");
+    au.block();
+    pass(&mut q, &mut au);
+    assert_eq!(q.pool().source_used(), Cost::default());
+}
+
+/// F10: an unused absent entry alone is nothing to offer; a purge with
+/// nothing unused moves nothing, `rev` included.
+#[test]
+fn absent_alone_is_not_offered() {
+    let (mut p, _) = Project::boxed();
+    let r = sref(88, 100);
+    p.source_absent(r).unwrap();
+    assert_eq!(p.unused_sources().count, 0);
+    assert_eq!(p.purge_unused_sources(0), Purged::default());
+    assert!(
+        p.pool().find_source(r).is_none(),
+        "the absent entry goes with a purge"
+    );
+    let rev = p.rev();
+    assert_eq!(p.purge_unused_sources(0), Purged::default());
+    assert_eq!(p.rev(), rev, "nothing unused: no bump");
 }
 
 #[test]
@@ -120,37 +744,6 @@ fn source_ref_round_trips() {
 }
 
 #[test]
-fn store_sounding_is_read() {
-    let t = SourceTable::new();
-    assert_eq!(t.sounding(), 0);
-    for m in [1, 0x8000_0001, u32::MAX, 0] {
-        t.store_sounding(m);
-        assert_eq!(t.sounding(), m);
-    }
-}
-
-#[test]
-fn gate_view_bytes_none_while_moving() {
-    let (mut p, _) = Project::boxed();
-    let (a, b) = (sref(1, 1000), sref(2, 2000));
-    let (ia, ib) = (store(&mut p, a), store(&mut p, b));
-    let table = p.pool().table();
-    let open = table.begin_block();
-    assert_eq!(open.bytes(ia), Some(&audio(a)[..]));
-    assert_eq!(open.bytes(ib), Some(&audio(b)[..]));
-    let e = table.close_gate(ia.bit());
-    assert!(!table.gate_acked(e));
-    let v = table.begin_block();
-    assert!(table.gate_acked(e));
-    assert_eq!(v.bytes(ia), None);
-    assert_eq!(v.bytes(ib), Some(&audio(b)[..]));
-    table.open_gate();
-    assert_eq!(table.begin_block().bytes(ia), Some(&audio(a)[..]));
-    // An empty row reads nothing.
-    assert_eq!(table.begin_block().bytes(SourceId::ALL[31]), None);
-}
-
-#[test]
 fn choir_orphan() {
     let (mut p, t) = Project::boxed();
     let choir = store(&mut p, CHOIR);
@@ -181,7 +774,7 @@ fn choir_orphan() {
             retired: 0
         }
     );
-    settle(&mut p, 0, 4);
+    quiet(&mut p);
     assert_eq!(
         p.pool().free(),
         Cost::of((gap.bytes() + cost.bytes()) as usize)
@@ -264,7 +857,7 @@ fn purge_recounts() {
                         in_part[part.index()] = in_slot[&s];
                     }
                 }
-                _ => settle(&mut p, 0, 2),
+                _ => quiet(&mut p),
             }
         }
         let used: Vec<SourceRef> = in_slot
@@ -283,196 +876,9 @@ fn purge_recounts() {
         for r in &held {
             assert!(p.pool().find_source(*r).is_some());
         }
-        settle(&mut p, 0, 2);
+        quiet(&mut p);
         assert_eq!(pending(&p), Cost::default());
     }
-}
-
-/// Review Focus 3: a purged source still sounding comes back by itself
-/// when its note ends.
-#[test]
-fn pending_hole_resolves_when_note_ends() {
-    let (mut p, _) = Project::boxed();
-    let r = sref(7, 9000);
-    let id = store(&mut p, r);
-    let cost = p.pool().source(id).unwrap().cost();
-    let table = p.pool().table();
-    table.store_sounding(id.bit());
-    let gap = p.pool().free();
-    let purged = p.purge_unused_sources(table.sounding());
-    assert_eq!(
-        purged,
-        Purged {
-            freed: cost,
-            retired: 1
-        }
-    );
-    settle(&mut p, id.bit(), 8);
-    assert_eq!(pending(&p), cost, "on the meter while it sounds");
-    assert_eq!(p.pool().free(), gap);
-    assert_eq!(
-        table.begin_block().bytes(id),
-        Some(&audio(r)[..]),
-        "never cut"
-    );
-
-    table.store_sounding(0);
-    settle(&mut p, 0, 4);
-    assert_eq!(pending(&p), Cost::default());
-    assert_eq!(
-        p.pool().free(),
-        Cost::of((gap.bytes() + cost.bytes()) as usize)
-    );
-    assert_eq!(p.unused_sources().count, 0, "no second purge");
-    assert_eq!(table.begin_block().bytes(id), None);
-}
-
-#[test]
-fn retire_never_cuts() {
-    let (mut p, _) = Project::boxed();
-    let (a, b) = (sref(10, 3000), sref(11, 5000));
-    let ia = store(&mut p, a);
-    let ib = store(&mut p, b);
-    tape_sound(&mut p, "KEEP B", b);
-    let table = p.pool().table();
-    table.store_sounding(ia.bit());
-    assert_eq!(p.purge_unused_sources(ia.bit()).retired, 1);
-    assert!(p.pool().source(ia).is_none(), "out of the index at once");
-    for _ in 0..16 {
-        settle(&mut p, ia.bit(), 1);
-        let v = table.begin_block();
-        assert_eq!(v.bytes(ia), Some(&audio(a)[..]));
-        assert_eq!(v.bytes(ib), Some(&audio(b)[..]));
-    }
-    settle(&mut p, 0, 4);
-    let v = table.begin_block();
-    assert_eq!(v.bytes(ia), None);
-    assert_eq!(v.bytes(ib), Some(&audio(b)[..]), "moved, unchanged");
-}
-
-/// A stub TAPE voice: latched to a source at note-on, it plays its bytes
-/// a block at a time through the view, and waits while the gate moves it.
-struct Voice {
-    id: SourceId,
-    pos: usize,
-    len: usize,
-    out: Vec<u8>,
-    /// The blocks it played in.
-    played: Vec<usize>,
-}
-
-const BLOCK: usize = 64;
-
-impl Voice {
-    fn on(id: SourceId, len: usize) -> Voice {
-        Voice {
-            id,
-            pos: 0,
-            len,
-            out: Vec::new(),
-            played: Vec::new(),
-        }
-    }
-
-    fn block(&mut self, v: &GateView<'_>, n: usize) {
-        if self.pos == self.len {
-            return;
-        }
-        if let Some(b) = v.bytes(self.id) {
-            let end = (self.pos + BLOCK).min(self.len);
-            self.out.extend_from_slice(&b[self.pos..end]);
-            self.pos = end;
-            self.played.push(n);
-        }
-    }
-
-    /// Started and not ended: its bit is in `sounding`.
-    fn sounding(&self) -> u32 {
-        if self.pos > 0 && self.pos < self.len {
-            self.id.bit()
-        } else {
-            0
-        }
-    }
-}
-
-/// Retires the lowest source: the hole below `above`.
-fn hole_below(p: &mut Project, low: SourceRef, above: &[SourceRef]) {
-    store(p, low);
-    for &r in above {
-        store(p, r);
-        tape_sound(p, "KEEP", r);
-    }
-    assert_eq!(p.purge_unused_sources(0).retired, 0);
-    assert!(pending(p) > Cost::default());
-}
-
-#[test]
-fn gate_recheck_catches_late_note_on() {
-    let (mut p, _) = Project::boxed();
-    let (a, b) = (sref(20, 2000), sref(21, 4000));
-    hole_below(&mut p, a, &[b]);
-    let ib = p.pool().find_source(b).unwrap();
-    let table = p.pool().table();
-    let (gap, held) = (p.pool().free(), pending(&p));
-
-    // The block before the close began with the gate open.
-    let open = table.begin_block();
-    assert!(!p.sources_pass(), "closes the gate");
-    let mut voice = Voice::on(ib, audio(b).len());
-    voice.block(&open, 0);
-    table.store_sounding(voice.sounding());
-
-    // The ack, then the re-check sees the late note: open, nothing moved.
-    let v = table.begin_block();
-    voice.block(&v, 1);
-    assert_eq!(v.bytes(ib), None, "the gate holds it this block");
-    table.store_sounding(voice.sounding());
-    assert!(!p.sources_pass());
-    assert_eq!((p.pool().free(), pending(&p)), (gap, held));
-    assert!(table.begin_block().bytes(ib).is_some(), "reopened");
-
-    // It plays on; the hole waits for its end, then closes.
-    let mut n = 2;
-    while voice.sounding() != 0 {
-        let v = table.begin_block();
-        voice.block(&v, n);
-        table.store_sounding(voice.sounding());
-        n += 1;
-        p.sources_pass();
-        assert_eq!(pending(&p), held, "nothing moves under the voice");
-    }
-    settle(&mut p, 0, 4);
-    assert_eq!(pending(&p), Cost::default());
-    assert_eq!(voice.out, audio(b), "the unmoved source, throughout");
-    assert_eq!(table.begin_block().bytes(ib), Some(&audio(b)[..]));
-}
-
-#[test]
-fn gate_holds_note_on() {
-    let (mut p, _) = Project::boxed();
-    let (c, a, b) = (sref(30, 1500), sref(31, 2000), sref(32, 3000));
-    let ic = store(&mut p, c);
-    tape_sound(&mut p, "KEEP C", c);
-    hole_below(&mut p, a, &[b]);
-    let ib = p.pool().find_source(b).unwrap();
-    let table = p.pool().table();
-
-    assert!(!p.sources_pass(), "closes the gate");
-    let v = table.begin_block();
-    let mut moving = Voice::on(ib, audio(b).len());
-    let mut other = Voice::on(ic, audio(c).len());
-    moving.block(&v, 0);
-    other.block(&v, 0);
-    table.store_sounding(moving.sounding() | other.sounding());
-    assert_eq!(other.played, [0], "another source starts at once");
-    assert!(moving.played.is_empty(), "held for the block");
-
-    assert!(p.sources_pass(), "moves, then opens");
-    let v = table.begin_block();
-    moving.block(&v, 1);
-    assert_eq!(moving.played, [1], "the first block after open");
-    assert_eq!(moving.out, audio(b)[..BLOCK], "first sample unchanged");
 }
 
 /// `n`'s file on both sides of the card.
