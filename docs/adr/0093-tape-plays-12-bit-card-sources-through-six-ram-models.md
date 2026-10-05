@@ -263,7 +263,7 @@ code 23, ident `"TAPE"`, ADR 0055).
 
 ## Consequences
 - A third engine at about 10 KB of flash (leaving about 87 KB) and about
-  3 KB of AXI (the params block's snapshot copies alone measure 2 976 B).
+  4 KB of AXI (the params block's snapshot copies alone measure 2 976 B).
   **D2: 384 B** (measured) for the voices' `played` snapshots. The engine
   state itself fits the existing slot.
 - Six one-second 24 kHz sources don't fit beside NEW. At 16 kHz, or at

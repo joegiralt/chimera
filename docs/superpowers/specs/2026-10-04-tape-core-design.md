@@ -442,13 +442,14 @@ Host estimates, in the house manner (instructions × 1.46 × 1.1, as `ModalEngin
 | … with AGE | 487 | 10 → **8** | **7** | 9 → **8** | 9 → **8** |
 | STRETCH or TRANSWAVE with AGE | 497 | 10 → **8** | **7** | 9 → **8** | 9 → **8** |
 | … with DRIVE and FOLD (+102) | 599 | 8 → **8** | **6** | 8 → **8** | **7** |
+| TRANSWAVE, pitch able to move > ±6.2 st, AGE off (was 6 on rev V) | 847 | **5** | **4** | **5** | **5** |
 | TRANSWAVE, pitch able to move > ±6.2 st, with AGE | 867 | **5** | **4** | **5** | **5** |
 | … with the worst routing (633 in place of 47) | 1 453 | **3** | **2** | **3** | **3** |
 | STRETCH with AGE and the worst routing | 1 083 | **4** | **3** | **4** | **4** |
 
 **What these numbers support, and no more.**
 - Eight voices of any plain TAPE Sound hold on rev V while the benched engine stays under **546** (4 984 / 8 − 77), and on rev Y under **400** (3 817 / 8 − 77).
-- The estimates sit at 390 for LOOP, REVERSE, PING-PONG and SCRUB with AGE off, which keeps 8 on rev Y with 10 to spare (2.5 %). With AGE (410), and for STRETCH and TRANSWAVE with AGE (420), rev Y admits **7**. Rev V keeps 8 with 23 % to spare.
+- The estimates sit at 390 for LOOP, REVERSE, PING-PONG and SCRUB with AGE off, which keeps 8 on rev Y with 10 to spare (2.5 %). STRETCH and TRANSWAVE with AGE off (400, a 477 voice) keep 8 on rev Y by **1 cycle**: 8 × 477 = 3 816 against 3 817. With AGE (410), and for STRETCH and TRANSWAVE with AGE (420), rev Y admits **7**. Rev V keeps 8 with 23 % to spare.
 - A TRANSWAVE whose pitch can move more than ±6.2 semitones gets 4 voices on rev Y (a vibrato route doesn't count), and the heaviest routing gets 2.
 - These are counts of the **billed** figures. The guarantee holds only once the bench's cold-cache rows confirm them. Until then they are stated as estimates.
 
@@ -643,8 +644,8 @@ TAPE's steps 1–3 can be built on the host beside that, against a boxed arena.
 **About 10 KB,** from about 97 KB left after #337 (120 304 − 23 KB), leaving **about 87 KB.** If the #337 plan drops its on-device importer, add back its share.
 
 **RAM:**
-- **AXI, about 2 KB of the 36 KB margin:**
-  - `TapeEngineParams` in each `ParamSnapshot`, about 56 B: six Parts and the triple buffer's copies, about 1 KB;
+- **AXI, about 4 KB of the 36 KB margin:**
+  - `TapeEngineParams` in each `ParamSnapshot`, 48 B: six Parts, the triple buffer's and the other copies, 2 976 B of AXI (measured, TAPE Task 3);
   - the strip's cache, 432 B;
   - the head atomics, 48 B;
   - the head cache, 512 B.
