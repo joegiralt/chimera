@@ -1649,43 +1649,51 @@ fn taps_blend_through_a_size_move() {
     );
 }
 
-/// An impulse into each loop alone (stage allpasses at g 0) reaches its
-/// second line exactly a stage delay and a stage allpass after its first:
-/// the first tap on each line reads its first sample there, none before.
+/// An impulse into each loop alone (stage allpasses at g 0, θ 0) reaches
+/// its second line exactly a stage delay and a stage allpass after its
+/// first, and its first line again a second stage later, at SIZE 0 and 1:
+/// L's tap on each line reads the pulse there, and nothing a sample early.
+/// The lengths are the engine's own, which `room_layout_matches_adr_0095`
+/// pins to ADR 0095.
 #[test]
 fn a_stage_is_its_delay_and_its_allpass_exactly() {
-    let mut p = params(1.0);
-    (
-        p.shape, p.predelay, p.damping, p.time, p.size, p.tone, p.smear,
-    ) = (0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0);
-    let k = knobs_120(&p);
-    for lp in 0..4 {
-        let (mut e, mut arena) = engine(&p);
-        e.probe_loop(lp as u8);
-        let (mut l, mut r) = ([0.0f32; HALF], [0.0; HALF]);
-        let mut out = [Vec::new(), Vec::new()];
-        for b in 0..6_000 / HALF {
-            let u: [f32; HALF] = core::array::from_fn(|i| (b == 0 && i == 0) as u8 as f32);
-            e.run(&mut arena, &u, &k, &mut l, &mut r);
-            out[0].extend_from_slice(&l);
-            out[1].extend_from_slice(&r);
+    for size in [0.0, 1.0] {
+        let mut p = params(1.0);
+        (
+            p.shape, p.predelay, p.damping, p.time, p.size, p.tone, p.smear,
+        ) = (0.0, 0.0, 0.0, 1.0, size, 0.0, 0.0);
+        let k = knobs_120(&p);
+        for lp in 0..4 {
+            let (mut e, mut arena) = engine(&p);
+            e.probe_loop(lp as u8);
+            let (d, tap) = (e.delays()[lp], e.taps().0[0]);
+            let (mut l, mut r) = ([0.0f32; HALF], [0.0; HALF]);
+            let mut out = Vec::new();
+            for b in 0..6_000 / HALF {
+                let u: [f32; HALF] = core::array::from_fn(|i| (b == 0 && i == 0) as u8 as f32);
+                e.run(&mut arena, &u, &k, &mut l, &mut r);
+                out.extend_from_slice(&l);
+            }
+            // The send writes line 1 at 2 (PRE-DLY's floor); stage 1 writes
+            // line 2 a delay and an allpass on; stage 2 line 1 again.
+            let line2 = 2 + d[0] as usize + room::AP[lp][0];
+            let back = line2 + d[1] as usize + room::AP[lp][1];
+            let peak = out.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+            for (what, at) in [
+                ("line 2", line2 + tap[2 * lp + 1] as usize),
+                ("line 1, a trip on", back + tap[2 * lp] as usize),
+            ] {
+                assert!(
+                    out[at].abs() >= 0.3 * peak,
+                    "SIZE {size} loop {lp} {what}: {} at {at}",
+                    out[at]
+                );
+                assert!(
+                    out[at - 1].abs() <= 1e-3 * peak,
+                    "SIZE {size} loop {lp} {what}: {} a sample early",
+                    out[at - 1]
+                );
+            }
         }
-        // L's tap on the loop's second line: the line's first sample lands
-        // at 2 (PRE-DLY's floor) + D + AP, then the tap's offset.
-        let j = 2 * lp + 1;
-        let at = 2 + room::DELAY[lp][0] + room::AP[lp][0] + n24(TAP_MS[0][j]);
-        let peak = out[0].iter().fold(0.0f32, |m, x| m.max(x.abs()));
-        // The tap's own arrival, and nothing of it a sample early: the
-        // other taps on this loop land elsewhere.
-        assert!(
-            out[0][at].abs() >= 0.3 * peak,
-            "loop {lp}: {} at {at}",
-            out[0][at]
-        );
-        assert!(
-            out[0][at - 1].abs() <= 1e-3 * peak,
-            "loop {lp}: {} a sample early",
-            out[0][at - 1]
-        );
     }
 }
