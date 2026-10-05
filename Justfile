@@ -4,6 +4,13 @@
 desktop:
     cargo run -p chimera-desktop
 
+# TAPE's listening rig (spec § 9): each model on each source into
+# target/listen/ (WAVs, report.txt, and index.html once every render passes
+# QA). `just tape-listen loop --src chimera --src <file.wav>`; a bare file
+# name is looked for in $CHIMERA_TAPES_SRC (~/chimera-tapes-src)
+tape-listen *args:
+    cargo run -q -p chimera-desktop --bin tape-listen -- {{args}}
+
 # Build STM32 firmware (release)
 firmware:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf

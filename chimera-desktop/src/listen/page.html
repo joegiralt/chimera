@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TAPE Listening Room</title>
+<style>
+:root {
+  --bg: #f4f1ea;
+  --panel: #fffdf8;
+  --ink: #1d1b16;
+  --muted: #6b665b;
+  --line: #d9d3c5;
+  --accent: #0f7c78;
+  --accent-ink: #ffffff;
+  --track: #e6e0d2;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121311;
+    --panel: #1b1d1a;
+    --ink: #ecebe4;
+    --muted: #9b998f;
+    --line: #2f322d;
+    --accent: #3cc1b9;
+    --accent-ink: #0b1514;
+    --track: #2a2d28;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121311;
+  --panel: #1b1d1a;
+  --ink: #ecebe4;
+  --muted: #9b998f;
+  --line: #2f322d;
+  --accent: #3cc1b9;
+  --accent-ink: #0b1514;
+  --track: #2a2d28;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; overflow-x: hidden; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+header.page h1 { margin: 0 0 4px; font-size: 22px; letter-spacing: 0.04em; }
+header.page p { margin: 0; color: var(--muted); }
+.keys { margin-top: 8px; font-size: 13px; }
+kbd {
+  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+  border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; background: var(--panel);
+}
+section { margin-top: 28px; }
+h2 { margin: 0; font-size: 15px; letter-spacing: 0.12em; color: var(--accent); }
+.legend { margin: 2px 0 10px; color: var(--muted); font-size: 13px; }
+.track {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 12px; margin-top: 10px;
+}
+.track.current { border-color: var(--accent); }
+.meta h3 { margin: 0; font-size: 15px; }
+.meta p { margin: 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.meta a { color: var(--accent); }
+.transport {
+  display: grid; gap: 8px; margin-top: 10px; align-items: center;
+  grid-template-columns: repeat(4, auto) minmax(0, 1fr) auto auto auto;
+}
+button {
+  font: 600 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+  min-width: 40px; height: 34px; padding: 0 8px;
+  color: var(--ink); background: transparent;
+  border: 1px solid var(--line); border-radius: 6px; cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.on, button[aria-pressed="true"] {
+  background: var(--accent); color: var(--accent-ink); border-color: var(--accent);
+}
+input[type="range"] { width: 100%; min-width: 0; accent-color: var(--accent); }
+.time { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); white-space: nowrap; }
+@media (max-width: 560px) {
+  .transport { grid-template-columns: repeat(4, 1fr) auto; }
+  .transport input[type="range"] { grid-column: 1 / -1; grid-row: 2; }
+  .transport .time { grid-column: 1 / 4; grid-row: 3; }
+  .transport .loop { grid-column: 4; grid-row: 3; }
+  .transport .ab { grid-column: 5; grid-row: 1; }
+}
+</style>
+</head>
+<body>
+<main>
+<header class="page">
+<h1>TAPE · listening</h1>
+<p>Each model on each source, rendered offline by the desktop rig. A/B switches between the dry source and the render at the same place.</p>
+<p class="keys"><kbd>space</kbd> play/pause · <kbd>←</kbd> <kbd>→</kbd> 2 s · <kbd>L</kbd> loop · <kbd>A</kbd> A/B</p>
+</header>
+<!--SECTIONS-->
+</main>
+<script>
+(() => {
+  const fmt = (s) => {
+    s = Math.max(0, Math.floor(isFinite(s) ? s : 0));
+    return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+  };
+  let cur = null;
+  const players = [...document.querySelectorAll(".track")].map((row) => {
+    const q = (a) => row.querySelector('[data-act="' + a + '"]');
+    const dry = new Audio(row.dataset.dry), wet = new Audio(row.dataset.wet);
+    dry.preload = wet.preload = "metadata";
+    const p = { row, dry, wet, a: wet, loop: false };
+    const time = row.querySelector(".time"), seek = q("seek"), play = q("play");
+    const show = () => {
+      const d = p.a.duration;
+      time.textContent = fmt(p.a.currentTime) + " / " + fmt(d);
+      if (isFinite(d) && d > 0 && document.activeElement !== seek) {
+        seek.value = Math.round(1000 * p.a.currentTime / d);
+      }
+      play.textContent = p.a.paused ? "▶" : "❚❚";
+      play.classList.toggle("on", !p.a.paused);
+    };
+    const select = () => {
+      if (cur && cur !== p) cur.stop();
+      if (cur) cur.row.classList.remove("current");
+      cur = p;
+      row.classList.add("current");
+    };
+    p.toggle = () => {
+      select();
+      if (p.a.paused) p.a.play().catch(() => {}); else p.a.pause();
+    };
+    p.stop = () => {
+      for (const a of [dry, wet]) { a.pause(); a.currentTime = 0; }
+      show();
+    };
+    p.nudge = (s) => {
+      select();
+      const d = p.a.duration;
+      p.a.currentTime = Math.min(Math.max(0, p.a.currentTime + s), isFinite(d) ? d : 0);
+      show();
+    };
+    p.toggleLoop = () => {
+      p.loop = !p.loop;
+      dry.loop = wet.loop = p.loop;
+      q("loop").setAttribute("aria-pressed", String(p.loop));
+    };
+    p.ab = () => {
+      select();
+      const from = p.a, to = from === wet ? dry : wet;
+      const playing = !from.paused, d = to.duration;
+      from.pause();
+      to.currentTime = isFinite(d) && d > 0 ? from.currentTime % d : 0;
+      p.a = to;
+      if (playing) to.play().catch(() => {});
+      const ab = q("ab");
+      ab.textContent = to === wet ? "WET" : "DRY";
+      ab.setAttribute("aria-pressed", String(to === wet));
+      show();
+    };
+    play.addEventListener("click", p.toggle);
+    q("stop").addEventListener("click", () => { select(); p.stop(); });
+    q("back").addEventListener("click", () => p.nudge(-2));
+    q("fwd").addEventListener("click", () => p.nudge(2));
+    q("loop").addEventListener("click", p.toggleLoop);
+    q("ab").addEventListener("click", p.ab);
+    seek.addEventListener("input", () => {
+      select();
+      const d = p.a.duration;
+      if (isFinite(d)) p.a.currentTime = d * seek.value / 1000;
+      show();
+    });
+    for (const a of [dry, wet]) {
+      for (const e of ["timeupdate", "play", "pause", "ended", "loadedmetadata", "seeked"]) {
+        a.addEventListener(e, () => { if (a === p.a) show(); });
+      }
+    }
+    row.dataset.ready = "1";
+    return p;
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey || !players.length) return;
+    const p = cur || players[0];
+    const k = e.key.toLowerCase();
+    if (k === " ") p.toggle();
+    else if (k === "arrowleft") p.nudge(-2);
+    else if (k === "arrowright") p.nudge(2);
+    else if (k === "l") p.toggleLoop();
+    else if (k === "a") p.ab();
+    else return;
+    e.preventDefault();
+  });
+})();
+</script>
+</body>
+</html>
