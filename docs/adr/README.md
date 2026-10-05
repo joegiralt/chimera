@@ -89,8 +89,9 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0082](0082-orbit-command-channel.md) | ORBIT's UI and runner talk through one sequenced command log and one ack (supersedes parts of 0071, 0075, 0077; amends 0080) | Proposed |
 | [0083](0083-a-scene-keeps-its-edits-across-switches.md) | A scene keeps its edits across switches; drift restarts (amends 0077) | Proposed |
 | [0084](0084-edit-on-orb-always-opens-custom-rings-show-their-part.md) | EDIT on ORB always opens CUSTOM, a named scale made CUSTOM by the first toggle; each ring shows its Part on ORB (amends 0079) | Proposed |
-| [0085](0085-the-master-reverb-picks-a-type.md) | The master reverb picks a TYPE: QUAD plus ROOM, HALL, GATE, REVERSE and BLOOM (supersedes in part 0028; amends 0067) | Proposed |
+| [0085](0085-the-master-reverb-picks-a-type.md) | The master reverb picks a TYPE: QUAD plus ROOM, HALL, GATE, REVERSE and BLOOM (supersedes in part 0028; amends 0067) | Proposed; ROOM, BLOOM, provenance and the A/B pass superseded in part by [0095](0095-every-reverb-type-matches-its-midiverb-ii-presets.md) |
 | [0086](0086-every-gesture-shows-a-contextual-hint-in-the-focus-band.md) | Every gesture shows a contextual hint in the focus band, one shared component, HINTS ON/OFF in THEME (amends 0074, 0081; supersedes 0017's hint text) | Proposed |
 | [0089](0089-ship-with-fat-lto.md) | Ship the firmware with fat LTO in one codegen unit | Proposed |
 | [0091](0091-orbit-billed-while-it-plays.md) | While ORBIT plays, reserve its own block and a note-on burst; cost the Parts once a block; bill a stolen voice until its fade ends (supersedes in part 0040; amends 0027) | Proposed |
 | [0092](0092-put-files-over-the-usb-console.md) | Put project files onto the card over the USB console: `ls`, and `put` through the unit's own A/B save, checked as it streams, a refused side deleted (amends 0068) | Proposed |
+| [0095](0095-every-reverb-type-matches-its-midiverb-ii-presets.md) | Match every reverb TYPE to its MidiVerb II presets; rebuild ROOM and BLOOM on the programs' structure (supersedes in part 0085) | Proposed |

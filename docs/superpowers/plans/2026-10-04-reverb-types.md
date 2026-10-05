@@ -11,7 +11,7 @@
 
 **Tech Stack:** Rust 2024 on stable; `no_std` `chimera-core`; `chimera-stm32` (bench build, `--features bench`); host tests in `chimera-core/tests`; `tools/chimera-usb.py` for the unit.
 
-**Spec:** `docs/superpowers/specs/2026-10-04-reverb-types-design.md`. ADR: `docs/adr/0085-the-master-reverb-picks-a-type.md`.
+**Spec:** `docs/superpowers/specs/2026-10-04-reverb-types-design.md`. ADRs: `docs/adr/0085-the-master-reverb-picks-a-type.md`, and `docs/adr/0095-every-reverb-type-matches-its-midiverb-ii-presets.md` (the MidiVerb II reference; § Amendment, 2026-10-05).
 
 **Base:** `reverb-types`, rebased onto `orbit-qa2` (e2891b0d). On that base:
 - ADR 0086's `ui::hint`, ADR 0089's fat LTO, ORBIT's clock and runner, and `cost_test`'s numbers are present.
@@ -31,7 +31,7 @@
   - `ReverbType` codes: QUAD 0, ROOM 1, HALL 2, GATE 3, REVERSE 4, BLOOM 5. Code 6 is never assigned.
   - `RevSync` codes: OFF 0, TIME 1, ALL 2.
   - All are frozen in `chimera-core/tests/fixtures/disk_codes_v1.txt` (ADR 0045).
-- **Provenance.** No code, instruction listing, or ROM coefficient, offset or tap table may come from github.com/thement/midiverb_emulator or commit 7119f7ad, whole or in part. Every engine task writes a provenance report: each table, its spec source, and each ear change.
+- **Provenance.** Through Task 10: no code, instruction listing, or ROM coefficient, offset or tap table may come from github.com/thement/midiverb_emulator or commit 7119f7ad, whole or in part. From Task 9b on, ADR 0095 governs: structure numbers (delay and allpass lengths, gains, tap offsets) read from the decompiled MidiVerb II programs may be used, by owner approval of 2026-10-05, and only those named in ADR 0095. No emulator code, listing, harness code or rendered output ever enters the repository, and knob values are fitted, never copied. Every engine task writes a provenance report: each table, its source (spec or ADR 0095), and each ear change.
 - **CPU.**
   - The target is a TYPE's REV row against REV QUAD on the same bench (Task 1: QUAD reads 66 as a delta over the MIX-0 default; ADR 0031's absolute 485 is the old frame).
   - The per-TYPE gate is ΔCOST ≤ headroom: **76** in the default build (BOWED 8 × 717 on rev V), **23** with `master-tape` (Task 1, § Measured).
@@ -678,6 +678,8 @@ git commit -m "GATE and REVERSE on the BURST engine"
 
 ### Task 9: ROOM on the LOOP engine (unit check)
 
+> Done (2026-10-05). Its ROOM structure is replaced by Task 9b (ADR 0095); its LOOP-engine machinery stays.
+
 > **Owns, moved from Task 6:** its panel in `ui::reverb_panel` (and `View::short`'s reverb words where it brings `DENS`); ROOM's `Ranges` row (Task 8's table), `tone_hz`, `diffuse_g`, `predelay_ms` and the SMEAR cap (0.72 % of the loop) in `knobs`; its value texts; `types_on_screen`; its rows of `knobs_hit_the_spec_endpoints` and `smear_caps_hold_at_every_size`. Check ROOM's `t_min` floor against its 0.2 s DECAY.
 
 **Files:**
@@ -742,6 +744,8 @@ git commit -m "ROOM on the LOOP engine"
 
 ### Task 10: HALL and its plate zone (unit check)
 
+> Done on the host (2026-10-05). Its held unit step and the fit to the MidiVerb halls are Task 10b (ADR 0095).
+
 > **Owns, moved from Task 6:** its panel in `ui::reverb_panel` (and `View::short`'s reverb words where it brings `DENS`); HALL's `Ranges` row, its DAMP and SMEAR cap (0.36 %), the plate zone (`plate_pull`, `plate_zone_pulls_diffuse_tone_predelay`), and `PLATE` shown in the SIZE cell's label (not the value, ADR 0085); its value texts; `types_on_screen`.
 
 **Files:**
@@ -793,54 +797,9 @@ git add chimera-core/src/dsp/rev/loop_engine.rs chimera-core/src/dsp/rev/mod.rs 
 git commit -m "HALL and its plate zone; bench kernels retired"
 ```
 
-### Task 11: BLOOM (unit check)
+### Task 11: BLOOM
 
-> **Owns, moved from Task 6:** its panel in `ui::reverb_panel` (and `View::short`'s reverb words where it brings `DENS`); BLOOM's `Ranges` row, its in-loop TONE and SMEAR cap (0.24 %), its value texts, `types_on_screen`, and its rows of the endpoint and cap tests.
-
-**Files:**
-- Create: `chimera-core/src/dsp/rev/bloom.rs`, `chimera-core/tests/reverb_bloom_test.rs`
-- Modify:
-  - `chimera-core/src/dsp/rev/mod.rs` (adds `EngineState::Bloom`);
-  - `chimera-core/src/ui/reverb_panel.rs`;
-  - `chimera-core/tests/reverb_switch_test.rs` (adds Bloom);
-  - `chimera-core/tests/fx_golden_test.rs`;
-  - `chimera-stm32/src/bench.rs` (REV BLOOM);
-  - plan § Measured.
-
-**Interfaces:**
-- **Produces:** `pub struct BloomEngine`, with `prime` and `run`, taking the same arguments as `BurstEngine`'s; and `EngineState::Bloom`.
-
-- [ ] **Step 1: Write the failing tests.**
-
-```rust
-#[test] fn bloom_window() { /* defaults: onset_ms ∈ [140, 300], peak_ms ∈ [450, 750] */ }
-#[test] fn swell_moves_one_delay_by_crossfade() { /* SWELL 0 → 1: only the SWELL delay and PRE-DLY change length, at crossfade starts, by ≤ 120 samples; the ten AP lengths never change */ }
-#[test] fn bloom_settles_on_its_input_pitch() { /* check_settles_on_pitch: SWELL 0 → 1; L = 0.7 s */ }
-#[test] fn bloom_smear_is_bounded_without_drift_or_vibrato() { /* check_smear_bound at SWELL 0 (L = 0.25 s); APs 3, 6, 9, each its own Wander; D ≤ 0.24 % of L */ }
-#[test] fn bloom_rt60() { /* DECAY .6: rt60 == 5.86 s ± 35 %; DECAY 1: 12 s ± 35 % */ }
-#[test] fn level_plan_holds_for_bloom() { /* check_level_plan at DECAY 1, SWELL 0, DIFFUSE 1 */ }
-#[test] fn bloom_knobs_ease() { /* check_knobs_ease over ids 1, 3, 7, 8, 9, 11 (SMEAR), 12 */ }
-#[test] fn bloom_noise_and_loudness() { /* check_noise_and_loudness(bloom, quad, 4.0); 6.0 at DIFFUSE 1 */ }
-```
-
-- [ ] **Step 2: Run the tests and see them fail.**
-  - Run: `cargo test -p chimera-core --test reverb_bloom_test`.
-  - Expected: FAIL.
-- [ ] **Step 3: Implement** to the spec's § BLOOM engine.
-  - The split-SWELL fallback is built only if the A/B in Task 13 asks for it. In the tape build it would also need an owner ruling.
-- [ ] **Step 4: Run the tests and see them pass.**
-  - Run: `cargo test -p chimera-core --test reverb_bloom_test --test reverb_switch_test`.
-  - Expected: PASS.
-- [ ] **Step 5: Golden.** Add `rev_bloom`, then run `--test fx_golden_test`. Expected: PASS.
-- [ ] **Step 6: Bench and flash (unit).** Record REV BLOOM, STRESS with BLOOM, and flash.
-  - Gates: ΔCOST ≤ headroom, STRESS < budget, and a flash delta ≤ 3 KB.
-- [ ] **Step 7: Provenance report.** List BLOOM's ten allpass lengths, the SWELL range, the decorrelators and every range with their spec sections, and every ear change. State that nothing came from the emulator or 7119f7ad.
-- [ ] **Step 8: Commit.**
-
-```bash
-git add chimera-core/src/dsp/rev/bloom.rs chimera-core/src/dsp/rev/mod.rs chimera-core/src/ui/reverb_panel.rs chimera-core/tests/reverb_bloom_test.rs chimera-core/tests/reverb_switch_test.rs chimera-core/tests/fx_golden_test.rs chimera-stm32/src/bench.rs docs/superpowers/plans/2026-10-04-reverb-types.md
-git commit -m "BLOOM"
-```
+Rewritten for ADR 0095 and moved after Task 12: see § Amendment, 2026-10-05.
 
 ### Task 12: Tempo sync on ORBIT's clock
 
@@ -905,15 +864,306 @@ git add chimera-core/src/dsp/rev/sync.rs chimera-core/src/instrument.rs chimera-
 git commit -m "Reverb tempo sync on ORBIT's clock"
 ```
 
-### Task 13: Sweeps, screens, A/B, final bench and the ADR (unit)
+## Amendment, 2026-10-05: the MidiVerb II reference (ADR 0095)
+
+The MidiVerb II is now the reference for every TYPE, and the tasks below replace Task 9's ROOM structure and Task 11's BLOOM. They run in this order: **9b → 10b → 11 → 11b → 13**. Task 12 is done; Task 11 picks up its deferred BLOOM rows.
+
+**The rule.** A named knob setting must be indistinguishable from the same-named preset. The harness's `verify.py` prints PASS only when all of these hold:
+- band RT60 is within ±5 % from 250 Hz to 4 kHz;
+- pre-delay is within ±1 ms;
+- C50 is within ±1 dB;
+- NED is within ±10 % at 20, 50 and 100 ms;
+- the centroid is within ±5 %.
+
+A preset that still fails after its task's near-miss steps goes to the owner with its residuals, and passes only by the owner's signed-off exception.
+
+**The harness** is outside the repository: `$S/midiverb-ref/`, where `S=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad`. It renders the *Rust* `FxBus` through the ignored test `zz_mvref.rs::mvref_batch`, which lives untracked in the `$S/wt-reverb-ref` worktree. Its job line already sets every slot: `size time tone diffuse predelay smear rate shape damping` (slots 3, 1, 7, 8, 9, 11, 12, 10, 2). Before each fit, point that worktree at the task's commit:
+
+```bash
+git -C $S/wt-reverb-ref checkout --detach <task HEAD>   # zz_mvref.rs stays, untracked
+cd $S/midiverb-ref
+rm -f fits/<type>_sweep.json                            # the sweep was of the old engine
+./run.sh <TYPE> <programs>                              # sweep, fit, verify, A/B renders
+$S/mvenv/bin/python verify.py <TYPE>                    # re-verify after any change: PASS/FAIL per preset
+```
+
+`fit.py`'s `DIMS` lists the knobs it fits for each TYPE. Nothing from the harness, the emulator or their outputs is committed. Fitted knobs, verdicts and residuals go into § Measured, and each passing preset's knobs become a golden.
+
+**Tests that bite.** Every task here ends with a hand mutation check:
+1. Apply each listed mutation to the engine.
+2. Run the task's tests, and see at least one fail.
+3. Revert.
+
+Record which test catches each mutation in the report. A mutation that no test catches gets a test.
+
+### Task 9b: ROOM v2 (unit check)
+
+> **ADR 0095.** ROOM becomes 4 loops × 2 stages, with a 5-AP diffuser, reflection-coupled pairs, 8 taps a side and the new DAMP and LOOPS knobs. It keeps Task 9's machinery: the crossfade scheduler (one stage delay a loop, ≤ 5 ms, every loop in the same crossfade), `store_settle` re-entries, f32 stage allpasses, unrounded dampers, SMEAR's in-engine bound and the level plan.
+
+**Files:**
+- Modify:
+  - `chimera-core/src/dsp/rev/loop_engine.rs`. ROOM becomes `LoopEngine<4, 2>` with the pairs' reflection and moving taps. It moves to its own `rev/room.rs` only if sharing would change HALL: the `rev_hall` golden must stay bit-identical;
+  - `chimera-core/src/dsp/reverb.rs`: ROOM's `Ranges` (RT60 0.2–2.0 s, `damp_hz` 1.5–10 kHz, `diffuse_g` 0.45–0.70, θ 0–90° on SHAPE's slot) and ROOM's `START`;
+  - `chimera-core/src/ui/reverb_panel.rs`: ROOM's MORE page becomes PRE-DLY · DAMP · SMEAR · RATE · SYNC · LOOPS, with LOOPS in degrees;
+  - `chimera-core/tests/reverb_loop_test.rs`, `reverb_panel_test.rs` (the per-TYPE cell rows), `fx_golden_test.rs`;
+  - plan § Measured.
+- Outside the repo: `$S/midiverb-ref/fit.py`, whose `DIMS["ROOM"]` gains `"damping", "shape"`.
+
+**The structure** (ADR 0095; ms at 24 kHz, rounded to the nearest sample):
+- diffuser APs, g 0.75: 0.81, 1.92, 3.59, 4.91 and 6.24 ms;
+- stage delays at SIZE 1: A 37.1/57.5, B 59.4/42.3, C 52.7/41.9 and D 41.5/43.6 ms, × k with k = 0.4 + 0.6·SIZE;
+- stage APs, fixed: A 29.0/13.3, B 28.9/18.4, C 30.4/16.3 and D 27.1/14.2 ms;
+- one one-pole per loop end;
+- pairs (A, B) and (C, D) re-enter through [[cos θ, sin θ], [sin θ, −cos θ]];
+- the send enters every loop at +1;
+- taps × k, weight ¾. R: 0.51 (fixed), 31.4, 10.8, 20.4, 15.8, 21.3, 30.9 and 9.1 ms. L: 5.5, 5.6, 36.7, 11.8, 24.1, 8.9, 18.0 and 38.1 ms. Tap j of a side reads stage line j: A1, A2, B1, B2, C1, C2, D1, D2;
+- SMEAR moves one stage AP a loop (A2, B1, C2 and D1), each with its own wander. Each is capped at 1.45 % of its loop's trip at θ 0, the shortest trip.
+
+- [ ] **Step 1: Write the failing tests** in `reverb_loop_test.rs`. They replace `room_layout_fits_and_lengths_are_distinct_primes`, `rotation_preserves_energy` and `room_window_and_rt60`.
+
+```rust
+#[test] fn room_layout_matches_adr_0095() { /* every diffuser, stage-delay (at k 0.4 and 1) and stage-AP length == round(ms × 24) of ADR 0095's tables; delays distinct; every tap ≤ its line at k 0.4 and 1; layout incl. f32 slots ≤ RING_LEN (about 19.6 k) */ }
+#[test] fn reflection_preserves_energy_at_every_loops() { /* gains 1, dampers open: pair energy constant to 1e-6 over 10 round trips at θ 0°, 30°, 60°, 90°; H·H == I to 1e-7 */ }
+#[test] fn loops_0_keeps_four_loops_and_90_makes_two() { /* send into A's line only, diffuser bypassed: θ 0 → B's line stays exactly 0; θ 90° → A's output reaches only B, so A's line is silent on every second trip */ }
+#[test] fn taps_move_with_their_lines() { /* SIZE 0 → 1: each tap's read changes only in its line's crossfade, by ≤ 120 samples; R's first tap stays at 12 samples (0.51 ms) */ }
+#[test] fn room_first_arrival_is_under_a_millisecond() { /* PRE-DLY 0, click: first sample within −20 dB of the peak ≤ 1.0 ms (as built: 2.9 ms) */ }
+#[test] fn room_rt60_tracks_decay_to_2_s() { /* 1 kHz octave, interrupted noise: DECAY 0, .5, 1 → 0.2, 0.63, 2.0 s ± 10 %; no stage gain above 0.985 */ }
+#[test] fn damp_darkens_the_loop_and_tone_the_input() { /* DAMP 1.5 vs 10 kHz: the 4 kHz RT60 falls ≥ 30 %, 500 Hz within 5 %; TONE 10 → 2.5 kHz moves the centroid down with the 1 kHz RT60 within 5 % */ }
+```
+
+  Task 9's other ROOM tests stay, adapted:
+  - `round_trip_moves_at_most_5_ms_per_crossfade` covers 8 delays;
+  - `room_knobs_ease` covers ids 1, 2, 3, 7, 8, 9, 10, 11 and 12;
+  - `level_plan_holds_for_room` runs at DECAY 1, SIZE 0, DIFFUSE 1, at both LOOPS 0 and 1;
+  - `room_noise_and_loudness` sets `WET_ROOM` again;
+  - unchanged: `room_settles_on_its_input_pitch`, `room_smear_reads_stay_within_the_cap`, `room_smear_does_not_move_the_tails_peak`, `no_slap_after_a_size_sweep`, `room_falls_silent` and `room_tail_draws_its_predelay_gap`.
+
+  In `reverb_panel_test.rs`, `every_type_shows_its_cells` and `labels_and_values_fit_their_cells` gain DAMP and LOOPS under ROOM.
+- [ ] **Step 2: Run the tests and see them fail.** Run: `cargo test -p chimera-core --test reverb_loop_test`. Expected: FAIL on the new tests.
+- [ ] **Step 3: Implement** to ADR 0095 § ROOM v2.
+- [ ] **Step 4: Run the tests and see them pass.** Run: `cargo test -p chimera-core --test reverb_loop_test --test reverb_switch_test --test reverb_panel_test --test reverb_sync_test`. Expected: PASS.
+- [ ] **Step 5: Fit the nine ROOM presets on the Rust render.**
+  - Run: `./run.sh ROOM 1 2 3 5 8 9 10 11 14`, then `verify.py ROOM`.
+  - The float model's fits (`fits/room_v2_best.json`) are the seeds. Its stage gain and loop pole map to DECAY and DAMP through the Rust laws, and are never copied:
+
+    | # | Preset | SIZE | θ | stage gain | loop pole | PRE (ms) | stage AP g | float verdict |
+    |---|---|---|---|---|---|---|---|---|
+    | 1 | Small Bright .1 | 0.357 | 0° | 0.239 | 0.569 | 0.94 | 0.457 | PASS |
+    | 2 | Small Bright .2 | 0.862 | 0° | 0.456 | 0.474 | 5.04 | ½ | PASS |
+    | 3 | Small Bright .3 | 0.937 | 8.8° | 0.471 | 0.424 | 4.58 | ½ | PASS |
+    | 5 | Medium Bright .6 | 0.631 | 90° | 0.637 | 0.263 | 4.76 | ½ | PASS |
+    | 8 | Medium Dark .6 | 0.629 | 90° | 0.628 | 0.256 | 5.12 | ½ | PASS |
+    | 9 | Medium Dark .5 | 0.630 | 90° | 0.578 | 0.149 | 4.34 | 0.691 | C50 −1.04 dB |
+    | 10 | Medium Bright .6 | 0.779 | 90° | 0.631 | 0.143 | 4.55 | 0.575 | 4 kHz RT −9.8 %, NED 20 ms −15 % |
+    | 11 | Medium Bright .8 | 0.737 | 86.6° | 0.666 | 0.268 | 3.80 | 0.543 | PASS |
+    | 14 | Medium Dark 1.0 | 0.751 | 52.6° | 0.742 | 0.149 | 5.18 | 0.511 | 4 kHz RT −9.9 %, C50 −1.41 dB |
+
+  - The Dark presets (8, 9 and 14) put TONE at about 2.6 kHz, the unit's input one-pole.
+  - **Pass:** at least #1, 2, 3, 5, 8 and 11 PASS, as they do in the float model.
+- [ ] **Step 6: The near misses** (#9, #10 and #14), in order, re-verifying all nine after each, since each moves the others:
+  1. DAMP's top end opens the damper fully (a bypass, not 10 kHz). Refit #10 and #14.
+  2. The tap weight follows θ: ¾ at 0°, rising to ¾ × 9/8 at 90°. Refit #9, #10 and #14.
+
+  Keep whichever step passes more presets without losing one. If any still fail, they go to the owner with their residuals.
+- [ ] **Step 7: Starting knobs and goldens.**
+  - ROOM's `START` becomes #5's fitted knobs (Medium Bright .6), with SMEAR 0.3 kept. The owner confirms at UAT.
+  - `fx_golden_test` re-records `rev_room` and adds `rev_room_mv<NN>`, one per passing preset at its fitted knobs, from a `MV2_ROOM` table of (program, knobs).
+- [ ] **Step 8: Mutation check.** Each must fail a test:
+  - A1's delay +1 sample;
+  - B2's AP swapped with C2's;
+  - the reflection's −cos → +cos;
+  - θ ignored (held at 0);
+  - L's tap 3 dropped;
+  - tap weight ¾ → ½;
+  - the damper ignoring DAMP;
+  - the diffuser cut to 4 APs;
+  - DECAY's top back to 1.5 s;
+  - a tap left fixed through a SIZE move.
+- [ ] **Step 9: Bench and flash (unit).**
+  - Flash the bench build, and record REV ROOM, STRESS with ROOM and REV SWITCH MAX (QUAD → GATE → ROOM → HALL), on both builds.
+  - **Gates:** ΔCOST ≤ 76 (default) and ≤ 23 (tape). ADR 0095 estimates REV ROOM at about 34 and 82, ΔCOST −21 and +11. STRESS must stay under budget as it was before (#355 is not this task).
+  - Record the flash delta over `ba2d1acf` in one line.
+  - Over the tape gate goes to the owner, before anything is cut.
+- [ ] **Step 10: Provenance report.** Every ROOM table against ADR 0095's tables, with no other number from the emulator, and the fitted knobs shown fitted, not copied.
+- [ ] **Step 11: Commit.**
+
+```bash
+git add chimera-core/src/dsp/rev/loop_engine.rs chimera-core/src/dsp/reverb.rs chimera-core/src/ui/reverb_panel.rs chimera-core/tests/reverb_loop_test.rs chimera-core/tests/reverb_panel_test.rs chimera-core/tests/fx_golden_test.rs docs/superpowers/plans/2026-10-04-reverb-types.md
+git commit -m "ROOM v2: four loops, DAMP and LOOPS, fitted to the MidiVerb II rooms"
+```
+
+### Task 10b: HALL fitted to the Large and Xlarge presets (unit check)
+
+> **ADR 0095.** HALL is judged against programs 4, 6, 7, 12, 13, 15–29: twenty presets. Its design (ADR 0085, "HALL, as built") stands until this task's investigation shows a change is needed. Task 10's held unit step runs here.
+
+**Files:** `chimera-core/src/dsp/rev/loop_engine.rs` (and `reverb.rs`, `reverb_panel.rs`) only if Step 3 changes the structure; `reverb_loop_test.rs`, `fx_golden_test.rs`, ADR 0095 (§ HALL, as fitted), plan § Measured.
+
+- [ ] **Step 1: Baseline.**
+  - Run: `./run.sh HALL 4 6 7 12 13 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29`, then `verify.py HALL`.
+  - Record each preset's verdict and residuals in § Measured.
+- [ ] **Step 2: Investigate before changing anything.** For each preset family that fails, read its program's structure (`$S/mvenv/bin/python structure.py <N>`). Compare it with HALL's 1 loop × 4 stages, 4-AP diffuser and 3 taps a side. Answer each question with numbers:
+  - **Loops and stages.** Are the Large programs 1 × 4, or 4 × 2 / 2 × 4 like ROOM v2? Does LOOPS belong on HALL too?
+  - **Taps.** What tap count and C50 do the presets need? ROOM as built ran 0.3–3.2 dB short with 3 taps a side.
+  - **DECAY's top.** #29 measures 14.9 s at 250 Hz, past HALL's 10 s. #28 measures 7.6 s.
+  - **Tilt.** #28 and #29 fall 1.9× and 2.4× from 250 Hz to 4 kHz (7.63 → 4.11 s, 14.93 → 6.14 s). Can DAMP's range reach that?
+  - **Pre-delay.** The presets use 1.0–73.6 ms, inside 0–125 ms; check the fits land.
+  - **The plate zone.** It has no MidiVerb counterpart. It must survive any change, with `plate_corner_onset_is_short` holding.
+- [ ] **Step 3: Decide.**
+  - If the structure must change, build a float model first, as `room_v2.py` did (`model.py`, `configs.py`), and show its pass count.
+  - Write the proposal into ADR 0095 as "HALL, as fitted", and take it to the owner before any code.
+  - With no structural change, go to Step 6.
+- [ ] **Step 4: Write the failing tests** for the approved structure, in the pattern of Task 9b's: `hall_layout_matches_adr_0095`, plus energy, coupling and tap tests for whatever changed. `hall_reaches_10_s_at_size_0` moves to DECAY's new top if it changes. Run `cargo test -p chimera-core --test reverb_loop_test`, and see them fail.
+- [ ] **Step 5: Implement**, then run `--test reverb_loop_test --test reverb_switch_test --test reverb_panel_test --test reverb_sync_test`. Expected: PASS, with `rev_room` unchanged unless the change is shared.
+- [ ] **Step 6: Fit and verify.** Run `./run.sh HALL …` (the programs of Step 1), then `verify.py HALL`. **Pass:** every HALL preset PASSes or is owner-signed. Near misses try DAMP and tap weight first, as Task 9b's Step 6 does.
+- [ ] **Step 7: Goldens.** `rev_hall` and `rev_hall_plate` are re-recorded if the sound moved, and `rev_hall_mv<NN>` is added for each passing preset (`MV2_HALL`).
+- [ ] **Step 8: Mutation check:** one stage delay +1 sample; a tap dropped; the damper ignoring DAMP; DECAY's top lowered; the plate pull disabled.
+- [ ] **Step 9: Bench and flash (unit)**, Task 10's held step:
+  - record REV HALL, STRESS with HALL and REV SWITCH MAX (QUAD → GATE → ROOM → HALL) on both builds;
+  - gates: ΔCOST ≤ 76 / 23;
+  - record the flash delta in one line.
+- [ ] **Step 10: Provenance report and commit:** `git commit -m "HALL fitted to the MidiVerb II halls"`, staging only the files changed.
+
+### Task 11: BLOOM (unit check), rewritten for ADR 0095
+
+> **Owns**, moved from Task 6:
+> - its panel, SWELL · DECAY · TONE · DIFFUSE, with MORE: PRE-DLY · — · SMEAR · RATE · SYNC · —;
+> - BLOOM's `Ranges` row: SWELL × 0.5–1.2 on the cascade, DECAY RT60 2–12 s, TONE 10 → 1.5 kHz on both one-poles, DIFFUSE as the cascade's g at 0.45–0.65, PRE-DLY 0–125 ms, SMEAR capped at 0.24 % of the loop, RATE 0.05–0.5 Hz;
+> - its value texts and `types_on_screen`;
+> - the Bloom arms of `ranges()` and `panel()`, which today play QUAD's.
+>
+> **Owns, deferred from Task 12:**
+> - `synced()`'s Bloom arm: `(P::PREDELAY, HALL_PRE)`, and `beats` true under ALL;
+> - `beats_s` clamping BLOOM's DECAY in beats to 2–12 s;
+> - BLOOM's SYNC cell, with all three of OFF, TIME and ALL.
+
+**The structure** (ADR 0095):
+- an input one-pole, then PRE-DLY;
+- 15 series unity allpasses at g ½, 0.56–89 ms and 580 ms in all, with no plain delay;
+- feedback from the cascade's end through a one-pole and a gain;
+- outputs from the cascade's end, through 3-AP decorrelators: L 10.6/2.1/0.9 ms and R 6.3/1.8/2.4 ms, stored f32.
+
+The cascade stores normalised i16 states, since f32 needs about 29 k slots. Its re-entry and states settle as ROOM's do (`store_settle`). SMEAR moves the three longest cascade APs, each with its own wander. The arena takes about 14.4 k slots at × 1.031 and 16.7 k at × 1.2, plus 3 k for PRE-DLY and about 0.5 k f32: about 20.7 k at most. This replaces the spec's ten APs plus SWELL delay, and the split-SWELL fallback is dropped.
+
+**Files:**
+- Create: `chimera-core/src/dsp/rev/bloom.rs`, `chimera-core/tests/reverb_bloom_test.rs`.
+- Modify:
+  - `chimera-core/src/dsp/rev/mod.rs` (`EngineState::Bloom`);
+  - `chimera-core/src/dsp/reverb.rs` (the Bloom row, `ranges`, `synced`, `beats_s`, `START`);
+  - `chimera-core/src/ui/reverb_panel.rs`;
+  - `chimera-core/tests/reverb_switch_test.rs`, `reverb_sync_test.rs`, `reverb_panel_test.rs`, `fx_golden_test.rs`;
+  - `chimera-stm32/src/bench.rs` (REV BLOOM, and BLOOM in STRESS and REV SWITCH MAX);
+  - plan § Measured.
+- Outside the repo: `fit.py`'s `DIMS["BLOOM"]` becomes `["size", "time", "tone", "diffuse", "predelay"]`, since BLOOM has no DAMP.
+
+- [ ] **Step 1: Write the failing tests.**
+
+```rust
+// reverb_bloom_test.rs
+#[test] fn bloom_layout_matches_adr_0095() { /* 15 cascade lengths == round(ms × 24 × swell) at × 0.5, 1.031 and 1.2, distinct, sum 580 ms × swell ± 1 sample a line; decorrelators L 10.6/2.1/0.9, R 6.3/1.8/2.4 ms; layout at × 1.2 with PRE 125 ms ≤ RING_LEN */ }
+#[test] fn cascade_is_flat_with_the_loop_open() { /* feedback 0, one-poles open: |H| flat within 0.1 dB, 50 Hz–10 kHz */ }
+#[test] fn swell_scales_the_cascade_by_crossfade() { /* SWELL 0 → 1: only cascade lengths and PRE change, at crossfade starts, the cascade's total by ≤ 120 samples a crossfade; decorrelators never change */ }
+#[test] fn bloom_settles_on_its_input_pitch() { /* check_settles_on_pitch: SWELL 0 → 1; L = 0.7 s */ }
+#[test] fn bloom_smear_is_bounded_without_drift_or_vibrato() { /* check_smear_bound at SWELL 0 (L = 0.29 s); the three longest APs, each its own Wander; D ≤ 0.24 % of L */ }
+#[test] fn bloom_rt60_tracks_decay() { /* 1 kHz octave, interrupted noise: DECAY 0, .5, 1 → 2, 4.9, 12 s ± 10 % */ }
+#[test] fn bloom_falls_silent() { /* DECAY 1: exact 0 within 2 × RT60 + 1 s (the i16 cascade states: Task 10's limit cycle) */ }
+#[test] fn level_plan_holds_for_bloom() { /* check_level_plan at DECAY 1, SWELL 0, DIFFUSE 1 */ }
+#[test] fn bloom_knobs_ease() { /* check_knobs_ease over ids 1, 3, 7, 8, 9, 11, 12 */ }
+#[test] fn bloom_noise_and_loudness() { /* check_noise_and_loudness(bloom, quad, 4.0); 6.0 at DIFFUSE 1; sets WET_BLOOM */ }
+
+// reverb_sync_test.rs
+#[test] fn bloom_syncs_predelay_and_decay_in_beats() {
+    // 120 BPM, SYNC TIME: PRE-DLY walks HALL_PRE, folded into 0–125 ms; DECAY stays in seconds
+    // SYNC ALL: 32 beats (16 s) → 12 s; 4 beats → 2 s; 1 beat at 300 BPM (0.2 s) → 2 s
+}
+```
+
+  - `every_type_shows_its_cells`, `labels_and_values_fit_their_cells`, `every_ordered_pair_switches_without_a_click` and `decay_in_beats_clamps_and_room_has_no_all` gain BLOOM.
+- [ ] **Step 2: Run the tests and see them fail.** Run: `cargo test -p chimera-core --test reverb_bloom_test --test reverb_sync_test`. Expected: FAIL.
+- [ ] **Step 3: Implement** to ADR 0095 § BLOOM.
+- [ ] **Step 4: Run the tests and see them pass.** Run: `cargo test -p chimera-core --test reverb_bloom_test --test reverb_switch_test --test reverb_sync_test --test reverb_panel_test`. Expected: PASS.
+- [ ] **Step 5: Fit Bloom 1 and Bloom 2.**
+  - Run: `./run.sh BLOOM 45 49`, then `verify.py BLOOM`.
+  - The seeds are the float model's (`fits/bloom_model_final.json`): cascade × 1.031, feedback 0.662, both one-poles about 3.1 kHz, PRE-DLY 2.3 ms (#45) and 87.8 ms (#49). Only PRE-DLY differs between the two.
+  - **Pass:** both PASS.
+  - `START` becomes #45's knobs, with SMEAR 0.3 kept, and the owner confirms at UAT.
+- [ ] **Step 6: Goldens.** Add `rev_bloom`, `rev_bloom_mv45` and `rev_bloom_mv49`, then run `--test fx_golden_test`. Expected: PASS.
+- [ ] **Step 7: Mutation check:**
+  - one cascade AP +1 sample;
+  - a cascade AP removed;
+  - a plain delay put back in the loop;
+  - g ½ → 0.6 fixed (ignoring DIFFUSE);
+  - TONE driving only one of the one-poles;
+  - SWELL scaling all but one AP;
+  - a decorrelator AP dropped;
+  - `synced()` returning no Bloom arm;
+  - `beats_s` unclamped.
+- [ ] **Step 8: Bench and flash (unit).**
+  - Record REV BLOOM, STRESS with BLOOM and REV SWITCH MAX through all six, on both builds.
+  - Gates: ΔCOST ≤ 76 / 23. ADR 0095 expects about 5 more allpass updates a sample than ADR 0085's +14.
+  - Record the flash delta in one line.
+- [ ] **Step 9: Provenance report and commit.**
+
+```bash
+git add chimera-core/src/dsp/rev/bloom.rs chimera-core/src/dsp/rev/mod.rs chimera-core/src/dsp/reverb.rs chimera-core/src/ui/reverb_panel.rs chimera-core/tests/reverb_bloom_test.rs chimera-core/tests/reverb_switch_test.rs chimera-core/tests/reverb_sync_test.rs chimera-core/tests/reverb_panel_test.rs chimera-core/tests/fx_golden_test.rs chimera-stm32/src/bench.rs docs/superpowers/plans/2026-10-04-reverb-types.md
+git commit -m "BLOOM: the MidiVerb's allpass cascade, Bloom 1 and 2 matched; synced"
+```
+
+### Task 11b: GATE and REVERSE fitted (unit check)
+
+> **ADR 0095. Scope.** Task 8's BURST engine is fitted to programs 30–39 (GATE) and 40–44, 46, 47 and 48 (REVERSE). GATE is expected to need knob and range changes. REVERSE may need a structural change: the unit's silent onset and its end hit are not in BURST. As with HALL, any structural change is investigated, proposed in ADR 0095, and approved by the owner before any code. The harness also reports burst metrics (the −20 dB cut, body slope and peak time). They are reported beside the verdict, and their tolerances are proposed in Step 2 for the owner to set.
+
+- [ ] **Step 1: Baseline.**
+  - Run: `./run.sh GATE 30 31 32 33 34 35 36 37 38 39` and `./run.sh REVERSE 40 41 42 43 44 46 47 48`, then `verify.py` for each.
+  - Record the verdicts.
+- [ ] **Step 2: Investigate** with `structure.py <N>` and the recon (`fits/recon.json`):
+  - **GATE.** Today's default is nearest Fast Gate 150 (#35) on cut and slope, but:
+    - it has no pre-delay, while the presets measure 6.9–71 ms. Does GATE take PRE-DLY on slot 9, its empty MORE cell?
+    - it is twice as dense early. Is that DENSITY's tap count or the pre-diffuser g?
+    - it is 25 % brighter. Is that TONE's range, or the unit's two-sample average?
+  - **REVERSE.** It is far off. The unit:
+    - is silent for about 60 ms (an onset delay, or zero-weight first taps);
+    - rises 45 dB over 400 ms, against CURVE's 12–30 dB;
+    - fires a loud delayed copy at 483 ms (an end-hit tap above the ramp);
+    - then cuts hard.
+
+    Regen 2 s and 8 s (#47 and #48) measure 2.4 and 10.9 s.
+  - Write the findings and any proposed structure into ADR 0095 ("GATE and REVERSE, as fitted"), then go to the owner.
+- [ ] **Step 3: Write the failing tests** for the approved changes. They are provisional until Step 2's ruling:
+  - `gate_predelay_reaches_71_ms`;
+  - `reverse_is_silent_before_its_onset` (the first −40 dB arrival at ≥ 55 ms at the #40 fit);
+  - `reverse_ends_on_its_hit` (the envelope's peak in the last 10 % of LENGTH, then −20 dB within 20 ms);
+  - `curve_reaches_45_db`.
+
+  Task 8's tests are kept wherever they still hold. `weights_keep_sum_of_squares` and `reverse_window` change with any end hit, and each change is listed with its reason. Run `cargo test -p chimera-core --test reverb_burst_test`, and see them fail.
+- [ ] **Step 4: Implement**, then run `--test reverb_burst_test --test reverb_switch_test --test reverb_panel_test --test reverb_sync_test`. Expected: PASS.
+- [ ] **Step 5: Fit and verify** both TYPEs, with Step 1's commands. **Pass:** every preset PASSes or is owner-signed.
+- [ ] **Step 6: Goldens.** Re-record `rev_gate`, `rev_reverse` and `rev_gate_sync_8th_120` if they moved, and add `rev_gate_mv<NN>` and `rev_reverse_mv<NN>` per passing preset.
+- [ ] **Step 7: Mutation check:**
+  - a tap's offset +1 sample;
+  - PRE-DLY ignored;
+  - the onset delay removed;
+  - the end hit at the ramp's weight;
+  - CURVE's top back to 30 dB;
+  - REGEN's write rounding instead of truncating.
+- [ ] **Step 8: Bench and flash (unit).**
+  - Record REV GATE, REV RVRS and STRESS with each, on both builds.
+  - Gates: ΔCOST ≤ 76 / 23.
+  - Record the flash delta in one line.
+- [ ] **Step 9: Provenance report and commit:** `git commit -m "GATE and REVERSE fitted to the MidiVerb II gates and reverses"`, staging only the files changed.
+
+### Task 13: Sweeps, screens, A/B, final bench and the ADRs (unit)
+
+> Runs last, after Tasks 9b, 10b, 11 and 11b (§ Amendment, 2026-10-05).
 
 **Files:**
 - Modify:
   - `chimera-core/tests/param_sweep_test.rs` and `chimera-core/tests/common/sweep.rs`;
   - `chimera-core/tests/screen_golden_test.rs`, with images under `docs/screens/`;
   - `chimera-core/src/dsp/fx_bus.rs` (`COST`) and `chimera-core/tests/cost_test.rs` (the `bus` literal, both arms: `if TAPE { … } else { … }`);
+  - `chimera-core/src/orbit/runner.rs` (`OrbitRunner::COST`);
+  - `chimera-stm32/src/bench.rs` (the SYNC rows);
   - `tools/ab/render.sh`;
-  - `docs/adr/0085-the-master-reverb-picks-a-type.md`;
+  - `docs/adr/0085-the-master-reverb-picks-a-type.md` and `docs/adr/0095-every-reverb-type-matches-its-midiverb-ii-presets.md`;
   - plan § Measured.
 
 - [ ] **Step 1: Make the sweeps TYPE-aware.**
@@ -932,6 +1182,7 @@ git commit -m "Reverb tempo sync on ORBIT's clock"
   - Render Chimera's side of the spec's eleven pairs to `target/ab/` with `tools/ab/render.sh pairs`.
   - Render every TYPE on the saw chord and the snare at SMEAR 0, at its default and at 1, with `tools/ab/render.sh smear-all`, for the owner's SMEAR on/off judgement.
   - Write `target/ab/report.md`, with RT60 (T20), onset, peak, −20 dB end, tilt and ρ for each pair, measured with `tests/common/rev.rs`'s measures, and a VST column left blank.
+  - For every TYPE with a MidiVerb counterpart, ADR 0095's harness verdicts replace the ±30 % pass. Re-run `verify.py` for ROOM, HALL, GATE, REVERSE and BLOOM on this task's HEAD (the harness § Amendment shows how), and put the per-preset table into the report. The VST pairs remain only for QUAD, HALL's plate corner and SMEAR on/off.
   - Hand it to the owner.
 - [ ] **Step 4: Final bench (unit).**
   - On both builds, record:
@@ -941,13 +1192,29 @@ git commit -m "Reverb tempo sync on ORBIT's clock"
     - REV SWITCH MAX, stepping through all six TYPEs.
   - If the costliest BUS+V reading exceeds `FxBus::COST`, set `COST` to it and update both arms of `cost_test`'s `bus` literal. Then run `cargo test -p chimera-core --test cost_test` and `cargo test -p chimera-core --features master-tape --test cost_test`. Expected: PASS.
   - Record the flash total (`rust-size` `text`).
-- [ ] **Step 5: The ADR.**
-  - Write the measured CPU, flash and headroom into ADR 0085 § Consequences.
-  - Its status stays Proposed until the owner's A/B and UAT.
+- [ ] **Step 4b: Every TYPE's on-unit cost rows.** On both builds, record:
+  - REV QUAD, REV QUAD S, REV ROOM, REV HALL, REV GATE, REV RVRS and REV BLOOM;
+  - STRESS with each;
+  - REV SWITCH MAX, QUAD → GATE → ROOM → HALL → REVERSE → BLOOM.
+
+  Record them in one table in § Measured, each with its ΔCOST against REV QUAD. Gate: ΔCOST ≤ 76 (default) and ≤ 23 (tape) for every TYPE.
+- [ ] **Step 4c: The SYNC bench.**
+  - Add two rows at **97.25 BPM**, a tempo on the 0.25 grid whose beat is no whole number of samples (29,614.4 at 48 kHz):
+    - **REV GATE SYNC:** GATE, SYNC TIME, LENGTH at 1/8, with the tempo stepping 97.25 ↔ 97.5 every 2 s so that folds and crossfades run;
+    - **REV HALL ALL:** HALL, SYNC ALL, PRE-DLY at 1/16, DECAY at 8 beats, with the same tempo steps.
+  - Each row's ΔCOST against REV QUAD fits 76 / 23.
+- [ ] **Step 4d: Re-measure `OrbitRunner::COST`.**
+  - Task 12 put the reverb tempo into `OrbitRunner::block` (`set_tempo`, the rev clock).
+  - Read ORBIT PHASES on the unit over five runs, STRESS keys first, as `COST`'s comment describes, with a synced TYPE playing.
+  - If the worst block less its notes' handling, / 64 and rounded up, exceeds today's 171, raise `COST` and its comment.
+  - Then run `cargo test -p chimera-core --test cost_test` and `cargo test -p chimera-core --features master-tape --test cost_test`. Expected: PASS.
+- [ ] **Step 5: The ADRs.**
+  - Write the measured CPU, flash and headroom into ADR 0085 § Consequences, and each preset's verdict and every TYPE's cost row into ADR 0095 § Consequences.
+  - Both stay Proposed until the owner's A/B and UAT.
 - [ ] **Step 6: Commit.**
 
 ```bash
-git add chimera-core/tests/param_sweep_test.rs chimera-core/tests/common/sweep.rs chimera-core/tests/screen_golden_test.rs docs/screens chimera-core/src/dsp/fx_bus.rs chimera-core/tests/cost_test.rs tools/ab/render.sh docs/adr/0085-the-master-reverb-picks-a-type.md docs/superpowers/plans/2026-10-04-reverb-types.md
+git add chimera-core/tests/param_sweep_test.rs chimera-core/tests/common/sweep.rs chimera-core/tests/screen_golden_test.rs docs/screens chimera-core/src/dsp/fx_bus.rs chimera-core/tests/cost_test.rs chimera-core/src/orbit/runner.rs chimera-stm32/src/bench.rs tools/ab/render.sh docs/adr/0085-the-master-reverb-picks-a-type.md docs/adr/0095-every-reverb-type-matches-its-midiverb-ii-presets.md docs/superpowers/plans/2026-10-04-reverb-types.md
 git commit -m "Reverb TYPEs: sweeps, screens, A/B renders, measured costs"
 ```
 
@@ -1316,6 +1583,7 @@ BUS+V's frame is QUAD_BUS_V + ΔCOST, so ΔCOST = that row − QUAD_BUS_V.
 | 6 | T12 |
 | 7 | T13 |
 
+- **Amendment (ADR 0095).** Tasks 9b, 10b, 11 (rewritten) and 11b fit every TYPE with a counterpart to the MidiVerb II presets by the reference harness. The order is 9b → 10b → 11 → 11b → 13. Task 11 takes Task 12's deferred BLOOM sync rows, and Task 13 adds every TYPE's cost rows, the SYNC bench and `OrbitRunner::COST`.
 - **Steps.** Every test has its assertions and the spec's values. Function bodies appear only for the soft clip, TPDF and idle mute, and ROOM-T. Every commit stages its paths.
 - **Types.** Each is defined once, in one task, and used under that name after: `Tempo` (T4), `FoldState`/`fold`/`Division` (T6), `EngineKnobs`/`knobs` (T6), `KnobMemory` (T6, 108 B, `u16::MAX` sentinel), `SwitchPhase` (T7), `LoopEngine<LOOPS, STAGES>` (T9), `Render` and the `check_*` helpers (T2).
 - **Review Focus.** Each of the five lines has its test, in T7, T6, T7, T5 and T12.

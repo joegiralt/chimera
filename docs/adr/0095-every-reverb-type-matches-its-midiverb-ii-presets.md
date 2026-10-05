@@ -1,0 +1,237 @@
+# 0095. Match every reverb TYPE to its MidiVerb II presets; rebuild ROOM and BLOOM on the programs' structure
+
+- **Status:** Proposed; supersedes in part [0085](0085-the-master-reverb-picks-a-type.md) (ROOM's and BLOOM's designs, its provenance rule for structure numbers, and its ±30 % A/B pass for every TYPE with a MidiVerb counterpart)
+- **Deciders:** project owner, 2026-10-05 ("yes to all three": structure numbers, ROOM's cost, ROOM's two new knobs). Firmware drafted it from the reference harness's findings.
+
+## Context
+ADR 0085 judged each TYPE against a named Midiverb program within ±30 % on
+time metrics. That was a sanity window, not a match: the owner wants a named
+setting to *be* the preset.
+
+A reference harness now renders the MidiVerb II's 49 reverb programs through
+thement/midiverb_emulator (GPL-3.0) at the unit's native 23.4 kHz, and renders
+Chimera's real `FxBus` from the same stimuli. It measures both sides the same
+way. The harness lives outside the repository (the session scratchpad's
+`midiverb-ref/`: `README.md`, `run.sh`, `model.py`, `room_v2.py`,
+`bloom_model.py`, `fits/*.json`).
+
+What it found:
+- **ROOM as built (Task 9) fails every ROOM preset.** Four causes:
+  - its first arrival can't go below 2.9 ms;
+  - 3 taps a side leave C50 0.3–3.2 dB short;
+  - its echo density sags 7–32 % by 100 ms;
+  - its damper is fixed at 8 kHz.
+- **The unit's ROOMs are 4 loops × 2 stages, not 2 × 2.** A float model of
+  that structure (ROOM v2) passes 6 of 9 ROOM presets.
+- **The unit's Blooms are an allpass cascade with no plain delay**, not the
+  spec's ten allpasses plus a SWELL delay. A float model of the cascade
+  passes Bloom 1 and Bloom 2.
+- **GATE and REVERSE miss as well.** GATE is near Fast Gate 150 on cut and
+  slope, but it has no pre-delay (the presets use 10–71 ms), is twice as
+  dense early, and is 25 % brighter. REVERSE is far off. The unit is silent
+  for about 60 ms, rises 45 dB over 400 ms, fires a loud delayed copy at
+  483 ms, then cuts hard.
+
+Matching took the unit's own delay lengths, gains and tap offsets, read from
+the emulator's decompiled programs. ADR 0085 forbade that. The owner lifted
+the ban on 2026-10-05.
+
+## Decision
+- **The MidiVerb II is the reference for every TYPE.** A named knob setting
+  must be indistinguishable from the same-named preset. It passes only if,
+  measured by the harness on the Rust render:
+  - band RT60 is within ±5 % in every octave from 250 Hz to 4 kHz
+    (125 Hz and 8 kHz are reported, not judged);
+  - pre-delay is within ±1 ms;
+  - C50 is within ±1 dB;
+  - NED (Abel–Huang echo density) is within ±10 % at 20, 50 and 100 ms;
+  - the tail's spectral centroid is within ±5 %.
+
+  The metrics are those of the harness's `mvlib.verdict`: interrupted noise
+  for RT60 (ISO 3382-2, 16 seeds), and the click response for the rest.
+  The owner's UAT by ear still comes after the numbers pass.
+- **Which presets belong to which TYPE:**
+
+  | TYPE | MidiVerb II programs |
+  |---|---|
+  | ROOM | 1, 2, 3, 5, 8, 9, 10, 11, 14 |
+  | HALL | 4, 6, 7, 12, 13, 17–20, 23–26, 28, 29; and 15, 16, 21, 22, 27 |
+  | GATE | 30–39 |
+  | REVERSE | 40–44, 46, 47, 48 |
+  | BLOOM | 45, 49 |
+  | QUAD | none; it stays Chimera's own |
+
+  Programs 15, 16, 21, 22 and 27 would be ROOM's if its DECAY reached 3.5 s.
+  At ROOM's 2.0 s they are HALL's.
+- **Provenance.**
+  - **The source.** ROOM's and BLOOM's structure numbers (delay lengths,
+    allpass lengths, gains and tap offsets) come from the MidiVerb II
+    programs as decompiled by github.com/thement/midiverb_emulator
+    (GPL-3.0). The owner approved their use in the firmware on 2026-10-05.
+  - **What enters the repository.** The numbers, in ms, as constants in our
+    own Rust, each table with a comment naming this ADR. Nothing else:
+    - no emulator code, no instruction listing, no ROM image;
+    - no harness code and no renders or other outputs.
+
+    The emulator stays an external tool.
+  - **The licensing question, named plainly.** These numbers are read out of
+    Alesis's ROM through a GPL-3.0 decompilation, and the workspace was then MIT (GPL-3.0-or-later since ADR 0330).
+    Whether delay lengths and gains are protectable expression or bare facts
+    is not settled here. The owner has decided to use them and to resolve the
+    question before V1, with the other licensing matters held until then.
+    Until it is resolved, every table that carries these numbers is named in
+    one place (this ADR's tables), so it can be replaced as a unit.
+  - **Knob values are fitted, never copied.** The float model rings 11–30 %
+    longer than the unit's 16-bit tank. So each preset's knob setting comes
+    from fitting the Rust render to the reference, never from the unit's
+    gains.
+  - This supersedes ADR 0085's "no ROM coefficient, offset or tap table"
+    and "lengths are our own primes" for ROOM and BLOOM. It also covers HALL,
+    GATE and REVERSE if their fits need the same.
+- **ROOM v2.** At 24 kHz, ms converted to the nearest sample:
+  - **Input:** TONE's one-pole, then PRE-DLY.
+  - **Diffuser:** 5 series allpasses, g 0.75, fixed at 0.81, 1.92, 3.59,
+    4.91 and 6.24 ms.
+  - **Tank:** 4 loops × 2 stages. Each stage is a delay then an allpass, and
+    each loop ends in one one-pole damper.
+
+    | Loop | Stage delays at SIZE 1 (ms) | Stage allpasses, fixed (ms) |
+    |---|---|---|
+    | A | 37.1 / 57.5 | 29.0 / 13.3 |
+    | B | 59.4 / 42.3 | 28.9 / 18.4 |
+    | C | 52.7 / 41.9 | 30.4 / 16.3 |
+    | D | 41.5 / 43.6 | 27.1 / 14.2 |
+
+    SIZE scales the stage delays by k, from 0.4 to 1.0. The allpasses and
+    the diffuser don't move.
+  - **Coupling:** the loops re-enter in pairs, (A, B) and (C, D), through a
+    Householder reflection [[cos θ, sin θ], [sin θ, −cos θ]]. θ 0° is four
+    2-stage loops, and θ 90° is two 4-stage loops. This replaces ADR 0085's
+    fixed 0.25 rad rotation.
+  - **Send:** the diffused send enters every loop at +1.
+  - **Taps:** 8 a side, one per stage line, each of weight ¾, offsets scaled
+    by k with their lines:
+    - R: 0.51 (fixed), 31.4, 10.8, 20.4, 15.8, 21.3, 30.9 and 9.1 ms;
+    - L: 5.5, 5.6, 36.7, 11.8, 24.1, 8.9, 18.0 and 38.1 ms.
+
+    Each tap stays inside its line at every SIZE. The scaled taps move by
+    crossfade, in the same crossfade as their lines. This replaces ADR
+    0085's fixed taps for ROOM.
+- **ROOM v2's knobs:**
+
+  | Knob | Slot | Range |
+  |---|---|---|
+  | SIZE | 3 | k 0.4 → 1.0 |
+  | DECAY | 1 | stage gain from RT60 0.2–**2.0 s** (was 1.5) |
+  | TONE | 7 | input fc 10 → 2.5 kHz |
+  | DIFFUSE | 8 | stage allpass g 0.45–0.70 (the diffuser stays at 0.75) |
+  | DAMP (new) | 2 | loop one-pole, 1.5–10 kHz |
+  | LOOPS (new) | 10 | θ 0–90° |
+  | PRE-DLY | 9 | 0–50 ms |
+  | SMEAR | 11 | as ADR 0085; 0 matches the unit |
+  | RATE | 12 | as ADR 0085 |
+
+  - DAMP takes the MORE page's second cell, as HALL's does. LOOPS takes the
+    MORE page's sixth cell, on slot 10, which ROOM never used. So the block
+    keeps its 12 live ids, `KnobMemory` keeps its 108 B, and no disk code
+    changes.
+  - SYNC stays OFF and TIME only.
+- **ROOM v2's near misses.** In the float model, #9 misses C50 by 0.04 dB.
+  #10 and #14 miss 4 kHz RT by about 10 %, and #10 also misses NED at 20 ms.
+  Two things to try, in order:
+  1. let DAMP's top end open the damper fully;
+  2. tie the tap weight to θ: some Mediums use ×9/8.
+
+  A preset that still fails after both goes to the owner, with its residuals.
+- **BLOOM.** This replaces ADR 0085's ten allpasses plus SWELL delay:
+  - an input one-pole, then PRE-DLY;
+  - a loop of 15 series unity allpasses, g ½, from 0.56 to 89 ms and
+    580 ms in all, with no plain delay;
+  - feedback from the cascade's end through a one-pole and a gain (the
+    unit's ¾);
+  - outputs from the cascade's end, through 3-allpass decorrelators: L 10.6,
+    2.1 and 0.9 ms; R 6.3, 1.8 and 2.4 ms.
+
+  Bloom 2 is Bloom 1 with 85.5 ms more pre-delay, and both have an 11.1 s RT.
+  - **The float model passes both** with the cascade × 1.031, feedback
+    0.662, both one-poles at about 3.1 kHz, and PRE-DLY 2.3 ms (#45) and
+    87.8 ms (#49).
+  - **The knobs:**
+    - TONE drives both one-poles together;
+    - SWELL scales the whole cascade, × 0.5–1.2, by crossfade;
+    - DECAY sets the feedback gain from RT60, 2–12 s;
+    - DIFFUSE sets the cascade's g;
+    - PRE-DLY, SMEAR and RATE are as before.
+- **CPU and memory.**
+  - **ROOM about doubles its memory accesses** (owner, 2026-10-05). The
+    accesses go from 4 stage delays, 4 stage allpasses, 4 diffuser
+    allpasses and 6 fixed taps to 8, 8, 5 and 16, and the taps now
+    crossfade with SIZE. Doubling Task 9's REV ROOM (17 cycles default, 41 tape) gives
+    about 34 and 82. Against REV QUAD's 55 and 71, that is ΔCOST about −21
+    and +11, inside the 76 and 23 headrooms. The tape build's margin is
+    thin, and the bench decides. ADR 0085's ΔCOST ≤ headroom gate still
+    holds.
+  - **ROOM's arena:** about 9.0 k i16 slots of stage delays, 4.3 k f32 stage
+    allpass states (8.5 k slots, f32 as Task 10 ruled), 0.4 k f32 diffuser
+    (0.8 k slots), and 1.2 k of PRE-DLY. That is about 19.6 k of the
+    23,220-slot arena, which does not grow.
+  - **BLOOM's arena:** about 14.4 k i16 slots of cascade at the presets'
+    × 1.031, and 16.7 k at SWELL's × 1.2. Then 3 k of PRE-DLY and about 0.5 k
+    f32 (1 k slots). That is about 20.7 k at most. The cascade can't afford
+    f32 states (2 slots each), so its allpasses store normalised i16 (ADR
+    0085's R2). That brings back Task 10's limit-cycle risk, which BLOOM's
+    tests must catch.
+  - **BLOOM's CPU:** about 5 more allpass updates a sample than ADR 0085's
+    estimate (15 in the loop and 6 in the decorrelators, against 10 and 4).
+
+## Alternatives considered
+- **Keep ADR 0085's ±30 % window:** it passes reverbs the owner can tell
+  apart from the preset at once. The new bar is set where the harness's own
+  repeatability (≤ 1.4 % a band) leaves room to judge.
+- **Tune ROOM as built (2 × 2, 3 taps):** its 2.9 ms first arrival, thin
+  C50 and sagging density are structural, and no knob setting passes a
+  preset.
+- **Our own lengths, fitted to the presets (keeping ADR 0085's provenance):**
+  possible in principle, but the fit would have to rediscover the structure
+  by search, over 30-odd lengths, with no assurance of passing. The owner
+  chose the numbers.
+- **Copy the unit's gains as knob values:** the float model rings 11–30 %
+  longer than the 16-bit unit, so copied gains miss RT60 by more than ±5 %.
+- **f32 states for BLOOM's cascade:** they need about 29 k slots, past the
+  arena.
+- **Vendor the emulator or its renders as test fixtures:** GPL-3.0 code and
+  output in an MIT repository. The harness stays external, and the repo's
+  own tests check structure and bounds, not the match.
+
+## Consequences
+- **ROOM and BLOOM become the unit's structures,** reached by our own code
+  with fitted knobs. HALL, GATE and REVERSE are fitted the same way (plan
+  Tasks 10b and 11b). Any structural change those fits need is recorded here
+  as an "as built" section while this ADR is Proposed.
+- **Acceptance moves to the harness.** A TYPE with a counterpart is accepted
+  when every preset in its row passes at its fitted knobs, or the owner signs
+  off a named miss. The verdicts are recorded in the plan's § Measured. The
+  harness isn't in CI, so a TYPE's in-repo tests pin the structure (lengths,
+  taps, energy, bounds) and a golden pins the sound.
+- **ROOM's cost roughly doubles,** within the headroom, approved.
+- **A licensing debt** is open until the owner settles it before V1. If it
+  goes against using the numbers, ROOM's and BLOOM's tables are replaced and
+  their presets refitted.
+- **It rules out** taking knob values or gains from the unit directly, and
+  any emulator code or output in the repository.
+
+## Sources
+- ADR 0085 and its "ROOM, as built" and "HALL, as built" sections.
+- `docs/superpowers/specs/2026-10-04-reverb-types-design.md`, § MidiVerb II
+  reference; `docs/superpowers/plans/2026-10-04-reverb-types.md`, Tasks 9b,
+  10b, 11, 11b and 13.
+- github.com/thement/midiverb_emulator (GPL-3.0): run as an external program
+  at 23.4 kHz, with its decompiled programs as the source of the structure
+  numbers above. Not vendored.
+- The reference harness, outside the repository: the scratchpad's
+  `midiverb-ref/` (`README.md`, `run.sh`, `mvlib.py`, `model.py`,
+  `room_v2.py`, `bloom_model.py`, `fits/room_v2_best.json`,
+  `fits/bloom_model_final.json`, `fits/recon.json`).
+- J. S. Abel and P. Huang, "A simple, robust measure of reverberation echo
+  density", AES 121st Convention, 2006.
+- ISO 3382-2:2008, reverberation time by interrupted noise.

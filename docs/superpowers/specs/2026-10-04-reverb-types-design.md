@@ -71,7 +71,32 @@ The spike read the emulator's machine model and decompiled programs as documenta
 | Reverse | | Envelope peaks at 300–600 ms, then cuts; L/R correlation 0.4–0.65 |
 | Bloom | 8.6 s | Onset 140–225 ms; peak at 550–630 ms |
 
+## MidiVerb II reference
+
+Added 2026-10-05; ADR [0095](../../adr/0095-every-reverb-type-matches-its-midiverb-ii-presets.md) (Proposed) records it.
+
+- **The rule.** The Alesis MidiVerb II is the reference for every TYPE. A named knob setting must be indistinguishable from the same-named preset. It passes when:
+  - band RT60 is within ±5 % from 250 Hz to 4 kHz;
+  - pre-delay is within ±1 ms;
+  - C50 is within ±1 dB;
+  - NED is within ±10 % at 20, 50 and 100 ms;
+  - the tail's centroid is within ±5 %.
+
+  This replaces § A/B's ±30 % pass for every TYPE with a counterpart.
+- **The presets:**
+  - ROOM: 1, 2, 3, 5, 8, 9, 10, 11, 14;
+  - HALL: 4, 6, 7, 12, 13, 15–29;
+  - GATE: 30–39;
+  - REVERSE: 40–44, 46–48;
+  - BLOOM: 45 and 49;
+  - QUAD: none.
+- **The harness.** It is outside the repository. It runs thement/midiverb_emulator (GPL-3.0) at 23.4 kHz as an external program, renders the real `FxBus` from the same stimuli, and judges both the same way. The emulator, the harness and their outputs never enter the repository.
+- **The numbers.** ROOM's and BLOOM's structure numbers come from the decompiled programs, by the owner's approval of 2026-10-05. Knob values are fitted to the Rust render and never copied, since a float model rings 11–30 % longer than the 16-bit unit. This supersedes § Provenance below for those numbers. The licensing question is recorded in the ADR, for the owner to settle before V1.
+- **ROOM and BLOOM are redesigned** to the programs' structure (ADR 0095 § ROOM v2 and § BLOOM). The § LOOP engine ROOM rows and § BLOOM engine below are kept as the first design.
+
 ## Provenance
+
+> Superseded in part by ADR [0095](../../adr/0095-every-reverb-type-matches-its-midiverb-ii-presets.md) (§ MidiVerb II reference above) for structure numbers from the decompiled programs.
 
 - **Licensing.** The emulator is GPL-3.0, and this workspace was then MIT (`Cargo.toml`; GPL-3.0-or-later since ADR 0330). Nothing from the emulator enters the repository:
   - no code;
@@ -343,6 +368,8 @@ The bound, stated per pass and cumulatively, for every TYPE:
 
 ### LOOP engine: ROOM and HALL
 
+> **ROOM is superseded by ADR [0095](../../adr/0095-every-reverb-type-matches-its-midiverb-ii-presets.md) § ROOM v2:** 4 loops × 2 stages, a 5-AP diffuser, (A, B) and (C, D) re-entering through a Householder reflection of angle θ (the new LOOPS knob), 8 taps a side moving with SIZE, one damper a loop (the new DAMP knob, 1.5–10 kHz), and DECAY to 2.0 s. The ROOM rows below are the first design. HALL stands until plan Task 10b fits it.
+
 ```
 send → TONE → PRE-DLY → diffuser (4 AP, fixed) ─┬─► loop A: [delay → AP] → [delay → AP] → DAMP ─┐
                                                  │                                                ├─ rotation g·R(θ) ─► back into A and B
@@ -414,6 +441,8 @@ send → TONE → pre-diffuser (2 AP) → burst line ──► 12 taps over [0, 
   - The taps sum mono first (the MV2 shape), and the decorrelators make the stereo.
 
 ### BLOOM engine
+
+> **Superseded by ADR [0095](../../adr/0095-every-reverb-type-matches-its-midiverb-ii-presets.md) § BLOOM:** 15 series unity allpasses (g ½, 0.56–89 ms, 580 ms in all) with no plain delay, feedback through a one-pole and a gain, input and loop one-poles both on TONE, 3-AP decorrelators, and SWELL scaling the whole cascade × 0.5–1.2. The split-SWELL fallback is dropped. What follows is the first design.
 
 ```
 send → PRE-DLY → (+) → AP1 → … → AP10 → SWELL delay → DAMP(TONE) → ×g ─┐
@@ -513,6 +542,13 @@ Values are p (0..1) → quantity. The main page holds cells 2–5, and REV › M
 
 **ROOM** (main: SIZE · DECAY · TONE · DIFFUSE; MORE: PRE-DLY · — · SMEAR · RATE · SYNC · —)
 
+> ADR [0095](../../adr/0095-every-reverb-type-matches-its-midiverb-ii-presets.md) changes this. MORE becomes PRE-DLY · DAMP · SMEAR · RATE · SYNC · LOOPS:
+> - SIZE is k 0.4 → 1.0;
+> - DECAY is RT60 0.2–2.0 s;
+> - DIFFUSE is the stage AP g at 0.45–0.70, with the diffuser fixed at 0.75;
+> - DAMP is slot 2, 1.5–10 kHz;
+> - LOOPS is slot 10, θ 0–90°.
+
 | Knob | Slot | Law | Range | Default p → value |
 |---|---|---|---|---|
 | SIZE | 3 | exp | loop 100–200 ms | 0.5 → 141 ms |
@@ -563,6 +599,11 @@ The plate corner is SIZE 0 (120 ms), DECAY 0.35 (1.9 s), TONE 0 (10 kHz), DIFFUS
 | RATE | 12 | exp | 0.1–2 Hz | 0.5 → 0.45 Hz |
 
 **BLOOM** (main: SWELL · DECAY · TONE · DIFFUSE; MORE: PRE-DLY · — · SMEAR · RATE · SYNC · —)
+
+> ADR [0095](../../adr/0095-every-reverb-type-matches-its-midiverb-ii-presets.md) changes this:
+> - SWELL scales the cascade × 0.5–1.2;
+> - TONE drives the input and loop one-poles together;
+> - DIFFUSE is the cascade's g.
 
 | Knob | Slot | Law | Range | Default p → value |
 |---|---|---|---|---|
