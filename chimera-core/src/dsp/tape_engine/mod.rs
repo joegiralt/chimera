@@ -18,6 +18,7 @@
 //! Manual p. 32, TIMESTRETCH) splices two grains at a time pointer
 //! (`stretch`).
 
+pub mod age;
 pub mod heads;
 pub mod params;
 pub mod read;
@@ -26,11 +27,13 @@ pub mod wave;
 
 use core::mem::MaybeUninit;
 
-use chimera_hal::BLOCK_SIZE;
+use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 
 use crate::dsp::algo::math::{clampf, exp2};
+use crate::dsp::delay::{Tap, Transport};
 use crate::dsp::ease::Ramp;
 use crate::dsp::glide::Glide;
+use age::Age;
 use heads::{
     Bounds, Fade, Ghost, Head, Plan, Turn, at, plan, shortest, window_end_min, window_start,
 };
@@ -71,6 +74,10 @@ pub const STILL: f32 = 1e-3;
 pub const HUSH_S: f32 = 0.030;
 /// The macros' share of the way each block: MODAL's (ADR 0056).
 const EASE: f32 = 0.3;
+/// AGE easing to 0 is 0 under this, so the wear stops (hiss at −102 dBFS,
+/// the corner 0.2 % under 20 kHz). TAPE needs none: its cents vanish in
+/// `inc`'s sum.
+const AGE_SETTLE: f32 = 1e-3;
 
 const _: () = assert!(NOTE_ON_RAMP as usize <= BLOCK_SIZE);
 const _: () = assert!(read::MIN_SOURCE_FRAMES == MIN_LOOP_FRAMES);
@@ -261,6 +268,15 @@ pub struct TapeEngine {
     /// ROOT, latched at note-on.
     root: f32,
     active: bool,
+    /// TAPE: this voice's transport, run once a block; its speed deviation
+    /// this block, cents.
+    wow: Transport,
+    cents: f32,
+    /// AGE: this voice's wear.
+    age: Age,
+    /// The transport is skipped: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    no_transport: bool,
 }
 
 impl TapeEngine {
@@ -325,11 +341,29 @@ impl TapeEngine {
             slide: Glide::new(1.0, 1.0),
             root: 6_000.0,
             active: false,
+            wow: Transport::new(),
+            cents: 0.0,
+            age: Age::new(),
+            #[cfg(any(test, feature = "test-support"))]
+            no_transport: false,
         }
     }
 
     pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
         slot.write(Self::idle())
+    }
+
+    /// Each voice's own strip of tape: its transport's phases and its
+    /// hiss and dropouts, from `s` (the voice's index).
+    pub fn seed(&mut self, s: u32) {
+        self.wow = Transport::seeded(s);
+        self.age.seed(s);
+    }
+
+    /// The transport skipped, as if TAPE added nothing: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn without_transport(&mut self) {
+        self.no_transport = true;
     }
 
     /// The voice's PITCH and FINE with their routes, in cents, for the next
@@ -493,6 +527,7 @@ impl TapeEngine {
     /// from the last note's sample (as `Ramp::hold`).
     pub fn hold(&mut self) {
         self.last = 0.0;
+        self.age.hold();
     }
 
     pub fn is_active(&self) -> bool {
@@ -602,10 +637,14 @@ impl TapeEngine {
         } else {
             self.mac.ease(&to);
         }
+        if to.age == 0.0 && self.mac.age < AGE_SETTLE {
+            self.mac.age = 0.0;
+        }
+        self.cents = self.transport();
         self.slide.tick();
         if self.model == TapeModel::Transwave {
             let target = clampf(
-                wave::cycles(self.note, self.pitch, sample_rate) * self.slide.value(),
+                wave::cycles(self.note, self.pitch + self.cents, sample_rate) * self.slide.value(),
                 f32::EPSILON,
                 wave::CYCLES_MAX,
             );
@@ -619,8 +658,13 @@ impl TapeEngine {
             );
         } else if self.model == TapeModel::Stretch {
             let target = clampf(
-                inc(v.desc().rate, self.note, self.pitch, self.root, sample_rate)
-                    * self.slide.value(),
+                inc(
+                    v.desc().rate,
+                    self.note,
+                    self.pitch + self.cents,
+                    self.root,
+                    sample_rate,
+                ) * self.slide.value(),
                 f32::EPSILON,
                 INC_MAX,
             );
@@ -643,7 +687,24 @@ impl TapeEngine {
                 *y = last + (*y - last) * (i as f32 / NOTE_ON_RAMP as f32);
             }
         }
+        self.age.process(out, self.mac.age);
         self.last = out[BLOCK_SIZE - 1];
+    }
+
+    /// TAPE's transport, once a block: the head's speed deviation in cents
+    /// (`Tap::speed_cents`), which `inc` ramps to across the block. TAPE 0
+    /// adds exact zeros.
+    /// The block rate is the hardware's, so its rates fold to constants
+    /// (the voice's own `sample_rate` is `SAMPLE_RATE`, as `Age`'s is).
+    fn transport(&mut self) -> f32 {
+        #[cfg(any(test, feature = "test-support"))]
+        if self.no_transport {
+            return 0.0;
+        }
+        const BLOCK_RATE: f32 = (SAMPLE_RATE as usize / BLOCK_SIZE) as f32;
+        let tap = Tap::speed_cents(self.mac.tape, BLOCK_RATE);
+        let (wow, flutter) = self.wow.offsets(&tap);
+        wow + flutter
     }
 
     /// The block of a model that plays heads through a window: all but
@@ -660,7 +721,13 @@ impl TapeEngine {
 
         let rate = v.desc().rate;
         let target = clampf(
-            inc(rate, self.note, self.pitch, self.root, sample_rate) * self.slide.value(),
+            inc(
+                rate,
+                self.note,
+                self.pitch + self.cents,
+                self.root,
+                sample_rate,
+            ) * self.slide.value(),
             f32::EPSILON,
             INC_MAX,
         );
