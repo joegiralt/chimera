@@ -153,6 +153,8 @@ pub struct Ek {
     pub wet: f64,
     /// The ramp's curve exponent (1: straight in dB).
     pub gamma: f64,
+    /// REGEN's darkening one-pole, Hz (0: none).
+    pub regen_hz: f64,
 }
 
 /// `weights`: 12 taps, |shape| dB end to end, DENSITY's fade, Σw² = 1.
@@ -239,7 +241,11 @@ pub fn render24(ek: &Ek, u: &[f64]) -> Vec<f64> {
     } else {
         1.0
     };
-    let ra = 1.0 - (-2.0 * PI * 6_000.0 / FS).exp();
+    let ra = if ek.regen_hz > 0.0 {
+        one_pole(ek.regen_hz)
+    } else {
+        1.0
+    };
     let regen_at = if ek.n == 0 { d[11] } else { dh };
     let (mut tone, mut regen, mut tlp) = (0.0, 0.0, 0.0);
     let mut out = Vec::with_capacity(u.len());
@@ -354,6 +360,7 @@ fn gate_base(k: &K) -> Ek {
         ramp_g: 0.0,
         wet: 1.0,
         gamma: 1.0,
+        regen_hz: 6_000.0,
     }
 }
 
@@ -402,6 +409,7 @@ fn rev_v2(k: &K, n: usize) -> Ek {
         ramp_g: 0.0,
         wet: 1.0,
         gamma: 1.0,
+        regen_hz: 6_000.0,
     }
 }
 
@@ -452,6 +460,42 @@ fn variant(name: &str) -> Result<Variant, String> {
         "rev12c3g" => v(Ty::Rev, REVR_DIMS, 160, 3, |k| Ek {
             gamma: 1.6,
             ..rev_chain(k, &[5.3, 9.7, 14.9])
+        }),
+        "rev16ogs" => v(Ty::Rev, REV_DIMS, 120, 3, |k| Ek {
+            gamma: 1.6,
+            steps: 4,
+            ..rev_v2(k, 16)
+        }),
+        "rev24og" => v(Ty::Rev, REV_DIMS, 120, 3, |k| Ek {
+            gamma: 1.6,
+            ..rev_v2(k, 24)
+        }),
+        // rev16og on GATE's gate7 diffuser (one engine): five allpasses,
+        // g 0.2 → 0.8, the diffused share 1.5·DENSITY.
+        "rev16ogu" => v(Ty::Rev, REV_DIMS, 120, 3, |k| Ek {
+            gamma: 1.6,
+            diff_ms: vec![2.3, 4.3, 7.1, 11.3, 17.0],
+            g: lin((0.2, 0.8), kv(k, "diffuse")),
+            wet: (1.5 * kv(k, "diffuse")).clamp(0.0, 1.0),
+            ..rev_v2(k, 16)
+        }),
+        // rev16ogu with REGEN's one-pole open (the unit's regen is flat).
+        "rev16ogu2" => v(Ty::Rev, REV_DIMS, 120, 3, |k| Ek {
+            gamma: 1.6,
+            diff_ms: vec![2.3, 4.3, 7.1, 11.3, 17.0],
+            g: lin((0.2, 0.8), kv(k, "diffuse")),
+            wet: (1.5 * kv(k, "diffuse")).clamp(0.0, 1.0),
+            regen_hz: 0.0,
+            ..rev_v2(k, 16)
+        }),
+        // GATE's five allpasses, fully diffused (REVERSE's own DENSITY
+        // law: g 0 → 0.8), REGEN's one-pole open.
+        "rev16ogu3" => v(Ty::Rev, REV_DIMS, 120, 3, |k| Ek {
+            gamma: 1.6,
+            diff_ms: vec![2.3, 4.3, 7.1, 11.3, 17.0],
+            g: lin((0.0, 0.8), kv(k, "diffuse")),
+            regen_hz: 0.0,
+            ..rev_v2(k, 16)
         }),
         "rev12c3s" => v(Ty::Rev, REVR_DIMS, 160, 3, |k| {
             rev_chain(k, &[5.3, 9.7, 14.9])
@@ -706,19 +750,25 @@ struct Meas {
     rev: Option<RevM>,
 }
 
-fn measure(var: &Variant, k: &K, seeds: usize) -> Meas {
+/// `long`: the references' 20 s tails (2 s charge), for a long REGEN.
+fn measure(var: &Variant, k: &K, seeds: usize, long: bool) -> Meas {
     let ek = (var.ek)(k);
-    let c = click(4.0);
+    let (cs, charge, tail) = if long {
+        (20.0, 2.0, 20.0)
+    } else {
+        (4.0, 1.0, 3.0)
+    };
+    let c = click(cs);
     let (h, ys) = rayon::join(
         || render(&ek, &c),
         || {
             (0..seeds)
                 .into_par_iter()
-                .map(|s| render(&ek, &noise_stim(s as u32, 1.0, 3.0).0))
+                .map(|s| render(&ek, &noise_stim(s as u32, charge, tail).0))
                 .collect::<Vec<_>>()
         },
     );
-    let rt = noise_band_rt60(&ys, (1.0 * SR) as usize);
+    let rt = noise_band_rt60(&ys, (charge * SR) as usize);
     let h = &h[CLICK_AT..];
     let m = ir_metrics(&h[..h.len().min((3.0 * SR) as usize)], Some(&rt));
     let rev = (var.ty == Ty::Rev).then(|| rev_metrics(h, rt.bands));
@@ -741,6 +791,7 @@ fn fit_one(var: &Variant, p: u32, r: &Ref, start: Option<&K>) -> (K, Meas, f64) 
         .copied()
         .filter(|d| var.ty == Ty::Gate || *d != "time" || p == 47 || p == 48)
         .collect();
+    let long = var.ty == Ty::Rev && p == 48;
     let base: K = if var.ty == Ty::Gate {
         GATE_START
             .iter()
@@ -767,7 +818,7 @@ fn fit_one(var: &Variant, p: u32, r: &Ref, start: Option<&K>) -> (K, Meas, f64) 
                 .par_iter()
                 .map(|u| {
                     let k = mk(u);
-                    (score(var, &measure(var, &k, 2), r), k)
+                    (score(var, &measure(var, &k, 2, long), r), k)
                 })
                 .collect();
             c.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -779,14 +830,14 @@ fn fit_one(var: &Variant, p: u32, r: &Ref, start: Option<&K>) -> (K, Meas, f64) 
         .par_iter()
         .map(|(_, k0)| {
             let mut bk = k0.clone();
-            let mut bs = score(var, &measure(var, &bk, 4), r);
+            let mut bs = score(var, &measure(var, &bk, 4, long), r);
             for &st in steps {
                 let seeds = match (start, st < 0.01) {
                     (Some(_), _) => 16,
                     (None, true) => 8,
                     (None, false) => 4,
                 };
-                bs = score(var, &measure(var, &bk, seeds), r);
+                bs = score(var, &measure(var, &bk, seeds, long), r);
                 let mut imp = true;
                 while imp {
                     imp = false;
@@ -799,7 +850,7 @@ fn fit_one(var: &Variant, p: u32, r: &Ref, start: Option<&K>) -> (K, Meas, f64) 
                             }
                             let mut k = bk.clone();
                             k.insert(d.to_string(), json!(v));
-                            let sc = score(var, &measure(var, &k, seeds), r);
+                            let sc = score(var, &measure(var, &k, seeds, long), r);
                             if sc < bs - 1e-9 {
                                 (bs, bk, imp) = (sc, k, true);
                             }
@@ -811,7 +862,7 @@ fn fit_one(var: &Variant, p: u32, r: &Ref, start: Option<&K>) -> (K, Meas, f64) 
         })
         .min_by(|a, b| a.0.total_cmp(&b.0))
         .unwrap();
-    let m = measure(var, &best.1, 16);
+    let m = measure(var, &best.1, 16, long);
     let d = score(var, &m, r);
     (best.1, m, d)
 }
