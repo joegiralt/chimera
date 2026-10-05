@@ -352,7 +352,7 @@ out = clamp(½ · ½·(m₁ + m₂), ±1)                 // m = the mode's outp
   - On a non-ALGO Sound the tap rows are hidden, and stored taps are inert.
 - **Gating and billing (M-new-3).**
   - A FOLD tap counts as a route in `Voice::stage_runs`, so the folder runs. Its bill includes `FOLD_COST` (45) when FOLD would otherwise be off.
-  - A VCA tap on ALGO with no VCA route makes ALGO's no-route path build a per-sample gain array for the tap-VCA, and that array is billed.
+  - A VCA tap is its own multiply in the tap-VCA stage, before the DC blocker, and is billed as such. ALGO's no-route VCA path is untouched.
 - **Disk codes, append-only.**
   - `Jack` has codes 0–9 (ModSource 0–7, OP 5 = 8, OP 6 = 9) and idents (the ModSource idents, then "OP5" and "OP6"), pinned in the codes fixture with `ModSource`'s own `DiskCode` (M4).
   - `ModSource` is unchanged.
@@ -391,7 +391,7 @@ out = clamp(½ · ½·(m₁ + m₂), ±1)                 // m = the mode's outp
 | Tap capture (per tapped op) | +1 | 0 | +2 | in each tap's cost |
 | Tap → FREQ | +12, plus the moving path | 0 | +20 | 20 + the type's moving cost (CLEAN 55, 2040 55, DIRTY 20) |
 | Tap → Q | +4, plus the moving path | 0 | +7 | 7 + the moving cost (CLEAN 42, 2040 42, DIRTY 10) |
-| Tap → VCA | +4, plus the gain array on ALGO's no-route path | 0 | +7 | 10, + 5 for the gain array when ALGO has no VCA route |
+| Tap → VCA | +4 (the tap-VCA multiply) | 0 | +7 | 10 |
 | Tap → FOLD | +4, plus `FOLD_RAMP_COST` | 0 | +7 | 10 + 29, + `FOLD_COST` 45 when FOLD would otherwise be off |
 
 - **Not double-billed.** FREQ and Q taps on the same voice share the moving path's divides, so the moving cost is billed once.
@@ -414,7 +414,9 @@ out = clamp(½ · ½·(m₁ + m₂), ±1)                 // m = the mode's outp
 - **Never snapped.** Every coefficient, gain and tap amount ramps across the block. TYPE and MODE warm-start and crossfade over two blocks. The LEVEL clipper fades over 20 ms.
 - **Old patches load safely,** but needn't sound the same:
   - LP1, NOTCH1 and NOTCH2 change sound, and the top octave moves with the new `tan`;
-  - DRIVE translates to LEVEL on load, so levels hold;
+  - DRIVE translates to LEVEL on load (`2^(4·LEVEL − 2) = 1 + 4·DRIVE`), so levels hold exactly up to DRIVE 0.75. Above that LEVEL clamps at 1 (×4), so a patch at DRIVE 1 loads 1.94 dB quieter;
+  - a translated patch with DRIVE > 0 now passes through LEVEL's clipper, so material above ±1 gets some grit it didn't have;
+  - a route into DRIVE keeps its amount, but under the exponential law that amount moves the level by a different number of dB;
   - goldens are re-recorded and listed in the PR;
   - all new params, codes and `TapRoutes` are append-only (DRIVE's id 2 retired, LEVEL new at 12), and unknown codes load as CLEAN LP4.
 
@@ -437,7 +439,7 @@ out = clamp(½ · ½·(m₁ + m₂), ±1)                 // m = the mode's outp
    - QM driven by a stepped LFO square;
    - FM3 IN and QM IN repatched mid-note;
    - LEVEL 0.5 ↔ 0.51 on a full-scale saw with no step (the clipper's gate and fade);
-   - a DRIVE-only file loads at the same level as before, within 0.1 dB (the H-new-4 translation).
+   - a DRIVE-only file loads at the same level as before, within 0.1 dB, for DRIVE ≤ 0.75 (the H-new-4 translation); above 0.75, at most 1.94 dB quieter, at the ×4 ceiling.
 4. **One-block jumps (B1):** FREQ 100 Hz ↔ 20 kHz in one block, and a 1 ms ENV 1 → CUTOFF at +100 %, at RES 0 and RES 1, on every type, against a per-sample reference in f64 that uses `tan_accurate` and exact divides. At RES 0 the max deviation must be ≤ 1e-3 relative. At RES 1, where self-oscillation makes relative error meaningless, the check is boundedness: no output exceeds the steady bound (N4).
 5. **TYPE and MODE changes (B5):** every TYPE change and every MODE change, mid-note on a held saw. Measured from the end of the crossfade (N4), the output's max deviation from the destination's own steady output must be ≤ 10 %, and it must click at no point.
 6. **NOTCH2:** white noise, averaged spectrum.
@@ -463,7 +465,7 @@ out = clamp(½ · ½·(m₁ + m₂), ±1)                 // m = the mode's outp
    - **Scope.** A tap cannot be routed to an operator pitch or level, or to any destination but the four (pure test on `TapRoutes` and the view). Taps are inert on non-ALGO Sounds, where a jack on OP 5 or OP 6 acts as its default source. They never hold a voice.
    - **Units.** A Mod → Tap → Mod repatch keeps the depth in octaves, within one amount step.
 10. **Cost:**
-    - `filter_bills_each_type_and_mode` and `taps_bill_each_destination`, including FOLD_COST for a FOLD tap with FOLD off and the gain array for a VCA tap with no VCA route;
+    - `filter_bills_each_type_and_mode` and `taps_bill_each_destination`, including FOLD_COST for a FOLD tap with FOLD off;
     - the probe disassembly shows 0 `vdiv` per steady loop;
     - each constant's count is in its doc comment.
 11. **Pure tests:**

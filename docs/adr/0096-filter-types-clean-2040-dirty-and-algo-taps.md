@@ -52,7 +52,7 @@ The owner also wants ALGO's OP 5 and OP 6 as audio-rate modulation sources. The 
   - **NOTCH1** = `lp + ¼·hp`, a zero at 2 × FREQ.
   - **NOTCH2** = dry plus four TPT all-passes (the SSM2040 data sheet's Fig. 10), with notches at 0.414 and 2.414 × FREQ. Q is one-sample feedback, `fb = 0.7·RES`, with no self-oscillation, as on the Cascadia; the output is scaled by `√(1 − fb)`, which holds loudness within about 1 dB for FREQ up to about 2 kHz (about +3 dB at 10 kHz), and the dry signal is taken after the feedback node, so the notches stay exact.
 - **LEVEL:**
-  - It is a new param, Filter id 12. DRIVE (id 2) is retired (ADR 0009), and on load a stored DRIVE translates to `LEVEL = clamp((log₂(1 + 4·DRIVE) + 2)/4, 0, 1)`, through `storage/codes.rs` as Modal's `translate_v1` does. Routes into DRIVE are re-addressed to LEVEL, and `Sound::neutral`'s DRIVE stays frozen, so old patches keep their level.
+  - It is a new param, Filter id 12. DRIVE (id 2) is retired (ADR 0009), and on load a stored DRIVE translates to `LEVEL = clamp((log₂(1 + 4·DRIVE) + 2)/4, 0, 1)`, through `storage/codes.rs` as Modal's `translate_v1` does. Routes into DRIVE are re-addressed to LEVEL, and `Sound::neutral`'s DRIVE stays frozen, so old patches keep their level up to DRIVE 0.75; above it LEVEL clamps at ×4, at most 1.94 dB quieter.
   - It attenuates below unity, as the Cascadia's does: `2^(4·LEVEL − 2)`, unity at 0.5.
   - A transparent clipper (linear to ±1, C1 knee) runs past unity with its own 20 ms faded gate.
   - A per-Part meter drives a red ring LED.
