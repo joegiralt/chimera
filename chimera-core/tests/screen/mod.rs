@@ -1070,19 +1070,19 @@ pub const CASES: &[ScreenCase] = &[
     }),
     ("mixer_fx_reverb_gate", |ui| {
         to_fx(ui, REV);
-        feed(ui, Input::turn(EncoderId::A, 3)); // TYPE → GATE
+        feed(ui, Input::turn(EncoderId::A, 4)); // TYPE → GATE
         feed(ui, Input::turn(EncoderId::C, 10)); // TAIL
     }),
     ("mixer_fx_reverb_gate_more", |ui| {
         to_fx(ui, REV);
-        feed(ui, Input::turn(EncoderId::A, 3)); // TYPE → GATE
+        feed(ui, Input::turn(EncoderId::A, 4)); // TYPE → GATE
         feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
         feed(ui, Input::turn(EncoderId::B, 20)); // SHAPE
     }),
     // SYNC TIME, then LENGTH a note up: 1/8 (reverb TYPEs T12).
     ("mixer_fx_reverb_gate_sync", |ui| {
         to_fx(ui, REV);
-        feed(ui, Input::turn(EncoderId::A, 3)); // TYPE → GATE
+        feed(ui, Input::turn(EncoderId::A, 4)); // TYPE → GATE
         feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
         feed(ui, Input::turn(EncoderId::E, 1)); // SYNC TIME: LENGTH 1/16D
         feed(ui, Input::press(ButtonId::Edit)); // back to REV

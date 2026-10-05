@@ -22,7 +22,7 @@ use embedded_graphics::prelude::*;
 fn a_synced_cell_redraws_when_the_clock_moves() {
     let mut ui = UiState::new();
     screen::to_fx(&mut ui, screen::REV);
-    screen::feed(&mut ui, screen::Input::turn(EncoderId::A, 3)); // TYPE → GATE
+    screen::feed(&mut ui, screen::Input::turn(EncoderId::A, 4)); // TYPE → GATE
     screen::feed(&mut ui, screen::Input::turn(EncoderId::B, 1)); // focus LENGTH
     {
         let r = &mut ui.project_mut().edit_fx().reverb;
