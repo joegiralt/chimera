@@ -286,12 +286,34 @@ impl ArenaWriter {
         })
     }
 
-    /// Closes `next_compaction()`'s hole, sliding every source above it
-    /// down, if the gate's re-check finds the hole and every source above
-    /// it ready (no voice on it). `None` leaves everything where it was.
+    /// Every pending hole, lowest first.
+    pub fn holes(&self) -> impl Iterator<Item = Hole> + '_ {
+        self.live_srcs().iter().filter(|s| s.pending).map(|s| Hole {
+            offset: s.offset,
+            cost: Cost(s.cost),
+        })
+    }
+
+    /// Closes `next_compaction()`'s hole: `source_compact_at` the lowest.
     pub fn source_compact<F: Fn(u32) -> bool>(&mut self, gate: GateAcked<F>) -> Option<Shift> {
+        let at = self.next_compaction()?.offset;
+        self.source_compact_at(at, gate)
+    }
+
+    /// Closes the hole at `offset`, sliding every source above it down, if
+    /// the gate's re-check finds the hole and every source above it ready
+    /// (no voice on it). Holes below stay. `None` leaves everything where
+    /// it was: no hole there, or a source above it not ready.
+    pub fn source_compact_at<F: Fn(u32) -> bool>(
+        &mut self,
+        offset: u32,
+        gate: GateAcked<F>,
+    ) -> Option<Shift> {
         let n = self.n_srcs;
-        let i = self.live_srcs().iter().position(|s| s.pending)?;
+        let i = self
+            .live_srcs()
+            .iter()
+            .position(|s| s.pending && s.offset == offset)?;
         if !self.srcs[i..n].iter().all(|s| (gate.ready)(s.offset)) {
             return None;
         }

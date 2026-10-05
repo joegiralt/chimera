@@ -66,6 +66,8 @@ pub struct Pool {
     sources: Sources,
     /// What a gate waits by, in ms: the UI loop's clock. None in tests.
     clock: Option<fn() -> u32>,
+    /// Factory Sounds the last NEW skipped, until the UI says so.
+    pub(in crate::project) new_skipped: u8,
     arena: ArenaWriter,
     /// A load's slot, decoded whole before it is encoded in: here, in
     /// AXI, not on the stack. Nothing reads it but the load.
@@ -121,6 +123,7 @@ impl Pool {
                 gens: [0; MAX_SOURCES],
             });
             addr_of_mut!((*p).clock).write(None);
+            addr_of_mut!((*p).new_skipped).write(0);
             addr_of_mut!((*p).arena).write(arena);
             // ponytail: built by value, left to the optimiser to write in
             // place (`neutral_params` returns its snapshot whole);
@@ -314,37 +317,44 @@ impl Pool {
             .fold(0, |m, s| m | s.bit())
     }
 
-    /// ADR 0087's sequence for the lowest pending hole, whole, in one
-    /// call: nothing while a source at or above it sounds; else close the
-    /// gate on them, wait for the audio's answer while `within` says so
-    /// (it answers within two blocks), and on an ack close every hole the
-    /// gate covers. A nack (a voice holds a moving id) or a timeout moves
+    /// ADR 0087's sequence, whole, in one call, for the lowest pending
+    /// hole with no source at or above it sounding (none: nothing): close
+    /// the gate on those sources, wait for the audio's answer while
+    /// `within` says so (it answers within two blocks), and on an ack close
+    /// that hole and every one above it. A nack (a voice holds a moving id) or a timeout moves
     /// nothing. The gate is open again on return, always. True when a
     /// hole closed.
     pub(in crate::project) fn source_pass(&mut self, within: impl FnMut() -> bool) -> bool {
         self.drain_retired();
         let table = self.table();
-        let Some(hole) = self.arena.next_compaction() else {
+        // The lowest hole nothing at or above sounds: a voice low in the
+        // arena pins only the holes below it.
+        let sounding = table.sounding();
+        let Some((from, moving)) = self
+            .arena
+            .holes()
+            .map(|h| (h.offset, self.above(h.offset)))
+            .find(|&(_, above)| sounding & above == 0)
+        else {
             return false;
         };
-        let moving = self.above(hole.offset);
-        if table.sounding() & moving != 0 {
-            return false;
-        }
         let epoch = table.close_gate(moving);
         let mut moved = false;
         if table.wait(epoch, within) == Answer::Acked {
             // No voice holds a moving source, and none can start on one
-            // until the gate opens: each hole above closes too.
-            while self
-                .arena
-                .next_compaction()
-                .is_some_and(|h| self.above(h.offset) & !moving == 0)
-            {
+            // until the gate opens: each hole from `from` up closes too.
+            loop {
+                let next = self.arena.holes().find(|h| h.offset >= from);
+                let Some(h) = next else {
+                    break;
+                };
                 let moves =
                     SourceId::ALL.map(|s| self.source_offset(s).filter(|_| moving & s.bit() != 0));
                 let ready = |o: u32| moves.contains(&Some(o));
-                let Some(shift) = self.arena.source_compact(GateAcked::after_ack(ready)) else {
+                let Some(shift) = self
+                    .arena
+                    .source_compact_at(h.offset, GateAcked::after_ack(ready))
+                else {
                     break;
                 };
                 self.rebase_sources(shift, table.blocks());
