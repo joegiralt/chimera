@@ -171,18 +171,22 @@ static SWEEP: [(f32, ParamId, f32); 16] = [
 pub const SWEEP_LEGEND: &str = "0–2 s neutral · 2–5 s POSITION 0→1→0 · 5–8 s MOTION 0→1→0 · \
     8–11 s SIZE 0→1→0 · 11.5–14.5 s TAPE and AGE at 0.5";
 
-/// SCRUB's: its neutral holds still, so the loop is 0.3 of the window and
-/// runs at the note's speed (MOTION 0.5); POSITION drags the finger 0 → 1
-/// → 0; MOTION runs 0.5 → −1 → 0.5, through a stop into reverse; SIZE and
-/// TAPE and AGE as `SWEEP`'s.
-static SCRUB_SWEEP: [(f32, ParamId, f32); 18] = [
+/// SCRUB's: 2 s at neutral, where the tape stands still and is silent;
+/// then the loop takes 0.3 of the window and runs at the note's speed
+/// (MOTION 0.5) over 250 ms, as POSITION drags the finger 0 → 1 → 0; MOTION
+/// runs 0.5 → −1 → 0.5, through a stop into reverse; SIZE and TAPE and AGE
+/// as `SWEEP`'s.
+static SCRUB_SWEEP: [(f32, ParamId, f32); 20] = [
     (2.0, P::POSITION, 0.0),
     (3.5, P::POSITION, 1.0),
     (5.0, P::POSITION, 0.0),
+    (2.0, P::MOTION, 0.0),
+    (2.25, P::MOTION, 0.5),
     (5.0, P::MOTION, 0.5),
     (6.5, P::MOTION, -1.0),
     (8.0, P::MOTION, 0.5),
-    (0.0, P::SIZE, 0.3),
+    (2.0, P::SIZE, 1.0),
+    (2.25, P::SIZE, 0.3),
     (7.75, P::SIZE, 0.3),
     (8.0, P::SIZE, 0.0),
     (9.5, P::SIZE, 1.0),
@@ -193,13 +197,12 @@ static SCRUB_SWEEP: [(f32, ParamId, f32); 18] = [
     (14.5, P::TAPE, 0.5),
     (11.25, P::AGE, 0.0),
     (11.5, P::AGE, 0.5),
-    (14.5, P::AGE, 0.5),
 ];
 
 /// What the page says SCRUB's script does.
-pub const SCRUB_LEGEND: &str = "SIZE 0.3, MOTION 0.5 (the note's speed) · 2–5 s POSITION \
-    (the finger) 0→1→0 · 5–8 s MOTION 0.5→−1→0.5 · 8–11 s SIZE 0→1→0 · 11.5–14.5 s TAPE \
-    and AGE at 0.5";
+pub const SCRUB_LEGEND: &str = "0–2 s neutral (the tape stands still: silent) · 2–2.25 s to \
+    SIZE 0.3, MOTION 0.5 (the note's speed) · 2–5 s POSITION (the finger) 0→1→0 · 5–8 s \
+    MOTION 0.5→−1→0.5 · 8–11 s SIZE 0→1→0 · 11.5–14.5 s TAPE and AGE at 0.5";
 
 /// The macro script `model` is heard under, and what the page says of it.
 pub fn script(model: TapeModel) -> Script {
@@ -512,6 +515,20 @@ mod tests {
             author: "Chimera".into(),
             licence: "CC0 1.0".into(),
             url: Some("https://example.org/a?b&c".into()),
+        }
+    }
+
+    #[test]
+    fn every_script_starts_neutral_and_runs_14_5_s() {
+        for m in TapeModel::ALL {
+            let s = script(m);
+            assert_eq!(s.secs(), 14.5, "{m:?}");
+            let (mut a, mut b) = (P::default(), P::default());
+            s.apply(&mut a, 0.0);
+            s.apply(&mut b, 1.9);
+            for p in [a, b] {
+                assert_eq!(p, P::default(), "{m:?}: not neutral before 2 s");
+            }
         }
     }
 

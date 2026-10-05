@@ -12,8 +12,8 @@
 //! source at `off − u`, so REVERSE, PING-PONG's way down and SCRUB's
 //! backward vari-speed are LOOP's arithmetic read backward.
 
-use super::MIN_LOOP_S;
 use super::read::Pos;
+use super::{MIN_LOOP_FRAMES, MIN_LOOP_S};
 use crate::dsp::algo::math::clampf;
 
 /// One read head: a 32.32 position in frames.
@@ -27,9 +27,10 @@ pub const fn at(n: u32) -> Pos {
     Pos((n as u64) << 32)
 }
 
-/// 2 ms of a source at `rate`, in frames: at least 1.
+/// The shortest loop at `rate`, in frames: 2 ms, at least
+/// `MIN_LOOP_FRAMES`.
 pub fn min_frames(rate: u16) -> u32 {
-    (libm::roundf(MIN_LOOP_S * rate as f32) as u32).max(1)
+    (libm::roundf(MIN_LOOP_S * rate as f32) as u32).max(MIN_LOOP_FRAMES)
 }
 
 /// The window's start, of `frames` (≥ 1): in `[0, frames − 1]`.
@@ -44,12 +45,13 @@ pub fn window_end(ws: u32, end: f32, frames: u32, rate: u16) -> u32 {
     e.max(ws.saturating_add(min_frames(rate))).min(frames)
 }
 
-/// SIZE's loop length in frames: `2 ms · (W / 2 ms)^size`, at least 1, at
-/// most `W`.
+/// SIZE's loop length in frames: `2 ms · (W / 2 ms)^size`, at least
+/// `MIN_LOOP_FRAMES` (or `W`, if shorter; 1 at least), at most `W`.
 pub fn loop_len(size: f32, w: u32, rate: u16) -> u32 {
     let min = MIN_LOOP_S * rate as f32;
     let l = min * libm::powf(w as f32 / min, clampf(size, 0.0, 1.0));
-    (libm::roundf(l) as u32).clamp(1, w.max(1))
+    let w = w.max(1);
+    (libm::roundf(l) as u32).clamp(MIN_LOOP_FRAMES.min(w), w)
 }
 
 /// One pass's loop: `[ls, le)`, its last `lx` frames the crossfade.
