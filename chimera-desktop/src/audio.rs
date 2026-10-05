@@ -79,7 +79,8 @@ impl DesktopAudio {
         });
         let audio = Arc::clone(&shared);
 
-        let mut engine = Engine::new(sample_rate, orbit);
+        let sources = SOURCE_TABLE.reader().expect("the source reader, once");
+        let mut engine = Engine::new(sample_rate, orbit, sources);
         let mut block_pos = BLOCK_SIZE;
         let mut scope = ScopeWriter::new(scope);
 
@@ -183,7 +184,8 @@ struct Engine {
 }
 
 impl Engine {
-    fn new(sample_rate: u32, view: Writer<OrbitView>) -> Self {
+    /// `sources`: its table's one reader (`SOURCE_TABLE`'s for the sim).
+    fn new(sample_rate: u32, view: Writer<OrbitView>, sources: AudioToken) -> Self {
         Self {
             inst: Box::new(Instrument::new(
                 sample_rate,
@@ -196,7 +198,7 @@ impl Engine {
                 core::num::NonZeroU32::new(sample_rate).expect("sample rate"),
             )),
             view,
-            sources: SOURCE_TABLE.reader().expect("the source reader, once"),
+            sources,
         }
     }
 
@@ -335,6 +337,12 @@ fn connect_midi(mut notes: NoteProducer<'static>) -> Option<midir::MidiInputConn
 
 #[cfg(test)]
 mod tests {
+    /// A reader of a table of its own: the sim's is taken once.
+    fn test_reader() -> chimera_core::source_table::AudioToken {
+        let t = Box::leak(Box::new(chimera_core::source_table::SourceTable::new()));
+        t.reader().unwrap()
+    }
+
     use super::*;
 
     fn dac() -> DacOut {
@@ -400,7 +408,7 @@ mod tests {
         let sources: &'static NoteSources<1> = Box::leak(Box::new(NoteSources::new()));
         let (mut producers, mut drain) = sources.split().unwrap();
         let mut keys = producers.take(SourceId::new(0)).unwrap();
-        let mut e = Engine::new(SAMPLE_RATE, orbit_writer());
+        let mut e = Engine::new(SAMPLE_RATE, orbit_writer(), test_reader());
         let (w, _unread) = Box::leak(Box::new(chimera_core::scope::scope_buffer())).split();
         let mut scope = ScopeWriter::new(w);
         let mut shared = AudioShared::default();
@@ -509,7 +517,7 @@ mod tests {
         let render = || {
             let sources: &'static NoteSources<1> = Box::leak(Box::new(NoteSources::new()));
             let (_producers, mut drain) = sources.split().unwrap();
-            let mut e = Engine::new(SAMPLE_RATE, orbit_writer());
+            let mut e = Engine::new(SAMPLE_RATE, orbit_writer(), test_reader());
             let (w, _unread) = Box::leak(Box::new(chimera_core::scope::scope_buffer())).split();
             let mut scope = ScopeWriter::new(w);
             let link = LoadLink::new();
@@ -540,7 +548,7 @@ mod tests {
         let sources: &'static NoteSources<1> = Box::leak(Box::new(NoteSources::new()));
         let (mut producers, mut drain) = sources.split().unwrap();
         let mut keys = producers.take(SourceId::new(0)).unwrap();
-        let mut e = Engine::new(SAMPLE_RATE, orbit_writer());
+        let mut e = Engine::new(SAMPLE_RATE, orbit_writer(), test_reader());
         let (w, _unread) = Box::leak(Box::new(chimera_core::scope::scope_buffer())).split();
         let mut scope = ScopeWriter::new(w);
         let link = LoadLink::new();
