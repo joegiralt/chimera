@@ -278,7 +278,10 @@ impl ArenaWriter {
     }
 
     /// The hole `source_compact` closes next: the lowest. The sources at
-    /// and above its offset are ADR 0087's `above` mask.
+    /// and above its offset are ADR 0087's `above` mask. Tests only: the
+    /// pool closes the lowest hole nothing pins (`holes`).
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
     pub fn next_compaction(&self) -> Option<Hole> {
         self.live_srcs().iter().find(|s| s.pending).map(|s| Hole {
             offset: s.offset,
@@ -295,6 +298,9 @@ impl ArenaWriter {
     }
 
     /// Closes `next_compaction()`'s hole: `source_compact_at` the lowest.
+    /// Tests only.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
     pub fn source_compact<F: Fn(u32) -> bool>(&mut self, gate: GateAcked<F>) -> Option<Shift> {
         let at = self.next_compaction()?.offset;
         self.source_compact_at(at, gate)

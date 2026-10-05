@@ -1,6 +1,7 @@
-//! A project as card records (projects spec § Format): a `PoolSource` per
-//! pool source (ADR 0087: its ref, never audio), `Fx` and its five
-//! blocks, then `Slot` and its Sound per filled slot, then each `Part`: its
+//! A project as card records (projects spec § Format): `Fx` and its five
+//! blocks, a `PoolSource` per pool source in slot order (ADR 0087: its
+//! ref, never audio), then `Slot` and its Sound per filled slot, then each
+//! `Part`: its
 //! Sound, `Block(Part)` (the mix) and `Origin`; then ORBIT's records
 //! (`orbit::records`). `Slot`, `Part` and `Fx` open a context; the records
 //! after one belong to it. An ORBIT record closes the last Part's.
@@ -167,21 +168,19 @@ fn put_part(w: &mut RecordWriter<'_>, i: usize, part: &Part) -> Result<(), Store
     w.put(RecordTag::Origin, &origin)
 }
 
-/// The pool's source refs, absent ones included, ordered by ref: one file
-/// for one set of sources, whatever their slots.
+/// The pool's source refs, absent ones included, in slot order (spec
+/// § Format). A load takes them into the same slots, in the same order.
 fn put_sources(w: &mut RecordWriter<'_>, pool: &Pool) -> Result<(), StoreError> {
-    let mut refs = SourceId::ALL.map(|s| pool.source(s).map(|e| e.r));
-    refs.sort_unstable_by_key(|r| r.map(|r| (r.crc, r.frames, r.rate)));
-    for r in refs.into_iter().flatten() {
-        w.put(RecordTag::PoolSource, &r.to_bytes())?;
+    for e in SourceId::ALL.into_iter().filter_map(|s| pool.source(s)) {
+        w.put(RecordTag::PoolSource, &e.r.to_bytes())?;
     }
     Ok(())
 }
 
 /// Streams `p` from live state: no copy, no buffer past one record.
 pub fn encode_project(p: &Project, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
-    put_sources(w, &p.pool)?;
     put_fx(w, &p.perf.fx)?;
+    put_sources(w, &p.pool)?;
     for s in SlotId::ALL {
         if let Some(sound) = p.pool.get(s) {
             put_encoded(w, s, sound)?;
@@ -364,7 +363,8 @@ impl ProjectCheck {
     /// record outside any context, a context repeated, a record the context
     /// doesn't hold or holds once read twice, a Sound's rule broken, an
     /// ORBIT record before the six Parts, or anything but ORBIT's after
-    /// one, a `PoolSource` after `Fx` or repeated. `Bounds`: an index out
+    /// one, a `PoolSource` outside `Fx` (before it, or after a `Slot` or
+    /// `Part`) or repeated. `Bounds`: an index out
     /// of range, a payload of the wrong shape, or a 33rd `PoolSource`.
     /// `BadName`: a context's name. An ORBIT record is never an error past
     /// its place: a bad one keeps the neutral base.
@@ -409,7 +409,7 @@ impl ProjectCheck {
             (ReadTag::Known(t), _) if t.is_orbit() => self.orbit(t, p, target, stage),
             (ReadTag::Unknown(_), Context::Orbit) => Ok(()),
             (ReadTag::Known(_), Context::Orbit) => Err(FileError::Corrupt),
-            (ReadTag::Known(RecordTag::PoolSource), Context::None) => self.pool_source(p, target),
+            (ReadTag::Known(RecordTag::PoolSource), Context::Fx) => self.pool_source(p, target),
             (ReadTag::Known(RecordTag::PoolSource), _) => Err(FileError::Corrupt),
             (ReadTag::Known(t @ (RecordTag::Fx | RecordTag::Slot | RecordTag::Part)), _) => {
                 self.open(t, p, target, stage)

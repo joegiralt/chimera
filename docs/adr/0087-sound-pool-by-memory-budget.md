@@ -20,7 +20,7 @@ Measured on `orbit` (43d59110), which merges first:
 - **`encode_sound` writes all 19 voice blocks of both engines,** 1 143 B a
   Sound, more than the struct. Writing only params that differ from
   `Sound::neutral` gives 153–273 B for the factory Sounds and 128 B for
-  INIT. The worst case is 1 858 B.
+  INIT. The worst case is 1 872 B, its `SourceRef` included.
 - **AXI really free** (`rust-size`, `main` at cf50ee74) is 140 024 B on
   the largest shipping build (`orbit`), and 104 188 B on the largest build
   of all (`bench,master-tape`, whose diagnostics hold 31 KB). The paper model, `AXI_RESIDENT` with its 64 KiB `UI_RESERVE`

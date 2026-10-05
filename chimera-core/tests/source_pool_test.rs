@@ -1069,7 +1069,7 @@ fn slow_ms() -> u32 {
     let mut g = SLOW.lock().unwrap();
     let a = g.as_mut().expect("the slow audio");
     a.ms += 1;
-    if a.ms % SLOW_PERIOD_MS == 0 {
+    if a.ms.is_multiple_of(SLOW_PERIOD_MS) {
         let _ = a.tok.begin_block();
         let killed = a.link.epoch() != a.at;
         a.tok.store_sounding(if killed { 0 } else { a.old.bit() });

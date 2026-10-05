@@ -31,7 +31,7 @@ These figures were first measured on `orbit` (43d59110), then re-measured on `ma
 | `Project` on orbit (Performance 5 720 + slots 28 672 + ORBIT 3 912 + meta) | 38 424 | same test |
 | A Sound as card records today (`encode_sound`, every block of both engines) | **1 143** (1 127 records + 16 name) | `tests/fixtures/v1/*.snd`, 1 159 B with the 28 B header and 4 B CRC |
 | The same Sounds, sparse (§ Sparse encoding) | **153–273, mean 211**; INIT 128 | the 8 factory fixtures, re-encoded by hand |
-| Worst case, sparse | 1 858 | § Sparse encoding |
+| Worst case, sparse | 1 872 | § Sparse encoding |
 | AXI by the paper model (`AXI_RESIDENT`, with `orbit`) | 442 084 (64 KiB spare required, 82 204 spare) | `axi_residents_fit` |
 | AXI really used, default features | 382 496; 141 792 free | `rust-size -A`, release ELF |
 | AXI really used, `--features orbit` (the largest shipping build) | 384 264; **140 024 free** | same |
@@ -206,7 +206,7 @@ A source delete leaves a hole below the sources above it. Compaction slides them
 
   A param added later takes its neutral default at addition. Old sparse files omit it and get that default, just as old full files lacked it.
 - **Canonical.** The bytes depend only on the Sound's bits, so two Sounds are byte-equal exactly when they are bit-equal. `sound_crc` keeps its definition, and its values change once. No CRC is stored on the card: `Origin` stores the slot, and ADR 0043 recomputes `Origin.crc` at load.
-- **Sizes.** The 8 factory fixtures go from 1 143 B to 153–273 B, and INIT to 128 B (its RR and OUT LEVEL sit off neutral, ADR 0063). The bound is 16 (name) + 5 (`Engine`) + 19 × 5 (block heads) + 205 × 5 (params) + 164 (`Registry`) + 37 (`ModDests`) + 516 (`Routes`) = **1 858 B**. `MAX_SOUND_COST` (1 872) is asserted.
+- **Sizes.** The 8 factory fixtures go from 1 143 B to 153–273 B, and INIT to 128 B (its RR and OUT LEVEL sit off neutral, ADR 0063). The bound is 16 (name) + 5 (`Engine`) + 19 × 5 (block heads) + 205 × 5 (params) + 164 (`Registry`) + 37 (`ModDests`) + 516 (`Routes`) + 14 (`SourceRef`) = **1 872 B**. `MAX_SOUND_COST` (1 872) is asserted.
 - **A legacy file's previewed cost differs from its loaded cost.** A library `.snd` written full (before step 1) previews at about 1.1 K from its file size, and costs its sparse size, around 0.2 K, once loaded. The preview over-estimates, never under: a fitting load is never refused late. After a load, the meter shows the true cost.
 - **One encoder writes everywhere:** the arena, project `Slot` and `Part` records, library `.snd` files and the factory blob.
 

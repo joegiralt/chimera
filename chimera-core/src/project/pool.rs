@@ -192,7 +192,10 @@ impl Pool {
         self.arena.source_count()
     }
 
-    /// The bytes the sources hold, pending holes included.
+    /// The bytes the sources hold, pending holes included. Tests only: the
+    /// meter reads `split`.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
     pub fn source_used(&self) -> Cost {
         Cost::of((self.used().bytes() - self.arena.sounds().bytes()) as usize)
     }

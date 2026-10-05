@@ -518,7 +518,8 @@ fn sparse_sizes() {
 }
 
 /// `neutral(e)` with every stored param that can move at another value, a
-/// full registry and every route; and how many can't (one-value enums).
+/// full registry, every route and a source; and how many can't (one-value
+/// enums).
 fn worst(e: EngineType) -> (Sound, usize) {
     let neutral = Sound::neutral(e);
     let mut s = Sound::neutral(e);
@@ -561,11 +562,17 @@ fn worst(e: EngineType) -> (Sound, usize) {
             s.mod_state.set_route(src, d, 1);
         }
     }
+    s.source = Some(chimera_core::project::SourceRef {
+        crc: 0xC401_0001,
+        frames: 27_900,
+        rate: 24_000,
+    });
     (s, stuck)
 }
 
 /// 16 + 5 (`Engine`) + 19 × 5 (block heads) + 205 × 5 (params) + 164
-/// (`Registry`) + 37 (`ModDests`) + 516 (`Routes`) = 1 858 B, less 5 B for
+/// (`Registry`) + 37 (`ModDests`) + 516 (`Routes`) + 14 (`SourceRef`) =
+/// 1 872 B, less 5 B for
 /// each param that has nowhere to move. A new param moves it: raise
 /// `MAX_SOUND_COST` with it.
 #[test]
@@ -578,6 +585,6 @@ fn sparse_bound() {
         assert!(c <= MAX_SOUND_COST, "{e:?} {c}");
         most = most.max(c + 5 * stuck);
     }
-    assert_eq!(most, 1858);
+    assert_eq!(most, 1872);
     assert_eq!(MAX_SOUND_COST, most.next_multiple_of(16));
 }

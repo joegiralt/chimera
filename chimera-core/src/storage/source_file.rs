@@ -6,9 +6,9 @@
 
 use chimera_hal::store::{Dir, FileName, Store, StoreError};
 
+use super::SourceRef;
 use crate::dsp::tape_engine::read::{DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape};
 use crate::name::SoundName;
-use crate::project::SourceRef;
 
 use super::card::Ready;
 use super::crc::Crc32;

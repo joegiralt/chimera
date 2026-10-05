@@ -15,8 +15,8 @@ use chimera_core::project::{
 use chimera_core::source_table::AudioToken;
 use chimera_core::storage::{
     Card, DecodeInPlace, Event, FileError, FileKind, Framer, Generation, Header, LoadError,
-    ProjectId, ReadTag, RecordTag, SaveError, Side, SourceHead, Wrote, read_source_into,
-    source_crc, source_file, source_file_min_len, write_file, write_source,
+    ProjectId, ReadTag, RecordTag, RecordWriter, SaveError, Side, SourceHead, Wrote,
+    read_source_into, source_crc, source_file, source_file_min_len, write_file, write_source,
 };
 use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use chimera_hal::testkit::MemStore;
@@ -151,11 +151,24 @@ fn pool_source_round_trips() {
     }
     let bytes = encode_project(&p);
     let refs = pool_sources(&bytes);
-    // Ordered by ref, not by slot: one canonical file.
-    let want: Vec<Vec<u8>> = [(0x0100, 64), (0x0200, 2_001), (0x0300, 900)]
+    // In slot order, after `Fx` and its blocks, before the first `Slot`.
+    let want: Vec<Vec<u8>> = [(0x0300, 900), (0x0100, 64), (0x0200, 2_001)]
         .map(|(c, f)| sref(c, f).to_bytes().to_vec())
         .into();
     assert_eq!(refs, want);
+    let tags: Vec<ReadTag> = records(&bytes).into_iter().map(|(t, _)| t).collect();
+    let at = |t: RecordTag| tags.iter().position(|&x| x == ReadTag::Known(t)).unwrap();
+    let (fx, first, slot) = (
+        at(RecordTag::Fx),
+        at(RecordTag::PoolSource),
+        at(RecordTag::Slot),
+    );
+    assert!(fx < first && first + 3 <= slot);
+    assert!(
+        tags[fx + 1..first]
+            .iter()
+            .all(|&t| t == ReadTag::Known(RecordTag::Block))
+    );
     assert!(
         records(&bytes)
             .iter()
@@ -166,8 +179,12 @@ fn pool_source_round_trips() {
     decode_project(&bytes, &mut q).unwrap();
     assert_eq!(encode_project(&q), bytes, "byte-equal");
     // No card read here: each ref is an absent entry, costing nothing.
-    for (c, f) in [(0x0100, 64), (0x0200, 2_001), (0x0300, 900)] {
+    for (slot, (c, f)) in [(0x0300, 900), (0x0100, 64), (0x0200, 2_001)]
+        .into_iter()
+        .enumerate()
+    {
         let id = q.pool().find_source(sref(c, f)).expect("the ref");
+        assert_eq!(id.index(), slot, "the same slot");
         assert!(q.pool().source(id).unwrap().absent());
     }
     assert_eq!(q.pool().source_used(), Cost::default());
@@ -650,43 +667,70 @@ fn a_card_fault_ends_the_source_reads() {
     assert_eq!(q.pool().source_used(), Cost::default());
 }
 
-/// `PoolSource` rules: a 9-byte payload is Bounds, a ref twice is
-/// Corrupt, a 33rd is Bounds, and one past the Parts is Corrupt.
+/// `PoolSource` rules: only between `Fx`'s blocks and the first `Slot`; a
+/// 9-byte payload is Bounds, a ref twice is Corrupt, a 33rd is Bounds, and
+/// one before `Fx` or past the Parts is Corrupt.
 #[test]
 fn pool_source_rules() {
     let (p, _) = Project::boxed();
-    let file = |pre: &[Vec<u8>], post: &[Vec<u8>]| {
+    let body = records(&encode_project(&p));
+    // `p`'s records with `at` before `Fx`, `mid` after `Fx`'s blocks and
+    // `end` after ORBIT's.
+    let file = |at: &[Vec<u8>], mid: &[Vec<u8>], end: &[Vec<u8>]| {
         let h = Header {
             kind: FileKind::Project,
             generation: Generation::FIRST,
             name: Some(p.meta().name()),
         };
+        let pool = |w: &mut RecordWriter<'_>, rs: &[Vec<u8>]| {
+            rs.iter().try_for_each(|r| w.put(RecordTag::PoolSource, r))
+        };
+        let slot = body
+            .iter()
+            .position(|(t, _)| *t == ReadTag::Known(RecordTag::Slot))
+            .unwrap();
         let mut sink = VecSink(Vec::new());
         write_file(&mut sink, &h, &mut |w| {
-            for r in pre {
-                w.put(RecordTag::PoolSource, r)?;
+            pool(w, at)?;
+            for (i, (t, payload)) in body.iter().enumerate() {
+                if i == slot {
+                    pool(w, mid)?;
+                }
+                let ReadTag::Known(t) = *t else {
+                    unreachable!()
+                };
+                w.put(t, payload)?;
             }
-            chimera_core::project::encode_project(&p, w)?;
-            for r in post {
-                w.put(RecordTag::PoolSource, r)?;
-            }
-            Ok(())
+            pool(w, end)
         })
         .unwrap();
         sink.0
     };
     let r = |i: u32| sref(i, 64).to_bytes().to_vec();
     let decode = |bytes: Vec<u8>| decode_project(&bytes, &mut Project::boxed().0);
+    assert_eq!(decode(file(&[], &[], &[])), Ok(()));
     assert_eq!(
-        decode(file(&[r(1)[..9].to_vec()], &[])),
+        decode(file(&[], &[r(1)[..9].to_vec()], &[])),
         Err(FileError::Bounds)
     );
-    assert_eq!(decode(file(&[r(1), r(1)], &[])), Err(FileError::Corrupt));
+    assert_eq!(
+        decode(file(&[], &[r(1), r(1)], &[])),
+        Err(FileError::Corrupt)
+    );
     let all: Vec<Vec<u8>> = (0..32).map(r).collect();
-    assert_eq!(decode(file(&all, &[])), Ok(()));
+    assert_eq!(decode(file(&[], &all, &[])), Ok(()));
     let over: Vec<Vec<u8>> = (0..33).map(r).collect();
-    assert_eq!(decode(file(&over, &[])), Err(FileError::Bounds));
-    assert_eq!(decode(file(&[], &[r(1)])), Err(FileError::Corrupt));
+    assert_eq!(decode(file(&[], &over, &[])), Err(FileError::Bounds));
+    assert_eq!(
+        decode(file(&[r(1)], &[], &[])),
+        Err(FileError::Corrupt),
+        "before Fx"
+    );
+    assert_eq!(
+        decode(file(&[], &[], &[r(1)])),
+        Err(FileError::Corrupt),
+        "past ORBIT"
+    );
 }
 
 /// `h`'s samples as a 4-zone `ZoneSet` head, its CRC as TAPE Task 2 has
@@ -758,6 +802,8 @@ fn a_ref_with_no_slot_is_lossy() {
         p.source_store(sref(0x100 + crc, 64), &[1; 40]).unwrap();
     }
     let mut d = ProjectDecoder::new_for_test(&mut p);
+    let fx = Event::Record(ReadTag::Known(RecordTag::Fx), &[]);
+    assert_eq!(d.apply(fx), Ok(()));
     let r = sref(0x999, 64).to_bytes();
     let e = Event::Record(ReadTag::Known(RecordTag::PoolSource), &r);
     assert_eq!(d.apply(e), Ok(()));

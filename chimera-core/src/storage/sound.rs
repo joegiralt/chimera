@@ -3,6 +3,7 @@
 
 use chimera_hal::store::StoreError;
 
+use super::SourceRef;
 use crate::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use crate::block::{DiskCode, ParamId};
 use crate::mod_path::{LABEL_LEN, MAX_REGISTRY_DESTS, ModDestRegistry};
@@ -10,7 +11,6 @@ use crate::modulation::{MAX_MOD_DESTS, MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::SoundName;
 use crate::params::{EngineType, ParamSnapshot};
 use crate::preset::Sound;
-use crate::project::SourceRef;
 
 use super::block_codec::{ByteSet, decode_block, encode_block};
 use super::codes::{MIGRATIONS, TRANSLATIONS, ValidAddr};
@@ -26,8 +26,9 @@ const _: () = assert!(MAX_ROUTES * ROUTE_LEN <= MAX_RECORD_LEN);
 const _: () = assert!(MAX_REGISTRY_DESTS * REGISTRY_ENTRY_LEN <= MAX_RECORD_LEN);
 
 /// The most a Sound costs in the pool: its 16 B name and its sparse records
-/// with every param off neutral, a full registry and every route (1 858 B
-/// for 205 params), rounded up to 16 B. `sparse_bound` pins it.
+/// with every param off neutral, a full registry, every route and a
+/// `SourceRef` (1 872 B for 205 params), rounded up to 16 B. `sparse_bound`
+/// pins it.
 pub const MAX_SOUND_COST: usize = 1872;
 
 impl Sound {
