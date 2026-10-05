@@ -383,17 +383,20 @@ The random generator draws each param uniformly from its spec range, quantised a
 #360 (private issue #360): a power cut mid-save can leave a new file's clusters marked used with no directory entry. #362 (private issue #362) is the device-error variant: `alloc` marks the new cluster end-of-chain before it links the previous one, so when the link's sector fails to flush, `drop_chain` stops at the old tail and strands the new cluster. Detection exists only in the tests, and `fat_check` (`chimera-fat/tests/common/image.rs:598`) walks only `/CHIMERA`, so it is no oracle for a whole-volume sweep. This task adds a bounded sweep to `chimera-fat`, run once at boot, checked against `fsck.fat -n`.
 
 **Decisions:**
-- **#362 is fixed at its source, not by reordering.** Writing EOC before the link keeps a *reachable* chain safe: `grow` extends a live directory, and linking first would let a cut leave a live chain pointing at a free cluster, which the next `alloc` cross-links. So `alloc` keeps its order. `Table` instead keeps `fresh: Option<(prev, c)>` from the last `alloc`:
-  - It clears only when a flush of `fat_block(prev)` carrying the link lands in FAT 1, or at once when `prev` is `None` or shares `c`'s FAT sector.
+- **#362 is fixed at its source, not by reordering.** Writing EOC before the link keeps a *reachable* chain safe: `grow` extends a live directory, and linking first would let a cut leave a live chain pointing at a free cluster, which the next `alloc` cross-links. So `alloc` keeps its order. `Table` instead keeps `fresh: Option<(u32, u32)>`, the `(prev, c)` of the last `alloc`, one type everywhere:
+  - It is set only when `prev` is `Some` and in another FAT sector than `c`, and clears only when a flush of `fat_block(prev)` carrying the link lands in FAT 1.
+  - While `fresh` is pending, `alloc` flushes first, so at most one pair is ever pending.
+  - `free_chain` returns its last freed cluster and whether it ended on an end mark.
   - `drop_chain(start)` frees `c` only if its walk freed `prev`, ended there on an end mark, and `c` still reads EOC. Otherwise `c` is left alone.
-  - `heal` uses the same check, with the orphan `(start, Option<(prev, c)>)`. Stale orphans are kept per `VolumeId`, as now (the ADR notes it).
+  - `heal` uses the same check, with the orphan `(u32, Option<(u32, u32)>)`: `start` and the pending pair. Stale orphans are kept per `VolumeId`, as now (the ADR notes it).
 - **The sweep runs at boot only.** A power cut is always followed by a boot, so the first mount after power-on covers #360. Device errors mid-session are #362's fix and the orphan. A card swapped in from a computer gets no sweep: its disk check is the computer's job.
 - **Reachability needs a bitmap, one bit a cluster, which the store can't hold** (ADR 0048: 2 KB). At boot the arena's gap is unused, so the firmware lends it from the `ui` static's Project: `shared::take_ui()` → `ui.project_mut().pool.sweep_scratch()`, which calls `ArenaWriter::gap_mut`. It asserts that no source row is published. The sweep zeroes its own bitmap. The host lends a `Vec`. `NoRoom` is decided from `Layout` (clusters against bits) before any read.
-- **One operation, under the card deadlines** (`SD_IDLE_MS` 600, `SD_OP_CAP_MS` 10 s, `chimera-stm32/src/sd.rs:34`), in three phases:
-  - **mark:** every directory, and each entry's chain;
-  - **count:** one pass over FAT 1, and over FAT 2 for rule 1, both inside the time budget;
+- **One operation, under the card deadlines** (`SD_IDLE_MS` 600, `SD_OP_CAP_MS` 10 s, `chimera-stm32/src/sd.rs:34`), in four phases:
+  - **compare:** FAT 1 and FAT 2 read side by side. More than one differing sector is `FatsDiffer`; D's FAT 2 copy (512 B) is kept in RAM;
+  - **mark:** every directory, and each entry's chain, over the union of the copies in D (rule 1). The "no live entry after `0x00`" rule makes mark read whole directory chains, so `mark_ms` can be large on a card with many folders; the 10 s cap aborts safely;
+  - **count:** one pass over FAT 1, plus D's FAT 2 copy from RAM. Compare's extra FAT 1 read and the FAT 2 read both count in the time budget;
   - **free:** under the same sticky deadline. Stopping partway is safe, because every cluster it frees was proven unreachable before the first write. `sweep_write_error_is_safe` and `sweep_cut_is_safe` cover it.
-- **Measure before deciding the trigger.** The dry run reports spc, clusters, FAT bytes, the ms for mark and for count, and its abort reason, even on a doubt. At about 2 s or less it runs every boot. Over that, a dirty-bit follow-up issue is opened and decided before `sweep-free`.
+- **Measure before deciding the trigger.** The dry run reports spc, clusters, FAT bytes, the ms for compare, mark and count, and its abort reason, even on a doubt. At about 2 s or less it runs every boot. Over that, a dirty-bit follow-up issue is opened and decided before `sweep-free`.
 - **Freeing waits for the owner.** The firmware runs `Sweep::DryRun` only. `Sweep::Free` is behind the `chimera-stm32` cargo feature `sweep-free`, which carries `#[cfg(feature = "sweep-free")] compile_error!("owner's go required");`. Only the commit that enables Free removes that line.
 - **A dry run cannot write.** `DryRun` wraps the device in `ReadOnly<B>`, whose `write` returns an error, and it never calls `will_change` (so no `heal`, and no FSInfo patch).
 
@@ -408,7 +411,8 @@ The random generator draws each param uniformly from its spec range, quantised a
 
 **Abort rules.** The sweep must never free a reachable cluster, so any doubt ends it with `Err(Doubt)` before the first write, and nothing is freed:
 1. **FAT copies.** FAT 2 differs from FAT 1 in more than one sector: `FatsDiffer`. A cut can leave exactly one sector `D` differing.
-   - The mark phase uses the union of both copies: for chains through `D`, it follows both links, and a double reach is `CrossLinked`.
+   - Compare finds D and keeps its FAT 2 copy in RAM.
+   - The mark phase uses the union of both copies: for chains through `D`, it follows both links, and a double reach is `CrossLinked`. If D's two copies point a *marked* cluster at two different clusters, that is `FatsDiffer`.
    - A cluster is lost only if it reads as lost in both copies.
    - FAT 1 is authoritative for writing. FAT 2's copy of `D` is written from FAT 1 only after mark and count succeed, as the free phase's first write.
 2. **An unreadable directory** (`Unreadable`): any device error reading a directory block or a FAT sector.
@@ -430,24 +434,25 @@ The random generator draws each param uniformly from its spec range, quantised a
 **Files:**
 - Create: `chimera-fat/src/sweep.rs` (the raw classifier, mark, count, free, the abort rules), `chimera-fat/tests/sweep_test.rs`
 - Modify:
-  - `chimera-fat/src/fat.rs`: `Table::fresh: Option<(u32, Option<u32>)>`, which `alloc` sets and the landed flush clears; `drop_chain` and `heal` use the rule above; `FatCache::orphan` becomes `Option<(u32, Option<(u32, u32)>)>`;
+  - `chimera-fat/src/fat.rs`: `Table::fresh: Option<(u32, u32)>`, which `alloc` sets (flushing first while one is pending) and the landed flush clears; `free_chain` returns its last freed cluster and whether it ended on an end mark; `drop_chain` and `heal` use the rule above; `FatCache::orphan` becomes `Option<(u32, Option<(u32, u32)>)>`;
   - `chimera-fat/src/store.rs`: `FatStore::sweep`, `ReadOnly<B>`, and the orphan's new type;
   - `chimera-fat/src/lib.rs` (the module);
   - `chimera-hal/src/store.rs`: `Sweep`, `Swept`, `SweepStats`, `Doubt`, and `Store::sweep`, with a default that sweeps nothing (`MemStore` has no FAT);
   - `chimera-core/src/project/arena.rs` (`ArenaWriter::gap_mut`, UI-only, its `// SAFETY:` comment as `bytes_mut`'s) and `chimera-core/src/project/pool.rs` (`Pool::sweep_scratch`, which asserts no source is published);
-  - `chimera-stm32/src/main.rs` (the dry run before `ui.boot_project` at ~338), `chimera-stm32/Cargo.toml` (`sweep-free = []`) (and the `compile_error!` at its top), `chimera-core/src/console/status.rs` (the dry run's report);
+  - `chimera-stm32/src/main.rs` (the dry run before `ui.boot_project` at ~338, and the `compile_error!`), `chimera-stm32/Cargo.toml` (`sweep-free = []`), `chimera-core/src/console/status.rs` (the dry run's report);
   - `docs/adr/`: an ADR for the sweep (boot-only, the bitmap in the arena gap, the raw classifier, the abort rules, the dry run first, stale orphans per `VolumeId`), added to `docs/adr/README.md`.
 - Test:
   - `chimera-fat/tests/sweep_test.rs` (new);
   - `chimera-fat/tests/fat_core_test.rs`;
-  - `chimera-fat/tests/dosfstools_test.rs` (`sweep_matches_fsck`; images from `mkfs.fat`);
+  - `chimera-fat/tests/dosfstools_test.rs` (`sweep_matches_fsck`; images from `mkfs.fat`; the `Fsck` helper parses `Reclaimed N unused cluster(s)`);
+  - `chimera-fat/tests/common/tree.rs` (new): a raw image writer for random trees on a `mkfs.fat` image. It writes raw 32-byte entries (LFN runs with correct checksums, any name bytes, `.`/`..` = 0) and their chains into both FATs, and sets FSInfo's free count to unknown;
   - `pool_card_test.rs`, `power_cut_test.rs` and `console_put_test.rs`: the `Cut::After` tests end with `swept(&disk)`; the device-error tests assert `fat_check`'s `lost == []` before any sweep, with the `put_entry` exception kept;
   - `chimera-fat/tests/common/image.rs` (a `swept(&disk)` helper: mount, `Sweep::Free`). `fat_check` is not grown into an oracle.
 
 **Interfaces:**
 - Produces:
   - `pub enum Sweep { DryRun, Free }`
-  - `pub struct SweepStats { pub spc: u32, pub clusters: u32, pub fat_bytes: u32, pub mark_ms: u32, pub count_ms: u32 }`
+  - `pub struct SweepStats { pub spc: u32, pub clusters: u32, pub fat_bytes: u32, pub compare_ms: u32, pub mark_ms: u32, pub count_ms: u32 }`
   - `pub struct Swept { pub lost: u32, pub freed: u32, pub healed: bool, pub stats: SweepStats }`: `freed` is 0 in `DryRun`, and `healed` says rule 1's sector was (or, in `DryRun`, would be) copied
   - `pub enum Doubt { FatsDiffer, Unreadable, DirBroken, FileShort, CrossLinked, TooDeep, NoRoom, Card(StoreError) }`
   - `fn Store::sweep(&mut self, vol: VolumeId, mode: Sweep, marks: &mut [u8]) -> Result<Swept, (Doubt, SweepStats)>`: the stats come back even on a doubt
@@ -460,6 +465,7 @@ The random generator draws each param uniformly from its spec range, quantised a
 ```rust
 // fat_core_test.rs
 #[test] fn drop_chain_frees_the_stranded_cluster() // alloc across a FAT sector; Log::fail_write, then Log::land_then_fail, at each of the four FAT writes (both copies of both sectors): drop_chain leaves fat_check's lost == [], no cross_linked, no short
+#[test] fn pending_link_sector_flush_fails() // the next free cluster sits in the sector holding the pending link, and that flush fails at FAT 1: lost == []
 #[test] fn grow_then_failed_replace_keeps_the_directory() // a directory grows a cluster, then the replace that grew it fails at each later write: the directory's chain and entries intact, no cluster freed from it, no cross_linked
 // pool_card_test.rs
 // sector_crossing_fat2_error_loses_a_cluster: un-ignored, renamed sector_crossing_fat2_error_loses_nothing, and passes on #362's fix alone, with no sweep
@@ -474,24 +480,25 @@ The random generator draws each param uniformly from its spec range, quantised a
 #[test] fn sweep_write_error_is_safe()    // Log::fail_write and Log::land_then_fail at each of the free phase's writes: no cross_linked, no short, entries intact, lost ⊆ before; a second sweep leaves lost == []
 #[test] fn sweep_cut_is_safe()            // Cut::After(k) at each of the free phase's writes: the same, after the next boot's sweep
 // dosfstools_test.rs (behind test-fat-tools)
-#[test] fn sweep_matches_fsck()           // ≥ 200 seeds; random FAT16 and FAT32 images from mkfs.fat; trees to depth 8 with 1–300 directories, F1's names, LFN runs, deleted entries with stale clusters, zero-length files with and without a cluster, chains longer than their size; N lost chains injected. Before: fsck.fat -n reports exactly the injected clusters. After Free: fsck exits 0, the used count drops by exactly the injected count, every file's bytes and chain unchanged. Seeds that add a cross-link, a loop, a broken directory link or a short file: Err, image byte-identical. Depth 9 or > 256 directories: TooDeep
+#[test] #[ignore] fn sweep_matches_fsck() // like the other dosfstools cases; ≥ 200 seeds; random FAT16 and FAT32 images from mkfs.fat; trees from common/tree.rs (`..` = 0; the root-cluster `..` is sweep_test's) to depth 8 with 1–300 directories, F1's names, LFN runs, deleted entries with stale clusters, zero-length files with and without a cluster, chains longer than their size; N lost chains injected. Before: fsck.fat -n reports exactly the injected clusters (`Reclaimed N unused cluster(s)`). After Free: fsck exits 0 with its used count unchanged (it counts only reachable clusters); the FAT's non-free count (`Table::free_count`) drops by exactly the injected count; every file's bytes and chain unchanged. Seeds that add a cross-link, a loop, a broken directory link or a short file: Err, image byte-identical. Depth 9 or > 256 directories: TooDeep
 ```
 
 - [ ] **Step 2: Run** `cargo test -p chimera-fat --features chimera-hal/testkit --test sweep_test --test fat_core_test --test pool_card_test`. Expected: FAIL (no `sweep`; the #362 test strands cluster 256).
 
 - [ ] **Step 3: Implement it.**
-  - #362 first, on its own: `fresh`, `drop_chain`, `heal`, the orphan triple. `sector_crossing_fat2_error_loses_nothing` and the two `fat_core_test` tests pass.
-  - **Mark:** `NoRoom` first, from `Layout`; zero the bitmap. From the root (FAT32: its chain from the BPB), an explicit stack of at most `MAX_DEPTH` `(dir start, block)` frames walks every directory through the raw classifier, marking each chain in full.
-  - **Count:** one pass over FAT 1 (and FAT 2 where rule 1 needs it), each sector read once, applying the definition of lost above.
-  - **Free** (`Sweep::Free` only): rule 1's FAT 2 sector first, with FSInfo's free count set to unknown in the same first write. Then `Table::set(c, FREE)` for each lost cluster, sector by sector, flushed to every copy, under the sticky deadline.
+  - #362 first, on its own: `fresh`, `alloc`'s flush while one is pending, `free_chain`'s return, `drop_chain`, `heal`, the orphan. `sector_crossing_fat2_error_loses_nothing` and the three `fat_core_test` tests pass.
+  - **Compare:** `NoRoom` first, from `Layout`. Then FAT 1 and FAT 2 side by side: more than one differing sector is `FatsDiffer`; keep D's FAT 2 copy in RAM.
+  - **Mark:** zero the bitmap. From the root (FAT32: its chain from the BPB), an explicit stack of at most `MAX_DEPTH` `(dir start, block)` frames walks every directory through the raw classifier, marking each chain in full.
+  - **Count:** one pass over FAT 1, plus D's FAT 2 copy from RAM, each sector read once, applying the definition of lost above.
+  - **Free** (`Sweep::Free` only): the writes go in order: D's FAT 2 copy, then the FSInfo patch (its free count set to unknown, a separate write), then `Table::set(c, FREE)` for each lost cluster, sector by sector, flushed to every copy, under the sticky deadline.
   - **Firmware:** `store.sweep(vol, Sweep::DryRun, ui.project_mut().pool.sweep_scratch())` runs before `ui.boot_project`, and `status` reports its result. A `Doubt` is logged with its stats, and the boot goes on.
 
 - [ ] **Step 4: Run** `just test` (it runs `test-fat-tools`), `just clippy` and `just check`. Expected: PASS. `just check` never sets `sweep-free`, which would not compile.
 
 - [ ] **Step 5: (unit) A read-only boot, dry run:**
   - Run `just flash`, then `python3 tools/chimera-usb.py status` and `shot`.
-  - `status` reports `lost {n}` (what the sweep *would* free on the owner's card), spc, clusters, FAT bytes, the mark and count ms, and any abort reason. Record them in the commit message.
-  - If mark plus count is over about 2 s, open the dirty-bit follow-up issue before anything enables `sweep-free`.
+  - `status` reports `lost {n}` (what the sweep *would* free on the owner's card), spc, clusters, FAT bytes, the compare, mark and count ms, and any abort reason. Record them in the commit message.
+  - If compare, mark and count together are over about 2 s, open the dirty-bit follow-up issue before anything enables `sweep-free`.
   - Nothing is written. Real freeing on the unit waits for the owner's go.
 
 - [ ] **Step 6: Commit** with `git add chimera-fat/src/sweep.rs chimera-fat/src/fat.rs chimera-fat/src/store.rs chimera-fat/src/lib.rs chimera-hal/src/store.rs chimera-core/src/project/arena.rs chimera-core/src/project/pool.rs chimera-core/src/console/status.rs chimera-stm32/src/main.rs chimera-stm32/Cargo.toml chimera-fat/tests docs/adr`, then `git commit -m "A boot sweep finds lost clusters, dry run on the unit; drop_chain frees the stranded cluster"`.
