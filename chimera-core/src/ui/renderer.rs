@@ -164,7 +164,7 @@ impl Renderer {
                         .map_or(0.0, a)
                 };
                 use crate::params::FilterParams;
-                let mode = f.parts[f.active_part.index()].sound.params.filter.mode();
+                let flt = &f.parts[f.active_part.index()].sound.params.filter;
                 let v = view::view(f.def, f.focus, &f.ctx);
                 let buf = value_text(f, f.focus, a(f.focus));
                 let readout = (v != View::Empty).then(|| (v.label(), buf.as_str()));
@@ -172,7 +172,7 @@ impl Renderer {
                     display,
                     at(FilterParams::CUTOFF),
                     at(FilterParams::RESONANCE),
-                    viz::Response::of(mode),
+                    viz::Response::of(flt.kind(), flt.mode()),
                     readout,
                 );
             }

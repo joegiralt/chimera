@@ -79,17 +79,13 @@ impl FilterMode {
         FilterMode::Notch,
         FilterMode::Phaser,
     ];
-
-    pub const fn label(self) -> &'static str {
-        SVF_MODE_NAMES_BY_ID[self as usize]
-    }
 }
 
-/// The SVF's modes as its MODE knob steps them, the default first (spec § 7).
-pub const SVF_MODES: [FilterMode; 8] = [
-    FilterMode::Lp24,
+/// CLEAN's modes as its MODE knob steps them (spec § 1).
+const CLEAN_MODES: [FilterMode; 8] = [
     FilterMode::Lp6,
     FilterMode::Lp12,
+    FilterMode::Lp24,
     FilterMode::Bp12,
     FilterMode::Bp24,
     FilterMode::Hp24,
@@ -97,14 +93,9 @@ pub const SVF_MODES: [FilterMode; 8] = [
     FilterMode::Phaser,
 ];
 
-/// `SVF_MODES`' names, for MODE's spec.
-pub static SVF_MODE_NAMES: [&str; 8] = [
-    "LP24", "LP6", "LP12", "BP12", "BP24", "HP24", "NOTCH", "PHASER",
-];
-
-const SVF_MODE_NAMES_BY_ID: [&str; 8] = [
-    "LP6", "LP12", "LP24", "BP12", "BP24", "HP24", "NOTCH", "PHASER",
-];
+/// `CLEAN_MODES`' screen names: what each does, the Cascadia's words. The
+/// disk idents stay the old ones.
+const CLEAN_LABELS: [&str; 8] = ["LP1", "LP2", "LP4", "BP2", "BP4", "HP4", "NOTCH1", "NOTCH2"];
 
 /// PHASER over LP24: measured 2026-09-28, bench ROUTING SVF row, rev V at
 /// 480 MHz (500 − 1 OP's 483). That row never takes `saturate`'s divide;
@@ -151,11 +142,34 @@ impl FilterKind {
     /// The kinds built, as KIND steps them.
     pub const BUILT: [FilterKind; 1] = [FilterKind::Svf];
 
-    /// Never empty; `[0]` is the default (spec § 7).
+    /// Never empty, in knob order (spec § 1).
     pub const fn modes(self) -> &'static [FilterMode] {
         match self {
-            FilterKind::Svf => &SVF_MODES,
+            FilterKind::Svf => &CLEAN_MODES,
         }
+    }
+
+    /// Where a new Sound, a KIND change that loses MODE and an unknown code
+    /// land; always in `modes()`.
+    pub const fn default_mode(self) -> FilterMode {
+        match self {
+            FilterKind::Svf => FilterMode::Lp24,
+        }
+    }
+
+    /// `modes()`' screen names, in their order.
+    pub const fn mode_labels(self) -> &'static [&'static str] {
+        match self {
+            FilterKind::Svf => &CLEAN_LABELS,
+        }
+    }
+
+    /// `m`'s screen name on this kind; its disk ident if the kind lacks it.
+    pub fn mode_label(self, m: FilterMode) -> &'static str {
+        self.modes()
+            .iter()
+            .position(|&x| x == m)
+            .map_or(m.disk_ident(), |i| self.mode_labels()[i])
     }
 
     /// NOTE → CUTOFF on a new Sound (spec § 2).
@@ -194,7 +208,7 @@ pub fn kind_change(p: FilterParams, new: FilterKind) -> FilterParams {
     let mut q = p;
     q.set_kind_raw(new);
     if !new.modes().contains(&p.mode()) {
-        q.set_mode(new.modes()[0]);
+        q.set_mode(new.default_mode());
     }
     q
 }

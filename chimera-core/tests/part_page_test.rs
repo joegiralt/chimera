@@ -139,14 +139,15 @@ fn drive_filter_folder_pages() {
     snap(&reg::DRIVE, 1, 1, &mut p);
     assert_eq!(p.drive.tone, 107.0 / 127.0);
 
-    assert_eq!(read(&reg::FILTER, &p), [0.0, 1.0, 0.0, 0.0, 0.0, 0.0]);
+    // MODE reads LP4's place in CLEAN's knob order, 2 of 7.
+    assert_eq!(read(&reg::FILTER, &p), [0.0, 1.0, 0.0, 2.0 / 7.0, 0.0, 0.0]);
     turn(&reg::FILTER, 1, -1, &mut p);
     assert_eq!(p.filter.cutoff, 20000.0 - (20000.0 - 20.0) / 128.0);
     turn(&reg::FILTER, 3, 1, &mut p);
     assert_eq!(
         p.filter.mode(),
-        FilterMode::Lp6,
-        "the next in the SVF's list"
+        FilterMode::Bp12,
+        "the next in CLEAN's list, after LP4"
     );
     turn(&reg::FILTER, 3, 20, &mut p);
     assert_eq!(p.filter.mode(), FilterMode::Phaser, "clamps at the last");

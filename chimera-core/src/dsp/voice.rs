@@ -787,10 +787,11 @@ impl Voice {
 
         // Check if done
         self.active = self.slot.is_active();
-        if !self.active && self.fade == 0 && self.filter.rings() {
+        if !self.active && self.filter.rings() {
             // The engine ended, but a self-oscillating filter rings on
-            // (#374): fade it out over this block instead of cutting it.
-            // The next note starts it from rest (`trigger`).
+            // (#374): fade it out over this block instead of cutting it,
+            // inside a steal, kill or switch fade too, which ends with the
+            // engine. The next note starts it from rest (`trigger`).
             for (i, sample) in output.iter_mut().enumerate() {
                 *sample *= (BLOCK_SIZE - 1 - i) as f32 / BLOCK_SIZE as f32;
             }

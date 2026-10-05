@@ -30,12 +30,11 @@ pub fn clean_k2(k: f32) -> f32 {
 /// Each mode's output trim at `k ≤ 0`, by `FilterMode as usize`: the
 /// middle of its untrimmed RES 1 range over 100 Hz – 8 kHz, brought to
 /// −8 dBFS, the middle of the shared band (`OSC_BAND_DB`). Untrimmed, dBFS:
-/// LP12 −2.35 to −0.74, LP24 −1.59 to +1.73, BP12 +3.70 to +5.28, BP24
-/// +5.00 to +7.76, HP24 +0.62 to +2.29. LP6 (no `k`) and NOTCH (−21 dBFS)
-/// stay 1.0 until Task 4 rebuilds them as LP1 and NOTCH1. PHASER is never
-/// trimmed: its successor NOTCH2 never oscillates (today's rings at −8 to
-/// −10 dBFS until Task 5 replaces it).
-pub(crate) const TRIM_OSC: [f32; 8] = [1.0, 0.4756, 0.3949, 0.2374, 0.191, 0.3367, 1.0, 1.0];
+/// LP1 +0.89 to +2.49, LP12 −2.35 to −0.74, LP24 −1.59 to +1.73, BP12
+/// +3.70 to +5.28, BP24 +5.00 to +7.76, HP24 +0.62 to +2.29, NOTCH1 −4.82
+/// to −3.22. PHASER is never trimmed: its successor NOTCH2 never
+/// oscillates (today's rings at −8 to −10 dBFS until Task 5 replaces it).
+pub(crate) const TRIM_OSC: [f32; 8] = [0.3277, 0.4756, 0.3949, 0.2374, 0.191, 0.3367, 0.6324, 1.0];
 
 /// `mode`'s output trim at `k`: 1 for `k ≥ 0.5`, linear to
 /// `TRIM_OSC[mode]` at `k ≤ 0`. Set at each end of a block and ramped
@@ -66,7 +65,7 @@ pub(super) struct Ramps {
 }
 
 /// A sample's coefficients: `d = 1/(1 + kg + g²)` for stage 1, and `d2`
-/// at `k2` for stage 2 (LP6's `d` is `1/(1 + g)`), and the output trim.
+/// at `k2` for stage 2, and the output trim.
 #[derive(Clone, Copy)]
 struct Coef {
     g: f32,
@@ -91,7 +90,6 @@ fn coef<const M: u8>(g: f32, k: f32, trim: f32) -> Coef {
         trim,
     };
     match FilterMode::ALL[M as usize] {
-        FilterMode::Lp6 => c.d = 1.0 / (1.0 + g),
         FilterMode::Lp24 | FilterMode::Bp24 | FilterMode::Hp24 => {
             // The second stage less resonant, so the cascade doesn't blow up.
             c.k2 = clean_k2(k);
@@ -102,7 +100,7 @@ fn coef<const M: u8>(g: f32, k: f32, trim: f32) -> Coef {
             c.d = d_at(k);
             c.d2 = c.d;
         }
-        FilterMode::Lp12 | FilterMode::Bp12 | FilterMode::Notch => c.d = d_at(k),
+        FilterMode::Lp6 | FilterMode::Lp12 | FilterMode::Bp12 | FilterMode::Notch => c.d = d_at(k),
     }
     c
 }
@@ -129,8 +127,8 @@ impl Clean {
             FilterMode::Notch => self.run::<6>(buf, r),
             FilterMode::Phaser => self.run::<7>(buf, r),
         }
-        // A NaN or infinite input poisons the states for good (LP6 reads
-        // its state unsaturated): start the next block from rest.
+        // A NaN or infinite input poisons the states for good: start the
+        // next block from rest.
         if !(self.s1[0] + self.s1[1] + self.s2[0] + self.s2[1]).is_finite() {
             (self.s1, self.s2) = ([0.0; 2], [0.0; 2]);
         }
@@ -228,11 +226,11 @@ impl Clean {
     #[inline(always)]
     fn untrimmed<const M: u8>(&mut self, x: f32, c: &Coef) -> f32 {
         match FilterMode::ALL[M as usize] {
+            // LP1: `(1 + s)/(s² + ks + 1)`, the one-pole `1/(1 + s)` at
+            // `k = 2`; Q peaks it by `√2/k` at FREQ.
             FilterMode::Lp6 => {
-                let v = (x - self.s1[0]) * c.g * c.d;
-                let lp = v + self.s1[0];
-                self.s1[0] = lp + v;
-                lp
+                let (lp, bp, _) = self.stage(x, c.g, c.k, c.d, 0);
+                lp + bp
             }
             FilterMode::Lp12 => self.stage(x, c.g, c.k, c.d, 0).0,
             FilterMode::Lp24 => {
@@ -249,9 +247,11 @@ impl Clean {
                 let hp = self.stage(x, c.g, c.k, c.d, 0).2;
                 self.stage(hp, c.g, c.k2, c.d2, 1).2
             }
+            // NOTCH1, the Cascadia's NT2: `(1 − s²/4)/(s² + ks + 1)`, a zero
+            // at 2 × FREQ, the treble −12 dB.
             FilterMode::Notch => {
                 let (lp, _, hp) = self.stage(x, c.g, c.k, c.d, 0);
-                lp + hp
+                lp + 0.25 * hp
             }
             FilterMode::Phaser => {
                 let ap1 = x - 2.0 * c.k * self.stage(x, c.g, c.k, c.d, 0).1;

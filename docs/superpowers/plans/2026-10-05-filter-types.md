@@ -655,6 +655,7 @@ git commit -m "DIRTY: Chamberlin SVF at 2x, Jury-bounded f, hard clamps"
 ```
 
   - **Task 3's review (F2):** the first test must include a MODE switch at RES 1, in self-oscillation, not only RES 0.5. Today the switch steps 0.62–1.42 (BP24 → LP12, LP24 → PHASER, HP24 → LP6 at 500 Hz) against a ring step of about 0.04: the trim steps with the mode on top of the topology.
+  - **Task 4:** `param_sweep_test::clicks_ok` allows a Filter MODE jump (LP1 → NOTCH2, knob 0 → 7, steps 48× the steady state on TRI PROBE). Remove that allowance here; the crossfade must pass the sweep without it.
 - [ ] **Step 2: Run them and see them fail.** Expect FAIL (today a TYPE change zeroes the state, so the deviation is about 47 %).
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run them and see them pass.** Expect PASS. Mutation-check:
@@ -1368,3 +1369,13 @@ The moving, LEVEL and tap terms are deltas, not over `OLD_LP24`, and don't chang
 - **Re-recorded goldens ("CLEAN's k law and trims, ADR 0096"):** all 24 `golden_test` rows (RES 0's `k` moved from 2.01 to 2); `filter_test::every_mode_renders_as_recorded` (7 of 8, not LP6) and `full_resonance_rings_at_its_level`'s four levels; `instrument_test` `GOLDENS` and `PRE_LIMITER` (5 each); `codec_compat_test::FIXTURE_RENDERS` (all 10); `factory_level_test::KNOWN` factory 4 0.001 → 0.07 dB and SQR BASS 0.56 → 0.74 (the law: +0.70 dB at its cutoff). STRING's 8-note v127 chord still takes 2.8 dB of gain reduction (ADR 0063's cap 3).
 - **Voice end (fix round 1):** a voice whose engine ends while its filter still rings (a state above −80 dB) fades that block to 0 instead of cutting; the next note starts the filter from rest (`Clean::reset`). Re-recorded for the fade: `golden_test` `factory_5` and `codec_compat_test` `factory_5.snd` (SQR BASS ends on a −65 dB filter tail). The ring after note-off itself is #374.
 
+### Task 4: CLEAN's modes, LP1 and NOTCH1 (2026-10-05)
+
+- **Knob order** `[LP1, LP2, LP4, BP2, BP4, HP4, NOTCH1, NOTCH2]`, default LP4 (`default_mode()`), MODE's static default 2.0. Disk codes and idents unchanged, so stored Sounds load the same mode.
+- **`TRIM_OSC`** gains LP1 0.3277 (untrimmed +0.89 to +2.49 dBFS → −8.80 to −7.20) and NOTCH1 0.6324 (−4.82 to −3.22 → −8.80 to −7.20). PHASER stays 1.0 until Task 5.
+- **Responses at RES 0** (250 Hz, 1 kHz and 4 kHz alike, on the prototype's axis, `tan(π f/fs) = w·g`): slopes over 4..8 × FREQ LP1 −5.82, LP2 −11.65, LP4 −22.78, HP4 +22.78 dB/oct. Over 2..4 × LP4 reads −20.15 (the second stage, `k₂` 2.7, short of its asymptote), outside the brief's −24 ± 3, so the test reads 4..8 ×. NOTCH1's zero lands on `tan(π f/fs) = 2g` (499.9, 1,991.5 and 7,516.5 Hz), −150 dB deep.
+- **Pinned bounds:** `CLEAN_JUMP_BOUND` 0.81 → 0.92 (RES 1 jumps now include LP1 and NOTCH1: max 0.833). `CLEAN_BOUND` and `CLEAN_STATE_BOUND` unchanged (grid max 12.55, states 3.84).
+- **Probes** (LP4) unchanged: steady 47, moving 67. **`CLEAN_MOVE_COST`** stays 55.
+- **Flash:** `text` 709,928 → 710,096 (+168 B), default release build.
+- **Re-recorded ("LP1 and NOTCH1, ADR 0096"):** `filter_test::every_mode_renders_as_recorded` LP6 and NOTCH rows; screen goldens `bigviz_filter` and `flt_mode` (the MODE label only: LP4, HP4). No `golden_test` patch is on LP6 or NOTCH: none moved.
+- **Voice end (Task 3's F5):** the end fade now also runs inside a steal, kill or switch fade, which stops with the engine half way down.

@@ -33,8 +33,10 @@ const GOLDENS: &[(&str, u64)] = &[
     ("algo_ar", 0x661a8ad43d30be01),
     ("algo_d1l", 0x7ca2aaf1d50c3055),
     ("algo_d2r", 0x60965afdf2d22552),
-    ("bigviz_filter", 0x64de3de945e82cf3),
-    ("flt_mode", 0x9dd12a044e75cc68),
+    // Re-recorded: MODE reads LP4, CLEAN's label for LP24 (ADR 0096).
+    ("bigviz_filter", 0x69bd1e4289e89a80),
+    // Re-recorded: MODE reads HP4, CLEAN's label for HP24 (ADR 0096).
+    ("flt_mode", 0x75e888cf52f51a44),
     ("env_a", 0x6f15c442d71edf83),
     ("env_b_env_ad", 0x849b12e99ea94bfd),
     ("env_b_env_ahr", 0x25bd96be29456024),

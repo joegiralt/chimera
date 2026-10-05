@@ -198,6 +198,14 @@ fn param(addr: ParamAddr, label: &'static str, fmt: ValFmt) -> View {
     View::Param { addr, label, fmt }
 }
 
+/// `addr`'s format under `ctx`: MODE names its kind's own modes.
+fn fmt_of(addr: ParamAddr, fmt: ValFmt, ctx: &SlotCtx) -> ValFmt {
+    match (addr.block, addr.param) {
+        (BlockRef::Filter, FilterParams::MODE) => ValFmt::Names(ctx.kind.mode_labels()),
+        _ => fmt,
+    }
+}
+
 /// Slot `i` of `def` as it reads under `ctx`.
 pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
     let Some(slot) = def.params.get(i) else {
@@ -217,7 +225,7 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
             label: slot.label(),
             text: "TYPE B",
         },
-        SlotBinding::Param(addr) => param(addr, slot.label(), slot.format()),
+        SlotBinding::Param(addr) => param(addr, slot.label(), fmt_of(addr, slot.format(), ctx)),
         SlotBinding::SelectedOp(id) => param(
             ParamAddr::new(BlockRef::AlgoOp(ctx.sel_op), id),
             slot.label(),
@@ -235,7 +243,8 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
                 label,
             }) => {
                 let addr = ParamAddr::new(BlockRef::Filter, id);
-                param(addr, label, addr.spec().map_or(ValFmt::Uni, |s| s.fmt))
+                let fmt = addr.spec().map_or(ValFmt::Uni, |s| s.fmt);
+                param(addr, label, fmt_of(addr, fmt, ctx))
             }
             Some(&PanelKnob {
                 target: PanelTarget::Route(source),

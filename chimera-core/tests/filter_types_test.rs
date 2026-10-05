@@ -2,15 +2,16 @@
 
 mod common;
 
+use chimera_core::block::{Block, DiskCode};
 use chimera_core::dsp::filter::clean::{clean_k, clean_k2, trim};
 use chimera_core::dsp::filter::coef::{g_of, tan_accurate};
-use chimera_core::dsp::filter::{Clean, FilterMode, routed_cutoff};
+use chimera_core::dsp::filter::{Clean, FilterKind, FilterMode, routed_cutoff};
 use chimera_core::modulation::ModState;
-use chimera_core::params::{EngineType, FilterParams, ParamSnapshot};
+use chimera_core::params::{EngineType, FILTER_SPECS, FilterParams, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::Rig;
-use common::filter_ref::{OSC_BAND_DB, clean_ref, g_track, ramp_track, rms_db, trim_ref};
+use common::filter_ref::{OSC_BAND_DB, clean_ref, g_track, mag_db, ramp_track, rms_db, trim_ref};
 
 const SR: u32 = 48_000;
 const FS: f32 = SR as f32;
@@ -99,11 +100,13 @@ fn jump_error(mode: FilterMode, blocks: &[(f32, f32)]) -> f64 {
     err / peak
 }
 
-const JUMP_MODES: [FilterMode; 4] = [
+const JUMP_MODES: [FilterMode; 6] = [
+    FilterMode::Lp6,
     FilterMode::Lp12,
     FilterMode::Lp24,
     FilterMode::Bp24,
     FilterMode::Hp24,
+    FilterMode::Notch,
 ];
 
 #[test]
@@ -166,7 +169,8 @@ fn clean_k_law_has_its_onset_at_0_95() {
 fn clean_trim_ramps_with_k() {
     for mode in OSC_MODES {
         let osc = trim(mode, 0.0);
-        assert!(osc > 0.1 && osc < 0.6, "{mode:?}: {osc}");
+        // NOTCH1's ¼ HP keeps its ring the quietest: 0.63.
+        assert!(osc > 0.1 && osc < 0.7, "{mode:?}: {osc}");
         assert_eq!(trim(mode, 0.5), 1.0);
         assert_eq!(trim(mode, 2.0), 1.0);
         assert_eq!(trim(mode, clean_k(1.0)), osc);
@@ -175,13 +179,16 @@ fn clean_trim_ramps_with_k() {
     assert_eq!(trim(FilterMode::Phaser, clean_k(1.0)), 1.0);
 }
 
-/// The modes that self-oscillate today: LP1 and NOTCH1 join in Task 4.
-const OSC_MODES: [FilterMode; 5] = [
+/// The modes that self-oscillate: all but NOTCH2 (PHASER), which never
+/// will (spec § CLEAN's DSP).
+const OSC_MODES: [FilterMode; 7] = [
+    FilterMode::Lp6,
     FilterMode::Lp12,
     FilterMode::Lp24,
     FilterMode::Bp12,
     FilterMode::Bp24,
     FilterMode::Hp24,
+    FilterMode::Notch,
 ];
 
 /// `n` samples of `mode` at a held `fc` and RES, fed `x(i)`.
@@ -305,8 +312,9 @@ const CLEAN_BOUND: f32 = 13.8;
 /// `sat_c1`, so the loop never sees more than 1.5.
 const CLEAN_STATE_BOUND: f32 = 4.22;
 
-/// The RES 1 jumps' bound on the 0.8 saw: their max, 0.733, × 1.1.
-const CLEAN_JUMP_BOUND: f32 = 0.81;
+/// The RES 1 jumps' bound on the 0.8 saw: their max, 0.833, × 1.1. It was
+/// 0.733 before LP1 and NOTCH1 joined (NOTCH1 passes the saw's low end).
+const CLEAN_JUMP_BOUND: f32 = 0.92;
 
 /// Task 2's one-block jumps at RES 1, where self-oscillation makes the
 /// reference's relative error meaningless: bounded instead (spec test 4).
@@ -482,6 +490,50 @@ fn a_voice_ending_mid_oscillation_fades_without_a_click() {
     }
 }
 
+/// The same, with the voice stolen (`kill`) in the block its engine ends
+/// in: the steal fade stops with the engine, half way down, and the end
+/// fade takes it the rest of the way.
+#[test]
+fn an_engine_ending_inside_a_steal_fade_fades_too() {
+    for engine in [EngineType::Algo, EngineType::Modal] {
+        // The block the engine ends in: the last but the idle one.
+        let (y, ..) = ring_out(engine, 1.0);
+        let end = y.len() / BLOCK_SIZE - 2;
+        let mut p = ParamSnapshot::for_engine(engine);
+        (p.filter.cutoff, p.filter.resonance) = (500.0, 1.0);
+        let mut r = Rig::new(SR);
+        r.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &p);
+        let (mut out, mut b) = (Vec::new(), [0.0f32; BLOCK_SIZE]);
+        for blk in 0..=end + 1 {
+            if blk == 375 {
+                r.note_off();
+            }
+            if blk == end {
+                r.kill();
+            }
+            r.render(&mut b, &p, &ModState::new());
+            out.extend_from_slice(&b);
+        }
+        assert!(!r.is_active(), "{engine:?}: still active");
+        let step = |w: &[f32]| {
+            w.windows(2)
+                .map(|p| (p[1] - p[0]).abs())
+                .fold(0.0f32, f32::max)
+        };
+        let n = out.len();
+        let (ring, end) = (
+            step(&out[n - 40 * BLOCK_SIZE..n - 2 * BLOCK_SIZE]),
+            step(&out[n - 2 * BLOCK_SIZE - 1..]),
+        );
+        println!("{engine:?} stolen: ring step {ring:.4}, end step {end:.4}");
+        assert!(ring > 0.01, "{engine:?}: no ring ({ring})");
+        assert!(
+            end <= ring,
+            "{engine:?}: the end steps {end}, the ring {ring}"
+        );
+    }
+}
+
 /// A voice that ended self-oscillating starts its next note from rest: bit
 /// for bit as a voice that ended at RES 0 does (the engine before the
 /// filter ran the same either way), and on ALGO as a fresh voice does.
@@ -514,4 +566,142 @@ fn a_voice_reused_after_oscillation_starts_from_rest() {
             }
         }
     }
+}
+
+#[test]
+fn default_mode_is_in_modes_and_mode_stays_in_modes() {
+    assert_eq!(FilterKind::Svf.default_mode(), FilterMode::Lp24);
+    assert_eq!(
+        FilterParams::default().mode(),
+        FilterKind::Svf.default_mode()
+    );
+    // MODE's static default is the index of CLEAN's.
+    let spec = FILTER_SPECS
+        .iter()
+        .find(|s| s.id == FilterParams::MODE)
+        .unwrap();
+    assert_eq!(
+        FilterKind::Svf.modes()[spec.default as usize],
+        FilterKind::Svf.default_mode()
+    );
+    for k in FilterKind::BUILT {
+        let modes = k.modes();
+        assert!(modes.contains(&k.default_mode()), "{k:?}");
+        assert_eq!(k.mode_labels().len(), modes.len(), "{k:?}");
+        let mut p = FilterParams::default();
+        p.set_kind(k);
+        for v in 0..=7 {
+            p.write(FilterParams::MODE, v as f32);
+            assert!(modes.contains(&p.mode()), "{k:?} write {v}");
+        }
+        for code in 0..=255u8 {
+            let mut q = p;
+            q.set_enum_code(FilterParams::MODE, code);
+            assert!(modes.contains(&q.mode()), "{k:?} code {code}");
+        }
+    }
+}
+
+#[test]
+fn clean_labels_name_what_they_do() {
+    let k = FilterKind::Svf;
+    assert_eq!(
+        k.mode_labels(),
+        ["LP1", "LP2", "LP4", "BP2", "BP4", "HP4", "NOTCH1", "NOTCH2"]
+    );
+    for (&m, &l) in k.modes().iter().zip(k.mode_labels()) {
+        assert_eq!(k.mode_label(m), l);
+    }
+    assert_eq!(k.mode_label(FilterMode::Lp6), "LP1");
+    assert_eq!(k.mode_label(FilterMode::Notch), "NOTCH1");
+    assert_eq!(k.mode_label(FilterMode::Phaser), "NOTCH2");
+    // Labels only: the disk keeps its idents.
+    assert_eq!(FilterMode::Lp6.disk_ident(), "LP6");
+    assert_eq!(FilterMode::Notch.disk_ident(), "NOTCH");
+    assert_eq!(FilterMode::Phaser.disk_ident(), "PHASER");
+}
+
+/// `mode`'s gain at `f`, dB, at a held `fc` and RES: a unit sine, read over
+/// 2 s after 0.25 s (a whole number of periods at any half-hertz `f`).
+fn gain_db(mode: FilterMode, fc: f32, res: f32, f: f32) -> f32 {
+    let (settle, n) = ((0.25 * FS) as usize, (2.0 * FS) as usize);
+    let w = core::f64::consts::TAU * f64::from(f) / f64::from(FS);
+    let y = render(mode, fc, res, settle + n, |i| (w * i as f64).sin() as f32);
+    mag_db(&y[settle..], f, FS)
+}
+
+/// The digital frequency of the analog prototype's `w` × FREQ: CLEAN's `g`
+/// prewarps FREQ, so `tan(π f/fs) = w·g`.
+fn proto_hz(fc: f32, w: f32) -> f32 {
+    FS / core::f32::consts::PI * (w * g_of(fc, FS)).atan()
+}
+
+/// RES 0 (spec § Modes against the Cascadia). Slopes are read over 4..8 ×
+/// FREQ on the prototype's axis: over 2..4 × the cascade's second stage
+/// (`k₂` = 2.7) is not yet at its asymptote, and LP4 reads −20.1 dB/oct.
+#[test]
+fn clean_responses_match_the_prototype() {
+    for fc in [250.0f32, 1000.0, 4000.0] {
+        let g = |mode, f| gain_db(mode, fc, 0.0, f);
+        for (mode, want, tol) in [
+            (FilterMode::Lp6, -6.0, 1.5),
+            (FilterMode::Lp12, -12.0, 2.0),
+            (FilterMode::Lp24, -24.0, 3.0),
+        ] {
+            let slope = g(mode, proto_hz(fc, 8.0)) - g(mode, proto_hz(fc, 4.0));
+            println!("{fc} Hz {mode:?}: {slope:.2} dB/oct");
+            assert!((slope - want).abs() <= tol, "{fc} Hz {mode:?}: {slope:.2}");
+        }
+        // HP4 the mirror image, over 1/8..1/4 × FREQ.
+        let hp = g(FilterMode::Hp24, proto_hz(fc, 0.25)) - g(FilterMode::Hp24, proto_hz(fc, 0.125));
+        println!("{fc} Hz HP24: {hp:.2} dB/oct");
+        assert!((hp - 24.0).abs() <= 3.0, "{fc} Hz HP24: {hp:.2}");
+        // LP1 crosses −3 dB within FREQ ± 3 %.
+        let cut = -3.0103;
+        let (lo, hi) = (g(FilterMode::Lp6, fc * 0.97), g(FilterMode::Lp6, fc * 1.03));
+        assert!(lo > cut && hi < cut, "{fc} Hz LP1: {lo:.3}, {hi:.3}");
+        // BP2 and BP4 peak within FREQ ± 3 %.
+        for mode in [FilterMode::Bp12, FilterMode::Bp24] {
+            let (lo, at, hi) = (g(mode, fc * 0.97), g(mode, fc), g(mode, fc * 1.03));
+            assert!(at > lo && at > hi, "{fc} Hz {mode:?}: {lo}, {at}, {hi}");
+        }
+        // NOTCH1: its zero at 2 × FREQ (digitally `tan(π f/fs) = 2g`),
+        // found within ± 3 % and ≥ 30 dB deep against DC's 0 dB.
+        let fz = proto_hz(fc, 2.0);
+        let sweep: Vec<(f32, f32)> = (-5..=5)
+            .map(|i| {
+                let f = fz * (1.0 + 0.01 * i as f32);
+                (f, g(FilterMode::Notch, f))
+            })
+            .collect();
+        let (f_min, _) = sweep
+            .iter()
+            .copied()
+            .fold((0.0, f32::INFINITY), |m, x| if x.1 < m.1 { x } else { m });
+        let depth = g(FilterMode::Notch, fz);
+        println!("{fc} Hz NOTCH1: zero {fz:.1} Hz, {depth:.1} dB; min at {f_min:.1}");
+        assert!(
+            (f_min / fz - 1.0).abs() <= 0.03,
+            "{fc} Hz NOTCH1: min at {f_min}"
+        );
+        assert!(depth <= -30.0, "{fc} Hz NOTCH1: {depth:.1} dB at the zero");
+        // FREQ itself an 8.6 dB dip at Q 0.
+        let at = g(FilterMode::Notch, fc);
+        assert!((at + 8.6).abs() <= 0.5, "{fc} Hz NOTCH1 at FREQ: {at:.2}");
+    }
+}
+
+/// LP1 is `lp + bp`: the one-pole at Q 0, and Q peaks it at FREQ by `√2/k`.
+#[test]
+fn lp1_at_q0_is_the_one_pole_and_q_peaks_it() {
+    let fc = 1000.0;
+    let at0 = gain_db(FilterMode::Lp6, fc, 0.0, fc);
+    assert!((at0 + 3.01).abs() <= 0.2, "RES 0: {at0:.3} dB");
+    let k = clean_k(0.5);
+    let want = 20.0 * (2f32.sqrt() / k).log10();
+    let at = gain_db(FilterMode::Lp6, fc, 0.5, fc);
+    assert!(
+        (at - want).abs() <= 0.5,
+        "RES 0.5: {at:.2} dB, want {want:.2}"
+    );
 }

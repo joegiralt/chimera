@@ -214,7 +214,7 @@ fn part_pages_display_like_before() {
                 ("RES", Uni),
                 (
                     "MODE",
-                    ValFmt::Names(&chimera_core::dsp::filter::SVF_MODE_NAMES),
+                    ValFmt::Names(chimera_core::dsp::filter::FilterKind::Svf.mode_labels()),
                 ),
                 ("ENV", ValFmt::Route),
                 ("KEY", ValFmt::Route),

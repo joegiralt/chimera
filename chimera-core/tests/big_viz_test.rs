@@ -221,15 +221,34 @@ fn envelope_label_spans_keep_the_two_pixel_gap() {
     }
 }
 
-/// PHASER is an all-pass: its curve is flat, not a low-pass.
+/// NOTCH2 (PHASER) and CLEAN's NOTCH1 draw their notches where they cut:
+/// 0.414 × and 2.414 × FREQ, and 2 × FREQ, on the plot's linear axis.
 #[test]
-fn the_phaser_draws_flat() {
-    use chimera_core::dsp::filter::FilterMode;
-    let r = viz::Response::of(FilterMode::Phaser);
-    assert_eq!(r, viz::Response::Flat);
-    for t in [0.0, 0.3, 0.5, 0.9, 1.0] {
-        assert_eq!(viz::response_y(t, 0.3, 1.0, r), FILTER_PASS_Y, "{t}");
+fn the_notches_draw_where_they_cut() {
+    use chimera_core::dsp::filter::{FilterKind, FilterMode};
+    let (c, k) = (0.3, FilterKind::Svf);
+    let r = viz::Response::of(k, FilterMode::Phaser);
+    assert_eq!(r, viz::Response::DoubleNotch);
+    for t in [0.414 * c, 2.414 * c] {
+        assert_eq!(viz::response_y(t, c, 0.0, r), PLOT_BASE, "{t}");
     }
+    assert!(
+        viz::response_y(c, c, 1.0, r) < FILTER_PASS_Y,
+        "Q raises the middle"
+    );
+    let r = viz::Response::of(k, FilterMode::Notch);
+    assert_eq!(r, viz::Response::Notch2x);
+    assert_eq!(viz::response_y(2.0 * c, c, 0.0, r), PLOT_BASE);
+    assert!(
+        viz::response_y(c, c, 0.0, r) > FILTER_PASS_Y,
+        "Q 0 dips at FREQ"
+    );
+    assert!(viz::response_y(c, c, 1.0, r) < FILTER_PASS_Y, "Q peaks it");
+    assert!(
+        viz::response_y(0.9, c, 0.0, r) > FILTER_PASS_Y,
+        "the treble is down"
+    );
+    assert_eq!(viz::Response::of(k, FilterMode::Lp6), viz::Response::Lp1);
 }
 
 /// Width of the lit segment on the plot: HOLD focused lights H.

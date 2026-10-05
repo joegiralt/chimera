@@ -1,6 +1,6 @@
 use crate::addr::{BlockRead, BlockRef, Blocks};
 use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
-use crate::dsp::filter::{FilterKind, FilterMode, KIND_NAMES, SVF_MODE_NAMES};
+use crate::dsp::filter::{FilterKind, FilterMode, KIND_NAMES};
 use crate::dsp::modulator::{
     EnvForm, EnvSpeed, EnvType, FuncMode, FuncParams, HoldPos, LfoForm, pick,
 };
@@ -24,7 +24,7 @@ impl Default for FilterParams {
             resonance: 0.0,
             drive: 0.0,
             kind: FilterKind::Svf,
-            mode: FilterMode::Lp24,
+            mode: FilterKind::Svf.default_mode(),
         }
     }
 }
@@ -86,9 +86,17 @@ pub static FILTER_SPECS: [ParamSpec; 5] = [
     ParamSpec::choice(6, "KIND", ValFmt::Names(&KIND_NAMES), 0.0, 0.0)
         .ident("KIND")
         .glyph(crate::ui::glyph::FocusGlyph::None),
-    ParamSpec::choice(7, "MODE", ValFmt::Names(&SVF_MODE_NAMES), 7.0, 0.0)
-        .ident("MODE")
-        .glyph(crate::ui::glyph::FocusGlyph::None),
+    // CLEAN's labels and LP4's index: the FLT view shows the kind's own
+    // (`FilterKind::mode_labels`), and defaults go through `default_mode`.
+    ParamSpec::choice(
+        7,
+        "MODE",
+        ValFmt::Names(FilterKind::Svf.mode_labels()),
+        7.0,
+        2.0,
+    )
+    .ident("MODE")
+    .glyph(crate::ui::glyph::FocusGlyph::None),
 ];
 
 impl Block for FilterParams {

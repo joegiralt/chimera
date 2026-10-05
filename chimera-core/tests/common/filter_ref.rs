@@ -59,10 +59,8 @@ pub fn clean_ref(x: &[f32], g: &[f64], k: &[f64], t: &[f64], mode: FilterMode) -
         let [a2, b2] = &mut s2;
         let y = match mode {
             FilterMode::Lp6 => {
-                let v = (x - *a1) * g / (1.0 + g);
-                let lp = v + *a1;
-                *a1 = lp + v;
-                lp
+                let (lp, bp, _) = stage(x, g, k, a1, a2);
+                lp + bp
             }
             FilterMode::Lp12 => stage(x, g, k, a1, a2).0,
             FilterMode::Lp24 => {
@@ -80,7 +78,7 @@ pub fn clean_ref(x: &[f32], g: &[f64], k: &[f64], t: &[f64], mode: FilterMode) -
             }
             FilterMode::Notch => {
                 let (lp, _, hp) = stage(x, g, k, a1, a2);
-                lp + hp
+                lp + 0.25 * hp
             }
             FilterMode::Phaser => {
                 let ap1 = x - 2.0 * k * stage(x, g, k, a1, a2).1;

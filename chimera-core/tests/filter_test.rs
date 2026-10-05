@@ -4,7 +4,7 @@ use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::block::{Block, ParamId};
 use chimera_core::dsp::fast_exp2;
 use chimera_core::dsp::filter::routed_cutoff;
-use chimera_core::dsp::filter::{Clean, FilterMode, SVF_MODES};
+use chimera_core::dsp::filter::{Clean, FilterKind, FilterMode};
 use chimera_core::params::{FilterParams, ParamSnapshot};
 use chimera_core::ui::block_def::slot_addr;
 use chimera_core::ui::block_registry::{FILTER, FILTER_MODE};
@@ -21,10 +21,12 @@ fn mode_is_typed_and_stays_in_the_svf_list() {
         assert!(f.set_mode(m));
         assert_eq!(f.mode(), m);
     }
-    // The block value is the index in the SVF's list, so an encoder steps it.
+    // The block value is the index in CLEAN's list, so an encoder steps it.
     f.set(FilterParams::MODE, 0.0);
-    assert_eq!(f.mode(), SVF_MODES[0]);
-    assert_eq!(SVF_MODES[0], FilterMode::Lp24, "the default comes first");
+    assert_eq!(f.mode(), FilterKind::Svf.modes()[0]);
+    assert_eq!(f.mode(), FilterMode::Lp6, "knob order: LP1 first");
+    f.set(FilterParams::MODE, 2.0);
+    assert_eq!(f.mode(), FilterKind::Svf.default_mode());
     f.set(FilterParams::MODE, 99.0);
     assert_eq!(f.mode(), FilterMode::Phaser);
     assert_eq!(f.get(FilterParams::MODE), 7.0);
@@ -233,17 +235,17 @@ fn a_steady_cutoff_does_not_ramp() {
 /// re-recorded for the C1 `saturate` (ADR 0063), the first mode unmoved;
 /// then every mode for CLEAN's ACCURATE tan and exact divides (#57);
 /// then every mode but LP6 (no `k`, trim 1) for CLEAN's k law and trims
-/// (ADR 0096).
+/// (ADR 0096); then LP6 and NOTCH for LP1 and NOTCH1 (ADR 0096).
 #[test]
 fn every_mode_renders_as_recorded() {
     const WANT: [u64; 8] = [
-        0xad32_27d9_4948_d08c,
+        0x6146_912a_7eed_f88b, // LP1 and NOTCH1, ADR 0096: was 0xad32_27d9_4948_d08c
         0x34fe_71d6_f19a_8455,
         0x87b5_53f8_a19c_07bd,
         0x349d_6da0_e37f_8293,
         0xd7a0_6303_5618_783f,
         0x95bd_99a3_ae4b_6f4d,
-        0x964d_6390_2ba9_3da5,
+        0x9243_ca9d_5805_0f0c, // LP1 and NOTCH1, ADR 0096: was 0x964d_6390_2ba9_3da5
         0xf66a_5343_055e_3a97,
     ];
     let got = FilterMode::ALL.map(|m| {
