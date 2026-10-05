@@ -564,6 +564,13 @@ impl TapeEngine {
         self.events + self.stretch.events
     }
 
+    /// STRETCH's wraps in the loop since the note-on, lifted and bare: for
+    /// the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn wraps(&self) -> [u32; 2] {
+        self.stretch.wraps
+    }
+
     /// STRETCH's grain clock: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn grain(&self) -> stretch::GrainClock {

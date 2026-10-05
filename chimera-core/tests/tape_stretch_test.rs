@@ -13,7 +13,8 @@ use chimera_core::dsp::tape_engine::stretch::{
     GrainClock, WRAP_SAMPLES, d_time_s, lock, locks, time_speed,
 };
 use chimera_core::dsp::tape_engine::{
-    INC_MAX, NOTE_ON_RAMP, Probe, StretchType, TapeEngine, TapeEngineParams, TapeModel,
+    INC_MAX, MIN_PASS_SAMPLES, NOTE_ON_RAMP, Probe, StretchType, TapeEngine, TapeEngineParams,
+    TapeModel,
 };
 use chimera_hal::BLOCK_SIZE;
 use common::XorShift;
@@ -511,6 +512,8 @@ fn time_wraps_under_the_fade() {
             let (out, _, clocks) = run(&mut e, &|_| p, &v, 1_500);
             let laps = clocks.windows(2).filter(|c| c[1].t < c[0].t).count();
             assert!(laps >= 5, "{kind:?}, MOTION {motion}: {laps} laps");
+            let peak = out.iter().fold(0f32, |m, y| m.max(y.abs()));
+            assert!(peak <= 2.0, "{kind:?}, MOTION {motion}: peak {peak}");
             let (step, bend) = (max_step(&out[B..]), max_bend(&out[B..]));
             let bent = kind == StretchType::Mono && bend > 1.1 * own.1;
             assert!(
@@ -583,6 +586,9 @@ fn grain_wraps_are_click_free() {
             // voice's DC blocker takes it.
             let mean = out.iter().sum::<f32>() / out.len() as f32;
             assert!(mean.abs() < 0.1, "{kind:?}, MOTION {motion}: mean {mean}");
+            // The lift's overshoot (spec § 2): under 2× the sine's peak.
+            let peak = out.iter().fold(0f32, |m, y| m.max(y.abs()));
+            assert!(peak <= 2.0, "{kind:?}, MOTION {motion}: peak {peak}");
         }
     }
 }
@@ -644,6 +650,8 @@ fn one_shots_wrap_click_free() {
                 ..stretch(StretchType::Poly, 0.0)
             };
             let out = note(&|_| p, &|_| cents, &v, 300);
+            let peak = out.iter().fold(0f32, |m, y| m.max(y.abs()));
+            assert!(peak <= 2.0, "{frames} frames, {cents} cents: peak {peak}");
             let step = max_step(&out[B..]);
             eprintln!("{frames} frames, {cents} cents: {step:.3} against {own:.3}");
             if step > 4.0 * own {
@@ -746,6 +754,55 @@ fn pitch_jump_keeps_wraps_inside() {
             "block {n}: {pr:?}"
         );
         assert!(b.iter().all(|y| y.is_finite()));
+    }
+}
+
+/// A pitch risen mid-grain on the shortest source (64 frames, 2 168 →
+/// 4 800 cents for POLY, 2 000 → 4 800 for MONO, after the run-up): each grain is re-judged
+/// a waveform loop every block, so lifted wraps stay at most one in
+/// `MIN_PASS_SAMPLES` a grain, and those at the new speed go bare.
+#[test]
+fn pitch_rise_keeps_lifted_wraps_bounded() {
+    let held = held_plain(&sine(48_000, 13.0, 64), 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    // MONO's wrap is 4 periods (52 frames): lifted under 2 040 cents.
+    for (kind, period, from) in [
+        (StretchType::Poly, 0.0, 2_168.0),
+        (StretchType::Mono, 13.0, 2_000.0),
+    ] {
+        let p = TapeEngineParams {
+            size: 1.0,
+            motion: 0.5,
+            ..stretch(kind, period)
+        };
+        let mut e = fresh();
+        e.set_pitch(from);
+        e.note_on(60, &p, &v, SR);
+        let mut b = [0.0; B];
+        let mut most = 0;
+        let mut bare_after = 0;
+        for n in 0..200 {
+            e.set_pitch(if n < 100 { from } else { 4_800.0 });
+            let [lifted, bare] = e.wraps();
+            e.render(&mut b, &p, &v, SR);
+            let [l2, b2] = e.wraps();
+            most = most.max(l2 - lifted);
+            if n > 101 {
+                bare_after += b2 - bare;
+                assert_eq!(l2, lifted, "{kind:?}, block {n}: lifted at inc 16");
+            }
+            let peak = b.iter().fold(0f32, |m, y| m.max(y.abs()));
+            assert!(peak <= 2.0, "{kind:?}, block {n}: peak {peak}");
+        }
+        let cap = 2 * B as u32 / MIN_PASS_SAMPLES;
+        eprintln!(
+            "{kind:?}: at most {most} lifted wraps a block, {bare_after} bare after the rise"
+        );
+        assert!(
+            (1..=cap).contains(&most),
+            "{kind:?}: {most} lifted wraps a block, at most {cap}"
+        );
+        assert!(bare_after > 1_000, "{kind:?}: {bare_after} bare wraps");
     }
 }
 

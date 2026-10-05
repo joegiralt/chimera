@@ -125,8 +125,9 @@ struct Block {
     /// wrapped with no lift.
     tiny: bool,
     /// The lift's one-pole fall a sample: its time constant `LIFT_S`, or
-    /// an eighth of the wrap's interval if shorter, so lifts that come
-    /// again and again add at most an eighth of a jump as DC.
+    /// an eighth of the shorter grain's wrap interval if shorter, so lifts
+    /// that come again and again add at most an eighth of a jump as DC.
+    /// Set in `render`, from the grains' latched spans at the block's speed.
     lift_k: f32,
     locked: bool,
     /// The fade's length and its reciprocal.
@@ -198,6 +199,9 @@ pub struct Stretch {
     /// Splices and wraps: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub(super) events: u32,
+    /// Wraps in the loop, lifted and bare: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(super) wraps: [u32; 2],
 }
 
 impl Stretch {
@@ -223,6 +227,8 @@ impl Stretch {
         lift: 0.0,
         #[cfg(any(test, feature = "test-support"))]
         events: 0,
+        #[cfg(any(test, feature = "test-support"))]
+        wraps: [0; 2],
     };
 
     /// A note on `v` at `inc` frames a sample, `m` its macros: both grains
@@ -243,6 +249,8 @@ impl Stretch {
             runup: true,
             #[cfg(any(test, feature = "test-support"))]
             events: 0,
+            #[cfg(any(test, feature = "test-support"))]
+            wraps: [0; 2],
             ..Stretch::IDLE
         };
         let k = s.block(v, (inc, inc), (m.position, m.motion, m.size), p.end, sr);
@@ -312,9 +320,6 @@ impl Stretch {
         // POSITION's offset in the window and time's step a sample, 32.32,
         // built from 32-bit conversions.
         let tiny = (span >> 32) < (MIN_PASS_SAMPLES as f32 * from.max(to)) as u64;
-        let every = (span >> 32) as f32 / from.max(to).max(f32::EPSILON);
-        let tc = (LIFT_S * sr as f32).min(0.125 * every).max(1.0);
-        let lift_k = libm::expf(-1.0 / tc);
         let x = clampf(position, 0.0, 1.0) * w as f32;
         let off = q(x).min(wq - 1);
         let speed = time_speed(motion) * rate as f32 / sr as f32;
@@ -324,7 +329,7 @@ impl Stretch {
             wq,
             span,
             tiny,
-            lift_k,
+            lift_k: 0.0,
             locked,
             half,
             inv_half: 1.0 / half as f32,
@@ -350,7 +355,7 @@ impl Stretch {
         end: f32,
         sr: u32,
     ) {
-        let k = self.block(v, (from, to), macros, end, sr);
+        let mut k = self.block(v, (from, to), macros, end, sr);
         if self.runup {
             // Nothing is in play yet: the first grain takes the block's
             // window, and its fade the block's D-TIME.
@@ -367,6 +372,16 @@ impl Stretch {
                 self.wrap(v);
             }
         }
+        // Each grain is a waveform loop, or not, at this block's speed: a
+        // pitch risen mid-grain makes its wraps bare, so lifted wraps come
+        // at most once in `MIN_PASS_SAMPLES`. The lift falls as fast as the
+        // shorter grain's wraps now come.
+        let fast = from.max(to);
+        let most = (MIN_PASS_SAMPLES as f32 * fast) as u64;
+        self.tiny = self.span.map(|s| (s >> 32) < most);
+        let every = (self.span[0].min(self.span[1]) >> 32) as f32 / fast.max(f32::EPSILON);
+        let tc = (LIFT_S * sr as f32).min(0.125 * every).max(1.0);
+        k.lift_k = libm::expf(-1.0 / tc);
         let (from, to) = (q(from), q(to));
         let step = (to.wrapping_sub(from) as i64 / BLOCK_SIZE as i64) as u64;
         let tau = self.tau as i64;
@@ -420,6 +435,7 @@ impl Stretch {
                     #[cfg(any(test, feature = "test-support"))]
                     {
                         self.events += 1;
+                        self.wraps[usize::from(t0)] += 1;
                     }
                 }
                 if h1.whole() >= e1 {
@@ -430,6 +446,7 @@ impl Stretch {
                     #[cfg(any(test, feature = "test-support"))]
                     {
                         self.events += 1;
+                        self.wraps[usize::from(t1)] += 1;
                     }
                 }
             }
