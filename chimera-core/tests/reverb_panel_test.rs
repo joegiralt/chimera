@@ -387,11 +387,11 @@ fn cells_read_their_starting_values() {
     let b = ReverbParams::default().with_type(ReverbType::Bloom, &KnobMemory::new());
     // MidiVerb II program 45's fitted knobs (ADR 0095).
     for (id, w) in [
-        (P::SIZE, "579ms"),
+        (P::SIZE, "538ms"),
         (P::TIME, "11s"),
-        (P::TONE, "3.2k"),
+        (P::TONE, "3.3k"),
         (P::DIFFUSE, "0.48"),
-        (P::PREDELAY, "0ms"),
+        (P::PREDELAY, "17ms"),
         (P::SMEAR, "0.6ms"),
         (P::RATE, "0.13Hz"),
     ] {

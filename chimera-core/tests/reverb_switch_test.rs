@@ -51,15 +51,15 @@ const BURST: usize = 20;
 /// PRE-DLY (19 ms), and its tail is 2 kHz-rough until the dampers have
 /// darkened it: a one-step gain jump (the bound's negative control) is
 /// lost in it until about 0.8 s (block 600; 200 and 400 still lose it).
-/// BLOOM's tail roughens each time its loop comes round (about 0.7 s at
-/// its starting SWELL): at blocks 600, 900 and 1,100 the gain jump is lost
-/// in it, or the tail alone reads rougher than the window before; 300–500
-/// and 700–1,000 pass, and 400 sits mid-band.
+/// BLOOM's tail roughens each time its loop comes round (about 0.65 s at
+/// its starting SWELL): at most leads the gain jump is lost in it, or the
+/// tail alone reads rougher than the window before; 200–350, 600 and
+/// 800–900 pass, and 850 sits mid-band.
 fn lead(t: ReverbType) -> usize {
     match t {
         ReverbType::Room => 70,
         ReverbType::Hall => 600,
-        ReverbType::Bloom => 400,
+        ReverbType::Bloom => 850,
         _ => 0,
     }
 }

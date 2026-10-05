@@ -254,10 +254,15 @@ the ban on 2026-10-05.
   - **The cascade's lengths are the ADR's ms to two places** (0.56, 3.55,
     4.96, 10.21, 14.49, 20.56, 23.72, 35.17, 42.69, 47.01, 57.56, 66.79,
     78.68, 85.51, 89.02: 580.48 ms), and the decorrelators' to one, as
-    above. At 24 kHz they round a sample off the float model's here and
-    there, and the click metrics are that sensitive: the float model with
-    these lengths reads pre-delay −9.6 ms and C50 −1.5 dB on Bloom 1. The
-    fit absorbs it; the lengths stay the ADR's.
+    above. The click metrics are chaotic in the lengths: one SWELL step
+    (0.001, about 2 samples on the long allpasses) moves Bloom's pre-delay
+    by up to 30 ms and C50 by 2 dB, through which sample of the bloom
+    peaks. So the fit takes a point where they hold still: SWELL 0.705,
+    where 0.700–0.706 read within 1 ms of each other. There both presets
+    pass at one knob set, only PRE-DLY differing as on the unit (0.132 and
+    0.815), and each still passes a step off on every knob (fix round 1).
+    Any change that moves a length (the SWELL law, `exp2`, the rounding)
+    must refit.
   - **DECAY is the 1 kHz RT60** over the loop's slow length, (Σ lengths +
     1) × (1.07 + 1.9 g⁴), fitted over DIFFUSE, SWELL and DECAY ½–1, and
     through the loop one-pole's 1 kHz gain, so TONE leaves it. That lift

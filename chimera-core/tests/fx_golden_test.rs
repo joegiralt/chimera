@@ -79,10 +79,11 @@ const MV2_ROOM: &[(u8, &str, [f32; 7])] = &[
 
 /// BLOOM at each MidiVerb II program's knobs, fitted on the Rust render by
 /// the reference harness (ADR 0095): (program, its golden's name, SWELL,
-/// DECAY, TONE, DIFFUSE, PRE-DLY), SMEAR 0.
+/// DECAY, TONE, DIFFUSE, PRE-DLY), SMEAR 0. One point for both, as the
+/// unit's: only PRE-DLY differs, and each passes a step off on every knob.
 const MV2_BLOOM: &[(u8, &str, [f32; 5])] = &[
-    (45, "rev_bloom_mv45", [0.789, 0.956, 0.597, 0.165, 0.0]), // Bloom 1 8 Sec
-    (49, "rev_bloom_mv49", [0.809, 0.956, 0.619, 0.226, 0.674]), // Bloom 2 7 Sec
+    (45, "rev_bloom_mv45", [0.705, 0.948, 0.578, 0.165, 0.132]), // Bloom 1 8 Sec
+    (49, "rev_bloom_mv49", [0.705, 0.948, 0.578, 0.165, 0.815]), // Bloom 2 7 Sec
 ];
 
 fn cases() -> Vec<(&'static str, Fx)> {
@@ -281,9 +282,9 @@ const GOLDENS: &[(&str, u64)] = &[
     ("rev_reverse_regen", 0x510ced0081cb2515),
     // BLOOM (ADR 0095, reverb TYPEs T11) on program 45's knobs, and at
     // each MidiVerb II Bloom's fitted knobs (`MV2_BLOOM`).
-    ("rev_bloom", 0xceadb6e37f5a9b24),
-    ("rev_bloom_mv45", 0x4ff3078add7c2630),
-    ("rev_bloom_mv49", 0xcf076ba69073619f),
+    ("rev_bloom", 0xa8a796e5d0808d9f),
+    ("rev_bloom_mv45", 0x9b822ef91b9a25f9),
+    ("rev_bloom_mv49", 0x2472fe09807dbc32),
 ];
 
 #[test]

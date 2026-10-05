@@ -719,7 +719,7 @@ fn bloom_knobs_ease() {
 /// return gain follows). Its noise floor, at DECAY 0 (at the start's 11 s
 /// the sine's own onset still rings 2 s on, far above any floor), within
 /// 5.5 dB of QUAD's, 8 dB at DIFFUSE 1: 15 normalised states, each
-/// error read × 1/(1 − g). (The spec asked 4 and 6; it reads 4.7 and 7.2.)
+/// error read × 1/(1 − g). (The spec asked 4 and 6; it reads 3.6 and 5.9.)
 #[test]
 fn bloom_noise_and_loudness() {
     let q = ReverbParams {

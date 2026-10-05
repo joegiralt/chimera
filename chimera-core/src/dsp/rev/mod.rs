@@ -68,7 +68,7 @@ const WET_ROOM: f32 = 2.42;
 const WET_HALL: f32 = 9.7;
 const WET_GATE: f32 = 6.75;
 const WET_REVERSE: f32 = 7.05;
-const WET_BLOOM: f32 = 6.43;
+const WET_BLOOM: f32 = 5.72;
 
 /// ROOM's four loops (ADR 0095) set it: their gains, targets, dampers and
 /// four smear offsets, 84 B past ADR 0085's 160 (88 with the tests'
