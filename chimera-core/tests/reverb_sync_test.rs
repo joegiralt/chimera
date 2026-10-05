@@ -320,6 +320,8 @@ fn clock_dropout_moves_synced_length_once() {
             let rv = r.fx.reverb();
             let mut f = rv.fold();
             tempos.push(r.inst.tempo());
+            // What the cells draw is what played, the 100 BPM too.
+            assert_eq!(rev_clock(), (r.inst.tempo(), rv.fold()));
             targets.push(knobs(&g, r.inst.tempo(), &mut f).length_ms);
             folds.push(rv.fold());
             // QUAD switches to GATE over the first blocks.
@@ -329,8 +331,6 @@ fn clock_dropout_moves_synced_length_once() {
             }
             let _ = b;
         }
-        // What the cells draw is what played.
-        assert_eq!(rev_clock(), (r.inst.tempo(), r.fx.reverb().fold()));
         (g, tempos, targets, folds, steps, taps)
     };
     // Just past a tick: the clock's last.
