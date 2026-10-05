@@ -13,7 +13,7 @@ use chimera_core::dsp::tape_engine::stretch::{
     GrainClock, WRAP_SAMPLES, d_time_s, lock, locks, time_speed,
 };
 use chimera_core::dsp::tape_engine::{
-    NOTE_ON_RAMP, Probe, StretchType, TapeEngine, TapeEngineParams, TapeModel,
+    INC_MAX, NOTE_ON_RAMP, Probe, StretchType, TapeEngine, TapeEngineParams, TapeModel,
 };
 use chimera_hal::BLOCK_SIZE;
 use common::XorShift;
@@ -485,12 +485,12 @@ fn run_up_follows_the_block() {
 }
 
 /// Time wraps in a window of 4 800 frames again and again, MONO and POLY,
-/// at 0.5×, 1× and 2×: each grain starts early enough to end inside it, so
-/// no grain wraps, and the splice's fade carries the output from the
-/// window's end to its start: no step past the sine's own, and MONO, whose
-/// splices land in phase, no bend either. (POLY's linear fades bend the
-/// output by up to twice their slope where one ends and the next starts:
-/// the S950's splice, by design.)
+/// at 0.5×, 1× and 2×. The splice's fade carries the output from the
+/// window's end to its start, and grains that reach the end wrap under the
+/// lift. No step passes the sine's own, and MONO, whose splices land in
+/// phase and whose grains wrap by whole periods, no bend either. (POLY's
+/// linear fades bend the output by up to twice their slope where one ends
+/// and the next starts: the S950's splice, by design.)
 #[test]
 fn time_wraps_under_the_fade() {
     let held = held_plain(&sine(48_000, P, 48_000), 48_000);
@@ -509,11 +509,6 @@ fn time_wraps_under_the_fade() {
             let (out, _, clocks) = run(&mut e, &|_| p, &v, 1_500);
             let laps = clocks.windows(2).filter(|c| c[1].t < c[0].t).count();
             assert!(laps >= 5, "{kind:?}, MOTION {motion}: {laps} laps");
-            assert_eq!(
-                e.events() as usize,
-                splices(&clocks).len() + usize::from(clocks[0].pos < B as u32),
-                "{kind:?}, MOTION {motion}: a grain wrapped"
-            );
             let (step, bend) = (max_step(&out[B..]), max_bend(&out[B..]));
             let bent = kind == StretchType::Mono && bend > 1.1 * own.1;
             assert!(
@@ -551,9 +546,30 @@ fn grain_wraps_are_click_free() {
             };
             let mut e = fresh();
             e.note_on(60, &p, &v, SR);
-            let (out, _, clocks) = run(&mut e, &|_| p, &v, 1_500);
+            let (out, probes, clocks) = run(&mut e, &|_| p, &v, 1_500);
             let wraps = e.events() as usize - splices(&clocks).len();
             assert!(wraps > 10, "{kind:?}, MOTION {motion}: {wraps} wraps");
+            // MONO wraps back by the fewest whole periods that are
+            // `WRAP_SAMPLES` of travel (at `inc` 1, 2 periods of 109.3),
+            // re-reading its last cycles; POLY by the window.
+            let back = (WRAP_SAMPLES as f32 / P).ceil() * P;
+            let mut seen = 0;
+            for (c, w) in clocks[1..].windows(2).zip(probes[1..].windows(2)) {
+                if c[1].pos > c[0].pos && w[1].head < w[0].head {
+                    let jump = (w[0].head + B as u32 - w[1].head) as f32;
+                    let want = if kind == StretchType::Mono {
+                        back
+                    } else {
+                        4_798.0
+                    };
+                    assert!(
+                        (jump - want).abs() <= 2.0,
+                        "{kind:?}: back {jump}, want {want}"
+                    );
+                    seen += 1;
+                }
+            }
+            assert!(seen > 3, "{kind:?}, MOTION {motion}: {seen} wraps seen");
             let (step, bend) = (max_step(&out[B..]), max_bend(&out[B..]));
             let bent = kind == StretchType::Mono && bend > 1.1 * own.1;
             assert!(
@@ -564,6 +580,34 @@ fn grain_wraps_are_click_free() {
     }
 }
 
+/// The shortest window the floor allows at `inc` 16 (4 096 frames) wraps
+/// POLY grains under the lift, as any window does: a slow sine there steps
+/// no more than its own. (A window under the floor would be a waveform
+/// loop, wrapped bare.)
+#[test]
+fn shortest_window_wraps_under_the_lift() {
+    let held = held_plain(&sine(48_000, 2_000.0, 48_000), 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    let own = 16.0 * core::f32::consts::TAU / 2_000.0;
+    let p = TapeEngineParams {
+        start: 0.5,
+        end: 0.5,
+        size: 0.0,
+        motion: 1.0,
+        ..stretch(StretchType::Poly, 0.0)
+    };
+    let mut e = fresh();
+    e.set_pitch(4_800.0);
+    e.note_on(60, &p, &v, SR);
+    let (out, _, clocks) = run(&mut e, &|_| p, &v, 600);
+    assert!(
+        e.events() as usize > splices(&clocks).len() + 10,
+        "it wraps"
+    );
+    let step = max_step(&out[B..]);
+    assert!(step <= 1.25 * own, "{step} against {own}");
+}
+
 /// Splices come once a D-TIME/2 at most, and a grain wraps at most once in
 /// `WRAP_SAMPLES` samples (a block): at `inc` 16 on the shortest window, at
 /// the shortest D-TIME, a block holds at most one splice and the two
@@ -571,14 +615,26 @@ fn grain_wraps_are_click_free() {
 #[test]
 fn event_rate_is_bounded() {
     let held = held_plain(&sine(48_000, P, 48_000), 48_000);
-    let v = SourceView::strict(&held).unwrap();
+    tiny_events(&held, P);
+    // Sources under the floor are waveform loops, wrapped inline: only
+    // splices are events.
+    for frames in [8, 64] {
+        let held = held_plain(&sine(48_000, frames as f32 / 2.0, frames), 48_000);
+        tiny_events(&held, frames as f32 / 2.0);
+    }
+}
+
+/// `event_rate_is_bounded` on `held` (period `period`), at the shortest
+/// window and D-TIME at `inc` 16.
+fn tiny_events(held: &[u8], period: f32) {
+    let v = SourceView::strict(held).unwrap();
     for kind in [StretchType::Mono, StretchType::Poly] {
         let p = TapeEngineParams {
             start: 0.5,
             end: 0.5,
             size: 0.0,
             motion: 1.0,
-            ..stretch(kind, P)
+            ..stretch(kind, period)
         };
         let mut e = fresh();
         e.set_pitch(4_800.0);
@@ -586,15 +642,137 @@ fn event_rate_is_bounded() {
         run(&mut e, &|_| p, &v, 4);
         let before = e.events();
         let blocks = 300;
-        let (out, _, _) = run(&mut e, &|_| p, &v, blocks);
+        let (out, probes, _) = run(&mut e, &|_| p, &v, blocks);
+        // A waveform loop's grains stay within a stride of their window.
+        let reach = v.frames() + INC_MAX as u32;
+        for pr in &probes {
+            assert!(pr.head <= reach && pr.other.unwrap() <= reach, "{pr:?}");
+        }
         let per = (e.events() - before) as f32 / blocks as f32;
         let most = 1 + 2 * B / WRAP_SAMPLES as usize;
         assert!(
             per <= most as f32,
-            "{kind:?}: {per} a block, at most {most}"
+            "{kind:?}, {} frames: {per} a block, at most {most}",
+            v.frames()
         );
         assert!(out.iter().all(|y| y.is_finite()));
     }
+}
+
+/// SIZE 1 at +12 st, MOTION 0.5: every grain starts where time is, the
+/// window's end included (no frozen time there): within a frame of `T`.
+#[test]
+fn time_moves_at_high_pitch() {
+    let held = held_plain(&sine(48_000, P, 96_000), 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    let p = TapeEngineParams {
+        size: 1.0,
+        motion: 0.5,
+        ..stretch(StretchType::Poly, 0.0)
+    };
+    let mut e = fresh();
+    e.set_pitch(1_200.0);
+    e.note_on(60, &p, &v, SR);
+    let (_, probes, clocks) = run(&mut e, &|_| p, &v, 1_600);
+    let w = 96_000 - 2;
+    let mut latest = 0;
+    for (b, (c, pr)) in clocks.windows(2).zip(&probes[1..]).enumerate() {
+        if c[1].pos < c[0].pos {
+            // The new grain's start: its head less what it read since, at
+            // `inc` 2, unwrapped.
+            let at = (b + 2) * B - c[1].pos as usize;
+            let start = (pr.other.unwrap() as usize + w - 2 * c[1].pos as usize) % w;
+            assert!(start.abs_diff(at % w) <= 1, "splice at {at}: {start}");
+            latest = latest.max(start);
+        }
+    }
+    let fade = 2 * (d_time_s(1.0) * 24_000.0) as usize;
+    assert!(latest + fade >= w, "grains start no later than {latest}");
+}
+
+/// Each splice starts its grain at `T` as it stands at that sample: POLY
+/// at 0.5× time, the new grain's head at a splice block's end is
+/// `T(splice) + pos` within a frame.
+#[test]
+fn splices_start_at_the_time_pointer() {
+    let held = held_plain(&sine(48_000, P, 96_000), 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    let p = TapeEngineParams {
+        size: 0.13,
+        motion: 0.25,
+        ..stretch(StretchType::Poly, 0.0)
+    };
+    let mut e = fresh();
+    e.note_on(60, &p, &v, SR);
+    let (_, probes, clocks) = run(&mut e, &|_| p, &v, 600);
+    let mut n = 0;
+    for (b, (c, pr)) in clocks.windows(2).zip(&probes[1..]).enumerate() {
+        if c[1].pos < c[0].pos {
+            let at = (b + 2) * B - c[1].pos as usize;
+            let want = at as f64 * 0.5 + c[1].pos as f64;
+            let got = pr.other.unwrap() as f64;
+            assert!(
+                (got - want).abs() <= 1.0,
+                "splice at {at}: {got} against {want}"
+            );
+            n += 1;
+        }
+    }
+    assert!(n > 20);
+}
+
+/// END lowered past the first grain while it runs up: it wraps back in the
+/// window from where it read, so the output carries on without a step.
+#[test]
+fn end_moved_in_the_run_up_is_click_free() {
+    let held = held_plain(&sine(48_000, P, 48_000), 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    let own = own(&v);
+    let p = |n: usize| TapeEngineParams {
+        position: 0.5,
+        size: 1.0,
+        motion: 0.5,
+        end: if n < 5 { 1.0 } else { 0.1 },
+        ..stretch(StretchType::Poly, 0.0)
+    };
+    let mut e = fresh();
+    e.note_on(60, &p(0), &v, SR);
+    let (out, probes, _) = run(&mut e, &p, &v, 40);
+    assert!(probes[6].head < 4_800, "it wrapped: {:?}", probes[6]);
+    let step = max_step(&out[B..]);
+    assert!(step <= 1.1 * own.0, "{step} against {own:?}");
+}
+
+/// SIZE grown from 0 to 1 while the first fade runs up: its gain is
+/// re-aimed each block, so it climbs to exactly 1 as the fade ends and
+/// never past it.
+#[test]
+fn run_up_gain_lands_on_one() {
+    let held = held_plain(&sine(48_000, P, 48_000), 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    let p = |n: usize| TapeEngineParams {
+        size: if n == 0 { 0.0 } else { 1.0 },
+        motion: 0.5,
+        ..stretch(StretchType::Poly, 0.0)
+    };
+    let mut e = fresh();
+    e.note_on(60, &p(0), &v, SR);
+    let (_, probes, clocks) = run(&mut e, &p, &v, 200);
+    let first = clocks
+        .iter()
+        .position(|c| c.pos < B as u32 && c.len > 1_000);
+    let n = first.unwrap_or(clocks.len()).max(2);
+    for (k, pr) in probes[..n - 1].iter().enumerate() {
+        assert!(pr.gain <= 1.0 + 1e-5, "block {k}: gain {}", pr.gain);
+    }
+    let before = &probes[n - 2];
+    let c = clocks[n - 2];
+    let want = 1.0 - c.left() as f32 / c.len as f32;
+    assert!(
+        (before.gain - want).abs() < 0.05,
+        "{} against {want}",
+        before.gain
+    );
 }
 
 /// A note-on on a sounding STRETCH ramps from where the output was; `hold`
@@ -684,6 +862,23 @@ fn stretch_costs_within_its_bill() {
         short / fade,
         long / fade
     );
+    // Sources under the floor: waveform loops, wrapped inline.
+    for frames in [8u32, 64] {
+        let held = held_plain(&sine(48_000, frames as f32 / 2.0, frames), 48_000);
+        let tv = SourceView::strict(&held).unwrap();
+        let p = TapeEngineParams {
+            size: 0.0,
+            motion: 1.0,
+            ..stretch(StretchType::Mono, frames as f32 / 2.0)
+        };
+        let ratio = host_time(p, &tv, at_clamp, blocks) / fade;
+        eprintln!(
+            "STRETCH on {frames} frames at inc 16: {ratio:.2} × LOOP's fade path, {:.2} × its long run",
+            ratio * fade / long
+        );
+        let slack = if cfg!(debug_assertions) { 1.5 } else { 1.0 };
+        assert!(ratio * fade / long <= slack * 1.15, "{frames} frames");
+    }
     let events = short / long;
     eprintln!(
         "its events: {:.3} × the plain run (the M7 count amortises 7 %)",
