@@ -107,9 +107,14 @@ code 23, ident `"TAPE"`, ADR 0055).
   as on MODAL's RES. SIZE is on the model page with XFADE, DRAG and TYPE.
   - All five are modulatable and eased per block (ADR 0056).
   - TAPE is ADR 0053's `Transport` on the head's speed, once a block, one
-    per voice.
-  - AGE is a falling one-pole, hiss and dropouts. It runs, and is billed,
-    when stored above 0 or routed (`stage_runs`' rule).
+    per voice: its offsets' sum is the deviation in cents (±25 of wow,
+    ±8 of flutter), added to `inc`'s sum before the clamp, so the floors
+    take the wow and no head passes `INC_MAX`. Each voice is seeded by its
+    index, its phases a golden ratio of a turn apart (TAPE Task 9).
+  - AGE is a falling one-pole (20 kHz to 2.5 kHz), white hiss to
+    −42 dBFS after the dropout gain, and above ½ dropouts of up to 9 dB
+    for 20–80 ms, eased a block at a time. It runs, and is billed, when
+    stored above 0 or routed (`stage_runs`' rule); eased to 0 it stops.
   - MODEL and TYPE latch at note-on.
 - **The models:**
   - **LOOP:** plays from START, then loops `[Ls, Ls + Ll)`, latching new
@@ -214,16 +219,21 @@ code 23, ident `"TAPE"`, ADR 0055).
 
   | | LOOP, REVERSE | PING-PONG | SCRUB | TRANSWAVE | TRANSWAVE, pitch moving > ±6.2 st | STRETCH | AGE on |
   |---|---|---|---|---|---|---|---|
-  | Billed | 450 | 490 | 480 | 400 | 770 | 430 | +20 |
+  | Billed | 450 | 500 | 480 | 400 | 770 | 440 | +30 |
 
-  - **Admission.** Every plain TAPE voice is admitted 8 on rev V, with
-    ORBIT and with the master tape (PING-PONG with AGE 7 with the master
-    tape), and 7 or 6 with DRIVE and FOLD. On rev Y, TRANSWAVE with AGE off
-    (477) keeps 8 by one cycle; STRETCH (507, a short source's lifted
-    wraps, TAPE Task 8) 7; LOOP and REVERSE with AGE off (527) 7; STRETCH and
-    TRANSWAVE with AGE 7; LOOP and REVERSE with AGE,
-    SCRUB and PING-PONG 6; with DRIVE and FOLD, 5 or 6. A TRANSWAVE whose
-    pitch can move past ±6.2 semitones (867) is admitted 4 on rev Y and 5
+  TAPE Task 9 measured TAPE's transport at 1.55 instructions a sample on
+  every model and AGE at 15.7: PING-PONG (490.6) and STRETCH (431.5) went
+  over 490 and 430 and were re-billed, and AGE's +20 (an estimate that
+  left out its loop and its block) became +30. TRANSWAVE holds 400 by 0.1.
+
+  - **Admission.** Every plain TAPE voice is admitted 8 on rev V, and
+    with ORBIT and the master tape but for AGE on PING-PONG (7 with both)
+    and SCRUB (7 with the master tape); 7 or 6 with DRIVE and FOLD. On rev
+    Y, TRANSWAVE with AGE off (477) keeps 8 by one cycle; STRETCH with AGE
+    off (517), LOOP and REVERSE with AGE off (527) and TRANSWAVE with AGE
+    7; STRETCH with AGE (547), LOOP and REVERSE with AGE, SCRUB and
+    PING-PONG 6; with DRIVE and FOLD, 5 or 6. A TRANSWAVE whose pitch can
+    move past ±6.2 semitones (877 with AGE) is admitted 4 on rev Y and 5
     on rev V.
   - **Eight voices hold while the benched engine stays under 546 on rev V
     and 400 on rev Y.**
