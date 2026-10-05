@@ -414,3 +414,23 @@ fn moving_bounds_are_click_free() {
         );
     }
 }
+
+/// `hold` before a fresh note on an idle voice: the ramp starts at 0, not at
+/// the last note's sample.
+#[test]
+fn fresh_note_after_hold_starts_at_zero() {
+    let held = held_plain(&sine(48_000, 100.7, 48_000), 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    let p = TapeEngineParams::default();
+    let mut e = fresh();
+    e.note_on(60, &p, &v, SR);
+    let (out, _) = play(&mut e, &p, &v, 7);
+    assert!(
+        out[out.len() - 1].abs() > 0.1,
+        "the last note ends off zero"
+    );
+    e.hold();
+    e.note_on(60, &TapeEngineParams { start: 0.3, ..p }, &v, SR);
+    let (out, _) = play(&mut e, &p, &v, 1);
+    assert_eq!(out[0], 0.0);
+}

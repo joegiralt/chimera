@@ -265,6 +265,12 @@ impl TapeEngine {
     /// Nothing: a loop has no end, so the note ends when its VCA lets go.
     pub fn note_off(&mut self) {}
 
+    /// A fresh note is to come on an idle voice: its ramp starts from 0, not
+    /// from the last note's sample (as `Ramp::hold`).
+    pub fn hold(&mut self) {
+        self.last = 0.0;
+    }
+
     pub fn is_active(&self) -> bool {
         self.active
     }
@@ -412,6 +418,7 @@ impl TapeEngine {
     #[cold]
     #[inline(never)]
     fn on_event(&mut self, k: &AtWrap) {
+        let ws = self.ws.min(k.frames - 1);
         for _ in 0..MAX_EVENTS {
             let h = self.heads[0].pos;
             if h.whole() < self.event {
@@ -438,7 +445,7 @@ impl TapeEngine {
                     None => self.next_bounds(k),
                 };
                 let rem = at(le) - h;
-                match plan(rem, &next, self.ws, le) {
+                match plan(rem, &next, ws, le) {
                     Plan::Fade { restart } => {
                         self.pending = None;
                         self.heads[1].pos = restart - rem;
