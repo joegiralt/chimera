@@ -5,6 +5,7 @@ use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use chimera_core::addr::{BlockRef, ParamAddr};
+use chimera_core::audio_out::{DacSample, interleave};
 use chimera_core::console::Report;
 use chimera_core::dsp::algo::algorithms::AlgoId;
 use chimera_core::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
@@ -23,7 +24,7 @@ use chimera_core::dsp::modulator::{EnvForm, EnvSlot, EnvType, Func, Glide, LfoFo
 use chimera_core::dsp::voice::Voice;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::hw::{
-    BLOCK_SIZE, MAX_PARTS, MAX_VOICES, SAMPLE_RATE, SampleBudget, VOICE_RAM_BUDGET,
+    BLOCK_SIZE, BlockBudget, MAX_PARTS, MAX_VOICES, SAMPLE_RATE, SampleBudget, VOICE_RAM_BUDGET,
 };
 use chimera_core::instrument::{
     AudioShared, DacBlocks, Instrument, MixState, PartAudio, mix_parts,
@@ -36,8 +37,9 @@ use chimera_core::orbit::runner::OrbitRunner;
 use chimera_core::params::{
     EngineType, EnvParams, FilterParams, FolderParams, OutParams, ParamSnapshot,
 };
+use chimera_core::part::{DacPair, PartParams};
 use chimera_core::preset::{Performance, Sound};
-use chimera_core::project::{Project, SlotId, project_crc};
+use chimera_core::project::{NEW_PARTS, Project, SlotId, project_crc};
 use chimera_core::scope::{ScopeFrame, ScopeWriter, scope_buffer};
 use chimera_core::sym_alloc::SymAlloc;
 use chimera_core::triple::TripleBuffer;
@@ -53,7 +55,7 @@ use crate::audio::engine;
 use crate::clocks::Clocks;
 
 /// The bench's screens as text: about 4 KB today, `# TRUNCATED` past this.
-pub const BENCH_TEXT_LEN: usize = 6144;
+pub const BENCH_TEXT_LEN: usize = 8192;
 type Text = Report<BENCH_TEXT_LEN>;
 
 // A `static mut`, not a `singleton!`: that builds its value on the caller's
@@ -108,7 +110,7 @@ const PATCHES: [Row; ROWS] = [
     ("CHAIN", || algo(AlgoId::A17, ALL, 0), 36, 12),
     ("CHN FB", || algo(AlgoId::A17, ALL, 7), 36, 12),
     ("WC", || algo_pair(AlgoId::A14, AlgoId::A22), 36, 12),
-    ("A16+17", || algo_pair(AlgoId::A16, AlgoId::A17), 36, 12),
+    ("A16+17", a16_a17, 36, 12),
 ];
 
 /// Label and per-block FX setup of each FX row. Every row runs the same
@@ -125,15 +127,21 @@ const FX: [FxRow; FX_ROWS] = [
     #[cfg(feature = "master-tape")]
     ("REEL", |s, _| worst_tape(s)),
     ("COMP", |s, _| worst_comp(s)),
-    ("BUS", |s, b| {
-        worst_chorus(s);
-        worst_delay(s);
-        worst_reverb(s, b);
-        #[cfg(feature = "master-tape")]
-        worst_tape(s);
-        worst_comp(s);
-    }),
+    ("BUS", worst_bus),
 ];
+
+/// The STRESS rows' blocks: 10 s, past NEW's four bars at its BPM.
+const STRESS_BLOCKS: u32 = 7_500;
+
+/// Every effect at its worst: the BUS row's.
+fn worst_bus(s: &mut AudioShared, b: u32) {
+    worst_chorus(s);
+    worst_delay(s);
+    worst_reverb(s, b);
+    #[cfg(feature = "master-tape")]
+    worst_tape(s);
+    worst_comp(s);
+}
 
 fn worst_chorus(s: &mut AudioShared) {
     let c = &mut s.fx.chorus;
@@ -554,6 +562,7 @@ const ROUNDS: u32 = 16;
 const IDLE_BLOCKS: u32 = 10 * SAMPLE_RATE / BLOCK_SIZE as u32;
 
 struct Rig<'p> {
+    cpu_hz: u32,
     inst_slot: &'static mut MaybeUninit<Instrument>,
     fx_slot: &'static mut MaybeUninit<FxBus>,
     shared_slot: &'static mut MaybeUninit<AudioShared>,
@@ -582,6 +591,7 @@ pub fn run(
         (i, f, &mut *addr_of_mut!(SHARED), w)
     };
     let mut rig = Rig {
+        cpu_hz: clocks.cpu_hz,
         inst_slot,
         fx_slot,
         shared_slot,
@@ -623,6 +633,18 @@ pub fn run(
         show_routing(rec, page, labels, counts);
         hold(clocks);
     }
+    memory_pages(&mut rig, rec, clocks, proj_crc);
+}
+
+/// The MEMORY and ORBIT PHASES screens: out of `run`, so its frame stays
+/// under the stack check's 8 KB.
+#[inline(never)]
+fn memory_pages(
+    rig: &mut Rig<'_>,
+    rec: &mut Recorder<'_, impl ChimeraDisplay>,
+    clocks: Clocks,
+    proj_crc: u32,
+) {
     let rebuild = time_rebuild();
     // A4 after A4, the default Sound: the lines clear a loop each.
     let sym = |p: &mut PartAudio| modal(p, ResonatorMode::Sympathetic);
@@ -635,16 +657,37 @@ pub fn run(
     let g1 = MidiNote::new(31).unwrap_or(MidiNote::A4);
     let dark = rig.time_note_on(g1, dark_pluck, (true, silent));
     let light = rig.time_note_on(g1, short_string, (true, silent));
+    chimera_core::probe::set_clock(DWT::cycle_count);
     #[cfg(feature = "orbit")]
-    let orbit = Some(rig.time_orbit());
+    let (orbit, [ow, ow1, omean]) = {
+        let (o, p) = rig.time_orbit();
+        (Some(o), p)
+    };
     #[cfg(not(feature = "orbit"))]
-    let orbit = None;
+    let (orbit, [ow, ow1, omean]) = (None, [Phases::default(); 3]);
+    let ((s1, sp1), (s2, sp2)) = (rig.stress(true), rig.stress(false));
+    let stress = (
+        [s1, s2],
+        BlockBudget::for_cpu(clocks.cpu_hz).budget_cycles(),
+    );
     show_memory(
         rec,
         (rebuild, proj_crc),
         note_on,
         (lowest, dark, light),
         orbit,
+        stress,
+    );
+    hold(clocks);
+    show_phases(
+        rec,
+        &[
+            ("WORST", ow),
+            ("WORST>0", ow1),
+            ("MEAN", omean),
+            ("ST1", sp1),
+            ("ST2", sp2),
+        ],
     );
     hold(clocks);
 }
@@ -655,7 +698,7 @@ pub fn run(
 /// before. A slot a Part names is left as it is.
 #[inline(never)]
 fn time_project_crc(project: &mut Project) -> u32 {
-    let mut filled = 0u32;
+    let mut filled = 0u128;
     for s in SlotId::ALL {
         if project.pool().get(s).is_some() || !project.users(s).is_empty() {
             continue;
@@ -666,7 +709,9 @@ fn time_project_crc(project: &mut Project) -> u32 {
             _ => factory_sound(i % FACTORY_LEN),
         };
         let sound = sound.unwrap_or_else(|| Sound::init(EngineType::Modal));
-        project.pool_store(s, sound);
+        project
+            .pool_store(s, &sound)
+            .expect("NEW and sparse copies fit the arena");
         filled |= 1 << i;
     }
     let mut cycles = 0u32;
@@ -848,7 +893,7 @@ impl Rig<'_> {
     /// notes' `handle` are inside the timing.
     #[cfg(feature = "orbit")]
     #[inline(never)]
-    fn time_orbit(&mut self) -> (u32, u32) {
+    fn time_orbit(&mut self) -> ((u32, u32), [Phases; 3]) {
         use chimera_core::block::Block;
         use chimera_core::orbit::clock::Bpm;
         use chimera_core::orbit::scene::SceneRing;
@@ -869,14 +914,25 @@ impl Rig<'_> {
         let mut runner = OrbitRunner::new(engine::SAMPLE_RATE_NZ);
         let mut view = runner.view();
         let (mut total, mut worst, mut blocks) = (0u32, 0u32, 0u32);
+        let (mut w, mut w1, mut sum) = (Phases::default(), Phases::default(), Phases::default());
         while view.loops < ORBIT_LOOPS && blocks < IDLE_BLOCKS {
             let start = DWT::cycle_count();
-            black_box(runner.block(inst, shared));
+            let ev = black_box(runner.block(inst, shared));
             runner.fill_view(black_box(&mut view));
+            chimera_core::probe::stamp(10);
             let c = DWT::cycle_count().wrapping_sub(start);
+            let p = Phases::read(blocks, c, ev.boundary());
+            sum.add(&p);
+            if c > w.total {
+                w = p;
+            }
+            if blocks > 0 && c > w1.total {
+                w1 = p;
+            }
             (total, worst, blocks) = (total.wrapping_add(c), worst.max(c), blocks + 1);
         }
-        (total / blocks.max(1), worst)
+        sum.div(blocks.max(1));
+        ((total / blocks.max(1), worst), [w, w1, sum])
     }
 
     /// Six Parts written with one noise block, sends 0.5, no voices:
@@ -922,6 +978,177 @@ impl Rig<'_> {
         }
         DWT::cycle_count().wrapping_sub(start) / (TIMED_BLOCKS * BLOCK_SIZE as u32)
     }
+
+    /// The costliest whole callback block over `STRESS_BLOCKS` and the most
+    /// voices sounding: six `a16_a17` keys on Part 6, every effect at its
+    /// worst, and (with `orbit`) ORBIT playing NEW's groove on Parts 1–5
+    /// with NEW's Sounds (ADR 0073). ORBIT starts at the first timed block,
+    /// whose cycles come back on their own too (T0); the keys go down
+    /// before the warm blocks if `keys_first`, else a block after ORBIT
+    /// starts. The allocator keeps the unit's real budget, so it refuses
+    /// what the unit would. Timed as `render_half` runs: ORBIT's block and
+    /// view, the render and the three pairs' interleave; the note queues
+    /// are empty.
+    #[inline(never)]
+    fn stress(&mut self, keys_first: bool) -> ((u32, usize, u32, u32), Phases) {
+        let budget = SampleBudget::for_cpu(self.cpu_hz);
+        let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
+        let fx = FxBus::init_in_place(self.fx_slot);
+        let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
+        for (i, part) in shared.parts.iter_mut().enumerate() {
+            part.mix = PartParams::for_part(i);
+            part.mix.sends = [0.5; FX_SENDS];
+            let new = NEW_PARTS.get(i).and_then(|s| factory_sound(s.index()));
+            let sound = new.unwrap_or_else(|| Sound::init(EngineType::Algo));
+            (part.params, part.mod_state) = (sound.params, sound.mod_state);
+        }
+        shared.parts[MAX_PARTS - 1].params = a16_a17();
+        if keys_first {
+            hold_notes(inst, shared, MAX_PARTS - 1);
+        }
+        #[cfg(feature = "orbit")]
+        let (mut runner, mut view) = {
+            let runner = OrbitRunner::new(engine::SAMPLE_RATE_NZ);
+            let view = runner.view();
+            (runner, view)
+        };
+        let mut out = [[DacSample::ZERO; BLOCK_SIZE * 2]; DacPair::ALL.len()];
+        let (mut worst, mut most, mut orbit, mut t0) = (0u32, 0usize, 0u32, 0u32);
+        let mut ph = Phases::default();
+        for b in 0..WARM_BLOCKS + STRESS_BLOCKS {
+            #[cfg(feature = "orbit")]
+            if b == WARM_BLOCKS {
+                shared
+                    .orbit
+                    .push(chimera_core::orbit::channel::Cmd::TogglePlay);
+            }
+            if b == WARM_BLOCKS + 1 && !keys_first {
+                hold_notes(inst, shared, MAX_PARTS - 1);
+            }
+            worst_bus(shared, b);
+            let start = DWT::cycle_count();
+            #[cfg(feature = "orbit")]
+            let boundary = {
+                let ev = black_box(runner.block(inst, shared));
+                runner.fill_view(black_box(&mut view));
+                chimera_core::probe::stamp(10);
+                ev.boundary()
+            };
+            #[cfg(not(feature = "orbit"))]
+            let boundary = false;
+            let ran = DWT::cycle_count().wrapping_sub(start);
+            if b >= WARM_BLOCKS && ran > ph.total {
+                ph = Phases::read(b, ran, boundary);
+            }
+            inst.render(fx, &mut self.dac, shared, &mut self.scope);
+            for (pair, o) in DacPair::ALL.into_iter().zip(out.iter_mut()) {
+                interleave(self.dac.out(), pair, o);
+            }
+            let c = DWT::cycle_count().wrapping_sub(start);
+            black_box(&out);
+            if b == WARM_BLOCKS {
+                t0 = c;
+            }
+            if b >= WARM_BLOCKS {
+                worst = worst.max(c);
+                most = most.max(inst.sounding());
+                orbit = orbit.max(ran);
+            }
+        }
+        ((worst, most, orbit, t0), ph)
+    }
+}
+
+/// One ORBIT block's phases from `chimera_core::probe`'s stamps: 1 intake,
+/// 2 transport and adopt, 3 clock, 4 offs due, 5 loop boundary (MUTATE),
+/// 6 the rings' steps, 7 harmony, 8 the notes' `handle`, 9 resnap, 10 view.
+/// `acc`: 0 recost, 1 pick, 2 note-on, 3 ons, 5 offs, 6 costliest event.
+#[derive(Clone, Copy, Default)]
+struct Phases {
+    block: u32,
+    total: u32,
+    boundary: u32,
+    d: [u32; 11],
+    acc: [u32; chimera_core::probe::ACCS],
+}
+
+impl Phases {
+    fn read(block: u32, total: u32, boundary: bool) -> Self {
+        use chimera_core::probe::{ACC, AT, SEEN};
+        use core::sync::atomic::Ordering::Relaxed;
+        let seen = SEEN.load(Relaxed);
+        let mut p = Phases {
+            block,
+            total,
+            boundary: boundary as u32,
+            ..Default::default()
+        };
+        let mut last = AT[0].load(Relaxed);
+        for i in 1..p.d.len() {
+            if seen & 1 << i != 0 {
+                let t = AT[i].load(Relaxed);
+                p.d[i] = t.wrapping_sub(last);
+                last = t;
+            }
+        }
+        p.acc = core::array::from_fn(|i| ACC[i].load(Relaxed));
+        p
+    }
+
+    #[cfg(feature = "orbit")]
+    fn add(&mut self, o: &Phases) {
+        self.total += o.total;
+        self.boundary += o.boundary;
+        for (a, b) in self.d.iter_mut().zip(&o.d) {
+            *a += b;
+        }
+        for (a, b) in self.acc.iter_mut().zip(&o.acc) {
+            *a += b;
+        }
+    }
+
+    /// The mean of `n` added; `block` is the count, `acc[6]` stays a sum.
+    #[cfg(feature = "orbit")]
+    fn div(&mut self, n: u32) {
+        self.block = n;
+        self.total /= n;
+        for a in self.d.iter_mut().chain(self.acc.iter_mut()) {
+            *a /= n;
+        }
+    }
+}
+
+fn show_phases(rec: &mut Recorder<'_, impl ChimeraDisplay>, rows: &[(&str, Phases)]) {
+    rec.clear();
+    rec.heading("ORBIT PHASES");
+    let mut line = FmtBuf::new();
+    let mut y = 30;
+    for (tag, p) in rows {
+        let d = &p.d;
+        let a = &p.acc;
+        let lines = [
+            format_args!("{tag} #{} {} B{}", p.block, p.total, p.boundary),
+            format_args!("IN{} TR{} CK{} PO{}", d[1], d[2], d[3], d[4]),
+            format_args!("MU{} PL{} HA{}", d[5], d[6], d[7]),
+            format_args!("SN{} RS{} VW{}", d[8], d[9], d[10]),
+            format_args!("ON{} OF{} MX{}", a[3], a[5], a[6]),
+            format_args!("RC{} PK{} NO{}", a[0], a[1], a[2]),
+            format_args!(
+                "C6{} SL{} TL{} PS{}",
+                a[8],
+                a[4],
+                a[7],
+                core::mem::size_of::<ParamSnapshot>()
+            ),
+        ];
+        for args in lines {
+            line.clear();
+            let _ = line.write_fmt(args);
+            rec.line(Face::Label(theme::INK2), line.as_str(), (4, y));
+            y += 8;
+        }
+    }
+    rec.flush();
 }
 
 /// Spec § Budget worst case, one kernel per voice: six operators, all with
@@ -1007,6 +1234,23 @@ fn algo(alg: AlgoId, lit: u8, feedback: u8) -> ParamSnapshot {
         (op.wave, op.coarse, op.level, op.feedback) = (WAVES[i].get(), COARSE[i], level, feedback);
     }
     p
+}
+
+/// ADR 0026's costliest pair, the bench's heaviest voice.
+fn a16_a17() -> ParamSnapshot {
+    algo_pair(AlgoId::A16, AlgoId::A17)
+}
+
+/// Six notes, C2 up in octaves, on Part `part`'s channel.
+fn hold_notes(inst: &mut Instrument, shared: &AudioShared, part: usize) {
+    for v in 0..6u8 {
+        let ev = NoteEvent {
+            channel: shared.parts[part].mix.channel,
+            note: MidiNote::new(36 + 12 * v).unwrap_or(MidiNote::A4),
+            kind: NoteKind::On(Velocity::DEFAULT),
+        };
+        inst.handle(ev, shared);
+    }
 }
 
 /// `a` ∪ `b` at MORPH 64, six audible operators, all with feedback: A14 ∪
@@ -1142,6 +1386,7 @@ fn show_memory(
     note_on: u32,
     (lowest, dark, light): (u32, u32, u32),
     orbit: Option<(u32, u32)>,
+    ([(first, v1, o1, t1), (after, v2, o2, t2)], budget): ([(u32, usize, u32, u32); 2], u32),
 ) {
     use core::mem::size_of;
     rec.clear();
@@ -1166,9 +1411,21 @@ fn show_memory(
     // A block's ORBIT, mean and worst (a step on every ring, MUTATE at
     // the loop), against `SampleBudget`'s cycles per block.
     let orbit_line = format_args!("ORBIT {mean}/{worst} CYC/BLK");
-    let lines = lines.into_iter().chain(orbit.map(|_| orbit_line));
-    // Twelve lines at 22 px end at 288, under 320; eleven fit at ROW_H.
-    let row_h = if orbit.is_some() { 22 } else { ROW_H };
+    // The costliest block of each STRESS run (keys before ORBIT, then
+    // after) against the block budget, and the most voices it sounded.
+    // Each run's costliest ORBIT block within it.
+    let stress_line = format_args!("STRESS {first}/{after}/{budget} {v1}/{v2}V");
+    let stress_orbit = format_args!("STRESS ORBIT {o1}/{o2} CYC");
+    // The block ORBIT starts in, whole, in each run.
+    let stress_t0 = format_args!("STRESS T0 {t1}/{t2}");
+    let lines = lines
+        .into_iter()
+        .chain(orbit.map(|_| orbit_line))
+        .chain([stress_line])
+        .chain(orbit.map(|_| stress_orbit))
+        .chain(orbit.map(|_| stress_t0));
+    // Fifteen lines at 18 px end at 298, under 320; twelve fit at 22.
+    let row_h = if orbit.is_some() { 18 } else { 22 };
     let mut line = FmtBuf::new();
     for (i, args) in lines.enumerate() {
         line.clear();

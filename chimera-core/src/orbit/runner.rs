@@ -14,7 +14,7 @@ use super::scene::{Scene, SceneIdx, SceneRing};
 use super::walk::Pool;
 use super::{MAX_POOL, MAX_STEPS, RINGS, RingIdx};
 use crate::MidiNote;
-use crate::hw::{BLOCK_SIZE, MAX_PARTS};
+use crate::hw::{BLOCK_SIZE, Cost, MAX_PARTS};
 use crate::instrument::{AudioShared, Instrument, NoteOrigin, NoteSet};
 use crate::note_queue::{NoteEvent, NoteKind, RealTime};
 use crate::triple::TripleBuffer;
@@ -337,6 +337,14 @@ pub struct OrbitRunner {
 const _: () = assert!(size_of::<OrbitRunner>() <= 1024);
 
 impl OrbitRunner {
+    /// Reserved from the voice budget while ORBIT plays, as `FxBus::COST`
+    /// is (ADR 0091): its own worst block, the clock, rings, MUTATE,
+    /// harmony, re-snap and view, without the notes it hands the
+    /// `Instrument` (`Instrument::BURST` bills those, as anyone's), over
+    /// the block's samples. Re-measured with `Instrument::BURST`: their sum
+    /// must cover ORBIT's cold first block (65,387 at 785a028a).
+    pub const COST: Cost = Cost(171); // worst block less its notes' handling, 10,913, the worst over five runs (STRESS keys first), measured 2026-10-04/05, bench ORBIT PHASES, rev V at 480 MHz, 06dd8707 to 785a028a; / 64, rounded up
+
     pub fn new(sample_rate: NonZeroU32) -> Self {
         let working = Scene::init();
         OrbitRunner {
@@ -436,7 +444,11 @@ impl OrbitRunner {
                 note,
                 kind,
             };
+            #[cfg(feature = "probe")]
+            let t0 = crate::probe::now();
             inst.handle_from(ev, shared, NoteOrigin::Orbit(e.ring));
+            #[cfg(feature = "probe")]
+            crate::probe::max(6, crate::probe::now().wrapping_sub(t0));
         }
     }
 
@@ -537,14 +549,24 @@ impl OrbitRunner {
     /// from the last one handed (spec § 5.2): a segment change, a landed
     /// scene, a start or a MIDI Start back to bar 0, a chord played in.
     pub fn block(&mut self, inst: &mut Instrument, shared: &AudioShared) -> Events {
+        #[cfg(feature = "probe")]
+        crate::probe::begin();
         let sent = self.advance(shared);
-        Self::send(inst, shared, &sent, &mut self.fired);
+        // Before the notes: while ORBIT plays, its reserve judges them too
+        // (ADR 0091).
         let h = self.transport.then(|| self.state.harmony(&self.working));
         inst.set_harmony(h);
+        #[cfg(feature = "probe")]
+        crate::probe::stamp(7);
+        Self::send(inst, shared, &sent, &mut self.fired);
+        #[cfg(feature = "probe")]
+        crate::probe::stamp(8);
         if h.is_some() && h != self.harmony {
             inst.resnap(shared);
         }
         self.harmony = h;
+        #[cfg(feature = "probe")]
+        crate::probe::stamp(9);
         sent
     }
 
@@ -595,6 +617,8 @@ impl OrbitRunner {
             self.midi = MidiClock::new(self.sample_rate);
             (self.ext_start, self.ext_play) = (false, None);
         }
+        #[cfg(feature = "probe")]
+        crate::probe::stamp(1);
 
         // The DAW's Start or Stop first ends what ORBIT holds; Start goes
         // back to bar 0.
@@ -658,6 +682,8 @@ impl OrbitRunner {
         if self.base_landed {
             self.copy_knobs(&o.settings, edits.rhythm, edits.notes);
         }
+        #[cfg(feature = "probe")]
+        crate::probe::stamp(2);
 
         let sounding = self.transport;
         let (to, from_sample, bar_len) = match midi {
@@ -704,6 +730,8 @@ impl OrbitRunner {
         };
         let channels = core::array::from_fn::<_, MAX_PARTS, _>(|i| shared.parts[i].mix.channel);
         let cue = self.cue.map(|c| c.of(o));
+        #[cfg(feature = "probe")]
+        crate::probe::stamp(3);
         let ev = block(&mut self.state, &mut self.working, cue, span, &channels);
         if let Some(inc) = self.cue
             && ev.adopted()

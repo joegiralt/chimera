@@ -11,15 +11,15 @@ use crate::name::ProjectName;
 use crate::storage::{
     AbFile, Card, CardEvent, CardFault, FileError, FileKind, Generation, HEADER_LEN, Header,
     InPlaceError, LoadError, Outcome, ProjectId, Ready, RecordWriter, SaveError, Side, delete_ab,
-    load_ab_in_place, peek_header, save_ab,
+    held_len, load_ab_in_place, peek_header, read_source_into, save_ab,
 };
 
 use super::codec::encode_new_project;
 use super::note::{Differ, ProjectNote, Subject};
 use super::{
     Confirmed, DeleteTarget, LoadLink, NEW_PROJECT_NAME, Origin, OverwriteTarget, PartId,
-    PartStatus, Project, ProjectCheck, ProjectDecoder, ProjectFile, ProjectSource, Seen, Swap,
-    encode_project, part_status, project_crc,
+    PartStatus, Project, ProjectCheck, ProjectDecoder, ProjectFile, ProjectSource, Seen, SourceId,
+    Swap, encode_project, part_status, project_crc,
 };
 
 pub fn project_file(id: ProjectId) -> AbFile {
@@ -67,6 +67,7 @@ fn load_note(e: LoadError, subject: Subject) -> ProjectNote {
         LoadError::Store(err) => card_note(err, Some(subject)),
         LoadError::File(err) => ProjectNote::File { err, subject },
         LoadError::Missing => ProjectNote::Missing(subject),
+        LoadError::Busy => ProjectNote::Busy(subject),
     }
 }
 
@@ -230,7 +231,7 @@ fn write_project<S: Store>(
             s,
             r,
             project_file(file.id()),
-            &mut ProjectCheck::new(),
+            &mut ProjectCheck::default(),
             Some(name),
             body,
         )
@@ -243,6 +244,10 @@ fn write_project<S: Store>(
         Ok(Err(now)) => Err(changed(now, subject)),
         Err(SaveError::Store(err)) => Err(card_note(err, Some(subject))),
         Err(SaveError::File(err)) => Err(ProjectNote::File { err, subject }),
+        Err(SaveError::Damaged) => Err(ProjectNote::File {
+            err: FileError::Corrupt,
+            subject,
+        }),
     };
     CardOut { out, event }
 }
@@ -365,6 +370,95 @@ pub struct LoadOutcome {
     pub event: Option<CardEvent>,
 }
 
+/// What a load read: whether it is lossy, what didn't fit, and the sources
+/// missing from the card (not listed, or not read whole).
+struct Loaded {
+    lossy: bool,
+    sounds: u8,
+    sources: u8,
+    missing: u8,
+}
+
+impl Loaded {
+    /// `LOADED · a SOUNDS, b SRC DIDN'T FIT` when any didn't, else
+    /// `LOADED · n SRC MISSING` when any is.
+    fn note(&self) -> Option<ProjectNote> {
+        if self.sounds > 0 || self.sources > 0 {
+            return Some(ProjectNote::DidntFit {
+                sounds: self.sounds,
+                sources: self.sources,
+            });
+        }
+        (self.missing > 0).then_some(ProjectNote::SourcesMissing(self.missing))
+    }
+}
+
+/// The file in place (ADR 0046), then the sources its plan takes, read
+/// from the card into their absent entries (ADR 0087): one card operation.
+/// Pass 2 and the source reads run after `link`'s epoch, which `swap`
+/// takes, has faded the voices. Its own frame: the decoder's two sides of
+/// pass 1 costs stay out of the UI loop's (the 8 KB stack-check).
+#[inline(never)]
+fn load_into<S: Store>(
+    s: &mut S,
+    r: &Ready,
+    p: &mut Project,
+    id: ProjectId,
+    link: Option<&LoadLink>,
+    swap: &mut Option<Swap>,
+) -> Result<Loaded, InPlaceError> {
+    let mut d = ProjectDecoder::new(p, link);
+    let read = load_ab_in_place(s, r, project_file(id), &mut d);
+    *swap = d.take_swap();
+    let (lossy, to_read, (sounds, sources)) = (d.lossy(), d.to_read(), d.dropped());
+    let unlisted = d.missing();
+    read?;
+    let (missed, unread) = read_sources(s, r, p, to_read);
+    Ok(Loaded {
+        lossy,
+        sounds,
+        sources: sources.saturating_add(missed),
+        missing: unlisted.saturating_add(unread),
+    })
+}
+
+/// Reads sources `ids` into their absent entries, inside the load's epoch
+/// fade. Returns how many the arena couldn't take, and how many are left
+/// absent otherwise. A file missing, short, damaged or naming another ref
+/// leaves its entry absent: the ref is kept, and its Parts are silent. A
+/// card fault ends the reads there.
+fn read_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: u32) -> (u8, u8) {
+    p.bump();
+    let (mut missed, mut unread) = (0u8, 0u8);
+    let mut fault = false;
+    for id in SourceId::ALL.into_iter().filter(|i| ids & i.bit() != 0) {
+        let Some(e) = p.pool.source(id) else { continue };
+        if fault {
+            unread = unread.saturating_add(1);
+            continue;
+        }
+        let got = match held_len(e.r) {
+            Some(len) => {
+                p.pool
+                    .source_fill(id, len, |out| match read_source_into(s, r, e.r, out) {
+                        Ok(_) => true,
+                        Err(err) => {
+                            fault = err.store_error().is_some();
+                            false
+                        }
+                    })
+            }
+            None => Ok(false),
+        };
+        match got {
+            Ok(true) => {}
+            Ok(false) => unread = unread.saturating_add(1),
+            Err(_) => missed = missed.saturating_add(1),
+        }
+    }
+    (missed, unread)
+}
+
 /// Replaces `p` as `go` confirmed: NEW, or a file in place (ADR 0046).
 /// The only writer of the load epoch. Refused, with `Changed`, if `p`
 /// moved since `go`; a file listed on another card is refused before any
@@ -395,9 +489,10 @@ pub fn load_project<S: Store>(
         ProjectSource::File { id, vol } => (id, vol),
     };
     let subject = Subject::File(id);
+    // Bumped between the passes, once the file is known good.
+    let mut swap = None;
     let run = run_on(card, store, vol, |s, r| {
-        let mut d = ProjectDecoder::new(p);
-        load_ab_in_place(s, r, project_file(id), &mut d).map(|_| d.lossy())
+        load_into(s, r, p, id, Some(link), &mut swap)
     });
     let result = match run {
         Ok(o) => {
@@ -407,11 +502,12 @@ pub fn load_project<S: Store>(
         Err(e) => Err(e),
     };
     match result {
-        Ok(Ok(lossy)) => {
+        Ok(Ok(loaded)) => {
             p.bump();
             p.meta.file = Some(ProjectFile::new(id, vol));
-            p.meta.saved_crc = loaded_crc(p, lossy);
-            out.swap = Some(link.bump());
+            p.meta.saved_crc = loaded_crc(p, loaded.lossy);
+            out.swap = Some(swap.take().unwrap_or_else(|| link.bump()));
+            out.note = loaded.note();
         }
         // Not the card the file was listed on: nothing read.
         Ok(Err(now)) => out.note = Some(changed(now, subject)),
@@ -423,9 +519,13 @@ pub fn load_project<S: Store>(
             clobbered: true, ..
         }) => {
             p.reset_new();
-            out.swap = Some(link.bump());
+            out.swap = Some(swap.take().unwrap_or_else(|| link.bump()));
             out.note = Some(ProjectNote::LoadFailed(subject));
         }
+    }
+    // Refused after the bump (`Busy`): the voices faded, so publish.
+    if out.swap.is_none() {
+        out.swap = swap;
     }
     out
 }
@@ -449,16 +549,15 @@ pub fn boot_project<S: Store>(
         Some(id) => {
             let subject = Subject::File(id);
             let run = card.run(store, |s, r| {
-                let mut d = ProjectDecoder::new(p);
-                load_ab_in_place(s, r, project_file(id), &mut d).map(|_| (r.volume(), d.lossy()))
+                load_into(s, r, p, id, None, &mut None).map(|l| (r.volume(), l))
             });
             match run {
                 Ok(o) => match o.result {
-                    Ok((vol, lossy)) => {
+                    Ok((vol, loaded)) => {
                         p.bump();
                         p.meta.file = Some(ProjectFile::new(id, vol));
-                        p.meta.saved_crc = loaded_crc(p, lossy);
-                        return None;
+                        p.meta.saved_crc = loaded_crc(p, loaded.lossy);
+                        return loaded.note();
                     }
                     Err(InPlaceError {
                         clobbered: true, ..
@@ -773,7 +872,7 @@ pub fn delete_project<S: Store>(
         if let Err(moved) = still(s, r.volume(), file.id(), Expect::Newest(c.witness()))? {
             return Ok(Err(moved));
         }
-        delete_ab(s, r, project_file(file.id()), &mut ProjectCheck::new()).map(Ok)
+        delete_ab(s, r, project_file(file.id()), &mut ProjectCheck::default()).map(Ok)
     });
     let subject = Subject::File(file.id());
     let (result, event) = split(run);

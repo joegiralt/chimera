@@ -8,6 +8,8 @@ mod file;
 mod frame;
 mod record;
 mod sound;
+mod source_file;
+mod source_ref;
 mod system;
 pub mod twelve;
 
@@ -32,6 +34,13 @@ pub use record::{
     CRITICAL, MAX_RECORD_LEN, ReadTag, RecordBuf, RecordTag, RecordWriter, write_file,
 };
 pub use sound::{MAX_SOUND_COST, SoundCheck, SoundDecoder, encode_sound, sound_crc};
+pub use source_file::{
+    SOURCE_DATA_MAX, SOURCE_HEAD_LEN, SourceHead, held_len, read_source_into, source_crc,
+    source_file, source_file_min_len,
+};
+#[cfg(feature = "source-writer")]
+pub use source_file::{Wrote, write_source};
+pub use source_ref::SourceRef;
 pub use system::{
     BootNote, Exit, ExitPlan, SyncError, SystemCheck, SystemDecoder, SystemSettings, SystemSync,
     body_crc, encode_system, exit_plan,

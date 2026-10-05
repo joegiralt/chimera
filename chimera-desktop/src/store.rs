@@ -30,6 +30,7 @@ impl DirStore {
             Dir::Projects => self.root.join("CHIMERA/PROJECTS"),
             Dir::Sounds => self.root.join("CHIMERA/SOUNDS"),
             Dir::Bench => self.root.join("CHIMERA/BENCH"),
+            Dir::Tapes => self.root.join("CHIMERA/TAPES"),
         }
     }
 
@@ -71,6 +72,14 @@ impl DirStore {
             Ok(())
         } else {
             Err(StoreError::VolumeChanged(now))
+        }
+    }
+
+    /// A read-only file on the host is sealed: `ReadOnly`.
+    fn writable(&self, f: FileName) -> Result<(), StoreError> {
+        match fs::metadata(self.file_path(f)) {
+            Ok(m) if m.permissions().readonly() => Err(StoreError::ReadOnly),
+            _ => Ok(()),
         }
     }
 
@@ -163,6 +172,7 @@ impl Store for DirStore {
     ) -> Result<u32, StoreError> {
         self.open(vol)?;
         self.has_dir(file.dir())?;
+        self.writable(file)?;
         let mut fh = File::create(self.file_path(file)).map_err(io_err)?;
         // What the body wrote stays on Err.
         let r = body(&mut FileSink(&mut fh));
@@ -175,6 +185,7 @@ impl Store for DirStore {
 
     fn delete(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
         self.open(vol)?;
+        self.writable(file)?;
         fs::remove_file(self.file_path(file)).map_err(io_err)
     }
 
@@ -187,6 +198,17 @@ impl Store for DirStore {
             Err(e) if e.kind() != io::ErrorKind::AlreadyExists => Err(io_err(e)),
             _ => Ok(()),
         }
+    }
+
+    fn seal(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
+        self.open(vol)?;
+        if file.dir() != Dir::Tapes {
+            return Err(StoreError::Io);
+        }
+        let path = self.file_path(file);
+        let mut perm = fs::metadata(&path).map_err(io_err)?.permissions();
+        perm.set_readonly(true);
+        fs::set_permissions(&path, perm).map_err(io_err)
     }
 }
 
@@ -349,7 +371,8 @@ pub(crate) mod tests {
             .params
             .filter
             .set(FilterParams::RESONANCE, 0.7);
-        p.pool_store(SlotId::ALL[20], Sound::init(EngineType::Modal));
+        p.pool_store(SlotId::ALL[20], &Sound::init(EngineType::Modal))
+            .unwrap();
         p.edit_fx().reverb.mix = 0.6;
         p.set_name(ProjectName::new("RELAUNCH").unwrap());
         let file = new_project_id(&mut card, &mut store).out.unwrap();

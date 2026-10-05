@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-chimera-core = { path = "../chimera-core" }
+chimera-core = { path = "../chimera-core", features = ["source-writer"] }
 chimera-hal = { path = "../chimera-hal" }
 minifb = "0.28"
 cpal = "0.15"

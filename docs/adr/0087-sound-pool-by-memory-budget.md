@@ -20,10 +20,10 @@ Measured on `orbit` (43d59110), which merges first:
 - **`encode_sound` writes all 19 voice blocks of both engines,** 1 143 B a
   Sound, more than the struct. Writing only params that differ from
   `Sound::neutral` gives 153–273 B for the factory Sounds and 128 B for
-  INIT. The worst case was 1 858 B. It is now 1 928 B, with
-  `MAX_SOUND_COST` 1 936 (rounded up to 16 B): TAPE's `TAPE_ENG` block
+  INIT. The worst case was 1 858 B. It is now 1 942 B, with
+  `MAX_SOUND_COST` 1 952 (rounded up to 16 B): TAPE's `TAPE_ENG` block
   (ADR 0093) adds a block head and 13 params, 70 B, when every param is
-  off neutral.
+  off neutral, and the `SourceRef` record adds 14 B.
 - **AXI really free** (`rust-size`, `main` at cf50ee74) is 140 024 B on
   the largest shipping build (`orbit`), and 104 188 B on the largest build
   of all (`bench,master-tape`, whose diagnostics hold 31 KB). The paper model, `AXI_RESIDENT` with its 64 KiB `UI_RESERVE`
@@ -102,6 +102,8 @@ engine.
   - A deleted source still sounding is retired, never cut.
   - `SourceTable` rows (12 B) carry no generation: a row is reused only
     after retirement, when no voice holds it.
+- **A project file load fades the voices before pass 2** and reads its
+  sources inside the fade: [0099](0099-a-project-file-load-fades-before-pass-2.md).
 - **12-bit packing:** two samples in three bytes, two's complement. The
   rate is set per source, 4–48 kHz, with 24 kHz the default (#279).
   Conversion is host-only (ADR 0093): the unit stores and plays

@@ -3,6 +3,11 @@
 
 #[cfg(all(feature = "bench", feature = "sd-probe"))]
 compile_error!("bench and sd-probe both take over after boot: pick one");
+// The lost-cluster sweep frees only on the owner's go (#360, ADR 0094):
+// until then the boot runs it dry. Only the commit that enables freeing
+// removes this line.
+#[cfg(feature = "sweep-free")]
+compile_error!("owner's go required");
 #[cfg(all(feature = "usb-console", feature = "sd-probe"))]
 compile_error!(
     "the SD probe halts after boot, so nothing would poll USB: build it with --no-default-features"
@@ -251,6 +256,7 @@ fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::Check
                 crs: dp.CRS,
                 crs_rec: ccdr.peripheral.CRS,
                 boot: seen,
+                sweep: None,
             },
         },
         sd: sd::SdParts {
@@ -262,6 +268,25 @@ fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::Check
             cs: gpioe.pe12,
         },
     }
+}
+
+/// The boot sweep's mode: a dry run until `sweep-free`, which the owner's
+/// go enables.
+#[cfg(not(feature = "sd-probe"))]
+#[cfg(not(feature = "sweep-free"))]
+const SWEEP: chimera_hal::store::Sweep = chimera_hal::store::Sweep::DryRun;
+#[cfg(not(feature = "sd-probe"))]
+#[cfg(feature = "sweep-free")]
+const SWEEP: chimera_hal::store::Sweep = chimera_hal::store::Sweep::Free;
+
+/// The card swept once, as it mounts now; no card is the card's doubt.
+#[cfg(not(feature = "sd-probe"))]
+fn sweep_card(store: &mut sd::SdStore, marks: &mut [u8]) -> chimera_hal::store::SweepSeen {
+    use chimera_hal::store::{Doubt, Store, SweepStats};
+    let vol = store
+        .mount()
+        .map_err(|e| (Doubt::Card(e), SweepStats::default()))?;
+    store.sweep(vol, SWEEP, marks)
 }
 
 /// The load ack's timeout in control ticks.
@@ -306,6 +331,7 @@ fn synth(board: Board) -> ! {
 
     let mut controls = Stm32Controls::new();
     let ui = shared::take_ui().expect("UI state taken once");
+    ui.project_mut().set_gate_clock(gate_ms);
 
     // Start-up, in order, behind the splash until PART 1 can be drawn:
     // 1. SYSTEM and the last project from the card, however slow;
@@ -333,8 +359,18 @@ fn synth(board: Board) -> ! {
     ui.set_theme(settings.theme);
     ui.set_midi(settings.midi);
     apply_theme(settings.theme, &mut theme, &mut backlight, &mut display);
-    // Still behind the splash: the last project (about 130 KB read), or
-    // NEW and why.
+    // Still behind the splash: the lost-cluster sweep (#360, ADR 0094),
+    // one card operation, its bitmap in the arena's gap before the project
+    // fills it. A doubt is reported and the boot goes on.
+    let swept = sweep_card(store, ui.project_mut().sweep_scratch());
+    #[cfg(feature = "usb-console")]
+    let usb_parts = usb::UsbParts {
+        sweep: Some((SWEEP, swept)),
+        ..usb_parts
+    };
+    #[cfg(not(feature = "usb-console"))]
+    let _ = swept;
+    // Then the last project (about 130 KB read), or NEW and why.
     ui.boot_project(&mut card, store, settings.last_project);
     // The splash again in the card's theme; it stays up until PART 1.
     let _ = chimera_core::ui::splash::draw(&mut display);
@@ -597,4 +633,10 @@ fn apply_theme(
     display.set_palette(new.palette());
     *theme = new;
     recolour
+}
+
+/// The source gate's clock (ADR 0087): ms from SysTick, at 2 ms steps.
+#[cfg(not(feature = "sd-probe"))]
+fn gate_ms() -> u32 {
+    controls::ticks().wrapping_mul(1_000 / controls::CONTROLS_HZ)
 }

@@ -242,9 +242,9 @@ fn the_browser_offers_clear_on_a_filled_slot() {
         .expect("an empty slot");
     let ink = |cursor| {
         let mut fb = screen::Fb::new();
-        browser::draw(&mut fb, pool, PartId::ALL[0], cursor, 0, true);
+        browser::draw(&mut fb, ui.project(), PartId::ALL[0], cursor, 0, true, None);
         (0..120)
-            .flat_map(|x| (277..=284).map(move |y| (x, y)))
+            .flat_map(|x| (browser::CLEAR_Y - 7..=browser::CLEAR_Y).map(move |y| (x, y)))
             .filter(|&(x, y)| fb.at(x, y) == theme::INK)
             .count()
     };
@@ -275,13 +275,7 @@ fn every_hint_fits() {
     let all = cells
         .iter()
         .flat_map(|c| [c.hint(true), c.hint(false)])
-        .chain([
-            mute,
-            mod_grid::DELETE,
-            mod_grid::PRIME,
-            browser::HINT,
-            browser::CLEAR_HINT,
-        ]);
+        .chain([mute, mod_grid::DELETE, mod_grid::PRIME]);
     for h in all {
         println!("{:3} {h:?}", hint::width(h));
         assert!(
@@ -290,6 +284,98 @@ fn every_hint_fits() {
             hint::width(h)
         );
     }
+}
+
+/// The pool's lines at their longest (999K) fit too: the refusal, the
+/// clear's bytes, the save's cost and its WON'T FIT.
+#[test]
+fn every_pool_hint_fits() {
+    use chimera_core::project::PoolFull;
+    use chimera_core::project::arena::Cost;
+    use chimera_core::ui::settings::prompt;
+    let k999 = Cost::of(999 * 1024);
+    assert_eq!(k999.kib_label().as_str(), "999K");
+    let w = theme::CONTENT_W;
+    let needs = prompt::pool_needs(PoolFull {
+        needs: k999,
+        free: k999,
+    });
+    assert_eq!(needs.as_str(), "NEEDS 999K, 999K FREE");
+    for line in [prompt::POOL_FULL, needs.as_str()] {
+        let text =
+            chimera_core::ui::draw::text_width(&theme::FONT_LABEL, line, theme::LABEL_TRACKING);
+        assert!(text <= w, "{line}: {text}");
+    }
+    let (clear, save, wont) = (
+        browser::clear_words(k999),
+        browser::save_words(Some(k999)),
+        browser::save_words(None),
+    );
+    let lines = [
+        vec![Gesture(browser::CLEAR_KEYS, clear.as_str())],
+        vec![Gesture(browser::SAVE_KEYS, save.as_str())],
+        vec![Gesture(browser::SAVE_KEYS, wont.as_str())],
+    ];
+    for l in &lines {
+        assert!(hint::width(l) <= w, "{l:?}: {}", hint::width(l));
+    }
+    // A clear that orphans a source: its own line left of the meter's
+    // percentage, the longest name cut to fit; then the purge's question.
+    let pct = chimera_core::ui::draw::text_width(&theme::FONT_LABEL, "100%", 0);
+    assert!(theme::MARGIN_X + browser::ORPHAN_W + 6 <= theme::VIZ_RIGHT - pct);
+    let name = chimera_core::name::SoundName::new("WWWWWWWWWWWWWWWW").unwrap();
+    let orphan = browser::orphan_words(name, k999);
+    assert!(
+        orphan.as_str().ends_with("W 999K UNUSED"),
+        "{}",
+        orphan.as_str()
+    );
+    let text = chimera_core::ui::draw::text_width(
+        &theme::FONT_LABEL,
+        orphan.as_str(),
+        theme::LABEL_TRACKING,
+    );
+    assert!(text <= browser::ORPHAN_W, "{}: {text}", orphan.as_str());
+    // The toast after such a clear: the name cut so it fits.
+    let after = prompt::unused_after_clear(name, k999);
+    assert!(
+        after.as_str().ends_with("W 999K UNUSED · PURGE FREES IT"),
+        "{}",
+        after.as_str()
+    );
+    assert!(
+        chimera_core::ui::busy::toast_fits(after.as_str()),
+        "{}",
+        after.as_str()
+    );
+    let choir = prompt::unused_after_clear(
+        chimera_core::name::SoundName::new("CHOIR").unwrap(),
+        Cost::of(41 * 1024),
+    );
+    assert_eq!(choir.as_str(), "CHOIR 41K UNUSED · PURGE FREES IT");
+    let purge = prompt::purge_question(chimera_core::project::Unused {
+        count: 32,
+        cost: k999,
+    });
+    assert_eq!(purge.as_str(), "PURGE 32 SOURCES? FREES 999K");
+    // A load over the arena, at its most.
+    let most = chimera_core::project::ProjectNote::DidntFit {
+        sounds: 128,
+        sources: 32,
+    }
+    .line();
+    assert_eq!(most.as_str(), "LOADED · 128 SOUNDS, 32 SRC DIDN'T FIT");
+    assert!(
+        chimera_core::ui::busy::toast_fits(most.as_str()),
+        "{}",
+        most.as_str()
+    );
+    let text = chimera_core::ui::draw::text_width(
+        &theme::FONT_LABEL,
+        purge.as_str(),
+        theme::LABEL_TRACKING,
+    );
+    assert!(text <= w, "{}: {text}", purge.as_str());
 }
 
 /// RING's value, its redraw key, is one of RINGS × 6 within 0..=1: ring 5
@@ -338,8 +424,8 @@ fn hints_off_shows_no_hint() {
     );
     let (mut a, mut b) = (screen::Fb::new(), screen::Fb::new());
     let ui = ui_for("sound_browser");
-    browser::draw(&mut a, ui.project().pool(), PartId::ALL[0], 0, 0, true);
-    browser::draw(&mut b, ui.project().pool(), PartId::ALL[0], 0, 0, false);
+    browser::draw(&mut a, ui.project(), PartId::ALL[0], 0, 0, true, None);
+    browser::draw(&mut b, ui.project(), PartId::ALL[0], 0, 0, false, None);
     assert_ne!(a.hash(), b.hash(), "the browser's go too");
 }
 

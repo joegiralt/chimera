@@ -10,7 +10,7 @@ use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::test_support::save_part_to;
 use chimera_core::project::{
-    ActionGone, Origin, PartActionKind, PartActions, PartFrom, PartId, PartSet, PartSource,
+    ActionRefused, Origin, PartActionKind, PartActions, PartFrom, PartId, PartSet, PartSource,
     PartStatus, Project, ProjectStatus, SlotId, part_actions, part_status, project_crc,
     project_status,
 };
@@ -80,7 +80,13 @@ fn save_over_a_slot_stales_the_other_unedited_users() {
     assert_eq!(status(&p, a), PartStatus::Clean);
     assert_eq!(status(&p, b), PartStatus::Stale(s));
     assert_eq!(status(&p, c), PartStatus::Edited);
-    assert!(p.pool().get(s).unwrap().bits_eq(&p.part(a).sound));
+    assert!(
+        p.pool()
+            .get(s)
+            .unwrap()
+            .to_sound()
+            .bits_eq(&p.part(a).sound)
+    );
 }
 
 #[test]
@@ -111,7 +117,13 @@ fn new_slot_saves_to_the_free_slot_and_cleans_the_part() {
         .find(|x| x.kind() == PartActionKind::NewSlot(free))
         .unwrap();
     assert_eq!(p.apply_part_action(new), Ok(PartSet::EMPTY));
-    assert!(p.pool().get(free).unwrap().bits_eq(&p.part(a).sound));
+    assert!(
+        p.pool()
+            .get(free)
+            .unwrap()
+            .to_sound()
+            .bits_eq(&p.part(a).sound)
+    );
     assert_eq!(status(&p, a), PartStatus::Clean);
     match p.part(a).origin() {
         Origin::Slot { slot, crc, .. } => {
@@ -135,7 +147,11 @@ fn revert_is_bit_exact() {
         .find(|x| x.kind() == PartActionKind::Revert(s))
         .unwrap();
     assert_eq!(p.apply_part_action(rev), Ok(PartSet::EMPTY));
-    assert!(p.part(a).sound.bits_eq(p.pool().get(s).unwrap()));
+    assert!(
+        p.part(a)
+            .sound
+            .bits_eq(&p.pool().get(s).unwrap().to_sound())
+    );
     assert_eq!(status(&p, a), PartStatus::Clean);
     // A revert copies the Sound; the mix isn't the slot's.
     assert_ne!(p.part(a).mix, mix);
@@ -165,7 +181,8 @@ fn init_origin_never_stale() {
     let a = PartId::ALL[1];
     assert_eq!(status(&p, a), PartStatus::Clean);
     // The INIT slot changes under it.
-    p.pool_store(SlotId::ALL[8], factory_sound(0).unwrap());
+    p.pool_store(SlotId::ALL[8], &factory_sound(0).unwrap())
+        .unwrap();
     assert_eq!(status(&p, a), PartStatus::Clean);
     edit(&mut p, a, 0.5);
     assert_eq!(status(&p, a), PartStatus::Edited);
@@ -189,7 +206,7 @@ fn edited_part_never_stale_after_reload() {
     match q.part(a).origin() {
         Origin::Slot { slot, crc, .. } => {
             assert_eq!(slot, s);
-            assert_eq!(crc, sound_crc(q.pool().get(s).unwrap()));
+            assert_eq!(crc, q.pool().get(s).unwrap().crc());
             assert_ne!(crc, sound_crc(&q.part(a).sound));
         }
         o => panic!("origin {o:?}"),
@@ -234,7 +251,8 @@ fn project_marks() {
     p.mark_saved_for_test();
     assert_eq!(p.meta().saved_crc(), Some(project_crc(&p)));
     assert_eq!(st(&p), ProjectStatus::Saved);
-    p.pool_store(SlotId::ALL[20], Sound::init(EngineType::Modal));
+    p.pool_store(SlotId::ALL[20], &Sound::init(EngineType::Modal))
+        .unwrap();
     assert_eq!(st(&p), ProjectStatus::Modified);
     p.pool_clear(SlotId::ALL[20]).unwrap();
     assert_eq!(st(&p), ProjectStatus::Saved);
@@ -308,7 +326,7 @@ fn actions_offer_only_what_applies() {
 
     // A full pool: NewSlot drops out of every row.
     for slot in SlotId::ALL.into_iter().skip(free.index()) {
-        p.pool_store(slot, Sound::init(EngineType::Modal));
+        p.pool_store(slot, &Sound::init(EngineType::Modal)).unwrap();
     }
     assert_eq!(p.pool().first_free(), None);
     assert_eq!(
@@ -335,7 +353,7 @@ fn actions_offer_only_what_applies() {
     load_anyway(&mut p, t, init(edited_slot, EngineType::Algo)).unwrap();
     p.pool_clear(s).unwrap();
     let crc = project_crc(&p);
-    assert_eq!(p.apply_part_action(rev), Err(ActionGone));
+    assert_eq!(p.apply_part_action(rev), Err(ActionRefused::Gone));
     assert_eq!(project_crc(&p), crc);
 }
 
@@ -358,7 +376,7 @@ fn an_action_is_gone_once_its_part_or_slot_moves() {
     p.edit_part(a).sound.params.filter.cutoff = was;
     let crc = project_crc(&p);
     for x in [over, new, rev] {
-        assert_eq!(p.apply_part_action(x), Err(ActionGone));
+        assert_eq!(p.apply_part_action(x), Err(ActionRefused::Gone));
     }
     assert_eq!(project_crc(&p), crc);
 
@@ -366,14 +384,14 @@ fn an_action_is_gone_once_its_part_or_slot_moves() {
     // TX BRASS: no other Part of NEW's plays it.
     load(&mut p, t, src(a, SlotId::ALL[2])).unwrap();
     edit(&mut p, a, 0.5);
-    assert_eq!(p.apply_part_action(over), Err(ActionGone));
-    assert_eq!(p.apply_part_action(rev), Err(ActionGone));
+    assert_eq!(p.apply_part_action(over), Err(ActionRefused::Gone));
+    assert_eq!(p.apply_part_action(rev), Err(ActionRefused::Gone));
 
     // The NewSlot's slot filled.
     let new = pick(&p, PartActionKind::NewSlot(free));
-    p.pool_store(free, Sound::init(EngineType::Algo));
+    p.pool_store(free, &Sound::init(EngineType::Algo)).unwrap();
     let crc = project_crc(&p);
-    assert_eq!(p.apply_part_action(new), Err(ActionGone));
+    assert_eq!(p.apply_part_action(new), Err(ActionRefused::Gone));
     assert_eq!(project_crc(&p), crc);
 
     // A NewSlot whose slot is free, though no longer the first, applies.
@@ -381,7 +399,13 @@ fn an_action_is_gone_once_its_part_or_slot_moves() {
     let new = pick(&p, PartActionKind::NewSlot(later));
     p.pool_clear(free).unwrap();
     assert_eq!(p.apply_part_action(new), Ok(PartSet::EMPTY));
-    assert!(p.pool().get(later).unwrap().bits_eq(&p.part(a).sound));
+    assert!(
+        p.pool()
+            .get(later)
+            .unwrap()
+            .to_sound()
+            .bits_eq(&p.part(a).sound)
+    );
 }
 
 /// An INIT Part's action from before a project load can't apply to the
@@ -401,6 +425,77 @@ fn an_action_from_before_a_load_is_gone() {
     assert_eq!(p.part(a).origin(), Origin::Init(EngineType::Modal));
     assert_eq!(status(&p, a), PartStatus::Edited);
     let crc = project_crc(&p);
-    assert_eq!(p.apply_part_action(new), Err(ActionGone));
+    assert_eq!(p.apply_part_action(new), Err(ActionRefused::Gone));
     assert_eq!(project_crc(&p), crc);
+}
+
+/// A Part against its slot reads Clean exactly when the two Sounds are
+/// bit-equal: the encoded compare misses no edit and sees none that isn't
+/// there. 200 seeded pairs: unedited, a param one ulp off, renamed, a route
+/// moved, edited and put back, a slot that was dense.
+#[test]
+fn marks_compare_encodings() {
+    use chimera_core::factory::FACTORY_LEN;
+    use chimera_core::name::SoundName;
+    use chimera_core::project::test_support::dense;
+    let mut x: u64 = 0x005E_ED0F_C1EA;
+    let mut next = || {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        x
+    };
+    let mut clean = 0;
+    for i in 0..200 {
+        let (mut p, t) = Project::boxed();
+        let r = next();
+        let part = PartId::ALL[(r % 6) as usize];
+        let slot = SlotId::ALL[10 + (r >> 8) as usize % 118];
+        let mut s = match (r >> 16) % 3 {
+            0 => Sound::init(EngineType::Modal),
+            1 => Sound::init(EngineType::Algo),
+            _ => factory_sound((r >> 20) as usize % FACTORY_LEN).unwrap(),
+        };
+        if (r >> 24) % 4 == 0 {
+            dense(&mut s, r);
+        }
+        p.pool_store(slot, &s).unwrap();
+        if status(&p, part) == PartStatus::Clean {
+            load(&mut p, t, src(part, slot)).unwrap();
+        } else {
+            load_anyway(&mut p, t, src(part, slot)).unwrap();
+        }
+        let copy = p.pool().get(slot).unwrap().to_sound();
+        let e = p.edit_part(part).sound;
+        match (r >> 32) % 6 {
+            0 => {}
+            1 => {
+                let c = &mut e.params.filter.cutoff;
+                *c = f32::from_bits(c.to_bits() ^ 1);
+            }
+            2 => e.name = SoundName::new(&format!("R{i}")).unwrap(),
+            3 => {
+                let m = &mut e.mod_state;
+                if m.num_dests() > 0 && m.num_sources() > 0 {
+                    let a = m.amount(0, 0);
+                    m.set_route(0, 0, a.wrapping_add(1));
+                }
+            }
+            4 => {
+                let v = e.params.out.volume;
+                e.params.out.volume = v * 0.5 + 0.01;
+                e.params.out.volume = v;
+            }
+            _ => *e = copy,
+        }
+        let held = p.pool().get(slot).unwrap().to_sound();
+        let eq = p.part(part).sound.bits_eq(&held);
+        clean += usize::from(eq);
+        assert_eq!(
+            status(&p, part) == PartStatus::Clean,
+            eq,
+            "pair {i}: seed {r:#x}"
+        );
+    }
+    assert!((60..180).contains(&clean), "{clean} of 200 Clean");
 }

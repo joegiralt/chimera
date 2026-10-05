@@ -1,6 +1,8 @@
 //! CPU costs (ADR 0013): cycles/sample per voice, measured on the bench
 //! (rev V at 480 MHz, 2026-09-27) and rounded up.
 
+mod common;
+
 use chimera_core::dsp::algo::algorithms::AlgoId;
 use chimera_core::dsp::algo::engine::AlgoEngine;
 use chimera_core::dsp::algo::params::AlgoParams;
@@ -10,6 +12,7 @@ use chimera_core::dsp::filter::{FilterKind, FilterMode};
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{CPU_HZ_REV_V, CPU_HZ_REV_Y, Cost, MAX_VOICES, SampleBudget};
+use chimera_core::instrument::{AudioShared, NoteOrigin};
 use chimera_core::modulation::{ModRouting, ModSource, ModState, VCA};
 use chimera_core::params::{EngineType, ParamSnapshot};
 
@@ -644,6 +647,14 @@ fn the_costliest_patch_gets_six_voices_on_rev_v() {
     assert_eq!(voices_at(CPU_HZ_REV_V, &p), 6);
     assert_eq!(MAX_VOICES, 8, "the budget stops it short of the pool");
     assert_eq!(voices_at(CPU_HZ_REV_Y, &p), if TAPE { 4 } else { 5 });
+    // ADR 0091: while ORBIT plays, its own block (171) and a five-note
+    // burst (857) are reserved beside the bus: five on rev V
+    // ((7,000 − 2,208) / 909 = 5.3; four with the tape). Stopped, six.
+    use chimera_core::instrument::Instrument;
+    use chimera_core::orbit::runner::OrbitRunner;
+    let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
+    let playing = FxBus::COST.0 + Instrument::BURST.0 + OrbitRunner::COST.0;
+    assert_eq!((budget - playing) / 909, if TAPE { 4 } else { 5 });
     // With the folder on, unrouted (45, ADR 0060): 954, six on rev V and
     // four on rev Y (five and four with the tape); the drive stage too
     // (1,011): five on rev V, four on rev Y, with the tape too. No factory
@@ -656,29 +667,39 @@ fn the_costliest_patch_gets_six_voices_on_rev_v() {
     assert_eq!((fits(CPU_HZ_REV_V, both), fits(CPU_HZ_REV_Y, both)), (5, 4));
 }
 
-/// Spec § Intent and ADR 0031, 0040: every factory Sound gets at least six
-/// voices on rev V and at least five on rev Y, billed as it plays (its
-/// routes, FOLD and DRIVE in; all at LP24). With the bus at 1,180 (ADR
-/// 0055, 0061) and ADR 0060's chain, the TX and single-oscillator Sounds
-/// (575–712) get all eight on rev V, MORPH PAD (853) and MORPH KEYS (864)
-/// six, both five on rev Y. With the master tape (1,490) the TX Sounds
-/// (703–712) get seven.
+/// Spec § Intent and ADR 0031, 0040: billed as it plays (its routes, FOLD
+/// and DRIVE in; all at LP24) beside the bus alone, every factory Sound
+/// fits six voices on rev V and five on rev Y; the TX and single-oscillator
+/// Sounds all eight on rev V (seven with the master tape for the TX).
+/// That is what ORBIT stopped admits. ADR 0091: while ORBIT plays, its own
+/// block (171) and a five-note burst (857) are reserved too: on rev V the
+/// TX Sounds get six, MORPH PAD and MORPH KEYS five, SAW LEAD and SQR BASS
+/// eight (seven with the tape).
 #[test]
 fn every_factory_sound_gets_at_least_six_voices_on_rev_v() {
-    const REV_V: [u32; 8] = if TAPE {
+    use chimera_core::instrument::Instrument;
+    use chimera_core::orbit::runner::OrbitRunner;
+    const FITS: [u32; 8] = if TAPE {
         [7, 7, 7, 7, 8, 8, 6, 6]
     } else {
         [8, 8, 8, 8, 8, 8, 6, 6]
     };
-    for (i, want) in REV_V.into_iter().enumerate() {
+    const ORBIT: [u32; 8] = if TAPE {
+        [6, 6, 6, 6, 7, 7, 5, 5]
+    } else {
+        [6, 6, 6, 6, 8, 8, 5, 5]
+    };
+    for i in 0..8 {
         let s = chimera_core::factory::factory_sound(i).unwrap();
         let voice = Voice::cost(&s.params, &s.mod_state).0;
-        let at = |hz| {
+        let at = |hz, reserved: Cost| {
             let budget = SampleBudget::for_cpu(hz).as_cost().0;
-            ((budget - FxBus::COST.0) / voice).min(MAX_VOICES as u32)
+            ((budget - reserved.0) / voice).min(MAX_VOICES as u32)
         };
-        assert_eq!(at(CPU_HZ_REV_V), want, "factory {i}");
-        assert!(at(CPU_HZ_REV_Y) >= 5, "factory {i} on rev Y");
+        assert_eq!(at(CPU_HZ_REV_V, FxBus::COST), FITS[i], "factory {i}");
+        assert!(at(CPU_HZ_REV_Y, FxBus::COST) >= 5, "factory {i} on rev Y");
+        let playing = FxBus::COST + Instrument::BURST + OrbitRunner::COST;
+        assert_eq!(at(CPU_HZ_REV_V, playing), ORBIT[i], "factory {i}, ORBIT");
     }
 }
 
@@ -844,7 +865,9 @@ fn a_structure_route_on_symp_bills_the_chord_glide() {
 /// ensemble when on: host estimates until the bench's MDL rows (Modal 2
 /// step A, task 12; `modal` in chimera-stm32/src/bench.rs) read them.
 /// Voices beside the whole FX bus at its worst, on rev V and rev Y: the
-/// costlier models get fewer, as they must.
+/// costlier models get fewer, as they must. BANK's and SYMP's out clip,
+/// stmlib's rational curve for `tanhf` (ADR 0097), gave BANK a third voice
+/// on rev V and SYMP one more on most rows.
 #[test]
 fn modal_bills_each_model() {
     use chimera_core::dsp::modal::{BankModes, ModalEngine, ResonatorMode};
@@ -860,10 +883,10 @@ fn modal_bills_each_model() {
         (sound(String, 0.3, 0.0), 410, (8, 8), (8, 8)),
         (sound(String, 0.3, 0.5), 550, (8, 7), (8, 6)),
         (sound(Bowed, 0.3, 0.5), 640, (8, 6), (7, 6)),
-        (sound(Sympathetic, 0.0, 0.0), 540, (8, 7), (8, 7)),
-        (sound(Sympathetic, 0.3, 0.0), 620, (8, 6), (7, 6)),
-        (sound(Sympathetic, 0.3, 0.5), 760, (6, 5), (6, 5)),
-        (sound(Modal, 0.3, 0.5), 1_900, (2, 2), (2, 2)),
+        (sound(Sympathetic, 0.0, 0.0), 470, (8, 8), (8, 7)),
+        (sound(Sympathetic, 0.3, 0.0), 550, (8, 7), (8, 6)),
+        (sound(Sympathetic, 0.3, 0.5), 690, (7, 6), (7, 5)),
+        (sound(Modal, 0.3, 0.5), 1_840, (3, 2), (2, 2)),
     ] {
         let (rev_v, rev_y) = if cfg!(feature = "master-tape") {
             taped
@@ -888,7 +911,7 @@ fn modal_bills_each_model() {
     // The bank scales with its modes: 48, the most, is 16 more than 32.
     let mut bank = sound(Modal, 0.0, 0.0);
     bank.modal.modes = BankModes::M48;
-    assert_eq!(ModalEngine::cost(&bank.modal), Cost(1_900 + 16 * 45));
+    assert_eq!(ModalEngine::cost(&bank.modal), Cost(1_840 + 16 * 45));
 }
 
 /// A bow from C6 up re-takes its lock correction each block while FORCE
@@ -947,4 +970,171 @@ fn a_glide_steal_bills_the_retune() {
     let cut = EngineSlot::cost(&algo, &ModState::new());
     algo.pitch.steal = Steal::Glide;
     assert_eq!(EngineSlot::cost(&algo, &ModState::new()), cut);
+}
+
+/// What the voices render now, each at the Sound it plays (a stolen
+/// voice's fade at the Sound it fades), the FX bus beside them: what the
+/// allocator's bill must cover.
+fn rendered(inst: &chimera_core::instrument::Instrument, shared: &AudioShared) -> u32 {
+    let parts = inst.sounding_parts();
+    let active = inst.active();
+    (0..MAX_VOICES)
+        .filter(|&v| active[v])
+        .map(|v| {
+            let p = &shared.parts[parts[v] as usize];
+            Voice::cost(&p.params, &p.mod_state).0
+        })
+        .sum::<u32>()
+        + FxBus::COST.0
+}
+
+/// A16 ∪ A17 as the bench plays it: the costliest voice (909).
+fn a16_a17_sound() -> ParamSnapshot {
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    p.algo = a16_a17();
+    p
+}
+
+/// ADR 0091: a voice taken for another Part's note fades out on its own
+/// Sound for `Voice::FADE` before the note starts, so its slot is billed
+/// at the costlier of the two until then. A16 ∪ A17 keys fill the budget;
+/// a TX note (704) takes a key's voice, still 909 while it fades. Billed at
+/// 704, the 205 "freed" would let a Modal note (487) in beside the fade,
+/// over the budget; billed at 909, it takes a key too, and waits.
+#[test]
+fn a_stolen_voice_is_billed_until_its_fade_ends() {
+    let mut r = common::InstRig::with_budget(SampleBudget::for_cpu(CPU_HZ_REV_V));
+    let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
+    r.shared.parts[5].params = a16_a17_sound();
+    r.shared.parts[0].params = chimera_core::factory::factory_sound(0).unwrap().params;
+    r.shared.parts[1].params = ParamSnapshot::for_engine(EngineType::Modal);
+    for k in 0..6 {
+        r.note_on(5, 36 + 12 * k);
+    }
+    r.render(1);
+    r.note_on(0, 60);
+    r.note_on(1, 64);
+    let mut most = 0;
+    for _ in 0..8 {
+        let before = rendered(&r.inst, &r.shared);
+        r.render(1);
+        most = most.max(before).max(rendered(&r.inst, &r.shared));
+    }
+    assert!(most <= budget, "{most} rendered of {budget}");
+    let sounding = r.inst.sounding_parts();
+    let active = r.inst.active();
+    for p in [0u8, 1] {
+        assert!(
+            (0..MAX_VOICES).any(|v| active[v] && sounding[v] == p),
+            "Part {} sounds",
+            p + 1
+        );
+    }
+}
+
+/// The STRESS scene (the bench's): NEW's Sounds on Parts 1–5, A16 ∪ A17
+/// on Part 6, its six keys down a block after ORBIT starts (or, with
+/// `keys_first`, before), ORBIT playing NEW's groove. Every block, the
+/// most voices sounding and the most the voices and bus rendered; and
+/// whether every block from ORBIT's start held all six keys, none stolen
+/// or shed.
+fn stress(keys_first: bool, blocks: usize) -> (usize, u32, bool) {
+    use chimera_core::factory::factory_sound;
+    use chimera_core::orbit::runner::OrbitRunner;
+    use chimera_core::part::PartParams;
+    use chimera_core::project::{NEW_PARTS, Project};
+    let (project, _) = Project::boxed();
+    let mut r = common::InstRig::with_budget(SampleBudget::for_cpu(CPU_HZ_REV_V));
+    *r.shared = AudioShared::from_performance(project.perf());
+    for (i, part) in r.shared.parts.iter_mut().enumerate() {
+        part.mix = PartParams::for_part(i);
+        let s = NEW_PARTS.get(i).and_then(|s| factory_sound(s.index()));
+        let s = s.unwrap_or_else(|| chimera_core::preset::Sound::init(EngineType::Algo));
+        (part.params, part.mod_state) = (s.params, s.mod_state);
+    }
+    r.shared.parts[5].params = a16_a17_sound();
+    let ch = r.shared.parts[5].mix.channel.get();
+    let keys = |r: &mut common::InstRig| {
+        for k in 0..6 {
+            r.note_on(ch, 36 + 12 * k);
+        }
+    };
+    if keys_first {
+        keys(&mut r);
+    }
+    r.shared
+        .orbit
+        .push(chimera_core::orbit::channel::Cmd::TogglePlay);
+    let sr = core::num::NonZeroU32::new(common::SR).unwrap();
+    let mut runner = Box::new(OrbitRunner::new(sr));
+    let (mut voices, mut most, mut kept) = (0, 0, true);
+    for b in 0..blocks {
+        if b == 1 && !keys_first {
+            keys(&mut r);
+        }
+        runner.block(&mut r.inst, &r.shared);
+        let before = rendered(&r.inst, &r.shared);
+        r.render(1);
+        voices = voices.max(r.inst.sounding());
+        most = most.max(before).max(rendered(&r.inst, &r.shared));
+        let a = r.inst.allocator();
+        let origins = r.inst.origins();
+        let held = (0..MAX_VOICES)
+            .filter(|&v| {
+                let s = a.slots()[v];
+                s.part() == Some(5) && s.held() && !s.dying() && origins[v] == NoteOrigin::Live
+            })
+            .count();
+        kept &= held == 6;
+    }
+    (voices, most, kept)
+}
+
+/// The bench's STRESS run: 10 s, past NEW's four bars.
+const STRESS_BLOCKS: usize = 7_500;
+
+/// ADR 0091: in the STRESS scene with the keys down a block after ORBIT
+/// starts, what the voices and bus render leaves room for ORBIT's own
+/// block and a burst in every block. Keys down before it keep sounding,
+/// all six, past that (its reserve refuses, it never steals them or sheds),
+/// within the budget.
+#[test]
+fn orbit_and_a_burst_fit_beside_what_renders() {
+    use chimera_core::instrument::Instrument;
+    use chimera_core::orbit::runner::OrbitRunner;
+    let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
+    for keys_first in [true, false] {
+        let (voices, most, kept) = stress(keys_first, STRESS_BLOCKS);
+        // Six keys first, none stolen or shed once ORBIT starts; a block
+        // after, five voices beside ORBIT's reserve. The counts come out
+        // the same on the `master-tape` bus, so the assert takes no cfg.
+        assert_eq!(voices, if keys_first { 6 } else { 5 }, "{keys_first}");
+        assert!(kept || !keys_first, "a key stolen or shed");
+        let room = match keys_first {
+            true => 0,
+            false => Instrument::BURST.0 + OrbitRunner::COST.0,
+        };
+        assert!(
+            most + room <= budget,
+            "keys first {keys_first}: {most} + {room} of {budget}, {voices} voices"
+        );
+    }
+}
+
+/// ADR 0091: the Parts are costed once a block. A burst of note-ons, here
+/// all refused (no budget), costs them once between them and the render;
+/// the next block costs them again.
+#[test]
+fn a_refused_note_on_does_not_recost() {
+    let mut r = common::InstRig::with_budget(SampleBudget::for_cpu(0));
+    r.render(1);
+    let before = r.inst.costings();
+    for n in 60..65 {
+        r.note_on(0, n);
+    }
+    r.render(1);
+    assert_eq!(r.inst.allocator().refused(), 5);
+    assert_eq!(r.inst.costings(), before + 1, "once for the block");
+    r.render(1);
+    assert_eq!(r.inst.costings(), before + 2, "and once the next");
 }

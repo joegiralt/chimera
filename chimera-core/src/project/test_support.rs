@@ -33,7 +33,7 @@ use super::{
 
 /// `Project::save_part_to`, which only a Part action reaches outside tests.
 pub fn save_part_to(p: &mut Project, part: PartId, s: SlotId) -> PartSet {
-    p.save_part_to(part, s)
+    p.save_part_to(part, s).expect("the pool has room")
 }
 
 /// Where a test saves `p` as `f`: SAVE when it is `p`'s own file, else a
@@ -62,7 +62,7 @@ pub fn confirm_delete(e: &ProjectEntry) -> Confirmed<DeleteTarget> {
     Confirmed::<DeleteTarget>::unasked(e)
 }
 
-/// NEW with every slot filled: the factory Sounds and INIT, then edited
+/// NEW with all 128 slots filled: the factory Sounds and INIT, then edited
 /// and renamed copies of them. Parts from slots 0, 3 and 9 and from INIT;
 /// two Parts edited after loading, one of them renamed; non-default FX and
 /// mix; the name `FULL`.
@@ -83,7 +83,7 @@ pub fn full() -> (Box<Project>, TemplateCrc) {
             .filter
             .set(FilterParams::CUTOFF, 200.0 + 100.0 * i as f32);
         sound.params.out.set(OutParams::VOLUME, i as f32 / 40.0);
-        p.pool_store(s, sound);
+        p.pool_store(s, &sound).expect("128 sparse Sounds fit");
     }
     let loads = [
         (0, PartFrom::Slot(SlotId::ALL[0])),
@@ -161,15 +161,27 @@ pub fn dense(s: &mut Sound, seed: u64) {
     }
 }
 
-/// `full()` with every Part and every slot no Part came from `dense` (a
-/// Part's Origin keeps its slot's CRC): larger on the card than `full()`
-/// was before sparse encoding.
+/// `full()` with every Part and each of the first 32 slots no Part came
+/// from `dense` (a Part's Origin keeps its slot's CRC): about 60 KB on the
+/// card, as the 32-slot pool's was.
 pub fn full_dense() -> (Box<Project>, TemplateCrc) {
+    full_dense_slots(32)
+}
+
+/// `full_dense` over the first `n` slots, as far as the arena has room;
+/// past it a slot stays sparse. All 128: about 175 KB on the card.
+pub fn full_dense_slots(n: usize) -> (Box<Project>, TemplateCrc) {
     let (mut p, t) = full();
-    for s in SlotId::ALL {
-        if let Some(mut x) = p.pool().get(s).filter(|_| p.users(s).is_empty()).cloned() {
+    for s in SlotId::ALL.into_iter().take(n) {
+        if let Some(mut x) = p
+            .pool()
+            .get(s)
+            .filter(|_| p.users(s).is_empty())
+            .map(|e| e.to_sound())
+        {
             dense(&mut x, s.index() as u64);
-            p.pool_store(s, x);
+            // Past the arena's room the slot stays sparse.
+            let _ = p.pool_store(s, &x);
         }
     }
     for (i, id) in PartId::ALL.into_iter().enumerate() {
@@ -178,7 +190,7 @@ pub fn full_dense() -> (Box<Project>, TemplateCrc) {
     (p, t)
 }
 
-/// Panics with the first difference: the names, each slot (`bits_eq`),
+/// Panics with the first difference: the names, each slot (its bytes),
 /// each Part's Sound (`bits_eq`), mix, Origin (slot and CRC, or engine;
 /// never the generation) and `part_status`, the FX, ORBIT, then
 /// `project_crc`.
@@ -188,11 +200,11 @@ pub fn same(a: &Project, b: &Project) {
         match (a.pool().get(s), b.pool().get(s)) {
             (None, None) => {}
             (Some(x), Some(y)) => assert!(
-                x.bits_eq(y),
+                x == y,
                 "slot {}: {} vs {}",
                 s.index(),
-                x.name.as_str(),
-                y.name.as_str()
+                x.name().as_str(),
+                y.name().as_str()
             ),
             (x, y) => panic!(
                 "slot {}: filled {} vs {}",
@@ -308,6 +320,10 @@ impl<S: Store> Store for FullOnWrite<S> {
     fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError> {
         self.0.make_dir(vol, dir)
     }
+
+    fn seal(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
+        self.0.seal(vol, file)
+    }
 }
 
 /// A store that flips one byte, mid-file, of `file` from its second read
@@ -410,6 +426,10 @@ impl<S: Store> Store for FlipOnSecondRead<S> {
     fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError> {
         self.inner.make_dir(vol, dir)
     }
+
+    fn seal(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
+        self.inner.seal(vol, file)
+    }
 }
 
 /// A store whose second read of `file` on fails with `err` before any
@@ -482,6 +502,10 @@ impl<S: Store> Store for FailOnSecondRead<S> {
 
     fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError> {
         self.inner.make_dir(vol, dir)
+    }
+
+    fn seal(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
+        self.inner.seal(vol, file)
     }
 }
 

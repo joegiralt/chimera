@@ -4,13 +4,13 @@ use core::fmt::{self, Write};
 
 use super::{
     CardAnswer, Command, Frame, MAX_LINE, NoArg, Out, PROTOCOL, Refusal, Request, Stalled,
-    write_card, write_shot, write_status,
+    write_card, write_shot, write_status, write_sweep,
 };
 use crate::boot::{BootSeen, UsbRegs};
 use crate::hw::MAX_VOICES;
 use crate::perf::load::AudioStats;
 use crate::ui::UiState;
-use chimera_hal::store::Files;
+use chimera_hal::store::{Files, Sweep, SweepSeen};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Stats {
@@ -34,6 +34,11 @@ pub trait Unit {
     /// What the chip saw at boot: `status`'s `boot` and `last_usb_regs`
     /// lines, after `at`. `None`: neither.
     fn boot(&self) -> Option<BootSeen>;
+    /// The boot's card sweep and its mode: `status`'s `sweep` line, after
+    /// `boot`. `None`: none ran.
+    fn sweep(&self) -> Option<(Sweep, SweepSeen)> {
+        None
+    }
     /// The OTG and PWR registers now: `status`'s `usb_regs` line, last
     /// before `OK`. `None`: no line.
     fn usb_regs(&self) -> Option<UsbRegs>;
@@ -82,6 +87,10 @@ pub fn answer(
         Ok(Request::Help(NoArg)) => Ok(help(&mut t)),
         Ok(Request::Status(NoArg)) => Ok(write_status(unit.ui(), &mut t)
             .and_then(|()| unit.boot().map_or(Ok(()), |b| writeln!(t, "{b}")))
+            .and_then(|()| {
+                unit.sweep()
+                    .map_or(Ok(()), |(m, s)| write_sweep(m, &s, &mut t))
+            })
             .and_then(|()| {
                 unit.usb_regs()
                     .map_or(Ok(()), |r| writeln!(t, "usb_regs {r}"))

@@ -52,6 +52,7 @@ check:
     cargo build -p chimera-bootloader --target thumbv7em-none-eabihf
     cargo build -p chimera-theory --target thumbv7em-none-eabihf
     just clippy
+    just loom
     cargo fmt --all -- --check
     just stack-check
 
@@ -91,6 +92,12 @@ stack-check:
             python3 tools/stack_depth.py "$(( $(addr _stack_start) - $(addr _stack_end) ))" <<<"$dis"$'\n'"$data"
         fi
     done
+
+# The source table's gate under loom (ADR 0087): every interleaving of
+# one audio block loop and one UI close, wait, move and open. Its own
+# target dir: `--cfg loom` would rebuild everything else.
+loom:
+    RUSTFLAGS="--cfg loom" CARGO_TARGET_DIR=target/loom cargo test -p chimera-core --features test-support --test loom_source_table --release
 
 # Run tests
 test:
@@ -172,13 +179,13 @@ flash:
         python3 tools/chimera-usb.py wait-console 10
     elif [ "$rc" -ne 0 ]; then exit "$rc"; fi
 
-# Flash the bench build (--features bench) to PreenFM3 via DFU
+# Flash the bench build (--features bench,orbit: STRESS plays ORBIT) to PreenFM3 via DFU
 # The bench holds its screens about 4 min before the UI loop (and so the
 # console) starts, so a 74 after a completed download is accepted unwaited.
 flash-bench:
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features bench
+    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features bench,orbit
     rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-bench.bin
     python3 tools/chimera-usb.py to-dfu
     log=$(mktemp) && trap 'rm -f "$log"' EXIT

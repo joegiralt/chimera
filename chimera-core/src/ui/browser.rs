@@ -1,22 +1,30 @@
 //! Sound browser overlay in Direction A (UI refresh spec § Page types):
 //! title, list rows (slot / name / engine tag) with the selected row an
-//! accent pill and empty slots dimmed, a thin scroll indicator, its gesture hints.
+//! accent pill and empty slots dimmed, each Sound's cost, a thin scroll
+//! indicator, its gesture hints with the bytes they move, and the pool
+//! meter (ADR 0087).
 
 use core::fmt::Write;
 
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
+use u8g2_fonts::FontRenderer;
 
 use chimera_hal::{Controls, EncoderId};
 
+use crate::name::SoundName;
 use crate::params::EngineType;
-use crate::preset::POOL_SIZE;
-use crate::project::{PartId, Pool, SlotId};
+use crate::preset::MAX_SOUNDS;
+use crate::project::arena::Cost;
+use crate::project::{Line, PartId, Pool, Project, SlotId};
 use crate::ui::components;
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
-use crate::ui::hint::{self, Gesture, Hint};
+use crate::ui::hint::{self, Gesture};
+use crate::ui::meter::{self, MeterView};
 use crate::ui::nav::chain_def_for;
+use crate::ui::settings::part::Offer;
+use crate::ui::settings::prompt::POOL_FULL;
 use crate::ui::theme;
 
 /// Rows on screen.
@@ -24,7 +32,7 @@ pub const VISIBLE_ROWS: usize = 8;
 /// The pool's slots, then one init Sound per engine, in `EngineType::ALL`
 /// order.
 pub const INIT_TYPES: [EngineType; EngineType::ALL.len()] = EngineType::ALL;
-pub const TOTAL_ENTRIES: usize = POOL_SIZE + INIT_TYPES.len();
+pub const TOTAL_ENTRIES: usize = MAX_SOUNDS + INIT_TYPES.len();
 
 /// The Sound rung's browser: its cursor and the first row shown. Only
 /// `input` moves it; it opens at the top.
@@ -62,14 +70,70 @@ pub const ROW_H: i32 = 26;
 pub const SCROLL_X: i32 = theme::SCROLL_X;
 pub const SCROLL_TOP: i32 = 40;
 pub const SCROLL_H: i32 = 208;
-const HINT_Y: i32 = 264;
-const CLEAR_Y: i32 = 284;
-const INFO_Y: i32 = 304;
+/// The hint lines: EDIT's load, MIX + EDIT's save, MIX + MINUS's clear.
+/// A refusal takes the first two: `POOL FULL`, then what it needs.
+pub const HINT_Y: i32 = 250;
+pub const SAVE_Y: i32 = 266;
+pub const CLEAR_Y: i32 = 282;
+pub const INFO_Y: i32 = 300;
+/// The pool meter's top, under its percentage.
+pub const METER_Y: i32 = 306;
+/// A row's cost, right-aligned short of its engine tag.
+const COST_RIGHT: i32 = 196;
+/// Where a row's name starts, and its clearance from the cost or tag.
+const NAME_X: i32 = 52;
+const NAME_GAP: i32 = 6;
+/// The engine tag's right edge.
+const TAG_RIGHT: i32 = 223;
+/// The widest engine tag, three letters.
+const TAG_ROOM: i32 = 24;
 /// The keys and what they do here (Pre-flight 22, ADR 0086). SEQ's way up
-/// is every chain's (ADR 0081), so it goes unsaid. MIX + MINUS's clear
-/// has a line of its own, on a filled slot alone: nothing else clears.
-pub const HINT: Hint = &[Gesture("EDIT", "LOADS"), Gesture("MIX + EDIT", "SAVES")];
-pub const CLEAR_HINT: Hint = &[Gesture("MIX + MINUS", "CLEARS")];
+/// is every chain's (ADR 0081), so it goes unsaid. MIX + EDIT's save says
+/// what it costs; MIX + MINUS's clear, on a filled slot alone, what it
+/// frees.
+pub const LOAD: Gesture<'static> = Gesture("EDIT", "LOADS");
+pub const SAVE_KEYS: &str = "MIX + EDIT";
+pub const CLEAR_KEYS: &str = "MIX + MINUS";
+
+/// MIX + EDIT's words: `SAVES · +0.1K`, the save against the slot it
+/// replaces; `WON'T FIT` with none that fits.
+pub fn save_words(cost: Option<Cost>) -> FmtBuf {
+    let mut f = FmtBuf::new();
+    let _ = match cost {
+        Some(c) => write!(f, "SAVES · +{}", c.kib_label().as_str()),
+        None => f.write_str("WON'T FIT"),
+    };
+    f
+}
+
+/// MIX + MINUS's words on a filled slot: `CLEARS · FREES 0.3K`.
+pub fn clear_words(cost: Cost) -> FmtBuf {
+    let mut f = FmtBuf::new();
+    let _ = write!(f, "CLEARS · FREES {}", cost.kib_label().as_str());
+    f
+}
+
+/// The orphan line's room: left of the meter's percentage, `100%` at
+/// its widest.
+pub const ORPHAN_W: i32 = 168;
+
+/// Under MIX + MINUS's line, on a slot whose clear leaves its source
+/// unused: `CHOIR 41K UNUSED`, the source's cost, the name cut to fit
+/// `ORPHAN_W`. The spec's one line, `CLEARS · CHOIR 41K UNUSED`, is wider
+/// than the screen beside the keys.
+pub fn orphan_words(name: SoundName, cost: Cost) -> Line {
+    let name = components::upper(name.as_str());
+    let mut n = name.as_str();
+    loop {
+        let mut l = Line::new(n);
+        let _ = write!(l, " {} UNUSED", cost.kib_label().as_str());
+        let w = draw::text_width(&theme::FONT_LABEL, l.as_str(), theme::LABEL_TRACKING);
+        match n.char_indices().last() {
+            Some((cut, _)) if w > ORPHAN_W => n = &n[..cut],
+            _ => return l,
+        }
+    }
+}
 
 /// Encoder A moves the cursor, clamped to the list; the scroll follows it
 /// on screen. EDIT's load, MIX+EDIT's save, MIX+MINUS's clear and every
@@ -95,11 +159,19 @@ pub fn row_y(i: usize) -> i32 {
 
 /// The full-screen browser for Part `part` (0-based), on a screen the
 /// caller has cleared to `theme::BG`; its gesture hints with `hints`
-/// (THEME's HINTS).
-pub fn draw<D>(d: &mut D, pool: &Pool, part: PartId, cursor: usize, scroll: usize, hints: bool)
-where
+/// (THEME's HINTS). A `refusal` reads in their place, in `ALERT`.
+pub fn draw<D>(
+    d: &mut D,
+    project: &Project,
+    part: PartId,
+    cursor: usize,
+    scroll: usize,
+    hints: bool,
+    refusal: Option<&str>,
+) where
     D: DrawTarget<Color = Rgb565>,
 {
+    let pool = project.pool();
     let mut name = FmtBuf::new();
     let _ = write!(name, "PART {}", part.index() + 1);
     components::title_to(d, "LOAD SOUND", name.as_str());
@@ -120,14 +192,53 @@ where
         SCROLL_TOP + (SCROLL_H - thumb_h) * scroll.min(max_scroll as usize) as i32 / max_scroll;
     draw::fill_rect(d, SCROLL_X, thumb_y, 2, thumb_h, theme::MID);
 
-    if hints {
-        hint::draw(d, HINT, theme::MARGIN_X, HINT_Y);
-    }
-    if hints && slot_at(cursor).is_some_and(|s| pool.get(s).is_some()) {
-        hint::draw(d, CLEAR_HINT, theme::MARGIN_X, CLEAR_Y);
+    if let Some(r) = refusal {
+        for (line, y) in [(POOL_FULL, HINT_Y), (r, SAVE_Y)] {
+            draw::text_tracked(
+                d,
+                &theme::FONT_LABEL,
+                line,
+                theme::MARGIN_X,
+                y,
+                theme::ALERT,
+                theme::LABEL_TRACKING,
+            );
+        }
+    } else if hints {
+        hint::draw(d, &[LOAD], theme::MARGIN_X, HINT_Y);
+        let cost = Offer::of(project, part).save_cost();
+        let words = save_words(cost);
+        let does = if cost.is_some() {
+            theme::MID
+        } else {
+            theme::ALERT
+        };
+        let save = Gesture(SAVE_KEYS, words.as_str());
+        hint::gesture(d, &save, theme::MARGIN_X, SAVE_Y, does);
+        if let Some((s, e)) = slot_at(cursor).and_then(|s| Some((s, pool.get(s)?))) {
+            if let Some(c) = project.orphaned_by_clear(s) {
+                let words = orphan_words(e.name(), c);
+                draw::text_tracked(
+                    d,
+                    &theme::FONT_LABEL,
+                    words.as_str(),
+                    theme::MARGIN_X,
+                    INFO_Y,
+                    theme::WARN,
+                    theme::LABEL_TRACKING,
+                );
+            }
+            let words = clear_words(e.cost());
+            hint::draw(
+                d,
+                &[Gesture(CLEAR_KEYS, words.as_str())],
+                theme::MARGIN_X,
+                CLEAR_Y,
+            );
+        }
     }
     let mut info = FmtBuf::new();
-    let _ = write!(info, "{} INIT + {} SLOTS", INIT_TYPES.len(), POOL_SIZE);
+    let _ = write!(info, "{}%", meter::percent(pool.used()));
     draw::text_right(
         d,
         &theme::FONT_LABEL,
@@ -137,6 +248,19 @@ where
         theme::MID,
         0,
     );
+    meter::draw(d, &MeterView::of(pool, None), theme::MARGIN_X, METER_Y);
+}
+
+/// The longest start of `s` that fits `w` px in `font`.
+fn clip<'s>(font: &FontRenderer, s: &'s str, w: i32) -> &'s str {
+    let mut end = s.len();
+    while end > 0 && draw::text_width(font, &s[..end], 0) > w {
+        end -= 1;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+    }
+    &s[..end]
 }
 
 fn row<D>(d: &mut D, pool: &Pool, entry: usize, y: i32, selected: bool)
@@ -144,17 +268,22 @@ where
     D: DrawTarget<Color = Rgb565>,
 {
     let mut slot = FmtBuf::new();
-    let (name, chain, saved) = if let Some(s) = slot_at(entry) {
+    let (name, chain, cost) = if let Some(s) = slot_at(entry) {
         let _ = write!(slot, "{:02}", entry + 1);
         match pool.get(s) {
-            Some(s) => (components::upper(s.name.as_str()), Some(s.engine()), true),
-            None => (FmtBuf::new(), None, false),
+            Some(s) => (
+                components::upper(s.name().as_str()),
+                Some(s.engine()),
+                Some(s.cost()),
+            ),
+            None => (FmtBuf::new(), None, None),
         }
     } else {
         let _ = slot.write_str("INIT");
-        let engine = INIT_TYPES[entry - POOL_SIZE];
-        (components::upper(engine.label()), Some(engine), false)
+        let engine = INIT_TYPES[entry - MAX_SOUNDS];
+        (components::upper(engine.label()), Some(engine), None)
     };
+    let saved = cost.is_some();
     let empty = chain.is_none();
     if selected {
         draw::pill(d, 8, y - 16, 224, 22, theme::ACCENT);
@@ -172,7 +301,7 @@ where
     if empty {
         draw::fill_rect(
             d,
-            52,
+            NAME_X,
             y - 4,
             10,
             1,
@@ -186,11 +315,22 @@ where
         } else {
             theme::INK2
         };
-        draw::text(d, &theme::FONT_VALUE, name.as_str(), 52, y, color);
+        // A long name stops short of the cost, or of the tag.
+        let room = match cost {
+            Some(c) => COST_RIGHT - draw::text_width(&theme::FONT_LABEL, c.kib_label().as_str(), 0),
+            None => TAG_RIGHT - TAG_ROOM,
+        } - NAME_GAP
+            - NAME_X;
+        let shown = clip(&theme::FONT_VALUE, name.as_str(), room);
+        draw::text(d, &theme::FONT_VALUE, shown, NAME_X, y, color);
+    }
+    if let Some(c) = cost {
+        let label = c.kib_label();
+        draw::text_right(d, &theme::FONT_LABEL, label.as_str(), COST_RIGHT, y, dim, 0);
     }
     if let Some(engine) = chain {
         let chain = chain_def_for(engine);
         let label = chain.blocks[chain.engine_node()].def.short;
-        draw::text_right(d, &theme::FONT_LABEL, label, 223, y, dim, 0);
+        draw::text_right(d, &theme::FONT_LABEL, label, TAG_RIGHT, y, dim, 0);
     }
 }

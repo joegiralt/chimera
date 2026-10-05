@@ -30,9 +30,12 @@ pub mod params;
 pub mod part;
 pub mod perf;
 pub mod preset;
+#[cfg(feature = "probe")]
+pub mod probe;
 pub mod project;
 pub mod reset;
 pub mod scope;
+pub mod source_table;
 pub mod storage;
 pub mod sym_alloc;
 pub mod triple;

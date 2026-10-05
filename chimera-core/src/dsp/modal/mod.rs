@@ -398,13 +398,20 @@ impl ModalEngine {
     /// sample to 187, −306 cycles. Each halo string runs its block in
     /// spans, 19 a sample (42 before, 87 at task 11); the main string 15;
     /// the coupling, the mix and the `tanhf` dispatch 32. Ten `powf`s a
-    /// block for the loop gains, +35.
-    pub const COST_SYMPATHETIC: Cost = Cost(540);
-    /// The resonator bank: this plus `COST_MODE` per mode. Unchanged: its
-    /// sample loop is as benched (MDL RES /VOICE 1,865; less the chain's 57,
-    /// 1,808 at 32 modes against 1,900 billed), and the macros' easing is a few operations a block.
-    /// Dropping modes past Nyquist can only save.
-    pub const COST_BANK: Cost = Cost(460);
+    /// block for the loop gains, +35. Then 540 − 71.07, rounded up to 470
+    /// (ADR 0097): the out clip's `tanhf`, 62 instructions and two
+    /// `vdiv.f32`s a sample on its shortest path, for stmlib's rational
+    /// clip, 16.5 and one: (45.5 × 1.46 + 12.54) × 0.9.
+    pub const COST_SYMPATHETIC: Cost = Cost(470);
+    /// The resonator bank: this plus `COST_MODE` per mode. Its sample loop
+    /// as benched (MDL RES /VOICE 1,865; less the chain's 57, 1,808 at 32
+    /// modes against 1,900 billed), and the macros' easing is a few
+    /// operations a block. Dropping modes past Nyquist can only save.
+    /// Then 460 − 69.1, rounded up to 400 (ADR 0097): the out clip's
+    /// `tanhf`, 60 instructions and two `vdiv.f32`s a sample on its
+    /// shortest path, for stmlib's rational clip, 16 and one, (44 × 1.46 +
+    /// 12.54) × 0.9.
+    pub const COST_BANK: Cost = Cost(400);
     pub const COST_MODE: Cost = Cost(45);
 
     /// More on STRING and SYMP with BODY above 0: three band-passes over
@@ -987,7 +994,7 @@ impl ModalEngine {
                 false
             }
         };
-        // Every model's DC stops here, BANK's tanh's too; silence is judged
+        // Every model's DC stops here, BANK's clip's too; silence is judged
         // on what is heard, after the blocker.
         for s in output.iter_mut() {
             *s = self.dc.process(*s);
@@ -1483,7 +1490,9 @@ fn render_modal(bank: &mut ModalBank, output: &mut [f32; BLOCK_SIZE]) {
 
         // Sum to mono and soft-limit, a quarter of Rings' 2× out: the
         // voice's filter after it stays under its knee (`out_gain` makes up).
-        *s = libm::tanhf(odd + even) * 0.5;
+        // stmlib's rational clip, not `tanhf` (ADR 0097): the same slope
+        // and ceiling, 44 instructions and a divide a sample fewer.
+        *s = fast_tanh(odd + even) * 0.5;
     }
 }
 
@@ -1514,7 +1523,7 @@ fn ensemble(params: &ModalParams, hz: f32, sample_rate: u32) -> (f32, Ensemble) 
 /// Each model's output gain (ADR 0058, 0063), at the voice's VCA: its
 /// INIT's C4 at velocity 100 as loud on P1 as ALGO INIT's, the factory
 /// median, ±1 dB; STRING's by its peak, its eight-note chord at velocity
-/// 127 under 3 dB of the limiter's gain reduction. After the bank's tanh,
+/// 127 under 3 dB of the limiter's gain reduction. After the bank's clip,
 /// SYMP's and the voice's filter, so none of them saturates more.
 pub const fn out_gain(mode: ResonatorMode) -> f32 {
     match mode {
@@ -1722,8 +1731,9 @@ fn render_sympathetic(
         }
     }
     main.colour(output);
+    // stmlib's rational clip, as BANK's (ADR 0097).
     for s in output.iter_mut() {
-        *s = libm::tanhf(*s);
+        *s = fast_tanh(*s);
     }
 }
 
@@ -2230,6 +2240,34 @@ mod tests {
         for (i, f) in rendered(b).iter().enumerate() {
             assert!(f.g() < ceiling, "mode {i}: g {}", f.g());
         }
+    }
+
+    /// BANK's out is stmlib's rational clip at half scale (ADR 0097): a
+    /// C1 struck as hard as it goes, every mode ringing long and bright,
+    /// reaches the ceiling and never passes it.
+    #[test]
+    fn the_banks_clip_holds_its_ceiling() {
+        let p = ModalParams {
+            mode: ResonatorMode::Modal,
+            excite: 1.0,
+            bright: 1.0,
+            damp: 1.0,
+            modes: BankModes::M48,
+            ..Default::default()
+        };
+        let mut pool = SymPool::boxed();
+        let mut e = engine(&mut pool, p.mode);
+        e.note_on(24, 127, &p, SR, &mut pool);
+        let ModelSlot::Bank(b) = &mut e.model else {
+            unreachable!()
+        };
+        let mut peak = 0.0f32;
+        for _ in 0..20 {
+            let mut out = [0.0; BLOCK_SIZE];
+            render_modal(b, &mut out);
+            peak = out.iter().fold(peak, |m, x| m.max(x.abs()));
+        }
+        assert!(peak > 0.45 && peak <= 0.5, "peak {peak}");
     }
 
     /// BURST alone sets the strike's length, 2 to 6 ms; EXCITE its level.

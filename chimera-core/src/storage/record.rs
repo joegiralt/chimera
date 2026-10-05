@@ -44,6 +44,16 @@ pub enum RecordTag {
     Orbit,
     /// A scene's CUSTOM set (`orbit::scene::encode_scale`).
     OrbitScale,
+    /// A project's pool source, at the top level before `Fx`: its
+    /// `SourceRef`, 10 B. Never audio (ADR 0087).
+    PoolSource,
+    /// A Sound's source: its `SourceRef`, 10 B (ADR 0087).
+    SourceRef,
+    /// A source file's head: `SourceHead`, 34 B, first (ADR 0093).
+    SourceHead,
+    /// A source file's packed 12-bit samples, up to 504 B a record, in
+    /// order after the head.
+    SourceData,
 }
 
 impl RecordTag {
@@ -65,6 +75,10 @@ impl RecordTag {
             RecordTag::OrbitChord => 0x0012,
             RecordTag::Orbit => 0x0013,
             RecordTag::OrbitScale => 0x0014,
+            RecordTag::PoolSource => 0x8015,
+            RecordTag::SourceRef => 0x0016,
+            RecordTag::SourceHead => 0x8017,
+            RecordTag::SourceData => 0x0018,
         }
     }
 
@@ -86,6 +100,10 @@ impl RecordTag {
             0x0012 => RecordTag::OrbitChord,
             0x0013 => RecordTag::Orbit,
             0x0014 => RecordTag::OrbitScale,
+            0x8015 => RecordTag::PoolSource,
+            0x0016 => RecordTag::SourceRef,
+            0x8017 => RecordTag::SourceHead,
+            0x0018 => RecordTag::SourceData,
             _ => return None,
         })
     }
@@ -185,15 +203,19 @@ impl<'s> RecordWriter<'s> {
         }
     }
 
+    /// A writer of records alone, no header: a pool entry's.
+    pub(crate) fn over(sink: &'s mut dyn ByteSink) -> Self {
+        Self::new(sink)
+    }
+
     fn raw(&mut self, b: &[u8]) -> Result<(), StoreError> {
         self.crc.update(b);
         self.sink.put(b)
     }
 
-    /// Records copied as they are from a whole file the console was sent,
-    /// hashed into this file's CRC like any other. The kind's check judges
-    /// them once they are on the card.
-    #[cfg(feature = "card-put")]
+    /// Records copied as they are, hashed into this file's CRC like any
+    /// other: a pool entry's, or a whole file the console was sent. The
+    /// kind's check judges them once they are on the card.
     pub(crate) fn copy(&mut self, records: &[u8]) -> Result<(), StoreError> {
         self.raw(records)
     }

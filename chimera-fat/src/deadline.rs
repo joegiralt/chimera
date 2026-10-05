@@ -87,6 +87,12 @@ impl Deadline {
         self.over
     }
 
+    /// Cycles (or ticks, when counting transfers) since `arm`, as of the
+    /// last tick.
+    pub const fn elapsed(&self) -> u64 {
+        self.op
+    }
+
     /// The longest idle stretch a block ended, in cycles (0 when counting
     /// transfers).
     pub const fn max_gap(&self) -> u64 {

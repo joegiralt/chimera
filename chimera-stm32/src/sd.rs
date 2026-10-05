@@ -65,6 +65,8 @@ pub struct SdSpi {
     mode: spi::Mode,
     phase: BusPhase,
     deadline: Deadline,
+    /// The deadline's units (cycles, or transactions) in a ms.
+    per_ms: u64,
     /// Each operation's cap: `SD_OP_CAP_MS` but while the bench's `card` or
     /// a console `put` runs under its own deadline.
     cap_ms: u32,
@@ -91,6 +93,7 @@ impl SdSpi {
             mode,
             phase: BusPhase::Acquire,
             deadline: Deadline::arm_transfers(0, 0),
+            per_ms: 1,
             cap_ms: SD_OP_CAP_MS,
         };
         s.arm(SD_IDLE_MS);
@@ -133,14 +136,19 @@ impl SdSpi {
     /// moved, or the cap (`SD_OP_CAP_MS`) in all, is a timeout.
     pub fn arm(&mut self, idle_ms: u32) {
         let (idle, cap) = (u64::from(idle_ms), u64::from(self.cap_ms));
-        self.deadline = if self.counting {
-            let per_ms = u64::from(self.cpu_hz / 1_000);
-            Deadline::arm(DWT::cycle_count(), idle * per_ms, cap * per_ms)
+        self.per_ms = if self.counting {
+            u64::from(self.cpu_hz / 1_000)
         } else {
             // ponytail: coarse. Each transaction counts as its shortest (one
             // byte at SCK), so this never times out early but runs long by
             // the per-transaction overhead; the DWT path is exact.
-            let per_ms = u64::from(self.hz.raw() / MIN_TRANSACTION_SCK / 1_000);
+            u64::from(self.hz.raw() / MIN_TRANSACTION_SCK / 1_000)
+        }
+        .max(1);
+        let per_ms = self.per_ms;
+        self.deadline = if self.counting {
+            Deadline::arm(DWT::cycle_count(), idle * per_ms, cap * per_ms)
+        } else {
             Deadline::arm_transfers(idle * per_ms, cap * per_ms)
         };
     }
@@ -273,6 +281,10 @@ impl SdBus for SdSpi {
 
     fn set_cap(&mut self, ms: Option<u32>) {
         self.cap_ms = ms.unwrap_or(SD_OP_CAP_MS);
+    }
+
+    fn elapsed_ms(&self) -> u32 {
+        (self.deadline.elapsed() / self.per_ms) as u32
     }
 }
 

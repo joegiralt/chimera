@@ -25,7 +25,7 @@ use chimera_hal::Controls;
 use crate::name::{Name, ProjectName};
 use crate::project::{
     FreshFile, PartAction, PartId, PartSet, PartSource, Project, ProjectEntry, ProjectSource,
-    SceneAsk, SlotId, Subject,
+    SceneAsk, SlotId, Subject, Unused,
 };
 use crate::ui::hold::Presses;
 use crate::ui::region::settings_key;
@@ -35,9 +35,9 @@ use naming::{NAME_MAX, Naming, NamingOut};
 use prompt::{
     AlsoUses, AlsoUsesAnswer, Answer, CardChanged, CardChangedAnswer, Choice, Clear, ClearAnswer,
     ClearScene, ClearSceneAnswer, ClearSlot, Delete, DeleteAnswer, DfuAnswer, EnterDfu, Load,
-    LoadAnswer, NameExists, NameExistsAnswer, PromptView, Reload, ReloadAnswer, ReloadScene,
-    ReloadSceneAnswer, Replace, ReplaceAnswer, ReplaceTo, SaveOver, SaveOverAnswer, SaveSceneOver,
-    SaveSceneOverAnswer, panel,
+    LoadAnswer, NameExists, NameExistsAnswer, PromptView, PurgeAnswer, PurgeSources, Reload,
+    ReloadAnswer, ReloadScene, ReloadSceneAnswer, Replace, ReplaceAnswer, ReplaceTo, SaveOver,
+    SaveOverAnswer, SaveSceneOver, SaveSceneOverAnswer, panel,
 };
 use replace::{PartAsk, ProjectAsk, ReloadAsk, Reply};
 
@@ -98,6 +98,8 @@ pub(crate) enum Ask {
     ReloadScene(SceneAsk, Choice<ReloadSceneAnswer>),
     /// SYSTEM's OS UPGRADE.
     EnterDfu(Choice<DfuAnswer>),
+    /// PROJECT's PURGE UNUSED SOURCES, counted as it opened.
+    PurgeSources(Unused, Choice<PurgeAnswer>),
 }
 
 /// `AskKind` and its `ALL`, from one list: no kind can miss `ALL`.
@@ -139,6 +141,7 @@ ask_kinds! {
     ClearScene => "clear_scene",
     ReloadScene => "reload_scene",
     EnterDfu => "enter_dfu",
+    PurgeSources => "purge_sources",
 }
 
 /// A listed project as its prompt names it.
@@ -168,6 +171,7 @@ pub(crate) enum Answered {
     ClearScene(SceneAsk, Answer<ClearSceneAnswer>),
     ReloadScene(SceneAsk, Answer<ReloadSceneAnswer>),
     EnterDfu(Answer<DfuAnswer>),
+    PurgeSources(Answer<PurgeAnswer>),
 }
 
 /// Each named Part's `Revert`, by Part, as offered when the prompt opened:
@@ -277,6 +281,7 @@ impl Ask {
                 f,
             ),
             Ask::EnterDfu(c) => panel(&EnterDfu, c, f),
+            Ask::PurgeSources(unused, c) => panel(&PurgeSources { unused: *unused }, c, f),
         }
     }
 
@@ -297,6 +302,7 @@ impl Ask {
             Ask::ClearScene(..) => AskKind::ClearScene,
             Ask::ReloadScene(..) => AskKind::ReloadScene,
             Ask::EnterDfu(_) => AskKind::EnterDfu,
+            Ask::PurgeSources(..) => AskKind::PurgeSources,
         }
     }
 
@@ -407,6 +413,10 @@ impl Ask {
             Ask::EnterDfu(mut choice) => match choice.input(c, p) {
                 Some(a) => Got(Answered::EnterDfu(a)),
                 None => Open(Ask::EnterDfu(choice)),
+            },
+            Ask::PurgeSources(unused, mut choice) => match choice.input(c, p) {
+                Some(a) => Got(Answered::PurgeSources(a)),
+                None => Open(Ask::PurgeSources(unused, choice)),
             },
         }
     }

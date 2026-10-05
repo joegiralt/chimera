@@ -6,13 +6,35 @@ use crate::blocks::{BLOCK, Blocks, FsError};
 use crate::volume::{Layout, Link};
 
 const FIRST_CLUSTER: u32 = 2;
-const FREE: u32 = 0;
+pub(crate) const FREE: u32 = 0;
 
 /// A FAT 1 sector whose write reached FAT 1 but not every other copy.
 /// Only a failed `Table::flush` makes one, so no caller can name a sector
 /// to be copied over.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Stale(u32);
+
+/// A chain no entry holds, which a write a device error stopped left
+/// allocated: its first cluster still on the card, and the `(prev, c)` of
+/// an `alloc` whose link may not have landed (`Table::fresh`).
+pub type Orphan = (u32, Option<(u32, u32)>);
+
+/// What `free_chain` freed: how many, the last, and whether the walk
+/// stopped on an end mark (not a free, reserved or broken link).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Freed {
+    pub n: u32,
+    pub tail: Option<u32>,
+    pub ended: bool,
+}
+
+/// How far a flush got before a copy failed.
+enum Landed<E> {
+    /// FAT 1's write failed: the card may hold the old sector.
+    Nowhere(E),
+    /// FAT 1 holds the sector; a later copy failed.
+    Fat1(E),
+}
 
 /// One FAT 1 sector, and whether it differs from the card.
 pub struct FatCache {
@@ -22,9 +44,9 @@ pub struct FatCache {
     /// Outlives the operation: the store carries it for its volume, and the
     /// next change there copies it over first (`Table::heal`).
     stale: Option<Stale>,
-    /// The first cluster of a chain no entry holds, which a write a device
-    /// error stopped left allocated: carried the same way, freed by `heal`.
-    orphan: Option<u32>,
+    /// What a device error left allocated with no entry: carried the same
+    /// way, freed by `heal`.
+    orphan: Option<Orphan>,
 }
 
 impl FatCache {
@@ -51,12 +73,12 @@ impl FatCache {
     }
 
     /// The chain a failed write left, for the store to keep.
-    pub fn take_orphan(&mut self) -> Option<u32> {
+    pub fn take_orphan(&mut self) -> Option<Orphan> {
         self.orphan.take()
     }
 
     /// Hands back what `take_orphan` gave, for the volume it came from.
-    pub fn keep_orphan(&mut self, orphan: Option<u32>) {
+    pub fn keep_orphan(&mut self, orphan: Option<Orphan>) {
         self.orphan = orphan;
     }
 }
@@ -73,6 +95,12 @@ pub struct Table<'a, B: Blocks> {
     /// A copy, so an `Fs` can own its `Table` for a whole operation.
     layout: Layout,
     cache: &'a mut FatCache,
+    /// The `(prev, c)` of the last `alloc` whose `c` sits in another FAT
+    /// sector than `prev`: `c` reads end-of-chain before `prev`'s link to
+    /// it is known to be in FAT 1 (#362). Cleared once a flush carrying
+    /// the link lands there; `alloc` flushes first while one is pending,
+    /// so there is at most one.
+    fresh: Option<(u32, u32)>,
 }
 
 impl<'a, B: Blocks> Table<'a, B> {
@@ -87,6 +115,7 @@ impl<'a, B: Blocks> Table<'a, B> {
             blocks,
             layout: *layout,
             cache,
+            fresh: None,
         }
     }
 
@@ -135,6 +164,11 @@ impl<'a, B: Blocks> Table<'a, B> {
         Ok(self.layout.as_link(v))
     }
 
+    /// `c`'s raw entry; `c` not held is `Corrupt`.
+    pub(crate) fn value(&mut self, c: u32) -> Result<u32, FsError<B::Error>> {
+        self.entry(self.held(c)?)
+    }
+
     /// Sets `c`'s entry. The sector turns dirty only if the value changes.
     pub fn set(&mut self, c: u32, v: u32) -> Result<(), FsError<B::Error>> {
         if self.entry(self.held(c)?)? != v {
@@ -148,31 +182,64 @@ impl<'a, B: Blocks> Table<'a, B> {
     /// empties the cache: what the card holds is unknown, so it is read
     /// again. One that fails after FAT 1's landed leaves the sector `stale`.
     pub fn flush(&mut self) -> Result<(), FsError<B::Error>> {
+        self.write_out()
+            .map_err(|(Landed::Nowhere(e) | Landed::Fat1(e))| FsError::Dev(e))
+    }
+
+    /// `flush`, saying whether FAT 1 took the sector when a copy failed.
+    /// A flush that lands in FAT 1 with `fresh`'s link clears it.
+    fn write_out(&mut self) -> Result<(), Landed<B::Error>> {
         let Some(sector) = self.cache.sector.filter(|_| self.cache.dirty) else {
             return Ok(());
         };
         self.cache.dirty = false;
+        let mut r = Ok(());
         for (i, copy) in self.layout.fat_copies(sector).enumerate() {
             if let Err(e) = self.blocks.write(copy, &self.cache.buf) {
-                self.cache.sector = None;
-                if i > 0 {
+                r = Err(if i > 0 {
                     self.cache.stale = Some(Stale(sector));
-                }
-                return Err(FsError::Dev(e));
+                    Landed::Fat1(e)
+                } else {
+                    Landed::Nowhere(e)
+                });
+                break;
             }
         }
-        Ok(())
+        if !matches!(r, Err(Landed::Nowhere(_)))
+            && let Some((p, c)) = self.fresh
+            && self.layout.fat_block(p) == sector
+            && self.layout.entry(&self.cache.buf, p) == c
+        {
+            self.fresh = None;
+        }
+        if r.is_err() {
+            self.cache.sector = None;
+        }
+        r
+    }
+
+    /// Writes a dirty sector before `c`'s is loaded, so the orphan can
+    /// move on: once FAT 1 holds the clusters freed so far, `c` is the
+    /// first the card still holds.
+    fn switch_to(&mut self, c: u32, track: bool) -> Result<(), FsError<B::Error>> {
+        if !self.cache.dirty || self.cache.sector == Some(self.layout.fat_block(c)) {
+            return Ok(());
+        }
+        let r = self.write_out();
+        if track
+            && !matches!(r, Err(Landed::Nowhere(_)))
+            && let Some((start, _)) = &mut self.cache.orphan
+        {
+            *start = c;
+        }
+        r.map_err(|(Landed::Nowhere(e) | Landed::Fat1(e))| FsError::Dev(e))
     }
 
     /// Copies the `stale` sector from FAT 1 to every other FAT, then
     /// forgets it; before an operation's first FAT change. A sector outside
     /// this volume's FAT 1 is forgotten unwritten. A failed write keeps it.
     pub fn heal(&mut self) -> Result<(), FsError<B::Error>> {
-        if let Some(start) = self.cache.orphan {
-            self.free_chain(start)?;
-            self.flush()?;
-            self.cache.orphan = None;
-        }
+        self.drop_orphan()?;
         let Some(Stale(sector)) = self.cache.stale else {
             return Ok(());
         };
@@ -180,6 +247,14 @@ impl<'a, B: Blocks> Table<'a, B> {
             self.cache.stale = None;
             return Ok(());
         }
+        self.copy_fat1(sector)?;
+        self.cache.stale = None;
+        Ok(())
+    }
+
+    /// Copies FAT 1's `sector` over every other FAT. A failed write
+    /// empties the cache.
+    pub(crate) fn copy_fat1(&mut self, sector: u32) -> Result<(), FsError<B::Error>> {
         self.flush()?;
         self.cache.sector = None;
         self.blocks
@@ -192,19 +267,60 @@ impl<'a, B: Blocks> Table<'a, B> {
                 return Err(FsError::Dev(e));
             }
         }
-        self.cache.stale = None;
         Ok(())
     }
 
     /// Frees the chain from `start`, which no entry holds since a device
     /// error stopped its write, as far as the card has it: what the cache
     /// held unflushed is dropped first, so the walk ends where the card's
-    /// copy does. A card that refuses keeps it for the next `heal`.
-    pub fn drop_chain(&mut self, start: u32) {
+    /// copy does. A pending `fresh` cluster goes too if the walk ends on
+    /// its `prev` (#362). A card that refuses keeps what is left for the
+    /// next `heal`, and the error returns. An orphan still unhealed (no
+    /// operation reaches here before `heal`) is kept, and this chain left
+    /// for the sweep: `Corrupt`.
+    pub fn drop_chain(&mut self, start: u32) -> Result<(), FsError<B::Error>> {
+        let fresh = self.fresh.take();
         self.discard();
-        if self.free_chain(start).and_then(|_| self.flush()).is_err() {
-            self.discard();
-            self.cache.orphan = Some(start);
+        if self.cache.orphan.is_some() {
+            debug_assert!(false, "an orphan unhealed");
+            return Err(FsError::Corrupt);
+        }
+        self.cache.orphan = Some((start, fresh));
+        self.drop_orphan().inspect_err(|_| self.discard())
+    }
+
+    /// Frees the orphan's chain, then its pending cluster if the walk
+    /// freed that cluster's `prev`, ended there on an end mark, and the
+    /// cluster still reads end-of-chain: its link never landed, and
+    /// nothing else holds it. Every FAT sector FAT 1 takes moves the
+    /// orphan on to the first cluster the card still holds, so a failure
+    /// partway strands nothing; `None` once all of it is in FAT 1.
+    fn drop_orphan(&mut self) -> Result<(), FsError<B::Error>> {
+        let Some((start, pending)) = self.cache.orphan else {
+            return Ok(());
+        };
+        let freed = self.walk_free(start, true)?;
+        if let Some((p, c)) = pending
+            && freed.tail == Some(p)
+            && freed.ended
+            && self.layout.holds(c)
+        {
+            self.switch_to(c, true)?;
+            let v = self.entry(c)?;
+            if self.layout.as_link(v) == Link::End {
+                self.set(c, FREE)?;
+            }
+        }
+        match self.write_out() {
+            Ok(()) => {
+                self.cache.orphan = None;
+                Ok(())
+            }
+            Err(Landed::Fat1(e)) => {
+                self.cache.orphan = None;
+                Err(FsError::Dev(e))
+            }
+            Err(Landed::Nowhere(e)) => Err(FsError::Dev(e)),
         }
     }
 
@@ -219,9 +335,18 @@ impl<'a, B: Blocks> Table<'a, B> {
     /// The first free cluster from `from` (any value: an unheld one starts
     /// at cluster 2), wrapping once. It becomes the end of a chain, and
     /// `prev`, if any, links to it. `Full` changes nothing.
+    ///
+    /// `c` reads end-of-chain before `prev` links it, so a cut never leaves
+    /// a live chain pointing at a free cluster. When the two sit in
+    /// different FAT sectors, `(prev, c)` stays `fresh` until the link is
+    /// in FAT 1; one still pending is flushed first.
     pub fn alloc(&mut self, from: u32, prev: Option<u32>) -> Result<u32, FsError<B::Error>> {
         if let Some(p) = prev {
             self.held(p)?;
+        }
+        if self.fresh.is_some() {
+            self.flush()?;
+            debug_assert!(self.fresh.is_none(), "a pending link no flush carried");
         }
         let end = FIRST_CLUSTER + self.layout.clusters();
         let from = if self.layout.holds(from) {
@@ -233,6 +358,9 @@ impl<'a, B: Blocks> Table<'a, B> {
             if self.entry(c)? == FREE {
                 self.set(c, self.layout.end_mark())?;
                 if let Some(p) = prev {
+                    if self.layout.fat_block(p) != self.layout.fat_block(c) {
+                        self.fresh = Some((p, c));
+                    }
                     self.set(p, c)?;
                 }
                 return Ok(c);
@@ -255,24 +383,40 @@ impl<'a, B: Blocks> Table<'a, B> {
     }
 
     /// Frees the chain from `start` up to its end or first bad link, in at
-    /// most `clusters` steps, and returns how many clusters it freed. A
-    /// loop stops where it meets a cluster it already freed. A cluster
-    /// marked bad or reserved is bad media, not the chain's: it stays.
-    pub fn free_chain(&mut self, start: u32) -> Result<u32, FsError<B::Error>> {
-        let (mut c, mut n) = (start, 0);
-        while n < self.layout.clusters() && self.layout.holds(c) {
+    /// most `clusters` steps. A loop stops where it meets a cluster it
+    /// already freed. A cluster marked bad or reserved is bad media, not
+    /// the chain's: it stays.
+    pub fn free_chain(&mut self, start: u32) -> Result<Freed, FsError<B::Error>> {
+        self.walk_free(start, false)
+    }
+
+    /// `free_chain`; with `track`, each sector FAT 1 takes moves the
+    /// orphan's start on.
+    fn walk_free(&mut self, start: u32, track: bool) -> Result<Freed, FsError<B::Error>> {
+        let mut c = start;
+        let mut freed = Freed {
+            n: 0,
+            tail: None,
+            ended: false,
+        };
+        while freed.n < self.layout.clusters() && self.layout.holds(c) {
+            self.switch_to(c, track)?;
             let v = self.entry(c)?;
             if v == FREE || self.layout.is_reserved(v) {
                 break;
             }
             self.set(c, FREE)?;
-            n += 1;
+            (freed.n, freed.tail) = (freed.n + 1, Some(c));
             match self.layout.as_link(v) {
                 Link::Next(next) => c = next,
-                Link::End | Link::Broken => break,
+                Link::End => {
+                    freed.ended = true;
+                    break;
+                }
+                Link::Broken => break,
             }
         }
-        Ok(n)
+        Ok(freed)
     }
 
     /// Free clusters in `2..clusters + 2`.

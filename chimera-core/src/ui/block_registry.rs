@@ -18,7 +18,7 @@ use crate::ui::midi_settings::MidiSettings;
 use crate::ui::page::{PageLayout, ValFmt};
 use crate::ui::settings::leaves::{
     ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, DEMO_LEAVES, LIVE_SNAP_LEAF, OUTPUTS_LEAF,
-    SYNC_LEAF, THEME_LEAF, TUNING_LEAF,
+    POOL_LEAF, SYNC_LEAF, THEME_LEAF, TUNING_LEAF,
 };
 use crate::ui::theme_settings::ThemeSettings;
 
@@ -675,6 +675,24 @@ pub static SYS_AUDIO: BlockDef = BlockDef {
     ],
 };
 
+/// PROJECT › POOL: the pool's breakdown (ADR 0087).
+pub static SYS_POOL: BlockDef = BlockDef {
+    id: 92,
+    name: "Pool",
+    short: "POL",
+    layout: PageLayout::CellGrid,
+    viz: VizType::Pool,
+    // Read-only: `pool_page` fills them.
+    params: [
+        ParamSlot::legacy("SOUNDS", ValFmt::Int(0)),
+        ParamSlot::legacy("SOURCES", ValFmt::Int(0)),
+        ParamSlot::legacy("FREE", ValFmt::Int(0)),
+        ParamSlot::legacy("PENDING", ValFmt::Int(0)),
+        EMPTY,
+        EMPTY,
+    ],
+};
+
 // ---------------------------------------------------------------------------
 // DEMO pages (UI component storyboard)
 // ---------------------------------------------------------------------------
@@ -954,7 +972,7 @@ pub static DEMO_BLOCKS: [ChainBlock; 15] = [
 ];
 
 /// The chains besides DEMO's leaves.
-const FIXED: [&ChainDef2; 12] = [
+const FIXED: [&ChainDef2; 13] = [
     &ALGO_CHAIN,
     &MODAL_PLUCK_CHAIN,
     &MIXER_CHANNEL_CHAIN,
@@ -965,6 +983,7 @@ const FIXED: [&ChainDef2; 12] = [
     THEME_LEAF.chain(),
     ABOUT_LEAF.chain(),
     AUDIO_LOAD_LEAF.chain(),
+    POOL_LEAF.chain(),
     LIVE_SNAP_LEAF.chain(),
     &crate::ui::orbit::ORBIT_CHAIN,
 ];

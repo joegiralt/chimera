@@ -64,6 +64,12 @@ fn lines(text: &str) -> (&str, Option<&str>) {
         .map_or((text, None), |(a, b)| (a, Some(b)))
 }
 
+/// `text` fits a toast: one line, or two split at a space.
+pub fn toast_fits(text: &str) -> bool {
+    let (a, b) = lines(text);
+    ink(a) <= MAX_INK && b.is_none_or(|b| ink(b) <= MAX_INK)
+}
+
 fn draw_band<D: DrawTarget<Color = Rgb565>>(d: &mut D, text: &str) -> (u16, u16) {
     let (first, second) = lines(text);
     let widest = ink(first).max(second.map_or(0, ink));
@@ -105,6 +111,8 @@ pub struct Toast {
 impl Toast {
     pub const SAVED_MS: u32 = 600;
     pub const ERROR_MS: u32 = 1_200;
+    /// What a change did, read once: as long as an error, not one.
+    pub const INFO_MS: u32 = 1_200;
     /// A start-up fault, read once after PART 1 comes up.
     pub const BOOT_MS: u32 = 5_000;
 }

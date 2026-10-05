@@ -6,6 +6,7 @@
 use core::fmt::Write as _;
 use core::ptr::NonNull;
 
+use crate::source_table::SourceTable;
 use crate::ui::fmt::FmtBuf;
 
 pub const ARENA_BYTES: usize = 160 * 1024;
@@ -31,18 +32,36 @@ impl Cost {
         self.0
     }
 
-    /// KiB rounded up: `0.3K`, `9.9K` under 10, then `10K`, `41K`.
+    /// KiB rounded up: `0.3K`, `9.9K` under 10, then `10K`, `41K`. What
+    /// a thing costs never reads less than it takes.
     pub fn kib_label(self) -> FmtBuf {
-        let b = self.0 as u64;
-        let tenths = (b * 10).div_ceil(1024);
-        let mut f = FmtBuf::new();
-        let _ = if tenths < 100 {
-            write!(f, "{}.{}K", tenths / 10, tenths % 10)
-        } else {
-            write!(f, "{}K", b.div_ceil(1024))
-        };
-        f
+        kib(self.0 as u64, u64::div_ceil)
     }
+
+    /// KiB rounded down: free space never reads more than there is.
+    pub fn kib_floor_label(self) -> FmtBuf {
+        kib(self.0 as u64, |a, b| a / b)
+    }
+}
+
+impl core::ops::Add for Cost {
+    type Output = Cost;
+
+    fn add(self, rhs: Cost) -> Cost {
+        Cost(self.0.saturating_add(rhs.0))
+    }
+}
+
+/// `b` bytes in KiB, one decimal under 10, divided by `div`.
+fn kib(b: u64, div: fn(u64, u64) -> u64) -> FmtBuf {
+    let tenths = div(b * 10, 1024);
+    let mut f = FmtBuf::new();
+    let _ = if tenths < 100 {
+        write!(f, "{}.{}K", tenths / 10, tenths % 10)
+    } else {
+        write!(f, "{}K", div(b, 1024))
+    };
+    f
 }
 
 /// What a free or a compaction moved: every entry on the moving side of
@@ -87,25 +106,31 @@ pub struct Hole {
 
 /// Proof that ADR 0087's gate is closed and acked, carrying the re-check
 /// read after the ack: `ready(offset)` is true iff no voice is on the
-/// source at that offset. Only the gate mints one (Task 8); until then,
-/// tests assume it.
+/// source at that offset. Only the pool's gate pass mints one.
 pub struct GateAcked<F: Fn(u32) -> bool> {
     ready: F,
 }
 
 impl<F: Fn(u32) -> bool> GateAcked<F> {
-    /// Tests only: Task 8's gate owns the real constructor.
+    /// The pool's pass, after `gate_acked` and its re-check.
+    pub(super) fn after_ack(ready: F) -> Self {
+        GateAcked { ready }
+    }
+
+    /// Tests of the arena alone.
     #[cfg(any(test, feature = "test-support"))]
     pub fn assumed(ready: F) -> Self {
         GateAcked { ready }
     }
 }
 
-/// The only writer of the arena's bytes. The audio's view (Task 8's
-/// `SourceReader`) reads through its own pointer, so this holds a raw one
-/// rather than a `&mut` that would claim the bytes exclusively.
+/// The only writer of the arena's bytes. The audio reads sources through
+/// `table` (`GateView`, the `SourceReader`), with its own pointer, so this
+/// holds a raw one rather than a `&mut` that would claim the bytes
+/// exclusively.
 pub struct ArenaWriter {
     base: NonNull<u8>,
+    table: &'static SourceTable,
     /// Sources fill `[0, src_end)`, in offset order.
     src_end: u32,
     /// Sounds fill `[snd_start, ARENA_BYTES)`.
@@ -120,16 +145,34 @@ unsafe impl Send for ArenaWriter {}
 
 impl ArenaWriter {
     /// Takes the arena's bytes for good: the AXI static on the chip, a
-    /// leaked box in tests and on the desktop.
-    pub fn new(bytes: &'static mut [u8]) -> ArenaWriter {
+    /// leaked box in tests and on the desktop. `table` is the audio's view
+    /// of them: `SOURCE_TABLE` where audio runs, one of its own per arena.
+    pub fn new(bytes: &'static mut [u8], table: &'static SourceTable) -> ArenaWriter {
         assert_eq!(bytes.len(), ARENA_BYTES);
+        let base: NonNull<u8> = NonNull::from(bytes).cast();
+        table.attach(base.as_ptr());
         ArenaWriter {
-            base: NonNull::from(bytes).cast(),
+            base,
+            table,
             src_end: 0,
             snd_start: ARENA_BYTES as u32,
             srcs: [NO_SRC; MAX_SOURCES],
             n_srcs: 0,
         }
+    }
+
+    /// An arena of its own on the heap, leaked (host tests).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn leaked() -> ArenaWriter {
+        ArenaWriter::new(
+            alloc::boxed::Box::leak(alloc::vec![0; ARENA_BYTES].into_boxed_slice()),
+            alloc::boxed::Box::leak(alloc::boxed::Box::new(SourceTable::new())),
+        )
+    }
+
+    /// The audio's view of these bytes.
+    pub fn table(&self) -> &'static SourceTable {
+        self.table
     }
 
     /// Bytes held by Sounds and sources, pending holes included.
@@ -146,6 +189,16 @@ impl ArenaWriter {
                 .map(|s| s.cost)
                 .sum(),
         )
+    }
+
+    /// Bytes held by Sounds.
+    pub fn sounds(&self) -> Cost {
+        Cost(ARENA_BYTES as u32 - self.snd_start)
+    }
+
+    /// Sources no hole holds.
+    pub fn source_count(&self) -> usize {
+        self.live_srcs().iter().filter(|s| !s.pending).count()
     }
 
     /// The free space between the ends: an add fits iff its cost ≤ this.
@@ -172,6 +225,12 @@ impl ArenaWriter {
         self.shift(lo, lo + by as usize, end - lo);
         self.snd_start += by;
         Shift { from: offset, by }
+    }
+
+    /// Frees every Sound at once: a load or NEW refilling the pool. The
+    /// sources stay.
+    pub fn sounds_clear(&mut self) {
+        self.snd_start = ARENA_BYTES as u32;
     }
 
     /// Where the next source goes: `len` bytes at the bottom of the gap to
@@ -219,7 +278,10 @@ impl ArenaWriter {
     }
 
     /// The hole `source_compact` closes next: the lowest. The sources at
-    /// and above its offset are ADR 0087's `above` mask.
+    /// and above its offset are ADR 0087's `above` mask. Tests only: the
+    /// pool closes the lowest hole nothing pins (`holes`).
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
     pub fn next_compaction(&self) -> Option<Hole> {
         self.live_srcs().iter().find(|s| s.pending).map(|s| Hole {
             offset: s.offset,
@@ -227,12 +289,37 @@ impl ArenaWriter {
         })
     }
 
-    /// Closes `next_compaction()`'s hole, sliding every source above it
-    /// down, if the gate's re-check finds the hole and every source above
-    /// it ready (no voice on it). `None` leaves everything where it was.
+    /// Every pending hole, lowest first.
+    pub fn holes(&self) -> impl Iterator<Item = Hole> + '_ {
+        self.live_srcs().iter().filter(|s| s.pending).map(|s| Hole {
+            offset: s.offset,
+            cost: Cost(s.cost),
+        })
+    }
+
+    /// Closes `next_compaction()`'s hole: `source_compact_at` the lowest.
+    /// Tests only.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
     pub fn source_compact<F: Fn(u32) -> bool>(&mut self, gate: GateAcked<F>) -> Option<Shift> {
+        let at = self.next_compaction()?.offset;
+        self.source_compact_at(at, gate)
+    }
+
+    /// Closes the hole at `offset`, sliding every source above it down, if
+    /// the gate's re-check finds the hole and every source above it ready
+    /// (no voice on it). Holes below stay. `None` leaves everything where
+    /// it was: no hole there, or a source above it not ready.
+    pub fn source_compact_at<F: Fn(u32) -> bool>(
+        &mut self,
+        offset: u32,
+        gate: GateAcked<F>,
+    ) -> Option<Shift> {
         let n = self.n_srcs;
-        let i = self.live_srcs().iter().position(|s| s.pending)?;
+        let i = self
+            .live_srcs()
+            .iter()
+            .position(|s| s.pending && s.offset == offset)?;
         if !self.srcs[i..n].iter().all(|s| (gate.ready)(s.offset)) {
             return None;
         }
@@ -272,6 +359,18 @@ impl ArenaWriter {
         // `src_end`: the gap and the Sounds, which no source row points
         // into, so the audio never reads them. `&mut self` keeps every
         // other Rust reference out for the borrow's life.
+        unsafe { core::slice::from_raw_parts_mut(self.base.as_ptr().add(o), len) }
+    }
+
+    /// UI only: the whole gap, as scratch for a caller that hands it back
+    /// before the next add (the boot's card sweep). Its bytes are no
+    /// entry's; an add writes the bytes it takes.
+    pub fn gap_mut(&mut self) -> &mut [u8] {
+        let (o, len) = (self.src_end as usize, self.gap().bytes() as usize);
+        // SAFETY: `[o, o+len)` is the gap, inside the arena and at or
+        // above `src_end`: no source row points into it, so the audio
+        // never reads it. `&mut self` keeps every other Rust reference
+        // out for the borrow's life.
         unsafe { core::slice::from_raw_parts_mut(self.base.as_ptr().add(o), len) }
     }
 

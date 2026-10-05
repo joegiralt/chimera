@@ -10,6 +10,7 @@ mod marks;
 mod note;
 mod parts;
 mod pool;
+mod sources;
 mod store;
 mod swap;
 mod template;
@@ -24,12 +25,15 @@ pub use guard::{
 pub(crate) use ids::bounded_index;
 pub use ids::{PartId, PartSet, SlotId};
 pub use marks::{
-    ActionGone, PartAction, PartActionKind, PartActions, PartStatus, ProjectStatus, StatusCache,
+    ActionRefused, PartAction, PartActionKind, PartActions, PartStatus, ProjectStatus, StatusCache,
     part_actions, part_status, project_status,
 };
 pub use note::{Differ, LINE_LEN, Line, ProjectNote, Subject};
 pub use parts::{Origin, Part, PartEdit, PartRead, Performance, part_block, part_block_mut};
-pub use pool::Pool;
+pub use pool::{EncodedSound, Pool, PoolFull};
+pub use sources::{
+    Purged, SOURCE_HEAD, SourceEntry, SourceId, SourceRef, Unused, Users, source_users,
+};
 #[cfg(feature = "card-put")]
 pub(crate) use store::peek_entry;
 pub(crate) use store::still_over;
@@ -47,7 +51,7 @@ use crate::orbit::scene::OrbitSong;
 use crate::params::EngineType;
 use crate::preset::Sound;
 pub use crate::storage::ProjectFile;
-use crate::storage::{ProjectId, sound_crc};
+use crate::storage::ProjectId;
 
 pub const NEW_NAME: &str = "NEW PROJECT";
 const NEW_PROJECT_NAME: ProjectName = match ProjectName::new(NEW_NAME) {
@@ -113,6 +117,9 @@ pub enum ReplaceError {
     SlotEmpty,
     /// The target moved since the replace was confirmed.
     Changed,
+    /// The slot's bytes didn't decode: never, as they were checked when
+    /// stored; the Part is left as it was.
+    Unreadable,
 }
 
 pub struct Project {
@@ -148,6 +155,12 @@ impl Project {
 
     pub fn pool(&self) -> &Pool {
         &self.pool
+    }
+
+    /// `Pool::sweep_scratch`: the boot's card sweep, before the project
+    /// loads.
+    pub fn sweep_scratch(&mut self) -> &mut [u8] {
+        self.pool.sweep_scratch()
     }
 
     pub fn part(&self, p: PartId) -> &Part {
@@ -196,9 +209,9 @@ impl Project {
             .fold(PartSet::EMPTY, PartSet::with)
     }
 
-    pub fn pool_store(&mut self, s: SlotId, sound: Sound) {
+    pub fn pool_store(&mut self, s: SlotId, sound: &Sound) -> Result<(), PoolFull> {
         self.bump();
-        self.pool.store(s, sound);
+        self.pool.store(s, sound)
     }
 
     pub fn pool_clear(&mut self, s: SlotId) -> Result<(), InUse> {
@@ -221,21 +234,20 @@ impl Project {
     ///     let _ = p.save_part_to(PartId::ALL[0], SlotId::ALL[0]);
     /// }
     /// ```
-    pub(crate) fn save_part_to(&mut self, p: PartId, s: SlotId) -> PartSet {
+    pub(crate) fn save_part_to(&mut self, p: PartId, s: SlotId) -> Result<PartSet, PoolFull> {
         self.bump();
         let others = self.users(s);
-        let sound = self.part(p).sound.clone();
-        let crc = sound_crc(&sound);
-        self.pool.store(s, sound);
+        self.pool.store(s, &self.perf.parts[p.index()].sound)?;
+        let stored = self.pool.get(s).expect("just stored");
         self.perf.parts[p.index()].origin = Origin::Slot {
             slot: s,
             generation: self.pool.generation(s),
-            crc,
+            crc: stored.crc(),
         };
-        others
+        Ok(others
             .iter()
             .filter(|&o| o != p && part_status(self.part(o), &self.pool) == PartStatus::Stale(s))
-            .fold(PartSet::EMPTY, PartSet::with)
+            .fold(PartSet::EMPTY, PartSet::with))
     }
 
     /// Replaces the Part's Sound; its mix stays. Refused if the Part moved
@@ -254,11 +266,13 @@ impl Project {
         match src.from {
             PartFrom::Slot(s) => {
                 let sound = self.pool.get(s).ok_or(ReplaceError::SlotEmpty)?;
-                part.sound.clone_from(sound);
+                sound
+                    .decode_into(&mut part.sound)
+                    .map_err(|_| ReplaceError::Unreadable)?;
                 part.origin = Origin::Slot {
                     slot: s,
                     generation: self.pool.generation(s),
-                    crc: sound_crc(sound),
+                    crc: sound.crc(),
                 };
             }
             PartFrom::Init(e) => {

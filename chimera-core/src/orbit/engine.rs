@@ -231,6 +231,8 @@ pub fn block(
         }
     }
 
+    #[cfg(feature = "probe")]
+    crate::probe::stamp(4);
     let bars = scene.chords.bars.get() as u32;
     let line = |b: u32| Position {
         bar: b,
@@ -253,6 +255,8 @@ pub fn block(
         st.fresh = false;
     }
 
+    #[cfg(feature = "probe")]
+    crate::probe::stamp(5);
     let total = units(to, from).max(1);
     let elapsed = span.to_sample.saturating_sub(span.from_sample);
     // A window is under a step long, so it sees a segment or two: each
@@ -303,6 +307,8 @@ pub fn block(
         }
     }
 
+    #[cfg(feature = "probe")]
+    crate::probe::stamp(6);
     let seg = segment_at(to.bar, to.phase, scene.chords.bars, scene.chords.segs) as u8;
     ev.seg_changed = seg != st.seg;
     st.seg = seg;

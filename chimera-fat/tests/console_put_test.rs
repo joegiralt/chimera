@@ -28,7 +28,7 @@ use chimera_fat::FatStore;
 use chimera_hal::store::{ByteSink, Dir, FileName, Files, Store, StoreError, VolumeId};
 use chimera_hal::{FB_SIZE, Ms};
 use image::{Cut, CutDisk, RamDisk, fat_check, fat16, with_clusters};
-use probe::{Probed, Sink, log, probed};
+use probe::{Probed, Sink, log, probed, swept_clean};
 use std::collections::VecDeque;
 use std::rc::Rc;
 
@@ -735,6 +735,8 @@ fn a_power_cut_at_any_write_keeps_a_generation() {
                 || got == Some(("AVRIL 14".into(), Generation::new(7))),
             "{what}: {got:?}"
         );
+        swept_clean(&what, &slot, &slot.inner);
+        assert_eq!(loads(&mut probed(&slot)), got, "{what}: swept");
     }
     let new_clusters = body.len().div_ceil(512);
     assert!(most_lost <= new_clusters, "{most_lost} lost");

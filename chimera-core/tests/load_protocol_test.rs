@@ -888,3 +888,62 @@ fn a_delay_tail_rings_through_the_swap() {
     let after = common::rms(&r.out()[0]);
     assert!(before > 0.01 && after > 0.25 * before, "{before} → {after}");
 }
+
+/// ADR 0099: the note queue waits from the bump through a file load's
+/// card reads to the publish. A player who keeps playing chords fills it:
+/// note-ons are dropped at the reserve, never the note-off of one queued,
+/// so after the publish no key is left held.
+#[test]
+fn a_long_hold_drops_note_ons_never_their_note_offs() {
+    let mut l = Load::new();
+    let swap = l.link.bump_for_test();
+    for _ in 0..3 {
+        assert!(!l.callback().0);
+    }
+    assert_eq!(swap.settle(&l.link, || false), Settled::Acked);
+    let ch = MidiChannel::new(0).unwrap();
+    let (mut queued, mut refused) = (0, 0);
+    // The card reads: 50 three-note chords, pressed and released, nothing
+    // drained. Six events a chord: a chord's note-ons can land in the
+    // queue's last slots, its note-offs past them.
+    for c in 0..50u8 {
+        let chord: Vec<MidiNote> = (0..3)
+            .map(|k| MidiNote::new(36 + ((c as u32 * 5 + k * 4) % 60) as u8).unwrap())
+            .collect();
+        let mut down = Vec::new();
+        for &note in &chord {
+            let on = NoteEvent {
+                channel: ch,
+                note,
+                kind: NoteKind::On(Velocity::DEFAULT),
+            };
+            if l.keys.push(on) {
+                queued += 1;
+                down.push(note);
+            } else {
+                refused += 1;
+            }
+        }
+        for note in down {
+            let off = NoteEvent {
+                channel: ch,
+                note,
+                kind: NoteKind::Off,
+            };
+            assert!(l.keys.push(off), "chord {c}: a queued note's note-off");
+        }
+    }
+    assert!(queued > 0 && refused > 0, "the queue filled");
+    l.publish();
+    for _ in 0..4 {
+        assert!(l.callback().0);
+    }
+    let held =
+        l.r.inst
+            .allocator()
+            .slots()
+            .iter()
+            .filter(|s| s.held())
+            .count();
+    assert_eq!(held, 0, "no note stuck");
+}

@@ -32,7 +32,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0024](0024-morph-blends-link-weights.md) | MORPH blends link weights; one plan orders both algorithms | Accepted; output scale superseded in part by [0049](0049-algo-init-routed-morph-dims.md) |
 | [0025](0025-dtcm-holds-wave-tables-and-stack.md) | DTCM holds the wave tables and the stack | Accepted |
 | [0026](0026-algo-voices-billed-by-patch-shape.md) | Algo voices are billed by patch shape; heavy patches get fewer voices | Accepted; shedding clause and four-voice floor superseded in part by 0027; rev V voice counts superseded by [0031](0031-six-voices-on-rev-v.md) |
-| [0027](0027-shedding-fades-tails-first.md) | Shedding fades, and takes tails before held notes | Proposed; "rev Y gets two" superseded by [0031](0031-six-voices-on-rev-v.md) |
+| [0027](0027-shedding-fades-tails-first.md) | Shedding fades, and takes tails before held notes | Proposed; "rev Y gets two" superseded by [0031](0031-six-voices-on-rev-v.md); cross-Part steal billing amended by [0091](0091-orbit-billed-while-it-plays.md) |
 | [0028](0028-one-alesis-style-reverb.md) | One Alesis-style ring is the reverb; Plate, FDN and MidiVerb retire | Accepted |
 | [0029](0029-stereo-fx-returns.md) | The reverb and chorus return stereo; the delay stays mono | Accepted |
 | [0030](0030-master-section.md) | REV SEND feeds the delay into the reverb; tape on pair 1; a compressor linked across the pairs, last | Accepted; tape superseded in part by [0055](0055-master-tape-off-the-chain.md) |
@@ -45,14 +45,14 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0037](0037-kind-lays-out-the-filter-panel.md) | KIND lays out the filter panel; MODE follows KIND | Accepted |
 | [0038](0038-delay-sat-zero-still-saturates.md) | The delay's feedback loop saturates at every SAT, SAT 0 included | Proposed |
 | [0039](0039-six-encoders-no-main-encoder.md) | Six encoders; no main encoder | Proposed |
-| [0040](0040-eight-voices-modal-strings-to-g1.md) | Eight voices in D2; Modal strings sized to G1 (supersedes in part 0014 and 0031) | Accepted; line length superseded in part by [0056](0056-modal-resonators-share-four-macros.md) |
+| [0040](0040-eight-voices-modal-strings-to-g1.md) | Eight voices in D2; Modal strings sized to G1 (supersedes in part 0014 and 0031) | Accepted; line length superseded in part by [0056](0056-modal-resonators-share-four-macros.md); admission and voice counts while ORBIT plays superseded in part by [0091](0091-orbit-billed-while-it-plays.md) |
 | [0041](0041-mod-matrix-amount-grid.md) | The mod matrix is an amount grid of outlined cells (supersedes in part 0016) | Accepted |
 | [0042](0042-voice-pitch-is-a-matrix-destination.md) | Voice pitch is a matrix destination on each engine's PITCH page | Accepted; `ModalEngine::PITCH` superseded in part by [0056](0056-modal-resonators-share-four-macros.md) |
 | [0043](0043-projects-own-their-sounds.md) | Projects own their sounds; marks are derived; one typed replace guard | Proposed; template amended by [0073](0073-new-plays-the-sparse-groove-on-factory-sounds.md); fixed 32-slot `Pool` superseded in part by [0087](0087-sound-pool-by-memory-budget.md) |
 | [0044](0044-one-ladder-one-button-map.md) | One ladder and one button map for Parts, the mixer and ORBIT (absorbs 0057; amended by 0066 for SETTINGS) | Proposed |
 | [0045](0045-card-format.md) | Store cards in 8.3 A/B files of versioned TLV records | Accepted; load staging superseded in part by [0046](0046-project-load-protocol.md) |
-| [0046](0046-project-load-protocol.md) | Swap projects by epoch: fade the voices, then publish (supersedes in part [0045](0045-card-format.md)) | Proposed |
-| [0048](0048-own-fat-layer.md) | Own the FAT layer; keep embedded-sdmmc only as the SD block driver | Accepted |
+| [0046](0046-project-load-protocol.md) | Swap projects by epoch: fade the voices, then publish (supersedes in part [0045](0045-card-format.md)) | Proposed; step 6 and the MIDI-during-load bound superseded for project file loads by [0099](0099-a-project-file-load-fades-before-pass-2.md) |
+| [0048](0048-own-fat-layer.md) | Own the FAT layer; keep embedded-sdmmc only as the SD block driver | Accepted; amended by [0094](0094-a-boot-sweep-frees-lost-clusters.md) |
 | [0049](0049-algo-init-routed-morph-dims.md) | Algo INIT is audibly routed; MORPH dims when A = B (supersedes in part 0024) | Proposed; INIT's RR and OUT LEVEL noted by [0063](0063-levels-at-the-factory-median.md) |
 | [0050](0050-gain-staging-trim-and-final-limiter.md) | Gain staging: a 1/√8 output trim and one peak limiter at −1 dBFS, last | Proposed |
 | [0051](0051-a-voice-holds-one-engine-rebuilt-in-place.md) | A voice holds one engine, rebuilt in place (supersedes 0008) | Accepted |
@@ -67,7 +67,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0060](0060-one-dc-blocker-per-voice.md) | Block DC once per voice, after its last nonlinear stage (supersedes in part 0022, 0056) | Proposed |
 | [0061](0061-settings-ease-effects-run-at-mix-0.md) | Every continuous setting eases; an effect runs at MIX 0 | Proposed |
 | [0062](0062-modal-notes-ring-free.md) | A Modal note rings free, a re-struck key re-plucks its string, the halo glides (supersedes in part 0056) | Proposed |
-| [0063](0063-levels-at-the-factory-median.md) | INITs play at the factory median; BANK and the voice filter stop buzzing (supersedes 0058) | Proposed |
+| [0063](0063-levels-at-the-factory-median.md) | INITs play at the factory median; BANK and the voice filter stop buzzing (supersedes 0058) | Proposed; BANK's out curve amended by [0097](0097-bank-and-symp-clip-with-stmlibs-curve.md) |
 | [0064](0064-the-one-loop-bow-in-tune.md) | Bowed is the one-loop bow again, half-length and inverting, in tune (supersedes in part 0056) | Proposed |
 | [0065](0065-steal-cut-or-glide.md) | A Part's own steal cuts, or glides the ring to the new note | Proposed |
 | [0066](0066-settings-menu.md) | MENU opens a SETTINGS menu (amends 0044, supersedes 0057 through it) | Proposed |
@@ -93,5 +93,9 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0087](0087-sound-pool-by-memory-budget.md) | Budget the sound pool by memory: one arena for sparse Sounds and card-backed 12-bit sources, one meter (supersedes in part 0043 and 0014) | Proposed |
 | [0089](0089-ship-with-fat-lto.md) | Ship the firmware with fat LTO in one codegen unit | Proposed |
 | [0090](0090-delay-line-stored-as-i16.md) | Store the master delay line as i16, full scale ±2.0 (supersedes in part 0014) | Proposed |
+| [0091](0091-orbit-billed-while-it-plays.md) | While ORBIT plays, reserve its own block and a note-on burst; cost the Parts once a block; bill a stolen voice until its fade ends (supersedes in part 0040; amends 0027) | Proposed |
 | [0092](0092-put-files-over-the-usb-console.md) | Put project files onto the card over the USB console: `ls`, and `put` through the unit's own A/B save, checked as it streams, a refused side deleted (amends 0068) | Proposed |
 | [0093](0093-tape-plays-12-bit-card-sources-through-six-ram-models.md) | TAPE plays 12-bit card sources from the pool through seven RAM machines; STRETCH is the S950's stretch in real time (amends 0087) | Proposed |
+| [0094](0094-a-boot-sweep-frees-lost-clusters.md) | Sweep lost clusters once at boot, from a bitmap in the arena's gap, dry until the owner's go; `drop_chain` frees the cluster a sector-crossing alloc stranded (amends 0048) | Proposed |
+| [0097](0097-bank-and-symp-clip-with-stmlibs-curve.md) | BANK and SYMP clip with stmlib's curve; the Elements stagger tried and dropped (amends 0063) | Proposed |
+| [0099](0099-a-project-file-load-fades-before-pass-2.md) | A project file load fades before pass 2 and reads its sources inside the fade (supersedes in part [0046](0046-project-load-protocol.md)) | Proposed |

@@ -112,6 +112,11 @@ fn axi_report() {
             size_of::<chimera_core::ui::UiState>() - size_of::<Project>(),
         ),
         ("Project", size_of::<Project>()),
+        ("pool arena", chimera_core::project::arena::ARENA_BYTES),
+        (
+            "source table",
+            size_of::<chimera_core::source_table::SourceTable>(),
+        ),
         ("AudioShared x3", size_of::<TripleBuffer<AudioShared>>()),
         ("scope x3", size_of::<TripleBuffer<ScopeFrame>>()),
         ("scope writer", size_of::<ScopeWriter>()),
@@ -136,21 +141,27 @@ fn instrument_fits_d2() {
     assert!(size <= hw::VOICE_RAM_BUDGET, "Instrument = {size} B");
 }
 
-/// The Project is the Performance and the pool's slots, plus no more than
-/// its meta and the slots' generations.
+/// The Project is the Performance and ORBIT's song, plus no more than its
+/// meta and the pool's index: the Sounds live in the arena (ADR 0087).
 #[test]
 fn axi_counts_the_project() {
     use chimera_core::orbit::scene::OrbitSong;
-    use chimera_core::preset::{POOL_SIZE, Performance, Sound};
-    use chimera_core::project::Project;
-    let (project, perf, slots, orbit) = (
+    use chimera_core::preset::Performance;
+    use chimera_core::project::{Pool, Project};
+    let (project, perf, pool, orbit) = (
         size_of::<Project>(),
         size_of::<Performance>(),
-        POOL_SIZE * size_of::<Option<Sound>>(),
+        size_of::<Pool>(),
         size_of::<OrbitSong>(),
     );
-    eprintln!("Project = {project} B: Performance {perf} B, slots {slots} B, ORBIT {orbit} B");
-    let parts = perf + slots + orbit;
+    eprintln!(
+        "Project = {project} B: Performance {perf} B, pool index and scratch {pool} B, ORBIT {orbit} B"
+    );
+    // The index (128 Sound entries, 32 source entries, their
+    // generations), the arena's writer and a load's scratch Sound.
+    let scratch = size_of::<chimera_core::preset::Sound>();
+    assert!(pool - scratch <= 3072, "the pool's index is {pool} B");
+    let parts = perf + pool + orbit;
     assert!(
         project - parts <= 128,
         "Project = {project} B, {} B over its parts",
