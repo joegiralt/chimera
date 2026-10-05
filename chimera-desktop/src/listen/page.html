@@ -183,6 +183,8 @@ input[type="range"] { width: 100%; min-width: 0; accent-color: var(--accent); }
   });
   document.addEventListener("keydown", (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey || !players.length) return;
+    // A focused control keeps its own keys (space presses a button, arrows move a slider).
+    if (e.target.closest && e.target.closest("button, input")) return;
     const p = cur || players[0];
     const k = e.key.toLowerCase();
     if (k === " ") p.toggle();

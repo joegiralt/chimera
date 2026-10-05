@@ -72,10 +72,15 @@ pub fn chimera_source(slot: usize, note: u8, secs: f32) -> Mono {
 
 /// `m` as the importer holds it at `rate`: cleaned, resampled, pitched by
 /// YIN, dithered to 12 bits, then the descriptor and the packed samples.
-pub fn held_from(m: &Mono, rate: u32) -> (Vec<u8>, Pitch) {
+/// An empty or silent `m` holds no source: an error.
+pub fn held_from(m: &Mono, rate: u32) -> Result<(Vec<u8>, Pitch), String> {
     let mut c = m.clone();
     clean(&mut c);
-    let x = resample(&c.samples, c.rate, rate).expect("a source rate");
+    if c.samples.is_empty() {
+        return Err("no audio: empty or silent".into());
+    }
+    let x =
+        resample(&c.samples, c.rate, rate).map_err(|_| format!("can't resample {} Hz", c.rate))?;
     let pitch = yin(&x, rate);
     let q = quantise_tpdf(&x, SEED);
     let desc = Descriptor {
@@ -87,7 +92,7 @@ pub fn held_from(m: &Mono, rate: u32) -> (Vec<u8>, Pitch) {
     let mut held = desc.to_bytes().to_vec();
     held.resize(DESC_LEN + 3 * q.len() / 2, 0);
     pack12(&q, &mut held[DESC_LEN..]);
-    (held, pitch)
+    Ok((held, pitch))
 }
 
 /// The source the A/B compares against: `m` cleaned, at 48 kHz.
@@ -202,46 +207,109 @@ pub fn render(model: TapeModel, held: &[u8], pitch: Pitch, note: u8, s: &Script)
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Qa {
     pub peak_dbfs: f32,
-    /// The largest sample step over the steady state's largest.
-    pub max_step_ratio: f32,
+    /// The worst sample's `isolation` under either detector (`qa`).
+    pub click_ratio: f32,
     pub non_finite: usize,
 }
 
-/// The click rule (`click_free_test`'s): no step over 4× the steady
-/// state's largest.
-pub const CLICK_RATIO: f32 = 4.0;
+/// A render passes at most this `click_ratio`: tuned on the LOOP renders
+/// (≤ 1.92) and the test clicks (≥ 4).
+pub const CLICK_RATIO: f32 = 3.0;
 
-/// A real recording has no steady sine to measure, so the steady state's
-/// largest step is the 99.9th percentile of the steps: a click is a few
-/// samples, and a source's own steep passages are many.
-const STEADY: f32 = 0.999;
+/// A render must be louder than this: silence is a failed render.
+pub const SILENT_DBFS: f32 = -80.0;
 
+/// Detector values at or under this are not clicks (−60 dBFS).
+const FLOOR: f32 = 1e-3;
+
+/// How far a click looks for its peers: ±21 ms, a period down to 47 Hz.
+const REACH: usize = 1_024;
+
+/// Samples about a candidate that its own click spreads into.
+const OWN: usize = 2;
+
+/// Block length of `isolation`'s running maxima.
+const BLOCK: usize = 64;
+
+/// The worst ratio of a sample of `r` (over `FLOOR`) to the largest of
+/// its peers within ±`REACH`, the sample's own ±`OWN` left out. A periodic
+/// edge has peers as large one period away; a click has none.
+fn isolation(r: &[f32]) -> f32 {
+    let a: Vec<f32> = r.iter().map(|v| v.abs()).collect();
+    let blocks: Vec<f32> = a
+        .chunks(BLOCK)
+        .map(|c| c.iter().fold(0f32, |m, &v| m.max(v)))
+        .collect();
+    // The largest of `a[lo..hi]`: loose ends sample by sample, whole blocks
+    // by their maxima.
+    let max = |lo: usize, hi: usize| {
+        let (mut m, mut i) = (0f32, lo);
+        while i < hi {
+            if i % BLOCK == 0 && i + BLOCK <= hi {
+                m = m.max(blocks[i / BLOCK]);
+                i += BLOCK;
+            } else {
+                m = m.max(a[i]);
+                i += 1;
+            }
+        }
+        m
+    };
+    let n = a.len();
+    (0..n)
+        .filter(|&i| a[i] > FLOOR)
+        .map(|i| {
+            let left = max(i.saturating_sub(REACH), i.saturating_sub(OWN));
+            let right = max((i + OWN + 1).min(n), (i + REACH + 1).min(n));
+            a[i] / left.max(right).max(f32::MIN_POSITIVE)
+        })
+        .fold(0.0, f32::max)
+}
+
+/// Two detectors, each judged by `isolation`: the second difference
+/// `x[i+1] − 2x[i] + x[i−1]`, which finds a small click in a smooth wave;
+/// and the residual from a 5-point running median, which leaves a
+/// band-limited edge (monotone) alone and finds a click riding on one.
+/// A median of the second difference over a window (the first idea) failed
+/// a clean saw at 60–270×: one edge in a window looks like a click.
 pub fn qa(x: &[f32]) -> Qa {
     let finite = |s: &&f32| s.is_finite();
     let peak = x.iter().filter(finite).fold(0f32, |a, s| a.max(s.abs()));
-    let mut steps: Vec<f32> = x
-        .windows(2)
-        .filter(|w| w[0].is_finite() && w[1].is_finite())
-        .map(|w| (w[1] - w[0]).abs())
+    let y: Vec<f32> = x
+        .iter()
+        .map(|&s| if s.is_finite() { s } else { 0.0 })
         .collect();
-    let max = steps.iter().copied().fold(0f32, f32::max);
-    let max_step_ratio = if max == 0.0 {
-        0.0
-    } else {
-        let k = ((steps.len() - 1) as f32 * STEADY) as usize;
-        max / *steps.select_nth_unstable_by(k, f32::total_cmp).1
-    };
+    let n = y.len();
+    let d2: Vec<f32> = (0..n)
+        .map(|i| match (i.checked_sub(1), y.get(i + 1)) {
+            (Some(p), Some(&q)) => q - 2.0 * y[i] + y[p],
+            _ => 0.0,
+        })
+        .collect();
+    let med: Vec<f32> = (0..n)
+        .map(|i| {
+            let (Some(lo), Some(_)) = (i.checked_sub(2), y.get(i + 2)) else {
+                return 0.0;
+            };
+            let mut w: [f32; 5] = y[lo..lo + 5].try_into().expect("five samples");
+            w.sort_unstable_by(f32::total_cmp);
+            y[i] - w[2]
+        })
+        .collect();
     Qa {
         peak_dbfs: 20.0 * peak.log10(),
-        max_step_ratio,
-        non_finite: x.iter().filter(|s| !s.is_finite()).count(),
+        click_ratio: isolation(&d2).max(isolation(&med)),
+        non_finite: n - x.iter().filter(finite).count(),
     }
 }
 
 impl Qa {
-    /// Finite, at or under 0 dBFS, and click-free.
+    /// Finite, sounding, at or under 0 dBFS, and click-free.
     pub fn passes(&self) -> bool {
-        self.non_finite == 0 && self.peak_dbfs <= 0.0 && self.max_step_ratio <= CLICK_RATIO
+        self.non_finite == 0
+            && self.peak_dbfs > SILENT_DBFS
+            && self.peak_dbfs <= 0.0
+            && self.click_ratio <= CLICK_RATIO
     }
 }
 
@@ -254,6 +322,56 @@ pub struct Src {
     pub author: String,
     pub licence: String,
     pub url: Option<String>,
+}
+
+/// `listen.toml`: `[[source]]` tables of `key = "value"` lines, `#`
+/// comments and blank lines; anything else is an error, so a malformed
+/// file fails loudly. Each table needs `file`; `slug` defaults to the
+/// file's stem.
+pub fn credits(toml: &str) -> Result<Vec<(String, Src)>, String> {
+    let mut tables: Vec<Vec<(String, String)>> = Vec::new();
+    for (n, line) in toml.lines().enumerate() {
+        let l = line.trim();
+        if l.is_empty() || l.starts_with('#') {
+            continue;
+        }
+        if l == "[[source]]" {
+            tables.push(Vec::new());
+            continue;
+        }
+        let bad = || format!("listen.toml:{}: not key = \"value\": {l}", n + 1);
+        let (k, v) = l.split_once('=').ok_or_else(bad)?;
+        let v = v.trim();
+        let v = v
+            .strip_prefix('"')
+            .and_then(|v| v.strip_suffix('"'))
+            .filter(|v| !v.contains('"'))
+            .ok_or_else(bad)?;
+        let k = k.trim();
+        if k.is_empty() || !k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return Err(bad());
+        }
+        tables
+            .last_mut()
+            .ok_or_else(bad)?
+            .push((k.into(), v.into()));
+    }
+    tables
+        .into_iter()
+        .map(|t| {
+            let get = |k: &str| t.iter().find(|e| e.0 == k).map(|e| e.1.clone());
+            let file = get("file").ok_or("listen.toml: a [[source]] without file")?;
+            let stem = file.trim_end_matches(".wav").to_lowercase();
+            let src = Src {
+                slug: get("slug").unwrap_or(stem),
+                title: get("title").unwrap_or_else(|| file.clone()),
+                author: get("author").unwrap_or_default(),
+                licence: get("licence").unwrap_or_default(),
+                url: get("url"),
+            };
+            Ok((file, src))
+        })
+        .collect()
 }
 
 /// `model`'s name in file names and on the command line: `loop`,
@@ -275,6 +393,24 @@ fn esc(s: &str) -> String {
 
 const PAGE: &str = include_str!("page.html");
 
+/// The row's author, linked when its URL is http(s); an empty author shows
+/// the URL.
+fn credit(s: &Src) -> String {
+    let url = s.url.as_deref().filter(|u| !u.is_empty());
+    let name = match (s.author.as_str(), url) {
+        ("", Some(u)) => u,
+        (a, _) => a,
+    };
+    match url {
+        Some(u) if u.starts_with("https://") || u.starts_with("http://") => format!(
+            "<a href=\"{}\" rel=\"noopener noreferrer\">{}</a>",
+            esc(u),
+            esc(name)
+        ),
+        _ => esc(name),
+    }
+}
+
 /// The listening page: a section per model, in `TapeModel::ALL`'s order,
 /// a row per source, each with its transport.
 pub fn page(rows: &[(TapeModel, &Src)]) -> String {
@@ -291,10 +427,7 @@ pub fn page(rows: &[(TapeModel, &Src)]) -> String {
             esc(SWEEP_LEGEND)
         );
         for &(m, s) in it {
-            let credit = match &s.url {
-                Some(u) => format!("<a href=\"{}\">{}</a>", esc(u), esc(&s.author)),
-                None => esc(&s.author),
-            };
+            let credit = credit(s);
             let _ = write!(
                 out,
                 r#"<article class="track" data-dry="{dry}" data-wet="{wet}">
@@ -355,6 +488,120 @@ mod tests {
             html.contains("https://example.org/a?b&amp;c"),
             "links escaped"
         );
+        assert_eq!(
+            html.matches("rel=\"noopener noreferrer\"").count(),
+            rows.len()
+        );
+    }
+
+    #[test]
+    fn only_http_links() {
+        let mut s = src("x");
+        s.url = Some("javascript:alert(1)".into());
+        let html = page(&[(TapeModel::Loop, &s)]);
+        assert!(!html.contains("href=\"javascript"), "plain text");
+        s.url = Some("https://example.org/f".into());
+        s.author.clear();
+        let html = page(&[(TapeModel::Loop, &s)]);
+        assert!(
+            html.contains(">https://example.org/f</a>"),
+            "the URL stands in"
+        );
+    }
+
+    #[test]
+    fn credits_reads_and_refuses() {
+        let ok = "# a\n\n[[source]]\nfile = \"A.wav\"\ntitle = \"T\"\nurl = \"https://e.org\"\n";
+        let c = credits(ok).unwrap();
+        assert_eq!((c[0].0.as_str(), c[0].1.slug.as_str()), ("A.wav", "a"));
+        assert_eq!(c[0].1.title, "T");
+        for bad in [
+            "[[source]]\nfile = A.wav\n",
+            "[[source]]\nfile = \"A.wav\" # x\n",
+            "file = \"A.wav\"\n",
+            "[[source]]\nfile = \"A.wav\"\n[sources]\n",
+            "[[source]]\ntitle = \"T\"\n",
+        ] {
+            assert!(credits(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn an_empty_wav_is_an_error() {
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 44_100,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        hound::WavWriter::new(&mut bytes, spec)
+            .unwrap()
+            .finalize()
+            .unwrap();
+        let held = crate::import::tape::convert::read_wav(
+            bytes.get_ref(),
+            crate::import::tape::convert::Channel::Mix,
+        )
+        .map_err(|e| format!("{e:?}"))
+        .and_then(|m| held_from(&m, 24_000));
+        assert!(held.is_err(), "{held:?}");
+    }
+
+    fn sine(amp: f32) -> Vec<f32> {
+        (0..48_000)
+            .map(|i| amp * (std::f32::consts::TAU * 440.0 * i as f32 / 48_000.0).sin())
+            .collect()
+    }
+
+    /// A band-limited saw at 110 Hz, harmonics to 0.35 × 48 kHz.
+    fn saw() -> Vec<f32> {
+        (0..48_000)
+            .map(|i| {
+                (1..153)
+                    .map(|k| {
+                        let w = std::f32::consts::TAU * 110.0 * k as f32 / 48_000.0;
+                        0.3 * (w * i as f32).sin() / k as f32
+                    })
+                    .sum()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_clean_saw_passes() {
+        assert!(qa(&saw()).passes(), "{:?}", qa(&saw()));
+    }
+
+    #[test]
+    fn a_click_on_saw_and_noise_fails() {
+        let mut s = 1u32;
+        let mut x: Vec<f32> = saw()
+            .into_iter()
+            .map(|v| {
+                s ^= s << 13;
+                s ^= s >> 17;
+                s ^= s << 5;
+                v + 0.04 * (s as f32 / u32::MAX as f32 - 0.5)
+            })
+            .collect();
+        assert!(qa(&x).passes(), "{:?}", qa(&x));
+        x[24_100] += 0.6;
+        x[24_101] += 0.6;
+        assert!(!qa(&x).passes(), "{:?}", qa(&x));
+    }
+
+    #[test]
+    fn a_small_click_on_a_sine_fails() {
+        let mut x = sine(0.5);
+        x[24_000] += 0.05;
+        assert!(!qa(&x).passes(), "{:?}", qa(&x));
+    }
+
+    #[test]
+    fn silence_fails() {
+        assert!(!qa(&vec![0.0; 48_000]).passes());
+        assert!(!qa(&sine(1e-5)).passes(), "−100 dBFS");
     }
 
     #[test]

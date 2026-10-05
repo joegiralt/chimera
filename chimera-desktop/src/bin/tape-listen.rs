@@ -9,11 +9,11 @@
 use chimera_core::block::DiskCode;
 use chimera_core::dsp::clampf;
 use chimera_core::dsp::tape_engine::TapeModel;
-use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::factory::FACTORY_LEN;
 use chimera_desktop::import::tape::convert::{Channel, Mono, Pitch, read_wav};
 use chimera_desktop::listen::{
-    Src, chimera_source, dry, file_name, held_from, model_slug, page, qa, render, root_note, script,
+    Src, chimera_source, credits, dry, file_name, held_from, model_slug, page, qa, render,
+    root_note, script,
 };
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -57,8 +57,9 @@ fn run() -> Result<bool, String> {
     if models.is_empty() || srcs.is_empty() {
         return Err("usage: tape-listen <model>… --src chimera|<path.wav>…".into());
     }
-    let credits = std::fs::read_to_string(format!("{ROOT}/tools/factory-tapes/listen.toml"))
+    let text = std::fs::read_to_string(format!("{ROOT}/tools/factory-tapes/listen.toml"))
         .map_err(|e| format!("listen.toml: {e}"))?;
+    let credits = credits(&text)?;
     let mut sources = Vec::new();
     for s in &srcs {
         if s == "chimera" {
@@ -71,12 +72,12 @@ fn run() -> Result<bool, String> {
 
     let out = PathBuf::from(format!("{ROOT}/target/listen"));
     std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+    let index = out.join("index.html");
+    // A page from an earlier run never outlives this one's QA.
+    let _ = std::fs::remove_file(&index);
     let (mut report, mut rows, mut pass) = (String::new(), Vec::new(), true);
     for (src, mono) in &sources {
-        let (held, pitch) = held_from(mono, RATE);
-        if SourceView::new(&held).is_none() {
-            return Err(format!("{}: silent", src.slug));
-        }
+        let (held, pitch) = held_from(mono, RATE).map_err(|e| format!("{}: {e}", src.slug))?;
         let note = root_note(pitch);
         let pitch_txt = match pitch {
             Pitch::Pitched { period, root_cents } => {
@@ -99,11 +100,11 @@ fn run() -> Result<bool, String> {
                 pass &= q.passes();
                 let _ = writeln!(
                     report,
-                    "{:<9} {:<12} {kind}  peak {:6.2} dBFS  step {:5.2}x  non-finite {}  {}",
+                    "{:<9} {:<12} {kind}  peak {:6.2} dBFS  click {:5.2}x  non-finite {}  {}",
                     m.disk_ident(),
                     src.slug,
                     q.peak_dbfs,
-                    q.max_step_ratio,
+                    q.click_ratio,
                     q.non_finite,
                     if q.passes() { "PASS" } else { "FAIL" }
                 );
@@ -120,13 +121,10 @@ fn run() -> Result<bool, String> {
     let _ = writeln!(report, "{verdict}");
     std::fs::write(out.join("report.txt"), &report).map_err(|e| e.to_string())?;
     print!("{report}");
-    let index = out.join("index.html");
     if pass {
         std::fs::write(&index, page(&rows)).map_err(|e| e.to_string())?;
         let index = std::fs::canonicalize(&index).unwrap_or(index);
         println!("{}", index.display());
-    } else {
-        let _ = std::fs::remove_file(index);
     }
     Ok(pass)
 }
@@ -142,7 +140,7 @@ fn chimera(slot: usize, title: &str, slug: &str) -> (Src, Mono) {
     (src, chimera_source(slot, NOTE, HOLD_S))
 }
 
-fn wav(arg: &str, credits: &str) -> Result<(Src, Mono), String> {
+fn wav(arg: &str, credits: &[(String, Src)]) -> Result<(Src, Mono), String> {
     let mut path = PathBuf::from(arg);
     if !path.exists() && path.components().count() == 1 {
         let dir = std::env::var("CHIMERA_TAPES_SRC").unwrap_or_else(|_| {
@@ -157,30 +155,14 @@ fn wav(arg: &str, credits: &str) -> Result<(Src, Mono), String> {
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or(format!("{arg}: no file name"))?;
-    let src = credit(credits, name).ok_or(format!("{name}: not credited in listen.toml"))?;
+    let src = credits
+        .iter()
+        .find(|c| c.0 == name)
+        .map(|c| c.1.clone())
+        .ok_or(format!("{name}: not credited in listen.toml"))?;
     let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mono = read_wav(&bytes, Channel::Mix).map_err(|e| format!("{name}: {e:?}"))?;
     Ok((src, mono))
-}
-
-/// `listen.toml`'s `[[source]]` whose `file` is `name`: flat `key = "value"`
-/// lines, all this file needs.
-fn credit(toml: &str, name: &str) -> Option<Src> {
-    toml.split("[[source]]").skip(1).find_map(|block| {
-        let get = |k: &str| {
-            block.lines().find_map(|l| {
-                let (key, v) = l.split_once('=')?;
-                (key.trim() == k).then(|| v.trim().trim_matches('"').to_string())
-            })
-        };
-        (get("file")? == name).then(|| Src {
-            slug: get("slug").unwrap_or_else(|| name.trim_end_matches(".wav").to_lowercase()),
-            title: get("title").unwrap_or_else(|| name.into()),
-            author: get("author").unwrap_or_default(),
-            licence: get("licence").unwrap_or_default(),
-            url: get("url"),
-        })
-    })
 }
 
 fn write_wav(path: &Path, x: &[f32]) -> Result<(), String> {
