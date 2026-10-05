@@ -130,6 +130,32 @@ fn rotation_preserves_energy() {
     assert!(drift.abs() <= 1e-6, "energy drifts {drift}");
 }
 
+/// The cached targets follow every move: DECAY, TONE, then SIZE turned
+/// mid-run, and once the lengths land the targets equal a fresh engine's
+/// primed at the final knobs. Without `retarget` the stage gains would
+/// keep the lengths DECAY last saw.
+#[test]
+fn room_targets_follow_decay_tone_and_size() {
+    let mut p = params(1.0);
+    let (mut e, mut arena) = engine(&p);
+    let (u, mut l, mut r) = ([0.0f32; HALF], [0.0; HALF], [0.0; HALF]);
+    for b in 0..1_200 {
+        match b {
+            10 => p.time = 1.0,
+            20 => p.tone = 0.9,
+            30 => p.size = 1.0,
+            _ => {}
+        }
+        e.run(&mut arena, &u, &knobs(&p), &mut l, &mut r);
+    }
+    assert!(!e.moving(), "the move lands");
+    let (fresh, _) = engine(&p);
+    assert_eq!(e.delays(), fresh.delays());
+    let ((ta, da, g), (fta, fda, fg)) = (e.targets(), fresh.targets());
+    assert_eq!((ta, da), (fta, fda));
+    assert_eq!(g, fg, "stage-gain targets stale");
+}
+
 /// ROOM alone at the ring's rate: the engine, primed on `p`.
 fn engine(p: &ReverbParams) -> (L, Box<ReverbArena>) {
     let mut e = L::default();
@@ -336,9 +362,6 @@ fn size_tail(from: f32, start: f32, coarse: u16) -> Vec<f32> {
 /// have rung down. Before it, those are the tail.
 const LATE: usize = 100 * MS;
 
-/// The 0 → 1 sweep (22 crossfades, 0.66 s) from 1.4 s lands at 2.06 s,
-/// in the judged tail. And the check has teeth: 50 ms steps from 1.95 s
-/// (3 crossfades, landing at 2.04 s) slap.
 /// The 0 → 1 sweep (22 crossfades, 0.66 s) from 1.4 s lands at 2.06 s,
 /// as the noise ends: the judged tail is the settled one. And the check
 /// has teeth: 50 ms steps (test-only), crossfading inside the judged tail

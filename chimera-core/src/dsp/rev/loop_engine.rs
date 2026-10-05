@@ -550,6 +550,14 @@ where
         self.coarse = step;
     }
 
+    /// The eased values' targets as cached: TONE's and the damper's
+    /// coefficients, and each stage's gain (tests: a stale cache).
+    #[cfg(any(test, feature = "test-support"))]
+    #[allow(clippy::type_complexity)]
+    pub fn targets(&self) -> (f32, f32, [[f32; S]; L]) {
+        (self.t_ta, self.t_da, self.t_g)
+    }
+
     /// The SMEAR offsets the last block read by, as held.
     pub fn smear(&self) -> [(f32, f32); 2] {
         self.smear
@@ -798,8 +806,10 @@ where
                                 // [0, 2·cap·trip] above, and `SMEAR_FITS`
                                 // keeps `nom − sm` in 2..`slots`.
                                 let wd = if (LO, ST) == Self::SMEARED[0] {
+                                    // SAFETY: as above (pair_in).
                                     unsafe { pair_in(&*lines, slots, b[A::<L, S>::W_AP + j] + t, nom[0] - sm[0]) }
                                 } else if (LO, ST) == Self::SMEARED[1] {
+                                    // SAFETY: as above (pair_in).
                                     unsafe { pair_in(&*lines, slots, b[A::<L, S>::W_AP + j] + t, nom[1] - sm[1]) }
                                 } else {
                                     rd!(A::<L, S>::R_AP + j)
