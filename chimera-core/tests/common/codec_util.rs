@@ -66,7 +66,7 @@ pub fn project_pass(target: &mut Project, bytes: &[u8], apply: bool) -> Result<(
         f.finish()?;
         DecodeInPlace::finish(&mut d)
     } else {
-        let mut c = ProjectCheck::new(target.pool().load_limit());
+        let mut c = ProjectCheck::new();
         f.push(bytes, &mut |e| c.event(e))?;
         f.finish()?;
         c.end()

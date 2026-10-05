@@ -267,6 +267,7 @@ fn save<F: Files, P: Out>(
         save_target(s, r, file, &mut ProjectCheck::default()).map_err(|e| match e {
             SaveError::Store(e) => PutFail::Store(e),
             SaveError::File(e) => PutFail::File(e),
+            SaveError::Damaged => PutFail::File(FileError::Corrupt),
         })?;
     let h = Header { generation, ..h };
     src.due.arm(s, src.port, VERIFY_MS)?;

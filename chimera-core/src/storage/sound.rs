@@ -147,7 +147,10 @@ const fn once_bit(tag: RecordTag) -> u8 {
         | RecordTag::OrbitNotes
         | RecordTag::OrbitChord
         | RecordTag::Orbit
-        | RecordTag::OrbitScale => 0,
+        | RecordTag::OrbitScale
+        | RecordTag::PoolSource
+        | RecordTag::SourceHead
+        | RecordTag::SourceData => 0,
     }
 }
 
@@ -331,7 +334,10 @@ impl SoundCheck {
             | RecordTag::OrbitNotes
             | RecordTag::OrbitChord
             | RecordTag::Orbit
-            | RecordTag::OrbitScale => Err(FileError::Corrupt),
+            | RecordTag::OrbitScale
+            | RecordTag::PoolSource
+            | RecordTag::SourceHead
+            | RecordTag::SourceData => Err(FileError::Corrupt),
         }
     }
 

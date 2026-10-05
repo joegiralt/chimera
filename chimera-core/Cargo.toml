@@ -24,10 +24,14 @@ master-tape = []
 # The by-value engine constructors (`AlgoEngine::new`, `ModalEngine::new`,
 # `EngineSlot::new`), for tests only: firmware builds every engine in place.
 test-support = []
+# `write_source`: sources written, verified and sealed on the card. Host
+# only (the importer, the desktop, tests); no firmware build enables it
+# until the lost-cluster sweep frees on the unit (#360).
+source-writer = []
 
 [dev-dependencies]
 # No default features: `--no-default-features` must reach the library too.
-chimera-core = { path = ".", default-features = false, features = ["test-support"] }
+chimera-core = { path = ".", default-features = false, features = ["test-support", "source-writer"] }
 chimera-hal = { path = "../chimera-hal", features = ["testkit"] }
 
 # The `SourceTable` model (`tests/loom_source_table.rs`): only under

@@ -102,6 +102,12 @@ pub enum ProjectNote {
     ClearLoaded,
     NoIds,
     NewProject,
+    /// A load over the arena (ADR 0087): what it left out. The project
+    /// loaded.
+    DidntFit {
+        sounds: u8,
+        sources: u8,
+    },
 }
 
 /// `msg: subject`. Past `LINE_LEN` the message gives way, so the name or
@@ -159,6 +165,9 @@ impl ProjectNote {
             ProjectNote::ClearLoaded => l.write_str("CAN NOT CLEAR THE LOADED PROJECT"),
             ProjectNote::NoIds => l.write_str("NO PROJECT IDS LEFT"),
             ProjectNote::NewProject => l.write_str("NEW PROJECT"),
+            ProjectNote::DidntFit { sounds, sources } => {
+                write!(l, "LOADED \u{b7} {sounds} SOUNDS, {sources} SRC DIDN'T FIT")
+            }
         };
         l
     }

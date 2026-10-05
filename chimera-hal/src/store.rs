@@ -37,6 +37,8 @@ pub enum Dir {
     Sounds,
     /// `/CHIMERA/BENCH`: the bench build's card test file.
     Bench,
+    /// `/CHIMERA/TAPES`: TAPE's sources, write-once (ADR 0087).
+    Tapes,
 }
 
 /// An 8.3 name in one of the `Dir`s: A-Z and 0-9 only, so it is valid on any
@@ -177,6 +179,12 @@ pub trait Store {
     /// An existing directory is `Ok`. Making any other `Dir` before `Chimera`
     /// exists is `NotFound`.
     fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError>;
+    /// Marks `file` read-only: from then on `write` and `delete` refuse it
+    /// (`ReadOnly`). One already sealed is `Ok`, with nothing written. A
+    /// store that can't seal says `Io`.
+    fn seal(&mut self, _vol: VolumeId, _file: FileName) -> Result<(), StoreError> {
+        Err(StoreError::Io)
+    }
     /// The lost-cluster sweep (#360), one operation at boot: clusters the
     /// FAT holds that no directory on the volume reaches. `marks` lends
     /// the reachability bitmap, one bit a cluster; the sweep zeroes it.

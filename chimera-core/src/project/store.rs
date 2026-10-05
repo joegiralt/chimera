@@ -11,15 +11,15 @@ use crate::name::ProjectName;
 use crate::storage::{
     AbFile, Card, CardEvent, CardFault, FileError, FileKind, Generation, HEADER_LEN, Header,
     InPlaceError, LoadError, Outcome, ProjectId, Ready, RecordWriter, SaveError, Side, delete_ab,
-    load_ab_in_place, peek_header, save_ab,
+    held_len, load_ab_in_place, peek_header, read_source_into, save_ab,
 };
 
 use super::codec::encode_new_project;
 use super::note::{Differ, ProjectNote, Subject};
 use super::{
     Confirmed, DeleteTarget, LoadLink, NEW_PROJECT_NAME, Origin, OverwriteTarget, PartId,
-    PartStatus, Project, ProjectCheck, ProjectDecoder, ProjectFile, ProjectSource, Seen, Swap,
-    encode_project, part_status, project_crc,
+    PartStatus, Project, ProjectCheck, ProjectDecoder, ProjectFile, ProjectSource, Seen, SourceId,
+    Swap, encode_project, part_status, project_crc,
 };
 
 pub fn project_file(id: ProjectId) -> AbFile {
@@ -243,6 +243,10 @@ fn write_project<S: Store>(
         Ok(Err(now)) => Err(changed(now, subject)),
         Err(SaveError::Store(err)) => Err(card_note(err, Some(subject))),
         Err(SaveError::File(err)) => Err(ProjectNote::File { err, subject }),
+        Err(SaveError::Damaged) => Err(ProjectNote::File {
+            err: FileError::Corrupt,
+            subject,
+        }),
     };
     CardOut { out, event }
 }
@@ -365,6 +369,76 @@ pub struct LoadOutcome {
     pub event: Option<CardEvent>,
 }
 
+/// What a load read: whether it is lossy, and what didn't fit.
+struct Loaded {
+    lossy: bool,
+    sounds: u8,
+    sources: u8,
+}
+
+impl Loaded {
+    /// `LOADED · a SOUNDS, b SRC DIDN'T FIT`, when any didn't.
+    fn note(&self) -> Option<ProjectNote> {
+        (self.sounds > 0 || self.sources > 0).then_some(ProjectNote::DidntFit {
+            sounds: self.sounds,
+            sources: self.sources,
+        })
+    }
+}
+
+/// The file in place (ADR 0046), then the sources its plan takes, read
+/// from the card into their absent entries (ADR 0087): one card operation.
+fn load_into<S: Store>(
+    s: &mut S,
+    r: &Ready,
+    p: &mut Project,
+    id: ProjectId,
+) -> Result<Loaded, InPlaceError> {
+    let mut d = ProjectDecoder::new(p);
+    let read = load_ab_in_place(s, r, project_file(id), &mut d);
+    let (lossy, to_read, (sounds, sources)) = (d.lossy(), d.to_read(), d.dropped());
+    read?;
+    let missed = read_sources(s, r, p, to_read);
+    Ok(Loaded {
+        lossy,
+        sounds,
+        sources: sources.saturating_add(missed),
+    })
+}
+
+/// Reads sources `ids` into their absent entries, inside the load's epoch
+/// fade, and returns how many the arena couldn't take. A file missing,
+/// short, damaged or naming another ref leaves its entry absent: the ref
+/// is kept, and its Parts are silent. A card fault ends the reads there.
+fn read_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: u32) -> u8 {
+    p.bump();
+    let mut missed = 0u8;
+    for id in SourceId::ALL.into_iter().filter(|i| ids & i.bit() != 0) {
+        let Some(e) = p.pool.source(id) else { continue };
+        let mut fault = false;
+        let got = match held_len(e.r) {
+            Some(len) => {
+                p.pool
+                    .source_fill(id, len, |out| match read_source_into(s, r, e.r, out) {
+                        Ok(_) => true,
+                        Err(err) => {
+                            fault = err.store_error().is_some();
+                            false
+                        }
+                    })
+            }
+            None => Ok(false),
+        };
+        if got.is_err() {
+            missed = missed.saturating_add(1);
+        }
+        if fault {
+            break;
+        }
+    }
+    missed
+}
+
 /// Replaces `p` as `go` confirmed: NEW, or a file in place (ADR 0046).
 /// The only writer of the load epoch. Refused, with `Changed`, if `p`
 /// moved since `go`; a file listed on another card is refused before any
@@ -395,11 +469,7 @@ pub fn load_project<S: Store>(
         ProjectSource::File { id, vol } => (id, vol),
     };
     let subject = Subject::File(id);
-    let run = run_on(card, store, vol, |s, r| {
-        let limit = p.pool().load_limit();
-        let mut d = ProjectDecoder::new(p, limit);
-        load_ab_in_place(s, r, project_file(id), &mut d).map(|_| d.lossy())
-    });
+    let run = run_on(card, store, vol, |s, r| load_into(s, r, p, id));
     let result = match run {
         Ok(o) => {
             out.event = Some(o.event);
@@ -408,11 +478,12 @@ pub fn load_project<S: Store>(
         Err(e) => Err(e),
     };
     match result {
-        Ok(Ok(lossy)) => {
+        Ok(Ok(loaded)) => {
             p.bump();
             p.meta.file = Some(ProjectFile::new(id, vol));
-            p.meta.saved_crc = loaded_crc(p, lossy);
+            p.meta.saved_crc = loaded_crc(p, loaded.lossy);
             out.swap = Some(link.bump());
+            out.note = loaded.note();
         }
         // Not the card the file was listed on: nothing read.
         Ok(Err(now)) => out.note = Some(changed(now, subject)),
@@ -450,17 +521,15 @@ pub fn boot_project<S: Store>(
         Some(id) => {
             let subject = Subject::File(id);
             let run = card.run(store, |s, r| {
-                let limit = p.pool().load_limit();
-                let mut d = ProjectDecoder::new(p, limit);
-                load_ab_in_place(s, r, project_file(id), &mut d).map(|_| (r.volume(), d.lossy()))
+                load_into(s, r, p, id).map(|l| (r.volume(), l))
             });
             match run {
                 Ok(o) => match o.result {
-                    Ok((vol, lossy)) => {
+                    Ok((vol, loaded)) => {
                         p.bump();
                         p.meta.file = Some(ProjectFile::new(id, vol));
-                        p.meta.saved_crc = loaded_crc(p, lossy);
-                        return None;
+                        p.meta.saved_crc = loaded_crc(p, loaded.lossy);
+                        return loaded.note();
                     }
                     Err(InPlaceError {
                         clobbered: true, ..

@@ -205,6 +205,7 @@ fn verify(what: &str, disk: &RamDisk, model: &Model) {
                 Dir::Projects => d.change_dir("PROJECTS").unwrap(),
                 Dir::Sounds => d.change_dir("SOUNDS").unwrap(),
                 Dir::Bench => d.change_dir("BENCH").unwrap(),
+                Dir::Tapes => d.change_dir("TAPES").unwrap(),
             }
             let stem = String::from_utf8_lossy(file.stem());
             let ext = String::from_utf8_lossy(file.ext());

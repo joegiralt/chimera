@@ -16,7 +16,7 @@ use crate::storage::{
     Crc32, Event, FileError, ReadTag, RecordTag, RecordWriter, SoundCheck, encode_sound,
 };
 
-use super::arena::{ARENA_BYTES, ArenaWriter, Cost, GateAcked, MAX_SOURCES, Shift};
+use super::arena::{ArenaWriter, Cost, GateAcked, MAX_SOURCES, Shift};
 use super::ids::SlotId;
 use super::sources::{SOURCE_HEAD, SourceEntry, SourceId, SourceRef, source_cost};
 use crate::source_table::{Answer, GATE_ACK_TIMEOUT_MS, SourceTable};
@@ -185,12 +185,6 @@ impl Pool {
         Cost::of((self.used().bytes() - self.arena.sounds().bytes()) as usize)
     }
 
-    /// What a load's Sounds may take: the arena less the sources (pass 1's
-    /// limit; Task 9 replaces it).
-    pub fn load_limit(&self) -> Cost {
-        Cost::of(ARENA_BYTES - self.source_used().bytes() as usize)
-    }
-
     /// The arena's gap lent as scratch: the boot's card sweep keeps its
     /// reachability bitmap here (ADR 0094). Only while no source is
     /// published, so nothing the audio reads sits near it.
@@ -245,13 +239,45 @@ impl Pool {
         if let Some(s) = found.filter(|&s| self.source(s).is_some_and(|e| !e.absent())) {
             return Ok(s);
         }
-        let needs = source_cost(held.len());
         let Some(s) = found.or_else(|| self.free_source()) else {
             return Err(PoolFull {
-                needs,
+                needs: source_cost(held.len()),
                 free: Cost::default(),
             });
         };
+        self.source_put(s, r, held.len(), |to| {
+            to.copy_from_slice(held);
+            true
+        })?;
+        Ok(s)
+    }
+
+    /// Absent source `s` takes `len` held bytes, which `fill` writes
+    /// straight into the gap (a load's card read). They publish only when
+    /// `fill` says they are good: `Ok(false)` leaves `s` absent. Refused,
+    /// with nothing moved, when the gap can't take them.
+    pub(in crate::project) fn source_fill(
+        &mut self,
+        s: SourceId,
+        len: usize,
+        fill: impl FnOnce(&mut [u8]) -> bool,
+    ) -> Result<bool, PoolFull> {
+        match self.source(s) {
+            Some(e) if e.absent() => self.source_put(s, e.r, len, fill),
+            _ => Ok(false),
+        }
+    }
+
+    /// Slot `s` holds `r` with `len` bytes from `fill`, staged in the gap
+    /// and published only if `fill` is true.
+    fn source_put(
+        &mut self,
+        s: SourceId,
+        r: SourceRef,
+        len: usize,
+        fill: impl FnOnce(&mut [u8]) -> bool,
+    ) -> Result<bool, PoolFull> {
+        let needs = source_cost(len);
         let free = self.arena.gap();
         if needs > free {
             return Err(PoolFull { needs, free });
@@ -261,19 +287,21 @@ impl Pool {
             needs,
             free: Cost::default(),
         };
-        let len = SOURCE_HEAD + held.len();
-        let to = self.arena.source_stage(len).map_err(busy)?;
+        let total = SOURCE_HEAD + len;
+        let to = self.arena.source_stage(total).map_err(busy)?;
         let (head, bytes) = to.split_at_mut(SOURCE_HEAD);
         head.fill(0);
         head[..SourceRef::LEN].copy_from_slice(&r.to_bytes());
-        bytes.copy_from_slice(held);
-        let offset = self.arena.source_alloc(len).map_err(busy)?;
-        let held = held.len() as u32;
+        if !fill(bytes) {
+            return Ok(false);
+        }
+        let offset = self.arena.source_alloc(total).map_err(busy)?;
+        let held = len as u32;
         self.sources.slots[s.index()] = SrcSlot::Live(SourceEntry { r, held, offset });
         self.sources.gens[s.index()] = self.sources.gens[s.index()].wrapping_add(1);
         self.table()
             .publish(s, offset + SOURCE_HEAD as u32, held, r.rate);
-        Ok(s)
+        Ok(true)
     }
 
     /// Source `r` as an absent entry: its ref kept, no bytes, cost 0. The

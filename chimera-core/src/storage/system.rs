@@ -282,6 +282,7 @@ impl From<SaveError> for SyncError {
         match e {
             SaveError::Store(e) => SyncError::Store(e),
             SaveError::File(e) => SyncError::File(e),
+            SaveError::Damaged => SyncError::File(FileError::Corrupt),
         }
     }
 }

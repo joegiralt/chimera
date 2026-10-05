@@ -7,7 +7,7 @@ mod image;
 mod probe;
 
 use chimera_fat::blocks::FsError;
-use chimera_fat::dir::{Entry, ShortName, Slot, encode, lfn_checksum, parse};
+use chimera_fat::dir::{Attr, Entry, ShortName, Slot, encode, lfn_checksum, parse, read_only};
 use chimera_fat::fat::{FatCache, Table};
 use chimera_fat::fsinfo;
 use chimera_fat::volume::{FsKind, Layout};
@@ -325,7 +325,12 @@ fn entry_codec_round_trips() {
         len: 5_000,
     };
     let mut r = [0xFF; 32];
-    encode(&e, false, FsKind::Fat32, &mut r);
+    encode(&e, Attr::Sealed, FsKind::Fat32, &mut r);
+    assert_eq!(r[11], 0x21, "a sealed file is read-only");
+    assert!(read_only(&r));
+    assert_eq!(parse(&r, FsKind::Fat32), Slot::File(e));
+    encode(&e, Attr::File, FsKind::Fat32, &mut r);
+    assert!(!read_only(&r));
     assert_eq!(&r[..11], b"SONG1   CHP");
     assert_eq!(r[11], 0x20);
     assert_eq!(u16::from_le_bytes([r[24], r[25]]), 0x5C21, "2026-01-01");
@@ -333,7 +338,7 @@ fn entry_codec_round_trips() {
     assert_eq!(name.to_file(Dir::Projects), Some(file(b"SONG1", b"CHP")));
 
     let e16 = Entry { start: 0x2345, ..e };
-    encode(&e16, false, FsKind::Fat16, &mut r);
+    encode(&e16, Attr::File, FsKind::Fat16, &mut r);
     assert_eq!(r[20..22], [0, 0], "FAT16 has no high half");
     assert_eq!(parse(&r, FsKind::Fat16), Slot::File(e16));
     r[20] = 1;
@@ -348,10 +353,10 @@ fn entry_codec_round_trips() {
         start: 7,
         len: 0,
     };
-    encode(&d, true, FsKind::Fat16, &mut r);
+    encode(&d, Attr::Dir, FsKind::Fat16, &mut r);
     assert_eq!((&r[..11], r[11]), (&b"PROJECTS   "[..], 0x10));
     assert_eq!(parse(&r, FsKind::Fat16), Slot::Dir(d));
-    encode(&Entry { len: 99, ..d }, true, FsKind::Fat16, &mut r);
+    encode(&Entry { len: 99, ..d }, Attr::Dir, FsKind::Fat16, &mut r);
     assert_eq!(
         parse(&r, FsKind::Fat16),
         Slot::Dir(d),

@@ -80,6 +80,13 @@ impl SourceEntry {
     }
 }
 
+/// What source `r` takes held whole; `None` when it could never fit.
+pub(super) fn ref_cost(r: SourceRef) -> Option<Cost> {
+    crate::storage::held_len(r)
+        .filter(|&n| n <= super::arena::ARENA_BYTES)
+        .map(source_cost)
+}
+
 /// What `held` bytes take: none when absent, else the head and the bytes.
 pub(super) fn source_cost(held: usize) -> Cost {
     if held == 0 {

@@ -20,6 +20,8 @@ pub enum FileKind {
     Sound = 1,
     Project = 2,
     System = 3,
+    /// TAPE's audio, `/CHIMERA/TAPES/<CRC>.SRC` (ADR 0087).
+    Source = 6,
 }
 
 impl FileKind {
@@ -28,6 +30,7 @@ impl FileKind {
             1 => Some(FileKind::Sound),
             2 => Some(FileKind::Project),
             3 => Some(FileKind::System),
+            6 => Some(FileKind::Source),
             _ => None,
         }
     }

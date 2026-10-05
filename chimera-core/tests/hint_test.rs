@@ -358,6 +358,18 @@ fn every_pool_hint_fits() {
         cost: k999,
     });
     assert_eq!(purge.as_str(), "PURGE 32 SOURCES? FREES 999K");
+    // A load over the arena, at its most.
+    let most = chimera_core::project::ProjectNote::DidntFit {
+        sounds: 128,
+        sources: 32,
+    }
+    .line();
+    assert_eq!(most.as_str(), "LOADED · 128 SOUNDS, 32 SRC DIDN'T FIT");
+    assert!(
+        chimera_core::ui::busy::toast_fits(most.as_str()),
+        "{}",
+        most.as_str()
+    );
     let text = chimera_core::ui::draw::text_width(
         &theme::FONT_LABEL,
         purge.as_str(),

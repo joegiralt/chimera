@@ -10,6 +10,7 @@ use std::vec::Vec;
 pub struct MemStore {
     files: BTreeMap<FileName, Vec<u8>>,
     dirs: BTreeSet<Dir>,
+    sealed: BTreeSet<FileName>,
     id: VolumeId,
     present: bool,
 }
@@ -26,6 +27,7 @@ impl MemStore {
         MemStore {
             files: BTreeMap::new(),
             dirs: BTreeSet::new(),
+            sealed: BTreeSet::new(),
             id: volume(serial),
             present: true,
         }
@@ -50,6 +52,14 @@ impl MemStore {
             Err(StoreError::NoCard)
         } else if vol != self.id {
             Err(StoreError::VolumeChanged(self.id))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn writable(&self, file: FileName) -> Result<(), StoreError> {
+        if self.sealed.contains(&file) {
+            Err(StoreError::ReadOnly)
         } else {
             Ok(())
         }
@@ -123,6 +133,7 @@ impl Store for MemStore {
     ) -> Result<u32, StoreError> {
         self.open(vol)?;
         self.has_dir(file.dir())?;
+        self.writable(file)?;
         let mut data = Vec::new();
         let r = body(&mut Buf(&mut data));
         let n = data.len() as u32;
@@ -133,6 +144,7 @@ impl Store for MemStore {
 
     fn delete(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
         self.open(vol)?;
+        self.writable(file)?;
         self.files
             .remove(&file)
             .map(|_| ())
@@ -145,6 +157,15 @@ impl Store for MemStore {
             self.has_dir(Dir::Chimera)?;
         }
         self.dirs.insert(dir);
+        Ok(())
+    }
+
+    fn seal(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
+        self.open(vol)?;
+        if !self.files.contains_key(&file) {
+            return Err(StoreError::NotFound);
+        }
+        self.sealed.insert(file);
         Ok(())
     }
 }
@@ -390,6 +411,29 @@ pub fn store_suite<S: Store>(
     assert_eq!(c.data, b"ok");
     after_op(&s);
 
+    // A sealed file reads as it was; nothing rewrites or deletes it.
+    s.make_dir(vol, Dir::Tapes).unwrap();
+    after_op(&s);
+    let tape = FileName::new(Dir::Tapes, b"0A1B2C3D", b"SRC").unwrap();
+    assert_eq!(s.seal(vol, tape), Err(StoreError::NotFound));
+    after_op(&s);
+    s.write(vol, tape, &mut |w| w.put(&pattern(700))).unwrap();
+    after_op(&s);
+    s.seal(vol, tape).unwrap();
+    after_op(&s);
+    s.seal(vol, tape).unwrap();
+    after_op(&s);
+    let r = s.write(vol, tape, &mut |w| w.put(b"over"));
+    assert_eq!(r, Err(StoreError::ReadOnly));
+    after_op(&s);
+    assert_eq!(s.delete(vol, tape), Err(StoreError::ReadOnly));
+    after_op(&s);
+    let (r, c) = read_all(&mut s, vol, tape, None);
+    r.unwrap();
+    assert_eq!(c.data, pattern(700), "the sealed file unchanged");
+    assert_eq!(listing(&mut s, vol, Dir::Tapes), Ok(std::vec![(tape, 700)]));
+    after_op(&s);
+
     // A swapped card: every op refuses the old id and touches nothing.
     swap(&mut s);
     after_op(&s);
@@ -408,6 +452,8 @@ pub fn store_suite<S: Store>(
     assert_eq!(s.delete(vol, ok), changed);
     after_op(&s);
     assert_eq!(s.make_dir(vol, Dir::Chimera), changed);
+    after_op(&s);
+    assert_eq!(s.seal(vol, ok), changed);
     after_op(&s);
     assert_eq!(s.mount().unwrap(), new);
     after_op(&s);

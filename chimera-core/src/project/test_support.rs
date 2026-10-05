@@ -320,6 +320,10 @@ impl<S: Store> Store for FullOnWrite<S> {
     fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError> {
         self.0.make_dir(vol, dir)
     }
+
+    fn seal(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
+        self.0.seal(vol, file)
+    }
 }
 
 /// A store that flips one byte, mid-file, of `file` from its second read
@@ -422,6 +426,10 @@ impl<S: Store> Store for FlipOnSecondRead<S> {
     fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError> {
         self.inner.make_dir(vol, dir)
     }
+
+    fn seal(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
+        self.inner.seal(vol, file)
+    }
 }
 
 /// A store whose second read of `file` on fails with `err` before any
@@ -494,6 +502,10 @@ impl<S: Store> Store for FailOnSecondRead<S> {
 
     fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError> {
         self.inner.make_dir(vol, dir)
+    }
+
+    fn seal(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
+        self.inner.seal(vol, file)
     }
 }
 

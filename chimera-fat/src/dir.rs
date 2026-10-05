@@ -61,6 +61,7 @@ impl ShortName {
                 Dir::Projects => b"PROJECTS",
                 Dir::Sounds => b"SOUNDS",
                 Dir::Bench => b"BENCH",
+                Dir::Tapes => b"TAPES",
             },
             b"",
         )
@@ -141,12 +142,25 @@ pub fn parse(raw: &[u8; ENTRY], kind: FsKind) -> Slot {
     }
 }
 
-/// `e` as a file (attribute 0x20) or directory (0x10, length 0), stamped
-/// 2026-01-01 00:00. FAT16 keeps the cluster's high half 0.
-pub fn encode(e: &Entry, is_dir: bool, kind: FsKind, raw: &mut [u8; ENTRY]) {
+/// What an entry is: a file, a sealed (read-only) file, or a directory.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Attr {
+    File,
+    Sealed,
+    Dir,
+}
+
+/// `e` as a file (attribute 0x20, 0x21 sealed) or directory (0x10, length
+/// 0), stamped 2026-01-01 00:00. FAT16 keeps the cluster's high half 0.
+pub fn encode(e: &Entry, attr: Attr, kind: FsKind, raw: &mut [u8; ENTRY]) {
     raw.fill(0);
     raw[..NAME_LEN].copy_from_slice(&e.name.0);
-    raw[ATTR] = if is_dir { ATTR_DIR } else { ATTR_FILE };
+    let is_dir = attr == Attr::Dir;
+    raw[ATTR] = match attr {
+        Attr::File => ATTR_FILE,
+        Attr::Sealed => ATTR_FILE | ATTR_READ_ONLY,
+        Attr::Dir => ATTR_DIR,
+    };
     for at in [CREATE_DATE, ACCESS_DATE, WRITE_DATE] {
         put16(raw, at, STAMP_DATE);
     }

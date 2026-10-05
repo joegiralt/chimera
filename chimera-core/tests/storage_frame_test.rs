@@ -193,7 +193,10 @@ fn codes_are_frozen() {
         (RecordTag::OrbitChord, 0x0012),
         (RecordTag::Orbit, 0x0013),
         (RecordTag::OrbitScale, 0x0014),
+        (RecordTag::PoolSource, 0x8015),
         (RecordTag::SourceRef, 0x0016),
+        (RecordTag::SourceHead, 0x8017),
+        (RecordTag::SourceData, 0x0018),
     ];
     for (t, c) in table {
         assert_eq!(t.code(), c);
@@ -207,6 +210,7 @@ fn codes_are_frozen() {
     assert_eq!(FileKind::Sound as u8, 1);
     assert_eq!(FileKind::Project as u8, 2);
     assert_eq!(FileKind::System as u8, 3);
+    assert_eq!(FileKind::Source as u8, 6);
 }
 
 #[test]

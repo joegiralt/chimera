@@ -476,6 +476,10 @@ impl<D: Medium> Store for FatStore<D> {
         self.run(vol, |fs, _| fs.make_dir(dir))
     }
 
+    fn seal(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
+        self.run(vol, |fs, _| fs.seal(file))
+    }
+
     fn sweep(&mut self, vol: VolumeId, mode: Sweep, marks: &mut [u8]) -> SweepSeen {
         FatStore::sweep(self, vol, mode, marks)
     }

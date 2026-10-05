@@ -1,4 +1,5 @@
-//! A project as card records (projects spec § Format): `Fx` and its five
+//! A project as card records (projects spec § Format): a `PoolSource` per
+//! pool source (ADR 0087: its ref, never audio), `Fx` and its five
 //! blocks, then `Slot` and its Sound per filled slot, then each `Part`: its
 //! Sound, `Block(Part)` (the mix) and `Origin`; then ORBIT's records
 //! (`orbit::records`). `Slot`, `Part` and `Fx` open a context; the records
@@ -7,6 +8,12 @@
 //! A slot's Sound is decoded whole, then encoded into the pool's arena as
 //! `encode_sound` writes it today (ADR 0087): a file from before sparse
 //! Sounds loads sparse.
+//!
+//! Pass 1 costs the slots and the sources' refs against the whole arena,
+//! with no card read, and plans what a load takes: the sources a Part
+//! plays, then the slots by index, then the other sources, each while it
+//! fits. Pass 2 follows the plan; each source becomes an absent entry, and
+//! the loader reads the planned ones from the card after it.
 
 use chimera_hal::store::StoreError;
 
@@ -24,10 +31,13 @@ use crate::storage::{
     RecordWriter, SoundCheck, TRANSLATIONS, decode_block, encode_block, encode_sound, records_crc,
 };
 
-use super::arena::{ARENA_BYTES, Cost};
-use super::pool::entry_len;
+use super::arena::{ARENA_BYTES, Cost, MAX_SOURCES};
+use super::pool::{Pool, entry_len};
+use super::sources::{SourceId, SourceRef, ref_cost};
 use super::template::{new_project_part, new_slot};
 use super::{EncodedSound, Origin, Part, PartId, PartSet, Project, SlotId};
+use crate::preset::MAX_SOUNDS;
+use crate::storage::Side;
 
 const FX_BLOCKS: [BlockRef; 5] = [
     BlockRef::Chorus,
@@ -151,8 +161,20 @@ fn put_part(w: &mut RecordWriter<'_>, i: usize, part: &Part) -> Result<(), Store
     w.put(RecordTag::Origin, &origin)
 }
 
+/// The pool's source refs, absent ones included, ordered by ref: one file
+/// for one set of sources, whatever their slots.
+fn put_sources(w: &mut RecordWriter<'_>, pool: &Pool) -> Result<(), StoreError> {
+    let mut refs = SourceId::ALL.map(|s| pool.source(s).map(|e| e.r));
+    refs.sort_unstable_by_key(|r| r.map(|r| (r.crc, r.frames, r.rate)));
+    for r in refs.into_iter().flatten() {
+        w.put(RecordTag::PoolSource, &r.to_bytes())?;
+    }
+    Ok(())
+}
+
 /// Streams `p` from live state: no copy, no buffer past one record.
 pub fn encode_project(p: &Project, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
+    put_sources(w, &p.pool)?;
     put_fx(w, &p.perf.fx)?;
     for s in SlotId::ALL {
         if let Some(sound) = p.pool.get(s) {
@@ -206,17 +228,59 @@ enum ReadOrigin {
     Init(Option<EngineType>),
 }
 
+/// What a load takes of a file (ADR 0087): its slots and sources (a bit
+/// each, sources by `PoolSource` record in file order), and how many of
+/// each it leaves out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Plan {
+    slots: u128,
+    sources: u32,
+    dropped_slots: u8,
+    dropped_sources: u8,
+}
+
+impl Plan {
+    /// No pass 1 ran on this side: take everything the arena does.
+    const ALL: Plan = Plan {
+        slots: u128::MAX,
+        sources: u32::MAX,
+        dropped_slots: 0,
+        dropped_sources: 0,
+    };
+}
+
+/// Takes `c` from `left` if it fits.
+fn take(left: &mut u32, c: Option<Cost>) -> bool {
+    match c {
+        Some(c) if c.bytes() <= *left => {
+            *left -= c.bytes();
+            true
+        }
+        _ => false,
+    }
+}
+
 /// Checks a project file's events: pass 1, which touches nothing.
 /// `ProjectDecoder` runs the same checks in pass 2, writing its target.
 pub struct ProjectCheck {
     /// The open context's Sound: a fresh one per `Slot` and `Part`.
     sound: SoundCheck,
-    /// The slots' arena bytes so far, when a stage costs them: past
-    /// `limit`, a load refuses the file in pass 1, before anything is
-    /// touched.
-    cost: u32,
-    /// What the slots may take: the arena less the target's sources.
-    limit: Cost,
+    /// Each slot's arena bytes, when a stage costs them.
+    slot_costs: [u16; MAX_SOUNDS],
+    /// The `PoolSource` refs so far, in file order.
+    refs: [SourceRef; MAX_SOURCES],
+    n_refs: u8,
+    /// The refs a Part's Sound plays, a bit each in `refs`.
+    part_used: u32,
+    /// Pass 1's plan of each side, kept across passes.
+    plans: [Option<Plan>; 2],
+    side: Side,
+    /// Pass 2's plan, and what it left out so far.
+    plan: Plan,
+    dropped_slots: u8,
+    dropped_sources: u8,
+    /// Pass 2's absent entries the plan takes: the loader reads them.
+    to_read: u32,
     context: Context,
     slots: u128,
     parts: PartSet,
@@ -235,20 +299,30 @@ pub struct ProjectCheck {
 
 const _: () = assert!(SlotId::ALL.len() <= u128::BITS as usize);
 
-/// A check with no target: the whole arena.
 impl Default for ProjectCheck {
     fn default() -> Self {
-        Self::new(Cost::of(ARENA_BYTES))
+        Self::new()
     }
 }
 
 impl ProjectCheck {
-    /// Refuses slots costing past `limit` (`Bounds`).
-    pub fn new(limit: Cost) -> Self {
+    pub fn new() -> Self {
         ProjectCheck {
             sound: SoundCheck::begin(None),
-            cost: 0,
-            limit,
+            slot_costs: [0; MAX_SOUNDS],
+            refs: [SourceRef {
+                crc: 0,
+                frames: 0,
+                rate: 0,
+            }; MAX_SOURCES],
+            n_refs: 0,
+            part_used: 0,
+            plans: [None; 2],
+            side: Side::A,
+            plan: Plan::ALL,
+            dropped_slots: 0,
+            dropped_sources: 0,
+            to_read: 0,
             context: Context::None,
             slots: 0,
             parts: PartSet::EMPTY,
@@ -267,9 +341,10 @@ impl ProjectCheck {
     /// record outside any context, a context repeated, a record the context
     /// doesn't hold or holds once read twice, a Sound's rule broken, an
     /// ORBIT record before the six Parts, or anything but ORBIT's after
-    /// one. `Bounds`: an index out of range or a payload of the wrong
-    /// shape. `BadName`: a context's name. An ORBIT record is never an
-    /// error past its place: a bad one keeps the neutral base.
+    /// one, a `PoolSource` after `Fx` or repeated. `Bounds`: an index out
+    /// of range, a payload of the wrong shape, or a 33rd `PoolSource`.
+    /// `BadName`: a context's name. An ORBIT record is never an error past
+    /// its place: a bad one keeps the neutral base.
     ///
     /// `stage`: where pass 1 of a load decodes each `Slot`'s Sound whole,
     /// to cost it. Pass 2 decodes into `target`'s pool scratch and stores
@@ -286,10 +361,17 @@ impl ProjectCheck {
                     return Err(FileError::WrongKind);
                 }
                 let name = h.name.ok_or(FileError::Corrupt)?;
-                *self = ProjectCheck::new(self.limit);
+                let kept = (self.plans, self.side);
+                *self = ProjectCheck::new();
+                (self.plans, self.side) = kept;
                 if let Some(t) = target {
-                    // Every slot cleared: generations only move.
+                    self.plan = self.plans[self.side as usize].unwrap_or(Plan::ALL);
+                    (self.dropped_slots, self.dropped_sources) =
+                        (self.plan.dropped_slots, self.plan.dropped_sources);
+                    // Every slot cleared: generations only move. The old
+                    // sources retire; one still sounding stays pending.
                     t.pool.clear_all();
+                    t.pool.sources_clear();
                     t.perf.fx = FxParams::default();
                     t.meta.name = name;
                     t.orbit.clear_for_load();
@@ -302,6 +384,8 @@ impl ProjectCheck {
             (ReadTag::Known(t), _) if t.is_orbit() => self.orbit(t, p, target, stage),
             (ReadTag::Unknown(_), Context::Orbit) => Ok(()),
             (ReadTag::Known(_), Context::Orbit) => Err(FileError::Corrupt),
+            (ReadTag::Known(RecordTag::PoolSource), Context::None) => self.pool_source(p, target),
+            (ReadTag::Known(RecordTag::PoolSource), _) => Err(FileError::Corrupt),
             (ReadTag::Known(t @ (RecordTag::Fx | RecordTag::Slot | RecordTag::Part)), _) => {
                 self.open(t, p, target, stage)
             }
@@ -340,10 +424,44 @@ impl ProjectCheck {
                 Ok(())
             }
             (_, Context::Part(n)) => {
+                if let Event::Record(ReadTag::Known(RecordTag::SourceRef), p) = e
+                    && let Some(r) = SourceRef::from_bytes(p)
+                    && let Some(k) = self.refs().iter().position(|&x| x == r)
+                {
+                    self.part_used |= 1 << k;
+                }
                 let staged = target.map(|t| &mut t.perf.parts[n.index()].sound);
                 self.sound.step(e, staged)
             }
         }
+    }
+
+    fn refs(&self) -> &[SourceRef] {
+        &self.refs[..self.n_refs as usize]
+    }
+
+    /// A `PoolSource`: its ref, each once. Pass 2 makes it an absent
+    /// entry, and marks it for the card read if the plan takes it.
+    fn pool_source(&mut self, p: &[u8], target: Option<&mut Project>) -> Result<(), FileError> {
+        let r = SourceRef::from_bytes(p).ok_or(FileError::Bounds)?;
+        let k = self.refs().len();
+        if k == MAX_SOURCES {
+            return Err(FileError::Bounds);
+        }
+        if self.refs().contains(&r) {
+            return Err(FileError::Corrupt);
+        }
+        (self.refs[k], self.n_refs) = (r, self.n_refs + 1);
+        let Some(t) = target else { return Ok(()) };
+        let planned = self.plan.sources & 1 << k != 0;
+        match t.pool.source_absent(r) {
+            Some(id) if planned => self.to_read |= id.bit(),
+            Some(_) => {}
+            // Every slot held by a retiring source: it didn't fit.
+            None if planned => self.dropped_sources += 1,
+            None => {}
+        }
+        Ok(())
     }
 
     /// An ORBIT record: the first closes the last Part, so all six must be
@@ -452,14 +570,19 @@ impl ProjectCheck {
             Context::Slot(s) => match (target, stage) {
                 (Some(t), _) => {
                     self.sound.finish(Some(t.pool.scratch()))?;
-                    self.cost_slot(entry_len(t.pool.scratch()))?;
-                    // Pass 1 costed every slot against the arena less
-                    // the sources, which pass 2 leaves where they are.
-                    t.pool.store_scratch(s).map_err(|_| FileError::Bounds)
+                    // A source still sounding from the last project can
+                    // hold what the plan counted on: that slot didn't fit.
+                    let planned = self.plan.slots & 1 << s.index() != 0;
+                    if planned && t.pool.store_scratch(s).is_err() {
+                        self.dropped_slots += 1;
+                    }
+                    Ok(())
                 }
                 (None, Some(stage)) => {
                     self.sound.finish(Some(&mut *stage))?;
-                    self.cost_slot(entry_len(stage))
+                    let c = Cost::of(entry_len(stage)).bytes();
+                    self.slot_costs[s.index()] = c as u16;
+                    Ok(())
                 }
                 (None, None) => self.sound.finish(None),
             },
@@ -471,13 +594,44 @@ impl ProjectCheck {
         }
     }
 
-    /// Adds a slot's arena bytes: `Bounds` past `limit`.
-    fn cost_slot(&mut self, len: usize) -> Result<(), FileError> {
-        self.cost += Cost::of(len).bytes();
-        if self.cost > self.limit.bytes() {
-            return Err(FileError::Bounds);
+    /// Pass 1's plan from its costs, against the whole arena: the
+    /// sources a Part plays, the slots by index, then the other sources,
+    /// each taken while it fits.
+    fn plan_load(&self) -> Plan {
+        let mut left = ARENA_BYTES as u32;
+        let mut p = Plan {
+            slots: 0,
+            sources: 0,
+            dropped_slots: 0,
+            dropped_sources: 0,
+        };
+        let refs = self.refs();
+        let sources = |part: bool, p: &mut Plan, left: &mut u32| {
+            for (k, &r) in refs.iter().enumerate() {
+                if (self.part_used & 1 << k != 0) != part {
+                    continue;
+                }
+                if take(left, ref_cost(r)) {
+                    p.sources |= 1 << k;
+                } else {
+                    p.dropped_sources += 1;
+                }
+            }
+        };
+        sources(true, &mut p, &mut left);
+        for s in SlotId::ALL
+            .into_iter()
+            .filter(|s| self.slots & 1 << s.index() != 0)
+        {
+            let c = Cost::of(self.slot_costs[s.index()] as usize);
+            if take(&mut left, Some(c)) {
+                p.slots |= 1 << s.index();
+            } else {
+                p.dropped_slots += 1;
+            }
         }
-        Ok(())
+        sources(false, &mut p, &mut left);
+        p
     }
 
     /// Closes the last context; `Corrupt` unless all six Parts were read.
@@ -494,7 +648,12 @@ impl ProjectCheck {
         if PartId::ALL.iter().any(|&n| !self.parts.contains(n)) {
             return Err(FileError::Corrupt);
         }
-        let Some(t) = target else { return Ok(()) };
+        let Some(t) = target else {
+            self.plans[self.side as usize] = Some(self.plan_load());
+            return Ok(());
+        };
+        // A save would write fewer slots than the file holds.
+        self.lossy |= self.dropped_slots > 0;
         t.orbit.loaded();
         for (part, read) in t.perf.parts.iter_mut().zip(self.origins) {
             let engine = part.sound.engine();
@@ -525,6 +684,10 @@ impl Check for ProjectCheck {
     fn end(&mut self) -> Result<(), FileError> {
         self.finish(None, None)
     }
+
+    fn side(&mut self, s: Side) {
+        self.side = s;
+    }
 }
 
 /// Decodes a project file into `target` in place: pass 1 checks, pass 2
@@ -536,7 +699,7 @@ impl Check for ProjectCheck {
 /// ```compile_fail,E0624
 /// use chimera_core::project::{Project, ProjectDecoder};
 /// fn f(p: &mut Project) {
-///     let _ = ProjectDecoder::new(p, p.pool().load_limit());
+///     let _ = ProjectDecoder::new(p);
 /// }
 /// ```
 pub struct ProjectDecoder<'a> {
@@ -545,22 +708,30 @@ pub struct ProjectDecoder<'a> {
 }
 
 impl<'a> ProjectDecoder<'a> {
-    /// Pass 1 refuses slots past `limit`: the loader's `load_limit`, read
-    /// from `target` before it.
-    pub(crate) fn new(target: &'a mut Project, limit: Cost) -> Self {
+    pub(crate) fn new(target: &'a mut Project) -> Self {
         target.bump();
         ProjectDecoder {
-            check: ProjectCheck::new(limit),
+            check: ProjectCheck::new(),
             target,
         }
     }
 
-    /// `new` at the loader's limit.
+    /// `new`, for tests.
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
     pub fn new_for_test(target: &'a mut Project) -> Self {
-        let limit = target.pool.load_limit();
-        Self::new(target, limit)
+        Self::new(target)
+    }
+
+    /// After pass 2: the sources the loader reads from the card, each an
+    /// absent entry until it does.
+    pub(crate) fn to_read(&self) -> u32 {
+        self.check.to_read
+    }
+
+    /// After pass 2: the Sounds and sources the arena didn't take.
+    pub(crate) fn dropped(&self) -> (u8, u8) {
+        (self.check.dropped_slots, self.check.dropped_sources)
     }
 
     /// After pass 2: the project holds less than the file, or other bytes
@@ -580,6 +751,10 @@ impl Check for ProjectDecoder<'_> {
 
     fn end(&mut self) -> Result<(), FileError> {
         self.check.finish(None, Some(self.target.pool.scratch()))
+    }
+
+    fn side(&mut self, s: Side) {
+        self.check.side = s;
     }
 }
 

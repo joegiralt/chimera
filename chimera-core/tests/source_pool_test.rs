@@ -1,5 +1,5 @@
 //! Sources in the pool (ADR 0087): their table, the gate a compaction
-//! closes, retirement, purge, NEW, and pass 1's limit less the sources.
+//! closes, retirement, purge, NEW, and pass 1 against the whole arena.
 
 mod common;
 
@@ -15,7 +15,7 @@ use chimera_core::project::test_support::{
 use chimera_core::project::{
     EncodedSound, LoadLink, PartFrom, PartId, PartSource, Project, ProjectNote, ProjectSource,
     ProjectStatus, Purged, ReplaceGuard, SlotId, SourceId, SourceRef, Subject, TemplateCrc,
-    boot_project, load_project, project_crc, project_file, project_status, source_users,
+    boot_project, load_project, project_file, project_status, source_users,
 };
 use chimera_core::source_table::{Answer, AudioToken, GateView, SourceTable};
 use chimera_core::storage::{Card, FileError, ProjectId, Side};
@@ -594,12 +594,13 @@ fn seeded_model_with_flipping_sounding() {
     }
 }
 
+/// NEW, confirmed: a pool holding sources is a project with changes.
 fn new_go(q: &Project, t: TemplateCrc) -> chimera_core::project::Confirmed<ProjectSource> {
-    ReplaceGuard::check(q, t, ProjectSource::New).expect("no prompt")
+    ReplaceGuard::check(q, t, ProjectSource::New).unwrap_or_else(|n| n.into_pending().anyway(q))
 }
 
 /// NEW frees the sources: three paths to `reset_new`, an arena full of
-/// sources, no panic, and NEW pristine with nothing left in `load_limit`.
+/// sources, no panic, and NEW pristine with no source left.
 #[test]
 fn new_frees_the_sources() {
     let fill = |q: &mut Project| {
@@ -613,12 +614,7 @@ fn new_frees_the_sources() {
         assert!(q.pool().source_used() > Cost::of(140 * 1024));
     };
     let fresh = |q: &Project, t: TemplateCrc| {
-        assert_eq!(q.pool().source_used(), Cost::default());
-        assert_eq!(
-            q.pool().load_limit(),
-            Cost::of(ARENA_BYTES),
-            "no orphan left"
-        );
+        assert_eq!(q.pool().source_used(), Cost::default(), "no orphan left");
         assert_eq!(project_status(q, t), ProjectStatus::Pristine);
     };
     let link = LoadLink::new();
@@ -644,7 +640,8 @@ fn new_frees_the_sources() {
     let (mut q, t) = Project::boxed();
     fill(&mut q);
     let vol = s.mount().unwrap();
-    let go = ReplaceGuard::check(&q, t, ProjectSource::File { id, vol }).expect("no prompt");
+    let go = ReplaceGuard::check(&q, t, ProjectSource::File { id, vol })
+        .unwrap_or_else(|n| n.into_pending().anyway(&q));
     let out = load_project(&mut card, &mut s, &mut q, go, &link);
     assert_eq!(out.note, Some(ProjectNote::LoadFailed(Subject::File(id))));
     fresh(&q, t);
@@ -898,46 +895,54 @@ fn load_file(s: &mut MemStore, q: &mut Project, t: TemplateCrc) -> (Option<Proje
     let link = LoadLink::new();
     let vol = s.mount().unwrap();
     let id = ProjectId::new(1).unwrap();
-    let go = ReplaceGuard::check(q, t, ProjectSource::File { id, vol }).expect("no prompt");
+    // Sources in RAM are changes: confirmed.
+    let go = ReplaceGuard::check(q, t, ProjectSource::File { id, vol })
+        .unwrap_or_else(|n| n.into_pending().anyway(q));
     let out = load_project(&mut card, s, q, go, &link);
     (out.note, out.swap.is_some())
 }
 
-/// Pass 1's limit is the arena less the sources: a project that only fits
-/// the whole arena is refused before anything is written.
+/// Pass 1 counts a file against the whole arena (ADR 0087): the sources
+/// in RAM retire at the load, so a project only the whole arena holds
+/// loads whole beside them. One still sounding keeps its bytes pending:
+/// the slots it holds the room of don't fit, and the load says so.
 #[test]
-fn pass_one_counts_the_sources() {
+fn pass_one_counts_the_whole_arena() {
     let (src, _) = full_dense_slots(48);
-    let slots = src.pool().used().bytes() as usize;
+    let slots = src.pool().used();
     let file = encode_project(&src);
-    let room = ARENA_BYTES - slots;
-    for (extra, fits) in [(16, false), (0, true)] {
+    let room = ARENA_BYTES - slots.bytes() as usize;
+    for sounding in [false, true] {
         let mut s = MemStore::new(1);
         put_project(&mut s, 1, &file);
         let (mut q, t) = Project::boxed();
-        // Sources holding S: the slots cost ARENA_BYTES − S + extra.
-        q.source_store(sref(99, 0), &vec![7; room + extra - 16])
-            .unwrap();
-        assert_eq!(q.pool().source_used().bytes() as usize, room + extra);
-        q.mark_saved_for_test();
-        let before = project_crc(&q);
+        // Its cost, room + 16, leaves the slots 16 B short beside it.
+        let old = q.source_store(sref(99, 0), &vec![7; room]).unwrap();
+        if sounding {
+            let mut tok = q.pool().table().reader().expect("one reader");
+            let _ = tok.begin_block();
+            tok.store_sounding(old.bit());
+        }
         let (note, swapped) = load_file(&mut s, &mut q, t);
-        if fits {
-            assert_eq!(note, None, "loaded, no note");
-            assert!(swapped);
-            assert_eq!(q.pool().free(), Cost::default());
-            assert_eq!(q.meta().name(), src.meta().name());
-        } else {
+        assert!(swapped, "{sounding}");
+        assert_eq!(q.pool().find_source(sref(99, 0)), None, "retired");
+        assert_eq!(q.meta().name(), src.meta().name());
+        if sounding {
+            assert!(pending(&q) > Cost::default(), "its bytes stay");
+            let Some(ProjectNote::DidntFit { sounds, sources: 0 }) = note else {
+                panic!("{note:?}");
+            };
+            assert!(sounds > 0);
             assert_eq!(
-                note,
-                Some(ProjectNote::File {
-                    err: FileError::Bounds,
-                    subject: Subject::File(ProjectId::new(1).unwrap()),
-                })
+                q.pool().sound_count(),
+                src.pool().sound_count() - usize::from(sounds)
             );
-            assert!(!swapped, "no NEW fallback");
-            assert_eq!(project_crc(&q), before, "nothing written");
-            assert_eq!(q.meta().saved_crc(), Some(before));
+            assert_eq!(q.meta().saved_crc(), None, "lossy");
+        } else {
+            assert_eq!(note, None, "loaded, no note");
+            assert_eq!(q.pool().used(), slots);
+            assert_eq!(q.pool().source_used(), Cost::default());
+            assert!(q.meta().saved_crc().is_some());
         }
     }
 }
