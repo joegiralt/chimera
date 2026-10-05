@@ -129,17 +129,24 @@ code 23, ident `"TAPE"`, ADR 0055).
   - **TRANSWAVE:** plays only `Transwave` sources (on others the note-on is
     refused).
     - A transwave is up to 32 single-cycle frames, stored at octave mip
-      levels from 512 (by default; `--top 1024` doubles the bytes) down to
-      16 samples. Each level is band-limited to ⌊0.35 N⌋ harmonics by the
-      importer: the PPG and Waldorf approach.
-    - The 512 default costs only notes below about 94 Hz half their
-      harmonics: C1 tops out at 5.9 kHz, not 11.7.
+      levels, nominal 256 (by default; `--top 1024` adds 512) down to 16.
+      Each level is band-limited to ⌊0.35 N⌋ harmonics by the importer:
+      the PPG and Waldorf approach.
+    - Each level is stored oversampled, 2 N from 128 up and 4 N below
+      (1 216 samples a frame by default, 2 240 with `--top 1024`), and
+      chosen on its nominal step: at `N` samples the Hermite read's own
+      images reached −32 dB at level 16 (TAPE Task 7, fix round 1). The
+      tables are rounded to 12 bits, not dithered.
+    - The 256 default costs only notes below about 188 Hz half their
+      harmonics: C1 tops out at 2.9 kHz, not 5.9.
     - Two heads lerp adjacent frames, and the position `p` is ramped per
       sample.
     - At note-on the level is the **largest** whose step is ≤ 1. It changes
       only past the alias limit (a step over 1.43 or under 0.35), a move
       of more than ±6.2 semitones. Level 16 is alias-free up to a 4.3 kHz
-      fundamental, just above C8; higher notes fold.
+      fundamental, just above C8; higher notes fold. Near Nyquist the
+      output fades to silence (0.3 to 0.45 cycles a sample); the phase
+      never stops.
     - A change crossfades over one block, reading four heads. That is
       billed only when pitch can move more than ±6.2 semitones (STEAL
       GLIDE, or deep PITCH/FINE routes), as MODAL's `PITCH` term is. A
@@ -221,8 +228,10 @@ code 23, ident `"TAPE"`, ADR 0055).
   - the root from `--root`, the `smpl` chunk or YIN, and the period from
     YIN;
   - `rubato` resamples at a 0.35 × rate cut-off (24 kHz by default);
-  - `--transwave` builds the mip levels with `rustfft` (top 512, or
-    `--top 1024`);
+  - `--transwave` stretches the input by `rubato`'s sinc to whole-sample
+    cycles, turns each to one phase and builds the mip levels with
+    `rustfft` (nominal top 256, or 512 with `--top 1024`), rounded, not
+    dithered;
   - TPDF dither, then `pack12` and `write_source`.
 
   The firmware links no importer, dither or resampler.
@@ -277,9 +286,13 @@ code 23, ident `"TAPE"`, ADR 0055).
   wouldn't fit beside NEW. A head only has to outlast the first refill.
 - **Root and period read from the file.** A re-labelled copy on another
   card would retune a project.
-- **A TRANSWAVE top level of 1 024 by default.** It doubles every
-  transwave (37 % of the meter for 16 frames, against 22 %) for brightness
-  below 94 Hz.
+- **A TRANSWAVE top level of 1 024 by default.** It nearly doubles every
+  transwave (40 % of the meter for 16 frames, against 25 %) for brightness
+  below 188 Hz.
+- **TRANSWAVE levels stored at their nominal length.** 17 % fewer bytes,
+  but the Hermite read's images fold to −32 dB at level 16; the
+  alternatives, a longer kernel or fewer harmonics a level, cost cycles
+  or brightness.
 - **SPACE off the home page, with SIZE on it** (the first draft). #279
   rules four macros, and MODAL's RES pattern fits them.
 - **Stereo sources.** They double every cost on the meter.
@@ -306,8 +319,10 @@ code 23, ident `"TAPE"`, ADR 0055).
   - Hermite's measured response;
   - reads stay in the row (proptest);
   - pitch within 0.1 cent;
-  - TRANSWAVE alias-free from C1 to C8, its level the largest with step
-    ≤ 1, and vibrato billing no level heads;
+  - TRANSWAVE alias-free from C1 to C8: everything off the note's
+    harmonics, folds and the read's images alike, under −60 dB at every
+    level and worst-case step and in each level change's block; its level
+    the largest with step ≤ 1, and vibrato billing no level heads;
   - tuning lives in the Sound;
   - STRETCH keeps pitch, scales time, and its fades are complementary;
   - INIT never hard-wraps;

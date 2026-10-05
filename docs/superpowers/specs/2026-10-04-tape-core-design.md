@@ -241,16 +241,22 @@ Every model plays inside the **window** `[START, END]`, as fractions of the sour
 - XFADE dims. One head, two during a clamp; billed at its short-loop worst, a clamp (§ 5).
 
 **TRANSWAVE.** Plays only a `Transwave` source (§ 6); on any other, the note-on is refused, and SRC reads `NOT A TRANSWAVE`.
-- **A transwave is `count` frames, each one cycle,** stored at **octave mip levels** from a top level down to 16 samples. Each level is band-limited to ⌊0.35 · N⌋ harmonics: the PPG and Waldorf approach, computed by the importer.
-  - **The top level is 512 by default** (six levels, 512 → 16; 1 008 samples a frame). `--top 1024` adds a seventh (2 032 a frame), at twice the bytes.
-  - What 512 loses: below about 94 Hz (F♯2), where 1 024 would serve, the harmonics stop at 179 in place of 358. C1 then reaches 5.9 kHz in place of 11.7 kHz; the loss shrinks to nothing at 94 Hz, where level 512 already reaches 16.8 kHz. Notes above 94 Hz are unchanged. A dark top on bass notes suits tape; a bright sub-bass transwave imports with `--top 1024`.
+- **A transwave is `count` frames, each one cycle,** stored at **octave mip levels**, nominal `N` from a top level down to 16. Each level is band-limited to ⌊0.35 · N⌋ harmonics: the PPG and Waldorf approach, computed by the importer.
+  - **Each level is stored oversampled** (TAPE Task 7, fix round 1): nominal 256 at 512 samples, 128 at 256, 64 at 256, 32 at 128, 16 at 64 (2 N from 128 up, 4 N below); `--top 1024` adds nominal 512 (179 harmonics) at 1 024. The level is still chosen on its *nominal* step, `N · f / 48 000`. **Why:** the Hermite read's own images (the table in Reading a source) fold into the band as non-harmonic energy; at `N` samples they reached −32 dB at level 16 and −48 dB at level 512, measured. Stored this way everything off the note's harmonics stays under −60 dB at every level and step.
+  - **The default top is nominal 256** (five levels; 1 216 samples a frame, stored top 512). `--top 1024` adds nominal 512 (2 240 a frame).
+  - What the default loses: below about 188 Hz (F♯3), where nominal 512 would serve, the harmonics stop at 89 in place of 179. C1 then reaches 2.9 kHz in place of 5.9 kHz; the loss shrinks to nothing at 188 Hz, where level 256 already reaches 16.7 kHz. Notes above 188 Hz are unchanged. A dark top on bass notes suits tape; a brighter bass transwave imports with `--top 1024`.
+  - **The tables are rounded to 12 bits, not dithered:** a fixed single-cycle table gains nothing from dither, and its noise would eat the 60 dB.
 - **The frame position** is `p = POSITION · (n − 1) + SIZE · (n − 1) · tri(MOTION's phase)`, clamped to `[0, n − 1]`. It is ramped **per sample** across the block, so a scan never zippers at the block rate (750 Hz).
 - **Two heads** at one phase `φ` read frames `⌊p⌋` and `⌊p⌋ + 1` at the same level. The output is their lerp by `p`'s fraction. `φ` advances `N_ℓ · f_note / 48 000` a sample: a frame is one cycle at the note's pitch, and the source's rate and root don't enter.
-- **The level** at note-on is the **largest** one whose step `N · f / 48 000` is at most 1, so the step starts in (0.5, 1]. A level's content stops at 0.35 N, so a step up to 1.43 is still alias-free.
+- **The level** at note-on is the **largest** one whose nominal step `N · f / 48 000` is at most 1, so the step starts in (0.5, 1]. A level's content stops at 0.35 N, so a step up to 1.43 is still alias-free.
+- **Frames are turned to one phase** by the importer: each so its harmonic 1 is in sine phase, so frames cut anywhere in a cycle line up, and a scan between two never cancels their fundamentals.
 - **Hysteresis at the alias limit.** The level drops (to a smaller N) only when the step passes 1.43, and rises only when it falls under 0.35. From any note-on step, that is a pitch move of more than **±6.2 semitones** (`12·log2(1.43)`). Vibrato, wow (at most 33 cents) and ordinary bends never change the level.
-- **The top notes.** The smallest level, 16 samples, holds 5 harmonics. It is alias-free up to a step of 1.43: a fundamental of **4.3 kHz, just above C8 (4 186 Hz)**. Above that, MIDI 109–127 fold even level 16's harmonics back down, as a plain source folds on pitch-up (§ 2): the SP-1200 character, at notes nobody plays as a wavetable. From about F♯6 (1.5 kHz) up, a note plays level 16's 5 harmonics, which is the price of no aliasing.
+- **The top notes.** The smallest level, nominal 16, holds 5 harmonics. It is alias-free up to a step of 1.43: a fundamental of **4.3 kHz, just above C8 (4 186 Hz)**. Above that, MIDI 109–127 fold even level 16's harmonics back down, as a plain source folds on pitch-up (§ 2): the SP-1200 character, at notes nobody plays as a wavetable. From about F♯6 (1.5 kHz) up, a note plays level 16's 5 harmonics, which is the price of no aliasing.
+- **Alias-free from C1 to C8, as `transwave_is_alias_free` measures it:** a 16-frame saw transwave swept C1 → C8 and back, held every semitone and at each level's worst steps (just under 1.43 going up, just over 0.35 coming down), at both tops: all the energy off the note's harmonics, folded harmonics and the read's images alike, is under −60 dB of the whole (worst −61.6 dB, nominal 128). `level_change_block_is_alias_free` holds the block of each change to −60 dB against the band-limited wave the two levels hold, fading.
+- **Near Nyquist the output fades:** the fundamental is clamped at 0.45 cycles a sample, never 0.5, and the output's gain falls from 1 at 0.3 to 0 at 0.45, ramped across each block, so a glide into the clamp leaves no 24 kHz tone and no held DC (a phase stopped at Nyquist would hold one). The phase never stops.
 - **A level change crossfades over one block,** reading both levels for both frames: four heads in that block.
   - It can happen only when the Sound's pitch can move more than ±6.2 semitones within a note: STEAL GLIDE, or PITCH and FINE routes whose summed depth (|amount| × the destination's range) can pass it.
+  - The level moves on the block's larger step, so the new level reads at most 1.43 across its block. The level faded out may pass 1.43 in that one block, if the pitch rose past it there: it folds briefly, at a falling weight, for that block.
   - **Only then are the two extra heads billed,** as MODAL's `PITCH` term is (`glide_cost`). A vibrato route costs nothing extra.
 - This is the Ensoniq transwave and the Tracker's wavetable mode, band-limited.
 
@@ -386,14 +392,14 @@ TAPE then means two things only on screen: the engine (the browser's engine tag 
 |---|---|---|
 | 1 s at 24 kHz | 36 016 | 29 % |
 | 1 s at 16 kHz | 24 016 | 21 % |
-| a 16-frame transwave (6 levels, 512 → 16, the default) | 24 208 | 22 % |
-| a 32-frame transwave, default | 48 400 | 36 % |
-| a 16-frame transwave, `--top 1024` | 48 784 | 37 % |
+| a 16-frame transwave (5 levels, nominal 256 → 16, stored 1 216 a frame; the default) | 29 200 | 25 % |
+| a 32-frame transwave, default | 58 384 | 42 % |
+| a 16-frame transwave, `--top 1024` | 53 776 | 40 % |
 | six Parts, each on its own 1 s source, at 24 kHz | 216 096 | **won't fit** |
 | the same at 16 kHz | 144 096 | 95 % |
 | the same at 24 kHz, 0.7 s each | 151 296 | 99 % |
 
-  A transwave costs the same whatever its rate. Its levels sum to `count · 1 008` samples by default.
+  A transwave costs the same whatever its rate. Its levels sum to `count · 1 216` samples by default (1 824 B a frame; `--top 1024`: 2 240, 3 360 B).
 
   The rate per source is the S950's trade, quality against time, and the factory set uses it (§ 7). 24 kHz stays the import default (#279).
 
@@ -417,7 +423,8 @@ Host estimates, in the house manner (instructions × 1.46 × 1.1, + 12 a head fo
 - **The model rows below bill the measured 88-instruction head.** Build step 3's bench still replaces every bill (§ 10).
 - **Measured per path (TAPE Task 6, fix round 2),** static instructions a sample in each path's loop: LOOP 102 with one head, 217 in a fade; REVERSE (and PING-PONG going down) 104 and 224; SCRUB 117 and 241, plus about 4 while a stop or start eases; PING-PONG's turns (now run back to back in one call) up to 128 with one head, its clamp up to 251 with two. None has a `vdiv` in its loop.
 - **Per-call work in the shortest loops (TAPE Task 6, fix round 3).** Each pass's events (a fade's start, a wrap, a turn and its flip) cost a call and its bookkeeping, at most once in 16 output samples (§ 2). **Each model bills the worst a whole block can sit in, that work amortised over its shortest pass included.** It is measured on the host as time against LOOP's fade path (`tiny_loops_cost_within_their_bills`, release, the worst of three clean runs of five), times that path's 217 instructions, each model in its shortest legal loop at `inc` 16 (256 frames) and XFADE ½: LOOP 1.20× (260), REVERSE 1.20× (260), PING-PONG clamping under a POSITION square wave 1.33× (289), SCRUB 1.27× (276, + 4 for an ease). An 8-frame source, where a loop is the whole source, measures 0.93–1.33× (PING-PONG's turns the most).
-- **Measured TRANSWAVE (TAPE Task 7),** static instructions a sample: 216 in the two-head loop (`wave::Run::run`), 417 in a level change's four (`Run::fade`); the block's own work (the macros, one `exp2f`, the scan, the level's hysteresis) is about 6 a sample spread over 64. Neither loop has a `vdiv`. The host's ratio to LOOP's fade path reads higher (1.11–1.14 and 2.0–2.1, `transwave_costs_within_its_bills`: about 410–420 and 750–790 cycles); the bench row `TAPE WAVE C7 /VOICE` decides it.
+- **Measured TRANSWAVE (TAPE Task 7, fix round 1),** static instructions a sample on the M7: 217 in the two-head loop (`wave::Run::run`), 417 in a level change's four (`Run::fade`); the block's own work (the macros, one `exp2f`, the scan, the hysteresis, two table look-ups) is about 7.5 a sample spread over 64, and the Nyquist fade (only above 0.3 cycles a sample) 8 more. Neither loop has a `vdiv`. Steady 217 + 7.5 + 8 = 232.5 → 373 + 24 = 397 → **400**; a change 417 + 7.5 + 8 = 432.5 → 695 + 48 = 743 → **750 ≤ 770**.
+- **TRANSWAVE bills on the static M7 count (ruled, TAPE Task 7 fix round 1).** It has no per-event work: no wraps, turns or splices, only the block's. The host-time proxy (`transwave_costs_within_its_bills`, against LOOP's fade path) stood in for LOOP–SCRUB's per-event overhead, which a static count can't see; for TRANSWAVE it reads 9–19 % high on x86 (404–440 and 682–793 cycles, measured under load) and is informational. The bench row `TAPE WAVE C7 /VOICE` confirms the bill.
 - **Measured LOOP loop (TAPE Task 3, history; the rows above replace it):** `TapeEngine::render`'s inner loop is 103 instructions a sample with one head and 224 while a fade reads two: 2 × 88 + 48. The first draft's 9 a voice was 39 short. The budget is checked a block at a time and a whole block can lie inside a fade (XFADE runs to ½ the loop), so **every two-head model bills the fade sample**, and a model's own extras sit on top of the measured 48. The bills are the cycles rounded up to 10; the bench (§ 10) replaces them.
 
 **Cache misses grow with `inc`.**
@@ -495,9 +502,10 @@ Host estimates, in the house manner (instructions × 1.46 × 1.1, + 12 a head fo
 3. **Pitch.** The root comes from, in order: `--root`; the `smpl` chunk's unity note and fraction; a YIN estimate over the loudest 100 ms. YIN's period goes in the header (Q16.16) if its aperiodicity is under 0.2. Otherwise the source is **unpitched**: `period` 0, root C4, and the log says so.
 4. **Resample** to the chosen rate (48, 32, 24, 16, 12 or 8 kHz; 24 by default, #279) with `rubato`'s windowed-sinc resampler (MIT, host only), with its cut-off at **0.35 × rate** and 80 dB of stop band from 0.5 × rate.
 5. **Transwave** (`--transwave <cycle>`, the cycle length in input samples):
-   - cut the input into whole cycles, at most 32;
-   - resample each to the top level's length (512, or 1 024 with `--top 1024`);
-   - build the levels down to 16, each keeping ⌊0.35 · N⌋ harmonics by FFT truncation (`rustfft`, MIT/Apache-2.0, host only).
+   - stretch the input by `rubato`'s sinc so a cycle is a whole number of samples, and cut whole cycles from across it, at most 32;
+   - turn each to one phase (harmonic 1 in sine phase);
+   - build the levels, nominal top (256, or 512 with `--top 1024`) down to 16, each keeping ⌊0.35 · N⌋ harmonics by FFT truncation (`rustfft`, MIT/Apache-2.0, host only), each at its stored, oversampled length;
+   - round to 12 bits (no dither).
 
    `shape` 1, `count` frames, rate 48 000 nominal.
 6. **Quantise** to 12 bits with TPDF dither and pack two samples in three bytes. This is `chimera-core`'s own `pack12`, so host and unit share the bytes. Dither is host code.
@@ -576,7 +584,7 @@ All host-side (`just test`). Hardware waits for the ship flash.
 
 **Pitch, time and aliasing**
 - **`plays_in_tune`:** a source of known period at root, played at C2–C6 at each rate, measures within 0.1 cent (zero-crossing estimator over 1 s). TRANSWAVE's cycle plays at the note's frequency.
-- **`transwave_is_alias_free`:** a 16-frame saw transwave swept C1 → C8 with a pitch route. Energy that isn't a harmonic of the note stays under −60 dB relative at every level and in every level change. Above C8 the test asserts nothing.
+- **`transwave_is_alias_free`:** a 16-frame saw transwave swept C1 → C8 and back with a pitch route, held every semitone and at each level's worst steps, at both tops. All energy that isn't a harmonic of the note (folds and the read's images alike) stays under −60 dB relative at every level; `level_change_block_is_alias_free` holds each level change's block to −60 dB against the fading band-limited wave. Above C8 the test asserts nothing.
 - **`transwave_level_is_largest`:** at note-on the level is the largest whose step is ≤ 1, at every note, for `--top` 512 and 1 024. A ±1-semitone vibrato never changes it, and a ±7-semitone route does.
 - **`vibrato_costs_no_level_heads`:** a transwave Sound with a shallow PITCH route bills 400, and one with a ±12-semitone route bills 770.
 - **`stretch_keeps_pitch`:** at MOTION 0.5, 1 and 2, STRETCH's pitch is the note's within 1 cent, and a marked event in the source arrives at `t / MOTION` within one D-TIME.
@@ -618,7 +626,7 @@ All host-side (`just test`). Hardware waits for the ship flash.
 - A sweep above 0.35 × rate comes out at least 60 dB down.
 - The CRC is deterministic across runs.
 - `smpl` roots are read. Re-importing with another `--root` writes the same file (`Present`).
-- A transwave's levels: 1 008 samples a frame by default, 2 032 with `--top 1024`.
+- A transwave's levels: 1 216 samples a frame by default, 2 240 with `--top 1024` (each level stored oversampled).
 - Each transwave level holds no harmonic above ⌊0.35 · N⌋.
 - The `tapes-v1` manifest's CRCs are pinned.
 
@@ -679,7 +687,7 @@ Settled by precedent or the code, not asked:
 - **#279's four macros are the home page, with SPACE,** as on MODAL's RES. SIZE is on the model page.
 - **Mono sources** (the S950, the original Digitakt; stereo doubles the meter).
 - **Hermite interpolation with a 0.35 × rate cut-off,** and folding on pitch-up (the SP-1200's character, bounded).
-- **TRANSWAVE's octave levels** (PPG, Waldorf), top level 512 by default. The largest level whose step is ≤ 1; hysteresis at the alias limit (±6.2 st); level-change heads billed only where pitch can move that far.
+- **TRANSWAVE's octave levels** (PPG, Waldorf), nominal top 256 by default, each stored oversampled. The largest level whose step is ≤ 1; hysteresis at the alias limit (±6.2 st); level-change heads billed only where pitch can move that far.
 - **A real-time STRETCH with one complementary fade per splice,** period-locked for MONO. WSOLA is kept as a costed follow-up.
 - **Linear crossfades,** folded inside the loop when needed (an oscillator's loop is correlated).
 - **No one-shot model:** KIT and DRUM are the one-shot path (#214, #215; #279's own note).
