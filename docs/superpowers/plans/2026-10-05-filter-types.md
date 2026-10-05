@@ -80,7 +80,7 @@
 | `chimera-core/src/dsp/filter/level.rs` | LEVEL law, DRIVE translation, clipper, gate fade, peak | T6, T7 |
 | `chimera-core/src/dsp/filter/k2040.rs` | 2040 | T8 |
 | `chimera-core/src/dsp/filter/dirty.rs` | DIRTY | T9 |
-| `chimera-core/src/dsp/filter/probe.rs` | `#[cfg(feature = "probe")]` static-count probes | T1, extended T2–T9, T14 |
+| `chimera-core/src/dsp/filter/probe.rs` | `#[cfg(any(test, feature = "probe"))]` static-count probes | T1, extended T2–T9, T14 |
 | `chimera-core/src/taps.rs` | `TapOp`, `Jack`, `TapRoutes`, `TapRows`, `TapLane`, `tap_vca` | T12–T14 |
 | `chimera-core/src/modulation.rs` | `FixedCol`, `ModState`'s fixed columns | T11 |
 | `chimera-core/src/ui/mod_grid.rs` | fixed columns, rows 8–9, X cells, geometry, hints | T11, T13, T17 |
@@ -122,7 +122,7 @@ git commit -m "Filter keeps its C1 sat_c1 in the loop"
 **Files:**
 - Move: `chimera-core/src/dsp/filter.rs` → `chimera-core/src/dsp/filter/mod.rs` (`git mv`, no edits)
 - Create: `chimera-core/src/dsp/filter/probe.rs`, `tools/loop_count.py`, `tools/test_loop_count.py`
-- Modify: `chimera-core/src/dsp/filter/mod.rs` (`#[cfg(feature = "probe")] pub mod probe;`), `chimera-stm32/src/bench.rs`, this plan's § Measured
+- Modify: `chimera-core/src/dsp/filter/mod.rs` (`#[cfg(any(test, feature = "probe"))] pub mod probe;`), `chimera-stm32/src/bench.rs`, this plan's § Measured
 
 **Interfaces:**
 - **Produces:**

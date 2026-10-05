@@ -52,6 +52,7 @@ def _function(disasm, symbol):
     return found[0]
 
 
+CALL = re.compile(r"^blx?(?:\.w)?$")
 COND = "eq|ne|cs|hs|cc|lo|mi|pl|vs|vc|hi|ls|ge|lt|gt|le"
 BRANCH = re.compile(rf"^(?:b({COND})?|cbn?z)(?:\.[wn])?$")
 
@@ -63,6 +64,16 @@ def _branch(op, args):
     if not t:
         return None
     return int(t.group(1), 16), op.startswith("cb") or m.group(1) is not None
+
+
+def _ends(op, args):
+    """Leaves the function or jumps by table: no path round goes on."""
+    regs = args.split(",")[0]
+    return (
+        op.startswith(("bx", "tbb", "tbh"))
+        or (op.startswith("pop") and "pc" in args)
+        or (op.startswith(("ldr", "mov")) and regs.strip() == "pc")
+    )
 
 
 def _loops(body):
@@ -90,7 +101,9 @@ def _paths(ins, head):
         a, op, args = ins[i]
         b = _branch(op, args)
         nxt = []
-        if b is None or b[1]:
+        if _ends(op, args):
+            pass
+        elif b is None or b[1]:
             nxt.append(i + 1)
         if b is not None:
             nxt.append("back" if b[0] == head else at.get(b[0]))
@@ -105,12 +118,17 @@ def count(disasm, symbol):
     """`loop_instr` (head to last back-edge), `fast` and `slow` (the
     shortest and longest path round), `vdiv`, `vsqrt` of the first innermost
     loop; `block_instr` outside every loop; and `loops`, each innermost
-    loop's counts in address order."""
+    loop's counts in address order. Exits if a loop calls out (`bl`, `blx`):
+    the callee's cost wouldn't be counted."""
     name, body = _function(disasm, symbol)
     loops = []
     for head, edge in _loops(body):
         ins = [x for x in body if head <= x[0] <= edge]
         ops = [op for _, op, _ in ins]
+        calls = [f"{a:#x}" for a, op, _ in ins if CALL.match(op)]
+        if calls:
+            raise SystemExit(f"{name}: a call in the loop at {', '.join(calls)}"
+                             " (its cost isn't counted)")
         d = sum(op.startswith("vdiv") for op in ops)
         r = sum(op.startswith("vsqrt") for op in ops)
         fast, slow = _paths(ins, head)

@@ -26,7 +26,8 @@ mod tests {
     use super::*;
     use crate::dsp::filter::FilterMode;
 
-    /// The probe is LP24's `process`, sample for sample, steady and ramped.
+    /// The probe is LP24's `process`, sample for sample: steady, ramped, and
+    /// ramped to a cutoff past 0.49·fs.
     #[test]
     fn old_lp24_probe_is_process_at_lp24() {
         let mut p = FilterParams::default();
@@ -34,10 +35,14 @@ mod tests {
         assert!(p.set_mode(FilterMode::Lp24));
         let (mut a, mut b) = (SvfFilter::new(), SvfFilter::new());
         let mut x = 0.37f32;
-        for block in 0..4 {
+        for block in 0..5 {
             if block == 2 {
                 p.cutoff = 3000.0;
                 p.drive = 0.6;
+            }
+            if block == 4 {
+                // Past 0.49·fs: the clamp.
+                p.cutoff = SAMPLE_RATE as f32 * 0.6;
             }
             let mut want = [0.0f32; BLOCK_SIZE];
             for s in want.iter_mut() {

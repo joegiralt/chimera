@@ -66,6 +66,50 @@ class LoopCount(unittest.TestCase):
         self.assertEqual((c["fast"], c["slow"]), (5, 7))
         self.assertEqual(c["block_instr"], 1)  # not the `.word`
 
+    def test_a_divide_outside_the_loop_is_per_block(self):
+        dis = DIS.replace("movs\tr2, #0x40", "vdiv.f32\ts1, s1, s2")
+        c = lc.count(dis, "probe_fn")
+        self.assertEqual(c["vdiv"], 1)
+        self.assertEqual(c["block_div"], 1)
+
+    def test_nested_loops_give_the_inner_one(self):
+        dis = """08000100 <nest>:
+ 8000100:      \tmovs\tr3, #0x4
+ 8000102:      \tmovs\tr2, #0x10
+ 8000104:      \tvadd.f32\ts0, s0, s1
+ 8000108:      \tsubs\tr2, #0x1
+ 800010a:      \tbne\t0x8000104 <nest+0x4>
+ 800010c:      \tsubs\tr3, #0x1
+ 800010e:      \tbne\t0x8000102 <nest+0x2>
+ 8000110:      \tbx\tlr
+"""
+        c = lc.count(dis, "nest")
+        self.assertEqual([l["head"] for l in c["loops"]], [0x8000104])
+        self.assertEqual(c["loop_instr"], 3)
+
+    def test_a_pc_write_ends_a_path(self):
+        # `pop {pc}` leaves the loop: the only path round is the one past it.
+        dis = """08000100 <ret>:
+ 8000100:      \tvadd.f32\ts0, s0, s1
+ 8000104:      \tcmp\tr2, #0x0
+ 8000106:      \tbne\t0x800010e <ret+0xe>
+ 8000108:      \tpop\t{r7, pc}
+ 800010a:      \tnop
+ 800010c:      \tnop
+ 800010e:      \tsubs\tr2, #0x1
+ 8000110:      \tb\t0x8000100 <ret>
+"""
+        c = lc.count(dis, "ret")
+        self.assertEqual((c["fast"], c["slow"]), (5, 5))
+        for op in ("bx\tlr", "ldr\tpc, [sp], #4", "tbb\t[pc, r2]"):
+            c = lc.count(dis.replace("pop\t{r7, pc}", op), "ret")
+            self.assertEqual((c["fast"], c["slow"]), (5, 5), op)
+
+    def test_a_call_in_a_loop_fails(self):
+        dis = DIS.replace("vmul.f32\ts0, s0, s1", "bl\t0x8000400 <libm::tanf>")
+        with self.assertRaises(SystemExit):
+            lc.count(dis, "probe_fn")
+
     def test_cycles_land_on_fives(self):
         self.assertEqual(lc.cycles(0, 0), 0)
         # Per-block work over 64: 41 + 96/64 = 42.5 → 68.3 + 24 = 92.3.
