@@ -9,15 +9,15 @@ use std::cell::RefCell;
 use chimera_core::block::{Block, ParamId};
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::halfband::{Decimator, HALF, Interpolator};
-use chimera_core::dsp::rev::Reverb;
 use chimera_core::dsp::rev::arena::ReverbArena;
 use chimera_core::dsp::rev::loop_engine::{
     Hall, Layout, LoopEngine, PER_MS, Room, STEP, THETA, rotate, rotation,
 };
 use chimera_core::dsp::rev::parts::{Wander, wander_seeds};
 use chimera_core::dsp::rev::sync::Tempo;
+use chimera_core::dsp::rev::{Reverb, wet_gain};
 use chimera_core::dsp::reverb::{KnobMemory, ReverbParams, ReverbType, knobs};
-use chimera_core::dsp::ring::RING_LEN;
+use chimera_core::dsp::ring::{FULL_SCALE, RING_LEN};
 use chimera_hal::BLOCK_SIZE;
 use common::SR;
 use common::rev::{
@@ -737,7 +737,7 @@ fn hall_reaches_10_s_at_size_0() {
 /// HALL's RT60 tracks DECAY across the knob, at its default SIZE.
 #[test]
 fn hall_rt60_tracks_decay() {
-    for decay in [0.0, 0.45] {
+    for decay in [0.0, 0.25, 0.45, 0.5, 0.75, 1.0] {
         let mut p = hall(1.0);
         p.time = decay;
         let want = knobs(&p).rt60_s;
@@ -822,15 +822,14 @@ fn hall_decorrelates() {
 fn hall_settles_on_its_input_pitch() {
     let mut p = hall(1.0);
     (p.time, p.smear, p.size, p.predelay) = (1.0, 0.0, 0.0, 0.0);
-    let sine = tone(1_000.0, 0.25);
+    let sine = tone(1_000.0, 0.5);
     let send = |b: usize| -> Blk {
         core::array::from_fn(|i| {
             let n = b * BLOCK_SIZE + i;
             if n < SR as usize / 2 { sine(n) } else { 0.0 }
         })
     };
-    let (window, trip) = (blocks(2.4), blocks(0.6));
-    let peak = |l: &[Blk], from: usize| settled_peak_hz(l[from..from + window].as_flattened());
+    let (window, trip) = (blocks(1.2), blocks(0.6));
     let (rv, pc) = (fresh(&p), RefCell::new(p));
     let (mut l, mut done) = (Vec::new(), None);
     for b in 0..blocks(30.0) {
@@ -845,19 +844,40 @@ fn hall_settles_on_its_input_pitch() {
             }
         }
         l.push(bus(&rv, &pc)(&send(b)).0);
-        if done.is_some_and(|d| b >= d + trip + 3 * window) {
+        if done.is_some_and(|d| b >= d + trip + 8 * window) {
             break;
         }
     }
+    // The power-weighted mean of 1 kHz ± 25 Hz (one Hann frame of 2^16):
+    // the tail's modes trade the peak as they decay at their own rates,
+    // but an accumulated shift moves the whole band.
+    let centroid_hz = |x: &[f32]| {
+        let n = 1 << 16;
+        let mut pad = x.to_vec();
+        pad.resize(n, 0.0);
+        let p = common::sweep::power(&pad, n);
+        let hz = SR as f64 / n as f64;
+        let (lo, hi) = ((975.0 / hz) as usize, (1_025.0 / hz) as usize);
+        let (w, m) = (lo..=hi).fold((0.0, 0.0), |(w, m), k| (w + p[k], m + p[k] * k as f64 * hz));
+        (m / w) as f32
+    };
     let d = done.expect("the moves land");
-    let f: Vec<f32> = (0..3).map(|w| peak(&l, d + trip + w * window)).collect();
+    // Judged only 20 dB or more over the storage's LSB at the return.
+    let lsb = wet_gain(ReverbType::Hall) / FULL_SCALE;
+    let f: Vec<(f32, f32)> = (0..8)
+        .map(|w| {
+            let x = l[d + trip + w * window..][..window].as_flattened();
+            (centroid_hz(x), common::rev::rms_db(x) - 20.0 * lsb.log10())
+        })
+        .take_while(|&(_, over)| over >= 20.0)
+        .collect();
     println!(
-        "landed at {:.2} s; settled peaks {f:?} Hz",
+        "landed at {:.2} s; settled peaks (Hz, dB over the LSB) {f:?}",
         d as f32 * BLOCK_SIZE as f32 / SR as f32
     );
-    for &x in &f {
-        assert!((x - f[0]).abs() <= 1.0 / 0.6, "walks: {f:?}");
-        assert!((x - 1_000.0).abs() <= 1_000.0 / 120.0, "{f:?}");
+    assert!(f.len() >= 3, "{f:?}");
+    for &(x, _) in &f {
+        assert!((x - 1_000.0).abs() <= 0.5, "{f:?}");
     }
 }
 
@@ -1025,6 +1045,55 @@ fn hall_falls_silent() {
                 .chain(&r[r.len() - last..])
                 .all(|&s| s == 0.0),
             "SMEAR {smear} DAMP {damp} SIZE {size}: still ringing"
+        );
+    }
+}
+
+/// H1's own case: the plate's 120 ms loop at DECAY 1 (10 s, a round trip
+/// of 0.927), where R2's rounded i16 allpass states held a cycle 45 dB
+/// down. HALL alone at 24 kHz, a 0.5 s noise burst, its SMEAR offsets
+/// moving at SMEAR 1: the return is exactly 0 by 2 × RT60 + 1 s. (ROOM's
+/// 1.5 × is 90 dB at the nominal rate; this burst stands 81 dB over the
+/// LSB and HALL measures 11.9 s here, so its last LSBs go near 19 s.)
+#[test]
+fn hall_plate_at_10_s_falls_silent() {
+    for (smear, damp) in [(0.0, 0.0), (1.0, 1.0)] {
+        let mut p = hall(1.0);
+        (p.smear, p.damping, p.size, p.time) = (smear, damp, 0.0, 1.0);
+        let k = knobs(&p);
+        let (mut e, mut arena) = hall_engine(&p);
+        let full = k.smear_ms * PER_MS;
+        let mut n = Noise(0x5eed);
+        let ring = 24_000.0;
+        let blocks = ((0.5 + 2.0 * k.rt60_s + 1.0) * ring) as usize / HALF;
+        let (mut l, mut r) = ([0.0f32; HALF], [0.0; HALF]);
+        let mut last = Vec::new();
+        for b in 0..blocks {
+            let u: [f32; HALF] = core::array::from_fn(|i| {
+                if b * HALF + i < 12_000 {
+                    0.5 * n.next()
+                } else {
+                    0.0
+                }
+            });
+            // A slow sweep of both offsets over 0..2D: SMEAR moving.
+            let x = |b: usize| (b as f32 * 0.003).sin();
+            e.set_smear([0, 1].map(|m| {
+                let ph = m as f32 * 1.7;
+                (
+                    full * (1.0 + x(b) * ph.cos()),
+                    full * (1.0 + x(b + 1) * ph.cos()),
+                )
+            }));
+            e.run(&mut arena, &u, &k, &mut l, &mut r);
+            if b + 25 >= blocks {
+                last.extend(l.iter().chain(&r).copied());
+            }
+        }
+        let loud = last.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+        assert_eq!(
+            loud, 0.0,
+            "SMEAR {smear} DAMP {damp}: still ringing at {loud} LSB"
         );
     }
 }

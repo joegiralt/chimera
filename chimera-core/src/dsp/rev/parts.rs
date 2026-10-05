@@ -285,8 +285,9 @@ pub(crate) fn segment<const N: usize>(
     (base, len)
 }
 
-/// Where the i16 lines live: the arena, or (tests) plain floats for the
-/// level plan's unquantised reference.
+/// A line store: the arena's i16 slots (quantised writes), or plain f32s,
+/// which store as written: the LOOP engine's stage allpasses, and the
+/// level plan's unquantised reference (tests).
 pub(crate) trait Lines {
     fn len(&self) -> usize;
     /// # Safety
