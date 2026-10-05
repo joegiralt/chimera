@@ -24,8 +24,12 @@ Flags go anywhere on the line. `--jobs N` sets the worker threads (default 8).
 ## Where things live
 
 Nothing a reference produces goes into the repo. The paths come from the
-environment. `just` reads a git-ignored `.env` at the repo root, so local
-paths can live there.
+environment, or from the flag of the same name. Export them in the shell
+that runs `just`:
+
+    export MIDIVERB_EMU=~/src/midiverb_emulator/midiverb
+    export MV_STIM=~/audio/mv-stim
+    export CHIMERA_REFS=~/src/refs-cpp
 
 | Variable | What |
 |---|---|
@@ -33,7 +37,7 @@ paths can live there.
 | `MIDIVERB_EMU` | The MidiVerb emulator binary. Its names and decompiled listing are read from beside it. |
 | `MV_STIM` | Dry stimuli: `snare`, `kick`, `strings`, `plucked`, `idm` `.wav`, 48 kHz |
 | `MV_LISTING` | `decompiled-midiverb2.h`, if it is not beside the emulator |
-| `CHIMERA_REFS` | The directory `ab` looks in for a REF by name |
+| `CHIMERA_REFS` | The directory `ab` looks in for a bare REF name. Unset, a bare name means `./name`, never a program on `PATH`. |
 
 ## The reference contract
 
@@ -46,14 +50,19 @@ The tool runs it as:
 - **`frames`** replaces `in` for a source (an oscillator): the number of samples to render.
 - **`key=value` pairs** are the device's knobs as given on the `ab` line. `ref.key=value` goes to the reference alone.
 - **`out`** must be written at `sr`, as PCM or float, mono or stereo. Stereo is averaged.
+- **It must hold at least** the input's length (or `frames`) in samples. Extra samples are dropped, and fewer is an error.
 - **A non-zero exit** fails the run. Its stderr is shown.
 
 The tool owns the stimuli, the alignment and every metric. A reference only
-renders.
+renders. Latency and inverted polarity are measured, not penalised. The null
+finds the lag by the largest |correlation| and reports a negative gain as
+`inverted`. The response error is read after the reference is moved by that
+lag.
 
 **The MidiVerb II adapter.** thement/midiverb_emulator (GPL-3.0) predates the
-contract. The `midiverb` REF adapts it. It takes `prog=N`, and
-`normalise=0` drives the unit as is. It resamples 48 kHz to 23,400 Hz with the
+contract. The `midiverb` REF adapts it. It takes the program as
+`ref.prog=N`, as in `just ab midiverb room ref.prog=5`, and `ref.normalise=0`
+drives the unit as is. It resamples 48 kHz to 23,400 Hz with the
 `resample_poly` 39/80 filter (Kaiser β 10, linear phase). It writes the
 unit's 16-bit stereo, runs `midiverb N in out`, resamples back, and returns
 (L+R)/2.
@@ -89,3 +98,27 @@ numpy's. Written as float32 WAVs, they are bit-identical.
 
 New reverb structures, and any other DSP idea measured against a reference,
 are prototyped in `src/models.rs`, in Rust.
+
+## Builds
+
+The `just` recipes build in the `utils` profile. It is release without the
+firmware's fat LTO, and its panics unwind so scratch directories are removed.
+`--redo` on `mv-fit` re-measures the knob sweep, which is cached per TYPE in
+`fits/<type>_sweep.json`. Use it after a DSP change.
+
+## Third-party notices
+
+The tool ports, and does not link, these. Each notice also sits in the code:
+
+- **NumPy** (`src/stim.rs`): `SeedSequence`, `random_standard_normal`,
+  `next_double`, `random_interval` and `Generator.shuffle`. BSD-3-Clause.
+  Copyright (c) 2005-2024, NumPy Developers; Copyright (c) 2019 Kevin Sheppard.
+  The full license text is in `src/stim.rs`.
+- **PCG64** (`src/stim.rs`): Melissa O'Neill's PCG XSL-RR 128/64 (pcg-random.org).
+  Apache-2.0 or MIT. Copyright 2014 Melissa O'Neill.
+- **SciPy** (`src/sig.rs`): `resample_poly`'s filter design and padding,
+  `butter`'s pole placement, `sosfilt` and `welch`. BSD-3-Clause. Copyright (c)
+  2001-2002 Enthought, Inc. 2003, SciPy Developers.
+
+References run through the contract (the MidiVerb emulator, GPL-3.0, and any
+wrapper) stay outside the repo, whatever their license.
