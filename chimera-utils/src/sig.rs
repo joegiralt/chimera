@@ -1,9 +1,40 @@
 //! Signal primitives, each matching the numpy/scipy call the Python harness
 //! made (named on each), in f64.
+//!
+//! `resample_poly`'s filter design and padding and `butter3_bandpass`'s
+//! pole placement follow SciPy's `scipy.signal` (BSD-3-Clause; Copyright (c)
+//! 2001-2002 Enthought, Inc. 2003, SciPy Developers). See the crate README's
+//! third-party notices.
 
-use rustfft::FftPlanner;
 use rustfft::num_complex::Complex64;
+use rustfft::{Fft, FftPlanner};
+use std::cell::RefCell;
 use std::f64::consts::PI;
+use std::sync::Arc;
+
+thread_local! {
+    /// One planner a thread: it keeps every plan it has made.
+    static PLANNER: RefCell<FftPlanner<f64>> = RefCell::new(FftPlanner::new());
+}
+
+/// A forward (or inverse) FFT of length `n`, planned once a thread.
+pub fn plan(n: usize, inverse: bool) -> Arc<dyn Fft<f64>> {
+    PLANNER.with(|p| {
+        let mut p = p.borrow_mut();
+        if inverse {
+            p.plan_fft_inverse(n)
+        } else {
+            p.plan_fft_forward(n)
+        }
+    })
+}
+
+/// The forward FFT of real `x`.
+pub fn fft(x: &[f64]) -> Vec<Complex64> {
+    let mut b: Vec<Complex64> = x.iter().map(|&v| Complex64::new(v, 0.0)).collect();
+    plan(b.len(), false).process(&mut b);
+    b
+}
 
 /// `scipy.special.erfc(1 / sqrt(2))`: the share of a Gaussian beyond 1 σ.
 pub const ERFC_INV_SQRT2: f64 = 0.317_310_507_862_914_15;
@@ -58,6 +89,7 @@ fn gcd(a: usize, b: usize) -> usize {
 
 /// `scipy.signal.resample_poly(x, up, down, window=("kaiser", 10.0))`:
 /// polyphase, linear phase, zero padding, the same filter and alignment.
+/// The `half_len`/`pre_pad`/`pre_remove` arithmetic mirrors SciPy's own.
 pub fn resample_poly(x: &[f64], up: usize, down: usize) -> Vec<f64> {
     let g = gcd(up, down);
     let (up, down) = (up / g, down / g);
@@ -229,39 +261,69 @@ pub fn tail_mean(x: &[f64]) -> f64 {
     x[x.len() - k..].iter().sum::<f64>() / k as f64
 }
 
-/// `scipy.signal.welch(x, fs, nperseg=n)`: periodic Hann, half overlap,
-/// constant detrend, one-sided density. Returns (frequencies, PSD).
-pub fn welch(x: &[f64], fs: f64, nperseg: usize) -> (Vec<f64>, Vec<f64>) {
+/// Welch-averaged spectra, one-sided density: of `x` (`pxx`) and, given `y`,
+/// their cross spectrum (`pxy` = conj(X)·Y).
+pub struct Spectra {
+    pub f: Vec<f64>,
+    pub pxx: Vec<f64>,
+    pub pxy: Vec<Complex64>,
+}
+
+/// `scipy.signal.welch`/`csd` with `nperseg=n`: periodic Hann, half overlap,
+/// constant detrend, one-sided density.
+pub fn spectra(x: &[f64], y: Option<&[f64]>, fs: f64, nperseg: usize) -> Spectra {
     let n = nperseg;
     let win: Vec<f64> = (0..n)
         .map(|i| 0.5 - 0.5 * (2.0 * PI * i as f64 / n as f64).cos())
         .collect();
     let scale = 1.0 / (fs * win.iter().map(|w| w * w).sum::<f64>());
     let step = n - n / 2;
-    let segs = (x.len() - n / 2) / step;
-    let fft = FftPlanner::new().plan_fft_forward(n);
+    let len = y.map_or(x.len(), |y| x.len().min(y.len()));
+    let segs = (len - n / 2) / step;
+    let fft = plan(n, false);
     let bins = n / 2 + 1;
-    let mut p = vec![0.0; bins];
-    let mut buf = vec![Complex64::new(0.0, 0.0); n];
-    for s in 0..segs {
-        let seg = &x[s * step..s * step + n];
-        let mean = seg.iter().sum::<f64>() / n as f64;
-        for i in 0..n {
-            buf[i] = Complex64::new((seg[i] - mean) * win[i], 0.0);
+    let mut pxx = vec![0.0; bins];
+    let mut pxy = vec![Complex64::new(0.0, 0.0); bins];
+    let zero = Complex64::new(0.0, 0.0);
+    let (mut a, mut b) = (vec![zero; n], vec![zero; n]);
+    let windowed = |sig: &[f64], buf: &mut [Complex64]| {
+        let mean = sig.iter().sum::<f64>() / n as f64;
+        for (i, v) in buf.iter_mut().enumerate() {
+            *v = Complex64::new((sig[i] - mean) * win[i], 0.0);
         }
-        fft.process(&mut buf);
+        fft.process(buf);
+    };
+    for s in 0..segs {
+        let at = s * step..s * step + n;
+        windowed(&x[at.clone()], &mut a);
+        if let Some(y) = y {
+            windowed(&y[at], &mut b);
+        }
         for k in 0..bins {
-            p[k] += buf[k].norm_sqr();
+            pxx[k] += a[k].norm_sqr();
+            if y.is_some() {
+                pxy[k] += a[k].conj() * b[k];
+            }
         }
     }
-    for (k, v) in p.iter_mut().enumerate() {
-        *v *= scale / segs as f64;
-        if k != 0 && !(n.is_multiple_of(2) && k == bins - 1) {
-            *v *= 2.0;
-        }
+    for k in 0..bins {
+        let one_sided = if k != 0 && !(n.is_multiple_of(2) && k == bins - 1) {
+            2.0
+        } else {
+            1.0
+        };
+        let g = scale / segs as f64 * one_sided;
+        pxx[k] *= g;
+        pxy[k] *= g;
     }
     let f = (0..bins).map(|k| k as f64 * fs / n as f64).collect();
-    (f, p)
+    Spectra { f, pxx, pxy }
+}
+
+/// `scipy.signal.welch(x, fs, nperseg=n)`: (frequencies, PSD).
+pub fn welch(x: &[f64], fs: f64, nperseg: usize) -> (Vec<f64>, Vec<f64>) {
+    let s = spectra(x, None, fs, nperseg);
+    (s.f, s.pxx)
 }
 
 #[cfg(test)]
@@ -287,6 +349,57 @@ mod tests {
             .map(|i| (back[i] - x[i]).abs())
             .fold(0.0, f64::max);
         assert!(err < 1e-3, "round-trip error {err}");
+    }
+
+    /// SciPy's own outputs on one input (scipy 1.x, `resample_poly` with
+    /// `window=("kaiser", 10.0)`, `butter(3, …, output="sos")` + `sosfilt`,
+    /// `welch(nperseg=64)`), pinned.
+    #[test]
+    fn scipy_outputs_are_reproduced() {
+        let x: Vec<f64> = (0..200)
+            .map(|i| {
+                let t = i as f64;
+                (0.1 * t).sin() + 0.5 * (0.37 * t).cos() + if i == 50 { 1.0 } else { 0.0 }
+            })
+            .collect();
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-12 * b.abs().max(1.0);
+        let d = resample_poly(&x, 39, 80);
+        assert_eq!(d.len(), 98);
+        for (i, v) in [
+            (0, 0.3886585959874708),
+            (7, 1.2737411793117404),
+            (48, -0.2600839778265102),
+            (97, 0.538777462120233),
+        ] {
+            assert!(close(d[i], v), "down[{i}] {} vs {v}", d[i]);
+        }
+        let u = resample_poly(&x, 80, 39);
+        assert_eq!(u.len(), 411);
+        for (i, v) in [
+            (0, 0.49999966460134126),
+            (13, 0.24324036711749297),
+            (102, 0.3605867212046057),
+            (409, 0.5071572087984056),
+        ] {
+            assert!(close(u[i], v), "up[{i}] {} vs {v}", u[i]);
+        }
+        let s = butter3_bandpass(1000.0 / 2f64.sqrt(), 1000.0 * 2f64.sqrt(), 48_000.0);
+        let y = sosfilt(&s, &x);
+        for (i, v) in [
+            (3, 0.0026293688973878953),
+            (60, 0.42595657286682004),
+            (199, 0.2920525316461442),
+        ] {
+            assert!(close(y[i], v), "butter[{i}] {} vs {v}", y[i]);
+        }
+        let (_, p) = welch(&x, 48_000.0, 64);
+        for (i, v) in [
+            (0, 9.073400214895127e-06),
+            (5, 1.1799987132237528e-05),
+            (32, 9.009933501210447e-08),
+        ] {
+            assert!((p[i] / v - 1.0).abs() < 1e-9, "welch[{i}] {} vs {v}", p[i]);
+        }
     }
 
     #[test]

@@ -62,3 +62,11 @@ panic = "abort"
 opt-level = 2
 lto = "fat"
 codegen-units = 1
+
+# chimera-utils (ADR 0098), through its just recipes: release speed without
+# the firmware's fat LTO, and panics that unwind so scratch files are removed.
+[profile.utils]
+inherits = "release"
+lto = false
+codegen-units = 16
+panic = "unwind"

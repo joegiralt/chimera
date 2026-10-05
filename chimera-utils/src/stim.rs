@@ -1,11 +1,54 @@
 //! Test signals: the click, interrupted noise (ISO 3382-2) and the Latin
 //! hypercube, drawn as numpy's `default_rng(seed)` draws them (SeedSequence,
 //! PCG64, the ziggurat normal), so a seed gives the Python harness's noise.
+//!
+//! Third-party code, ported:
+//!
+//! - `seed_state` is NumPy's `SeedSequence` (numpy/random/bit_generator.pyx);
+//!   `Rng::normal`, `Rng::uniform` and `Rng::interval` are NumPy's
+//!   `random_standard_normal`, `next_double` and `random_interval`
+//!   (numpy/random/src/distributions/distributions.c), and `Rng::shuffle` its
+//!   `Generator.shuffle`. Under NumPy's BSD-3-Clause license:
+//!
+//!   Copyright (c) 2005-2024, NumPy Developers.
+//!   Copyright (c) 2019 Kevin Sheppard (numpy.random, from randomgen).
+//!   All rights reserved.
+//!
+//!   Redistribution and use in source and binary forms, with or without
+//!   modification, are permitted provided that the following conditions are
+//!   met:
+//!
+//!   * Redistributions of source code must retain the above copyright
+//!     notice, this list of conditions and the following disclaimer.
+//!   * Redistributions in binary form must reproduce the above copyright
+//!     notice, this list of conditions and the following disclaimer in the
+//!     documentation and/or other materials provided with the distribution.
+//!   * Neither the name of the NumPy Developers nor the names of any
+//!     contributors may be used to endorse or promote products derived from
+//!     this software without specific prior written permission.
+//!
+//!   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+//!   IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+//!   TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+//!   PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER
+//!   OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+//!   EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+//!   PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+//!   PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+//!   LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+//!   NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+//!   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+//!
+//! - PCG64 (XSL-RR 128/64, `Rng::new`/`step`/`next_u64`) is Melissa
+//!   O'Neill's PCG family (pcg-random.org), Copyright 2014 Melissa O'Neill,
+//!   licensed Apache-2.0 or MIT, as NumPy's PCG64 is.
+//! - The ziggurat's tables are rebuilt by Marsaglia and Tsang's recurrence
+//!   ("The Ziggurat Method for Generating Random Variables", JSS 2000).
 
+use crate::SR;
 use std::f64::consts::PI;
 use std::sync::OnceLock;
 
-pub const SR: f64 = 48_000.0;
 pub const CLICK_AT: usize = 480;
 pub const NOISE_SEEDS: usize = 16;
 const NOISE_RMS_DB: f64 = -18.0;

@@ -1,13 +1,13 @@
 //! A reverb's metrics, residuals, verdict and distance: the MidiVerb
 //! harness's `mvlib` measurer, ported call for call.
 
+use crate::SR;
 use crate::sig::{
     ERFC_INV_SQRT2, box_same, butter3_bandpass, hanning, rev_cumsum, slope, sosfilt, tail_mean,
     welch,
 };
 use serde_json::{Map, Value, json};
 
-pub const SR: f64 = 48_000.0;
 pub const BANDS: [u32; 7] = [125, 250, 500, 1000, 2000, 4000, 8000];
 /// Judged bands: 125 Hz and 8 kHz are reported only.
 pub const JUDGED: [u32; 5] = [250, 500, 1000, 2000, 4000];
@@ -563,10 +563,14 @@ mod tests {
     }
 
     #[test]
-    fn predelay_of_a_delayed_impulse() {
+    fn predelay_is_the_first_arrival_within_20_db_of_the_peak() {
+        // A −26 dB reflection at 5 ms (ignored), the first arrival at −14 dB
+        // at 10 ms, the peak at 30 ms, then a decaying tail.
         let mut h = vec![0.0; 48_000];
-        h[480] = 1.0;
-        for (i, v) in h.iter_mut().enumerate().skip(481) {
+        h[240] = 0.05;
+        h[480] = 0.2;
+        h[1440] = 1.0;
+        for (i, v) in h.iter_mut().enumerate().skip(1441) {
             *v = 0.05 * (-(i as f64) / 4800.0).exp() * if i % 2 == 0 { 1.0 } else { -1.0 };
         }
         let m = ir_metrics(&h, None);

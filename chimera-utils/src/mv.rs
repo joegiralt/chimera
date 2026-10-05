@@ -2,12 +2,13 @@
 //! fit, verification, listening pairs and the program listings.
 
 use crate::Config;
-use crate::devices::{self, render_reverb, reverb_knob_names};
+use crate::SR;
+use crate::devices::{self, REVERB_KNOBS, render_reverb};
 use crate::metrics::{
     self, BANDS, Metrics, NoiseRt, distance, ir_metrics, noise_band_rt60, residuals, verdict,
 };
 use crate::reference::{Reference, read_wav, write_f32, write_pcm24};
-use crate::stim::{CLICK_AT, NOISE_SEEDS, SR, click, lhs, noise_stim};
+use crate::stim::{CLICK_AT, NOISE_SEEDS, click, lhs, noise_stim};
 use chimera_core::dsp::reverb::ReverbType;
 use rayon::prelude::*;
 use serde_json::{Map, Value, json};
@@ -17,7 +18,7 @@ use std::sync::Mutex;
 const SOURCES: [&str; 5] = ["snare", "kick", "strings", "plucked", "idm"];
 const AB_SOURCES: [&str; 3] = ["idm", "snare", "strings"];
 
-/// Each TYPE's fitted knobs, by `devices::reverb_knob_names`.
+/// Each TYPE's fitted knobs, by `devices::REVERB_KNOBS`.
 fn dims(t: ReverbType) -> &'static [&'static str] {
     match t {
         ReverbType::Room => &[
@@ -44,7 +45,7 @@ pub type Knobs = Map<String, Value>;
 fn values(t: ReverbType, k: &Knobs) -> Vec<f32> {
     let dev = devices::Device::Reverb(t);
     let mut v: Vec<f32> = dev.knobs().iter().map(|k| k.default).collect();
-    for (i, n) in reverb_knob_names().iter().enumerate() {
+    for (i, n) in REVERB_KNOBS.iter().enumerate() {
         if let Some(x) = k.get(*n).and_then(Value::as_f64) {
             v[i] = format!("{x:.6}").parse().unwrap_or(x as f32);
         }
@@ -263,8 +264,9 @@ fn score(m: &Metrics, r: &Metrics) -> f64 {
     distance(&residuals(m, r))
 }
 
-/// A shrinking pattern search from `start`: each knob ±step, the best move
-/// taken until none helps, then the next step. Knobs in `fixed` stay put.
+/// A shrinking pattern search from `start` (a knob it lacks starts at the
+/// TYPE's default): each knob ±step, the best move taken until none helps,
+/// then the next step. Knobs in `fixed` stay put.
 fn refine(
     cfg: &Config,
     t: ReverbType,
@@ -274,6 +276,12 @@ fn refine(
     fixed: &[&str],
 ) -> Result<(Knobs, Metrics, f64), String> {
     let mut best_k = start.clone();
+    let defaults = values(t, &Knobs::new());
+    for (i, n) in REVERB_KNOBS.iter().enumerate() {
+        if dims(t).contains(n) && best_k.get(*n).and_then(Value::as_f64).is_none() {
+            best_k.insert(n.to_string(), json!(defaults[i]));
+        }
+    }
     let mut best_m = measure(t, std::slice::from_ref(&best_k), cfg.refine_seeds)?.remove(0);
     let mut best = score(&best_m, r);
     for &st in steps {
@@ -282,7 +290,7 @@ fn refine(
             improved = false;
             let mut cands = Vec::new();
             for d in dims(t).iter().filter(|d| !fixed.contains(d)) {
-                let cur = best_k[*d].as_f64().unwrap_or(0.0);
+                let cur = best_k.get(*d).and_then(Value::as_f64).unwrap_or(0.0);
                 for s in [-st, st] {
                     let v = (cur + s).clamp(0.0, 1.0);
                     if v != cur {
@@ -304,12 +312,14 @@ fn refine(
     Ok((best_k, best_m, best))
 }
 
-/// The sweep shared by every preset of a TYPE: measured once, kept.
-fn sweep(cfg: &Config, t: ReverbType) -> Result<Vec<(Knobs, Metrics)>, String> {
+/// The sweep shared by every preset of a TYPE: measured once and kept,
+/// unless `fresh` (a DSP change makes the kept ranking stale).
+fn sweep(cfg: &Config, t: ReverbType, fresh: bool) -> Result<Vec<(Knobs, Metrics)>, String> {
     let path = cfg
         .out
         .join(format!("fits/{}_sweep.json", t_name(t).to_lowercase()));
-    if let Ok(Value::Array(a)) = read_json(&path) {
+    if let (false, Ok(Value::Array(a))) = (fresh, read_json(&path)) {
+        println!("cached sweep: {} (--redo re-sweeps)", path.display());
         return a
             .iter()
             .map(|e| {
@@ -354,7 +364,12 @@ fn fit_line(
 ) -> String {
     let knobs: Vec<String> = dims(t)
         .iter()
-        .map(|d| format!("{d}={:.3}", k[*d].as_f64().unwrap_or(0.0)))
+        .map(|d| {
+            format!(
+                "{d}={:.3}",
+                k.get(*d).and_then(Value::as_f64).unwrap_or(0.0)
+            )
+        })
         .collect();
     format!(
         "{p:>2} {name:26} d={d:8.1} pass={} knobs={}",
@@ -385,7 +400,7 @@ pub fn fit(
     let sweep = if seeds.is_some() {
         Vec::new()
     } else {
-        sweep(cfg, t)?
+        sweep(cfg, t, redo)?
     };
     let path = fits_path(cfg, t);
     let out = Mutex::new(match read_json(&path) {
@@ -403,8 +418,9 @@ pub fn fit(
         let r = Metrics::from_json(rv)?;
         let results = match &seeds {
             Some(s) => {
-                let k = s[&key]["knobs"]
-                    .as_object()
+                let k = s
+                    .get(&key)
+                    .and_then(|f| f["knobs"].as_object())
                     .cloned()
                     .ok_or(format!("start: no fit {p}"))?;
                 vec![refine(cfg, t, &k, &r, &[0.03, 0.012], &["smear"])?]

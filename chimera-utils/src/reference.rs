@@ -55,6 +55,16 @@ pub fn read_wav(path: &Path) -> Result<(Vec<f64>, u32), String> {
     let mut r = hound::WavReader::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let spec = r.spec();
     let ch = spec.channels as usize;
+    if ch == 0 || !(1..=32).contains(&spec.bits_per_sample) {
+        return Err(format!("{}: not a usable WAV ({spec:?})", path.display()));
+    }
+    // A header promising more than the file holds (a writer that died).
+    let bytes = std::fs::metadata(path)
+        .map_err(|e| format!("{}: {e}", path.display()))?
+        .len();
+    if u64::from(r.len()) * u64::from(spec.bits_per_sample).div_ceil(8) > bytes {
+        return Err(format!("{}: truncated", path.display()));
+    }
     let raw: Vec<f64> = match spec.sample_format {
         hound::SampleFormat::Float => r
             .samples::<f32>()
@@ -121,14 +131,20 @@ fn run(cmd: &mut Command) -> Result<(), String> {
 }
 
 impl Reference {
-    /// `name` is `midiverb` (the emulator at `emu`), a path, or a program in
-    /// `refs_dir`.
-    pub fn find(name: &str, emu: &Path, refs_dir: Option<&Path>) -> Result<Self, String> {
+    /// `name` is `midiverb` (the emulator `emu` gives), a path, or a program
+    /// in `refs_dir`.
+    /// A bare name is looked up in `refs_dir`, else the current directory,
+    /// never on `PATH`.
+    pub fn find(
+        name: &str,
+        emu: impl FnOnce() -> Result<PathBuf, String>,
+        refs_dir: Option<&Path>,
+    ) -> Result<Self, String> {
         if name.eq_ignore_ascii_case("midiverb") {
-            return Ok(Reference::MidiVerb(emu.to_path_buf()));
+            return Ok(Reference::MidiVerb(emu()?));
         }
         let direct = PathBuf::from(name);
-        let p = if direct.components().count() > 1 || refs_dir.is_none() {
+        let p = if direct.components().count() > 1 {
             direct
         } else {
             refs_dir.unwrap_or(Path::new(".")).join(name)
@@ -144,7 +160,8 @@ impl Reference {
     }
 
     /// Renders at 48 kHz: of `input` (an effect) or `frames` samples (a
-    /// source), with `params` passed through.
+    /// source), with `params` passed through. Exactly that many samples come
+    /// back; a reference that returns fewer is an error.
     pub fn render(
         &self,
         params: &[(String, String)],
@@ -152,7 +169,7 @@ impl Reference {
         frames: usize,
         tmp: &Path,
     ) -> Result<Vec<f64>, String> {
-        let sr = crate::devices::SR;
+        let sr = crate::SR as u32;
         let s = Scratch::new(tmp)?;
         match self {
             Reference::Exe(exe) => {
@@ -173,10 +190,19 @@ impl Reference {
                     cmd.arg(format!("{k}={v}"));
                 }
                 run(&mut cmd)?;
-                let (y, got) = read_wav(&s.path("out.wav"))?;
+                let (mut y, got) = read_wav(&s.path("out.wav"))?;
                 if got != sr {
                     return Err(format!("{}: wrote {got} Hz, asked {sr}", exe.display()));
                 }
+                let want = input.map_or(frames, <[f64]>::len);
+                if y.len() < want {
+                    return Err(format!(
+                        "{}: wrote {} samples, asked {want}",
+                        exe.display(),
+                        y.len()
+                    ));
+                }
+                y.truncate(want);
                 Ok(y)
             }
             Reference::MidiVerb(emu) => {
@@ -209,6 +235,7 @@ fn mv_render(
     let g = if normalise { 0.89 / pk } else { 1.0 };
     let scaled: Vec<f64> = x.iter().map(|v| v * g).collect();
     let u = resample_poly(&scaled, 39, 80);
+    let n_mv = u.len();
     let (a, b) = (s.path("in.wav"), s.path("out.wav"));
     let spec = hound::WavSpec {
         channels: 2,
@@ -230,7 +257,28 @@ fn mv_render(
     if sr != MV_SR {
         return Err(format!("midiverb wrote {sr} Hz"));
     }
+    if y.len() != n_mv {
+        return Err(format!("midiverb wrote {} samples, asked {n_mv}", y.len()));
+    }
     let mut y = resample_poly(&y, 80, 39);
     y.resize(x.len(), 0.0);
     Ok(y.into_iter().map(|v| v / g).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_bare_name_is_the_current_directory_never_path() {
+        // `ls` is on PATH; a bare `ls` must still mean ./ls.
+        let e = Reference::find("ls", || Err("unused".into()), None)
+            .err()
+            .unwrap_or_default();
+        assert!(e.contains("./ls"), "{e}");
+        let e = Reference::find("midiverb", || Err("set MIDIVERB_EMU".into()), None)
+            .err()
+            .unwrap_or_default();
+        assert_eq!(e, "set MIDIVERB_EMU");
+    }
 }

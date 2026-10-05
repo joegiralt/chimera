@@ -6,7 +6,7 @@ use chimera_core::dsp::Stereo;
 use chimera_core::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
 use chimera_core::dsp::algo::kernel::{Kernel, KernelBlock, OpBlock, SAMPLE_SCALE};
 use chimera_core::dsp::algo::plan::{EvalPlan, OPS};
-use chimera_core::dsp::algo::waves::{WAVE_COUNT, WaveId, mip_position};
+use chimera_core::dsp::algo::waves::{WAVE_IDENTS, WaveId, mip_position};
 use chimera_core::dsp::filter::{FilterMode, SvfFilter};
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use chimera_core::dsp::rev::sync::Tempo;
@@ -14,8 +14,6 @@ use chimera_core::dsp::reverb::{KnobMemory, ReverbParams, ReverbType};
 use chimera_core::params::FilterParams;
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 use std::mem::MaybeUninit;
-
-pub const SR: u32 = SAMPLE_RATE;
 
 /// One knob: a number, or one of `choices` (given by name, stored as its
 /// index).
@@ -45,7 +43,8 @@ pub enum Device {
     AlgoOp,
 }
 
-const REVERB_KNOBS: [&str; 9] = [
+/// A reverb's knobs, in the order its values take.
+pub const REVERB_KNOBS: [&str; 9] = [
     "size", "time", "tone", "diffuse", "predelay", "smear", "rate", "shape", "damping",
 ];
 
@@ -66,21 +65,11 @@ const FILTER_KNOBS: [Knob; 4] = [
     num("drive", 0.0),
 ];
 
-static WAVES: [&str; WAVE_COUNT] = {
-    let mut n = [""; WAVE_COUNT];
-    let mut i = 0;
-    while i < WAVE_COUNT {
-        n[i] = chimera_core::dsp::algo::waves::WAVE_NAMES[i];
-        i += 1;
-    }
-    n
-};
-
 const OSC_KNOBS: [Knob; 3] = [
     Knob {
         name: "wave",
         default: 0.0,
-        choices: &WAVES,
+        choices: &WAVE_IDENTS,
     },
     num("freq", 440.0),
     num("level", 0.5),
@@ -141,21 +130,29 @@ impl Device {
                 .iter()
                 .position(|k| k.name.eq_ignore_ascii_case(key))
                 .ok_or_else(|| format!("no knob `{key}`"))?;
-            v[i] = match knobs[i]
-                .choices
-                .iter()
-                .position(|c| c.eq_ignore_ascii_case(val))
-            {
+            let choices = knobs[i].choices;
+            v[i] = match choices.iter().position(|c| c.eq_ignore_ascii_case(val)) {
                 Some(c) => c as f32,
+                None if !choices.is_empty() => {
+                    return Err(format!("{key}={val}: one of {}", choices.join(", ")));
+                }
                 None => val
                     .parse()
                     .map_err(|_| format!("{key}={val}: not a number"))?,
             };
         }
+        if let Device::CleanFilter = self
+            && !FilterParams::default().set_mode(filter_mode(v[0] as usize))
+        {
+            return Err(format!(
+                "mode {}: not an SVF mode",
+                FILTER_MODES[v[0] as usize]
+            ));
+        }
         Ok(v)
     }
 
-    /// Renders `len` samples at `SR`: of `input` for an effect, from silence
+    /// Renders `len` samples at `crate::SR`: of `input` for an effect, from silence
     /// for a source.
     pub fn render(&self, v: &[f32], input: &[f32], len: usize) -> Vec<f32> {
         match self {
@@ -189,20 +186,21 @@ pub fn render_reverb(t: ReverbType, v: &[f32], x: &[f32]) -> Vec<f32> {
     (r.smear, r.rate, r.shape, r.damping) = (v[5], v[6], v[7], v[8]);
     let mut slot = Box::new(MaybeUninit::<FxBus>::uninit());
     let bus = FxBus::init_in_place(&mut slot);
-    let lead = (SR as usize / 2) / BLOCK_SIZE * BLOCK_SIZE;
+    let lead = (SAMPLE_RATE as usize / 2) / BLOCK_SIZE * BLOCK_SIZE;
     let n = x.len() + lead;
     let mut y = Vec::with_capacity(n + BLOCK_SIZE);
     let mut i = 0;
     while i < n {
         let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
-        for (k, s) in sends[2].iter_mut().enumerate() {
+        let [_, _, rev] = &mut sends;
+        for (k, s) in rev.iter_mut().enumerate() {
             let j = i + k;
             if j >= lead && j - lead < x.len() {
                 *s = x[j - lead];
             }
         }
         let mut ret = Stereo::SILENT;
-        bus.process(&mut sends, &fx, Tempo::DEFAULT, SR, &mut ret);
+        bus.process(&mut sends, &fx, Tempo::DEFAULT, SAMPLE_RATE, &mut ret);
         y.extend((0..BLOCK_SIZE).map(|k| 0.5 * (ret.l[k] + ret.r[k])));
         i += BLOCK_SIZE;
     }
@@ -227,7 +225,7 @@ fn render_filter(v: &[f32], x: &[f32]) -> Vec<f32> {
     let mut f = SvfFilter::new();
     let mut y = x.to_vec();
     for blk in y.chunks_mut(BLOCK_SIZE) {
-        f.process(blk, &p, SR);
+        f.process(blk, &p, SAMPLE_RATE);
     }
     y
 }
@@ -258,7 +256,7 @@ fn render_op(v: &[f32], len: usize) -> Vec<f32> {
     };
     let mut ops = [silent; OPS];
     ops[0] = OpBlock {
-        inc: (hz as f64 / SR as f64 * 4_294_967_296.0) as u32,
+        inc: (hz as f64 / crate::SR * 4_294_967_296.0) as u32,
         gain_from: level * SAMPLE_SCALE,
         gain_to: level * SAMPLE_SCALE,
         lo: wave.table(lo),
@@ -278,7 +276,7 @@ fn render_op(v: &[f32], len: usize) -> Vec<f32> {
     };
     let mut env: [OpEnv; OPS] = core::array::from_fn(|_| {
         let mut e = OpEnv::IDLE;
-        e.note_on(EnvCoefs::new(HOLD, MidiNote::A4, SR as f32));
+        e.note_on(EnvCoefs::new(HOLD, MidiNote::A4, crate::SR as f32));
         e
     });
     let mut k = Kernel::new();
@@ -299,9 +297,4 @@ pub fn reverb_type(name: &str) -> Result<ReverbType, String> {
         .position(|n| n.eq_ignore_ascii_case(name))
         .map(|i| ReverbType::ALL[i])
         .ok_or_else(|| format!("no reverb TYPE `{name}`"))
-}
-
-/// `REVERB_KNOBS` order.
-pub fn reverb_knob_names() -> &'static [&'static str; 9] {
-    &REVERB_KNOBS
 }

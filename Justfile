@@ -1,8 +1,5 @@
 # Justfile for Chimera
 
-# Local paths (MIDIVERB_EMU, MV_STIM, …) in a git-ignored .env
-set dotenv-load
-
 # Build desktop simulator
 desktop:
     cargo run -p chimera-desktop
@@ -217,9 +214,10 @@ fuzz:
     cd chimera-core/fuzz && for t in decode_sound decode_project; do cargo +nightly fuzz run $t -- -max_total_time=300; done
 
 # chimera-utils (ADR 0098): Chimera's DSP against external references, on
-# the host. Paths from the environment (chimera-utils/README.md); outputs in
-# target/mv. Flags such as --jobs N go after the arguments.
-utils := "cargo run -q --release -p chimera-utils --"
+# the host, built in the `utils` profile. Paths from the environment
+# (chimera-utils/README.md); outputs in target/mv. Flags such as --jobs N go
+# after the arguments.
+utils := "cargo run -q --profile utils -p chimera-utils --"
 
 # REF (a program on the contract, or midiverb) vs a Chimera DEVICE
 ab ref device *knobs:

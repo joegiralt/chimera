@@ -16,6 +16,9 @@ mod stim;
 
 use std::path::PathBuf;
 
+/// The one rate everything runs at: Chimera's.
+pub const SR: f64 = chimera_hal::SAMPLE_RATE as f64;
+
 const USAGE: &str = "\
 usage: chimera-utils [flags] COMMAND …
   ab REF DEVICE [k=v …]    REF vs a Chimera DEVICE: null, response, THD, centroid; A/B WAVs
@@ -36,7 +39,7 @@ flags:
   --fits PATH     mv-verify: fits from elsewhere (results go to OUT/fits/TYPE_verify.json)
   --seeds N       mv-fit: noise seeds per search step (default 8; verify uses 16)
   --start PATH    mv-fit: search from these fits' knobs (finer steps, SMEAR held)
-  --redo          mv-fit: refit presets already fitted
+  --redo          mv-fit: refit presets already fitted, and re-sweep
   --no-sources    mv-refs: skip the stimuli renders";
 
 pub struct Config {
