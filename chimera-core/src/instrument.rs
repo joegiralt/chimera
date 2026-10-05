@@ -21,7 +21,7 @@ use crate::modulation::ModState;
 use crate::note_queue::{NoteEvent, NoteKind};
 use crate::orbit::RingIdx;
 use crate::orbit::ring::Harmony;
-use crate::orbit::runner::OrbitShared;
+use crate::orbit::runner::{OrbitRunner, OrbitShared};
 use crate::params::ParamSnapshot;
 use crate::part::{Held, LiveSnap, PartParams};
 use crate::preset::{Part, Performance};
