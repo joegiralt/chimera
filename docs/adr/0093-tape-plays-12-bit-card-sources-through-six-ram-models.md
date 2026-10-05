@@ -118,10 +118,14 @@ code 23, ident `"TAPE"`, ADR 0055).
       too little (always, at neutral), it **folds inside the loop**, so
       INIT never hard-wraps.
     - MOTION walks the loop through the window.
-  - **REVERSE:** LOOP mirrored.
-  - **PING-PONG:** reflects at the loop's edges. New bounds latch at a
-    turn, and a head left outside them moves inside under a 5 ms
-    crossfade.
+  - **REVERSE:** LOOP mirrored: LOOP in a mirrored frame with the window
+    mirrored, so END is read at note-on and START latches at a wrap.
+  - **PING-PONG:** turns at the loop's edges, slowing to a stop over 1 ms
+    and back, as a reel reverses: a plain reflection is continuous but
+    leaves a corner (a click on a steep slope). New bounds latch at a
+    turn; a head left outside them that would not be in within 5 ms moves
+    inside under a 5 ms crossfade, and a nearer one plays on into the
+    loop.
   - **TRANSWAVE:** plays only `Transwave` sources (on others the note-on is
     refused).
     - A transwave is up to 32 single-cycle frames, stored at octave mip
@@ -143,6 +147,15 @@ code 23, ident `"TAPE"`, ADR 0055).
   - **SCRUB:** a finger, slewed by DRAG, drags a head that loops at
     MOTION's bipolar vari-speed (Morphagene's Slide and Vari-Speed). The
     finger's speed is bounded so the head's never passes `inc`'s clamp.
+    - The finger follows the block's POSITION (DRAG is its smoothing, not
+      the macros' easing), its speed ramped across the block.
+    - The loop's crossfade is a smoothstep, not LOOP's line: near MOTION 0
+      it crawls, where a line's corners stand out.
+    - A stopped tape is silent: with the loop and the finger still, the
+      output eases to 0 over 1 ms, and back in when the tape moves.
+  - Every loop is at least 64 frames (four samples at `inc`'s clamp) or
+    the whole source, and the next pass's bounds are worked out once a
+    block, so a pass's events never cost every sample.
   - **STRETCH:** a time pointer at MOTION (−1 to +2), and grains read at
     the note's pitch.
     - A splice every D-TIME/2 (SIZE, 10–250 ms) starts a grain under one
@@ -166,21 +179,24 @@ code 23, ident `"TAPE"`, ADR 0055).
   with its hint (ADR 0086): `MIX + PLUS LOADS · 41K`, or `WON'T FIT ·
   NEEDS 41K, 12K FREE`.
 - **CPU,** in cycles a sample. These are host estimates, with one head at
-  88 instructions (measured on `SourceView::read`, TAPE Task 2), a two-head
-  fade sample at 224 (measured on LOOP's loop, TAPE Task 3) and the cache
-  misses of `inc` 16 (+12 a head). The budget is checked a block at a time
-  and a whole block can lie inside a fade, so each two-head model bills
-  its fade sample. The bench at build step 3 replaces them:
+  88 instructions (measured on `SourceView::read`, TAPE Task 2), each
+  model's loops measured (TAPE Tasks 3 and 6) and the cache misses of
+  `inc` 16 (+12 a head). The budget is checked a block at a time, so each
+  model bills the worst path a whole block can sit in: LOOP's fade (217),
+  REVERSE's (224), PING-PONG's clamp (232), SCRUB's fade with a stop or
+  start in the block (241 + 9). The bench at build step 3 replaces them:
 
-  | | LOOP, REVERSE, PING-PONG | SCRUB | TRANSWAVE | TRANSWAVE, pitch moving > ±6.2 st | STRETCH | AGE on |
-  |---|---|---|---|---|---|---|
-  | Billed | 390 | 390 | 400 | 770 | 400 | +20 |
+  | | LOOP, REVERSE | PING-PONG | SCRUB | TRANSWAVE | TRANSWAVE, pitch moving > ±6.2 st | STRETCH | AGE on |
+  |---|---|---|---|---|---|---|---|
+  | Billed | 390 | 400 | 430 | 400 | 770 | 400 | +20 |
 
   - **Admission.** A plain TAPE voice is admitted 8 on rev V, with ORBIT
-    and with the master tape (497 at worst; 7 with the master tape when
-    DRIVE and FOLD are on). On rev Y, LOOP, REVERSE, PING-PONG and SCRUB
-    with AGE off (467) keep 8; with AGE, and STRETCH or TRANSWAVE with
-    AGE (497), 7; with DRIVE and FOLD, 6. A TRANSWAVE whose pitch can move
+    and with the master tape (527 at worst, SCRUB with AGE; 7 with the
+    master tape when DRIVE and FOLD are on, and 7 everywhere for SCRUB
+    with AGE, DRIVE and FOLD). On rev Y, LOOP and REVERSE with AGE off
+    (467) keep 8, and PING-PONG, STRETCH and TRANSWAVE with AGE off (477)
+    keep 8 by one cycle; SCRUB (507), and any model with AGE, 7; with
+    DRIVE and FOLD, 6. A TRANSWAVE whose pitch can move
     past ±6.2 semitones (867) is admitted 4 on rev Y and 5 on rev V.
   - **Eight voices hold while the benched engine stays under 546 on rev V
     and 400 on rev Y.**

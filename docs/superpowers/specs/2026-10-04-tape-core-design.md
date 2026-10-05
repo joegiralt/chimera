@@ -216,6 +216,7 @@ Every model plays inside the **window** `[START, END]`, as fractions of the sour
   - above 0.5, dropouts: a gain dipping up to 9 dB at random, for 20–80 ms, eased per block.
 
   It runs, and is billed, whenever it can be heard: stored above 0, **or routed** (`stage_runs`' rule). Unrouted at 0 it is bypassed and unbilled.
+- **The shortest loop** is 2 ms of the source and at least `MIN_LOOP_FRAMES` (64 frames, four samples' travel at `inc`'s clamp), or the whole source if it is shorter (TAPE Task 6). So at the clamp a loop wraps at most once in 4 samples, and its arithmetic never runs every sample. The next pass's bounds are worked out once a block (they read only the block's params) and latched at the events.
 - **A loop's bounds are latched at each wrap.** The loop is `[Ls, Ls + Ll)`, with `Ll` from SIZE and `Ls = START + (POSITION + walk) · (W − Ll)`.
   - The head finishes its pass on the bounds it started with, then takes the eased new ones as it wraps.
   - A moved POSITION or SIZE therefore never cuts a pass short, and the wrap's crossfade covers the step.
@@ -231,11 +232,13 @@ Every model plays inside the **window** `[START, END]`, as fractions of the sour
 - Two heads while crossfading; billed at two.
 
 **REVERSE.** LOOP mirrored. The head starts at END and runs backward. Its crossfade reads the material after the loop, and folds inside the loop the same way. This is the Digitakt's REVERSE LOOP.
+- **It is LOOP in a mirrored frame (ruled, TAPE Task 6):** the source read at `n − 1 − u` and the window mirrored, so it equals LOOP on the reversed source exactly. END is therefore read at note-on and START latches at a wrap: the mirror of LOOP's rule.
 
-**PING-PONG.** The head reflects at each edge of the loop: `h = 2·edge − h`, and its direction flips.
-- The value is continuous at a turn, so a turn needs no crossfade.
-- **New bounds latch at a turn.** If the head then lies outside them (SIZE shrank, or POSITION moved past it), a second head starts at the clamped place inside, and a 5 ms crossfade moves the output there. A bound change never jumps.
-- XFADE dims. One head, two during a clamp; billed at two.
+**PING-PONG.** The head turns at each edge of the loop, and its direction flips.
+- **A turn slows to a stop (ruled, TAPE Task 6).** Over `TURN_S` (1 ms) before an edge the head's speed falls linearly to 0, and over 1 ms after it rises again, as a reel reverses. A plain reflection (`h = 2·edge − h`) is continuous in value but leaves a corner in the wave, a click on a steep slope (7–9× the click limit on the listening renders). In a short loop the run-up is cut to a quarter of the loop; with no room for one the head reflects.
+- No turn needs a crossfade: there is no second head at a turn.
+- **New bounds latch at a turn.** If the head then lies outside them (SIZE shrank, or POSITION moved past it) and would not be inside within 5 ms at its speed, a second head starts at the clamped place inside, and a 5 ms crossfade moves the output there. A head nearer than that (bounds moved by a frame or two) plays on into the loop (ruled, TAPE Task 6). A bound change never jumps.
+- XFADE dims. One head, two during a clamp; billed at the clamp's two (§ 5).
 
 **TRANSWAVE.** Plays only a `Transwave` source (§ 6); on any other, the note-on is refused, and SRC reads `NOT A TRANSWAVE`.
 - **A transwave is `count` frames, each one cycle,** stored at **octave mip levels** from a top level down to 16 samples. Each level is band-limited to ⌊0.35 · N⌋ harmonics: the PPG and Waldorf approach, computed by the importer.
@@ -251,12 +254,14 @@ Every model plays inside the **window** `[START, END]`, as fractions of the sour
   - **Only then are the two extra heads billed,** as MODAL's `PITCH` term is (`glide_cost`). A vibrato route costs nothing extra.
 - This is the Ensoniq transwave and the Tracker's wavetable mode, band-limited.
 
-**SCRUB.** The finger `F` follows POSITION through a one-pole of DRAG (10–500 ms, the tape's inertia). It is computed once a block and ramped.
-- The head is `F + l`. `l` advances `MOTION · inc` a sample, and wraps inside `[0, Ll)` with LOOP's crossfade.
+**SCRUB.** The finger `F` follows POSITION through a one-pole of DRAG (10–500 ms, the tape's inertia). It is computed once a block, and its speed is ramped across the block as `inc`'s is.
+- **The finger follows the block's POSITION, not the eased macro (ruled, TAPE Task 6):** DRAG's one-pole is its smoothing, and the macro's easing would add about 2.3 blocks of lag.
+- The head is `F + l`, `F` in `[START, END − Ll]`. `l` advances `2 · MOTION · inc` a sample (MOTION −1 to +1 is vari-speed −2 to +2), clamped to 16, and wraps inside `[0, Ll)` with LOOP's crossfade, eased by a smoothstep in place of LOOP's line (ruled, TAPE Task 6): near MOTION 0 the loop crawls, and a linear fade's corners stand out.
+- **Turning round,** the loop's speed ramps to 0, and the frame mirrors on the next block. A turn during a fade runs the fade back the way it came.
 - **Moving the finger drags the head with it,** so a moving POSITION bends the pitch by the finger's speed, as a hand on a reel does.
 - **The finger's speed is bounded** so the head's total speed, `|MOTION · inc + dF|`, never passes `inc`'s clamp of 16 frames a sample. A POSITION jump becomes a fast scrub, never a skip.
-- At MOTION 0 and a still finger, the head stands still, and the voice's DC blocker (ADR 0060) takes the held value to silence. Sound comes only while the finger moves, so a POSITION route from an LFO is a scratch.
-- Two heads; billed as LOOP.
+- **A stopped tape is silent (ruled, TAPE Task 6).** While the loop and the finger are both still (under `STILL`, 10⁻³ frames a sample), the output eases (smoothstep) to 0 over the note-on ramp (1 ms) and stays at 0 until the tape moves; then it eases back in. A neutral SCRUB note is silent from its note-on. Holding the value for the DC blocker (ADR 0060) to remove made a thump, then silence. Sound comes only while the tape moves, so a POSITION route from an LFO is a scratch.
+- Two heads; billed at its fade with a stop or start in the block (§ 5).
 
 **STRETCH.** The S950's time-stretch, run in real time: two grains spliced by crossfades.
 - **The time pointer** `T` moves through the window at `MOTION · rate / 48 000` frames a sample, wrapping in it.
@@ -287,7 +292,7 @@ Every model plays inside the **window** `[START, END]`, as fractions of the sour
 
 - The macros and SIZE are eased per block. `inc`, TRANSWAVE's `p` and the transport are ramped per sample.
 - A loop's bounds change only at a wrap, under a crossfade that folds inside the loop when it has to.
-- PING-PONG's change at a turn, with a crossfade if the head must move.
+- PING-PONG's change at a turn, with a crossfade if the head must move far; its turns slow to a stop.
 - SCRUB's finger is slewed and speed-bounded.
 - STRETCH's grains take new settings only at a splice, under one complementary fade.
 - TRANSWAVE's level changes under a one-block crossfade.
@@ -410,6 +415,7 @@ Host estimates, in the house manner (instructions × 1.46 × 1.1, as `ModalEngin
 - **Measured (TAPE Task 2), not estimated:** `SourceView::read` compiles to 96 instructions and `read_cycle` to 103, on `thumbv7em-none-eabihf` with `target-cpu=cortex-m7` at opt-level 2, as out-of-line functions. That includes about 8 for the call, the frame and two loads from the view, which inlining into a model's loop removes. The rows above split the measured `read`.
 - The first draft's 55 assumed one clamp instruction a tap and three word loads for four taps. A branch-free clamp is 5 on Thumb-2 (`qadd`, `bic`, `cmp`, `it`, `movlt`).
 - **The model rows below bill the measured 88-instruction head.** Build step 3's bench still replaces every bill (§ 10).
+- **Measured per path (TAPE Task 6, fix round 1),** instructions a sample, each path its own function: LOOP 102 with one head, 217 in a fade; REVERSE (and PING-PONG going down) 104 and 224; SCRUB 117 and 241, plus 9 averaged over a block in which the tape stops or starts; PING-PONG's turn 126 (one head), its clamp 232 and a clamp during a turn 227 (two). None has a `vdiv` in its loop. **Each model bills the worst path a whole block can sit in,** at × 1.46 × 1.1, + 12 a head, rounded up to 10.
 - **Measured LOOP loop (TAPE Task 3):** `TapeEngine::render`'s inner loop is 103 instructions a sample with one head and 224 while a fade reads two: 2 × 88 + 48. The first draft's 9 a voice was 39 short. The budget is checked a block at a time and a whole block can lie inside a fade (XFADE runs to ½ the loop), so **every two-head model bills the fade sample**, and a model's own extras sit on top of the measured 48. The bills are the cycles rounded up to 10; the bench (§ 10) replaces them.
 
 **Cache misses grow with `inc`.**
@@ -424,9 +430,9 @@ Host estimates, in the house manner (instructions × 1.46 × 1.1, as `ModalEngin
 
 | Model | Heads | Instructions | Cycles (with misses) | **Billed** |
 |---|---|---|---|---|
-| LOOP, REVERSE | 2 | 224 (measured) | 360 + 24 = 384 | **390** |
-| PING-PONG | 2 (one, two in a clamp) | 224 | 384 | **390** |
-| SCRUB | 2 (+ the finger, 2) | 226 | 387 | **390** |
+| LOOP, REVERSE | 2 | LOOP 217, REVERSE 224 (measured) | 360 + 24 = 384 | **390** |
+| PING-PONG | 2 (one, two in a clamp) | 232 (the clamp, measured) | 373 + 24 = 397 | **400** |
+| SCRUB | 2 (the finger in each read position) | 241 + 9 (a fade, with a stop or start in the block; measured) | 402 + 24 = 426 | **430** |
 | TRANSWAVE | 2 (+ `p`'s ramp and the scan, 4) | 228 | 391 | **400** |
 | TRANSWAVE, pitch able to move > ±6.2 st (STEAL GLIDE, or deep PITCH/FINE routes) | 4 in a level change (two pairs, each a fade's 48) | 448 | 720 + 48 = 768 | **770** |
 | STRETCH | 2 (+ two gains, the grain clock, 5) | 229 | 392 | **400** |
@@ -438,10 +444,14 @@ Host estimates, in the house manner (instructions × 1.46 × 1.1, as `ModalEngin
 
 | Voice | Cost | rev V (4 984 room) | rev Y (3 817) | rev V, ORBIT (4 813) | rev V, master tape (4 674) |
 |---|---|---|---|---|---|
-| LOOP, REVERSE, PING-PONG or SCRUB, AGE off | 467 | 10 → **8** | 8 → **8** | 10 → **8** | 10 → **8** |
-| … with AGE | 487 | 10 → **8** | **7** | 9 → **8** | 9 → **8** |
-| STRETCH or TRANSWAVE with AGE | 497 | 10 → **8** | **7** | 9 → **8** | 9 → **8** |
+| LOOP or REVERSE, AGE off | 467 | 10 → **8** | 8 → **8** | 10 → **8** | 10 → **8** |
+| PING-PONG, STRETCH or TRANSWAVE, AGE off | 477 | 10 → **8** | 8 → **8** (by 1 cycle) | 10 → **8** | 9 → **8** |
+| SCRUB, AGE off (was 467: 8 on rev Y) | 507 | 9 → **8** | **7** | 9 → **8** | 9 → **8** |
+| LOOP or REVERSE with AGE | 487 | 10 → **8** | **7** | 9 → **8** | 9 → **8** |
+| PING-PONG, STRETCH or TRANSWAVE with AGE | 497 | 10 → **8** | **7** | 9 → **8** | 9 → **8** |
 | … with DRIVE and FOLD (+102) | 599 | 8 → **8** | **6** | 8 → **8** | **7** |
+| SCRUB with AGE | 527 | 9 → **8** | **7** | 9 → **8** | 8 → **8** |
+| … with DRIVE and FOLD (+102; was 8 on rev V and with ORBIT) | 629 | **7** | **6** | **7** | **7** |
 | TRANSWAVE, pitch able to move > ±6.2 st, AGE off (was 6 on rev V) | 847 | **5** | **4** | **5** | **5** |
 | TRANSWAVE, pitch able to move > ±6.2 st, with AGE | 867 | **5** | **4** | **5** | **5** |
 | … with the worst routing (633 in place of 47) | 1 453 | **3** | **2** | **3** | **3** |
@@ -449,13 +459,14 @@ Host estimates, in the house manner (instructions × 1.46 × 1.1, as `ModalEngin
 
 **What these numbers support, and no more.**
 - Eight voices of any plain TAPE Sound hold on rev V while the benched engine stays under **546** (4 984 / 8 − 77), and on rev Y under **400** (3 817 / 8 − 77).
-- The estimates sit at 390 for LOOP, REVERSE, PING-PONG and SCRUB with AGE off, which keeps 8 on rev Y with 10 to spare (2.5 %). STRETCH and TRANSWAVE with AGE off (400, a 477 voice) keep 8 on rev Y by **1 cycle**: 8 × 477 = 3 816 against 3 817. With AGE (410), and for STRETCH and TRANSWAVE with AGE (420), rev Y admits **7**. Rev V keeps 8 with 23 % to spare.
+- The estimates sit at 390 for LOOP and REVERSE with AGE off, which keeps 8 on rev Y with 10 to spare (2.5 %). PING-PONG, STRETCH and TRANSWAVE with AGE off (400, a 477 voice) keep 8 on rev Y by **1 cycle**: 8 × 477 = 3 816 against 3 817. SCRUB (430) and anything with AGE admit **7** on rev Y. Rev V keeps 8 for every voice without DRIVE and FOLD; SCRUB with AGE, DRIVE and FOLD (629) admits 7 there.
 - A TRANSWAVE whose pitch can move more than ±6.2 semitones gets 4 voices on rev Y (a vibrato route doesn't count), and the heaviest routing gets 2.
 - These are counts of the **billed** figures. The guarantee holds only once the bench's cold-cache rows confirm them. Until then they are stated as estimates.
 
 **The bench rows** (build step 3, `--features bench`), each the worst block over four runs, cold cache:
 - `TAPE LOOP /VOICE`: eight voices, each on its own source, at `inc` 16;
 - `TAPE STRETCH /VOICE`: the same, at the shortest D-TIME, TYPE MONO;
+- `TAPE TINY /VOICE`: each model at SIZE 0 and `inc` 16 on an 8-frame source, the most events a block can hold (host: within 0.3–0.7 × LOOP's fade path, TAPE Task 6);
 - `TAPE WAVE C7 /VOICE`: TRANSWAVE at C7 with a ±12-semitone pitch LFO forcing a level change every block;
 - `TAPE 8 VOICES`: the whole render.
 
@@ -569,7 +580,9 @@ All host-side (`just test`). Hardware waits for the ship flash.
 **Click-free.** `click_free_test`'s rule: no sample step over 4× the steady state's largest.
 - **`init_never_hard_wraps`:** neutral TAPE on a sine whose length isn't a whole period, through 50 wraps.
 - **`loops_are_click_free`:** LOOP, REVERSE and SCRUB at XFADE 0.1 and 0.5, with the loop at START and mid-window.
-- **`ping_pong_clamps_with_a_fade`:** SIZE stepped 1 → 0.1 while the head is outside the new loop. Also PING-PONG's turns.
+- **`ping_pong_clamps_with_a_fade`:** SIZE stepped 1 → 0.1 while the head is outside the new loop. Also PING-PONG's turns, which bend no more than the sine's own (`ping_pong_turns_are_continuous`); a 25–240-frame shrink at POSITION 0 and a SIZE LFO soak.
+- **`scrub_still_is_silent`:** a neutral SCRUB note is silent, eases in when MOTION moves and out when it stops. `scrub_crawl_has_no_corner`: fades and turns at a crawl bend no more than the sine at that speed.
+- **`events_are_bounded_per_block`** and **`tiny_loop_at_the_clamp_costs_about_a_fade`:** SIZE 0 at `inc` 16, every model.
 - **`sweeps_are_click_free`:** each modulatable param swept 0 → 1 → 0 in 100 ms, and stepped 0 ↔ 1, per model, on a sine source. TRANSWAVE's scan at MOTION ±1 shows no 750 Hz sideband above −80 dB.
 - **`scrub_finger_is_bounded`:** POSITION stepped 0 → 1, and the head's speed never passes 16.
 - **`source_switch_leaves_the_ringing_note`:** a Part changes SOURCE mid-note, and the voice's output is bit-identical to an unchanged run until its note-off.
