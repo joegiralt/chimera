@@ -41,6 +41,8 @@ const CUBE: FocusGlyph = FocusGlyph::Composite(CompositeId::ReverbCube);
 const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     // Word choices: the word is the value, there is no amount to gauge.
     ("Modal", "MODE", NONE),
+    ("TapeEngine", "MODEL", NONE),
+    ("TapeEngine", "TYPE", NONE),
     ("Algo", "ALG_A", NONE),
     ("Algo", "ALG_B", NONE),
     ("Filter", "KIND", NONE),
@@ -143,6 +145,8 @@ const TWO_PEERS: &[(&str, &str)] = &[
     ("Part", "HELD"),
     // INT and EXT: two clocks to follow, neither is off.
     ("Midi", "SYNC"),
+    // MONO and POLY: two ways to splice a grain.
+    ("TapeEngine", "TYPE"),
 ];
 
 /// Every LEVEL BAR param is a unipolar level, 0 to max.

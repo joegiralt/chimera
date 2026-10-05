@@ -206,6 +206,7 @@ pub fn part_block<'a>(
         | BlockRef::OrbitRing(_)
         | BlockRef::Tempo => None,
         BlockRef::Modal
+        | BlockRef::TapeEngine
         | BlockRef::Algo
         | BlockRef::AlgoOp(_)
         | BlockRef::Drive
@@ -239,6 +240,7 @@ pub fn part_block_mut<'a>(
         | BlockRef::OrbitRing(_)
         | BlockRef::Tempo => None,
         BlockRef::Modal
+        | BlockRef::TapeEngine
         | BlockRef::Algo
         | BlockRef::AlgoOp(_)
         | BlockRef::Drive

@@ -813,6 +813,7 @@ pub struct ParamSnapshot {
     pub envelopes: [EnvParams; 3],
     pub algo: crate::dsp::algo::params::AlgoParams,
     pub modal: crate::dsp::modal::ModalParams,
+    pub tape: crate::dsp::tape_engine::TapeEngineParams,
     pub lfos: [crate::dsp::lfo::LfoParams; 3],
     pub out: OutParams,
     pub pitch: PitchParams,
@@ -839,6 +840,7 @@ impl BlockRead for ParamSnapshot {
     fn block(&self, b: BlockRef) -> Option<&dyn Block> {
         Some(match b {
             BlockRef::Modal => &self.modal,
+            BlockRef::TapeEngine => &self.tape,
             BlockRef::Algo => &self.algo,
             BlockRef::AlgoOp(op) => &self.algo.ops[op.index()],
             BlockRef::Drive => &self.drive,
@@ -868,6 +870,7 @@ impl Blocks for ParamSnapshot {
     fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
         Some(match b {
             BlockRef::Modal => &mut self.modal,
+            BlockRef::TapeEngine => &mut self.tape,
             BlockRef::Algo => &mut self.algo,
             BlockRef::AlgoOp(op) => &mut self.algo.ops[op.index()],
             BlockRef::Drive => &mut self.drive,
@@ -913,6 +916,7 @@ impl Default for ParamSnapshot {
             ],
             algo: crate::dsp::algo::params::AlgoParams::default(),
             modal: crate::dsp::modal::ModalParams::default(),
+            tape: crate::dsp::tape_engine::TapeEngineParams::default(),
             lfos: [crate::dsp::lfo::LfoParams::default(); 3],
             out: OutParams::default(),
             pitch: PitchParams::default(),

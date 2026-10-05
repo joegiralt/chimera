@@ -49,6 +49,9 @@ impl BlockRef {
             BlockRef::OrbitChords => 27,
             BlockRef::OrbitRing(r) => 28 + r.get(),
             BlockRef::Midi => 33,
+            // A block code: the registry's retired page id 34 is another
+            // namespace.
+            BlockRef::TapeEngine => 34,
             BlockRef::PartMix(_) | BlockRef::Tempo => return None,
         })
     }
@@ -88,6 +91,7 @@ impl BlockRef {
                 ["RING1", "RING2", "RING3", "RING4", "RING5"][r.get() as usize]
             }
             BlockRef::Midi => "MIDI",
+            BlockRef::TapeEngine => "TAPE_ENG",
             BlockRef::PartMix(_) | BlockRef::Tempo => return None,
         })
     }

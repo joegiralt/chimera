@@ -49,6 +49,8 @@ impl TryFrom<u8> for Op {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BlockRef {
     Modal,
+    /// TAPE's engine (`TapeEngineParams`). `Tape` is the master stage.
+    TapeEngine,
     /// The Algo engine's voice-level parameters (`AlgoParams`).
     Algo,
     /// One Algo operator (`AlgoOpParams`).
@@ -93,7 +95,7 @@ pub enum BlockRef {
 }
 
 impl BlockRef {
-    pub const ALL: [BlockRef; 33] = [
+    pub const ALL: [BlockRef; 34] = [
         BlockRef::Modal,
         BlockRef::Algo,
         BlockRef::AlgoOp(Op::A),
@@ -127,12 +129,14 @@ impl BlockRef {
         BlockRef::OrbitRing(RingIdx::ALL[3]),
         BlockRef::OrbitRing(RingIdx::ALL[4]),
         BlockRef::Midi,
+        BlockRef::TapeEngine,
     ];
 
     /// The block type's spec table (static; no instance needed).
     pub fn specs(self) -> &'static [ParamSpec] {
         match self {
             BlockRef::Modal => &crate::dsp::modal::MODAL_SPECS,
+            BlockRef::TapeEngine => &crate::dsp::tape_engine::TAPE_ENGINE_SPECS,
             BlockRef::Algo => &crate::dsp::algo::params::ALGO_SPECS,
             BlockRef::AlgoOp(_) => &crate::dsp::algo::params::ALGO_OP_SPECS,
             BlockRef::Drive => &crate::params::DRIVE_SPECS,
@@ -171,7 +175,9 @@ impl BlockRef {
             | BlockRef::Out
             | BlockRef::Pitch
             | BlockRef::Env(_) => true,
-            BlockRef::Lfo(_)
+            // Not yet: the voice plays TAPE from build step 3.
+            BlockRef::TapeEngine
+            | BlockRef::Lfo(_)
             | BlockRef::Chorus
             | BlockRef::Delay
             | BlockRef::Reverb
