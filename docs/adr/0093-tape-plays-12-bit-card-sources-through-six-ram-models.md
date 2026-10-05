@@ -110,11 +110,14 @@ code 23, ident `"TAPE"`, ADR 0055).
     per voice: its offsets' sum is the deviation in cents (±25 of wow,
     ±8 of flutter), added to `inc`'s sum before the clamp, so the floors
     take the wow and no head passes `INC_MAX`. Each voice is seeded by its
-    index, its phases a golden ratio of a turn apart (TAPE Task 9).
+    index, its phases a golden ratio of a turn apart and its rates 5–10 %
+    off, so voices drift apart (TAPE Task 9). It runs, and is billed, when
+    stored above 0 or routed (`tape_runs`).
   - AGE is a falling one-pole (20 kHz to 2.5 kHz), white hiss to
     −42 dBFS after the dropout gain, and above ½ dropouts of up to 9 dB
-    for 20–80 ms, eased a block at a time. It runs, and is billed, when
-    stored above 0 or routed (`stage_runs`' rule); eased to 0 it stops.
+    for 20–80 ms, eased a block at a time, ended at once by AGE at ½ or
+    under. It runs, and is billed, when stored above 0 or routed
+    (`stage_runs`' rule); eased to 0 it stops, a wire just above 0.
   - MODEL and TYPE latch at note-on.
 - **The models:**
   - **LOOP:** plays from START, then loops `[Ls, Ls + Ll)`, latching new
@@ -217,24 +220,25 @@ code 23, ident `"TAPE"`, ADR 0055).
   REVERSE about 260, SCRUB about 280, PING-PONG clamping about 289. The
   bench at build step 3 replaces them:
 
-  | | LOOP, REVERSE | PING-PONG | SCRUB | TRANSWAVE | TRANSWAVE, pitch moving > ±6.2 st | STRETCH | AGE on |
-  |---|---|---|---|---|---|---|---|
-  | Billed | 450 | 500 | 480 | 400 | 770 | 440 | +30 |
+  | | LOOP, REVERSE | PING-PONG | SCRUB | TRANSWAVE | TRANSWAVE, pitch moving > ±6.2 st | STRETCH | TAPE on | AGE on |
+  |---|---|---|---|---|---|---|---|---|
+  | Billed | 450 | 490 | 480 | 400 | 770 | 430 | +10 | +30 |
 
-  TAPE Task 9 measured TAPE's transport at 1.55 instructions a sample on
-  every model and AGE at 15.7: PING-PONG (490.6) and STRETCH (431.5) went
-  over 490 and 430 and were re-billed, and AGE's +20 (an estimate that
-  left out its loop and its block) became +30. TRANSWAVE holds 400 by 0.1.
+  TAPE Task 9 (fix round 1) measured the macros' tests at 0.52
+  instructions a sample on every model (PING-PONG 489, STRETCH 429.9,
+  TRANSWAVE 398), TAPE's transport at 1.14 (+10, billed only when it
+  runs) and AGE at 15.9: AGE's +20 (an estimate that left out its loop
+  and its block) became +30.
 
   - **Admission.** Every plain TAPE voice is admitted 8 on rev V, and
-    with ORBIT and the master tape but for AGE on PING-PONG (7 with both)
-    and SCRUB (7 with the master tape); 7 or 6 with DRIVE and FOLD. On rev
-    Y, TRANSWAVE with AGE off (477) keeps 8 by one cycle; STRETCH with AGE
-    off (517), LOOP and REVERSE with AGE off (527) and TRANSWAVE with AGE
-    7; STRETCH with AGE (547), LOOP and REVERSE with AGE, SCRUB and
-    PING-PONG 6; with DRIVE and FOLD, 5 or 6. A TRANSWAVE whose pitch can
-    move past ±6.2 semitones (877 with AGE) is admitted 4 on rev Y and 5
-    on rev V.
+    with ORBIT and the master tape but for TAPE and AGE on PING-PONG (7
+    with both) and SCRUB (7 with the master tape); 7 or 6 with DRIVE and
+    FOLD. On rev Y, TRANSWAVE with TAPE and AGE off (477) keeps 8 by one
+    cycle; STRETCH (507) and LOOP and REVERSE (527) with them off, and
+    TRANSWAVE with them (517), 7; STRETCH with them (547), LOOP and
+    REVERSE with them, SCRUB and PING-PONG 6; with DRIVE and FOLD, 5 or 6.
+    A TRANSWAVE whose pitch can move past ±6.2 semitones (887 with TAPE
+    and AGE) is admitted 4 on rev Y and 5 on rev V.
   - **Eight voices hold while the benched engine stays under 546 on rev V
     and 400 on rev Y.**
   - **The bench rows are build step 3:** cold-cache worst blocks with
