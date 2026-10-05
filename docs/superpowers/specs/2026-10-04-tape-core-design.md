@@ -474,7 +474,7 @@ Host estimates, in the house manner (instructions × 1.46 × 1.1, as `ModalEngin
 `just tape <file.wav> [--rate 24k] [--root C3] [--transwave <cycle> [--top 1024]] [--name CHOIR] [--channel mix|L|R]` runs `chimera-import tape` (in `chimera-desktop`, beside ADR 0088's binary):
 
 1. **Read** PCM 8/16/24/32-bit or float WAV with `hound` (MIT/Apache-2.0, host only). Stereo is mixed `(L + R)/2` unless `--channel` picks a side.
-2. **Clean.** A 5 Hz high-pass takes out DC. Leading and trailing silence under −60 dBFS is trimmed. The peak is normalised to −0.5 dBFS, so the 12 bits are used whole; the Sound sets the level.
+2. **Clean.** A 5 Hz high-pass takes out DC. Leading and trailing silence more than 60 dB under the file's own peak is trimmed (relative, so a quiet recording keeps its tail). The peak is normalised to −0.5 dBFS, so the 12 bits are used whole; the Sound sets the level.
 3. **Pitch.** The root comes from, in order: `--root`; the `smpl` chunk's unity note and fraction; a YIN estimate over the loudest 100 ms. YIN's period goes in the header (Q16.16) if its aperiodicity is under 0.2. Otherwise the source is **unpitched**: `period` 0, root C4, and the log says so.
 4. **Resample** to the chosen rate (48, 32, 24, 16, 12 or 8 kHz; 24 by default, #279) with `rubato`'s windowed-sinc resampler (MIT, host only), with its cut-off at **0.35 × rate** and 80 dB of stop band from 0.5 × rate.
 5. **Transwave** (`--transwave <cycle>`, the cycle length in input samples):
