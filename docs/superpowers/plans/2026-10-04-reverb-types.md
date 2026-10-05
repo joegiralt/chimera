@@ -1198,16 +1198,33 @@ BUS+V's frame is QUAD_BUS_V + ΔCOST, so ΔCOST = that row − QUAD_BUS_V.
   fixed 24 kHz layout, whole-dB SHAPE/CURVE, and loudness by sustained
   input.
 
-### Task 9: ROOM on the LOOP engine (2026-10-05, host; unit deferred)
+### Task 9: ROOM on the LOOP engine (2026-10-05, rev V at 480 MHz, unit)
 
-- **Bench: not read.** The unit was held by another task. The build
-  carries REV ROOM (SIZE and PRE-DLY between their ends every block,
-  DECAY, DIFFUSE, SMEAR and RATE at 1), `STRESS ROOM`, and REV SWITCH MAX
-  stepping QUAD → GATE → ROOM. Host estimate, not a gate: the per-sample
-  body is 386 Thumb instructions against QUAD's crossfading 361 and
-  BURST's 263–318; BURST's −43 instructions read −34 cycles on the chip,
-  so ROOM is about **+20 over REV QUAD**: inside the default 76, at the
-  tape build's 23. ROOM-T is the fallback if the unit reads it over.
+- **Bench** at `9cc3e42e` (fix round 1), builds `bench,orbit` ("default")
+  and `bench,orbit,master-tape` ("tape"); rows are cycles per sample less
+  MIX, each warmed through the switch (`.superpowers/sdd/2026-10-04-reverb-types/t9-bench-orbit.txt`, `t9-bench-tape.txt`).
+
+| Row | default | tape |
+|---|---|---|
+| MIX | 800 | 785 |
+| REV QUAD | 55 | 71 |
+| REV QUAD S | 49 | 49 |
+| REV GATE | 34 | 55 |
+| REV RVRS | 34 | 56 |
+| REV ROOM | **17** (ΔCOST **−38**) | **41** (**−30**) |
+| BUS+V | 1,078 | 1,423 |
+| STRESS (max / 448,000), QUAD | 529,252: over | 491,223: over |
+| STRESS with GATE | 528,090: over | 490,279: over |
+| STRESS with ROOM | 527,059: over | 488,153: over |
+| REV SWITCH MAX (QUAD → GATE → ROOM) | **414,364: passes** | **436,583: passes** |
+
+- **ΔCOST ≤ headroom** on both builds: ROOM costs less than QUAD (76 and
+  23 untouched). REV ROOM runs DECAY held with SIZE and PRE-DLY always
+  crossfading; the bench has no DECAY-moving row (host estimate: about
+  +390 instructions a block, under 11 cycles a sample). STRESS is over
+  with ORBIT for every TYPE alike, ROOM the lowest: #355, not this task.
+- The host estimate before the unit read −9 (steady): the chip reads
+  −38 and −30.
 - **Flash:** plain release `text` 720,404 B (+5,220 over `13b55276`'s
   715,184); `--features orbit` `.text` +4,656, `.rodata` +396. The
   engine is 4.3 KB of it (`run` 3.1 KB, unrolled).
