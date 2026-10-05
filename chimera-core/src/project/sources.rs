@@ -152,16 +152,21 @@ pub struct Unused {
 }
 
 impl Project {
-    /// PURGE UNUSED SOURCES' count, as it would run now.
+    /// The sources nothing uses, absent ones included.
+    fn unused(&self) -> impl Iterator<Item = (SourceId, SourceEntry)> + '_ {
+        SourceId::ALL.into_iter().filter_map(|s| {
+            let e = self.pool.source(s)?;
+            source_users(self, s).is_empty().then_some((s, e))
+        })
+    }
+
+    /// PURGE UNUSED SOURCES' count, as it would run now: sources holding
+    /// bytes only. An unused absent entry goes with them, but alone it is
+    /// nothing to offer.
     pub fn unused_sources(&self) -> Unused {
-        SourceId::ALL
-            .into_iter()
-            .filter_map(|s| {
-                self.pool
-                    .source(s)
-                    .filter(|_| source_users(self, s).is_empty())
-            })
-            .fold(Unused::default(), |u, e| Unused {
+        self.unused()
+            .filter(|(_, e)| !e.absent())
+            .fold(Unused::default(), |u, (_, e)| Unused {
                 count: u.count + 1,
                 cost: u.cost + e.cost(),
             })
@@ -169,17 +174,18 @@ impl Project {
 
     /// Every source nothing uses, recounted now (ADR 0087). A source in
     /// `sounding` is retired: its bytes stay pending until its note ends.
-    /// The card is never touched.
+    /// The card is never touched. With none, nothing moves.
     pub fn purge_unused_sources(&mut self, sounding: u32) -> Purged {
+        let mut gone = [None; MAX_SOURCES];
+        for (i, (s, e)) in self.unused().enumerate() {
+            gone[i] = Some((s, e));
+        }
+        if gone[0].is_none() {
+            return Purged::default();
+        }
         self.bump();
         let mut out = Purged::default();
-        for s in SourceId::ALL {
-            let Some(e) = self.pool.source(s) else {
-                continue;
-            };
-            if !source_users(self, s).is_empty() {
-                continue;
-            }
+        for (s, e) in gone.into_iter().flatten() {
             out.freed = out.freed + e.cost();
             if sounding & s.bit() != 0 && !e.absent() {
                 out.retired += 1;
@@ -213,14 +219,29 @@ impl Project {
         self.pool.source_absent(r)
     }
 
-    /// One UI pass of the sources' gated compaction (ADR 0087): true when
-    /// a hole closed. Bumps only then, so a status cache keyed on `rev`
-    /// isn't redone each frame.
+    /// One UI pass of the sources' gated compaction (ADR 0087), waiting
+    /// by the gate clock: true when a hole closed. Bumps only then, so a
+    /// status cache keyed on `rev` isn't redone each frame.
     pub fn sources_pass(&mut self) -> bool {
-        let moved = self.pool.source_pass();
+        let moved = self.pool.source_pass_timed();
         if moved {
             self.bump();
         }
         moved
+    }
+
+    /// `sources_pass`, waiting for the audio while `within` says so.
+    pub fn sources_pass_with(&mut self, within: impl FnMut() -> bool) -> bool {
+        let moved = self.pool.source_pass(within);
+        if moved {
+            self.bump();
+        }
+        moved
+    }
+
+    /// The UI loop's clock in ms, which a gate waits by
+    /// (`GATE_ACK_TIMEOUT_MS`).
+    pub fn set_gate_clock(&mut self, now_ms: fn() -> u32) {
+        self.pool.set_clock(now_ms);
     }
 }

@@ -33,6 +33,8 @@ pub struct Desk {
 
 impl Desk {
     pub fn launch(root: PathBuf) -> Self {
+        // A table of its own with no reader: no audio runs here, so a
+        // source gate is answered at once (ADR 0087).
         let mut ui = Box::new(UiState::with_arena(crate::leaked_arena(Box::leak(
             Box::new(chimera_core::source_table::SourceTable::new()),
         ))));

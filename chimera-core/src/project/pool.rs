@@ -19,7 +19,17 @@ use crate::storage::{
 use super::arena::{ARENA_BYTES, ArenaWriter, Cost, GateAcked, MAX_SOURCES, Shift};
 use super::ids::SlotId;
 use super::sources::{SOURCE_HEAD, SourceEntry, SourceId, SourceRef, source_cost};
-use crate::source_table::SourceTable;
+use crate::source_table::{Answer, GATE_ACK_TIMEOUT_MS, SourceTable};
+
+/// While `GATE_ACK_TIMEOUT_MS` hasn't passed on `clock`; false at once
+/// without one.
+fn deadline(clock: Option<fn() -> u32>) -> impl FnMut() -> bool {
+    let t0 = clock.map(|c| c());
+    move || match (clock, t0) {
+        (Some(c), Some(t0)) => c().wrapping_sub(t0) < GATE_ACK_TIMEOUT_MS,
+        _ => false,
+    }
+}
 
 /// An entry's name, padded, before its records.
 const NAME_LEN: usize = 16;
@@ -54,6 +64,8 @@ pub struct PoolFull {
 pub struct Pool {
     index: Index,
     sources: Sources,
+    /// What a gate waits by, in ms: the UI loop's clock. None in tests.
+    clock: Option<fn() -> u32>,
     arena: ArenaWriter,
     /// A load's slot, decoded whole before it is encoded in: here, in
     /// AXI, not on the stack. Nothing reads it but the load.
@@ -70,14 +82,17 @@ enum SrcSlot {
     Retired {
         offset: u32,
     },
+    /// Its bytes gone and its row empty: free once no voice holds it, two
+    /// blocks after audio block `since` began.
+    Draining {
+        since: u32,
+    },
 }
 
-/// The source slots, their generations, and the gate pass's state.
+/// The source slots and their generations.
 struct Sources {
     slots: [SrcSlot; MAX_SOURCES],
     gens: [u16; MAX_SOURCES],
-    /// The epoch of a closed gate and the ids it moves.
-    closed: Option<(u32, u32)>,
 }
 
 /// Where each slot's bytes sit, and its generation.
@@ -104,8 +119,8 @@ impl Pool {
             addr_of_mut!((*p).sources).write(Sources {
                 slots: [SrcSlot::Empty; MAX_SOURCES],
                 gens: [0; MAX_SOURCES],
-                closed: None,
             });
+            addr_of_mut!((*p).clock).write(None);
             addr_of_mut!((*p).arena).write(arena);
             // ponytail: built by value, left to the optimiser to write in
             // place (`neutral_params` returns its snapshot whole);
@@ -182,7 +197,7 @@ impl Pool {
     pub fn source(&self, s: SourceId) -> Option<SourceEntry> {
         match self.sources.slots[s.index()] {
             SrcSlot::Live(e) => Some(e),
-            SrcSlot::Empty | SrcSlot::Retired { .. } => None,
+            SrcSlot::Empty | SrcSlot::Retired { .. } | SrcSlot::Draining { .. } => None,
         }
     }
 
@@ -294,72 +309,99 @@ impl Pool {
             .filter(|s| match self.sources.slots[s.index()] {
                 SrcSlot::Live(e) => !e.absent() && e.offset >= offset,
                 SrcSlot::Retired { offset: o } => o >= offset,
-                SrcSlot::Empty => false,
+                SrcSlot::Empty | SrcSlot::Draining { .. } => false,
             })
             .fold(0, |m, s| m | s.bit())
     }
 
-    /// One UI pass of ADR 0087's sequence for the lowest pending hole:
-    /// wait for `sounding & above == 0`, close the gate, wait for the ack,
-    /// re-check, then move and open, or open and wait again. Never blocks:
-    /// each step is a pass. True when the hole closed.
-    pub(in crate::project) fn source_pass(&mut self) -> bool {
+    /// ADR 0087's sequence for the lowest pending hole, whole, in one
+    /// call: nothing while a source at or above it sounds; else close the
+    /// gate on them, wait for the audio's answer while `within` says so
+    /// (it answers within two blocks), and on an ack close every hole the
+    /// gate covers. A nack (a voice holds a moving id) or a timeout moves
+    /// nothing. The gate is open again on return, always. True when a
+    /// hole closed.
+    pub(in crate::project) fn source_pass(&mut self, within: impl FnMut() -> bool) -> bool {
+        self.drain_retired();
         let table = self.table();
         let Some(hole) = self.arena.next_compaction() else {
-            if self.sources.closed.take().is_some() {
-                table.open_gate();
-            }
             return false;
         };
-        let above = self.above(hole.offset);
-        let Some((epoch, moving)) = self.sources.closed else {
-            if table.sounding() & above == 0 {
-                self.sources.closed = Some((table.close_gate(above), above));
-            }
-            return false;
-        };
-        if !table.gate_acked(epoch) {
+        let moving = self.above(hole.offset);
+        if table.sounding() & moving != 0 {
             return false;
         }
-        // The re-check: a note-on in the block before the close, or a
-        // source stored since it, and nothing moves.
-        let sounding = table.sounding();
-        self.sources.closed = None;
-        if sounding & moving != 0 || moving != above {
-            table.open_gate();
-            return false;
-        }
-        // Every source at or above the hole is in `moving`, and none
-        // sounds: each hole above it closes under the same gate.
+        let epoch = table.close_gate(moving);
         let mut moved = false;
-        while self
-            .arena
-            .next_compaction()
-            .is_some_and(|h| self.above(h.offset) & !moving == 0)
-        {
-            let moves =
-                SourceId::ALL.map(|s| self.source_offset(s).filter(|_| moving & s.bit() != 0));
-            let ready = |o: u32| moves.contains(&Some(o));
-            let Some(shift) = self.arena.source_compact(GateAcked::after_ack(ready)) else {
-                break;
-            };
-            self.rebase_sources(shift);
-            moved = true;
+        if table.wait(epoch, within) == Answer::Acked {
+            // No voice holds a moving source, and none can start on one
+            // until the gate opens: each hole above closes too.
+            while self
+                .arena
+                .next_compaction()
+                .is_some_and(|h| self.above(h.offset) & !moving == 0)
+            {
+                let moves =
+                    SourceId::ALL.map(|s| self.source_offset(s).filter(|_| moving & s.bit() != 0));
+                let ready = |o: u32| moves.contains(&Some(o));
+                let Some(shift) = self.arena.source_compact(GateAcked::after_ack(ready)) else {
+                    break;
+                };
+                self.rebase_sources(shift, table.blocks());
+                moved = true;
+            }
         }
         table.open_gate();
         moved
     }
 
+    /// `source_pass` against the pool's clock: `GATE_ACK_TIMEOUT_MS`, or
+    /// one look with no clock.
+    pub(in crate::project) fn source_pass_timed(&mut self) -> bool {
+        let within = deadline(self.clock);
+        self.source_pass(within)
+    }
+
+    /// Every source out of the index (NEW, a failed load): retired, and
+    /// compacted at once unless one still sounds.
+    pub(in crate::project) fn sources_clear(&mut self) {
+        for s in SourceId::ALL {
+            self.source_free(s);
+        }
+        self.source_pass_timed();
+    }
+
+    /// The clock `source_pass_timed` waits by, in ms.
+    pub(in crate::project) fn set_clock(&mut self, now_ms: fn() -> u32) {
+        self.clock = Some(now_ms);
+    }
+
+    /// A drained slot whose source no voice held since its row emptied
+    /// is free again: a held note-on never finds its id reused.
+    fn drain_retired(&mut self) {
+        let table = self.table();
+        let (reader, blocks) = (table.has_reader(), table.blocks());
+        let sounding = table.sounding();
+        for s in SourceId::ALL {
+            let slot = &mut self.sources.slots[s.index()];
+            if let SrcSlot::Draining { since } = *slot
+                && (!reader || blocks.wrapping_sub(since) >= 2 && sounding & s.bit() == 0)
+            {
+                *slot = SrcSlot::Empty;
+            }
+        }
+    }
+
     /// The index and the rows after `source_compact` closed the hole at
     /// `from`: its retired slot empties, every source above moves down.
     /// Under the closed gate.
-    fn rebase_sources(&mut self, Shift { from, by }: Shift) {
+    fn rebase_sources(&mut self, Shift { from, by }: Shift, since: u32) {
         let table = self.table();
         for s in SourceId::ALL {
             let slot = &mut self.sources.slots[s.index()];
             let base = match slot {
                 SrcSlot::Retired { offset } if *offset == from => {
-                    *slot = SrcSlot::Empty;
+                    *slot = SrcSlot::Draining { since };
                     table.clear(s);
                     continue;
                 }

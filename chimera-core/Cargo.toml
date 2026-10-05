@@ -30,5 +30,13 @@ test-support = []
 chimera-core = { path = ".", default-features = false, features = ["test-support"] }
 chimera-hal = { path = "../chimera-hal", features = ["testkit"] }
 
+# The `SourceTable` model (`tests/loom_source_table.rs`): only under
+# `RUSTFLAGS="--cfg loom"`, never in a firmware or desktop build. MIT.
+[target.'cfg(loom)'.dependencies]
+loom = "0.7"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }
+
 [build-dependencies]
 chimera-waves = { path = "../chimera-waves" }

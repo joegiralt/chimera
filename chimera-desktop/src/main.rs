@@ -67,6 +67,7 @@ fn main() {
     let mut audio = audio::DesktopAudio::new(scope_w, orbit_w);
 
     let mut ui = UiState::with_arena(leaked_arena(&SOURCE_TABLE));
+    ui.project_mut().set_gate_clock(gate_ms);
 
     // Boot: SYSTEM and the last project behind the splash, held 1 s from
     // first light as on the chip; then the splash again in the card's theme.
@@ -224,6 +225,12 @@ fn piano_note(keys: &[minifb::Key]) -> Option<u8> {
 }
 
 /// The pool arena: the chip's AXI static, here a leaked box.
+/// The source gate's clock (ADR 0087): ms since the first call.
+fn gate_ms() -> u32 {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_millis() as u32
+}
+
 /// An arena of its own, read by `table`: `SOURCE_TABLE` where the audio
 /// runs.
 fn leaked_arena(table: &'static SourceTable) -> ArenaWriter {

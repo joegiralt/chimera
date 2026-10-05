@@ -1,23 +1,37 @@
 //! The audio's view of the pool's sources (ADR 0087): a row per source,
 //! the gate the UI closes while it moves source bytes, and the mask of
-//! sources a voice reads. Atomics only: the UI writes rows and the gate,
-//! the audio writes the ack and `sounding`.
+//! sources the audio's voices hold. Atomics only: the UI writes rows and
+//! the gate, the audio writes the ack, the nack and `sounding`.
+//!
+//! One reader: `reader` hands out the table's only `AudioToken`, and every
+//! block's `GateView` borrows it, so blocks run one after another on one
+//! owner.
 //!
 //! Ordering:
-//! - **publish:** a row's fields `Relaxed`, then `fence(Release)`. The id
-//!   reaches the audio later, through the triple buffer's own `Release`.
+//! - **publish:** `base` and `rate` `Relaxed`, then `held` `Release`; a
+//!   reader loads `held` `Acquire` first. The id itself reaches the audio
+//!   later, through the triple buffer's own `Release`.
 //! - **close:** the moving mask `Relaxed`, then the epoch `Release`. The
 //!   audio's `begin_block` loads the epoch `Acquire` before the mask, so a
-//!   block that acks an epoch saw that epoch's mask.
-//! - **ack:** `Release` by the audio after its loads; the UI's `Acquire`
-//!   then sees every `sounding` the audio stored before it.
+//!   block that answers an epoch saw that epoch's mask.
+//! - **ack / nack:** `Release` by the audio after its loads. The UI's
+//!   `Acquire` of the ack orders every earlier block's reads before the
+//!   move. A block whose voices hold a moving source nacks instead, and
+//!   the UI opens without moving.
 //! - **open:** rows rewritten `Relaxed`, then the gate `Release`; the
 //!   audio's next `begin_block` loads it `Acquire` and so sees the rows.
 
-use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering, fence};
+#[cfg(not(loom))]
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
+#[cfg(loom)]
+use loom::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 
 use crate::project::SourceId;
 use crate::project::arena::{ARENA_BYTES, MAX_SOURCES};
+
+/// How long a gate waits for the audio's answer: two blocks and change.
+/// Every block answers, so only a stalled audio runs it out.
+pub const GATE_ACK_TIMEOUT_MS: u32 = 6;
 
 /// Where a source's held bytes sit in the arena, and its rate. `held` 0
 /// is an empty row: nothing to read.
@@ -28,7 +42,17 @@ pub struct SourceRow {
 }
 
 impl SourceRow {
+    #[cfg(not(loom))]
     const fn empty() -> SourceRow {
+        SourceRow {
+            base: AtomicU32::new(0),
+            held: AtomicU32::new(0),
+            rate: AtomicU32::new(0),
+        }
+    }
+
+    #[cfg(loom)]
+    fn empty() -> SourceRow {
         SourceRow {
             base: AtomicU32::new(0),
             held: AtomicU32::new(0),
@@ -41,75 +65,147 @@ pub struct SourceTable {
     rows: [SourceRow; MAX_SOURCES],
     /// The ids a closed gate moves, a bit each; 0 while open.
     gate: AtomicU32,
-    /// Moves on every close: what the audio acks.
+    /// Moves on every close: what the audio answers.
     epoch: AtomicU32,
     ack: AtomicU32,
+    nack: AtomicU32,
     /// Written by the audio once a block: bit n set while a voice holds
-    /// source n.
+    /// source n, one waiting at a closed gate included.
     sounding: AtomicU32,
+    /// Audio blocks begun: each one after the last block's `sounding`.
+    blocks: AtomicU32,
     /// The arena's first byte: null until `attach`.
     arena: AtomicPtr<u8>,
+    /// The `AudioToken` is out: someone may read.
+    reader: AtomicBool,
 }
 
 /// The chip's and the desktop's one table, beside the one arena.
+#[cfg(not(loom))]
 pub static SOURCE_TABLE: SourceTable = SourceTable::new();
 
+#[cfg(not(loom))]
 impl Default for SourceTable {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// What the UI's wait on a closed gate came to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Answer {
+    /// The audio began a block under the gate, no voice on a moving id.
+    Acked,
+    /// A voice holds a moving id: open, and try again later.
+    Nacked,
+    /// No answer in time: the audio is stalled.
+    TimedOut,
+}
+
 impl SourceTable {
+    #[cfg(not(loom))]
     pub const fn new() -> Self {
         SourceTable {
             rows: [const { SourceRow::empty() }; MAX_SOURCES],
             gate: AtomicU32::new(0),
             epoch: AtomicU32::new(0),
             ack: AtomicU32::new(0),
+            nack: AtomicU32::new(0),
             sounding: AtomicU32::new(0),
+            blocks: AtomicU32::new(0),
             arena: AtomicPtr::new(core::ptr::null_mut()),
+            reader: AtomicBool::new(false),
         }
     }
 
-    /// The arena the rows' bases are offsets into: `ArenaWriter::new`'s.
+    /// loom's atomics aren't `const`.
+    #[cfg(loom)]
+    pub fn new() -> Self {
+        SourceTable {
+            rows: core::array::from_fn(|_| SourceRow::empty()),
+            gate: AtomicU32::new(0),
+            epoch: AtomicU32::new(0),
+            ack: AtomicU32::new(0),
+            nack: AtomicU32::new(0),
+            sounding: AtomicU32::new(0),
+            blocks: AtomicU32::new(0),
+            arena: AtomicPtr::new(core::ptr::null_mut()),
+            reader: AtomicBool::new(false),
+        }
+    }
+
+    /// The table's one `AudioToken`: `None` once taken.
+    pub fn reader(&'static self) -> Option<AudioToken> {
+        (!self.reader.swap(true, Ordering::AcqRel)).then_some(AudioToken {
+            table: self,
+            answered: (0, true),
+        })
+    }
+
+    /// Binds the arena the rows' bases are offsets into, once: a second
+    /// arena would leave the first's rows pointing at the second's bytes.
+    ///
+    /// # Panics
+    /// When already attached: one table per arena.
     pub(crate) fn attach(&self, base: *mut u8) {
-        self.arena.store(base, Ordering::Release);
+        let was = self.arena.compare_exchange(
+            core::ptr::null_mut(),
+            base,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+        assert!(was.is_ok(), "a source table serves one arena");
+        self.gate.store(0, Ordering::Release);
     }
 
     /// UI: source `id` reads `held` bytes from arena offset `base`. The
-    /// row must be empty or under a closed gate that moves `id`.
-    pub fn publish(&self, id: SourceId, base: u32, held: u32, rate: u16) {
+    /// row must be empty, or under an acked gate that moves `id`.
+    pub(crate) fn publish(&self, id: SourceId, base: u32, held: u32, rate: u16) {
         let r = &self.rows[id.index()];
         r.base.store(base, Ordering::Relaxed);
-        r.held.store(held, Ordering::Relaxed);
         r.rate.store(rate.into(), Ordering::Relaxed);
-        fence(Ordering::Release);
+        r.held.store(held, Ordering::Release);
     }
 
-    /// UI: `id`'s row reads nothing. Under a closed gate that moves `id`.
+    /// UI: `id`'s row reads nothing. Under an acked gate that moves `id`.
     pub(crate) fn clear(&self, id: SourceId) {
         self.rows[id.index()].held.store(0, Ordering::Relaxed);
     }
 
-    /// UI: `id`'s base, under a closed gate that moves `id`.
+    /// UI: `id`'s base, under an acked gate that moves `id`.
     pub(crate) fn rebase(&self, id: SourceId, base: u32) {
         self.rows[id.index()].base.store(base, Ordering::Relaxed);
     }
 
     /// UI: closes the gate on the ids in `moving`; the epoch to wait for.
-    pub fn close_gate(&self, moving: u32) -> u32 {
+    pub(crate) fn close_gate(&self, moving: u32) -> u32 {
         self.gate.store(moving, Ordering::Relaxed);
         self.epoch.fetch_add(1, Ordering::Release).wrapping_add(1)
     }
 
-    /// UI: the audio began a block after the close that returned `epoch`.
-    pub fn gate_acked(&self, epoch: u32) -> bool {
-        self.ack.load(Ordering::Acquire) == epoch
+    /// UI: waits for the audio's answer to the close that returned
+    /// `epoch`, while `within` says so. No reader: nothing can read, so
+    /// acked at once.
+    pub(crate) fn wait(&self, epoch: u32, mut within: impl FnMut() -> bool) -> Answer {
+        if !self.has_reader() {
+            return Answer::Acked;
+        }
+        loop {
+            if self.ack.load(Ordering::Acquire) == epoch {
+                return Answer::Acked;
+            }
+            if self.nack.load(Ordering::Acquire) == epoch {
+                return Answer::Nacked;
+            }
+            if !within() {
+                return Answer::TimedOut;
+            }
+            core::hint::spin_loop();
+        }
     }
 
     /// UI: every source reads again, from the rows as rewritten.
-    pub fn open_gate(&self) {
+    pub(crate) fn open_gate(&self) {
         self.gate.store(0, Ordering::Release);
     }
 
@@ -118,28 +214,115 @@ impl SourceTable {
         self.sounding.load(Ordering::Acquire)
     }
 
-    /// Audio, once a block after its voices: the sources they hold, a
-    /// voice waiting on a closed gate included.
-    pub fn store_sounding(&self, mask: u32) {
-        self.sounding.store(mask, Ordering::Release);
+    /// The `AudioToken` is out: something may read.
+    pub fn has_reader(&self) -> bool {
+        self.reader.load(Ordering::Acquire)
     }
 
-    /// Audio, at each block's start: acks the gate, and the block's view.
-    pub fn begin_block(&self) -> GateView<'_> {
-        let e = self.epoch.load(Ordering::Acquire);
-        let moving = self.gate.load(Ordering::Acquire);
-        self.ack.store(e, Ordering::Release);
-        GateView {
-            table: self,
-            moving,
-        }
+    /// UI: audio blocks begun. Read before `sounding`, a count `n` means
+    /// `sounding` is from block `n - 1`'s end or later.
+    pub fn blocks(&self) -> u32 {
+        self.blocks.load(Ordering::Acquire)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn publish_for_test(&self, id: SourceId, base: u32, held: u32, rate: u16) {
+        self.publish(id, base, held, rate)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn close_gate_for_test(&self, moving: u32) -> u32 {
+        self.close_gate(moving)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn open_gate_for_test(&self) {
+        self.open_gate()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn rebase_for_test(&self, id: SourceId, base: u32) {
+        self.rebase(id, base)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn wait_for_test(&self, epoch: u32, within: impl FnMut() -> bool) -> Answer {
+        self.wait(epoch, within)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn attach_for_test(&self, base: *mut u8) {
+        self.attach(base)
     }
 }
 
-/// One block's reads: the sources a closed gate moves read nothing.
-pub struct GateView<'a> {
-    table: &'a SourceTable,
+/// The audio's side of a table: only `SourceTable::reader` makes one, once.
+pub struct AudioToken {
+    table: &'static SourceTable,
+    /// The last epoch this side answered, and whether it acked: an answer
+    /// holds for every block of its epoch.
+    answered: (u32, bool),
+}
+
+impl AudioToken {
+    /// At each block's start: answers a new close, and the block's view.
+    /// A block whose voices (as last stored) hold a moving id nacks and
+    /// reads as if the gate were open: the UI won't move without an ack.
+    pub fn begin_block(&mut self) -> GateView<'_> {
+        let t = self.table;
+        t.blocks.fetch_add(1, Ordering::Release);
+        let e = t.epoch.load(Ordering::Acquire);
+        let gate = t.gate.load(Ordering::Acquire);
+        if self.answered.0 != e {
+            let held = t.sounding.load(Ordering::Relaxed);
+            let ack = gate & held == 0;
+            let to = if ack { &t.ack } else { &t.nack };
+            to.store(e, Ordering::Release);
+            self.answered = (e, ack);
+        }
+        let moving = if self.answered.1 { gate } else { 0 };
+        GateView {
+            table: t,
+            moving,
+            arena: t.arena.load(Ordering::Acquire),
+            _token: core::marker::PhantomData,
+        }
+    }
+
+    /// Once a block after its voices: the sources they hold, one waiting
+    /// at a closed gate included.
+    pub fn store_sounding(&mut self, mask: u32) {
+        self.table.sounding.store(mask, Ordering::Release);
+    }
+
+    /// A block with no source voice: answers the gate, holds none.
+    pub fn idle_block(&mut self) {
+        let _ = self.begin_block();
+        self.store_sounding(0);
+    }
+}
+
+/// One block's reads: the sources a closed, acked gate moves read nothing.
+/// Not `Send` (its raw pointer): a view stays on the token owner's thread
+/// for its block.
+///
+/// ```compile_fail
+/// fn send<T: Send>(_: T) {}
+/// fn f(t: &mut chimera_core::source_table::AudioToken) {
+///     send(t.begin_block());
+/// }
+/// ```
+pub struct GateView<'b> {
+    table: &'static SourceTable,
     moving: u32,
+    arena: *const u8,
+    _token: core::marker::PhantomData<&'b mut AudioToken>,
 }
 
 impl GateView<'_> {
@@ -150,22 +333,30 @@ impl GateView<'_> {
             return None;
         }
         let r = &self.table.rows[id.index()];
-        let held = r.held.load(Ordering::Relaxed) as usize;
+        let held = r.held.load(Ordering::Acquire) as usize;
         let base = r.base.load(Ordering::Relaxed) as usize;
-        let arena = self.table.arena.load(Ordering::Acquire);
-        if held == 0 || arena.is_null() || base + held > ARENA_BYTES {
+        if held == 0 || self.arena.is_null() || base + held > ARENA_BYTES {
             return None;
         }
         // SAFETY (the `SourceReader` argument, ADR 0087): `arena` is the
-        // `&'static mut [u8; ARENA_BYTES]` `ArenaWriter::new` took, and
-        // `[base, base+held)` is inside it. The row is live (`held > 0`),
-        // and the UI writes a live row's bytes only under a closed, acked
-        // gate that moves that row's id: then `moving` has its bit and we
-        // returned above. The ack is stored after this block's `moving`
-        // was read, so no move starts until a later block. The writer's
-        // `bytes_mut` never reaches below the sources' end, where live rows
-        // point, so no `&mut` overlaps this `&`.
-        Some(unsafe { core::slice::from_raw_parts(arena.add(base), held) })
+        // `&'static mut [u8; ARENA_BYTES]` `ArenaWriter::new` attached
+        // (once), and `[base, base+held)` is inside it. The UI writes a
+        // live row's bytes only after it reads an ack for an epoch whose
+        // mask has `id`, and before it opens the gate. Views come one at
+        // a time from the table's one `AudioToken` (each borrows it, and
+        // can't leave its thread), so every view before the acking one
+        // ended before that ack was stored; the ack's `Release` and the
+        // UI's `Acquire` order their reads before the move. The acking
+        // view and every later one of its epoch carry the mask, and
+        // returned above. A nacking view carries none, but the UI never
+        // moves on a nack. The writer's `bytes_mut` never reaches below
+        // the sources' end, where live rows point.
+        Some(unsafe { core::slice::from_raw_parts(self.arena.add(base), held) })
+    }
+
+    /// The gate moves `id` this block: a note-on on it waits.
+    pub fn moving(&self, id: SourceId) -> bool {
+        self.moving & id.bit() != 0
     }
 
     /// Source `id`'s rate in Hz, 0 for an empty row.

@@ -306,6 +306,7 @@ fn synth(board: Board) -> ! {
 
     let mut controls = Stm32Controls::new();
     let ui = shared::take_ui().expect("UI state taken once");
+    ui.project_mut().set_gate_clock(gate_ms);
 
     // Start-up, in order, behind the splash until PART 1 can be drawn:
     // 1. SYSTEM and the last project from the card, however slow;
@@ -597,4 +598,10 @@ fn apply_theme(
     display.set_palette(new.palette());
     *theme = new;
     recolour
+}
+
+/// The source gate's clock (ADR 0087): ms from SysTick, at 2 ms steps.
+#[cfg(not(feature = "sd-probe"))]
+fn gate_ms() -> u32 {
+    controls::ticks().wrapping_mul(1_000 / controls::CONTROLS_HZ)
 }

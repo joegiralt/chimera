@@ -14,7 +14,7 @@ use chimera_core::note_queue::{InEvent, NoteDrain, NoteSources};
 use chimera_core::part::DacPair;
 use chimera_core::project::{LOAD_LINK, LoadGate};
 use chimera_core::scope::{ScopeFrame, ScopeWriter};
-use chimera_core::source_table::SOURCE_TABLE;
+use chimera_core::source_table::{AudioToken, SOURCE_TABLE};
 use chimera_core::triple::{Reader, Writer};
 
 use super::dma;
@@ -45,6 +45,8 @@ struct Engine {
     /// Holds the note queues through a project load (ADR 0046).
     gate: LoadGate,
     orbit: crate::orbit::Runner,
+    /// The source table's one reader (ADR 0087).
+    sources: AudioToken,
 }
 
 static mut ENGINE: MaybeUninit<Engine> = MaybeUninit::uninit();
@@ -95,6 +97,7 @@ pub fn init(
             dac: DacBlocks::new(),
             gate: LoadGate::new(),
             orbit,
+            sources: SOURCE_TABLE.reader().expect("the source reader, once"),
         });
     }
     ENGINE_READY.store(true, Ordering::Release);
@@ -122,8 +125,7 @@ pub fn render_half(half: Half) {
     let e = unsafe { (*addr_of_mut!(ENGINE)).assume_init_mut() };
     let shared = e.shared.read();
     // No TAPE voice yet: the block acks the source gate, and holds none.
-    let _ = SOURCE_TABLE.begin_block();
-    SOURCE_TABLE.store_sounding(0);
+    e.sources.idle_block();
     if e.gate.before_block(&LOAD_LINK, e.inst, shared) {
         let now = e.orbit.now();
         e.notes.drain(|src, ev| match ev {

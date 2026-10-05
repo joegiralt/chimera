@@ -14,7 +14,7 @@ use chimera_core::orbit::runner::{OrbitRunner, OrbitShared, OrbitView};
 use chimera_core::preset::Performance;
 use chimera_core::project::{LOAD_LINK, LoadGate, LoadLink};
 use chimera_core::scope::{ScopeFrame, ScopeWriter};
-use chimera_core::source_table::SOURCE_TABLE;
+use chimera_core::source_table::{AudioToken, SOURCE_TABLE};
 use chimera_core::triple::{TripleBuffer, Writer};
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use cpal::Stream;
@@ -178,6 +178,8 @@ struct Engine {
     gate: LoadGate,
     runner: Box<OrbitRunner>,
     view: Writer<OrbitView>,
+    /// The source table's one reader (ADR 0087).
+    sources: AudioToken,
 }
 
 impl Engine {
@@ -194,6 +196,7 @@ impl Engine {
                 core::num::NonZeroU32::new(sample_rate).expect("sample rate"),
             )),
             view,
+            sources: SOURCE_TABLE.reader().expect("the source reader, once"),
         }
     }
 
@@ -215,10 +218,10 @@ impl Engine {
             gate,
             runner,
             view,
+            sources,
         } = self;
-        // No TAPE voice yet: the block acks the source gate, and holds none.
-        let _ = SOURCE_TABLE.begin_block();
-        SOURCE_TABLE.store_sounding(0);
+        // No TAPE voice yet: the block answers the source gate, holds none.
+        sources.idle_block();
         if gate.before_block(link, inst, shared) {
             let now = runner.now();
             drain.drain(|src, ev| match ev {
