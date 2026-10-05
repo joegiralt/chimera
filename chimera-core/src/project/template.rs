@@ -8,6 +8,7 @@ use super::arena::ArenaWriter;
 use crate::factory::{factory_entries, new_sound};
 use crate::in_place::uninit_at;
 use crate::orbit::scene::OrbitSong;
+use crate::params::EngineType;
 use crate::preset::Sound;
 use crate::storage::sound_crc;
 
@@ -75,18 +76,25 @@ impl Project {
         self.fill_new();
     }
 
-    /// The pool: emptied, every generation moved and the arena's Sounds
-    /// dropped; then the factory Sounds, then an INIT Sound per engine.
-    /// Then Parts 1–5 load theirs from it, clean (`NEW_PARTS`).
+    /// The pool: every source out (retired if it sounds, compacted
+    /// through the gate if not), emptied, every generation moved and the
+    /// arena's Sounds dropped; then the factory Sounds, then an INIT Sound
+    /// per engine. Then Parts 1–5 load theirs from it, clean (`NEW_PARTS`).
+    /// Never panics: a factory Sound a sounding source still leaves no
+    /// room for is skipped, and its Part loads INIT.
     fn fill_new(&mut self) {
+        self.pool.sources_clear();
         self.pool.clear_all();
         for (s, (_, bytes)) in SlotId::ALL.into_iter().zip(factory_entries()) {
-            self.pool.store_bytes(s, bytes).expect("NEW fits the arena");
+            let _ = self.pool.store_bytes(s, bytes);
         }
         for (part, slot) in PartId::ALL.into_iter().zip(NEW_PARTS) {
-            let from = PartFrom::Slot(slot);
-            self.load_part(PartSource { part, from })
-                .expect("NEW_PARTS names filled slots");
+            let from = match self.pool.get(slot) {
+                Some(_) => PartFrom::Slot(slot),
+                None => PartFrom::Init(EngineType::Algo),
+            };
+            // A stored slot decodes: it was checked when stored.
+            let _ = self.load_part(PartSource { part, from });
         }
     }
 }
