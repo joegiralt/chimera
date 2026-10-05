@@ -28,6 +28,9 @@ const _: () = assert!((DROPOUT_MIN + DROPOUT_SPAN - 1) as usize * BLOCK_SIZE == 
 const EASE: f32 = 0.3;
 /// Within this of 1 the gain is 1 (−87 dB): the stage can go quiet.
 const SETTLE: f32 = 4e-5;
+/// The one-pole opens to a wire below this AGE (its `a` blended to 1), so
+/// AGE just above 0 sounds as AGE off.
+pub const AGE_OPEN: f32 = 0.05;
 
 /// AGE runs, and is billed, whenever it can be heard: stored above 0, or
 /// routed (`Voice::stage_runs`' rule).
@@ -69,6 +72,12 @@ impl Age {
         self.rng = (s.wrapping_mul(0x9E37_79B9) ^ 0x6A09_E667) | 1;
     }
 
+    /// The dropout gain: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn gain(&self) -> f32 {
+        self.g
+    }
+
     /// A fresh note: the filter starts from silence, with no dropout.
     pub fn hold(&mut self) {
         (self.y, self.g, self.target, self.left) = (0.0, 1.0, 1.0, 0);
@@ -90,7 +99,8 @@ impl Age {
     fn wear(&mut self, x: &mut [f32; BLOCK_SIZE], age: f32) {
         // 1 − e^(−2π·corner/rate), the corner `AGE_TOP_HZ · 2^(−3·age)`.
         const K: f32 = core::f32::consts::TAU / SAMPLE_RATE as f32 * core::f32::consts::LOG2_E;
-        let a = 1.0 - exp2(-K * AGE_TOP_HZ * exp2(-3.0 * age));
+        let shut = exp2(-K * AGE_TOP_HZ * exp2(-3.0 * age));
+        let a = 1.0 - shut * (age * (1.0 / AGE_OPEN)).min(1.0);
         self.dropout(age);
         let g0 = self.g;
         let mut g1 = g0 + EASE * (self.target - g0);
@@ -114,17 +124,21 @@ impl Age {
     }
 
     /// A block of the dropouts: one in progress counts down, else one may
-    /// start, its depth and length drawn as it does.
+    /// start, its depth and length drawn as it does. AGE at ½ or under ends
+    /// one at once: the gain eases back, so none outlives its AGE.
     fn dropout(&mut self, age: f32) {
+        let over = (age - DROPOUT_FROM) * 2.0;
+        if over <= 0.0 {
+            if self.left > 0 {
+                (self.left, self.target) = (0, 1.0);
+            }
+            return;
+        }
         if self.left > 0 {
             self.left -= 1;
             if self.left == 0 {
                 self.target = 1.0;
             }
-            return;
-        }
-        let over = (age - DROPOUT_FROM) * 2.0;
-        if over <= 0.0 {
             return;
         }
         // A block's chance: the mean rate over the block rate, in 2⁻³².

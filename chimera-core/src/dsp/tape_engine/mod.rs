@@ -74,10 +74,31 @@ pub const STILL: f32 = 1e-3;
 pub const HUSH_S: f32 = 0.030;
 /// The macros' share of the way each block: MODAL's (ADR 0056).
 const EASE: f32 = 0.3;
-/// AGE easing to 0 is 0 under this, so the wear stops (hiss at −102 dBFS,
-/// the corner 0.2 % under 20 kHz). TAPE needs none: its cents vanish in
-/// `inc`'s sum.
-const AGE_SETTLE: f32 = 1e-3;
+/// TAPE or AGE easing to 0 is 0 under this, so the transport or the wear
+/// stops and its bill with it (0.03 cents of wow; hiss at −102 dBFS, the
+/// one-pole a wire).
+const MACRO_SETTLE: f32 = 1e-3;
+/// The block rate the transport runs at: the hardware's, so its rates are
+/// constants (`Age` takes 48 kHz too).
+const BLOCK_RATE: f32 = (SAMPLE_RATE as usize / BLOCK_SIZE) as f32;
+
+/// TAPE runs, and is billed, whenever it can be heard: stored above 0, or
+/// routed (AGE's rule, `age::age_runs`). Stored at 0 and unrouted, the
+/// transport is bypassed.
+pub fn tape_runs(stored: f32, routed: bool) -> bool {
+    stored > 0.0 || routed
+}
+
+/// Voice `s`'s wow and flutter rates, as a share of the transport's: 5 to
+/// 10 % off, so voices drift apart rather than hold their phases. The sign
+/// and size follow the seed's wow phase (`Transport::seeded`), so seeds
+/// whose phases sit either side of 0 run opposite ways, fastest apart.
+pub fn wow_detune(s: u32) -> f32 {
+    let x = s as f32 * 0.618_034;
+    let u = x - libm::floorf(x);
+    let off = 0.05 + 0.1 * libm::fabsf(u - 0.5);
+    if u >= 0.5 { 1.0 + off } else { 1.0 - off }
+}
 
 const _: () = assert!(NOTE_ON_RAMP as usize <= BLOCK_SIZE);
 const _: () = assert!(read::MIN_SOURCE_FRAMES == MIN_LOOP_FRAMES);
@@ -268,9 +289,10 @@ pub struct TapeEngine {
     /// ROOT, latched at note-on.
     root: f32,
     active: bool,
-    /// TAPE: this voice's transport, run once a block; its speed deviation
-    /// this block, cents.
+    /// TAPE: this voice's transport, run once a block, at its own rates
+    /// at depth 1; its speed deviation this block, cents.
     wow: Transport,
+    tap: Tap,
     cents: f32,
     /// AGE: this voice's wear.
     age: Age,
@@ -342,6 +364,7 @@ impl TapeEngine {
             root: 6_000.0,
             active: false,
             wow: Transport::new(),
+            tap: Tap::speed_cents(1.0, BLOCK_RATE),
             cents: 0.0,
             age: Age::new(),
             #[cfg(any(test, feature = "test-support"))]
@@ -357,6 +380,7 @@ impl TapeEngine {
     /// hiss and dropouts, from `s` (the voice's index).
     pub fn seed(&mut self, s: u32) {
         self.wow = Transport::seeded(s);
+        self.tap = Tap::speed_cents(1.0, BLOCK_RATE / wow_detune(s));
         self.age.seed(s);
     }
 
@@ -612,6 +636,12 @@ impl TapeEngine {
         self.stretch.clock()
     }
 
+    /// The wear: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn age(&self) -> &Age {
+        &self.age
+    }
+
     /// The eased macros: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn macros(&self) -> Macros {
@@ -637,10 +667,17 @@ impl TapeEngine {
         } else {
             self.mac.ease(&to);
         }
-        if to.age == 0.0 && self.mac.age < AGE_SETTLE {
-            self.mac.age = 0.0;
+        for (x, t) in [(&mut self.mac.tape, to.tape), (&mut self.mac.age, to.age)] {
+            if t == 0.0 && *x < MACRO_SETTLE {
+                *x = 0.0;
+            }
         }
-        self.cents = self.transport();
+        // Eased to 0, TAPE's cents shrink with it; at 0 the transport rests.
+        self.cents = if self.mac.tape > 0.0 {
+            self.transport()
+        } else {
+            0.0
+        };
         self.slide.tick();
         if self.model == TapeModel::Transwave {
             let target = clampf(
@@ -693,18 +730,15 @@ impl TapeEngine {
 
     /// TAPE's transport, once a block: the head's speed deviation in cents
     /// (`Tap::speed_cents`), which `inc` ramps to across the block. TAPE 0
-    /// adds exact zeros.
-    /// The block rate is the hardware's, so its rates fold to constants
-    /// (the voice's own `sample_rate` is `SAMPLE_RATE`, as `Age`'s is).
+    /// adds exact zeros. The voice's rates were set at its seed (`tap`, depth 1), so a block
+    /// only scales the offsets by TAPE.
     fn transport(&mut self) -> f32 {
         #[cfg(any(test, feature = "test-support"))]
         if self.no_transport {
             return 0.0;
         }
-        const BLOCK_RATE: f32 = (SAMPLE_RATE as usize / BLOCK_SIZE) as f32;
-        let tap = Tap::speed_cents(self.mac.tape, BLOCK_RATE);
-        let (wow, flutter) = self.wow.offsets(&tap);
-        wow + flutter
+        let (wow, flutter) = self.wow.offsets(&self.tap);
+        (wow + flutter) * self.mac.tape
     }
 
     /// The block of a model that plays heads through a window: all but

@@ -17,7 +17,7 @@ use common::tape::{held_plain, held_transwave, saw_with_burst, sine};
 const SR: u32 = 48_000;
 /// The bills (spec § 5) the shortest-loop timings are held under.
 const LOOP_BILL: f64 = 450.0;
-const PING_PONG_BILL: f64 = 500.0;
+const PING_PONG_BILL: f64 = 490.0;
 const SCRUB_BILL: f64 = 480.0;
 /// TRANSWAVE's (spec § 5): two heads; four in a level change's block.
 const WAVE_BILL: f64 = 400.0;

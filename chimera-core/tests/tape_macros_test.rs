@@ -11,11 +11,12 @@ use chimera_core::dsp::tape_engine::age::{Age, age_runs};
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::stretch::WRAP_SAMPLES;
 use chimera_core::dsp::tape_engine::{
-    INC_MAX, MIN_PASS_SAMPLES, NOTE_ON_RAMP, TapeEngine, TapeEngineParams, TapeModel,
+    INC_MAX, MIN_PASS_SAMPLES, NOTE_ON_RAMP, TapeEngine, TapeEngineParams, TapeModel, tape_runs,
+    wow_detune,
 };
 use chimera_hal::BLOCK_SIZE;
 use common::XorShift;
-use common::tape::{held_plain, held_transwave, sine};
+use common::tape::{fft, held_plain, held_transwave, sine};
 
 const SR: u32 = 48_000;
 const B: usize = BLOCK_SIZE;
@@ -167,8 +168,10 @@ fn wow_depth_bounds() {
         assert!(peak <= 33.0, "{model:?}: {peak} cents");
         assert!(peak >= 20.0, "{model:?}: {peak} cents");
         // The wow, ±25 cents at 0.5 Hz, and the capstan, half the ±8 of
-        // flutter at 9 Hz: each its own line in the deviation's spectrum.
-        let (wow, capstan) = (line(&dev, 0.5), line(&dev, 9.0));
+        // flutter at 9 Hz, each at seed 1's detune: each its own line in the
+        // deviation's spectrum.
+        let k = wow_detune(1) as f64;
+        let (wow, capstan) = (line(&dev, 0.5 * k), line(&dev, 9.0 * k));
         assert!((wow - 25.0).abs() <= 2.0, "{model:?}: wow {wow} cents");
         assert!(
             (capstan - 4.0).abs() <= 1.0,
@@ -190,40 +193,98 @@ fn line(curve: &[(f64, f64)], hz: f64) -> f64 {
     2.0 * (re * re + im * im).sqrt() / n as f64
 }
 
+/// Each voice its own transport: seeds 1 and 2 (phases 137° apart), and 0
+/// and 8 (20° apart, their wows detuned −10 % and +9.4 % so they drift
+/// apart). Over 8 s the deviation curves correlate under ½ either way, and
+/// so does the flutter's noise alone: the deviation's 3–7 Hz band, between
+/// the wow and the capstan.
 #[test]
 fn voices_have_own_transport() {
     let model = TapeModel::Loop;
-    let held = source(model, 4.5);
+    let held = source(model, 9.0);
     let v = SourceView::strict(&held).unwrap();
     let (note, f0) = note_hz(model);
     let p = TapeEngineParams {
         tape: 1.0,
         ..params(model)
     };
+    // The deviation on a 1 ms grid, 8.192 s.
     let curve = |s: u32| {
         let mut e = fresh();
         e.seed(s);
         e.note_on(note, &p, &v, SR);
-        let y = play(&mut e, &v, 4 * SR as usize / B, |_| p);
+        let y = play(&mut e, &v, 33 * SR as usize / (4 * B), |_| p);
         let dev = deviation(&y[NOTE_ON_RAMP as usize..], f0);
-        (1..399)
-            .map(|k| at(&dev, k as f64 * 0.01))
+        (1..=8_192)
+            .map(|k| at(&dev, k as f64 * 1e-3))
             .collect::<Vec<f64>>()
     };
+    // The 3–7 Hz bins of `c` under a Hann window.
+    let band = |c: &[f64]| {
+        let n = c.len();
+        let mean = c.iter().sum::<f64>() / n as f64;
+        let mut re: Vec<f64> = c
+            .iter()
+            .enumerate()
+            .map(|(i, x)| {
+                (x - mean) * (0.5 - 0.5 * (core::f64::consts::TAU * i as f64 / n as f64).cos())
+            })
+            .collect();
+        let mut im = vec![0.0; n];
+        fft(&mut re, &mut im);
+        let df = 1e3 / n as f64;
+        ((3.0 / df) as usize..=(7.0 / df) as usize)
+            .map(|k| (re[k], im[k]))
+            .collect::<Vec<_>>()
+    };
+    let band_r = |a: &[(f64, f64)], b: &[(f64, f64)]| {
+        let dot: f64 = a.iter().zip(b).map(|(x, y)| x.0 * y.0 + x.1 * y.1).sum();
+        let pow = |z: &[(f64, f64)]| z.iter().map(|x| x.0 * x.0 + x.1 * x.1).sum::<f64>();
+        dot / (pow(a) * pow(b)).sqrt()
+    };
+    // They start apart: seeds 1 and 2's phases are 137° apart, so their
+    // first second runs opposite ways, before any drift.
     let (a, b) = (curve(1), curve(2));
-    // Each moves: a transport, not a flat line.
-    for c in [&a, &b] {
-        assert!(c.iter().fold(0.0f64, |m, x| m.max(x.abs())) > 10.0);
+    let r = correlation(&a[..1_000], &b[..1_000]);
+    assert!(r < 0.0, "seeds 1 and 2 start together: {r}");
+    for (s, t) in [(1, 2), (0, 8)] {
+        let (a, b) = (curve(s), curve(t));
+        // Each moves: a transport, not a flat line.
+        for c in [&a, &b] {
+            assert!(c.iter().fold(0.0f64, |m, x| m.max(x.abs())) > 10.0);
+        }
+        let r = correlation(&a, &b);
+        assert!(r.abs() < 0.5, "seeds {s} and {t} correlate {r}");
+        let r = band_r(&band(&a), &band(&b));
+        assert!(
+            r.abs() < 0.5,
+            "seeds {s} and {t}: flutter noise correlates {r}"
+        );
     }
-    let r = correlation(&a, &b);
-    assert!(r < 0.5, "seeds 1 and 2 correlate {r}");
 }
 
 #[test]
 fn age_zero_is_bypassed() {
+    assert!(!tape_runs(0.0, false));
+    assert!(tape_runs(0.0, true));
+    assert!(tape_runs(0.01, false));
     assert!(!age_runs(0.0, false));
     assert!(age_runs(0.0, true));
     assert!(age_runs(0.01, false));
+    // Just above 0 the one-pole is a wire (`AGE_OPEN`): AGE 0.001 on a
+    // sine moves it by its hiss and no more.
+    let mut age = Age::new();
+    let w = core::f64::consts::TAU / 100.7;
+    for blk in 0..100 {
+        let x: [f32; B] = core::array::from_fn(|i| ((blk * B + i) as f64 * w).sin() as f32);
+        let mut y = x;
+        age.process(&mut y, 0.001);
+        let d = x
+            .iter()
+            .zip(&y)
+            .fold(0.0f32, |m, (a, b)| m.max((a - b).abs()));
+        assert!(d < 5e-4, "AGE 0.001 moves a sine {d}");
+    }
     let mut rng = XorShift(0xA6E0_0001);
     let mut age = Age::new();
     age.seed(5);
@@ -314,21 +375,27 @@ fn level_at(f: f32, age: f32) -> f64 {
 
 #[test]
 fn age_corner_falls() {
-    // The −3 dB point at AGE 1, against 100 Hz: the dropouts fall on both
+    // The −3 dB point against 100 Hz, at AGE 1 (2.5 kHz) and ½ (the law's
+    // middle, 20 kHz/√8 = 7.07 kHz). At AGE 1 the dropouts fall on both
     // runs alike (seeded, independent of the input), so they cancel.
-    let low = level_at(100.0, 1.0);
-    let db = |f: f32| 20.0 * (level_at(f, 1.0) / low).log10();
-    let (mut lo, mut hi) = (1_000.0f32, 6_000.0f32);
-    assert!(db(lo) > -3.0 && db(hi) < -3.0);
-    for _ in 0..20 {
-        let mid = 0.5 * (lo + hi);
-        if db(mid) > -3.0 {
-            lo = mid;
-        } else {
-            hi = mid;
+    for (age, corner) in [(1.0, 2_500.0), (0.5, 7_071.0)] {
+        let low = level_at(100.0, age);
+        let db = |f: f32| 20.0 * (level_at(f, age) / low).log10();
+        let (mut lo, mut hi) = (1_000.0f32, 14_000.0f32);
+        assert!(db(lo) > -3.0 && db(hi) < -3.0);
+        for _ in 0..20 {
+            let mid = 0.5 * (lo + hi);
+            if db(mid) > -3.0 {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
         }
+        assert!(
+            (lo - corner).abs() <= 0.1 * corner,
+            "AGE {age}: −3 dB at {lo} Hz"
+        );
     }
-    assert!((lo - 2_500.0).abs() <= 250.0, "−3 dB at {lo} Hz");
 }
 
 #[test]
@@ -346,6 +413,19 @@ fn hiss_floor() {
     let y = play(&mut e, &v, 2 * SR as usize / B, |_| p);
     let db = 20.0 * (common::rms(&y[SR as usize / 2..]) as f64).log10();
     assert!((db + 42.0).abs() <= 1.0, "{db} dBFS");
+    // Inside the dropouts too: the hiss comes after the gain. 20 s, the
+    // blocks with the gain under ½.
+    let mut dips = Vec::new();
+    let mut b = [0.0; B];
+    for _ in 0..20 * SR as usize / B {
+        e.render(&mut b, &p, &v, SR);
+        if e.age().gain() < 0.5 {
+            dips.extend_from_slice(&b);
+        }
+    }
+    assert!(dips.len() >= 50 * B, "{} dropout blocks", dips.len() / B);
+    let db = 20.0 * (common::rms(&dips) as f64).log10();
+    assert!((db + 42.0).abs() <= 1.0, "in dropouts: {db} dBFS");
     // Each voice its own hiss: seeded 4 and 5, uncorrelated.
     let mut f = fresh();
     f.seed(5);
@@ -612,5 +692,125 @@ fn sweeps_are_click_free() {
                 "{model:?} macro {which}: {worst} against {steady}"
             );
         }
+    }
+}
+
+/// AGE stepped 1 → 0 in the middle of a dropout ends it at once: the gain
+/// eases back, then the wear stops. The engine's output is bit-identical to
+/// a note never worn within 32 blocks (AGE under ½ in 2, the gain within
+/// 4e-5 of 1 about 27 later), and nothing outlives AGE unbilled.
+#[test]
+fn dropout_ends_with_age() {
+    let held = held_plain(&sine(48_000, 100.7, 48_000), 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    let p = |age: f32| TapeEngineParams {
+        age,
+        ..TapeEngineParams::default()
+    };
+    let (mut a, mut b) = (fresh(), fresh());
+    a.seed(6);
+    b.seed(6);
+    a.note_on(60, &p(1.0), &v, SR);
+    b.note_on(60, &p(0.0), &v, SR);
+    let mut blk = [0.0; B];
+    let mut n = 0;
+    while a.age().gain() > 0.5 {
+        a.render(&mut blk, &p(1.0), &v, SR);
+        b.render(&mut blk, &p(0.0), &v, SR);
+        n += 1;
+        assert!(n < 20 * 750, "no dropout in 20 s");
+    }
+    let ya = play(&mut a, &v, 60, |_| p(0.0));
+    let yb = play(&mut b, &v, 60, |_| p(0.0));
+    assert!(ya[..B] != yb[..B], "the dip is still easing out");
+    let from = 32 * B;
+    assert!(
+        ya[from..]
+            .iter()
+            .zip(&yb[from..])
+            .all(|(x, y)| x.to_bits() == y.to_bits()),
+        "worn past block 32"
+    );
+}
+
+/// The same step on `Age` itself, AGE straight to 0 mid-dip: the gain
+/// eases back across blocks, never snapping to 1 because AGE is 0, so the
+/// click rule holds against the sine's own steps.
+#[test]
+fn age_off_mid_dip_is_click_free() {
+    let mut a = Age::new();
+    a.seed(14);
+    let w = core::f64::consts::TAU / 100.7;
+    let mut i = 0usize;
+    let mut sine_block = || {
+        let x: [f32; B] = core::array::from_fn(|k| ((i + k) as f64 * w).sin() as f32);
+        i += B;
+        x
+    };
+    let mut n = 0;
+    while a.gain() > 0.45 {
+        let mut x = sine_block();
+        a.process(&mut x, 1.0);
+        n += 1;
+        assert!(n < 20 * 750, "no dropout in 20 s");
+    }
+    let mut out = Vec::new();
+    for _ in 0..60 {
+        let mut x = sine_block();
+        a.process(&mut x, 0.0);
+        out.extend_from_slice(&x);
+    }
+    let steady = 2.0 * (0.5 * w).sin() as f32;
+    let worst = max_step(&out);
+    assert!(worst <= 4.0 * steady, "{worst} against {steady}");
+    assert_eq!(a.gain(), 1.0);
+}
+
+/// SCRUB's POSITION at the default DRAG, swept 0 → 1 → 0 in 100 ms and
+/// stepped: the finger scrubs the tape faster, so each block's steps are
+/// held to 4× a sine's at the head's own speed there (its probe's move,
+/// over the block and its neighbours), not the still tape's.
+#[test]
+fn scrub_position_is_click_free_at_its_speed() {
+    let held = held_plain(&sine(48_000, 100.7, 48_000), 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    let base = TapeEngineParams {
+        size: 0.5,
+        ..params(TapeModel::Scrub)
+    };
+    let x = |i: usize| match i {
+        40..=77 => (i - 40) as f32 / 37.5,
+        78..=115 => (115 - i) as f32 / 37.5,
+        200..260 => 1.0,
+        _ => 0.0,
+    };
+    let mut e = fresh();
+    e.seed(1);
+    e.note_on(57, &with(base, 0, x(0)), &v, SR);
+    let (mut out, mut heads) = (Vec::new(), vec![e.probe().head]);
+    let mut b = [0.0; B];
+    for i in 0..330 {
+        e.render(&mut b, &with(base, 0, x(i)), &v, SR);
+        out.extend_from_slice(&b);
+        heads.push(e.probe().head);
+    }
+    // Frames a sample each block; a wrap's jump reads as its neighbours'.
+    let speed: Vec<f32> = heads
+        .windows(2)
+        .map(|h| (h[1] as f32 - h[0] as f32).abs() / B as f32)
+        .map(|s| if s > INC_MAX { f32::NAN } else { s })
+        .collect();
+    // A full-scale sine of 100.7 frames steps at most this a frame.
+    let per_frame = 2.0 * (core::f32::consts::PI / 100.7).sin();
+    for blk in 2..330usize {
+        let near = speed[blk.saturating_sub(1)..(blk + 2).min(330)]
+            .iter()
+            .filter(|s| !s.is_nan())
+            .fold(1.0f32, |m, &s| m.max(s));
+        let worst = max_step(&out[blk * B - 1..(blk + 1) * B]);
+        assert!(
+            worst <= 4.0 * per_frame * near,
+            "block {blk}: {worst} at {near} frames a sample"
+        );
     }
 }
