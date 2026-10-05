@@ -48,25 +48,17 @@ pub const MIN_LOOP_S: f32 = 0.002;
 /// Four samples' travel at `INC_MAX`: a loop's events come at most one in 4
 /// samples, so a pass's arithmetic never runs every sample.
 pub const MIN_LOOP_FRAMES: u32 = 4 * INC_MAX as u32;
-/// SCRUB's tape counts as stopped under this speed, frames a sample: its
-/// output fades to silence until it moves (spec § 2 SCRUB).
+/// SCRUB's tape stops under this speed, frames a sample (loop and finger
+/// both), and starts again over twice it: its output is silent while
+/// stopped (spec § 2 SCRUB).
 pub const STILL: f32 = 1e-3;
+/// A mid-note stop or start eases SCRUB's output over 30 ms, smoothstep, so
+/// the held value leaves through the DC blocker without a tick.
+pub const HUSH_S: f32 = 0.030;
 /// The macros' share of the way each block: MODAL's (ADR 0056).
 const EASE: f32 = 0.3;
 
 const _: () = assert!(NOTE_ON_RAMP as usize <= BLOCK_SIZE);
-
-/// SCRUB's stop and start: smoothstep from 0 at `1/48` to 1 at `48/48`.
-const HUSH: [f32; NOTE_ON_RAMP as usize] = {
-    let mut t = [0.0; NOTE_ON_RAMP as usize];
-    let mut k = 0;
-    while k < t.len() {
-        let x = (k + 1) as f32 / NOTE_ON_RAMP as f32;
-        t[k] = x * x * (3.0 - 2.0 * x);
-        k += 1;
-    }
-    t
-};
 
 /// Events one sample handles: a put-off fade's start, then the fade's start
 /// and its wrap, then the new pass's fade, which is one pass of an ordinary
@@ -164,9 +156,11 @@ pub struct TapeEngine {
     /// sample: it ramps across the block, as `inc` does.
     df: u64,
     ddf: u64,
-    /// SCRUB: the output's share while the tape stops and starts, eased
-    /// (smoothstep) over `NOTE_ON_RAMP`.
+    /// SCRUB: the tape is stopped; the output's share, linear before its
+    /// smoothstep, and its move a block (`HUSH_S`).
+    stopped: bool,
     hush: f32,
+    hush_step: f32,
     /// SCRUB: the loop's speed in frames a sample at the last block's end,
     /// signed; DRAG's one-pole share a block.
     speed: f32,
@@ -183,6 +177,7 @@ pub struct TapeEngine {
     inv_v: f32,
     turn_len: u16,
     clamp_len: u32,
+    clamp_dg: f32,
     reach: f32,
     /// Events handled: for the tests.
     #[cfg(any(test, feature = "test-support"))]
@@ -232,7 +227,9 @@ impl TapeEngine {
             off: Pos(0),
             df: 0,
             ddf: 0,
+            stopped: false,
             hush: 1.0,
+            hush_step: 1.0,
             speed: 0.0,
             pull: 1.0,
             n: 2,
@@ -242,6 +239,7 @@ impl TapeEngine {
             inv_v: 1.0,
             turn_len: 48,
             clamp_len: 240,
+            clamp_dg: 1.0 / 240.0,
             reach: 241.0,
             #[cfg(any(test, feature = "test-support"))]
             events: 0,
@@ -313,9 +311,12 @@ impl TapeEngine {
         self.turning = None;
         self.turn_len = clampf(libm::roundf(TURN_S * sample_rate as f32), 2.0, 1_000.0) as u16;
         self.clamp_len = libm::roundf(CLAMP_FADE_S * sample_rate as f32).max(1.0) as u32;
+        self.clamp_dg = 1.0 / self.clamp_len as f32;
         self.df = 0;
         self.ddf = 0;
         self.hush = 1.0;
+        self.stopped = false;
+        self.hush_step = BLOCK_SIZE as f32 / (HUSH_S * sample_rate as f32);
         self.speed = 0.0;
         self.pull = 1.0 - libm::expf(-(BLOCK_SIZE as f32) / (drag_s(p.drag) * sample_rate as f32));
         let (start, end) = self.window(p);
@@ -519,27 +520,29 @@ impl TapeEngine {
         }
         // Every event this block latches these: worked out once.
         self.next = self.next_bounds(&k);
-        let still = scrub && from.max(to) < STILL && {
-            let most = (STILL * 4_294_967_296.0) as i64;
+        if scrub {
+            // The finger's speed at the block's ends, frames a sample.
             let end =
                 (self.df as i64).wrapping_add((self.ddf as i64).wrapping_mul(BLOCK_SIZE as i64));
-            (self.df as i64).abs() < most && end.abs() < most
-        };
+            let finger = (self.df as i64).unsigned_abs().max(end.unsigned_abs()) as f32
+                * (1.0 / 4_294_967_296.0);
+            let speed = from.max(to).max(finger);
+            // Hysteresis: stop under STILL, start over twice it.
+            self.stopped = if self.stopped && !first {
+                speed <= 2.0 * STILL
+            } else {
+                speed < STILL
+            };
+        }
         let (from, to) = (Pos::from_f32(from).0, Pos::from_f32(to).0);
         let step = (to.wrapping_sub(from) as i64 / BLOCK_SIZE as i64) as u64;
 
-        // A stopped tape, already silent, has nothing to read.
-        let silent = still && self.hush == 0.0 && !first;
-        let (mut i, mut cur) = (if silent { BLOCK_SIZE } else { 0 }, from);
-        if silent {
-            out.fill(0.0);
-        }
+        let (mut i, mut cur) = (0, from);
         while i < BLOCK_SIZE {
             let c = (i, cur, step);
             (i, cur) = match (self.ghost.is_some(), self.turning.is_some()) {
-                (true, true) => self.run_slow::<true, true>(out, v, c, &k),
-                (true, false) => self.run_slow::<true, false>(out, v, c, &k),
-                (false, true) => self.run_slow::<false, true>(out, v, c, &k),
+                (true, _) => self.run_slow::<true>(out, v, c, &k),
+                (false, true) => self.run_slow::<false>(out, v, c, &k),
                 (false, false) => match (self.mirror, scrub) {
                     (false, false) => self.run::<false, false>(out, v, c, &k),
                     (true, false) => self.run::<true, false>(out, v, c, &k),
@@ -549,7 +552,7 @@ impl TapeEngine {
             };
         }
         if scrub {
-            self.hush_block(out, still, first);
+            self.hush_block(out, first);
         }
 
         if core::mem::take(&mut self.ramp) {
@@ -602,34 +605,36 @@ impl TapeEngine {
         (from, to)
     }
 
-    /// SCRUB's stopped tape is silent: while the loop and the finger are
-    /// both still (`still`), the output eases (smoothstep) to 0 over
-    /// `NOTE_ON_RAMP`, and eases back in once the tape moves. A ramp ends
-    /// inside the block it starts in, so a block starts at 0 or 1. A note's
-    /// first block takes it whole, under the note-on ramp.
-    fn hush_block(&mut self, out: &mut [f32; BLOCK_SIZE], still: bool, first: bool) {
-        let to = if still { 0.0 } else { 1.0 };
+    /// SCRUB's stopped tape is silent. A note-on into a stopped tape is
+    /// silent from its first sample; a mid-note stop or start eases the
+    /// output over `HUSH_S`, a smoothstep, ramped linearly across each block.
+    /// The heads play on underneath, so nothing jumps when it comes back.
+    fn hush_block(&mut self, out: &mut [f32; BLOCK_SIZE], first: bool) {
+        let to = if self.stopped { 0.0 } else { 1.0 };
         if first {
             self.hush = to;
         }
-        if self.hush == to {
-            if still {
-                out.fill(0.0);
-            }
+        let x0 = self.hush;
+        let x1 = if self.stopped {
+            (x0 - self.hush_step).max(0.0)
+        } else {
+            (x0 + self.hush_step).min(1.0)
+        };
+        self.hush = x1;
+        let (g0, g1) = (x0 * x0 * (3.0 - 2.0 * x0), x1 * x1 * (3.0 - 2.0 * x1));
+        if g0 == 1.0 && g1 == 1.0 {
             return;
         }
-        let (ramp, rest) = out.split_at_mut(NOTE_ON_RAMP as usize);
-        for (k, y) in ramp.iter_mut().enumerate() {
-            *y *= if still {
-                HUSH[HUSH.len() - 1 - k]
-            } else {
-                HUSH[k]
-            };
+        if g0 == 0.0 && g1 == 0.0 {
+            out.fill(0.0);
+            return;
         }
-        if still {
-            rest.fill(0.0);
+        let dg = (g1 - g0) * (1.0 / BLOCK_SIZE as f32);
+        let mut g = g0;
+        for y in out.iter_mut() {
+            g += dg;
+            *y *= g;
         }
-        self.hush = to;
     }
 
     /// SCRUB's loop turns round: the frame mirrors about the source's
@@ -855,126 +860,163 @@ impl TapeEngine {
         (i, cur)
     }
 
-    /// PING-PONG's slow samples: a turn (`TURN`), where the head slows to
+    /// PING-PONG's slow samples: turns (`turning`), where the head slows to
     /// a stop at the edge and comes back, its step scaled by a Q16
-    /// `|2·th − 2k − 1| / 2·th`; and a clamp (`GHOST`), where the head left
+    /// `|2·th − 2k − 1| · unit`; and a clamp (`GHOST`), where the head left
     /// outside plays on its way while the output fades, by the sample, to
-    /// the head inside. Turns keep their bounds while a clamp fades. The
-    /// state lives in locals; returns where it stopped: the block's end, or
-    /// a change of either.
+    /// the head inside. Turns keep their bounds while a clamp fades.
+    ///
+    /// A short loop turns every few samples, so turns, flips and the next
+    /// turn's start run here, one after another, without returning. It
+    /// returns at the block's end, when a clamp starts or ends (`GHOST`
+    /// changes), or when a turn ends with the next edge beyond the block
+    /// (the plain run takes the pass).
     #[cold]
     #[inline(never)]
-    fn run_slow<const GHOST: bool, const TURN: bool>(
+    fn run_slow<const GHOST: bool>(
         &mut self,
         out: &mut [f32; BLOCK_SIZE],
         v: &SourceView<'_>,
         (mut i, mut cur, step): (usize, u64, u64),
         k: &AtWrap,
     ) -> (usize, u64) {
-        let (mirror, off) = (self.mirror, self.off);
-        // The head's read position, moving down in a mirrored frame.
-        let mut r = self.real(self.heads[0].pos);
+        let dg = self.clamp_dg;
         let mut gh = self.ghost.unwrap_or(Ghost {
             pos: Pos(0),
             back: false,
             done: 0,
             len: 1,
         });
-        let dg = 1.0 / gh.len as f32;
         let mut g = self.gain;
-        let mut t = self.turning.unwrap_or(Turn { k: 0, th: 1 });
-        // A step's scale in Q16: `|2·th − 2k − 1| / 2·th`, the distance from
-        // the stop; it falls to the stop (where the run ends) and rises
-        // after it, by `2 / 2·th` a sample either way.
-        let unit = (1u64 << 16) / (2 * t.th as u64);
-        let num = 2 * t.th as i64 - 2 * t.k as i64 - 1;
-        let mut fq = num.unsigned_abs() * unit;
-        let dfq = if num > 0 {
-            (2 * unit).wrapping_neg()
-        } else {
-            2 * unit
-        };
-        // Samples until the turn stops or ends, or the clamp ends.
-        let mut left = BLOCK_SIZE - i;
-        if TURN {
-            let to = if t.k < t.th { t.th } else { 2 * t.th };
-            left = left.min((to - t.k) as usize);
-        }
-        if GHOST {
-            left = left.min((gh.len - gh.done) as usize);
-        }
-        let stop = i + left;
-        // `h ≥ event`, in `r`.
-        let ev = (self.event as i64) << 32;
-        let rev = (off.0 as i64).wrapping_sub(ev);
-        let mut hit = false;
-        while i < stop {
-            let mut y = v.read(r);
-            if GHOST {
-                g += dg;
-                let a = v.read(gh.pos);
-                y = a + g * (y - a);
-            }
-            out[i] = y;
-            cur = cur.wrapping_add(step);
-            let mut s = Pos(cur);
-            if TURN {
-                s = Pos((cur >> 16) * fq);
-                fq = fq.wrapping_add(dfq);
-            }
-            r = if mirror { r - s } else { r + s };
-            if GHOST {
-                gh.pos = if gh.back { gh.pos - s } else { gh.pos + s };
-            }
-            i += 1;
-            if !TURN
-                && (if mirror {
-                    r.0 as i64 <= rev
-                } else {
-                    r.0 as i64 >= ev
-                })
-            {
-                hit = true;
-                break;
-            }
-        }
-        let n = (i + left - stop) as u32;
-        if TURN {
-            t.k += n as u16;
-        }
-        if GHOST {
-            gh.done += n;
-        }
-        let h = if mirror { off - r } else { r };
-        let done =
-            hit || (TURN && (t.k == t.th || t.k == 2 * t.th)) || (GHOST && gh.done >= gh.len);
-        self.heads[0].pos = h;
-        if GHOST {
-            if gh.done >= gh.len {
-                self.ghost = None;
-                g = 0.0;
+        while i < BLOCK_SIZE {
+            let (mirror, off) = (self.mirror, self.off);
+            // The head's read position, moving down in a mirrored frame.
+            let mut r = self.real(self.heads[0].pos);
+            let turning = self.turning;
+            let mut t = turning.unwrap_or(Turn {
+                k: 0,
+                th: 1,
+                unit: 0,
+            });
+            // A step's scale in Q16: the distance from the stop, falling to
+            // it (where the half ends) and rising after it, `2 · unit` a
+            // sample either way.
+            let num = 2 * t.th as i64 - 2 * t.k as i64 - 1;
+            let mut fq = num.unsigned_abs() * t.unit as u64;
+            let dfq = if num > 0 {
+                (2 * t.unit as u64).wrapping_neg()
             } else {
-                self.ghost = Some(gh);
+                2 * t.unit as u64
+            };
+            // Samples until the turn's half ends or the clamp does.
+            let mut left = BLOCK_SIZE - i;
+            if turning.is_some() {
+                let to = if t.k < t.th { t.th } else { 2 * t.th };
+                left = left.min((to - t.k) as usize);
             }
+            if GHOST {
+                left = left.min((gh.len - gh.done) as usize);
+            }
+            let (start, stop) = (i, i + left);
+            // `h ≥ event`, in `r`.
+            let ev = (self.event as i64) << 32;
+            let rev = (off.0 as i64).wrapping_sub(ev);
+            let mut hit = false;
+            while i < stop {
+                let mut y = v.read(r);
+                if GHOST {
+                    g += dg;
+                    let a = v.read(gh.pos);
+                    y = a + g * (y - a);
+                }
+                out[i] = y;
+                cur = cur.wrapping_add(step);
+                let mut s = Pos(cur);
+                if turning.is_some() {
+                    s = Pos((cur >> 16) * fq);
+                    fq = fq.wrapping_add(dfq);
+                }
+                r = if mirror { r - s } else { r + s };
+                if GHOST {
+                    gh.pos = if gh.back { gh.pos - s } else { gh.pos + s };
+                }
+                i += 1;
+                if turning.is_none()
+                    && (if mirror {
+                        r.0 as i64 <= rev
+                    } else {
+                        r.0 as i64 >= ev
+                    })
+                {
+                    hit = true;
+                    break;
+                }
+            }
+            let n = (i - start) as u32;
+            let h = if mirror { off - r } else { r };
+            self.heads[0].pos = h;
+            if GHOST {
+                gh.done += n;
+                if gh.done >= gh.len {
+                    // The clamp is done: the plain run takes over.
+                    self.ghost = None;
+                    self.gain = 0.0;
+                    if turning.is_some() {
+                        t.k += n as u16;
+                        self.turning = Some(t);
+                        self.end_half(t);
+                    }
+                    if hit || (turning.is_some() && self.turning.is_none()) {
+                        self.on_event(k);
+                    }
+                    return (i, cur);
+                }
+            }
+            if turning.is_some() {
+                t.k += n as u16;
+                self.turning = Some(t);
+                if self.end_half(t) && !GHOST && self.ghost.is_some() {
+                    // A clamp started at the flip.
+                    return (i, cur);
+                }
+                if self.turning.is_none() && !GHOST {
+                    // The turn is over: on to the next edge, here if it is
+                    // within the block, else in the plain run.
+                    let to = self.event.saturating_sub(self.heads[0].pos.whole());
+                    if to as f32 > self.v * (BLOCK_SIZE - i) as f32 {
+                        return (i, cur);
+                    }
+                }
+            }
+            if hit || (turning.is_some() && self.turning.is_none()) {
+                self.on_event(k);
+                if !GHOST && self.ghost.is_some() {
+                    return (i, cur);
+                }
+            }
+        }
+        if GHOST {
+            self.ghost = Some(gh);
             self.gain = g;
         }
-        if TURN {
-            self.turning = Some(t);
-        }
-        if done {
-            if TURN && t.k == t.th {
-                // At rest at the edge: the head comes back.
-                let r = self.real(h);
-                self.flip_at(r);
-            } else if TURN && t.k == 2 * t.th {
+        (i, cur)
+    }
+
+    /// A turn's half may have ended at `t`: at rest at the edge the head
+    /// comes back (`flip_at`; true); at the end of the turn, the next edge's
+    /// event is set.
+    fn end_half(&mut self, t: Turn) -> bool {
+        if t.k == t.th {
+            let r = self.real(self.heads[0].pos);
+            self.flip_at(r);
+            true
+        } else {
+            if t.k == 2 * t.th {
                 self.turning = None;
                 self.event = self.pp_event();
             }
-            if !TURN || self.turning.is_none() {
-                self.on_event(k);
-            }
+            false
         }
-        (i, cur)
     }
 
     /// The next pass's bounds from the eased macros, the walk, and END and
@@ -1078,7 +1120,11 @@ impl TapeEngine {
             let rem = rem.whole() as f32 + rem.frac();
             let th = (2.0 * rem * self.inv_v).min(self.turn_len as f32) as u16;
             if th >= 2 {
-                self.turning = Some(Turn { k: 0, th });
+                self.turning = Some(Turn {
+                    k: 0,
+                    th,
+                    unit: (1u32 << 16) / (2 * th as u32),
+                });
                 self.event = u32::MAX;
             } else {
                 self.event = b.le;

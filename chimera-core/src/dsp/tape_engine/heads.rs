@@ -116,6 +116,8 @@ pub struct Ghost {
 pub struct Turn {
     pub k: u16,
     pub th: u16,
+    /// `2^16 / 2·th`, worked out when the turn starts.
+    pub unit: u32,
 }
 
 /// What a head `rem` frames before its pass's end does about `next`, the

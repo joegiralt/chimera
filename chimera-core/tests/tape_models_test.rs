@@ -14,6 +14,11 @@ use chimera_hal::BLOCK_SIZE;
 use common::tape::{held_plain, saw_with_burst, sine};
 
 const SR: u32 = 48_000;
+/// The bills (spec § 5) the tiny-loop timings are held under; LOOP and
+/// REVERSE's short-loop worst is measured, not yet billed (390 stands).
+const PING_PONG_BILL: f64 = 560.0;
+const SCRUB_BILL: f64 = 540.0;
+const LOOP_SHORT_WORST: f64 = 510.0;
 const B: usize = BLOCK_SIZE;
 
 fn fresh() -> TapeEngine {
@@ -292,6 +297,102 @@ fn scrub_still_is_silent() {
     let all: Vec<f32> = [moving, stopping].concat();
     let steady = max_step(&sine(48_000, 100.7, 4_800));
     assert!(max_step(&all) <= 4.0 * steady);
+}
+
+/// The tape just under `STILL` (the finger creeping at 0.8 of it) stays
+/// stopped and silent from its note-on, never toggling; at 1.5× it stays
+/// stopped from a stop and moving from a start (hysteresis). The heads play
+/// on underneath either way (N1): a hushed block is still read.
+#[test]
+fn scrub_stop_has_hysteresis() {
+    let w = 48_000u32;
+    let held = held_plain(&sine(48_000, 100.7, w), 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    let span = (w - loop_len(0.2, w, 48_000)) as f32;
+    // (speed, its first 100 blocks', silent after): a stopped tape starts
+    // only over 2×, a moving one stops only under 1×.
+    for (speed, start, silent) in [
+        (0.8e-3f32, 0.8e-3f32, true),
+        (1.5e-3, 1.5e-3, true),
+        (1.5e-3, 4e-3, false),
+    ] {
+        let mut p = TapeEngineParams {
+            model: TapeModel::Scrub,
+            size: 0.2,
+            drag: 0.0,
+            ..TapeEngineParams::default()
+        };
+        let mut e = fresh();
+        e.note_on(60, &p, &v, SR);
+        let mut pos = 0.0f32;
+        let mut b = [0.0; BLOCK_SIZE];
+        let (mut first_head, mut last_head) = (0, 0);
+        for n in 0..3_000 {
+            let sp = if n < 100 { start } else { speed };
+            pos += sp * B as f32 / span;
+            p.position = pos;
+            e.render(&mut b, &p, &v, SR);
+            if n == 200 {
+                first_head = e.probe().head;
+            }
+            last_head = e.probe().head;
+            if n >= 200 {
+                if silent {
+                    assert!(b.iter().all(|&y| y == 0.0), "{speed}: block {n} sounds");
+                } else {
+                    assert!(b.iter().any(|&y| y != 0.0), "{speed}: block {n} is silent");
+                }
+            }
+        }
+        // The finger moved on underneath: 2 800 blocks at `speed`.
+        let moved = (last_head - first_head) as f32;
+        let want = speed * 2_799.0 * B as f32;
+        assert!(
+            (moved / want - 1.0).abs() < 0.05,
+            "{speed}: moved {moved}, want {want}"
+        );
+    }
+}
+
+/// A mid-note stop through the voice's DC blocker: the held value leaves
+/// over `HUSH_S` without a step above the material's own (a slow sine, so
+/// a 1 ms hush's tick would show).
+#[test]
+fn scrub_mid_note_stop_passes_the_dc_blocker() {
+    use chimera_core::dsp::dc_blocker::DcBlocker;
+    use chimera_core::dsp::voice::DC_HZ;
+    let held = held_plain(&sine(48_000, 2_000.0, 48_000), 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    for stop_at in [50usize, 57, 63, 71] {
+        let mut p = TapeEngineParams {
+            model: TapeModel::Scrub,
+            size: 0.5,
+            position: 0.3,
+            motion: 0.5,
+            ..TapeEngineParams::default()
+        };
+        let mut e = fresh();
+        e.note_on(60, &p, &v, SR);
+        let mut dc = DcBlocker::new(DC_HZ, SR);
+        let mut out = Vec::new();
+        let mut b = [0.0; BLOCK_SIZE];
+        for n in 0..stop_at + 400 {
+            if n == stop_at {
+                p.motion = 0.0;
+            }
+            if n == stop_at + 200 {
+                p.motion = 0.5;
+            }
+            e.render(&mut b, &p, &v, SR);
+            out.extend(b.iter().map(|&x| dc.process(x)));
+        }
+        let own = max_step(&out[20 * B..stop_at * B]);
+        let worst = max_step(&out[stop_at * B..]);
+        assert!(
+            worst <= own * 1.05,
+            "stop at block {stop_at}: {worst} against {own}"
+        );
+    }
 }
 
 /// MOTION 0.5 plays the loop at the note's speed (`inc` 1 here); POSITION
@@ -582,34 +683,70 @@ fn events_are_bounded_per_block() {
     }
 }
 
-/// The worst case for events (H2): SIZE 0 at `inc`'s clamp on an 8-frame
-/// source, where a loop is the whole source. Its host time stays within a
-/// few times LOOP's fade path (a long loop fading every sample). This is
-/// the row the step-3 bench measures on the unit.
-#[test]
-fn tiny_loop_at_the_clamp_costs_about_a_fade() {
+/// Host time a sample of `blocks` blocks of `p(block)` on `v`, at `note`
+/// and `pitch`: the best of seven.
+fn host_time(
+    p: &dyn Fn(usize) -> TapeEngineParams,
+    v: &SourceView<'_>,
+    (note, pitch): (u8, f32),
+    blocks: usize,
+) -> f64 {
     use std::time::Instant;
+    let mut best = f64::MAX;
+    for _ in 0..7 {
+        let mut e = fresh();
+        e.set_pitch(pitch);
+        e.note_on(note, &p(0), v, SR);
+        let mut b = [0.0; BLOCK_SIZE];
+        let t = Instant::now();
+        for n in 0..blocks {
+            e.render(&mut b, &p(n), v, SR);
+            std::hint::black_box(&b);
+        }
+        best = best.min(t.elapsed().as_secs_f64());
+    }
+    best
+}
+
+/// The worst cases for events and per-call work (H2, N2), the `TAPE TINY`
+/// bench rows, in host time against LOOP's fade path (a long loop at
+/// neutral XFADE ½, where every pass fades):
+/// - each model at SIZE 0 and `inc` 16 on an 8-frame source;
+/// - PING-PONG clamping in a 64-frame loop at `inc` 16 under a POSITION
+///   square wave;
+/// - SCRUB in a 64-frame loop at `inc` 16.
+///
+/// Each is held under its model's bill: host time over LOOP's fade path,
+/// times that path's 217 instructions, is an M7 estimate, billed at
+/// × 1.46 × 1.1 + 12 a head; 5 % is left for the host's noise (in release;
+/// `cargo test --release` measured the bills). The bench rows replace
+/// these.
+#[test]
+fn tiny_loops_cost_within_their_bills() {
     let tiny = held_plain(&[0.9, -0.7, 0.4, -0.2, 0.6, -0.1, 0.3, -0.8], 48_000);
     let tv = SourceView::strict(&tiny).unwrap();
+    // At 8 kHz, SIZE 0's 2 ms is 16 frames: the loop is MIN_LOOP_FRAMES.
+    let slow = held_plain(&sine(8_000, 100.7, 80_000), 8_000);
+    let sv = SourceView::strict(&slow).unwrap();
     let long = held_plain(&sine(48_000, 100.7, 480_000), 48_000);
     let lv = SourceView::strict(&long).unwrap();
     let blocks = 20_000;
-    let time = |p: &TapeEngineParams, v: &SourceView<'_>, note: u8, pitch: f32| {
-        let mut best = f64::MAX;
-        for _ in 0..3 {
-            let mut e = fresh();
-            e.set_pitch(pitch);
-            e.note_on(note, p, v, SR);
-            let mut b = [0.0; BLOCK_SIZE];
-            let t = Instant::now();
-            for _ in 0..blocks {
-                e.render(&mut b, p, v, SR);
-                std::hint::black_box(&b);
-            }
-            best = best.min(t.elapsed().as_secs_f64());
-        }
-        best
+    let fade = host_time(
+        &|_| TapeEngineParams {
+            xfade: 0.5,
+            ..TapeEngineParams::default()
+        },
+        &lv,
+        (60, 0.0),
+        blocks,
+    );
+    let at_clamp = (127, 4_800.0);
+    let bill = |m: TapeModel| match m {
+        TapeModel::Loop | TapeModel::Reverse => LOOP_SHORT_WORST,
+        TapeModel::PingPong => PING_PONG_BILL,
+        _ => SCRUB_BILL,
     };
+    let mut rows: Vec<(String, TapeModel, f64)> = Vec::new();
     for model in [
         TapeModel::Loop,
         TapeModel::Reverse,
@@ -623,16 +760,52 @@ fn tiny_loop_at_the_clamp_costs_about_a_fade() {
             motion: 1.0,
             ..TapeEngineParams::default()
         };
-        let tiny_t = time(&p, &tv, 127, 4_800.0);
-        // A long loop's fade at its own speed: half of every pass fades.
-        let fade = TapeEngineParams {
+        let t = host_time(&|_| p, &tv, at_clamp, blocks);
+        rows.push((format!("{model:?}, 8 frames"), model, t));
+    }
+    for model in [TapeModel::Loop, TapeModel::Reverse] {
+        let p = TapeEngineParams {
+            model,
+            size: 0.0,
             xfade: 0.5,
             ..TapeEngineParams::default()
         };
-        let fade_t = 2.0 * time(&fade, &lv, 60, 0.0);
-        let ratio = tiny_t / fade_t;
-        eprintln!("{model:?}: tiny loop at the clamp {ratio:.2} × LOOP's fade");
-        assert!(ratio < 4.0, "{model:?}: {ratio:.2} × LOOP's fade");
+        let t = host_time(&|_| p, &sv, at_clamp, blocks);
+        rows.push((format!("{model:?}, 64 frames"), model, t));
+    }
+    let square = |n: usize| TapeEngineParams {
+        model: TapeModel::PingPong,
+        size: 0.0,
+        position: if (n / 8).is_multiple_of(2) { 0.0 } else { 1.0 },
+        ..TapeEngineParams::default()
+    };
+    let t = host_time(&square, &sv, at_clamp, blocks);
+    rows.push((
+        "PingPong, 64 frames, clamping".into(),
+        TapeModel::PingPong,
+        t,
+    ));
+    let scrub = TapeEngineParams {
+        model: TapeModel::Scrub,
+        size: 0.0,
+        xfade: 0.5,
+        motion: 1.0,
+        ..TapeEngineParams::default()
+    };
+    let t = host_time(&|_| scrub, &sv, at_clamp, blocks);
+    rows.push(("Scrub, 64 frames".into(), TapeModel::Scrub, t));
+    for (name, model, t) in rows {
+        let ratio = t / fade;
+        let cycles = ratio * 217.0 * 1.46 * 1.1 + 24.0;
+        eprintln!("{name}: {ratio:.2} × LOOP's fade, about {cycles:.0} cycles");
+        // A debug build's code is not the firmware's: there, only a gross
+        // regression (an event costing a block's work) is caught.
+        let slack = if cfg!(debug_assertions) { 1.5 } else { 1.05 };
+        assert!(
+            cycles <= slack * bill(model),
+            "{name}: about {cycles:.0} cycles, billed {}",
+            bill(model)
+        );
     }
 }
 
