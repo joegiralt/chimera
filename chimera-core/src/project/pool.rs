@@ -122,6 +122,24 @@ impl Pool {
         c <= self.free()
     }
 
+    /// The meter's parts: Sounds, live sources, pending holes. They sum
+    /// to `used`.
+    pub fn split(&self) -> (Cost, Cost, Cost) {
+        let (sounds, pending) = (self.arena.sounds(), self.arena.pending());
+        let sources = self.used().bytes() - sounds.bytes() - pending.bytes();
+        (sounds, Cost::of(sources as usize), pending)
+    }
+
+    pub fn source_count(&self) -> usize {
+        self.arena.source_count()
+    }
+
+    /// What storing `sound` in `s` takes from the gap: its cost less the
+    /// slot's old Sound's.
+    pub fn needs(&self, s: SlotId, sound: &Sound) -> Cost {
+        self.index.needs(s, sound)
+    }
+
     /// Encodes `sound` into slot `s`, over what was there. Refused, with
     /// nothing moved, when it won't fit even with the old Sound's bytes
     /// given back.
@@ -156,13 +174,21 @@ impl Pool {
 }
 
 impl Index {
+    fn needs(&self, s: SlotId, sound: &Sound) -> Cost {
+        self.needs_len(s, entry_len(sound))
+    }
+
+    fn needs_len(&self, s: SlotId, len: usize) -> Cost {
+        let old = self.slots[s.index()].map_or(0, |e| Cost::of(e.len as usize).bytes());
+        Cost::of(Cost::of(len).bytes().saturating_sub(old) as usize)
+    }
+
     fn store(&mut self, arena: &mut ArenaWriter, s: SlotId, sound: &Sound) -> Result<(), PoolFull> {
         let len = entry_len(sound);
-        let old = self.slots[s.index()].map_or(0, |e| Cost::of(e.len as usize).bytes());
-        let needs = Cost::of(len).bytes().saturating_sub(old);
-        if needs > arena.gap().bytes() {
+        let needs = self.needs_len(s, len);
+        if needs > arena.gap() {
             return Err(PoolFull {
-                needs: Cost::of(needs as usize),
+                needs,
                 free: arena.gap(),
             });
         }

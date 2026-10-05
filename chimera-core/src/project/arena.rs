@@ -156,6 +156,16 @@ impl ArenaWriter {
         )
     }
 
+    /// Bytes held by Sounds.
+    pub fn sounds(&self) -> Cost {
+        Cost(ARENA_BYTES as u32 - self.snd_start)
+    }
+
+    /// Sources no hole holds.
+    pub fn source_count(&self) -> usize {
+        self.live_srcs().iter().filter(|s| !s.pending).count()
+    }
+
     /// The free space between the ends: an add fits iff its cost ≤ this.
     pub fn gap(&self) -> Cost {
         Cost(self.snd_start - self.src_end)

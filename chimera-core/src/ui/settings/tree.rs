@@ -3,8 +3,8 @@
 //! kind and navigation stays as it is.
 
 use super::leaves::{
-    ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, LIVE_SNAP_LEAF, OUTPUTS_LEAF, OnePage, THEME_LEAF,
-    TUNING_LEAF,
+    ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, LIVE_SNAP_LEAF, OUTPUTS_LEAF, OnePage, POOL_LEAF,
+    THEME_LEAF, TUNING_LEAF,
 };
 use core::num::NonZeroU16;
 
@@ -84,7 +84,7 @@ const fn crumb(label: &'static str, crumb: &'static str, kind: Kind) -> Row {
 
 use Kind::{Later, Leaf, List};
 
-static PROJECT: [Row; 3] = [
+static PROJECT: [Row; 4] = [
     crumb("LOAD PROJECT", "LOAD", Kind::Screen(Screen::LoadProject)),
     crumb("SAVE PROJECT AS", "SAVE AS", Kind::Act(Act::SaveProjectAs)),
     crumb(
@@ -92,6 +92,7 @@ static PROJECT: [Row; 3] = [
         "MANAGE",
         Kind::Screen(Screen::ManageProjects),
     ),
+    row("POOL", Leaf(&POOL_LEAF)),
 ];
 
 /// The active Part's list: its crumb is `PART n`.

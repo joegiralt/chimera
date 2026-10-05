@@ -242,9 +242,9 @@ fn the_browser_offers_clear_on_a_filled_slot() {
         .expect("an empty slot");
     let ink = |cursor| {
         let mut fb = screen::Fb::new();
-        browser::draw(&mut fb, pool, PartId::ALL[0], cursor, 0, true);
+        browser::draw(&mut fb, ui.project(), PartId::ALL[0], cursor, 0, true, None);
         (0..120)
-            .flat_map(|x| (277..=284).map(move |y| (x, y)))
+            .flat_map(|x| (browser::CLEAR_Y - 7..=browser::CLEAR_Y).map(move |y| (x, y)))
             .filter(|&(x, y)| fb.at(x, y) == theme::INK)
             .count()
     };
@@ -275,13 +275,7 @@ fn every_hint_fits() {
     let all = cells
         .iter()
         .flat_map(|c| [c.hint(true), c.hint(false)])
-        .chain([
-            mute,
-            mod_grid::DELETE,
-            mod_grid::PRIME,
-            browser::HINT,
-            browser::CLEAR_HINT,
-        ]);
+        .chain([mute, mod_grid::DELETE, mod_grid::PRIME]);
     for h in all {
         println!("{:3} {h:?}", hint::width(h));
         assert!(
@@ -289,6 +283,41 @@ fn every_hint_fits() {
             "{h:?}: {}",
             hint::width(h)
         );
+    }
+}
+
+/// The pool's lines at their longest (999K) fit too: the refusal, the
+/// clear's bytes, the save's cost and its WON'T FIT.
+#[test]
+fn every_pool_hint_fits() {
+    use chimera_core::project::PoolFull;
+    use chimera_core::project::arena::Cost;
+    use chimera_core::ui::settings::prompt;
+    let k999 = Cost::of(999 * 1024);
+    assert_eq!(k999.kib_label().as_str(), "999K");
+    let w = theme::CONTENT_W;
+    let full = prompt::pool_full(PoolFull {
+        needs: k999,
+        free: k999,
+    });
+    let text = chimera_core::ui::draw::text_width(
+        &theme::FONT_LABEL,
+        full.as_str(),
+        browser::REFUSAL_TRACKING,
+    );
+    assert!(text <= w, "{}: {text}", full.as_str());
+    let (clear, save, wont) = (
+        browser::clear_words(k999),
+        browser::save_words(Some(k999)),
+        browser::save_words(None),
+    );
+    let lines = [
+        vec![Gesture(browser::CLEAR_KEYS, clear.as_str())],
+        vec![Gesture(browser::SAVE_KEYS, save.as_str())],
+        vec![Gesture(browser::SAVE_KEYS, wont.as_str())],
+    ];
+    for l in &lines {
+        assert!(hint::width(l) <= w, "{l:?}: {}", hint::width(l));
     }
 }
 
@@ -338,8 +367,8 @@ fn hints_off_shows_no_hint() {
     );
     let (mut a, mut b) = (screen::Fb::new(), screen::Fb::new());
     let ui = ui_for("sound_browser");
-    browser::draw(&mut a, ui.project().pool(), PartId::ALL[0], 0, 0, true);
-    browser::draw(&mut b, ui.project().pool(), PartId::ALL[0], 0, 0, false);
+    browser::draw(&mut a, ui.project(), PartId::ALL[0], 0, 0, true, None);
+    browser::draw(&mut b, ui.project(), PartId::ALL[0], 0, 0, false, None);
     assert_ne!(a.hash(), b.hash(), "the browser's go too");
 }
 

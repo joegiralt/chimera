@@ -728,3 +728,33 @@ fn a_card_error_after_naming_drops_the_save_and_its_load() {
     assert_eq!(r.ui.project().meta().name(), name("SKETCH"));
     assert_eq!(listed(&mut r.s).len(), 1);
 }
+
+/// SETTINGS › PROJECT › POOL: the bar, then `SOUNDS n · xK`, `SOURCES`,
+/// `FREE yK`; PENDING only while a hole waits. Read-only.
+#[test]
+fn pool_leaf_lists_breakdown() {
+    use chimera_core::ui::block_registry::SYS_POOL;
+    use chimera_core::ui::pool_page::{self, METER_Y};
+    use chimera_core::ui::theme;
+    let mut ui = Box::new(UiState::new());
+    screen::to_leaf(&mut ui, &["PROJECT", "POOL"]);
+    assert_eq!(ui.page_def().id, SYS_POOL.id);
+    let pool = ui.project().pool();
+    let (sounds, _, _) = pool.split();
+    let texts = pool_page::cell_texts(pool);
+    let text = |i: usize| texts[i].as_ref().map(|t| t.as_str().to_string());
+    assert_eq!(SYS_POOL.params[0].label(), "SOUNDS");
+    assert_eq!(
+        text(0).unwrap(),
+        format!("{} · {}", pool.sound_count(), sounds.kib_label().as_str())
+    );
+    assert_eq!(pool.sound_count(), 10);
+    assert_eq!(SYS_POOL.params[1].label(), "SOURCES");
+    assert_eq!(text(1).unwrap(), "0 · 0.0K");
+    assert_eq!(SYS_POOL.params[2].label(), "FREE");
+    assert_eq!(text(2).unwrap(), pool.free().kib_label().as_str());
+    assert_eq!(text(3), None, "no PENDING with none pending");
+    let fb = screen::render_ui(&ui);
+    assert_eq!(fb.at(theme::MARGIN_X, METER_Y), theme::INK, "the bar");
+    assert_eq!(fb.at(theme::MARGIN_X + 215, METER_Y), theme::BAR_REST);
+}

@@ -1140,6 +1140,27 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
         feed(ui, Input::turn(EncoderId::A, 1));
     }),
+    // Part 1 edited past the pool's free bytes: MIX + EDIT is refused,
+    // and the band says by how much (sound-pool plan Task 6).
+    ("sound_browser_pool_full", |ui| {
+        use chimera_core::project::test_support::dense;
+        feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
+        dense(ui.project_mut().edit_part(PartId::ALL[0]).sound, 7);
+        for s in SlotId::ALL {
+            if ui.project().pool().get(s).is_some() {
+                continue;
+            }
+            let mut x = Sound::init(EngineType::Algo);
+            dense(&mut x, s.index() as u64);
+            let p = ui.project_mut();
+            if p.pool_store(s, &x).is_err()
+                && p.pool_store(s, &Sound::init(EngineType::Algo)).is_err()
+            {
+                break;
+            }
+        }
+        feed(ui, Input::chord(ButtonId::Mix, ButtonId::Edit));
+    }),
     ("settings_personal_theme", |ui| {
         to_leaf(ui, &["PERSONALIZE", "THEME"]);
         feed(ui, Input::turn(EncoderId::C, 1)); // ACCENT AMBER, focused
@@ -1151,6 +1172,10 @@ pub const CASES: &[ScreenCase] = &[
     }),
     ("settings_system_diag_aud_load", |ui| {
         to_leaf(ui, &["SYSTEM", "DIAGNOSTICS", "AUDIO LOAD"])
+    }),
+    // PROJECT › POOL on NEW: the bar, SOUNDS, SOURCES, FREE.
+    ("settings_project_pool", |ui| {
+        to_leaf(ui, &["PROJECT", "POOL"])
     }),
     ("settings_top", |ui| tap(ui, ButtonId::Menu)),
     // Part 3's LIVE SNAP (plan Task 15): SNAP CHORD, HELD RE-SNAP focused.

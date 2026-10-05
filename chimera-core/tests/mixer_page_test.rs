@@ -455,11 +455,12 @@ fn sound_browser_title_names_the_part() {
     let _ = got.clear(theme::BG);
     browser::draw(
         &mut got,
-        Project::boxed().0.pool(),
+        &Project::boxed().0,
         PartId::ALL[1],
         0,
         0,
         true,
+        None,
     );
     let mut want = screen::Fb::new();
     let _ = want.clear(theme::BG);

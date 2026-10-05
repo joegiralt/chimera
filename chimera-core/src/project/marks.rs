@@ -5,6 +5,7 @@
 use crate::preset::Sound;
 use crate::storage::sound_crc;
 
+use super::arena::Cost;
 use super::{Origin, Part, PartFrom, PartId, PartSet, PartSource, Pool, PoolFull, Project, SlotId};
 use super::{TemplateCrc, project_crc};
 
@@ -187,12 +188,21 @@ pub fn part_actions(p: &Project, part: PartId) -> PartActions {
     let x = p.part(part);
     let status = part_status(x, &p.pool);
     let crc = sound_crc(&x.sound);
-    let free = p.pool.first_free().map(PartActionKind::NewSlot);
+    // An offer that can't apply isn't made (ADR 0043): a save that
+    // won't fit is no save.
+    let fits = |s: SlotId| p.pool.fits(p.pool.needs(s, &x.sound));
+    let free = p
+        .pool
+        .first_free()
+        .filter(|&s| fits(s))
+        .map(PartActionKind::NewSlot);
     let filled = |s: SlotId| p.pool.get(s).is_some().then_some(PartActionKind::Revert(s));
     let kinds = match (status, x.origin) {
-        (PartStatus::Edited, Origin::Slot { slot, .. }) => {
-            [Some(PartActionKind::OverSlot(slot)), free, filled(slot)]
-        }
+        (PartStatus::Edited, Origin::Slot { slot, .. }) => [
+            fits(slot).then_some(PartActionKind::OverSlot(slot)),
+            free,
+            filled(slot),
+        ],
         (PartStatus::Stale(s), _) => [filled(s), free, None],
         (PartStatus::Clean | PartStatus::Edited, _) => [free, None, None],
     };
@@ -206,6 +216,16 @@ pub fn part_actions(p: &Project, part: PartId) -> PartActions {
                 crc,
             })
         }),
+    }
+}
+
+/// What `part`'s save takes from the gap: over its slot when it is
+/// Edited from one, else a whole new slot. As `part_actions` saves it.
+pub fn save_needs(p: &Project, part: PartId) -> Cost {
+    let x = p.part(part);
+    match (part_status(x, &p.pool), x.origin) {
+        (PartStatus::Edited, Origin::Slot { slot, .. }) => p.pool.needs(slot, &x.sound),
+        _ => Cost::of(super::pool::entry_len(&x.sound)),
     }
 }
 

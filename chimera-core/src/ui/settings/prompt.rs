@@ -13,7 +13,7 @@ use u8g2_fonts::FontRenderer;
 
 use crate::name::ProjectName;
 use crate::orbit::scene::{Refused, SceneIdx};
-use crate::project::{Line, PartId, PartSet, ReplaceError, SlotId, Subject};
+use crate::project::{Line, PartId, PartSet, PoolFull, ReplaceError, SlotId, Subject};
 use crate::storage::ProjectId;
 use crate::ui::components::upper;
 use crate::ui::draw;
@@ -496,8 +496,20 @@ impl Prompt for EnterDfu {
     }
 }
 
-/// SAVE PART FIRST with no slot free.
+/// A save with every slot taken.
 pub const POOL_FULL: &str = "POOL FULL";
+
+/// A save the arena has no room for: `POOL FULL · NEEDS 1.2K, 0.4K FREE`.
+pub fn pool_full(f: PoolFull) -> Line {
+    let mut l = Line::new("");
+    let _ = write!(
+        l,
+        "POOL FULL · NEEDS {}, {} FREE",
+        f.needs.kib_label().as_str(),
+        f.free.kib_label().as_str()
+    );
+    l
+}
 
 /// A Part saved to `s` from SAVE TO PROJ.
 pub fn saved_to(s: SlotId) -> Line {

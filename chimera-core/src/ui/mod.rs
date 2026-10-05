@@ -16,6 +16,7 @@ pub mod glyph;
 pub mod hint;
 pub mod hold;
 pub mod led;
+pub mod meter;
 pub mod midi_settings;
 pub mod mod_grid;
 pub mod mod_panel;
@@ -24,6 +25,7 @@ pub mod orbit;
 pub mod page;
 pub mod part_page;
 pub mod perf;
+pub mod pool_page;
 pub mod region;
 pub mod renderer;
 pub mod settings;
@@ -204,6 +206,9 @@ pub struct UiState {
     display_lfos: [Lfo; 3],
     /// The last MIX+PLUS outcome; `None` once retired (issue #21).
     prime_status: Option<PrimeStatus>,
+    /// A save the pool had no room for, in the browser's band until the
+    /// next input (ADR 0017's convention).
+    refusal: Option<Line>,
     /// SETTINGS › THEME; boot sets it from SYSTEM (`set_theme`).
     theme: ThemeSettings,
     /// SETTINGS › MIDI CONFIG's SYNC; boot sets it from SYSTEM (`set_midi`).
@@ -248,6 +253,7 @@ crate::in_place::field_list!(UiState => UiState {
     focus,
     display_lfos,
     prime_status,
+    refusal,
     theme,
     midi,
     toast,
@@ -322,6 +328,7 @@ impl UiState {
             addr_of_mut!((*p).focus).write(focus::FocusMemory::new());
             addr_of_mut!((*p).display_lfos).write([Lfo::new(); 3]);
             addr_of_mut!((*p).prime_status).write(None);
+            addr_of_mut!((*p).refusal).write(None);
             addr_of_mut!((*p).theme).write(theme);
             addr_of_mut!((*p).midi).write(midi);
             addr_of_mut!((*p).toast).write(busy::ToastTimer::new());
@@ -375,6 +382,11 @@ impl UiState {
     /// encoder, button or page change (issue #21).
     pub fn prime_status(&self) -> Option<PrimeStatus> {
         self.prime_status
+    }
+
+    /// The browser's refusal: `POOL FULL · NEEDS 1.2K, 0.4K FREE`.
+    pub fn refusal(&self) -> Option<&str> {
+        self.refusal.as_ref().map(Line::as_str)
     }
 
     /// Where the UI is.
@@ -997,7 +1009,7 @@ impl UiState {
         again: impl Fn(Asked<PartSource, A>) -> Ask,
     ) {
         let Some(a) = save(&Offer::of(&self.project, ask.source().part)) else {
-            self.error(Line::new(prompt::POOL_FULL));
+            self.error(self.pool_full(ask.source().part));
             return self.ask(again(ask));
         };
         let stale = self.save_sound(a);
@@ -1017,9 +1029,8 @@ impl UiState {
         let slot = slot_of(a.kind());
         let stale = match self.project.apply_part_action(a) {
             Ok(stale) => stale,
-            // Until the meter's copy (Task 6): the save didn't happen.
-            Err(project::ActionRefused::Full(_)) => {
-                self.error(Line::new("POOL FULL"));
+            Err(project::ActionRefused::Full(f)) => {
+                self.refuse(prompt::pool_full(f));
                 return None;
             }
             Err(project::ActionRefused::Gone) => return None,
@@ -1066,8 +1077,26 @@ impl UiState {
                     self.ask(x);
                 }
             }
-            None => self.error(Line::new(prompt::POOL_FULL)),
+            None => self.refuse(self.pool_full(p)),
         }
+    }
+
+    /// Why `part`'s save isn't offered: what it needs against the gap,
+    /// else every slot taken.
+    fn pool_full(&self, part: PartId) -> Line {
+        let needs = project::save_needs(&self.project, part);
+        let free = self.project.pool().free();
+        if needs > free {
+            prompt::pool_full(project::PoolFull { needs, free })
+        } else {
+            Line::new(prompt::POOL_FULL)
+        }
+    }
+
+    /// `why` in the browser's band, until the next input.
+    fn refuse(&mut self, why: Line) {
+        self.refusal = Some(why);
+        self.browser_dirty = true;
     }
 
     /// EDIT on an action row; `at` is its list.
@@ -1794,7 +1823,10 @@ impl UiState {
     /// Process one frame of input: navigation + encoder deltas, then
     /// ORBIT's commands flushed for the frame's publish.
     pub fn handle_input(&mut self, controls: &impl Controls) {
+        let rev = self.project.rev();
         self.input(controls);
+        // A save or clear moves the browser's hints, costs and meter.
+        self.browser_dirty |= self.loc.browse().is_some() && self.project.rev() != rev;
         self.flush_orbit();
     }
 
@@ -1805,6 +1837,7 @@ impl UiState {
         if any_input(controls) {
             self.prime_status = None;
             self.toast.dismiss();
+            self.browser_dirty |= self.refusal.take().is_some();
         }
         self.refresh_status();
 
@@ -2151,11 +2184,12 @@ impl UiState {
             let (cursor, scroll) = (b.cursor(), b.scroll());
             browser::draw(
                 display,
-                self.project.pool(),
+                &self.project,
                 part,
                 cursor,
                 scroll,
                 self.theme.hints,
+                self.refusal(),
             );
             self.draw_prompt(display);
             return;
@@ -2244,6 +2278,7 @@ impl UiState {
             parts: self.project.perf().parts(),
             active_part: self.active_part,
             prime_status: self.prime_status,
+            pool: self.project.pool(),
             audio,
             card: self.card,
             master_gr_db: crate::meter::MASTER_GR.read(),
@@ -2322,6 +2357,8 @@ impl UiState {
                 f.focus as u8,
                 if audio_page {
                     audio_page::focus_key(f.audio)
+                } else if f.def.viz == VizType::Pool {
+                    pool_page::focus_key(f.pool)
                 } else {
                     qvalues[f.focus]
                 },
@@ -2350,6 +2387,7 @@ impl UiState {
                     self.page,
                     match f.def.viz {
                         VizType::AudioStats => audio_page::cells_key(f.audio),
+                        VizType::Pool => pool_page::cells_key(f.pool),
                         VizType::About => about_page::cells_key(f.audio, f.card),
                         _ => qvalues,
                     },
@@ -2454,11 +2492,12 @@ impl UiState {
                 let (cursor, scroll) = (b.cursor(), b.scroll());
                 browser::draw(
                     display,
-                    self.project.pool(),
+                    &self.project,
                     part,
                     cursor,
                     scroll,
                     self.theme.hints,
+                    self.refusal(),
                 );
                 self.draw_prompt(display);
                 // Invalidate region set so normal layout forces full rebuild on exit
