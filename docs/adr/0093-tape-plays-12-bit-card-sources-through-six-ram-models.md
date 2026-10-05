@@ -151,8 +151,9 @@ code 23, ident `"TAPE"`, ADR 0055).
       the macros' easing), its speed ramped across the block.
     - The loop's crossfade is a smoothstep, not LOOP's line: near MOTION 0
       it crawls, where a line's corners stand out.
-    - A stopped tape is silent: with the loop and the finger still, the
-      output eases to 0 over 1 ms, and back in when the tape moves.
+    - A stopped tape is silent: it stops under `STILL` and starts over
+      twice it; a note-on into a stopped tape is silent, and a mid-note
+      stop or start eases over 30 ms, so the DC blocker sees no tick.
   - Every loop is at least 64 frames (four samples at `inc`'s clamp) or
     the whole source, and the next pass's bounds are worked out once a
     block, so a pass's events never cost every sample.
@@ -178,31 +179,38 @@ code 23, ident `"TAPE"`, ADR 0055).
   dimmed, each with its cost and the meter's preview. One new gesture,
   with its hint (ADR 0086): `MIX + PLUS LOADS · 41K`, or `WON'T FIT ·
   NEEDS 41K, 12K FREE`.
-- **CPU,** in cycles a sample. These are host estimates, with one head at
-  88 instructions (measured on `SourceView::read`, TAPE Task 2), each
-  model's loops measured (TAPE Tasks 3 and 6) and the cache misses of
-  `inc` 16 (+12 a head). The budget is checked a block at a time, so each
-  model bills the worst path a whole block can sit in: LOOP's fade (217),
-  REVERSE's (224), PING-PONG's clamp (232), SCRUB's fade with a stop or
-  start in the block (241 + 9). The bench at build step 3 replaces them:
+- **CPU,** in cycles a sample, in the house manner: instructions × 1.46 ×
+  1.1, + 12 a head for `inc` 16's cache misses, + 12 a `vdiv` left in the
+  path, rounded up to 10. These are host estimates, with one head at 88
+  instructions (measured on `SourceView::read`, TAPE Task 2) and each
+  model's loops measured (TAPE Tasks 3 and 6). The budget is checked a
+  block at a time, so each model bills the worst a whole block can sit
+  in, the per-call work of its shortest pass (a 64-frame loop at `inc`
+  16) included: LOOP's fade (217), REVERSE's (224), PING-PONG clamping
+  in a 64-frame loop (about 328), SCRUB's fade in one (about 317). LOOP
+  and REVERSE in a 64-frame loop measure about 300 and are not re-billed
+  yet. The bench at build step 3 replaces them:
 
   | | LOOP, REVERSE | PING-PONG | SCRUB | TRANSWAVE | TRANSWAVE, pitch moving > ±6.2 st | STRETCH | AGE on |
   |---|---|---|---|---|---|---|---|
-  | Billed | 390 | 400 | 430 | 400 | 770 | 400 | +20 |
+  | Billed | 390 | 560 | 540 | 400 | 770 | 400 | +20 |
 
-  - **Admission.** A plain TAPE voice is admitted 8 on rev V, with ORBIT
-    and with the master tape (527 at worst, SCRUB with AGE; 7 with the
-    master tape when DRIVE and FOLD are on, and 7 everywhere for SCRUB
-    with AGE, DRIVE and FOLD). On rev Y, LOOP and REVERSE with AGE off
-    (467) keep 8, and PING-PONG, STRETCH and TRANSWAVE with AGE off (477)
-    keep 8 by one cycle; SCRUB (507), and any model with AGE, 7; with
-    DRIVE and FOLD, 6. A TRANSWAVE whose pitch can move
+  - **Admission.** LOOP, REVERSE, STRETCH and TRANSWAVE are admitted 8
+    on rev V, with ORBIT and with the master tape (7 with the master tape
+    when DRIVE and FOLD are on). On rev Y, LOOP and REVERSE with AGE off
+    (467) keep 8, and STRETCH and TRANSWAVE with AGE off (477) keep 8 by
+    one cycle; with AGE, 7; with DRIVE and FOLD, 6. PING-PONG (637, 657
+    with AGE) is admitted 7 on rev V and 5 on rev Y; SCRUB (617, 637 with
+    AGE) 8 or 7 on rev V and 6 or 5 on rev Y; with DRIVE and FOLD, 6 on
+    rev V and 5 on rev Y. A TRANSWAVE whose pitch can move
     past ±6.2 semitones (867) is admitted 4 on rev Y and 5 on rev V.
   - **Eight voices hold while the benched engine stays under 546 on rev V
     and 400 on rev Y.**
   - **The bench rows are build step 3:** cold-cache worst blocks with
     eight voices on distinct sources at `inc` 16, STRETCH at its shortest
-    D-TIME, and TRANSWAVE at C7 changing level every block. They are
+    D-TIME, TRANSWAVE at C7 changing level every block, and `TAPE TINY`:
+    each model in its shortest loop at `inc` 16, PING-PONG clamping under
+    a POSITION square wave, each held under its model's bill. They are
     flashed before any model past LOOP is built, and a row over its bill
     raises it.
   - `cost_test` gains `tape_bills_each_model`.
