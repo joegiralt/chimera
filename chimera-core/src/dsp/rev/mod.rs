@@ -6,6 +6,7 @@
 //! the new TYPE fades in as a fresh engine.
 
 pub mod arena;
+pub mod bloom;
 pub mod burst;
 pub mod loop_engine;
 pub mod parts;
@@ -23,6 +24,7 @@ use crate::dsp::halfband::{Decimator, HALF, Interpolator};
 use crate::dsp::reverb::{ReverbParams, ReverbType, knobs, ranges};
 use crate::dsp::ring::{FULL_SCALE, STAGES, WET_GAIN, smear_depth, smear_hz};
 use arena::ReverbArena;
+use bloom::Bloom;
 use burst::BurstEngine;
 use loop_engine::{Hall, Layout, LoopEngine};
 use parts::{Wander, wander_seeds};
@@ -42,6 +44,7 @@ pub enum EngineState {
     Burst(BurstEngine),
     Room(Room),
     Hall(Hall),
+    Bloom(Bloom),
 }
 
 /// Each TYPE's return gain. ROOM's, HALL's, GATE's and REVERSE's match
@@ -56,7 +59,8 @@ pub fn wet_gain(t: ReverbType) -> f32 {
         ReverbType::Hall => WET_HALL,
         ReverbType::Gate => WET_GATE,
         ReverbType::Reverse => WET_REVERSE,
-        ReverbType::Quad | ReverbType::Bloom => WET_GAIN,
+        ReverbType::Bloom => WET_BLOOM,
+        ReverbType::Quad => WET_GAIN,
     }
 }
 
@@ -64,6 +68,7 @@ const WET_ROOM: f32 = 2.42;
 const WET_HALL: f32 = 9.7;
 const WET_GATE: f32 = 6.75;
 const WET_REVERSE: f32 = 7.05;
+const WET_BLOOM: f32 = 6.43;
 
 /// ROOM's four loops (ADR 0095) set it: their gains, targets, dampers and
 /// four smear offsets, 84 B past ADR 0085's 160 (88 with the tests'
@@ -358,12 +363,12 @@ impl Reverb {
     /// easing: it is the player's.
     fn reset(&mut self, kind: ReverbType) {
         self.kind = kind;
-        // BLOOM plays QUAD's engine until its own lands (Task 11).
         self.state = match kind {
             ReverbType::Gate | ReverbType::Reverse => EngineState::Burst(BurstEngine::default()),
             ReverbType::Room => EngineState::Room(Room::default()),
             ReverbType::Hall => EngineState::Hall(Hall::default()),
-            ReverbType::Quad | ReverbType::Bloom => EngineState::Quad(QuadState::default()),
+            ReverbType::Bloom => EngineState::Bloom(Bloom::default()),
+            ReverbType::Quad => EngineState::Quad(QuadState::default()),
         };
         self.dec = Decimator::new();
         self.up_l = Interpolator::new();
@@ -405,6 +410,23 @@ impl Reverb {
     pub fn room(&self) -> Option<&Room> {
         match &self.state {
             EngineState::Room(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    /// BLOOM's state to change, while BLOOM runs (tests).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn bloom_mut(&mut self) -> Option<&mut Bloom> {
+        match &mut self.state {
+            EngineState::Bloom(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    /// BLOOM's state, while BLOOM runs.
+    pub fn bloom(&self) -> Option<&Bloom> {
+        match &self.state {
+            EngineState::Bloom(e) => Some(e),
             _ => None,
         }
     }
@@ -464,9 +486,10 @@ impl Reverb {
         let p = &self.latched;
         // A row TYPE's knobs, mapped once a block (fast `exp2`/`log2`).
         let kn = match self.state {
-            EngineState::Burst(_) | EngineState::Room(_) | EngineState::Hall(_) => {
-                Some(knobs(p, tempo, &mut self.fold))
-            }
+            EngineState::Burst(_)
+            | EngineState::Room(_)
+            | EngineState::Hall(_)
+            | EngineState::Bloom(_) => Some(knobs(p, tempo, &mut self.fold)),
             EngineState::Quad(_) => None,
         };
         let mut u = [0.0f32; HALF];
@@ -540,6 +563,19 @@ impl Reverb {
                 // crossfade, as HALL's.
                 let kn = kn.unwrap_or_default();
                 let full = kn.smear_ms * room::PER_MS;
+                let (d0, d1) = (s0 * full, s1 * full);
+                e.set_smear(core::array::from_fn(|k| {
+                    (d0 * (1.0 + x0[k]), d1 * (1.0 + x1[k]))
+                }));
+                self.paths = (e.crossfade().is_some(), d0 != 0.0 || d1 != 0.0);
+                self.depth = d1;
+                let [l, r] = &mut lr;
+                e.run(&mut self.arena, &u, &kn, l, r);
+            }
+            EngineState::Bloom(e) => {
+                // One wander a smeared allpass, the three in one loop.
+                let kn = kn.unwrap_or_default();
+                let full = kn.smear_ms * bloom::PER_MS;
                 let (d0, d1) = (s0 * full, s1 * full);
                 e.set_smear(core::array::from_fn(|k| {
                     (d0 * (1.0 + x0[k]), d1 * (1.0 + x1[k]))

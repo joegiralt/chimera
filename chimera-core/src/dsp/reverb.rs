@@ -9,11 +9,11 @@ use crate::dsp::algo::math::log2;
 use crate::dsp::clampf;
 use crate::dsp::modulator::law::Law;
 use crate::dsp::rev::parts::{lg2, pow2};
-use crate::dsp::rev::room;
 use crate::dsp::rev::sync::{
     DECAY_BEATS, Division, FoldState, GATE_LENGTH, HALL_PRE, REVERSE_LENGTH, ROOM_PRE, Tempo, fold,
     index_of, p_of,
 };
+use crate::dsp::rev::{bloom, room};
 use crate::dsp::ring::{self, RingControls, STAGES, size_step, stage_len};
 use crate::ui::glyph::{CompositeId, FocusGlyph};
 
@@ -134,13 +134,14 @@ const KNOB_SLOTS: [ParamId; 9] = [
 
 /// Each TYPE's starting knobs (spec § Each TYPE's knobs), by `KNOB_SLOTS`,
 /// in screen order. QUAD writes only TIME, DAMP, SIZE, SMEAR and RATE.
-/// ROOM's are MidiVerb II program 5's (Medium Bright .6), fitted on the
-/// Rust render (ADR 0095), with SMEAR 0.3.
+/// ROOM's are MidiVerb II program 5's (Medium Bright .6), BLOOM's program
+/// 45's (Bloom 1), each fitted on the Rust render (ADR 0095), with SMEAR
+/// 0.3.
 const START: [[f32; 9]; 6] = [
     [0.5, 0.3, 0.5, 0.3, 0.4, 0.0, 0.2, 0.0, 0.5],
     [0.702, 0.346, 0.619, 0.0, 0.0, 0.077, 0.72, 0.3, 0.5],
     [0.45, 0.3, 0.65, 0.3, 0.4, 0.15, 0.2, 0.35, 0.4],
-    [0.6, 0.3, 0.7, 0.35, 0.5, 0.0, 0.2, 0.3, 0.4],
+    [0.957, 0.3, 0.827, 0.617, 0.25, 0.018, 0.2, 0.3, 0.4],
     [0.3, 0.3, 0.55, 0.2, 0.7, 0.0, 0.2, 0.0, 0.5],
     [0.0, 0.3, 0.5, 0.0, 0.8, 0.0, 0.67, 0.0, 0.5],
 ];
@@ -203,7 +204,7 @@ const RING_MS: f32 = 1000.0 / 24_000.0;
 
 /// What the engine plays, from the knobs (spec § Each TYPE's knobs):
 /// QUAD's laws, or the TYPE's `Ranges` row (HALL's through its plate
-/// zone). BLOOM plays QUAD's until its engine lands (Task 11).
+/// zone).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct EngineKnobs {
     /// SIZE or LENGTH: the loop's round trip, or the burst, ms.
@@ -352,6 +353,29 @@ pub const ROOM: Ranges = Ranges {
     rate_hz: Exp::new(0.1, 1.0),
 };
 
+/// BLOOM (ADR 0095 § BLOOM): SWELL is the cascade's length, `exp` over
+/// × 0.5–1.2; DECAY its 1 kHz RT60; TONE both one-poles, 10 → 1.5 kHz;
+/// DIFFUSE the cascade's g. It has no DAMP.
+pub const BLOOM: Ranges = Ranges {
+    length_ms: Exp::new(
+        bloom::SWELL_LO * bloom::TOTAL_MS,
+        bloom::SWELL_HI * bloom::TOTAL_MS,
+    ),
+    length_lin: false,
+    time: TimeLaw::Decay {
+        rt60_s: Exp::new(2.0, 12.0),
+    },
+    tone_hz: Exp::new(10_000.0, 1_500.0),
+    diffuse_g: (0.45, 0.65),
+    predelay_ms: (0.0, 125.0),
+    shape_db: (0.0, 0.0),
+    smear_ms: 2.0,
+    smear_cap: 0.0024,
+    damp_hz: GATE.damp_hz,
+    rate_hz: Exp::new(0.05, 0.5),
+    ..ROOM
+};
+
 /// HALL's loop is its one loop's round trip, down to the plate's 120 ms:
 /// SIZE's bottom `PLATE_ZONE` is the plate zone (`plate_pull`). Its DAMP is
 /// QUAD's law (`damp_hz`).
@@ -405,7 +429,8 @@ pub fn ranges(t: ReverbType) -> Option<&'static Ranges> {
         ReverbType::Hall => Some(&HALL),
         ReverbType::Gate => Some(&GATE),
         ReverbType::Reverse => Some(&REVERSE),
-        ReverbType::Quad | ReverbType::Bloom => None,
+        ReverbType::Bloom => Some(&BLOOM),
+        ReverbType::Quad => None,
     }
 }
 
@@ -459,8 +484,7 @@ pub fn knobs(p: &ReverbParams, tempo: Tempo, fold: &mut FoldState) -> EngineKnob
 
 /// What `p.sync` puts in note values under `p.kind` (spec § Tempo sync):
 /// the slot and its divisions, and whether DECAY is in beats. QUAD takes
-/// none; ROOM reads ALL as TIME. BLOOM's (HALL's lists) join with its
-/// engine.
+/// none; ROOM reads ALL as TIME. BLOOM takes HALL's lists.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Synced {
     pub time: Option<(ParamId, &'static [Division])>,
@@ -471,10 +495,10 @@ pub fn synced(p: &ReverbParams) -> Synced {
     use ReverbParams as P;
     let time = match p.kind {
         ReverbType::Room => (P::PREDELAY, ROOM_PRE),
-        ReverbType::Hall => (P::PREDELAY, HALL_PRE),
+        ReverbType::Hall | ReverbType::Bloom => (P::PREDELAY, HALL_PRE),
         ReverbType::Gate => (P::SIZE, GATE_LENGTH),
         ReverbType::Reverse => (P::SIZE, REVERSE_LENGTH),
-        ReverbType::Quad | ReverbType::Bloom => {
+        ReverbType::Quad => {
             return Synced {
                 time: None,
                 beats: false,
@@ -483,7 +507,7 @@ pub fn synced(p: &ReverbParams) -> Synced {
     };
     Synced {
         time: (p.sync != RevSync::Off).then_some(time),
-        beats: p.sync == RevSync::All && p.kind == ReverbType::Hall,
+        beats: p.sync == RevSync::All && matches!(p.kind, ReverbType::Hall | ReverbType::Bloom),
     }
 }
 

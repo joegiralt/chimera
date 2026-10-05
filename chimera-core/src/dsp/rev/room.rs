@@ -18,7 +18,6 @@
 #![allow(clippy::needless_range_loop)]
 
 use core::f32::consts::LOG2_10;
-use core::mem::MaybeUninit;
 #[cfg(any(test, feature = "test-support"))]
 use core::ops::Range;
 
@@ -28,7 +27,9 @@ use crate::dsp::reverb::EngineKnobs;
 use crate::dsp::ring::{FULL_SCALE, RING_LEN};
 
 use super::arena::ReverbArena;
-use super::parts::{Lines, XFADE, XFADE_INV, ap_f32, ease_k, one_pole, pair_in, pow2, wrap};
+use super::parts::{
+    Lines, Scratch, XFADE, XFADE_INV, ap_f32, clip, ease, ease_k, one_pole, pair_in, pow2, wrap,
+};
 
 /// `$body` once per literal, `$k` that literal as a `const`: `ring.rs`'s.
 macro_rules! unroll {
@@ -331,7 +332,6 @@ const FITS: () = assert!(
 const MAX_GAIN: f32 = 0.985;
 /// The send, ½ (§ Shared machinery), in LSBs.
 const IN_GAIN: f32 = 0.5 * FULL_SCALE;
-const INV_FS: f32 = 1.0 / FULL_SCALE;
 /// The most one crossfade moves PRE-DLY, and a stage delay.
 pub const STEP: u16 = 120;
 
@@ -430,46 +430,6 @@ impl Default for Room {
 #[inline(always)]
 fn slow(g4: f32, k: f32) -> f32 {
     (1.0 + 4.8 * g4) * (1.37 - 0.37 * k)
-}
-
-/// One block's one-pole toward `t`, `k` the share kept (0 lands).
-fn ease(x: &mut f32, t: f32, k: f32) {
-    *x = t + k * (*x - t);
-}
-
-/// R1's clip (`parts::soft_clip`) on an LSB value: under its knee, as a
-/// re-entry nearly always is, `x` itself, past one compare.
-#[inline(always)]
-fn clip<const C: bool>(x: f32) -> f32 {
-    if C && x.abs() > FULL_SCALE {
-        let a = x.abs();
-        let u = clampf(a - FULL_SCALE, 0.0, 2.0 * FULL_SCALE);
-        (a.min(FULL_SCALE) + u - (0.25 * INV_FS) * u * u).copysign(x)
-    } else {
-        x
-    }
-}
-
-/// A block's scratch, written before it is read: never zeroed.
-struct Scratch<T: Copy, const N: usize>([MaybeUninit<T>; N]);
-
-impl<T: Copy, const N: usize> Scratch<T, N> {
-    fn new() -> Self {
-        Self([MaybeUninit::uninit(); N])
-    }
-
-    #[inline(always)]
-    fn set(&mut self, i: usize, v: T) {
-        self.0[i].write(v);
-    }
-
-    /// # Safety
-    /// `set(i, _)` ran first.
-    #[inline(always)]
-    unsafe fn get(&self, i: usize) -> T {
-        // SAFETY: the caller set slot `i`.
-        unsafe { self.0[i].assume_init() }
-    }
 }
 
 /// Line `w`'s write slot at head `h` (mod `m`), at offset `off`, and

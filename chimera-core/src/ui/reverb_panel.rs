@@ -71,6 +71,7 @@ static SHAPE: RevKnob = k(P::SHAPE, "SHAPE");
 static CURVE: RevKnob = k(P::SHAPE, "CURVE");
 static LOOPS: RevKnob = k(P::SHAPE, "LOOPS");
 static SIZE: RevKnob = k(P::SIZE, "SIZE");
+static SWELL: RevKnob = k(P::SIZE, "SWELL");
 static DECAY: RevKnob = k(P::TIME, "DECAY");
 static DIFFUSE: RevKnob = RevKnob {
     short: Some("DIFF"),
@@ -86,8 +87,7 @@ static SYNC: RevKnob = RevKnob {
     ..k(P::SYNC, "SYNC")
 };
 
-/// SIZE · TIME · DAMP · SMEAR; MORE: RATE. BLOOM's lands with its engine
-/// (Task 11).
+/// SIZE · TIME · DAMP · SMEAR; MORE: RATE.
 static QUAD: Panel = [
     Some(&QUAD_SIZE),
     Some(&TIME),
@@ -131,6 +131,21 @@ static HALL: Panel = [
     None,
 ];
 
+/// SWELL · DECAY · TONE · DIFFUSE; MORE: PRE-DLY · — · SMEAR · RATE ·
+/// SYNC (ADR 0095).
+static BLOOM: Panel = [
+    Some(&SWELL),
+    Some(&DECAY),
+    Some(&TONE),
+    Some(&DIFFUSE),
+    Some(&PREDELAY),
+    None,
+    Some(&SMEAR),
+    Some(&RATE),
+    Some(&SYNC),
+    None,
+];
+
 /// LENGTH · TAIL · TONE · DENSITY; MORE: — · SHAPE · SMEAR · RATE · SYNC.
 static GATE: Panel = [
     Some(&LENGTH),
@@ -166,20 +181,15 @@ fn panel(t: ReverbType) -> &'static Panel {
         ReverbType::Hall => &HALL,
         ReverbType::Gate => &GATE,
         ReverbType::Reverse => &REVERSE,
-        ReverbType::Quad | ReverbType::Bloom => &QUAD,
+        ReverbType::Bloom => &BLOOM,
+        ReverbType::Quad => &QUAD,
     }
 }
 
-/// The TYPEs TYPE walks, in screen order: each joins with its engine
-/// (BLOOM with Task 11).
+/// The TYPEs TYPE walks, in screen order: each joined with its engine,
+/// and now every one has its own.
 pub fn types_on_screen() -> &'static [ReverbType] {
-    &[
-        ReverbType::Quad,
-        ReverbType::Room,
-        ReverbType::Hall,
-        ReverbType::Gate,
-        ReverbType::Reverse,
-    ]
+    &ReverbType::ALL
 }
 
 /// The panel `t` shows: its own once its engine runs, else QUAD's, which

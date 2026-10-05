@@ -464,6 +464,13 @@ pub fn vibrato_share(x: &[f32], fs: f32, max_hz: f32) -> f32 {
 ///   trace's variance (20 ms windows): no vibrato. (A tail repeats each
 ///   pass, so the trace has lines at 1/`loop_s` and up.)
 pub fn check_smear_bound(r: Render, loop_s: f32, f_ref: f32, rate_hz: f32) {
+    check_smear_bound_drift(r, loop_s, f_ref, rate_hz, 1.0);
+}
+
+/// `check_smear_bound` with the window means' bound `drift` cents: BLOOM's
+/// three smeared lines share its one loop, so a 4/RATE window's eight
+/// targets leave its mean pitch about 1.4 cents (1σ) off at the cap.
+pub fn check_smear_bound_drift(r: Render, loop_s: f32, f_ref: f32, rate_hz: f32, drift: f32) {
     let window = (4.0 / rate_hz * SR as f32) as usize;
     let tail = smear_tail(r, 1.5 + 2.0 * window as f32 / SR as f32 + 0.5);
     assert!(
@@ -478,7 +485,8 @@ pub fn check_smear_bound(r: Render, loop_s: f32, f_ref: f32, rate_hz: f32) {
     }
     for (i, w) in tail.chunks_exact(window).enumerate() {
         let c = cents(zc_hz(w).expect("a window"), f_ref as f64);
-        assert!(c.abs() <= 1.0, "window {i}: mean {c} cents");
+        println!("window {i}: mean {c:.2} cents");
+        assert!(c.abs() <= drift, "window {i}: mean {c} cents");
     }
     let trace: Vec<f32> = tail
         .as_chunks::<{ 20 * MS }>()
@@ -650,9 +658,15 @@ fn burst_db(r: Render) -> f32 {
 /// then its storage noise floor no more than `extra_db` above QUAD's. The
 /// caller runs both at the same MIX and at GRIT 0.
 pub fn check_noise_and_loudness(r: Render, quad: Render, extra_db: f32) {
-    let (a, q) = (burst_db(&mut *r), burst_db(&mut *quad));
-    assert!((a - q).abs() <= 1.0, "loudness {a:.2} dB, QUAD {q:.2} dB");
+    check_loudness(&mut *r, &mut *quad);
     check_noise_floor(r, quad, extra_db);
+}
+
+/// `r`'s return within ±1 dB of QUAD's (`quad`) on the same burst.
+pub fn check_loudness(r: Render, quad: Render) {
+    let (a, q) = (burst_db(&mut *r), burst_db(&mut *quad));
+    println!("loudness {a:.2} dB, QUAD {q:.2} dB");
+    assert!((a - q).abs() <= 1.0, "loudness {a:.2} dB, QUAD {q:.2} dB");
 }
 
 /// `r`'s storage noise floor no more than `extra_db` above QUAD's.

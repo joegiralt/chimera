@@ -3,13 +3,14 @@
 //! i16, full scale ±2.0 in line units; values passed in LSBs.
 
 use core::f32::consts::{LOG2_E, TAU};
+use core::mem::MaybeUninit;
 
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 
 use crate::dsp::algo::math::exp2;
 use crate::dsp::clampf;
 use crate::dsp::halfband::HALF;
-use crate::dsp::ring::{RING_LEN, is_prime, rnd};
+use crate::dsp::ring::{FULL_SCALE, RING_LEN, is_prime, rnd};
 use crate::dsp::xorshift_noise;
 
 /// R1's re-entry clip: `x` to the knee at 1.0, then `1 + u − u²/4` with
@@ -20,6 +21,48 @@ pub fn soft_clip(x: f32) -> f32 {
     let a = x.abs();
     let u = clampf(a - 1.0, 0.0, 2.0);
     (a.min(1.0) + u - 0.25 * u * u).copysign(x)
+}
+
+/// R1's clip (`soft_clip`) on an LSB value: under its knee, as a
+/// re-entry nearly always is, `x` itself, past one compare. Off unless `C`
+/// (the level plan's unclipped reference).
+#[inline(always)]
+pub(crate) fn clip<const C: bool>(x: f32) -> f32 {
+    const INV_FS: f32 = 1.0 / FULL_SCALE;
+    if C && x.abs() > FULL_SCALE {
+        let a = x.abs();
+        let u = clampf(a - FULL_SCALE, 0.0, 2.0 * FULL_SCALE);
+        (a.min(FULL_SCALE) + u - (0.25 * INV_FS) * u * u).copysign(x)
+    } else {
+        x
+    }
+}
+
+/// One block's one-pole toward `t`, `k` the share kept (0 lands).
+pub(crate) fn ease(x: &mut f32, t: f32, k: f32) {
+    *x = t + k * (*x - t);
+}
+
+/// A block's scratch, written before it is read: never zeroed.
+pub(crate) struct Scratch<T: Copy, const N: usize>([MaybeUninit<T>; N]);
+
+impl<T: Copy, const N: usize> Scratch<T, N> {
+    pub(crate) fn new() -> Self {
+        Self([MaybeUninit::uninit(); N])
+    }
+
+    #[inline(always)]
+    pub(crate) fn set(&mut self, i: usize, v: T) {
+        self.0[i].write(v);
+    }
+
+    /// # Safety
+    /// `set(i, _)` ran first.
+    #[inline(always)]
+    pub(crate) unsafe fn get(&self, i: usize) -> T {
+        // SAFETY: the caller set slot `i`.
+        unsafe { self.0[i].assume_init() }
+    }
 }
 
 /// R2's in-loop allpass on its normalised state: `w_d` is the stored

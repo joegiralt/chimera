@@ -15,14 +15,8 @@ use chimera_hal::BLOCK_SIZE;
 use common::SR;
 use common::rev::{Noise, max_d2};
 
-/// The TYPEs with an engine. Tasks 8–11 each append theirs.
-const TYPES: &[ReverbType] = &[
-    ReverbType::Quad,
-    ReverbType::Room,
-    ReverbType::Hall,
-    ReverbType::Gate,
-    ReverbType::Reverse,
-];
+/// Every TYPE: each has its engine.
+const TYPES: &[ReverbType] = &ReverbType::ALL;
 
 /// The switch's blocks: FADE OUT, CLEAR, FADE IN.
 const SWITCH: usize = 2 * FADE_BLOCKS as usize + CLEAR_BLOCKS as usize;
@@ -57,10 +51,15 @@ const BURST: usize = 20;
 /// PRE-DLY (19 ms), and its tail is 2 kHz-rough until the dampers have
 /// darkened it: a one-step gain jump (the bound's negative control) is
 /// lost in it until about 0.8 s (block 600; 200 and 400 still lose it).
+/// BLOOM's tail roughens each time its loop comes round (0.71 s at its
+/// starting SWELL): unswitched, it reads 1.3–1.5× the window before at
+/// blocks 600 and 1000, and before 300 the gain jump is lost in it; 900
+/// sits between.
 fn lead(t: ReverbType) -> usize {
     match t {
         ReverbType::Room => 70,
         ReverbType::Hall => 600,
+        ReverbType::Bloom => 900,
         _ => 0,
     }
 }

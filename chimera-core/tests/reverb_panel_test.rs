@@ -62,9 +62,11 @@ fn every_type_shows_its_cells() {
         more(Hall),
         s(&["PRE-DLY", "DAMP", "SMEAR", "RATE", "SYNC", "-"])
     );
-    // BLOOM's lands with its engine (Task 11): until then it is QUAD's,
-    // which is what plays.
-    assert_eq!((main(Bloom), more(Bloom)), (main(Quad), more(Quad)));
+    assert_eq!(main(Bloom), s(&["SWELL", "DECAY", "TONE", "DIFFUSE"]));
+    assert_eq!(
+        more(Bloom),
+        s(&["PRE-DLY", "-", "SMEAR", "RATE", "SYNC", "-"])
+    );
     // Each label sits on its slot: a cell's id is the spec table's.
     let id = |t, page, k| knob(t, page, k).unwrap().id;
     assert_eq!(id(Quad, RevPage::Main, 0), ReverbParams::SIZE);
@@ -79,7 +81,10 @@ fn every_type_shows_its_cells() {
     assert_eq!(id(Room, RevPage::More, 1), ReverbParams::DAMPING);
     assert_eq!(id(Room, RevPage::More, 5), ReverbParams::SHAPE);
     assert_eq!(id(Hall, RevPage::More, 1), ReverbParams::DAMPING);
-    for t in [Room, Hall, Gate, Reverse] {
+    assert_eq!(id(Bloom, RevPage::Main, 0), ReverbParams::SIZE);
+    assert_eq!(id(Bloom, RevPage::Main, 3), ReverbParams::DIFFUSE);
+    assert_eq!(id(Bloom, RevPage::More, 0), ReverbParams::PREDELAY);
+    for t in [Room, Hall, Bloom, Gate, Reverse] {
         assert_eq!(id(t, RevPage::More, 4), ReverbParams::SYNC);
     }
     // REV: TYPE, the panel's four, then MIX on every TYPE.
@@ -129,6 +134,8 @@ fn label_follows_the_type() {
     assert_eq!(label(ReverbType::Room, ParamId(8)), "DIFFUSE");
     assert_eq!(label(ReverbType::Room, ParamId(10)), "LOOPS");
     assert_eq!(label(ReverbType::Room, ParamId(2)), "DAMP");
+    assert_eq!(label(ReverbType::Bloom, ParamId(3)), "SWELL");
+    assert_eq!(label(ReverbType::Bloom, ParamId(1)), "DECAY");
     assert_eq!(label(ReverbType::Quad, ParamId(3)), "SIZE");
     assert_eq!(label(ReverbType::Quad, ParamId(1)), "TIME");
     assert_eq!(label(ReverbType::Quad, ParamId(6)), "TYPE");
@@ -233,8 +240,8 @@ fn labels_and_values_fit_their_cells() {
     }
 }
 
-/// Until its engine lands, a TYPE a CC or a newer project set shows
-/// QUAD's panel, which is what plays; its code stays stored.
+/// Every TYPE has its engine, so each shows its own panel, however it
+/// was set: a CC, a project, the TYPE cell.
 #[test]
 fn an_off_screen_type_shows_quads_panel() {
     use chimera_core::addr::BlockRead;
@@ -280,18 +287,9 @@ fn a_type_nudge_keeps_the_tweaks() {
     assert!((back.size - 0.9).abs() <= 1.0 / 65_534.0);
     assert!((back.tone - 0.8).abs() <= 1.0 / 65_534.0);
     assert_eq!(back.mix, 0.6);
-    // QUAD, ROOM, HALL, GATE and REVERSE are on screen, in screen order:
-    // TYPE walks them and stops at either end.
-    assert_eq!(
-        types_on_screen(),
-        &[
-            ReverbType::Quad,
-            ReverbType::Room,
-            ReverbType::Hall,
-            ReverbType::Gate,
-            ReverbType::Reverse
-        ]
-    );
+    // Every TYPE is on screen, in screen order: TYPE walks them and stops
+    // at either end.
+    assert_eq!(types_on_screen(), &ReverbType::ALL);
     let q = ReverbParams::default();
     assert_eq!(
         turn(&q, ReverbParams::TYPE, -1, &mut mem, Tempo::DEFAULT),
@@ -301,7 +299,9 @@ fn a_type_nudge_keeps_the_tweaks() {
     assert_eq!(room.kind, ReverbType::Room);
     let hall = turn(&room, ReverbParams::TYPE, 1, &mut mem, Tempo::DEFAULT);
     assert_eq!(hall.kind, ReverbType::Hall);
-    let g = turn(&hall, ReverbParams::TYPE, 1, &mut mem, Tempo::DEFAULT);
+    let bloom = turn(&hall, ReverbParams::TYPE, 1, &mut mem, Tempo::DEFAULT);
+    assert_eq!(bloom.kind, ReverbType::Bloom);
+    let g = turn(&bloom, ReverbParams::TYPE, 1, &mut mem, Tempo::DEFAULT);
     assert_eq!(g.kind, ReverbType::Gate);
     assert_eq!((g.size, g.time), (0.55, 0.3), "GATE's starting knobs");
     let r = turn(&g, ReverbParams::TYPE, 5, &mut mem, Tempo::DEFAULT);
@@ -309,12 +309,6 @@ fn a_type_nudge_keeps_the_tweaks() {
     assert_eq!(
         turn(&r, ReverbParams::TYPE, 1, &mut mem, Tempo::DEFAULT).kind,
         ReverbType::Reverse
-    );
-    // A TYPE off the list stays put, its knobs too.
-    let b = ReverbParams::default().with_type(ReverbType::Bloom, &KnobMemory::new());
-    assert_eq!(
-        turn(&b, ReverbParams::TYPE, -1, &mut mem, Tempo::DEFAULT),
-        b
     );
 }
 

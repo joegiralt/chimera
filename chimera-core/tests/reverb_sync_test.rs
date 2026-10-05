@@ -157,6 +157,20 @@ fn decay_in_beats_clamps_and_room_has_no_all() {
     hall.time = p_of(3, DECAY_BEATS.len()); // 4 beats at 120: 2 s
     let k = knobs(&hall, tempo(120.0), &mut f);
     assert!((k.rt60_s - 2.0).abs() < 0.01, "{}", k.rt60_s);
+    // BLOOM's DECAY in beats clamps to its 2–12 s.
+    let mut bloom = synced(ReverbType::Bloom, RevSync::All);
+    for (beats, bpm, want) in [(32, 120.0, 12.0), (1, 300.0, 2.0), (4, 60.0, 4.0)] {
+        bloom.time = p_of(
+            DECAY_BEATS.iter().position(|&b| b == beats).unwrap(),
+            DECAY_BEATS.len(),
+        );
+        let k = knobs(&bloom, tempo(bpm), &mut f);
+        assert!(
+            (k.rt60_s - want).abs() < 0.01,
+            "BLOOM {beats} beats at {bpm}: {}",
+            k.rt60_s
+        );
+    }
     // HALL under TIME: DECAY in seconds.
     let time = ReverbParams {
         sync: RevSync::Time,
@@ -187,6 +201,56 @@ fn decay_in_beats_clamps_and_room_has_no_all() {
         room.with_sync(RevSync::All, tempo(120.0)).sync,
         RevSync::Time
     );
+}
+
+/// BLOOM syncs as HALL does: under TIME its PRE-DLY walks HALL's list,
+/// folded into its 0–125 ms, and DECAY stays in seconds; under ALL its
+/// DECAY is in beats, clamped to its 2–12 s.
+#[test]
+fn bloom_syncs_predelay_and_decay_in_beats() {
+    let mut p = synced(ReverbType::Bloom, RevSync::Time);
+    let k = |p: &ReverbParams, bpm: f32| knobs(p, tempo(bpm), &mut FoldState(0));
+    for (i, d) in HALL_PRE.iter().enumerate() {
+        p.predelay = p_of(i, HALL_PRE.len());
+        assert_eq!(k(&p, 120.0).predelay_ms, d.ms(tempo(120.0)), "{d:?}");
+    }
+    // 1/16 at 60 BPM is 250 ms: folded an octave down.
+    p.predelay = at(HALL_PRE, 16, DivKind::Straight);
+    assert_eq!(k(&p, 60.0).predelay_ms, 125.0);
+    let off = ReverbParams {
+        sync: RevSync::Off,
+        ..p
+    };
+    assert_eq!(
+        k(&p, 120.0).rt60_s,
+        k(&off, 120.0).rt60_s,
+        "TIME: DECAY in s"
+    );
+    let all = ReverbParams {
+        sync: RevSync::All,
+        ..p
+    };
+    let beats = |n: u8| {
+        p_of(
+            DECAY_BEATS.iter().position(|&b| b == n).unwrap(),
+            DECAY_BEATS.len(),
+        )
+    };
+    for (n, bpm, want) in [
+        (32, 120.0, 12.0),
+        (4, 120.0, 2.0),
+        (1, 300.0, 2.0),
+        (12, 120.0, 6.0),
+    ] {
+        let q = ReverbParams {
+            time: beats(n),
+            ..all
+        };
+        let rt = k(&q, bpm).rt60_s;
+        assert!((rt - want).abs() < 0.01, "{n} beats at {bpm}: {rt}");
+    }
+    // ALL keeps PRE-DLY's note.
+    assert_eq!(k(&all, 120.0).predelay_ms, k(&p, 120.0).predelay_ms);
 }
 
 /// Spec: toggling SYNC on and off keeps the length within one division.
