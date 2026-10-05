@@ -18,6 +18,7 @@
 #![allow(clippy::needless_range_loop)]
 
 use core::f32::consts::LOG2_10;
+use core::mem::MaybeUninit;
 #[cfg(any(test, feature = "test-support"))]
 use core::ops::Range;
 
@@ -247,7 +248,7 @@ const W_AP: usize = 10;
 const R_AP: usize = 18;
 const F_ACCESS: usize = 26;
 
-/// The accesses no length moves: the writes, and the f32 reads.
+/// The writes' offsets from the head (each read's own entry unused).
 const OFFSETS: [usize; ACCESS] = {
     let mut o = [0; ACCESS];
     o[W_PRE] = HEADS.pre;
@@ -258,23 +259,21 @@ const OFFSETS: [usize; ACCESS] = {
     }
     o
 };
+/// The f32 writes' offsets (each read's own entry unused).
 const F_OFFSETS: [usize; F_ACCESS] = {
     let mut o = [0; F_ACCESS];
     let mut j = 0;
     while j < 5 {
         o[W_DIF + j] = HEADS.diffuser[j];
-        o[R_DIF + j] = HEADS.diffuser[j] - DIFFUSER[j];
         j += 1;
     }
     j = 0;
     while j < 8 {
         o[W_AP + j] = HEADS.ap[j / 2][j % 2];
-        o[R_AP + j] = HEADS.ap[j / 2][j % 2] - AP[j / 2][j % 2];
         j += 1;
     }
     o
 };
-
 /// The longest stage allpass, ring samples.
 const AP_MAX: f32 = {
     let (mut m, mut j) = (0, 0);
@@ -451,24 +450,61 @@ fn clip<const C: bool>(x: f32) -> f32 {
     }
 }
 
-/// Each access's slot at head `h` (mod `m`) into `base`, and how many
-/// samples from `len` run before any of them wraps: `parts::segment`, in
-/// place.
-#[inline(always)]
-fn bases<const N: usize>(
-    h: usize,
-    m: usize,
-    off: &[usize; N],
-    base: &mut [usize; N],
-    len: usize,
-) -> usize {
-    let mut len = len;
-    for j in 0..N {
-        let b = wrap(h + off[j], m);
-        len = len.min(m - b);
-        base[j] = b;
+/// A block's scratch, written before it is read: never zeroed.
+struct Scratch<T: Copy, const N: usize>([MaybeUninit<T>; N]);
+
+impl<T: Copy, const N: usize> Scratch<T, N> {
+    fn new() -> Self {
+        Self([MaybeUninit::uninit(); N])
     }
-    len
+
+    #[inline(always)]
+    fn set(&mut self, i: usize, v: T) {
+        self.0[i].write(v);
+    }
+
+    /// # Safety
+    /// `set(i, _)` ran first.
+    #[inline(always)]
+    unsafe fn get(&self, i: usize) -> T {
+        // SAFETY: the caller set slot `i`.
+        unsafe { self.0[i].assume_init() }
+    }
+}
+
+/// Line `w`'s write slot at head `h` (mod `m`), at offset `off`, and
+/// its `reads`' (index, depth behind the write) slots, into `base`; `len`
+/// shortened to the samples that run before any of them wraps. A read
+/// wraps only while its line straddles the ring's end (`w` under `deep`,
+/// the line's deepest read): one line at a time. Else each read is the
+/// write's slot less its depth.
+#[inline(always)]
+fn line<const R: usize, const N: usize>(
+    (h, m): (usize, usize),
+    (w, off, deep): (usize, usize, usize),
+    reads: [(usize, usize); R],
+    base: &mut Scratch<usize, N>,
+    len: &mut usize,
+) {
+    let b = wrap(h + off, m);
+    *len = (*len).min(m - b);
+    base.set(w, b);
+    if b >= deep {
+        for (r, d) in reads {
+            base.set(r, b - d);
+        }
+    } else {
+        for (r, d) in reads {
+            let x = if b >= d {
+                b - d
+            } else {
+                let x = b + m - d;
+                *len = (*len).min(m - x);
+                x
+            };
+            base.set(r, x);
+        }
+    }
 }
 
 impl Room {
@@ -683,22 +719,20 @@ impl Room {
         }
     }
 
-    /// Each access's offset from the head this block: `OFFSETS`, and the
-    /// reads the lengths move: PRE-DLY's, the delays', the taps'.
-    fn offsets(&self) -> [usize; ACCESS] {
-        let h = &HEADS;
-        let mut o = OFFSETS;
-        o[R_PRE] = h.pre - self.pre_to as usize;
-        o[R_PRE + 1] = h.pre - self.pre_at as usize;
+    /// Each i16 read's depth behind its line's write this block: PRE-DLY's,
+    /// the stage delays', the taps' (the writes' entries unused).
+    fn depths(&self) -> [usize; ACCESS] {
+        let mut o = [0; ACCESS];
+        o[R_PRE] = self.pre_to as usize;
+        o[R_PRE + 1] = self.pre_at as usize;
         let (from, to) = self.taps();
         for j in 0..8 {
             let (l, s) = (j / 2, j % 2);
-            let w = h.delay[l][s];
-            o[R_D_TO + j] = w - self.to[l][s] as usize;
-            o[R_D_FROM + j] = w - self.at[l][s] as usize;
+            o[R_D_TO + j] = self.to[l][s] as usize;
+            o[R_D_FROM + j] = self.at[l][s] as usize;
             for side in 0..2 {
-                o[R_TAP_TO + 8 * side + j] = w - to[side][j] as usize;
-                o[R_TAP_FROM + 8 * side + j] = w - from[side][j] as usize;
+                o[R_TAP_TO + 8 * side + j] = to[side][j] as usize;
+                o[R_TAP_FROM + 8 * side + j] = from[side][j] as usize;
             }
         }
         o
@@ -763,7 +797,7 @@ impl Room {
         let mut sm = off.map(|o| o.0);
         let dsm = off.map(|o| (o.1 - o.0) * n);
         let nom: [f32; 4] = core::array::from_fn(|l| AP[l][SMEARED[l]] as f32);
-        let off_i = self.offsets();
+        let depth = self.depths();
         let (mut tone, mut lp) = (self.tone, self.lp);
         let (mut h, mut hf) = (self.h as usize % SLOTS, self.hf as usize % FSLOTS);
         // Stage by stage over each segment: every feedback read sits 319 or
@@ -772,12 +806,70 @@ impl Room {
         // every write before them. Each stage's loop keeps its few bases in
         // registers; one loop over every access spilled them. The
         // arithmetic is the sample loop's, in its order.
-        let (mut wv, mut dv, mut ov) = ([0.0f32; HALF], [0.0f32; HALF], [0.0f32; HALF]);
-        let (mut b, mut fb) = ([0usize; ACCESS], [0usize; F_ACCESS]);
+        // Scratch, each slot written before it is read: the bases every
+        // segment (`line` sets every access), the blend, send and A's or
+        // C's output for t < len.
+        let (mut wv, mut dv, mut ov) = (
+            Scratch::<f32, HALF>::new(),
+            Scratch::<f32, HALF>::new(),
+            Scratch::<f32, HALF>::new(),
+        );
+        let (mut b, mut fb) = (
+            Scratch::<usize, ACCESS>::new(),
+            Scratch::<usize, F_ACCESS>::new(),
+        );
         let mut i = 0;
         while i < HALF {
-            let len = bases(h, SLOTS, &off_i, &mut b, HALF - i);
-            let len = bases(hf, FSLOTS, &F_OFFSETS, &mut fb, len);
+            let mut len = HALF - i;
+            line(
+                (h, SLOTS),
+                (W_PRE, OFFSETS[W_PRE], PRE + 1),
+                [(R_PRE, depth[R_PRE]), (R_PRE + 1, depth[R_PRE + 1])],
+                &mut b,
+                &mut len,
+            );
+            unroll!(J in [0, 1, 2, 3, 4, 5, 6, 7] {
+                let deep = DELAY[J / 2][J % 2] + 1;
+                let reads = [R_D_TO + J, R_D_FROM + J, R_TAP_TO + J, R_TAP_FROM + J, R_TAP_TO + 8 + J, R_TAP_FROM + 8 + J]
+                    .map(|r| (r, depth[r]));
+                line((h, SLOTS), (W_D + J, OFFSETS[W_D + J], deep), reads, &mut b, &mut len);
+            });
+            unroll!(J in [0, 1, 2, 3, 4] {
+                line((hf, FSLOTS), (W_DIF + J, F_OFFSETS[W_DIF + J], DIFFUSER[J]), [(R_DIF + J, DIFFUSER[J])], &mut fb, &mut len);
+            });
+            unroll!(J in [0, 1, 2, 3, 4, 5, 6, 7] {
+                let d = AP[J / 2][J % 2];
+                line((hf, FSLOTS), (W_AP + J, F_OFFSETS[W_AP + J], d), [(R_AP + J, d)], &mut fb, &mut len);
+            });
+            let len = len;
+            // SAFETY (each): `line` above set every base, and each `t` <
+            // `len` of the blend, the send and A's or C's output is set
+            // before its loop reads it.
+            macro_rules! bi {
+                ($k:expr) => {
+                    unsafe { b.get($k) }
+                };
+            }
+            macro_rules! fbi {
+                ($k:expr) => {
+                    unsafe { fb.get($k) }
+                };
+            }
+            macro_rules! wvi {
+                ($t:expr) => {
+                    unsafe { wv.get($t) }
+                };
+            }
+            macro_rules! dvi {
+                ($t:expr) => {
+                    unsafe { dv.get($t) }
+                };
+            }
+            macro_rules! ovi {
+                ($t:expr) => {
+                    unsafe { ov.get($t) }
+                };
+            }
             // This segment's send and return: `t` < `len` bounds all three.
             let (us, ls, rs) = (&u[i..i + len], &mut l[i..i + len], &mut r[i..i + len]);
             macro_rules! rd {
@@ -790,25 +882,26 @@ impl Room {
                 };
             }
             // The crossfade's blend, sample by sample.
-            for x in &mut wv[..len] {
-                *x = w;
+            for t in 0..len {
+                wv.set(t, w);
                 w = (w + dw).min(1.0);
             }
             // TONE, then PRE-DLY.
             {
-                let (wp, to, from) = (b[W_PRE], b[R_PRE], b[R_PRE + 1]);
+                let (wp, to, from) = (bi!(W_PRE), bi!(R_PRE), bi!(R_PRE + 1));
                 macro_rules! pre {
                     ($mv:expr) => {
                         for t in 0..len {
                             tone += ta * (us[t] * IN_GAIN - tone);
                             // SAFETY: as `rd`'s.
                             unsafe { lines.round(wp + t, tone) };
-                            dv[t] = if $mv {
+                            let x = if $mv {
                                 let o = rd!(from, t);
-                                o + wv[t] * (rd!(to, t) - o)
+                                o + wvi!(t) * (rd!(to, t) - o)
                             } else {
                                 rd!(from, t)
                             };
+                            dv.set(t, x);
                             ta += dta;
                         }
                     };
@@ -817,11 +910,11 @@ impl Room {
             }
             if !probe {
                 let (w, r): ([usize; 5], [usize; 5]) = (
-                    core::array::from_fn(|j| fb[W_DIF + j]),
-                    core::array::from_fn(|j| fb[R_DIF + j]),
+                    core::array::from_fn(|j| fbi!(W_DIF + j)),
+                    core::array::from_fn(|j| fbi!(R_DIF + j)),
                 );
                 for t in 0..len {
-                    let mut y = dv[t];
+                    let mut y = dvi!(t);
                     unroll!(J in [0, 1, 2, 3, 4] {
                         // SAFETY: as `rd`'s, on the f32 region.
                         let (o, v) = ap_f32(y, unsafe { *f.get_unchecked(r[J] + t) }, DIFFUSER_G);
@@ -829,7 +922,7 @@ impl Room {
                         unsafe { *f.get_unchecked_mut(w[J] + t) = v };
                         y = o;
                     });
-                    dv[t] = y;
+                    dv.set(t, y);
                 }
             }
             // Each loop's stages, unrolled: `LO` and `ST` are literals. A
@@ -840,19 +933,19 @@ impl Room {
                 let sm_at = sm[LO];
                 unroll!(ST in [0, 1] {
                     let j = LO * 2 + ST;
-                    let (to, from) = (b[R_D_TO + j], b[R_D_FROM + j]);
+                    let (to, from) = (bi!(R_D_TO + j), bi!(R_D_FROM + j));
                     let moving = to != from;
-                    let (wa, ra) = (fb[W_AP + j], fb[R_AP + j]);
-                    let wd = b[W_D + (j | 1)];
+                    let (wa, ra) = (fbi!(W_AP + j), fbi!(R_AP + j));
+                    let wd = bi!(W_D + (j | 1));
                     // The pair's re-entries: its first loop's and its own.
-                    let (wr0, wr1) = (b[W_D + 4 * (LO / 2)], b[W_D + 4 * (LO / 2) + 2]);
+                    let (wr0, wr1) = (bi!(W_D + 4 * (LO / 2)), bi!(W_D + 4 * (LO / 2) + 2));
                     let (mut sm_, g_) = (sm_at, gb[LO][ST]);
                     let mut lp_ = lp[LO];
                     macro_rules! stage { ($mv:expr, $fast:expr) => {
                     for t in 0..len {
                         let x = if $mv {
                             let o = rd!(from, t);
-                            o + wv[t] * (rd!(to, t) - o)
+                            o + wvi!(t) * (rd!(to, t) - o)
                         } else {
                             rd!(from, t)
                         };
@@ -890,12 +983,12 @@ impl Room {
                             // SAFETY: as `rd`'s.
                             unsafe { lines.round(wd + t, y) };
                         } else if LO.is_multiple_of(2) {
-                            ov[t] = y;
+                            ov.set(t, y);
                         } else {
-                            let (a, bb) = reflect(c, s, ov[t], y);
+                            let (a, bb) = reflect(c, s, ovi!(t), y);
                             // Under a probe, only its loop hears the send.
-                            let a_send = if probe && only + 1 != LO { 0.0 } else { dv[t] };
-                            let send = if probe && only != LO { 0.0 } else { dv[t] };
+                            let a_send = if probe && only + 1 != LO { 0.0 } else { dvi!(t) };
+                            let send = if probe && only != LO { 0.0 } else { dvi!(t) };
                             // SAFETY: as `rd`'s.
                             unsafe {
                                 let (ea, eb) = (a + a_send, bb + send);
@@ -933,15 +1026,15 @@ impl Room {
             // from, whose difference is 0. Each side: the four still lines'
             // and the four movers' reads summed exactly, then in a crossfade
             // w × Σ(to − from) over the movers, from 12 reads.
-            let moving: [bool; 8] = core::array::from_fn(|j| b[R_D_TO + j] != b[R_D_FROM + j]);
+            let moving: [bool; 8] = core::array::from_fn(|j| bi!(R_D_TO + j) != bi!(R_D_FROM + j));
             let any = moving.iter().any(|&m| m);
             let mv: [usize; 4] = core::array::from_fn(|lo| 2 * lo + moving[2 * lo + 1] as usize);
             unroll!(SD in [0, 1] {
                 let out: &mut [f32] = if SD == 0 { &mut *ls } else { &mut *rs };
-                let st: [usize; 4] = core::array::from_fn(|k| b[R_TAP_FROM + 8 * SD + (mv[k] ^ 1)]);
-                let fr: [usize; 4] = core::array::from_fn(|k| b[R_TAP_FROM + 8 * SD + mv[k]]);
+                let st: [usize; 4] = core::array::from_fn(|k| bi!(R_TAP_FROM + 8 * SD + (mv[k] ^ 1)));
+                let fr: [usize; 4] = core::array::from_fn(|k| bi!(R_TAP_FROM + 8 * SD + mv[k]));
                 if any {
-                    let tt: [usize; 4] = core::array::from_fn(|k| b[R_TAP_TO + 8 * SD + mv[k]]);
+                    let tt: [usize; 4] = core::array::from_fn(|k| bi!(R_TAP_TO + 8 * SD + mv[k]));
                     for t in 0..len {
                         // SAFETY: as `rd`'s.
                         let (s0, f0, t0) = unsafe {
@@ -954,7 +1047,7 @@ impl Room {
                                     + lines.rd_sum(tt[2] + t) + lines.rd_sum(tt[3] + t),
                             )
                         };
-                        out[t] = TAP_W * (Ln::sum_f32(s0 + f0) + wv[t] * Ln::sum_f32(t0 - f0));
+                        out[t] = TAP_W * (Ln::sum_f32(s0 + f0) + wvi!(t) * Ln::sum_f32(t0 - f0));
                     }
                 } else {
                     for t in 0..len {
