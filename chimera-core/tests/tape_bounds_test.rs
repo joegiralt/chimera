@@ -15,15 +15,8 @@ use chimera_core::storage::twelve::pack12;
 use chimera_hal::BLOCK_SIZE;
 use common::XorShift;
 
-/// The models these runs play (TRANSWAVE on a `Plain` is silent); Task 8
-/// adds STRETCH.
-const MODELS: [TapeModel; 5] = [
-    TapeModel::Loop,
-    TapeModel::Reverse,
-    TapeModel::PingPong,
-    TapeModel::Transwave,
-    TapeModel::Scrub,
-];
+/// The models these runs play (TRANSWAVE on a `Plain` is silent).
+const MODELS: [TapeModel; 6] = TapeModel::ALL;
 
 const MAX_FRAMES: usize = 100_000;
 
@@ -68,7 +61,7 @@ fn reads_stay_in_row() {
             drag: unit(&mut rng),
             kind: [StretchType::Mono, StretchType::Poly][rng.below(2)],
             root: 12_700.0 * unit(&mut rng),
-            period: 1_000.0 * unit(&mut rng),
+            period: [0.0, 1.0 + 60.0 * unit(&mut rng), 1_000.0 * unit(&mut rng)][rng.below(3)],
         };
         let mut slot = MaybeUninit::uninit();
         let e = TapeEngine::init_in_place(&mut slot);

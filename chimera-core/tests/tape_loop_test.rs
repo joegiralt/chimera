@@ -18,12 +18,13 @@ use common::tape::{held_plain, held_transwave, sine};
 
 const SR: u32 = 48_000;
 
-/// The models built so far; Tasks 7–8 add theirs.
-const MODELS: [TapeModel; 4] = [
+/// The models that play heads through a window (TRANSWAVE has its own).
+const MODELS: [TapeModel; 5] = [
     TapeModel::Loop,
     TapeModel::Reverse,
     TapeModel::PingPong,
     TapeModel::Scrub,
+    TapeModel::Stretch,
 ];
 
 /// `p` as `model` plays it in a loop test: SCRUB's head moves only with

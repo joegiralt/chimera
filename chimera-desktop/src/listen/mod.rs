@@ -12,7 +12,7 @@ use chimera_core::block::{Block, DiskCode, ParamId};
 use chimera_core::dsp::clampf;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape, SourceView};
-use chimera_core::dsp::tape_engine::{TapeEngine, TapeEngineParams as P, TapeModel};
+use chimera_core::dsp::tape_engine::{StretchType, TapeEngine, TapeEngineParams as P, TapeModel};
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
@@ -183,8 +183,10 @@ pub fn root_note(pitch: Pitch) -> u8 {
 
 /// Breakpoints `(seconds, param, value)`: each param linear between its
 /// own, in time order, and held before the first and after the last. A
-/// param the script never names stays neutral. It ends at its last.
-pub struct Script(pub &'static [(f32, ParamId, f32)]);
+/// param the script never names stays neutral. It ends at its last
+/// breakpoint. Then the seconds a fresh note-on comes, past the first (a
+/// take: the head back at START, MODEL and TYPE latched again).
+pub struct Script(pub &'static [(f32, ParamId, f32)], pub &'static [f32]);
 
 impl Script {
     pub fn secs(&self) -> f32 {
@@ -303,6 +305,59 @@ static WAVE_SWEEP: [(f32, ParamId, f32); 21] = [
     (11.5, P::AGE, 0.5),
 ];
 
+/// STRETCH's SIZE for a D-TIME of 60 ms: `log(6) / log(25)`.
+const D_TIME_60: f32 = 0.556_641;
+
+/// STRETCH's: 2 s frozen at START (MOTION 0) at D-TIME 250 ms; then the
+/// same passage from START, a fresh take each, at 0.5×, 1× and 2× its time
+/// (MOTION 0.25, 0.5, 1), pitch fixed, D-TIME 60 ms; then at 0.5× again at
+/// D-TIME 10 ms (metallic) and 250 ms (tremolo).
+static STRETCH_SWEEP: [(f32, ParamId, f32); 12] = [
+    (1.99, P::MOTION, 0.0),
+    (2.0, P::MOTION, 0.25),
+    (4.99, P::MOTION, 0.25),
+    (5.0, P::MOTION, 0.5),
+    (7.99, P::MOTION, 0.5),
+    (8.0, P::MOTION, 1.0),
+    (10.99, P::MOTION, 1.0),
+    (11.0, P::MOTION, 0.25),
+    (14.5, P::MOTION, 0.25),
+    (1.99, P::SIZE, 1.0),
+    (2.0, P::SIZE, D_TIME_60),
+    (10.99, P::SIZE, D_TIME_60),
+];
+
+/// STRETCH's SIZE after 11 s: D-TIME 10 ms, then 250 ms from 12.75 s.
+static STRETCH_SIZE_TAIL: [(f32, ParamId, f32); 4] = [
+    (11.0, P::SIZE, 0.0),
+    (12.74, P::SIZE, 0.0),
+    (12.75, P::SIZE, 1.0),
+    (14.5, P::SIZE, 1.0),
+];
+
+/// STRETCH's takes.
+static STRETCH_TAKES: [f32; 5] = [2.0, 5.0, 8.0, 11.0, 12.75];
+
+/// STRETCH's breakpoints, whole.
+static STRETCH_KEYS: [(f32, ParamId, f32); 16] = {
+    let mut k = [(0.0, P::SIZE, 0.0); 16];
+    let mut i = 0;
+    while i < 12 {
+        k[i] = STRETCH_SWEEP[i];
+        i += 1;
+    }
+    while i < 16 {
+        k[i] = STRETCH_SIZE_TAIL[i - 12];
+        i += 1;
+    }
+    k
+};
+
+/// What the page says STRETCH's script does.
+pub const STRETCH_LEGEND: &str = "Each take from START, pitch fixed · 0–2 s frozen (MOTION 0), \
+    D-TIME 250 ms · 2–5 s 0.5× time · 5–8 s 1× · 8–11 s 2× (D-TIME 60 ms) · 11–12.75 s 0.5× \
+    at D-TIME 10 ms (metallic) · 12.75–14.5 s 0.5× at 250 ms (tremolo)";
+
 /// What the page says TRANSWAVE's script does.
 pub const WAVE_LEGEND: &str = "16 frames cut from the source · 0–2 s frame 0 · 2–4.75 s \
     POSITION scans 0→1→½ · 5–7.75 s MOTION 0→0.5→0.25 (a 4 Hz scan, SIZE ½) · 8–11 s SIZE \
@@ -311,9 +366,10 @@ pub const WAVE_LEGEND: &str = "16 frames cut from the source · 0–2 s frame 0 
 /// The macro script `model` is heard under, and what the page says of it.
 pub fn script(model: TapeModel) -> Script {
     match model {
-        TapeModel::Scrub => Script(&SCRUB_SWEEP),
-        TapeModel::Transwave => Script(&WAVE_SWEEP),
-        _ => Script(&SWEEP),
+        TapeModel::Scrub => Script(&SCRUB_SWEEP, &[]),
+        TapeModel::Transwave => Script(&WAVE_SWEEP, &[]),
+        TapeModel::Stretch => Script(&STRETCH_KEYS, &STRETCH_TAKES),
+        _ => Script(&SWEEP, &[]),
     }
 }
 
@@ -321,16 +377,27 @@ pub fn legend(model: TapeModel) -> &'static str {
     match model {
         TapeModel::Scrub => SCRUB_LEGEND,
         TapeModel::Transwave => WAVE_LEGEND,
+        TapeModel::Stretch => STRETCH_LEGEND,
         _ => SWEEP_LEGEND,
     }
 }
 
-/// `held` played by `model` on `note` under `s`, from a fresh engine: the
-/// engine's own output, 48 kHz. Panics on a `held` with no source in it.
-pub fn render(model: TapeModel, held: &[u8], pitch: Pitch, note: u8, s: &Script) -> Vec<f32> {
+/// `held` played by `model` (TYPE `kind`) on `note` under `s`, from a
+/// fresh engine: the engine's own output, 48 kHz. Before each take the
+/// output fades out over `RELEASE` samples, as a VCA letting go would, and
+/// the take is a fresh note on the idle voice (`hold`, then `note_on`).
+/// Panics on a `held` with no source in it.
+pub fn render(
+    (model, kind): (TapeModel, StretchType),
+    held: &[u8],
+    pitch: Pitch,
+    note: u8,
+    s: &Script,
+) -> Vec<f32> {
     let v = SourceView::new(held).expect("a held source");
     let mut p = P {
         model,
+        kind,
         ..P::default()
     };
     if let Pitch::Pitched { period, root_cents } = pitch {
@@ -344,13 +411,25 @@ pub fn render(model: TapeModel, held: &[u8], pitch: Pitch, note: u8, s: &Script)
     let blocks = (s.secs() * SAMPLE_RATE as f32) as usize / BLOCK_SIZE;
     let mut out = Vec::with_capacity(blocks * BLOCK_SIZE);
     let mut blk = [0.0; BLOCK_SIZE];
+    let at = |b: usize| (b * BLOCK_SIZE) as f32 / SAMPLE_RATE as f32;
     for b in 0..blocks {
-        s.apply(&mut p, (b * BLOCK_SIZE) as f32 / SAMPLE_RATE as f32);
+        s.apply(&mut p, at(b));
+        if b > 0 && s.1.iter().any(|&t| at(b - 1) < t && t <= at(b)) {
+            let n0 = out.len();
+            for (i, y) in out[n0.saturating_sub(RELEASE)..].iter_mut().enumerate() {
+                *y *= 1.0 - (i + 1) as f32 / RELEASE as f32;
+            }
+            e.hold();
+            e.note_on(note, &p, &v, SAMPLE_RATE);
+        }
         e.render(&mut blk, &p, &v, SAMPLE_RATE);
         out.extend_from_slice(&blk);
     }
     out
 }
+
+/// A take's release: 10 ms.
+const RELEASE: usize = 480;
 
 /// Claude's QA of a render (QA before UAT).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -635,6 +714,33 @@ mod tests {
             for p in [a, b] {
                 assert_eq!(p, P::default(), "{m:?}: not neutral before 2 s");
             }
+            assert!(s.1.iter().all(|&t| (2.0..s.secs()).contains(&t)), "{m:?}");
+        }
+    }
+
+    /// STRETCH's takes: 0.5×, 1× and 2× at 60 ms, then 0.5× at 10 and
+    /// 250 ms, each settled before its note-on.
+    #[test]
+    fn stretch_script_plays_its_takes() {
+        use chimera_core::dsp::tape_engine::stretch::{d_time_s, time_speed};
+        let s = script(TapeModel::Stretch);
+        let want = [
+            (0.5, 0.06),
+            (1.0, 0.06),
+            (2.0, 0.06),
+            (0.5, 0.01),
+            (0.5, 0.25),
+        ];
+        assert_eq!(s.1.len(), want.len());
+        for (&t, (speed, d)) in s.1.iter().zip(want) {
+            let mut p = P::default();
+            s.apply(&mut p, t);
+            assert!((time_speed(p.motion) - speed).abs() < 1e-6, "{t} s");
+            assert!(
+                (d_time_s(p.size) - d).abs() < 1e-4,
+                "{t} s: {}",
+                d_time_s(p.size)
+            );
         }
     }
 

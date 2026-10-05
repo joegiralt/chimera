@@ -14,12 +14,14 @@
 //! (Morphagene manual, Slide and Vari-Speed) loops behind a finger that
 //! follows POSITION through DRAG; MOTION is its vari-speed. TRANSWAVE
 //! (Ensoniq VFX/SD-1 transwaves; PPG Wave and Waldorf Microwave mips) scans
-//! a table of single-cycle frames (`wave`). STRETCH plays as LOOP until its
-//! kernel lands.
+//! a table of single-cycle frames (`wave`). STRETCH (Akai S950 Operator's
+//! Manual p. 32, TIMESTRETCH) splices two grains at a time pointer
+//! (`stretch`).
 
 pub mod heads;
 pub mod params;
 pub mod read;
+pub mod stretch;
 pub mod wave;
 
 use core::mem::MaybeUninit;
@@ -33,6 +35,7 @@ use heads::{
     Bounds, Fade, Ghost, Head, Plan, Turn, at, plan, shortest, window_end_min, window_start,
 };
 use read::{Pos, SourceView};
+use stretch::Stretch;
 use wave::Wave;
 
 pub use heads::loop_len;
@@ -192,6 +195,8 @@ pub struct TapeEngine {
     hush_step: f32,
     /// TRANSWAVE's note: its frames, level and scan.
     wave: Wave,
+    /// STRETCH's note: its grains and clock.
+    stretch: Stretch,
     /// SCRUB: the loop's speed in frames a sample at the last block's end,
     /// signed; DRAG's one-pole share a block.
     speed: f32,
@@ -270,6 +275,7 @@ impl TapeEngine {
             hush: 1.0,
             hush_step: 1.0,
             wave: Wave::IDLE,
+            stretch: Stretch::IDLE,
             speed: 0.0,
             pull: 1.0,
             n: 2,
@@ -366,6 +372,11 @@ impl TapeEngine {
         self.active = true;
         if self.model == TapeModel::Transwave {
             self.wave = Wave::on(v, wave::cycles(note, self.pitch, sample_rate));
+            return;
+        }
+        if self.model == TapeModel::Stretch {
+            let i = inc(rate, note, self.pitch, self.root, sample_rate);
+            self.stretch = Stretch::on(p, v, i, &self.mac, sample_rate);
             return;
         }
         let (start, end) = self.window(p);
@@ -516,6 +527,16 @@ impl TapeEngine {
                 from: self.wave.from(),
             };
         }
+        if self.model == TapeModel::Stretch {
+            let (head, other, gain) = self.stretch.probe();
+            return Probe {
+                head,
+                other: Some(other),
+                gain,
+                level: 0,
+                from: None,
+            };
+        }
         let first = self.frame(self.heads[0].pos);
         match self.ghost {
             // The head left outside fades out; the one inside fades in.
@@ -539,7 +560,13 @@ impl TapeEngine {
     /// Events handled since `init_in_place`: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn events(&self) -> u32 {
-        self.events
+        self.events + self.stretch.events
+    }
+
+    /// STRETCH's grain clock: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn grain(&self) -> stretch::GrainClock {
+        self.stretch.clock()
     }
 
     /// The eased macros: for the tests.
@@ -581,6 +608,22 @@ impl TapeEngine {
                 self.inc.step(target),
                 (m.position, m.motion, m.size),
                 (first, sample_rate),
+            );
+        } else if self.model == TapeModel::Stretch {
+            let target = clampf(
+                inc(v.desc().rate, self.note, self.pitch, self.root, sample_rate)
+                    * self.slide.value(),
+                f32::EPSILON,
+                INC_MAX,
+            );
+            let m = self.mac;
+            self.stretch.render(
+                out,
+                v,
+                self.inc.step(target),
+                (m.position, m.motion, m.size),
+                p.end,
+                sample_rate,
             );
         } else {
             self.render_heads(out, v, (p, first), sample_rate);

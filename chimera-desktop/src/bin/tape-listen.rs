@@ -10,7 +10,7 @@
 
 use chimera_core::block::DiskCode;
 use chimera_core::dsp::clampf;
-use chimera_core::dsp::tape_engine::TapeModel;
+use chimera_core::dsp::tape_engine::{StretchType, TapeModel};
 use chimera_core::factory::FACTORY_LEN;
 use chimera_desktop::import::tape::convert::{Channel, Mono, Pitch, read_wav};
 use chimera_desktop::listen::{
@@ -119,7 +119,7 @@ fn run() -> Result<bool, String> {
         );
         let d = dry(mono);
         for &m in &models {
-            let wet = if m == TapeModel::Transwave {
+            let wet: Vec<(Src, Vec<f32>)> = if m == TapeModel::Transwave {
                 let (wave, cycle) =
                     held_transwave(mono, WAVE_FRAMES).map_err(|e| format!("{}: {e}", src.slug))?;
                 let _ = writeln!(
@@ -128,27 +128,48 @@ fn run() -> Result<bool, String> {
                     src.slug,
                     wave.len()
                 );
-                render(m, &wave, pitch, note, &script(m))
+                vec![(
+                    src.clone(),
+                    render((m, StretchType::Mono), &wave, pitch, note, &script(m)),
+                )]
+            } else if m == TapeModel::Stretch {
+                // A row each for MONO and POLY.
+                [StretchType::Mono, StretchType::Poly]
+                    .map(|k| {
+                        let id = k.disk_ident();
+                        let row = Src {
+                            slug: format!("{}-{}", src.slug, id.to_lowercase()),
+                            title: format!("{} · {id}", src.title),
+                            ..src.clone()
+                        };
+                        (row, render((m, k), &held, pitch, note, &script(m)))
+                    })
+                    .into()
             } else {
-                render(m, &held, pitch, note, &script(m))
+                vec![(
+                    src.clone(),
+                    render((m, StretchType::Mono), &held, pitch, note, &script(m)),
+                )]
             };
-            for (kind, x) in [("dry", &d), ("wet", &wet)] {
-                let q = qa(x);
-                pass &= q.passes();
-                let _ = writeln!(
-                    report,
-                    "{:<9} {:<12} {kind}  peak {:6.2} dBFS  click {:5.2}x at {:6.3} s  non-finite {}  {}",
-                    m.disk_ident(),
-                    src.slug,
-                    q.peak_dbfs,
-                    q.click_ratio,
-                    q.click_at as f32 / chimera_hal::SAMPLE_RATE as f32,
-                    q.non_finite,
-                    if q.passes() { "PASS" } else { "FAIL" }
-                );
-                write_wav(&out.join(file_name(m, src, kind)), x)?;
+            for (row, wet) in wet {
+                for (kind, x) in [("dry", &d), ("wet", &wet)] {
+                    let q = qa(x);
+                    pass &= q.passes();
+                    let _ = writeln!(
+                        report,
+                        "{:<9} {:<17} {kind}  peak {:6.2} dBFS  click {:5.2}x at {:6.3} s  non-finite {}  {}",
+                        m.disk_ident(),
+                        row.slug,
+                        q.peak_dbfs,
+                        q.click_ratio,
+                        q.click_at as f32 / chimera_hal::SAMPLE_RATE as f32,
+                        q.non_finite,
+                        if q.passes() { "PASS" } else { "FAIL" }
+                    );
+                    write_wav(&out.join(file_name(m, &row, kind)), x)?;
+                }
+                rows.push((m, row));
             }
-            rows.push((m, src));
         }
     }
     let verdict = if pass {
@@ -160,6 +181,7 @@ fn run() -> Result<bool, String> {
     std::fs::write(out.join("report.txt"), &report).map_err(|e| e.to_string())?;
     print!("{report}");
     if pass {
+        let rows: Vec<(TapeModel, &Src)> = rows.iter().map(|(m, s)| (*m, s)).collect();
         std::fs::write(&index, page(&rows)).map_err(|e| e.to_string())?;
         let index = std::fs::canonicalize(&index).unwrap_or(index);
         println!("{}", index.display());
