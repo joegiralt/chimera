@@ -3,6 +3,9 @@ use crate::dsp::modulator::pick;
 use crate::hw::Cost;
 use crate::params::FilterParams;
 
+#[cfg(any(test, feature = "probe"))]
+pub mod probe;
+
 /// The SVF's modes. The discriminants are the old `mode` byte (#111), so
 /// every Sound keeps its mode (LP24 = 2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

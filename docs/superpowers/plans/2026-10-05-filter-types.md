@@ -1292,3 +1292,39 @@ git commit -m "Filter types: QA levels, PR notes"
 ## Measured
 
 _Filled in during execution: Task 1's `OLD_LP24` (steady and ramped, with instructions and `vdiv`s), the recomputed bills, each probe's count, the 2040's tuned α, `L` and `OUT_2040`, `TRIM_OSC`, `OSC_BAND_DB` changes, the re-recorded goldens, the flash line, the bench rows (or "held"), the per-pair level table, and the PR notes._
+
+### Task 1: today's LP24 (2026-10-05, filter code as at 4adacaea, rustc 1.100.0-nightly e457a7b0d)
+
+`python3 tools/loop_count.py target/thumbv7em-none-eabihf/release/chimera-stm32 old_lp24_probe`, release bench build (`opt-level = 2`, fat LTO). Static counts from `llvm-objdump --mcpu=cortex-m7`. Each loop runs 64 times a block (not unrolled), so a loop's path is one sample's executed instructions.
+
+- **The loop has an `if` per `saturate`.** LLVM rotates each of the four `saturate`s into a skippable tail, so a sample's count depends on how many integrator states are past ±1:
+  - **fast path** (all four linear): the core and four compares;
+  - **slow path** (all four bending): +10 instructions each, plus one `b`.
+- **Both loops have 2 `vdiv` a sample** (the SVF's `/ (1 + k·g + g²)`, one a stage; LLVM doesn't turn a divide by an invariant into a multiply without fast-math). `saturate` has none (`vminnm`, `bfi`).
+- **Per-block work:** 98 instructions and 1 `vdiv` (`fast_tan`) outside the loops, both preludes counted: 1.53 instructions and 0.016 `vdiv` a sample.
+
+| Path | Loop span | Fast path | Slow path | `vdiv` | Cycles, fast (with block) | Cycles, slow (with block) |
+|---|---|---|---|---|---|---|
+| Steady | 82 | 41 | 82 | 2 | 90 (95) | 160 (160) |
+| Ramped | 98 | 57 | 98 | 2 | 120 (120) | 185 (185) |
+
+- **`OLD_LP24` = 95 cycles a sample:** the steady fast path with per-block work, `ceil5((41 + 98/64) × 1.606 + 12 × (2 + 1/64))` = ceil5(92.5). The fast path is the low end, so bills against it are the conservative ones. With every state bending, today's LP24 costs 160.
+- The spec's hand estimate (≈ 50 instructions + 2 `vdiv` ≈ 105) sits between the two loops' fast paths (41 and 57).
+
+**Recomputed bills,** `max(0, est. cycles − 95)`:
+
+| Path | Est. cycles | Spec's bill | Bill against 95 |
+|---|---|---|---|
+| CLEAN LP4 / BP4 / HP4, steady | 90 | 0 | 0 |
+| CLEAN LP1 / LP2 / BP2 / NOTCH1, steady | 50 | 0 | 0 |
+| CLEAN NOTCH2, steady | 55 | 0 | 0 |
+| 2040, steady | 115 | 10 | **20** |
+| DIRTY, any mode | 50 | 0 | 0 |
+
+The moving, LEVEL and tap terms are deltas, not over `OLD_LP24`, and don't change. No steady bill turns positive where the spec says 0.
+
+**Over `OLD_LP24 + 50` = 145 (Step 6: owner's call before Task 2):**
+- 2040 moving: 70 + 6 instructions and 2 `vdiv` = ceil5(146.1) = **150**.
+- 2040 with a FREQ tap: 70 + 12 + 6 instructions and 2 `vdiv` = ceil5(165.3) = **170**. With a Q tap: 70 + 4 + 6 = ceil5(152.5) = **155**.
+- CLEAN stays under: moving 125, with a FREQ tap 56 + 12 + 6 = ceil5(142.8) = 145 (on the line), with a Q tap 130.
+- For comparison, today's LP24 ramped is 120 on the fast path and 185 on the slow; the 2040 moving at 150 is +30 over today's ramp.
