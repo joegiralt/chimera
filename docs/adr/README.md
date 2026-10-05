@@ -33,9 +33,6 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0025](0025-dtcm-holds-wave-tables-and-stack.md) | DTCM holds the wave tables and the stack | Accepted |
 | [0026](0026-algo-voices-billed-by-patch-shape.md) | Algo voices are billed by patch shape; heavy patches get fewer voices | Accepted; shedding clause and four-voice floor superseded in part by 0027; rev V voice counts superseded by [0031](0031-six-voices-on-rev-v.md) |
 | [0027](0027-shedding-fades-tails-first.md) | Shedding fades, and takes tails before held notes | Proposed; "rev Y gets two" superseded by [0031](0031-six-voices-on-rev-v.md); cross-Part steal billing amended by [0091](0091-orbit-billed-while-it-plays.md) |
-| [0028](0028-one-alesis-style-reverb.md) | One Alesis-style ring is the reverb; Plate, FDN and MidiVerb retire | Accepted |
-||||||| parent of d402b12e (Reverb TYPEs: ADR 0085 and the design spec)
-| [0027](0027-shedding-fades-tails-first.md) | Shedding fades, and takes tails before held notes | Proposed; "rev Y gets two" superseded by [0031](0031-six-voices-on-rev-v.md) |
 | [0028](0028-one-alesis-style-reverb.md) | One Alesis-style ring is the reverb; Plate, FDN and MidiVerb retire | Accepted; "one reverb" and GRIT superseded by [0085](0085-the-master-reverb-picks-a-type.md) |
 | [0029](0029-stereo-fx-returns.md) | The reverb and chorus return stereo; the delay stays mono | Accepted |
 | [0030](0030-master-section.md) | REV SEND feeds the delay into the reverb; tape on pair 1; a compressor linked across the pairs, last | Accepted; tape superseded in part by [0055](0055-master-tape-off-the-chain.md) |
@@ -97,7 +94,3 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0089](0089-ship-with-fat-lto.md) | Ship the firmware with fat LTO in one codegen unit | Proposed |
 | [0091](0091-orbit-billed-while-it-plays.md) | While ORBIT plays, reserve its own block and a note-on burst; cost the Parts once a block; bill a stolen voice until its fade ends (supersedes in part 0040; amends 0027) | Proposed |
 | [0092](0092-put-files-over-the-usb-console.md) | Put project files onto the card over the USB console: `ls`, and `put` through the unit's own A/B save, checked as it streams, a refused side deleted (amends 0068) | Proposed |
-||||||| parent of d402b12e (Reverb TYPEs: ADR 0085 and the design spec)
-| [0085](0085-the-master-reverb-picks-a-type.md) | The master reverb picks a TYPE: QUAD plus ROOM, HALL, GATE, REVERSE, BLOOM and ECHO (supersedes in part 0028; amends 0067) | Proposed |
-| [0085](0085-the-master-reverb-picks-a-type.md) | The master reverb picks a TYPE: QUAD plus ROOM, HALL, GATE, REVERSE and BLOOM (supersedes in part 0028; amends 0067) | Proposed |
-||||||| parent of 7e23dba8 (ADR index: one 0085 row, in order)
