@@ -388,6 +388,13 @@ pub struct Instrument {
     /// A note waits on the clear budget: later Sympathetic notes queue
     /// behind it, until render step 0 serves the queue oldest first.
     clear_backlog: bool,
+    /// Each Part's `voice_cost`, worked out once a block (`recost`).
+    costs: [Cost; MAX_PARTS],
+    /// The snapshot `costs` were worked out from this block, by address;
+    /// 0 when not yet (each `render` ends the block).
+    costed: usize,
+    /// `costs` worked out since start: for the tests.
+    costings: u32,
 }
 
 /// Who plays a note: the keys and MIDI, or one of ORBIT's rings.
@@ -403,11 +410,22 @@ pub enum NoteOrigin {
 /// worst-case slots starts a note a block, a typical one all at once.
 pub const SYM_CLEAR_BUDGET: usize = SYM_NOTE_ON_CLEAR_MAX;
 
-crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog });
+crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings });
 
 const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
 impl Instrument {
+    /// Reserved from the voice budget for a block's burst of note-ons
+    /// while ORBIT plays (ADR 0091): five voice starts, its five rings
+    /// striking in one block, the most it sends; each costs the pick and a
+    /// voice start, and the first the block's `recost`. Layered Parts on
+    /// one channel, or a live chord in the same block, start more and run
+    /// into the headroom. With ORBIT stopped nothing is reserved: a DIN
+    /// chord comes a note a millisecond, spread over blocks. Re-measured
+    /// with `OrbitRunner::COST`: their sum must cover ORBIT's cold first
+    /// block (65,387 at 785a028a).
+    pub const BURST: Cost = Cost(857); // 5 note-ons in one block, 54,810 (ORBIT's first block, every voice cold; its own work 10,577, under `OrbitRunner::COST`, so the pair covers the 65,387 block), measured 2026-10-05, bench ORBIT PHASES, rev V at 480 MHz, 785a028a; / 64, rounded up
+
     pub fn new(sample_rate: u32, budget: SampleBudget) -> Self {
         // SAFETY: `init_in_place` writes every field of the slot.
         unsafe { by_value(|slot| Self::init_in_place(slot, sample_rate, budget)) }
@@ -445,6 +463,9 @@ impl Instrument {
             addr_of_mut!((*p).last_kind).write([SlotKind::Algo; MAX_PARTS]);
             addr_of_mut!((*p).clear_left).write(SYM_CLEAR_BUDGET);
             addr_of_mut!((*p).clear_backlog).write(false);
+            addr_of_mut!((*p).costs).write([Cost::ZERO; MAX_PARTS]);
+            addr_of_mut!((*p).costed).write(0);
+            addr_of_mut!((*p).costings).write(0);
             slot.assume_init_mut()
         }
     }
@@ -470,9 +491,21 @@ impl Instrument {
         self.voices.iter().filter(|v| v.is_active()).count()
     }
 
-    /// The voice budget booked, FX bus included, in percent: for `stats`.
+    /// The voice budget booked, FX bus and ORBIT included, in percent: for
+    /// `stats`.
     pub fn cost_pct(&self) -> u8 {
-        self.alloc.cost_pct(FxBus::COST)
+        self.alloc.cost_pct(self.reserved())
+    }
+
+    /// Spent outside the pool each block, so a new voice must fit beside
+    /// it: the FX bus, and while ORBIT plays its own block and a burst of
+    /// note-ons (ADR 0091). It plays exactly while it hands a harmony.
+    fn reserved(&self) -> Cost {
+        let orbit = match self.harmony {
+            Some(_) => OrbitRunner::COST + Self::BURST,
+            None => Cost::ZERO,
+        };
+        FxBus::COST + orbit
     }
 
     /// Voices that ring a pool set, at most `SYM_SLOTS`: for the bench,
@@ -503,6 +536,18 @@ impl Instrument {
     #[cfg(any(test, feature = "test-support"))]
     pub fn slides(&self) -> [f32; MAX_VOICES] {
         core::array::from_fn(|v| self.voices[v].slide())
+    }
+
+    /// Times the Parts were costed (`recost`): for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn costings(&self) -> u32 {
+        self.costings
+    }
+
+    /// The Part whose Sound each voice renders: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn sounding_parts(&self) -> [u8; MAX_VOICES] {
+        self.sounding
     }
 
     /// Whether each voice sounds: for the tests.
@@ -543,12 +588,20 @@ impl Instrument {
     /// Note-on: play on every Part listening on the channel, a live key
     /// snapped per Part while ORBIT runs. Note-off: release the voices this
     /// channel, `from` and the key started. A Poly re-strike takes back
-    /// only `from`'s own voice of the note.
+    /// only `from`'s own voice of the note. A note-on judges against the
+    /// Parts' costs worked out once for the block's snapshot (`recost`), so
+    /// a burst, admitted or refused, costs them once.
     pub fn handle_from(&mut self, ev: NoteEvent, shared: &AudioShared, from: NoteOrigin) {
         match ev.kind {
             NoteKind::On(vel) => {
+                #[cfg(feature = "probe")]
+                let t0 = crate::probe::now();
                 // Judge the note against this block's patches, not the last.
                 self.recost(shared);
+                #[cfg(feature = "probe")]
+                crate::probe::acc(0, crate::probe::now().wrapping_sub(t0));
+                #[cfg(feature = "probe")]
+                crate::probe::acc(3, 1);
                 for (p, part) in shared.parts.iter().enumerate() {
                     if part.mix.channel != ev.channel {
                         continue;
@@ -559,11 +612,14 @@ impl Instrument {
                         NoteOrigin::Live => part.live_note(ev.note, self.harmony),
                         NoteOrigin::Orbit(_) => ev.note,
                     };
-                    let cost = part.voice_cost();
+                    #[cfg(feature = "probe")]
+                    let t1 = crate::probe::now();
+                    let cost = self.costs[p];
+                    let reserved = self.reserved();
                     let origins = &self.note_origin;
                     let Some(v) = self
                         .alloc
-                        .pick_where(q, mode, note, cost, FxBus::COST, &|v| origins[v] == from)
+                        .pick_where(q, mode, note, cost, reserved, &|v| origins[v] == from)
                     else {
                         self.alloc.refuse();
                         continue;
@@ -592,6 +648,13 @@ impl Instrument {
                     self.held_keys[v] = base.with(ev.note);
                     self.alloc.book(v, q, mode, note, cost);
                     let waits = self.sounding[v] as usize != p && self.voices[v].is_active();
+                    // A voice taken from another Part fades out on that
+                    // Part's Sound before the note starts: billed what it
+                    // was (a held Modal's extra in) till then (ADR 0091). A
+                    // shed one's fade was never billed (ADR 0027).
+                    if waits && !was.dying() {
+                        self.alloc.fade_from(v, was.cost());
+                    }
                     // Sympathetic starts now only if the block's clear
                     // budget takes it and no note waits on it before; else
                     // it waits, as a steal does (spec § 4.8).
@@ -599,6 +662,10 @@ impl Instrument {
                         && SlotKind::of(&part.params) == SYMPATHETIC
                         && !(self.voices[v].starts_now(&part.params, &self.sym)
                             && self.admit(v, &part.params, note));
+                    #[cfg(feature = "probe")]
+                    let t2 = crate::probe::now();
+                    #[cfg(feature = "probe")]
+                    crate::probe::acc(1, t2.wrapping_sub(t1));
                     let voice = &mut self.voices[v];
                     let waited = self.waiting[v].take().is_some();
                     let queued = if waits || deferred {
@@ -611,6 +678,8 @@ impl Instrument {
                         self.sounding[v] = q;
                         voice.note_on(note, vel, &part.params, &mut self.sym)
                     };
+                    #[cfg(feature = "probe")]
+                    crate::probe::acc(2, crate::probe::now().wrapping_sub(t2));
                     // A note replaced before it sounded (ADR 0027).
                     if waited || queued {
                         self.alloc.dropped_unheard();
@@ -625,6 +694,8 @@ impl Instrument {
                 // By voice index: every held voice this channel and `from`
                 // hold the key on (one per layered Part), let go with the
                 // last of its keys.
+                #[cfg(feature = "probe")]
+                crate::probe::acc(5, 1);
                 for v in 0..MAX_VOICES {
                     let s = self.alloc.slots()[v];
                     if !(s.held()
@@ -752,6 +823,7 @@ impl Instrument {
         if !self.admit(v, params, note) {
             return false;
         }
+        self.alloc.fade_from(v, Cost::ZERO);
         let voice = &mut self.voices[v];
         let _ = voice.note_on(note, vel, params, &mut self.sym);
         if !held {
@@ -784,9 +856,21 @@ impl Instrument {
 
     /// A patch edit changes its voices' cost; fade voices out if that went
     /// over the budget (ADR 0027). The slot stays taken until the fade ends
-    /// and `render` step 5 frees it.
+    /// and `render` step 5 frees it. Once a block: a later note-on, or the
+    /// render, on the same snapshot reuses it (ADR 0091), so a burst of
+    /// notes, admitted or refused, costs the Parts once.
     fn recost(&mut self, shared: &AudioShared) {
-        let costs: [Cost; MAX_PARTS] = core::array::from_fn(|p| shared.parts[p].voice_cost());
+        let at = core::ptr::from_ref(shared) as usize;
+        if self.costed == at {
+            return;
+        }
+        #[cfg(feature = "probe")]
+        let t0 = crate::probe::now();
+        self.costs = core::array::from_fn(|p| shared.parts[p].voice_cost());
+        (self.costed, self.costings) = (at, self.costings.wrapping_add(1));
+        #[cfg(feature = "probe")]
+        crate::probe::acc(8, crate::probe::now().wrapping_sub(t0));
+        let costs = self.costs;
         for v in 0..MAX_VOICES {
             if let Some(p) = self.alloc.slots()[v].part() {
                 let p = p as usize % MAX_PARTS;
@@ -794,6 +878,8 @@ impl Instrument {
                 self.alloc.recost(v, costs[p] + held);
             }
         }
+        // Only the bus: ORBIT's reserve refuses new voices, it never fades
+        // out sounding ones (ADR 0091).
         while let Some(v) = self.alloc.shed(FxBus::COST) {
             self.shed(v);
         }
@@ -930,6 +1016,8 @@ impl Instrument {
 
         // Oscilloscope: every part's bus, before pan and level.
         scope.write(&scope_block);
+        // The block is over: the next may carry other patches.
+        self.costed = 0;
     }
 }
 

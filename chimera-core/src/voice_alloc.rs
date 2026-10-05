@@ -22,6 +22,10 @@
 //! fades, is never stolen or shed again, and frees when the fade ends
 //! (`release_finished`). Its cost counts in `sounding_cost` but not against a
 //! note-on: it is gone within `Voice::FADE`.
+//!
+//! A voice taken for another Sound's note fades out on its old one first;
+//! its slot bills the costlier of the two until the note starts
+//! (`fade_from`, ADR 0091).
 
 use crate::MidiNote;
 use crate::hw::{Cost, MAX_VOICES, SampleBudget};
@@ -58,6 +62,9 @@ pub struct VoiceSlot {
     /// Shed, fading out, freed by `release_finished`: the shed's order.
     dying: Option<u32>,
     cost: Cost,
+    /// What the voice's last note, taken for this one, costs while it
+    /// fades out before this one starts (ADR 0091).
+    fading: Cost,
 }
 
 impl VoiceSlot {
@@ -89,9 +96,10 @@ impl VoiceSlot {
         self.part.is_none()
     }
 
-    /// Cycles/sample this voice costs now (0 when free).
+    /// Cycles/sample this voice costs now (0 when free): its note's, or
+    /// while the note it took fades out, the costlier of the two.
     pub fn cost(&self) -> Cost {
-        self.cost
+        self.cost.max(self.fading)
     }
 }
 
@@ -145,7 +153,7 @@ impl Allocator {
 
     /// Sum of the costs of every allocated voice.
     pub fn sounding_cost(&self) -> Cost {
-        self.slots.iter().map(|s| s.cost).sum()
+        self.slots.iter().map(VoiceSlot::cost).sum()
     }
 
     /// `reserved` and every allocated voice, as a share of the budget,
@@ -163,7 +171,7 @@ impl Allocator {
         self.slots
             .iter()
             .filter(|s| s.dying.is_none())
-            .map(|s| s.cost)
+            .map(VoiceSlot::cost)
             .sum()
     }
 
@@ -211,6 +219,7 @@ impl Allocator {
             mono,
             dying: None,
             cost,
+            fading: Cost::ZERO,
         };
     }
 
@@ -230,6 +239,15 @@ impl Allocator {
     pub fn renote(&mut self, voice: usize, note: MidiNote) {
         if let Some(s) = self.slots.get_mut(voice).filter(|s| !s.is_free()) {
             s.note = Some(note);
+        }
+    }
+
+    /// `voice` was taken from a note of another Sound, which costs
+    /// `fading` until it has faded out and the booked note starts; then
+    /// `Cost::ZERO` (ADR 0091). No-op for a free voice.
+    pub fn fade_from(&mut self, voice: usize, fading: Cost) {
+        if let Some(s) = self.slots.get_mut(voice).filter(|s| !s.is_free()) {
+            s.fading = fading;
         }
     }
 
@@ -316,7 +334,7 @@ impl Allocator {
                 .iter()
                 .position(|s| s.mono && !s.dying() && s.part == Some(part))
         {
-            return fits(self.slots[v].cost).then_some(v);
+            return fits(self.slots[v].cost()).then_some(v);
         }
         // Rule 2: the key's own voice, re-struck (if `restrike` accepts it),
         // if it fits (else on to
@@ -326,7 +344,7 @@ impl Allocator {
             && let Some(v) = self.slots.iter().enumerate().position(|(v, s)| {
                 !s.mono && !s.dying() && s.part == Some(part) && s.note == Some(note) && restrike(v)
             })
-            && fits(self.slots[v].cost)
+            && fits(self.slots[v].cost())
         {
             return Some(v);
         }
@@ -349,7 +367,7 @@ impl Allocator {
         let oldest = (0..MAX_VOICES)
             .filter(|&v| !self.slots[v].is_free() && !self.slots[v].mono && !self.slots[v].dying())
             .min_by_key(|&v| (self.slots[v].held, self.slots[v].age))?;
-        fits(self.slots[oldest].cost).then_some(oldest)
+        fits(self.slots[oldest].cost()).then_some(oldest)
     }
 }
 

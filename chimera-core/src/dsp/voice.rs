@@ -471,8 +471,14 @@ impl Voice {
         self.retrigger = true;
         self.last_note = note;
         self.last_velocity = velocity;
+        #[cfg(feature = "probe")]
+        let t0 = crate::probe::now();
         self.slot
             .note_on(note, velocity, params, self.sample_rate, pool);
+        #[cfg(feature = "probe")]
+        let t1 = crate::probe::now();
+        #[cfg(feature = "probe")]
+        crate::probe::acc(4, t1.wrapping_sub(t0));
         for e in &mut self.envs {
             e.note_on();
         }
@@ -483,6 +489,8 @@ impl Voice {
         // Until the first block renders, a fade has these to keep.
         self.played.clone_from(params);
         self.played_live = AlgoLive::from_params(&params.algo);
+        #[cfg(feature = "probe")]
+        crate::probe::acc(7, crate::probe::now().wrapping_sub(t1));
     }
 
     /// The note moves to `note` without a strike, gliding there on the
