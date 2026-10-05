@@ -30,14 +30,19 @@ mod tests {
     use super::*;
     use crate::dsp::filter::FilterMode;
 
-    /// Each probe is LP24's `process` on its own kind of block: steady
-    /// blocks, then a cutoff and RES move, RES alone (a moving block too),
-    /// and past 0.497·fs.
+    /// Each probe is `process` on its own kind of block, at LP4 and at
+    /// NOTCH2: steady blocks, then a cutoff and RES move, RES alone (a
+    /// moving block too), and past 0.497·fs.
     #[test]
-    fn clean_probe_is_process_at_lp24() {
+    fn clean_probe_is_process() {
+        probe_is_process::<2>(FilterMode::Lp24);
+        probe_is_process::<7>(FilterMode::Phaser);
+    }
+
+    fn probe_is_process<const M: u8>(mode: FilterMode) {
         let mut p = FilterParams::default();
         (p.cutoff, p.resonance, p.drive) = (800.0, 0.7, 0.3);
-        assert!(p.set_mode(FilterMode::Lp24));
+        assert!(p.set_mode(mode));
         let (mut a, mut b) = (Clean::new(), Clean::new());
         let mut x = 0.37f32;
         for block in 0..6 {
@@ -56,11 +61,11 @@ mod tests {
             let mut got = want;
             a.process(&mut want, &p, SAMPLE_RATE);
             if moving {
-                clean_probe::<2, true>(&mut b, &mut got, &p);
+                clean_probe::<M, true>(&mut b, &mut got, &p);
             } else {
-                clean_probe::<2, false>(&mut b, &mut got, &p);
+                clean_probe::<M, false>(&mut b, &mut got, &p);
             }
-            assert_eq!(got, want, "block {block}");
+            assert_eq!(got, want, "{mode:?} block {block}");
         }
     }
 }

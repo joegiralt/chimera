@@ -36,13 +36,22 @@ fn stage(x: f64, g: f64, k: f64, s1: &mut f64, s2: &mut f64) -> (f64, f64, f64) 
     (lp, bp, hp)
 }
 
+/// NOTCH2's feedback at `k`: `0.7·RES`, with RES read back through
+/// `k = 2·(1 − RES/0.95)`.
+pub fn notch2_fb_ref(k: f64) -> f64 {
+    0.7 * 0.95 * (1.0 - k / 2.0)
+}
+
 /// CLEAN's output trim at `k`: 1 for `k ≥ 0.5`, linear to the mode's
-/// `TRIM_OSC` (read as `trim` at `k = −1`) at `k ≤ 0`; PHASER untrimmed.
+/// `TRIM_OSC` (read as `trim` at `k = −1`) at `k ≤ 0`; NOTCH2's is its
+/// output scale, `√(1 − fb)·½`.
 pub fn trim_ref(mode: FilterMode, k: f32) -> f32 {
-    let osc = trim(mode, -1.0);
     match mode {
-        FilterMode::Phaser => 1.0,
-        _ => osc + (1.0 - osc) * clampf(2.0 * k, 0.0, 1.0),
+        FilterMode::Phaser => (0.5 * (1.0 - notch2_fb_ref(k.into())).sqrt()) as f32,
+        _ => {
+            let osc = trim(mode, -1.0);
+            osc + (1.0 - osc) * clampf(2.0 * k, 0.0, 1.0)
+        }
     }
 }
 
@@ -51,6 +60,7 @@ pub fn trim_ref(mode: FilterMode, k: f32) -> f32 {
 /// 0.1)`.
 pub fn clean_ref(x: &[f32], g: &[f64], k: &[f64], t: &[f64], mode: FilterMode) -> Vec<f64> {
     let (mut s1, mut s2) = ([0.0f64; 2], [0.0f64; 2]);
+    let (mut ap, mut w) = ([0.0f64; 4], 0.0f64);
     let mut out = Vec::with_capacity(x.len());
     for n in 0..x.len() {
         let (x, g, k) = (f64::from(x[n]), g[n], k[n]);
@@ -80,9 +90,19 @@ pub fn clean_ref(x: &[f32], g: &[f64], k: &[f64], t: &[f64], mode: FilterMode) -
                 let (lp, _, hp) = stage(x, g, k, a1, a2);
                 lp + 0.25 * hp
             }
+            // Dry plus four TPT all-passes, fed back one sample late; the
+            // trim `t` is the output scale.
             FilterMode::Phaser => {
-                let ap1 = x - 2.0 * k * stage(x, g, k, a1, a2).1;
-                ap1 - 2.0 * k * stage(ap1, g, k, b1, b2).1
+                let u = x + notch2_fb_ref(k) * w;
+                let g1 = g / (1.0 + g);
+                let mut v = u;
+                for s in &mut ap {
+                    let lp = (v - *s) * g1 + *s;
+                    *s = 2.0 * lp - *s;
+                    v = 2.0 * lp - v;
+                }
+                w = v;
+                u + v
             }
         };
         out.push(t * y);
@@ -124,4 +144,37 @@ pub fn mag_db(out: &[f32], f: f32, fs: f32) -> f32 {
 pub fn rms_db(x: &[f32]) -> f32 {
     let ms = x.iter().map(|&v| f64::from(v) * f64::from(v)).sum::<f64>() / x.len() as f64;
     (10.0 * ms.log10()) as f32
+}
+
+/// In-place iterative radix-2 FFT; `re.len()` is a power of two.
+pub fn fft(re: &mut [f64], im: &mut [f64]) {
+    let n = re.len();
+    let mut j = 0;
+    for i in 1..n {
+        let mut bit = n >> 1;
+        while j & bit != 0 {
+            j ^= bit;
+            bit >>= 1;
+        }
+        j |= bit;
+        if i < j {
+            re.swap(i, j);
+            im.swap(i, j);
+        }
+    }
+    let mut len = 2;
+    while len <= n {
+        let ang = -2.0 * std::f64::consts::PI / len as f64;
+        for start in (0..n).step_by(len) {
+            for k in 0..len / 2 {
+                let (s, c) = (ang * k as f64).sin_cos();
+                let (a, b) = (start + k, start + k + len / 2);
+                let (tr, ti) = (re[b] * c - im[b] * s, re[b] * s + im[b] * c);
+                (re[b], im[b]) = (re[a] - tr, im[a] - ti);
+                re[a] += tr;
+                im[a] += ti;
+            }
+        }
+        len <<= 1;
+    }
 }

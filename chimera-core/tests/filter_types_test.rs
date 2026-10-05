@@ -11,7 +11,9 @@ use chimera_core::params::{EngineType, FILTER_SPECS, FilterParams, ParamSnapshot
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::Rig;
-use common::filter_ref::{OSC_BAND_DB, clean_ref, g_track, mag_db, ramp_track, rms_db, trim_ref};
+use common::filter_ref::{
+    OSC_BAND_DB, clean_ref, fft, g_track, mag_db, ramp_track, rms_db, trim_ref,
+};
 
 const SR: u32 = 48_000;
 const FS: f32 = SR as f32;
@@ -100,13 +102,14 @@ fn jump_error(mode: FilterMode, blocks: &[(f32, f32)]) -> f64 {
     err / peak
 }
 
-const JUMP_MODES: [FilterMode; 6] = [
+const JUMP_MODES: [FilterMode; 7] = [
     FilterMode::Lp6,
     FilterMode::Lp12,
     FilterMode::Lp24,
     FilterMode::Bp24,
     FilterMode::Hp24,
     FilterMode::Notch,
+    FilterMode::Phaser,
 ];
 
 #[test]
@@ -164,7 +167,7 @@ fn clean_k_law_has_its_onset_at_0_95() {
 }
 
 /// 1 down to `k = 0.5`, then linear to the mode's own trim at `k = 0`, held
-/// below; PHASER untrimmed.
+/// below.
 #[test]
 fn clean_trim_ramps_with_k() {
     for mode in OSC_MODES {
@@ -176,7 +179,9 @@ fn clean_trim_ramps_with_k() {
         assert_eq!(trim(mode, clean_k(1.0)), osc);
         assert!((trim(mode, 0.25) - (1.0 + osc) / 2.0).abs() < 1e-6);
     }
-    assert_eq!(trim(FilterMode::Phaser, clean_k(1.0)), 1.0);
+    // NOTCH2's is its output scale, `√(1 − 0.7·RES)·½`.
+    assert_eq!(trim(FilterMode::Phaser, clean_k(0.0)), 0.5);
+    assert!((trim(FilterMode::Phaser, clean_k(1.0)) - 0.5 * 0.3f32.sqrt()).abs() < 1e-6);
 }
 
 /// The modes that self-oscillate: all but NOTCH2 (PHASER), which never
@@ -306,11 +311,17 @@ fn clean_onset_is_res_0_95() {
 }
 
 /// CLEAN's output bound on every input, at every setting (spec test 8):
-/// the grid's max, 12.55 (the ±10 impulses, passed through), × 1.1.
-const CLEAN_BOUND: f32 = 13.8;
-/// Its raw states' bound, the same way: 3.84 × 1.1. Each is read through
-/// `sat_c1`, so the loop never sees more than 1.5.
-const CLEAN_STATE_BOUND: f32 = 4.22;
+/// the grid's max, 10.39 (LP1 on the ±10 impulses), × 1.1. NOTCH2, ADR
+/// 0096: was 13.8, from the old PHASER's 12.55 (the impulses, all-passed).
+const CLEAN_BOUND: f32 = 11.43;
+/// Its SVF states' bound, the same way: 3.50 × 1.1. Each is read through
+/// `sat_c1`, so the loop never sees more than 1.5. NOTCH2, ADR 0096: was
+/// 4.22, from the old PHASER's 3.84.
+const CLEAN_STATE_BOUND: f32 = 3.85;
+/// NOTCH2's all-pass and feedback states' bound: 5.03 × 1.1. They are
+/// linear (unit-gain all-passes, `fb ≤ 0.7`), so they scale with the ±10
+/// impulses.
+const NOTCH2_STATE_BOUND: f32 = 5.54;
 
 /// The RES 1 jumps' bound on the 0.8 saw: their max, 0.833, × 1.1. It was
 /// 0.733 before LP1 and NOTCH1 joined (NOTCH1 passes the saw's low end).
@@ -318,6 +329,7 @@ const CLEAN_JUMP_BOUND: f32 = 0.92;
 
 /// Task 2's one-block jumps at RES 1, where self-oscillation makes the
 /// reference's relative error meaningless: bounded instead (spec test 4).
+/// NOTCH2 never oscillates, so it is held to the reference.
 #[test]
 fn clean_res_1_one_block_jumps_stay_bounded() {
     let held = |a: f32, b: f32| -> Vec<f32> { [[a; 6], [b; 6]].concat() };
@@ -330,6 +342,12 @@ fn clean_res_1_one_block_jumps_stay_bounded() {
     let mut max = 0.0f32;
     for mode in JUMP_MODES {
         for cutoffs in [held(100.0, 20_000.0), held(20_000.0, 100.0), env.clone()] {
+            if mode == FilterMode::Phaser {
+                let blocks: Vec<(f32, f32)> = cutoffs.iter().map(|&fc| (fc, 1.0)).collect();
+                let e = jump_error(mode, &blocks);
+                assert!(e <= 1e-3, "{mode:?}: {e:.2e}");
+                continue;
+            }
             let mut p = FilterParams::default();
             assert!(p.set_mode(mode));
             p.resonance = 1.0;
@@ -383,8 +401,9 @@ fn grid_input(which: usize, i: usize) -> f32 {
 
 #[test]
 fn clean_is_bounded_on_the_grid() {
-    let (mut max, mut max_state) = (0.0f32, 0.0f32);
+    let (mut max, mut max_state, mut max_ap) = (0.0f32, 0.0f32, 0.0f32);
     for mode in FilterMode::ALL {
+        let mut mode_max = 0.0f32;
         for fi in 0..24 {
             let fc = 20.0 * 1000f32.powf(fi as f32 / 23.0);
             for ri in 0..=10 {
@@ -399,20 +418,24 @@ fn clean_is_bounded_on_the_grid() {
                         f.process(&mut buf, &p, SR);
                         for v in buf {
                             assert!(v.is_finite(), "{mode:?} {fc} RES {ri}: {v}");
-                            max = max.max(v.abs());
+                            mode_max = mode_max.max(v.abs());
                         }
-                        for s in f.states() {
-                            assert!(s.is_finite());
-                            max_state = max_state.max(s.abs());
-                        }
+                        let states = f.states();
+                        assert!(states.iter().all(|s| s.is_finite()));
+                        let m = |s: &[f32]| s.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+                        max_state = max_state.max(m(&states[..4]));
+                        max_ap = max_ap.max(m(&states[4..]));
                     }
                 }
             }
         }
+        println!("grid {mode:?}: max |y| {mode_max}");
+        max = max.max(mode_max);
     }
-    println!("grid: max |y| {max}, max |state| {max_state}");
+    println!("grid: max |y| {max}, max |state| {max_state}, NOTCH2's {max_ap}");
     assert!(max <= CLEAN_BOUND, "{max}");
     assert!(max_state <= CLEAN_STATE_BOUND, "{max_state}");
+    assert!(max_ap <= NOTCH2_STATE_BOUND, "{max_ap}");
 }
 
 #[test]
@@ -703,5 +726,226 @@ fn lp1_at_q0_is_the_one_pole_and_q_peaks_it() {
     assert!(
         (at - want).abs() <= 0.5,
         "RES 0.5: {at:.2} dB, want {want:.2}"
+    );
+}
+
+/// Broadband loudness, dB: the level of pink noise through a power
+/// response, the mean of `|H|²` over log frequency, 20 Hz – 20 kHz. White
+/// noise's would weight the top octave as all the others together, where
+/// the feedback's one-sample delay sets the level, not the notches.
+fn pink_db(p: &[f64]) -> f64 {
+    let n = 2000;
+    let mean = (0..n)
+        .map(|i| {
+            let f = 20.0 * 1000f64.powf(i as f64 / (n - 1) as f64);
+            p[(f * WELCH_N as f64 / f64::from(FS)).round() as usize]
+        })
+        .sum::<f64>()
+        / n as f64;
+    10.0 * mean.log10()
+}
+
+/// NOTCH2's segment length: a 2^15-point Welch average.
+const WELCH_N: usize = 1 << 15;
+
+/// White noise, ±1: sample `i` is splitmix64(i)'s top 24 bits. (The bound
+/// grid's hash noise is 7 dB from flat across the band.)
+fn white(i: usize) -> f32 {
+    let mut z = (i as u64)
+        .wrapping_add(1)
+        .wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    ((z ^ (z >> 31)) >> 40) as f32 / (1u32 << 23) as f32 - 1.0
+}
+
+/// NOTCH2's power response `|H|²` per bin (`k·fs/WELCH_N`, 0..=N/2) at
+/// FREQ `fc` and RES `res`: white noise in, the H1 estimate `|Pxy|/Pxx` of
+/// a Welch average (Hann, half overlap, 8 segments) after 0.1 s.
+fn notch2_power(fc: f32, res: f32) -> Vec<f64> {
+    let (settle, segs) = ((0.1 * FS) as usize, 8);
+    let n = settle + WELCH_N / 2 * (segs + 1);
+    let noise = white;
+    let y = render(FilterMode::Phaser, fc, res, n, noise);
+    let hann = |i: usize| 0.5 - 0.5 * (core::f64::consts::TAU * i as f64 / WELCH_N as f64).cos();
+    let bins = WELCH_N / 2 + 1;
+    let (mut pxx, mut pxy) = (vec![0.0f64; bins], vec![(0.0f64, 0.0f64); bins]);
+    for s in 0..segs {
+        let at = settle + s * WELCH_N / 2;
+        let spec = |f: &dyn Fn(usize) -> f64| {
+            let mut re: Vec<f64> = (0..WELCH_N).map(|i| f(at + i) * hann(i)).collect();
+            let mut im = vec![0.0; WELCH_N];
+            fft(&mut re, &mut im);
+            (re, im)
+        };
+        let (xr, xi) = spec(&|i| f64::from(noise(i)));
+        let (yr, yi) = spec(&|i| f64::from(y[i]));
+        for k in 0..bins {
+            pxx[k] += xr[k] * xr[k] + xi[k] * xi[k];
+            // conj(X)·Y
+            pxy[k].0 += xr[k] * yr[k] + xi[k] * yi[k];
+            pxy[k].1 += xr[k] * yi[k] - xi[k] * yr[k];
+        }
+    }
+    (0..bins)
+        .map(|k| (pxy[k].0 * pxy[k].0 + pxy[k].1 * pxy[k].1) / (pxx[k] * pxx[k]))
+        .collect()
+}
+
+fn bin_hz(k: f64) -> f64 {
+    k * f64::from(FS) / WELCH_N as f64
+}
+
+/// The bin's vertex: a parabola through `p[m − 1..=m + 1]`, in bins.
+fn vertex(p: &[f64], m: usize) -> f64 {
+    let (a, b, c) = (p[m - 1], p[m], p[m + 1]);
+    m as f64 + 0.5 * (a - c) / (a - 2.0 * b + c)
+}
+
+/// The minima ≥ 25 dB under the response's median (10 Hz – 22 kHz), Hz:
+/// one per run of bins below that, each at its parabola's vertex on `|H|²`,
+/// which is quadratic about an exact zero.
+fn notch2_notches(p: &[f64]) -> Vec<f64> {
+    let span = (10.0 * WELCH_N as f32 / FS) as usize..(22_000.0 * WELCH_N as f32 / FS) as usize;
+    let mut db: Vec<f64> = p[span.clone()].iter().map(|v| 10.0 * v.log10()).collect();
+    db.sort_by(f64::total_cmp);
+    let floor = db[db.len() / 2] - 25.0;
+    let deep = |k: usize| 10.0 * p[k].log10() < floor;
+    let mut found = Vec::new();
+    let mut k = span.start;
+    while k < span.end {
+        if !deep(k) {
+            k += 1;
+            continue;
+        }
+        let start = k;
+        while k < span.end && deep(k) {
+            k += 1;
+        }
+        let m = (start..k).min_by(|&a, &b| p[a].total_cmp(&p[b])).unwrap();
+        found.push(bin_hz(vertex(p, m)));
+    }
+    found
+}
+
+/// The response's peak between the two notches, Hz: the vertex of a
+/// parabola on dB.
+fn notch2_peak(p: &[f64]) -> f64 {
+    let n = notch2_notches(p);
+    assert_eq!(n.len(), 2, "{n:?}");
+    let (lo, hi) = (
+        (n[0] * WELCH_N as f64 / f64::from(FS)) as usize + 2,
+        (n[1] * WELCH_N as f64 / f64::from(FS)) as usize - 1,
+    );
+    let m = (lo..hi).max_by(|&a, &b| p[a].total_cmp(&p[b])).unwrap();
+    let db: Vec<f64> = p[m - 1..=m + 1].iter().map(|v| 10.0 * v.log10()).collect();
+    bin_hz(m as f64 + vertex(&db, 1) - 1.0)
+}
+
+/// The digital notches at FREQ `fc`: `(fs/π)·atan(g·tan(π/8))` and
+/// `(fs/π)·atan(g·tan(3π/8))`, the analog 0.414 × and 2.414 × FREQ.
+fn notch2_want(fc: f32) -> [f64; 2] {
+    let g = f64::from(g_of(fc, FS));
+    let pi = core::f64::consts::PI;
+    [pi / 8.0, 3.0 * pi / 8.0].map(|a| f64::from(FS) / pi * (g * a.tan()).atan())
+}
+
+/// Two exact notches at every Q (spec § CLEAN's DSP, test 6): the output is
+/// `(1 + A)·u`, zero where the four all-passes turn −180° and −540°.
+#[test]
+fn notch2_has_two_exact_notches_that_sweep_in_octaves() {
+    for res in [0.0f32, 0.5, 1.0] {
+        let mut last: Option<[f64; 2]> = None;
+        for fc in [200.0f32, 400.0, 800.0, 1600.0] {
+            let got = notch2_notches(&notch2_power(fc, res));
+            let want = notch2_want(fc);
+            println!("NOTCH2 {fc} Hz Q {res}: notches {got:.2?}, want {want:.2?}");
+            assert_eq!(got.len(), 2, "{fc} Hz Q {res}: {got:?}");
+            for (g, w) in got.iter().zip(want) {
+                assert!((g / w - 1.0).abs() <= 0.03, "{fc} Hz Q {res}: {g} vs {w}");
+            }
+            if let Some(l) = last {
+                for (g, l) in got.iter().zip(l) {
+                    let oct = (g / l).log2();
+                    assert!((oct - 1.0).abs() <= 0.05, "{fc} Hz Q {res}: {oct:.3} oct");
+                }
+            }
+            last = Some([got[0], got[1]]);
+        }
+    }
+}
+
+/// The `√(1 − fb)` law's ceiling on the peak's rise: `10·log10(1/0.3)` =
+/// 5.229 dB at `fb` 0.7, which the spec rounds to 5.2.
+const NOTCH2_RISE_DB: f32 = 5.23;
+
+/// Q is feedback, `fb = 0.7·RES`, scaled by `√(1 − fb)`: the peak between
+/// the notches rises with Q, but the loudness (`pink_db`) holds to 2 kHz.
+#[test]
+fn notch2_q_raises_the_peaks_but_not_the_loudness() {
+    for fc in [200.0f32, 400.0, 800.0, 1600.0, 2000.0, 8000.0] {
+        // Found on the Welch spectrum, read by a sine at the nearest half
+        // hertz: the peak is broad, and the bound is within 1e-3 dB of it.
+        let peaks: Vec<f32> = [0.0f32, 0.5, 1.0]
+            .iter()
+            .map(|&res| {
+                let hz = (notch2_peak(&notch2_power(fc, res)) * 2.0).round() / 2.0;
+                gain_db(FilterMode::Phaser, fc, res, hz as f32)
+            })
+            .collect();
+        println!("NOTCH2 {fc} Hz peak at Q 0, 0.5, 1: {peaks:.4?} dB");
+        assert!(
+            peaks[0] < peaks[1] && peaks[1] < peaks[2],
+            "{fc} Hz: {peaks:?}"
+        );
+        let rise = peaks[2] - peaks[0];
+        assert!(rise <= NOTCH2_RISE_DB, "{fc} Hz: +{rise:.4} dB");
+    }
+    for fc in [200.0f32, 400.0, 800.0, 1600.0, 2000.0] {
+        let level = |res: f32| pink_db(&notch2_power(fc, res));
+        let at0 = level(0.0);
+        let levels: Vec<f64> = (0..=4).map(|q| level(q as f32 / 4.0) - at0).collect();
+        println!("NOTCH2 {fc} Hz pink level re Q 0, Q 0..1: {levels:.2?} dB");
+        for (q, l) in levels.iter().enumerate() {
+            assert!(l.abs() <= 1.5, "{fc} Hz Q {}: {l:+.2} dB", q as f32 / 4.0);
+        }
+    }
+}
+
+/// NOTCH2 never self-oscillates (owner: as the Cascadia's PHZR): at RES 1
+/// an impulse dies 80 dB within 0.5 s at every FREQ of the bound grid. A
+/// loop that runs away overflows, and the NaN reset would silence it, so
+/// every sample is held finite and the peak to the impulse's own 1.
+#[test]
+fn notch2_never_self_oscillates() {
+    let mut worst = f32::NEG_INFINITY;
+    for fi in 0..24 {
+        let fc = 20.0 * 1000f32.powf(fi as f32 / 23.0);
+        let y = render(FilterMode::Phaser, fc, 1.0, (0.6 * FS) as usize, impulse);
+        assert!(y.iter().all(|v| v.is_finite()), "{fc} Hz");
+        let peak = y.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(peak <= 1.0, "{fc} Hz: peak {peak}");
+        let late = y[(0.5 * FS) as usize..]
+            .iter()
+            .fold(0.0f32, |m, v| m.max(v.abs()));
+        let db = 20.0 * (late / peak).log10();
+        assert!(db < -80.0, "{fc} Hz: {db:.1} dB after 0.5 s");
+        worst = worst.max(db);
+    }
+    println!("NOTCH2 RES 1: the impulse's level after 0.5 s, at worst {worst:.1} dB");
+}
+
+/// The one-sample feedback delay slides the peak below FREQ at high FREQ
+/// (spec: accepted, and pinned here): at 8 kHz, Q 1.
+const NOTCH2_PEAK_AT_8K: f64 = 0.834;
+
+#[test]
+fn notch2_peak_slides_below_freq_as_pinned() {
+    let hz = notch2_peak(&notch2_power(8000.0, 1.0));
+    let ratio = hz / 8000.0;
+    println!("NOTCH2 8 kHz Q 1: peak {hz:.1} Hz, {ratio:.4} × FREQ");
+    assert!(
+        (ratio / NOTCH2_PEAK_AT_8K - 1.0).abs() <= 0.02,
+        "{ratio:.4} × FREQ"
     );
 }

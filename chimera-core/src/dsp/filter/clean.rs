@@ -5,7 +5,8 @@
 //! and `k` equal at both ends, divides once for the block; a moving one
 //! ramps `g` and `k` and divides exactly every sample. `d` is convex in
 //! `g`, so lerping it is wrong by up to 95 % on a one-block jump. Each
-//! stage takes its `d`, and never divides.
+//! stage takes its `d`, and never divides. NOTCH2 is not an SVF: four TPT
+//! all-passes with the dry, and `G₁` takes the divide.
 
 use super::coef::{g_of, sat_c1};
 use super::{FilterMode, g_at};
@@ -32,15 +33,27 @@ pub fn clean_k2(k: f32) -> f32 {
 /// −8 dBFS, the middle of the shared band (`OSC_BAND_DB`). Untrimmed, dBFS:
 /// LP1 +0.89 to +2.49, LP12 −2.35 to −0.74, LP24 −1.59 to +1.73, BP12
 /// +3.70 to +5.28, BP24 +5.00 to +7.76, HP24 +0.62 to +2.29, NOTCH1 −4.82
-/// to −3.22. PHASER is never trimmed: its successor NOTCH2 never
-/// oscillates (today's rings at −8 to −10 dBFS until Task 5 replaces it).
-pub(crate) const TRIM_OSC: [f32; 8] = [0.3277, 0.4756, 0.3949, 0.2374, 0.191, 0.3367, 0.6324, 1.0];
+/// to −3.22. NOTCH2 (PHASER, 7) never oscillates and has none: its trim is
+/// its output scale.
+pub(crate) const TRIM_OSC: [f32; 7] = [0.3277, 0.4756, 0.3949, 0.2374, 0.191, 0.3367, 0.6324];
+
+/// NOTCH2's feedback, `0.7·RES`, at `k = clean_k(RES)`: linear in `k`, so it
+/// ramps with it. 0 at RES 0, 0.7 at RES 1; the Cascadia's PHZR never
+/// oscillates, and neither does this.
+#[inline(always)]
+pub fn notch2_fb(k: f32) -> f32 {
+    (0.7 * 0.95) * (1.0 - 0.5 * k)
+}
 
 /// `mode`'s output trim at `k`: 1 for `k ≥ 0.5`, linear to
-/// `TRIM_OSC[mode]` at `k ≤ 0`. Set at each end of a block and ramped
-/// across it, as `k` is: one multiply-add and one multiply a sample.
+/// `TRIM_OSC[mode]` at `k ≤ 0`. NOTCH2's is `√(1 − fb)·½`, which holds its
+/// loudness as Q feeds back. Set at each end of a block and ramped across
+/// it, as `k` is: one multiply-add and one multiply a sample.
 #[inline(always)]
 pub fn trim(mode: FilterMode, k: f32) -> f32 {
+    if mode == FilterMode::Phaser {
+        return 0.5 * libm::sqrtf(1.0 - notch2_fb(k));
+    }
     let u = crate::dsp::clampf(1.0 - 2.0 * k, 0.0, 1.0);
     1.0 + (TRIM_OSC[mode as usize] - 1.0) * u
 }
@@ -49,6 +62,10 @@ pub fn trim(mode: FilterMode, k: f32) -> f32 {
 pub struct Clean {
     s1: [f32; 2],
     s2: [f32; 2],
+    /// NOTCH2's four all-pass states, and its cascade's last output (the
+    /// feedback, one sample late).
+    ap: [f32; 4],
+    w: f32,
     /// The last block's `g`, `k` and DRIVE gain; `None` on a fresh voice,
     /// which starts unramped.
     g: Option<f32>,
@@ -65,7 +82,8 @@ pub(super) struct Ramps {
 }
 
 /// A sample's coefficients: `d = 1/(1 + kg + g²)` for stage 1, and `d2`
-/// at `k2` for stage 2, and the output trim.
+/// at `k2` for stage 2, and the output trim. NOTCH2 reads `two_g1 =
+/// 2g/(1 + g)` (its all-passes' `2·G₁`) and `fb` instead.
 #[derive(Clone, Copy)]
 struct Coef {
     g: f32,
@@ -73,6 +91,8 @@ struct Coef {
     k2: f32,
     d: f32,
     d2: f32,
+    two_g1: f32,
+    fb: f32,
     trim: f32,
 }
 
@@ -87,6 +107,8 @@ fn coef<const M: u8>(g: f32, k: f32, trim: f32) -> Coef {
         k2: k,
         d: 0.0,
         d2: 0.0,
+        two_g1: 0.0,
+        fb: 0.0,
         trim,
     };
     match FilterMode::ALL[M as usize] {
@@ -97,8 +119,8 @@ fn coef<const M: u8>(g: f32, k: f32, trim: f32) -> Coef {
             c.d2 = d_at(c.k2);
         }
         FilterMode::Phaser => {
-            c.d = d_at(k);
-            c.d2 = c.d;
+            c.two_g1 = 2.0 * g / (1.0 + g);
+            c.fb = notch2_fb(k);
         }
         FilterMode::Lp6 | FilterMode::Lp12 | FilterMode::Bp12 | FilterMode::Notch => c.d = d_at(k),
     }
@@ -129,16 +151,20 @@ impl Clean {
         }
         // A NaN or infinite input poisons the states for good: start the
         // next block from rest.
-        if !(self.s1[0] + self.s1[1] + self.s2[0] + self.s2[1]).is_finite() {
-            (self.s1, self.s2) = ([0.0; 2], [0.0; 2]);
+        let ap: f32 = self.ap.iter().sum();
+        if !(self.s1[0] + self.s1[1] + self.s2[0] + self.s2[1] + ap + self.w).is_finite() {
+            self.rest();
         }
     }
 
-    /// The raw integrator states, `[s1, s2]` of each stage, for the bound
-    /// tests.
+    /// The raw states, for the bound tests: `[s1, s2]` of each stage, then
+    /// NOTCH2's four all-passes and its feedback.
     #[cfg(feature = "test-support")]
-    pub fn states(&self) -> [f32; 4] {
-        [self.s1[0], self.s1[1], self.s2[0], self.s2[1]]
+    pub fn states(&self) -> [f32; 9] {
+        let [a, b, c, d] = self.ap;
+        [
+            self.s1[0], self.s1[1], self.s2[0], self.s2[1], a, b, c, d, self.w,
+        ]
     }
 
     /// This block's ramps, stored as the next block's start.
@@ -196,14 +222,19 @@ impl Clean {
     /// A fresh voice's filter: at rest and unramped. Self-oscillation never
     /// decays, so a voice ended mid-ring would start its next note from it.
     pub fn reset(&mut self) {
-        (self.s1, self.s2) = ([0.0; 2], [0.0; 2]);
+        self.rest();
         self.hold();
+    }
+
+    fn rest(&mut self) {
+        (self.s1, self.s2, self.ap, self.w) = ([0.0; 2], [0.0; 2], [0.0; 4], 0.0);
     }
 
     /// Still ringing: a state above −80 dB.
     pub fn rings(&self) -> bool {
         let m = |a: f32, b: f32| a.abs().max(b.abs());
-        m(m(self.s1[0], self.s1[1]), m(self.s2[0], self.s2[1])) > 1e-4
+        let ap = self.ap.iter().fold(self.w.abs(), |a, &s| m(a, s));
+        m(m(m(self.s1[0], self.s1[1]), m(self.s2[0], self.s2[1])), ap) > 1e-4
     }
 
     /// The last block's `g` (`None`: no ramp next block). Test-only: nothing
@@ -213,14 +244,10 @@ impl Clean {
         self.g
     }
 
-    /// One sample, trimmed (`trim`); PHASER, NOTCH2 to be, isn't.
+    /// One sample, trimmed (`trim`).
     #[inline(always)]
     fn tick<const M: u8>(&mut self, x: f32, c: &Coef) -> f32 {
-        let y = self.untrimmed::<M>(x, c);
-        match FilterMode::ALL[M as usize] {
-            FilterMode::Phaser => y,
-            _ => y * c.trim,
-        }
+        self.untrimmed::<M>(x, c) * c.trim
     }
 
     #[inline(always)]
@@ -247,15 +274,30 @@ impl Clean {
                 let hp = self.stage(x, c.g, c.k, c.d, 0).2;
                 self.stage(hp, c.g, c.k2, c.d2, 1).2
             }
-            // NOTCH1, the Cascadia's NT2: `(1 − s²/4)/(s² + ks + 1)`, a zero
+            // NOTCH1, the Cascadia's NT2: `(1 + s²/4)/(s² + ks + 1)`, a zero
             // at 2 × FREQ, the treble −12 dB.
             FilterMode::Notch => {
                 let (lp, _, hp) = self.stage(x, c.g, c.k, c.d, 0);
                 lp + 0.25 * hp
             }
+            // NOTCH2, the Cascadia's PHZR (the SSM2040 data sheet's Fig. 10,
+            // with Q as feedback): dry plus four all-passes, `(1 + A)·u`,
+            // zero where A turns −180° and −540°: 0.414 × and 2.414 × FREQ.
+            // The dry is `u`, after the feedback node, so the notches stay
+            // exact at every Q; `w` is a sample late, so no loop to solve.
             FilterMode::Phaser => {
-                let ap1 = x - 2.0 * c.k * self.stage(x, c.g, c.k, c.d, 0).1;
-                ap1 - 2.0 * c.k * self.stage(ap1, c.g, c.k, c.d2, 1).1
+                let u = x + c.fb * self.w;
+                let mut v = u;
+                for s in &mut self.ap {
+                    // The TPT one-pole: `t = (v − s)·G₁`, `lp = s + t`, and
+                    // the new state `s′ = s + 2t`. Its all-pass `2·lp − v`
+                    // is `s′ − (v − s)`: four operations, not six.
+                    let e = v - *s;
+                    *s += e * c.two_g1;
+                    v = *s - e;
+                }
+                self.w = v;
+                u + v
             }
         }
     }

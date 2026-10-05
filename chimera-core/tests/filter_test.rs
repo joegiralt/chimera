@@ -235,7 +235,8 @@ fn a_steady_cutoff_does_not_ramp() {
 /// re-recorded for the C1 `saturate` (ADR 0063), the first mode unmoved;
 /// then every mode for CLEAN's ACCURATE tan and exact divides (#57);
 /// then every mode but LP6 (no `k`, trim 1) for CLEAN's k law and trims
-/// (ADR 0096); then LP6 and NOTCH for LP1 and NOTCH1 (ADR 0096).
+/// (ADR 0096); then LP6 and NOTCH for LP1 and NOTCH1 (ADR 0096); then
+/// PHASER for NOTCH2 (ADR 0096).
 #[test]
 fn every_mode_renders_as_recorded() {
     const WANT: [u64; 8] = [
@@ -246,7 +247,7 @@ fn every_mode_renders_as_recorded() {
         0xd7a0_6303_5618_783f,
         0x95bd_99a3_ae4b_6f4d,
         0x9243_ca9d_5805_0f0c, // LP1 and NOTCH1, ADR 0096: was 0x964d_6390_2ba9_3da5
-        0xf66a_5343_055e_3a97,
+        0x9636_9567_b001_efb2, // NOTCH2, ADR 0096: was 0xf66a_5343_055e_3a97
     ];
     let got = FilterMode::ALL.map(|m| {
         let mut p = FilterParams::default();

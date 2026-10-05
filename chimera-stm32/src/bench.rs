@@ -62,6 +62,7 @@ type FilterProbe = fn(&mut Clean, &mut [f32; BLOCK_SIZE], &FilterParams);
 static FILTER_PROBES: &[FilterProbe] = &[
     filter::probe::clean_probe::<2, false>,
     filter::probe::clean_probe::<2, true>,
+    filter::probe::clean_probe::<7, false>,
 ];
 
 /// The bench's screens as text: about 4 KB today, `# TRUNCATED` past this.

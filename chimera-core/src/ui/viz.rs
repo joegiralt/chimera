@@ -153,7 +153,7 @@ pub fn response_y(t: f32, cutoff: f32, reso: f32, r: Response) -> i32 {
         }
         Response::Notch => FILTER_PASS_Y as f32 + span * dip(t, cutoff),
         Response::Notch2x => {
-            // Q 0 dips 8.6 dB at FREQ; the treble is 12 dB down (a quarter).
+            // Q 0 dips 8.6 dB at FREQ; the treble is drawn a quarter down.
             let treble = if t > 2.0 * cutoff { 0.25 * span } else { 0.0 };
             let at_freq = 0.2 * span * (1.0 - reso) - peak_h * reso;
             let notch = dip(t, 2.0 * cutoff);

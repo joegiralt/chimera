@@ -9,6 +9,7 @@ use chimera_core::dsp::reverb::{REVERB_SPECS, ReverbParams};
 use chimera_core::dsp::ring::*;
 use chimera_hal::BLOCK_SIZE;
 use common::Rig;
+use common::filter_ref::fft;
 use common::{SR, rms};
 
 const FS_RING: f32 = 24_000.0;
@@ -320,39 +321,6 @@ fn a_normal_tail_is_never_zeroed_early() {
                 );
             }
         }
-    }
-}
-
-/// In-place iterative radix-2 FFT; `re.len()` is a power of two.
-fn fft(re: &mut [f64], im: &mut [f64]) {
-    let n = re.len();
-    let mut j = 0;
-    for i in 1..n {
-        let mut bit = n >> 1;
-        while j & bit != 0 {
-            j ^= bit;
-            bit >>= 1;
-        }
-        j |= bit;
-        if i < j {
-            re.swap(i, j);
-            im.swap(i, j);
-        }
-    }
-    let mut len = 2;
-    while len <= n {
-        let ang = -2.0 * std::f64::consts::PI / len as f64;
-        for start in (0..n).step_by(len) {
-            for k in 0..len / 2 {
-                let (s, c) = (ang * k as f64).sin_cos();
-                let (a, b) = (start + k, start + k + len / 2);
-                let (tr, ti) = (re[b] * c - im[b] * s, re[b] * s + im[b] * c);
-                (re[b], im[b]) = (re[a] - tr, im[a] - ti);
-                re[a] += tr;
-                im[a] += ti;
-            }
-        }
-        len <<= 1;
     }
 }
 

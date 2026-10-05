@@ -1379,3 +1379,17 @@ The moving, LEVEL and tap terms are deltas, not over `OLD_LP24`, and don't chang
 - **Flash:** `text` 709,928 → 710,096 (+168 B), default release build.
 - **Re-recorded ("LP1 and NOTCH1, ADR 0096"):** `filter_test::every_mode_renders_as_recorded` LP6 and NOTCH rows; screen goldens `bigviz_filter` and `flt_mode` (the MODE label only: LP4, HP4). No `golden_test` patch is on LP6 or NOTCH: none moved.
 - **Voice end (Task 3's F5):** the end fade now also runs inside a steal, kill or switch fade, which stops with the engine half way down.
+
+### Task 5: NOTCH2 (2026-10-05)
+
+- **DSP:** `u = x + fb·w[n−1]`, four TPT all-passes at `G₁ = g/(1 + g)`, `out = √(1 − fb)·½·(u + a)`, `fb = 0.7·RES` (read from `k`, so it ramps with it). `√(1 − fb)·½` is NOTCH2's `trim`, set at each block end and ramped, so it is computed once a block end (`libm::sqrtf`, software: no `vsqrt` in `core`). Each all-pass is four operations: `e = v − s; s += 2G₁·e; v = s − e`.
+- **Notches** (2^15-point Welch H1 on white noise, FREQ 200–1600 Hz, Q 0, 0.5, 1): exactly two, at `(fs/π)·atan(g·tan(π/8))` and `(fs/π)·atan(g·tan(3π/8))` within 0.2 % (e.g. 200 Hz: 82.73 and 482.73 Hz, want 82.85 and 482.71), the same at every Q.
+- **Peaks** rise with Q by at most 5.218 dB (400 Hz), 4.40 dB at 8 kHz. The law's ceiling is `10·log10(1/0.3)` = 5.229 dB, over the brief's 5.2, so the bound is pinned at 5.23.
+- **Loudness** (pink, 20 Hz – 20 kHz, re Q 0) at Q 1: 200 Hz −0.31, 400 Hz −0.57, 800 Hz +0.08, 1.6 kHz +1.14, 2 kHz +1.47 dB. White noise weights the top octave as all the others together, where the one-sample delay, not the notches, sets the level: there Q 1 reads −1.3 to −1.6 dB.
+- **Peak at 8 kHz, Q 1:** 0.834 × FREQ (6,671 Hz), pinned ±2 %.
+- **No self-oscillation:** at RES 1 an impulse is down at least 90.4 dB after 0.5 s over the bound grid's 24 FREQs.
+- **Probe** `clean_probe::<7, false>` (steady NOTCH2): the loop is unrolled 4 ×, 96 instructions for 4 samples: **24 a sample**, 0 `vdiv`, 40 cycles (budget ≤ 34). Block: 77 instructions, 2 `vdiv` (`fc/fs`, `G₁`) and one `sqrtf` call. Moving NOTCH2 (counted, not linked): 74 instructions for 2 samples, 1 `vdiv` a sample, 75 cycles: +35 over steady, under `CLEAN_MOVE_COST` 55. LP4's probes unchanged: steady 47, moving 67.
+- **Pinned bounds** ("NOTCH2, ADR 0096"): `CLEAN_BOUND` 13.8 → 11.43 (grid max 12.55, the old PHASER, → 10.39, LP1); `CLEAN_STATE_BOUND` 4.22 → 3.85 (3.84 → 3.50); new `NOTCH2_STATE_BOUND` 5.54 (5.03 × 1.1). NOTCH2 joins the exact-reference jump tests, and at RES 1 is held to the reference instead of `CLEAN_JUMP_BOUND` (unchanged, 0.92).
+- **Re-recorded ("NOTCH2, ADR 0096"):** `filter_test::every_mode_renders_as_recorded` PHASER row. No `golden_test` patch is on PHASER: none moved.
+- **Flash:** `text` 710,096 → 710,304 (+208 B), default release build.
+- **Stack** (stack-check on `target/t5`): bench,orbit 60,672 B of 63,232, unchanged.
