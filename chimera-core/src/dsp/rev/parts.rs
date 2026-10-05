@@ -9,7 +9,7 @@ use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 use crate::dsp::algo::math::exp2;
 use crate::dsp::clampf;
 use crate::dsp::halfband::HALF;
-use crate::dsp::ring::{RING_LEN, is_prime, rint, rnd};
+use crate::dsp::ring::{RING_LEN, is_prime, rnd};
 use crate::dsp::xorshift_noise;
 
 /// R1's re-entry clip: `x` to the knee at 1.0, then `1 + u − u²/4` with
@@ -305,9 +305,6 @@ pub(crate) trait Lines {
     /// # Safety
     /// `i` < `len()`.
     unsafe fn settle(&mut self, i: usize, x: f32);
-    /// A value held beside the lines (a damper), as a rounding write
-    /// would store it.
-    fn held(x: f32) -> f32;
 }
 
 impl Lines for [i16] {
@@ -338,21 +335,19 @@ impl Lines for [i16] {
         // SAFETY: the caller keeps `i` < `len()`.
         unsafe { *self.get_unchecked_mut(i) = store_settle(x) }
     }
-
-    #[inline(always)]
-    fn held(x: f32) -> f32 {
-        rint(x)
-    }
 }
 
-#[cfg(any(test, feature = "test-support"))]
+/// Unquantised lines: the LOOP engine's f32 stage allpasses, and (tests)
+/// the level plan's reference.
 impl Lines for [f32] {
     fn len(&self) -> usize {
         <[f32]>::len(self)
     }
 
+    #[inline(always)]
     unsafe fn rd(&self, i: usize) -> f32 {
-        self[i]
+        // SAFETY: the caller keeps `i` < `len()`.
+        unsafe { *self.get_unchecked(i) }
     }
 
     unsafe fn trunc(&mut self, i: usize, x: f32) {
@@ -365,10 +360,6 @@ impl Lines for [f32] {
 
     unsafe fn settle(&mut self, i: usize, x: f32) {
         self[i] = x;
-    }
-
-    fn held(x: f32) -> f32 {
-        x
     }
 }
 

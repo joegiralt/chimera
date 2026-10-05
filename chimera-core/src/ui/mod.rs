@@ -825,7 +825,7 @@ impl UiState {
             self.sel_op,
         )
         .on_clock(self.orbit.status.source)
-        .on_rev(self.project.perf().fx.reverb.kind);
+        .on_rev(&self.project.perf().fx.reverb);
         match self.loc.orbit() {
             Some(o) => ctx.on_ring(o.ring()),
             None => ctx,

@@ -1241,6 +1241,36 @@ BUS+V's frame is QUAD_BUS_V + ΔCOST, so ΔCOST = that row − QUAD_BUS_V.
   states 0.52 of full scale at most.
 - **Goldens:** `rev_room` (MIX 0.3); every other hash unchanged.
 
+### Task 10: HALL and its plate zone (2026-10-05, host; unit held)
+
+- **Unit held** (coordinator, 2026-10-05: the MidiVerb II presets are the
+  reference now; preset matching may change the algorithm). REV HALL,
+  `STRESS ROOM … HALL` and REV SWITCH MAX (QUAD → GATE → ROOM → HALL)
+  are built into the bench, both builds; `bench_rev` and its kernels are
+  gone.
+- **Static count** (Thumb, `bench,orbit` release): the per-sample loop is
+  HALL 280 instructions (166 VFP), ROOM 306 (188; it read 350 at Task 9,
+  before the f32 stage allpasses); per segment 214; `run` outside it 379.
+  HALL's per-sample body is 70 under the ROOM that read 17 / 41 on the
+  unit (ΔCOST −38 / −30): at BURST's 0.8 cycles an instruction, about 28
+  cycles an output sample less. Estimate, not a gate: ΔCOST well under
+  0 on both builds (76 / 23).
+- **Flash:** plain release `text` 726,688 B, **+5,492** over `ba2d1acf`
+  (721,196): HALL's `run` monomorph 2.8 KB, its `ease_to`, `prime` and
+  `schedule` 1.2 KB, the zone, panel and bench rows the rest.
+- **WET_HALL 9.7** (+6.6 dB over QUAD's 4.54): short-term loudness
+  −6.76 dB against QUAD's −6.73, peak +4.91 dBFS against +5.95.
+- **Host readings** (`reverb_loop_test`): RT60 11.9 s at SIZE 0 DECAY 1
+  (10 s ± 35 %, round trip 0.927), 2.28 s at the default 2.49, 0.79 at
+  DECAY 0; plate corner onset 4 ms; corr(L, R) −0.001; PRE-DLY 62.5 ms
+  → 0 through the zone in 13 crossfades of ≤ 120; after SIZE 0 → 1 and
+  PRE-DLY 0 → 1 the tail's peak holds at 1002.6 ± 0.1 Hz (5 cents over
+  where it rang); level plan PRE 0.535 (pad peak 1.13), delays 1.72,
+  held 500 Hz mode at DECAY 1 THD 16.4 %; noise floor 14.8 dB (QUAD
+  12.0), 14.9 at DIFFUSE 1. ROOM now: floor 14.0 (13.8 at DIFFUSE 1).
+- **Goldens:** `rev_hall`, `rev_hall_plate` (MIX 0.3); `rev_room`
+  re-recorded (f32 stage allpasses, unrounded dampers).
+
 ---
 
 ## Self-review

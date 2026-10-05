@@ -10,7 +10,8 @@ use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::rev::Reverb;
 use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::reverb::{
-    KnobMemory, REVERB_SPECS, RevSync, ReverbParams, ReverbType, knobs,
+    KnobMemory, REVERB_SPECS, RevSync, ReverbParams, ReverbType, damp_hz, in_plate_zone, knobs,
+    plate_pull,
 };
 use chimera_core::storage::decode_block;
 use common::SR;
@@ -270,7 +271,7 @@ fn knob_memory_zeroed_is_clear() {
     assert!((back[1] - 0.3).abs() <= 0.5 / 65_534.0);
 }
 
-/// ROOM's, GATE's and REVERSE's rows (spec § Each TYPE's knobs): every
+/// ROOM's, HALL's, GATE's and REVERSE's rows (spec § Each TYPE's knobs): every
 /// range's ends and the starting knobs' values, to 1e-3.
 #[test]
 fn knobs_hit_the_spec_endpoints() {
@@ -367,13 +368,95 @@ fn knobs_hit_the_spec_endpoints() {
         8_000.0,
         "room damper, DAMP 1",
     );
+    // HALL, above its plate zone (SIZE ≥ 0.15).
+    let h = |f: &dyn Fn(&mut ReverbParams)| at(ReverbType::Hall, f);
+    close(h(&|p| p.size = 0.0).length_ms, 120.0, "hall size 0");
+    close(h(&|p| p.size = 1.0).length_ms, 600.0, "hall size 1");
+    close(h(&|p| p.time = 0.0).rt60_s, 0.8, "hall decay 0");
+    close(h(&|p| p.time = 1.0).rt60_s, 10.0, "hall decay 1");
+    close(h(&|p| p.tone = 0.0).tone_hz, 10_000.0, "hall tone 0");
+    close(h(&|p| p.tone = 1.0).tone_hz, 2_500.0, "hall tone 1");
+    close(h(&|p| p.diffuse = 0.0).diffuse_g, 0.5, "hall diffuse 0");
+    close(h(&|p| p.diffuse = 1.0).diffuse_g, 0.75, "hall diffuse 1");
+    close(h(&|p| p.damping = 0.0).damp_hz, 11_000.0, "hall damp 0");
+    close(h(&|p| p.damping = 1.0).damp_hz, 1_500.0, "hall damp 1");
+    close(h(&|p| p.predelay = 1.0).predelay_ms, 125.0, "hall pre 1");
+    assert_eq!(h(&|p| p.predelay = 0.0).predelay_ms, 0.0);
+    close(
+        h(&|p| (p.smear, p.size) = (1.0, 1.0)).smear_ms,
+        2.0,
+        "hall smear 1",
+    );
+    close(h(&|p| p.rate = 0.0).rate_hz, 0.1, "hall rate 0");
+    close(h(&|p| p.rate = 1.0).rate_hz, 1.5, "hall rate 1");
+    let d = h(&|_| {});
+    close(d.length_ms, 341.6, "hall size default");
+    close(d.rt60_s, 2.4929, "hall decay default");
+    close(d.tone_hz, 6_597.5, "hall tone default");
+    close(d.diffuse_g, 0.6, "hall diffuse default");
+    close(d.damp_hz, 6_050.7, "hall damp default");
+    close(d.predelay_ms, 18.75, "hall pre default");
+    close(d.smear_ms, 0.7, "hall smear default");
+    close(d.rate_hz, 0.2954, "hall rate default");
+    // HALL's DAMP is QUAD's law.
+    for p in [0.0, 0.3, 0.7, 1.0] {
+        close(h(&|q| q.damping = p).damp_hz, damp_hz(p), "hall damp law");
+    }
+}
+
+/// Below SIZE 0.15, HALL plays DIFFUSE pulled up and TONE and PRE-DLY
+/// down by w = 1 − SIZE/0.15; the stored knobs never change, and no other
+/// TYPE has the zone.
+#[test]
+fn plate_zone_pulls_diffuse_tone_predelay() {
+    let p = |size: f32| ReverbParams {
+        kind: ReverbType::Hall,
+        size,
+        diffuse: 0.4,
+        tone: 0.6,
+        predelay: 0.5,
+        ..ReverbParams::default()
+    };
+    let eff = |size: f32| {
+        let q = plate_pull(&p(size));
+        (q.diffuse, q.tone, q.predelay)
+    };
+    let near = |a: (f32, f32, f32), b: (f32, f32, f32)| {
+        assert!(
+            (a.0 - b.0).abs() < 1e-6 && (a.1 - b.1).abs() < 1e-6 && (a.2 - b.2).abs() < 1e-6,
+            "{a:?} != {b:?}"
+        );
+    };
+    near(eff(0.0), (1.0, 0.0, 0.0));
+    near(eff(0.075), (0.7, 0.3, 0.25));
+    for size in [0.15, 0.5, 1.0] {
+        near(eff(size), (0.4, 0.6, 0.5));
+    }
+    assert!(in_plate_zone(&p(0.149)) && !in_plate_zone(&p(0.15)));
+    // The engine plays the pulled knobs; the stored ones stay.
+    let k = knobs(&p(0.0));
+    assert_eq!(
+        (k.diffuse_g, k.tone_hz, k.predelay_ms),
+        (0.75, 10_000.0, 0.0)
+    );
+    assert_eq!(p(0.0).diffuse, 0.4);
+    let room = ReverbParams {
+        kind: ReverbType::Room,
+        ..p(0.0)
+    };
+    assert_eq!(plate_pull(&room), room);
+    assert!(!in_plate_zone(&room));
 }
 
 /// SMEAR 1 never passes its TYPE's cap at any SIZE (§ The SMEAR bound):
-/// D ≤ 0.72 % of ROOM's loop, 0.18 % of QUAD's ring.
+/// D ≤ 0.72 % of ROOM's loop, 0.36 % of HALL's, 0.18 % of QUAD's ring.
 #[test]
 fn smear_caps_hold_at_every_size() {
-    for (t, cap) in [(ReverbType::Room, 0.0072), (ReverbType::Quad, 0.0018)] {
+    for (t, cap) in [
+        (ReverbType::Room, 0.0072),
+        (ReverbType::Hall, 0.0036),
+        (ReverbType::Quad, 0.0018),
+    ] {
         let mut p = ReverbParams::default().with_type(t, &KnobMemory::new());
         p.smear = 1.0;
         for i in 0..=128 {

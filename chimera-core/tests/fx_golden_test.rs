@@ -25,7 +25,7 @@ enum Fx {
     Reverb(ReverbParams),
 }
 
-fn cases() -> [(&'static str, Fx); 12] {
+fn cases() -> [(&'static str, Fx); 14] {
     let reverb = |smear: f32, size: f32| ReverbParams {
         time: 0.7,
         damping: 0.3,
@@ -88,6 +88,16 @@ fn cases() -> [(&'static str, Fx); 12] {
         ("reverb_ring_max_size", Fx::Reverb(reverb(0.0, 1.0))),
         ("reverb_ring_smear", Fx::Reverb(reverb(1.0, 0.5))),
         ("rev_room", burst(ReverbType::Room, |_| {})),
+        ("rev_hall", burst(ReverbType::Hall, |_| {})),
+        // The plate corner (reverb TYPEs spec § PLATE is a zone of HALL).
+        (
+            "rev_hall_plate",
+            burst(ReverbType::Hall, |p| {
+                (
+                    p.size, p.time, p.tone, p.diffuse, p.damping, p.predelay, p.smear, p.rate,
+                ) = (0.0, 0.35, 0.0, 1.0, 0.1, 0.0, 0.5, 0.6)
+            }),
+        ),
         ("rev_gate", burst(ReverbType::Gate, |_| {})),
         // Fast Gate: a hard cut, no TAIL.
         (
@@ -157,8 +167,11 @@ const GOLDENS: &[(&str, u64)] = &[
     ("reverb_ring", 0xd17b7769e13816bf),
     ("reverb_ring_max_size", 0x83591bf24cab49f6),
     ("reverb_ring_smear", 0xa7e01c103cc02150),
-    // ROOM on the LOOP engine (reverb TYPEs T9).
-    ("rev_room", 0x011f8465c119da63),
+    // ROOM and HALL on the LOOP engine (reverb TYPEs T9, T10: f32 stage
+    // allpasses and unrounded dampers re-recorded ROOM).
+    ("rev_room", 0xea8831fb155bea01),
+    ("rev_hall", 0x6d09691da61c04c5),
+    ("rev_hall_plate", 0xcc09501b70f66688),
     // GATE and REVERSE on the BURST engine (reverb TYPEs T8).
     ("rev_gate", 0xf58be0a4e64aeddf),
     ("rev_gate_flat_tail0", 0x951817e3e86edf28),

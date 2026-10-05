@@ -5,6 +5,10 @@
 
 use crate::block::{Block, ParamId, find_spec};
 use crate::dsp::reverb::{KnobMemory, REVERB_SPECS, ReverbParams, ReverbType, knobs};
+
+/// The SIZE cell's word in HALL's plate zone (ADR 0085: the label, not
+/// the value).
+pub const PLATE: &str = "PLATE";
 use crate::ui::fmt::{FmtBuf, fixed};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,8 +76,8 @@ static PREDELAY: RevKnob = RevKnob {
     ..k(P::PREDELAY, "PRE-DLY")
 };
 
-/// SIZE · TIME · DAMP · SMEAR; MORE: RATE. HALL's and BLOOM's land with
-/// their engines (Tasks 10–11).
+/// SIZE · TIME · DAMP · SMEAR; MORE: RATE. BLOOM's lands with its engine
+/// (Task 11).
 static QUAD: Panel = [
     Some(&QUAD_SIZE),
     Some(&TIME),
@@ -96,6 +100,21 @@ static ROOM: Panel = [
     Some(&DIFFUSE),
     Some(&PREDELAY),
     None,
+    Some(&SMEAR),
+    Some(&RATE),
+    None,
+    None,
+];
+
+/// SIZE · DECAY · TONE · DIFFUSE; MORE: PRE-DLY · DAMP · SMEAR · RATE.
+/// SYNC joins with tempo sync (Task 12).
+static HALL: Panel = [
+    Some(&SIZE),
+    Some(&DECAY),
+    Some(&TONE),
+    Some(&DIFFUSE),
+    Some(&PREDELAY),
+    Some(&DAMP),
     Some(&SMEAR),
     Some(&RATE),
     None,
@@ -133,18 +152,20 @@ static REVERSE: Panel = [
 fn panel(t: ReverbType) -> &'static Panel {
     match t {
         ReverbType::Room => &ROOM,
+        ReverbType::Hall => &HALL,
         ReverbType::Gate => &GATE,
         ReverbType::Reverse => &REVERSE,
-        ReverbType::Quad | ReverbType::Hall | ReverbType::Bloom => &QUAD,
+        ReverbType::Quad | ReverbType::Bloom => &QUAD,
     }
 }
 
 /// The TYPEs TYPE walks, in screen order: each joins with its engine
-/// (HALL and BLOOM with Tasks 10–11).
+/// (BLOOM with Task 11).
 pub fn types_on_screen() -> &'static [ReverbType] {
     &[
         ReverbType::Quad,
         ReverbType::Room,
+        ReverbType::Hall,
         ReverbType::Gate,
         ReverbType::Reverse,
     ]

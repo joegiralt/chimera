@@ -19,6 +19,7 @@ use common::rev::{Noise, max_d2};
 const TYPES: &[ReverbType] = &[
     ReverbType::Quad,
     ReverbType::Room,
+    ReverbType::Hall,
     ReverbType::Gate,
     ReverbType::Reverse,
 ];
@@ -48,13 +49,20 @@ const BEFORE: usize = 30;
 /// The tone burst's blocks, and the switch's first block: mid-tail, its
 /// `BEFORE` window all tail.
 const BURST: usize = 20;
-/// Blocks ROOM's burst comes earlier: its longest fixed tap (84 ms)
-/// replays the burst until about 110 ms (block 85), its tail up to 3×
-/// rougher while that ends. Its `BEFORE` window then starts at block 95.
+/// Blocks ROOM's and HALL's bursts come earlier: ROOM's longest fixed tap
+/// (84 ms) replays the burst until about 110 ms (block 85), its tail up to
+/// 3× rougher while that ends; its `BEFORE` window then starts at block
+/// 95. HALL's right side first hears it only through S1 (59 ms) and
+/// PRE-DLY (19 ms), and its tail is 2 kHz-rough until the dampers have
+/// darkened it: a one-step gain jump (the bound's negative control) is
+/// lost in it until about 0.8 s (block 600; 200 and 400 still lose it).
 fn lead(t: ReverbType) -> usize {
-    if t == ReverbType::Room { LEAD } else { 0 }
+    match t {
+        ReverbType::Room => 70,
+        ReverbType::Hall => 600,
+        _ => 0,
+    }
 }
-const LEAD: usize = 70;
 const AT: usize = BURST + 5 + BEFORE;
 
 type Block = [f32; BLOCK_SIZE];

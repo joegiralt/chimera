@@ -1,17 +1,21 @@
 //! LOOP (reverb TYPEs spec § LOOP engine): ROOM's 2 loops × 2 stages and
 //! HALL's 1 × 4 on one code path. The send, through TONE, PRE-DLY and a
 //! four-allpass f32 diffuser, enters each loop at its own sign; a stage is
-//! a delay then a normalised allpass, a damper follows every second
-//! stage, and the stage gains carry the decay. ROOM's two loops re-enter
-//! through an energy-preserving rotation, each past R1's clip. Three fixed
-//! taps a side, from different stage delays, make the return.
+//! a delay then an f32 allpass, a damper follows every second stage, and
+//! the stage gains carry the decay. ROOM's two loops re-enter through an
+//! energy-preserving rotation, each past R1's clip. Three fixed taps a
+//! side, from different stage delays, make the return.
 //!
 //! SIZE scales the stage delays only, by one k for all, and moves them by
 //! pitch-free crossfades: one 5 ms slice a loop a crossfade, every loop in
 //! the same one (§ Moving a length); PRE-DLY moves in the same crossfades.
 //! SMEAR moves two stage allpasses, which never crossfade. The re-entries
-//! and the allpass states write by `store_settle`. Laid out for the chip's
-//! 24 kHz ring, as BURST is. Values are in LSBs.
+//! write by `store_settle`. The stage allpasses store f32 beside the
+//! diffuser: R2's normalised i16 states held HALL at SIZE 0 in a limit
+//! cycle 45 dB down (their rounding error, ×4 at g 0.75, outran its 8 %
+//! loss a round trip), and truncating them about halved its RT60 at low
+//! levels. Laid out for the chip's 24 kHz ring, as BURST is. Values are in
+//! LSBs.
 
 // Indexed loops over loops and stages read as the spec's graph does.
 #![allow(clippy::needless_range_loop)]
@@ -28,7 +32,7 @@ use crate::dsp::ring::{FULL_SCALE, RING_LEN};
 use super::arena::ReverbArena;
 pub use super::parts::XFADE;
 use super::parts::{
-    Lines, XFADE_INV, ap_f32, ap_norm, ease_k, one_pole, pair_in, pow2, prime_ms, segment, wrap,
+    Lines, XFADE_INV, ap_f32, ease_k, one_pole, pair_in, pow2, prime_ms, segment, wrap,
 };
 
 /// `$body` once per literal, `$k` that literal as a `const`: `ring.rs`'s.
@@ -91,7 +95,7 @@ pub struct Lens<const L: usize, const S: usize> {
 /// Where each line writes, from the shared heads: line j owns its length
 /// and 2 slots more (a pair's second read, and the guard), so a read d
 /// back, 2 ≤ d ≤ len + 1, is what it wrote d samples ago. The i16 lines
-/// in `Lens`' order (PRE, delays, allpasses), then the f32 diffuser.
+/// (PRE, the delays), then the f32 ones (the diffuser, the allpasses).
 #[derive(Clone, Copy, Debug)]
 pub struct Heads<const L: usize, const S: usize> {
     pre: usize,
@@ -117,16 +121,6 @@ const fn place<const L: usize, const S: usize>(n: &Lens<L, S>) -> Heads<L, S> {
         }
         l += 1;
     }
-    l = 0;
-    while l < L {
-        let mut s = 0;
-        while s < S {
-            o += n.ap[l][s] + 2;
-            ap[l][s] = o - 1;
-            s += 1;
-        }
-        l += 1;
-    }
     let slots = o + o % 2;
     let (mut diffuser, mut f) = ([0; 4], 0);
     let mut j = 0;
@@ -134,6 +128,16 @@ const fn place<const L: usize, const S: usize>(n: &Lens<L, S>) -> Heads<L, S> {
         f += n.diffuser[j] + 2;
         diffuser[j] = f - 1;
         j += 1;
+    }
+    l = 0;
+    while l < L {
+        let mut s = 0;
+        while s < S {
+            f += n.ap[l][s] + 2;
+            ap[l][s] = f - 1;
+            s += 1;
+        }
+        l += 1;
     }
     Heads {
         pre,
@@ -159,7 +163,7 @@ pub trait Layout<const L: usize, const S: usize> {
     const SMEAR_CAP: f32;
 
     const HEADS: Heads<L, S> = place(&Self::LENS);
-    /// The i16 lines' slots, and the f32 diffuser's f32s above them.
+    /// The i16 lines' slots, and the f32 lines' f32s above them.
     const SLOTS: usize = Self::HEADS.slots;
     const FSLOTS: usize = Self::HEADS.fslots;
     /// The longest stage allpass, ring samples.
@@ -195,23 +199,36 @@ pub trait Layout<const L: usize, const S: usize> {
         }
         1.0 / d as f32
     };
-    /// Every access's offset from the head that no length moves: the
-    /// writes, the stage allpasses' reads, the taps (`Access`). The ten
-    /// PRE-DLY and delay reads are filled in each block.
-    const OFFSETS: [usize; MAX_ACCESS] = fixed_offsets(&Self::HEADS, &Self::LENS, &Self::TAPS);
-    /// The diffuser's four writes, then its four reads.
-    const F_OFFSETS: [usize; 8] = {
-        let mut o = [0; 8];
+    /// Every i16 access's offset from the head that no length moves: the
+    /// writes and the taps (`Access`). The ten PRE-DLY and delay reads are
+    /// filled in each block.
+    const OFFSETS: [usize; MAX_ACCESS] = fixed_offsets(&Self::HEADS, &Self::TAPS);
+    /// The f32 accesses (`FAccess`): the diffuser's four writes and four
+    /// reads, then the stage allpasses' writes and fixed reads.
+    const F_OFFSETS: [usize; MAX_F_ACCESS] = {
+        let mut o = [0; MAX_F_ACCESS];
         let mut j = 0;
         while j < 4 {
             o[j] = Self::HEADS.diffuser[j];
             o[4 + j] = Self::HEADS.diffuser[j] - Self::LENS.diffuser[j];
             j += 1;
         }
+        let mut l = 0;
+        while l < L {
+            let mut s = 0;
+            while s < S {
+                let j = l * S + s;
+                o[FAccess::<L, S>::W_AP + j] = Self::HEADS.ap[l][s];
+                o[FAccess::<L, S>::R_AP + j] = Self::HEADS.ap[l][s] - Self::LENS.ap[l][s];
+                s += 1;
+            }
+            l += 1;
+        }
         o
     };
-    /// The i16 accesses (`Access`), every one in its segment.
-    const ACCESS: usize = 9 + 5 * L * S;
+    /// The i16 and f32 accesses, every one in its segment.
+    const ACCESS: usize = 9 + 3 * L * S;
+    const F_ACCESS: usize = 8 + 2 * L * S;
     /// The smeared reads, `M − 2D` at the deepest D (twice the cap of the
     /// longest loop), stay 2 or more behind their write: `pair_in`'s
     /// contract.
@@ -225,7 +242,7 @@ pub trait Layout<const L: usize, const S: usize> {
                 s += 1;
             }
             let d = Self::LENS.ap[l][st] as f32 - 2.0 * Self::SMEAR_CAP * trip as f32;
-            ok &= d >= 2.0 && Self::LENS.ap[l][st] < Self::SLOTS;
+            ok &= d >= 2.0 && Self::LENS.ap[l][st] < Self::FSLOTS;
             m += 1;
         }
         ok
@@ -233,32 +250,34 @@ pub trait Layout<const L: usize, const S: usize> {
     const FITS: () = assert!(
         Self::SLOTS + 2 * Self::FSLOTS <= RING_LEN
             && Self::SLOTS < u16::MAX as usize
+            && Self::FSLOTS < u16::MAX as usize
             && Self::ACCESS == MAX_ACCESS
+            && Self::F_ACCESS == MAX_F_ACCESS
             && S.is_multiple_of(2)
             && L * S == 2 * DAMPERS
             && Self::SMEAR_FITS
     );
 
-    /// The i16 regions a level-plan test reads: PRE, the stage delays and
-    /// the stage allpasses.
+    /// The i16 regions a level-plan test reads, from the head: PRE and the
+    /// stage delays. A head's own slot is the next written, so it still
+    /// holds what the line above wrote a lap ago: PRE's is left out.
     #[cfg(any(test, feature = "test-support"))]
-    fn regions() -> [Range<usize>; 3] {
+    fn regions() -> [Range<usize>; 2] {
         let h = Self::HEADS;
-        let (d, a) = (h.delay[L - 1][S - 1] + 1, h.ap[L - 1][S - 1] + 1);
-        [0..h.pre + 1, h.pre + 1..d, d..a]
+        [0..h.pre, h.pre + 1..h.delay[L - 1][S - 1]]
     }
 }
 
-/// ROOM's and HALL's i16 accesses: both run 4 stages in all.
-const MAX_ACCESS: usize = 29;
+/// ROOM's and HALL's i16 and f32 accesses: both run 4 stages in all.
+const MAX_ACCESS: usize = 21;
+const MAX_F_ACCESS: usize = 16;
 /// A damper after every second stage: 4 stages, 2 dampers.
 const DAMPERS: usize = 2;
 
-/// `Layout::OFFSETS`: the writes at their heads, each stage allpass read
-/// its length back, each tap its own; the rest 0.
+/// `Layout::OFFSETS`: the writes at their heads, each tap its own; the
+/// rest 0.
 const fn fixed_offsets<const L: usize, const S: usize>(
     h: &Heads<L, S>,
-    n: &Lens<L, S>,
     taps: &[[(usize, usize, usize, f32); 3]; 2],
 ) -> [usize; MAX_ACCESS] {
     let mut o = [0; MAX_ACCESS];
@@ -269,8 +288,6 @@ const fn fixed_offsets<const L: usize, const S: usize>(
         while s < S {
             let j = l * S + s;
             o[Access::<L, S>::W_D + j] = h.delay[l][s];
-            o[Access::<L, S>::W_AP + j] = h.ap[l][s];
-            o[Access::<L, S>::R_AP + j] = h.ap[l][s] - n.ap[l][s];
             s += 1;
         }
         l += 1;
@@ -291,7 +308,9 @@ const fn fixed_offsets<const L: usize, const S: usize>(
 /// ROOM: loops A and B, two stages each (§ LOOP engine's table), SIZE's
 /// k from 0.375 to 1 (A's round trip 100 → 200 ms).
 pub type Room = LoopEngine<2, 2>;
-/// HALL: one loop, four stages (Task 10).
+/// HALL: one loop, four stages (§ LOOP engine's table), SIZE's k from
+/// 0.111 to 1 (the round trip 120 → 600 ms); its plate zone is in the
+/// knobs (`reverb::plate_pull`).
 pub type Hall = LoopEngine<1, 4>;
 
 const ROOM_LENS: Lens<2, 2> = {
@@ -310,18 +329,24 @@ const ROOM_LENS: Lens<2, 2> = {
     }
 };
 
-/// A tap `frac` of loop `l` stage `s`'s delay at SIZE 0 (k 0.375), or at
-/// its longest.
-const fn tap(
+/// A tap `frac` of loop `l` stage `s`'s delay in `n` at SIZE 0 (SIZE's
+/// k there `k0`), or at its longest.
+#[allow(clippy::too_many_arguments)]
+const fn tap<const L: usize, const S: usize>(
+    n: &Lens<L, S>,
+    k0: f32,
     l: usize,
     s: usize,
     frac: f32,
     of_size_0: bool,
     sign: f32,
 ) -> (usize, usize, usize, f32) {
-    let len = ROOM_LENS.delay[l][s] as f32 * if of_size_0 { 0.375 } else { 1.0 };
+    let len = n.delay[l][s] as f32 * if of_size_0 { k0 } else { 1.0 };
     (l, s, (len * frac) as usize, sign)
 }
+
+/// ROOM's SIZE-0 k.
+const ROOM_K0: f32 = 0.375;
 
 impl Layout<2, 2> for Room {
     const LENS: Lens<2, 2> = ROOM_LENS;
@@ -329,14 +354,14 @@ impl Layout<2, 2> for Room {
     /// 0.12 of SIZE 0, +), (A2, 0.53, −), (B2, 0.79, +).
     const TAPS: [[(usize, usize, usize, f32); 3]; 2] = [
         [
-            tap(0, 0, 0.10, true, 1.0),
-            tap(1, 1, 0.57, false, -1.0),
-            tap(0, 1, 0.83, false, 1.0),
+            tap(&ROOM_LENS, ROOM_K0, 0, 0, 0.10, true, 1.0),
+            tap(&ROOM_LENS, ROOM_K0, 1, 1, 0.57, false, -1.0),
+            tap(&ROOM_LENS, ROOM_K0, 0, 1, 0.83, false, 1.0),
         ],
         [
-            tap(1, 0, 0.12, true, 1.0),
-            tap(0, 1, 0.53, false, -1.0),
-            tap(1, 1, 0.79, false, 1.0),
+            tap(&ROOM_LENS, ROOM_K0, 1, 0, 0.12, true, 1.0),
+            tap(&ROOM_LENS, ROOM_K0, 0, 1, 0.53, false, -1.0),
+            tap(&ROOM_LENS, ROOM_K0, 1, 1, 0.79, false, 1.0),
         ],
     ];
     /// A2's and B1's: one a loop.
@@ -344,6 +369,48 @@ impl Layout<2, 2> for Room {
     /// +½ into A, −½ into B, as QUAD injects into S1 and S3.
     const INJECT: [f32; 2] = [0.5, -0.5];
     const SMEAR_CAP: f32 = crate::dsp::reverb::ROOM.smear_cap;
+}
+
+const HALL_LENS: Lens<1, 4> = Lens {
+    pre: (125.0 * PER_MS) as usize,
+    diffuser: [prime_ms(1.7), prime_ms(3.1), prime_ms(5.3), prime_ms(8.9)],
+    delay: [[
+        prime_ms(113.0),
+        prime_ms(157.0),
+        prime_ms(124.0),
+        prime_ms(146.0),
+    ]],
+    ap: [[
+        prime_ms(11.0),
+        prime_ms(17.0),
+        prime_ms(13.0),
+        prime_ms(19.0),
+    ]],
+};
+
+/// HALL's SIZE-0 k.
+const HALL_K0: f32 = 0.111;
+
+impl Layout<1, 4> for Hall {
+    const LENS: Lens<1, 4> = HALL_LENS;
+    /// L: (S1, 0.30 of SIZE 0, +), (S3, 0.61, −), (S2, 0.83, +); R: (S2,
+    /// 0.25 of SIZE 0, +), (S4, 0.49, −), (S1, 0.91, +).
+    const TAPS: [[(usize, usize, usize, f32); 3]; 2] = [
+        [
+            tap(&HALL_LENS, HALL_K0, 0, 0, 0.30, true, 1.0),
+            tap(&HALL_LENS, HALL_K0, 0, 2, 0.61, false, -1.0),
+            tap(&HALL_LENS, HALL_K0, 0, 1, 0.83, false, 1.0),
+        ],
+        [
+            tap(&HALL_LENS, HALL_K0, 0, 1, 0.25, true, 1.0),
+            tap(&HALL_LENS, HALL_K0, 0, 3, 0.49, false, -1.0),
+            tap(&HALL_LENS, HALL_K0, 0, 0, 0.91, false, 1.0),
+        ],
+    ];
+    /// Stages 1's and 3's.
+    const SMEARED: [(usize, usize); 2] = [(0, 0), (0, 2)];
+    const INJECT: [f32; 1] = [0.5];
+    const SMEAR_CAP: f32 = crate::dsp::reverb::HALL.smear_cap;
 }
 
 /// The new engines' stage gain cap (§ Shared machinery).
@@ -381,8 +448,6 @@ pub struct LoopEngine<const L: usize, const S: usize> {
     gs: f32,
     da: f32,
     g: [[f32; S]; L],
-    /// 1/(1 − `gs`), as the last block ended.
-    inv: f32,
     /// What the eases head for, worked out again only when RT60, TONE,
     /// the damper (`key`'s bits) or the lengths (`retarget`) change: the
     /// coefficients, the stage allpasses' cap and the stage gains.
@@ -392,7 +457,10 @@ pub struct LoopEngine<const L: usize, const S: usize> {
     t_da: f32,
     t_cap: f32,
     t_g: [[f32; S]; L],
-    /// The dampers, one after every second stage, rounded to the LSB.
+    /// The dampers, one after every second stage. Unrounded: they are
+    /// state, not stored, and rounding them put HALL's floor 1.2 dB up, at
+    /// its +4 dB bound; nor can one stick at ±1 LSB once its coefficient
+    /// is under ½ (DAMP's 1.5 kHz is 0.32).
     lp: [f32; DAMPERS],
     /// This block's SMEAR offsets (start, end), ring samples: `D·(1 + x)`.
     smear: [(f32, f32); 2],
@@ -421,7 +489,6 @@ impl<const L: usize, const S: usize> Default for LoopEngine<L, S> {
             gs: 0.0,
             da: 0.0,
             g: [[0.0; S]; L],
-            inv: 0.0,
             key: [0; 3],
             retarget: false,
             t_ta: 0.0,
@@ -455,20 +522,26 @@ fn clip<const C: bool>(x: f32) -> f32 {
 }
 
 /// The i16 accesses, as offsets from the shared head: the writes (PRE,
-/// the delays, the allpasses), PRE's new and old read, the delays' new and
-/// old reads, the allpasses' fixed reads, the six taps. Each per-line
-/// group is `L·S` long, loop-major.
+/// the delays), PRE's new and old read, the delays' new and old reads,
+/// the six taps. Each per-line group is `L·S` long, loop-major.
 struct Access<const L: usize, const S: usize>;
 
 impl<const L: usize, const S: usize> Access<L, S> {
     const W_PRE: usize = 0;
     const W_D: usize = 1;
-    const W_AP: usize = 1 + L * S;
-    const R_PRE: usize = 1 + 2 * L * S;
-    const R_D_TO: usize = 3 + 2 * L * S;
-    const R_D_FROM: usize = 3 + 3 * L * S;
-    const R_AP: usize = 3 + 4 * L * S;
-    const R_TAP: usize = 3 + 5 * L * S;
+    const R_PRE: usize = 1 + L * S;
+    const R_D_TO: usize = 3 + L * S;
+    const R_D_FROM: usize = 3 + 2 * L * S;
+    const R_TAP: usize = 3 + 3 * L * S;
+}
+
+/// The f32 accesses, from the f32 head: the diffuser's writes (0–3) and
+/// reads (4–7), the stage allpasses' writes and fixed reads.
+struct FAccess<const L: usize, const S: usize>;
+
+impl<const L: usize, const S: usize> FAccess<L, S> {
+    const W_AP: usize = 8;
+    const R_AP: usize = 8 + L * S;
 }
 
 impl<const L: usize, const S: usize> LoopEngine<L, S>
@@ -499,7 +572,6 @@ where
         (self.pre_at, self.pre_to, self.pre_goal) = (pre, pre, pre);
         (self.left, self.primed, self.retarget) = (0, true, true);
         self.ease_to(k, 0.0, 0.0);
-        self.inv = 1.0 / (1.0 - self.gs);
     }
 
     /// Each eased value one block toward `k`: TONE's and the damper's
@@ -556,6 +628,13 @@ where
     #[allow(clippy::type_complexity)]
     pub fn targets(&self) -> (f32, f32, [[f32; S]; L]) {
         (self.t_ta, self.t_da, self.t_g)
+    }
+
+    /// The i16 lines' shared write head: a line's slot i of `regions`
+    /// sits at (head + i) mod `SLOTS` (tests).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn head(&self) -> usize {
+        self.h as usize
     }
 
     /// The SMEAR offsets the last block read by, as held.
@@ -685,6 +764,7 @@ where
         r: &mut [f32; HALF],
     ) {
         type A<const L: usize, const S: usize> = Access<L, S>;
+        type F<const L: usize, const S: usize> = FAccess<L, S>;
         let () = Self::FITS;
         let (slots, fslots) = (Self::SLOTS, Self::FSLOTS);
         // Every unchecked access below leans on these two.
@@ -697,7 +777,7 @@ where
             self.schedule();
         }
         // Each scalar at the block's start, then its end: TONE's
-        // coefficient, the allpass g and 1/(1 − g), the damper's
+        // coefficient, the allpass g, the damper's
         // coefficient, the stage gains. The eases: τ 50 ms for the gains,
         // as QUAD's TIME; 20 ms the rest.
         let (ta0, gd0, gs0, da0, g0) = (self.ta, self.gd, self.gs, self.da, self.g);
@@ -708,12 +788,6 @@ where
         let (mut ta, dta) = (ta0, (self.ta - ta0) * n);
         let (mut gd, dgd) = (gd0, (self.gd - gd0) * n);
         let (mut gs, dgs) = (gs0, (self.gs - gs0) * n);
-        let inv0 = self.inv;
-        if self.gs != gs0 {
-            self.inv = 1.0 / (1.0 - self.gs);
-        }
-        let inv1 = self.inv;
-        let (mut inv, dinv) = (inv0, (inv1 - inv0) * n);
         let (mut da, dda) = (da0, (self.da - da0) * n);
         let mut g = g0;
         let dg: [[f32; S]; L] =
@@ -743,7 +817,7 @@ where
         let nom = Self::SMEARED.map(|(l, s)| Self::LENS.ap[l][s] as f32);
         const { assert!(L <= 2 && S <= 4) };
         let off_i = self.offsets();
-        let off_f: [usize; 8] = Self::F_OFFSETS;
+        let off_f: [usize; MAX_F_ACCESS] = Self::F_OFFSETS;
         let (mut tone, mut lp) = (self.tone, self.lp);
         let (mut h, mut hf) = (self.h as usize % slots, self.hf as usize % fslots);
         let mut i = 0;
@@ -802,24 +876,23 @@ where
                                 // write: before or after it, the same.
                                 let x = blend!(A::<L, S>::R_D_TO + j, A::<L, S>::R_D_FROM + j);
                                 // SAFETY (`pair_in`): the write slot is below
-                                // `slots` (as `rd`'s); `sm` is clamped to
+                                // `fslots` (as `fget`'s); `sm` is clamped to
                                 // [0, 2·cap·trip] above, and `SMEAR_FITS`
-                                // keeps `nom − sm` in 2..`slots`.
-                                let wd = if (LO, ST) == Self::SMEARED[0] {
+                                // keeps `nom − sm` in 2..`fslots`.
+                                let z = if (LO, ST) == Self::SMEARED[0] {
                                     // SAFETY: as above (pair_in).
-                                    unsafe { pair_in(&*lines, slots, b[A::<L, S>::W_AP + j] + t, nom[0] - sm[0]) }
+                                    unsafe { pair_in(&*f, fslots, fb[F::<L, S>::W_AP + j] + t, nom[0] - sm[0]) }
                                 } else if (LO, ST) == Self::SMEARED[1] {
                                     // SAFETY: as above (pair_in).
-                                    unsafe { pair_in(&*lines, slots, b[A::<L, S>::W_AP + j] + t, nom[1] - sm[1]) }
+                                    unsafe { pair_in(&*f, fslots, fb[F::<L, S>::W_AP + j] + t, nom[1] - sm[1]) }
                                 } else {
-                                    rd!(A::<L, S>::R_AP + j)
+                                    fget!(F::<L, S>::R_AP + j)
                                 };
-                                let (mut y, v) = ap_norm(x, wd, gs, inv);
-                                // SAFETY: as `rd`'s.
-                                unsafe { lines.settle(b[A::<L, S>::W_AP + j] + t, v) };
+                                let (mut y, v) = ap_f32(x, z, gs);
+                                fset!(F::<L, S>::W_AP + j, v);
                                 if ST % 2 == 1 {
                                     let q = j / 2;
-                                    lp[q] = Ln::held(lp[q] + da * (y - lp[q]));
+                                    lp[q] += da * (y - lp[q]);
                                     y = lp[q];
                                 }
                                 y *= g[LO][ST];
@@ -855,7 +928,6 @@ where
                 ta += dta;
                 gd += dgd;
                 gs += dgs;
-                inv += dinv;
                 da += dda;
                 unroll!(LO in [0, 1] {
                     unroll!(ST in [0, 1, 2, 3] {

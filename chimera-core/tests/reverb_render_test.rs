@@ -10,8 +10,8 @@
 //!   send on both sides plus the return, 6 dB down) and `<name>_s<smear>.txt`
 //!   (the figures).
 //!
-//! - `render_bursts` (Tasks 8–9) runs the snare, kick, bowed and plucked
-//!   strings and the IDM phrase through ROOM, GATE and REVERSE (or those
+//! - `render_bursts` (Tasks 8–10) runs the snare, kick, bowed and plucked
+//!   strings and the IDM phrase through ROOM, HALL, GATE and REVERSE (or those
 //!   named in `$AB_TYPES`, e.g. `room`), each at its starting knobs and two
 //!   contrasting settings, into `$AB_OUT` (default `$AB_DIR/burst`):
 //!   `<source>_<type>_<setting>.wav` and `manifest.json`.
@@ -341,16 +341,17 @@ fn render() {
     .expect("the figures");
 }
 
-/// ROOM, GATE and REVERSE at their starting knobs and two contrasting
-/// settings, each a (name, knobs over the starting ones) pair.
+/// ROOM, HALL, GATE and REVERSE at their starting knobs and two
+/// contrasting settings (HALL: its plate corner and a large dark hall),
+/// each a (name, knobs over the starting ones) pair.
 type Setting = (
     &'static str,
     &'static str,
     fn(&mut chimera_core::dsp::reverb::ReverbParams),
 );
 
-const BURST_SETTINGS: [(chimera_core::dsp::reverb::ReverbType, [Setting; 3]); 3] = {
-    use chimera_core::dsp::reverb::ReverbType::{Gate, Reverse, Room};
+const BURST_SETTINGS: [(chimera_core::dsp::reverb::ReverbType, [Setting; 3]); 4] = {
+    use chimera_core::dsp::reverb::ReverbType::{Gate, Hall, Reverse, Room};
     [
         (
             Room,
@@ -371,6 +372,31 @@ const BURST_SETTINGS: [(chimera_core::dsp::reverb::ReverbType, [Setting; 3]); 3]
                     "large_dark",
                     "large and dark: SIZE 200 ms, DECAY 1.5 s, TONE 3.3 kHz, PRE-DLY 30 ms, SMEAR 0.5 ms",
                     |p| (p.size, p.time, p.tone, p.predelay, p.smear) = (1.0, 1.0, 0.8, 0.6, 0.5),
+                ),
+            ],
+        ),
+        (
+            Hall,
+            [
+                (
+                    "default",
+                    "starting knobs: SIZE 342 ms, DECAY 2.5 s, TONE 6.6 kHz, DIFFUSE 0.60, DAMP 6.1 kHz, PRE-DLY 19 ms, SMEAR 0.7 ms",
+                    |_| {},
+                ),
+                (
+                    "plate",
+                    "the plate corner: SIZE 0 (120 ms, the plate zone: DIFFUSE 0.75, TONE 10 kHz, PRE-DLY 0), DECAY 1.9 s, DAMP 9.1 kHz, SMEAR 0.43 ms, RATE 0.51 Hz",
+                    |p| {
+                        (
+                            p.size, p.time, p.tone, p.diffuse, p.damping, p.predelay, p.smear,
+                            p.rate,
+                        ) = (0.0, 0.35, 0.0, 1.0, 0.1, 0.0, 0.5, 0.6)
+                    },
+                ),
+                (
+                    "large_dark",
+                    "large and dark: SIZE 600 ms, DECAY 6.0 s, TONE 3.3 kHz, DAMP 2.2 kHz, PRE-DLY 50 ms",
+                    |p| (p.size, p.time, p.tone, p.damping, p.predelay) = (1.0, 0.8, 0.8, 0.8, 0.4),
                 ),
             ],
         ),

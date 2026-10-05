@@ -196,8 +196,8 @@ fn unit(p: f32) -> f32 {
 const RING_MS: f32 = 1000.0 / 24_000.0;
 
 /// What the engine plays, from the knobs (spec § Each TYPE's knobs):
-/// QUAD's laws, or the TYPE's `Ranges` row. HALL and BLOOM play QUAD's
-/// until their engines land (Tasks 10–11).
+/// QUAD's laws, or the TYPE's `Ranges` row (HALL's through its plate
+/// zone). BLOOM plays QUAD's until its engine lands (Task 11).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct EngineKnobs {
     /// SIZE or LENGTH: the loop's round trip, or the burst, ms.
@@ -334,13 +334,57 @@ pub const ROOM: Ranges = Ranges {
     rate_hz: Exp::new(0.1, 1.0),
 };
 
+/// HALL's loop is its one loop's round trip, down to the plate's 120 ms:
+/// SIZE's bottom `PLATE_ZONE` is the plate zone (`plate_pull`). Its DAMP is
+/// QUAD's law (`damp_hz`).
+pub const HALL: Ranges = Ranges {
+    length_ms: Exp::new(120.0, 600.0),
+    time: TimeLaw::Decay {
+        rt60_s: Exp::new(0.8, 10.0),
+    },
+    predelay_ms: (0.0, 125.0),
+    smear_ms: 2.0,
+    smear_cap: 0.0036,
+    damp_hz: Exp::new(11_000.0, 1_500.0),
+    rate_hz: Exp::new(0.1, 1.5),
+    ..ROOM
+};
+
+/// HALL's SIZE below this is the plate zone (spec § PLATE is a zone of
+/// HALL).
+pub const PLATE_ZONE: f32 = 0.15;
+
+/// Whether `p` sits in HALL's plate zone: its SIZE cell reads `PLATE`.
+pub fn in_plate_zone(p: &ReverbParams) -> bool {
+    p.kind == ReverbType::Hall && unit(p.size) < PLATE_ZONE
+}
+
+/// The knobs HALL plays in its plate zone, w = 1 − SIZE/0.15 (1 at SIZE
+/// 0): DIFFUSE pulled up by w, TONE and PRE-DLY down by w, toward the
+/// plate's dense, bright, immediate corner. The stored knobs never change;
+/// above the zone, and on every other TYPE, `p` itself.
+pub fn plate_pull(p: &ReverbParams) -> ReverbParams {
+    if !in_plate_zone(p) {
+        return *p;
+    }
+    let w = 1.0 - unit(p.size) / PLATE_ZONE;
+    let d = unit(p.diffuse);
+    ReverbParams {
+        diffuse: d + w * (1.0 - d),
+        tone: unit(p.tone) * (1.0 - w),
+        predelay: unit(p.predelay) * (1.0 - w),
+        ..*p
+    }
+}
+
 /// `t`'s row; `None` plays QUAD's laws.
 pub fn ranges(t: ReverbType) -> Option<&'static Ranges> {
     match t {
         ReverbType::Room => Some(&ROOM),
+        ReverbType::Hall => Some(&HALL),
         ReverbType::Gate => Some(&GATE),
         ReverbType::Reverse => Some(&REVERSE),
-        ReverbType::Quad | ReverbType::Hall | ReverbType::Bloom => None,
+        ReverbType::Quad | ReverbType::Bloom => None,
     }
 }
 
@@ -364,7 +408,7 @@ pub fn damp_hz(p: f32) -> f32 {
 /// as `dsp::ring` runs them (ADR 0028), on the chip's 24 kHz ring.
 pub fn knobs(p: &ReverbParams) -> EngineKnobs {
     match ranges(p.kind) {
-        Some(r) => row_knobs(r, p),
+        Some(r) => row_knobs(r, &plate_pull(p)),
         None => quad_knobs(p),
     }
 }

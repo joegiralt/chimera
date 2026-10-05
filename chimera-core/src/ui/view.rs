@@ -11,7 +11,7 @@ use crate::dsp::modal::{self, ModalParams, ResonatorMode};
 use crate::dsp::modulator::{
     EnvForm, EnvSlot, EnvSpeed, EnvType, Func, FuncMode, LfoForm, LfoSlot, LfoType, pick,
 };
-use crate::dsp::reverb::{ReverbParams, ReverbType};
+use crate::dsp::reverb::{ReverbParams, ReverbType, in_plate_zone};
 use crate::modulation::{ModSource, VCA};
 use crate::orbit::RingIdx;
 use crate::orbit::clock::ClockSource;
@@ -62,6 +62,8 @@ pub struct SlotCtx {
     pub model: ResonatorMode,
     /// The reverb panel REV and REV › MORE show (`reverb_panel::shown`).
     pub rev: ReverbType,
+    /// HALL's SIZE sits in its plate zone: the SIZE cell reads `PLATE`.
+    pub plate: bool,
     /// The ORBIT ring the location selects: what `SelectedRing` edits.
     pub ring: RingIdx,
     /// ORBIT's clock: BPM is inert while MIDI leads.
@@ -72,6 +74,11 @@ impl SlotCtx {
     /// Read from any `BlockRead`: a Sound's params or a Part view.
     pub fn read(params: &impl BlockRead, sel_op: Op) -> Self {
         let get = |b: BlockRef, id| params.block(b).map_or(0.0, |blk| blk.get(id));
+        let rev = ReverbParams {
+            kind: ReverbType::at(get(BlockRef::Reverb, ReverbParams::TYPE)),
+            size: get(BlockRef::Reverb, ReverbParams::SIZE),
+            ..ReverbParams::default()
+        };
         Self {
             sel_op,
             kind: FilterKind::from_index(get(BlockRef::Filter, FilterParams::KIND)),
@@ -90,7 +97,8 @@ impl SlotCtx {
                 }
             }),
             model: ResonatorMode::from_u8(get(BlockRef::Modal, ModalParams::MODE) as u8),
-            rev: reverb_panel::shown(ReverbType::at(get(BlockRef::Reverb, ReverbParams::TYPE))),
+            rev: reverb_panel::shown(rev.kind),
+            plate: in_plate_zone(&rev),
             ring: RingIdx::ALL[0],
             clock: ClockSource::Internal,
         }
@@ -101,11 +109,12 @@ impl SlotCtx {
         Self { ring, ..self }
     }
 
-    /// This context under reverb TYPE `rev` (its shown panel): a Sound's
-    /// params hold no FX.
-    pub fn on_rev(self, rev: ReverbType) -> Self {
+    /// This context under reverb `rev` (its TYPE's shown panel, and HALL's
+    /// plate zone): a Sound's params hold no FX.
+    pub fn on_rev(self, rev: &ReverbParams) -> Self {
         Self {
-            rev: reverb_panel::shown(rev),
+            rev: reverb_panel::shown(rev.kind),
+            plate: in_plate_zone(rev),
             ..self
         }
     }
@@ -289,8 +298,13 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
             Some(c) => {
                 let addr = ParamAddr::new(BlockRef::Reverb, c.id);
                 let fmt = addr.spec().map_or(ValFmt::Uni, |s| s.fmt);
+                let label = if ctx.plate && c.id == ReverbParams::SIZE {
+                    reverb_panel::PLATE
+                } else {
+                    c.label
+                };
                 // A panel word's own short (`DENS`) over the spec's.
-                match (param(addr, c.label, fmt), c.short) {
+                match (param(addr, label, fmt), c.short) {
                     (
                         View::Param {
                             addr, label, fmt, ..

@@ -44,11 +44,14 @@ fn every_type_shows_its_cells() {
     assert_eq!(more(Reverse), s(&["-", "CURVE", "SMEAR", "RATE", "-", "-"]));
     assert_eq!(main(Room), s(&["SIZE", "DECAY", "TONE", "DIFFUSE"]));
     assert_eq!(more(Room), s(&["PRE-DLY", "-", "SMEAR", "RATE", "-", "-"]));
-    // HALL's and BLOOM's land with their engines (Tasks 10–11): until
-    // then each is QUAD's, which is what plays.
-    for t in [Hall, Bloom] {
-        assert_eq!((main(t), more(t)), (main(Quad), more(Quad)), "{t:?}");
-    }
+    assert_eq!(main(Hall), s(&["SIZE", "DECAY", "TONE", "DIFFUSE"]));
+    assert_eq!(
+        more(Hall),
+        s(&["PRE-DLY", "DAMP", "SMEAR", "RATE", "-", "-"])
+    );
+    // BLOOM's lands with its engine (Task 11): until then it is QUAD's,
+    // which is what plays.
+    assert_eq!((main(Bloom), more(Bloom)), (main(Quad), more(Quad)));
     // Each label sits on its slot: a cell's id is the spec table's.
     let id = |t, page, k| knob(t, page, k).unwrap().id;
     assert_eq!(id(Quad, RevPage::Main, 0), ReverbParams::SIZE);
@@ -60,6 +63,7 @@ fn every_type_shows_its_cells() {
     assert_eq!(id(Reverse, RevPage::More, 1), ReverbParams::SHAPE);
     assert_eq!(id(Room, RevPage::Main, 1), ReverbParams::TIME);
     assert_eq!(id(Room, RevPage::More, 0), ReverbParams::PREDELAY);
+    assert_eq!(id(Hall, RevPage::More, 1), ReverbParams::DAMPING);
     // REV: TYPE, the panel's four, then MIX on every TYPE.
     for t in ALL {
         let v = |def: &BlockDef, i| view(def, i, &ctx(t));
@@ -185,7 +189,8 @@ fn labels_and_values_fit_their_cells() {
     for want in [
         "663ms", "1.9s", "6.1k", "OFF", "0.22Hz", "40ms", "800ms", "0.80s", "2.5k", "12.0",
         "-18dB", "30dB", "2.00Hz", "1.0ms", "16s", "100ms", "200ms", "0.20s", "1.5s", "0.50",
-        "0.75", "50ms", "0.7ms", "1.00Hz",
+        "0.75", "50ms", "0.7ms", "1.00Hz", "10s", "120ms", "600ms", "11k", "1.5k", "125ms",
+        "2.0ms", "1.50Hz",
     ] {
         assert!(seen.iter().any(|s| s == want), "no cell shows {want}");
     }
@@ -215,7 +220,10 @@ fn an_off_screen_type_shows_quads_panel() {
         assert_eq!(SlotCtx::read(&One(p), Op::A).rev, want);
         assert_eq!(
             SlotCtx::read(&ParamSnapshot::default(), Op::A)
-                .on_rev(t)
+                .on_rev(&ReverbParams {
+                    kind: t,
+                    ..ReverbParams::default()
+                })
                 .rev,
             want
         );
@@ -235,13 +243,14 @@ fn a_type_nudge_keeps_the_tweaks() {
     assert!((back.size - 0.9).abs() <= 1.0 / 65_534.0);
     assert!((back.tone - 0.8).abs() <= 1.0 / 65_534.0);
     assert_eq!(back.mix, 0.6);
-    // QUAD, ROOM, GATE and REVERSE are on screen, in screen order: TYPE
-    // walks them and stops at either end.
+    // QUAD, ROOM, HALL, GATE and REVERSE are on screen, in screen order:
+    // TYPE walks them and stops at either end.
     assert_eq!(
         types_on_screen(),
         &[
             ReverbType::Quad,
             ReverbType::Room,
+            ReverbType::Hall,
             ReverbType::Gate,
             ReverbType::Reverse
         ]
@@ -250,7 +259,9 @@ fn a_type_nudge_keeps_the_tweaks() {
     assert_eq!(turn(&q, ReverbParams::TYPE, -1, &mut mem), q);
     let room = turn(&q, ReverbParams::TYPE, 1, &mut mem);
     assert_eq!(room.kind, ReverbType::Room);
-    let g = turn(&room, ReverbParams::TYPE, 1, &mut mem);
+    let hall = turn(&room, ReverbParams::TYPE, 1, &mut mem);
+    assert_eq!(hall.kind, ReverbType::Hall);
+    let g = turn(&hall, ReverbParams::TYPE, 1, &mut mem);
     assert_eq!(g.kind, ReverbType::Gate);
     assert_eq!((g.size, g.time), (0.55, 0.3), "GATE's starting knobs");
     let r = turn(&g, ReverbParams::TYPE, 5, &mut mem);
@@ -260,8 +271,8 @@ fn a_type_nudge_keeps_the_tweaks() {
         ReverbType::Reverse
     );
     // A TYPE off the list stays put, its knobs too.
-    let h = ReverbParams::default().with_type(ReverbType::Hall, &KnobMemory::new());
-    assert_eq!(turn(&h, ReverbParams::TYPE, -1, &mut mem), h);
+    let b = ReverbParams::default().with_type(ReverbType::Bloom, &KnobMemory::new());
+    assert_eq!(turn(&b, ReverbParams::TYPE, -1, &mut mem), b);
 }
 
 /// GATE's, REVERSE's and ROOM's starting knobs, as their cells read
@@ -311,8 +322,68 @@ fn cells_read_their_starting_values() {
     ] {
         assert_eq!(value_text(id, &p).as_str(), w, "ROOM {id:?}");
     }
+    let p = ReverbParams::default().with_type(ReverbType::Hall, &KnobMemory::new());
+    for (id, w) in [
+        (P::SIZE, "342ms"),
+        (P::TIME, "2.5s"),
+        (P::TONE, "6.6k"),
+        (P::DIFFUSE, "0.60"),
+        (P::DAMPING, "6.1k"),
+        (P::PREDELAY, "19ms"),
+        (P::SMEAR, "0.7ms"),
+        (P::RATE, "0.30Hz"),
+    ] {
+        assert_eq!(value_text(id, &p).as_str(), w, "HALL {id:?}");
+    }
+    // In the plate zone the cells show what plays: the plate's 120 ms,
+    // DIFFUSE 0.75, TONE 10 kHz, no pre-delay.
+    let plate = ReverbParams { size: 0.0, ..p };
+    for (id, w) in [
+        (P::SIZE, "120ms"),
+        (P::DIFFUSE, "0.75"),
+        (P::TONE, "10k"),
+        (P::PREDELAY, "0ms"),
+    ] {
+        assert_eq!(value_text(id, &plate).as_str(), w, "PLATE {id:?}");
+    }
     // TAIL 0 is the fast gate.
     let mut g = ReverbParams::default().with_type(ReverbType::Gate, &KnobMemory::new());
     g.time = 0.0;
     assert_eq!(value_text(P::TIME, &g).as_str(), "OFF");
+}
+
+/// HALL's SIZE cell reads `PLATE` in the plate zone (SIZE < 0.15; ADR
+/// 0085: the label, not the value), on the page and under any context;
+/// MIDI MAP keeps the slot's word.
+#[test]
+fn hall_size_cell_reads_plate_in_its_zone() {
+    use chimera_core::addr::BlockRead;
+    struct One(ReverbParams);
+    impl BlockRead for One {
+        fn block(&self, b: BlockRef) -> Option<&dyn chimera_core::block::Block> {
+            (b == BlockRef::Reverb).then_some(&self.0 as &dyn chimera_core::block::Block)
+        }
+    }
+    let w = |s: &str| draw::text_width(&theme::FONT_LABEL, s, theme::LABEL_TRACKING);
+    assert!(w("PLATE") <= theme::CELL_BAR_W);
+    for (kind, size, want) in [
+        (ReverbType::Hall, 0.0, "PLATE"),
+        (ReverbType::Hall, 0.149, "PLATE"),
+        (ReverbType::Hall, 0.15, "SIZE"),
+        (ReverbType::Hall, 0.65, "SIZE"),
+        (ReverbType::Room, 0.0, "SIZE"),
+    ] {
+        let p = ReverbParams {
+            kind,
+            size,
+            ..ReverbParams::default()
+        };
+        let base = SlotCtx::read(&ParamSnapshot::default(), Op::A);
+        for c in [base.on_rev(&p), SlotCtx::read(&One(p), Op::A)] {
+            assert_eq!(view(&reg::EFX, 1, &c).label(), want, "{kind:?} {size}");
+            // Only the SIZE cell.
+            assert_eq!(view(&reg::EFX, 2, &c).label(), "DECAY");
+        }
+    }
+    assert_eq!(label(ReverbType::Hall, ParamId(3)), "SIZE");
 }

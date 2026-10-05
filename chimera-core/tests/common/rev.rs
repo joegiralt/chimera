@@ -559,6 +559,20 @@ pub fn check_level_plan(
     r_f32: Render,
     loop_mode_hz: f32,
 ) {
+    check_level_plan_thd(r, set_max, r_unclipped, r_f32, loop_mode_hz, 0.03);
+}
+
+/// `check_level_plan` with step 4's THD bound `max_thd`: HALL's 10 s on its
+/// 120 ms loop holds a loop mode at G 12.5, where a 0 dBFS tone drives the
+/// clip far past its knee.
+pub fn check_level_plan_thd(
+    r: Render,
+    set_max: &mut dyn FnMut(),
+    r_unclipped: Render,
+    r_f32: Render,
+    loop_mode_hz: f32,
+    max_thd: f32,
+) {
     let pad = pink(0x91ab, 10.0, -12.0);
     // 1. Default DECAY: the clip never engages. `r_f32` keeps in step.
     let (hits, _, _) = lockstep(&pad, &mut *r, &mut *r_unclipped, false);
@@ -578,7 +592,8 @@ pub fn check_level_plan(
     let (l, hits, _) = run_counted(&mut *r, &tone(f, 1.0), 30.0);
     let d = thd(&l[l.len() - last..], f);
     assert_eq!(hits, 0, "held {f} Hz: clamp hits");
-    assert!(d <= 0.03, "held {f} Hz: THD {:.2} %", 100.0 * d);
+    println!("held {f} Hz: THD {:.2} %", 100.0 * d);
+    assert!(d <= max_thd, "held {f} Hz: THD {:.2} %", 100.0 * d);
     let f = mode(5_000.0);
     let (l, _, _) = run_counted(&mut *r, &tone(f, 1.0), 30.0);
     let a = alias_db(&l[l.len() - last..], f);

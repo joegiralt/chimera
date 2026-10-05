@@ -23,7 +23,7 @@ use crate::dsp::reverb::{ReverbParams, ReverbType, knobs, ranges};
 use crate::dsp::ring::{FULL_SCALE, STAGES, WET_GAIN, smear_depth, smear_hz};
 use arena::ReverbArena;
 use burst::BurstEngine;
-use loop_engine::Room;
+use loop_engine::{Hall, Layout, LoopEngine, Room};
 use parts::{Wander, wander_seeds};
 use sync::Tempo;
 
@@ -39,23 +39,27 @@ pub enum EngineState {
     /// GATE and REVERSE.
     Burst(BurstEngine),
     Room(Room),
+    Hall(Hall),
 }
 
-/// Each TYPE's return gain. ROOM's, GATE's and REVERSE's match QUAD's
-/// short-term loudness on a held −12 dBFS pink pad at MIX 0.5 (the loudest
-/// 400 ms), their peaks within 0.6 dB of QUAD's: a TYPE switch under a
-/// held note neither jumps nor clips (`check_sustained_loudness`). ROOM's
-/// 0.55 s holds less than QUAD's 1.9 s, so it takes 7.5 dB more.
+/// Each TYPE's return gain. ROOM's, HALL's, GATE's and REVERSE's match
+/// QUAD's short-term loudness on a held −12 dBFS pink pad at MIX 0.5 (the
+/// loudest 400 ms), their peaks within 1 dB of QUAD's: a TYPE switch under
+/// a held note neither jumps nor clips (`check_sustained_loudness`).
+/// ROOM's 0.55 s holds less than QUAD's 1.9 s, so it takes 7.5 dB more;
+/// HALL, through one loop of sparse taps, 6.6 dB.
 pub fn wet_gain(t: ReverbType) -> f32 {
     match t {
         ReverbType::Room => WET_ROOM,
+        ReverbType::Hall => WET_HALL,
         ReverbType::Gate => WET_GATE,
         ReverbType::Reverse => WET_REVERSE,
-        ReverbType::Quad | ReverbType::Hall | ReverbType::Bloom => WET_GAIN,
+        ReverbType::Quad | ReverbType::Bloom => WET_GAIN,
     }
 }
 
 const WET_ROOM: f32 = 10.8;
+const WET_HALL: f32 = 9.7;
 const WET_GATE: f32 = 6.75;
 const WET_REVERSE: f32 = 7.05;
 
@@ -339,14 +343,12 @@ impl Reverb {
     /// easing: it is the player's.
     fn reset(&mut self, kind: ReverbType) {
         self.kind = kind;
-        // HALL and BLOOM play QUAD's engine until theirs land (Tasks
-        // 10–11).
+        // BLOOM plays QUAD's engine until its own lands (Task 11).
         self.state = match kind {
             ReverbType::Gate | ReverbType::Reverse => EngineState::Burst(BurstEngine::default()),
             ReverbType::Room => EngineState::Room(Room::default()),
-            ReverbType::Quad | ReverbType::Hall | ReverbType::Bloom => {
-                EngineState::Quad(QuadState::default())
-            }
+            ReverbType::Hall => EngineState::Hall(Hall::default()),
+            ReverbType::Quad | ReverbType::Bloom => EngineState::Quad(QuadState::default()),
         };
         self.dec = Decimator::new();
         self.up_l = Interpolator::new();
@@ -391,6 +393,23 @@ impl Reverb {
         }
     }
 
+    /// HALL's state to change, while HALL runs (tests).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn hall_mut(&mut self) -> Option<&mut Hall> {
+        match &mut self.state {
+            EngineState::Hall(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    /// HALL's state, while HALL runs.
+    pub fn hall(&self) -> Option<&Hall> {
+        match &self.state {
+            EngineState::Hall(e) => Some(e),
+            _ => None,
+        }
+    }
+
     /// Wet only: the engine's return × `mix`, into `out`. QUAD runs free
     /// of `tempo`.
     pub fn process(
@@ -429,7 +448,7 @@ impl Reverb {
         let p = &self.latched;
         // A row TYPE's knobs, mapped once a block (fast `exp2`/`log2`).
         let kn = match self.state {
-            EngineState::Burst(_) | EngineState::Room(_) => Some(knobs(p)),
+            EngineState::Burst(_) | EngineState::Room(_) | EngineState::Hall(_) => Some(knobs(p)),
             EngineState::Quad(_) => None,
         };
         let mut u = [0.0f32; HALF];
@@ -499,18 +518,26 @@ impl Reverb {
                 b.run(&mut self.arena, &u, &kn.unwrap_or_default(), l, r);
             }
             EngineState::Room(e) => {
-                // Its smeared allpasses never crossfade: no SIZE move to
-                // rest for. The cap is in the knobs, and each loop's in the
-                // engine.
-                let kn = kn.unwrap_or_default();
-                let full = kn.smear_ms * loop_engine::PER_MS;
-                let (d0, d1) = (s0 * full, s1 * full);
-                e.set_smear(core::array::from_fn(|k| {
-                    (d0 * (1.0 + x0[k]), d1 * (1.0 + x1[k]))
-                }));
-                (self.paths, self.depth) = ((e.crossfade().is_some(), d0 != 0.0 || d1 != 0.0), d1);
-                let [l, r] = &mut lr;
-                e.run(&mut self.arena, &u, &kn, l, r);
+                (self.paths, self.depth) = run_loop(
+                    e,
+                    &mut self.arena,
+                    &u,
+                    &kn.unwrap_or_default(),
+                    (s0, s1),
+                    (x0, x1),
+                    &mut lr,
+                );
+            }
+            EngineState::Hall(e) => {
+                (self.paths, self.depth) = run_loop(
+                    e,
+                    &mut self.arena,
+                    &u,
+                    &kn.unwrap_or_default(),
+                    (s0, s1),
+                    (x0, x1),
+                    &mut lr,
+                );
             }
         }
         self.up_l.process(&lr[0], &mut out.l);
@@ -534,6 +561,34 @@ impl Reverb {
             ramp(out, r.0, step_of(r, BLOCK_SIZE));
         }
     }
+}
+
+/// A LOOP TYPE's block: its two smeared allpasses' offsets at D =
+/// `kn.smear_ms` × SMEAR's ease `s`, from the wanders' `x`, then the
+/// engine. Its smeared allpasses never crossfade: no SIZE move to rest
+/// for. The cap is in the knobs, and each loop's in the engine. Returns
+/// the paths and the depth `Reverb` reports.
+#[allow(clippy::too_many_arguments)]
+fn run_loop<const L: usize, const S: usize>(
+    e: &mut LoopEngine<L, S>,
+    arena: &mut ReverbArena,
+    u: &[f32; HALF],
+    kn: &crate::dsp::reverb::EngineKnobs,
+    (s0, s1): (f32, f32),
+    (x0, x1): ([f32; STAGES], [f32; STAGES]),
+    [l, r]: &mut [[f32; HALF]; 2],
+) -> ((bool, bool), f32)
+where
+    LoopEngine<L, S>: Layout<L, S>,
+{
+    let full = kn.smear_ms * loop_engine::PER_MS;
+    let (d0, d1) = (s0 * full, s1 * full);
+    e.set_smear(core::array::from_fn(|k| {
+        (d0 * (1.0 + x0[k]), d1 * (1.0 + x1[k]))
+    }));
+    let paths = (e.crossfade().is_some(), d0 != 0.0 || d1 != 0.0);
+    e.run(arena, u, kn, l, r);
+    (paths, d1)
 }
 
 /// Both sides × a ramp from `g0` by `step` a sample: MIX's, and the
