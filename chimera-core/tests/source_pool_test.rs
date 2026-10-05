@@ -941,3 +941,98 @@ fn pass_one_counts_the_sources() {
         }
     }
 }
+
+/// A small source at offset 0 and a large one above it, both retired, the
+/// small one still sounding.
+/// The factory Sounds no Part plays are cleared first, so the sources
+/// take their room and NEW can't refill it.
+fn small_sounding_under_large(p: &mut Project) -> (SourceId, SourceId, Audio) {
+    for s in SlotId::ALL {
+        let _ = p.pool_clear(s);
+    }
+    let small = sref(0xA1, 600);
+    let is = store(p, small);
+    let room = p.pool().free().bytes() as usize - 16 - 64;
+    let il = p.source_store(sref(0xA2, 0), &vec![5; room]).unwrap();
+    let mut au = Audio::of(p);
+    au.note_on(is, audio(small).len());
+    au.block();
+    assert_eq!(p.pool().table().sounding(), is.bit());
+    (is, il, au)
+}
+
+/// M1: a voice low in the arena pins only the holes below it. The large
+/// hole above the sounding small one closes; the small one stays pending.
+#[test]
+fn a_low_voice_pins_only_holes_below() {
+    let (mut p, _) = Project::boxed();
+    let (is, il, mut au) = small_sounding_under_large(&mut p);
+    let small = p.pool().source(is).unwrap().cost();
+    let large = p.pool().source(il).unwrap().cost();
+    let gap = p.pool().free();
+    assert_eq!(
+        p.purge_unused_sources(p.pool().table().sounding()).retired,
+        1
+    );
+    assert!(pass(&mut p, &mut au) > 0);
+    assert_eq!(pending(&p), small, "the sounding one stays");
+    assert_eq!(
+        p.pool().free(),
+        Cost::of((gap.bytes() + large.bytes()) as usize)
+    );
+    assert!(
+        au.voices[0]
+            .out
+            .iter()
+            .eq(audio(sref(0xA1, 600))[..au.voices[0].out.len()].iter())
+    );
+}
+
+/// M1's skip path: NEW while the audio can't answer the gate (its reader
+/// out, no block running) and a small source sounds under a large one.
+/// NEW comes up partial; no Part points at a missing slot, and the count
+/// is taken once.
+#[test]
+fn partial_new_points_no_part_at_a_missing_slot() {
+    use chimera_core::project::Origin;
+    let (mut q, t) = Project::boxed();
+    let (_, _, _au) = small_sounding_under_large(&mut q);
+    q.mark_saved_for_test();
+    let go = new_go(&q, t);
+    let _ = load_project(
+        &mut Card::new(),
+        &mut MemStore::new(1),
+        &mut q,
+        go,
+        &LoadLink::new(),
+    );
+    let skipped = q.take_new_skipped().expect("NEW came up partial");
+    assert!(skipped > 0);
+    assert_eq!(q.take_new_skipped(), None, "said once");
+    for id in PartId::ALL {
+        if let Origin::Slot { slot, .. } = q.part(id).origin() {
+            assert!(q.pool().get(slot).is_some(), "{id:?} on an empty {slot:?}");
+        }
+    }
+}
+
+/// The partial NEW's toast: `NEW: n SOUNDS SKIPPED`, as info, in place of
+/// boot's NEW PROJECT.
+#[test]
+fn partial_new_says_so() {
+    use chimera_core::ui::UiState;
+    use chimera_core::ui::busy::ToastStep;
+    use chimera_core::ui::settings::prompt;
+    assert_eq!(prompt::new_skipped(3).as_str(), "NEW: 3 SOUNDS SKIPPED");
+    let mut ui = Box::new(UiState::new());
+    let (_, _, _au) = small_sounding_under_large(ui.project_mut());
+    ui.boot_project(&mut Card::new(), &mut MemStore::new(1), None);
+    let ToastStep::Show(text) = ui.step_toast(0) else {
+        panic!("a toast");
+    };
+    assert!(
+        text.as_str().starts_with("NEW: ") && text.as_str().ends_with(" SOUNDS SKIPPED"),
+        "{}",
+        text.as_str()
+    );
+}

@@ -539,6 +539,13 @@ pub fn unused_after_clear(name: crate::name::SoundName, cost: crate::project::ar
     }
 }
 
+/// NEW without room for every factory Sound: `NEW: 2 SOUNDS SKIPPED`.
+pub fn new_skipped(n: u8) -> Line {
+    let mut l = Line::new("");
+    let _ = write!(l, "NEW: {n} SOUNDS SKIPPED");
+    l
+}
+
 /// PURGE with every source in use.
 pub const NO_UNUSED: &str = "NO UNUSED SOURCES";
 

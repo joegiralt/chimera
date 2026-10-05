@@ -464,6 +464,18 @@ impl UiState {
         self.toast.show(busy::Toast { text: n.line(), ms });
     }
 
+    /// A load's note. A NEW that came up partial says so instead
+    /// (`NEW: 2 SOUNDS SKIPPED`, as info) unless the note is an error,
+    /// which wins: one toast at a time.
+    fn show_note_or_skipped(&mut self, note: Option<ProjectNote>) {
+        let skipped = self.project.take_new_skipped();
+        match (note, skipped) {
+            (None | Some(ProjectNote::NewProject), Some(k)) => self.notice(prompt::new_skipped(k)),
+            (Some(n), _) => self.show_note(n),
+            (None, None) => {}
+        }
+    }
+
     /// The active Part's engine, before a replace (`project_replaced`).
     fn active_engine(&self) -> EngineType {
         self.project.part(self.active_part).sound.engine()
@@ -499,9 +511,8 @@ impl UiState {
         last: Option<ProjectId>,
     ) {
         let was = self.active_engine();
-        if let Some(n) = project::boot_project(card, store, last, &mut self.project) {
-            self.show_note(n);
-        }
+        let note = project::boot_project(card, store, last, &mut self.project);
+        self.show_note_or_skipped(note);
         self.orbit.booted(self.project.orbit_mut());
         self.project_replaced(was);
     }
@@ -589,9 +600,7 @@ impl UiState {
     ) -> (Option<R>, Option<CardEvent>) {
         let was = self.active_engine();
         let out = project::load_project(cx.card, cx.store, &mut self.project, go, link);
-        if let Some(n) = out.note {
-            self.show_note(n);
-        }
+        self.show_note_or_skipped(out.note);
         let Some(swap) = out.swap else {
             return (None, out.event);
         };

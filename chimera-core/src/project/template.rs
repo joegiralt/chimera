@@ -81,21 +81,36 @@ impl Project {
     /// arena's Sounds dropped; then the factory Sounds, then an INIT Sound
     /// per engine. Then Parts 1–5 load theirs from it, clean (`NEW_PARTS`).
     /// Never panics: a factory Sound a sounding source still leaves no
-    /// room for is skipped, and its Part loads INIT.
+    /// room for is skipped (`take_new_skipped` counts them), and a Part
+    /// whose slot is missing or won't load loads INIT.
     fn fill_new(&mut self) {
         self.pool.sources_clear();
         self.pool.clear_all();
+        let mut skipped = 0;
         for (s, (_, bytes)) in SlotId::ALL.into_iter().zip(factory_entries()) {
-            let _ = self.pool.store_bytes(s, bytes);
+            if self.pool.store_bytes(s, bytes).is_err() {
+                skipped += 1;
+            }
         }
+        self.pool.new_skipped = skipped;
         for (part, slot) in PartId::ALL.into_iter().zip(NEW_PARTS) {
+            let init = PartFrom::Init(EngineType::Algo);
             let from = match self.pool.get(slot) {
                 Some(_) => PartFrom::Slot(slot),
-                None => PartFrom::Init(EngineType::Algo),
+                None => init,
             };
-            // A stored slot decodes: it was checked when stored.
-            let _ = self.load_part(PartSource { part, from });
+            if self.load_part(PartSource { part, from }).is_err() {
+                // INIT never fails.
+                let _ = self.load_part(PartSource { part, from: init });
+            }
         }
+    }
+
+    /// Factory Sounds the last NEW had no room for, once: a sounding
+    /// source held their bytes. `None` when NEW came up whole.
+    pub fn take_new_skipped(&mut self) -> Option<u8> {
+        let n = core::mem::take(&mut self.pool.new_skipped);
+        (n > 0).then_some(n)
     }
 }
 
