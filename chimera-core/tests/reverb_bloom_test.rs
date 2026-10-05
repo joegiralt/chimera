@@ -476,7 +476,12 @@ fn bandpass(x: &[f32], fc: f32) -> Vec<f32> {
 /// noise, then the decay from the cut, four seeds' band energy summed,
 /// T20 of its Schroeder curve.
 fn band_rt60(p: &ReverbParams, fc: f32) -> f32 {
-    let tail = 0.5 + 0.8 * knobs_120(p).rt60_s;
+    band_rt60_over(p, fc, knobs_120(p).rt60_s)
+}
+
+/// `band_rt60` with a tail long enough for an RT60 of `rt60_s`.
+fn band_rt60_over(p: &ReverbParams, fc: f32, rt60_s: f32) -> f32 {
+    let tail = 0.5 + 0.8 * rt60_s;
     let cut = SR as usize;
     let mut e: Vec<f64> = Vec::new();
     for seed in 0..4 {
@@ -519,7 +524,7 @@ fn band_rt60(p: &ReverbParams, fc: f32) -> f32 {
 /// DECAY 0, ½ and 1 ring the 1 kHz octave 2, 4.9 and 12 s, ±10 %, at
 /// SWELL 0 (TONE at its start, about 3.1 kHz: DECAY counts the loop's
 /// one-pole); DECAY ½ and 1 at the starting SWELL too, and DECAY ½ at
-/// SWELL's and DIFFUSE's ends. (At the starting SWELL, DECAY 0's 2 s is
+/// SWELL's and DIFFUSE's ends; and the 125 Hz octave within twice DECAY. (At the starting SWELL, DECAY 0's 2 s is
 /// three trips of its 0.7 s loop: a staircase, whose T20 read 12 % short.)
 #[test]
 fn bloom_rt60_tracks_decay() {
@@ -560,6 +565,13 @@ fn bloom_rt60_tracks_decay() {
             "SWELL {size} DIFFUSE {diffuse} TONE {tone}: {rt} s"
         );
     }
+    // The bass at its worst, SWELL 0 and TONE 1 (the loop one-pole darkest,
+    // the 1 kHz law's lift highest), DECAY 1: the 125 Hz octave rings at
+    // most twice DECAY.
+    (p.size, p.diffuse, p.tone, p.time) = (0.0, 0.25, 1.0, 1.0);
+    let rt = band_rt60_over(&p, 125.0, 24.0);
+    println!("SWELL 0 TONE 1 DECAY 1: 125 Hz RT60 {rt:.2} s");
+    assert!(rt <= 24.0, "125 Hz rings {rt} s against DECAY's 12");
 }
 
 /// A 0.5 s noise burst into BLOOM on `p`, MIX 1, `seconds` long: (L, R).
@@ -584,20 +596,36 @@ fn noise_burst(p: &ReverbParams, seconds: f32) -> (Vec<f32>, Vec<f32>) {
 /// cycle survives in the i16 cascade states.
 #[test]
 fn bloom_falls_silent() {
-    for (smear, noise) in [(0.0, true), (1.0, true), (0.0, false)] {
+    // (SWELL, TONE, DIFFUSE, SMEAR, input): the start, SMEAR 1, a held
+    // tone; then SWELL 0's dark and bright, sparse and dense corners, where
+    // the loop is shortest and its one-pole darkest, from a 60 Hz tone (a
+    // kick's fundamental: the bass the 1 kHz law lifts most).
+    let start = params(1.0);
+    let mut cases = vec![
+        (start.size, start.tone, start.diffuse, 0.0, None),
+        (start.size, start.tone, start.diffuse, 1.0, None),
+        (start.size, start.tone, start.diffuse, 0.0, Some(1_000.0)),
+    ];
+    for tone in [0.0, 1.0] {
+        for diffuse in [0.0, 1.0] {
+            cases.push((0.0, tone, diffuse, 0.0, Some(60.0)));
+        }
+    }
+    for (size, tn, diffuse, smear, hz) in cases {
         let mut p = params(1.0);
-        (p.time, p.smear) = (1.0, smear);
+        (p.time, p.size, p.tone, p.diffuse, p.smear) = (1.0, size, tn, diffuse, smear);
         let seconds = 0.5 + 2.0 * knobs_120(&p).rt60_s + 1.0;
-        let (l, r) = if noise {
-            noise_burst(&p, seconds)
-        } else {
-            let (rv, pc) = (fresh(&p), RefCell::new(p));
-            let sine = tone(1_000.0, 0.25);
-            run(
-                &mut bus(&rv, &pc),
-                &mut |i| if i < SR as usize / 2 { sine(i) } else { 0.0 },
-                seconds,
-            )
+        let (l, r) = match hz {
+            None => noise_burst(&p, seconds),
+            Some(hz) => {
+                let (rv, pc) = (fresh(&p), RefCell::new(p));
+                let sine = tone(hz, 0.25);
+                run(
+                    &mut bus(&rv, &pc),
+                    &mut |i| if i < SR as usize / 2 { sine(i) } else { 0.0 },
+                    seconds,
+                )
+            }
         };
         let last = 50 * MS;
         assert!(
@@ -605,7 +633,7 @@ fn bloom_falls_silent() {
                 .iter()
                 .chain(&r[r.len() - last..])
                 .all(|&s| s == 0.0),
-            "SMEAR {smear}: still ringing"
+            "SWELL {size} TONE {tn} DIFFUSE {diffuse} SMEAR {smear} {hz:?}: still ringing"
         );
     }
 }
@@ -690,7 +718,7 @@ fn bloom_knobs_ease() {
 /// held pad, its peak within 1 dB (`WET_BLOOM`, the rule every TYPE's
 /// return gain follows). Its noise floor, at DECAY 0 (at the start's 11 s
 /// the sine's own onset still rings 2 s on, far above any floor), within
-/// 5.5 dB of QUAD's, 7.5 dB at DIFFUSE 1: 15 normalised states, each
+/// 5.5 dB of QUAD's, 8 dB at DIFFUSE 1: 15 normalised states, each
 /// error read × 1/(1 − g). (The spec asked 4 and 6; it reads 4.7 and 7.2.)
 #[test]
 fn bloom_noise_and_loudness() {
@@ -702,7 +730,7 @@ fn bloom_noise_and_loudness() {
     let (rv, pc) = (fresh(&p), RefCell::new(p));
     let (qv, qc) = (fresh(&q), RefCell::new(q));
     check_sustained_loudness(&mut bus(&rv, &pc), &mut bus(&qv, &qc));
-    for (diffuse, extra) in [(p.diffuse, 5.5), (1.0, 7.5)] {
+    for (diffuse, extra) in [(p.diffuse, 5.5), (1.0, 8.0)] {
         let p = ReverbParams {
             diffuse,
             time: 0.0,

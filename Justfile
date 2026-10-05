@@ -32,10 +32,10 @@ check:
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
-    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf
-    # Every other feature set in release: a build check, not a debug flash;
-    # their dev builds sit at or past FLASH
+    # Every feature set in release, the default too since BLOOM: a build
+    # check, not a debug flash; their dev builds sit at or past FLASH
     # (private issue #303).
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bench
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bench,master-tape

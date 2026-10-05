@@ -283,7 +283,8 @@ impl Bloom {
 
     /// Each eased value one block toward `k`. The feedback gain sets the
     /// 1 kHz RT60 over the cascade's slow length and through the loop's
-    /// one-pole; its `exp2` runs only when what it reads changes.
+    /// one-pole, the bass's at most twice it; its `exp2` runs only when
+    /// what it reads changes.
     fn ease_to(&mut self, k: &EngineKnobs, k20: f32, k50: f32) {
         let key = [
             k.rt60_s.to_bits(),
@@ -296,7 +297,13 @@ impl Bloom {
             // The trip: the cascade's lengths and the one sample back.
             let trip = self.to.iter().map(|&d| d as u32).sum::<u32>() as f32 + 1.0;
             let per = -3.0 * LOG2_10 / (k.rt60_s.max(1e-3) * FS);
-            self.t_fb = (pow2(per * trip * slow(k.diffuse_g)) / gain_1k(self.t_ta)).min(MAX_GAIN);
+            // The loop one-pole passes DC whole: lifting 1 kHz to DECAY
+            // lifts the bass too, so the gain also holds DC's RT60 to twice
+            // DECAY (√ of the open loop's gain), and 0.985.
+            let open = pow2(per * trip * slow(k.diffuse_g));
+            self.t_fb = (open / gain_1k(self.t_ta))
+                .min(libm::sqrtf(open))
+                .min(MAX_GAIN);
         }
         ease(&mut self.ta, self.t_ta, k20);
         ease(&mut self.g, k.diffuse_g, k20);

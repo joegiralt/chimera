@@ -1088,6 +1088,18 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::press(ButtonId::Edit)); // back to REV
         feed(ui, Input::turn(EncoderId::B, 1)); // LENGTH 1/8
     }),
+    // BLOOM: SWELL first, and MORE's two empty cells (reverb TYPEs T11).
+    ("mixer_fx_reverb_bloom", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::turn(EncoderId::A, 3)); // TYPE → BLOOM
+        feed(ui, Input::turn(EncoderId::B, -10)); // SWELL
+    }),
+    ("mixer_fx_reverb_bloom_more", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::turn(EncoderId::A, 3)); // TYPE → BLOOM
+        feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
+        feed(ui, Input::turn(EncoderId::A, 20)); // PRE-DLY
+    }),
     ("mixer_fx_delay_char", |ui| {
         to_fx(ui, DLY);
         feed(ui, Input::press(ButtonId::Edit)); // DLY › CHAR

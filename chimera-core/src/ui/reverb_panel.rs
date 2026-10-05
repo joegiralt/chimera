@@ -309,7 +309,8 @@ pub fn turn(
 
 /// Slot `id`'s value as `p`'s panel shows it at `tempo`, in units, from
 /// the maps the engine plays (`dsp::reverb::knobs`): a synced time as the
-/// note that plays, marked ▾ or ▴ by the engine's `fold`; DECAY in beats.
+/// note that plays, marked ▾ or ▴ by the engine's `fold`; DECAY in beats,
+/// marked ▾ or ▴ where the row's range clamps it.
 pub fn value_text(id: ParamId, p: &ReverbParams, tempo: Tempo, fold: FoldState) -> FmtBuf {
     let mut b = FmtBuf::new();
     let s = synced(p);
@@ -324,8 +325,19 @@ pub fn value_text(id: ParamId, p: &ReverbParams, tempo: Tempo, fold: FoldState) 
         return b;
     }
     if s.beats && id == P::TIME {
+        // A count the row clamps plays shorter (▾) or longer (▴) than it
+        // reads, marked as a folded note is.
         let n = DECAY_BEATS[index_of(p.time, DECAY_BEATS.len())];
-        let _ = core::fmt::Write::write_fmt(&mut b, format_args!("{n} BT"));
+        let asked = f32::from(n) * tempo.beat_ms() * 1e-3;
+        let plays = knobs(p, tempo, &mut { fold }).rt60_s;
+        let mark = if plays < 0.999 * asked {
+            "▾"
+        } else if plays > 1.001 * asked {
+            "▴"
+        } else {
+            ""
+        };
+        let _ = core::fmt::Write::write_fmt(&mut b, format_args!("{mark}{n} BT"));
         return b;
     }
     // REGEN's RT60 rings for the LENGTH that plays.

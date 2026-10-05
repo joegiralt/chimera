@@ -260,7 +260,12 @@ the ban on 2026-10-05.
     fit absorbs it; the lengths stay the ADR's.
   - **DECAY is the 1 kHz RT60** over the loop's slow length, (Σ lengths +
     1) × (1.07 + 1.9 g⁴), fitted over DIFFUSE, SWELL and DECAY ½–1, and
-    through the loop one-pole's 1 kHz gain, so TONE leaves it. At SWELL 0
+    through the loop one-pole's 1 kHz gain, so TONE leaves it. That lift
+    reaches DC too (the one-pole passes it whole), so the gain is also
+    held to √ of the open loop's: DC rings at most twice DECAY (fix round
+    1; uncapped, SWELL 0 at TONE 1 rang 60 Hz for 139 s at DECAY 1). The
+    cap binds only at dark TONE with long DECAY: there 1 kHz falls short
+    (about 8.5 s against 12 at SWELL 0, TONE 1); never at the presets. At SWELL 0
     DECAY 0, ½ and 1 read 2.04, 4.82 and 11.73 s. At the starting SWELL
     DECAY 0 is three trips of a 0.7 s loop, a staircase, whose T20 read
     12 % short.
@@ -269,6 +274,8 @@ the ban on 2026-10-05.
   - **WET_BLOOM 6.43, by the held-input loudness rule** every other TYPE's
     return gain follows (−6.35 dB against QUAD's −6.73; peak +5.5 dBFS
     against +5.95), not the burst rule the plan named.
+  - **DECAY in beats marks a clamped count** ▴ or ▾, as a folded note
+    is: at 120 BPM 1–3 beats play BLOOM's 2 s floor, 32 its 12 s top.
   - **The noise floor is over the plan's bound:** 16.7 dB against QUAD's
     12.0 at DECAY 0 (+4.7; bound 4), 19.2 at DIFFUSE 1 (+7.2; bound 6).
     Fifteen normalised states, each error read × 1/(1 − g), behind a

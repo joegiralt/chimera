@@ -234,16 +234,38 @@ fn labels_and_values_fit_their_cells() {
         "-18dB", "30dB", "2.00Hz", "1.0ms", "16s", "80ms", "137ms", "0.20s", "2.0s", "0.50",
         "0.75", "0.45", "0.70", "10k", "90", "50ms", "0.7ms", "1.00Hz", "10s", "120ms", "600ms",
         "11k", "1.5k", "125ms", "2.0ms", "1.50Hz", "TIME", "1/32T", "1/4", "1/2T", "1/4D", "0",
-        "1/128", "1/16", "▾1/8", "▴1/16T", "▾1/256", "▾1/192", "▾3/256", "32 BT", "1 BT",
+        "1/128", "1/16", "▾1/8", "▴1/16T", "▾1/256", "▾1/192", "▾3/256", "▾32 BT", "▴1 BT", "8 BT",
     ] {
         assert!(seen.iter().any(|s| s == want), "no cell shows {want}");
+    }
+}
+
+/// DECAY in beats marks a count the row clamps (spec § Tempo sync): at 120
+/// BPM BLOOM's 1–3 beats play its 2 s floor (▴), 4–24 as read (24 is
+/// its 12 s top exactly), 32 its top (▾).
+#[test]
+fn clamped_decay_beats_are_marked() {
+    use chimera_core::dsp::rev::sync::{DECAY_BEATS, p_of};
+    let p = ReverbParams {
+        sync: RevSync::All,
+        ..ReverbParams::default().with_type(ReverbType::Bloom, &KnobMemory::new())
+    };
+    let want = [
+        "▴1 BT", "▴2 BT", "▴3 BT", "4 BT", "6 BT", "8 BT", "12 BT", "16 BT", "24 BT", "▾32 BT",
+    ];
+    for (i, w) in want.iter().enumerate() {
+        let q = ReverbParams {
+            time: p_of(i, DECAY_BEATS.len()),
+            ..p
+        };
+        assert_eq!(text(ReverbParams::TIME, &q).as_str(), *w);
     }
 }
 
 /// Every TYPE has its engine, so each shows its own panel, however it
 /// was set: a CC, a project, the TYPE cell.
 #[test]
-fn an_off_screen_type_shows_quads_panel() {
+fn every_type_shows_its_own_panel() {
     use chimera_core::addr::BlockRead;
     use chimera_core::block::Block as _;
     struct One(ReverbParams);
