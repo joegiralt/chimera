@@ -14,7 +14,7 @@
 //! card, and the picked side's plan takes, against the whole arena: the
 //! sources a Part plays, then the slots by index, then the other sources,
 //! each while it fits. Then the load's epoch fades every voice, and pass 2
-//! starts only once no voice holds a source (ADR 0046, ADR 0087). Pass 2
+//! starts only once no voice holds a source (ADR 0099). Pass 2
 //! retires the old sources into a drained arena and follows the plan; each
 //! source becomes an absent entry, and the loader reads the planned ones
 //! from the card after it.
@@ -384,7 +384,6 @@ impl ProjectCheck {
                     return Err(FileError::WrongKind);
                 }
                 let name = h.name.ok_or(FileError::Corrupt)?;
-                let refs = self.costs().refs().len();
                 self.restart();
                 if let Some(t) = target {
                     (self.dropped_slots, self.dropped_sources) =
@@ -395,7 +394,7 @@ impl ProjectCheck {
                     // arena. Only an audio that stopped answering since
                     // `begin` leaves one pending.
                     t.pool.clear_all();
-                    if !t.pool.sources_drain_timed(refs) {
+                    if !t.pool.sources_drain_timed() {
                         return Err(FileError::Bounds);
                     }
                     t.perf.fx = FxParams::default();
@@ -798,6 +797,11 @@ impl<'a> ProjectDecoder<'a> {
         self.check.to_read
     }
 
+    /// After `begin`: the refs `/CHIMERA/TAPES` doesn't list.
+    pub(crate) fn missing(&self) -> u8 {
+        self.check.plan.missing.count_ones() as u8
+    }
+
     /// After pass 2: the Sounds and sources the arena didn't take.
     pub(crate) fn dropped(&self) -> (u8, u8) {
         (self.check.dropped_slots, self.check.dropped_sources)
@@ -852,7 +856,12 @@ impl DecodeInPlace for ProjectDecoder<'_> {
         }
         self.check.plan = self.check.plan_load(present);
         self.swap = self.link.map(LoadLink::bump);
-        if !self.target.pool.quiet_timed() {
+        let acked = |s: &Swap| self.link.is_some_and(|l| l.acked(s.epoch()));
+        if !self
+            .target
+            .pool
+            .quiet_timed(|| self.swap.as_ref().is_none_or(acked))
+        {
             return Err(LoadError::Busy);
         }
         Ok(())

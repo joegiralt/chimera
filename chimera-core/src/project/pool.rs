@@ -416,12 +416,15 @@ impl Pool {
         self.source_pass(within)
     }
 
-    /// Whether no voice holds a source, waiting `LOAD_DRAIN_TIMEOUT_MS`
-    /// on the pool's clock for one to let go (one look with no clock).
-    pub(in crate::project) fn quiet_timed(&self) -> bool {
+    /// Whether the audio has `acked` a load's kill and no voice holds a
+    /// source since, waiting `LOAD_DRAIN_TIMEOUT_MS` on the pool's clock
+    /// (one look with no clock). The ack means a block began after the
+    /// kill, so `sounding` isn't the block's before it. No reader: no audio
+    /// to wait for.
+    pub(in crate::project) fn quiet_timed(&self, acked: impl Fn() -> bool) -> bool {
         let table = self.table();
         let mut within = deadline(self.clock, LOAD_DRAIN_TIMEOUT_MS);
-        while table.has_reader() && table.sounding() != 0 {
+        while table.has_reader() && !(acked() && table.sounding() == 0) {
             if !within() {
                 return false;
             }
@@ -432,9 +435,9 @@ impl Pool {
 
     /// A load's retirement (ADR 0087): every source out of the index, then
     /// each hole closed and each slot freed, waiting `LOAD_DRAIN_TIMEOUT_MS`
-    /// on the pool's clock. True once the arena holds no source and `refs`
-    /// slots are free, so pass 2 gets what pass 1 planned for.
-    pub(in crate::project) fn sources_drain_timed(&mut self, refs: usize) -> bool {
+    /// on the pool's clock. True once the arena holds no source and every
+    /// slot is free, so pass 2 gets what pass 1 planned for.
+    pub(in crate::project) fn sources_drain_timed(&mut self) -> bool {
         let mut within = deadline(self.clock, LOAD_DRAIN_TIMEOUT_MS);
         for s in SourceId::ALL {
             self.source_free(s);
@@ -442,10 +445,12 @@ impl Pool {
         loop {
             self.source_pass(&mut within);
             self.drain_retired();
-            let slots = &self.sources.slots;
-            let retired = slots.iter().any(|s| matches!(s, SrcSlot::Retired { .. }));
-            let free = slots.iter().filter(|s| matches!(s, SrcSlot::Empty)).count();
-            if !retired && free >= refs {
+            if self
+                .sources
+                .slots
+                .iter()
+                .all(|s| matches!(s, SrcSlot::Empty))
+            {
                 return true;
             }
             if !within() {

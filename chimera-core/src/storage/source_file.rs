@@ -247,9 +247,11 @@ pub fn write_source<S: Store>(
         }
         Err(LoadError::Missing) => Wrote::New,
         Err(LoadError::Store(e)) => return Err(e.into()),
+        // A load's refusal: `read_source` never says it.
+        Err(LoadError::Busy) => return Err(StoreError::Io.into()),
         // Only a sealed file refuses the delete: that one is never
         // rewritten.
-        Err(LoadError::File(_) | LoadError::Busy) => match s.delete(vol, file) {
+        Err(LoadError::File(_)) => match s.delete(vol, file) {
             Ok(()) => Wrote::Replaced,
             Err(StoreError::ReadOnly) => return Err(SaveError::Damaged),
             Err(e) => return Err(e.into()),
@@ -275,6 +277,7 @@ pub fn write_source<S: Store>(
         Err(LoadError::Store(e)) => return Err(e.into()),
         Err(LoadError::File(e)) => return Err(SaveError::File(e)),
         Err(LoadError::Missing) => return Err(StoreError::NotFound.into()),
+        // A load's refusal: `read_source` never says it.
         Err(LoadError::Busy) => return Err(StoreError::Io.into()),
     }
     s.seal(vol, file)?;

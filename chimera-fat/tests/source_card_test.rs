@@ -142,7 +142,8 @@ fn truncated_source_reads_missing() {
             Err(e) => assert!(!last, "{what}: {e:?}"),
         }
         let (q, out) = load(&mut probed(&cut));
-        assert_eq!(out.note, None, "{what}");
+        let want = (!last).then_some(ProjectNote::SourcesMissing(1));
+        assert_eq!(out.note, want, "{what}");
         let id = q.pool().find_source(h.sref).expect("the ref");
         let e = q.pool().source(id).unwrap();
         if last {

@@ -1114,3 +1114,70 @@ fn a_same_engine_load_keeps_the_page() {
     load_file(&mut b, &mut s, 5);
     assert_eq!(b.ui.location(), flt);
 }
+
+/// ADR 0099: a load refused as AUDIO BUSY (a voice still holds a source
+/// after the kill) still publishes, but it is no load: the project, its
+/// file and SYSTEM's last project stay as they were.
+#[test]
+fn a_busy_refusal_is_no_load() {
+    use chimera_core::project::SourceRef;
+    let mut s = MemStore::new(1);
+    let (mut p, _) = full();
+    put_project(&mut s, &mut p, 5);
+    let (mut other, _) = full();
+    put_project(&mut s, &mut other, 6);
+    let link = LoadLink::new();
+    let mut b = boot_system(&mut s);
+    let go = file_go(&b.ui, at(&mut s, 5));
+    let load = |b: &mut Booted, s: &mut MemStore, go| {
+        b.ui.load_project(
+            &mut b.card,
+            s,
+            &mut b.sync,
+            &mut b.settings,
+            go,
+            &link,
+            settle,
+        )
+    };
+    assert!(load(&mut b, &mut s, go).is_some());
+    // A source a voice holds and never lets go; no audio acks the kill.
+    let r = SourceRef {
+        crc: 0x5EED,
+        frames: 64,
+        rate: 24_000,
+    };
+    let held = b.ui.project_mut().source_store(r, &[1; 40]).unwrap();
+    let mut tok = b.ui.project().pool().table().reader().unwrap();
+    let _ = tok.begin_block();
+    tok.store_sounding(held.bit());
+    let before = project_crc(b.ui.project());
+    // RAM's SYSTEM moved off the card's: any SYSTEM sync would write it.
+    b.settings.last_project = Some(id(9));
+
+    let go = file_go(&b.ui, at(&mut s, 6));
+    let writes = std::rc::Rc::new(std::cell::Cell::new(0));
+    let mut counted = CountWrites {
+        inner: s,
+        writes: writes.clone(),
+    };
+    let swap = b.ui.load_project(
+        &mut b.card,
+        &mut counted,
+        &mut b.sync,
+        &mut b.settings,
+        go,
+        &link,
+        settle,
+    );
+    let mut s = counted.inner;
+    assert!(swap.is_some(), "still published");
+    assert_eq!(writes.get(), 0, "no SYSTEM write");
+    assert_eq!(b.ui.step_toast(0), show("AUDIO BUSY, NOT LOADED: P0000006"));
+    assert_eq!(project_crc(b.ui.project()), before, "untouched");
+    assert_eq!(b.ui.project().meta().file().map(|f| f.id()), Some(id(5)));
+    assert_eq!(
+        (b.settings.last_project, last_on_card(&mut s)),
+        (Some(id(9)), Some(id(5)))
+    );
+}

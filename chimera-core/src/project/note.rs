@@ -111,6 +111,9 @@ pub enum ProjectNote {
         sounds: u8,
         sources: u8,
     },
+    /// A load whose sources weren't all on the card whole: their refs are
+    /// kept, their Parts silent. The project loaded.
+    SourcesMissing(u8),
 }
 
 /// `msg: subject`. Past `LINE_LEN` the message gives way, so the name or
@@ -172,6 +175,7 @@ impl ProjectNote {
             ProjectNote::DidntFit { sounds, sources } => {
                 write!(l, "LOADED \u{b7} {sounds} SOUNDS, {sources} SRC DIDN'T FIT")
             }
+            ProjectNote::SourcesMissing(n) => write!(l, "LOADED \u{b7} {n} SRC MISSING"),
         };
         l
     }

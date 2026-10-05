@@ -82,6 +82,10 @@ pub enum Settled {
 }
 
 impl Swap {
+    pub(in crate::project) fn epoch(&self) -> u32 {
+        self.epoch
+    }
+
     /// Spins until the audio acks this epoch or `within` says time is up
     /// (`LOAD_ACK_TIMEOUT_MS`). Either way the UI publishes next.
     pub fn settle(self, link: &LoadLink, mut within: impl FnMut() -> bool) -> Settled {

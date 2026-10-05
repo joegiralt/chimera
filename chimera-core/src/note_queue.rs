@@ -2,7 +2,10 @@
 //! audio thread, in the order they came (instrument-core spec
 //! § Threading): a fixed 64-event single-producer single-consumer ring.
 //! Lock-free and allocation-free; each event is packed into one `AtomicU32`,
-//! so there is no `unsafe`. A full queue drops the event and counts it.
+//! so there is no `unsafe`. A full queue drops the event and counts it. The
+//! last `NOTE_OFF_RESERVE` slots take no note-on, so a queue held through a
+//! project load's card reads (ADR 0099) still takes the note-offs: a
+//! dropped note-off would leave a note stuck.
 //!
 //! Ordering: the Cortex-M7 is single-core, so there is no cache-coherency
 //! problem to solve here — every access sees the same physical memory.
@@ -33,6 +36,9 @@ use crate::{MidiChannel, MidiNote, Velocity};
 
 pub const NOTE_QUEUE_LEN: usize = 64;
 const _: () = assert!(NOTE_QUEUE_LEN.is_power_of_two());
+/// Free slots kept for note-offs and real-time: a note-on that would leave
+/// fewer is dropped.
+pub const NOTE_OFF_RESERVE: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NoteKind {
@@ -206,7 +212,8 @@ impl NoteQueue {
             .then_some((NoteProducer(self), NoteConsumer(self)))
     }
 
-    /// Producer side. `false`: the queue was full and the event was dropped.
+    /// Producer side. `false`: the queue was full and the event was dropped,
+    /// or it was a note-on and only `NOTE_OFF_RESERVE` slots were free.
     ///
     /// Ordering: `tail` is read back `Relaxed` since only this thread ever
     /// writes it. `head` is `Acquire`, pairing with `pop`'s `Release` store
@@ -218,7 +225,15 @@ impl NoteQueue {
     fn push(&self, ev: InEvent) -> bool {
         let tail = self.tail.load(Ordering::Relaxed);
         let head = self.head.load(Ordering::Acquire);
-        if tail.wrapping_sub(head) as usize >= NOTE_QUEUE_LEN {
+        let note_on = matches!(
+            ev,
+            InEvent::Note(NoteEvent {
+                kind: NoteKind::On(_),
+                ..
+            })
+        );
+        let limit = NOTE_QUEUE_LEN - if note_on { NOTE_OFF_RESERVE } else { 0 };
+        if tail.wrapping_sub(head) as usize >= limit {
             self.dropped.fetch_add(1, Ordering::Relaxed);
             return false;
         }

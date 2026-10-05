@@ -600,6 +600,9 @@ impl UiState {
     ) -> (Option<R>, Option<CardEvent>) {
         let was = self.active_engine();
         let out = project::load_project(cx.card, cx.store, &mut self.project, go, link);
+        // Refused after the bump (ADR 0099): the project is as it was, so
+        // nothing past the publish runs.
+        let busy = matches!(out.note, Some(ProjectNote::Busy(_)));
         self.show_note_or_skipped(out.note);
         let Some(swap) = out.swap else {
             return (None, out.event);
@@ -607,6 +610,9 @@ impl UiState {
         // Before the publish: it carries the load to the runner.
         self.orbit.loaded(link.epoch(), self.project.orbit_mut());
         let published = publish(swap, self);
+        if busy {
+            return (Some(published), out.event);
+        }
         self.project_replaced(was);
         // Only a file load sets it: NEW, loaded or fallen back to, has none.
         if let Some(f) = self.project.meta().file() {

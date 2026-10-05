@@ -2,8 +2,8 @@
 //! (instrument-core spec § Threading).
 
 use chimera_core::note_queue::{
-    InEvent, MAX_NOTE_SOURCES, NOTE_QUEUE_LEN, NoteEvent, NoteKind, NoteQueue, NoteSources,
-    SourceId,
+    InEvent, MAX_NOTE_SOURCES, NOTE_OFF_RESERVE, NOTE_QUEUE_LEN, NoteEvent, NoteKind, NoteQueue,
+    NoteSources, RealTime, SourceId,
 };
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::MidiMessage;
@@ -78,14 +78,33 @@ fn full_queue_drops_and_counts() {
     let q = NoteQueue::new();
     let (mut tx, mut rx) = q.split().unwrap();
     for i in 0..NOTE_QUEUE_LEN {
-        assert!(tx.push(ev(0, i as u8, 100)), "slot {i}");
+        assert!(tx.push(ev(0, i as u8, 0)), "slot {i}");
     }
-    assert!(!tx.push(ev(0, 100, 100)));
-    assert!(!tx.push(ev(0, 101, 100)));
+    assert!(!tx.push(ev(0, 100, 0)));
+    assert!(!tx.push(ev(0, 101, 0)));
     assert_eq!(q.dropped(), 2);
     // The queued events are untouched by the drops.
-    assert_eq!(rx.pop(), Some(ev(0, 0, 100).into()));
-    assert!(tx.push(ev(0, 102, 100)), "room again after a pop");
+    assert_eq!(rx.pop(), Some(ev(0, 0, 0).into()));
+    assert!(tx.push(ev(0, 102, 0)), "room again after a pop");
+}
+
+/// The last `NOTE_OFF_RESERVE` slots take note-offs and real-time, never
+/// a note-on: every note-on queued can still be followed by its note-off.
+#[test]
+fn note_ons_leave_room_for_note_offs() {
+    let q = NoteQueue::new();
+    let (mut tx, _rx) = q.split().unwrap();
+    let ons = NOTE_QUEUE_LEN - NOTE_OFF_RESERVE;
+    for i in 0..ons {
+        assert!(tx.push(ev(0, i as u8, 100)), "note-on {i}");
+    }
+    assert!(!tx.push(ev(0, 100, 100)), "a note-on into the reserve");
+    assert!(tx.push(RealTime::Stop));
+    for i in 1..NOTE_OFF_RESERVE {
+        assert!(tx.push(ev(0, i as u8, 0)), "note-off {i}");
+    }
+    assert!(!tx.push(ev(0, 0, 0)), "full");
+    assert_eq!(q.dropped(), 2);
 }
 
 #[test]
@@ -157,7 +176,7 @@ fn drops_are_counted_per_source() {
     let (mut producers, _) = s.split().unwrap();
     let mut b = producers.take(B).unwrap();
     for i in 0..NOTE_QUEUE_LEN + 3 {
-        b.push(ev(0, (i % 128) as u8, 100));
+        b.push(ev(0, (i % 128) as u8, 0));
     }
     assert_eq!(s.drops(), [0, 3]);
 }

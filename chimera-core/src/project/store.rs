@@ -370,20 +370,26 @@ pub struct LoadOutcome {
     pub event: Option<CardEvent>,
 }
 
-/// What a load read: whether it is lossy, and what didn't fit.
+/// What a load read: whether it is lossy, what didn't fit, and the sources
+/// missing from the card (not listed, or not read whole).
 struct Loaded {
     lossy: bool,
     sounds: u8,
     sources: u8,
+    missing: u8,
 }
 
 impl Loaded {
-    /// `LOADED · a SOUNDS, b SRC DIDN'T FIT`, when any didn't.
+    /// `LOADED · a SOUNDS, b SRC DIDN'T FIT` when any didn't, else
+    /// `LOADED · n SRC MISSING` when any is.
     fn note(&self) -> Option<ProjectNote> {
-        (self.sounds > 0 || self.sources > 0).then_some(ProjectNote::DidntFit {
-            sounds: self.sounds,
-            sources: self.sources,
-        })
+        if self.sounds > 0 || self.sources > 0 {
+            return Some(ProjectNote::DidntFit {
+                sounds: self.sounds,
+                sources: self.sources,
+            });
+        }
+        (self.missing > 0).then_some(ProjectNote::SourcesMissing(self.missing))
     }
 }
 
@@ -405,25 +411,32 @@ fn load_into<S: Store>(
     let read = load_ab_in_place(s, r, project_file(id), &mut d);
     *swap = d.take_swap();
     let (lossy, to_read, (sounds, sources)) = (d.lossy(), d.to_read(), d.dropped());
+    let unlisted = d.missing();
     read?;
-    let missed = read_sources(s, r, p, to_read);
+    let (missed, unread) = read_sources(s, r, p, to_read);
     Ok(Loaded {
         lossy,
         sounds,
         sources: sources.saturating_add(missed),
+        missing: unlisted.saturating_add(unread),
     })
 }
 
 /// Reads sources `ids` into their absent entries, inside the load's epoch
-/// fade, and returns how many the arena couldn't take. A file missing,
-/// short, damaged or naming another ref leaves its entry absent: the ref
-/// is kept, and its Parts are silent. A card fault ends the reads there.
-fn read_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: u32) -> u8 {
+/// fade. Returns how many the arena couldn't take, and how many are left
+/// absent otherwise. A file missing, short, damaged or naming another ref
+/// leaves its entry absent: the ref is kept, and its Parts are silent. A
+/// card fault ends the reads there.
+fn read_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: u32) -> (u8, u8) {
     p.bump();
-    let mut missed = 0u8;
+    let (mut missed, mut unread) = (0u8, 0u8);
+    let mut fault = false;
     for id in SourceId::ALL.into_iter().filter(|i| ids & i.bit() != 0) {
         let Some(e) = p.pool.source(id) else { continue };
-        let mut fault = false;
+        if fault {
+            unread = unread.saturating_add(1);
+            continue;
+        }
         let got = match held_len(e.r) {
             Some(len) => {
                 p.pool
@@ -437,14 +450,13 @@ fn read_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: u32) -> u8
             }
             None => Ok(false),
         };
-        if got.is_err() {
-            missed = missed.saturating_add(1);
-        }
-        if fault {
-            break;
+        match got {
+            Ok(true) => {}
+            Ok(false) => unread = unread.saturating_add(1),
+            Err(_) => missed = missed.saturating_add(1),
         }
     }
-    missed
+    (missed, unread)
 }
 
 /// Replaces `p` as `go` confirmed: NEW, or a file in place (ADR 0046).

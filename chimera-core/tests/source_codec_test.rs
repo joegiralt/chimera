@@ -16,7 +16,7 @@ use chimera_core::source_table::AudioToken;
 use chimera_core::storage::{
     Card, DecodeInPlace, Event, FileError, FileKind, Framer, Generation, Header, LoadError,
     ProjectId, ReadTag, RecordTag, SaveError, Side, SourceHead, Wrote, read_source_into,
-    source_crc, source_file, write_file, write_source,
+    source_crc, source_file, source_file_min_len, write_file, write_source,
 };
 use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use chimera_hal::testkit::MemStore;
@@ -313,7 +313,11 @@ fn missing_source_ref_survives_save() {
     p.edit_part(PartId::ALL[1]).sound.source = Some(gone.sref);
     let (mut q, note) = round_trip(&mut s, &mut p);
     let tok = &mut q.pool().table().reader().expect("one reader");
-    assert_eq!(note, None, "a missing file is no budget note");
+    assert_eq!(
+        note,
+        Some(ProjectNote::SourcesMissing(1)),
+        "named, not a budget note"
+    );
     let id = q.pool().find_source(gone.sref).expect("the ref kept");
     let e = q.pool().source(id).unwrap();
     assert!(e.absent());
@@ -773,11 +777,55 @@ fn a_missing_part_source_pushes_no_sound_out() {
     p.edit_part(PartId::ALL[0]).sound.source = Some(gone.sref);
     let mut s = MemStore::new(1);
     let (q, note) = round_trip(&mut s, &mut p);
-    assert_eq!(note, None, "nothing didn't fit");
+    assert_eq!(
+        note,
+        Some(ProjectNote::SourcesMissing(1)),
+        "nothing didn't fit"
+    );
     assert_eq!(q.pool().sound_count(), sounds);
     let id = q.pool().find_source(gone.sref).expect("the ref kept");
     assert!(q.pool().source(id).unwrap().absent());
     assert!(q.meta().saved_crc().is_some());
+}
+
+/// A source file is exactly `source_file_min_len` long as `write_source`
+/// writes it, whatever its last record holds.
+#[test]
+fn a_written_source_is_its_min_len() {
+    for frames in [64, 336, 337, 1_001, 20_000] {
+        let (h, data) = source(35, frames, "LEN");
+        let mut s = MemStore::new(1);
+        put_source(&mut s, &h, &data);
+        let vol = s.mount().unwrap();
+        let mut sizes = Vec::new();
+        s.list(vol, Dir::Tapes, &mut |_, n| sizes.push(n)).unwrap();
+        assert_eq!(sizes, [source_file_min_len(h.sref).unwrap()], "{frames}");
+    }
+}
+
+/// A torn file listed in `/CHIMERA/TAPES` (shorter than a whole one) is
+/// planned as missing: a Part's source cut short pushes no Sound out.
+#[test]
+fn a_torn_part_source_pushes_no_sound_out() {
+    let (mut p, _) = full_dense_slots(48);
+    let sounds = p.pool().sound_count();
+    let left = ARENA_BYTES as u32 - p.pool().used().bytes();
+    let (torn, torn_data) = source(36, 2 * (left + 3_000) / 3, "TORN");
+    let mut s = MemStore::new(1);
+    put_raw(&mut s, &torn, &torn_data);
+    let vol = s.mount().unwrap();
+    let mut whole = Bytes(Vec::new());
+    s.read(vol, source_file(torn.sref), &mut whole).unwrap();
+    let cut = whole.0.len() / 2;
+    s.write(vol, source_file(torn.sref), &mut |w| w.put(&whole.0[..cut]))
+        .unwrap();
+    p.source_absent(torn.sref).unwrap();
+    p.edit_part(PartId::ALL[0]).sound.source = Some(torn.sref);
+    let (q, note) = round_trip(&mut s, &mut p);
+    assert_eq!(note, Some(ProjectNote::SourcesMissing(1)));
+    assert_eq!(q.pool().sound_count(), sounds, "every Sound");
+    let id = q.pool().find_source(torn.sref).expect("the ref kept");
+    assert!(q.pool().source(id).unwrap().absent());
 }
 
 /// A source whose cost is exactly the room the slots leave is taken.
@@ -797,4 +845,21 @@ fn a_source_that_fits_exactly_loads() {
     assert_eq!(note, None);
     assert_eq!(arena_bytes(&q, tok, h.sref), Some(held(&h, &data)));
     assert_eq!(q.pool().free(), Cost::default());
+}
+
+/// A listed file of a whole file's length that fails its check (other
+/// bytes) reads as missing, and the note counts it.
+#[test]
+fn a_damaged_source_is_named_missing() {
+    let (mut p, _) = Project::boxed();
+    let (h, data) = source(37, 1_000, "DAMAGED");
+    let mut flipped = data.clone();
+    flipped[10] ^= 1;
+    let mut s = MemStore::new(1);
+    put_raw(&mut s, &h, &flipped);
+    p.source_absent(h.sref).unwrap();
+    let (q, note) = round_trip(&mut s, &mut p);
+    assert_eq!(note, Some(ProjectNote::SourcesMissing(1)));
+    let id = q.pool().find_source(h.sref).expect("the ref kept");
+    assert!(q.pool().source(id).unwrap().absent());
 }

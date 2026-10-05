@@ -927,8 +927,11 @@ fn pass_one_counts_the_whole_arena() {
                 Some(std::thread::spawn(move || {
                     while !stop.load(Ordering::Relaxed) {
                         let _ = tok.begin_block();
-                        let held = if link.epoch() == at { old.bit() } else { 0 };
-                        tok.store_sounding(held);
+                        let killed = link.epoch() != at;
+                        tok.store_sounding(if killed { 0 } else { old.bit() });
+                        if killed {
+                            link.ack(link.epoch());
+                        }
                         std::thread::sleep(std::time::Duration::from_micros(200));
                     }
                 }))
@@ -960,6 +963,90 @@ fn pass_one_counts_the_whole_arena() {
         assert_eq!(q.pool().source_used(), Cost::default());
         assert!(q.meta().saved_crc().is_some());
     }
+}
+
+/// The audio of `a_late_holder_fails_the_load`: run a block each time the
+/// UI reads its clock, so the test is one thread and deterministic.
+struct LateAudio {
+    tok: AudioToken,
+    link: &'static LoadLink,
+    old: SourceId,
+    /// The voice took the source once the drain's gate moved it.
+    late: bool,
+    ms: u32,
+}
+
+static LATE: std::sync::Mutex<Option<LateAudio>> = std::sync::Mutex::new(None);
+
+/// The UI's clock: each read is a block of the late holder's audio and a
+/// millisecond.
+fn late_ms() -> u32 {
+    let mut g = LATE.lock().unwrap();
+    let a = g.as_mut().expect("the late audio");
+    let moving = a.tok.begin_block().moving(a.old);
+    a.late |= moving;
+    a.tok.store_sounding(if a.late { a.old.bit() } else { 0 });
+    a.link.ack(a.link.epoch());
+    a.ms += 1;
+    a.ms
+}
+
+/// A voice that takes an old source after the kill was acked, while the
+/// drain moves it, and never lets go: pass 2 can't get the arena pass 1
+/// planned for, so the load fails whole (NEW, LOAD FAILED), never lossy.
+#[test]
+fn a_late_holder_fails_the_load() {
+    let (src, _) = full_dense_slots(48);
+    let file = encode_project(&src);
+    let room = ARENA_BYTES - src.pool().used().bytes() as usize;
+    let mut s = MemStore::new(1);
+    put_project(&mut s, 1, &file);
+    let (mut q, t) = Project::boxed();
+    let old = q.source_store(sref(99, 0), &vec![7; room]).unwrap();
+    let link: &'static LoadLink = Box::leak(Box::new(LoadLink::new()));
+    *LATE.lock().unwrap() = Some(LateAudio {
+        tok: q.pool().table().reader().expect("one reader"),
+        link,
+        old,
+        late: false,
+        ms: 0,
+    });
+    q.set_gate_clock(late_ms);
+    let vol = s.mount().unwrap();
+    let id = ProjectId::new(1).unwrap();
+    let go = ReplaceGuard::check(&q, t, ProjectSource::File { id, vol })
+        .unwrap_or_else(|n| n.into_pending().anyway(&q));
+    let out = load_project(&mut Card::new(), &mut s, &mut q, go, link);
+    assert!(
+        LATE.lock().unwrap().as_ref().unwrap().late,
+        "it took it late"
+    );
+    assert!(out.swap.is_some());
+    assert_eq!(out.note, Some(ProjectNote::LoadFailed(Subject::File(id))));
+    assert_eq!(q.meta().file(), None, "NEW");
+}
+
+/// An audio that stalled before the bump: its last `sounding` is 0, but it
+/// never acks the kill, so nothing says a block ran since. The load is
+/// refused untouched (Busy), not run into a drain that can't finish.
+#[test]
+fn a_stalled_audio_refuses_untouched() {
+    let (src, _) = full_dense_slots(48);
+    let mut s = MemStore::new(1);
+    put_project(&mut s, 1, &encode_project(&src));
+    let (mut q, t) = Project::boxed();
+    let old = q.source_store(sref(99, 0), &[7; 600]).unwrap();
+    let mut tok = q.pool().table().reader().expect("one reader");
+    let _ = tok.begin_block();
+    tok.store_sounding(0);
+    let vol = s.mount().unwrap();
+    let id = ProjectId::new(1).unwrap();
+    let go = ReplaceGuard::check(&q, t, ProjectSource::File { id, vol })
+        .unwrap_or_else(|n| n.into_pending().anyway(&q));
+    let out = load_project(&mut Card::new(), &mut s, &mut q, go, &LoadLink::new());
+    assert!(out.swap.is_some());
+    assert_eq!(out.note, Some(ProjectNote::Busy(Subject::File(id))));
+    assert_eq!(q.pool().find_source(sref(99, 0)), Some(old), "untouched");
 }
 
 /// The UI loop's clock for a gate's wait, in ms.
