@@ -8,7 +8,7 @@
 //! times the source's own), from POSITION. Two grains read at the note's
 //! `inc`, so the pitch is the note's whatever the speed. Every D-TIME/2
 //! output samples (SIZE: 10–250 ms) a splice starts a grain at `T` under
-//! one linear fade, D-TIME/2 long, latched as it starts; the next splice
+//! one fade (a smoothstep, so splices have no corner), D-TIME/2 long, latched as it starts; the next splice
 //! waits for it to end, so the old grain's gain is always exactly 1 − the
 //! new one's. MONO starts the new grain a whole number of the source's YIN
 //! periods from the old grain's head (`lock`), so a held tone's splices
@@ -16,34 +16,34 @@
 //! (`locks`), or none, plays POLY.
 //!
 //! A grain starts at `T` wherever it is, so time always moves on; one that
-//! reaches the window's end wraps: MONO's back by the fewest whole periods
-//! that are a wrap's travel (`WRAP_SAMPLES` at the block's fastest `inc`),
-//! re-reading its last cycles, the nearest in kind; POLY's by the
-//! window. That jump's value, at the grain's share, rides on the
-//! output as a lift fading over `LIFT_S`, as PING-PONG's retargeted clamp
-//! carries its ghost's share: the output never steps there. A lift still
-//! running carries on under the next.
+//! reaches the window's end wraps, in the render loop: MONO's back by the
+//! fewest whole periods that are a wrap's travel (`WRAP_SAMPLES` at the
+//! block's fastest `inc`, and at least `INC_MAX` frames), re-reading its
+//! last cycles, the nearest in kind, until the next splice (at most one
+//! grain's life); POLY's by the window, under the lift, not a splice's
+//! fade. What the grain read the sample before, against the same place
+//! wrapped, at its share, joins the lift: a one-pole falling over `LIFT_S`
+//! (or an eighth of the wrap's interval, if shorter: lifts again and again
+//! add at most an eighth of a jump as DC),
+//! as PING-PONG's retargeted clamp carries its ghost's share, so the output
+//! never steps there. A grain whose wrap comes more than once in
+//! `MIN_PASS_SAMPLES` samples is a waveform loop, as an oscillator's cycle
+//! is: it wraps bare.
 //!
-//! Events: a splice comes once in D-TIME/2 (at least `MIN_PASS_SAMPLES`).
-//! The window is at least `2 · WRAP_SAMPLES · inc` frames where the source
-//! has them, and MONO's wrap is at least `WRAP_SAMPLES` of travel, so a
-//! grain wraps at most once in two blocks at the speed it started at, a
-//! call each (a pitch risen since shortens that for the rest of its life;
-//! the bill holds the floor's case). A window shorter than `WRAP_SAMPLES ·
-//! inc` (a source shorter than the floor), or a wrap shorter than `INC_MAX`,
-//! is a waveform loop: its grains wrap inline in the loop, a comparison
-//! and at most one subtraction a sample, with no call and no lift. A wrap
-//! shorter than `INC_MAX` frames (a window of a few frames) is strided to
-//! a whole multiple at least that long, so one subtraction still does:
-//! such a grain reads up to `INC_MAX` frames past its window, clamped in
-//! the row.
+//! The window is never under `MIN_LOOP_FRAMES` (no source is shorter), so
+//! every wrap is at least `INC_MAX` frames and one subtraction does: no
+//! grain reads past its window, and no path divides. Where the source has
+//! them the window is at least `2 · WRAP_SAMPLES · inc` frames, so a grain
+//! wraps at most once in two blocks at the speed it started at; a shorter
+//! source's grains wrap more often, at most once in `MIN_PASS_SAMPLES`
+//! samples with a lift (the bill holds that case).
 
 use chimera_hal::BLOCK_SIZE;
 
 use super::heads::{at, shortest, window_end_min, window_start};
 use super::params::{StretchType, TapeEngineParams};
 use super::read::{Pos, SourceView};
-use super::{INC_MAX, MIN_PASS_SAMPLES, Macros};
+use super::{INC_MAX, MIN_LOOP_FRAMES, MIN_PASS_SAMPLES, Macros};
 use crate::dsp::algo::math::{clampf, exp2};
 
 /// A wrap's lift fades over 5 ms, as PING-PONG's clamp does.
@@ -51,8 +51,8 @@ pub const LIFT_S: f32 = 0.005;
 /// A grain wraps at most once in this many samples (two blocks): the
 /// window is at least twice this many samples of travel at the block's
 /// fastest `inc` (POLY wraps by it), and MONO's wrap is the fewest whole
-/// periods at least this long. The two grains' wraps then cost one call a block, on average
-/// (spec § 5): at `inc` 16 the window is at least 4 096 frames, at the
+/// periods at least this long, so where the source allows it the two
+/// grains' wraps come once a block, on average (spec § 5): at `inc` 16 the window is at least 4 096 frames, at the
 /// source's own speed 256 (5.3 ms at 48 kHz).
 pub const WRAP_SAMPLES: u32 = 2 * BLOCK_SIZE as u32;
 /// `log2(25)`: D-TIME runs 10 ms to 250 ms.
@@ -105,27 +105,29 @@ impl GrainClock {
 
     /// The new grain's share.
     pub fn gain(&self) -> f32 {
-        self.pos as f32 / self.len as f32
+        smooth(self.pos as f32 / self.len as f32)
     }
 }
 
 /// What a block's splices take, worked out once a block.
 #[derive(Clone, Copy)]
 struct Block {
-    /// The window's start and its end for grains, frames: its last two
-    /// frames are left out, so no Hermite tap reads past it.
+    /// The window's start and end for grains, frames: its first frame and
+    /// last two are left out, so no Hermite tap reads past it.
     ws: u32,
     hi: u32,
     /// Its length, 32.32.
     wq: u64,
-    /// The window is a waveform loop: grains wrap inline.
+    /// A new grain's wrap: the window, or MONO's whole periods; at least
+    /// `INC_MAX` frames.
+    span: u64,
+    /// It wraps more than once in `MIN_PASS_SAMPLES`: a waveform loop,
+    /// wrapped with no lift.
     tiny: bool,
-    /// A new grain's end and wrap: `hi` and `span`, but a span under
-    /// `INC_MAX` is strided to the first whole multiple at or over it, so
-    /// one wrap a sample does (the end moves on by as much: past the
-    /// window by under `INC_MAX` frames, read clamped in the row).
-    edge: u32,
-    stride: u64,
+    /// The lift's one-pole fall a sample: its time constant `LIFT_S`, or
+    /// an eighth of the wrap's interval if shorter, so lifts that come
+    /// again and again add at most an eighth of a jump as DC.
+    lift_k: f32,
     locked: bool,
     /// The fade's length and its reciprocal.
     half: u32,
@@ -133,6 +135,14 @@ struct Block {
     /// POSITION in the window, 32.32, and time's step a sample.
     off: u64,
     tstep: i64,
+}
+
+/// The new grain's share `x` of the way through its fade: a smoothstep,
+/// so a splice has no corner where one fade ends and the next starts (the
+/// old grain's is `1 −` it: they still sum to 1).
+#[inline(always)]
+pub fn smooth(x: f32) -> f32 {
+    x * x * (3.0 - 2.0 * x)
 }
 
 /// `inc` (in `(0, INC_MAX]`) in 32.32, from 32-bit conversions.
@@ -167,7 +177,8 @@ pub struct Stretch {
     hi: [u32; 2],
     span: [u64; 2],
     tiny: [bool; 2],
-    /// The new grain's share at the last sample, and its step a sample.
+    /// How far through the fade the last sample was (the new grain's share
+    /// is `smooth` of it), and its step a sample.
     g: f32,
     dg: f32,
     /// Time since the note-on in the window, 32.32: `T` is `ws` + POSITION's
@@ -182,15 +193,8 @@ pub struct Stretch {
     inv_p: f32,
     /// The first splice is to come: the fade follows each block's D-TIME.
     runup: bool,
-    /// Each grain's last sample read.
-    last: [f32; 2],
-    /// What wraps moved, riding on the output; its fall a sample and the
-    /// samples left; `LIFT_S` in samples, and its reciprocal.
+    /// What wraps moved, riding on the output.
     lift: f32,
-    lift_dl: f32,
-    lift_left: u32,
-    lift_len: u32,
-    inv_lift: f32,
     /// Splices and wraps: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub(super) events: u32,
@@ -216,12 +220,7 @@ impl Stretch {
         pf: 0.0,
         inv_p: 0.0,
         runup: false,
-        last: [0.0; 2],
         lift: 0.0,
-        lift_dl: 0.0,
-        lift_left: 0,
-        lift_len: 1,
-        inv_lift: 1.0,
         #[cfg(any(test, feature = "test-support"))]
         events: 0,
     };
@@ -235,7 +234,6 @@ impl Stretch {
         } else {
             0.0
         };
-        let lift_len = ((LIFT_S * sr as f32) as u32).max(1);
         let mut s = Stretch {
             ws: window_start(p.start, v.frames()),
             kind: p.kind,
@@ -243,8 +241,6 @@ impl Stretch {
             pf,
             inv_p: if pf > 0.0 { 1.0 / pf } else { 0.0 },
             runup: true,
-            lift_len,
-            inv_lift: 1.0 / lift_len as f32,
             #[cfg(any(test, feature = "test-support"))]
             events: 0,
             ..Stretch::IDLE
@@ -268,7 +264,7 @@ impl Stretch {
 
     /// The old grain's frame, the new one's, and the new one's share.
     pub fn probe(&self) -> (u32, u32, f32) {
-        (self.heads[0].whole(), self.heads[1].whole(), self.g)
+        (self.heads[0].whole(), self.heads[1].whole(), smooth(self.g))
     }
 
     /// This block's window, D-TIME, lock and time step, from its `inc` ramp
@@ -282,12 +278,17 @@ impl Stretch {
         sr: u32,
     ) -> Block {
         let (frames, rate) = (v.frames(), v.desc().rate);
-        let ws = self.ws.min(frames - 1);
+        // Never under `MIN_LOOP_FRAMES` (64, and no source is shorter): a
+        // START near the end moves the window's start back.
+        let ws = self.ws.min(frames.saturating_sub(MIN_LOOP_FRAMES));
         let floor = shortest(
             rate,
             (2 * WRAP_SAMPLES / MIN_PASS_SAMPLES) as f32 * from.max(to),
         );
         let we = window_end_min(ws, end, frames, floor);
+        // The grains keep a tap inside: the window's first frame and last
+        // two are left out.
+        let ws = ws + 1;
         let hi = we.saturating_sub(2).max(ws + 1);
         let w = hi - ws;
         let wq = (w as u64) << 32;
@@ -296,10 +297,12 @@ impl Stretch {
         let locked = locks(self.kind, self.pf, w, (d * rate as f32 + 0.5) as u32);
         let span = if locked {
             // The fewest whole periods that are a wrap's travel at the
-            // block's fastest `inc`, so a grain re-reads its last cycles,
-            // the nearest in kind; at most the window's.
+            // block's fastest `inc` and at least `INC_MAX` frames, so a
+            // grain re-reads its last cycles, the nearest in kind; at most
+            // the window's (two at least, so at least half of it).
             let most = (w as f32 * self.inv_p) as u32;
-            let fewest = (WRAP_SAMPLES as f32 * from.max(to) * self.inv_p) as u32 + 1;
+            let travel = (WRAP_SAMPLES as f32 * from.max(to)).max(INC_MAX);
+            let fewest = (travel * self.inv_p) as u32 + 1;
             let n = fewest.min(most).max(1);
             let s = (n as u64).wrapping_mul(self.period);
             if s > wq { s - self.period } else { s }
@@ -308,18 +311,10 @@ impl Stretch {
         };
         // POSITION's offset in the window and time's step a sample, 32.32,
         // built from 32-bit conversions.
-        let most = (INC_MAX as u64) << 32;
-        let tiny = (w as f32) < WRAP_SAMPLES as f32 * from.max(to) || span < most;
-        let (edge, stride) = if span < most {
-            // At most 16 steps: the span is at least a frame.
-            let mut st = span.max(1 << 32);
-            while st < most {
-                st += span.max(1 << 32);
-            }
-            ((at(hi) + Pos(st - span)).whole(), st)
-        } else {
-            (hi, span)
-        };
+        let tiny = (span >> 32) < (MIN_PASS_SAMPLES as f32 * from.max(to)) as u64;
+        let every = (span >> 32) as f32 / from.max(to).max(f32::EPSILON);
+        let tc = (LIFT_S * sr as f32).min(0.125 * every).max(1.0);
+        let lift_k = libm::expf(-1.0 / tc);
         let x = clampf(position, 0.0, 1.0) * w as f32;
         let off = q(x).min(wq - 1);
         let speed = time_speed(motion) * rate as f32 / sr as f32;
@@ -327,9 +322,9 @@ impl Stretch {
             ws,
             hi,
             wq,
+            span,
             tiny,
-            edge,
-            stride,
+            lift_k,
             locked,
             half,
             inv_half: 1.0 / half as f32,
@@ -359,7 +354,7 @@ impl Stretch {
         if self.runup {
             // Nothing is in play yet: the first grain takes the block's
             // window, and its fade the block's D-TIME.
-            (self.hi, self.span, self.tiny) = ([k.edge; 2], [k.stride; 2], [k.tiny; 2]);
+            (self.hi, self.span, self.tiny) = ([k.hi; 2], [k.span; 2], [k.tiny; 2]);
             self.clock.len = k.half.max(self.clock.pos + 1);
             // Re-aimed, so the share lands on 1 as the fade ends.
             self.dg = (1.0 - self.g) / self.clock.left() as f32;
@@ -369,28 +364,26 @@ impl Stretch {
                 .zip(self.hi)
                 .any(|(h, hi)| h.whole() >= hi)
             {
-                self.last = self.heads.map(|h| v.read(h));
-                self.wrap(v, 0);
+                self.wrap(v);
             }
         }
         let (from, to) = (q(from), q(to));
         let step = (to.wrapping_sub(from) as i64 / BLOCK_SIZE as i64) as u64;
         let tau = self.tau as i64;
-        if self.tiny[0] || self.tiny[1] {
-            self.play::<true>(out, v, &k, (from, step), tau);
-        } else {
-            self.play::<false>(out, v, &k, (from, step), tau);
-        }
+        self.play(out, v, &k, (from, step), tau);
         self.tau = wrap_q(tau + BLOCK_SIZE as i64 * k.tstep, k.wq);
         self.clock.t = self.time((k.off + self.tau) as i64, k);
     }
 
     /// The block's samples: two grains, the fade's gain rising `dg` a
-    /// sample, `inc` ramped by `step`, and the lift riding on them (0 with
-    /// none), each run to the next splice, a grain's wrap, the lift's end or
-    /// the block's end. `TINY`: a waveform loop, its grains wrapped inline.
+    /// sample, `inc` ramped by `step`, and the lift riding on them, falling
+    /// by `lift_k` a sample; each run to the next splice or the block's
+    /// end. A grain at its window's end wraps here, in the loop: by its
+    /// span (at least `INC_MAX`, so once does), what it read the sample
+    /// before against the same place wrapped joining the lift at its share
+    /// next, unless the grain is a waveform loop's.
     #[inline(never)]
-    fn play<const TINY: bool>(
+    fn play(
         &mut self,
         out: &mut [f32; BLOCK_SIZE],
         v: &SourceView<'_>,
@@ -399,55 +392,51 @@ impl Stretch {
         tau: i64,
     ) {
         let mut i = 0;
+        let lk = k.lift_k;
         while i < BLOCK_SIZE {
             let [mut h0, mut h1] = self.heads;
             let [e0, e1] = self.hi;
             let [s0, s1] = self.span.map(Pos);
+            let [t0, t1] = self.tiny;
             let (mut g, dg) = (self.g, self.dg);
-            let (mut l, dl) = (self.lift, self.lift_dl);
-            let (mut a, mut b) = (0.0, 0.0);
+            let mut l = self.lift;
             let s = i;
-            let mut stop = BLOCK_SIZE.min(i + self.clock.left() as usize);
-            if self.lift_left > 0 {
-                stop = stop.min(i + self.lift_left as usize);
-            }
+            let stop = BLOCK_SIZE.min(i + self.clock.left() as usize);
             for y in out.iter_mut().take(stop).skip(s) {
-                a = v.read(h0);
-                b = v.read(h1);
+                let a = v.read(h0);
+                let b = v.read(h1);
                 g += dg;
-                *y = a + g * (b - a) + l;
-                l -= dl;
+                *y = a + smooth(g) * (b - a) + l;
+                l *= lk;
                 cur = cur.wrapping_add(step);
                 h0 = h0 + Pos(cur);
                 h1 = h1 + Pos(cur);
                 i += 1;
-                if TINY {
-                    // A stride is at least a step: one wrap does.
-                    if h0.whole() >= e0 {
-                        h0 = h0 - s0;
+                if h0.whole() >= e0 {
+                    h0 = h0 - s0;
+                    if !t0 {
+                        l += (1.0 - smooth(g + dg)) * (a - v.read(h0 - Pos(cur)));
                     }
-                    if h1.whole() >= e1 {
-                        h1 = h1 - s1;
+                    #[cfg(any(test, feature = "test-support"))]
+                    {
+                        self.events += 1;
                     }
-                } else if h0.whole() >= e0 || h1.whole() >= e1 {
-                    break;
+                }
+                if h1.whole() >= e1 {
+                    h1 = h1 - s1;
+                    if !t1 {
+                        l += smooth(g + dg) * (b - v.read(h1 - Pos(cur)));
+                    }
+                    #[cfg(any(test, feature = "test-support"))]
+                    {
+                        self.events += 1;
+                    }
                 }
             }
             self.heads = [h0, h1];
             self.g = g;
+            self.lift = l;
             self.clock.pos += (i - s) as u32;
-            if self.lift_left > 0 {
-                self.lift_left -= (i - s) as u32;
-                (self.lift, self.lift_dl) = if self.lift_left == 0 {
-                    (0.0, 0.0)
-                } else {
-                    (l, dl)
-                };
-            }
-            if !TINY && (h0.whole() >= e0 || h1.whole() >= e1) {
-                self.last = [a, b];
-                self.wrap(v, cur);
-            }
             if self.clock.left() == 0 {
                 let t = self.time(k.off as i64 + tau + i as i64 * k.tstep, *k);
                 self.splice(t, *k);
@@ -455,15 +444,13 @@ impl Stretch {
         }
     }
 
-    /// A grain at its window's end wraps back by its span: at least
-    /// `INC_MAX`, so one wrap does it (`tiny` takes any shorter). It last
-    /// read `last` one step (`cur`) back: what that sample read, against the same place wrapped, at the
-    /// share the grain plays next, rides on the output from here, and a lift
-    /// still running with it, falling to 0 over `LIFT_S`.
+    /// A grain past its window's end before a block (the window moved under
+    /// the run-up) wraps back by its span, or to the span's start if further
+    /// out; what it reads there against where it was joins the lift.
     #[cold]
     #[inline(never)]
-    fn wrap(&mut self, v: &SourceView<'_>, cur: u64) {
-        let g = self.g + self.dg;
+    fn wrap(&mut self, v: &SourceView<'_>) {
+        let g = smooth(self.g + self.dg);
         for x in 0..2 {
             let (u, hi, span) = (self.heads[x], self.hi[x], self.span[x]);
             if u.whole() < hi {
@@ -474,15 +461,9 @@ impl Stretch {
                 w = at(hi) - Pos(span);
             }
             let share = if x == 1 { g } else { 1.0 - g };
-            self.lift += share * (self.last[x] - v.read(w - Pos(cur)));
+            self.lift += share * (v.read(u) - v.read(w));
             self.heads[x] = w;
-            #[cfg(any(test, feature = "test-support"))]
-            {
-                self.events += 1;
-            }
         }
-        self.lift_left = self.lift_len;
-        self.lift_dl = self.lift * self.inv_lift;
     }
 
     /// The fade has ended: the new grain plays on as the old, and a grain
@@ -500,11 +481,14 @@ impl Stretch {
         } else {
             t
         };
-        self.hi[1] = k.edge;
-        self.span[1] = k.stride;
+        self.hi[1] = k.hi;
+        self.span[1] = k.span;
         self.tiny[1] = k.tiny;
         self.clock.len = k.half;
         self.clock.pos = 0;
+        if libm::fabsf(self.lift) < 1e-9 {
+            self.lift = 0.0;
+        }
         self.g = 0.0;
         self.dg = k.inv_half;
         self.runup = false;
@@ -557,8 +541,8 @@ mod tests {
             hi: 100_000,
             wq: 100_000 << 32,
             tiny: false,
-            edge: 100_000,
-            stride: 0,
+            span: 0,
+            lift_k: 1.0,
             locked: true,
             half: 240,
             inv_half: 1.0 / 240.0,
@@ -600,34 +584,71 @@ mod tests {
     }
 
     /// A wrap carries the grain's value at the share it plays next: the
-    /// new grain's `g + dg`, not the last sample's `g`.
+    /// new grain's `g + dg`, not the last sample's `g`. In the loop, what
+    /// it read the sample before against the same place wrapped; before a
+    /// block (the run-up), what it reads against where it lands. A waveform
+    /// loop's grain wraps bare.
     #[test]
     fn wrap_carries_the_next_share() {
-        let (held, n) = ramp(64);
+        let (held, n) = ramp(128);
         let v = SourceView::new(&held[..n]).unwrap();
         let mut s = Stretch::IDLE;
         (s.heads, s.hi, s.span) = ([at(1), at(40)], [40; 2], [32 << 32; 2]);
-        (s.g, s.dg, s.last) = (0.25, 0.25, [0.0, 0.5]);
-        s.wrap(&v, 0);
+        (s.g, s.dg) = (0.25, 0.25);
+        s.wrap(&v);
         assert_eq!(s.heads[1], at(8));
-        let want = 0.5 * (0.5 - v.read(at(8)));
+        let want = smooth(0.5) * (v.read(at(40)) - v.read(at(8)));
         assert!((s.lift - want).abs() < 1e-6, "{} against {want}", s.lift);
+
+        let k = Block {
+            ws: 1,
+            hi: 100,
+            wq: 99 << 32,
+            span: 30 << 32,
+            tiny: false,
+            lift_k: 1.0,
+            locked: false,
+            half: 1_000,
+            inv_half: 0.001,
+            off: 0,
+            tstep: 0,
+        };
+        let mut out = [0.0; BLOCK_SIZE];
+        for tiny in [false, true] {
+            let mut s = Stretch::IDLE;
+            let h1 = Pos::from_f32(39.9);
+            (s.heads, s.hi, s.span) = ([at(1), h1], [1_000, 40], [30 << 32; 2]);
+            (s.g, s.dg, s.tiny) = (0.25, 0.25, [tiny; 2]);
+            s.clock = GrainClock {
+                t: at(1),
+                len: 1_000,
+                pos: 0,
+            };
+            // A quarter frame a sample: one wrap, at the first sample.
+            s.play(&mut out, &v, &k, (1 << 30, 0), 0);
+            let want = if tiny {
+                0.0
+            } else {
+                smooth(0.75) * (v.read(h1) - v.read(Pos::from_f32(9.9)))
+            };
+            assert!((s.lift - want).abs() < 1e-5, "{} against {want}", s.lift);
+        }
     }
 
     /// MONO's wrap is whole periods inside the window, even where the
     /// window is a whole number of them and `w / P` rounds up in `f32`
-    /// (P = 2.15, w = 86: a source of 88 frames at `inc` 16).
+    /// (P = 2.13, w = 213: a source of 216 frames at `inc` 16).
     #[test]
     fn mono_span_fits_the_window() {
-        let (held, n) = ramp(88);
+        let (held, n) = ramp(216);
         let v = SourceView::new(&held[..n]).unwrap();
-        let p = 2.15f32;
+        let p = 2.13f32;
         let mut s = Stretch::IDLE;
         (s.period, s.pf, s.inv_p) = (Pos::from_f32(p).0, p, 1.0 / p);
         let k = s.block(&v, (16.0, 16.0), (0.0, 0.0, 0.0), 1.0, 48_000);
-        assert_eq!(k.hi - k.ws, 86);
+        assert_eq!(k.hi - k.ws, 213);
         assert!(k.locked);
-        assert!(k.stride <= k.wq, "{} > {}", k.stride, k.wq);
-        assert!(k.stride + s.period > k.wq);
+        assert!(k.span <= k.wq, "{} > {}", k.span, k.wq);
+        assert!(k.span + s.period > k.wq);
     }
 }

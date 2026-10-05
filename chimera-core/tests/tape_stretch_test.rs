@@ -163,11 +163,13 @@ fn stretch_keeps_pitch() {
         }
     }
 
-    // A 2 ms burst, so a seam's fade can't hide it.
+    // A 10 ms burst of 1 kHz, so neither a seam's fade (at 2× the grains
+    // tile the source, seam to seam) nor a read between frames can hide
+    // it.
     let c = 24_000;
     let mut src = vec![0.0; 2 * 48_000];
-    for (k, y) in src[c..c + 96].iter_mut().enumerate() {
-        *y = if k % 2 == 0 { 0.9 } else { -0.9 };
+    for (k, y) in src[c..c + 480].iter_mut().enumerate() {
+        *y = 0.9 * libm::sinf(core::f32::consts::TAU * (k as f32 + 0.5) / 48.0);
     }
     let held = held_plain(&src, 48_000);
     let v = SourceView::strict(&held).unwrap();
@@ -393,7 +395,7 @@ fn oversized_period_plays_as_poly() {
         (0.5, d, true),
         (1.0, (w / 2 + 1) as f32, true),
         (0.5, d / 2.0 + 1.0, true),
-        (1.0, (w / 2 - 1) as f32, false),
+        (1.0, (w - 3) as f32 / 2.0, false),
         (0.5, d / 2.0, false),
     ] {
         let p = TapeEngineParams {
@@ -427,8 +429,8 @@ fn freeze_holds_time() {
         let (out, _, clocks) = run(&mut e, &|_| p, &v, 1_500);
         let t = clocks[0].t;
         assert!(clocks.iter().all(|c| c.t == t), "POSITION {position}");
-        // POSITION of the window, its last two frames left out.
-        assert_eq!(t.whole(), (position * 47_998.0) as u32);
+        // POSITION of the window, its first frame and last two left out.
+        assert_eq!(t.whole(), (1.0 + position * 47_997.0) as u32);
         assert!(splices(&clocks).len() > 50);
         assert!(out[B..].iter().any(|y| y.abs() > 0.5), "it sounds");
     }
@@ -576,6 +578,11 @@ fn grain_wraps_are_click_free() {
                 step <= 1.1 * own.0 && !bent,
                 "{kind:?}, MOTION {motion}: {step}, {bend} against {own:?}"
             );
+            // Each lift falls away: the DC they leave is a jump's share
+            // over the laps (5 ms in 100 ms, at most 2 × 0.05), and the
+            // voice's DC blocker takes it.
+            let mean = out.iter().sum::<f32>() / out.len() as f32;
+            assert!(mean.abs() < 0.1, "{kind:?}, MOTION {motion}: mean {mean}");
         }
     }
 }
@@ -608,6 +615,140 @@ fn shortest_window_wraps_under_the_lift() {
     assert!(step <= 1.25 * own, "{step} against {own}");
 }
 
+/// One-shots whose end doesn't meet their start (0.73 of a sine cycle):
+/// 100, 400 and 2 000 frames at unity, +24 and +48 st, POLY, time at 1×.
+/// Every wrap is lifted, so no step passes the click rule (spec § 9: 4×
+/// the source's own at that speed, read straight). Only a true waveform loop (a window under
+/// `MIN_PASS_SAMPLES · inc`, wrapping more than once in 16 samples: 100
+/// frames at +48 st) wraps bare, as an oscillator's cycle does.
+#[test]
+fn one_shots_wrap_click_free() {
+    let mut worst = Vec::new();
+    for frames in [100u32, 400, 2_000] {
+        let src = sine(48_000, 1.37 * frames as f32, frames);
+        let held = held_plain(&src, 48_000);
+        let v = SourceView::strict(&held).unwrap();
+        for cents in [0.0f32, 2_400.0, 4_800.0] {
+            let inc = libm::exp2f(cents / 1_200.0);
+            let w = frames - 2;
+            if (w as f32) < 16.0 * inc {
+                continue;
+            }
+            let straight: Vec<f32> = (0..((w - 3) as f32 / inc) as usize)
+                .map(|i| v.read(Pos::from_f32(i as f32 * inc)))
+                .collect();
+            let own = max_step(&straight);
+            let p = TapeEngineParams {
+                size: 0.5,
+                motion: 0.5,
+                ..stretch(StretchType::Poly, 0.0)
+            };
+            let out = note(&|_| p, &|_| cents, &v, 300);
+            let step = max_step(&out[B..]);
+            eprintln!("{frames} frames, {cents} cents: {step:.3} against {own:.3}");
+            if step > 4.0 * own {
+                worst.push(format!(
+                    "{frames} frames, {cents} cents: {step} against {own}"
+                ));
+            }
+        }
+    }
+    assert!(worst.is_empty(), "{worst:#?}");
+}
+
+/// The shortest window (START at the source's end: its last 64 frames)
+/// plays only what is in it: a sine (13 frames a cycle) there, full scale DC before it, at
+/// unity and +48 st, MONO and POLY, every SIZE. The window is 64 frames
+/// wide, not the one START leaves: the output swings about 0.
+#[test]
+fn minimum_window_reads_only_itself() {
+    let mut src = vec![1.0; 2_000];
+    for (k, y) in src[1_936..].iter_mut().enumerate() {
+        *y = 0.5 * libm::sinf(core::f32::consts::TAU * k as f32 / 13.0);
+    }
+    let held = held_plain(&src, 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    for (kind, period) in [(StretchType::Mono, 13.0), (StretchType::Poly, 0.0)] {
+        for cents in [0.0, 4_800.0] {
+            for size in [0.0, 0.5, 1.0] {
+                let p = TapeEngineParams {
+                    start: 1.0,
+                    end: 1.0,
+                    size,
+                    motion: 1.0,
+                    ..stretch(kind, period)
+                };
+                let out = &note(&|_| p, &|_| cents, &v, 200)[B..];
+                let mean = out.iter().sum::<f32>() / out.len() as f32;
+                let swings = out
+                    .windows(2)
+                    .filter(|w| (w[0] < 0.0) != (w[1] < 0.0))
+                    .count();
+                // Lifts lap after lap leave at most an eighth of a jump (up
+                // to 1 here) as DC.
+                assert!(
+                    mean.abs() < 0.125 && swings > 100,
+                    "{kind:?}, {cents} cents, SIZE {size}: mean {mean}, {swings} swings"
+                );
+            }
+        }
+    }
+}
+
+/// POLY on a sine at the shortest D-TIME, the window long: the smoothstep
+/// fade leaves no corner where one fade ends and the next starts (a linear
+/// one bends the output by twice its slope times the grains' difference).
+#[test]
+fn splices_have_no_corner() {
+    let held = held_plain(&sine(48_000, P, 4 * 48_000), 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    let own = own(&v);
+    for motion in [0.25, 1.0] {
+        let p = TapeEngineParams {
+            size: 0.0,
+            motion,
+            ..stretch(StretchType::Poly, 0.0)
+        };
+        let out = note(&|_| p, &|_| 0.0, &v, 1_000);
+        let bend = max_bend(&out[B..]);
+        assert!(
+            bend <= 1.5 * own.1,
+            "MOTION {motion}: {bend} against {own:?}"
+        );
+    }
+}
+
+/// MONO on a short period at −48 st, then +48 st under the same grains:
+/// each wrap was latched at least `INC_MAX` frames, so one subtraction
+/// still keeps every head inside the window at the new speed.
+#[test]
+fn pitch_jump_keeps_wraps_inside() {
+    let held = held_plain(&sine(48_000, 4.0, 48_000), 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    let p = TapeEngineParams {
+        end: 0.1,
+        size: 1.0,
+        motion: 0.5,
+        ..stretch(StretchType::Mono, 4.0)
+    };
+    let mut e = fresh();
+    e.set_pitch(-4_800.0);
+    e.note_on(60, &p, &v, SR);
+    let mut b = [0.0; B];
+    // The jump after the first splices, so grains latched at −48 st play
+    // on at +48.
+    for n in 0..400 {
+        e.set_pitch(if n < 120 { -4_800.0 } else { 4_800.0 });
+        e.render(&mut b, &p, &v, SR);
+        let pr = e.probe();
+        assert!(
+            pr.head < 4_800 && pr.other.unwrap() < 4_800,
+            "block {n}: {pr:?}"
+        );
+        assert!(b.iter().all(|y| y.is_finite()));
+    }
+}
+
 /// Splices come once a D-TIME/2 at most, and a grain wraps at most once in
 /// `WRAP_SAMPLES` samples (a block): at `inc` 16 on the shortest window, at
 /// the shortest D-TIME, a block holds at most one splice and the two
@@ -615,18 +756,18 @@ fn shortest_window_wraps_under_the_lift() {
 #[test]
 fn event_rate_is_bounded() {
     let held = held_plain(&sine(48_000, P, 48_000), 48_000);
-    tiny_events(&held, P);
-    // Sources under the floor are waveform loops, wrapped inline: only
-    // splices are events.
-    for frames in [8, 64] {
+    tiny_events(&held, P, true);
+    // Sources under the floor: grains wrap in the loop; those of a
+    // waveform loop more than once in 16 samples, bare.
+    for frames in [64, 100] {
         let held = held_plain(&sine(48_000, frames as f32 / 2.0, frames), 48_000);
-        tiny_events(&held, frames as f32 / 2.0);
+        tiny_events(&held, frames as f32 / 2.0, false);
     }
 }
 
 /// `event_rate_is_bounded` on `held` (period `period`), at the shortest
 /// window and D-TIME at `inc` 16.
-fn tiny_events(held: &[u8], period: f32) {
+fn tiny_events(held: &[u8], period: f32, counted: bool) {
     let v = SourceView::strict(held).unwrap();
     for kind in [StretchType::Mono, StretchType::Poly] {
         let p = TapeEngineParams {
@@ -651,7 +792,7 @@ fn tiny_events(held: &[u8], period: f32) {
         let per = (e.events() - before) as f32 / blocks as f32;
         let most = 1 + 2 * B / WRAP_SAMPLES as usize;
         assert!(
-            per <= most as f32,
+            !counted || per <= most as f32,
             "{kind:?}, {} frames: {per} a block, at most {most}",
             v.frames()
         );
@@ -674,14 +815,15 @@ fn time_moves_at_high_pitch() {
     e.set_pitch(1_200.0);
     e.note_on(60, &p, &v, SR);
     let (_, probes, clocks) = run(&mut e, &|_| p, &v, 1_600);
-    let w = 96_000 - 2;
+    // The grains' window: frames 1 to 95 998.
+    let w = 96_000 - 3;
     let mut latest = 0;
     for (b, (c, pr)) in clocks.windows(2).zip(&probes[1..]).enumerate() {
         if c[1].pos < c[0].pos {
             // The new grain's start: its head less what it read since, at
             // `inc` 2, unwrapped.
             let at = (b + 2) * B - c[1].pos as usize;
-            let start = (pr.other.unwrap() as usize + w - 2 * c[1].pos as usize) % w;
+            let start = (pr.other.unwrap() as usize - 1 + w - 2 * c[1].pos as usize) % w;
             assert!(start.abs_diff(at % w) <= 1, "splice at {at}: {start}");
             latest = latest.max(start);
         }
@@ -767,7 +909,7 @@ fn run_up_gain_lands_on_one() {
     }
     let before = &probes[n - 2];
     let c = clocks[n - 2];
-    let want = 1.0 - c.left() as f32 / c.len as f32;
+    let want = c.gain();
     assert!(
         (before.gain - want).abs() < 0.05,
         "{} against {want}",
@@ -863,7 +1005,7 @@ fn stretch_costs_within_its_bill() {
         long / fade
     );
     // Sources under the floor: waveform loops, wrapped inline.
-    for frames in [8u32, 64] {
+    for frames in [64u32, 400] {
         let held = held_plain(&sine(48_000, frames as f32 / 2.0, frames), 48_000);
         let tv = SourceView::strict(&held).unwrap();
         let p = TapeEngineParams {
