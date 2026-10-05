@@ -210,6 +210,15 @@ the ban on 2026-10-05.
     small SIZE. With it, DECAY tracks within ±10 % over DECAY ¼–1, SIZE
     0–1 and DIFFUSE 0–1; DECAY 0 reads +4 % at SIZE ½ and +15 % at SIZE 0
     and 1, where the diffuser's own ring adds.
+  - **Φ's SIZE slope is fit evidence, not pinned by a test** (fix round 2).
+    It was fit at that grid's knobs (LOOPS 18°, DAMP 10 kHz). At the
+    starting knobs as fitted (LOOPS 65°, dampers open) the measured 1 kHz
+    RT60 at DIFFUSE 0, DECAY ½ and 1, reads −9 and −7 % at SIZE 0 and −1
+    and +2 % at SIZE 1; with k held at 0.7 in Φ it reads −4 and −1 %, and
+    −5 and −2 %. Both sit inside the test's ±10 %, so no tolerance the data
+    allows kills the flat mutant. At DIFFUSE 1, DECAY 1, both read short:
+    the fitted Φ −16, −10 and −9 % at SIZE 0, ½ and 1. DECAY's honesty at
+    high LOOPS and DIFFUSE wants a refit of Φ with θ in it.
   - **DAMP's top opens the dampers** (the first near-miss step): DAMP 0 is
     a bypass, and its cell reads OFF. Its first tick is a cliff, from no
     damper to a 9.9 kHz one-pole (about −0.3 dB a trip at 4 kHz), eased
@@ -219,6 +228,16 @@ the ban on 2026-10-05.
     metric is level-free: it can't change a verdict.
   - **The first arrival is 0.52 ms past the bus's half-bands** (34
     samples at 48 kHz, ahead of every TYPE): 1.23 ms on the bus.
+  - **ΔCOST is a range until the unit reads it** (Task 13). On the
+    emulator ROOM v2 runs +91.7 instructions an output sample over Task
+    9's ROOM. The two calibration anchors, 0.47 cycles an instruction
+    (Task 9's REV ROOM) and 1.06 (REV QUAD), put the default build at about
+    +5 to +60 against its 76, and the tape build at +13 to +67 against its
+    23. If the tape build reads over, the fallback order is:
+    1. revert the `moving` unswitch: about −6.8 KB of flash for +20
+       instructions, and it frees I-cache (`Room::run`'s text is 21.5 KB
+       against the 16 KB I-cache);
+    2. the parked truncation of the stage allpass states.
   - **`EngineState` grows to 244 B** (248 B with the tests' probes),
     against ADR 0085's 160 B: four loops' gains, targets, dampers and
     smear offsets.
