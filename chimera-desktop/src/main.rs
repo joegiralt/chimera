@@ -224,15 +224,14 @@ fn piano_note(keys: &[minifb::Key]) -> Option<u8> {
     None
 }
 
-/// The pool arena: the chip's AXI static, here a leaked box.
 /// The source gate's clock (ADR 0087): ms since the first call.
 fn gate_ms() -> u32 {
     static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_millis() as u32
 }
 
-/// An arena of its own, read by `table`: `SOURCE_TABLE` where the audio
-/// runs.
+/// The pool arena: the chip's AXI static, here a leaked box, read by
+/// `table`: `SOURCE_TABLE` where the audio runs.
 fn leaked_arena(table: &'static SourceTable) -> ArenaWriter {
     ArenaWriter::new(Box::leak(vec![0; ARENA_BYTES].into_boxed_slice()), table)
 }

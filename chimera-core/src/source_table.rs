@@ -22,9 +22,9 @@
 //!   audio's next `begin_block` loads it `Acquire` and so sees the rows.
 
 #[cfg(not(loom))]
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering, fence};
 #[cfg(loom)]
-use loom::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
+use loom::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering, fence};
 
 use crate::project::SourceId;
 use crate::project::arena::{ARENA_BYTES, MAX_SOURCES};
@@ -135,10 +135,20 @@ impl SourceTable {
     }
 
     /// The table's one `AudioToken`: `None` once taken.
+    ///
+    /// Take it before any source pass can run (the chip and the desktop
+    /// take it as their audio engine is built, before the UI loop). A pass
+    /// that finds no reader moves without waiting, since nothing can read;
+    /// a reader taken in the middle of that pass could read a moving byte.
     pub fn reader(&'static self) -> Option<AudioToken> {
-        (!self.reader.swap(true, Ordering::AcqRel)).then_some(AudioToken {
+        let taken = self.reader.swap(true, Ordering::AcqRel);
+        // Orders the flag before every later gate load, against a pass's
+        // `has_reader` and its close on the UI side.
+        fence(Ordering::SeqCst);
+        (!taken).then_some(AudioToken {
             table: self,
             answered: (0, true),
+            acked: 0,
         })
     }
 
@@ -251,6 +261,12 @@ impl SourceTable {
 
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
+    pub fn clear_for_test(&self, id: SourceId) {
+        self.clear(id)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
     pub fn wait_for_test(&self, epoch: u32, within: impl FnMut() -> bool) -> Answer {
         self.wait(epoch, within)
     }
@@ -268,6 +284,9 @@ pub struct AudioToken {
     /// The last epoch this side answered, and whether it acked: an answer
     /// holds for every block of its epoch.
     answered: (u32, bool),
+    /// The mask that ack covered: later views of the epoch read `gate &
+    /// acked`. Cleared when a view sees the gate open.
+    acked: u32,
 }
 
 impl AudioToken {
@@ -285,8 +304,12 @@ impl AudioToken {
             let to = if ack { &t.ack } else { &t.nack };
             to.store(e, Ordering::Release);
             self.answered = (e, ack);
+            self.acked = if ack { gate } else { 0 };
         }
-        let moving = if self.answered.1 { gate } else { 0 };
+        if gate == 0 {
+            self.acked = 0;
+        }
+        let moving = gate & self.acked;
         GateView {
             table: t,
             moving,
@@ -328,6 +351,11 @@ pub struct GateView<'b> {
 impl GateView<'_> {
     /// Source `id`'s held bytes; `None` while the gate moves it, or while
     /// its row is empty.
+    ///
+    /// The voice's contract: on `None` with `moving(id)`, it waits and
+    /// keeps its bit in `store_sounding`. On `None` with the gate open,
+    /// its row is gone (retired and compacted): it ends, and drops its
+    /// bit from the next `store_sounding`, which frees the id for reuse.
     pub fn bytes(&self, id: SourceId) -> Option<&[u8]> {
         if self.moving & id.bit() != 0 {
             return None;
@@ -347,8 +375,10 @@ impl GateView<'_> {
         // can't leave its thread), so every view before the acking one
         // ended before that ack was stored; the ack's `Release` and the
         // UI's `Acquire` order their reads before the move. The acking
-        // view and every later one of its epoch carry the mask, and
-        // returned above. A nacking view carries none, but the UI never
+        // view and every later one of its epoch carry the acked mask
+        // (`gate & acked`) while the gate stays closed, and returned
+        // above; a view that loads the gate open loads it `Acquire`, after
+        // the move and the rebased rows. A nacking view carries none, but the UI never
         // moves on a nack. The writer's `bytes_mut` never reaches below
         // the sources' end, where live rows point.
         Some(unsafe { core::slice::from_raw_parts(self.arena.add(base), held) })
