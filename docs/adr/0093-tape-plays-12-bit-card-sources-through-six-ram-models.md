@@ -177,6 +177,12 @@ code 23, ident `"TAPE"`, ADR 0055).
     - TYPE MONO starts each grain a whole number of the source's stored
       YIN periods from the old grain's head. An unpitched source plays MONO
       as POLY. These are the S950's MONO and POLY types.
+    - A grain starts early enough to end inside the window, so where time
+      wraps the splice's fade carries the output across (TAPE Task 8). One
+      that reaches the end all the same wraps (MONO by whole periods) under
+      a 5 ms lift, as PING-PONG's retargeted clamp. The window is at least
+      256 samples of travel, so the grains' wraps cost one call a block, on
+      average.
 - **Pages:**
   - `SRC · DECK · DRV · FLT · AMP · MOD`, opening on DECK;
   - SRC holds SOURCE, START, END and VOL;

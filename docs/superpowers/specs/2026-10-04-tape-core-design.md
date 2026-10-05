@@ -207,7 +207,7 @@ Every model plays inside the **window** `[START, END]`, as fractions of the sour
 | **PING-PONG** | as LOOP | as LOOP | as LOOP | as LOOP | as LOOP |
 | **TRANSWAVE** | the frame, fractional | the scan's rate, 0 to ±8 Hz, a triangle around POSITION | as LOOP | as LOOP | the scan's width, in frames |
 | **SCRUB** | the **finger**: where the tape is held | **vari-speed:** −2 to +2 times the note's speed | as LOOP | as LOOP | the window the head loops behind the finger, 2 ms to `W` |
-| **STRETCH** | where time starts | the **speed of time:** −1 to +2. 0 freezes, 1 is the source's own | as LOOP | as LOOP | **D-TIME:** the splice length, 10–250 ms, exponential |
+| **STRETCH** | where time starts | the **speed of time:** −1 to +2 (`2 · MOTION` from 0 up, MOTION below). 0 freezes; MOTION 0.5 is the source's own speed | as LOOP | as LOOP | **D-TIME:** the splice length, 10–250 ms, exponential |
 
 - **TAPE** is the transport's wow and flutter: ADR 0053's `Transport`, run **once a block** on the head's speed in cents, and ramped into `inc`. Its depth runs to ±25 cents of wow and ±8 of flutter. Each voice has its own transport and phase, because a Mellotron gives each note its own strip of tape. At 0 it adds exact zeros.
 - **AGE** is the wear:
@@ -270,17 +270,24 @@ Every model plays inside the **window** `[START, END]`, as fractions of the sour
 - Two heads; billed at its short-loop worst (§ 5).
 
 **STRETCH.** The S950's time-stretch, run in real time: two grains spliced by crossfades.
-- **The time pointer** `T` moves through the window at `MOTION · rate / 48 000` frames a sample, wrapping in it.
-  - At MOTION 1 the source keeps its duration, at 0.5 it takes twice as long, and at 0 it freezes.
+- **The time pointer** `T` moves through the window at `speed · rate / 48 000` frames a sample, wrapping in it, from START + POSITION of the window. `speed` is `2 · MOTION` from 0 up and MOTION below (−1 to +2).
+  - At MOTION 0.5 the source keeps its duration, at 0.25 it takes twice as long, at 1 half as long, and at 0 it freezes.
   - Below 0, time runs backward while the grains still play forward.
+  - POSITION moves `T` with it; a grain takes the move at its splice, under the fade.
 - **A grain** reads at `inc`, so the pitch is the note's whatever MOTION is.
 - **Splices.** Every `L/2` output samples (`L` from SIZE, the D-TIME), a splice starts a new grain at `T`, and **one fade** moves the output from the old grain to the new: the old grain's gain is always exactly 1 − the new one's.
   - The fade runs `L/2` samples, the length set when it starts.
   - The next splice comes only once that fade has ended.
   - So a change of D-TIME changes only the next fade's length, and the two gains always sum to 1. A moved SIZE never bumps the level, and a steady tone holds a steady level. In steady state this is two triangular windows half a grain apart.
 - **TYPE MONO** (the S950's type for single tones) starts the new grain **in phase with the old one.** With `P` the source's YIN period from its header (fractional, Q16.16), the new grain starts at `T' = h_old − P · round((h_old − T) / P)`: as near `T` as it can be, a whole number of periods from the old head. That is one division a splice. A held tone's splices then line up, and only the S950's tremolo at long D-TIMEs remains.
+  - **Built (TAPE Task 8):** in 32.32 with the period's reciprocal, worked out at note-on, so a splice has no division. A splice locks only if two periods fit in both the window and the D-TIME (`locks`, the D-TIME in source frames); otherwise it plays POLY (Review Focus 5).
 - **An unpitched source (`period` 0) plays MONO as POLY,** and its TYPE cell reads `POLY (UNPITCHED)`.
 - **TYPE POLY** starts at `T`, for chords, loops and noise. It keeps the metal and tremolo that make the S950's stretch recognisable.
+- **The window's end (TAPE Task 8).** The grains play in `[START, END)`, its last two frames left out, so no Hermite tap reads past it.
+  - **A grain starts early enough to end inside it:** no later than its life's travel (two fades at the block's fastest `inc`, and a period more for MONO) before the end. Where time wraps, the splice's fade carries the output from the window's end to its start, as it carries every other change.
+  - **A grain that reaches the end all the same wraps** (a window shorter than a grain's travel, or SIZE or the pitch risen since it started): MONO back by whole periods, POLY by the window. That jump's value, at the grain's share, rides on the output as a lift fading over 5 ms, as PING-PONG's retargeted clamp carries its ghost's share. The output never steps there; on a POLY tone a corner stays.
+- **Events are bounded whatever the pitch.** A splice comes once in D-TIME/2 (at least 240 samples at 48 kHz). The window is at least `2 · WRAP_SAMPLES · inc` frames (`WRAP_SAMPLES` = 128, two blocks; 256 frames at the source's own speed, 4 096 at `inc` 16), so a grain wraps (MONO by at least half the window) at most once in two blocks.
+- **The run-up.** Until the first splice nothing is in play: the first fade follows each block's D-TIME, and the first grain each block's window.
 
 **Why period-locking, and not WSOLA.**
 - WSOLA searches each splice for the lag of best correlation. The next splice is known `L/2` ahead (at least 5 ms, 3.75 blocks), so the search can be spread over the blocks before it. That removes the burst that ruled it out in the first draft.
@@ -424,6 +431,7 @@ Host estimates, in the house manner (instructions × 1.46 × 1.1, + 12 a head fo
 - **Measured per path (TAPE Task 6, fix round 2),** static instructions a sample in each path's loop: LOOP 102 with one head, 217 in a fade; REVERSE (and PING-PONG going down) 104 and 224; SCRUB 117 and 241, plus about 4 while a stop or start eases; PING-PONG's turns (now run back to back in one call) up to 128 with one head, its clamp up to 251 with two. None has a `vdiv` in its loop.
 - **Per-call work in the shortest loops (TAPE Task 6, fix round 3).** Each pass's events (a fade's start, a wrap, a turn and its flip) cost a call and its bookkeeping, at most once in 16 output samples (§ 2). **Each model bills the worst a whole block can sit in, that work amortised over its shortest pass included.** It is measured on the host as time against LOOP's fade path (`tiny_loops_cost_within_their_bills`, release, the worst of three clean runs of five), times that path's 217 instructions, each model in its shortest legal loop at `inc` 16 (256 frames) and XFADE ½: LOOP 1.20× (260), REVERSE 1.20× (260), PING-PONG clamping under a POSITION square wave 1.33× (289), SCRUB 1.27× (276, + 4 for an ease). An 8-frame source, where a loop is the whole source, measures 0.93–1.33× (PING-PONG's turns the most).
 - **Measured TRANSWAVE (TAPE Task 7, fix round 1),** static instructions a sample on the M7: 217 in the two-head loop (`wave::Run::run`), 417 in a level change's four (`Run::fade`); the block's own work (the macros, one `exp2f`, the scan, the hysteresis, two table look-ups) is about 7.5 a sample spread over 64, and the Nyquist fade (only above 0.3 cycles a sample) 8 more. Neither loop has a `vdiv`. Steady 217 + 7.5 + 8 = 232.5 → 373 + 24 = 397 → **400**; a change 417 + 7.5 + 8 = 432.5 → 695 + 48 = 743 → **750 ≤ 770**.
+- **Measured STRETCH (TAPE Task 8),** static instructions a sample on the M7: 217 in the two-grain loop (`Stretch::play`: two reads, the fade, the lift, two wrap checks), no `vdiv`. Its per-call work, amortised over its shortest legal pass at `inc` 16 on the shortest window: a splice (about 260 with its run's bookkeeping) once in 240 samples, a grain's wrap (about 260) once a block on average, and the block's own (the macros, `inc`, the window and D-TIME with one `exp2` and one division, `T`: about 530), about 15 a sample in all. 217 + 15 = 232 → 373 + 24 = 397 → **400**. On a window the grains end inside, as at any musical setting, it is 228 → 390. The host's ratio to LOOP's fade path at `inc` 16 is 1.15× with and without events (`stretch_costs_within_its_bill`): on x86 the events cost under 1 %, and the loop reads about 13 % above LOOP's, as TRANSWAVE's does; the M7 count is the basis, and the bench row `TAPE STRETCH /VOICE` confirms it.
 - **TRANSWAVE bills on the static M7 count (ruled, TAPE Task 7 fix round 1).** It has no per-event work: no wraps, turns or splices, only the block's. The host-time proxy (`transwave_costs_within_its_bills`, against LOOP's fade path) stood in for LOOP–SCRUB's per-event overhead, which a static count can't see; for TRANSWAVE it reads 9–19 % high on x86 (404–440 and 682–793 cycles, measured under load) and is informational. The bench row `TAPE WAVE C7 /VOICE` confirms the bill.
 - **Measured LOOP loop (TAPE Task 3, history; the rows above replace it):** `TapeEngine::render`'s inner loop is 103 instructions a sample with one head and 224 while a fade reads two: 2 × 88 + 48. The first draft's 9 a voice was 39 short. The budget is checked a block at a time and a whole block can lie inside a fade (XFADE runs to ½ the loop), so **every two-head model bills the fade sample**, and a model's own extras sit on top of the measured 48. The bills are the cycles rounded up to 10; the bench (§ 10) replaces them.
 
@@ -444,7 +452,7 @@ Host estimates, in the house manner (instructions × 1.46 × 1.1, + 12 a head fo
 | SCRUB | 2 (the finger in each read position) | 280 (a fade in its shortest loop at `inc` 16, events and an ease included; measured) | 449 + 24 = 473 | **480** |
 | TRANSWAVE | 2 (+ `p`'s ramp and the scan) | 222 (216 in the loop + 6 for the block's work; measured) | 357 + 24 = 381 | **400** |
 | TRANSWAVE, pitch able to move > ±6.2 st (STEAL GLIDE, or deep PITCH/FINE routes) | 4 in a level change's block | 424 (417 + 7; measured) | 681 + 48 = 729 | **770** |
-| STRETCH | 2 (+ two gains, the grain clock, 5) | 229 | 392 | **400** |
+| STRETCH | 2 (+ the fade, the lift, the grain clock) | 232 (217 in the loop + 15 for events and the block's work; measured) | 373 + 24 = 397 | **400** |
 | AGE stored above 0 or routed, on any model | (one-pole 3, hiss 5, gain 2) | 10 | 16 | **+20** |
 
 `TapeEngine::cost(&TapeEngineParams, &ModState)` returns the model's figure plus AGE's, and `playing_cost` returns the latched model's, as MODAL's does. TRANSWAVE's level-change term is TAPE's `glide_cost`, billed exactly where MODAL's `PITCH` is.
@@ -587,7 +595,7 @@ All host-side (`just test`). Hardware waits for the ship flash.
 - **`transwave_is_alias_free`:** a 16-frame saw transwave swept C1 → C8 and back with a pitch route, held every semitone and at each level's worst steps, at both tops. All energy that isn't a harmonic of the note (folds and the read's images alike) stays under −60 dB relative at every level; `level_change_block_is_alias_free` holds each level change's block to −60 dB against the fading band-limited wave. Above C8 the test asserts nothing.
 - **`transwave_level_is_largest`:** at note-on the level is the largest whose step is ≤ 1, at every note, for `--top` 512 and 1 024. A ±1-semitone vibrato never changes it, and a ±7-semitone route does.
 - **`vibrato_costs_no_level_heads`:** a transwave Sound with a shallow PITCH route bills 400, and one with a ±12-semitone route bills 770.
-- **`stretch_keeps_pitch`:** at MOTION 0.5, 1 and 2, STRETCH's pitch is the note's within 1 cent, and a marked event in the source arrives at `t / MOTION` within one D-TIME.
+- **`stretch_keeps_pitch`:** at time speeds 0.5, 1 and 2 (MOTION 0.25, 0.5, 1), STRETCH's pitch is the note's within 1 cent, and a marked event in the source arrives at `t / speed` within one D-TIME.
 - **`stretch_fades_are_complementary`:** the two gains sum to 1 at every sample while SIZE is swept 0 → 1 → 0 in 50 ms. MONO's splices of a sine are click-free by the rule below. POLY on white noise wobbles under 3 dB: the S950's tremolo, measured, not hidden.
 - **`unpitched_mono_is_poly`:** a `period` 0 source renders bit-identically under MONO and POLY.
 
