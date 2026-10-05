@@ -200,7 +200,7 @@ fn priming_a_non_modulatable_param_is_refused() {
 /// produced values).
 #[test]
 fn algo_matrix_rows_are_the_eight_sources() {
-    use chimera_core::preset::POOL_SIZE;
+    use chimera_core::preset::MAX_SOUNDS;
 
     let mut ui = UiState::new();
     ui.handle_input(
@@ -208,7 +208,8 @@ fn algo_matrix_rows_are_the_eight_sources() {
             .button(ButtonId::Edit, ButtonState::Held)
             .button(ButtonId::B1, ButtonState::Pressed),
     );
-    ui.handle_input(&MockControls::new().encoder(EncoderId::A, POOL_SIZE as i8));
+    ui.handle_input(&MockControls::new().encoder(EncoderId::A, 100));
+    ui.handle_input(&MockControls::new().encoder(EncoderId::A, (MAX_SOUNDS - 100) as i8));
     press(&mut ui, ButtonId::Edit); // load "INIT Algo"
     let rows: Vec<&str> = (0..ui.matrix_state.num_sources)
         .map(|i| ui.matrix_state.sources[i].unwrap().name)

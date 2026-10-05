@@ -20,6 +20,10 @@ pub trait Check {
     const KIND: FileKind;
     fn event(&mut self, e: Event<'_>) -> Result<(), FileError>;
     fn end(&mut self) -> Result<(), FileError>;
+    /// The side of a pair the next pass reads: before each side's pass 1,
+    /// and before pass 2 in place. A check that plans a load keeps one
+    /// plan a side.
+    fn side(&mut self, _s: Side) {}
 }
 
 /// Pass 2 on top of the check: runs only after pass 1's `finish` and `end`
@@ -36,6 +40,11 @@ pub trait Decode: Check {
 /// staging can't fit (a project); `load_ab_in_place` says whether the
 /// target was touched.
 pub trait DecodeInPlace: Check {
+    /// After pass 1 and the pick, before pass 2: an `Err` refuses the
+    /// load with the target untouched.
+    fn begin<S: Store>(&mut self, _s: &mut S, _r: &Ready) -> Result<(), LoadError> {
+        Ok(())
+    }
     fn apply(&mut self, e: Event<'_>) -> Result<(), FileError>;
     fn finish(&mut self) -> Result<(), FileError>;
 }
@@ -46,6 +55,8 @@ pub enum LoadError {
     File(FileError),
     /// Neither side exists.
     Missing,
+    /// The audio still holds what pass 2 would overwrite (ADR 0087).
+    Busy,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,6 +66,9 @@ pub enum SaveError {
     /// (`NeedsNewerFirmware`): a save would be shadowed by it, so none is
     /// written. Deleting the pair overrides it.
     File(FileError),
+    /// A sealed source file fails its check: nothing rewrites it, so
+    /// nothing is written (ADR 0087).
+    Damaged,
 }
 
 impl From<StoreError> for LoadError {
@@ -98,7 +112,7 @@ impl CardFault for LoadError {
     fn store_error(&self) -> Option<StoreError> {
         match *self {
             LoadError::Store(e) => Some(e),
-            LoadError::File(_) | LoadError::Missing => None,
+            LoadError::File(_) | LoadError::Missing | LoadError::Busy => None,
         }
     }
 }
@@ -107,7 +121,7 @@ impl CardFault for SaveError {
     fn store_error(&self) -> Option<StoreError> {
         match *self {
             SaveError::Store(e) => Some(e),
-            SaveError::File(_) => None,
+            SaveError::File(_) | SaveError::Damaged => None,
         }
     }
 }
@@ -323,7 +337,7 @@ impl ReadSink for Feed<'_> {
 }
 
 /// One read of a file through the framer.
-enum Scan {
+pub(crate) enum Scan {
     /// The CRC matched and every verdict so far was Ok.
     Passed { header: Header, crc: u32 },
     Failed {
@@ -335,7 +349,7 @@ enum Scan {
 /// Reads `f` through a `Framer`, handing `on` its events. A `kind` other
 /// than the file's is `WrongKind`, deferred like every verdict; `None`
 /// takes any kind.
-fn scan<S: Store>(
+pub(crate) fn scan<S: Store>(
     s: &mut S,
     r: &Ready,
     f: FileName,
@@ -532,10 +546,10 @@ fn sides<S: Store, C: Check>(
     f: AbFile,
     c: &mut C,
 ) -> Result<[Checked; 2], StoreError> {
-    Ok([
-        check(s, r, f.side(Side::A), c)?,
-        check(s, r, f.side(Side::B), c)?,
-    ])
+    c.side(Side::A);
+    let a = check(s, r, f.side(Side::A), c)?;
+    c.side(Side::B);
+    Ok([a, check(s, r, f.side(Side::B), c)?])
 }
 
 /// Checks both sides, `pick`s one and applies it.
@@ -584,6 +598,8 @@ pub fn load_ab_in_place<S: Store, D: DecodeInPlace>(
         Checked::Missing => return Err(untouched(LoadError::Missing)),
         Checked::Failed { err, .. } => return Err(untouched(LoadError::File(err))),
     };
+    d.side(side);
+    d.begin(s, r).map_err(untouched)?;
     let header =
         pass_two(s, r, f.side(side), D::KIND, crc, &mut |e| d.apply(e)).map_err(clobbered)?;
     d.finish().map_err(|e| clobbered(LoadError::File(e)))?;

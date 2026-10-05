@@ -5,7 +5,7 @@ use crate::part::PartParams;
 use crate::project::PartId;
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, ParamSlot, VizType};
 use crate::ui::block_registry::{
-    DEMO_BLOCKS, SYS_ABOUT, SYS_AUDIO, SYS_SYNC, SYS_THEME, SYS_TUNING,
+    DEMO_BLOCKS, SYS_ABOUT, SYS_AUDIO, SYS_POOL, SYS_SYNC, SYS_THEME, SYS_TUNING,
 };
 use crate::ui::page::{PageId, PageLayout};
 
@@ -108,6 +108,7 @@ static THEME_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_THEME)];
 static ABOUT_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_ABOUT)];
 static AUDIO_LOAD_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_AUDIO)];
 static LIVE_SNAP_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&LIVE_SNAP)];
+static POOL_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_POOL)];
 
 pub static CHANNELS_LEAF: OnePage = OnePage::new("Channels", &CHANNELS_BLOCKS);
 pub static SYNC_LEAF: OnePage = OnePage::new("Sync", &SYNC_BLOCKS);
@@ -117,6 +118,7 @@ pub static THEME_LEAF: OnePage = OnePage::new("Theme", &THEME_BLOCKS);
 pub static ABOUT_LEAF: OnePage = OnePage::new("About", &ABOUT_BLOCKS);
 pub static AUDIO_LOAD_LEAF: OnePage = OnePage::new("Audio Load", &AUDIO_LOAD_BLOCKS);
 pub static LIVE_SNAP_LEAF: OnePage = OnePage::new("Live Snap", &LIVE_SNAP_BLOCKS);
+pub static POOL_LEAF: OnePage = OnePage::new("Pool", &POOL_BLOCKS);
 
 /// One leaf per DEMO page, in `DEMO_BLOCKS`' order.
 pub static DEMO_LEAVES: [OnePage; DEMO_BLOCKS.len()] = {

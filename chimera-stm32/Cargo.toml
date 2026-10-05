@@ -24,6 +24,9 @@ usb-console = [
 ]
 # The console's `ls` and `put` (ADR 0092): files onto the card over USB.
 card-put = ["usb-console", "chimera-core/card-put"]
+# The boot's lost-cluster sweep frees what it finds (#360, ADR 0094). Off,
+# it runs dry; on, it fails to build until the owner's go.
+sweep-free = []
 
 [dependencies]
 chimera-core = { path = "../chimera-core", default-features = false }

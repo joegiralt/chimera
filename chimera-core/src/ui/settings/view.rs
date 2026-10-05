@@ -909,13 +909,13 @@ impl Bands<'_> {
         let (pname, pkey) = match &self.part {
             Some(b) => {
                 let [m0, m1] = b.mark.key();
-                let [o0, o1, o2] = b.offer.key();
+                let [o0, o1, o2, o3, o4, o5] = b.offer.key();
                 (
                     b.name.as_str(),
-                    [1, self.active.index() as u8, m0, m1, o0, o1, o2],
+                    [1, self.active.index() as u8, m0, m1, o0, o1, o2, o3, o4, o5],
                 )
             }
-            None => ("", [0; 7]),
+            None => ("", [0; 10]),
         };
         let okey = self.orbit.map_or([0xFF; 3], |b| b.key());
         settings_key(&[

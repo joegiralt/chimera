@@ -91,6 +91,9 @@ pub enum ProjectNote {
     Missing(Subject),
     /// Pass 2 failed: the project is NEW.
     LoadFailed(Subject),
+    /// A voice still held a source when pass 2 would start (ADR 0087):
+    /// nothing loaded.
+    Busy(Subject),
     /// The confirmed target moved: nothing ran.
     Changed,
     /// A confirmed overwrite or delete whose file moved: nothing written.
@@ -102,6 +105,15 @@ pub enum ProjectNote {
     ClearLoaded,
     NoIds,
     NewProject,
+    /// A load over the arena (ADR 0087): what it left out. The project
+    /// loaded.
+    DidntFit {
+        sounds: u8,
+        sources: u8,
+    },
+    /// A load whose sources weren't all on the card whole: their refs are
+    /// kept, their Parts silent. The project loaded.
+    SourcesMissing(u8),
 }
 
 /// `msg: subject`. Past `LINE_LEN` the message gives way, so the name or
@@ -152,6 +164,7 @@ impl ProjectNote {
             ProjectNote::File { err, subject } => return naming(err.message(), subject),
             ProjectNote::Missing(s) => return naming("PROJECT NOT FOUND", s),
             ProjectNote::LoadFailed(s) => return naming("LOAD FAILED", s),
+            ProjectNote::Busy(s) => return naming("AUDIO BUSY, NOT LOADED", s),
             ProjectNote::Changed => l.write_str("CHANGED SINCE ASKED: TRY AGAIN"),
             ProjectNote::FileChanged(s) => return naming("CHANGED SINCE ASKED", s),
             ProjectNote::NoFile => l.write_str("NOT SAVED YET"),
@@ -159,6 +172,10 @@ impl ProjectNote {
             ProjectNote::ClearLoaded => l.write_str("CAN NOT CLEAR THE LOADED PROJECT"),
             ProjectNote::NoIds => l.write_str("NO PROJECT IDS LEFT"),
             ProjectNote::NewProject => l.write_str("NEW PROJECT"),
+            ProjectNote::DidntFit { sounds, sources } => {
+                write!(l, "LOADED \u{b7} {sounds} SOUNDS, {sources} SRC DIDN'T FIT")
+            }
+            ProjectNote::SourcesMissing(n) => write!(l, "LOADED \u{b7} {n} SRC MISSING"),
         };
         l
     }

@@ -37,6 +37,8 @@ pub enum Dir {
     Sounds,
     /// `/CHIMERA/BENCH`: the bench build's card test file.
     Bench,
+    /// `/CHIMERA/TAPES`: TAPE's sources, write-once (ADR 0087).
+    Tapes,
 }
 
 /// An 8.3 name in one of the `Dir`s: A-Z and 0-9 only, so it is valid on any
@@ -177,7 +179,108 @@ pub trait Store {
     /// An existing directory is `Ok`. Making any other `Dir` before `Chimera`
     /// exists is `NotFound`.
     fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError>;
+    /// Marks `file` read-only: from then on `write` and `delete` refuse it
+    /// (`ReadOnly`). One already sealed is `Ok`, with nothing written. A
+    /// store that can't seal says `Io`, as does every store for a file
+    /// outside `Dir::Tapes`: only a source is write-once.
+    fn seal(&mut self, _vol: VolumeId, _file: FileName) -> Result<(), StoreError> {
+        Err(StoreError::Io)
+    }
+    /// The lost-cluster sweep (#360), one operation at boot: clusters the
+    /// FAT holds that no directory on the volume reaches. `marks` lends
+    /// the reachability bitmap, one bit a cluster; the sweep zeroes it.
+    /// Any doubt is an `Err` before the first write, with the stats so far.
+    /// A store with no FAT sweeps nothing.
+    fn sweep(
+        &mut self,
+        _vol: VolumeId,
+        _mode: Sweep,
+        _marks: &mut [u8],
+    ) -> Result<Swept, (Doubt, SweepStats)> {
+        Ok(Swept::default())
+    }
 }
+
+/// What a sweep does with the clusters it finds lost.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sweep {
+    /// Counts them; never writes.
+    DryRun,
+    /// Frees them.
+    Free,
+}
+
+/// The volume a sweep ran on, and its phases' times.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SweepStats {
+    /// Blocks per cluster.
+    pub spc: u32,
+    pub clusters: u32,
+    /// Bytes in one FAT.
+    pub fat_bytes: u32,
+    pub compare_ms: u32,
+    pub mark_ms: u32,
+    pub count_ms: u32,
+}
+
+/// A sweep that ran to its end.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Swept {
+    pub lost: u32,
+    /// 0 in `DryRun`.
+    pub freed: u32,
+    /// FAT 2's one differing sector was (in `DryRun`: would be) copied
+    /// from FAT 1.
+    pub healed: bool,
+    pub stats: SweepStats,
+}
+
+/// Why a sweep stopped before writing anything.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Doubt {
+    /// FAT 2 differs from FAT 1 in more than one sector, or the one
+    /// differing sector sends a reached cluster two ways.
+    FatsDiffer,
+    /// A directory block or a FAT sector didn't read.
+    Unreadable,
+    /// A directory's chain or entries are malformed.
+    DirBroken,
+    /// A file's chain breaks, or is shorter than its length.
+    FileShort,
+    /// A cluster reached twice.
+    CrossLinked,
+    /// Deeper than `MAX_DEPTH`, or more than `MAX_DIRS` directories.
+    TooDeep,
+    /// More clusters than the bitmap's bits.
+    NoRoom,
+    /// The card timed out, left, or was swapped.
+    Card(StoreError),
+}
+
+impl Doubt {
+    /// The word `status` prints.
+    pub fn word(self) -> &'static str {
+        match self {
+            Doubt::FatsDiffer => "fats-differ",
+            Doubt::Unreadable => "unreadable",
+            Doubt::DirBroken => "dir-broken",
+            Doubt::FileShort => "file-short",
+            Doubt::CrossLinked => "cross-linked",
+            Doubt::TooDeep => "too-deep",
+            Doubt::NoRoom => "no-room",
+            Doubt::Card(StoreError::NoCard) => "no-card",
+            Doubt::Card(StoreError::Timeout) => "timeout",
+            Doubt::Card(StoreError::VolumeChanged(_)) => "card-changed",
+            Doubt::Card(StoreError::Unsupported(_)) => "unsupported",
+            // The sweep's read-only phases asked to write: a bug.
+            Doubt::Card(StoreError::ReadOnly) => "write-refused",
+            Doubt::Card(_) => "card-error",
+        }
+    }
+}
+
+/// What a boot's sweep ended with.
+pub type SweepSeen = Result<Swept, (Doubt, SweepStats)>;
 
 /// A `Store` whose operations' time can be capped: the console's `put`
 /// holds each to what is left of its own deadline.

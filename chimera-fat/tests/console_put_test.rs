@@ -14,7 +14,7 @@ use chimera_core::console::{
     answer, put,
 };
 use chimera_core::name::Name;
-use chimera_core::project::test_support::full;
+use chimera_core::project::test_support::full_dense;
 use chimera_core::project::{
     Project, ProjectDecoder, encode_new_project, encode_project, list_projects, project_file,
 };
@@ -28,7 +28,7 @@ use chimera_fat::FatStore;
 use chimera_hal::store::{ByteSink, Dir, FileName, Files, Store, StoreError, VolumeId};
 use chimera_hal::{FB_SIZE, Ms};
 use image::{Cut, CutDisk, RamDisk, fat_check, fat16, with_clusters};
-use probe::{Probed, Sink, log, probed};
+use probe::{Probed, Sink, log, probed, swept_clean};
 use std::collections::VecDeque;
 use std::rc::Rc;
 
@@ -185,9 +185,9 @@ fn project_bytes(name: &str, g: u32) -> Vec<u8> {
     file_of(name, g, &mut |w| encode_new_project(w))
 }
 
-/// A project with a full pool: about 130 KB.
+/// A project with a full, dense pool: about 60 KB.
 fn big_project_bytes(name: &str, g: u32) -> Vec<u8> {
-    let (p, _) = full();
+    let (p, _) = full_dense();
     file_of(name, g, &mut |w| encode_project(&p, w))
 }
 
@@ -438,7 +438,11 @@ fn bad_lines_are_refused() {
 fn a_put_past_the_deadline_times_out() {
     // 0.6 ms a byte: each block in time, the whole file past 30 s.
     let body = big_project_bytes("AVRIL 14", 1);
-    assert!(lines(&body).len() as u64 * 600 > u64::from(PUT_DEADLINE_MS) * 1_000);
+    assert!(
+        lines(&body).len() as u64 * 600 > u64::from(PUT_DEADLINE_MS) * 1_000,
+        "{} B",
+        body.len()
+    );
     fails_draining(put_line(PATH, &body), &lines(&body), 600, "timeout", false);
 }
 
@@ -731,6 +735,8 @@ fn a_power_cut_at_any_write_keeps_a_generation() {
                 || got == Some(("AVRIL 14".into(), Generation::new(7))),
             "{what}: {got:?}"
         );
+        swept_clean(&what, &slot, &slot.inner);
+        assert_eq!(loads(&mut probed(&slot)), got, "{what}: swept");
     }
     let new_clusters = body.len().div_ceil(512);
     assert!(most_lost <= new_clusters, "{most_lost} lost");

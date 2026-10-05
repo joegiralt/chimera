@@ -698,7 +698,7 @@ fn memory_pages(
 /// before. A slot a Part names is left as it is.
 #[inline(never)]
 fn time_project_crc(project: &mut Project) -> u32 {
-    let mut filled = 0u32;
+    let mut filled = 0u128;
     for s in SlotId::ALL {
         if project.pool().get(s).is_some() || !project.users(s).is_empty() {
             continue;
@@ -709,7 +709,9 @@ fn time_project_crc(project: &mut Project) -> u32 {
             _ => factory_sound(i % FACTORY_LEN),
         };
         let sound = sound.unwrap_or_else(|| Sound::init(EngineType::Modal));
-        project.pool_store(s, sound);
+        project
+            .pool_store(s, &sound)
+            .expect("NEW and sparse copies fit the arena");
         filled |= 1 << i;
     }
     let mut cycles = 0u32;

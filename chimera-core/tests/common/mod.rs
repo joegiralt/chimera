@@ -594,3 +594,20 @@ pub fn at_model_level(mut out: Vec<f32>, mode: ResonatorMode) -> Vec<f32> {
 
 #[allow(unused_imports)] // each test binary uses some of these
 pub use chimera_core::scope::peak;
+
+/// xorshift64: the same draws every run. `chimera-fat`'s test copy can't be
+/// imported here.
+pub struct XorShift(pub u64);
+
+impl XorShift {
+    pub fn next_u32(&mut self) -> u32 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        (self.0 >> 32) as u32
+    }
+
+    pub fn below(&mut self, n: usize) -> usize {
+        self.next_u32() as usize % n
+    }
+}

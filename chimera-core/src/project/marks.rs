@@ -5,7 +5,9 @@
 use crate::preset::Sound;
 use crate::storage::sound_crc;
 
-use super::{Origin, Part, PartFrom, PartId, PartSet, PartSource, Pool, Project, SlotId};
+use super::arena::Cost;
+use super::pool::entry_len;
+use super::{Origin, Part, PartFrom, PartId, PartSet, PartSource, Pool, PoolFull, Project, SlotId};
 use super::{TemplateCrc, project_crc};
 
 /// A Part against its slot: `Edited` is `*`, `Stale` is `◦`.
@@ -27,7 +29,7 @@ pub fn part_status(part: &Part, pool: &Pool) -> PartStatus {
             crc,
         } => (slot, generation, crc),
     };
-    if pool.get(slot).is_some_and(|s| part.sound.bits_eq(s)) {
+    if pool.get(slot).is_some_and(|s| s.matches(&part.sound)) {
         PartStatus::Clean
     } else if pool.generation(slot) == generation || sound_crc(&part.sound) != crc {
         PartStatus::Edited
@@ -170,31 +172,58 @@ impl PartAction {
     }
 }
 
-/// At most three, in menu order.
+/// At most three, in menu order, with what they were weighed by.
 pub struct PartActions {
     items: [Option<PartAction>; 3],
+    status: PartStatus,
+    save_needs: Cost,
 }
 
 impl PartActions {
     pub fn iter(&self) -> impl Iterator<Item = PartAction> + '_ {
         self.items.iter().flatten().copied()
     }
+
+    /// The Part's status as they were offered against it.
+    pub fn status(&self) -> PartStatus {
+        self.status
+    }
+
+    /// What the Part's save takes from the gap, offered or not: over its
+    /// slot when it is Edited from one, else a whole new slot.
+    pub fn save_needs(&self) -> Cost {
+        self.save_needs
+    }
 }
 
 /// What applies to `part` now (§ Copy rules). A Stale Part never offers
-/// `OverSlot`: that would undo the other Part's save.
+/// `OverSlot`: that would undo the other Part's save. An offer that
+/// can't apply isn't made (ADR 0043): a save that won't fit is no save.
 pub fn part_actions(p: &Project, part: PartId) -> PartActions {
     let x = p.part(part);
     let status = part_status(x, &p.pool);
     let crc = sound_crc(&x.sound);
-    let free = p.pool.first_free().map(PartActionKind::NewSlot);
+    // Counted once: every save below weighs the same bytes.
+    let len = entry_len(&x.sound);
+    let new_needs = Cost::of(len);
+    let free = p
+        .pool
+        .first_free()
+        .filter(|_| p.pool.fits(new_needs))
+        .map(PartActionKind::NewSlot);
     let filled = |s: SlotId| p.pool.get(s).is_some().then_some(PartActionKind::Revert(s));
-    let kinds = match (status, x.origin) {
+    let (kinds, save_needs) = match (status, x.origin) {
         (PartStatus::Edited, Origin::Slot { slot, .. }) => {
-            [Some(PartActionKind::OverSlot(slot)), free, filled(slot)]
+            let over = p.pool.needs_len(slot, len);
+            let kinds = [
+                p.pool.fits(over).then_some(PartActionKind::OverSlot(slot)),
+                free,
+                filled(slot),
+            ];
+            (kinds, over)
         }
-        (PartStatus::Stale(s), _) => [filled(s), free, None],
-        (PartStatus::Clean | PartStatus::Edited, _) => [free, None, None],
+        (PartStatus::Stale(s), _) => ([filled(s), free, None], new_needs),
+        (PartStatus::Clean | PartStatus::Edited, _) => ([free, None, None], new_needs),
     };
     PartActions {
         items: kinds.map(|k| {
@@ -206,39 +235,48 @@ pub fn part_actions(p: &Project, part: PartId) -> PartActions {
                 crc,
             })
         }),
+        status,
+        save_needs,
     }
 }
 
-/// The action no longer applies: its Part's status, Origin or Sound changed,
-/// its new slot filled, or its revert slot emptied.
+/// Why a Part action didn't run.
 #[derive(Debug, PartialEq)]
-pub struct ActionGone;
+pub enum ActionRefused {
+    /// It no longer applies: its Part's status, Origin or Sound changed,
+    /// its new slot filled, or its revert slot emptied.
+    Gone,
+    /// The Sound won't fit the pool's free bytes.
+    Full(PoolFull),
+}
 
 impl Project {
     /// Ok: the other users of the slot that now derive Stale (as `save_part_to`).
-    pub fn apply_part_action(&mut self, a: PartAction) -> Result<PartSet, ActionGone> {
+    pub fn apply_part_action(&mut self, a: PartAction) -> Result<PartSet, ActionRefused> {
         self.bump();
         let x = self.part(a.part);
         if x.origin != a.origin
             || part_status(x, &self.pool) != a.status
             || sound_crc(&x.sound) != a.crc
         {
-            return Err(ActionGone);
+            return Err(ActionRefused::Gone);
         }
         match a.kind {
-            PartActionKind::OverSlot(s) => Ok(self.save_part_to(a.part, s)),
+            PartActionKind::OverSlot(s) => {
+                self.save_part_to(a.part, s).map_err(ActionRefused::Full)
+            }
             PartActionKind::NewSlot(s) if self.pool.get(s).is_none() => {
-                Ok(self.save_part_to(a.part, s))
+                self.save_part_to(a.part, s).map_err(ActionRefused::Full)
             }
             PartActionKind::Revert(s) => {
                 let src = PartSource {
                     part: a.part,
                     from: PartFrom::Slot(s),
                 };
-                self.load_part(src).map_err(|_| ActionGone)?;
+                self.load_part(src).map_err(|_| ActionRefused::Gone)?;
                 Ok(PartSet::EMPTY)
             }
-            PartActionKind::NewSlot(_) => Err(ActionGone),
+            PartActionKind::NewSlot(_) => Err(ActionRefused::Gone),
         }
     }
 

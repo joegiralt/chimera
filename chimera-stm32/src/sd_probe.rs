@@ -6,8 +6,8 @@
 use core::fmt::Write as _;
 use core::ops::ControlFlow;
 
-use chimera_core::hw::{AXI_SRAM, VOICE_RAM_BUDGET};
-use chimera_core::instrument::{AXI_RESIDENT, AudioShared, Instrument};
+use chimera_core::hw::VOICE_RAM_BUDGET;
+use chimera_core::instrument::{AudioShared, Instrument};
 use chimera_core::preset::{Performance, Sound};
 use chimera_core::project::Pool;
 use chimera_core::triple::TripleBuffer;
@@ -338,7 +338,15 @@ fn sizes<D: ChimeraDisplay>(c: &mut Console<D>) {
         "AUDIO3 {}",
         size_of::<TripleBuffer<AudioShared>>()
     ));
-    c.line(format_args!("AXI FREE {}", AXI_SRAM - AXI_RESIDENT));
+    // SAFETY: linker symbols whose addresses are the end of AXI statics
+    // and the end of AXI (axi_margin.x); never read.
+    unsafe extern "C" {
+        static __sheap: u8;
+        static AXI_END: u8;
+    }
+    let sheap = core::ptr::addr_of!(__sheap) as usize;
+    let end = core::ptr::addr_of!(AXI_END) as usize;
+    c.line(format_args!("AXI FREE {}", end - sheap));
     c.line(format_args!(
         "VOICE FREE {}",
         VOICE_RAM_BUDGET - size_of::<Instrument>()

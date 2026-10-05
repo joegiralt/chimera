@@ -445,7 +445,7 @@ fn part_snap_default_is_neutral() {
     assert_eq!((d.snap, d.held), (LiveSnap::Off, Held::Stay));
     // A whole PART block, less ids 8 and 9.
     let mut buf = chimera_core::storage::RecordBuf::new();
-    encode_block(BlockRef::Part, &d, &mut buf);
+    encode_block(BlockRef::Part, &d, None, &mut buf);
     let old: Vec<u8> = {
         let b = buf.as_slice();
         let mut v = vec![b[0]];
