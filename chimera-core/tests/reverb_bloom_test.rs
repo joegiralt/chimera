@@ -190,17 +190,8 @@ fn reference(e: &mut Bloom, p: &ReverbParams, x: &[f32]) -> (Vec<f32>, Vec<f32>)
     let k = knobs_120(p);
     let (mut l, mut r) = (Vec::new(), Vec::new());
     let (mut bl, mut br) = ([0.0f32; HALF], [0.0; HALF]);
-    for c in x.chunks_exact(HALF) {
-        let u: [f32; HALF] = c.try_into().unwrap();
-        e.run_reference(
-            &mut arena,
-            Some(&mut lines),
-            false,
-            &u,
-            &k,
-            &mut bl,
-            &mut br,
-        );
+    for u in x.as_chunks::<HALF>().0 {
+        e.run_reference(&mut arena, Some(&mut lines), false, u, &k, &mut bl, &mut br);
         l.extend_from_slice(&bl);
         r.extend_from_slice(&br);
     }
