@@ -259,7 +259,8 @@ code 23, ident `"TAPE"`, ADR 0055).
 
 ## Consequences
 - A third engine at about 10 KB of flash (leaving about 87 KB) and about
-  2 KB of AXI. **D2: 448 B** for the voices' `played` snapshots. The engine
+  3 KB of AXI (the params block's snapshot copies alone measure 2 976 B).
+  **D2: 384 B** (measured) for the voices' `played` snapshots. The engine
   state itself fits the existing slot.
 - Six one-second 24 kHz sources don't fit beside NEW. At 16 kHz, or at
   0.7 s each, they do. A 16-frame transwave costs 22 % of the meter, and six

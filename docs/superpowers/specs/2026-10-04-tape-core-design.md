@@ -137,7 +137,7 @@ pub struct TapeEngine {
 
 - **The voice calls TAPE as it calls the others,** with a context in place of today's bare `&mut SymPool`: `EngineCtx { sym: &mut SymPool, src: &SourceTableView }`. ALGO and MODAL ignore `src`.
 - **`TapeEngine` is about 200 B.** It sits in an `EngineSlot` sized by `ModalEngine`, so the engine adds nothing to D2. A test pins `size_of::<TapeEngine>() < size_of::<ModalEngine>()`.
-  - **D2 still grows by 448 B:** `ParamSnapshot` gains `TapeEngineParams` (about 56 B), and each of the eight voices keeps a `played` snapshot. It is measured against `VOICE_CHAIN_BYTES` at build step 3.
+  - **D2 still grows by 384 B (measured, TAPE Task 3):** `ParamSnapshot` gains `TapeEngineParams` (48 B), and each of the eight voices keeps a `played` snapshot. AXI's `.bss` grows by 2 976 B for the other snapshot copies; DTCM is unchanged. It is measured against `VOICE_CHAIN_BYTES` at build step 3.
 - **A note-on with no playable source is refused before voice allocation.** That covers no source picked, `SOURCE MISSING`, and TRANSWAVE on a source that isn't a `Transwave`.
   - The Instrument checks the Part's `SourceId` and its row before it asks the allocator.
   - So no voice is stolen and nothing fades, for a note that can't sound.
@@ -410,6 +410,7 @@ Host estimates, in the house manner (instructions × 1.46 × 1.1, as `ModalEngin
 - **Measured (TAPE Task 2), not estimated:** `SourceView::read` compiles to 96 instructions and `read_cycle` to 103, on `thumbv7em-none-eabihf` with `target-cpu=cortex-m7` at opt-level 2, as out-of-line functions. That includes about 8 for the call, the frame and two loads from the view, which inlining into a model's loop removes. The rows above split the measured `read`.
 - The first draft's 55 assumed one clamp instruction a tap and three word loads for four taps. A branch-free clamp is 5 on Thumb-2 (`qadd`, `bic`, `cmp`, `it`, `movlt`).
 - **The model rows below bill the measured 88-instruction head.** Build step 3's bench still replaces every bill (§ 10).
+- **Measured LOOP loop (TAPE Task 3):** `TapeEngine::render`'s inner loop is 103 instructions a sample with one head and 224 while a fade reads two. So the per-voice overhead is about 15 a head, not the 9 tabled below; LOOP's fade samples run about 40 instructions over its 185. The bills are left for the bench (§ 10) to replace.
 
 **Cache misses grow with `inc`.**
 - A 32 B line holds 21.3 packed samples.
@@ -574,7 +575,7 @@ All host-side (`just test`). Hardware waits for the ship flash.
 **Goldens (ADR 0011).** One per model, plus AGE 0.5 and TAPE 0.5 on LOOP. Each is 2 s of C3, C4 and C5 on synthetic sources built in the test: a saw with a noise burst at 24 and 8 kHz, and a 4-frame saw-to-square transwave. They lock the refactor, not the sound.
 
 **Memory, the pool and admission**
-- `size_of::<TapeEngine>() < size_of::<ModalEngine>()`, and `[Voice; MAX_VOICES]` still fits D2 (ADR 0013), with the 448 B of `played` snapshots.
+- `size_of::<TapeEngine>() < size_of::<ModalEngine>()`, and `[Voice; MAX_VOICES]` still fits D2 (ADR 0013), with the 384 B of `played` snapshots.
 - A TAPE voice's latched id sets its `sounding` bit, and the bit clears on the block after the voice ends.
 - **`gate_holds_tape_note_on`:** ADR 0087's gate test on a TAPE voice. Its first sample after the move equals the unmoved source's.
 - Retire never cuts a TAPE note.
@@ -644,7 +645,7 @@ TAPE's steps 1–3 can be built on the host beside that, against a boxed arena.
   - the strip's cache, 432 B;
   - the head atomics, 48 B;
   - the head cache, 512 B.
-- **D2: 448 B,** for the eight `played` snapshots. The engine state fits the slot MODAL already sizes.
+- **D2: 384 B,** for the eight `played` snapshots (measured). The engine state fits the slot MODAL already sizes.
 - **The arena:** the sources the user loads (§ 4).
 
 ## Owner questions
