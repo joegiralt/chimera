@@ -324,13 +324,15 @@ a certain direction."
 - **TRON** (code 6, the code held for it) is the Mellotron: it plays from
   START toward END while the key is held and never loops.
   - **The tape runs out** after SIZE's length, 0.25–8 s (8 by default),
-    counted as the head's **travel in source time**, so a note above ROOT
-    runs out sooner, as a varispeeded Mellotron does: `len / 2^((note·100 +
-    pitch − ROOT)/1200)` s of sound, wow included, capped by END.
+    of **sound at every pitch**, as each key of an M400 has its own strip
+    (owner, 2026-10-05). The head's travel scales with the pitch ratio, so
+    a note above ROOT reads more of the source and END may end it first.
   - Note-off fades the tape through a one-pole of DRAG's law, labelled
     FADE (10–500 ms, 32 ms by default).
   - In this core it plays `Plain` sources held whole, so an 8 s tape fits
-    the arena only at 8 or 12 kHz. Per-key zone sets and streaming are the
+    the arena only at 8 or 12 kHz. **The owner accepts low-rate RAM TRON
+    (8–12 kHz) until the streamed TRON exists** (2026-10-05). Per-key zone
+    sets and streaming are the
     same machine, later, under the streamed TRON's ADR; until then a
     `ZoneSet` on TRON is refused.
 - **Bills** (the house rule): ONESHOT and TRON about 190 each (LOOP's
@@ -342,7 +344,8 @@ a certain direction."
 - **From CHOMPI** (Chompi Club's tape and TEMPO firmware, MIT): **ideas
   only, no code ported or translated.** Taken, each built from its idea
   alone:
-  1. a **MUSICAL** step on PIT's PITCH (SNAP, every engine): fifth,
+  1. a **MUSICAL** step on PIT's PITCH (SNAP, on the shared PIT page, so
+     every engine, owner 2026-10-05): fifth,
      fourth, fifth, fourth, so two clicks are an octave;
   2. SCRUB's **jog**: the FINGER's encoder speed over a 1/8 s window moves
      POSITION, gliding to a stop through DRAG's one-pole, a tape stop;
@@ -352,7 +355,8 @@ a certain direction."
      and fits TAPE's +10: adopted;
   4. ONESHOT's sustain-off, and TEMPO's 16 equal slices of the window;
   5. **per-source memory**: each source the pool holds remembers a Part's
-     START, END, PITCH and FINE, in RAM (TAPE Task 17).
+     START, END, PITCH and FINE, in RAM only (TAPE Task 17); persisting it
+     is a later decision.
 
   Not taken: CHOMPI refusing END before START (ours reverses), its linear
   interpolation, and its double-size files.
@@ -400,10 +404,9 @@ a certain direction."
 - **Keep REVERSE as a model** (the first lineup). It duplicates LOOP's
   controls under another name, and a reversed STRETCH or one-shot would
   each want their own. Order is one rule for all four.
-- **TRON's tape counted in played time,** every key 8 s whatever its pitch
-  (the M400's strip per key). With one source transposed that is a tape
-  that speeds up without shortening; per-key zones will get it naturally,
-  each zone its own tape.
+- **TRON's tape counted in source travel,** a note above ROOT running out
+  sooner, as one varispeeded tape does. Rejected by the owner: every key
+  gets its 8 s, as on an M400, and per-key zones will keep that rule.
 - **A blank canvas:** every param on every model with generic labels. The
   owner's ruling above.
 - **Warble left for later.** It costs less than the capstan it replaces, so
