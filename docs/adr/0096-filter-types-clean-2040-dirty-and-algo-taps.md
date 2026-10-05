@@ -77,9 +77,14 @@ The owner also wants ALGO's OP 5 and OP 6 as audio-rate modulation sources. The 
     - Q, through QM.
     - The VCA, as a tap-VCA stage `1 − |a| + a·tap`, AM to ring, placed **before** the DC blocker so a self-correlated tap's DC is removed. The envelope VCA stays after the blocker.
     - FOLD: a FOLD tap makes the folder run (`stage_runs`) and is billed `FOLD_COST` when FOLD is otherwise off.
-  - **Where they may not go.** Never operator pitch or level; every other cell greys out with a hint.
+  - **Where they may not go.** Never operator pitch or level; every other cell is an X cell with a hint.
   - **Storage.** Taps live outside the matrix, in `ParamSnapshot.taps`, so `Voice::cost` sees them. They are stored as a record of 4-byte (jack, dest block, dest param, amount) entries, validated through `ValidAddr`, not as a positional blob.
   - **Rendering.** Op rows are copied per block into a stack buffer. Amounts are ramped per block. A FREQ or Q tap forces the moving, dividing path.
+- **The matrix is the only patch bay, and the single source of truth.**
+  - **Four permanent columns.** FREQ, Q, VCA and FOLD are permanent columns for every Sound and source. They are reserved in `ModState` (`fixed`, 36 B) outside `MAX_MOD_DESTS`'s 16 registry columns, rather than pinning 4 of the 16, so no patch loses a column. On load, routes to those four move into the fixed columns and free their registry slots, which keeps a full-16 patch whole. On disk they are ordinary route records.
+  - **Ten rows on ALGO.** OP5 and OP6 are two extra rows, 10 rows of 14 px in the same span, so the grid still has no vertical scroll. Their amounts are bipolar and stored in `TapRoutes`, but shown as matrix rows.
+  - **X cells.** Tap cells outside the four show a 5 × 5 px X in MID, take no amount, and on touch show `OP5 · AUDIO RATE: FREQ Q VCA FOLD ONLY` (ADR 0086).
+  - **One value.** FM3 and QM on the filter page are views of the matrix cells (jack, FREQ) and (jack, Q). Editing either place edits one value.
 - **Billing,** in the house manner:
   - Static probe counts (thumbv7em, cortex-m7, opt-level 2) × 1.46 × 1.1, + 12 per `vdiv`.
   - Today's LP24 is counted first. Steady paths are billed `max(0, that − old LP24)`, and each probe asserts 0 `vdiv` in its steady loop.

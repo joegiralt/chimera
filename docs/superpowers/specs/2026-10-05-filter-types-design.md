@@ -137,9 +137,10 @@
   - **Loading a patch that lacks them.** FM3 IN is taken from the existing → CUTOFF route that is neither ENV 1 nor NOTE, if exactly one exists; otherwise it defaults. QM IN is taken from the single existing → RES route if there is one; otherwise it defaults.
 - **On a non-ALGO Sound** a jack holding OP 5 or OP 6 shows, and acts as, its default source (LFO 1 or ENV 3). The stored tap stays inert and is kept, so it returns if the Sound goes back to ALGO (L-new-2).
 - **QM** is a route into RES (linear law, ADR 0010), read per block and ramped per sample. A tap reaches it per sample (§ 6).
+- **FM3 and QM are views of one matrix cell each,** like the Cascadia's jack plus slider: the jack (FM3 IN, QM IN) picks the cell's row, and the knob is that cell's bipolar amount. FM3 is (FM3 IN, FREQ) and QM is (QM IN, Q). Editing the knob or the cell in the matrix edits the same stored value; there is no second copy. **The matrix is the single source of truth** for every route, the taps included (§ 7). FREQ and Q are permanent columns, so these knobs never meet "matrix full".
 - **Hints (ADR 0086).**
   - MIX + MINUS on any route view of any type deletes that route. That covers FM1, FM2, FM3, QM, ENV AMT and KEYBD. The focus band then shows `MIX + MINUS DELETES THE ROUTE` (`mod_grid::DELETE`). ADR 0086's table gains this row (FLT and FLT › MOD, any route knob).
-  - The tap rows' greyed cells get their own hint (§ 6).
+  - The tap rows' X cells get their own hint (§ 7).
 
 #### LEVEL: attenuation, a transparent clipper and its LED (H1)
 
@@ -303,7 +304,7 @@ out = clamp(½ · ½·(m₁ + m₂), ±1)                 // m = the mode's outp
   - the 2040's fixed MODE;
   - the LED at 0, ½ and 1;
   - FM3 IN and QM IN after a repatch;
-  - the matrix with ALGO's tap rows (§ 6).
+  - the matrix with ALGO's tap rows and X cells (§ 7).
 
 ### 6. ALGO's audio-rate taps: OP 5 and OP 6
 
@@ -345,11 +346,7 @@ out = clamp(½ · ½·(m₁ + m₂), ±1)                 // m = the mode's outp
     - DIRTY applies it to `f`, which `sin` keeps near-linear, and clamps to the block's `f` bound.
     - NOTCH2 scales `G₁`'s `g`.
 - **Interaction with B1.** A FREQ or Q tap makes every block a moving block for that voice. CLEAN then divides `d` (and `d₂`) per sample; the 2040 divides `G` and `D`; NOTCH2 divides `G₁`. Those divides are part of the tap's bill.
-- **The matrix view.** On an ALGO Sound the MTX grid shows two more rows, **OP5** and **OP6**, below the eight.
-  - Only the CUTOFF, RES, VCA and FOLD columns are live in those rows. A missing column is added on the first turn, as a route knob does.
-  - Every other cell in the tap rows is greyed. Touching one shows the hint `OP TAPS REACH FREQ · Q · VCA · FOLD`, a new row in ADR 0086's table.
-  - On FLT › MOD, FM3 IN and QM IN offer OP 5 and OP 6 on ALGO. The FM3 or QM knob then edits the tap's amount.
-  - On a non-ALGO Sound the tap rows are hidden, and stored taps are inert.
+- **The matrix view.** Taps are patched in the matrix like every other source (§ 7). On FLT › MOD, FM3 IN and QM IN also offer OP 5 and OP 6 on ALGO, and the FM3 or QM knob is then a view of the tap's cell. On a non-ALGO Sound the tap rows are hidden, and stored taps are inert.
 - **Gating and billing (M-new-3).**
   - A FOLD tap counts as a route in `Voice::stage_runs`, so the folder runs. Its bill includes `FOLD_COST` (45) when FOLD would otherwise be off.
   - A VCA tap is its own multiply in the tap-VCA stage, before the DC blocker, and is billed as such. ALGO's no-route VCA path is untouched.
@@ -357,6 +354,46 @@ out = clamp(½ · ½·(m₁ + m₂), ±1)                 // m = the mode's outp
   - `Jack` has codes 0–9 (ModSource 0–7, OP 5 = 8, OP 6 = 9) and idents (the ModSource idents, then "OP5" and "OP6"), pinned in the codes fixture with `ModSource`'s own `DiskCode` (M4).
   - `ModSource` is unchanged.
   - `TapRoutes` is a new record (above).
+
+### 7. The matrix is the only patch bay
+
+Owner ruling (2026-10-05): every patch, the taps included, is made and seen in the matrix.
+
+#### Four permanent columns
+
+- **The columns.** Every Sound's matrix has four permanent destination columns, always shown first: **FREQ** (filter CUTOFF), **Q** (RES), **VCA** (OUT VCA) and **FOLD** (FOLD amount). They exist for every source, not only taps, so opening the matrix always shows the filter at hand.
+- **Reserved, outside the registry.** `ModState` gains `fixed: [[i8; 4]; MAX_MOD_SOURCES]` and `fixed_present: [u8; 4]`, 36 B. These four columns don't count against `MAX_MOD_DESTS` (16, registry-assigned). The registry keeps its 16 columns for every other destination. Columns become 4 + up to 16.
+- **Why reserved and not "the first 4 of 16, pinned".**
+  - Pinning would take 4 of a full patch's 16 columns, evicting routes.
+  - Reserving evicts nothing and frees registry slots: CUTOFF's default column (`Sound::init`'s ENV 1, LFO 1, NOTE → CUTOFF) and any RES, VCA or FOLD columns move into the fixed four.
+  - The cost is 36 B per `ModState`, about 2 KB of AXI across the pool, the triple buffer and the Performance.
+  - The block sum adds 8 × 4 multiply-adds a block (under 0.1 cycle a sample). The VCA rule (ADR 0035) and the lifetime rule read the VCA column's presence bits from `fixed_present`.
+- **Existing patches, full registries included.** On load, a stored route into CUTOFF, RES, OUT VCA or FOLD goes into the matching fixed column, with its amount and presence. The registry entry it used is dropped, so a patch that used all 16 registry columns comes back with as many free as it had routes to those four. No route is lost, and none needs to fit anywhere new. On save, fixed-column routes are written as ordinary route records with their destination address, so the disk format gains no field.
+- **The grid.** It is 4 fixed + N registry columns, scrolling horizontally as today (`VISIBLE_COLS` 5). `inert_dests` widens from `u16` to `u32`, and its assert follows.
+
+#### Ten rows on ALGO
+
+- **Rows.** On an ALGO Sound the grid shows **OP5** and **OP6** as two extra source rows, after the eight (`ROW_ORDER` plus 8 and 9). The rows are a view: tap amounts stay in the `TapRoutes` records (§ 6), and the grid reads and writes them through the cell API, so a tap cell turns, primes and deletes like any other.
+- **Geometry.** The grid keeps "every source on screen, no vertical scroll". Today 8 rows × `GRID_ROW_H` 17 fill `GRID_ROW0_Y` 50 to `GRID_BOTTOM` 190. On ALGO the row height becomes **14**, so 10 × 14 = 140 fills the same span, and `CELL_INSET` 4 leaves a 10 px cell. Other engines keep 8 rows of 17, and the readout, amount, hint and stats lines don't move.
+- **Amounts.** Each tap cell has a bipolar amount, −100..+100 %: plus or minus gives attenuation and inversion, as every cell does.
+
+#### X cells
+
+- **Which cells.** Every OP5 or OP6 cell outside the four fixed columns is an **X cell**: an impossible patch, since taps reach only FREQ, Q, VCA and FOLD.
+- **The glyph** (screen spec). Centred in the cell, a 5 × 5 px X drawn as two 1 px diagonals in `theme::MID`, with no amount bar and no fill. It is distinct from an absent route's dash and from a dimmed cell. It is drawn by one helper, `draw::x_mark`.
+- **An X cell can't take an amount.** Its encoder turn, MIX + PLUS and MIX + MINUS are ignored.
+- **Touched,** it shows the hint `OP5 · AUDIO RATE: FREQ Q VCA FOLD ONLY` (`OP6 · …` on OP6's row) in the focus band, through `ui::hint` (ADR 0086). That is a new row in 0086's table ("MOD MATRIX, an X cell"). The hint test holds it within 216 px; if it overflows, it is shortened to `OP5: FREQ Q VCA FOLD ONLY`.
+
+#### Goldens and tests
+
+- **Screen goldens:**
+  - MTX on ALGO: 10 rows, the four fixed columns, X cells across the registry columns, and the cursor on an X cell showing its hint;
+  - MTX on MODAL: 8 rows, the four fixed columns.
+- **Pure tests:**
+  - an X cell refuses every edit;
+  - FM3, QM, FM1 and FM2 on FLT and the same cells in MTX read and write one value;
+  - loading a full-registry patch routing CUTOFF, RES, VCA and FOLD keeps every route and frees four registry columns;
+  - a save and reload round-trips the fixed columns.
 
 ## Cost
 
