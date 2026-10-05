@@ -228,6 +228,19 @@ impl Tap {
     }
 }
 
+impl Tap {
+    /// The wow's rate, turns a tick.
+    pub fn wow_rate(&self) -> f32 {
+        self.wow_rate
+    }
+
+    /// A voice's wow at its own rate, turns a tick: its phase runs on, so
+    /// the pitch stays continuous.
+    pub fn set_wow_rate(&mut self, rate: f32) {
+        self.wow_rate = rate;
+    }
+}
+
 /// TAPE's depths at 1, cents (spec 2026-10-04 § 2).
 pub const TAPE_WOW_CENTS: f32 = 25.0;
 pub const TAPE_FLUTTER_CENTS: f32 = 8.0;

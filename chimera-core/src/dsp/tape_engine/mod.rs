@@ -33,6 +33,7 @@ use crate::dsp::algo::math::{clampf, exp2};
 use crate::dsp::delay::{Tap, Transport};
 use crate::dsp::ease::Ramp;
 use crate::dsp::glide::Glide;
+use crate::dsp::xorshift32;
 use age::Age;
 use heads::{
     Bounds, Fade, Ghost, Head, Plan, Turn, at, plan, shortest, window_end_min, window_start,
@@ -89,16 +90,13 @@ pub fn tape_runs(stored: f32, routed: bool) -> bool {
     stored > 0.0 || routed
 }
 
-/// Voice `s`'s wow and flutter rates, as a share of the transport's: 5 to
-/// 10 % off, so voices drift apart rather than hold their phases. The sign
-/// and size follow the seed's wow phase (`Transport::seeded`), so seeds
-/// whose phases sit either side of 0 run opposite ways, fastest apart.
-pub fn wow_detune(s: u32) -> f32 {
-    let x = s as f32 * 0.618_034;
-    let u = x - libm::floorf(x);
-    let off = 0.05 + 0.1 * libm::fabsf(u - 0.5);
-    if u >= 0.5 { 1.0 + off } else { 1.0 - off }
-}
+/// The wow's rate at the block rate, turns a tick; each note draws its own
+/// within ±`WOW_SPREAD` of it.
+const WOW_RATE: f32 = crate::dsp::delay::WOW_HZ / BLOCK_RATE;
+/// Each note's wow runs up to 10 % off the transport's (TAPE Task 9 fix
+/// round 2), so voices' wows never lock: their phases random-walk note by
+/// note, as reels that never quite run at one speed.
+pub const WOW_SPREAD: f32 = 0.1;
 
 const _: () = assert!(NOTE_ON_RAMP as usize <= BLOCK_SIZE);
 const _: () = assert!(read::MIN_SOURCE_FRAMES == MIN_LOOP_FRAMES);
@@ -293,6 +291,8 @@ pub struct TapeEngine {
     /// at depth 1; its speed deviation this block, cents.
     wow: Transport,
     tap: Tap,
+    /// The voice's own draws: each note's wow rate.
+    rng: u32,
     cents: f32,
     /// AGE: this voice's wear.
     age: Age,
@@ -365,6 +365,7 @@ impl TapeEngine {
             active: false,
             wow: Transport::new(),
             tap: Tap::speed_cents(1.0, BLOCK_RATE),
+            rng: 0x510E_527F,
             cents: 0.0,
             age: Age::new(),
             #[cfg(any(test, feature = "test-support"))]
@@ -380,7 +381,7 @@ impl TapeEngine {
     /// hiss and dropouts, from `s` (the voice's index).
     pub fn seed(&mut self, s: u32) {
         self.wow = Transport::seeded(s);
-        self.tap = Tap::speed_cents(1.0, BLOCK_RATE / wow_detune(s));
+        self.rng = (s.wrapping_mul(0x9E37_79B9) ^ 0x510E_527F) | 1;
         self.age.seed(s);
     }
 
@@ -411,6 +412,9 @@ impl TapeEngine {
         self.root = p.root;
         self.slide = Glide::new(1.0, 1.0);
         self.inc.hold();
+        // This note's wow rate, ±`WOW_SPREAD`: one draw, the phase runs on.
+        let d = xorshift32(&mut self.rng) as i32 as f32 * (WOW_SPREAD / 2_147_483_648.0);
+        self.tap.set_wow_rate(WOW_RATE * (1.0 + d));
         self.mac = Macros::of(p);
         self.first = true;
         self.walk = 0.0;
@@ -636,6 +640,12 @@ impl TapeEngine {
         self.stretch.clock()
     }
 
+    /// This note's wow rate, Hz: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn wow_hz(&self) -> f32 {
+        self.tap.wow_rate() * BLOCK_RATE
+    }
+
     /// The wear: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn age(&self) -> &Age {
@@ -667,17 +677,23 @@ impl TapeEngine {
         } else {
             self.mac.ease(&to);
         }
-        for (x, t) in [(&mut self.mac.tape, to.tape), (&mut self.mac.age, to.age)] {
-            if t == 0.0 && *x < MACRO_SETTLE {
-                *x = 0.0;
-            }
-        }
-        // Eased to 0, TAPE's cents shrink with it; at 0 the transport rests.
+        // Eased to 0, TAPE's cents shrink with it; stored at 0 and under
+        // `MACRO_SETTLE` it is 0 and the transport rests. AGE likewise. Each
+        // settle sits behind its stage's own test, so a stage at rest pays
+        // only that test.
         self.cents = if self.mac.tape > 0.0 {
-            self.transport()
+            if to.tape == 0.0 && self.mac.tape < MACRO_SETTLE {
+                self.mac.tape = 0.0;
+                0.0
+            } else {
+                self.transport()
+            }
         } else {
             0.0
         };
+        if self.mac.age > 0.0 && to.age == 0.0 && self.mac.age < MACRO_SETTLE {
+            self.mac.age = 0.0;
+        }
         self.slide.tick();
         if self.model == TapeModel::Transwave {
             let target = clampf(

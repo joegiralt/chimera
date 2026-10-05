@@ -12,7 +12,6 @@ use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::stretch::WRAP_SAMPLES;
 use chimera_core::dsp::tape_engine::{
     INC_MAX, MIN_PASS_SAMPLES, NOTE_ON_RAMP, TapeEngine, TapeEngineParams, TapeModel, tape_runs,
-    wow_detune,
 };
 use chimera_hal::BLOCK_SIZE;
 use common::XorShift;
@@ -168,10 +167,9 @@ fn wow_depth_bounds() {
         assert!(peak <= 33.0, "{model:?}: {peak} cents");
         assert!(peak >= 20.0, "{model:?}: {peak} cents");
         // The wow, ±25 cents at 0.5 Hz, and the capstan, half the ±8 of
-        // flutter at 9 Hz, each at seed 1's detune: each its own line in the
-        // deviation's spectrum.
-        let k = wow_detune(1) as f64;
-        let (wow, capstan) = (line(&dev, 0.5 * k), line(&dev, 9.0 * k));
+        // flutter at 9 Hz, the wow at this note's rate: each its own line in
+        // the deviation's spectrum.
+        let (wow, capstan) = (line(&dev, e.wow_hz() as f64), line(&dev, 9.0));
         assert!((wow - 25.0).abs() <= 2.0, "{model:?}: wow {wow} cents");
         assert!(
             (capstan - 4.0).abs() <= 1.0,
@@ -193,11 +191,9 @@ fn line(curve: &[(f64, f64)], hz: f64) -> f64 {
     2.0 * (re * re + im * im).sqrt() / n as f64
 }
 
-/// Each voice its own transport: seeds 1 and 2 (phases 137° apart), and 0
-/// and 8 (20° apart, their wows detuned −10 % and +9.4 % so they drift
-/// apart). Over 8 s the deviation curves correlate under ½ either way, and
-/// so does the flutter's noise alone: the deviation's 3–7 Hz band, between
-/// the wow and the capstan.
+/// Each voice its own transport: seeds 1 and 2 start with their wows 137°
+/// apart, and the flutter's noise alone (the deviation's 3–7 Hz band,
+/// between the wow and the capstan) correlates under ½ over 8 s.
 #[test]
 fn voices_have_own_transport() {
     let model = TapeModel::Loop;
@@ -247,20 +243,69 @@ fn voices_have_own_transport() {
     let (a, b) = (curve(1), curve(2));
     let r = correlation(&a[..1_000], &b[..1_000]);
     assert!(r < 0.0, "seeds 1 and 2 start together: {r}");
-    for (s, t) in [(1, 2), (0, 8)] {
-        let (a, b) = (curve(s), curve(t));
-        // Each moves: a transport, not a flat line.
-        for c in [&a, &b] {
-            assert!(c.iter().fold(0.0f64, |m, x| m.max(x.abs())) > 10.0);
-        }
-        let r = correlation(&a, &b);
-        assert!(r.abs() < 0.5, "seeds {s} and {t} correlate {r}");
-        let r = band_r(&band(&a), &band(&b));
-        assert!(
-            r.abs() < 0.5,
-            "seeds {s} and {t}: flutter noise correlates {r}"
-        );
+    // Each moves: a transport, not a flat line.
+    for c in [&a, &b] {
+        assert!(c.iter().fold(0.0f64, |m, x| m.max(x.abs())) > 10.0);
     }
+    let r = band_r(&band(&a), &band(&b));
+    assert!(r.abs() < 0.5, "seeds 1 and 2: flutter noise correlates {r}");
+}
+
+/// Wows never lock: each note draws its voice's wow rate within ±10 %, its
+/// phase running on, so phases random-walk note by note. Eight voices
+/// (seeds 0–7), twenty 8 s notes each: the pairs' mean correlation is near
+/// 0, and no pair sits above +0.7 on more than 12 of 20 notes (by chance a
+/// pair does on about a quarter, 5; a locked pair on all 20).
+#[test]
+fn wows_never_lock() {
+    let model = TapeModel::Loop;
+    let held = source(model, 9.0);
+    let v = SourceView::strict(&held).unwrap();
+    let (note, f0) = note_hz(model);
+    let p = TapeEngineParams {
+        tape: 1.0,
+        ..params(model)
+    };
+    let mut voices: Vec<TapeEngine> = (0..8)
+        .map(|s| {
+            let mut e = fresh();
+            e.seed(s);
+            e
+        })
+        .collect();
+    let (notes, pairs) = (20, 28);
+    let (mut sum, mut above) = (0.0, vec![0; pairs]);
+    let mut rates = Vec::new();
+    for _ in 0..notes {
+        let curves: Vec<Vec<f64>> = voices
+            .iter_mut()
+            .map(|e| {
+                e.note_on(note, &p, &v, SR);
+                rates.push(e.wow_hz());
+                let y = play(e, &v, 8 * SR as usize / B, |_| p);
+                let dev = deviation(&y[NOTE_ON_RAMP as usize..], f0);
+                (1..790).map(|k| at(&dev, k as f64 * 0.01)).collect()
+            })
+            .collect();
+        let mut k = 0;
+        for i in 0..8 {
+            for j in i + 1..8 {
+                let r = correlation(&curves[i], &curves[j]);
+                sum += r;
+                above[k] += usize::from(r > 0.7);
+                k += 1;
+            }
+        }
+    }
+    // Each note's rate within ±10 % of 0.5 Hz, and they differ.
+    assert!(rates.iter().all(|&r| (0.45..=0.55).contains(&r)));
+    let spread =
+        rates.iter().fold(0.0f32, |m, &r| m.max(r)) - rates.iter().fold(1.0f32, |m, &r| m.min(r));
+    assert!(spread > 0.08, "rates spread {spread} Hz");
+    let mean = sum / (notes * pairs) as f64;
+    let most = *above.iter().max().unwrap();
+    assert!(mean.abs() < 0.1, "mean r {mean}");
+    assert!(most <= 12, "a pair above +0.7 on {most} of {notes} notes");
 }
 
 #[test]
