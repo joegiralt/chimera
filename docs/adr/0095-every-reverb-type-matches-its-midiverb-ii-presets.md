@@ -199,8 +199,11 @@ the ban on 2026-10-05.
   - **The taps sum exactly,** as integers, and a crossfade adds w ×
     (to − from) for the moving lines' taps only.
   - **DIFFUSE's g, the dampers and the reflection step once a block** on
-    their 20 ms ease, as BURST's weights do. The stage gains and SMEAR
-    still ramp per sample.
+    their 20 ms ease, as BURST's weights do. SMEAR still ramps per sample.
+  - **The stage gains step once a block too** (fix round 1), on their
+    50 ms ease. At still knobs that is bit-identical; under SIZE toggling
+    every block (the bench's worst) the return differs from the per-sample
+    ramp by 62 dB SNR.
   - **The stage gains count the stage allpasses' slow modes:** each stage
     is (D + M·Φ) long for the RT60, with Φ = (1 + 4.8 g⁴)(1.37 − 0.37 k).
     Without it the 1 kHz RT60 ran 6–90 % long, more with DIFFUSE and at

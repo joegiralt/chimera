@@ -27,9 +27,7 @@ use crate::dsp::reverb::EngineKnobs;
 use crate::dsp::ring::{FULL_SCALE, RING_LEN};
 
 use super::arena::ReverbArena;
-use super::parts::{
-    Lines, XFADE, XFADE_INV, ap_f32, ease_k, one_pole, pair_in, pow2, segment, wrap,
-};
+use super::parts::{Lines, XFADE, XFADE_INV, ap_f32, ease_k, one_pole, pair_in, pow2, wrap};
 
 /// `$body` once per literal, `$k` that literal as a `const`: `ring.rs`'s.
 macro_rules! unroll {
@@ -359,8 +357,8 @@ pub struct Room {
     pre_goal: u16,
     tone: f32,
     /// The eased TONE coefficient, the stage allpasses' g, the damper's
-    /// coefficient, the reflection's (cos θ, sin θ) and the stage gains:
-    /// each block ramps from last block's.
+    /// coefficient, the reflection's (cos θ, sin θ) and the stage gains,
+    /// one step a block (TONE ramps across it).
     ta: f32,
     gs: f32,
     da: f32,
@@ -451,6 +449,26 @@ fn clip<const C: bool>(x: f32) -> f32 {
     } else {
         x
     }
+}
+
+/// Each access's slot at head `h` (mod `m`) into `base`, and how many
+/// samples from `len` run before any of them wraps: `parts::segment`, in
+/// place.
+#[inline(always)]
+fn bases<const N: usize>(
+    h: usize,
+    m: usize,
+    off: &[usize; N],
+    base: &mut [usize; N],
+    len: usize,
+) -> usize {
+    let mut len = len;
+    for j in 0..N {
+        let b = wrap(h + off[j], m);
+        len = len.min(m - b);
+        base[j] = b;
+    }
+    len
 }
 
 impl Room {
@@ -705,12 +723,12 @@ impl Room {
         if self.left == 0 && self.moving() {
             self.schedule();
         }
-        // TONE, the gains and SMEAR ramp from the block's start to its end;
-        // the stage allpasses' g, the dampers and the reflection step once
-        // a block on their 20 ms ease (ADR 0085, BURST as built: its
-        // weights). The eases: τ 50 ms for the gains, as QUAD's TIME; 20 ms
-        // the rest.
-        let (ta0, g0) = (self.ta, self.g);
+        // TONE and SMEAR ramp from the block's start to its end; the stage
+        // gains, the stage allpasses' g, the dampers and the reflection step
+        // once a block on their eases (ADR 0085, BURST as built: its
+        // weights; ADR 0095, ROOM v2 as built). The eases: τ 50 ms for the
+        // gains, as QUAD's TIME; 20 ms the rest.
+        let ta0 = self.ta;
         const K20: f32 = ease_k(0.02);
         const K50: f32 = ease_k(0.05);
         self.ease_to(k, K20, K50);
@@ -724,9 +742,7 @@ impl Room {
         let n = 1.0 / HALF as f32;
         let (mut ta, dta) = (ta0, (self.ta - ta0) * n);
         let (gs, da, (c, s)) = (self.gs, self.da, self.cs);
-        let mut g = g0;
-        let dg: [[f32; 2]; 4] =
-            core::array::from_fn(|l| core::array::from_fn(|s| (self.g[l][s] - g0[l][s]) * n));
+        let gb = self.g;
         // The crossfade's blend: the new read's share.
         let (mut w, dw) = if self.left > 0 {
             ((XFADE - self.left) as f32 * XFADE_INV, XFADE_INV)
@@ -754,13 +770,14 @@ impl Room {
         // more samples back (a stage delay or allpass at k 0.4), so no
         // stage reads what this block writes, and the taps, read last, see
         // every write before them. Each stage's loop keeps its few bases in
-        // registers; one loop over every access spilled them. Each ramp
-        // advances per sample as before: the arithmetic is the sample
-        // loop's, in its order.
+        // registers; one loop over every access spilled them. The
+        // arithmetic is the sample loop's, in its order.
+        let (mut wv, mut dv, mut ov) = ([0.0f32; HALF], [0.0f32; HALF], [0.0f32; HALF]);
+        let (mut b, mut fb) = ([0usize; ACCESS], [0usize; F_ACCESS]);
         let mut i = 0;
         while i < HALF {
-            let (b, len) = segment(h, SLOTS, &off_i, HALF - i);
-            let (fb, len) = segment(hf, FSLOTS, &F_OFFSETS, len);
+            let len = bases(h, SLOTS, &off_i, &mut b, HALF - i);
+            let len = bases(hf, FSLOTS, &F_OFFSETS, &mut fb, len);
             // This segment's send and return: `t` < `len` bounds all three.
             let (us, ls, rs) = (&u[i..i + len], &mut l[i..i + len], &mut r[i..i + len]);
             macro_rules! rd {
@@ -773,45 +790,52 @@ impl Room {
                 };
             }
             // The crossfade's blend, sample by sample.
-            let mut wv = [0.0f32; HALF];
             for x in &mut wv[..len] {
                 *x = w;
                 w = (w + dw).min(1.0);
             }
             // TONE, then PRE-DLY.
-            let mut dv = [0.0f32; HALF];
             {
                 let (wp, to, from) = (b[W_PRE], b[R_PRE], b[R_PRE + 1]);
-                for t in 0..len {
-                    tone += ta * (us[t] * IN_GAIN - tone);
-                    // SAFETY: as `rd`'s.
-                    unsafe { lines.round(wp + t, tone) };
-                    dv[t] = if to != from {
-                        let o = rd!(from, t);
-                        o + wv[t] * (rd!(to, t) - o)
-                    } else {
-                        rd!(from, t)
+                macro_rules! pre {
+                    ($mv:expr) => {
+                        for t in 0..len {
+                            tone += ta * (us[t] * IN_GAIN - tone);
+                            // SAFETY: as `rd`'s.
+                            unsafe { lines.round(wp + t, tone) };
+                            dv[t] = if $mv {
+                                let o = rd!(from, t);
+                                o + wv[t] * (rd!(to, t) - o)
+                            } else {
+                                rd!(from, t)
+                            };
+                            ta += dta;
+                        }
                     };
-                    ta += dta;
                 }
+                if to != from { pre!(true) } else { pre!(false) }
             }
             if !probe {
-                unroll!(J in [0, 1, 2, 3, 4] {
-                    let (wj, rj) = (fb[W_DIF + J], fb[R_DIF + J]);
-                    for t in 0..len {
+                let (w, r): ([usize; 5], [usize; 5]) = (
+                    core::array::from_fn(|j| fb[W_DIF + j]),
+                    core::array::from_fn(|j| fb[R_DIF + j]),
+                );
+                for t in 0..len {
+                    let mut y = dv[t];
+                    unroll!(J in [0, 1, 2, 3, 4] {
                         // SAFETY: as `rd`'s, on the f32 region.
-                        let (y, v) = ap_f32(dv[t], unsafe { *f.get_unchecked(rj + t) }, DIFFUSER_G);
+                        let (o, v) = ap_f32(y, unsafe { *f.get_unchecked(r[J] + t) }, DIFFUSER_G);
                         // SAFETY: as `rd`'s, on the f32 region.
-                        unsafe { *f.get_unchecked_mut(wj + t) = v };
-                        dv[t] = y;
-                    }
-                });
+                        unsafe { *f.get_unchecked_mut(w[J] + t) = v };
+                        y = o;
+                    });
+                    dv[t] = y;
+                }
             }
             // Each loop's stages, unrolled: `LO` and `ST` are literals. A
             // read whose length holds this crossfade reads once. Each
             // pair's reflection, send and re-entries run in its second
             // loop's last stage, beside A's or C's output.
-            let mut ov = [0.0f32; HALF];
             unroll!(LO in [0, 1, 2, 3] {
                 let sm_at = sm[LO];
                 unroll!(ST in [0, 1] {
@@ -822,10 +846,11 @@ impl Room {
                     let wd = b[W_D + (j | 1)];
                     // The pair's re-entries: its first loop's and its own.
                     let (wr0, wr1) = (b[W_D + 4 * (LO / 2)], b[W_D + 4 * (LO / 2) + 2]);
-                    let (mut sm_, mut g_) = (sm_at, g[LO][ST]);
-                    let (dg_, mut lp_) = (dg[LO][ST], lp[LO]);
+                    let (mut sm_, g_) = (sm_at, gb[LO][ST]);
+                    let mut lp_ = lp[LO];
+                    macro_rules! stage { ($mv:expr, $fast:expr) => {
                     for t in 0..len {
-                        let x = if moving {
+                        let x = if $mv {
                             let o = rd!(from, t);
                             o + wv[t] * (rd!(to, t) - o)
                         } else {
@@ -836,7 +861,19 @@ impl Room {
                             // `FSLOTS` (as `rd`'s); `sm` is clamped to [0,
                             // 2·cap·trip] above, and `FITS` keeps `nom − sm`
                             // in 2..`FSLOTS`.
-                            unsafe { pair_in(&*f, FSLOTS, wa + t, nom[LO] - sm_) }
+                            if $fast {
+                                let d = nom[LO] - sm_;
+                                let di = d as usize;
+                                let fr = d - di as f32;
+                                // SAFETY: `wa` > the deepest read (`fast`),
+                                // so both slots sit in `wa − di − 1..wa + t`.
+                                let (x0, x1) = unsafe {
+                                    (*f.get_unchecked(wa + t - di), *f.get_unchecked(wa + t - di - 1))
+                                };
+                                x0 + fr * (x1 - x0)
+                            } else {
+                                unsafe { pair_in(&*f, FSLOTS, wa + t, nom[LO] - sm_) }
+                            }
                         } else {
                             // SAFETY: as `rd`'s, on the f32 region.
                             unsafe { *f.get_unchecked(ra + t) }
@@ -861,62 +898,77 @@ impl Room {
                             let send = if probe && only != LO { 0.0 } else { dv[t] };
                             // SAFETY: as `rd`'s.
                             unsafe {
-                                lines.settle(wr0 + t, clip::<CLIP>(a + a_send));
-                                lines.settle(wr1 + t, clip::<CLIP>(bb + send));
+                                let (ea, eb) = (a + a_send, bb + send);
+                                // Both under the knee, as nearly always: as
+                                // they are, past one compare.
+                                if CLIP && ea.abs().max(eb.abs()) > FULL_SCALE {
+                                    lines.settle(wr0 + t, clip::<CLIP>(ea));
+                                    lines.settle(wr1 + t, clip::<CLIP>(eb));
+                                } else {
+                                    lines.settle(wr0 + t, ea);
+                                    lines.settle(wr1 + t, eb);
+                                }
                             }
                         }
-                        g_ += dg_;
                         if ST == SMEARED[LO] {
                             sm_ += dsm[LO];
                         }
                     }
-                    (g[LO][ST], lp[LO]) = (g_, lp_);
+                    }}
+                    let fast = ST == SMEARED[LO] && wa > AP[LO][ST];
+                    match (moving, fast) {
+                        (true, true) => stage!(true, true),
+                        (true, false) => stage!(true, false),
+                        (false, true) => stage!(false, true),
+                        (false, false) => stage!(false, false),
+                    }
+                    lp[LO] = lp_;
                     if ST == SMEARED[LO] {
                         sm[LO] = sm_;
                     }
                 });
             });
-            // The taps, after every write they may read: each side's eight
-            // summed exactly, then in a crossfade w × Σ(to − from) over the
-            // taps of the lines that move.
+            // The taps, after every write they may read. At most one line a
+            // loop moves; a loop with none stands in its first line, to ==
+            // from, whose difference is 0. Each side: the four still lines'
+            // and the four movers' reads summed exactly, then in a crossfade
+            // w × Σ(to − from) over the movers, from 12 reads.
             let moving: [bool; 8] = core::array::from_fn(|j| b[R_D_TO + j] != b[R_D_FROM + j]);
-            let mut side = [[0.0f32; HALF]; 2];
+            let any = moving.iter().any(|&m| m);
+            let mv: [usize; 4] = core::array::from_fn(|lo| 2 * lo + moving[2 * lo + 1] as usize);
             unroll!(SD in [0, 1] {
-                let q: [usize; 8] = core::array::from_fn(|j| b[R_TAP_FROM + 8 * SD + j]);
-                let mut sum = [Ln::Sum::default(); HALF];
-                for (t, x) in sum[..len].iter_mut().enumerate() {
-                    // SAFETY: as `rd`'s.
-                    *x = unsafe {
-                        lines.rd_sum(q[0] + t) + lines.rd_sum(q[1] + t) + lines.rd_sum(q[2] + t)
-                            + lines.rd_sum(q[3] + t) + lines.rd_sum(q[4] + t)
-                            + lines.rd_sum(q[5] + t) + lines.rd_sum(q[6] + t)
-                            + lines.rd_sum(q[7] + t)
-                    };
-                }
-                let mut dif = [Ln::Sum::default(); HALF];
-                let mut any = false;
-                for j in 0..8 {
-                    if moving[j] {
-                        any = true;
-                        let (to, from) = (b[R_TAP_TO + 8 * SD + j], q[j]);
-                        for (t, x) in dif[..len].iter_mut().enumerate() {
-                            // SAFETY: as `rd`'s.
-                            *x = *x + unsafe { lines.rd_sum(to + t) - lines.rd_sum(from + t) };
-                        }
-                    }
-                }
-                for t in 0..len {
-                    side[SD][t] = Ln::sum_f32(sum[t]);
-                }
+                let out: &mut [f32] = if SD == 0 { &mut *ls } else { &mut *rs };
+                let st: [usize; 4] = core::array::from_fn(|k| b[R_TAP_FROM + 8 * SD + (mv[k] ^ 1)]);
+                let fr: [usize; 4] = core::array::from_fn(|k| b[R_TAP_FROM + 8 * SD + mv[k]]);
                 if any {
+                    let tt: [usize; 4] = core::array::from_fn(|k| b[R_TAP_TO + 8 * SD + mv[k]]);
                     for t in 0..len {
-                        side[SD][t] += wv[t] * Ln::sum_f32(dif[t]);
+                        // SAFETY: as `rd`'s.
+                        let (s0, f0, t0) = unsafe {
+                            (
+                                lines.rd_sum(st[0] + t) + lines.rd_sum(st[1] + t)
+                                    + lines.rd_sum(st[2] + t) + lines.rd_sum(st[3] + t),
+                                lines.rd_sum(fr[0] + t) + lines.rd_sum(fr[1] + t)
+                                    + lines.rd_sum(fr[2] + t) + lines.rd_sum(fr[3] + t),
+                                lines.rd_sum(tt[0] + t) + lines.rd_sum(tt[1] + t)
+                                    + lines.rd_sum(tt[2] + t) + lines.rd_sum(tt[3] + t),
+                            )
+                        };
+                        out[t] = TAP_W * (Ln::sum_f32(s0 + f0) + wv[t] * Ln::sum_f32(t0 - f0));
+                    }
+                } else {
+                    for t in 0..len {
+                        // SAFETY: as `rd`'s.
+                        let s0 = unsafe {
+                            lines.rd_sum(st[0] + t) + lines.rd_sum(st[1] + t)
+                                + lines.rd_sum(st[2] + t) + lines.rd_sum(st[3] + t)
+                                + lines.rd_sum(fr[0] + t) + lines.rd_sum(fr[1] + t)
+                                + lines.rd_sum(fr[2] + t) + lines.rd_sum(fr[3] + t)
+                        };
+                        out[t] = TAP_W * Ln::sum_f32(s0);
                     }
                 }
             });
-            for t in 0..len {
-                (ls[t], rs[t]) = (TAP_W * side[0][t], TAP_W * side[1][t]);
-            }
             i += len;
             h = wrap(h + len, SLOTS);
             hf = wrap(hf + len, FSLOTS);
