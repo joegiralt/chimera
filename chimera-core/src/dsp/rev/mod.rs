@@ -48,8 +48,8 @@ pub enum EngineState {
 /// QUAD's short-term loudness on a held −12 dBFS pink pad at MIX 0.5 (the
 /// loudest 400 ms), their peaks within 1 dB of QUAD's: a TYPE switch under
 /// a held note neither jumps nor clips (`check_sustained_loudness`).
-/// ROOM's four loops at +1 and sixteen taps return 6.4 dB under QUAD's
-/// 4.54 (ADR 0095); HALL, through one loop of sparse taps, 6.6 dB over.
+/// ROOM's four loops at +1 and sixteen taps take 5.5 dB under QUAD's 4.54
+/// (ADR 0095); HALL, through one loop of sparse taps, 6.6 dB over.
 pub fn wet_gain(t: ReverbType) -> f32 {
     match t {
         ReverbType::Room => WET_ROOM,

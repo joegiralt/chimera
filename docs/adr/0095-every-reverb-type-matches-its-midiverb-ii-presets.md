@@ -211,7 +211,9 @@ the ban on 2026-10-05.
     0–1 and DIFFUSE 0–1; DECAY 0 reads +4 % at SIZE ½ and +15 % at SIZE 0
     and 1, where the diffuser's own ring adds.
   - **DAMP's top opens the dampers** (the first near-miss step): DAMP 0 is
-    a bypass, and its cell reads OFF.
+    a bypass, and its cell reads OFF. Its first tick is a cliff, from no
+    damper to a 9.9 kHz one-pole (about −0.3 dB a trip at 4 kHz), eased
+    over 20 ms: for the owner to judge at UAT.
   - **The tap weight stays ¾ at every θ.** The second near-miss step
     scales every tap alike, so it moves only the level, and every judged
     metric is level-free: it can't change a verdict.

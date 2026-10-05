@@ -501,14 +501,21 @@ fn room_rt60_tracks_decay_to_2_s() {
             "DECAY {decay}: {rt} s against {want}"
         );
     }
-    p.time = 1.0;
-    for size in [0.0, 0.5, 1.0] {
-        p.size = size;
-        let (e, _) = engine(&p);
-        let g = e.targets().3;
+    // SIZE's ends: the stage allpasses' share of the trip (Φ's k term)
+    // changes most there. (The gains' 0.985 cap is shared machinery and
+    // never binds here: the longest stage at 2.0 s is under 0.75.)
+    for (size, decay, want) in [
+        (0.0, 0.5, 0.632),
+        (0.0, 1.0, 2.0),
+        (1.0, 0.5, 0.632),
+        (1.0, 1.0, 2.0),
+    ] {
+        (p.size, p.time) = (size, decay);
+        let rt = band_rt60(&p, 1_000.0);
+        println!("SIZE {size} DECAY {decay}: 1 kHz RT60 {rt:.3} s, target {want}");
         assert!(
-            g.as_flattened().iter().all(|&g| g <= 0.985),
-            "SIZE {size}: {g:?}"
+            (rt / want - 1.0).abs() <= 0.1,
+            "SIZE {size} DECAY {decay}: {rt} s against {want}"
         );
     }
 }
@@ -533,6 +540,10 @@ fn damp_darkens_the_loop_and_tone_the_input() {
     (p.size, p.time, p.smear, p.tone, p.damping) = (1.0, 0.5, 0.0, 0.0, 0.0);
     let open = p;
     let dark = ReverbParams { damping: 1.0, ..p };
+    // DAMP's top opens the dampers outright; its next step is a one-pole.
+    let da = |damping: f32| engine(&ReverbParams { damping, ..p }).0.targets().1;
+    assert_eq!(da(0.0), 1.0, "DAMP 0: the dampers open");
+    assert!(da(0.01) < 1.0, "DAMP 0.01: {}", da(0.01));
     let (o4, d4) = (band_rt60(&open, 4_000.0), band_rt60(&dark, 4_000.0));
     let (o5, d5) = (band_rt60(&open, 500.0), band_rt60(&dark, 500.0));
     println!("DAMP 10 → 1.5 kHz: 4 kHz {o4:.3} → {d4:.3} s, 500 Hz {o5:.3} → {d5:.3} s");
@@ -675,6 +686,36 @@ fn room_smear_reads_stay_within_the_cap() {
             assert!(e_share <= 0.0145, "SIZE {}: loop {lp} E {e_share}", p.size);
         }
     }
+    // Through a SIZE move the cap follows the shorter of each moving
+    // delay's two lengths.
+    p.size = 1.0;
+    let (mut e, mut arena) = engine(&p);
+    p.size = 0.0;
+    let k = knobs_120(&p);
+    let (u, mut l, mut r) = ([0.0f32; HALF], [0.0; HALF], [0.0; HALF]);
+    let mut seen = 0;
+    for _ in 0..400 {
+        e.set_smear([(1e9, 1e9); 4]);
+        e.run(&mut arena, &u, &k, &mut l, &mut r);
+        let Some((from, to, _)) = e.crossfade() else {
+            continue;
+        };
+        seen += 1;
+        let held = e.smear();
+        for lp in 0..4 {
+            let trip: usize = (0..2)
+                .map(|s| from[lp][s].min(to[lp][s]) as usize)
+                .sum::<usize>()
+                + room::AP[lp].iter().sum::<usize>();
+            let top = 2.0 * 0.0072 * trip as f32;
+            assert!(
+                held[lp].0 <= top + 1e-3 && held[lp].1 <= top + 1e-3,
+                "loop {lp}: {:?} over {top}",
+                held[lp]
+            );
+        }
+    }
+    assert!(seen > 100, "{seen} crossfading blocks");
 }
 
 /// A LOOP-family engine alone at `p`, its wanders run as `Reverb` runs
@@ -1565,4 +1606,86 @@ fn the_diffuser_is_five_allpasses() {
         );
     }
     assert!(want[14..100].iter().filter(|x| x.abs() > 1.0).count() > 20);
+}
+
+/// The return through a SIZE move: each moving tap blends its two reads
+/// across the crossfade, so a held tone's return steps at most twice as
+/// far as at a held SIZE. A tap snapping to its new read steps by up to the
+/// tone's swing over 120 samples.
+#[test]
+fn taps_blend_through_a_size_move() {
+    let steps = |moving: bool| {
+        let mut p = params(1.0);
+        (p.size, p.smear, p.time, p.predelay) = (0.0, 0.0, 0.5, 0.0);
+        let (mut e, mut arena) = engine(&p);
+        let (mut l, mut r) = ([0.0f32; HALF], [0.0; HALF]);
+        let mut most = 0.0f32;
+        let mut prev = (0.0f32, 0.0f32);
+        for b in 0..1_500 {
+            if b == 500 && moving {
+                p.size = 1.0;
+            }
+            let k = knobs_120(&p);
+            let u: [f32; HALF] = core::array::from_fn(|i| {
+                (std::f32::consts::TAU * 150.0 * (b * HALF + i) as f32 / 24_000.0).sin() * 0.25
+            });
+            e.run(&mut arena, &u, &k, &mut l, &mut r);
+            for i in 0..HALF {
+                if b >= 500 {
+                    most = most.max((l[i] - prev.0).abs()).max((r[i] - prev.1).abs());
+                }
+                prev = (l[i], r[i]);
+            }
+        }
+        most
+    };
+    let (held, moved) = (steps(false), steps(true));
+    println!("largest step: {moved:.1} moving, {held:.1} held");
+    // The move itself colours the loops (1.45× here); a snapping tap
+    // reads 35×.
+    assert!(
+        moved <= 2.0 * held,
+        "a SIZE move steps {moved}, held {held}"
+    );
+}
+
+/// An impulse into each loop alone (stage allpasses at g 0) reaches its
+/// second line exactly a stage delay and a stage allpass after its first:
+/// the first tap on each line reads its first sample there, none before.
+#[test]
+fn a_stage_is_its_delay_and_its_allpass_exactly() {
+    let mut p = params(1.0);
+    (
+        p.shape, p.predelay, p.damping, p.time, p.size, p.tone, p.smear,
+    ) = (0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0);
+    let k = knobs_120(&p);
+    for lp in 0..4 {
+        let (mut e, mut arena) = engine(&p);
+        e.probe_loop(lp as u8);
+        let (mut l, mut r) = ([0.0f32; HALF], [0.0; HALF]);
+        let mut out = [Vec::new(), Vec::new()];
+        for b in 0..6_000 / HALF {
+            let u: [f32; HALF] = core::array::from_fn(|i| (b == 0 && i == 0) as u8 as f32);
+            e.run(&mut arena, &u, &k, &mut l, &mut r);
+            out[0].extend_from_slice(&l);
+            out[1].extend_from_slice(&r);
+        }
+        // L's tap on the loop's second line: the line's first sample lands
+        // at 2 (PRE-DLY's floor) + D + AP, then the tap's offset.
+        let j = 2 * lp + 1;
+        let at = 2 + room::DELAY[lp][0] + room::AP[lp][0] + n24(TAP_MS[0][j]);
+        let peak = out[0].iter().fold(0.0f32, |m, x| m.max(x.abs()));
+        // The tap's own arrival, and nothing of it a sample early: the
+        // other taps on this loop land elsewhere.
+        assert!(
+            out[0][at].abs() >= 0.3 * peak,
+            "loop {lp}: {} at {at}",
+            out[0][at]
+        );
+        assert!(
+            out[0][at - 1].abs() <= 1e-3 * peak,
+            "loop {lp}: {} a sample early",
+            out[0][at - 1]
+        );
+    }
 }
