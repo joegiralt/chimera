@@ -563,6 +563,7 @@ The random generator draws each param uniformly from its spec range, quantised a
   - Pass 1 sums costs from `PoolSource` frames and the model's `held`, with no card read. The limit Task 8 passed (`ARENA_BYTES − source_used()`) is replaced: pass 1 counts the incoming slot costs plus the `PoolSource` costs, against the whole `ARENA_BYTES`.
   - Pass 2 reads sources inside the existing epoch fade (ADR 0046).
   - A header that mismatches the ref, or a short read, makes an absent entry.
+  - If the card driver DMAs straight into the arena (AXI, cached), clean and invalidate the D-cache over the destination around the transfer; a CPU copy from the driver's buffer needs none.
 
 - [ ] **Step 4: Run** `just test`, `just clippy`, `just check` (no firmware feature set enables `source-writer`) and `cargo build -p chimera-core --features source-writer`. Expected: PASS.
 

@@ -525,15 +525,18 @@ impl Prompt for PurgeSources {
 
 /// After a clear that left its source unused: `CHOIR 41K UNUSED · PURGE
 /// FREES IT`.
+/// The name is cut to fit the toast.
 pub fn unused_after_clear(name: crate::name::SoundName, cost: crate::project::arena::Cost) -> Line {
-    let mut l = Line::new("");
-    let _ = write!(
-        l,
-        "{} {} UNUSED · PURGE FREES IT",
-        upper(name.as_str()).as_str(),
-        cost.kib_label().as_str()
-    );
-    l
+    let name = upper(name.as_str());
+    let mut n = name.as_str();
+    loop {
+        let mut l = Line::new(n);
+        let _ = write!(l, " {} UNUSED · PURGE FREES IT", cost.kib_label().as_str());
+        match n.char_indices().last() {
+            Some((cut, _)) if !crate::ui::busy::toast_fits(l.as_str()) => n = &n[..cut],
+            _ => return l,
+        }
+    }
 }
 
 /// PURGE with every source in use.

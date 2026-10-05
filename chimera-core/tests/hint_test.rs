@@ -336,6 +336,23 @@ fn every_pool_hint_fits() {
         theme::LABEL_TRACKING,
     );
     assert!(text <= browser::ORPHAN_W, "{}: {text}", orphan.as_str());
+    // The toast after such a clear: the name cut so it fits.
+    let after = prompt::unused_after_clear(name, k999);
+    assert!(
+        after.as_str().ends_with("W 999K UNUSED · PURGE FREES IT"),
+        "{}",
+        after.as_str()
+    );
+    assert!(
+        chimera_core::ui::busy::toast_fits(after.as_str()),
+        "{}",
+        after.as_str()
+    );
+    let choir = prompt::unused_after_clear(
+        chimera_core::name::SoundName::new("CHOIR").unwrap(),
+        Cost::of(41 * 1024),
+    );
+    assert_eq!(choir.as_str(), "CHOIR 41K UNUSED · PURGE FREES IT");
     let purge = prompt::purge_question(chimera_core::project::Unused {
         count: 32,
         cost: k999,

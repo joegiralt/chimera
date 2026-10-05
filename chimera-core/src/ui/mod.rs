@@ -1167,6 +1167,14 @@ impl UiState {
         }
     }
 
+    /// What a change did, as a toast that isn't an error.
+    fn notice(&mut self, text: Line) {
+        self.toast.show(busy::Toast {
+            text,
+            ms: busy::Toast::INFO_MS,
+        });
+    }
+
     fn error(&mut self, text: Line) {
         self.toast.show(busy::Toast {
             text,
@@ -1492,7 +1500,7 @@ impl UiState {
                     Err(project::InUse(u)) => self.error(prompt::in_use(u)),
                     Ok(()) => {
                         if let Some(l) = orphan {
-                            self.error(l);
+                            self.notice(l);
                         }
                     }
                 }
