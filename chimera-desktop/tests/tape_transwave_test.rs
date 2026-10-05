@@ -3,8 +3,12 @@
 //! oversampled. Precedent: PPG Wave and Waldorf Microwave (band-limited
 //! copies per octave).
 
-use chimera_core::dsp::tape_engine::wave::{MIN_LOG2, level_offset, nominal_top, stored_log2};
-use chimera_desktop::import::tape::transwave::{DEFAULT_TOP, MAX_FRAMES, cut_cycles, levels};
+use chimera_core::dsp::tape_engine::wave::{
+    MIN_LOG2, harmonics, level_offset, nominal_top, stored_log2,
+};
+use chimera_desktop::import::tape::transwave::{
+    DEFAULT_TOP, MAX_FRAMES, cut_cycles, levels, transwave,
+};
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex;
 
@@ -30,7 +34,7 @@ fn rich_cycle() -> Vec<f32> {
 }
 
 /// Each level's FFT at its stored length: no DC, nothing above its nominal
-/// ⌊0.35 N⌋ (under −100 dB of its largest bin), and each kept harmonic at
+/// harmonics (⌊0.35 N⌋, 42 at 128; under −100 dB of its largest bin), and each kept harmonic at
 /// the cycle's own magnitude.
 #[test]
 fn levels_hold_no_harmonic_above_limit() {
@@ -42,7 +46,7 @@ fn levels_hold_no_harmonic_above_limit() {
             let (off, n) = (level_offset(top, nl) as usize, 1usize << stored_log2(nl));
             let sp = spectrum(&lv[off..off + n]);
             let peak = sp.iter().fold(0.0f64, |m, &x| m.max(x));
-            let limit = (0.35 * (1u64 << nl) as f64) as usize;
+            let limit = harmonics(nl) as usize;
             assert!(sp[0] / peak < 1e-5, "top {top}, level {nl}: DC");
             for (k, &m) in sp.iter().enumerate().skip(limit + 1) {
                 let db = 20.0 * (m / peak).log10();
@@ -128,4 +132,38 @@ fn cut_cycles_takes_whole_cycles() {
     assert_eq!(cut_cycles(&x[..1_000], period as f32).len(), 5);
     assert!(cut_cycles(&x[..400], period as f32).is_empty());
     assert!(cut_cycles(&x, 0.0).is_empty());
+}
+
+/// A frame whose fundamental is 50 dB under its 2nd harmonic can't say its
+/// phase by harmonic 1: cut 0.37 of a cycle on, with its weak fundamental
+/// at a phase of its own, it is turned to match the frame before by
+/// cross-correlation, so their strong harmonics line up and a scan half
+/// way between them keeps them whole.
+#[test]
+fn weak_fundamental_aligns_by_correlation() {
+    let cut = |at: f64, h1: f64| -> Vec<f32> {
+        (0..301)
+            .map(|i| {
+                let x = std::f64::consts::TAU * (i as f64 / 301.0 + at);
+                let y = 0.00316 * (x + h1).sin() + (2.0 * x).sin() + 0.5 * (3.0 * x).sin();
+                (0.4 * y) as f32
+            })
+            .collect()
+    };
+    let w = transwave(&[cut(0.0, 0.0), cut(0.37, 2.1)], 512);
+    let f = 1_216;
+    let n = 1usize << stored_log2(8);
+    let (a, b) = (&w[..n], &w[f..f + n]);
+    let (sa, sb) = (spectrum(a), spectrum(b));
+    let mid: Vec<f32> = a.iter().zip(b).map(|(x, y)| 0.5 * (x + y)).collect();
+    let sm = spectrum(&mid);
+    for k in [2, 3] {
+        assert!((sa[k] - sb[k]).abs() < 1e-3 * sa[k], "harmonic {k}");
+        assert!(
+            sm[k] > 0.995 * sa[k],
+            "harmonic {k} half way: {} against {}",
+            sm[k],
+            sa[k]
+        );
+    }
 }

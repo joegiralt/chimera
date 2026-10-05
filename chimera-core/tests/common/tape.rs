@@ -59,7 +59,8 @@ pub fn saw_with_burst(rate: u16, secs: f32) -> Vec<f32> {
 /// A `Transwave` of `count` frames at stored top `top` (nominal levels
 /// `top / 2` down to 16, each at `wave::stored_log2`'s length), frame `f`'s
 /// sine-phase harmonic `h` at amplitude `amp(f, h)`: each nominal level `N`
-/// keeps harmonics `1..=⌊0.35 N⌋`, as the importer's do, rounded to 12 bits.
+/// keeps harmonics `1..=wave::harmonics`, as the importer's do, rounded to
+/// 12 bits.
 pub fn held_transwave(top: u32, count: u8, amp: impl Fn(usize, u32) -> f32) -> Vec<u8> {
     let d = Descriptor {
         shape: Shape::Transwave,
@@ -72,7 +73,7 @@ pub fn held_transwave(top: u32, count: u8, amp: impl Fn(usize, u32) -> f32) -> V
         let mut l = wave::nominal_top(top).trailing_zeros();
         while l >= wave::MIN_LOG2 {
             let n = 1u64 << wave::stored_log2(l);
-            let parts: Vec<(u64, f32)> = (1..=((1u64 << l) as f32 * 0.35) as u64)
+            let parts: Vec<(u64, f32)> = (1..=u64::from(wave::harmonics(l)))
                 .map(|h| (h, amp(f, h as u32)))
                 .filter(|&(_, a)| a != 0.0)
                 .collect();

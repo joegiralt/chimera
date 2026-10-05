@@ -7,7 +7,7 @@ use std::fmt::Write as _;
 use std::mem::MaybeUninit;
 
 use crate::import::tape::convert::{Mono, Pitch, clean, quantise_tpdf, resample, yin};
-use crate::import::tape::transwave::{DEFAULT_TOP, cut_cycles, levels};
+use crate::import::tape::transwave::{DEFAULT_TOP, cut_cycles, transwave};
 use chimera_core::block::{Block, DiskCode, ParamId};
 use chimera_core::dsp::clampf;
 use chimera_core::dsp::fx_bus::FxBus;
@@ -143,9 +143,8 @@ pub fn held_transwave(m: &Mono, frames: usize) -> Result<(Vec<u8>, f32), String>
             0
         }
     };
-    let x: Vec<f32> = (0..n)
-        .flat_map(|k| levels(&cycles[pick(k)], DEFAULT_TOP))
-        .collect();
+    let picked: Vec<Vec<f32>> = (0..n).map(|k| cycles[pick(k)].clone()).collect();
+    let x = transwave(&picked, DEFAULT_TOP);
     let peak = x.iter().fold(0f32, |a, s| a.max(s.abs()));
     if peak <= 0.0 {
         return Err("silent cycles".into());

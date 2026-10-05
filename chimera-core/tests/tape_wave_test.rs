@@ -215,7 +215,7 @@ fn off_harmonic_db(x: &[f32], f0: f64) -> f64 {
     10.0 * (off / total).log10()
 }
 
-/// A 16-frame saw-to-square transwave swept C1 → C8 and back by a pitch
+/// A 16-frame saw transwave swept C1 → C8 and back by a pitch
 /// route, held every semitone and at each level's worst steps (just under
 /// `ALIAS_STEP` going up, just over `RISE_STEP` coming down).
 ///
@@ -235,10 +235,8 @@ fn transwave_is_alias_free() {
 
 fn alias_free_at(top: u32) {
     let hi = top.trailing_zeros() - 1;
-    let held = held_transwave(top, 16, |f, h| {
-        let odd = if h % 2 == 1 { 1.0 } else { f as f32 / 15.0 };
-        0.5 * odd / h as f32
-    });
+    // A pure saw, every harmonic at 1/h: the worst case for the images.
+    let held = held_transwave(top, 16, |_, h| 0.5 / h as f32);
     let v = SourceView::strict(&held).unwrap();
     let p = wave(TapeEngineParams {
         position: 0.5,
@@ -396,7 +394,7 @@ fn level_change_block_is_alias_free() {
         let (mut ph, mut want) = (0u32, Vec::new());
         let (keep, moved) = {
             let (lo, hi) = (l.min(to), l.max(to));
-            let h = |l: u32| (0.35 * (1u32 << l) as f32) as u32;
+            let h = wave::harmonics;
             (h(lo), h(hi))
         };
         let pass = [l, to].map(|l| {

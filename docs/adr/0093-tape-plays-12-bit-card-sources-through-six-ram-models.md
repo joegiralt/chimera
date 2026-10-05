@@ -130,7 +130,8 @@ code 23, ident `"TAPE"`, ADR 0055).
     refused).
     - A transwave is up to 32 single-cycle frames, stored at octave mip
       levels, nominal 256 (by default; `--top 1024` adds 512) down to 16.
-      Each level is band-limited to ⌊0.35 N⌋ harmonics by the importer:
+      Each level is band-limited to ⌊0.35 N⌋ harmonics (42 at 128) by the
+      importer, its frames turned to one phase:
       the PPG and Waldorf approach.
     - Each level is stored oversampled, 2 N from 128 up and 4 N below
       (1 216 samples a frame by default, 2 240 with `--top 1024`), and

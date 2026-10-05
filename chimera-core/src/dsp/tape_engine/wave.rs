@@ -54,6 +54,16 @@ pub const SCAN_HZ: f32 = 8.0;
 /// 512): 64, 128, 256, 256, 512, 1 024.
 const STORED_LOG2: [u32; 6] = [6, 7, 8, 8, 9, 10];
 
+/// Each nominal level's harmonics, by `log2 N − 4`: `⌊0.35 N⌋`, but 42 at
+/// 128, whose 2× storage leaves the read's images least room (44 measured
+/// −61.6 dB on a saw).
+const HARMONICS: [u32; 6] = [5, 11, 22, 42, 89, 179];
+
+/// The harmonics nominal level `2^log2_n` keeps: `1..=harmonics`.
+pub fn harmonics(log2_n: u32) -> u32 {
+    HARMONICS[(log2_n.clamp(MIN_LOG2, 9) - MIN_LOG2) as usize]
+}
+
 /// Where nominal level `2^log2_n` is held: its stored length, `log2`.
 pub fn stored_log2(log2_n: u32) -> u32 {
     STORED_LOG2[(log2_n.clamp(MIN_LOG2, 9) - MIN_LOG2) as usize]
