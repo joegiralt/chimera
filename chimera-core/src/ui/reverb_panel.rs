@@ -291,13 +291,7 @@ pub fn turn(
             p.with_sync(to, tempo)
         };
     }
-    match notches(p, id) {
-        Some(n) => {
-            let i = index_of(p.get(id), n) as i32 + delta as i32;
-            q.set(id, p_of(i.clamp(0, n as i32 - 1) as usize, n));
-        }
-        None => q.set(id, q.get(id) + delta as f32 * step(p, id)),
-    }
+    q.set(id, q.get(id) + delta as f32 * step(p, id));
     q
 }
 

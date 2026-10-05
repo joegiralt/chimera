@@ -128,6 +128,10 @@ fn tempo_quantiser_holds_through_jitter() {
     for b in [119.9, 120.1, 119.95] {
         assert_eq!(tempo(b).quantised(held), held);
     }
+    // Jitter across a step's edge holds too.
+    for b in [120.13, 119.87] {
+        assert_eq!(tempo(b).quantised(held), held);
+    }
     assert_eq!(tempo(120.4).quantised(held), tempo(120.5));
     assert_eq!(tempo(119.8).quantised(held), tempo(119.75));
 }
@@ -354,4 +358,30 @@ fn clock_dropout_moves_synced_length_once() {
     let moved = max_d2(&out[2 * SR as usize..]);
     println!("d2: moved {moved}, held {held}");
     assert!(moved <= 1.25 * held, "d2 {moved} against held {held}");
+}
+
+/// A switch starts the fold afresh: the fold the cells mark is the running
+/// engine's, and QUAD folds nothing.
+#[test]
+fn a_switch_starts_the_fold_afresh() {
+    use chimera_core::dsp::Stereo;
+    use chimera_core::dsp::rev::Reverb;
+    let mut g = synced(ReverbType::Gate, RevSync::Time);
+    (g.size, g.mix) = (1.0, 1.0); // 1/4: 667 ms at 90 BPM plays 1/8
+    let mut rv = Box::new(Reverb::of_type(ReverbType::Gate));
+    let send = [0.0; BLOCK_SIZE];
+    let mut run = |rv: &mut Reverb, p: &ReverbParams, blocks| {
+        for _ in 0..blocks {
+            rv.process(&send, p, p.mix, tempo(90.0), SR, &mut Stereo::SILENT);
+        }
+    };
+    run(&mut rv, &g, 4);
+    assert_eq!(rv.fold(), FoldState(1));
+    let quad = ReverbParams {
+        kind: ReverbType::Quad,
+        ..g
+    };
+    run(&mut rv, &quad, 100);
+    assert_eq!(rv.running(), ReverbType::Quad);
+    assert_eq!(rv.fold(), FoldState(0));
 }
