@@ -86,6 +86,7 @@ impl DesktopAudio {
             .build_output_stream(
                 &config.into(),
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    flush_denormals();
                     let shared = shared_reader.read();
                     let solo = audio.solo.load(Ordering::Relaxed);
                     for frame in data.chunks_mut(channels) {
@@ -324,6 +325,41 @@ fn connect_midi(mut notes: NoteProducer<'static>) -> Option<midir::MidiInputConn
         )
         .map_err(|e| eprintln!("MIDI connect failed: {e}"))
         .ok()
+}
+
+/// Subnormals flush to zero on this thread, as the firmware's FPSCR FZ
+/// and DN have them: f32 state (the reverb's allpasses, its dampers)
+/// decays to exactly 0 on both, never sits in subnormals on the host.
+/// Every callback, as it costs two instructions and cpal may move threads.
+#[inline(always)]
+fn flush_denormals() {
+    #[cfg(target_arch = "x86_64")]
+    {
+        // FTZ (bit 15) and DAZ (bit 6).
+        const FTZ_DAZ: u32 = 0x8040;
+        let mut csr: u32 = 0;
+        // SAFETY: STMXCSR and LDMXCSR read and write this thread's SSE
+        // control register through `csr`, a live local; setting FTZ and
+        // DAZ changes only subnormal results and operands, and keeps the
+        // rounding mode and exception masks as they were.
+        unsafe {
+            core::arch::asm!("stmxcsr [{0}]", in(reg) &mut csr, options(nostack));
+            csr |= FTZ_DAZ;
+            core::arch::asm!("ldmxcsr [{0}]", in(reg) &csr, options(nostack, readonly));
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        // FZ (bit 24).
+        // SAFETY: MRS and MSR read and write this thread's FPCR; setting
+        // FZ changes only subnormal results and operands, and keeps the
+        // rounding mode and traps as they were.
+        unsafe {
+            let fpcr: u64;
+            core::arch::asm!("mrs {0}, fpcr", out(reg) fpcr, options(nomem, nostack));
+            core::arch::asm!("msr fpcr, {0}", in(reg) fpcr | (1 << 24), options(nomem, nostack));
+        }
+    }
 }
 
 #[cfg(test)]
