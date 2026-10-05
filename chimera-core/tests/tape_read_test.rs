@@ -116,12 +116,14 @@ fn descriptor_round_trips() {
 
 #[test]
 fn odd_source_reads_one_silent_tail() {
-    let h = held_plain(&[0.5, -0.5, 0.25], 48_000);
-    assert_eq!(h.len(), DESC_LEN + 6);
+    let mut x = vec![0.5; 64];
+    x.push(0.25);
+    let h = held_plain(&x, 48_000);
+    assert_eq!(h.len(), DESC_LEN + 99);
     let v = SourceView::new(&h).unwrap();
-    assert_eq!((v.frames(), v.sample(2), v.sample(3)), (4, 512, 0));
-    let v4 = held_plain(&[0.5, -0.5, 0.25, 0.1], 48_000);
-    assert_eq!(SourceView::new(&v4).unwrap().frames(), 4);
+    assert_eq!((v.frames(), v.sample(64), v.sample(65)), (66, 512, 0));
+    let v64 = held_plain(&[0.5; 64], 48_000);
+    assert_eq!(SourceView::new(&v64).unwrap().frames(), 64);
 }
 
 #[test]
@@ -254,7 +256,7 @@ fn pos_and_edges() {
         Pos::from_f32(2.25) + Pos::from_f32(0.75),
         Pos::from_f32(3.0)
     );
-    let h = held_plain(&sine(48_000, 7.0, 10)[1..], 48_000);
+    let h = held_plain(&sine(48_000, 7.0, 70)[1..], 48_000);
     let v = SourceView::new(&h).unwrap();
     let last = v.frames() - 1;
     assert_eq!(v.read(Pos::from_f32(-5.0)), v.sample(0) as f32 / 2048.0);
@@ -292,7 +294,7 @@ fn reads_stay_in_row_reader() {
         h.truncate(h.len() - cut);
         let data = h.len() - DESC_LEN - layout;
         let Some(v) = SourceView::strict(&h) else {
-            assert!(data < 3, "{data} B of samples refused");
+            assert!(2 * (data / 3) < 64, "{data} B of samples refused");
             continue;
         };
         assert_eq!(v.frames() as usize, 2 * (data / 3));
@@ -309,19 +311,20 @@ fn reads_stay_in_row_reader() {
             }
         }
     }
-    let h = held(desc(Shape::Transwave, 1, 24_000), 0, &[1, 2, 3, 4]);
+    let h = held(desc(Shape::Transwave, 1, 24_000), 0, &[1; 64]);
     let v = SourceView::strict(&h).unwrap();
-    let over = std::panic::catch_unwind(|| v.read_cycle(2, 2, Pos(0)));
+    let over = std::panic::catch_unwind(|| v.read_cycle(62, 2, Pos(0)));
     assert!(over.is_err(), "strict catches a frame past the row");
 }
 
 #[test]
 fn zone_set_samples_start_after_layout() {
-    let s = [100, -200, 300, -400, 500];
+    let mut s = vec![100, -200, 300, -400, 500];
+    s.resize(65, 0);
     let h = held(desc(Shape::ZoneSet, 3, 32_000), 27, &s);
     let v = SourceView::new(&h).unwrap();
     assert_eq!(v.frames(), 2 * ((h.len() - 16 - 27) / 3) as u32);
-    assert_eq!(v.frames(), 6);
+    assert_eq!(v.frames(), 66);
     let got: Vec<i32> = (0..5).map(|i| v.sample(i)).collect();
     assert_eq!(got, [100, -200, 300, -400, 500]);
     let short = &h[..16 + 26];

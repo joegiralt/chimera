@@ -41,6 +41,10 @@ impl Shape {
 
 /// The descriptor's bytes at the start of `held`.
 pub const DESC_LEN: usize = 16;
+/// The fewest frames a source holds: `MIN_LOOP_FRAMES`, so no model's
+/// window is shorter (STRETCH TAPE Task 8, fix round 2). The importer
+/// refuses a shorter file.
+pub const MIN_SOURCE_FRAMES: u32 = 64;
 /// One zone's entry in a `ZoneSet`'s layout, after the descriptor.
 pub const ZONE_LAYOUT_LEN: usize = 9;
 
@@ -155,14 +159,16 @@ pub struct SourceView<'a> {
 }
 
 impl<'a> SourceView<'a> {
-    /// `None` if the descriptor is bad, or `held` holds no whole pair of
-    /// samples after it. The samples are `2 · (data_len / 3)` frames: an
-    /// odd source reads one silent frame at its end.
+    /// `None` if the descriptor is bad, or `held` holds fewer than
+    /// `MIN_SOURCE_FRAMES` after it. The samples are `2 · (data_len / 3)`
+    /// frames: an odd source reads one silent frame at its end.
     pub fn new(held: &'a [u8]) -> Option<SourceView<'a>> {
         let desc = Descriptor::from_bytes(held)?;
         let data = held.get(desc.data_start()..)?;
         let pairs = data.len() / 3;
-        let frames = u32::try_from(2 * pairs).ok().filter(|&f| f > 0)?;
+        let frames = u32::try_from(2 * pairs)
+            .ok()
+            .filter(|&f| f >= MIN_SOURCE_FRAMES)?;
         Some(SourceView {
             samples: &data[..3 * pairs],
             desc,

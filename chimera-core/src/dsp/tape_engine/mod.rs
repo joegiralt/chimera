@@ -73,6 +73,7 @@ pub const HUSH_S: f32 = 0.030;
 const EASE: f32 = 0.3;
 
 const _: () = assert!(NOTE_ON_RAMP as usize <= BLOCK_SIZE);
+const _: () = assert!(read::MIN_SOURCE_FRAMES == MIN_LOOP_FRAMES);
 
 /// Events one sample handles: a put-off fade's start, then the fade's start
 /// and its wrap, then the new pass's fade, which is one pass of an ordinary

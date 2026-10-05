@@ -11,7 +11,9 @@ use crate::import::tape::transwave::{DEFAULT_TOP, cut_cycles, transwave};
 use chimera_core::block::{Block, DiskCode, ParamId};
 use chimera_core::dsp::clampf;
 use chimera_core::dsp::fx_bus::FxBus;
-use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape, SourceView};
+use chimera_core::dsp::tape_engine::read::{
+    DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape, SourceView,
+};
 use chimera_core::dsp::tape_engine::{StretchType, TapeEngine, TapeEngineParams as P, TapeModel};
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
@@ -95,7 +97,8 @@ fn chimera_render(
 
 /// `m` as the importer holds it at `rate`: cleaned, resampled, pitched by
 /// YIN, dithered to 12 bits, then the descriptor and the packed samples.
-/// An empty or silent `m` holds no source: an error.
+/// An empty or silent `m` holds no source, nor one under
+/// `MIN_SOURCE_FRAMES` (64) at `rate`: an error.
 pub fn held_from(m: &Mono, rate: u32) -> Result<(Vec<u8>, Pitch), String> {
     let mut c = m.clone();
     clean(&mut c);
@@ -104,6 +107,12 @@ pub fn held_from(m: &Mono, rate: u32) -> Result<(Vec<u8>, Pitch), String> {
     }
     let x =
         resample(&c.samples, c.rate, rate).map_err(|_| format!("can't resample {} Hz", c.rate))?;
+    if x.len() < MIN_SOURCE_FRAMES as usize {
+        return Err(format!(
+            "too short: {} frames at {rate} Hz, a source needs {MIN_SOURCE_FRAMES}",
+            x.len()
+        ));
+    }
     let pitch = yin(&x, rate);
     let q = quantise_tpdf(&x, SEED);
     let desc = Descriptor {
@@ -841,6 +850,19 @@ mod tests {
                     .sum()
             })
             .collect()
+    }
+
+    /// A source under 64 frames at the held rate is refused, by name.
+    #[test]
+    fn a_too_short_source_is_an_error() {
+        let m = |n: usize| Mono {
+            rate: 24_000,
+            samples: (0..n).map(|i| 0.5 * (i as f32 * 0.3).sin()).collect(),
+            smpl: None,
+        };
+        let e = held_from(&m(63), 24_000).unwrap_err();
+        assert!(e.contains("too short"), "{e}");
+        assert!(held_from(&m(200), 24_000).is_ok());
     }
 
     #[test]

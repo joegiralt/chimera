@@ -312,14 +312,22 @@ fn steal_glide_glides_inc() {
     assert!(at.abs_diff(want) <= 1, "63 % at block {at}, want {want}");
 }
 
-/// Review Focus 3: 1–4 frames, START == END, every setting: finite, in the
+/// Review Focus 3: a source under `MIN_SOURCE_FRAMES` (64) is refused
+/// (STRETCH TAPE Task 8, fix round 2: no window is shorter); the shortest,
+/// 64 and 66 frames, with START == END and every setting: finite, in the
 /// row, no panic.
 #[test]
 fn tiny_sources_play_finite() {
-    for frames in 1..=4u32 {
+    // Held in pairs: 62 frames is the longest refused (63 samples pad to
+    // 64 frames; the importer refuses those by their count).
+    for frames in [1u32, 2, 4, 12, 62] {
+        let held = held_plain(&vec![0.5; frames as usize], 48_000);
+        assert!(SourceView::new(&held).is_none(), "{frames} frames");
+    }
+    for frames in [64u32, 65] {
         for rate in [8_000u16, 48_000] {
             let src: Vec<f32> = (0..frames)
-                .map(|i| [0.9, -0.7, 0.4, -0.2][i as usize])
+                .map(|i| [0.9, -0.7, 0.4, -0.2][i as usize % 4])
                 .collect();
             let held = held_plain(&src, rate);
             let v = SourceView::strict(&held).unwrap();

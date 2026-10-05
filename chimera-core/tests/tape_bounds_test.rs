@@ -34,7 +34,7 @@ fn reads_stay_in_row() {
     pack12(&s, &mut packed);
     let rates = [4_000u16, 8_000, 24_000, 48_000];
     for run in 0..2_000 {
-        let frames = 1 + rng.below(MAX_FRAMES);
+        let frames = 64 + rng.below(MAX_FRAMES - 64);
         let rate = rates[rng.below(rates.len())];
         let d = Descriptor {
             shape: Shape::Plain,
@@ -44,8 +44,9 @@ fn reads_stay_in_row() {
         };
         let mut held = d.to_bytes().to_vec();
         held.extend_from_slice(&packed[..3 * frames.div_ceil(2)]);
-        // Held cut short, as a head-only hold is: at least one pair.
-        let keep = DESC_LEN + 3 + rng.below(held.len() - DESC_LEN - 2);
+        // Held cut short, as a head-only hold is: the shortest source at
+        // least (`MIN_SOURCE_FRAMES`, 64).
+        let keep = DESC_LEN + 96 + rng.below(held.len() - DESC_LEN - 95);
         held.truncate(keep);
         let v = SourceView::strict(&held).unwrap();
         let p = TapeEngineParams {

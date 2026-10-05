@@ -959,7 +959,7 @@ fn host_time(
 /// The worst cases for events and per-call work (H2, N2), the `TAPE TINY`
 /// bench rows, in host time against LOOP's fade path (a long loop at
 /// neutral XFADE ½, where every pass fades):
-/// - each model at SIZE 0 and `inc` 16 on an 8-frame source;
+/// - each model at SIZE 0 and `inc` 16 on the shortest source (64 frames);
 /// - each model in its shortest legal loop at `inc` 16 (SIZE 0 on 8 kHz
 ///   sources: 256 frames, `MIN_PASS_SAMPLES · inc`), XFADE ½; PING-PONG
 ///   clamping there under a POSITION square wave.
@@ -976,7 +976,10 @@ fn host_time(
 #[test]
 #[ignore = "load-sensitive host timing; the bench rows replace it"]
 fn tiny_loops_cost_within_their_bills() {
-    let tiny = held_plain(&[0.9, -0.7, 0.4, -0.2, 0.6, -0.1, 0.3, -0.8], 48_000);
+    let tiny = held_plain(
+        &[0.9, -0.7, 0.4, -0.2, 0.6, -0.1, 0.3, -0.8].repeat(8),
+        48_000,
+    );
     let tv = SourceView::strict(&tiny).unwrap();
     // At 8 kHz, SIZE 0's 2 ms is 16 frames: the loop is MIN_LOOP_FRAMES.
     let slow = held_plain(&sine(8_000, 100.7, 80_000), 8_000);
@@ -1014,7 +1017,7 @@ fn tiny_loops_cost_within_their_bills() {
             ..TapeEngineParams::default()
         };
         let t = host_time(&|_| p, &tv, at_clamp, blocks);
-        rows.push((format!("{model:?}, 8 frames"), model, t));
+        rows.push((format!("{model:?}, 64 frames"), model, t));
     }
     for model in [TapeModel::Loop, TapeModel::Reverse] {
         let p = TapeEngineParams {
