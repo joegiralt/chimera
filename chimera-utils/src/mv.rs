@@ -132,12 +132,12 @@ pub fn measure(t: ReverbType, knobs: &[Knobs], seeds: usize) -> Result<Vec<Metri
         .collect())
 }
 
-fn read_json(p: &Path) -> Result<Value, String> {
+pub(crate) fn read_json(p: &Path) -> Result<Value, String> {
     let s = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
     serde_json::from_str(&s).map_err(|e| format!("{}: {e}", p.display()))
 }
 
-fn write_json(p: &Path, v: &Value) -> Result<(), String> {
+pub(crate) fn write_json(p: &Path, v: &Value) -> Result<(), String> {
     if let Some(d) = p.parent() {
         std::fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
     }
@@ -160,7 +160,7 @@ fn t_name(t: ReverbType) -> &'static str {
     ReverbType::NAMES[t.index()]
 }
 
-fn load_refs(cfg: &Config) -> Result<Map<String, Value>, String> {
+pub(crate) fn load_refs(cfg: &Config) -> Result<Map<String, Value>, String> {
     match read_json(&refs_path(cfg))? {
         Value::Object(m) => Ok(m),
         _ => Err("refs: not an object".into()),
