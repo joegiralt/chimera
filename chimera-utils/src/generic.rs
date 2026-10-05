@@ -396,8 +396,10 @@ mod tests {
     #[test]
     fn a_fake_reference_is_measured_through_inversion_latency_and_short_output() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!("chimera-utils-fake-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let root = std::env::temp_dir().join("chimera-utils-fake");
+        // Removed when the test ends, passed or failed.
+        let scratch = crate::reference::Scratch::new(&root).unwrap();
+        let dir = scratch.path("");
         let script = dir.join("fake-svf");
         let me = std::env::current_exe().unwrap();
         std::fs::write(
@@ -440,6 +442,5 @@ mod tests {
         assert!(short.contains("samples, asked"), "{short}");
         // Every render's scratch directory is gone, the failed one's too.
         assert_eq!(std::fs::read_dir(dir.join("tmp")).unwrap().count(), 0);
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
