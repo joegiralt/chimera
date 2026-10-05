@@ -342,3 +342,75 @@ fn midi_extremes_stay_finite() {
     let (out, _) = play(&mut e, &p, &v, SR as usize / BLOCK_SIZE);
     assert!(out.iter().all(|y| y.is_finite()));
 }
+
+/// A note-on on a sounding engine ramps from where the output was, so the
+/// head's jump to START never steps.
+#[test]
+fn retrigger_is_click_free() {
+    let held = held_plain(&sine(48_000, 100.7, 48_000), 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    let p = TapeEngineParams::default();
+    let mut e = fresh();
+    e.note_on(60, &p, &v, SR);
+    let (mut out, _) = play(&mut e, &p, &v, 20);
+    let steady = max_step(&out[BLOCK_SIZE..]);
+    // Retriggered at frame 0, half a period on, and 30 % in: each a jump.
+    for start in [0.0, 50.0 / 48_000.0, 0.3] {
+        e.note_on(60, &TapeEngineParams { start, ..p }, &v, SR);
+        let (more, _) = play(&mut e, &p, &v, 4);
+        out.extend_from_slice(&more);
+    }
+    let worst = max_step(&out[BLOCK_SIZE..]);
+    assert!(worst <= 4.0 * steady, "{worst} against {steady}");
+}
+
+/// `inc` ramps across a block: a PITCH move of an octave advances the head
+/// by the ramp's mean, 1.5 frames a sample, not by its end's 2.
+#[test]
+fn inc_ramps_across_the_block() {
+    let held = held_plain(&sine(48_000, 100.0, 48_000), 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    let p = TapeEngineParams::default();
+    let mut e = fresh();
+    e.note_on(60, &p, &v, SR);
+    let (_, a) = play(&mut e, &p, &v, 1);
+    e.set_pitch(1_200.0);
+    let (_, b) = play(&mut e, &p, &v, 1);
+    let moved = b[0] - a[0];
+    assert!((95..=97).contains(&moved), "{moved} frames");
+}
+
+/// SIZE and POSITION moved every block: each pass takes its bounds at its
+/// wrap, the fade covering the step, and a fade with too little room waits
+/// rather than splicing.
+#[test]
+fn moving_bounds_are_click_free() {
+    let held = held_plain(&sine(48_000, 100.7, 48_000), 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    let steady = {
+        let src = sine(48_000, 100.7, 4_800);
+        max_step(&src)
+    };
+    for xfade in [0.1, 0.5] {
+        let mut p = TapeEngineParams {
+            xfade,
+            ..TapeEngineParams::default()
+        };
+        let mut e = fresh();
+        e.note_on(60, &p, &v, SR);
+        let mut out = Vec::new();
+        let mut b = [0.0; BLOCK_SIZE];
+        for n in 0..3_000 {
+            let t = n as f32;
+            p.size = 0.6 + 0.4 * (t * 0.05).sin();
+            p.position = 0.5 + 0.5 * (t * 0.031).sin();
+            e.render(&mut b, &p, &v, SR);
+            out.extend_from_slice(&b);
+        }
+        let worst = max_step(&out[BLOCK_SIZE..]);
+        assert!(
+            worst <= 4.0 * steady,
+            "XFADE {xfade}: {worst} against {steady}"
+        );
+    }
+}

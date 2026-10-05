@@ -116,6 +116,10 @@ pub fn plan(rem: Pos, next: &Bounds, ws: u32, le: u32) -> Plan {
 }
 
 /// A fade in progress: the second head's share is `1 − (end − head) · inv`.
+///
+/// The fade advances with the head, so one shorter than a sample's step
+/// (`lx < inc`: a 2 ms loop played far above its own speed) is crossed in a
+/// sample or two, and the wrap is in effect hard. `inc`'s clamp bounds it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Fade {
     /// The pass's end, where the second head takes over.
@@ -127,6 +131,17 @@ pub struct Fade {
 }
 
 impl Fade {
+    /// A fade over the `rem` frames to `end`. A fade under one frame takes
+    /// one, so `inv` stays finite.
+    pub fn new(end: Pos, rem: Pos, next: Bounds) -> Fade {
+        let r = rem.whole() as f32 + rem.frac();
+        Fade {
+            end,
+            inv: 1.0 / r.max(1.0),
+            next,
+        }
+    }
+
     /// The second head's share with the first at `h`.
     #[inline(always)]
     pub fn gain(&self, h: Pos) -> f32 {
@@ -138,6 +153,17 @@ impl Fade {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A fade 100 / 2³² of a frame long: finite, its gain in [0, 1].
+    #[test]
+    fn a_sliver_of_a_fade_stays_finite() {
+        let end = at(1_000);
+        let f = Fade::new(end, Pos(100), Bounds::default());
+        assert!(f.inv.is_finite());
+        let g = f.gain(end - Pos(100));
+        assert!((0.0..=1.0).contains(&g), "{g}");
+        assert_eq!(f.gain(end), 1.0);
+    }
 
     #[test]
     fn loop_len_spans_2ms_to_the_window() {

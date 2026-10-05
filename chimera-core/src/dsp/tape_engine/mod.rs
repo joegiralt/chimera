@@ -36,6 +36,12 @@ const EASE: f32 = 0.3;
 
 const _: () = assert!(NOTE_ON_RAMP as usize <= BLOCK_SIZE);
 
+/// Events one sample handles: a put-off fade's start, then the fade's start
+/// and its wrap, then the new pass's fade, which is one pass of an ordinary
+/// loop. Only a loop shorter than a sample's step needs more; it takes them
+/// the next sample, its head held in reach by the splice's modulo.
+const MAX_EVENTS: usize = 4;
+
 /// Frames a head advances each output sample:
 /// `rate / sample_rate · 2^((note·100 + pitch_cents − root) / 1200)`,
 /// clamped to `[ε, INC_MAX]` so a head never stands still.
@@ -135,6 +141,9 @@ pub struct TapeEngine {
     gain: f32,
     /// The note-on ramp is to come.
     ramp: bool,
+    /// The last sample out: a note-on ramps from it, so a retrigger never
+    /// steps.
+    last: f32,
     note: u8,
     /// PIT's PITCH and FINE with their routes, cents.
     pitch: f32,
@@ -171,6 +180,7 @@ impl TapeEngine {
             event: 0,
             gain: 0.0,
             ramp: false,
+            last: 0.0,
             note: 60,
             pitch: 0.0,
             slide: Glide::new(1.0, 1.0),
@@ -288,6 +298,7 @@ impl TapeEngine {
     ) {
         if !self.active {
             out.fill(0.0);
+            self.last = 0.0;
             return;
         }
         let to = Macros::of(p);
@@ -318,13 +329,17 @@ impl TapeEngine {
         self.run_loop(out, v, (from, step), &k);
 
         if core::mem::take(&mut self.ramp) {
+            let last = self.last;
             for (i, y) in out[..NOTE_ON_RAMP as usize].iter_mut().enumerate() {
-                *y *= i as f32 / NOTE_ON_RAMP as f32;
+                *y = last + (*y - last) * (i as f32 / NOTE_ON_RAMP as f32);
             }
         }
+        self.last = out[BLOCK_SIZE - 1];
     }
 
-    /// LOOP's samples: the head, and the fade's second head while one runs.
+    /// LOOP's samples: runs of one head, or of a fade's two, each up to the
+    /// next event. The heads live in locals; the state is written back only
+    /// around an event and at the block's end.
     #[inline(always)]
     fn run_loop(
         &mut self,
@@ -333,34 +348,62 @@ impl TapeEngine {
         (mut cur, step): (u64, u64),
         k: &AtWrap,
     ) {
-        for y in out.iter_mut() {
-            let a = v.read(self.heads[0].pos);
-            *y = match &self.fade {
-                Some(f) => {
-                    let g = f.gain(self.heads[0].pos);
-                    self.gain = g;
-                    a + g * (v.read(self.heads[1].pos) - a)
+        let [mut h0, mut h1] = self.heads.map(|h| h.pos);
+        let (mut ev, mut g) = (self.event, self.gain);
+        let mut i = 0;
+        while i < BLOCK_SIZE {
+            let mut hit = false;
+            match self.fade {
+                None => {
+                    while i < BLOCK_SIZE {
+                        out[i] = v.read(h0);
+                        cur = cur.wrapping_add(step);
+                        h0 = h0 + Pos(cur);
+                        i += 1;
+                        if h0.whole() >= ev {
+                            hit = true;
+                            break;
+                        }
+                    }
                 }
-                None => a,
-            };
-            cur = cur.wrapping_add(step);
-            self.heads[0].pos = self.heads[0].pos + Pos(cur);
-            self.heads[1].pos = self.heads[1].pos + Pos(cur);
-            if self.heads[0].pos.whole() >= self.event {
+                Some(f) => {
+                    while i < BLOCK_SIZE {
+                        let a = v.read(h0);
+                        g = f.gain(h0);
+                        out[i] = a + g * (v.read(h1) - a);
+                        cur = cur.wrapping_add(step);
+                        h0 = h0 + Pos(cur);
+                        h1 = h1 + Pos(cur);
+                        i += 1;
+                        if h0.whole() >= ev {
+                            hit = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if hit {
+                self.heads = [Head { pos: h0 }, Head { pos: h1 }];
+                self.gain = g;
                 self.on_event(k);
+                [h0, h1] = self.heads.map(|h| h.pos);
+                (ev, g) = (self.event, self.gain);
             }
         }
+        self.heads = [Head { pos: h0 }, Head { pos: h1 }];
+        self.gain = g;
     }
 
     /// The next pass's bounds from the eased macros, the walk, and END and
     /// XFADE now.
     fn next_bounds(&self, k: &AtWrap) -> Bounds {
-        let we = window_end(self.ws, k.end, k.frames, k.rate);
+        let ws = self.ws.min(k.frames - 1);
+        let we = window_end(ws, k.end, k.frames, k.rate);
         let mut place = self.mac.position + self.walk;
         if place > 1.0 {
             place -= 1.0;
         }
-        Bounds::of(self.ws, we, (self.mac.size, place, k.xfade), k.rate)
+        Bounds::of(ws, we, (self.mac.size, place, k.xfade), k.rate)
     }
 
     /// The head reached `event`: a fade starts (or is put off), a fade
@@ -369,7 +412,7 @@ impl TapeEngine {
     #[cold]
     #[inline(never)]
     fn on_event(&mut self, k: &AtWrap) {
-        for _ in 0..4 {
+        for _ in 0..MAX_EVENTS {
             let h = self.heads[0].pos;
             if h.whole() < self.event {
                 return;
@@ -399,11 +442,7 @@ impl TapeEngine {
                     Plan::Fade { restart } => {
                         self.pending = None;
                         self.heads[1].pos = restart - rem;
-                        self.fade = Some(Fade {
-                            end: at(le),
-                            inv: 1.0 / (rem.whole() as f32 + rem.frac()),
-                            next,
-                        });
+                        self.fade = Some(Fade::new(at(le), rem, next));
                         self.event = le;
                     }
                     Plan::Later(frame) => {
