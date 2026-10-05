@@ -35,20 +35,30 @@ impl Default for Meter {
 /// binary may publish a nonzero value or render MST expecting one.
 pub static MASTER_GR: Meter = Meter::new();
 
-/// The tempo the reverb follows and its synced time's fold: what a synced
-/// cell shows. Global as `MASTER_GR`: only a test binary whose renders keep
-/// 120 BPM may draw synced cells.
-static REV_TEMPO: Meter = Meter::new();
-static REV_FOLD: Meter = Meter::new();
+/// The tempo the reverb follows and its synced time's fold, in one word:
+/// tempo × 4 (its 0.25 BPM grid) in the low 16 bits, the fold above. What
+/// a synced cell shows. Global as `MASTER_GR`: only a test binary whose
+/// renders keep 120 BPM may draw synced cells.
+static REV_CLOCK: AtomicU32 = AtomicU32::new(0);
 
 pub fn publish_rev_clock(t: Tempo, f: FoldState) {
-    REV_TEMPO.publish(t.0);
-    REV_FOLD.publish(f.0 as f32);
+    REV_CLOCK.store(clock_word(t, f), Ordering::Relaxed);
+}
+
+/// `t` × 4 in bits 0–15, `f` in bits 16–23: the published word, and what
+/// a synced cell's redraw is keyed on.
+pub fn clock_word(t: Tempo, f: FoldState) -> u32 {
+    (libm::roundf(t.0 * 4.0) as u32 & 0xFFFF) | (f.0 as u8 as u32) << 16
 }
 
 /// The last published clock; 120 BPM, unfolded, before any.
 pub fn rev_clock() -> (Tempo, FoldState) {
-    let t = REV_TEMPO.read();
-    let t = if t > 0.0 { Tempo(t) } else { Tempo::DEFAULT };
-    (t, FoldState(REV_FOLD.read() as i8))
+    let w = REV_CLOCK.load(Ordering::Relaxed);
+    let q = w & 0xFFFF;
+    let t = if q == 0 {
+        Tempo::DEFAULT
+    } else {
+        Tempo(q as f32 / 4.0)
+    };
+    (t, FoldState((w >> 16) as u8 as i8))
 }

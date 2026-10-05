@@ -2347,7 +2347,12 @@ impl UiState {
                 self.prime_status,
             )
             .with_set(region::quantize(self.renderer.set[f.focus].current()))
-            .with_text(f.orbit_focus.as_ref().map_or(0, |o| o.key()), f.hints)
+            .with_text(
+                f.orbit_focus
+                    .as_ref()
+                    .map_or_else(|| rev_clock_key(f), |o| o.key()),
+                f.hints,
+            )
             .animated(glyph::anim_key(
                 shown.is_some_and(|g| g.animates()),
                 f.clock.frame(),
@@ -2689,16 +2694,28 @@ fn page_def(at: Location, cx: &NavCtx) -> &'static BlockDef {
 /// What a reverb panel's cells read beyond their own values: HALL's plate
 /// zone (the SIZE cell's `PLATE`) and the PRE-DLY it plays there, which a
 /// SIZE CC moves while REV › MORE shows only PRE-DLY's stored knob; and
-/// the clock a synced cell's note reads. 0 on any other page.
-fn rev_text_key(f: &renderer::Frame) -> u32 {
-    if !(0..f.def.params.len()).any(|i| view::is_reverb_panel(f.def, i)) {
+/// the clock a synced cell's note reads. 0 on any other page. Bits 0–15
+/// PRE-DLY, 16 the plate, 17–40 the clock (`rev_clock_key`).
+fn rev_text_key(f: &renderer::Frame) -> u64 {
+    if !is_rev_page(f) {
         return 0;
     }
     let pre = crate::dsp::reverb::plate_pull(&f.fx.reverb).predelay;
-    // A synced cell reads the tempo, on its 0.25 BPM grid, and the fold.
+    region::quantize(pre) as u64 | (f.ctx.plate as u64) << 16 | (rev_clock_key(f) as u64) << 17
+}
+
+/// The tempo and fold a synced reverb cell reads (`meter::clock_word`);
+/// 0 off the reverb's pages.
+fn rev_clock_key(f: &renderer::Frame) -> u32 {
+    if !is_rev_page(f) {
+        return 0;
+    }
     let (t, fold) = f.rev_clock;
-    let clock = ((t.0 * 4.0) as u32) << 8 | fold.0 as u8 as u32;
-    ((f.ctx.plate as u32) << 16 | region::quantize(pre) as u32) ^ clock.wrapping_mul(0x9E37_79B9)
+    crate::meter::clock_word(t, fold)
+}
+
+fn is_rev_page(f: &renderer::Frame) -> bool {
+    (0..f.def.params.len()).any(|i| view::is_reverb_panel(f.def, i))
 }
 
 #[cfg(test)]

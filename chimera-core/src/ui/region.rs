@@ -61,7 +61,8 @@ pub enum RegionData {
         anim: u32,
         /// The slot's set value (quantized): a glyph may draw it, not `value`.
         set: u16,
-        /// What the band shows from outside its slot (ORBIT's readings).
+        /// What the band shows from outside its slot (ORBIT's readings, a
+        /// synced reverb cell's clock).
         text: u32,
         /// HINTS on: the band draws its hint.
         hints: bool,
@@ -102,8 +103,9 @@ pub enum RegionData {
         matrix_rev: u16,
         looks: u16,
         /// What a cell's text reads beyond its own value: the reverb
-        /// panels' plate zone and its effective PRE-DLY.
-        text: u32,
+        /// panels' plate zone and its effective PRE-DLY, and the clock a
+        /// synced cell reads.
+        text: u64,
     },
     Nav {
         chain_idx: u8,
@@ -316,7 +318,7 @@ impl RegionData {
             mods: [Some(u32::MAX); 6],
             matrix_rev: u16::MAX,
             looks: u16::MAX,
-            text: u32::MAX,
+            text: u64::MAX,
         }
     }
 
@@ -373,7 +375,7 @@ impl RegionData {
     /// inert column redraws.
     /// Cells keyed on `text` too: what their text reads beyond their
     /// values.
-    pub fn with_text_key(self, key: u32) -> Self {
+    pub fn with_text_key(self, key: u64) -> Self {
         match self {
             Self::Cells {
                 page,
