@@ -7,6 +7,7 @@
 - **Revision 2:**
   - It folds in the adversarial review (B1–B5, H1–H3, M1–M6) and every owner ruling of 2026-10-05.
   - It adds the owner's ALGO audio-rate taps (§ 6).
+- **Revision 3:** it applies the re-review (H-new-1 to 4, M-new-1 to 4, N4, L-new-1 and 2, and M6's leftover). ADR 0096 now supersedes ADR 0037, which is Accepted, rather than amending it.
 
 **Implementation starts after `modal-stagger` merges.** That branch may replace `filter.rs`'s `saturate()` with stmlib's rational soft clipper, which divides. The CLEAN loop's in-loop saturate must stay divide-free on its common path, and the cost probes assert it (§ Cost). If `modal-stagger` lands a dividing clipper, the filter keeps today's C1 `saturate` for its own use.
 
@@ -74,7 +75,7 @@
   - A mode's disk code and ident are its identity and are unchanged: `Notch` = 6 "NOTCH" and `Phaser` = 7 "PHASER". Only the screen label changes.
 - **Labels and defaults belong to the type.**
   - `FilterKind::mode_label(mode)` replaces the global name tables (#165).
-  - `FilterKind::default_mode()` replaces "`modes()[0]` is the default" (amends ADR 0037). MODE's `ParamSpec` default resolves through it, so index 0, now LP1, never becomes a default.
+  - `FilterKind::default_mode()` replaces "`modes()[0]` is the default" (ADR 0037, superseded by 0096). MODE's `ParamSpec` default resolves through it, so index 0, now LP1, never becomes a default.
 - **Display names:**
   - The code's `FilterKind::Svf` keeps ident "SVF" and shows **CLEAN**.
   - **2040** is named after the chip. "Prophet" is Sequential's trademark, so no screen, ident or doc label uses it.
@@ -113,22 +114,28 @@
 | MODE [8.7] | MODE (7) | **MODE** | FLT 4 |
 | FM 1 [8.1], normalled to ENV B | route ENV 1 → CUTOFF (was `env_amount`) | **FM1** | FLT 5 |
 | FM 2 [8.2], ±1 V/oct, normalled to pitch | route NOTE → CUTOFF (was `key_track`); ±100 % is ±1 oct/oct | **FM2** | FLT 6 |
-| LEVEL [8.8], attenuates, and past unity clips with a red LED | DRIVE (2), the law and LED below | **LEVEL** | FLT › MOD 1 |
+| LEVEL [8.8], attenuates, and past unity clips with a red LED | new param **LEVEL** (Filter **12**), replacing DRIVE (2, retired); the law, migration and LED are below | **LEVEL** | FLT › MOD 1 |
 | FM 3 [8.3], free | route *FM3 IN* → CUTOFF (was the LFO knob, `fm_amount`) | **FM3** | FLT › MOD 2 |
-| FM 3 jack [8.C] | new enum `fm3_src` (Filter **8**), default **LFO 1** | **FM3 IN** | FLT › MOD 3 |
+| FM 3 jack [8.C] | new enum `fm3_src: Jack` (Filter **8**), default **LFO 1** | **FM3 IN** | FLT › MOD 3 |
 | QM [8.4] | route *QM IN* → RES | **QM** | FLT › MOD 4 |
-| Q MOD jack [8.D] | new enum `qm_src` (Filter **11**), default **ENV 3** | **QM IN** | FLT › MOD 5 |
+| Q MOD jack [8.D] | new enum `qm_src: Jack` (Filter **11**), default **ENV 3** | **QM IN** | FLT › MOD 5 |
 
 - **Layout.** FLT knob 1 is TYPE. FLT › MODE is renamed **FLT › MOD**. Its sixth cell is MODE, fixed and dimmed, on single-mode types only (2040), so that every type shows its mode somewhere (M6).
 - **Ids.** Filter ids 9 and 10 stay unused, because the routing spec left them for never-built params.
 - **Route knobs** are views of matrix cells, −100..+100 % (ADR 0035, 0037).
   - FM1, FM2 and FM3 act in octaves (`CUTOFF_OCTAVES`).
   - *Departures from the Cascadia:* its FM1 is unipolar and its FM3 is linear FM. Ours are one bipolar, exponential amount each (routing-spec decision 24).
-- **FM3 IN and QM IN are the jacks (M4).**
+- **FM3 IN and QM IN are the jacks (M4, H-new-3).**
+  - **The type.** `enum Jack { Mod(ModSource), Tap(TapOp) }`, with `enum TapOp { Op5, Op6 }`. `Jack` has its own disk codes: 0–7 are the `ModSource` codes, and 8 and 9 are OP 5 and OP 6. `ModSource` itself is **not** extended: it is the matrix-row type, and its `ALL` and `index()` callers (about 91) assume exactly 8 rows, so two more variants would index out of bounds.
   - **Choices.** FM3 IN steps through LFO 1, LFO 2, LFO 3, ENV 2, ENV 3, VEL, and on ALGO also OP 5 and OP 6 (§ 6). QM IN steps through all eight matrix sources, and on ALGO also OP 5 and OP 6.
-  - **Repatching moves the cable.** One UI-side function, `filter_panel::repatch(sound, jack, new_src)`, moves the route's amount and presence bit from the old source's cell to the new one in one write. It never moves into an occupied cell; that source is skipped. The cutoff and Q move through their ramps, so the move doesn't click.
+  - **Repatching moves the cable.** One UI-side function, `filter_panel::repatch(sound, jack, new: Jack)`, matches on the (old, new) pair and moves the amount in one write. The cutoff and Q move through their ramps, so the move doesn't click.
+    - Mod → Mod: the matrix cell's amount and presence bit move to the new source's cell.
+    - Mod → Tap or Tap → Mod: the amount moves between `ModState` and `TapRoutes`, and is converted to keep its depth in octaves (M-new-2). A CUTOFF route at 100 % is 10 octaves; a FREQ tap at 100 % is 4. So `a_tap = clamp(a·10/4, ±1)` going to a tap, and `a = a_tap·4/10` coming back. Q routes and Q taps are both linear in RES, so their amount carries over unchanged.
+    - Tap → Tap: the amount moves between the two tap entries.
+    - It never moves into an occupied cell or entry; that source is skipped.
   - **Exclusions.** Both params are excluded from MIDI learn and from the parameter sweep: they are patching, not sound.
   - **Loading a patch that lacks them.** FM3 IN is taken from the existing → CUTOFF route that is neither ENV 1 nor NOTE, if exactly one exists; otherwise it defaults. QM IN is taken from the single existing → RES route if there is one; otherwise it defaults.
+- **On a non-ALGO Sound** a jack holding OP 5 or OP 6 shows, and acts as, its default source (LFO 1 or ENV 3). The stored tap stays inert and is kept, so it returns if the Sound goes back to ALGO (L-new-2).
 - **QM** is a route into RES (linear law, ADR 0010), read per block and ramped per sample. A tap reaches it per sample (§ 6).
 - **Hints (ADR 0086).**
   - MIX + MINUS on any route view of any type deletes that route. That covers FM1, FM2, FM3, QM, ENV AMT and KEYBD. The focus band then shows `MIX + MINUS DELETES THE ROUTE` (`mod_grid::DELETE`). ADR 0086's table gains this row (FLT and FLT › MOD, any route knob).
@@ -136,14 +143,17 @@
 
 #### LEVEL: attenuation, a transparent clipper and its LED (H1)
 
-- **The law, Cascadia-style:** `gain = 2^(4·LEVEL − 2)`, one `fast_exp2` per block. LEVEL 0 is ×¼ (−12 dB), **0.5 is unity**, and 1 is ×4 (+12 dB).
-  - The new default is 0.5. Factory Sounds move their DRIVE 0 to 0.5, which keeps their level. Other old patches load quieter, which the no-legacy-compat rule allows.
-  - The gain is ramped per sample. That is today's pre-gain ramp, at no new cost.
+- **The law, Cascadia-style:** `gain = 2^(4·LEVEL − 2)`, one `fast_exp2` per block. LEVEL 0 is ×¼ (−12 dB), **0.5 is unity**, and 1 is ×4 (+12 dB). The default is 0.5. The gain is ramped per sample, which is today's pre-gain ramp at no new cost.
+- **A new id, not a new meaning (H-new-4, ADR 0009).** LEVEL is a new param, Filter id **12**, and DRIVE (id 2) is retired and never reused. Giving id 2 the new law would load every DRIVE-0 patch 12 dB quieter.
+  - **Translation on load.** A file that stores DRIVE but not LEVEL is translated through `storage/codes.rs`'s translation table, the precedent being Modal's `translate_v1`: `LEVEL = clamp((log₂(1 + 4·DRIVE) + 2)/4, 0, 1)`. This preserves the old gain `1 + 4·DRIVE` up to the new ×4 ceiling, so DRIVE 0 becomes LEVEL 0.5 (unity).
+  - Routes into DRIVE's address are re-addressed to LEVEL's, with their amount kept.
+  - `Sound::neutral`'s DRIVE stays frozen at its v1 value (0), so a file with neither param decodes to LEVEL 0.5.
+  - Factory Sounds and old patches keep their level.
 - **The clipper:** linear to ±1, then today's C1 knee, `1 + u − u²/2` for `u = |x| − 1`, flat at ±1.5 from ±2. It is transparent below ±1, unlike stmlib's rational clipper (0.78 at 1) or a cubic (0.85).
-  - **Gate.** It runs while the *filter's* DRIVE gives a gain > 1, or while a route or tap moves it (not the DRIVE stage's `p.drive.drive`).
+  - **Gate.** It runs while the *filter's* LEVEL gives a gain > 1, or while a route or tap moves it (not the DRIVE stage's `p.drive.drive`).
   - **Fade.** Its own 20 ms fade blends dry into clipped when the gate opens, and back when it closes, so crossing unity never steps.
   - **Bill.** It is billed while it runs (§ Cost).
-- **2040:** LEVEL's gain feeds the OTA stages directly, and the clipper does not run (H2), because on the 2040 the stages are the clipper.
+- **2040:** LEVEL's gain feeds the OTA stages directly, and the clipper does not run (H2), because on the 2040 the stages are the clipper. With the 2040's small α (§ 3), LEVEL is its drive control.
 - **The LED.** While the clipper runs, a voice keeps its block's `peak = max|x·gain|`. On the 2040 the peak is `max|(1 − G)(u − s₁)|`, the first OTA's error.
   - The voice reports `clip = clamp((peak − 1)/2, 0, 1)`.
   - Each Part publishes the maximum over its voices to `meter::FILTER_CLIP[part]`, one relaxed store a block, like `MASTER_GR`.
@@ -167,6 +177,7 @@
   - **Bounded.** For `k < 0` the linear loop grows, and `saturate` (|output| ≤ 1.5) caps every state read. Then `hp` is bounded by `(|x| + (0.105 + g)·1.5 + 1.5)·d`, and each state `= v + 2g·hp` stays bounded for any finite input and any `g ≤ tan(π·0.49)`. The oscillation's level is set by the saturator.
   - **One onset everywhere.** Every resonant type maps RES so it begins to oscillate at **RES 0.95**: CLEAN here, 2040 at `k = 4` (§ 3), and DIRTY at `q = 0` (§ 4).
   - **LP4:** `k₂ = 1.2k + 0.3`, clamped ≥ 0.1. The second stage resonates but does not oscillate on its own.
+  - **Per-mode trim at onset (M-new-1).** Untrimmed, CLEAN's self-oscillation is hot and uneven by mode, up to +8.4 dBFS on BP2. Each resonant mode gets an output trim, `trim(mode, k) = 1` for `k ≥ 0.5`, falling linearly to the mode's pinned `TRIM_OSC[mode]` at `k ≤ 0`. The trims are set at build so every mode's self-oscillation sits below 0 dBFS, within a band shared with the 2040's (test 2). It is one multiply on the output, ramped with `k`.
 - **`tan` per block (M2).** `g = tan_accurate(min(fc/fs, 0.497))`, using stmlib's FREQUENCY_ACCURATE polynomial. The clamp is ours, because ACCURATE has none. It replaces `fast_tan` in the filter, which addresses #57 there. The Modal resonators' second approximation stays #57's.
 - **Coefficients: exact where they move, precomputed where they don't (B1).**
   - **Steady block** (g and k equal at both ends, no tap on FREQ or Q): `d = 1/(1 + kg + g²)` and `d₂` are computed once, with no per-sample divide. This is the common case and the billed baseline.
@@ -184,7 +195,7 @@
   ```
 
   - **Two exact notches at every Q.** `out ∝ (1 + A)·u`, so it is zero wherever the cascade's phase is −180° or −540°. In analog terms that is 0.414 × and 2.414 × FREQ, 2.54 octaves apart and centred on FREQ in log frequency. Digitally the notches are at `(fs/π)·atan(g·tan(π/8))` and `(fs/π)·atan(g·tan(3π/8))`. They move with FREQ in octaves, which is why it sweeps well.
-  - **Q is feedback:** `fb = 0.7·RES`. It cannot self-oscillate, matching the Cascadia (owner). The `√(1 − fb)` scaling keeps loudness within about 1 dB, while the peaks between the notches rise by up to 5.2 dB with Q.
+  - **Q is feedback:** `fb = 0.7·RES`. It cannot self-oscillate, matching the Cascadia (owner). The `√(1 − fb)` scaling keeps loudness within about 1 dB for FREQ up to about 2 kHz, while the peaks between the notches rise by up to 5.2 dB with Q. Above that the one-sample delay lets Q add loudness: about +2.4 dB at 5 kHz and +3 dB at 10 kHz at full Q, which is accepted (L-new-1).
   - **Stable.** The all-pass chain has unit gain and `|fb| ≤ 0.7`.
   - **Coefficient.** `G₁` is computed per block, or per sample (one `vdiv`) on a moving block, as `d` is.
   - **Peak position.** The one-sample delay slides the peak below FREQ at high FREQ. That is accepted, and the test pins it.
@@ -216,7 +227,7 @@
 Per block: `g = tan_accurate(fc/fs)`, `G = g/(1 + g)`, `k = 4·RES/0.95` (so 4 at RES 0.95 and 4.21 at RES 1), and `D = 1/(1 + k·G⁴)`. On a moving block, `G` and `D` are divided per sample, exactly, as CLEAN's `d` is (B1).
 
 ```
-x_c = α · x · gain                                // α = ½: the saturation domain; no compensation (c = 0)
+x_c = α · x · gain                                // α ≈ 0.1, tuned with L (H-new-1); no compensation (c = 0)
 S   = (1 − G)·(s₄ + G·(s₃ + G·(s₂ + G·s₁)))        // the stages' state through the linear cascade
 u_l = (x_c − k·S) · D                             // one-step ZDF: the global loop solved linearly
 u   = x_c − L·sat((x_c − u_l)/L)                  // the 3080's feedback limit, L = ¼ (B3)
@@ -224,7 +235,7 @@ for i in 1..=4:                                   // x₁ = u, xᵢ₊₁ = yᵢ
     t  = g · sat((1 − G)·(xᵢ − sᵢ))               // the OTA on the true error x − y (H2)
     yᵢ = sᵢ + t
     sᵢ = yᵢ + t
-out = y₄ · (1/α) · OUT_2040                       // OUT_2040 pinned so LEVEL ½, RES 0 is 0 dB ± 0.5 (≈ 0.82)
+out = y₄ · (1/α) · OUT_2040                       // OUT_2040 pinned so LEVEL ½, RES 0 is 0 dB ± 0.5
 sat(v) = c − (4/27)·c³,  c = clamp(v, ±1.5)       // C1 cubic, no divide
 ```
 
@@ -234,14 +245,19 @@ sat(v) = c − (4/27)·c³,  c = clamp(v, ±1.5)       // C1 cubic, no divide
   - Without the feedback limit, the model oscillates 330 cents flat: the OTAs saturate inside the loop. An RK4 reference agrees, so the error is in the model, not the solver.
   - Limiting the feedback, as the 3080 in Fig. 9 and in the Kobol's CI5 does (`L = ¼`), keeps the stages near-linear, which brings the pitch to within about −3 to −5 cents.
   - `L` is tuned at build against the 1 V/oct test.
+- **The input scale α is tuned with `L` (H-new-1).**
+  - With α = ½ and L = ¼, a full-scale input saturates the limiter, so resonance collapses at normal levels. At full scale 14.5 dB of resonance is lost, and the bass loss reads −7.7 dB instead of −13.6. Self-oscillation sits near −24 dBFS, against CLEAN's +0.6 to +8.4, so a TYPE switch at RES 1 jumps 25–30 dB.
+  - **α ≈ 0.1** keeps the pitch within −1 cent, puts self-oscillation near −8 dBFS (inside the band CLEAN's trims target), and keeps the authentic −13.5 dB bass loss at full scale.
+  - α and `L` are pinned together at build by tests 2 and 7.
+  - With α this small, ordinary levels stay near-linear, and the 2040's grit comes from LEVEL.
 - **Bounded.** `sat` is bounded with slope ≤ 1. Each stage moves its state by at most `2G` per sample toward its input, and `u` is a bounded combination of the input and the states. The feedback limiter bounds the loop further.
 - **Bass loss:** DC gain `1/(1 + k)`. That is −14 dB at onset and −14.3 dB at RES 1. Nothing compensates it.
 - **Mode:** LP4 only. FLT › MOD's sixth cell shows "LP4", fixed and dimmed.
 - **Panel:**
   - FLT: TYPE · CUTOFF · RES · ENV AMT · KEYBD · DRIVE.
-  - FLT › MOD: LEVEL · FM3 · FM3 IN · QM · QM IN · MODE (fixed).
+  - FLT › MOD: — · FM3 · FM3 IN · QM · QM IN · MODE (fixed).
   - **KEYBD** is a stepped view of the continuous route NOTE → CUTOFF. It shows OFF, HALF or FULL when the amount is exactly 0, 64 or 127, and its percentage otherwise. One detent moves to the next step in that direction.
-  - DRIVE is the same parameter as LEVEL, with the LED; on the 2040 the label is the Prophet panel's word.
+  - **DRIVE is LEVEL (Filter 12) under the 2040's panel word, shown in one place only:** FLT's knob 6, with the LED. FLT › MOD's first cell is empty on the 2040 (M6).
 - **State:** four floats.
 
 ### 4. DIRTY: the Chamberlin SVF
@@ -304,24 +320,26 @@ out = clamp(½ · ½·(m₁ + m₂), ±1)                 // m = the mode's outp
   |---|---|
   | **FREQ** (the filter's CUTOFF, through FM3) | `g[n] = clamp(g_blk · exp2_poly(4·a·tap[n]), g_min, g_max)`: ±4 octaves at 100 % |
   | **Q** (RES, through QM) | `RES[n] = clamp(RES_blk + a·tap[n], 0, 1)`, which maps to `k`, `fb` or `q` per sample |
-  | **VCA** | `vca[n] · (1 − |a| + a·tap[n])`: AM at partial depth, ring modulation at 100 %; a negative amount inverts the phase |
+  | **VCA** | a tap-VCA stage, `x[n] · (1 − |a| + a·tap[n])`: AM at partial depth, ring modulation at 100 %; a negative amount inverts the phase. It runs **before** the DC blocker (below). |
   | **FOLD** (FOLD amount) | `fold[n] = clamp(fold_blk + a·tap[n], 0, 1)` on the folder's per-sample path |
 
-- **Out of the voice's lifetime.** Taps never hold a voice. The VCA rule of ADR 0035 is unchanged, and a tap only scales the gain it computes.
+- **The tap-VCA runs before the DC blocker (H-new-2).** The chain becomes engine → DRIVE → filter → FOLD → **tap-VCA** → DC blocker → VCA. A carrier tapped onto the VCA, or a 1:1 FM pair, multiplies the signal by a term correlated with it, which makes DC proportional to the envelope; after the blocker that DC would thump. Before it, the blocker removes it (ADR 0060). The envelope VCA stays where it is, after the blocker.
+- **Out of the voice's lifetime.** Taps never hold a voice. The VCA rule of ADR 0035 is unchanged, and the tap-VCA only scales the signal.
 
 #### Coexisting with the block-rate matrix
 
-- **Taps are not matrix rows.** The matrix's 8 rows are full, and raising `MAX_MOD_SOURCES` to 16 would add 128 B to every `ModState`, about 7 KB of AXI. Instead each Sound gains a fixed `TapRoutes { amt: [[i8; 4]; 2], present: u8 }`: 2 taps × 4 destinations, 9 B, stored append-only.
+- **Taps are not matrix rows.** The matrix's 8 rows are full, and raising `MAX_MOD_SOURCES` to 16 would add 128 B to every `ModState`, about 7 KB of AXI. Instead each Sound's `ParamSnapshot` gains `taps: TapRoutes`, at most 8 entries (2 taps × 4 destinations). Living in `ParamSnapshot`, it is seen by `Voice::cost(p, mods)` without a signature change (M-new-3).
+  - **Storage (M-new-4).** It is stored as a record of 4-byte entries, `(Jack code, dest block code, dest param id, amount i8)`, as `Routes` are. Each entry is validated on load through `ValidAddr`, and its destination must be one of the four. An invalid entry is dropped, and unknown codes are skipped. So it is append-only in the sense of ADR 0009: no positional blob.
 - **Order each block:**
   1. The block-rate matrix runs as today, giving each destination its block value: `fc_blk`, `RES_blk`, the VCA's block terms and `fold_blk`.
   2. The engine renders. ALGO copies OP 5's and OP 6's 64-sample rows into a stack `tap: [[f32; 64]; 2]` (512 B, DTCM), but only for a tapped op.
      - In `render_ops` that is a row copy.
      - In `render_samples` it is one store per sample per tapped op.
-  3. The filter, folder and VCA add the tap's per-sample term to their block value, as in the table.
+  3. The filter and folder add the tap's per-sample term to their block value, and the tap-VCA multiplies, as in the table.
 - **Amounts never snap.** A tap's amount is ramped across each block from its previous value, so enabling, disabling or turning a tap is click-free.
 - **Exponential FM on cutoff without a per-sample `tan`.**
   - **The scaling.** `tan` is close to linear well below Nyquist, so scaling `g` by `2^x` scales the cutoff by `2^x`. `exp2_poly` is a 3rd-order polynomial on the fraction plus an exponent-bit add for the integer part. It is about 8 instructions, divide-free, and accurate to about 0.1 % (about 2 cents).
-  - **Above about fs/8** the product reads sharp against true `tan` (`tan` grows faster). Then the clamp to `g_max = tan_accurate(0.45)`, computed per block, keeps the filter inside its range.
+  - **Above about fs/8** the product reads *flat* for upward moves (L-new-2): `tan` grows faster than linear, so `g·2^x` is less than `tan(2^x·ω)`, and the cutoff lands below the target. Downward moves read slightly sharp. Then the clamp to `g_max = tan_accurate(0.45)`, computed per block, keeps the filter inside its range.
   - **By type:**
     - The 2040 applies the same scaling to `g`.
     - DIRTY applies it to `f`, which `sin` keeps near-linear, and clamps to the block's `f` bound.
@@ -332,10 +350,13 @@ out = clamp(½ · ½·(m₁ + m₂), ±1)                 // m = the mode's outp
   - Every other cell in the tap rows is greyed. Touching one shows the hint `OP TAPS REACH FREQ · Q · VCA · FOLD`, a new row in ADR 0086's table.
   - On FLT › MOD, FM3 IN and QM IN offer OP 5 and OP 6 on ALGO. The FM3 or QM knob then edits the tap's amount.
   - On a non-ALGO Sound the tap rows are hidden, and stored taps are inert.
+- **Gating and billing (M-new-3).**
+  - A FOLD tap counts as a route in `Voice::stage_runs`, so the folder runs. Its bill includes `FOLD_COST` (45) when FOLD would otherwise be off.
+  - A VCA tap on ALGO with no VCA route makes ALGO's no-route path build a per-sample gain array for the tap-VCA, and that array is billed.
 - **Disk codes, append-only.**
-  - `ModSource` gains `Op5 = 8` and `Op6 = 9` (idents "OP5" and "OP6"). They are used only by `fm3_src`, `qm_src` and the tap view, never as `ModState` rows.
-  - `TapRoutes` is a new append-only Sound field.
-  - `ModSource`'s `DiskCode` is pinned in the codes fixture (M4).
+  - `Jack` has codes 0–9 (ModSource 0–7, OP 5 = 8, OP 6 = 9) and idents (the ModSource idents, then "OP5" and "OP6"), pinned in the codes fixture with `ModSource`'s own `DiskCode` (M4).
+  - `ModSource` is unchanged.
+  - `TapRoutes` is a new record (above).
 
 ## Cost
 
@@ -370,20 +391,20 @@ out = clamp(½ · ½·(m₁ + m₂), ±1)                 // m = the mode's outp
 | Tap capture (per tapped op) | +1 | 0 | +2 | in each tap's cost |
 | Tap → FREQ | +12, plus the moving path | 0 | +20 | 20 + the type's moving cost (CLEAN 55, 2040 55, DIRTY 20) |
 | Tap → Q | +4, plus the moving path | 0 | +7 | 7 + the moving cost (CLEAN 42, 2040 42, DIRTY 10) |
-| Tap → VCA | +4 | 0 | +7 | 10 |
-| Tap → FOLD | +4, plus `FOLD_RAMP_COST` | 0 | +7 | 10 + 29 |
+| Tap → VCA | +4, plus the gain array on ALGO's no-route path | 0 | +7 | 10, + 5 for the gain array when ALGO has no VCA route |
+| Tap → FOLD | +4, plus `FOLD_RAMP_COST` | 0 | +7 | 10 + 29, + `FOLD_COST` 45 when FOLD would otherwise be off |
 
 - **Not double-billed.** FREQ and Q taps on the same voice share the moving path's divides, so the moving cost is billed once.
 - **Per block:** `tan_accurate` is about 14 instructions; up to 3 `vdiv`s, 1 `vsqrt`, 1 `fast_exp2` and the ramps add under 1.5 cycles a sample. That is included above.
 - **The crossfade blocks** are not billed (§ 1).
-- **`cost_test`** replaces `each_svf_mode_bills_its_delta_over_lp24` with `filter_bills_each_type_and_mode` and `taps_bill_each_destination`. Every bill is ≥ 0. Every built type and mode is listed. `Voice::cost` adds the move, LEVEL and tap terms exactly when they apply, and adds nothing when no tap is present.
+- **`cost_test`** replaces `each_svf_mode_bills_its_delta_over_lp24` with `filter_bills_each_type_and_mode` and `taps_bill_each_destination`. Every bill is ≥ 0. Every built type and mode is listed. `Voice::cost` adds the move, LEVEL and tap terms exactly when they apply, reading `p.taps`, and adds nothing when no tap is present.
 - The bench's SVF row (#177) gains 2040, DIRTY and tap rows at ship time.
 
 ### Memory
 
 - **Per voice:** CLEAN 4 floats plus NOTCH2's 5; the 2040 4; DIRTY 2; the ramp endpoints; the block's clip peak and fade; and the tap amounts' previous values. That is about 110 B against 24 B today, ×8 ≈ 0.7 KB, under ADR 0051's assert. Types keep separate, flat state, so the crossfade can run two at once.
 - **Stack:** the crossfade's 256 B and the tap rows' 512 B, both in DTCM.
-- **Per Sound:** `FilterParams` grows 2 B and `TapRoutes` adds 9 B. Across the pool, the triple buffer and the Performance that is about 0.7 KB of AXI.
+- **Per Sound:** `FilterParams` grows 6 B (two `Jack`s and LEVEL) and `TapRoutes` adds up to 33 B (8 entries × 4 B, plus a count). Across the pool, the triple buffer and the Performance that is about 2 KB of AXI.
 - **Elsewhere:** `meter::FILTER_CLIP` is 6 × 4 B.
 - **Flash:** about 2.5 KB, reported in one line.
 
@@ -392,10 +413,10 @@ out = clamp(½ · ½·(m₁ + m₂), ±1)                 // m = the mode's outp
 - **No alloc and no panic in audio.** Modes and paths are matched once a block. Indices are const or clamped, and clamps are `vmaxnm`/`vminnm`.
 - **Never snapped.** Every coefficient, gain and tap amount ramps across the block. TYPE and MODE warm-start and crossfade over two blocks. The LEVEL clipper fades over 20 ms.
 - **Old patches load safely,** but needn't sound the same:
-  - LP1, NOTCH1 and NOTCH2 change sound, the top octave moves with the new `tan`, and LEVEL's law moves old DRIVE 0 to −12 dB;
-  - factory Sounds are set to keep their level;
+  - LP1, NOTCH1 and NOTCH2 change sound, and the top octave moves with the new `tan`;
+  - DRIVE translates to LEVEL on load, so levels hold;
   - goldens are re-recorded and listed in the PR;
-  - all new params, codes and `TapRoutes` are append-only, and unknown codes load as CLEAN LP4.
+  - all new params, codes and `TapRoutes` are append-only (DRIVE's id 2 retired, LEVEL new at 12), and unknown codes load as CLEAN LP4.
 
 ## Tests the build must add
 
@@ -407,7 +428,7 @@ out = clamp(½ · ½·(m₁ + m₂), ±1)                 // m = the mode's outp
    - DIRTY NOTCH1 at FREQ ± 5 % up to fs/8;
    - the 2040's −3 dB point within ±5 % of the linear prototype at a small input.
 2. **Self-oscillation, level and 1 V/oct** at RES 1, for CLEAN (every mode but NOTCH2), the 2040 and DIRTY. Each is started by one impulse and read over 0.5 s after 0.25 s.
-   - The level is steady (±1 dB) and within a band per type pinned at build, across FREQ 100 Hz – 8 kHz. That band test is required for the 2040.
+   - The level is steady (±1 dB) and below 0 dBFS in every mode, across FREQ 100 Hz – 8 kHz (M-new-1). CLEAN's trimmed modes, the 2040 and DIRTY share one pinned band, so a TYPE switch at RES 1 jumps no more than that band's width (H-new-1).
    - With FM2 at +100 %, notes C2–C6: each octave is within ±10 cents and the absolute pitch within ±25 cents, up to 5 kHz for CLEAN and the 2040, and up to fs/8 for DIRTY.
    - Onset sits at RES 0.95 ± 0.01 on each type.
 3. **Click-free sweeps** with `tests/common/sweep.rs` (`Tape::click`, `CLICK_RATIO`, `CLICK_FLOOR`) and `common::clicks`:
@@ -415,17 +436,18 @@ out = clamp(½ · ½·(m₁ + m₂), ±1)                 // m = the mode's outp
    - the same as UI steps through `Block::set`;
    - QM driven by a stepped LFO square;
    - FM3 IN and QM IN repatched mid-note;
-   - LEVEL 0.5 ↔ 0.51 on a full-scale saw with no step (the clipper's gate and fade).
-4. **One-block jumps (B1):** FREQ 100 Hz ↔ 20 kHz in one block, and a 1 ms ENV 1 → CUTOFF at +100 %, at RES 0 and RES 1, on every type, against an exact per-sample reference (f64, exact `tan` and divides). The test checks the max deviation ≤ 1e-3 relative and that no output exceeds the steady bound.
-5. **TYPE and MODE changes (B5):** every TYPE change and every MODE change, mid-note on a held saw. The output's max deviation from the destination's own steady output must be ≤ 10 % after the crossfade's first block, and must click at no point.
+   - LEVEL 0.5 ↔ 0.51 on a full-scale saw with no step (the clipper's gate and fade);
+   - a DRIVE-only file loads at the same level as before, within 0.1 dB (the H-new-4 translation).
+4. **One-block jumps (B1):** FREQ 100 Hz ↔ 20 kHz in one block, and a 1 ms ENV 1 → CUTOFF at +100 %, at RES 0 and RES 1, on every type, against a per-sample reference in f64 that uses `tan_accurate` and exact divides. At RES 0 the max deviation must be ≤ 1e-3 relative. At RES 1, where self-oscillation makes relative error meaningless, the check is boundedness: no output exceeds the steady bound (N4).
+5. **TYPE and MODE changes (B5):** every TYPE change and every MODE change, mid-note on a held saw. Measured from the end of the crossfade (N4), the output's max deviation from the destination's own steady output must be ≤ 10 %, and it must click at no point.
 6. **NOTCH2:** white noise, averaged spectrum.
    - There are exactly two minima at least 25 dB deep, at the digital formula's 0.414 × and 2.414 × FREQ (±3 %), for FREQ 200 Hz – 1.6 kHz in octaves.
    - A doubling of FREQ moves both up one octave (±0.05).
    - The notches hold at Q 0.5 and 1.
    - The peak near FREQ rises with Q by ≤ 5.2 dB.
-   - Broadband loudness stays within ±1.5 dB across Q.
+   - For FREQ ≤ 2 kHz, broadband loudness stays within ±1.5 dB across Q (L-new-1).
    - It never self-oscillates.
-7. **The 2040's bass loss:** the gain at 100 Hz with FREQ 2 kHz, at a small input, for RES 0–1 in tenths. It falls monotonically and stays within ±1 dB of `−20·log₁₀(1 + k)`. At RES 0.95 (`k = 4`) it is −14 ± 1 dB.
+7. **The 2040's bass loss and resonance at level (H-new-1):** the gain at 100 Hz with FREQ 2 kHz, for RES 0–1 in tenths, at a small input **and at full scale**. It falls monotonically and stays within ±1 dB of `−20·log₁₀(1 + k)`. At RES 0.95 (`k = 4`) it is −14 ± 1 dB, at full scale included. The resonant peak's gain at full scale for RES ≤ 0.8 stays within a pinned number of dB of the small-signal gain.
 8. **Bounded at every setting:**
    - a grid of FREQ (24 log points) × RES (11) × LEVEL (0, ½, 1) × every mode of every type;
    - inputs: silence, a full-scale saw, a square at fs/4, white noise ±1, and impulses of ±10;
@@ -435,11 +457,13 @@ out = clamp(½ · ½·(m₁ + m₂), ±1)                 // m = the mode's outp
    - **Sidebands at the op ratio.** An ALGO Sound with OP 6 at ratio r, its tap → VCA at 50 % and at 100 %, and a sine carrier at f_c: the sidebands at f_c ± r·f_note must sit within ±1 dB of the AM/RM theory. With the amount at 0 they must be under −90 dB.
      - Tap → FREQ on LP2 with a saw: sidebands at each harmonic ± r·f_note, and none at amount 0.
      - Tap → FOLD: the fold's spectrum moves at r·f_note.
-   - **No aliasing blow-up.** Every type and mode, with tap → FREQ and → Q at 100 %, OP 6 at 8 kHz and FREQ at 10 kHz: the output is finite and bounded as in test 8, and aliased energy is at most what the tap-free filter shows at the same settings plus a pinned margin.
+   - **No aliasing blow-up.** Every type and mode, with tap → FREQ and → Q at 100 %, OP 6 at 8 kHz and an inharmonic op ratio (√2), FREQ at 10 kHz: the output is finite and bounded as in test 8. Energy off the expected bins (the carrier's harmonics ± multiples of the op frequency) is at most a pinned margin above the tap-free filter's (N4).
+   - **No DC from the tap-VCA (H-new-2).** A carrier tapped onto the VCA at 100 % (OP 6 as carrier, 1:1) leaves output DC under −80 dB after the blocker settles.
    - **Click-free enable and disable.** The tap amount goes 0 → 100 % → 0 in UI steps, and the tap source is repatched mid-note, under the click detector.
-   - **Scope.** A tap cannot be routed to an operator pitch or level, or to any destination but the four (pure test on `TapRoutes` and the view). Taps are inert on non-ALGO Sounds. They never hold a voice.
+   - **Scope.** A tap cannot be routed to an operator pitch or level, or to any destination but the four (pure test on `TapRoutes` and the view). Taps are inert on non-ALGO Sounds, where a jack on OP 5 or OP 6 acts as its default source. They never hold a voice.
+   - **Units.** A Mod → Tap → Mod repatch keeps the depth in octaves, within one amount step.
 10. **Cost:**
-    - `filter_bills_each_type_and_mode` and `taps_bill_each_destination`;
+    - `filter_bills_each_type_and_mode` and `taps_bill_each_destination`, including FOLD_COST for a FOLD tap with FOLD off and the gain array for a VCA tap with no VCA route;
     - the probe disassembly shows 0 `vdiv` per steady loop;
     - each constant's count is in its doc comment.
 11. **Pure tests:**
@@ -449,9 +473,10 @@ out = clamp(½ · ½·(m₁ + m₂), ±1)                 // m = the mode's outp
     - a TYPE change leaves the `ModState` byte-identical;
     - `repatch` moves exactly one route and refuses an occupied cell;
     - load without FM3 IN or QM IN infers the source from the routes;
-    - codec round-trips of KIND 4 and 6, MODE 9, Filter 8 and 11, ModSource 8 and 9, and `TapRoutes`;
+    - codec round-trips of KIND 4 and 6, MODE 9, Filter 8, 11 and 12, `Jack` 0–9, and `TapRoutes` entries, with invalid entries dropped;
     - unknown codes load as CLEAN LP4;
-    - the `ModSource` codes fixture.
+    - the `ModSource` and `Jack` codes fixtures;
+    - no `ModSource::ALL` or `index()` caller ever sees a tap.
 12. **LEVEL's LED:** 0 while the clipper is off and for any signal ≤ 1; it rises monotonically with LEVEL on a full-scale saw; it is the Part's maximum over its voices; screen goldens at 0, ½ and 1.
 
 ## Build order
@@ -461,7 +486,7 @@ The build starts after `modal-stagger` merges.
 1. Count today's LP24 loop. Then ACCURATE `tan`, steady and moving paths, the `k` law with self-oscillation, and `d₂`. Goldens are re-recorded.
 2. LP1 (`lp + bp`) and NOTCH1.
 3. NOTCH2.
-4. LEVEL's law, clipper, fade and LED.
+4. LEVEL (new id 12, DRIVE's translation), its clipper, fade and LED.
 5. The Cascadia panel, labels, FM3 IN and QM IN, and route delete.
 6. TYPE and MODE warm start and crossfade.
 7. The 2040.

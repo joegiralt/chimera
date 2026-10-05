@@ -42,7 +42,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0034](0034-watchdog-kicked-by-audio-heartbeat.md) | The IWDG resets on a stalled audio interrupt, kicked from the controls tick | Proposed |
 | [0035](0035-every-connection-is-a-matrix-route.md) | Every connection from a modulator to the sound is a matrix route | Accepted |
 | [0036](0036-cascadia-style-modulators.md) | ENV slots follow the Cascadia's Envelopes A and B; LFO slots are CLASSIC or FUNC | Accepted |
-| [0037](0037-kind-lays-out-the-filter-panel.md) | KIND lays out the filter panel; MODE follows KIND | Accepted; SVF panel and default mode amended by [0096](0096-filter-types-clean-2040-dirty-and-algo-taps.md) |
+| [0037](0037-kind-lays-out-the-filter-panel.md) | KIND lays out the filter panel; MODE follows KIND | Accepted; superseded by [0096](0096-filter-types-clean-2040-dirty-and-algo-taps.md) (Proposed) |
 | [0038](0038-delay-sat-zero-still-saturates.md) | The delay's feedback loop saturates at every SAT, SAT 0 included | Proposed |
 | [0039](0039-six-encoders-no-main-encoder.md) | Six encoders; no main encoder | Proposed |
 | [0040](0040-eight-voices-modal-strings-to-g1.md) | Eight voices in D2; Modal strings sized to G1 (supersedes in part 0014 and 0031) | Accepted; line length superseded in part by [0056](0056-modal-resonators-share-four-macros.md); admission and voice counts while ORBIT plays superseded in part by [0091](0091-orbit-billed-while-it-plays.md) |
@@ -96,3 +96,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0097](0097-bank-and-symp-clip-with-stmlibs-curve.md) | BANK and SYMP clip with stmlib's curve; the Elements stagger tried and dropped (amends 0063) | Proposed |
 | [0096](0096-three-filter-types-cascadia-home_prophet-dirty.md) | Three filter TYPEs: the SVF as a Cascadia-style home filter, PROPHET (SSM2040) and DIRTY (Chamberlin); per-type modes, labels and bills (amends 0037) | Proposed |
 | [0096](0096-filter-types-clean-2040-dirty-and-algo-taps.md) | Three filter TYPEs, CLEAN (Cascadia-style), 2040 (SSM2040) and DIRTY (Chamberlin), with per-type modes, labels and bills; ALGO OP 5/6 audio-rate taps to FREQ, Q, VCA and FOLD (amends 0037) | Proposed |
+| [0096](0096-filter-types-clean-2040-dirty-and-algo-taps.md) | Three filter TYPEs, CLEAN (Cascadia-style), 2040 (SSM2040) and DIRTY (Chamberlin), with per-type modes, labels and bills; ALGO OP 5/6 audio-rate taps to FREQ, Q, VCA and FOLD (supersedes 0037) | Proposed |
