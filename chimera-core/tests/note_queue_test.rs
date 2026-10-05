@@ -88,8 +88,9 @@ fn full_queue_drops_and_counts() {
     assert!(tx.push(ev(0, 102, 0)), "room again after a pop");
 }
 
-/// The last `NOTE_OFF_RESERVE` slots take note-offs and real-time, never
-/// a note-on: every note-on queued can still be followed by its note-off.
+/// The last `NOTE_OFF_RESERVE` slots take note-offs only, never a note-on
+/// or a clock tick: every note-on queued can still be followed by its
+/// note-off, however fast the clock runs.
 #[test]
 fn note_ons_leave_room_for_note_offs() {
     let q = NoteQueue::new();
@@ -99,12 +100,14 @@ fn note_ons_leave_room_for_note_offs() {
         assert!(tx.push(ev(0, i as u8, 100)), "note-on {i}");
     }
     assert!(!tx.push(ev(0, 100, 100)), "a note-on into the reserve");
-    assert!(tx.push(RealTime::Stop));
-    for i in 1..NOTE_OFF_RESERVE {
+    for _ in 0..NOTE_OFF_RESERVE {
+        assert!(!tx.push(RealTime::Clock), "a tick into the reserve");
+    }
+    for i in 0..NOTE_OFF_RESERVE {
         assert!(tx.push(ev(0, i as u8, 0)), "note-off {i}");
     }
-    assert!(!tx.push(ev(0, 0, 0)), "full");
-    assert_eq!(q.dropped(), 2);
+    assert!(!tx.push(ev(0, 99, 0)), "full");
+    assert_eq!(q.dropped(), 2 + NOTE_OFF_RESERVE as u32);
 }
 
 #[test]

@@ -31,19 +31,23 @@ and leaves its status alone.
      `source_file_min_len`. Then plan the picked side: only present refs
      take room, and the note counts the rest (`LOADED · n SRC MISSING`).
   3. Bump the epoch (`ProjectDecoder::begin`).
-  4. Wait at most `LOAD_DRAIN_TIMEOUT_MS` = 50 ms, on the UI's gate clock,
-     for the gate's ack of that epoch (`LoadLink::acked`) and then
-     `SourceTable::sounding() == 0`.
+  4. Wait, on the UI's gate clock, for the gate's ack of that epoch
+     (`LoadLink::acked`) and then `SourceTable::sounding() == 0`.
      - The ack means a block began after the kill and every voice is quiet,
        so `sounding` is no stale block's.
-     - Fifty ms is two or three blocks on the chip, and one 10–20 ms
-       desktop callback.
+     - The wait is max(`LOAD_DRAIN_TIMEOUT_MS` = 50 ms, 3 × the audio's
+       callback period). Each shell gives its period
+       (`AudioToken::set_period_us`): one block on the chip, 1.33 ms, and
+       each callback's frames on the desktop.
+     - Fifty ms is two or three blocks on the chip. The three periods cover
+       a long desktop buffer, so a slow callback ends in `Busy` or a load,
+       never `LOAD FAILED`.
      - If either is missing, the load is refused with `Busy` (`AUDIO BUSY,
        NOT LOADED`). The project is untouched, and the UI still settles and
        publishes. It skips the page reset and the SYSTEM write
        (`project_replaced`, `remember`).
   5. Pass 2 in place. Its header retires every source, then waits within
-     the same 50 ms for each hole to close and each slot to free
+     the same bound for each hole to close and each slot to free
      (`Pool::sources_drain_timed`). A failure there, or anything after it,
      is clobbered: NEW, `LOAD FAILED`, publish. It is never lossy.
   6. The source reads, under the shut gate.
@@ -77,10 +81,12 @@ and leaves its status alone.
     which is ordinary dense sequencing.
   - A dropped note-off is a stuck note.
   - So every `NoteQueue` producer (DIN, the desktop's MIDI and keys, the
-    bench) refuses a note-on when `NOTE_OFF_RESERVE` = 8 or fewer slots
-    are free. Note-offs and real-time still fit. A note sticks only if more
-    than 8 note-offs are pending at once while the queue is full.
-  - The note-ons refused are counted as drops, as before.
+    bench) refuses anything but a note-off when `NOTE_OFF_RESERVE` = 8 or
+    fewer slots are free. A note-on with velocity 0 is a note-off, and real
+    time (the clock's ticks included) counts as anything else, so a running
+    clock can't fill the reserve. A note sticks only if more than 8
+    note-offs are pending at once while the queue is full.
+  - The events refused are counted as drops, as before.
 
 ## Alternatives considered
 - **Bump after pass 2, as 0046 does.** A source still sounding is retired
@@ -96,12 +102,13 @@ and leaves its status alone.
 ## Consequences
 - The late-ack case of 0046 goes away for file loads: the ack arrives
   during pass 2.
-- The UI blocks for up to 100 ms of extra spinning: 50 ms at `begin`, and
-  50 ms in the drain.
+- The UI blocks for up to two waits of extra spinning, one at `begin` and
+  one in the drain: 100 ms in all at the 50 ms floor, longer only with a
+  callback period over about 17 ms.
 - A `Busy` refusal still costs what the bump did: every voice is killed,
   and ORBIT's runner sees the epoch, so it stops the transport and drops
-  a capture. Only a stalled audio, or a desktop callback slower than
-  50 ms, reaches it.
+  a capture. Only an audio that stalls past three of its periods reaches
+  it.
 - A stall after `begin` loses the old project (NEW), and the error isn't
   named.
 - TAPE voices must count in `Instrument::quiet` and in `sounding`
@@ -116,12 +123,14 @@ and leaves its status alone.
   (F1–F4, § 3).
 - Code: `chimera-core/src/project/codec.rs` (`ProjectDecoder::begin`, the
   header's drain), `chimera-core/src/project/pool.rs` (`quiet_timed`,
-  `sources_drain_timed`, `LOAD_DRAIN_TIMEOUT_MS`),
+  `sources_drain_timed`, `LOAD_DRAIN_TIMEOUT_MS`, `drain_ms`),
+  `chimera-core/src/source_table.rs` (`set_period_us`, `period_ms`),
   `chimera-core/src/project/store.rs` (`load_into`, `read_sources`),
   `chimera-core/src/note_queue.rs` (`NOTE_OFF_RESERVE`),
   `chimera-core/src/ui/mod.rs` (`load_with`).
 - Tests: `source_pool_test` (`pass_one_counts_the_whole_arena`,
-  `a_late_holder_fails_the_load`, `a_stalled_audio_refuses_untouched`),
+  `a_late_holder_fails_the_load`, `a_stalled_audio_refuses_untouched`,
+  `a_long_audio_period_still_loads`),
   `load_protocol_test::a_long_hold_drops_note_ons_never_their_note_offs`,
   `note_queue_test::note_ons_leave_room_for_note_offs`,
   `project_boot_test::a_busy_refusal_is_no_load`, `source_codec_test`.

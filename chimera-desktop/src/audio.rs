@@ -90,6 +90,10 @@ impl DesktopAudio {
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                     let shared = shared_reader.read();
                     let solo = audio.solo.load(Ordering::Relaxed);
+                    // A load's waits scale with this period (ADR 0099).
+                    let frames = (data.len() / channels) as u64;
+                    let us = frames * 1_000_000 / u64::from(sample_rate);
+                    engine.sources.set_period_us(us as u32);
                     for frame in data.chunks_mut(channels) {
                         if block_pos >= BLOCK_SIZE {
                             engine.block(&LOAD_LINK, &mut drain, shared, &mut scope);

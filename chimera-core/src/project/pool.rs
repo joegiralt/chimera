@@ -21,11 +21,18 @@ use super::ids::SlotId;
 use super::sources::{SOURCE_HEAD, SourceEntry, SourceId, SourceRef, source_cost};
 use crate::source_table::{Answer, GATE_ACK_TIMEOUT_MS, SourceTable};
 
-/// How long a load waits for the voices its kill fades to let go of the
-/// old sources, then for their holes to close and their slots to free:
-/// two or three blocks on the chip, but a desktop callback renders 10 to
-/// 20 ms of blocks at once.
+/// How long a load waits, at least, for the voices its kill fades to let
+/// go of the old sources, then for their holes to close and their slots to
+/// free: two or three blocks on the chip, one 10–20 ms desktop callback.
+/// A longer audio period stretches it (`drain_ms`).
 pub const LOAD_DRAIN_TIMEOUT_MS: u32 = 50;
+
+/// A load's wait: `LOAD_DRAIN_TIMEOUT_MS`, or three of the audio's
+/// callback periods if longer, so a long buffer never times a load out
+/// (ADR 0099).
+fn drain_ms(table: &SourceTable) -> u32 {
+    LOAD_DRAIN_TIMEOUT_MS.max(table.period_ms().saturating_mul(3))
+}
 
 /// While `ms` haven't passed on `clock`; false at once without one.
 fn deadline(clock: Option<fn() -> u32>, ms: u32) -> impl FnMut() -> bool {
@@ -423,7 +430,7 @@ impl Pool {
     /// to wait for.
     pub(in crate::project) fn quiet_timed(&self, acked: impl Fn() -> bool) -> bool {
         let table = self.table();
-        let mut within = deadline(self.clock, LOAD_DRAIN_TIMEOUT_MS);
+        let mut within = deadline(self.clock, drain_ms(table));
         while table.has_reader() && !(acked() && table.sounding() == 0) {
             if !within() {
                 return false;
@@ -438,7 +445,7 @@ impl Pool {
     /// on the pool's clock. True once the arena holds no source and every
     /// slot is free, so pass 2 gets what pass 1 planned for.
     pub(in crate::project) fn sources_drain_timed(&mut self) -> bool {
-        let mut within = deadline(self.clock, LOAD_DRAIN_TIMEOUT_MS);
+        let mut within = deadline(self.clock, drain_ms(self.table()));
         for s in SourceId::ALL {
             self.source_free(s);
         }

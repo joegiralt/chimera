@@ -6,7 +6,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use chimera_core::audio_out::{Half, interleave};
 use chimera_core::dsp::fx_bus::FxBus;
-use chimera_core::hw::{SAMPLE_RATE, SampleBudget};
+use chimera_core::hw::{BLOCK_SIZE, SAMPLE_RATE, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 #[cfg(any(feature = "midi-din", feature = "bench"))]
 use chimera_core::note_queue::SourceId;
@@ -97,7 +97,12 @@ pub fn init(
             dac: DacBlocks::new(),
             gate: LoadGate::new(),
             orbit,
-            sources: SOURCE_TABLE.reader().expect("the source reader, once"),
+            sources: {
+                let mut t = SOURCE_TABLE.reader().expect("the source reader, once");
+                // One block a half (ADR 0099's drain wait).
+                t.set_period_us(BLOCK_SIZE as u32 * 1_000_000 / SAMPLE_RATE);
+                t
+            },
         });
     }
     ENGINE_READY.store(true, Ordering::Release);

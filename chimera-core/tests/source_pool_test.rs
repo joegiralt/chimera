@@ -1049,6 +1049,71 @@ fn a_stalled_audio_refuses_untouched() {
     assert_eq!(q.pool().find_source(sref(99, 0)), Some(old), "untouched");
 }
 
+/// The audio of `a_long_audio_period_still_loads`: a block every 200 ms
+/// of the UI's clock, as a long desktop buffer renders them.
+struct SlowAudio {
+    tok: AudioToken,
+    link: &'static LoadLink,
+    old: SourceId,
+    at: u32,
+    ms: u32,
+}
+
+static SLOW: std::sync::Mutex<Option<SlowAudio>> = std::sync::Mutex::new(None);
+
+const SLOW_PERIOD_MS: u32 = 200;
+
+/// The UI's clock: a millisecond a read, and a block of the slow audio
+/// each `SLOW_PERIOD_MS`. Its voice holds the old source until the kill.
+fn slow_ms() -> u32 {
+    let mut g = SLOW.lock().unwrap();
+    let a = g.as_mut().expect("the slow audio");
+    a.ms += 1;
+    if a.ms % SLOW_PERIOD_MS == 0 {
+        let _ = a.tok.begin_block();
+        let killed = a.link.epoch() != a.at;
+        a.tok.store_sounding(if killed { 0 } else { a.old.bit() });
+        if killed {
+            a.link.ack(a.link.epoch());
+        }
+    }
+    a.ms
+}
+
+/// ADR 0099: the load's waits scale with the audio's period. A 200 ms
+/// callback acks the kill past 50 ms; the waits allow three periods, so the
+/// project loads whole instead of being refused.
+#[test]
+fn a_long_audio_period_still_loads() {
+    let (src, _) = full_dense_slots(48);
+    let mut s = MemStore::new(1);
+    put_project(&mut s, 1, &encode_project(&src));
+    let (mut q, t) = Project::boxed();
+    let old = q.source_store(sref(99, 0), &[7; 600]).unwrap();
+    let link: &'static LoadLink = Box::leak(Box::new(LoadLink::new()));
+    let mut tok = q.pool().table().reader().expect("one reader");
+    tok.set_period_us(SLOW_PERIOD_MS * 1_000);
+    let _ = tok.begin_block();
+    tok.store_sounding(old.bit());
+    *SLOW.lock().unwrap() = Some(SlowAudio {
+        tok,
+        link,
+        old,
+        at: link.epoch(),
+        ms: 1,
+    });
+    q.set_gate_clock(slow_ms);
+    let vol = s.mount().unwrap();
+    let id = ProjectId::new(1).unwrap();
+    let go = ReplaceGuard::check(&q, t, ProjectSource::File { id, vol })
+        .unwrap_or_else(|n| n.into_pending().anyway(&q));
+    let out = load_project(&mut Card::new(), &mut s, &mut q, go, link);
+    assert_eq!(out.note, None, "loaded whole");
+    assert_eq!(q.meta().name(), src.meta().name());
+    assert_eq!(q.pool().find_source(sref(99, 0)), None, "retired");
+    assert_eq!(q.pool().sound_count(), src.pool().sound_count());
+}
+
 /// The UI loop's clock for a gate's wait, in ms.
 fn now_ms() -> u32 {
     static T0: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();

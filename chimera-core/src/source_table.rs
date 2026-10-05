@@ -78,6 +78,9 @@ pub struct SourceTable {
     arena: AtomicPtr<u8>,
     /// The `AudioToken` is out: someone may read.
     reader: AtomicBool,
+    /// The audio's callback period in µs, as its shell last said: 0 until
+    /// it does.
+    period_us: AtomicU32,
 }
 
 /// The chip's and the desktop's one table, beside the one arena.
@@ -115,6 +118,7 @@ impl SourceTable {
             blocks: AtomicU32::new(0),
             arena: AtomicPtr::new(core::ptr::null_mut()),
             reader: AtomicBool::new(false),
+            period_us: AtomicU32::new(0),
         }
     }
 
@@ -131,6 +135,7 @@ impl SourceTable {
             blocks: AtomicU32::new(0),
             arena: AtomicPtr::new(core::ptr::null_mut()),
             reader: AtomicBool::new(false),
+            period_us: AtomicU32::new(0),
         }
     }
 
@@ -222,6 +227,11 @@ impl SourceTable {
     /// UI: the sources a voice held at the end of the last block.
     pub fn sounding(&self) -> u32 {
         self.sounding.load(Ordering::Acquire)
+    }
+
+    /// UI: the audio's callback period in ms, rounded up; 0 if unknown.
+    pub fn period_ms(&self) -> u32 {
+        self.period_us.load(Ordering::Relaxed).div_ceil(1000)
     }
 
     /// The `AudioToken` is out: something may read.
@@ -322,6 +332,12 @@ impl AudioToken {
     /// at a closed gate included.
     pub fn store_sounding(&mut self, mask: u32) {
         self.table.sounding.store(mask, Ordering::Release);
+    }
+
+    /// The shell's callback period, in µs: how long the UI's waits on the
+    /// audio must allow (ADR 0099).
+    pub fn set_period_us(&mut self, us: u32) {
+        self.table.period_us.store(us, Ordering::Relaxed);
     }
 
     /// A block with no source voice: answers the gate, holds none.
