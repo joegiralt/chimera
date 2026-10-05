@@ -201,7 +201,12 @@ pub fn clean(m: &mut Mono) {
     let x = &mut m.samples;
     let peak = x.iter().fold(0f32, |a, s| a.max(s.abs()));
     let floor = peak * 10f32.powf(-60.0 / 20.0);
-    let Some(first) = x.iter().position(|s| s.abs() > floor) else {
+    // Under 1e-9 (−180 dBFS) is silence: a subnormal peak overflows the gain.
+    let Some(first) = x
+        .iter()
+        .position(|s| s.abs() > floor)
+        .filter(|_| peak >= 1e-9)
+    else {
         x.clear();
         return;
     };
@@ -267,6 +272,10 @@ const APERIODIC: f64 = 0.2;
 /// 0.078 at the partial's period.
 const DIP: f64 = 0.05;
 
+/// Above this (about C8, with room for 4.8 kHz at 24 kHz's 5 frames) a
+/// source is unpitched.
+const TOP_HZ: f64 = 5_000.0;
+
 /// YIN (de Cheveigné & Kawahara 2002) over the loudest 100 ms: the
 /// cumulative-mean-normalised difference, its first dip within `DIP` of the
 /// deepest followed to its floor, pitched under `APERIODIC`, refined on the
@@ -295,16 +304,21 @@ pub fn yin(x: &[f32], rate: u32) -> Pitch {
             diff.map(|e| f64::from(e * e)).sum()
         })
         .collect();
-    let mut cmnd = vec![1f64; tmax + 1];
-    let mut sum = 0f64;
-    for t in 1..=tmax {
-        sum += d[t];
-        cmnd[t] = if sum > 0.0 {
-            d[t] * t as f64 / sum
-        } else {
-            1.0
-        };
-    }
+    // sums[t] = d[1] + … + d[t]
+    let sums: Vec<f64> = d
+        .iter()
+        .scan(-d[0], |a, &v| {
+            *a += v;
+            Some(*a)
+        })
+        .collect();
+    let cmnd_at = |x: f64, dx: f64| {
+        let sum = sums[(x as usize).min(tmax)];
+        if sum > 0.0 { dx * x / sum } else { 1.0 }
+    };
+    let cmnd: Vec<f64> = (0..=tmax)
+        .map(|t| if t == 0 { 1.0 } else { cmnd_at(t as f64, d[t]) })
+        .collect();
     let deepest = cmnd[2..tmax].iter().copied().fold(f64::INFINITY, f64::min);
     let Some(mut t) = (2..tmax).find(|&t| cmnd[t] <= deepest + DIP) else {
         return Pitch::Unpitched;
@@ -315,7 +329,19 @@ pub fn yin(x: &[f32], rate: u32) -> Pitch {
     if cmnd[t] >= APERIODIC {
         return Pitch::Unpitched;
     }
-    let period = floor_of(&d, t);
+    // Integer lags miss a period of a few frames, so the dip lands on a
+    // multiple: the shortest sub-multiple that dips as deep is the period.
+    let p = floor_of(&d, t);
+    let period = (2..)
+        .map(|k| p / f64::from(k))
+        .take_while(|&q| q >= 2.0)
+        .map(|q| floor_of(&d, q.round() as usize))
+        .filter(|&q| cmnd_at(q, lanczos(&d, q)) <= deepest + DIP)
+        .last()
+        .unwrap_or(p);
+    if period < f64::from(rate) / TOP_HZ {
+        return Pitch::Unpitched;
+    }
     let cents = 6_900.0 + 1_200.0 * (f64::from(rate) / period / 440.0).log2();
     Pitch::Pitched {
         period: period as f32,
@@ -326,10 +352,8 @@ pub fn yin(x: &[f32], rate: u32) -> Pitch {
 /// Lanczos half-width, in lags.
 const LANCZOS: i64 = 16;
 
-/// The difference is an autocorrelation, so it is band-limited in lag: read
-/// between lags by Lanczos, its floor near `t` found by ternary search. A
-/// parabola through three lags sits 0.035 frame off on a saw at 220.5 Hz.
-fn floor_of(d: &[f64], t: usize) -> f64 {
+/// `d` read between lags; even about lag 0 (`d[−i] = d[i]`), held at the top.
+fn lanczos(d: &[f64], x: f64) -> f64 {
     let sinc = |x: f64| {
         if x == 0.0 {
             1.0
@@ -337,17 +361,21 @@ fn floor_of(d: &[f64], t: usize) -> f64 {
             (PI * x).sin() / (PI * x)
         }
     };
-    let at = |x: f64| {
-        let i0 = x.floor() as i64;
-        (i0 - LANCZOS + 1..=i0 + LANCZOS)
-            .map(|i| {
-                let u = x - i as f64;
-                // Even about lag 0 (d[−i] = d[i]); held at the top.
-                let j = i.unsigned_abs().min(d.len() as u64 - 1) as usize;
-                d[j] * sinc(u) * sinc(u / LANCZOS as f64)
-            })
-            .sum::<f64>()
-    };
+    let i0 = x.floor() as i64;
+    (i0 - LANCZOS + 1..=i0 + LANCZOS)
+        .map(|i| {
+            let u = x - i as f64;
+            let j = i.unsigned_abs().min(d.len() as u64 - 1) as usize;
+            d[j] * sinc(u) * sinc(u / LANCZOS as f64)
+        })
+        .sum()
+}
+
+/// The difference is an autocorrelation, so it is band-limited in lag: read
+/// between lags by Lanczos, its floor near `t` found by ternary search. A
+/// parabola through three lags sits 0.035 frame off on a saw at 220.5 Hz.
+fn floor_of(d: &[f64], t: usize) -> f64 {
+    let at = |x| lanczos(d, x);
     let (mut lo, mut hi) = (t as f64 - 1.0, t as f64 + 1.0);
     for _ in 0..48 {
         let (a, b) = (lo + (hi - lo) / 3.0, hi - (hi - lo) / 3.0);

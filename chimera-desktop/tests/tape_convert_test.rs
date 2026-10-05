@@ -123,6 +123,28 @@ fn weak_fundamental_reads() {
     }
 }
 
+/// A tone and its second harmonic at half its level.
+fn two_partials(f: f64, rate: u32) -> Vec<f32> {
+    let w = std::f64::consts::TAU * f / f64::from(rate);
+    (0..rate as usize / 2)
+        .map(|i| (0.4 * (w * i as f64).sin() + 0.2 * (2.0 * w * i as f64).sin()) as f32)
+        .collect()
+}
+
+#[test]
+fn top_of_the_range() {
+    // 4.8 kHz at 24 kHz: a 5-frame period, read through the reflected low edge.
+    match yin(&two_partials(4_800.0, 24_000), 24_000) {
+        Pitch::Pitched { period, .. } => assert!((period - 5.0).abs() <= 0.005, "{period}"),
+        Pitch::Unpitched => panic!("4.8 kHz read as unpitched"),
+    }
+    // Past about C8 (5 kHz here) is unpitched, not an octave down.
+    assert_eq!(
+        yin(&two_partials(5_300.0, 24_000), 24_000),
+        Pitch::Unpitched
+    );
+}
+
 #[test]
 fn noise_is_unpitched() {
     assert_eq!(yin(&noise(24_000, 7), 24_000), Pitch::Unpitched);
@@ -302,6 +324,17 @@ fn high_pass_passes_audio_and_takes_dc() {
     let e = x[100..].iter().position(|&y| y < (-1f32).exp()).unwrap();
     let tau = e as f32 / 48.0;
     assert!((tau - 31.83).abs() < 0.1, "τ {tau} ms");
+}
+
+#[test]
+fn subnormal_file_is_silence() {
+    let b = wav(
+        spec(1, 32, hound::SampleFormat::Float),
+        &[0.0f32, 1e-40, -1e-40, 2e-40, 0.0],
+    );
+    let mut m = read_wav(&b, Channel::Mix).unwrap();
+    clean(&mut m);
+    assert!(m.samples.is_empty(), "{:?}", m.samples);
 }
 
 #[test]
