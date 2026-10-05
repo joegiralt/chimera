@@ -1,5 +1,8 @@
 # Justfile for Chimera
 
+# Local paths (MIDIVERB_EMU, MV_STIM, …) in a git-ignored .env
+set dotenv-load
+
 # Build desktop simulator
 desktop:
     cargo run -p chimera-desktop
@@ -26,7 +29,7 @@ build:
 # system-wide. The host tool's tests run first, against a fake unit.
 check:
     python3 -m unittest discover -s tools -p 'test_*.py'
-    cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit
+    cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils --features chimera-hal/testkit
     cargo test -p chimera-core --features master-tape
     cargo test -p chimera-core --no-default-features
     just test-fat-tools
@@ -87,7 +90,7 @@ stack-check:
 
 # Run tests
 test:
-    cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit
+    cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils --features chimera-hal/testkit
     just test-fat-tools
 
 # The FAT layer checked by dosfstools (ADR 0048): mkfs.fat images must read
@@ -100,7 +103,7 @@ test-fat-tools:
 
 # Clippy on every target and feature set `check` builds, test targets included
 clippy:
-    cargo clippy -p chimera-core -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit --all-targets -- -D warnings
+    cargo clippy -p chimera-core -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils --features chimera-hal/testkit --all-targets -- -D warnings
     cargo clippy -p chimera-core --features master-tape --all-targets -- -D warnings
     cargo clippy -p chimera-core --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-desktop --no-default-features --all-targets -- -D warnings
@@ -212,3 +215,32 @@ fuzz:
     cp chimera-core/tests/fixtures/v1/project.prj chimera-core/fuzz/corpus/decode_project/
     cp chimera-core/tests/fixtures/v1/orbit.prj chimera-core/fuzz/seeds/decode_project/*.prj chimera-core/fuzz/corpus/decode_project/
     cd chimera-core/fuzz && for t in decode_sound decode_project; do cargo +nightly fuzz run $t -- -max_total_time=300; done
+
+# chimera-utils (ADR 0098): Chimera's DSP against external references, on
+# the host. Paths from the environment (chimera-utils/README.md); outputs in
+# target/mv. Flags such as --jobs N go after the arguments.
+utils := "cargo run -q --release -p chimera-utils --"
+
+# REF (a program on the contract, or midiverb) vs a Chimera DEVICE
+ab ref device *knobs:
+    {{utils}} ab {{ref}} {{device}} {{knobs}}
+
+# MidiVerb II references (default programs 1-49)
+mv-refs *progs:
+    {{utils}} mv-refs {{progs}}
+
+# Fit a reverb TYPE's knobs to MidiVerb II programs
+mv-fit type +progs:
+    {{utils}} mv-fit {{type}} {{progs}}
+
+# Re-measure a TYPE's fits: residuals and PASS/FAIL per preset
+mv-verify type *flags:
+    {{utils}} mv-verify {{type}} {{flags}}
+
+# RMS-matched A/B WAVs of a TYPE's fits on idm, snare and strings
+mv-ab type:
+    {{utils}} mv-ab {{type}}
+
+# A MidiVerb II program's structure from the decompiled listing
+mv-structure +progs:
+    {{utils}} mv-structure {{progs}}

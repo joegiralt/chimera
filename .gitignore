@@ -7,3 +7,4 @@
 /chimera.map
 /chimera-card/
 __pycache__/
+.env
