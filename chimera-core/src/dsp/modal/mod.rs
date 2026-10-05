@@ -24,9 +24,7 @@
 //
 // `dispersion.rs` follows Rings' `ap_gain` curve, and `chords.rs` holds its
 // chord table (`dsp/part.cc`, Copyright 2015 Emilie Gillet), under the
-// same notice. The bank's staggered re-tune (`DUE`) follows Mutable
-// Instruments Elements' `dsp/resonator.cc` (Copyright 2014 Emilie Gillet),
-// under the same notice (ADR 0097).
+// same notice.
 //
 // The Karplus-Strong string (`string.rs`) is the project owner's own code,
 // from their Carcosa firmware for the Ambika, relicensed here under MIT
@@ -75,24 +73,6 @@ pub fn take_cleared_bytes() -> usize {
     string::cleared::take()
 }
 
-/// The bank re-tunes every mode every block while `set_off(true)` holds
-/// on this thread: the unstaggered reference, for the tests.
-#[cfg(any(test, feature = "test-support"))]
-pub mod stagger {
-    extern crate std;
-    use core::cell::Cell;
-
-    std::thread_local!(static OFF: Cell<bool> = const { Cell::new(false) });
-
-    pub fn set_off(off: bool) {
-        OFF.with(|o| o.set(off));
-    }
-
-    pub(super) fn off() -> bool {
-        OFF.with(Cell::get)
-    }
-}
-
 pub const MAX_MODES: usize = 48;
 
 // ── Modal Engine (with String and Bowed modes) ──────────────────────
@@ -116,8 +96,6 @@ struct ModalBank {
     /// How many of them, from the first, lie below 0.49 of the rate: the
     /// ones rendered. The rest are dropped, as Rings does, and rest silent.
     sounding: usize,
-    /// Blocks re-tuned, wrapping: whose turn it is (`DUE`).
-    clock: u8,
     /// Samples of burst left; the note sounds while any are.
     burst_remaining: usize,
     burst_amp: f32,
@@ -127,7 +105,7 @@ struct ModalBank {
 }
 
 crate::in_place::field_list!(ModalBank => ModalBank {
-    filters, cos_osc, resolution, sounding, clock, burst_remaining, burst_amp, noise_state, burst_lp,
+    filters, cos_osc, resolution, sounding, burst_remaining, burst_amp, noise_state, burst_lp,
 });
 
 /// The bowed string and the bow's force on it, 0 once the bow lifts.
@@ -420,7 +398,7 @@ impl ModalEngine {
     /// sample to 187, −306 cycles. Each halo string runs its block in
     /// spans, 19 a sample (42 before, 87 at task 11); the main string 15;
     /// the coupling, the mix and the `tanhf` dispatch 32. Ten `powf`s a
-    /// block for the loop gains, +35. Then 540 − 70.4, rounded up to 470
+    /// block for the loop gains, +35. Then 540 − 71.07, rounded up to 470
     /// (ADR 0097): the out clip's `tanhf`, 62 instructions and two
     /// `vdiv.f32`s a sample on its shortest path, for stmlib's rational
     /// clip, 16.5 and one: (45.5 × 1.46 + 12.54) × 0.9.
@@ -429,14 +407,10 @@ impl ModalEngine {
     /// as benched (MDL RES /VOICE 1,865; less the chain's 57, 1,808 at 32
     /// modes against 1,900 billed), and the macros' easing is a few
     /// operations a block. Dropping modes past Nyquist can only save.
-    /// Then 460 − 69.1 + 3.0, rounded up to 400 (ADR 0097): the out clip's
+    /// Then 460 − 69.1, rounded up to 400 (ADR 0097): the out clip's
     /// `tanhf`, 60 instructions and two `vdiv.f32`s a sample on its
     /// shortest path, for stmlib's rational clip, 16 and one, (44 × 1.46 +
-    /// 12.54) × 0.9; the staggered re-tune, 41 instructions and two
-    /// `vdiv.f32`s a mode a block before, 46 and two a re-tuned mode and 27
-    /// a skipped one after, at its worst (MODES 24, every mode re-tuned)
-    /// 120 more a block, 1.9 a sample, × 1.46 × 1.1. MODES 32 saves 2.9
-    /// cycles a sample, 48 11.
+    /// 12.54) × 0.9.
     pub const COST_BANK: Cost = Cost(400);
     pub const COST_MODE: Cost = Cost(45);
 
@@ -723,7 +697,7 @@ impl ModalEngine {
         match &mut self.model {
             ModelSlot::Bank(bank) => {
                 bank.resolution = params.modes.count();
-                bank.compute_filters(m, bank_freq, Retune::All);
+                bank.compute_filters(m, bank_freq);
                 if !restrike {
                     bank.cos_osc.init(params::beta(m.pos, params::END));
                 }
@@ -985,14 +959,8 @@ impl ModalEngine {
         // note sounds on.
         let exciting = match &mut self.model {
             ModelSlot::Bank(bank) => {
-                // A note's first block re-tunes every mode; then the
-                // high ones take turns (`DUE`).
-                let retune = if first {
-                    Retune::All
-                } else {
-                    Retune::Staggered
-                };
-                bank.compute_filters(&m, bank_freq, retune);
+                // Recompute filters every block (Rings does this — allows live parameter changes)
+                bank.compute_filters(&m, bank_freq);
                 // POS glides its weights over the block; a note's first takes it whole.
                 let place = params::beta(m.pos, params::END);
                 if first {
@@ -1064,7 +1032,6 @@ impl ModalBank {
             addr_of_mut!((*p).cos_osc).write(CosineOsc::new());
             addr_of_mut!((*p).resolution).write(0);
             addr_of_mut!((*p).sounding).write(0);
-            addr_of_mut!((*p).clock).write(0);
             addr_of_mut!((*p).burst_remaining).write(0);
             addr_of_mut!((*p).burst_amp).write(0.0);
             addr_of_mut!((*p).noise_state).write(0x1234_5678);
@@ -1074,19 +1041,9 @@ impl ModalBank {
     }
 
     /// Configure filters — called every render block (not just note_on).
-    /// Matches Rings' ComputeFilters(), its modes re-tuned as Elements'
-    /// are: the low ones every block, the rest in turn (`DUE`).
-    fn compute_filters(&mut self, m: &Macros, frequency: f32, retune: Retune) {
+    /// Matches Rings' ComputeFilters().
+    fn compute_filters(&mut self, m: &Macros, frequency: f32) {
         let num = self.resolution;
-        let mut due = match retune {
-            Retune::All => u64::MAX,
-            Retune::Staggered => DUE[self.clock as usize & 3],
-        };
-        #[cfg(any(test, feature = "test-support"))]
-        if stagger::off() {
-            due = u64::MAX;
-        }
-        self.clock = self.clock.wrapping_add(1);
 
         // Q from DAMP (Rings-style range).
         // At partial_freq=0.003 (130Hz): mode_q = 1 + 0.003 * q
@@ -1120,11 +1077,8 @@ impl ModalBank {
             }
 
             // Per-mode Q (Rings: 1.0 + partial_freq * q)
-            // Mode `i`'s bit is the lowest: a shift a mode, not by `i`.
-            if due & 1 != 0 {
-                filter.set(partial_freq, 1.0 + partial_freq * q);
-            }
-            due >>= 1;
+            let mode_q = 1.0 + partial_freq * q;
+            filter.set(partial_freq, mode_q);
 
             // Accumulate stiffness with decay for negative values
             stretch_factor += stiffness;
@@ -1148,43 +1102,6 @@ impl ModalBank {
         self.sounding = sounding;
     }
 }
-
-/// Which modes a block's `compute_filters` re-tunes.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Retune {
-    /// Every one: a note's first block.
-    All,
-    /// Those whose turn it is (`DUE`).
-    Staggered,
-}
-
-/// The modes re-tuned on block `clock`, bit `i` for mode `i`, as Elements
-/// staggers its bank (ADR 0097): the first 16 every block (750 Hz), the
-/// next 16 every other, the rest every fourth, each tier's modes in turn:
-/// 28 of 48 a block, at most. A skipped mode keeps its last coefficients,
-/// a block or three behind its eased macros: high, and quickly damped.
-const fn due(clock: u8) -> u64 {
-    let mut mask = 0;
-    let mut i = 0;
-    while i < MAX_MODES {
-        let every = if i < 16 {
-            0
-        } else if i < 32 {
-            1
-        } else {
-            3
-        };
-        if (i + clock as usize) & every == 0 {
-            mask |= 1 << i;
-        }
-        i += 1;
-    }
-    mask
-}
-
-/// `due` for each clock: it repeats every four blocks.
-const DUE: [u64; 4] = [due(0), due(1), due(2), due(3)];
-const _: () = assert!(MAX_MODES <= 64);
 
 impl BowedString {
     fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
@@ -2293,31 +2210,6 @@ mod tests {
         assert!(pool.alloc.place(v1));
         let fresh = (1 + NUM_SYMPATHETIC) * FRESH_CLEAR_BYTES;
         assert_eq!(pool.note_on_clear(None, v1), fresh);
-    }
-
-    /// The stagger's rotation: the first 16 modes every block, the next 16
-    /// every other, the rest every fourth, so every mode within four
-    /// blocks and 28 of 48 a block, whatever the clock.
-    #[test]
-    fn the_bank_retunes_its_high_modes_in_turn() {
-        for clock in 0..=u8::MAX {
-            let at = |c: u8| {
-                (0..MAX_MODES)
-                    .filter(|&i| DUE[c as usize & 3] >> i & 1 != 0)
-                    .collect::<Vec<_>>()
-            };
-            let now = at(clock);
-            assert_eq!(now.len(), 28, "clock {clock}");
-            assert!((0..16).all(|i| now.contains(&i)));
-            assert_eq!(now.iter().filter(|&&i| (16..32).contains(&i)).count(), 8);
-            let mut seen = [false; MAX_MODES];
-            for k in 0..4 {
-                for i in at(clock.wrapping_add(k)) {
-                    seen[i] = true;
-                }
-            }
-            assert!(seen.iter().all(|&s| s), "clock {clock}: a mode missed");
-        }
     }
 
     /// The modes a bank renders, after its last `compute_filters`.
