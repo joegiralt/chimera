@@ -167,3 +167,53 @@ fn the_ui_starts_with_the_bank_in_the_pool() {
         "INIT follows the bank"
     );
 }
+
+/// The blob is today's authored Sounds, sparse: each entry decodes to its
+/// Sound. `GOLDEN_RECORD=1` writes `factory.bin` from them.
+#[test]
+fn blob_matches_authored() {
+    use chimera_core::factory::{FACTORY_BLOB, authored_sound, factory_entries};
+    use chimera_core::project::EncodedSound;
+    let authored: Vec<Sound> = (0..FACTORY_LEN)
+        .map(|i| authored_sound(i).unwrap())
+        .chain(EngineType::ALL.map(Sound::init))
+        .collect();
+    if std::env::var_os("GOLDEN_RECORD").is_some() {
+        let mut blob = (authored.len() as u16).to_le_bytes().to_vec();
+        for s in &authored {
+            let bytes = chimera_core::factory::encode_entry(s);
+            blob.extend((bytes.len() as u16).to_le_bytes());
+            blob.extend(bytes);
+        }
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/factory.bin");
+        std::fs::write(path, blob).unwrap();
+        return;
+    }
+    assert_eq!(FACTORY_BLOB[..2], (authored.len() as u16).to_le_bytes());
+    let entries: Vec<_> = factory_entries().collect();
+    assert_eq!(entries.len(), authored.len());
+    for ((name, bytes), want) in entries.iter().zip(&authored) {
+        assert_eq!(*name, want.name);
+        let got = EncodedSound::new(bytes).to_sound();
+        assert!(got.bits_eq(want), "{}", want.name.as_str());
+        assert!(EncodedSound::new(bytes).matches(want));
+    }
+}
+
+#[test]
+fn new_copies_without_decode() {
+    use chimera_core::factory::factory_entries;
+    let (p, _) = chimera_core::project::Project::boxed();
+    for (s, (name, bytes)) in SlotId::ALL.into_iter().zip(factory_entries()) {
+        let got = p.pool().get(s).unwrap();
+        assert_eq!(got.bytes(), bytes, "{}", name.as_str());
+    }
+    assert_eq!(p.pool().sound_count(), factory_entries().count());
+}
+
+#[test]
+fn new_is_pristine() {
+    use chimera_core::project::{ProjectStatus, project_status};
+    let (p, t) = chimera_core::project::Project::boxed();
+    assert_eq!(project_status(&p, t), ProjectStatus::Pristine);
+}

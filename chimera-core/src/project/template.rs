@@ -5,10 +5,9 @@ use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
 use super::arena::ArenaWriter;
-use crate::factory::{FACTORY_LEN, factory_sound};
+use crate::factory::{factory_entries, new_sound};
 use crate::in_place::uninit_at;
 use crate::orbit::scene::OrbitSong;
-use crate::params::EngineType;
 use crate::preset::Sound;
 use crate::storage::sound_crc;
 
@@ -81,10 +80,8 @@ impl Project {
     /// Then Parts 1–5 load theirs from it, clean (`NEW_PARTS`).
     fn fill_new(&mut self) {
         self.pool.clear_all();
-        for s in SlotId::ALL {
-            if let Some(sound) = new_slot(s) {
-                self.pool.store(s, &sound).expect("NEW fits the arena");
-            }
+        for (s, (_, bytes)) in SlotId::ALL.into_iter().zip(factory_entries()) {
+            self.pool.store_bytes(s, bytes).expect("NEW fits the arena");
         }
         for (part, slot) in PartId::ALL.into_iter().zip(NEW_PARTS) {
             let from = PartFrom::Slot(slot);
@@ -121,17 +118,14 @@ pub(super) fn new_project_part(i: usize) -> Part {
 
 /// NEW's Sound in slot `s`.
 pub(super) fn new_slot(s: SlotId) -> Option<Sound> {
-    let i = s.index();
-    match i.checked_sub(FACTORY_LEN) {
-        None => factory_sound(i),
-        Some(j) => EngineType::ALL.get(j).map(|&e| Sound::init(e)),
-    }
+    new_sound(s.index())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::name::ProjectName;
+    use crate::params::EngineType;
     use crate::project::{
         Origin, PartFrom, PartId, PartSource, PartStatus, ProjectStatus, part_status,
         project_status,

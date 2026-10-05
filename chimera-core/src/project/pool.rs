@@ -152,6 +152,18 @@ impl Pool {
         self.index.store(&mut self.arena, s, sound)
     }
 
+    /// Slot `s` takes an entry's bytes as they are: no encode.
+    pub(in crate::project) fn store_bytes(
+        &mut self,
+        s: SlotId,
+        bytes: &[u8],
+    ) -> Result<(), PoolFull> {
+        self.index
+            .store_with(&mut self.arena, s, bytes.len(), |to| {
+                to.copy_from_slice(bytes)
+            })
+    }
+
     /// The load's scratch Sound.
     pub(in crate::project) fn scratch(&mut self) -> &mut Sound {
         &mut self.scratch
@@ -185,7 +197,17 @@ impl Index {
     }
 
     fn store(&mut self, arena: &mut ArenaWriter, s: SlotId, sound: &Sound) -> Result<(), PoolFull> {
-        let len = entry_len(sound);
+        self.store_with(arena, s, entry_len(sound), |to| write_entry(to, sound))
+    }
+
+    /// `len` bytes for slot `s`, filled by `fill`.
+    fn store_with(
+        &mut self,
+        arena: &mut ArenaWriter,
+        s: SlotId,
+        len: usize,
+        fill: impl FnOnce(&mut [u8]),
+    ) -> Result<(), PoolFull> {
         let needs = self.needs_len(s, len);
         if needs > arena.gap() {
             return Err(PoolFull {
@@ -197,7 +219,7 @@ impl Index {
         // a Sound that needs the old one's bytes frees them first.
         let offset = match arena.sound_alloc(len) {
             Some(at) => {
-                write_entry(arena, at, len, sound);
+                fill(arena.bytes_mut(at, len));
                 // The new entry is the lowest: the free moves it up too.
                 match self.drop_entry(arena, s) {
                     Some(shift) if at < shift.from => at + shift.by,
@@ -209,7 +231,7 @@ impl Index {
                 let Some(at) = arena.sound_alloc(len) else {
                     unreachable!("needs <= gap: the old Sound's bytes made room")
                 };
-                write_entry(arena, at, len, sound);
+                fill(arena.bytes_mut(at, len));
                 at
             }
         };
@@ -248,9 +270,9 @@ impl Index {
     }
 }
 
-/// `sound`'s name and records into the `len` bytes at `at`.
-fn write_entry(arena: &mut ArenaWriter, at: u32, len: usize, sound: &Sound) {
-    let (name, records) = arena.bytes_mut(at, len).split_at_mut(NAME_LEN);
+/// `sound`'s name and records into `to`, which is its `entry_len`.
+fn write_entry(to: &mut [u8], sound: &Sound) {
+    let (name, records) = to.split_at_mut(NAME_LEN);
     name.copy_from_slice(&sound.name.padded());
     let mut w = Fill(records);
     let wrote = encode_sound(sound, &mut RecordWriter::over(&mut w));
@@ -313,6 +335,13 @@ impl ByteSink for Same<'_> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EncodedSound<'a> {
     bytes: &'a [u8],
+}
+
+impl<'a> EncodedSound<'a> {
+    /// `bytes` as an entry: padded name, then records.
+    pub fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes }
+    }
 }
 
 impl EncodedSound<'_> {
