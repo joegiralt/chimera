@@ -866,7 +866,7 @@ fn a_structure_route_on_symp_bills_the_chord_glide() {
 /// step A, task 12; `modal` in chimera-stm32/src/bench.rs) read them.
 /// Voices beside the whole FX bus at its worst, on rev V and rev Y: the
 /// costlier models get fewer, as they must. BANK's and SYMP's out clip,
-/// stmlib's rational curve for `tanhf` (ADR 0096), gave BANK a third voice
+/// stmlib's rational curve for `tanhf` (ADR 0097), gave BANK a third voice
 /// on rev V and SYMP one more on most rows.
 #[test]
 fn modal_bills_each_model() {

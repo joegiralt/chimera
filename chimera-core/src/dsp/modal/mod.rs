@@ -26,7 +26,7 @@
 // chord table (`dsp/part.cc`, Copyright 2015 Emilie Gillet), under the
 // same notice. The bank's staggered re-tune (`DUE`) follows Mutable
 // Instruments Elements' `dsp/resonator.cc` (Copyright 2014 Emilie Gillet),
-// under the same notice (ADR 0096).
+// under the same notice (ADR 0097).
 //
 // The Karplus-Strong string (`string.rs`) is the project owner's own code,
 // from their Carcosa firmware for the Ambika, relicensed here under MIT
@@ -421,7 +421,7 @@ impl ModalEngine {
     /// spans, 19 a sample (42 before, 87 at task 11); the main string 15;
     /// the coupling, the mix and the `tanhf` dispatch 32. Ten `powf`s a
     /// block for the loop gains, +35. Then 540 − 70.4, rounded up to 470
-    /// (ADR 0096): the out clip's `tanhf`, 62 instructions and two
+    /// (ADR 0097): the out clip's `tanhf`, 62 instructions and two
     /// `vdiv.f32`s a sample on its shortest path, for stmlib's rational
     /// clip, 16.5 and one: (45.5 × 1.46 + 12.54) × 0.9.
     pub const COST_SYMPATHETIC: Cost = Cost(470);
@@ -429,7 +429,7 @@ impl ModalEngine {
     /// as benched (MDL RES /VOICE 1,865; less the chain's 57, 1,808 at 32
     /// modes against 1,900 billed), and the macros' easing is a few
     /// operations a block. Dropping modes past Nyquist can only save.
-    /// Then 460 − 69.1 + 3.0, rounded up to 400 (ADR 0096): the out clip's
+    /// Then 460 − 69.1 + 3.0, rounded up to 400 (ADR 0097): the out clip's
     /// `tanhf`, 60 instructions and two `vdiv.f32`s a sample on its
     /// shortest path, for stmlib's rational clip, 16 and one, (44 × 1.46 +
     /// 12.54) × 0.9; the staggered re-tune, 41 instructions and two
@@ -1159,7 +1159,7 @@ enum Retune {
 }
 
 /// The modes re-tuned on block `clock`, bit `i` for mode `i`, as Elements
-/// staggers its bank (ADR 0096): the first 16 every block (750 Hz), the
+/// staggers its bank (ADR 0097): the first 16 every block (750 Hz), the
 /// next 16 every other, the rest every fourth, each tier's modes in turn:
 /// 28 of 48 a block, at most. A skipped mode keeps its last coefficients,
 /// a block or three behind its eased macros: high, and quickly damped.
@@ -1573,7 +1573,7 @@ fn render_modal(bank: &mut ModalBank, output: &mut [f32; BLOCK_SIZE]) {
 
         // Sum to mono and soft-limit, a quarter of Rings' 2× out: the
         // voice's filter after it stays under its knee (`out_gain` makes up).
-        // stmlib's rational clip, not `tanhf` (ADR 0096): the same slope
+        // stmlib's rational clip, not `tanhf` (ADR 0097): the same slope
         // and ceiling, 44 instructions and a divide a sample fewer.
         *s = fast_tanh(odd + even) * 0.5;
     }
@@ -1814,7 +1814,7 @@ fn render_sympathetic(
         }
     }
     main.colour(output);
-    // stmlib's rational clip, as BANK's (ADR 0096).
+    // stmlib's rational clip, as BANK's (ADR 0097).
     for s in output.iter_mut() {
         *s = fast_tanh(*s);
     }
@@ -2350,7 +2350,7 @@ mod tests {
         }
     }
 
-    /// BANK's out is stmlib's rational clip at half scale (ADR 0096): a
+    /// BANK's out is stmlib's rational clip at half scale (ADR 0097): a
     /// C1 struck as hard as it goes, every mode ringing long and bright,
     /// reaches the ceiling and never passes it.
     #[test]

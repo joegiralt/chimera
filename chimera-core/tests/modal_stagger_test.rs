@@ -1,4 +1,4 @@
-//! BANK re-tunes its low modes every block and the rest in turn (ADR 0096):
+//! BANK re-tunes its low modes every block and the rest in turn (ADR 0097):
 //! a fresh note is the unstaggered bank's from its first sample, a held
 //! one strays from it by little, and a swept macro never clicks.
 

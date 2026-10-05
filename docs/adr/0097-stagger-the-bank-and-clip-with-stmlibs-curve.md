@@ -1,4 +1,4 @@
-# 0096. Stagger BANK's re-tune as Elements does; clip BANK and SYMP with stmlib's rational curve (amends 0063)
+# 0097. Stagger BANK's re-tune as Elements does; clip BANK and SYMP with stmlib's rational curve (amends 0063)
 
 - **Status:** Proposed
 - **Deciders:** project owner (asked for both); firmware

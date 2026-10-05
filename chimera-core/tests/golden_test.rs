@@ -48,7 +48,7 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain,
     // then Task 18's DAMP make-up and relative silence (ADR 0056),
     // then the free ring on release (ADR 0062), then SYMP's out clip, stmlib's
-    // rational curve for `tanhf` (ADR 0096).
+    // rational curve for `tanhf` (ADR 0097).
     (
         "modal_sympathetic",
         (

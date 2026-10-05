@@ -274,7 +274,7 @@ fn every_mode_renders_as_recorded() {
 /// LP24 ring at the cutoff, held by `saturate` at a steady level: the last
 /// half second's RMS and the ring's own level (990 Hz, the harmonic at the cutoff), dBFS, at
 /// DRIVE 0 and 1, each within 1 dB of what they were, the level's two
-/// quarters within 0.5 dB of each other. ADR 0096 kept the curve: stmlib's
+/// quarters within 0.5 dB of each other. ADR 0097 kept the curve: stmlib's
 /// rational clip in its place, scaled to the same slope and ceiling, put
 /// the ring 14 to 24 dB under these.
 #[test]

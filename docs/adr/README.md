@@ -67,7 +67,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0060](0060-one-dc-blocker-per-voice.md) | Block DC once per voice, after its last nonlinear stage (supersedes in part 0022, 0056) | Proposed |
 | [0061](0061-settings-ease-effects-run-at-mix-0.md) | Every continuous setting eases; an effect runs at MIX 0 | Proposed |
 | [0062](0062-modal-notes-ring-free.md) | A Modal note rings free, a re-struck key re-plucks its string, the halo glides (supersedes in part 0056) | Proposed |
-| [0063](0063-levels-at-the-factory-median.md) | INITs play at the factory median; BANK and the voice filter stop buzzing (supersedes 0058) | Proposed; BANK's out curve amended by [0096](0096-stagger-the-bank-and-clip-with-stmlibs-curve.md) |
+| [0063](0063-levels-at-the-factory-median.md) | INITs play at the factory median; BANK and the voice filter stop buzzing (supersedes 0058) | Proposed; BANK's out curve amended by [0097](0097-stagger-the-bank-and-clip-with-stmlibs-curve.md) |
 | [0064](0064-the-one-loop-bow-in-tune.md) | Bowed is the one-loop bow again, half-length and inverting, in tune (supersedes in part 0056) | Proposed |
 | [0065](0065-steal-cut-or-glide.md) | A Part's own steal cuts, or glides the ring to the new note | Proposed |
 | [0066](0066-settings-menu.md) | MENU opens a SETTINGS menu (amends 0044, supersedes 0057 through it) | Proposed |
@@ -93,4 +93,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0089](0089-ship-with-fat-lto.md) | Ship the firmware with fat LTO in one codegen unit | Proposed |
 | [0091](0091-orbit-billed-while-it-plays.md) | While ORBIT plays, reserve its own block and a note-on burst; cost the Parts once a block; bill a stolen voice until its fade ends (supersedes in part 0040; amends 0027) | Proposed |
 | [0092](0092-put-files-over-the-usb-console.md) | Put project files onto the card over the USB console: `ls`, and `put` through the unit's own A/B save, checked as it streams, a refused side deleted (amends 0068) | Proposed |
-| [0096](0096-stagger-the-bank-and-clip-with-stmlibs-curve.md) | BANK re-tunes its high modes in turn as Elements does; BANK and SYMP clip with stmlib's rational curve (amends 0063) | Proposed |
+| [0097](0097-stagger-the-bank-and-clip-with-stmlibs-curve.md) | BANK re-tunes its high modes in turn as Elements does; BANK and SYMP clip with stmlib's rational curve (amends 0063) | Proposed |
