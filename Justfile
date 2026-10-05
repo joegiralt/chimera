@@ -88,6 +88,7 @@ stack-check:
 # Run tests
 test:
     cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit
+    cargo test -p chimera-desktop --lib --tests
     just test-fat-tools
 
 # The FAT layer checked by dosfstools (ADR 0048): mkfs.fat images must read
@@ -204,7 +205,8 @@ flash-sd-probe:
     dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-sd-probe.bin -s 0x8020000:leave
 
 # Coverage-guided fuzz of the Sound and project decoders, seeded with the
-# v1 fixtures and NEW, so ORBIT's records are in the corpus from the start
+# v1 fixtures and NEW, so ORBIT's records are in the corpus from the start,
+# and of the TAPE importer's WAV reader, seeded with small WAVs
 # (needs nightly and cargo-fuzz)
 fuzz:
     mkdir -p chimera-core/fuzz/corpus/decode_sound chimera-core/fuzz/corpus/decode_project
@@ -212,3 +214,6 @@ fuzz:
     cp chimera-core/tests/fixtures/v1/project.prj chimera-core/fuzz/corpus/decode_project/
     cp chimera-core/tests/fixtures/v1/orbit.prj chimera-core/fuzz/seeds/decode_project/*.prj chimera-core/fuzz/corpus/decode_project/
     cd chimera-core/fuzz && for t in decode_sound decode_project; do cargo +nightly fuzz run $t -- -max_total_time=300; done
+    mkdir -p chimera-desktop/fuzz/corpus/read_wav
+    cp chimera-desktop/fuzz/seeds/read_wav/*.wav chimera-desktop/fuzz/corpus/read_wav/
+    cd chimera-desktop/fuzz && cargo +nightly fuzz run read_wav -- -max_total_time=300

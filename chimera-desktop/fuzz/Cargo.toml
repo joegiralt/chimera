@@ -1,0 +1,21 @@
+[package]
+name = "chimera-desktop-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+chimera-desktop = { path = "..", default-features = false }
+
+[[bin]]
+name = "read_wav"
+path = "fuzz_targets/read_wav.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
