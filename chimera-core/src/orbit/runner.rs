@@ -341,8 +341,9 @@ impl OrbitRunner {
     /// is (ADR 0091): its own worst block, the clock, rings, MUTATE,
     /// harmony, re-snap and view, without the notes it hands the
     /// `Instrument` (`Instrument::BURST` bills those, as anyone's), over
-    /// the block's samples.
-    pub const COST: Cost = Cost(171); // worst block less its notes' handling, 10,913 (STRESS keys first), measured 2026-10-04, bench ORBIT PHASES, rev V at 480 MHz, 06dd8707; / 64, rounded up
+    /// the block's samples. Re-measured with `Instrument::BURST`: their sum
+    /// must cover ORBIT's cold first block (65,387 at 785a028a).
+    pub const COST: Cost = Cost(171); // worst block less its notes' handling, 10,913, the worst over five runs (STRESS keys first), measured 2026-10-04/05, bench ORBIT PHASES, rev V at 480 MHz, 06dd8707 to 785a028a; / 64, rounded up
 
     pub fn new(sample_rate: NonZeroU32) -> Self {
         let working = Scene::init();

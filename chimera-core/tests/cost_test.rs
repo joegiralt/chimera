@@ -1104,7 +1104,8 @@ fn orbit_and_a_burst_fit_beside_what_renders() {
     for keys_first in [true, false] {
         let (voices, most, kept) = stress(keys_first, STRESS_BLOCKS);
         // Six keys first, none stolen or shed once ORBIT starts; a block
-        // after, five voices beside ORBIT's reserve (the tape's too).
+        // after, five voices beside ORBIT's reserve. The counts come out
+        // the same on the `master-tape` bus, so the assert takes no cfg.
         assert_eq!(voices, if keys_first { 6 } else { 5 }, "{keys_first}");
         assert!(kept || !keys_first, "a key stolen or shed");
         let room = match keys_first {
