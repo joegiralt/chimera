@@ -36,6 +36,8 @@ usage: chimera-utils [flags] COMMAND …
   model-check hall FITS    the Python model's HALL fits through the Rust model
   model-fit hall TAG [dens=own|fixed:X|KNOB[-][:lo:hi]] [warm=FITS] PROG …
                            fit the proposed HALL model (ADR 0095) to programs
+  model-taps hall FITS [dens=…] [taps=FILE]
+                           search HALL's tap fractions, the fits' knobs held
 flags:
   --jobs N        worker threads (default 8)
   --out DIR       outputs (env MV_OUT, default target/mv)
@@ -201,6 +203,9 @@ fn run() -> Result<bool, String> {
         "mv-structure" => mv::structure(&cfg, &nums(rest)?).map(|_| true),
         "model-check" if rest.len() == 2 && rest[0] == "hall" => {
             models::check(&cfg, std::path::Path::new(&rest[1])).map(|_| true)
+        }
+        "model-taps" if rest.len() >= 2 && rest[0] == "hall" => {
+            models::taps_search(&cfg, std::path::Path::new(&rest[1]), &rest[2..]).map(|_| true)
         }
         "model-fit" if rest.len() >= 3 && rest[0] == "hall" => {
             let (opts, progs): (Vec<String>, Vec<String>) =

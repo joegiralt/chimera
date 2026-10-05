@@ -159,7 +159,8 @@ const AP_MS: [f64; 4] = [11.0, 17.0, 13.0, 19.0];
 const K0: f64 = 0.111;
 /// Each side's taps by rank (the first three always on): (line, fraction
 /// of it), our own. Ranks 4–8 fade in with DENSITY.
-const TAPS: [[(usize, f64); 8]; 2] = [
+type Taps = [[(usize, f64); 8]; 2];
+const TAPS: Taps = [
     [
         (0, 0.62),
         (1, 0.55),
@@ -167,8 +168,8 @@ const TAPS: [[(usize, f64); 8]; 2] = [
         (0, 0.17),
         (1, 0.24),
         (2, 0.48),
-        (3, 0.25),
-        (3, 0.74),
+        (3, 0.06),
+        (3, 0.82),
     ],
     [
         (1, 0.02),
@@ -193,6 +194,7 @@ pub struct Hall {
     spread: f64,
     dens: f64,
     pre_ms: f64,
+    taps: Taps,
 }
 
 /// The knob names, in the fit's order (PRE-DLY is solved, not fitted).
@@ -244,6 +246,7 @@ impl Hall {
             spread: 0.05 + 1.05 * k[5],
             dens: d,
             pre_ms: 0.0,
+            taps: TAPS,
         }
     }
 
@@ -259,7 +262,27 @@ impl Hall {
             spread: f("spread"),
             dens: f("dens"),
             pre_ms: f("pre_ms"),
+            taps: TAPS,
         }
+    }
+
+    /// The knob positions that give these settings (DENSITY as its own).
+    fn to_knobs(self) -> [f64; 7] {
+        let inv = |lo: f64, hi: f64, v: f64| ((v / lo).ln() / (hi / lo).ln()).clamp(0.0, 1.0);
+        let damp_hz = -self.pole.max(1e-9).ln() * FS / (2.0 * PI);
+        [
+            self.size,
+            inv(0.8, 16.0, self.rt),
+            inv(14_000.0, 1_300.0, damp_hz),
+            if self.tone_hz >= 12_000.0 {
+                0.0
+            } else {
+                inv(12_000.0, 2_000.0, self.tone_hz).max(1.0 / 128.0)
+            },
+            ((self.dg - 0.3) / 0.5).clamp(0.0, 1.0),
+            ((self.spread - 0.05) / 1.05).clamp(0.0, 1.0),
+            self.dens,
+        ]
     }
 
     fn build(&self) -> Loop {
@@ -269,7 +292,7 @@ impl Hall {
             .map(|s| 10f64.powf(-3.0 * (dl[s] + AP_MS[s]) / 1000.0 / self.rt))
             .collect();
         let mut taps = Vec::new();
-        for row in &TAPS {
+        for row in &self.taps {
             for (j, &(s, f)) in row.iter().enumerate() {
                 let w = if j < 3 {
                     1.0
@@ -336,6 +359,22 @@ fn measure(h: &Hall, r: &Metrics, seeds: usize, solve_pre: bool) -> (Metrics, f6
 
 fn score(h: &Hall, r: &Metrics, seeds: usize) -> f64 {
     distance(&residuals(&measure(h, r, seeds, true).0, r))
+}
+
+/// A tap table from `model-taps`' JSON: per side 8 [line, fraction].
+fn read_taps(p: &str) -> Result<Taps, String> {
+    let v = read_json(std::path::Path::new(p))?;
+    let mut t = TAPS;
+    for (side, row) in t.iter_mut().enumerate() {
+        for (j, e) in row.iter_mut().enumerate() {
+            let x = &v["taps"][side][j];
+            *e = (
+                x[0].as_u64().ok_or("taps: line")? as usize,
+                x[1].as_f64().ok_or("taps: fraction")?,
+            );
+        }
+    }
+    Ok(t)
 }
 
 fn parse_dens(s: &str) -> Result<Dens, String> {
@@ -407,18 +446,44 @@ pub fn check(cfg: &Config, fits: &std::path::Path) -> Result<(), String> {
     };
     let mut keys: Vec<&String> = f.keys().collect();
     keys.sort_by_key(|k| k.parse::<u32>().unwrap_or(0));
-    let rows: Vec<(String, bool)> = keys
+    let rows: Vec<(String, bool, Value)> = keys
         .par_iter()
-        .map(|p| -> Result<(String, bool), String> {
+        .map(|p| -> Result<(String, bool, Value), String> {
             let r = Metrics::from_json(refs.get(*p).ok_or("no ref")?)?;
-            let h = Hall::from_python(f[*p]["knobs"].as_object().ok_or("knobs")?);
-            let (m, _) = measure(&h, &r, 16, false);
-            Ok(line(p, f[*p]["preset"].as_str().unwrap_or(""), &m, &r))
+            let kj = f[*p]["knobs"].as_object().ok_or("knobs")?;
+            // Knob positions (a `model-fit` file), or the Python model's
+            // physical settings.
+            let (h, solve) = if kj.contains_key("decay") {
+                let k: Vec<f64> = KNOBS
+                    .iter()
+                    .map(|n| kj[*n].as_f64().unwrap_or(0.0))
+                    .collect();
+                (Hall::from_knobs(&k, Dens::Own), true)
+            } else {
+                (Hall::from_python(kj), false)
+            };
+            let (m, _) = measure(&h, &r, 16, solve);
+            let (l, pass) = line(p, f[*p]["preset"].as_str().unwrap_or(""), &m, &r);
+            let k: Map<String, Value> = KNOBS
+                .iter()
+                .zip(h.to_knobs())
+                .map(|(n, v)| (n.to_string(), json!(v)))
+                .collect();
+            Ok((l, pass, json!({"preset": f[*p]["preset"], "knobs": k})))
         })
         .collect::<Result<_, _>>()?;
-    for (l, _) in &rows {
+    for (l, ..) in &rows {
         println!("{l}");
     }
+    let kn: Map<String, Value> = keys
+        .iter()
+        .zip(&rows)
+        .map(|(p, r)| (p.to_string(), r.2.clone()))
+        .collect();
+    write_json(
+        &cfg.out.join("fits/model_hall_checked.json"),
+        &Value::Object(kn),
+    )?;
     println!(
         "pass {} of {}",
         rows.iter().filter(|r| r.1).count(),
@@ -432,16 +497,31 @@ pub fn check(cfg: &Config, fits: &std::path::Path) -> Result<(), String> {
 /// seeds), judged at 16; into `out/fits/model_hall_TAG.json`.
 pub fn fit(cfg: &Config, tag: &str, opts: &[String], progs: &[u32]) -> Result<(), String> {
     let mut dens = Dens::Own;
-    let mut warm: Option<Map<String, Value>> = None;
+    let mut warm: Vec<Map<String, Value>> = Vec::new();
+    let (mut seeds, mut step0, mut n_rand) = (4, 0.15, 120);
+    let mut taps = TAPS;
     for o in opts {
+        let num = |v: &str| v.parse::<f64>().map_err(|_| format!("{o}: not a number"));
         match o.split_once('=') {
             Some(("dens", v)) => dens = parse_dens(v)?,
             Some(("warm", v)) => {
-                warm = read_json(std::path::Path::new(v))?.as_object().cloned();
+                for f in v.split(',') {
+                    if let Some(m) = read_json(std::path::Path::new(f))?.as_object() {
+                        warm.push(m.clone());
+                    }
+                }
             }
+            Some(("seeds", v)) => seeds = num(v)? as usize,
+            Some(("step", v)) => step0 = num(v)?,
+            Some(("random", v)) => n_rand = num(v)? as usize,
+            Some(("taps", v)) => taps = read_taps(v)?,
             _ => return Err(format!("model-fit: unknown option {o}")),
         }
     }
+    let mk = |k: &[f64]| Hall {
+        taps,
+        ..Hall::from_knobs(k, dens)
+    };
     let refs = load_refs(cfg)?;
     let path = cfg.out.join(format!("fits/model_hall_{tag}.json"));
     let out = Mutex::new(Map::new());
@@ -453,33 +533,29 @@ pub fn fit(cfg: &Config, tag: &str, opts: &[String], progs: &[u32]) -> Result<()
         let rv = refs.get(&key).ok_or(format!("no reference {p}"))?;
         let r = Metrics::from_json(rv)?;
         let mut rng = Rng::new(p);
-        let mut cands: Vec<Vec<f64>> = (0..120)
+        let cands: Vec<Vec<f64>> = (0..n_rand)
             .map(|_| (0..KNOBS.len()).map(|_| rng.uniform()).collect())
             .collect();
-        if let Some(w) = warm.as_ref().and_then(|w| w.get(&key)) {
-            cands.push(
-                KNOBS
-                    .iter()
-                    .map(|n| w["knobs"][*n].as_f64().unwrap_or(0.5))
-                    .collect(),
-            );
-        }
         let mut scored: Vec<(f64, Vec<f64>)> = cands
             .into_par_iter()
-            .map(|k| (score(&Hall::from_knobs(&k, dens), &r, 2), k))
+            .map(|k| (score(&mk(&k), &r, 2), k))
             .collect();
-        if warm.is_some() {
-            // The warm start always gets searched.
-            let last = scored.len() - 1;
-            scored[last].0 = f64::MIN;
-        }
         scored.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let best = scored[..2]
+        scored.truncate(2);
+        // Every warm start gets searched too.
+        for w in warm.iter().filter_map(|w| w.get(&key)) {
+            let k = KNOBS
+                .iter()
+                .map(|n| w["knobs"][*n].as_f64().unwrap_or(0.5))
+                .collect();
+            scored.push((0.0, k));
+        }
+        let best = scored
             .par_iter()
             .map(|(_, k)| {
                 let mut k = k.clone();
-                let mut sc = score(&Hall::from_knobs(&k, dens), &r, 4);
-                let mut step = 0.15;
+                let mut sc = score(&mk(&k), &r, seeds);
+                let mut step = step0;
                 for _ in 0..5 {
                     loop {
                         let cs: Vec<Vec<f64>> = free
@@ -496,7 +572,7 @@ pub fn fit(cfg: &Config, tag: &str, opts: &[String], progs: &[u32]) -> Result<()
                             .collect();
                         let (s2, c) = cs
                             .into_par_iter()
-                            .map(|c| (score(&Hall::from_knobs(&c, dens), &r, 4), c))
+                            .map(|c| (score(&mk(&c), &r, seeds), c))
                             .min_by(|a, b| a.0.total_cmp(&b.0))
                             .unwrap_or((f64::MAX, k.clone()));
                         if s2 < sc - 1e-9 {
@@ -507,12 +583,14 @@ pub fn fit(cfg: &Config, tag: &str, opts: &[String], progs: &[u32]) -> Result<()
                     }
                     step *= 0.45;
                 }
-                (sc, k)
+                // Finalists are compared on what verify judges.
+                let _ = sc;
+                (score(&mk(&k), &r, 16), k)
             })
             .min_by(|a, b| a.0.total_cmp(&b.0))
             .ok_or("no fit")?
             .1;
-        let h = Hall::from_knobs(&best, dens);
+        let h = mk(&best);
         let (m, pre) = measure(&h, &r, 16, true);
         let name = rv["name"].as_str().unwrap_or("");
         let (l, pass) = line(&key, name, &m, &r);
@@ -538,4 +616,78 @@ pub fn fit(cfg: &Config, tag: &str, opts: &[String], progs: &[u32]) -> Result<()
         .count();
     println!("pass {n} of {}", o.len());
     Ok(())
+}
+
+/// `model-taps hall FITS [dens=…] [taps=FILE]`: the tap fractions, by a
+/// coordinate search with each preset's fitted knobs held (8 seeds), on the
+/// sum of distances (each capped at 25); into `out/fits/model_hall_taps.json`.
+pub fn taps_search(cfg: &Config, fits: &std::path::Path, opts: &[String]) -> Result<(), String> {
+    let mut dens = Dens::Own;
+    let mut taps = TAPS;
+    for o in opts {
+        match o.split_once('=') {
+            Some(("dens", v)) => dens = parse_dens(v)?,
+            Some(("taps", v)) => taps = read_taps(v)?,
+            _ => return Err(format!("model-taps: unknown option {o}")),
+        }
+    }
+    let refs = load_refs(cfg)?;
+    let Value::Object(f) = read_json(fits)? else {
+        return Err("fits: not an object".into());
+    };
+    let presets: Vec<(Vec<f64>, Metrics)> = f
+        .iter()
+        .map(|(p, v)| -> Result<_, String> {
+            let k = KNOBS
+                .iter()
+                .map(|n| v["knobs"][*n].as_f64().unwrap_or(0.0))
+                .collect();
+            Ok((k, Metrics::from_json(refs.get(p).ok_or("no ref")?)?))
+        })
+        .collect::<Result<_, _>>()?;
+    let eval = |t: &Taps| -> (f64, usize) {
+        let ds: Vec<(f64, bool)> = presets
+            .par_iter()
+            .map(|(k, r)| {
+                let h = Hall {
+                    taps: *t,
+                    ..Hall::from_knobs(k, dens)
+                };
+                let res = residuals(&measure(&h, r, 8, true).0, r);
+                (distance(&res).min(25.0), verdict(&res).all())
+            })
+            .collect();
+        (
+            ds.iter().map(|d| d.0).sum(),
+            ds.iter().filter(|d| d.1).count(),
+        )
+    };
+    let (mut best, mut pass) = eval(&taps);
+    println!("start {best:.1} pass {pass}");
+    for step in [0.08, 0.03] {
+        let mut improved = true;
+        while improved {
+            improved = false;
+            for side in 0..2 {
+                for j in 0..8 {
+                    for s in [-step, step] {
+                        let mut t = taps;
+                        t[side][j].1 = (t[side][j].1 + s).clamp(0.02, 0.98);
+                        if t[side][j].1 == taps[side][j].1 {
+                            continue;
+                        }
+                        let (sc, n) = eval(&t);
+                        if sc < best - 1e-9 {
+                            (best, pass, taps, improved) = (sc, n, t, true);
+                            println!("{side} {j} {:.2} → {best:.1} pass {pass}", t[side][j].1);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    write_json(
+        &cfg.out.join("fits/model_hall_taps.json"),
+        &json!({"taps": taps.map(|r| r.map(|(l, f)| json!([l, f]))), "score": best, "pass": pass}),
+    )
 }
