@@ -236,6 +236,25 @@ pub fn resample(x: &[f32], from: u32, to: u32) -> Result<Vec<f32>, BadRatio> {
     }
     // Relative to the lower rate's Nyquist.
     let f_cutoff = (0.7 * to as f32 / from.min(to) as f32).min(0.95);
+    sinc(x, f64::from(to) / f64::from(from), f_cutoff)
+}
+
+/// `x` resampled by `ratio` (output samples an input sample, 1 to 4) with
+/// the same sinc, the band left whole (cut-off 0.95 of the input's
+/// Nyquist): a cycle stretched to a whole number of samples.
+pub fn resample_ratio(x: &[f32], ratio: f64) -> Result<Vec<f32>, BadRatio> {
+    if !(1.0..=4.0).contains(&ratio) {
+        return Err(BadRatio);
+    }
+    if x.is_empty() {
+        return Ok(Vec::new());
+    }
+    sinc(x, ratio, 0.95)
+}
+
+/// `rubato`'s windowed sinc at `ratio`, cut-off `f_cutoff` of the lower
+/// rate's Nyquist, delay compensated.
+fn sinc(x: &[f32], ratio: f64, f_cutoff: f32) -> Result<Vec<f32>, BadRatio> {
     let params = SincInterpolationParameters {
         sinc_len: 256,
         f_cutoff: Some(f_cutoff),
@@ -243,7 +262,6 @@ pub fn resample(x: &[f32], from: u32, to: u32) -> Result<Vec<f32>, BadRatio> {
         interpolation: SincInterpolationType::Cubic,
         window: WindowFunction::BlackmanHarris2,
     };
-    let ratio = f64::from(to) / f64::from(from);
     let mut rs = Async::<f32>::new_sinc(ratio, 1.0, &params, 1024, 1, FixedAsync::Input)
         .map_err(|_| BadRatio)?;
     let input = InterleavedSlice::new(x, 1, x.len()).map_err(|_| BadRatio)?;

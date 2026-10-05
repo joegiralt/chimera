@@ -1,19 +1,32 @@
 //! TRANSWAVE (spec § 2 TRANSWAVE): a table of single-cycle frames, scanned.
-//! Each frame is held at octave mip levels from a top level (512, or 1 024)
-//! down to 16 samples, each band-limited to `⌊0.35 · N⌋` harmonics by the
-//! importer: the PPG Wave and Waldorf Microwave approach, for the Ensoniq
-//! VFX/SD-1's transwaves. POSITION and a triangle scan (MOTION its rate,
-//! SIZE its width) pick the frame, as the Polyend Tracker v1.5's wavetable
-//! POSITION and WINDOW do.
+//! Each frame is held at octave mip levels, nominal `N` from the top (256,
+//! or 512 with `--top 1024`) down to 16, each band-limited to `⌊0.35 · N⌋`
+//! harmonics by the importer: the PPG Wave and Waldorf Microwave approach,
+//! for the Ensoniq VFX/SD-1's transwaves. POSITION and a triangle scan
+//! (MOTION its rate, SIZE its width) pick the frame, as the Polyend Tracker
+//! v1.5's wavetable POSITION and WINDOW do.
+//!
+//! A level is chosen on its nominal step, `N · f / 48 000`, but stored
+//! oversampled (`stored_log2`: 2 N from 128 up, 4 N below), so the
+//! Hermite read's own images stay 60 dB down at every level and step (TAPE
+//! Task 7, fix round 1); at `N` samples they reached −32 dB at level 16.
 //!
 //! The layout is frame-major: frame `f`'s level `N` starts at sample
-//! `f · S + level_offset(top, log2 N)`, `S = 2 · top − 16` (1 008 or 2 032).
+//! `f · frame_len(top) + level_offset(top, log2 N)`, `top` the stored top
+//! (512 by default: 1 216 samples a frame; 1 024: 2 240).
 //!
 //! Two heads at one phase read frames `⌊p⌋` and `⌊p⌋ + 1` at one level,
 //! lerped by `p`'s fraction; a level change reads both levels for one block
 //! (four heads) and fades between them. The note-on level is the largest
 //! whose step is at most 1; it drops only past `ALIAS_STEP` and rises only
-//! under `RISE_STEP`, so vibrato never changes it.
+//! under `RISE_STEP`, so vibrato never changes it. The new level reads at
+//! most `ALIAS_STEP` across its first block; the one faded out may pass it
+//! in that block, if the pitch rose past it there, so it folds briefly, at
+//! a falling weight, for that one block.
+//!
+//! Near Nyquist the output fades to silence, 0.3 to 0.45 cycles a sample,
+//! and the phase never stops: a clamped phase would hold a 24 kHz tone, or
+//! DC.
 
 use chimera_hal::BLOCK_SIZE;
 
@@ -27,41 +40,78 @@ pub const ALIAS_STEP: f32 = 1.43;
 /// Under this step the level rises: 0.35, so a rise lands under 0.7 and a
 /// drop over 0.715, and neither undoes the other.
 pub const RISE_STEP: f32 = 0.35;
-/// The smallest level, `log2 N`: 16 samples, 5 harmonics.
+/// The smallest level, `log2 N`: 16 nominal, 5 harmonics.
 pub const MIN_LOG2: u32 = 4;
-/// The fundamental's most cycles a sample: Nyquist.
-pub const CYCLES_MAX: f32 = 0.5;
+/// The fundamental's most cycles a sample: under Nyquist, so the phase
+/// never stands still or flips.
+pub const CYCLES_MAX: f32 = 0.45;
+/// From here to `CYCLES_MAX` the output fades to 0.
+pub const FADE_CYCLES: f32 = 0.3;
 /// MOTION's scan rate at ±1, Hz.
 pub const SCAN_HZ: f32 = 8.0;
 
-/// The top level of `count` frames held in `frames`: 512 or 1 024, else
+/// Each nominal level's stored length, `log2`, by `log2 N − 4` (16 to
+/// 512): 64, 128, 256, 256, 512, 1 024.
+const STORED_LOG2: [u32; 6] = [6, 7, 8, 8, 9, 10];
+
+/// Where nominal level `2^log2_n` is held: its stored length, `log2`.
+pub fn stored_log2(log2_n: u32) -> u32 {
+    STORED_LOG2[(log2_n.clamp(MIN_LOG2, 9) - MIN_LOG2) as usize]
+}
+
+/// The nominal top level for stored top `top`: half it.
+pub fn nominal_top(top: u32) -> u32 {
+    (top / 2).max(1 << MIN_LOG2)
+}
+
+/// A frame's samples, every level: 1 216 for top 512, 2 240 for 1 024.
+pub fn frame_len(top: u32) -> u32 {
+    level_offset(top, MIN_LOG2 - 1)
+}
+
+/// The stored top of `count` frames held in `frames`: 512 or 1 024, else
 /// `None`.
 pub fn top_of(frames: u32, count: u8) -> Option<u32> {
     let c = u32::from(count);
     [512, 1_024]
         .into_iter()
-        .find(|&top| c > 0 && frames == c * (2 * top - 16))
+        .find(|&top| c > 0 && frames == c * frame_len(top))
 }
 
-/// Where level `2^log2_n` starts in a frame: after the larger ones.
+/// The stored lengths of nominal levels 16 up to `2^(j + 3)`, summed, by
+/// `j` (0 for none): `level_offset` is a difference of two.
+const BELOW: [u32; 7] = {
+    let mut t = [0; 7];
+    let mut j = 1;
+    while j < 7 {
+        t[j] = t[j - 1] + (1 << STORED_LOG2[j - 1]);
+        j += 1;
+    }
+    t
+};
+
+/// Where nominal level `2^log2_n` starts in a frame: after the larger ones.
 pub fn level_offset(top: u32, log2_n: u32) -> u32 {
-    (2 * top).saturating_sub(2u32 << (log2_n & 15))
+    let hi = nominal_top(top).trailing_zeros().clamp(MIN_LOG2, 9);
+    let l = log2_n.clamp(MIN_LOG2 - 1, hi);
+    BELOW[(hi - 3) as usize] - BELOW[(l - 3) as usize]
 }
 
-/// The largest level `N` (16 to `top`) with `N · freq / sample_rate ≤ 1`.
+/// The largest nominal level `N` (16 to the nominal top) with
+/// `N · freq / sample_rate ≤ 1`.
 pub fn note_on_level(freq: f32, top: u32, sample_rate: u32) -> u32 {
-    let mut n = top.max(1 << MIN_LOG2);
+    let mut n = nominal_top(top);
     while n > 1 << MIN_LOG2 && n as f32 * freq > sample_rate as f32 {
         n >>= 1;
     }
     n
 }
 
-/// The level after one at `log2_n` read at `step`: smaller while the step
-/// is past `ALIAS_STEP`, larger while under `RISE_STEP`, within 16 and
-/// `top`.
+/// The level after one at nominal `log2_n` read at nominal `step`: smaller
+/// while the step is past `ALIAS_STEP`, larger while under `RISE_STEP`,
+/// within 16 and the nominal top.
 pub fn next_level(log2_n: u32, step: f32, top: u32) -> u32 {
-    let hi = top.max(1 << MIN_LOG2).trailing_zeros();
+    let hi = nominal_top(top).trailing_zeros();
     let (mut l, mut s) = (log2_n.clamp(MIN_LOG2, hi), step);
     while s > ALIAS_STEP && l > MIN_LOG2 {
         (l, s) = (l - 1, s * 0.5);
@@ -78,6 +128,12 @@ pub fn playable(model: TapeModel, v: &SourceView<'_>) -> bool {
     let d = v.desc();
     model != TapeModel::Transwave
         || (d.shape == Shape::Transwave && top_of(v.frames(), d.count).is_some())
+}
+
+/// The output's share at `cycles` a sample: 1 to `FADE_CYCLES`, 0 from
+/// `CYCLES_MAX`, linear between.
+pub fn nyquist_gain(cycles: f32) -> f32 {
+    clampf((CYCLES_MAX - cycles) / (CYCLES_MAX - FADE_CYCLES), 0.0, 1.0)
 }
 
 /// The note's fundamental in cycles a sample, `cents` on it: the source's
@@ -122,6 +178,8 @@ pub struct Wave {
     scan: f32,
     /// The frame position at the last block's end, Q16.
     p: u32,
+    /// `nyquist_gain` at the last block's end.
+    gain: f32,
 }
 
 impl Wave {
@@ -133,6 +191,7 @@ impl Wave {
         phase: 0,
         scan: 0.0,
         p: 0,
+        gain: 1.0,
     };
 
     /// A note at `cycles` a sample on `v`: the largest level whose step is
@@ -147,6 +206,7 @@ impl Wave {
             top: top.trailing_zeros() as u8,
             count,
             level: note_on_level(cycles, top, 1).trailing_zeros() as u8,
+            gain: nyquist_gain(cycles),
             ..Wave::IDLE
         }
     }
@@ -201,7 +261,7 @@ impl Wave {
         let old = u32::from(self.level);
         let level = next_level(old, c0.max(c1) * (1u32 << old) as f32, top);
         self.level = level as u8;
-        let span = 2 * top - 16;
+        let span = frame_len(top);
         // In Q22 the block's 64 steps of `p1 − p0` land on `p1` exactly.
         let k = Run {
             p0: p0 << 6,
@@ -211,25 +271,30 @@ impl Wave {
             d0: (c0 * 4_294_967_296.0) as u32,
             dd: (((c1 - c0) * 4_294_967_296.0) as i64 / BLOCK_SIZE as i64) as u32,
         };
+        // Read at the stored length, looked up once a block.
+        let at = |l: u32| (stored_log2(l), level_offset(top, l));
         self.phase = if level == old {
-            k.run(out, v, self.phase, (level, level_offset(top, level)))
+            k.run(out, v, self.phase, at(level))
         } else {
             self.from = Some(old as u8);
-            k.fade(
-                out,
-                v,
-                self.phase,
-                [
-                    (old, level_offset(top, old)),
-                    (level, level_offset(top, level)),
-                ],
-            )
+            k.fade(out, v, self.phase, [at(old), at(level)])
         };
+        let g1 = nyquist_gain(c1);
+        let g0 = if first { g1 } else { self.gain };
+        self.gain = g1;
+        if g0 != 1.0 || g1 != 1.0 {
+            let dg = (g1 - g0) * (1.0 / BLOCK_SIZE as f32);
+            let mut g = g0;
+            for y in out.iter_mut() {
+                g += dg;
+                *y *= g;
+            }
+        }
     }
 }
 
 /// The phase `ph` (a cycle 2³²) in samples of a frame `2^l` long, as a
-/// 32.32 position: built from two 32-bit shifts (`l` is 4 to 10), not a
+/// 32.32 position: built from two 32-bit shifts (`l` is 6 to 10), not a
 /// 64-bit one.
 #[inline(always)]
 fn at_level(ph: u32, l: u32) -> Pos {
@@ -259,7 +324,8 @@ impl Run {
         (f * self.span, g * self.span, t)
     }
 
-    /// Two heads at one level `(log2 N, offset)`. Returns the phase after.
+    /// Two heads at one level `(stored log2, offset)`. Returns the phase
+    /// after.
     #[inline(never)]
     fn run(
         &self,

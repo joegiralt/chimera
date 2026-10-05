@@ -7,6 +7,7 @@ mod common;
 use core::mem::MaybeUninit;
 
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape, SourceView};
+use chimera_core::dsp::tape_engine::wave;
 use chimera_core::dsp::tape_engine::{
     INC_MAX, StretchType, TapeEngine, TapeEngineParams, TapeModel,
 };
@@ -100,7 +101,7 @@ fn transwave_reads_stay_in_row() {
     for run in 0..300 {
         let top = [512u32, 1_024][rng.below(2)];
         let count = 1 + rng.below(32) as u8;
-        let n = count as usize * (2 * top as usize - 16);
+        let n = count as usize * wave::frame_len(top) as usize;
         let s: Vec<i16> = (0..n)
             .map(|_| ((rng.next_u32() & 0xFFF) as i16) << 4 >> 4)
             .collect();

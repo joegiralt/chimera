@@ -409,7 +409,7 @@ fn midi_extremes_stay_finite() {
     let v = SourceView::strict(&held).unwrap();
     assert_eq!(wave::cycles(127, 2_400.0, SR), wave::CYCLES_MAX);
     assert!(wave::cycles(0, -2_400.0, SR) >= f32::EPSILON);
-    for (note, pitch, level) in [(0u8, -2_400.0f32, 10u8), (127, 2_400.0, 4)] {
+    for (note, pitch, level) in [(0u8, -2_400.0f32, 9u8), (127, 2_400.0, 4)] {
         let p = TapeEngineParams {
             model: TapeModel::Transwave,
             position: 0.5,

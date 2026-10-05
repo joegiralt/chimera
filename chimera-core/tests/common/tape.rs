@@ -4,6 +4,7 @@
 
 use chimera_core::dsp::clampf;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
+use chimera_core::dsp::tape_engine::wave;
 use chimera_core::storage::twelve::pack12;
 
 use super::XorShift;
@@ -55,9 +56,10 @@ pub fn saw_with_burst(rate: u16, secs: f32) -> Vec<f32> {
         .collect()
 }
 
-/// A `Transwave` of `count` frames at octave levels `top` down to 16, frame
-/// `f`'s sine-phase harmonic `h` at amplitude `amp(f, h)`: each level `N`
-/// keeps harmonics `1..=⌊0.35 N⌋`, as the importer's do.
+/// A `Transwave` of `count` frames at stored top `top` (nominal levels
+/// `top / 2` down to 16, each at `wave::stored_log2`'s length), frame `f`'s
+/// sine-phase harmonic `h` at amplitude `amp(f, h)`: each nominal level `N`
+/// keeps harmonics `1..=⌊0.35 N⌋`, as the importer's do, rounded to 12 bits.
 pub fn held_transwave(top: u32, count: u8, amp: impl Fn(usize, u32) -> f32) -> Vec<u8> {
     let d = Descriptor {
         shape: Shape::Transwave,
@@ -67,22 +69,24 @@ pub fn held_transwave(top: u32, count: u8, amp: impl Fn(usize, u32) -> f32) -> V
     };
     let mut s: Vec<i16> = Vec::new();
     for f in 0..count as usize {
-        let mut n = top;
-        while n >= 16 {
-            let parts: Vec<(u32, f32)> = (1..=(n as f32 * 0.35) as u32)
-                .map(|h| (h, amp(f, h)))
+        let mut l = wave::nominal_top(top).trailing_zeros();
+        while l >= wave::MIN_LOG2 {
+            let n = 1u64 << wave::stored_log2(l);
+            let parts: Vec<(u64, f32)> = (1..=((1u64 << l) as f32 * 0.35) as u64)
+                .map(|h| (h, amp(f, h as u32)))
                 .filter(|&(_, a)| a != 0.0)
                 .collect();
             s.extend((0..n).map(|i| {
                 let x = parts.iter().fold(0.0f64, |y, &(h, a)| {
-                    let w = core::f64::consts::TAU * (h as u64 * i as u64 % n as u64) as f64;
+                    let w = core::f64::consts::TAU * (h * i % n) as f64;
                     y + a as f64 * (w / n as f64).sin()
                 });
                 to12(x as f32)
             }));
-            n /= 2;
+            l -= 1;
         }
     }
+    assert_eq!(s.len(), count as usize * wave::frame_len(top) as usize);
     let mut held = d.to_bytes().to_vec();
     held.resize(DESC_LEN + 3 * s.len() / 2, 0);
     pack12(&s, &mut held[DESC_LEN..]);

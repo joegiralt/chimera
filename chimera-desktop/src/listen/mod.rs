@@ -9,6 +9,7 @@ use std::mem::MaybeUninit;
 use crate::import::tape::convert::{Mono, Pitch, clean, quantise_tpdf, resample, yin};
 use crate::import::tape::transwave::{DEFAULT_TOP, cut_cycles, levels};
 use chimera_core::block::{Block, DiskCode, ParamId};
+use chimera_core::dsp::clampf;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape, SourceView};
 use chimera_core::dsp::tape_engine::{TapeEngine, TapeEngineParams as P, TapeModel};
@@ -120,8 +121,10 @@ pub fn held_from(m: &Mono, rate: u32) -> Result<(Vec<u8>, Pitch), String> {
 /// `m` as a `Transwave` of `frames` frames, as the importer will hold one
 /// (spec § 6 step 5): cleaned; whole cycles at its YIN period cut from
 /// across it (`cut_cycles`, at most 32), `frames` of them taken evenly;
-/// each built into levels 512 down to 16; the whole set's peak to −0.5
-/// dBFS, dithered to 12 bits. An unpitched or too short `m` is an error.
+/// each built into levels (nominal 256 down to 16, stored oversampled); the
+/// whole set's peak to −0.5 dBFS, rounded to 12 bits: a fixed single-cycle
+/// table gains nothing from dither, and its noise would eat the levels'
+/// 60 dB. An unpitched or too short `m` is an error.
 pub fn held_transwave(m: &Mono, frames: usize) -> Result<(Vec<u8>, f32), String> {
     let mut c = m.clone();
     clean(&mut c);
@@ -148,8 +151,10 @@ pub fn held_transwave(m: &Mono, frames: usize) -> Result<(Vec<u8>, f32), String>
         return Err("silent cycles".into());
     }
     let gain = 10f32.powf(-0.5 / 20.0) / peak;
-    let x: Vec<f32> = x.iter().map(|s| s * gain).collect();
-    let q = quantise_tpdf(&x, SEED);
+    let q: Vec<i16> = x
+        .iter()
+        .map(|s| clampf((s * gain * 2048.0).round(), -2048.0, 2047.0) as i16)
+        .collect();
     let desc = Descriptor {
         shape: Shape::Transwave,
         count: n as u8,
