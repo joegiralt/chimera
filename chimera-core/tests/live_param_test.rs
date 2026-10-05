@@ -89,30 +89,31 @@ fn test_filter_cutoff_sweep_mid_note() {
 
 #[test]
 fn test_filter_resonance_mid_note() {
-    let (_, _, before, after) = render_with_param_change(
-        |p| {
-            *p = tri();
-            p.filter.cutoff = 1000.0;
-            p.filter
-                .set_mode(chimera_core::dsp::filter::FilterMode::Lp12);
-            p.filter.resonance = 0.0;
-        },
-        |p| {
-            p.filter.resonance = 0.9;
-        },
-        8,
-        8,
-    );
+    // The same note twice, RES raised mid-note or left at 0: the control
+    // takes out the note's own onset.
+    let render = |res: f32| {
+        render_with_param_change(
+            |p| {
+                *p = tri();
+                p.filter.cutoff = 1000.0;
+                p.filter
+                    .set_mode(chimera_core::dsp::filter::FilterMode::Lp12);
+                p.filter.resonance = 0.0;
+            },
+            |p| p.filter.resonance = res,
+            8,
+            8,
+        )
+        .3
+    };
     // A triangle has no 4th harmonic: read the odd ones either side of
-    // the 1 kHz cutoff, C4's 3rd and 5th. 1 kHz itself held only the step
-    // a snapped RES used to make; RES ramps now.
+    // the 1 kHz cutoff, C4's 3rd and 5th.
     let near = |b: &[f32]| goertzel(b, 3.0 * 261.63, SR) + goertzel(b, 5.0 * 261.63, SR);
-    let (peak_before, peak_after) = (near(&before), near(&after));
+    let (control, raised) = (near(&render(0.0)), near(&render(0.9)));
+    println!("RES 0.9 over RES 0: {:.2}", raised / control);
     assert!(
-        peak_after > 2.0 * peak_before,
-        "resonance should boost cutoff freq: before={} after={}",
-        peak_before,
-        peak_after
+        raised > 2.0 * control,
+        "resonance should boost near the cutoff: {raised} vs {control} with RES 0"
     );
 }
 

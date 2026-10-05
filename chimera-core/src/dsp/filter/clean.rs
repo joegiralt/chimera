@@ -200,3 +200,35 @@ impl Clean {
         (lp, bp, hp)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hw::SAMPLE_RATE;
+
+    /// The moving loop on a steady block is the steady loop: the same
+    /// coefficients, per sample instead of once.
+    #[test]
+    fn steady_and_moving_agree_on_a_steady_block() {
+        let mut p = FilterParams::default();
+        (p.cutoff, p.resonance) = (1500.0, 0.6);
+        let saw = |b: usize| -> [f32; BLOCK_SIZE] {
+            core::array::from_fn(|i| 0.8 * (((b * BLOCK_SIZE + i) % 218) as f32 / 109.0 - 1.0))
+        };
+        let mut a = Clean::new();
+        for b in 0..3 {
+            a.process(&mut saw(b), &p, SAMPLE_RATE);
+        }
+        let mut m = a.clone();
+        let (mut s, mut v) = (saw(3), saw(3));
+        let r = a.ramps(&p, SAMPLE_RATE);
+        a.steady::<2>(&mut s, r);
+        let r = m.ramps(&p, SAMPLE_RATE);
+        m.moving::<2>(&mut v, r);
+        let peak = s.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(peak > 0.01);
+        for (i, (a, b)) in s.iter().zip(&v).enumerate() {
+            assert!((a - b).abs() <= 1e-6 * peak, "sample {i}: {a} vs {b}");
+        }
+    }
+}

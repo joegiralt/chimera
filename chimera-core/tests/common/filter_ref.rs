@@ -74,10 +74,14 @@ pub fn clean_ref(x: &[f32], g: &[f64], k: &[f64], mode: FilterMode) -> Vec<f64> 
 /// One block's `g`, sample by sample, as CLEAN ramps it from `from_hz`'s
 /// to `to_hz`'s.
 pub fn g_track(from_hz: f64, to_hz: f64, fs: f64) -> Vec<f64> {
-    let (a, b) = (
+    ramp_track(
         g_of(from_hz as f32, fs as f32),
         g_of(to_hz as f32, fs as f32),
-    );
+    )
+}
+
+/// One block of a coefficient CLEAN ramps from `a` to `b`, sample by sample.
+pub fn ramp_track(a: f32, b: f32) -> Vec<f64> {
     let step = (b - a) / BLOCK_SIZE as f32;
     (0..BLOCK_SIZE)
         .map(|i| f64::from(g_at(a, step, i)))

@@ -5,7 +5,7 @@ use crate::params::FilterParams;
 
 pub mod clean;
 pub mod coef;
-#[cfg(any(test, feature = "probe", feature = "test-support"))]
+#[cfg(any(test, feature = "probe"))]
 pub mod probe;
 
 pub use clean::Clean;
