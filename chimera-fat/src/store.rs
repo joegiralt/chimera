@@ -3,7 +3,7 @@
 //! mapped here, and a device error re-inits the card.
 
 use crate::blocks::{BLOCK, Blocks, FsError};
-use crate::fat::{FatCache, Stale};
+use crate::fat::{FatCache, Orphan, Stale};
 use crate::fs::Fs;
 use crate::volume::{Layout, first_partition, layout};
 use chimera_hal::store::{ByteSink, Dir, FileName, Files, ReadSink, Store, StoreError, VolumeId};
@@ -165,7 +165,7 @@ pub struct FatStore<D: Medium> {
     fat: FatCache,
     hint: Keyed<u32>,
     stale: Keyed<Stale>,
-    orphan: Keyed<u32>,
+    orphan: Keyed<Orphan>,
 }
 
 type FsResult<T, D> = Result<T, FsError<PartError<<D as BlockDevice>::Error>>>;

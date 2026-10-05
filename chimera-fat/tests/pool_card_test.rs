@@ -388,12 +388,11 @@ fn project_save_device_error_no_leak() {
     }
 }
 
-/// A device error at FAT 2's write as a chain crosses into the next FAT
-/// sector strands that sector's first cluster:
-/// private issue #362
+/// A device error as a chain crosses into the next FAT sector, FAT 2's
+/// write among them, strands nothing: `drop_chain` frees the new sector's
+/// first cluster (#362), with no sweep.
 #[test]
-#[ignore = "private issue #362"]
-fn sector_crossing_fat2_error_loses_a_cluster() {
+fn sector_crossing_fat2_error_loses_nothing() {
     let base: Base = full;
     let card = two_saves(base);
     let (mut big, _) = full_dense_slots(128);

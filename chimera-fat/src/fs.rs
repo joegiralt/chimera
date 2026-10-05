@@ -290,8 +290,7 @@ impl<'a, B: Blocks> Fs<'a, B> {
         }
         self.will_change()?;
         self.mark_free(at, &found.run.at[..found.run.n])?;
-        self.table.free_chain(e.start)?;
-        self.table.flush()?;
+        self.table.drop_chain(e.start)?;
         Ok(true)
     }
 
@@ -339,11 +338,7 @@ impl<'a, B: Blocks> Fs<'a, B> {
         self.put_entry(at, &empty, false)?;
         if let Some(old) = old {
             // The entry no longer holds it: freed now, or at the next change.
-            let freed = self.table.free_chain(old).and_then(|_| self.table.flush());
-            if let Err(e) = freed {
-                self.table.drop_chain(old);
-                return Err(e);
-            }
+            self.table.drop_chain(old)?;
         }
 
         let mut out = Stream {
@@ -373,7 +368,8 @@ impl<'a, B: Blocks> Fs<'a, B> {
         if let Err(e) = flushed {
             // No entry holds the chain: free it now, or at the next change.
             if first != 0 {
-                self.table.drop_chain(first);
+                // A refusal is kept for the next change; `e` is the cause.
+                let _ = self.table.drop_chain(first);
             }
             return Err(e);
         }
@@ -406,8 +402,7 @@ impl<'a, B: Blocks> Fs<'a, B> {
         self.writable(at)?;
         self.will_change()?;
         self.mark_free(at, &found.run.at[..found.run.n])?;
-        self.table.free_chain(e.start)?;
-        self.table.flush()
+        self.table.drop_chain(e.start)
     }
 
     /// A file entry marked read-only is `ReadOnly`, before anything is

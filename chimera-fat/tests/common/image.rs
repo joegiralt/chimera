@@ -415,6 +415,10 @@ pub struct Rec<'a> {
     pub reads: u32,
     /// Every write fails while set.
     pub fail_writes: bool,
+    /// Every write to this block fails.
+    pub fail_write: Option<u32>,
+    /// The write with this index in `writes` lands, then errs.
+    pub land_then_fail: Option<usize>,
     /// Each write's block, and whether it held these bytes already.
     pub writes: Vec<(u32, bool)>,
 }
@@ -428,6 +432,8 @@ impl<'a> Rec<'a> {
             bound: p.blocks,
             reads: 0,
             fail_writes: false,
+            fail_write: None,
+            land_then_fail: None,
             writes: Vec::new(),
         }
     }
@@ -450,14 +456,17 @@ impl Blocks for Rec<'_> {
 
     fn write(&mut self, lba: u32, buf: &[u8; BLOCK]) -> Result<(), DiskError> {
         let at = self.at(lba);
-        if self.fail_writes {
+        if self.fail_writes || self.fail_write == Some(lba) {
             return Err(DiskError);
         }
         let mut disk = self.disk.0.borrow_mut();
         let block = disk.get_mut(at).ok_or(DiskError)?;
         self.writes.push((lba, block == buf));
         *block = *buf;
-        Ok(())
+        match self.land_then_fail == Some(self.writes.len() - 1) {
+            true => Err(DiskError),
+            false => Ok(()),
+        }
     }
 }
 
