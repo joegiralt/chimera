@@ -12,6 +12,40 @@ use super::{FilterMode, g_at};
 use crate::hw::BLOCK_SIZE;
 use crate::params::FilterParams;
 
+/// RES's `k`: 2 at RES 0, 0 at 0.95 (the onset, spec § CLEAN's DSP) and
+/// −0.105 at RES 1, where CLEAN self-oscillates into `sat_c1`. `k > −2`
+/// keeps `1 + kg + g² ≥ 0.997` for every `g`.
+#[inline(always)]
+pub fn clean_k(res: f32) -> f32 {
+    2.0 * (1.0 - res * (1.0 / 0.95))
+}
+
+/// The LP4 cascade's second-stage `k₂`: it resonates, but never oscillates
+/// on its own.
+#[inline(always)]
+pub fn clean_k2(k: f32) -> f32 {
+    (k * 1.2 + 0.3).max(0.1)
+}
+
+/// Each mode's output trim at `k ≤ 0`, by `FilterMode as usize`: the
+/// middle of its untrimmed RES 1 range over 100 Hz – 8 kHz, brought to
+/// −8 dBFS, the middle of the shared band (`OSC_BAND_DB`). Untrimmed, dBFS:
+/// LP12 −2.35 to −0.74, LP24 −1.59 to +1.73, BP12 +3.70 to +5.28, BP24
+/// +5.00 to +7.76, HP24 +0.62 to +2.29. LP6 (no `k`) and NOTCH (−21 dBFS)
+/// stay 1.0 until Task 4 rebuilds them as LP1 and NOTCH1. PHASER is never
+/// trimmed: its successor NOTCH2 never oscillates (today's rings at −8 to
+/// −10 dBFS until Task 5 replaces it).
+pub(crate) const TRIM_OSC: [f32; 8] = [1.0, 0.4756, 0.3949, 0.2374, 0.191, 0.3367, 1.0, 1.0];
+
+/// `mode`'s output trim at `k`: 1 for `k ≥ 0.5`, linear to
+/// `TRIM_OSC[mode]` at `k ≤ 0`. Set at each end of a block and ramped
+/// across it, as `k` is: one multiply-add and one multiply a sample.
+#[inline(always)]
+pub fn trim(mode: FilterMode, k: f32) -> f32 {
+    let u = crate::dsp::clampf(1.0 - 2.0 * k, 0.0, 1.0);
+    1.0 + (TRIM_OSC[mode as usize] - 1.0) * u
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Clean {
     s1: [f32; 2],
@@ -32,7 +66,7 @@ pub(super) struct Ramps {
 }
 
 /// A sample's coefficients: `d = 1/(1 + kg + g²)` for stage 1, and `d2`
-/// at `k2` for stage 2 (LP6's `d` is `1/(1 + g)`).
+/// at `k2` for stage 2 (LP6's `d` is `1/(1 + g)`), and the output trim.
 #[derive(Clone, Copy)]
 struct Coef {
     g: f32,
@@ -40,12 +74,13 @@ struct Coef {
     k2: f32,
     d: f32,
     d2: f32,
+    trim: f32,
 }
 
 /// Mode `M`'s coefficients at `g` and `k`: a divide a stage, and only
 /// those `M` reads.
 #[inline(always)]
-fn coef<const M: u8>(g: f32, k: f32) -> Coef {
+fn coef<const M: u8>(g: f32, k: f32, trim: f32) -> Coef {
     let d_at = |k: f32| 1.0 / (1.0 + k * g + g * g);
     let mut c = Coef {
         g,
@@ -53,12 +88,13 @@ fn coef<const M: u8>(g: f32, k: f32) -> Coef {
         k2: k,
         d: 0.0,
         d2: 0.0,
+        trim,
     };
     match FilterMode::ALL[M as usize] {
         FilterMode::Lp6 => c.d = 1.0 / (1.0 + g),
         FilterMode::Lp24 | FilterMode::Bp24 | FilterMode::Hp24 => {
             // The second stage less resonant, so the cascade doesn't blow up.
-            c.k2 = k * 1.2 + 0.3;
+            c.k2 = clean_k2(k);
             c.d = d_at(k);
             c.d2 = d_at(c.k2);
         }
@@ -93,16 +129,26 @@ impl Clean {
             FilterMode::Notch => self.run::<6>(buf, r),
             FilterMode::Phaser => self.run::<7>(buf, r),
         }
+        // A NaN or infinite input poisons the states for good (LP6 reads
+        // its state unsaturated): start the next block from rest.
+        if !(self.s1[0] + self.s1[1] + self.s2[0] + self.s2[1]).is_finite() {
+            (self.s1, self.s2) = ([0.0; 2], [0.0; 2]);
+        }
+    }
+
+    /// The raw integrator states, `[s1, s2]` of each stage, for the bound
+    /// tests.
+    #[cfg(feature = "test-support")]
+    pub fn states(&self) -> [f32; 4] {
+        [self.s1[0], self.s1[1], self.s2[0], self.s2[1]]
     }
 
     /// This block's ramps, stored as the next block's start.
     #[inline(always)]
     pub(super) fn ramps(&mut self, p: &FilterParams, fs: u32) -> Ramps {
-        // k = 2 (none) to 0.01; the law moves to the spec's in Task 3.
-        let k = 2.0 * (1.0 - p.resonance) + 0.01;
         Ramps {
             g: ramp(&mut self.g, g_of(p.cutoff, fs as f32)),
-            k: ramp(&mut self.k, k),
+            k: ramp(&mut self.k, clean_k(p.resonance)),
             pre: ramp(&mut self.pre, 1.0 + p.drive * 4.0),
         }
     }
@@ -120,7 +166,7 @@ impl Clean {
     /// multiply).
     #[inline(always)]
     pub(super) fn steady<const M: u8>(&mut self, buf: &mut [f32; BLOCK_SIZE], r: Ramps) {
-        let c = coef::<M>(r.g.1, r.k.1);
+        let c = coef::<M>(r.g.1, r.k.1, trim(FilterMode::ALL[M as usize], r.k.1));
         let pre_step = (r.pre.1 - r.pre.0) / BLOCK_SIZE as f32;
         for (i, s) in buf.iter_mut().enumerate() {
             *s = self.tick::<M>(*s * g_at(r.pre.0, pre_step, i), &c);
@@ -134,8 +180,12 @@ impl Clean {
         let n = BLOCK_SIZE as f32;
         let (g_step, k_step) = ((r.g.1 - r.g.0) / n, (r.k.1 - r.k.0) / n);
         let pre_step = (r.pre.1 - r.pre.0) / n;
+        let mode = FilterMode::ALL[M as usize];
+        let t = (trim(mode, r.k.0), trim(mode, r.k.1));
+        let t_step = (t.1 - t.0) / n;
         for (i, s) in buf.iter_mut().enumerate() {
-            let c = coef::<M>(g_at(r.g.0, g_step, i), g_at(r.k.0, k_step, i));
+            let (g, k) = (g_at(r.g.0, g_step, i), g_at(r.k.0, k_step, i));
+            let c = coef::<M>(g, k, g_at(t.0, t_step, i));
             *s = self.tick::<M>(*s * g_at(r.pre.0, pre_step, i), &c);
         }
     }
@@ -152,8 +202,18 @@ impl Clean {
         self.g
     }
 
+    /// One sample, trimmed (`trim`); PHASER, NOTCH2 to be, isn't.
     #[inline(always)]
     fn tick<const M: u8>(&mut self, x: f32, c: &Coef) -> f32 {
+        let y = self.untrimmed::<M>(x, c);
+        match FilterMode::ALL[M as usize] {
+            FilterMode::Phaser => y,
+            _ => y * c.trim,
+        }
+    }
+
+    #[inline(always)]
+    fn untrimmed<const M: u8>(&mut self, x: f32, c: &Coef) -> f32 {
         match FilterMode::ALL[M as usize] {
             FilterMode::Lp6 => {
                 let v = (x - self.s1[0]) * c.g * c.d;

@@ -432,21 +432,23 @@ const FIXTURE_RENDERS: &[(&str, u64)] = &[
     // Re-recorded, every row, as `golden_test`'s: ADR 0060's DC blocker;
     // SQR BASS and ALGO INIT for the filter's C1 `saturate` (ADR 0063); every
     // row for the harness's 1.6 s release (`OFF_BLOCKS`, ADR 0063); every
-    // row for CLEAN's ACCURATE tan and exact divides (#57).
-    ("factory_0.snd", 0xaa7131f2dfebe366),
-    ("factory_1.snd", 0x1a1b51b985d2434f),
-    ("factory_2.snd", 0xeb4d1ecae1a1ab64),
-    ("factory_3.snd", 0x91023c60160d5d1d),
-    ("factory_4.snd", 0xcb63c26c7687e135),
-    ("factory_5.snd", 0xcf21fffaad39cf99),
-    ("factory_6.snd", 0xaecf1b8852ff9ee6),
-    ("factory_7.snd", 0xdc097c46ef5fbee9),
-    ("init_algo.snd", 0xfa70577a22e49b79),
+    // row for CLEAN's ACCURATE tan and exact divides (#57); every row for
+    // CLEAN's k law and trims (ADR 0096).
+    ("factory_0.snd", 0x2b0219df38902ede),
+    ("factory_1.snd", 0x0e3d85b43ff9ccf9),
+    ("factory_2.snd", 0xfe00848f39d1981e),
+    ("factory_3.snd", 0x901698e789a3ccf9),
+    ("factory_4.snd", 0x68328532bf9779a7),
+    ("factory_5.snd", 0x005325bcaf24fa19),
+    ("factory_6.snd", 0x144e8d10ce6ac51e),
+    ("factory_7.snd", 0xcabe755163058e15),
+    ("init_algo.snd", 0x889c731ceb1c7089),
     // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain,
     // then Task 18's DAMP make-up and relative silence (ADR 0056),
     // then the free ring on release (ADR 0062), then CLEAN's ACCURATE tan
-    // and exact divides (#57), and STRING's out_gain 5.7 for it.
-    ("init_modal.snd", 0xc5a2c97d6f390c4b),
+    // and exact divides (#57), and STRING's out_gain 5.7 for it, then
+    // CLEAN's k law and trims (ADR 0096).
+    ("init_modal.snd", 0x12099b1d30a46e52),
 ];
 
 #[test]

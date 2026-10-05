@@ -107,12 +107,17 @@ fn test_filter_resonance_mid_note() {
         .3
     };
     // A triangle has no 4th harmonic: read the odd ones either side of
-    // the 1 kHz cutoff, C4's 3rd and 5th.
-    let near = |b: &[f32]| goertzel(b, 3.0 * 261.63, SR) + goertzel(b, 5.0 * 261.63, SR);
+    // the 1 kHz cutoff, C4's 3rd and 5th, over the fundamental: CLEAN's
+    // trim (ADR 0096) lowers the whole note as RES nears onset, so only
+    // the shape shows the resonance.
+    let near = |b: &[f32]| {
+        (goertzel(b, 3.0 * 261.63, SR) + goertzel(b, 5.0 * 261.63, SR)) / goertzel(b, 261.63, SR)
+    };
     let (control, raised) = (near(&render(0.0)), near(&render(0.9)));
-    println!("RES 0.9 over RES 0: {:.2}", raised / control);
+    // Live, 1.89×; with RES left dead, 1.00×. The bar was 2× on the level
+    // alone, before the trim.
     assert!(
-        raised > 2.0 * control,
+        raised > 1.5 * control,
         "resonance should boost near the cutoff: {raised} vs {control} with RES 0"
     );
 }

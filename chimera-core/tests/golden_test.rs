@@ -24,13 +24,14 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     // then the free ring on release (ADR 0062).
     // Then CLEAN's ACCURATE tan and exact divides (#57).
     // Then STRING's out_gain 5.7 for it (ADR 0063's peak rule).
+    // Then CLEAN's k law and trims (ADR 0096).
     (
         "modal_init",
         (
-            0x0b86619362c2bd86,
+            0x5176d0ac65f9a3d1,
             [
-                0, 1048130049, 1052223445, 3177195002, 1048312954, 1048568510, 1040495471,
-                3182556235,
+                0, 1048126220, 1052218609, 3177234998, 1048314789, 1048569258, 1040495686,
+                3182558310,
             ],
         ),
     ),
@@ -39,13 +40,14 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     // then the free ring on release (ADR 0062).
     // Then CLEAN's ACCURATE tan and exact divides (#57).
     // Then STRING's out_gain 5.7 for it (ADR 0063's peak rule).
+    // Then CLEAN's k law and trims (ADR 0096).
     (
         "modal_lfo_cutoff",
         (
-            0x6b7b182a0801dd22,
+            0x102a7b03053e661d,
             [
-                0, 1048130049, 1053104401, 3177196352, 1048312903, 1048568458, 1040457572,
-                996432783,
+                0, 1048126220, 1053102339, 3177236354, 1048314741, 1048569210, 1040458604,
+                996184393,
             ],
         ),
     ),
@@ -54,13 +56,14 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     // then the free ring on release (ADR 0062), then SYMP's out clip, stmlib's
     // rational curve for `tanhf` (ADR 0097).
     // Then CLEAN's ACCURATE tan and exact divides (#57).
+    // Then CLEAN's k law and trims (ADR 0096).
     (
         "modal_sympathetic",
         (
-            0x237e18a837e03e23,
+            0xc40e2c3dd96cc9d7,
             [
-                1012634585, 1038584383, 1036349511, 3198907774, 1055296120, 1054098540, 1051530283,
-                3193932763,
+                1012689062, 1038551816, 1036302816, 3198907799, 1055292148, 1054094316, 1051530843,
+                3193926805,
             ],
         ),
     ),
@@ -69,135 +72,147 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     // their data and match 937b89f to about 1e-7, but MORPH PAD (#192).
     // Recorded after the Algo sanity gate (ADR 0011).
     // Then CLEAN's ACCURATE tan and exact divides (#57).
+    // Then CLEAN's k law and trims (ADR 0096).
     (
         "algo_init",
         (
-            0x17badeee4796aa04,
+            0xac18195fc3101ceb,
             [
-                972000743, 3198286712, 1049036115, 1041165645, 3197132999, 3197549984, 3169224985,
-                3155278114,
+                972060177, 3198287341, 1049035940, 1041192466, 3197134115, 3197551485, 3169230522,
+                3155283520,
             ],
         ),
     ),
     // Re-recorded: CUTOFF routes in octaves, g ramped per block (filter-routing spec § 3).
     // Then CLEAN's ACCURATE tan and exact divides (#57).
+    // Then CLEAN's k law and trims (ADR 0096).
     (
         "algo_lfo_cutoff",
         (
-            0x3afe861d1833814e,
+            0x1dab49a9800513aa,
             [
-                972000743, 3198286712, 1049135525, 1041166648, 3197132912, 3197549896, 3168584400,
-                1023793799,
+                972060177, 3198287341, 1049133884, 1041193425, 3197134037, 3197551406, 3168592718,
+                1023771867,
             ],
         ),
     ),
     // Then CLEAN's ACCURATE tan and exact divides (#57).
+    // Then CLEAN's k law and trims (ADR 0096).
     (
         "algo_t1",
         (
-            0x2fcff6beeda3ea0b,
+            0x338914f3a4a9afb3,
             [
-                973104740, 3199093595, 1029424440, 3168178737, 3188801531, 3166864242, 3185833603,
-                3160611643,
+                973136596, 3199095550, 1029401004, 3168216480, 3188781221, 3166622429, 3185833548,
+                3160620186,
             ],
         ),
     ),
     // Then CLEAN's ACCURATE tan and exact divides (#57).
+    // Then CLEAN's k law and trims (ADR 0096).
     (
         "algo_t2",
         (
-            0xf5ecef181702b7ea,
+            0x1d58e515e3735a87,
             [
-                973511898, 1049606175, 3176979084, 3184345673, 3195447274, 3191650866, 3185821110,
-                3161700955,
+                973545296, 1049607733, 3177018799, 3184382992, 3195443999, 3191636009, 3185821175,
+                3161709992,
             ],
         ),
     ),
     // Then CLEAN's ACCURATE tan and exact divides (#57).
+    // Then CLEAN's k law and trims (ADR 0096).
     (
         "algo_t3",
         (
-            0xeedd1bcbb3f4fbfb,
+            0x99e521972604a034,
             [
-                975136140, 1051147691, 3178234101, 3181961713, 3195882728, 3192908927, 3185609780,
-                3163494781,
+                975175686, 1051148883, 3178282459, 3181992097, 3195881675, 3192897117, 3185609824,
+                3163500002,
             ],
         ),
     ),
     // Then CLEAN's ACCURATE tan and exact divides (#57).
+    // Then CLEAN's k law and trims (ADR 0096).
     (
         "algo_t4",
         (
-            0x258096473c4d7b9b,
+            0xd442c1935b585ad3,
             [
-                973161373, 3198352118, 3193782070, 3171990724, 1048066720, 1044983843, 3184259921,
-                3159709337,
+                973193445, 3198350446, 3193788259, 3172016707, 1048064525, 1044971578, 3184260242,
+                3159716904,
             ],
         ),
     ),
     // Then CLEAN's ACCURATE tan and exact divides (#57).
+    // Then CLEAN's k law and trims (ADR 0096).
     (
         "algo_t5",
         (
-            0x4e0b407d256c5073,
+            0x87063bb722952de9,
             [
-                972851153, 1052282914, 1052239202, 3177401553, 3197289251, 3196993042, 3186423998,
-                3161048607,
+                972913803, 1052282164, 1052238905, 3177438969, 3197288083, 3196992014, 3186424013,
+                3161057541,
             ],
         ),
     ),
     // Then CLEAN's ACCURATE tan and exact divides (#57).
+    // Then CLEAN's k law and trims (ADR 0096).
     (
         "algo_t6",
         (
-            0x1d99854a90c1eae9,
+            0x6b5b7b394ee8e944,
             [
-                973680009, 1050252135, 1052050473, 3174268141, 3197279196, 3196855413, 3180957695,
-                3158106002,
+                973714044, 1050250631, 1052049530, 3174298559, 3197277840, 3196853927, 3180957860,
+                3158113119,
             ],
         ),
     ),
     // Then CLEAN's ACCURATE tan and exact divides (#57).
+    // Then CLEAN's k law and trims (ADR 0096).
     (
         "algo_t7",
         (
-            0xaa00f5945c74fd50,
+            0xb08ecc3848fdbdb7,
             [
-                969958162, 1038221324, 1052176241, 3162577594, 3197462327, 3197297358, 3182570698,
-                3154643559,
+                970009862, 1038215128, 1052175815, 3162593418, 3197461555, 3197296821, 3182571825,
+                3154648884,
             ],
         ),
     ),
     // Then CLEAN's ACCURATE tan and exact divides (#57).
+    // Then CLEAN's k law and trims (ADR 0096).
     (
         "algo_t8",
         (
-            0x7dd73887b38d5584,
+            0xa1c30bf3e89efef8,
             [
-                971532030, 1032254560, 1052340098, 3160211768, 3197701516, 3197614532, 3183234059,
-                3152536390,
+                971589691, 1032249938, 1052339992, 3160236107, 3197701223, 3197614217, 3183235600,
+                3152545449,
             ],
         ),
     ),
     // Then CLEAN's ACCURATE tan and exact divides (#57).
+    // Then CLEAN's k law and trims (ADR 0096).
     (
         "algo_morph_static",
         (
-            0x7654c7bf0b352e6b,
+            0x39ed449b407c938c,
             [
-                981210362, 3178905166, 1036463405, 3173273820, 3170827040, 3180534557, 3173544681,
-                3147977966,
+                981272904, 3178920668, 1036455980, 3173319077, 3170829742, 3180559784, 3173539048,
+                3147980193,
             ],
         ),
     ),
     // Then CLEAN's ACCURATE tan and exact divides (#57).
+    // Then CLEAN's k law and trims (ADR 0096).
     (
         "algo_morph_sweep",
         (
-            0xb70aef06b8dbb656,
+            0x39888b5354294798,
             [
-                981210362, 3182354122, 1034307198, 3161573018, 1023432677, 1022712148, 3173467981,
-                991723855,
+                981272904, 3182365268, 1034303929, 3161722387, 1023475985, 1022702980, 3173462416,
+                991728612,
             ],
         ),
     ),
@@ -206,100 +221,109 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     // then the free ring on release (ADR 0062).
     // Then CLEAN's ACCURATE tan and exact divides (#57).
     // Then STRING's out_gain 5.7 for it (ADR 0063's peak rule).
+    // Then CLEAN's k law and trims (ADR 0096).
     (
         "algo_to_modal_switch",
         (
-            0x2e71270bdc728ca2,
+            0xb8704edef6f53de2,
             [
-                972000743, 3198286712, 1049036115, 3201771932, 992742944, 1024799747, 3148467438,
-                3195749056,
+                972060177, 3198287341, 1049035940, 3201774263, 992947158, 1024834130, 3148631123,
+                3195747569,
             ],
         ),
     ),
     // Filter-routing spec § Migration: recorded before the change; re-recorded
     // only for ADR 0060's DC blocker.
     // Then CLEAN's ACCURATE tan and exact divides (#57).
+    // Then CLEAN's k law and trims (ADR 0096).
     (
         "factory_0",
         (
-            0xaa7131f2dfebe366,
+            0x2b0219df38902ede,
             [
-                966594190, 3199651666, 3193952662, 1045452929, 3188637911, 3188421023, 0, 0,
+                966633155, 3199652310, 3193953164, 1045452874, 3188637170, 3188420254, 0, 0,
             ],
         ),
     ),
     // Then CLEAN's ACCURATE tan and exact divides (#57).
+    // Then CLEAN's k law and trims (ADR 0096).
     (
         "factory_1",
         (
-            0x1a1b51b985d2434f,
+            0x0e3d85b43ff9ccf9,
             [
-                979020344, 1032024055, 1055785694, 3166954412, 3201981665, 3202000478, 3116681394,
+                979074595, 1032020609, 1055785139, 3166978861, 3201981805, 3202000541, 3116682528,
                 0,
             ],
         ),
     ),
     // Then CLEAN's ACCURATE tan and exact divides (#57).
+    // Then CLEAN's k law and trims (ADR 0096).
     (
         "factory_2",
         (
-            0xeb4d1ecae1a1ab64,
+            0xfe00848f39d1981e,
             [
-                919583258, 1043289988, 982293406, 3161136891, 3140603612, 1007623845, 3158422115,
-                3100577339,
+                919634797, 1043285534, 982936894, 3161177423, 3140431246, 1007666467, 3158423231,
+                3100585116,
             ],
         ),
     ),
     // Then CLEAN's ACCURATE tan and exact divides (#57).
+    // Then CLEAN's k law and trims (ADR 0096).
     (
         "factory_3",
         (
-            0x91023c60160d5d1d,
+            0x901698e789a3ccf9,
             [
-                986548193, 1055271554, 3186664128, 1056922158, 1025689417, 3147140860, 3192121623,
-                1021144886,
+                986599185, 1055273736, 3186656317, 1056926714, 1025655748, 3147485307, 3192124968,
+                1021142159,
             ],
         ),
     ),
     // Then CLEAN's ACCURATE tan and exact divides (#57).
+    // Then CLEAN's k law and trims (ADR 0096).
     (
         "factory_4",
         (
-            0xcb63c26c7687e135,
+            0x68328532bf9779a7,
             [
-                908006558, 1055245974, 1049487006, 1030822531, 3191695551, 3191314470, 3113304079,
+                908219966, 1055265999, 1049507872, 1030503929, 3191651237, 3191270130, 3113279447,
                 0,
             ],
         ),
     ),
     // Then CLEAN's ACCURATE tan and exact divides (#57).
+    // Then CLEAN's k law and trims (ADR 0096).
     (
         "factory_5",
         (
-            0xcf21fffaad39cf99,
+            0x005325bcaf24fa19,
             [
-                898764886, 3209726290, 3209318023, 1060029535, 3206500300, 3206492947, 0, 0,
+                898824421, 3209678144, 3209854415, 1059992875, 3206492922, 3206485466, 0, 0,
             ],
         ),
     ),
     // Then CLEAN's ACCURATE tan and exact divides (#57).
+    // Then CLEAN's k law and trims (ADR 0096).
     (
         "factory_6",
         (
-            0xaecf1b8852ff9ee6,
+            0x144e8d10ce6ac51e,
             [
-                834310083, 1009665465, 1036684398, 974376884, 3182100486, 3181362640, 3177305616,
-                993245287,
+                834352396, 1009650854, 1036674498, 968914263, 3182119491, 3181374484, 3177329682,
+                993036649,
             ],
         ),
     ),
     // Then CLEAN's ACCURATE tan and exact divides (#57).
+    // Then CLEAN's k law and trims (ADR 0096).
     (
         "factory_7",
         (
-            0xdc097c46ef5fbee9,
+            0xcabe755163058e15,
             [
-                974600695, 1046941466, 1045726236, 999345947, 1033284981, 1032942180, 3133150627, 0,
+                974638215, 1046941265, 1045727262, 999705034, 1033284198, 1032940907, 3133150842, 0,
             ],
         ),
     ),

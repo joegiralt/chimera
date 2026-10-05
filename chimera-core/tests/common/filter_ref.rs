@@ -1,10 +1,19 @@
 //! The filter types' references (spec § Tests): CLEAN's topology in f64 with
 //! exact divides, the per-sample `g` a block's ramp gives, and level measures.
 
+use chimera_core::dsp::clampf;
 use chimera_core::dsp::filter::FilterMode;
+use chimera_core::dsp::filter::clean::trim;
 use chimera_core::dsp::filter::coef::g_of;
 use chimera_core::dsp::filter::g_at;
 use chimera_hal::BLOCK_SIZE;
+
+/// The self-oscillation band every resonant type shares at RES 1, dBFS RMS
+/// (spec test 2, H-new-1): a TYPE switch at RES 1 jumps no more than its
+/// width. Tasks 8 and 9 may widen it only to take their type in, with the
+/// reason in § Measured.
+#[allow(dead_code)] // not every test binary reads it
+pub const OSC_BAND_DB: (f32, f32) = (-12.0, -4.0);
 
 /// `sat_c1` in f64.
 fn sat(x: f64) -> f64 {
@@ -27,17 +36,28 @@ fn stage(x: f64, g: f64, k: f64, s1: &mut f64, s2: &mut f64) -> (f64, f64, f64) 
     (lp, bp, hp)
 }
 
-/// CLEAN, sample by sample, from rest, with `g[n]` and `k[n]` per sample
-/// and the second stage at `k₂ = 1.2k + 0.3`.
-pub fn clean_ref(x: &[f32], g: &[f64], k: &[f64], mode: FilterMode) -> Vec<f64> {
+/// CLEAN's output trim at `k`: 1 for `k ≥ 0.5`, linear to the mode's
+/// `TRIM_OSC` (read as `trim` at `k = −1`) at `k ≤ 0`; PHASER untrimmed.
+pub fn trim_ref(mode: FilterMode, k: f32) -> f32 {
+    let osc = trim(mode, -1.0);
+    match mode {
+        FilterMode::Phaser => 1.0,
+        _ => osc + (1.0 - osc) * clampf(2.0 * k, 0.0, 1.0),
+    }
+}
+
+/// CLEAN, sample by sample, from rest, with `g[n]`, `k[n]` and the output
+/// trim `t[n]` per sample, and the second stage at `k₂ = max(1.2k + 0.3,
+/// 0.1)`.
+pub fn clean_ref(x: &[f32], g: &[f64], k: &[f64], t: &[f64], mode: FilterMode) -> Vec<f64> {
     let (mut s1, mut s2) = ([0.0f64; 2], [0.0f64; 2]);
     let mut out = Vec::with_capacity(x.len());
     for n in 0..x.len() {
         let (x, g, k) = (f64::from(x[n]), g[n], k[n]);
-        let k2 = 1.2 * k + 0.3;
+        let (k2, t) = ((1.2 * k + 0.3).max(0.1), t[n]);
         let [a1, b1] = &mut s1;
         let [a2, b2] = &mut s2;
-        out.push(match mode {
+        let y = match mode {
             FilterMode::Lp6 => {
                 let v = (x - *a1) * g / (1.0 + g);
                 let lp = v + *a1;
@@ -66,7 +86,8 @@ pub fn clean_ref(x: &[f32], g: &[f64], k: &[f64], mode: FilterMode) -> Vec<f64> 
                 let ap1 = x - 2.0 * k * stage(x, g, k, a1, a2).1;
                 ap1 - 2.0 * k * stage(ap1, g, k, b1, b2).1
             }
-        });
+        };
+        out.push(t * y);
     }
     out
 }

@@ -231,18 +231,20 @@ fn a_steady_cutoff_does_not_ramp() {
 /// Every mode's output, steady and ramped, hot enough to saturate, bit for
 /// bit as recorded before `tick` was inlined into per-mode loops;
 /// re-recorded for the C1 `saturate` (ADR 0063), the first mode unmoved;
-/// then every mode for CLEAN's ACCURATE tan and exact divides (#57).
+/// then every mode for CLEAN's ACCURATE tan and exact divides (#57);
+/// then every mode but LP6 (no `k`, trim 1) for CLEAN's k law and trims
+/// (ADR 0096).
 #[test]
 fn every_mode_renders_as_recorded() {
     const WANT: [u64; 8] = [
         0xad32_27d9_4948_d08c,
-        0xe41d_bf3b_71ae_9aff,
-        0x0421_2e8a_e041_7727,
-        0x3553_c934_593f_5b11,
-        0xca99_c5c3_babb_f066,
-        0x5219_a408_77d3_3684,
-        0xc966_4b3e_825f_62bb,
-        0xffd6_d186_dd16_b669,
+        0x34fe_71d6_f19a_8455,
+        0x87b5_53f8_a19c_07bd,
+        0x349d_6da0_e37f_8293,
+        0xd7a0_6303_5618_783f,
+        0x95bd_99a3_ae4b_6f4d,
+        0x964d_6390_2ba9_3da5,
+        0xf66a_5343_055e_3a97,
     ];
     let got = FilterMode::ALL.map(|m| {
         let mut p = FilterParams::default();
@@ -265,8 +267,9 @@ fn every_mode_renders_as_recorded() {
     assert_eq!(got, WANT, "{got:#x?}");
 }
 
-/// At full resonance (k = 0.01) under a full-scale 110 Hz saw, LP12 and
-/// LP24 ring at the cutoff, held by `sat_c1` at a steady level: the last
+/// At full resonance (k = −0.105, self-oscillating, trimmed: ADR 0096)
+/// under a full-scale 110 Hz saw, LP12 and LP24 ring at the cutoff, held
+/// by `sat_c1` at a steady level: the last
 /// half second's RMS and the ring's own level (990 Hz, the harmonic at the cutoff), dBFS, at
 /// DRIVE 0 and 1, each within 1 dB of what they were, the level's two
 /// quarters within 0.5 dB of each other. ADR 0097 kept the curve: stmlib's
@@ -275,10 +278,12 @@ fn every_mode_renders_as_recorded() {
 #[test]
 fn full_resonance_rings_at_its_level() {
     const WANT: [(FilterMode, f32, f32, f32); 4] = [
-        (FilterMode::Lp12, 0.0, -4.04, -14.55),
-        (FilterMode::Lp12, 1.0, 2.69, -29.15),
-        (FilterMode::Lp24, 0.0, -2.34, -7.04),
-        (FilterMode::Lp24, 1.0, 1.87, -25.35),
+        // Re-pinned for CLEAN's k law and trims (ADR 0096); at k = 0.01
+        // they were −4.04/−14.55, 2.69/−29.15, −2.34/−7.04, 1.87/−25.35.
+        (FilterMode::Lp12, 0.0, -8.31, -13.28),
+        (FilterMode::Lp12, 1.0, -3.64, -40.87),
+        (FilterMode::Lp24, 0.0, -8.40, -11.70),
+        (FilterMode::Lp24, 1.0, -5.77, -29.68),
     ];
     let db = |x: &[f32]| 10.0 * (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).log10();
     // The level at `hz`, a sine's RMS: the DFT bin over a whole number of

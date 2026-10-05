@@ -2,11 +2,12 @@
 
 mod common;
 
+use chimera_core::dsp::filter::clean::{clean_k, clean_k2, trim};
 use chimera_core::dsp::filter::coef::{g_of, tan_accurate};
 use chimera_core::dsp::filter::{Clean, FilterMode, routed_cutoff};
 use chimera_core::params::FilterParams;
 use chimera_hal::BLOCK_SIZE;
-use common::filter_ref::{clean_ref, g_track, ramp_track};
+use common::filter_ref::{OSC_BAND_DB, clean_ref, g_track, ramp_track, rms_db, trim_ref};
 
 const SR: u32 = 48_000;
 const FS: f32 = SR as f32;
@@ -66,19 +67,14 @@ fn saw(n: usize) -> Vec<f32> {
         .collect()
 }
 
-/// RES's `k` until Task 3's law, as `Clean` computes it.
-fn k_of(res: f32) -> f32 {
-    2.0 * (1.0 - res) + 0.01
-}
-
 /// `(cutoff, RES)` for block b through `Clean`, and through `clean_ref`
-/// with the ramps' `g` and `k` per sample: max |y − y_ref| / max |y_ref|.
+/// with the ramps' `g`, `k` and trim per sample: max |y − y_ref| / max |y_ref|.
 fn jump_error(mode: FilterMode, blocks: &[(f32, f32)]) -> f64 {
     let mut p = FilterParams::default();
     assert!(p.set_mode(mode));
     let x = saw(blocks.len() * BLOCK_SIZE);
     let mut f = Clean::new();
-    let (mut y, mut g, mut k) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut y, mut g, mut k, mut t) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for (b, &(fc, res)) in blocks.iter().enumerate() {
         (p.cutoff, p.resonance) = (fc, res);
         let mut buf: [f32; BLOCK_SIZE] = x[b * BLOCK_SIZE..][..BLOCK_SIZE].try_into().unwrap();
@@ -86,9 +82,12 @@ fn jump_error(mode: FilterMode, blocks: &[(f32, f32)]) -> f64 {
         y.extend_from_slice(&buf);
         let (from, from_res) = blocks[b.saturating_sub(1)];
         g.extend(g_track(from.into(), fc.into(), FS.into()));
-        k.extend(ramp_track(k_of(from_res), k_of(res)));
+        let (k0, k1) = (clean_k(from_res), clean_k(res));
+        k.extend(ramp_track(k0, k1));
+        // The trim ramps across the block as `k` does, end to end.
+        t.extend(ramp_track(trim_ref(mode, k0), trim_ref(mode, k1)));
     }
-    let r = clean_ref(&x, &g, &k, mode);
+    let r = clean_ref(&x, &g, &k, &t, mode);
     let peak = r.iter().fold(0.0f64, |m, v| m.max(v.abs()));
     let err = y
         .iter()
@@ -138,5 +137,292 @@ fn clean_res_jumps_match_the_exact_reference() {
     for mode in JUMP_MODES {
         let e = jump_error(mode, &blocks);
         assert!(e <= 1e-3, "{mode:?}: {e:.2e}");
+    }
+}
+
+#[test]
+fn clean_k_law_has_its_onset_at_0_95() {
+    assert_eq!(clean_k(0.0), 2.0);
+    assert!(clean_k(0.95).abs() < 1e-6, "{}", clean_k(0.95));
+    assert!((clean_k(1.0) + 0.10526).abs() < 1e-4, "{}", clean_k(1.0));
+    // No divide nears zero, even at RES 1 (spec § CLEAN's DSP).
+    let k = clean_k(1.0);
+    for hz in 20..=24_000 {
+        let g = g_of(hz as f32, FS);
+        assert!(1.0 + k * g + g * g >= 0.997, "{hz} Hz");
+    }
+    // The second stage never oscillates on its own.
+    assert!((clean_k2(clean_k(1.0)) - 0.17368).abs() < 1e-4);
+    assert!((clean_k2(2.0) - 2.7).abs() < 1e-6);
+    assert_eq!(clean_k2(-1.0), 0.1);
+}
+
+/// 1 down to `k = 0.5`, then linear to the mode's own trim at `k = 0`, held
+/// below; PHASER untrimmed.
+#[test]
+fn clean_trim_ramps_with_k() {
+    for mode in OSC_MODES {
+        let osc = trim(mode, 0.0);
+        assert!(osc > 0.1 && osc < 0.6, "{mode:?}: {osc}");
+        assert_eq!(trim(mode, 0.5), 1.0);
+        assert_eq!(trim(mode, 2.0), 1.0);
+        assert_eq!(trim(mode, clean_k(1.0)), osc);
+        assert!((trim(mode, 0.25) - (1.0 + osc) / 2.0).abs() < 1e-6);
+    }
+    assert_eq!(trim(FilterMode::Phaser, clean_k(1.0)), 1.0);
+}
+
+/// The modes that self-oscillate today: LP1 and NOTCH1 join in Task 4.
+const OSC_MODES: [FilterMode; 5] = [
+    FilterMode::Lp12,
+    FilterMode::Lp24,
+    FilterMode::Bp12,
+    FilterMode::Bp24,
+    FilterMode::Hp24,
+];
+
+/// `n` samples of `mode` at a held `fc` and RES, fed `x(i)`.
+fn render(mode: FilterMode, fc: f32, res: f32, n: usize, x: impl Fn(usize) -> f32) -> Vec<f32> {
+    let mut p = FilterParams::default();
+    assert!(p.set_mode(mode));
+    (p.cutoff, p.resonance) = (fc, res);
+    let mut f = Clean::new();
+    let mut out = Vec::with_capacity(n);
+    for b in 0..n.div_ceil(BLOCK_SIZE) {
+        let mut buf: [f32; BLOCK_SIZE] = core::array::from_fn(|i| x(b * BLOCK_SIZE + i));
+        f.process(&mut buf, &p, SR);
+        out.extend_from_slice(&buf);
+    }
+    out.truncate(n);
+    out
+}
+
+fn impulse(i: usize) -> f32 {
+    if i == 0 { 1.0 } else { 0.0 }
+}
+
+/// RES 1 from one impulse, read over 0.5 s after 0.25 s.
+fn oscillation(mode: FilterMode, fc: f32) -> Vec<f32> {
+    let n = (0.75 * FS) as usize;
+    render(mode, fc, 1.0, n, impulse).split_off((0.25 * FS) as usize)
+}
+
+/// The pitch of `x`, Hz, from its upward zero crossings, interpolated.
+fn pitch(x: &[f32]) -> f64 {
+    let ups: Vec<f64> = x
+        .windows(2)
+        .enumerate()
+        .filter(|(_, w)| w[0] < 0.0 && w[1] >= 0.0)
+        .map(|(i, w)| i as f64 + f64::from(w[0] / (w[0] - w[1])))
+        .collect();
+    assert!(ups.len() > 10, "no oscillation: {} crossings", ups.len());
+    f64::from(FS) * (ups.len() - 1) as f64 / (ups[ups.len() - 1] - ups[0])
+}
+
+fn cents(f: f64, want: f64) -> f64 {
+    1200.0 * (f / want).log2()
+}
+
+#[test]
+fn clean_self_oscillates_in_band_and_tracks_1v_oct() {
+    let (lo, hi) = OSC_BAND_DB;
+    for mode in OSC_MODES {
+        // 100 Hz to 6.4 kHz in octaves, and 8 kHz.
+        let freqs = (0..7).map(|o| 100.0 * (1 << o) as f32).chain([8000.0]);
+        let levels: Vec<(f32, f32, f32)> = freqs
+            .map(|fc| {
+                let y = oscillation(mode, fc);
+                let level = rms_db(&y);
+                let wobble = y
+                    .chunks(4800)
+                    .map(|w| (rms_db(w) - level).abs())
+                    .fold(0.0f32, f32::max);
+                (fc, level, wobble)
+            })
+            .collect();
+        println!("{mode:?} RES 1 (Hz, dBFS, ±dB): {levels:.2?}");
+        for (fc, level, wobble) in levels {
+            assert!(wobble <= 1.0, "{mode:?} {fc} Hz: ±{wobble:.2} dB");
+            assert!(
+                level > lo && level < hi && level < 0.0,
+                "{mode:?} {fc} Hz: {level:.2} dBFS"
+            );
+        }
+        // FM2 (NOTE → CUTOFF) at +100 %: C2..C6 from FREQ at C4, two bases.
+        for base in [261.626f32, 1250.0] {
+            let mut last: Option<f64> = None;
+            for note in (36..=84).step_by(12) {
+                let fc = routed_cutoff(base, (note as f32 - 60.0) / 120.0);
+                let want = f64::from(base) * 2f64.powf((note as f64 - 60.0) / 12.0);
+                if want > 5000.0 {
+                    continue;
+                }
+                let f = pitch(&oscillation(mode, fc));
+                let c = cents(f, want);
+                assert!(
+                    c.abs() <= 25.0,
+                    "{mode:?} base {base} note {note}: {c:.1} cents"
+                );
+                if let Some(l) = last {
+                    let o = cents(f, l) - 1200.0;
+                    assert!(
+                        o.abs() <= 10.0,
+                        "{mode:?} base {base} note {note}: octave {o:.1} cents"
+                    );
+                }
+                last = Some(f);
+            }
+        }
+    }
+}
+
+#[test]
+fn clean_onset_is_res_0_95() {
+    let n = (1.1 * FS) as usize;
+    let tail = (1.0 * FS) as usize;
+    for mode in OSC_MODES {
+        for fc in [250.0, 1000.0, 4000.0] {
+            let at = |res: f32| {
+                let y = render(mode, fc, res, n, impulse);
+                let peak = y.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+                let late = y[tail..].iter().fold(0.0f32, |m, v| m.max(v.abs()));
+                20.0 * (late / peak).log10()
+            };
+            let (below, above) = (at(0.94), at(0.96));
+            assert!(below < -60.0, "{mode:?} {fc} Hz RES 0.94: {below:.1} dB");
+            assert!(above > -20.0, "{mode:?} {fc} Hz RES 0.96: {above:.1} dB");
+        }
+    }
+}
+
+/// CLEAN's output bound on every input, at every setting (spec test 8):
+/// the grid's max, 12.55 (the ±10 impulses, passed through), × 1.1.
+const CLEAN_BOUND: f32 = 13.8;
+/// Its raw states' bound, the same way: 3.84 × 1.1. Each is read through
+/// `sat_c1`, so the loop never sees more than 1.5.
+const CLEAN_STATE_BOUND: f32 = 4.22;
+
+/// The RES 1 jumps' bound on the 0.8 saw: their max, 0.733, × 1.1.
+const CLEAN_JUMP_BOUND: f32 = 0.81;
+
+/// Task 2's one-block jumps at RES 1, where self-oscillation makes the
+/// reference's relative error meaningless: bounded instead (spec test 4).
+#[test]
+fn clean_res_1_one_block_jumps_stay_bounded() {
+    let held = |a: f32, b: f32| -> Vec<f32> { [[a; 6], [b; 6]].concat() };
+    let env: Vec<f32> = (0..12usize)
+        .map(|b| {
+            let t = (b.saturating_sub(4) * BLOCK_SIZE) as f32 / (0.001 * FS);
+            routed_cutoff(100.0, t.min(1.0))
+        })
+        .collect();
+    let mut max = 0.0f32;
+    for mode in JUMP_MODES {
+        for cutoffs in [held(100.0, 20_000.0), held(20_000.0, 100.0), env.clone()] {
+            let mut p = FilterParams::default();
+            assert!(p.set_mode(mode));
+            p.resonance = 1.0;
+            let x = saw(cutoffs.len() * BLOCK_SIZE);
+            let mut f = Clean::new();
+            for (b, &fc) in cutoffs.iter().enumerate() {
+                p.cutoff = fc;
+                let mut buf: [f32; BLOCK_SIZE] =
+                    x[b * BLOCK_SIZE..][..BLOCK_SIZE].try_into().unwrap();
+                f.process(&mut buf, &p, SR);
+                for v in buf {
+                    assert!(
+                        v.is_finite() && v.abs() <= CLEAN_JUMP_BOUND,
+                        "{mode:?}: {v}"
+                    );
+                    max = max.max(v.abs());
+                }
+            }
+        }
+    }
+    println!("RES 1 jumps: max |y| {max}");
+}
+
+/// The grid's inputs (spec test 8): silence, a full-scale saw, a square at
+/// fs/4, white noise ±1 and impulses of ±10.
+fn grid_input(which: usize, i: usize) -> f32 {
+    match which {
+        0 => 0.0,
+        1 => (i % 109) as f32 / 54.5 - 1.0,
+        2 => {
+            if i % 4 < 2 {
+                1.0
+            } else {
+                -1.0
+            }
+        }
+        3 => {
+            let h = (i as u32)
+                .wrapping_mul(2_654_435_761)
+                .rotate_left(13)
+                .wrapping_mul(2_246_822_519);
+            h as f32 / u32::MAX as f32 * 2.0 - 1.0
+        }
+        _ => match i % 480 {
+            0 => 10.0,
+            240 => -10.0,
+            _ => 0.0,
+        },
+    }
+}
+
+#[test]
+fn clean_is_bounded_on_the_grid() {
+    let (mut max, mut max_state) = (0.0f32, 0.0f32);
+    for mode in FilterMode::ALL {
+        for fi in 0..24 {
+            let fc = 20.0 * 1000f32.powf(fi as f32 / 23.0);
+            for ri in 0..=10 {
+                let mut p = FilterParams::default();
+                assert!(p.set_mode(mode));
+                (p.cutoff, p.resonance) = (fc, ri as f32 / 10.0);
+                for which in 0..5 {
+                    let mut f = Clean::new();
+                    for b in 0..20 {
+                        let mut buf: [f32; BLOCK_SIZE] =
+                            core::array::from_fn(|i| grid_input(which, b * BLOCK_SIZE + i));
+                        f.process(&mut buf, &p, SR);
+                        for v in buf {
+                            assert!(v.is_finite(), "{mode:?} {fc} RES {ri}: {v}");
+                            max = max.max(v.abs());
+                        }
+                        for s in f.states() {
+                            assert!(s.is_finite());
+                            max_state = max_state.max(s.abs());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    println!("grid: max |y| {max}, max |state| {max_state}");
+    assert!(max <= CLEAN_BOUND, "{max}");
+    assert!(max_state <= CLEAN_STATE_BOUND, "{max_state}");
+}
+
+#[test]
+fn clean_recovers_from_a_nan_block() {
+    for mode in FilterMode::ALL {
+        let mut p = FilterParams::default();
+        assert!(p.set_mode(mode));
+        (p.cutoff, p.resonance) = (1000.0, 0.5);
+        let mut f = Clean::new();
+        f.process(&mut [f32::NAN; BLOCK_SIZE], &p, SR);
+        // Cleared: silence in, silence out.
+        let mut quiet = [0.0f32; BLOCK_SIZE];
+        f.process(&mut quiet, &p, SR);
+        assert!(quiet.iter().all(|&v| v == 0.0), "{mode:?}: {quiet:?}");
+        let x = saw(2 * BLOCK_SIZE);
+        let mut b = [0.0f32; BLOCK_SIZE];
+        for c in x.chunks(BLOCK_SIZE) {
+            b.copy_from_slice(c);
+            f.process(&mut b, &p, SR);
+        }
+        assert!(b.iter().all(|v| v.is_finite()), "{mode:?}: {b:?}");
+        assert!(b.iter().any(|&v| v != 0.0), "{mode:?}");
     }
 }

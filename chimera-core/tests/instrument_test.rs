@@ -675,15 +675,16 @@ fn the_costliest_patch_plays_six_voices_on_rev_v() {
 /// before. The Algo rows re-recorded for the filter's C1 `saturate` (ADR
 /// 0063), then every row for its INIT (OUT LEVEL 45/128, RR 5), then
 /// every row for CLEAN's ACCURATE tan and exact divides (#57), and
-/// `two_parts_two_pairs` (P2 is Modal INIT, STRING) for STRING's out_gain 5.7.
+/// `two_parts_two_pairs` (P2 is Modal INIT, STRING) for STRING's out_gain 5.7;
+/// then every row for CLEAN's k law and trims (ADR 0096).
 const GOLDENS: &[(&str, u64)] = &[
-    ("poly_chord", 0x054d364b185a2c85), // ADR 0049 INIT, then the ADR 0050 output trim
+    ("poly_chord", 0xcb717ce9be83227d), // ADR 0049 INIT, then the ADR 0050 output trim
     // Re-recorded: Modal 2 step A, then ADR 0058's gain, then Task 18's DAMP make-up,
     // then the free ring on release (ADR 0062).
-    ("two_parts_two_pairs", 0xa49351f59a201379),
-    ("reverb_send_off", 0x6068f1f1eae888d9), // ADR 0049 INIT, then the ADR 0050 output trim
-    ("reverb_send_on", 0x6ac14b2c2de20951),  // ADR 0049 INIT, then the ADR 0050 output trim
-    ("six_voice_chord", 0x08c94755174f2799), // ADR 0049 INIT, then the ADR 0050 output trim
+    ("two_parts_two_pairs", 0x08f37cef25d6536b),
+    ("reverb_send_off", 0xfbfed33813188e05), // ADR 0049 INIT, then the ADR 0050 output trim
+    ("reverb_send_on", 0x12acf08859602685),  // ADR 0049 INIT, then the ADR 0050 output trim
+    ("six_voice_chord", 0xc403d6115fa7c0ad), // ADR 0049 INIT, then the ADR 0050 output trim
 ];
 
 /// ADR 0050: everything before the limiter is the mix unchanged by it,
@@ -691,16 +692,16 @@ const GOLDENS: &[(&str, u64)] = &[
 /// before the output trim; every row re-recorded for ADR 0060's voice DC
 /// blocker, for ADR 0063's C1 `saturate` and INIT, and for CLEAN's
 /// ACCURATE tan and exact divides (#57); `two_parts_two_pairs` for
-/// STRING's out_gain 5.7.
+/// STRING's out_gain 5.7; every row for CLEAN's k law and trims (ADR 0096).
 const PRE_LIMITER: &[(&str, u64)] = &[
-    ("poly_chord", 0x8225541410068d91),
+    ("poly_chord", 0x4c80fe4c6c784f59),
     // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain,
     // then Task 18's DAMP make-up,
     // then the free ring on release (ADR 0062).
-    ("two_parts_two_pairs", 0xa71477c1a73f69ac),
-    ("reverb_send_off", 0x18b4f98fb64ecd25),
-    ("reverb_send_on", 0x5bb060f0427b96a5),
-    ("six_voice_chord", 0xc722364fb6dc0ec1),
+    ("two_parts_two_pairs", 0x39011cff1c61c20f),
+    ("reverb_send_off", 0xfa51f05d4383455d),
+    ("reverb_send_on", 0x6f59ef333f7b5956),
+    ("six_voice_chord", 0x5132735055c0c78d),
 ];
 
 /// A named golden case: a case name paired with its render function.
