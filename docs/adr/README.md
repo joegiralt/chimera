@@ -51,7 +51,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0043](0043-projects-own-their-sounds.md) | Projects own their sounds; marks are derived; one typed replace guard | Proposed; template amended by [0073](0073-new-plays-the-sparse-groove-on-factory-sounds.md); fixed 32-slot `Pool` superseded in part by [0087](0087-sound-pool-by-memory-budget.md) |
 | [0044](0044-one-ladder-one-button-map.md) | One ladder and one button map for Parts, the mixer and ORBIT (absorbs 0057; amended by 0066 for SETTINGS) | Proposed |
 | [0045](0045-card-format.md) | Store cards in 8.3 A/B files of versioned TLV records | Accepted; load staging superseded in part by [0046](0046-project-load-protocol.md) |
-| [0046](0046-project-load-protocol.md) | Swap projects by epoch: fade the voices, then publish (supersedes in part [0045](0045-card-format.md)) | Proposed |
+| [0046](0046-project-load-protocol.md) | Swap projects by epoch: fade the voices, then publish (supersedes in part [0045](0045-card-format.md)) | Proposed; step 6 and the MIDI-during-load bound superseded for project file loads by [0099](0099-a-project-file-load-fades-before-pass-2.md) |
 | [0048](0048-own-fat-layer.md) | Own the FAT layer; keep embedded-sdmmc only as the SD block driver | Accepted |
 | [0049](0049-algo-init-routed-morph-dims.md) | Algo INIT is audibly routed; MORPH dims when A = B (supersedes in part 0024) | Proposed; INIT's RR and OUT LEVEL noted by [0063](0063-levels-at-the-factory-median.md) |
 | [0050](0050-gain-staging-trim-and-final-limiter.md) | Gain staging: a 1/√8 output trim and one peak limiter at −1 dBFS, last | Proposed |
@@ -95,3 +95,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0090](0090-delay-line-stored-as-i16.md) | Store the master delay line as i16, full scale ±2.0 (supersedes in part 0014) | Proposed |
 | [0092](0092-put-files-over-the-usb-console.md) | Put project files onto the card over the USB console: `ls`, and `put` through the unit's own A/B save, checked as it streams, a refused side deleted (amends 0068) | Proposed |
 | [0094](0094-a-boot-sweep-frees-lost-clusters.md) | Sweep lost clusters once at boot, from a bitmap in the arena's gap, dry until the owner's go; `drop_chain` frees the cluster a sector-crossing alloc stranded (amends 0048) | Proposed |
+| [0099](0099-a-project-file-load-fades-before-pass-2.md) | A project file load fades before pass 2 and reads its sources inside the fade (supersedes in part [0046](0046-project-load-protocol.md)) | Proposed |

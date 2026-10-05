@@ -99,19 +99,8 @@ engine.
   - A deleted source still sounding is retired, never cut.
   - `SourceTable` rows (12 B) carry no generation: a row is reused only
     after retirement, when no voice holds it.
-- **A project load fades the voices between its passes** (this changes
-  ADR 0046's order for a project file: the bump came after pass 2).
-  - Pass 1 checks both sides while the old project plays. One listing of
-    `/CHIMERA/TAPES` (names and sizes, no data) then tells which refs are
-    on the card, and the plan takes only those.
-  - Then the epoch is bumped. The UI waits up to
-    `LOAD_DRAIN_TIMEOUT_MS` (50 ms: two or three blocks on the chip, one
-    desktop callback) until no voice holds a source. If one still does,
-    the load is refused with `AUDIO BUSY, NOT LOADED`. Nothing is
-    touched, and the UI still publishes.
-  - Pass 2 retires the old sources into a drained arena, so it stores
-    exactly what pass 1 planned. The source reads follow. The note queues
-    wait through both (spec § Loading: inside the fade).
+- **A project file load fades the voices before pass 2** and reads its
+  sources inside the fade: [0099](0099-a-project-file-load-fades-before-pass-2.md).
 - **12-bit packing:** two samples in three bytes, two's complement. The
   rate is set per source, 4–48 kHz, with 24 kHz the default (#279).
   Conversion is host-only (ADR 0093): the unit stores and plays
