@@ -319,6 +319,34 @@ fn every_pool_hint_fits() {
     for l in &lines {
         assert!(hint::width(l) <= w, "{l:?}: {}", hint::width(l));
     }
+    // A clear that orphans a source: its own line left of the meter's
+    // percentage, the longest name cut to fit; then the purge's question.
+    let pct = chimera_core::ui::draw::text_width(&theme::FONT_LABEL, "100%", 0);
+    assert!(theme::MARGIN_X + browser::ORPHAN_W + 6 <= theme::VIZ_RIGHT - pct);
+    let name = chimera_core::name::SoundName::new("WWWWWWWWWWWWWWWW").unwrap();
+    let orphan = browser::orphan_words(name, k999);
+    assert!(
+        orphan.as_str().ends_with("W 999K UNUSED"),
+        "{}",
+        orphan.as_str()
+    );
+    let text = chimera_core::ui::draw::text_width(
+        &theme::FONT_LABEL,
+        orphan.as_str(),
+        theme::LABEL_TRACKING,
+    );
+    assert!(text <= browser::ORPHAN_W, "{}: {text}", orphan.as_str());
+    let purge = prompt::purge_question(chimera_core::project::Unused {
+        count: 32,
+        cost: k999,
+    });
+    assert_eq!(purge.as_str(), "PURGE 32 SOURCES? FREES 999K");
+    let text = chimera_core::ui::draw::text_width(
+        &theme::FONT_LABEL,
+        purge.as_str(),
+        theme::LABEL_TRACKING,
+    );
+    assert!(text <= w, "{}: {text}", purge.as_str());
 }
 
 /// RING's value, its redraw key, is one of RINGS × 6 within 0..=1: ring 5

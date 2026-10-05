@@ -230,7 +230,7 @@ fn write_project<S: Store>(
             s,
             r,
             project_file(file.id()),
-            &mut ProjectCheck::new(),
+            &mut ProjectCheck::default(),
             Some(name),
             body,
         )
@@ -396,7 +396,8 @@ pub fn load_project<S: Store>(
     };
     let subject = Subject::File(id);
     let run = run_on(card, store, vol, |s, r| {
-        let mut d = ProjectDecoder::new(p);
+        let limit = p.pool().load_limit();
+        let mut d = ProjectDecoder::new(p, limit);
         load_ab_in_place(s, r, project_file(id), &mut d).map(|_| d.lossy())
     });
     let result = match run {
@@ -449,7 +450,8 @@ pub fn boot_project<S: Store>(
         Some(id) => {
             let subject = Subject::File(id);
             let run = card.run(store, |s, r| {
-                let mut d = ProjectDecoder::new(p);
+                let limit = p.pool().load_limit();
+                let mut d = ProjectDecoder::new(p, limit);
                 load_ab_in_place(s, r, project_file(id), &mut d).map(|_| (r.volume(), d.lossy()))
             });
             match run {
@@ -773,7 +775,7 @@ pub fn delete_project<S: Store>(
         if let Err(moved) = still(s, r.volume(), file.id(), Expect::Newest(c.witness()))? {
             return Ok(Err(moved));
         }
-        delete_ab(s, r, project_file(file.id()), &mut ProjectCheck::new()).map(Ok)
+        delete_ab(s, r, project_file(file.id()), &mut ProjectCheck::default()).map(Ok)
     });
     let subject = Subject::File(file.id());
     let (result, event) = split(run);

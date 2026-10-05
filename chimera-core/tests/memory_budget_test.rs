@@ -113,6 +113,10 @@ fn axi_report() {
         ),
         ("Project", size_of::<Project>()),
         ("pool arena", chimera_core::project::arena::ARENA_BYTES),
+        (
+            "source table",
+            size_of::<chimera_core::source_table::SourceTable>(),
+        ),
         ("AudioShared x3", size_of::<TripleBuffer<AudioShared>>()),
         ("scope x3", size_of::<TripleBuffer<ScopeFrame>>()),
         ("scope writer", size_of::<ScopeWriter>()),
@@ -153,9 +157,10 @@ fn axi_counts_the_project() {
     eprintln!(
         "Project = {project} B: Performance {perf} B, pool index and scratch {pool} B, ORBIT {orbit} B"
     );
-    // The index, the arena's writer and a load's scratch Sound.
+    // The index (128 Sound entries, 32 source entries, their
+    // generations), the arena's writer and a load's scratch Sound.
     let scratch = size_of::<chimera_core::preset::Sound>();
-    assert!(pool - scratch <= 2304, "the pool's index is {pool} B");
+    assert!(pool - scratch <= 3072, "the pool's index is {pool} B");
     let parts = perf + pool + orbit;
     assert!(
         project - parts <= 128,

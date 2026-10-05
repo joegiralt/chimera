@@ -53,7 +53,8 @@ impl Act {
             | Act::PartClear
             | Act::SceneClear
             | Act::SceneReload
-            | Act::EnterDfu => None,
+            | Act::EnterDfu
+            | Act::PurgeUnusedSources => None,
         }
     }
 }

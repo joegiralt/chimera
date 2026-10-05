@@ -1122,6 +1122,10 @@ impl UiState {
                 self.ask_scene(true, |a| Ask::ReloadScene(a, prompt::Choice::new()))
             }
             Act::EnterDfu => self.ask(Ask::EnterDfu(prompt::Choice::new())),
+            Act::PurgeUnusedSources => match self.project.unused_sources() {
+                u if u.count == 0 => self.error(Line::new(prompt::NO_UNUSED)),
+                u => self.ask(Ask::PurgeSources(u, prompt::Choice::new())),
+            },
         }
     }
 
@@ -1476,10 +1480,21 @@ impl UiState {
                 }
             }
             Answered::ClearSlot(s, a) => {
-                if a.picked() == Some(C::Clear)
-                    && let Err(project::InUse(u)) = self.project.pool_clear(s)
-                {
-                    self.error(prompt::in_use(u));
+                if a.picked() != Some(C::Clear) {
+                    return;
+                }
+                let orphan = self
+                    .project
+                    .orphaned_by_clear(s)
+                    .zip(self.project.pool().get(s));
+                let orphan = orphan.map(|(c, e)| prompt::unused_after_clear(e.name(), c));
+                match self.project.pool_clear(s) {
+                    Err(project::InUse(u)) => self.error(prompt::in_use(u)),
+                    Ok(()) => {
+                        if let Some(l) = orphan {
+                            self.error(l);
+                        }
+                    }
                 }
             }
             Answered::LoadProject { reply, to, clear } => match reply {
@@ -1565,6 +1580,12 @@ impl UiState {
                 }
             }
             Answered::EnterDfu(a) => self.dfu = said(a),
+            Answered::PurgeSources(a) => {
+                if a.picked() == Some(prompt::PurgeAnswer::Purge) {
+                    let sounding = self.project.pool().table().sounding();
+                    self.project.purge_unused_sources(sounding);
+                }
+            }
         }
     }
 
@@ -2065,6 +2086,8 @@ impl UiState {
 
     /// Advance animations one frame: a `Pacer`'s, at `UI_FPS`.
     pub fn update(&mut self, _: animation::UiTick) {
+        // A pending source hole closes when nothing above it sounds.
+        self.project.sources_pass();
         self.refresh_status();
         self.clock.tick();
         let at = self.active_part;

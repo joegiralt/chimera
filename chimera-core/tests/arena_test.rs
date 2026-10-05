@@ -4,10 +4,14 @@
 use chimera_core::project::arena::{
     ARENA_BYTES, ArenaWriter, Cost, GRANULE, GateAcked, Hole, MAX_SOURCES, Refused, Shift,
 };
+use chimera_core::source_table::SourceTable;
 use chimera_core::storage::{Crc32, MAX_SOUND_COST};
 
 fn arena() -> ArenaWriter {
-    ArenaWriter::new(Box::leak(vec![0; ARENA_BYTES].into_boxed_slice()))
+    ArenaWriter::new(
+        Box::leak(vec![0; ARENA_BYTES].into_boxed_slice()),
+        Box::leak(Box::new(SourceTable::new())),
+    )
 }
 
 struct Rng(u64);

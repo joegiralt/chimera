@@ -68,6 +68,8 @@ pub enum Act {
     SceneReload,
     /// OS UPGRADE: asks, then the shell restarts into the ROM loader.
     EnterDfu,
+    /// PROJECT's PURGE UNUSED SOURCES: asks with the count and the bytes.
+    PurgeUnusedSources,
 }
 
 const fn row(label: &'static str, kind: Kind) -> Row {
@@ -84,7 +86,7 @@ const fn crumb(label: &'static str, crumb: &'static str, kind: Kind) -> Row {
 
 use Kind::{Later, Leaf, List};
 
-static PROJECT: [Row; 4] = [
+static PROJECT: [Row; 5] = [
     crumb("LOAD PROJECT", "LOAD", Kind::Screen(Screen::LoadProject)),
     crumb("SAVE PROJECT AS", "SAVE AS", Kind::Act(Act::SaveProjectAs)),
     crumb(
@@ -93,6 +95,11 @@ static PROJECT: [Row; 4] = [
         Kind::Screen(Screen::ManageProjects),
     ),
     row("POOL", Leaf(&POOL_LEAF)),
+    crumb(
+        "PURGE UNUSED SRC",
+        "PURGE",
+        Kind::Act(Act::PurgeUnusedSources),
+    ),
 ];
 
 /// The active Part's list: its crumb is `PART n`.

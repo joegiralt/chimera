@@ -33,6 +33,7 @@ pub mod preset;
 pub mod project;
 pub mod reset;
 pub mod scope;
+pub mod source_table;
 pub mod storage;
 pub mod sym_alloc;
 pub mod triple;

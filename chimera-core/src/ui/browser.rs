@@ -12,10 +12,11 @@ use u8g2_fonts::FontRenderer;
 
 use chimera_hal::{Controls, EncoderId};
 
+use crate::name::SoundName;
 use crate::params::EngineType;
 use crate::preset::MAX_SOUNDS;
 use crate::project::arena::Cost;
-use crate::project::{PartId, Pool, Project, SlotId};
+use crate::project::{Line, PartId, Pool, Project, SlotId};
 use crate::ui::components;
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
@@ -112,6 +113,28 @@ pub fn clear_words(cost: Cost) -> FmtBuf {
     f
 }
 
+/// The orphan line's room: left of the meter's percentage, `100%` at
+/// its widest.
+pub const ORPHAN_W: i32 = 168;
+
+/// Under MIX + MINUS's line, on a slot whose clear leaves its source
+/// unused: `CHOIR 41K UNUSED`, the source's cost, the name cut to fit
+/// `ORPHAN_W`. The spec's one line, `CLEARS · CHOIR 41K UNUSED`, is wider
+/// than the screen beside the keys.
+pub fn orphan_words(name: SoundName, cost: Cost) -> Line {
+    let name = components::upper(name.as_str());
+    let mut n = name.as_str();
+    loop {
+        let mut l = Line::new(n);
+        let _ = write!(l, " {} UNUSED", cost.kib_label().as_str());
+        let w = draw::text_width(&theme::FONT_LABEL, l.as_str(), theme::LABEL_TRACKING);
+        match n.char_indices().last() {
+            Some((cut, _)) if w > ORPHAN_W => n = &n[..cut],
+            _ => return l,
+        }
+    }
+}
+
 /// Encoder A moves the cursor, clamped to the list; the scroll follows it
 /// on screen. EDIT's load, MIX+EDIT's save, MIX+MINUS's clear and every
 /// key's way out are `UiState`'s.
@@ -192,7 +215,19 @@ pub fn draw<D>(
         };
         let save = Gesture(SAVE_KEYS, words.as_str());
         hint::gesture(d, &save, theme::MARGIN_X, SAVE_Y, does);
-        if let Some(e) = slot_at(cursor).and_then(|s| pool.get(s)) {
+        if let Some((s, e)) = slot_at(cursor).and_then(|s| Some((s, pool.get(s)?))) {
+            if let Some(c) = project.orphaned_by_clear(s) {
+                let words = orphan_words(e.name(), c);
+                draw::text_tracked(
+                    d,
+                    &theme::FONT_LABEL,
+                    words.as_str(),
+                    theme::MARGIN_X,
+                    INFO_Y,
+                    theme::WARN,
+                    theme::LABEL_TRACKING,
+                );
+            }
             let words = clear_words(e.cost());
             hint::draw(
                 d,

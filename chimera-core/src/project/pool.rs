@@ -16,8 +16,10 @@ use crate::storage::{
     Crc32, Event, FileError, ReadTag, RecordTag, RecordWriter, SoundCheck, encode_sound,
 };
 
-use super::arena::{ArenaWriter, Cost, Shift};
+use super::arena::{ARENA_BYTES, ArenaWriter, Cost, GateAcked, MAX_SOURCES, Shift};
 use super::ids::SlotId;
+use super::sources::{SOURCE_HEAD, SourceEntry, SourceId, SourceRef, source_cost};
+use crate::source_table::SourceTable;
 
 /// An entry's name, padded, before its records.
 const NAME_LEN: usize = 16;
@@ -51,10 +53,31 @@ pub struct PoolFull {
 /// ```
 pub struct Pool {
     index: Index,
+    sources: Sources,
     arena: ArenaWriter,
     /// A load's slot, decoded whole before it is encoded in: here, in
     /// AXI, not on the stack. Nothing reads it but the load.
     scratch: Sound,
+}
+
+/// A source slot.
+#[derive(Clone, Copy, Debug)]
+enum SrcSlot {
+    Empty,
+    Live(SourceEntry),
+    /// Out of the index, its row still live until its hole compacts: a
+    /// voice may hold it (ADR 0087's retirement).
+    Retired {
+        offset: u32,
+    },
+}
+
+/// The source slots, their generations, and the gate pass's state.
+struct Sources {
+    slots: [SrcSlot; MAX_SOURCES],
+    gens: [u16; MAX_SOURCES],
+    /// The epoch of a closed gate and the ids it moves.
+    closed: Option<(u32, u32)>,
 }
 
 /// Where each slot's bytes sit, and its generation.
@@ -78,6 +101,11 @@ impl Pool {
                 slots.add(i).write(None);
             }
             addr_of_mut!((*p).index.gens).write([0; MAX_SOUNDS]);
+            addr_of_mut!((*p).sources).write(Sources {
+                slots: [SrcSlot::Empty; MAX_SOURCES],
+                gens: [0; MAX_SOURCES],
+                closed: None,
+            });
             addr_of_mut!((*p).arena).write(arena);
             // ponytail: built by value, left to the optimiser to write in
             // place (`neutral_params` returns its snapshot whole);
@@ -132,6 +160,229 @@ impl Pool {
 
     pub fn source_count(&self) -> usize {
         self.arena.source_count()
+    }
+
+    /// The bytes the sources hold, pending holes included.
+    pub fn source_used(&self) -> Cost {
+        Cost::of((self.used().bytes() - self.arena.sounds().bytes()) as usize)
+    }
+
+    /// What a load's Sounds may take: the arena less the sources (pass 1's
+    /// limit; Task 9 replaces it).
+    pub fn load_limit(&self) -> Cost {
+        Cost::of(ARENA_BYTES - self.source_used().bytes() as usize)
+    }
+
+    /// The audio's view of the arena.
+    pub fn table(&self) -> &'static SourceTable {
+        self.arena.table()
+    }
+
+    /// Source slot `s`, if it holds a source (absent included).
+    pub fn source(&self, s: SourceId) -> Option<SourceEntry> {
+        match self.sources.slots[s.index()] {
+            SrcSlot::Live(e) => Some(e),
+            SrcSlot::Empty | SrcSlot::Retired { .. } => None,
+        }
+    }
+
+    pub fn source_generation(&self, s: SourceId) -> u16 {
+        self.sources.gens[s.index()]
+    }
+
+    /// The source `r` resolves to.
+    pub fn find_source(&self, r: SourceRef) -> Option<SourceId> {
+        SourceId::ALL
+            .into_iter()
+            .find(|&s| self.source(s).is_some_and(|e| e.r == r))
+    }
+
+    /// Source `r` with its `held` bytes; an identical source already held
+    /// is shared, and an absent one takes the bytes in its own slot.
+    /// Refused, with nothing moved, when the gap can't take it, or when
+    /// every slot is taken (`free` then reads 0).
+    pub(in crate::project) fn source_store(
+        &mut self,
+        r: SourceRef,
+        held: &[u8],
+    ) -> Result<SourceId, PoolFull> {
+        if held.is_empty() {
+            return self.source_absent(r).ok_or(PoolFull {
+                needs: Cost::default(),
+                free: Cost::default(),
+            });
+        }
+        let found = self.find_source(r);
+        if let Some(s) = found.filter(|&s| self.source(s).is_some_and(|e| !e.absent())) {
+            return Ok(s);
+        }
+        let needs = source_cost(held.len());
+        let Some(s) = found.or_else(|| self.free_source()) else {
+            return Err(PoolFull {
+                needs,
+                free: Cost::default(),
+            });
+        };
+        let free = self.arena.gap();
+        if needs > free {
+            return Err(PoolFull { needs, free });
+        }
+        // A free slot means a free arena row: retired holes keep theirs.
+        let busy = |_| PoolFull {
+            needs,
+            free: Cost::default(),
+        };
+        let len = SOURCE_HEAD + held.len();
+        let to = self.arena.source_stage(len).map_err(busy)?;
+        let (head, bytes) = to.split_at_mut(SOURCE_HEAD);
+        head.fill(0);
+        head[..SourceRef::LEN].copy_from_slice(&r.to_bytes());
+        bytes.copy_from_slice(held);
+        let offset = self.arena.source_alloc(len).map_err(busy)?;
+        let held = held.len() as u32;
+        self.sources.slots[s.index()] = SrcSlot::Live(SourceEntry { r, held, offset });
+        self.sources.gens[s.index()] = self.sources.gens[s.index()].wrapping_add(1);
+        self.table()
+            .publish(s, offset + SOURCE_HEAD as u32, held, r.rate);
+        Ok(s)
+    }
+
+    /// Source `r` as an absent entry: its ref kept, no bytes, cost 0. The
+    /// slot `r` already has, if any; `None` with every slot taken.
+    pub(in crate::project) fn source_absent(&mut self, r: SourceRef) -> Option<SourceId> {
+        if let Some(s) = self.find_source(r) {
+            return Some(s);
+        }
+        let s = self.free_source()?;
+        self.sources.slots[s.index()] = SrcSlot::Live(SourceEntry {
+            r,
+            held: 0,
+            offset: 0,
+        });
+        self.sources.gens[s.index()] = self.sources.gens[s.index()].wrapping_add(1);
+        Some(s)
+    }
+
+    fn free_source(&self) -> Option<SourceId> {
+        SourceId::ALL
+            .into_iter()
+            .find(|s| matches!(self.sources.slots[s.index()], SrcSlot::Empty))
+    }
+
+    /// Takes source `s` out of the index. Its bytes become a pending hole
+    /// and its row stays live until `source_pass` compacts it: a voice
+    /// may still hold it, and is never cut.
+    pub(in crate::project) fn source_free(&mut self, s: SourceId) {
+        let SrcSlot::Live(e) = self.sources.slots[s.index()] else {
+            return;
+        };
+        self.sources.gens[s.index()] = self.sources.gens[s.index()].wrapping_add(1);
+        self.sources.slots[s.index()] = if e.absent() {
+            SrcSlot::Empty
+        } else {
+            self.arena
+                .source_free_pending(e.offset, SOURCE_HEAD + e.held as usize);
+            SrcSlot::Retired { offset: e.offset }
+        };
+    }
+
+    /// The ids at or above arena `offset`: what closing the hole there
+    /// moves (ADR 0087's `above`).
+    fn above(&self, offset: u32) -> u32 {
+        SourceId::ALL
+            .into_iter()
+            .filter(|s| match self.sources.slots[s.index()] {
+                SrcSlot::Live(e) => !e.absent() && e.offset >= offset,
+                SrcSlot::Retired { offset: o } => o >= offset,
+                SrcSlot::Empty => false,
+            })
+            .fold(0, |m, s| m | s.bit())
+    }
+
+    /// One UI pass of ADR 0087's sequence for the lowest pending hole:
+    /// wait for `sounding & above == 0`, close the gate, wait for the ack,
+    /// re-check, then move and open, or open and wait again. Never blocks:
+    /// each step is a pass. True when the hole closed.
+    pub(in crate::project) fn source_pass(&mut self) -> bool {
+        let table = self.table();
+        let Some(hole) = self.arena.next_compaction() else {
+            if self.sources.closed.take().is_some() {
+                table.open_gate();
+            }
+            return false;
+        };
+        let above = self.above(hole.offset);
+        let Some((epoch, moving)) = self.sources.closed else {
+            if table.sounding() & above == 0 {
+                self.sources.closed = Some((table.close_gate(above), above));
+            }
+            return false;
+        };
+        if !table.gate_acked(epoch) {
+            return false;
+        }
+        // The re-check: a note-on in the block before the close, or a
+        // source stored since it, and nothing moves.
+        let sounding = table.sounding();
+        self.sources.closed = None;
+        if sounding & moving != 0 || moving != above {
+            table.open_gate();
+            return false;
+        }
+        // Every source at or above the hole is in `moving`, and none
+        // sounds: each hole above it closes under the same gate.
+        let mut moved = false;
+        while self
+            .arena
+            .next_compaction()
+            .is_some_and(|h| self.above(h.offset) & !moving == 0)
+        {
+            let moves =
+                SourceId::ALL.map(|s| self.source_offset(s).filter(|_| moving & s.bit() != 0));
+            let ready = |o: u32| moves.contains(&Some(o));
+            let Some(shift) = self.arena.source_compact(GateAcked::after_ack(ready)) else {
+                break;
+            };
+            self.rebase_sources(shift);
+            moved = true;
+        }
+        table.open_gate();
+        moved
+    }
+
+    /// The index and the rows after `source_compact` closed the hole at
+    /// `from`: its retired slot empties, every source above moves down.
+    /// Under the closed gate.
+    fn rebase_sources(&mut self, Shift { from, by }: Shift) {
+        let table = self.table();
+        for s in SourceId::ALL {
+            let slot = &mut self.sources.slots[s.index()];
+            let base = match slot {
+                SrcSlot::Retired { offset } if *offset == from => {
+                    *slot = SrcSlot::Empty;
+                    table.clear(s);
+                    continue;
+                }
+                SrcSlot::Live(e) if !e.absent() && e.offset > from => {
+                    e.offset -= by;
+                    e.offset
+                }
+                SrcSlot::Retired { offset } if *offset > from => {
+                    *offset -= by;
+                    *offset
+                }
+                _ => continue,
+            };
+            table.rebase(s, base + SOURCE_HEAD as u32);
+        }
+    }
+
+    fn source_offset(&self, s: SourceId) -> Option<u32> {
+        match self.sources.slots[s.index()] {
+            SrcSlot::Live(e) if !e.absent() => Some(e.offset),
+            SrcSlot::Retired { offset } => Some(offset),
+            _ => None,
+        }
     }
 
     /// What storing `sound` in `s` takes from the gap: its cost less the
@@ -371,6 +622,18 @@ impl EncodedSound<'_> {
         let mut c = Crc32::new();
         c.update(self.bytes);
         c.finish()
+    }
+
+    /// Its `SourceRef` record's, if it has one.
+    pub fn source_ref(&self) -> Option<SourceRef> {
+        let mut found = None;
+        let _ = self.each(|e| {
+            if let Event::Record(ReadTag::Known(RecordTag::SourceRef), p) = e {
+                found = SourceRef::from_bytes(p);
+            }
+            Ok(())
+        });
+        found
     }
 
     /// The bytes, name first.

@@ -44,6 +44,8 @@ pub enum RecordTag {
     Orbit,
     /// A scene's CUSTOM set (`orbit::scene::encode_scale`).
     OrbitScale,
+    /// A Sound's source: its `SourceRef`, 10 B (ADR 0087).
+    SourceRef,
 }
 
 impl RecordTag {
@@ -65,6 +67,7 @@ impl RecordTag {
             RecordTag::OrbitChord => 0x0012,
             RecordTag::Orbit => 0x0013,
             RecordTag::OrbitScale => 0x0014,
+            RecordTag::SourceRef => 0x0016,
         }
     }
 
@@ -86,6 +89,7 @@ impl RecordTag {
             0x0012 => RecordTag::OrbitChord,
             0x0013 => RecordTag::Orbit,
             0x0014 => RecordTag::OrbitScale,
+            0x0016 => RecordTag::SourceRef,
             _ => return None,
         })
     }

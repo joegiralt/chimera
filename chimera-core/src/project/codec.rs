@@ -212,9 +212,11 @@ pub struct ProjectCheck {
     /// The open context's Sound: a fresh one per `Slot` and `Part`.
     sound: SoundCheck,
     /// The slots' arena bytes so far, when a stage costs them: past
-    /// `ARENA_BYTES`, a load refuses the file in pass 1, before anything is
+    /// `limit`, a load refuses the file in pass 1, before anything is
     /// touched.
     cost: u32,
+    /// What the slots may take: the arena less the target's sources.
+    limit: Cost,
     context: Context,
     slots: u128,
     parts: PartSet,
@@ -233,17 +235,20 @@ pub struct ProjectCheck {
 
 const _: () = assert!(SlotId::ALL.len() <= u128::BITS as usize);
 
+/// A check with no target: the whole arena.
 impl Default for ProjectCheck {
     fn default() -> Self {
-        Self::new()
+        Self::new(Cost::of(ARENA_BYTES))
     }
 }
 
 impl ProjectCheck {
-    pub fn new() -> Self {
+    /// Refuses slots costing past `limit` (`Bounds`).
+    pub fn new(limit: Cost) -> Self {
         ProjectCheck {
             sound: SoundCheck::begin(None),
             cost: 0,
+            limit,
             context: Context::None,
             slots: 0,
             parts: PartSet::EMPTY,
@@ -281,7 +286,7 @@ impl ProjectCheck {
                     return Err(FileError::WrongKind);
                 }
                 let name = h.name.ok_or(FileError::Corrupt)?;
-                *self = ProjectCheck::new();
+                *self = ProjectCheck::new(self.limit);
                 if let Some(t) = target {
                     // Every slot cleared: generations only move.
                     t.pool.clear_all();
@@ -448,7 +453,8 @@ impl ProjectCheck {
                 (Some(t), _) => {
                     self.sound.finish(Some(t.pool.scratch()))?;
                     self.cost_slot(entry_len(t.pool.scratch()))?;
-                    // Pass 1 costed every slot against the whole arena.
+                    // Pass 1 costed every slot against the arena less
+                    // the sources, which pass 2 leaves where they are.
                     t.pool.store_scratch(s).map_err(|_| FileError::Bounds)
                 }
                 (None, Some(stage)) => {
@@ -465,10 +471,10 @@ impl ProjectCheck {
         }
     }
 
-    /// Adds a slot's arena bytes: `Bounds` past the arena.
+    /// Adds a slot's arena bytes: `Bounds` past `limit`.
     fn cost_slot(&mut self, len: usize) -> Result<(), FileError> {
         self.cost += Cost::of(len).bytes();
-        if self.cost as usize > ARENA_BYTES {
+        if self.cost > self.limit.bytes() {
             return Err(FileError::Bounds);
         }
         Ok(())
@@ -530,7 +536,7 @@ impl Check for ProjectCheck {
 /// ```compile_fail,E0624
 /// use chimera_core::project::{Project, ProjectDecoder};
 /// fn f(p: &mut Project) {
-///     let _ = ProjectDecoder::new(p);
+///     let _ = ProjectDecoder::new(p, p.pool().load_limit());
 /// }
 /// ```
 pub struct ProjectDecoder<'a> {
@@ -539,18 +545,22 @@ pub struct ProjectDecoder<'a> {
 }
 
 impl<'a> ProjectDecoder<'a> {
-    pub(crate) fn new(target: &'a mut Project) -> Self {
+    /// Pass 1 refuses slots past `limit`: the loader's `load_limit`, read
+    /// from `target` before it.
+    pub(crate) fn new(target: &'a mut Project, limit: Cost) -> Self {
         target.bump();
         ProjectDecoder {
-            check: ProjectCheck::new(),
+            check: ProjectCheck::new(limit),
             target,
         }
     }
 
+    /// `new` at the loader's limit.
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
     pub fn new_for_test(target: &'a mut Project) -> Self {
-        Self::new(target)
+        let limit = target.pool.load_limit();
+        Self::new(target, limit)
     }
 
     /// After pass 2: the project holds less than the file, or other bytes

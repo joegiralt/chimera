@@ -251,7 +251,7 @@ fn save<F: Files, P: Out>(
 ) -> Result<(), PutFail> {
     let file = project_file(id);
     let mut framer = Framer::new(src.size).map_err(PutFail::File)?;
-    let mut check = ProjectCheck::new();
+    let mut check = ProjectCheck::default();
     let mut head = [0; HEADER_LEN];
     for b in &mut head {
         *b = src.next()?;
@@ -264,7 +264,7 @@ fn save<F: Files, P: Out>(
         .push(&head, &mut |e: Event<'_>| check.event(e))
         .map_err(PutFail::File)?;
     let (side, generation) =
-        save_target(s, r, file, &mut ProjectCheck::new()).map_err(|e| match e {
+        save_target(s, r, file, &mut ProjectCheck::default()).map_err(|e| match e {
             SaveError::Store(e) => PutFail::Store(e),
             SaveError::File(e) => PutFail::File(e),
         })?;

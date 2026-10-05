@@ -33,7 +33,9 @@ pub struct Desk {
 
 impl Desk {
     pub fn launch(root: PathBuf) -> Self {
-        let mut ui = Box::new(UiState::with_arena(crate::leaked_arena()));
+        let mut ui = Box::new(UiState::with_arena(crate::leaked_arena(Box::leak(
+            Box::new(chimera_core::source_table::SourceTable::new()),
+        ))));
         let mut store = DirStore::new(root);
         let mut card = Card::new();
         let (sync, settings) = crate::boot(&mut ui, &mut card, &mut store);

@@ -10,6 +10,7 @@ use crate::modulation::{MAX_MOD_DESTS, MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::SoundName;
 use crate::params::{EngineType, ParamSnapshot};
 use crate::preset::Sound;
+use crate::project::SourceRef;
 
 use super::block_codec::{ByteSet, decode_block, encode_block};
 use super::codes::{MIGRATIONS, TRANSLATIONS, ValidAddr};
@@ -44,6 +45,7 @@ impl Sound {
             params: neutral_params(engine),
             mod_state: ModState::with_sources(MAX_MOD_SOURCES),
             dest_registry: ModDestRegistry::new(),
+            source: None,
         }
     }
 }
@@ -73,8 +75,8 @@ fn addr_of(block: u8, id: u8) -> Option<ParamAddr> {
 }
 
 /// `Engine`, a `Block` per voice block holding only the params off
-/// `Sound::neutral` (none: no record), then `Registry`, `ModDests` and
-/// `Routes`.
+/// `Sound::neutral` (none: no record), then `Registry`, `ModDests`,
+/// `Routes`, and its `SourceRef` if it has one.
 pub fn encode_sound(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     w.put(RecordTag::Engine, &[s.engine().disk_code()])?;
     let neutral = neutral_params(s.engine());
@@ -112,7 +114,11 @@ pub fn encode_sound(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(), StoreErro
             }
         }
     }
-    w.put(RecordTag::Routes, r.as_slice())
+    w.put(RecordTag::Routes, r.as_slice())?;
+    match s.source {
+        Some(src) => w.put(RecordTag::SourceRef, &src.to_bytes()),
+        None => Ok(()),
+    }
 }
 
 /// The CRC of the Sound's padded name, then `encode_sound`'s bytes: equal
@@ -130,6 +136,7 @@ const fn once_bit(tag: RecordTag) -> u8 {
         RecordTag::ModDests => 1 << 2,
         RecordTag::Routes => 1 << 3,
         RecordTag::LastProject => 1 << 4,
+        RecordTag::SourceRef => 1 << 5,
         // A project's own records: refused before `once` is asked.
         RecordTag::Slot
         | RecordTag::Part
@@ -308,6 +315,13 @@ impl SoundCheck {
                 Ok(())
             }
             RecordTag::LastProject => Ok(()),
+            RecordTag::SourceRef => {
+                let r = SourceRef::from_bytes(p).ok_or(FileError::Bounds)?;
+                if let Some(s) = staged {
+                    s.source = Some(r);
+                }
+                Ok(())
+            }
             RecordTag::Slot
             | RecordTag::Part
             | RecordTag::Fx

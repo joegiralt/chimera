@@ -6,6 +6,7 @@
 use core::fmt::Write as _;
 use core::ptr::NonNull;
 
+use crate::source_table::SourceTable;
 use crate::ui::fmt::FmtBuf;
 
 pub const ARENA_BYTES: usize = 160 * 1024;
@@ -105,25 +106,31 @@ pub struct Hole {
 
 /// Proof that ADR 0087's gate is closed and acked, carrying the re-check
 /// read after the ack: `ready(offset)` is true iff no voice is on the
-/// source at that offset. Only the gate mints one (Task 8); until then,
-/// tests assume it.
+/// source at that offset. Only the pool's gate pass mints one.
 pub struct GateAcked<F: Fn(u32) -> bool> {
     ready: F,
 }
 
 impl<F: Fn(u32) -> bool> GateAcked<F> {
-    /// Tests only: Task 8's gate owns the real constructor.
+    /// The pool's pass, after `gate_acked` and its re-check.
+    pub(super) fn after_ack(ready: F) -> Self {
+        GateAcked { ready }
+    }
+
+    /// Tests of the arena alone.
     #[cfg(any(test, feature = "test-support"))]
     pub fn assumed(ready: F) -> Self {
         GateAcked { ready }
     }
 }
 
-/// The only writer of the arena's bytes. The audio's view (Task 8's
-/// `SourceReader`) reads through its own pointer, so this holds a raw one
-/// rather than a `&mut` that would claim the bytes exclusively.
+/// The only writer of the arena's bytes. The audio reads sources through
+/// `table` (`GateView`, the `SourceReader`), with its own pointer, so this
+/// holds a raw one rather than a `&mut` that would claim the bytes
+/// exclusively.
 pub struct ArenaWriter {
     base: NonNull<u8>,
+    table: &'static SourceTable,
     /// Sources fill `[0, src_end)`, in offset order.
     src_end: u32,
     /// Sounds fill `[snd_start, ARENA_BYTES)`.
@@ -138,11 +145,15 @@ unsafe impl Send for ArenaWriter {}
 
 impl ArenaWriter {
     /// Takes the arena's bytes for good: the AXI static on the chip, a
-    /// leaked box in tests and on the desktop.
-    pub fn new(bytes: &'static mut [u8]) -> ArenaWriter {
+    /// leaked box in tests and on the desktop. `table` is the audio's view
+    /// of them: `SOURCE_TABLE` where audio runs, one of its own per arena.
+    pub fn new(bytes: &'static mut [u8], table: &'static SourceTable) -> ArenaWriter {
         assert_eq!(bytes.len(), ARENA_BYTES);
+        let base: NonNull<u8> = NonNull::from(bytes).cast();
+        table.attach(base.as_ptr());
         ArenaWriter {
-            base: NonNull::from(bytes).cast(),
+            base,
+            table,
             src_end: 0,
             snd_start: ARENA_BYTES as u32,
             srcs: [NO_SRC; MAX_SOURCES],
@@ -153,9 +164,15 @@ impl ArenaWriter {
     /// An arena of its own on the heap, leaked (host tests).
     #[cfg(any(test, feature = "test-support"))]
     pub fn leaked() -> ArenaWriter {
-        ArenaWriter::new(alloc::boxed::Box::leak(
-            alloc::vec![0; ARENA_BYTES].into_boxed_slice(),
-        ))
+        ArenaWriter::new(
+            alloc::boxed::Box::leak(alloc::vec![0; ARENA_BYTES].into_boxed_slice()),
+            alloc::boxed::Box::leak(alloc::boxed::Box::new(SourceTable::new())),
+        )
+    }
+
+    /// The audio's view of these bytes.
+    pub fn table(&self) -> &'static SourceTable {
+        self.table
     }
 
     /// Bytes held by Sounds and sources, pending holes included.

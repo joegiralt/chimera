@@ -59,7 +59,7 @@ impl SlotId {
 }
 
 /// A set of Parts, a bit each.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PartSet(u8);
 
 const _: () = assert!(MAX_PARTS <= u8::BITS as usize);

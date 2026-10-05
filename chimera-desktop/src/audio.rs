@@ -14,6 +14,7 @@ use chimera_core::orbit::runner::{OrbitRunner, OrbitShared, OrbitView};
 use chimera_core::preset::Performance;
 use chimera_core::project::{LOAD_LINK, LoadGate, LoadLink};
 use chimera_core::scope::{ScopeFrame, ScopeWriter};
+use chimera_core::source_table::SOURCE_TABLE;
 use chimera_core::triple::{TripleBuffer, Writer};
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use cpal::Stream;
@@ -215,6 +216,9 @@ impl Engine {
             runner,
             view,
         } = self;
+        // No TAPE voice yet: the block acks the source gate, and holds none.
+        let _ = SOURCE_TABLE.begin_block();
+        SOURCE_TABLE.store_sounding(0);
         if gate.before_block(link, inst, shared) {
             let now = runner.now();
             drain.drain(|src, ev| match ev {

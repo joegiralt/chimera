@@ -13,7 +13,7 @@ use u8g2_fonts::FontRenderer;
 
 use crate::name::ProjectName;
 use crate::orbit::scene::{Refused, SceneIdx};
-use crate::project::{Line, PartId, PartSet, PoolFull, ReplaceError, SlotId, Subject};
+use crate::project::{Line, PartId, PartSet, PoolFull, ReplaceError, SlotId, Subject, Unused};
 use crate::storage::ProjectId;
 use crate::ui::components::upper;
 use crate::ui::draw;
@@ -86,6 +86,7 @@ answers!(ClearSceneAnswer { Clear => "CLEAR", Cancel => "CANCEL" } Two);
 answers!(ReloadSceneAnswer { Reload => "RELOAD", Cancel => "CANCEL" } Two);
 answers!(CardChangedAnswer { SaveAs => "SAVE AS", Cancel => "CANCEL" } Two);
 answers!(DfuAnswer { EnterDfu => "ENTER DFU", Cancel => "CANCEL" } Two);
+answers!(PurgeAnswer { Purge => "PURGE", Cancel => "CANCEL" } Two);
 
 /// A pick, or MENU (`None`). Only `Choice::input` makes one, so an answer
 /// is always a key's:
@@ -495,6 +496,48 @@ impl Prompt for EnterDfu {
         let _ = r.write_str("PLAY STOPS UNTIL FLASHED OR POWER-CYCLED");
     }
 }
+
+/// PURGE UNUSED SOURCES, counted as it opened; the purge recounts.
+pub struct PurgeSources {
+    pub unused: Unused,
+}
+
+/// `PURGE 3 SOURCES? FREES 61K`.
+pub fn purge_question(u: Unused) -> Line {
+    let mut l = Line::new("");
+    let noun = if u.count == 1 { "SOURCE" } else { "SOURCES" };
+    let _ = write!(
+        l,
+        "PURGE {} {noun}? FREES {}",
+        u.count,
+        u.cost.kib_label().as_str()
+    );
+    l
+}
+
+impl Prompt for PurgeSources {
+    type Answer = PurgeAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        *q = purge_question(self.unused);
+        let _ = r.write_str("THE CARD KEEPS THEM");
+    }
+}
+
+/// After a clear that left its source unused: `CHOIR 41K UNUSED · PURGE
+/// FREES IT`.
+pub fn unused_after_clear(name: crate::name::SoundName, cost: crate::project::arena::Cost) -> Line {
+    let mut l = Line::new("");
+    let _ = write!(
+        l,
+        "{} {} UNUSED · PURGE FREES IT",
+        upper(name.as_str()).as_str(),
+        cost.kib_label().as_str()
+    );
+    l
+}
+
+/// PURGE with every source in use.
+pub const NO_UNUSED: &str = "NO UNUSED SOURCES";
 
 /// A save with every slot taken.
 pub const POOL_FULL: &str = "POOL FULL";
