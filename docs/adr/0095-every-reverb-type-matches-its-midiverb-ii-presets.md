@@ -244,6 +244,42 @@ the ban on 2026-10-05.
   - **LOOPS's cos and sin come from an f32 series,** normalised so c² + s²
     is 1 to the rounding: libm's ran in double precision.
 
+- **BLOOM, as built (Task 11, 2026-10-05).** The following departures
+  are measured, and need the owner's ruling.
+  - **Its own module, `rev/bloom.rs`, sample by sample.** The cascade
+    comes back one sample after its end, as the unit's does, so no stage
+    can run a segment ahead; its i16 lines need no guard. The
+    decorrelators, outside the loop, run stage by stage, with a block's
+    guard each.
+  - **The cascade's lengths are the ADR's ms to two places** (0.56, 3.55,
+    4.96, 10.21, 14.49, 20.56, 23.72, 35.17, 42.69, 47.01, 57.56, 66.79,
+    78.68, 85.51, 89.02: 580.48 ms), and the decorrelators' to one, as
+    above. At 24 kHz they round a sample off the float model's here and
+    there, and the click metrics are that sensitive: the float model with
+    these lengths reads pre-delay −9.6 ms and C50 −1.5 dB on Bloom 1. The
+    fit absorbs it; the lengths stay the ADR's.
+  - **DECAY is the 1 kHz RT60** over the loop's slow length, (Σ lengths +
+    1) × (1.07 + 1.9 g⁴), fitted over DIFFUSE, SWELL and DECAY ½–1, and
+    through the loop one-pole's 1 kHz gain, so TONE leaves it. At SWELL 0
+    DECAY 0, ½ and 1 read 2.04, 4.82 and 11.73 s. At the starting SWELL
+    DECAY 0 is three trips of a 0.7 s loop, a staircase, whose T20 read
+    12 % short.
+  - **The cascade's states settle** (`store_settle`), as ROOM's
+    re-entries: the return reaches exact zero from DECAY 1.
+  - **WET_BLOOM 6.43, by the held-input loudness rule** every other TYPE's
+    return gain follows (−6.35 dB against QUAD's −6.73; peak +5.5 dBFS
+    against +5.95), not the burst rule the plan named.
+  - **The noise floor is over the plan's bound:** 16.7 dB against QUAD's
+    12.0 at DECAY 0 (+4.7; bound 4), 19.2 at DIFFUSE 1 (+7.2; bound 6).
+    Fifteen normalised states, each error read × 1/(1 − g), behind a
+    return gain 8.5 dB over ROOM's.
+  - **SMEAR's window mean drifts 1.25 cents** at the cap (bound 1): the
+    three smeared lines share one loop, so a 4/RATE window's eight targets
+    leave its mean about 1.4 cents (1σ) off. Per pass it holds 25 cents,
+    and no vibrato.
+  - **SWELL is `exp`, as the spec's table,** over 290–697 ms; one
+    allpass moves a crossfade, 89 crossfades from SWELL 0 to 1.
+
 ## Alternatives considered
 - **Keep ADR 0085's ±30 % window:** it passes reverbs the owner can tell
   apart from the preset at once. The new bar is set where the harness's own

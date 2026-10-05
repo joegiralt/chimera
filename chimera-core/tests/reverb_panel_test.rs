@@ -312,7 +312,7 @@ fn a_type_nudge_keeps_the_tweaks() {
     );
 }
 
-/// GATE's, REVERSE's and ROOM's starting knobs, as their cells read
+/// GATE's, REVERSE's, ROOM's and BLOOM's starting knobs, as their cells read
 /// (spec § Each TYPE's knobs).
 #[test]
 fn cells_read_their_starting_values() {
@@ -361,6 +361,19 @@ fn cells_read_their_starting_values() {
         (P::SHAPE, "65"),
     ] {
         assert_eq!(text(id, &p).as_str(), w, "ROOM {id:?}");
+    }
+    let b = ReverbParams::default().with_type(ReverbType::Bloom, &KnobMemory::new());
+    // MidiVerb II program 45's fitted knobs (ADR 0095).
+    for (id, w) in [
+        (P::SIZE, "579ms"),
+        (P::TIME, "11s"),
+        (P::TONE, "3.2k"),
+        (P::DIFFUSE, "0.48"),
+        (P::PREDELAY, "0ms"),
+        (P::SMEAR, "0.6ms"),
+        (P::RATE, "0.13Hz"),
+    ] {
+        assert_eq!(text(id, &b).as_str(), w, "BLOOM {id:?}");
     }
     // DAMP's top opens the dampers.
     let open = ReverbParams { damping: 0.0, ..p };

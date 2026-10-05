@@ -77,6 +77,14 @@ const MV2_ROOM: &[(u8, &str, [f32; 7])] = &[
     ), // Medium Dark 1.0
 ];
 
+/// BLOOM at each MidiVerb II program's knobs, fitted on the Rust render by
+/// the reference harness (ADR 0095): (program, its golden's name, SWELL,
+/// DECAY, TONE, DIFFUSE, PRE-DLY), SMEAR 0.
+const MV2_BLOOM: &[(u8, &str, [f32; 5])] = &[
+    (45, "rev_bloom_mv45", [0.789, 0.956, 0.597, 0.165, 0.0]), // Bloom 1 8 Sec
+    (49, "rev_bloom_mv49", [0.809, 0.956, 0.619, 0.226, 0.674]), // Bloom 2 7 Sec
+];
+
 fn cases() -> Vec<(&'static str, Fx)> {
     let reverb = |smear: f32, size: f32| ReverbParams {
         time: 0.7,
@@ -164,6 +172,7 @@ fn cases() -> Vec<(&'static str, Fx)> {
             }),
         ),
         ("rev_reverse", burst(ReverbType::Reverse, |_| {})),
+        ("rev_bloom", burst(ReverbType::Bloom, |_| {})),
         (
             "rev_reverse_regen",
             burst(ReverbType::Reverse, |p| p.time = 0.7),
@@ -178,6 +187,16 @@ fn cases() -> Vec<(&'static str, Fx)> {
         (
             p.size, p.time, p.tone, p.diffuse, p.predelay, p.damping, p.shape, p.smear,
         ) = (k[0], k[1], k[2], k[3], k[4], k[5], k[6], 0.0);
+        v.push((name, Fx::Reverb(p)));
+    }
+    for &(_, name, k) in MV2_BLOOM {
+        let mut p = ReverbParams {
+            mix: 0.3,
+            ..Default::default()
+        }
+        .with_type(ReverbType::Bloom, &KnobMemory::new());
+        (p.size, p.time, p.tone, p.diffuse, p.predelay, p.smear) =
+            (k[0], k[1], k[2], k[3], k[4], 0.0);
         v.push((name, Fx::Reverb(p)));
     }
     v
@@ -260,6 +279,11 @@ const GOLDENS: &[(&str, u64)] = &[
     ("rev_gate_sync_8th_120", 0xfdf822a972a4be23),
     ("rev_reverse", 0x6556c8e280534d44),
     ("rev_reverse_regen", 0x510ced0081cb2515),
+    // BLOOM (ADR 0095, reverb TYPEs T11) on program 45's knobs, and at
+    // each MidiVerb II Bloom's fitted knobs (`MV2_BLOOM`).
+    ("rev_bloom", 0xceadb6e37f5a9b24),
+    ("rev_bloom_mv45", 0x4ff3078add7c2630),
+    ("rev_bloom_mv49", 0xcf076ba69073619f),
 ];
 
 #[test]

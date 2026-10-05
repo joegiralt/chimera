@@ -203,19 +203,18 @@ fn impulse(n: usize) -> Vec<f32> {
 }
 
 /// The engine is ADR 0095's structure, sample for sample: an impulse into
-/// it on unquantised lines (no clip) at DECAY ½, TONE ½ and DIFFUSE ¾,
+/// it on unquantised lines (no clip) at DECAY ½, TONE ½ and DIFFUSE ½ (g 0.55),
 /// against `model` at the engine's own coefficients, over 2.5 s: within
 /// 10⁻⁴ of the peak at every sample, L and R.
 #[test]
 fn bloom_is_its_structure_exactly() {
     for (swell, pre) in [(0.83, 0.02), (0.0, 0.4)] {
         let mut p = params(1.0);
-        (p.time, p.tone, p.diffuse, p.smear, p.size, p.predelay) =
-            (0.5, 0.5, 0.75, 0.0, swell, pre);
+        (p.time, p.tone, p.diffuse, p.smear, p.size, p.predelay) = (0.5, 0.5, 0.5, 0.0, swell, pre);
         let (mut e, _) = engine(&p);
         let (ta, fb) = e.targets();
         let k = knobs_120(&p);
-        assert!(fb > 0.3 && (0.5..0.65).contains(&k.diffuse_g));
+        assert!(fb > 0.3 && (k.diffuse_g - 0.55).abs() < 1e-6);
         let x = impulse(60_000);
         let (l, r) = reference(&mut e, &p, &x);
         let (ml, mr) = model(
@@ -521,7 +520,7 @@ fn band_rt60(p: &ReverbParams, fc: f32) -> f32 {
 /// SWELL 0 (TONE at its start, about 3.1 kHz: DECAY counts the loop's
 /// one-pole); DECAY ½ and 1 at the starting SWELL too, and DECAY ½ at
 /// SWELL's and DIFFUSE's ends. (At the starting SWELL, DECAY 0's 2 s is
-/// three trips of its 0.71 s loop: a staircase, whose T20 reads 1.76 s.)
+/// three trips of its 0.7 s loop: a staircase, whose T20 read 12 % short.)
 #[test]
 fn bloom_rt60_tracks_decay() {
     let mut p = params(1.0);
@@ -692,7 +691,7 @@ fn bloom_knobs_ease() {
 /// return gain follows). Its noise floor, at DECAY 0 (at the start's 11 s
 /// the sine's own onset still rings 2 s on, far above any floor), within
 /// 5.5 dB of QUAD's, 7.5 dB at DIFFUSE 1: 15 normalised states, each
-/// error read × 1/(1 − g). (The spec asked 4 and 6; it reads 5.0 and 7.1.)
+/// error read × 1/(1 − g). (The spec asked 4 and 6; it reads 4.7 and 7.2.)
 #[test]
 fn bloom_noise_and_loudness() {
     let q = ReverbParams {

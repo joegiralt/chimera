@@ -1594,6 +1594,43 @@ BUS+V's frame is QUAD_BUS_V + ΔCOST, so ΔCOST = that row − QUAD_BUS_V.
 - **Goldens:** `rev_room` re-recorded, `rev_room_mv01`–`mv14` added;
   `rev_hall` and `rev_hall_plate` unchanged.
 
+### Task 11: BLOOM (2026-10-05, host; unit folded into Task 13)
+
+- **MidiVerb II fit** (reference harness, on the Rust render, 16 noise
+  seeds, a 20 s click and 2 s + 20 s noise as the references; ADR 0095's
+  bar). Both pass:
+
+| # | Preset | RT60 250–4k (%) | Pre (ms) | C50 (dB) | NED 20/50/100 (%) | Centroid (%) |
+|---|---|---|---|---|---|---|
+| 45 | Bloom 1 8 Sec | +1, +0, −1, +0, +3 | +0.2 | −0.1 | −2, −1, +2 | +1 |
+| 49 | Bloom 2 7 Sec | +0, +2, −1, −4, +2 | +0.1 | −0.2 | −0, +2, +2 | −1 |
+
+- **Fitted knobs** (SWELL, DECAY, TONE, DIFFUSE, PRE-DLY; SMEAR 0), on
+  the 3-place grid: #45 0.789, 0.956, 0.597, 0.165, 0; #49 0.809, 0.956,
+  0.619, 0.226, 0.674 (`fx_golden_test`'s `MV2_BLOOM`). START is #45's,
+  with SMEAR 0.3 and RATE 0.4: 579 ms · 11 s · 3.2k · 0.48.
+- **Cost (no unit reading; Cortex-M7 emulator instructions an output
+  sample, `orbit` release):** BLOOM at the bench's REV BLOOM settings
+  404.3, at its start 392.1 (QUAD's MIX row 278.4, REV QUAD 330.1, ROOM v2
+  404.8). `Bloom::run` is 8.4 KB of text (`Room::run` 21.5 KB), prime,
+  ease and schedule 1.4 KB more. On Task 9's ROOM anchor (17 cycles for
+  36 instructions, 0.47 a cycle): REV BLOOM about 60 default, 84 tape,
+  **ΔCOST about +5 (gate 76) and +13 (gate 23)**; at 1.06 cycles an
+  instruction about +59 and +67: the tape gate fails there. The unit
+  decides (Task 13).
+- **Arena:** 19,750 i16 + 782 f32 = 21,314 of 23,220 slots.
+- **Flash:** plain release `text` 769,800 B, +10,464 over `d78331d9`.
+- **WET_BLOOM 6.43:** short-term loudness −6.35 dB against QUAD's −6.73,
+  peak +5.5 dBFS against +5.95. Noise floor at DECAY 0 16.7 dB (QUAD
+  12.0), 19.2 at DIFFUSE 1: over the 4 and 6 dB asked (ADR 0095, BLOOM as
+  built).
+- **Host readings** (`reverb_bloom_test`): 1 kHz RT60 2.04, 4.82 and 11.73
+  s at SWELL 0, DECAY 0, ½ and 1; SWELL 0 → 1 lands in 89 crossfades;
+  the engine matches an f64 model of ADR 0095's structure to 10⁻⁴ of the
+  peak over 2.5 s; SMEAR's window mean 1.25 cents.
+- **Goldens:** `rev_bloom`, `rev_bloom_mv45` and `rev_bloom_mv49` added;
+  every other golden unchanged.
+
 ---
 
 ## Self-review

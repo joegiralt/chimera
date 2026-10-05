@@ -136,7 +136,7 @@ const FX: [FxRow; FX_ROWS] = [
 ];
 
 /// The REVERB screen's rows, each timed as an FX row is, less MIX.
-const REV_ROWS: usize = 6;
+const REV_ROWS: usize = 7;
 const REV: [FxRow; REV_ROWS] = [
     ("REV QUAD", worst_reverb),
     ("REV QUAD S", smear_reverb),
@@ -144,6 +144,7 @@ const REV: [FxRow; REV_ROWS] = [
     ("REV RVRS", |s, b| worst_burst(s, b, ReverbType::Reverse)),
     ("REV ROOM", |s, b| worst_loop(s, b, ReverbType::Room)),
     ("REV HALL", |s, b| worst_loop(s, b, ReverbType::Hall)),
+    ("REV BLOOM", |s, b| worst_loop(s, b, ReverbType::Bloom)),
 ];
 
 /// The STRESS rows' blocks: 10 s, past NEW's four bars at its BPM.
@@ -201,10 +202,10 @@ fn worst_burst(s: &mut AudioShared, block: u32, kind: ReverbType) {
         (kind, size, 1.0, 1.0, 1.0, 1.0, 0.5);
 }
 
-/// ROOM or HALL at its worst (reverb TYPEs spec § Bench rows): SIZE and
-/// PRE-DLY between their ends every block, so a crossfade always runs
-/// (HALL's SIZE 0 is its plate corner, whose zone moves PRE-DLY too);
-/// DECAY, DIFFUSE, SMEAR and RATE at 1.
+/// ROOM, HALL or BLOOM at its worst (reverb TYPEs spec § Bench rows): SIZE
+/// (BLOOM's SWELL) and PRE-DLY between their ends every block, so a
+/// crossfade always runs (HALL's SIZE 0 is its plate corner, whose zone
+/// moves PRE-DLY too); DECAY, DIFFUSE, SMEAR and RATE at 1.
 fn worst_loop(s: &mut AudioShared, block: u32, kind: ReverbType) {
     let r = &mut s.fx.reverb;
     let size = [0.0, 1.0][block as usize % 2];
@@ -666,7 +667,13 @@ pub fn run(
     // Each TYPE's STRESS, keys before ORBIT starts, then after.
     let mut st = |rev| [rig.stress(true, rev).0.0, rig.stress(false, rev).0.0];
     let stress = (
-        [st(worst_reverb), st(REV[2].1), st(REV[4].1), st(REV[5].1)],
+        [
+            st(worst_reverb),
+            st(REV[2].1),
+            st(REV[4].1),
+            st(REV[5].1),
+            st(REV[6].1),
+        ],
         BlockBudget::for_cpu(clocks.cpu_hz).budget_cycles(),
     );
     let switch = rig.switch_max();
@@ -1078,8 +1085,8 @@ impl Rig<'_> {
 
     /// The costliest whole callback block over `STRESS_BLOCKS` and the most
     /// voices sounding: six `a16_a17` keys on Part 6, every effect at its
-    /// worst (the reverb as `rev` sets it: QUAD's, or GATE's, ROOM's or
-    /// HALL's for those STRESS readings), and (with `orbit`) ORBIT playing
+    /// worst (the reverb as `rev` sets it: QUAD's, or GATE's, ROOM's,
+    /// HALL's or BLOOM's for those STRESS readings), and (with `orbit`) ORBIT playing
     /// NEW's groove on Parts 1–5 with NEW's Sounds (ADR 0073). ORBIT starts
     /// at the first timed block, whose cycles come back on their own too
     /// (T0); the keys go down before the warm blocks if `keys_first`, else
@@ -1167,8 +1174,8 @@ impl Rig<'_> {
     /// REV SWITCH MAX (reverb TYPEs spec § Bench rows): the costliest whole
     /// callback block over `SWITCH_BLOCKS`, and the block budget it must
     /// stay under: six `a16_a17` voices held on Part 1, every effect at its
-    /// worst, the reverb's TYPE stepping QUAD → GATE → ROOM → HALL every
-    /// `SWITCH_EVERY` blocks (Task 11 adds BLOOM); TAPE too in the master-tape build,
+    /// worst, the reverb's TYPE stepping QUAD → GATE → ROOM → HALL → BLOOM
+    /// every `SWITCH_EVERY` blocks; TAPE too in the master-tape build,
     /// by `worst_bus`. The four CLEAR blocks,
     /// 11.6 KB zeroed each, and the voices' refill after them are what a
     /// mean would hide.
@@ -1194,7 +1201,8 @@ impl Rig<'_> {
                 ReverbType::Gate,
                 ReverbType::Room,
                 ReverbType::Hall,
-            ][(b / SWITCH_EVERY) as usize % 4];
+                ReverbType::Bloom,
+            ][(b / SWITCH_EVERY) as usize % 5];
             let start = DWT::cycle_count();
             inst.render(fx, &mut self.dac, shared, &mut self.scope);
             for (pair, o) in DacPair::ALL.into_iter().zip(out.iter_mut()) {
@@ -1525,9 +1533,10 @@ fn show_reverb(
             [gate1, gate2],
             [room1, room2],
             [hall1, hall2],
+            [bloom1, bloom2],
         ],
         budget,
-    ): ([[u32; 2]; 4], u32),
+    ): ([[u32; 2]; 5], u32),
     (switch, switch_budget): (u32, u32),
 ) {
     rec.clear();
@@ -1554,8 +1563,11 @@ fn show_reverb(
     let _ = write!(line, "STRESS ROOM {room1}/{room2} HALL {hall1}/{hall2}");
     rec.line(Face::Label(theme::INK2), line.as_str(), (4, y + 20));
     line.clear();
-    let _ = write!(line, "REV SWITCH MAX {switch}/{switch_budget}");
+    let _ = write!(line, "STRESS BLOOM {bloom1}/{bloom2}");
     rec.line(Face::Label(theme::INK2), line.as_str(), (4, y + 30));
+    line.clear();
+    let _ = write!(line, "REV SWITCH MAX {switch}/{switch_budget}");
+    rec.line(Face::Label(theme::INK2), line.as_str(), (4, y + 40));
     rec.flush();
 }
 

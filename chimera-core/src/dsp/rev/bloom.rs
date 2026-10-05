@@ -30,6 +30,16 @@ use super::parts::{
     wrap,
 };
 
+/// `$body` once per literal, `$k` that literal as a `const`: `ring.rs`'s.
+macro_rules! unroll {
+    ($k:ident in [$($n:literal),*] $body:block) => {
+        $({
+            const $k: usize = $n;
+            $body
+        })*
+    };
+}
+
 /// The ring rate the lengths are laid out at.
 const FS: f32 = 24_000.0;
 /// Ring samples a millisecond.
@@ -513,6 +523,10 @@ impl Bloom {
                 wb[j] > at[j].max(to[j]) as usize
             });
             let len = len;
+            // The smeared three's writes and lengths.
+            let sw: [usize; 3] = core::array::from_fn(|s| wb[SMEARED[s]]);
+            let sa: [f32; 3] = core::array::from_fn(|s| at[SMEARED[s]] as f32);
+            let st: [f32; 3] = core::array::from_fn(|s| to[SMEARED[s]] as f32);
             // This segment's send and return: `t` < `len` bounds all three.
             let (us, ls, rs) = (&u[i..i + len], &mut l[i..i + len], &mut r[i..i + len]);
             macro_rules! rd {
@@ -544,42 +558,49 @@ impl Bloom {
                         a = y;
                     }};
                 }
-                for j in 0..mv.min(PLAIN) {
-                    ap!(j, rd!(rb[j] + t));
-                }
-                if mv < PLAIN {
+                // The plain twelve: unrolled while none of them moves,
+                // else up to the mover, the mover's blend, and on.
+                if mv >= PLAIN {
+                    unroll!(J in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] {
+                        ap!(J, rd!(rb[J] + t));
+                    });
+                } else {
+                    for j in 0..mv {
+                        ap!(j, rd!(rb[j] + t));
+                    }
                     let o = rd!(rb[mv] + t);
                     ap!(mv, o + w * (rd!(tb + t) - o));
                     for j in mv + 1..PLAIN {
                         ap!(j, rd!(rb[j] + t));
                     }
                 }
-                for s in 0..3 {
-                    let j = SMEARED[s];
+                // The smeared three, unrolled: `S` is a literal.
+                unroll!(S in [0, 1, 2] {
                     let pair = |d: f32| {
-                        if fast[s] {
+                        if fast[S] {
                             let di = d as usize;
                             let fr = d - di as f32;
-                            // SAFETY: `wb[j]` > the deepest read (`fast`),
-                            // so both slots sit in `wb − di − 1..wb + t`.
+                            // SAFETY: the write slot is past the deepest
+                            // read (`fast`), so both slots sit in
+                            // `sw − di − 1..sw + t`.
                             let (x0, x1) =
-                                unsafe { (lines.rd(wb[j] + t - di), lines.rd(wb[j] + t - di - 1)) };
+                                unsafe { (lines.rd(sw[S] + t - di), lines.rd(sw[S] + t - di - 1)) };
                             x0 + fr * (x1 - x0)
                         } else {
                             // SAFETY (`pair_in`): the write slot is below
                             // `SLOTS` (as `rd`'s); `sm` is clamped to [0,
                             // 2·cap·trip] above, and `FITS` keeps `d` in
                             // 2..`SLOTS`.
-                            unsafe { pair_in(&*lines, SLOTS, wb[j] + t, d) }
+                            unsafe { pair_in(&*lines, SLOTS, sw[S] + t, d) }
                         }
                     };
-                    let mut z = pair(at[j] as f32 - sm[s]);
-                    if mv == j {
-                        z += w * (pair(to[j] as f32 - sm[s]) - z);
+                    let mut z = pair(sa[S] - sm[S]);
+                    if mv == PLAIN + S {
+                        z += w * (pair(st[S] - sm[S]) - z);
                     }
-                    ap!(j, z);
-                    sm[s] += dsm[s];
-                }
+                    ap!(PLAIN + S, z);
+                    sm[S] += dsm[S];
+                });
                 lp += ta * (a - lp);
                 ov.set(t, a);
                 w = (w + dw).min(1.0);
