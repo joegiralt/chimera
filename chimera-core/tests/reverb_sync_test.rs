@@ -17,7 +17,8 @@ use chimera_core::orbit::runner::OrbitRunner;
 use chimera_hal::BLOCK_SIZE;
 use common::SR;
 use common::inst_rig::InstRig;
-use common::rev::max_d2;
+use common::rev::{blocks, max_d2};
+use common::sweep::{CLICK_FLOOR, CLICK_RATIO};
 
 /// Each list with its knob's ms range (spec § Each TYPE's knobs).
 const LISTS: [(&str, &[Division], f32, f32); 4] = [
@@ -122,18 +123,16 @@ fn jitter_at_a_fold_boundary_never_flips_it() {
     }
 }
 
+/// The tempo is a beat's samples on a 0.25 BPM grid.
 #[test]
-fn tempo_quantiser_holds_through_jitter() {
-    let held = tempo(120.0);
-    for b in [119.9, 120.1, 119.95] {
-        assert_eq!(tempo(b).quantised(held), held);
-    }
-    // Jitter across a step's edge holds too.
-    for b in [120.13, 119.87] {
-        assert_eq!(tempo(b).quantised(held), held);
-    }
-    assert_eq!(tempo(120.4).quantised(held), tempo(120.5));
-    assert_eq!(tempo(119.8).quantised(held), tempo(119.75));
+fn a_beat_maps_to_the_grid() {
+    let at = |samples| Tempo::from_beat(samples, SR);
+    assert_eq!(at(24_000), tempo(120.0));
+    assert_eq!(at(22_500), tempo(128.0));
+    // ±1 block of drain at 128 BPM: 127.75 or 128.25 at most.
+    assert_eq!(at(22_564), tempo(127.75));
+    assert_eq!(at(22_436), tempo(128.25));
+    assert_eq!(at(0), tempo(1_200.0));
 }
 
 #[test]
@@ -269,107 +268,286 @@ fn regen_rt60_follows_the_synced_length() {
     );
 }
 
-/// `g` fed a 220 Hz sine at −12 dBFS, block by block at `tempos`, from
-/// 2 s: its L.
-fn replay(g: &ReverbParams, tempos: &[Tempo]) -> Vec<f32> {
-    use chimera_core::dsp::Stereo;
-    use chimera_core::dsp::rev::Reverb;
-    let mut rv = Box::new(Reverb::of_type(g.kind));
-    let sine = common::rev::tone(220.0, 0.25);
-    let mut out = vec![];
-    for (b, &t) in tempos.iter().enumerate() {
-        let send = core::array::from_fn(|i| sine(b * BLOCK_SIZE + i));
-        let mut w = Stereo::SILENT;
-        rv.process(&send, g, g.mix, t, SR, &mut w);
-        out.extend_from_slice(&w.l);
-    }
-    out.split_off(2 * SR as usize)
-}
-
 /// Samples between MIDI clocks at `bpm`, 24 a beat.
 fn tick_every(bpm: f32) -> f64 {
     SR as f64 * 60.0 / (bpm as f64 * 24.0)
 }
 
-/// Review Focus 5. ORBIT on SYNC EXT follows a 100 BPM MIDI clock; GATE
+/// ORBIT's runner handing an `Instrument` its tempo a block at a time, fed
+/// a MIDI clock whose ticks are drained at each block's start, as the
+/// shells drain them.
+struct Clocked {
+    r: InstRig,
+    runner: Box<OrbitRunner>,
+    /// The next tick, and when it lands, jittered.
+    next: f64,
+    due: f64,
+    seed: u32,
+}
+
+impl Clocked {
+    fn new(g: ReverbParams) -> Self {
+        let mut r = InstRig::with_budget(SampleBudget::for_cpu(480_000_000));
+        r.shared.fx.reverb = g;
+        let sr = core::num::NonZeroU32::new(SR).unwrap();
+        Clocked {
+            r,
+            runner: Box::new(OrbitRunner::new(sr)),
+            next: 0.0,
+            due: 0.0,
+            seed: 0x2545_f491,
+        }
+    }
+
+    fn rt(&mut self, rt: RealTime) {
+        let now = self.runner.now();
+        self.runner.realtime(0, rt, now);
+    }
+
+    /// One block: Clocks at `bpm` (`None`: silent), each ±`jit_ms` off its
+    /// beat, then the runner, then (with `render`) the instrument.
+    fn block(&mut self, bpm: Option<f32>, jit_ms: f32, render: bool) {
+        let now = self.runner.now();
+        let end = (now + BLOCK_SIZE as u64) as f64;
+        while let Some(b) = bpm
+            && self.due < end
+        {
+            self.rt(RealTime::Clock);
+            self.next += tick_every(b);
+            self.seed ^= self.seed << 13;
+            self.seed ^= self.seed >> 17;
+            self.seed ^= self.seed << 5;
+            let j = (self.seed as f64 / u32::MAX as f64 * 2.0 - 1.0) * jit_ms as f64;
+            self.due = self.next + j * SR as f64 / 1000.0;
+        }
+        if bpm.is_none() {
+            // Silence: the next clock lands where it would have.
+            (self.next, self.due) = (end, end);
+        }
+        self.runner.block(&mut self.r.inst, &self.r.shared);
+        if render {
+            self.r.render(1);
+        }
+    }
+
+    fn tempo(&self) -> Tempo {
+        self.r.inst.tempo()
+    }
+}
+
+/// The blocks at which `tempos` changes.
+fn retargets(tempos: &[Tempo]) -> Vec<(usize, f32, f32)> {
+    tempos
+        .windows(2)
+        .enumerate()
+        .filter(|(_, w)| w[0] != w[1])
+        .map(|(b, w)| (b + 1, w[0].0, w[1].0))
+        .collect()
+}
+
+/// A steady clock, drained a block at a time, never retargets once its
+/// average is full: one move from the internal 120 BPM, at a beat, and
+/// none after, at 110, 128, 140 and 174 BPM and at 120 BPM with ±0.5 ms of
+/// jitter a tick.
+#[test]
+fn steady_clocks_never_retarget() {
+    let g = synced(ReverbType::Gate, RevSync::Time);
+    for (bpm, jit) in [
+        (110.0, 0.0),
+        (128.0, 0.0),
+        (140.0, 0.0),
+        (174.0, 0.0),
+        (120.0, 0.5),
+    ] {
+        let mut c = Clocked::new(g);
+        // The clock comes in a second after power-up.
+        let tempos: Vec<_> = (0..blocks(9.0))
+            .map(|b| {
+                c.block((b >= blocks(1.0)).then_some(bpm), jit, false);
+                c.tempo()
+            })
+            .collect();
+        let moves = retargets(&tempos);
+        println!("{bpm} BPM ±{jit} ms: {} retargets {moves:?}", moves.len());
+        // The settled average taken once (at 120 ± jitter it may land a
+        // grid step off), then nothing.
+        assert!(moves.len() <= 1, "{bpm}: {moves:?}");
+        assert!(bpm == 120.0 || moves.len() == 1, "{bpm}: {moves:?}");
+        // Held until the average spans a beat.
+        let beat = (SR as f32 * 60.0 / bpm) as usize / BLOCK_SIZE;
+        assert!(
+            moves.iter().all(|m| m.0 + 2 >= blocks(1.0) + beat),
+            "{bpm}: {moves:?}"
+        );
+        // Within a block's drain over the beat, and the grid's half step.
+        let last = tempos.last().unwrap().0;
+        let within = bpm * bpm * BLOCK_SIZE as f32 / (60.0 * SR as f32) + 0.125;
+        assert!(
+            (last - bpm).abs() <= within,
+            "{bpm}: {last} off by > {within}"
+        );
+    }
+}
+
+/// A DAW stopped with its Clock still running is followed: a tempo it
+/// changes to while stopped (100 → 125 BPM) moves the reverb. The clock
+/// falling silent while ORBIT is stopped keeps the last external tempo, as
+/// an Elektron box's does; a BPM edit takes the internal one back.
+#[test]
+fn a_stopped_or_silent_daw_keeps_its_tempo() {
+    let mut c = Clocked::new(synced(ReverbType::Gate, RevSync::Time));
+    c.rt(RealTime::Start);
+    let mut tempos = vec![];
+    for b in 0..blocks(10.0) {
+        if b == blocks(3.0) {
+            c.rt(RealTime::Stop);
+        }
+        // Stopped, the clock runs on at 125 for 3 s, then stops.
+        let bpm = match b {
+            _ if b < blocks(3.0) => Some(100.0),
+            _ if b < blocks(6.0) => Some(125.0),
+            _ => None,
+        };
+        c.block(bpm, 0.0, false);
+        tempos.push(c.tempo());
+    }
+    let moves = retargets(&tempos);
+    assert_eq!(moves.len(), 2, "{moves:?}");
+    assert!(
+        moves[1].0 > blocks(3.0) && moves[1].0 < blocks(6.0),
+        "{moves:?}"
+    );
+    assert_eq!(c.tempo(), tempo(125.0));
+    c.r.shared.orbit.bpm = chimera_core::orbit::clock::Bpm::new(90).unwrap();
+    c.block(None, 0.0, false);
+    assert_eq!(c.tempo(), tempo(90.0));
+}
+
+/// `p_at(block)` fed a sine of `hz` at −6 dBFS: its L, and the blocks a
+/// length move ran (its first crossfade to its last), from the event at
+/// block `e`.
+fn replay(
+    hz: f32,
+    e: usize,
+    p_at: impl Fn(usize) -> (ReverbParams, Tempo),
+) -> (Vec<f32>, std::ops::Range<usize>) {
+    use chimera_core::dsp::Stereo;
+    use chimera_core::dsp::rev::Reverb;
+    let mut rv = Box::new(Reverb::of_type(p_at(0).0.kind));
+    let sine = common::rev::tone(hz, 0.5);
+    let (mut out, mut last) = (vec![], e);
+    for b in 0..blocks(4.0) {
+        let (p, t) = p_at(b);
+        let send = core::array::from_fn(|i| sine(b * BLOCK_SIZE + i));
+        let mut w = Stereo::SILENT;
+        rv.process(&send, &p, p.mix, t, SR, &mut w);
+        out.extend_from_slice(&w.l);
+        let mut f = rv.fold();
+        let e_ = rv.burst().unwrap();
+        if e_.crossfades().next().is_some()
+            || e_.taps_at() != tap_targets(knobs(&p, t, &mut f).length_ms)
+        {
+            last = b;
+        }
+    }
+    (out, e..last + 1)
+}
+
+/// `common::sweep`'s click: the move's largest second difference over
+/// `CLICK_RATIO` × the steady state either side, and over `CLICK_FLOOR`.
+/// Returns the ratio.
+fn click(x: &[f32], mv: &std::ops::Range<usize>) -> (bool, f32) {
+    let d2 = |a: usize, b: usize| max_d2(&x[a * BLOCK_SIZE..b * BLOCK_SIZE]);
+    let trans = d2(mv.start, mv.end + 2);
+    let steady = d2(mv.start - 40, mv.start - 1).max(d2(mv.end + 20, mv.end + 60));
+    let r = trans / steady.max(1e-9);
+    (trans > CLICK_FLOOR && r > CLICK_RATIO, r)
+}
+
+const FREQS: [f32; 5] = [110.0, 220.0, 440.0, 1_000.0, 3_000.0];
+
+/// GATE's synced LENGTH moved by the tempo (100 → 120 BPM: 1/4 600 →
+/// 500 ms) and by SYNC's note (1/8 → 1/4 mid-tail, spec § Sound) clicks at
+/// no frequency.
+#[test]
+fn synced_length_moves_do_not_click() {
+    let mut g = synced(ReverbType::Gate, RevSync::Time);
+    (g.size, g.mix) = (1.0, 1.0);
+    let e = blocks(2.0);
+    let eighth = ReverbParams {
+        size: at(GATE_LENGTH, 8, DivKind::Straight),
+        ..g
+    };
+    for hz in FREQS {
+        let (x, mv) = replay(hz, e, |b| (g, tempo(if b < e { 100.0 } else { 120.0 })));
+        let (bad, r) = click(&x, &mv);
+        println!("tempo move at {hz} Hz: {:?} blocks, ×{r:.2}", mv.len());
+        assert!(!bad && mv.len() > 4, "tempo move clicks at {hz} Hz: ×{r}");
+        let (x, mv) = replay(hz, e, |b| (if b < e { eighth } else { g }, tempo(120.0)));
+        let (bad, r) = click(&x, &mv);
+        println!("1/8 → 1/4 at {hz} Hz: {:?} blocks, ×{r:.2}", mv.len());
+        assert!(!bad && mv.len() > 4, "1/8 → 1/4 clicks at {hz} Hz: ×{r}");
+    }
+}
+
+/// Review Focus 5. ORBIT plays on a 100 BPM MIDI clock (SYNC EXT); GATE
 /// plays 1/4 synced (600 ms, its maximum: the fold's boundary). The ticks
-/// stop, and 500 ms later the internal 120 BPM takes over. The LENGTH
-/// target changes exactly once, the taps reach it by crossfades of at most
-/// one step, the return is no rougher than held at either tempo, and the
+/// stop, and 500 ms later ORBIT plays on its own 120 BPM, which the reverb
+/// follows. The LENGTH target changes exactly once after the clock
+/// settles, each tap moves by crossfades of one step, 128 ring samples
+/// long, the taps reach the target, the cells read what played, and the
 /// fold never flips.
 #[test]
 fn clock_dropout_moves_synced_length_once() {
-    let run = |drop_at: Option<f64>| {
-        let mut r = InstRig::with_budget(SampleBudget::for_cpu(480_000_000));
-        let mut g = synced(ReverbType::Gate, RevSync::Time);
-        (g.size, g.mix) = (1.0, 1.0); // 1/4
-        r.shared.fx.reverb = g;
-        let mut runner = Box::new(OrbitRunner::new(core::num::NonZeroU32::new(SR).unwrap()));
-        let (mut next, every) = (0.0f64, tick_every(100.0));
-        let (mut tempos, mut targets, mut folds) = (vec![], vec![], vec![]);
-        let (mut steps, mut taps) = (vec![], vec![]);
-        for b in 0..(4.0 * SR as f64 / BLOCK_SIZE as f64) as usize {
-            let now = runner.now();
-            let end = (now + BLOCK_SIZE as u64) as f64;
-            while next < end && drop_at.is_none_or(|d| next < d) {
-                runner.realtime(0, RealTime::Clock, now);
-                next += every;
-            }
-            runner.block(&mut r.inst, &r.shared);
-            r.render(1);
-            let rv = r.fx.reverb();
-            let mut f = rv.fold();
-            tempos.push(r.inst.tempo());
-            // What the cells draw is what played, the 100 BPM too.
-            assert_eq!(rev_clock(), (r.inst.tempo(), rv.fold()));
-            targets.push(knobs(&g, r.inst.tempo(), &mut f).length_ms);
-            folds.push(rv.fold());
-            // QUAD switches to GATE over the first blocks.
-            if let Some(e) = rv.burst() {
-                steps.extend(e.crossfades().map(|(_, a, b)| a.abs_diff(b)));
-                taps.push(e.taps_at());
-            }
-            let _ = b;
+    let mut g = synced(ReverbType::Gate, RevSync::Time);
+    (g.size, g.mix) = (1.0, 1.0); // 1/4
+    let mut c = Clocked::new(g);
+    c.rt(RealTime::Start);
+    let drop = blocks(3.0);
+    let (mut targets, mut folds, mut steps, mut taps, mut fading) =
+        (vec![], vec![], vec![], vec![], vec![]);
+    for b in 0..blocks(5.0) {
+        c.block((b < drop).then_some(100.0), 0.0, true);
+        let rv = c.r.fx.reverb();
+        assert_eq!(rev_clock(), (c.tempo(), rv.fold()), "the cells' clock");
+        targets.push(knobs(&g, c.tempo(), &mut rv.fold()).length_ms);
+        folds.push(rv.fold());
+        // QUAD switches to GATE over the first blocks.
+        if let Some(e) = rv.burst() {
+            steps.extend(e.crossfades().map(|(_, a, b)| a.abs_diff(b)));
+            fading.push(e.crossfades().next().is_some());
+            taps.push(e.taps_at());
         }
-        (g, tempos, targets, folds, steps, taps)
-    };
-    // Just past a tick: the clock's last.
-    let drop = 2.0 * SR as f64 + 1.0;
-    let (g, tempos, targets, folds, steps, taps) = run(Some(drop));
+    }
     let changes: Vec<_> = targets
         .windows(2)
         .enumerate()
         .filter(|(_, w)| w[0] != w[1])
-        .map(|(b, w)| (b, w[0], w[1]))
+        .map(|(b, w)| (b + 1, w[0], w[1]))
         .collect();
     println!("LENGTH target changes: {changes:?}");
-    // The first second settles the clock's average: judged after it.
-    let settled = SR as usize / BLOCK_SIZE;
-    let after: Vec<_> = changes.iter().filter(|c| c.0 >= settled).collect();
-    assert_eq!(after.len(), 1, "{after:?}");
-    let (b, from, to) = *after[0];
-    assert!((from - 600.0).abs() < 3.0 && to == 500.0, "{from} → {to}");
-    let fell = (drop + SR as f64 / 2.0) / BLOCK_SIZE as f64;
-    assert!((b as f64 - fell).abs() <= 3.0, "at block {b}, not {fell}");
+    // 120 → 100 once settled, then back to 120 once ORBIT's own clock plays.
+    assert_eq!(changes.len(), 2, "{changes:?}");
+    let (b, from, to) = changes[1];
+    assert!((from - 600.0).abs() < 0.01 && to == 500.0, "{from} → {to}");
+    let fell = drop + blocks(0.5);
+    assert!(b.abs_diff(fell) <= 20, "at block {b}, not about {fell}");
     assert!(folds.iter().all(|&f| f == FoldState(0)), "the fold flipped");
     assert!(
         !steps.is_empty() && steps.iter().all(|&s| s <= 120),
         "{steps:?}"
     );
-    // The engine plays the target: the taps on it before the drop and
-    // after the move.
-    let before = (drop / BLOCK_SIZE as f64) as usize;
-    let at = |b: usize| taps[b - (targets.len() - taps.len())];
-    assert_eq!(at(before), tap_targets(targets[before]));
-    assert_eq!(at(targets.len() - 1), tap_targets(500.0));
-    // That tempo sequence replayed into GATE fed a sine, which shows a
-    // click the chain's own source would hide: no rougher through the
-    // move than held at either tempo.
-    let held = |bpm| max_d2(&replay(&g, &vec![tempo(bpm); tempos.len()]));
-    let held = held(100.0).max(held(120.0));
-    let moved = max_d2(&replay(&g, &tempos));
-    println!("d2: moved {moved}, held {held}");
-    assert!(moved <= 1.25 * held, "d2 {moved} against held {held}");
+    // Each crossfade lasts 128 ring samples, 4 blocks of 32: it shows
+    // mid-way at 3 blocks' ends, then the next starts.
+    let runs: Vec<usize> = fading
+        .split(|&f| !f)
+        .map(<[bool]>::len)
+        .filter(|&n| n > 0)
+        .collect();
+    assert!(!runs.is_empty() && runs.iter().all(|&n| n == 3), "{runs:?}");
+    let off = targets.len() - taps.len();
+    assert_eq!(taps[b - 1 - off], tap_targets(from));
+    assert_eq!(*taps.last().unwrap(), tap_targets(500.0));
 }
 
 /// A switch starts the fold afresh: the fold the cells mark is the running

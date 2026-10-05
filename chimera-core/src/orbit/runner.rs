@@ -333,6 +333,9 @@ pub struct OrbitRunner {
     take: Take,
     /// The harmony last handed to the `Instrument`: a change re-snaps.
     harmony: Option<Harmony>,
+    /// The external tempo the reverb follows, a beat in samples, with the
+    /// BPM set when it was taken (`follow`).
+    ext: Option<(u32, Bpm)>,
 }
 
 const _: () = assert!(size_of::<OrbitRunner>() <= 1024);
@@ -370,6 +373,7 @@ impl OrbitRunner {
             fired: [0; RINGS],
             take: Take::new(),
             harmony: None,
+            ext: None,
         }
     }
 
@@ -569,19 +573,34 @@ impl OrbitRunner {
         #[cfg(feature = "probe")]
         crate::probe::stamp(9);
         // After the last stamp: no phase bills it.
+        self.follow(shared.orbit.bpm);
         inst.set_tempo(self.tempo());
         sent
     }
 
-    /// The clock that moved the last block, as the reverb takes it: the
-    /// leading MIDI clock's averaged beat (`bar_len() / 4`) under EXT, else
-    /// the internal BPM.
+    /// Which tempo the reverb follows. Under EXT, the leader's held beat
+    /// whenever it is heard and settled, playing or stopped (a DAW's Stop
+    /// with its Clock running keeps it). Through a dropout or a fresh
+    /// clock's first beat the last external tempo holds, as an Elektron
+    /// box keeps the last one it heard, until ORBIT plays its own clock,
+    /// the BPM is edited, or SYNC goes INT.
+    fn follow(&mut self, bpm: Bpm) {
+        let own = self.transport && self.source == ClockSource::Internal;
+        if self.sync == SyncMode::Int || own {
+            self.ext = None;
+        } else if let Some(b) = self.midi.beat().filter(|_| self.midi.heard(self.sample)) {
+            self.ext = Some((b, bpm));
+        } else if self.ext.is_some_and(|(_, at)| at != bpm) {
+            self.ext = None;
+        }
+    }
+
+    /// The tempo the reverb takes this block: the external beat `follow`
+    /// holds, else the internal BPM.
     pub fn tempo(&self) -> Tempo {
-        match self.source {
-            ClockSource::Midi => Tempo::from_bpm(
-                240.0 * self.sample_rate.get() as f32 / self.midi.bar_len().max(1) as f32,
-            ),
-            ClockSource::Internal => Tempo::from_bpm(self.clock.bpm().get() as f32),
+        match self.ext {
+            Some((beat, _)) => Tempo::from_beat(beat, self.sample_rate.get()),
+            None => Tempo::from_bpm(self.clock.bpm().get() as f32),
         }
     }
 

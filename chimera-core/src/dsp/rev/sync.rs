@@ -12,10 +12,6 @@ pub struct Tempo(pub f32);
 
 impl Tempo {
     pub const DEFAULT: Tempo = Tempo(120.0);
-    /// The quantiser's step and how far past the held step the clock must
-    /// be to move it, BPM.
-    const STEP: f32 = 0.25;
-    const HOLD: f32 = 0.15;
 
     /// `bpm` held to ORBIT's clock range (`Bpm::MIN` to `MAX_BPM_EXT`);
     /// NaN is the default.
@@ -26,13 +22,11 @@ impl Tempo {
         Tempo(clampf(bpm, 30.0, 1_200.0))
     }
 
-    /// `self` on the 0.25 BPM grid, `held` until `self` is 0.15 BPM past
-    /// it: a MIDI clock's jittering average retargets nothing.
-    pub fn quantised(self, held: Tempo) -> Tempo {
-        if (self.0 - held.0).abs() < Self::HOLD {
-            return held;
-        }
-        Tempo(libm::roundf(self.0 / Self::STEP) * Self::STEP)
+    /// A beat of `samples` at `sample_rate`, on a 0.25 BPM grid. Its jitter
+    /// is held upstream, in samples (`MidiClock::beat`).
+    pub fn from_beat(samples: u32, sample_rate: u32) -> Tempo {
+        let bpm = 60.0 * sample_rate as f32 / samples.max(1) as f32;
+        Self::from_bpm(libm::roundf(bpm * 4.0) / 4.0)
     }
 
     /// One beat, in ms.

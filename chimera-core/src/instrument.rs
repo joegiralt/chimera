@@ -395,7 +395,7 @@ pub struct Instrument {
     held_keys: [NoteSet; MAX_VOICES],
     /// ORBIT's key and chord now; `None` while it is stopped (spec § 5.2).
     harmony: Option<Harmony>,
-    /// ORBIT's clock, quantised: what the reverb's synced times follow.
+    /// ORBIT's clock: what the reverb's synced times follow.
     tempo: Tempo,
     /// A re-snap's note waiting on the clear budget (a SYMP voice's rings
     /// grow for its glide), served at the next block's start.
@@ -756,10 +756,10 @@ impl Instrument {
         self.harmony = h;
     }
 
-    /// ORBIT's tempo this block, on the reverb's 0.25 BPM grid (spec §
-    /// Tempo sync): a jittering MIDI clock moves no synced time.
+    /// ORBIT's tempo this block (`OrbitRunner::tempo`): what the reverb's
+    /// synced times follow.
     pub fn set_tempo(&mut self, t: Tempo) {
-        self.tempo = t.quantised(self.tempo);
+        self.tempo = t;
     }
 
     /// The tempo the reverb follows.

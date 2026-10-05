@@ -653,7 +653,8 @@ Owner, 2026-10-04: every mod source today lives inside a Part, and nothing exist
 
 - **Source.** The ORBIT clock (ADR 0071, 0072, 0080): the internal BPM, or the leading MIDI clock's average under SYNC EXT. The runner already has it on the audio thread each block.
   - `FxBus::process` takes `Tempo`, a newtype of samples per beat.
-  - **Quantised.** The reverb takes the tempo in steps of 0.25 BPM, and moves to a new step only when the clock is 0.15 BPM past the current one. A MIDI clock's average jitters, and every tempo move retargets the synced lengths.
+  - **Quantised.** The reverb takes the tempo in steps of 0.25 BPM. A MIDI clock's average jitters, and every tempo move retargets the synced lengths, so the jitter is held in the measurement's own units: the beat's sum of tick intervals moves the tempo only once it is more than 1.5 blocks (96 samples) off the held one for a whole beat of ticks. (Amended 2026-10-05, Task 12 review: the first rule, a 0.15 BPM hold, chattered on a perfect clock. Ticks are drained a block at a time, so a steady clock's sum wanders ±64 samples, ±0.36 BPM at 128, and GATE crossfaded in 43 % of blocks.)
+  - **Holding.** Until a fresh clock's average spans a beat, through a dropout, and while a DAW is stopped with its Clock still running, the reverb keeps the last external tempo, as an Elektron box keeps the last it heard. ORBIT playing its own clock, a BPM edit or SYNC INT returns it to the internal BPM.
   - Until ORBIT is on `main`, `Tempo` is 120 BPM and SYNC is hidden. The tempo step in § Build order waits for ORBIT.
 - **SYNC** (slot 13, MORE page): OFF, TIME or ALL.
 
