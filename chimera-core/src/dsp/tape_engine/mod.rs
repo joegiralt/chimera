@@ -201,8 +201,13 @@ pub struct TapeEngine {
     /// The pass in play.
     bounds: Bounds,
     /// The shortest loop this block, frames: `heads::shortest` at its
-    /// fastest head.
+    /// fastest head; the window's end this block, kept that far past its
+    /// start.
     min_len: u32,
+    we: u32,
+    /// The head has yet to reach its first event: nothing is in play, so
+    /// the first pass's bounds follow `next` each block.
+    runup: bool,
     /// The next pass's bounds, worked out once a block from its params;
     /// latched where its fade was put off.
     next: Bounds,
@@ -270,6 +275,8 @@ impl TapeEngine {
                 lx: 0,
             },
             min_len: MIN_LOOP_FRAMES,
+            we: 1,
+            runup: false,
             next: Bounds {
                 ls: 0,
                 le: 1,
@@ -340,6 +347,7 @@ impl TapeEngine {
         }
         self.min_len = shortest(rate, fast);
         let we = window_end_min(self.ws, end, frames, self.min_len);
+        self.we = we;
         let xfade = if self.model == TapeModel::PingPong {
             0.0
         } else {
@@ -386,6 +394,7 @@ impl TapeEngine {
         self.fade = None;
         self.gain = 0.0;
         self.event = self.bounds.fade_at();
+        self.runup = true;
         self.ramp = true;
         self.active = true;
     }
@@ -546,13 +555,14 @@ impl TapeEngine {
         let scrub = self.model == TapeModel::Scrub;
         if scrub {
             (from, to) = self.scrub_block(p, to, first, &k);
+        } else {
+            self.floor(from.max(to), &k);
         }
         // Every event this block latches these: worked out once.
-        // The floor follows the block's fastest head, so it moves only with
-        // `inc`, and the bounds it sets latch at a wrap or a turn, under the
-        // crossfades every other change goes through.
-        self.min_len = shortest(rate, from.max(to));
         self.next = self.next_bounds(&k);
+        if self.runup {
+            self.follow_next();
+        }
         if scrub {
             // The finger's speed at the block's ends, frames a sample.
             let end =
@@ -617,8 +627,9 @@ impl TapeEngine {
         let to = if ahead < 0.0 { 0.0 } else { ahead.min(INC_MAX) };
         let from = if first { to } else { libm::fabsf(self.speed) };
         self.speed = if self.mirror { -to } else { to };
+        self.floor(from.max(to), k);
 
-        let we = window_end_min(self.ws.min(k.frames - 1), p.end, k.frames, self.min_len);
+        let we = self.we;
         let at_n = if self.mirror { at(self.n) } else { Pos(0) };
         let finger = self.off - at_n;
         let target = self.finger_target(p.position, we);
@@ -636,6 +647,32 @@ impl TapeEngine {
         };
         self.ddf = (df_to.wrapping_sub(self.df as i64) / BLOCK_SIZE as i64) as u64;
         (from, to)
+    }
+
+    /// The block's floor at its fastest head, `fast` frames a sample, and
+    /// the window's end it keeps. It moves only with `inc`, and the bounds it
+    /// sets latch at a wrap or a turn, under the crossfades every other
+    /// change goes through (or while the head runs up, with nothing in play).
+    fn floor(&mut self, fast: f32, k: &AtWrap) {
+        self.min_len = shortest(k.rate, fast);
+        self.we = window_end_min(self.ws.min(k.frames - 1), k.end, k.frames, self.min_len);
+    }
+
+    /// The head has yet to reach its first event, so the first pass takes
+    /// this block's bounds and floor (F1): bounds latched at note-on keep
+    /// that moment's floor, a fade too short for the speed the head
+    /// arrives at. Not if the event would fall behind the head.
+    fn follow_next(&mut self) {
+        let (b, ev) = (self.bounds, self.event);
+        self.bounds = self.next;
+        self.event = if self.model == TapeModel::PingPong {
+            self.pp_event()
+        } else {
+            self.next.fade_at()
+        };
+        if self.heads[0].pos.whole() >= self.event {
+            (self.bounds, self.event) = (b, ev);
+        }
     }
 
     /// SCRUB's stopped tape is silent. A note-on into a stopped tape is
@@ -1055,8 +1092,7 @@ impl TapeEngine {
     /// The next pass's bounds from the eased macros, the walk, and END and
     /// XFADE now. SCRUB's loop is `[0, Ll)` behind the finger.
     fn next_bounds(&self, k: &AtWrap) -> Bounds {
-        let ws = self.ws.min(k.frames - 1);
-        let we = window_end_min(ws, k.end, k.frames, self.min_len);
+        let (ws, we) = (self.ws.min(k.frames - 1), self.we);
         match self.model {
             TapeModel::Scrub => {
                 let b = Bounds::of_min(
@@ -1099,6 +1135,7 @@ impl TapeEngine {
             {
                 self.events += 1;
             }
+            self.runup = false;
             if self.model == TapeModel::PingPong {
                 self.turn();
                 continue;
@@ -1150,7 +1187,8 @@ impl TapeEngine {
     /// PING-PONG reached `event`: the run-up to an edge starts, so the
     /// head slows to a stop there and comes back (`TURN_S` each way, less in
     /// a short loop). With no room for one, the head reflects at the edge,
-    /// `h = 2·edge − h`, and its direction flips (`flip_at`).
+    /// `h = 2·edge − h`, and its direction flips (`flip_at`); run past it by
+    /// more than a step, the output fades to the reflected head.
     fn turn(&mut self) {
         let b = self.bounds;
         let h = self.heads[0].pos;
@@ -1171,14 +1209,26 @@ impl TapeEngine {
             return;
         }
         let len = (b.frames() as u64) << 32;
-        let over = (h - at(b.le)).0;
-        let over = Pos(if over >= len { over % len } else { over });
+        let past = (h - at(b.le)).0;
+        let over = Pos(if past >= len { past % len } else { past });
         // The reflected head, in source frames.
         let r = if self.mirror {
             at(b.ls) + over
         } else {
             at(b.le) - over
         };
+        // Past the edge by more than a step (the speed rose mid-turn), the
+        // reflected head reads where this one never played: the output
+        // fades there, as a clamp's does.
+        if (past >> 32) as f32 > self.v + 1.0 && self.ghost.is_none() {
+            self.ghost = Some(Ghost {
+                pos: self.real(h),
+                back: self.mirror,
+                done: 0,
+                len: self.clamp_len,
+            });
+            self.gain = 0.0;
+        }
         self.flip_at(r);
     }
 
@@ -1208,18 +1258,41 @@ impl TapeEngine {
         b.le - (half as u32).min(b.frames() / 4)
     }
 
+    /// The bounds a clamp's fade holds, lengthened to this block's floor
+    /// within the window (F2), away from the edge the head turns at (going
+    /// `back` from `le`, else from `ls`): they only grow round the head, so
+    /// it stays inside and nothing moves while the fade runs.
+    fn held(&self, back: bool) -> Bounds {
+        let b = self.bounds;
+        let ws = self.ws.min(self.n - 1);
+        let len = self.min_len.min(self.we - ws);
+        if b.frames() >= len {
+            return b;
+        }
+        let ls = if back {
+            b.le.saturating_sub(len).max(ws)
+        } else {
+            b.ls.min(self.we - len)
+        };
+        Bounds {
+            ls,
+            le: ls + len,
+            lx: 0,
+        }
+    }
+
     /// PING-PONG turns at `r` (source frames): the frame mirrors, so the
-    /// head runs forward in `u` again. New bounds latch here (not while a
-    /// clamp fades). A head outside them that would not be in within
-    /// `CLAMP_FADE_S` moves to the clamped place inside under a fade that
-    /// long.
+    /// head runs forward in `u` again. New bounds latch here (while a clamp
+    /// fades, only the floor: `held`). A head outside them that would not be
+    /// in within `CLAMP_FADE_S` moves to the clamped place inside under a
+    /// fade that long.
     fn flip_at(&mut self, r: Pos) {
+        let back = !self.mirror;
         let nb = if self.ghost.is_some() {
-            self.bounds
+            self.held(back)
         } else {
             self.next
         };
-        let back = !self.mirror;
         let (lo, hi) = (at(nb.ls).0 as i64, at(nb.le).0 as i64 - 1);
         let mut u = self.enter(back, r, &nb);
         if u > hi {

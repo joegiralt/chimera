@@ -132,8 +132,10 @@ fn ping_pong_turns_are_continuous() {
     assert!(worst <= 2.0 * steady, "bend {worst} against {steady}");
 }
 
-/// SIZE 1 → 0.1: at the next turn the head is far outside the new loop, so
-/// a second head starts inside it and a 5 ms fade moves the output there.
+/// SIZE 1 → 0.1 on the way up, past the first turn (before it the first
+/// pass just follows SIZE): at the top the head is far outside the new
+/// loop, so a second head starts inside it and a 5 ms fade moves the output
+/// there.
 #[test]
 fn ping_pong_clamps_with_a_fade() {
     let w = 48_000u32;
@@ -145,9 +147,9 @@ fn ping_pong_clamps_with_a_fade() {
     };
     let mut e = fresh();
     e.note_on(60, &p, &v, SR);
-    let (mut out, _) = play(&mut e, &p, &v, 100);
+    let (mut out, _) = play(&mut e, &p, &v, 1_550);
     p.size = 0.1;
-    let (more, probes) = play(&mut e, &p, &v, 800);
+    let (more, probes) = play(&mut e, &p, &v, 900);
     out.extend_from_slice(&more);
     let ll = loop_len(0.1, w, 48_000);
     let j = probes
@@ -690,15 +692,17 @@ fn pass_rate_is_bounded() {
 
 /// `inc` swept from 1 to 16 and back on SIZE 0: the floor rises from 96
 /// to 256 frames and falls, each change latched at a wrap or a turn under
-/// the crossfades. A loop this short at this speed has its own seams, so
-/// the sweep is held against the same loop played at fixed speeds across
-/// the range: the floor's moves add no step of their own.
+/// the crossfades, or followed while the head runs up to its first. A loop
+/// this short at this speed has its own seams, so the sweep is held against
+/// the same loop played at fixed speeds across the range: the floor's moves
+/// add no step of their own. Swept over 60 and 300 blocks the head is still
+/// running up from START to POSITION 0.3's loop as `inc` climbs (F1); over
+/// 3,000 it is long in the loop.
 #[test]
 fn inc_sweep_across_the_floor_is_click_free() {
     let held = held_plain(&sine(48_000, 2_000.0, 48_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
     let cents = |t: f32| 4_800.0 * (1.0 - (2.0 * t - 1.0).abs());
-    let blocks = 3_000;
     for model in [
         TapeModel::Loop,
         TapeModel::Reverse,
@@ -713,7 +717,7 @@ fn inc_sweep_across_the_floor_is_click_free() {
             motion: 0.5,
             ..TapeEngineParams::default()
         };
-        let run = |pitch: &dyn Fn(usize) -> f32| {
+        let run = |blocks: usize, pitch: &dyn Fn(usize) -> f32| {
             let mut e = fresh();
             e.set_pitch(pitch(0));
             e.note_on(60, &p, &v, SR);
@@ -726,21 +730,157 @@ fn inc_sweep_across_the_floor_is_click_free() {
             }
             max_step(&out[4 * B..])
         };
-        let fixed = (0..=8)
+        // Every 200 cents: a loop's seams vary with its length.
+        let fixed = (0..=24)
             .map(|k| {
-                let c = 600.0 * k as f32;
-                run(&|_| c)
+                let c = 200.0 * k as f32;
+                run(3_000, &|_| c)
             })
             .fold(0.0f32, f32::max);
-        // Or the sine's own step at `inc` 16, where a loop sits near a
-        // peak and its fixed runs barely move.
-        let fixed = fixed.max(16.0 * max_step(&sine(48_000, 2_000.0, 4_800)));
-        let swept = run(&|n| cents(n as f32 / blocks as f32));
+        for blocks in [60, 300, 3_000] {
+            let swept = run(blocks, &|n| cents(n as f32 / blocks as f32));
+            assert!(
+                swept <= 1.25 * fixed,
+                "{model:?} over {blocks} blocks: swept {swept} against fixed {fixed}"
+            );
+        }
+    }
+}
+
+/// The pitch dropping four octaves at once, again and again: the floor
+/// falls from 256 frames to 96, but the pass in play still ends where it
+/// was latched, under its fade. Applied at once, the shorter loop's end can
+/// fall behind the head mid-pass, which splices. A ramp source shows any
+/// jump; each block at the low pitch is held against that pitch's own run.
+#[test]
+fn pitch_drops_latch_the_floor_at_a_wrap() {
+    let ramp: Vec<f32> = (0..48_000).map(|i| i as f32 / 24_000.0 - 1.0).collect();
+    let held = held_plain(&ramp, 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    let square = |n: usize| {
+        if (n / 13).is_multiple_of(2) {
+            4_800.0
+        } else {
+            0.0
+        }
+    };
+    for model in [
+        TapeModel::Loop,
+        TapeModel::Reverse,
+        TapeModel::PingPong,
+        TapeModel::Scrub,
+    ] {
+        let p = TapeEngineParams {
+            model,
+            size: 0.0,
+            xfade: 0.1,
+            position: 0.3,
+            motion: if model == TapeModel::Scrub { 0.5 } else { 0.0 },
+            ..TapeEngineParams::default()
+        };
+        let run = |pitch: &dyn Fn(usize) -> f32| {
+            let mut e = fresh();
+            e.set_pitch(pitch(0));
+            e.note_on(60, &p, &v, SR);
+            let mut out = Vec::new();
+            let mut b = [0.0; BLOCK_SIZE];
+            for n in 0..1_200 {
+                e.set_pitch(pitch(n));
+                e.render(&mut b, &p, &v, SR);
+                out.extend_from_slice(&b);
+            }
+            out
+        };
+        let low = max_step(&run(&|_| 0.0)[4 * B..]);
+        let out = run(&square);
+        // Blocks wholly at the low pitch: the drop's own block ramps.
+        let worst = (4..1_200)
+            .filter(|&n| square(n) == 0.0 && square(n - 1) == 0.0)
+            .map(|n| max_step(&out[n * B - 1..(n + 1) * B]))
+            .fold(0.0f32, f32::max);
         assert!(
-            swept <= 1.25 * fixed,
-            "{model:?}: swept {swept} against fixed {fixed}"
+            worst <= 1.5 * low,
+            "{model:?}: {worst} after a drop, against {low}"
         );
     }
+}
+
+/// The pitch jumping four octaves and back, again and again: a turn sized
+/// for the slow head is carried far past the edge by the fast one, and the
+/// head that reflects there reads where it never played, so the output
+/// fades to it as a clamp's does. Every block is held against the loop's
+/// own runs at the two pitches, walked by MOTION and still.
+#[test]
+fn ping_pong_pitch_jumps_are_click_free() {
+    let held = held_plain(&sine(48_000, 2_000.0, 48_000), 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    for motion in [0.0, 0.5] {
+        let p = TapeEngineParams {
+            model: TapeModel::PingPong,
+            size: 0.0,
+            position: 0.3,
+            motion,
+            ..TapeEngineParams::default()
+        };
+        let run = |pitch: &dyn Fn(usize) -> f32| {
+            let mut e = fresh();
+            e.set_pitch(pitch(0));
+            e.note_on(60, &p, &v, SR);
+            let mut out = Vec::new();
+            let mut b = [0.0; BLOCK_SIZE];
+            for n in 0..1_200 {
+                e.set_pitch(pitch(n));
+                e.render(&mut b, &p, &v, SR);
+                out.extend_from_slice(&b);
+            }
+            max_step(&out[4 * B..])
+        };
+        let fixed = run(&|_| 0.0).max(run(&|_| 4_800.0));
+        for half in [7, 13, 29] {
+            let jumps = run(&|n| if (n / half) % 2 == 0 { 4_800.0 } else { 0.0 });
+            assert!(
+                jumps <= 1.25 * fixed,
+                "MOTION {motion}, every {half} blocks: {jumps} against {fixed}"
+            );
+        }
+    }
+}
+
+/// A clamp's fade holds PING-PONG's bounds, but `inc` rising under it still
+/// lengthens them to the floor (F2): a 96-frame loop at `inc` 1 clamps under
+/// a POSITION jump, then the pitch rises four octaves, and every block's
+/// turns stay within the floor's one pass in 16 samples.
+#[test]
+fn ping_pong_clamp_keeps_the_floor() {
+    let held = held_plain(&sine(48_000, 2_000.0, 48_000), 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    let mut p = TapeEngineParams {
+        model: TapeModel::PingPong,
+        size: 0.0,
+        ..TapeEngineParams::default()
+    };
+    let mut e = fresh();
+    e.note_on(60, &p, &v, SR);
+    let (mut out, _) = play(&mut e, &p, &v, 20);
+    p.position = 1.0;
+    let mut n = 0;
+    while e.probe().other.is_none() {
+        out.extend_from_slice(&play(&mut e, &p, &v, 1).0);
+        n += 1;
+        assert!(n < 100, "no clamp");
+    }
+    e.set_pitch(4_800.0);
+    let most = B as u32 / MIN_PASS_SAMPLES + 1;
+    for k in 0..40 {
+        let before = e.events();
+        out.extend_from_slice(&play(&mut e, &p, &v, 1).0);
+        let per = e.events() - before;
+        assert!(per <= most, "block {k}: {per} events, at most {most}");
+    }
+    // Lengthened round the head, the held bounds move nothing.
+    let steady = 16.0 * max_step(&sine(48_000, 2_000.0, 4_800));
+    let worst = max_step(&out[B..]);
+    assert!(worst <= 2.0 * steady, "{worst} against {steady}");
 }
 
 /// Host time a sample of `blocks` blocks of `p(block)` on `v`, at `note`
