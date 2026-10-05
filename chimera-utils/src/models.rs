@@ -149,6 +149,10 @@ pub struct Ek {
     /// (the dense ramp's cheap stand-in), ms, at `ramp_g`.
     pub ramp_ms: Vec<f64>,
     pub ramp_g: f64,
+    /// The post diffuser's share against the dry tap sum (1: all diffused).
+    pub wet: f64,
+    /// The ramp's curve exponent (1: straight in dB).
+    pub gamma: f64,
 }
 
 /// `weights`: 12 taps, |shape| dB end to end, DENSITY's fade, Σw² = 1.
@@ -200,8 +204,13 @@ pub fn render24(ek: &Ek, u: &[f64]) -> Vec<f64> {
                     + pre
             })
             .collect();
-        let step = 10f64.powf(-ek.shape_db.abs() / 20.0 / (n - 1) as f64);
-        let mut w: Vec<f64> = (0..n).map(|k| step.powi((n - 1 - k) as i32)).collect();
+        // dB below the top: CURVE·(1 − x)^γ, x the tap's place 0 → 1.
+        let mut w: Vec<f64> = (0..n)
+            .map(|k| {
+                let x = k as f64 / (n - 1) as f64;
+                10f64.powf(-ek.shape_db.abs() * (1.0 - x).powf(ek.gamma) / 20.0)
+            })
+            .collect();
         if ek.steps > 0 {
             // Equal weights inside each step, the step's mean level.
             let per = n.div_ceil(ek.steps);
@@ -258,9 +267,11 @@ pub fn render24(ek: &Ek, u: &[f64]) -> Vec<f64> {
             s = ap.run(s, ek.ramp_g);
         }
         if ek.post {
+            let dry = s;
             for ap in &mut pre_ap {
                 s = ap.run(s, ek.g);
             }
+            s = dry + ek.wet * (s - dry);
         }
         let c = dec[0].run(s, DEC_G);
         let y = 0.5 * (dec[1].run(c, DEC_G) + dec[2].run(c, DEC_G));
@@ -341,6 +352,8 @@ fn gate_base(k: &K) -> Ek {
         steps: 0,
         ramp_ms: vec![],
         ramp_g: 0.0,
+        wet: 1.0,
+        gamma: 1.0,
     }
 }
 
@@ -387,6 +400,8 @@ fn rev_v2(k: &K, n: usize) -> Ek {
         steps: 0,
         ramp_ms: vec![],
         ramp_g: 0.0,
+        wet: 1.0,
+        gamma: 1.0,
     }
 }
 
@@ -421,6 +436,22 @@ fn variant(name: &str) -> Result<Variant, String> {
         "gate6" => v(Ty::Gate, GATE_DIMS, 280, 5, |k| Ek {
             diff_ms: vec![2.3, 4.3, 7.1, 11.3, 17.0],
             ..gate5(k)
+        }),
+        // gate6 with DENSITY's low end dry: the diffuser's share 1.5·DENSITY
+        // (capped at 1), its g 0.2 → 0.8.
+        "gate7" => v(Ty::Gate, GATE_DIMS, 280, 5, |k| Ek {
+            diff_ms: vec![2.3, 4.3, 7.1, 11.3, 17.0],
+            g: lin((0.2, 0.8), kv(k, "diffuse")),
+            wet: (1.5 * kv(k, "diffuse")).clamp(0.0, 1.0),
+            ..gate5(k)
+        }),
+        "rev16og" => v(Ty::Rev, REV_DIMS, 120, 3, |k| Ek {
+            gamma: 1.6,
+            ..rev_v2(k, 16)
+        }),
+        "rev12c3g" => v(Ty::Rev, REVR_DIMS, 160, 3, |k| Ek {
+            gamma: 1.6,
+            ..rev_chain(k, &[5.3, 9.7, 14.9])
         }),
         "rev12c3s" => v(Ty::Rev, REVR_DIMS, 160, 3, |k| {
             rev_chain(k, &[5.3, 9.7, 14.9])
@@ -703,7 +734,7 @@ fn score(var: &Variant, m: &Meas, r: &Ref) -> f64 {
 
 /// The Python fitters' search: an LHS sweep (2 seeds), then a sequential
 /// pattern search (first improvement, 4 seeds) from the best `starts`.
-fn fit_one(var: &Variant, p: u32, r: &Ref) -> (K, Meas, f64) {
+fn fit_one(var: &Variant, p: u32, r: &Ref, start: Option<&K>) -> (K, Meas, f64) {
     let dims: Vec<&str> = var
         .dims
         .iter()
@@ -728,20 +759,34 @@ fn fit_one(var: &Variant, p: u32, r: &Ref) -> (K, Meas, f64) {
         }
         k
     };
-    let mut cands: Vec<(f64, K)> = lhs(var.sweep, dims.len(), p)
-        .par_iter()
-        .map(|u| {
-            let k = mk(u);
-            (score(var, &measure(var, &k, 2), r), k)
-        })
-        .collect();
-    cands.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let best = cands[..var.starts]
+    // A polish (from earlier fits): fine steps on 16 seeds.
+    let (cands, steps): (Vec<(f64, K)>, &[f64]) = match start {
+        Some(k) => (vec![(0.0, k.clone())], &[0.012, 0.004]),
+        None => {
+            let mut c: Vec<(f64, K)> = lhs(var.sweep, dims.len(), p)
+                .par_iter()
+                .map(|u| {
+                    let k = mk(u);
+                    (score(var, &measure(var, &k, 2), r), k)
+                })
+                .collect();
+            c.sort_by(|a, b| a.0.total_cmp(&b.0));
+            c.truncate(var.starts);
+            (c, &[0.08, 0.025, 0.008])
+        }
+    };
+    let best = cands
         .par_iter()
         .map(|(_, k0)| {
             let mut bk = k0.clone();
             let mut bs = score(var, &measure(var, &bk, 4), r);
-            for st in [0.08, 0.025, 0.008] {
+            for &st in steps {
+                let seeds = match (start, st < 0.01) {
+                    (Some(_), _) => 16,
+                    (None, true) => 8,
+                    (None, false) => 4,
+                };
+                bs = score(var, &measure(var, &bk, seeds), r);
                 let mut imp = true;
                 while imp {
                     imp = false;
@@ -754,7 +799,7 @@ fn fit_one(var: &Variant, p: u32, r: &Ref) -> (K, Meas, f64) {
                             }
                             let mut k = bk.clone();
                             k.insert(d.to_string(), json!(v));
-                            let sc = score(var, &measure(var, &k, 4), r);
+                            let sc = score(var, &measure(var, &k, seeds), r);
                             if sc < bs - 1e-9 {
                                 (bs, bk, imp) = (sc, k, true);
                             }
@@ -779,6 +824,14 @@ fn pct(x: f64) -> String {
 /// count, writes `out/models/VARIANT.json`.
 pub fn fit(cfg: &Config, name: &str, progs: &[u32]) -> Result<(), String> {
     let var = variant(name)?;
+    // `MODEL_START=fits.json`: polish those fits instead of searching.
+    let start: Option<Value> = match std::env::var_os("MODEL_START") {
+        Some(p) => Some(
+            serde_json::from_str(&std::fs::read_to_string(&p).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?,
+        ),
+        None => None,
+    };
     let refs: Vec<(u32, Ref)> = progs
         .iter()
         .map(|&p| load_ref(cfg, p, var.ty).map(|r| (p, r)))
@@ -786,7 +839,8 @@ pub fn fit(cfg: &Config, name: &str, progs: &[u32]) -> Result<(), String> {
     let res: Vec<(u32, String, bool, bool, Value)> = refs
         .par_iter()
         .map(|(p, r)| {
-            let (k, m, d) = fit_one(&var, *p, r);
+            let k0 = start.as_ref().and_then(|s| s[&p.to_string()]["knobs"].as_object().cloned());
+            let (k, m, d) = fit_one(&var, *p, r, k0.as_ref());
             let ek = format!("{:?}", (var.ek)(&k));
             let (line, pass, pass2) = match var.ty {
                 Ty::Gate => {
@@ -860,7 +914,8 @@ pub fn fit(cfg: &Config, name: &str, progs: &[u32]) -> Result<(), String> {
         .into_iter()
         .map(|(p, _, _, _, j)| (p.to_string(), j))
         .collect();
-    let path: PathBuf = cfg.out.join(format!("models/{name}.json"));
+    let tag = if start.is_some() { "_polish" } else { "" };
+    let path: PathBuf = cfg.out.join(format!("models/{name}{tag}.json"));
     std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
     std::fs::write(
         &path,
