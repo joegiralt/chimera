@@ -1,10 +1,10 @@
-//! LOOP (reverb TYPEs spec § LOOP engine): ROOM's 2 loops × 2 stages and
-//! HALL's 1 × 4 on one code path. The send, through TONE, PRE-DLY and a
-//! four-allpass f32 diffuser, enters each loop at its own sign; a stage is
-//! a delay then an f32 allpass, a damper follows every second stage, and
-//! the stage gains carry the decay. ROOM's two loops re-enter through an
-//! energy-preserving rotation, each past R1's clip. Three fixed taps a
-//! side, from different stage delays, make the return.
+//! LOOP (reverb TYPEs spec § LOOP engine): HALL's 1 loop × 4 stages,
+//! generic in its loops and stages (ROOM v2 has its own engine, `room`).
+//! The send, through TONE, PRE-DLY and a four-allpass f32 diffuser, enters
+//! each loop at its own sign; a stage is a delay then an f32 allpass, a
+//! damper follows every second stage, and the stage gains carry the
+//! decay, each re-entry past R1's clip. Three fixed taps a side, from
+//! different stage delays, make the return.
 //!
 //! SIZE scales the stage delays only, by one k for all, and moves them by
 //! pitch-free crossfades: one 5 ms slice a loop a crossfade, every loop in
@@ -49,36 +49,6 @@ macro_rules! unroll {
 const FS: f32 = 24_000.0;
 /// Ring samples a millisecond.
 pub const PER_MS: f32 = FS / 1000.0;
-
-/// ROOM's coupling angle, rad: a light one (§ LOOP engine).
-pub const THETA: f32 = 0.25;
-
-/// (cos θ, sin θ), each by its series to θ¹⁹: exact in f32 for |θ| ≤ 1,
-/// at compile time.
-pub const fn rotation(theta: f32) -> (f32, f32) {
-    let x = theta as f64;
-    let (mut c, mut s, mut tc, mut ts) = (1.0, x, 1.0, x);
-    let mut n = 1;
-    while n < 10 {
-        let k = 2.0 * n as f64;
-        tc *= -x * x / ((k - 1.0) * k);
-        ts *= -x * x / (k * (k + 1.0));
-        c += tc;
-        s += ts;
-        n += 1;
-    }
-    (c as f32, s as f32)
-}
-
-const ROT: (f32, f32) = rotation(THETA);
-
-/// ROOM's coupling: loop outputs (a, b) to the re-entries (c·a + s·b,
-/// c·b − s·a). The engine and its energy test share it.
-#[inline(always)]
-pub fn rotate(a: f32, b: f32) -> (f32, f32) {
-    let (c, s) = ROT;
-    (c * a + s * b, c * b - s * a)
-}
 
 /// A LOOP TYPE's lines at SIZE 1, ring samples.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -268,7 +238,7 @@ pub trait Layout<const L: usize, const S: usize> {
     }
 }
 
-/// ROOM's and HALL's i16 and f32 accesses: both run 4 stages in all.
+/// HALL's i16 and f32 accesses: 4 stages in all.
 const MAX_ACCESS: usize = 21;
 const MAX_F_ACCESS: usize = 16;
 /// A damper after every second stage: 4 stages, 2 dampers.
@@ -305,29 +275,10 @@ const fn fixed_offsets<const L: usize, const S: usize>(
     o
 }
 
-/// ROOM: loops A and B, two stages each (§ LOOP engine's table), SIZE's
-/// k from 0.375 to 1 (A's round trip 100 → 200 ms).
-pub type Room = LoopEngine<2, 2>;
 /// HALL: one loop, four stages (§ LOOP engine's table), SIZE's k from
 /// 0.111 to 1 (the round trip 120 → 600 ms); its plate zone is in the
 /// knobs (`reverb::plate_pull`).
 pub type Hall = LoopEngine<1, 4>;
-
-const ROOM_LENS: Lens<2, 2> = {
-    let d = [prime_ms(2.3), prime_ms(3.7), prime_ms(5.9), prime_ms(8.9)];
-    Lens {
-        pre: (50.0 * PER_MS) as usize,
-        diffuser: d,
-        delay: [
-            [prime_ms(59.0), prime_ms(101.0)],
-            [prime_ms(73.0), prime_ms(95.0)],
-        ],
-        ap: [
-            [prime_ms(17.0), prime_ms(23.0)],
-            [prime_ms(13.0), prime_ms(19.0)],
-        ],
-    }
-};
 
 /// A tap `frac` of loop `l` stage `s`'s delay in `n` at SIZE 0 (SIZE's
 /// k there `k0`), or at its longest.
@@ -343,32 +294,6 @@ const fn tap<const L: usize, const S: usize>(
 ) -> (usize, usize, usize, f32) {
     let len = n.delay[l][s] as f32 * if of_size_0 { k0 } else { 1.0 };
     (l, s, (len * frac) as usize, sign)
-}
-
-/// ROOM's SIZE-0 k.
-const ROOM_K0: f32 = 0.375;
-
-impl Layout<2, 2> for Room {
-    const LENS: Lens<2, 2> = ROOM_LENS;
-    /// L: (A1, 0.10 of SIZE 0, +), (B2, 0.57, −), (A2, 0.83, +); R: (B1,
-    /// 0.12 of SIZE 0, +), (A2, 0.53, −), (B2, 0.79, +).
-    const TAPS: [[(usize, usize, usize, f32); 3]; 2] = [
-        [
-            tap(&ROOM_LENS, ROOM_K0, 0, 0, 0.10, true, 1.0),
-            tap(&ROOM_LENS, ROOM_K0, 1, 1, 0.57, false, -1.0),
-            tap(&ROOM_LENS, ROOM_K0, 0, 1, 0.83, false, 1.0),
-        ],
-        [
-            tap(&ROOM_LENS, ROOM_K0, 1, 0, 0.12, true, 1.0),
-            tap(&ROOM_LENS, ROOM_K0, 0, 1, 0.53, false, -1.0),
-            tap(&ROOM_LENS, ROOM_K0, 1, 1, 0.79, false, 1.0),
-        ],
-    ];
-    /// A2's and B1's: one a loop.
-    const SMEARED: [(usize, usize); 2] = [(0, 1), (1, 0)];
-    /// +½ into A, −½ into B, as QUAD injects into S1 and S3.
-    const INJECT: [f32; 2] = [0.5, -0.5];
-    const SMEAR_CAP: f32 = crate::dsp::reverb::ROOM.smear_cap;
 }
 
 const HALL_LENS: Lens<1, 4> = Lens {
@@ -906,14 +831,10 @@ where
                         });
                     }
                 });
-                // The rotation (ROOM), the send, R1's clip at re-entry.
-                let mut re = out;
-                if L == 2 {
-                    (re[0], re[1]) = rotate(out[0], out[1]);
-                }
+                // The send, R1's clip at re-entry.
                 unroll!(LO in [0, 1] {
                     if LO < L {
-                        let x = clip::<CLIP>(re[LO] + Self::INJECT[LO] * d);
+                        let x = clip::<CLIP>(out[LO] + Self::INJECT[LO] * d);
                         // SAFETY: as `rd`'s.
                         unsafe { lines.settle(b[A::<L, S>::W_D + LO * S] + t, x) };
                     }

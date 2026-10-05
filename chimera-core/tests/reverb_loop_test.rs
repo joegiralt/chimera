@@ -1,22 +1,22 @@
-//! ROOM and HALL on the LOOP engine (reverb TYPEs spec § LOOP engine,
-//! § PLATE is a zone of HALL, § Level plan, § Moving a length, § Pitch
-//! bounds, § Tests).
+//! ROOM (ADR 0095 § ROOM v2) and HALL on the LOOP engine (reverb TYPEs
+//! spec § LOOP engine, § PLATE is a zone of HALL, § Level plan, § Moving a
+//! length, § Pitch bounds, § Tests).
 
 mod common;
 
 use std::cell::RefCell;
+use std::ops::Range;
 
 use chimera_core::block::{Block, ParamId};
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::halfband::{Decimator, HALF, Interpolator};
 use chimera_core::dsp::rev::arena::ReverbArena;
-use chimera_core::dsp::rev::loop_engine::{
-    Hall, Layout, LoopEngine, PER_MS, Room, STEP, THETA, rotate, rotation,
-};
+use chimera_core::dsp::rev::loop_engine::{Hall, Layout, LoopEngine, PER_MS};
 use chimera_core::dsp::rev::parts::{Wander, wander_seeds};
+use chimera_core::dsp::rev::room::{self, Room};
 use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::rev::{Reverb, wet_gain};
-use chimera_core::dsp::reverb::{KnobMemory, ReverbParams, ReverbType};
+use chimera_core::dsp::reverb::{EngineKnobs, KnobMemory, ReverbParams, ReverbType};
 use chimera_core::dsp::ring::{FULL_SCALE, RING_LEN};
 use chimera_hal::BLOCK_SIZE;
 use common::SR;
@@ -25,10 +25,9 @@ use common::rev::{
     check_settles_on_pitch, check_sustained_loudness, corr, knobs_120, onset_ms, pink, rt60_t20,
     run, settled_peak_hz, tone,
 };
+use common::sweep::power;
 
 type Blk = [f32; BLOCK_SIZE];
-type L = Room;
-const LENS: chimera_core::dsp::rev::loop_engine::Lens<2, 2> = <L as Layout<2, 2>>::LENS;
 
 /// ROOM's starting knobs at MIX `mix`.
 fn params(mix: f32) -> ReverbParams {
@@ -72,71 +71,488 @@ fn nearest_prime(ms: f32, taken: &[usize]) -> usize {
         .unwrap()
 }
 
+/// A LOOP-family engine as the shared checks drive it: HALL's
+/// `LoopEngine`, or ROOM's own.
+trait Eng: Default {
+    const SLOTS: usize;
+    /// Its smeared allpasses, one wander each.
+    const SMEARS: usize;
+    fn regions() -> [Range<usize>; 2];
+    fn head(&self) -> usize;
+    fn smear_to(&mut self, s: &[(f32, f32)]);
+    #[allow(clippy::too_many_arguments)]
+    fn run_ref(
+        &mut self,
+        arena: &mut ReverbArena,
+        lines: Option<&mut [f32]>,
+        clipped: bool,
+        u: &[f32; HALF],
+        k: &EngineKnobs,
+        l: &mut [f32; HALF],
+        r: &mut [f32; HALF],
+    );
+}
+
+impl<const NL: usize, const NS: usize> Eng for LoopEngine<NL, NS>
+where
+    LoopEngine<NL, NS>: Layout<NL, NS>,
+{
+    const SLOTS: usize = <Self as Layout<NL, NS>>::SLOTS;
+    const SMEARS: usize = 2;
+    fn regions() -> [Range<usize>; 2] {
+        <Self as Layout<NL, NS>>::regions()
+    }
+    fn head(&self) -> usize {
+        LoopEngine::head(self)
+    }
+    fn smear_to(&mut self, s: &[(f32, f32)]) {
+        self.set_smear([s[0], s[1]]);
+    }
+    fn run_ref(
+        &mut self,
+        arena: &mut ReverbArena,
+        lines: Option<&mut [f32]>,
+        clipped: bool,
+        u: &[f32; HALF],
+        k: &EngineKnobs,
+        l: &mut [f32; HALF],
+        r: &mut [f32; HALF],
+    ) {
+        self.run_reference(arena, lines, clipped, u, k, l, r);
+    }
+}
+
+impl Eng for Room {
+    const SLOTS: usize = room::SLOTS;
+    const SMEARS: usize = 4;
+    fn regions() -> [Range<usize>; 2] {
+        Room::regions()
+    }
+    fn head(&self) -> usize {
+        Room::head(self)
+    }
+    fn smear_to(&mut self, s: &[(f32, f32)]) {
+        self.set_smear([s[0], s[1], s[2], s[3]]);
+    }
+    fn run_ref(
+        &mut self,
+        arena: &mut ReverbArena,
+        lines: Option<&mut [f32]>,
+        clipped: bool,
+        u: &[f32; HALF],
+        k: &EngineKnobs,
+        l: &mut [f32; HALF],
+        r: &mut [f32; HALF],
+    ) {
+        self.run_reference(arena, lines, clipped, u, k, l, r);
+    }
+}
+
+// ── ROOM ──
+
+/// ADR 0095's ROOM tables, ms, written out again: the test's own copy.
+const DIFFUSER_MS: [f32; 5] = [0.81, 1.92, 3.59, 4.91, 6.24];
+const DELAY_MS: [[f32; 2]; 4] = [[37.1, 57.5], [59.4, 42.3], [52.7, 41.9], [41.5, 43.6]];
+const AP_MS: [[f32; 2]; 4] = [[29.0, 13.3], [28.9, 18.4], [30.4, 16.3], [27.1, 14.2]];
+/// L, then R; tap j reads stage line j (A1 … D2); R's first is fixed.
+const TAP_MS: [[f32; 8]; 2] = [
+    [5.5, 5.6, 36.7, 11.8, 24.1, 8.9, 18.0, 38.1],
+    [0.51, 31.4, 10.8, 20.4, 15.8, 21.3, 30.9, 9.1],
+];
+
+fn n24(ms: f32) -> usize {
+    (ms * 24.0).round() as usize
+}
+
+/// ROOM alone at the ring's rate: the engine, primed on `p`.
+fn engine(p: &ReverbParams) -> (Room, Box<ReverbArena>) {
+    let mut e = Room::default();
+    e.prime(&knobs_120(p));
+    (e, Box::new(ReverbArena::new()))
+}
+
 #[test]
-fn room_layout_fits_and_lengths_are_distinct_primes() {
-    let spec_ms: [f32; 12] = [
-        2.3, 3.7, 5.9, 8.9, // diffuser
-        59.0, 101.0, 73.0, 95.0, // delays A1 A2 B1 B2
-        17.0, 23.0, 13.0, 19.0, // stage APs A1 A2 B1 B2
-    ];
-    let got: Vec<usize> = LENS
-        .diffuser
+fn room_layout_matches_adr_0095() {
+    assert_eq!(room::DIFFUSER, DIFFUSER_MS.map(n24));
+    assert_eq!(room::AP, AP_MS.map(|l| l.map(n24)));
+    assert_eq!(room::DELAY, DELAY_MS.map(|l| l.map(n24)));
+    assert_eq!(room::PRE, 1_200, "PRE-DLY's 50 ms");
+    for (size, k) in [(0.0, 0.4f32), (1.0, 1.0)] {
+        let mut p = params(1.0);
+        p.size = size;
+        let (e, _) = engine(&p);
+        let want = DELAY_MS.map(|l| l.map(|ms| (ms * 24.0 * k).round() as u16));
+        assert_eq!(e.delays(), want, "k {k}");
+        let mut flat = want.as_flattened().to_vec();
+        flat.sort();
+        flat.dedup();
+        assert_eq!(flat.len(), 8, "k {k}: delays not distinct");
+        let (taps, to) = e.taps();
+        assert_eq!(taps, to, "landed");
+        for side in 0..2 {
+            for j in 0..8 {
+                let line = want[j / 2][j % 2];
+                let t = taps[side][j];
+                let tap = if side == 1 && j == 0 {
+                    n24(TAP_MS[1][0]) as u16
+                } else {
+                    (TAP_MS[side][j] * 24.0 * k).round() as u16
+                };
+                // A tap scales with its line's rounded length: within a
+                // sample of × k.
+                assert!(
+                    t.abs_diff(tap) <= (k < 1.0) as u16,
+                    "k {k}: side {side} tap {j}: {t}, want {tap}"
+                );
+                assert!((2..=line).contains(&t), "k {k}: tap {t} past line {line}");
+            }
+        }
+    }
+    // Each line: its length, 2 slots, and a block's guard (`room::GUARD`).
+    assert_eq!(room::GUARD, HALF);
+    let slots = |ms: f32| n24(ms) + 2 + HALF;
+    let i16s = slots(50.0)
+        + DELAY_MS
+            .as_flattened()
+            .iter()
+            .map(|&ms| slots(ms))
+            .sum::<usize>();
+    let f32s = DIFFUSER_MS
         .iter()
-        .chain(LENS.delay.as_flattened())
-        .chain(LENS.ap.as_flattened())
-        .copied()
+        .chain(AP_MS.as_flattened())
+        .map(|&ms| slots(ms))
+        .sum::<usize>();
+    assert_eq!(room::SLOTS, i16s + i16s % 2);
+    assert_eq!(room::FSLOTS, f32s);
+    let used = room::SLOTS + 2 * room::FSLOTS;
+    println!(
+        "ROOM: {} i16 + {} f32 = {used} of {RING_LEN}",
+        room::SLOTS,
+        room::FSLOTS
+    );
+    assert!(used <= RING_LEN);
+}
+
+#[test]
+fn reflection_preserves_energy_at_every_loops() {
+    let trip = |l: usize| room::DELAY[l].iter().chain(&room::AP[l]).sum::<usize>();
+    for deg in [0.0, 30.0, 60.0, 90.0] {
+        let (c, s) = room::coupling(deg);
+        let (c64, s64) = (c as f64, s as f64);
+        // H·H = I: a reflection is its own inverse.
+        let hh = [
+            [c64 * c64 + s64 * s64, c64 * s64 - s64 * c64],
+            [s64 * c64 - c64 * s64, s64 * s64 + c64 * c64],
+        ];
+        for (i, row) in hh.iter().enumerate() {
+            for (j, &x) in row.iter().enumerate() {
+                let id = (i == j) as u8 as f64;
+                assert!((x - id).abs() <= 1e-7, "{deg}°: H·H[{i}][{j}] = {x}");
+            }
+        }
+        // Each pair's two lossless loops (gains 1, dampers open) of their
+        // SIZE-1 trips, re-entering through the engine's own `reflect` in
+        // f32: their stored energy holds over 10 round trips.
+        for (a, b) in [(0, 1), (2, 3)] {
+            let mut n = Noise(7);
+            let mut lines: [Vec<f32>; 2] = [a, b].map(|l| (0..trip(l)).map(|_| n.next()).collect());
+            let energy = |x: &[Vec<f32>; 2]| {
+                x.iter()
+                    .flatten()
+                    .map(|&v| v as f64 * v as f64)
+                    .sum::<f64>()
+            };
+            let e0 = energy(&lines);
+            let mut at = [0usize; 2];
+            let (ta, tb) = (trip(a), trip(b));
+            for _ in 0..10 * ta.max(tb) {
+                (lines[0][at[0]], lines[1][at[1]]) =
+                    room::reflect(c, s, lines[0][at[0]], lines[1][at[1]]);
+                at = [(at[0] + 1) % ta, (at[1] + 1) % tb];
+            }
+            let drift = energy(&lines) / e0 - 1.0;
+            assert!(
+                drift.abs() <= 1e-6,
+                "{deg}° ({a}, {b}): energy drifts {drift}"
+            );
+        }
+    }
+}
+
+/// Each block, which loops' stage lines hold anything: an impulse into
+/// loop A alone (diffuser bypassed, stage allpasses at g 0, so it travels
+/// as a pulse) at LOOPS `loops`, 0.6 s.
+fn loops_holding(loops: f32) -> Vec<[bool; 4]> {
+    let mut p = params(1.0);
+    (p.shape, p.predelay, p.damping, p.time, p.size) = (loops, 0.0, 0.0, 1.0, 1.0);
+    let (mut e, mut arena) = engine(&p);
+    e.probe_loop(0);
+    let k = knobs_120(&p);
+    let (mut l, mut r) = ([0.0f32; HALF], [0.0; HALF]);
+    (0..(0.6 * 24_000.0) as usize / HALF)
+        .map(|b| {
+            let u: [f32; HALF] = core::array::from_fn(|i| (b == 0 && i == 0) as u8 as f32);
+            e.run(&mut arena, &u, &k, &mut l, &mut r);
+            let (h, lines) = (e.head(), arena.lines());
+            core::array::from_fn(|lp| {
+                (0..2).any(|s| Room::line(lp, s).any(|i| lines[(h + i) % room::SLOTS] != 0))
+            })
+        })
+        .collect()
+}
+
+/// LOOPS 0 (θ 0) keeps four loops: what enters A never reaches B. LOOPS 1
+/// (θ 90°) makes (A, B) one loop of four stages: A's output re-enters B
+/// alone, so A's lines are silent while the pulse crosses B, every second
+/// trip. C and D hear nothing either way.
+#[test]
+fn loops_0_keeps_four_loops_and_90_makes_two() {
+    let four = loops_holding(0.0);
+    assert!(
+        four.iter().all(|h| !h[1] && !h[2] && !h[3]),
+        "θ 0: B, C or D heard A"
+    );
+    // A's lines hold the pulse but while it crosses A's own allpasses.
+    assert!(
+        four[four.len() / 2..].iter().any(|h| h[0]),
+        "θ 0: A rings on"
+    );
+    let two = loops_holding(1.0);
+    assert!(two.iter().all(|h| !h[2] && !h[3]), "θ 90°: C or D heard A");
+    let only = |a: bool, b: bool| two.iter().filter(|h| h[0] == a && h[1] == b).count();
+    let (a_only, b_only, both) = (only(true, false), only(false, true), only(true, true));
+    println!("θ 90°: A alone {a_only} blocks, B alone {b_only}, both {both}");
+    assert!(b_only >= 100, "θ 90°: B never holds the pulse alone");
+    assert!(
+        a_only >= 100 && both <= a_only / 10,
+        "θ 90°: A not silent through B's trips"
+    );
+    // The pulse comes back to A after B's trip: A holds it again late.
+    let first_b = two.iter().position(|h| h[1]).unwrap();
+    let back = two[first_b..].iter().position(|h| h[0] && !h[1]);
+    assert!(back.is_some(), "θ 90°: never back to A");
+}
+
+/// SIZE 0 → 1: each tap's read moves only in its own line's crossfade,
+/// by at most 120 samples; R's first tap stays at 12 samples (0.51 ms).
+#[test]
+fn taps_move_with_their_lines() {
+    let mut p = params(1.0);
+    (p.size, p.predelay) = (0.0, 0.0);
+    let (mut e, mut arena) = engine(&p);
+    p.size = 1.0;
+    let k = knobs_120(&p);
+    let (u, mut l, mut r) = ([0.0f32; HALF], [0.0; HALF], [0.0; HALF]);
+    let mut moved = [[false; 8]; 2];
+    for _ in 0..2_000 {
+        e.run(&mut arena, &u, &k, &mut l, &mut r);
+        let (from, to) = e.taps();
+        let lines = e.crossfade().map(|(a, b, _)| (a, b));
+        for side in 0..2 {
+            for j in 0..8 {
+                let (f, t) = (from[side][j], to[side][j]);
+                let line_moves = lines.is_some_and(|(a, b)| a[j / 2][j % 2] != b[j / 2][j % 2]);
+                if side == 1 && j == 0 {
+                    assert_eq!((f, t), (12, 12), "R's first tap moved");
+                } else if line_moves {
+                    assert!(f != t && f.abs_diff(t) <= 120, "{side} {j}: {f} → {t}");
+                    moved[side][j] = true;
+                } else {
+                    assert_eq!(f, t, "{side} {j}: tap moves without its line");
+                }
+            }
+        }
+        if !e.moving() {
+            let want: [[u16; 8]; 2] = core::array::from_fn(|s| {
+                core::array::from_fn(|j| {
+                    if s == 1 && j == 0 {
+                        12
+                    } else {
+                        n24(TAP_MS[s][j]) as u16
+                    }
+                })
+            });
+            assert_eq!(from, want, "landed taps");
+            assert_eq!(moved.as_flattened().iter().filter(|&&m| m).count(), 15);
+            return;
+        }
+    }
+    panic!("never landed");
+}
+
+/// The return's first sample within −20 dB of its peak, ms after a click.
+fn first_arrival_ms(p: &ReverbParams) -> f32 {
+    let (rv, pc) = (fresh(p), RefCell::new(*p));
+    let lead = blocks(0.5) * BLOCK_SIZE;
+    let (l, r) = run(&mut bus(&rv, &pc), &mut |i| (i == lead) as u8 as f32, 0.8);
+    let m: Vec<f32> = l[lead..]
+        .iter()
+        .zip(&r[lead..])
+        .map(|(a, b)| 0.5 * (a + b))
         .collect();
-    let mut taken = Vec::new();
-    for (&ms, &n) in spec_ms.iter().zip(&got) {
-        assert!(is_prime(n), "{ms} ms → {n}");
-        assert_eq!(n, nearest_prime(ms, &taken), "{ms} ms");
-        taken.push(n);
-    }
-    assert_eq!(LENS.pre, 1_200, "PRE-DLY's 50 ms");
-    let i16_slots: usize = [LENS.pre]
-        .iter()
-        .chain(LENS.delay.as_flattened())
-        .chain(LENS.ap.as_flattened())
-        .map(|n| n + 2)
-        .sum();
-    let f32_slots: usize = LENS.diffuser.iter().map(|n| 2 * (n + 2)).sum();
-    assert!(i16_slots + f32_slots <= RING_LEN);
-    const { assert!(<L as Layout<2, 2>>::SLOTS + 2 * <L as Layout<2, 2>>::FSLOTS <= RING_LEN) };
+    let peak = m.iter().fold(0.0f32, |a, x| a.max(x.abs()));
+    m.iter().position(|x| x.abs() >= 0.1 * peak).unwrap() as f32 * 1000.0 / SR as f32
 }
 
+/// The bus's half-bands, 17 samples each way at 48 kHz: ahead of every
+/// TYPE alike.
+const HALF_BANDS_MS: f32 = 34.0 / 48.0;
+
+/// PRE-DLY 0: ROOM's own first arrival, R's fixed 0.51 ms tap past the
+/// diffuser, is under 1 ms at every SIZE (Task 9's ROOM: 2.9 ms on the
+/// bus).
 #[test]
-fn rotation_preserves_energy() {
-    let (c, s) = rotation(THETA);
-    let e = (c as f64).powi(2) + (s as f64).powi(2);
-    assert!((e - 1.0).abs() <= 1e-7, "c² + s² = {e}");
-    assert!((c - THETA.cos()).abs() < 1e-6 && (s - THETA.sin()).abs() < 1e-6);
-    // Two lossless loops (gains 1, dampers off) of ROOM's SIZE-1 round
-    // trips, coupled by the engine's own `rotate` in f32: their stored
-    // energy holds.
-    let trip = |l: usize| LENS.delay[l].iter().chain(&LENS.ap[l]).sum::<usize>();
-    let mut n = Noise(7);
-    let mut lines: [Vec<f32>; 2] =
-        core::array::from_fn(|l| (0..trip(l)).map(|_| n.next()).collect());
-    let energy = |x: &[Vec<f32>; 2]| {
-        x.iter()
-            .flatten()
-            .map(|&v| v as f64 * v as f64)
-            .sum::<f64>()
-    };
-    let e0 = energy(&lines);
-    let mut at = [0usize; 2];
-    for _ in 0..10 * trip(0).max(trip(1)) {
-        (lines[0][at[0]], lines[1][at[1]]) = rotate(lines[0][at[0]], lines[1][at[1]]);
-        at = [(at[0] + 1) % trip(0), (at[1] + 1) % trip(1)];
+fn room_first_arrival_is_under_a_millisecond() {
+    let mut p = params(1.0);
+    p.predelay = 0.0;
+    for size in [0.0, 0.5, 1.0] {
+        p.size = size;
+        let t = first_arrival_ms(&p) - HALF_BANDS_MS;
+        println!("SIZE {size}: first arrival {t:.2} ms past the half-bands");
+        assert!(t <= 1.0, "SIZE {size}: first arrival {t} ms");
     }
-    let drift = energy(&lines) / e0 - 1.0;
-    assert!(drift.abs() <= 1e-6, "energy drifts {drift}");
 }
 
-/// The cached targets follow every move: DECAY, TONE, then SIZE turned
-/// mid-run, and once the lengths land the targets equal a fresh engine's
-/// primed at the final knobs. Without `retarget` the stage gains would
-/// keep the lengths DECAY last saw.
+/// A 2-pole bandpass at `fc`, an octave wide (RBJ, constant 0 dB peak).
+fn bandpass(x: &[f32], fc: f32) -> Vec<f32> {
+    let w = std::f64::consts::TAU * fc as f64 / SR as f64;
+    let q = 2f64.sqrt();
+    let alpha = w.sin() / (2.0 * q);
+    let a0 = 1.0 + alpha;
+    let (b0, b2, a1, a2) = (
+        alpha / a0,
+        -alpha / a0,
+        -2.0 * w.cos() / a0,
+        (1.0 - alpha) / a0,
+    );
+    let (mut x1, mut x2, mut y1, mut y2) = (0.0, 0.0, 0.0, 0.0);
+    x.iter()
+        .map(|&v| {
+            let v = v as f64;
+            let y = b0 * v + b2 * x2 - a1 * y1 - a2 * y2;
+            (x2, x1, y2, y1) = (x1, v, y1, y);
+            y as f32
+        })
+        .collect()
+}
+
+/// RT60 of the `fc` octave by interrupted noise (ISO 3382-2): 1 s of
+/// noise, then the decay from the cut, four seeds' band energy averaged,
+/// T20 of its Schroeder curve.
+fn band_rt60(p: &ReverbParams, fc: f32) -> f32 {
+    let tail = 0.3 + 1.5 * knobs_120(p).rt60_s;
+    let cut = SR as usize;
+    let mut e: Vec<f64> = Vec::new();
+    for seed in 0..4 {
+        let (rv, pc) = (fresh(p), RefCell::new(*p));
+        let mut n = Noise(0x1234 + seed);
+        let (l, r) = run(
+            &mut bus(&rv, &pc),
+            &mut |i| if i < cut { 0.25 * n.next() } else { 0.0 },
+            1.0 + tail,
+        );
+        // Twice through the band: steeper skirts.
+        let (bl, br) = (
+            bandpass(&bandpass(&l, fc), fc),
+            bandpass(&bandpass(&r, fc), fc),
+        );
+        let sq: Vec<f64> = bl[cut..]
+            .iter()
+            .zip(&br[cut..])
+            .map(|(&a, &b)| a as f64 * a as f64 + b as f64 * b as f64)
+            .collect();
+        if e.is_empty() {
+            e = sq;
+        } else {
+            e.iter_mut().zip(sq).for_each(|(a, b)| *a += b);
+        }
+    }
+    for i in (0..e.len() - 1).rev() {
+        e[i] += e[i + 1];
+    }
+    let (mut n, mut sx, mut sy, mut sxx, mut sxy) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    for (i, &v) in e.iter().enumerate() {
+        let db = 10.0 * (v / e[0]).log10();
+        if (-25.0..=-5.0).contains(&db) {
+            let x = i as f64 / SR as f64;
+            (n, sx, sy, sxx, sxy) = (n + 1.0, sx + x, sy + db, sxx + x * x, sxy + x * db);
+        }
+    }
+    (-60.0 * (n * sxx - sx * sx) / (n * sxy - sx * sy)) as f32
+}
+
+/// DECAY 0, ½ and 1 ring their 1 kHz octave 0.2, 0.63 and 2.0 s, ±10 %,
+/// with DAMP open; no stage's gain passes 0.985 at any SIZE.
+#[test]
+fn room_rt60_tracks_decay_to_2_s() {
+    let mut p = params(1.0);
+    (p.damping, p.smear, p.size) = (0.0, 0.0, 0.5);
+    for (decay, want) in [(0.0, 0.2), (0.5, 0.632), (1.0, 2.0)] {
+        p.time = decay;
+        let law = knobs_120(&p).rt60_s;
+        assert!(
+            (law / want - 1.0).abs() < 2e-3,
+            "DECAY {decay}: the law {law}"
+        );
+        let rt = band_rt60(&p, 1_000.0);
+        println!("DECAY {decay}: 1 kHz RT60 {rt:.3} s, target {want}");
+        assert!(
+            (rt / want - 1.0).abs() <= 0.1,
+            "DECAY {decay}: {rt} s against {want}"
+        );
+    }
+    p.time = 1.0;
+    for size in [0.0, 0.5, 1.0] {
+        p.size = size;
+        let (e, _) = engine(&p);
+        let g = e.targets().3;
+        assert!(
+            g.as_flattened().iter().all(|&g| g <= 0.985),
+            "SIZE {size}: {g:?}"
+        );
+    }
+}
+
+/// The tail's spectral centroid, 60 Hz–11 kHz.
+fn centroid_hz(x: &[f32]) -> f64 {
+    let n = 4_096;
+    let p = power(x, n);
+    let hz = |k: usize| k as f64 * SR as f64 / n as f64;
+    let (num, den) = (1..p.len())
+        .filter(|&k| (60.0..=11_000.0).contains(&hz(k)))
+        .fold((0.0, 0.0), |(a, b), k| (a + hz(k) * p[k], b + p[k]));
+    num / den
+}
+
+/// DAMP is in the loop: 1.5 kHz against 10 kHz shortens the 4 kHz octave
+/// by 30 % or more and leaves 500 Hz within 5 %. TONE is at the input: 10
+/// → 2.5 kHz pulls the tail's centroid down, its 1 kHz RT60 within 5 %.
+#[test]
+fn damp_darkens_the_loop_and_tone_the_input() {
+    let mut p = params(1.0);
+    (p.size, p.time, p.smear, p.tone, p.damping) = (1.0, 0.5, 0.0, 0.0, 0.0);
+    let open = p;
+    let dark = ReverbParams { damping: 1.0, ..p };
+    let (o4, d4) = (band_rt60(&open, 4_000.0), band_rt60(&dark, 4_000.0));
+    let (o5, d5) = (band_rt60(&open, 500.0), band_rt60(&dark, 500.0));
+    println!("DAMP 10 → 1.5 kHz: 4 kHz {o4:.3} → {d4:.3} s, 500 Hz {o5:.3} → {d5:.3} s");
+    assert!(d4 <= 0.7 * o4, "4 kHz: {o4} → {d4}");
+    assert!((d5 / o5 - 1.0).abs() <= 0.05, "500 Hz: {o5} → {d5}");
+    let toned = ReverbParams { tone: 1.0, ..p };
+    let tail = |q: &ReverbParams| {
+        let (l, _) = noise_burst(q, 1.5);
+        centroid_hz(&l[SR as usize / 2 + 20 * MS..])
+    };
+    let (bright, darker) = (tail(&open), tail(&toned));
+    let (o1, t1) = (band_rt60(&open, 1_000.0), band_rt60(&toned, 1_000.0));
+    println!("TONE 10 → 2.5 kHz: centroid {bright:.0} → {darker:.0} Hz, 1 kHz {o1:.3} → {t1:.3} s");
+    assert!(darker < 0.8 * bright, "centroid {bright} → {darker}");
+    assert!((t1 / o1 - 1.0).abs() <= 0.05, "1 kHz: {o1} → {t1}");
+}
+
+/// The cached targets follow every move: DECAY, TONE, DAMP, LOOPS, then
+/// SIZE turned mid-run; once the lengths land they equal a fresh engine's
+/// primed at the final knobs.
 #[test]
 fn room_targets_follow_decay_tone_and_size() {
     let mut p = params(1.0);
@@ -146,6 +562,8 @@ fn room_targets_follow_decay_tone_and_size() {
         match b {
             10 => p.time = 1.0,
             20 => p.tone = 0.9,
+            25 => p.damping = 0.8,
+            28 => p.shape = 0.7,
             30 => p.size = 1.0,
             _ => {}
         }
@@ -154,32 +572,30 @@ fn room_targets_follow_decay_tone_and_size() {
     assert!(!e.moving(), "the move lands");
     let (fresh, _) = engine(&p);
     assert_eq!(e.delays(), fresh.delays());
-    let ((ta, da, g), (fta, fda, fg)) = (e.targets(), fresh.targets());
-    assert_eq!((ta, da), (fta, fda));
-    assert_eq!(g, fg, "stage-gain targets stale");
+    assert_eq!(e.targets(), fresh.targets(), "targets stale");
 }
 
-/// ROOM alone at the ring's rate: the engine, primed on `p`.
-fn engine(p: &ReverbParams) -> (L, Box<ReverbArena>) {
-    let mut e = L::default();
-    e.prime(&knobs_120(p));
-    (e, Box::new(ReverbArena::new()))
-}
-
+/// SIZE and PRE-DLY 0 → 1: each crossfade moves one stage delay of each
+/// loop by at most 120 samples, every loop still moving in the same one.
 #[test]
 fn round_trip_moves_at_most_5_ms_per_crossfade() {
     let mut p = params(1.0);
     (p.size, p.predelay) = (0.0, 0.0);
     let (mut e, mut arena) = engine(&p);
-    let trip = |d: [[u16; 2]; 2], l: usize| d[l].iter().map(|&x| x as i32).sum::<i32>();
+    let trip = |d: [[u16; 2]; 4], l: usize| d[l].iter().map(|&x| x as i32).sum::<i32>();
     let k0 = e.delays();
-    for (l, ap) in LENS.ap.iter().enumerate() {
-        let ms = (trip(k0, l) as usize + ap.iter().sum::<usize>()) as f32 / 24.0;
-        println!("loop {l} at SIZE 0: {ms:.1} ms");
-    }
     (p.size, p.predelay) = (1.0, 1.0);
     let k = knobs_120(&p);
     let (u, mut l, mut r) = ([0.0f32; HALF], [0.0; HALF], [0.0; HALF]);
+    // Each delay steps ⌈its move / 120⌉ times, one a loop a crossfade.
+    let need = (0..4)
+        .map(|l| {
+            (0..2)
+                .map(|s| (room::DELAY[l][s] - k0[l][s] as usize).div_ceil(120))
+                .sum::<usize>()
+        })
+        .max()
+        .unwrap();
     let mut crossfades = 0;
     let mut last = None;
     for b in 0..2_000 {
@@ -187,26 +603,23 @@ fn round_trip_moves_at_most_5_ms_per_crossfade() {
         if let Some((from, to, pre)) = e.crossfade() {
             if last != Some((from, to, pre)) {
                 crossfades += 1;
-                for l in 0..2 {
+                assert!(pre.0.abs_diff(pre.1) <= 120, "block {b}: PRE {pre:?}");
+                for l in 0..4 {
                     let d = (trip(to, l) - trip(from, l)).abs();
                     assert!(d <= 120, "block {b}: loop {l} moves {d}");
-                }
-                assert!(pre.0.abs_diff(pre.1) <= 120, "block {b}: PRE {pre:?}");
-                // One slice a loop, every loop still moving in the same
-                // crossfade: the round trips move together.
-                for l in 0..2 {
                     let moved = (0..2).filter(|&s| from[l][s] != to[l][s]).count();
-                    let left = (0..2).any(|s| to[l][s] as usize != LENS.delay[l][s]);
+                    let left = (0..2).any(|s| to[l][s] as usize != room::DELAY[l][s]);
                     assert!(moved <= 1, "block {b}: loop {l} moves {moved} delays");
-                    assert!(moved == 1 || !left || from[l] == to[l] && from[1 - l] == to[1 - l]);
+                    // Every loop moves while it has a way to go.
+                    assert!(moved == 1 || !left, "block {b}: loop {l} waits");
                 }
             }
             last = Some((from, to, pre));
-        } else if e.delays() == LENS.delay.map(|l| l.map(|x| x as u16))
-            && e.predelay() == LENS.pre as u16
+        } else if e.delays() == room::DELAY.map(|l| l.map(|x| x as u16))
+            && e.predelay() == room::PRE as u16
         {
-            println!("{crossfades} crossfades; landed at block {b}");
-            assert!((18..=26).contains(&crossfades), "{crossfades}");
+            println!("{crossfades} crossfades (need {need}); landed at block {b}");
+            assert_eq!(crossfades, need);
             return;
         }
     }
@@ -233,10 +646,8 @@ fn room_settles_on_its_input_pitch() {
 
 /// SMEAR's cap (§ The SMEAR bound) where ROOM keeps it: each loop's one
 /// smeared allpass reads within [M − 2D, M], never under 2, and 2D is at
-/// most 1.45 % of that loop's round trip at every SIZE, however deep the
-/// offsets asked. The 25 cents follow from it. `check_smear_bound`'s zero
-/// crossings can't judge it here: two coupled loops 100 and 95.4 ms long
-/// beat, so a still ROOM at SMEAR 0 already reads ±45 cents pass to pass.
+/// most 1.45 % of that loop's 2-stage round trip at every SIZE (θ 0's,
+/// the shortest), however deep the offsets asked.
 #[test]
 fn room_smear_reads_stay_within_the_cap() {
     let mut p = params(1.0);
@@ -247,56 +658,54 @@ fn room_smear_reads_stay_within_the_cap() {
         assert!(k.smear_ms <= 0.0072 * k.length_ms + 1e-6, "SIZE {}", p.size);
         let (mut e, mut arena) = engine(&p);
         let (u, mut l, mut r) = ([0.0f32; HALF], [0.0; HALF], [0.0; HALF]);
-        e.set_smear([(1e9, -1e9), (-5.0, 1e9)]);
+        e.set_smear([(1e9, -1e9), (-5.0, 1e9), (1e9, 1e9), (0.0, 1e9)]);
         e.run(&mut arena, &u, &k, &mut l, &mut r);
         let held = e.smear();
-        for (m, &(lp, st)) in <L as Layout<2, 2>>::SMEARED.iter().enumerate() {
+        for (lp, &st) in room::SMEARED.iter().enumerate() {
             let trip: usize = e.delays()[lp].iter().map(|&d| d as usize).sum::<usize>()
-                + LENS.ap[lp].iter().sum::<usize>();
-            for x in [held[m].0, held[m].1] {
+                + room::AP[lp].iter().sum::<usize>();
+            for x in [held[lp].0, held[lp].1] {
                 assert!(
                     (0.0..=2.0 * 0.0072 * trip as f32 + 1e-3).contains(&x),
                     "{x} of {trip}"
                 );
-                assert!(LENS.ap[lp][st] as f32 - x >= 2.0);
+                assert!(room::AP[lp][st] as f32 - x >= 2.0);
             }
-            // E ≤ 1.45 % of L: 1200·log2(1/(1 − E/L)) ≈ 25 cents.
-            let e_share = held[m].0.max(held[m].1) / trip as f32;
+            let e_share = held[lp].0.max(held[lp].1) / trip as f32;
             assert!(e_share <= 0.0145, "SIZE {}: loop {lp} E {e_share}", p.size);
         }
     }
 }
 
-/// ROOM alone at `p`, its two wanders run as `Reverb` runs them, and its
-/// decay held long: RT60 20 s holds every stage at its 0.985 cap (22 s at
-/// SIZE 0), so a tail lasts the 4 s windows a wander's drift needs.
-fn smeared<const NL: usize, const NS: usize>(p: ReverbParams) -> impl FnMut(&Blk) -> (Blk, Blk)
-where
-    LoopEngine<NL, NS>: Layout<NL, NS>,
-{
+/// A LOOP-family engine alone at `p`, its wanders run as `Reverb` runs
+/// them, and its decay held long: RT60 20 s holds every stage at its 0.985
+/// cap, so a tail lasts the 4 s windows a wander's drift needs.
+fn smeared<E: Eng>(p: ReverbParams) -> impl FnMut(&Blk) -> (Blk, Blk) {
     let mut k = knobs_120(&p);
     k.rt60_s = 20.0;
     let full = k.smear_ms * PER_MS;
-    let seeds = wander_seeds::<2>(0x5EED_0343);
-    let mut w: [Wander; 2] = core::array::from_fn(|i| {
-        let mut w = Wander::new(seeds[i], i as f32 / 2.0);
-        w.set(Wander::rate(k.rate_hz, 24_000.0));
-        w
-    });
-    let (mut e, mut arena) = (
-        LoopEngine::<NL, NS>::default(),
-        Box::new(ReverbArena::new()),
-    );
+    let seeds = wander_seeds::<4>(0x5EED_0343);
+    let mut w: Vec<Wander> = (0..E::SMEARS)
+        .map(|i| {
+            let mut w = Wander::new(seeds[i], i as f32 / E::SMEARS as f32);
+            w.set(Wander::rate(k.rate_hz, 24_000.0));
+            w
+        })
+        .collect();
+    let (mut e, mut arena) = (E::default(), Box::new(ReverbArena::new()));
     let (mut dec, mut up) = (Decimator::new(), [Interpolator::new(), Interpolator::new()]);
     move |send| {
         let (mut u, mut l, mut r) = ([0.0; HALF], [0.0; HALF], [0.0; HALF]);
         dec.process(send, &mut u);
-        let x0 = w.map(|w| w.value());
-        let x1: [f32; 2] = core::array::from_fn(|i| w[i].block());
-        e.set_smear(core::array::from_fn(|i| {
-            (full * (1.0 + x0[i]), full * (1.0 + x1[i]))
-        }));
-        e.run(&mut arena, &u, &k, &mut l, &mut r);
+        let s: Vec<(f32, f32)> = w
+            .iter_mut()
+            .map(|w| {
+                let x0 = w.value();
+                (full * (1.0 + x0), full * (1.0 + w.block()))
+            })
+            .collect();
+        e.smear_to(&s);
+        e.run_ref(&mut arena, None, true, &u, &k, &mut l, &mut r);
         let (mut ol, mut or) = ([0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE]);
         up[0].process(&l, &mut ol);
         up[1].process(&r, &mut or);
@@ -315,7 +724,7 @@ fn room_smear_does_not_move_the_tails_peak() {
         (p.smear, p.rate, p.size) = (smear, 1.0, 0.0);
         let sine = tone(1_000.0, 0.25);
         let (l, _) = run(
-            &mut smeared::<2, 2>(p),
+            &mut smeared::<Room>(p),
             &mut |i| if i < SR as usize / 2 { sine(i) } else { 0.0 },
             9.5,
         );
@@ -338,7 +747,9 @@ fn room_smear_does_not_move_the_tails_peak() {
 /// from `LATE` after the noise to 6 s. `coarse` steps 50 ms a crossfade.
 fn size_tail(from: f32, start: f32, coarse: u16) -> Vec<f32> {
     let mut p = params(1.0);
-    (p.time, p.size) = (1.0, from);
+    // DIFFUSE 0.4 (g 0.55): at the starting 0.45 the 50 ms control's
+    // slap passes the check, so it has no teeth there.
+    (p.time, p.size, p.diffuse) = (1.0, from, 0.4);
     let (rv, pc) = (fresh(&p), RefCell::new(p));
     if coarse > 0 {
         rv.borrow_mut()
@@ -365,28 +776,23 @@ fn size_tail(from: f32, start: f32, coarse: u16) -> Vec<f32> {
     out.split_off(2 * SR as usize + LATE)
 }
 
-/// Where a tail is judged from: once the longest fixed tap (0.83 of A2's
-/// line, 84 ms) has heard the send's end, and the diffuser's allpasses
-/// (2.2–8.9 ms, an echo train at their own lengths while they ring out)
-/// have rung down. Before it, those are the tail.
+/// Where a tail is judged from: once the longest tap (L's 38.1 ms, on
+/// D2) has heard the send's end and the diffuser has rung down.
 const LATE: usize = 100 * MS;
 
-/// The 0 → 1 sweep (22 crossfades, 0.66 s) from 1.4 s lands at 2.06 s,
-/// as the noise ends: the judged tail is the settled one. And the check
-/// has teeth: 50 ms steps (test-only), crossfading inside the judged tail
-/// from 2.1 s, slap. (It hears 10 ms steps too, not 20 or 100 ms; and a
-/// 5 ms sweep still running in the tail reads up to −10.7 dB, the
-/// crossfade's own comb, § Moving a length.)
+/// The 0 → 1 sweep from 1.4 s lands before the noise ends: the judged
+/// tail is the settled one. And the check has teeth: 50 ms steps
+/// (test-only), crossfading inside the judged tail from 2.1 s, slap.
 #[test]
 fn no_slap_after_a_size_sweep() {
     let still = size_tail(1.0, 1.4, 0);
     check_no_slap(&size_tail(0.0, 1.4, 0), &still);
-    let coarse = size_tail(0.0, 2.1, 10 * STEP);
+    let coarse = size_tail(0.0, 2.1, 10 * room::STEP);
     let heard = std::panic::catch_unwind(|| check_no_slap(&coarse, &still));
     assert!(heard.is_err(), "50 ms steps pass the slap check");
 }
 
-/// A 0.5 s noise burst into ROOM on `p`, MIX 1, `seconds` long: (L, R).
+/// A 0.5 s noise burst into the TYPE on `p`, MIX 1, `seconds` long: (L, R).
 fn noise_burst(p: &ReverbParams, seconds: f32) -> (Vec<f32>, Vec<f32>) {
     let (rv, pc) = (fresh(p), RefCell::new(*p));
     let mut n = Noise(0x5eed);
@@ -403,53 +809,10 @@ fn noise_burst(p: &ReverbParams, seconds: f32) -> (Vec<f32>, Vec<f32>) {
     )
 }
 
-/// RT60 by T20 on `p`'s tail, from `LATE` after a 0.5 s noise burst.
-fn rt60_of(p: &ReverbParams) -> f32 {
-    let (l, r) = noise_burst(p, 0.5 + 3.0 * knobs_120(p).rt60_s.max(0.3));
-    let tail = |x: &[f32]| x[SR as usize / 2 + LATE..].to_vec();
-    rt60_t20(&tail(&l), &tail(&r))
-}
-
-#[test]
-fn room_window_and_rt60() {
-    let p = params(1.0);
-    let (l, r) = noise_burst(&p, 1.0);
-    let onset = onset_ms(&l).min(onset_ms(&r));
-    let rt = rt60_of(&p);
-    println!("defaults: RT60 {rt:.3} s, onset {onset} ms");
-    assert!((rt / 0.548 - 1.0).abs() <= 0.2, "RT60 {rt}");
-    assert!(onset <= 34.0, "onset {onset} ms");
-    // DECAY 0 checks the rotation. No `t_min` floors it: the stage
-    // allpasses' g is held to their own ring, DIFFUSE 1's too.
-    for (decay, diffuse) in [
-        (0.0, 0.4),
-        (0.25, 0.4),
-        (0.5, 0.4),
-        (0.75, 0.4),
-        (1.0, 0.4),
-        (0.0, 1.0),
-    ] {
-        let mut q = p;
-        (q.time, q.diffuse) = (decay, diffuse);
-        let want = knobs_120(&q).rt60_s;
-        let law = 0.2 * 7.5f32.powf(decay);
-        assert!(
-            (want / law - 1.0).abs() < 1e-3,
-            "{decay}: {want}, the law {law}"
-        );
-        let rt = rt60_of(&q);
-        println!("DECAY {decay} DIFFUSE {diffuse}: RT60 {rt:.3} s, target {want:.3} s");
-        assert!(
-            (rt / want - 1.0).abs() <= 0.2,
-            "DECAY {decay}: {rt} vs {want}"
-        );
-    }
-}
-
-/// A LOOP TYPE alone at the ring's rate, behind the bus's half-bands: the
-/// i16 engine, or its unclipped or f32-line references.
-struct Alone<const NL: usize, const NS: usize> {
-    e: LoopEngine<NL, NS>,
+/// A LOOP-family engine alone at the ring's rate, behind the bus's
+/// half-bands: the i16 engine, or its unclipped or f32-line references.
+struct Alone<E: Eng> {
+    e: E,
     arena: Box<ReverbArena>,
     f32_lines: Option<Vec<f32>>,
     clipped: bool,
@@ -457,15 +820,12 @@ struct Alone<const NL: usize, const NS: usize> {
     up: [Interpolator; 2],
 }
 
-impl<const NL: usize, const NS: usize> Alone<NL, NS>
-where
-    LoopEngine<NL, NS>: Layout<NL, NS>,
-{
+impl<E: Eng> Alone<E> {
     fn new(f32_lines: bool, clipped: bool) -> Self {
         Self {
-            e: LoopEngine::default(),
+            e: E::default(),
             arena: Box::new(ReverbArena::new()),
-            f32_lines: f32_lines.then(|| vec![0.0; <LoopEngine<NL, NS> as Layout<NL, NS>>::SLOTS]),
+            f32_lines: f32_lines.then(|| vec![0.0; E::SLOTS]),
             clipped,
             dec: Decimator::new(),
             up: [Interpolator::new(), Interpolator::new()],
@@ -476,7 +836,7 @@ where
         let (mut u, mut l, mut r) = ([0.0; HALF], [0.0; HALF], [0.0; HALF]);
         self.dec.process(send, &mut u);
         let k = knobs_120(p);
-        self.e.run_reference(
+        self.e.run_ref(
             &mut self.arena,
             self.f32_lines.as_deref_mut(),
             self.clipped,
@@ -499,24 +859,21 @@ where
         // The lines rotate with the shared head: a region's slot i sits
         // at (head + i) mod slots.
         let (h, n) = (self.e.head(), lines.len());
-        <LoopEngine<NL, NS> as Layout<NL, NS>>::regions()
-            .map(|r| r.map(|i| lines[(h + i) % n].abs()).fold(0.0f32, f32::max) / 16_384.0)
+        E::regions().map(|r| r.map(|i| lines[(h + i) % n].abs()).fold(0.0f32, f32::max) / 16_384.0)
     }
 }
 
-/// § Level plan on a LOOP TYPE at `p` (its DECAY set to 1 for the hot
-/// stimuli), then § Level plan's table: the clipped engine on unquantised
-/// lines, at maximum DECAY, under the pad and a held loop mode. PRE holds
-/// the send (≤ ½ the send's peak, the half-band's overshoot aside); every i16 loop line
-/// ≤ 2.0 (the stage allpasses store f32: no bound).
-fn check_loop_level_plan<const NL: usize, const NS: usize>(p: ReverbParams, max_thd: f32)
-where
-    LoopEngine<NL, NS>: Layout<NL, NS>,
-{
+/// § Level plan on a LOOP-family TYPE at `p` (its DECAY set to 1 for the
+/// hot stimuli), then § Level plan's table: the clipped engine on
+/// unquantised lines, at maximum DECAY, under the pad and a held loop
+/// mode. PRE holds the send (≤ ½ the send's peak, the half-band's
+/// overshoot aside); every i16 loop line ≤ 2.0 (the stage allpasses store
+/// f32: no bound).
+fn check_loop_level_plan<E: Eng>(p: ReverbParams, max_thd: f32) {
     let pc = RefCell::new(p);
-    let mut a = Alone::<NL, NS>::new(false, true);
-    let mut b = Alone::<NL, NS>::new(false, false);
-    let mut c = Alone::<NL, NS>::new(true, false);
+    let mut a = Alone::<E>::new(false, true);
+    let mut b = Alone::<E>::new(false, false);
+    let mut c = Alone::<E>::new(true, false);
     let mode = 1_000.0 / knobs_120(&p).length_ms;
     {
         let mut ra = |s: &Blk| a.block(s, &pc.borrow());
@@ -531,7 +888,7 @@ where
             max_thd,
         );
     }
-    let mut d = Alone::<NL, NS>::new(true, true);
+    let mut d = Alone::<E>::new(true, true);
     let pad = pink(0x91ab, 10.0, -12.0);
     let f = (500.0 / mode).round() * mode;
     let held = tone(f, 1.0);
@@ -559,16 +916,18 @@ where
 
 #[test]
 fn level_plan_holds_for_room() {
-    let mut p = params(1.0);
-    (p.size, p.diffuse) = (0.0, 1.0);
-    check_loop_level_plan::<2, 2>(p, 0.03);
+    for loops in [0.0, 1.0] {
+        let mut p = params(1.0);
+        (p.size, p.diffuse, p.shape) = (0.0, 1.0, loops);
+        check_loop_level_plan::<Room>(p, 0.03);
+    }
 }
 
 #[test]
 fn room_knobs_ease() {
     let p = params(1.0);
     let (rv, pc) = (fresh(&p), RefCell::new(p));
-    let ids = [1, 3, 7, 8, 9, 11, 12].map(ParamId);
+    let ids = [1, 2, 3, 7, 8, 9, 10, 11, 12].map(ParamId);
     check_knobs_ease(&mut bus(&rv, &pc), &ids, &mut |id, v| {
         pc.borrow_mut().write(id, v)
     });
@@ -927,7 +1286,7 @@ fn hall_smear_is_bounded_without_drift_or_vibrato() {
         (p.smear, p.rate, p.size) = (smear, 1.0, 0.0);
         let sine = tone(1_000.0, 0.25);
         let (l, _) = run(
-            &mut smeared::<1, 4>(p),
+            &mut smeared::<Hall>(p),
             &mut |i| if i < SR as usize / 2 { sine(i) } else { 0.0 },
             9.5,
         );
@@ -951,7 +1310,7 @@ fn level_plan_holds_for_hall() {
     (p.size, p.diffuse) = (0.0, 1.0);
     // A 0 dBFS tone held on a loop mode at 10 s drives the clip far past
     // its knee (G 12.5 against ROOM's 2.7): soft saturation, not 3 % THD.
-    check_loop_level_plan::<1, 4>(p, 0.2);
+    check_loop_level_plan::<Hall>(p, 0.2);
 }
 
 #[test]
@@ -1112,4 +1471,98 @@ fn hall_tail_draws_the_effective_predelay() {
     p.size = 0.0;
     let plate = tail_shape(ReverbType::Hall, &knobs_120(&p));
     assert!(plate[0] > 0, "{plate:?}");
+}
+
+/// Every tap reads its own stage line, at its own offset: an impulse into
+/// one loop alone (stage allpasses at g 0, θ 0, dampers open, SIZE 1)
+/// reaches each side's two taps on that loop's lines at the line's write
+/// time plus the tap's offset.
+#[test]
+fn each_tap_reads_its_line_at_its_offset() {
+    let mut p = params(1.0);
+    (
+        p.shape, p.predelay, p.damping, p.time, p.size, p.tone, p.smear,
+    ) = (0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0);
+    let k = knobs_120(&p);
+    for lp in 0..4 {
+        let (mut e, mut arena) = engine(&p);
+        e.probe_loop(lp as u8);
+        let (mut l, mut r) = ([0.0f32; HALF], [0.0; HALF]);
+        let mut out = [Vec::new(), Vec::new()];
+        for b in 0..6_000 / HALF {
+            let u: [f32; HALF] = core::array::from_fn(|i| (b == 0 && i == 0) as u8 as f32);
+            e.run(&mut arena, &u, &k, &mut l, &mut r);
+            out[0].extend_from_slice(&l);
+            out[1].extend_from_slice(&r);
+        }
+        // The send writes line (lp, 0) 2 samples on (PRE-DLY's floor);
+        // stage 1's output, a delay and an allpass of g 0 on, line (lp, 1).
+        let w0 = 2;
+        let w1 = w0 + room::DELAY[lp][0] + room::AP[lp][0];
+        let peak = out.iter().flatten().fold(0.0f32, |m, x| m.max(x.abs()));
+        for side in 0..2 {
+            for (s, w) in [(0, w0), (1, w1)] {
+                let j = 2 * lp + s;
+                let tap = if side == 1 && j == 0 {
+                    12
+                } else {
+                    n24(TAP_MS[side][j])
+                };
+                let x = out[side][w + tap];
+                assert!(
+                    x.abs() >= 0.3 * peak,
+                    "loop {lp} side {side} tap {j}: {x} at {} (peak {peak})",
+                    w + tap
+                );
+            }
+        }
+    }
+}
+
+/// The diffuser is ADR 0095's five allpasses at g 0.75: before any loop
+/// returns, R reads loop A's first line through its fixed 12-sample tap,
+/// so its first 100 samples are ¾ of the diffused send, 14 samples late
+/// (PRE-DLY's 2 and the tap's 12), within the lines' rounding.
+#[test]
+fn the_diffuser_is_five_allpasses() {
+    let mut p = params(1.0);
+    (p.predelay, p.tone, p.size) = (0.0, 0.0, 0.0);
+    let k = knobs_120(&p);
+    let (mut e, mut arena) = engine(&p);
+    let (mut l, mut r) = ([0.0f32; HALF], [0.0; HALF]);
+    let mut got = Vec::new();
+    for b in 0..4 {
+        let u: [f32; HALF] = core::array::from_fn(|i| (b == 0 && i == 0) as u8 as f32);
+        e.run(&mut arena, &u, &k, &mut l, &mut r);
+        got.extend_from_slice(&r);
+    }
+    // The model: TONE's one-pole at 10 kHz, PRE-DLY's rounding store,
+    // then five allpasses (v = x − g·z, y = z + g·v).
+    let a = 1.0 - (-std::f64::consts::TAU * 10_000.0 / 24_000.0).exp();
+    let (mut tone, mut lines): (f64, Vec<Vec<f64>>) = (
+        0.0,
+        DIFFUSER_MS.iter().map(|&ms| vec![0.0; n24(ms)]).collect(),
+    );
+    let mut want = vec![0.0f64; got.len()];
+    for t in 0..got.len() - 14 {
+        tone += a * ((t == 0) as u8 as f64 * 8_192.0 - tone);
+        let mut x = tone.round();
+        for line in &mut lines {
+            let m = line.len();
+            let z = line[t % m];
+            let v = x - 0.75 * z;
+            line[t % m] = v;
+            x = z + 0.75 * v;
+        }
+        want[t + 14] = 0.75 * x.round();
+    }
+    for t in 0..100 {
+        assert!(
+            (got[t] as f64 - want[t]).abs() <= 1.0,
+            "sample {t}: {} against {}",
+            got[t],
+            want[t]
+        );
+    }
+    assert!(want[14..100].iter().filter(|x| x.abs() > 1.0).count() > 20);
 }

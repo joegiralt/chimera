@@ -127,12 +127,13 @@ fn axi_residents_fit() {
     // four wanders and depth, reverb TYPEs T5) and 88 B for the reverb's
     // slots 6–13 (T6: `ReverbParams` in the Project and in each of three
     // `AudioShared`s), 48 B for the TYPE switch's latched knobs (T7), and
-    // 88 B for BURST's state, `EngineState`'s largest (T8); the master
-    // tape adds its own.
+    // 88 B for BURST's state, `EngineState`'s largest (T8), and 96 B more
+    // for ROOM v2's four loops (T9b, ADR 0095; 4 B of it the tests'
+    // probes); the master tape adds its own.
     if !cfg!(feature = "master-tape") {
         assert!(
-            total <= 442_452,
-            "AXI grew past 2dc9eefd's, SMEAR's, the slots', the switch's and BURST's"
+            total <= 442_548,
+            "AXI grew past 2dc9eefd's, SMEAR's, the slots', the switch's, BURST's and ROOM v2's"
         );
     }
     assert!(

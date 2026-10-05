@@ -9,6 +9,7 @@ use crate::dsp::algo::math::log2;
 use crate::dsp::clampf;
 use crate::dsp::modulator::law::Law;
 use crate::dsp::rev::parts::{lg2, pow2};
+use crate::dsp::rev::room;
 use crate::dsp::rev::sync::{
     DECAY_BEATS, Division, FoldState, GATE_LENGTH, HALL_PRE, REVERSE_LENGTH, ROOM_PRE, Tempo, fold,
     index_of, p_of,
@@ -133,9 +134,11 @@ const KNOB_SLOTS: [ParamId; 9] = [
 
 /// Each TYPE's starting knobs (spec § Each TYPE's knobs), by `KNOB_SLOTS`,
 /// in screen order. QUAD writes only TIME, DAMP, SIZE, SMEAR and RATE.
+/// ROOM's are MidiVerb II program 5's (Medium Bright .6), fitted on the
+/// Rust render (ADR 0095), with SMEAR 0.3.
 const START: [[f32; 9]; 6] = [
     [0.5, 0.3, 0.5, 0.3, 0.4, 0.0, 0.2, 0.0, 0.5],
-    [0.5, 0.3, 0.5, 0.3, 0.4, 0.1, 0.2, 0.3, 0.5],
+    [0.702, 0.346, 0.619, 0.0, 0.0, 0.077, 0.72, 0.3, 0.5],
     [0.45, 0.3, 0.65, 0.3, 0.4, 0.15, 0.2, 0.35, 0.4],
     [0.6, 0.3, 0.7, 0.35, 0.5, 0.0, 0.2, 0.3, 0.4],
     [0.3, 0.3, 0.55, 0.2, 0.7, 0.0, 0.2, 0.0, 0.5],
@@ -248,6 +251,7 @@ pub enum TimeLaw {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Exp {
     pub lo: f32,
+    pub hi: f32,
     pub log2_ratio: f32,
 }
 
@@ -255,6 +259,7 @@ impl Exp {
     pub const fn new(lo: f32, hi: f32) -> Self {
         Self {
             lo,
+            hi,
             log2_ratio: log2(hi / lo),
         }
     }
@@ -265,8 +270,9 @@ impl Exp {
 /// reads every row.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Ranges {
-    /// LENGTH, ms, `exp`.
+    /// LENGTH, ms, `exp`; `lin` over the same ends when `length_lin`.
     pub length_ms: Exp,
+    pub length_lin: bool,
     pub time: TimeLaw,
     /// TONE's input corner, bright → dark, Hz, `exp`.
     pub tone_hz: Exp,
@@ -276,7 +282,8 @@ pub struct Ranges {
     pub diffuse_g: (f32, f32),
     /// PRE-DLY, ms, `lin`.
     pub predelay_ms: (f32, f32),
-    /// SHAPE or CURVE, dB, `lin`: negative falls.
+    /// SHAPE or CURVE, dB, `lin`: negative falls. ROOM's LOOPS, θ in
+    /// degrees.
     pub shape_db: (f32, f32),
     pub rising: bool,
     /// SMEAR's depth at 1, ms, `lin`, capped at `smear_cap` of the loop
@@ -291,6 +298,7 @@ pub struct Ranges {
 
 pub const GATE: Ranges = Ranges {
     length_ms: Exp::new(40.0, 600.0),
+    length_lin: false,
     time: TimeLaw::Tail {
         rt60_s: Exp::new(0.15, 0.8),
         fade: 0.05,
@@ -305,6 +313,7 @@ pub const GATE: Ranges = Ranges {
     smear_cap: f32::INFINITY,
     damp_hz: Exp {
         lo: 0.0,
+        hi: 0.0,
         log2_ratio: 0.0,
     },
     rate_hz: Exp::new(0.1, 2.0),
@@ -318,22 +327,28 @@ pub const REVERSE: Ranges = Ranges {
     ..GATE
 };
 
-/// ROOM's loop is LOOP A's round trip. Its one damper is fixed and mild
-/// (no DAMP cell): the input's TONE darkens it.
+/// ROOM (ADR 0095 § ROOM v2): SIZE is loop A's round trip, `lin` in
+/// SIZE's k 0.4 → 1; DIFFUSE the stage allpasses' g (the diffuser's is
+/// fixed); DAMP the loops' one-poles, 10 → 1.5 kHz; LOOPS (SHAPE's slot)
+/// the pairs' θ, 0–90°.
 pub const ROOM: Ranges = Ranges {
-    length_ms: Exp::new(100.0, 200.0),
+    length_ms: Exp::new(
+        room::A_AP_MS + room::K_MIN * room::A_DELAY_MS,
+        room::A_AP_MS + room::A_DELAY_MS,
+    ),
+    length_lin: true,
     time: TimeLaw::Decay {
-        rt60_s: Exp::new(0.2, 1.5),
+        rt60_s: Exp::new(0.2, 2.0),
     },
     tone_hz: Exp::new(10_000.0, 2_500.0),
     taps: (0.0, 0.0),
-    diffuse_g: (0.5, 0.75),
+    diffuse_g: (0.45, 0.70),
     predelay_ms: (0.0, 50.0),
-    shape_db: (0.0, 0.0),
+    shape_db: (0.0, 90.0),
     rising: false,
     smear_ms: 1.0,
     smear_cap: 0.0072,
-    damp_hz: Exp::new(8_000.0, 8_000.0),
+    damp_hz: Exp::new(10_000.0, 1_500.0),
     rate_hz: Exp::new(0.1, 1.0),
 };
 
@@ -342,6 +357,9 @@ pub const ROOM: Ranges = Ranges {
 /// QUAD's law (`damp_hz`).
 pub const HALL: Ranges = Ranges {
     length_ms: Exp::new(120.0, 600.0),
+    length_lin: false,
+    diffuse_g: (0.5, 0.75),
+    shape_db: (0.0, 0.0),
     time: TimeLaw::Decay {
         rt60_s: Exp::new(0.8, 10.0),
     },
@@ -552,7 +570,11 @@ fn quad_knobs(p: &ReverbParams) -> EngineKnobs {
 
 /// One row's laws.
 fn row_knobs(r: &Ranges, p: &ReverbParams) -> EngineKnobs {
-    let length_ms = exp_law(r.length_ms, p.size);
+    let length_ms = if r.length_lin {
+        lin((r.length_ms.lo, r.length_ms.hi), p.size)
+    } else {
+        exp_law(r.length_ms, p.size)
+    };
     let (rt60_s, tail, regen) = match r.time {
         TimeLaw::Decay { rt60_s } => (exp_law(rt60_s, p.time), 0.0, 0.0),
         TimeLaw::Tail { rt60_s, fade } => (

@@ -4,6 +4,7 @@
 //! that TYPE. TYPE and MIX sit on REV outside the panel.
 
 use crate::block::{Block, ParamId, find_spec};
+use crate::dsp::rev::room;
 use crate::dsp::rev::sync::{DECAY_BEATS, FoldState, Tempo, index_of, p_of};
 use crate::dsp::reverb::{
     KnobMemory, REVERB_SPECS, RevSync, ReverbParams, ReverbType, knobs, plate_pull, synced,
@@ -68,6 +69,7 @@ static DENSITY: RevKnob = RevKnob {
 };
 static SHAPE: RevKnob = k(P::SHAPE, "SHAPE");
 static CURVE: RevKnob = k(P::SHAPE, "CURVE");
+static LOOPS: RevKnob = k(P::SHAPE, "LOOPS");
 static SIZE: RevKnob = k(P::SIZE, "SIZE");
 static DECAY: RevKnob = k(P::TIME, "DECAY");
 static DIFFUSE: RevKnob = RevKnob {
@@ -99,19 +101,19 @@ static QUAD: Panel = [
     None,
 ];
 
-/// SIZE · DECAY · TONE · DIFFUSE; MORE: PRE-DLY · — · SMEAR · RATE ·
-/// SYNC.
+/// SIZE · DECAY · TONE · DIFFUSE; MORE: PRE-DLY · DAMP · SMEAR · RATE ·
+/// SYNC · LOOPS (ADR 0095).
 static ROOM: Panel = [
     Some(&SIZE),
     Some(&DECAY),
     Some(&TONE),
     Some(&DIFFUSE),
     Some(&PREDELAY),
-    None,
+    Some(&DAMP),
     Some(&SMEAR),
     Some(&RATE),
     Some(&SYNC),
-    None,
+    Some(&LOOPS),
 ];
 
 /// SIZE · DECAY · TONE · DIFFUSE; MORE: PRE-DLY · DAMP · SMEAR · RATE ·
@@ -321,6 +323,8 @@ pub fn value_text(id: ParamId, p: &ReverbParams, tempo: Tempo, fold: FoldState) 
     let burst = matches!(p.kind, ReverbType::Gate | ReverbType::Reverse);
     let off = match id {
         P::SMEAR => k.smear_ms == 0.0,
+        // ROOM's DAMP at its top opens the dampers.
+        P::DAMPING if p.kind == ReverbType::Room => k.damp_hz >= room::DAMP_OPEN_HZ,
         // TAIL 0 is the fast gate; REGEN 0 none.
         P::TIME if burst => k.tail == 0.0 && k.regen == 0.0,
         _ => false,
@@ -343,6 +347,8 @@ pub fn value_text(id: ParamId, p: &ReverbParams, tempo: Tempo, fold: FoldState) 
         // The curve end to end, whole dB: `-4dB`, `24dB` (tenths outrun
         // the focus band).
         P::SHAPE if burst => (k.shape_db, 0, "dB"),
+        // LOOPS, θ in whole degrees: `0`, `90` (the face has no "°").
+        P::SHAPE => (k.shape_db, 0, ""),
         // Tenths: hundredths would run into the cube.
         P::SMEAR => (k.smear_ms, 1, "ms"),
         P::RATE => (k.rate_hz, 2, "Hz"),
@@ -350,7 +356,7 @@ pub fn value_text(id: ParamId, p: &ReverbParams, tempo: Tempo, fold: FoldState) 
     };
     if off {
         let _ = core::fmt::Write::write_str(&mut b, "OFF");
-    } else if places > 0 || !unit.is_empty() {
+    } else if places > 0 || !unit.is_empty() || id == P::SHAPE {
         fixed(&mut b, x, places, unit);
     }
     b

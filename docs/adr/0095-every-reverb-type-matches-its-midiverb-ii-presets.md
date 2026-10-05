@@ -184,6 +184,42 @@ the ban on 2026-10-05.
   - **BLOOM's CPU:** about 5 more allpass updates a sample than ADR 0085's
     estimate (15 in the loop and 6 in the decorrelators, against 10 and 4).
 
+- **ROOM v2, as built (Task 9b, 2026-10-05).** The following departures
+  are measured, and need the owner's ruling.
+  - **Its own engine, `rev/room.rs`,** not `LoopEngine<4, 2>`: ROOM v2 runs
+    59 i16 and 26 f32 accesses against HALL's 21 and 16, and sharing the
+    access tables would size HALL's to ROOM's. HALL is untouched
+    (`rev_hall` bit-identical).
+  - **It runs stage by stage over each segment,** not sample by sample:
+    the sample loop spilled its 85 bases and read 705 instructions a ring
+    sample. Every feedback read sits 319 samples back or more, so the
+    order is the sample loop's arithmetic. Each line keeps one block of
+    guard slots (`GUARD`, +1,120 slots), since a line's write lands on the
+    slot the line above reads 1–2 samples earlier.
+  - **The taps sum exactly,** as integers, and a crossfade adds w ×
+    (to − from) for the moving lines' taps only.
+  - **DIFFUSE's g, the dampers and the reflection step once a block** on
+    their 20 ms ease, as BURST's weights do. The stage gains and SMEAR
+    still ramp per sample.
+  - **The stage gains count the stage allpasses' slow modes:** each stage
+    is (D + M·Φ) long for the RT60, with Φ = (1 + 4.8 g⁴)(1.37 − 0.37 k).
+    Without it the 1 kHz RT60 ran 6–90 % long, more with DIFFUSE and at
+    small SIZE. With it, DECAY tracks within ±10 % over DECAY ¼–1, SIZE
+    0–1 and DIFFUSE 0–1; DECAY 0 reads +4 % at SIZE ½ and +15 % at SIZE 0
+    and 1, where the diffuser's own ring adds.
+  - **DAMP's top opens the dampers** (the first near-miss step): DAMP 0 is
+    a bypass, and its cell reads OFF.
+  - **The tap weight stays ¾ at every θ.** The second near-miss step
+    scales every tap alike, so it moves only the level, and every judged
+    metric is level-free: it can't change a verdict.
+  - **The first arrival is 0.52 ms past the bus's half-bands** (34
+    samples at 48 kHz, ahead of every TYPE): 1.23 ms on the bus.
+  - **`EngineState` grows to 244 B** (248 B with the tests' probes),
+    against ADR 0085's 160 B: four loops' gains, targets, dampers and
+    smear offsets.
+  - **LOOPS's cos and sin come from an f32 series,** normalised so c² + s²
+    is 1 to the rounding: libm's ran in double precision.
+
 ## Alternatives considered
 - **Keep ADR 0085's ±30 % window:** it passes reverbs the owner can tell
   apart from the preset at once. The new bar is set where the harness's own

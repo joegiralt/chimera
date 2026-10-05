@@ -55,7 +55,7 @@ fn every_type_shows_its_cells() {
     assert_eq!(main(Room), s(&["SIZE", "DECAY", "TONE", "DIFFUSE"]));
     assert_eq!(
         more(Room),
-        s(&["PRE-DLY", "-", "SMEAR", "RATE", "SYNC", "-"])
+        s(&["PRE-DLY", "DAMP", "SMEAR", "RATE", "SYNC", "LOOPS"])
     );
     assert_eq!(main(Hall), s(&["SIZE", "DECAY", "TONE", "DIFFUSE"]));
     assert_eq!(
@@ -76,6 +76,8 @@ fn every_type_shows_its_cells() {
     assert_eq!(id(Reverse, RevPage::More, 1), ReverbParams::SHAPE);
     assert_eq!(id(Room, RevPage::Main, 1), ReverbParams::TIME);
     assert_eq!(id(Room, RevPage::More, 0), ReverbParams::PREDELAY);
+    assert_eq!(id(Room, RevPage::More, 1), ReverbParams::DAMPING);
+    assert_eq!(id(Room, RevPage::More, 5), ReverbParams::SHAPE);
     assert_eq!(id(Hall, RevPage::More, 1), ReverbParams::DAMPING);
     for t in [Room, Hall, Gate, Reverse] {
         assert_eq!(id(t, RevPage::More, 4), ReverbParams::SYNC);
@@ -125,6 +127,8 @@ fn label_follows_the_type() {
     assert_eq!(label(ReverbType::Room, ParamId(3)), "SIZE");
     assert_eq!(label(ReverbType::Room, ParamId(1)), "DECAY");
     assert_eq!(label(ReverbType::Room, ParamId(8)), "DIFFUSE");
+    assert_eq!(label(ReverbType::Room, ParamId(10)), "LOOPS");
+    assert_eq!(label(ReverbType::Room, ParamId(2)), "DAMP");
     assert_eq!(label(ReverbType::Quad, ParamId(3)), "SIZE");
     assert_eq!(label(ReverbType::Quad, ParamId(1)), "TIME");
     assert_eq!(label(ReverbType::Quad, ParamId(6)), "TYPE");
@@ -220,10 +224,10 @@ fn labels_and_values_fit_their_cells() {
     }
     for want in [
         "663ms", "1.9s", "6.1k", "OFF", "0.22Hz", "40ms", "800ms", "0.80s", "2.5k", "12.0",
-        "-18dB", "30dB", "2.00Hz", "1.0ms", "16s", "100ms", "200ms", "0.20s", "1.5s", "0.50",
-        "0.75", "50ms", "0.7ms", "1.00Hz", "10s", "120ms", "600ms", "11k", "1.5k", "125ms",
-        "2.0ms", "1.50Hz", "TIME", "1/32T", "1/4", "1/2T", "1/4D", "0", "1/128", "1/16", "▾1/8",
-        "▴1/16T", "▾1/256", "▾1/192", "▾3/256", "32 BT", "1 BT",
+        "-18dB", "30dB", "2.00Hz", "1.0ms", "16s", "80ms", "137ms", "0.20s", "2.0s", "0.50",
+        "0.75", "0.45", "0.70", "10k", "90", "50ms", "0.7ms", "1.00Hz", "10s", "120ms", "600ms",
+        "11k", "1.5k", "125ms", "2.0ms", "1.50Hz", "TIME", "1/32T", "1/4", "1/2T", "1/4D", "0",
+        "1/128", "1/16", "▾1/8", "▴1/16T", "▾1/256", "▾1/192", "▾3/256", "32 BT", "1 BT",
     ] {
         assert!(seen.iter().any(|s| s == want), "no cell shows {want}");
     }
@@ -350,17 +354,23 @@ fn cells_read_their_starting_values() {
         ],
     );
     let p = ReverbParams::default().with_type(ReverbType::Room, &KnobMemory::new());
+    // MidiVerb II program 5's fitted knobs (ADR 0095).
     for (id, w) in [
-        (P::SIZE, "141ms"),
-        (P::TIME, "0.55s"),
-        (P::TONE, "6.6k"),
-        (P::DIFFUSE, "0.60"),
-        (P::PREDELAY, "5ms"),
+        (P::SIZE, "115ms"),
+        (P::TIME, "1.0s"),
+        (P::TONE, "10k"),
+        (P::DIFFUSE, "0.45"),
+        (P::PREDELAY, "4ms"),
+        (P::DAMPING, "5.2k"),
         (P::SMEAR, "0.3ms"),
         (P::RATE, "0.32Hz"),
+        (P::SHAPE, "65"),
     ] {
         assert_eq!(text(id, &p).as_str(), w, "ROOM {id:?}");
     }
+    // DAMP's top opens the dampers.
+    let open = ReverbParams { damping: 0.0, ..p };
+    assert_eq!(text(P::DAMPING, &open).as_str(), "OFF");
     let p = ReverbParams::default().with_type(ReverbType::Hall, &KnobMemory::new());
     for (id, w) in [
         (P::SIZE, "342ms"),

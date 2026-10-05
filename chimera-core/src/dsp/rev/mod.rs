@@ -9,6 +9,7 @@ pub mod arena;
 pub mod burst;
 pub mod loop_engine;
 pub mod parts;
+pub mod room;
 pub mod sync;
 
 use core::mem::MaybeUninit;
@@ -23,8 +24,9 @@ use crate::dsp::reverb::{ReverbParams, ReverbType, knobs, ranges};
 use crate::dsp::ring::{FULL_SCALE, STAGES, WET_GAIN, smear_depth, smear_hz};
 use arena::ReverbArena;
 use burst::BurstEngine;
-use loop_engine::{Hall, Layout, LoopEngine, Room};
+use loop_engine::{Hall, Layout, LoopEngine};
 use parts::{Wander, wander_seeds};
+use room::Room;
 use sync::{FoldState, Tempo};
 
 pub use crate::dsp::ring::QuadState;
@@ -46,8 +48,8 @@ pub enum EngineState {
 /// QUAD's short-term loudness on a held −12 dBFS pink pad at MIX 0.5 (the
 /// loudest 400 ms), their peaks within 1 dB of QUAD's: a TYPE switch under
 /// a held note neither jumps nor clips (`check_sustained_loudness`).
-/// ROOM's 0.55 s holds less than QUAD's 1.9 s, so it takes 7.5 dB more;
-/// HALL, through one loop of sparse taps, 6.6 dB.
+/// ROOM's four loops at +1 and sixteen taps return 6.4 dB under QUAD's
+/// 4.54 (ADR 0095); HALL, through one loop of sparse taps, 6.6 dB over.
 pub fn wet_gain(t: ReverbType) -> f32 {
     match t {
         ReverbType::Room => WET_ROOM,
@@ -58,12 +60,16 @@ pub fn wet_gain(t: ReverbType) -> f32 {
     }
 }
 
-const WET_ROOM: f32 = 10.8;
+const WET_ROOM: f32 = 2.42;
 const WET_HALL: f32 = 9.7;
 const WET_GATE: f32 = 6.75;
 const WET_REVERSE: f32 = 7.05;
 
-const _: () = assert!(core::mem::size_of::<EngineState>() <= 160);
+/// ROOM's four loops (ADR 0095) set it: their gains, targets, dampers and
+/// four smear offsets, 84 B past ADR 0085's 160 (88 with the tests'
+/// probes).
+pub const ENGINE_STATE_MAX: usize = 248;
+const _: () = assert!(core::mem::size_of::<EngineState>() <= ENGINE_STATE_MAX);
 
 /// Blocks each fade of the switch takes: 20 ms at 48 kHz.
 pub const FADE_BLOCKS: u8 = 15;
@@ -530,15 +536,18 @@ impl Reverb {
                 b.run(&mut self.arena, &u, &kn.unwrap_or_default(), l, r);
             }
             EngineState::Room(e) => {
-                (self.paths, self.depth) = run_loop(
-                    e,
-                    &mut self.arena,
-                    &u,
-                    &kn.unwrap_or_default(),
-                    (s0, s1),
-                    (x0, x1),
-                    &mut lr,
-                );
+                // One wander a loop, its smeared allpass outside every
+                // crossfade, as HALL's.
+                let kn = kn.unwrap_or_default();
+                let full = kn.smear_ms * room::PER_MS;
+                let (d0, d1) = (s0 * full, s1 * full);
+                e.set_smear(core::array::from_fn(|k| {
+                    (d0 * (1.0 + x0[k]), d1 * (1.0 + x1[k]))
+                }));
+                self.paths = (e.crossfade().is_some(), d0 != 0.0 || d1 != 0.0);
+                self.depth = d1;
+                let [l, r] = &mut lr;
+                e.run(&mut self.arena, &u, &kn, l, r);
             }
             EngineState::Hall(e) => {
                 (self.paths, self.depth) = run_loop(
@@ -575,7 +584,7 @@ impl Reverb {
     }
 }
 
-/// A LOOP TYPE's block: its two smeared allpasses' offsets at D =
+/// HALL's block: its two smeared allpasses' offsets at D =
 /// `kn.smear_ms` × SMEAR's ease `s`, from the wanders' `x`, then the
 /// engine. Its smeared allpasses never crossfade: no SIZE move to rest
 /// for. The cap is in the knobs, and each loop's in the engine. Returns

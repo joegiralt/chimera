@@ -25,7 +25,59 @@ enum Fx {
     Reverb(ReverbParams),
 }
 
-fn cases() -> [(&'static str, Fx); 15] {
+/// ROOM at each MidiVerb II program's knobs, fitted on the Rust render
+/// by the reference harness (ADR 0095): (program, its golden's name,
+/// SIZE, DECAY, TONE, DIFFUSE, PRE-DLY, DAMP, LOOPS), SMEAR 0. Only the
+/// programs whose fit passes.
+const MV2_ROOM: &[(u8, &str, [f32; 7])] = &[
+    (
+        1,
+        "rev_room_mv01",
+        [0.42, 0.177, 0.0, 0.0, 0.0, 0.569, 0.095],
+    ), // Small Bright .1
+    (
+        2,
+        "rev_room_mv02",
+        [0.924, 0.495, 0.0, 0.01, 0.085, 0.629, 0.0],
+    ), // Small Bright .2
+    (
+        3,
+        "rev_room_mv03",
+        [0.847, 0.534, 0.0, 0.308, 0.088, 0.587, 0.233],
+    ), // Small Bright .3
+    (
+        5,
+        "rev_room_mv05",
+        [0.619, 0.702, 0.0, 0.0, 0.077, 0.346, 0.72],
+    ), // Medium Bright .6
+    (
+        8,
+        "rev_room_mv08",
+        [0.619, 0.702, 1.0, 0.09, 0.077, 0.364, 0.84],
+    ), // Medium Dark .6
+    (
+        9,
+        "rev_room_mv09",
+        [0.44, 0.736, 0.985, 1.0, 0.079, 0.0, 1.0],
+    ), // Medium Dark .5
+    (
+        10,
+        "rev_room_mv10",
+        [0.729, 0.768, 0.01, 0.86, 0.075, 0.0, 0.99],
+    ), // Medium Bright .6
+    (
+        11,
+        "rev_room_mv11",
+        [0.817, 0.791, 0.0, 0.42, 0.08, 0.352, 0.983],
+    ), // Medium Bright .8
+    (
+        14,
+        "rev_room_mv14",
+        [0.739, 0.897, 1.0, 0.637, 0.078, 0.0, 0.39],
+    ), // Medium Dark 1.0
+];
+
+fn cases() -> Vec<(&'static str, Fx)> {
     let reverb = |smear: f32, size: f32| ReverbParams {
         time: 0.7,
         damping: 0.3,
@@ -46,7 +98,7 @@ fn cases() -> [(&'static str, Fx); 15] {
         f(&mut p);
         Fx::Reverb(p)
     };
-    [
+    let mut v = vec![
         (
             "chorus_both",
             Fx::Chorus(ChorusParams {
@@ -116,7 +168,19 @@ fn cases() -> [(&'static str, Fx); 15] {
             "rev_reverse_regen",
             burst(ReverbType::Reverse, |p| p.time = 0.7),
         ),
-    ]
+    ];
+    for &(_, name, k) in MV2_ROOM {
+        let mut p = ReverbParams {
+            mix: 0.3,
+            ..Default::default()
+        }
+        .with_type(ReverbType::Room, &KnobMemory::new());
+        (
+            p.size, p.time, p.tone, p.diffuse, p.predelay, p.damping, p.shape, p.smear,
+        ) = (k[0], k[1], k[2], k[3], k[4], k[5], k[6], 0.0);
+        v.push((name, Fx::Reverb(p)));
+    }
+    v
 }
 
 /// Block `b` of the input signal; `phase` carries the saw between blocks.
@@ -174,9 +238,19 @@ const GOLDENS: &[(&str, u64)] = &[
     ("reverb_ring", 0xd17b7769e13816bf),
     ("reverb_ring_max_size", 0x83591bf24cab49f6),
     ("reverb_ring_smear", 0xa7e01c103cc02150),
-    // ROOM and HALL on the LOOP engine (reverb TYPEs T9, T10: f32 stage
-    // allpasses and unrounded dampers re-recorded ROOM).
-    ("rev_room", 0xea8831fb155bea01),
+    // ROOM v2 (ADR 0095, reverb TYPEs T9b), on program 5's knobs; HALL on
+    // the LOOP engine (T10).
+    ("rev_room", 0xed4734d2cb03a37a),
+    // ROOM v2 at each MidiVerb II program's fitted knobs (`MV2_ROOM`).
+    ("rev_room_mv01", 0x43da64962209d696),
+    ("rev_room_mv02", 0x03c37b1839ac437e),
+    ("rev_room_mv03", 0xaab609762f3bf4ba),
+    ("rev_room_mv05", 0x50a5153a08cc3f87),
+    ("rev_room_mv08", 0xd0a30dd917d701c6),
+    ("rev_room_mv09", 0x8ddef1be565aa4eb),
+    ("rev_room_mv10", 0x5be76dd563e94732),
+    ("rev_room_mv11", 0x5931b8a711f0ff3e),
+    ("rev_room_mv14", 0xf34b7015eacb49aa),
     ("rev_hall", 0x6d09691da61c04c5),
     ("rev_hall_plate", 0xcc09501b70f66688),
     // GATE and REVERSE on the BURST engine (reverb TYPEs T8).

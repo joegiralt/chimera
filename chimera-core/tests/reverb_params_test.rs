@@ -335,38 +335,41 @@ fn knobs_hit_the_spec_endpoints() {
     close(d.shape_db, 24.06, "curve default");
     assert!(d.rising);
     let m = |f: &dyn Fn(&mut ReverbParams)| at(ReverbType::Room, f);
-    close(m(&|p| p.size = 0.0).length_ms, 100.0, "room size 0");
-    close(m(&|p| p.size = 1.0).length_ms, 200.0, "room size 1");
+    // SIZE is loop A's round trip, `lin` in k 0.4 → 1 (ADR 0095): 42.3 ms
+    // of allpasses and 94.6 ms of delays × k.
+    close(m(&|p| p.size = 0.0).length_ms, 80.14, "room size 0");
+    close(m(&|p| p.size = 0.5).length_ms, 108.52, "room size ½");
+    close(m(&|p| p.size = 1.0).length_ms, 136.9, "room size 1");
     close(m(&|p| p.time = 0.0).rt60_s, 0.2, "decay 0");
-    close(m(&|p| p.time = 1.0).rt60_s, 1.5, "decay 1");
+    close(m(&|p| p.time = 1.0).rt60_s, 2.0, "decay 1");
+    close(m(&|p| p.damping = 0.0).damp_hz, 10_000.0, "room damp 0");
+    close(m(&|p| p.damping = 1.0).damp_hz, 1_500.0, "room damp 1");
+    close(m(&|p| p.shape = 0.0).shape_db, 0.0, "loops 0");
+    close(m(&|p| p.shape = 1.0).shape_db, 90.0, "loops 1");
     close(m(&|p| p.tone = 0.0).tone_hz, 10_000.0, "room tone 0");
     close(m(&|p| p.tone = 1.0).tone_hz, 2_500.0, "room tone 1");
-    close(m(&|p| p.diffuse = 0.0).diffuse_g, 0.5, "diffuse 0");
-    close(m(&|p| p.diffuse = 1.0).diffuse_g, 0.75, "diffuse 1");
+    close(m(&|p| p.diffuse = 0.0).diffuse_g, 0.45, "diffuse 0");
+    close(m(&|p| p.diffuse = 1.0).diffuse_g, 0.70, "diffuse 1");
     close(m(&|p| p.predelay = 0.0).predelay_ms, 0.0, "pre 0");
     close(m(&|p| p.predelay = 1.0).predelay_ms, 50.0, "pre 1");
     close(
         m(&|p| (p.smear, p.size) = (1.0, 1.0)).smear_ms,
-        1.0,
-        "smear 1",
+        0.0072 * 136.9,
+        "smear 1, at the cap",
     );
     close(m(&|p| p.rate = 0.0).rate_hz, 0.1, "room rate 0");
     close(m(&|p| p.rate = 1.0).rate_hz, 1.0, "room rate 1");
     let d = m(&|_| {});
-    close(d.length_ms, 141.42, "room size default");
-    close(d.rt60_s, 0.5477, "room decay default");
-    close(d.tone_hz, 6_597.5, "room tone default");
-    close(d.diffuse_g, 0.6, "room diffuse default");
-    close(d.predelay_ms, 5.0, "room pre default");
+    // MidiVerb II program 5's fitted knobs (ADR 0095), SMEAR 0.3.
+    close(d.length_ms, 115.27, "room size default");
+    close(d.rt60_s, 1.007, "room decay default");
+    close(d.tone_hz, 10_000.0, "room tone default");
+    close(d.diffuse_g, 0.45, "room diffuse default");
+    close(d.predelay_ms, 3.85, "room pre default");
+    close(d.damp_hz, 5_187.1, "room damp default");
+    close(d.shape_db, 64.8, "room loops default");
     close(d.smear_ms, 0.3, "room smear default");
     close(d.rate_hz, 0.3162, "room rate default");
-    // Its one damper is fixed (no DAMP cell): DAMP's slot moves nothing.
-    close(d.damp_hz, 8_000.0, "room damper");
-    close(
-        m(&|p| p.damping = 1.0).damp_hz,
-        8_000.0,
-        "room damper, DAMP 1",
-    );
     // HALL, above its plate zone (SIZE ≥ 0.15).
     let h = |f: &dyn Fn(&mut ReverbParams)| at(ReverbType::Hall, f);
     close(h(&|p| p.size = 0.0).length_ms, 120.0, "hall size 0");

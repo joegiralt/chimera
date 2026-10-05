@@ -49,10 +49,11 @@ const BEFORE: usize = 30;
 /// The tone burst's blocks, and the switch's first block: mid-tail, its
 /// `BEFORE` window all tail.
 const BURST: usize = 20;
-/// Blocks ROOM's and HALL's bursts come earlier: ROOM's longest fixed tap
-/// (84 ms) replays the burst until about 110 ms (block 85), its tail up to
-/// 3× rougher while that ends; its `BEFORE` window then starts at block
-/// 95. HALL's right side first hears it only through S1 (59 ms) and
+/// Blocks ROOM's and HALL's bursts come earlier. ROOM on its starting
+/// knobs (MidiVerb II program 5's) settles about 0.1 s past its burst: at
+/// 0 its switch window reads 1.3× rougher than the window before it, at
+/// 200 the gain-jump control is lost in it; 70 passes both. HALL's right
+/// side first hears it only through S1 (59 ms) and
 /// PRE-DLY (19 ms), and its tail is 2 kHz-rough until the dampers have
 /// darkened it: a one-step gain jump (the bound's negative control) is
 /// lost in it until about 0.8 s (block 600; 200 and 400 still lose it).

@@ -289,10 +289,22 @@ pub(crate) fn segment<const N: usize>(
 /// which store as written: the LOOP engine's stage allpasses, and the
 /// level plan's unquantised reference (tests).
 pub(crate) trait Lines {
+    /// Reads summed exactly: i32 on the i16 lines (16 of them stay under
+    /// 2²⁴, so the f32 they convert to is the f32 sum), f32 on the f32
+    /// ones.
+    type Sum: Copy
+        + Default
+        + core::ops::Add<Output = Self::Sum>
+        + core::ops::Sub<Output = Self::Sum>;
     fn len(&self) -> usize;
     /// # Safety
     /// `i` < `len()`.
     unsafe fn rd(&self, i: usize) -> f32;
+    /// `rd`, unconverted, to sum.
+    /// # Safety
+    /// `i` < `len()`.
+    unsafe fn rd_sum(&self, i: usize) -> Self::Sum;
+    fn sum_f32(s: Self::Sum) -> f32;
     /// A truncating write (allpass states, a feedback line).
     /// # Safety
     /// `i` < `len()`.
@@ -309,8 +321,21 @@ pub(crate) trait Lines {
 }
 
 impl Lines for [i16] {
+    type Sum = i32;
+
     fn len(&self) -> usize {
         <[i16]>::len(self)
+    }
+
+    #[inline(always)]
+    unsafe fn rd_sum(&self, i: usize) -> i32 {
+        // SAFETY: the caller keeps `i` < `len()`.
+        (unsafe { *self.get_unchecked(i) }) as i32
+    }
+
+    #[inline(always)]
+    fn sum_f32(s: i32) -> f32 {
+        s as f32
     }
 
     #[inline(always)]
@@ -341,8 +366,21 @@ impl Lines for [i16] {
 /// Unquantised lines: the LOOP engine's f32 stage allpasses, and (tests)
 /// the level plan's reference.
 impl Lines for [f32] {
+    type Sum = f32;
+
     fn len(&self) -> usize {
         <[f32]>::len(self)
+    }
+
+    #[inline(always)]
+    unsafe fn rd_sum(&self, i: usize) -> f32 {
+        // SAFETY: the caller keeps `i` < `len()`.
+        unsafe { *self.get_unchecked(i) }
+    }
+
+    #[inline(always)]
+    fn sum_f32(s: f32) -> f32 {
+        s
     }
 
     #[inline(always)]

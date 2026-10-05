@@ -1543,6 +1543,57 @@ BUS+V's frame is QUAD_BUS_V + ΔCOST, so ΔCOST = that row − QUAD_BUS_V.
 - **Goldens:** `rev_hall`, `rev_hall_plate` (MIX 0.3); `rev_room`
   re-recorded (f32 stage allpasses, unrounded dampers).
 
+### Task 9b: ROOM v2 (2026-10-05, host; unit deferred)
+
+- **MidiVerb II fit** (reference harness, on the Rust render, 16 noise
+  seeds; ADR 0095's bar). All nine ROOM programs pass:
+
+| # | Preset | RT60 250–4k (%) | Pre (ms) | C50 (dB) | NED 20/50/100 (%) | Centroid (%) |
+|---|---|---|---|---|---|---|
+| 1 | Small Bright .1 | +1, +2, −4, +4, +4 | +0.7 | +0.5 | −4, −8, −6 | −0 |
+| 2 | Small Bright .2 | +4, −1, −3, +1, −0 | +0.2 | −0.4 | −2, +4, +3 | −2 |
+| 3 | Small Bright .3 | −2, −1, +1, −2, +2 | +0.0 | +0.0 | −1, −5, +7 | −3 |
+| 5 | Medium Bright .6 | −3, −0, −3, +0, +3 | −0.1 | +1.0 | −8, −5, −3 | −5 |
+| 8 | Medium Dark .6 | −2, −1, −1, +1, +1 | −0.1 | +0.5 | −8, −4, +4 | −1 |
+| 9 | Medium Dark .5 | −2, −1, +2, +4, −5 | +0.0 | −0.2 | −7, +7, +2 | +0 |
+| 10 | Medium Bright .6 | −3, +4, +2, −5, −1 | −0.2 | −0.7 | −4, +5, +5 | +3 |
+| 11 | Medium Bright .8 | −3, +3, +2, +2, −0 | +0.0 | +0.8 | −0, −2, +7 | −3 |
+| 14 | Medium Dark 1.0 | +3, −0, −2, +1, −3 | −0.1 | −0.8 | −3, +0, +0 | +3 |
+
+  Several pass with little margin: #1's 1 kHz and 4 kHz RT60 sit −4.2
+  and +4.3 %, #5's C50 +0.97 dB and centroid −4.9 %, #9's 4 kHz and #10's
+  2 kHz −5 %. Rounding the knobs to 3 places tipped #3 and #9 over; both
+  were refit on that grid.
+- **Fitted knobs** (SIZE, DECAY, TONE, DIFFUSE, PRE-DLY, DAMP, LOOPS;
+  SMEAR 0), fitted on the Rust render from the float model's fits mapped
+  through the Rust laws, never copied: `fx_golden_test`'s `MV2_ROOM`.
+  START is program 5's, with SMEAR 0.3.
+- **Near misses:** DAMP's top opening the dampers passed #10 and #14
+  outright and let #9 pass after a refit. The tap weight tied to θ was not
+  built: it scales every tap alike, and every judged metric is level-free.
+- **Cost (no unit reading; instruction counts of the bench's REV ROOM
+  settings in a Cortex-M7 emulator, `bench,orbit`-equivalent release):**
+  QUAD at its defaults (the MIX row) 276.5, QUAD at the REV QUAD settings
+  328.2, Task 9's ROOM 312.8, ROOM v2 524.2 instructions an output sample
+  (`Room::run` about 600 a ring sample). Against Task 9's ROOM's unit
+  reading (17 cycles for 36 instructions over the MIX row), REV ROOM
+  reads about 117 cycles: **ΔCOST about +62 (default, gate 76)**. The
+  tape build read Task 9's ROOM 24 cycles higher: about 141, **ΔCOST
+  about +70 against the tape's 23: over**, for the owner. The unit decides.
+- **Arena:** 10,530 i16 + 5,124 f32 = 20,778 of 23,220 slots (each line
+  keeps one block's guard: +1,120).
+- **Flash:** plain release `text` 752,512 B, +12,768 over `aeb85960`.
+- **WET_ROOM 2.42:** short-term loudness −6.72 dB against QUAD's −6.73,
+  peak +3.99 dBFS against +5.95. Noise floor 5.3 dB (QUAD 12.1), 4.0 at
+  DIFFUSE 1.
+- **Host readings** (`reverb_loop_test`): 1 kHz RT60 0.209, 0.643 and
+  1.960 s at DECAY 0, ½ and 1 (targets 0.2, 0.632, 2.0); first arrival
+  0.52 ms past the bus's half-bands at every SIZE; SIZE 0 → 1 lands in 14
+  crossfades; θ 90° holds the pulse in A alone 164 blocks and B alone
+  153, never both.
+- **Goldens:** `rev_room` re-recorded, `rev_room_mv01`–`mv14` added;
+  `rev_hall` and `rev_hall_plate` unchanged.
+
 ---
 
 ## Self-review
