@@ -110,8 +110,9 @@ code 23, ident `"TAPE"`, ADR 0055).
     per voice: its offsets' sum is the deviation in cents (±25 of wow,
     ±8 of flutter), added to `inc`'s sum before the clamp, so the floors
     take the wow and no head passes `INC_MAX`. Each voice is seeded by its
-    index, its phases a golden ratio of a turn apart and its rates 5–10 %
-    off, so voices drift apart (TAPE Task 9). It runs, and is billed, when
+    index, its phases a golden ratio of a turn apart; each note draws its
+    wow rate within ±10 %, the phase running on, so voices' wows never
+    lock (TAPE Task 9). It runs, and is billed, when
     stored above 0 or routed (`tape_runs`).
   - AGE is a falling one-pole (20 kHz to 2.5 kHz), white hiss to
     −42 dBFS after the dropout gain, and above ½ dropouts of up to 9 dB
@@ -222,20 +223,21 @@ code 23, ident `"TAPE"`, ADR 0055).
 
   | | LOOP, REVERSE | PING-PONG | SCRUB | TRANSWAVE | TRANSWAVE, pitch moving > ±6.2 st | STRETCH | TAPE on | AGE on |
   |---|---|---|---|---|---|---|---|---|
-  | Billed | 450 | 490 | 480 | 400 | 770 | 430 | +10 | +30 |
+  | Billed | 450 | 490 | 480 | 400 | 770 | 440 | +10 | +30 |
 
-  TAPE Task 9 (fix round 1) measured the macros' tests at 0.52
-  instructions a sample on every model (PING-PONG 489, STRETCH 429.9,
-  TRANSWAVE 398), TAPE's transport at 1.14 (+10, billed only when it
-  runs) and AGE at 15.9: AGE's +20 (an estimate that left out its loop
-  and its block) became +30.
+  TAPE Task 9 (fix rounds 1 and 2) measured the macros' tests at 0.44
+  instructions a sample on every model (PING-PONG 489, TRANSWAVE 398,
+  STRETCH 429.7, billed 440 for margin with its bench row a hard gate),
+  TAPE's transport at 1.2 (+10, billed only when it runs) and AGE at
+  15.9: AGE's +20 (an estimate that left out its loop and its block)
+  became +30.
 
   - **Admission.** Every plain TAPE voice is admitted 8 on rev V, and
     with ORBIT and the master tape but for TAPE and AGE on PING-PONG (7
     with both) and SCRUB (7 with the master tape); 7 or 6 with DRIVE and
     FOLD. On rev Y, TRANSWAVE with TAPE and AGE off (477) keeps 8 by one
-    cycle; STRETCH (507) and LOOP and REVERSE (527) with them off, and
-    TRANSWAVE with them (517), 7; STRETCH with them (547), LOOP and
+    cycle; STRETCH (517) and LOOP and REVERSE (527) with them off, and
+    TRANSWAVE with them (517), 7; STRETCH with them (557), LOOP and
     REVERSE with them, SCRUB and PING-PONG 6; with DRIVE and FOLD, 5 or 6.
     A TRANSWAVE whose pitch can move past ±6.2 semitones (887 with TAPE
     and AGE) is admitted 4 on rev Y and 5 on rev V.
