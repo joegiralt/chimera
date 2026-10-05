@@ -364,6 +364,41 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
     them hot on sustained notes. The test is the loudest 400 ms of a held
     −12 dBFS pink pad at MIX 0.5, within ±1 dB, with the peak at most 1 dB
     over QUAD's. WET is 6.75 for GATE and 7.05 for REVERSE.
+- **ROOM, as built (Task 9, 2026-10-05).** The following departures from
+  the spec are accepted.
+  - **A crossfade moves one stage delay a loop, by at most 5 ms, and every
+    loop in the same crossfade:** the delay farthest from its goal. Moving
+    both delays of a loop by k stepped them by unrelated amounts (44 and 74
+    samples), so their two combs didn't line up, and a held tone's phase
+    scrambled: its settled peak sat 28 Hz off at a 5 Hz mode spacing. One
+    5 ms slice is the spec's own comb at 200 Hz spacing; the peak settles
+    within 1/L, and moves 3.9 cents at most while it slides.
+  - **The re-entries and the in-loop allpass states write by
+    `store_settle`:** rounding, but 0 under 1 LSB. With rounding re-entries
+    and truncating states, ROOM held a 1080 Hz cycle at −86 dB for good: a
+    normalised allpass truncates only its scaled state, and 0.6 of 1 LSB
+    rounds back up through the loop. A truncating re-entry kills it too,
+    but its error is a square wave on a held tone's sign, 1.4 dB on the
+    floor; settled states sit 1 dB under truncated ones.
+  - **No `t_min` floors ROOM's DECAY.** The stage allpasses take DIFFUSE's
+    g held to the stage gain at the longest one's length, so their own ring
+    never outlasts the RT60 (it binds below about 0.33 s). Without it,
+    DIFFUSE 1 at DECAY 0 rang 0.37 s for 0.2; QUAD's rule would floor DECAY
+    at 0.47 s, a third of the knob.
+  - **ROOM's RT60 and slap are judged from 100 ms after the send.** Before
+    then its longest fixed tap (84 ms) replays the send, and the diffuser
+    rings out as an echo train at its own lengths: they are not the tail.
+  - **ROOM's SMEAR bound is held in the engine:** each smeared read stays in
+    [M − 2D, M], 2D ≤ 1.45 % of its own loop's trip at every SIZE, which is
+    the spec's 25 cents. Zero crossings can't judge two coupled loops 100
+    and 95.4 ms long: a still ROOM reads ±45 cents pass to pass. Loop B is
+    held to its own trip's cap, up to 5 % under A's, which the panel shows.
+    A held tone's tail keeps its spectral peak within 25 cents of SMEAR 0's
+    (2.8 cents at SMEAR 1, RATE 1).
+  - **The switch test starts ROOM's tone burst 70 blocks early,** past the
+    same 84 ms tap, whose end makes ROOM's own tail 3× rougher.
+  - **WET is 10.8**, by the held-input loudness rule: ROOM's 0.55 s holds
+    less than QUAD's 1.9 s.
 - **Interactions.**
   - A TYPE switch drops about 5.3 ms of send and dips the return for about
     45 ms; sweeps list this as by design.
