@@ -270,21 +270,21 @@ the ban on 2026-10-05.
     held to √ of the open loop's: DC rings at most twice DECAY (fix round
     1; uncapped, SWELL 0 at TONE 1 rang 60 Hz for 139 s at DECAY 1). The
     cap binds only at dark TONE with long DECAY: there 1 kHz falls short
-    (about 8.5 s against 12 at SWELL 0, TONE 1); never at the presets. At SWELL 0
-    DECAY 0, ½ and 1 read 2.04, 4.82 and 11.73 s. At the starting SWELL
+    (10.2–10.8 s measured against 12 at SWELL 0, TONE 1); never at the
+    presets. At SWELL 0 DECAY 0, ½ and 1 read 2.04, 4.82 and 11.69 s. At the starting SWELL
     DECAY 0 is three trips of a 0.7 s loop, a staircase, whose T20 read
     12 % short.
   - **The cascade's states settle** (`store_settle`), as ROOM's
     re-entries: the return reaches exact zero from DECAY 1.
-  - **WET_BLOOM 6.43, by the held-input loudness rule** every other TYPE's
-    return gain follows (−6.35 dB against QUAD's −6.73; peak +5.5 dBFS
+  - **WET_BLOOM 5.72, by the held-input loudness rule** every other TYPE's
+    return gain follows (−6.70 dB against QUAD's −6.73; peak +5.4 dBFS
     against +5.95), not the burst rule the plan named.
   - **DECAY in beats marks a clamped count** ▴ or ▾, as a folded note
     is: at 120 BPM 1–3 beats play BLOOM's 2 s floor, 32 its 12 s top.
-  - **The noise floor is over the plan's bound:** 16.7 dB against QUAD's
-    12.0 at DECAY 0 (+4.7; bound 4), 19.2 at DIFFUSE 1 (+7.2; bound 6).
-    Fifteen normalised states, each error read × 1/(1 − g), behind a
-    return gain 8.5 dB over ROOM's.
+  - **The noise floor is inside the plan's bound:** 15.6 dB against
+    QUAD's 12.0 at DECAY 0 (+3.6; bound 4), 17.9 at DIFFUSE 1 (+5.9; bound
+    6): fifteen normalised states, each error read × 1/(1 − g). The tests
+    hold +4 and +6.5.
   - **SMEAR's window mean drifts 1.25 cents** at the cap (bound 1): the
     three smeared lines share one loop, so a 4/RATE window's eight targets
     leave its mean about 1.4 cents (1σ) off. Per pass it holds 25 cents,

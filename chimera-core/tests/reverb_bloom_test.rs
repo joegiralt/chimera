@@ -718,8 +718,9 @@ fn bloom_knobs_ease() {
 /// held pad, its peak within 1 dB (`WET_BLOOM`, the rule every TYPE's
 /// return gain follows). Its noise floor, at DECAY 0 (at the start's 11 s
 /// the sine's own onset still rings 2 s on, far above any floor), within
-/// 5.5 dB of QUAD's, 8 dB at DIFFUSE 1: 15 normalised states, each
-/// error read × 1/(1 − g). (The spec asked 4 and 6; it reads 3.6 and 5.9.)
+/// 4 dB of QUAD's (it reads 3.6), 6.5 dB at DIFFUSE 1 (it reads 5.9; the
+/// spec's 6 would leave 0.1 dB): 15 normalised states each read their
+/// error × 1/(1 − g), 2.9 at g 0.65.
 #[test]
 fn bloom_noise_and_loudness() {
     let q = ReverbParams {
@@ -730,7 +731,7 @@ fn bloom_noise_and_loudness() {
     let (rv, pc) = (fresh(&p), RefCell::new(p));
     let (qv, qc) = (fresh(&q), RefCell::new(q));
     check_sustained_loudness(&mut bus(&rv, &pc), &mut bus(&qv, &qc));
-    for (diffuse, extra) in [(p.diffuse, 5.5), (1.0, 8.0)] {
+    for (diffuse, extra) in [(p.diffuse, 4.0), (1.0, 6.5)] {
         let p = ReverbParams {
             diffuse,
             time: 0.0,
