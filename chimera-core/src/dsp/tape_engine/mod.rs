@@ -12,12 +12,15 @@
 //! to a stop there over 1 ms so the wave has no corner; new bounds latch at
 //! a turn, and a head far outside them moves under a 5 ms fade. SCRUB
 //! (Morphagene manual, Slide and Vari-Speed) loops behind a finger that
-//! follows POSITION through DRAG; MOTION is its vari-speed. TRANSWAVE and
-//! STRETCH play as LOOP until their kernels land.
+//! follows POSITION through DRAG; MOTION is its vari-speed. TRANSWAVE
+//! (Ensoniq VFX/SD-1 transwaves; PPG Wave and Waldorf Microwave mips) scans
+//! a table of single-cycle frames (`wave`). STRETCH plays as LOOP until its
+//! kernel lands.
 
 pub mod heads;
 pub mod params;
 pub mod read;
+pub mod wave;
 
 use core::mem::MaybeUninit;
 
@@ -30,6 +33,7 @@ use heads::{
     Bounds, Fade, Ghost, Head, Plan, Turn, at, plan, shortest, window_end_min, window_start,
 };
 use read::{Pos, SourceView};
+use wave::Wave;
 
 pub use heads::loop_len;
 pub use params::{StretchType, TAPE_ENGINE_SPECS, TapeEngineParams, TapeModel, drag_s};
@@ -149,6 +153,9 @@ pub struct Probe {
     pub gain: f32,
     /// TRANSWAVE's `log2 N`.
     pub level: u8,
+    /// TRANSWAVE's level change this block: the level it fades from (four
+    /// heads read).
+    pub from: Option<u8>,
 }
 
 /// What a wrap or a turn reads from the block's params: END (START, for
@@ -183,6 +190,8 @@ pub struct TapeEngine {
     stopped: bool,
     hush: f32,
     hush_step: f32,
+    /// TRANSWAVE's note: its frames, level and scan.
+    wave: Wave,
     /// SCRUB: the loop's speed in frames a sample at the last block's end,
     /// signed; DRAG's one-pole share a block.
     speed: f32,
@@ -260,6 +269,7 @@ impl TapeEngine {
             stopped: false,
             hush: 1.0,
             hush_step: 1.0,
+            wave: Wave::IDLE,
             speed: 0.0,
             pull: 1.0,
             n: 2,
@@ -352,6 +362,12 @@ impl TapeEngine {
         self.hush_step = BLOCK_SIZE as f32 / (HUSH_S * sample_rate as f32);
         self.speed = 0.0;
         self.pull = 1.0 - libm::expf(-(BLOCK_SIZE as f32) / (drag_s(p.drag) * sample_rate as f32));
+        self.ramp = true;
+        self.active = true;
+        if self.model == TapeModel::Transwave {
+            self.wave = Wave::on(v, wave::cycles(note, self.pitch, sample_rate));
+            return;
+        }
         let (start, end) = self.window(p);
         self.ws = window_start(start, frames);
         // The first pass's floor, at the note's own `inc` (SCRUB: its loop's
@@ -410,8 +426,6 @@ impl TapeEngine {
         self.gain = 0.0;
         self.event = self.bounds.fade_at();
         self.runup = true;
-        self.ramp = true;
-        self.active = true;
     }
 
     /// START and END as the model plays them: REVERSE's window is mirrored,
@@ -492,6 +506,16 @@ impl TapeEngine {
     }
 
     pub fn probe(&self) -> Probe {
+        if self.model == TapeModel::Transwave {
+            let (head, other, gain) = self.wave.frames();
+            return Probe {
+                head,
+                other: Some(other),
+                gain,
+                level: self.wave.level(),
+                from: self.wave.from(),
+            };
+        }
         let first = self.frame(self.heads[0].pos);
         match self.ghost {
             // The head left outside fades out; the one inside fades in.
@@ -500,12 +524,14 @@ impl TapeEngine {
                 other: Some(first),
                 gain: self.gain,
                 level: 0,
+                from: None,
             },
             None => Probe {
                 head: first,
                 other: self.fade.map(|_| self.frame(self.heads[1].pos)),
                 gain: self.gain,
                 level: 0,
+                from: None,
             },
         }
     }
@@ -541,11 +567,47 @@ impl TapeEngine {
         } else {
             self.mac.ease(&to);
         }
+        self.slide.tick();
+        if self.model == TapeModel::Transwave {
+            let target = clampf(
+                wave::cycles(self.note, self.pitch, sample_rate) * self.slide.value(),
+                f32::EPSILON,
+                wave::CYCLES_MAX,
+            );
+            let m = self.mac;
+            self.wave.render(
+                out,
+                v,
+                self.inc.step(target),
+                (m.position, m.motion, m.size),
+                (first, sample_rate),
+            );
+        } else {
+            self.render_heads(out, v, (p, first), sample_rate);
+        }
+
+        if core::mem::take(&mut self.ramp) {
+            let last = self.last;
+            for (i, y) in out[..NOTE_ON_RAMP as usize].iter_mut().enumerate() {
+                *y = last + (*y - last) * (i as f32 / NOTE_ON_RAMP as f32);
+            }
+        }
+        self.last = out[BLOCK_SIZE - 1];
+    }
+
+    /// The block of a model that plays heads through a window: all but
+    /// TRANSWAVE.
+    fn render_heads(
+        &mut self,
+        out: &mut [f32; BLOCK_SIZE],
+        v: &SourceView<'_>,
+        (p, first): (&TapeEngineParams, bool),
+        sample_rate: u32,
+    ) {
         let w = self.walk + self.mac.motion * BLOCK_SIZE as f32 / sample_rate as f32;
         self.walk = w - libm::floorf(w);
 
         let rate = v.desc().rate;
-        self.slide.tick();
         let target = clampf(
             inc(rate, self.note, self.pitch, self.root, sample_rate) * self.slide.value(),
             f32::EPSILON,
@@ -613,14 +675,6 @@ impl TapeEngine {
         if scrub {
             self.hush_block(out, first);
         }
-
-        if core::mem::take(&mut self.ramp) {
-            let last = self.last;
-            for (i, y) in out[..NOTE_ON_RAMP as usize].iter_mut().enumerate() {
-                *y = last + (*y - last) * (i as f32 / NOTE_ON_RAMP as f32);
-            }
-        }
-        self.last = out[BLOCK_SIZE - 1];
     }
 
     /// SCRUB's block (spec § 2 SCRUB): the loop's speed is MOTION's

@@ -12,13 +12,16 @@ use chimera_core::dsp::tape_engine::{
     drag_s, loop_len,
 };
 use chimera_hal::BLOCK_SIZE;
-use common::tape::{held_plain, saw_with_burst, sine};
+use common::tape::{held_plain, held_transwave, saw_with_burst, sine};
 
 const SR: u32 = 48_000;
 /// The bills (spec § 5) the shortest-loop timings are held under.
 const LOOP_BILL: f64 = 450.0;
 const PING_PONG_BILL: f64 = 490.0;
 const SCRUB_BILL: f64 = 480.0;
+/// TRANSWAVE's (spec § 5): two heads; four in a level change's block.
+const WAVE_BILL: f64 = 400.0;
+const WAVE_CHANGE_BILL: f64 = 770.0;
 const B: usize = BLOCK_SIZE;
 
 fn fresh() -> TapeEngine {
@@ -1055,6 +1058,73 @@ fn tiny_loops_cost_within_their_bills() {
             cycles <= slack * bill(model),
             "{name}: about {cycles:.0} cycles, billed {}",
             bill(model)
+        );
+    }
+}
+
+/// TRANSWAVE's bills (spec § 5), in host time against LOOP's fade path as
+/// `tiny_loops_cost_within_their_bills` measures, the block's own work
+/// included: a 32-frame table at top 1 024 scanned at MOTION 1, SIZE 1,
+/// two heads; and a pitch route stepping up 12 st a block through six
+/// levels (a drop each block) and back at once (held a block, then a rise
+/// of six), so seven blocks in eight change level and read four heads, the
+/// eighth taken out at the steady path's time.
+///
+/// Host timing is load-sensitive: run it alone, `cargo test --release -p
+/// chimera-core --test tape_models_test transwave_costs -- --ignored`.
+#[test]
+#[ignore = "load-sensitive host timing; the bench rows replace it"]
+fn transwave_costs_within_its_bills() {
+    let long = held_plain(&sine(48_000, 100.7, 480_000), 48_000);
+    let lv = SourceView::strict(&long).unwrap();
+    let held = held_transwave(1_024, 32, |f, h| (f + 1) as f32 * 0.01 / h as f32);
+    let wv = SourceView::strict(&held).unwrap();
+    let blocks = 24_000;
+    let fade = host_time(
+        &|_| TapeEngineParams {
+            xfade: 0.5,
+            ..TapeEngineParams::default()
+        },
+        &lv,
+        (60, 0.0),
+        blocks,
+    );
+    let scan = |_| TapeEngineParams {
+        model: TapeModel::Transwave,
+        position: 0.5,
+        motion: 1.0,
+        size: 1.0,
+        ..TapeEngineParams::default()
+    };
+    let steady = host_time(&scan, &wv, (24, 0.0), blocks) / fade;
+    // Seven changes in eight blocks; `host_time` only sets the pitch at the
+    // note-on, so the pattern runs here, best of seven.
+    let mut best = f64::MAX;
+    for _ in 0..7 {
+        let mut e = fresh();
+        e.note_on(24, &scan(0), &wv, SR);
+        let mut b = [0.0; BLOCK_SIZE];
+        let t = std::time::Instant::now();
+        for n in 0..blocks {
+            let k = n % 8;
+            e.set_pitch(if k < 7 { 1_200.0 * k as f32 } else { 0.0 });
+            e.render(&mut b, &scan(n), &wv, SR);
+            std::hint::black_box(&b);
+        }
+        best = best.min(t.elapsed().as_secs_f64());
+    }
+    let mixed = best / fade;
+    let change = (8.0 * mixed - steady) / 7.0;
+    let slack = if cfg!(debug_assertions) { 1.5 } else { 1.05 };
+    for (name, ratio, heads, bill) in [
+        ("steady", steady, 2.0, WAVE_BILL),
+        ("level change", change, 4.0, WAVE_CHANGE_BILL),
+    ] {
+        let cycles = ratio * 217.0 * 1.46 * 1.1 + 12.0 * heads;
+        eprintln!("TRANSWAVE {name}: {ratio:.2} × LOOP's fade, about {cycles:.0} cycles");
+        assert!(
+            cycles <= slack * bill,
+            "{name}: about {cycles:.0}, billed {bill}"
         );
     }
 }

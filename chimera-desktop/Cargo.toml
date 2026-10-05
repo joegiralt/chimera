@@ -11,9 +11,11 @@ cpal = "0.15"
 midir = { version = "0.10", optional = true }
 embedded-graphics = "0.8"
 embedded-graphics-core = "0.4"
-# The TAPE importer (spec § 6), host only: WAV reading and the sinc resampler.
+# The TAPE importer (spec § 6), host only: WAV reading, the sinc resampler
+# and the transwave mips' FFT.
 hound = "3.5"
 rubato = { version = "5.0", default-features = false }
+rustfft = "6"
 
 [features]
 default = ["midi"]

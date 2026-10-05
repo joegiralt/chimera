@@ -2,7 +2,9 @@
 //! each source into `target/listen/` (48 kHz, 16-bit, mono WAVs), with
 //! `report.txt` and, when every render passes QA, `index.html`.
 //!
-//! `chimera` is two Chimera renders: factory slot 0 (ALGO) and INIT MODAL.
+//! `chimera` is two Chimera renders, factory slot 0 (ALGO) and INIT MODAL,
+//! and for TRANSWAVE a third, MORPH PAD with MORPH swept: TRANSWAVE plays
+//! 16 cycles cut from it, and from each WAV.
 //! A WAV must be credited in `tools/factory-tapes/listen.toml`; a bare file
 //! name is looked for in `$CHIMERA_TAPES_SRC` (`~/chimera-tapes-src`).
 
@@ -12,8 +14,8 @@ use chimera_core::dsp::tape_engine::TapeModel;
 use chimera_core::factory::FACTORY_LEN;
 use chimera_desktop::import::tape::convert::{Channel, Mono, Pitch, read_wav};
 use chimera_desktop::listen::{
-    Src, chimera_source, credits, dry, file_name, held_from, model_slug, page, qa, render,
-    root_note, script,
+    Src, chimera_morph_sweep, chimera_source, credits, dry, file_name, held_from, held_transwave,
+    model_slug, page, qa, render, root_note, script,
 };
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -24,6 +26,8 @@ const RATE: u32 = 24_000;
 /// A Chimera source's note and hold.
 const NOTE: u8 = 48;
 const HOLD_S: f32 = 2.0;
+/// A transwave's frames, cut from each source.
+const WAVE_FRAMES: usize = 16;
 /// The WAVs' ends fade over 10 ms, so a player stopping there never clicks.
 const FADE: usize = 480;
 
@@ -60,13 +64,26 @@ fn run() -> Result<bool, String> {
     let text = std::fs::read_to_string(format!("{ROOT}/tools/factory-tapes/listen.toml"))
         .map_err(|e| format!("listen.toml: {e}"))?;
     let credits = credits(&text)?;
+    // Each source, and whether TRANSWAVE (`Some(true)`), the others
+    // (`Some(false)`) or every model (`None`) plays it.
     let mut sources = Vec::new();
     for s in &srcs {
         if s == "chimera" {
-            sources.push(chimera(0, "TX BASS", "tx-bass"));
-            sources.push(chimera(FACTORY_LEN + 1, "INIT MODAL", "init-modal"));
+            let (a, b) = (
+                chimera(0, "TX BASS", "tx-bass"),
+                chimera(FACTORY_LEN + 1, "INIT MODAL", "init-modal"),
+            );
+            let src = Src {
+                slug: "morph-sweep".into(),
+                title: "MORPH PAD, MORPH 0→127".into(),
+                ..a.0.clone()
+            };
+            sources.push((a.0, a.1, Some(false)));
+            sources.push((b.0, b.1, Some(false)));
+            sources.push((src, chimera_morph_sweep(NOTE, HOLD_S), Some(true)));
         } else {
-            sources.push(wav(s, &credits)?);
+            let (src, mono) = wav(s, &credits)?;
+            sources.push((src, mono, None));
         }
     }
 
@@ -76,7 +93,15 @@ fn run() -> Result<bool, String> {
     // A page from an earlier run never outlives this one's QA.
     let _ = std::fs::remove_file(&index);
     let (mut report, mut rows, mut pass) = (String::new(), Vec::new(), true);
-    for (src, mono) in &sources {
+    for (src, mono, only) in &sources {
+        let models: Vec<TapeModel> = models
+            .iter()
+            .copied()
+            .filter(|&m| only.is_none_or(|w| w == (m == TapeModel::Transwave)))
+            .collect();
+        if models.is_empty() {
+            continue;
+        }
         let (held, pitch) = held_from(mono, RATE).map_err(|e| format!("{}: {e}", src.slug))?;
         let note = root_note(pitch);
         let pitch_txt = match pitch {
@@ -94,7 +119,19 @@ fn run() -> Result<bool, String> {
         );
         let d = dry(mono);
         for &m in &models {
-            let wet = render(m, &held, pitch, note, &script(m));
+            let wet = if m == TapeModel::Transwave {
+                let (wave, cycle) =
+                    held_transwave(mono, WAVE_FRAMES).map_err(|e| format!("{}: {e}", src.slug))?;
+                let _ = writeln!(
+                    report,
+                    "{}: TRANSWAVE of {WAVE_FRAMES} cycles of {cycle:.2} samples at 48 kHz, {} B held",
+                    src.slug,
+                    wave.len()
+                );
+                render(m, &wave, pitch, note, &script(m))
+            } else {
+                render(m, &held, pitch, note, &script(m))
+            };
             for (kind, x) in [("dry", &d), ("wet", &wet)] {
                 let q = qa(x);
                 pass &= q.passes();

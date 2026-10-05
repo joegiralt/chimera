@@ -14,11 +14,13 @@ use chimera_core::storage::twelve::pack12;
 use chimera_hal::BLOCK_SIZE;
 use common::XorShift;
 
-/// The models these runs play; Tasks 7–8 add theirs.
-const MODELS: [TapeModel; 4] = [
+/// The models these runs play (TRANSWAVE on a `Plain` is silent); Task 8
+/// adds STRETCH.
+const MODELS: [TapeModel; 5] = [
     TapeModel::Loop,
     TapeModel::Reverse,
     TapeModel::PingPong,
+    TapeModel::Transwave,
     TapeModel::Scrub,
 ];
 
@@ -73,6 +75,7 @@ fn reads_stay_in_row() {
         e.note_on(rng.below(128) as u8, &p, &v, 48_000);
         let mut b = [0.0; BLOCK_SIZE];
         let reach = v.frames() + INC_MAX as u32;
+        assert!(p.model != TapeModel::Transwave || b.iter().all(|&y| y == 0.0));
         for _ in 0..4 {
             e.render(&mut b, &p, &v, 48_000);
             assert!(b.iter().all(|y| y.is_finite()), "run {run}: {p:?}");
@@ -84,6 +87,60 @@ fn reads_stay_in_row() {
                 v.frames()
             );
             assert!(pr.other.is_none_or(|o| o <= reach), "run {run}: {pr:?}");
+        }
+    }
+}
+
+/// TRANSWAVE on random transwaves, whole or cut short (then silent): every
+/// frame and level it reads lies inside the row (`read_cycle` panics on a
+/// frame past it when strict), and the output stays finite.
+#[test]
+fn transwave_reads_stay_in_row() {
+    let mut rng = XorShift(0x7A9E_0702);
+    for run in 0..300 {
+        let top = [512u32, 1_024][rng.below(2)];
+        let count = 1 + rng.below(32) as u8;
+        let n = count as usize * (2 * top as usize - 16);
+        let s: Vec<i16> = (0..n)
+            .map(|_| ((rng.next_u32() & 0xFFF) as i16) << 4 >> 4)
+            .collect();
+        let d = Descriptor {
+            shape: Shape::Transwave,
+            count,
+            rate: 48_000,
+            head_frames: 0,
+        };
+        let mut held = d.to_bytes().to_vec();
+        held.resize(DESC_LEN + 3 * n / 2, 0);
+        pack12(&s, &mut held[DESC_LEN..]);
+        if rng.below(4) == 0 {
+            let keep = DESC_LEN + 3 + rng.below(held.len() - DESC_LEN - 3);
+            held.truncate(keep);
+        }
+        let v = SourceView::strict(&held).unwrap();
+        let p = TapeEngineParams {
+            model: TapeModel::Transwave,
+            position: unit(&mut rng),
+            motion: 2.0 * unit(&mut rng) - 1.0,
+            size: unit(&mut rng),
+            ..TapeEngineParams::default()
+        };
+        let mut slot = MaybeUninit::uninit();
+        let e = TapeEngine::init_in_place(&mut slot);
+        e.set_pitch(4_800.0 * unit(&mut rng) - 2_400.0);
+        e.note_on(rng.below(128) as u8, &p, &v, 48_000);
+        let mut b = [0.0; BLOCK_SIZE];
+        for k in 0..8 {
+            // A pitch route anywhere in ±24 st, block by block.
+            e.set_pitch(4_800.0 * unit(&mut rng) - 2_400.0);
+            e.render(&mut b, &p, &v, 48_000);
+            assert!(b.iter().all(|y| y.is_finite()), "run {run}, block {k}");
+            let pr = e.probe();
+            assert!(pr.head < count as u32, "run {run}: {pr:?}");
+            assert!(
+                pr.other.is_some_and(|o| o < count as u32),
+                "run {run}: {pr:?}"
+            );
         }
     }
 }

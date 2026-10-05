@@ -11,3 +11,4 @@
 - Host-only crates (`chimera-desktop`, never linked into the firmware), used by the TAPE importer (TAPE spec § 6):
   - `hound` 3.5 (WAV reading): Apache-2.0. https://github.com/ruuda/hound
   - `rubato` 5.0 (sinc resampler): MIT OR Apache-2.0. https://github.com/HEnquist/rubato. It pulls in `audioadapter`, `audioadapter-buffers`, `audioadapter-sample` (MIT OR Apache-2.0), `windowfunctions` (MIT), `audio-codec-algorithms` (0BSD OR Apache-2.0), `visibility` (Zlib OR MIT OR Apache-2.0) and `num-traits`, `num-integer` (MIT OR Apache-2.0).
+  - `rustfft` 6.4 (the transwave mips' FFT truncation): MIT OR Apache-2.0. https://github.com/ejmahler/RustFFT. It pulls in `num-complex`, `primal-check`, `strength_reduce`, `transpose` (MIT OR Apache-2.0), `num-traits`, `num-integer` and, to build, `autocfg` (MIT OR Apache-2.0).

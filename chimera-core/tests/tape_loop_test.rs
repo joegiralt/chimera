@@ -9,11 +9,12 @@ use core::f32::consts::TAU;
 use core::mem::MaybeUninit;
 
 use chimera_core::dsp::tape_engine::read::SourceView;
+use chimera_core::dsp::tape_engine::wave;
 use chimera_core::dsp::tape_engine::{
     INC_MAX, NOTE_ON_RAMP, TapeEngine, TapeEngineParams, TapeModel, inc, loop_len,
 };
 use chimera_hal::BLOCK_SIZE;
-use common::tape::{held_plain, sine};
+use common::tape::{held_plain, held_transwave, sine};
 
 const SR: u32 = 48_000;
 
@@ -343,7 +344,34 @@ fn tiny_sources_play_finite() {
                     }
                 }
             }
+            // TRANSWAVE can't play a `Plain`: silent, not stuck.
+            let p = TapeEngineParams {
+                model: TapeModel::Transwave,
+                ..TapeEngineParams::default()
+            };
+            let mut e = fresh();
+            e.note_on(84, &p, &v, SR);
+            let (out, _) = play(&mut e, &p, &v, 4);
+            assert!(out.iter().all(|&y| y == 0.0), "{frames} frames");
         }
+    }
+    // The smallest transwave, one frame, at every corner of the scan.
+    let held = held_transwave(512, 1, |_, h| 0.5 / h as f32);
+    let v = SourceView::strict(&held).unwrap();
+    for (position, motion, size) in [(0.0, -1.0, 1.0), (1.0, 1.0, 1.0), (0.5, 0.0, 0.0)] {
+        let p = TapeEngineParams {
+            model: TapeModel::Transwave,
+            position,
+            motion,
+            size,
+            ..TapeEngineParams::default()
+        };
+        let mut e = fresh();
+        e.note_on(84, &p, &v, SR);
+        let (out, heads) = play(&mut e, &p, &v, SR as usize / BLOCK_SIZE);
+        assert!(out.iter().all(|y| y.is_finite()));
+        assert!(heads.iter().all(|&h| h == 0));
+        assert!(out.iter().any(|&y| y != 0.0), "it sounds");
     }
 }
 
@@ -372,6 +400,34 @@ fn midi_extremes_stay_finite() {
     e.note_on(127, &p, &v, SR);
     let (out, _) = play(&mut e, &p, &v, SR as usize / BLOCK_SIZE);
     assert!(out.iter().all(|y| y.is_finite()));
+
+    // TRANSWAVE: note 0 at −24 st and note 127 at +24 st. Its step is at
+    // its clamp (Nyquist) at the top and never 0 at the bottom; the levels
+    // sit at their ends. At Nyquist a sine-phase table reads its zeros, so
+    // only the bottom is asked to sound.
+    let held = held_transwave(1_024, 4, |f, h| (f + 1) as f32 * 0.1 / h as f32);
+    let v = SourceView::strict(&held).unwrap();
+    assert_eq!(wave::cycles(127, 2_400.0, SR), wave::CYCLES_MAX);
+    assert!(wave::cycles(0, -2_400.0, SR) >= f32::EPSILON);
+    for (note, pitch, level) in [(0u8, -2_400.0f32, 10u8), (127, 2_400.0, 4)] {
+        let p = TapeEngineParams {
+            model: TapeModel::Transwave,
+            position: 0.5,
+            motion: 1.0,
+            tape: 1.0,
+            ..TapeEngineParams::default()
+        };
+        let mut e = fresh();
+        e.set_pitch(pitch);
+        e.note_on(note, &p, &v, SR);
+        let (out, _) = play(&mut e, &p, &v, SR as usize / BLOCK_SIZE);
+        assert!(out.iter().all(|y| y.is_finite()), "note {note}");
+        assert!(
+            note == 127 || out.iter().any(|&y| y != 0.0),
+            "note {note} sounds"
+        );
+        assert_eq!(e.probe().level, level, "note {note}");
+    }
 }
 
 /// A note-on on a sounding engine ramps from where the output was, so the

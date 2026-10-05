@@ -7,6 +7,7 @@ use std::fmt::Write as _;
 use std::mem::MaybeUninit;
 
 use crate::import::tape::convert::{Mono, Pitch, clean, quantise_tpdf, resample, yin};
+use crate::import::tape::transwave::{DEFAULT_TOP, cut_cycles, levels};
 use chimera_core::block::{Block, DiskCode, ParamId};
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape, SourceView};
@@ -32,6 +33,26 @@ const SEED: u64 = 0x7A9E;
 /// Slots past the factory bank are NEW's INIT Sounds, by `EngineType::ALL`
 /// (as `template::new_slot`): `FACTORY_LEN + 1` is INIT MODAL.
 pub fn chimera_source(slot: usize, note: u8, secs: f32) -> Mono {
+    chimera_render(slot, note, secs, &|_, _| {})
+}
+
+/// A transwave's Chimera source: factory slot 6 (MORPH PAD, ALGO) with
+/// MORPH's base swept 0 → 127 across the hold (its LFO 1 rides on it), as
+/// `chimera_source` renders it.
+pub fn chimera_morph_sweep(note: u8, secs: f32) -> Mono {
+    chimera_render(6, note, secs, &|t, p| {
+        p.algo.morph = (127.0 * t.min(1.0)) as u8
+    })
+}
+
+/// `chimera_source`, with `each(t, params)` run before every block, `t`
+/// the hold's share gone (0 to 1, past 1 in the tail).
+fn chimera_render(
+    slot: usize,
+    note: u8,
+    secs: f32,
+    each: &dyn Fn(f32, &mut chimera_core::params::ParamSnapshot),
+) -> Mono {
     let sound = factory_sound(slot)
         .or_else(|| {
             let e = EngineType::ALL.get(slot.checked_sub(FACTORY_LEN)?)?;
@@ -59,6 +80,7 @@ pub fn chimera_source(slot: usize, note: u8, secs: f32) -> Mono {
         if b == blocks(secs) {
             inst.handle(ev(NoteKind::Off), &shared);
         }
+        each(b as f32 / blocks(secs) as f32, &mut shared.parts[0].params);
         inst.render(&mut fx, &mut dac, &shared, &mut scope);
         let lr = &dac.out()[0];
         samples.extend(lr.chunks(2).map(|f| 0.5 * (f[0] + f[1])));
@@ -93,6 +115,51 @@ pub fn held_from(m: &Mono, rate: u32) -> Result<(Vec<u8>, Pitch), String> {
     held.resize(DESC_LEN + 3 * q.len() / 2, 0);
     pack12(&q, &mut held[DESC_LEN..]);
     Ok((held, pitch))
+}
+
+/// `m` as a `Transwave` of `frames` frames, as the importer will hold one
+/// (spec § 6 step 5): cleaned; whole cycles at its YIN period cut from
+/// across it (`cut_cycles`, at most 32), `frames` of them taken evenly;
+/// each built into levels 512 down to 16; the whole set's peak to −0.5
+/// dBFS, dithered to 12 bits. An unpitched or too short `m` is an error.
+pub fn held_transwave(m: &Mono, frames: usize) -> Result<(Vec<u8>, f32), String> {
+    let mut c = m.clone();
+    clean(&mut c);
+    let Pitch::Pitched { period, .. } = yin(&c.samples, c.rate) else {
+        return Err("unpitched: no cycle to cut".into());
+    };
+    let cycles = cut_cycles(&c.samples, period);
+    if cycles.is_empty() {
+        return Err("too short for a cycle".into());
+    }
+    let n = frames.clamp(1, cycles.len());
+    let pick = |k: usize| {
+        if n > 1 {
+            k * (cycles.len() - 1) / (n - 1)
+        } else {
+            0
+        }
+    };
+    let x: Vec<f32> = (0..n)
+        .flat_map(|k| levels(&cycles[pick(k)], DEFAULT_TOP))
+        .collect();
+    let peak = x.iter().fold(0f32, |a, s| a.max(s.abs()));
+    if peak <= 0.0 {
+        return Err("silent cycles".into());
+    }
+    let gain = 10f32.powf(-0.5 / 20.0) / peak;
+    let x: Vec<f32> = x.iter().map(|s| s * gain).collect();
+    let q = quantise_tpdf(&x, SEED);
+    let desc = Descriptor {
+        shape: Shape::Transwave,
+        count: n as u8,
+        rate: 48_000,
+        head_frames: 0,
+    };
+    let mut held = desc.to_bytes().to_vec();
+    held.resize(DESC_LEN + 3 * q.len() / 2, 0);
+    pack12(&q, &mut held[DESC_LEN..]);
+    Ok((held, period * SAMPLE_RATE as f32 / c.rate as f32))
 }
 
 /// The source the A/B compares against: `m` cleaned, at 48 kHz.
@@ -204,10 +271,44 @@ pub const SCRUB_LEGEND: &str = "0–2 s neutral (the tape stands still: silent) 
     SIZE 0.3, MOTION 0.5 (the note's speed) · 2–5 s POSITION (the finger) 0→1→0 · 5–8 s \
     MOTION 0.5→−1→0.5 · 8–11 s SIZE 0→1→0 · 11.5–14.5 s TAPE and AGE at 0.5";
 
+/// TRANSWAVE's: 2 s on frame 0; POSITION scans the table 0 → 1 → 0;
+/// then at POSITION ½ MOTION runs the scan up to 0.5 (4 Hz) and back, the
+/// triangle half the table either way (SIZE ½); SIZE then widens it 0 → 1
+/// → 0 under MOTION 0.25 (2 Hz); TAPE and AGE as `SWEEP`'s.
+static WAVE_SWEEP: [(f32, ParamId, f32); 21] = [
+    (2.0, P::POSITION, 0.0),
+    (3.5, P::POSITION, 1.0),
+    (4.75, P::POSITION, 0.5),
+    (5.0, P::MOTION, 0.0),
+    (6.5, P::MOTION, 0.5),
+    (7.75, P::MOTION, 0.25),
+    (4.75, P::SIZE, 1.0),
+    (5.0, P::SIZE, 0.5),
+    (7.75, P::SIZE, 0.5),
+    (8.0, P::SIZE, 0.0),
+    (9.5, P::SIZE, 1.0),
+    (11.0, P::SIZE, 0.0),
+    (11.0, P::MOTION, 0.25),
+    (11.25, P::MOTION, 0.0),
+    (11.25, P::SIZE, 1.0),
+    (11.25, P::POSITION, 0.5),
+    (11.25, P::TAPE, 0.0),
+    (11.5, P::TAPE, 0.5),
+    (14.5, P::TAPE, 0.5),
+    (11.25, P::AGE, 0.0),
+    (11.5, P::AGE, 0.5),
+];
+
+/// What the page says TRANSWAVE's script does.
+pub const WAVE_LEGEND: &str = "16 frames cut from the source · 0–2 s frame 0 · 2–4.75 s \
+    POSITION scans 0→1→½ · 5–7.75 s MOTION 0→0.5→0.25 (a 4 Hz scan, SIZE ½) · 8–11 s SIZE \
+    0→1→0 at 2 Hz · 11.5–14.5 s TAPE and AGE at 0.5";
+
 /// The macro script `model` is heard under, and what the page says of it.
 pub fn script(model: TapeModel) -> Script {
     match model {
         TapeModel::Scrub => Script(&SCRUB_SWEEP),
+        TapeModel::Transwave => Script(&WAVE_SWEEP),
         _ => Script(&SWEEP),
     }
 }
@@ -215,6 +316,7 @@ pub fn script(model: TapeModel) -> Script {
 pub fn legend(model: TapeModel) -> &'static str {
     match model {
         TapeModel::Scrub => SCRUB_LEGEND,
+        TapeModel::Transwave => WAVE_LEGEND,
         _ => SWEEP_LEGEND,
     }
 }
