@@ -195,15 +195,41 @@ pub fn encode_project(p: &Project, w: &mut RecordWriter<'_>) -> Result<(), Store
 /// NEW's records, as `encode_project` of NEW puts them, built a Sound at a
 /// time: no second project in RAM (CLEAR of a file not loaded).
 pub fn encode_new_project(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
-    put_fx(w, &FxParams::default())?;
+    put_new_fx(w)?;
+    put_new_slots(w)?;
+    put_new_parts(w)?;
+    put_new_orbit(w)
+}
+
+// NEW's FX, slot Sounds, Parts and ORBIT song each in a frame of its own,
+// never nested in one (each holds its value whole): CLEAR's write is
+// reached through a pointer, so its depth is charged to every pointer call
+// (the stack check).
+#[inline(never)]
+fn put_new_fx(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
+    put_fx(w, &FxParams::default())
+}
+
+#[inline(never)]
+fn put_new_slots(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     for s in SlotId::ALL {
         if let Some(sound) = new_slot(s) {
             put_slot(w, s, &sound)?;
         }
     }
+    Ok(())
+}
+
+#[inline(never)]
+fn put_new_parts(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     for i in 0..MAX_PARTS {
         put_part(w, i, &new_project_part(i))?;
     }
+    Ok(())
+}
+
+#[inline(never)]
+fn put_new_orbit(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     encode_new_orbit(w)
 }
 
