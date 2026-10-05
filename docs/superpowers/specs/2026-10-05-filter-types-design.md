@@ -78,6 +78,10 @@
 - **Display names:**
   - The code's `FilterKind::Svf` keeps ident "SVF" and shows **CLEAN**.
   - **2040** is named after the chip. "Prophet" is Sequential's trademark, so no screen, ident or doc label uses it.
+- **The default TYPE depends on the engine** (owner, 2026-10-05). ALGO, MODAL and TAPE start on **CLEAN**; the future VA engine starts on **2040**.
+  - **One source.** The engine's neutral Sound sets it, through `FilterKind::default_for(engine)`, which `ParamSnapshot::for_engine` applies. So both `Sound::init` (a new or INIT patch) and `neutral_params` (`storage/sound.rs`, the frozen base a file decodes onto) start on that type, at the type's `default_mode()`. `Sound::init` seeds NOTE → CUTOFF from that kind's `key_default()`, not `FilterKind::default()`'s.
+  - **Existing patches** keep the TYPE they stored, because a stored KIND overrides the neutral base. A file without KIND decodes onto its engine's neutral. For ALGO, MODAL and TAPE that is CLEAN, today's only kind, so nothing changes.
+  - **Fixture.** The neutral-Sound fixture gains one row per engine, appended only: `(engine, KIND code, MODE code)`, i.e. ALGO/MODAL/TAPE → (0, 2), and VA → (4, 2) when VA lands. A test checks `Sound::init(e)` and `neutral_params(e)` against each row.
 - **New codes,** all append-only (ADR 0009):
   - `FilterKind::K2040 = 4` (the slot the routing spec reserved for the Prophet kind), ident "2040";
   - `FilterKind::Dirty = 6`, ident "DIRTY";

@@ -21,6 +21,7 @@ The owner also wants ALGO's OP 5 and OP 6 as audio-rate modulation sources. The 
   - **CLEAN** (`Svf`, code 0): LP1 LP2 **LP4** BP2 BP4 HP4 NOTCH1 NOTCH2.
   - **2040** (code 4): LP4 only.
   - **DIRTY** (code 6): **LP2** BP2 HP2 NOTCH1. HP2 is `Hp12`, code 9.
+- **The default TYPE follows the engine.** ALGO, MODAL and TAPE default to CLEAN; the future VA engine defaults to 2040. The default is set in each engine's neutral Sound (`FilterKind::default_for(engine)` through `ParamSnapshot::for_engine`, which reaches `Sound::init` and `neutral_params`). The neutral fixture gains one row per engine, appended only. Existing patches keep their stored TYPE.
 - **Names:**
   - The modes are named by what they do: NOTCH1 is one notch, NOTCH2 two. NOTCH2 is the Cascadia's PHZR; CLEAN's NOTCH1 is its NT2.
   - The SSM2040 type is called **2040** because "Prophet" is Sequential's trademark.
