@@ -201,7 +201,7 @@ fn blob_matches_authored() {
 }
 
 #[test]
-fn new_copies_without_decode() {
+fn new_holds_the_blob_bytes() {
     use chimera_core::factory::factory_entries;
     let (p, _) = chimera_core::project::Project::boxed();
     for (s, (name, bytes)) in SlotId::ALL.into_iter().zip(factory_entries()) {

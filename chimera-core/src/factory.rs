@@ -17,13 +17,14 @@ pub static FACTORY_BLOB: &[u8] = include_bytes!("factory.bin");
 /// Each entry's name and bytes (name first, as the pool holds them), in
 /// slot order.
 pub fn factory_entries() -> impl Iterator<Item = (SoundName, &'static [u8])> {
+    const _: () = assert!(FACTORY_BLOB.len() >= 2, "factory.bin has a count");
     let count = usize::from(u16::from_le_bytes([FACTORY_BLOB[0], FACTORY_BLOB[1]]));
     let mut rest = &FACTORY_BLOB[2..];
-    (0..count).map(move |_| {
-        let len = usize::from(u16::from_le_bytes([rest[0], rest[1]]));
-        let (bytes, tail) = rest[2..].split_at(len);
-        rest = tail;
-        (EncodedSound::new(bytes).name(), bytes)
+    (0..count).map_while(move |_| {
+        let len = usize::from(u16::from_le_bytes([*rest.first()?, *rest.get(1)?]));
+        let bytes = rest.get(2..2 + len)?;
+        rest = &rest[2 + len..];
+        Some((EncodedSound::new(bytes).name(), bytes))
     })
 }
 

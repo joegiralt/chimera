@@ -152,7 +152,9 @@ impl Pool {
         self.index.store(&mut self.arena, s, sound)
     }
 
-    /// Slot `s` takes an entry's bytes as they are: no encode.
+    /// Slot `s` takes an entry's bytes as they are: no encode. The bytes must
+    /// already be valid: the compile-time blob only; anything from disk or USB
+    /// goes through `store`.
     pub(in crate::project) fn store_bytes(
         &mut self,
         s: SlotId,
