@@ -417,6 +417,7 @@ Host estimates, in the house manner (instructions × 1.46 × 1.1, + 12 a head fo
 - **The model rows below bill the measured 88-instruction head.** Build step 3's bench still replaces every bill (§ 10).
 - **Measured per path (TAPE Task 6, fix round 2),** static instructions a sample in each path's loop: LOOP 102 with one head, 217 in a fade; REVERSE (and PING-PONG going down) 104 and 224; SCRUB 117 and 241, plus about 4 while a stop or start eases; PING-PONG's turns (now run back to back in one call) up to 128 with one head, its clamp up to 251 with two. None has a `vdiv` in its loop.
 - **Per-call work in the shortest loops (TAPE Task 6, fix round 3).** Each pass's events (a fade's start, a wrap, a turn and its flip) cost a call and its bookkeeping, at most once in 16 output samples (§ 2). **Each model bills the worst a whole block can sit in, that work amortised over its shortest pass included.** It is measured on the host as time against LOOP's fade path (`tiny_loops_cost_within_their_bills`, release, the worst of three clean runs of five), times that path's 217 instructions, each model in its shortest legal loop at `inc` 16 (256 frames) and XFADE ½: LOOP 1.20× (260), REVERSE 1.20× (260), PING-PONG clamping under a POSITION square wave 1.33× (289), SCRUB 1.27× (276, + 4 for an ease). An 8-frame source, where a loop is the whole source, measures 0.93–1.33× (PING-PONG's turns the most).
+- **Measured TRANSWAVE (TAPE Task 7),** static instructions a sample: 216 in the two-head loop (`wave::Run::run`), 417 in a level change's four (`Run::fade`); the block's own work (the macros, one `exp2f`, the scan, the level's hysteresis) is about 6 a sample spread over 64. Neither loop has a `vdiv`. The host's ratio to LOOP's fade path reads higher (1.11–1.14 and 2.0–2.1, `transwave_costs_within_its_bills`: about 410–420 and 750–790 cycles); the bench row `TAPE WAVE C7 /VOICE` decides it.
 - **Measured LOOP loop (TAPE Task 3, history; the rows above replace it):** `TapeEngine::render`'s inner loop is 103 instructions a sample with one head and 224 while a fade reads two: 2 × 88 + 48. The first draft's 9 a voice was 39 short. The budget is checked a block at a time and a whole block can lie inside a fade (XFADE runs to ½ the loop), so **every two-head model bills the fade sample**, and a model's own extras sit on top of the measured 48. The bills are the cycles rounded up to 10; the bench (§ 10) replaces them.
 
 **Cache misses grow with `inc`.**
@@ -434,8 +435,8 @@ Host estimates, in the house manner (instructions × 1.46 × 1.1, + 12 a head fo
 | LOOP, REVERSE | 2 | 260 (its shortest loop at `inc` 16, events included; measured) | 418 + 24 = 442 | **450** |
 | PING-PONG | 2 (one, two in a clamp) | 289 (a clamp in its shortest loop at `inc` 16, turns and events included; measured) | 464 + 24 = 488 | **490** |
 | SCRUB | 2 (the finger in each read position) | 280 (a fade in its shortest loop at `inc` 16, events and an ease included; measured) | 449 + 24 = 473 | **480** |
-| TRANSWAVE | 2 (+ `p`'s ramp and the scan, 4) | 228 | 391 | **400** |
-| TRANSWAVE, pitch able to move > ±6.2 st (STEAL GLIDE, or deep PITCH/FINE routes) | 4 in a level change (two pairs, each a fade's 48) | 448 | 720 + 48 = 768 | **770** |
+| TRANSWAVE | 2 (+ `p`'s ramp and the scan) | 222 (216 in the loop + 6 for the block's work; measured) | 357 + 24 = 381 | **400** |
+| TRANSWAVE, pitch able to move > ±6.2 st (STEAL GLIDE, or deep PITCH/FINE routes) | 4 in a level change's block | 424 (417 + 7; measured) | 681 + 48 = 729 | **770** |
 | STRETCH | 2 (+ two gains, the grain clock, 5) | 229 | 392 | **400** |
 | AGE stored above 0 or routed, on any model | (one-pole 3, hiss 5, gain 2) | 10 | 16 | **+20** |
 
