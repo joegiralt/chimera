@@ -9,14 +9,14 @@ use chimera_core::name::SoundName;
 use chimera_core::project::arena::{ARENA_BYTES, Cost};
 use chimera_core::project::test_support::{full_dense_slots, save_at};
 use chimera_core::project::{
-    LoadLink, PartId, Project, ProjectNote, ProjectSource, ReplaceGuard, SlotId, SourceRef,
-    load_project, project_file,
+    LoadLink, PartId, Project, ProjectDecoder, ProjectNote, ProjectSource, ReplaceGuard, SlotId,
+    SourceRef, load_project, project_file,
 };
 use chimera_core::source_table::AudioToken;
 use chimera_core::storage::{
-    Card, Event, FileError, FileKind, Framer, Generation, Header, LoadError, ProjectId, ReadTag,
-    RecordTag, SaveError, Side, SourceHead, Wrote, read_source_into, source_crc, source_file,
-    write_file, write_source,
+    Card, DecodeInPlace, Event, FileError, FileKind, Framer, Generation, Header, LoadError,
+    ProjectId, ReadTag, RecordTag, SaveError, Side, SourceHead, Wrote, read_source_into,
+    source_crc, source_file, write_file, write_source,
 };
 use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use chimera_hal::testkit::MemStore;
@@ -493,12 +493,14 @@ fn write_source_refuses_what_tape_cant_play() {
         },
         ..h
     };
-    let cases: [(&str, SourceHead, &[u8]); 5] = [
+    let zones = zone_set(&h, &data);
+    let cases: [(&str, SourceHead, &[u8]); 6] = [
         ("crc", bad_crc, &data),
         ("62 frames", short, &short_data),
         ("rate", slow, &data),
         ("a Plain of 2", two, &data),
         ("length", h, &data[..data.len() - 3]),
+        ("a ZoneSet before its layout", zones, &data),
     ];
     for (what, head, d) in cases {
         let mut s = MemStore::new(1);
@@ -681,4 +683,118 @@ fn pool_source_rules() {
     let over: Vec<Vec<u8>> = (0..33).map(r).collect();
     assert_eq!(decode(file(&over, &[])), Err(FileError::Bounds));
     assert_eq!(decode(file(&[], &[r(1)])), Err(FileError::Corrupt));
+}
+
+/// `h`'s samples as a 4-zone `ZoneSet` head, its CRC as TAPE Task 2 has
+/// it: no layout folded in yet.
+fn zone_set(h: &SourceHead, data: &[u8]) -> SourceHead {
+    SourceHead {
+        shape: Shape::ZoneSet,
+        count: 4,
+        sref: SourceRef {
+            crc: source_crc(Shape::ZoneSet, 4, data),
+            ..h.sref
+        },
+        ..*h
+    }
+}
+
+/// A framed file whose CRC and length match its head, but whose head TAPE
+/// can't play (too short, or a `ZoneSet` with no layout yet), reads as
+/// missing: nothing enters the arena.
+#[test]
+fn an_unplayable_head_reads_missing() {
+    let (short, short_data) = source(30, 62, "SHORT");
+    let (h, data) = source(31, 1_000, "ZONES");
+    let zones = zone_set(&h, &data);
+    for (what, head, body) in [
+        ("62 frames", short, &short_data),
+        ("a ZoneSet", zones, &data),
+    ] {
+        let mut s = MemStore::new(1);
+        put_raw(&mut s, &head, body);
+        let mut out = vec![0; DESC_LEN + body.len()];
+        let r = Card::new()
+            .run(&mut s, |s, r| read_source_into(s, r, head.sref, &mut out))
+            .unwrap()
+            .result;
+        assert_eq!(r, Err(LoadError::File(FileError::Bounds)), "{what}");
+    }
+}
+
+/// An unsealed file that verifies (a write cut at its seal, or a host copy
+/// that dropped the read-only attribute) is sealed as it is: Present,
+/// never deleted and written again.
+#[test]
+fn a_whole_unsealed_source_is_sealed_not_rewritten() {
+    let (h, data) = source(32, 1_000, "COPY");
+    let mut s = MemStore::new(1);
+    put_raw(&mut s, &h, &data);
+    let vol = s.mount().unwrap();
+    // Unsealed: a raw write goes through.
+    s.write(vol, source_file(h.sref), &mut |w| w.put(b"x"))
+        .unwrap();
+    put_raw(&mut s, &h, &data);
+    let r = Card::new()
+        .run(&mut s, |s, r| write_source(s, r, &h, &data))
+        .unwrap()
+        .result;
+    assert_eq!(r, Ok(Wrote::Present));
+    let raw = s.write(vol, source_file(h.sref), &mut |w| w.put(b"x"));
+    assert_eq!(raw, Err(StoreError::ReadOnly), "sealed now");
+}
+
+/// A `PoolSource` that finds no free source slot in pass 2 is lost from
+/// the project, so the load is lossy and counts it. (Pass 2 drains the
+/// old sources first, so a load proper never gets here.)
+#[test]
+fn a_ref_with_no_slot_is_lossy() {
+    let (mut p, _) = Project::boxed();
+    for crc in 0..32 {
+        p.source_store(sref(0x100 + crc, 64), &[1; 40]).unwrap();
+    }
+    let mut d = ProjectDecoder::new_for_test(&mut p);
+    let r = sref(0x999, 64).to_bytes();
+    let e = Event::Record(ReadTag::Known(RecordTag::PoolSource), &r);
+    assert_eq!(d.apply(e), Ok(()));
+    assert!(d.lossy(), "a save would drop the ref");
+}
+
+/// Pass 1 plans only the refs `/CHIMERA/TAPES` lists: a Part's source
+/// missing from the card takes no room, so no Sound gives way to it.
+#[test]
+fn a_missing_part_source_pushes_no_sound_out() {
+    let (mut p, _) = full_dense_slots(48);
+    let sounds = p.pool().sound_count();
+    let left = ARENA_BYTES as u32 - p.pool().used().bytes();
+    // Would take the room left and 3 KB more.
+    let (gone, _) = source(33, 2 * (left + 3_000) / 3, "GONE");
+    p.source_absent(gone.sref).unwrap();
+    p.edit_part(PartId::ALL[0]).sound.source = Some(gone.sref);
+    let mut s = MemStore::new(1);
+    let (q, note) = round_trip(&mut s, &mut p);
+    assert_eq!(note, None, "nothing didn't fit");
+    assert_eq!(q.pool().sound_count(), sounds);
+    let id = q.pool().find_source(gone.sref).expect("the ref kept");
+    assert!(q.pool().source(id).unwrap().absent());
+    assert!(q.meta().saved_crc().is_some());
+}
+
+/// A source whose cost is exactly the room the slots leave is taken.
+#[test]
+fn a_source_that_fits_exactly_loads() {
+    let (mut p, _) = full_dense_slots(8);
+    let left = ARENA_BYTES as u32 - p.pool().used().bytes();
+    let pairs = (left - 16 - DESC_LEN as u32) / 3;
+    let (h, data) = source(34, 2 * pairs, "EXACT");
+    let cost = Cost::of(16 + DESC_LEN + data.len()).bytes();
+    assert_eq!(cost, left, "fills the arena to the byte");
+    let mut s = MemStore::new(1);
+    put_source(&mut s, &h, &data);
+    p.source_absent(h.sref).unwrap();
+    let (q, note) = round_trip(&mut s, &mut p);
+    let tok = &mut q.pool().table().reader().expect("one reader");
+    assert_eq!(note, None);
+    assert_eq!(arena_bytes(&q, tok, h.sref), Some(held(&h, &data)));
+    assert_eq!(q.pool().free(), Cost::default());
 }

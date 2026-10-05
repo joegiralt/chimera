@@ -21,12 +21,17 @@ use super::ids::SlotId;
 use super::sources::{SOURCE_HEAD, SourceEntry, SourceId, SourceRef, source_cost};
 use crate::source_table::{Answer, GATE_ACK_TIMEOUT_MS, SourceTable};
 
-/// While `GATE_ACK_TIMEOUT_MS` hasn't passed on `clock`; false at once
-/// without one.
-fn deadline(clock: Option<fn() -> u32>) -> impl FnMut() -> bool {
+/// How long a load waits for the voices its kill fades to let go of the
+/// old sources, then for their holes to close and their slots to free:
+/// two or three blocks on the chip, but a desktop callback renders 10 to
+/// 20 ms of blocks at once.
+pub const LOAD_DRAIN_TIMEOUT_MS: u32 = 50;
+
+/// While `ms` haven't passed on `clock`; false at once without one.
+fn deadline(clock: Option<fn() -> u32>, ms: u32) -> impl FnMut() -> bool {
     let t0 = clock.map(|c| c());
     move || match (clock, t0) {
-        (Some(c), Some(t0)) => c().wrapping_sub(t0) < GATE_ACK_TIMEOUT_MS,
+        (Some(c), Some(t0)) => c().wrapping_sub(t0) < ms,
         _ => false,
     }
 }
@@ -407,8 +412,47 @@ impl Pool {
     /// `source_pass` against the pool's clock: `GATE_ACK_TIMEOUT_MS`, or
     /// one look with no clock.
     pub(in crate::project) fn source_pass_timed(&mut self) -> bool {
-        let within = deadline(self.clock);
+        let within = deadline(self.clock, GATE_ACK_TIMEOUT_MS);
         self.source_pass(within)
+    }
+
+    /// Whether no voice holds a source, waiting `LOAD_DRAIN_TIMEOUT_MS`
+    /// on the pool's clock for one to let go (one look with no clock).
+    pub(in crate::project) fn quiet_timed(&self) -> bool {
+        let table = self.table();
+        let mut within = deadline(self.clock, LOAD_DRAIN_TIMEOUT_MS);
+        while table.has_reader() && table.sounding() != 0 {
+            if !within() {
+                return false;
+            }
+            core::hint::spin_loop();
+        }
+        true
+    }
+
+    /// A load's retirement (ADR 0087): every source out of the index, then
+    /// each hole closed and each slot freed, waiting `LOAD_DRAIN_TIMEOUT_MS`
+    /// on the pool's clock. True once the arena holds no source and `refs`
+    /// slots are free, so pass 2 gets what pass 1 planned for.
+    pub(in crate::project) fn sources_drain_timed(&mut self, refs: usize) -> bool {
+        let mut within = deadline(self.clock, LOAD_DRAIN_TIMEOUT_MS);
+        for s in SourceId::ALL {
+            self.source_free(s);
+        }
+        loop {
+            self.source_pass(&mut within);
+            self.drain_retired();
+            let slots = &self.sources.slots;
+            let retired = slots.iter().any(|s| matches!(s, SrcSlot::Retired { .. }));
+            let free = slots.iter().filter(|s| matches!(s, SrcSlot::Empty)).count();
+            if !retired && free >= refs {
+                return true;
+            }
+            if !within() {
+                return false;
+            }
+            core::hint::spin_loop();
+        }
     }
 
     /// Every source out of the index (NEW, a failed load): retired, and

@@ -264,6 +264,9 @@ impl<'a, B: Blocks> Fs<'a, B> {
     }
 
     fn mark_sealed(&mut self, file: FileName) -> Result<(), FsError<B::Error>> {
+        if file.dir() != Dir::Tapes {
+            return Err(FsError::Body(StoreError::Io));
+        }
         let dir = self.open(file.dir())?;
         let Some((Slot::File(e), at)) = self.lookup(dir, ShortName::file(&file))?.hit else {
             return Err(FsError::NotFound);
@@ -563,6 +566,9 @@ impl<'a, B: Blocks> Fs<'a, B> {
                 Link::End => {
                     let c = self.claim(Some(last))?;
                     let block = self.fresh(c, None)?;
+                    // Not `add_dir`'s drop_chain on a failed flush: `c` is
+                    // linked from `last`, so freeing it alone would leave
+                    // the directory pointing at a free cluster.
                     self.table.flush()?;
                     return Ok(Loc { block, slot: 0 });
                 }

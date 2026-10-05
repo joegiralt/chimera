@@ -13,7 +13,7 @@ use crate::project::SourceRef;
 use super::card::Ready;
 use super::crc::Crc32;
 use super::file::{LoadError, Scan, scan};
-use super::frame::{Event, FileError, FileKind};
+use super::frame::{Event, FileError, FileKind, HEADER_LEN, RECORD_HEAD_LEN, TRAILER_LEN};
 use super::record::{ReadTag, RecordTag};
 
 /// A `SourceHead` record's payload.
@@ -71,9 +71,12 @@ impl SourceHead {
     }
 
     /// A head TAPE can play: a descriptor `SourceView` takes, and at
-    /// least `MIN_SOURCE_FRAMES`.
+    /// least `MIN_SOURCE_FRAMES`. Not a `ZoneSet` until TAPE Task 10 gives
+    /// it its layout: one written now would be sealed under a CRC and a
+    /// length that leave the layout out.
     fn playable(&self) -> bool {
         self.sref.frames >= MIN_SOURCE_FRAMES
+            && self.shape != Shape::ZoneSet
             && Descriptor::from_bytes(&self.descriptor().to_bytes()).is_some()
     }
 }
@@ -93,6 +96,15 @@ pub fn source_crc(shape: Shape, count: u8, packed: &[u8]) -> u32 {
 pub fn held_len(r: SourceRef) -> Option<usize> {
     let pairs = usize::try_from(r.frames.div_ceil(2)).ok()?;
     pairs.checked_mul(3)?.checked_add(DESC_LEN)
+}
+
+/// The fewest bytes a whole file of `r` takes, its samples in full
+/// `SourceData` records: a listing shorter than this is a torn file.
+pub fn source_file_min_len(r: SourceRef) -> Option<u32> {
+    let data = held_len(r)? - DESC_LEN;
+    let records = (1 + data.div_ceil(SOURCE_DATA_MAX)) * RECORD_HEAD_LEN;
+    let n = HEADER_LEN + records + SOURCE_HEAD_LEN + data + TRAILER_LEN;
+    u32::try_from(n).ok()
 }
 
 /// `/CHIMERA/TAPES/<CRC>.SRC`, the CRC in upper-case hex.
@@ -192,10 +204,11 @@ pub fn read_source_into<S: Store>(
 pub enum Wrote {
     /// No file: written, verified, sealed.
     New,
-    /// A sealed file that verifies: nothing written.
+    /// A file that verifies: nothing written, sealed if it wasn't (a cut
+    /// at the seal, or a host copy that dropped the attribute).
     Present,
-    /// An unsealed file, the torn remains of a cut write: deleted, then
-    /// written, verified and sealed.
+    /// An unsealed file that fails its check, the torn remains of a cut
+    /// write: deleted, then written, verified and sealed.
     Replaced,
 }
 
@@ -205,7 +218,8 @@ pub enum Wrote {
 ///
 /// `File(Bounds)` with nothing written for a head and data that disagree
 /// or that TAPE couldn't play; `Damaged`, nothing written, for a sealed
-/// file that fails its check, which only the user may remove.
+/// file that fails its check, which only the user may remove. A file is
+/// checked before anything else: only one that fails is deleted.
 #[cfg(feature = "source-writer")]
 pub fn write_source<S: Store>(
     s: &mut S,
@@ -226,18 +240,20 @@ pub fn write_source<S: Store>(
     let (vol, file) = (r.volume(), source_file(head.sref));
     s.make_dir(vol, Dir::Chimera)?;
     s.make_dir(vol, Dir::Tapes)?;
-    // Only a sealed file refuses the delete: that one is never rewritten.
-    let wrote = match s.delete(vol, file) {
-        Ok(()) => Wrote::Replaced,
-        Err(StoreError::NotFound) => Wrote::New,
-        Err(StoreError::ReadOnly) => {
-            return match read_source(s, r, head.sref, None) {
-                Ok(_) => Ok(Wrote::Present),
-                Err(LoadError::Store(e)) => Err(e.into()),
-                Err(LoadError::File(_) | LoadError::Missing) => Err(SaveError::Damaged),
-            };
+    let wrote = match read_source(s, r, head.sref, None) {
+        Ok(_) => {
+            s.seal(vol, file)?;
+            return Ok(Wrote::Present);
         }
-        Err(e) => return Err(e.into()),
+        Err(LoadError::Missing) => Wrote::New,
+        Err(LoadError::Store(e)) => return Err(e.into()),
+        // Only a sealed file refuses the delete: that one is never
+        // rewritten.
+        Err(LoadError::File(_) | LoadError::Busy) => match s.delete(vol, file) {
+            Ok(()) => Wrote::Replaced,
+            Err(StoreError::ReadOnly) => return Err(SaveError::Damaged),
+            Err(e) => return Err(e.into()),
+        },
     };
     let h = Header {
         kind: FileKind::Source,
@@ -259,6 +275,7 @@ pub fn write_source<S: Store>(
         Err(LoadError::Store(e)) => return Err(e.into()),
         Err(LoadError::File(e)) => return Err(SaveError::File(e)),
         Err(LoadError::Missing) => return Err(StoreError::NotFound.into()),
+        Err(LoadError::Busy) => return Err(StoreError::Io.into()),
     }
     s.seal(vol, file)?;
     Ok(wrote)

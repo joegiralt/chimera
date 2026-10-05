@@ -4,6 +4,7 @@
 mod common;
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use chimera_core::name::SoundName;
 use chimera_core::params::EngineType;
@@ -890,61 +891,83 @@ fn put_project(s: &mut MemStore, n: u32, bytes: &[u8]) {
     }
 }
 
-fn load_file(s: &mut MemStore, q: &mut Project, t: TemplateCrc) -> (Option<ProjectNote>, bool) {
-    let mut card = Card::new();
-    let link = LoadLink::new();
-    let vol = s.mount().unwrap();
-    let id = ProjectId::new(1).unwrap();
-    // Sources in RAM are changes: confirmed.
-    let go = ReplaceGuard::check(q, t, ProjectSource::File { id, vol })
-        .unwrap_or_else(|n| n.into_pending().anyway(q));
-    let out = load_project(&mut card, s, q, go, &link);
-    (out.note, out.swap.is_some())
-}
-
 /// Pass 1 counts a file against the whole arena (ADR 0087): the sources
 /// in RAM retire at the load, so a project only the whole arena holds
-/// loads whole beside them. One still sounding keeps its bytes pending:
-/// the slots it holds the room of don't fit, and the load says so.
+/// loads whole beside them. A source still sounding is drained first: the
+/// load's epoch fades its voice, and pass 2 waits for it to let go. A
+/// voice that never does refuses the load before pass 2, with nothing
+/// dropped and nothing touched.
 #[test]
 fn pass_one_counts_the_whole_arena() {
     let (src, _) = full_dense_slots(48);
     let slots = src.pool().used();
     let file = encode_project(&src);
     let room = ARENA_BYTES - slots.bytes() as usize;
-    for sounding in [false, true] {
+    for case in ["quiet", "fades", "stuck"] {
         let mut s = MemStore::new(1);
         put_project(&mut s, 1, &file);
         let (mut q, t) = Project::boxed();
         // Its cost, room + 16, leaves the slots 16 B short beside it.
         let old = q.source_store(sref(99, 0), &vec![7; room]).unwrap();
-        if sounding {
+        let before = q.pool().used();
+        let link: &'static LoadLink = Box::leak(Box::new(LoadLink::new()));
+        let audio = (case != "quiet").then(|| {
             let mut tok = q.pool().table().reader().expect("one reader");
             let _ = tok.begin_block();
             tok.store_sounding(old.bit());
+            tok
+        });
+        let stop: &'static AtomicBool = Box::leak(Box::new(AtomicBool::new(false)));
+        let thread = match (case, audio) {
+            // The audio: the voice holds the source until the load's
+            // epoch kills it, every block answering the gate.
+            ("fades", Some(mut tok)) => {
+                q.set_gate_clock(now_ms);
+                let at = link.epoch();
+                Some(std::thread::spawn(move || {
+                    while !stop.load(Ordering::Relaxed) {
+                        let _ = tok.begin_block();
+                        let held = if link.epoch() == at { old.bit() } else { 0 };
+                        tok.store_sounding(held);
+                        std::thread::sleep(std::time::Duration::from_micros(200));
+                    }
+                }))
+            }
+            _ => None,
+        };
+        let vol = s.mount().unwrap();
+        let id = ProjectId::new(1).unwrap();
+        let go = ReplaceGuard::check(&q, t, ProjectSource::File { id, vol })
+            .unwrap_or_else(|n| n.into_pending().anyway(&q));
+        let out = load_project(&mut Card::new(), &mut s, &mut q, go, link);
+        stop.store(true, Ordering::Relaxed);
+        if let Some(h) = thread {
+            h.join().unwrap();
         }
-        let (note, swapped) = load_file(&mut s, &mut q, t);
-        assert!(swapped, "{sounding}");
+        assert!(out.swap.is_some(), "{case}: always published");
+        if case == "stuck" {
+            assert_eq!(out.note, Some(ProjectNote::Busy(Subject::File(id))));
+            assert_eq!(q.pool().find_source(sref(99, 0)), Some(old), "untouched");
+            assert_eq!(q.pool().used(), before, "no Sound dropped, none stored");
+            assert_ne!(q.meta().name(), src.meta().name());
+            continue;
+        }
+        assert_eq!(out.note, None, "{case}: loaded whole, no note");
         assert_eq!(q.pool().find_source(sref(99, 0)), None, "retired");
         assert_eq!(q.meta().name(), src.meta().name());
-        if sounding {
-            assert!(pending(&q) > Cost::default(), "its bytes stay");
-            let Some(ProjectNote::DidntFit { sounds, sources: 0 }) = note else {
-                panic!("{note:?}");
-            };
-            assert!(sounds > 0);
-            assert_eq!(
-                q.pool().sound_count(),
-                src.pool().sound_count() - usize::from(sounds)
-            );
-            assert_eq!(q.meta().saved_crc(), None, "lossy");
-        } else {
-            assert_eq!(note, None, "loaded, no note");
-            assert_eq!(q.pool().used(), slots);
-            assert_eq!(q.pool().source_used(), Cost::default());
-            assert!(q.meta().saved_crc().is_some());
-        }
+        assert_eq!(q.pool().sound_count(), src.pool().sound_count(), "{case}");
+        assert_eq!(q.pool().used(), slots);
+        assert_eq!(q.pool().source_used(), Cost::default());
+        assert!(q.meta().saved_crc().is_some());
     }
+}
+
+/// The UI loop's clock for a gate's wait, in ms.
+fn now_ms() -> u32 {
+    static T0: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    T0.get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_millis() as u32
 }
 
 /// A small source at offset 0 and a large one above it, both retired, the

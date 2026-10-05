@@ -40,6 +40,11 @@ pub trait Decode: Check {
 /// staging can't fit (a project); `load_ab_in_place` says whether the
 /// target was touched.
 pub trait DecodeInPlace: Check {
+    /// After pass 1 and the pick, before pass 2: an `Err` refuses the
+    /// load with the target untouched.
+    fn begin<S: Store>(&mut self, _s: &mut S, _r: &Ready) -> Result<(), LoadError> {
+        Ok(())
+    }
     fn apply(&mut self, e: Event<'_>) -> Result<(), FileError>;
     fn finish(&mut self) -> Result<(), FileError>;
 }
@@ -50,6 +55,8 @@ pub enum LoadError {
     File(FileError),
     /// Neither side exists.
     Missing,
+    /// The audio still holds what pass 2 would overwrite (ADR 0087).
+    Busy,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,7 +112,7 @@ impl CardFault for LoadError {
     fn store_error(&self) -> Option<StoreError> {
         match *self {
             LoadError::Store(e) => Some(e),
-            LoadError::File(_) | LoadError::Missing => None,
+            LoadError::File(_) | LoadError::Missing | LoadError::Busy => None,
         }
     }
 }
@@ -592,6 +599,7 @@ pub fn load_ab_in_place<S: Store, D: DecodeInPlace>(
         Checked::Failed { err, .. } => return Err(untouched(LoadError::File(err))),
     };
     d.side(side);
+    d.begin(s, r).map_err(untouched)?;
     let header =
         pass_two(s, r, f.side(side), D::KIND, crc, &mut |e| d.apply(e)).map_err(clobbered)?;
     d.finish().map_err(|e| clobbered(LoadError::File(e)))?;

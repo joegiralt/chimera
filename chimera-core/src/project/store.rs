@@ -67,6 +67,7 @@ fn load_note(e: LoadError, subject: Subject) -> ProjectNote {
         LoadError::Store(err) => card_note(err, Some(subject)),
         LoadError::File(err) => ProjectNote::File { err, subject },
         LoadError::Missing => ProjectNote::Missing(subject),
+        LoadError::Busy => ProjectNote::Busy(subject),
     }
 }
 
@@ -388,14 +389,21 @@ impl Loaded {
 
 /// The file in place (ADR 0046), then the sources its plan takes, read
 /// from the card into their absent entries (ADR 0087): one card operation.
+/// Pass 2 and the source reads run after `link`'s epoch, which `swap`
+/// takes, has faded the voices. Its own frame: the decoder's two sides of
+/// pass 1 costs stay out of the UI loop's (the 8 KB stack-check).
+#[inline(never)]
 fn load_into<S: Store>(
     s: &mut S,
     r: &Ready,
     p: &mut Project,
     id: ProjectId,
+    link: Option<&LoadLink>,
+    swap: &mut Option<Swap>,
 ) -> Result<Loaded, InPlaceError> {
-    let mut d = ProjectDecoder::new(p);
+    let mut d = ProjectDecoder::new(p, link);
     let read = load_ab_in_place(s, r, project_file(id), &mut d);
+    *swap = d.take_swap();
     let (lossy, to_read, (sounds, sources)) = (d.lossy(), d.to_read(), d.dropped());
     read?;
     let missed = read_sources(s, r, p, to_read);
@@ -469,7 +477,11 @@ pub fn load_project<S: Store>(
         ProjectSource::File { id, vol } => (id, vol),
     };
     let subject = Subject::File(id);
-    let run = run_on(card, store, vol, |s, r| load_into(s, r, p, id));
+    // Bumped between the passes, once the file is known good.
+    let mut swap = None;
+    let run = run_on(card, store, vol, |s, r| {
+        load_into(s, r, p, id, Some(link), &mut swap)
+    });
     let result = match run {
         Ok(o) => {
             out.event = Some(o.event);
@@ -482,7 +494,7 @@ pub fn load_project<S: Store>(
             p.bump();
             p.meta.file = Some(ProjectFile::new(id, vol));
             p.meta.saved_crc = loaded_crc(p, loaded.lossy);
-            out.swap = Some(link.bump());
+            out.swap = Some(swap.take().unwrap_or_else(|| link.bump()));
             out.note = loaded.note();
         }
         // Not the card the file was listed on: nothing read.
@@ -495,9 +507,13 @@ pub fn load_project<S: Store>(
             clobbered: true, ..
         }) => {
             p.reset_new();
-            out.swap = Some(link.bump());
+            out.swap = Some(swap.take().unwrap_or_else(|| link.bump()));
             out.note = Some(ProjectNote::LoadFailed(subject));
         }
+    }
+    // Refused after the bump (`Busy`): the voices faded, so publish.
+    if out.swap.is_none() {
+        out.swap = swap;
     }
     out
 }
@@ -521,7 +537,7 @@ pub fn boot_project<S: Store>(
         Some(id) => {
             let subject = Subject::File(id);
             let run = card.run(store, |s, r| {
-                load_into(s, r, p, id).map(|l| (r.volume(), l))
+                load_into(s, r, p, id, None, &mut None).map(|l| (r.volume(), l))
             });
             match run {
                 Ok(o) => match o.result {

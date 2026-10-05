@@ -35,7 +35,7 @@ pub use record::{
 pub use sound::{MAX_SOUND_COST, SoundCheck, SoundDecoder, encode_sound, sound_crc};
 pub use source_file::{
     SOURCE_DATA_MAX, SOURCE_HEAD_LEN, SourceHead, held_len, read_source_into, source_crc,
-    source_file,
+    source_file, source_file_min_len,
 };
 #[cfg(feature = "source-writer")]
 pub use source_file::{Wrote, write_source};

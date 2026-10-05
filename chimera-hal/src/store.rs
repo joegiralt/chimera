@@ -181,7 +181,8 @@ pub trait Store {
     fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError>;
     /// Marks `file` read-only: from then on `write` and `delete` refuse it
     /// (`ReadOnly`). One already sealed is `Ok`, with nothing written. A
-    /// store that can't seal says `Io`.
+    /// store that can't seal says `Io`, as does every store for a file
+    /// outside `Dir::Tapes`: only a source is write-once.
     fn seal(&mut self, _vol: VolumeId, _file: FileName) -> Result<(), StoreError> {
         Err(StoreError::Io)
     }

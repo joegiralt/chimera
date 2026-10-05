@@ -338,7 +338,9 @@ fn fat_block_of(disk: &RamDisk, c: u32) -> u32 {
 }
 
 /// A write cut at each block, then `write_source` again: the torn file is
-/// Replaced (New if no entry landed), verified and sealed.
+/// Replaced (New if no entry landed), verified and sealed. A cut at the
+/// seal itself left a whole file: it is sealed as it is, Present, never
+/// deleted.
 #[test]
 fn torn_source_is_replaced() {
     let (h, data) = source(7, FRAMES);
@@ -352,10 +354,20 @@ fn torn_source_is_replaced() {
         assert!(write_on(&mut probed(&cut), &h, &data).is_err(), "{what}");
         cut.cut.set(Cut::Never);
         let had = fat_check(&cut.inner).entry(&name83(&h)).is_some();
+        let whole = read_on(&mut probed(&cut), h.sref).is_ok();
+        assert_eq!(
+            whole,
+            k == writes.len() - 1,
+            "{what}: whole only cut at the seal"
+        );
         let again = write_on(&mut probed(&cut), &h, &data);
-        let want = if had { Wrote::Replaced } else { Wrote::New };
+        let want = match (whole, had) {
+            (true, _) => Wrote::Present,
+            (false, true) => Wrote::Replaced,
+            (false, false) => Wrote::New,
+        };
         assert_eq!(again, Ok(want), "{what}");
-        replaced += usize::from(had);
+        replaced += usize::from(had && !whole);
         clean(&what, &cut.inner);
         let mut s = probed(&cut);
         assert_eq!(read_on(&mut s, h.sref), Ok(held(&h, &data)), "{what}");

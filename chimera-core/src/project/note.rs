@@ -91,6 +91,9 @@ pub enum ProjectNote {
     Missing(Subject),
     /// Pass 2 failed: the project is NEW.
     LoadFailed(Subject),
+    /// A voice still held a source when pass 2 would start (ADR 0087):
+    /// nothing loaded.
+    Busy(Subject),
     /// The confirmed target moved: nothing ran.
     Changed,
     /// A confirmed overwrite or delete whose file moved: nothing written.
@@ -158,6 +161,7 @@ impl ProjectNote {
             ProjectNote::File { err, subject } => return naming(err.message(), subject),
             ProjectNote::Missing(s) => return naming("PROJECT NOT FOUND", s),
             ProjectNote::LoadFailed(s) => return naming("LOAD FAILED", s),
+            ProjectNote::Busy(s) => return naming("AUDIO BUSY, NOT LOADED", s),
             ProjectNote::Changed => l.write_str("CHANGED SINCE ASKED: TRY AGAIN"),
             ProjectNote::FileChanged(s) => return naming("CHANGED SINCE ASKED", s),
             ProjectNote::NoFile => l.write_str("NOT SAVED YET"),

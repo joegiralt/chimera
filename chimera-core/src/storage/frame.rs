@@ -11,7 +11,7 @@ pub const FORMAT_VERSION: u16 = 1;
 pub const HEADER_LEN: usize = 28;
 /// CRC32, little-endian, over the header and the records.
 pub const TRAILER_LEN: usize = 4;
-const RECORD_HEAD_LEN: usize = 4;
+pub(crate) const RECORD_HEAD_LEN: usize = 4;
 
 /// What a file holds. 4 Tags and 5 Index are reserved (ADR 0045).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

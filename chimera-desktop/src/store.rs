@@ -202,6 +202,9 @@ impl Store for DirStore {
 
     fn seal(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
         self.open(vol)?;
+        if file.dir() != Dir::Tapes {
+            return Err(StoreError::Io);
+        }
         let path = self.file_path(file);
         let mut perm = fs::metadata(&path).map_err(io_err)?.permissions();
         perm.set_readonly(true);

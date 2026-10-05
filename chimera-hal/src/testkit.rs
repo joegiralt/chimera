@@ -162,6 +162,9 @@ impl Store for MemStore {
 
     fn seal(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
         self.open(vol)?;
+        if file.dir() != Dir::Tapes {
+            return Err(StoreError::Io);
+        }
         if !self.files.contains_key(&file) {
             return Err(StoreError::NotFound);
         }
@@ -409,6 +412,11 @@ pub fn store_suite<S: Store>(
     let (r, c) = read_all(&mut s, vol, ok, None);
     r.unwrap();
     assert_eq!(c.data, b"ok");
+    after_op(&s);
+    // Only a source seals: any other file stays writable.
+    assert_eq!(s.seal(vol, ok), Err(StoreError::Io));
+    after_op(&s);
+    s.write(vol, ok, &mut |w| w.put(b"ok")).unwrap();
     after_op(&s);
 
     // A sealed file reads as it was; nothing rewrites or deletes it.
