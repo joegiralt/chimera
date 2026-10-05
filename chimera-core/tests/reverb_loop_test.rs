@@ -10,7 +10,8 @@ use chimera_core::dsp::Stereo;
 use chimera_core::dsp::halfband::{Decimator, HALF, Interpolator};
 use chimera_core::dsp::rev::Reverb;
 use chimera_core::dsp::rev::arena::ReverbArena;
-use chimera_core::dsp::rev::loop_engine::{Layout, Room, THETA, rotation};
+use chimera_core::dsp::rev::loop_engine::{Layout, PER_MS, Room, STEP, THETA, rotate, rotation};
+use chimera_core::dsp::rev::parts::{Wander, wander_seeds};
 use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::reverb::{KnobMemory, ReverbParams, ReverbType, knobs};
 use chimera_core::dsp::ring::RING_LEN;
@@ -18,7 +19,8 @@ use chimera_hal::BLOCK_SIZE;
 use common::SR;
 use common::rev::{
     MS, Noise, blocks, check_knobs_ease, check_level_plan, check_no_slap, check_noise_floor,
-    check_settles_on_pitch, check_sustained_loudness, onset_ms, pink, rt60_t20, run, tone,
+    check_settles_on_pitch, check_sustained_loudness, onset_ms, pink, rt60_t20, run,
+    settled_peak_hz, tone,
 };
 
 type Blk = [f32; BLOCK_SIZE];
@@ -106,19 +108,22 @@ fn rotation_preserves_energy() {
     assert!((e - 1.0).abs() <= 1e-7, "c² + s² = {e}");
     assert!((c - THETA.cos()).abs() < 1e-6 && (s - THETA.sin()).abs() < 1e-6);
     // Two lossless loops (gains 1, dampers off) of ROOM's SIZE-1 round
-    // trips, coupled by the rotation: their stored energy holds.
+    // trips, coupled by the engine's own `rotate` in f32: their stored
+    // energy holds.
     let trip = |l: usize| LENS.delay[l].iter().chain(&LENS.ap[l]).sum::<usize>();
     let mut n = Noise(7);
-    let mut lines: [Vec<f64>; 2] =
-        core::array::from_fn(|l| (0..trip(l)).map(|_| n.next() as f64).collect());
-    let energy = |x: &[Vec<f64>; 2]| x.iter().flatten().map(|v| v * v).sum::<f64>();
+    let mut lines: [Vec<f32>; 2] =
+        core::array::from_fn(|l| (0..trip(l)).map(|_| n.next()).collect());
+    let energy = |x: &[Vec<f32>; 2]| {
+        x.iter()
+            .flatten()
+            .map(|&v| v as f64 * v as f64)
+            .sum::<f64>()
+    };
     let e0 = energy(&lines);
-    let (c, s) = (c as f64, s as f64);
     let mut at = [0usize; 2];
     for _ in 0..10 * trip(0).max(trip(1)) {
-        let (a, b) = (lines[0][at[0]], lines[1][at[1]]);
-        lines[0][at[0]] = c * a + s * b;
-        lines[1][at[1]] = -s * a + c * b;
+        (lines[0][at[0]], lines[1][at[1]]) = rotate(lines[0][at[0]], lines[1][at[1]]);
         at = [(at[0] + 1) % trip(0), (at[1] + 1) % trip(1)];
     }
     let drift = energy(&lines) / e0 - 1.0;
@@ -197,15 +202,14 @@ fn room_settles_on_its_input_pitch() {
     check_settles_on_pitch(&mut bus(&rv, &pc), &mut step, 0.2);
 }
 
-/// SMEAR's bound (§ The SMEAR bound) where ROOM keeps it: each loop's one
+/// SMEAR's cap (§ The SMEAR bound) where ROOM keeps it: each loop's one
 /// smeared allpass reads within [M − 2D, M], never under 2, and 2D is at
-/// most 1.45 % of that loop's round trip at every SIZE (25 cents), however
-/// deep the offsets asked. `check_smear_bound`'s zero crossings can't judge
-/// it here: two coupled loops 100 and 95.4 ms long beat, so a still ROOM at
-/// SMEAR 0 already reads ±45 cents pass to pass, and its spectral peak hops
-/// between modes 40 cents apart window to window.
+/// most 1.45 % of that loop's round trip at every SIZE, however deep the
+/// offsets asked. The 25 cents follow from it. `check_smear_bound`'s zero
+/// crossings can't judge it here: two coupled loops 100 and 95.4 ms long
+/// beat, so a still ROOM at SMEAR 0 already reads ±45 cents pass to pass.
 #[test]
-fn room_smear_is_bounded_without_drift_or_vibrato() {
+fn room_smear_reads_stay_within_the_cap() {
     let mut p = params(1.0);
     (p.smear, p.rate) = (1.0, 1.0);
     for i in 0..=16 {
@@ -234,17 +238,84 @@ fn room_smear_is_bounded_without_drift_or_vibrato() {
     }
 }
 
-/// ROOM at DECAY 1: noise for 2 s, SIZE from `from` to 1 at 0.5 s, then
-/// the tail from `LATE` after the noise to 6 s.
-fn size_tail(from: f32) -> Vec<f32> {
+/// ROOM alone at `p`, its two wanders run as `Reverb` runs them, and its
+/// decay held long: RT60 20 s holds every stage at its 0.985 cap (22 s at
+/// SIZE 0), so a tail lasts the 4 s windows a wander's drift needs.
+fn smeared(p: ReverbParams) -> impl FnMut(&Blk) -> (Blk, Blk) {
+    let mut k = knobs(&p);
+    k.rt60_s = 20.0;
+    let full = k.smear_ms * PER_MS;
+    let seeds = wander_seeds::<2>(0x5EED_0343);
+    let mut w: [Wander; 2] = core::array::from_fn(|i| {
+        let mut w = Wander::new(seeds[i], i as f32 / 2.0);
+        w.set(Wander::rate(k.rate_hz, 24_000.0));
+        w
+    });
+    let (mut e, mut arena) = (L::default(), Box::new(ReverbArena::new()));
+    let (mut dec, mut up) = (Decimator::new(), [Interpolator::new(), Interpolator::new()]);
+    move |send| {
+        let (mut u, mut l, mut r) = ([0.0; HALF], [0.0; HALF], [0.0; HALF]);
+        dec.process(send, &mut u);
+        let x0 = w.map(|w| w.value());
+        let x1: [f32; 2] = core::array::from_fn(|i| w[i].block());
+        e.set_smear(core::array::from_fn(|i| {
+            (full * (1.0 + x0[i]), full * (1.0 + x1[i]))
+        }));
+        e.run(&mut arena, &u, &k, &mut l, &mut r);
+        let (mut ol, mut or) = ([0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE]);
+        up[0].process(&l, &mut ol);
+        up[1].process(&r, &mut or);
+        (ol.map(|x| x / 16_384.0), or.map(|x| x / 16_384.0))
+    }
+}
+
+/// SMEAR leaves a held tone's tail where it was: a 1 kHz sine's tail,
+/// held long, has its spectral peak in two 4 s windows (1.5–5.5 s and
+/// 5.5–9.5 s, above −60 dB); at SMEAR 1 and RATE 1 the peak hops between
+/// them by no more than 25 cents beyond SMEAR 0's own hop, at SIZE 0.
+#[test]
+fn room_smear_does_not_move_the_tails_peak() {
+    let hop = |smear: f32| {
+        let mut p = params(1.0);
+        (p.smear, p.rate, p.size) = (smear, 1.0, 0.0);
+        let sine = tone(1_000.0, 0.25);
+        let (l, _) = run(
+            &mut smeared(p),
+            &mut |i| if i < SR as usize / 2 { sine(i) } else { 0.0 },
+            9.5,
+        );
+        let at = |a: f32, b: f32| {
+            settled_peak_hz(&l[(a * SR as f32) as usize..(b * SR as f32) as usize])
+        };
+        let (f1, f2) = (at(1.5, 5.5), at(5.5, 9.5));
+        println!("SMEAR {smear}: {f1:.2} → {f2:.2} Hz");
+        (1200.0 * (f2 / f1).log2()).abs()
+    };
+    let (still, moving) = (hop(0.0), hop(1.0));
+    assert!(
+        moving <= still + 25.0,
+        "SMEAR 1 hops {moving} cents, SMEAR 0 {still}"
+    );
+}
+
+/// ROOM at DECAY 1: noise for 2 s, SIZE from `from` to 1 from `start`
+/// seconds, so the sweep lands as the noise ends or after; then the tail
+/// from `LATE` after the noise to 6 s. `coarse` steps 50 ms a crossfade.
+fn size_tail(from: f32, start: f32, coarse: u16) -> Vec<f32> {
     let mut p = params(1.0);
     (p.time, p.size) = (1.0, from);
     let (rv, pc) = (fresh(&p), RefCell::new(p));
+    if coarse > 0 {
+        rv.borrow_mut()
+            .room_mut()
+            .expect("ROOM")
+            .coarse_steps(coarse);
+    }
     let mut n = Noise(0xface);
     let mut render = bus(&rv, &pc);
     let mut out = Vec::new();
     for b in 0..blocks(6.0) {
-        if b == blocks(0.5) {
+        if b == blocks(start) {
             pc.borrow_mut().size = 1.0;
         }
         let send = core::array::from_fn(|i| {
@@ -265,9 +336,22 @@ fn size_tail(from: f32) -> Vec<f32> {
 /// have rung down. Before it, those are the tail.
 const LATE: usize = 100 * MS;
 
+/// The 0 → 1 sweep (22 crossfades, 0.66 s) from 1.4 s lands at 2.06 s,
+/// in the judged tail. And the check has teeth: 50 ms steps from 1.95 s
+/// (3 crossfades, landing at 2.04 s) slap.
+/// The 0 → 1 sweep (22 crossfades, 0.66 s) from 1.4 s lands at 2.06 s,
+/// as the noise ends: the judged tail is the settled one. And the check
+/// has teeth: 50 ms steps (test-only), crossfading inside the judged tail
+/// from 2.1 s, slap. (It hears 10 ms steps too, not 20 or 100 ms; and a
+/// 5 ms sweep still running in the tail reads up to −10.7 dB, the
+/// crossfade's own comb, § Moving a length.)
 #[test]
 fn no_slap_after_a_size_sweep() {
-    check_no_slap(&size_tail(0.0), &size_tail(1.0));
+    let still = size_tail(1.0, 1.4, 0);
+    check_no_slap(&size_tail(0.0, 1.4, 0), &still);
+    let coarse = size_tail(0.0, 2.1, 10 * STEP);
+    let heard = std::panic::catch_unwind(|| check_no_slap(&coarse, &still));
+    assert!(heard.is_err(), "50 ms steps pass the slap check");
 }
 
 /// A 0.5 s noise burst into ROOM on `p`, MIX 1, `seconds` long: (L, R).
@@ -301,7 +385,7 @@ fn room_window_and_rt60() {
     let onset = onset_ms(&l).min(onset_ms(&r));
     let rt = rt60_of(&p);
     println!("defaults: RT60 {rt:.3} s, onset {onset} ms");
-    assert!((rt / 0.548 - 1.0).abs() <= 0.3, "RT60 {rt}");
+    assert!((rt / 0.548 - 1.0).abs() <= 0.2, "RT60 {rt}");
     assert!(onset <= 34.0, "onset {onset} ms");
     // DECAY 0 checks the rotation. No `t_min` floors it: the stage
     // allpasses' g is held to their own ring, DIFFUSE 1's too.
@@ -324,7 +408,7 @@ fn room_window_and_rt60() {
         let rt = rt60_of(&q);
         println!("DECAY {decay} DIFFUSE {diffuse}: RT60 {rt:.3} s, target {want:.3} s");
         assert!(
-            (rt / want - 1.0).abs() <= 0.35,
+            (rt / want - 1.0).abs() <= 0.2,
             "DECAY {decay}: {rt} vs {want}"
         );
     }
