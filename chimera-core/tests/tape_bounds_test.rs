@@ -14,8 +14,13 @@ use chimera_core::storage::twelve::pack12;
 use chimera_hal::BLOCK_SIZE;
 use common::XorShift;
 
-/// The models these runs play; Tasks 6–8 add theirs.
-const MODELS: [TapeModel; 1] = [TapeModel::Loop];
+/// The models these runs play; Tasks 7–8 add theirs.
+const MODELS: [TapeModel; 4] = [
+    TapeModel::Loop,
+    TapeModel::Reverse,
+    TapeModel::PingPong,
+    TapeModel::Scrub,
+];
 
 const MAX_FRAMES: usize = 100_000;
 

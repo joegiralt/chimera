@@ -7,6 +7,10 @@
 //! With too few frames before the next loop's start, the fade folds inside
 //! it: the pass after plays `[ls + lx, le)`, with `[ls, ls + lx)` as the
 //! fade's pre-roll. So no setting but XFADE 0 ever hard-wraps.
+//!
+//! The heads move forward in their own frame `u`. A mirrored frame reads the
+//! source at `off − u`, so REVERSE, PING-PONG's way down and SCRUB's
+//! backward vari-speed are LOOP's arithmetic read backward.
 
 use super::MIN_LOOP_S;
 use super::read::Pos;
@@ -78,6 +82,38 @@ impl Bounds {
     pub fn fade_at(&self) -> u32 {
         self.le - self.lx
     }
+
+    /// The same loop in a frame mirrored about `n` (≥ `le`): `u = n − x`.
+    pub fn mirror(&self, n: u32) -> Bounds {
+        Bounds {
+            ls: n - self.le,
+            le: n - self.ls,
+            lx: self.lx,
+        }
+    }
+}
+
+/// PING-PONG's clamp (spec § 2): a head left outside new bounds plays on,
+/// its own way, while the output moves to the head that starts inside, over
+/// `len` samples, linearly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Ghost {
+    /// Where it reads, in source frames.
+    pub pos: Pos,
+    /// It moves toward frame 0.
+    pub back: bool,
+    /// Samples of the fade played, and its length.
+    pub done: u32,
+    pub len: u32,
+}
+
+/// PING-PONG's turn in progress: `k` samples of `2·th`. The head's step is
+/// scaled by `|th − k − ½| / th`, so it slows to a stop over `th` samples
+/// (travelling `th/2` steps) and comes back as it went.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Turn {
+    pub k: u16,
+    pub th: u16,
 }
 
 /// What a head `rem` frames before its pass's end does about `next`, the
@@ -163,6 +199,25 @@ mod tests {
         let g = f.gain(end - Pos(100));
         assert!((0.0..=1.0).contains(&g), "{g}");
         assert_eq!(f.gain(end), 1.0);
+    }
+
+    #[test]
+    fn mirror_twice_is_the_same() {
+        let b = Bounds {
+            ls: 10,
+            le: 90,
+            lx: 8,
+        };
+        assert_eq!(
+            b.mirror(100),
+            Bounds {
+                ls: 10,
+                le: 90,
+                lx: 8
+            }
+        );
+        assert_eq!(b.mirror(200).mirror(200), b);
+        assert_eq!(b.mirror(200).ls, 110);
     }
 
     #[test]

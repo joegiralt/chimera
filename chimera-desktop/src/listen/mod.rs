@@ -171,9 +171,49 @@ static SWEEP: [(f32, ParamId, f32); 16] = [
 pub const SWEEP_LEGEND: &str = "0–2 s neutral · 2–5 s POSITION 0→1→0 · 5–8 s MOTION 0→1→0 · \
     8–11 s SIZE 0→1→0 · 11.5–14.5 s TAPE and AGE at 0.5";
 
-/// The macro script `model` is heard under.
-pub fn script(_model: TapeModel) -> Script {
-    Script(&SWEEP)
+/// SCRUB's: its neutral holds still, so the loop is 0.3 of the window and
+/// runs at the note's speed (MOTION 0.5); POSITION drags the finger 0 → 1
+/// → 0; MOTION runs 0.5 → −1 → 0.5, through a stop into reverse; SIZE and
+/// TAPE and AGE as `SWEEP`'s.
+static SCRUB_SWEEP: [(f32, ParamId, f32); 18] = [
+    (2.0, P::POSITION, 0.0),
+    (3.5, P::POSITION, 1.0),
+    (5.0, P::POSITION, 0.0),
+    (5.0, P::MOTION, 0.5),
+    (6.5, P::MOTION, -1.0),
+    (8.0, P::MOTION, 0.5),
+    (0.0, P::SIZE, 0.3),
+    (7.75, P::SIZE, 0.3),
+    (8.0, P::SIZE, 0.0),
+    (9.5, P::SIZE, 1.0),
+    (11.0, P::SIZE, 0.0),
+    (11.25, P::SIZE, 0.3),
+    (11.25, P::TAPE, 0.0),
+    (11.5, P::TAPE, 0.5),
+    (14.5, P::TAPE, 0.5),
+    (11.25, P::AGE, 0.0),
+    (11.5, P::AGE, 0.5),
+    (14.5, P::AGE, 0.5),
+];
+
+/// What the page says SCRUB's script does.
+pub const SCRUB_LEGEND: &str = "SIZE 0.3, MOTION 0.5 (the note's speed) · 2–5 s POSITION \
+    (the finger) 0→1→0 · 5–8 s MOTION 0.5→−1→0.5 · 8–11 s SIZE 0→1→0 · 11.5–14.5 s TAPE \
+    and AGE at 0.5";
+
+/// The macro script `model` is heard under, and what the page says of it.
+pub fn script(model: TapeModel) -> Script {
+    match model {
+        TapeModel::Scrub => Script(&SCRUB_SWEEP),
+        _ => Script(&SWEEP),
+    }
+}
+
+pub fn legend(model: TapeModel) -> &'static str {
+    match model {
+        TapeModel::Scrub => SCRUB_LEGEND,
+        _ => SWEEP_LEGEND,
+    }
 }
 
 /// `held` played by `model` on `note` under `s`, from a fresh engine: the
@@ -209,6 +249,8 @@ pub struct Qa {
     pub peak_dbfs: f32,
     /// The worst sample's `isolation` under either detector (`qa`).
     pub click_ratio: f32,
+    /// The sample it scored at.
+    pub click_at: usize,
     pub non_finite: usize,
 }
 
@@ -233,8 +275,9 @@ const BLOCK: usize = 64;
 
 /// The worst ratio of a sample of `r` (over `FLOOR`) to the largest of
 /// its peers within ±`REACH`, the sample's own ±`OWN` left out. A periodic
-/// edge has peers as large one period away; a click has none.
-fn isolation(r: &[f32]) -> f32 {
+/// edge has peers as large one period away; a click has none. With the
+/// sample it is at.
+fn isolation(r: &[f32]) -> (f32, usize) {
     let a: Vec<f32> = r.iter().map(|v| v.abs()).collect();
     let blocks: Vec<f32> = a
         .chunks(BLOCK)
@@ -261,9 +304,9 @@ fn isolation(r: &[f32]) -> f32 {
         .map(|i| {
             let left = max(i.saturating_sub(REACH), i.saturating_sub(OWN));
             let right = max((i + OWN + 1).min(n), (i + REACH + 1).min(n));
-            a[i] / left.max(right).max(f32::MIN_POSITIVE)
+            (a[i] / left.max(right).max(f32::MIN_POSITIVE), i)
         })
-        .fold(0.0, f32::max)
+        .fold((0.0, 0), |m, r| if r.0 > m.0 { r } else { m })
 }
 
 /// Two detectors, each judged by `isolation`: the second difference
@@ -296,9 +339,12 @@ pub fn qa(x: &[f32]) -> Qa {
             y[i] - w[2]
         })
         .collect();
+    let (a, b) = (isolation(&d2), isolation(&med));
+    let (click_ratio, click_at) = if b.0 > a.0 { b } else { a };
     Qa {
         peak_dbfs: 20.0 * peak.log10(),
-        click_ratio: isolation(&d2).max(isolation(&med)),
+        click_ratio,
+        click_at,
         non_finite: n - x.iter().filter(finite).count(),
     }
 }
@@ -424,7 +470,7 @@ pub fn page(rows: &[(TapeModel, &Src)]) -> String {
         let _ = write!(
             out,
             "<section><h2>{name}</h2><p class=\"legend\">{}</p>",
-            esc(SWEEP_LEGEND)
+            esc(legend(m))
         );
         for &(m, s) in it {
             let credit = credit(s);

@@ -17,8 +17,24 @@ use common::tape::{held_plain, sine};
 
 const SR: u32 = 48_000;
 
-/// The models this task plays; Tasks 6–8 add theirs.
-const MODELS: [TapeModel; 1] = [TapeModel::Loop];
+/// The models built so far; Tasks 7–8 add theirs.
+const MODELS: [TapeModel; 4] = [
+    TapeModel::Loop,
+    TapeModel::Reverse,
+    TapeModel::PingPong,
+    TapeModel::Scrub,
+];
+
+/// `p` as `model` plays it in a loop test: SCRUB's head moves only with
+/// MOTION, so it runs at the note's speed.
+fn as_model(model: TapeModel, p: TapeEngineParams) -> TapeEngineParams {
+    let motion = if model == TapeModel::Scrub {
+        0.5
+    } else {
+        p.motion
+    };
+    TapeEngineParams { model, motion, ..p }
+}
 
 fn fresh() -> TapeEngine {
     let mut slot = MaybeUninit::uninit();
@@ -49,6 +65,13 @@ fn max_step(x: &[f32]) -> f32 {
 /// Times the probe head moved back: the wraps.
 fn wraps(heads: &[u32]) -> usize {
     heads.windows(2).filter(|w| w[1] < w[0]).count()
+}
+
+/// Times the probe head moved against its usual way: a reverse loop's
+/// wraps jump forward.
+fn wraps_either(heads: &[u32]) -> usize {
+    let back = wraps(heads);
+    back.min(heads.len() - 1 - back)
 }
 
 /// Rising zero crossings, linearly interpolated: the frequency over `x`.
@@ -120,24 +143,32 @@ fn init_never_hard_wraps() {
 fn loops_are_click_free() {
     let held = held_plain(&sine(48_000, 100.7, 48_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
-    for xfade in [0.1, 0.5] {
-        for position in [0.0, 0.5] {
-            let p = TapeEngineParams {
-                xfade,
-                position,
-                size: 0.6,
-                ..TapeEngineParams::default()
-            };
-            let mut e = fresh();
-            e.note_on(60, &p, &v, SR);
-            let (out, heads) = play(&mut e, &p, &v, 1_500);
-            assert!(wraps(&heads) >= 10, "XFADE {xfade} POSITION {position}");
-            let steady = max_step(&out[BLOCK_SIZE..2_000]);
-            let worst = max_step(&out[BLOCK_SIZE..]);
-            assert!(
-                worst <= 4.0 * steady,
-                "XFADE {xfade} POSITION {position}: {worst} against {steady}"
-            );
+    for model in [TapeModel::Loop, TapeModel::Reverse, TapeModel::Scrub] {
+        for xfade in [0.1, 0.5] {
+            for position in [0.0, 0.5] {
+                let p = as_model(
+                    model,
+                    TapeEngineParams {
+                        xfade,
+                        position,
+                        size: 0.6,
+                        ..TapeEngineParams::default()
+                    },
+                );
+                let mut e = fresh();
+                e.note_on(60, &p, &v, SR);
+                let (out, heads) = play(&mut e, &p, &v, 1_500);
+                assert!(
+                    wraps_either(&heads) >= 10,
+                    "{model:?} XFADE {xfade} POSITION {position}"
+                );
+                let steady = max_step(&out[BLOCK_SIZE..2_000]);
+                let worst = max_step(&out[BLOCK_SIZE..]);
+                assert!(
+                    worst <= 4.0 * steady,
+                    "{model:?} XFADE {xfade} POSITION {position}: {worst} against {steady}"
+                );
+            }
         }
     }
 }
@@ -349,19 +380,21 @@ fn midi_extremes_stay_finite() {
 fn retrigger_is_click_free() {
     let held = held_plain(&sine(48_000, 100.7, 48_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
-    let p = TapeEngineParams::default();
-    let mut e = fresh();
-    e.note_on(60, &p, &v, SR);
-    let (mut out, _) = play(&mut e, &p, &v, 20);
-    let steady = max_step(&out[BLOCK_SIZE..]);
-    // Retriggered at frame 0, half a period on, and 30 % in: each a jump.
-    for start in [0.0, 50.0 / 48_000.0, 0.3] {
-        e.note_on(60, &TapeEngineParams { start, ..p }, &v, SR);
-        let (more, _) = play(&mut e, &p, &v, 4);
-        out.extend_from_slice(&more);
+    for model in MODELS {
+        let p = as_model(model, TapeEngineParams::default());
+        let mut e = fresh();
+        e.note_on(60, &p, &v, SR);
+        let (mut out, _) = play(&mut e, &p, &v, 20);
+        let steady = max_step(&out[BLOCK_SIZE..]);
+        // Retriggered at frame 0, half a period on, and 30 % in: each a jump.
+        for start in [0.0, 50.0 / 48_000.0, 0.3] {
+            e.note_on(60, &TapeEngineParams { start, ..p }, &v, SR);
+            let (more, _) = play(&mut e, &p, &v, 4);
+            out.extend_from_slice(&more);
+        }
+        let worst = max_step(&out[BLOCK_SIZE..]);
+        assert!(worst <= 4.0 * steady, "{model:?}: {worst} against {steady}");
     }
-    let worst = max_step(&out[BLOCK_SIZE..]);
-    assert!(worst <= 4.0 * steady, "{worst} against {steady}");
 }
 
 /// `inc` ramps across a block: a PITCH move of an octave advances the head
@@ -391,27 +424,35 @@ fn moving_bounds_are_click_free() {
         let src = sine(48_000, 100.7, 4_800);
         max_step(&src)
     };
-    for xfade in [0.1, 0.5] {
-        let mut p = TapeEngineParams {
-            xfade,
-            ..TapeEngineParams::default()
-        };
-        let mut e = fresh();
-        e.note_on(60, &p, &v, SR);
-        let mut out = Vec::new();
-        let mut b = [0.0; BLOCK_SIZE];
-        for n in 0..3_000 {
-            let t = n as f32;
-            p.size = 0.6 + 0.4 * (t * 0.05).sin();
-            p.position = 0.5 + 0.5 * (t * 0.031).sin();
-            e.render(&mut b, &p, &v, SR);
-            out.extend_from_slice(&b);
+    for model in MODELS {
+        for xfade in [0.1, 0.5] {
+            let mut p = as_model(
+                model,
+                TapeEngineParams {
+                    xfade,
+                    ..TapeEngineParams::default()
+                },
+            );
+            let mut e = fresh();
+            e.note_on(60, &p, &v, SR);
+            let mut out = Vec::new();
+            let mut b = [0.0; BLOCK_SIZE];
+            for n in 0..3_000 {
+                let t = n as f32;
+                p.size = 0.6 + 0.4 * (t * 0.05).sin();
+                // SCRUB's POSITION is the finger: moved, it bends the pitch.
+                if model != TapeModel::Scrub {
+                    p.position = 0.5 + 0.5 * (t * 0.031).sin();
+                }
+                e.render(&mut b, &p, &v, SR);
+                out.extend_from_slice(&b);
+            }
+            let worst = max_step(&out[BLOCK_SIZE..]);
+            assert!(
+                worst <= 4.0 * steady,
+                "{model:?} XFADE {xfade}: {worst} against {steady}"
+            );
         }
-        let worst = max_step(&out[BLOCK_SIZE..]);
-        assert!(
-            worst <= 4.0 * steady,
-            "XFADE {xfade}: {worst} against {steady}"
-        );
     }
 }
 

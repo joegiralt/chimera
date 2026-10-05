@@ -100,11 +100,12 @@ fn run() -> Result<bool, String> {
                 pass &= q.passes();
                 let _ = writeln!(
                     report,
-                    "{:<9} {:<12} {kind}  peak {:6.2} dBFS  click {:5.2}x  non-finite {}  {}",
+                    "{:<9} {:<12} {kind}  peak {:6.2} dBFS  click {:5.2}x at {:6.3} s  non-finite {}  {}",
                     m.disk_ident(),
                     src.slug,
                     q.peak_dbfs,
                     q.click_ratio,
+                    q.click_at as f32 / chimera_hal::SAMPLE_RATE as f32,
                     q.non_finite,
                     if q.passes() { "PASS" } else { "FAIL" }
                 );

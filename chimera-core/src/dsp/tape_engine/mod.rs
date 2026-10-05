@@ -4,8 +4,16 @@
 //! LOOP (Digitakt II manual § Playback modes): the head starts at START,
 //! plays forward to the loop's end, then loops under a crossfade that folds
 //! inside the loop when it must (`heads`). MOTION walks the loop through the
-//! window (Morphagene manual, Organize). REVERSE, PING-PONG, TRANSWAVE,
-//! SCRUB and STRETCH play as LOOP until their kernels land.
+//! window (Morphagene manual, Organize).
+//!
+//! REVERSE (Digitakt II manual § Playback modes, REVERSE LOOP) is LOOP
+//! mirrored: the head starts at END and runs back. PING-PONG (Polyend
+//! Tracker v1.5 § Instrument) turns at each edge with no crossfade, slowing
+//! to a stop there over 1 ms so the wave has no corner; new bounds latch at
+//! a turn, and a head far outside them moves under a 5 ms fade. SCRUB
+//! (Morphagene manual, Slide and Vari-Speed) loops behind a finger that
+//! follows POSITION through DRAG; MOTION is its vari-speed. TRANSWAVE and
+//! STRETCH play as LOOP until their kernels land.
 
 pub mod heads;
 pub mod params;
@@ -18,7 +26,7 @@ use chimera_hal::BLOCK_SIZE;
 use crate::dsp::algo::math::{clampf, exp2};
 use crate::dsp::ease::Ramp;
 use crate::dsp::glide::Glide;
-use heads::{Bounds, Fade, Head, Plan, at, plan, window_end, window_start};
+use heads::{Bounds, Fade, Ghost, Head, Plan, Turn, at, plan, window_end, window_start};
 use read::{Pos, SourceView};
 
 pub use heads::loop_len;
@@ -29,6 +37,11 @@ pub const INC_MAX: f32 = 16.0;
 /// A note's first samples ramp from 0 (1 ms), so a START inside a waveform
 /// never steps.
 pub const NOTE_ON_RAMP: u32 = 48;
+/// PING-PONG's clamp fade: a head outside new bounds moves inside over 5 ms.
+pub const CLAMP_FADE_S: f32 = 0.005;
+/// PING-PONG's turn: the head slows to a stop at an edge over 1 ms and comes
+/// back over 1 ms, as a reel does, so the wave has no corner there.
+pub const TURN_S: f32 = 0.001;
 /// The shortest loop and window: 2 ms of the source.
 pub const MIN_LOOP_S: f32 = 0.002;
 /// The macros' share of the way each block: MODAL's (ADR 0056).
@@ -107,20 +120,42 @@ pub struct Probe {
     pub level: u8,
 }
 
-/// What a wrap reads from the block's params: END and XFADE latch there.
+/// What a wrap or a turn reads from the block's params: END (START, for
+/// REVERSE's mirrored window) and XFADE latch there.
 #[derive(Clone, Copy)]
 struct AtWrap {
     end: f32,
     xfade: f32,
     frames: u32,
     rate: u16,
+    sample_rate: u32,
 }
 
 #[derive(Clone, Copy)]
 pub struct TapeEngine {
     model: TapeModel,
-    /// The head, and the head a fade reads into.
+    /// The head, and the head a fade reads into, in the frame `u`.
     heads: [Head; 2],
+    /// The frame is mirrored: the source is read at `off − u`, else at `u`
+    /// (`off + u` in SCRUB).
+    mirror: bool,
+    /// REVERSE: the source's last frame. PING-PONG down: `ls + le`. SCRUB:
+    /// the finger, plus the source's length when mirrored.
+    off: Pos,
+    /// SCRUB: the finger's move each sample, this block (wrapping).
+    df: u64,
+    /// SCRUB: the loop's speed in frames a sample at the last block's end,
+    /// signed; DRAG's one-pole share a block.
+    speed: f32,
+    pull: f32,
+    /// The source's frames, latched at note-on.
+    n: u32,
+    /// PING-PONG's clamp in progress, and its turn.
+    ghost: Option<Ghost>,
+    turning: Option<Turn>,
+    /// `inc` at the block's end, and the output rate: PING-PONG's run-up.
+    v: f32,
+    rate_out: u32,
     /// Frames a sample, ramped across the block.
     inc: Ramp,
     mac: Macros,
@@ -128,14 +163,15 @@ pub struct TapeEngine {
     first: bool,
     /// MOTION's walk, in windows: [0, 1).
     walk: f32,
-    /// The window's start, latched at note-on.
+    /// The window's start, latched at note-on (REVERSE: mirrored).
     ws: u32,
     /// The pass in play.
     bounds: Bounds,
     /// The next pass's bounds, latched where its fade was put off.
     pending: Option<Bounds>,
     fade: Option<Fade>,
-    /// The first head's frame at which the next fade or wrap is handled.
+    /// The first head's frame at which the next fade, wrap or turn is
+    /// handled.
     event: u32,
     /// The second head's share, last sample.
     gain: f32,
@@ -159,6 +195,16 @@ impl TapeEngine {
         TapeEngine {
             model: TapeModel::Loop,
             heads: [Head { pos: Pos(0) }; 2],
+            mirror: false,
+            off: Pos(0),
+            df: 0,
+            speed: 0.0,
+            pull: 1.0,
+            n: 2,
+            ghost: None,
+            turning: None,
+            v: 1.0,
+            rate_out: 48_000,
             inc: Ramp::default(),
             mac: Macros {
                 position: 0.0,
@@ -199,13 +245,14 @@ impl TapeEngine {
         self.pitch = cents;
     }
 
-    /// MODEL, START and ROOT latch here; the head starts at START.
+    /// MODEL, START, ROOT and DRAG latch here; the head starts at START
+    /// (REVERSE: at END).
     pub fn note_on(
         &mut self,
         note: u8,
         p: &TapeEngineParams,
         v: &SourceView<'_>,
-        _sample_rate: u32,
+        sample_rate: u32,
     ) {
         let (frames, rate) = (v.frames(), v.desc().rate);
         self.model = p.model;
@@ -216,21 +263,69 @@ impl TapeEngine {
         self.mac = Macros::of(p);
         self.first = true;
         self.walk = 0.0;
-        self.ws = window_start(p.start, frames);
-        let we = window_end(self.ws, p.end, frames, rate);
-        self.bounds = Bounds::of(
-            self.ws,
-            we,
-            (self.mac.size, self.mac.position, p.xfade),
-            rate,
-        );
-        self.heads = [Head { pos: at(self.ws) }; 2];
+        self.n = frames;
+        self.ghost = None;
+        self.turning = None;
+        self.rate_out = sample_rate;
+        self.df = 0;
+        self.speed = 0.0;
+        self.pull = 1.0 - libm::expf(-(BLOCK_SIZE as f32) / (drag_s(p.drag) * sample_rate as f32));
+        let (start, end) = self.window(p);
+        self.ws = window_start(start, frames);
+        let we = window_end(self.ws, end, frames, rate);
+        let xfade = if self.model == TapeModel::PingPong {
+            0.0
+        } else {
+            p.xfade
+        };
+        self.mirror = false;
+        self.off = Pos(0);
+        let mut start_at = self.ws;
+        match self.model {
+            TapeModel::Scrub => {
+                self.bounds = Bounds::of(0, we - self.ws, (self.mac.size, 0.0, xfade), rate);
+                self.off = self.finger_target(p.position, we);
+                start_at = 0;
+                if p.motion < 0.0 {
+                    self.mirror = true;
+                    self.bounds = self.bounds.mirror(frames);
+                    self.off = self.off + at(frames);
+                    start_at = self.bounds.ls;
+                }
+            }
+            model => {
+                self.bounds =
+                    Bounds::of(self.ws, we, (self.mac.size, self.mac.position, xfade), rate);
+                if model == TapeModel::Reverse {
+                    self.mirror = true;
+                    self.off = at(frames - 1);
+                }
+            }
+        }
+        self.heads = [Head { pos: at(start_at) }; 2];
         self.pending = None;
         self.fade = None;
         self.gain = 0.0;
         self.event = self.bounds.fade_at();
         self.ramp = true;
         self.active = true;
+    }
+
+    /// START and END as the model plays them: REVERSE's window is mirrored,
+    /// so END is its start.
+    fn window(&self, p: &TapeEngineParams) -> (f32, f32) {
+        if self.model == TapeModel::Reverse {
+            (1.0 - p.end, 1.0 - p.start)
+        } else {
+            (p.start, p.end)
+        }
+    }
+
+    /// SCRUB's finger for POSITION `position`, in a window ending at `we`:
+    /// where the loop behind it fits in the window.
+    fn finger_target(&self, position: f32, we: u32) -> Pos {
+        let room = (we - self.ws).saturating_sub(self.bounds.frames());
+        Pos::from_f32(self.ws as f32 + clampf(position, 0.0, 1.0) * room as f32)
     }
 
     /// `note_on` on a sounding engine (STEAL GLIDE, ADR 0065): the heads
@@ -280,12 +375,35 @@ impl TapeEngine {
         self.model
     }
 
+    /// The source frame a head at `u` reads; one before frame 0 reads 0.
+    fn frame(&self, u: Pos) -> u32 {
+        let r = if self.mirror {
+            self.off - u
+        } else if self.model == TapeModel::Scrub {
+            self.off + u
+        } else {
+            u
+        };
+        let w = r.whole();
+        if w > i32::MAX as u32 { 0 } else { w }
+    }
+
     pub fn probe(&self) -> Probe {
-        Probe {
-            head: self.heads[0].pos.whole(),
-            other: self.fade.map(|_| self.heads[1].pos.whole()),
-            gain: self.gain,
-            level: 0,
+        let first = self.frame(self.heads[0].pos);
+        match self.ghost {
+            // The head left outside fades out; the one inside fades in.
+            Some(g) => Probe {
+                head: g.pos.whole().min(self.n),
+                other: Some(first),
+                gain: self.gain,
+                level: 0,
+            },
+            None => Probe {
+                head: first,
+                other: self.fade.map(|_| self.frame(self.heads[1].pos)),
+                gain: self.gain,
+                level: 0,
+            },
         }
     }
 
@@ -308,7 +426,8 @@ impl TapeEngine {
             return;
         }
         let to = Macros::of(p);
-        if core::mem::take(&mut self.first) {
+        let first = core::mem::take(&mut self.first);
+        if first {
             self.mac = to;
         } else {
             self.mac.ease(&to);
@@ -323,16 +442,39 @@ impl TapeEngine {
             f32::EPSILON,
             INC_MAX,
         );
-        let (from, to) = self.inc.step(target);
-        let (from, to) = (Pos::from_f32(from).0, Pos::from_f32(to).0);
-        let step = (to.wrapping_sub(from) as i64 / BLOCK_SIZE as i64) as u64;
+        let (mut from, mut to) = self.inc.step(target);
+        self.v = to;
+        if self.model == TapeModel::PingPong && self.turning.is_none() {
+            self.event = self.pp_event();
+        }
+        let (start, end) = self.window(p);
+        let _ = start;
         let k = AtWrap {
-            end: p.end,
+            end,
             xfade: p.xfade,
             frames: v.frames(),
             rate,
+            sample_rate,
         };
-        self.run_loop(out, v, (from, step), &k);
+        if self.model == TapeModel::Scrub {
+            (from, to) = self.scrub_block(p, to, first, &k);
+        }
+        let (from, to) = (Pos::from_f32(from).0, Pos::from_f32(to).0);
+        let step = (to.wrapping_sub(from) as i64 / BLOCK_SIZE as i64) as u64;
+
+        let (mut i, mut cur) = (0, from);
+        while i < BLOCK_SIZE {
+            (i, cur) = if self.ghost.is_some() || self.turning.is_some() {
+                self.run_slow(out, v, (i, cur, step), &k)
+            } else {
+                match (self.mirror, self.model == TapeModel::Scrub) {
+                    (false, false) => self.run::<false, false>(out, v, (i, cur, step), &k),
+                    (true, false) => self.run::<true, false>(out, v, (i, cur, step), &k),
+                    (false, true) => self.run::<false, true>(out, v, (i, cur, step), &k),
+                    (true, true) => self.run::<true, true>(out, v, (i, cur, step), &k),
+                }
+            };
+        }
 
         if core::mem::take(&mut self.ramp) {
             let last = self.last;
@@ -343,28 +485,135 @@ impl TapeEngine {
         self.last = out[BLOCK_SIZE - 1];
     }
 
-    /// LOOP's samples: runs of one head, or of a fade's two, each up to the
-    /// next event. The heads live in locals; the state is written back only
-    /// around an event and at the block's end.
-    #[inline(always)]
-    fn run_loop(
+    /// SCRUB's block (spec § 2 SCRUB): the loop's speed is MOTION's
+    /// vari-speed, −2 to +2 times the note's; turning round, it ramps to 0
+    /// first and the frame mirrors the block after. The finger follows
+    /// POSITION through DRAG's one-pole, its speed bounded so the head's
+    /// never passes `INC_MAX`. Returns the loop's `(from, to)` speed.
+    fn scrub_block(
+        &mut self,
+        p: &TapeEngineParams,
+        inc: f32,
+        first: bool,
+        k: &AtWrap,
+    ) -> (f32, f32) {
+        let want = 2.0 * self.mac.motion * inc;
+        let ahead = if self.mirror { -want } else { want };
+        if self.speed == 0.0 && ahead < 0.0 {
+            self.turn_scrub();
+        }
+        let ahead = if self.mirror { -want } else { want };
+        let to = if ahead < 0.0 { 0.0 } else { ahead.min(INC_MAX) };
+        let from = if first { to } else { libm::fabsf(self.speed) };
+        self.speed = if self.mirror { -to } else { to };
+
+        let we = window_end(self.ws.min(k.frames - 1), p.end, k.frames, k.rate);
+        let at_n = if self.mirror { at(self.n) } else { Pos(0) };
+        let finger = self.off - at_n;
+        let target = self.finger_target(p.position, we);
+        if first {
+            self.off = target + at_n;
+            self.df = 0;
+        } else {
+            let gap = (target.0 as i64).wrapping_sub(finger.0 as i64) as f32;
+            let most = (INC_MAX - from.max(to)) * BLOCK_SIZE as f32 * 4_294_967_296.0;
+            let move_ = clampf(self.pull * gap, -most, most);
+            self.df = ((move_ / BLOCK_SIZE as f32) as i64) as u64;
+        }
+        (from, to)
+    }
+
+    /// SCRUB's loop turns round: the frame mirrors about the source's
+    /// length. A fade in progress runs back the way it came, so the head it
+    /// faded from takes over where the fade began.
+    #[cold]
+    fn turn_scrub(&mut self) {
+        let n = at(self.n);
+        let [h0, h1] = self.heads.map(|h| h.pos);
+        self.off = if self.mirror {
+            self.off - n
+        } else {
+            self.off + n
+        };
+        self.mirror = !self.mirror;
+        self.pending = None;
+        match self.fade.take() {
+            None => {
+                self.heads[0].pos = n - h0;
+                self.bounds = self.bounds.mirror(self.n);
+                self.event = self.bounds.fade_at();
+            }
+            Some(f) => {
+                // The fade runs back to where it began: the head it faded
+                // from (`h0`) takes over there. Its end is rounded up to a
+                // whole frame, as a wrap's is, and its slope set so the
+                // gain carries on from this sample's.
+                let left = f.end - h0;
+                let left = left.whole() as f32 + left.frac();
+                let g = clampf(1.0 - left * f.inv, 0.0, 1.0);
+                // A fade with no slope (one reversed at a share of 0) has no
+                // way back to run: it ends at the next whole frame.
+                let back = if f.inv > 0.0 {
+                    Pos::from_f32((1.0 / f.inv - left).max(0.0))
+                } else {
+                    Pos(0)
+                };
+                let h = n - h1;
+                let whole = (1u64 << 32) - 1;
+                let mut end = Pos((h + back).0.wrapping_add(whole) & !whole);
+                if end.whole() <= h.whole() {
+                    end = at(h.whole() + 1);
+                }
+                let span = end - h;
+                self.heads = [Head { pos: h }, Head { pos: n - h0 }];
+                self.fade = Some(Fade {
+                    end,
+                    inv: g / (span.whole() as f32 + span.frac()),
+                    next: self.bounds.mirror(self.n),
+                });
+                self.bounds = f.next.mirror(self.n);
+                self.gain = 1.0 - g;
+                self.event = end.whole();
+            }
+        }
+    }
+
+    /// Samples of one head, or of a fade's two, each run up to the next
+    /// event, in a frame fixed at compile time: `MIRROR` reads at
+    /// `off − u`, `MOVING` (SCRUB) moves `off` by `df` a sample. The heads
+    /// live in locals; the state is written back only around an event and
+    /// at the end. Returns where it stopped: the block's end, or an event
+    /// that changed the frame or started a clamp.
+    #[inline(never)]
+    fn run<const MIRROR: bool, const MOVING: bool>(
         &mut self,
         out: &mut [f32; BLOCK_SIZE],
         v: &SourceView<'_>,
-        (mut cur, step): (u64, u64),
+        (mut i, mut cur, step): (usize, u64, u64),
         k: &AtWrap,
-    ) {
+    ) -> (usize, u64) {
+        let rd = |h: Pos, off: Pos| {
+            if MIRROR {
+                off - h
+            } else if MOVING {
+                off + h
+            } else {
+                h
+            }
+        };
         let [mut h0, mut h1] = self.heads.map(|h| h.pos);
-        let (mut ev, mut g) = (self.event, self.gain);
-        let mut i = 0;
+        let (mut ev, mut g, mut off, df) = (self.event, self.gain, self.off, self.df);
         while i < BLOCK_SIZE {
             let mut hit = false;
             match self.fade {
                 None => {
                     while i < BLOCK_SIZE {
-                        out[i] = v.read(h0);
+                        out[i] = v.read(rd(h0, off));
                         cur = cur.wrapping_add(step);
                         h0 = h0 + Pos(cur);
+                        if MOVING {
+                            off = off + Pos(df);
+                        }
                         i += 1;
                         if h0.whole() >= ev {
                             hit = true;
@@ -374,12 +623,20 @@ impl TapeEngine {
                 }
                 Some(f) => {
                     while i < BLOCK_SIZE {
-                        let a = v.read(h0);
+                        let a = v.read(rd(h0, off));
                         g = f.gain(h0);
-                        out[i] = a + g * (v.read(h1) - a);
+                        if MOVING {
+                            // SCRUB's loop crawls near MOTION 0, where a
+                            // linear fade's corners stand out: smoothstep.
+                            g = g * g * (3.0 - 2.0 * g);
+                        }
+                        out[i] = a + g * (v.read(rd(h1, off)) - a);
                         cur = cur.wrapping_add(step);
                         h0 = h0 + Pos(cur);
                         h1 = h1 + Pos(cur);
+                        if MOVING {
+                            off = off + Pos(df);
+                        }
                         i += 1;
                         if h0.whole() >= ev {
                             hit = true;
@@ -390,31 +647,107 @@ impl TapeEngine {
             }
             if hit {
                 self.heads = [Head { pos: h0 }, Head { pos: h1 }];
-                self.gain = g;
+                (self.gain, self.off) = (g, off);
                 self.on_event(k);
+                if self.mirror != MIRROR || self.ghost.is_some() || self.turning.is_some() {
+                    return (i, cur);
+                }
                 [h0, h1] = self.heads.map(|h| h.pos);
-                (ev, g) = (self.event, self.gain);
+                (ev, g, off) = (self.event, self.gain, self.off);
             }
         }
         self.heads = [Head { pos: h0 }, Head { pos: h1 }];
-        self.gain = g;
+        (self.gain, self.off) = (g, off);
+        (i, cur)
+    }
+
+    /// PING-PONG's slow samples: a turn's run-up, where the head slows to
+    /// a stop at the edge and comes back (`Turn`), and a clamp, where the
+    /// head left outside plays on its way while the output fades, by the
+    /// sample, to the head inside. Turns keep their bounds while a clamp
+    /// fades. Returns where it stopped: the block's end, or both done.
+    #[cold]
+    #[inline(never)]
+    fn run_slow(
+        &mut self,
+        out: &mut [f32; BLOCK_SIZE],
+        v: &SourceView<'_>,
+        (mut i, mut cur, step): (usize, u64, u64),
+        k: &AtWrap,
+    ) -> (usize, u64) {
+        while i < BLOCK_SIZE && (self.ghost.is_some() || self.turning.is_some()) {
+            if let Some(t) = self.turning
+                && t.k == t.th
+            {
+                // At rest at the edge: the head comes back.
+                let r = self.real(self.heads[0].pos);
+                self.flip_at(r, k);
+            }
+            let h = self.heads[0].pos;
+            let mut y = v.read(self.real(h));
+            if let Some(g) = &mut self.ghost {
+                g.done += 1;
+                self.gain = g.done as f32 / g.len as f32;
+                let a = v.read(g.pos);
+                y = a + self.gain * (y - a);
+            }
+            out[i] = y;
+            cur = cur.wrapping_add(step);
+            let mut s = Pos(cur);
+            if let Some(t) = &mut self.turning {
+                let (n, th) = (t.k as f32, t.th as f32);
+                let f = libm::fabsf(th - n - 0.5) / th;
+                s = Pos::from_f32((s.whole() as f32 + s.frac()) * f);
+                t.k += 1;
+                if t.k == 2 * t.th {
+                    self.turning = None;
+                    self.event = self.pp_event();
+                }
+            }
+            self.heads[0].pos = h + s;
+            if let Some(g) = &mut self.ghost {
+                g.pos = if g.back { g.pos - s } else { g.pos + s };
+                if g.done >= g.len {
+                    self.ghost = None;
+                    self.gain = 0.0;
+                }
+            }
+            i += 1;
+            if self.turning.is_none() && self.heads[0].pos.whole() >= self.event {
+                self.on_event(k);
+            }
+        }
+        (i, cur)
     }
 
     /// The next pass's bounds from the eased macros, the walk, and END and
-    /// XFADE now.
+    /// XFADE now. SCRUB's loop is `[0, Ll)` behind the finger.
     fn next_bounds(&self, k: &AtWrap) -> Bounds {
         let ws = self.ws.min(k.frames - 1);
         let we = window_end(ws, k.end, k.frames, k.rate);
-        let mut place = self.mac.position + self.walk;
-        if place > 1.0 {
-            place -= 1.0;
+        match self.model {
+            TapeModel::Scrub => {
+                let b = Bounds::of(0, we - ws, (self.mac.size, 0.0, k.xfade), k.rate);
+                if self.mirror { b.mirror(self.n) } else { b }
+            }
+            model => {
+                let mut place = self.mac.position + self.walk;
+                if place > 1.0 {
+                    place -= 1.0;
+                }
+                let xfade = if model == TapeModel::PingPong {
+                    0.0
+                } else {
+                    k.xfade
+                };
+                Bounds::of(ws, we, (self.mac.size, place, xfade), k.rate)
+            }
         }
-        Bounds::of(ws, we, (self.mac.size, place, k.xfade), k.rate)
     }
 
     /// The head reached `event`: a fade starts (or is put off), a fade
-    /// ends at the wrap, or a pass with no fade splices. A loop shorter
-    /// than a sample's step may need more than one.
+    /// ends at the wrap, a pass with no fade splices, or PING-PONG turns.
+    /// A loop shorter than a sample's step may need more than one.
     #[cold]
     #[inline(never)]
     fn on_event(&mut self, k: &AtWrap) {
@@ -423,6 +756,10 @@ impl TapeEngine {
             let h = self.heads[0].pos;
             if h.whole() < self.event {
                 return;
+            }
+            if self.model == TapeModel::PingPong {
+                self.turn(k);
+                continue;
             }
             let le = self.bounds.le;
             if let Some(f) = self.fade.take() {
@@ -444,6 +781,12 @@ impl TapeEngine {
                     Some(b) => b,
                     None => self.next_bounds(k),
                 };
+                // SCRUB's loop has nothing before it: its fades fold.
+                let ws = if self.model == TapeModel::Scrub {
+                    next.ls
+                } else {
+                    ws
+                };
                 let rem = at(le) - h;
                 match plan(rem, &next, ws, le) {
                     Plan::Fade { restart } => {
@@ -463,5 +806,104 @@ impl TapeEngine {
                 }
             }
         }
+    }
+
+    /// PING-PONG reached `event`: the run-up to an edge starts, so the
+    /// head slows to a stop there and comes back (`TURN_S` each way, less in
+    /// a short loop). With no room for one, the head reflects at the edge,
+    /// `h = 2·edge − h`, and its direction flips (`flip_at`).
+    fn turn(&mut self, k: &AtWrap) {
+        let b = self.bounds;
+        let h = self.heads[0].pos;
+        if h.whole() < b.le {
+            let rem = at(b.le) - h;
+            let rem = rem.whole() as f32 + rem.frac();
+            let most = libm::roundf(TURN_S * k.sample_rate as f32);
+            let th = (2.0 * rem / self.v).min(most) as u16;
+            if th >= 2 {
+                self.turning = Some(Turn { k: 0, th });
+                self.event = u32::MAX;
+            } else {
+                self.event = b.le;
+            }
+            return;
+        }
+        let len = (b.frames() as u64) << 32;
+        let over = (h - at(b.le)).0;
+        let over = Pos(if over >= len { over % len } else { over });
+        // The reflected head, in source frames.
+        let r = if self.mirror {
+            at(b.ls) + over
+        } else {
+            at(b.le) - over
+        };
+        self.flip_at(r, k);
+    }
+
+    /// PING-PONG's frame for a head at `r` (source frames) going down
+    /// (`back`) or up in loop `b`: its `u`, signed.
+    fn enter(&mut self, back: bool, r: Pos, b: &Bounds) -> i64 {
+        self.mirror = back;
+        if back {
+            self.off = at(b.ls + b.le);
+            self.off.0 as i64 - r.0 as i64
+        } else {
+            self.off = Pos(0);
+            r.0 as i64
+        }
+    }
+
+    /// The source frame a head at `u` reads.
+    fn real(&self, u: Pos) -> Pos {
+        if self.mirror { self.off - u } else { u }
+    }
+
+    /// Where PING-PONG's run-up to the pass's far edge starts: half the
+    /// distance a turn at this speed takes, at most a quarter of the loop.
+    fn pp_event(&self) -> u32 {
+        let b = self.bounds;
+        let half = self.v * libm::roundf(TURN_S * self.rate_out as f32) * 0.5;
+        b.le - (half as u32).min(b.frames() / 4)
+    }
+
+    /// PING-PONG turns at `r` (source frames): the frame mirrors, so the
+    /// head runs forward in `u` again. New bounds latch here (not while a
+    /// clamp fades). A head outside them that would not be in within
+    /// `CLAMP_FADE_S` moves to the clamped place inside under a fade that
+    /// long.
+    fn flip_at(&mut self, r: Pos, k: &AtWrap) {
+        let nb = if self.ghost.is_some() {
+            self.bounds
+        } else {
+            self.next_bounds(k)
+        };
+        let back = !self.mirror;
+        let (lo, hi) = (at(nb.ls).0 as i64, at(nb.le).0 as i64 - 1);
+        let mut u = self.enter(back, r, &nb);
+        if u > hi {
+            // Past the far edge: the head comes in from the near one,
+            // the other way.
+            u = self.enter(!back, r, &nb);
+        }
+        // A head outside that would be in within a clamp's time plays on
+        // from where it is (bounds moved by a frame, a turn's overshoot).
+        // Further out, it moves to the clamped place under a fade; while
+        // one fades the bounds hold, so that is only a nudge.
+        let reach = self.v * CLAMP_FADE_S * k.sample_rate as f32 + 1.0;
+        let mut inside = u.clamp(lo, hi);
+        if (((inside - u) >> 32) as f32) < reach {
+            inside = u;
+        } else if self.ghost.is_none() {
+            self.ghost = Some(Ghost {
+                pos: r,
+                back,
+                done: 0,
+                len: libm::roundf(CLAMP_FADE_S * k.sample_rate as f32).max(1.0) as u32,
+            });
+            self.gain = 0.0;
+        }
+        self.heads[0].pos = Pos(inside as u64);
+        self.bounds = nb;
+        self.event = self.pp_event();
     }
 }
