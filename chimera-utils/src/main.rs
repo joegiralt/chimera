@@ -28,6 +28,7 @@ usage: chimera-utils [flags] COMMAND …
   mv-verify TYPE           re-measure the fits: residuals, PASS/FAIL
   mv-ab TYPE               RMS-matched A/B WAVs on idm, snare, strings
   mv-structure PROG …      a program's structure from the decompiled listing
+  model-fit VARIANT PROG … fit a `models` sketch (BURST v2) to programs
 flags:
   --jobs N        worker threads (default 8)
   --out DIR       outputs (env MV_OUT, default target/mv)
@@ -168,6 +169,9 @@ fn run() -> Result<bool, String> {
         "mv-verify" => mv::verify(&cfg, ty(0)?, fits.as_deref()),
         "mv-ab" => mv::ab(&cfg, ty(0)?).map(|_| true),
         "mv-structure" => mv::structure(&cfg, &nums(rest)?).map(|_| true),
+        "model-fit" if rest.len() >= 2 => {
+            models::fit(&cfg, &rest[0], &nums(&rest[1..])?).map(|_| true)
+        }
         _ => Err(USAGE.into()),
     };
     let _ = std::fs::remove_dir(cfg.tmp());
