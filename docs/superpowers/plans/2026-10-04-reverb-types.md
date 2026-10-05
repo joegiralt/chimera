@@ -1636,6 +1636,40 @@ BUS+V's frame is QUAD_BUS_V + ΔCOST, so ΔCOST = that row − QUAD_BUS_V.
 - **Goldens:** `rev_bloom`, `rev_bloom_mv45`, `rev_bloom_mv49`,
   `mixer_fx_reverb_bloom` and `_more` added; every other golden unchanged.
 
+### Task 10b: HALL against the MidiVerb II halls (2026-10-05, host; held at Step 3)
+
+- **Baseline, HALL as built** (reference harness, Rust render at
+  `d78331d9`): no preset passes. Best of the 320-point sweep, then four
+  refined fits (8 seeds):
+
+| # | RT60 250–4k (%) | Pre (ms) | C50 (dB) | NED 20/50/100 (%) | Centroid (%) |
+|---|---|---|---|---|---|
+| 4 (refined) | +2, +2, −1, −2, +3 | −1.5 | +2.2 | +12, −18, −16 | +3 |
+| 6 (refined) | −1, +1, −3, −1, +1 | −0.1 | +2.4 | +60, −36, −32 | +4 |
+| 7 (refined) | +0, +4, −1, −0, +1 | −0.5 | +3.3 | +17, −22, −47 | +5 |
+| 12 (refined) | −2, −1, −1, +6, −4 | −1.1 | −1.3 | −11, −24, −26 | −4 |
+| 13 | +0, −1, +2, +7, −13 | +2.1 | −4.6 | −5, −24, −27 | +5 |
+| 15 | −11, +4, −5, −7, −18 | +1.4 | −2.6 | −2, −1, −73 | −9 |
+| 16 | −2, +2, −1, −7, −26 | +0.8 | −4.0 | −31, −19, −70 | −12 |
+| 17 | −15, −11, −11, −3, +9 | +4.1 | +6.8 | +161, +57, −42 | −21 |
+| 18 | −24, −18, −21, −15, −5 | −4.0 | +11.1 | +102, −3, −18 | +19 |
+| 19 | +113, +108, +72, +11, −27 | +7.4 | −4.8 | +1620, +0, −3 | −20 |
+| 20 | −31, −28, −26, −24, −19 | +4.9 | −1.8 | −3, −10, −68 | −13 |
+| 21 | +6, +5, +8, +12, +2 | +0.9 | −5.0 | −20, −2, −68 | −17 |
+| 22 | −16, +11, +6, +5, −8 | +0.1 | −3.7 | −12, −1, −61 | −8 |
+| 23 | −6, −4, −4, +1, +10 | +7.9 | +10.3 | +122, +43, −53 | −21 |
+| 24 | −15, −17, −18, −22, −29 | +1.5 | +10.1 | +76, −4, +8 | +29 |
+| 25 | +11, +12, +9, +9, +1 | +6.8 | +12.2 | +137, −6, −43 | +24 |
+| 26 | +5, +9, +7, +14, +23 | −1.4 | +8.9 | +162, +38, +18 | −12 |
+| 27 | +0, +5, +3, +4, −7 | +0.5 | −3.1 | −10, −0, −70 | −10 |
+| 28 | −29, −31, −27, −17, +8 | +2.5 | +9.2 | +22, −11, −57 | −30 |
+| 29 | −64, −65, −62, −54, −27 | +2.5 | +9.7 | +22, −5, −54 | −29 |
+
+  The other 16 were not refined: the gaps are structural, and a sweep
+  measures #28 and #29 only to 3 s with DECAY topping at 10 s.
+- **Proposal:** ADR 0095 § HALL, as fitted (proposed). The float model
+  passes 12 of 20. Held for the owner before Step 4.
+
 ---
 
 ## Self-review
