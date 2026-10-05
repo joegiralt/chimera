@@ -1,7 +1,7 @@
 # 0096. Three filter TYPEs, CLEAN (Cascadia-style), 2040 (SSM2040) and DIRTY (Chamberlin), and ALGO's OP 5/6 audio-rate taps (supersedes 0037)
 
 - **Status:** Proposed
-- **Deciders:** owner (direction and rulings, 2026-10-05), firmware (after adversarial review)
+- **Deciders:** owner (direction and rulings, 2026-10-05; the 2040's VOICE and stage clip, 2026-10-06), firmware (after adversarial review)
 
 ## Context
 The owner wants a home filter with the Intellijel Cascadia VCF's UX, built on today's ZDF/TPT SVF ("reminds me of a 101"). Two more machines are wanted: the SSM2040, and a cheap, edgy Chamberlin SVF.
@@ -29,7 +29,7 @@ The owner also wants ALGO's OP 5 and OP 6 as audio-rate modulation sources. The 
   What changes is 0037's SVF panel row, its "`modes()[0]` is the default" and its SVF bills.
 - **Types and modes.** KIND shows as TYPE. Mode labels and `default_mode()` belong to each type. Disk codes are identity; only labels change. A TYPE or MODE change warm-starts the incoming state from the outgoing outputs and crossfades over two blocks, unbilled.
   - **CLEAN** (`Svf`, code 0): LP1 LP2 **LP4** BP2 BP4 HP4 NOTCH1 NOTCH2.
-  - **2040** (code 4): LP4 only.
+  - **2040** (code 4): LP4 only, with VOICE REV2 / EXP.
   - **DIRTY** (code 6): **LP2** BP2 HP2 NOTCH1. HP2 is `Hp12`, code 9.
 - **The default TYPE follows the engine.** ALGO, MODAL and TAPE default to CLEAN; the future VA engine defaults to 2040. The default is set in each engine's neutral Sound (`FilterKind::default_for(engine)` through `ParamSnapshot::for_engine`, which reaches `Sound::init` and `neutral_params`). The neutral fixture gains one row per engine, appended only. Existing patches keep their stored TYPE.
 - **Names:**
@@ -47,7 +47,7 @@ The owner also wants ALGO's OP 5 and OP 6 as audio-rate modulation sources. The 
   - **Divides.** A steady block uses `d = 1/(1 + kg + g²)` and `d₂` precomputed. A moving block (routed, tapped or changed) divides exactly per sample, because lerping `d` is unsafe (it errs by 95 % on a one-block octave), and that path is billed.
   - **Resonance.** `k = 2(1 − RES/0.95)`, to −0.105 at RES 1, so CLEAN self-oscillates. `1 + kg + g² > 0` for all g iff k > −2, and the in-loop C1 saturate (≤ 1.5) bounds the oscillation.
   - **Onset.** Every resonant type starts to oscillate at RES 0.95.
-  - **Trims.** Per-mode output trims at onset keep every mode's self-oscillation below 0 dBFS, in one band shared with the 2040's.
+  - **Trims.** Per-mode output trims at onset keep every mode's self-oscillation below 0 dBFS, in one band shared with the 2040's REV2 voice.
   - **LP1** = `lp + bp`.
   - **NOTCH1** = `lp + ¼·hp`, a zero at 2 × FREQ.
   - **NOTCH2** = dry plus four TPT all-passes (the SSM2040 data sheet's Fig. 10), with notches at 0.414 and 2.414 × FREQ. Q is one-sample feedback, `fb = 0.7·RES`, with no self-oscillation, as on the Cascadia; the output is scaled by `√(1 − fb)`, which holds loudness within about 1 dB for FREQ up to about 2 kHz (about +3 dB at 10 kHz), and the dry signal is taken after the feedback node, so the notches stay exact.
@@ -56,15 +56,21 @@ The owner also wants ALGO's OP 5 and OP 6 as audio-rate modulation sources. The 
   - It attenuates below unity, as the Cascadia's does: `2^(4·LEVEL − 2)`, unity at 0.5.
   - A transparent clipper (linear to ±1, C1 knee) runs past unity with its own 20 ms faded gate.
   - A per-Part meter drives a red ring LED.
-  - On the 2040, LEVEL drives the OTA stages directly and the clipper doesn't run. LEVEL is shown once, as DRIVE on FLT.
+  - On the 2040, LEVEL drives the OTA stages directly and the clipper doesn't run: the stages' ±1 V clip is the clipper. LEVEL is shown once, as DRIVE on FLT.
 - **2040:** four TPT one-poles.
   - Each stage is `t = g·sat((1 − G)(x − s))`, the OTA on the true error, with a divide-free cubic `sat`.
+  - Each stage output is clamped to ±R, the chip's ±1 V swing (data sheet design hint 1), on both voices. `R = 2·ALPHA_REV2`, because the Prophet-5 shows 500 mV per pole at maximum saw. It costs 8 instructions, and it makes the output bound exact: `R/α_v · OUT_2040`.
   - The global loop is solved linearly in one step, then limited by a 3080-style feedback limit `L·sat(·/L)` with `L = ¼`, which fixes a 330-cent flat self-oscillation.
   - **Input scale.** α ≈ 0.1 is tuned together with `L`. α = ½ would crush resonance at full scale, with self-oscillation around −24 dBFS against CLEAN's level. So LEVEL is the 2040's drive.
   - `k = 4·RES/0.95`.
   - The bass loss is authentic: DC gain `1/(1 + k)`, −14 dB at onset, uncompensated.
-  - **Two references.** It covers the Prophet-5 Rev 1/2 and the RSF Kobol Expander. RSF's 1979 factory schematic (p. 11 BOM: CI4 "SSM 2040"; p. 8: resonance through a CA3080, CI5, under a 2N3906, T3) confirms the 3080 resonance path. That scan is reference only and is not in the repo.
-  - **The Kobol's "natural saturation".** Its reputed source is unconfirmed: the schematic shows no distinct saturating circuit, so it is not modelled separately.
+  - **Two references, one VOICE switch.** It covers the Prophet-5 Rev 1/2 and the RSF Kobol Expander. The switch is FLT › MOD's first cell (Filter id 13, `K2040Voice`), and its values read **REV2** and **EXP**: the panel avoids both names, out of trademark caution. It changes only constants:
+    - **Drive.** `α_EXP = 2·ALPHA_REV2`, +6.0 dB. The stage-1 gain is 10 K/200 K on the Prophet (Voice schematic SD411, R480/R476) and 10 K/100 K on the Kobol (RSF schematic p. 8, R25/R24).
+    - **The output VCA, EXP only.** `sat(β·y₄)/β` with `β = 0.62/R`: the Kobol's CI3, a CA3080 "VCA linéaire" fed through 10 K/220 Ω, about 1–2 % THD at full swing. That is the circuit candidate for its reputed "natural saturation". It costs 6 instructions.
+    - **Resonance.** `k`, `L` and the onset are shared. The Kobol's resonance is a CA3080 (CI5, under T3 a 2N3906), whose compression the limiter models; EXP reaches it 6 dB sooner, so under drive its resonance ducks and blooms back. The Prophet's resonance is an SSM 2020 in linear mode ("RES FDBK VCA", ½ U490), so on REV2 the limiter is a modelling device, kept so both voices pass one 1 V/oct test.
+    - **Level.** LEVEL ½ is unity on both voices, so EXP self-oscillates about 6 dB below REV2. REV2 shares the self-oscillation band with CLEAN and DIRTY; EXP has its own band.
+    - A VOICE change rescales the states by `α_new/α_old` and crossfades like a MODE change.
+  - **Correction.** The data sheet's Fig. 9 feeds resonance through "½ SSM 2020", not a 3080, and the Prophet-5 follows it. Only the Kobol uses a 3080. The RSF schematic (p. 11: CI3 "3080", CI4 "SSM 2040", CI5 "CA 3080") is reference only and is not in the repo.
   - **A cross-check.** René Schmitz's discrete RS2040, which Behringer's 2023 clone follows, is the check for the per-stage nonlinearity.
 - **DIRTY:** the Chamberlin SVF at ×2, with `q = 2(1 − RES/0.95)`.
   - **Stability.** `f` is clamped per block to `0.95(√(q₊² + 4) − q₊)`, Jury's exact bound, using the block's largest `q`.
@@ -89,13 +95,15 @@ The owner also wants ALGO's OP 5 and OP 6 as audio-rate modulation sources. The 
   - Static probe counts (thumbv7em, cortex-m7, opt-level 2) × 1.46 × 1.1, + 12 per `vdiv`.
   - Today's LP24 is counted first. Steady paths are billed `max(0, that − old LP24)`, and each probe asserts 0 `vdiv` in its steady loop.
   - The move, LEVEL and per-tap-destination terms are billed only while they apply; an unused tap costs 0.
-  - Budgets: CLEAN LP4 ≤ 56, NOTCH2 ≤ 34, 2040 ≤ 70, DIRTY ≤ 30 instructions a sample.
+  - Budgets: CLEAN LP4 ≤ 56, NOTCH2 ≤ 34, 2040 REV2 ≤ 78 and EXP ≤ 84 (each including the 8-instruction stage clip), DIRTY ≤ 30 instructions a sample. The 2040 bills 25 on REV2 and 30 on EXP.
 - **Order.** Implementation starts after `modal-stagger` merges. The filter's in-loop saturate stays divide-free whatever that branch lands.
 
 ## Alternatives considered
 - **Lerping `d` per sample:** unsafe on large one-block moves (B1).
 - **Newton for the 2040's loop:** about +100 instructions and a `vdiv` per iteration.
 - **Compensating the 2040's bass loss:** the owner chose the authentic loss.
+- **One 2040 voicing between the two references:** the drive, the resonance element and the output stage really differ, and the owner wants both.
+- **A separate resonance law or limiter per voice:** no evidence for a different law, and a shared `L` keeps one pitch test.
 - **A self-oscillating NOTCH2:** the Cascadia's PHZR doesn't.
 - **Raising `MAX_MOD_SOURCES` to 16 for the taps:** about 7 KB of AXI for two rows with four live cells.
 - **Taps to operator pitch or level:** that is double FM, which the owner ruled out.
@@ -105,13 +113,15 @@ The owner also wants ALGO's OP 5 and OP 6 as audio-rate modulation sources. The 
 - **Sound changes.** LP1, NOTCH1, NOTCH2 and the top octave change sound, and goldens are re-recorded. Old patches load safely, and DRIVE's translation keeps their level.
 - **Bills.** The steady SVF bills less than it costs, which is headroom until a re-bench. Routed or tapped cutoff pays for its divides.
 - **Memory.** About 110 B per voice and 768 B of stack in the worst block; up to about 39 B per Sound.
-- **Codes.** All new codes are append-only: KIND 4 and 6, MODE 9, Filter params 8, 11 and 12 (2 retired), `Jack` 0–9, and the `TapRoutes` record.
+- **Codes.** All new codes are append-only: KIND 4 and 6, MODE 9, Filter params 8, 11, 12 and 13 (2 retired), `K2040Voice` 0–1, `Jack` 0–9, and the `TapRoutes` record.
 
 ## Sources
 - `docs/superpowers/specs/2026-10-05-filter-types-design.md` (revision 2) and its sources.
 - Intellijel *Cascadia Manual* v1.2 § 8.
 - *SSM 2040* data sheet (1977).
-- RSF *Kobol Expander* schematic (1979), pp. 8 and 11. Reference only, not in the repo: https://yusynth.net/gear/RSF/schema-RSF-KOBOL.pdf
+- RSF *Kobol Expander* schematic (1979), pp. 8, 11, 13 and 14. Reference only, not in the repo: https://yusynth.net/gear/RSF/schema-RSF-KOBOL.pdf
+- Sequential Circuits, *Prophet-5 Technical Manual* (January 1980), §§ 2-7, 2-13, 4-17, 5-13 and Voice schematic SD411: https://archive.org/details/Sequential_Circuits_Prophet_5_Service_Manual
+- `.superpowers/sdd/filter-types/2040-p5-vs-kobol.md`, the comparison behind VOICE.
 - R. Schmitz, RS2040: https://www.schmitzbits.de/rs2040.html
 - Zavalishin, *The Art of VA Filter Design* 2.1.2.
 - stmlib `dsp/filter.h` (MIT).

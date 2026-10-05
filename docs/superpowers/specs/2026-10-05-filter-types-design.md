@@ -8,6 +8,7 @@
   - It folds in the adversarial review (B1–B5, H1–H3, M1–M6) and every owner ruling of 2026-10-05.
   - It adds the owner's ALGO audio-rate taps (§ 6).
 - **Revision 3:** it applies the re-review (H-new-1 to 4, M-new-1 to 4, N4, L-new-1 and 2, and M6's leftover). ADR 0096 now supersedes ADR 0037, which is Accepted, rather than amending it.
+- **Revision 4 (2026-10-06):** the 2040 gains VOICE (REV2 / EXP: the Prophet-5 Rev 1/2 and the RSF Kobol Expander) and the chip's ±1 V stage clip, and Fig. 9's resonance element is corrected to the SSM 2020 (§ 3).
 
 **Implementation starts after `modal-stagger` merges.** That branch may replace `filter.rs`'s `saturate()` with stmlib's rational soft clipper, which divides. The CLEAN loop's in-loop saturate must stay divide-free on its common path, and the cost probes assert it (§ Cost). If `modal-stagger` lands a dividing clipper, the filter keeps today's C1 `saturate` for its own use.
 
@@ -34,6 +35,8 @@
 > PROPHET bass loss: AUTHENTIC. PROPHET modes: LP4 only. LEVEL: attenuates below unity, like Cascadia. Defaults: QM IN ← ENV 3, FM3 IN ← LFO 1. Names: home type "CLEAN"; "DIRTY". DIRTY: accept ~12 kHz ceiling at 2×.
 
 > After the review: CLEAN self-oscillates at the top of RES (k slightly negative, bounded by the in-loop saturate). PROPHET renamed "2040" (trademark). PHZR matches Cascadia: no self-oscillation (fb ≤ 0.7). LP1 → lp + bp.
+
+> 2026-10-06: the 2040 captures both the Prophet-5 Rev 1/2 and the Kobol Expander through one switch, labelled REV2 / EXP, that changes only constants. EXP must do squelchy, driven, resonant acid. The chip's ±1 V stage clip goes in both voices.
 
 > Name the modes by what they do: the single notch is NOTCH1, the double-notch phaser NOTCH2. Disk codes unchanged.
 
@@ -154,7 +157,7 @@
   - **Gate.** It runs while the *filter's* LEVEL gives a gain > 1, or while a route or tap moves it (not the DRIVE stage's `p.drive.drive`).
   - **Fade.** Its own 20 ms fade blends dry into clipped when the gate opens, and back when it closes, so crossing unity never steps.
   - **Bill.** It is billed while it runs (§ Cost).
-- **2040:** LEVEL's gain feeds the OTA stages directly, and the clipper does not run (H2), because on the 2040 the stages are the clipper. With the 2040's small α (§ 3), LEVEL is its drive control.
+- **2040:** LEVEL's gain feeds the OTA stages directly, and the clipper does not run (H2), because on the 2040 the stages, with their ±1 V clip, are the clipper. With the 2040's small α (§ 3), LEVEL is its drive control: REV2 reaches the stage clip at LEVEL 0.75 on a full-scale sine, EXP at 0.5.
 - **The LED.** While the clipper runs, a voice keeps its block's `peak = max|x·gain|`. On the 2040 the peak is `max|(1 − G)(u − s₁)|`, the first OTA's error.
   - The voice reports `clip = clamp((peak − 1)/2, 0, 1)`.
   - Each Part publishes the maximum over its voices to `meter::FILTER_CLIP[part]`, one relaxed store a block, like `MASTER_GR`.
@@ -178,7 +181,7 @@
   - **Bounded.** For `k < 0` the linear loop grows, and `saturate` (|output| ≤ 1.5) caps every state read. Then `hp` is bounded by `(|x| + (0.105 + g)·1.5 + 1.5)·d`, and each state `= v + 2g·hp` stays bounded for any finite input and any `g ≤ tan(π·0.49)`. The oscillation's level is set by the saturator.
   - **One onset everywhere.** Every resonant type maps RES so it begins to oscillate at **RES 0.95**: CLEAN here, 2040 at `k = 4` (§ 3), and DIRTY at `q = 0` (§ 4).
   - **LP4:** `k₂ = 1.2k + 0.3`, clamped ≥ 0.1. The second stage resonates but does not oscillate on its own.
-  - **Per-mode trim at onset (M-new-1).** Untrimmed, CLEAN's self-oscillation is hot and uneven by mode, up to +8.4 dBFS on BP2. Each resonant mode gets an output trim, `trim(mode, k) = 1` for `k ≥ 0.5`, falling linearly to the mode's pinned `TRIM_OSC[mode]` at `k ≤ 0`. The trims are set at build so every mode's self-oscillation sits below 0 dBFS, within a band shared with the 2040's (test 2). It is one multiply on the output, ramped with `k`.
+  - **Per-mode trim at onset (M-new-1).** Untrimmed, CLEAN's self-oscillation is hot and uneven by mode, up to +8.4 dBFS on BP2. Each resonant mode gets an output trim, `trim(mode, k) = 1` for `k ≥ 0.5`, falling linearly to the mode's pinned `TRIM_OSC[mode]` at `k ≤ 0`. The trims are set at build so every mode's self-oscillation sits below 0 dBFS, within a band shared with the 2040's REV2 voice (test 2); EXP's band sits about 6 dB lower (§ 3). It is one multiply on the output, ramped with `k`.
 - **`tan` per block (M2).** `g = tan_accurate(min(fc/fs, 0.497))`, using stmlib's FREQUENCY_ACCURATE polynomial. The clamp is ours, because ACCURATE has none. It replaces `fast_tan` in the filter, which addresses #57 there. The Modal resonators' second approximation stays #57's.
 - **Coefficients: exact where they move, precomputed where they don't (B1).**
   - **Steady block** (g and k equal at both ends, no tap on FREQ or Q): `d = 1/(1 + kg + g²)` and `d₂` are computed once, with no per-sample divide. This is the common case and the billed baseline.
@@ -206,60 +209,109 @@
 #### What the chip is (data sheet, Solid State Music, July 1977)
 
 - **Sections.** Four identical sections. Each is a transconductance amplifier ("G", an OTA) into a grounded capacitor, buffered by a follower ("B"). The cutoff is exponential over 10,000:1.
-- **Fig. 1, the low-pass real pole.** The input and the section's own output meet at the OTA's input through a 200 Ω attenuator, so the OTA sees the stage's *error*. A one-pole of the form `ẏ = ω·tanh(x − y)`: the nonlinearity bends the slew, not the level, unlike the Moog ladder's `tanh(x) − tanh(y)`.
+- **Fig. 1, the low-pass real pole.** The input and the section's own output meet at the OTA's input through a 200 Ω attenuator, so the OTA sees the stage's *error*. That gives a one-pole of the form `ẏ = ω·tanh(x − y)`: the nonlinearity bends the slew, not the level, unlike the Moog ladder's `tanh(x) − tanh(y)`. The stage's gain is `−R2/R1`: its feedback resistor over its input resistor (the data sheet's applications table).
+- **Output swing.** "The output pins (OUT1–OUT4) are only capable of swinging ±1 V" (design hint 1). Every stage clips there.
 - **Distortion** (THD vs input level graph): about 0.01 % at 30 mV, about 0.4–0.5 % at 80 mV. The table lists 0.1 % typical at 30 mVpp. It is soft and gradual.
-- **Fig. 9, the VCF.** Four low-pass sections, with resonance as feedback from the fourth output through an external 3080 OTA. The chip has no resonance VCA of its own (Electric Druid). "At high resonance settings the filter will oscillate with a pure sine wave."
-- **Bass loss.** Negative feedback `k` around four unity-DC poles gives a DC gain of `1/(1 + k)`, −14 dB at `k = 4`. Fig. 9 compensates nothing, and the owner chose that authentic behaviour.
+- **Fig. 9, the VCF.** Four low-pass sections, with resonance as feedback from the fourth output through **"½ SSM 2020"**, a linear VCA, steered by a two-transistor current source from the RESONANCE CONTROL INPUT. The chip has no resonance VCA of its own. "At high resonance settings the filter will oscillate with a pure sine wave."
+  - *Correction (2026-10-06):* revision 3 of this spec said Fig. 9 used a 3080. It does not: Fig. 9's resonance element is the SSM 2020.
+- **Bass loss.** Negative feedback `k` around four unity-DC poles gives a DC gain of `1/(1 + k)`: −14 dB at `k = 4`. Nothing in either reference compensates it, and the owner chose that authentic behaviour.
 
-#### The second reference: the RSF Kobol Expander
+#### The two references: the Prophet-5 Rev 1/2 and the RSF Kobol Expander
 
-- **The same chip.** RSF's factory schematic of the Kobol Expander (1979) uses the SSM2040 as its VCF. The BOM on page 11 ("Expander Kobol", dated 20/11/79) lists CI4 as "SSM 2040". The Expander's VCF is on page 8 (dated 15/6/79).
-- **The same resonance path as the data sheet.** Page 8 takes resonance from CI4's output back to its input through a CA3080 (CI5), whose bias is set by a 2N3906 (T3) on the "Res VCF" control input.
-  - That is Fig. 9's structure, so the 3080 feedback limiter in the model below (B3) is the circuit in both instruments, not a guess.
-  - The scan is reference only, not redistributable, and is not in the repo.
-- **One type, two voicings.** The 2040 type covers both the Prophet-5 Rev 1/2 and the Kobol's voicing.
-  - Both are four SSM2040 low-pass sections with 3080 resonance and no pass-band compensation.
-  - Their differences are in the drive into the chip and the resonance law. LEVEL and RES span both.
-  - The Kobol's reputed "natural saturation" is not confirmed by the schematic as a distinct circuit, so it gets no separate model (ADR 0096).
-- **A modern discrete build.** Behringer's 2023 clone builds a discrete SSM2040 after René Schmitz's design (https://www.schmitzbits.de/rs2040.html). Its transistor-level stage is a useful check on the per-stage OTA nonlinearity below; `sat`'s curve is compared against it at build.
+Both instruments use the same chip, the same 1 nF pole capacitors, LP4 only, and no pass-band compensation. They differ in three places: the drive into the chip, the resonance element, and what follows the filter. The owner's switch, **VOICE: REV2 / EXP**, carries those three differences and nothing else. The panel labels avoid both instruments' names, out of trademark caution.
+
+- **The Prophet-5 Rev 1/2** (Sequential Circuits, *Prophet-5 Technical Manual*, January 1980, Voice schematic SD411):
+  - The input is R476 200 K into stage 1 (U478, the 2040), with 10 K stage feedback and 200 Ω attenuators: stage-1 gain **0.05**.
+  - "A maximum-level sawtooth" gives "a 500-mV level" at each pole (§ 5-13). That is 6 dB under the chip's ±1 V.
+  - Resonance is "the RES FDBK VCA": ½ U490, an **SSM 2020 in linear mode** ("ALL VCAs: 2020", § 2-13). It is fed by a TL082 buffer at ×20 (R461 10 K, R478 200 K). Fig. 9's structure.
+  - After the filter: a 0.1 µF / 100 K coupling (16 Hz), then the other half of U490 as the FIN VCA.
+  - "The filters are not temperature-compensated" (§ 4-17). They are tuned at full resonance, where they "oscillate with a pure sine wave".
+- **The RSF Kobol Expander** (RSF factory schematic and BOM, 1979: VCF on p. 8, dated 15/6/79; ICs p. 11, capacitors p. 13, resistors p. 14, BOM dated 20/11/79):
+  - The input is R24 100 K into stage 1 (CI4 "SSM 2040"), with 10 K stage feedback and 220 Ω attenuators: stage-1 gain **0.10**. So for the same source level it drives the chip **2× (+6.0 dB)** harder than the Prophet.
+    - The remaining 0.8 dB difference in OTA error comes from the 220 Ω attenuators against 200 Ω. It acts on input and feedback alike, so it is a cutoff calibration, which FREQ absorbs.
+    - The mixer level into R21 is not legible on the scan, so the 2× assumes similar mixer levels.
+  - Resonance goes from OUT4 through C6 (4.7 µF) and a 4.7 K / 220 Ω divider into a **CA3080** (CI5, "trié"), biased by T3, a 2N3906. ±1 V at OUT4 is ±45 mV at the 3080 (0.87 of its 2V_T), so **the feedback compresses at the chip's own full swing**.
+  - After the filter: R31 10 K into a 220 Ω shunt on a **second CA3080**, the "VCA linéaire" (CI3). ±1 V at OUT4 is ±21.5 mV there (0.42 of 2V_T), about 1–2 % THD. That is the circuit candidate for the Kobol's reputed "natural saturation".
+  - The input and output couplings are 4.7 µF (sub-audio).
+- **Sound.** Players call the Rev 2's resonance "fuzzy" and the Rev 1/2 "warm, organic". They call the Kobol's SSM filter "very snappy", "liquid", with "smooth oscillation". The owner hears the Kobol as "so dirty and so wonderful", and the better acid box. Sources and the full comparison: `.superpowers/sdd/filter-types/2040-p5-vs-kobol.md`.
+- **A modern discrete build.** Behringer's 2023 Kobol clone builds a discrete SSM2040 after René Schmitz's design (https://www.schmitzbits.de/rs2040.html). Its transistor-level stage is a useful check on the per-stage OTA nonlinearity below; `sat`'s curve is compared against it at build.
 
 #### Model
 
-Per block: `g = tan_accurate(fc/fs)`, `G = g/(1 + g)`, `k = 4·RES/0.95` (so 4 at RES 0.95 and 4.21 at RES 1), and `D = 1/(1 + k·G⁴)`. On a moving block, `G` and `D` are divided per sample, exactly, as CLEAN's `d` is (B1).
+Per block: `g = tan_accurate(fc/fs)`, `G = g/(1 + g)`, `k = 4·RES/0.95` (so 4 at RES 0.95 and 4.21 at RES 1), and `D = 1/(1 + k·G⁴)`. On a moving block, `G` and `D` are divided per sample, exactly, as CLEAN's `d` is (B1). `v` is the block's VOICE.
 
 ```
-x_c = α · x · gain                                // α ≈ 0.1, tuned with L (H-new-1); no compensation (c = 0)
+x_c = α_v · x · gain                               // α_v per voice (table below); no compensation (c = 0)
 S   = (1 − G)·(s₄ + G·(s₃ + G·(s₂ + G·s₁)))        // the stages' state through the linear cascade
-u_l = (x_c − k·S) · D                             // one-step ZDF: the global loop solved linearly
-u   = x_c − L·sat((x_c − u_l)/L)                  // the 3080's feedback limit, L = ¼ (B3)
-for i in 1..=4:                                   // x₁ = u, xᵢ₊₁ = yᵢ
-    t  = g · sat((1 − G)·(xᵢ − sᵢ))               // the OTA on the true error x − y (H2)
-    yᵢ = sᵢ + t
+u_l = (x_c − k·S) · D                              // one-step ZDF: the global loop solved linearly
+u   = x_c − L·sat((x_c − u_l)/L)                   // the feedback limit, L = ¼ (B3)
+for i in 1..=4:                                    // x₁ = u, xᵢ₊₁ = yᵢ
+    t  = g · sat((1 − G)·(xᵢ − sᵢ))                // the OTA on the true error x − y (H2)
+    yᵢ = clamp(sᵢ + t, ±R)                         // the chip's ±1 V output swing
     sᵢ = yᵢ + t
-out = y₄ · (1/α) · OUT_2040                       // OUT_2040 pinned so LEVEL ½, RES 0 is 0 dB ± 0.5
-sat(v) = c − (4/27)·c³,  c = clamp(v, ±1.5)       // C1 cubic, no divide
+y   = y₄                                           // REV2
+y   = sat(β·y₄) · (1/β)                            // EXP only: the 3080 output VCA
+out = y · (1/α_v) · OUT_2040                       // OUT_2040 pinned so LEVEL ½, RES 0 is 0 dB ± 0.5 on both voices
+sat(v) = c − (4/27)·c³,  c = clamp(v, ±1.5)        // C1 cubic, no divide
 ```
 
-- **ZDF/TPT one-poles.** Each stage is the trapezoidal one-pole, exact at FREQ and stable under modulation (Zavalishin ch. 3 and 5). In the linear case `t = g(1 − G)(x − s) = G(x − s)`, so the explicit-nonlinearity form reduces exactly to the linear TPT stage.
+#### VOICE: the constants
+
+| Constant | REV2 | EXP | Source |
+|---|---|---|---|
+| `α_v`, the drive into the chip | `ALPHA_REV2` ≈ 0.1, tuned at build with `L` (tests 2 and 7) | **`2 · ALPHA_REV2`** (+6.0 dB) | Stage-1 gain `R2/R1`: Prophet 10 K/200 K (R480/R476) = 0.05; Kobol 10 K/100 K (R25/R24) = 0.10 |
+| `R`, the stage clip | **`2 · ALPHA_REV2`**, shared | the same | The data sheet's ±1 V swing, against the Prophet's 500 mV per pole at maximum saw (§ 5-13): 0.5 V ↔ `ALPHA_REV2`, so 1 V ↔ 2·`ALPHA_REV2`. The chip is the same in both. |
+| `L`, the feedback limit | ¼, shared | ¼, shared | Tuned for pitch (B3); see below |
+| `β`, the output VCA | — (no POST stage) | **`0.62 / R`** | CI3: R31 10 K into R40 220 Ω turns ±1 V into ±21.5 mV = 0.416 × 2V_T; the cubic `sat` matches `tanh` at `v = 1.5 · V/2V_T`, so 0.416 × 1.5 = 0.62 at `y₄ = R` |
+| `OUT_2040`, `k` law, onset | shared | shared | No evidence of a different resonance law: the 2020 is linear, and T3 is a plain PNP current source |
+
+- **"500 mV" is read as peak.** If the manual meant peak to peak, `R` would be `4 · ALPHA_REV2`. Peak is chosen because it is the grittier reading, and it sits in the constant's doc comment.
+- **Clip onsets for a full-scale sine at RES 0:**
+  - **REV2** clips at a gain of ×2, LEVEL 0.75, so it has 6 dB of headroom at unity, as the Prophet does.
+  - **EXP** clips at ×1, LEVEL **0.5**: it is already at the chip's swing at unity.
+  - At LEVEL 1 (×4), REV2 runs 6 dB over the swing and EXP 12 dB over.
+- **The resonance compression.**
+  - The limiter `L·sat(·/L)` is a 3080 in kind, the Kobol's CI5. EXP reaches it 6 dB sooner, so under drive its resonance ducks and blooms back as the level falls: the squelch.
+  - The Prophet's SSM 2020 is linear, so on REV2 the limiter is a modelling device. Without it the model oscillates 330 cents flat (B3); the real instrument hides its own drift by being trimmed at full resonance (§ 4-17). REV2 keeps `L` so that both voices pass the same 1 V/oct test.
+  - The two voices share every resonance constant, so with no input they oscillate at the same pitch and in the same shape.
+- **Deliberately not modelled:**
+  - the Prophet's 16 Hz output coupling (−1 dB at 31 Hz) and the Kobol's 3.3 Hz;
+  - the Kobol's in-loop 6.9 Hz high-pass (C6): it is sub-audio, so the bass loss is the same in both voices from 40 Hz up.
+
+- **ZDF/TPT one-poles.** Each stage is the trapezoidal one-pole, exact at FREQ and stable under modulation (Zavalishin ch. 3 and 5). In the linear case `t = g(1 − G)(x − s) = G(x − s)`, so the explicit-nonlinearity form reduces exactly to the linear TPT stage. The clamp is the identity below ±R.
 - **Solving the nonlinear loop in one step.** The global loop is solved linearly and exactly (Zavalishin's ladder solution). The stage nonlinearities then run explicitly on the true linear error, Zavalishin's "cheap" method (ch. 6). Newton with two fixed iterations was rejected: about +100 instructions and a `vdiv` per iteration.
 - **Self-oscillation pitch (B3).**
   - Without the feedback limit, the model oscillates 330 cents flat: the OTAs saturate inside the loop. An RK4 reference agrees, so the error is in the model, not the solver.
-  - Limiting the feedback, as the 3080 in Fig. 9 and in the Kobol's CI5 does (`L = ¼`), keeps the stages near-linear, which brings the pitch to within about −3 to −5 cents.
+  - Limiting the feedback (`L = ¼`) keeps the stages near-linear, which brings the pitch to within about −3 to −5 cents.
   - `L` is tuned at build against the 1 V/oct test.
-- **The input scale α is tuned with `L` (H-new-1).**
+- **The input scale is tuned with `L` (H-new-1).**
   - With α = ½ and L = ¼, a full-scale input saturates the limiter, so resonance collapses at normal levels. At full scale 14.5 dB of resonance is lost, and the bass loss reads −7.7 dB instead of −13.6. Self-oscillation sits near −24 dBFS, against CLEAN's +0.6 to +8.4, so a TYPE switch at RES 1 jumps 25–30 dB.
-  - **α ≈ 0.1** keeps the pitch within −1 cent, puts self-oscillation near −8 dBFS (inside the band CLEAN's trims target), and keeps the authentic −13.5 dB bass loss at full scale.
-  - α and `L` are pinned together at build by tests 2 and 7.
-  - With α this small, ordinary levels stay near-linear, and the 2040's grit comes from LEVEL.
-- **Bounded.** `sat` is bounded with slope ≤ 1. Each stage moves its state by at most `2G` per sample toward its input, and `u` is a bounded combination of the input and the states. The feedback limiter bounds the loop further.
-- **Bass loss:** DC gain `1/(1 + k)`. That is −14 dB at onset and −14.3 dB at RES 1. Nothing compensates it.
-- **Mode:** LP4 only. FLT › MOD's sixth cell shows "LP4", fixed and dimmed.
+  - **`ALPHA_REV2` ≈ 0.1** keeps the pitch within −1 cent, puts REV2's self-oscillation near −8 dBFS (inside the band CLEAN's trims target), and keeps the authentic −13.5 dB bass loss at full scale.
+  - `ALPHA_REV2` and `L` are pinned together at build by tests 2 and 7. `ALPHA_EXP` and `R` follow from `ALPHA_REV2` by the table's ratios and are never tuned on their own.
+  - At REV2's α, ordinary levels stay near-linear, and the grit comes from LEVEL. On EXP it starts at unity.
+- **The self-oscillation level, per voice.**
+  - With no input, `y₄` oscillates at the same amplitude on both voices. The output divides by `α_v`, so **EXP's self-oscillation sits 6.0 dB below REV2's**: unity at LEVEL ½ costs that.
+  - REV2 shares test 2's band with CLEAN and DIRTY.
+  - EXP has its own band, `OSC_BAND_EXP_DB`, pinned at build and expected about 6 dB lower.
+  - A VOICE flip at RES 1 therefore steps about 6 dB, and the crossfade carries it.
+  - The clip doesn't touch the oscillation: `y₄` is expected near `0.4·α`, against `R = 2α`. Test 2 shows it if the clip does.
+- **Bounded.**
+  - `sat` is bounded with slope ≤ 1. Each stage moves its state by at most `2G` per sample toward its input. The clamp holds every `yᵢ` within ±R, so every state is within `R + g`, and `u` is a bounded combination of the input and the states. The feedback limiter bounds the loop further.
+  - **The output is bounded exactly:** `|out| ≤ R/α_v · OUT_2040`, that is `2·OUT_2040` on REV2 and `OUT_2040` on EXP. POST only lowers it.
+- **Bass loss:** DC gain `1/(1 + k)`. That is −14 dB at onset and −14.3 dB at RES 1. Nothing compensates it, on either voice.
+- **Mode:** LP4 only, on both voices. FLT › MOD's sixth cell shows "LP4", fixed and dimmed.
 - **Panel:**
   - FLT: TYPE · CUTOFF · RES · ENV AMT · KEYBD · DRIVE.
-  - FLT › MOD: — · FM3 · FM3 IN · QM · QM IN · MODE (fixed).
-  - **KEYBD** is a stepped view of the continuous route NOTE → CUTOFF. It shows OFF, HALF or FULL when the amount is exactly 0, 64 or 127, and its percentage otherwise. One detent moves to the next step in that direction.
-  - **DRIVE is LEVEL (Filter 12) under the 2040's panel word, shown in one place only:** FLT's knob 6, with the LED. FLT › MOD's first cell is empty on the 2040 (M6).
-- **State:** four floats.
+  - FLT › MOD: **VOICE** · FM3 · FM3 IN · QM · QM IN · MODE (fixed).
+  - **KEYBD** is a stepped view of the continuous route NOTE → CUTOFF. It shows OFF, HALF or FULL when the amount is exactly 0, 64 or 127, and its percentage otherwise. One detent moves to the next step in that direction. The Prophet's keyboard tracking is an on/off switch at full; the Kobol's is a knob. KEYBD covers both.
+  - **DRIVE is LEVEL (Filter 12) under the 2040's panel word, shown in one place only:** FLT's knob 6, with the LED.
+  - **VOICE** fills FLT › MOD's first cell, which was empty on the 2040 (M6). Its values read **REV2** and **EXP**.
+    - It is a new param, Filter id **13**: `enum K2040Voice { Rev2 = 0, Exp = 1 }`, ident "VOICE". Disk codes are append-only (ADR 0009). An absent or unknown code loads as REV2, the default on every engine.
+    - It is a sound param: it is MIDI-learnable and in the parameter sweep.
+    - It is shown only on the 2040. On other types it is kept and inert.
+    - The precedent is the Prophet-5 Rev 4's REV switch, which sits in its filter section and picks the Rev 1/2 or Rev 3 filter.
+- **Never snapped.** A VOICE change is treated like a MODE change. The states are rescaled, `sᵢ ← sᵢ · α_new/α_old`, which is exact for linear content because `out = y/α_v`. Then the two-block crossfade runs (§ 1).
+- **State:** four floats. VOICE and POST add none.
 
 ### 4. DIRTY: the Chamberlin SVF
 
@@ -291,7 +343,7 @@ out = clamp(½ · ½·(m₁ + m₂), ±1)                 // m = the mode's outp
 - **One knob picks the machine, the next its voice.** Every type opens at its default mode with the Sound's CUTOFF, RES and DRIVE, and with its routes where they were.
 - **Each type nudges:**
   - CLEAN speaks Cascadia.
-  - The 2040 has one mode and the Prophet's panel words, and its bass falls as RES rises.
+  - The 2040 has one mode and the Prophet's panel words, and its bass falls as RES rises. Its VOICE picks REV2, clean up to the chip, or EXP, hot into it, for driven acid.
   - DIRTY is four plain modes that clip and scream near the top.
 - **The viz** (`viz::Response`) gains:
   - CLEAN's NOTCH1: a peak or dip at FREQ, a notch at 2 × FREQ, and −12 dB treble;
@@ -301,7 +353,7 @@ out = clamp(½ · ½·(m₁ + m₂), ±1)                 // m = the mode's outp
   - the 2040's pass band, lowered by `1/(1 + k)`.
 - **Screen goldens:**
   - FLT and FLT › MOD per type;
-  - the 2040's fixed MODE;
+  - the 2040's fixed MODE and its VOICE cell at REV2 and EXP;
   - the LED at 0, ½ and 1;
   - FM3 IN and QM IN after a repatch;
   - the matrix with ALGO's tap rows and X cells (§ 7).
@@ -421,8 +473,9 @@ Owner ruling (2026-10-05): every patch, the taps included, is made and seen in t
 | CLEAN LP1 / LP2 / BP2 / NOTCH1, steady | ≤ 30 | 0 | 50 | 0 |
 | CLEAN NOTCH2, steady | ≤ 34 | 0 | 55 | 0 (was 17) |
 | CLEAN, moving (LP4) | +6 | 2 | +35 | `CLEAN_MOVE_COST` 35 |
-| 2040, steady | ≤ 70 | 0 | 115 | 10 |
-| 2040, moving | +6 | 2 | +35 | +35 |
+| 2040 REV2, steady (70 + 8 for the ±1 V clip) | ≤ 78 | 0 | 130 | 25 |
+| 2040 EXP, steady (REV2 + 6 for the output VCA) | ≤ 84 | 0 | 135 | 30 |
+| 2040, moving (either voice) | +6 | 2 | +35 | +35 |
 | DIRTY, any mode | ≤ 30 | 0 | 50 | 0 |
 | LEVEL clipper + meter + fade | ≤ +12 | 0 | +20 | +20 |
 | Tap capture (per tapped op) | +1 | 0 | +2 | in each tap's cost |
@@ -441,7 +494,7 @@ Owner ruling (2026-10-05): every patch, the taps included, is made and seen in t
 
 - **Per voice:** CLEAN 4 floats plus NOTCH2's 5; the 2040 4; DIRTY 2; the ramp endpoints; the block's clip peak and fade; and the tap amounts' previous values. That is about 110 B against 24 B today, ×8 ≈ 0.7 KB, under ADR 0051's assert. Types keep separate, flat state, so the crossfade can run two at once.
 - **Stack:** the crossfade's 256 B and the tap rows' 512 B, both in DTCM.
-- **Per Sound:** `FilterParams` grows 6 B (two `Jack`s and LEVEL) and `TapRoutes` adds up to 33 B (8 entries × 4 B, plus a count). Across the pool, the triple buffer and the Performance that is about 2 KB of AXI.
+- **Per Sound:** `FilterParams` grows 7 B (two `Jack`s, LEVEL and the 2040's VOICE) and `TapRoutes` adds up to 33 B (8 entries × 4 B, plus a count). Across the pool, the triple buffer and the Performance that is about 2 KB of AXI.
 - **Elsewhere:** `meter::FILTER_CLIP` is 6 × 4 B.
 - **Flash:** about 2.5 KB, reported in one line.
 
@@ -455,7 +508,7 @@ Owner ruling (2026-10-05): every patch, the taps included, is made and seen in t
   - a translated patch with DRIVE > 0 now passes through LEVEL's clipper, so material above ±1 gets some grit it didn't have;
   - a route into DRIVE keeps its amount, but under the exponential law that amount moves the level by a different number of dB;
   - goldens are re-recorded and listed in the PR;
-  - all new params, codes and `TapRoutes` are append-only (DRIVE's id 2 retired, LEVEL new at 12), and unknown codes load as CLEAN LP4.
+  - all new params, codes and `TapRoutes` are append-only (DRIVE's id 2 retired, LEVEL new at 12, the 2040's VOICE new at 13), and unknown codes load as CLEAN LP4 (an unknown VOICE as REV2).
 
 ## Tests the build must add
 
@@ -465,9 +518,9 @@ Owner ruling (2026-10-05): every patch, the taps included, is made and seen in t
    - BP's peak at FREQ ± 3 %;
    - CLEAN NOTCH1's zero at 2 × FREQ ± 3 %, at least 30 dB deep, with its −8.6 dB dip at FREQ at Q 0;
    - DIRTY NOTCH1 at FREQ ± 5 % up to fs/8;
-   - the 2040's −3 dB point within ±5 % of the linear prototype at a small input.
+   - the 2040's −3 dB point within ±5 % of the linear prototype at a small input, on both voices.
 2. **Self-oscillation, level and 1 V/oct** at RES 1, for CLEAN (every mode but NOTCH2), the 2040 and DIRTY. Each is started by one impulse and read over 0.5 s after 0.25 s.
-   - The level is steady (±1 dB) and below 0 dBFS in every mode, across FREQ 100 Hz – 8 kHz (M-new-1). CLEAN's trimmed modes, the 2040 and DIRTY share one pinned band, so a TYPE switch at RES 1 jumps no more than that band's width (H-new-1).
+   - The level is steady (±1 dB) and below 0 dBFS in every mode, across FREQ 100 Hz – 8 kHz (M-new-1). CLEAN's trimmed modes, the 2040's REV2 and DIRTY share one pinned band, so a TYPE switch at RES 1 jumps no more than that band's width (H-new-1). The 2040's EXP has its own pinned band, `OSC_BAND_EXP_DB`, about 6 dB lower (§ 3); its pitch and onset limits are the shared ones.
    - With FM2 at +100 %, notes C2–C6: each octave is within ±10 cents and the absolute pitch within ±25 cents, up to 5 kHz for CLEAN and the 2040, and up to fs/8 for DIRTY.
    - Onset sits at RES 0.95 ± 0.01 on each type.
 3. **Click-free sweeps** with `tests/common/sweep.rs` (`Tape::click`, `CLICK_RATIO`, `CLICK_FLOOR`) and `common::clicks`:
@@ -486,12 +539,17 @@ Owner ruling (2026-10-05): every patch, the taps included, is made and seen in t
    - The peak near FREQ rises with Q by ≤ 5.2 dB.
    - For FREQ ≤ 2 kHz, broadband loudness stays within ±1.5 dB across Q (L-new-1).
    - It never self-oscillates.
-7. **The 2040's bass loss and resonance at level (H-new-1):** the gain at 100 Hz with FREQ 2 kHz, for RES 0–1 in tenths, at a small input **and at full scale**. It falls monotonically and stays within ±1 dB of `−20·log₁₀(1 + k)`. At RES 0.95 (`k = 4`) it is −14 ± 1 dB, at full scale included. The resonant peak's gain at full scale for RES ≤ 0.8 stays within a pinned number of dB of the small-signal gain.
+7. **The 2040's bass loss and resonance at level (H-new-1):** the gain at 100 Hz with FREQ 2 kHz, for RES 0–1 in tenths, at a small input **and at full scale**. It falls monotonically and stays within ±1 dB of `−20·log₁₀(1 + k)`. At RES 0.95 (`k = 4`) it is −14 ± 1 dB, at full scale included. The resonant peak's gain at full scale for RES ≤ 0.8 stays within a pinned number of dB of the small-signal gain. The small-signal checks hold on both voices. The full-scale checks hold on REV2; EXP's full-scale tolerances are pinned per voice, because EXP is meant to compress there.
+7a. **The 2040's VOICE and stage clip:**
+   - EXP's resonant peak compresses under drive by at least 2 dB more than REV2's (RES 0.8, FREQ 1 kHz, full scale against small-signal).
+   - The output stage runs on EXP only.
+   - Every stage output stays within ±R, and the output within `R/α_v · OUT_2040`.
+   - The clip begins between LEVEL 0.70 and 0.80 on REV2, and between 0.45 and 0.55 on EXP.
 8. **Bounded at every setting:**
    - a grid of FREQ (24 log points) × RES (11) × LEVEL (0, ½, 1) × every mode of every type;
    - inputs: silence, a full-scale saw, a square at fs/4, white noise ±1, and impulses of ±10;
    - plus 10 s of random per-block changes of FREQ, RES, MODE and TYPE.
-   - Every output is finite. DIRTY's output stays within ±1 and its states within ±2. CLEAN's and the 2040's bounds are pinned at build.
+   - Every output is finite. DIRTY's output stays within ±1 and its states within ±2. CLEAN's bound is pinned at build. The 2040's is exact: `R/α_v · OUT_2040`, that is `2·OUT_2040` on REV2 and `OUT_2040` on EXP.
 9. **Taps:**
    - **Sidebands at the op ratio.** An ALGO Sound with OP 6 at ratio r, its tap → VCA at 50 % and at 100 %, and a sine carrier at f_c: the sidebands at f_c ± r·f_note must sit within ±1 dB of the AM/RM theory. With the amount at 0 they must be under −90 dB.
      - Tap → FREQ on LP2 with a saw: sidebands at each harmonic ± r·f_note, and none at amount 0.
@@ -546,13 +604,16 @@ Each task gets desktop QA (sweeps, per-pair levels) before the owner's ear.
 
 ## Open questions for the owner
 
-None. Every question from revision 1 is answered above. Two constants are tuned at build against their tests and are not taste calls: the 2040's limiter `L`, and `OUT_2040`.
+None. Every question from revision 1 is answered above. Three constants are tuned at build against their tests and are not taste calls: the 2040's limiter `L`, `ALPHA_REV2` and `OUT_2040`. `ALPHA_EXP` (2 × `ALPHA_REV2`), the stage clip `R` (2 × `ALPHA_REV2`) and EXP's `β` (0.62/R) follow from the circuits and aren't tuned.
 
 ## Sources
 
 - Intellijel, *Cascadia Manual*, firmware 1.2, rev. 2023-10-15, § 8 "VCF" (pp. 44–48). Behaviour and UX only. https://intellijel.com/downloads/manuals/cascadia_manual_v1.2_2023.10.15.pdf
 - Solid State Music, *SSM 2040 Voltage Controlled Filter Circuit*, data sheet, July 1977: the block diagram, Figs. 1, 9 and 10, and THD vs input level. http://bitsavers.trailing-edge.com/components/solidStateMusic/SSM2040.pdf
-- RSF, *Kobol Expander* factory schematic (Toulouse, 1979): p. 8 (VCF, CI4 and CI5, T3) and p. 11 (BOM: CI4 "SSM 2040", CI5 "CA 3080"). Reference only, not redistributable, and kept out of the repo. Scan: https://yusynth.net/gear/RSF/schema-RSF-KOBOL.pdf
+- Sequential Circuits, *Prophet-5 Technical Manual* (January 1980; SSM-era): § 2-7, § 2-13, § 4-17, § 5-13, and the Voice schematic SD411 (U478, R476, R480, R461/R478, U490 RES FDBK VCA, C413/R471). https://archive.org/details/Sequential_Circuits_Prophet_5_Service_Manual
+- Sequential, *Prophet-5 User's Guide* 1.3 (Rev 4): the REV switch. https://sequential.com/wp-content/uploads/2021/02/Prophet-5-Users-Guide-1.3.pdf
+- *Electronics & Music Maker*, "RSF Kobol Expander", March 1983. https://www.muzines.co.uk/articles/rsf-kobol-expander/5929
+- RSF, *Kobol Expander* factory schematic (Toulouse, 1979): p. 8 (VCF: R24, R25, the 220 Ω attenuators, CI4, CI5 and T3, C6, and the CI3 VCA with R31/R40), p. 11 (BOM: CI3 "3080", CI4 "SSM 2040", CI5 "CA 3080"), p. 13 (C6, C16 4.7 µF) and p. 14 (resistors). Reference only, not redistributable, and kept out of the repo. Scan: https://yusynth.net/gear/RSF/schema-RSF-KOBOL.pdf
 - R. Schmitz, "RS2040", a discrete SSM2040; Behringer's 2023 clone follows it. https://www.schmitzbits.de/rs2040.html
 - Synth DIY Wiki, "SSM2040" (https://sdiy.info/wiki/SSM2040) and "Sequential Circuits Prophet-5" (https://sdiy.info/wiki/Sequential_Circuits_Prophet-5).
 - T. Wiltshire (Electric Druid), "Multimode filters, Part 1: Reconfigurable filters". https://electricdruid.net/multimode-filters-part-1-reconfigurable-filters/
