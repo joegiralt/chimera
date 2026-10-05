@@ -374,6 +374,15 @@ impl Reverb {
         }
     }
 
+    /// ROOM's state to change, while ROOM runs (tests).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn room_mut(&mut self) -> Option<&mut Room> {
+        match &mut self.state {
+            EngineState::Room(e) => Some(e),
+            _ => None,
+        }
+    }
+
     /// ROOM's state, while ROOM runs.
     pub fn room(&self) -> Option<&Room> {
         match &self.state {

@@ -490,11 +490,11 @@ impl BurstEngine {
         }
         let (mut tone, mut regen) = (self.tone, self.regen);
         let (mut h, mut hf) = (self.h as usize % SLOTS, self.hf as usize % FSLOTS);
-        let (mut b, mut fb) = ([0usize; ACCESS], [0usize; F_ACCESS]);
         let mut i = 0;
         while i < HALF {
-            let len = segment(h, SLOTS, &off, &mut b, HALF - i);
-            let len = segment(hf, FSLOTS, &F_OFF, &mut fb, len);
+            let (b, len) = segment(h, SLOTS, &off, HALF - i);
+            let (fb, len) = segment(hf, FSLOTS, &F_OFF, len);
+            let len = len.min(HALF - i);
             for t in 0..len {
                 macro_rules! rd {
                     ($b:expr) => {

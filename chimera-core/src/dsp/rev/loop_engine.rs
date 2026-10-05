@@ -26,8 +26,9 @@ use crate::dsp::reverb::EngineKnobs;
 use crate::dsp::ring::{FULL_SCALE, RING_LEN};
 
 use super::arena::ReverbArena;
+pub use super::parts::XFADE;
 use super::parts::{
-    Lines, ap_f32, ap_norm, ease_k, one_pole, pair_in, pow2, prime_ms, segment, soft_clip, wrap,
+    Lines, XFADE_INV, ap_f32, ap_norm, ease_k, one_pole, pair_in, pow2, prime_ms, segment, wrap,
 };
 
 /// `$body` once per literal, `$k` that literal as a `const`: `ring.rs`'s.
@@ -66,6 +67,14 @@ pub const fn rotation(theta: f32) -> (f32, f32) {
 }
 
 const ROT: (f32, f32) = rotation(THETA);
+
+/// ROOM's coupling: loop outputs (a, b) to the re-entries (c·a + s·b,
+/// c·b − s·a). The engine and its energy test share it.
+#[inline(always)]
+pub fn rotate(a: f32, b: f32) -> (f32, f32) {
+    let (c, s) = ROT;
+    (c * a + s * b, c * b - s * a)
+}
 
 /// A LOOP TYPE's lines at SIZE 1, ring samples.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -168,13 +177,66 @@ pub trait Layout<const L: usize, const S: usize> {
         }
         m as f32
     };
+    /// Loop 0's stage allpasses, and 1/its stage delays at SIZE 1: SIZE's
+    /// k from its round trip.
+    const AP0: f32 = {
+        let (mut a, mut s) = (0, 0);
+        while s < S {
+            a += Self::LENS.ap[0][s];
+            s += 1;
+        }
+        a as f32
+    };
+    const INV_D0: f32 = {
+        let (mut d, mut s) = (0, 0);
+        while s < S {
+            d += Self::LENS.delay[0][s];
+            s += 1;
+        }
+        1.0 / d as f32
+    };
+    /// Every access's offset from the head that no length moves: the
+    /// writes, the stage allpasses' reads, the taps (`Access`). The ten
+    /// PRE-DLY and delay reads are filled in each block.
+    const OFFSETS: [usize; MAX_ACCESS] = fixed_offsets(&Self::HEADS, &Self::LENS, &Self::TAPS);
+    /// The diffuser's four writes, then its four reads.
+    const F_OFFSETS: [usize; 8] = {
+        let mut o = [0; 8];
+        let mut j = 0;
+        while j < 4 {
+            o[j] = Self::HEADS.diffuser[j];
+            o[4 + j] = Self::HEADS.diffuser[j] - Self::LENS.diffuser[j];
+            j += 1;
+        }
+        o
+    };
     /// The i16 accesses (`Access`), every one in its segment.
     const ACCESS: usize = 9 + 5 * L * S;
+    /// The smeared reads, `M − 2D` at the deepest D (twice the cap of the
+    /// longest loop), stay 2 or more behind their write: `pair_in`'s
+    /// contract.
+    const SMEAR_FITS: bool = {
+        let (mut m, mut ok) = (0, true);
+        while m < 2 {
+            let (l, st) = Self::SMEARED[m];
+            let (mut trip, mut s) = (0, 0);
+            while s < S {
+                trip += Self::LENS.delay[l][s] + Self::LENS.ap[l][s];
+                s += 1;
+            }
+            let d = Self::LENS.ap[l][st] as f32 - 2.0 * Self::SMEAR_CAP * trip as f32;
+            ok &= d >= 2.0 && Self::LENS.ap[l][st] < Self::SLOTS;
+            m += 1;
+        }
+        ok
+    };
     const FITS: () = assert!(
         Self::SLOTS + 2 * Self::FSLOTS <= RING_LEN
             && Self::SLOTS < u16::MAX as usize
-            && Self::ACCESS <= MAX_ACCESS
+            && Self::ACCESS == MAX_ACCESS
             && S.is_multiple_of(2)
+            && L * S == 2 * DAMPERS
+            && Self::SMEAR_FITS
     );
 
     /// The i16 regions a level-plan test reads: PRE, the stage delays and
@@ -187,7 +249,44 @@ pub trait Layout<const L: usize, const S: usize> {
     }
 }
 
-const MAX_ACCESS: usize = 32;
+/// ROOM's and HALL's i16 accesses: both run 4 stages in all.
+const MAX_ACCESS: usize = 29;
+/// A damper after every second stage: 4 stages, 2 dampers.
+const DAMPERS: usize = 2;
+
+/// `Layout::OFFSETS`: the writes at their heads, each stage allpass read
+/// its length back, each tap its own; the rest 0.
+const fn fixed_offsets<const L: usize, const S: usize>(
+    h: &Heads<L, S>,
+    n: &Lens<L, S>,
+    taps: &[[(usize, usize, usize, f32); 3]; 2],
+) -> [usize; MAX_ACCESS] {
+    let mut o = [0; MAX_ACCESS];
+    o[Access::<L, S>::W_PRE] = h.pre;
+    let mut l = 0;
+    while l < L {
+        let mut s = 0;
+        while s < S {
+            let j = l * S + s;
+            o[Access::<L, S>::W_D + j] = h.delay[l][s];
+            o[Access::<L, S>::W_AP + j] = h.ap[l][s];
+            o[Access::<L, S>::R_AP + j] = h.ap[l][s] - n.ap[l][s];
+            s += 1;
+        }
+        l += 1;
+    }
+    let mut side = 0;
+    while side < 2 {
+        let mut i = 0;
+        while i < 3 {
+            let (l, s, d, _) = taps[side][i];
+            o[Access::<L, S>::R_TAP + 3 * side + i] = h.delay[l][s] - d;
+            i += 1;
+        }
+        side += 1;
+    }
+    o
+}
 
 /// ROOM: loops A and B, two stages each (§ LOOP engine's table), SIZE's
 /// k from 0.375 to 1 (A's round trip 100 → 200 ms).
@@ -252,8 +351,6 @@ const MAX_GAIN: f32 = 0.985;
 /// The send's injection, ½ (§ Shared machinery), in LSBs.
 const IN_GAIN: f32 = 0.5 * FULL_SCALE;
 const INV_FS: f32 = 1.0 / FULL_SCALE;
-/// Ring samples a length crossfade takes: 30 ms, QUAD's.
-pub const XFADE: u16 = 720;
 /// The most one crossfade moves PRE-DLY, and a loop's round trip.
 pub const STEP: u16 = 120;
 
@@ -284,10 +381,25 @@ pub struct LoopEngine<const L: usize, const S: usize> {
     gs: f32,
     da: f32,
     g: [[f32; S]; L],
-    /// The dampers, rounded to the LSB.
-    lp: [[f32; S]; L],
+    /// 1/(1 − `gs`), as the last block ended.
+    inv: f32,
+    /// What the eases head for, worked out again only when RT60, TONE,
+    /// the damper (`key`'s bits) or the lengths (`retarget`) change: the
+    /// coefficients, the stage allpasses' cap and the stage gains.
+    key: [u32; 3],
+    retarget: bool,
+    t_ta: f32,
+    t_da: f32,
+    t_cap: f32,
+    t_g: [[f32; S]; L],
+    /// The dampers, one after every second stage, rounded to the LSB.
+    lp: [f32; DAMPERS],
     /// This block's SMEAR offsets (start, end), ring samples: `D·(1 + x)`.
     smear: [(f32, f32); 2],
+    /// A crossfade step other than `STEP`, when not 0 (the slap test's
+    /// negative control): never in firmware.
+    #[cfg(any(test, feature = "test-support"))]
+    coarse: u16,
 }
 
 impl<const L: usize, const S: usize> Default for LoopEngine<L, S> {
@@ -309,8 +421,17 @@ impl<const L: usize, const S: usize> Default for LoopEngine<L, S> {
             gs: 0.0,
             da: 0.0,
             g: [[0.0; S]; L],
-            lp: [[0.0; S]; L],
+            inv: 0.0,
+            key: [0; 3],
+            retarget: false,
+            t_ta: 0.0,
+            t_da: 0.0,
+            t_cap: 0.0,
+            t_g: [[0.0; S]; L],
+            lp: [0.0; DAMPERS],
             smear: [(0.0, 0.0); 2],
+            #[cfg(any(test, feature = "test-support"))]
+            coarse: 0,
         }
     }
 }
@@ -320,10 +441,14 @@ fn ease(x: &mut f32, t: f32, k: f32) {
     *x = t + k * (*x - t);
 }
 
+/// R1's clip (`parts::soft_clip`) on an LSB value, its knee and ceiling
+/// in LSBs: no scaling in and out.
 #[inline(always)]
 fn clip<const C: bool>(x: f32) -> f32 {
     if C {
-        soft_clip(x * INV_FS) * FULL_SCALE
+        let a = x.abs();
+        let u = clampf(a - FULL_SCALE, 0.0, 2.0 * FULL_SCALE);
+        (a.min(FULL_SCALE) + u - (0.25 * INV_FS) * u * u).copysign(x)
     } else {
         x
     }
@@ -360,13 +485,8 @@ where
     /// The knobs' goals: the stage delays at SIZE's k (loop 0's round
     /// trip is `length_ms`), and PRE-DLY, in ring samples.
     fn goals(k: &EngineKnobs) -> ([[u16; S]; L], u16) {
-        let n = &Self::LENS;
-        let (aps, ds) = (
-            n.ap[0].iter().sum::<usize>() as f32,
-            n.delay[0].iter().sum::<usize>() as f32,
-        );
-        let size = clampf((k.length_ms * PER_MS - aps) / ds, 0.0, 1.0);
-        let pre = clampf(k.predelay_ms * PER_MS + 0.5, 2.0, n.pre as f32) as u16;
+        let size = clampf((k.length_ms * PER_MS - Self::AP0) * Self::INV_D0, 0.0, 1.0);
+        let pre = clampf(k.predelay_ms * PER_MS + 0.5, 2.0, Self::LENS.pre as f32) as u16;
         (Self::delays_at(size), pre)
     }
 
@@ -377,26 +497,41 @@ where
         let (d, pre) = Self::goals(k);
         (self.at, self.to, self.goal) = (d, d, d);
         (self.pre_at, self.pre_to, self.pre_goal) = (pre, pre, pre);
-        (self.left, self.primed) = (0, true);
+        (self.left, self.primed, self.retarget) = (0, true, true);
         self.ease_to(k, 0.0, 0.0);
+        self.inv = 1.0 / (1.0 - self.gs);
     }
 
-    /// Each stage's gain toward `k`'s RT60 at the lengths it heads for.
-    /// The stage allpasses take DIFFUSE's g held to the longest one's
-    /// stage gain, so its own ring never outlasts the RT60: no `t_min`
-    /// floors DECAY (it binds under about 0.33 s, DIFFUSE 1 at 0.2 s
-    /// rang 0.37 s without it).
+    /// Each eased value one block toward `k`: TONE's and the damper's
+    /// coefficients, the g, and each stage's gain for `k`'s RT60 at the
+    /// lengths it heads for. The stage allpasses take DIFFUSE's g held to
+    /// the longest one's stage gain, so its own ring never outlasts the
+    /// RT60: no `t_min` floors DECAY (it binds under about 0.33 s, DIFFUSE
+    /// 1 at 0.2 s rang 0.37 s without it). The targets' `exp2`s run only
+    /// when what they read changes.
     fn ease_to(&mut self, k: &EngineKnobs, k20: f32, k50: f32) {
-        ease(&mut self.ta, one_pole(k.tone_hz, FS), k20);
+        let key = [k.rt60_s.to_bits(), k.tone_hz.to_bits(), k.damp_hz.to_bits()];
+        if key != self.key || self.retarget {
+            (self.key, self.retarget) = (key, false);
+            self.t_ta = one_pole(k.tone_hz, FS);
+            self.t_da = one_pole(k.damp_hz, FS);
+            let per = -3.0 * LOG2_10 / (k.rt60_s.max(1e-3) * FS);
+            self.t_cap = pow2(per * Self::AP_MAX);
+            let d = self.to;
+            for l in 0..L {
+                for s in 0..S {
+                    let len = (d[l][s] as usize + Self::LENS.ap[l][s]) as f32;
+                    self.t_g[l][s] = pow2(per * len).min(MAX_GAIN);
+                }
+            }
+        }
+        ease(&mut self.ta, self.t_ta, k20);
         ease(&mut self.gd, k.diffuse_g, k20);
-        ease(&mut self.da, one_pole(k.damp_hz, FS), k20);
-        let per = -3.0 * LOG2_10 / (k.rt60_s.max(1e-3) * FS);
-        ease(&mut self.gs, k.diffuse_g.min(pow2(per * Self::AP_MAX)), k20);
-        let d = self.to;
+        ease(&mut self.da, self.t_da, k20);
+        ease(&mut self.gs, k.diffuse_g.min(self.t_cap), k20);
         for l in 0..L {
             for s in 0..S {
-                let len = (d[l][s] as usize + Self::LENS.ap[l][s]) as f32;
-                ease(&mut self.g[l][s], pow2(per * len).min(MAX_GAIN), k50);
+                ease(&mut self.g[l][s], self.t_g[l][s], k50);
             }
         }
     }
@@ -406,6 +541,13 @@ where
     /// twice its loop's cap.
     pub fn set_smear(&mut self, s: [(f32, f32); 2]) {
         self.smear = s;
+    }
+
+    /// Step `step` ring samples a crossfade from now on: the slap a 5 ms
+    /// step avoids, for the no-slap test to hear.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn coarse_steps(&mut self, step: u16) {
+        self.coarse = step;
     }
 
     /// The SMEAR offsets the last block read by, as held.
@@ -443,8 +585,12 @@ where
     /// held tone's phase: its tail's peak sat 28 Hz off at a 5 Hz spacing.
     #[inline(never)]
     fn schedule(&mut self) {
+        #[cfg(any(test, feature = "test-support"))]
+        let step = if self.coarse > 0 { self.coarse } else { STEP };
+        #[cfg(not(any(test, feature = "test-support")))]
+        let step = STEP;
         let toward = |at: u16, goal: u16| {
-            let d = goal.abs_diff(at).min(STEP);
+            let d = goal.abs_diff(at).min(step);
             if goal > at { at + d } else { at - d }
         };
         self.to = self.at;
@@ -461,7 +607,7 @@ where
         }
         self.pre_to = toward(self.pre_at, self.pre_goal);
         if self.to != self.at || self.pre_to != self.pre_at {
-            self.left = XFADE;
+            (self.left, self.retarget) = (XFADE, true);
         }
     }
 
@@ -503,28 +649,19 @@ where
         }
     }
 
-    /// Each access's offset from the head this block.
+    /// Each access's offset from the head this block: `OFFSETS`, and the
+    /// ten reads the lengths move.
     fn offsets(&self) -> [usize; MAX_ACCESS] {
         type A<const L: usize, const S: usize> = Access<L, S>;
-        let (h, n) = (&Self::HEADS, &Self::LENS);
-        let (to, from) = (self.to, self.at);
-        let mut o = [0; MAX_ACCESS];
-        o[A::<L, S>::W_PRE] = h.pre;
+        let h = &Self::HEADS;
+        let mut o = Self::OFFSETS;
         o[A::<L, S>::R_PRE] = h.pre - self.pre_to as usize;
         o[A::<L, S>::R_PRE + 1] = h.pre - self.pre_at as usize;
         for l in 0..L {
             for s in 0..S {
                 let j = l * S + s;
-                o[A::<L, S>::W_D + j] = h.delay[l][s];
-                o[A::<L, S>::W_AP + j] = h.ap[l][s];
-                o[A::<L, S>::R_D_TO + j] = h.delay[l][s] - to[l][s] as usize;
-                o[A::<L, S>::R_D_FROM + j] = h.delay[l][s] - from[l][s] as usize;
-                o[A::<L, S>::R_AP + j] = h.ap[l][s] - n.ap[l][s];
-            }
-        }
-        for (side, taps) in Self::TAPS.iter().enumerate() {
-            for (i, &(l, s, d, _)) in taps.iter().enumerate() {
-                o[A::<L, S>::R_TAP + 3 * side + i] = h.delay[l][s] - d;
+                o[A::<L, S>::R_D_TO + j] = h.delay[l][s] - self.to[l][s] as usize;
+                o[A::<L, S>::R_D_FROM + j] = h.delay[l][s] - self.at[l][s] as usize;
             }
         }
         o
@@ -563,7 +700,11 @@ where
         let (mut ta, dta) = (ta0, (self.ta - ta0) * n);
         let (mut gd, dgd) = (gd0, (self.gd - gd0) * n);
         let (mut gs, dgs) = (gs0, (self.gs - gs0) * n);
-        let (inv0, inv1) = (1.0 / (1.0 - gs0), 1.0 / (1.0 - self.gs));
+        let inv0 = self.inv;
+        if self.gs != gs0 {
+            self.inv = 1.0 / (1.0 - self.gs);
+        }
+        let inv1 = self.inv;
         let (mut inv, dinv) = (inv0, (inv1 - inv0) * n);
         let (mut da, dda) = (da0, (self.da - da0) * n);
         let mut g = g0;
@@ -571,10 +712,7 @@ where
             core::array::from_fn(|l| core::array::from_fn(|s| (self.g[l][s] - g0[l][s]) * n));
         // The crossfade's blend: the new read's share.
         let (mut w, dw) = if self.left > 0 {
-            (
-                (XFADE - self.left) as f32 / XFADE as f32,
-                1.0 / XFADE as f32,
-            )
+            ((XFADE - self.left) as f32 * XFADE_INV, XFADE_INV)
         } else {
             (1.0, 0.0)
         };
@@ -596,24 +734,16 @@ where
         let dsm = [(off[0].1 - off[0].0) * n, (off[1].1 - off[1].0) * n];
         let nom = Self::SMEARED.map(|(l, s)| Self::LENS.ap[l][s] as f32);
         const { assert!(L <= 2 && S <= 4) };
-        let (c, s_) = ROT;
-        let acc = Self::ACCESS;
         let off_i = self.offsets();
-        let off_f: [usize; 8] = core::array::from_fn(|j| {
-            let h = Self::HEADS.diffuser[j % 4];
-            if j < 4 {
-                h
-            } else {
-                h - Self::LENS.diffuser[j - 4]
-            }
-        });
+        let off_f: [usize; 8] = Self::F_OFFSETS;
         let (mut tone, mut lp) = (self.tone, self.lp);
         let (mut h, mut hf) = (self.h as usize % slots, self.hf as usize % fslots);
-        let (mut b, mut fb) = ([0usize; MAX_ACCESS], [0usize; 8]);
         let mut i = 0;
         while i < HALF {
-            let len = segment(h, slots, &off_i[..acc], &mut b[..acc], HALF - i);
-            let len = segment(hf, fslots, &off_f, &mut fb, len);
+            let (b, len) = segment(h, slots, &off_i, HALF - i);
+            let (fb, len) = segment(hf, fslots, &off_f, len);
+            // This segment's send and return: `t` < `len` bounds all three.
+            let (us, ls, rs) = (&u[i..i + len], &mut l[i..i + len], &mut r[i..i + len]);
             for t in 0..len {
                 macro_rules! rd {
                     ($j:expr) => {
@@ -642,7 +772,7 @@ where
                         o + w * (rd!($to) - o)
                     }};
                 }
-                tone += ta * (u[i + t] * IN_GAIN - tone);
+                tone += ta * (us[t] * IN_GAIN - tone);
                 // SAFETY: as `rd`'s.
                 unsafe { lines.round(b[A::<L, S>::W_PRE] + t, tone) };
                 let mut d = blend!(A::<L, S>::R_PRE, A::<L, S>::R_PRE + 1);
@@ -663,10 +793,14 @@ where
                                 // Stage `ST`'s delay, 2 or more behind its
                                 // write: before or after it, the same.
                                 let x = blend!(A::<L, S>::R_D_TO + j, A::<L, S>::R_D_FROM + j);
+                                // SAFETY (`pair_in`): the write slot is below
+                                // `slots` (as `rd`'s); `sm` is clamped to
+                                // [0, 2·cap·trip] above, and `SMEAR_FITS`
+                                // keeps `nom − sm` in 2..`slots`.
                                 let wd = if (LO, ST) == Self::SMEARED[0] {
-                                    pair_in(&*lines, slots, b[A::<L, S>::W_AP + j] + t, nom[0] - sm[0])
+                                    unsafe { pair_in(&*lines, slots, b[A::<L, S>::W_AP + j] + t, nom[0] - sm[0]) }
                                 } else if (LO, ST) == Self::SMEARED[1] {
-                                    pair_in(&*lines, slots, b[A::<L, S>::W_AP + j] + t, nom[1] - sm[1])
+                                    unsafe { pair_in(&*lines, slots, b[A::<L, S>::W_AP + j] + t, nom[1] - sm[1]) }
                                 } else {
                                     rd!(A::<L, S>::R_AP + j)
                                 };
@@ -674,8 +808,9 @@ where
                                 // SAFETY: as `rd`'s.
                                 unsafe { lines.settle(b[A::<L, S>::W_AP + j] + t, v) };
                                 if ST % 2 == 1 {
-                                    lp[LO][ST] = Ln::held(lp[LO][ST] + da * (y - lp[LO][ST]));
-                                    y = lp[LO][ST];
+                                    let q = j / 2;
+                                    lp[q] = Ln::held(lp[q] + da * (y - lp[q]));
+                                    y = lp[q];
                                 }
                                 y *= g[LO][ST];
                                 if ST + 1 < S {
@@ -691,8 +826,7 @@ where
                 // The rotation (ROOM), the send, R1's clip at re-entry.
                 let mut re = out;
                 if L == 2 {
-                    re[0] = c * out[0] + s_ * out[1];
-                    re[1] = c * out[1] - s_ * out[0];
+                    (re[0], re[1]) = rotate(out[0], out[1]);
                 }
                 unroll!(LO in [0, 1] {
                     if LO < L {
@@ -707,7 +841,7 @@ where
                         side[SD] += Self::TAPS[SD][Q].3 * rd!(A::<L, S>::R_TAP + 3 * SD + Q);
                     });
                 });
-                (l[i + t], r[i + t]) = (side[0], side[1]);
+                (ls[t], rs[t]) = (side[0], side[1]);
                 ta += dta;
                 gd += dgd;
                 gs += dgs;

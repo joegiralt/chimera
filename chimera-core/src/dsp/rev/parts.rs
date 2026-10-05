@@ -9,7 +9,7 @@ use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 use crate::dsp::algo::math::exp2;
 use crate::dsp::clampf;
 use crate::dsp::halfband::HALF;
-use crate::dsp::ring::{RING_LEN, is_prime, rnd};
+use crate::dsp::ring::{RING_LEN, is_prime, rint, rnd};
 use crate::dsp::xorshift_noise;
 
 /// R1's re-entry clip: `x` to the knee at 1.0, then `1 + u − u²/4` with
@@ -67,7 +67,7 @@ pub fn pair(lines: &[i16; RING_LEN], base: usize, d: f32) -> f32 {
 
 /// Ring samples a length crossfade takes: 30 ms, QUAD's.
 pub const XFADE: u16 = 720;
-const XFADE_INV: f32 = 1.0 / XFADE as f32;
+pub(crate) const XFADE_INV: f32 = 1.0 / XFADE as f32;
 
 /// A pitch-free length move: fixed reads at `from` and `to`, blended over
 /// `XFADE` ring samples. Zero bytes are idle at length 0.
@@ -270,13 +270,19 @@ pub(crate) fn wrap(i: usize, m: usize) -> usize {
 /// samples from `len` run before any of them wraps. Out of line: one copy
 /// serves both regions.
 #[inline(never)]
-pub(crate) fn segment(h: usize, m: usize, off: &[usize], base: &mut [usize], len: usize) -> usize {
+pub(crate) fn segment<const N: usize>(
+    h: usize,
+    m: usize,
+    off: &[usize; N],
+    len: usize,
+) -> ([usize; N], usize) {
     let mut len = len;
-    for (b, &o) in base.iter_mut().zip(off) {
-        *b = wrap(h + o, m);
-        len = len.min(m - *b);
-    }
-    len
+    let base = core::array::from_fn(|j| {
+        let b = wrap(h + off[j], m);
+        len = len.min(m - b);
+        b
+    });
+    (base, len)
 }
 
 /// Where the i16 lines live: the arena, or (tests) plain floats for the
@@ -335,7 +341,7 @@ impl Lines for [i16] {
 
     #[inline(always)]
     fn held(x: f32) -> f32 {
-        store_round(x) as f32
+        rint(x)
     }
 }
 
@@ -367,18 +373,20 @@ impl Lines for [f32] {
 }
 
 /// SMEAR's moving read on `lines`' first `n` slots: `pair`'s form, `d`
-/// (2 ≤ d < n) behind `base` (< n).
+/// behind `base`.
+///
+/// # Safety
+/// `n` ≤ `lines.len()`, `base` < `n`, and 2 ≤ `d` < `n`: no clamp here,
+/// the caller's layout bounds them (`LoopEngine`'s const asserts).
 #[inline(always)]
-pub(crate) fn pair_in<L: Lines + ?Sized>(lines: &L, n: usize, base: usize, d: f32) -> f32 {
-    debug_assert!(n <= lines.len());
-    let n = n.min(lines.len());
-    let base = base.min(n - 1);
-    let di = (d as usize).min(n - 1);
+pub(crate) unsafe fn pair_in<L: Lines + ?Sized>(lines: &L, n: usize, base: usize, d: f32) -> f32 {
+    debug_assert!(n <= lines.len() && base < n && (2.0..n as f32).contains(&d));
+    let di = d as usize;
     let f = d - di as f32;
     let i0 = wrap(base + n - di, n);
     let i1 = wrap(i0 + n - 1, n);
-    // SAFETY: `base` and `di` are below n ≤ `len()`, so `wrap` puts both
-    // indices below n.
+    // SAFETY: `base` and `di` are below n ≤ `len()` (the caller's
+    // contract), so `wrap` puts both indices below n.
     let (x0, x1) = unsafe { (lines.rd(i0), lines.rd(i1)) };
     x0 + f * (x1 - x0)
 }
@@ -398,8 +406,10 @@ pub fn store_round(x: f32) -> i16 {
 /// tone's sign (+1.4 dB on the floor).
 #[inline(always)]
 pub fn store_settle(x: f32) -> i16 {
+    // `x as i32` truncates: 0 exactly when |x| < 1 (and for NaN), an
+    // integer compare where `abs() < 1.0` read the FPU's flags.
     let r = store_round(x);
-    if x.abs() < 1.0 { 0 } else { r }
+    if x as i32 == 0 { 0 } else { r }
 }
 
 /// An allpass state or REGEN write: `x` (LSBs) truncated toward zero, and
