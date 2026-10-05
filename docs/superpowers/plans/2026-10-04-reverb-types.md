@@ -1260,14 +1260,19 @@ BUS+V's frame is QUAD_BUS_V + ΔCOST, so ΔCOST = that row − QUAD_BUS_V.
   `schedule` 1.2 KB, the zone, panel and bench rows the rest.
 - **WET_HALL 9.7** (+6.6 dB over QUAD's 4.54): short-term loudness
   −6.76 dB against QUAD's −6.73, peak +4.91 dBFS against +5.95.
-- **Host readings** (`reverb_loop_test`): RT60 11.9 s at SIZE 0 DECAY 1
-  (10 s ± 35 %, round trip 0.927), 2.28 s at the default 2.49, 0.79 at
-  DECAY 0; plate corner onset 4 ms; corr(L, R) −0.001; PRE-DLY 62.5 ms
-  → 0 through the zone in 13 crossfades of ≤ 120; after SIZE 0 → 1 and
-  PRE-DLY 0 → 1 the tail's peak holds at 1002.6 ± 0.1 Hz (5 cents over
-  where it rang); level plan PRE 0.535 (pad peak 1.13), delays 1.72,
-  held 500 Hz mode at DECAY 1 THD 16.4 %; noise floor 14.8 dB (QUAD
-  12.0), 14.9 at DIFFUSE 1. ROOM now: floor 14.0 (13.8 at DIFFUSE 1).
+- **Host readings** (`reverb_loop_test`, fix round 1): RT60 11.3 s at
+  SIZE 0 DECAY 1 (10 s ± 35 %; round trip 0.920, no stage over 0.985);
+  at SIZE 0.65, DECAY 0–1: 0.79, 1.40, 2.28, 2.58, 4.76, 8.82 s against
+  0.80, 1.50, 2.49, 2.83, 5.32, 10.0; plate corner onset 4 ms; corr(L, R)
+  −0.001; PRE-DLY 62.5 ms → 0 through the zone in 13 crossfades of ≤ 120;
+  after SIZE 0 → 1 and PRE-DLY 0 → 1 the tail's 1 kHz ± 25 Hz centroid
+  reads 1000.06, 1000.10, 1000.10 Hz in three 1.2 s windows 43–27 dB over
+  the LSB; the plate at 10 s falls to exact 0 near 19 s; level plan PRE
+  0.535 (pad peak 1.13), delays 1.72, a held 500 Hz mode at DECAY 1 THD
+  16.4 %; noise floor 14.8 dB (QUAD 12.0), 14.9 at DIFFUSE 1. ROOM now:
+  floor 14.0 (13.8 at DIFFUSE 1).
+- **Arena:** HALL 15,958 i16 slots + 1,908 f32 = 19,774 of 23,220; ROOM
+  9,076 + 2,232 f32 = 13,540.
 - **Goldens:** `rev_hall`, `rev_hall_plate` (MIX 0.3); `rev_room`
   re-recorded (f32 stage allpasses, unrounded dampers).
 

@@ -399,6 +399,39 @@ found three reverb engines: diffuse loops, tap bursts and an allpass bloom.
     same 84 ms tap, whose end makes ROOM's own tail 3× rougher.
   - **WET is 10.8**, by the held-input loudness rule: ROOM's 0.55 s holds
     less than QUAD's 1.9 s.
+- **HALL, as built (Task 10, 2026-10-05).** The following departures from
+  the spec are accepted.
+  - **The LOOP engine's stage allpasses store f32**, in ROOM and HALL,
+    beside the diffuser, not R2's normalised i16 states. Those held HALL at
+    SIZE 0, DECAY 1 in a limit cycle 45 dB down for good: their rounding
+    error, ×4 at g 0.75, outran the loop's 8 % loss a round trip.
+    Truncating them killed it but about halved the RT60 at low levels. f32
+    is R3's answer, costs fewer instructions, and fits: HALL 19,774 slots,
+    ROOM 13,540. ROOM's sound moved by it (its floor 1.4 dB down); ROOM's
+    "states settle" above is moot, its re-entries still settle.
+  - **The dampers do not round.** They are state beside the arena; rounding
+    them put HALL's floor at its +4 dB bound, and a rounding one-pole can
+    hold ±1 LSB of DC under a coefficient of ½ (DAMP's 1.5 kHz is 0.32).
+  - **HALL's level plan allows 20 % THD** on a 0 dBFS tone held on a loop
+    mode at 10 s and 120 ms (G 12.5): R1's clip runs far past its knee
+    (16.4 %). Every other level-plan step holds as specified.
+  - **HALL's settling is judged by the 1 kHz ± 25 Hz centroid**, in 1.2 s
+    windows at least 20 dB over the LSB, within 0.5 Hz of the input: the
+    tail's modes 1.67 Hz apart trade the spectral peak as they decay, so a
+    peak reads up to 5 Hz off while nothing has shifted.
+  - **HALL's SMEAR bound is held in the engine**, as ROOM's, with a check
+    that the tail's peak hops no more than 25 cents beyond SMEAR 0's.
+  - **HALL's switch test starts its burst 600 blocks early:** its default
+    tail is 2 kHz-rough until the dampers darken it, which hides the
+    gain-jump control.
+  - **The level plan's stored regions follow the rotating head**, and each
+    noise floor is read from a fresh engine; Task 9's region readings were
+    of fixed slots, not of the lines.
+  - **Exact silence is judged by 2 × RT60 + 1 s at HALL's 10 s:** the
+    burst stands 81 dB over the LSB and the plate measures 11.3 s.
+  - **WET is 9.7**, by the held-input loudness rule (+6.6 dB over QUAD's).
+  - **The host flushes subnormals** on its audio thread (MXCSR FTZ and
+    DAZ), as the chip's FPSCR FZ does, so f32 state reaches exact 0 on both.
 - **Interactions.**
   - A TYPE switch drops about 5.3 ms of send and dips the return for about
     45 ms; sweeps list this as by design.
