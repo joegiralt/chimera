@@ -103,10 +103,13 @@ fn test_filter_resonance_mid_note() {
         8,
         8,
     );
-    let peak_before = goertzel(&before, 1000.0, SR);
-    let peak_after = goertzel(&after, 1000.0, SR);
+    // A triangle has no 4th harmonic: read the odd ones either side of
+    // the 1 kHz cutoff, C4's 3rd and 5th. 1 kHz itself held only the step
+    // a snapped RES used to make; RES ramps now.
+    let near = |b: &[f32]| goertzel(b, 3.0 * 261.63, SR) + goertzel(b, 5.0 * 261.63, SR);
+    let (peak_before, peak_after) = (near(&before), near(&after));
     assert!(
-        peak_after > peak_before,
+        peak_after > 2.0 * peak_before,
         "resonance should boost cutoff freq: before={} after={}",
         peak_before,
         peak_after

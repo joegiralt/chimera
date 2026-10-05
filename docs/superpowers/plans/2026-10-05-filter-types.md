@@ -1328,3 +1328,21 @@ The moving, LEVEL and tap terms are deltas, not over `OLD_LP24`, and don't chang
 - 2040 with a FREQ tap: 70 + 12 + 6 instructions and 2 `vdiv` = ceil5(165.3) = **170**. With a Q tap: 70 + 4 + 6 = ceil5(152.5) = **155**.
 - CLEAN stays under: moving 125, with a FREQ tap 56 + 12 + 6 = ceil5(142.8) = 145 (on the line), with a Q tap 130.
 - For comparison, today's LP24 ramped is 120 on the fast path and 185 on the slow; the 2040 moving at 150 is +30 over today's ramp.
+
+### Task 2: CLEAN LP4 (2026-10-05, same toolchain and build)
+
+`python3 tools/loop_count.py target/thumbv7em-none-eabihf/release/chimera-stm32 'clean_probe::<2, false>'` (and `true`). `old_lp24_probe` went with `SvfFilter`; its count above stands, reproducible at 22ea0dc0.
+
+| Path | Loop span | Fast path | Slow path | `vdiv` in loop | Block (instr, `vdiv`) | Cycles, fast | Cycles, slow |
+|---|---|---|---|---|---|---|---|
+| Steady | 87 | 46 | 87 | **0** | 77, 3 (`fc/fs`, `d`, `d₂`) | 80 | 145 |
+| Moving | 104 | 63 | 104 | 2 | 76, 1 (`fc/fs`) | 130 | 195 |
+
+- Steady: 46 ≤ 56, 0 `vdiv`. Bill over `OLD_LP24` (95): 0.
+- Moving: 63 against the budget's 56 + 6 = 62, one over. The ramps of `g`, `k` and DRIVE, `k₂` and the two `1 + kg + g²` cost 17 instructions over steady, not 6: the move costs **+50** over the steady fast path, not the spec's 35. Task 15 bills `CLEAN_MOVE_COST` from this.
+- DRIVE ramps on the steady loop (a multiply), so a DRIVE move alone never divides.
+- Flash: `text` 707,984 → 708,552 (+568 B), default release build.
+
+**Re-recorded goldens (Task 2, "ACCURATE tan, exact divides (#57)"):** every `golden_test` row (all 24: each case runs the voice's filter; the voice and instrument harnesses share the table), `filter_test::every_mode_renders_as_recorded` (all 8 modes), and `codec_compat_test::FIXTURE_RENDERS` (all 10 fixtures, which render through the same voice). `factory_level_test::KNOWN` gains a dB allowance for the six factory Sounds that matched the old norm to 1e-5: each moves 0.0003–0.09 dB.
+- **STRING's `out_gain` 5.95 → 5.7** (ADR 0063's peak rule): the brighter 20 kHz took its eight-note v127 chord from 2.8 to 3.2 dB of gain reduction, over the rule's 3; 5.7 puts it back at 2.8 (C4 now 5.7 dB under the reference, was 5.4). Re-recorded again for it: `golden_test` `modal_init`, `modal_lfo_cutoff`, `algo_to_modal_switch`; `instrument_test` `two_parts_two_pairs` (both tables); `codec_compat_test` `init_modal.snd`.
+- **`live_param_test::test_filter_resonance_mid_note`** read a triangle's absent 4th harmonic at 1 kHz, where only a snapped RES's step put energy; it now reads C4's 3rd and 5th either side of the cutoff and wants 2× (it gets 5×).

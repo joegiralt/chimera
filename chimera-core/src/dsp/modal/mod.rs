@@ -1524,10 +1524,12 @@ fn ensemble(params: &ModalParams, hz: f32, sample_rate: u32) -> (f32, Ensemble) 
 /// INIT's C4 at velocity 100 as loud on P1 as ALGO INIT's, the factory
 /// median, ±1 dB; STRING's by its peak, its eight-note chord at velocity
 /// 127 under 3 dB of the limiter's gain reduction. After the bank's clip,
-/// SYMP's and the voice's filter, so none of them saturates more.
+/// SYMP's and the voice's filter, so none of them saturates more. STRING
+/// 5.95 to 5.7 for the filter's ACCURATE tan (#57): a brighter 20 kHz took
+/// its chord from 2.8 to 3.2 dB, back to 2.8 here.
 pub const fn out_gain(mode: ResonatorMode) -> f32 {
     match mode {
-        ResonatorMode::String => 5.95,
+        ResonatorMode::String => 5.7,
         ResonatorMode::Modal => 11.83,
         ResonatorMode::Bowed => 0.93,
         ResonatorMode::Sympathetic => 4.24,

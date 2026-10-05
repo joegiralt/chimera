@@ -1,10 +1,11 @@
 mod common;
 use chimera_core::dsp::drive::Drive;
-use chimera_core::dsp::filter::{FilterMode, SvfFilter};
+use chimera_core::dsp::filter::{Clean, FilterMode};
 use chimera_core::dsp::wavefolder::Wavefolder;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{DriveParams, FilterParams, FolderParams, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
+use chimera_hal::BLOCK_SIZE;
 use common::Rig;
 use common::{SR, goertzel, tri};
 
@@ -130,7 +131,7 @@ fn test_drive_tone_changes_spectrum() {
 
 #[test]
 fn test_filter_lp_removes_highs() {
-    let mut filter = SvfFilter::new();
+    let mut filter = Clean::new();
     let mut params = FilterParams::default();
     params.cutoff = 500.0;
     params.set_mode(FilterMode::Lp24);
@@ -147,7 +148,9 @@ fn test_filter_lp_removes_highs() {
     let pre_low = goertzel(&buf, 200.0, SR);
     let pre_high = goertzel(&buf, 2000.0, SR);
 
-    filter.process(&mut buf, &params, SR);
+    for c in buf.as_chunks_mut::<BLOCK_SIZE>().0 {
+        filter.process(c, &params, SR);
+    }
 
     let post_low = goertzel(&buf, 200.0, SR);
     let post_high = goertzel(&buf, 2000.0, SR);
@@ -168,7 +171,7 @@ fn test_filter_lp_removes_highs() {
 
 #[test]
 fn test_filter_hp_removes_lows() {
-    let mut filter = SvfFilter::new();
+    let mut filter = Clean::new();
     let mut params = FilterParams::default();
     params.cutoff = 1000.0;
     params.set_mode(FilterMode::Hp24);
@@ -184,7 +187,9 @@ fn test_filter_hp_removes_lows() {
     let pre_low = goertzel(&buf, 200.0, SR);
     let pre_high = goertzel(&buf, 4000.0, SR);
 
-    filter.process(&mut buf, &params, SR);
+    for c in buf.as_chunks_mut::<BLOCK_SIZE>().0 {
+        filter.process(c, &params, SR);
+    }
 
     let post_low = goertzel(&buf, 200.0, SR);
     let post_high = goertzel(&buf, 4000.0, SR);
@@ -205,7 +210,7 @@ fn test_filter_hp_removes_lows() {
 
 #[test]
 fn test_filter_bp_passes_center() {
-    let mut filter = SvfFilter::new();
+    let mut filter = Clean::new();
     let mut params = FilterParams::default();
     params.cutoff = 1000.0;
     params.resonance = 0.7;
@@ -220,7 +225,9 @@ fn test_filter_bp_passes_center() {
         })
         .collect();
 
-    filter.process(&mut buf, &params, SR);
+    for c in buf.as_chunks_mut::<BLOCK_SIZE>().0 {
+        filter.process(c, &params, SR);
+    }
 
     let low = goertzel(&buf, 200.0, SR);
     let center = goertzel(&buf, 1000.0, SR);
@@ -240,7 +247,7 @@ fn test_filter_resonance_boosts_cutoff() {
     let freq = 1000.0;
 
     let measure_peak = |reso: f32| -> f32 {
-        let mut filter = SvfFilter::new();
+        let mut filter = Clean::new();
         let mut params = FilterParams::default();
         params.cutoff = freq;
         params.resonance = reso;
@@ -258,7 +265,9 @@ fn test_filter_resonance_boosts_cutoff() {
             })
             .collect();
 
-        filter.process(&mut buf, &params, SR);
+        for c in buf.as_chunks_mut::<BLOCK_SIZE>().0 {
+            filter.process(c, &params, SR);
+        }
         goertzel(&buf, freq, SR)
     };
 
@@ -276,7 +285,7 @@ fn test_filter_resonance_boosts_cutoff() {
 #[test]
 fn test_filter_cutoff_sweep_changes_brightness() {
     let measure_brightness = |cutoff: f32| -> f32 {
-        let mut filter = SvfFilter::new();
+        let mut filter = Clean::new();
         let mut params = FilterParams::default();
         params.cutoff = cutoff;
         params.set_mode(FilterMode::Lp24);
@@ -293,7 +302,9 @@ fn test_filter_cutoff_sweep_changes_brightness() {
             })
             .collect();
 
-        filter.process(&mut buf, &params, SR);
+        for c in buf.as_chunks_mut::<BLOCK_SIZE>().0 {
+            filter.process(c, &params, SR);
+        }
         harmonic_energy(&buf, 200.0)
     };
 

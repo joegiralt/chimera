@@ -15,7 +15,7 @@ use chimera_core::dsp::algo::plan::{EvalPlan, OPS};
 use chimera_core::dsp::algo::tx::FEEDBACK_CYCLES;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::engines::{EngineSlot, SlotKind};
-use chimera_core::dsp::filter::{self, FilterMode, SvfFilter};
+use chimera_core::dsp::filter::{self, Clean, FilterMode};
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::dsp::modal::{
     BankModes, CHORD_COUNT, ModalEngine, ModalParams, ResonatorMode, SymPool,
@@ -55,11 +55,14 @@ use crate::audio::engine;
 use crate::clocks::Clocks;
 
 /// One block of one filter path, for `tools/loop_count.py`'s static count.
-type FilterProbe = fn(&mut SvfFilter, &mut [f32; BLOCK_SIZE], &FilterParams);
+type FilterProbe = fn(&mut Clean, &mut [f32; BLOCK_SIZE], &FilterParams);
 
 /// Every filter probe, kept in the bench ELF though nothing calls them.
 #[used]
-static FILTER_PROBES: &[FilterProbe] = &[filter::probe::old_lp24_probe];
+static FILTER_PROBES: &[FilterProbe] = &[
+    filter::probe::clean_probe::<2, false>,
+    filter::probe::clean_probe::<2, true>,
+];
 
 /// The bench's screens as text: about 4 KB today, `# TRUNCATED` past this.
 pub const BENCH_TEXT_LEN: usize = 8192;

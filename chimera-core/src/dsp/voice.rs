@@ -12,7 +12,7 @@ use crate::dsp::drive::Drive;
 use crate::dsp::ease::{Ease, Ramp, at, ease_coeff, step_of};
 use crate::dsp::engines::{EngineSlot, SlotKind};
 use crate::dsp::envelope::{EnvMods, Envelope};
-use crate::dsp::filter::SvfFilter;
+use crate::dsp::filter::Clean;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modal::{ModalEngine, ResonatorMode, SymPool};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
@@ -50,7 +50,7 @@ pub struct Voice {
     /// Slot rebuilds since `init_in_place`, wrapping: `reset` keeps it.
     rebuilds: u16,
     drive: Drive,
-    filter: SvfFilter,
+    filter: Clean,
     folder: Wavefolder,
     /// DC from the stages before it (ADR 0060).
     dc: DcBlocker,
@@ -300,7 +300,7 @@ impl Voice {
             let played = ParamSnapshot::default();
             write_chain!(p, {
                 drive: Drive::new(),
-                filter: SvfFilter::new(),
+                filter: Clean::new(),
                 folder: Wavefolder::new(),
                 dc: DcBlocker::new(DC_HZ, (*p).sample_rate),
                 stages: StageEase::default(),

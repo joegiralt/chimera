@@ -673,30 +673,34 @@ fn the_costliest_patch_plays_six_voices_on_rev_v() {
 /// for an intended sound change (`common::golden`). Every row re-recorded
 /// at Task 17 for ADR 0060's voice DC blocker; each comment names what came
 /// before. The Algo rows re-recorded for the filter's C1 `saturate` (ADR
-/// 0063), then every row for its INIT (OUT LEVEL 45/128, RR 5).
+/// 0063), then every row for its INIT (OUT LEVEL 45/128, RR 5), then
+/// every row for CLEAN's ACCURATE tan and exact divides (#57), and
+/// `two_parts_two_pairs` (P2 is Modal INIT, STRING) for STRING's out_gain 5.7.
 const GOLDENS: &[(&str, u64)] = &[
-    ("poly_chord", 0xba9fbebb12bbbc4d), // ADR 0049 INIT, then the ADR 0050 output trim
+    ("poly_chord", 0x054d364b185a2c85), // ADR 0049 INIT, then the ADR 0050 output trim
     // Re-recorded: Modal 2 step A, then ADR 0058's gain, then Task 18's DAMP make-up,
     // then the free ring on release (ADR 0062).
-    ("two_parts_two_pairs", 0xd461a92a9542074a),
-    ("reverb_send_off", 0xb7ff733538f39db9), // ADR 0049 INIT, then the ADR 0050 output trim
-    ("reverb_send_on", 0xa7009ff4d6324987),  // ADR 0049 INIT, then the ADR 0050 output trim
-    ("six_voice_chord", 0xb3bb31dbc471cf01), // ADR 0049 INIT, then the ADR 0050 output trim
+    ("two_parts_two_pairs", 0xa49351f59a201379),
+    ("reverb_send_off", 0x6068f1f1eae888d9), // ADR 0049 INIT, then the ADR 0050 output trim
+    ("reverb_send_on", 0x6ac14b2c2de20951),  // ADR 0049 INIT, then the ADR 0050 output trim
+    ("six_voice_chord", 0x08c94755174f2799), // ADR 0049 INIT, then the ADR 0050 output trim
 ];
 
 /// ADR 0050: everything before the limiter is the mix unchanged by it,
 /// bit for bit. These are the goldens as ADR 0049's INIT recorded them,
 /// before the output trim; every row re-recorded for ADR 0060's voice DC
-/// blocker, and for ADR 0063's C1 `saturate` and INIT.
+/// blocker, for ADR 0063's C1 `saturate` and INIT, and for CLEAN's
+/// ACCURATE tan and exact divides (#57); `two_parts_two_pairs` for
+/// STRING's out_gain 5.7.
 const PRE_LIMITER: &[(&str, u64)] = &[
-    ("poly_chord", 0x9a7e4fc66c45f339),
+    ("poly_chord", 0x8225541410068d91),
     // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain,
     // then Task 18's DAMP make-up,
     // then the free ring on release (ADR 0062).
-    ("two_parts_two_pairs", 0x5505c654fb526b21),
-    ("reverb_send_off", 0x8180167de55cf955),
-    ("reverb_send_on", 0x746ea6b464bbdb38),
-    ("six_voice_chord", 0x5efd58ea3b91d3bd),
+    ("two_parts_two_pairs", 0xa71477c1a73f69ac),
+    ("reverb_send_off", 0x18b4f98fb64ecd25),
+    ("reverb_send_on", 0x5bb060f0427b96a5),
+    ("six_voice_chord", 0xc722364fb6dc0ec1),
 ];
 
 /// A named golden case: a case name paired with its render function.

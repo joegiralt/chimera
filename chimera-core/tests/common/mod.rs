@@ -7,6 +7,7 @@
 #![allow(dead_code)]
 
 pub mod codec_util;
+pub mod filter_ref;
 pub mod golden;
 pub mod inst_rig;
 pub mod orbit;

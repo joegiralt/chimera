@@ -1,6 +1,6 @@
 mod common;
 use chimera_core::dsp::drive::Drive;
-use chimera_core::dsp::filter::SvfFilter;
+use chimera_core::dsp::filter::Clean;
 use chimera_core::dsp::wavefolder::Wavefolder;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{DriveParams, FilterParams, FolderParams, ParamSnapshot};
@@ -58,7 +58,7 @@ fn test_drive_output_bounded() {
 
 #[test]
 fn test_filter_lowpass_attenuates_high_freq() {
-    let mut filter = SvfFilter::new();
+    let mut filter = Clean::new();
     let mut params = FilterParams::default();
     params.cutoff = 200.0; // very low cutoff
 
@@ -82,7 +82,7 @@ fn test_filter_lowpass_attenuates_high_freq() {
 
 #[test]
 fn test_filter_passes_low_freq() {
-    let mut filter = SvfFilter::new();
+    let mut filter = Clean::new();
     let mut params = FilterParams::default();
     params.cutoff = 5000.0;
 
@@ -106,7 +106,7 @@ fn test_filter_passes_low_freq() {
 
 #[test]
 fn test_filter_output_stable() {
-    let mut filter = SvfFilter::new();
+    let mut filter = Clean::new();
     let mut params = FilterParams::default();
     params.resonance = 0.99; // near self-oscillation
     params.cutoff = 1000.0;

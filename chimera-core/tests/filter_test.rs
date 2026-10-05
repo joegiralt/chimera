@@ -4,7 +4,7 @@ use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::block::{Block, ParamId};
 use chimera_core::dsp::fast_exp2;
 use chimera_core::dsp::filter::routed_cutoff;
-use chimera_core::dsp::filter::{FilterMode, SVF_MODES, SvfFilter};
+use chimera_core::dsp::filter::{Clean, FilterMode, SVF_MODES};
 use chimera_core::params::{FilterParams, ParamSnapshot};
 use chimera_core::ui::block_def::slot_addr;
 use chimera_core::ui::block_registry::{FILTER, FILTER_MODE};
@@ -61,12 +61,11 @@ fn every_mode_renders_finite_and_distinct() {
         let mut p = FilterParams::default();
         p.set_mode(m);
         p.resonance = 0.4;
-        let mut f = SvfFilter::new();
+        let mut f = Clean::new();
         let mut out = Vec::new();
         for b in 0..20 {
-            let mut buf: Vec<f32> = (0..BLOCK_SIZE)
-                .map(|i| ((b * BLOCK_SIZE + i) % 218) as f32 / 109.0 - 1.0)
-                .collect();
+            let mut buf: [f32; BLOCK_SIZE] =
+                core::array::from_fn(|i| ((b * BLOCK_SIZE + i) % 218) as f32 / 109.0 - 1.0);
             f.process(&mut buf, &p, SR);
             out.extend(buf);
         }
@@ -142,7 +141,7 @@ fn a_cutoff_sweep_does_not_click() {
             let env = |b: usize| ((b * BLOCK_SIZE) as f32 / (attack * SR as f32)).min(1.0);
             let fc = |b: usize| routed_cutoff(1000.0, amount * env(b));
             let render = |how: How| {
-                let mut f = SvfFilter::new();
+                let mut f = Clean::new();
                 let mut p = FilterParams::default();
                 p.resonance = 0.5;
                 let mut out = Vec::new();
@@ -155,12 +154,10 @@ fn a_cutoff_sweep_does_not_click() {
                     if how != How::Ramped {
                         f.hold();
                     }
-                    let mut buf: Vec<f32> = (0..BLOCK_SIZE)
-                        .map(|i| {
-                            let n = (b * BLOCK_SIZE + i) as f32;
-                            0.5 * (core::f32::consts::TAU * 220.0 * n / SR as f32).sin()
-                        })
-                        .collect();
+                    let mut buf: [f32; BLOCK_SIZE] = core::array::from_fn(|i| {
+                        let n = (b * BLOCK_SIZE + i) as f32;
+                        0.5 * (core::f32::consts::TAU * 220.0 * n / SR as f32).sin()
+                    });
                     f.process(&mut buf, &p, SR);
                     out.extend(buf);
                 }
@@ -214,12 +211,10 @@ fn a_steady_cutoff_does_not_ramp() {
     // MODE is private: no struct-update syntax from a test.
     let (mut lo, mut hi) = (FilterParams::default(), FilterParams::default());
     (lo.cutoff, hi.cutoff) = (500.0, 2000.0);
-    let saw = |b: usize| -> Vec<f32> {
-        (0..BLOCK_SIZE)
-            .map(|i| ((b * BLOCK_SIZE + i) % 97) as f32 / 48.5 - 1.0)
-            .collect()
+    let saw = |b: usize| -> [f32; BLOCK_SIZE] {
+        core::array::from_fn(|i| ((b * BLOCK_SIZE + i) % 97) as f32 / 48.5 - 1.0)
     };
-    let mut a = SvfFilter::new();
+    let mut a = Clean::new();
     for (blk, p) in [&lo, &hi].into_iter().enumerate() {
         a.process(&mut saw(blk), p, SR); // block 1 ramps 500 → 2000 Hz
     }
@@ -235,31 +230,31 @@ fn a_steady_cutoff_does_not_ramp() {
 
 /// Every mode's output, steady and ramped, hot enough to saturate, bit for
 /// bit as recorded before `tick` was inlined into per-mode loops;
-/// re-recorded for the C1 `saturate` (ADR 0063), the first mode unmoved.
+/// re-recorded for the C1 `saturate` (ADR 0063), the first mode unmoved;
+/// then every mode for CLEAN's ACCURATE tan and exact divides (#57).
 #[test]
 fn every_mode_renders_as_recorded() {
     const WANT: [u64; 8] = [
-        0x31ba_0de6_59aa_bd16,
-        0xff48_85db_b8fb_a588,
-        0x8de8_dcb7_bcad_af5c,
-        0x4137_d7eb_af1e_4c5b,
-        0x3760_1f4e_5339_ba69,
-        0x5c6d_d584_642b_f8ce,
-        0xfbac_439c_098e_01c8,
-        0xad2c_fb78_5be4_b719,
+        0xad32_27d9_4948_d08c,
+        0xe41d_bf3b_71ae_9aff,
+        0x0421_2e8a_e041_7727,
+        0x3553_c934_593f_5b11,
+        0xca99_c5c3_babb_f066,
+        0x5219_a408_77d3_3684,
+        0xc966_4b3e_825f_62bb,
+        0xffd6_d186_dd16_b669,
     ];
     let got = FilterMode::ALL.map(|m| {
         let mut p = FilterParams::default();
         p.set_mode(m);
         (p.resonance, p.drive) = (0.9, 0.5);
-        let mut f = SvfFilter::new();
+        let mut f = Clean::new();
         let mut h = 0xcbf2_9ce4_8422_2325u64;
         for b in 0..24 {
             // Steady blocks, then a cutoff change every other block (ramps).
             p.cutoff = if b < 8 || b % 2 == 0 { 800.0 } else { 3000.0 };
-            let mut buf: Vec<f32> = (0..BLOCK_SIZE)
-                .map(|i| ((b * BLOCK_SIZE + i) % 150) as f32 / 75.0 - 1.0)
-                .collect();
+            let mut buf: [f32; BLOCK_SIZE] =
+                core::array::from_fn(|i| ((b * BLOCK_SIZE + i) % 150) as f32 / 75.0 - 1.0);
             f.process(&mut buf, &p, SR);
             for x in buf {
                 h = (h ^ u64::from(x.to_bits())).wrapping_mul(0x100_0000_01b3);
@@ -271,7 +266,7 @@ fn every_mode_renders_as_recorded() {
 }
 
 /// At full resonance (k = 0.01) under a full-scale 110 Hz saw, LP12 and
-/// LP24 ring at the cutoff, held by `saturate` at a steady level: the last
+/// LP24 ring at the cutoff, held by `sat_c1` at a steady level: the last
 /// half second's RMS and the ring's own level (990 Hz, the harmonic at the cutoff), dBFS, at
 /// DRIVE 0 and 1, each within 1 dB of what they were, the level's two
 /// quarters within 0.5 dB of each other. ADR 0097 kept the curve: stmlib's
@@ -302,7 +297,7 @@ fn full_resonance_rings_at_its_level() {
         let mut p = FilterParams::default();
         p.set_mode(mode);
         (p.cutoff, p.resonance, p.drive) = (1000.0, 1.0, drive);
-        let mut f = SvfFilter::new();
+        let mut f = Clean::new();
         let mut out = Vec::new();
         for b in 0..750 {
             let mut buf: [f32; BLOCK_SIZE] = core::array::from_fn(|i| {
