@@ -536,7 +536,15 @@ fn sweep_aborts_on_doubt() {
                 Doubt::DirBroken,
             );
         }
-        let shapes: [(&str, Shape); 9] = [
+        let shapes: [(&str, Shape); 11] = [
+            ("no dot dot", |b, l| {
+                let (blk, at) = slot_at(l, &b.sub, 1);
+                poke(&b.disk, (blk, at), &[0xE5]);
+            }),
+            ("no dots", |b, l| {
+                let (blk, _) = slot_at(l, &b.subsub, 0);
+                poke(&b.disk, (blk, 0), &[0; 64]);
+            }),
             ("a subdir at 0", |b, l| {
                 let (blk, at) = slot_at(l, &b.sub, 3);
                 poke(&b.disk, (blk, at + 26), &[0, 0]);

@@ -404,6 +404,10 @@ impl<B: Blocks> Walk<'_, '_, '_, B> {
                 for slot in f.slot..SLOTS {
                     let e = &self.buf[slot * ENTRY..(slot + 1) * ENTRY];
                     let (b0, attr) = (e[0], e[ATTR]);
+                    // A subdirectory opens with `.`, then `..`.
+                    if f.first_block() && slot < 2 && e[..11] != [DOT, DOT_DOT][slot] {
+                        return Err(Doubt::DirBroken.into());
+                    }
                     if b0 == END {
                         stack[top].ended = true;
                         continue;

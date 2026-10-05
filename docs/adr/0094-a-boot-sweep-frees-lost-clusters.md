@@ -84,8 +84,9 @@ whose 8.3 names `dir::parse` gives as `Slot::Other`. The store's RAM is
   3. A broken directory (`DirBroken`). This covers a free, reserved, bad
      or out-of-range link; a subdirectory at cluster 0; a label or long
      name slot holding a cluster; a label that is also a directory; a
-     live entry after `0x00`; and a `.` or `..` out of place or naming
-     the wrong cluster.
+     live entry after `0x00`; a subdirectory whose first block lacks `.`
+     in slot 0 and `..` in slot 1; and a `.` or `..` anywhere else or
+     naming the wrong cluster.
   4. A file whose chain breaks, or is shorter than its length
      (`FileShort`).
   5. A cluster reached twice, loops included (`CrossLinked`).
