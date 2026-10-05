@@ -1,8 +1,10 @@
-# 0093. TAPE plays 12-bit card sources from the pool through six RAM models; STRETCH is the S950's stretch in real time (amends 0087)
+# 0093. TAPE plays 12-bit card sources from the pool through seven RAM machines; STRETCH is the S950's stretch in real time (amends 0087)
 
 - **Status:** Proposed
 - **Deciders:** owner (#279 rulings, 2026-10-01 to 2026-10-04), firmware;
-  revised after two adversarial reviews (2026-10-04)
+  revised after two adversarial reviews (2026-10-04); amended in place
+  while Proposed (owner, 2026-10-05, #369): the models become seven
+  machines, and END before START replaces REVERSE (§ Machines below)
 - **Amends:** [0087](0087-sound-pool-by-memory-budget.md) (Proposed, on
   `sound-pool-budget`):
   - `SourceHead`'s payload is fixed: shape, count, root, period;
@@ -42,7 +44,9 @@ code 23, ident `"TAPE"`, ADR 0055).
   - The engine's home page is **DECK**.
   - On screen, TAPE names only the engine and its macro.
 - **The engine:** one `SlotKind::Tape`, about 200 B, inside the slot
-  `ModalEngine` already sizes. `TapeModel` codes 0–5; 6 is TRON's.
+  `ModalEngine` already sizes. `TapeModel` codes: LOOP 0, PING-PONG 2,
+  TRANSWAVE 3, SCRUB 4, STRETCH 5, TRON 6, ONESHOT 7; 1 (REVERSE) is
+  retired (§ Machines).
 - **Sources.** Mono, 12-bit and packed (ADR 0087).
   - `SourceHead` holds the `SourceRef`, `shape` (`Plain`, `Transwave` or
     `ZoneSet`), `count`, `root` (MIDI cents), `period` (YIN, Q16.16; 0 is
@@ -127,7 +131,8 @@ code 23, ident `"TAPE"`, ADR 0055).
       too little (always, at neutral), it **folds inside the loop**, so
       INIT never hard-wraps.
     - MOTION walks the loop through the window.
-  - **REVERSE:** LOOP mirrored: LOOP in a mirrored frame with the window
+  - **REVERSE** (as built in TAPE Task 6; retired by § Machines, its code
+    reused for END before START): LOOP in a mirrored frame with the window
     mirrored, so END is read at note-on and START latches at a wrap.
   - **PING-PONG:** turns at the loop's edges, slowing to a stop over 1 ms
     and back, as a reel reverses: a plain reflection is continuous but
@@ -221,9 +226,9 @@ code 23, ident `"TAPE"`, ADR 0055).
   REVERSE about 260, SCRUB about 280, PING-PONG clamping about 289. The
   bench at build step 3 replaces them:
 
-  | | LOOP, REVERSE | PING-PONG | SCRUB | TRANSWAVE | TRANSWAVE, pitch moving > ±6.2 st | STRETCH | TAPE on | AGE on |
-  |---|---|---|---|---|---|---|---|---|
-  | Billed | 450 | 490 | 480 | 400 | 770 | 440 | +10 | +30 |
+  | | LOOP, either order | PING-PONG | SCRUB | TRANSWAVE | TRANSWAVE, pitch moving > ±6.2 st | STRETCH, either order | ONESHOT, TRON | TAPE on | AGE on |
+  |---|---|---|---|---|---|---|---|---|---|
+  | Billed | 450 | 490 | 480 | 400 | 770 | 440 | 190 (estimate) | +10 | +30 |
 
   TAPE Task 9 (fix rounds 1 and 2) measured the macros' tests at 0.44
   instructions a sample on every model (PING-PONG 489, TRANSWAVE 398,
@@ -287,6 +292,71 @@ code 23, ident `"TAPE"`, ADR 0055).
     later as new sealed `.SRC` files and new factory Sounds in a later
     versioned release, with no format change.
 
+### Machines (amended 2026-10-05, owner; #369)
+The owner: "you don't want it to be so blank where you don't understand
+where things are… modes that have different parameters that nudge you into
+a certain direction."
+
+- **The models become Digitakt-style machines.** Each shows its own labels
+  for the shared params (POSITION, MOTION, SIZE, XFADE, DRAG, TYPE) and
+  dims what it ignores, from one table (`tape_engine::machine`), with its
+  own defaults, which the UI writes when MODEL changes and never on load.
+  The neutral stays LOOP's. The lineup, in MODEL's order: **ONESHOT, LOOP,
+  TRON, STRETCH, TRANSWAVE, SCRUB, PING-PONG.**
+- **Reverse is END before START,** replacing REVERSE:
+  - direction is the sign of END − START (equal is forward), and the
+    window the sorted pair;
+  - the minimum window holds on both sides, widening toward END's side;
+  - a flip lands at the next wrap (LOOP) or splice (STRETCH), the outgoing
+    head finishing its pass in the old direction under the crossfade; at
+    XFADE 0 it takes the clamp's 5 ms fade, so a flip never clicks;
+  - it applies to ONESHOT, LOOP, TRON and STRETCH. PING-PONG, SCRUB and
+    TRANSWAVE take the sorted window; SCRUB keeps MOTION's sign;
+  - REVERSE's code is LOOP mirrored, so it is reused. Disk code 1 stays
+    loadable: a translation maps it to LOOP with START and END swapped
+    (pre-alpha: old patches load safely; this one happens to sound the
+    same, bit for bit).
+- **ONESHOT** (code 7) plays START→END once and **ignores note-off**: the
+  voice keeps its gate while the engine sustains, and ends at END under a
+  1 ms ramp. **SLICE** (OFF, NOTE, 1–16) plays one of 16 equal slices of
+  the window, exact in frames; under NOTE the key picks the slice (C4 is
+  slice 1) and doesn't transpose. PCM drums such as a 909 come from this.
+- **TRON** (code 6, the code held for it) is the Mellotron: it plays from
+  START toward END while the key is held and never loops.
+  - **The tape runs out** after SIZE's length, 0.25–8 s (8 by default),
+    counted as the head's **travel in source time**, so a note above ROOT
+    runs out sooner, as a varispeeded Mellotron does: `len / 2^((note·100 +
+    pitch − ROOT)/1200)` s of sound, wow included, capped by END.
+  - Note-off fades the tape through a one-pole of DRAG's law, labelled
+    FADE (10–500 ms, 32 ms by default).
+  - In this core it plays `Plain` sources held whole, so an 8 s tape fits
+    the arena only at 8 or 12 kHz. Per-key zone sets and streaming are the
+    same machine, later, under the streamed TRON's ADR; until then a
+    `ZoneSet` on TRON is refused.
+- **Bills** (the house rule): ONESHOT and TRON about 190 each (LOOP's
+  one-head path, one end event a note); LOOP and STRETCH stay at 450 and
+  440 in either order, the direction a const generic on STRETCH's loop.
+  `MIN_PASS_SAMPLES` doesn't bind a one-shot (one event a note); the
+  window keeps `MIN_LOOP_FRAMES`; a span under 16 samples' travel ends in
+  its first block, judged per block as STRETCH's `tiny`.
+- **From CHOMPI** (Chompi Club's tape and TEMPO firmware, MIT): **ideas
+  only, no code ported or translated.** Taken, each built from its idea
+  alone:
+  1. a **MUSICAL** step on PIT's PITCH (SNAP, every engine): fifth,
+     fourth, fifth, fourth, so two clicks are an octave;
+  2. SCRUB's **jog**: the FINGER's encoder speed over a 1/8 s window moves
+     POSITION, gliding to a stop through DRAG's one-pole, a tape stop;
+  3. **WOW WARBLE**, a second flutter flavour beside the capstan: a random
+     target glided to, redrawn at random, once a block. It replaces the
+     transport's call, never adds to it, so it is cheaper than the capstan
+     and fits TAPE's +10: adopted;
+  4. ONESHOT's sustain-off, and TEMPO's 16 equal slices of the window;
+  5. **per-source memory**: each source the pool holds remembers a Part's
+     START, END, PITCH and FINE, in RAM (TAPE Task 17).
+
+  Not taken: CHOMPI refusing END before START (ours reverses), its linear
+  interpolation, and its double-size files.
+
 ## Alternatives considered
 - **Rename the master stage to `MasterTape`** (the second draft). It
   touches 54 uses on three unmerged branches for no change on disk.
@@ -327,6 +397,17 @@ code 23, ident `"TAPE"`, ADR 0055).
 - **Stereo sources.** They double every cost on the meter.
 - **Import on the device.** The WAV parser, resampler, FFT and dither cost
   flash. The host has them for free.
+- **Keep REVERSE as a model** (the first lineup). It duplicates LOOP's
+  controls under another name, and a reversed STRETCH or one-shot would
+  each want their own. Order is one rule for all four.
+- **TRON's tape counted in played time,** every key 8 s whatever its pitch
+  (the M400's strip per key). With one source transposed that is a tape
+  that speeds up without shortening; per-key zones will get it naturally,
+  each zone its own tape.
+- **A blank canvas:** every param on every model with generic labels. The
+  owner's ruling above.
+- **Warble left for later.** It costs less than the capstan it replaces, so
+  only a cell and a disk code argued against it.
 
 ## Consequences
 - A third engine at about 10 KB of flash (leaving about 87 KB) and about
@@ -340,6 +421,10 @@ code 23, ident `"TAPE"`, ADR 0055).
   the bench comes in higher, the counts are restated.
 - MONO is smooth only on pitched sources. POLY keeps the S950's tremolo
   and metal.
+- Machines: two params on TAPE's block (SLICE 13, WOW 14) and one on PIT
+  (SNAP 4, every engine), all appended; disk code 1 retired with a
+  translation; a label table that the pages, dimming, matrix and
+  `tape_engine::reads` all read; 512 B of AXI for the per-source memory.
 - An on-device RESAMPLE needs a source's CRC before it opens the file, so
   it renders twice, or the FAT layer gains a rename.
 - The #337 plan's on-device importer (Task 9's `quantise_tpdf`, and the
@@ -381,4 +466,12 @@ code 23, ident `"TAPE"`, ADR 0055).
 - O. Niemitalo, "Polynomial Interpolators for High-Quality Resampling of
   Oversampled Audio", 2001.
 - W. Verhelst and M. Roelands, WSOLA, ICASSP 1993.
+- Issue #369 (END before START; the machines ruling).
+- Elektron Digitakt II (machines, as the owner cites them; § Playback
+  modes) and Octatrack manual OS 1.25, § Machines.
+- Mellotron M400 (Streetly Electronics): about 8 s of tape a key, the
+  pressure pad.
+- CHOMPI (Chompi Club), tape and TEMPO firmware, MIT licence: ideas only,
+  no code (`DSPEngine.h` varispeed steps, `Sampler.h` jog, `Warble.h`,
+  `SampleReader.h` sustain, TEMPO `SliceEngine.h`).
 - `hound`, `rubato`, `rustfft` (MIT/Apache-2.0): host only.

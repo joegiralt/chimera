@@ -1,4 +1,4 @@
-# TAPE core: 12-bit card sources played from the pool by six RAM models
+# TAPE core: 12-bit card sources played from the pool by seven RAM machines
 
 Status: draft for owner review (2026-10-04), revised the same day after two adversarial reviews. Issue: private issue #279. ADR 0093 (Proposed) records the decision.
 
@@ -17,7 +17,7 @@ TAPE is Chimera's third engine, beside ALGO (six-operator PM) and MODAL. Its sam
 - **Four shared macros: POSITION, MOTION, TAPE and AGE.** Each model reads them its own way (#279).
 - **Sources are stored S950-style:** 12-bit, with a sample rate per source. Every source lives on the card, write-once, under `/CHIMERA/TAPES`.
 - **The pool's arena holds a whole short source,** or the first slice of a streamed one. Both count on the one meter (ADR 0087). Projects store only a `SourceRef`.
-- **The RAM models in this core:** LOOP, TRANSWAVE, REVERSE, PING-PONG, SCRUB, and **STRETCH**, an S950-style time-stretch.
+- **The RAM models in this core:** LOOP, TRANSWAVE, REVERSE, PING-PONG, SCRUB, and **STRETCH**, an S950-style time-stretch. **Amended (owner, 2026-10-05, #369):** they become seven machines, ONESHOT, LOOP, TRON, STRETCH, TRANSWAVE, SCRUB and PING-PONG, and END before START replaces REVERSE (§ 2 Machines).
 - **Sources come from WAV import plus a factory set,** which lives on the card only. WAV import travels over USB, because the card is sealed inside the case.
 - **CPU:** a voice cost and an admission row, as for every engine (ADR 0040, `cost_test`, ADR 0091).
 - **Never snap a parameter, never allocate or block in audio, and never read the card in audio.**
@@ -111,6 +111,7 @@ pub enum SlotKind   { Algo, Modal(ResonatorMode), Tape }   // one kind: every mo
 in_place_enum! { pub enum EngineSlot { Algo(AlgoEngine), Modal(ModalEngine), Tape(TapeEngine) } }   // dsp/tape_engine/
 
 pub enum TapeModel { Loop, Reverse, PingPong, Transwave, Scrub, Stretch }   // disk codes 0..5; TRON takes 6
+// From TAPE Task 12b (§ 2 Machines): Loop 0, PingPong 2, Transwave 3, Scrub 4, Stretch 5, Tron 6, Oneshot 7; 1 retired
 
 /// What a voice reads a source through: one block's copy of its row.
 pub struct SourceView<'a> {
@@ -229,6 +230,17 @@ Every model plays inside the **window** `[START, END]`, as fractions of the sour
   - A moved POSITION or SIZE therefore never cuts a pass short, and the wrap's crossfade covers the step.
   - This is how the Digitakt's loop behaves.
 
+### Machines (owner, 2026-10-05; #369; TAPE Task 12b)
+
+The models below become Digitakt-style **machines**: each labels the shared params its own way, dims what it ignores and has its own defaults, so a player is nudged toward what it does. In MODEL's order: **ONESHOT, LOOP, TRON, STRETCH, TRANSWAVE, SCRUB, PING-PONG.** The label table is the plan's Task 12b; ADR 0093 records the ruling.
+
+- **END before START plays reversed,** and REVERSE goes. Direction is the sign of END − START (equal is forward); the window is the sorted pair; the minimum window holds on both sides. A flip lands at the next wrap (LOOP) or splice (STRETCH), under the crossfade (at XFADE 0, the clamp's 5 ms), so it never clicks. It applies to ONESHOT, LOOP, TRON and STRETCH; PING-PONG, SCRUB and TRANSWAVE take the sorted window, SCRUB keeping MOTION's sign. REVERSE below is the mirrored frame this reuses; its disk code 1 loads as LOOP with START and END swapped.
+- **ONESHOT** (code 7) plays START→END once and ignores note-off, ending at END under a 1 ms ramp. **SLICE** (OFF, NOTE, 1–16) plays one of 16 exact, equal slices of the window; under NOTE the key picks it (C4 is slice 1) and doesn't transpose.
+- **TRON** (code 6) plays from START while the key is held, never looping. Its tape runs out after SIZE's length (0.25–8 s, 8 by default) of the head's travel in source time, so a note an octave above ROOT runs out in half the time; or at END. Note-off fades it over DRAG's law, labelled FADE (32 ms by default). In this core it plays `Plain` sources held whole: 8 s fits the arena at 8 or 12 kHz. Per-key zone sets come with the streamed TRON (§ 8).
+- **WOW** (CAPSTAN, WARBLE): WARBLE glides to random targets in place of the capstan's transport, within TAPE's ±33 cents and its +10.
+- **SNAP** on PIT (CHROMATIC, MUSICAL; every engine): MUSICAL steps PITCH by fifths and fourths, two clicks an octave.
+- Machines' ideas from CHOMPI (MIT) are ideas only; ADR 0093 lists them. ONESHOT and TRON bill about 190 each (§ 5's rule); LOOP and STRETCH keep 450 and 440 in either order.
+
 ### The models
 
 **LOOP.** The head starts at START, plays forward to the loop's end, then loops.
@@ -333,7 +345,7 @@ Every model plays inside the **window** `[START, END]`, as fractions of the sour
 
 | Id | Param | Range, law | Read | Mod |
 |---|---|---|---|---|
-| 0 | MODEL | LOOP, REVERSE, PING-PONG, TRANSWAVE, SCRUB, STRETCH | note-on | no |
+| 0 | MODEL | LOOP, REVERSE, PING-PONG, TRANSWAVE, SCRUB, STRETCH; from Task 12b ONESHOT, LOOP, TRON, STRETCH, TRANSWAVE, SCRUB, PING-PONG (§ 2 Machines) | note-on | no |
 | 1 | START | 0–1 of the source | note-on | no |
 | 2 | END | 0–1, kept ≥ START + 2 ms | each wrap | no |
 | 3 | POSITION | 0–1 | block, eased | **yes** |
@@ -346,6 +358,8 @@ Every model plays inside the **window** `[START, END]`, as fractions of the sour
 | 10 | TYPE | MONO, POLY | note-on | no |
 | 11 | ROOT | MIDI cents, copied from the source at pick; no cell | note-on | no |
 | 12 | PERIOD | frames, Q16.16, copied at pick; 0 unpitched; no cell | note-on | no |
+| 13 | SLICE | OFF, NOTE, 1–16 (ONESHOT) | note-on | no |
+| 14 | WOW | CAPSTAN, WARBLE | note-on | no |
 
 - **SOURCE is not a param.** It is the Sound's `SourceRef` record (0x0016, ADR 0087), and its cell is a `ParamSlot::source()`, as MODAL's panel cells are `modal_panel`.
 - **Neutral** (`Sound::neutral(Tape)`, a format contract under ADR 0087) is LOOP, START 0, END 1, POSITION 0, MOTION 0, TAPE 0, AGE 0, SIZE 1, XFADE 0.1, DRAG 0.3, TYPE MONO. It loops the whole source with a folded 10 % crossfade, so it never hard-wraps.
