@@ -14,13 +14,14 @@ use chimera_core::dsp::rev::burst::{
     BurstEngine, MOVERS, SLOTS, STEP, TAP_SEED, tap_table, tap_targets, tap_weights,
 };
 use chimera_core::dsp::rev::sync::Tempo;
-use chimera_core::dsp::reverb::{KnobMemory, ReverbParams, ReverbType, knobs};
+use chimera_core::dsp::reverb::{KnobMemory, ReverbParams, ReverbType};
 use chimera_core::ui::glyph::tail_shape;
 use chimera_hal::BLOCK_SIZE;
 use common::SR;
 use common::rev::{
     MS, Noise, blocks, check_knobs_ease, check_level_plan, check_no_slap, check_noise_floor,
-    check_settles_on_pitch, check_sustained_loudness, corr, end_20db_ms, peak_ms, rms_db, run,
+    check_settles_on_pitch, check_sustained_loudness, corr, end_20db_ms, knobs_120, peak_ms,
+    rms_db, run,
 };
 
 type Blk = [f32; BLOCK_SIZE];
@@ -73,7 +74,7 @@ fn tap_table_is_seeded_and_bounded() {
 fn curve(t: ReverbType, shape: f32, density: f32) -> [f32; 12] {
     let mut p = params(t, 0.0);
     (p.shape, p.diffuse) = (shape, density);
-    tap_weights(&knobs(&p))
+    tap_weights(&knobs_120(&p))
 }
 
 #[test]
@@ -115,13 +116,13 @@ fn density_fades_taps_continuously() {
 fn scheduler_moves_at_most_four_taps_by_120() {
     let mut p = params(ReverbType::Gate, 1.0);
     p.size = 0.0;
-    let k0 = knobs(&p);
+    let k0 = knobs_120(&p);
     assert!((k0.length_ms - 40.0).abs() < 0.1);
     let mut e = BurstEngine::default();
     e.prime(&k0);
     let mut arena = Box::new(ReverbArena::new());
     p.size = 1.0;
-    let k1 = knobs(&p);
+    let k1 = knobs_120(&p);
     let goal = tap_targets(k1.length_ms);
     let (u, mut l, mut r) = ([0.0f32; HALF], [0.0; HALF], [0.0; HALF]);
     let mut windows = 0;
@@ -161,7 +162,7 @@ fn noise_burst(p: &ReverbParams) -> (Vec<f32>, Vec<f32>) {
 fn gate_window() {
     let mut p = params(ReverbType::Gate, 1.0);
     (p.size, p.time, p.shape) = (0.55, 0.0, 0.0);
-    assert!((knobs(&p).length_ms - 177.0).abs() < 1.0);
+    assert!((knobs_120(&p).length_ms - 177.0).abs() < 1.0);
     let (l, r) = noise_burst(&p);
     let x: Vec<f32> = l.iter().zip(&r).map(|(a, b)| 0.5 * (a + b)).collect();
     let end = end_20db_ms(&x);
@@ -177,7 +178,7 @@ fn gate_window() {
 #[test]
 fn reverse_window() {
     let p = params(ReverbType::Reverse, 1.0);
-    assert!((knobs(&p).length_ms - 346.0).abs() < 1.0);
+    assert!((knobs_120(&p).length_ms - 346.0).abs() < 1.0);
     let (l, r) = noise_burst(&p);
     let x: Vec<f32> = l.iter().zip(&r).map(|(a, b)| 0.5 * (a + b)).collect();
     let peak = peak_ms(&x);
@@ -197,7 +198,7 @@ fn moving(rv: &Reverb, length_ms: f32) -> bool {
 fn regen_settles_on_its_input_pitch() {
     let mut p = params(ReverbType::Reverse, 1.0);
     (p.time, p.size) = (1.0, 0.0);
-    let k0 = knobs(&p);
+    let k0 = knobs_120(&p);
     assert!((k0.length_ms - 150.0).abs() < 0.5 && (k0.regen - 0.708).abs() < 1e-4);
     let (rv, pc) = (fresh(&p), RefCell::new(p));
     let start = blocks(0.25);
@@ -244,7 +245,7 @@ fn no_slap_after_a_length_move() {
 fn regen_1_falls_to_exact_zero() {
     let mut p = params(ReverbType::Reverse, 1.0);
     (p.time, p.size) = (1.0, 1.0);
-    assert!((knobs(&p).rt60_s - 16.0).abs() < 1.0);
+    assert!((knobs_120(&p).rt60_s - 16.0).abs() < 1.0);
     let (rv, pc) = (fresh(&p), RefCell::new(p));
     let mut n = Noise(0xbeef);
     let (l, r) = run(
@@ -298,7 +299,7 @@ impl Alone {
     fn block(&mut self, send: &Blk, p: &ReverbParams) -> (Blk, Blk) {
         let (mut u, mut l, mut r) = ([0.0; HALF], [0.0; HALF], [0.0; HALF]);
         self.dec.process(send, &mut u);
-        let k = knobs(p);
+        let k = knobs_120(p);
         self.e.run_reference(
             &mut self.arena,
             self.f32_lines.as_deref_mut(),
@@ -325,7 +326,7 @@ fn level_plan_holds_for_burst() {
         let mut a = Alone::new(false, true);
         let mut b = Alone::new(false, false);
         let mut c = Alone::new(true, false);
-        let mode = 1_000.0 / knobs(&p).length_ms;
+        let mode = 1_000.0 / knobs_120(&p).length_ms;
         let mut ra = |s: &Blk| a.block(s, &pc.borrow());
         let mut rb = |s: &Blk| b.block(s, &pc.borrow());
         let mut rc = |s: &Blk| c.block(s, &pc.borrow());
@@ -372,15 +373,17 @@ fn tail_shape_moves_with_every_knob() {
         for id in [1, 3, 7, 8, 10, 11, 12] {
             base.write(ParamId(id), 0.5);
         }
-        let shape = tail_shape(t, &knobs(&base));
+        let shape = tail_shape(t, &knobs_120(&base));
         let cells = (0..4)
             .filter_map(|k| knob(t, RevPage::Main, k))
-            .chain((0..6).filter_map(|k| knob(t, RevPage::More, k)));
+            .chain((0..6).filter_map(|k| knob(t, RevPage::More, k)))
+            // SYNC is a word choice, not a knob.
+            .filter(|c| c.id != ReverbParams::SYNC);
         let mut n = 0;
         for c in cells {
             let mut p = base;
             p.write(c.id, 0.9);
-            assert_ne!(tail_shape(t, &knobs(&p)), shape, "{t:?} {}", c.label);
+            assert_ne!(tail_shape(t, &knobs_120(&p)), shape, "{t:?} {}", c.label);
             n += 1;
         }
         assert_eq!(n, 7, "{t:?}: its seven knobs");

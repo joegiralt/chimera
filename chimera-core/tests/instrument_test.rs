@@ -181,6 +181,7 @@ fn mix_parts_alone_is_renders_mix() {
         &mut MixState::default(),
         &mut fx,
         &shared,
+        Tempo::DEFAULT,
         SR,
         &mut out,
     );
@@ -315,7 +316,15 @@ fn mix_parts_is_bit_identical_to_the_reference() {
             _ => [false; MAX_PARTS],
         };
         let scope = mix_parts(
-            &buses, &written, &mut sends, &mut pans, &mut fx, &shared, SR, &mut out,
+            &buses,
+            &written,
+            &mut sends,
+            &mut pans,
+            &mut fx,
+            &shared,
+            Tempo::DEFAULT,
+            SR,
+            &mut out,
         );
         let scope_ref = mix_parts_reference(
             &buses,
@@ -1335,7 +1344,15 @@ fn the_tape_is_on_pair_1_only() {
         let mut blocks = Vec::new();
         for _ in 0..32 {
             mix_parts(
-                &buses, &written, &mut sends, &mut pans, &mut fx, &shared, SR, &mut out,
+                &buses,
+                &written,
+                &mut sends,
+                &mut pans,
+                &mut fx,
+                &shared,
+                Tempo::DEFAULT,
+                SR,
+                &mut out,
             );
             blocks.push(*out.out());
         }
@@ -1375,7 +1392,15 @@ fn the_master_comp_ducks_pair_2_with_pair_1() {
         let mut energy = 0.0f32;
         for b in 0..128 {
             mix_parts(
-                &buses, &written, &mut sends, &mut pans, &mut fx, &shared, SR, &mut out,
+                &buses,
+                &written,
+                &mut sends,
+                &mut pans,
+                &mut fx,
+                &shared,
+                Tempo::DEFAULT,
+                SR,
+                &mut out,
             );
             if b >= 64 {
                 energy += out.out()[1].iter().map(|s| s * s).sum::<f32>();

@@ -10,12 +10,11 @@ use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::rev::Reverb;
 use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::reverb::{
-    KnobMemory, REVERB_SPECS, RevSync, ReverbParams, ReverbType, damp_hz, in_plate_zone, knobs,
-    plate_pull,
+    KnobMemory, REVERB_SPECS, RevSync, ReverbParams, ReverbType, damp_hz, in_plate_zone, plate_pull,
 };
 use chimera_core::storage::decode_block;
 use common::SR;
-use common::rev::{Noise, blocks};
+use common::rev::{Noise, blocks, knobs_120};
 
 /// The FX's reverb as a `Blocks`, for the codec.
 struct Fx<'a>(&'a mut FxParams);
@@ -163,7 +162,7 @@ fn unknown_type_code_and_nan_slots_load_as_safe_quad() {
             for id in [1, 2, 3, 7, 8, 9, 10, 11, 12] {
                 p.write(ParamId(id), f32::NAN);
             }
-            let k = knobs(&p);
+            let k = knobs_120(&p);
             let all = [
                 k.length_ms,
                 k.rt60_s,
@@ -242,7 +241,7 @@ fn quad_knobs_are_the_rings_laws() {
     let at = |f: &dyn Fn(&mut ReverbParams)| {
         let mut p = ReverbParams::default();
         f(&mut p);
-        knobs(&p)
+        knobs_120(&p)
     };
     close(at(&|p| p.size = 0.0).length_ms, 338.583, "size 0");
     close(at(&|p| p.time = 0.5).rt60_s, 0.3 * 40f32.sqrt(), "time .5");
@@ -278,7 +277,7 @@ fn knobs_hit_the_spec_endpoints() {
     let at = |t: ReverbType, f: &dyn Fn(&mut ReverbParams)| {
         let mut p = ReverbParams::default().with_type(t, &KnobMemory::new());
         f(&mut p);
-        knobs(&p)
+        knobs_120(&p)
     };
     for t in [ReverbType::Gate, ReverbType::Reverse] {
         let k = |f: &dyn Fn(&mut ReverbParams)| at(t, f);
@@ -434,7 +433,7 @@ fn plate_zone_pulls_diffuse_tone_predelay() {
     }
     assert!(in_plate_zone(&p(0.149)) && !in_plate_zone(&p(0.15)));
     // The engine plays the pulled knobs; the stored ones stay.
-    let k = knobs(&p(0.0));
+    let k = knobs_120(&p(0.0));
     assert_eq!(
         (k.diffuse_g, k.tone_hz, k.predelay_ms),
         (0.75, 10_000.0, 0.0)
@@ -461,7 +460,7 @@ fn smear_caps_hold_at_every_size() {
         p.smear = 1.0;
         for i in 0..=128 {
             p.size = i as f32 / 128.0;
-            let k = knobs(&p);
+            let k = knobs_120(&p);
             assert!(
                 k.smear_ms <= cap * k.length_ms * (1.0 + 1e-6),
                 "{t:?} SIZE {}: {} ms of {} ms",

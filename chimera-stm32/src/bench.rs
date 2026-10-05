@@ -21,6 +21,7 @@ use chimera_core::dsp::modal::{
     BankModes, CHORD_COUNT, ModalEngine, ModalParams, ResonatorMode, SymPool,
 };
 use chimera_core::dsp::modulator::{EnvForm, EnvSlot, EnvType, Func, Glide, LfoForm, LfoType};
+use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::reverb::ReverbType;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
@@ -1058,6 +1059,7 @@ impl Rig<'_> {
                 &mut pans,
                 fx,
                 shared,
+                Tempo::DEFAULT,
                 SAMPLE_RATE,
                 dac,
             ));

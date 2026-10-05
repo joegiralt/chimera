@@ -25,7 +25,7 @@ use arena::ReverbArena;
 use burst::BurstEngine;
 use loop_engine::{Hall, Layout, LoopEngine, Room};
 use parts::{Wander, wander_seeds};
-use sync::Tempo;
+use sync::{FoldState, Tempo};
 
 pub use crate::dsp::ring::QuadState;
 
@@ -192,15 +192,17 @@ pub struct Reverb {
     depth: f32,
     /// MIX, eased (never snap).
     mix: Ease,
+    /// The synced time's fold, held across blocks (§ Tempo sync).
+    fold: FoldState,
 }
 
 #[cfg(any(test, feature = "smear-probe"))]
 crate::in_place::field_list!(Reverb => Reverb {
-    arena, kind, state, phase, latched, dec, up_l, up_r, smear, smear_on, wander, wanders_rate, wanders_set, frozen, hard_gate, paths, depth, mix
+    arena, kind, state, phase, latched, dec, up_l, up_r, smear, smear_on, wander, wanders_rate, wanders_set, frozen, hard_gate, paths, depth, mix, fold
 });
 #[cfg(not(any(test, feature = "smear-probe")))]
 crate::in_place::field_list!(Reverb => Reverb {
-    arena, kind, state, phase, latched, dec, up_l, up_r, smear, smear_on, wander, wanders_rate, wanders_set, frozen, paths, depth, mix
+    arena, kind, state, phase, latched, dec, up_l, up_r, smear, smear_on, wander, wanders_rate, wanders_set, frozen, paths, depth, mix, fold
 });
 
 /// QUAD's SMEAR seed: its four lines' wanders hash it.
@@ -241,6 +243,7 @@ impl Reverb {
             paths: (false, false),
             depth: 0.0,
             mix: Ease::default(),
+            fold: FoldState(0),
         }
     }
 
@@ -252,8 +255,9 @@ impl Reverb {
         // `Quad` and `Running`, `latched` floats and two `repr(u8)` enums
         // (0 is `Quad`, `Off`); `smear` and `mix` are `Ease`s of a float
         // and a `bool`, `smear_on` a `Gate` of a `u8` and a `bool`,
-        // `wander` integers and floats, the rest integers and `bool`s. All
-        // are valid as zero bytes, and zero is `new()`'s state but for the
+        // `wander` integers and floats, `fold` an `i8`, the rest integers
+        // and `bool`s. All are valid as zero bytes, and zero is `new()`'s
+        // state but for the
         // wanders' seeds and phases, set below, and `latched`'s knobs,
         // which a block writes before it reads them unless the first
         // block already switches: that FADE OUT plays an empty arena.
@@ -291,6 +295,11 @@ impl Reverb {
 
     pub fn arena(&self) -> &ReverbArena {
         &self.arena
+    }
+
+    /// The synced time's fold as it plays: what its cell marks.
+    pub fn fold(&self) -> FoldState {
+        self.fold
     }
 
     /// Where a TYPE switch is.
@@ -358,6 +367,7 @@ impl Reverb {
         self.wander = QUAD_WANDERS;
         (self.wanders_rate, self.wanders_set) = (0, false);
         (self.paths, self.depth) = ((false, false), 0.0);
+        self.fold = FoldState(0);
     }
 
     /// QUAD's state, while QUAD runs.
@@ -410,14 +420,14 @@ impl Reverb {
         }
     }
 
-    /// Wet only: the engine's return × `mix`, into `out`. QUAD runs free
-    /// of `tempo`.
+    /// Wet only: the engine's return × `mix`, into `out`. A synced time
+    /// follows `tempo`; QUAD runs free of it.
     pub fn process(
         &mut self,
         send: &[f32; BLOCK_SIZE],
         p: &ReverbParams,
         mix: f32,
-        _tempo: Tempo,
+        tempo: Tempo,
         sample_rate: u32,
         out: &mut Stereo,
     ) {
@@ -448,7 +458,9 @@ impl Reverb {
         let p = &self.latched;
         // A row TYPE's knobs, mapped once a block (fast `exp2`/`log2`).
         let kn = match self.state {
-            EngineState::Burst(_) | EngineState::Room(_) | EngineState::Hall(_) => Some(knobs(p)),
+            EngineState::Burst(_) | EngineState::Room(_) | EngineState::Hall(_) => {
+                Some(knobs(p, tempo, &mut self.fold))
+            }
             EngineState::Quad(_) => None,
         };
         let mut u = [0.0f32; HALF];

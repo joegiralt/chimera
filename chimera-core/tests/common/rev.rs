@@ -7,6 +7,8 @@ use std::f64::consts::TAU;
 
 use chimera_core::block::ParamId;
 use chimera_core::dsp::rev::parts::clamp_counts;
+use chimera_core::dsp::rev::sync::{FoldState, Tempo};
+use chimera_core::dsp::reverb::{EngineKnobs, ReverbParams, knobs};
 use chimera_hal::BLOCK_SIZE;
 
 use super::sweep::power;
@@ -723,4 +725,10 @@ pub fn check_knobs_ease(r: Render, ids: &[ParamId], set: &mut dyn FnMut(ParamId,
             "{id:?} 0 → 1: d2 {after} after, {before} before"
         );
     }
+}
+
+/// `p`'s knobs at the default 120 BPM, a fresh fold: unsynced, the knobs
+/// alone.
+pub fn knobs_120(p: &ReverbParams) -> EngineKnobs {
+    knobs(p, Tempo::DEFAULT, &mut FoldState::default())
 }

@@ -9,6 +9,10 @@ use crate::dsp::algo::math::log2;
 use crate::dsp::clampf;
 use crate::dsp::modulator::law::Law;
 use crate::dsp::rev::parts::{lg2, pow2};
+use crate::dsp::rev::sync::{
+    DECAY_BEATS, Division, FoldState, GATE_LENGTH, HALL_PRE, REVERSE_LENGTH, ROOM_PRE, Tempo, fold,
+    index_of, p_of,
+};
 use crate::dsp::ring::{self, RingControls, STAGES, size_step, stage_len};
 use crate::ui::glyph::{CompositeId, FocusGlyph};
 
@@ -48,8 +52,7 @@ impl ReverbType {
     }
 }
 
-/// Which lengths follow the tempo (spec § Tempo sync; Task 12 reads it).
-/// Zero bytes are OFF.
+/// Which lengths follow the tempo (spec § Tempo sync). Zero bytes are OFF.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(u8)]
 pub enum RevSync {
@@ -404,13 +407,131 @@ pub fn damp_hz(p: f32) -> f32 {
     11_000.0 * libm::powf(1.5 / 11.0, unit(p))
 }
 
-/// `p`'s knobs as the engine plays them: its TYPE's row, else QUAD's laws
-/// as `dsp::ring` runs them (ADR 0028), on the chip's 24 kHz ring.
-pub fn knobs(p: &ReverbParams) -> EngineKnobs {
-    match ranges(p.kind) {
-        Some(r) => row_knobs(r, &plate_pull(p)),
-        None => quad_knobs(p),
+/// `p`'s knobs as the engine plays them at `tempo`: its TYPE's row, its
+/// synced times in note values (`fold` held across calls), else QUAD's
+/// laws as `dsp::ring` runs them (ADR 0028), on the chip's 24 kHz ring.
+pub fn knobs(p: &ReverbParams, tempo: Tempo, fold: &mut FoldState) -> EngineKnobs {
+    let Some(r) = ranges(p.kind) else {
+        return quad_knobs(p);
+    };
+    let q = plate_pull(p);
+    let mut k = row_knobs(r, &q);
+    let s = synced(p);
+    match s.time {
+        Some((id, list)) => {
+            let ms = synced_ms(r, id, list, q.get(id), tempo, fold);
+            if id == ReverbParams::SIZE {
+                k.length_ms = ms;
+                if k.regen > 0.0 {
+                    k.rt60_s = regen_rt60(ms, k.regen);
+                }
+            } else {
+                k.predelay_ms = ms;
+            }
+        }
+        None => *fold = FoldState::default(),
     }
+    if s.beats
+        && let TimeLaw::Decay { rt60_s } = r.time
+    {
+        k.rt60_s = beats_s(rt60_s, q.time, tempo);
+    }
+    k
+}
+
+/// What `p.sync` puts in note values under `p.kind` (spec § Tempo sync):
+/// the slot and its divisions, and whether DECAY is in beats. QUAD takes
+/// none; ROOM reads ALL as TIME. BLOOM's (HALL's lists) join with its
+/// engine.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Synced {
+    pub time: Option<(ParamId, &'static [Division])>,
+    pub beats: bool,
+}
+
+pub fn synced(p: &ReverbParams) -> Synced {
+    use ReverbParams as P;
+    let time = match p.kind {
+        ReverbType::Room => (P::PREDELAY, ROOM_PRE),
+        ReverbType::Hall => (P::PREDELAY, HALL_PRE),
+        ReverbType::Gate => (P::SIZE, GATE_LENGTH),
+        ReverbType::Reverse => (P::SIZE, REVERSE_LENGTH),
+        ReverbType::Quad | ReverbType::Bloom => {
+            return Synced {
+                time: None,
+                beats: false,
+            };
+        }
+    };
+    Synced {
+        time: (p.sync != RevSync::Off).then_some(time),
+        beats: p.sync == RevSync::All && p.kind == ReverbType::Hall,
+    }
+}
+
+/// Slot `id`'s ms range on row `r`: LENGTH's or PRE-DLY's.
+fn ms_range(r: &Ranges, id: ParamId) -> (f32, f32) {
+    if id == ReverbParams::SIZE {
+        (r.length_ms.lo, exp_law(r.length_ms, 1.0))
+    } else {
+        r.predelay_ms
+    }
+}
+
+/// Slot `id` at `v` as a division at `tempo`, folded into its range.
+fn synced_ms(
+    r: &Ranges,
+    id: ParamId,
+    list: &[Division],
+    v: f32,
+    tempo: Tempo,
+    st: &mut FoldState,
+) -> f32 {
+    let (lo, hi) = ms_range(r, id);
+    fold(list[index_of(v, list.len())].ms(tempo), lo, hi, st)
+}
+
+/// Slot `id` at `v` unsynced, ms.
+fn free_ms(r: &Ranges, id: ParamId, v: f32) -> f32 {
+    if id == ReverbParams::SIZE {
+        exp_law(r.length_ms, v)
+    } else {
+        lin(r.predelay_ms, v)
+    }
+}
+
+/// The stored value whose unsynced ms is `ms`.
+fn free_p(r: &Ranges, id: ParamId, ms: f32) -> f32 {
+    if id == ReverbParams::SIZE {
+        exp_inv(r.length_ms, ms)
+    } else {
+        let (lo, hi) = r.predelay_ms;
+        unit((ms - lo) / (hi - lo))
+    }
+}
+
+/// `exp_law`'s inverse: the p at which `e` reads `x`.
+fn exp_inv(e: Exp, x: f32) -> f32 {
+    unit(lg2(x / e.lo) / e.log2_ratio)
+}
+
+/// DECAY at `v` in beats at `tempo`, s, clamped to the row's seconds (a
+/// decay has no grid to stay on).
+fn beats_s(e: Exp, v: f32, tempo: Tempo) -> f32 {
+    let b = DECAY_BEATS[index_of(v, DECAY_BEATS.len())] as f32;
+    clampf(b * tempo.beat_ms() * 1e-3, e.lo, exp_law(e, 1.0))
+}
+
+/// The entry of `n` whose value `at(i)` is nearest `x`; the first on a tie.
+fn nearest(n: usize, x: f32, at: impl Fn(usize) -> f32) -> usize {
+    (0..n)
+        .min_by(|&a, &b| (at(a) - x).abs().total_cmp(&(at(b) - x).abs()))
+        .unwrap_or(0)
+}
+
+/// −60 dB at 20·log10 `g` a pass of `length_ms`.
+fn regen_rt60(length_ms: f32, g: f32) -> f32 {
+    length_ms * 1e-3 * -3.0 * LOG2_10 / lg2(g)
 }
 
 fn quad_knobs(p: &ReverbParams) -> EngineKnobs {
@@ -443,7 +564,7 @@ fn row_knobs(r: &Ranges, p: &ReverbParams) -> EngineKnobs {
             let g = max * unit(p.time);
             // −60 dB at 20·log10 g a pass.
             let rt = if g > 0.0 {
-                length_ms * 1e-3 * -3.0 * LOG2_10 / lg2(g)
+                regen_rt60(length_ms, g)
             } else {
                 0.0
             };
@@ -506,6 +627,48 @@ impl ReverbParams {
         for (i, &id) in KNOB_SLOTS.iter().enumerate() {
             if writes(t, i) {
                 p.write(id, knobs[i]);
+            }
+        }
+        p
+    }
+
+    /// SYNC `s`, its slots converted so the sound stays close (spec §
+    /// Toggling SYNC): into note values, the division nearest what plays
+    /// at `tempo`; out of them, the value whose ms is the division that
+    /// played. ROOM takes ALL as TIME. Decode and CC writes store SYNC
+    /// alone.
+    pub fn with_sync(self, s: RevSync, tempo: Tempo) -> Self {
+        let s = if self.kind == ReverbType::Room && s == RevSync::All {
+            RevSync::Time
+        } else {
+            s
+        };
+        let mut p = Self { sync: s, ..self };
+        let Some(r) = ranges(self.kind) else {
+            return p;
+        };
+        let (from, to) = (synced(&self), synced(&p));
+        match (from.time, to.time) {
+            (None, Some((id, list))) => {
+                let ms = free_ms(r, id, self.get(id));
+                let at = |i| synced_ms(r, id, list, p_of(i, list.len()), tempo, &mut FoldState(0));
+                p.write(id, p_of(nearest(list.len(), ms, at), list.len()));
+            }
+            (Some((id, list)), None) => {
+                let ms = synced_ms(r, id, list, self.get(id), tempo, &mut FoldState(0));
+                p.write(id, free_p(r, id, ms));
+            }
+            _ => {}
+        }
+        if let TimeLaw::Decay { rt60_s } = r.time {
+            let n = DECAY_BEATS.len();
+            match (from.beats, to.beats) {
+                (false, true) => {
+                    let s = exp_law(rt60_s, self.time);
+                    p.time = p_of(nearest(n, s, |i| beats_s(rt60_s, p_of(i, n), tempo)), n);
+                }
+                (true, false) => p.time = exp_inv(rt60_s, beats_s(rt60_s, self.time, tempo)),
+                _ => {}
             }
         }
         p

@@ -16,14 +16,14 @@ use chimera_core::dsp::rev::loop_engine::{
 use chimera_core::dsp::rev::parts::{Wander, wander_seeds};
 use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::rev::{Reverb, wet_gain};
-use chimera_core::dsp::reverb::{KnobMemory, ReverbParams, ReverbType, knobs};
+use chimera_core::dsp::reverb::{KnobMemory, ReverbParams, ReverbType};
 use chimera_core::dsp::ring::{FULL_SCALE, RING_LEN};
 use chimera_hal::BLOCK_SIZE;
 use common::SR;
 use common::rev::{
     MS, Noise, blocks, check_knobs_ease, check_level_plan_thd, check_no_slap, check_noise_floor,
-    check_settles_on_pitch, check_sustained_loudness, corr, onset_ms, pink, rt60_t20, run,
-    settled_peak_hz, tone,
+    check_settles_on_pitch, check_sustained_loudness, corr, knobs_120, onset_ms, pink, rt60_t20,
+    run, settled_peak_hz, tone,
 };
 
 type Blk = [f32; BLOCK_SIZE];
@@ -149,7 +149,7 @@ fn room_targets_follow_decay_tone_and_size() {
             30 => p.size = 1.0,
             _ => {}
         }
-        e.run(&mut arena, &u, &knobs(&p), &mut l, &mut r);
+        e.run(&mut arena, &u, &knobs_120(&p), &mut l, &mut r);
     }
     assert!(!e.moving(), "the move lands");
     let (fresh, _) = engine(&p);
@@ -162,7 +162,7 @@ fn room_targets_follow_decay_tone_and_size() {
 /// ROOM alone at the ring's rate: the engine, primed on `p`.
 fn engine(p: &ReverbParams) -> (L, Box<ReverbArena>) {
     let mut e = L::default();
-    e.prime(&knobs(p));
+    e.prime(&knobs_120(p));
     (e, Box::new(ReverbArena::new()))
 }
 
@@ -178,7 +178,7 @@ fn round_trip_moves_at_most_5_ms_per_crossfade() {
         println!("loop {l} at SIZE 0: {ms:.1} ms");
     }
     (p.size, p.predelay) = (1.0, 1.0);
-    let k = knobs(&p);
+    let k = knobs_120(&p);
     let (u, mut l, mut r) = ([0.0f32; HALF], [0.0; HALF], [0.0; HALF]);
     let mut crossfades = 0;
     let mut last = None;
@@ -243,7 +243,7 @@ fn room_smear_reads_stay_within_the_cap() {
     (p.smear, p.rate) = (1.0, 1.0);
     for i in 0..=16 {
         p.size = i as f32 / 16.0;
-        let k = knobs(&p);
+        let k = knobs_120(&p);
         assert!(k.smear_ms <= 0.0072 * k.length_ms + 1e-6, "SIZE {}", p.size);
         let (mut e, mut arena) = engine(&p);
         let (u, mut l, mut r) = ([0.0f32; HALF], [0.0; HALF], [0.0; HALF]);
@@ -274,7 +274,7 @@ fn smeared<const NL: usize, const NS: usize>(p: ReverbParams) -> impl FnMut(&Blk
 where
     LoopEngine<NL, NS>: Layout<NL, NS>,
 {
-    let mut k = knobs(&p);
+    let mut k = knobs_120(&p);
     k.rt60_s = 20.0;
     let full = k.smear_ms * PER_MS;
     let seeds = wander_seeds::<2>(0x5EED_0343);
@@ -405,7 +405,7 @@ fn noise_burst(p: &ReverbParams, seconds: f32) -> (Vec<f32>, Vec<f32>) {
 
 /// RT60 by T20 on `p`'s tail, from `LATE` after a 0.5 s noise burst.
 fn rt60_of(p: &ReverbParams) -> f32 {
-    let (l, r) = noise_burst(p, 0.5 + 3.0 * knobs(p).rt60_s.max(0.3));
+    let (l, r) = noise_burst(p, 0.5 + 3.0 * knobs_120(p).rt60_s.max(0.3));
     let tail = |x: &[f32]| x[SR as usize / 2 + LATE..].to_vec();
     rt60_t20(&tail(&l), &tail(&r))
 }
@@ -431,7 +431,7 @@ fn room_window_and_rt60() {
     ] {
         let mut q = p;
         (q.time, q.diffuse) = (decay, diffuse);
-        let want = knobs(&q).rt60_s;
+        let want = knobs_120(&q).rt60_s;
         let law = 0.2 * 7.5f32.powf(decay);
         assert!(
             (want / law - 1.0).abs() < 1e-3,
@@ -475,7 +475,7 @@ where
     fn block(&mut self, send: &Blk, p: &ReverbParams) -> (Blk, Blk) {
         let (mut u, mut l, mut r) = ([0.0; HALF], [0.0; HALF], [0.0; HALF]);
         self.dec.process(send, &mut u);
-        let k = knobs(p);
+        let k = knobs_120(p);
         self.e.run_reference(
             &mut self.arena,
             self.f32_lines.as_deref_mut(),
@@ -517,7 +517,7 @@ where
     let mut a = Alone::<NL, NS>::new(false, true);
     let mut b = Alone::<NL, NS>::new(false, false);
     let mut c = Alone::<NL, NS>::new(true, false);
-    let mode = 1_000.0 / knobs(&p).length_ms;
+    let mode = 1_000.0 / knobs_120(&p).length_ms;
     {
         let mut ra = |s: &Blk| a.block(s, &pc.borrow());
         let mut rb = |s: &Blk| b.block(s, &pc.borrow());
@@ -602,7 +602,7 @@ fn room_falls_silent() {
     for (smear, size, noise) in [(0.0, 0.5, true), (1.0, 0.5, true), (0.0, 0.0, false)] {
         let mut p = params(1.0);
         (p.time, p.smear, p.size) = (1.0, smear, size);
-        let seconds = 0.5 + 1.5 * knobs(&p).rt60_s + 1.0;
+        let seconds = 0.5 + 1.5 * knobs_120(&p).rt60_s + 1.0;
         let (l, r) = if noise {
             noise_burst(&p, seconds)
         } else {
@@ -631,9 +631,9 @@ fn room_tail_draws_its_predelay_gap() {
     use chimera_core::ui::glyph::tail_shape;
     let mut p = params(0.5);
     p.predelay = 0.0;
-    let open = tail_shape(ReverbType::Room, &knobs(&p));
+    let open = tail_shape(ReverbType::Room, &knobs_120(&p));
     p.predelay = 1.0;
-    let gap = tail_shape(ReverbType::Room, &knobs(&p));
+    let gap = tail_shape(ReverbType::Room, &knobs_120(&p));
     // 1.5 s over 60 columns: 50 ms is the first two.
     assert!(gap[..2].iter().all(|&c| c == 0) && open[0] > 0, "{gap:?}");
     assert!(gap[2] > 0);
@@ -656,7 +656,7 @@ fn hall(mix: f32) -> ReverbParams {
 /// HALL alone at the ring's rate: the engine, primed on `p`.
 fn hall_engine(p: &ReverbParams) -> (H, Box<ReverbArena>) {
     let mut e = H::default();
-    e.prime(&knobs(p));
+    e.prime(&knobs_120(p));
     (e, Box::new(ReverbArena::new()))
 }
 
@@ -675,7 +675,7 @@ const HALL_LATE: usize = 150 * MS;
 
 /// RT60 by T20 on `p`'s tail, from `HALL_LATE` after a 0.5 s noise burst.
 fn hall_rt60(p: &ReverbParams) -> f32 {
-    let (l, r) = noise_burst(p, 0.5 + 2.0 * knobs(p).rt60_s.max(0.5));
+    let (l, r) = noise_burst(p, 0.5 + 2.0 * knobs_120(p).rt60_s.max(0.5));
     let tail = |x: &[f32]| x[SR as usize / 2 + HALL_LATE..].to_vec();
     rt60_t20(&tail(&l), &tail(&r))
 }
@@ -740,7 +740,7 @@ fn hall_rt60_tracks_decay() {
     for decay in [0.0, 0.25, 0.45, 0.5, 0.75, 1.0] {
         let mut p = hall(1.0);
         p.time = decay;
-        let want = knobs(&p).rt60_s;
+        let want = knobs_120(&p).rt60_s;
         let rt = hall_rt60(&p);
         println!("DECAY {decay}: RT60 {rt:.2} s, target {want:.2} s");
         assert!(
@@ -753,7 +753,7 @@ fn hall_rt60_tracks_decay() {
 #[test]
 fn plate_corner_onset_is_short() {
     let p = plate_corner();
-    let k = knobs(&p);
+    let k = knobs_120(&p);
     assert_eq!(
         (k.diffuse_g, k.tone_hz, k.predelay_ms),
         (0.75, 10_000.0, 0.0)
@@ -774,7 +774,7 @@ fn plate_zone_moves_predelay_by_crossfade() {
     let (mut e, mut arena) = hall_engine(&p);
     assert_eq!(e.predelay(), 1_500);
     p.size = 0.0;
-    let k = knobs(&p);
+    let k = knobs_120(&p);
     let (u, mut l, mut r) = ([0.0f32; HALF], [0.0; HALF], [0.0; HALF]);
     let (mut crossfades, mut last) = (0, None);
     for b in 0..2_000 {
@@ -892,12 +892,12 @@ fn hall_settles_on_its_input_pitch() {
 fn hall_smear_is_bounded_without_drift_or_vibrato() {
     let mut p = hall(1.0);
     (p.size, p.time, p.smear, p.rate) = (0.0, 1.0, 1.0, 1.0);
-    let k = knobs(&p);
+    let k = knobs_120(&p);
     assert!(k.smear_ms <= 0.0036 * k.length_ms * (1.0 + 1e-6));
     assert!(k.smear_ms > 0.4, "capped, not off: {}", k.smear_ms);
     for size in [0.0, 0.5, 1.0] {
         p.size = size;
-        let k = knobs(&p);
+        let k = knobs_120(&p);
         let (mut e, mut arena) = hall_engine(&p);
         let (u, mut l, mut r) = ([0.0f32; HALF], [0.0; HALF], [0.0; HALF]);
         e.set_smear([(1e9, -1e9), (-5.0, 1e9)]);
@@ -1002,7 +1002,7 @@ fn hall_targets_follow_decay_tone_damp_and_size() {
             30 => p.size = 1.0,
             _ => {}
         }
-        e.run(&mut arena, &u, &knobs(&p), &mut l, &mut r);
+        e.run(&mut arena, &u, &knobs_120(&p), &mut l, &mut r);
     }
     assert!(!e.moving(), "the move lands");
     let (fresh, _) = hall_engine(&p);
@@ -1026,7 +1026,7 @@ fn hall_falls_silent() {
     ] {
         let mut p = hall(1.0);
         (p.time, p.smear, p.damping, p.size) = (0.0, smear, damp, size);
-        let seconds = 0.5 + 1.5 * knobs(&p).rt60_s + 1.0;
+        let seconds = 0.5 + 1.5 * knobs_120(&p).rt60_s + 1.0;
         let (l, r) = if noise {
             noise_burst(&p, seconds)
         } else {
@@ -1060,7 +1060,7 @@ fn hall_plate_at_10_s_falls_silent() {
     for (smear, damp) in [(0.0, 0.0), (1.0, 1.0)] {
         let mut p = hall(1.0);
         (p.smear, p.damping, p.size, p.time) = (smear, damp, 0.0, 1.0);
-        let k = knobs(&p);
+        let k = knobs_120(&p);
         let (mut e, mut arena) = hall_engine(&p);
         let full = k.smear_ms * PER_MS;
         let mut n = Noise(0x5eed);
@@ -1106,10 +1106,10 @@ fn hall_tail_draws_the_effective_predelay() {
     use chimera_core::ui::glyph::tail_shape;
     let mut p = hall(0.5);
     p.predelay = 1.0;
-    let gap = tail_shape(ReverbType::Hall, &knobs(&p));
+    let gap = tail_shape(ReverbType::Hall, &knobs_120(&p));
     // 10 s over 60 columns: 125 ms is under the first.
     assert_eq!(gap[0], 0, "{gap:?}");
     p.size = 0.0;
-    let plate = tail_shape(ReverbType::Hall, &knobs(&p));
+    let plate = tail_shape(ReverbType::Hall, &knobs_120(&p));
     assert!(plate[0] > 0, "{plate:?}");
 }

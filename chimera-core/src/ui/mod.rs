@@ -48,7 +48,7 @@ use crate::block::Block;
 use crate::boot::RomDfu;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
-use crate::dsp::reverb::{KnobMemory, ReverbParams};
+use crate::dsp::reverb::KnobMemory;
 use crate::in_place::{by_value, uninit_at};
 use crate::mod_path::{LABEL_LEN, RegistryError};
 use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModState};
@@ -1956,10 +1956,12 @@ impl UiState {
                 // knobs it leaves (reverb TYPEs spec § Pages).
                 if let Some(a) = v.addr()
                     && a.block == BlockRef::Reverb
-                    && (!shift || matches!(a.param, ReverbParams::TYPE | ReverbParams::SYNC))
+                    && (!shift
+                        || reverb_panel::whole_ticks(&self.project.perf().fx.reverb, a.param))
                 {
+                    let (tempo, _) = crate::meter::rev_clock();
                     let rev = &mut self.project.edit_part(at).fx.reverb;
-                    *rev = reverb_panel::turn(rev, a.param, delta, &mut self.rev_knobs);
+                    *rev = reverb_panel::turn(rev, a.param, delta, &mut self.rev_knobs, tempo);
                     continue;
                 }
                 let params = &mut UiBlocks {
@@ -2262,6 +2264,7 @@ impl UiState {
             audio,
             card: self.card,
             master_gr_db: crate::meter::MASTER_GR.read(),
+            rev_clock: crate::meter::rev_clock(),
             clock: self.clock,
             fx: &self.project.perf().fx,
             orbit,
@@ -2685,14 +2688,17 @@ fn page_def(at: Location, cx: &NavCtx) -> &'static BlockDef {
 
 /// What a reverb panel's cells read beyond their own values: HALL's plate
 /// zone (the SIZE cell's `PLATE`) and the PRE-DLY it plays there, which a
-/// SIZE CC moves while REV › MORE shows only PRE-DLY's stored knob. 0 on
-/// any other page.
+/// SIZE CC moves while REV › MORE shows only PRE-DLY's stored knob; and
+/// the clock a synced cell's note reads. 0 on any other page.
 fn rev_text_key(f: &renderer::Frame) -> u32 {
     if !(0..f.def.params.len()).any(|i| view::is_reverb_panel(f.def, i)) {
         return 0;
     }
     let pre = crate::dsp::reverb::plate_pull(&f.fx.reverb).predelay;
-    (f.ctx.plate as u32) << 16 | region::quantize(pre) as u32
+    // A synced cell reads the tempo, on its 0.25 BPM grid, and the fold.
+    let (t, fold) = f.rev_clock;
+    let clock = ((t.0 * 4.0) as u32) << 8 | fold.0 as u8 as u32;
+    ((f.ctx.plate as u32) << 16 | region::quantize(pre) as u32) ^ clock.wrapping_mul(0x9E37_79B9)
 }
 
 #[cfg(test)]

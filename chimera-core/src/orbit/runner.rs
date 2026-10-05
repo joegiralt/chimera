@@ -14,6 +14,7 @@ use super::scene::{Scene, SceneIdx, SceneRing};
 use super::walk::Pool;
 use super::{MAX_POOL, MAX_STEPS, RINGS, RingIdx};
 use crate::MidiNote;
+use crate::dsp::rev::sync::Tempo;
 use crate::hw::{BLOCK_SIZE, Cost, MAX_PARTS};
 use crate::instrument::{AudioShared, Instrument, NoteOrigin, NoteSet};
 use crate::note_queue::{NoteEvent, NoteKind, RealTime};
@@ -567,7 +568,21 @@ impl OrbitRunner {
         self.harmony = h;
         #[cfg(feature = "probe")]
         crate::probe::stamp(9);
+        // After the last stamp: no phase bills it.
+        inst.set_tempo(self.tempo());
         sent
+    }
+
+    /// The clock that moved the last block, as the reverb takes it: the
+    /// leading MIDI clock's averaged beat (`bar_len() / 4`) under EXT, else
+    /// the internal BPM.
+    pub fn tempo(&self) -> Tempo {
+        match self.source {
+            ClockSource::Midi => Tempo::from_bpm(
+                240.0 * self.sample_rate.get() as f32 / self.midi.bar_len().max(1) as f32,
+            ),
+            ClockSource::Internal => Tempo::from_bpm(self.clock.bpm().get() as f32),
+        }
     }
 
     /// A project load, at `epoch`: it killed every voice, so nothing to

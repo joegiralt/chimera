@@ -79,6 +79,11 @@ pub struct Frame<'a> {
     pub card: crate::storage::Card,
     /// The master compressor's gain reduction, dB (MST's GR meter).
     pub master_gr_db: f32,
+    /// The tempo the reverb follows and its synced time's fold.
+    pub rev_clock: (
+        crate::dsp::rev::sync::Tempo,
+        crate::dsp::rev::sync::FoldState,
+    ),
     /// Animation phase: what an animated glyph draws from.
     pub clock: crate::ui::animation::UiClock,
     /// The FX's stored params (a composite reads the chorus's).
@@ -831,7 +836,8 @@ fn param_text(f: &Frame, i: usize, view: &View, v: f32) -> FmtBuf {
         Some(a) => {
             let mut p = f.fx.reverb;
             crate::block::Block::set(&mut p, a.param, v);
-            crate::ui::reverb_panel::value_text(a.param, &p)
+            let (tempo, fold) = f.rev_clock;
+            crate::ui::reverb_panel::value_text(a.param, &p, tempo, fold)
         }
         None => {
             let mut buf = FmtBuf::new();

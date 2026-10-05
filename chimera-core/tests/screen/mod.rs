@@ -1079,6 +1079,15 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
         feed(ui, Input::turn(EncoderId::B, 20)); // SHAPE
     }),
+    // SYNC TIME, then LENGTH a note up: 1/8 (reverb TYPEs T12).
+    ("mixer_fx_reverb_gate_sync", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::turn(EncoderId::A, 3)); // TYPE → GATE
+        feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
+        feed(ui, Input::turn(EncoderId::E, 1)); // SYNC TIME: LENGTH 1/16D
+        feed(ui, Input::press(ButtonId::Edit)); // back to REV
+        feed(ui, Input::turn(EncoderId::B, 1)); // LENGTH 1/8
+    }),
     ("mixer_fx_delay_char", |ui| {
         to_fx(ui, DLY);
         feed(ui, Input::press(ButtonId::Edit)); // DLY › CHAR

@@ -3,10 +3,12 @@
 
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::block::{Block, ParamId};
-use chimera_core::dsp::reverb::{KnobMemory, REVERB_SPECS, ReverbParams, ReverbType};
+use chimera_core::dsp::rev::sync::{FoldState, Tempo};
+use chimera_core::dsp::reverb::{KnobMemory, REVERB_SPECS, RevSync, ReverbParams, ReverbType};
 use chimera_core::params::ParamSnapshot;
 use chimera_core::ui::block_def::BlockDef;
 use chimera_core::ui::block_registry as reg;
+use chimera_core::ui::fmt::FmtBuf;
 use chimera_core::ui::reverb_panel::{
     RevPage, knob, label, retype, shown, turn, types_on_screen, value_text,
 };
@@ -14,6 +16,11 @@ use chimera_core::ui::view::{SlotCtx, View, view};
 use chimera_core::ui::{draw, hint, theme};
 
 const ALL: [ReverbType; 6] = ReverbType::ALL;
+
+/// Slot `id`'s text at 120 BPM, unfolded.
+fn text(id: ParamId, p: &ReverbParams) -> FmtBuf {
+    value_text(id, p, Tempo::DEFAULT, FoldState(0))
+}
 
 fn words(t: ReverbType, page: RevPage, n: u8) -> Vec<Option<&'static str>> {
     (0..n).map(|k| knob(t, page, k).map(|c| c.label)).collect()
@@ -39,15 +46,21 @@ fn every_type_shows_its_cells() {
     assert_eq!(main(Quad), s(&["SIZE", "TIME", "DAMP", "SMEAR"]));
     assert_eq!(more(Quad), s(&["-", "-", "-", "RATE", "-", "-"]));
     assert_eq!(main(Gate), s(&["LENGTH", "TAIL", "TONE", "DENSITY"]));
-    assert_eq!(more(Gate), s(&["-", "SHAPE", "SMEAR", "RATE", "-", "-"]));
+    assert_eq!(more(Gate), s(&["-", "SHAPE", "SMEAR", "RATE", "SYNC", "-"]));
     assert_eq!(main(Reverse), s(&["LENGTH", "REGEN", "TONE", "DENSITY"]));
-    assert_eq!(more(Reverse), s(&["-", "CURVE", "SMEAR", "RATE", "-", "-"]));
+    assert_eq!(
+        more(Reverse),
+        s(&["-", "CURVE", "SMEAR", "RATE", "SYNC", "-"])
+    );
     assert_eq!(main(Room), s(&["SIZE", "DECAY", "TONE", "DIFFUSE"]));
-    assert_eq!(more(Room), s(&["PRE-DLY", "-", "SMEAR", "RATE", "-", "-"]));
+    assert_eq!(
+        more(Room),
+        s(&["PRE-DLY", "-", "SMEAR", "RATE", "SYNC", "-"])
+    );
     assert_eq!(main(Hall), s(&["SIZE", "DECAY", "TONE", "DIFFUSE"]));
     assert_eq!(
         more(Hall),
-        s(&["PRE-DLY", "DAMP", "SMEAR", "RATE", "-", "-"])
+        s(&["PRE-DLY", "DAMP", "SMEAR", "RATE", "SYNC", "-"])
     );
     // BLOOM's lands with its engine (Task 11): until then it is QUAD's,
     // which is what plays.
@@ -64,6 +77,9 @@ fn every_type_shows_its_cells() {
     assert_eq!(id(Room, RevPage::Main, 1), ReverbParams::TIME);
     assert_eq!(id(Room, RevPage::More, 0), ReverbParams::PREDELAY);
     assert_eq!(id(Hall, RevPage::More, 1), ReverbParams::DAMPING);
+    for t in [Room, Hall, Gate, Reverse] {
+        assert_eq!(id(t, RevPage::More, 4), ReverbParams::SYNC);
+    }
     // REV: TYPE, the panel's four, then MIX on every TYPE.
     for t in ALL {
         let v = |def: &BlockDef, i| view(def, i, &ctx(t));
@@ -129,7 +145,13 @@ fn quad_size_still_ticks_by_one_table_step() {
         1.0 / 31.0
     );
     let p = ReverbParams::default();
-    let q = turn(&p, ReverbParams::SIZE, 1, &mut KnobMemory::new());
+    let q = turn(
+        &p,
+        ReverbParams::SIZE,
+        1,
+        &mut KnobMemory::new(),
+        Tempo::DEFAULT,
+    );
     assert!((q.size - (0.5 + 1.0 / 31.0)).abs() < 1e-6);
 }
 
@@ -163,15 +185,25 @@ fn labels_and_values_fit_their_cells() {
         for (page, n) in [(RevPage::Main, 4), (RevPage::More, 6)] {
             for k in 0..n {
                 let Some(c) = knob(t, page, k) else { continue };
-                for size in [0.0, 0.5, 1.0] {
+                for (size, sync, fold) in [
+                    (0.0, RevSync::Off, 0),
+                    (0.5, RevSync::Off, 0),
+                    (1.0, RevSync::Off, 0),
+                    (0.5, RevSync::Time, 0),
+                    (0.5, RevSync::All, 1),
+                    (0.5, RevSync::All, -1),
+                    (0.5, RevSync::All, 2),
+                ] {
                     for i in 0..=128 {
                         let mut p = ReverbParams {
                             kind: t,
                             size,
+                            sync,
                             ..ReverbParams::default()
                         };
                         p.write(c.id, i as f32 / 128.0);
-                        let s = value_text(c.id, &p).as_str().to_string();
+                        let s = value_text(c.id, &p, Tempo::DEFAULT, FoldState(fold));
+                        let s = s.as_str().to_string();
                         let cell = draw::text_width(&theme::FONT_VALUE, &s, 0);
                         assert!(
                             cell <= theme::CELL_BAR_W,
@@ -190,7 +222,8 @@ fn labels_and_values_fit_their_cells() {
         "663ms", "1.9s", "6.1k", "OFF", "0.22Hz", "40ms", "800ms", "0.80s", "2.5k", "12.0",
         "-18dB", "30dB", "2.00Hz", "1.0ms", "16s", "100ms", "200ms", "0.20s", "1.5s", "0.50",
         "0.75", "50ms", "0.7ms", "1.00Hz", "10s", "120ms", "600ms", "11k", "1.5k", "125ms",
-        "2.0ms", "1.50Hz",
+        "2.0ms", "1.50Hz", "TIME", "1/32T", "1/4", "1/2T", "1/4D", "0", "1/128", "1/16", "▾1/8",
+        "▴1/16T", "▾1/256", "▾1/192", "▾3/256", "32 BT", "1 BT",
     ] {
         assert!(seen.iter().any(|s| s == want), "no cell shows {want}");
     }
@@ -256,23 +289,29 @@ fn a_type_nudge_keeps_the_tweaks() {
         ]
     );
     let q = ReverbParams::default();
-    assert_eq!(turn(&q, ReverbParams::TYPE, -1, &mut mem), q);
-    let room = turn(&q, ReverbParams::TYPE, 1, &mut mem);
+    assert_eq!(
+        turn(&q, ReverbParams::TYPE, -1, &mut mem, Tempo::DEFAULT),
+        q
+    );
+    let room = turn(&q, ReverbParams::TYPE, 1, &mut mem, Tempo::DEFAULT);
     assert_eq!(room.kind, ReverbType::Room);
-    let hall = turn(&room, ReverbParams::TYPE, 1, &mut mem);
+    let hall = turn(&room, ReverbParams::TYPE, 1, &mut mem, Tempo::DEFAULT);
     assert_eq!(hall.kind, ReverbType::Hall);
-    let g = turn(&hall, ReverbParams::TYPE, 1, &mut mem);
+    let g = turn(&hall, ReverbParams::TYPE, 1, &mut mem, Tempo::DEFAULT);
     assert_eq!(g.kind, ReverbType::Gate);
     assert_eq!((g.size, g.time), (0.55, 0.3), "GATE's starting knobs");
-    let r = turn(&g, ReverbParams::TYPE, 5, &mut mem);
+    let r = turn(&g, ReverbParams::TYPE, 5, &mut mem, Tempo::DEFAULT);
     assert_eq!(r.kind, ReverbType::Reverse);
     assert_eq!(
-        turn(&r, ReverbParams::TYPE, 1, &mut mem).kind,
+        turn(&r, ReverbParams::TYPE, 1, &mut mem, Tempo::DEFAULT).kind,
         ReverbType::Reverse
     );
     // A TYPE off the list stays put, its knobs too.
     let b = ReverbParams::default().with_type(ReverbType::Bloom, &KnobMemory::new());
-    assert_eq!(turn(&b, ReverbParams::TYPE, -1, &mut mem), b);
+    assert_eq!(
+        turn(&b, ReverbParams::TYPE, -1, &mut mem, Tempo::DEFAULT),
+        b
+    );
 }
 
 /// GATE's, REVERSE's and ROOM's starting knobs, as their cells read
@@ -282,7 +321,7 @@ fn cells_read_their_starting_values() {
     let shows = |t: ReverbType, want: [(ParamId, &str); 7]| {
         let p = ReverbParams::default().with_type(t, &KnobMemory::new());
         for (id, w) in want {
-            assert_eq!(value_text(id, &p).as_str(), w, "{t:?} {id:?}");
+            assert_eq!(text(id, &p).as_str(), w, "{t:?} {id:?}");
         }
     };
     use ReverbParams as P;
@@ -320,7 +359,7 @@ fn cells_read_their_starting_values() {
         (P::SMEAR, "0.3ms"),
         (P::RATE, "0.32Hz"),
     ] {
-        assert_eq!(value_text(id, &p).as_str(), w, "ROOM {id:?}");
+        assert_eq!(text(id, &p).as_str(), w, "ROOM {id:?}");
     }
     let p = ReverbParams::default().with_type(ReverbType::Hall, &KnobMemory::new());
     for (id, w) in [
@@ -333,7 +372,7 @@ fn cells_read_their_starting_values() {
         (P::SMEAR, "0.7ms"),
         (P::RATE, "0.30Hz"),
     ] {
-        assert_eq!(value_text(id, &p).as_str(), w, "HALL {id:?}");
+        assert_eq!(text(id, &p).as_str(), w, "HALL {id:?}");
     }
     // In the plate zone the cells show what plays: the plate's 120 ms,
     // DIFFUSE 0.75, TONE 10 kHz, no pre-delay.
@@ -344,12 +383,12 @@ fn cells_read_their_starting_values() {
         (P::TONE, "10k"),
         (P::PREDELAY, "0ms"),
     ] {
-        assert_eq!(value_text(id, &plate).as_str(), w, "PLATE {id:?}");
+        assert_eq!(text(id, &plate).as_str(), w, "PLATE {id:?}");
     }
     // TAIL 0 is the fast gate.
     let mut g = ReverbParams::default().with_type(ReverbType::Gate, &KnobMemory::new());
     g.time = 0.0;
-    assert_eq!(value_text(P::TIME, &g).as_str(), "OFF");
+    assert_eq!(text(P::TIME, &g).as_str(), "OFF");
 }
 
 /// HALL's SIZE cell reads `PLATE` in the plate zone (SIZE < 0.15; ADR
@@ -386,4 +425,96 @@ fn hall_size_cell_reads_plate_in_its_zone() {
         }
     }
     assert_eq!(label(ReverbType::Hall, ParamId(3)), "SIZE");
+}
+
+/// ROOM's SYNC walks OFF and TIME only (spec: 7 of 10 beat values would
+/// clamp at its 1.5 s); a stored ALL reads, and turns, as TIME. The others
+/// walk OFF, TIME, ALL.
+#[test]
+fn room_sync_steps_off_and_time_only() {
+    let mem = KnobMemory::new();
+    let room = ReverbParams::default().with_type(ReverbType::Room, &mem);
+    let sync = |p: &ReverbParams, d| {
+        turn(
+            p,
+            ReverbParams::SYNC,
+            d,
+            &mut KnobMemory::new(),
+            Tempo::DEFAULT,
+        )
+    };
+    let mut seen = vec![room.sync];
+    let mut p = room;
+    for d in [1, 1, 1, -1, -1, -1] {
+        p = sync(&p, d);
+        seen.push(p.sync);
+    }
+    use RevSync::*;
+    assert_eq!(seen, [Off, Time, Time, Time, Off, Off, Off]);
+    let stored = ReverbParams { sync: All, ..room };
+    assert_eq!(text(ReverbParams::SYNC, &stored).as_str(), "TIME");
+    assert_eq!(sync(&stored, 1), stored, "ALL is TIME's end");
+    assert_eq!(sync(&stored, -1).sync, Off);
+    let hall = ReverbParams::default().with_type(ReverbType::Hall, &mem);
+    let all = sync(&sync(&hall, 1), 1);
+    assert_eq!(
+        (all.sync, text(ReverbParams::SYNC, &all).as_str()),
+        (All, "ALL")
+    );
+    // A SYNC turn converts the slot (`with_sync`): HALL's 18.75 ms
+    // PRE-DLY reads its nearest note, 1/64T.
+    assert_eq!(text(ReverbParams::PREDELAY, &all).as_str(), "1/64T");
+    assert_eq!(text(ReverbParams::TIME, &all).as_str(), "4 BT");
+}
+
+/// A synced knob walks its notes, one a tick, fine or not; its cell shows
+/// the note that plays, marked when the engine folds it (GATE's 1/4 at
+/// 90 BPM plays ▾1/8).
+#[test]
+fn synced_knobs_step_by_note_and_show_the_fold() {
+    use chimera_core::ui::reverb_panel::{step, whole_ticks};
+    let g = ReverbParams {
+        sync: RevSync::Time,
+        ..ReverbParams::default().with_type(ReverbType::Gate, &KnobMemory::new())
+    };
+    let t = |p: &ReverbParams, d| {
+        turn(
+            p,
+            ReverbParams::SIZE,
+            d,
+            &mut KnobMemory::new(),
+            Tempo::DEFAULT,
+        )
+    };
+    let mut p = ReverbParams { size: 0.0, ..g };
+    let mut notes = vec![text(ReverbParams::SIZE, &p).as_str().to_string()];
+    for _ in 0..12 {
+        p = t(&p, 1);
+        notes.push(text(ReverbParams::SIZE, &p).as_str().to_string());
+    }
+    assert_eq!(
+        notes,
+        [
+            "1/32T", "1/32", "1/16T", "1/32D", "1/16", "1/8T", "1/16D", "1/8", "1/4T", "1/8D",
+            "1/4", "1/4", "1/4"
+        ]
+    );
+    assert_eq!(step(&g, ReverbParams::SIZE), 0.1);
+    assert!(whole_ticks(&g, ReverbParams::SIZE));
+    assert!(!whole_ticks(&g, ReverbParams::TONE));
+    let free = ReverbParams {
+        sync: RevSync::Off,
+        ..g
+    };
+    assert!(!whole_ticks(&free, ReverbParams::SIZE));
+    assert_eq!(step(&free, ReverbParams::SIZE), 1.0 / 128.0);
+    // The fold the engine reports marks the note that plays.
+    let quarter = ReverbParams { size: 1.0, ..g };
+    let at90 = Tempo::from_bpm(90.0);
+    let shown = |f| value_text(ReverbParams::SIZE, &quarter, at90, FoldState(f));
+    assert_eq!(shown(0).as_str(), "1/4");
+    assert_eq!(shown(1).as_str(), "▾1/8");
+    let fast = ReverbParams { size: 0.0, ..g };
+    let shown = value_text(ReverbParams::SIZE, &fast, at90, FoldState(-1));
+    assert_eq!(shown.as_str(), "▴1/16T");
 }

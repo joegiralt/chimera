@@ -7,6 +7,7 @@ use crate::dsp::algo::waves::{WAVE_LEN, WaveId};
 use crate::dsp::chorus::{ChorusMode, ChorusParams};
 use crate::dsp::clampf;
 use crate::dsp::delay::DelayParams;
+use crate::dsp::rev::sync::{FoldState, Tempo};
 use crate::dsp::reverb::{EngineKnobs, RevSync, ReverbParams, ReverbType, knobs};
 
 /// The gauge a parameter's focus band shows.
@@ -364,7 +365,8 @@ impl Tail {
             shape: set[9],
             sync: RevSync::Off,
         };
-        let k = knobs(&p);
+        // Unsynced: the set values alone, at the default tempo.
+        let k = knobs(&p, Tempo::DEFAULT, &mut FoldState(0));
         let span = tail_span_ms(t);
         let n = TAIL_COLS as f32;
         let edge = clampf(k.length_ms / span * n, 0.0, n) as u8;

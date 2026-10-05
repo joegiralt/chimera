@@ -9,7 +9,7 @@ use chimera_core::dsp::chorus::{ChorusParams, JunoChorus};
 use chimera_core::dsp::delay::{DelayParams, TapeDelay};
 use chimera_core::dsp::rev::Reverb;
 use chimera_core::dsp::rev::sync::Tempo;
-use chimera_core::dsp::reverb::{KnobMemory, ReverbParams, ReverbType};
+use chimera_core::dsp::reverb::{KnobMemory, RevSync, ReverbParams, ReverbType};
 use chimera_hal::BLOCK_SIZE;
 use common::{SR, fnv1a};
 
@@ -25,7 +25,7 @@ enum Fx {
     Reverb(ReverbParams),
 }
 
-fn cases() -> [(&'static str, Fx); 14] {
+fn cases() -> [(&'static str, Fx); 15] {
     let reverb = |smear: f32, size: f32| ReverbParams {
         time: 0.7,
         damping: 0.3,
@@ -104,6 +104,13 @@ fn cases() -> [(&'static str, Fx); 14] {
             "rev_gate_flat_tail0",
             burst(ReverbType::Gate, |p| (p.time, p.shape) = (0.0, 0.0)),
         ),
+        // LENGTH synced to 1/8 at 120 BPM: 250 ms (reverb TYPEs T12).
+        (
+            "rev_gate_sync_8th_120",
+            burst(ReverbType::Gate, |p| {
+                (p.sync, p.size) = (RevSync::Time, 0.7)
+            }),
+        ),
         ("rev_reverse", burst(ReverbType::Reverse, |_| {})),
         (
             "rev_reverse_regen",
@@ -175,6 +182,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // GATE and REVERSE on the BURST engine (reverb TYPEs T8).
     ("rev_gate", 0xf58be0a4e64aeddf),
     ("rev_gate_flat_tail0", 0x951817e3e86edf28),
+    // LENGTH synced (reverb TYPEs T12).
+    ("rev_gate_sync_8th_120", 0xfdf822a972a4be23),
     ("rev_reverse", 0x6556c8e280534d44),
     ("rev_reverse_regen", 0x510ced0081cb2515),
 ];

@@ -4,7 +4,10 @@
 //! that TYPE. TYPE and MIX sit on REV outside the panel.
 
 use crate::block::{Block, ParamId, find_spec};
-use crate::dsp::reverb::{KnobMemory, REVERB_SPECS, ReverbParams, ReverbType, knobs};
+use crate::dsp::rev::sync::{DECAY_BEATS, FoldState, Tempo, index_of, p_of};
+use crate::dsp::reverb::{
+    KnobMemory, REVERB_SPECS, RevSync, ReverbParams, ReverbType, knobs, plate_pull, synced,
+};
 
 /// The SIZE cell's word in HALL's plate zone (ADR 0085: the label, not
 /// the value).
@@ -75,6 +78,11 @@ static PREDELAY: RevKnob = RevKnob {
     short: Some("PRE"),
     ..k(P::PREDELAY, "PRE-DLY")
 };
+/// A word choice: one tick a word (ROOM's walk skips ALL).
+static SYNC: RevKnob = RevKnob {
+    step: 1.0,
+    ..k(P::SYNC, "SYNC")
+};
 
 /// SIZE · TIME · DAMP · SMEAR; MORE: RATE. BLOOM's lands with its engine
 /// (Task 11).
@@ -91,8 +99,8 @@ static QUAD: Panel = [
     None,
 ];
 
-/// SIZE · DECAY · TONE · DIFFUSE; MORE: PRE-DLY · — · SMEAR · RATE. SYNC
-/// joins with tempo sync (Task 12).
+/// SIZE · DECAY · TONE · DIFFUSE; MORE: PRE-DLY · — · SMEAR · RATE ·
+/// SYNC.
 static ROOM: Panel = [
     Some(&SIZE),
     Some(&DECAY),
@@ -102,12 +110,12 @@ static ROOM: Panel = [
     None,
     Some(&SMEAR),
     Some(&RATE),
-    None,
+    Some(&SYNC),
     None,
 ];
 
-/// SIZE · DECAY · TONE · DIFFUSE; MORE: PRE-DLY · DAMP · SMEAR · RATE.
-/// SYNC joins with tempo sync (Task 12).
+/// SIZE · DECAY · TONE · DIFFUSE; MORE: PRE-DLY · DAMP · SMEAR · RATE ·
+/// SYNC.
 static HALL: Panel = [
     Some(&SIZE),
     Some(&DECAY),
@@ -117,11 +125,11 @@ static HALL: Panel = [
     Some(&DAMP),
     Some(&SMEAR),
     Some(&RATE),
-    None,
+    Some(&SYNC),
     None,
 ];
 
-/// LENGTH · TAIL · TONE · DENSITY; MORE: — · SHAPE · SMEAR · RATE.
+/// LENGTH · TAIL · TONE · DENSITY; MORE: — · SHAPE · SMEAR · RATE · SYNC.
 static GATE: Panel = [
     Some(&LENGTH),
     Some(&TAIL),
@@ -131,11 +139,12 @@ static GATE: Panel = [
     Some(&SHAPE),
     Some(&SMEAR),
     Some(&RATE),
-    None,
+    Some(&SYNC),
     None,
 ];
 
-/// LENGTH · REGEN · TONE · DENSITY; MORE: — · CURVE · SMEAR · RATE.
+/// LENGTH · REGEN · TONE · DENSITY; MORE: — · CURVE · SMEAR · RATE ·
+/// SYNC.
 static REVERSE: Panel = [
     Some(&LENGTH),
     Some(&REGEN),
@@ -145,7 +154,7 @@ static REVERSE: Panel = [
     Some(&CURVE),
     Some(&SMEAR),
     Some(&RATE),
-    None,
+    Some(&SYNC),
     None,
 ];
 
@@ -206,9 +215,36 @@ pub fn label(t: ReverbType, id: ParamId) -> &'static str {
         .unwrap_or("--")
 }
 
-/// One encoder tick of `id` under `p`'s panel.
+/// One encoder tick of `id` under `p`'s panel: a division, or a beat
+/// count, while synced.
 pub fn step(p: &ReverbParams, id: ParamId) -> f32 {
-    find(shown(p.kind), id).map_or(TICK, |c| c.step)
+    match notches(p, id) {
+        Some(n) => p_of(1, n),
+        None => find(shown(p.kind), id).map_or(TICK, |c| c.step),
+    }
+}
+
+/// How many notes or beat counts slot `id` walks under `p`'s SYNC.
+pub fn notches(p: &ReverbParams, id: ParamId) -> Option<usize> {
+    let s = synced(p);
+    match s.time {
+        Some((sid, list)) if sid == id => Some(list.len()),
+        _ => (s.beats && id == P::TIME).then_some(DECAY_BEATS.len()),
+    }
+}
+
+/// SYNC as `p.kind` reads it: ROOM's stored ALL is TIME.
+fn sync_read(p: &ReverbParams) -> RevSync {
+    match (p.kind, p.sync) {
+        (ReverbType::Room, RevSync::All) => RevSync::Time,
+        (_, s) => s,
+    }
+}
+
+/// Whether a turn of `id` goes whole ticks, fine or not: a word choice,
+/// or a synced knob's notes.
+pub fn whole_ticks(p: &ReverbParams, id: ParamId) -> bool {
+    matches!(id, P::TYPE | P::SYNC) || notches(p, id).is_some()
 }
 
 /// TYPE `t`, leaving `p`'s knobs in `mem` (spec § A TYPE change loads
@@ -218,9 +254,17 @@ pub fn retype(p: &ReverbParams, t: ReverbType, mem: &mut KnobMemory) -> ReverbPa
     p.with_type(t, mem)
 }
 
-/// One encoder turn of `id` under `p`: TYPE walks the TYPEs on screen (a
-/// TYPE off the list stays put), a knob its `step`.
-pub fn turn(p: &ReverbParams, id: ParamId, delta: i8, mem: &mut KnobMemory) -> ReverbParams {
+/// One encoder turn of `id` under `p` at `tempo`: TYPE walks the TYPEs on
+/// screen (a TYPE off the list stays put), SYNC its words converting the
+/// knobs (ROOM's OFF and TIME only), a synced knob its notes, a knob its
+/// `step`.
+pub fn turn(
+    p: &ReverbParams,
+    id: ParamId,
+    delta: i8,
+    mem: &mut KnobMemory,
+    tempo: Tempo,
+) -> ReverbParams {
     if id == P::TYPE {
         let list = types_on_screen();
         let Some(i) = list.iter().position(|&t| t == p.kind) else {
@@ -234,14 +278,52 @@ pub fn turn(p: &ReverbParams, id: ParamId, delta: i8, mem: &mut KnobMemory) -> R
         };
     }
     let mut q = *p;
-    q.set(id, q.get(id) + delta as f32 * step(p, id));
+    if id == P::SYNC {
+        let walk: &[RevSync] = match p.kind {
+            ReverbType::Room => &RevSync::ALL[..2],
+            _ => &RevSync::ALL,
+        };
+        let i = walk.iter().position(|&s| s == sync_read(p)).unwrap_or(0) as i32;
+        let to = walk[(i + delta as i32).clamp(0, walk.len() as i32 - 1) as usize];
+        return if to == sync_read(p) {
+            *p
+        } else {
+            p.with_sync(to, tempo)
+        };
+    }
+    match notches(p, id) {
+        Some(n) => {
+            let i = index_of(p.get(id), n) as i32 + delta as i32;
+            q.set(id, p_of(i.clamp(0, n as i32 - 1) as usize, n));
+        }
+        None => q.set(id, q.get(id) + delta as f32 * step(p, id)),
+    }
     q
 }
 
-/// Slot `id`'s value as `p`'s panel shows it, in units, from the maps
-/// the engine plays (`dsp::reverb::knobs`).
-pub fn value_text(id: ParamId, p: &ReverbParams) -> FmtBuf {
-    let k = knobs(p);
+/// Slot `id`'s value as `p`'s panel shows it at `tempo`, in units, from
+/// the maps the engine plays (`dsp::reverb::knobs`): a synced time as the
+/// note that plays, marked ▾ or ▴ by the engine's `fold`; DECAY in beats.
+pub fn value_text(id: ParamId, p: &ReverbParams, tempo: Tempo, fold: FoldState) -> FmtBuf {
+    let mut b = FmtBuf::new();
+    let s = synced(p);
+    if id == P::SYNC {
+        let _ = core::fmt::Write::write_str(&mut b, RevSync::NAMES[sync_read(p) as usize]);
+        return b;
+    }
+    if let Some((sid, list)) = s.time
+        && sid == id
+    {
+        list[index_of(plate_pull(p).get(id), list.len())].write(fold, &mut b);
+        return b;
+    }
+    if s.beats && id == P::TIME {
+        let n = DECAY_BEATS[index_of(p.time, DECAY_BEATS.len())];
+        let _ = core::fmt::Write::write_fmt(&mut b, format_args!("{n} BT"));
+        return b;
+    }
+    // REGEN's RT60 rings for the LENGTH that plays.
+    let k = knobs(p, tempo, &mut { fold });
     let burst = matches!(p.kind, ReverbType::Gate | ReverbType::Reverse);
     let off = match id {
         P::SMEAR => k.smear_ms == 0.0,
@@ -272,7 +354,6 @@ pub fn value_text(id: ParamId, p: &ReverbParams) -> FmtBuf {
         P::RATE => (k.rate_hz, 2, "Hz"),
         _ => (0.0, 0, ""),
     };
-    let mut b = FmtBuf::new();
     if off {
         let _ = core::fmt::Write::write_str(&mut b, "OFF");
     } else if places > 0 || !unit.is_empty() {
