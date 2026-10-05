@@ -292,6 +292,136 @@ the ban on 2026-10-05.
   - **SWELL is `exp`, as the spec's table,** over 290–697 ms; one
     allpass moves a crossfade, 89 crossfades from SWELL 0 to 1.
 
+- **GATE and REVERSE, as fitted (proposed, Task 11b, 2026-10-05).** For
+  the owner's ruling; no firmware yet. A float model of BURST (the
+  harness's `burst-fit/bmodel.py`) matches the Rust render within 0.06 ms
+  pre-delay, 0.05 dB C50, 0.5 % centroid and 0.01 NED, so the options were
+  tried there first.
+  - **Baseline.** At today's ranges, fitted in the harness on the Rust
+    render: GATE passes 0 of 10 and REVERSE 0 of 8.
+    - GATE fails pre-delay on all ten (the presets sit at 6.9–71 ms; BURST
+      has none) and NED on eight.
+    - REVERSE's verdict is degenerate. The first −20 dB arrival is the
+      unit's end hit, so the presets read pre-delay 300–598 ms, C50
+      30–297 dB and NED 0.00–0.22 after it. The fit drives LENGTH to its
+      top and still misses by 87–294 ms.
+  - **GATE's three questions.**
+    - **Pre-delay:** yes, PRE-DLY on slot 9, the empty MORE cell, 0–80 ms.
+      It shifts every tap's read inside the burst line (LENGTH 600 + 80 ms
+      fits its 800 ms), so it costs no memory. With it, every preset's
+      pre-delay lands within ±0.3 ms, except #35 and #39 (+2.1 ms, PRE-DLY
+      at 0).
+    - **Density:** it is the pre-diffuser's g, not the tap count. NED at
+      20 ms reads 0.31–0.39 at g 0, 0.69–0.75 at g 0.5 and 0.86–0.93 at
+      g 0.7. Taps 6 → 12 move it 0.06 at most. The fast gates (0.42–0.52)
+      need g 0.2–0.35, under DENSITY's 0.5 floor; the slow gates
+      (0.86–0.99) need more diffusion than g 0.7 gives.
+    - **Brightness:** it is TONE's setting and range, not the unit's
+      two-sample average. TONE 0.2 (7.6 kHz) reads 4,943 Hz against
+      #35's 3,986 Hz, and 3.5 kHz reads 3,793 Hz. The slow gates have no
+      average (their centroids reach 5,467 Hz, which the average's
+      3,513 Hz ceiling can't). #38 (1,898 Hz) needs TONE below 2.5 kHz.
+  - **GATE, proposed.** Range changes alone (PRE-DLY, TONE 12 k → 1.2 k,
+    DENSITY's g from 0.2) pass 0 of 10: the slow gates miss NED by 7–20 %,
+    and the fast gates miss 4 kHz RT60 by up to 15 %. The proposal, all
+    shared by both TYPEs:
+    - the pre-diffuser moves after the tap sum. For the taps, TAIL and
+      REGEN that is the same transfer, since they are linear;
+    - two more f32 allpasses follow it, 11.3 and 17 ms, on DENSITY's g;
+    - DENSITY's g runs 0 → 0.8; taps stay 6 → 12;
+    - TONE runs 12 kHz → 1 kHz; SHAPE runs 0 to −30 dB (#35 and #39 sit
+      at −18);
+    - TAIL's loop gets a one-pole damper, DAMP on slot 10, 12 kHz → 2 kHz.
+
+    The float model passes 1 of 10 (#37). The near misses:
+    - NED at 20 ms on #30, #31, #32 and #34: −16, −14, −19 and −11 %;
+    - pre-delay on #35 and #39: +2.1 and +2.2 ms, PRE-DLY at 0;
+    - RT60 on #33 and #34: −6 % at 500 Hz;
+    - #36: +8 % at 2 kHz, and NED +10 and +13 %;
+    - #38: NED at 50 ms +22 %.
+  - **REVERSE's four questions.** The unit's REVERSE has about 75 taps in
+    four level steps, three allpasses a side after the sum, and one
+    undiffused tap at the end, about 9/4 of the ramp's output.
+    - **The silence:** it is the ramp's start, not a fixed delay. The
+      first −60 dB arrival comes at 82, 46 and 174 ms on #40, #41 and #46,
+      but at 7 ms on #42–44, whose ramps start at −55 dB. The model's best
+      fits use an ONSET (where the ramp starts) of 5–62 ms.
+    - **The rise:** from 20 % to 80 % of the hit time, the 20 ms envelope
+      climbs 27 dB (#40), 18 dB (#41–44) and 34 dB (#46). The fitted CURVE
+      runs 19–47 dB, so CURVE's top goes from 30 to 50 dB.
+    - **The end hit:** it carries 58–78 % of the burst's energy and sits
+      14–16 dB above the ramp's top on a 5 ms envelope. It falls 20 dB in
+      4.4–17 ms. BURST's tap 11 can't be the hit: the pre-diffuser and
+      the decorrelators smear it, so it reads only 2–4 dB over the ramp and
+      takes 47–64 ms to fall. The hit needs its own undiffused read at
+      LENGTH, added to both sides after the decorrelators. Fitted, it sits
+      5.3–7.9 dB over the ramp's top tap.
+    - **REGEN:** the unit feeds the hit back at 1/4 a pass (#47) and 3/4
+      a pass (#48). #48's 10.9 s at a 481 ms hit needs 0.74 a pass, above
+      REGEN's 0.708 top, so the top goes to 0.75. #47 fits at 0.27 with
+      every band within 5 %.
+  - **REVERSE, proposed:**
+    - the shared move above (the taps read the TONE'd send);
+    - an undiffused HIT read at LENGTH, fixed at about +7.5 dB over the
+      top tap;
+    - ONSET on slot 9, 0–150 ms;
+    - 16 ramp taps (12 leaves NED 21–40 % short at 75–90 % of the ramp);
+    - CURVE 0–50 dB;
+    - REGEN's top 0.75.
+  - **REVERSE's metrics.** These are judged from the click, not from the
+    first −20 dB arrival:
+    - the hit's time, ±1 ms;
+    - the hit's level over the ramp's top, ±1.5 dB;
+    - the ramp's 20 ms envelope at 20, 40, 60 and 80 % of the hit time,
+      ±3 dB;
+    - the first −60 and −40 dB arrivals, ±15 %;
+    - the fall to −20 dB after the hit, ±5 ms;
+    - the ramp's NED at 50, 75 and 90 %, ±10 %;
+    - the burst's centroid from the click to 20 ms past the hit, ±5 %.
+
+    Band RT60 is judged on #47 and #48 only. On a window it reads the
+    window, not a decay, and every reverse preset reads its 500 Hz octave
+    7–15 % long, which no BURST variant follows.
+  - **REVERSE's pass count.** In the float model it passes 0 of 8 on
+    those metrics. The best variant (16 taps with ONSET and HIT) gets
+    within these:
+    - the hit's time, within ±2 ms;
+    - the hit's level, 0.3–2.9 dB over;
+    - the onsets, mostly within ±25 %;
+    - #47's RT60, within ±4 %.
+
+    It misses these:
+    - the ramp's last quarter, 2.5–6 dB low;
+    - the ramp's NED, 5–44 % short.
+
+    24 taps don't close either miss. The unit's ramp needs its own ~75
+    taps: about +250 instructions a ring sample (+125 an output sample),
+    over both builds' headroom. The owner rules: take REVERSE v2 and sign
+    the ramp misses, or pay for the dense ramp.
+  - **Burst metrics, reported beside the verdict.**
+    - **Cut:** ±10 ms or ±5 %, whichever is larger.
+    - **Body slope:** ±25 %, and never under ±5 dB/s.
+    - **Peak time:** reported only. On a flat body it jumps by 175 ms
+      while the cut and slope hold (#33, #34).
+
+    At those tolerances, GATE meets cut and slope on 2 of 10 at baseline
+    (#33, #34) and on 3 of 10 in the model (#32, #34, #35). The fit
+    doesn't steer on them.
+  - **Cost and memory.** The base is BURST's 263–318 instructions a ring
+    sample, two output samples each. Per ring sample, the changes add:
+    - +12 for the two allpasses;
+    - +3–5 for TAIL's damper;
+    - +4–5 for the hit;
+    - +2 for PRE-DLY's tap 0;
+    - +16 for four more taps.
+
+    That is +37–40 a ring sample, or **+18–22 instructions an output
+    sample**: 8.5–10 cycles at 0.47 a cycle, and 19–23 at 1.06. Without the
+    four taps it is +10–12 (4.7–5.6 and 10.6–12.7 cycles). The tape build's
+    headroom of 23 is reached only at 1.06 with 16 taps. The allpasses
+    take 680 f32 (1,360 slots) of the arena's 1,462 spare. ONSET and HIT
+    are placement and weights, worked out once a block.
+
 ## Alternatives considered
 - **Keep ADR 0085's ±30 % window:** it passes reverbs the owner can tell
   apart from the preset at once. The new bar is set where the harness's own
