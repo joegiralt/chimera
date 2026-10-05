@@ -129,10 +129,13 @@ impl Bounds {
 /// PING-PONG's clamp (spec § 2): a head left outside new bounds plays on,
 /// its own way, while the output moves to the head that starts inside, over
 /// `len` samples, linearly.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Ghost {
     /// Where it reads, in source frames.
     pub pos: Pos,
+    /// Added to what it reads: the share of a fade it retargeted, so the
+    /// output carries on from where it was and fades with it.
+    pub lift: f32,
     /// It moves toward frame 0.
     pub back: bool,
     /// Samples of the fade played, and its length.

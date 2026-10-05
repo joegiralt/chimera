@@ -846,6 +846,51 @@ fn ping_pong_pitch_jumps_are_click_free() {
     }
 }
 
+/// PING-PONG under a far POSITION square wave clamps all the time, and a
+/// pitch square wave on top makes turns land late and heads land outside
+/// while a clamp's fade still runs: those jumps retarget the fade (R1), so
+/// the worst step stays within the fixed pitches' own under the same wave.
+#[test]
+fn ping_pong_jumps_under_a_running_clamp_are_click_free() {
+    let held = held_plain(&sine(48_000, 2_000.0, 48_000), 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    let mut loud = Vec::new();
+    for size in [0.0, 0.2] {
+        for motion in [0.0, 0.5] {
+            let run = |pitch: &dyn Fn(usize) -> f32| {
+                let p = |n: usize| TapeEngineParams {
+                    model: TapeModel::PingPong,
+                    size,
+                    position: if (n / 3).is_multiple_of(2) { 0.1 } else { 0.9 },
+                    motion,
+                    ..TapeEngineParams::default()
+                };
+                let mut e = fresh();
+                e.set_pitch(pitch(0));
+                e.note_on(60, &p(0), &v, SR);
+                let mut out = Vec::new();
+                let mut b = [0.0; BLOCK_SIZE];
+                for n in 0..3_000 {
+                    e.set_pitch(pitch(n));
+                    e.render(&mut b, &p(n), &v, SR);
+                    out.extend_from_slice(&b);
+                }
+                max_step(&out[4 * B..])
+            };
+            let fixed = run(&|_| 0.0).max(run(&|_| 4_800.0));
+            for half in [2, 3, 7] {
+                let jumps = run(&|n| if (n / half) % 2 == 0 { 4_800.0 } else { 0.0 });
+                if jumps > 1.25 * fixed {
+                    loud.push(format!(
+                        "SIZE {size}, MOTION {motion}, every {half} blocks: {jumps} against {fixed}"
+                    ));
+                }
+            }
+        }
+    }
+    assert!(loud.is_empty(), "{loud:#?}");
+}
+
 /// A clamp's fade holds PING-PONG's bounds, but `inc` rising under it still
 /// lengthens them to the floor (F2): a 96-frame loop at `inc` 1 clamps under
 /// a POSITION jump, then the pitch rises four octaves, and every block's
@@ -921,7 +966,12 @@ fn host_time(
 /// × 1.46 × 1.1 + 12 a head; 5 % is left for the host's noise (in release;
 /// `cargo test --release` measured the bills). The bench rows replace
 /// these.
+///
+/// Host timing is load-sensitive, so it doesn't run by default: run it
+/// alone on a quiet machine with `cargo test --release -p chimera-core
+/// --test tape_models_test tiny_loops -- --ignored`.
 #[test]
+#[ignore = "load-sensitive host timing; the bench rows replace it"]
 fn tiny_loops_cost_within_their_bills() {
     let tiny = held_plain(&[0.9, -0.7, 0.4, -0.2, 0.6, -0.1, 0.3, -0.8], 48_000);
     let tv = SourceView::strict(&tiny).unwrap();

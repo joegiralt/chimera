@@ -73,6 +73,19 @@ const _: () = assert!(NOTE_ON_RAMP as usize <= BLOCK_SIZE);
 /// the next sample, its head held in reach by the splice's modulo.
 const MAX_EVENTS: usize = 4;
 
+/// A retargeted clamp's `lift` (R1) on its samples `out`, fading with the
+/// ghost's share: `lift · (1 − gain)`, where the last sample's gain is `g`
+/// and it rises `dg` a sample. It runs after the clamp's loop, not in it,
+/// and only while a lift is set: the plain clamp pays nothing for it.
+#[inline(always)]
+fn lift(out: &mut [f32], lift: f32, g: f32, dg: f32) {
+    let mut c = lift * (1.0 - g);
+    for y in out.iter_mut().rev() {
+        *y += c;
+        c += lift * dg;
+    }
+}
+
 /// Frames a head advances each output sample:
 /// `rate / sample_rate · 2^((note·100 + pitch_cents − root) / 1200)`,
 /// clamped to `[ε, INC_MAX]` so a head never stands still.
@@ -141,11 +154,13 @@ pub struct Probe {
 /// What a wrap or a turn reads from the block's params: END (START, for
 /// REVERSE's mirrored window) and XFADE latch there.
 #[derive(Clone, Copy)]
-struct AtWrap {
+struct AtWrap<'a> {
     end: f32,
     xfade: f32,
     frames: u32,
     rate: u16,
+    /// The source: a retargeted fade reads what it plays (`fade_from`).
+    v: &'a SourceView<'a>,
 }
 
 #[derive(Clone, Copy)]
@@ -551,6 +566,7 @@ impl TapeEngine {
             xfade: p.xfade,
             frames: v.frames(),
             rate,
+            v,
         };
         let scrub = self.model == TapeModel::Scrub;
         if scrub {
@@ -617,7 +633,7 @@ impl TapeEngine {
         p: &TapeEngineParams,
         inc: f32,
         first: bool,
-        k: &AtWrap,
+        k: &AtWrap<'_>,
     ) -> (f32, f32) {
         let want = 2.0 * self.mac.motion * inc;
         if self.speed == 0.0 && want != 0.0 && (want < 0.0) != self.mirror {
@@ -653,7 +669,7 @@ impl TapeEngine {
     /// the window's end it keeps. It moves only with `inc`, and the bounds it
     /// sets latch at a wrap or a turn, under the crossfades every other
     /// change goes through (or while the head runs up, with nothing in play).
-    fn floor(&mut self, fast: f32, k: &AtWrap) {
+    fn floor(&mut self, fast: f32, k: &AtWrap<'_>) {
         self.min_len = shortest(k.rate, fast);
         self.we = window_end_min(self.ws.min(k.frames - 1), k.end, k.frames, self.min_len);
     }
@@ -777,7 +793,7 @@ impl TapeEngine {
         out: &mut [f32; BLOCK_SIZE],
         v: &SourceView<'_>,
         (mut i, mut cur, step): (usize, u64, u64),
-        k: &AtWrap,
+        k: &AtWrap<'_>,
     ) -> (usize, u64) {
         let [mut h0, mut h1] = self.heads.map(|h| h.pos);
         let (mut ev, mut g, mut off, mut df) = (self.event, self.gain, self.off, self.df);
@@ -948,11 +964,12 @@ impl TapeEngine {
         out: &mut [f32; BLOCK_SIZE],
         v: &SourceView<'_>,
         (mut i, mut cur, step): (usize, u64, u64),
-        k: &AtWrap,
+        k: &AtWrap<'_>,
     ) -> (usize, u64) {
         let dg = self.clamp_dg;
         let mut gh = self.ghost.unwrap_or(Ghost {
             pos: Pos(0),
+            lift: 0.0,
             back: false,
             done: 0,
             len: 1,
@@ -1022,6 +1039,9 @@ impl TapeEngine {
                     break;
                 }
             }
+            if GHOST && gh.lift != 0.0 {
+                lift(&mut out[start..i], gh.lift, g, dg);
+            }
             let n = (i - start) as u32;
             let h = if mirror { off - r } else { r };
             self.heads[0].pos = h;
@@ -1034,18 +1054,22 @@ impl TapeEngine {
                     if turning.is_some() {
                         t.k += n as u16;
                         self.turning = Some(t);
-                        self.end_half(t);
+                        self.end_half(t, k);
                     }
                     if hit || (turning.is_some() && self.turning.is_none()) {
                         self.on_event(k);
                     }
                     return (i, cur);
                 }
+                // An event may retarget the fade (`fade_from`): it reads
+                // the fade's state from `self`, and it comes back here.
+                self.ghost = Some(gh);
+                self.gain = g;
             }
             if turning.is_some() {
                 t.k += n as u16;
                 self.turning = Some(t);
-                if self.end_half(t) && !GHOST && self.ghost.is_some() {
+                if self.end_half(t, k) && !GHOST && self.ghost.is_some() {
                     // A clamp started at the flip.
                     return (i, cur);
                 }
@@ -1064,6 +1088,9 @@ impl TapeEngine {
                     return (i, cur);
                 }
             }
+            if let (true, Some(h)) = (GHOST, self.ghost) {
+                (gh, g) = (h, self.gain);
+            }
         }
         if GHOST {
             self.ghost = Some(gh);
@@ -1074,11 +1101,12 @@ impl TapeEngine {
 
     /// A turn's half may have ended at `t`: at rest at the edge the head
     /// comes back (`flip_at`; true); at the end of the turn, the next edge's
-    /// event is set.
-    fn end_half(&mut self, t: Turn) -> bool {
+    /// event is set. Out of line: `run_slow`'s loops compile leaner.
+    #[inline(never)]
+    fn end_half(&mut self, t: Turn, k: &AtWrap<'_>) -> bool {
         if t.k == t.th {
             let r = self.real(self.heads[0].pos);
-            self.flip_at(r);
+            self.flip_at(r, k);
             true
         } else {
             if t.k == 2 * t.th {
@@ -1091,7 +1119,7 @@ impl TapeEngine {
 
     /// The next pass's bounds from the eased macros, the walk, and END and
     /// XFADE now. SCRUB's loop is `[0, Ll)` behind the finger.
-    fn next_bounds(&self, k: &AtWrap) -> Bounds {
+    fn next_bounds(&self, k: &AtWrap<'_>) -> Bounds {
         let (ws, we) = (self.ws.min(k.frames - 1), self.we);
         match self.model {
             TapeModel::Scrub => {
@@ -1124,7 +1152,7 @@ impl TapeEngine {
     /// A loop shorter than a sample's step may need more than one.
     #[cold]
     #[inline(never)]
-    fn on_event(&mut self, k: &AtWrap) {
+    fn on_event(&mut self, k: &AtWrap<'_>) {
         let ws = self.ws.min(k.frames - 1);
         for _ in 0..MAX_EVENTS {
             let h = self.heads[0].pos;
@@ -1137,7 +1165,7 @@ impl TapeEngine {
             }
             self.runup = false;
             if self.model == TapeModel::PingPong {
-                self.turn();
+                self.turn(k);
                 continue;
             }
             let le = self.bounds.le;
@@ -1188,8 +1216,9 @@ impl TapeEngine {
     /// head slows to a stop there and comes back (`TURN_S` each way, less in
     /// a short loop). With no room for one, the head reflects at the edge,
     /// `h = 2·edge − h`, and its direction flips (`flip_at`); run past it by
-    /// more than a step, the output fades to the reflected head.
-    fn turn(&mut self) {
+    /// more than a step, the output fades to the reflected head (a fade
+    /// already running is retargeted).
+    fn turn(&mut self, k: &AtWrap<'_>) {
         let b = self.bounds;
         let h = self.heads[0].pos;
         if h.whole() < b.le {
@@ -1220,16 +1249,30 @@ impl TapeEngine {
         // Past the edge by more than a step (the speed rose mid-turn), the
         // reflected head reads where this one never played: the output
         // fades there, as a clamp's does.
-        if (past >> 32) as f32 > self.v + 1.0 && self.ghost.is_none() {
-            self.ghost = Some(Ghost {
-                pos: self.real(h),
-                back: self.mirror,
-                done: 0,
-                len: self.clamp_len,
-            });
-            self.gain = 0.0;
+        if (past >> 32) as f32 > self.v + 1.0 {
+            self.fade_from(self.real(h), self.mirror, k);
         }
-        self.flip_at(r);
+        self.flip_at(r, k);
+    }
+
+    /// The head jumps from `pos` (source frames, going `back` or up): the
+    /// output fades from there over `CLAMP_FADE_S`. A fade already running
+    /// is retargeted (R1): its ghost restarts at `pos`, and what it still
+    /// added to the output, `(1 − gain)·(ghost − head)`, rides on the new
+    /// ghost as its `lift`, so the output carries on and fades from there.
+    fn fade_from(&mut self, pos: Pos, back: bool, k: &AtWrap<'_>) {
+        let lift = match self.ghost {
+            Some(g) => (1.0 - self.gain) * (k.v.read(g.pos) + g.lift - k.v.read(pos)),
+            None => 0.0,
+        };
+        self.ghost = Some(Ghost {
+            pos,
+            lift,
+            back,
+            done: 0,
+            len: self.clamp_len,
+        });
+        self.gain = 0.0;
     }
 
     /// PING-PONG's frame for a head at `r` (source frames) going down
@@ -1286,8 +1329,11 @@ impl TapeEngine {
     /// fades, only the floor: `held`). A head outside them that would not be
     /// in within `CLAMP_FADE_S` moves to the clamped place inside under a
     /// fade that long.
-    fn flip_at(&mut self, r: Pos) {
+    fn flip_at(&mut self, r: Pos, k: &AtWrap<'_>) {
         let back = !self.mirror;
+        // Where the head is before any jump: `r` at a turn's rest, the
+        // overshooting head on a late reflection (whose fade is started).
+        let pre = self.real(self.heads[0].pos);
         let nb = if self.ghost.is_some() {
             self.held(back)
         } else {
@@ -1303,20 +1349,15 @@ impl TapeEngine {
         // A head outside that would be in within a clamp's time plays on
         // from where it is (bounds moved by a frame, a turn's overshoot).
         // Further out, it moves to the clamped place under a fade; while
-        // one fades the bounds hold, so that is only a nudge.
+        // one fades the bounds hold, and the fade is retargeted from here
+        // (unless a late reflection just started it here).
         let mut inside = u.clamp(lo, hi);
         // Below 0 (a loop shrunk under a head going down at POSITION 0) it
         // would wrap: clamped.
         if u >= 0 && (((inside - u) >> 32) as f32) < self.reach {
             inside = u;
-        } else if self.ghost.is_none() {
-            self.ghost = Some(Ghost {
-                pos: r,
-                back,
-                done: 0,
-                len: self.clamp_len,
-            });
-            self.gain = 0.0;
+        } else if self.ghost.is_none_or(|g| g.done > 0 || g.pos != pre) {
+            self.fade_from(pre, back, k);
         }
         self.heads[0].pos = Pos(inside as u64);
         self.bounds = nb;
