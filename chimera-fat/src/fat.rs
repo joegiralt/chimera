@@ -275,11 +275,16 @@ impl<'a, B: Blocks> Table<'a, B> {
     /// held unflushed is dropped first, so the walk ends where the card's
     /// copy does. A pending `fresh` cluster goes too if the walk ends on
     /// its `prev` (#362). A card that refuses keeps what is left for the
-    /// next `heal`, and the error returns.
+    /// next `heal`, and the error returns. An orphan still unhealed (no
+    /// operation reaches here before `heal`) is kept, and this chain left
+    /// for the sweep: `Corrupt`.
     pub fn drop_chain(&mut self, start: u32) -> Result<(), FsError<B::Error>> {
         let fresh = self.fresh.take();
         self.discard();
-        debug_assert!(self.cache.orphan.is_none(), "an orphan unhealed");
+        if self.cache.orphan.is_some() {
+            debug_assert!(false, "an orphan unhealed");
+            return Err(FsError::Corrupt);
+        }
         self.cache.orphan = Some((start, fresh));
         self.drop_orphan().inspect_err(|_| self.discard())
     }

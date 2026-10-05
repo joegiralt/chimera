@@ -173,7 +173,9 @@ impl<B: Blocks> Blocks for ReadOnly<B> {
         self.0.read(lba, buf).map_err(RoError::Dev)
     }
 
+    /// Never asked: the read phases don't write. A bug, if it is.
     fn write(&mut self, _lba: u32, _buf: &[u8; BLOCK]) -> Result<(), Self::Error> {
+        debug_assert!(false, "a write in the sweep's read phases");
         Err(RoError::Refused)
     }
 }

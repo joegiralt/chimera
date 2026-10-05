@@ -263,6 +263,8 @@ impl Doubt {
             Doubt::Card(StoreError::Timeout) => "timeout",
             Doubt::Card(StoreError::VolumeChanged(_)) => "card-changed",
             Doubt::Card(StoreError::Unsupported(_)) => "unsupported",
+            // The sweep's read-only phases asked to write: a bug.
+            Doubt::Card(StoreError::ReadOnly) => "write-refused",
             Doubt::Card(_) => "card-error",
         }
     }
