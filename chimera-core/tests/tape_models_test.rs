@@ -8,17 +8,17 @@ use core::mem::MaybeUninit;
 
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::{
-    CLAMP_FADE_S, INC_MAX, NOTE_ON_RAMP, TapeEngine, TapeEngineParams, TapeModel, drag_s, loop_len,
+    CLAMP_FADE_S, INC_MAX, MIN_PASS_SAMPLES, NOTE_ON_RAMP, TapeEngine, TapeEngineParams, TapeModel,
+    drag_s, loop_len,
 };
 use chimera_hal::BLOCK_SIZE;
 use common::tape::{held_plain, saw_with_burst, sine};
 
 const SR: u32 = 48_000;
-/// The bills (spec § 5) the tiny-loop timings are held under; LOOP and
-/// REVERSE's short-loop worst is measured, not yet billed (390 stands).
-const PING_PONG_BILL: f64 = 560.0;
-const SCRUB_BILL: f64 = 540.0;
-const LOOP_SHORT_WORST: f64 = 510.0;
+/// The bills (spec § 5) the shortest-loop timings are held under.
+const LOOP_BILL: f64 = 450.0;
+const PING_PONG_BILL: f64 = 490.0;
+const SCRUB_BILL: f64 = 480.0;
 const B: usize = BLOCK_SIZE;
 
 fn fresh() -> TapeEngine {
@@ -643,11 +643,12 @@ fn ping_pong_size_lfo_soak() {
     }
 }
 
-/// Every loop is at least `MIN_LOOP_FRAMES` (or the source), so at `inc`'s
-/// clamp a loop wraps at most once in 4 samples; folded at XFADE ½ a pass
-/// is half the loop, so at most a fade's start and a wrap in 4.
+/// A loop is at least `MIN_PASS_SAMPLES · inc` frames, so at `inc` 16 on a
+/// 64-frame window (which END widens to the floor) a pass, or a turn, comes
+/// at most once in 16 output samples: one event a pass at XFADE 0. Folded
+/// at XFADE ½ a pass is half the loop: a fade's start and its wrap in 8.
 #[test]
-fn events_are_bounded_per_block() {
+fn pass_rate_is_bounded() {
     let held = held_plain(&sine(48_000, 100.7, 48_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
     for model in [
@@ -659,6 +660,8 @@ fn events_are_bounded_per_block() {
         for xfade in [0.0, 0.5] {
             let p = TapeEngineParams {
                 model,
+                start: 0.5,
+                end: 0.5 + 64.0 / 48_000.0,
                 size: 0.0,
                 xfade,
                 motion: 1.0,
@@ -672,14 +675,71 @@ fn events_are_bounded_per_block() {
             let blocks = 200;
             play(&mut e, &p, &v, blocks);
             let per = (e.events() - before) as f32 / blocks as f32;
-            // A wrap at most every 4 samples; folded at XFADE ½, a pass is
-            // half the loop, so a fade's start and its wrap every 2.
-            let most = if xfade == 0.0 { B / 4 + 1 } else { B + 1 };
+            let most = if xfade == 0.0 {
+                B / MIN_PASS_SAMPLES as usize + 1
+            } else {
+                2 * B / (MIN_PASS_SAMPLES as usize / 2) + 1
+            };
             assert!(
                 per <= most as f32,
-                "{model:?} XFADE {xfade}: {per} events a block"
+                "{model:?} XFADE {xfade}: {per} events a block, at most {most}"
             );
         }
+    }
+}
+
+/// `inc` swept from 1 to 16 and back on SIZE 0: the floor rises from 96
+/// to 256 frames and falls, each change latched at a wrap or a turn under
+/// the crossfades. A loop this short at this speed has its own seams, so
+/// the sweep is held against the same loop played at fixed speeds across
+/// the range: the floor's moves add no step of their own.
+#[test]
+fn inc_sweep_across_the_floor_is_click_free() {
+    let held = held_plain(&sine(48_000, 2_000.0, 48_000), 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    let cents = |t: f32| 4_800.0 * (1.0 - (2.0 * t - 1.0).abs());
+    let blocks = 3_000;
+    for model in [
+        TapeModel::Loop,
+        TapeModel::Reverse,
+        TapeModel::PingPong,
+        TapeModel::Scrub,
+    ] {
+        let p = TapeEngineParams {
+            model,
+            size: 0.0,
+            xfade: 0.5,
+            position: 0.3,
+            motion: 0.5,
+            ..TapeEngineParams::default()
+        };
+        let run = |pitch: &dyn Fn(usize) -> f32| {
+            let mut e = fresh();
+            e.set_pitch(pitch(0));
+            e.note_on(60, &p, &v, SR);
+            let mut out = Vec::new();
+            let mut b = [0.0; BLOCK_SIZE];
+            for n in 0..blocks {
+                e.set_pitch(pitch(n));
+                e.render(&mut b, &p, &v, SR);
+                out.extend_from_slice(&b);
+            }
+            max_step(&out[4 * B..])
+        };
+        let fixed = (0..=8)
+            .map(|k| {
+                let c = 600.0 * k as f32;
+                run(&|_| c)
+            })
+            .fold(0.0f32, f32::max);
+        // Or the sine's own step at `inc` 16, where a loop sits near a
+        // peak and its fixed runs barely move.
+        let fixed = fixed.max(16.0 * max_step(&sine(48_000, 2_000.0, 4_800)));
+        let swept = run(&|n| cents(n as f32 / blocks as f32));
+        assert!(
+            swept <= 1.25 * fixed,
+            "{model:?}: swept {swept} against fixed {fixed}"
+        );
     }
 }
 
@@ -712,9 +772,9 @@ fn host_time(
 /// bench rows, in host time against LOOP's fade path (a long loop at
 /// neutral XFADE ½, where every pass fades):
 /// - each model at SIZE 0 and `inc` 16 on an 8-frame source;
-/// - PING-PONG clamping in a 64-frame loop at `inc` 16 under a POSITION
-///   square wave;
-/// - SCRUB in a 64-frame loop at `inc` 16.
+/// - each model in its shortest legal loop at `inc` 16 (SIZE 0 on 8 kHz
+///   sources: 256 frames, `MIN_PASS_SAMPLES · inc`), XFADE ½; PING-PONG
+///   clamping there under a POSITION square wave.
 ///
 /// Each is held under its model's bill: host time over LOOP's fade path,
 /// times that path's 217 instructions, is an M7 estimate, billed at
@@ -742,7 +802,7 @@ fn tiny_loops_cost_within_their_bills() {
     );
     let at_clamp = (127, 4_800.0);
     let bill = |m: TapeModel| match m {
-        TapeModel::Loop | TapeModel::Reverse => LOOP_SHORT_WORST,
+        TapeModel::Loop | TapeModel::Reverse => LOOP_BILL,
         TapeModel::PingPong => PING_PONG_BILL,
         _ => SCRUB_BILL,
     };
@@ -771,7 +831,7 @@ fn tiny_loops_cost_within_their_bills() {
             ..TapeEngineParams::default()
         };
         let t = host_time(&|_| p, &sv, at_clamp, blocks);
-        rows.push((format!("{model:?}, 64 frames"), model, t));
+        rows.push((format!("{model:?}, shortest loop"), model, t));
     }
     let square = |n: usize| TapeEngineParams {
         model: TapeModel::PingPong,
@@ -781,7 +841,7 @@ fn tiny_loops_cost_within_their_bills() {
     };
     let t = host_time(&square, &sv, at_clamp, blocks);
     rows.push((
-        "PingPong, 64 frames, clamping".into(),
+        "PingPong, shortest loop, clamping".into(),
         TapeModel::PingPong,
         t,
     ));
@@ -793,7 +853,7 @@ fn tiny_loops_cost_within_their_bills() {
         ..TapeEngineParams::default()
     };
     let t = host_time(&|_| scrub, &sv, at_clamp, blocks);
-    rows.push(("Scrub, 64 frames".into(), TapeModel::Scrub, t));
+    rows.push(("Scrub, shortest loop".into(), TapeModel::Scrub, t));
     for (name, model, t) in rows {
         let ratio = t / fade;
         let cycles = ratio * 217.0 * 1.46 * 1.1 + 24.0;

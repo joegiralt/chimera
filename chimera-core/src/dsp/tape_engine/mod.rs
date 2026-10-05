@@ -26,7 +26,9 @@ use chimera_hal::BLOCK_SIZE;
 use crate::dsp::algo::math::{clampf, exp2};
 use crate::dsp::ease::Ramp;
 use crate::dsp::glide::Glide;
-use heads::{Bounds, Fade, Ghost, Head, Plan, Turn, at, plan, window_end, window_start};
+use heads::{
+    Bounds, Fade, Ghost, Head, Plan, Turn, at, plan, shortest, window_end_min, window_start,
+};
 use read::{Pos, SourceView};
 
 pub use heads::loop_len;
@@ -48,6 +50,11 @@ pub const MIN_LOOP_S: f32 = 0.002;
 /// Four samples' travel at `INC_MAX`: a loop's events come at most one in 4
 /// samples, so a pass's arithmetic never runs every sample.
 pub const MIN_LOOP_FRAMES: u32 = 4 * INC_MAX as u32;
+/// A loop is at least this many output samples of travel at the block's
+/// fastest `inc` (`MIN_PASS_SAMPLES · inc` frames): a pass, or a turn,
+/// comes at most once in 16 samples, so a pass's events and calls never
+/// dominate a block (spec § 2). At `inc` 16 a loop is at least 256 frames.
+pub const MIN_PASS_SAMPLES: u32 = 16;
 /// SCRUB's tape stops under this speed, frames a sample (loop and finger
 /// both), and starts again over twice it: its output is silent while
 /// stopped (spec § 2 SCRUB).
@@ -193,6 +200,9 @@ pub struct TapeEngine {
     ws: u32,
     /// The pass in play.
     bounds: Bounds,
+    /// The shortest loop this block, frames: `heads::shortest` at its
+    /// fastest head.
+    min_len: u32,
     /// The next pass's bounds, worked out once a block from its params;
     /// latched where its fade was put off.
     next: Bounds,
@@ -259,6 +269,7 @@ impl TapeEngine {
                 le: 1,
                 lx: 0,
             },
+            min_len: MIN_LOOP_FRAMES,
             next: Bounds {
                 ls: 0,
                 le: 1,
@@ -321,7 +332,14 @@ impl TapeEngine {
         self.pull = 1.0 - libm::expf(-(BLOCK_SIZE as f32) / (drag_s(p.drag) * sample_rate as f32));
         let (start, end) = self.window(p);
         self.ws = window_start(start, frames);
-        let we = window_end(self.ws, end, frames, rate);
+        // The first pass's floor, at the note's own `inc` (SCRUB: its loop's
+        // vari-speed).
+        let mut fast = inc(rate, note, self.pitch, self.root, sample_rate);
+        if self.model == TapeModel::Scrub {
+            fast = (2.0 * libm::fabsf(clampf(p.motion, -1.0, 1.0)) * fast).min(INC_MAX);
+        }
+        self.min_len = shortest(rate, fast);
+        let we = window_end_min(self.ws, end, frames, self.min_len);
         let xfade = if self.model == TapeModel::PingPong {
             0.0
         } else {
@@ -332,7 +350,13 @@ impl TapeEngine {
         let mut start_at = self.ws;
         match self.model {
             TapeModel::Scrub => {
-                self.bounds = Bounds::of(0, we - self.ws, (self.mac.size, 0.0, xfade), rate);
+                self.bounds = Bounds::of_min(
+                    0,
+                    we - self.ws,
+                    (self.mac.size, 0.0, xfade),
+                    rate,
+                    self.min_len,
+                );
                 self.off = self.finger_target(p.position, we);
                 start_at = 0;
                 if p.motion < 0.0 {
@@ -343,8 +367,13 @@ impl TapeEngine {
                 }
             }
             model => {
-                self.bounds =
-                    Bounds::of(self.ws, we, (self.mac.size, self.mac.position, xfade), rate);
+                self.bounds = Bounds::of_min(
+                    self.ws,
+                    we,
+                    (self.mac.size, self.mac.position, xfade),
+                    rate,
+                    self.min_len,
+                );
                 if model == TapeModel::Reverse {
                     self.mirror = true;
                     self.off = at(frames - 1);
@@ -519,6 +548,10 @@ impl TapeEngine {
             (from, to) = self.scrub_block(p, to, first, &k);
         }
         // Every event this block latches these: worked out once.
+        // The floor follows the block's fastest head, so it moves only with
+        // `inc`, and the bounds it sets latch at a wrap or a turn, under the
+        // crossfades every other change goes through.
+        self.min_len = shortest(rate, from.max(to));
         self.next = self.next_bounds(&k);
         if scrub {
             // The finger's speed at the block's ends, frames a sample.
@@ -585,7 +618,7 @@ impl TapeEngine {
         let from = if first { to } else { libm::fabsf(self.speed) };
         self.speed = if self.mirror { -to } else { to };
 
-        let we = window_end(self.ws.min(k.frames - 1), p.end, k.frames, k.rate);
+        let we = window_end_min(self.ws.min(k.frames - 1), p.end, k.frames, self.min_len);
         let at_n = if self.mirror { at(self.n) } else { Pos(0) };
         let finger = self.off - at_n;
         let target = self.finger_target(p.position, we);
@@ -1023,10 +1056,16 @@ impl TapeEngine {
     /// XFADE now. SCRUB's loop is `[0, Ll)` behind the finger.
     fn next_bounds(&self, k: &AtWrap) -> Bounds {
         let ws = self.ws.min(k.frames - 1);
-        let we = window_end(ws, k.end, k.frames, k.rate);
+        let we = window_end_min(ws, k.end, k.frames, self.min_len);
         match self.model {
             TapeModel::Scrub => {
-                let b = Bounds::of(0, we - ws, (self.mac.size, 0.0, k.xfade), k.rate);
+                let b = Bounds::of_min(
+                    0,
+                    we - ws,
+                    (self.mac.size, 0.0, k.xfade),
+                    k.rate,
+                    self.min_len,
+                );
                 if self.mirror { b.mirror(self.n) } else { b }
             }
             model => {
@@ -1039,7 +1078,7 @@ impl TapeEngine {
                 } else {
                     k.xfade
                 };
-                Bounds::of(ws, we, (self.mac.size, place, xfade), k.rate)
+                Bounds::of_min(ws, we, (self.mac.size, place, xfade), k.rate, self.min_len)
             }
         }
     }
