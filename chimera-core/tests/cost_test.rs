@@ -865,7 +865,9 @@ fn a_structure_route_on_symp_bills_the_chord_glide() {
 /// ensemble when on: host estimates until the bench's MDL rows (Modal 2
 /// step A, task 12; `modal` in chimera-stm32/src/bench.rs) read them.
 /// Voices beside the whole FX bus at its worst, on rev V and rev Y: the
-/// costlier models get fewer, as they must.
+/// costlier models get fewer, as they must. BANK's and SYMP's out clip,
+/// stmlib's rational curve for `tanhf` (ADR 0097), gave BANK a third voice
+/// on rev V and SYMP one more on most rows.
 #[test]
 fn modal_bills_each_model() {
     use chimera_core::dsp::modal::{BankModes, ModalEngine, ResonatorMode};
@@ -881,10 +883,10 @@ fn modal_bills_each_model() {
         (sound(String, 0.3, 0.0), 410, (8, 8), (8, 8)),
         (sound(String, 0.3, 0.5), 550, (8, 7), (8, 6)),
         (sound(Bowed, 0.3, 0.5), 640, (8, 6), (7, 6)),
-        (sound(Sympathetic, 0.0, 0.0), 540, (8, 7), (8, 7)),
-        (sound(Sympathetic, 0.3, 0.0), 620, (8, 6), (7, 6)),
-        (sound(Sympathetic, 0.3, 0.5), 760, (6, 5), (6, 5)),
-        (sound(Modal, 0.3, 0.5), 1_900, (2, 2), (2, 2)),
+        (sound(Sympathetic, 0.0, 0.0), 470, (8, 8), (8, 7)),
+        (sound(Sympathetic, 0.3, 0.0), 550, (8, 7), (8, 6)),
+        (sound(Sympathetic, 0.3, 0.5), 690, (7, 6), (7, 5)),
+        (sound(Modal, 0.3, 0.5), 1_840, (3, 2), (2, 2)),
     ] {
         let (rev_v, rev_y) = if cfg!(feature = "master-tape") {
             taped
@@ -909,7 +911,7 @@ fn modal_bills_each_model() {
     // The bank scales with its modes: 48, the most, is 16 more than 32.
     let mut bank = sound(Modal, 0.0, 0.0);
     bank.modal.modes = BankModes::M48;
-    assert_eq!(ModalEngine::cost(&bank.modal), Cost(1_900 + 16 * 45));
+    assert_eq!(ModalEngine::cost(&bank.modal), Cost(1_840 + 16 * 45));
 }
 
 /// A bow from C6 up re-takes its lock correction each block while FORCE
