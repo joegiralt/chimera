@@ -682,3 +682,36 @@ fn the_master_page_meters_gain_reduction() {
     );
     MASTER_GR.publish(0.0);
 }
+
+/// REV › MORE under HALL reads PRE-DLY as it plays: a SIZE move from
+/// elsewhere (a CC) into the plate zone pulls it to 0 ms, and the dirty
+/// render redraws the cells though no cell's own value moved.
+#[test]
+fn rev_more_redraws_the_plate_zones_predelay() {
+    use chimera_core::dsp::reverb::ReverbType;
+    use chimera_core::ui::perf::PerfStats;
+    let mut ui = UiState::new();
+    screen::to_fx(&mut ui, screen::REV);
+    {
+        let r = &mut ui.project_mut().edit_fx().reverb;
+        (r.kind, r.size, r.predelay) = (ReverbType::Hall, 0.5, 0.5);
+    }
+    screen::feed(&mut ui, screen::Input::press(ButtonId::Edit)); // REV › MORE
+    screen::settle(&mut ui);
+    let (perf, scope) = (PerfStats::zero(), screen::scope_fixture());
+    let mut fb = screen::Fb::new();
+    ui.render_dirty_with_scope(&mut fb, &perf, &scope);
+    ui.project_mut().edit_fx().reverb.size = 0.0;
+    screen::settle(&mut ui);
+    ui.render_dirty_with_scope(&mut fb, &perf, &scope);
+    let mut full = screen::Fb::new();
+    ui.render_with_audio(&mut full, &perf, None, &scope);
+    // Everything below the focus band. (The band's TAIL, drawn from the
+    // stored SIZE, is keyed on the focused cell only: a CC to a knob off
+    // the page leaves it stale too, for every composite.)
+    let rows = |f: &screen::Fb| f.px[FOCUS_BOTTOM * 240..].to_vec();
+    assert!(rows(&fb) == rows(&full), "REV › MORE kept a stale PRE-DLY");
+}
+
+/// The first pixel row under the focus band.
+const FOCUS_BOTTOM: usize = chimera_core::ui::theme::FOCUS_BOTTOM as usize;

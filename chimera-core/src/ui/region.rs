@@ -101,6 +101,9 @@ pub enum RegionData {
         /// `MatrixState::rev`, and each cell's `Look` in two bits.
         matrix_rev: u16,
         looks: u16,
+        /// What a cell's text reads beyond its own value: the reverb
+        /// panels' plate zone and its effective PRE-DLY.
+        text: u32,
     },
     Nav {
         chain_idx: u8,
@@ -250,6 +253,7 @@ impl RegionData {
             mods,
             matrix_rev: 0,
             looks: 0,
+            text: 0,
         }
     }
 
@@ -312,6 +316,7 @@ impl RegionData {
             mods: [Some(u32::MAX); 6],
             matrix_rev: u16::MAX,
             looks: u16::MAX,
+            text: u32::MAX,
         }
     }
 
@@ -366,7 +371,9 @@ impl RegionData {
     /// With the matrix's revision in the key, and `looks`: the cells' looks,
     /// or the matrix's inert columns. A deleted route, a dimmed cell or an
     /// inert column redraws.
-    pub fn keyed(self, matrix_rev: u16, looks: u16) -> Self {
+    /// Cells keyed on `text` too: what their text reads beyond their
+    /// values.
+    pub fn with_text_key(self, key: u32) -> Self {
         match self {
             Self::Cells {
                 page,
@@ -374,6 +381,8 @@ impl RegionData {
                 focus,
                 dest_count,
                 mods,
+                matrix_rev,
+                looks,
                 ..
             } => Self::Cells {
                 page,
@@ -383,6 +392,31 @@ impl RegionData {
                 mods,
                 matrix_rev,
                 looks,
+                text: key,
+            },
+            other => other,
+        }
+    }
+
+    pub fn keyed(self, matrix_rev: u16, looks: u16) -> Self {
+        match self {
+            Self::Cells {
+                page,
+                values,
+                focus,
+                dest_count,
+                mods,
+                text,
+                ..
+            } => Self::Cells {
+                page,
+                values,
+                focus,
+                dest_count,
+                mods,
+                matrix_rev,
+                looks,
+                text,
             },
             Self::Grid {
                 sel_row,

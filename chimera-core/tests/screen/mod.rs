@@ -856,7 +856,7 @@ pub type ScreenCase = (&'static str, fn(&mut UiState));
 /// after the Part's SENDS.
 const MST: usize = if cfg!(feature = "master-tape") { 6 } else { 5 };
 const DLY: usize = 3;
-const REV: usize = 4;
+pub const REV: usize = 4;
 #[cfg(feature = "master-tape")]
 const TAPE: usize = 5;
 
@@ -1055,6 +1055,29 @@ pub const CASES: &[ScreenCase] = &[
         to_fx(ui, REV);
         feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
         feed(ui, Input::turn(EncoderId::D, 20)); // RATE
+    }),
+    // HALL at SIZE 0: the SIZE cell reads PLATE (reverb TYPEs T10).
+    ("mixer_fx_reverb_hall", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::turn(EncoderId::A, 2)); // TYPE → HALL
+        feed(ui, Input::turn(EncoderId::B, -128)); // SIZE 0: PLATE
+    }),
+    ("mixer_fx_reverb_hall_more", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::turn(EncoderId::A, 2)); // TYPE → HALL
+        feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
+        feed(ui, Input::turn(EncoderId::B, 20)); // DAMP
+    }),
+    ("mixer_fx_reverb_gate", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::turn(EncoderId::A, 3)); // TYPE → GATE
+        feed(ui, Input::turn(EncoderId::C, 10)); // TAIL
+    }),
+    ("mixer_fx_reverb_gate_more", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::turn(EncoderId::A, 3)); // TYPE → GATE
+        feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
+        feed(ui, Input::turn(EncoderId::B, 20)); // SHAPE
     }),
     ("mixer_fx_delay_char", |ui| {
         to_fx(ui, DLY);

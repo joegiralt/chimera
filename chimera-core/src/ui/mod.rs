@@ -2373,6 +2373,7 @@ impl UiState {
                     core::array::from_fn(|i| renderer::mod_info(f, i).map(f32::to_bits)),
                 )
                 .keyed(self.matrix_state.rev, looks)
+                .with_text_key(rev_text_key(f))
             }
             RegionKind::Nav => RegionData::nav(
                 chain,
@@ -2680,6 +2681,18 @@ fn page_def(at: Location, cx: &NavCtx) -> &'static BlockDef {
     at.page(cx)
         .and_then(|(c, p)| c.def_at(p))
         .unwrap_or(&NO_PAGE)
+}
+
+/// What a reverb panel's cells read beyond their own values: HALL's plate
+/// zone (the SIZE cell's `PLATE`) and the PRE-DLY it plays there, which a
+/// SIZE CC moves while REV › MORE shows only PRE-DLY's stored knob. 0 on
+/// any other page.
+fn rev_text_key(f: &renderer::Frame) -> u32 {
+    if !(0..f.def.params.len()).any(|i| view::is_reverb_panel(f.def, i)) {
+        return 0;
+    }
+    let pre = crate::dsp::reverb::plate_pull(&f.fx.reverb).predelay;
+    (f.ctx.plate as u32) << 16 | region::quantize(pre) as u32
 }
 
 #[cfg(test)]
