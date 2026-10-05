@@ -8,19 +8,21 @@ use core::fmt::Write;
 
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
+use u8g2_fonts::FontRenderer;
 
 use chimera_hal::{Controls, EncoderId};
 
 use crate::params::EngineType;
 use crate::preset::MAX_SOUNDS;
 use crate::project::arena::Cost;
-use crate::project::{PartActionKind, PartId, Pool, Project, SlotId, part_actions, save_needs};
+use crate::project::{PartId, Pool, Project, SlotId};
 use crate::ui::components;
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
 use crate::ui::hint::{self, Gesture};
 use crate::ui::meter::{self, MeterView};
 use crate::ui::nav::chain_def_for;
+use crate::ui::settings::part::Offer;
 use crate::ui::theme;
 
 /// Rows on screen.
@@ -67,18 +69,22 @@ pub const SCROLL_X: i32 = theme::SCROLL_X;
 pub const SCROLL_TOP: i32 = 40;
 pub const SCROLL_H: i32 = 208;
 /// The hint lines: EDIT's load, MIX + EDIT's save, MIX + MINUS's clear.
-/// A refusal reads from the first.
+/// A refusal takes the first two: `POOL FULL`, then what it needs.
 pub const HINT_Y: i32 = 250;
 pub const SAVE_Y: i32 = 266;
 pub const CLEAR_Y: i32 = 282;
 pub const INFO_Y: i32 = 300;
 /// The pool meter's top, under its percentage.
 pub const METER_Y: i32 = 306;
-/// The refusal untracked: `POOL FULL · NEEDS 999K, 999K FREE` fits 216
-/// px only so.
-pub const REFUSAL_TRACKING: i32 = 0;
 /// A row's cost, right-aligned short of its engine tag.
 const COST_RIGHT: i32 = 196;
+/// Where a row's name starts, and its clearance from the cost or tag.
+const NAME_X: i32 = 52;
+const NAME_GAP: i32 = 6;
+/// The engine tag's right edge.
+const TAG_RIGHT: i32 = 223;
+/// The widest engine tag, three letters.
+const TAG_ROOM: i32 = 24;
 /// The keys and what they do here (Pre-flight 22, ADR 0086). SEQ's way up
 /// is every chain's (ADR 0081), so it goes unsaid. MIX + EDIT's save says
 /// what it costs; MIX + MINUS's clear, on a filled slot alone, what it
@@ -103,20 +109,6 @@ pub fn clear_words(cost: Cost) -> FmtBuf {
     let mut f = FmtBuf::new();
     let _ = write!(f, "CLEARS · FREES {}", cost.kib_label().as_str());
     f
-}
-
-/// What MIX + EDIT's save of `part` takes, if one is offered: over its
-/// slot, else to a new one, as `Offer::first_save` picks.
-pub fn save_cost(p: &Project, part: PartId) -> Option<Cost> {
-    part_actions(p, part)
-        .iter()
-        .any(|a| {
-            matches!(
-                a.kind(),
-                PartActionKind::OverSlot(_) | PartActionKind::NewSlot(_)
-            )
-        })
-        .then(|| save_needs(p, part))
 }
 
 /// Encoder A moves the cursor, clamped to the list; the scroll follows it
@@ -177,18 +169,21 @@ pub fn draw<D>(
     draw::fill_rect(d, SCROLL_X, thumb_y, 2, thumb_h, theme::MID);
 
     if let Some(r) = refusal {
-        draw::text_tracked(
-            d,
-            &theme::FONT_LABEL,
-            r,
-            theme::MARGIN_X,
-            HINT_Y,
-            theme::ALERT,
-            REFUSAL_TRACKING,
-        );
+        let (head, why) = refusal_lines(r);
+        for (line, y) in [(head, HINT_Y), (why, SAVE_Y)] {
+            draw::text_tracked(
+                d,
+                &theme::FONT_LABEL,
+                line,
+                theme::MARGIN_X,
+                y,
+                theme::ALERT,
+                theme::LABEL_TRACKING,
+            );
+        }
     } else if hints {
         hint::draw(d, &[LOAD], theme::MARGIN_X, HINT_Y);
-        let cost = save_cost(project, part);
+        let cost = Offer::of(project, part).save_cost();
         let words = save_words(cost);
         let does = if cost.is_some() {
             theme::MID
@@ -219,6 +214,23 @@ pub fn draw<D>(
         0,
     );
     meter::draw(d, &MeterView::of(pool, None), theme::MARGIN_X, METER_Y);
+}
+
+/// A refusal on its two lines: `POOL FULL`, then `NEEDS 1.5K, 0.1K FREE`.
+pub fn refusal_lines(r: &str) -> (&str, &str) {
+    r.split_once(" · ").unwrap_or((r, ""))
+}
+
+/// The longest start of `s` that fits `w` px in `font`.
+fn clip<'s>(font: &FontRenderer, s: &'s str, w: i32) -> &'s str {
+    let mut end = s.len();
+    while end > 0 && draw::text_width(font, &s[..end], 0) > w {
+        end -= 1;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+    }
+    &s[..end]
 }
 
 fn row<D>(d: &mut D, pool: &Pool, entry: usize, y: i32, selected: bool)
@@ -259,7 +271,7 @@ where
     if empty {
         draw::fill_rect(
             d,
-            52,
+            NAME_X,
             y - 4,
             10,
             1,
@@ -273,7 +285,14 @@ where
         } else {
             theme::INK2
         };
-        draw::text(d, &theme::FONT_VALUE, name.as_str(), 52, y, color);
+        // A long name stops short of the cost, or of the tag.
+        let room = match cost {
+            Some(c) => COST_RIGHT - draw::text_width(&theme::FONT_LABEL, c.kib_label().as_str(), 0),
+            None => TAG_RIGHT - TAG_ROOM,
+        } - NAME_GAP
+            - NAME_X;
+        let shown = clip(&theme::FONT_VALUE, name.as_str(), room);
+        draw::text(d, &theme::FONT_VALUE, shown, NAME_X, y, color);
     }
     if let Some(c) = cost {
         let label = c.kib_label();
@@ -282,6 +301,6 @@ where
     if let Some(engine) = chain {
         let chain = chain_def_for(engine);
         let label = chain.blocks[chain.engine_node()].def.short;
-        draw::text_right(d, &theme::FONT_LABEL, label, 223, y, dim, 0);
+        draw::text_right(d, &theme::FONT_LABEL, label, TAG_RIGHT, y, dim, 0);
     }
 }

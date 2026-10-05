@@ -36,7 +36,8 @@ pub fn cell_texts(pool: &Pool) -> [Option<FmtBuf>; 6] {
                 pool.source_count(),
                 sources.kib_label().as_str()
             ),
-            2 => b.write_str(free.kib_label().as_str()),
+            // Floored: never more than there is.
+            2 => b.write_str(free.kib_floor_label().as_str()),
             3 if pending > Cost::default() => b.write_str(pending.kib_label().as_str()),
             _ => return None,
         };
@@ -103,12 +104,12 @@ fn fold(c: Cost) -> u16 {
 pub fn cells_key(pool: &Pool) -> [u16; 6] {
     let (sounds, sources, pending) = pool.split();
     [
-        fold(sounds) ^ (pool.sound_count() as u16) << 12,
-        fold(sources) ^ (pool.source_count() as u16) << 12,
+        fold(sounds),
+        pool.sound_count() as u16,
+        fold(sources),
+        pool.source_count() as u16,
         fold(pool.free()),
         fold(pending),
-        0,
-        0,
     ]
 }
 

@@ -300,12 +300,13 @@ fn every_pool_hint_fits() {
         needs: k999,
         free: k999,
     });
-    let text = chimera_core::ui::draw::text_width(
-        &theme::FONT_LABEL,
-        full.as_str(),
-        browser::REFUSAL_TRACKING,
-    );
-    assert!(text <= w, "{}: {text}", full.as_str());
+    let (head, why) = browser::refusal_lines(full.as_str());
+    assert_eq!(why, "NEEDS 999K, 999K FREE");
+    for line in [head, why] {
+        let text =
+            chimera_core::ui::draw::text_width(&theme::FONT_LABEL, line, theme::LABEL_TRACKING);
+        assert!(text <= w, "{line}: {text}");
+    }
     let (clear, save, wont) = (
         browser::clear_words(k999),
         browser::save_words(Some(k999)),

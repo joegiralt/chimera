@@ -31,18 +31,36 @@ impl Cost {
         self.0
     }
 
-    /// KiB rounded up: `0.3K`, `9.9K` under 10, then `10K`, `41K`.
+    /// KiB rounded up: `0.3K`, `9.9K` under 10, then `10K`, `41K`. What
+    /// a thing costs never reads less than it takes.
     pub fn kib_label(self) -> FmtBuf {
-        let b = self.0 as u64;
-        let tenths = (b * 10).div_ceil(1024);
-        let mut f = FmtBuf::new();
-        let _ = if tenths < 100 {
-            write!(f, "{}.{}K", tenths / 10, tenths % 10)
-        } else {
-            write!(f, "{}K", b.div_ceil(1024))
-        };
-        f
+        kib(self.0 as u64, u64::div_ceil)
     }
+
+    /// KiB rounded down: free space never reads more than there is.
+    pub fn kib_floor_label(self) -> FmtBuf {
+        kib(self.0 as u64, |a, b| a / b)
+    }
+}
+
+impl core::ops::Add for Cost {
+    type Output = Cost;
+
+    fn add(self, rhs: Cost) -> Cost {
+        Cost(self.0.saturating_add(rhs.0))
+    }
+}
+
+/// `b` bytes in KiB, one decimal under 10, divided by `div`.
+fn kib(b: u64, div: fn(u64, u64) -> u64) -> FmtBuf {
+    let tenths = div(b * 10, 1024);
+    let mut f = FmtBuf::new();
+    let _ = if tenths < 100 {
+        write!(f, "{}.{}K", tenths / 10, tenths % 10)
+    } else {
+        write!(f, "{}K", div(b, 1024))
+    };
+    f
 }
 
 /// What a free or a compaction moved: every entry on the moving side of

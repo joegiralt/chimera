@@ -246,3 +246,22 @@ fn the_sound_rung_leaves_by_the_location_keys() {
         Location::mixer(PartId::ALL[1], MixPage::Sends)
     );
 }
+
+/// A 16-character name stops short of its cost: they share no pixels.
+#[test]
+fn a_long_name_clears_its_cost() {
+    let mut p = empty();
+    let mut s = Sound::init(EngineType::Algo);
+    s.name = chimera_core::name::SoundName::new("WWWWWWWWWWWWWWWW").unwrap();
+    p.pool_store(SlotId::ALL[0], &s).unwrap();
+    let fb = drawn(&p, 5, 0);
+    let y = row_y(0);
+    let cols = |c| {
+        (100..SCROLL_X)
+            .filter(|&x| (y - 12..y + 2).any(|yy| fb.at(x, yy) == c))
+            .collect::<Vec<_>>()
+    };
+    let name_end = *cols(theme::INK).last().expect("the name");
+    let cost_start = *cols(theme::MID).first().expect("the cost");
+    assert!(name_end < cost_start, "{name_end} < {cost_start}");
+}

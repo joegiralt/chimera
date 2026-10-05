@@ -1084,7 +1084,7 @@ impl UiState {
     /// Why `part`'s save isn't offered: what it needs against the gap,
     /// else every slot taken.
     fn pool_full(&self, part: PartId) -> Line {
-        let needs = project::save_needs(&self.project, part);
+        let needs = Offer::of(&self.project, part).save_needs();
         let free = self.project.pool().free();
         if needs > free {
             prompt::pool_full(project::PoolFull { needs, free })
@@ -1093,8 +1093,12 @@ impl UiState {
         }
     }
 
-    /// `why` in the browser's band, until the next input.
+    /// `why` in the browser's band until the next input; elsewhere
+    /// (SAVE TO PROJ), a toast.
     fn refuse(&mut self, why: Line) {
+        if self.loc.browse().is_none() {
+            return self.error(why);
+        }
         self.refusal = Some(why);
         self.browser_dirty = true;
     }

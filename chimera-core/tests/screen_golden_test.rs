@@ -111,12 +111,12 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: the pool meter, row costs, the hints' bytes (sound-pool
     // plan Task 6); and its refusal.
     ("sound_browser", 0xff8f72f449506956),
-    ("sound_browser_pool_full", 0x34c66a0a56b79fb0),
+    ("sound_browser_pool_full", 0x60971131ef0b2f89),
     // Re-recorded: a fresh project's footer drops NEW (#286).
     ("settings_personal_theme", 0xc35039e65219cdc2),
     ("settings_midi_sync", 0x0e26ce69d0f54980),
     ("settings_system_diag_aud_load", 0x0d5edcdc4826225e),
-    ("settings_project_pool", 0x4d061a492c38e270),
+    ("settings_project_pool", 0x6a4a4d046c4ef394),
     // ORBIT's row opens its list (plan Task 17).
     ("settings_top", 0x08d6ee26dad9fb97),
     // Part 3's LIVE SNAP leaf (plan Task 15).

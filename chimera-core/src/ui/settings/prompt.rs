@@ -506,7 +506,7 @@ pub fn pool_full(f: PoolFull) -> Line {
         l,
         "POOL FULL · NEEDS {}, {} FREE",
         f.needs.kib_label().as_str(),
-        f.free.kib_label().as_str()
+        f.free.kib_floor_label().as_str()
     );
     l
 }

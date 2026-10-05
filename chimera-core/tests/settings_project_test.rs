@@ -740,19 +740,17 @@ fn pool_leaf_lists_breakdown() {
     screen::to_leaf(&mut ui, &["PROJECT", "POOL"]);
     assert_eq!(ui.page_def().id, SYS_POOL.id);
     let pool = ui.project().pool();
-    let (sounds, _, _) = pool.split();
     let texts = pool_page::cell_texts(pool);
     let text = |i: usize| texts[i].as_ref().map(|t| t.as_str().to_string());
-    assert_eq!(SYS_POOL.params[0].label(), "SOUNDS");
+    let labels = SYS_POOL.params.map(|p| p.label());
+    assert_eq!(labels[..4], ["SOUNDS", "SOURCES", "FREE", "PENDING"]);
+    assert_eq!(text(0).as_deref(), Some("10 · 2.0K"));
+    assert_eq!(text(1).as_deref(), Some("0 · 0.0K"));
     assert_eq!(
-        text(0).unwrap(),
-        format!("{} · {}", pool.sound_count(), sounds.kib_label().as_str())
+        text(2).as_deref(),
+        Some("158K"),
+        "floored: 2.0K + 158K ≤ 160K"
     );
-    assert_eq!(pool.sound_count(), 10);
-    assert_eq!(SYS_POOL.params[1].label(), "SOURCES");
-    assert_eq!(text(1).unwrap(), "0 · 0.0K");
-    assert_eq!(SYS_POOL.params[2].label(), "FREE");
-    assert_eq!(text(2).unwrap(), pool.free().kib_label().as_str());
     assert_eq!(text(3), None, "no PENDING with none pending");
     let fb = screen::render_ui(&ui);
     assert_eq!(fb.at(theme::MARGIN_X, METER_Y), theme::INK, "the bar");

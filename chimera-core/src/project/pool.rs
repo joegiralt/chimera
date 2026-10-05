@@ -137,7 +137,12 @@ impl Pool {
     /// What storing `sound` in `s` takes from the gap: its cost less the
     /// slot's old Sound's.
     pub fn needs(&self, s: SlotId, sound: &Sound) -> Cost {
-        self.index.needs(s, sound)
+        self.index.needs_len(s, entry_len(sound))
+    }
+
+    /// `needs` for a Sound already counted at `len` bytes.
+    pub(super) fn needs_len(&self, s: SlotId, len: usize) -> Cost {
+        self.index.needs_len(s, len)
     }
 
     /// Encodes `sound` into slot `s`, over what was there. Refused, with
@@ -174,10 +179,6 @@ impl Pool {
 }
 
 impl Index {
-    fn needs(&self, s: SlotId, sound: &Sound) -> Cost {
-        self.needs_len(s, entry_len(sound))
-    }
-
     fn needs_len(&self, s: SlotId, len: usize) -> Cost {
         let old = self.slots[s.index()].map_or(0, |e| Cost::of(e.len as usize).bytes());
         Cost::of(Cost::of(len).bytes().saturating_sub(old) as usize)

@@ -34,8 +34,8 @@ impl MeterView {
         }
     }
 
-    pub fn used(&self) -> u32 {
-        self.sounds.bytes() + self.sources.bytes() + self.pending.bytes()
+    pub fn used(&self) -> Cost {
+        self.sounds + self.sources + self.pending
     }
 }
 
@@ -60,7 +60,7 @@ where
 {
     let a = edge(v.sounds.bytes());
     let b = edge(v.sounds.bytes() + v.sources.bytes());
-    let used = v.used();
+    let used = v.used().bytes();
     let c = edge(used);
     let mut seg = |from: i32, to: i32, color| {
         if to > from {
@@ -75,7 +75,8 @@ where
         if used + p.bytes() <= ARENA_BYTES as u32 {
             seg(c, edge(used + p.bytes()), theme::ACCENT);
         } else {
-            seg(c, W, theme::ALERT);
+            // At least a pixel, even on a full bar.
+            seg(c.min(W - 1), W, theme::ALERT);
         }
     }
 }

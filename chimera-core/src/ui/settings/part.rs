@@ -3,9 +3,9 @@
 
 use core::fmt::Write;
 
+use crate::project::arena::Cost;
 use crate::project::{
     Line, Origin, PartAction, PartActionKind, PartId, PartStatus, Project, SlotId, part_actions,
-    part_status,
 };
 
 use super::prompt::Slot;
@@ -67,26 +67,29 @@ pub struct Offer {
     home: Option<SlotId>,
     /// An Edited Part's save over its slot won't fit.
     over_full: bool,
+    /// What the Part's save takes, offered or not (`PartActions::save_needs`).
+    save_needs: Cost,
 }
 
 impl Offer {
     pub fn of(p: &Project, part: PartId) -> Self {
+        let offered = part_actions(p, part);
         let mut actions = [None; 3];
-        for a in part_actions(p, part).iter() {
+        for a in offered.iter() {
             actions[PartCmd::of(a.kind()).idx()] = Some(a);
         }
-        let x = p.part(part);
-        let home = match x.origin() {
+        let home = match p.part(part).origin() {
             Origin::Slot { slot, .. } => Some(slot),
             Origin::Init(_) => None,
         };
         let over_full = actions[PartCmd::OverSlot.idx()].is_none()
-            && part_status(x, p.pool()) == PartStatus::Edited
+            && offered.status() == PartStatus::Edited
             && home.is_some();
         Offer {
             actions,
             home,
             over_full,
+            save_needs: offered.save_needs(),
         }
     }
 
@@ -97,6 +100,16 @@ impl Offer {
     /// SAVE PART FIRST's save: over the slot, else to a new one.
     pub fn first_save(&self) -> Option<PartAction> {
         SAVE_ROWS.iter().find_map(|&c| self.get(c))
+    }
+
+    /// What MIX + EDIT's save takes, if one is offered: `first_save`'s.
+    pub fn save_cost(&self) -> Option<Cost> {
+        self.first_save().map(|_| self.save_needs)
+    }
+
+    /// What the Part's save would take, offered or not: a refusal's NEEDS.
+    pub fn save_needs(&self) -> Cost {
+        self.save_needs
     }
 
     pub fn look(&self, c: PartCmd) -> RowLook {

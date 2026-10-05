@@ -6,6 +6,7 @@ use crate::preset::Sound;
 use crate::storage::sound_crc;
 
 use super::arena::Cost;
+use super::pool::entry_len;
 use super::{Origin, Part, PartFrom, PartId, PartSet, PartSource, Pool, PoolFull, Project, SlotId};
 use super::{TemplateCrc, project_crc};
 
@@ -171,40 +172,58 @@ impl PartAction {
     }
 }
 
-/// At most three, in menu order.
+/// At most three, in menu order, with what they were weighed by.
 pub struct PartActions {
     items: [Option<PartAction>; 3],
+    status: PartStatus,
+    save_needs: Cost,
 }
 
 impl PartActions {
     pub fn iter(&self) -> impl Iterator<Item = PartAction> + '_ {
         self.items.iter().flatten().copied()
     }
+
+    /// The Part's status as they were offered against it.
+    pub fn status(&self) -> PartStatus {
+        self.status
+    }
+
+    /// What the Part's save takes from the gap, offered or not: over its
+    /// slot when it is Edited from one, else a whole new slot.
+    pub fn save_needs(&self) -> Cost {
+        self.save_needs
+    }
 }
 
 /// What applies to `part` now (§ Copy rules). A Stale Part never offers
-/// `OverSlot`: that would undo the other Part's save.
+/// `OverSlot`: that would undo the other Part's save. An offer that
+/// can't apply isn't made (ADR 0043): a save that won't fit is no save.
 pub fn part_actions(p: &Project, part: PartId) -> PartActions {
     let x = p.part(part);
     let status = part_status(x, &p.pool);
     let crc = sound_crc(&x.sound);
-    // An offer that can't apply isn't made (ADR 0043): a save that
-    // won't fit is no save.
-    let fits = |s: SlotId| p.pool.fits(p.pool.needs(s, &x.sound));
+    // Counted once: every save below weighs the same bytes.
+    let len = entry_len(&x.sound);
+    let new_needs = Cost::of(len);
     let free = p
         .pool
         .first_free()
-        .filter(|&s| fits(s))
+        .filter(|_| p.pool.fits(new_needs))
         .map(PartActionKind::NewSlot);
     let filled = |s: SlotId| p.pool.get(s).is_some().then_some(PartActionKind::Revert(s));
-    let kinds = match (status, x.origin) {
-        (PartStatus::Edited, Origin::Slot { slot, .. }) => [
-            fits(slot).then_some(PartActionKind::OverSlot(slot)),
-            free,
-            filled(slot),
-        ],
-        (PartStatus::Stale(s), _) => [filled(s), free, None],
-        (PartStatus::Clean | PartStatus::Edited, _) => [free, None, None],
+    let (kinds, save_needs) = match (status, x.origin) {
+        (PartStatus::Edited, Origin::Slot { slot, .. }) => {
+            let over = p.pool.needs_len(slot, len);
+            let kinds = [
+                p.pool.fits(over).then_some(PartActionKind::OverSlot(slot)),
+                free,
+                filled(slot),
+            ];
+            (kinds, over)
+        }
+        (PartStatus::Stale(s), _) => ([filled(s), free, None], new_needs),
+        (PartStatus::Clean | PartStatus::Edited, _) => ([free, None, None], new_needs),
     };
     PartActions {
         items: kinds.map(|k| {
@@ -216,16 +235,8 @@ pub fn part_actions(p: &Project, part: PartId) -> PartActions {
                 crc,
             })
         }),
-    }
-}
-
-/// What `part`'s save takes from the gap: over its slot when it is
-/// Edited from one, else a whole new slot. As `part_actions` saves it.
-pub fn save_needs(p: &Project, part: PartId) -> Cost {
-    let x = p.part(part);
-    match (part_status(x, &p.pool), x.origin) {
-        (PartStatus::Edited, Origin::Slot { slot, .. }) => p.pool.needs(slot, &x.sound),
-        _ => Cost::of(super::pool::entry_len(&x.sound)),
+        status,
+        save_needs,
     }
 }
 
