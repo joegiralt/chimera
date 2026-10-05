@@ -269,6 +269,23 @@ fn regen_rt60_follows_the_synced_length() {
     );
 }
 
+/// `g` fed a 220 Hz sine at −12 dBFS, block by block at `tempos`, from
+/// 2 s: its L.
+fn replay(g: &ReverbParams, tempos: &[Tempo]) -> Vec<f32> {
+    use chimera_core::dsp::Stereo;
+    use chimera_core::dsp::rev::Reverb;
+    let mut rv = Box::new(Reverb::of_type(g.kind));
+    let sine = common::rev::tone(220.0, 0.25);
+    let mut out = vec![];
+    for (b, &t) in tempos.iter().enumerate() {
+        let send = core::array::from_fn(|i| sine(b * BLOCK_SIZE + i));
+        let mut w = Stereo::SILENT;
+        rv.process(&send, g, g.mix, t, SR, &mut w);
+        out.extend_from_slice(&w.l);
+    }
+    out.split_off(2 * SR as usize)
+}
+
 /// Samples between MIDI clocks at `bpm`, 24 a beat.
 fn tick_every(bpm: f32) -> f64 {
     SR as f64 * 60.0 / (bpm as f64 * 24.0)
@@ -287,14 +304,10 @@ fn clock_dropout_moves_synced_length_once() {
         let mut g = synced(ReverbType::Gate, RevSync::Time);
         (g.size, g.mix) = (1.0, 1.0); // 1/4
         r.shared.fx.reverb = g;
-        let part = &mut r.shared.parts[0].mix;
-        (part.level, part.sends) = (0.0, [0.0, 0.0, 1.0]);
-        let ch = part.channel.get();
-        r.note_on(ch, 48);
         let mut runner = Box::new(OrbitRunner::new(core::num::NonZeroU32::new(SR).unwrap()));
         let (mut next, every) = (0.0f64, tick_every(100.0));
-        let (mut out, mut targets, mut folds, mut steps) = (vec![], vec![], vec![], vec![]);
-        let mut taps = vec![];
+        let (mut tempos, mut targets, mut folds) = (vec![], vec![], vec![]);
+        let (mut steps, mut taps) = (vec![], vec![]);
         for b in 0..(4.0 * SR as f64 / BLOCK_SIZE as f64) as usize {
             let now = runner.now();
             let end = (now + BLOCK_SIZE as u64) as f64;
@@ -306,6 +319,7 @@ fn clock_dropout_moves_synced_length_once() {
             r.render(1);
             let rv = r.fx.reverb();
             let mut f = rv.fold();
+            tempos.push(r.inst.tempo());
             targets.push(knobs(&g, r.inst.tempo(), &mut f).length_ms);
             folds.push(rv.fold());
             // QUAD switches to GATE over the first blocks.
@@ -313,16 +327,15 @@ fn clock_dropout_moves_synced_length_once() {
                 steps.extend(e.crossfades().map(|(_, a, b)| a.abs_diff(b)));
                 taps.push(e.taps_at());
             }
-            out.extend(r.out()[0].iter().step_by(2).copied());
             let _ = b;
         }
         // What the cells draw is what played.
         assert_eq!(rev_clock(), (r.inst.tempo(), r.fx.reverb().fold()));
-        (out, targets, folds, steps, taps)
+        (g, tempos, targets, folds, steps, taps)
     };
     // Just past a tick: the clock's last.
     let drop = 2.0 * SR as f64 + 1.0;
-    let (out, targets, folds, steps, taps) = run(Some(drop));
+    let (g, tempos, targets, folds, steps, taps) = run(Some(drop));
     let changes: Vec<_> = targets
         .windows(2)
         .enumerate()
@@ -349,13 +362,12 @@ fn clock_dropout_moves_synced_length_once() {
     let at = |b: usize| taps[b - (targets.len() - taps.len())];
     assert_eq!(at(before), tap_targets(targets[before]));
     assert_eq!(at(targets.len() - 1), tap_targets(500.0));
-    // No rougher through the move than held at either tempo.
-    let held = |bpm: Option<f64>| {
-        let (o, ..) = run(bpm);
-        max_d2(&o[2 * SR as usize..])
-    };
-    let held = held(None).max(held(Some(0.0)));
-    let moved = max_d2(&out[2 * SR as usize..]);
+    // That tempo sequence replayed into GATE fed a sine, which shows a
+    // click the chain's own source would hide: no rougher through the
+    // move than held at either tempo.
+    let held = |bpm| max_d2(&replay(&g, &vec![tempo(bpm); tempos.len()]));
+    let held = held(100.0).max(held(120.0));
+    let moved = max_d2(&replay(&g, &tempos));
     println!("d2: moved {moved}, held {held}");
     assert!(moved <= 1.25 * held, "d2 {moved} against held {held}");
 }
@@ -370,9 +382,10 @@ fn a_switch_starts_the_fold_afresh() {
     (g.size, g.mix) = (1.0, 1.0); // 1/4: 667 ms at 90 BPM plays 1/8
     let mut rv = Box::new(Reverb::of_type(ReverbType::Gate));
     let send = [0.0; BLOCK_SIZE];
-    let mut run = |rv: &mut Reverb, p: &ReverbParams, blocks| {
+    let run = |rv: &mut Reverb, p: &ReverbParams, blocks| {
         for _ in 0..blocks {
-            rv.process(&send, p, p.mix, tempo(90.0), SR, &mut Stereo::SILENT);
+            let mut out = Stereo::SILENT;
+            rv.process(&send, p, p.mix, tempo(90.0), SR, &mut out);
         }
     };
     run(&mut rv, &g, 4);
