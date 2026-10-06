@@ -55,7 +55,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0048](0048-own-fat-layer.md) | Own the FAT layer; keep embedded-sdmmc only as the SD block driver | Accepted |
 | [0049](0049-algo-init-routed-morph-dims.md) | Algo INIT is audibly routed; MORPH dims when A = B (supersedes in part 0024) | Proposed; INIT's RR and OUT LEVEL noted by [0063](0063-levels-at-the-factory-median.md) |
 | [0050](0050-gain-staging-trim-and-final-limiter.md) | Gain staging: a 1/√8 output trim and one peak limiter at −1 dBFS, last | Proposed |
-| [0051](0051-a-voice-holds-one-engine-rebuilt-in-place.md) | A voice holds one engine, rebuilt in place (supersedes 0008) | Accepted |
+| [0051](0051-a-voice-holds-one-engine-rebuilt-in-place.md) | A voice holds one engine, rebuilt in place (supersedes 0008) | Accepted; superseded in part by [0101](0101-voice-chain-may-hold-2112-bytes.md) (Proposed) |
 | [0052](0052-strings-stored-as-16-bit-block-float.md) | Store Modal's string delay lines as 16-bit block float | Superseded by [0054](0054-sympathetic-strings-from-a-shared-pool.md) (sympathetic slot pool, never accepted) |
 | [0053](0053-delay-mechanics-wow-and-irregular-flutter.md) | The delay's WOW becomes MECHANICS: a slow wow and an irregular flutter | Proposed |
 | [0054](0054-sympathetic-strings-from-a-shared-pool.md) | Sympathetic borrows its strings from a shared pool of four (supersedes 0052) | Accepted; voice size assert and `COST_SYMPATHETIC` superseded in part by [0056](0056-modal-resonators-share-four-macros.md) |
@@ -95,3 +95,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0092](0092-put-files-over-the-usb-console.md) | Put project files onto the card over the USB console: `ls`, and `put` through the unit's own A/B save, checked as it streams, a refused side deleted (amends 0068) | Proposed |
 | [0096](0096-filter-types-clean-2040-dirty-and-algo-taps.md) | Three filter TYPEs, CLEAN (Cascadia-style), 2040 (SSM2040) and DIRTY (Chamberlin), with per-type modes, labels and bills; ALGO OP 5/6 audio-rate taps to FREQ, Q, VCA and FOLD (supersedes 0037) | Proposed |
 | [0097](0097-bank-and-symp-clip-with-stmlibs-curve.md) | BANK and SYMP clip with stmlib's curve; the Elements stagger tried and dropped (amends 0063) | Proposed |
+| [0101](0101-voice-chain-may-hold-2112-bytes.md) | The voice chain may hold 2,112 B (supersedes in part 0051) | Proposed |
