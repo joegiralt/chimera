@@ -92,12 +92,13 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_part", 0x91b06a3780c2bbb5),
     #[cfg(feature = "master-tape")]
     ("mixer_sends", 0xcf97b892a7d5a933),
+    // DLY's branch hides REV's label it ran into (TAPE Task 15).
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay", 0xde205a6af1b18294),
+    ("mixer_fx_delay", 0x6bfad50017562c25),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb", 0xc0311d87f95d9df6),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay_char", 0x3b8f3b6dc208a5aa),
+    ("mixer_fx_delay_char", 0x8efda1c817189d8f),
     #[cfg(feature = "master-tape")]
     ("mixer_tape", 0xe4642868fa275a5c),
     #[cfg(feature = "master-tape")]
@@ -167,6 +168,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("tape_page_tron", 0xd146bec467e2e194),
     ("tape_deck_stretch", 0xab44978184d79862),
     ("tape_page_stretch", 0x213f0019718af53c),
+    ("tape_page_stretch_type", 0x1f4bf7ad5f8d6284),
     ("tape_deck_transwave", 0x7313e472f9b49f52),
     ("tape_page_transwave", 0x902f5e3c0b411f96),
     ("tape_deck_scrub", 0x655798835eb8c4ba),

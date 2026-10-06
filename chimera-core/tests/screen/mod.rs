@@ -1045,6 +1045,12 @@ pub const CASES: &[ScreenCase] = &[
         tape_deck(ui, 2);
         feed(ui, Input::press(ButtonId::Edit));
     }),
+    // An unpitched source's TYPE in focus: too wide for the numerals.
+    ("tape_page_stretch_type", |ui| {
+        tape_deck(ui, 2);
+        feed(ui, Input::press(ButtonId::Edit));
+        feed(ui, Input::turn(EncoderId::B, 1));
+    }),
     ("tape_deck_transwave", |ui| tape_deck(ui, 3)),
     ("tape_page_transwave", |ui| {
         tape_deck(ui, 3);

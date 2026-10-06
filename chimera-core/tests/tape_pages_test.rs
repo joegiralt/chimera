@@ -511,3 +511,37 @@ fn tape_pages_have_no_other_gestures() {
         }
     }
 }
+
+/// A TAPE column reads the machine's label and short; a machine change
+/// bumps the matrix's revision, so the headers redraw.
+#[test]
+fn matrix_columns_read_the_machine() {
+    use chimera_core::ui::mod_grid::{MatrixState, ModDest, draw_grid, fmt_route_dest};
+    let dest = ModDest {
+        addr: tape(P::MOTION),
+        label: [0; 8],
+    };
+    let name = |t| {
+        let mut b = FmtBuf::new();
+        fmt_route_dest(&mut b, &dest, t);
+        b.as_str().to_owned()
+    };
+    assert_eq!(name(TapeModel::Loop), "TPE WALK");
+    assert_eq!(name(TapeModel::Stretch), "TPE SPEED");
+    assert_eq!(name(TapeModel::Oneshot), "TPE MOTION");
+    let mut m = MatrixState::new();
+    m.dests[0] = Some(dest);
+    m.num_dests = 1;
+    let grid = |m: &MatrixState| {
+        let mut fb = Fb::new();
+        draw_grid(&mut fb, m, 0, 0);
+        fb.hash()
+    };
+    let walk = grid(&m);
+    let rev = m.rev;
+    m.set_tape(TapeModel::Stretch);
+    assert_ne!(m.rev, rev);
+    assert_ne!(grid(&m), walk, "the header still reads WLK");
+    m.set_tape(TapeModel::Loop);
+    assert_eq!(grid(&m), walk);
+}
