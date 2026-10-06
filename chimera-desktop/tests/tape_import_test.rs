@@ -9,8 +9,8 @@ use chimera_core::project::arena::Cost;
 use chimera_core::storage::{Card, SourceCheck, SourceHead, Wrote, read_source_into};
 use chimera_desktop::import::tape::convert::Channel;
 use chimera_desktop::import::tape::{
-    Cycle, Form, ImportError, Rate, Report, Root, SEND_LINE, TapeOpts, Top, Tune, free_beside_new,
-    import,
+    Cycle, Form, ImportError, MAX_WAV_BYTES, Rate, Report, Root, SEND_LINE, TapeOpts, Top, Tune,
+    free_beside_new, import,
 };
 use chimera_desktop::store::DirStore;
 use std::path::{Path, PathBuf};
@@ -95,7 +95,7 @@ fn head_of(root: &Path, rep: &Report) -> SourceHead {
         .join("CHIMERA/TAPES")
         .join(rep.file().rsplit('/').next().unwrap());
     let bytes = std::fs::read(path).unwrap();
-    let mut c = SourceCheck::new(rep.sref.crc, bytes.len() as u32).unwrap();
+    let mut c = SourceCheck::new(rep.head.sref.crc, bytes.len() as u32).unwrap();
     c.feed(&bytes).unwrap();
     c.finish().unwrap()
 }
@@ -121,7 +121,9 @@ fn held(root: &Path, rep: &Report) -> Vec<u8> {
     let mut s = DirStore::new(root.to_path_buf());
     let mut out = vec![0; 2 << 20];
     let n = Card::new()
-        .run(&mut s, |s, r| read_source_into(s, r, rep.sref, &mut out))
+        .run(&mut s, |s, r| {
+            read_source_into(s, r, rep.head.sref, &mut out)
+        })
         .unwrap()
         .result
         .expect("the source reads back");
@@ -140,8 +142,8 @@ fn crc_is_deterministic() {
         run(&plain(&w, Rate::K24, None), &b).unwrap(),
     );
     assert_eq!((ra.wrote, rb.wrote), (Wrote::New, Wrote::New));
-    assert_eq!(ra.name, rb.name);
-    assert_eq!(ra.name.as_str(), "TEST TAKE 1");
+    assert_eq!(ra.head.name, rb.head.name);
+    assert_eq!(ra.head.name.as_str(), "TEST TAKE 1");
     assert_eq!(ra.file(), rb.file());
     let (fa, fb) = (tapes(&a), tapes(&b));
     assert_eq!(fa.len(), 1);
@@ -166,11 +168,21 @@ fn reimport_with_new_root_is_present() {
     assert_eq!((c3.wrote, d3.wrote), (Wrote::New, Wrote::Present));
     assert_eq!(c3.file(), d3.file());
     assert_eq!(tapes(&card).len(), 1);
-    let root = |r: &Report| match r.tune {
+    let root = |r: &Report| match r.tune() {
         Tune::Pitched { root, .. } | Tune::Unpitched { root } => root.cents(),
         Tune::Note => panic!("a plain source has a root"),
     };
-    assert_eq!((root(&c3), root(&d3)), (4_800, 5_000));
+    // The card keeps the first import's labels, and the report says so.
+    assert_eq!((root(&c3), root(&d3)), (4_800, 4_800));
+    assert!(d3.to_string().lines().any(|l| l == "ROOT     C3"), "{d3}");
+    let renamed = TapeOpts {
+        name: Some(SoundName::new("OTHER").unwrap()),
+        ..plain(&w, Rate::K24, None)
+    };
+    let again = run(&renamed, &card).unwrap();
+    assert_eq!(again.wrote, Wrote::Present);
+    assert_eq!(again.head, c3.head);
+    assert_eq!(again.head.name.as_str(), "TEST TAKE 1");
 }
 
 /// A `smpl` loop is printed as the POSITION and SIZE that play it: LOOP's
@@ -184,12 +196,12 @@ fn smpl_loop_suggests_position_and_size() {
     let w = wav_file(&x, 48_000, Some((16_800, 40_800)));
     for (rate, frames) in [(Rate::K48, 48_000), (Rate::K24, 24_000)] {
         let rep = run(&plain(&w, rate, None), &fresh("card")).unwrap();
-        assert_eq!(rep.sref.frames, frames);
+        assert_eq!(rep.head.sref.frames, frames);
         // The `smpl` root comes before YIN's A4.
         assert!(
-            matches!(rep.tune, Tune::Pitched { root, .. } if root.cents() == 6_025),
+            matches!(rep.tune(), Tune::Pitched { root, .. } if root.cents() == 6_025),
             "{:?}",
-            rep.tune
+            rep.tune()
         );
         let s = rep.suggest.expect("a loop to suggest");
         // ls = POSITION · (W − Ll), Ll = 2 ms · (W / 2 ms)^SIZE.
@@ -258,9 +270,48 @@ fn over_1_mib_refused() {
         "{r:?}"
     );
     assert!(tapes(&card).is_empty());
-    // 28 s is under it (29 s, with its records' heads, is just over).
+    // 29 s, with its records' heads, is just over: 1 052 358 B.
+    let w = wav_file(&saw(109.0, 696_000), 24_000, None);
+    let r = run(&plain(&w, Rate::K24, None), &card);
+    assert!(
+        matches!(r, Err(ImportError::TooBig { bytes: 1_052_358 })),
+        "{r:?}"
+    );
+    assert!(tapes(&card).is_empty());
+    // 28 s is under it.
     let w = wav_file(&saw(109.0, 672_000), 24_000, None);
     assert!(run(&plain(&w, Rate::K24, None), &card).is_ok());
+}
+
+/// A WAV past 512 MiB is refused before it is read (a sparse file: no
+/// bytes behind it).
+#[test]
+fn huge_wav_refused_unread() {
+    let path = fresh("wav").join("huge.wav");
+    std::fs::File::create(&path)
+        .unwrap()
+        .set_len(MAX_WAV_BYTES + 1)
+        .unwrap();
+    let card = fresh("card");
+    let r = run(&plain(&path, Rate::K24, None), &card);
+    assert!(
+        matches!(r, Err(ImportError::WavTooBig { bytes }) if bytes == MAX_WAV_BYTES + 1),
+        "{r:?}"
+    );
+    assert!(tapes(&card).is_empty());
+    let _ = std::fs::remove_file(path);
+}
+
+/// The `smpl` loop's last frame is in the loop: frames 100 to 1 099 of a
+/// short take (the first, 0, goes to the trim) play 1 000 frames from 99.
+#[test]
+fn smpl_loop_end_is_inclusive() {
+    let w = wav_file(&saw(109.0, 2_000), 48_000, Some((100, 1_099)));
+    let rep = run(&plain(&w, Rate::K48, None), &fresh("card")).unwrap();
+    let s = rep.suggest.unwrap();
+    let b = Bounds::of(0, rep.head.sref.frames, (s.size, s.position, 0.0), 48_000);
+    assert_eq!(b.frames(), 1_000, "{s:?}");
+    assert!(b.ls.abs_diff(99) <= 1, "{b:?}");
 }
 
 /// `--transwave 512` on 18 cycles (16 whole ones clear the resampler's
@@ -281,9 +332,11 @@ fn transwave_import_layout() {
             channel: Channel::Mix,
         };
         let rep = run(&o, &card).unwrap();
-        assert_eq!(rep.sref.frames, 16 * len, "{top:?}");
-        assert_eq!(rep.sref.rate, 48_000);
-        assert_eq!(rep.tune, Tune::Note);
+        assert_eq!(rep.head.sref.frames, 16 * len, "{top:?}");
+        assert_eq!(rep.head.sref.rate, 48_000);
+        assert_eq!(rep.tune(), Tune::Note);
+        assert_eq!(rep.cycles(), Some(16));
+        assert!(rep.to_string().lines().any(|l| l == "CYCLES   16"));
         let h = held(&card, &rep);
         let d = Descriptor::from_bytes(&h).unwrap();
         assert_eq!((d.shape, d.count, d.rate), (Shape::Transwave, 16, 48_000));
@@ -318,7 +371,7 @@ fn odd_input_imports_even() {
     let card = fresh("card");
     let w = wav_file(&saw(109.0, 5_000), 24_000, None);
     let rep = run(&plain(&w, Rate::K24, None), &card).unwrap();
-    assert_eq!(rep.sref.frames, 5_000);
+    assert_eq!(rep.head.sref.frames, 5_000);
     assert_eq!(SourceView::new(&held(&card, &rep)).unwrap().frames(), 5_000);
 }
 
@@ -328,14 +381,14 @@ fn imported_file_reads_into_a_view() {
     let card = fresh("card");
     let w = wav_file(&saw(109.0, 24_000), 48_000, None);
     let rep = run(&plain(&w, Rate::K16, None), &card).unwrap();
-    assert_eq!((rep.sref.frames, rep.sref.rate), (8_000, 16_000));
+    assert_eq!((rep.head.sref.frames, rep.head.sref.rate), (8_000, 16_000));
     let h = held(&card, &rep);
     let v = SourceView::new(&h).expect("a view");
-    assert_eq!(v.frames(), rep.sref.frames);
+    assert_eq!(v.frames(), rep.head.sref.frames);
     assert_eq!(v.desc().rate, 16_000);
     // Pitched at the saw's 440.37 Hz: A4 +1, its period in 16 kHz frames.
-    let Tune::Pitched { root, period } = rep.tune else {
-        panic!("{:?}", rep.tune)
+    let Tune::Pitched { root, period } = rep.tune() else {
+        panic!("{:?}", rep.tune())
     };
     assert_eq!(root.to_string(), "A4 +1");
     assert!(
@@ -344,7 +397,7 @@ fn imported_file_reads_into_a_view() {
     );
     // The head's labels, as `put`'s check reads them from the file.
     let h = head_of(&card, &rep);
-    assert_eq!((h.sref, h.shape, h.count), (rep.sref, Shape::Plain, 1));
+    assert_eq!((h.sref, h.shape, h.count), (rep.head.sref, Shape::Plain, 1));
     assert_eq!(h.root, 6_901);
     assert_eq!(h.period_q16, (period * 65_536.0).round() as u32);
     assert_eq!(h.name.as_str(), "TEST TAKE 1");
@@ -397,6 +450,9 @@ fn what_it_refuses() {
 #[test]
 fn args_parse() {
     let args = |s: &str| -> Vec<String> { s.split(' ').map(String::from).collect() };
+    for r in ["24", "24000", "24K", "24k"] {
+        assert_eq!(r.parse::<Rate>(), Ok(Rate::K24), "{r}");
+    }
     let o = TapeOpts::from_args(&args("a.wav")).unwrap();
     assert_eq!(
         o.form,

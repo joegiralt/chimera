@@ -7,7 +7,7 @@ pub mod convert;
 pub mod transwave;
 
 use std::fmt;
-use std::ops::Range;
+use std::ops::{ControlFlow, Range};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -15,17 +15,17 @@ use chimera_core::console::PUT_MAX_BYTES;
 use chimera_core::dsp::clampf;
 use chimera_core::dsp::tape_engine::MIN_LOOP_S;
 use chimera_core::dsp::tape_engine::heads::loop_len;
-use chimera_core::dsp::tape_engine::read::MIN_SOURCE_FRAMES;
+use chimera_core::dsp::tape_engine::read::{MIN_SOURCE_FRAMES, Shape};
 use chimera_core::factory::factory_entries;
 use chimera_core::name::SoundName;
 use chimera_core::project::arena::{ARENA_BYTES, Cost};
 use chimera_core::project::{SOURCE_HEAD, SlotId};
 use chimera_core::storage::twelve::pack12;
 use chimera_core::storage::{
-    CardFault, Ready, SaveError, SourceHead, SourceRef, WholeShape, Wrote, held_len, source_crc,
-    source_file, source_file_min_len, write_source,
+    CardFault, Ready, SaveError, SourceCheck, SourceHead, SourceRef, WholeShape, Wrote, held_len,
+    source_crc, source_file, source_file_min_len, write_source,
 };
-use chimera_hal::store::{Store, StoreError};
+use chimera_hal::store::{Dir, ReadSink, Store, StoreError};
 
 use convert::{
     Channel, Mono, Pitch, Smpl, WavError, clean, quantise_tpdf, read_wav, resample, yin,
@@ -35,6 +35,10 @@ use transwave::{cut_cycles, round12, transwave};
 /// The report's last line: where the source is, and how it reaches the
 /// unit. TAPE Task 18's `put-tape` changes it.
 pub const SEND_LINE: &str = "ON THE SIM CARD · put FOR SOURCES IS TASK 18";
+
+/// The largest WAV the importer reads: about 25 minutes of 48 kHz 24-bit
+/// stereo, far past `put`'s 1 MiB, and held four times over as it converts.
+pub const MAX_WAV_BYTES: u64 = 512 << 20;
 
 /// The dither's seed: a source rebuilds bit for bit, so a re-import is the
 /// same file.
@@ -295,17 +299,16 @@ pub enum Tune {
 }
 
 impl Tune {
-    fn root(self) -> u16 {
-        match self {
-            Tune::Pitched { root, .. } | Tune::Unpitched { root } => root.cents(),
-            Tune::Note => Root::C4.cents(),
-        }
-    }
-
-    fn period_q16(self) -> u32 {
-        match self {
-            Tune::Pitched { period, .. } => (f64::from(period) * 65_536.0).round() as u32,
-            Tune::Unpitched { .. } | Tune::Note => 0,
+    /// What `h`'s labels say: a transwave's are none.
+    pub fn of(h: &SourceHead) -> Tune {
+        let root = Root(h.root.min(12_700));
+        match (h.shape, h.period_q16) {
+            (Shape::Transwave, _) => Tune::Note,
+            (_, 0) => Tune::Unpitched { root },
+            (_, q) => Tune::Pitched {
+                root,
+                period: q as f32 / 65_536.0,
+            },
         }
     }
 }
@@ -318,13 +321,26 @@ pub struct Suggest {
     pub size: f32,
 }
 
-/// What `build` makes: the head and samples `write_source` takes, and the
-/// report's view of them.
+/// What `build` makes: the head and samples `write_source` takes, and a
+/// `smpl` loop's suggestion.
 pub struct Built {
     pub head: SourceHead,
     pub packed: Vec<u8>,
-    pub tune: Tune,
     pub suggest: Option<Suggest>,
+}
+
+/// What `seal` heads: a plain source with its labels (`count` 1), or a
+/// transwave of `count` frames at 48 kHz nominal, with none.
+enum Whole {
+    Plain {
+        rate: Rate,
+        root: Root,
+        /// YIN's, in frames; `None` is unpitched.
+        period: Option<f32>,
+    },
+    Transwave {
+        count: u8,
+    },
 }
 
 #[derive(Debug)]
@@ -344,6 +360,10 @@ pub enum ImportError {
     NoCycles,
     /// A file past `put`'s 1 MiB: nothing written.
     TooBig {
+        bytes: u64,
+    },
+    /// A WAV past `MAX_WAV_BYTES`, refused before it is read.
+    WavTooBig {
         bytes: u64,
     },
     /// The card refused the write, or a sealed copy is damaged.
@@ -375,6 +395,10 @@ impl fmt::Display for ImportError {
                 f,
                 "too short: {frames} frames at the rate, a source needs {MIN_SOURCE_FRAMES}"
             ),
+            ImportError::WavTooBig { bytes } => write!(
+                f,
+                "a {bytes} B WAV: past the {MAX_WAV_BYTES} B the importer reads"
+            ),
             ImportError::Resample => f.write_str("can't resample from the file's rate"),
             ImportError::NoCycles => f.write_str("--transwave: not one whole cycle in the take"),
             ImportError::TooBig { bytes } => write!(
@@ -401,25 +425,32 @@ pub fn free_beside_new() -> Cost {
     Cost::of(ARENA_BYTES - sounds)
 }
 
-/// What an import wrote, and what to tell the user of it.
+/// What an import wrote, and what to tell the user of it: the head as the
+/// card holds it (on `Present`, the first import's labels, not this one's).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Report {
-    pub name: SoundName,
-    /// The CRC, frames and rate: the file's stem and the Sound's ref.
-    pub sref: SourceRef,
-    pub tune: Tune,
+    pub head: SourceHead,
     pub suggest: Option<Suggest>,
     pub wrote: Wrote,
 }
 
 impl Report {
+    pub fn tune(&self) -> Tune {
+        Tune::of(&self.head)
+    }
+
+    /// A transwave's frames (single cycles); `None` for a plain source.
+    pub fn cycles(&self) -> Option<u8> {
+        (self.head.shape == Shape::Transwave).then_some(self.head.count)
+    }
+
     pub fn seconds(&self) -> f32 {
-        self.sref.frames as f32 / f32::from(self.sref.rate)
+        self.head.sref.frames as f32 / f32::from(self.head.sref.rate)
     }
 
     /// On the meter: `16 + held`, to the granule.
     pub fn cost(&self) -> Cost {
-        let held = held_len(self.sref).expect("a source under put's 1 MiB");
+        let held = held_len(self.head.sref).expect("a source under put's 1 MiB");
         Cost::of(SOURCE_HEAD + held)
     }
 
@@ -430,7 +461,7 @@ impl Report {
 
     /// Its card path: `/CHIMERA/TAPES/<CRC>.SRC`.
     pub fn file(&self) -> String {
-        let f = source_file(self.sref);
+        let f = source_file(self.head.sref);
         let s = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
         format!("/CHIMERA/TAPES/{}.{}", s(f.stem()), s(f.ext()))
     }
@@ -439,17 +470,21 @@ impl Report {
 /// One field a line, as spec § 6 step 8 lists them, then `SEND_LINE`.
 impl fmt::Display for Report {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "NAME     {}", self.name.as_str())?;
-        match self.tune {
+        writeln!(f, "NAME     {}", self.head.name.as_str())?;
+        let tune = self.tune();
+        match tune {
             Tune::Note => writeln!(f, "RATE     48 kHz NOMINAL (TRANSWAVE)")?,
-            _ => writeln!(f, "RATE     {} kHz", self.sref.rate / 1_000)?,
+            _ => writeln!(f, "RATE     {} kHz", self.head.sref.rate / 1_000)?,
         }
-        writeln!(f, "FRAMES   {}", self.sref.frames)?;
-        match self.tune {
+        writeln!(f, "FRAMES   {}", self.head.sref.frames)?;
+        if let Some(n) = self.cycles() {
+            writeln!(f, "CYCLES   {n}")?;
+        }
+        match tune {
             Tune::Note => writeln!(f, "SECONDS  NONE: A TRANSWAVE IS CYCLES, NOT TIME")?,
             _ => writeln!(f, "SECONDS  {:.2}", self.seconds())?,
         }
-        match self.tune {
+        match tune {
             Tune::Pitched { root, period } => {
                 writeln!(f, "ROOT     {root}")?;
                 writeln!(f, "PERIOD   {period:.3} FRAMES")?;
@@ -511,8 +546,11 @@ pub fn build(mut m: Mono, form: Form, name: SoundName) -> Result<Built, ImportEr
                 return Err(ImportError::NoCycles);
             }
             let q = round12(&transwave(&cycles, top.samples())).ok_or(ImportError::Silent)?;
+            let (pairs, []) = q.as_chunks::<2>() else {
+                unreachable!("every level is an even length")
+            };
             let count = u8::try_from(cycles.len()).expect("at most 32 frames");
-            seal(WholeShape::Transwave, count, 48_000, Tune::Note, name, &q)
+            seal(Whole::Transwave { count }, name, pairs)
         }
     }
 }
@@ -531,17 +569,19 @@ fn plain(
     }
     // The root: `--root`, the `smpl` chunk's, YIN's, else C4.
     let root = root.or_else(|| m.smpl.and_then(smpl_root));
-    let tune = match yin(&x, hz.into()) {
-        Pitch::Pitched { period, root_cents } => Tune::Pitched {
-            root: root.unwrap_or(Root::new(root_cents).unwrap_or(Root::C4)),
-            period,
-        },
-        Pitch::Unpitched => Tune::Unpitched {
-            root: root.unwrap_or(Root::C4),
-        },
+    let (root, period) = match yin(&x, hz.into()) {
+        Pitch::Pitched { period, root_cents } => (
+            root.unwrap_or(Root::new(root_cents).unwrap_or(Root::C4)),
+            Some(period),
+        ),
+        Pitch::Unpitched => (root.unwrap_or(Root::C4), None),
     };
     let q = quantise_tpdf(&x, SEED);
-    let built = seal(WholeShape::Plain, 1, hz, tune, name, &q)?;
+    let (pairs, []) = q.as_chunks::<2>() else {
+        unreachable!("quantise_tpdf holds whole pairs")
+    };
+    let whole = Whole::Plain { rate, root, period };
+    let built = seal(whole, name, pairs)?;
     let suggest = m
         .smpl
         .and_then(|s| s.loop_frames)
@@ -555,19 +595,21 @@ fn smpl_root(s: Smpl) -> Option<Root> {
     Root::new((u16::from(s.unity?) * 100 + fraction).min(12_700))
 }
 
-/// `q` packed under a head of `shape`, its CRC over the bytes. Refused
+/// `pairs` packed under `whole`'s head, its CRC over the bytes. Refused
 /// past `put`'s 1 MiB.
-fn seal(
-    shape: WholeShape,
-    count: u8,
-    rate: u16,
-    tune: Tune,
-    name: SoundName,
-    q: &[i16],
-) -> Result<Built, ImportError> {
-    debug_assert!(q.len().is_multiple_of(2), "held whole pairs");
+fn seal(whole: Whole, name: SoundName, pairs: &[[i16; 2]]) -> Result<Built, ImportError> {
+    let (shape, count, rate, root, period_q16) = match whole {
+        Whole::Plain { rate, root, period } => (
+            WholeShape::Plain,
+            1,
+            rate.hz(),
+            root.cents(),
+            period.map_or(0, |p| (f64::from(p) * 65_536.0).round() as u32),
+        ),
+        Whole::Transwave { count } => (WholeShape::Transwave, count, 48_000, Root::C4.cents(), 0),
+    };
     let too_big = |bytes| ImportError::TooBig { bytes };
-    let frames = u32::try_from(q.len()).map_err(|_| too_big(u64::MAX))?;
+    let frames = u32::try_from(2 * pairs.len()).map_err(|_| too_big(u64::MAX))?;
     let unsealed = SourceRef {
         crc: 0,
         frames,
@@ -577,8 +619,8 @@ fn seal(
     if bytes > u64::from(PUT_MAX_BYTES) {
         return Err(too_big(bytes));
     }
-    let mut packed = vec![0; 3 * q.len().div_ceil(2)];
-    pack12(q, &mut packed);
+    let mut packed = vec![0; 3 * pairs.len()];
+    pack12(pairs.as_flattened(), &mut packed);
     let head = SourceHead {
         sref: SourceRef {
             crc: source_crc(shape, count, &packed),
@@ -586,14 +628,13 @@ fn seal(
         },
         shape: shape.into(),
         count,
-        root: tune.root(),
-        period_q16: tune.period_q16(),
+        root,
+        period_q16,
         name,
     };
     Ok(Built {
         head,
         packed,
-        tune,
         suggest: None,
     })
 }
@@ -603,6 +644,11 @@ fn seal(
 /// `kept` input frames: SIZE inverts `loop_len` (`2 ms · (W / 2 ms)^SIZE`),
 /// POSITION places the start in the room the loop leaves. `None` for a
 /// loop the trim cut away.
+///
+/// It inverts the floor at the source's own speed (2 ms, `loop_len`). The
+/// engine floors a loop by `shortest(rate, inc)`, at least 16 output samples
+/// of the head's travel, so a loop under that floor plays longer than
+/// suggested on high notes: at 4× speed, any loop under 64 frames.
 fn suggest(lp: (u32, u32), kept: Range<usize>, out: usize, s: SourceRef) -> Option<Suggest> {
     let k = kept.len() as f64;
     let from = (f64::from(lp.0) - kept.start as f64).max(0.0);
@@ -648,18 +694,55 @@ pub fn name_of(wav: &Path) -> SoundName {
 
 /// `o.wav` to a sealed source on the card `r` lends (spec § 6 steps 1–8):
 /// `write_source` writes it, reads it back and seals it; a sealed copy of
-/// the same audio is `Present`, nothing written.
+/// the same audio is `Present`, nothing written, and the report gives the
+/// card's head. A WAV past `MAX_WAV_BYTES` is refused unread.
 pub fn import<S: Store>(o: &TapeOpts, s: &mut S, r: &Ready) -> Result<Report, ImportError> {
+    let bytes = std::fs::metadata(&o.wav).map_err(ImportError::Io)?.len();
+    if bytes > MAX_WAV_BYTES {
+        return Err(ImportError::WavTooBig { bytes });
+    }
     let bytes = std::fs::read(&o.wav).map_err(ImportError::Io)?;
     let m = read_wav(&bytes, o.channel).map_err(ImportError::Wav)?;
     let name = o.name.unwrap_or_else(|| name_of(&o.wav));
     let b = build(m, o.form, name)?;
     let wrote = write_source(s, r, &b.head, &b.packed).map_err(ImportError::Save)?;
+    let head = match wrote {
+        Wrote::Present => card_head(s, r, b.head.sref)?,
+        Wrote::New | Wrote::Replaced => b.head,
+    };
     Ok(Report {
-        name,
-        sref: b.head.sref,
-        tune: b.tune,
+        head,
         suggest: b.suggest,
         wrote,
     })
+}
+
+/// `sref`'s head as the card holds it, read through `put`'s own check. A
+/// file that fails it is `Damaged`.
+fn card_head<S: Store>(s: &mut S, r: &Ready, sref: SourceRef) -> Result<SourceHead, ImportError> {
+    struct Feed(SourceCheck);
+    impl ReadSink for Feed {
+        fn begin(&mut self, _: u32) -> ControlFlow<()> {
+            ControlFlow::Continue(())
+        }
+
+        fn chunk(&mut self, b: &[u8]) -> ControlFlow<()> {
+            match self.0.feed(b) {
+                Ok(()) => ControlFlow::Continue(()),
+                Err(_) => ControlFlow::Break(()),
+            }
+        }
+    }
+    let (vol, file) = (r.volume(), source_file(sref));
+    let mut len = None;
+    s.list(vol, Dir::Tapes, &mut |n, size| {
+        if n == file {
+            len = Some(size)
+        }
+    })?;
+    let damaged = |_| ImportError::Save(SaveError::Damaged);
+    let check = SourceCheck::new(sref.crc, len.ok_or(StoreError::NotFound)?).map_err(damaged)?;
+    let mut feed = Feed(check);
+    s.read(vol, file, &mut feed)?;
+    feed.0.finish().map_err(damaged)
 }
