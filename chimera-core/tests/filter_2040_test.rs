@@ -315,23 +315,35 @@ fn saw(n: usize) -> Vec<f32> {
         .collect()
 }
 
+/// The per-sample `g`, `k` and `α·gain` tracks `process` ramps through,
+/// one `(cutoff, RES)` a block, at a held LEVEL `gain`, for `k2040_ref`.
+type Tracks = (Vec<f64>, Vec<f64>, Vec<f64>);
+fn tracks(v: K2040Voice, blocks: &[(f32, f32)], gain: f32) -> Tracks {
+    let (mut g, mut k, mut a) = (Vec::new(), Vec::new(), Vec::new());
+    let ga = gain * v.alpha();
+    for (b, &(fc, res)) in blocks.iter().enumerate() {
+        let (from, from_res) = blocks[b.saturating_sub(1)];
+        g.extend(a_track(g_of(from * v.trim(), FS), g_of(fc * v.trim(), FS)));
+        k.extend(a_track(k2040_k(from_res), k2040_k(res)));
+        a.extend(a_track(ga, ga));
+    }
+    (g, k, a)
+}
+
 /// `(cutoff, RES)` a block through the 2040, and through `k2040_ref` in
 /// f64 with the ramps per sample: max |y − y_ref| / max |y_ref|.
 fn jump_error(v: K2040Voice, blocks: &[(f32, f32)]) -> f64 {
     let mut p = params(v, 1000.0, 0.0, 0.5);
     let x = saw(blocks.len() * BLOCK_SIZE);
     let mut f = K2040::new();
-    let (mut y, mut g, mut k, mut a) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut y = Vec::new();
     for (b, &(fc, res)) in blocks.iter().enumerate() {
         (p.cutoff, p.resonance) = (fc, res);
         let mut buf: [f32; BLOCK_SIZE] = x[b * BLOCK_SIZE..][..BLOCK_SIZE].try_into().unwrap();
         f.process(&mut buf, &p, SR, &FilterMods::NONE);
         y.extend_from_slice(&buf);
-        let (from, from_res) = blocks[b.saturating_sub(1)];
-        g.extend(a_track(g_of(from * v.trim(), FS), g_of(fc * v.trim(), FS)));
-        k.extend(a_track(k2040_k(from_res), k2040_k(res)));
-        a.extend(a_track(v.alpha(), v.alpha()));
     }
+    let (g, k, a) = tracks(v, blocks, 1.0);
     let r = k2040_ref::<f64>(&x, &g, &k, &a, v, v.post());
     let peak = r.iter().fold(0.0f64, |m, v| m.max(v.abs()));
     let err = y
@@ -542,19 +554,15 @@ fn k2040_post_is_exp_only() {
                 .map(sine(1.0, 220.0))
                 .collect();
             let mut f = K2040::new();
-            let (mut y, mut g, mut k, mut a) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+            let mut y = Vec::new();
             for (b, &(fc, res)) in blocks.iter().enumerate() {
                 (p.cutoff, p.resonance) = (fc, res);
                 let mut buf: [f32; BLOCK_SIZE] =
                     x[b * BLOCK_SIZE..][..BLOCK_SIZE].try_into().unwrap();
                 f.process(&mut buf, &p, SR, &FilterMods::NONE);
                 y.extend(buf.map(f64::from));
-                let (from, from_res) = blocks[b.saturating_sub(1)];
-                g.extend(a_track(g_of(from * v.trim(), FS), g_of(fc * v.trim(), FS)));
-                k.extend(a_track(k2040_k(from_res), k2040_k(res)));
-                let ga = level_gain(0.8) * v.alpha();
-                a.extend(a_track(ga, ga));
             }
+            let (g, k, a) = tracks(v, &blocks, level_gain(0.8));
             let r = k2040_ref::<f32>(&x, &g, &k, &a, v, post);
             // The voice's own `post()` is not the oracle: EXP alone runs it.
             let want = post == (v == K2040Voice::Exp);

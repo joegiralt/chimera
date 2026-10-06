@@ -71,10 +71,10 @@ type K2040Probe = fn(&mut filter::K2040, &mut [f32; BLOCK_SIZE], &FilterParams);
 
 #[used]
 static K2040_PROBES: &[K2040Probe] = &[
-    filter::probe::k2040_probe::<0, false>,
-    filter::probe::k2040_probe::<0, true>,
-    filter::probe::k2040_probe::<1, false>,
-    filter::probe::k2040_probe::<1, true>,
+    filter::probe::k2040_probe::<filter::k2040::voice::Rev2, false>,
+    filter::probe::k2040_probe::<filter::k2040::voice::Rev2, true>,
+    filter::probe::k2040_probe::<filter::k2040::voice::Exp, false>,
+    filter::probe::k2040_probe::<filter::k2040::voice::Exp, true>,
 ];
 
 /// DIRTY's probes, one a mode: LP2, BP2, HP2 and NOTCH1 (`DIRTY_MODES`).

@@ -5,6 +5,7 @@
 //! Today's LP24 before CLEAN, `old_lp24_probe`, counted `OLD_LP24` at
 //! 22ea0dc0 (plan § Measured) and went with `SvfFilter`.
 
+use super::k2040::VoiceSpec;
 use super::{Clean, Dirty, FilterMods, K2040};
 use crate::hw::{BLOCK_SIZE, SAMPLE_RATE};
 use crate::params::FilterParams;
@@ -29,10 +30,9 @@ pub fn clean_probe<const M: u8, const MOVING: bool>(
 }
 
 /// The 2040's two loops, `process`'s ramps with the loop forced: the steady
-/// one, or the moving one if `MOVING`; VOICE `V`, its discriminant
-/// (`p.voice` must agree).
+/// one, or the moving one if `MOVING`; VOICE `V` (`p.voice` must agree).
 #[inline(never)]
-pub fn k2040_probe<const V: u8, const MOVING: bool>(
+pub fn k2040_probe<V: VoiceSpec, const MOVING: bool>(
     f: &mut K2040,
     buf: &mut [f32; BLOCK_SIZE],
     p: &FilterParams,
@@ -58,7 +58,7 @@ pub fn dirty_probe<const M: u8>(f: &mut Dirty, buf: &mut [f32; BLOCK_SIZE], p: &
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dsp::filter::{FilterKind, FilterMode, K2040Voice};
+    use crate::dsp::filter::{FilterKind, FilterMode};
 
     /// DIRTY's probe is `process` in every mode, on steady blocks, a FREQ
     /// and RES move, RES alone, past the ceiling, and LEVEL over unity.
@@ -108,11 +108,12 @@ mod tests {
     /// The 2040's probe is `process` on each kind of block, both voices.
     #[test]
     fn k2040_probe_is_process() {
-        k2040_is_process::<{ K2040Voice::Rev2 as u8 }>(K2040Voice::Rev2);
-        k2040_is_process::<{ K2040Voice::Exp as u8 }>(K2040Voice::Exp);
+        k2040_is_process::<crate::dsp::filter::k2040::voice::Rev2>();
+        k2040_is_process::<crate::dsp::filter::k2040::voice::Exp>();
     }
 
-    fn k2040_is_process<const V: u8>(v: K2040Voice) {
+    fn k2040_is_process<V: VoiceSpec>() {
+        let v = V::VOICE;
         let mut p = FilterParams::default();
         p.set_kind(FilterKind::K2040);
         (p.cutoff, p.resonance, p.level, p.voice) = (800.0, 0.7, 0.75, v);
