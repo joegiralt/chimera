@@ -12,6 +12,10 @@ use crate::in_place::uninit_at;
 // Relaxed load is just a hint.
 const INDEX: u8 = 0b011;
 const FRESH: u8 = 0b100;
+/// `latest` is stored XOR this: its first value, 1, stores as 0, so a
+/// buffer of zeroed slots is all zero bytes, in .bss, not a flash copy
+/// in .data.
+const STORED: u8 = 1;
 
 pub struct TripleBuffer<T> {
     slots: [UnsafeCell<T>; 3],
@@ -26,7 +30,7 @@ impl<T> TripleBuffer<T> {
                 UnsafeCell::new(second),
                 UnsafeCell::new(third),
             ],
-            latest: AtomicU8::new(1),
+            latest: AtomicU8::new(1 ^ STORED),
         }
     }
 
@@ -59,7 +63,7 @@ impl<T> TripleBuffer<T> {
             for i in 0..3 {
                 init(uninit_at(slots.add(i)));
             }
-            addr_of_mut!((*p).latest).write(AtomicU8::new(1));
+            addr_of_mut!((*p).latest).write(AtomicU8::new(1 ^ STORED));
             slot.assume_init_mut()
         }
     }
@@ -98,16 +102,19 @@ impl<T> Writer<T> {
         let prev = self
             .buf
             .latest
-            .swap(self.back as u8 | FRESH, Ordering::AcqRel);
-        self.back = (prev & INDEX) as usize;
+            .swap((self.back as u8 | FRESH) ^ STORED, Ordering::AcqRel);
+        self.back = ((prev ^ STORED) & INDEX) as usize;
     }
 }
 
 impl<T> Reader<T> {
     pub fn read(&mut self) -> &T {
         if self.buf.latest.load(Ordering::Relaxed) & FRESH != 0 {
-            let prev = self.buf.latest.swap(self.front as u8, Ordering::AcqRel);
-            self.front = (prev & INDEX) as usize;
+            let prev = self
+                .buf
+                .latest
+                .swap(self.front as u8 ^ STORED, Ordering::AcqRel);
+            self.front = ((prev ^ STORED) & INDEX) as usize;
         }
         // SAFETY: `front` is the reader's own slot; the writer never writes
         // it until a later `read` swaps it out, and that `read` needs
