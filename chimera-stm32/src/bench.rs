@@ -41,6 +41,7 @@ use chimera_core::part::{DacPair, PartParams};
 use chimera_core::preset::{Performance, Sound};
 use chimera_core::project::{NEW_PARTS, Project, SlotId, project_crc};
 use chimera_core::scope::{ScopeFrame, ScopeWriter, scope_buffer};
+use chimera_core::source_table::GateView;
 use chimera_core::sym_alloc::SymAlloc;
 use chimera_core::triple::TripleBuffer;
 use chimera_core::ui::fmt::FmtBuf;
@@ -74,6 +75,8 @@ pub fn take_report() -> Option<&'static mut Text> {
     Some(unsafe { &mut *addr_of_mut!(REPORT) })
 }
 
+/// The bench plays no pool source: its TAPE rows are refused, as before.
+const NO_POOL: GateView<'static> = GateView::empty();
 const WARM_BLOCKS: u32 = 8;
 const TIMED_BLOCKS: u32 = 64;
 const HOLD_SECONDS: u32 = 30;
@@ -829,16 +832,16 @@ impl Rig<'_> {
                 note,
                 kind: NoteKind::On(Velocity::DEFAULT),
             };
-            inst.handle(ev, shared);
+            inst.handle_with(ev, shared, &NO_POOL);
         }
         for b in 0..WARM_BLOCKS {
             each(shared, b);
-            inst.render(fx, &mut self.dac, shared, &mut self.scope);
+            inst.render_with(fx, &mut self.dac, shared, &mut self.scope, &NO_POOL);
         }
         let start = DWT::cycle_count();
         for b in 0..TIMED_BLOCKS {
             each(shared, WARM_BLOCKS + b);
-            inst.render(fx, &mut self.dac, shared, &mut self.scope);
+            inst.render_with(fx, &mut self.dac, shared, &mut self.scope, &NO_POOL);
         }
         let cycles = DWT::cycle_count().wrapping_sub(start);
         let spans = match inst.ringing() {
@@ -873,16 +876,20 @@ impl Rig<'_> {
         let mut cycles = 0u32;
         for round in 0..=ROUNDS {
             let start = DWT::cycle_count();
-            inst.handle(black_box(ev(NoteKind::On(Velocity::DEFAULT))), shared);
+            inst.handle_with(
+                black_box(ev(NoteKind::On(Velocity::DEFAULT))),
+                shared,
+                &NO_POOL,
+            );
             if first_block {
-                inst.render(fx, &mut self.dac, shared, &mut self.scope);
+                inst.render_with(fx, &mut self.dac, shared, &mut self.scope, &NO_POOL);
             }
             if round > 0 {
                 cycles = cycles.wrapping_add(DWT::cycle_count().wrapping_sub(start));
             }
-            inst.handle(ev(NoteKind::Off), shared);
+            inst.handle_with(ev(NoteKind::Off), shared, &NO_POOL);
             for _ in 0..IDLE_BLOCKS {
-                inst.render(fx, &mut self.dac, shared, &mut self.scope);
+                inst.render_with(fx, &mut self.dac, shared, &mut self.scope, &NO_POOL);
                 if idle(inst) {
                     break;
                 }
@@ -924,7 +931,7 @@ impl Rig<'_> {
         let (mut w, mut w1, mut sum) = (Phases::default(), Phases::default(), Phases::default());
         while view.loops < ORBIT_LOOPS && blocks < IDLE_BLOCKS {
             let start = DWT::cycle_count();
-            let ev = black_box(runner.block(inst, shared));
+            let ev = black_box(runner.block_with(inst, shared, &NO_POOL));
             runner.fill_view(black_box(&mut view));
             chimera_core::probe::stamp(10);
             let c = DWT::cycle_count().wrapping_sub(start);
@@ -1036,7 +1043,7 @@ impl Rig<'_> {
             let start = DWT::cycle_count();
             #[cfg(feature = "orbit")]
             let boundary = {
-                let ev = black_box(runner.block(inst, shared));
+                let ev = black_box(runner.block_with(inst, shared, &NO_POOL));
                 runner.fill_view(black_box(&mut view));
                 chimera_core::probe::stamp(10);
                 ev.boundary()
@@ -1047,7 +1054,7 @@ impl Rig<'_> {
             if b >= WARM_BLOCKS && ran > ph.total {
                 ph = Phases::read(b, ran, boundary);
             }
-            inst.render(fx, &mut self.dac, shared, &mut self.scope);
+            inst.render_with(fx, &mut self.dac, shared, &mut self.scope, &NO_POOL);
             for (pair, o) in DacPair::ALL.into_iter().zip(out.iter_mut()) {
                 interleave(self.dac.out(), pair, o);
             }
@@ -1256,7 +1263,7 @@ fn hold_notes(inst: &mut Instrument, shared: &AudioShared, part: usize) {
             note: MidiNote::new(36 + 12 * v).unwrap_or(MidiNote::A4),
             kind: NoteKind::On(Velocity::DEFAULT),
         };
-        inst.handle(ev, shared);
+        inst.handle_with(ev, shared, &NO_POOL);
     }
 }
 

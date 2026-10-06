@@ -23,6 +23,7 @@ use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::scope::{ScopeWriter, scope_buffer};
+use chimera_core::source_table::GateView;
 use chimera_core::storage::twelve::pack12;
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
@@ -78,14 +79,18 @@ fn chimera_render(
         kind,
     };
     let blocks = |s: f32| (s * SAMPLE_RATE as f32) as usize / BLOCK_SIZE;
-    inst.handle(ev(NoteKind::On(Velocity::DEFAULT)), &shared);
+    inst.handle_with(
+        ev(NoteKind::On(Velocity::DEFAULT)),
+        &shared,
+        &GateView::empty(),
+    );
     let mut samples = Vec::new();
     for b in 0..blocks(secs + TAIL_S) {
         if b == blocks(secs) {
-            inst.handle(ev(NoteKind::Off), &shared);
+            inst.handle_with(ev(NoteKind::Off), &shared, &GateView::empty());
         }
         each(b as f32 / blocks(secs) as f32, &mut shared.parts[0].params);
-        inst.render(&mut fx, &mut dac, &shared, &mut scope);
+        inst.render_with(&mut fx, &mut dac, &shared, &mut scope, &GateView::empty());
         let lr = &dac.out()[0];
         samples.extend(lr.chunks(2).map(|f| 0.5 * (f[0] + f[1])));
     }

@@ -225,26 +225,21 @@ impl Engine {
             view,
             sources,
         } = self;
-        // The block's source view, held over the notes and the render:
-        // TAPE's voices read through it, and then the sources they hold
-        // are stored.
-        {
-            let reads = sources.begin_block();
+        // TAPE's voices read the pool through the block's view.
+        inst.run_block(sources, (fx, dac, scope), shared, |inst, reads| {
             if gate.before_block(link, inst, shared) {
                 let now = runner.now();
                 drain.drain(|src, ev| match ev {
                     // Capture sees the raw key, before any snap.
                     InEvent::Note(n) => {
                         runner.live(n);
-                        inst.handle_with(n, shared, &reads);
+                        inst.handle_with(n, shared, reads);
                     }
                     InEvent::Rt(rt) => runner.realtime(src.index(), rt, now),
                 });
-                runner.block_with(inst, shared, &reads);
+                runner.block_with(inst, shared, reads);
             }
-            inst.render_with(fx, dac, shared, scope, &reads);
-        }
-        sources.store_sounding(inst.source_mask());
+        });
         view.publish(|v| runner.fill_view(v));
     }
 }

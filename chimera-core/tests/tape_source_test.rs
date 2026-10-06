@@ -576,3 +576,78 @@ fn a_glide_on_a_gated_note_moves_its_start() {
     g.play(&mut out, &wave, &src.view(), SR);
     assert!(!g.is_active() && !loud(&out));
 }
+
+/// The shells' block (`Instrument::run_block`): note-ons and the render
+/// read through the block's view, and the mask after it is the voices'.
+#[test]
+fn the_shells_block_stores_the_voices_sources() {
+    let (mut p, _) = Project::boxed();
+    let (ra, ha) = plain(1, 100.0);
+    let a = p.source_store(ra, &ha).unwrap();
+    let mut r = Rig::of(&p);
+    r.tape(0, TapeModel::Loop, Some(a));
+    let on = r.on(0, 60);
+    let Rig {
+        inst,
+        fx,
+        dac,
+        scope,
+        shared,
+        tok,
+        table,
+    } = &mut r;
+    inst.run_block(tok, (fx, dac, scope), shared, |inst, reads| {
+        inst.handle_with(on, shared, reads);
+    });
+    assert_eq!(table.sounding(), a.bit(), "stored after the block");
+    inst.run_block(tok, (fx, dac, scope), shared, |_, _| {});
+    assert!(loud(inst.part_bus(0)), "the render read it");
+    assert_eq!(table.sounding(), a.bit());
+}
+
+/// A key-gated note (no route into VCA) fading at key up with a note
+/// queued behind it: killed, the queued note's source goes from `reads`
+/// while the fade still holds the slot's.
+#[test]
+fn a_dropped_queued_note_frees_its_source() {
+    use chimera_core::dsp::engines::EngineCtx;
+    use chimera_core::dsp::modal::SymPool;
+    use common::tape::OneSource;
+    let (_, ha) = plain(1, 100.0);
+    let (_, hb) = plain(2, 37.0);
+    let (mut src, b) = OneSource::with(&ha, &hb);
+    let a = src.id;
+    let params = Sound::init(EngineType::Tape).params;
+    let mods = ModState::new();
+    let mut sym = SymPool::boxed();
+    let mut v = Voice::new(SR);
+    let mut out = [0.0; BLOCK_SIZE];
+    let note = MidiNote::new(60).unwrap();
+    let mut block = |v: &mut Voice, f: &dyn Fn(&mut Voice, &mut EngineCtx<'_>)| {
+        let view = src.view();
+        let ctx = &mut EngineCtx {
+            sym: &mut sym,
+            src: &view,
+        };
+        f(v, ctx);
+        v.render(&mut out, &params, &mods, ctx);
+    };
+    block(&mut v, &|v, ctx| {
+        v.note_on(note, Velocity::DEFAULT, &params, Some(a), ctx);
+    });
+    assert_eq!(v.reads(), [Some(a), None]);
+    // Key up: no VCA route, so the key's fade starts.
+    block(&mut v, &|v, ctx| v.note_off(ctx));
+    assert!(v.is_active());
+    assert_eq!(v.reads(), [Some(a), None], "fading, nothing queued");
+    let view = src.view();
+    let ctx = &mut EngineCtx {
+        sym: &mut sym,
+        src: &view,
+    };
+    v.note_on(note, Velocity::DEFAULT, &params, Some(b), ctx);
+    assert_eq!(v.reads(), [Some(a), Some(b)], "queued behind the fade");
+    assert!(v.kill(), "dropped unheard");
+    assert!(v.is_active());
+    assert_eq!(v.reads(), [Some(a), None], "the fade holds only its own");
+}

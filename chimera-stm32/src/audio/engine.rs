@@ -129,26 +129,24 @@ pub fn render_half(half: Half) {
     // this is the only live reference to `ENGINE`.
     let e = unsafe { (*addr_of_mut!(ENGINE)).assume_init_mut() };
     let shared = e.shared.read();
-    // The block's source view, held over the notes and the render: TAPE's
-    // voices read through it, and then the sources they hold are stored.
-    {
-        let reads = e.sources.begin_block();
-        if e.gate.before_block(&LOAD_LINK, e.inst, shared) {
-            let now = e.orbit.now();
-            e.notes.drain(|src, ev| match ev {
-                // Capture sees the raw key, before any snap.
-                InEvent::Note(n) => {
-                    e.orbit.live(n);
-                    e.inst.handle_with(n, shared, &reads);
-                }
-                InEvent::Rt(rt) => e.orbit.realtime(src.index(), rt, now),
-            });
-            e.orbit.block(e.inst, shared, &reads);
-        }
-        e.inst
-            .render_with(e.fx, &mut e.dac, shared, &mut e.scope, &reads);
-    }
-    e.sources.store_sounding(e.inst.source_mask());
+    // TAPE's voices read the pool through the block's view.
+    let (gate, notes, orbit) = (&mut e.gate, &mut e.notes, &mut e.orbit);
+    let out = (&mut *e.fx, &mut e.dac, &mut e.scope);
+    e.inst
+        .run_block(&mut e.sources, out, shared, |inst, reads| {
+            if gate.before_block(&LOAD_LINK, inst, shared) {
+                let now = orbit.now();
+                notes.drain(|src, ev| match ev {
+                    // Capture sees the raw key, before any snap.
+                    InEvent::Note(n) => {
+                        orbit.live(n);
+                        inst.handle_with(n, shared, reads);
+                    }
+                    InEvent::Rt(rt) => orbit.realtime(src.index(), rt, now),
+                });
+                orbit.block(inst, shared, reads);
+            }
+        });
     e.orbit.publish();
     #[cfg(feature = "perf-probe")]
     {

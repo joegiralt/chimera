@@ -28,7 +28,7 @@ use crate::part::{Held, LiveSnap, PartParams};
 use crate::preset::{Part, Performance};
 use crate::project::{Project, SourceId};
 use crate::scope::ScopeWriter;
-use crate::source_table::GateView;
+use crate::source_table::{AudioToken, GateView};
 use crate::voice_alloc::{Allocator, VoiceIdx};
 use crate::{MidiChannel, MidiNote, Velocity};
 use chimera_theory::{Note, snap};
@@ -169,9 +169,9 @@ impl AudioShared {
 pub type DacOut = [[f32; BLOCK_SIZE * 2]; DAC_PAIRS];
 pub use crate::dsp::limiter::DacBlocks;
 
-/// No pool behind a render (`handle`, `render`: the tests, the bench, the
-/// listening rig): every TAPE note-on is refused. The shells play through
-/// the block's view (`handle_with`, `render_with`).
+/// No pool behind a call: every TAPE note-on is refused. The tests'
+/// `handle` and `render` play through it; the shells through the block's
+/// view (`run_block`).
 const NO_SOURCES: GateView<'static> = GateView::empty();
 
 /// A note waiting for its voice's fade to end (#33 M7), and the source it
@@ -617,7 +617,9 @@ impl Instrument {
         &self.buses[part]
     }
 
-    /// A played key or MIDI note, with no pool behind it (`NO_SOURCES`).
+    /// A played key or MIDI note, with no pool behind it (`NO_SOURCES`):
+    /// tests only, so no shell mutes TAPE by calling it.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn handle(&mut self, ev: NoteEvent, shared: &AudioShared) {
         self.handle_with(ev, shared, &NO_SOURCES);
     }
@@ -627,7 +629,8 @@ impl Instrument {
         self.handle_from_with(ev, shared, NoteOrigin::Live, src);
     }
 
-    /// `handle_from_with` with no pool behind it (`NO_SOURCES`).
+    /// `handle_from_with` with no pool behind it (`NO_SOURCES`): tests only.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn handle_from(&mut self, ev: NoteEvent, shared: &AudioShared, from: NoteOrigin) {
         self.handle_from_with(ev, shared, from, &NO_SOURCES);
     }
@@ -1039,7 +1042,27 @@ impl Instrument {
         }
     }
 
-    /// `render_with` with no pool behind it (`NO_SOURCES`).
+    /// One block as the shells run it (spec § 4): `notes` (the load gate,
+    /// the drain, ORBIT) and the render read the pool through the block's
+    /// view, then the sources the voices hold are stored, holding
+    /// compaction off.
+    pub fn run_block(
+        &mut self,
+        sources: &mut AudioToken,
+        (fx, dac, scope): (&mut FxBus, &mut DacBlocks, &mut ScopeWriter),
+        shared: &AudioShared,
+        notes: impl FnOnce(&mut Self, &GateView<'_>),
+    ) {
+        {
+            let reads = sources.begin_block();
+            notes(self, &reads);
+            self.render_with(fx, dac, shared, scope, &reads);
+        }
+        sources.store_sounding(self.source_mask());
+    }
+
+    /// `render_with` with no pool behind it (`NO_SOURCES`): tests only.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn render(
         &mut self,
         fx: &mut FxBus,

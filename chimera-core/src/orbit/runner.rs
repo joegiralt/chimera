@@ -554,6 +554,7 @@ impl OrbitRunner {
     /// `None` while stopped, and re-snaps held keys whenever it differs
     /// from the last one handed (spec § 5.2): a segment change, a landed
     /// scene, a start or a MIDI Start back to bar 0, a chord played in.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn block(&mut self, inst: &mut Instrument, shared: &AudioShared) -> Events {
         self.block_with(inst, shared, &GateView::empty())
     }
