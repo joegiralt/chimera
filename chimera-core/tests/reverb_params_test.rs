@@ -361,13 +361,13 @@ fn knobs_hit_the_spec_endpoints() {
     close(m(&|p| p.rate = 1.0).rate_hz, 1.0, "room rate 1");
     let d = m(&|_| {});
     // MidiVerb II program 5's fitted knobs (ADR 0095), SMEAR 0.3.
-    close(d.length_ms, 115.27, "room size default");
-    close(d.rt60_s, 1.007, "room decay default");
+    close(d.length_ms, 116.64, "room size default");
+    close(d.rt60_s, 1.035, "room decay default");
     close(d.tone_hz, 10_000.0, "room tone default");
     close(d.diffuse_g, 0.45, "room diffuse default");
     close(d.predelay_ms, 3.85, "room pre default");
-    close(d.damp_hz, 5_187.1, "room damp default");
-    close(d.shape_db, 64.8, "room loops default");
+    close(d.damp_hz, 4_473.7, "room damp default");
+    close(d.shape_db, 57.78, "room loops default");
     close(d.smear_ms, 0.3, "room smear default");
     close(d.rate_hz, 0.3162, "room rate default");
     // HALL, above its plate zone (SIZE ≥ 0.15).

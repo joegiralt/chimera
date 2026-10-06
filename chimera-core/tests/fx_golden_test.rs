@@ -33,47 +33,47 @@ const MV2_ROOM: &[(u8, &str, [f32; 7])] = &[
     (
         1,
         "rev_room_mv01",
-        [0.42, 0.177, 0.0, 0.0, 0.0, 0.569, 0.095],
+        [0.42, 0.189, 0.036, 0.0, 0.0, 0.923, 0.0],
     ), // Small Bright .1
     (
         2,
         "rev_room_mv02",
-        [0.924, 0.495, 0.0, 0.01, 0.085, 0.629, 0.0],
+        [0.924, 0.495, 0.024, 0.0, 0.073, 0.695, 0.0],
     ), // Small Bright .2
     (
         3,
         "rev_room_mv03",
-        [0.847, 0.534, 0.0, 0.308, 0.088, 0.587, 0.233],
+        [0.847, 0.534, 0.036, 0.026, 0.088, 0.623, 0.161],
     ), // Small Bright .3
     (
         5,
         "rev_room_mv05",
-        [0.619, 0.702, 0.0, 0.0, 0.077, 0.346, 0.72],
+        [0.643, 0.714, 0.0, 0.0, 0.077, 0.424, 0.642],
     ), // Medium Bright .6
     (
         8,
         "rev_room_mv08",
-        [0.619, 0.702, 1.0, 0.09, 0.077, 0.364, 0.84],
+        [0.619, 0.702, 0.91, 0.0, 0.077, 0.394, 0.78],
     ), // Medium Dark .6
     (
         9,
         "rev_room_mv09",
-        [0.44, 0.736, 0.985, 1.0, 0.079, 0.0, 1.0],
+        [0.44, 0.736, 0.937, 1.0, 0.079, 0.0, 1.0],
     ), // Medium Dark .5
     (
         10,
         "rev_room_mv10",
-        [0.729, 0.768, 0.01, 0.86, 0.075, 0.0, 0.99],
+        [0.729, 0.756, 0.03, 1.0, 0.075, 0.0, 0.636],
     ), // Medium Bright .6
     (
         11,
         "rev_room_mv11",
-        [0.817, 0.791, 0.0, 0.42, 0.08, 0.352, 0.983],
+        [0.847, 0.791, 0.0, 0.57, 0.092, 0.25, 0.863],
     ), // Medium Bright .8
     (
         14,
         "rev_room_mv14",
-        [0.739, 0.897, 1.0, 0.637, 0.078, 0.0, 0.39],
+        [0.739, 0.897, 0.982, 0.745, 0.078, 0.0, 0.39],
     ), // Medium Dark 1.0
 ];
 
@@ -260,17 +260,17 @@ const GOLDENS: &[(&str, u64)] = &[
     ("reverb_ring_smear", 0xa7e01c103cc02150),
     // ROOM v2 (ADR 0095, reverb TYPEs T9b), on program 5's knobs; HALL on
     // the LOOP engine (T10).
-    ("rev_room", 0xed4734d2cb03a37a),
+    ("rev_room", 0xf006888168aea99c),
     // ROOM v2 at each MidiVerb II program's fitted knobs (`MV2_ROOM`).
-    ("rev_room_mv01", 0x43da64962209d696),
-    ("rev_room_mv02", 0x03c37b1839ac437e),
-    ("rev_room_mv03", 0xaab609762f3bf4ba),
-    ("rev_room_mv05", 0x50a5153a08cc3f87),
-    ("rev_room_mv08", 0xd0a30dd917d701c6),
-    ("rev_room_mv09", 0x8ddef1be565aa4eb),
-    ("rev_room_mv10", 0x5be76dd563e94732),
-    ("rev_room_mv11", 0x5931b8a711f0ff3e),
-    ("rev_room_mv14", 0xf34b7015eacb49aa),
+    ("rev_room_mv01", 0x60df4ce32d30852d),
+    ("rev_room_mv02", 0x2262abda362a7850),
+    ("rev_room_mv03", 0x28273aab652e0b37),
+    ("rev_room_mv05", 0xd64a5b75c70c4b80),
+    ("rev_room_mv08", 0x520b38197118c849),
+    ("rev_room_mv09", 0xfdff8543b7be57e0),
+    ("rev_room_mv10", 0x85a254c66db5f2c7),
+    ("rev_room_mv11", 0x193920776227df0d),
+    ("rev_room_mv14", 0x7f3146738ce901c8),
     ("rev_hall", 0x6d09691da61c04c5),
     ("rev_hall_plate", 0xcc09501b70f66688),
     // GATE and REVERSE on the BURST engine (reverb TYPEs T8).

@@ -12,20 +12,27 @@
 //! in the same one, each tap with its line. SMEAR moves one stage allpass
 //! a loop. Its own module: HALL's engine runs a third of the accesses, and
 //! sharing their tables would size HALL's to ROOM's. Values are in LSBs.
+//!
+//! GRAIN (ADR 0095, ROOM as built: GRAIN) is the MidiVerb II's arithmetic
+//! sizzle: noise on the return at the ring's rate, at a fixed level while
+//! the tail stands well above it, fading with the tail as it nears it, and
+//! exactly nothing once the tail is gone.
 
 // Indexed loops over a segment read as the graph does, several arrays at
 // once.
 #![allow(clippy::needless_range_loop)]
 
-use core::f32::consts::LOG2_10;
+use core::f32::consts::{LOG2_10, LOG2_E};
 #[cfg(any(test, feature = "test-support"))]
 use core::ops::Range;
 
+use crate::dsp::algo::math::{exp2, log2};
 use crate::dsp::clampf;
 use crate::dsp::halfband::HALF;
 use crate::dsp::reverb::EngineKnobs;
 use crate::dsp::ring::{FULL_SCALE, RING_LEN};
 
+use super::WET_ROOM;
 use super::arena::ReverbArena;
 use super::parts::{
     Lines, Scratch, XFADE, XFADE_INV, ap_f32, clip, ease, ease_k, one_pole, pair_in, pow2, wrap,
@@ -294,6 +301,18 @@ pub const A_DELAY_MS: f32 = DELAY_MS[0][0] + DELAY_MS[0][1];
 
 /// DAMP at its top: the dampers open.
 pub const DAMP_OPEN_HZ: f32 = crate::dsp::reverb::ROOM.damp_hz.lo;
+/// TONE at its top: the input filter open (ADR 0095, GRAIN's refit).
+pub const TONE_OPEN_HZ: f32 = crate::dsp::reverb::ROOM.tone_hz.lo;
+/// Where TONE starts to open it: the knob's last 5 %, so the fit, and a
+/// hand, find every brightness between (no cliff, as DAMP's top has). The
+/// presets were fitted with this value; it is TONE's law at 0.05 within
+/// a hertz.
+pub const TONE_RAMP_HZ: f32 = 9_330.0;
+const _: () = assert!({
+    let r = crate::dsp::reverb::ROOM.tone_hz;
+    let at = r.lo * exp2(0.05 * r.log2_ratio);
+    TONE_RAMP_HZ < TONE_OPEN_HZ && at - TONE_RAMP_HZ < 1.0 && TONE_RAMP_HZ - at < 1.0
+});
 
 /// SMEAR's cap, a share of the loop (§ The SMEAR bound).
 const SMEAR_CAP: f32 = crate::dsp::reverb::ROOM.smear_cap;
@@ -327,6 +346,271 @@ const FITS: () = assert!(
             ok
         }
 );
+
+/// A level in LSBs of 13 bits at the wet return's full scale (MIX 1): the
+/// grid the MidiVerb II's grain is read against.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Lsb13(f32);
+
+impl Lsb13 {
+    /// `x` LSBs: a grain, so above 0 and under 64 (−42 dBFS).
+    pub const fn new(x: f32) -> Self {
+        assert!(x > 0.0 && x < 64.0, "a grain: 0 < LSB13 < 64");
+        Self(x)
+    }
+
+    pub const fn get(self) -> f32 {
+        self.0
+    }
+
+    /// The same level on one side of ROOM's return, before the wet gain.
+    pub const fn ring(self) -> RingLsb {
+        RingLsb(self.0 / 4096.0 * FULL_SCALE / WET_ROOM)
+    }
+}
+
+/// A level in ROOM's ring LSBs: its lines' i16 grid.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RingLsb(f32);
+
+impl RingLsb {
+    pub const fn new(x: f32) -> Self {
+        assert!(x >= 0.0, "a level: not negative");
+        Self(x)
+    }
+
+    pub const fn get(self) -> f32 {
+        self.0
+    }
+}
+
+/// A time constant, ms.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Ms(f32);
+
+impl Ms {
+    pub const fn new(x: f32) -> Self {
+        assert!(x > 0.0, "a time constant: positive");
+        Self(x)
+    }
+
+    pub const fn get(self) -> f32 {
+        self.0
+    }
+}
+
+/// Where GRAIN's gate opens fully: the tail's envelope as a multiple of
+/// the grain's own level. The envelope reads the return before the grain,
+/// so one under 1 never opens on the grain itself.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Knee(f32);
+
+impl Knee {
+    pub const fn new(x: f32) -> Self {
+        assert!(x > 0.0, "a knee: positive");
+        Self(x)
+    }
+
+    pub const fn get(self) -> f32 {
+        self.0
+    }
+}
+
+/// GRAIN's tilt: each draw plus this × its side's last draw, a gentle fall
+/// to the top (−3.6 dB at 9 kHz against 3 kHz at 0.3).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tilt(f32);
+
+impl Tilt {
+    pub const fn new(x: f32) -> Self {
+        assert!(x >= 0.0 && x < 1.0, "a tilt: 0 ≤ x < 1");
+        Self(x)
+    }
+
+    pub const fn get(self) -> f32 {
+        self.0
+    }
+}
+
+/// A time, seconds.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Seconds(f32);
+
+impl Seconds {
+    pub const fn new(x: f32) -> Self {
+        assert!(x > 0.0, "a time: positive");
+        Self(x)
+    }
+
+    pub const fn get(self) -> f32 {
+        self.0
+    }
+}
+
+/// GRAIN's level against DECAY: full from `full` up, and under it × (RT60
+/// / `full`)^`slope`. The unit's grain is truncation fed round its loops,
+/// so a short room carries less of it (the sizzle report's p01–p03 against
+/// p05–p14).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GrainDecay {
+    full: Seconds,
+    slope: f32,
+}
+
+impl GrainDecay {
+    /// A slope from 0 (no law) to 1 (the level in proportion).
+    pub const fn new(full: Seconds, slope: f32) -> Self {
+        assert!(slope >= 0.0 && slope <= 1.0, "a slope: 0 to 1");
+        Self { full, slope }
+    }
+
+    /// The level's share at `rt60_s`, 0–1.
+    #[inline(always)]
+    pub fn share(&self, rt60_s: f32) -> f32 {
+        pow2(self.slope * log2((rt60_s * (1.0 / self.full.0)).min(1.0)))
+    }
+}
+
+/// GRAIN's gate: full at the tail's envelope (|l| + |r|, `env`'s one-pole)
+/// a knee × the grain's level, fading linearly under it, nothing under
+/// `floor`. The knee runs geometrically in SIZE's k, from `small` at
+/// `K_MIN` to `large` at 1: a small room keeps its grain on as its tail
+/// dies into the unit's dead band, a large one fades it sooner.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GrainGate {
+    env: Ms,
+    small: Knee,
+    large: Knee,
+    floor: RingLsb,
+    /// log2(large / small): the knee's rise over SIZE's k.
+    rise: f32,
+}
+
+impl GrainGate {
+    /// A floor of half a ring LSB or more: a dead tail's envelope falls
+    /// under it in finite time, so the gate shuts exactly.
+    pub const fn new(env: Ms, small: Knee, large: Knee, floor: RingLsb) -> Self {
+        assert!(floor.get() >= 0.5, "the floor: half a ring LSB or more");
+        Self {
+            env,
+            small,
+            large,
+            floor,
+            rise: log2(large.0 / small.0),
+        }
+    }
+
+    /// The knee at SIZE's `k`.
+    #[inline(always)]
+    pub fn knee(&self, k: f32) -> f32 {
+        let x = (k - K_MIN) * (1.0 / (1.0 - K_MIN));
+        self.small.0 * pow2(x * self.rise)
+    }
+
+    pub const fn env(&self) -> Ms {
+        self.env
+    }
+
+    pub const fn floor(&self) -> RingLsb {
+        self.floor
+    }
+}
+
+/// GRAIN (ADR 0095, ROOM as built: GRAIN): its level per side, gate, tilt
+/// and seed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Grain {
+    level: Lsb13,
+    decay: GrainDecay,
+    gate: GrainGate,
+    tilt: Tilt,
+    seed: u32,
+}
+
+impl Grain {
+    /// The gate's floor under its knee at both ends of SIZE (the knee's
+    /// geometric, so between them too): the gate opens on a tail.
+    pub const fn new(
+        level: Lsb13,
+        decay: GrainDecay,
+        gate: GrainGate,
+        tilt: Tilt,
+        seed: u32,
+    ) -> Self {
+        let ring = level.ring().get();
+        assert!(
+            gate.floor.0 < gate.small.0 * ring && gate.floor.0 < gate.large.0 * ring,
+            "the gate's floor under its knee"
+        );
+        Self {
+            level,
+            decay,
+            gate,
+            tilt,
+            seed,
+        }
+    }
+
+    pub const fn level(&self) -> Lsb13 {
+        self.level
+    }
+
+    pub const fn decay(&self) -> GrainDecay {
+        self.decay
+    }
+
+    pub const fn gate(&self) -> GrainGate {
+        self.gate
+    }
+
+    pub const fn tilt(&self) -> Tilt {
+        self.tilt
+    }
+
+    /// The noise source's seed: every fresh ROOM draws the same grain.
+    pub const fn seed(&self) -> u32 {
+        self.seed
+    }
+}
+
+/// ROOM's GRAIN, fitted by the GRAIN metric (ADR 0095).
+pub const GRAIN: Grain = Grain::new(
+    Lsb13::new(2.6),
+    GrainDecay::new(Seconds::new(0.8), 0.5),
+    GrainGate::new(
+        Ms::new(20.0),
+        Knee::new(0.8),
+        Knee::new(135.0),
+        RingLsb::new(1.0),
+    ),
+    Tilt::new(0.3),
+    0x2545_f491,
+);
+/// The envelope's one-pole coefficient at the ring's rate.
+const GRAIN_ENV_A: f32 = 1.0 - exp2(-LOG2_E / (GRAIN.gate.env.0 * PER_MS));
+/// The LCG's top 16 bits (±32768, RMS 32768/√3), tilted, to the level per
+/// side.
+const GRAIN_K: f32 = GRAIN.level.ring().0 * 1.732_050_8
+    / 32_768.0
+    / exp2(0.5 * log2(1.0 + GRAIN.tilt.0 * GRAIN.tilt.0));
+
+/// One step of GRAIN's LCG (Numerical Recipes').
+#[inline(always)]
+const fn lcg(x: u32) -> u32 {
+    x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223)
+}
+
+/// One step back: 4 276 115 653 is 1 664 525's inverse mod 2³².
+#[inline(always)]
+const fn lcg_back(x: u32) -> u32 {
+    x.wrapping_sub(1_013_904_223).wrapping_mul(4_276_115_653)
+}
+
+/// A state's draw: its top 16 bits, signed.
+#[inline(always)]
+fn draw(x: u32) -> f32 {
+    (x as i32 >> 16) as f32
+}
 
 /// The new engines' stage gain cap (§ Shared machinery).
 const MAX_GAIN: f32 = 0.985;
@@ -371,10 +655,19 @@ pub struct Room {
     t_cap: f32,
     t_cs: (f32, f32),
     t_g: [[f32; 2]; 4],
+    /// GRAIN's noise scale and its gate's 1/knee, for DECAY and the lengths
+    /// crossfading to.
+    t_grain: (f32, f32),
     /// The dampers, one a loop. Unrounded (ADR 0085, HALL as built).
     lp: [f32; 4],
     /// This block's SMEAR offsets (start, end), ring samples: `D·(1 + x)`.
     smear: [(f32, f32); 4],
+    /// GRAIN's envelope (ring LSBs) and its noise source's state.
+    env: f32,
+    seed: u32,
+    /// GRAIN off (tests: the tail alone, and the grain as the difference).
+    #[cfg(any(test, feature = "test-support"))]
+    no_grain: bool,
     /// A crossfade step other than `STEP`, when not 0 (the slap test's
     /// negative control): never in firmware.
     #[cfg(any(test, feature = "test-support"))]
@@ -412,8 +705,13 @@ impl Default for Room {
             t_cap: 0.0,
             t_cs: (0.0, 0.0),
             t_g: [[0.0; 2]; 4],
+            t_grain: (0.0, 0.0),
             lp: [0.0; 4],
             smear: [(0.0, 0.0); 4],
+            env: 0.0,
+            seed: GRAIN.seed(),
+            #[cfg(any(test, feature = "test-support"))]
+            no_grain: false,
             #[cfg(any(test, feature = "test-support"))]
             coarse: 0,
             #[cfg(any(test, feature = "test-support"))]
@@ -501,7 +799,16 @@ impl Room {
         ];
         if key != self.key || self.retarget {
             (self.key, self.retarget) = (key, false);
-            self.t_ta = one_pole(k.tone_hz, FS);
+            // TONE's top opens the input filter, as DAMP's the dampers:
+            // the unit has none, and 10 kHz cost the bright programs'
+            // 4–11.7 kHz 1–1.5 dB (ADR 0095, GRAIN's refit).
+            let open = clampf(
+                (k.tone_hz - TONE_RAMP_HZ) * (1.0 / (TONE_OPEN_HZ - TONE_RAMP_HZ)),
+                0.0,
+                1.0,
+            );
+            let a = one_pole(k.tone_hz, FS);
+            self.t_ta = a + open * (1.0 - a);
             // DAMP's top end opens the damper (ADR 0095's first near
             // miss): a bypass, not 10 kHz.
             self.t_da = if k.damp_hz >= DAMP_OPEN_HZ {
@@ -522,6 +829,12 @@ impl Room {
                     self.t_g[l][s] = pow2(per * len).min(MAX_GAIN);
                 }
             }
+            let lv = GRAIN.decay.share(k.rt60_s);
+            let kk = self.to[0][0] as f32 * (1.0 / (DELAY_MS[0][0] * PER_MS));
+            self.t_grain = (
+                GRAIN_K * lv,
+                1.0 / (GRAIN.level.ring().0 * lv * GRAIN.gate.knee(kk)),
+            );
         }
         ease(&mut self.ta, self.t_ta, k20);
         ease(&mut self.da, self.t_da, k20);
@@ -545,6 +858,18 @@ impl Room {
     /// The SMEAR offsets the last block read by, as held.
     pub fn smear(&self) -> [(f32, f32); 4] {
         self.smear
+    }
+
+    /// GRAIN off from now on (tests).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn grain_off(&mut self) {
+        self.no_grain = true;
+    }
+
+    /// GRAIN's envelope, ring LSBs (tests).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn grain_env(&self) -> f32 {
+        self.env
     }
 
     /// Step `step` ring samples a crossfade from now on (tests).
@@ -642,7 +967,7 @@ impl Room {
     }
 
     /// One ring block of the decimated send `u` (1.0 full scale); `l` and
-    /// `r` get the return in LSBs.
+    /// `r` get the return in LSBs, GRAIN on it.
     #[inline(never)]
     pub fn run(
         &mut self,
@@ -654,10 +979,43 @@ impl Room {
     ) {
         let (lines, f, _) = arena.split(SLOTS, FSLOTS);
         self.block::<[i16], true>(lines, f, u, k, l, r);
+        #[cfg(any(test, feature = "test-support"))]
+        if self.no_grain {
+            return;
+        }
+        self.grain(l, r);
     }
 
-    /// `run` with its i16 lines as `lines`' floats (unquantised), and the
-    /// re-entry clips off unless `clipped`: the level plan's references.
+    /// GRAIN on the return `l`, `r`: per side, uniform noise from the
+    /// LCG's top 16 bits, tilted, at `GRAIN`'s level for DECAY, times the
+    /// gate, read off the envelope before this sample. Branch-free: the
+    /// same work at every level. Its scale and knee are cached with the
+    /// other targets: they move with DECAY, and with SIZE by the length
+    /// crossfades' steps.
+    #[inline(always)]
+    fn grain(&mut self, l: &mut [f32; HALF], r: &mut [f32; HALF]) {
+        let (kn, inv_t) = self.t_grain;
+        let (mut env, mut x) = (self.env, self.seed);
+        // Each side's last draw: the seed is R's, one step back L's.
+        let (mut pl, mut pr) = (draw(lcg_back(x)), draw(x));
+        for i in 0..HALF {
+            let (yl, yr) = (l[i], r[i]);
+            let s = kn * clampf((env - GRAIN.gate.floor.0) * inv_t, 0.0, 1.0);
+            env += GRAIN_ENV_A * (yl.abs() + yr.abs() - env);
+            x = lcg(x);
+            let nl = draw(x);
+            l[i] = yl + (nl + GRAIN.tilt.0 * pl) * s;
+            x = lcg(x);
+            let nr = draw(x);
+            r[i] = yr + (nr + GRAIN.tilt.0 * pr) * s;
+            (pl, pr) = (nl, nr);
+        }
+        (self.env, self.seed) = (env, x);
+    }
+
+    /// `run` without GRAIN, with its i16 lines as `lines`' floats
+    /// (unquantised), and the re-entry clips off unless `clipped`: the level
+    /// plan's references.
     #[cfg(any(test, feature = "test-support"))]
     #[allow(clippy::too_many_arguments)]
     pub fn run_reference(

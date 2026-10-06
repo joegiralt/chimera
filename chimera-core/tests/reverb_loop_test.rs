@@ -549,6 +549,22 @@ fn damp_darkens_the_loop_and_tone_the_input() {
     println!("DAMP 10 → 1.5 kHz: 4 kHz {o4:.3} → {d4:.3} s, 500 Hz {o5:.3} → {d5:.3} s");
     assert!(d4 <= 0.7 * o4, "4 kHz: {o4} → {d4}");
     assert!((d5 / o5 - 1.0).abs() <= 0.05, "500 Hz: {o5} → {d5}");
+    // TONE's top opens the input filter, over the knob's last 5 % (no
+    // cliff): open at 0, a one-pole from 0.05 on, rising monotonically.
+    let ta = |tone: f32| engine(&ReverbParams { tone, ..p }).0.targets().0;
+    assert_eq!(ta(0.0), 1.0, "TONE 0: the input open");
+    let steps: Vec<f32> = [0.0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06].map(ta).to_vec();
+    assert!(steps.windows(2).all(|w| w[1] < w[0]), "{steps:?}");
+    assert!(
+        steps.windows(2).all(|w| w[0] - w[1] < 0.03),
+        "a cliff: {steps:?}"
+    );
+    let pole = 1.0 - (-core::f32::consts::TAU * 9_000.0 / 24_000.0).exp();
+    assert!(
+        ta(0.08) < pole + 0.01,
+        "TONE 0.08: a one-pole, {}",
+        ta(0.08)
+    );
     let toned = ReverbParams { tone: 1.0, ..p };
     let tail = |q: &ReverbParams| {
         let (l, _) = noise_burst(q, 1.5);
@@ -986,10 +1002,19 @@ fn room_noise_and_loudness() {
     let (rv, pc) = (fresh(&p), RefCell::new(p));
     let (qv, qc) = (fresh(&q), RefCell::new(q));
     check_sustained_loudness(&mut bus(&rv, &pc), &mut bus(&qv, &qc));
+    // The storage noise floor: GRAIN's is meant, and bounded by its own
+    // tests.
+    let quiet = |p: &ReverbParams| {
+        let rv = fresh(p);
+        rv.borrow_mut().room_mut().expect("ROOM").grain_off();
+        rv
+    };
+    let (rv, pc) = (quiet(&p), RefCell::new(p));
+    let (qv, qc) = (fresh(&q), RefCell::new(q));
     check_noise_floor(&mut bus(&rv, &pc), &mut bus(&qv, &qc), 4.0);
     let mut dense = p;
     dense.diffuse = 1.0;
-    let (rv, pc) = (fresh(&dense), RefCell::new(dense));
+    let (rv, pc) = (quiet(&dense), RefCell::new(dense));
     let (qv, qc) = (fresh(&q), RefCell::new(q));
     check_noise_floor(&mut bus(&rv, &pc), &mut bus(&qv, &qc), 6.0);
 }
@@ -1023,6 +1048,210 @@ fn room_falls_silent() {
             "SMEAR {smear} SIZE {size}: still ringing"
         );
     }
+}
+
+// ── GRAIN (ADR 0095, ROOM as built: GRAIN) ──
+
+/// ROOM at MIX 1 on MidiVerb II program 5's fitted knobs (SIZE, DECAY,
+/// TONE, DIFFUSE, PRE-DLY, DAMP, LOOPS), SMEAR 0.
+fn mv_room(k: [f32; 7]) -> ReverbParams {
+    let mut p = params(1.0);
+    (
+        p.size, p.time, p.tone, p.diffuse, p.predelay, p.damping, p.shape,
+    ) = (k[0], k[1], k[2], k[3], k[4], k[5], k[6]);
+    p.smear = 0.0;
+    p
+}
+const MV01: [f32; 7] = [0.42, 0.189, 0.036, 0.0, 0.0, 0.923, 0.0];
+const MV05: [f32; 7] = [0.643, 0.714, 0.0, 0.0, 0.077, 0.424, 0.642];
+const MV08: [f32; 7] = [0.619, 0.702, 0.91, 0.0, 0.077, 0.394, 0.78];
+
+/// ROOM on `p` fed `input`, with GRAIN and without: (with, without), each
+/// (l, r).
+#[allow(clippy::type_complexity)]
+fn with_and_without_grain(
+    p: &ReverbParams,
+    input: &dyn Fn(usize) -> f32,
+    seconds: f32,
+) -> ((Vec<f32>, Vec<f32>), (Vec<f32>, Vec<f32>)) {
+    let pc = RefCell::new(*p);
+    let on = fresh(p);
+    let off = fresh(p);
+    off.borrow_mut().room_mut().expect("ROOM").grain_off();
+    let a = run(&mut bus(&on, &pc), &mut |i| input(i), seconds);
+    let b = run(&mut bus(&off, &pc), &mut |i| input(i), seconds);
+    (a, b)
+}
+
+/// The harness's noise burst as Chimera hears it: white at −18 dBFS RMS
+/// for `burst` samples, then silence.
+fn harness_burst(burst: usize) -> impl Fn(usize) -> f32 {
+    // Uniform ±a has RMS a/√3.
+    let a = 10f32.powf(-18.0 / 20.0) * 3f32.sqrt();
+    let x: Vec<f32> = {
+        let mut n = Noise(0x9e37_79b9);
+        (0..burst).map(|_| a * n.next()).collect()
+    };
+    move |i| x.get(i).copied().unwrap_or(0.0)
+}
+
+fn mean_power(x: &[f32]) -> f64 {
+    x.iter().map(|&v| f64::from(v) * f64::from(v)).sum::<f64>() / x.len() as f64
+}
+
+/// The grain alone, per side: the difference GRAIN makes. Nothing feeds it
+/// back, so it is exactly the noise × the gate.
+fn grain_of(a: &(Vec<f32>, Vec<f32>), b: &(Vec<f32>, Vec<f32>)) -> (Vec<f32>, Vec<f32>) {
+    let d = |x: &[f32], y: &[f32]| x.iter().zip(y).map(|(p, q)| p - q).collect();
+    (d(&a.0, &b.0), d(&a.1, &b.1))
+}
+
+/// Under a held send the gate stands open: each side carries the grain at
+/// its level (`room::GRAIN`, for DECAY's RT60), within 1 dB. A short room
+/// carries less.
+#[test]
+fn grain_carries_its_level() {
+    for (k, short) in [(MV05, false), (MV01, true)] {
+        let p = mv_room(k);
+        let (on, off) = with_and_without_grain(&p, &harness_burst(SR as usize * 2), 2.0);
+        let g = grain_of(&on, &off);
+        let share = room::GRAIN.decay().share(knobs_120(&p).rt60_s);
+        assert_eq!(share < 0.9, short, "DECAY's share {share}");
+        let want = room::GRAIN.level().get() * share;
+        for side in [&g.0, &g.1] {
+            let lsb = mean_power(&side[SR as usize..]).sqrt() * 4096.0;
+            assert!(
+                (20.0 * (lsb / f64::from(want)).log10()).abs() < 1.0,
+                "{lsb:.2} LSB13, want {want:.2}"
+            );
+        }
+    }
+}
+
+/// After the harness's burst the grain-to-tail ratio follows the unit's
+/// (the sizzle report's r/F, all bands): a fixed grain under a falling
+/// tail, so the ratio climbs, a small room's furthest. The bands sit under
+/// the report's: GRAIN's level is fitted on the notched burst at the A/B's
+/// drive (ADR 0095), which drives the unit 3–4 dB harder than the plain
+/// burst the r/F was read at, and the gate fades the grain sooner than
+/// the unit's dead band takes its tail. Each window lies `GRAIN_UNDER_DB`
+/// under to `GRAIN_OVER_DB` over the unit's, and climbs from the first.
+#[test]
+fn grain_to_tail_follows_the_unit() {
+    let burst = SR as usize;
+    /// A window after the burst, ms, and the unit's r/F there, dB.
+    #[derive(Clone, Copy)]
+    struct Window {
+        from: f32,
+        to: f32,
+        unit_db: f64,
+    }
+    const fn w(from: f32, to: f32, unit_db: f64) -> Window {
+        Window { from, to, unit_db }
+    }
+    struct Case {
+        name: &'static str,
+        knobs: [f32; 7],
+        windows: [Window; 3],
+    }
+    const CASES: [Case; 3] = [
+        Case {
+            name: "p01",
+            knobs: MV01,
+            windows: [
+                w(0.0, 50.0, -41.5),
+                w(100.0, 200.0, -21.4),
+                w(200.0, 400.0, -9.0),
+            ],
+        },
+        Case {
+            name: "p05",
+            knobs: MV05,
+            windows: [
+                w(0.0, 50.0, -41.4),
+                w(100.0, 200.0, -35.1),
+                w(200.0, 400.0, -26.4),
+            ],
+        },
+        Case {
+            name: "p08",
+            knobs: MV08,
+            windows: [
+                w(0.0, 50.0, -36.4),
+                w(100.0, 200.0, -31.1),
+                w(200.0, 400.0, -23.8),
+            ],
+        },
+    ];
+    for Case {
+        name,
+        knobs: k,
+        windows,
+    } in CASES
+    {
+        let (on, off) = with_and_without_grain(&mv_room(k), &harness_burst(burst), 2.0);
+        let g = grain_of(&on, &off);
+        let got = windows.map(
+            |Window {
+                 from: a,
+                 to: b,
+                 unit_db: want,
+             }| {
+                let w = burst + (a * MS as f32) as usize..burst + (b * MS as f32) as usize;
+                let grain = mean_power(&g.0[w.clone()]) + mean_power(&g.1[w.clone()]);
+                let tail = mean_power(&off.0[w.clone()]) + mean_power(&off.1[w.clone()]);
+                let got = 10.0 * (grain / tail).log10();
+                assert!(
+                    got >= want - GRAIN_UNDER_DB && got <= want + GRAIN_OVER_DB,
+                    "{name} {a}-{b} ms: grain/tail {got:.1} dB, the unit's {want:.1}"
+                );
+                got
+            },
+        );
+        assert!(
+            got[0] < got[1] && got[1] < got[2],
+            "{name}: {got:?} doesn't climb"
+        );
+    }
+}
+/// How far under and over the unit's r/F the grain-to-tail ratio may sit.
+const GRAIN_UNDER_DB: f64 = 9.0;
+const GRAIN_OVER_DB: f64 = 2.0;
+
+/// A fresh ROOM fed nothing returns exactly nothing: no hiss at idle.
+#[test]
+fn room_is_silent_at_idle() {
+    let p = mv_room(MV05);
+    let (rv, pc) = (fresh(&p), RefCell::new(p));
+    let (l, r) = run(&mut bus(&rv, &pc), &mut |_| 0.0, 3.0);
+    assert!(l.iter().chain(&r).all(|&s| s == 0.0), "hiss at idle");
+}
+
+/// Once the tail is gone the grain is too, exactly: where ROOM without
+/// GRAIN reads zero, ROOM with it reads zero, and the envelope sits under
+/// the gate's floor.
+#[test]
+fn no_grain_without_a_tail() {
+    let p = mv_room(MV05);
+    let (on, off) = with_and_without_grain(&p, &harness_burst(SR as usize / 2), 4.0);
+    let last = SR as usize / 2;
+    let quiet = |x: &[f32]| x[x.len() - last..].iter().all(|&s| s == 0.0);
+    assert!(quiet(&off.0) && quiet(&off.1), "the tail outlasts the test");
+    assert!(quiet(&on.0) && quiet(&on.1), "grain after the tail");
+}
+
+/// Every fresh ROOM draws the same grain (goldens reproduce), and it is
+/// there to draw.
+#[test]
+fn grain_is_deterministic() {
+    let p = mv_room(MV05);
+    let x = harness_burst(SR as usize / 2);
+    let (a, off) = with_and_without_grain(&p, &x, 1.5);
+    let (b, _) = with_and_without_grain(&p, &x, 1.5);
+    let bits = |v: &[f32]| v.iter().map(|s| s.to_bits()).collect::<Vec<_>>();
+    assert_eq!(bits(&a.0), bits(&b.0));
+    assert_eq!(bits(&a.1), bits(&b.1));
+    assert_ne!(bits(&a.0), bits(&off.0), "no grain drawn");
 }
 
 /// ROOM's TAIL draws a pre-delay gap, then the fall (spec § Glyph).
@@ -1567,9 +1796,12 @@ fn each_tap_reads_its_line_at_its_offset() {
 #[test]
 fn the_diffuser_is_five_allpasses() {
     let mut p = params(1.0);
-    (p.predelay, p.tone, p.size) = (0.0, 0.0, 0.0);
+    // TONE under its open top: a one-pole that spreads the impulse.
+    (p.predelay, p.tone, p.size) = (0.0, 0.1, 0.0);
     let k = knobs_120(&p);
     let (mut e, mut arena) = engine(&p);
+    // The structure alone: GRAIN rides on the return.
+    e.grain_off();
     let (mut l, mut r) = ([0.0f32; HALF], [0.0; HALF]);
     let mut got = Vec::new();
     for b in 0..4 {
@@ -1577,9 +1809,9 @@ fn the_diffuser_is_five_allpasses() {
         e.run(&mut arena, &u, &k, &mut l, &mut r);
         got.extend_from_slice(&r);
     }
-    // The model: TONE's one-pole at 10 kHz, PRE-DLY's rounding store,
-    // then five allpasses (v = x − g·z, y = z + g·v).
-    let a = 1.0 - (-std::f64::consts::TAU * 10_000.0 / 24_000.0).exp();
+    // The model: TONE's one-pole, PRE-DLY's rounding store, then five
+    // allpasses (v = x − g·z, y = z + g·v).
+    let a = 1.0 - (-std::f64::consts::TAU * f64::from(k.tone_hz) / 24_000.0).exp();
     let (mut tone, mut lines): (f64, Vec<Vec<f64>>) = (
         0.0,
         DIFFUSER_MS.iter().map(|&ms| vec![0.0; n24(ms)]).collect(),

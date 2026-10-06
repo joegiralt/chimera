@@ -347,6 +347,8 @@ pub fn value_text(id: ParamId, p: &ReverbParams, tempo: Tempo, fold: FoldState) 
         P::SMEAR => k.smear_ms == 0.0,
         // ROOM's DAMP at its top opens the dampers.
         P::DAMPING if p.kind == ReverbType::Room => k.damp_hz >= room::DAMP_OPEN_HZ,
+        // And its TONE at its top the input filter.
+        P::TONE if p.kind == ReverbType::Room => k.tone_hz >= room::TONE_OPEN_HZ,
         // TAIL 0 is the fast gate; REGEN 0 none.
         P::TIME if burst => k.tail == 0.0 && k.regen == 0.0,
         _ => false,

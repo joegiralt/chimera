@@ -64,16 +64,16 @@ pub fn wet_gain(t: ReverbType) -> f32 {
     }
 }
 
-const WET_ROOM: f32 = 2.42;
+pub(crate) const WET_ROOM: f32 = 2.42;
 const WET_HALL: f32 = 9.7;
 const WET_GATE: f32 = 6.75;
 const WET_REVERSE: f32 = 7.05;
 const WET_BLOOM: f32 = 5.72;
 
 /// ROOM's four loops (ADR 0095) set it: their gains, targets, dampers and
-/// four smear offsets, 84 B past ADR 0085's 160 (88 with the tests'
-/// probes).
-pub const ENGINE_STATE_MAX: usize = 248;
+/// four smear offsets, 84 B past ADR 0085's 160, and GRAIN's envelope,
+/// seed and cached scale and knee, 16 more (104 with the tests' probes).
+pub const ENGINE_STATE_MAX: usize = 264;
 const _: () = assert!(core::mem::size_of::<EngineState>() <= ENGINE_STATE_MAX);
 
 /// Blocks each fade of the switch takes: 20 ms at 48 kHz.

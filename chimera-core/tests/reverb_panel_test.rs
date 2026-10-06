@@ -372,15 +372,15 @@ fn cells_read_their_starting_values() {
     let p = ReverbParams::default().with_type(ReverbType::Room, &KnobMemory::new());
     // MidiVerb II program 5's fitted knobs (ADR 0095).
     for (id, w) in [
-        (P::SIZE, "115ms"),
+        (P::SIZE, "117ms"),
         (P::TIME, "1.0s"),
-        (P::TONE, "10k"),
+        (P::TONE, "OFF"),
         (P::DIFFUSE, "0.45"),
         (P::PREDELAY, "4ms"),
-        (P::DAMPING, "5.2k"),
+        (P::DAMPING, "4.5k"),
         (P::SMEAR, "0.3ms"),
         (P::RATE, "0.32Hz"),
-        (P::SHAPE, "65"),
+        (P::SHAPE, "58"),
     ] {
         assert_eq!(text(id, &p).as_str(), w, "ROOM {id:?}");
     }
@@ -397,9 +397,14 @@ fn cells_read_their_starting_values() {
     ] {
         assert_eq!(text(id, &b).as_str(), w, "BLOOM {id:?}");
     }
-    // DAMP's top opens the dampers.
+    // DAMP's top opens the dampers; TONE's the input filter, and its next
+    // step reads its cutoff.
     let open = ReverbParams { damping: 0.0, ..p };
     assert_eq!(text(P::DAMPING, &open).as_str(), "OFF");
+    let open = ReverbParams { tone: 0.0, ..p };
+    assert_eq!(text(P::TONE, &open).as_str(), "OFF");
+    let shut = ReverbParams { tone: 0.01, ..p };
+    assert_ne!(text(P::TONE, &shut).as_str(), "OFF");
     let p = ReverbParams::default().with_type(ReverbType::Hall, &KnobMemory::new());
     for (id, w) in [
         (P::SIZE, "342ms"),
