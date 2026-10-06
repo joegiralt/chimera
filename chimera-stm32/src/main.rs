@@ -596,7 +596,7 @@ fn tend_usb(
 #[cfg(not(feature = "sd-probe"))]
 #[inline(never)]
 fn publish(b: &mut chimera_core::instrument::AudioShared, ui: &chimera_core::ui::UiState) {
-    b.update_from(ui.project().perf(), LOAD_LINK.epoch());
+    b.update_from_project(ui.project(), LOAD_LINK.epoch());
     orbit::publish(ui, b);
 }
 

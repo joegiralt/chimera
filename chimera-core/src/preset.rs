@@ -4,7 +4,7 @@ use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModSta
 use crate::name::SoundName;
 use crate::params::{EngineType, ParamSnapshot};
 use crate::project::SourceRef;
-use crate::storage::TapeSource;
+use crate::storage::{SourceHead, TapeSource, ZoneTune};
 
 pub use crate::project::{Part, PartEdit, Performance, part_block, part_block_mut};
 
@@ -57,6 +57,15 @@ impl Sound {
             dest_registry,
             source: None,
         }
+    }
+
+    /// SOURCE picked (spec § 1): the head's ref, and its root and period
+    /// copied into ROOT and PERIOD, with a zone set's `tune`. The voice
+    /// reads them from here, never from the file.
+    pub fn pick_source(&mut self, head: &SourceHead, tune: Option<ZoneTune>) {
+        self.source = Some(TapeSource { r: head.sref, tune });
+        self.params.tape.root = f32::from(head.root);
+        self.params.tape.period = head.period_q16 as f32 / 65_536.0;
     }
 
     /// Its source's ref, if it has one.

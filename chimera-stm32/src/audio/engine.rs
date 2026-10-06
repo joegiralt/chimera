@@ -129,26 +129,26 @@ pub fn render_half(half: Half) {
     // this is the only live reference to `ENGINE`.
     let e = unsafe { (*addr_of_mut!(ENGINE)).assume_init_mut() };
     let shared = e.shared.read();
-    // The block's source view, held over the render: TAPE's voices read
-    // through `GateView::bytes` (TAPE Task 13). Until one latches a source
-    // the block holds none, and stores 0.
+    // The block's source view, held over the notes and the render: TAPE's
+    // voices read through it, and then the sources they hold are stored.
     {
-        let _reads = e.sources.begin_block();
+        let reads = e.sources.begin_block();
         if e.gate.before_block(&LOAD_LINK, e.inst, shared) {
             let now = e.orbit.now();
             e.notes.drain(|src, ev| match ev {
                 // Capture sees the raw key, before any snap.
                 InEvent::Note(n) => {
                     e.orbit.live(n);
-                    e.inst.handle(n, shared);
+                    e.inst.handle_with(n, shared, &reads);
                 }
                 InEvent::Rt(rt) => e.orbit.realtime(src.index(), rt, now),
             });
-            e.orbit.block(e.inst, shared);
+            e.orbit.block(e.inst, shared, &reads);
         }
-        e.inst.render(e.fx, &mut e.dac, shared, &mut e.scope);
+        e.inst
+            .render_with(e.fx, &mut e.dac, shared, &mut e.scope, &reads);
     }
-    e.sources.store_sounding(0);
+    e.sources.store_sounding(e.inst.source_mask());
     e.orbit.publish();
     #[cfg(feature = "perf-probe")]
     {

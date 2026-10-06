@@ -335,6 +335,14 @@ impl EngineSlot {
         }
     }
 
+    /// The source TAPE latched at its last note-on; none on the others.
+    pub fn source(&self) -> Option<SourceId> {
+        match self {
+            Self::Algo(_) | Self::Modal(_) => None,
+            Self::Tape(t) => t.source(),
+        }
+    }
+
     /// The engine plays on through note-off (ONESHOT): the voice keeps its
     /// gate. ALGO and MODAL never.
     pub fn sustains(&self) -> bool {

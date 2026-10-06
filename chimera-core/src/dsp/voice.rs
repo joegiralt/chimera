@@ -602,6 +602,18 @@ impl Voice {
         self.active
     }
 
+    /// The sources this voice reads or will, for the audio's `sounding`
+    /// mask (spec § 4): only while active (an idle engine keeps its last
+    /// source latched, and must not hold its row), the latched one, fading
+    /// too, and the one a note queued behind the fade latched.
+    pub fn reads(&self) -> [Option<SourceId>; 2] {
+        if !self.active {
+            return [None; 2];
+        }
+        let queued = self.after_fade != AfterFade::Idle;
+        [self.slot.source(), self.last_source.filter(|_| queued)]
+    }
+
     /// No route into VCA, and the engine can't end the note itself: a TAPE
     /// loop has no end (spec § 2), so its key holds it, as a VCA route from
     /// a source other than an ENV does.

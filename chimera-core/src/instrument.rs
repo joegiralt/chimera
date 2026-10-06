@@ -14,6 +14,7 @@ use crate::dsp::ease::{Ease, ease_coeff, step_of};
 use crate::dsp::engines::{EngineCtx, SlotKind};
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use crate::dsp::modal::{ResonatorMode, SYM_NOTE_ON_CLEAR_MAX, SymPool};
+use crate::dsp::tape_engine::TapeEngine;
 use crate::dsp::voice::Voice;
 use crate::hw::{Cost, DAC_PAIRS, MAX_PARTS, MAX_VOICES, SampleBudget, VOICE_RAM_BUDGET};
 use crate::in_place::{by_value, uninit_at};
@@ -22,9 +23,10 @@ use crate::note_queue::{NoteEvent, NoteKind};
 use crate::orbit::RingIdx;
 use crate::orbit::ring::Harmony;
 use crate::orbit::runner::{OrbitRunner, OrbitShared};
-use crate::params::ParamSnapshot;
+use crate::params::{EngineType, ParamSnapshot};
 use crate::part::{Held, LiveSnap, PartParams};
 use crate::preset::{Part, Performance};
+use crate::project::{Project, SourceId};
 use crate::scope::ScopeWriter;
 use crate::source_table::GateView;
 use crate::voice_alloc::{Allocator, VoiceIdx};
@@ -37,6 +39,9 @@ pub struct PartAudio {
     pub params: ParamSnapshot,
     pub mod_state: ModState,
     pub mix: PartParams,
+    /// The pool's id for its Sound's source (spec § 4): what a TAPE
+    /// note-on latches. `None` with no source, or none in the pool.
+    pub source: Option<SourceId>,
 }
 
 /// The Performance state the audio needs (ADR 0021: through a triple buffer).
@@ -61,6 +66,7 @@ impl PartAudio {
             params: p.sound.params.clone(),
             mod_state: p.sound.mod_state.clone(),
             mix: p.mix,
+            source: None,
         }
     }
 
@@ -127,6 +133,22 @@ impl AudioShared {
     /// `PartAudio`, not the whole struct. The destructuring lists every
     /// field, so a new one fails to compile here.
     pub fn update_from(&mut self, perf: &Performance, epoch: u32) {
+        self.fill(perf, |_| None, epoch);
+    }
+
+    /// The shells' publish: `project`'s Performance as `update_from`, each
+    /// Part's source the id its pool holds for its Sound's ref (pass 2's,
+    /// `source_store`'s or `source_absent`'s). A lookup, never a load.
+    pub fn update_from_project(&mut self, project: &Project, epoch: u32) {
+        let pool = project.pool();
+        self.fill(
+            project.perf(),
+            |p| pool.find_source(p.sound.source?.r),
+            epoch,
+        );
+    }
+
+    fn fill(&mut self, perf: &Performance, source: impl Fn(&Part) -> Option<SourceId>, epoch: u32) {
         let Self {
             parts,
             fx,
@@ -136,6 +158,7 @@ impl AudioShared {
         } = self;
         for (d, p) in parts.iter_mut().zip(perf.parts()) {
             *d = PartAudio::of(p);
+            d.source = source(p);
         }
         *fx = perf.fx;
         *e = epoch;
@@ -146,10 +169,18 @@ impl AudioShared {
 pub type DacOut = [[f32; BLOCK_SIZE * 2]; DAC_PAIRS];
 pub use crate::dsp::limiter::DacBlocks;
 
-/// The sources a voice reads: none yet. TAPE Task 13 hands the block's
-/// `GateView` and each Part's source in; until then a TAPE note plays
-/// nothing.
+/// No pool behind a render (`handle`, `render`: the tests, the bench, the
+/// listening rig): every TAPE note-on is refused. The shells play through
+/// the block's view (`handle_with`, `render_with`).
 const NO_SOURCES: GateView<'static> = GateView::empty();
+
+/// A note waiting for its voice's fade to end (#33 M7), and the source it
+/// latched at its note-on (TAPE).
+#[derive(Clone, Copy, Debug)]
+struct Waiting {
+    vel: Velocity,
+    source: Option<SourceId>,
+}
 
 // ADR 0013/0014: the voice pool (and its small bookkeeping) lives in D2.
 const _: () = assert!(size_of::<Instrument>() <= VOICE_RAM_BUDGET);
@@ -379,8 +410,8 @@ pub struct Instrument {
     /// The Part whose Sound each voice renders: its slot's Part, except
     /// while another Part's sound fades out ahead of a waiting note.
     sounding: [u8; MAX_VOICES],
-    /// A note waiting for its voice's fade to end (#33 M7).
-    waiting: [Option<Velocity>; MAX_VOICES],
+    /// A note waiting for its voice's fade to end.
+    waiting: [Option<Waiting>; MAX_VOICES],
     /// Each Part's mono bus from the last `render`: the sum of its voices.
     buses: [[f32; BLOCK_SIZE]; MAX_PARTS],
     sends: [[f32; BLOCK_SIZE]; FX_SENDS],
@@ -586,9 +617,41 @@ impl Instrument {
         &self.buses[part]
     }
 
-    /// A played key or MIDI note: `handle_from` `NoteOrigin::Live`.
+    /// A played key or MIDI note, with no pool behind it (`NO_SOURCES`).
     pub fn handle(&mut self, ev: NoteEvent, shared: &AudioShared) {
-        self.handle_from(ev, shared, NoteOrigin::Live);
+        self.handle_with(ev, shared, &NO_SOURCES);
+    }
+
+    /// A played key or MIDI note: `handle_from_with` `NoteOrigin::Live`.
+    pub fn handle_with(&mut self, ev: NoteEvent, shared: &AudioShared, src: &GateView<'_>) {
+        self.handle_from_with(ev, shared, NoteOrigin::Live, src);
+    }
+
+    /// `handle_from_with` with no pool behind it (`NO_SOURCES`).
+    pub fn handle_from(&mut self, ev: NoteEvent, shared: &AudioShared, from: NoteOrigin) {
+        self.handle_from_with(ev, shared, from, &NO_SOURCES);
+    }
+
+    /// A note-on on Part `part` plays nothing (`TapeEngine::refuses`): a
+    /// TAPE Part with no source, an absent one, or one its model can't
+    /// play through this block's `src`. The allocator is never asked.
+    pub fn refuses(&self, part: usize, shared: &AudioShared, src: &GateView<'_>) -> bool {
+        let a = &shared.parts[part % MAX_PARTS];
+        a.params.engine() == EngineType::Tape
+            && TapeEngine::refuses(a.params.tape.model, a.source, src)
+    }
+
+    /// The sources the voices read or will (spec § 4): each active voice's
+    /// latched source, fading or not, the one a note queued behind its
+    /// fade latched (`Voice::reads`), and a note waiting for another
+    /// Part's fade. Stored once a block, it holds compaction off.
+    pub fn source_mask(&self) -> u32 {
+        let voices = self.voices.iter().flat_map(Voice::reads);
+        let waiting = self.waiting.iter().map(|w| w.and_then(|w| w.source));
+        voices
+            .chain(waiting)
+            .flatten()
+            .fold(0, |m, id| m | id.bit())
     }
 
     /// Note-on: play on every Part listening on the channel, a live key
@@ -597,7 +660,13 @@ impl Instrument {
     /// only `from`'s own voice of the note. A note-on judges against the
     /// Parts' costs worked out once for the block's snapshot (`recost`), so
     /// a burst, admitted or refused, costs them once.
-    pub fn handle_from(&mut self, ev: NoteEvent, shared: &AudioShared, from: NoteOrigin) {
+    pub fn handle_from_with(
+        &mut self,
+        ev: NoteEvent,
+        shared: &AudioShared,
+        from: NoteOrigin,
+        src: &GateView<'_>,
+    ) {
         match ev.kind {
             NoteKind::On(vel) => {
                 #[cfg(feature = "probe")]
@@ -609,7 +678,7 @@ impl Instrument {
                 #[cfg(feature = "probe")]
                 crate::probe::acc(3, 1);
                 for (p, part) in shared.parts.iter().enumerate() {
-                    if part.mix.channel != ev.channel {
+                    if part.mix.channel != ev.channel || self.refuses(p, shared, src) {
                         continue;
                     }
                     let (q, mode) = (p as u8, part.mix.mode);
@@ -678,15 +747,18 @@ impl Instrument {
                         // Another Part's sound fades out on its own bus and
                         // settings first; a Sympathetic note past the clear
                         // budget waits a block.
-                        self.waiting[v] = Some(vel);
+                        self.waiting[v] = Some(Waiting {
+                            vel,
+                            source: part.source,
+                        });
                         voice.kill()
                     } else {
                         self.sounding[v] = q;
                         let ctx = &mut EngineCtx {
                             sym: &mut self.sym,
-                            src: &NO_SOURCES,
+                            src,
                         };
-                        voice.note_on(note, vel, &part.params, None, ctx)
+                        voice.note_on(note, vel, &part.params, part.source, ctx)
                     };
                     #[cfg(feature = "probe")]
                     crate::probe::acc(2, crate::probe::now().wrapping_sub(t2));
@@ -805,7 +877,7 @@ impl Instrument {
     /// Starts the waiting notes on idle voices oldest first, by `Allocator`
     /// age, while the clear budget takes them: the first that doesn't fit
     /// queues the rest (`admit`).
-    fn start_waiting(&mut self, shared: &AudioShared) {
+    fn start_waiting(&mut self, shared: &AudioShared, src: &GateView<'_>) {
         let mut queue = [(u32::MAX, 0usize); MAX_VOICES];
         let mut n = 0;
         for v in 0..MAX_VOICES {
@@ -817,15 +889,15 @@ impl Instrument {
         queue[..n].sort_unstable();
         for &(_, v) in &queue[..n] {
             let s = self.alloc.slots()[v];
-            if let (Some(vel), Some(q), Some(note)) = (self.waiting[v], s.part(), s.note())
-                && self.start(v, (vel, q, note, s.held()), shared)
+            if let (Some(w), Some(q), Some(note)) = (self.waiting[v], s.part(), s.note())
+                && self.start(v, (w, q, note, s.held()), shared, src)
             {
                 self.waiting[v] = None;
             }
         }
     }
 
-    /// Starts idle voice `v`'s waiting note, velocity `vel` on Part `q`,
+    /// Starts idle voice `v`'s waiting note `w` on Part `q`,
     /// released at once unless `held`, if the block's clear budget lets it:
     /// false if it must wait on. A Sympathetic note is placed as it starts
     /// (its Part may have become Sympathetic while it waited): it keeps its
@@ -833,8 +905,9 @@ impl Instrument {
     fn start(
         &mut self,
         v: usize,
-        (vel, q, note, held): (Velocity, u8, MidiNote, bool),
+        (w, q, note, held): (Waiting, u8, MidiNote, bool),
         shared: &AudioShared,
+        src: &GateView<'_>,
     ) -> bool {
         let params = &shared.parts[q as usize % MAX_PARTS].params;
         if SlotKind::of(params) == SYMPATHETIC {
@@ -847,9 +920,9 @@ impl Instrument {
         let voice = &mut self.voices[v];
         let ctx = &mut EngineCtx {
             sym: &mut self.sym,
-            src: &NO_SOURCES,
+            src,
         };
-        let _ = voice.note_on(note, vel, params, None, ctx);
+        let _ = voice.note_on(note, w.vel, params, w.source, ctx);
         if !held {
             voice.note_off(ctx);
         }
@@ -960,19 +1033,32 @@ impl Instrument {
                 // Its note waits for the fade; a note that came mid-fade
                 // gives way to it.
                 let vel = self.voices[v].velocity();
-                self.waiting[v].get_or_insert(vel);
+                self.waiting[v].get_or_insert(Waiting { vel, source: None });
                 let _ = self.voices[v].kill();
             }
         }
     }
 
-    /// Render one block into the three DAC pairs: `dac.out()` after.
+    /// `render_with` with no pool behind it (`NO_SOURCES`).
     pub fn render(
         &mut self,
         fx: &mut FxBus,
         dac: &mut DacBlocks,
         shared: &AudioShared,
         scope: &mut ScopeWriter,
+    ) {
+        self.render_with(fx, dac, shared, scope, &NO_SOURCES);
+    }
+
+    /// Render one block into the three DAC pairs, TAPE's voices reading
+    /// through the block's `src`: `dac.out()` after.
+    pub fn render_with(
+        &mut self,
+        fx: &mut FxBus,
+        dac: &mut DacBlocks,
+        shared: &AudioShared,
+        scope: &mut ScopeWriter,
+        src: &GateView<'_>,
     ) {
         self.recost(shared);
         self.restart_switched(shared);
@@ -987,7 +1073,7 @@ impl Instrument {
         // 0. Notes that waited on the clear budget, their voices idle, start
         //    before the voices render: let in this block, one sounds in it.
         self.clear_backlog = false;
-        self.start_waiting(shared);
+        self.start_waiting(shared, src);
         self.serve_resnaps();
         for v in 0..MAX_VOICES {
             if self.alloc.slots()[v].is_free() {
@@ -997,7 +1083,7 @@ impl Instrument {
             let part = &shared.parts[p];
             let ctx = &mut EngineCtx {
                 sym: &mut self.sym,
-                src: &NO_SOURCES,
+                src,
             };
             self.voices[v].render(&mut block, &part.params, &part.mod_state, ctx);
             if written[p] {
@@ -1024,7 +1110,7 @@ impl Instrument {
         }
         // 6. Waiting notes whose voices went idle this block start, oldest
         //    first, behind any the budget still queues.
-        self.start_waiting(shared);
+        self.start_waiting(shared, src);
 
         self.clear_left = SYM_CLEAR_BUDGET;
 

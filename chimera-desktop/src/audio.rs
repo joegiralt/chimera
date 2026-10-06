@@ -11,8 +11,7 @@ use chimera_core::note_queue::{
     InEvent, NoteDrain, NoteEvent, NoteKind, NoteProducer, NoteSources, SourceId,
 };
 use chimera_core::orbit::runner::{OrbitRunner, OrbitShared, OrbitView};
-use chimera_core::preset::Performance;
-use chimera_core::project::{LOAD_LINK, LoadGate, LoadLink};
+use chimera_core::project::{LOAD_LINK, LoadGate, LoadLink, Project};
 use chimera_core::scope::{ScopeFrame, ScopeWriter};
 use chimera_core::source_table::{AudioToken, SOURCE_TABLE};
 use chimera_core::triple::{TripleBuffer, Writer};
@@ -136,9 +135,9 @@ impl DesktopAudio {
     /// settings (`orbit` writes every field) to the audio thread through the
     /// triple buffer, and report any mixdown frames clamped since the last
     /// call.
-    pub fn update(&mut self, perf: &Performance, epoch: u32, orbit: impl FnOnce(&mut OrbitShared)) {
+    pub fn update(&mut self, project: &Project, epoch: u32, orbit: impl FnOnce(&mut OrbitShared)) {
         self.shared_audio.publish(|b| {
-            b.update_from(perf, epoch);
+            b.update_from_project(project, epoch);
             orbit(&mut b.orbit);
         });
         let clamped = self.shared.clamped.swap(0, Ordering::Relaxed);
@@ -226,26 +225,26 @@ impl Engine {
             view,
             sources,
         } = self;
-        // The block's source view, held over the render: TAPE's voices
-        // read through `GateView::bytes` (TAPE Task 13). Until one latches
-        // a source the block holds none, and stores 0.
+        // The block's source view, held over the notes and the render:
+        // TAPE's voices read through it, and then the sources they hold
+        // are stored.
         {
-            let _reads = sources.begin_block();
+            let reads = sources.begin_block();
             if gate.before_block(link, inst, shared) {
                 let now = runner.now();
                 drain.drain(|src, ev| match ev {
                     // Capture sees the raw key, before any snap.
                     InEvent::Note(n) => {
                         runner.live(n);
-                        inst.handle(n, shared);
+                        inst.handle_with(n, shared, &reads);
                     }
                     InEvent::Rt(rt) => runner.realtime(src.index(), rt, now),
                 });
-                runner.block(inst, shared);
+                runner.block_with(inst, shared, &reads);
             }
-            inst.render(fx, dac, shared, scope);
+            inst.render_with(fx, dac, shared, scope, &reads);
         }
-        sources.store_sounding(0);
+        sources.store_sounding(inst.source_mask());
         view.publish(|v| runner.fill_view(v));
     }
 }
@@ -353,6 +352,7 @@ mod tests {
     }
 
     use super::*;
+    use chimera_core::preset::Performance;
 
     fn dac() -> DacOut {
         let mut d = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];

@@ -74,12 +74,18 @@ impl ZoneTune {
 
     /// Each zone's `(root, period)`, in zone order.
     pub fn zones(&self) -> impl ExactSizeIterator<Item = (u16, u32)> + '_ {
-        self.zones[..self.n.get() as usize].iter().map(|b| {
-            (
-                u16::from_le_bytes([b[0], b[1]]),
-                u32::from_le_bytes([b[2], b[3], b[4], b[5]]),
-            )
-        })
+        (0..self.n.get() as usize).map(|i| self.zone(i))
+    }
+
+    /// Zone `i`'s `(root, period)`. The tune isn't typed against its set's
+    /// zone count (the ref doesn't count zones), so a zone past it plays
+    /// at the last tune's pitch; tunes past the set's zones go unused.
+    pub fn zone(&self, i: usize) -> (u16, u32) {
+        let b = self.zones[i.min(self.n.get() as usize - 1)];
+        (
+            u16::from_le_bytes([b[0], b[1]]),
+            u32::from_le_bytes([b[2], b[3], b[4], b[5]]),
+        )
     }
 
     /// The record's payload, `ZONE_LEN` bytes a zone: as it is held, so

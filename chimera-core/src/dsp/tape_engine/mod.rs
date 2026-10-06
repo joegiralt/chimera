@@ -266,6 +266,9 @@ pub struct TapeEngine {
     /// The source a note plays, latched at note-on (ADR 0087): never
     /// re-resolved, its row read each block.
     src: Option<SourceId>,
+    /// A note-on whose source a closed gate moves: active and silent, it
+    /// starts (`note_on`) on the first block its row reads (spec § 4).
+    gated: bool,
     model: TapeModel,
     /// The head, and the head a fade reads into, each in its frame `u`:
     /// mirrored, the source is read at `off − u`, else at `u` (`off + u`
@@ -392,6 +395,7 @@ impl TapeEngine {
     fn idle() -> TapeEngine {
         TapeEngine {
             src: None,
+            gated: false,
             model: TapeModel::Loop,
             heads: [Head::default(); 2],
             off: Pos(0),
@@ -526,17 +530,38 @@ impl TapeEngine {
 
     /// `note_on` on the latched source through the block's view. With no
     /// source to read, or one `p`'s model can't play (`wave::playable`), the
-    /// engine stays idle.
+    /// engine stays idle. One a closed gate moves waits, active and silent,
+    /// and starts on the first block after the gate opens (`play`).
     pub fn start(&mut self, note: u8, p: &TapeEngineParams, src: &GateView<'_>, sample_rate: u32) {
-        match self.view(src).filter(|v| wave::playable(p.model, v)) {
-            Some(v) => self.note_on(note, p, &v, sample_rate),
-            None => self.active = false,
+        match self.view(src) {
+            Some(v) if wave::playable(p.model, &v) => self.note_on(note, p, &v, sample_rate),
+            None if self.src.is_some_and(|id| src.moving(id)) => {
+                (self.note, self.model) = (note, p.model);
+                (self.gated, self.active) = (true, true);
+            }
+            _ => (self.gated, self.active) = (false, false),
         }
+    }
+
+    /// A note-on on `model` and `id` (a Part's) plays nothing: no source,
+    /// an absent one (its row empty, the gate open), or one `model` can't
+    /// play. One a closed gate moves isn't refused: it waits (`start`).
+    /// Refused, it is never allocated (spec § 2).
+    pub fn refuses(model: TapeModel, id: Option<SourceId>, src: &GateView<'_>) -> bool {
+        let Some(id) = id else {
+            return true;
+        };
+        !src.moving(id)
+            && !src
+                .bytes(id)
+                .and_then(SourceView::new)
+                .is_some_and(|v| wave::playable(model, &v))
     }
 
     /// `render` from the latched source's row this block. While a closed
     /// gate moves it, the block is silent and the note waits; a row gone
-    /// (retired and compacted) ends it (`GateView::bytes`).
+    /// (retired and compacted) ends it (`GateView::bytes`), as does one
+    /// re-stored under the id with fewer frames than the note latched.
     pub fn play(
         &mut self,
         out: &mut [f32; BLOCK_SIZE],
@@ -545,12 +570,17 @@ impl TapeEngine {
         sample_rate: u32,
     ) {
         if let Some(v) = self.view(src) {
+            if core::mem::take(&mut self.gated) {
+                self.start(self.note, p, src, sample_rate);
+            } else if v.frames() < self.n {
+                self.active = false;
+            }
             self.render(out, p, &v, sample_rate);
             return;
         }
         out.fill(0.0);
         if !self.src.is_some_and(|id| src.moving(id)) {
-            self.active = false;
+            (self.gated, self.active) = (false, false);
         }
     }
 
@@ -609,6 +639,7 @@ impl TapeEngine {
     ) {
         let (frames, rate) = (v.frames(), v.desc().rate);
         self.model = p.model;
+        self.gated = false;
         self.note = note;
         self.root = p.root;
         self.slide = Glide::new(1.0, 1.0);
@@ -753,7 +784,8 @@ impl TapeEngine {
 
     /// ONESHOT's and TRON's note: one head from START toward END in the
     /// window (ONESHOT: its slice), at least 2 ms (`min_frames`) on END's
-    /// side, mirrored about it when END is before START. TRON's tape runs
+    /// side but at the source's edge, mirrored about it when END is before
+    /// START. TRON's tape runs
     /// out after SIZE's length in output samples.
     fn once_on(&mut self, note: u8, p: &TapeEngineParams, v: &SourceView<'_>, sample_rate: u32) {
         let (frames, rate) = (v.frames(), v.desc().rate);
@@ -807,6 +839,7 @@ impl TapeEngine {
 
     /// `inc` glides to `note`'s from the pitch it sounds, a one-pole of
     /// `tau` seconds in log pitch. Idle, or on `note`, nothing moves.
+    /// Gated, the note it starts on moves (its `note_on` drops the glide).
     pub fn glide_to(&mut self, note: u8, (_sample_rate, tau): (u32, f32)) {
         if !self.active || note == self.note {
             return;
@@ -1147,6 +1180,9 @@ impl TapeEngine {
         let mut h = self.heads[0].pos;
         let (mut g, k) = (self.rel, self.rel_k);
         for y in out.iter_mut() {
+            // Reversed at `lo` 0, the head's last fraction reads just
+            // under frame 0: the position wraps, and `SourceView::read`
+            // takes its whole part as `i32` −1, clamped to frame 0.
             *y = v.read(Pos((h.0 ^ m).wrapping_add(a))) * g;
             g *= k;
             cur = cur.wrapping_add(step);
@@ -1177,6 +1213,7 @@ impl TapeEngine {
         while i < BLOCK_SIZE && h < end && self.left > 0 {
             r -= dr;
             let x = clampf(r, 0.0, 1.0);
+            // `off − h` under frame 0 at `lo` 0: `read`'s clamp, as in `once`.
             out[i] = v.read(if REV { off - h } else { h }) * g * (x * x * (3.0 - 2.0 * x));
             g *= k;
             self.left -= 1;

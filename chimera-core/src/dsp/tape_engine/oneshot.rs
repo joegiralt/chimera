@@ -50,9 +50,11 @@ pub fn slice_bounds(w: Window, s: Slice, note: u8) -> Window {
     let k = if w.dir == Dir::Rev { 15 - k } else { k };
     let n = u64::from(w.frames());
     let edge = |k: u64| w.lo + (k * n / 16) as u32;
+    // Under 16 frames (a window at the source's edge) a slice is at least
+    // one frame: `edge(k) < w.hi` for every `k < 16`.
     Window {
         lo: edge(k),
-        hi: edge(k + 1),
+        hi: edge(k + 1).max(edge(k) + 1),
         dir: w.dir,
     }
 }

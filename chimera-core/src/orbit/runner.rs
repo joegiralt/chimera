@@ -17,6 +17,7 @@ use crate::MidiNote;
 use crate::hw::{BLOCK_SIZE, Cost, MAX_PARTS};
 use crate::instrument::{AudioShared, Instrument, NoteOrigin, NoteSet};
 use crate::note_queue::{NoteEvent, NoteKind, RealTime};
+use crate::source_table::GateView;
 use crate::triple::TripleBuffer;
 use chimera_theory::{Chord, Note};
 use core::mem::size_of;
@@ -426,7 +427,12 @@ impl OrbitRunner {
         }
     }
 
-    fn send(inst: &mut Instrument, shared: &AudioShared, ev: &Events, fired: &mut [u8; RINGS]) {
+    fn send(
+        inst: &mut Instrument,
+        (shared, src): (&AudioShared, &GateView<'_>),
+        ev: &Events,
+        fired: &mut [u8; RINGS],
+    ) {
         for e in ev.iter() {
             let Some(note) = MidiNote::new(e.note.get()) else {
                 continue;
@@ -446,7 +452,7 @@ impl OrbitRunner {
             };
             #[cfg(feature = "probe")]
             let t0 = crate::probe::now();
-            inst.handle_from(ev, shared, NoteOrigin::Orbit(e.ring));
+            inst.handle_from_with(ev, shared, NoteOrigin::Orbit(e.ring), src);
             #[cfg(feature = "probe")]
             crate::probe::max(6, crate::probe::now().wrapping_sub(t0));
         }
@@ -549,6 +555,17 @@ impl OrbitRunner {
     /// from the last one handed (spec § 5.2): a segment change, a landed
     /// scene, a start or a MIDI Start back to bar 0, a chord played in.
     pub fn block(&mut self, inst: &mut Instrument, shared: &AudioShared) -> Events {
+        self.block_with(inst, shared, &GateView::empty())
+    }
+
+    /// `block`, TAPE's note-ons reading through the block's `src`: what
+    /// the shells run.
+    pub fn block_with(
+        &mut self,
+        inst: &mut Instrument,
+        shared: &AudioShared,
+        src: &GateView<'_>,
+    ) -> Events {
         #[cfg(feature = "probe")]
         crate::probe::begin();
         let sent = self.advance(shared);
@@ -558,7 +575,7 @@ impl OrbitRunner {
         inst.set_harmony(h);
         #[cfg(feature = "probe")]
         crate::probe::stamp(7);
-        Self::send(inst, shared, &sent, &mut self.fired);
+        Self::send(inst, (shared, src), &sent, &mut self.fired);
         #[cfg(feature = "probe")]
         crate::probe::stamp(8);
         if h.is_some() && h != self.harmony {

@@ -206,24 +206,34 @@ fn min_window_both_sides() {
     );
     assert_eq!(Window::of(0.5, 0.5, 10_000, 96).dir, Dir::Fwd);
     assert_eq!(Window::of(0.5, 0.5, 10_000, 96).lo, 5_000);
-    // At the source's edges it stays inside, still on END's side as far
-    // as it can.
+    // At the source's edges the head still starts at START: the window
+    // shortens there rather than reach past it (12b review F1).
     assert_eq!(
         Window::of(0.001, 0.0, 10_000, 96),
         Window {
             lo: 0,
-            hi: 96,
+            hi: 10,
             dir: Dir::Rev
         }
     );
     assert_eq!(
+        Window::of(0.0001, 0.0, 10_000, 96),
+        Window {
+            lo: 0,
+            hi: 1,
+            dir: Dir::Rev
+        }
+    );
+    assert_eq!(Window::of(1e-6, 0.0, 10_000, 96).frames(), 1, "never empty");
+    assert_eq!(
         Window::of(0.999, 1.0, 10_000, 96),
         Window {
-            lo: 9_904,
+            lo: 9_990,
             hi: 10_000,
             dir: Dir::Fwd
         }
     );
+    assert_eq!(Window::of(1.0, 1.0, 10_000, 96).frames(), 1, "never empty");
     // Wide enough, it is the sorted pair.
     assert_eq!(
         Window::of(0.8, 0.2, 10_000, 96),
@@ -671,6 +681,17 @@ fn slices_are_exact() {
                     7 + w,
                     "slice 1 is the top"
                 );
+            }
+        }
+    }
+    // A window shorter than 16 frames (START at a source's edge): no
+    // slice is empty, and each stays inside it.
+    for w in 1..16u32 {
+        for dir in [Dir::Fwd, Dir::Rev] {
+            let win = Window { lo: 0, hi: w, dir };
+            for k in 0..16u8 {
+                let s = slice_bounds(win, Slice::At(k), 0);
+                assert!(s.lo < s.hi && s.hi <= w, "W {w} slice {k}: {s:?}");
             }
         }
     }

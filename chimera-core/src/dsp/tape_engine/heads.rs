@@ -52,23 +52,23 @@ pub struct Window {
 
 impl Window {
     /// START and END as fractions of `frames` (≥ 1): sorted, and `Rev` when
-    /// END is before START. Under `floor` frames it widens away from START,
-    /// toward END's side, kept inside the source (all of it, if shorter).
+    /// END is before START. Under `floor` frames it widens from START
+    /// toward END's side, so the head always starts at START: at the
+    /// source's edge it stays shorter, never empty.
     pub fn of(start: f32, end: f32, frames: u32, floor: u32) -> Window {
         let at = |x: f32| (libm::roundf(clampf(x, 0.0, 1.0) * frames as f32) as u32).min(frames);
         let dir = Dir::of(start, end);
         let (s, e) = (at(start), at(end));
         let (mut lo, mut hi) = (s.min(e), s.max(e));
-        let floor = floor.min(frames);
         if hi - lo < floor {
             match dir {
                 Dir::Fwd => {
+                    lo = lo.min(frames - 1);
                     hi = (lo + floor).min(frames);
-                    lo = hi - floor;
                 }
                 Dir::Rev => {
+                    hi = hi.max(1);
                     lo = hi.saturating_sub(floor);
-                    hi = lo + floor;
                 }
             }
         }
