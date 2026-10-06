@@ -282,7 +282,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("rev_reverse_regen", 0x510ced0081cb2515),
     // BLOOM (ADR 0095, reverb TYPEs T11) on program 45's knobs, and at
     // each MidiVerb II Bloom's fitted knobs (`MV2_BLOOM`).
-    ("rev_bloom", 0xedc341b56f20614f),
+    ("rev_bloom", 0xd80822fb3d18e458),
     ("rev_bloom_mv45", 0xd80822fb3d18e458),
     ("rev_bloom_mv49", 0x2014f5741eb7a296),
 ];

@@ -392,7 +392,7 @@ fn cells_read_their_starting_values() {
         (P::TONE, "3.3k"),
         (P::DIFFUSE, "0.48"),
         (P::PREDELAY, "17ms"),
-        (P::SMEAR, "0.6ms"),
+        (P::SMEAR, "OFF"),
         (P::RATE, "0.13Hz"),
     ] {
         assert_eq!(text(id, &b).as_str(), w, "BLOOM {id:?}");

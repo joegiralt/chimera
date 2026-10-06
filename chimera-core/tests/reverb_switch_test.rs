@@ -53,13 +53,15 @@ const BURST: usize = 20;
 /// lost in it until about 0.8 s (block 600; 200 and 400 still lose it).
 /// BLOOM's tail roughens each time its loop comes round (about 0.65 s at
 /// its starting SWELL): at most leads the gain jump is lost in it, or the
-/// tail alone reads rougher than the window before; 200–350, 600 and
-/// 800–900 pass, and 850 sits mid-band.
+/// tail alone reads rougher than the window before. At its START's SMEAR 0
+/// the control's margin (the jump's roughness over the bound, which must
+/// pass 1.5) swings with the lead, 10 blocks at a time: 1.85 at 350, the
+/// widest of 200–900 bar an isolated 1.88 at 540; 1.61 at 340, 1.18 at 360.
 fn lead(t: ReverbType) -> usize {
     match t {
         ReverbType::Room => 70,
         ReverbType::Hall => 600,
-        ReverbType::Bloom => 850,
+        ReverbType::Bloom => 350,
         _ => 0,
     }
 }

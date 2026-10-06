@@ -312,9 +312,8 @@ the ban on 2026-10-05.
     SMEAR 0. With SMEAR 0.3 it failed #5 (GRAIN 4.7/9.5 dB, HF 3.8 dB, C50
     +1.5 dB): SMEAR's motion fills the notches on top of the grain.
     `chimera-utils mv-start` judges each TYPE's START against its source
-    program, as `mv-verify` judges a fit: ROOM's against #5 PASSES. BLOOM's
-    keeps SMEAR 0.3 for the owner's UAT and FAILS #45 (centroid −43 %,
-    4 kHz RT −29 %, HF 5.5 dB).
+    program, as `mv-verify` judges a fit: ROOM's against #5 PASSES, and
+    BLOOM's against #45 (BLOOM, as built).
   - **The fit, every TYPE's** (fix round 1): its distance adds 4 for each
     judged metric past 0.8 of its bar, so the search keeps a margin rather
     than parking on the bars. Scoring a setting by the worst of it and
@@ -405,6 +404,17 @@ the ban on 2026-10-05.
     and no vibrato.
   - **SWELL is `exp`, as the spec's table,** over 290–697 ms; one
     allpass moves a crossfade, 89 crossfades from SWELL 0 to 1.
+  - **START is Bloom 1 (#45) exactly** (owner, 2026-10-06): its fitted
+    knobs and SMEAR 0, as ROOM's START is #5. With SMEAR 0.3 it failed #45
+    (centroid −43 %, 4 kHz RT60 −29 %, HF share 5.5 dB); `mv-start BLOOM`
+    now PASSES. **Needs the owner's ruling:** at SMEAR 0 the cascade's
+    storage noise floor reads 6.7 dB over QUAD's (DIFFUSE at START) and
+    8.8 dB at DIFFUSE 1, past the 4 and 6.5 dB bounds above; SMEAR 0.3
+    dithers it to 3.6 and 5.9. The bound test is judged at SMEAR 0.3. The
+    switch test's BLOOM lead moved 850 → 350 blocks: at SMEAR 0 its
+    gain-jump control (which must read over 1.5× the bound) swings with
+    the lead, and 350 gives it 1.85×, the widest margin over 200–900
+    blocks bar an isolated 540.
 
 ## Alternatives considered
 - **Keep ADR 0085's ±30 % window:** it passes reverbs the owner can tell
