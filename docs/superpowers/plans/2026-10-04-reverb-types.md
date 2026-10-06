@@ -1668,7 +1668,40 @@ BUS+V's frame is QUAD_BUS_V + ΔCOST, so ΔCOST = that row − QUAD_BUS_V.
   The other 16 were not refined: the gaps are structural, and a sweep
   measures #28 and #29 only to 3 s with DECAY topping at 10 s.
 - **Proposal:** ADR 0095 § HALL, as fitted (proposed). The float model
-  passes 12 of 20. Held for the owner before Step 4.
+  passed 12 of 20 and was held for the owner. Ported to `chimera-utils`'
+  models, it passed 14 of 20 (DENSITY its own knob; 12 tied to DIFFUSE,
+  10 to TONE). The owner approved the build, with DENSITY on its own cell.
+- **As built (2026-10-06, host; unit folded into Task 13):** ADR 0095 §
+  HALL, as built.
+  - **Rust render, `mv-verify HALL` (16 seeds):** 9 of 20 pass: #4, 7,
+    12, 13, 15, 22, 23, 25 and 27. #19 is a signed miss; the near misses
+    are listed in the ADR for the owner's ear. Fits are from the model's
+    knobs, refined with `mv-fit --start`. A second refine and a
+    sweep-based fit of the misses added none. Rounding the knobs to 3
+    places tips #4 and #22, so `MV2_HALL` keeps 6.
+  - **Static count** (Thumb, release): the per-sample loop is 394
+    instructions a ring sample, 570 in a crossfade, against 280.
+    `Hall::run` is 7,484 B.
+    - ΔCOST at 0.47 cycles an instruction: −28 to +13 (default), −20 to
+      +21 (tape).
+    - At 1.06: +5 to +99 and +13 to +107.
+    - Gates 76 and 23.
+  - **Flash:** plain release `text` 777,204 B, +7,220 over `be5e8b9c`.
+  - **Arena:** 18,876 i16 + 1,448 f32 = 21,772 of 23,220 slots.
+  - **Host readings** (`reverb_loop_test`):
+    - noise floor 18.1 dB at START and 21.9 at DIFFUSE 1 (QUAD 12.0);
+    - a held 500 Hz mode at DECAY's top: THD 8.3 %; a held 5 kHz:
+      aliases −21 dB;
+    - SIZE 1 DECAY 1: 1 kHz RT60 14.0 s.
+  - **Mutants:** each of the five is caught:
+    - a stage delay +1 sample;
+    - a tap dropped;
+    - the damper ignoring DAMP;
+    - DECAY's top at 10 s;
+    - the plate pull off.
+  - **Goldens:** `rev_hall` and `rev_hall_plate` re-recorded;
+    `rev_hall_mv04`–`mv27` added; the HALL screens and
+    `mixer_fx_reverb_hall_more2`.
 
 ---
 

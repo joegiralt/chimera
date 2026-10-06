@@ -406,82 +406,100 @@ the ban on 2026-10-05.
   - **SWELL is `exp`, as the spec's table,** over 290–697 ms; one
     allpass moves a crossfade, 89 crossfades from SWELL 0 to 1.
 
-- **HALL, as fitted (proposed, Task 10b, 2026-10-05).** For the owner's
-  ruling; no firmware has changed.
-  - **HALL as built passes no HALL preset.** Its 320-point sweep and four
-    refined fits leave C50 2–12 dB high and NED at 100 ms 16–70 % low on
-    most presets. #28 and #29 lie past DECAY's 10 s top (14.9 s at
-    250 Hz on #29).
-  - **The unit's halls are four structures, not HALL's one:**
+- **HALL, as built (Task 10b, 2026-10-06).** The owner approved the
+  redesign below and #19 as a signed miss. The near misses get signed off
+  after listening.
+  - **Why it changed.** HALL as it stood passed no HALL preset: C50 2–12
+    dB high and NED at 100 ms 16–70 % low on most presets, and #29 rang
+    past DECAY's 10 s top. The unit's halls are four structures:
     - 1 loop × 3 stages, 3 taps a side: #4, 17, 18, 23–26, 28, 29;
-    - 2 loops × 2 stages, 4 taps a side: #6, 7, 19, 20;
-    - 1 loop × 8 stages, 8 taps a side: #12, 13;
-    - 2 loops × 4 stages, 7 taps a side: #15, 16, 21, 22, 27.
+    - 2 × 2 with 4 taps: #6, 7, 19, 20;
+    - 1 × 8 with 8 taps: #12, 13;
+    - 2 × 4 with 7 taps: #15, 16, 21, 22, 27.
 
-    Their diffusers run 0.5 k to 3.6 k samples (21 to 155 ms), the long
-    ones at g ½. Each program run as decompiled, in float, lands every C50
-    within 1.3 dB and every NED within 6 % of the unit. So the diffuser
-    and the taps set those metrics, and the tank barely does.
-  - **The proposal keeps HALL's tank** (`LoopEngine<1, 4>`, its lengths,
-    SIZE, SMEAR and the crossfades) and changes the rest:
-    - **Diffuser:** 6 allpasses at program 17's 13.7, 18.4, 28.5, 34.5, 8.7
-      and 6.2 ms, scaled whole by a new **SPREAD** knob, × 0.05–1.1. Their
-      g is DIFFUSE's, widened to 0.3–0.8. They replace HALL's four
-      1.7–8.9 ms allpasses.
-    - **Stage allpasses:** their g stays tied to DIFFUSE's. In the model
-      the tie costs no preset.
-    - **One damper a loop,** after stage 4 (was one after every second
-      stage). DAMP's range widens to 1.3–14 kHz.
-    - **Taps: 8 a side,** one per stage line in turn, scaled with SIZE and
-      crossfaded with their lines (as ROOM v2's). Taps 4–8 a side fade in
-      with a new **DENSITY** knob, so DENSITY 0 is 3 taps a side. The
-      offsets are our own fractions of each line.
-    - **TONE's bright end opens to a bypass** (TONE 0 reads OFF), as
-      ROOM's DAMP 0 does: 10 of the 19 fits want a corner past 10 kHz.
-    - **DECAY's top goes to 16 s** (from 10): #29 fits at 14.6 s.
-    - **The plate zone** also pulls SPREAD to 0.05, so the plate's onset
-      stays short and `plate_corner_onset_is_short` holds.
-  - **The float model passes 12 of 20:** #4, 7, 12, 13, 16, 18, 21, 22, 23,
-    25, 27 and 28. Near misses:
-    - #6: 1 kHz −7 %, 2 kHz −6 %, 4 kHz +7 %, C50 −1.3 dB;
-    - #15: 500 Hz +6 %;
-    - #17: 500 Hz +6 %, NED −19 % at 20 ms and +20 % at 100 ms;
-    - #20: pre-delay +2.4 ms, NED +15 % at 20 ms;
-    - #24 and #26: NED +13/+15 % at 20 ms, −11/−12 % at 50 ms;
-    - #29: NED −12 % at 20 ms and +19 % at 100 ms.
+    Each one's C50 and NED follow its diffuser and taps, not its tank.
+  - **The tank stays** `LoopEngine<1, 4>`: its lengths, SMEAR, and the
+    crossfades. SIZE is now `lin`, 120 → 600 ms.
+  - **The diffuser:** six allpasses at program 17's 13.718, 18.419,
+    28.547, 34.530, 8.718 and 6.154 ms (`DIFFUSER_MS`), with g from
+    DIFFUSE.
+    - **SPREAD** scales them whole, × 0.05–1.10. It is the `Spread`
+      newtype, on SHAPE's slot (10), in MORE's sixth cell. The cell reads
+      the diffuser's length in ms.
+    - SPREAD moves them by crossfade: one allpass and at most 120 samples
+      a crossfade, in the same crossfades as SIZE and PRE-DLY.
+    - The plate zone pulls SPREAD to 0 with TONE and PRE-DLY.
+  - **The diffuser's states are normalised i16** (R2), stored by
+    `store_settle_ap`: rounded, but truncated under 3 LSB.
+    - The arena has no room for f32: 21,772 slots of 23,220 as built
+      (18,876 i16 and 1,448 f32), and about 24.7 k with f32.
+    - A rounding allpass at g 0.8 holds ±2 LSB for good, and the loop rang
+      on it. Under 3 LSB it truncates, which breaks that hold.
+  - **Taps: 8 a side**, one per stage line in turn, at our own fractions
+    of each line, scaled with SIZE and read from the lines' crossfades.
+    - Each tap is signed by its line's stage-allpass parity.
+    - **DENSITY** fades taps 4–8 in, a fifth of the knob each (the
+      `TapCount` newtype, 3–8 a side).
+    - DENSITY has its own id, ParamId 14, disk ident `DENSITY`.
+      `KnobMemory` grows to 120 B and AXI by 16 B.
+    - Its cell is on a new page, REV › MORE 2. EDIT skips that page under
+      every TYPE with no cell there.
+    - A Sound saved before DENSITY loads at `DENSITY_DEFAULT`, HALL's
+      starting 0.205 (4.0 taps).
+    - Tying DENSITY to DIFFUSE cost 2 presets in the model, to TONE 4.
+  - **One damper a loop**, after stage 4. DAMP is `exp` 14 → 1.3 kHz,
+    HALL's own law, no longer QUAD's.
+  - **TONE 0 is OFF**, an open one-pole (`ToneLaw::OffThenExp`); above
+    it, 12 → 2 kHz.
+  - **DIFFUSE is g 0.3–0.8.**
+  - **DECAY's top is 16 s.** A round trip's gain is also held to 0.92 (G
+    12.5, the level plan's), which binds only under SIZE 0.15, in the plate
+    zone.
+  - **The stage delays write by `store_settle_ap`**, as the diffuser does.
+    Rounding writes at DAMP's 14 kHz held 3 LSB in the plate corner for
+    good.
+  - **Two read paths.** A block without a crossfade reads each line once.
+    A crossfade's block blends every moving read. The output is the same
+    sample for sample: a blend at w 1 is exact on integer-valued lines.
+  - **The Rust render passes 9 of 20 at its fitted knobs:** #4, 7, 12,
+    13, 15, 22, 23, 25 and 27. The float model passed 14. The firmware's
+    i16 storage, R1's clip, the gain caps and the half-bands move the
+    rest. Near misses, for the owner's ear:
+    - #6: 1 kHz −9 %, 4 kHz +7 %, C50 −1.3 dB;
+    - #16: 500 Hz +7 %;
+    - #17: NED −13 % at 20 ms, +13 % at 100 ms;
+    - #18: NED +10 % at 50 ms, +12 % at 100 ms;
+    - #20: pre-delay +3.2 ms, NED +17 % at 20 ms;
+    - #21: 500 Hz +5.4 %;
+    - #24: NED +15 % at 20 ms, −12 % at 50 and 100 ms;
+    - #26: NED +12 % at 20 ms;
+    - #28: NED −15 % at 20 ms;
+    - #29: pre-delay +1.9 ms, NED −16 % at 20 ms.
 
-    #19 can't pass on any structure tried: its taps read the dry input,
-    so its NED is 0.03 and 0.00 at 20 and 50 ms. It is proposed as an
-    owner-signed miss.
-  - **The fits use both new knobs.** With 8 taps fixed, no DENSITY, the
-    model passes 8. Two alternatives fitted the same way do no better:
-    - two 4-stage loops coupled by LOOPS (ROOM v2's engine shape) pass 10
-      of 20, at about ROOM v2's cost;
-    - HALL's tank with an 8-allpass diffuser and 8 fixed taps passes none.
-  - **Knob slots.** SPREAD takes slot 10 (SHAPE's), as ROOM's LOOPS does.
-    It goes on the MORE page's sixth cell. DENSITY needs a 13th live id and
-    a cell the 10-cell panel doesn't have. That needs a ruling: a new id
-    (with `KnobMemory` and the disk code), or a reach the owner names.
-  - **Cost** (an estimate from the structure; nothing is built). Against
-    HALL as built:
-    - the diffuser adds 2 allpasses and stores i16;
-    - 16 crossfaded taps replace 6 fixed;
-    - one damper goes.
-
-    That is about +37 instructions an output sample, which puts HALL near
-    Task 9's ROOM: about 315 against the MIX row's 276.5. At 0.47 cycles an
-    instruction, REV HALL comes to about 18 cycles, or about 42 on the
-    tape build. ΔCOST is then about −37 and −29, inside both headrooms
-    (76 and 23).
-  - **Arena:** 15,958 i16 slots (PRE-DLY and the stage delays), plus
-    3,447 i16 for the diffuser at SPREAD 1.1, plus 1,448 f32 stage
-    allpasses (2,896 slots). That is 22,301 of 23,220. An f32 diffuser
-    would need 25.7 k. It sits outside the loop, so ADR 0085's in-loop
-    limit cycle doesn't apply to it. A lone allpass's rounding deadband at
-    g 0.8 is about 2 LSB.
-  - **Provenance:** the six diffuser lengths are program 17's, under this
-    ADR's rule. The tank, the taps, the ranges and every knob value are
-    our own.
+    #19 is signed off as a miss.
+  - **START is program 25's fit** (Large Warm 2.3), with SMEAR 0.3.
+  - **Departures for the owner:**
+    - **The noise floor** is 6.1 dB over QUAD's at START and 9.9 dB at
+      DIFFUSE 1. The bounds are 6.5 and 10.5 (were 4 and 6). The cause is
+      the i16 diffuser: each error is read × 1/(1 − g).
+    - **A 0 dBFS 5 kHz tone held at DECAY's top in the plate corner
+      aliases −21 dB through R1's clip** (bound −40). With one damper,
+      5 kHz's mode has G 4.5, against two dampers' 2.4.
+    - **A held tone's tail sits 0.8 Hz over 1 kHz,** steady and not
+      walking. That is where the SIZE-1 loop's modes (1.67 Hz apart)
+      weight the band. The test holds 1 Hz and 0.25 Hz of walk.
+    - **REV › MORE 2** is a new page.
+  - **Cost** (static count, `Hall::run`):
+    - The per-sample loop is 394 instructions a ring sample without a
+      crossfade and 570 with one, against 280 as built.
+    - `Hall::run` is 7,484 B of text (2,796 B as built), two read paths.
+    - At 0.47 cycles an instruction: ΔCOST about −28 to +13 default (gate
+      76), −20 to +21 tape (gate 23).
+    - At 1.06: about +5 to +99 default, +13 to +107 tape.
+    - The bench's REV HALL toggles SIZE every block: the high end.
+  - **Flash:** plain release `text` +7,220 B over `be5e8b9c`.
+  - **Provenance:** only `DIFFUSER_MS` carries emulator numbers. The tank,
+    the taps, the laws and every knob value are our own.
 
 ## Alternatives considered
 - **Keep ADR 0085's ±30 % window:** it passes reverbs the owner can tell
