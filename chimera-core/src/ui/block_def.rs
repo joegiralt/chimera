@@ -39,6 +39,8 @@ pub enum VizType {
     OrbitScenes,
     /// ALGO's AR · D1R · D1L · D2R · RR: the focused operator's envelope.
     OpEnv,
+    /// TAPE's SRC and DECK: the source, the machine's part of it, the heads.
+    Strip,
 }
 
 /// A node of the FX flow; the value is its index in `viz::effects_flow`.

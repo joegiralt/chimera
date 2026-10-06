@@ -253,6 +253,30 @@ pub struct Probe {
     pub from: Option<u8>,
 }
 
+/// What the strip reads of a Part's newest note (spec § 3): the first
+/// head's frame in the low word, the second's in the high, `u32::MAX` for
+/// none. TRANSWAVE's are frames of its table, and TRON's second is where
+/// its tape runs out. The audio stores it once a block (`instrument::HEADS`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Heads(pub u64);
+
+impl Heads {
+    /// No note: nothing drawn.
+    pub const NONE: Heads = Heads(u64::MAX);
+
+    pub fn new(head: u32, second: Option<u32>) -> Heads {
+        Heads(u64::from(head) | u64::from(second.unwrap_or(u32::MAX)) << 32)
+    }
+
+    pub fn head(self) -> Option<u32> {
+        Some(self.0 as u32).filter(|&h| h != u32::MAX)
+    }
+
+    pub fn second(self) -> Option<u32> {
+        Some((self.0 >> 32) as u32).filter(|&h| h != u32::MAX)
+    }
+}
+
 /// What a wrap or a turn reads from the block's params: END (in the next
 /// pass's frame: `1 − END` mirrored) and XFADE latch there.
 #[derive(Clone, Copy)]
@@ -938,6 +962,22 @@ impl TapeEngine {
         };
         let w = r.whole();
         if w > i32::MAX as u32 { 0 } else { w }
+    }
+
+    /// The strip's heads (`Heads`): the probe's, but TRON's second is
+    /// where its tape runs out at this pitch, `left · inc` frames on, END
+    /// at most. None while idle.
+    pub fn heads(&self) -> Heads {
+        if !self.active {
+            return Heads::NONE;
+        }
+        let p = self.probe();
+        if self.model == TapeModel::Tron {
+            let run = (self.left as f32 * self.inc.value().unwrap_or(0.0)) as u32;
+            let out = self.heads[0].pos.whole().saturating_add(run).min(self.once_end);
+            return Heads::new(p.head, Some(self.frame(at(out))));
+        }
+        Heads::new(p.head, p.other)
     }
 
     pub fn probe(&self) -> Probe {

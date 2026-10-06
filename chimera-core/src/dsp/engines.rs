@@ -338,6 +338,14 @@ impl EngineSlot {
         }
     }
 
+    /// TAPE's heads for the strip; none on the others.
+    pub fn heads(&self) -> crate::dsp::tape_engine::Heads {
+        match self {
+            Self::Tape(t) => t.heads(),
+            Self::Algo(_) | Self::Modal(_) => crate::dsp::tape_engine::Heads::NONE,
+        }
+    }
+
     /// The source TAPE latched at its last note-on; none on the others.
     pub fn source(&self) -> Option<SourceId> {
         match self {

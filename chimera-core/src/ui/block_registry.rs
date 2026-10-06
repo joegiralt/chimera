@@ -92,7 +92,7 @@ pub static TAPE_SRC: BlockDef = BlockDef {
     name: "Source",
     short: "SRC",
     layout: PageLayout::CellGrid,
-    viz: VizType::None,
+    viz: VizType::Strip,
     params: [
         ParamSlot::source(),
         ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::START),
@@ -110,7 +110,7 @@ pub static TAPE_DECK: BlockDef = BlockDef {
     name: "Deck",
     short: "DECK",
     layout: PageLayout::CellGrid,
-    viz: VizType::None,
+    viz: VizType::Strip,
     params: [
         ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::MODEL),
         ParamSlot::machine(MachineSlot::Position),

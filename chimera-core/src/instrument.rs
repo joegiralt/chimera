@@ -6,6 +6,7 @@ use crate::dsp::clampf;
 use core::cmp::Reverse;
 use core::mem::{MaybeUninit, size_of};
 use core::ptr::addr_of_mut;
+use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
 
 use chimera_hal::BLOCK_SIZE;
 
@@ -14,7 +15,7 @@ use crate::dsp::ease::{Ease, ease_coeff, step_of};
 use crate::dsp::engines::{EngineCtx, SlotKind};
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use crate::dsp::modal::{ResonatorMode, SYM_NOTE_ON_CLEAR_MAX, SymPool};
-use crate::dsp::tape_engine::TapeEngine;
+use crate::dsp::tape_engine::{Heads, TapeEngine};
 use crate::dsp::voice::Voice;
 use crate::hw::{Cost, DAC_PAIRS, MAX_PARTS, MAX_VOICES, SampleBudget, VOICE_RAM_BUDGET};
 use crate::in_place::{by_value, uninit_at};
@@ -32,6 +33,40 @@ use crate::source_table::{AudioToken, GateView};
 use crate::voice_alloc::{Allocator, VoiceIdx};
 use crate::{MidiChannel, MidiNote, Velocity};
 use chimera_theory::{Note, snap};
+
+/// Each Part's newest TAPE note's heads, for the strip (spec § 3): stored
+/// once a block by the audio, read by the UI. Two words a Part, as the
+/// chip has no 64-bit atomics: a read may pair one block's head with the
+/// next's second, a frame the strip never holds. Held inverted, so
+/// `Heads::NONE` is all zeros: no flash for its initial value.
+pub struct PartHeads([[AtomicU32; 2]; MAX_PARTS]);
+
+impl PartHeads {
+    pub const fn new() -> Self {
+        Self([const { [const { AtomicU32::new(0) }; 2] }; MAX_PARTS])
+    }
+
+    pub fn publish(&self, part: usize, h: Heads) {
+        let w = &self.0[part];
+        w[0].store(!(h.0 as u32), Relaxed);
+        w[1].store(!((h.0 >> 32) as u32), Relaxed);
+    }
+
+    pub fn read(&self, part: usize) -> Heads {
+        let w = &self.0[part];
+        Heads(!(u64::from(w[0].load(Relaxed)) | u64::from(w[1].load(Relaxed)) << 32))
+    }
+}
+
+impl Default for PartHeads {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The heads the strip draws. Global: at most one test per test binary
+/// may play TAPE through an `Instrument`.
+pub static HEADS: PartHeads = PartHeads::new();
 
 /// One Part as the audio thread sees it.
 #[derive(Clone, Debug)]
@@ -1135,6 +1170,7 @@ impl Instrument {
         //    first, behind any the budget still queues.
         self.start_waiting(shared, src);
 
+        self.publish_heads();
         self.clear_left = SYM_CLEAR_BUDGET;
 
         // 2-4.
@@ -1155,6 +1191,22 @@ impl Instrument {
         scope.write(&scope_block);
         // The block is over: the next may carry other patches.
         self.costed = 0;
+    }
+
+    /// The strip's heads (spec § 3): each Part's newest voice playing
+    /// TAPE, none where no voice does. One store a Part a block.
+    fn publish_heads(&self) {
+        let mut newest = [(0, Heads::NONE); MAX_PARTS];
+        for (v, s) in self.alloc.slots().iter().enumerate() {
+            let h = self.voices[v].heads();
+            let n = &mut newest[self.sounding[v] as usize % MAX_PARTS];
+            if !s.is_free() && h != Heads::NONE && (n.1 == Heads::NONE || s.age() >= n.0) {
+                *n = (s.age(), h);
+            }
+        }
+        for (p, &(_, h)) in newest.iter().enumerate() {
+            HEADS.publish(p, h);
+        }
     }
 }
 

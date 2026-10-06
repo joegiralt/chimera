@@ -31,6 +31,7 @@ pub mod region;
 pub mod renderer;
 pub mod settings;
 pub mod splash;
+pub mod tape_strip;
 pub mod theme;
 pub mod theme_settings;
 pub mod view;
@@ -50,7 +51,7 @@ use crate::block::Block;
 use crate::boot::RomDfu;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
-use crate::dsp::tape_engine::{TapeEngineParams, TapeModel};
+use crate::dsp::tape_engine::{Heads, TapeEngineParams, TapeModel};
 use crate::in_place::uninit_at;
 use crate::mod_path::{LABEL_LEN, RegistryError};
 use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModState};
@@ -69,7 +70,8 @@ use crate::project::{
     SceneAsk, SceneSlot, StatusCache, Swap, TemplateCrc, part_block_mut,
 };
 use crate::scope::SCOPE_LEN;
-use crate::storage::ProjectId;
+use crate::instrument::PartHeads;
+use crate::storage::{ProjectId, SourceRef};
 
 /// SCRUB's FINGER: the address DECK's POSITION cell edits.
 const SCRUB_FINGER: ParamAddr = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::POSITION);
@@ -241,6 +243,13 @@ pub struct UiState {
     dfu: Option<Said<RomDfu>>,
     /// SCRUB's FINGER: the active Part's reel, turned and let go.
     jog: jog::Jog,
+    /// TAPE's strip: the source its overview is of (`None`: none held),
+    /// the overview, the heads read each frame, and where from: the
+    /// audio's (`instrument::HEADS`) but in tests.
+    strip_of: Option<SourceRef>,
+    overview: tape_strip::Overview,
+    heads: Heads,
+    heads_from: &'static PartHeads,
 }
 
 crate::in_place::field_list!(UiState => UiState {
@@ -274,6 +283,10 @@ crate::in_place::field_list!(UiState => UiState {
     led,
     dfu,
     jog,
+    strip_of,
+    overview,
+    heads,
+    heads_from,
 });
 
 #[cfg(any(test, feature = "test-support"))]
@@ -330,6 +343,10 @@ impl UiState {
             addr_of_mut!((*p).renderer).write(renderer);
             addr_of_mut!((*p).matrix_state).write(MatrixState::new());
             addr_of_mut!((*p).jog).write(jog::Jog::new());
+            addr_of_mut!((*p).strip_of).write(None);
+            addr_of_mut!((*p).overview).write(tape_strip::Overview::EMPTY);
+            addr_of_mut!((*p).heads).write(Heads::NONE);
+            addr_of_mut!((*p).heads_from).write(&crate::instrument::HEADS);
             addr_of_mut!((*p).browser_dirty).write(false);
             addr_of_mut!((*p).page).write(page);
             addr_of_mut!((*p).sel_op).write(Op::A);
@@ -1883,9 +1900,34 @@ impl UiState {
         let rev = self.project.rev();
         self.input(controls);
         self.jog_pass(controls.now_ms().0);
+        self.strip_pass();
         // A save or clear moves the browser's hints, costs and meter.
         self.browser_dirty |= self.loc.browse().is_some() && self.project.rev() != rev;
         self.flush_orbit();
+    }
+
+    /// The strip's overview, worked out on a strip page when the source
+    /// it shows isn't the one held (the page opened on another Part, or
+    /// SOURCE changed); never on START or END.
+    fn strip_pass(&mut self) {
+        if self.page_def().viz != VizType::Strip {
+            return;
+        }
+        let r = self.project.part(self.active_part).sound.source_ref();
+        let v = r.and_then(|r| self.project.pool().source_view(r));
+        let held = r.filter(|_| v.is_some());
+        if held != self.strip_of {
+            self.strip_of = held;
+            self.overview = v.map_or(tape_strip::Overview::EMPTY, |v| {
+                tape_strip::Overview::of(&v, 0.0, 1.0)
+            });
+        }
+    }
+
+    /// The strip reads its heads from `from` (the goldens' own), not the
+    /// audio's.
+    pub fn hear_heads(&mut self, from: &'static PartHeads) {
+        self.heads_from = from;
     }
 
     /// SCRUB's reel this pass: POSITION moves at the jog's speed, gliding
@@ -2155,6 +2197,8 @@ impl UiState {
         self.refresh_status();
         self.clock.tick();
         let at = self.active_part;
+        self.strip_pass();
+        self.heads = self.heads_from.read(at.index());
 
         // Read base param values
         let def = self.page_def();
@@ -2374,6 +2418,8 @@ impl UiState {
             clock: self.clock,
             fx: &self.project.perf().fx,
             orbit,
+            strip: &self.overview,
+            heads: self.heads,
         }
     }
 

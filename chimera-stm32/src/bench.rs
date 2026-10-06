@@ -101,10 +101,17 @@ const COARSE: [u8; OPS] = [4, 8, 10, 13, 16, 19];
 /// Label, patch, lowest note and note spacing of each row; the report solves
 /// `AlgoEngine::cost`'s terms from them.
 type Row = (&'static str, fn() -> ParamSnapshot, u8, u8);
+/// `ParamSnapshot::for_engine`, once: inlined, each bench row carried
+/// its own copy.
+#[inline(never)]
+fn snapshot(e: EngineType) -> ParamSnapshot {
+    ParamSnapshot::for_engine(e)
+}
+
 const PATCHES: [Row; ROWS] = [
     (
         "MODAL",
-        || ParamSnapshot::for_engine(EngineType::Modal),
+        || snapshot(EngineType::Modal),
         48,
         5,
     ),
@@ -428,7 +435,7 @@ fn switch_storm(p: &mut PartAudio, block: u32) {
 // Setup, never timed: one copy, not one a row.
 #[inline(never)]
 fn modal(p: &mut PartAudio, mode: ResonatorMode) {
-    p.params = ParamSnapshot::for_engine(EngineType::Modal);
+    p.params = snapshot(EngineType::Modal);
     p.params.modal.mode = mode;
 }
 
@@ -647,7 +654,7 @@ fn algo_pages(
     for (row, &(_, patch, low, step)) in rows.iter_mut().zip(&PATCHES) {
         for n in 1..=MAX_VOICES {
             let setup = |s: &mut AudioShared| s.parts[0].params = black_box(patch());
-            row.add(n, rig.time(setup, |_, _| {}, n, low, step));
+            row.add(n, rig.time(&setup, &|_, _| {}, n, low, step));
         }
     }
     let fx: [u32; FX_ROWS] = core::array::from_fn(|i| rig.time_bus(FX[i].1));
@@ -658,11 +665,11 @@ fn algo_pages(
     for (row, &(_, part, each)) in routing.iter_mut().zip(&ROUTING) {
         for n in 1..=MAX_VOICES {
             let timed = rig.time(
-                |s| {
+                &|s| {
                     part(&mut s.parts[0]);
                     black_box(&s.parts[0]);
                 },
-                |s, b| each(&mut s.parts[0], b),
+                &|s, b| each(&mut s.parts[0], b),
                 n,
                 36,
                 12,
@@ -865,7 +872,7 @@ impl TapeRig<'_> {
             let shared = AudioShared::init_in_place(self.shared_slot, perf);
             let p = &mut shared.parts[0];
             (p.params, p.mod_state) =
-                (ParamSnapshot::for_engine(EngineType::Tape), ModState::new());
+                (snapshot(EngineType::Tape), ModState::new());
             (p.params.tape.tape, p.params.tape.age) = (0.5, 0.5);
             setup(&mut p.params);
             hit(self.sources, inst, shared, (ids, voices), Hit::Again);
@@ -997,7 +1004,7 @@ fn tape_page(
     let mut line = FmtBuf::new();
     for (i, row) in TAPE_ROWS.iter().enumerate() {
         line.clear();
-        let mut bill = ParamSnapshot::for_engine(EngineType::Tape);
+        let mut bill = snapshot(EngineType::Tape);
         (bill.tape.tape, bill.tape.age) = (0.5, 0.5);
         (row.2)(&mut bill);
         let bill = Voice::CHAIN_COST.0 + EngineSlot::cost(&bill, &ModState::new()).0;
@@ -1192,8 +1199,8 @@ impl Rig<'_> {
     #[inline(never)]
     fn time(
         &mut self,
-        setup: impl FnOnce(&mut AudioShared),
-        mut each: impl FnMut(&mut AudioShared, u32),
+        setup: &dyn Fn(&mut AudioShared),
+        each: &dyn Fn(&mut AudioShared, u32),
         voices: usize,
         low: u8,
         step: u8,
@@ -1622,7 +1629,7 @@ const ALL: u8 = 0b11_1111;
 /// closure carried its own copy.
 #[inline(never)]
 fn algo(alg: AlgoId, lit: u8, feedback: u8) -> ParamSnapshot {
-    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    let mut p = snapshot(EngineType::Algo);
     (p.algo.alg_a, p.algo.alg_b, p.algo.morph) = (alg.get(), alg.get(), 0);
     for (i, op) in p.algo.ops.iter_mut().enumerate() {
         let level = if lit & (1 << i) != 0 { 99 } else { 0 };

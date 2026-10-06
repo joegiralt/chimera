@@ -602,6 +602,11 @@ impl Voice {
         self.active
     }
 
+    /// The strip's heads (`TapeEngine::heads`): none unless TAPE plays.
+    pub fn heads(&self) -> crate::dsp::tape_engine::Heads {
+        self.slot.heads()
+    }
+
     /// The sources this voice reads or will, for the audio's `sounding`
     /// mask (spec § 4): only while active (an idle engine keeps its last
     /// source latched, and must not hold its row), the latched one, fading

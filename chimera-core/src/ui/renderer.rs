@@ -10,6 +10,7 @@ use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::env::EnvRates;
 use crate::dsp::algo::params::AlgoOpParams;
 use crate::dsp::modulator::{EnvType, HoldPos};
+use crate::dsp::tape_engine::params::{TapeEngineParams, TapeModel};
 use crate::part::DacPair;
 use crate::perf::load::AudioStats;
 use crate::project::PartId;
@@ -91,6 +92,9 @@ pub struct Frame<'a> {
     pub orbit_focus: Option<orbit::Focus>,
     /// THEME's HINTS: gesture hints drawn (ADR 0086).
     pub hints: bool,
+    /// TAPE's strip: the active Part's source, and its newest note's heads.
+    pub strip: &'a crate::ui::tape_strip::Overview,
+    pub heads: crate::dsp::tape_engine::Heads,
 }
 
 impl Frame<'_> {
@@ -307,6 +311,18 @@ impl Renderer {
                     self.anim[slot].current(),
                 );
             }
+            VizType::Strip => {
+                let (model, p) = self.strip_params(f);
+                crate::ui::tape_strip::draw_strip(
+                    display,
+                    f.strip,
+                    model,
+                    &p,
+                    f.heads,
+                    theme::VIZ_LEFT,
+                    crate::ui::tape_strip::Y,
+                );
+            }
             VizType::OpEnv => {
                 if let Some((rates, lit)) = self.op_env(f) {
                     let (widths, heights) = viz::op_env(rates);
@@ -316,6 +332,24 @@ impl Renderer {
             }
             _ => viz::live_output(display, f.scope),
         }
+    }
+
+    /// The active Part's machine and its TAPE params, this page's as its
+    /// slots glide: the strip never snaps.
+    fn strip_params(&self, f: &Frame) -> (TapeModel, TapeEngineParams) {
+        let t = f.parts[f.active_part.index()].sound.params.tape;
+        let mut p = t;
+        for i in 0..f.def.params.len() {
+            let Some(a) = slot_addr(f.def, i, &f.ctx).filter(|a| a.block == BlockRef::TapeEngine)
+            else {
+                continue;
+            };
+            if let Some(s) = find_spec(a.block.specs(), a.param) {
+                let v = s.min + self.anim[i].current() * (s.max - s.min);
+                crate::block::Block::set(&mut p, a.param, v);
+            }
+        }
+        (t.model, p)
     }
 
     /// The focused operator's envelope rates, this page's from its animated
@@ -431,6 +465,11 @@ impl Renderer {
                 | VizType::OrbitNotes
                 | VizType::OrbitChords
                 | VizType::OrbitScenes => ([0; 6], 0),
+                VizType::Strip => {
+                    let (model, p) = self.strip_params(f);
+                    let key = crate::ui::tape_strip::key(f.strip, model, &p, f.heads);
+                    (region::quantize_values(&self.anim), key)
+                }
                 VizType::OpEnv => {
                     // AR D1R D2R 5 bits, D1L RR 4, the lit stage 3.
                     let key = self.op_env(f).map_or(0, |(r, lit)| {

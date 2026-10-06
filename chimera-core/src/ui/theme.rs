@@ -22,6 +22,8 @@ pub const FAINT: Rgb565 = Rgb565::new(5, 10, 5);
 pub const ACCENT: Rgb565 = Rgb565::new(15, 53, 25);
 /// Accent at 12 % over the ground: fill under a viz line.
 pub const ACCENT_SOFT: Rgb565 = Rgb565::new(3, 8, 4);
+/// A machine's part of the source under the TAPE strip's waveform.
+pub const ACCENT_DIM: Rgb565 = ACCENT_SOFT;
 /// A prompt's panel `#0d1514`.
 pub const PANEL: Rgb565 = Rgb565::new(1, 5, 2);
 /// An unpicked option's outline `#3a3937`.
