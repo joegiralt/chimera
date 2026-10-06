@@ -974,7 +974,11 @@ impl TapeEngine {
         let p = self.probe();
         if self.model == TapeModel::Tron {
             let run = (self.left as f32 * self.inc.value().unwrap_or(0.0)) as u32;
-            let out = self.heads[0].pos.whole().saturating_add(run).min(self.once_end);
+            let out = self.heads[0]
+                .pos
+                .whole()
+                .saturating_add(run)
+                .min(self.once_end);
             return Heads::new(p.head, Some(self.frame(at(out))));
         }
         Heads::new(p.head, p.other)

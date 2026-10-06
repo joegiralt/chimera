@@ -339,13 +339,13 @@ impl Renderer {
     fn strip_params(&self, f: &Frame) -> (TapeModel, TapeEngineParams) {
         let t = f.parts[f.active_part.index()].sound.params.tape;
         let mut p = t;
-        for i in 0..f.def.params.len() {
+        for (i, anim) in self.anim.iter().enumerate().take(f.def.params.len()) {
             let Some(a) = slot_addr(f.def, i, &f.ctx).filter(|a| a.block == BlockRef::TapeEngine)
             else {
                 continue;
             };
             if let Some(s) = find_spec(a.block.specs(), a.param) {
-                let v = s.min + self.anim[i].current() * (s.max - s.min);
+                let v = s.min + anim.current() * (s.max - s.min);
                 crate::block::Block::set(&mut p, a.param, v);
             }
         }

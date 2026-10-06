@@ -109,12 +109,7 @@ fn snapshot(e: EngineType) -> ParamSnapshot {
 }
 
 const PATCHES: [Row; ROWS] = [
-    (
-        "MODAL",
-        || snapshot(EngineType::Modal),
-        48,
-        5,
-    ),
+    ("MODAL", || snapshot(EngineType::Modal), 48, 5),
     ("FLOOR", || algo(AlgoId::A1, 0, 0), 36, 12),
     ("1 OP", || algo(AlgoId::A1, 0b1, 0), 36, 12),
     // Operators 1, 3 and 5: none can pair, so each runs alone.
@@ -871,8 +866,7 @@ impl TapeRig<'_> {
             let fx = FxBus::init_in_place(self.fx_slot);
             let shared = AudioShared::init_in_place(self.shared_slot, perf);
             let p = &mut shared.parts[0];
-            (p.params, p.mod_state) =
-                (snapshot(EngineType::Tape), ModState::new());
+            (p.params, p.mod_state) = (snapshot(EngineType::Tape), ModState::new());
             (p.params.tape.tape, p.params.tape.age) = (0.5, 0.5);
             setup(&mut p.params);
             hit(self.sources, inst, shared, (ids, voices), Hit::Again);

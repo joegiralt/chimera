@@ -1200,7 +1200,7 @@ impl Instrument {
         for (v, s) in self.alloc.slots().iter().enumerate() {
             let h = self.voices[v].heads();
             let n = &mut newest[self.sounding[v] as usize % MAX_PARTS];
-            if !s.is_free() && h != Heads::NONE && (n.1 == Heads::NONE || s.age() >= n.0) {
+            if h != Heads::NONE && (n.1 == Heads::NONE || s.age() >= n.0) {
                 *n = (s.age(), h);
             }
         }

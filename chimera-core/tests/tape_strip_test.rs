@@ -3,9 +3,11 @@
 //! locked by the screen goldens (`tape_strip_*`).
 
 mod common;
+mod screen;
 
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::tape_engine::Heads;
+use chimera_core::dsp::tape_engine::params::TapeEngineParams;
 use chimera_core::dsp::tape_engine::params::TapeModel;
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::hw::SampleBudget;
@@ -14,11 +16,13 @@ use chimera_core::modulation::ModState;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
-use chimera_core::ui::tape_strip::{COLS, Overview};
+use chimera_core::ui::tape_strip::{self, COLS, Overview};
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
+use chimera_hal::{ButtonId, EncoderId};
 use common::tape::{OneSource, held_plain, sine};
 use common::{SR, XorShift, scope_writer};
+use screen::{Input, feed, render_ui, settle, tape_strip};
 
 /// `n` frames of seeded noise at 24 kHz, as the arena holds them.
 fn noise(n: usize) -> Vec<u8> {
@@ -156,7 +160,11 @@ fn heads_published_once_a_block() {
     block(&mut inst, &[on(&shared, 0, 72)], &shared);
     let h = HEADS.read(0).head().unwrap();
     block(&mut inst, &[], &shared);
-    assert_eq!(HEADS.read(0).head(), Some(h + 2 * b), "the newest note's head");
+    assert_eq!(
+        HEADS.read(0).head(),
+        Some(h + 2 * b),
+        "the newest note's head"
+    );
 
     // TRON's second is where its 8 s of tape runs out: at C4, past this
     // 1 s source, so END.
@@ -169,7 +177,10 @@ fn heads_published_once_a_block() {
     for (note, frames) in [(60, 12_000), (72, 24_000)] {
         block(&mut inst, &[on(&shared, 1, note)], &shared);
         let out = HEADS.read(1).second().unwrap();
-        assert!(out.abs_diff(frames) <= 2 * b, "note {note}: {out} ≈ {frames}");
+        assert!(
+            out.abs_diff(frames) <= 2 * b,
+            "note {note}: {out} ≈ {frames}"
+        );
     }
 
     // A kill fades for a block, its heads still playing.
@@ -178,4 +189,63 @@ fn heads_published_once_a_block() {
     block(&mut inst, &[], &shared);
     assert_eq!(HEADS.read(0), Heads::NONE, "all quiet, no heads");
     assert_eq!(HEADS.read(1), Heads::NONE);
+}
+
+/// The viz region redraws when a head crosses a column, the source or a
+/// machine's param changes; not for a head inside its column.
+#[test]
+fn strip_key_moves_with_the_heads() {
+    let held = noise(21_600); // 100 frames a column
+    let o = Overview::of(&SourceView::new(&held).unwrap(), 0.0, 1.0);
+    let p = TapeEngineParams::default();
+    let key = |o: &Overview, h: Heads| tape_strip::key(o, TapeModel::Loop, &p, h);
+    let at = |h, s| key(&o, Heads::new(h, s));
+    assert_eq!(at(1_000, None), at(1_099, None), "one column");
+    assert_ne!(at(1_000, None), at(1_100, None), "the next");
+    assert_ne!(at(1_000, None), at(1_000, Some(5_000)), "a second head");
+    assert_ne!(at(1_000, Some(5_000)), at(1_000, Some(5_100)));
+    assert_ne!(at(1_000, None), key(&o, Heads::NONE));
+    assert_ne!(key(&o, Heads::NONE), key(&Overview::EMPTY, Heads::NONE));
+    let other = held_plain(&sine(24_000, 50.0, 21_600), 24_000);
+    let o2 = Overview::of(&SourceView::new(&other).unwrap(), 0.0, 1.0);
+    assert_ne!(
+        key(&o, Heads::NONE),
+        key(&o2, Heads::NONE),
+        "another source"
+    );
+    let size = TapeEngineParams { size: 0.5, ..p };
+    assert_ne!(
+        key(&o, Heads::NONE),
+        tape_strip::key(&o, TapeModel::Loop, &size, Heads::NONE),
+        "LENGTH, off this page"
+    );
+}
+
+/// The strip's rows of `ui`'s screen.
+fn strip_rows(ui: &chimera_core::ui::UiState) -> Vec<u16> {
+    let fb = render_ui(ui);
+    let (top, bottom) = (
+        tape_strip::Y as usize,
+        (tape_strip::Y + tape_strip::H) as usize,
+    );
+    fb.px[top * 240..bottom * 240].to_vec()
+}
+
+/// START turned on SRC: the strip's mark glides with its cell, never
+/// snaps.
+#[test]
+fn strip_glides_with_its_cells() {
+    let mut ui = chimera_core::ui::UiState::new();
+    tape_strip(&mut ui, 0, Heads::NONE);
+    feed(&mut ui, Input::press(ButtonId::Minus)); // SRC
+    settle(&mut ui);
+    let before = strip_rows(&ui);
+    feed(&mut ui, Input::turn(EncoderId::B, 60)); // START
+    ui.update(chimera_core::ui::animation::UiTick::for_test());
+    let gliding = strip_rows(&ui);
+    settle(&mut ui);
+    let after = strip_rows(&ui);
+    assert_ne!(before, after, "START moved");
+    assert_ne!(gliding, after, "mid-glide, not at its end");
+    assert_ne!(gliding, before, "and on its way");
 }

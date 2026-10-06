@@ -56,7 +56,11 @@ impl Overview {
         let mut o = Overview {
             frames: n,
             rate: d.rate,
-            count: if d.shape == Shape::Transwave { d.count } else { 0 },
+            count: if d.shape == Shape::Transwave {
+                d.count
+            } else {
+                0
+            },
             ..Overview::EMPTY
         };
         let mut a = lo;
@@ -95,7 +99,10 @@ impl Overview {
 /// the heads to the column.
 #[inline(never)]
 pub fn key(o: &Overview, model: TapeModel, p: &TapeEngineParams, heads: Heads) -> u32 {
-    let col = |h: Option<u32>| h.filter(|_| o.frames > 0).map_or(u32::MAX, |h| o.column(h) as u32);
+    let col = |h: Option<u32>| {
+        h.filter(|_| o.frames > 0)
+            .map_or(u32::MAX, |h| o.column(h) as u32)
+    };
     let words = [
         o.frames,
         u32::from(o.rate),
@@ -107,7 +114,10 @@ pub fn key(o: &Overview, model: TapeModel, p: &TapeEngineParams, heads: Heads) -
         col(heads.head()),
         col(heads.second()),
     ];
-    let cols = o.cols.iter().map(|c| u32::from(c[0] as u8) << 8 | u32::from(c[1] as u8));
+    let cols = o
+        .cols
+        .iter()
+        .map(|c| u32::from(c[0] as u8) << 8 | u32::from(c[1] as u8));
     words
         .into_iter()
         .chain(cols)

@@ -10,8 +10,6 @@ use chimera_core::clock_plan::SiliconRev;
 use chimera_core::dsp::tape_engine::Heads;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
 use chimera_core::dsp::tape_engine::wave::frame_len;
-use chimera_core::storage::twelve::pack12;
-use chimera_core::storage::{SourceRef, TapeSource};
 use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::{AudioShared, Instrument, PartHeads};
 use chimera_core::name::ProjectName;
@@ -27,7 +25,9 @@ use chimera_core::project::{
 };
 use chimera_core::reset::ResetCause;
 use chimera_core::scope::SCOPE_LEN;
+use chimera_core::storage::twelve::pack12;
 use chimera_core::storage::{Card, SystemSettings, SystemSync};
+use chimera_core::storage::{SourceRef, TapeSource};
 use chimera_core::triple::{Reader, TripleBuffer, Writer};
 use chimera_core::ui::UiState;
 use chimera_core::ui::animation::UiTick;
@@ -736,7 +736,10 @@ fn held(shape: Shape, count: u8, rate: u16, x: &[f32]) -> Vec<u8> {
         rate,
         head_frames: 0,
     };
-    let s: Vec<i16> = x.iter().map(|&v| (v.clamp(-1.0, 1.0) * 2047.0).round() as i16).collect();
+    let s: Vec<i16> = x
+        .iter()
+        .map(|&v| (chimera_core::dsp::clampf(v, -1.0, 1.0) * 2047.0).round() as i16)
+        .collect();
     let mut h = d.to_bytes().to_vec();
     h.resize(DESC_LEN + 3 * s.len().div_ceil(2), 0);
     pack12(&s, &mut h[DESC_LEN..]);
@@ -750,14 +753,21 @@ pub fn strip_source(ui: &mut UiState, wave: bool) {
     let (shape, count, rate, x): (_, _, u16, Vec<f32>) = if wave {
         let len = frame_len(512) as usize;
         let x = (0..8 * len)
-            .map(|i| (0.3 + 0.1 * (i / len) as f32) * (i as f32 * core::f32::consts::FRAC_PI_4).sin())
+            .map(|i| {
+                (0.3 + 0.1 * (i / len) as f32) * (i as f32 * core::f32::consts::FRAC_PI_4).sin()
+            })
             .collect();
         (Shape::Transwave, 8, 48_000, x)
     } else {
         let x = (0..36_000)
             .map(|i| {
                 let t = i as f32 / 24_000.0;
-                let env = (-5.0 * t).exp() + if t < 0.75 { 0.0 } else { 0.8 * (-5.0 * (t - 0.75)).exp() };
+                let env = (-5.0 * t).exp()
+                    + if t < 0.75 {
+                        0.0
+                    } else {
+                        0.8 * (-5.0 * (t - 0.75)).exp()
+                    };
                 0.95 * env * (core::f32::consts::TAU * 180.0 * t).sin()
             })
             .collect();
@@ -1146,18 +1156,30 @@ pub const CASES: &[ScreenCase] = &[
     }),
     // The strip (TAPE Task 16): each machine over the plucks (a transwave
     // for TRANSWAVE), with the heads the audio would store.
-    ("tape_strip_oneshot", |ui| tape_strip(ui, -1, Heads::new(9_000, None))),
+    ("tape_strip_oneshot", |ui| {
+        tape_strip(ui, -1, Heads::new(9_000, None))
+    }),
     // A loop's fade: the second head plays on.
-    ("tape_strip_loop", |ui| tape_strip(ui, 0, Heads::new(20_000, Some(2_000)))),
-    ("tape_strip_tron", |ui| tape_strip(ui, 1, Heads::new(6_000, Some(30_000)))),
-    ("tape_strip_stretch", |ui| tape_strip(ui, 2, Heads::new(12_000, Some(13_200)))),
-    ("tape_strip_transwave", |ui| tape_strip(ui, 3, Heads::new(2, Some(3)))),
+    ("tape_strip_loop", |ui| {
+        tape_strip(ui, 0, Heads::new(20_000, Some(2_000)))
+    }),
+    ("tape_strip_tron", |ui| {
+        tape_strip(ui, 1, Heads::new(6_000, Some(30_000)))
+    }),
+    ("tape_strip_stretch", |ui| {
+        tape_strip(ui, 2, Heads::new(12_000, Some(13_200)))
+    }),
+    ("tape_strip_transwave", |ui| {
+        tape_strip(ui, 3, Heads::new(2, Some(3)))
+    }),
     ("tape_strip_scrub", |ui| {
         tape_strip(ui, 4, Heads::new(16_000, None));
         let p = chimera_core::project::PartId::ALL[0];
         ui.project_mut().edit_part(p).sound.params.tape.position = 0.4; // FINGER
     }),
-    ("tape_strip_pingpong", |ui| tape_strip(ui, 5, Heads::new(25_000, None))),
+    ("tape_strip_pingpong", |ui| {
+        tape_strip(ui, 5, Heads::new(25_000, None))
+    }),
     // END before START on SRC: LOOP plays reversed.
     ("tape_strip_loop_reversed", |ui| {
         tape_strip(ui, 0, Heads::new(20_000, None));
@@ -1171,6 +1193,39 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::press(ButtonId::Edit));
         feed(ui, Input::turn(EncoderId::A, 6));
         tap(ui, ButtonId::Seq);
+    }),
+    // END before START: ONESHOT's slice 5 counts from START, PING-PONG
+    // plays its sorted window.
+    ("tape_strip_oneshot_slice_reversed", |ui| {
+        tape_strip(ui, -1, Heads::NONE);
+        let p = &mut ui
+            .project_mut()
+            .edit_part(chimera_core::project::PartId::ALL[0])
+            .sound
+            .params
+            .tape;
+        (p.start, p.end, p.slice) = (0.9, 0.1, 6);
+    }),
+    ("tape_strip_pingpong_reversed", |ui| {
+        tape_strip(ui, 5, Heads::new(20_000, None));
+        let p = &mut ui
+            .project_mut()
+            .edit_part(chimera_core::project::PartId::ALL[0])
+            .sound
+            .params
+            .tape;
+        (p.start, p.end, p.size) = (0.9, 0.1, 0.8);
+    }),
+    // No note: TRON's LENGTH 0 (0.25 s) at ROOT.
+    ("tape_strip_tron_idle", |ui| {
+        tape_strip(ui, 1, Heads::NONE);
+        let p = &mut ui
+            .project_mut()
+            .edit_part(chimera_core::project::PartId::ALL[0])
+            .sound
+            .params
+            .tape;
+        p.size = 0.0;
     }),
     // SRC on a pool row, SOURCE focused.
     ("tape_src_pool", |ui| {

@@ -183,7 +183,10 @@ fn ui_state_rest_under_4k() {
     // A growth tripwire, no physical limit: `UiState` is an AXI static
     // built in place, never moved or cloned. 512 B of it is TAPE's strip
     // (the overview's 432 B cache and its key, spec § RAM).
-    assert!(rest <= 4096 + 512, "UiState grew to {rest} B besides its Project");
+    assert!(
+        rest <= 4096 + 512,
+        "UiState grew to {rest} B besides its Project"
+    );
 }
 
 /// Exclusive-state spec § Memory: Sympathetic's seven lines live in a pool

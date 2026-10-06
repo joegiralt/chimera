@@ -53,6 +53,7 @@ use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
 use crate::dsp::tape_engine::{Heads, TapeEngineParams, TapeModel};
 use crate::in_place::uninit_at;
+use crate::instrument::PartHeads;
 use crate::mod_path::{LABEL_LEN, RegistryError};
 use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::ProjectName;
@@ -70,7 +71,6 @@ use crate::project::{
     SceneAsk, SceneSlot, StatusCache, Swap, TemplateCrc, part_block_mut,
 };
 use crate::scope::SCOPE_LEN;
-use crate::instrument::PartHeads;
 use crate::storage::{ProjectId, SourceRef};
 
 /// SCRUB's FINGER: the address DECK's POSITION cell edits.
@@ -1900,7 +1900,6 @@ impl UiState {
         let rev = self.project.rev();
         self.input(controls);
         self.jog_pass(controls.now_ms().0);
-        self.strip_pass();
         // A save or clear moves the browser's hints, costs and meter.
         self.browser_dirty |= self.loc.browse().is_some() && self.project.rev() != rev;
         self.flush_orbit();
