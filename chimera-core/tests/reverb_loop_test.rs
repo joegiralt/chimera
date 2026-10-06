@@ -1903,9 +1903,8 @@ fn held_tone_move_ratio(id: ParamId, from: f32, to: f32, sweep_s: f32) -> (f32, 
     let held = tone(300.0, 0.25);
     let (pre, sweep, post) = (blocks(3.0), blocks(sweep_s).max(1), blocks(8.0));
     let (mut l, mut r) = (Vec::new(), Vec::new());
-    let mut b = 0;
     let drive = |b: usize| -> Blk { core::array::from_fn(|i| held(b * BLOCK_SIZE + i)) };
-    for _ in 0..pre + sweep + post {
+    for b in 0..pre + sweep + post {
         if b >= pre && b < pre + sweep {
             let x = (b - pre + 1) as f32 / sweep as f32;
             pc.borrow_mut().write(id, from + (to - from) * x);
@@ -1913,7 +1912,6 @@ fn held_tone_move_ratio(id: ParamId, from: f32, to: f32, sweep_s: f32) -> (f32, 
         let (ol, or) = bus(&rv, &pc)(&drive(b));
         l.extend(ol);
         r.extend(or);
-        b += 1;
     }
     let at = |blk: usize| blk * BLOCK_SIZE;
     let d2 = |a: usize, b: usize| max_d2(&l[a..b]).max(max_d2(&r[a..b]));
