@@ -16,9 +16,10 @@ use std::ops::{Add, Div, Mul, Sub};
 /// The self-oscillation band every resonant type shares at RES 1, dBFS RMS
 /// (spec test 2, H-new-1): a TYPE switch at RES 1 jumps no more than its
 /// width. Tasks 8 and 9 may widen it only to take their type in, with the
-/// reason in § Measured.
+/// reason in § Measured. Task 9 raised the top from −4 to −2: DIRTY rings
+/// into its ±2 state clamps, through its ½ output, at −2.8 dBFS.
 #[allow(dead_code)] // not every test binary reads it
-pub const OSC_BAND_DB: (f32, f32) = (-12.0, -4.0);
+pub const OSC_BAND_DB: (f32, f32) = (-12.0, -2.0);
 
 /// The 2040's self-oscillation band on EXP, dBFS RMS: REV2's (`OSC_BAND_DB`)
 /// less EXP's 6 dB of drive, which LEVEL ½'s unity costs (spec § 3).
@@ -92,7 +93,8 @@ pub fn clean_ref(x: &[f32], g: &[f64], k: &[f64], t: &[f64], mode: FilterMode) -
                 let bp = stage(x, g, k, a1, a2).1;
                 2.0 * stage(bp, g, k2, b1, b2).1
             }
-            FilterMode::Hp24 => {
+            // HP12 is DIRTY's; CLEAN runs HP4 for it.
+            FilterMode::Hp24 | FilterMode::Hp12 => {
                 let hp = stage(x, g, k, a1, a2).2;
                 stage(hp, g, k2, b1, b2).2
             }

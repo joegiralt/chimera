@@ -10,7 +10,7 @@
 
 use super::coef::{g_of, sat_c1};
 use super::level::{FilterMods, LevelRamp, LevelStage, level_gain};
-use super::{FilterMode, g_at};
+use super::{CLEAN_MODES, FilterMode, g_at};
 use crate::hw::BLOCK_SIZE;
 use crate::meter::Clip;
 use crate::params::FilterParams;
@@ -49,13 +49,14 @@ pub fn notch2_fb(k: f32) -> f32 {
 pub fn trim(mode: FilterMode, k: f32) -> f32 {
     // Untrimmed at RES 1, dBFS.
     let osc = match mode {
-        FilterMode::Lp6 => 0.3277,   // +0.89 to +2.49
-        FilterMode::Lp12 => 0.4756,  // −2.35 to −0.74
-        FilterMode::Lp24 => 0.3949,  // −1.59 to +1.73
-        FilterMode::Bp12 => 0.2374,  // +3.70 to +5.28
-        FilterMode::Bp24 => 0.191,   // +5.00 to +7.76
-        FilterMode::Hp24 => 0.3367,  // +0.62 to +2.29
-        FilterMode::Notch => 0.6324, // −4.82 to −3.22
+        FilterMode::Lp6 => 0.3277,  // +0.89 to +2.49
+        FilterMode::Lp12 => 0.4756, // −2.35 to −0.74
+        FilterMode::Lp24 => 0.3949, // −1.59 to +1.73
+        FilterMode::Bp12 => 0.2374, // +3.70 to +5.28
+        FilterMode::Bp24 => 0.191,  // +5.00 to +7.76
+        // HP12 never reaches CLEAN (`process` runs HP4 for it).
+        FilterMode::Hp24 | FilterMode::Hp12 => 0.3367, // +0.62 to +2.29
+        FilterMode::Notch => 0.6324,                   // −4.82 to −3.22
         FilterMode::Phaser => return 0.5 * libm::sqrtf(1.0 - notch2_fb(k)),
     };
     let u = crate::dsp::clampf(1.0 - 2.0 * k, 0.0, 1.0);
@@ -117,8 +118,8 @@ fn coef<const M: u8>(g: f32, k: f32, trim: f32) -> Coef {
         fb: 0.0,
         trim,
     };
-    match FilterMode::ALL[M as usize] {
-        FilterMode::Lp24 | FilterMode::Bp24 | FilterMode::Hp24 => {
+    match CLEAN_MODES[M as usize] {
+        FilterMode::Lp24 | FilterMode::Bp24 | FilterMode::Hp24 | FilterMode::Hp12 => {
             // The second stage less resonant, so the cascade doesn't blow up.
             c.k2 = clean_k2(k);
             c.d = d_at(k);
@@ -159,7 +160,8 @@ impl Clean {
             FilterMode::Lp24 => self.run::<2>(buf, r),
             FilterMode::Bp12 => self.run::<3>(buf, r),
             FilterMode::Bp24 => self.run::<4>(buf, r),
-            FilterMode::Hp24 => self.run::<5>(buf, r),
+            // DIRTY's HP2 isn't CLEAN's; were it handed one, HP4.
+            FilterMode::Hp24 | FilterMode::Hp12 => self.run::<5>(buf, r),
             FilterMode::Notch => self.run::<6>(buf, r),
             FilterMode::Phaser => self.run::<7>(buf, r),
         }
@@ -223,7 +225,7 @@ impl Clean {
     /// `g` and `k` held: their divides once a block.
     #[inline(always)]
     pub(super) fn steady<const M: u8>(&mut self, buf: &mut [f32; BLOCK_SIZE], r: Ramps) {
-        let c = coef::<M>(r.g.1, r.k.1, trim(FilterMode::ALL[M as usize], r.k.1));
+        let c = coef::<M>(r.g.1, r.k.1, trim(CLEAN_MODES[M as usize], r.k.1));
         for s in buf.iter_mut() {
             *s = self.tick::<M>(*s, &c);
         }
@@ -235,7 +237,7 @@ impl Clean {
     pub(super) fn moving<const M: u8>(&mut self, buf: &mut [f32; BLOCK_SIZE], r: Ramps) {
         let n = BLOCK_SIZE as f32;
         let (g_step, k_step) = ((r.g.1 - r.g.0) / n, (r.k.1 - r.k.0) / n);
-        let mode = FilterMode::ALL[M as usize];
+        let mode = CLEAN_MODES[M as usize];
         let t = (trim(mode, r.k.0), trim(mode, r.k.1));
         let t_step = (t.1 - t.0) / n;
         for (i, s) in buf.iter_mut().enumerate() {
@@ -285,7 +287,7 @@ impl Clean {
 
     #[inline(always)]
     fn untrimmed<const M: u8>(&mut self, x: f32, c: &Coef) -> f32 {
-        match FilterMode::ALL[M as usize] {
+        match CLEAN_MODES[M as usize] {
             // LP1: `(1 + s)/(s² + ks + 1)`, the one-pole `1/(1 + s)` at
             // `k = 2`; Q peaks it by `√2/k` at FREQ.
             FilterMode::Lp6 => {
@@ -303,7 +305,7 @@ impl Clean {
                 let bp = self.stage(x, c.g, c.k, c.d, 0).1;
                 self.stage(bp, c.g, c.k2, c.d2, 1).1 * 2.0
             }
-            FilterMode::Hp24 => {
+            FilterMode::Hp24 | FilterMode::Hp12 => {
                 let hp = self.stage(x, c.g, c.k, c.d, 0).2;
                 self.stage(hp, c.g, c.k2, c.d2, 1).2
             }

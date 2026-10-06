@@ -112,12 +112,17 @@ impl Response {
         use crate::dsp::filter::{FilterKind as K, FilterMode as M};
         match (kind, m) {
             (K::Svf, M::Lp6) => Response::Lp1,
-            (K::Svf, M::Hp24) => Response::High,
+            (K::Svf, M::Hp24 | M::Hp12) => Response::High,
             (K::Svf, M::Bp12 | M::Bp24) => Response::Band,
             (K::Svf, M::Notch) => Response::Notch2x,
             (K::Svf, M::Phaser) => Response::DoubleNotch,
             (K::Svf, M::Lp12 | M::Lp24) => Response::Low,
             (K::K2040, _) => Response::Low,
+            // DIRTY's NOTCH1 notches at FREQ (spec § 5).
+            (K::Dirty, M::Notch) => Response::Notch,
+            (K::Dirty, M::Bp12 | M::Bp24) => Response::Band,
+            (K::Dirty, M::Hp12 | M::Hp24) => Response::High,
+            (K::Dirty, _) => Response::Low,
         }
     }
 }

@@ -471,9 +471,10 @@ fn applies_matches_the_panel() {
     }
 }
 
-/// TYPE is live once a second kind is built: its encoder steps CLEAN to
-/// 2040, whose one MODE then shows fixed, and a TYPE change leaves the
-/// matrix byte-identical. (TYPE is an enum the registry refuses to prime.)
+/// TYPE is live once a second kind is built: a detent a kind, CLEAN to
+/// 2040 (whose one MODE shows fixed) to DIRTY, each at its default MODE and
+/// held at the last; a TYPE change leaves the matrix byte-identical. (TYPE
+/// is an enum the registry refuses to prime.)
 #[test]
 fn type_steps_the_built_kinds_and_never_edits_the_matrix() {
     use chimera_core::ui::view::{self, SlotCtx};
@@ -486,10 +487,16 @@ fn type_steps_the_built_kinds_and_never_edits_the_matrix() {
     ));
     let mut ui = on_flt(EngineType::Algo);
     let before = format!("{:?}", ui.mod_state());
-    feed(&mut ui, Input::turn(EncoderId::A, 3));
-    assert_eq!(ui.params().filter.kind(), FilterKind::K2040);
-    assert_eq!(ui.params().filter.mode(), FilterMode::Lp24);
-    assert_eq!(format!("{:?}", ui.mod_state()), before);
+    for (kind, mode) in [
+        (FilterKind::K2040, FilterMode::Lp24),
+        (FilterKind::Dirty, FilterMode::Lp12),
+        (FilterKind::Dirty, FilterMode::Lp12),
+    ] {
+        feed(&mut ui, Input::turn(EncoderId::A, 1));
+        assert_eq!(ui.params().filter.kind(), kind);
+        assert_eq!(ui.params().filter.mode(), mode);
+        assert_eq!(format!("{:?}", ui.mod_state()), before);
+    }
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
     assert_eq!(ui.prime_status(), Some(PrimeStatus::NotModulatable));
     feed(&mut ui, Input::turn(EncoderId::A, -3));

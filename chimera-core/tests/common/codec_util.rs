@@ -310,3 +310,28 @@ pub fn check_sound(s: &Sound) {
         assert!(e.addr.modulatable(), "registry {i}");
     }
 }
+
+/// A Sound file of hand-built records.
+pub fn sound_file(records: &[(chimera_core::storage::RecordTag, Vec<u8>)]) -> Vec<u8> {
+    let h = Header {
+        kind: FileKind::Sound,
+        generation: Generation::FIRST,
+        name: Some(Sound::neutral(EngineType::Algo).name),
+    };
+    let mut sink = VecSink(Vec::new());
+    write_file(&mut sink, &h, &mut |w| {
+        records.iter().try_for_each(|(t, p)| w.put(*t, p))
+    })
+    .unwrap();
+    sink.0
+}
+
+/// A Filter Block payload: `(id, raw)` entries, a real's bits or a code.
+pub fn filter_payload(entries: &[(u8, [u8; 4])]) -> Vec<u8> {
+    let mut p = vec![10];
+    for (id, raw) in entries {
+        p.push(*id);
+        p.extend_from_slice(raw);
+    }
+    p
+}

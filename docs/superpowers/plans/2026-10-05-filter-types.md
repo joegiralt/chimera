@@ -1453,3 +1453,26 @@ The moving, LEVEL and tap terms are deltas, not over `OLD_LP24`, and don't chang
 - **Re-recorded:** `screen_golden_test` `bigviz_filter` (TYPE live with two kinds, label TYPE). Fixtures: `disk_codes_v1.txt` appends `E 10 6 4 2040`, `B 10 13 VOICE`, `E 10 13 0 REV2`, `E 10 13 1 EXP`; `neutral_v1.txt` gains `voice: Rev2` (the Debug print, every engine).
 - **Sweep allowance:** a TYPE jump clicks (the incoming type starts from rest) until Task 10's crossfade.
 - **Fix round 1 (Task 8 review):** the 2040 bills its measured steady cost, 30 (REV2) and 40 (EXP), through `FilterParams::filter_cost` (CLEAN's by-mode bill is `clean_cost`). The moving path is re-budgeted to +12 instructions / +45 cycles (ADR 0096), billed by Task 18. Test 2 pins the pitch to ±5 cents and REV2's level to −11.2 ± 1 dB, so a missing `L` fails it (L = ∞: +11 to +14 cents, −5.9 dBFS). `Filter.last` is `(kind, mode, voice)` for Task 10. ADR 0101 raises `VOICE_CHAIN_BYTES` to 2,112 B.
+
+### Task 9: DIRTY (2026-10-06)
+
+- **Constants, as the brief gave them:** `f = 2·fast_sin(π·fc/(2·fs))` (fc/fs held to 0..0.497), `q = 2·(1 − RES/0.95)`, `f` clamped per block to `0.95·(√(q₊² + 4) − q₊)` at the block's larger `q` end, `lp`, `bp ∈ ±2`, `out = clamp(¼·(m₁ + m₂), ±1)`. Each sub-step runs spec § 4's order: `hp` reads `lp` before its clamp. Clamping `lp` first held the RES 1 pitch at −23 cents at 100 Hz but −40 at 5 kHz.
+- **Ceiling:** the clamp binds from 12,359 Hz at RES 0 (spec 12.35 kHz), 15.3 kHz at RES 0.25, 19.7 kHz at RES 0.5, and not below 20 kHz from RES 0.75.
+- **Response, RES 0:** LP2 −11.65 / −11.83 / −11.16 dB/oct over 4..8 × FREQ at 250 Hz / 1 kHz / 2.5 kHz; HP2 +11.91 / +11.63 / +11.57 / +11.56 over ⅛..¼ × at 250 / 1 k / 2.5 k / 4 k. Over 2..4 × it reads −10.5, as the Q ½ analog prototype does (Task 4's window ruling). NOTCH1's minimum sits on FREQ (to the 1 % sweep step; 6,060 Hz at fs/8), −89 dB at 250 Hz falling to −30 dB at fs/8, where the held input's image leaks in.
+- **BP2's peak rides above FREQ at RES 0:** the Chamberlin's resonance is `2·asin(f/(2√(1 − fq/2)))`, so at `q = 2` it sits +0.8 % at 250 Hz, +3.3 % at 1 kHz and +15 % at 4 kHz (measured; the transfer function says 13). The test pins those (`DIRTY_BP_PEAK`) ± 3 % instead of FREQ ± 3 %. On FREQ from RES 0.95 (`q = 0`). A per-block retune (`f = F·(√(1 + (Fq/4)²) − Fq/4)`, one more `vsqrt` a block) would put it on FREQ at every RES, but then `f` never reaches Jury's bound below 20 kHz: the 12 kHz ceiling, and what the `f` clamp's tests can see, would go. Not taken; the owner's call.
+- **Self-oscillation, RES 1:** LP2, BP2 and HP2 −2.75 to −2.93 dBFS (100 Hz – 8 kHz), wobble ≤ 0.06 dB: DIRTY rings into its ±2 clamps through the ½ output. **`OSC_BAND_DB` widened from (−12, −4) to (−12, −2)** to take it in (the plan allows Task 9 that). At 1 kHz the spread across CLEAN (−7.9 to −8.1), REV2 (−11.0) and DIRTY (−2.76) is 8.25 dB, inside the band's 10. NOTCH1 rings at −22.3 to −22.7 dBFS: its zero sits on the pitch, so it is left out of the band, as NOTCH2 is on CLEAN.
+- **Pitch, RES 1, FM2 +100 %:** −22.7 to −23.4 cents, flat across C2–C6 to fs/8 (octaves within 0.6 cents): the clamped ring's dwell, not the `q` law (which alone gives −17 cents only at fs/8). Within the ±25 limit by 1.6 cents.
+- **Onset:** RES 0.94 decays below −60 dB and RES 0.96 sustains, at 250 Hz / 1 kHz / 4 kHz, every oscillating mode.
+- **Bound:** the grid (24 FREQ × 11 RES × LEVEL 0, ½, 1 × 4 modes × 5 inputs) and 10 s of random per-block FREQ, RES, MODE and LEVEL: output exactly within ±1, states within ±2, all finite. At RES 0 every FREQ dies away to < 1e-4 within 1 s of silence (stable to the top).
+- **Probes** (`tools/loop_count.py`, bench ELF in `wt-t9/target`, unrolled 4 ×), a sample:
+
+  | Loop | Instructions | `vdiv` | Cycles (with block) | Budget |
+  |---|---|---|---|---|
+  | `dirty_probe::<0>` LP2 | **28** | 0 | 55 | ≤ 30 |
+  | `dirty_probe::<1>` BP2 | **28** | 0 | 55 | ≤ 30 |
+  | `dirty_probe::<2>` HP2 | **27** | 0 | 50 | ≤ 30 |
+  | `dirty_probe::<3>` NOTCH1 | **29** | 0 | 55 | ≤ 30 |
+
+  One loop serves steady and moving blocks (the ramps add; a steady block's steps are 0). Block work 232 instructions, 3 `vdiv`/`vsqrt` (with LEVEL's three loops, 4.31 / 16.62 / 20.00 a sample, as on CLEAN). Under `OLD_LP24`'s 95 cycles: `DIRTY_COST` 0.
+- **Memory.** `Dirty` is 32 B: two states, one `Option` for the three ramp ends (`f`, `q`, LEVEL's gain), and its `LevelStage` (8 B). Three `Option<f32>`s would be 40 B and the voice 2,120 B, over ADR 0101's 2,112. `Filter` is 148 B; a `Voice` less its slot is **2,112 B, exactly the cap**: Task 10's crossfade state does not fit without another ADR or packing CLEAN's and the 2040's ramp ends the same way (8 B each).
+- **Re-recorded:** none. Fixture `disk_codes_v1.txt` appends `E 10 6 6 DIRTY` and `E 10 7 9 HP12`; `table()` now lists MODE's codes on every built kind.

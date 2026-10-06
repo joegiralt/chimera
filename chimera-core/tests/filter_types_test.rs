@@ -5,12 +5,16 @@ mod common;
 use chimera_core::block::{Block, DiskCode};
 use chimera_core::dsp::filter::clean::{clean_k, clean_k2, trim};
 use chimera_core::dsp::filter::coef::{g_of, tan_accurate};
-use chimera_core::dsp::filter::{Clean, FilterKind, FilterMode, FilterMods, routed_cutoff};
+use chimera_core::dsp::filter::dirty::{DIRTY_STATE, dirty_f, dirty_f_bound, dirty_f_raw, dirty_q};
+use chimera_core::dsp::filter::{
+    Clean, Dirty, Filter, FilterKind, FilterMode, FilterMods, K2040Voice, routed_cutoff,
+};
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, FILTER_SPECS, FilterParams, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::Rig;
+use common::codec_util::{decode, encode, filter_payload, sound_file};
 use common::filter_ref::{
     OSC_BAND_DB, clean_ref, fft, g_track, grid_input, mag_db, ramp_track, rms_db, trim_ref,
 };
@@ -375,7 +379,7 @@ fn clean_res_1_one_block_jumps_stay_bounded() {
 #[test]
 fn clean_is_bounded_on_the_grid() {
     let (mut max, mut max_state, mut max_ap) = (0.0f32, 0.0f32, 0.0f32);
-    for mode in FilterMode::ALL {
+    for &mode in FilterKind::Svf.modes() {
         let mut mode_max = 0.0f32;
         for fi in 0..24 {
             let fc = 20.0 * 1000f32.powf(fi as f32 / 23.0);
@@ -413,7 +417,7 @@ fn clean_is_bounded_on_the_grid() {
 
 #[test]
 fn clean_recovers_from_a_nan_block() {
-    for mode in FilterMode::ALL {
+    for &mode in FilterKind::Svf.modes() {
         let mut p = FilterParams::default();
         assert!(p.set_mode(mode));
         (p.cutoff, p.resonance) = (1000.0, 0.5);
@@ -953,4 +957,473 @@ fn notch2_peak_slides_below_freq_as_pinned() {
         (ratio / NOTCH2_PEAK_AT_8K - 1.0).abs() <= 0.02,
         "{ratio:.4} × FREQ"
     );
+}
+
+// DIRTY, the Chamberlin SVF at ×2 (spec § 4, plan Task 9).
+
+/// DIRTY in `mode` at a held setting.
+fn dirty(mode: FilterMode, fc: f32, res: f32) -> FilterParams {
+    let mut p = FilterParams::default();
+    p.set_kind(FilterKind::Dirty);
+    assert!(p.set_mode(mode), "{mode:?}");
+    (p.cutoff, p.resonance) = (fc, res);
+    p
+}
+
+/// `n` samples through a fresh `Filter` at `p`, fed `x(i)`: any TYPE.
+fn render_filter(p: &FilterParams, n: usize, x: impl Fn(usize) -> f32) -> Vec<f32> {
+    let mut f = Filter::new();
+    let mut out = Vec::with_capacity(n);
+    for b in 0..n.div_ceil(BLOCK_SIZE) {
+        let mut buf: [f32; BLOCK_SIZE] = core::array::from_fn(|i| x(b * BLOCK_SIZE + i));
+        f.process(&mut buf, p, SR, &FilterMods::NONE);
+        out.extend_from_slice(&buf);
+    }
+    out.truncate(n);
+    out
+}
+
+const DIRTY_MODES: [FilterMode; 4] = [
+    FilterMode::Lp12,
+    FilterMode::Bp12,
+    FilterMode::Hp12,
+    FilterMode::Notch,
+];
+
+/// DIRTY's gain at `f`, dB re its input: a 0.5 sine, read over 1 s after
+/// 0.25 s (whole periods at any whole-hertz `f`).
+fn dirty_gain_db(mode: FilterMode, fc: f32, res: f32, f: f32) -> f32 {
+    let (settle, n) = ((0.25 * FS) as usize, (1.0 * FS) as usize);
+    let w = core::f64::consts::TAU * f64::from(f) / f64::from(FS);
+    let y = render_filter(&dirty(mode, fc, res), settle + n, |i| {
+        0.5 * (w * i as f64).sin() as f32
+    });
+    mag_db(&y[settle..], f, FS) + 6.0206
+}
+
+/// Where BP2 peaks at RES 0, × FREQ, at 250 Hz, 1 kHz and 4 kHz: the
+/// Chamberlin's own. Its resonance sits at `2·asin(f/(2√(1 − fq/2)))` at
+/// ×2, so at RES 0 (`q = 2`) it rides up with `f`: +0.8 and +3.3 % on the
+/// transfer function, and +15 % at 4 kHz as measured (the function says 13;
+/// a Q ½ peak is flat to 0.01 dB across ±3 %). On FREQ from RES 0.95, where
+/// `q = 0` (the pitch test).
+const DIRTY_BP_PEAK: [(f32, f32); 3] = [(250.0, 1.0082), (1000.0, 1.0332), (4000.0, 1.153)];
+
+/// RES 0 (spec test 1): LP2 and HP2 ±12 ± 2 dB/oct, BP2's peak where the
+/// Chamberlin puts it (`DIRTY_BP_PEAK`) ± 3 %, NOTCH1's zero at FREQ ± 5 %
+/// up to fs/8. The slopes are read over 4..8 × FREQ (HP2 mirrored, ⅛..¼),
+/// as CLEAN's are (Task 4's ruling): at RES 0 the two-pole has Q ½, which
+/// reads −10.6 dB/oct over 2..4 × on the analog prototype too. LP2 is
+/// read to 2.5 kHz, where 8 × is still under Nyquist.
+#[test]
+fn dirty_responses() {
+    for fc in [250.0f32, 1000.0, 2500.0, 4000.0] {
+        let g = |mode, f: f32| dirty_gain_db(mode, fc, 0.0, f.round());
+        if 8.0 * fc < FS / 2.0 {
+            let lp = g(FilterMode::Lp12, 8.0 * fc) - g(FilterMode::Lp12, 4.0 * fc);
+            println!("DIRTY {fc} Hz: LP2 {lp:.2} dB/oct");
+            assert!((lp + 12.0).abs() <= 2.0, "{fc} Hz LP2: {lp:.2}");
+        }
+        let hp = g(FilterMode::Hp12, 0.25 * fc) - g(FilterMode::Hp12, 0.125 * fc);
+        println!("DIRTY {fc} Hz: HP2 {hp:.2} dB/oct");
+        assert!((hp - 12.0).abs() <= 2.0, "{fc} Hz HP2: {hp:.2}");
+    }
+    for (fc, at) in DIRTY_BP_PEAK {
+        let g = |f: f32| dirty_gain_db(FilterMode::Bp12, fc, 0.0, (fc * at * f).round());
+        let (lo, at_peak, hi) = (g(0.97), g(1.0), g(1.03));
+        assert!(
+            at_peak > lo && at_peak > hi,
+            "{fc} Hz BP2: {lo}, {at_peak}, {hi}"
+        );
+    }
+    // NOTCH1 at FREQ, 250 Hz to fs/8 in octaves, and fs/8 itself.
+    for fc in [250.0f32, 500.0, 1000.0, 2000.0, 4000.0, FS / 8.0] {
+        let sweep: Vec<(f32, f32)> = (-10..=10)
+            .map(|i| {
+                let f = (fc * (1.0 + 0.01 * i as f32)).round();
+                (f, dirty_gain_db(FilterMode::Notch, fc, 0.0, f))
+            })
+            .collect();
+        let (f_min, depth) = sweep
+            .iter()
+            .copied()
+            .fold((0.0, f32::INFINITY), |m, x| if x.1 < m.1 { x } else { m });
+        println!("DIRTY {fc} Hz NOTCH1: min {depth:.1} dB at {f_min}");
+        assert!(
+            (f_min / fc - 1.0).abs() <= 0.05,
+            "{fc} Hz NOTCH1: min at {f_min}"
+        );
+        assert!(depth <= -20.0, "{fc} Hz NOTCH1: {depth:.1} dB");
+    }
+}
+
+/// Where `dirty_f` starts to clamp at `res`: the FREQ, Hz, by bisection;
+/// `None` if not below 20 kHz.
+fn dirty_ceiling(res: f32) -> Option<f32> {
+    let q = dirty_q(res);
+    let binds = |fc: f32| dirty_f(fc, FS, q) < dirty_f_raw(fc, FS);
+    if !binds(20_000.0) {
+        return None;
+    }
+    let (mut lo, mut hi) = (20.0f32, 20_000.0f32);
+    for _ in 0..40 {
+        let mid = 0.5 * (lo + hi);
+        if binds(mid) { hi = mid } else { lo = mid }
+    }
+    Some(hi)
+}
+
+/// Jury's bound at ×2 sets a 12.35 kHz ceiling at RES 0, rising with RES
+/// and gone below 20 kHz from the onset (spec § 4).
+#[test]
+fn dirty_ceiling_is_12k_at_res_0_and_rises_with_res() {
+    let at0 = dirty_ceiling(0.0).expect("binds at RES 0");
+    println!("DIRTY ceiling at RES 0: {at0:.0} Hz");
+    assert!((at0 / 12_350.0 - 1.0).abs() <= 0.01, "{at0}");
+    // Below it `f` is FREQ's own, above it the bound.
+    assert_eq!(dirty_f(0.99 * at0, FS, 2.0), dirty_f_raw(0.99 * at0, FS));
+    assert_eq!(dirty_f(1.01 * at0, FS, 2.0), dirty_f_bound(2.0));
+    let mut last = at0;
+    for res in [0.25, 0.5, 0.75, 0.9] {
+        let c = dirty_ceiling(res);
+        println!("DIRTY ceiling at RES {res}: {c:?}");
+        if let Some(c) = c {
+            assert!(c > last, "RES {res}: {c} after {last}");
+            last = c;
+        }
+    }
+    for res in [0.95, 1.0] {
+        assert_eq!(dirty_ceiling(res), None, "RES {res}");
+    }
+    // The bound is Jury's, × 0.95: at it `f² + 2fq < 4` with room.
+    for q in [2.0f32, 1.0, 0.1, 0.0, -0.105] {
+        let f = dirty_f_bound(q);
+        assert!(f * f + 2.0 * f * q < 4.0, "q {q}: f {f}");
+    }
+}
+
+/// DIRTY's output bound and its states' clamps on the grid (spec test 8),
+/// LEVEL 0, ½ and 1; stable at RES 0 to the top (the silence after a saw
+/// dies away, which a missing `f` clamp breaks above 12.35 kHz); and 10 s of
+/// random per-block FREQ, RES, MODE and LEVEL.
+#[test]
+fn dirty_is_bounded_everywhere() {
+    let (mut max, mut max_state) = (0.0f32, 0.0f32);
+    let mut check = |buf: &[f32], f: &Dirty, what: &dyn Fn() -> String| {
+        for &v in buf {
+            assert!(v.is_finite() && v.abs() <= 1.0, "{}: {v}", what());
+            max = max.max(v.abs());
+        }
+        for s in f.states() {
+            assert!(s.is_finite() && s.abs() <= DIRTY_STATE, "{}: {s}", what());
+            max_state = max_state.max(s.abs());
+        }
+    };
+    for mode in DIRTY_MODES {
+        for fi in 0..24 {
+            let fc = 20.0 * 1000f32.powf(fi as f32 / 23.0);
+            for ri in 0..=10 {
+                for level in [0.0, 0.5, 1.0] {
+                    let mut p = dirty(mode, fc, ri as f32 / 10.0);
+                    p.level = level;
+                    for which in 0..5 {
+                        let mut f = Dirty::new();
+                        for b in 0..20 {
+                            let mut buf: [f32; BLOCK_SIZE] =
+                                core::array::from_fn(|i| grid_input(which, b * BLOCK_SIZE + i));
+                            f.process(&mut buf, &p, SR, &FilterMods::NONE);
+                            check(&buf, &f, &|| {
+                                format!("{mode:?} {fc} RES {ri} LEVEL {level} in {which}")
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Stable at RES 0 at every FREQ: a saw, then silence that dies away.
+    for fi in 0..24 {
+        let fc = 20.0 * 1000f32.powf(fi as f32 / 23.0);
+        let p = dirty(FilterMode::Lp12, fc, 0.0);
+        let y = render_filter(&p, (1.2 * FS) as usize, |i| {
+            if i < 4800 { grid_input(1, i) } else { 0.0 }
+        });
+        let tail = y[(1.0 * FS) as usize..]
+            .iter()
+            .fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(tail < 1e-4, "{fc} Hz RES 0: rings on at {tail}");
+    }
+    // 10 s of random per-block changes.
+    let mut seed = 0x9e37_79b9u32;
+    let mut rnd = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        seed as f32 / u32::MAX as f32
+    };
+    let mut f = Dirty::new();
+    let mut p = dirty(FilterMode::Lp12, 1000.0, 0.0);
+    for b in 0..(10.0 * FS) as usize / BLOCK_SIZE {
+        assert!(p.set_mode(DIRTY_MODES[(rnd() * 3.99) as usize]));
+        (p.cutoff, p.resonance, p.level) = (20.0 * 1000f32.powf(rnd()), rnd(), rnd());
+        let which = (rnd() * 4.99) as usize;
+        let mut buf: [f32; BLOCK_SIZE] =
+            core::array::from_fn(|i| grid_input(which, b * BLOCK_SIZE + i));
+        f.process(&mut buf, &p, SR, &FilterMods::NONE);
+        check(&buf, &f, &|| format!("random block {b}"));
+    }
+    println!("DIRTY grid and random: max |y| {max}, max |state| {max_state}");
+}
+
+/// DIRTY's modes that oscillate at RES 1: NOTCH1's zero sits on the pitch
+/// it would ring at, as NOTCH2's all-passes never ring on CLEAN.
+const DIRTY_OSC_MODES: [FilterMode; 3] = [FilterMode::Lp12, FilterMode::Bp12, FilterMode::Hp12];
+
+/// DIRTY at RES 1 from one impulse, read over 0.5 s after 0.25 s.
+fn dirty_oscillation(mode: FilterMode, fc: f32) -> Vec<f32> {
+    let n = (0.75 * FS) as usize;
+    render_filter(&dirty(mode, fc, 1.0), n, impulse).split_off((0.25 * FS) as usize)
+}
+
+/// Spec test 2 on DIRTY: steady (±1 dB) in the shared band, 1 V/oct with
+/// FM2 at +100 % up to fs/8, and the onset at RES 0.95 ± 0.01.
+#[test]
+fn dirty_self_oscillates_in_band_and_on_pitch() {
+    let (lo, hi) = OSC_BAND_DB;
+    for mode in DIRTY_OSC_MODES {
+        let freqs = (0..7).map(|o| 100.0 * (1 << o) as f32).chain([8000.0]);
+        let levels: Vec<(f32, f32, f32)> = freqs
+            .map(|fc| {
+                let y = dirty_oscillation(mode, fc);
+                let level = rms_db(&y);
+                let wobble = y
+                    .chunks(4800)
+                    .map(|w| (rms_db(w) - level).abs())
+                    .fold(0.0f32, f32::max);
+                (fc, level, wobble)
+            })
+            .collect();
+        println!("DIRTY {mode:?} RES 1 (Hz, dBFS, ±dB): {levels:.2?}");
+        for (fc, level, wobble) in levels {
+            assert!(wobble <= 1.0, "{mode:?} {fc} Hz: ±{wobble:.2} dB");
+            assert!(
+                level > lo && level < hi && level < 0.0,
+                "{mode:?} {fc} Hz: {level:.2} dBFS"
+            );
+        }
+        let mut worst = (0.0f64, 0.0f64);
+        for base in [261.626f32, 1250.0] {
+            let mut last: Option<f64> = None;
+            for note in (36..=84).step_by(12) {
+                let fc = routed_cutoff(base, (note as f32 - 60.0) / 120.0);
+                let want = f64::from(base) * 2f64.powf((note as f64 - 60.0) / 12.0);
+                if want > f64::from(FS) / 8.0 {
+                    continue;
+                }
+                let f = pitch(&dirty_oscillation(mode, fc));
+                let c = cents(f, want);
+                worst.0 = worst.0.max(c.abs());
+                assert!(
+                    c.abs() <= 25.0,
+                    "{mode:?} base {base} note {note}: {c:.1} cents"
+                );
+                if let Some(l) = last {
+                    let o = cents(f, l) - 1200.0;
+                    worst.1 = worst.1.max(o.abs());
+                    assert!(
+                        o.abs() <= 10.0,
+                        "{mode:?} base {base} note {note}: octave {o:.1}"
+                    );
+                }
+                last = Some(f);
+            }
+        }
+        println!(
+            "DIRTY {mode:?} pitch: worst {:.1} cents, octave {:.1}",
+            worst.0, worst.1
+        );
+    }
+    let n = (1.1 * FS) as usize;
+    let tail = (1.0 * FS) as usize;
+    for mode in DIRTY_OSC_MODES {
+        for fc in [250.0, 1000.0, 4000.0] {
+            let at = |res: f32| {
+                let y = render_filter(&dirty(mode, fc, res), n, impulse);
+                let peak = y.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+                let late = y[tail..].iter().fold(0.0f32, |m, v| m.max(v.abs()));
+                20.0 * (late / peak).log10()
+            };
+            let (below, above) = (at(0.94), at(0.96));
+            assert!(below < -60.0, "{mode:?} {fc} Hz RES 0.94: {below:.1} dB");
+            assert!(above > -20.0, "{mode:?} {fc} Hz RES 0.96: {above:.1} dB");
+        }
+    }
+}
+
+/// A TYPE switch at RES 1 jumps no more than the shared band is wide (spec
+/// H-new-1): CLEAN's modes but NOTCH2, the 2040's REV2 (EXP has its own
+/// band) and DIRTY's oscillating modes, at FREQ 1 kHz.
+#[test]
+fn every_type_self_oscillates_in_one_band() {
+    let mut levels = Vec::new();
+    let read = |p: &FilterParams| {
+        let n = (0.75 * FS) as usize;
+        rms_db(&render_filter(p, n, impulse)[(0.25 * FS) as usize..])
+    };
+    for mode in OSC_MODES {
+        let mut p = FilterParams::default();
+        assert!(p.set_mode(mode));
+        (p.cutoff, p.resonance) = (1000.0, 1.0);
+        levels.push((format!("CLEAN {mode:?}"), read(&p)));
+    }
+    let mut p = FilterParams::default();
+    p.set_kind(FilterKind::K2040);
+    (p.cutoff, p.resonance, p.voice) = (1000.0, 1.0, K2040Voice::Rev2);
+    levels.push(("2040 REV2".into(), read(&p)));
+    for mode in DIRTY_OSC_MODES {
+        levels.push((format!("DIRTY {mode:?}"), read(&dirty(mode, 1000.0, 1.0))));
+    }
+    println!("RES 1 at 1 kHz, dBFS: {levels:.2?}");
+    let max = levels.iter().map(|l| l.1).fold(f32::MIN, f32::max);
+    let min = levels.iter().map(|l| l.1).fold(f32::MAX, f32::min);
+    assert!(
+        max - min <= OSC_BAND_DB.1 - OSC_BAND_DB.0,
+        "spread {:.2} dB",
+        max - min
+    );
+}
+
+#[test]
+fn dirty_recovers_from_a_nan_block() {
+    for mode in DIRTY_MODES {
+        let p = dirty(mode, 1000.0, 0.5);
+        let mut f = Dirty::new();
+        f.process(&mut [f32::NAN; BLOCK_SIZE], &p, SR, &FilterMods::NONE);
+        let mut quiet = [0.0f32; BLOCK_SIZE];
+        f.process(&mut quiet, &p, SR, &FilterMods::NONE);
+        assert!(quiet.iter().all(|&v| v == 0.0), "{mode:?}: {quiet:?}");
+        let x = saw(2 * BLOCK_SIZE);
+        let mut b = [0.0f32; BLOCK_SIZE];
+        for c in x.chunks(BLOCK_SIZE) {
+            b.copy_from_slice(c);
+            f.process(&mut b, &p, SR, &FilterMods::NONE);
+        }
+        assert!(b.iter().all(|v| v.is_finite()), "{mode:?}: {b:?}");
+        assert!(b.iter().any(|&v| v != 0.0), "{mode:?}");
+    }
+}
+
+/// DIRTY's codes and labels, and the fallbacks (spec § 1): an unknown KIND
+/// loads as CLEAN LP4; a MODE DIRTY lacks as its LP2; MODE 9 (HP12)
+/// round-trips on DIRTY.
+#[test]
+fn unknown_codes_load_as_clean_lp4() {
+    let k = FilterKind::Dirty;
+    assert_eq!((k.disk_code(), k.disk_ident()), (6, "DIRTY"));
+    assert_eq!(FilterKind::from_disk_code(6), Some(k));
+    assert_eq!(k.modes(), DIRTY_MODES);
+    assert_eq!(k.default_mode(), FilterMode::Lp12);
+    assert_eq!(k.mode_labels(), ["LP2", "BP2", "HP2", "NOTCH1"]);
+    let hp = FilterMode::Hp12;
+    assert_eq!((hp.disk_code(), hp.disk_ident()), (9, "HP12"));
+    assert_eq!(FilterMode::from_disk_code(9), Some(hp));
+    assert!(!FilterKind::Svf.modes().contains(&hp));
+    assert!(!FilterKind::K2040.modes().contains(&hp));
+
+    let engine = (
+        chimera_core::storage::RecordTag::Engine,
+        vec![EngineType::Algo.disk_code()],
+    );
+    let load = |e: &[(u8, [u8; 4])]| {
+        let block = (chimera_core::storage::RecordTag::Block, filter_payload(e));
+        let f = decode(&sound_file(&[engine.clone(), block]))
+            .unwrap()
+            .params
+            .filter;
+        (f.kind(), f.mode())
+    };
+    let code = |c: u32| c.to_le_bytes();
+    // KIND codes no kind has: CLEAN at LP4, whatever MODE says.
+    for kind in [1, 2, 3, 5, 7, 255, 1 << 20] {
+        assert_eq!(
+            load(&[(6, code(kind))]),
+            (FilterKind::Svf, FilterMode::Lp24),
+            "KIND {kind}"
+        );
+        assert_eq!(
+            load(&[(6, code(kind)), (7, code(9))]),
+            (FilterKind::Svf, FilterMode::Lp24),
+            "KIND {kind} MODE 9"
+        );
+    }
+    // DIRTY with a MODE it lacks (LP24, or none known): LP2.
+    for mode in [2, 0, 5, 7, 8, 255] {
+        assert_eq!(
+            load(&[(6, code(6)), (7, code(mode))]),
+            (FilterKind::Dirty, FilterMode::Lp12),
+            "MODE {mode}"
+        );
+    }
+    // Each of DIRTY's modes, MODE before KIND in the file too.
+    for m in DIRTY_MODES {
+        let c = code(u32::from(m.disk_code()));
+        assert_eq!(load(&[(6, code(6)), (7, c)]), (k, m));
+        assert_eq!(load(&[(7, c), (6, code(6))]), (k, m));
+    }
+    // And through a Sound's own encode.
+    for m in DIRTY_MODES {
+        let mut s = chimera_core::preset::Sound::init(EngineType::Algo);
+        s.params.filter.set_kind(k);
+        assert!(s.params.filter.set_mode(m));
+        let d = decode(&encode(&s)).unwrap();
+        assert!(d.bits_eq(&s), "{m:?}");
+        assert_eq!((d.params.filter.kind(), d.params.filter.mode()), (k, m));
+    }
+}
+
+/// A RES jump inside one block stays in Jury's region: at FREQ 20 kHz, RES
+/// 0 → 0.9 → 0 a block at a time, a 0.1 sine stays a small signal. (`f` is
+/// bounded at the block's larger `q` end; bounded at the new end alone the
+/// ramp's line still clears the boundary for RES in 0..1 and FREQ to
+/// 0.497·fs, touching it only at RES 0 → 0.59 there, so this can't tell
+/// the two apart: the larger end is for taps, which leave the ramp.)
+#[test]
+fn dirty_res_jumps_stay_inside_jury() {
+    for mode in DIRTY_MODES {
+        let mut p = dirty(mode, 20_000.0, 0.0);
+        let mut f = Dirty::new();
+        let mut max = 0.0f32;
+        for b in 0..40 {
+            p.resonance = if (b / 4) % 2 == 1 { 0.9 } else { 0.0 };
+            let mut buf: [f32; BLOCK_SIZE] = core::array::from_fn(|i| {
+                0.1 * (core::f32::consts::TAU * 1000.0 * (b * BLOCK_SIZE + i) as f32 / FS).sin()
+            });
+            f.process(&mut buf, &p, SR, &FilterMods::NONE);
+            max = buf.iter().fold(max, |m, v| m.max(v.abs()));
+        }
+        assert!(max < 0.25, "{mode:?}: {max}");
+    }
+}
+
+/// LEVEL runs ahead of DIRTY as on CLEAN: ×2 at ¾ (+6 dB in the pass
+/// band), its clipper lit past unity, and `Filter` reports it running.
+#[test]
+fn dirty_takes_level_and_its_clipper() {
+    let sine = |i: usize| 0.1 * (core::f32::consts::TAU * 100.0 * i as f32 / FS).sin();
+    let mut p = dirty(FilterMode::Lp12, 5000.0, 0.0);
+    let n = (0.5 * FS) as usize;
+    let half = mag_db(&render_filter(&p, n, sine)[n / 2..], 100.0, FS);
+    p.level = 0.75;
+    let three = mag_db(&render_filter(&p, n, sine)[n / 2..], 100.0, FS);
+    assert!((three - half - 6.0206).abs() < 0.05, "{half} → {three}");
+    p.level = 1.0;
+    let mut f = Filter::new();
+    let mut clip = 0.0f32;
+    for b in 0..20 {
+        let mut buf: [f32; BLOCK_SIZE] =
+            core::array::from_fn(|i| grid_input(1, b * BLOCK_SIZE + i));
+        clip = clip.max(f.process(&mut buf, &p, SR, &FilterMods::NONE).get());
+    }
+    assert!(clip > 0.5, "LED {clip}");
+    assert!(f.level_running());
 }

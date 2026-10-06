@@ -63,11 +63,12 @@ impl FilterParams {
     }
 
     /// The filter's bill, cycles a sample over LP24: CLEAN by its MODE
-    /// (`clean_cost`), the 2040 by its VOICE.
+    /// (`clean_cost`), the 2040 by its VOICE, DIRTY flat (`DIRTY_COST`).
     pub const fn filter_cost(&self) -> crate::hw::Cost {
         match self.kind {
             FilterKind::Svf => crate::dsp::filter::clean_cost(self.mode),
             FilterKind::K2040 => self.voice.cost(),
+            FilterKind::Dirty => crate::dsp::filter::dirty::DIRTY_COST,
         }
     }
 

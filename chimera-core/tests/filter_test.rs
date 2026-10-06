@@ -17,7 +17,7 @@ const SR: u32 = 48_000;
 fn mode_is_typed_and_stays_in_the_svf_list() {
     let mut f = FilterParams::default();
     assert_eq!(f.mode(), FilterMode::Lp24, "every Sound is on LP24 today");
-    for m in FilterMode::ALL {
+    for &m in FilterKind::Svf.modes() {
         assert!(f.set_mode(m));
         assert_eq!(f.mode(), m);
     }
@@ -34,8 +34,12 @@ fn mode_is_typed_and_stays_in_the_svf_list() {
 
 #[test]
 fn the_discriminants_are_the_old_mode_byte() {
-    for (i, m) in FilterMode::ALL.iter().enumerate() {
+    // CLEAN's list is the old byte's order; every mode's code is its own.
+    for (i, m) in FilterKind::Svf.modes().iter().enumerate() {
         assert_eq!(*m as u8, i as u8);
+    }
+    for m in FilterMode::ALL {
+        assert_eq!(m as u8, chimera_core::block::DiskCode::disk_code(m));
     }
 }
 
@@ -59,7 +63,7 @@ fn mode_is_on_the_flt_pages() {
 #[test]
 fn every_mode_renders_finite_and_distinct() {
     let mut seen = Vec::new();
-    for m in FilterMode::ALL {
+    for &m in FilterKind::Svf.modes() {
         let mut p = FilterParams::default();
         p.set_mode(m);
         p.resonance = 0.4;
@@ -252,7 +256,8 @@ fn every_mode_renders_as_recorded() {
         0xdd27_40cb_0de2_3654, // was 0xd0d9_32a0_f21b_7369
         0x3cd8_2d48_578c_234c, // was 0x3af2_e7cd_ebcf_5b97
     ];
-    let got = FilterMode::ALL.map(|m| {
+    let got: [u64; 8] = core::array::from_fn(|i| {
+        let m = FilterKind::Svf.modes()[i];
         let mut p = FilterParams::default();
         p.set_mode(m);
         // DRIVE 0.5's old ×3, as LEVEL (Task 6).

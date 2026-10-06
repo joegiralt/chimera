@@ -77,6 +77,17 @@ static K2040_PROBES: &[K2040Probe] = &[
     filter::probe::k2040_probe::<true, true>,
 ];
 
+/// DIRTY's probes, one a mode: LP2, BP2, HP2 and NOTCH1 (`DIRTY_MODES`).
+type DirtyProbe = fn(&mut filter::Dirty, &mut [f32; BLOCK_SIZE], &FilterParams);
+
+#[used]
+static DIRTY_PROBES: &[DirtyProbe] = &[
+    filter::probe::dirty_probe::<0>,
+    filter::probe::dirty_probe::<1>,
+    filter::probe::dirty_probe::<2>,
+    filter::probe::dirty_probe::<3>,
+];
+
 /// The bench's screens as text: about 4 KB today, `# TRUNCATED` past this.
 pub const BENCH_TEXT_LEN: usize = 8192;
 type Text = Report<BENCH_TEXT_LEN>;

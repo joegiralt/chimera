@@ -15,11 +15,11 @@ use chimera_core::dsp::filter::{
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, FilterParams, ParamSnapshot};
 use chimera_core::preset::Sound;
-use chimera_core::storage::{FileKind, Generation, Header, RecordTag, write_file};
+use chimera_core::storage::RecordTag;
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::Rig;
-use common::codec_util::{VecSink, decode, encode};
+use common::codec_util::{decode, encode, filter_payload, sound_file as file};
 use common::filter_ref::{
     OSC_BAND_DB, OSC_BAND_EXP_DB, a_track, grid_input, k2040_ref, mag_db, rms_db, thd,
 };
@@ -423,35 +423,10 @@ fn k2040_recovers_from_a_nan_block() {
     }
 }
 
-/// A Sound file of hand-built records.
-fn file(records: &[(RecordTag, Vec<u8>)]) -> Vec<u8> {
-    let h = Header {
-        kind: FileKind::Sound,
-        generation: Generation::FIRST,
-        name: Some(Sound::neutral(EngineType::Algo).name),
-    };
-    let mut sink = VecSink(Vec::new());
-    write_file(&mut sink, &h, &mut |w| {
-        records.iter().try_for_each(|(t, p)| w.put(*t, p))
-    })
-    .unwrap();
-    sink.0
-}
-
-/// A Filter Block payload: `(id, raw)` entries, a real's bits or a code.
-fn filter_payload(entries: &[(u8, [u8; 4])]) -> Vec<u8> {
-    let mut p = vec![10];
-    for (id, raw) in entries {
-        p.push(*id);
-        p.extend_from_slice(raw);
-    }
-    p
-}
-
 #[test]
 fn kind_codes_round_trip() {
     assert_eq!(KIND_NAMES.len(), FilterKind::BUILT.len());
-    assert_eq!(KIND_NAMES, ["CLEAN", "2040"]);
+    assert_eq!(KIND_NAMES, ["CLEAN", "2040", "DIRTY"]);
     assert_eq!(FilterKind::K2040.disk_code(), 4);
     assert_eq!(FilterKind::K2040.disk_ident(), "2040");
     assert_eq!(FilterKind::K2040.modes(), [FilterMode::Lp24]);

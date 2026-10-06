@@ -5,7 +5,7 @@
 //! Today's LP24 before CLEAN, `old_lp24_probe`, counted `OLD_LP24` at
 //! 22ea0dc0 (plan § Measured) and went with `SvfFilter`.
 
-use super::{Clean, FilterMods, K2040};
+use super::{Clean, Dirty, FilterMods, K2040};
 use crate::hw::{BLOCK_SIZE, SAMPLE_RATE};
 use crate::params::FilterParams;
 
@@ -46,10 +46,55 @@ pub fn k2040_probe<const EXP: bool, const MOVING: bool>(
     f.settle(sum);
 }
 
+/// DIRTY in mode `M` (`DIRTY_MODES`' index), `process` with the mode
+/// forced: one loop serves steady and moving blocks (`p.mode()` must agree).
+#[inline(never)]
+pub fn dirty_probe<const M: u8>(f: &mut Dirty, buf: &mut [f32; BLOCK_SIZE], p: &FilterParams) {
+    let r = f.prelude(buf, p, SAMPLE_RATE, &FilterMods::NONE);
+    let sum = f.run::<M>(buf, r);
+    f.settle(sum);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::dsp::filter::{FilterKind, FilterMode, K2040Voice};
+
+    /// DIRTY's probe is `process` in every mode, on steady blocks, a FREQ
+    /// and RES move, RES alone, past the ceiling, and LEVEL over unity.
+    #[test]
+    fn dirty_probe_is_process() {
+        dirty_is_process::<0>(FilterMode::Lp12);
+        dirty_is_process::<1>(FilterMode::Bp12);
+        dirty_is_process::<2>(FilterMode::Hp12);
+        dirty_is_process::<3>(FilterMode::Notch);
+    }
+
+    fn dirty_is_process<const M: u8>(mode: FilterMode) {
+        let mut p = FilterParams::default();
+        p.set_kind(FilterKind::Dirty);
+        assert!(p.set_mode(mode));
+        (p.cutoff, p.resonance, p.level) = (800.0, 0.7, 0.75);
+        let (mut a, mut b) = (Dirty::new(), Dirty::new());
+        let mut x = 0.37f32;
+        for block in 0..6 {
+            match block {
+                2 => (p.cutoff, p.resonance) = (3000.0, 0.4),
+                3 => p.resonance = 0.5,
+                4 => p.cutoff = SAMPLE_RATE as f32 * 0.6,
+                _ => {}
+            }
+            let mut want = [0.0f32; BLOCK_SIZE];
+            for s in want.iter_mut() {
+                x = crate::dsp::clampf(x * 3.9 * (1.0 - x), 0.01, 0.99);
+                *s = x - 0.5;
+            }
+            let mut got = want;
+            a.process(&mut want, &p, SAMPLE_RATE, &FilterMods::NONE);
+            dirty_probe::<M>(&mut b, &mut got, &p);
+            assert_eq!(got, want, "{mode:?} block {block}");
+        }
+    }
 
     /// Each probe is `process` on its own kind of block, at LP4 and at
     /// NOTCH2: steady blocks, then a cutoff and RES move, RES alone (a

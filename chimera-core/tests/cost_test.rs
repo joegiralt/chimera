@@ -115,6 +115,24 @@ fn the_2040_bills_its_voice() {
     assert_eq!(Voice::cost(&p, &mods).0, clean.0 + 30);
 }
 
+/// DIRTY bills 0 over `OLD_LP24` in every mode, VOICE inert (spec § Cost:
+/// it counts under LP24's 95 cycles).
+#[test]
+fn dirty_bills_nothing_over_lp24() {
+    let mut p = ParamSnapshot::default();
+    let mods = ModState::new();
+    let clean = Voice::cost(&p, &mods);
+    p.filter.set_kind(FilterKind::Dirty);
+    for &m in FilterKind::Dirty.modes() {
+        assert!(p.filter.set_mode(m));
+        for v in K2040Voice::ALL {
+            p.filter.voice = v;
+            assert_eq!(p.filter.filter_cost(), Cost(0), "{m:?} {v:?}");
+            assert_eq!(Voice::cost(&p, &mods), clean, "{m:?} {v:?}");
+        }
+    }
+}
+
 fn routed(routes: &[ModSource]) -> ModState {
     let mut reg = chimera_core::mod_path::ModDestRegistry::new();
     reg.add(VCA, *b"OUT VCA\0").unwrap();

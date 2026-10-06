@@ -4,6 +4,7 @@ use chimera_core::addr::{BlockRef, Blocks, Op};
 use chimera_core::block::{Block, DiskCode, ParamId, ValFmt};
 use chimera_core::dsp::algo::algorithms::{ALGO_IDENTS, ALGO_NAMES};
 use chimera_core::dsp::algo::waves::{WAVE_IDENTS, WAVE_NAMES};
+use chimera_core::dsp::filter::FilterKind;
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::modulator::{EnvForm, EnvSlot, FuncMode, LfoForm};
 use chimera_core::modulation::ModSource;
@@ -98,6 +99,23 @@ fn table() -> Vec<String> {
                     s.id.0,
                     shown(s.fmt, v)
                 ));
+            }
+            // MODE through TYPE: every built kind's modes, not only CLEAN's.
+            if (b, s.id) == (BlockRef::Filter, FilterParams::MODE) {
+                for k in FilterKind::BUILT {
+                    let blk = bank.block(b);
+                    assert!(blk.set_enum_code(FilterParams::KIND, k.disk_code()));
+                    for (v, label) in k.mode_labels().iter().enumerate() {
+                        blk.set(s.id, v as f32);
+                        let c = blk.enum_code(s.id).expect("an Enum has a code");
+                        let ident = blk.enum_ident(s.id).expect("an Enum has an ident");
+                        let line = format!("E {code} {} {c} {ident} # {label}", s.id.0);
+                        if !out.iter().any(|l| key(l) == key(&line)) {
+                            out.push(line);
+                        }
+                    }
+                }
+                bank.block(b).set(FilterParams::KIND, 0.0);
             }
             // Back to its default, so a param read through it (MODE through
             // TYPE) lists its own codes, not the last kind's.
