@@ -1702,6 +1702,29 @@ BUS+V's frame is QUAD_BUS_V + ΔCOST, so ΔCOST = that row − QUAD_BUS_V.
   - **Goldens:** `rev_hall` and `rev_hall_plate` re-recorded;
     `rev_hall_mv04`–`mv27` added; the HALL screens and
     `mixer_fx_reverb_hall_more2`.
+- **Fix round 1 (2026-10-06, host; unit folded into Task 13):** ADR 0095
+  § HALL, as built, rewritten.
+  - **Rust render, `mv-verify HALL` (16 seeds):** 8 of 20 pass at the
+    fitted knobs (#7, 12, 13, 15, 16, 22, 23, 27); **7 of 20 hold every
+    fitted knob ±0.001** (all but #7). Fits by `mv-fit --start` scored at
+    0.8× the bar, worst of SIZE and SPREAD ±0.001, from the round-0 knobs
+    with PRE-DLY lifted 0.71 ms. #19 signed off; 11 near misses in the ADR.
+  - **Static count** (Thumb, release), per ring sample: 361 still, 458 in a
+    SIZE or PRE-DLY crossfade, 398 in a SPREAD crossfade or DENSITY move
+    (round 0: 394 and 570). ΔCOST at 0.47: −35 to −12 default, −27 to −4
+    tape; at 1.06: −10 to +41 and −2 to +49. `Hall::run` 18,544 B.
+  - **Flash:** plain release `text` 790,340 B, +19,196 over `reverb-types`
+    (8740cfb9).
+  - **Arena:** 17,628 i16 + 2,696 f32 = 23,020 of 23,220 slots.
+  - **Host readings:** noise floor 15.9 dB at START and 17.5 at DIFFUSE 1
+    (QUAD 12.0; bounds 4 and 6 dB again); a held 500 Hz mode at DECAY's
+    top THD 2.6 %, a held 5 kHz aliases −30 dB (bound −20, owner's
+    sign-off); DENSITY 0 → 1 +0.2 dB on a burst, a held pad's peak within
+    1 dB of QUAD's at MIX 1; held-300 Hz moves: DENSITY d2 ≤ 1.20, SPREAD
+    d2 ≤ 1.2 × its level swing (up to 1.9×).
+  - **WET_HALL 14.0;** START is program 23 exactly, SMEAR 0.
+  - **Goldens:** `rev_hall`, `rev_hall_plate` and `rev_hall_mv07`–`mv27`
+    (8) re-recorded; the HALL screens.
 
 ---
 
