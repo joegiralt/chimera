@@ -10,7 +10,7 @@ use rubato::{
 };
 use std::f64::consts::PI;
 use std::io::Cursor;
-use std::ops::RangeInclusive;
+use std::ops::{Range, RangeInclusive};
 
 /// Which channel of a stereo file becomes the source.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -196,7 +196,8 @@ pub fn high_pass(x: &mut [f32], rate: u32) {
 
 /// The 5 Hz high-pass; silence more than 60 dB under the file's own peak
 /// trimmed from both ends, so a quiet file keeps its tail; peak to −0.5 dBFS.
-pub fn clean(m: &mut Mono) {
+/// Returns the frames kept, of the input's: a `smpl` loop is placed by it.
+pub fn clean(m: &mut Mono) -> Range<usize> {
     high_pass(&mut m.samples, m.rate);
     let x = &mut m.samples;
     let peak = x.iter().fold(0f32, |a, s| a.max(s.abs()));
@@ -208,17 +209,15 @@ pub fn clean(m: &mut Mono) {
         .filter(|_| peak >= 1e-9)
     else {
         x.clear();
-        return;
+        return 0..0;
     };
     let last = x.iter().rposition(|s| s.abs() > floor).unwrap_or(first);
     x.truncate(last + 1);
     x.drain(..first);
     let gain = 10f32.powf(-0.5 / 20.0) / peak;
     x.iter_mut().for_each(|s| *s *= gain);
+    first..last + 1
 }
-
-/// The rates a source may have (descriptor 4 000–48 000 Hz).
-pub const RATES: [u32; 6] = [48_000, 32_000, 24_000, 16_000, 12_000, 8_000];
 
 /// A resample `rubato` refused: a 0 rate, or a ratio it can't build.
 #[derive(Debug, PartialEq, Eq)]

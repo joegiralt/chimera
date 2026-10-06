@@ -6,6 +6,7 @@
 //! Waldorf Microwave approach (band-limited copies per octave), for the
 //! Ensoniq VFX/SD-1's transwaves. Host only: the firmware reads the levels.
 
+use chimera_core::dsp::clampf;
 use chimera_core::dsp::tape_engine::wave::{MIN_LOG2, harmonics, nominal_top, stored_log2};
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex;
@@ -138,4 +139,20 @@ pub fn transwave(cycles: &[Vec<f32>], top: u32) -> Vec<f32> {
         prev = Some(x);
     }
     out
+}
+
+/// A transwave's levels to 12 bits: the whole set's peak to −0.5 dBFS,
+/// rounded. A fixed single-cycle table gains nothing from dither, and its
+/// noise would eat the levels' 60 dB. `None` when the levels are silent.
+pub fn round12(x: &[f32]) -> Option<Vec<i16>> {
+    let peak = x.iter().fold(0f32, |a, s| a.max(s.abs()));
+    if peak <= 0.0 {
+        return None;
+    }
+    let gain = 10f32.powf(-0.5 / 20.0) / peak;
+    Some(
+        x.iter()
+            .map(|s| clampf((s * gain * 2048.0).round(), -2048.0, 2047.0) as i16)
+            .collect(),
+    )
 }

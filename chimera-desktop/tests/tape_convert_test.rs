@@ -277,11 +277,14 @@ fn clean_trims_and_normalises() {
         samples: x,
         smpl: None,
     };
-    clean(&mut m);
+    let kept = clean(&mut m);
     // The lead is cut to the onset; the tail keeps the high-pass's own ring
     // (46 dB under the peak, τ 31.8 ms) until it is 60 dB under: about 62 ms.
     let n = m.samples.len();
     assert!((48_000..48_000 + 3_600).contains(&n), "len {n}");
+    // What was kept, of the input's frames: from the onset, 0.2 s in.
+    assert_eq!(kept.len(), n);
+    assert!((9_600..9_610).contains(&kept.start), "{kept:?}");
     let peak = m.samples.iter().fold(0f32, |a, s| a.max(s.abs()));
     assert!((db(peak) + 0.5).abs() <= 0.01, "peak {} dB", db(peak));
     let dc = m.samples.iter().map(|&s| s as f64).sum::<f64>() / m.samples.len() as f64;
@@ -333,7 +336,7 @@ fn subnormal_file_is_silence() {
         &[0.0f32, 1e-40, -1e-40, 2e-40, 0.0],
     );
     let mut m = read_wav(&b, Channel::Mix).unwrap();
-    clean(&mut m);
+    assert_eq!(clean(&mut m), 0..0);
     assert!(m.samples.is_empty(), "{:?}", m.samples);
 }
 

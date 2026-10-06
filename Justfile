@@ -11,6 +11,17 @@ desktop:
 tape-listen *args:
     cargo run -q -p chimera-desktop --bin tape-listen -- {{args}}
 
+# A WAV to a TAPE source (spec § 6), sealed in the desktop sim's card
+# (CHIMERA_CARD, else chimera-card/), never the unit's:
+# `just tape take.wav [--rate 24k] [--root C3] [--transwave <cycle> [--top 1024]]
+# [--name CHOIR] [--channel mix|L|R]`. `put` takes sources from TAPE Task 18.
+[positional-arguments]
+tape file *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shift
+    cargo run -q -p chimera-desktop --bin chimera-import -- tape "{{ if file =~ '^/' { file } else { invocation_directory() / file } }}" "$@"
+
 # Build STM32 firmware (release)
 firmware:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf

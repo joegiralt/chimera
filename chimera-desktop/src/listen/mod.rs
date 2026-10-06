@@ -7,9 +7,8 @@ use std::fmt::Write as _;
 use std::mem::MaybeUninit;
 
 use crate::import::tape::convert::{Mono, Pitch, clean, quantise_tpdf, resample, yin};
-use crate::import::tape::transwave::{DEFAULT_TOP, cut_cycles, transwave};
+use crate::import::tape::transwave::{DEFAULT_TOP, cut_cycles, round12, transwave};
 use chimera_core::block::{Block, DiskCode, ParamId};
-use chimera_core::dsp::clampf;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::tape_engine::read::{
     DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape, SourceView,
@@ -153,16 +152,7 @@ pub fn held_transwave(m: &Mono, frames: usize) -> Result<(Vec<u8>, f32), String>
         }
     };
     let picked: Vec<Vec<f32>> = (0..n).map(|k| cycles[pick(k)].clone()).collect();
-    let x = transwave(&picked, DEFAULT_TOP);
-    let peak = x.iter().fold(0f32, |a, s| a.max(s.abs()));
-    if peak <= 0.0 {
-        return Err("silent cycles".into());
-    }
-    let gain = 10f32.powf(-0.5 / 20.0) / peak;
-    let q: Vec<i16> = x
-        .iter()
-        .map(|s| clampf((s * gain * 2048.0).round(), -2048.0, 2047.0) as i16)
-        .collect();
+    let q = round12(&transwave(&picked, DEFAULT_TOP)).ok_or("silent cycles")?;
     let desc = Descriptor {
         shape: Shape::Transwave,
         count: n as u8,
