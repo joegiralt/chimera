@@ -906,7 +906,9 @@ impl Instrument {
         for v in 0..MAX_VOICES {
             if let Some(p) = self.alloc.slots()[v].part() {
                 let p = p as usize % MAX_PARTS;
-                let held = self.voices[v].held_model_extra(&shared.parts[p].params);
+                let part = &shared.parts[p];
+                let held = self.voices[v].held_model_extra(&part.params)
+                    + self.voices[v].held_level_extra(&part.params, &part.mod_state);
                 self.alloc.recost(v, costs[p] + held);
             }
         }

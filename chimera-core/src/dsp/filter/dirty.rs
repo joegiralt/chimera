@@ -39,7 +39,9 @@ pub const DIRTY_MARGIN: f32 = 0.95;
 /// DIRTY's bill over `OLD_LP24`, any mode: 0. Counted at 27 (HP2) to 29
 /// (NOTCH1) instructions a sample, 0 `vdiv`: `ceil5(29 × 1.606)` = 50
 /// cycles, 55 with the block's 3.6, under LP24's 95 (plan § Measured, Task
-/// 9). One loop serves steady and moving blocks.
+/// 9). One loop serves steady and moving blocks. Since Task 14 it reads
+/// `ramps`' arrays on every block: 30.25 + 6.25 + 4.08 = ceil5(65.2 + 0.6)
+/// = 70, still under (1879169d, 2026-10-07).
 pub const DIRTY_COST: Cost = Cost(0);
 
 /// RES's `q`: 2 at RES 0, 0 at 0.95 (the onset every type shares) and

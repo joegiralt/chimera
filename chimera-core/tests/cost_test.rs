@@ -8,13 +8,14 @@ use chimera_core::dsp::algo::engine::AlgoEngine;
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::plan::OPS;
 use chimera_core::dsp::engines::EngineSlot;
-use chimera_core::dsp::filter::{FilterKind, FilterMode, K2040Voice, clean_cost};
+use chimera_core::dsp::filter::{FilterKind, FilterMode, K2040Voice};
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{CPU_HZ_REV_V, CPU_HZ_REV_Y, Cost, MAX_VOICES, SampleBudget};
 use chimera_core::instrument::{AudioShared, NoteOrigin};
-use chimera_core::modulation::{ModRouting, ModSource, ModState, VCA};
+use chimera_core::modulation::{FixedCol, ModRouting, ModSource, ModState, VCA};
 use chimera_core::params::{EngineType, ParamSnapshot};
+use chimera_core::taps::TapOp;
 
 const UNROUTED: [bool; OPS] = [false; OPS];
 
@@ -59,39 +60,251 @@ fn voice_costs_are_the_billed_literals() {
 }
 
 /// The SVF at LP24, the default: the engine terms already carry it.
-const LP24: Cost = clean_cost(FilterMode::Lp24);
+const LP24: Cost = FilterKind::Svf.cost(FilterMode::Lp24, K2040Voice::Rev2);
 
-/// Each SVF mode bills its delta over LP24, which the engine terms carry:
-/// PHASER its bench reading (SVF 500 − 1 OP 483), BP24 and HP24 a
-/// provisional pad, the modes that run less than LP24 nothing.
+/// Every built (TYPE, MODE, VOICE) bills `max(0, cycles − OLD_LP24)`, as
+/// counted on the bench ELF (plan § Measured, Task 15): CLEAN 35–80 and
+/// DIRTY 70 sit under LP24's 95; the 2040 REV2 110, EXP 135.
 #[test]
-fn each_svf_mode_bills_its_delta_over_lp24() {
-    use FilterMode as M;
-    for (m, want) in [
-        (M::Lp24, 0),
-        (M::Lp6, 0),
-        (M::Lp12, 0),
-        (M::Bp12, 0),
-        (M::Notch, 0),
-        (M::Bp24, 2),
-        (M::Hp24, 2),
-        (M::Phaser, 17),
-    ] {
-        assert_eq!(clean_cost(m), Cost(want), "{m:?}");
-        // VOICE is inert on CLEAN.
-        let mut p = chimera_core::params::FilterParams::default();
-        assert!(p.set_mode(m));
-        for v in K2040Voice::ALL {
-            p.voice = v;
-            assert_eq!(p.filter_cost(), Cost(want), "{m:?} {v:?}");
+fn filter_bills_each_type_and_mode() {
+    use FilterKind as K;
+    let mut seen = 0;
+    for k in FilterKind::BUILT {
+        for &m in k.modes() {
+            for v in K2040Voice::ALL {
+                let want = match (k, v) {
+                    (K::Svf | K::Dirty, _) => 0,
+                    (K::K2040, K2040Voice::Rev2) => 15,
+                    (K::K2040, K2040Voice::Exp) => 40,
+                };
+                assert_eq!(k.cost(m, v), Cost(want), "{k:?} {m:?} {v:?}");
+                let mut p = chimera_core::params::FilterParams::default();
+                p.set_kind(k);
+                assert!(p.set_mode(m));
+                p.voice = v;
+                assert_eq!(p.filter_cost(), Cost(want), "{k:?} {m:?} {v:?}");
+                seen += 1;
+            }
         }
     }
-    assert!(clean_cost(M::Phaser).0 >= 500 - 483);
+    assert_eq!(seen, (8 + 1 + 4) * 2, "every built pair, each VOICE");
+    // Over OLD_LP24 (95): the 2040's steady counts with the block.
+    assert!(K::K2040.cost(FilterMode::Lp24, K2040Voice::Rev2) >= Cost(110 - 95));
+    assert!(K::K2040.cost(FilterMode::Lp24, K2040Voice::Exp) >= Cost(135 - 95));
+}
+
+/// A snapshot on `kind` (its default mode), ALGO.
+fn on(kind: FilterKind) -> ParamSnapshot {
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    p.filter.set_kind(kind);
+    p
+}
+
+/// LFO 1 into the FREQ column at `amount`.
+fn cutoff_lfo(amount: i8) -> ModState {
+    let mut ms = ModState::with_sources(8);
+    ms.set_fixed(ModSource::Lfo1.index(), FixedCol::Freq, amount);
+    ms
+}
+
+/// The moving path bills once a block moves, however many things move it:
+/// a CUTOFF or RES route, a FREQ or a Q tap. Each figure is the moving
+/// loop with its block (and `ramps`' fill) less the steady one, counted:
+/// CLEAN LP4 150 − 75, the 2040 REV2 170 − 110 (EXP 190 − 135), DIRTY's
+/// one loop 0; `TapShape::apply` 48.45 instructions, 80.
+#[test]
+fn the_moving_path_bills_once() {
+    use chimera_core::dsp::filter::{CLEAN_MOVE_COST, K2040_MOVE_COST};
+    use chimera_core::taps::TAP_SHAPE_COST;
+    assert!(CLEAN_MOVE_COST >= Cost(150 - 75));
+    assert!(K2040_MOVE_COST >= Cost(170 - 110) && K2040_MOVE_COST >= Cost(190 - 135));
+    assert!(TAP_SHAPE_COST >= Cost(80));
+    let none = ModState::new();
+    for (k, mv) in [
+        (FilterKind::Svf, CLEAN_MOVE_COST),
+        (FilterKind::K2040, K2040_MOVE_COST),
+        (FilterKind::Dirty, Cost::ZERO),
+    ] {
+        assert_eq!(k.move_cost(), mv, "{k:?}");
+        let mut p = on(k);
+        let steady = Voice::filter_cost(&p, &none);
+        assert_eq!(steady, p.filter.filter_cost(), "{k:?}");
+        assert_eq!(Voice::filter_cost(&p, &cutoff_lfo(0)), steady, "{k:?} 0");
+        assert_eq!(
+            Voice::filter_cost(&p, &cutoff_lfo(64)),
+            steady + mv,
+            "{k:?}"
+        );
+        let mut res = ModState::with_sources(8);
+        res.set_fixed(ModSource::Lfo2.index(), FixedCol::Q, -3);
+        assert_eq!(Voice::filter_cost(&p, &res), steady + mv, "{k:?} RES");
+        // Taps: the move once, `apply` once, however many taps.
+        p.taps.set(TapOp::Op5, FixedCol::Freq, 40);
+        assert_eq!(
+            Voice::filter_cost(&p, &none),
+            steady + mv + TAP_SHAPE_COST,
+            "{k:?}"
+        );
+        p.taps.set(TapOp::Op6, FixedCol::Q, -9);
+        p.taps.set(TapOp::Op5, FixedCol::Q, 9);
+        assert_eq!(
+            Voice::filter_cost(&p, &cutoff_lfo(64)),
+            steady + mv + TAP_SHAPE_COST,
+            "{k:?} not twice"
+        );
+        // Off ALGO the taps are inert.
+        let mut m = ParamSnapshot::for_engine(EngineType::Modal);
+        (m.filter, m.taps) = (p.filter, p.taps);
+        assert_eq!(Voice::filter_cost(&m, &none), steady, "{k:?} MODAL");
+    }
+}
+
+/// Each tap destination bills its loop: the tap-VCA 15.25 instructions
+/// with its block, 30; the FOLD's tapped loop 72.5 (125 with its block)
+/// over the folder's moving 45 (80); each wanted op's capture 8.75, 15.
+#[test]
+fn taps_bill_each_destination() {
+    use chimera_core::taps::{TAP_CAPTURE_COST, TAP_FOLD_COST, TAP_VCA_COST};
+    assert!(TAP_VCA_COST >= Cost(30) && TAP_FOLD_COST >= Cost(125 - 80));
+    assert!(TAP_CAPTURE_COST >= Cost(15) && Voice::FOLD_RAMP_COST >= Cost(80 - 45));
+    let none = ModState::new();
+    let base = ParamSnapshot::for_engine(EngineType::Algo);
+    let bare = Voice::cost(&base, &none);
     assert_eq!(
-        FilterKind::Svf.modes().len(),
-        8,
-        "every mode is listed above"
+        bare,
+        EngineSlot::cost(&base, &none) + Voice::CHAIN_COST + LP24 + ModRouting::BASE,
+        "no taps: as before"
     );
+    let with = |taps: &[(TapOp, FixedCol, i8)], fold: f32| {
+        let mut p = base.clone();
+        p.folder.fold = fold;
+        for &(op, c, a) in taps {
+            p.taps.set(op, c, a);
+        }
+        p
+    };
+    let (op5, op6) = (TapOp::Op5, TapOp::Op6);
+    let one = with(&[(op5, FixedCol::Vca, 64)], 0.0);
+    assert_eq!(
+        Voice::cost(&one, &none),
+        bare + TAP_VCA_COST + TAP_CAPTURE_COST
+    );
+    let two = with(&[(op5, FixedCol::Vca, 64), (op6, FixedCol::Vca, -1)], 0.0);
+    assert_eq!(
+        Voice::cost(&two, &none),
+        bare + TAP_VCA_COST + TAP_CAPTURE_COST + TAP_CAPTURE_COST,
+        "one tap-VCA loop, two captures"
+    );
+    let zero = with(&[(op5, FixedCol::Vca, 0)], 0.0);
+    assert_eq!(Voice::cost(&zero, &none), bare, "a 0 tap bills nothing");
+    let fold = with(&[(op6, FixedCol::Fold, 64)], 0.0);
+    assert_eq!(
+        Voice::cost(&fold, &none),
+        bare + Voice::FOLD_COST + Voice::FOLD_RAMP_COST + TAP_FOLD_COST + TAP_CAPTURE_COST
+    );
+    let stored = with(&[], 0.5);
+    let fold = with(&[(op6, FixedCol::Fold, 64)], 0.5);
+    assert_eq!(
+        Voice::cost(&fold, &none),
+        Voice::cost(&stored, &none) + Voice::FOLD_RAMP_COST + TAP_FOLD_COST + TAP_CAPTURE_COST
+    );
+    // A FOLD route already ramps the folder: the tap adds its loop only.
+    let mut ms = ModState::with_sources(8);
+    ms.set_fixed(ModSource::Lfo1.index(), FixedCol::Fold, 20);
+    assert_eq!(
+        Voice::cost(&fold, &ms),
+        Voice::cost(&stored, &ms) + TAP_FOLD_COST + TAP_CAPTURE_COST
+    );
+    // Every destination off ALGO: nothing.
+    let all = with(
+        &[
+            (op5, FixedCol::Vca, 64),
+            (op6, FixedCol::Fold, 64),
+            (op5, FixedCol::Freq, 64),
+            (op6, FixedCol::Q, 64),
+        ],
+        0.0,
+    );
+    let mut modal = ParamSnapshot::for_engine(EngineType::Modal);
+    let plain = Voice::cost(&modal, &none);
+    modal.taps = all.taps;
+    assert_eq!(Voice::cost(&modal, &none), plain, "MODAL");
+}
+
+/// LEVEL's clipper bills while it can run: stored over ½, or routed, on
+/// CLEAN and DIRTY (the 2040 has none). The fading loop, 20 instructions
+/// a sample, is the bill: 35.
+#[test]
+fn level_bills_while_it_can_clip() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::filter::FILTER_LEVEL_COST;
+    use chimera_core::params::FilterParams;
+    assert!(FILTER_LEVEL_COST >= Cost(35));
+    let none = ModState::new();
+    let mut routed = ModState::from_registry(&chimera_core::mod_path::ModDestRegistry::new(), 8);
+    let d = routed
+        .push(ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL))
+        .unwrap();
+    routed.set_route(ModSource::Lfo1.index(), d, 5);
+    for (k, lvl) in [
+        (FilterKind::Svf, FILTER_LEVEL_COST),
+        (FilterKind::Dirty, FILTER_LEVEL_COST),
+        (FilterKind::K2040, Cost::ZERO),
+    ] {
+        assert_eq!(k.level_cost(), lvl, "{k:?}");
+        let mut p = on(k);
+        let steady = p.filter.filter_cost();
+        assert_eq!(Voice::filter_cost(&p, &none), steady, "{k:?} ½");
+        assert_eq!(
+            Voice::filter_cost(&p, &routed),
+            steady + lvl,
+            "{k:?} routed"
+        );
+        p.filter.level = 0.6;
+        assert_eq!(Voice::filter_cost(&p, &none), steady + lvl, "{k:?} 0.6");
+        p.filter.level = 1.0;
+        assert_eq!(Voice::filter_cost(&p, &none), steady + lvl, "{k:?} 1");
+    }
+}
+
+/// After LEVEL is set back to ½ the clipper runs on while the ease lands
+/// and the fade falls: the voice bills it (`held_level_extra`) until it
+/// stops, and never twice.
+#[test]
+fn a_running_clipper_bills_until_it_stops() {
+    use chimera_core::dsp::algo::waves::WaveId;
+    use chimera_core::dsp::filter::FILTER_LEVEL_COST;
+    use chimera_core::{MidiNote, Velocity};
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    p.algo = AlgoParams::single(WaveId::SAW);
+    p.filter.level = 0.75;
+    let mods = ModState::new();
+    let mut rig = common::rig::Rig::new(chimera_hal::SAMPLE_RATE);
+    rig.note_on(MidiNote::new(45).unwrap(), Velocity::new(127).unwrap(), &p);
+    let mut buf = [0.0f32; chimera_hal::BLOCK_SIZE];
+    rig.render(&mut buf, &p, &mods);
+    assert!(rig.voice.filter_level_running());
+    assert_eq!(
+        rig.voice.held_level_extra(&p, &mods),
+        Cost::ZERO,
+        "billed already"
+    );
+    p.filter.level = 0.5;
+    let mut billed = 0;
+    for _ in 0..400 {
+        rig.render(&mut buf, &p, &mods);
+        let extra = rig.voice.held_level_extra(&p, &mods);
+        assert_eq!(
+            extra,
+            if rig.voice.filter_level_running() {
+                FILTER_LEVEL_COST
+            } else {
+                Cost::ZERO
+            }
+        );
+        billed += usize::from(extra != Cost::ZERO);
+    }
+    assert!(billed > 15 && !rig.voice.filter_level_running(), "{billed}");
 }
 
 /// The 2040 bills by its VOICE alone (spec § Cost), as measured over
@@ -514,7 +727,10 @@ fn the_model_bills_every_routing_row_high() {
         // BENCH screen, the 13b run.
         ("A16+17", a16, ModState::new(), 861),
         ("MODS", mods_row().0, mods_row().1, 668),
-        ("SVF", svf, ModState::new(), 500),
+        // The old SVF's PHASER read 500 and went with it; NOTCH2 counts
+        // 35 cycles to LP24's 95 (Task 15), so the row is 1 OP's until
+        // the bench reads it again.
+        ("SVF", svf, ModState::new(), 483),
         ("A VCA", one(), vca(), 535),
         ("B VCA", b(Func::Env(EnvForm::Ad), 0.5), vca(), 597),
         ("B CURVE", env_b(Func::Env(EnvForm::Ad)), vca(), 598),
@@ -617,6 +833,9 @@ fn the_model_bills_the_mods_row_high() {
             + Voice::FOLD_COST
             + Voice::FOLD_RAMP_COST
             + LP24
+            // CUTOFF and RES routed: the moving path, once; LEVEL routed.
+            + chimera_core::dsp::filter::CLEAN_MOVE_COST
+            + chimera_core::dsp::filter::FILTER_LEVEL_COST
     );
 }
 

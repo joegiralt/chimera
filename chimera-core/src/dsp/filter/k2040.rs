@@ -64,6 +64,8 @@ const _: () = {
 
 /// Steady per-sample bills over `OLD_LP24` (spec § Cost), as measured:
 /// REV2 65 instructions, 110 cycles (no limiter); EXP 81, 135; less 95.
+/// Recounted with the block at 1879169d (2026-10-07): REV2 65 + 1.92, EXP
+/// 81 + 1.95, 0.047 `vdiv`; unchanged.
 const COST_REV2: u32 = 15;
 const COST_EXP: u32 = 40;
 

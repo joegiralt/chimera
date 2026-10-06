@@ -397,7 +397,8 @@ fn saw(n: usize) -> f32 {
 
 fn rows_with(op6_hz: f32, b: usize) -> TapRows {
     let mut r = TapRows::new([false, true]);
-    for (i, v) in r.rows[1].iter_mut().enumerate() {
+    let [_, row] = r.rows_mut();
+    for (i, v) in row.unwrap().iter_mut().enumerate() {
         *v = sine(op6_hz, b * BLOCK_SIZE + i);
     }
     r
@@ -405,7 +406,7 @@ fn rows_with(op6_hz: f32, b: usize) -> TapRows {
 
 fn lane(rows: &TapRows, a: f32) -> TapLane<'_> {
     TapLane {
-        rows: &rows.rows,
+        rows: rows.rows().unwrap(),
         from: [0.0, a],
         to: [0.0, a],
     }
@@ -785,10 +786,14 @@ fn kernel(plan: &EvalPlan, ops: [OpBlock; OPS], want: [bool; 2]) -> (Vec<f32>, V
     let mut b = [0.0f32; BLOCK_SIZE];
     for _ in 0..4 {
         let mut t = TapRows::new(want);
-        t.rows = [[9.0; BLOCK_SIZE]; 2];
+        for r in t.rows_mut().into_iter().flatten() {
+            *r = [9.0; BLOCK_SIZE];
+        }
         k.render(&blk, &mut env, &mut b, &mut t);
         out.extend_from_slice(&b);
-        rows.extend((0..BLOCK_SIZE).map(|i| [t.rows[0][i], t.rows[1][i]]));
+        // No op wanted: no rows at all, so nothing was written.
+        let r = t.rows().copied().unwrap_or([[9.0; BLOCK_SIZE]; 2]);
+        rows.extend((0..BLOCK_SIZE).map(|i| [r[0][i], r[1][i]]));
     }
     (out, rows)
 }
@@ -842,20 +847,35 @@ fn capture_matches_the_op_output() {
 /// `tap_vca` is the product of each op's `1 − |a| + a·row`.
 #[test]
 fn tap_vca_is_the_product_of_each_ops_factor() {
-    let mut r = TapRows::new([true, true]);
-    for i in 0..BLOCK_SIZE {
-        r.rows[0][i] = sine(1000.0, i);
-        r.rows[1][i] = sine(300.0, i);
+    let mut t = TapRows::new([true, true]);
+    if let [Some(a), Some(b)] = t.rows_mut() {
+        for i in 0..BLOCK_SIZE {
+            (a[i], b[i]) = (sine(1000.0, i), sine(300.0, i));
+        }
     }
+    let r = t.rows().unwrap();
     let l = TapLane {
-        rows: &r.rows,
+        rows: r,
         from: [0.5, -0.25],
         to: [0.5, -0.25],
     };
     let mut buf = [0.5f32; BLOCK_SIZE];
     tap_vca(&mut buf, &l);
     for (i, &y) in buf.iter().enumerate() {
-        let want = 0.5 * (0.5 + 0.5 * r.rows[0][i]) * (0.75 - 0.25 * r.rows[1][i]);
+        let want = 0.5 * (0.5 + 0.5 * r[0][i]) * (0.75 - 0.25 * r[1][i]);
         assert!((y - want).abs() < 1e-6, "{i}: {y} vs {want}");
     }
+}
+
+/// An untapped block has no rows (no 512 B fill); a tapped one starts
+/// every row at zeros, and hands out only the wanted rows to write.
+#[test]
+fn rows_exist_only_while_an_op_is_wanted() {
+    let mut none = TapRows::new([false; 2]);
+    assert!(none.rows().is_none());
+    assert!(none.rows_mut().iter().all(Option::is_none));
+    let mut one = TapRows::new([false, true]);
+    let [a, b] = one.rows_mut();
+    assert!(a.is_none() && b.is_some());
+    assert_eq!(one.rows(), Some(&[[0.0; BLOCK_SIZE]; 2]));
 }

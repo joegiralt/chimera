@@ -1,6 +1,8 @@
 //! The filter's jacks (filter-types spec § 2, § 6): FM3 IN and QM IN pick a
 //! matrix source, or on ALGO an audio-rate tap of OP 5 or OP 6.
 
+use core::mem::MaybeUninit;
+
 use crate::block::DiskCode;
 use crate::hw::BLOCK_SIZE;
 use crate::modulation::{FixedCol, ModSource};
@@ -278,20 +280,73 @@ impl core::fmt::Debug for TapRoutes {
     }
 }
 
+/// What the taps add to a voice on ALGO, cycles a sample, each counted on
+/// the bench ELF at 1879169d (2026-10-07, `tools/loop_count.py`, cycles =
+/// ceil5(instructions × 1.606 + 12 × `vdiv`)). A FREQ or a Q tap also makes
+/// the block a moving one (`FilterKind::move_cost`, billed once).
+///
+/// `TapShape::apply`, both lanes and both ops in one loop, whenever a FREQ
+/// or Q tap is present: 96 instructions for 2 samples, 0 `vdiv`, + 0.45 of
+/// block: ceil5(48.45 × 1.606) = 80. Once, however many taps.
+pub const TAP_SHAPE_COST: crate::hw::Cost = crate::hw::Cost(80);
+/// The tap-VCA, both ops in one loop (`tap_vca_probe`): 61 instructions
+/// for 4 samples, 0 `vdiv`, + 0.70 of block: ceil5(15.95 × 1.606) = 30.
+/// Once, however many VCA taps.
+pub const TAP_VCA_COST: crate::hw::Cost = crate::hw::Cost(30);
+/// A tapped FOLD's per-sample loop over the folder's moving one
+/// (`Wavefolder::process`): 72.5 instructions, + 3.48 of block, 125,
+/// against the moving 45, 80: 45. On top of `FOLD_COST` and
+/// `FOLD_RAMP_COST`, which a FOLD tap always bills.
+pub const TAP_FOLD_COST: crate::hw::Cost = crate::hw::Cost(45);
+/// Each wanted op's capture in the kernel, a compare-and-select clamp and
+/// a store a sample: 70 instructions for 8 samples in `render_ops`, 0
+/// `vdiv`: ceil5(8.75 × 1.606) = 15. Per op with any nonzero tap.
+pub const TAP_CAPTURE_COST: crate::hw::Cost = crate::hw::Cost(15);
+
 /// Each tapped op's output this block, clamped to ±1 (spec § 6): the
-/// engine fills `rows[i]` only when `want[i]`, and a silent op's row is
-/// zeros. 512 B, on the audio stack.
+/// engine fills an op's row only when it is wanted, and a silent op's row
+/// is zeros. 512 B, on the audio stack, zeroed only while an op is
+/// wanted: an untapped block (every block off ALGO) skips the fill.
 pub struct TapRows {
-    pub want: [bool; 2],
-    pub rows: [[f32; BLOCK_SIZE]; 2],
+    want: [bool; 2],
+    rows: MaybeUninit<[[f32; BLOCK_SIZE]; 2]>,
 }
 
 impl TapRows {
-    pub const fn new(want: [bool; 2]) -> Self {
-        Self {
+    #[inline(always)]
+    pub fn new(want: [bool; 2]) -> Self {
+        let mut t = Self {
             want,
-            rows: [[0.0; BLOCK_SIZE]; 2],
+            rows: MaybeUninit::uninit(),
+        };
+        if want != [false; 2] {
+            t.rows.write([[0.0; BLOCK_SIZE]; 2]);
         }
+        t
+    }
+
+    pub fn want(&self) -> [bool; 2] {
+        self.want
+    }
+
+    /// Both rows, while an op is wanted; `None` when none is (never written).
+    #[inline(always)]
+    pub fn rows(&self) -> Option<&[[f32; BLOCK_SIZE]; 2]> {
+        // SAFETY: `new` zeroed the rows whenever an op is wanted, and
+        // `want` is private and never changed after.
+        (self.want != [false; 2]).then(|| unsafe { self.rows.assume_init_ref() })
+    }
+
+    /// Each wanted op's row to write.
+    #[inline(always)]
+    pub fn rows_mut(&mut self) -> [Option<&mut [f32; BLOCK_SIZE]>; 2] {
+        let want = self.want;
+        if want == [false; 2] {
+            return [None, None];
+        }
+        // SAFETY: as `rows`: zeroed by `new` while an op is wanted.
+        let [r0, r1] = unsafe { self.rows.assume_init_mut() };
+        [want[0].then_some(r0), want[1].then_some(r1)]
     }
 }
 

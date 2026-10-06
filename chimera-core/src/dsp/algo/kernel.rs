@@ -198,8 +198,8 @@ impl Kernel {
             self.keep(a, &x);
         }
         // A silent op's row was never written: zeros.
-        for (op, (row, want)) in TapOp::ALL.iter().zip(taps.rows.iter_mut().zip(taps.want)) {
-            if want {
+        for (op, row) in TapOp::ALL.iter().zip(taps.rows_mut()) {
+            if let Some(row) = row {
                 for (r, &y) in row.iter_mut().zip(&bufs[pos[op.op_index()]]) {
                     *r = tap_sample(y);
                 }
@@ -340,8 +340,8 @@ impl Kernel {
     /// Sample `s` of each wanted tap: its op's latest output (0 if silent).
     #[inline(always)]
     fn tap(&self, taps: &mut TapRows, s: usize) {
-        for (op, (row, want)) in TapOp::ALL.iter().zip(taps.rows.iter_mut().zip(taps.want)) {
-            if want {
+        for (op, row) in TapOp::ALL.iter().zip(taps.rows_mut()) {
+            if let Some(row) = row {
                 row[s] = tap_sample(self.out[op.op_index()]);
             }
         }

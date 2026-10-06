@@ -116,13 +116,23 @@ pub(crate) const CLEAN_MODES: [FilterMode; 8] = [
 /// disk idents stay the old ones.
 const CLEAN_LABELS: [&str; 8] = ["LP1", "LP2", "LP4", "BP2", "BP4", "HP4", "NOTCH1", "NOTCH2"];
 
-/// PHASER over LP24: measured 2026-09-28, bench ROUTING SVF row, rev V at
-/// 480 MHz (500 − 1 OP's 483). That row never takes `saturate`'s divide;
-/// SVF HOT and LP24 HOT do, not yet read.
-const SVF_PHASER: u32 = 17;
-/// BP24 and HP24 over LP24: provisional, for BP24's extra multiply and the
-/// loop's own layout, until the bench reads each mode.
-const SVF_PAD: u32 = 2;
+/// The moving path's bill, once a block, over the steady one (plan
+/// § Measured, Task 15, bench ELF at 1879169d, 2026-10-07): CLEAN LP4's
+/// moving loop 64 instructions, 2 `vdiv`, with `ramps`' fill (8.5) and
+/// the block (3.61, 0.016 `vdiv`) ceil5(76.1 × 1.606 + 12 × 2.02) = 150,
+/// less steady LP4's 41 + 3.25 = 75: 75. NOTCH2 moves for 90 − 35 = 55;
+/// the one-stage modes run less.
+pub const CLEAN_MOVE_COST: Cost = Cost(75);
+/// The 2040's moving path (ADR 0096's +12 instructions, 2 `vdiv`), with
+/// `ramps`' fill by adding (6.25): REV2 80 + 6.25 + 2.31 block
+/// instructions, 2.02 `vdiv`, 170 less steady 110 = 60; EXP 94 + 6.25 +
+/// 2.34, 190 − 135 = 55. Billed the larger: 60 (1879169d, 2026-10-07).
+pub const K2040_MOVE_COST: Cost = Cost(60);
+/// LEVEL's clipper on CLEAN and DIRTY, billed while it can run: the
+/// fading loop 20.0 instructions a sample, 0 `vdiv`, ceil5(20 × 1.606) =
+/// 35 (held in, 16.62: 30), over the gate shut's 0 at ½ (1879169d,
+/// 2026-10-07). The 2040 takes LEVEL into its stages: its steady count.
+pub const FILTER_LEVEL_COST: Cost = Cost(35);
 
 /// The 2040's one mode.
 const K2040_MODES: [FilterMode; 1] = [FilterMode::Lp24];
@@ -226,24 +236,40 @@ impl FilterKind {
     pub fn from_index(v: f32) -> Self {
         pick(&Self::BUILT, v)
     }
-}
 
-/// CLEAN's bill by mode, cycles a sample over LP24 (spec § CPU), never
-/// below 0: the engine terms were solved from bench rows that already run
-/// the SVF at LP24. `recost` re-prices at every note-on, so a mode bills
-/// its own delta. Each kind's bill is `FilterParams::filter_cost`.
-pub const fn clean_cost(mode: FilterMode) -> Cost {
-    Cost(match mode {
-        FilterMode::Phaser => SVF_PHASER,
-        // HP12 is DIRTY's; on CLEAN it would run HP4.
-        FilterMode::Bp24 | FilterMode::Hp24 | FilterMode::Hp12 => SVF_PAD,
-        // LP24 is the baseline; LP6, LP12, BP12 and NOTCH run less.
-        FilterMode::Lp24
-        | FilterMode::Lp6
-        | FilterMode::Lp12
-        | FilterMode::Bp12
-        | FilterMode::Notch => 0,
-    })
+    /// The steady bill, cycles a sample over `OLD_LP24` (95), never below
+    /// 0: the engine terms carry LP24 (plan § Measured, Task 15, counted
+    /// with the block at 1879169d). CLEAN: LP4, BP4 and HP4 41 + 3.25
+    /// instructions, 75 (80 with LEVEL's gain); NOTCH2 18 + 3.06, 35; the
+    /// one-stage modes less: 0. The 2040 by VOICE (`K2040Voice::cost`):
+    /// REV2 110, EXP 135. DIRTY 30.25 + `ramps`' 6.25 + 4.08, 70, every
+    /// block and mode: 0.
+    pub const fn cost(self, mode: FilterMode, voice: K2040Voice) -> Cost {
+        let _ = mode;
+        match self {
+            FilterKind::Svf => Cost::ZERO,
+            FilterKind::K2040 => voice.cost(),
+            FilterKind::Dirty => dirty::DIRTY_COST,
+        }
+    }
+
+    /// What a moving block adds, once: a CUTOFF or RES route, or a FREQ or
+    /// Q tap. DIRTY's one loop already reads the arrays on every block.
+    pub const fn move_cost(self) -> Cost {
+        match self {
+            FilterKind::Svf => CLEAN_MOVE_COST,
+            FilterKind::K2040 => K2040_MOVE_COST,
+            FilterKind::Dirty => Cost::ZERO,
+        }
+    }
+
+    /// LEVEL's clipper, while it can run; the 2040 has none.
+    pub const fn level_cost(self) -> Cost {
+        match self {
+            FilterKind::Svf | FilterKind::Dirty => FILTER_LEVEL_COST,
+            FilterKind::K2040 => Cost::ZERO,
+        }
+    }
 }
 
 /// `p` with KIND `new`: MODE stays if `new` has it, else becomes `new`'s

@@ -70,14 +70,9 @@ impl FilterParams {
         self.kind = k;
     }
 
-    /// The filter's bill, cycles a sample over LP24: CLEAN by its MODE
-    /// (`clean_cost`), the 2040 by its VOICE, DIRTY flat (`DIRTY_COST`).
+    /// The filter's steady bill over LP24 (`FilterKind::cost`).
     pub const fn filter_cost(&self) -> crate::hw::Cost {
-        match self.kind {
-            FilterKind::Svf => crate::dsp::filter::clean_cost(self.mode),
-            FilterKind::K2040 => self.voice.cost(),
-            FilterKind::Dirty => crate::dsp::filter::dirty::DIRTY_COST,
-        }
+        self.kind.cost(self.mode, self.voice)
     }
 
     /// FM3 IN, as stored (`Jack::effective` says what it acts as).

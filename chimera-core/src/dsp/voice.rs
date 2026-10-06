@@ -12,7 +12,7 @@ use crate::dsp::drive::Drive;
 use crate::dsp::ease::{Ease, Ramp, at, ease_coeff, step_of};
 use crate::dsp::engines::{EngineSlot, SlotKind};
 use crate::dsp::envelope::{EnvMods, Envelope};
-use crate::dsp::filter::{Filter, FilterMods};
+use crate::dsp::filter::{FILTER_LEVEL_COST, Filter, FilterMods};
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modal::{ModalEngine, ResonatorMode, SymPool};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
@@ -26,7 +26,9 @@ use crate::modulation::{
 use crate::params::{
     DriveParams, EngineType, EnvParams, FilterParams, FolderParams, ParamSnapshot, Steal,
 };
-use crate::taps::{TapLane, TapRows, tap_vca};
+use crate::taps::{
+    TAP_CAPTURE_COST, TAP_FOLD_COST, TAP_SHAPE_COST, TAP_VCA_COST, TapLane, TapRows, tap_vca,
+};
 use crate::voice_alloc::VoiceIdx;
 use crate::{MidiNote, Velocity};
 
@@ -205,9 +207,12 @@ impl Voice {
     /// the offset of silence's fold (ADR 0060), 1 instruction a sample, 1.6
     /// by ADR 0056's host method.
     pub const FOLD_COST: Cost = Cost(45);
-    /// FOLD, SYM or MIX routed: the fold ramps every block, 42 instructions
-    /// a sample against the steady 24; 18 × 1.46 × 1.1 = 28.9.
-    pub const FOLD_RAMP_COST: Cost = Cost(29);
+    /// FOLD, SYM or MIX routed, or a FOLD tap: the fold ramps every block.
+    /// Recounted on the bench ELF at 1879169d (2026-10-07): the moving loop
+    /// 45 instructions a sample (silence's fold per sample, ADR 0060) +
+    /// 3.48 of block, 80, against the steady 24 + 3.48, 45: 35 (was 29,
+    /// from 42 against 24).
+    pub const FOLD_RAMP_COST: Cost = Cost(35);
     /// The drive stage, which runs once DRIVE is 0.001 or more. Measured:
     /// bench-t13d's DRIVE LO row (541) less that run's 1 OP (488) = 53;
     /// bench-t13c's DRIVE row (540) less that run's 1 OP (483) = 57.
@@ -222,9 +227,62 @@ impl Voice {
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
         EngineSlot::cost(p, mods)
             + Self::CHAIN_COST
-            + p.filter.filter_cost()
+            + Self::filter_cost(p, mods)
             + ModRouting::cost(p, mods)
             + Self::stage_cost(p, mods)
+            + Self::tap_cost(p)
+    }
+
+    /// The filter as `p` and `mods` run it: the steady bill, the moving
+    /// path once if a CUTOFF or RES route or (on ALGO) a FREQ or Q tap
+    /// moves it, `TapShape::apply` once for those taps, and LEVEL's
+    /// clipper while it can open (stored over ½, or routed). A clipper
+    /// still running after LEVEL comes back is `held_level_extra`'s.
+    pub fn filter_cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
+        let f = &p.filter;
+        let kind = f.kind();
+        let algo = p.engine() == EngineType::Algo;
+        let shaped = algo && (p.taps.moving(FixedCol::Freq) || p.taps.moving(FixedCol::Q));
+        let moving = shaped || mods.fixed_moves(FixedCol::Freq) || mods.fixed_moves(FixedCol::Q);
+        let when = |on: bool, c: Cost| if on { c } else { Cost::ZERO };
+        f.filter_cost()
+            + when(moving, kind.move_cost())
+            + when(shaped, TAP_SHAPE_COST)
+            + when(Self::level_may_open(p, mods), kind.level_cost())
+    }
+
+    /// LEVEL's gate can open: stored over ½, or routed.
+    fn level_may_open(p: &ParamSnapshot, mods: &ModState) -> bool {
+        p.filter.level > 0.5
+            || mods.moves_addr(ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL))
+    }
+
+    /// The taps the filter and folder don't bill (on ALGO only): the
+    /// tap-VCA once, and each wanted op's capture.
+    fn tap_cost(p: &ParamSnapshot) -> Cost {
+        if p.engine() != EngineType::Algo {
+            return Cost::ZERO;
+        }
+        let vca = if p.taps.moving(FixedCol::Vca) {
+            TAP_VCA_COST
+        } else {
+            Cost::ZERO
+        };
+        p.taps
+            .wanted()
+            .into_iter()
+            .filter(|&w| w)
+            .fold(vca, |c, _| c + TAP_CAPTURE_COST)
+    }
+
+    /// LEVEL's clipper still running (the ease landing on ½, then the
+    /// fade) where `p` and `mods` no longer bill it: what the voice adds.
+    pub fn held_level_extra(&self, p: &ParamSnapshot, mods: &ModState) -> Cost {
+        if self.filter_level_running() && !Self::level_may_open(p, mods) {
+            FILTER_LEVEL_COST
+        } else {
+            Cost::ZERO
+        }
     }
 
     /// What this voice's sounding Modal note costs over `p`'s stored
@@ -257,6 +315,7 @@ impl Voice {
                 .iter()
                 .any(|&param| mods.moves_addr(ParamAddr::new(block, param)))
         };
+        let tapped = p.engine() == EngineType::Algo && p.taps.moving(FixedCol::Fold);
         let mut c = Cost::ZERO;
         if fold {
             c = c + Self::FOLD_COST;
@@ -265,8 +324,11 @@ impl Voice {
                 FolderParams::SYMMETRY,
                 FolderParams::MIX,
             ];
-            if routed(BlockRef::Folder, fp) {
+            if routed(BlockRef::Folder, fp) || tapped {
                 c = c + Self::FOLD_RAMP_COST;
+            }
+            if tapped {
+                c = c + TAP_FOLD_COST;
             }
         }
         if drive {
@@ -783,8 +845,9 @@ impl Voice {
             .render(output, m, live, sample_rate, pool, &mut rows);
         let lane = |c: FixedCol| {
             let (a, b) = (from.map(|o| o[c.index()]), to.map(|o| o[c.index()]));
-            (a != [0; 2] || b != [0; 2]).then(|| TapLane {
-                rows: &rows.rows,
+            // A nonzero amount wants its op, so the rows are there.
+            Some(TapLane {
+                rows: rows.rows().filter(|_| a != [0; 2] || b != [0; 2])?,
                 from: a.map(amount_scale),
                 to: b.map(amount_scale),
             })
