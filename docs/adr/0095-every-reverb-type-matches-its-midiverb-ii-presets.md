@@ -243,11 +243,11 @@ the ban on 2026-10-05.
     smear offsets.
   - **LOOPS's cos and sin come from an f32 series,** normalised so c² + s²
     is 1 to the rounding: libm's ran in double precision.
-  - **ΔCOST with GRAIN** (Task 9c): GRAIN adds 15.2 instructions an
-    output sample, counted statically (below), 7.1 to 16.1 cycles at 0.47
-    and 1.06 cycles an instruction. That puts the default build at about
-    +12 to +76 against its 76, and the tape build at +20 to +83 against its
-    23. The unit decides at Task 13; the fallback order above stands, and
+  - **ΔCOST with GRAIN** (Task 9c): GRAIN adds 15.5 instructions an
+    output sample, counted in the release firmware (below), 7.3 to 16.4
+    cycles at 0.47 and 1.06 cycles an instruction. That puts the default
+    build at about +12 to +76 against its 76, and the tape build at +20 to
+    +83 against its 23. The unit decides at Task 13; the fallback order above stands, and
     GRAIN is cuttable on its own (it never feeds back).
 
 - **ROOM's GRAIN, as built (Task 9c, 2026-10-06).** The MidiVerb II's
@@ -281,14 +281,18 @@ the ban on 2026-10-05.
     is exact zeros at idle and after the tail, as before.
   - **Branch-free:** the gate is a clamp, the noise integer arithmetic; the
     same work at every level. The scale and the knee are cached with the
-    other targets (DECAY, and the lengths crossfading to).
-  - **Cost, counted statically** as Task 9b's: the kernel built for
-    thumbv7em with cortex-m7 at opt-level 2 runs a 117-instruction body (96
-    VFP) four samples at a time, 8 times a 32-sample ring block, plus 36 of
-    entry and exit: 972 a block, 30.4 a ring sample, **15.2 an output
-    sample**. No data-dependent branch, so the dynamic count is the same.
-  - **`EngineState` grows to 260 B** (264 with the tests' probes): the
-    envelope, the seed and the cached scale and knee.
+    other targets (DECAY, and the lengths crossfading to) and eased on the
+    20 ms ease once a block (fix round 1): a DECAY or SIZE move never snaps
+    the grain's level. The floor sits under the knee at DECAY's shortest
+    RT60 too, checked at compile time.
+  - **Cost, counted statically** in the release firmware's disassembly
+    (the review's count; GRAIN is inlined in `Room::run`): a 120-instruction
+    body (99 VFP) four samples at a time, 8 times a 32-sample ring block,
+    plus about 30 of entry and exit: about 990 a block, **15.5 an output
+    sample** (a mirror kernel read 15.2). No data-dependent branch, so the
+    dynamic count is the same.
+  - **`EngineState` grows to 268 B** (272 with the tests' probes): the
+    envelope, the seed, and the scale and knee cached and eased.
   - **GRAIN and HF share join the harness's bar** (`chimera-utils`'s
     `grain.rs`), judged for ROOM, reported for the others. GRAIN is a
     noise-power ratio: four notched noise bursts, the notch cores' power
@@ -301,13 +305,37 @@ the ban on 2026-10-05.
     (the first near-miss step): the unit has no input filter, and the
     10 kHz one-pole cost #5 and #10 1–1.5 dB of HF share no knob could win
     back. It opens over the knob's last 5 % (9.33 → 10 kHz), so the fit and
-    a hand find every brightness between, with no cliff; TONE 0 reads OFF.
-    START (program 5's knobs) is refitted, so its TONE reads OFF too.
-  - **The refit:** all nine ROOM presets pass with GRAIN and HF share in,
-    seeded from the Task 9b fits (16 seeds). The fit's distance weighs HF
-    share as C50, and adds 4 for each judged metric over its bar, so the
-    search spends margin before a pass. Several margins are thin: #5's C50
-    +1.0 dB, #8's, #10's and #14's centroid +5 %, #11's NED −10 %.
+    a hand find every brightness between, with no cliff; TONE 0 reads OFF,
+    and inside the ramp the cell reads the cutoff the opening filter has
+    (fix round 1), not the knob's.
+  - **START is program 5 exactly** (fix round 1): its fitted knobs and
+    SMEAR 0. With SMEAR 0.3 it failed #5 (GRAIN 4.7/9.5 dB, HF 3.8 dB, C50
+    +1.5 dB): SMEAR's motion fills the notches on top of the grain.
+    `chimera-utils mv-start` judges each TYPE's START against its source
+    program, as `mv-verify` judges a fit: ROOM's against #5 PASSES. BLOOM's
+    keeps SMEAR 0.3 for the owner's UAT and FAILS #45 (centroid −43 %,
+    4 kHz RT −29 %, HF 5.5 dB).
+  - **The fit, every TYPE's** (fix round 1): its distance adds 4 for each
+    judged metric past 0.8 of its bar, so the search keeps a margin rather
+    than parking on the bars, and scores a setting by the worst of it and
+    SIZE ±0.001, since SIZE's lengths are whole samples. `mv-verify
+    --robust` nudges every fitted knob ±0.001 and judges each nudge.
+  - **The refit:** all nine ROOM presets pass with GRAIN and HF share in.
+    Held to ±0.001 on every knob, #3 and #5 pass every nudge; 120 of the
+    135 nudges pass. The rest fail on the metrics' own grain, not on a
+    trend:
+    - SIZE ±0.001 moves whole-sample lengths and reshuffles the echo fine
+      structure: NED at 100 ms moves ±5–9 %, and on the short programs
+      (#1, #2) HF share's 200–600 ms window moves 1.3–1.5 dB. #1, #2, #9,
+      #14 fail at SIZE ±0.001, #8 and #10 at one side;
+    - #9, #10 and #14 fit DAMP 0, the dampers' bypass: DAMP +0.001 is the
+      step to a 9.9 kHz one-pole (DAMP's top, above), and fails;
+    - #10 at TONE −0.001, #11 at PRE-DLY +0.001 (NED −10 %, its bar).
+    The robust search itself (from the Task 9c fits, at 0.03/0.012 and at
+    0.012/0.004/0.002) found no setting passing all three SIZE settings
+    for the others, and left nominal passes at 3 of 9; the committed fits
+    keep each preset's best: the Task 9c fit, or a robust or fewer-failing
+    neighbour (#3, #5, #8).
 
 - **BLOOM, as built (Task 11, 2026-10-05).** The following departures
   are measured, and need the owner's ruling.
