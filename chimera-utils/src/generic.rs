@@ -5,7 +5,7 @@ use crate::devices::{Device, Values};
 use crate::mv::rms_match;
 use crate::reference::{Reference, write_pcm24};
 use crate::sig::{fft, plan, spectra};
-use crate::stim::Rng;
+use crate::stim::{Rng, listening};
 use crate::{Config, SR};
 use rustfft::num_complex::Complex64;
 use serde_json::json;
@@ -268,8 +268,9 @@ pub fn compare(
 }
 
 /// `just ab REF DEVICE [k=v …]`: compares, prints the metrics, writes the
-/// A/B WAVs and `report.json` to `out/ab/<ref>_<device>/`. Pairs go to both
-/// sides; `ref.k=v` to the reference alone.
+/// A/B WAVs and `report.json` to `out/ab/<ref>_<device>/`: the measured
+/// pair, and for an effect `<source>_{ref,chimera}.wav` on the listening set.
+/// Pairs go to both sides; `ref.k=v` to the reference alone.
 pub fn ab(cfg: &Config, ref_name: &str, dev_name: &str, args: &[String]) -> Result<(), String> {
     let dev = Device::find(dev_name)?;
     let mut both = Vec::new();
@@ -321,6 +322,20 @@ pub fn ab(cfg: &Config, ref_name: &str, dev_name: &str, args: &[String]) -> Resu
     let [a, b] = rms_match([&c.theirs, &c.ours]);
     write_pcm24(&dir.join("ref.wav"), &a, SR as u32)?;
     write_pcm24(&dir.join("chimera.wav"), &b, SR as u32)?;
+    if !dev.is_source() {
+        for (s, x) in listening() {
+            let xf: Vec<f32> = x.iter().map(|&v| v as f32).collect();
+            let theirs = r.render(&rp, Some(&x), x.len(), &cfg.tmp())?;
+            let ours: Vec<f64> = dev
+                .render(&values, &xf, x.len())
+                .into_iter()
+                .map(f64::from)
+                .collect();
+            let [a, b] = rms_match([&theirs, &ours]);
+            write_pcm24(&dir.join(format!("{s}_ref.wav")), &a, SR as u32)?;
+            write_pcm24(&dir.join(format!("{s}_chimera.wav")), &b, SR as u32)?;
+        }
+    }
     let report = json!({
         "reference": ref_name, "device": dev_name, "args": args,
         "null_residual_db": n.db, "lag_samples": n.lag, "gain_db": n.gain_db, "inverted": n.inverted,

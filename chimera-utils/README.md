@@ -9,12 +9,12 @@ subprocess. It never enters the firmware build.
 
 | `just …` | What |
 |---|---|
-| `ab REF DEVICE [k=v …]` | Renders both sides. Prints the null residual, the response error per octave, THD and the centroid. Writes `ref.wav` and `chimera.wav` (RMS-matched) and `report.json`. |
-| `mv-refs [PROG …]` | MidiVerb II references: each program (default 1–49) on the click, 16 noise bursts and the dry stimuli. |
+| `ab REF DEVICE [k=v …]` | Renders both sides. Prints the null residual, the response error per octave, THD and the centroid. Writes `ref.wav` and `chimera.wav` (RMS-matched) and `report.json`. An effect also gets `<source>_ref.wav` and `<source>_chimera.wav` on the listening set. |
+| `mv-refs [PROG …]` | MidiVerb II references: each program (default 1–49) on the click, 16 noise bursts and the listening set. |
 | `mv-fit TYPE PROG …` | A Latin-hypercube sweep of the TYPE's knobs, then a pattern search per program. Writes `fits/<type>.json`. With `--start FITS` it searches from those fits instead, in finer steps with SMEAR held. `--seeds N` sets the noise seeds per search step: 8 by default, 16 to search on what verify judges. |
 | `mv-verify TYPE` | Re-measures the fitted knobs (16 seeds). Prints residuals and PASS/FAIL per preset. Exits 1 on any FAIL. With `--robust` it also nudges every fitted knob ±0.001 and names each nudge that fails (a report: the exit code ignores it). |
 | `mv-start [TYPE …]` | Each TYPE's START against its source program (ROOM #5, BLOOM #45), judged as `mv-verify` judges a fit. Exits 1 on any FAIL. |
-| `mv-ab TYPE` | Reference and TYPE at its fitted knobs on idm, snare and strings, RMS-matched. |
+| `mv-ab TYPE` | Reference and TYPE at its fitted knobs on the listening set, RMS-matched. |
 | `mv-structure PROG …` | A program's injections, allpasses and taps, read from the decompiled listing. |
 
 `chimera-utils devices` lists the devices and their knobs.
@@ -29,14 +29,12 @@ environment, or from the flag of the same name. Export them in the shell
 that runs `just`:
 
     export MIDIVERB_EMU=~/src/midiverb_emulator/midiverb
-    export MV_STIM=~/audio/mv-stim
     export CHIMERA_REFS=~/src/refs-cpp
 
 | Variable | What |
 |---|---|
 | `MV_OUT` | Outputs (default `target/mv`): `refs/`, `fits/`, `ab/` |
 | `MIDIVERB_EMU` | The MidiVerb emulator binary. Its names and decompiled listing are read from beside it. |
-| `MV_STIM` | Dry stimuli: `snare`, `kick`, `strings`, `plucked`, `idm` `.wav`, 48 kHz |
 | `MV_LISTING` | `decompiled-midiverb2.h`, if it is not beside the emulator |
 | `CHIMERA_REFS` | The directory `ab` looks in for a bare REF name. Unset, a bare name means `./name`, never a program on `PATH`. |
 
@@ -113,6 +111,26 @@ through every ±0.001 nudge (ADR 0095).
 - **response error:** the largest |Δ| in dB per octave. For an effect it is |Pxy|/Pxx on noise. For a source it is the output spectrum. Bins 60 dB under the reference's peak are skipped;
 - **THD:** harmonics 2–10, on a 1 kHz sine for an effect, on the output for a source;
 - **spectral centroid.**
+
+## The listening set
+
+`mv-ab`, `ab` and `mv-refs` play seven short sounds, synthesised in
+`src/stim.rs` with fixed seeds: no samples. Each is mono at 48 kHz, peaked
+at −12 dBFS and followed by 12 s of silence for the tail. `stim.rs` gives
+each one's exact recipe.
+
+| Source | What | It reveals |
+|---|---|---|
+| `snare` | a 190 → 160 Hz body and a noise rattle, 300 ms | the early reflections |
+| `bass` | A1, a sine and a little saw, a fast pitch drop, ~300 ms | the low end and the transient |
+| `stab` | an A minor 7 saw chord, 150 ms | the transient on a full spectrum |
+| `sine_short` | 440 Hz, 80 ms | the tail's colour |
+| `sine_long` | 220 Hz, 2 s | the build-up and the tail's colour |
+| `texture` | 300 ms of band-passed noise grains | the grain |
+| `hats` | six closed hats and an open one, high-passed noise, ~1 s | the grain and the top |
+
+The fit and the verdict never hear these: they measure on the click and
+the noise bursts.
 
 ## Noise and seeds
 

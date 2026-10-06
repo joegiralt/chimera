@@ -24,18 +24,19 @@ pub const SR: f64 = chimera_hal::SAMPLE_RATE as f64;
 const USAGE: &str = "\
 usage: chimera-utils [flags] COMMAND …
   ab REF DEVICE [k=v …]    REF vs a Chimera DEVICE: null, response, THD, centroid; A/B WAVs
+                           (an effect also on the listening set)
   devices                  the devices and their knobs
   mv-refs [PROG …]         MidiVerb II references (default 1–49)
   mv-fit TYPE PROG …       fit TYPE's knobs to programs
   mv-verify TYPE           re-measure the fits: residuals, PASS/FAIL
   mv-start [TYPE …]        each TYPE's START against its source program
-  mv-ab TYPE               RMS-matched A/B WAVs on idm, snare, strings
+  mv-ab TYPE               RMS-matched A/B WAVs on the listening set:
+                           snare bass stab sine_short sine_long texture hats
   mv-structure PROG …      a program's structure from the decompiled listing
 flags:
   --jobs N        worker threads (default 8)
   --out DIR       outputs (env MV_OUT, default target/mv)
   --emu PATH      MidiVerb emulator (env MIDIVERB_EMU)
-  --stim DIR      dry stimuli snare/kick/strings/plucked/idm.wav (env MV_STIM)
   --listing PATH  decompiled-midiverb2.h (env MV_LISTING, default beside the emulator)
   --refs-dir DIR  reference programs for `ab` (env CHIMERA_REFS)
   --refs PATH     reference metrics.json (default OUT/refs/metrics.json)
@@ -46,12 +47,11 @@ flags:
   --redo          mv-fit: refit presets already fitted, and re-sweep
   --robust        mv-verify: also nudge every fitted knob ±0.001 (a report)
   --size-worst    mv-fit: score each setting by the worst of it and SIZE ±0.001 (3× slower)
-  --no-sources    mv-refs: skip the stimuli renders";
+  --no-sources    mv-refs: skip the listening-set renders";
 
 pub struct Config {
     pub out: PathBuf,
     emu: Option<PathBuf>,
-    stim: Option<PathBuf>,
     listing: Option<PathBuf>,
     pub refs_dir: Option<PathBuf>,
     pub refs: Option<PathBuf>,
@@ -74,12 +74,6 @@ impl Config {
         self.emu
             .clone()
             .ok_or_else(|| "set MIDIVERB_EMU (or --emu) to the MidiVerb emulator".into())
-    }
-
-    pub fn stim(&self) -> Result<PathBuf, String> {
-        self.stim
-            .clone()
-            .ok_or_else(|| "set MV_STIM (or --stim) to the dry stimuli".into())
     }
 
     pub fn listing(&self) -> Result<PathBuf, String> {
@@ -122,7 +116,6 @@ fn run() -> Result<bool, String> {
     let mut cfg = Config {
         out: path(flag("--out")?, "MV_OUT").unwrap_or_else(|| PathBuf::from("target/mv")),
         emu: path(flag("--emu")?, "MIDIVERB_EMU"),
-        stim: path(flag("--stim")?, "MV_STIM"),
         listing: path(flag("--listing")?, "MV_LISTING"),
         refs_dir: path(flag("--refs-dir")?, "CHIMERA_REFS"),
         refs: flag("--refs")?.map(PathBuf::from),

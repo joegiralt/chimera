@@ -8,16 +8,13 @@ use crate::grain::{self, Grain};
 use crate::metrics::{
     self, BANDS, Metrics, NoiseRt, distance, ir_metrics, noise_band_rt60, residuals, verdict,
 };
-use crate::reference::{Reference, read_wav, write_f32, write_pcm24};
-use crate::stim::{CLICK_AT, NOISE_SEEDS, click, lhs, noise_stim};
+use crate::reference::{Reference, write_f32, write_pcm24};
+use crate::stim::{CLICK_AT, NOISE_SEEDS, click, lhs, listening, noise_stim};
 use chimera_core::dsp::reverb::ReverbType;
 use rayon::prelude::*;
 use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-
-const SOURCES: [&str; 5] = ["snare", "kick", "strings", "plucked", "idm"];
-const AB_SOURCES: [&str; 3] = ["idm", "snare", "strings"];
 
 /// Each TYPE's fitted knobs, by `devices::REVERB_KNOBS`.
 fn dims(t: ReverbType) -> &'static [&'static str] {
@@ -199,31 +196,16 @@ fn mv(
     r.render(&p, Some(x), x.len(), &cfg.tmp())
 }
 
-fn read_stim(cfg: &Config, name: &str) -> Result<Vec<f64>, String> {
-    let (x, sr) = read_wav(&cfg.stim()?.join(format!("{name}.wav")))?;
-    if sr != SR as u32 {
-        return Err(format!("{name}.wav: {sr} Hz, want 48000"));
-    }
-    Ok(x)
-}
-
 // ── mv-refs ──
 
 /// Programs `progs` on the click (20 s), 16 noise bursts (2 s + 20 s) and
-/// the dry stimuli: IRs, stimuli renders and metrics in `out/refs`.
+/// the listening set: IRs, its renders and metrics in `out/refs`.
 pub fn refs(cfg: &Config, progs: &[u32], sources: bool) -> Result<(), String> {
     let r = reference(cfg)?;
     let names = names(cfg)?;
     let dir = cfg.out.join("refs");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let stims: Vec<(&str, Vec<f64>)> = if sources {
-        SOURCES
-            .iter()
-            .map(|&s| read_stim(cfg, s).map(|x| (s, x)))
-            .collect::<Result<_, _>>()?
-    } else {
-        Vec::new()
-    };
+    let stims = if sources { listening() } else { Vec::new() };
     let mpath = dir.join("metrics.json");
     let all = Mutex::new(match read_json(&mpath) {
         Ok(Value::Object(m)) => m,
@@ -766,8 +748,8 @@ pub fn rms_match(pair: [&[f64]; 2]) -> [Vec<f64>; 2] {
     [0, 1].map(|i| pair[i].iter().map(|v| v * gains[i] * trim).collect())
 }
 
-/// Each fitted preset's reference and the TYPE at its knobs on idm, snare
-/// and strings, RMS-matched, into `out/ab/<type>/`.
+/// Each fitted preset's reference and the TYPE at its knobs on the
+/// listening set (`stim::LISTEN`), RMS-matched, into `out/ab/<type>/`.
 pub fn ab(cfg: &Config, t: ReverbType) -> Result<(), String> {
     let fits = match read_json(&fits_path(cfg, t))? {
         Value::Object(m) => m,
@@ -776,10 +758,7 @@ pub fn ab(cfg: &Config, t: ReverbType) -> Result<(), String> {
     let r = reference(cfg)?;
     let dir = cfg.out.join(format!("ab/{}", t_name(t).to_lowercase()));
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let stims: Vec<(&str, Vec<f64>)> = AB_SOURCES
-        .iter()
-        .map(|&s| read_stim(cfg, s).map(|x| (s, x)))
-        .collect::<Result<_, _>>()?;
+    let stims = listening();
     let mut keys: Vec<&String> = fits.keys().collect();
     keys.sort_by_key(|k| k.parse::<u32>().unwrap_or(0));
     let jobs: Vec<(&String, &(&str, Vec<f64>))> = keys

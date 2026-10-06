@@ -1,6 +1,7 @@
-//! Test signals: the click, interrupted noise (ISO 3382-2) and the Latin
-//! hypercube, drawn as numpy's `default_rng(seed)` draws them (SeedSequence,
-//! PCG64, the ziggurat normal), so a seed gives the Python harness's noise.
+//! Test signals: the click, interrupted noise (ISO 3382-2), the Latin
+//! hypercube and the listening set, drawn as numpy's `default_rng(seed)`
+//! draws them (SeedSequence, PCG64, the ziggurat normal), so a seed gives the
+//! Python harness's noise.
 //!
 //! Third-party code, ported:
 //!
@@ -67,6 +68,7 @@
 //!   ("The Ziggurat Method for Generating Random Variables", JSS 2000).
 
 use crate::SR;
+use crate::sig::{Sos, sosfilt};
 use std::f64::consts::PI;
 use std::sync::OnceLock;
 
@@ -317,6 +319,205 @@ pub fn lhs(n: usize, d: usize, seed: u32) -> Vec<Vec<f64>> {
     u
 }
 
+// ── the listening set ──
+
+/// The A/B listening stimuli, in page order: each mono at 48 kHz, peaked at
+/// −12 dBFS and followed by 12 s of silence for the tail.
+pub const LISTEN: [&str; 7] = [
+    "snare",
+    "bass",
+    "stab",
+    "sine_short",
+    "sine_long",
+    "texture",
+    "hats",
+];
+const LISTEN_PEAK_DB: f64 = -12.0;
+const LISTEN_TAIL_S: f64 = 12.0;
+
+/// The listening stimulus `name` (one of `LISTEN`).
+pub fn listen(name: &str) -> Option<Vec<f64>> {
+    let mut x = match name {
+        "snare" => snare(),
+        "bass" => bass(),
+        "stab" => stab(),
+        "sine_short" => sine(440.0, 0.08),
+        "sine_long" => sine(220.0, 2.0),
+        "texture" => texture(),
+        "hats" => hats(),
+        _ => return None,
+    };
+    let g = 10f64.powf(LISTEN_PEAK_DB / 20.0) / x.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+    x.iter_mut().for_each(|v| *v *= g);
+    x.resize(x.len() + (LISTEN_TAIL_S * SR) as usize, 0.0);
+    Some(x)
+}
+
+/// Every listening stimulus, by name.
+pub fn listening() -> Vec<(&'static str, Vec<f64>)> {
+    LISTEN
+        .iter()
+        .filter_map(|&n| Some((n, listen(n)?)))
+        .collect()
+}
+
+fn hz(midi: f64) -> f64 {
+    440.0 * 2f64.powf((midi - 69.0) / 12.0)
+}
+
+/// Raised-cosine (sin²) edges: `rise_s` in, `fall_s` out.
+fn edges(x: &mut [f64], rise_s: f64, fall_s: f64) {
+    let ramp = |i: usize, m: usize| ((PI / 2.0) * i as f64 / m as f64).sin().powi(2);
+    let (r, f) = ((rise_s * SR) as usize, (fall_s * SR) as usize);
+    for (i, v) in x.iter_mut().take(r).enumerate() {
+        *v *= ramp(i, r);
+    }
+    for (i, v) in x.iter_mut().rev().take(f).enumerate() {
+        *v *= ramp(i, f);
+    }
+}
+
+/// A band-limited saw at phase `ph` (radians): harmonics 1..=`k`.
+fn saw(ph: f64, k: usize) -> f64 {
+    (1..=k).map(|j| (j as f64 * ph).sin() / j as f64).sum()
+}
+
+/// RBJ cookbook band-pass (0 dB peak) or high-pass, as one section.
+fn rbj(f0: f64, q: f64, highpass: bool) -> Sos {
+    let w = 2.0 * PI * f0 / SR;
+    let (c, alpha) = (w.cos(), w.sin() / (2.0 * q));
+    let a0 = 1.0 + alpha;
+    let b = if highpass {
+        [(1.0 + c) / 2.0, -(1.0 + c), (1.0 + c) / 2.0]
+    } else {
+        [alpha, 0.0, -alpha]
+    };
+    [
+        b[0] / a0,
+        b[1] / a0,
+        b[2] / a0,
+        1.0,
+        -2.0 * c / a0,
+        (1.0 - alpha) / a0,
+    ]
+}
+
+/// `snare`: `tools/ab/stimuli.py`'s dry snare, 300 ms: a body falling
+/// 190 → 160 Hz (τ 20 ms) decaying τ 50 ms at 0.6, plus a uniform noise
+/// rattle decaying τ 70 ms at 0.8. Seed 343 (the PCG64 draw, not Python's
+/// Mersenne Twister: the same recipe, other noise).
+fn snare() -> Vec<f64> {
+    let mut rng = Rng::new(343);
+    let mut ph = 0.0;
+    (0..(0.3 * SR) as usize)
+        .map(|i| {
+            let t = i as f64 / SR;
+            ph += 2.0 * PI * (160.0 + 30.0 * (-t / 0.02).exp()) / SR;
+            let body = ph.sin() * (-t / 0.05).exp();
+            let rattle = (2.0 * rng.uniform() - 1.0) * (-t / 0.07).exp();
+            0.6 * body + 0.8 * rattle
+        })
+        .collect()
+}
+
+/// `bass`: A1 (55 Hz) falling from an octave up (τ 8 ms); a sine plus a
+/// band-limited saw at 0.25 (harmonics under 20 kHz at 110 Hz), 400 ms:
+/// 2 ms rise, decay τ 100 ms (−26 dB at 300 ms), a 10 ms raised-cosine end.
+fn bass() -> Vec<f64> {
+    let k = (20_000.0 / 110.0) as usize;
+    let mut ph = 0.0;
+    let mut x: Vec<f64> = (0..(0.4 * SR) as usize)
+        .map(|i| {
+            let t = i as f64 / SR;
+            ph += 2.0 * PI * 55.0 * (1.0 + (-t / 0.008).exp()) / SR;
+            (ph.sin() + 0.25 * saw(ph, k)) * (-t / 0.1).exp()
+        })
+        .collect();
+    edges(&mut x, 0.002, 0.01);
+    x
+}
+
+/// `stab`: an A minor 7 (A3 C4 E4 G4, equal temperament) of band-limited
+/// saws (harmonics under 20 kHz), 150 ms: 3 ms rise, decay τ 150 ms, a
+/// 15 ms raised-cosine release.
+fn stab() -> Vec<f64> {
+    let notes = [57.0, 60.0, 64.0, 67.0].map(hz);
+    let mut x: Vec<f64> = (0..(0.15 * SR) as usize)
+        .map(|i| {
+            let t = i as f64 / SR;
+            let s: f64 = notes
+                .iter()
+                .map(|&f| saw(2.0 * PI * f * t, (20_000.0 / f) as usize))
+                .sum();
+            s * (-t / 0.15).exp()
+        })
+        .collect();
+    edges(&mut x, 0.003, 0.015);
+    x
+}
+
+/// `sine_short` (440 Hz, 80 ms) and `sine_long` (220 Hz, 2 s): a sine
+/// with 5 ms raised-cosine edges.
+fn sine(f: f64, seconds: f64) -> Vec<f64> {
+    let mut x: Vec<f64> = (0..(seconds * SR) as usize)
+        .map(|i| (2.0 * PI * f * i as f64 / SR).sin())
+        .collect();
+    edges(&mut x, 0.005, 0.005);
+    x
+}
+
+/// `texture`: 300 ms of 48 band-passed noise grains. Each grain: a Hann
+/// window 10–40 ms long, starting anywhere it fits, of Gaussian noise
+/// through an RBJ band-pass (Q 6) centred 300 Hz–8 kHz (log-uniform), at
+/// 0.3–1.0. Seed 11; per grain the length, start, centre and level are
+/// drawn, then the noise.
+fn texture() -> Vec<f64> {
+    let n = (0.3 * SR) as usize;
+    let mut rng = Rng::new(11);
+    let mut x = vec![0.0; n];
+    for _ in 0..48 {
+        let len = ((0.01 + 0.03 * rng.uniform()) * SR) as usize;
+        let at = (rng.uniform() * (n - len) as f64) as usize;
+        let fc = 300.0 * (8000.0f64 / 300.0).powf(rng.uniform());
+        let g = 0.3 + 0.7 * rng.uniform();
+        let w: Vec<f64> = (0..len).map(|_| rng.normal()).collect();
+        let y = sosfilt(&[rbj(fc, 6.0, false)], &w);
+        for (i, v) in y.iter().enumerate() {
+            let hann = (PI * i as f64 / (len - 1) as f64).sin().powi(2);
+            x[at + i] += g * hann * v;
+        }
+    }
+    x
+}
+
+/// `hats`: 16ths at 120 BPM (125 ms apart). Closed hats on steps 0–5
+/// (levels 1.0, 0.6 alternating), 40 ms, decay τ 10 ms; an open hat on step
+/// 6, 300 ms, decay τ 90 ms; 1.05 s in all. Each a burst of uniform noise
+/// through two RBJ high-passes (7 kHz, Q 0.707), with a 0.5 ms rise. Seed 5.
+fn hats() -> Vec<f64> {
+    const STEP: f64 = 0.125;
+    let hp = [rbj(7000.0, 0.707, true), rbj(7000.0, 0.707, true)];
+    let mut rng = Rng::new(5);
+    let mut x = vec![0.0; (1.05 * SR) as usize];
+    let hits = (0..6)
+        .map(|s| (s, if s % 2 == 0 { 1.0 } else { 0.6 }, 0.04, 0.01))
+        .chain([(6, 1.0, 0.3, 0.09)]);
+    for (step, g, len_s, tau) in hits {
+        let len = (len_s * SR) as usize;
+        let w: Vec<f64> = (0..len).map(|_| 2.0 * rng.uniform() - 1.0).collect();
+        let mut y = sosfilt(&hp, &w);
+        for (i, v) in y.iter_mut().enumerate() {
+            *v *= g * (-(i as f64) / SR / tau).exp();
+        }
+        edges(&mut y, 0.0005, 0.0);
+        let at = (step as f64 * STEP * SR) as usize;
+        for (i, v) in y.into_iter().enumerate() {
+            x[at + i] += v;
+        }
+    }
+    x
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -354,5 +555,26 @@ mod tests {
         let mut p: Vec<u32> = (0..7).collect();
         r.shuffle(&mut p);
         assert_eq!(p, [1, 3, 0, 6, 4, 5, 2]);
+    }
+
+    #[test]
+    fn each_listening_stimulus_is_deterministic_finite_peaked_and_has_its_tail() {
+        let tail = (LISTEN_TAIL_S * SR) as usize;
+        let peak = 10f64.powf(LISTEN_PEAK_DB / 20.0);
+        let a = listening();
+        assert_eq!(a.len(), LISTEN.len());
+        for ((name, x), (_, y)) in a.iter().zip(listening()) {
+            let bits = |v: &[f64]| v.iter().map(|s| s.to_bits()).collect::<Vec<_>>();
+            assert_eq!(bits(x), bits(&y), "{name}: not byte-identical");
+            assert!(x.iter().all(|v| v.is_finite()), "{name}: not finite");
+            let pk = x.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+            assert!((pk / peak - 1.0).abs() < 1e-12, "{name}: peak {pk}");
+            assert!(x.len() > tail, "{name}");
+            assert!(
+                x[x.len() - tail..].iter().all(|&v| v == 0.0),
+                "{name}: tail"
+            );
+        }
+        assert!(listen("idm").is_none() && listen("strings").is_none());
     }
 }

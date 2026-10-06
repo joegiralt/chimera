@@ -235,7 +235,7 @@ mv-fit type +progs:
 mv-verify type *flags:
     {{utils}} mv-verify {{type}} {{flags}}
 
-# RMS-matched A/B WAVs of a TYPE's fits on idm, snare and strings
+# RMS-matched A/B WAVs of a TYPE's fits on the listening set
 mv-ab type:
     {{utils}} mv-ab {{type}}
 
