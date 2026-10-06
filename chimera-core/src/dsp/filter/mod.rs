@@ -125,13 +125,6 @@ const SVF_PAD: u32 = 2;
 const K2040_MODES: [FilterMode; 1] = [FilterMode::Lp24];
 const K2040_LABELS: [&str; 1] = ["LP4"];
 
-/// DIRTY's modes, in knob order (spec § 1): LP2 the default.
-const DIRTY_MODES: [FilterMode; 4] = [
-    FilterMode::Lp12,
-    FilterMode::Bp12,
-    FilterMode::Hp12,
-    FilterMode::Notch,
-];
 /// DIRTY's NOTCH1 notches at FREQ, Chamberlin's own (CLEAN's at 2 × FREQ).
 const DIRTY_LABELS: [&str; 4] = ["LP2", "BP2", "HP2", "NOTCH1"];
 
@@ -190,7 +183,7 @@ impl FilterKind {
         match self {
             FilterKind::Svf => &CLEAN_MODES,
             FilterKind::K2040 => &K2040_MODES,
-            FilterKind::Dirty => &DIRTY_MODES,
+            FilterKind::Dirty => &dirty::DIRTY_MODES,
         }
     }
 

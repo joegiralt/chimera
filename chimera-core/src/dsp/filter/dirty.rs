@@ -43,11 +43,47 @@ pub const DIRTY_MARGIN: f32 = 0.95;
 pub const DIRTY_COST: Cost = Cost(0);
 
 /// RES's `q`: 2 at RES 0, 0 at 0.95 (the onset every type shares) and
-/// −0.105 at RES 1, where DIRTY oscillates into its clamps.
+/// −0.105 at RES 1, where DIRTY oscillates into its clamps. RES is held to
+/// 0..1 first, a NaN to 0, so a bad value can't poison the next block's
+/// ramp.
 #[inline(always)]
+#[allow(clippy::manual_clamp)] // `clamp` passes a NaN; this lands it on 0
 pub fn dirty_q(res: f32) -> f32 {
-    2.0 * (1.0 - res * (1.0 / 0.95))
+    let r = res.max(0.0).min(1.0);
+    2.0 * (1.0 - r * (1.0 / 0.95))
 }
+
+/// `mode`'s output trim at `q`, as CLEAN's `trim` at `k`: 1 for `q ≥ ½`,
+/// linear to its trim at `q ≤ 0`, which brings the clamped ring's middle
+/// over 100 Hz – 8 kHz to −8 dBFS, the middle of the shared band
+/// (`OSC_BAND_DB`), so a TYPE switch at RES 1 doesn't jump. Ramped across
+/// the block with the output gain: one add a sample.
+#[inline(always)]
+pub fn dirty_trim(mode: FilterMode, q: f32) -> f32 {
+    // Untrimmed at RES 1, dBFS.
+    let osc = match mode {
+        FilterMode::Lp12 => DIRTY_TRIM_LP2, // −2.76 to −3.00
+        FilterMode::Bp12 => DIRTY_TRIM_BP2, // −2.75 to −2.95
+        FilterMode::Hp12 => DIRTY_TRIM_HP2, // −2.76 to −2.97
+        // NOTCH1's zero sits on the ring's pitch (−22.3 to −22.7): untrimmed,
+        // as CLEAN's NOTCH2, which never rings.
+        FilterMode::Notch => 1.0,
+        // CLEAN's; `DIRTY_MODES` holds none of them.
+        FilterMode::Lp6
+        | FilterMode::Lp24
+        | FilterMode::Bp24
+        | FilterMode::Hp24
+        | FilterMode::Phaser => 1.0,
+    };
+    let u = clampf(1.0 - 2.0 * q, 0.0, 1.0);
+    1.0 + (osc - 1.0) * u
+}
+
+/// The trims at `q ≤ 0`: `10^((−8 − mid)/20)`, `mid` the mode's untrimmed
+/// RES 1 range's middle (plan § Measured, Task 9 fix round).
+pub const DIRTY_TRIM_LP2: f32 = 0.5546;
+pub const DIRTY_TRIM_BP2: f32 = 0.5527;
+pub const DIRTY_TRIM_HP2: f32 = 0.5537;
 
 /// FREQ's `f` at ×2 before the bound, `2·sin(π·fc/(2·fs))`: exact pitch at
 /// `q = 0`. `fc/fs` is held to 0..0.497 as CLEAN's `g` is; a NaN lands on
@@ -166,13 +202,18 @@ impl Dirty {
         let n = BLOCK_SIZE as f32;
         let (mut f, f_step) = (r.f.0, (r.f.1 - r.f.0) / n);
         let (mut q, q_step) = (r.q.0, (r.q.1 - r.q.0) / n);
+        // The output gain, ½ of the mean × the mode's trim, ramped with `q`.
+        let mode = DIRTY_MODES[M as usize];
+        let gain = |q| 0.5 * DIRTY_OUT * dirty_trim(mode, q);
+        let (mut g, g1) = (gain(r.q.0), gain(r.q.1));
+        let g_step = (g1 - g) / n;
         let mut sum = 0.0f32;
         for s in buf.iter_mut() {
-            (f, q) = (f + f_step, q + q_step);
+            (f, q, g) = (f + f_step, q + q_step, g + g_step);
             let x = *s;
             sum += x;
             let m = self.sub::<M>(x, f, q) + self.sub::<M>(x, f, q);
-            *s = clampf(0.5 * DIRTY_OUT * m, -DIRTY_PEAK, DIRTY_PEAK);
+            *s = clampf(g * m, -DIRTY_PEAK, DIRTY_PEAK);
         }
         sum
     }

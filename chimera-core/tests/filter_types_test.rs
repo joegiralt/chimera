@@ -5,7 +5,10 @@ mod common;
 use chimera_core::block::{Block, DiskCode};
 use chimera_core::dsp::filter::clean::{clean_k, clean_k2, trim};
 use chimera_core::dsp::filter::coef::{g_of, tan_accurate};
-use chimera_core::dsp::filter::dirty::{DIRTY_STATE, dirty_f, dirty_f_bound, dirty_f_raw, dirty_q};
+use chimera_core::dsp::filter::dirty::{
+    DIRTY_STATE, DIRTY_TRIM_BP2, DIRTY_TRIM_HP2, DIRTY_TRIM_LP2, dirty_f, dirty_f_bound,
+    dirty_f_raw, dirty_q, dirty_trim,
+};
 use chimera_core::dsp::filter::{
     Clean, Dirty, Filter, FilterKind, FilterMode, FilterMods, K2040Voice, routed_cutoff,
 };
@@ -1426,4 +1429,75 @@ fn dirty_takes_level_and_its_clipper() {
     }
     assert!(clip > 0.5, "LED {clip}");
     assert!(f.level_running());
+}
+
+/// DIRTY's trims ramp with `q` as CLEAN's do with `k`: untouched for `q ≥
+/// ½` (RES ≤ 0.71), the mode's trim at `q ≤ 0`, linear between; NOTCH1
+/// untrimmed. `dirty_q` holds RES to 0..1 and a NaN to RES 0 (review F2).
+#[test]
+fn dirty_trim_ramps_with_q_and_q_is_sanitised() {
+    for (mode, t) in [
+        (FilterMode::Lp12, DIRTY_TRIM_LP2),
+        (FilterMode::Bp12, DIRTY_TRIM_BP2),
+        (FilterMode::Hp12, DIRTY_TRIM_HP2),
+        (FilterMode::Notch, 1.0),
+    ] {
+        assert_eq!(dirty_trim(mode, 2.0), 1.0, "{mode:?}");
+        assert_eq!(dirty_trim(mode, 0.5), 1.0, "{mode:?}");
+        assert_eq!(dirty_trim(mode, 0.0), t, "{mode:?}");
+        assert_eq!(dirty_trim(mode, dirty_q(1.0)), t, "{mode:?}");
+        let mid = dirty_trim(mode, 0.25);
+        assert!((mid - 0.5 * (1.0 + t)).abs() < 1e-6, "{mode:?}: {mid}");
+    }
+    assert_eq!(dirty_q(f32::NAN), dirty_q(0.0));
+    assert_eq!(dirty_q(-3.0), 2.0);
+    assert_eq!(dirty_q(7.0), dirty_q(1.0));
+    // A NaN RES block leaves the next block's ramp clean.
+    let mut f = Dirty::new();
+    let mut p = dirty(FilterMode::Lp12, 1000.0, f32::NAN);
+    let x = saw(2 * BLOCK_SIZE);
+    let mut b = [0.0f32; BLOCK_SIZE];
+    b.copy_from_slice(&x[..BLOCK_SIZE]);
+    f.process(&mut b, &p, SR, &FilterMods::NONE);
+    p.resonance = 0.0;
+    let mut want = Dirty::new();
+    let mut w = [0.0f32; BLOCK_SIZE];
+    w.copy_from_slice(&x[..BLOCK_SIZE]);
+    want.process(&mut w, &p, SR, &FilterMods::NONE);
+    assert_eq!(b, w);
+    b.copy_from_slice(&x[BLOCK_SIZE..]);
+    w.copy_from_slice(&x[BLOCK_SIZE..]);
+    f.process(&mut b, &p, SR, &FilterMods::NONE);
+    want.process(&mut w, &p, SR, &FilterMods::NONE);
+    assert_eq!(b, w);
+}
+
+/// The trim ramps across the block, never snaps: RES 0.7 → 0.94 (trim 1 →
+/// about 0.57) under a 50 Hz sine in LP2's pass band moves the output by
+/// no more a sample than the sine itself does, where a snapped trim steps
+/// it by about 0.1.
+#[test]
+fn dirty_trim_never_snaps() {
+    let mut p = dirty(FilterMode::Lp12, 2000.0, 0.7);
+    let mut f = Dirty::new();
+    let sine = |i: usize| 0.5 * (core::f32::consts::TAU * 50.0 * i as f32 / FS).sin();
+    let (mut last, mut steady, mut jump) = (0.0f32, 0.0f32, 0.0f32);
+    for b in 0..40 {
+        if b == 30 {
+            p.resonance = 0.94;
+        }
+        let mut buf: [f32; BLOCK_SIZE] = core::array::from_fn(|i| sine(b * BLOCK_SIZE + i));
+        f.process(&mut buf, &p, SR, &FilterMods::NONE);
+        for v in buf {
+            let d = (v - last).abs();
+            if (20..30).contains(&b) {
+                steady = steady.max(d);
+            } else if b >= 30 {
+                jump = jump.max(d);
+            }
+            last = v;
+        }
+    }
+    println!("DIRTY trim: steady step {steady:.4}, across the RES move {jump:.4}");
+    assert!(jump <= 1.5 * steady, "{jump} against {steady}");
 }
