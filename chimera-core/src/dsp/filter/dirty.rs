@@ -262,6 +262,18 @@ impl Dirty {
         self.level.running()
     }
 
+    /// `(lp, bp)`, for another type's warm start (spec § 1).
+    pub fn outputs(&self) -> (f32, f32) {
+        (self.lp, self.bp)
+    }
+
+    /// A warm start: `lp` and `bp` from another type's, held to the
+    /// states' clamp.
+    pub fn seed(&mut self, lp: f32, bp: f32) {
+        let c = |v| clampf(v, -DIRTY_STATE, DIRTY_STATE);
+        (self.lp, self.bp) = (c(lp), c(bp));
+    }
+
     /// `[lp, bp]`, for the bound tests.
     #[cfg(feature = "test-support")]
     pub fn states(&self) -> [f32; 2] {

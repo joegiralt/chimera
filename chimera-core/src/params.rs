@@ -57,7 +57,7 @@ impl FilterParams {
         *self = crate::dsp::filter::kind_change(*self, k);
     }
 
-    /// Only `kind_change` calls this; MODE is fixed up there.
+    /// `kind_change` and the filter's crossfade call this; each sets MODE.
     pub(crate) fn set_kind_raw(&mut self, k: FilterKind) {
         self.kind = k;
     }

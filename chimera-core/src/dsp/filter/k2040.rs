@@ -234,15 +234,24 @@ pub fn sat_2040(v: f32) -> f32 {
     c - (4.0 / 27.0) * c * c * c
 }
 
-/// The model's state: four stage integrators, the last block's ramps and
-/// VOICE (`None` on a fresh filter, which starts unramped).
+/// The model's state: four stage integrators and the last block's ramp
+/// ends (`None` on a fresh filter, which starts unramped). VOICE is the
+/// params', read each block: `Filter` rescales the states when it flips
+/// (`rescale`).
 #[derive(Clone, Debug, Default)]
 pub struct K2040 {
     s: [f32; 4],
-    g: Option<f32>,
-    k: Option<f32>,
-    pre: Option<f32>,
-    voice: Option<K2040Voice>,
+    /// One `Option` for the three, as DIRTY's: 8 B under three (ADR 0101's
+    /// 2,112 B voice chain).
+    last: Option<Ends>,
+}
+
+/// A block's end values of `g`, `k` and LEVEL's gain.
+#[derive(Clone, Copy, Debug)]
+struct Ends {
+    g: f32,
+    k: f32,
+    pre: f32,
 }
 
 /// One sample's coefficients at `g` and `k`: `G = g/(1 + g)`, `D = 1/(1 +
@@ -280,10 +289,6 @@ pub(super) struct Ramps {
     k: (f32, f32),
     a: (f32, f32),
     voice: K2040Voice,
-}
-
-fn ramp(last: &mut Option<f32>, to: f32) -> (f32, f32) {
-    (last.replace(to).unwrap_or(to), to)
 }
 
 impl K2040 {
@@ -349,24 +354,55 @@ impl K2040 {
         }
     }
 
-    /// This block's ramps, stored as the next block's start. A VOICE
-    /// change rescales the states by `α_new/α_old`, exact for linear
-    /// content since the output is `y/α` (spec § 3, never snapped).
+    /// A VOICE flip: the states rescaled by `α_new/α_old`, exact for linear
+    /// content since the output is `y/α` (spec § 3); `Filter` crossfades
+    /// the rest.
+    pub fn rescale(&mut self, from: K2040Voice, to: K2040Voice) {
+        let ratio = to.alpha() / from.alpha();
+        for s in &mut self.s {
+            *s *= ratio;
+        }
+    }
+
+    /// A warm start from another type's `lp` (spec § 1): every stage at
+    /// its DC steady state for that input, `lp/(1 + k)` (the loop's bass
+    /// loss), in voice `v`'s model units, within the chip's swing.
+    pub fn seed(&mut self, lp: f32, v: K2040Voice, res: f32) {
+        let s = lp * (v.alpha() / OUT_2040) / (1.0 + k2040_k(res));
+        self.s = [clampf(s, -R_2040, R_2040); 4];
+    }
+
+    /// `y₄` as another type's `lp` (spec § 1): at the output's scale on
+    /// voice `v` and the bass loss undone, `(1 + k)·y₄/α`, the input it is
+    /// the DC steady state of. Linear, POST's 3080 aside.
+    pub fn y4(&self, v: K2040Voice, res: f32) -> f32 {
+        self.s[3] * (OUT_2040 / v.alpha()) * (1.0 + k2040_k(res))
+    }
+
+    /// The stages' states, which a VOICE crossfade carries for the old
+    /// voice.
+    pub(super) fn stages(&self) -> [f32; 4] {
+        self.s
+    }
+
+    pub(super) fn set_stages(&mut self, s: [f32; 4]) {
+        self.s = s;
+    }
+
+    /// This block's ramps, stored as the next block's start.
     #[inline(always)]
     pub(super) fn ramps(&mut self, p: &FilterParams, fs: u32, mods: &FilterMods) -> Ramps {
         let v = p.voice;
-        if let Some(old) = self.voice.replace(v)
-            && old != v
-        {
-            let ratio = v.alpha() / old.alpha();
-            for s in &mut self.s {
-                *s *= ratio;
-            }
-        }
-        let gain = LevelRamp::new(ramp(&mut self.pre, level_gain(p.level)), mods).gain();
+        let to = Ends {
+            g: g_of(p.cutoff * v.trim(), fs as f32),
+            k: k2040_k(p.resonance),
+            pre: level_gain(p.level),
+        };
+        let from = self.last.replace(to).unwrap_or(to);
+        let gain = LevelRamp::new((from.pre, to.pre), mods).gain();
         Ramps {
-            g: ramp(&mut self.g, g_of(p.cutoff * v.trim(), fs as f32)),
-            k: ramp(&mut self.k, k2040_k(p.resonance)),
+            g: (from.g, to.g),
+            k: (from.k, to.k),
             a: (gain.0 * v.alpha(), gain.1 * v.alpha()),
             voice: v,
         }
@@ -470,7 +506,7 @@ impl K2040 {
 
     /// Forget the last `g`, `k` and LEVEL: the next block starts unramped.
     pub fn hold(&mut self) {
-        (self.g, self.k, self.pre) = (None, None, None);
+        self.last = None;
     }
 
     /// A fresh voice's filter: at rest and unramped.
@@ -479,11 +515,10 @@ impl K2040 {
         self.hold();
     }
 
-    /// Still ringing: a state above −80 dB at the output.
-    pub fn rings(&self) -> bool {
-        let a = self.voice.unwrap_or_default().alpha();
+    /// Still ringing on voice `v`: a state above −80 dB at the output.
+    pub fn rings(&self, v: K2040Voice) -> bool {
         let m = self.s.iter().fold(0.0f32, |m, s| m.max(s.abs()));
-        m * (OUT_2040 / a) > 1e-4
+        m * (OUT_2040 / v.alpha()) > 1e-4
     }
 
     /// The raw states, for the bound tests.
@@ -495,6 +530,6 @@ impl K2040 {
     /// The last block's `g` (`None`: no ramp next block).
     #[cfg(test)]
     pub(crate) fn last_g(&self) -> Option<f32> {
-        self.g
+        self.last.map(|e| e.g)
     }
 }

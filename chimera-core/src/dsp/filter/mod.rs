@@ -273,17 +273,105 @@ pub fn g_at(from: f32, step: f32, i: usize) -> f32 {
     from + step * (i + 1) as f32
 }
 
+/// What a block runs: TYPE, MODE and, on the 2040, VOICE. What a type
+/// ignores is normalised away (the 2040's MODE, the others' VOICE), so
+/// changing it changes nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Setting {
+    kind: FilterKind,
+    mode: FilterMode,
+    voice: K2040Voice,
+}
+
+impl Setting {
+    fn of(p: &FilterParams) -> Self {
+        match p.kind() {
+            FilterKind::K2040 => Setting {
+                kind: FilterKind::K2040,
+                mode: FilterKind::K2040.default_mode(),
+                voice: p.voice,
+            },
+            kind => Setting {
+                kind,
+                mode: p.mode(),
+                voice: K2040Voice::default(),
+            },
+        }
+    }
+
+    /// `p` running this setting; FREQ, RES and LEVEL its own.
+    fn on(self, p: &FilterParams) -> FilterParams {
+        let mut q = *p;
+        q.set_kind_raw(self.kind);
+        q.set_mode(self.mode);
+        q.voice = self.voice;
+        q
+    }
+}
+
+/// What a crossfade runs the old setting on (spec § 1).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Change {
+    /// TYPE: the old type on its own state, zeroed when the fade ends.
+    Kind,
+    /// CLEAN's MODE: the old mode on a stack copy of `Clean`; between two
+    /// cascades the copy's stage 2 is carried, since each runs it on its
+    /// own input.
+    CleanMode { stage2: bool },
+    /// DIRTY's MODE: its states run alike in every mode, so a stack copy
+    /// is exact.
+    DirtyMode,
+    /// The 2040's VOICE: the old voice on a stack copy, its states carried.
+    Voice,
+}
+
+impl Change {
+    fn of(from: Setting, to: Setting) -> Self {
+        match to.kind {
+            _ if from.kind != to.kind => Change::Kind,
+            FilterKind::Svf => Change::CleanMode {
+                stage2: clean::cascade(from.mode) && clean::cascade(to.mode),
+            },
+            FilterKind::Dirty => Change::DirtyMode,
+            FilterKind::K2040 => Change::Voice,
+        }
+    }
+}
+
+/// A crossfade under way: the setting it leaves, which of its two blocks
+/// is next, and the old side's states a stack copy can't keep
+/// (`Change::CleanMode`'s stage 2, `Change::Voice`'s stages).
+#[derive(Clone, Copy, Debug)]
+struct Fade {
+    from: Setting,
+    half: Half,
+    carry: [f32; 4],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Half {
+    First,
+    Second,
+}
+
+/// The crossfade's length, in samples: two blocks (spec § 1).
+pub const FADE_SAMPLES: usize = 2 * crate::hw::BLOCK_SIZE;
+
 /// A voice's filter: every built TYPE's state, the one its params name run
-/// each block. Until Task 10's crossfade, a TYPE change starts the incoming
-/// type from rest.
+/// each block. A change of TYPE, MODE or VOICE warm-starts the incoming
+/// setting and crossfades from the old one over two blocks, never snapped
+/// (spec § 1); one arriving mid-fade waits for its end.
 #[derive(Clone, Debug, Default)]
 pub struct Filter {
     clean: Clean,
     k2040: K2040,
     dirty: Dirty,
-    /// The last block's TYPE, MODE and VOICE; `None` before the first.
-    /// Task 10's crossfade triggers on a change of any of them.
-    last: Option<(FilterKind, FilterMode, K2040Voice)>,
+    /// The setting the last block ran (a fade's destination); `None` before
+    /// the first.
+    last: Option<Setting>,
+    /// No `pending`: the params hold the latest setting, so a change made
+    /// mid-fade is read again when the fade ends, and the last one wins.
+    fade: Option<Fade>,
 }
 
 impl Filter {
@@ -291,7 +379,9 @@ impl Filter {
         Self::default()
     }
 
-    /// One block through `p`'s TYPE: its clip for the LED.
+    /// One block through `p`'s setting, or a crossfade block into it: the
+    /// incoming setting's clip for the LED. The crossfade's blocks are
+    /// not billed (spec § 1).
     pub fn process(
         &mut self,
         buf: &mut [f32; crate::hw::BLOCK_SIZE],
@@ -299,22 +389,154 @@ impl Filter {
         fs: u32,
         mods: &FilterMods,
     ) -> crate::meter::Clip {
-        let kind = p.kind();
-        if self
-            .last
-            .replace((kind, p.mode(), p.voice))
-            .is_some_and(|(k, ..)| k != kind)
-        {
-            match kind {
+        let want = Setting::of(p);
+        let to = match (self.fade, self.last) {
+            (Some(_), Some(to)) => to,
+            (_, Some(from)) if from != want => {
+                self.start(from, want, p.resonance);
+                want
+            }
+            _ => want,
+        };
+        self.last = Some(to);
+        let q = to.on(p);
+        match self.fade {
+            None => self.run(to, buf, &q, fs, mods),
+            Some(f) => self.crossfade(f, to, buf, p, fs, mods),
+        }
+    }
+
+    fn run(
+        &mut self,
+        s: Setting,
+        buf: &mut [f32; crate::hw::BLOCK_SIZE],
+        q: &FilterParams,
+        fs: u32,
+        mods: &FilterMods,
+    ) -> crate::meter::Clip {
+        match s.kind {
+            FilterKind::Svf => self.clean.process(buf, q, fs, mods),
+            FilterKind::K2040 => self.k2040.process(buf, q, fs, mods),
+            FilterKind::Dirty => self.dirty.process(buf, q, fs, mods),
+        }
+    }
+
+    /// A fade's start: the incoming setting warm-started from the outgoing
+    /// one's outputs (spec § 1), and what the old side carries.
+    fn start(&mut self, from: Setting, to: Setting, res: f32) {
+        let mut carry = [0.0; 4];
+        match Change::of(from, to) {
+            Change::Kind => {
+                let (lp, bp) = match from.kind {
+                    FilterKind::Svf => self.clean.outputs(from.mode),
+                    FilterKind::K2040 => (self.k2040.y4(from.voice, res), 0.0),
+                    FilterKind::Dirty => self.dirty.outputs(),
+                };
+                match to.kind {
+                    FilterKind::Svf => {
+                        self.clean.seed(lp, bp);
+                        self.clean.enter(to.mode);
+                    }
+                    FilterKind::K2040 => self.k2040.seed(lp, to.voice, res),
+                    FilterKind::Dirty => self.dirty.seed(lp, bp),
+                }
+            }
+            Change::CleanMode { stage2 } => {
+                if stage2 {
+                    let [a, b] = self.clean.stage2();
+                    carry = [a, b, 0.0, 0.0];
+                }
+                self.clean.shift(from.mode, to.mode);
+            }
+            Change::DirtyMode => {}
+            Change::Voice => {
+                carry = self.k2040.stages();
+                self.k2040.rescale(from.voice, to.voice);
+            }
+        }
+        self.fade = Some(Fade {
+            from,
+            half: Half::First,
+            carry,
+        });
+    }
+
+    /// One of the fade's two blocks: the old setting on a copy of the
+    /// input, the new one on `buf`, crossfaded linearly.
+    fn crossfade(
+        &mut self,
+        mut f: Fade,
+        to: Setting,
+        buf: &mut [f32; crate::hw::BLOCK_SIZE],
+        p: &FilterParams,
+        fs: u32,
+        mods: &FilterMods,
+    ) -> crate::meter::Clip {
+        let (po, q) = (f.from.on(p), to.on(p));
+        let mut old = *buf;
+        let change = Change::of(f.from, to);
+        let mut copy = None;
+        match change {
+            Change::Kind => {
+                self.run(f.from, &mut old, &po, fs, mods);
+            }
+            Change::CleanMode { stage2 } => {
+                let mut c = self.clean.clone();
+                if stage2 {
+                    c.set_stage2([f.carry[0], f.carry[1]]);
+                }
+                c.process(&mut old, &po, fs, mods);
+                copy = Some(c);
+            }
+            Change::DirtyMode => {
+                self.dirty.clone().process(&mut old, &po, fs, mods);
+            }
+            Change::Voice => {
+                let mut c = self.k2040.clone();
+                c.set_stages(f.carry);
+                c.process(&mut old, &po, fs, mods);
+                f.carry = c.stages();
+            }
+        }
+        let clip = self.run(to, buf, &q, fs, mods);
+        if let Some(c) = copy {
+            self.clean.adopt(&c, to.mode);
+            let [a, b] = c.stage2();
+            f.carry = [a, b, 0.0, 0.0];
+        }
+        let base = match f.half {
+            Half::First => 0,
+            Half::Second => crate::hw::BLOCK_SIZE,
+        };
+        for (i, (y, o)) in buf.iter_mut().zip(&old).enumerate() {
+            let w = (base + i + 1) as f32 * (1.0 / FADE_SAMPLES as f32);
+            *y = o + (*y - o) * w;
+        }
+        self.fade = match f.half {
+            Half::First => Some(Fade {
+                half: Half::Second,
+                ..f
+            }),
+            Half::Second => {
+                self.finish(change, f.from, to);
+                None
+            }
+        };
+        clip
+    }
+
+    /// The fade's end: the state left behind zeroed, clean the next time it
+    /// is entered (spec § 1).
+    fn finish(&mut self, change: Change, from: Setting, to: Setting) {
+        if change == Change::Kind {
+            match from.kind {
                 FilterKind::Svf => self.clean.reset(),
                 FilterKind::K2040 => self.k2040.reset(),
                 FilterKind::Dirty => self.dirty.reset(),
             }
         }
-        match kind {
-            FilterKind::Svf => self.clean.process(buf, p, fs, mods),
-            FilterKind::K2040 => self.k2040.process(buf, p, fs, mods),
-            FilterKind::Dirty => self.dirty.process(buf, p, fs, mods),
+        if to.kind == FilterKind::Svf {
+            self.clean.zero_unused(to.mode);
         }
     }
 
@@ -330,15 +552,17 @@ impl Filter {
         self.clean.reset();
         self.k2040.reset();
         self.dirty.reset();
-        self.last = None;
+        (self.last, self.fade) = (None, None);
     }
 
     /// The running type still rings (the voice-end fade, #374).
     pub fn rings(&self) -> bool {
         match self.last {
-            Some((FilterKind::Svf, ..)) => self.clean.rings(),
-            Some((FilterKind::K2040, ..)) => self.k2040.rings(),
-            Some((FilterKind::Dirty, ..)) => self.dirty.rings(),
+            Some(s) => match s.kind {
+                FilterKind::Svf => self.clean.rings(),
+                FilterKind::K2040 => self.k2040.rings(s.voice),
+                FilterKind::Dirty => self.dirty.rings(),
+            },
             None => false,
         }
     }
@@ -346,9 +570,9 @@ impl Filter {
     /// LEVEL's clipper runs next block: CLEAN's or DIRTY's; the 2040 has
     /// none.
     pub fn level_running(&self) -> bool {
-        match self.last {
-            Some((FilterKind::Svf, ..)) => self.clean.level_running(),
-            Some((FilterKind::Dirty, ..)) => self.dirty.level_running(),
+        match self.last.map(|s| s.kind) {
+            Some(FilterKind::Svf) => self.clean.level_running(),
+            Some(FilterKind::Dirty) => self.dirty.level_running(),
             _ => false,
         }
     }
@@ -356,10 +580,59 @@ impl Filter {
     /// The running type's last `g` (`None`: no ramp next block).
     #[cfg(test)]
     pub(crate) fn last_g(&self) -> Option<f32> {
-        match self.last {
-            Some((FilterKind::K2040, ..)) => self.k2040.last_g(),
-            Some((FilterKind::Dirty, ..)) => self.dirty.last_f(),
+        match self.last.map(|s| s.kind) {
+            Some(FilterKind::K2040) => self.k2040.last_g(),
+            Some(FilterKind::Dirty) => self.dirty.last_f(),
             _ => self.clean.last_g(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hw::{BLOCK_SIZE, SAMPLE_RATE};
+
+    /// The type a fade leaves is zeroed when it ends, its states and ramps,
+    /// so it is clean the next time it is entered (spec § 1).
+    #[test]
+    fn a_type_left_is_zeroed_when_its_fade_ends() {
+        let mut p = FilterParams::default();
+        (p.cutoff, p.resonance) = (800.0, 0.9);
+        let mut f = Filter::new();
+        let block = |f: &mut Filter, p: &FilterParams, b: usize| {
+            let mut buf: [f32; BLOCK_SIZE] =
+                core::array::from_fn(|i| 0.5 * (((b * BLOCK_SIZE + i) % 300) as f32 / 150.0 - 1.0));
+            f.process(&mut buf, p, SAMPLE_RATE, &FilterMods::NONE);
+        };
+        for (from, to) in [
+            (FilterKind::K2040, FilterKind::Svf),
+            (FilterKind::Svf, FilterKind::Dirty),
+            (FilterKind::Dirty, FilterKind::K2040),
+        ] {
+            p.set_kind(from);
+            for b in 0..8 {
+                block(&mut f, &p, b);
+            }
+            p.set_kind(to);
+            for b in 0..2 {
+                block(&mut f, &p, b);
+                // Mid-fade, the old type still runs.
+                if b == 0 {
+                    assert!(match from {
+                        FilterKind::Svf => f.clean.rings(),
+                        FilterKind::K2040 => f.k2040.rings(p.voice),
+                        FilterKind::Dirty => f.dirty.rings(),
+                    });
+                }
+            }
+            let (rings, ramped) = match from {
+                FilterKind::Svf => (f.clean.rings(), f.clean.last_g().is_some()),
+                FilterKind::K2040 => (f.k2040.rings(p.voice), f.k2040.last_g().is_some()),
+                FilterKind::Dirty => (f.dirty.rings(), f.dirty.last_f().is_some()),
+            };
+            assert!(!rings && !ramped, "{from:?} → {to:?}");
+            assert!(f.rings(), "{to:?} runs");
         }
     }
 }

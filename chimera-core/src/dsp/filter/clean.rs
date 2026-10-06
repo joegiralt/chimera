@@ -71,13 +71,29 @@ pub struct Clean {
     /// feedback, one sample late).
     ap: [f32; 4],
     w: f32,
-    /// The last block's `g`, `k` and LEVEL gain; `None` on a fresh voice,
-    /// which starts unramped.
-    g: Option<f32>,
-    k: Option<f32>,
-    pre: Option<f32>,
+    /// The last block's ends; `None` on a fresh voice, which starts
+    /// unramped. One `Option` for the three: they are primed and forgotten
+    /// together, 8 B under three (ADR 0101's 2,112 B voice chain).
+    last: Option<Ends>,
     /// LEVEL's gain and clipper, before the loop.
     level: LevelStage,
+}
+
+/// A block's end values of `g`, `k` and LEVEL's gain.
+#[derive(Clone, Copy, Debug)]
+struct Ends {
+    g: f32,
+    k: f32,
+    pre: f32,
+}
+
+/// The modes that run the second stage: the four-pole cascades.
+#[inline(always)]
+pub(super) fn cascade(m: FilterMode) -> bool {
+    matches!(
+        m,
+        FilterMode::Lp24 | FilterMode::Bp24 | FilterMode::Hp24 | FilterMode::Hp12
+    )
 }
 
 /// One block's `(from, to)` for `g`, `k` and the LEVEL gain.
@@ -132,10 +148,6 @@ fn coef<const M: u8>(g: f32, k: f32, trim: f32) -> Coef {
         FilterMode::Lp6 | FilterMode::Lp12 | FilterMode::Bp12 | FilterMode::Notch => c.d = d_at(k),
     }
     c
-}
-
-fn ramp(last: &mut Option<f32>, to: f32) -> (f32, f32) {
-    (last.replace(to).unwrap_or(to), to)
 }
 
 impl Clean {
@@ -206,10 +218,16 @@ impl Clean {
     /// This block's ramps, stored as the next block's start.
     #[inline(always)]
     pub(super) fn ramps(&mut self, p: &FilterParams, fs: u32) -> Ramps {
+        let to = Ends {
+            g: g_of(p.cutoff, fs as f32),
+            k: clean_k(p.resonance),
+            pre: level_gain(p.level),
+        };
+        let from = self.last.replace(to).unwrap_or(to);
         Ramps {
-            g: ramp(&mut self.g, g_of(p.cutoff, fs as f32)),
-            k: ramp(&mut self.k, clean_k(p.resonance)),
-            pre: ramp(&mut self.pre, level_gain(p.level)),
+            g: (from.g, to.g),
+            k: (from.k, to.k),
+            pre: (from.pre, to.pre),
         }
     }
 
@@ -250,7 +268,7 @@ impl Clean {
     /// Forget the last `g`, `k` and LEVEL: the next block starts unramped,
     /// and LEVEL's clipper where its gate is.
     pub fn hold(&mut self) {
-        (self.g, self.k, self.pre) = (None, None, None);
+        self.last = None;
         self.level = LevelStage::default();
     }
 
@@ -276,7 +294,87 @@ impl Clean {
     /// in the audio path needs to read the ramp state back.
     #[cfg(test)]
     pub(crate) fn last_g(&self) -> Option<f32> {
-        self.g
+        self.last.map(|e| e.g)
+    }
+
+    /// `mode`'s outputs for a warm start (spec § 1), `(lp, bp)` of stage 0,
+    /// read from its states; NOTCH2's from its first all-pass, a one-pole
+    /// low-pass, and no `bp`.
+    pub fn outputs(&self, mode: FilterMode) -> (f32, f32) {
+        match mode {
+            FilterMode::Phaser => (self.ap[0], 0.0),
+            _ => (self.s2[0], self.s1[0]),
+        }
+    }
+
+    /// A warm start: both stages' states from `lp` and `bp`.
+    pub fn seed(&mut self, lp: f32, bp: f32) {
+        (self.s1, self.s2) = ([bp; 2], [lp; 2]);
+    }
+
+    /// Entering NOTCH2: each all-pass at stage 0's `lp`, its DC steady
+    /// state (spec § 1). The feedback starts from rest: seeding it at its
+    /// own DC state, `lp/(1 − fb)`, lands 4.5 % off at 1 kHz against 0.6.
+    pub fn seed_notch2(&mut self) {
+        self.ap = [self.s2[0]; 4];
+    }
+    /// A MODE change's warm start from `from` to `to`: stage 0 runs alike
+    /// in every SVF mode, so only what `to` reads beyond it starts anew
+    /// (`enter`); leaving NOTCH2, both stages start from its `lp`.
+    pub(super) fn shift(&mut self, from: FilterMode, to: FilterMode) {
+        if from == FilterMode::Phaser {
+            self.seed(self.ap[0], 0.0);
+        }
+        self.enter(to);
+    }
+
+    /// Entering `mode` with stage 0 warm: a cascade's stage 2 at its own
+    /// input's DC steady state (`lp` and `bp` of stage 0's `lp`, `bp` or
+    /// `hp`, the last near 0 at DC), NOTCH2's all-passes at `lp`.
+    pub(super) fn enter(&mut self, mode: FilterMode) {
+        match mode {
+            FilterMode::Lp24 => self.set_stage2([self.s1[0], self.s2[0]]),
+            FilterMode::Bp24 => self.set_stage2([0.0, self.s1[0]]),
+            FilterMode::Hp24 | FilterMode::Hp12 => self.set_stage2([0.0; 2]),
+            FilterMode::Phaser => self.seed_notch2(),
+            FilterMode::Lp6 | FilterMode::Lp12 | FilterMode::Bp12 | FilterMode::Notch => {}
+        }
+    }
+
+    /// Stage 2's states: what a cascade-to-cascade crossfade carries for
+    /// the old mode, whose stage 2 runs on another input.
+    pub(super) fn stage2(&self) -> [f32; 2] {
+        [self.s1[1], self.s2[1]]
+    }
+
+    pub(super) fn set_stage2(&mut self, [a, b]: [f32; 2]) {
+        (self.s1[1], self.s2[1]) = (a, b);
+    }
+
+    /// After a crossfade block: the states `mode` leaves alone take the old
+    /// mode's run (`old`), so it runs on from them next block.
+    pub(super) fn adopt(&mut self, old: &Clean, mode: FilterMode) {
+        if mode == FilterMode::Phaser {
+            (self.s1, self.s2) = (old.s1, old.s2);
+            return;
+        }
+        (self.ap, self.w) = (old.ap, old.w);
+        if !cascade(mode) {
+            self.set_stage2(old.stage2());
+        }
+    }
+
+    /// The states `mode` doesn't use zeroed (spec § 1: clean the next time
+    /// they are entered).
+    pub(super) fn zero_unused(&mut self, mode: FilterMode) {
+        if mode == FilterMode::Phaser {
+            (self.s1, self.s2) = ([0.0; 2], [0.0; 2]);
+            return;
+        }
+        (self.ap, self.w) = ([0.0; 4], 0.0);
+        if !cascade(mode) {
+            self.set_stage2([0.0; 2]);
+        }
     }
 
     /// One sample, trimmed (`trim`).

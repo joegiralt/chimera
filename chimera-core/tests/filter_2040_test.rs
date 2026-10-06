@@ -724,34 +724,39 @@ fn k2040_led_reads_the_stage_clip() {
     assert!(r80 > 0.0 && r100 > r80 && e50 > 0.0);
 }
 
-/// TYPE changes start the incoming type from rest (until Task 10's
-/// crossfade): 2040 after CLEAN is a fresh 2040.
+/// A TYPE change into the 2040 crossfades from a warm start (Task 10):
+/// from the fade's end it runs as the 2040 that was always there, within
+/// 1 % once its ring has settled; `reset` then rests every type.
 #[test]
-fn a_type_change_starts_the_incoming_type_from_rest() {
-    let x = saw(4 * BLOCK_SIZE);
+fn a_type_change_into_the_2040_lands_on_its_own_output() {
+    let x = saw(40 * BLOCK_SIZE);
     let mut p = params(K2040Voice::Exp, 700.0, 0.9, 0.6);
-    let mut fresh = K2040::new();
+    let mut always = Filter::new();
     let mut want = Vec::new();
     for c in x.chunks(BLOCK_SIZE) {
         let mut b: [f32; BLOCK_SIZE] = c.try_into().unwrap();
-        fresh.process(&mut b, &p, SR, &FilterMods::NONE);
+        always.process(&mut b, &p, SR, &FilterMods::NONE);
         want.extend_from_slice(&b);
     }
     let mut f = Filter::new();
-    for kind in [FilterKind::K2040, FilterKind::Svf] {
-        p.set_kind(kind);
-        for c in x.chunks(BLOCK_SIZE) {
-            f.process(&mut c.try_into().unwrap(), &p, SR, &FilterMods::NONE);
-        }
-    }
-    p.set_kind(FilterKind::K2040);
     let mut got = Vec::new();
-    for c in x.chunks(BLOCK_SIZE) {
+    for (i, c) in x.chunks(BLOCK_SIZE).enumerate() {
+        p.set_kind(if i < 4 {
+            FilterKind::Svf
+        } else {
+            FilterKind::K2040
+        });
         let mut b: [f32; BLOCK_SIZE] = c.try_into().unwrap();
         f.process(&mut b, &p, SR, &FilterMods::NONE);
         got.extend_from_slice(&b);
     }
-    assert_eq!(got, want);
+    let tail = 30 * BLOCK_SIZE;
+    let peak = want[tail..].iter().fold(0.0f32, |m, y| m.max(y.abs()));
+    let err = got[tail..]
+        .iter()
+        .zip(&want[tail..])
+        .fold(0.0f32, |m, (a, b)| m.max((a - b).abs()));
+    assert!(err <= 0.01 * peak, "{err} of {peak}");
     assert!(f.rings());
     f.reset();
     assert!(!f.rings());

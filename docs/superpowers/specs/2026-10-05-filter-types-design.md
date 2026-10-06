@@ -97,13 +97,16 @@
   - Routes are never touched.
 - **Never snapped: TYPE and MODE changes are warm-started and crossfaded (B5).**
   1. **Warm start.** The incoming filter's state is seeded from the outgoing filter's outputs, so it starts near steady state:
-     - CLEAN → 2040: every `sᵢ ← lp`.
+     - CLEAN or DIRTY → 2040: every `sᵢ ← lp/(1 + k)`, the DC steady state across the loop's bass loss (Task 10: `lp` alone lands 40 % off at 250 Hz).
      - CLEAN → DIRTY: `lp, bp ← lp, bp`.
-     - 2040 → CLEAN or DIRTY: both stages `lp ← y₄`, `bp ← 0`.
+     - 2040 → CLEAN or DIRTY: both stages `lp ← (1 + k)·y₄`, `bp ← 0`.
      - DIRTY → CLEAN: `lp, bp ← lp, bp`.
-     - Within CLEAN, entering NOTCH2: each all-pass state `s ← lp`, which is the all-pass's DC steady state.
+     - Within CLEAN, entering NOTCH2: each all-pass state `s ← lp`, which is the all-pass's DC steady state. Leaving it: both stages `lp ←` the first all-pass's state.
+     - Within CLEAN, entering a cascade: stage 2 at its own input's steady state (LP4 `lp, bp`; BP4 `lp ← bp`; HP4 rest).
      - Any state a type stops using is zeroed when it is left, so it is clean the next time it is entered.
   2. **Crossfade.** The old and new filters run together for two blocks (128 samples), crossfaded linearly. A MODE change runs the old mode on a stack copy of CLEAN's state. That copy and the second output buffer are 256 B of stack (DTCM).
+     - Task 10: a stack copy lives one block, so what the old side needs and the new one doesn't run alike is carried in the fade (`Fade.carry`, 16 B): stage 2 between two cascades, the 2040's four stages on a VOICE flip. The copy is 60 B (CLEAN) or 32 B (2040) beside the 256 B buffer.
+     - A change made mid-fade waits for its end: the params already hold it, so no `pending` field. The last one wins, at most 2 blocks late.
   3. **Billing.** The two blocks are not billed: they are brief and in the headroom (ADR 0061's rule for UI-only moves).
 
 ### 2. CLEAN, the home filter: the Cascadia mapping
