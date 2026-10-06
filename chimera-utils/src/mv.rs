@@ -377,8 +377,7 @@ fn refine(
         }
     }
     let tail = tail_for(t, r);
-    let (mut best_m, mut best) =
-        robust(cfg, t, std::slice::from_ref(&best_k), r, tail)?.remove(0);
+    let (mut best_m, mut best) = robust(cfg, t, std::slice::from_ref(&best_k), r, tail)?.remove(0);
     for &st in steps {
         let mut improved = true;
         while improved {
