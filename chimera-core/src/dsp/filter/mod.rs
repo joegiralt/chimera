@@ -2,7 +2,7 @@ use crate::block::DiskCode;
 use crate::dsp::modulator::pick;
 use crate::hw::BLOCK_SIZE;
 use crate::hw::Cost;
-use crate::params::FilterParams;
+use crate::params::{EngineType, FilterParams};
 use crate::taps::TapLane;
 use coef::exp2_poly;
 
@@ -197,6 +197,14 @@ impl FilterKind {
             FilterKind::Svf => &CLEAN_MODES,
             FilterKind::K2040 => &K2040_MODES,
             FilterKind::Dirty => &dirty::DIRTY_MODES,
+        }
+    }
+
+    /// The TYPE a new Sound on `e` starts with. TAPE (CLEAN) and VA (2040)
+    /// add their arms when those engines land.
+    pub const fn default_for(e: EngineType) -> FilterKind {
+        match e {
+            EngineType::Algo | EngineType::Modal => FilterKind::Svf,
         }
     }
 

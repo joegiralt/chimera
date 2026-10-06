@@ -26,7 +26,7 @@ impl Sound {
         // fixed CUTOFF column, at 0, NOTE at the kind's key default, on
         // every engine. The registry stays empty.
         let mut mod_state = ModState::with_sources(MAX_MOD_SOURCES);
-        let key = crate::dsp::filter::FilterKind::default().key_default();
+        let key = crate::dsp::filter::FilterKind::default_for(engine).key_default();
         for (s, a) in [
             (ModSource::Env1, 0),
             (ModSource::Lfo1, 0),

@@ -918,10 +918,14 @@ pub struct ParamSnapshot {
 impl ParamSnapshot {
     /// Default params for `engine`.
     pub fn for_engine(engine: EngineType) -> Self {
-        Self {
+        let mut p = Self {
             engine,
             ..Self::default()
-        }
+        };
+        let k = FilterKind::default_for(engine);
+        p.filter.set_kind_raw(k);
+        p.filter.set_mode(k.default_mode());
+        p
     }
 
     pub fn engine(&self) -> EngineType {

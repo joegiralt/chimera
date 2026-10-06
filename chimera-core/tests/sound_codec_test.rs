@@ -445,3 +445,36 @@ fn a_pitch_record_before_steal_decodes_to_cut() {
         );
     }
 }
+
+/// `<engine code> <KIND code> <MODE code>`, append-only: a new engine adds a row.
+const NEUTRAL_FILTER_ROWS: &str = include_str!("fixtures/neutral_filter_v1.txt");
+
+#[test]
+fn neutral_filter_rows_are_pinned() {
+    use chimera_core::block::DiskCode;
+    let rows: Vec<[u8; 3]> = NEUTRAL_FILTER_ROWS
+        .lines()
+        .map(|l| {
+            let v: Vec<u8> = l.split(' ').map(|n| n.parse().unwrap()).collect();
+            [v[0], v[1], v[2]]
+        })
+        .collect();
+    assert_eq!(rows.len(), EngineType::ALL.len());
+    for e in EngineType::ALL {
+        let row = rows
+            .iter()
+            .find(|r| r[0] == e.disk_code())
+            .unwrap_or_else(|| panic!("no row for {e:?}"));
+        let codes = |s: &Sound| {
+            [
+                e.disk_code(),
+                s.params.filter.kind().disk_code(),
+                s.params.filter.mode().disk_code(),
+            ]
+        };
+        assert_eq!(&codes(&Sound::init(e)), row, "init {e:?}");
+        assert_eq!(&codes(&Sound::neutral(e)), row, "neutral {e:?}");
+        let bare = decode(&file(&[engine(e)])).unwrap();
+        assert_eq!(&codes(&bare), row, "decoded {e:?}");
+    }
+}
