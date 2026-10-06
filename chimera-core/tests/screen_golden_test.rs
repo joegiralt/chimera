@@ -160,6 +160,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("orbit_scn", 0x7c2558bf895b7432),
     // TAPE's pages (TAPE Task 15): SRC, and DECK and the model page per machine.
     ("tape_src", 0xfbbf75776cb33d9f),
+    ("tape_src_missing", 0xa5c734dab1500aa7),
     ("tape_deck_oneshot", 0x09ca1c02c671ca6b),
     ("tape_page_oneshot", 0x6ec0cc6ab200711a),
     ("tape_deck_loop", 0x8d8bd167058c624a),

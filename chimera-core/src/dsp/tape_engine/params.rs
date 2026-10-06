@@ -242,12 +242,13 @@ impl TapeEngineParams {
 }
 
 /// Whether `model` reads `id`: the one table for cells, dimming and the
-/// audio test, from the machines' (`machine::MACHINES`). START, END, TAPE,
-/// AGE and WOW read on every machine; ROOT and PERIOD have no cell.
+/// audio test, from the machines' (`machine::MACHINES`, whose every page
+/// ends in WOW). START, END, TAPE and AGE read on every machine; ROOT and
+/// PERIOD have no cell.
 pub fn reads(model: TapeModel, id: ParamId) -> bool {
     type P = TapeEngineParams;
     match id {
-        P::MODEL | P::START | P::END | P::TAPE | P::AGE | P::WOW | P::ROOT | P::PERIOD => true,
+        P::MODEL | P::START | P::END | P::TAPE | P::AGE | P::ROOT | P::PERIOD => true,
         _ => super::machine::cell_of(model, id).is_some(),
     }
 }

@@ -236,12 +236,12 @@ impl Pool {
     }
 
     /// Source `r` as the audio reads it; `None` when the pool doesn't hold
-    /// it (absent included) or its descriptor doesn't read.
+    /// it (an absent one's empty bytes don't read).
     pub fn source_view(
         &self,
         r: SourceRef,
     ) -> Option<crate::dsp::tape_engine::read::SourceView<'_>> {
-        let e = self.source(self.find_source(r)?).filter(|e| !e.absent())?;
+        let e = self.source(self.find_source(r)?)?;
         let held = self
             .arena
             .bytes(e.offset + SOURCE_HEAD as u32, e.held as usize);

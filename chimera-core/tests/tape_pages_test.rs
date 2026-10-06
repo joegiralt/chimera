@@ -236,6 +236,16 @@ fn model_change_applies_machine_defaults() {
     assert_ne!(now, render_ui(&ui).hash(), "the change snapped");
     assert_ne!(settled, render_ui(&ui).hash());
 
+    // The matrix reads the new machine's labels.
+    assert_eq!(ui.matrix_state.tape, TapeModel::Stretch);
+
+    // MODEL turned past its end changes nothing, so writes nothing.
+    feed(&mut ui, Input::turn(EncoderId::A, -3)); // ONESHOT
+    ui.params_mut().tape.slice = 5;
+    feed(&mut ui, Input::turn(EncoderId::A, -1));
+    assert_eq!(ui.params().tape.model, TapeModel::Oneshot);
+    assert_eq!(ui.params().tape.slice, 5);
+
     // A Sound loaded on a machine keeps what it stored.
     {
         let t = &mut ui.params_mut().tape;
@@ -281,6 +291,16 @@ fn scrub_finger_jogs() {
         (last - turned - 0.5 * tau).abs() < 0.01,
         "{last} {turned} {tau}"
     );
+
+    // The reel stops at the tape's end.
+    ui.params_mut().tape.position = 0.99;
+    for k in 0..8u32 {
+        feed(&mut ui, Input::turn(EncoderId::B, 8).at(5_000 + k * 16));
+    }
+    for k in 1..=30u32 {
+        feed(&mut ui, Input::default().at(5_112 + k * 16));
+    }
+    assert_eq!(ui.params().tape.position, 1.0);
 
     // LOOP's POSITION steps 1/128 a detent.
     let mut ui = ui_at_deck();

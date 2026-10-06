@@ -1025,6 +1025,20 @@ pub const CASES: &[ScreenCase] = &[
     // TAPE's pages (TAPE Task 15): SRC, then DECK and the model page per
     // machine, MODEL turned from LOOP (index 1).
     ("tape_src", |ui| load_init(ui, EngineType::Tape)),
+    // A source the pool doesn't hold: SOURCE MISSING, focused.
+    ("tape_src_missing", |ui| {
+        load_init(ui, EngineType::Tape);
+        let r = chimera_core::storage::SourceRef {
+            crc: 0x5EED,
+            frames: 36_000,
+            rate: 24_000,
+        };
+        ui.project_mut()
+            .edit_part(chimera_core::project::PartId::ALL[0])
+            .sound
+            .source = Some(chimera_core::storage::TapeSource { r, tune: None });
+        feed(ui, Input::turn(EncoderId::A, 1));
+    }),
     ("tape_deck_oneshot", |ui| tape_deck(ui, -1)),
     ("tape_page_oneshot", |ui| {
         tape_deck(ui, -1);

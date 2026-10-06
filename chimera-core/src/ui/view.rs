@@ -267,11 +267,10 @@ impl View {
     /// The spec's short form, for a param shown under its own label.
     pub fn short(&self) -> Option<&'static str> {
         match *self {
-            View::Param { addr, label, .. } => match addr.spec() {
-                Some(s) if s.label == label => s.short,
-                // A machine's label carries its own short.
-                _ => machine::short_of(addr.param, label),
-            },
+            View::Param { addr, label, .. } => addr
+                .spec()
+                .filter(|s| s.label == label)
+                .and_then(|s| s.short),
             _ => None,
         }
     }
