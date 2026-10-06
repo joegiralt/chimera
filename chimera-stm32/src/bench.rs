@@ -420,6 +420,8 @@ fn switch_storm(p: &mut PartAudio, block: u32) {
 }
 
 /// The Modal Sound with its model set to `mode`.
+// Setup, never timed: one copy, not one a row.
+#[inline(never)]
 fn modal(p: &mut PartAudio, mode: ResonatorMode) {
     p.params = ParamSnapshot::for_engine(EngineType::Modal);
     p.params.modal.mode = mode;
@@ -434,6 +436,8 @@ fn hot(p: &mut PartAudio, mode: FilterMode) {
 }
 
 /// 1 OP, no routes.
+// Setup, never timed: one copy, not one a row.
+#[inline(never)]
 fn one_op(p: &mut PartAudio) -> &mut ParamSnapshot {
     p.params = algo(AlgoId::A1, 0b1, 0);
     &mut p.params
@@ -472,6 +476,8 @@ fn matrix(routes: &[(ModSource, ParamAddr, i8)]) -> ModState {
 
 /// 1 OP with `sources` routed to the VCA at 127; with `b`, ENV 2 is type
 /// B running that `Func` at that SHAPE (0.5 linear, 0.8 curved or tilted).
+// Setup, never timed: one copy, not one a row.
+#[inline(never)]
 fn on_vca(p: &mut PartAudio, sources: &[ModSource], b: Option<(Func, f32)>) {
     p.params = algo(AlgoId::A1, 0b1, 0);
     if let Some((f, shape)) = b {
