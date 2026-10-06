@@ -441,10 +441,10 @@ fn read_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: u32) -> (u
             Some(len) => {
                 p.pool
                     .source_fill(id, len, |out| match read_source_into(s, r, e.r, out) {
-                        Ok(_) => true,
+                        Ok(held) => Some(held),
                         Err(err) => {
                             fault = err.store_error().is_some();
-                            false
+                            None
                         }
                     })
             }

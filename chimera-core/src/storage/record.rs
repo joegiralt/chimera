@@ -54,6 +54,12 @@ pub enum RecordTag {
     /// A source file's packed 12-bit samples, up to 504 B a record, in
     /// order after the head.
     SourceData,
+    /// A `ZoneSet` source file's zones, right after its head: 15 B a zone
+    /// (spec § 8).
+    SourceZones,
+    /// A Sound's zone set tuning: 6 B a zone, its `root` and `period`
+    /// (spec § 8).
+    ZoneTune,
 }
 
 impl RecordTag {
@@ -79,6 +85,8 @@ impl RecordTag {
             RecordTag::SourceRef => 0x0016,
             RecordTag::SourceHead => 0x8017,
             RecordTag::SourceData => 0x0018,
+            RecordTag::SourceZones => 0x0019,
+            RecordTag::ZoneTune => 0x001A,
         }
     }
 
@@ -104,6 +112,8 @@ impl RecordTag {
             0x0016 => RecordTag::SourceRef,
             0x8017 => RecordTag::SourceHead,
             0x0018 => RecordTag::SourceData,
+            0x0019 => RecordTag::SourceZones,
+            0x001A => RecordTag::ZoneTune,
             _ => return None,
         })
     }

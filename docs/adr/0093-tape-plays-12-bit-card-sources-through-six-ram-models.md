@@ -72,6 +72,14 @@ code 23, ident `"TAPE"`, ADR 0055).
     the CRC; each zone's root and period are labels, copied into the
     Sound's `ZoneTune`.
   - In the arena: the descriptor, the layout, then each zone's head.
+  - **Built (TAPE Task 10):** a zone table is valid only as 1–24 zones
+    end to end from frame 0, each at least `MIN_SOURCE_FRAMES`, keys
+    rising MIDI notes, ending at the head's frames; `SourceZones` and
+    `SourceLayout` can't hold anything else. The `SourceZones` record
+    comes right after the head; a `ZoneSet` written without it, or under
+    a CRC that leaves the layout out, reads as damaged. A `SourceRef`
+    doesn't count zones, so a project load stages the whole gap and keeps
+    what the file says; its plan counts a zone set up to 216 B short.
   - **A head covers only the time until its first refill lands.** Its
     length is the descriptor's `head_frames`, so the format freezes none.
     TRON's spec sizes it from benched worst-case stalls and the refills one

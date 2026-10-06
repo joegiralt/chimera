@@ -50,7 +50,9 @@ impl SourceEntry {
     }
 }
 
-/// What source `r` takes held whole; `None` when it could never fit.
+/// What source `r` takes held whole, a `ZoneSet`'s layout aside (its
+/// `SourceRef` doesn't count its zones; at most 216 B more, read at
+/// load); `None` when it could never fit.
 pub(super) fn ref_cost(r: SourceRef) -> Option<Cost> {
     crate::storage::held_len(r)
         .filter(|&n| n <= super::arena::ARENA_BYTES)

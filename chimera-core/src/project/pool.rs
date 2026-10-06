@@ -261,21 +261,22 @@ impl Pool {
             });
         };
         self.source_put(s, r, held.len(), |to| {
-            to.copy_from_slice(held);
-            true
+            to[..held.len()].copy_from_slice(held);
+            Some(held.len())
         })?;
         Ok(s)
     }
 
-    /// Absent source `s` takes `len` held bytes, which `fill` writes
-    /// straight into the gap (a load's card read). They publish only when
-    /// `fill` says they are good: `Ok(false)` leaves `s` absent. Refused,
-    /// with nothing moved, when the gap can't take them.
+    /// Absent source `s` takes the held bytes `fill` writes straight into
+    /// the gap (a load's card read), at least `len`; `fill` says how many.
+    /// They publish only when `fill` says they are good: `Ok(false)` leaves
+    /// `s` absent. Refused, with nothing moved, when the gap can't take
+    /// `len`.
     pub(in crate::project) fn source_fill(
         &mut self,
         s: SourceId,
         len: usize,
-        fill: impl FnOnce(&mut [u8]) -> bool,
+        fill: impl FnOnce(&mut [u8]) -> Option<usize>,
     ) -> Result<bool, PoolFull> {
         match self.source(s) {
             Some(e) if e.absent() => self.source_put(s, e.r, len, fill),
@@ -283,14 +284,15 @@ impl Pool {
         }
     }
 
-    /// Slot `s` holds `r` with `len` bytes from `fill`, staged in the gap
-    /// and published only if `fill` is true.
+    /// Slot `s` holds `r` with the bytes `fill` writes, at least `len`,
+    /// staged in the whole gap (a zone set's layout is known only once its
+    /// file is read) and published only if `fill` gives their length.
     fn source_put(
         &mut self,
         s: SourceId,
         r: SourceRef,
         len: usize,
-        fill: impl FnOnce(&mut [u8]) -> bool,
+        fill: impl FnOnce(&mut [u8]) -> Option<usize>,
     ) -> Result<bool, PoolFull> {
         let needs = source_cost(len);
         let free = self.arena.gap();
@@ -302,15 +304,17 @@ impl Pool {
             needs,
             free: Cost::default(),
         };
-        let total = SOURCE_HEAD + len;
-        let to = self.arena.source_stage(total).map_err(busy)?;
+        let to = self
+            .arena
+            .source_stage(free.bytes() as usize)
+            .map_err(busy)?;
         let (head, bytes) = to.split_at_mut(SOURCE_HEAD);
         head.fill(0);
         head[..SourceRef::LEN].copy_from_slice(&r.to_bytes());
-        if !fill(bytes) {
+        let Some(len) = fill(bytes) else {
             return Ok(false);
-        }
-        let offset = self.arena.source_alloc(total).map_err(busy)?;
+        };
+        let offset = self.arena.source_alloc(SOURCE_HEAD + len).map_err(busy)?;
         let held = len as u32;
         self.sources.slots[s.index()] = SrcSlot::Live(SourceEntry { r, held, offset });
         self.sources.gens[s.index()] = self.sources.gens[s.index()].wrapping_add(1);

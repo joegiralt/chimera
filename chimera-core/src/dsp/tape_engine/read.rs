@@ -34,7 +34,7 @@ impl Shape {
         match self {
             Shape::Plain => 1,
             Shape::Transwave => 32,
-            Shape::ZoneSet => 24,
+            Shape::ZoneSet => MAX_ZONES,
         }
     }
 }
@@ -45,8 +45,11 @@ pub const DESC_LEN: usize = 16;
 /// window is shorter (STRETCH TAPE Task 8, fix round 2). The importer
 /// refuses a shorter file.
 pub const MIN_SOURCE_FRAMES: u32 = 64;
-/// One zone's entry in a `ZoneSet`'s layout, after the descriptor.
+/// One zone's entry in a `ZoneSet`'s layout, after the descriptor:
+/// `start` (LE), `frames` (LE), `key`.
 pub const ZONE_LAYOUT_LEN: usize = 9;
+/// The most zones a `ZoneSet` holds.
+pub const MAX_ZONES: u8 = 24;
 
 /// `held`'s first 16 B: `shape`, `count`, `rate` (LE), `head_frames` (LE,
 /// 0 when held whole), then 8 reserved zero bytes.

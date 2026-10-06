@@ -4,6 +4,7 @@ use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModSta
 use crate::name::SoundName;
 use crate::params::{EngineType, ParamSnapshot};
 use crate::project::SourceRef;
+use crate::storage::ZoneTune;
 
 pub use crate::project::{Part, PartEdit, Performance, part_block, part_block_mut};
 
@@ -20,6 +21,8 @@ pub struct Sound {
     pub dest_registry: ModDestRegistry,
     /// A TAPE Sound's source: a reference, never audio (ADR 0087).
     pub source: Option<SourceRef>,
+    /// A zone set source's tuning, copied at pick (spec § 8).
+    pub zone_tune: Option<ZoneTune>,
 }
 
 impl Sound {
@@ -43,6 +46,7 @@ impl Sound {
             mod_state,
             dest_registry,
             source: None,
+            zone_tune: None,
         }
     }
 
@@ -73,5 +77,6 @@ impl Sound {
             && self.mod_state.bits_eq(&o.mod_state)
             && self.dest_registry.bits_eq(&o.dest_registry)
             && self.source == o.source
+            && self.zone_tune == o.zone_tune
     }
 }

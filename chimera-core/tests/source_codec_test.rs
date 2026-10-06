@@ -521,7 +521,7 @@ fn write_source_refuses_what_tape_cant_play() {
         ("rate", slow, &data),
         ("a Plain of 2", two, &data),
         ("length", h, &data[..data.len() - 3]),
-        ("a ZoneSet before its layout", zones, &data),
+        ("a ZoneSet head alone, no zones", zones, &data),
     ];
     for (what, head, d) in cases {
         let mut s = MemStore::new(1);
@@ -733,8 +733,8 @@ fn pool_source_rules() {
     );
 }
 
-/// `h`'s samples as a 4-zone `ZoneSet` head, its CRC as TAPE Task 2 has
-/// it: no layout folded in yet.
+/// `h`'s samples as a 4-zone `ZoneSet` head, its CRC with no layout
+/// folded in (`zone_set_crc` folds it).
 fn zone_set(h: &SourceHead, data: &[u8]) -> SourceHead {
     SourceHead {
         shape: Shape::ZoneSet,
@@ -748,16 +748,16 @@ fn zone_set(h: &SourceHead, data: &[u8]) -> SourceHead {
 }
 
 /// A framed file whose CRC and length match its head, but whose head TAPE
-/// can't play (too short, or a `ZoneSet` with no layout yet), reads as
-/// missing: nothing enters the arena.
+/// can't play (too short), or a `ZoneSet` whose samples come with no
+/// `SourceZones` record, reads as missing: nothing enters the arena.
 #[test]
 fn an_unplayable_head_reads_missing() {
     let (short, short_data) = source(30, 62, "SHORT");
     let (h, data) = source(31, 1_000, "ZONES");
     let zones = zone_set(&h, &data);
-    for (what, head, body) in [
-        ("62 frames", short, &short_data),
-        ("a ZoneSet", zones, &data),
+    for (what, head, body, err) in [
+        ("62 frames", short, &short_data, FileError::Bounds),
+        ("a ZoneSet with no zones", zones, &data, FileError::Corrupt),
     ] {
         let mut s = MemStore::new(1);
         put_raw(&mut s, &head, body);
@@ -766,8 +766,56 @@ fn an_unplayable_head_reads_missing() {
             .run(&mut s, |s, r| read_source_into(s, r, head.sref, &mut out))
             .unwrap()
             .result;
-        assert_eq!(r, Err(LoadError::File(FileError::Bounds)), "{what}");
+        assert_eq!(r, Err(LoadError::File(err)), "{what}");
     }
+}
+
+/// A project's zone set loads whole through pass 2: the arena holds its
+/// descriptor, its layout and its samples, and costs what they take.
+#[test]
+fn a_zone_set_loads_with_its_layout() {
+    use chimera_core::storage::{SourceLayout, SourceZones, Zone, write_descriptor, zone_set_crc};
+    let zones: Vec<Zone> = (0..3)
+        .map(|i| Zone {
+            start: 500 * i,
+            frames: 500,
+            key: 48 + 12 * i as u8,
+            root: 4_800 + 1_200 * i as u16,
+            period_q16: 0,
+        })
+        .collect();
+    let z = SourceZones::new(&zones).unwrap();
+    let (plain, data) = source(38, 1_500, "TRON");
+    let h = SourceHead {
+        shape: Shape::ZoneSet,
+        count: 3,
+        sref: SourceRef {
+            crc: zone_set_crc(&z, &data),
+            ..plain.sref
+        },
+        ..plain
+    };
+    let mut s = MemStore::new(1);
+    let w = Card::new().run(&mut s, |s, r| {
+        chimera_core::storage::write_zone_set(s, r, &h, &z, &data)
+    });
+    assert_eq!(w.unwrap().result, Ok(Wrote::New));
+    let l = SourceLayout::zoned(h, z).unwrap();
+    let mut want = vec![0; l.held_len()];
+    let at = write_descriptor(&l, &mut want);
+    want[at..].copy_from_slice(&data);
+
+    let (mut p, _) = Project::boxed();
+    p.source_absent(h.sref).unwrap();
+    let (q, note) = round_trip(&mut s, &mut p);
+    assert_eq!(note, None);
+    let tok = &mut q.pool().table().reader().expect("one reader");
+    assert_eq!(arena_bytes(&q, tok, h.sref), Some(want));
+    let id = q.pool().find_source(h.sref).unwrap();
+    assert_eq!(
+        q.pool().source(id).unwrap().cost(),
+        Cost::of(16 + l.held_len())
+    );
 }
 
 /// An unsealed file that verifies (a write cut at its seal, or a host copy
