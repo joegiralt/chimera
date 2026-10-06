@@ -12,7 +12,7 @@ use crate::params::{EngineType, ParamSnapshot};
 use crate::preset::Sound;
 
 use super::block_codec::{ByteSet, decode_block, encode_block};
-use super::codes::{MIGRATIONS, TRANSLATIONS, ValidAddr, readdress};
+use super::codes::{DiskAddr, MIGRATIONS, TRANSLATIONS, ValidAddr, readdress};
 use super::file::{Check, Decode};
 use super::frame::{Event, FileError, FileKind};
 use super::record::records_crc;
@@ -53,7 +53,12 @@ fn addr_code(a: ParamAddr) -> [u8; 2] {
 /// The stored address with these codes, if this firmware has it; a
 /// retired one through `READDRESS` (DRIVE's routes land on LEVEL).
 fn addr_of(block: u8, id: u8) -> Option<ParamAddr> {
-    let (block, id) = readdress(block, id);
+    if let Some(a) = readdress(DiskAddr {
+        block,
+        id: ParamId(id),
+    }) {
+        return Some(a);
+    }
     let b = BlockRef::from_disk_code(block)?;
     ValidAddr::find(b, ParamId(id)).map(ValidAddr::addr)
 }
@@ -369,8 +374,11 @@ fn mod_dests(p: &[u8], staged: Option<&mut Sound>) -> Result<(), FileError> {
     if let Some(s) = staged {
         let mut m = ModState::with_sources(sources.into());
         for &[block, id] in dests {
-            // `push` refuses one that isn't modulatable: skipped.
-            if let Some(addr) = addr_of(block, id) {
+            // `push` refuses one that isn't modulatable: skipped. One
+            // already there (DRIVE's beside LEVEL's) is not added twice.
+            if let Some(addr) = addr_of(block, id)
+                && m.find(addr).is_none()
+            {
                 m.push(addr);
             }
         }

@@ -71,7 +71,7 @@ pub fn decode_block(
     let slot = |id: ParamId| specs.iter().position(|s| s.id == id);
 
     let mut vals = [None; MAX_BLOCK_PARAMS];
-    let mut retired = Retired::new();
+    let mut retired = Retired::new(seen);
     for (id, raw) in entries {
         let (a, v) = match ValidAddr::find(b, id) {
             Some(a) => (a, value(a, raw)),
@@ -117,6 +117,7 @@ pub fn decode_block(
 }
 
 /// A set of `u8`s: ids or codes a record may name once.
+#[derive(Clone, Copy)]
 pub(super) struct ByteSet([u32; 8]);
 
 impl ByteSet {
@@ -227,19 +228,12 @@ mod tests {
         }
     }
 
-    /// A re-address lands in the same block, on a live, stored and
-    /// modulatable param, so the routes it carries can play.
+    /// A re-address lands on a modulatable param, so the routes it
+    /// carries can play (spec tables are `static`: no const check).
     #[test]
-    fn readdress_targets_live_modulatable_params() {
-        for &((fb, fid), (tb, tid)) in READDRESS {
-            assert_eq!(fb, tb);
-            let b = BlockRef::from_disk_code(tb).expect("a live block");
-            assert!(
-                ValidAddr::find(b, ParamId(fid)).is_none(),
-                "{fb} {fid} live"
-            );
-            let a = ValidAddr::find(b, ParamId(tid)).expect("a stored target");
-            assert!(a.spec().modulatable, "{tb} {tid}");
+    fn readdress_targets_are_modulatable() {
+        for (_, to) in READDRESS {
+            assert!(to.modulatable(), "{to:?}");
         }
     }
 }

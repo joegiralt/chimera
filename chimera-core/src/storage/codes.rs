@@ -13,7 +13,7 @@ use crate::orbit::scene::TargetKind;
 use crate::orbit::walk::Walk;
 use chimera_theory::{Degree, PitchClass};
 
-use super::block_codec::MAX_BLOCK_PARAMS;
+use super::block_codec::{ByteSet, MAX_BLOCK_PARAMS};
 
 impl BlockRef {
     /// The block's code. `Option`, so a block that is never stored can be
@@ -169,24 +169,37 @@ pub struct Migration {
 
 pub const MIGRATIONS: &[Migration] = &[];
 
-/// A block's retired values from one file, by old `ParamId`.
-pub struct Retired([Option<f32>; MAX_BLOCK_PARAMS]);
+/// A block's retired values from one file, by old `ParamId`, and the ids
+/// the file held.
+pub struct Retired {
+    old: [Option<f32>; MAX_BLOCK_PARAMS],
+    held: ByteSet,
+}
 
 impl Retired {
-    pub(super) const fn new() -> Self {
-        Retired([None; MAX_BLOCK_PARAMS])
+    pub(super) const fn new(held: ByteSet) -> Self {
+        Retired {
+            old: [None; MAX_BLOCK_PARAMS],
+            held,
+        }
     }
 
     pub(super) fn put(&mut self, id: ParamId, v: f32) {
-        self.0[usize::from(id.0)] = Some(v);
+        self.old[usize::from(id.0)] = Some(v);
     }
 
     pub fn get(&self, id: ParamId) -> Option<f32> {
-        self.0.get(usize::from(id.0)).copied().flatten()
+        self.old.get(usize::from(id.0)).copied().flatten()
     }
 
     pub fn any(&self) -> bool {
-        self.0.iter().any(Option::is_some)
+        self.old.iter().any(Option::is_some)
+    }
+
+    /// The file named `id`, live or retired, whatever its value: a stored
+    /// param beats one translated into it.
+    pub fn held(&self, id: ParamId) -> bool {
+        self.held.contains(id.0)
     }
 }
 
@@ -217,23 +230,41 @@ pub const TRANSLATIONS: &[Translation] = &[
     },
 ];
 
-/// A param as a file names it: `(block code, param id)`.
-pub type DiskAddr = (u8, u8);
+/// A param as a file names it, which this firmware may no longer have.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DiskAddr {
+    pub block: u8,
+    pub id: ParamId,
+}
+
+impl DiskAddr {
+    /// `id` of the stored block `b`: a block without a code fails the build.
+    pub const fn of(b: BlockRef, id: ParamId) -> DiskAddr {
+        match b.disk_code() {
+            Some(block) => DiskAddr { block, id },
+            None => panic!("a block that is never stored"),
+        }
+    }
+}
+
+/// The filter's DRIVE (id 2), retired for LEVEL (ADR 0096).
+pub const FILTER_DRIVE: DiskAddr = DiskAddr::of(BlockRef::Filter, ParamId(2));
 
 /// A retired address whose routes, ModDests and registry entries a file
-/// loads at another, live one, amount and label kept: `(from, to)`.
-/// DRIVE's land on LEVEL (ADR 0096).
-pub const READDRESS: &[(DiskAddr, DiskAddr)] = &[((10, 2), (10, 12))];
+/// loads at a live param, amount and label kept. DRIVE's land on LEVEL.
+pub const READDRESS: &[(DiskAddr, ParamAddr)] = &[(
+    FILTER_DRIVE,
+    ParamAddr::new(BlockRef::Filter, crate::params::FilterParams::LEVEL),
+)];
 
 // Only a retired address is re-addressed, so a live one always loads as
-// itself, and never onto itself.
+// itself.
 const _: () = {
     let mut i = 0;
     while i < READDRESS.len() {
-        let (from, to) = READDRESS[i];
-        assert!(from.0 != to.0 || from.1 != to.1);
+        let from = READDRESS[i].0;
         let mut j = 0;
-        while j < RETIRED.len() && (RETIRED[j].0 != from.0 || RETIRED[j].1 != from.1) {
+        while j < RETIRED.len() && (RETIRED[j].0 != from.block || RETIRED[j].1 != from.id.0) {
             j += 1;
         }
         assert!(j < RETIRED.len(), "re-addressed but not retired");
@@ -241,12 +272,12 @@ const _: () = {
     }
 };
 
-/// `(block, id)` as a file names it, re-addressed if it's retired.
-pub fn readdress(block: u8, id: u8) -> DiskAddr {
+/// The live param a retired address's routes load at, if any.
+pub fn readdress(a: DiskAddr) -> Option<ParamAddr> {
     READDRESS
         .iter()
-        .find(|(from, _)| *from == (block, id))
-        .map_or((block, id), |&(_, to)| to)
+        .find(|(from, _)| *from == a)
+        .map(|&(_, to)| to)
 }
 
 /// A param that exists in a live spec table. Only built from one, so a saver

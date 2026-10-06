@@ -2,13 +2,10 @@
 //! attenuates below unity (spec § LEVEL, ADR 0096). It replaced DRIVE
 //! (Filter 2, retired), which translates to it on load.
 
-use crate::block::{Block, ParamId};
+use crate::block::Block;
 use crate::dsp::{clampf, fast_exp2};
 use crate::params::FilterParams;
-use crate::storage::Retired;
-
-/// DRIVE's retired id: read from old files, never written or reused.
-const DRIVE: ParamId = ParamId(2);
+use crate::storage::{FILTER_DRIVE, Retired};
 
 /// LEVEL's gain, `2^(4·LEVEL − 2)`: ×¼ at 0, exactly 1 at ½, ×4 at 1. One
 /// `fast_exp2` a block; the gain ramps per sample.
@@ -27,10 +24,13 @@ pub fn level_from_drive(drive: f32) -> f32 {
 }
 
 /// The Filter block's translation (`storage::TRANSLATIONS`): a file's
-/// DRIVE becomes LEVEL. Such a file has no LEVEL, as the firmware never
-/// writes DRIVE again; one holding only FM, ENV or KEY is untouched.
+/// DRIVE becomes LEVEL. The firmware never writes DRIVE again, so a file
+/// holding both is crafted: its LEVEL wins. One holding only FM, ENV or
+/// KEY is untouched.
 pub fn translate_drive(r: &Retired, b: &mut dyn Block) {
-    if let Some(d) = r.get(DRIVE) {
+    if let Some(d) = r.get(FILTER_DRIVE.id)
+        && !r.held(FilterParams::LEVEL)
+    {
         b.set(FilterParams::LEVEL, level_from_drive(d));
     }
 }

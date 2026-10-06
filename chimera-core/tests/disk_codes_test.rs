@@ -450,13 +450,6 @@ fn mod_source_codes_round_trip() {
     assert_eq!(ModSource::from_disk_code(255), None);
 }
 
-/// DRIVE (Filter 2) is gone for good: LEVEL (12) took its place (ADR 0096).
-#[test]
-fn drive_id_2_is_retired() {
-    assert!(RETIRED.contains(&(10, 2)));
-    assert!(ValidAddr::find(BlockRef::Filter, ParamId(2)).is_none());
-}
-
 #[test]
 fn retired_never_live() {
     assert_eq!(
