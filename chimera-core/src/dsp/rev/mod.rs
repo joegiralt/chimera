@@ -72,8 +72,9 @@ const WET_BLOOM: f32 = 5.72;
 
 /// ROOM's four loops (ADR 0095) set it: their gains, targets, dampers and
 /// four smear offsets, 84 B past ADR 0085's 160, and GRAIN's envelope,
-/// seed and cached scale and knee, 16 more (104 with the tests' probes).
-pub const ENGINE_STATE_MAX: usize = 264;
+/// seed and its scale and knee, cached and eased, 24 more (112 with the
+/// tests' probes).
+pub const ENGINE_STATE_MAX: usize = 272;
 const _: () = assert!(core::mem::size_of::<EngineState>() <= ENGINE_STATE_MAX);
 
 /// Blocks each fade of the switch takes: 20 ms at 48 kHz.

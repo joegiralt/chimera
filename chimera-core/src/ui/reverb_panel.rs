@@ -363,6 +363,8 @@ pub fn value_text(id: ParamId, p: &ReverbParams, tempo: Tempo, fold: FoldState) 
         ),
         // A cutoff: `6.1k`, `11k`.
         P::DAMPING => khz(k.damp_hz),
+        // ROOM's opens toward its top: what the filter does.
+        P::TONE if p.kind == ReverbType::Room => khz(room::tone_shown_hz(k.tone_hz)),
         P::TONE => khz(k.tone_hz),
         // Taps: `10.2`; else the allpass g, `0.60`.
         P::DIFFUSE if burst => (k.taps, 1, ""),

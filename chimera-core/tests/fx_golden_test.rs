@@ -43,17 +43,17 @@ const MV2_ROOM: &[(u8, &str, [f32; 7])] = &[
     (
         3,
         "rev_room_mv03",
-        [0.847, 0.534, 0.036, 0.026, 0.088, 0.623, 0.161],
+        [0.847, 0.534, 0.034, 0.026, 0.088, 0.611, 0.161],
     ), // Small Bright .3
     (
         5,
         "rev_room_mv05",
-        [0.643, 0.714, 0.0, 0.0, 0.077, 0.424, 0.642],
+        [0.644, 0.718, 0.0, 0.0, 0.085, 0.426, 0.634],
     ), // Medium Bright .6
     (
         8,
         "rev_room_mv08",
-        [0.619, 0.702, 0.91, 0.0, 0.077, 0.394, 0.78],
+        [0.615, 0.708, 0.91, 0.0, 0.085, 0.402, 0.796],
     ), // Medium Dark .6
     (
         9,
@@ -260,13 +260,13 @@ const GOLDENS: &[(&str, u64)] = &[
     ("reverb_ring_smear", 0xa7e01c103cc02150),
     // ROOM v2 (ADR 0095, reverb TYPEs T9b), on program 5's knobs; HALL on
     // the LOOP engine (T10).
-    ("rev_room", 0xf006888168aea99c),
+    ("rev_room", 0x97b4651629782f42),
     // ROOM v2 at each MidiVerb II program's fitted knobs (`MV2_ROOM`).
     ("rev_room_mv01", 0x60df4ce32d30852d),
     ("rev_room_mv02", 0x2262abda362a7850),
-    ("rev_room_mv03", 0x28273aab652e0b37),
-    ("rev_room_mv05", 0xd64a5b75c70c4b80),
-    ("rev_room_mv08", 0x520b38197118c849),
+    ("rev_room_mv03", 0xbf5c053012b74e28),
+    ("rev_room_mv05", 0x97b4651629782f42),
+    ("rev_room_mv08", 0x24116176210c0052),
     ("rev_room_mv09", 0xfdff8543b7be57e0),
     ("rev_room_mv10", 0x85a254c66db5f2c7),
     ("rev_room_mv11", 0x193920776227df0d),

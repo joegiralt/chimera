@@ -135,11 +135,12 @@ const KNOB_SLOTS: [ParamId; 9] = [
 /// Each TYPE's starting knobs (spec § Each TYPE's knobs), by `KNOB_SLOTS`,
 /// in screen order. QUAD writes only TIME, DAMP, SIZE, SMEAR and RATE.
 /// ROOM's are MidiVerb II program 5's (Medium Bright .6), BLOOM's program
-/// 45's (Bloom 1), each fitted on the Rust render (ADR 0095), with SMEAR
-/// 0.3.
+/// 45's (Bloom 1), each fitted on the Rust render (ADR 0095). ROOM's is
+/// the program exactly, SMEAR 0; BLOOM's keeps SMEAR 0.3 (the owner rules
+/// at UAT).
 const START: [[f32; 9]; 6] = [
     [0.5, 0.3, 0.5, 0.3, 0.4, 0.0, 0.2, 0.0, 0.5],
-    [0.714, 0.424, 0.643, 0.0, 0.0, 0.077, 0.642, 0.3, 0.5],
+    [0.718, 0.426, 0.644, 0.0, 0.0, 0.085, 0.634, 0.0, 0.5],
     [0.45, 0.3, 0.65, 0.3, 0.4, 0.15, 0.2, 0.35, 0.4],
     [0.948, 0.3, 0.705, 0.578, 0.165, 0.132, 0.2, 0.3, 0.4],
     [0.3, 0.3, 0.55, 0.2, 0.7, 0.0, 0.2, 0.0, 0.5],

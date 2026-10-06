@@ -35,7 +35,8 @@ use crate::dsp::ring::{FULL_SCALE, RING_LEN};
 use super::WET_ROOM;
 use super::arena::ReverbArena;
 use super::parts::{
-    Lines, Scratch, XFADE, XFADE_INV, ap_f32, clip, ease, ease_k, one_pole, pair_in, pow2, wrap,
+    Lines, Scratch, XFADE, XFADE_INV, ap_f32, clip, ease, ease_k, lg2, one_pole, pair_in, pow2,
+    wrap,
 };
 
 /// `$body` once per literal, `$k` that literal as a `const`: `ring.rs`'s.
@@ -57,6 +58,25 @@ pub const PER_MS: f32 = FS / 1000.0;
 // ROOM programs (github.com/thement/midiverb_emulator's decompilation,
 // GPL-3.0), used by the owner's approval of 2026-10-05. Only these
 // tables carry them; nothing else here comes from the emulator.
+
+/// TONE's input one-pole coefficient at `tone_hz`: a one-pole at the
+/// cutoff, opened toward a bypass over `TONE_RAMP_HZ`..`TONE_OPEN_HZ`.
+pub fn tone_coef(tone_hz: f32) -> f32 {
+    let open = clampf(
+        (tone_hz - TONE_RAMP_HZ) * (1.0 / (TONE_OPEN_HZ - TONE_RAMP_HZ)),
+        0.0,
+        1.0,
+    );
+    let a = one_pole(tone_hz, FS);
+    a + open * (1.0 - a)
+}
+
+/// The cutoff TONE's filter has at `tone_hz`: `tone_hz` under the ramp,
+/// higher inside it, as the filter opens (what its cell reads).
+pub fn tone_shown_hz(tone_hz: f32) -> f32 {
+    let a = tone_coef(tone_hz);
+    -lg2(1.0 - a) * (FS / (LOG2_E * core::f32::consts::TAU))
+}
 
 /// The diffuser's five allpasses, fixed.
 pub const DIFFUSER_MS: [f32; 5] = [0.81, 1.92, 3.59, 4.91, 6.24];
@@ -455,13 +475,18 @@ impl Seconds {
 pub struct GrainDecay {
     full: Seconds,
     slope: f32,
+    /// The share at DECAY's shortest RT60: the least the gate sees.
+    least: f32,
 }
 
 impl GrainDecay {
-    /// A slope from 0 (no law) to 1 (the level in proportion).
-    pub const fn new(full: Seconds, slope: f32) -> Self {
+    /// A slope from 0 (no law) to 1 (the level in proportion), over DECAY's
+    /// range from `shortest` up.
+    pub const fn new(full: Seconds, slope: f32, shortest: Seconds) -> Self {
         assert!(slope >= 0.0 && slope <= 1.0, "a slope: 0 to 1");
-        Self { full, slope }
+        let r = shortest.0 / full.0;
+        let least = exp2(slope * log2(if r < 1.0 { r } else { 1.0 }));
+        Self { full, slope, least }
     }
 
     /// The level's share at `rt60_s`, 0–1.
@@ -537,10 +562,12 @@ impl Grain {
         tilt: Tilt,
         seed: u32,
     ) -> Self {
-        let ring = level.ring().get();
+        // The knee's threshold is knee × level × DECAY's share: the floor
+        // under it at the least share, both ends of SIZE.
+        let ring = level.ring().get() * decay.least;
         assert!(
             gate.floor.0 < gate.small.0 * ring && gate.floor.0 < gate.large.0 * ring,
-            "the gate's floor under its knee"
+            "the gate's floor under its knee at the shortest DECAY"
         );
         Self {
             level,
@@ -573,10 +600,15 @@ impl Grain {
     }
 }
 
+/// DECAY's shortest RT60, s.
+const SHORTEST_RT60: f32 = match crate::dsp::reverb::ROOM.time {
+    crate::dsp::reverb::TimeLaw::Decay { rt60_s } => rt60_s.lo,
+    _ => panic!("ROOM's TIME is a DECAY"),
+};
 /// ROOM's GRAIN, fitted by the GRAIN metric (ADR 0095).
 pub const GRAIN: Grain = Grain::new(
     Lsb13::new(2.6),
-    GrainDecay::new(Seconds::new(0.8), 0.5),
+    GrainDecay::new(Seconds::new(0.8), 0.5, Seconds::new(SHORTEST_RT60)),
     GrainGate::new(
         Ms::new(20.0),
         Knee::new(0.8),
@@ -658,6 +690,8 @@ pub struct Room {
     /// GRAIN's noise scale and its gate's 1/knee, for DECAY and the lengths
     /// crossfading to.
     t_grain: (f32, f32),
+    /// GRAIN's scale and 1/knee as eased toward `t_grain`.
+    grain_k: (f32, f32),
     /// The dampers, one a loop. Unrounded (ADR 0085, HALL as built).
     lp: [f32; 4],
     /// This block's SMEAR offsets (start, end), ring samples: `D·(1 + x)`.
@@ -706,6 +740,7 @@ impl Default for Room {
             t_cs: (0.0, 0.0),
             t_g: [[0.0; 2]; 4],
             t_grain: (0.0, 0.0),
+            grain_k: (0.0, 0.0),
             lp: [0.0; 4],
             smear: [(0.0, 0.0); 4],
             env: 0.0,
@@ -802,13 +837,7 @@ impl Room {
             // TONE's top opens the input filter, as DAMP's the dampers:
             // the unit has none, and 10 kHz cost the bright programs'
             // 4–11.7 kHz 1–1.5 dB (ADR 0095, GRAIN's refit).
-            let open = clampf(
-                (k.tone_hz - TONE_RAMP_HZ) * (1.0 / (TONE_OPEN_HZ - TONE_RAMP_HZ)),
-                0.0,
-                1.0,
-            );
-            let a = one_pole(k.tone_hz, FS);
-            self.t_ta = a + open * (1.0 - a);
+            self.t_ta = tone_coef(k.tone_hz);
             // DAMP's top end opens the damper (ADR 0095's first near
             // miss): a bypass, not 10 kHz.
             self.t_da = if k.damp_hz >= DAMP_OPEN_HZ {
@@ -841,6 +870,8 @@ impl Room {
         ease(&mut self.gs, k.diffuse_g.min(self.t_cap), k20);
         ease(&mut self.cs.0, self.t_cs.0, k20);
         ease(&mut self.cs.1, self.t_cs.1, k20);
+        ease(&mut self.grain_k.0, self.t_grain.0, k20);
+        ease(&mut self.grain_k.1, self.t_grain.1, k20);
         for l in 0..4 {
             for s in 0..2 {
                 ease(&mut self.g[l][s], self.t_g[l][s], k50);
@@ -990,11 +1021,11 @@ impl Room {
     /// LCG's top 16 bits, tilted, at `GRAIN`'s level for DECAY, times the
     /// gate, read off the envelope before this sample. Branch-free: the
     /// same work at every level. Its scale and knee are cached with the
-    /// other targets: they move with DECAY, and with SIZE by the length
-    /// crossfades' steps.
+    /// other targets (DECAY, and SIZE by the length crossfades' steps) and
+    /// eased on the 20 ms ease, once a block: never snapped.
     #[inline(always)]
     fn grain(&mut self, l: &mut [f32; HALF], r: &mut [f32; HALF]) {
-        let (kn, inv_t) = self.t_grain;
+        let (kn, inv_t) = self.grain_k;
         let (mut env, mut x) = (self.env, self.seed);
         // Each side's last draw: the seed is R's, one step back L's.
         let (mut pl, mut pr) = (draw(lcg_back(x)), draw(x));

@@ -378,9 +378,9 @@ fn cells_read_their_starting_values() {
         (P::DIFFUSE, "0.45"),
         (P::PREDELAY, "4ms"),
         (P::DAMPING, "4.5k"),
-        (P::SMEAR, "0.3ms"),
+        (P::SMEAR, "OFF"),
         (P::RATE, "0.32Hz"),
-        (P::SHAPE, "58"),
+        (P::SHAPE, "57"),
     ] {
         assert_eq!(text(id, &p).as_str(), w, "ROOM {id:?}");
     }
@@ -403,8 +403,24 @@ fn cells_read_their_starting_values() {
     assert_eq!(text(P::DAMPING, &open).as_str(), "OFF");
     let open = ReverbParams { tone: 0.0, ..p };
     assert_eq!(text(P::TONE, &open).as_str(), "OFF");
-    let shut = ReverbParams { tone: 0.01, ..p };
-    assert_ne!(text(P::TONE, &shut).as_str(), "OFF");
+    // Inside the ramp it reads the filter as it is, opening: above the
+    // knob's own cutoff, falling to it at the ramp's foot.
+    let khz = |tone: f32| {
+        let t = text(P::TONE, &ReverbParams { tone, ..p });
+        t.as_str()
+            .trim_end_matches('k')
+            .parse::<f32>()
+            .expect("kHz")
+    };
+    let ramp: Vec<f32> = [0.01, 0.02, 0.03, 0.04, 0.05].map(khz).to_vec();
+    assert!(
+        ramp[0] > 12.0 && ramp.windows(2).all(|w| w[1] <= w[0]),
+        "{ramp:?}"
+    );
+    assert_eq!(
+        text(P::TONE, &ReverbParams { tone: 0.06, ..p }).as_str(),
+        "9.2k"
+    );
     let p = ReverbParams::default().with_type(ReverbType::Hall, &KnobMemory::new());
     for (id, w) in [
         (P::SIZE, "342ms"),

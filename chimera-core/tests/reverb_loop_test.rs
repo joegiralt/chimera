@@ -805,8 +805,9 @@ fn room_smear_does_not_move_the_tails_peak() {
 fn size_tail(from: f32, start: f32, coarse: u16) -> Vec<f32> {
     let mut p = params(1.0);
     // DIFFUSE 0.4 (g 0.55): at the starting 0.45 the 50 ms control's
-    // slap passes the check, so it has no teeth there.
-    (p.time, p.size, p.diffuse) = (1.0, from, 0.4);
+    // slap passes the check, so it has no teeth there. SMEAR 0.3, where
+    // the control was tuned: at 0 its 50 ms slap passes too.
+    (p.time, p.size, p.diffuse, p.smear) = (1.0, from, 0.4, 0.3);
     let (rv, pc) = (fresh(&p), RefCell::new(p));
     if coarse > 0 {
         rv.borrow_mut()
@@ -1063,8 +1064,8 @@ fn mv_room(k: [f32; 7]) -> ReverbParams {
     p
 }
 const MV01: [f32; 7] = [0.42, 0.189, 0.036, 0.0, 0.0, 0.923, 0.0];
-const MV05: [f32; 7] = [0.643, 0.714, 0.0, 0.0, 0.077, 0.424, 0.642];
-const MV08: [f32; 7] = [0.619, 0.702, 0.91, 0.0, 0.077, 0.394, 0.78];
+const MV05: [f32; 7] = [0.644, 0.718, 0.0, 0.0, 0.085, 0.426, 0.634];
+const MV08: [f32; 7] = [0.615, 0.708, 0.91, 0.0, 0.085, 0.402, 0.796];
 
 /// ROOM on `p` fed `input`, with GRAIN and without: (with, without), each
 /// (l, r).
@@ -1229,7 +1230,7 @@ fn room_is_silent_at_idle() {
 
 /// Once the tail is gone the grain is too, exactly: where ROOM without
 /// GRAIN reads zero, ROOM with it reads zero, and the envelope sits under
-/// the gate's floor.
+/// the gate's floor (so the gate, not underflow, shuts it).
 #[test]
 fn no_grain_without_a_tail() {
     let p = mv_room(MV05);
@@ -1238,6 +1239,79 @@ fn no_grain_without_a_tail() {
     let quiet = |x: &[f32]| x[x.len() - last..].iter().all(|&s| s == 0.0);
     assert!(quiet(&off.0) && quiet(&off.1), "the tail outlasts the test");
     assert!(quiet(&on.0) && quiet(&on.1), "grain after the tail");
+    // Block by block: once the tail has been exact zeros for two blocks
+    // (so the envelope only falls) and the envelope is under the floor
+    // but not yet nothing, the grain is exactly none: the floor, not
+    // underflow, shuts the gate.
+    let (on, off) = (fresh(&p), fresh(&p));
+    off.borrow_mut().room_mut().expect("ROOM").grain_off();
+    let x = harness_burst(SR as usize / 2);
+    let floor = room::GRAIN.gate().floor().get();
+    let (mut under, mut silent) = (0, 0);
+    for b in 0..blocks(4.0) {
+        let send: Blk = core::array::from_fn(|i| x(b * BLOCK_SIZE + i));
+        let env = on.borrow().room().expect("ROOM").grain_env();
+        let (a, z) = (
+            tick(&mut on.borrow_mut(), &send, &p),
+            tick(&mut off.borrow_mut(), &send, &p),
+        );
+        if silent >= 2 && env < floor && env > 0.01 * floor {
+            under += 1;
+            assert!(a == z, "grain with the envelope {env} under the floor");
+        }
+        let zero = z.0.iter().chain(&z.1).all(|&v| v == 0.0);
+        silent = if zero { silent + 1 } else { 0 };
+    }
+    assert!(under > 10, "{under} blocks under the floor");
+}
+
+/// GRAIN's level eases when DECAY moves, as every knob does: under a held
+/// send (the gate open), DECAY 1 → 0 takes the level to half (the DECAY
+/// law), over the 20 ms ease, not in a block. The same draws with DECAY
+/// held are the reference: their ratio is the level's.
+#[test]
+fn grain_level_eases_with_decay() {
+    let mut p = mv_room(MV05);
+    p.time = 1.0;
+    let x = harness_burst(SR as usize * 2);
+    let (on, off) = (fresh(&p), fresh(&p));
+    let (on_h, off_h) = (fresh(&p), fresh(&p));
+    for rv in [&off, &off_h] {
+        rv.borrow_mut().room_mut().expect("ROOM").grain_off();
+    }
+    let at = blocks(1.0);
+    let mut ratio = Vec::new();
+    for b in 0..blocks(1.5) {
+        let send: Blk = core::array::from_fn(|i| x(b * BLOCK_SIZE + i));
+        let q = ReverbParams {
+            time: if b >= at { 0.0 } else { 1.0 },
+            ..p
+        };
+        let g = |a: (Blk, Blk), z: (Blk, Blk)| -> f64 {
+            a.0.iter()
+                .zip(&z.0)
+                .map(|(u, v)| f64::from(u - v).powi(2))
+                .sum()
+        };
+        let moved = g(
+            tick(&mut on.borrow_mut(), &send, &q),
+            tick(&mut off.borrow_mut(), &send, &q),
+        );
+        let held = g(
+            tick(&mut on_h.borrow_mut(), &send, &p),
+            tick(&mut off_h.borrow_mut(), &send, &p),
+        );
+        if b >= at {
+            ratio.push((moved / held).sqrt());
+        }
+    }
+    assert!(
+        ratio[0] > 0.9,
+        "the level steps: {:.3} in the first block",
+        ratio[0]
+    );
+    let last = ratio[ratio.len() - 1];
+    assert!((last - 0.5).abs() < 0.05, "settles at {last:.3}, want 0.5");
 }
 
 /// Every fresh ROOM draws the same grain (goldens reproduce), and it is

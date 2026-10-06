@@ -454,7 +454,7 @@ fn the_reverb_pages_turn_by_the_panel() {
     use chimera_core::dsp::reverb::ReverbType;
     turn(&mut ui, EncoderId::A, 1);
     // ROOM on its starting knobs: MidiVerb II program 5's SIZE (ADR 0095).
-    assert_eq!((rev(&ui).kind, rev(&ui).size), (ReverbType::Room, 0.643));
+    assert_eq!((rev(&ui).kind, rev(&ui).size), (ReverbType::Room, 0.644));
     turn(&mut ui, EncoderId::A, -1);
     assert_eq!(rev(&ui).kind, ReverbType::Quad);
     assert!((rev(&ui).size - (0.5 + 1.0 / 31.0)).abs() < 1e-4);

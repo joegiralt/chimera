@@ -125,8 +125,8 @@ fn zeroed_engine_state_is_quad_default() {
 
 #[test]
 fn engine_state_fits() {
-    // ROOM v2's four loops and GRAIN (ADR 0095): 104 B past ADR 0085's 160.
-    assert!(core::mem::size_of::<EngineState>() <= 264);
+    // ROOM v2's four loops and GRAIN (ADR 0095): 112 B past ADR 0085's 160.
+    assert!(core::mem::size_of::<EngineState>() <= 272);
 }
 
 #[test]
