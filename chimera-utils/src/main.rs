@@ -169,6 +169,9 @@ fn run() -> Result<bool, String> {
         "mv-verify" => mv::verify(&cfg, ty(0)?, fits.as_deref()),
         "mv-ab" => mv::ab(&cfg, ty(0)?).map(|_| true),
         "mv-structure" => mv::structure(&cfg, &nums(rest)?).map(|_| true),
+        "model-compare" if rest.len() >= 3 => {
+            models::compare(&cfg, &rest[0], &rest[1], &nums(&rest[2..])?).map(|_| true)
+        }
         "model-fit" if rest.len() >= 2 => {
             models::fit(&cfg, &rest[0], &nums(&rest[1..])?).map(|_| true)
         }

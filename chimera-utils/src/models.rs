@@ -8,11 +8,12 @@
 //! dense ramp. `model-fit VARIANT PROG …` fits a variant's knobs.
 
 use crate::Config;
+use crate::SR;
 use crate::metrics::{Metrics, distance, ir_metrics, noise_band_rt60, residuals, verdict};
 use crate::reference::read_wav;
 use crate::sig::{ERFC_INV_SQRT2, box_same, hanning, resample_poly, welch};
-use crate::SR;
 use crate::stim::{CLICK_AT, click, lhs, noise_stim};
+use chimera_core::dsp::reverb::ReverbType;
 use rayon::prelude::*;
 use serde_json::{Map, Value, json};
 use std::f64::consts::PI;
@@ -331,6 +332,9 @@ enum Ty {
 
 struct Variant {
     ty: Ty,
+    /// The firmware's own TYPE (rendered through the real `FxBus`), not
+    /// the float model.
+    fw: Option<ReverbType>,
     dims: &'static [&'static str],
     sweep: usize,
     starts: usize,
@@ -427,6 +431,8 @@ const GATE_DIMS: &[&str] = &[
     "size", "time", "tone", "diffuse", "shape", "predelay", "damping",
 ];
 const REV_DIMS: &[&str] = &["size", "time", "tone", "diffuse", "shape", "hit", "onset"];
+/// The firmware's REVERSE: ONSET is PRE-DLY's slot; the hit is fixed.
+const FW_REV_DIMS: &[&str] = &["size", "time", "tone", "diffuse", "shape", "predelay"];
 const REVR_DIMS: &[&str] = &[
     "size", "time", "tone", "diffuse", "shape", "hit", "onset", "ramp",
 ];
@@ -434,12 +440,30 @@ const REVR_DIMS: &[&str] = &[
 fn variant(name: &str) -> Result<Variant, String> {
     let v = |ty, dims, sweep, starts, ek| Variant {
         ty,
+        fw: None,
         dims,
         sweep,
         starts,
         ek,
     };
+    let fw = |ty, t, dims| Variant {
+        ty,
+        fw: Some(t),
+        dims,
+        sweep: 160,
+        starts: 3,
+        ek: gate_base,
+    };
     Ok(match name {
+        // The firmware as built (ADR 0095 § GATE and REVERSE, as built).
+        "fw-gate" => fw(Ty::Gate, ReverbType::Gate, GATE_DIMS),
+        // A wider search: gate4's sweep and starts.
+        "fw-gate-wide" => Variant {
+            sweep: 280,
+            starts: 5,
+            ..fw(Ty::Gate, ReverbType::Gate, GATE_DIMS)
+        },
+        "fw-reverse" => fw(Ty::Rev, ReverbType::Reverse, FW_REV_DIMS),
         "gate4" => v(Ty::Gate, GATE_DIMS, 280, 5, gate4),
         "gate5" => v(Ty::Gate, GATE_DIMS, 280, 5, gate5),
         "gate6" => v(Ty::Gate, GATE_DIMS, 280, 5, |k| Ek {
@@ -752,6 +776,23 @@ struct Meas {
 }
 
 /// `long`: the references' 20 s tails (2 s charge), for a long REGEN.
+/// `x` through the real reverb of TYPE `t` at knobs `k` (the rest at
+/// SMEAR 0 and RATE ½), as `devices::render_reverb` renders it.
+fn fw_render(t: ReverbType, k: &K, x: &[f64]) -> Vec<f64> {
+    let v = [
+        "size", "time", "tone", "diffuse", "predelay", "smear", "rate", "shape", "damping",
+    ]
+    .map(|n| match n {
+        "rate" => 0.5,
+        _ => kv(k, n) as f32,
+    });
+    let x: Vec<f32> = x.iter().map(|&s| s as f32).collect();
+    crate::devices::render_reverb(t, &v, &x)
+        .into_iter()
+        .map(f64::from)
+        .collect()
+}
+
 fn measure(var: &Variant, k: &K, seeds: usize, long: bool) -> Meas {
     let ek = (var.ek)(k);
     let (cs, charge, tail) = if long {
@@ -760,12 +801,16 @@ fn measure(var: &Variant, k: &K, seeds: usize, long: bool) -> Meas {
         (4.0, 1.0, 3.0)
     };
     let c = click(cs);
+    let go = |x: &[f64]| match var.fw {
+        Some(t) => fw_render(t, k, x),
+        None => render(&ek, x),
+    };
     let (h, ys) = rayon::join(
-        || render(&ek, &c),
+        || go(&c),
         || {
             (0..seeds)
                 .into_par_iter()
-                .map(|s| render(&ek, &noise_stim(s as u32, charge, tail).0))
+                .map(|s| go(&noise_stim(s as u32, charge, tail).0))
                 .collect::<Vec<_>>()
         },
     );
@@ -813,6 +858,11 @@ fn fit_one(var: &Variant, p: u32, r: &Ref, start: Option<&K>) -> (K, Meas, f64) 
     };
     // A polish (from earlier fits): fine steps on 16 seeds.
     let (cands, steps): (Vec<(f64, K)>, &[f64]) = match start {
+        // The firmware from the model's fits: the search's steps, smaller.
+        // `MODEL_POLISH`: the firmware's fits, polished as the model's.
+        Some(k) if var.fw.is_some() && std::env::var_os("MODEL_POLISH").is_none() => {
+            (vec![(0.0, k.clone())], &[0.05, 0.015, 0.005])
+        }
         Some(k) => (vec![(0.0, k.clone())], &[0.012, 0.004]),
         None => {
             let mut c: Vec<(f64, K)> = lhs(var.sweep, dims.len(), p)
@@ -827,6 +877,7 @@ fn fit_one(var: &Variant, p: u32, r: &Ref, start: Option<&K>) -> (K, Meas, f64) 
             (c, &[0.08, 0.025, 0.008])
         }
     };
+    let polish = std::env::var_os("MODEL_POLISH").is_some();
     let best = cands
         .par_iter()
         .map(|(_, k0)| {
@@ -834,9 +885,9 @@ fn fit_one(var: &Variant, p: u32, r: &Ref, start: Option<&K>) -> (K, Meas, f64) 
             let mut bs = score(var, &measure(var, &bk, 4, long), r);
             for &st in steps {
                 let seeds = match (start, st < 0.01) {
-                    (Some(_), _) => 16,
-                    (None, true) => 8,
-                    (None, false) => 4,
+                    (Some(_), _) if var.fw.is_none() || polish => 16,
+                    (_, true) => 8,
+                    (_, false) => 4,
                 };
                 bs = score(var, &measure(var, &bk, seeds, long), r);
                 let mut imp = true;
@@ -974,6 +1025,51 @@ pub fn fit(cfg: &Config, name: &str, progs: &[u32]) -> Result<(), String> {
         serde_json::to_string_pretty(&Value::Object(out)).unwrap(),
     )
     .map_err(|e| e.to_string())
+}
+
+/// `model-compare A B PROG …` with `MODEL_START`: each program's start
+/// knobs measured under variants `a` and `b` (16 seeds), side by side: a
+/// model's gap from the firmware.
+pub fn compare(cfg: &Config, a: &str, b: &str, progs: &[u32]) -> Result<(), String> {
+    let (va, vb) = (variant(a)?, variant(b)?);
+    let p = std::env::var_os("MODEL_START").ok_or("set MODEL_START")?;
+    let start: Value =
+        serde_json::from_str(&std::fs::read_to_string(&p).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    for &p in progs {
+        let r = load_ref(cfg, p, va.ty)?;
+        let k = start[&p.to_string()]["knobs"]
+            .as_object()
+            .cloned()
+            .ok_or("no knobs")?;
+        for (n, v) in [(a, &va), (b, &vb)] {
+            if std::env::var_os("MODEL_IR").is_some() {
+                let c = click(1.0);
+                let h = match v.fw {
+                    Some(t) => fw_render(t, &k, &c),
+                    None => render(&(v.ek)(&k), &c),
+                };
+                let h: Vec<f32> = h.iter().map(|&x| x as f32).collect();
+                let path = cfg.out.join(format!("models/ir_{n}_{p}.wav"));
+                crate::reference::write_f32(&path, &h, SR as u32)?;
+            }
+            let m = measure(v, &k, 16, false);
+            let x = residuals(&m.m, &r.m);
+            println!(
+                "#{p} {n:10} rt {} pre {:+.1} c50 {:+.1} ned {} cen {}%",
+                x.band_rt60_rel[1..6]
+                    .iter()
+                    .map(|b| pct(b.unwrap_or(1.0)))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                x.predelay_ms,
+                x.c50_db,
+                x.ned_rel.map(pct).join("/"),
+                pct(x.centroid_rel)
+            );
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
