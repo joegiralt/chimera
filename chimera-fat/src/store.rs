@@ -459,6 +459,16 @@ impl<D: Medium> Store for FatStore<D> {
         self.run(vol, |fs, _| fs.read(file, sink))
     }
 
+    fn read_at(
+        &mut self,
+        vol: VolumeId,
+        file: FileName,
+        offset: u32,
+        sink: &mut dyn ReadSink,
+    ) -> Result<(), StoreError> {
+        self.run(vol, |fs, _| fs.read_at(file, offset, sink))
+    }
+
     fn write(
         &mut self,
         vol: VolumeId,

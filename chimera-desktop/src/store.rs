@@ -2,7 +2,7 @@
 
 use chimera_hal::store::{ByteSink, CHUNK, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -159,9 +159,20 @@ impl Store for DirStore {
         file: FileName,
         sink: &mut dyn ReadSink,
     ) -> Result<(), StoreError> {
+        self.read_at(vol, file, 0, sink)
+    }
+
+    fn read_at(
+        &mut self,
+        vol: VolumeId,
+        file: FileName,
+        offset: u32,
+        sink: &mut dyn ReadSink,
+    ) -> Result<(), StoreError> {
         self.open(vol)?;
         let mut fh = File::open(self.file_path(file)).map_err(io_err)?;
-        let len = fh.metadata().map_err(io_err)?.len();
+        let len = fh.metadata().map_err(io_err)?.len().saturating_sub(offset.into());
+        fh.seek(SeekFrom::Start(offset.into())).map_err(io_err)?;
         if sink.begin(len as u32).is_break() {
             return Ok(());
         }

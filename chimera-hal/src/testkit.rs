@@ -112,8 +112,19 @@ impl Store for MemStore {
         file: FileName,
         sink: &mut dyn ReadSink,
     ) -> Result<(), StoreError> {
+        self.read_at(vol, file, 0, sink)
+    }
+
+    fn read_at(
+        &mut self,
+        vol: VolumeId,
+        file: FileName,
+        offset: u32,
+        sink: &mut dyn ReadSink,
+    ) -> Result<(), StoreError> {
         self.open(vol)?;
         let data = self.files.get(&file).ok_or(StoreError::NotFound)?;
+        let data = data.get(offset as usize..).unwrap_or_default();
         if sink.begin(data.len() as u32).is_break() {
             return Ok(());
         }

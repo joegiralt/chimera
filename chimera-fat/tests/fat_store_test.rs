@@ -1220,3 +1220,42 @@ fn remove_dir_takes_only_an_empty_one() {
         assert_eq!(read_back(&mut s, vol, f), b"again", "{what}");
     }
 }
+
+/// TAPE Task 17: `read_at(off)` streams `read()[off..]`, its `begin` that
+/// length, for offsets across block and cluster edges; past the end, none.
+#[test]
+fn read_at_matches_read() {
+    struct Begun(u32, Vec<u8>);
+    impl chimera_hal::store::ReadSink for Begun {
+        fn begin(&mut self, len: u32) -> core::ops::ControlFlow<()> {
+            self.0 = len;
+            core::ops::ControlFlow::Continue(())
+        }
+        fn chunk(&mut self, b: &[u8]) -> core::ops::ControlFlow<()> {
+            self.1.extend_from_slice(b);
+            core::ops::ControlFlow::Continue(())
+        }
+    }
+    for image in [fat16(16_384, 1), fat32_counted(1)] {
+        let disk = Rc::new(image);
+        let mut s = probed(&disk);
+        let vol = s.mount().unwrap();
+        s.make_dir(vol, Dir::Chimera).unwrap();
+        let body = pattern(3, 9_000);
+        s.write(vol, name(b"DATA"), &mut |w| w.put(&body)).unwrap();
+        let whole = read_back(&mut s, vol, name(b"DATA"));
+        assert_eq!(whole, body);
+        let cluster = layout_of(&disk).cluster_bytes() as usize;
+        let mut offs = vec![0, 1, 511, 512, 513, 4_095, 4_096, 8_999, 9_000, 9_500];
+        for c in [cluster, 2 * cluster] {
+            offs.extend([c - 1, c, c + 1].into_iter().filter(|&o| o < 9_000));
+        }
+        for off in offs {
+            let mut got = Begun(u32::MAX, Vec::new());
+            s.read_at(vol, name(b"DATA"), off as u32, &mut got).unwrap();
+            let want = whole.get(off..).unwrap_or_default();
+            assert_eq!(got.0 as usize, want.len(), "begin at {off}");
+            assert_eq!(got.1, want, "bytes at {off}");
+        }
+    }
+}
