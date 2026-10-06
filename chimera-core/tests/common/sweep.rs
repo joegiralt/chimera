@@ -407,7 +407,7 @@ impl Bench {
     }
 
     /// Each voice's last LEVEL clip.
-    pub fn filter_clips(&self) -> [f32; chimera_core::hw::MAX_VOICES] {
+    pub fn filter_clips(&self) -> [chimera_core::meter::Clip; chimera_core::hw::MAX_VOICES] {
         self.inst.filter_clips()
     }
 

@@ -1396,6 +1396,7 @@ The moving, LEVEL and tap terms are deltas, not over `OLD_LP24`, and don't chang
 
 ### Task 7: LEVEL's clipper, gate fade and LED (2026-10-06)
 
+- **The fade is `ease::Gate`** (fix round 1), the drive's and fold's 20 ms law: a fresh `LevelStage` lands where its gate is, and `Clean::hold` resets it.
 - **Where it runs.** LEVEL's gain left CLEAN's loops for its own pass before them (`LevelStage::run`), so the 2040 can take the gain into its stages without the clipper (`LevelRamp` carries the gain and its gate; only CLEAN and DIRTY own a `LevelStage`). Three loops: the gain alone (gate shut, LEVEL off ½; skipped at exactly ½), the clipper faded in, and the clipper fading. The clipper is `sat_c1` branch-free (`c + u − ½·u·|u|`, four `vmaxnm`/`vminnm`); the ramps step by adding.
 - **Probes** (`tools/loop_count.py`, which now reads an unrolled loop's stride, bench ELF in `target/t7`), a sample:
 
@@ -1410,9 +1411,11 @@ The moving, LEVEL and tap terms are deltas, not over `OLD_LP24`, and don't chang
   | LEVEL clipper, fading (+ peak, 20 ms) | 4 × | 20.0 | 0 |
 
   Steady LP4 with the clipper held in: 41 + 16.6 = 57.6, **+10.6** over Task 3's 47 (budget +12), ceil5((57.6 + 3.19) × 1.606 + 12 × 0.047) = 95 cycles against 80: +15, under `FILTER_LEVEL_COST` 20. While the gate's 20 ms fade runs: 61.0, +14.0 (2 over), 105 cycles. At LEVEL ½, gate shut: 41, cheaper than before.
-- **The LED.** `clip_amount(peak) = clamp((peak − 1)/2, 0, 1)` per block. The engine's full-scale saw (0.94) through a voice reads 0.11, 0.31, 0.57, 0.91 and 1 at LEVEL 0.6–1.0. A per-block peak flickers on a note whose period is longer than a block; the UI's 150 ms hold (Task 17) covers it.
-- **The gate in a voice** shuts only when `StageEase` lands LEVEL exactly on ½, about 65 blocks after it is set back; until then the clipper runs (transparent), and the bill (Task 15, stored LEVEL > ½ or routed) does not see it.
+- **The LED.** `clip_amount(peak) = clamp((peak − 1)/2, 0, 1)` per block, a `meter::Clip`. The engine's full-scale saw (0.94) through a voice reads 0.11, 0.31, 0.57, 0.91 and 1 at LEVEL 0.6–1.0. **Fix round 1:** `FILTER_CLIP` is a `ClipMeter`: audio raises it each block (`fetch_max` on the bits, which `Clip` keeps non-negative so they order as values), and the UI takes it once a frame (`swap(0)`), so no one-block clip between frames is missed. Task 17's `ClipHold` reads `take()`. `MASTER_GR` is a `DbMeter`: the dB and the clip have their own types. The 2040's LED raises the same meter from its own stage clip (task-8-amendment).
+- **The gate in a voice** shuts only when `StageEase` lands LEVEL on ½ (within 1e-5): measured with the real `Ease`, up to 163 blocks after it is set back from LEVEL 1 (152 from 0.75, 104 from 0.51), then 15 more of fade. Until then the clipper runs, transparent. A bill on "stored LEVEL > ½ or routed" misses that tail, so Task 15 bills `FILTER_LEVEL_COST` from `Voice::filter_level_running()` (`LevelStage::running`: the gate open or the fade not yet out), the spec's "while it runs". (Fix round 1.)
+- **The bill is the held figure.** The fading loop is +14.0 (2 over the +12 budget, about +5 cycles over the 20 bill) for 20 ms after each gate change; `FILTER_LEVEL_COST` stays 20 from the held clipper's +10.6. (Fix round 1.)
 - **NOTCH2 (Task 5's review):** `notch2_fb` is held to ±0.7, so RES 1.5 or −3 decay like RES 1 (−90.4 dB after 0.5 s at worst); `rings()` holds NOTCH2's tail.
 - **Re-recorded ("LEVEL clips past unity, ADR 0096"):** `filter_test::every_mode_renders_as_recorded`, all 8 rows: LEVEL ×3 drives its ±1 saw to ±3 into the clipper. No `golden_test`, `instrument_test` or `codec_compat_test` row moved: every factory and fixture Sound is at LEVEL ½.
 - **Flash:** `text` 710,368 → 710,960 (+592 B), default release build.
+- **Fix round 1 flash:** `text` 710,960 → 711,368 (+408 B). Probes unchanged (gain 4.31, held 16.62, fading 20.00, LP4 41 / 82).
 - **Stack** (stack-check on `target/t7`): default 48,240, no default 47,196, bench 57,472, bench,master-tape 57,488, orbit 49,032, bench,orbit 60,704 B, +24 to +32 B each.

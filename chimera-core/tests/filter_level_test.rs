@@ -8,12 +8,12 @@ use chimera_core::block::DiskCode;
 use chimera_core::dsp::algo::params::AlgoOpParams;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::filter::{
-    Clean, FilterMods, LevelRamp, LevelStage, clip_amount, level_from_drive, level_gain,
+    Clean, FilterMods, LevelRamp, LevelStage, clip_amount, clipped, level_from_drive, level_gain,
 };
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::lfo::LfoShape;
 use chimera_core::factory::factory_sound;
-use chimera_core::meter::FILTER_CLIP;
+use chimera_core::meter::{Clip, FILTER_CLIP};
 use chimera_core::mod_path::{LABEL_LEN, ModDestRegistry};
 use chimera_core::modulation::{ModSource, ModState};
 use chimera_core::params::{DriveParams, EngineType, FilterParams, ParamSnapshot};
@@ -340,6 +340,17 @@ fn a_fresh_filter_clips_from_its_first_sample() {
     Clean::new().process(&mut a, &p, 48_000, &FilterMods::NONE);
     warm.process(&mut b, &p, 48_000, &FilterMods::NONE);
     assert_eq!(a, b);
+    // A voice reused from a note at LEVEL ½ (gate shut) starts fresh too.
+    let mut reused = Clean::new();
+    let mut half = p;
+    half.level = 0.5;
+    for _ in 0..20 {
+        reused.process(&mut [0.0; BLOCK_SIZE], &half, 48_000, &FilterMods::NONE);
+    }
+    reused.reset();
+    let mut c = sine(0.9, 3);
+    reused.process(&mut c, &p, 48_000, &FilterMods::NONE);
+    assert_eq!(c, a);
 }
 
 /// The bench: P1 plays `wave` on OP A alone (0.94 full scale), dry,
@@ -365,6 +376,34 @@ fn bench(wave: WaveId, drive: f32, tone: f32) -> (Bench, Param) {
     (b, find(flt, FilterParams::LEVEL))
 }
 
+/// The bill's flag through a voice: the clipper runs past unity, and on
+/// after LEVEL is set back to ½ while the ease lands and the fade falls;
+/// then it stops.
+#[test]
+fn a_voice_reports_its_clipper_running() {
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    p.algo = chimera_core::dsp::algo::params::AlgoParams::single(WaveId::SAW);
+    p.filter.level = 0.75;
+    let mut rig = Rig::new(chimera_hal::SAMPLE_RATE);
+    rig.note_on(MidiNote::new(45).unwrap(), Velocity::new(127).unwrap(), &p);
+    let mut buf = [0.0f32; BLOCK_SIZE];
+    for _ in 0..20 {
+        rig.render(&mut buf, &p, &ModState::new());
+        assert!(rig.voice.filter_level_running());
+    }
+    p.filter.level = 0.5;
+    let mut on = 0;
+    for _ in 0..400 {
+        rig.render(&mut buf, &p, &ModState::new());
+        if rig.voice.filter_level_running() {
+            on += 1;
+        }
+    }
+    println!("running {on} blocks after LEVEL 0.75 → ½");
+    assert!(on > 15 && on < 400, "{on}");
+    assert!(!rig.voice.filter_level_running());
+}
+
 /// LEVEL 0.5 ↔ 0.51 every 100 ms for 2 s, the gate opening and shutting on
 /// a sine DRIVE pushes to ±1.4: the 20 ms fade, never a step. Not a saw:
 /// its own edge is a second difference of 1.9 a period, which hides a
@@ -386,7 +425,7 @@ fn crossing_unity_does_not_step() {
             events.push(blk);
         }
         b.render(&mut tape);
-        lit = lit.max(FILTER_CLIP[0].read());
+        lit = lit.max(FILTER_CLIP[0].take().get());
     }
     // The gate really opened on a saw past ±1: the clipper ran, and bit.
     println!("LED at most {lit}");
@@ -419,6 +458,61 @@ fn the_gate_fades_both_ways() {
     );
 }
 
+/// The fade is 20 ms, 15 blocks, both ways: a held 1.4 sine at gain 1, the
+/// gate opened (a route on LEVEL) at block 0. Block 7's blend of clipped
+/// into dry lies in 7/15 ± 1/15 on every sample the knee bends; block 15 is
+/// `clipped` exactly. Shut again, the same toward dry, and block 15 is the
+/// dry exactly. `running` holds through the fade-out and drops after it.
+#[test]
+fn the_fade_takes_20_ms_both_ways() {
+    let x = |b: usize| -> [f32; BLOCK_SIZE] {
+        core::array::from_fn(|i| 1.4 * ((b * BLOCK_SIZE + i) as f32 * 0.21).sin())
+    };
+    let routed = FilterMods { level_routed: true };
+    let (open, shut) = (
+        LevelRamp::new((1.0, 1.0), &routed),
+        LevelRamp::new((1.0, 1.0), &FilterMods::NONE),
+    );
+    let mut st = LevelStage::default();
+    // Primed shut.
+    st.run(&mut x(0), shut);
+    assert!(!st.running());
+    for (lv, toward) in [(open, 1.0f32), (shut, 0.0)] {
+        for b in 0..=15 {
+            let dry = x(b);
+            let mut y = dry;
+            st.run(&mut y, lv);
+            assert_eq!(st.running(), lv.open() || b < 14, "block {b}");
+            let blends: Vec<f32> = dry
+                .iter()
+                .zip(&y)
+                .filter(|(d, _)| (clipped(**d) - **d).abs() > 0.05)
+                .map(|(d, y)| (y - d) / (clipped(*d) - d))
+                .collect();
+            assert!(blends.len() > 4, "block {b}");
+            let want = if toward == 1.0 {
+                b as f32 / 15.0
+            } else {
+                1.0 - b as f32 / 15.0
+            };
+            if b == 7 {
+                for f in &blends {
+                    assert!(
+                        (f - want).abs() <= 1.0 / 15.0 + 1e-4,
+                        "block 7: {f}, want {want}"
+                    );
+                }
+            }
+            if b == 15 {
+                let exact: [f32; BLOCK_SIZE] =
+                    dry.map(|d| if toward == 1.0 { clipped(d) } else { d });
+                assert_eq!(y, exact, "block 15 toward {toward}");
+            }
+        }
+    }
+    assert!(!st.running());
+}
+
 /// The largest second difference of a 1.4 sine through a `LevelStage` whose
 /// block `b` ends at gain `gain(b)`, over 20 × 100 ms.
 fn gate_run(gain: impl Fn(usize) -> f32) -> f32 {
@@ -449,7 +543,7 @@ fn voice_clip(level: f32, amp: f32) -> f32 {
     for b in 0..HELD + 20 {
         rig.render(&mut buf, &p, &ModState::new());
         if b >= HELD {
-            most = most.max(rig.voice.filter_clip());
+            most = most.max(rig.voice.filter_clip().get());
         }
     }
     most
@@ -465,7 +559,7 @@ fn led_is_zero_when_off_and_rises_with_level() {
     let mut st = LevelStage::default();
     let mut x = saw_block(0).map(|v| v * 3.0);
     st.run(&mut x, shut);
-    assert_eq!(st.clip(), 0.0);
+    assert_eq!(st.clip(), Clip::ZERO);
     // At most 1 after the gain, at any LEVEL past ½: 0.
     for l in [0.55, 0.7, 0.85, 1.0] {
         let g = level_gain(l);
@@ -476,7 +570,7 @@ fn led_is_zero_when_off_and_rises_with_level() {
             let mut x = saw_block(b).map(|v| v / g);
             assert_eq!(
                 c.process(&mut x, &p, 48_000, &FilterMods::NONE),
-                0.0,
+                Clip::ZERO,
                 "LEVEL {l}"
             );
         }
@@ -495,15 +589,18 @@ fn led_is_zero_when_off_and_rises_with_level() {
     p.level = 0.7;
     let mut most = 0.0f32;
     for b in 0..20 {
-        most = most.max(c.process(&mut saw_block(b), &p, 48_000, &FilterMods::NONE));
+        most = most.max(
+            c.process(&mut saw_block(b), &p, 48_000, &FilterMods::NONE)
+                .get(),
+        );
     }
-    let want = clip_amount(level_gain(0.7));
+    let want = clip_amount(level_gain(0.7)).get();
     assert!((most - want).abs() <= 1e-3, "{most}, want {want}");
 }
 
 /// Two voices of P1, OP A velocity-sensitive, at velocities that clip about
-/// 0.3 and 0.7 at LEVEL 1: every block the Part's meter reads the larger
-/// of its voices' clips, and the idle Parts read 0.
+/// 0.3 and 0.7 at LEVEL 1: the Part's meter holds the most of its voices'
+/// clips until taken, and the idle Parts read 0.
 #[test]
 fn part_meter_is_the_max_over_its_voices() {
     let _m = METER.lock().unwrap_or_else(|e| e.into_inner());
@@ -522,17 +619,27 @@ fn part_meter_is_the_max_over_its_voices() {
     b.note(57, Some(104));
     let mut tape = Tape::default();
     let mut most = [0.0f32; 8];
+    // The UI takes the meter every block, then every fourth: it reads the
+    // most since, not the last block's, so no block between frames is
+    // missed.
+    for p in &FILTER_CLIP {
+        p.take();
+    }
+    let mut since = Clip::ZERO;
     for blk in 0..HELD {
         b.render(&mut tape);
         let clips = b.filter_clips();
-        let max = clips.iter().fold(0.0f32, |m, &c| m.max(c));
-        assert_eq!(FILTER_CLIP[0].read(), max, "block {blk}: {clips:?}");
-        for (p, m) in FILTER_CLIP.iter().enumerate().skip(1) {
-            assert_eq!(m.read(), 0.0, "P{}", p + 1);
+        since = clips.iter().fold(since, |m, &c| m.max(c));
+        if blk < HELD / 2 || blk % 4 == 3 {
+            assert_eq!(FILTER_CLIP[0].take(), since, "block {blk}: {clips:?}");
+            since = Clip::ZERO;
+            for (p, m) in FILTER_CLIP.iter().enumerate().skip(1) {
+                assert_eq!(m.take(), Clip::ZERO, "P{}", p + 1);
+            }
         }
         if blk >= HELD - 20 {
             for (m, c) in most.iter_mut().zip(clips) {
-                *m = m.max(c);
+                *m = m.max(c.get());
             }
         }
     }

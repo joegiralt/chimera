@@ -19,6 +19,7 @@ use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::wavefolder::Wavefolder;
 use crate::hw::{Cost, MAX_VOICES, VOICE_CHAIN_BYTES, VOICE_RAM_BUDGET};
 use crate::in_place::{by_value, uninit_at};
+use crate::meter::Clip;
 use crate::modulation::{
     MAX_MOD_SOURCES, ModRouting, ModSource, ModState, VCA, amount_scale, note_source,
 };
@@ -53,7 +54,7 @@ pub struct Voice {
     filter: Clean,
     /// The last block's LEVEL clip, for the LED: 0 while the clipper is
     /// off or the voice idle.
-    filter_clip: f32,
+    filter_clip: Clip,
     folder: Wavefolder,
     /// DC from the stages before it (ADR 0060).
     dc: DcBlocker,
@@ -304,7 +305,7 @@ impl Voice {
             write_chain!(p, {
                 drive: Drive::new(),
                 filter: Clean::new(),
-                filter_clip: 0.0,
+                filter_clip: Clip::ZERO,
                 folder: Wavefolder::new(),
                 dc: DcBlocker::new(DC_HZ, (*p).sample_rate),
                 stages: StageEase::default(),
@@ -585,9 +586,15 @@ impl Voice {
         unsafe { Self::init_chain(self) }
     }
 
-    /// The last block's LEVEL clip, 0..1 (`filter::clip_amount`).
-    pub fn filter_clip(&self) -> f32 {
+    /// The last block's LEVEL clip (`filter::clip_amount`).
+    pub fn filter_clip(&self) -> Clip {
         self.filter_clip
+    }
+
+    /// The filter's LEVEL clipper runs next block (`LevelStage::running`):
+    /// what its bill reads.
+    pub fn filter_level_running(&self) -> bool {
+        self.filter.level_running()
     }
 
     /// Sounding: its engine is active and, with routes into VCA, one of
@@ -629,7 +636,7 @@ impl Voice {
 
         if !self.active {
             output.fill(0.0);
-            self.filter_clip = 0.0;
+            self.filter_clip = Clip::ZERO;
             return;
         }
 

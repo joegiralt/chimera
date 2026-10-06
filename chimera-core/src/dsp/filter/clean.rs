@@ -12,6 +12,7 @@ use super::coef::{g_of, sat_c1};
 use super::level::{FilterMods, LevelRamp, LevelStage, level_gain};
 use super::{FilterMode, g_at};
 use crate::hw::BLOCK_SIZE;
+use crate::meter::Clip;
 use crate::params::FilterParams;
 
 /// RES's `k`: 2 at RES 0, 0 at 0.95 (the onset, spec § CLEAN's DSP) and
@@ -149,7 +150,7 @@ impl Clean {
         p: &FilterParams,
         fs: u32,
         mods: &FilterMods,
-    ) -> f32 {
+    ) -> Clip {
         let r = self.prelude(buf, p, fs, mods);
         // The mode and the loop matched once a block: each is its own loop.
         match p.mode() {
@@ -171,8 +172,7 @@ impl Clean {
         self.level.clip()
     }
 
-    /// This block's ramps, and LEVEL's stage run on `buf`: a fresh
-    /// voice's starts where its gate is.
+    /// This block's ramps, and LEVEL's stage run on `buf`.
     #[inline(always)]
     pub(super) fn prelude(
         &mut self,
@@ -181,14 +181,14 @@ impl Clean {
         fs: u32,
         mods: &FilterMods,
     ) -> Ramps {
-        let fresh = self.pre.is_none();
         let r = self.ramps(p, fs);
-        let lv = LevelRamp::new(r.pre, mods);
-        if fresh {
-            self.level.start(lv.open());
-        }
-        self.level.run(buf, lv);
+        self.level.run(buf, LevelRamp::new(r.pre, mods));
         r
+    }
+
+    /// LEVEL's clipper runs next block (`LevelStage::running`).
+    pub fn level_running(&self) -> bool {
+        self.level.running()
     }
 
     /// The raw states, for the bound tests: `[s1, s2]` of each stage, then
@@ -245,9 +245,11 @@ impl Clean {
         }
     }
 
-    /// Forget the last `g`, `k` and LEVEL: the next block starts unramped.
+    /// Forget the last `g`, `k` and LEVEL: the next block starts unramped,
+    /// and LEVEL's clipper where its gate is.
     pub fn hold(&mut self) {
         (self.g, self.k, self.pre) = (None, None, None);
+        self.level = LevelStage::default();
     }
 
     /// A fresh voice's filter: at rest and unramped. Self-oscillation never

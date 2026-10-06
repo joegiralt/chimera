@@ -560,7 +560,7 @@ impl Instrument {
 
     /// Each voice's last LEVEL clip (`Voice::filter_clip`): for the tests.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn filter_clips(&self) -> [f32; MAX_VOICES] {
+    pub fn filter_clips(&self) -> [crate::meter::Clip; MAX_VOICES] {
         core::array::from_fn(|v| self.voices[v].filter_clip())
     }
 
@@ -988,7 +988,7 @@ impl Instrument {
         // 1. Voices into their part's mono bus. The first voice of a part is
         //    copied, not added, so a lone voice reaches the bus bit-for-bit.
         let mut written = [false; MAX_PARTS];
-        let mut clip = [0.0f32; MAX_PARTS];
+        let mut clip = [crate::meter::Clip::ZERO; MAX_PARTS];
         for bus in self.buses.iter_mut() {
             bus.fill(0.0);
         }
@@ -1047,9 +1047,9 @@ impl Instrument {
         );
         // The MST page's GR meter: one relaxed store, never blocks.
         crate::meter::MASTER_GR.publish(fx.master_gr_db());
-        // Each Part's LEVEL LED, the same way.
+        // Each Part's LEVEL LED: one atomic max, held until the UI takes it.
         for (m, c) in crate::meter::FILTER_CLIP.iter().zip(clip) {
-            m.publish(c);
+            m.raise(c);
         }
 
         // Oscilloscope: every part's bus, before pan and level.

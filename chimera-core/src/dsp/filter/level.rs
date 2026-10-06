@@ -3,8 +3,10 @@
 //! (Filter 2, retired), which translates to it on load.
 
 use crate::block::Block;
+use crate::dsp::ease::Gate;
 use crate::dsp::{clampf, fast_exp2};
 use crate::hw::BLOCK_SIZE;
+use crate::meter::Clip;
 use crate::params::FilterParams;
 use crate::storage::{FILTER_DRIVE, Retired};
 
@@ -54,9 +56,8 @@ impl FilterMods {
 /// One block's LEVEL gain, `(from, to)`, and its gate: open while the gain
 /// tops unity at either end or a route moves LEVEL (spec § LEVEL), never on
 /// the DRIVE stage. Only `new` builds one, so the gate always matches its
-/// gain. CLEAN and DIRTY clip through it (`LevelStage`); the 2040 feeds the
-/// gain to its stages, whose ±1 V clip is its clipper, and gates its LED on
-/// `open`.
+/// gain. CLEAN and DIRTY clip through it (`LevelStage`); the 2040 takes only
+/// the gain, into its stages, whose ±1 V clip is its clipper and its LED.
 #[derive(Clone, Copy, Debug)]
 pub struct LevelRamp {
     gain: (f32, f32),
@@ -81,8 +82,8 @@ impl LevelRamp {
 
 /// The LED's fill from a block's peak: 0 to ±1, full at ±3.
 #[inline(always)]
-pub fn clip_amount(peak: f32) -> f32 {
-    clampf((peak - 1.0) * 0.5, 0.0, 1.0)
+pub fn clip_amount(peak: f32) -> Clip {
+    Clip::new((peak - 1.0) * 0.5)
 }
 
 /// `sat_c1`'s knee, branch-free, as `(c, e, u)`: `c = clamp(y, ±1)`, the
@@ -109,45 +110,34 @@ pub fn clip_delta(y: f32) -> f32 {
     u - e - 0.5 * u * u.abs()
 }
 
-/// Blocks the gate's fade takes: 20 ms at 64 samples, 48 kHz.
-pub const FADE_BLOCKS: u8 = 15;
-
 /// LEVEL's gain and its clipper: `sat_c1`, transparent to ±1, faded in
-/// over `FADE_BLOCKS` when the gate opens and out when it shuts, so
-/// crossing unity never steps. The fade counts whole blocks, so it lands
-/// exactly on 0 and 1, and ramps per sample between them.
+/// by its `Gate` (20 ms) when the gate opens and out when it shuts, so
+/// crossing unity never steps. A fresh one (`Default`) lands where its
+/// gate is: nothing came before it to fade from.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LevelStage {
-    /// Blocks into the fade, `0..=FADE_BLOCKS`.
-    fade: u8,
+    gate: Gate,
     /// The last block's `max|x·gain|` while the clipper ran; 0 while off.
     peak: f32,
+    /// The clipper runs next block even if the gate shuts: it is open or
+    /// still fading out.
+    running: bool,
 }
 
 impl LevelStage {
-    /// A fresh voice's stage: the clipper on or off from its first sample,
-    /// with nothing before it to step from.
-    pub fn start(&mut self, open: bool) {
-        self.fade = if open { FADE_BLOCKS } else { 0 };
-        self.peak = 0.0;
-    }
-
     /// `buf × gain`, ramped per sample; through the clipper, blended by
     /// the fade, while the gate is open or the fade is falling. The ramps
     /// step by adding, not `g_at`'s convert and multiply: a block's last
     /// sample lands within an ulp or so of its end.
     #[inline(always)]
     pub fn run(&mut self, buf: &mut [f32; BLOCK_SIZE], lv: LevelRamp) {
-        let from = self.fade;
-        self.fade = if lv.open {
-            (from + 1).min(FADE_BLOCKS)
-        } else {
-            from.saturating_sub(1)
-        };
+        // 0 and 1 are exact shares, so the held cases match exactly.
+        let (f0, f1) = self.gate.step(lv.open);
+        self.running = f1 > 0.0;
         let (mut g, g1) = lv.gain;
         let n = BLOCK_SIZE as f32;
         let g_step = (g1 - g) / n;
-        if from == 0 && self.fade == 0 {
+        if (f0, f1) == (0.0, 0.0) {
             self.peak = 0.0;
             if (g, g1) != (1.0, 1.0) {
                 for s in buf.iter_mut() {
@@ -158,7 +148,7 @@ impl LevelStage {
             return;
         }
         let mut peak = 0.0f32;
-        if from == FADE_BLOCKS && self.fade == FADE_BLOCKS {
+        if (f0, f1) == (1.0, 1.0) {
             // Faded in: the clipper alone, the common held case.
             for s in buf.iter_mut() {
                 g += g_step;
@@ -167,8 +157,7 @@ impl LevelStage {
                 *s = clipped(y);
             }
         } else {
-            let mut f = f32::from(from) * (1.0 / FADE_BLOCKS as f32);
-            let f_step = (f32::from(self.fade) * (1.0 / FADE_BLOCKS as f32) - f) / n;
+            let (mut f, f_step) = (f0, (f1 - f0) / n);
             for s in buf.iter_mut() {
                 (g, f) = (g + g_step, f + f_step);
                 let y = *s * g;
@@ -180,8 +169,14 @@ impl LevelStage {
     }
 
     /// The last block's `clip_amount`: 0 while the clipper is off.
-    pub fn clip(&self) -> f32 {
+    pub fn clip(&self) -> Clip {
         clip_amount(self.peak)
+    }
+
+    /// The clipper is open or fading out, so it runs next block whatever
+    /// the gate says: what the bill reads (spec § Cost, "while it runs").
+    pub fn running(&self) -> bool {
+        self.running
     }
 }
 
