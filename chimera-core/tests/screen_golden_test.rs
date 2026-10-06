@@ -37,11 +37,11 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: MODE reads LP4, CLEAN's label for LP24 (ADR 0096); then
     // TYPE live with two kinds (Task 8); then CLEAN's Cascadia words FREQ,
     // Q, FM1, FM2 (Task 12): was 0x032b329ca06df69b.
-    ("bigviz_filter", 0xbcf09a4f3ff792cb),
+    ("bigviz_filter", 0x025e39b2435f9746),
     // Re-recorded: MODE reads HP4, CLEAN's label for HP24 (ADR 0096); then
     // LEVEL 64 in DRIVE's cell (Task 6); then FLT › MOD's six cells, FM3
     // turned, its delete hint showing (Task 12): was 0xf6e7d94448ca7888.
-    ("flt_mode", 0xdde51bd69fc70a02),
+    ("flt_mode", 0xc9a4e03001119a94),
     ("env_a", 0x6f15c442d71edf83),
     ("env_b_env_ad", 0x849b12e99ea94bfd),
     ("env_b_env_ahr", 0x25bd96be29456024),

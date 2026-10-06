@@ -548,21 +548,15 @@ impl Renderer {
         }
         let v = self.anim[f.focus].current();
         let buf = value_text(f, f.focus, v);
-        let look = look(f, f.focus);
         components::focus_band(
             display,
             view.label(),
             buf.as_str(),
             self.gauge(f),
-            look,
+            look(f, f.focus),
             f.prime_status,
         );
-        // An absent route has nothing for MIX + MINUS to delete.
-        let h = match look {
-            components::Look::Absent => hint::NONE,
-            _ => view.hint(),
-        };
-        hint::focus(display, f.hint(h));
+        hint::focus(display, f.hint(view.hint()));
     }
 
     /// What an ORBIT viz draws, for its region's key; 0 on any other.

@@ -304,7 +304,8 @@ fn an_absent_route_knob_shows_a_dash() {
 }
 
 /// On a CellGrid page (FLT › MOD's FM3 knob) the focus band reads `--`
-/// as the cell does: in INK2, with no arc, and no delete hint.
+/// as the cell does: in INK2, with no arc; its delete hint still shows
+/// (ADR 0086: a gesture's hint shows wherever its cell is touched).
 #[test]
 fn an_absent_route_knob_reads_dashes_in_the_focus_band() {
     use chimera_core::ui::components;
@@ -336,6 +337,7 @@ fn an_absent_route_knob_reads_dashes_in_the_focus_band() {
         components::Look::Absent,
         None,
     );
+    chimera_core::ui::hint::focus(&mut want, chimera_core::ui::mod_grid::DELETE);
     assert!(same_rect(
         &fb,
         &want,
@@ -347,11 +349,8 @@ fn an_absent_route_knob_reads_dashes_in_the_focus_band() {
         .map(|(x, y)| fb.at(x, y))
         .collect();
     assert!(band.contains(&theme::INK2), "the dash is INK2");
-    let live = [theme::INK, theme::ACCENT];
-    assert!(
-        !band.iter().any(|c| live.contains(c)),
-        "no INK value, no arc"
-    );
+    assert!(!band.contains(&theme::ACCENT), "no arc");
+    assert!(band.contains(&theme::INK), "the hint's keys");
 }
 
 /// The Cells key carries the real looks: FLT's TYPE (slot 0) live, ENV
@@ -697,6 +696,25 @@ fn turning_fm3_in_moves_the_cable_past_an_occupied_cell() {
         Some(40),
         "the matrix shows the move"
     );
+}
+
+/// A jack that skips an occupied source says so in the focus band; one
+/// that skips nothing stays quiet.
+#[test]
+fn skipping_a_source_in_use_shows_a_note() {
+    let mut ui = on_flt(EngineType::Algo);
+    back_to_flt(&mut ui, true);
+    feed(&mut ui, Input::turn(EncoderId::C, 1)); // FM3 IN: LFO 1 → LFO 2, free
+    assert_eq!(ui.prime_status(), None);
+    let s = ui.project_mut().edit_part(PartId::ALL[0]).sound;
+    s.mod_state
+        .set_fixed(ModSource::Lfo3.index(), FixedCol::Freq, 11);
+    feed(&mut ui, Input::turn(EncoderId::C, 1)); // LFO 3 is taken
+    assert_eq!(ui.prime_status(), Some(PrimeStatus::SourceInUse));
+    assert_eq!(PrimeStatus::SourceInUse.label(), "SOURCE IN USE");
+    assert_ne!(ui.params().filter.fm3_src(), Jack::Mod(ModSource::Lfo3));
+    feed(&mut ui, Input::turn(EncoderId::B, 1)); // the next input retires it
+    assert_eq!(ui.prime_status(), None);
 }
 
 /// MIX + MINUS on any route view deletes that cell's route, and the view's

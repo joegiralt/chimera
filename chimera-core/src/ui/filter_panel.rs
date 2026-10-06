@@ -206,34 +206,54 @@ pub fn repatch(s: &mut Sound, slot: JackSlot, new: Jack) -> bool {
     slot.set(&mut s.params.filter, new)
 }
 
+/// What a jack knob's turn did.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct JackStep {
+    pub moved: bool,
+    /// It passed a source whose cell another route holds: the UI says so.
+    pub skipped_in_use: bool,
+}
+
 /// `delta` detents of a jack knob: each moves the cable to the next choice
 /// `repatch` takes, skipping occupied cells, and stops at the list's end.
-/// Taps are offered on ALGO only. Returns whether the cable moved.
-pub fn step_jack(s: &mut Sound, slot: JackSlot, delta: i8) -> bool {
+/// Taps are offered on ALGO only.
+pub fn step_jack(s: &mut Sound, slot: JackSlot, delta: i8) -> JackStep {
     let choices = slot.choices();
     let algo = s.engine() == EngineType::Algo;
     let mut at = choices
         .iter()
         .position(|&j| j == slot.effective(s))
         .unwrap_or(0);
-    let mut moved = false;
+    let (mut moved, mut skipped) = (false, false);
+    let mut take = |s: &mut Sound, j: Jack| {
+        if !(algo || matches!(j, Jack::Mod(_))) {
+            return false;
+        }
+        if repatch(s, slot, j) {
+            return true;
+        }
+        skipped |= matches!(j, Jack::Mod(n)
+            if s.mod_state.fixed_present(slot.col()) & 1 << n.index() != 0);
+        false
+    };
     for _ in 0..delta.unsigned_abs() {
         let next = if delta > 0 {
             choices[at + 1..]
                 .iter()
-                .position(|&j| (algo || matches!(j, Jack::Mod(_))) && repatch(s, slot, j))
+                .position(|&j| take(s, j))
                 .map(|i| at + 1 + i)
         } else {
-            choices[..at]
-                .iter()
-                .rposition(|&j| (algo || matches!(j, Jack::Mod(_))) && repatch(s, slot, j))
+            choices[..at].iter().rposition(|&j| take(s, j))
         };
         match next {
             Some(i) => (at, moved) = (i, true),
             None => break,
         }
     }
-    moved
+    JackStep {
+        moved,
+        skipped_in_use: skipped,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

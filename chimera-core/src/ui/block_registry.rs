@@ -162,12 +162,12 @@ pub static FILTER: BlockDef = BlockDef {
 
 /// FLT › MOD: the type's six cells (filter-types spec § 2, § 3): LEVEL
 /// or VOICE, FM3, FM3 IN, QM, QM IN, and the 2040's fixed MODE. `short` is
-/// "MDE", not "MOD": on the Algo map "MOD" would read as the MOD node's own
-/// label and overlap the next node's; it is only the map's branch label.
+/// "FMD" (filter mod), not "MOD": on the Algo map "MOD" would read as the
+/// MOD node's own, and "FMOD" runs into the next node.
 pub static FILTER_MOD: BlockDef = BlockDef {
     id: 59,
     name: "Filter Mod",
-    short: "MDE",
+    short: "FMD",
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [

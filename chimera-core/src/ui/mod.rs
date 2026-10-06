@@ -134,7 +134,8 @@ pub static NO_PAGE: BlockDef = BlockDef {
 /// No page has it: `focus` keeps no slot for it.
 pub const NO_PAGE_ID: u16 = u16::MAX;
 
-/// The outcome of the last MIX+PLUS attempt on a parameter page, shown in
+/// The outcome of the last MIX+PLUS attempt on a parameter page (or a
+/// jack's turn that skipped a source in use), shown in
 /// the focus band in place of the value readout (on BigViz pages, which
 /// have no focus band, as a line at the top of the viz) until the next encoder,
 /// button or page change — no timer, matching the focus band's own rule
@@ -149,6 +150,8 @@ pub enum PrimeStatus {
     NotModulatable,
     /// The registry is at `MAX_REGISTRY_DESTS`, the matrix capacity.
     Full,
+    /// FM3 IN or QM IN passed a source whose cell another route holds.
+    SourceInUse,
 }
 
 impl PrimeStatus {
@@ -159,6 +162,7 @@ impl PrimeStatus {
             PrimeStatus::AlreadyRouted => "ALREADY ROUTED",
             PrimeStatus::NotModulatable => "NOT MODULATABLE",
             PrimeStatus::Full => "MATRIX FULL",
+            PrimeStatus::SourceInUse => "SOURCE IN USE",
         }
     }
 }
@@ -1944,8 +1948,12 @@ impl UiState {
                     .and_then(|a| JackSlot::of(a.param))
                 {
                     let sound = self.project.edit_part(at).sound;
-                    if filter_panel::step_jack(sound, slot, delta) {
+                    let step = filter_panel::step_jack(sound, slot, delta);
+                    if step.moved {
                         self.matrix_state.load_amounts(&sound.mod_state);
+                    }
+                    if step.skipped_in_use {
+                        self.prime_status = Some(PrimeStatus::SourceInUse);
                     }
                     continue;
                 }
