@@ -569,7 +569,7 @@ pub fn check_level_plan(
     r_f32: Render,
     loop_mode_hz: f32,
 ) {
-    check_level_plan_thd(r, set_max, r_unclipped, r_f32, loop_mode_hz, 0.03);
+    check_level_plan_thd(r, set_max, r_unclipped, r_f32, loop_mode_hz, 0.03, -40.0);
 }
 
 /// `check_level_plan` with step 4's THD bound `max_thd`: HALL's 10 s on its
@@ -582,6 +582,7 @@ pub fn check_level_plan_thd(
     r_f32: Render,
     loop_mode_hz: f32,
     max_thd: f32,
+    max_alias_db: f32,
 ) {
     let pad = pink(0x91ab, 10.0, -12.0);
     // 1. Default DECAY: the clip never engages. `r_f32` keeps in step.
@@ -607,7 +608,8 @@ pub fn check_level_plan_thd(
     let f = mode(5_000.0);
     let (l, _, _) = run_counted(&mut *r, &tone(f, 1.0), 30.0);
     let a = alias_db(&l[l.len() - last..], f);
-    assert!(a <= -40.0, "held {f} Hz: aliases {a:.1} dB");
+    println!("held {f} Hz: aliases {a:.1} dB");
+    assert!(a <= max_alias_db, "held {f} Hz: aliases {a:.1} dB");
     // 6. The sweep's transients.
     let k = (10_000.0f64 / 50.0).ln() / 10.0;
     let sweep = |i: usize| {

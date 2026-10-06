@@ -46,11 +46,10 @@ const BURST: usize = 20;
 /// Blocks ROOM's and HALL's bursts come earlier. ROOM on its starting
 /// knobs (MidiVerb II program 5's) settles about 0.1 s past its burst: at
 /// 0 its switch window reads 1.3× rougher than the window before it, at
-/// 200 the gain-jump control is lost in it; 70 passes both. HALL's right
-/// side first hears it only through S1 (59 ms) and
-/// PRE-DLY (19 ms), and its tail is 2 kHz-rough until the dampers have
-/// darkened it: a one-step gain jump (the bound's negative control) is
-/// lost in it until about 0.8 s (block 600; 200 and 400 still lose it).
+/// 200 the gain-jump control is lost in it; 70 passes both. HALL on its
+/// starting knobs (program 25's, ADR 0095 § HALL, as built) passes from
+/// 100 to 300; at 400 and 1000 the gain jump is lost in its tail, and at
+/// 800 the tail alone reads rougher than the window before: 200.
 /// BLOOM's tail roughens each time its loop comes round (about 0.65 s at
 /// its starting SWELL): at most leads the gain jump is lost in it, or the
 /// tail alone reads rougher than the window before; 200–350, 600 and
@@ -58,7 +57,7 @@ const BURST: usize = 20;
 fn lead(t: ReverbType) -> usize {
     match t {
         ReverbType::Room => 70,
-        ReverbType::Hall => 600,
+        ReverbType::Hall => 200,
         ReverbType::Bloom => 850,
         _ => 0,
     }

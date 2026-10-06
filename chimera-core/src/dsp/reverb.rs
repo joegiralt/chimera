@@ -8,6 +8,7 @@ use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
 use crate::dsp::algo::math::log2;
 use crate::dsp::clampf;
 use crate::dsp::modulator::law::Law;
+use crate::dsp::rev::loop_engine::{Spread, TapCount};
 use crate::dsp::rev::parts::{lg2, pow2};
 use crate::dsp::rev::sync::{
     DECAY_BEATS, Division, FoldState, GATE_LENGTH, HALL_PRE, REVERSE_LENGTH, ROOM_PRE, Tempo, fold,
@@ -79,7 +80,7 @@ pub struct ReverbParams {
     pub kind: ReverbType,
     /// How long it lasts: QUAD TIME, DECAY, TAIL, REGEN.
     pub time: f32,
-    /// In-loop damping: QUAD's and HALL's DAMP.
+    /// In-loop damping: DAMP.
     pub damping: f32,
     /// How big or long: SIZE, LENGTH, SWELL.
     pub size: f32,
@@ -98,6 +99,8 @@ pub struct ReverbParams {
     /// The wander's speed.
     pub rate: f32,
     pub sync: RevSync,
+    /// HALL's DENSITY: its taps a side, 3 → 8.
+    pub density: f32,
 }
 
 impl Default for ReverbParams {
@@ -115,12 +118,18 @@ impl Default for ReverbParams {
             smear: 0.0,
             rate: 0.5,
             sync: RevSync::Off,
+            density: DENSITY_DEFAULT,
         }
     }
 }
 
+/// DENSITY where a Sound or a TYPE sets none: a Sound saved before
+/// DENSITY loads with this, HALL's starting taps (program 25's, 4.0 a
+/// side).
+pub const DENSITY_DEFAULT: f32 = 0.205;
+
 /// The slots a TYPE change writes, in `KnobMemory`'s order.
-const KNOB_SLOTS: [ParamId; 9] = [
+const KNOB_SLOTS: [ParamId; 10] = [
     ReverbParams::TIME,
     ReverbParams::DAMPING,
     ReverbParams::SIZE,
@@ -130,21 +139,23 @@ const KNOB_SLOTS: [ParamId; 9] = [
     ReverbParams::SHAPE,
     ReverbParams::SMEAR,
     ReverbParams::RATE,
+    ReverbParams::DENSITY,
 ];
 
 /// Each TYPE's starting knobs (spec § Each TYPE's knobs), by `KNOB_SLOTS`,
 /// in screen order. QUAD writes only TIME, DAMP, SIZE, SMEAR and RATE.
-/// ROOM's are MidiVerb II program 5's (Medium Bright .6), BLOOM's program
-/// 45's (Bloom 1), each fitted on the Rust render (ADR 0095). ROOM's is
-/// the program exactly, SMEAR 0; BLOOM's keeps SMEAR 0.3 (the owner rules
-/// at UAT).
-const START: [[f32; 9]; 6] = [
-    [0.5, 0.3, 0.5, 0.3, 0.4, 0.0, 0.2, 0.0, 0.5],
-    [0.718, 0.426, 0.644, 0.0, 0.0, 0.085, 0.634, 0.0, 0.5],
-    [0.45, 0.3, 0.65, 0.3, 0.4, 0.15, 0.2, 0.35, 0.4],
-    [0.948, 0.3, 0.705, 0.578, 0.165, 0.132, 0.2, 0.3, 0.4],
-    [0.3, 0.3, 0.55, 0.2, 0.7, 0.0, 0.2, 0.0, 0.5],
-    [0.0, 0.3, 0.5, 0.0, 0.8, 0.0, 0.67, 0.0, 0.5],
+/// ROOM's are MidiVerb II program 5's (Medium Bright .6), HALL's program
+/// 25's (Large Warm 2.3), each with SMEAR 0 so START is the preset (ADR
+/// 0095), and BLOOM's program 45's (Bloom 1) with SMEAR 0.3; each fitted
+/// on the Rust render.
+#[rustfmt::skip]
+const START: [[f32; 10]; 6] = [
+    [0.5, 0.3, 0.5, 0.3, 0.4, 0.0, 0.2, 0.0, 0.5, DENSITY_DEFAULT],
+    [0.718, 0.426, 0.644, 0.0, 0.0, 0.085, 0.634, 0.0, 0.5, DENSITY_DEFAULT],
+    [0.488, 0.543, 0.525, 0.825, 0.38, 0.102, 0.892, 0.0, 0.4, DENSITY_DEFAULT],
+    [0.948, 0.3, 0.705, 0.578, 0.165, 0.132, 0.2, 0.3, 0.4, DENSITY_DEFAULT],
+    [0.3, 0.3, 0.55, 0.2, 0.7, 0.0, 0.2, 0.0, 0.5, DENSITY_DEFAULT],
+    [0.0, 0.3, 0.5, 0.0, 0.8, 0.0, 0.67, 0.0, 0.5, DENSITY_DEFAULT],
 ];
 
 /// Whether `t` writes `KNOB_SLOTS[i]` on a TYPE change.
@@ -157,16 +168,18 @@ fn writes(t: ReverbType, i: usize) -> bool {
 /// first slot marks it not yet visited, so zero bytes are a clear memory.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KnobMemory {
-    slots: [[u16; 9]; 6],
+    slots: [[u16; 10]; 6],
 }
 
-const _: () = assert!(core::mem::size_of::<KnobMemory>() == 108);
+const _: () = assert!(core::mem::size_of::<KnobMemory>() == 120);
 
 const KNOB_ONE: f32 = 65_534.0;
 
 impl KnobMemory {
     pub const fn new() -> Self {
-        Self { slots: [[0; 9]; 6] }
+        Self {
+            slots: [[0; 10]; 6],
+        }
     }
 
     /// Keep `p`'s knobs as its TYPE's.
@@ -178,7 +191,7 @@ impl KnobMemory {
     }
 
     /// `t`'s knobs as last left; `None` before `t` was left.
-    pub fn recall(&self, t: ReverbType) -> Option<[f32; 9]> {
+    pub fn recall(&self, t: ReverbType) -> Option<[f32; 10]> {
         let s = &self.slots[t.index()];
         (s[0] != 0).then(|| s.map(|v| (v - 1) as f32 / KNOB_ONE))
     }
@@ -232,6 +245,10 @@ pub struct EngineKnobs {
     pub predelay_ms: f32,
     /// The burst's curve end to end, dB: GATE falls (≤ 0), REVERSE rises.
     pub shape_db: f32,
+    /// HALL's SPREAD: the diffuser's scale.
+    pub spread: Spread,
+    /// HALL's DENSITY: taps a side.
+    pub density: TapCount,
     /// The curve rises to the end (REVERSE).
     pub rising: bool,
 }
@@ -267,6 +284,28 @@ impl Exp {
     }
 }
 
+/// How TONE maps: an `exp` corner, bright → dark, Hz; or OFF (an open
+/// one-pole) at 0 and the corner past it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ToneLaw {
+    Exp(Exp),
+    OffThenExp(Exp),
+}
+
+impl ToneLaw {
+    /// TONE `p`'s corner, Hz; `f32::INFINITY` is OFF.
+    pub fn hz(self, p: f32) -> f32 {
+        match self {
+            ToneLaw::Exp(e) => exp_law(e, p),
+            ToneLaw::OffThenExp(_) if unit(p) < TONE_OFF => f32::INFINITY,
+            ToneLaw::OffThenExp(e) => exp_law(e, p),
+        }
+    }
+}
+
+/// TONE under this reads OFF: below one encoder tick.
+pub const TONE_OFF: f32 = 0.5 / 128.0;
+
 /// A TYPE's knob ranges (spec § Each TYPE's knobs): `exp` laws for the
 /// pairs read low → high, `lin` for the rest. One law function, `knobs`,
 /// reads every row.
@@ -276,8 +315,8 @@ pub struct Ranges {
     pub length_ms: Exp,
     pub length_lin: bool,
     pub time: TimeLaw,
-    /// TONE's input corner, bright → dark, Hz, `exp`.
-    pub tone_hz: Exp,
+    /// TONE's input corner, bright → dark.
+    pub tone_hz: ToneLaw,
     /// DENSITY's taps, `lin`.
     pub taps: (f32, f32),
     /// DIFFUSE's or DENSITY's allpass g, `lin`.
@@ -305,7 +344,7 @@ pub const GATE: Ranges = Ranges {
         rt60_s: Exp::new(0.15, 0.8),
         fade: 0.05,
     },
-    tone_hz: Exp::new(10_000.0, 2_500.0),
+    tone_hz: ToneLaw::Exp(Exp::new(10_000.0, 2_500.0)),
     taps: (6.0, 12.0),
     diffuse_g: (0.5, 0.7),
     predelay_ms: (0.0, 0.0),
@@ -342,7 +381,7 @@ pub const ROOM: Ranges = Ranges {
     time: TimeLaw::Decay {
         rt60_s: Exp::new(0.2, 2.0),
     },
-    tone_hz: Exp::new(10_000.0, 2_500.0),
+    tone_hz: ToneLaw::Exp(Exp::new(10_000.0, 2_500.0)),
     taps: (0.0, 0.0),
     diffuse_g: (0.45, 0.70),
     predelay_ms: (0.0, 50.0),
@@ -366,7 +405,7 @@ pub const BLOOM: Ranges = Ranges {
     time: TimeLaw::Decay {
         rt60_s: Exp::new(2.0, 12.0),
     },
-    tone_hz: Exp::new(10_000.0, 1_500.0),
+    tone_hz: ToneLaw::Exp(Exp::new(10_000.0, 1_500.0)),
     diffuse_g: (0.45, 0.65),
     predelay_ms: (0.0, 125.0),
     shape_db: (0.0, 0.0),
@@ -377,21 +416,25 @@ pub const BLOOM: Ranges = Ranges {
     ..ROOM
 };
 
-/// HALL's loop is its one loop's round trip, down to the plate's 120 ms:
-/// SIZE's bottom `PLATE_ZONE` is the plate zone (`plate_pull`). Its DAMP is
-/// QUAD's law (`damp_hz`).
+/// HALL (ADR 0095 § HALL, as built): SIZE is its one loop's round trip,
+/// `lin` 120 → 600 ms, the plate's 120 ms at the bottom: SIZE's bottom
+/// `PLATE_ZONE` is the plate zone (`plate_pull`). DECAY to 16 s; TONE OFF
+/// at 0, then 12 → 2 kHz; DIFFUSE the diffuser's and the stage allpasses'
+/// g; DAMP the loop's one-pole, 14 → 1.3 kHz. SPREAD (SHAPE's slot) and
+/// DENSITY are `EngineKnobs::spread` and `density`.
 pub const HALL: Ranges = Ranges {
     length_ms: Exp::new(120.0, 600.0),
-    length_lin: false,
-    diffuse_g: (0.5, 0.75),
+    length_lin: true,
+    tone_hz: ToneLaw::OffThenExp(Exp::new(12_000.0, 2_000.0)),
+    diffuse_g: (0.3, 0.8),
     shape_db: (0.0, 0.0),
     time: TimeLaw::Decay {
-        rt60_s: Exp::new(0.8, 10.0),
+        rt60_s: Exp::new(0.8, 16.0),
     },
     predelay_ms: (0.0, 125.0),
     smear_ms: 2.0,
     smear_cap: 0.0036,
-    damp_hz: Exp::new(11_000.0, 1_500.0),
+    damp_hz: Exp::new(14_000.0, 1_300.0),
     rate_hz: Exp::new(0.1, 1.5),
     ..ROOM
 };
@@ -406,8 +449,8 @@ pub fn in_plate_zone(p: &ReverbParams) -> bool {
 }
 
 /// The knobs HALL plays in its plate zone, w = 1 − SIZE/0.15 (1 at SIZE
-/// 0): DIFFUSE pulled up by w, TONE and PRE-DLY down by w, toward the
-/// plate's dense, bright, immediate corner. The stored knobs never change;
+/// 0): DIFFUSE pulled up by w, TONE, PRE-DLY and SPREAD down by w, toward
+/// the plate's dense, bright, immediate corner. The stored knobs never change;
 /// above the zone, and on every other TYPE, `p` itself.
 pub fn plate_pull(p: &ReverbParams) -> ReverbParams {
     if !in_plate_zone(p) {
@@ -419,6 +462,7 @@ pub fn plate_pull(p: &ReverbParams) -> ReverbParams {
         diffuse: d + w * (1.0 - d),
         tone: unit(p.tone) * (1.0 - w),
         predelay: unit(p.predelay) * (1.0 - w),
+        shape: unit(p.shape) * (1.0 - w),
         ..*p
     }
 }
@@ -446,7 +490,7 @@ pub fn lin((lo, hi): (f32, f32), p: f32) -> f32 {
     lo + (hi - lo) * unit(p)
 }
 
-/// QUAD's and HALL's DAMP: `ring::damp_coef`'s cutoff.
+/// QUAD's DAMP: `ring::damp_coef`'s cutoff.
 pub fn damp_hz(p: f32) -> f32 {
     11_000.0 * libm::powf(1.5 / 11.0, unit(p))
 }
@@ -623,13 +667,15 @@ fn row_knobs(r: &Ranges, p: &ReverbParams) -> EngineKnobs {
         rt60_s,
         smear_ms: (r.smear_ms * unit(p.smear)).min(r.smear_cap * length_ms),
         rate_hz: exp_law(r.rate_hz, p.rate),
-        tone_hz: exp_law(r.tone_hz, p.tone),
+        tone_hz: r.tone_hz.hz(p.tone),
         tail,
         regen,
         taps: lin(r.taps, p.diffuse),
         diffuse_g: lin(r.diffuse_g, p.diffuse),
         predelay_ms: lin(r.predelay_ms, p.predelay),
         shape_db: lin(r.shape_db, p.shape),
+        spread: Spread::from_unit(p.shape),
+        density: TapCount::from_unit(p.density),
         rising: r.rising,
         damp_hz: exp_law(r.damp_hz, p.damping),
     }
@@ -656,6 +702,7 @@ impl ReverbParams {
     pub const SMEAR: ParamId = ParamId(11);
     pub const RATE: ParamId = ParamId(12);
     pub const SYNC: ParamId = ParamId(13);
+    pub const DENSITY: ParamId = ParamId(14);
 
     /// What the ring reads.
     pub fn controls(&self) -> RingControls {
@@ -728,7 +775,7 @@ const REV: FocusGlyph = FocusGlyph::Composite(CompositeId::Reverb);
 
 /// The reverb runs outside `Voice`: nothing is modulatable. Labels are the
 /// static ones; each TYPE's panel names its slots (`ui::reverb_panel`).
-pub static REVERB_SPECS: [ParamSpec; 12] = [
+pub static REVERB_SPECS: [ParamSpec; 13] = [
     ParamSpec::choice(6, "TYPE", ValFmt::Names(&ReverbType::NAMES), 5.0, 0.0)
         .ident("TYPE")
         .glyph(FocusGlyph::None),
@@ -777,6 +824,19 @@ pub static REVERB_SPECS: [ParamSpec; 12] = [
     ParamSpec::choice(13, "SYNC", ValFmt::Names(&RevSync::NAMES), 2.0, 0.0)
         .ident("SYNC")
         .glyph(FocusGlyph::None),
+    ParamSpec::continuous(
+        14,
+        "DENSITY",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        DENSITY_DEFAULT,
+        1.0 / 128.0,
+        false,
+    )
+    .ident("DENSITY")
+    .short("DENS")
+    .glyph(REV),
 ];
 
 impl Block for ReverbParams {
@@ -800,6 +860,7 @@ impl Block for ReverbParams {
             Self::SMEAR => self.smear,
             Self::RATE => self.rate,
             Self::SYNC => self.sync as u8 as f32,
+            Self::DENSITY => self.density,
             _ => 0.0,
         }
     }
@@ -821,6 +882,7 @@ impl Block for ReverbParams {
             Self::SMEAR => self.smear = v,
             Self::RATE => self.rate = v,
             Self::SYNC => self.sync = RevSync::at(v),
+            Self::DENSITY => self.density = v,
             _ => {}
         }
     }

@@ -141,10 +141,10 @@ fn decay_in_beats_clamps_and_room_has_no_all() {
     let mut hall = synced(ReverbType::Hall, RevSync::All);
     hall.time = 1.0; // 32 beats
     assert_eq!(DECAY_BEATS[index_of(hall.time, DECAY_BEATS.len())], 32);
-    let k = knobs(&hall, tempo(120.0), &mut f);
+    let k = knobs(&hall, tempo(60.0), &mut f);
     assert!(
-        (k.rt60_s - 10.0).abs() < 0.01,
-        "16 s clamps to 10: {}",
+        (k.rt60_s - 16.0).abs() < 0.01,
+        "32 s clamps to 16: {}",
         k.rt60_s
     );
     hall.time = 0.0; // 1 beat
@@ -274,15 +274,15 @@ fn sync_toggle_keeps_the_length_within_one_division() {
     let on90 = g.with_sync(RevSync::Time, tempo(90.0));
     assert_eq!(on90.size, at(GATE_LENGTH, 16, DivKind::Straight));
     // HALL: PRE-DLY in note values, and under ALL DECAY in beats too.
-    // PRE 18.75 ms → 1/64T (20.8); DECAY 2.49 s → 4 beats (2 s) over 6 (3 s).
+    // PRE 12.75 ms → 1/128 (15.6); DECAY 3.45 s → 6 beats (3 s) over 8 (4 s).
     let h = synced(ReverbType::Hall, RevSync::Off);
     let all = h.with_sync(RevSync::All, t);
-    assert_eq!(all.predelay, at(HALL_PRE, 64, DivKind::Triplet));
-    assert_eq!(all.time, p_of(3, DECAY_BEATS.len()));
+    assert_eq!(all.predelay, at(HALL_PRE, 128, DivKind::Straight));
+    assert_eq!(all.time, p_of(4, DECAY_BEATS.len()));
     let back = all.with_sync(RevSync::Off, t);
     let k = knobs(&back, t, &mut FoldState(0));
-    assert!((k.predelay_ms - 20.83).abs() < 0.1, "{}", k.predelay_ms);
-    assert!((k.rt60_s - 2.0).abs() < 0.01, "{}", k.rt60_s);
+    assert!((k.predelay_ms - 15.63).abs() < 0.1, "{}", k.predelay_ms);
+    assert!((k.rt60_s - 3.0).abs() < 0.01, "{}", k.rt60_s);
     // TIME → ALL converts DECAY alone; ALL → TIME back to seconds.
     let time = h.with_sync(RevSync::Time, t);
     assert_eq!((time.time, time.predelay), (h.time, all.predelay));

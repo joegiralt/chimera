@@ -1068,6 +1068,14 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
         feed(ui, Input::turn(EncoderId::B, 20)); // DAMP
     }),
+    // REV › MORE 2: HALL's DENSITY alone (ADR 0095 § HALL, as built).
+    ("mixer_fx_reverb_hall_more2", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::turn(EncoderId::A, 2)); // TYPE → HALL
+        feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
+        feed(ui, Input::press(ButtonId::Edit)); // REV › MORE 2
+        feed(ui, Input::turn(EncoderId::A, 20)); // DENSITY
+    }),
     ("mixer_fx_reverb_gate", |ui| {
         to_fx(ui, REV);
         feed(ui, Input::turn(EncoderId::A, 4)); // TYPE → GATE

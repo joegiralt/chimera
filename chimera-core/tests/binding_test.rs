@@ -131,6 +131,7 @@ fn all_chains_holds_every_reachable_chain() {
             engines: [engine; 6],
             dyn_rows: 0,
             orbit: OrbitCx::NONE,
+            rev: chimera_core::dsp::reverb::ReverbType::Quad,
         };
         let (chain, _) = l.page(&cx).unwrap();
         assert!(

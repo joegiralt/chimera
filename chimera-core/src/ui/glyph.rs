@@ -171,7 +171,7 @@ pub const CUBE_PARAMS: [ParamAddr; 6] = [
 
 /// Every reverb param that shows the composite: the cube's six, then the
 /// slots only the other TYPEs read (their glyph lands with them).
-pub const REVERB_PARAMS: [ParamAddr; 10] = [
+pub const REVERB_PARAMS: [ParamAddr; 11] = [
     CUBE_PARAMS[0],
     CUBE_PARAMS[1],
     CUBE_PARAMS[2],
@@ -182,6 +182,7 @@ pub const REVERB_PARAMS: [ParamAddr; 10] = [
     ParamAddr::new(BlockRef::Reverb, ReverbParams::DIFFUSE),
     ParamAddr::new(BlockRef::Reverb, ReverbParams::PREDELAY),
     ParamAddr::new(BlockRef::Reverb, ReverbParams::SHAPE),
+    ParamAddr::new(BlockRef::Reverb, ReverbParams::DENSITY),
 ];
 
 /// The cube's param in focus, emphasised.
@@ -350,7 +351,7 @@ impl Tail {
     /// From `REVERB_PARAMS`' set values (normalized) under TYPE `t`, the
     /// focused one's index in them, and the UI clock's `frame` (20 fps).
     #[inline(never)]
-    pub fn from_set(t: ReverbType, set: [f32; 10], focus: Option<usize>, frame: u32) -> Self {
+    pub fn from_set(t: ReverbType, set: [f32; 11], focus: Option<usize>, frame: u32) -> Self {
         let p = ReverbParams {
             kind: t,
             size: set[0],
@@ -364,6 +365,7 @@ impl Tail {
             predelay: set[8],
             shape: set[9],
             sync: RevSync::Off,
+            density: set[10],
         };
         // Unsynced: the set values alone, at the default tempo.
         let k = knobs(&p, Tempo::DEFAULT, &mut FoldState(0));

@@ -292,7 +292,25 @@ pub static EFX_MORE: BlockDef = BlockDef {
     ],
 };
 
-static EFX_SUB_PAGES: [&BlockDef; 1] = [&EFX_MORE];
+/// REV › MORE 2: HALL's DENSITY (ADR 0095 § HALL, as built); empty
+/// under the other TYPEs.
+pub static EFX_MORE2: BlockDef = BlockDef {
+    id: 93,
+    name: "Reverb More 2",
+    short: "MOR2",
+    layout: PageLayout::CellGrid,
+    viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Reverb)),
+    params: [
+        ParamSlot::reverb_panel(RevPage::More2, 0),
+        ParamSlot::reverb_panel(RevPage::More2, 1),
+        ParamSlot::reverb_panel(RevPage::More2, 2),
+        ParamSlot::reverb_panel(RevPage::More2, 3),
+        ParamSlot::reverb_panel(RevPage::More2, 4),
+        ParamSlot::reverb_panel(RevPage::More2, 5),
+    ],
+};
+
+static EFX_SUB_PAGES: [&BlockDef; 2] = [&EFX_MORE, &EFX_MORE2];
 
 pub static CHORUS: BlockDef = BlockDef {
     id: 18,

@@ -129,12 +129,14 @@ fn axi_residents_fit() {
     // `AudioShared`s), 48 B for the TYPE switch's latched knobs (T7), and
     // 88 B for BURST's state, `EngineState`'s largest (T8), and 96 B more
     // for ROOM v2's four loops (T9b, ADR 0095; 4 B of it the tests'
-    // probes), and 24 B for ROOM's GRAIN (T9c: its envelope, seed and
-    // cached and eased scale and knee); the master tape adds its own.
+    // probes), 24 B for ROOM's GRAIN (T9c: its envelope, seed and
+    // cached and eased scale and knee), and 16 B for HALL's DENSITY
+    // (T10b: `ReverbParams` in the Project and the three `AudioShared`s);
+    // the master tape adds its own.
     if !cfg!(feature = "master-tape") {
         assert!(
-            total <= 442_572,
-            "AXI grew past 2dc9eefd's, SMEAR's, the slots', the switch's, BURST's, ROOM v2's and GRAIN's"
+            total <= 442_588,
+            "AXI grew past 2dc9eefd's, SMEAR's, the slots', the switch's, BURST's, ROOM v2's, GRAIN's and DENSITY's"
         );
     }
     assert!(

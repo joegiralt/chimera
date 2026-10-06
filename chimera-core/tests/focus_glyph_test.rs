@@ -98,6 +98,7 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Reverb", "SHAPE", CUBE),
     ("Reverb", "SMEAR", CUBE),
     ("Reverb", "RATE", CUBE),
+    ("Reverb", "DENSITY", CUBE),
     ("Reverb", "TYPE", NONE),
     ("Reverb", "SYNC", NONE),
     // Blends between two ends: a crossfader.

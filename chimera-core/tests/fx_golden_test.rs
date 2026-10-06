@@ -271,8 +271,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("rev_room_mv10", 0x85a254c66db5f2c7),
     ("rev_room_mv11", 0x193920776227df0d),
     ("rev_room_mv14", 0x7f3146738ce901c8),
-    ("rev_hall", 0x6d09691da61c04c5),
-    ("rev_hall_plate", 0xcc09501b70f66688),
+    ("rev_hall", 0x218b75dabd0a86eb),
+    ("rev_hall_plate", 0x7bc455753f7d4ef0),
     // GATE and REVERSE on the BURST engine (reverb TYPEs T8).
     ("rev_gate", 0xf58be0a4e64aeddf),
     ("rev_gate_flat_tail0", 0x951817e3e86edf28),

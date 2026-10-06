@@ -114,6 +114,7 @@ fn node(ui: &UiState) -> usize {
         engines: [EngineType::Algo; 6],
         dyn_rows: 0,
         orbit: OrbitCx::NONE,
+        rev: chimera_core::dsp::reverb::ReverbType::Quad,
     };
     ui.location().page(&cx).unwrap().1.node() as usize
 }

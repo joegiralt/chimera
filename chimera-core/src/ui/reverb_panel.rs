@@ -4,6 +4,7 @@
 //! that TYPE. TYPE and MIX sit on REV outside the panel.
 
 use crate::block::{Block, ParamId, find_spec};
+use crate::dsp::rev::loop_engine::{DIFFUSER_MS, Spread};
 use crate::dsp::rev::room;
 use crate::dsp::rev::sync::{DECAY_BEATS, FoldState, Tempo, index_of, p_of};
 use crate::dsp::reverb::{
@@ -21,6 +22,8 @@ pub enum RevPage {
     Main,
     /// REV › MORE.
     More,
+    /// REV › MORE 2: HALL's DENSITY.
+    More2,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -34,8 +37,8 @@ pub struct RevKnob {
     pub step: f32,
 }
 
-/// REV's knobs 1–4, then REV › MORE's six.
-type Panel = [Option<&'static RevKnob>; 10];
+/// REV's knobs 1–4, then REV › MORE's six, then REV › MORE 2's six.
+type Panel = [Option<&'static RevKnob>; 16];
 
 const TICK: f32 = 1.0 / 128.0;
 
@@ -71,6 +74,16 @@ static SHAPE: RevKnob = k(P::SHAPE, "SHAPE");
 static CURVE: RevKnob = k(P::SHAPE, "CURVE");
 static LOOPS: RevKnob = k(P::SHAPE, "LOOPS");
 static SIZE: RevKnob = k(P::SIZE, "SIZE");
+/// HALL's diffuser scale, on SHAPE's slot (ADR 0095 § HALL, as built).
+static SPREAD: RevKnob = RevKnob {
+    short: Some("SPRD"),
+    ..k(P::SHAPE, "SPREAD")
+};
+/// HALL's taps a side, its own id.
+static TAPS: RevKnob = RevKnob {
+    short: Some("DENS"),
+    ..k(P::DENSITY, "DENSITY")
+};
 static SWELL: RevKnob = k(P::SIZE, "SWELL");
 static DECAY: RevKnob = k(P::TIME, "DECAY");
 static DIFFUSE: RevKnob = RevKnob {
@@ -99,6 +112,12 @@ static QUAD: Panel = [
     Some(&RATE),
     None,
     None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
 ];
 
 /// SIZE · DECAY · TONE · DIFFUSE; MORE: PRE-DLY · DAMP · SMEAR · RATE ·
@@ -114,10 +133,16 @@ static ROOM: Panel = [
     Some(&RATE),
     Some(&SYNC),
     Some(&LOOPS),
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
 ];
 
 /// SIZE · DECAY · TONE · DIFFUSE; MORE: PRE-DLY · DAMP · SMEAR · RATE ·
-/// SYNC.
+/// SYNC · SPREAD; MORE 2: DENSITY.
 static HALL: Panel = [
     Some(&SIZE),
     Some(&DECAY),
@@ -128,6 +153,12 @@ static HALL: Panel = [
     Some(&SMEAR),
     Some(&RATE),
     Some(&SYNC),
+    Some(&SPREAD),
+    Some(&TAPS),
+    None,
+    None,
+    None,
+    None,
     None,
 ];
 
@@ -144,6 +175,12 @@ static BLOOM: Panel = [
     Some(&RATE),
     Some(&SYNC),
     None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
 ];
 
 /// LENGTH · TAIL · TONE · DENSITY; MORE: — · SHAPE · SMEAR · RATE · SYNC.
@@ -157,6 +194,12 @@ static GATE: Panel = [
     Some(&SMEAR),
     Some(&RATE),
     Some(&SYNC),
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
     None,
 ];
 
@@ -172,6 +215,12 @@ static REVERSE: Panel = [
     Some(&SMEAR),
     Some(&RATE),
     Some(&SYNC),
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
     None,
 ];
 
@@ -207,11 +256,17 @@ pub fn knob(t: ReverbType, page: RevPage, k: u8) -> Option<&'static RevKnob> {
     let (at, n) = match page {
         RevPage::Main => (0, 4),
         RevPage::More => (4, 6),
+        RevPage::More2 => (10, 6),
     };
     if k >= n {
         return None;
     }
     panel(t)[at + k as usize]
+}
+
+/// Whether `page` has any cell under `t`'s panel.
+pub fn shows(t: ReverbType, page: RevPage) -> bool {
+    (0..6).any(|k| knob(shown(t), page, k).is_some())
 }
 
 fn find(t: ReverbType, id: ParamId) -> Option<&'static RevKnob> {
@@ -349,6 +404,8 @@ pub fn value_text(id: ParamId, p: &ReverbParams, tempo: Tempo, fold: FoldState) 
         P::DAMPING if p.kind == ReverbType::Room => k.damp_hz >= room::DAMP_OPEN_HZ,
         // And its TONE at its top the input filter.
         P::TONE if p.kind == ReverbType::Room => k.tone_hz >= room::TONE_OPEN_HZ,
+        // HALL's TONE at 0 opens the input one-pole.
+        P::TONE => k.tone_hz.is_infinite(),
         // TAIL 0 is the fast gate; REGEN 0 none.
         P::TIME if burst => k.tail == 0.0 && k.regen == 0.0,
         _ => false,
@@ -373,8 +430,12 @@ pub fn value_text(id: ParamId, p: &ReverbParams, tempo: Tempo, fold: FoldState) 
         // The curve end to end, whole dB: `-4dB`, `24dB` (tenths outrun
         // the focus band).
         P::SHAPE if burst => (k.shape_db, 0, "dB"),
+        // SPREAD, as the diffuser's length it plays: `6ms`, `121ms`.
+        P::SHAPE if p.kind == ReverbType::Hall => (spread_ms(k.spread), 0, "ms"),
         // LOOPS, θ in whole degrees: `0`, `90` (the face has no "°").
         P::SHAPE => (k.shape_db, 0, ""),
+        // DENSITY, taps a side: `3.0`, `5.5`.
+        P::DENSITY => (k.density.get(), 1, ""),
         // Tenths: hundredths would run into the cube.
         P::SMEAR => (k.smear_ms, 1, "ms"),
         P::RATE => (k.rate_hz, 2, "Hz"),
@@ -386,6 +447,11 @@ pub fn value_text(id: ParamId, p: &ReverbParams, tempo: Tempo, fold: FoldState) 
         fixed(&mut b, x, places, unit);
     }
     b
+}
+
+/// The diffuser's allpasses at `s`, summed, ms.
+fn spread_ms(s: Spread) -> f32 {
+    DIFFUSER_MS.iter().sum::<f32>() * s.scale()
 }
 
 /// `hz` as kHz: `6.1k`, `11k`.
