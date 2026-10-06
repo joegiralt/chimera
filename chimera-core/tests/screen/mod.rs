@@ -1007,6 +1007,12 @@ pub const CASES: &[ScreenCase] = &[
         to_pitch(ui, EngineType::Modal);
         feed(ui, Input::turn(EncoderId::A, -12)); // PITCH -12, focused
     }),
+    ("tape_pitch_musical", |ui| {
+        load_init(ui, EngineType::Tape);
+        to_pitch(ui, EngineType::Tape);
+        feed(ui, Input::turn(EncoderId::E, 1)); // SNAP MUSICAL
+        feed(ui, Input::turn(EncoderId::A, 3)); // PITCH +19, focused
+    }),
     ("modal_exc", |ui| load_init(ui, EngineType::Modal)), // PLUCK: EXCITE, COLOR
     ("modal_exc_bank", |ui| {
         load_init(ui, EngineType::Modal);

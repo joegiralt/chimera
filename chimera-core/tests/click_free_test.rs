@@ -193,6 +193,77 @@ fn test_no_clicks_tape() {
     );
 }
 
+/// Every machine on its own defaults (spec § 2 Machines; ONESHOT at SLICE
+/// 5 and WOW WARBLE besides), and LOOP and STRETCH with END before START,
+/// through the voice: 3 s of the sine, held, with no click.
+#[test]
+fn test_no_clicks_tape_machines() {
+    use chimera_core::block::Block;
+    use chimera_core::dsp::tape_engine::machine::defaults;
+    use chimera_core::dsp::tape_engine::{TapeEngineParams as P, TapeModel, Wow};
+    use common::tape::{held_plain, held_transwave, sine};
+    let plain = held_plain(&sine(48_000, 100.7, 4 * 24_000), 48_000);
+    let wave = held_transwave(512, 4, |f, h| if h <= 1 + f as u32 { 0.4 } else { 0.0 });
+    let mut cases = Vec::new();
+    for m in TapeModel::ALL {
+        let mut t = P {
+            model: m,
+            period: 100.7,
+            ..P::default()
+        };
+        for (id, d) in defaults(m) {
+            t.set(id, d);
+        }
+        cases.push(t);
+        if matches!(m, TapeModel::Loop | TapeModel::Stretch) {
+            cases.push(P {
+                start: 0.9,
+                end: 0.1,
+                ..t
+            });
+        }
+    }
+    cases.push(P {
+        model: TapeModel::Oneshot,
+        slice: 6,
+        ..P::default()
+    });
+    cases.push(P {
+        tape: 0.5,
+        wow: Wow::Warble,
+        ..P::default()
+    });
+    for t in cases {
+        let mut p = chimera_core::preset::Sound::neutral(EngineType::Tape).params;
+        p.tape = t;
+        let held = if t.model == TapeModel::Transwave {
+            &wave
+        } else {
+            &plain
+        };
+        let mut v = Rig::with_source(SR, held);
+        v.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &p);
+        let m = ModState::new();
+        let mut block = [0.0f32; BLOCK_SIZE];
+        let mut out = Vec::new();
+        for _ in 0..3 * 750 {
+            v.render(&mut block, &p, &m);
+            out.extend_from_slice(&block);
+        }
+        assert!(out.iter().any(|x| x.abs() > 0.1), "{t:?} sounds");
+        let c = clicks(&out);
+        assert!(
+            c.is_empty(),
+            "{:?} {}..{}: {} clicks: {:?}",
+            t.model,
+            t.start,
+            t.end,
+            c.len(),
+            &c[..c.len().min(5)]
+        );
+    }
+}
+
 // ── Misaligned callback sizes (stress test for block boundary) ──────
 
 #[test]

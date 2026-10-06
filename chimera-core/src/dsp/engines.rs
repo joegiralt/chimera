@@ -335,6 +335,15 @@ impl EngineSlot {
         }
     }
 
+    /// The engine plays on through note-off (ONESHOT): the voice keeps its
+    /// gate. ALGO and MODAL never.
+    pub fn sustains(&self) -> bool {
+        match self {
+            Self::Algo(_) | Self::Modal(_) => false,
+            Self::Tape(t) => t.sustains(),
+        }
+    }
+
     /// A fresh note is to come on this idle slot: TAPE's ramp starts from
     /// silence, not from its last note's sample (an idle voice skips
     /// render, so the engine still holds it).

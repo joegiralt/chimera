@@ -1531,13 +1531,23 @@ fn tape_params_sweep() {
                             runs += 1;
                             heard += usize::from(peak > 0.05);
                             // The voice: ENV 1 lets go, and within 1 s it is silent.
+                            // ONESHOT ignores note-off: it ends at its END, the
+                            // second of saw at this note's speed (ROOT's, and
+                            // TAPE's wow slowing it by 2 %) at most, then the 1 s.
+                            let most = if p.tape.model == TapeModel::Oneshot {
+                                let st = (p.tape.root - f32::from(n) * 100.0) / 1_200.0;
+                                let secs = 1.02 * 2f32.powf(st);
+                                ((secs + 1.0) * BPS as f32) as usize
+                            } else {
+                                BPS
+                            };
                             voice.note_on(note, Velocity::DEFAULT, p);
                             for _ in 0..HELD {
                                 voice.render(&mut out, p, &s.mod_state);
                             }
                             voice.note_off();
                             let mut blocks = 0;
-                            while voice.is_active() && blocks < BPS {
+                            while voice.is_active() && blocks < most {
                                 voice.render(&mut out, p, &s.mod_state);
                                 if out.iter().any(|x| !x.is_finite()) {
                                     found(format!("{label}: not finite"));
@@ -1545,7 +1555,7 @@ fn tape_params_sweep() {
                                 blocks += 1;
                             }
                             if voice.is_active() {
-                                found(format!("{label}: sounding 1 s after note-off"));
+                                found(format!("{label}: sounding {blocks} blocks after note-off"));
                                 voice.kill();
                                 for _ in 0..4 {
                                     voice.render(&mut out, p, &s.mod_state);

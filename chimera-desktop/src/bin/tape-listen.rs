@@ -1,4 +1,6 @@
 //! `just tape-listen <model>… [--src chimera|<path.wav>]…`: each model on
+//! (LOOP and STRETCH also with END before START, LOOP with WOW WARBLE,
+//! ONESHOT at SLICE NOTE; `reverse` is LOOP's END-before-START renders)
 //! each source into `target/listen/` (48 kHz, 16-bit, mono WAVs), with
 //! `report.txt` and, when every render passes QA, `index.html`.
 //!
@@ -14,8 +16,8 @@ use chimera_core::dsp::tape_engine::{StretchType, TapeModel};
 use chimera_core::factory::FACTORY_LEN;
 use chimera_desktop::import::tape::convert::{Channel, Mono, Pitch, read_wav};
 use chimera_desktop::listen::{
-    Src, chimera_morph_sweep, chimera_source, credits, dry, file_name, held_from, held_transwave,
-    model_slug, page, qa, render, root_note, script,
+    Src, Way, chimera_morph_sweep, chimera_source, credits, dry, file_name, held_from,
+    held_transwave, model_slug, page, qa, render, root_note, script,
 };
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -50,6 +52,9 @@ fn run() -> Result<bool, String> {
     while let Some(a) = args.next() {
         if a == "--src" {
             srcs.push(args.next().ok_or("--src needs chimera or a WAV")?);
+        } else if a.eq_ignore_ascii_case("reverse") {
+            // REVERSE is LOOP with END before START (#369): its renders.
+            models.push(TapeModel::Loop);
         } else {
             let m = TapeModel::ALL
                 .into_iter()
@@ -130,26 +135,42 @@ fn run() -> Result<bool, String> {
                 );
                 vec![(
                     src.clone(),
-                    render((m, StretchType::Mono), &wave, pitch, note, &script(m)),
+                    render(
+                        Way::Plain.base(m, StretchType::Mono),
+                        &wave,
+                        pitch,
+                        note,
+                        &script(m),
+                    ),
                 )]
-            } else if m == TapeModel::Stretch {
-                // A row each for MONO and POLY.
-                [StretchType::Mono, StretchType::Poly]
-                    .map(|k| {
-                        let id = k.disk_ident();
+            } else {
+                // A row a way (END before START, WARBLE, SLICE NOTE), and
+                // STRETCH's a row each for MONO and POLY.
+                let mut rows = Vec::new();
+                for &way in Way::of(m) {
+                    let kinds: &[StretchType] = if m == TapeModel::Stretch && way == Way::Plain {
+                        &[StretchType::Mono, StretchType::Poly]
+                    } else {
+                        &[StretchType::Mono]
+                    };
+                    for &k in kinds {
+                        let (slug, title) = if m == TapeModel::Stretch {
+                            let id = k.disk_ident();
+                            (format!("-{}", id.to_lowercase()), format!(" · {id}"))
+                        } else {
+                            (String::new(), String::new())
+                        };
                         let row = Src {
-                            slug: format!("{}-{}", src.slug, id.to_lowercase()),
-                            title: format!("{} · {id}", src.title),
+                            slug: format!("{}{slug}{}", src.slug, way.slug()),
+                            title: format!("{}{title}{}", src.title, way.title()),
                             ..src.clone()
                         };
-                        (row, render((m, k), &held, pitch, note, &script(m)))
-                    })
-                    .into()
-            } else {
-                vec![(
-                    src.clone(),
-                    render((m, StretchType::Mono), &held, pitch, note, &script(m)),
-                )]
+                        let y =
+                            render(way.base(m, k), &held, pitch, way.note(note), &way.script(m));
+                        rows.push((row, y));
+                    }
+                }
+                rows
             };
             for (row, wet) in wet {
                 for (kind, x) in [("dry", &d), ("wet", &wet)] {

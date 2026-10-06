@@ -238,7 +238,7 @@ code 23, ident `"TAPE"`, ADR 0055).
 
   | | LOOP, either order | PING-PONG | SCRUB | TRANSWAVE | TRANSWAVE, pitch moving > ±6.2 st | STRETCH, either order | ONESHOT, TRON | TAPE on | AGE on |
   |---|---|---|---|---|---|---|---|---|---|
-  | Billed | 450 | 490 | 480 | 400 | 770 | 440 | 190 (estimate) | +10 | +30 |
+  | Billed | 450 | 490 | 480 | 400 | 770 | 450 (440 until TAPE Task 12b) | 230 (measured, TAPE Task 12b) | +10 | +30 |
 
   TAPE Task 9 (fix rounds 1 and 2) measured the macros' tests at 0.44
   instructions a sample on every model (PING-PONG 489, TRANSWAVE 398,
@@ -350,9 +350,13 @@ a certain direction."
     sets and streaming are the
     same machine, later, under the streamed TRON's ADR; until then a
     `ZoneSet` on TRON is refused.
-- **Bills** (the house rule): ONESHOT and TRON about 190 each (LOOP's
-  one-head path, one end event a note); LOOP and STRETCH stay at 450 and
-  440 in either order, the direction a const generic on STRETCH's loop.
+- **Bills** (the house rule): ONESHOT and TRON 230 each (TAPE Task 12b's
+  count: one head, 200 far from the end, 230 where a whole block sits in
+  the end's ramp, a short slice retriggered); LOOP stays at 450 in either
+  order. STRETCH is re-billed 450 (was 440): one loop plays either way,
+  a reversed grain's step negated, 8 instructions a sample over the
+  forward loop alone; four const-generic loops held 440 but cost 4.7 KB
+  of flash the bench builds don't have.
   `MIN_PASS_SAMPLES` doesn't bind a one-shot (one event a note); the
   window keeps `MIN_LOOP_FRAMES`; a span under 16 samples' travel ends in
   its first block, judged per block as STRETCH's `tiny`.

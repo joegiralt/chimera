@@ -9,17 +9,75 @@
 //! fade's pre-roll. So no setting but XFADE 0 ever hard-wraps.
 //!
 //! The heads move forward in their own frame `u`. A mirrored frame reads the
-//! source at `off − u`, so REVERSE, PING-PONG's way down and SCRUB's
-//! backward vari-speed are LOOP's arithmetic read backward.
+//! source at `off − u`, so LOOP with END before START, PING-PONG's way down
+//! and SCRUB's backward vari-speed are LOOP's arithmetic read backward.
 
 use super::read::Pos;
 use super::{MIN_LOOP_FRAMES, MIN_LOOP_S, MIN_PASS_SAMPLES};
 use crate::dsp::algo::math::clampf;
 
-/// One read head: a 32.32 position in frames.
+/// One read head: a 32.32 position in frames, and its frame: mirrored, it
+/// reads the source backward (`off − u`). Each head has its own, so at a
+/// flip the head going out finishes its pass the old way while the one
+/// coming in starts the new (spec § 2 Machines).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Head {
     pub pos: Pos,
+    pub mirror: bool,
+}
+
+/// Which way a machine plays its window: START is where the head starts,
+/// END where it heads (spec § 2 Machines, #369).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dir {
+    Fwd,
+    Rev,
+}
+
+impl Dir {
+    /// END before START plays reversed; END on START plays forward.
+    pub fn of(start: f32, end: f32) -> Dir {
+        if end < start { Dir::Rev } else { Dir::Fwd }
+    }
+}
+
+/// A window of the source, `[lo, hi)` in frames, sorted, and the way it
+/// plays.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Window {
+    pub lo: u32,
+    pub hi: u32,
+    pub dir: Dir,
+}
+
+impl Window {
+    /// START and END as fractions of `frames` (≥ 1): sorted, and `Rev` when
+    /// END is before START. Under `floor` frames it widens away from START,
+    /// toward END's side, kept inside the source (all of it, if shorter).
+    pub fn of(start: f32, end: f32, frames: u32, floor: u32) -> Window {
+        let at = |x: f32| (libm::roundf(clampf(x, 0.0, 1.0) * frames as f32) as u32).min(frames);
+        let dir = Dir::of(start, end);
+        let (s, e) = (at(start), at(end));
+        let (mut lo, mut hi) = (s.min(e), s.max(e));
+        let floor = floor.min(frames);
+        if hi - lo < floor {
+            match dir {
+                Dir::Fwd => {
+                    hi = (lo + floor).min(frames);
+                    lo = hi - floor;
+                }
+                Dir::Rev => {
+                    lo = hi.saturating_sub(floor);
+                    hi = lo + floor;
+                }
+            }
+        }
+        Window { lo, hi, dir }
+    }
+
+    pub fn frames(&self) -> u32 {
+        self.hi - self.lo
+    }
 }
 
 /// `n` whole frames as a position.

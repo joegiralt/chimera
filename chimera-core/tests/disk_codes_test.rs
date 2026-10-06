@@ -458,7 +458,9 @@ fn retired_never_live() {
         RETIRED,
         &[(10, 3), (10, 4), (10, 5), (1, 2), (1, 5), (1, 7), (1, 8)]
     );
-    assert!(RETIRED_CODES.is_empty() && RETIRED_SOURCES.is_empty() && RETIRED_BLOCKS.is_empty());
+    // TAPE's MODEL REVERSE (#369): LOOP with END before START.
+    assert_eq!(RETIRED_CODES, &[(34, 0, 1)]);
+    assert!(RETIRED_SOURCES.is_empty() && RETIRED_BLOCKS.is_empty());
     for &(block, id) in RETIRED {
         for b in BlockRef::ALL
             .into_iter()

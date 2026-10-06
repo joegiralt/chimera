@@ -10,7 +10,7 @@ use core::mem::size_of;
 use chimera_core::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
 use chimera_core::dsp::modal::{ModalEngine, SymPool};
 use chimera_core::dsp::tape_engine::{
-    COST_TAPE, COST_TAPE_WAVE, StretchType, TapeEngine, TapeEngineParams, TapeModel,
+    COST_TAPE, COST_TAPE_WAVE, StretchType, TapeEngine, TapeEngineParams, TapeModel, Wow,
 };
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{MAX_VOICES, VOICE_CHAIN_BYTES, VOICE_RAM_BUDGET};
@@ -90,6 +90,8 @@ fn neutral_tape_loops_whole() {
             kind: StretchType::Mono,
             root: 6_000.0,
             period: 0.0,
+            slice: 0,
+            wow: Wow::Capstan,
         }
     );
 }

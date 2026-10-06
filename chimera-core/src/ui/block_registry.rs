@@ -83,8 +83,8 @@ pub static MODAL_2: BlockDef = BlockDef {
 // Voice pitch (ADR 0042): a sub-page of every engine's node
 // ---------------------------------------------------------------------------
 
-/// PIT: the voice's PITCH and FINE, and a steal's STEAL and GLIDE TIME
-/// (#254); E and F are free.
+/// PIT: the voice's PITCH and FINE, a steal's STEAL and GLIDE TIME
+/// (#254), and PITCH's SNAP (TAPE Task 12b); F is free.
 pub static PITCH: BlockDef = BlockDef {
     id: 66,
     name: "Pitch",
@@ -96,7 +96,7 @@ pub static PITCH: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Pitch, PitchParams::FINE),
         ParamSlot::param(BlockRef::Pitch, PitchParams::STEAL),
         ParamSlot::param(BlockRef::Pitch, PitchParams::GLIDE_TIME),
-        EMPTY,
+        ParamSlot::param(BlockRef::Pitch, PitchParams::SNAP),
         EMPTY,
     ],
 };

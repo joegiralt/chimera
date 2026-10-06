@@ -9,14 +9,15 @@ use core::mem::MaybeUninit;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape, SourceView};
 use chimera_core::dsp::tape_engine::wave;
 use chimera_core::dsp::tape_engine::{
-    INC_MAX, StretchType, TapeEngine, TapeEngineParams, TapeModel,
+    INC_MAX, StretchType, TapeEngine, TapeEngineParams, TapeModel, Wow,
 };
 use chimera_core::storage::twelve::pack12;
 use chimera_hal::BLOCK_SIZE;
 use common::XorShift;
 
 /// The models these runs play (TRANSWAVE on a `Plain` is silent).
-const MODELS: [TapeModel; 6] = TapeModel::ALL;
+/// Every machine; START and END are drawn in either order.
+const MODELS: [TapeModel; 7] = TapeModel::ALL;
 
 const MAX_FRAMES: usize = 100_000;
 
@@ -63,6 +64,8 @@ fn reads_stay_in_row() {
             kind: [StretchType::Mono, StretchType::Poly][rng.below(2)],
             root: 12_700.0 * unit(&mut rng),
             period: [0.0, 1.0 + 60.0 * unit(&mut rng), 1_000.0 * unit(&mut rng)][rng.below(3)],
+            slice: rng.below(18) as u8,
+            wow: [Wow::Capstan, Wow::Warble][rng.below(2)],
         };
         let mut slot = MaybeUninit::uninit();
         let e = TapeEngine::init_in_place(&mut slot);

@@ -132,12 +132,18 @@ pub fn next_level(log2_n: u32, step: f32, top: u32) -> u32 {
     l
 }
 
-/// TRANSWAVE plays only a `Transwave` whose frames fit its count; every
-/// other model plays any source.
+/// TRANSWAVE plays only a `Transwave` whose frames fit its count; TRON
+/// refuses a `ZoneSet`; every other model plays any source.
 pub fn playable(model: TapeModel, v: &SourceView<'_>) -> bool {
     let d = v.desc();
-    model != TapeModel::Transwave
-        || (d.shape == Shape::Transwave && top_of(v.frames(), d.count).is_some())
+    match model {
+        TapeModel::Transwave => {
+            d.shape == Shape::Transwave && top_of(v.frames(), d.count).is_some()
+        }
+        // Per-key zones are the streamed TRON's (spec § 8).
+        TapeModel::Tron => d.shape != Shape::ZoneSet,
+        _ => true,
+    }
 }
 
 /// The output's share at `cycles` a sample: 1 to `FADE_CYCLES`, 0 from

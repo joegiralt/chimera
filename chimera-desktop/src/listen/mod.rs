@@ -13,7 +13,9 @@ use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::tape_engine::read::{
     DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape, SourceView,
 };
-use chimera_core::dsp::tape_engine::{StretchType, TapeEngine, TapeEngineParams as P, TapeModel};
+use chimera_core::dsp::tape_engine::{
+    StretchType, TapeEngine, TapeEngineParams as P, TapeModel, Wow,
+};
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
@@ -184,8 +186,13 @@ pub fn root_note(pitch: Pitch) -> u8 {
 /// own, in time order, and held before the first and after the last. A
 /// param the script never names stays neutral. It ends at its last
 /// breakpoint. Then the seconds a fresh note-on comes, past the first (a
-/// take: the head back at START, MODEL and TYPE latched again).
-pub struct Script(pub &'static [(f32, ParamId, f32)], pub &'static [f32]);
+/// take: the head back at START, MODEL and TYPE latched again), and each
+/// note's semitones over the render's, the first's first (none: 0).
+pub struct Script(
+    pub &'static [(f32, ParamId, f32)],
+    pub &'static [f32],
+    pub &'static [u8],
+);
 
 impl Script {
     pub fn secs(&self) -> f32 {
@@ -365,10 +372,12 @@ pub const WAVE_LEGEND: &str = "16 frames cut from the source · 0–2 s frame 0 
 /// The macro script `model` is heard under, and what the page says of it.
 pub fn script(model: TapeModel) -> Script {
     match model {
-        TapeModel::Scrub => Script(&SCRUB_SWEEP, &[]),
-        TapeModel::Transwave => Script(&WAVE_SWEEP, &[]),
-        TapeModel::Stretch => Script(&STRETCH_KEYS, &STRETCH_TAKES),
-        _ => Script(&SWEEP, &[]),
+        TapeModel::Scrub => Script(&SCRUB_SWEEP, &[], &[]),
+        TapeModel::Transwave => Script(&WAVE_SWEEP, &[], &[]),
+        TapeModel::Stretch => Script(&STRETCH_KEYS, &STRETCH_TAKES, &[]),
+        TapeModel::Oneshot => Script(&ONESHOT_KEYS, &ONESHOT_TAKES, &[]),
+        TapeModel::Tron => Script(&TRON_KEYS, &[10.0], &[0, 12]),
+        TapeModel::Loop | TapeModel::PingPong => Script(&SWEEP, &[], &[]),
     }
 }
 
@@ -377,7 +386,131 @@ pub fn legend(model: TapeModel) -> &'static str {
         TapeModel::Scrub => SCRUB_LEGEND,
         TapeModel::Transwave => WAVE_LEGEND,
         TapeModel::Stretch => STRETCH_LEGEND,
-        _ => SWEEP_LEGEND,
+        TapeModel::Oneshot => ONESHOT_LEGEND,
+        TapeModel::Tron => TRON_LEGEND,
+        TapeModel::Loop | TapeModel::PingPong => SWEEP_LEGEND,
+    }
+}
+
+/// ONESHOT's: the whole window once; then a take every 0.5 s, SLICE's knob
+/// stepping slices 1 → 16 (the note fixed); from 10 s the whole window
+/// with END before START, a take a second, TAPE and AGE at 0.5 from 11.5 s.
+static ONESHOT_KEYS: [(f32, ParamId, f32); 15] = [
+    (2.0, P::SLICE, 0.0),
+    (2.25, P::SLICE, 2.0),
+    (9.75, P::SLICE, 17.0),
+    (9.99, P::SLICE, 17.0),
+    (10.0, P::SLICE, 0.0),
+    (9.99, P::START, 0.0),
+    (10.0, P::START, 1.0),
+    (9.99, P::END, 1.0),
+    (10.0, P::END, 0.0),
+    (11.25, P::TAPE, 0.0),
+    (11.5, P::TAPE, 0.5),
+    (14.5, P::TAPE, 0.5),
+    (11.25, P::AGE, 0.0),
+    (11.5, P::AGE, 0.5),
+    (14.5, P::AGE, 0.5),
+];
+
+static ONESHOT_TAKES: [f32; 20] = [
+    2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5, 10.0, 11.0, 12.0,
+    13.0, 14.0,
+];
+
+pub const ONESHOT_LEGEND: &str = "0–2.5 s the whole window once · 2.5–10 s a take each 0.5 s, \
+    SLICE 1→16 by the knob · 10–14.5 s END before START (reversed), a take a second · \
+    11.5–14.5 s TAPE and AGE at 0.5";
+
+/// ONESHOT at SLICE NOTE: 16 notes from C4, 0.5 s apart, each its slice
+/// at ROOT's pitch.
+static ONESHOT_NOTE_KEYS: [(f32, ParamId, f32); 1] = [(8.0, P::TAPE, 0.0)];
+static ONESHOT_NOTE_TAKES: [f32; 15] = [
+    0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5,
+];
+static ONESHOT_NOTE_NOTES: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+
+/// TRON's: held 10 s at ROOT, then 10 s an octave up; LENGTH 8 s, so the
+/// tape runs out (or END comes) before each key's 10 s.
+static TRON_KEYS: [(f32, ParamId, f32); 1] = [(20.0, P::TAPE, 0.0)];
+
+pub const TRON_LEGEND: &str = "0–10 s held at ROOT · 10–20 s held an octave up: each key \
+    its own 8 s of tape (END may come first)";
+
+/// How a machine is heard besides its plain script (spec § 2 Machines):
+/// END before START, WOW WARBLE, SLICE NOTE.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Way {
+    Plain,
+    Reversed,
+    Warble,
+    SliceNote,
+}
+
+impl Way {
+    /// The ways `m` is rendered.
+    pub fn of(m: TapeModel) -> &'static [Way] {
+        match m {
+            TapeModel::Loop => &[Way::Plain, Way::Reversed, Way::Warble],
+            TapeModel::Stretch => &[Way::Plain, Way::Reversed],
+            TapeModel::Oneshot => &[Way::Plain, Way::SliceNote],
+            _ => &[Way::Plain],
+        }
+    }
+
+    /// Added to a row's slug and title.
+    pub fn slug(self) -> &'static str {
+        match self {
+            Way::Plain => "",
+            Way::Reversed => "-rev",
+            Way::Warble => "-warble",
+            Way::SliceNote => "-note",
+        }
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Way::Plain => "",
+            Way::Reversed => " · END before START",
+            Way::Warble => " · WOW WARBLE, TAPE 0.5 from 11.5 s",
+            Way::SliceNote => " · SLICE NOTE, 16 notes from C4",
+        }
+    }
+
+    /// `model`'s params before the script: END before START swaps the
+    /// window (REVERSE's renders, #369), WARBLE in place of the capstan,
+    /// SLICE NOTE.
+    pub fn base(self, model: TapeModel, kind: StretchType) -> P {
+        let p = P {
+            model,
+            kind,
+            ..P::default()
+        };
+        match self {
+            Way::Plain => p,
+            Way::Reversed => P {
+                start: 1.0,
+                end: 0.0,
+                ..p
+            },
+            Way::Warble => P {
+                wow: Wow::Warble,
+                ..p
+            },
+            Way::SliceNote => P { slice: 1, ..p },
+        }
+    }
+
+    pub fn script(self, model: TapeModel) -> Script {
+        match self {
+            Way::SliceNote => Script(&ONESHOT_NOTE_KEYS, &ONESHOT_NOTE_TAKES, &ONESHOT_NOTE_NOTES),
+            _ => script(model),
+        }
+    }
+
+    /// The note it plays on: SLICE NOTE's start at C4, slice 1.
+    pub fn note(self, root: u8) -> u8 {
+        if self == Way::SliceNote { 60 } else { root }
     }
 }
 
@@ -386,18 +519,12 @@ pub fn legend(model: TapeModel) -> &'static str {
 /// output fades out over `RELEASE` samples, as a VCA letting go would, and
 /// the take is a fresh note on the idle voice (`hold`, then `note_on`).
 /// Panics on a `held` with no source in it.
-pub fn render(
-    (model, kind): (TapeModel, StretchType),
-    held: &[u8],
-    pitch: Pitch,
-    note: u8,
-    s: &Script,
-) -> Vec<f32> {
+pub fn render(base: P, held: &[u8], pitch: Pitch, note: u8, s: &Script) -> Vec<f32> {
     let v = SourceView::new(held).expect("a held source");
-    let mut p = P {
-        model,
-        kind,
-        ..P::default()
+    let mut p = base;
+    let key = |k: usize| {
+        note.saturating_add(s.2.get(k).copied().unwrap_or(0))
+            .min(127)
     };
     if let Pitch::Pitched { period, root_cents } = pitch {
         (p.root, p.period) = (f32::from(root_cents), period);
@@ -406,7 +533,8 @@ pub fn render(
     let mut slot = MaybeUninit::uninit();
     let e = TapeEngine::init_in_place(&mut slot);
     e.hold();
-    e.note_on(note, &p, &v, SAMPLE_RATE);
+    e.note_on(key(0), &p, &v, SAMPLE_RATE);
+    let mut take = 0;
     let blocks = (s.secs() * SAMPLE_RATE as f32) as usize / BLOCK_SIZE;
     let mut out = Vec::with_capacity(blocks * BLOCK_SIZE);
     let mut blk = [0.0; BLOCK_SIZE];
@@ -419,7 +547,8 @@ pub fn render(
                 *y *= 1.0 - (i + 1) as f32 / RELEASE as f32;
             }
             e.hold();
-            e.note_on(note, &p, &v, SAMPLE_RATE);
+            take += 1;
+            e.note_on(key(take), &p, &v, SAMPLE_RATE);
         }
         e.render(&mut blk, &p, &v, SAMPLE_RATE);
         out.extend_from_slice(&blk);
@@ -706,7 +835,9 @@ mod tests {
     fn every_script_starts_neutral_and_runs_14_5_s() {
         for m in TapeModel::ALL {
             let s = script(m);
-            assert_eq!(s.secs(), 14.5, "{m:?}");
+            // TRON holds a key 10 s, twice.
+            let secs = if m == TapeModel::Tron { 20.0 } else { 14.5 };
+            assert_eq!(s.secs(), secs, "{m:?}");
             let (mut a, mut b) = (P::default(), P::default());
             s.apply(&mut a, 0.0);
             s.apply(&mut b, 1.9);

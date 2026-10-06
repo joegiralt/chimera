@@ -543,6 +543,11 @@ impl Voice {
     }
 
     pub fn note_off(&mut self, ctx: &mut EngineCtx<'_>) {
+        // ONESHOT ignores note-off (CHOMPI's sustain off): the gate stays
+        // and the note ends at its END.
+        if self.slot.sustains() {
+            return;
+        }
         self.held = false;
         if self.after_fade == AfterFade::Restart {
             self.after_fade = AfterFade::Idle;

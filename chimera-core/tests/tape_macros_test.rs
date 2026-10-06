@@ -15,18 +15,19 @@ use chimera_core::dsp::tape_engine::{
 };
 use chimera_hal::BLOCK_SIZE;
 use common::XorShift;
-use common::tape::{fft, held_plain, held_transwave, sine};
+use common::tape::{Mach, fft, held_plain, held_transwave, sine};
 
 const SR: u32 = 48_000;
 const B: usize = BLOCK_SIZE;
 
-const MODELS: [TapeModel; 6] = [
-    TapeModel::Loop,
-    TapeModel::Reverse,
-    TapeModel::PingPong,
-    TapeModel::Scrub,
-    TapeModel::Transwave,
-    TapeModel::Stretch,
+/// LOOP either way (END before START plays reversed), and the rest.
+const MODELS: [Mach; 6] = [
+    Mach::fwd(TapeModel::Loop),
+    Mach::rev(TapeModel::Loop),
+    Mach::fwd(TapeModel::PingPong),
+    Mach::fwd(TapeModel::Scrub),
+    Mach::fwd(TapeModel::Transwave),
+    Mach::fwd(TapeModel::Stretch),
 ];
 
 fn fresh() -> TapeEngine {
@@ -46,16 +47,15 @@ fn source(model: TapeModel, secs: f32) -> Vec<u8> {
 
 /// `model` at its own speed: SCRUB's vari-speed at 1×, STRETCH's time at
 /// 1×, locked to the sine's period.
-fn params(model: TapeModel) -> TapeEngineParams {
-    TapeEngineParams {
-        model,
-        motion: match model {
+fn params(m: Mach) -> TapeEngineParams {
+    m.params(TapeEngineParams {
+        motion: match m.model {
             TapeModel::Scrub | TapeModel::Stretch => 0.5,
             _ => 0.0,
         },
         period: 48.0,
         ..TapeEngineParams::default()
-    }
+    })
 }
 
 /// The note each model plays its sine at: 1 kHz on a source, 440 Hz on a
@@ -122,14 +122,15 @@ fn correlation(a: &[f64], b: &[f64]) -> f64 {
 
 #[test]
 fn tape_zero_adds_exact_zeros() {
-    for model in MODELS {
+    for m in MODELS {
+        let model = m.model;
         let held = source(model, 2.5);
         let v = SourceView::strict(&held).unwrap();
         let (note, _) = note_hz(model);
         // MOTION and a SIZE LFO keep every path busy.
         let p = |i: usize| TapeEngineParams {
             size: 0.3 + 0.2 * (i as f32 * 0.05).sin(),
-            ..params(model)
+            ..params(m)
         };
         let (mut a, mut b) = (fresh(), fresh());
         a.seed(3);
@@ -142,7 +143,7 @@ fn tape_zero_adds_exact_zeros() {
             assert_eq!(
                 s.to_bits(),
                 t.to_bits(),
-                "{model:?}: sample {i}: {s} against {t}"
+                "{m:?}: sample {i}: {s} against {t}"
             );
         }
     }
@@ -150,13 +151,14 @@ fn tape_zero_adds_exact_zeros() {
 
 #[test]
 fn wow_depth_bounds() {
-    for model in MODELS {
+    for m in MODELS {
+        let model = m.model;
         let held = source(model, 4.5);
         let v = SourceView::strict(&held).unwrap();
         let (note, f0) = note_hz(model);
         let p = TapeEngineParams {
             tape: 1.0,
-            ..params(model)
+            ..params(m)
         };
         let mut e = fresh();
         e.seed(1);
@@ -164,16 +166,16 @@ fn wow_depth_bounds() {
         let y = play(&mut e, &v, 4 * SR as usize / B, |_| p);
         let dev = deviation(&y[NOTE_ON_RAMP as usize..], f0);
         let peak = dev.iter().fold(0.0f64, |m, &(_, c)| m.max(c.abs()));
-        assert!(peak <= 33.0, "{model:?}: {peak} cents");
-        assert!(peak >= 20.0, "{model:?}: {peak} cents");
+        assert!(peak <= 33.0, "{m:?}: {peak} cents");
+        assert!(peak >= 20.0, "{m:?}: {peak} cents");
         // The wow, ±25 cents at 0.5 Hz, and the capstan, half the ±8 of
         // flutter at 9 Hz, the wow at this note's rate: each its own line in
         // the deviation's spectrum.
         let (wow, capstan) = (line(&dev, e.wow_hz() as f64), line(&dev, 9.0));
-        assert!((wow - 25.0).abs() <= 2.0, "{model:?}: wow {wow} cents");
+        assert!((wow - 25.0).abs() <= 2.0, "{m:?}: wow {wow} cents");
         assert!(
             (capstan - 4.0).abs() <= 1.0,
-            "{model:?}: capstan {capstan} cents"
+            "{m:?}: capstan {capstan} cents"
         );
     }
 }
@@ -197,12 +199,13 @@ fn line(curve: &[(f64, f64)], hz: f64) -> f64 {
 #[test]
 fn voices_have_own_transport() {
     let model = TapeModel::Loop;
+    let m = Mach::fwd(model);
     let held = source(model, 9.0);
     let v = SourceView::strict(&held).unwrap();
     let (note, f0) = note_hz(model);
     let p = TapeEngineParams {
         tape: 1.0,
-        ..params(model)
+        ..params(m)
     };
     // The deviation on a 1 ms grid, 8.192 s.
     let curve = |s: u32| {
@@ -259,12 +262,13 @@ fn voices_have_own_transport() {
 #[test]
 fn wows_never_lock() {
     let model = TapeModel::Loop;
+    let m = Mach::fwd(model);
     let held = source(model, 9.0);
     let v = SourceView::strict(&held).unwrap();
     let (note, f0) = note_hz(model);
     let p = TapeEngineParams {
         tape: 1.0,
-        ..params(model)
+        ..params(m)
     };
     let mut voices: Vec<TapeEngine> = (0..8)
         .map(|s| {
@@ -633,13 +637,14 @@ fn full_tape_keeps_the_clamp_and_floors() {
     let v = SourceView::strict(&short).unwrap();
     // The note's `inc`: 16 · 2^(−33/1200), by PITCH from note 127.
     let pitch = 1_200.0 * INC_MAX.log2() - 33.0 - (12_700.0 - 6_000.0);
-    for model in [
-        TapeModel::Loop,
-        TapeModel::Reverse,
-        TapeModel::PingPong,
-        TapeModel::Scrub,
-        TapeModel::Stretch,
+    for m in [
+        Mach::fwd(TapeModel::Loop),
+        Mach::rev(TapeModel::Loop),
+        Mach::fwd(TapeModel::PingPong),
+        Mach::fwd(TapeModel::Scrub),
+        Mach::fwd(TapeModel::Stretch),
     ] {
+        let model = m.model;
         let p = TapeEngineParams {
             model,
             start: 0.5,
@@ -651,6 +656,7 @@ fn full_tape_keeps_the_clamp_and_floors() {
             tape: 1.0,
             ..TapeEngineParams::default()
         };
+        let p = m.params(p);
         let mut e = fresh();
         e.seed(2);
         e.set_pitch(pitch);
@@ -667,7 +673,7 @@ fn full_tape_keeps_the_clamp_and_floors() {
         };
         assert!(
             per <= most as f32,
-            "{model:?}: {per} events a block, at most {most}"
+            "{m:?}: {per} events a block, at most {most}"
         );
         assert!(y.iter().all(|s| s.is_finite()));
     }
@@ -698,7 +704,8 @@ fn sweeps_are_click_free() {
         _ => 0.0,
     });
     let plain = held_plain(&sine(48_000, 100.7, 48_000), 48_000);
-    for model in MODELS {
+    for m in MODELS {
+        let model = m.model;
         let held = if model == TapeModel::Transwave {
             &wave
         } else {
@@ -711,7 +718,7 @@ fn sweeps_are_click_free() {
             drag: 1.0,
             period: 100.7,
             size: 0.5,
-            ..params(model)
+            ..params(m)
         };
         for which in 0..5 {
             let run = |x: &dyn Fn(usize) -> f32| {
@@ -734,7 +741,7 @@ fn sweeps_are_click_free() {
             let worst = max_step(&run(&x)[2 * B..]);
             assert!(
                 worst <= 4.0 * steady,
-                "{model:?} macro {which}: {worst} against {steady}"
+                "{m:?} macro {which}: {worst} against {steady}"
             );
         }
     }
@@ -821,7 +828,7 @@ fn scrub_position_is_click_free_at_its_speed() {
     let v = SourceView::strict(&held).unwrap();
     let base = TapeEngineParams {
         size: 0.5,
-        ..params(TapeModel::Scrub)
+        ..params(Mach::fwd(TapeModel::Scrub))
     };
     let x = |i: usize| match i {
         40..=77 => (i - 40) as f32 / 37.5,

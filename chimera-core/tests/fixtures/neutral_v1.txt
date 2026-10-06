@@ -238,6 +238,8 @@ Sound {
             kind: Mono,
             root: 6000.0,
             period: 0.0,
+            slice: 0,
+            wow: Capstan,
         },
         lfos: [
             LfoParams {
@@ -306,6 +308,7 @@ Sound {
             fine: 0.0,
             steal: Cut,
             glide_time: 0.6592158,
+            snap: Chromatic,
         },
     },
     mod_state: ModState {

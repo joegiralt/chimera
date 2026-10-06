@@ -148,7 +148,9 @@ pub const RETIRED: &[(u8, u8)] = &[(10, 3), (10, 4), (10, 5), (1, 2), (1, 5), (1
 pub const RETIRED_BLOCKS: &[u8] = &[];
 
 /// `(block code, param id, value code)`: one enum value that is gone for good.
-pub const RETIRED_CODES: &[(u8, u8, u8)] = &[];
+/// TAPE's MODEL REVERSE (#369): LOOP with END before START plays it, so a
+/// file's code 1 goes to `Retired` and `tape_engine::translate_v1`.
+pub const RETIRED_CODES: &[(u8, u8, u8)] = &[(34, 0, 1)];
 
 /// `ModSource` codes that are gone for good.
 pub const RETIRED_SOURCES: &[u8] = &[];
@@ -164,24 +166,42 @@ pub struct Migration {
 
 pub const MIGRATIONS: &[Migration] = &[];
 
-/// A block's retired values from one file, by old `ParamId`.
-pub struct Retired([Option<f32>; MAX_BLOCK_PARAMS]);
+/// A block's retired values from one file, by old `ParamId`, and its
+/// retired enum codes (`RETIRED_CODES`), by the live param that held them.
+pub struct Retired {
+    vals: [Option<f32>; MAX_BLOCK_PARAMS],
+    codes: [Option<u8>; MAX_BLOCK_PARAMS],
+}
 
 impl Retired {
     pub(super) const fn new() -> Self {
-        Retired([None; MAX_BLOCK_PARAMS])
+        Retired {
+            vals: [None; MAX_BLOCK_PARAMS],
+            codes: [None; MAX_BLOCK_PARAMS],
+        }
     }
 
     pub(super) fn put(&mut self, id: ParamId, v: f32) {
-        self.0[usize::from(id.0)] = Some(v);
+        self.vals[usize::from(id.0)] = Some(v);
+    }
+
+    pub(super) fn put_code(&mut self, id: ParamId, c: u8) {
+        if let Some(x) = self.codes.get_mut(usize::from(id.0)) {
+            *x = Some(c);
+        }
     }
 
     pub fn get(&self, id: ParamId) -> Option<f32> {
-        self.0.get(usize::from(id.0)).copied().flatten()
+        self.vals.get(usize::from(id.0)).copied().flatten()
+    }
+
+    /// The retired code `id` held in the file.
+    pub fn code(&self, id: ParamId) -> Option<u8> {
+        self.codes.get(usize::from(id.0)).copied().flatten()
     }
 
     pub fn any(&self) -> bool {
-        self.0.iter().any(Option::is_some)
+        self.vals.iter().any(Option::is_some) || self.codes.iter().any(Option::is_some)
     }
 }
 
@@ -201,10 +221,16 @@ pub struct Translation {
     pub apply: fn(&Retired, &mut dyn Block),
 }
 
-pub const TRANSLATIONS: &[Translation] = &[Translation {
-    block: 1,
-    apply: crate::dsp::modal::translate_v1,
-}];
+pub const TRANSLATIONS: &[Translation] = &[
+    Translation {
+        block: 1,
+        apply: crate::dsp::modal::translate_v1,
+    },
+    Translation {
+        block: 34,
+        apply: crate::dsp::tape_engine::params::translate_v1,
+    },
+];
 
 /// A param that exists in a live spec table. Only built from one, so a saver
 /// can't write, and a loader can't apply, an address the firmware lacks.

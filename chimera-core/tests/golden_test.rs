@@ -285,7 +285,8 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
 ];
 
 /// TAPE through one voice on INIT (ENV 1 into VCA), each model and LOOP
-/// with AGE and TAPE at 0.5 (`tape_render`). Recorded at TAPE Task 12.
+/// with AGE and TAPE at 0.5 (`tape_render`). Recorded at TAPE Task 12; the
+/// machines' rows appended at Task 12b, the rest unchanged.
 const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "tape_loop",
@@ -364,6 +365,62 @@ const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
             [
                 0, 3176360232, 3142684280, 1035228111, 3160139092, 3159674534, 3179031364,
                 1034705517,
+            ],
+        ),
+    ),
+    (
+        "tape_oneshot",
+        (
+            0xf44bc2e5ae38c14b,
+            [
+                0, 3176471990, 3150416491, 1033975853, 3170966862, 3170787766, 3179306684,
+                1016163560,
+            ],
+        ),
+    ),
+    (
+        "tape_oneshot_slice7",
+        (
+            0x34b9dc508f1fcd09,
+            [0, 1033430496, 1035801497, 0, 0, 0, 0, 0],
+        ),
+    ),
+    (
+        "tape_tron_held",
+        (
+            0x438e3c4eaba50021,
+            [
+                0, 3176471990, 3150416491, 1033975853, 3170966862, 3170787766, 3179306684,
+                1016163560,
+            ],
+        ),
+    ),
+    (
+        "tape_tron_released",
+        (
+            0x0cffd1d7e43c164c,
+            [
+                0, 3176471990, 3150416491, 1033975853, 3170966862, 3170787766, 3179306684,
+                1016163560,
+            ],
+        ),
+    ),
+    (
+        "tape_stretch_reverse",
+        (
+            0xd40d79241fb4b94a,
+            [
+                0, 1027695794, 993333050, 1019875479, 3166297792, 3166535700, 3156484968, 994935476,
+            ],
+        ),
+    ),
+    (
+        "tape_loop_warble",
+        (
+            0xe9d72b9616abacb4,
+            [
+                0, 3176464333, 3149614442, 1034095840, 3171199820, 3171073198, 1034295924,
+                3173672115,
             ],
         ),
     ),
@@ -481,14 +538,22 @@ fn golden_check_catches_every_disagreement() {
     assert!(golden::mismatches(&table[..3], &table[..3]).is_empty());
 }
 
-/// The TAPE cases: each model, then LOOP with AGE, then with TAPE, at 0.5.
+/// The TAPE cases: each model, then LOOP with AGE, then with TAPE, at 0.5;
+/// then the machines (TAPE Task 12b). `tape_reverse` is Task 12's REVERSE,
+/// now LOOP with END before START: its row is unchanged.
 fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
     use chimera_core::dsp::tape_engine::TapeModel as M;
     let p = TapeEngineParams::default();
     let model = |model| TapeEngineParams { model, ..p };
+    let rev = |model| TapeEngineParams {
+        model,
+        start: 1.0,
+        end: 0.0,
+        ..p
+    };
     vec![
         ("tape_loop", model(M::Loop)),
-        ("tape_reverse", model(M::Reverse)),
+        ("tape_reverse", rev(M::Loop)),
         ("tape_pingpong", model(M::PingPong)),
         ("tape_transwave", model(M::Transwave)),
         // A moving tape: the neutral's MOTION 0 is a stopped, silent one.
@@ -502,6 +567,34 @@ fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
         ("tape_stretch", model(M::Stretch)),
         ("tape_loop_age", TapeEngineParams { age: 0.5, ..p }),
         ("tape_loop_tape", TapeEngineParams { tape: 0.5, ..p }),
+        ("tape_oneshot", model(M::Oneshot)),
+        // SLICE 7: its value 8.
+        (
+            "tape_oneshot_slice7",
+            TapeEngineParams {
+                slice: 8,
+                ..model(M::Oneshot)
+            },
+        ),
+        // Held: a 1.4 s tape runs out before the key up; released: an 8 s
+        // one fades at it.
+        (
+            "tape_tron_held",
+            TapeEngineParams {
+                size: 0.5,
+                ..model(M::Tron)
+            },
+        ),
+        ("tape_tron_released", model(M::Tron)),
+        ("tape_stretch_reverse", rev(M::Stretch)),
+        (
+            "tape_loop_warble",
+            TapeEngineParams {
+                tape: 0.5,
+                wow: chimera_core::dsp::tape_engine::Wow::Warble,
+                ..p
+            },
+        ),
     ]
 }
 
@@ -540,6 +633,28 @@ fn tape_render(t: &TapeEngineParams) -> Vec<f32> {
         }
     }
     out
+}
+
+/// Task 12's REVERSE Sound (MODEL code 1, START and END at their base),
+/// loaded through `translate_v1`: LOOP with END before START, its render
+/// the recorded `tape_reverse` row, bit for bit (#369).
+#[test]
+fn reverse_golden_replays_bit_identically() {
+    use chimera_core::dsp::tape_engine::TapeModel;
+    use chimera_core::storage::{MIGRATIONS, TRANSLATIONS, decode_block};
+    let mut s = Sound::init(EngineType::Tape);
+    let mut payload = vec![34u8, 0];
+    payload.extend_from_slice(&1u32.to_le_bytes());
+    decode_block(&payload, MIGRATIONS, TRANSLATIONS, Some(&mut s.params)).unwrap();
+    let t = s.params.tape;
+    assert_eq!((t.model, t.start, t.end), (TapeModel::Loop, 1.0, 0.0));
+    let out = tape_render(&t);
+    let want = TAPE_GOLDENS
+        .iter()
+        .find(|g| g.0 == "tape_reverse")
+        .unwrap()
+        .1;
+    assert_eq!((fnv1a(&out), spots(&out)), want);
 }
 
 #[test]

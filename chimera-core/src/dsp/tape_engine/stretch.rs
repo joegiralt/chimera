@@ -30,6 +30,12 @@
 //! `MIN_PASS_SAMPLES` samples is a waveform loop, as an oscillator's cycle
 //! is: it wraps bare.
 //!
+//! END before START plays reversed (spec § 2 Machines, #369): the
+//! window is mirrored, as LOOP's is, so the grains read backward and time
+//! walks from START toward END (MOTION below 0, back toward START). Each
+//! grain keeps the way it started, so a flip lands at a splice, under its
+//! fade; a reversed grain's step is negated, in the one render loop.
+//!
 //! The window is never under `MIN_LOOP_FRAMES` (no source is shorter), so
 //! every wrap is at least `INC_MAX` frames and one subtraction does: no
 //! grain reads past its window, and no path divides. Where the source has
@@ -40,7 +46,7 @@
 
 use chimera_hal::BLOCK_SIZE;
 
-use super::heads::{at, shortest, window_end_min, window_start};
+use super::heads::{Dir, at, shortest, window_end_min, window_start};
 use super::params::{StretchType, TapeEngineParams};
 use super::read::{Pos, SourceView};
 use super::{INC_MAX, MIN_LOOP_FRAMES, MIN_PASS_SAMPLES, Macros};
@@ -136,6 +142,8 @@ struct Block {
     /// POSITION in the window, 32.32, and time's step a sample.
     off: u64,
     tstep: i64,
+    /// The window is mirrored: END is before START.
+    rev: bool,
 }
 
 /// The new grain's share `x` of the way through its fade: a smoothstep,
@@ -171,7 +179,8 @@ fn wrap_q(x: i64, wq: u64) -> u64 {
 #[derive(Clone, Copy, Debug)]
 pub struct Stretch {
     clock: GrainClock,
-    /// The old grain's head and the new one's, 32.32 source frames.
+    /// The old grain's head and the new one's, 32.32 source frames, where
+    /// it reads: a reversed grain's moves down (`u` is `last − head`).
     heads: [Pos; 2],
     /// Each grain's window end (whole frames) and wrap, latched as it
     /// starts.
@@ -185,7 +194,13 @@ pub struct Stretch {
     /// Time since the note-on in the window, 32.32: `T` is `ws` + POSITION's
     /// offset + this, wrapped.
     tau: u64,
-    ws: u32,
+    /// START, latched at note-on.
+    start: f32,
+    /// Each grain's frame, latched as it starts: mirrored, its `u` is
+    /// `last − head`, `last` the source's last frame. Its window end and
+    /// span are in `u`.
+    rev: [bool; 2],
+    last: Pos,
     kind: StretchType,
     /// The source's period, 32.32 and frames (0 unpitched), and its
     /// reciprocal.
@@ -218,7 +233,9 @@ impl Stretch {
         g: 0.0,
         dg: 0.0,
         tau: 0,
-        ws: 0,
+        start: 0.0,
+        rev: [false; 2],
+        last: Pos(0),
         kind: StretchType::Mono,
         period: 0,
         pf: 0.0,
@@ -241,7 +258,8 @@ impl Stretch {
             0.0
         };
         let mut s = Stretch {
-            ws: window_start(p.start, v.frames()),
+            start: p.start,
+            last: at(v.frames() - 1),
             kind: p.kind,
             period: Pos::from_f32(pf).0,
             pf,
@@ -255,7 +273,9 @@ impl Stretch {
         };
         let k = s.block(v, (inc, inc), (m.position, m.motion, m.size), p.end, sr);
         let t = s.time(k.off as i64, k);
-        s.heads = [t; 2];
+        s.rev = [k.rev; 2];
+        s.set_u(0, t);
+        s.set_u(1, t);
         s.clock = GrainClock {
             t,
             len: k.half,
@@ -275,6 +295,25 @@ impl Stretch {
         (self.heads[0].whole(), self.heads[1].whole(), smooth(self.g))
     }
 
+    /// Grain `x`'s place in its frame.
+    fn u(&self, x: usize) -> Pos {
+        if self.rev[x] {
+            self.last - self.heads[x]
+        } else {
+            self.heads[x]
+        }
+    }
+
+    /// Grain `x` to `u` in its frame.
+    fn set_u(&mut self, x: usize, u: Pos) {
+        self.heads[x] = if self.rev[x] { self.last - u } else { u };
+    }
+
+    /// The old grain's way and the new one's.
+    pub fn dirs(&self) -> [Dir; 2] {
+        self.rev.map(|r| if r { Dir::Rev } else { Dir::Fwd })
+    }
+
     /// This block's window, D-TIME, lock and time step, from its `inc` ramp
     /// and eased macros: one division and one `exp2`.
     fn block(
@@ -286,9 +325,16 @@ impl Stretch {
         sr: u32,
     ) -> Block {
         let (frames, rate) = (v.frames(), v.desc().rate);
+        // END before START: the window mirrored, START its start there.
+        let rev = Dir::of(self.start, end) == Dir::Rev;
+        let (start, end) = if rev {
+            (1.0 - self.start, 1.0 - end)
+        } else {
+            (self.start, end)
+        };
         // Never under `MIN_LOOP_FRAMES` (64, and no source is shorter): a
         // START near the end moves the window's start back.
-        let ws = self.ws.min(frames.saturating_sub(MIN_LOOP_FRAMES));
+        let ws = window_start(start, frames).min(frames.saturating_sub(MIN_LOOP_FRAMES));
         let floor = shortest(
             rate,
             (2 * WRAP_SAMPLES / MIN_PASS_SAMPLES) as f32 * from.max(to),
@@ -335,6 +381,7 @@ impl Stretch {
             inv_half: 1.0 / half as f32,
             off,
             tstep: ((speed * (1u32 << 30) as f32) as i32 as i64) << 2,
+            rev,
         }
     }
 
@@ -356,19 +403,15 @@ impl Stretch {
         sr: u32,
     ) {
         let mut k = self.block(v, (from, to), macros, end, sr);
-        if self.runup {
+        // A flip waits for the first splice.
+        if self.runup && k.rev == self.rev[1] {
             // Nothing is in play yet: the first grain takes the block's
             // window, and its fade the block's D-TIME.
             (self.hi, self.span, self.tiny) = ([k.hi; 2], [k.span; 2], [k.tiny; 2]);
             self.clock.len = k.half.max(self.clock.pos + 1);
             // Re-aimed, so the share lands on 1 as the fade ends.
             self.dg = (1.0 - self.g) / self.clock.left() as f32;
-            if self
-                .heads
-                .iter()
-                .zip(self.hi)
-                .any(|(h, hi)| h.whole() >= hi)
-            {
+            if (0..2).any(|x| self.u(x).whole() >= self.hi[x]) {
                 self.wrap(v);
             }
         }
@@ -408,10 +451,23 @@ impl Stretch {
     ) {
         let mut i = 0;
         let lk = k.lift_k;
+        let top = self.last.whole() + 1;
         while i < BLOCK_SIZE {
+            // Each grain's way as a mask: 0 forward, all ones reversed. A
+            // reversed grain's head moves down by the same step (its step
+            // negated, `(x ^ d) − d`) and wraps up by its span below its
+            // edge (`last − hi + 1`), so either way costs the same, in one
+            // loop.
+            let [d0, d1] = self.rev.map(|r| if r { u64::MAX } else { 0 });
+            let neg = |x: u64, d: u64| (x ^ d).wrapping_sub(d);
             let [mut h0, mut h1] = self.heads;
+            let (mut c0, mut c1) = (neg(cur, d0), neg(cur, d1));
+            let (s0, s1) = (neg(step, d0), neg(step, d1));
+            let edge = |e: u32, d: u64| if d != 0 { (top - e) as i32 } else { e as i32 };
             let [e0, e1] = self.hi;
-            let [s0, s1] = self.span.map(Pos);
+            let (e0, e1) = (edge(e0, d0), edge(e1, d1));
+            let (m0, m1) = (d0 as i32, d1 as i32);
+            let (w0, w1) = (Pos(neg(self.span[0], d0)), Pos(neg(self.span[1], d1)));
             let [t0, t1] = self.tiny;
             let (mut g, dg) = (self.g, self.dg);
             let mut l = self.lift;
@@ -423,14 +479,16 @@ impl Stretch {
                 g += dg;
                 *y = a + smooth(g) * (b - a) + l;
                 l *= lk;
-                cur = cur.wrapping_add(step);
-                h0 = h0 + Pos(cur);
-                h1 = h1 + Pos(cur);
+                c0 = c0.wrapping_add(s0);
+                c1 = c1.wrapping_add(s1);
+                h0 = h0 + Pos(c0);
+                h1 = h1 + Pos(c1);
                 i += 1;
-                if h0.whole() >= e0 {
-                    h0 = h0 - s0;
+                // Past the edge: at or over it forward, under it reversed.
+                if (h0.whole() as i32).wrapping_sub(e0) ^ m0 >= 0 {
+                    h0 = h0 - w0;
                     if !t0 {
-                        l += (1.0 - smooth(g + dg)) * (a - v.read(h0 - Pos(cur)));
+                        l += (1.0 - smooth(g + dg)) * (a - v.read(h0 - Pos(c0)));
                     }
                     #[cfg(any(test, feature = "test-support"))]
                     {
@@ -438,10 +496,10 @@ impl Stretch {
                         self.wraps[usize::from(t0)] += 1;
                     }
                 }
-                if h1.whole() >= e1 {
-                    h1 = h1 - s1;
+                if (h1.whole() as i32).wrapping_sub(e1) ^ m1 >= 0 {
+                    h1 = h1 - w1;
                     if !t1 {
-                        l += smooth(g + dg) * (b - v.read(h1 - Pos(cur)));
+                        l += smooth(g + dg) * (b - v.read(h1 - Pos(c1)));
                     }
                     #[cfg(any(test, feature = "test-support"))]
                     {
@@ -450,6 +508,7 @@ impl Stretch {
                     }
                 }
             }
+            cur = neg(c0, d0);
             self.heads = [h0, h1];
             self.g = g;
             self.lift = l;
@@ -469,7 +528,7 @@ impl Stretch {
     fn wrap(&mut self, v: &SourceView<'_>) {
         let g = smooth(self.g + self.dg);
         for x in 0..2 {
-            let (u, hi, span) = (self.heads[x], self.hi[x], self.span[x]);
+            let (u, hi, span) = (self.u(x), self.hi[x], self.span[x]);
             if u.whole() < hi {
                 continue;
             }
@@ -478,8 +537,9 @@ impl Stretch {
                 w = at(hi) - Pos(span);
             }
             let share = if x == 1 { g } else { 1.0 - g };
-            self.lift += share * (v.read(u) - v.read(w));
-            self.heads[x] = w;
+            let was = self.heads[x];
+            self.set_u(x, w);
+            self.lift += share * (v.read(was) - v.read(self.heads[x]));
         }
     }
 
@@ -493,11 +553,16 @@ impl Stretch {
         self.hi[0] = self.hi[1];
         self.span[0] = self.span[1];
         self.tiny[0] = self.tiny[1];
-        self.heads[1] = if k.locked {
-            self.lock_at(self.heads[0], t, k)
+        self.rev[0] = self.rev[1];
+        // A flip lands here: the new grain plays the new way, and locks
+        // only to a grain going its way.
+        self.rev[1] = k.rev;
+        let u = if k.locked && self.rev[0] == k.rev {
+            self.lock_at(self.u(0), t, k)
         } else {
             t
         };
+        self.set_u(1, u);
         self.hi[1] = k.hi;
         self.span[1] = k.span;
         self.tiny[1] = k.tiny;
@@ -565,6 +630,7 @@ mod tests {
             inv_half: 1.0 / 240.0,
             off: 0,
             tstep: 0,
+            rev: false,
         };
         for (h, t) in [
             (50_000.25, 1_234.5),
@@ -629,6 +695,7 @@ mod tests {
             inv_half: 0.001,
             off: 0,
             tstep: 0,
+            rev: false,
         };
         let mut out = [0.0; BLOCK_SIZE];
         for tiny in [false, true] {

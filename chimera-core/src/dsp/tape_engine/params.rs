@@ -1,68 +1,115 @@
 //! TAPE's parameters (spec § 3), block `BlockRef::TapeEngine`: ids frozen
 //! once written.
 
-use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
+use super::oneshot::SLICE_CHOICES;
+use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code, identity_code};
 use crate::dsp::algo::math::exp2;
 
-/// How a note plays its source. Disk codes 0–5; 6 is TRON's.
+/// How a note plays its source: the machines (spec § 2 Machines). Each
+/// discriminant is its disk code; 1 (REVERSE) is retired, and loads as
+/// LOOP with END before START (`translate_v1`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum TapeModel {
     Loop = 0,
-    Reverse = 1,
     PingPong = 2,
     Transwave = 3,
     Scrub = 4,
     Stretch = 5,
+    Tron = 6,
+    Oneshot = 7,
 }
 
 impl TapeModel {
-    pub const ALL: [TapeModel; 6] = [
+    /// MODEL's screen order: its value is the index here.
+    pub const ALL: [TapeModel; 7] = [
+        TapeModel::Oneshot,
         TapeModel::Loop,
-        TapeModel::Reverse,
-        TapeModel::PingPong,
+        TapeModel::Tron,
+        TapeModel::Stretch,
         TapeModel::Transwave,
         TapeModel::Scrub,
-        TapeModel::Stretch,
+        TapeModel::PingPong,
     ];
 
-    /// By the choice's value; past the end, the last.
+    /// MODEL's value: the machine's place on screen.
+    pub fn index(self) -> u8 {
+        match self {
+            TapeModel::Oneshot => 0,
+            TapeModel::Loop => 1,
+            TapeModel::Tron => 2,
+            TapeModel::Stretch => 3,
+            TapeModel::Transwave => 4,
+            TapeModel::Scrub => 5,
+            TapeModel::PingPong => 6,
+        }
+    }
+
+    /// By MODEL's value; past the end, the last.
     pub fn from_index(v: u8) -> Self {
         Self::ALL[usize::from(v).min(Self::ALL.len() - 1)]
+    }
+
+    /// Order is direction: END before START plays reversed. The others
+    /// take the sorted window.
+    pub fn ordered(self) -> bool {
+        matches!(
+            self,
+            TapeModel::Oneshot | TapeModel::Loop | TapeModel::Tron | TapeModel::Stretch
+        )
     }
 }
 
 impl DiskCode for TapeModel {
     fn disk_code(self) -> u8 {
-        match self {
-            TapeModel::Loop => 0,
-            TapeModel::Reverse => 1,
-            TapeModel::PingPong => 2,
-            TapeModel::Transwave => 3,
-            TapeModel::Scrub => 4,
-            TapeModel::Stretch => 5,
-        }
+        self as u8
     }
 
     fn disk_ident(self) -> &'static str {
         match self {
             TapeModel::Loop => "LOOP",
-            TapeModel::Reverse => "REVERSE",
             TapeModel::PingPong => "PING_PONG",
             TapeModel::Transwave => "TRANSWAVE",
             TapeModel::Scrub => "SCRUB",
             TapeModel::Stretch => "STRETCH",
+            TapeModel::Tron => "TRON",
+            TapeModel::Oneshot => "ONESHOT",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.disk_code() == c)
+    }
+}
+
+/// MODEL's retired code: REVERSE, now LOOP with END before START.
+pub const REVERSE_CODE: u8 = 1;
+
+/// The speed's deviation under TAPE: the capstan's transport (ADR 0053),
+/// or CHOMPI's Warble (`warble`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Wow {
+    Capstan = 0,
+    Warble = 1,
+}
+
+impl DiskCode for Wow {
+    fn disk_code(self) -> u8 {
+        self as u8
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            Wow::Capstan => "CAPSTAN",
+            Wow::Warble => "WARBLE",
         }
     }
 
     fn from_disk_code(c: u8) -> Option<Self> {
         match c {
-            0 => Some(TapeModel::Loop),
-            1 => Some(TapeModel::Reverse),
-            2 => Some(TapeModel::PingPong),
-            3 => Some(TapeModel::Transwave),
-            4 => Some(TapeModel::Scrub),
-            5 => Some(TapeModel::Stretch),
+            0 => Some(Wow::Capstan),
+            1 => Some(Wow::Warble),
             _ => None,
         }
     }
@@ -101,8 +148,16 @@ impl DiskCode for StretchType {
     }
 }
 
-/// MODEL's names, by `TapeModel as u8`.
-pub const MODEL_NAMES: [&str; 6] = ["LOOP", "REVERSE", "PINGPONG", "WAVE", "SCRUB", "STRETCH"];
+/// MODEL's names, by `TapeModel::index` (Task 15 settles the copy).
+pub const MODEL_NAMES: [&str; 7] = [
+    "ONESHOT", "LOOP", "TRON", "STRETCH", "WAVE", "SCRUB", "PINGPONG",
+];
+
+/// SLICE's names, by its value.
+pub const SLICE_NAMES: [&str; 18] = [
+    "OFF", "NOTE", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15",
+    "16",
+];
 
 /// The source is not a param: it is the Sound's `SourceRef` record. START,
 /// END, POSITION and SIZE are fractions; the window is `[START, END]` of the
@@ -127,6 +182,10 @@ pub struct TapeEngineParams {
     pub root: f32,
     /// The source's period, frames, copied at pick; 0 unpitched.
     pub period: f32,
+    /// ONESHOT's SLICE, its value (`oneshot::Slice::of`): 0 OFF, 1 NOTE,
+    /// 2–17 slices 1–16. One byte, as the snapshot has no room for more.
+    pub slice: u8,
+    pub wow: Wow,
 }
 
 /// Neutral (`Sound::neutral(Tape)`, a format contract): the whole source
@@ -147,6 +206,8 @@ impl Default for TapeEngineParams {
             kind: StretchType::Mono,
             root: 6_000.0,
             period: 0.0,
+            slice: 0,
+            wow: Wow::Capstan,
         }
     }
 }
@@ -165,6 +226,8 @@ impl TapeEngineParams {
     pub const TYPE: ParamId = ParamId(10);
     pub const ROOT: ParamId = ParamId(11);
     pub const PERIOD: ParamId = ParamId(12);
+    pub const SLICE: ParamId = ParamId(13);
+    pub const WOW: ParamId = ParamId(14);
 }
 
 /// DRAG in seconds: 10 to 500 ms, exponential.
@@ -189,8 +252,9 @@ const fn unit(id: u8, label: &'static str, default: f32, modulatable: bool) -> P
 /// The five macros are modulatable (read every block, eased); the rest is
 /// read at note-on or at a wrap. ROOT and PERIOD have no cell: a pick
 /// copies them from the source.
-pub static TAPE_ENGINE_SPECS: [ParamSpec; 13] = [
-    ParamSpec::choice(0, "MODEL", ValFmt::Names(&MODEL_NAMES), 5.0, 0.0)
+pub static TAPE_ENGINE_SPECS: [ParamSpec; 15] = [
+    // The neutral is LOOP: index 1.
+    ParamSpec::choice(0, "MODEL", ValFmt::Names(&MODEL_NAMES), 6.0, 1.0)
         .ident("MODEL")
         .glyph(crate::ui::glyph::FocusGlyph::None),
     unit(1, "START", 0.0, false).ident("START"),
@@ -215,6 +279,13 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 13] = [
         .ident("ROOT"),
     ParamSpec::continuous(12, "PERIOD", ValFmt::Uni, 0.0, 65_536.0, 0.0, 1.0, false)
         .ident("PERIOD"),
+    ParamSpec::choice(13, "SLICE", ValFmt::Names(&SLICE_NAMES), 17.0, 0.0)
+        .short("SLC")
+        .ident("SLICE")
+        .glyph(crate::ui::glyph::FocusGlyph::None),
+    ParamSpec::choice(14, "WOW", ValFmt::Names(&["CAPSTAN", "WARBLE"]), 1.0, 0.0)
+        .ident("WOW")
+        .glyph(crate::ui::glyph::FocusGlyph::None),
 ];
 
 impl Block for TapeEngineParams {
@@ -224,7 +295,7 @@ impl Block for TapeEngineParams {
 
     fn get(&self, id: ParamId) -> f32 {
         match id {
-            Self::MODEL => self.model as u8 as f32,
+            Self::MODEL => self.model.index() as f32,
             Self::START => self.start,
             Self::END => self.end,
             Self::POSITION => self.position,
@@ -237,6 +308,8 @@ impl Block for TapeEngineParams {
             Self::TYPE => self.kind as u8 as f32,
             Self::ROOT => self.root,
             Self::PERIOD => self.period,
+            Self::SLICE => self.slice as f32,
+            Self::WOW => self.wow as u8 as f32,
             _ => 0.0,
         }
     }
@@ -262,6 +335,14 @@ impl Block for TapeEngineParams {
             }
             Self::ROOT => self.root = v,
             Self::PERIOD => self.period = v,
+            Self::SLICE => self.slice = (v as u8).min(SLICE_CHOICES - 1),
+            Self::WOW => {
+                self.wow = if v as u8 == 0 {
+                    Wow::Capstan
+                } else {
+                    Wow::Warble
+                }
+            }
             _ => {}
         }
     }
@@ -270,6 +351,8 @@ impl Block for TapeEngineParams {
         match id {
             Self::MODEL => Some(self.model.disk_code()),
             Self::TYPE => Some(self.kind.disk_code()),
+            Self::SLICE => Some(self.slice),
+            Self::WOW => Some(self.wow.disk_code()),
             _ => None,
         }
     }
@@ -278,6 +361,8 @@ impl Block for TapeEngineParams {
         match id {
             Self::MODEL => Some(self.model.disk_ident()),
             Self::TYPE => Some(self.kind.disk_ident()),
+            Self::SLICE => Some(SLICE_IDENTS[usize::from(self.slice)]),
+            Self::WOW => Some(self.wow.disk_ident()),
             _ => None,
         }
     }
@@ -286,9 +371,34 @@ impl Block for TapeEngineParams {
         match id {
             Self::MODEL => apply_code(TapeModel::from_disk_code(code), |m| self.model = m),
             Self::TYPE => apply_code(StretchType::from_disk_code(code), |k| self.kind = k),
+            Self::SLICE => apply_code(identity_code(&TAPE_ENGINE_SPECS, id, code), |c| {
+                self.slice = c
+            }),
+            Self::WOW => apply_code(Wow::from_disk_code(code), |w| self.wow = w),
             _ => false,
         }
     }
+}
+
+/// SLICE's frozen idents, by code.
+const SLICE_IDENTS: [&str; 18] = [
+    "OFF", "NOTE", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12",
+    "S13", "S14", "S15", "S16",
+];
+
+/// A file from before the machines (TAPE Task 12b, #369): MODEL's retired
+/// REVERSE (code 1) is LOOP with START and END swapped, which plays it bit
+/// for bit. Run after the file's writes, so a sparse Sound's base START 0,
+/// END 1 becomes START 1, END 0.
+pub fn translate_v1(old: &crate::storage::Retired, b: &mut dyn Block) {
+    type P = TapeEngineParams;
+    if old.code(P::MODEL) != Some(REVERSE_CODE) {
+        return;
+    }
+    let _ = b.set_enum_code(P::MODEL, TapeModel::Loop.disk_code());
+    let (start, end) = (b.get(P::START), b.get(P::END));
+    b.set(P::START, end);
+    b.set(P::END, start);
 }
 
 #[cfg(test)]

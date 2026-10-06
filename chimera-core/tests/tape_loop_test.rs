@@ -14,28 +14,29 @@ use chimera_core::dsp::tape_engine::{
     INC_MAX, NOTE_ON_RAMP, TapeEngine, TapeEngineParams, TapeModel, inc, loop_len,
 };
 use chimera_hal::BLOCK_SIZE;
-use common::tape::{held_plain, held_transwave, sine};
+use common::tape::{Mach, held_plain, held_transwave, sine};
 
 const SR: u32 = 48_000;
 
 /// The models that play heads through a window (TRANSWAVE has its own).
-const MODELS: [TapeModel; 5] = [
-    TapeModel::Loop,
-    TapeModel::Reverse,
-    TapeModel::PingPong,
-    TapeModel::Scrub,
-    TapeModel::Stretch,
+/// LOOP either way (END before START plays reversed), and the rest.
+const MODELS: [Mach; 5] = [
+    Mach::fwd(TapeModel::Loop),
+    Mach::rev(TapeModel::Loop),
+    Mach::fwd(TapeModel::PingPong),
+    Mach::fwd(TapeModel::Scrub),
+    Mach::fwd(TapeModel::Stretch),
 ];
 
-/// `p` as `model` plays it in a loop test: SCRUB's head moves only with
+/// `p` as `m` plays it in a loop test: SCRUB's head moves only with
 /// MOTION, so it runs at the note's speed.
-fn as_model(model: TapeModel, p: TapeEngineParams) -> TapeEngineParams {
-    let motion = if model == TapeModel::Scrub {
+fn as_model(m: Mach, p: TapeEngineParams) -> TapeEngineParams {
+    let motion = if m.model == TapeModel::Scrub {
         0.5
     } else {
         p.motion
     };
-    TapeEngineParams { model, motion, ..p }
+    m.params(TapeEngineParams { motion, ..p })
 }
 
 fn fresh() -> TapeEngine {
@@ -145,11 +146,15 @@ fn init_never_hard_wraps() {
 fn loops_are_click_free() {
     let held = held_plain(&sine(48_000, 100.7, 48_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
-    for model in [TapeModel::Loop, TapeModel::Reverse, TapeModel::Scrub] {
+    for m in [
+        Mach::fwd(TapeModel::Loop),
+        Mach::rev(TapeModel::Loop),
+        Mach::fwd(TapeModel::Scrub),
+    ] {
         for xfade in [0.1, 0.5] {
             for position in [0.0, 0.5] {
                 let p = as_model(
-                    model,
+                    m,
                     TapeEngineParams {
                         xfade,
                         position,
@@ -162,13 +167,13 @@ fn loops_are_click_free() {
                 let (out, heads) = play(&mut e, &p, &v, 1_500);
                 assert!(
                     wraps_either(&heads) >= 10,
-                    "{model:?} XFADE {xfade} POSITION {position}"
+                    "{m:?} XFADE {xfade} POSITION {position}"
                 );
                 let steady = max_step(&out[BLOCK_SIZE..2_000]);
                 let worst = max_step(&out[BLOCK_SIZE..]);
                 assert!(
                     worst <= 4.0 * steady,
-                    "{model:?} XFADE {xfade} POSITION {position}: {worst} against {steady}"
+                    "{m:?} XFADE {xfade} POSITION {position}: {worst} against {steady}"
                 );
             }
         }
@@ -193,6 +198,20 @@ fn xfade_zero_hard_splices() {
         heads.push(e.probe().head);
     }
     assert!(wraps(&heads) >= 5);
+    // No second head but at a flip (END moved across START), which fades
+    // over the clamp's 5 ms.
+    let q = TapeEngineParams { start: 0.5, ..p };
+    let mut e = fresh();
+    e.note_on(60, &q, &v, SR);
+    let mut seconds = 0;
+    for n in 0..500 {
+        let end = if n < 100 { 1.0 } else { 0.0 };
+        e.render(&mut b, &TapeEngineParams { end, ..q }, &v, SR);
+        let flip = e.dirs()[0] != e.dirs()[1];
+        assert_eq!(e.probe().other.is_some(), flip, "block {n}");
+        seconds += usize::from(flip);
+    }
+    assert!((4..=5).contains(&seconds), "{seconds} blocks fading");
 }
 
 /// SIZE 1 → 0.2 mid-pass: the head plays on to the old loop's end, then
@@ -331,7 +350,8 @@ fn tiny_sources_play_finite() {
                 .collect();
             let held = held_plain(&src, rate);
             let v = SourceView::strict(&held).unwrap();
-            for model in MODELS {
+            for m in MODELS {
+                let model = m.model;
                 for (start, end) in [(0.0, 0.0), (0.5, 0.5), (1.0, 1.0), (0.0, 1.0), (1.0, 0.0)] {
                     for (size, xfade) in [(0.0, 0.0), (0.0, 0.5), (1.0, 0.1), (1.0, 0.5)] {
                         let p = TapeEngineParams {
@@ -350,6 +370,36 @@ fn tiny_sources_play_finite() {
                             out.iter().all(|y| y.is_finite()),
                             "{frames} frames, {model:?}, {start}..{end}"
                         );
+                    }
+                }
+            }
+            // ONESHOT (SLICE OFF, NOTE, 16) and TRON, every window either
+            // way, at the clamp: they end, finite.
+            for (model, slice) in [
+                (TapeModel::Oneshot, 0u8),
+                (TapeModel::Oneshot, 1),
+                (TapeModel::Oneshot, 17),
+                (TapeModel::Tron, 0),
+            ] {
+                for (start, end) in [(0.0, 0.0), (0.5, 0.5), (1.0, 1.0), (0.0, 1.0), (1.0, 0.0)] {
+                    for size in [0.0, 1.0] {
+                        let p = TapeEngineParams {
+                            model,
+                            slice,
+                            start,
+                            end,
+                            size,
+                            ..TapeEngineParams::default()
+                        };
+                        let mut e = fresh();
+                        e.set_pitch(2_400.0);
+                        e.note_on(127, &p, &v, SR);
+                        let (out, _) = play(&mut e, &p, &v, 8);
+                        assert!(
+                            out.iter().all(|y| y.is_finite()),
+                            "{frames} frames, {model:?} {slice}, {start}..{end}"
+                        );
+                        assert!(!e.is_active(), "{model:?} {slice}: ends");
                     }
                 }
             }
@@ -409,6 +459,31 @@ fn midi_extremes_stay_finite() {
     e.note_on(127, &p, &v, SR);
     let (out, _) = play(&mut e, &p, &v, SR as usize / BLOCK_SIZE);
     assert!(out.iter().all(|y| y.is_finite()));
+    // The machines, at both ends of MIDI, either way round.
+    for model in [TapeModel::Oneshot, TapeModel::Tron, TapeModel::Loop] {
+        for slice in [0u8, 1, 17] {
+            for (note, pitch) in [(0u8, -2_400.0f32), (127, 2_400.0)] {
+                for (start, end) in [(0.2, 0.8), (0.8, 0.2)] {
+                    let p = TapeEngineParams {
+                        model,
+                        slice,
+                        start,
+                        end,
+                        tape: 1.0,
+                        ..TapeEngineParams::default()
+                    };
+                    let mut e = fresh();
+                    e.set_pitch(pitch);
+                    e.note_on(note, &p, &v, SR);
+                    let (out, _) = play(&mut e, &p, &v, SR as usize / BLOCK_SIZE);
+                    assert!(
+                        out.iter().all(|y| y.is_finite()),
+                        "{model:?} {slice} note {note} {start}..{end}"
+                    );
+                }
+            }
+        }
+    }
 
     // TRANSWAVE: note 0 at −24 st and note 127 at +24 st. Its step is at
     // its clamp (Nyquist) at the top and never 0 at the bottom; the levels
@@ -445,8 +520,9 @@ fn midi_extremes_stay_finite() {
 fn retrigger_is_click_free() {
     let held = held_plain(&sine(48_000, 100.7, 48_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
-    for model in MODELS {
-        let p = as_model(model, TapeEngineParams::default());
+    for m in MODELS {
+        let model = m.model;
+        let p = as_model(m, TapeEngineParams::default());
         let mut e = fresh();
         e.note_on(60, &p, &v, SR);
         let (mut out, _) = play(&mut e, &p, &v, 20);
@@ -489,10 +565,11 @@ fn moving_bounds_are_click_free() {
         let src = sine(48_000, 100.7, 4_800);
         max_step(&src)
     };
-    for model in MODELS {
+    for m in MODELS {
+        let model = m.model;
         for xfade in [0.1, 0.5] {
             let mut p = as_model(
-                model,
+                m,
                 TapeEngineParams {
                     xfade,
                     ..TapeEngineParams::default()

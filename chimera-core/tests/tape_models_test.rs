@@ -1,4 +1,5 @@
-//! TAPE's REVERSE, PING-PONG and SCRUB (spec § 2 The models). Precedent:
+//! TAPE's PING-PONG and SCRUB, and LOOP reversed (spec § 2 The models;
+//! END before START, `tape_machines_test`). Precedent:
 //! Digitakt II manual § Playback modes (REVERSE LOOP); Polyend Tracker
 //! v1.5 § Instrument (ping-pong); Morphagene manual (Slide, Vari-Speed).
 
@@ -8,11 +9,11 @@ use core::mem::MaybeUninit;
 
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::{
-    CLAMP_FADE_S, INC_MAX, MIN_PASS_SAMPLES, NOTE_ON_RAMP, TapeEngine, TapeEngineParams, TapeModel,
-    drag_s, loop_len,
+    CLAMP_FADE_S, INC_MAX, MIN_PASS_SAMPLES, TapeEngine, TapeEngineParams, TapeModel, drag_s,
+    loop_len,
 };
 use chimera_hal::BLOCK_SIZE;
-use common::tape::{held_plain, held_transwave, saw_with_burst, sine};
+use common::tape::{Mach, held_plain, held_transwave, sine};
 
 const SR: u32 = 48_000;
 /// The bills (spec § 5) the shortest-loop timings are held under.
@@ -54,51 +55,6 @@ fn max_step(x: &[f32]) -> f32 {
 fn max_bend(x: &[f32]) -> f32 {
     x.windows(3)
         .fold(0.0f32, |s, w| s.max((w[2] - 2.0 * w[1] + w[0]).abs()))
-}
-
-#[test]
-fn reverse_is_loop_mirrored() {
-    let x = saw_with_burst(48_000, 0.5);
-    let rev: Vec<f32> = x.iter().rev().copied().collect();
-    let (held, held_rev) = (held_plain(&x, 48_000), held_plain(&rev, 48_000));
-    let (v, v_rev) = (
-        SourceView::strict(&held).unwrap(),
-        SourceView::strict(&held_rev).unwrap(),
-    );
-    assert_eq!(v.frames() as usize, x.len());
-    for (start, end, position, size, xfade, motion) in [
-        (0.0, 1.0, 0.0, 1.0, 0.1, 0.0),
-        (0.1, 0.8, 0.3, 0.6, 0.2, 0.0),
-        (0.2, 0.9, 0.7, 0.4, 0.5, 0.3),
-    ] {
-        let p = TapeEngineParams {
-            model: TapeModel::Reverse,
-            start,
-            end,
-            position,
-            size,
-            xfade,
-            motion,
-            ..TapeEngineParams::default()
-        };
-        let q = TapeEngineParams {
-            model: TapeModel::Loop,
-            start: 1.0 - end,
-            end: 1.0 - start,
-            ..p
-        };
-        let (mut a, mut b) = (fresh(), fresh());
-        a.note_on(57, &p, &v, SR);
-        b.note_on(57, &q, &v_rev, SR);
-        let (ya, _) = play(&mut a, &p, &v, 800);
-        let (yb, _) = play(&mut b, &q, &v_rev, 800);
-        for (i, (s, t)) in ya.iter().zip(&yb).enumerate().skip(NOTE_ON_RAMP as usize) {
-            assert!(
-                (s - t).abs() < 1e-6,
-                "{start}..{end}: sample {i}: {s} against {t}"
-            );
-        }
-    }
 }
 
 /// The blocks where the probe head turned: its block-to-block move changed
@@ -656,12 +612,13 @@ fn ping_pong_size_lfo_soak() {
 fn pass_rate_is_bounded() {
     let held = held_plain(&sine(48_000, 100.7, 48_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
-    for model in [
-        TapeModel::Loop,
-        TapeModel::Reverse,
-        TapeModel::PingPong,
-        TapeModel::Scrub,
+    for m in [
+        Mach::fwd(TapeModel::Loop),
+        Mach::rev(TapeModel::Loop),
+        Mach::fwd(TapeModel::PingPong),
+        Mach::fwd(TapeModel::Scrub),
     ] {
+        let model = m.model;
         for xfade in [0.0, 0.5] {
             let p = TapeEngineParams {
                 model,
@@ -672,6 +629,7 @@ fn pass_rate_is_bounded() {
                 motion: 1.0,
                 ..TapeEngineParams::default()
             };
+            let p = m.params(p);
             let mut e = fresh();
             e.set_pitch(4_800.0);
             e.note_on(127, &p, &v, SR);
@@ -687,7 +645,7 @@ fn pass_rate_is_bounded() {
             };
             assert!(
                 per <= most as f32,
-                "{model:?} XFADE {xfade}: {per} events a block, at most {most}"
+                "{m:?} XFADE {xfade}: {per} events a block, at most {most}"
             );
         }
     }
@@ -706,12 +664,13 @@ fn inc_sweep_across_the_floor_is_click_free() {
     let held = held_plain(&sine(48_000, 2_000.0, 48_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
     let cents = |t: f32| 4_800.0 * (1.0 - (2.0 * t - 1.0).abs());
-    for model in [
-        TapeModel::Loop,
-        TapeModel::Reverse,
-        TapeModel::PingPong,
-        TapeModel::Scrub,
+    for m in [
+        Mach::fwd(TapeModel::Loop),
+        Mach::rev(TapeModel::Loop),
+        Mach::fwd(TapeModel::PingPong),
+        Mach::fwd(TapeModel::Scrub),
     ] {
+        let model = m.model;
         let p = TapeEngineParams {
             model,
             size: 0.0,
@@ -720,6 +679,7 @@ fn inc_sweep_across_the_floor_is_click_free() {
             motion: 0.5,
             ..TapeEngineParams::default()
         };
+        let p = m.params(p);
         let run = |blocks: usize, pitch: &dyn Fn(usize) -> f32| {
             let mut e = fresh();
             e.set_pitch(pitch(0));
@@ -744,7 +704,7 @@ fn inc_sweep_across_the_floor_is_click_free() {
             let swept = run(blocks, &|n| cents(n as f32 / blocks as f32));
             assert!(
                 swept <= 1.25 * fixed,
-                "{model:?} over {blocks} blocks: swept {swept} against fixed {fixed}"
+                "{m:?} over {blocks} blocks: swept {swept} against fixed {fixed}"
             );
         }
     }
@@ -767,12 +727,13 @@ fn pitch_drops_latch_the_floor_at_a_wrap() {
             0.0
         }
     };
-    for model in [
-        TapeModel::Loop,
-        TapeModel::Reverse,
-        TapeModel::PingPong,
-        TapeModel::Scrub,
+    for m in [
+        Mach::fwd(TapeModel::Loop),
+        Mach::rev(TapeModel::Loop),
+        Mach::fwd(TapeModel::PingPong),
+        Mach::fwd(TapeModel::Scrub),
     ] {
+        let model = m.model;
         let p = TapeEngineParams {
             model,
             size: 0.0,
@@ -781,6 +742,7 @@ fn pitch_drops_latch_the_floor_at_a_wrap() {
             motion: if model == TapeModel::Scrub { 0.5 } else { 0.0 },
             ..TapeEngineParams::default()
         };
+        let p = m.params(p);
         let run = |pitch: &dyn Fn(usize) -> f32| {
             let mut e = fresh();
             e.set_pitch(pitch(0));
@@ -803,7 +765,7 @@ fn pitch_drops_latch_the_floor_at_a_wrap() {
             .fold(0.0f32, f32::max);
         assert!(
             worst <= 1.5 * low,
-            "{model:?}: {worst} after a drop, against {low}"
+            "{m:?}: {worst} after a drop, against {low}"
         );
     }
 }
@@ -998,17 +960,18 @@ fn tiny_loops_cost_within_their_bills() {
     );
     let at_clamp = (127, 4_800.0);
     let bill = |m: TapeModel| match m {
-        TapeModel::Loop | TapeModel::Reverse => LOOP_BILL,
+        TapeModel::Loop => LOOP_BILL,
         TapeModel::PingPong => PING_PONG_BILL,
         _ => SCRUB_BILL,
     };
     let mut rows: Vec<(String, TapeModel, f64)> = Vec::new();
-    for model in [
-        TapeModel::Loop,
-        TapeModel::Reverse,
-        TapeModel::PingPong,
-        TapeModel::Scrub,
+    for m in [
+        Mach::fwd(TapeModel::Loop),
+        Mach::rev(TapeModel::Loop),
+        Mach::fwd(TapeModel::PingPong),
+        Mach::fwd(TapeModel::Scrub),
     ] {
+        let model = m.model;
         let p = TapeEngineParams {
             model,
             size: 0.0,
@@ -1016,18 +979,21 @@ fn tiny_loops_cost_within_their_bills() {
             motion: 1.0,
             ..TapeEngineParams::default()
         };
+        let p = m.params(p);
         let t = host_time(&|_| p, &tv, at_clamp, blocks);
-        rows.push((format!("{model:?}, 64 frames"), model, t));
+        rows.push((format!("{m:?}, 64 frames"), model, t));
     }
-    for model in [TapeModel::Loop, TapeModel::Reverse] {
+    for m in [Mach::fwd(TapeModel::Loop), Mach::rev(TapeModel::Loop)] {
+        let model = m.model;
         let p = TapeEngineParams {
             model,
             size: 0.0,
             xfade: 0.5,
             ..TapeEngineParams::default()
         };
+        let p = m.params(p);
         let t = host_time(&|_| p, &sv, at_clamp, blocks);
-        rows.push((format!("{model:?}, shortest loop"), model, t));
+        rows.push((format!("{m:?}, shortest loop"), model, t));
     }
     let square = |n: usize| TapeEngineParams {
         model: TapeModel::PingPong,

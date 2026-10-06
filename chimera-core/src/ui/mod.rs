@@ -15,6 +15,7 @@ pub mod focus;
 pub mod glyph;
 pub mod hint;
 pub mod hold;
+pub mod jog;
 pub mod led;
 pub mod meter;
 pub mod midi_settings;
