@@ -284,21 +284,20 @@ impl Exp {
     }
 }
 
-/// How TONE maps: an `exp` corner, bright → dark, Hz; or OFF (an open
-/// one-pole) at 0 and the corner past it.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ToneLaw {
-    Exp(Exp),
-    OffThenExp(Exp),
+/// Whether TONE's bottom tick is OFF: an open one-pole, `f32::INFINITY`
+/// Hz, before its `exp` corner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToneOff {
+    Never,
+    AtZero,
 }
 
-impl ToneLaw {
+impl Ranges {
     /// TONE `p`'s corner, Hz; `f32::INFINITY` is OFF.
-    pub fn hz(self, p: f32) -> f32 {
-        match self {
-            ToneLaw::Exp(e) => exp_law(e, p),
-            ToneLaw::OffThenExp(_) if unit(p) < TONE_OFF => f32::INFINITY,
-            ToneLaw::OffThenExp(e) => exp_law(e, p),
+    pub fn tone_at(&self, p: f32) -> f32 {
+        match self.tone_off {
+            ToneOff::AtZero if unit(p) < TONE_OFF => f32::INFINITY,
+            _ => exp_law(self.tone_hz, p),
         }
     }
 }
@@ -315,8 +314,10 @@ pub struct Ranges {
     pub length_ms: Exp,
     pub length_lin: bool,
     pub time: TimeLaw,
-    /// TONE's input corner, bright → dark.
-    pub tone_hz: ToneLaw,
+    /// TONE's input corner, bright → dark, Hz, `exp`.
+    pub tone_hz: Exp,
+    /// TONE 0 is OFF (an open one-pole), the corner past it: HALL's.
+    pub tone_off: ToneOff,
     /// DENSITY's taps, `lin`.
     pub taps: (f32, f32),
     /// DIFFUSE's or DENSITY's allpass g, `lin`.
@@ -344,7 +345,8 @@ pub const GATE: Ranges = Ranges {
         rt60_s: Exp::new(0.15, 0.8),
         fade: 0.05,
     },
-    tone_hz: ToneLaw::Exp(Exp::new(10_000.0, 2_500.0)),
+    tone_hz: Exp::new(10_000.0, 2_500.0),
+    tone_off: ToneOff::Never,
     taps: (6.0, 12.0),
     diffuse_g: (0.5, 0.7),
     predelay_ms: (0.0, 0.0),
@@ -381,7 +383,8 @@ pub const ROOM: Ranges = Ranges {
     time: TimeLaw::Decay {
         rt60_s: Exp::new(0.2, 2.0),
     },
-    tone_hz: ToneLaw::Exp(Exp::new(10_000.0, 2_500.0)),
+    tone_hz: Exp::new(10_000.0, 2_500.0),
+    tone_off: ToneOff::Never,
     taps: (0.0, 0.0),
     diffuse_g: (0.45, 0.70),
     predelay_ms: (0.0, 50.0),
@@ -405,7 +408,7 @@ pub const BLOOM: Ranges = Ranges {
     time: TimeLaw::Decay {
         rt60_s: Exp::new(2.0, 12.0),
     },
-    tone_hz: ToneLaw::Exp(Exp::new(10_000.0, 1_500.0)),
+    tone_hz: Exp::new(10_000.0, 1_500.0),
     diffuse_g: (0.45, 0.65),
     predelay_ms: (0.0, 125.0),
     shape_db: (0.0, 0.0),
@@ -425,7 +428,8 @@ pub const BLOOM: Ranges = Ranges {
 pub const HALL: Ranges = Ranges {
     length_ms: Exp::new(120.0, 600.0),
     length_lin: true,
-    tone_hz: ToneLaw::OffThenExp(Exp::new(12_000.0, 2_000.0)),
+    tone_hz: Exp::new(12_000.0, 2_000.0),
+    tone_off: ToneOff::AtZero,
     diffuse_g: (0.3, 0.8),
     shape_db: (0.0, 0.0),
     time: TimeLaw::Decay {
@@ -667,7 +671,7 @@ fn row_knobs(r: &Ranges, p: &ReverbParams) -> EngineKnobs {
         rt60_s,
         smear_ms: (r.smear_ms * unit(p.smear)).min(r.smear_cap * length_ms),
         rate_hz: exp_law(r.rate_hz, p.rate),
-        tone_hz: r.tone_hz.hz(p.tone),
+        tone_hz: r.tone_at(p.tone),
         tail,
         regen,
         taps: lin(r.taps, p.diffuse),
