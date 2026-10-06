@@ -320,15 +320,24 @@ fn nudged(k: &Knobs, d: &str, by: f64) -> Option<Knobs> {
     })
 }
 
-/// Each of `knobs` measured, scored by the worst of it and SIZE ±`NUDGE`
-/// (ADR 0095): a fit that holds only on one length is no fit. The metrics
-/// are the setting's own.
+/// Each of `knobs` measured and scored; with `--size-worst`, by the worst
+/// of it and SIZE ±`NUDGE` (ADR 0095: opt-in, it triples a fit and made
+/// ROOM's refits worse). The metrics are the setting's own.
 fn robust(
     cfg: &Config,
     t: ReverbType,
     knobs: &[Knobs],
     r: &Metrics,
 ) -> Result<Vec<(Metrics, f64)>, String> {
+    if !cfg.size_worst {
+        return Ok(measure(t, knobs, cfg.refine_seeds)?
+            .into_iter()
+            .map(|m| {
+                let sc = score(t, &m, r);
+                (m, sc)
+            })
+            .collect());
+    }
     let sets: Vec<Knobs> = knobs
         .iter()
         .flat_map(|k| {
@@ -623,7 +632,7 @@ pub fn verify(cfg: &Config, t: ReverbType, fits: Option<&Path>) -> Result<bool, 
 
 /// Each fit nudged ±`NUDGE` on every knob it fits (16 seeds): the fit
 /// holds where every nudge passes too. Prints each preset's failing
-/// nudges; true when none fails.
+/// nudges; true when none fails. A report, not a gate (ADR 0095).
 pub fn robust_verify(cfg: &Config, t: ReverbType, fits: Option<&Path>) -> Result<bool, String> {
     let src = fits.map_or(fits_path(cfg, t), Path::to_path_buf);
     let fits = match read_json(&src)? {

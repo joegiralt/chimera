@@ -44,7 +44,8 @@ flags:
   --start PATH    mv-fit: search from these fits' knobs (finer steps, SMEAR held)
   --steps A,B,…   mv-fit --start: the pattern steps (default 0.03,0.012)
   --redo          mv-fit: refit presets already fitted, and re-sweep
-  --robust        mv-verify: also nudge every fitted knob ±0.001, each must pass
+  --robust        mv-verify: also nudge every fitted knob ±0.001 (a report)
+  --size-worst    mv-fit: score each setting by the worst of it and SIZE ±0.001 (3× slower)
   --no-sources    mv-refs: skip the stimuli renders";
 
 pub struct Config {
@@ -58,6 +59,8 @@ pub struct Config {
     pub refine_seeds: usize,
     /// `mv-fit --start`'s pattern steps, coarse to fine.
     pub steps: Option<Vec<f64>>,
+    /// `mv-fit` scores a setting by the worst of it and SIZE ±0.001.
+    pub size_worst: bool,
 }
 
 fn env_path(k: &str) -> Option<PathBuf> {
@@ -116,7 +119,7 @@ fn run() -> Result<bool, String> {
     let jobs: usize =
         flag("--jobs")?.map_or(Ok(8), |v| v.parse().map_err(|_| "--jobs: not a number"))?;
     let path = |v: Option<String>, env: &str| v.map(PathBuf::from).or_else(|| env_path(env));
-    let cfg = Config {
+    let mut cfg = Config {
         out: path(flag("--out")?, "MV_OUT").unwrap_or_else(|| PathBuf::from("target/mv")),
         emu: path(flag("--emu")?, "MIDIVERB_EMU"),
         stim: path(flag("--stim")?, "MV_STIM"),
@@ -132,6 +135,7 @@ fn run() -> Result<bool, String> {
                     .collect::<Result<Vec<f64>, _>>()
             })
             .transpose()?,
+        size_worst: false,
     };
     let fits = flag("--fits")?.map(PathBuf::from);
     let start = flag("--start")?.map(PathBuf::from);
@@ -142,6 +146,7 @@ fn run() -> Result<bool, String> {
             .is_some()
     };
     let (redo, no_sources, robust) = (switch("--redo"), switch("--no-sources"), switch("--robust"));
+    cfg.size_worst = switch("--size-worst");
     rayon::ThreadPoolBuilder::new()
         .num_threads(jobs.max(1))
         .stack_size(16 << 20)
@@ -179,8 +184,13 @@ fn run() -> Result<bool, String> {
         "mv-fit" if rest.len() >= 2 => {
             mv::fit(&cfg, ty(0)?, &nums(&rest[1..])?, redo, start.as_deref()).map(|_| true)
         }
-        "mv-verify" => mv::verify(&cfg, ty(0)?, fits.as_deref())
-            .and_then(|ok| Ok(ok & (!robust || mv::robust_verify(&cfg, ty(0)?, fits.as_deref())?))),
+        "mv-verify" => mv::verify(&cfg, ty(0)?, fits.as_deref()).and_then(|ok| {
+            // A report, not a gate (ADR 0095).
+            if robust {
+                mv::robust_verify(&cfg, ty(0)?, fits.as_deref())?;
+            }
+            Ok(ok)
+        }),
         "mv-start" => {
             let types = if rest.is_empty() {
                 ReverbType::ALL.to_vec()

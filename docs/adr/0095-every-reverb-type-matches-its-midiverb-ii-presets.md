@@ -317,9 +317,15 @@ the ban on 2026-10-05.
     4 kHz RT −29 %, HF 5.5 dB).
   - **The fit, every TYPE's** (fix round 1): its distance adds 4 for each
     judged metric past 0.8 of its bar, so the search keeps a margin rather
-    than parking on the bars, and scores a setting by the worst of it and
-    SIZE ±0.001, since SIZE's lengths are whole samples. `mv-verify
-    --robust` nudges every fitted knob ±0.001 and judges each nudge.
+    than parking on the bars. Scoring a setting by the worst of it and
+    SIZE ±0.001 (SIZE's lengths are whole samples) is opt-in,
+    `--size-worst`, off by default: it tripled a fit's time and left ROOM's
+    refits worse (below). `mv-verify --robust` nudges every fitted knob
+    ±0.001 and names each failing nudge: a report, not a gate.
+  - **Acceptance is 9/9 at the committed knobs** (ruling, 2026-10-06). A
+    one-sample length change reshuffling the echoes is below hearing, and
+    the owner judged ROOM indistinguishable blind; the robust counts below
+    are recorded, not required.
   - **The refit:** all nine ROOM presets pass with GRAIN and HF share in.
     Held to ±0.001 on every knob, #3 and #5 pass every nudge; 120 of the
     135 nudges pass. The rest fail on the metrics' own grain, not on a
@@ -329,13 +335,28 @@ the ban on 2026-10-05.
       (#1, #2) HF share's 200–600 ms window moves 1.3–1.5 dB. #1, #2, #9,
       #14 fail at SIZE ±0.001, #8 and #10 at one side;
     - #9, #10 and #14 fit DAMP 0, the dampers' bypass: DAMP +0.001 is the
-      step to a 9.9 kHz one-pole (DAMP's top, above), and fails;
+      step to a 9.9 kHz one-pole (DAMP's top, above), and fails. **For
+      UAT:** DAMP 0's first step is a structural cliff, the bypass to a
+      damper engaging at 9.9 kHz, on every preset that sits at DAMP 0;
     - #10 at TONE −0.001, #11 at PRE-DLY +0.001 (NED −10 %, its bar).
     The robust search itself (from the Task 9c fits, at 0.03/0.012 and at
     0.012/0.004/0.002) found no setting passing all three SIZE settings
-    for the others, and left nominal passes at 3 of 9; the committed fits
-    keep each preset's best: the Task 9c fit, or a robust or fewer-failing
-    neighbour (#3, #5, #8).
+    for the others, and left nominal passes at 3 and 4 of 9; the committed
+    fits keep each preset's best: the Task 9c fit, or a robust or
+    fewer-failing neighbour (#3, #5, #8). At the committed knobs, ±0.001
+    on every knob:
+
+    | # | at its knobs | ±0.001 nudges that fail |
+    |---|---|---|
+    | 1 | PASS | SIZE ± |
+    | 2 | PASS | SIZE ± |
+    | 3 | PASS | none |
+    | 5 | PASS | none |
+    | 8 | PASS | SIZE − |
+    | 9 | PASS | SIZE ±, DAMP + |
+    | 10 | PASS | SIZE +, TONE −, DAMP + |
+    | 11 | PASS | PRE-DLY + (NED −10 %) |
+    | 14 | PASS | SIZE ±, DAMP + |
 
 - **BLOOM, as built (Task 11, 2026-10-05).** The following departures
   are measured, and need the owner's ruling.
