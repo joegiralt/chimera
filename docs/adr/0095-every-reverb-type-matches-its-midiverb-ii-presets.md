@@ -396,8 +396,8 @@ the ban on 2026-10-05.
     is: at 120 BPM 1–3 beats play BLOOM's 2 s floor, 32 its 12 s top.
   - **The noise floor is inside the plan's bound:** 15.6 dB against
     QUAD's 12.0 at DECAY 0 (+3.6; bound 4), 17.9 at DIFFUSE 1 (+5.9; bound
-    6): fifteen normalised states, each error read × 1/(1 − g). The tests
-    hold +4 and +6.5.
+    6): fifteen normalised states, each error read × 1/(1 − g), at SMEAR
+    0.3. At START's SMEAR 0 the tests hold +7.5 and +9.5 (below).
   - **SMEAR's window mean drifts 1.25 cents** at the cap (bound 1): the
     three smeared lines share one loop, so a 4/RATE window's eight targets
     leave its mean about 1.4 cents (1σ) off. Per pass it holds 25 cents,
@@ -407,10 +407,12 @@ the ban on 2026-10-05.
   - **START is Bloom 1 (#45) exactly** (owner, 2026-10-06): its fitted
     knobs and SMEAR 0, as ROOM's START is #5. With SMEAR 0.3 it failed #45
     (centroid −43 %, 4 kHz RT60 −29 %, HF share 5.5 dB); `mv-start BLOOM`
-    now PASSES. **Needs the owner's ruling:** at SMEAR 0 the cascade's
-    storage noise floor reads 6.7 dB over QUAD's (DIFFUSE at START) and
-    8.8 dB at DIFFUSE 1, past the 4 and 6.5 dB bounds above; SMEAR 0.3
-    dithers it to 3.6 and 5.9. The bound test is judged at SMEAR 0.3. The
+    now PASSES. **Its noise floor is judged at START** (owner,
+    2026-10-06): at SMEAR 0 the cascade's storage noise floor reads 6.7 dB
+    over QUAD's (DIFFUSE at START) and 8.8 dB at DIFFUSE 1, so the bounds
+    move from 4 and 6.5 dB to 7.5 and 9.5. The MidiVerb carries grain too,
+    and BLOOM's GRAIN passes against Bloom 1 (1.2/1.6 dB): this floor is
+    part of matching the unit. (SMEAR 0.3 dithers it to 3.6 and 5.9.) The
     switch test's BLOOM lead moved 850 → 350 blocks: at SMEAR 0 its
     gain-jump control (which must read over 1.5× the bound) swings with
     the lead, and 350 gives it 1.85×, the widest margin over 200–900
