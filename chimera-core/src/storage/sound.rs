@@ -3,7 +3,7 @@
 
 use chimera_hal::store::StoreError;
 
-use super::{SourceRef, ZoneTune};
+use super::{SourceRef, TapeSource, ZoneTune};
 use crate::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use crate::block::{DiskCode, ParamId};
 use crate::mod_path::{LABEL_LEN, MAX_REGISTRY_DESTS, ModDestRegistry};
@@ -47,7 +47,6 @@ impl Sound {
             mod_state: ModState::with_sources(MAX_MOD_SOURCES),
             dest_registry: ModDestRegistry::new(),
             source: None,
-            zone_tune: None,
         }
     }
 }
@@ -117,10 +116,11 @@ pub fn encode_sound(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(), StoreErro
         }
     }
     w.put(RecordTag::Routes, r.as_slice())?;
-    if let Some(src) = s.source {
-        w.put(RecordTag::SourceRef, &src.to_bytes())?;
-    }
-    match s.zone_tune {
+    let Some(src) = s.source else {
+        return Ok(());
+    };
+    w.put(RecordTag::SourceRef, &src.r.to_bytes())?;
+    match src.tune {
         Some(t) => w.put(RecordTag::ZoneTune, t.record()),
         None => Ok(()),
     }
@@ -328,14 +328,18 @@ impl SoundCheck {
             RecordTag::SourceRef => {
                 let r = SourceRef::from_bytes(p).ok_or(FileError::Bounds)?;
                 if let Some(s) = staged {
-                    s.source = Some(r);
+                    s.source = Some(TapeSource::from(r));
                 }
                 Ok(())
             }
+            // Only after the `SourceRef` it tunes.
+            RecordTag::ZoneTune if self.seen & once_bit(RecordTag::SourceRef) == 0 => {
+                Err(FileError::Corrupt)
+            }
             RecordTag::ZoneTune => {
                 let t = ZoneTune::from_record(p).ok_or(FileError::Bounds)?;
-                if let Some(s) = staged {
-                    s.zone_tune = Some(t);
+                if let Some(src) = staged.and_then(|s| s.source.as_mut()) {
+                    src.tune = Some(t);
                 }
                 Ok(())
             }

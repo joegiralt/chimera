@@ -15,7 +15,7 @@ use chimera_core::project::{
 use chimera_core::source_table::AudioToken;
 use chimera_core::storage::{
     Card, DecodeInPlace, Event, FileError, FileKind, Framer, Generation, Header, LoadError,
-    ProjectId, ReadTag, RecordTag, RecordWriter, SaveError, Side, SourceHead, Wrote,
+    ProjectId, ReadTag, RecordTag, RecordWriter, SaveError, Side, SourceHead, WholeShape, Wrote,
     read_source_into, source_crc, source_file, source_file_min_len, write_file, write_source,
 };
 use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
@@ -30,7 +30,7 @@ fn source(seed: u8, frames: u32, name: &str) -> (SourceHead, Vec<u8>) {
         .collect();
     let head = SourceHead {
         sref: SourceRef {
-            crc: source_crc(Shape::Plain, 1, &data),
+            crc: source_crc(WholeShape::Plain, 1, &data),
             frames,
             rate: 24_000,
         },
@@ -98,12 +98,16 @@ fn crc_ignores_labels() {
     b.root = 4_321;
     b.period_q16 = 99 << 16;
     // The labels aren't in what the CRC covers at all.
-    assert_eq!(source_crc(b.shape, b.count, &data), a.sref.crc);
-    assert_ne!(source_crc(Shape::Transwave, 1, &data), a.sref.crc, "shape");
-    assert_ne!(source_crc(Shape::Plain, 2, &data), a.sref.crc, "count");
+    assert_eq!(source_crc(WholeShape::Plain, b.count, &data), a.sref.crc);
+    assert_ne!(
+        source_crc(WholeShape::Transwave, 1, &data),
+        a.sref.crc,
+        "shape"
+    );
+    assert_ne!(source_crc(WholeShape::Plain, 2, &data), a.sref.crc, "count");
     let mut one = data.clone();
     one[300] ^= 1;
-    assert_ne!(source_crc(Shape::Plain, 1, &one), a.sref.crc, "a byte");
+    assert_ne!(source_crc(WholeShape::Plain, 1, &one), a.sref.crc, "a byte");
     assert_eq!(source_file(a.sref).dir(), Dir::Tapes);
     assert_eq!(
         source_file(a.sref).stem(),
@@ -250,8 +254,8 @@ fn over_budget_loads_in_order() {
     for h in [&other, &small, &part_src] {
         p.source_absent(h.sref).unwrap();
     }
-    p.edit_part(PartId::ALL[0]).sound.source = Some(part_src.sref);
-    p.edit_part(PartId::ALL[3]).sound.source = Some(part_src.sref);
+    p.edit_part(PartId::ALL[0]).sound.source = Some(part_src.sref.into());
+    p.edit_part(PartId::ALL[3]).sound.source = Some(part_src.sref.into());
     // An older project on both sides first: the load picks this one's
     // side, A, after checking B too, and plans by A's pass 1, not B's.
     let (mut older, _) = full_dense_slots(48);
@@ -327,7 +331,7 @@ fn missing_source_ref_survives_save() {
     put_source(&mut s, &here, &here_data);
     p.source_absent(gone.sref).unwrap();
     p.source_absent(here.sref).unwrap();
-    p.edit_part(PartId::ALL[1]).sound.source = Some(gone.sref);
+    p.edit_part(PartId::ALL[1]).sound.source = Some(gone.sref.into());
     let (mut q, note) = round_trip(&mut s, &mut p);
     let tok = &mut q.pool().table().reader().expect("one reader");
     assert_eq!(
@@ -461,7 +465,7 @@ fn a_framed_but_wrong_source_reads_missing() {
     let cut = &data[..data.len() - 3];
     let short = SourceHead {
         sref: SourceRef {
-            crc: source_crc(Shape::Plain, 1, cut),
+            crc: source_crc(WholeShape::Plain, 1, cut),
             ..h.sref
         },
         ..h
@@ -474,7 +478,7 @@ fn a_framed_but_wrong_source_reads_missing() {
             .run(&mut s, |s, r| read_source_into(s, r, head.sref, &mut out))
             .unwrap()
             .result;
-        assert_eq!(r, Err(LoadError::File(FileError::Corrupt)), "{what}");
+        assert_eq!(r, Err(LoadError::File(FileError::Corrupt).into()), "{what}");
     }
     let mut s = MemStore::new(1);
     put_raw(&mut s, &h, &data);
@@ -509,7 +513,7 @@ fn write_source_refuses_what_tape_cant_play() {
     let two = SourceHead {
         count: 2,
         sref: SourceRef {
-            crc: source_crc(Shape::Plain, 2, &data),
+            crc: source_crc(WholeShape::Plain, 2, &data),
             ..h.sref
         },
         ..h
@@ -733,6 +737,15 @@ fn pool_source_rules() {
     );
 }
 
+/// The CRC the pool once gave a zone set: `[ZoneSet, count]` and the
+/// samples, no layout. `source_crc` no longer takes a `ZoneSet`.
+fn layoutless_crc(count: u8, packed: &[u8]) -> u32 {
+    let mut c = chimera_core::storage::Crc32::new();
+    c.update(&[Shape::ZoneSet as u8, count]);
+    c.update(packed);
+    c.finish()
+}
+
 /// `h`'s samples as a 4-zone `ZoneSet` head, its CRC with no layout
 /// folded in (`zone_set_crc` folds it).
 fn zone_set(h: &SourceHead, data: &[u8]) -> SourceHead {
@@ -740,7 +753,7 @@ fn zone_set(h: &SourceHead, data: &[u8]) -> SourceHead {
         shape: Shape::ZoneSet,
         count: 4,
         sref: SourceRef {
-            crc: source_crc(Shape::ZoneSet, 4, data),
+            crc: layoutless_crc(4, data),
             ..h.sref
         },
         ..*h
@@ -766,7 +779,7 @@ fn an_unplayable_head_reads_missing() {
             .run(&mut s, |s, r| read_source_into(s, r, head.sref, &mut out))
             .unwrap()
             .result;
-        assert_eq!(r, Err(LoadError::File(err)), "{what}");
+        assert_eq!(r, Err(LoadError::File(err).into()), "{what}");
     }
 }
 
@@ -868,7 +881,7 @@ fn a_missing_part_source_pushes_no_sound_out() {
     // Would take the room left and 3 KB more.
     let (gone, _) = source(33, 2 * (left + 3_000) / 3, "GONE");
     p.source_absent(gone.sref).unwrap();
-    p.edit_part(PartId::ALL[0]).sound.source = Some(gone.sref);
+    p.edit_part(PartId::ALL[0]).sound.source = Some(gone.sref.into());
     let mut s = MemStore::new(1);
     let (q, note) = round_trip(&mut s, &mut p);
     assert_eq!(
@@ -914,7 +927,7 @@ fn a_torn_part_source_pushes_no_sound_out() {
     s.write(vol, source_file(torn.sref), &mut |w| w.put(&whole.0[..cut]))
         .unwrap();
     p.source_absent(torn.sref).unwrap();
-    p.edit_part(PartId::ALL[0]).sound.source = Some(torn.sref);
+    p.edit_part(PartId::ALL[0]).sound.source = Some(torn.sref.into());
     let (q, note) = round_trip(&mut s, &mut p);
     assert_eq!(note, Some(ProjectNote::SourcesMissing(1)));
     assert_eq!(q.pool().sound_count(), sounds, "every Sound");
@@ -956,4 +969,87 @@ fn a_damaged_source_is_named_missing() {
     assert_eq!(note, Some(ProjectNote::SourcesMissing(1)));
     let id = q.pool().find_source(h.sref).expect("the ref kept");
     assert!(q.pool().source(id).unwrap().absent());
+}
+
+/// The plan costs a zone set at its listed size, layout included: in an
+/// arena a zone-set Part source fills to the byte, a small source after
+/// it plans as not fitting, and the load is the plan.
+#[test]
+fn a_zone_set_plans_at_its_listed_size() {
+    use chimera_core::storage::{SourceLayout, SourceZones, Zone, write_descriptor, zone_set_crc};
+    let (mut p, _) = full_dense_slots(8);
+    let left = ARENA_BYTES as u32 - p.pool().used().bytes();
+    // 24 zones, the layout 216 B: the frames that fill `left` with it.
+    let room = left as usize - 16 - DESC_LEN - 24 * 9;
+    let total = 2 * (room / 3) as u32;
+    let zones: Vec<Zone> = (0..24u32)
+        .map(|i| Zone {
+            start: 64 * i,
+            frames: if i == 23 { total - 64 * 23 } else { 64 },
+            key: 24 + 4 * i as u8,
+            root: 3_600,
+            period_q16: 0,
+        })
+        .collect();
+    let z = SourceZones::new(&zones).unwrap();
+    let (plain, data) = source(39, total, "TRON");
+    let h = SourceHead {
+        shape: Shape::ZoneSet,
+        count: 24,
+        sref: SourceRef {
+            crc: zone_set_crc(&z, &data),
+            ..plain.sref
+        },
+        ..plain
+    };
+    let l = SourceLayout::zoned(h, z).unwrap();
+    assert_eq!(Cost::of(16 + l.held_len()).bytes(), left, "fills the arena");
+    // Fits only beside a zone set costed without its layout.
+    let (small, small_data) = source(40, 64, "SMALL");
+    let mut s = MemStore::new(1);
+    let w = Card::new().run(&mut s, |s, r| {
+        chimera_core::storage::write_zone_set(s, r, &h, &z, &data)
+    });
+    assert_eq!(w.unwrap().result, Ok(Wrote::New));
+    put_source(&mut s, &small, &small_data);
+    // The small source takes the first id, so it reads first: only the
+    // plan keeps it from the zone set's room.
+    p.source_absent(small.sref).unwrap();
+    p.source_absent(h.sref).unwrap();
+    p.edit_part(PartId::ALL[0]).sound.source = Some(h.sref.into());
+    let (q, note) = round_trip(&mut s, &mut p);
+    assert_eq!(
+        note,
+        Some(ProjectNote::DidntFit {
+            sounds: 0,
+            sources: 1
+        })
+    );
+    let mut want = vec![0; l.held_len()];
+    let at = write_descriptor(&l, &mut want);
+    want[at..].copy_from_slice(&data);
+    let tok = &mut q.pool().table().reader().expect("one reader");
+    assert_eq!(
+        arena_bytes(&q, tok, h.sref),
+        Some(want),
+        "the Part's zone set"
+    );
+    let id = q.pool().find_source(small.sref).expect("the ref kept");
+    assert!(q.pool().source(id).unwrap().absent());
+    assert_eq!(q.pool().free(), Cost::default());
+}
+
+/// `[Plain, 1]` and 96 zero bytes; zlib's CRC-32 agrees.
+const PLAIN_ZEROS: u32 = 0x3930_09AA;
+/// `[Transwave, 2]` and the bytes 0..96; zlib's CRC-32 agrees.
+const TRANSWAVE_RAMP: u32 = 0x2617_6512;
+
+/// The stems are an on-card contract: a `Plain` and a `Transwave` CRC,
+/// pinned. A change to the prefix, its order, or the hash renames every
+/// `.SRC` on every card.
+#[test]
+fn source_crcs_are_pinned() {
+    let ramp: Vec<u8> = (0..96u8).collect();
+    assert_eq!(source_crc(WholeShape::Plain, 1, &[0; 96]), PLAIN_ZEROS);
+    assert_eq!(source_crc(WholeShape::Transwave, 2, &ramp), TRANSWAVE_RAMP);
 }

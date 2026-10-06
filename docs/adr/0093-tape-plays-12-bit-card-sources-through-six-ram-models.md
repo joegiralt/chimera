@@ -78,8 +78,10 @@ code 23, ident `"TAPE"`, ADR 0055).
     `SourceLayout` can't hold anything else. The `SourceZones` record
     comes right after the head; a `ZoneSet` written without it, or under
     a CRC that leaves the layout out, reads as damaged. A `SourceRef`
-    doesn't count zones, so a project load stages the whole gap and keeps
-    what the file says; its plan counts a zone set up to 216 B short.
+    doesn't count zones: a project load's plan reads them from the file's
+    listed size (`listed_zones`), so it costs a zone set exactly, and the
+    read keeps what the file says. A Sound's `ZoneTune` lives inside its
+    `TapeSource`, beside the ref it tunes.
   - **A head covers only the time until its first refill lands.** Its
     length is the descriptor's `head_frames`, so the format freezes none.
     TRON's spec sizes it from benched worst-case stalls and the refills one

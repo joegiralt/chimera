@@ -34,7 +34,7 @@ use crate::preset::Sound;
 use crate::storage::{
     Check, DecodeInPlace, Event, FileError, FileKind, LoadError, MIGRATIONS, ReadTag, Ready,
     RecordBuf, RecordTag, RecordWriter, SoundCheck, TRANSLATIONS, decode_block, encode_block,
-    encode_sound, records_crc, source_file, source_file_min_len,
+    encode_sound, listed_zones, records_crc, source_file,
 };
 
 use super::arena::{ARENA_BYTES, Cost, MAX_SOURCES};
@@ -699,9 +699,10 @@ impl ProjectCheck {
 
     /// The plan of this side's pass 1, against the whole arena: the
     /// sources a Part plays, the slots by index, then the other sources,
-    /// each taken while it fits. A source not `present` on the card is
-    /// neither taken nor counted.
-    fn plan_load(&self, present: u32) -> Plan {
+    /// each taken while it fits, at its listed size (`zones`, a ref's
+    /// layout). A source not `present` on the card is neither taken nor
+    /// counted.
+    fn plan_load(&self, present: u32, zones: &[u8; MAX_SOURCES]) -> Plan {
         let c = self.costs();
         let mut left = ARENA_BYTES as u32;
         let refs = ((1u64 << c.n_refs) - 1) as u32;
@@ -717,7 +718,7 @@ impl ProjectCheck {
                 if (c.part_used & 1 << k != 0) != part || p.missing & 1 << k != 0 {
                     continue;
                 }
-                if take(left, ref_cost(r)) {
+                if take(left, ref_cost(r, zones[k])) {
                     p.sources |= 1 << k;
                 } else {
                     p.dropped_sources += 1;
@@ -893,12 +894,16 @@ impl DecodeInPlace for ProjectDecoder<'_> {
     /// waits for every voice to let go of its source. `Busy` when one
     /// doesn't: nothing is touched, and the caller still publishes.
     fn begin<S: Store>(&mut self, s: &mut S, r: &Ready) -> Result<(), LoadError> {
-        let mut present = 0u32;
+        let (mut present, mut zones) = (0u32, [0u8; MAX_SOURCES]);
         let refs = self.check.costs().refs();
         let listed = s.list(r.volume(), Dir::Tapes, &mut |name, size| {
             for (k, &x) in refs.iter().enumerate() {
-                if name == source_file(x) && source_file_min_len(x).is_some_and(|n| size >= n) {
+                if name != source_file(x) {
+                    continue;
+                }
+                if let Some(n) = listed_zones(x, size) {
                     present |= 1 << k;
+                    zones[k] = n;
                 }
             }
         });
@@ -906,7 +911,7 @@ impl DecodeInPlace for ProjectDecoder<'_> {
             Ok(()) | Err(StoreError::NotFound) => {}
             Err(e) => return Err(LoadError::Store(e)),
         }
-        self.check.plan = self.check.plan_load(present);
+        self.check.plan = self.check.plan_load(present, &zones);
         self.swap = self.link.map(LoadLink::bump);
         let acked = |s: &Swap| self.link.is_some_and(|l| l.acked(s.epoch()));
         if !self

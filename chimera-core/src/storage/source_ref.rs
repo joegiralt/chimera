@@ -100,3 +100,21 @@ impl ZoneTune {
         Some(ZoneTune { zones: all, n })
     }
 }
+
+/// A Sound's TAPE source: its ref, and a zone set's tuning with it. A
+/// `ZoneTune` exists only beside the `SourceRef` it tunes. The ref doesn't
+/// count zones, so a tune's zone count can't be typed against the set's:
+/// TAPE Task 13's voice clamps a mismatch (zones past the tune play at the
+/// last tune's pitch, tunes past the zones are unused).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TapeSource {
+    pub r: SourceRef,
+    pub tune: Option<ZoneTune>,
+}
+
+impl From<SourceRef> for TapeSource {
+    /// A source with no zone tuning: a `Plain` or `Transwave`.
+    fn from(r: SourceRef) -> Self {
+        TapeSource { r, tune: None }
+    }
+}

@@ -15,13 +15,23 @@ use chimera_core::project::arena::Cost;
 use chimera_core::project::{Project, SourceId, SourceRef};
 use chimera_core::storage::{
     Card, FileError, FileKind, Generation, Header, LoadError, PutRefusal, RecordTag, SaveError,
-    SourceCheck, SourceHead, SourceLayout, SourceZones, Wrote, Zone, ZoneTune, held_for_file_len,
-    held_len, read_source_into, source_crc, source_file_min_len, write_descriptor, write_file,
-    write_source, write_zone_set, zone_set_crc,
+    SourceCheck, SourceHead, SourceLayout, SourceReadError, SourceZones, TapeSource, WholeShape,
+    Wrote, Zone, ZoneTune, held_for_file_len, held_len, held_len_zoned, listed_zones,
+    read_source_into, source_crc, source_file_min_len, write_descriptor, write_file, write_source,
+    write_zone_set, zone_set_crc,
 };
 use chimera_hal::store::{Dir, Store};
 use chimera_hal::testkit::MemStore;
-use common::codec_util::{VecSink, decode, encode};
+use common::codec_util::{VecSink, decode, encode, fix_crc, record_offsets};
+
+/// The CRC the pool once gave a zone set: `[ZoneSet, count]` and the
+/// samples, no layout. `source_crc` no longer takes a `ZoneSet`.
+fn layoutless_crc(count: u8, packed: &[u8]) -> u32 {
+    let mut c = chimera_core::storage::Crc32::new();
+    c.update(&[Shape::ZoneSet as u8, count]);
+    c.update(packed);
+    c.finish()
+}
 
 /// `n` packed bytes, a pattern of `seed`.
 fn packed(seed: u8, frames: u32) -> Vec<u8> {
@@ -64,7 +74,7 @@ fn zone_set(seed: u8, zones: &[Zone]) -> (SourceHead, SourceZones, Vec<u8>) {
 }
 
 /// A `Plain` or `Transwave` source of `frames`.
-fn whole(shape: Shape, count: u8, frames: u32) -> (SourceHead, Vec<u8>) {
+fn whole(shape: WholeShape, count: u8, frames: u32) -> (SourceHead, Vec<u8>) {
     let data = packed(count, frames);
     let head = SourceHead {
         sref: SourceRef {
@@ -72,7 +82,7 @@ fn whole(shape: Shape, count: u8, frames: u32) -> (SourceHead, Vec<u8>) {
             frames,
             rate: 48_000,
         },
-        shape,
+        shape: shape.into(),
         count,
         root: 6_000,
         period_q16: 0,
@@ -114,14 +124,14 @@ fn crc_ignores_labels() {
     assert_ne!(crc(&key), h.sref.crc, "key");
 
     // The pool's CRC left the layout out: a zone set's isn't it.
-    assert_ne!(source_crc(Shape::ZoneSet, 12, &data), h.sref.crc);
+    assert_ne!(layoutless_crc(12, &data), h.sref.crc);
     assert_eq!(SourceLayout::zoned(h, z).unwrap().crc(&data), h.sref.crc);
 }
 
 /// `Plain` and `Transwave` keep the pool's CRC: a layout of none.
 #[test]
 fn plain_crc_is_pools() {
-    for (shape, count) in [(Shape::Plain, 1), (Shape::Transwave, 16)] {
+    for (shape, count) in [(WholeShape::Plain, 1), (WholeShape::Transwave, 16)] {
         let (h, data) = whole(shape, count, 16 * 1_216);
         let l = SourceLayout::whole(h).expect("playable");
         assert_eq!(l.crc(&data), source_crc(shape, count, &data), "{shape:?}");
@@ -159,7 +169,7 @@ fn read_back(
     s: &mut MemStore,
     sref: SourceRef,
     room: usize,
-) -> (Result<usize, LoadError>, Vec<u8>) {
+) -> (Result<usize, SourceReadError>, Vec<u8>) {
     let mut out = vec![0xEE; room];
     let r = Card::new()
         .run(s, |s, r| read_source_into(s, r, sref, &mut out))
@@ -203,7 +213,7 @@ fn descriptor_leads_held() {
     assert_eq!(exact, out[..l.held_len()]);
     // One byte short of the layout's `held`: refused, nothing to trust.
     let (r, _) = read_back(&mut s, h.sref, l.held_len() - 1);
-    assert_eq!(r, Err(LoadError::File(FileError::Bounds)));
+    assert_eq!(r, Err(SourceReadError::NoRoom));
 }
 
 /// What TAPE Task 2's pool refused a `ZoneSet` for: a file sealed under a
@@ -221,7 +231,7 @@ fn a_layout_outside_the_crc_reads_missing() {
     let moved = SourceZones::new(&moved).unwrap();
     let no_layout = SourceHead {
         sref: SourceRef {
-            crc: source_crc(Shape::ZoneSet, 4, &data),
+            crc: layoutless_crc(4, &data),
             ..h.sref
         },
         ..h
@@ -230,7 +240,7 @@ fn a_layout_outside_the_crc_reads_missing() {
         let mut s = MemStore::new(1);
         put_raw(&mut s, &head, Some(&zs), &data);
         let (r, _) = read_back(&mut s, head.sref, 1 << 16);
-        assert_eq!(r, Err(LoadError::File(FileError::Corrupt)), "{what}");
+        assert_eq!(r, Err(LoadError::File(FileError::Corrupt).into()), "{what}");
     }
     let mut s = MemStore::new(1);
     put_raw(&mut s, &h, Some(&z), &data);
@@ -393,7 +403,7 @@ fn source_check_refuses_early() {
     );
 
     // Plain sources, so frames alone move: their CRC doesn't cover them.
-    let (p, pdata) = whole(Shape::Plain, 1, 1_000);
+    let (p, pdata) = whole(WholeShape::Plain, 1, 1_000);
     let plain = file_bytes(FileKind::Source, &p, None, &pdata);
     assert_eq!(feed(p.sref.crc, &plain), Ok(p));
     // One frame more: a pair more than the samples hold.
@@ -462,7 +472,10 @@ fn held_for_file_len_inverts_framing() {
         }
     }
     // What `write_source` writes is that length, both shapes.
-    for (shape, count, frames) in [(Shape::Plain, 1, 777), (Shape::Transwave, 4, 4 * 1_216)] {
+    for (shape, count, frames) in [
+        (WholeShape::Plain, 1, 777),
+        (WholeShape::Transwave, 4, 4 * 1_216),
+    ] {
         let (h, data) = whole(shape, count, frames);
         let mut s = MemStore::new(1);
         let w = Card::new().run(&mut s, |s, r| write_source(s, r, &h, &data));
@@ -509,29 +522,97 @@ fn zone_set_is_one_source() {
     }
 }
 
-/// A Sound's `ZoneTune` survives the card, and its table is checked.
+/// A Sound's `ZoneTune` survives the card beside the `SourceRef` it
+/// tunes, never without it; its table is checked.
 #[test]
 fn zone_tune_round_trips() {
     let tunes: Vec<(u16, u32)> = (0..12)
         .map(|i| (3_600 + 100 * i, (90 + i as u32) << 16))
         .collect();
+    let r = SourceRef {
+        crc: 0x7055_0001,
+        frames: 12 * 1_024,
+        rate: 24_000,
+    };
     let mut s = Sound::init(EngineType::Algo);
-    s.zone_tune = ZoneTune::new(&tunes);
-    assert_eq!(s.zone_tune.unwrap().zones().collect::<Vec<_>>(), tunes);
-    let back = decode(&encode(&s)).expect("decodes");
+    s.source = Some(TapeSource {
+        r,
+        tune: ZoneTune::new(&tunes),
+    });
+    let t = s.source.unwrap().tune.unwrap();
+    assert_eq!(t.zones().collect::<Vec<_>>(), tunes);
+    let bytes = encode(&s);
+    let back = decode(&bytes).expect("decodes");
     assert!(back.bits_eq(&s));
-    assert_eq!(back.zone_tune, s.zone_tune);
+    assert_eq!(back.source, s.source);
     let mut other = s.clone();
-    other.zone_tune = ZoneTune::new(&tunes[..11]);
+    other.source = Some(TapeSource {
+        r,
+        tune: ZoneTune::new(&tunes[..11]),
+    });
     assert!(!other.bits_eq(&s), "bits_eq sees the tuning");
+
+    // The ZoneTune record without its SourceRef, or before it: refused.
+    let at = record_offsets(&bytes);
+    let tag = |o: usize| u16::from_le_bytes([bytes[o], bytes[o + 1]]);
+    let k = (0..at.len() - 1)
+        .find(|&k| tag(at[k]) == 0x0016)
+        .expect("a SourceRef");
+    assert_eq!(tag(at[k + 1]), 0x001A, "its ZoneTune next");
+    let mut alone = [&bytes[..at[k]], &bytes[at[k + 1]..]].concat();
+    fix_crc(&mut alone);
+    assert_eq!(decode(&alone).err(), Some(FileError::Corrupt), "alone");
+    let mut swapped = [
+        &bytes[..at[k]],
+        &bytes[at[k + 1]..at[k + 2]],
+        &bytes[at[k]..at[k + 1]],
+        &bytes[at[k + 2]..],
+    ]
+    .concat();
+    fix_crc(&mut swapped);
+    assert_eq!(decode(&swapped).err(), Some(FileError::Corrupt), "before");
 
     assert_eq!(ZoneTune::new(&[]), None);
     assert_eq!(ZoneTune::new(&[(0, 0); 25]), None);
     assert!(ZoneTune::new(&[(0, 0); 24]).is_some());
     assert_eq!(ZoneTune::from_record(&[0; 6 * 25]), None);
-    let t = s.zone_tune.unwrap();
     assert_eq!(t.record().len(), 72, "6 B a zone");
     assert_eq!(ZoneTune::from_record(t.record()), Some(t));
     assert_eq!(ZoneTune::from_record(&t.record()[..71]), None);
     assert_eq!(ZoneTune::from_record(&[]), None);
+}
+
+/// A listed file's size says its zones: 0 for a whole source, `n` for a
+/// zone set of `n`; a file shorter than a whole one is torn.
+#[test]
+fn listed_zones_reads_the_size() {
+    let mut s = MemStore::new(1);
+    let size_of = |s: &mut MemStore, r: SourceRef| {
+        let vol = s.mount().unwrap();
+        let mut size = None;
+        s.list(vol, Dir::Tapes, &mut |name, n| {
+            if name == chimera_core::storage::source_file(r) {
+                size = Some(n);
+            }
+        })
+        .unwrap();
+        size.unwrap()
+    };
+    for n in [1, 2, 23, 24] {
+        let (h, z, data) = zone_set(30 + n as u8, &zones_of(n, 100));
+        let w = Card::new().run(&mut s, |s, r| write_zone_set(s, r, &h, &z, &data));
+        assert_eq!(w.unwrap().result, Ok(Wrote::New));
+        let size = size_of(&mut s, h.sref);
+        assert_eq!(listed_zones(h.sref, size), Some(n as u8), "{n} zones");
+        assert_eq!(
+            held_len_zoned(h.sref, n as u8),
+            Some(SourceLayout::zoned(h, z).unwrap().held_len())
+        );
+    }
+    let (p, data) = whole(WholeShape::Plain, 1, 1_000);
+    let w = Card::new().run(&mut s, |s, r| write_source(s, r, &p, &data));
+    assert_eq!(w.unwrap().result, Ok(Wrote::New));
+    let size = size_of(&mut s, p.sref);
+    assert_eq!(listed_zones(p.sref, size), Some(0), "whole");
+    assert_eq!(listed_zones(p.sref, size - 1), None, "torn");
 }

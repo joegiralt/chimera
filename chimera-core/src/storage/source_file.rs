@@ -280,11 +280,28 @@ fn crc_prefix(shape: Shape, count: u8, zones: &[Zone]) -> Crc32 {
     c
 }
 
+/// A shape held whole, with no zone layout: the shapes `source_crc`
+/// hashes. A `ZoneSet` hashes its layout too, through `zone_set_crc`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WholeShape {
+    Plain,
+    Transwave,
+}
+
+impl From<WholeShape> for Shape {
+    fn from(w: WholeShape) -> Shape {
+        match w {
+            WholeShape::Plain => Shape::Plain,
+            WholeShape::Transwave => Shape::Transwave,
+        }
+    }
+}
+
 /// The source's CRC, its file's stem: over `shape`, `count` and the
 /// packed bytes, never the labels. A `ZoneSet`'s is `zone_set_crc`, so a
 /// `Plain` or `Transwave` CRC never changes.
-pub fn source_crc(shape: Shape, count: u8, packed: &[u8]) -> u32 {
-    let mut c = crc_prefix(shape, count, &[]);
+pub fn source_crc(shape: WholeShape, count: u8, packed: &[u8]) -> u32 {
+    let mut c = crc_prefix(shape.into(), count, &[]);
     c.update(packed);
     c.finish()
 }
@@ -300,8 +317,7 @@ pub fn zone_set_crc(zones: &SourceZones, packed: &[u8]) -> u32 {
 
 /// The bytes the arena holds for a `Plain` or `Transwave` `r` whole: the
 /// descriptor, then two frames in three bytes. A `ZoneSet` holds its
-/// layout too (`SourceLayout::held_len`), so for one this is the least.
-/// `None` past `usize`.
+/// layout too (`held_len_zoned`). `None` past `usize`.
 pub fn held_len(r: SourceRef) -> Option<usize> {
     let pairs = usize::try_from(r.frames.div_ceil(2)).ok()?;
     pairs.checked_mul(3)?.checked_add(DESC_LEN)
@@ -327,10 +343,12 @@ pub fn source_file_min_len(r: SourceRef) -> Option<u32> {
     u32::try_from(n).ok()
 }
 
-/// A `Plain` or `Transwave` source's `held`, from its file's length as
-/// `write_source` frames it (`source_file_min_len`): the card rows' cost,
-/// with no read. `None` for a length no such file has. A `ZoneSet`'s file
-/// carries its zones too, so its length doesn't say.
+/// A source's `held`, from its file's length as `write_source` frames it
+/// (`source_file_min_len`), with no read: exact for a `Plain` or
+/// `Transwave` file, an upper bound for any file (a `ZoneSet`'s length can
+/// parse as a whole file's, and then overcounts by up to 6 B a zone and 4).
+/// `None` for a length no whole file has. A card row takes the shape from
+/// the head, not from `Some` (Task 17).
 pub fn held_for_file_len(len: u32) -> Option<u32> {
     let fixed = HEADER_LEN + RECORD_HEAD_LEN + SOURCE_HEAD_LEN + TRAILER_LEN;
     // The samples and their records' heads, one a `SOURCE_DATA_MAX`.
@@ -341,6 +359,23 @@ pub fn held_for_file_len(len: u32) -> Option<u32> {
     framed
         .then(|| u32::try_from(DESC_LEN + data).ok())
         .flatten()
+}
+
+/// The zones a listed file of `r` holds, from its size: 0 for a whole
+/// source as written, `n` for a `ZoneSet`, whose `SourceZones` record adds
+/// `RECORD_HEAD_LEN + ZONE_LEN·n` B; at most `MAX_ZONES`, so a padded file
+/// counts high, never low. `None` for a file shorter than a whole one: torn.
+pub fn listed_zones(r: SourceRef, size: u32) -> Option<u8> {
+    let extra = size.checked_sub(source_file_min_len(r)?)? as usize;
+    // The record's head is less than a zone: it drops out of the division.
+    const _: () = assert!(RECORD_HEAD_LEN < ZONE_LEN);
+    Some((extra / ZONE_LEN).min(MAX_ZONE_COUNT) as u8)
+}
+
+/// What `held` takes for `r` with `zones` zones: `held_len`, then 9 B a
+/// zone's layout. `None` past `usize`.
+pub fn held_len_zoned(r: SourceRef, zones: u8) -> Option<usize> {
+    held_len(r)?.checked_add(ZONE_LAYOUT_LEN * zones as usize)
 }
 
 /// `/CHIMERA/TAPES/<CRC>.SRC`, the CRC in upper-case hex.
@@ -514,26 +549,76 @@ fn read_source<S: Store>(
     r: &Ready,
     sref: SourceRef,
     out: Option<&mut [u8]>,
-) -> Result<SourceLayout, LoadError> {
+) -> Result<SourceLayout, SourceReadError> {
     let mut rec = Records::new(Expect::Ref(sref), out);
+    let mut room = false;
     let mut on = |e: Event<'_>| match e {
         Event::Header(_) | Event::Record(ReadTag::Unknown(_), _) => Ok(()),
-        Event::Record(ReadTag::Known(t), p) => rec.record(t, p).map_err(Bad::file),
+        Event::Record(ReadTag::Known(t), p) => rec.record(t, p).map_err(|b| {
+            room |= b == Bad::Room;
+            b.file()
+        }),
     };
+    let load = |e| Err(SourceReadError::Load(e));
     match scan(s, r, source_file(sref), Some(FileKind::Source), &mut on) {
+        // Out of room only if the file is whole: a torn one is torn.
+        Ok(Scan::Failed { err, .. }) if room && !err.is_torn() => {
+            return Err(SourceReadError::NoRoom);
+        }
         Ok(Scan::Passed { .. }) => {}
-        Ok(Scan::Failed { err, .. }) => return Err(LoadError::File(err)),
-        Err(StoreError::NotFound) => return Err(LoadError::Missing),
+        Ok(Scan::Failed { err, .. }) => return load(LoadError::File(err)),
+        Err(StoreError::NotFound) => return load(LoadError::Missing),
         // A broken or short chain: what a cut can leave.
-        Err(StoreError::Corrupt) => return Err(LoadError::File(FileError::Truncated)),
-        Err(e) => return Err(LoadError::Store(e)),
+        Err(StoreError::Corrupt) => return load(LoadError::File(FileError::Truncated)),
+        Err(e) => return load(LoadError::Store(e)),
     }
-    rec.end().map_err(|b| LoadError::File(b.file()))
+    rec.end()
+        .map_err(|b| SourceReadError::Load(LoadError::File(b.file())))
+}
+
+/// A read back with no `out`, which has no room to run out of.
+#[cfg(feature = "source-writer")]
+fn read_back<S: Store>(s: &mut S, r: &Ready, sref: SourceRef) -> Result<SourceLayout, LoadError> {
+    read_source(s, r, sref, None).map_err(|e| match e {
+        SourceReadError::Load(e) => e,
+        SourceReadError::NoRoom => LoadError::File(FileError::Bounds),
+    })
+}
+
+/// Why `read_source_into` read no source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SourceReadError {
+    /// A whole file whose `held` is more than `out`: it didn't fit.
+    NoRoom,
+    /// Missing, damaged, another ref's, or a card fault.
+    Load(LoadError),
+}
+
+impl From<LoadError> for SourceReadError {
+    fn from(e: LoadError) -> Self {
+        SourceReadError::Load(e)
+    }
+}
+
+impl From<StoreError> for SourceReadError {
+    fn from(e: StoreError) -> Self {
+        SourceReadError::Load(LoadError::Store(e))
+    }
+}
+
+/// A card fault ends a load's reads; a source that didn't fit is no fault.
+impl super::card::CardFault for SourceReadError {
+    fn store_error(&self) -> Option<StoreError> {
+        match self {
+            SourceReadError::Load(e) => e.store_error(),
+            SourceReadError::NoRoom => None,
+        }
+    }
 }
 
 /// Source `sref` into `out` as the arena holds it: the descriptor, a
 /// `ZoneSet`'s layout, then the packed samples. Returns the bytes written,
-/// the layout's `held_len`; `File(Bounds)` if `out` is shorter. A head
+/// the layout's `held_len`; `NoRoom` if `out` is shorter. A head
 /// that names another ref, a short or damaged file, or a missing one is an
 /// error, and `out` holds nothing to trust: the source reads as missing,
 /// never as other audio.
@@ -545,7 +630,7 @@ pub fn read_source_into<S: Store>(
     r: &Ready,
     sref: SourceRef,
     out: &mut [u8],
-) -> Result<usize, LoadError> {
+) -> Result<usize, SourceReadError> {
     read_source(s, r, sref, Some(out)).map(|l| l.held_len())
 }
 
@@ -699,7 +784,7 @@ fn write_layout<S: Store>(
     let (vol, file) = (r.volume(), source_file(sref));
     s.make_dir(vol, Dir::Chimera)?;
     s.make_dir(vol, Dir::Tapes)?;
-    let wrote = match read_source(s, r, sref, None) {
+    let wrote = match read_back(s, r, sref) {
         Ok(_) => {
             s.seal(vol, file)?;
             return Ok(Wrote::Present);
@@ -733,7 +818,7 @@ fn write_layout<S: Store>(
     })?;
     // Unsealed until it reads back whole: a failure here is replaced by
     // the next write.
-    match read_source(s, r, sref, None) {
+    match read_back(s, r, sref) {
         Ok(back) if back == *l => {}
         Ok(_) => return Err(SaveError::File(FileError::Corrupt)),
         Err(LoadError::Store(e)) => return Err(e.into()),

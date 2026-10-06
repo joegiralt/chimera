@@ -57,7 +57,7 @@ fn tape_sound(p: &mut Project, name: &str, r: SourceRef) -> SlotId {
     let s = p.pool().first_free().expect("a free slot");
     let mut x = Sound::init(EngineType::Algo);
     x.name = SoundName::new(name).unwrap();
-    x.source = Some(r);
+    x.source = Some(r.into());
     p.pool_store(s, &x).unwrap();
     s
 }
@@ -720,8 +720,8 @@ fn source_ref_round_trips() {
     let got = p.pool().get(s).unwrap();
     assert_eq!(got.source_ref(), Some(r));
     let mut x = Sound::init(EngineType::Modal);
-    x.source = Some(r);
-    assert!(got.to_sound().source == Some(r));
+    x.source = Some(r.into());
+    assert!(got.to_sound().source_ref() == Some(r));
     let back = common::codec_util::decode(&common::codec_util::encode(&x)).unwrap();
     assert!(back.bits_eq(&x));
     assert!(
@@ -750,7 +750,7 @@ fn choir_orphan() {
     let slot = tape_sound(&mut p, "CHOIR", CHOIR);
     let p2 = PartId::ALL[1];
     load(&mut p, t, p2, slot);
-    assert_eq!(p.part(p2).sound.source, Some(CHOIR));
+    assert_eq!(p.part(p2).sound.source_ref(), Some(CHOIR));
     load(&mut p, t, p2, SlotId::ALL[0]);
 
     // Before the clear, the slot uses it: PURGE frees nothing.
@@ -830,7 +830,7 @@ fn purge_recounts() {
                     if p.users(s).is_empty() {
                         let r = (rnd(4) > 0).then(|| refs[rnd(6) as usize]);
                         let mut x = Sound::init(EngineType::Algo);
-                        x.source = r;
+                        x.source = r.map(Into::into);
                         p.pool_store(s, &x).unwrap();
                         in_slot.insert(s, r);
                     }
@@ -1230,7 +1230,10 @@ fn sweep_scratch_is_the_gap() {
     // entry's.
     let s = tape_sound(&mut p, "AFTER", CHOIR);
     let got = p.pool().get(s).unwrap().to_sound();
-    assert_eq!((got.name.as_str(), got.source), ("AFTER", Some(CHOIR)));
+    assert_eq!(
+        (got.name.as_str(), got.source_ref()),
+        ("AFTER", Some(CHOIR))
+    );
 }
 
 #[test]

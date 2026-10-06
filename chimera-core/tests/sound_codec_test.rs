@@ -562,13 +562,16 @@ fn worst(e: EngineType) -> (Sound, usize) {
             s.mod_state.set_route(src, d, 1);
         }
     }
-    s.source = Some(chimera_core::project::SourceRef {
-        crc: 0xC401_0001,
-        frames: 27_900,
-        rate: 24_000,
+    let tune = chimera_core::storage::ZoneTune::new(&[(6_000, 1 << 16); 24]);
+    assert!(tune.is_some());
+    s.source = Some(chimera_core::storage::TapeSource {
+        r: chimera_core::project::SourceRef {
+            crc: 0xC401_0001,
+            frames: 27_900,
+            rate: 24_000,
+        },
+        tune,
     });
-    s.zone_tune = chimera_core::storage::ZoneTune::new(&[(6_000, 1 << 16); 24]);
-    assert!(s.zone_tune.is_some());
     (s, stuck)
 }
 

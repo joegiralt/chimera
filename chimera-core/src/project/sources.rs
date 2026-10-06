@@ -50,11 +50,10 @@ impl SourceEntry {
     }
 }
 
-/// What source `r` takes held whole, a `ZoneSet`'s layout aside (its
-/// `SourceRef` doesn't count its zones; at most 216 B more, read at
-/// load); `None` when it could never fit.
-pub(super) fn ref_cost(r: SourceRef) -> Option<Cost> {
-    crate::storage::held_len(r)
+/// What source `r` with `zones` zones (`listed_zones`, 0 for a whole
+/// source) takes held whole; `None` when it could never fit.
+pub(super) fn ref_cost(r: SourceRef, zones: u8) -> Option<Cost> {
+    crate::storage::held_len_zoned(r, zones)
         .filter(|&n| n <= super::arena::ARENA_BYTES)
         .map(source_cost)
 }
@@ -103,7 +102,7 @@ pub fn source_users(p: &Project, s: SourceId) -> Users {
     };
     let mut u = Users::default();
     for part in PartId::ALL {
-        if p.part(part).sound.source == Some(e.r) {
+        if p.part(part).sound.source_ref() == Some(e.r) {
             u.parts = u.parts.with(part);
         }
     }

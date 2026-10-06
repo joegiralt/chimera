@@ -10,8 +10,8 @@ use chimera_hal::store::{Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use crate::name::ProjectName;
 use crate::storage::{
     AbFile, Card, CardEvent, CardFault, FileError, FileKind, Generation, HEADER_LEN, Header,
-    InPlaceError, LoadError, Outcome, ProjectId, Ready, RecordWriter, SaveError, Side, delete_ab,
-    held_len, load_ab_in_place, peek_header, read_source_into, save_ab,
+    InPlaceError, LoadError, Outcome, ProjectId, Ready, RecordWriter, SaveError, Side,
+    SourceReadError, delete_ab, held_len, load_ab_in_place, peek_header, read_source_into, save_ab,
 };
 
 use super::codec::encode_new_project;
@@ -437,6 +437,7 @@ fn read_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: u32) -> (u
             unread = unread.saturating_add(1);
             continue;
         }
+        let mut room = false;
         let got = match held_len(e.r) {
             Some(len) => {
                 p.pool
@@ -444,6 +445,7 @@ fn read_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: u32) -> (u
                         Ok(held) => Some(held),
                         Err(err) => {
                             fault = err.store_error().is_some();
+                            room = err == SourceReadError::NoRoom;
                             None
                         }
                     })
@@ -452,6 +454,8 @@ fn read_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: u32) -> (u
         };
         match got {
             Ok(true) => {}
+            // Whole on the card, more than the gap: it didn't fit.
+            Ok(false) if room => missed = missed.saturating_add(1),
             Ok(false) => unread = unread.saturating_add(1),
             Err(_) => missed = missed.saturating_add(1),
         }

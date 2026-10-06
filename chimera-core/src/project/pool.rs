@@ -311,9 +311,14 @@ impl Pool {
         let (head, bytes) = to.split_at_mut(SOURCE_HEAD);
         head.fill(0);
         head[..SourceRef::LEN].copy_from_slice(&r.to_bytes());
+        let least = len;
         let Some(len) = fill(bytes) else {
             return Ok(false);
         };
+        debug_assert!(
+            least <= len && len <= bytes.len(),
+            "fill gave {len} B, at least {least}"
+        );
         let offset = self.arena.source_alloc(SOURCE_HEAD + len).map_err(busy)?;
         let held = len as u32;
         self.sources.slots[s.index()] = SrcSlot::Live(SourceEntry { r, held, offset });
