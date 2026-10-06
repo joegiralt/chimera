@@ -435,12 +435,12 @@ fn modal(p: &mut PartAudio, mode: ResonatorMode) {
     p.params.modal.mode = mode;
 }
 
-/// 1 OP through the SVF in `mode` at DRIVE 1, RES 1 and CUTOFF 1000 Hz
+/// 1 OP through the SVF in `mode` at LEVEL 1 (×4), RES 1 and CUTOFF 1000 Hz
 /// (not the Sound's 20 kHz: the host sweep's worst for `saturate`).
 fn hot(p: &mut PartAudio, mode: FilterMode) {
     let f = &mut one_op(p).filter;
     let _ = f.set_mode(mode);
-    (f.drive, f.cutoff, f.resonance) = (1.0, 1000.0, 1.0);
+    (f.level, f.cutoff, f.resonance) = (1.0, 1000.0, 1.0);
 }
 
 /// 1 OP, no routes.
@@ -541,7 +541,7 @@ fn mods(p: &mut PartAudio) {
         l.lfo_type = LfoType::Func;
     }
     let res = ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE);
-    let drive = ParamAddr::new(BlockRef::Filter, FilterParams::DRIVE);
+    let flt_level = ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL);
     let fold = ParamAddr::new(BlockRef::Folder, FolderParams::FOLD);
     let morph = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
     let level = ParamAddr::new(BlockRef::Out, OutParams::VOLUME);
@@ -550,7 +550,7 @@ fn mods(p: &mut PartAudio) {
         (ModSource::Env2, VCA, 64),
         (ModSource::Env3, res, 64),
         (ModSource::Lfo1, morph, 64),
-        (ModSource::Lfo2, drive, 64),
+        (ModSource::Lfo2, flt_level, 64),
         (ModSource::Lfo3, fold, 64),
         (ModSource::Vel, level, 64),
         (ModSource::Note, CUTOFF, 64),

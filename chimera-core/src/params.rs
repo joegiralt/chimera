@@ -10,7 +10,8 @@ use crate::dsp::modulator::{
 pub struct FilterParams {
     pub cutoff: f32,
     pub resonance: f32,
-    pub drive: f32,
+    /// The input level: `level_gain` (Cascadia-style, unity at ½).
+    pub level: f32,
     /// Private: kept consistent with mode through set_kind and set_mode.
     kind: FilterKind,
     /// Private: `set_mode` keeps it in the kind's list (spec § 7).
@@ -22,7 +23,7 @@ impl Default for FilterParams {
         Self {
             cutoff: 1000.0,
             resonance: 0.0,
-            drive: 0.0,
+            level: 0.5,
             kind: FilterKind::Svf,
             mode: FilterKind::Svf.default_mode(),
         }
@@ -32,10 +33,11 @@ impl Default for FilterParams {
 impl FilterParams {
     pub const CUTOFF: ParamId = ParamId(0);
     pub const RESONANCE: ParamId = ParamId(1);
-    pub const DRIVE: ParamId = ParamId(2);
-    // 3 (FM), 4 (ENV) and 5 (KEY) are retired, never reused (ADR 0009).
+    // 2 (DRIVE), 3 (FM), 4 (ENV) and 5 (KEY) are retired, never reused
+    // (ADR 0009); DRIVE translates to LEVEL on load (ADR 0096).
     pub const KIND: ParamId = ParamId(6);
     pub const MODE: ParamId = ParamId(7);
+    pub const LEVEL: ParamId = ParamId(12);
 
     pub fn mode(&self) -> FilterMode {
         self.mode
@@ -81,7 +83,8 @@ pub static FILTER_SPECS: [ParamSpec; 5] = [
     .octaves(crate::dsp::filter::CUTOFF_OCTAVES)
     .short("CUT"),
     ParamSpec::continuous(1, "RESO", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true).ident("RESO"),
-    ParamSpec::continuous(2, "DRIVE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true).ident("DRIVE"),
+    ParamSpec::continuous(12, "LEVEL", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, true)
+        .ident("LEVEL"),
     // A choice among the one built kind.
     ParamSpec::choice(6, "KIND", ValFmt::Names(&KIND_NAMES), 0.0, 0.0)
         .ident("KIND")
@@ -108,7 +111,7 @@ impl Block for FilterParams {
         match id {
             Self::CUTOFF => self.cutoff,
             Self::RESONANCE => self.resonance,
-            Self::DRIVE => self.drive,
+            Self::LEVEL => self.level,
             Self::KIND => FilterKind::BUILT
                 .iter()
                 .position(|&k| k == self.kind)
@@ -127,7 +130,7 @@ impl Block for FilterParams {
         match id {
             Self::CUTOFF => self.cutoff = v,
             Self::RESONANCE => self.resonance = v,
-            Self::DRIVE => self.drive = v,
+            Self::LEVEL => self.level = v,
             Self::KIND => self.set_kind(FilterKind::from_index(v)),
             Self::MODE => {
                 let m = self.kind.modes();

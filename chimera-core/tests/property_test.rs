@@ -5,6 +5,7 @@ mod common;
 use common::Rig;
 use common::{SR, tri};
 
+use chimera_core::dsp::filter::level_gain;
 use chimera_core::dsp::modal::{BankModes, ResonatorMode};
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -83,7 +84,7 @@ fn random_params(rng: &mut Rng) -> ParamSnapshot {
     // Filter
     p.filter.cutoff = 20.0 + rng.f32() * 19980.0;
     p.filter.resonance = rng.f32();
-    p.filter.drive = rng.f32();
+    p.filter.level = rng.f32();
     p.filter
         .set_mode(chimera_core::dsp::filter::FilterMode::ALL[rng.u8(7) as usize]);
 
@@ -205,8 +206,10 @@ fn prop_note_on_produces_sound() {
             total_max = total_max.max(max);
         }
 
+        // LEVEL attenuates below ½ (to ×¼), and the floor with it.
+        let floor = 0.0001 * level_gain(params.filter.level).min(1.0);
         assert!(
-            total_max > 0.0001,
+            total_max > floor,
             "trial {}: note_on should produce sound, max={} engine={:?} modal_mode={:?} note={}",
             trial,
             total_max,

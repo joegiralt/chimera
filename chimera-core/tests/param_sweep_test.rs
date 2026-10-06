@@ -1064,7 +1064,7 @@ fn jumps_never_click() {
             THOROUGH,
         ),
         (
-            find(BlockRef::Filter, FilterParams::DRIVE),
+            find(BlockRef::Filter, FilterParams::LEVEL),
             symp,
             false,
             FAST,

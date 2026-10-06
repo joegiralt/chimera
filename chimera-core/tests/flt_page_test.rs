@@ -419,6 +419,40 @@ fn every_kind_keeps_its_mode_in_its_list() {
     }
 }
 
+/// Every KIND change, from every mode of every built kind: MODE stays if
+/// the new kind has it, else lands on the new kind's `default_mode()`, never
+/// its `modes()[0]` (Task 4 review F1). With CLEAN alone the fallback can't
+/// run; it runs once a kind lacks one of another's modes: DIRTY HP2 →
+/// CLEAN must land on LP4, not LP1.
+#[test]
+fn kind_change_falls_back_to_the_default_mode() {
+    let mut fell_back = 0;
+    for from in FilterKind::BUILT {
+        for &m in from.modes() {
+            let mut p = FilterParams::default();
+            p.set_kind(from);
+            assert!(p.set_mode(m));
+            for to in FilterKind::BUILT {
+                let q = kind_change(p, to);
+                assert_eq!(q.kind(), to);
+                if to.modes().contains(&m) {
+                    assert_eq!(q.mode(), m, "{from:?} {m:?} → {to:?}");
+                } else {
+                    fell_back += 1;
+                    assert_eq!(q.mode(), to.default_mode(), "{from:?} {m:?} → {to:?}");
+                }
+                assert_eq!(
+                    (q.cutoff, q.resonance, q.level),
+                    (p.cutoff, p.resonance, p.level)
+                );
+            }
+        }
+    }
+    // Every kind holds every mode only while CLEAN is the one built.
+    let all = |k: FilterKind| FilterMode::ALL.iter().all(|m| k.modes().contains(m));
+    assert_eq!(fell_back == 0, FilterKind::BUILT.iter().all(|&k| all(k)));
+}
+
 /// `applies` names exactly the filter parameters on the kind's panel.
 #[test]
 fn applies_matches_the_panel() {

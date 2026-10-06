@@ -42,7 +42,7 @@ const fn route(s: ModSource, label: &'static str) -> PanelKnob {
     }
 }
 
-/// SVF: CUTOFF · RES · MODE · ENV · KEY; extras DRIVE and LFO.
+/// SVF: CUTOFF · RES · MODE · ENV · KEY; extras LEVEL and LFO.
 pub static SVF_PANEL: KindPanel = KindPanel {
     main: [
         filter(FilterParams::CUTOFF, "CUTOFF"),
@@ -52,7 +52,7 @@ pub static SVF_PANEL: KindPanel = KindPanel {
         route(ModSource::Note, "KEY"),
     ],
     extras: [
-        Some(filter(FilterParams::DRIVE, "DRIVE")),
+        Some(filter(FilterParams::LEVEL, "LEVEL")),
         Some(route(ModSource::Lfo1, "LFO")),
     ],
 };

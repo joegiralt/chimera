@@ -13,8 +13,8 @@ mod system;
 pub use block_codec::{decode_block, encode_block};
 pub use card::{Card, CardError, CardEvent, CardFault, Outcome, Ready, after_error, after_mount};
 pub use codes::{
-    DiskValue, MIGRATIONS, Migration, RETIRED, RETIRED_BLOCKS, RETIRED_CODES, RETIRED_SOURCES,
-    Retired, TRANSLATIONS, Translation, ValidAddr, read_value,
+    DiskAddr, DiskValue, MIGRATIONS, Migration, READDRESS, RETIRED, RETIRED_BLOCKS, RETIRED_CODES,
+    RETIRED_SOURCES, Retired, TRANSLATIONS, Translation, ValidAddr, read_value, readdress,
 };
 pub use crc::Crc32;
 pub use file::{

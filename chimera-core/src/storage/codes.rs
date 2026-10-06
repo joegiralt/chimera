@@ -133,12 +133,21 @@ impl ModSource {
 }
 
 /// `(block code, param id)` pairs that once existed and never come back
-/// (ADR 0009: the filter's FM, ENV and KEY). A reader skips them, unless a
+/// (ADR 0009: the filter's DRIVE, FM, ENV and KEY). A reader skips them, unless a
 /// `Translation` of the block reads them.
 /// A retired code goes on one of these lists, and never gets another meaning:
 /// the fixture check fails a gone line that isn't listed, and a listed one
 /// that is produced again. A retired block lists each of its params.
-pub const RETIRED: &[(u8, u8)] = &[(10, 3), (10, 4), (10, 5), (1, 2), (1, 5), (1, 7), (1, 8)];
+pub const RETIRED: &[(u8, u8)] = &[
+    (10, 3),
+    (10, 4),
+    (10, 5),
+    (1, 2),
+    (1, 5),
+    (1, 7),
+    (1, 8),
+    (10, 2),
+];
 
 /// Block codes that are gone for good (each of its params is in `RETIRED`).
 pub const RETIRED_BLOCKS: &[u8] = &[];
@@ -197,10 +206,48 @@ pub struct Translation {
     pub apply: fn(&Retired, &mut dyn Block),
 }
 
-pub const TRANSLATIONS: &[Translation] = &[Translation {
-    block: 1,
-    apply: crate::dsp::modal::translate_v1,
-}];
+pub const TRANSLATIONS: &[Translation] = &[
+    Translation {
+        block: 1,
+        apply: crate::dsp::modal::translate_v1,
+    },
+    Translation {
+        block: 10,
+        apply: crate::dsp::filter::translate_drive,
+    },
+];
+
+/// A param as a file names it: `(block code, param id)`.
+pub type DiskAddr = (u8, u8);
+
+/// A retired address whose routes, ModDests and registry entries a file
+/// loads at another, live one, amount and label kept: `(from, to)`.
+/// DRIVE's land on LEVEL (ADR 0096).
+pub const READDRESS: &[(DiskAddr, DiskAddr)] = &[((10, 2), (10, 12))];
+
+// Only a retired address is re-addressed, so a live one always loads as
+// itself, and never onto itself.
+const _: () = {
+    let mut i = 0;
+    while i < READDRESS.len() {
+        let (from, to) = READDRESS[i];
+        assert!(from.0 != to.0 || from.1 != to.1);
+        let mut j = 0;
+        while j < RETIRED.len() && (RETIRED[j].0 != from.0 || RETIRED[j].1 != from.1) {
+            j += 1;
+        }
+        assert!(j < RETIRED.len(), "re-addressed but not retired");
+        i += 1;
+    }
+};
+
+/// `(block, id)` as a file names it, re-addressed if it's retired.
+pub fn readdress(block: u8, id: u8) -> DiskAddr {
+    READDRESS
+        .iter()
+        .find(|(from, _)| *from == (block, id))
+        .map_or((block, id), |&(_, to)| to)
+}
 
 /// A param that exists in a live spec table. Only built from one, so a saver
 /// can't write, and a loader can't apply, an address the firmware lacks.

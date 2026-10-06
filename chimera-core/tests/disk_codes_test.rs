@@ -450,11 +450,27 @@ fn mod_source_codes_round_trip() {
     assert_eq!(ModSource::from_disk_code(255), None);
 }
 
+/// DRIVE (Filter 2) is gone for good: LEVEL (12) took its place (ADR 0096).
+#[test]
+fn drive_id_2_is_retired() {
+    assert!(RETIRED.contains(&(10, 2)));
+    assert!(ValidAddr::find(BlockRef::Filter, ParamId(2)).is_none());
+}
+
 #[test]
 fn retired_never_live() {
     assert_eq!(
         RETIRED,
-        &[(10, 3), (10, 4), (10, 5), (1, 2), (1, 5), (1, 7), (1, 8)]
+        &[
+            (10, 3),
+            (10, 4),
+            (10, 5),
+            (1, 2),
+            (1, 5),
+            (1, 7),
+            (1, 8),
+            (10, 2)
+        ]
     );
     assert!(RETIRED_CODES.is_empty() && RETIRED_SOURCES.is_empty() && RETIRED_BLOCKS.is_empty());
     for &(block, id) in RETIRED {
@@ -500,7 +516,7 @@ fn valid_addr_only_from_specs() {
     let ids: Vec<u8> = ValidAddr::of_block(BlockRef::Filter)
         .map(|a| a.addr().param.0)
         .collect();
-    assert_eq!(ids, [0, 1, 2, 6, 7]);
+    assert_eq!(ids, [0, 1, 12, 6, 7]);
     let kind = ValidAddr::find(BlockRef::Filter, FilterParams::KIND).unwrap();
     assert!(kind.coded());
     assert_eq!(kind.spec().label, "KIND");

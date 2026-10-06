@@ -41,7 +41,7 @@ mod tests {
 
     fn probe_is_process<const M: u8>(mode: FilterMode) {
         let mut p = FilterParams::default();
-        (p.cutoff, p.resonance, p.drive) = (800.0, 0.7, 0.3);
+        (p.cutoff, p.resonance, p.level) = (800.0, 0.7, 0.75);
         assert!(p.set_mode(mode));
         let (mut a, mut b) = (Clean::new(), Clean::new());
         let mut x = 0.37f32;

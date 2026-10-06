@@ -9,6 +9,7 @@
 //! all-passes with the dry, and `G₁` takes the divide.
 
 use super::coef::{g_of, sat_c1};
+use super::level::level_gain;
 use super::{FilterMode, g_at};
 use crate::hw::BLOCK_SIZE;
 use crate::params::FilterParams;
@@ -66,14 +67,14 @@ pub struct Clean {
     /// feedback, one sample late).
     ap: [f32; 4],
     w: f32,
-    /// The last block's `g`, `k` and DRIVE gain; `None` on a fresh voice,
+    /// The last block's `g`, `k` and LEVEL gain; `None` on a fresh voice,
     /// which starts unramped.
     g: Option<f32>,
     k: Option<f32>,
     pre: Option<f32>,
 }
 
-/// One block's `(from, to)` for `g`, `k` and the DRIVE gain.
+/// One block's `(from, to)` for `g`, `k` and the LEVEL gain.
 #[derive(Clone, Copy)]
 pub(super) struct Ramps {
     g: (f32, f32),
@@ -173,7 +174,7 @@ impl Clean {
         Ramps {
             g: ramp(&mut self.g, g_of(p.cutoff, fs as f32)),
             k: ramp(&mut self.k, clean_k(p.resonance)),
-            pre: ramp(&mut self.pre, 1.0 + p.drive * 4.0),
+            pre: ramp(&mut self.pre, level_gain(p.level)),
         }
     }
 
@@ -186,7 +187,7 @@ impl Clean {
         }
     }
 
-    /// `g` and `k` held: their divides once a block. DRIVE still ramps (a
+    /// `g` and `k` held: their divides once a block. LEVEL still ramps (a
     /// multiply).
     #[inline(always)]
     pub(super) fn steady<const M: u8>(&mut self, buf: &mut [f32; BLOCK_SIZE], r: Ramps) {
@@ -197,7 +198,7 @@ impl Clean {
         }
     }
 
-    /// `g`, `k` and DRIVE ramp to this block's values, reached on the last
+    /// `g`, `k` and LEVEL ramp to this block's values, reached on the last
     /// sample (#53), and every sample divides exactly.
     #[inline(always)]
     pub(super) fn moving<const M: u8>(&mut self, buf: &mut [f32; BLOCK_SIZE], r: Ramps) {
@@ -214,7 +215,7 @@ impl Clean {
         }
     }
 
-    /// Forget the last `g`, `k` and DRIVE: the next block starts unramped.
+    /// Forget the last `g`, `k` and LEVEL: the next block starts unramped.
     pub fn hold(&mut self) {
         (self.g, self.k, self.pre) = (None, None, None);
     }

@@ -134,24 +134,24 @@ fn priming_on_a_part_page_registers_its_address() {
     assert_eq!(ui.mod_state().num_dests(), 2);
 }
 
-/// Review fix round 1: DRIVE lives on FLT › MODE, whose own short is "MDE",
+/// Review fix round 1: LEVEL lives on FLT › MODE, whose own short is "MDE",
 /// not the filter's tag. `mod_label` must key its prefix off the address's
 /// block (`mod_grid::block_tag`), not the active page's short name, so
 /// priming it from the sub-page still tags it "FLT".
 #[test]
-fn priming_the_filter_drive_from_flt_mode_tags_it_flt() {
+fn priming_the_filter_level_from_flt_mode_tags_it_flt() {
     let mut ui = UiState::new();
     to_filter_mode(&mut ui);
-    prime_slot(&mut ui, EncoderId::B); // DRIVE (slot 1: MODE, DRIVE, --, --, --, --)
+    prime_slot(&mut ui, EncoderId::B); // LEVEL (slot 1: MODE, LEVEL, --, --, --, --)
     assert_eq!(
         primed(&ui),
         [
             CUTOFF,
-            ParamAddr::new(BlockRef::Filter, FilterParams::DRIVE)
+            ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL)
         ]
     );
     let reg = &ui.project().part(PartId::ALL[0]).sound.dest_registry;
-    assert_eq!(reg.get(1).unwrap().label_str(), "FLTDRIVE");
+    assert_eq!(reg.get(1).unwrap().label_str(), "FLTLEVEL");
 }
 
 /// Review Focus 1: priming on the Mixer (bound, not modulatable) or System

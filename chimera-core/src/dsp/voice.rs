@@ -87,7 +87,7 @@ pub struct Voice {
     played_live: AlgoLive,
 }
 
-/// OUT LEVEL, DRIVE's three, filter DRIVE and FOLD's three, eased
+/// OUT LEVEL, DRIVE's three, filter LEVEL and FOLD's three, eased
 /// toward the stored values (never snap). Zero bytes land on the first
 /// block.
 #[derive(Clone, Copy, Debug, Default)]
@@ -102,7 +102,7 @@ impl StageEase {
             (b, &mut m.drive.drive),
             (c, &mut m.drive.tone),
             (d, &mut m.drive.mix),
-            (e, &mut m.filter.drive),
+            (e, &mut m.filter.level),
             (f, &mut m.folder.fold),
             (g, &mut m.folder.symmetry),
             (h, &mut m.folder.mix),
@@ -173,7 +173,7 @@ impl Voice {
     /// bench's `FLOOR` row (an Algo patch with every LEVEL at 0) measured 5 on
     /// 2026-09-27; 10 was kept, erring high. ADR 0060 adds the DC blocker
     /// (6.5 instructions a sample), the stages' ease (1.3) and the ramps of
-    /// OUT LEVEL and filter DRIVE (about 2 each): 11.8 × 1.46 × 1.1 = 19,
+    /// OUT LEVEL and filter LEVEL (about 2 each): 11.8 × 1.46 × 1.1 = 19,
     /// by ADR 0056's host method; 29, rounded up.
     pub const CHAIN_COST: Cost = Cost(30);
 

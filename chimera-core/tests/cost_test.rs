@@ -533,7 +533,7 @@ fn mods_row() -> (ParamSnapshot, ModState) {
         ),
         (
             ModSource::Lfo2,
-            ParamAddr::new(BlockRef::Filter, FilterParams::DRIVE),
+            ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL),
         ),
         (
             ModSource::Lfo3,

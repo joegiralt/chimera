@@ -3,8 +3,8 @@
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::block::{Block, ParamId};
 use chimera_core::dsp::fast_exp2;
-use chimera_core::dsp::filter::routed_cutoff;
 use chimera_core::dsp::filter::{Clean, FilterKind, FilterMode};
+use chimera_core::dsp::filter::{level_from_drive, routed_cutoff};
 use chimera_core::params::{FilterParams, ParamSnapshot};
 use chimera_core::ui::block_def::slot_addr;
 use chimera_core::ui::block_registry::{FILTER, FILTER_MODE};
@@ -236,23 +236,26 @@ fn a_steady_cutoff_does_not_ramp() {
 /// then every mode for CLEAN's ACCURATE tan and exact divides (#57);
 /// then every mode but LP6 (no `k`, trim 1) for CLEAN's k law and trims
 /// (ADR 0096); then LP6 and NOTCH for LP1 and NOTCH1 (ADR 0096); then
-/// PHASER for NOTCH2 (ADR 0096).
+/// PHASER for NOTCH2 (ADR 0096); then every mode for LEVEL's gain law.
 #[test]
 fn every_mode_renders_as_recorded() {
     const WANT: [u64; 8] = [
-        0x6146_912a_7eed_f88b, // LP1 and NOTCH1, ADR 0096: was 0xad32_27d9_4948_d08c
-        0x34fe_71d6_f19a_8455,
-        0x87b5_53f8_a19c_07bd,
-        0x349d_6da0_e37f_8293,
-        0xd7a0_6303_5618_783f,
-        0x95bd_99a3_ae4b_6f4d,
-        0x9243_ca9d_5805_0f0c, // LP1 and NOTCH1, ADR 0096: was 0x964d_6390_2ba9_3da5
-        0x9636_9567_b001_efb2, // NOTCH2, ADR 0096: was 0xf66a_5343_055e_3a97
+        // Every row, Task 6: DRIVE 0.5's exact ×3 is now LEVEL's `fast_exp2`
+        // ×3 (within 0.1 cent), so every sample moves by an ulp or so.
+        0x26b9_aa63_59f6_d12f, // was 0x6146_912a_7eed_f88b
+        0x8791_4d0d_04ec_eab7, // was 0x34fe_71d6_f19a_8455
+        0xd105_11dd_7eb6_1d7f, // was 0x87b5_53f8_a19c_07bd
+        0x957c_b82b_2a7c_5db8, // was 0x349d_6da0_e37f_8293
+        0x1d76_e888_9b17_7455, // was 0xd7a0_6303_5618_783f
+        0x95b1_3cce_fe80_0f26, // was 0x95bd_99a3_ae4b_6f4d
+        0xd0d9_32a0_f21b_7369, // was 0x9243_ca9d_5805_0f0c
+        0x3af2_e7cd_ebcf_5b97, // was 0x9636_9567_b001_efb2
     ];
     let got = FilterMode::ALL.map(|m| {
         let mut p = FilterParams::default();
         p.set_mode(m);
-        (p.resonance, p.drive) = (0.9, 0.5);
+        // DRIVE 0.5's old ×3, as LEVEL (Task 6).
+        (p.resonance, p.level) = (0.9, level_from_drive(0.5));
         let mut f = Clean::new();
         let mut h = 0xcbf2_9ce4_8422_2325u64;
         for b in 0..24 {
@@ -274,7 +277,7 @@ fn every_mode_renders_as_recorded() {
 /// under a full-scale 110 Hz saw, LP12 and LP24 ring at the cutoff, held
 /// by `sat_c1` at a steady level: the last
 /// half second's RMS and the ring's own level (990 Hz, the harmonic at the cutoff), dBFS, at
-/// DRIVE 0 and 1, each within 1 dB of what they were, the level's two
+/// LEVEL ½ and 1 (once DRIVE 0 and 1), each within 1 dB of what they were, the level's two
 /// quarters within 0.5 dB of each other. ADR 0097 kept the curve: stmlib's
 /// rational clip in its place, scaled to the same slope and ceiling, put
 /// the ring 14 to 24 dB under these.
@@ -283,10 +286,12 @@ fn full_resonance_rings_at_its_level() {
     const WANT: [(FilterMode, f32, f32, f32); 4] = [
         // Re-pinned for CLEAN's k law and trims (ADR 0096); at k = 0.01
         // they were −4.04/−14.55, 2.69/−29.15, −2.34/−7.04, 1.87/−25.35.
-        (FilterMode::Lp12, 0.0, -8.31, -13.28),
-        (FilterMode::Lp12, 1.0, -3.64, -40.87),
-        (FilterMode::Lp24, 0.0, -8.40, -11.70),
-        (FilterMode::Lp24, 1.0, -5.77, -29.68),
+        (FilterMode::Lp12, 0.5, -8.31, -13.28),
+        // LEVEL 1 is ×4 where DRIVE 1 was ×5 (Task 6, ADR 0096): was −3.64/−40.87.
+        (FilterMode::Lp12, 1.0, -3.99, -24.33),
+        (FilterMode::Lp24, 0.5, -8.40, -11.70),
+        // LEVEL 1 is ×4 where DRIVE 1 was ×5 (Task 6, ADR 0096): was −5.77/−29.68.
+        (FilterMode::Lp24, 1.0, -6.04, -22.60),
     ];
     let db = |x: &[f32]| 10.0 * (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).log10();
     // The level at `hz`, a sine's RMS: the DFT bin over a whole number of
@@ -301,10 +306,10 @@ fn full_resonance_rings_at_its_level() {
             });
         20.0 * (re.hypot(im) * 2.0 / x.len() as f32 / 2f32.sqrt()).log10()
     };
-    for (mode, drive, want, want_ring) in WANT {
+    for (mode, lv, want, want_ring) in WANT {
         let mut p = FilterParams::default();
         p.set_mode(mode);
-        (p.cutoff, p.resonance, p.drive) = (1000.0, 1.0, drive);
+        (p.cutoff, p.resonance, p.level) = (1000.0, 1.0, lv);
         let mut f = Clean::new();
         let mut out = Vec::new();
         for b in 0..750 {
@@ -318,18 +323,18 @@ fn full_resonance_rings_at_its_level() {
         let tail = &out[out.len() / 2..];
         let (a, b) = tail.split_at(tail.len() / 2);
         let (level, ring) = (db(tail), at(&tail[..24_000], 990.0));
-        println!("{mode:?} DRIVE {drive}: {level:.2} dBFS, the ring {ring:.2}");
+        println!("{mode:?} LEVEL {lv}: {level:.2} dBFS, the ring {ring:.2}");
         assert!(
             (level - want).abs() <= 1.0,
-            "{mode:?} DRIVE {drive}: {level:.2}, want {want:.2}"
+            "{mode:?} LEVEL {lv}: {level:.2}, want {want:.2}"
         );
         assert!(
             (ring - want_ring).abs() <= 1.0,
-            "{mode:?} DRIVE {drive}: ring {ring:.2}, want {want_ring:.2}"
+            "{mode:?} LEVEL {lv}: ring {ring:.2}, want {want_ring:.2}"
         );
         assert!(
             (db(a) - db(b)).abs() <= 0.5,
-            "{mode:?} DRIVE {drive}: unsteady"
+            "{mode:?} LEVEL {lv}: unsteady"
         );
     }
 }

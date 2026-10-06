@@ -153,7 +153,7 @@ mod tests {
     use super::*;
     use crate::block::{ParamKind, ParamSpec};
     use crate::params::{FILTER_SPECS, FilterParams};
-    use crate::storage::{MIGRATIONS, TRANSLATIONS};
+    use crate::storage::{MIGRATIONS, READDRESS, TRANSLATIONS};
 
     /// A Filter that logs the order of its enum writes.
     struct Order {
@@ -224,6 +224,22 @@ mod tests {
         for t in TRANSLATIONS {
             assert!(BlockRef::from_disk_code(t.block).is_some(), "{}", t.block);
             assert!(RETIRED.iter().any(|r| r.0 == t.block), "{}", t.block);
+        }
+    }
+
+    /// A re-address lands in the same block, on a live, stored and
+    /// modulatable param, so the routes it carries can play.
+    #[test]
+    fn readdress_targets_live_modulatable_params() {
+        for &((fb, fid), (tb, tid)) in READDRESS {
+            assert_eq!(fb, tb);
+            let b = BlockRef::from_disk_code(tb).expect("a live block");
+            assert!(
+                ValidAddr::find(b, ParamId(fid)).is_none(),
+                "{fb} {fid} live"
+            );
+            let a = ValidAddr::find(b, ParamId(tid)).expect("a stored target");
+            assert!(a.spec().modulatable, "{tb} {tid}");
         }
     }
 }

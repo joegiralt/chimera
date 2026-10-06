@@ -25,7 +25,7 @@ Sound {
         filter: FilterParams {
             cutoff: 20000.0,
             resonance: 0.0,
-            drive: 0.0,
+            level: 0.5,
             kind: Svf,
             mode: Lp24,
         },
