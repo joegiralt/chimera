@@ -34,6 +34,10 @@ use crate::dsp::delay::{Tap, Transport};
 use crate::dsp::ease::Ramp;
 use crate::dsp::glide::Glide;
 use crate::dsp::xorshift32;
+use crate::hw::Cost;
+use crate::modulation::ModState;
+use crate::project::SourceId;
+use crate::source_table::GateView;
 use age::Age;
 use heads::{
     Bounds, Fade, Ghost, Head, Plan, Turn, at, plan, shortest, window_end_min, window_start,
@@ -44,6 +48,11 @@ use wave::Wave;
 
 pub use heads::loop_len;
 pub use params::{StretchType, TAPE_ENGINE_SPECS, TapeEngineParams, TapeModel, drag_s};
+
+/// Every TAPE voice's bill until TAPE Task 14 splits it by model:
+/// PING-PONG's 490, the costliest model, + TAPE's 10 + AGE's 30, so a voice
+/// running both is never under-billed (spec § 5).
+pub const COST_TAPE: Cost = Cost(530);
 
 /// `inc`'s clamp: four octaves over a 48 kHz source's own speed.
 pub const INC_MAX: f32 = 16.0;
@@ -200,8 +209,21 @@ struct AtWrap<'a> {
     v: &'a SourceView<'a>,
 }
 
+/// A voice's strip of tape: its transport, its draws and its wear's, which
+/// run on from note to note (spec § 2 TAPE), so its wow's phase
+/// random-walks apart from the other voices'.
+#[derive(Clone, Copy)]
+pub(crate) struct Strip {
+    wow: Transport,
+    rng: u32,
+    age: Age,
+}
+
 #[derive(Clone, Copy)]
 pub struct TapeEngine {
+    /// The source a note plays, latched at note-on (ADR 0087): never
+    /// re-resolved, its row read each block.
+    src: Option<SourceId>,
     model: TapeModel,
     /// The head, and the head a fade reads into, in the frame `u`.
     heads: [Head; 2],
@@ -304,6 +326,7 @@ pub struct TapeEngine {
 impl TapeEngine {
     fn idle() -> TapeEngine {
         TapeEngine {
+            src: None,
             model: TapeModel::Loop,
             heads: [Head { pos: Pos(0) }; 2],
             mirror: false,
@@ -383,6 +406,89 @@ impl TapeEngine {
         self.wow = Transport::seeded(s);
         self.rng = (s.wrapping_mul(0x9E37_79B9) ^ 0x510E_527F) | 1;
         self.age.seed(s);
+    }
+
+    /// The strip a rebuilt slot keeps (`restore`).
+    pub(crate) fn strip(&self) -> Strip {
+        Strip {
+            wow: self.wow,
+            rng: self.rng,
+            age: self.age,
+        }
+    }
+
+    /// A fresh engine on the voice's own strip of tape, as it last ran.
+    pub(crate) fn restore(&mut self, s: Strip) {
+        (self.wow, self.rng, self.age) = (s.wow, s.rng, s.age);
+        self.age.hold();
+    }
+
+    /// The source the next `start` plays.
+    pub fn latch(&mut self, id: SourceId) {
+        self.src = Some(id);
+    }
+
+    /// No source: the next `start` plays nothing.
+    pub fn unlatch(&mut self) {
+        self.src = None;
+    }
+
+    /// The source latched.
+    pub fn source(&self) -> Option<SourceId> {
+        self.src
+    }
+
+    /// The latched source's view this block: `None` with none latched, its
+    /// row empty or moving, or a descriptor that doesn't read.
+    fn view<'v>(&self, src: &'v GateView<'_>) -> Option<SourceView<'v>> {
+        SourceView::new(src.bytes(self.src?)?)
+    }
+
+    /// `note_on` on the latched source through the block's view. With no
+    /// source to read, or one `p`'s model can't play (`wave::playable`), the
+    /// engine stays idle.
+    pub fn start(&mut self, note: u8, p: &TapeEngineParams, src: &GateView<'_>, sample_rate: u32) {
+        match self.view(src).filter(|v| wave::playable(p.model, v)) {
+            Some(v) => self.note_on(note, p, &v, sample_rate),
+            None => self.active = false,
+        }
+    }
+
+    /// `render` from the latched source's row this block. While a closed
+    /// gate moves it, the block is silent and the note waits; a row gone
+    /// (retired and compacted) ends it (`GateView::bytes`).
+    pub fn play(
+        &mut self,
+        out: &mut [f32; BLOCK_SIZE],
+        p: &TapeEngineParams,
+        src: &GateView<'_>,
+        sample_rate: u32,
+    ) {
+        if let Some(v) = self.view(src) {
+            self.render(out, p, &v, sample_rate);
+            return;
+        }
+        out.fill(0.0);
+        if !self.src.is_some_and(|id| src.moving(id)) {
+            self.active = false;
+        }
+    }
+
+    /// Every TAPE voice's bill (`COST_TAPE`) until TAPE Task 14 bills each
+    /// model and TAPE's and AGE's terms.
+    pub fn cost(_p: &TapeEngineParams, _mods: &ModState) -> Cost {
+        COST_TAPE
+    }
+
+    /// What the sounding note costs: its note-on's model.
+    pub fn playing_cost(&self) -> Option<Cost> {
+        self.active.then_some(COST_TAPE)
+    }
+
+    /// A glide steal's ratio now, 1 at rest: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn slide(&self) -> f32 {
+        self.slide.value()
     }
 
     /// The transport skipped, as if TAPE added nothing: for the tests.

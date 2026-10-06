@@ -50,7 +50,8 @@ check:
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
-    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf
+    # The default build in release too: with TAPE its dev build passes FLASH (#303).
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release
     # Every other feature set in release: a build check, not a debug flash;
     # their dev builds sit at or past FLASH
     # (private issue #303).

@@ -10,11 +10,11 @@ use crate::dsp::algo::params::AlgoParams;
 use crate::dsp::dc_blocker::DcBlocker;
 use crate::dsp::drive::Drive;
 use crate::dsp::ease::{Ease, Ramp, at, ease_coeff, step_of};
-use crate::dsp::engines::{EngineSlot, SlotKind};
+use crate::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
 use crate::dsp::envelope::{EnvMods, Envelope};
 use crate::dsp::filter::SvfFilter;
 use crate::dsp::lfo::Lfo;
-use crate::dsp::modal::{ModalEngine, ResonatorMode, SymPool};
+use crate::dsp::modal::{ResonatorMode, SymPool};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::wavefolder::Wavefolder;
 use crate::hw::{Cost, MAX_VOICES, VOICE_CHAIN_BYTES, VOICE_RAM_BUDGET};
@@ -23,6 +23,7 @@ use crate::modulation::{
     MAX_MOD_SOURCES, ModRouting, ModSource, ModState, VCA, amount_scale, note_source,
 };
 use crate::params::{DriveParams, EnvParams, FolderParams, ParamSnapshot, Steal};
+use crate::project::SourceId;
 use crate::voice_alloc::VoiceIdx;
 use crate::{MidiNote, Velocity};
 
@@ -74,6 +75,8 @@ pub struct Voice {
     active: bool,
     last_note: MidiNote,
     last_velocity: Velocity,
+    /// The source the last note, or the one waiting, plays (TAPE).
+    last_source: Option<SourceId>,
     /// Samples left of a fade-out (`kill`, a switch); 0 when not
     /// fading. Never set on an inactive voice.
     fade: u16,
@@ -207,12 +210,13 @@ impl Voice {
             + Self::stage_cost(p, mods)
     }
 
-    /// What this voice's sounding Modal note costs over `p`'s stored
-    /// model (#183): MODE and MODES are fixed per note, so an edit under a
-    /// sounding voice is billed at the costlier of the two.
+    /// What this voice's sounding note costs over `p`'s stored model
+    /// (#183): Modal's MODE and MODES and TAPE's MODEL are fixed per note,
+    /// so an edit under a sounding voice is billed at the costlier of the
+    /// two.
     pub fn held_model_extra(&self, p: &ParamSnapshot) -> Cost {
-        self.slot.modal_playing_cost().map_or(Cost::ZERO, |held| {
-            Cost(held.0.saturating_sub(ModalEngine::cost(&p.modal).0))
+        self.slot.playing_cost().map_or(Cost::ZERO, |held| {
+            Cost(held.0.saturating_sub(self.slot.model_cost(p).0))
         })
     }
 
@@ -314,6 +318,7 @@ impl Voice {
                 active: false,
                 last_note: MidiNote::A4,
                 last_velocity: Velocity::DEFAULT,
+                last_source: None,
                 fade: 0,
                 after_fade: AfterFade::Idle,
                 held: false,
@@ -414,24 +419,26 @@ impl Voice {
 
     /// On a fading voice, or one sounding another engine or model, the note
     /// waits for the fade-out and then starts clean. Returns whether it replaced
-    /// a note still waiting, unheard.
+    /// a note still waiting, unheard. A TAPE note plays `source`.
     pub fn note_on(
         &mut self,
         note: MidiNote,
         velocity: Velocity,
         params: &ParamSnapshot,
-        pool: &mut SymPool,
+        source: Option<SourceId>,
+        ctx: &mut EngineCtx<'_>,
     ) -> bool {
         let replaced = self.after_fade == AfterFade::Note;
         self.held = true;
-        if self.fade > 0 || (self.active && self.stale(params, pool)) {
+        if self.fade > 0 || (self.active && self.stale(params, ctx.sym)) {
             self.last_note = note;
             self.last_velocity = velocity;
+            self.last_source = source;
             self.after_fade = AfterFade::Note;
             self.fade_out();
             return replaced;
         }
-        self.trigger(note, velocity, params, pool);
+        self.trigger(note, velocity, params, source, ctx);
         replaced
     }
 
@@ -440,8 +447,10 @@ impl Voice {
         note: MidiNote,
         velocity: Velocity,
         params: &ParamSnapshot,
-        pool: &mut SymPool,
+        source: Option<SourceId>,
+        ctx: &mut EngineCtx<'_>,
     ) {
+        let pool = &mut *ctx.sym;
         // Another engine or model starts clean, in place; so does a bare
         // Sympathetic slot whose new note has a set. A Sympathetic note
         // rings the set promised to its voice (the `Instrument` places each
@@ -461,6 +470,7 @@ impl Voice {
             self.folder.hold();
             self.dc.reset();
             self.volume.hold();
+            self.slot.hold();
             self.stages = StageEase::default();
             // An idle voice's ENV slots and last source values start as a
             // fresh voice's. Idle is silent: a release its VCA routes still
@@ -471,10 +481,11 @@ impl Voice {
         self.retrigger = true;
         self.last_note = note;
         self.last_velocity = velocity;
+        self.last_source = source;
         #[cfg(feature = "probe")]
         let t0 = crate::probe::now();
         self.slot
-            .note_on(note, velocity, params, self.sample_rate, pool);
+            .note_on(note, velocity, params, self.sample_rate, source, ctx);
         #[cfg(feature = "probe")]
         let t1 = crate::probe::now();
         #[cfg(feature = "probe")]
@@ -501,7 +512,7 @@ impl Voice {
     /// starts after its fade; an idle one has nothing to move. Its cost:
     /// three transcendentals (the start ratio, `Glide::new`), and on Modal
     /// the rings' growth (`retune_clear`), which the caller bills.
-    pub fn retune(&mut self, note: MidiNote, glide_samples: u32, pool: &mut SymPool) {
+    pub fn retune(&mut self, note: MidiNote, glide_samples: u32, ctx: &mut EngineCtx<'_>) {
         if self.fade > 0 {
             if self.after_fade != AfterFade::Idle {
                 self.last_note = note;
@@ -513,7 +524,7 @@ impl Voice {
         }
         self.last_note = note;
         let tau = glide_samples as f32 / (3.0 * self.sample_rate as f32);
-        self.slot.retune(note, (self.sample_rate, tau), pool);
+        self.slot.retune(note, (self.sample_rate, tau), ctx);
     }
 
     /// The bytes `retune` to `note` writes to the lines (`ModalEngine::fit`'s
@@ -531,12 +542,12 @@ impl Voice {
         EngineSlot::glide_cost(p, mods)
     }
 
-    pub fn note_off(&mut self, pool: &mut SymPool) {
+    pub fn note_off(&mut self, ctx: &mut EngineCtx<'_>) {
         self.held = false;
         if self.after_fade == AfterFade::Restart {
             self.after_fade = AfterFade::Idle;
         }
-        self.slot.note_off(pool);
+        self.slot.note_off(ctx);
     }
 
     /// Fade to silence over `FADE` samples, then go idle as a fresh voice.
@@ -556,17 +567,17 @@ impl Voice {
     }
 
     /// The fade is over: back to fresh, then start a queued note.
-    fn fade_ended(&mut self, params: &ParamSnapshot, pool: &mut SymPool) {
+    fn fade_ended(&mut self, params: &ParamSnapshot, ctx: &mut EngineCtx<'_>) {
         let (after, held) = (self.after_fade, self.held);
-        let (note, velocity) = (self.last_note, self.last_velocity);
+        let (note, velocity, source) = (self.last_note, self.last_velocity, self.last_source);
         let then_plays = after != AfterFade::Idle;
-        self.reset(params, then_plays, pool);
+        self.reset(params, then_plays, ctx.sym);
         if then_plays {
             // The slot holds `params`' kind, clean: `trigger` has none to rebuild.
             self.held = true;
-            self.trigger(note, velocity, params, pool);
+            self.trigger(note, velocity, params, source, ctx);
             if !held {
-                self.note_off(pool);
+                self.note_off(ctx);
             }
         }
     }
@@ -581,9 +592,16 @@ impl Voice {
     }
 
     /// Sounding: its engine is active and, with routes into VCA, one of
-    /// them holds it (spec § 4).
+    /// them holds it (spec § 4); a TAPE note with none, its key.
     pub fn is_active(&self) -> bool {
         self.active
+    }
+
+    /// No route into VCA, and the engine can't end the note itself: a TAPE
+    /// loop has no end (spec § 2), so its key holds it, as a VCA route from
+    /// a source other than an ENV does.
+    fn key_gates(&self) -> bool {
+        self.vca.bits == 0 && matches!(self.slot, EngineSlot::Tape(_))
     }
 
     /// A VCA source still holds the voice (spec § 4): an ENV slot per its
@@ -604,7 +622,7 @@ impl Voice {
         output: &mut [f32; BLOCK_SIZE],
         params: &ParamSnapshot,
         mod_state: &ModState,
-        pool: &mut SymPool,
+        ctx: &mut EngineCtx<'_>,
     ) {
         let sample_rate = self.sample_rate();
 
@@ -724,7 +742,7 @@ impl Voice {
         let (m, live) = (&self.played, &self.played_live);
 
         // 1. Engine → raw oscillator output
-        self.slot.render(output, m, live, sample_rate, pool);
+        self.slot.render(output, m, live, sample_rate, ctx);
 
         // 2. Drive, gated as it's billed.
         self.drive.process(output, &m.drive, drive_on);
@@ -751,7 +769,8 @@ impl Voice {
                 // No route: the engine decides (spec § 4). No wildcard, so a new
                 // engine can't inherit the pass-through (VA gates: #148).
                 match &self.slot {
-                    EngineSlot::Algo(_) | EngineSlot::Modal(_) => {
+                    // TAPE's key ends it (`key_gates`), through the fade.
+                    EngineSlot::Algo(_) | EngineSlot::Modal(_) | EngineSlot::Tape(_) => {
                         // Its own envelopes shape the sound: today's expression, bit for bit.
                         if dv == 0.0 {
                             for sample in output.iter_mut() {
@@ -793,8 +812,14 @@ impl Voice {
                 *sample *= f32::from(self.fade) / f32::from(Self::FADE);
             }
             if self.fade == 0 || !self.active {
-                self.fade_ended(params, pool);
+                self.fade_ended(params, ctx);
             }
+        }
+
+        // A TAPE note with no route into VCA ends at key up, through the fade.
+        if self.active && self.fade == 0 && self.key_gates() && !self.held {
+            self.after_fade = AfterFade::Idle;
+            self.fade = Self::FADE;
         }
 
         // Lifetime by the VCA's routes (spec § 4), once per block: a voice
@@ -805,7 +830,7 @@ impl Voice {
                 self.fade = Self::FADE;
             } else {
                 // Silent, but the engine may still sound: back to fresh.
-                self.reset(params, false, pool);
+                self.reset(params, false, ctx.sym);
             }
         }
     }
@@ -838,17 +863,22 @@ mod tests {
     fn a_note_after_silence_starts_without_a_ramp() {
         let p = ParamSnapshot::default();
         let mut pool = SymPool::boxed();
+        let none = crate::source_table::GateView::empty();
+        let ctx = &mut EngineCtx {
+            sym: &mut pool,
+            src: &none,
+        };
         let mut v = Voice::new(chimera_hal::SAMPLE_RATE);
-        v.note_on(MidiNote::A4, Velocity::DEFAULT, &p, &mut pool);
+        v.note_on(MidiNote::A4, Velocity::DEFAULT, &p, None, ctx);
         let mut b = [0.0f32; BLOCK_SIZE];
-        v.render(&mut b, &p, &ModState::new(), &mut pool);
+        v.render(&mut b, &p, &ModState::new(), ctx);
         assert!(v.filter.last_g().is_some());
         v.active = false; // its engine went quiet
-        v.note_on(MidiNote::A4, Velocity::DEFAULT, &p, &mut pool);
+        v.note_on(MidiNote::A4, Velocity::DEFAULT, &p, None, ctx);
         assert!(v.filter.last_g().is_none());
         // A retrigger of a sounding voice keeps it.
-        v.render(&mut b, &p, &ModState::new(), &mut pool);
-        v.note_on(MidiNote::A4, Velocity::DEFAULT, &p, &mut pool);
+        v.render(&mut b, &p, &ModState::new(), ctx);
+        v.note_on(MidiNote::A4, Velocity::DEFAULT, &p, None, ctx);
         assert!(v.filter.last_g().is_some());
     }
 }

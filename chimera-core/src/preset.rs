@@ -1,6 +1,6 @@
 use crate::addr::{BlockRead, BlockRef};
 use crate::mod_path::ModDestRegistry;
-use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModState};
+use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModState, VCA};
 use crate::name::SoundName;
 use crate::params::{EngineType, ParamSnapshot};
 use crate::project::SourceRef;
@@ -24,12 +24,20 @@ pub struct Sound {
     pub source: Option<TapeSource>,
 }
 
+/// The VCA's matrix column label, as the UI primes it.
+const VCA_LABEL: [u8; crate::mod_path::LABEL_LEN] = *b"OUT VCA\0";
+
 impl Sound {
     pub fn init(engine: EngineType) -> Self {
         // The default routes (spec § 2): ENV 1, LFO 1 and NOTE → CUTOFF at
         // 0, NOTE at the kind's key default, on every engine.
         let mut dest_registry = ModDestRegistry::new();
         let _ = dest_registry.add(CUTOFF, CUTOFF_LABEL); // an empty registry takes it
+        // A TAPE loop has no end: ENV 1 into VCA ends its note (spec § 2).
+        let tape = engine == EngineType::Tape;
+        if tape {
+            let _ = dest_registry.add(VCA, VCA_LABEL);
+        }
         let mut mod_state = ModState::from_registry(&dest_registry, MAX_MOD_SOURCES);
         let key = crate::dsp::filter::FilterKind::default().key_default();
         for (s, a) in [
@@ -38,6 +46,9 @@ impl Sound {
             (ModSource::Note, key),
         ] {
             mod_state.set_route(s.index(), 0, a);
+        }
+        if tape {
+            mod_state.set_route(ModSource::Env1.index(), 1, 127);
         }
         Self {
             name: Self::init_name(),

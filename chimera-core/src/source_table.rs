@@ -321,7 +321,7 @@ impl AudioToken {
         }
         let moving = gate & self.acked;
         GateView {
-            table: t,
+            table: Some(t),
             moving,
             arena: t.arena.load(Ordering::Acquire),
             _token: core::marker::PhantomData,
@@ -352,10 +352,24 @@ impl AudioToken {
 /// }
 /// ```
 pub struct GateView<'b> {
-    table: &'static SourceTable,
+    /// `None`: `empty`, a view of no sources.
+    table: Option<&'static SourceTable>,
     moving: u32,
     arena: *const u8,
     _token: core::marker::PhantomData<&'b mut AudioToken>,
+}
+
+impl GateView<'static> {
+    /// A view of no sources: every `bytes` is `None`, nothing moves. A
+    /// render with no pool behind it reads through it.
+    pub const fn empty() -> Self {
+        GateView {
+            table: None,
+            moving: 0,
+            arena: core::ptr::null(),
+            _token: core::marker::PhantomData,
+        }
+    }
 }
 
 impl GateView<'_> {
@@ -370,7 +384,7 @@ impl GateView<'_> {
         if self.moving & id.bit() != 0 {
             return None;
         }
-        let r = &self.table.rows[id.index()];
+        let r = &self.table?.rows[id.index()];
         let held = r.held.load(Ordering::Acquire) as usize;
         let base = r.base.load(Ordering::Relaxed) as usize;
         if held == 0 || self.arena.is_null() || base + held > ARENA_BYTES {
@@ -401,6 +415,7 @@ impl GateView<'_> {
 
     /// Source `id`'s rate in Hz, 0 for an empty row.
     pub fn rate(&self, id: SourceId) -> u32 {
-        self.table.rows[id.index()].rate.load(Ordering::Relaxed)
+        self.table
+            .map_or(0, |t| t.rows[id.index()].rate.load(Ordering::Relaxed))
     }
 }

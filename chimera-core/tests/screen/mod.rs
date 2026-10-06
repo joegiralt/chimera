@@ -758,10 +758,11 @@ pub fn to_osc_sub(ui: &mut UiState, def: &chimera_core::ui::block_def::BlockDef)
 /// From Part 1's first node, on to the engine's node and EDIT down its
 /// sub-list to PIT.
 pub fn to_pitch(ui: &mut UiState, engine: EngineType) {
-    use chimera_core::ui::block_registry::{ALGO_CHAIN, MODAL_PLUCK_CHAIN, PITCH};
+    use chimera_core::ui::block_registry::{ALGO_CHAIN, MODAL_PLUCK_CHAIN, PITCH, TAPE_CHAIN};
     let chain = match engine {
         EngineType::Algo => &ALGO_CHAIN,
         EngineType::Modal => &MODAL_PLUCK_CHAIN,
+        EngineType::Tape => &TAPE_CHAIN,
     };
     let node = chain.engine_node();
     plus(ui, node);

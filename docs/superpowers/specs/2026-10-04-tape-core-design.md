@@ -136,13 +136,14 @@ pub struct TapeEngine {
 }
 ```
 
-- **The voice calls TAPE as it calls the others,** with a context in place of today's bare `&mut SymPool`: `EngineCtx { sym: &mut SymPool, src: &SourceTableView }`. ALGO and MODAL ignore `src`.
+- **The voice calls TAPE as it calls the others,** with a context in place of today's bare `&mut SymPool`: `EngineCtx { sym: &mut SymPool, src: &GateView }`, the block's view of the pool (TAPE Task 12). ALGO and MODAL ignore `src`. A note-on hands the voice the Part's `SourceId`; the engine latches it (`TapeEngine::latch`) and reads its row each block. A render with no pool behind it reads `GateView::empty()`, where every row is empty, until Task 13 threads the block's view through the `Instrument`.
+- **Each voice keeps its own strip of tape** (TAPE Task 12): its slot is seeded by the voice's index, and a TAPE slot rebuilt as TAPE (a reset at a note's end) keeps its transport and draws, so its wow's phase random-walks on from note to note, as Task 9 measured it, rather than replaying its seed's.
 - **`TapeEngine` is about 200 B.** It sits in an `EngineSlot` sized by `ModalEngine`, so the engine adds nothing to D2. A test pins `size_of::<TapeEngine>() < size_of::<ModalEngine>()`.
   - **D2 still grows by 384 B (measured, TAPE Task 3):** `ParamSnapshot` gains `TapeEngineParams` (48 B), and each of the eight voices keeps a `played` snapshot. AXI's `.bss` grows by 2 976 B for the other snapshot copies; DTCM is unchanged. It is measured against `VOICE_CHAIN_BYTES` at build step 3.
 - **A note-on with no playable source is refused before voice allocation.** That covers no source picked, `SOURCE MISSING`, and TRANSWAVE on a source that isn't a `Transwave`.
   - The Instrument checks the Part's `SourceId` and its row before it asks the allocator.
   - So no voice is stolen and nothing fades, for a note that can't sound.
-- **`is_active`** is true from note-on until the voice ends. A loop has no end, so the note ends when its VCA routes let go (`vca_holds`), as a Modal note does. TAPE's INIT routes ENV 1 into VCA.
+- **`is_active`** is true from note-on until the voice ends. A loop has no end, so the note ends when its VCA routes let go (`vca_holds`), as a Modal note does. TAPE's INIT routes ENV 1 into VCA. With no route into VCA the key holds a TAPE note, as `vca_holds` holds a route from any source but an ENV, and key up ends it through the voice's 2.7 ms fade (TAPE Task 12): a Sound whose VCA column was removed never sounds forever.
 
 ### Reading a source
 

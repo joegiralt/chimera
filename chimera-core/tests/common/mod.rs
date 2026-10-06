@@ -142,6 +142,7 @@ pub fn init_params(engine: EngineType) -> ParamSnapshot {
     match engine {
         EngineType::Algo => Sound::init(EngineType::Algo).params,
         EngineType::Modal => Sound::init(EngineType::Modal).params,
+        EngineType::Tape => Sound::init(EngineType::Tape).params,
     }
 }
 
@@ -199,6 +200,20 @@ pub fn routes(addr: ParamAddr, lfo: i8) -> ModState {
     if let BlockRef::Env(s) = addr.block {
         let d = ms.push(CUTOFF).unwrap();
         ms.set_amount(ModSource::of_env(s).index(), d, 127);
+    }
+    ms
+}
+
+/// Each `(source, addr, amount)` routed, its column primed.
+pub fn mods(routes: &[(ModSource, ParamAddr, i8)]) -> ModState {
+    let mut reg = ModDestRegistry::new();
+    for &(_, a, _) in routes {
+        let _ = reg.add(a, *b"TEST\0\0\0\0");
+    }
+    let mut ms = ModState::from_registry(&reg, MAX_MOD_SOURCES);
+    for &(s, a, amt) in routes {
+        let d = ms.find(a).unwrap();
+        ms.set_route(s.index(), d, amt);
     }
     ms
 }
@@ -342,7 +357,8 @@ pub fn spots(samples: &[f32]) -> [u32; 8] {
 /// expectation is written (spec § Testing "Engines").
 pub fn expects_sound(e: EngineType) -> bool {
     match e {
-        EngineType::Algo | EngineType::Modal => true,
+        // TAPE on a source; with none it plays nothing.
+        EngineType::Algo | EngineType::Modal | EngineType::Tape => true,
     }
 }
 

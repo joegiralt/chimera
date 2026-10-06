@@ -526,6 +526,21 @@ static ALGO_BLOCKS: [ChainBlock; 6] = [
 
 pub static ALGO_CHAIN: ChainDef2 = ChainDef2::new("Algo", &ALGO_BLOCKS, &PART_MOD_SOURCES);
 
+/// TAPE's chain until TAPE Task 15 puts SRC and DECK before it: the voice's
+/// own stages, PIT under DRV.
+static TAPE_BLOCKS: [ChainBlock; 4] = [
+    ChainBlock::with_subs(&DRIVE, &[&PITCH]),
+    ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
+    ChainBlock::page(&FOLDER),
+    ChainBlock {
+        def: &MOD_MATRIX,
+        sub_pages: &MOD_SUB_PAGES,
+        map: Some("MOD"),
+    },
+];
+
+pub static TAPE_CHAIN: ChainDef2 = ChainDef2::new("Tape", &TAPE_BLOCKS, &PART_MOD_SOURCES);
+
 // ---------------------------------------------------------------------------
 // Mixer channel strip
 // ---------------------------------------------------------------------------
@@ -972,9 +987,10 @@ pub static DEMO_BLOCKS: [ChainBlock; 15] = [
 ];
 
 /// The chains besides DEMO's leaves.
-const FIXED: [&ChainDef2; 13] = [
+const FIXED: [&ChainDef2; 14] = [
     &ALGO_CHAIN,
     &MODAL_PLUCK_CHAIN,
+    &TAPE_CHAIN,
     &MIXER_CHANNEL_CHAIN,
     CHANNELS_LEAF.chain(),
     SYNC_LEAF.chain(),

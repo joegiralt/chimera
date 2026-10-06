@@ -520,6 +520,8 @@ pub enum EngineType {
     #[default]
     Algo = 0,
     Modal = 1,
+    /// The sample engine (ADR 0093): `dsp::tape_engine`.
+    Tape = 2,
 }
 
 impl DiskCode for EngineType {
@@ -527,6 +529,7 @@ impl DiskCode for EngineType {
         match self {
             EngineType::Algo => 0,
             EngineType::Modal => 1,
+            EngineType::Tape => 2,
         }
     }
 
@@ -534,6 +537,7 @@ impl DiskCode for EngineType {
         match self {
             EngineType::Algo => "ALGO",
             EngineType::Modal => "MODAL",
+            EngineType::Tape => "TAPE",
         }
     }
 
@@ -541,6 +545,7 @@ impl DiskCode for EngineType {
         match c {
             0 => Some(EngineType::Algo),
             1 => Some(EngineType::Modal),
+            2 => Some(EngineType::Tape),
             _ => None,
         }
     }
@@ -549,13 +554,14 @@ impl DiskCode for EngineType {
 impl EngineType {
     /// Every engine. Tests iterate this; see `engines_test.rs` for the
     /// exhaustive-match guard that makes a new variant a compile error there.
-    pub const ALL: [EngineType; 2] = [EngineType::Algo, EngineType::Modal];
+    pub const ALL: [EngineType; 3] = [EngineType::Algo, EngineType::Modal, EngineType::Tape];
 
     /// Short display label for the engine and its chain.
     pub fn label(self) -> &'static str {
         match self {
             EngineType::Algo => "Algo",
             EngineType::Modal => "Modal",
+            EngineType::Tape => "Tape",
         }
     }
 }

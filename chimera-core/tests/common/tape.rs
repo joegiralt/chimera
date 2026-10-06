@@ -5,6 +5,8 @@
 use chimera_core::dsp::clampf;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
 use chimera_core::dsp::tape_engine::wave;
+use chimera_core::project::SourceId;
+use chimera_core::source_table::{AudioToken, GateView, SourceTable};
 use chimera_core::storage::twelve::pack12;
 
 use super::XorShift;
@@ -12,6 +14,62 @@ use super::XorShift;
 /// `x` in [−1, 1] as a 12-bit sample, rounded; full scale clips to 2047.
 pub fn to12(x: f32) -> i16 {
     clampf((x * 2048.0).round(), -2048.0, 2047.0) as i16
+}
+
+/// One source in a table of its own, read as the audio reads the pool: a
+/// voice's `GateView` for the tests. The table and its bytes are leaked
+/// (`reader` wants them `'static`): build one a test, not one a case.
+pub struct OneSource {
+    tok: AudioToken,
+    table: &'static SourceTable,
+    held: u32,
+    rate: u16,
+    pub id: SourceId,
+}
+
+impl OneSource {
+    /// `held` (a descriptor, then its samples) as source 0.
+    pub fn new(held: &[u8]) -> OneSource {
+        let table: &'static SourceTable = Box::leak(Box::new(SourceTable::new()));
+        let bytes: &'static mut [u8] = Box::leak(held.to_vec().into_boxed_slice());
+        table.attach_for_test(bytes.as_mut_ptr());
+        let rate = Descriptor::from_bytes(held).map_or(0, |d| d.rate);
+        let id = SourceId::ALL[0];
+        table.publish_for_test(id, 0, held.len() as u32, rate);
+        OneSource {
+            tok: table.reader().expect("its own table"),
+            table,
+            held: held.len() as u32,
+            rate,
+            id,
+        }
+    }
+
+    /// A block's view, as the audio begins one.
+    pub fn view(&mut self) -> GateView<'_> {
+        self.tok.begin_block()
+    }
+
+    /// The row gone: retired and compacted, as the pool leaves it.
+    pub fn clear(&self) {
+        self.table.clear_for_test(self.id);
+    }
+
+    /// The row back, as it was.
+    pub fn publish(&self) {
+        self.table
+            .publish_for_test(self.id, 0, self.held, self.rate);
+    }
+
+    /// A compaction's gate closed on the source: the next view moves it.
+    pub fn close(&self) {
+        self.table.close_gate_for_test(self.id.bit());
+    }
+
+    /// The gate open again.
+    pub fn open(&self) {
+        self.table.open_gate_for_test();
+    }
 }
 
 /// `samples` packed after a `Plain` descriptor at `rate`, held whole.
@@ -92,6 +150,19 @@ pub fn held_transwave(top: u32, count: u8, amp: impl Fn(usize, u32) -> f32) -> V
     held.resize(DESC_LEN + 3 * s.len() / 2, 0);
     pack12(&s, &mut held[DESC_LEN..]);
     held
+}
+
+/// A 4-frame transwave from a saw to a square (frame 0 a saw, frame 3 a
+/// square, the two between blends), stored top 512.
+pub fn saw_to_square() -> Vec<u8> {
+    held_transwave(512, 4, |f, h| {
+        let (saw, square) = (
+            0.5 / h as f32,
+            if h % 2 == 1 { 0.6 / h as f32 } else { 0.0 },
+        );
+        let k = f as f32 / 3.0;
+        saw + (square - saw) * k
+    })
 }
 
 /// In-place iterative radix-2 FFT; `re.len()` is a power of two.

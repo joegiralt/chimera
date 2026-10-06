@@ -11,7 +11,7 @@ use chimera_hal::BLOCK_SIZE;
 
 use crate::dsp::Stereo;
 use crate::dsp::ease::{Ease, ease_coeff, step_of};
-use crate::dsp::engines::SlotKind;
+use crate::dsp::engines::{EngineCtx, SlotKind};
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use crate::dsp::modal::{ResonatorMode, SYM_NOTE_ON_CLEAR_MAX, SymPool};
 use crate::dsp::voice::Voice;
@@ -26,6 +26,7 @@ use crate::params::ParamSnapshot;
 use crate::part::{Held, LiveSnap, PartParams};
 use crate::preset::{Part, Performance};
 use crate::scope::ScopeWriter;
+use crate::source_table::GateView;
 use crate::voice_alloc::{Allocator, VoiceIdx};
 use crate::{MidiChannel, MidiNote, Velocity};
 use chimera_theory::{Note, snap};
@@ -151,6 +152,13 @@ const _: () = assert!(size_of::<Instrument>() <= VOICE_RAM_BUDGET);
 /// Constant-power pan: (left, right) gains for `pan` in -1..1. Centre is
 /// -3 dB per side; hard left/right is unity on one side, exactly 0 on the
 /// other. Out-of-range `pan` is clamped (NaN reads as centre).
+/// A voice's context: the sympathetic pool and the block's sources. None
+/// yet: TAPE Task 13 hands the block's `GateView` and each Part's source in,
+/// so until then a TAPE note plays nothing.
+fn ctx<'a>(sym: &'a mut SymPool, src: &'a GateView<'a>) -> EngineCtx<'a> {
+    EngineCtx { sym, src }
+}
+
 pub fn pan_gains(pan: f32) -> (f32, f32) {
     let pan = if pan.is_nan() {
         0.0
@@ -676,7 +684,9 @@ impl Instrument {
                         voice.kill()
                     } else {
                         self.sounding[v] = q;
-                        voice.note_on(note, vel, &part.params, &mut self.sym)
+                        let none = GateView::empty();
+                        let ctx = &mut ctx(&mut self.sym, &none);
+                        voice.note_on(note, vel, &part.params, None, ctx)
                     };
                     #[cfg(feature = "probe")]
                     crate::probe::acc(2, crate::probe::now().wrapping_sub(t2));
@@ -712,7 +722,8 @@ impl Instrument {
                     } else {
                         self.alloc.release(v);
                         self.resnap_to[v] = None;
-                        self.voices[v].note_off(&mut self.sym);
+                        let none = GateView::empty();
+                        self.voices[v].note_off(&mut ctx(&mut self.sym, &none));
                     }
                 }
             }
@@ -777,7 +788,8 @@ impl Instrument {
                 }
                 self.clear_left -= bytes;
             }
-            self.voices[v].retune(to, glide, &mut self.sym);
+            let none = GateView::empty();
+            self.voices[v].retune(to, glide, &mut ctx(&mut self.sym, &none));
             self.resnap_to[v] = None;
         }
     }
@@ -825,9 +837,11 @@ impl Instrument {
         }
         self.alloc.fade_from(v, Cost::ZERO);
         let voice = &mut self.voices[v];
-        let _ = voice.note_on(note, vel, params, &mut self.sym);
+        let none = GateView::empty();
+        let ctx = &mut ctx(&mut self.sym, &none);
+        let _ = voice.note_on(note, vel, params, None, ctx);
         if !held {
-            voice.note_off(&mut self.sym);
+            voice.note_off(ctx);
         }
         self.sounding[v] = q;
         true
@@ -971,7 +985,9 @@ impl Instrument {
             }
             let p = self.sounding[v] as usize % MAX_PARTS;
             let part = &shared.parts[p];
-            self.voices[v].render(&mut block, &part.params, &part.mod_state, &mut self.sym);
+            let none = GateView::empty();
+            let ctx = &mut ctx(&mut self.sym, &none);
+            self.voices[v].render(&mut block, &part.params, &part.mod_state, ctx);
             if written[p] {
                 for (b, &s) in self.buses[p].iter_mut().zip(&block) {
                     *b += s;

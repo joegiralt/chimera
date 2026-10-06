@@ -1448,3 +1448,124 @@ fn bank_loudness_is_even_across_the_keyboard() {
         l.iter().fold(f32::MIN, |m, &x| m.max(x)) - l.iter().fold(f32::MAX, |m, &x| m.min(x));
     assert!(spread <= 6.0, "C2 to C6: {l:?} LUFS, {spread:.1} dB apart");
 }
+
+// ── TAPE, through one voice on a source ────────────────────────────────
+
+/// Spec § 9 Model sweeps: every `TapeEngineParams` param, per model, at 11
+/// values, at notes 24–108 an octave apart: no NaN or infinity, a peak
+/// under +6 dBFS out of the engine, before the chain, and, on INIT's ENV 1
+/// into VCA, silence and the voice idle within 1 s of note-off. Through a
+/// voice and its slot, not the `Instrument`, until TAPE Task 13 hands it
+/// sources.
+#[test]
+fn tape_params_sweep() {
+    use chimera_core::block::{Block, ParamKind};
+    use chimera_core::dsp::algo::engine::AlgoLive;
+    use chimera_core::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
+    use chimera_core::dsp::modal::SymPool;
+    use chimera_core::dsp::tape_engine::{TAPE_ENGINE_SPECS, TapeModel};
+    use chimera_core::params::EngineType;
+    use chimera_core::preset::Sound;
+    use chimera_core::{MidiNote, Velocity};
+    use chimera_hal::BLOCK_SIZE;
+    use common::tape::{OneSource, held_plain, saw_to_square, saw_with_burst};
+    use common::{Rig, SR};
+
+    const HELD: usize = BPS / 4;
+    let saw = held_plain(&saw_with_burst(24_000, 1.0), 24_000);
+    let wave = saw_to_square();
+    let findings = Mutex::new(Vec::<String>::new());
+    std::thread::scope(|sc| {
+        for model in TapeModel::ALL {
+            let held = if model == TapeModel::Transwave {
+                &wave
+            } else {
+                &saw
+            };
+            let findings = &findings;
+            sc.spawn(move || {
+                let mut src = OneSource::new(held);
+                let mut voice = Rig::with_source(SR, held);
+                let mut sym = SymPool::boxed();
+                let mut slot = EngineSlot::new(SlotKind::Tape);
+                let mut out = [0.0f32; BLOCK_SIZE];
+                let found = |what: String| findings.lock().unwrap().push(what);
+                let (mut runs, mut heard) = (0, 0);
+                for spec in &TAPE_ENGINE_SPECS {
+                    let values: Vec<f32> = match spec.kind {
+                        ParamKind::Enum => (0..=spec.max as u32).map(|v| v as f32).collect(),
+                        _ => (0..11)
+                            .map(|i| spec.min + (spec.max - spec.min) * i as f32 / 10.0)
+                            .collect(),
+                    };
+                    for v in values {
+                        let mut s = Sound::init(EngineType::Tape);
+                        s.params.tape.model = model;
+                        if model == TapeModel::Scrub {
+                            s.params.tape.motion = 0.5; // a moving tape
+                        }
+                        s.params.tape.set(spec.id, v);
+                        let p = &s.params;
+                        for n in (24..=108).step_by(12) {
+                            let label = format!("{model:?} {} = {v} at {n}", spec.label);
+                            let note = MidiNote::new(n).unwrap();
+                            // The engine alone, before the chain.
+                            let mut peak = 0.0f32;
+                            let id = Some(src.id);
+                            for b in 0..HELD {
+                                let view = src.view();
+                                let mut ctx = EngineCtx {
+                                    sym: &mut sym,
+                                    src: &view,
+                                };
+                                if b == 0 {
+                                    slot.note_on(note, Velocity::DEFAULT, p, SR, id, &mut ctx);
+                                }
+                                let live = AlgoLive::from_params(&p.algo);
+                                slot.render(&mut out, p, &live, SR, &mut ctx);
+                                peak = out.iter().fold(peak, |m, x| m.max(x.abs()));
+                            }
+                            if !peak.is_finite() || peak >= 2.0 {
+                                found(format!("{label}: engine peak {peak}"));
+                            }
+                            runs += 1;
+                            heard += usize::from(peak > 0.05);
+                            // The voice: ENV 1 lets go, and within 1 s it is silent.
+                            voice.note_on(note, Velocity::DEFAULT, p);
+                            for _ in 0..HELD {
+                                voice.render(&mut out, p, &s.mod_state);
+                            }
+                            voice.note_off();
+                            let mut blocks = 0;
+                            while voice.is_active() && blocks < BPS {
+                                voice.render(&mut out, p, &s.mod_state);
+                                if out.iter().any(|x| !x.is_finite()) {
+                                    found(format!("{label}: not finite"));
+                                }
+                                blocks += 1;
+                            }
+                            if voice.is_active() {
+                                found(format!("{label}: sounding 1 s after note-off"));
+                                voice.kill();
+                                for _ in 0..4 {
+                                    voice.render(&mut out, p, &s.mod_state);
+                                }
+                            }
+                        }
+                    }
+                }
+                // A sweep of silence proves nothing.
+                if heard * 10 < runs * 9 {
+                    found(format!("{model:?}: {heard} of {runs} runs sounded"));
+                }
+            });
+        }
+    });
+    let f = findings.into_inner().unwrap();
+    assert!(
+        f.is_empty(),
+        "{} findings:\n{}",
+        f.len(),
+        f[..f.len().min(40)].join("\n")
+    );
+}

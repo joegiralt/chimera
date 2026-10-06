@@ -58,12 +58,14 @@ fn part_chains_offer_the_eight_sources() {
             "{engine:?}"
         );
         let sound = chimera_core::preset::Sound::init(engine);
+        // TAPE's INIT has VCA's too: ENV 1 ends its loop.
+        let n = 1 + usize::from(engine == EngineType::Tape);
         assert_eq!(
             sound.dest_registry.len(),
-            1,
+            n,
             "{engine:?}: the default CUTOFF column"
         );
-        assert_eq!(sound.mod_state.num_dests(), 1, "{engine:?}");
+        assert_eq!(sound.mod_state.num_dests(), n, "{engine:?}");
     }
 }
 

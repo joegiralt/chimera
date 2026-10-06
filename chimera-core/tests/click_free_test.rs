@@ -166,6 +166,33 @@ fn test_no_clicks_modal() {
     }
 }
 
+// ── TAPE ────────────────────────────────────────────────────────────
+
+/// Neutral TAPE through the voice: half a second of a sine whose length
+/// isn't a whole period, looped whole under its folded crossfade for 3 s.
+#[test]
+fn test_no_clicks_tape() {
+    use common::tape::{held_plain, sine};
+    let p = chimera_core::preset::Sound::neutral(EngineType::Tape).params;
+    let mut v = Rig::with_source(SR, &held_plain(&sine(48_000, 100.7, 24_000), 48_000));
+    v.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &p);
+    let m = ModState::new();
+    let mut block = [0.0f32; BLOCK_SIZE];
+    let mut out = Vec::new();
+    for _ in 0..3 * 750 {
+        v.render(&mut block, &p, &m);
+        out.extend_from_slice(&block);
+    }
+    assert!(out.iter().any(|x| x.abs() > 0.1), "TAPE sounds");
+    let c = clicks(&out);
+    assert!(
+        c.is_empty(),
+        "{} clicks: {:?}",
+        c.len(),
+        &c[..c.len().min(5)]
+    );
+}
+
 // ── Misaligned callback sizes (stress test for block boundary) ──────
 
 #[test]

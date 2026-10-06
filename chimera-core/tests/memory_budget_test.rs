@@ -8,6 +8,7 @@ use chimera_core::dsp::algo::engine::AlgoEngine;
 use chimera_core::dsp::engines::EngineSlot;
 use chimera_core::dsp::modal::{MAX_STRING_DELAY, ModalEngine};
 use chimera_core::dsp::note_to_freq;
+use chimera_core::dsp::tape_engine::TapeEngine;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw;
 
@@ -31,15 +32,17 @@ fn voice_pool_fits_d2() {
 #[test]
 fn voice_is_its_chain_plus_one_slot() {
     use core::mem::align_of;
-    let (algo, modal, slot) = (
+    let (algo, modal, tape, slot) = (
         size_of::<AlgoEngine>(),
         size_of::<ModalEngine>(),
+        size_of::<TapeEngine>(),
         size_of::<EngineSlot>(),
     );
     let chain = size_of::<Voice>() - slot;
     for (name, size) in [
         ("AlgoEngine", algo),
         ("ModalEngine", modal),
+        ("TapeEngine", tape),
         ("EngineSlot", slot),
         ("chain", chain),
         ("Voice", size_of::<Voice>()),
@@ -60,7 +63,7 @@ fn voice_is_its_chain_plus_one_slot() {
     // slot's align, plus one align for the tag.
     let align = align_of::<EngineSlot>();
     assert!(
-        slot <= algo.max(modal).next_multiple_of(align) + align,
+        slot <= algo.max(modal).max(tape).next_multiple_of(align) + align,
         "EngineSlot = {slot} B"
     );
 }

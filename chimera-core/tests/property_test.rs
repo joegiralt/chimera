@@ -242,6 +242,7 @@ fn prop_param_change_changes_output() {
             _ => match params_a.engine() {
                 EngineType::Algo => params_b.algo.ops[0].level = 99 - params_a.algo.ops[0].level,
                 EngineType::Modal => params_b.out.volume = params_a.out.volume * 0.2,
+                EngineType::Tape => params_b.tape.start = 0.5 - params_a.tape.start,
             },
         }
 

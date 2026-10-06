@@ -116,7 +116,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("settings_personal_theme", 0xc35039e65219cdc2),
     ("settings_midi_sync", 0x0e26ce69d0f54980),
     ("settings_system_diag_aud_load", 0x0d5edcdc4826225e),
-    ("settings_project_pool", 0x6a4a4d046c4ef394),
+    // Re-recorded: NEW holds TAPE's INIT too (TAPE Task 12).
+    ("settings_project_pool", 0x0398cb5ed06d500b),
     // ORBIT's row opens its list (plan Task 17).
     ("settings_top", 0x08d6ee26dad9fb97),
     // Part 3's LIVE SNAP leaf (plan Task 15).

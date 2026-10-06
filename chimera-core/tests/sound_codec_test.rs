@@ -512,8 +512,10 @@ fn sparse_sizes() {
     // 58 B of Engine, Registry, ModDests and Routes, and 70 B for the
     // values INIT moved off neutral (ADR 0063): RR on six operators and
     // OUT LEVEL, a one-param block each.
+    // TAPE's INIT routes ENV 1 into VCA: a column and a route more, 16 B.
     for e in EngineType::ALL {
-        assert_eq!(cost(&encode(&Sound::init(e))), 58 + 7 * 10, "{e:?}");
+        let vca = if e == EngineType::Tape { 16 } else { 0 };
+        assert_eq!(cost(&encode(&Sound::init(e))), 58 + 7 * 10 + vca, "{e:?}");
     }
 }
 

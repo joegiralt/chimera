@@ -67,8 +67,15 @@ fn new_project_contents() {
             .to_sound()
             .bits_eq(&Sound::init(EngineType::Modal))
     );
-    assert_eq!(p.pool().sound_count(), 10);
-    assert_eq!(p.pool().first_free(), SlotId::new(10));
+    assert!(
+        p.pool()
+            .get(SlotId::ALL[10])
+            .unwrap()
+            .to_sound()
+            .bits_eq(&Sound::init(EngineType::Tape))
+    );
+    assert_eq!(p.pool().sound_count(), 11);
+    assert_eq!(p.pool().first_free(), SlotId::new(11));
     // Parts 1–5 on the init scene's factory Sounds, from their slots;
     // Part 6 on INIT Algo.
     for (id, slot) in PartId::ALL.into_iter().zip(NEW_PARTS) {
@@ -287,12 +294,12 @@ fn records_len(s: &Sound) -> usize {
     c.0 - HEADER_LEN - TRAILER_LEN
 }
 
-/// NEW's 8 factory Sounds and 2 INITs, each its 16 B name and its sparse
+/// NEW's 8 factory Sounds and 3 INITs, each its 16 B name and its sparse
 /// records, granule-rounded.
 #[test]
 fn new_pool_reads_its_cost() {
     let p = Project::boxed().0;
-    assert_eq!(p.pool().sound_count(), 10);
+    assert_eq!(p.pool().sound_count(), 11);
     let want: u32 = SlotId::ALL
         .into_iter()
         .filter_map(|s| p.pool().get(s))

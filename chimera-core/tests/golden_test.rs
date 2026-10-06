@@ -9,6 +9,11 @@ mod common;
 
 use common::*;
 
+use chimera_core::dsp::tape_engine::TapeEngineParams;
+use chimera_core::params::EngineType;
+use chimera_core::preset::Sound;
+use chimera_core::{MidiNote, Velocity};
+
 /// (case name, FNV-1a 64 over every sample's bits, sample bits at SPOT_IDX).
 const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     // Every row re-recorded at Task 17 for ADR 0060: the voice's DC blocker
@@ -279,6 +284,91 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     ),
 ];
 
+/// TAPE through one voice on INIT (ENV 1 into VCA), each model and LOOP
+/// with AGE and TAPE at 0.5 (`tape_render`). Recorded at TAPE Task 12.
+const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
+    (
+        "tape_loop",
+        (
+            0xeb75411846f2c4fd,
+            [
+                0, 3176470098, 3150415710, 1033975853, 3170966862, 3170787766, 3179306684,
+                1016163560,
+            ],
+        ),
+    ),
+    (
+        "tape_reverse",
+        (
+            0xaa5d30e93d2f0c2c,
+            [
+                0, 1028345001, 999945570, 3181616565, 1022612428, 1022375005, 1031436240,
+                3171712594,
+            ],
+        ),
+    ),
+    (
+        "tape_pingpong",
+        (
+            0xecf637f92e1a68e6,
+            [
+                0, 3176470098, 3150415710, 1033975853, 3170966862, 3170787766, 3179306684,
+                1016163560,
+            ],
+        ),
+    ),
+    (
+        "tape_transwave",
+        (
+            0x68446426e4e344dc,
+            [
+                0, 3183798657, 3174299362, 1033606535, 3185928905, 3186195438, 1028914423,
+                3181680044,
+            ],
+        ),
+    ),
+    (
+        "tape_scrub",
+        (
+            0xcf6a39769c6d18c3,
+            [
+                0, 3176470098, 3150415710, 1033975853, 3170966862, 3170787766, 3179306684,
+                1016163560,
+            ],
+        ),
+    ),
+    (
+        "tape_stretch",
+        (
+            0x9686e0c8eef6bc30,
+            [
+                0, 3175828711, 3146390580, 3168283110, 1017985224, 1018207769, 1007211557,
+                3147782999,
+            ],
+        ),
+    ),
+    (
+        "tape_loop_age",
+        (
+            0x63bff4e6e175424c,
+            [
+                3050480091, 3176508472, 3150105452, 1034022332, 3171256518, 3170977301, 3169702077,
+                1020044101,
+            ],
+        ),
+    ),
+    (
+        "tape_loop_tape",
+        (
+            0xd73229b00baf2b86,
+            [
+                0, 3176360232, 3142684280, 1035228111, 3160139092, 3159674534, 3179031364,
+                1034705517,
+            ],
+        ),
+    ),
+];
+
 /// Goldens whose locked output no longer reflects intended behaviour, each
 /// with its issue. Empty: Modal 2 step A closed #10, and Modal's four
 /// goldens were re-recorded then; `known_broken` guards whatever comes next.
@@ -389,4 +479,78 @@ fn golden_check_catches_every_disagreement() {
         ]
     );
     assert!(golden::mismatches(&table[..3], &table[..3]).is_empty());
+}
+
+/// The TAPE cases: each model, then LOOP with AGE, then with TAPE, at 0.5.
+fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
+    use chimera_core::dsp::tape_engine::TapeModel as M;
+    let p = TapeEngineParams::default();
+    let model = |model| TapeEngineParams { model, ..p };
+    vec![
+        ("tape_loop", model(M::Loop)),
+        ("tape_reverse", model(M::Reverse)),
+        ("tape_pingpong", model(M::PingPong)),
+        ("tape_transwave", model(M::Transwave)),
+        // A moving tape: the neutral's MOTION 0 is a stopped, silent one.
+        (
+            "tape_scrub",
+            TapeEngineParams {
+                motion: 0.5,
+                ..model(M::Scrub)
+            },
+        ),
+        ("tape_stretch", model(M::Stretch)),
+        ("tape_loop_age", TapeEngineParams { age: 0.5, ..p }),
+        ("tape_loop_tape", TapeEngineParams { tape: 0.5, ..p }),
+    ]
+}
+
+/// `t` on INIT through one voice: on the saw with its burst at 24 and at
+/// 8 kHz (TRANSWAVE: the saw-to-square transwave), C3, C4 and C5, each 2 s,
+/// its last 0.5 s released.
+fn tape_render(t: &TapeEngineParams) -> Vec<f32> {
+    use chimera_core::dsp::tape_engine::TapeModel;
+    use common::tape::{held_plain, saw_to_square, saw_with_burst};
+    let mut s = Sound::init(EngineType::Tape);
+    s.params.tape = *t;
+    let sources = if t.model == TapeModel::Transwave {
+        vec![saw_to_square()]
+    } else {
+        [24_000, 8_000]
+            .map(|r| held_plain(&saw_with_burst(r, 1.0), r))
+            .to_vec()
+    };
+    let mut out = Vec::new();
+    let mut b = [0.0f32; chimera_hal::BLOCK_SIZE];
+    for held in &sources {
+        let mut v = Rig::with_source(SR, held);
+        for n in [48, 60, 72] {
+            v.note_on(
+                MidiNote::new(n).unwrap(),
+                Velocity::new(VEL).unwrap(),
+                &s.params,
+            );
+            for i in 0..1_500 {
+                if i == 1_125 {
+                    v.note_off();
+                }
+                v.render(&mut b, &s.params, &s.mod_state);
+                out.extend_from_slice(&b);
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn tape_goldens_match() {
+    let got: Vec<_> = tape_cases()
+        .iter()
+        .map(|(name, t)| {
+            let out = tape_render(t);
+            assert!(out.iter().any(|&x| x.abs() > 1e-3), "{name} silent");
+            (*name, (fnv1a(&out), spots(&out)))
+        })
+        .collect();
+    golden::check(TAPE_GOLDENS, &got);
 }
