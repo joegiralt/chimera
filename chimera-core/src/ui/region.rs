@@ -76,7 +76,7 @@ pub enum RegionData {
         /// `MatrixState::rev`: a deleted route redraws.
         matrix_rev: u16,
         /// `mod_grid::inert_dests`: it can change without a `matrix_rev` bump.
-        inert: u16,
+        inert: u32,
     },
     Viz {
         page: PageKey,
@@ -100,7 +100,7 @@ pub enum RegionData {
         mods: [Option<u32>; 6],
         /// `MatrixState::rev`, and each cell's `Look` in two bits.
         matrix_rev: u16,
-        looks: u16,
+        looks: u32,
     },
     Nav {
         chain_idx: u8,
@@ -118,7 +118,7 @@ pub enum RegionData {
         sel_value: u16,
         matrix_rev: u16,
         /// `mod_grid::inert_dests`.
-        inert: u16,
+        inert: u32,
     },
     /// A SETTINGS band (breadcrumb, list or footer): a fingerprint of what
     /// it shows.
@@ -311,7 +311,7 @@ impl RegionData {
             dest_count: u16::MAX,
             mods: [Some(u32::MAX); 6],
             matrix_rev: u16::MAX,
-            looks: u16::MAX,
+            looks: u32::MAX,
         }
     }
 
@@ -359,14 +359,14 @@ impl RegionData {
             scroll_x: 255,
             sel_value: SENTINEL,
             matrix_rev: u16::MAX,
-            inert: u16::MAX,
+            inert: u32::MAX,
         }
     }
 
     /// With the matrix's revision in the key, and `looks`: the cells' looks,
     /// or the matrix's inert columns. A deleted route, a dimmed cell or an
     /// inert column redraws.
-    pub fn keyed(self, matrix_rev: u16, looks: u16) -> Self {
+    pub fn keyed(self, matrix_rev: u16, looks: u32) -> Self {
         match self {
             Self::Cells {
                 page,

@@ -24,7 +24,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0x29fa1ef579c4a0e7),
     ("algo_alg", 0xb73321ba103c1886),
     ("algo_alg_morph_dimmed", 0xd8e8a78a528ad3b4),
-    ("mod_matrix_morph_inert", 0xe5dc545f78f89d13),
+    // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7).
+    ("mod_matrix_morph_inert", 0xf03117b3aa70820f),
     // Re-recorded: WAVE shows its scope (#310).
     ("algo_wave", 0xe156f3e83d0aab72),
     ("algo_level", 0x408f6bef763157fe),
@@ -110,8 +111,9 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_out_p2", 0xc7a057082a7a6932),
     ("algo_out_p3", 0x3e91d6b588f4ebfa),
-    ("mod_matrix", 0x908cc3655fdaf8ee),
-    ("mod_matrix_wide", 0xc34ca17250bc0e55),
+    // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7).
+    ("mod_matrix", 0x7505746f6169857a),
+    ("mod_matrix_wide", 0x6c01ed7cf3031e61),
     ("sound_browser", 0xc5fad13cf6ddc71f),
     // Re-recorded: a fresh project's footer drops NEW (#286).
     ("settings_personal_theme", 0xc35039e65219cdc2),

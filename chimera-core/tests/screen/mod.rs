@@ -824,21 +824,16 @@ fn to_e3(ui: &mut UiState) {
 }
 
 /// ENV1→CUTOFF +20, ENV1→FOLD −30, LFO1→CUTOFF +42 (selected).
+/// FREQ (CUTOFF) and FOLD are permanent columns, 0 and 3: no priming.
 fn mod_matrix(ui: &mut UiState) {
-    plus(ui, 3);
-    feed(ui, Input::turn(EncoderId::B, 1)); // focus CUTOFF
-    prime(ui);
-    plus(ui, 1);
-    feed(ui, Input::turn(EncoderId::A, 1)); // focus FOLD
-    prime(ui);
-    plus(ui, 1);
+    plus(ui, 5);
     to_matrix(ui);
-    feed(ui, Input::turn(EncoderId::E, 20)); // ENV → CUTOFF
-    feed(ui, Input::turn(EncoderId::B, 1));
+    feed(ui, Input::turn(EncoderId::E, 20)); // ENV → FREQ
+    feed(ui, Input::turn(EncoderId::B, 3));
     feed(ui, Input::turn(EncoderId::E, -30)); // ENV → FOLD
     feed(ui, Input::turn(EncoderId::A, 3)); // LFO1
-    feed(ui, Input::turn(EncoderId::B, -1));
-    feed(ui, Input::turn(EncoderId::E, 42)); // LFO → CUTOFF, selected
+    feed(ui, Input::turn(EncoderId::B, -3));
+    feed(ui, Input::turn(EncoderId::E, 42)); // LFO → FREQ, selected
 }
 
 /// Prime the focused slot for modulation (MIX + PLUS).
@@ -987,11 +982,11 @@ pub const CASES: &[ScreenCase] = &[
     ("amp_vel_live", |ui| {
         plus(ui, 4);
         feed(ui, Input::turn(EncoderId::D, 1));
-        prime(ui); // VEL primes the VCA
+        prime(ui); // VEL primes the VCA: a permanent column, ALREADY ROUTED
         plus(ui, 1);
-        to_matrix(ui); // ENV1 → FLT CUTOFF
+        to_matrix(ui); // ENV1 → FREQ
         feed(ui, Input::turn(EncoderId::A, 1)); // ENV2
-        feed(ui, Input::turn(EncoderId::B, 1)); // OUT VCA
+        feed(ui, Input::turn(EncoderId::B, 2)); // VCA, the third fixed column
         feed(ui, Input::turn(EncoderId::E, 100)); // E2 → VCA
         feed(ui, Input::press(ButtonId::Minus)); // back to AMP: VEL live
     }),
@@ -1121,7 +1116,7 @@ pub const CASES: &[ScreenCase] = &[
         prime(ui);
         plus(ui, 5);
         to_matrix(ui);
-        feed(ui, Input::turn(EncoderId::B, 1)); // past FLT CUTOFF to MORPH
+        feed(ui, Input::turn(EncoderId::B, 4)); // past the fixed four to MORPH
         feed(ui, Input::turn(EncoderId::E, 60));
         for _ in 0..5 {
             feed(ui, Input::press(ButtonId::Minus));

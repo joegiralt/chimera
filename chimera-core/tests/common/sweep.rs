@@ -139,12 +139,6 @@ pub fn model_name(m: ResonatorMode) -> &'static str {
 fn route_all(s: &mut Sound, engine_dest: ParamAddr) {
     let ms = &mut s.mod_state;
     let cutoff = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
-    let mut at = |addr: ParamAddr| {
-        (0..ms.num_dests())
-            .find(|&d| ms.dest(d) == addr)
-            .or_else(|| ms.push(addr))
-            .expect("room for the route")
-    };
     let routes = [
         (ModSource::Env1, cutoff, 40),
         (ModSource::Lfo1, cutoff, 20),
@@ -171,9 +165,11 @@ fn route_all(s: &mut Sound, engine_dest: ParamAddr) {
             20,
         ),
     ];
-    let dests: Vec<usize> = routes.iter().map(|r| at(r.1)).collect();
-    for ((src, _, amt), d) in routes.into_iter().zip(dests) {
-        ms.set_amount(src.index(), d, amt);
+    for (src, addr, amt) in routes {
+        assert!(
+            ms.set_route_addr(src.index(), addr, amt),
+            "room for the route"
+        );
     }
     s.params.lfos[1].rate = 3.0;
     s.params.lfos[2].rate = 7.0;

@@ -6,7 +6,7 @@ use chimera_hal::store::StoreError;
 use crate::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use crate::block::{DiskCode, ParamId};
 use crate::mod_path::{LABEL_LEN, MAX_REGISTRY_DESTS, ModDestRegistry};
-use crate::modulation::{MAX_MOD_DESTS, MAX_MOD_SOURCES, ModSource, ModState};
+use crate::modulation::{FixedCol, MAX_MOD_DESTS, MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::SoundName;
 use crate::params::{EngineType, ParamSnapshot};
 use crate::preset::Sound;
@@ -20,7 +20,8 @@ use super::record::{MAX_RECORD_LEN, ReadTag, RecordBuf, RecordTag, RecordWriter}
 
 const REGISTRY_ENTRY_LEN: usize = 2 + LABEL_LEN;
 const ROUTE_LEN: usize = 4;
-const MAX_ROUTES: usize = MAX_MOD_SOURCES * MAX_MOD_DESTS;
+/// Every source into every registry column and every fixed one.
+const MAX_ROUTES: usize = MAX_MOD_SOURCES * (MAX_MOD_DESTS + FixedCol::ALL.len());
 const _: () = assert!(MAX_ROUTES * ROUTE_LEN <= MAX_RECORD_LEN);
 const _: () = assert!(MAX_REGISTRY_DESTS * REGISTRY_ENTRY_LEN <= MAX_RECORD_LEN);
 
@@ -65,15 +66,18 @@ fn addr_of(block: u8, id: u8) -> Option<ParamAddr> {
 
 pub fn encode_sound(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     w.put(RecordTag::Engine, &[s.engine().disk_code()])?;
+    // One buffer for every record: this frame is charged to each pointer
+    // call (ADR 0025's stack check), so it holds one, not one per record.
+    let mut r = RecordBuf::new();
     for b in BlockRef::ALL {
         if let Some(blk) = s.params.block(b) {
-            let mut r = RecordBuf::new();
+            r.clear();
             encode_block(b, blk, &mut r);
             w.put(RecordTag::Block, r.as_slice())?;
         }
     }
 
-    let mut r = RecordBuf::new();
+    r.clear();
     for e in (0..s.dest_registry.len()).filter_map(|i| s.dest_registry.get(i)) {
         r.bytes(&addr_code(e.addr));
         r.bytes(&e.label);
@@ -81,20 +85,30 @@ pub fn encode_sound(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(), StoreErro
     w.put(RecordTag::Registry, r.as_slice())?;
 
     let m = &s.mod_state;
-    let mut r = RecordBuf::new();
+    r.clear();
     r.u8(m.num_sources() as u8);
     for d in 0..m.num_dests() {
         r.bytes(&addr_code(m.dest(d)));
     }
     w.put(RecordTag::ModDests, r.as_slice())?;
 
-    let mut r = RecordBuf::new();
+    r.clear();
     for d in 0..m.num_dests() {
         for src in ModSource::ALL.into_iter().take(m.num_sources()) {
             if m.present(d) & 1 << src.index() != 0 {
                 r.u8(src.disk_code());
                 r.bytes(&addr_code(m.dest(d)));
                 r.u8(m.amount(src.index(), d) as u8);
+            }
+        }
+    }
+    // The fixed columns: ordinary route records, by address (no ModDests).
+    for c in FixedCol::ALL {
+        for src in ModSource::ALL.into_iter().take(m.num_sources()) {
+            if m.fixed_present(c) & 1 << src.index() != 0 {
+                r.u8(src.disk_code());
+                r.bytes(&addr_code(c.addr()));
+                r.u8(m.fixed_amount(src.index(), c) as u8);
             }
         }
     }
@@ -320,9 +334,9 @@ impl SoundCheck {
                 else {
                     continue;
                 };
-                if let Some(d) = m.find(addr).or_else(|| m.push(addr)) {
-                    m.set_route(src.index(), d, amount as i8);
-                }
+                // A fixed column's route lands there; any other finds or
+                // takes its registry column, else is dropped.
+                m.set_route_addr(src.index(), addr, amount as i8);
             }
         }
         Ok(())
@@ -356,7 +370,7 @@ fn registry(p: &[u8], staged: Option<&mut Sound>) -> Result<(), FileError> {
             let Some(addr) = addr_of(block, id) else {
                 continue;
             };
-            // Refused when not modulatable: skipped.
+            // Refused when not modulatable or a fixed column's: skipped.
             let _ = s.dest_registry.add(addr, *label);
         }
     }
@@ -374,7 +388,8 @@ fn mod_dests(p: &[u8], staged: Option<&mut Sound>) -> Result<(), FileError> {
     if let Some(s) = staged {
         let mut m = ModState::with_sources(sources.into());
         for &[block, id] in dests {
-            // `push` refuses one that isn't modulatable: skipped. One
+            // `push` refuses one that isn't modulatable, or is a fixed
+            // column's (its routes load there): skipped. One
             // already there (DRIVE's beside LEVEL's) is not added twice.
             if let Some(addr) = addr_of(block, id)
                 && m.find(addr).is_none()

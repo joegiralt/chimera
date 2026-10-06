@@ -123,9 +123,12 @@ fn axi_residents_fit() {
     let total: usize = parts.iter().map(|p| p.1).sum();
     eprintln!("{:>15} {total:>7} B of {} B", "AXI", hw::AXI_SRAM);
     assert_eq!(total, AXI_RESIDENT);
-    // The default build's, at 2dc9eefd; the master tape adds its own.
+    // The default build's, at 2dc9eefd, plus the four fixed matrix columns
+    // (filter-types spec § 7: 40 B a `ModState` with its padding, in the
+    // pool, the Performance and the AudioShared triple buffer); the master
+    // tape adds its own.
     if !cfg!(feature = "master-tape") {
-        assert!(total <= 442_132, "AXI grew past 2dc9eefd's");
+        assert!(total <= 444_324, "AXI grew past the fixed columns'");
     }
     assert!(
         hw::AXI_SRAM - total >= 64 * 1024,

@@ -789,7 +789,7 @@ pub fn look(f: &Frame, i: usize) -> components::Look {
 }
 
 /// The matrix's inert columns on the edited Part (`mod_grid::inert_dests`).
-pub fn inert(f: &Frame) -> u16 {
+pub fn inert(f: &Frame) -> u32 {
     crate::ui::mod_grid::inert_dests(f.matrix, &f.parts[f.active_part.index()].sound)
 }
 

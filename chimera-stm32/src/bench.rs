@@ -29,7 +29,6 @@ use chimera_core::hw::{
 use chimera_core::instrument::{
     AudioShared, DacBlocks, Instrument, MixState, PartAudio, mix_parts,
 };
-use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{CUTOFF, MAX_MOD_SOURCES, ModSource, ModState, VCA};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 #[cfg(feature = "orbit")]
@@ -488,17 +487,11 @@ fn a_level(p: &mut PartAudio) {
     p.mod_state = matrix(&[(ModSource::Env2, VCA, 127), (ModSource::Lfo1, level, 127)]);
 }
 
-/// `routes` as the Part's matrix, each destination primed.
+/// `routes` as the Part's matrix: fixed columns, else registry columns.
 fn matrix(routes: &[(ModSource, ParamAddr, i8)]) -> ModState {
-    let mut reg = ModDestRegistry::new();
-    for &(_, a, _) in routes {
-        let _ = reg.add(a, *b"BENCH\0\0\0");
-    }
-    let mut ms = ModState::from_registry(&reg, MAX_MOD_SOURCES);
+    let mut ms = ModState::with_sources(MAX_MOD_SOURCES);
     for &(s, a, amount) in routes {
-        if let Some(d) = ms.find(a) {
-            ms.set_route(s.index(), d, amount);
-        }
+        ms.set_route_addr(s.index(), a, amount);
     }
     ms
 }

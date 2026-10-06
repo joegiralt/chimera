@@ -214,15 +214,9 @@ fn the_matrix_draws_the_hint_of_its_cursor() {
 
 #[test]
 fn the_matrix_hint_follows_the_cursors_route() {
-    use chimera_core::mod_path::ModDestRegistry;
-    use chimera_core::modulation::CUTOFF;
     let mut m = MatrixState::new();
     m.rebuild_sources(&["SRC"; 8]);
-    assert_eq!(m.hint(), mod_grid::PRIME, "no destinations");
-    let mut reg = ModDestRegistry::new();
-    reg.add(CUTOFF, *b"CUTOFF\0\0").unwrap();
-    m.rebuild_dests_from_registry(&reg);
-    assert_eq!(m.hint(), mod_grid::PRIME, "no route here");
+    assert_eq!(m.hint(), mod_grid::PRIME, "no route on the fixed FREQ");
     m.set(m.sel_source(), 0, 20);
     assert_eq!(m.hint(), mod_grid::DELETE);
     m.delete_selected();

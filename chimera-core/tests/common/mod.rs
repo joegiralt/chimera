@@ -26,7 +26,6 @@ use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::modal::{Halo, ModalEngine, ModalParams, Model, ResonatorMode, SymPool};
 use chimera_core::instrument::{AudioShared, Instrument};
-use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{MAX_MOD_SOURCES, ModSource, ModState};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, FilterParams, ParamSnapshot};
@@ -182,23 +181,23 @@ pub fn morph_patch() -> ParamSnapshot {
 /// One LFO (source 1) route at MOD_AMOUNT to `dest`; env is source 0 so
 /// `num_sources >= 2` and the LFO runs.
 pub fn lfo_route(dest: ParamAddr) -> ModState {
-    let mut reg = ModDestRegistry::new();
-    reg.add(dest, *b"GOLDEN\0\0")
-        .expect("golden destination must be modulatable");
-    let mut ms = ModState::from_registry(&reg, 2);
-    ms.set_amount(1, 0, MOD_AMOUNT);
+    let mut ms = ModState::with_sources(2);
+    assert!(
+        ms.set_route_addr(1, dest, MOD_AMOUNT),
+        "golden destination must be modulatable"
+    );
     ms
 }
 
 /// LFO 1 → `addr` at `lfo`; an ENV slot also routes itself into CUTOFF.
 pub fn routes(addr: ParamAddr, lfo: i8) -> ModState {
-    let mut reg = ModDestRegistry::new();
-    reg.add(addr, *b"TEST\0\0\0\0").expect("modulatable");
-    let mut ms = ModState::from_registry(&reg, MAX_MOD_SOURCES);
-    ms.set_amount(ModSource::Lfo1.index(), 0, lfo);
+    assert!(addr.modulatable());
+    let mut ms = ModState::with_sources(MAX_MOD_SOURCES);
+    if lfo != 0 {
+        assert!(ms.set_route_addr(ModSource::Lfo1.index(), addr, lfo));
+    }
     if let BlockRef::Env(s) = addr.block {
-        let d = ms.push(CUTOFF).unwrap();
-        ms.set_amount(ModSource::of_env(s).index(), d, 127);
+        ms.set_route_addr(ModSource::of_env(s).index(), CUTOFF, 127);
     }
     ms
 }

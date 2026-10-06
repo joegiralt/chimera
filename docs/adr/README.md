@@ -50,7 +50,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0042](0042-voice-pitch-is-a-matrix-destination.md) | Voice pitch is a matrix destination on each engine's PITCH page | Accepted; `ModalEngine::PITCH` superseded in part by [0056](0056-modal-resonators-share-four-macros.md) |
 | [0043](0043-projects-own-their-sounds.md) | Projects own their sounds; marks are derived; one typed replace guard | Proposed; template amended by [0073](0073-new-plays-the-sparse-groove-on-factory-sounds.md) |
 | [0044](0044-one-ladder-one-button-map.md) | One ladder and one button map for Parts, the mixer and ORBIT (absorbs 0057; amended by 0066 for SETTINGS) | Proposed |
-| [0045](0045-card-format.md) | Store cards in 8.3 A/B files of versioned TLV records | Accepted; load staging superseded in part by [0046](0046-project-load-protocol.md) |
+| [0045](0045-card-format.md) | Store cards in 8.3 A/B files of versioned TLV records | Accepted; load staging superseded in part by [0046](0046-project-load-protocol.md); record bound by [0102](0102-a-record-may-hold-640-bytes.md) (Proposed) |
 | [0046](0046-project-load-protocol.md) | Swap projects by epoch: fade the voices, then publish (supersedes in part [0045](0045-card-format.md)) | Proposed |
 | [0048](0048-own-fat-layer.md) | Own the FAT layer; keep embedded-sdmmc only as the SD block driver | Accepted |
 | [0049](0049-algo-init-routed-morph-dims.md) | Algo INIT is audibly routed; MORPH dims when A = B (supersedes in part 0024) | Proposed; INIT's RR and OUT LEVEL noted by [0063](0063-levels-at-the-factory-median.md) |
@@ -96,3 +96,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0096](0096-filter-types-clean-2040-dirty-and-algo-taps.md) | Three filter TYPEs, CLEAN (Cascadia-style), 2040 (SSM2040) and DIRTY (Chamberlin), with per-type modes, labels and bills; ALGO OP 5/6 audio-rate taps to FREQ, Q, VCA and FOLD (supersedes 0037) | Proposed |
 | [0097](0097-bank-and-symp-clip-with-stmlibs-curve.md) | BANK and SYMP clip with stmlib's curve; the Elements stagger tried and dropped (amends 0063) | Proposed |
 | [0101](0101-voice-chain-may-hold-2112-bytes.md) | The voice chain may hold 2,112 B (supersedes in part 0051) | Proposed |
+| [0102](0102-a-record-may-hold-640-bytes.md) | A record may hold 640 B: the four fixed matrix columns' routes (supersedes in part 0045) | Proposed |

@@ -6,7 +6,7 @@ use chimera_core::block::{Block, ParamId};
 use chimera_core::dsp::filter::FilterMode;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::mod_path::{LABEL_LEN, MAX_REGISTRY_DESTS};
-use chimera_core::modulation::{CUTOFF, MAX_MOD_DESTS, MAX_MOD_SOURCES, ModState};
+use chimera_core::modulation::{FixedCol, MAX_MOD_DESTS, MAX_MOD_SOURCES, ModState};
 use chimera_core::params::{EngineType, FilterParams, ParamSnapshot, PitchParams};
 use chimera_core::preset::Sound;
 use chimera_core::storage::{
@@ -109,19 +109,19 @@ fn init_round_trip() {
 #[test]
 fn zero_amount_route_survives() {
     let mut s = Sound::init(EngineType::Algo);
-    let d = s.mod_state.find(CUTOFF).unwrap();
-    s.mod_state.set_route(6, d, 0);
+    s.mod_state.set_fixed(6, FixedCol::Freq, 0);
     let got = decode(&encode(&s)).unwrap();
-    assert_ne!(got.mod_state.present(d) & 1 << 6, 0);
+    assert_ne!(got.mod_state.fixed_present(FixedCol::Freq) & 1 << 6, 0);
     assert!(got.bits_eq(&s));
 }
 
-/// The first `n` modulatable addresses, in `BlockRef::ALL` order.
+/// The first `n` modulatable registry addresses (no fixed column's), in
+/// `BlockRef::ALL` order.
 fn modulatable(n: usize) -> Vec<ParamAddr> {
     BlockRef::ALL
         .into_iter()
         .flat_map(|b| b.specs().iter().map(move |s| ParamAddr::new(b, s.id)))
-        .filter(|a| a.modulatable())
+        .filter(|&a| a.modulatable() && FixedCol::of(a).is_none())
         .take(n)
         .collect()
 }
@@ -142,11 +142,19 @@ fn full_matrix_round_trip() {
             x ^= x << 5;
             s.mod_state.set_route(src, d, x as u8 as i8);
         }
+        // Every fixed column too: the largest Routes record there is.
+        for c in FixedCol::ALL {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            s.mod_state.set_fixed(src, c, x as u8 as i8);
+        }
     }
     let got = decode(&encode(&s)).unwrap();
     assert!(got.bits_eq(&s));
     assert_eq!(got.dest_registry.len(), MAX_REGISTRY_DESTS);
     assert_eq!(got.mod_state.present(MAX_MOD_DESTS - 1), 0xFF);
+    assert_eq!(got.mod_state.fixed_present(FixedCol::Fold), 0xFF);
 }
 
 #[test]
@@ -154,11 +162,13 @@ fn bits_eq_sees_differences_in_range() {
     let a = Sound::init(EngineType::Algo);
     let mut b = a.clone();
     assert!(a.bits_eq(&b));
-    b.mod_state.set_route(1, 0, 5);
+    b.mod_state.set_fixed(1, FixedCol::Freq, 5);
     assert!(!a.bits_eq(&b));
 
     let mut b = a.clone();
-    b.dest_registry.remove(CUTOFF);
+    b.dest_registry
+        .add(modulatable(1)[0], [b'A'; LABEL_LEN])
+        .unwrap();
     assert!(!a.bits_eq(&b));
 
     let mut b = a.clone();
@@ -359,6 +369,11 @@ fn random_sound(e: EngineType, rng: &mut Rng) -> Sound {
         for d in 0..s.mod_state.num_dests() {
             if rng.below(2) == 0 {
                 s.mod_state.set_route(src, d, rng.next() as u8 as i8);
+            }
+        }
+        for c in FixedCol::ALL {
+            if rng.below(2) == 0 {
+                s.mod_state.set_fixed(src, c, rng.next() as u8 as i8);
             }
         }
     }

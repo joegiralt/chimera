@@ -2,8 +2,9 @@
 //!
 //! Built only from the destination registry (`from_registry`) or the UI's
 //! matrix (`sync_from_matrix`), both of which admit only modulatable
-//! addresses (spec §4). The audio ISR reads routes + source values to compute
-//! per-destination offsets.
+//! addresses (spec §4). FREQ, Q, VCA and FOLD are four permanent columns
+//! beside the registry's (filter-types spec § 7). The audio ISR reads routes
+//! + source values to compute per-destination offsets.
 
 use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
@@ -11,7 +12,7 @@ use crate::dsp::algo::plan::OPS;
 use crate::dsp::clampf;
 use crate::dsp::modulator::{EnvSlot, EnvType, FuncMode, LfoType};
 use crate::hw::Cost;
-use crate::mod_path::{LABEL_LEN, ModDestRegistry};
+use crate::mod_path::ModDestRegistry;
 use crate::params::{EnvParams, FilterParams, ParamSnapshot};
 use crate::ui::mod_grid::MatrixState;
 
@@ -20,10 +21,52 @@ pub const MAX_MOD_DESTS: usize = 16;
 
 /// CUTOFF: the default routes' column, and the filter knobs' (spec § 2, § 6).
 pub const CUTOFF: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
-/// CUTOFF's matrix column label, wherever the column is created.
-pub const CUTOFF_LABEL: [u8; LABEL_LEN] = *b"FLTCUTOF";
 /// The VCA: a hidden destination, the voice's output level (spec § 4).
 pub const VCA: ParamAddr = ParamAddr::new(BlockRef::Out, crate::params::OutParams::VCA);
+
+/// The four permanent matrix columns, before the registry's (filter-types
+/// spec § 7): every Sound has them, and they take no registry slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum FixedCol {
+    Freq = 0,
+    Q = 1,
+    Vca = 2,
+    Fold = 3,
+}
+
+impl FixedCol {
+    pub const ALL: [FixedCol; 4] = [FixedCol::Freq, FixedCol::Q, FixedCol::Vca, FixedCol::Fold];
+
+    /// The param the column routes into.
+    pub const fn addr(self) -> ParamAddr {
+        match self {
+            FixedCol::Freq => CUTOFF,
+            FixedCol::Q => ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE),
+            FixedCol::Vca => VCA,
+            FixedCol::Fold => ParamAddr::new(BlockRef::Folder, crate::params::FolderParams::FOLD),
+        }
+    }
+
+    /// The fixed column routing into `a`, if any.
+    pub fn of(a: ParamAddr) -> Option<FixedCol> {
+        Self::ALL.into_iter().find(|c| c.addr() == a)
+    }
+
+    /// The column header.
+    pub const fn tag(self) -> &'static str {
+        match self {
+            FixedCol::Freq => "FREQ",
+            FixedCol::Q => "Q",
+            FixedCol::Vca => "VCA",
+            FixedCol::Fold => "FOLD",
+        }
+    }
+
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+}
 
 /// The matrix's source rows, in `Voice`'s order (spec § 2). Indices are
 /// stored: 0 and 1 keep their old meaning (the envelope and the LFO).
@@ -143,6 +186,10 @@ pub struct ModState {
     /// Route presence (spec § 2): bit s of present[d] is set when source s
     /// routes to dest d, at any amount. The audio thread's sums ignore it.
     present: [u8; MAX_MOD_DESTS],
+    /// The fixed columns' amounts, `[source][FixedCol]`, outside the registry.
+    fixed: [[i8; 4]; MAX_MOD_SOURCES],
+    /// The fixed columns' presence, as `present`.
+    fixed_present: [u8; 4],
 }
 
 impl ModState {
@@ -154,6 +201,8 @@ impl ModState {
             dests: [UNUSED; MAX_MOD_DESTS],
             amounts: [[0; MAX_MOD_DESTS]; MAX_MOD_SOURCES],
             present: [0; MAX_MOD_DESTS],
+            fixed: [[0; 4]; MAX_MOD_SOURCES],
+            fixed_present: [0; 4],
         }
     }
 
@@ -177,6 +226,72 @@ impl ModState {
                 (u16::from(self.present[d]) ^ u16::from(o.present[d])) & live == 0
                     && (0..ns).all(|s| self.amounts[s][d] == o.amounts[s][d])
             })
+            && FixedCol::ALL.into_iter().all(|c| {
+                let c = c.index();
+                (u16::from(self.fixed_present[c]) ^ u16::from(o.fixed_present[c])) & live == 0
+                    && (0..ns).all(|s| self.fixed[s][c] == o.fixed[s][c])
+            })
+    }
+
+    /// Amount from `source` into fixed column `c`; 0 out of range.
+    pub fn fixed_amount(&self, s: usize, c: FixedCol) -> i8 {
+        if s < self.num_sources {
+            self.fixed[s][c.index()]
+        } else {
+            0
+        }
+    }
+
+    /// The present bits of fixed column `c`.
+    pub fn fixed_present(&self, c: FixedCol) -> u8 {
+        self.fixed_present[c.index()]
+    }
+
+    /// Create (or set) the route `s → c` at `a`, 0 included.
+    pub fn set_fixed(&mut self, s: usize, c: FixedCol, a: i8) {
+        if s < self.num_sources {
+            self.fixed[s][c.index()] = a;
+            self.fixed_present[c.index()] |= 1 << s;
+        }
+    }
+
+    /// Delete the route `s → c`.
+    pub fn clear_fixed(&mut self, s: usize, c: FixedCol) {
+        if s < self.num_sources {
+            self.fixed[s][c.index()] = 0;
+            self.fixed_present[c.index()] &= !(1 << s);
+        }
+    }
+
+    /// `sum_for`, for fixed column `c`.
+    pub fn fixed_sum(&self, c: FixedCol, v: &[f32; MAX_MOD_SOURCES]) -> f32 {
+        let mut total = 0.0f32;
+        for (si, row) in self.fixed.iter().enumerate().take(self.num_sources) {
+            let amt = row[c.index()];
+            if amt != 0 {
+                total += v[si] * amount_scale(amt);
+            }
+        }
+        total
+    }
+
+    /// Create (or set) the route `s → a`: its fixed column, else its
+    /// registry column, appended if there is room. False when refused.
+    pub fn set_route_addr(&mut self, s: usize, a: ParamAddr, amount: i8) -> bool {
+        if s >= self.num_sources {
+            return false;
+        }
+        if let Some(c) = FixedCol::of(a) {
+            self.set_fixed(s, c, amount);
+            return true;
+        }
+        match self.find(a).or_else(|| self.push(a)) {
+            Some(d) => {
+                self.set_route(s, d, amount);
+                true
+            }
+            None => false,
+        }
     }
 
     pub fn num_sources(&self) -> usize {
@@ -185,6 +300,11 @@ impl ModState {
 
     pub fn num_dests(&self) -> usize {
         self.num_dests
+    }
+
+    /// No registry column and no fixed route: nothing to sum.
+    pub fn is_empty(&self) -> bool {
+        self.num_dests == 0 && self.fixed_present == [0; 4]
     }
 
     /// Destination `d` (`d < num_dests()`). Returns the unused sentinel
@@ -217,9 +337,13 @@ impl ModState {
         (0..self.num_dests).find(|&d| self.dests[d] == addr)
     }
 
-    /// The present bits of the column of `addr` (0 without a column).
+    /// The present bits of the column of `addr`, fixed or registry (0
+    /// without a column).
     pub fn routes_into(&self, addr: ParamAddr) -> u8 {
-        self.find(addr).map_or(0, |d| self.present[d])
+        match FixedCol::of(addr) {
+            Some(c) => self.fixed_present(c),
+            None => self.find(addr).map_or(0, |d| self.present[d]),
+        }
     }
 
     /// A route of nonzero amount into destination `d`: its sum can move it.
@@ -227,9 +351,17 @@ impl ModState {
         (0..self.num_sources).any(|s| self.amount(s, d) != 0)
     }
 
-    /// A route of nonzero amount into `addr`.
+    /// A route of nonzero amount into `addr`, fixed or registry.
     pub fn moves_addr(&self, addr: ParamAddr) -> bool {
-        self.find(addr).is_some_and(|d| self.moves(d))
+        match FixedCol::of(addr) {
+            Some(c) => self.fixed_moves(c),
+            None => self.find(addr).is_some_and(|d| self.moves(d)),
+        }
+    }
+
+    /// A route of nonzero amount into fixed column `c`.
+    pub fn fixed_moves(&self, c: FixedCol) -> bool {
+        (0..self.num_sources).any(|s| self.fixed[s][c.index()] != 0)
     }
 
     /// Create (or set) the route `source → dest` at `amount`, 0 included.
@@ -240,7 +372,8 @@ impl ModState {
         }
     }
 
-    /// Append `addr` as a column if it is modulatable and there is room.
+    /// Append `addr` as a registry column if it is modulatable, not a
+    /// fixed column's, and there is room.
     pub fn push(&mut self, addr: ParamAddr) -> Option<usize> {
         self.push_dest(Some(addr)).then(|| self.num_dests - 1)
     }
@@ -277,10 +410,15 @@ impl ModState {
         total
     }
 
-    /// Offset for `addr`, or 0.0 if it is not a destination (UI display).
+    /// Offset for `addr`, fixed or registry, or 0.0 if it is not a
+    /// destination (UI display).
     pub fn offset_for(&self, addr: ParamAddr, source_values: &[f32; MAX_MOD_SOURCES]) -> f32 {
-        self.find(addr)
-            .map_or(0.0, |d| self.sum_for(d, source_values))
+        match FixedCol::of(addr) {
+            Some(c) => self.fixed_sum(c, source_values),
+            None => self
+                .find(addr)
+                .map_or(0.0, |d| self.sum_for(d, source_values)),
+        }
     }
 
     /// Destinations from the registry (in order, at most `MAX_MOD_DESTS`),
@@ -313,6 +451,8 @@ impl ModState {
     pub fn sync_from_matrix(&mut self, matrix: &MatrixState) {
         *self = Self::new();
         self.num_sources = matrix.num_sources.min(MAX_MOD_SOURCES);
+        self.fixed = matrix.fixed;
+        self.fixed_present = matrix.fixed_present;
         for di in 0..matrix.num_dests {
             let addr = matrix.dests[di].map(|d| d.addr);
             if self.push_dest(addr) {
@@ -325,10 +465,14 @@ impl ModState {
         }
     }
 
-    /// Append `addr` if it is modulatable and there is room.
+    /// Append `addr` if it is modulatable, not fixed, and there is room.
     fn push_dest(&mut self, addr: Option<ParamAddr>) -> bool {
         match addr {
-            Some(a) if a.modulatable() && self.num_dests < MAX_MOD_DESTS => {
+            Some(a)
+                if a.modulatable()
+                    && FixedCol::of(a).is_none()
+                    && self.num_dests < MAX_MOD_DESTS =>
+            {
                 self.dests[self.num_dests] = a;
                 self.num_dests += 1;
                 true
@@ -406,15 +550,18 @@ impl ModRouting {
     }
 
     /// `DEST_FIRST`, then `DEST` for each further destination other than
-    /// the VCA with a route of nonzero amount. ENV slots' own count too:
-    /// their sums run every block; SLIDE and LEVEL bill what they add.
+    /// the VCA with a route of nonzero amount, fixed or registry. ENV
+    /// slots' own count too: their sums run every block; SLIDE and LEVEL
+    /// bill what they add.
     fn dest_cost(mods: &ModState) -> Cost {
-        (0..mods.num_dests())
-            .filter(|&d| mods.dest(d) != VCA && mods.moves(d))
-            .enumerate()
-            .fold(Cost::ZERO, |c, (i, _)| {
-                c + if i == 0 { Self::DEST_FIRST } else { Self::DEST }
-            })
+        let fixed = [FixedCol::Freq, FixedCol::Q, FixedCol::Fold]
+            .into_iter()
+            .filter(|&c| mods.fixed_moves(c))
+            .count();
+        let reg = (0..mods.num_dests()).filter(|&d| mods.moves(d)).count();
+        (0..fixed + reg).fold(Cost::ZERO, |c, i| {
+            c + if i == 0 { Self::DEST_FIRST } else { Self::DEST }
+        })
     }
 
     /// The VCA's own routes: 0 without one, else `CLAMP` plus each source's
@@ -480,7 +627,7 @@ mod tests {
     #[test]
     fn bits_eq_ignores_dead_slots() {
         let mut a = ModState::with_sources(2);
-        a.push(CUTOFF);
+        a.push(ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL));
         let mut b = a.clone();
         b.dests[1] = VCA;
         b.amounts[0][1] = 7;

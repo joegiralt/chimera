@@ -9,6 +9,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 
 use crate::addr::{BlockRef, ParamAddr};
 use crate::mod_path::LABEL_LEN;
+use crate::modulation::FixedCol;
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
 use crate::ui::hint::{self, Gesture, Hint};
@@ -54,7 +55,19 @@ const VISIBLE_COLS: usize = 5;
 /// Max sources and destinations for the amounts grid (presence is a `u8`).
 pub const MAX_SOURCES: usize = crate::modulation::MAX_MOD_SOURCES;
 pub const MAX_DESTS: usize = crate::modulation::MAX_MOD_DESTS;
-const _: () = assert!(MAX_DESTS <= u16::BITS as usize, "inert_dests is a u16");
+/// The permanent columns, before the registry's.
+pub const FIXED_COLS: usize = FixedCol::ALL.len();
+const _: () = assert!(
+    FIXED_COLS + MAX_DESTS <= u32::BITS as usize,
+    "inert_dests is a u32"
+);
+
+/// A grid column: one of the four permanent ones, or registry column `d`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Col {
+    Fixed(FixedCol),
+    Reg(usize),
+}
 
 /// A destination in the mod matrix — a primed param.
 #[derive(Clone, Copy, Debug)]
@@ -87,6 +100,9 @@ pub struct MatrixState {
     pub amounts: [[i8; MAX_DESTS]; MAX_SOURCES],
     /// Route presence, one bit per source, as ModState's.
     pub present: [u8; MAX_DESTS],
+    /// The permanent columns' amounts and presence, as ModState's.
+    pub fixed: [[i8; FIXED_COLS]; MAX_SOURCES],
+    pub fixed_present: [u8; FIXED_COLS],
     /// Bumped on every amount, presence or column change: part of the
     /// dirty-region keys.
     pub rev: u16,
@@ -106,6 +122,8 @@ impl MatrixState {
             scroll_x: 0,
             amounts: [[0; MAX_DESTS]; MAX_SOURCES],
             present: [0; MAX_DESTS],
+            fixed: [[0; FIXED_COLS]; MAX_SOURCES],
+            fixed_present: [0; FIXED_COLS],
             rev: 0,
             dests: [None; MAX_DESTS],
             num_dests: 0,
@@ -152,6 +170,12 @@ impl MatrixState {
     pub fn load_amounts(&mut self, mod_state: &crate::modulation::ModState) {
         self.amounts = [[0; MAX_DESTS]; MAX_SOURCES];
         self.present = [0; MAX_DESTS];
+        for c in FixedCol::ALL {
+            for si in 0..self.num_sources {
+                self.fixed[si][c.index()] = mod_state.fixed_amount(si, c);
+            }
+            self.fixed_present[c.index()] = mod_state.fixed_present(c);
+        }
         for di in 0..self.num_dests {
             let Some(dest) = self.dests[di] else { continue };
             let Some(d) = mod_state.find(dest.addr) else {
@@ -187,24 +211,74 @@ impl MatrixState {
 
     /// Get the amount at the current cursor position.
     pub fn current_amount(&self) -> i8 {
-        self.amounts[self.sel_source()][self.sel_col]
+        self.amount(self.sel_source(), self.sel_col)
+    }
+
+    /// Every column: the four fixed, then the registry's.
+    pub fn num_cols(&self) -> usize {
+        FIXED_COLS + self.num_dests
+    }
+
+    /// What grid column `c` is (`c < FIXED_COLS` is fixed).
+    pub fn col(&self, c: usize) -> Col {
+        match FixedCol::ALL.get(c) {
+            Some(&f) => Col::Fixed(f),
+            None => Col::Reg(c - FIXED_COLS),
+        }
+    }
+
+    /// Column `c`'s destination; `None` past the last column.
+    pub fn col_dest(&self, c: usize) -> Option<ModDest> {
+        match self.col(c) {
+            Col::Fixed(f) => {
+                let mut label = [0; LABEL_LEN];
+                label[..f.tag().len()].copy_from_slice(f.tag().as_bytes());
+                Some(ModDest {
+                    addr: f.addr(),
+                    label,
+                })
+            }
+            Col::Reg(d) => self
+                .dests
+                .get(d)
+                .copied()
+                .flatten()
+                .filter(|_| d < self.num_dests),
+        }
+    }
+
+    /// The amount in cell (`row`, `c`), 0 when absent or out of range.
+    pub fn amount(&self, row: usize, c: usize) -> i8 {
+        if row >= MAX_SOURCES {
+            return 0;
+        }
+        match self.col(c) {
+            Col::Fixed(f) => self.fixed[row][f.index()],
+            Col::Reg(d) if d < self.num_dests => self.amounts[row][d],
+            Col::Reg(_) => 0,
+        }
+    }
+
+    /// Column `c`'s presence bits.
+    fn present_bits(&self, c: usize) -> u8 {
+        match self.col(c) {
+            Col::Fixed(f) => self.fixed_present[f.index()],
+            Col::Reg(d) if d < self.num_dests => self.present[d],
+            Col::Reg(_) => 0,
+        }
     }
 
     /// Whether `addr` is a mod destination, and its summed amount (−1..1).
     /// `None` = not primed; `Some(0.0)` = primed with no amounts set.
+    /// A fixed column counts as primed once it has a route.
     pub fn mod_info_for(&self, addr: ParamAddr) -> Option<f32> {
-        for di in 0..self.num_dests {
-            if let Some(dest) = &self.dests[di]
-                && dest.addr == addr
-            {
-                let mut total: i16 = 0;
-                for amounts in self.amounts.iter().take(self.num_sources) {
-                    total += amounts[di] as i16;
-                }
-                return Some(clampf(total as f32 / 127.0, -1.0, 1.0));
-            }
-        }
-        None
+        let c = self
+            .col_of(addr)
+            .filter(|&c| matches!(self.col(c), Col::Reg(_)) || self.present_bits(c) != 0)?;
+        let total: i16 = (0..self.num_sources)
+            .map(|si| self.amount(si, c) as i16)
+            .sum();
+        Some(clampf(total as f32 / 127.0, -1.0, 1.0))
     }
 
     /// Adjust the amount at the current cursor position. A no-op when
@@ -214,11 +288,11 @@ impl MatrixState {
     /// landing on that same column would then inherit as a phantom amount
     /// (issue #11).
     pub fn adjust_amount(&mut self, delta: i8) {
-        if self.sel_col >= self.num_dests {
+        if self.sel_col >= self.num_cols() {
             return;
         }
         let src = self.sel_source();
-        let a = self.amounts[src][self.sel_col];
+        let a = self.amount(src, self.sel_col);
         self.set(
             src,
             self.sel_col,
@@ -226,39 +300,65 @@ impl MatrixState {
         );
     }
 
-    /// The column of destination `addr`, if the matrix has one.
+    /// The grid column of destination `addr`, if the matrix has one: a
+    /// fixed column always.
     pub fn col_of(&self, addr: ParamAddr) -> Option<usize> {
-        (0..self.num_dests).find(|&c| self.dests[c].is_some_and(|d| d.addr == addr))
+        match FixedCol::of(addr) {
+            Some(f) => Some(f.index()),
+            None => (0..self.num_dests)
+                .find(|&d| self.dests[d].is_some_and(|x| x.addr == addr))
+                .map(|d| FIXED_COLS + d),
+        }
     }
 
     /// The amount of route `row → addr`; `None` when the route is absent.
     pub fn route(&self, row: usize, addr: ParamAddr) -> Option<i8> {
         self.col_of(addr)
             .filter(|&c| self.is_present(row, c))
-            .map(|c| self.amounts[row][c])
+            .map(|c| self.amount(row, c))
     }
 
     pub fn is_present(&self, row: usize, col: usize) -> bool {
-        row < MAX_SOURCES && col < self.num_dests && self.present[col] & (1 << row) != 0
+        row < MAX_SOURCES && self.present_bits(col) & (1 << row) != 0
     }
 
     /// Set (and so create) cell (`row`, `col`); out of range does nothing.
     pub fn set(&mut self, row: usize, col: usize, amount: i8) {
-        if row < self.num_sources && col < self.num_dests {
-            self.amounts[row][col] = amount;
-            self.present[col] |= 1 << row;
-            self.bump();
+        if row >= self.num_sources {
+            return;
         }
+        match self.col(col) {
+            Col::Fixed(f) => {
+                self.fixed[row][f.index()] = amount;
+                self.fixed_present[f.index()] |= 1 << row;
+            }
+            Col::Reg(d) if d < self.num_dests => {
+                self.amounts[row][d] = amount;
+                self.present[d] |= 1 << row;
+            }
+            Col::Reg(_) => return,
+        }
+        self.bump();
     }
 
     /// MIX+MINUS: delete the route under the cursor.
     pub fn delete_selected(&mut self) {
         let src = self.sel_source();
-        if self.sel_col < self.num_dests && src < self.num_sources {
-            self.amounts[src][self.sel_col] = 0;
-            self.present[self.sel_col] &= !(1 << src);
-            self.bump();
+        if src >= self.num_sources {
+            return;
         }
+        match self.col(self.sel_col) {
+            Col::Fixed(f) => {
+                self.fixed[src][f.index()] = 0;
+                self.fixed_present[f.index()] &= !(1 << src);
+            }
+            Col::Reg(d) if d < self.num_dests => {
+                self.amounts[src][d] = 0;
+                self.present[d] &= !(1 << src);
+            }
+            Col::Reg(_) => return,
+        }
+        self.bump();
     }
 
     /// Clamp the cursor and scroll position to the current source/
@@ -269,7 +369,7 @@ impl MatrixState {
     /// before (issue #11).
     pub fn clamp_cursor(&mut self) {
         self.sel_row = self.sel_row.min(self.num_sources.saturating_sub(1));
-        self.sel_col = self.sel_col.min(self.num_dests.saturating_sub(1));
+        self.sel_col = self.sel_col.min(self.num_cols() - 1);
         self.scroll_x = self.scroll_x.min(self.max_scroll_x());
         self.follow_col();
     }
@@ -282,7 +382,7 @@ impl MatrixState {
 
     pub fn move_col(&mut self, delta: i8) {
         let new = self.sel_col as i32 + delta as i32;
-        self.sel_col = new.clamp(0, self.num_dests.saturating_sub(1) as i32) as usize;
+        self.sel_col = new.clamp(0, self.num_cols() as i32 - 1) as usize;
         self.follow_col();
     }
 
@@ -291,12 +391,12 @@ impl MatrixState {
     pub fn scroll_h(&mut self, delta: i8) {
         let new = self.scroll_x as i32 + delta as i32;
         self.scroll_x = new.clamp(0, self.max_scroll_x() as i32) as usize;
-        let last = (self.scroll_x + self.visible_cols()).min(self.num_dests.max(1)) - 1;
+        let last = (self.scroll_x + self.visible_cols()).min(self.num_cols()) - 1;
         self.sel_col = self.sel_col.clamp(self.scroll_x, last.max(self.scroll_x));
     }
 
     fn max_scroll_x(&self) -> usize {
-        self.num_dests.saturating_sub(self.visible_cols())
+        self.num_cols().saturating_sub(self.visible_cols())
     }
 
     /// Scroll just enough to show the cursor's column.
@@ -522,7 +622,7 @@ pub fn cell_center(ci: usize, vi: usize) -> (i32, i32) {
 /// the accent and prints `sel_amount`, the lerped amount. A column in
 /// `inert` (`inert_dests`) reads as a dimmed cell does: its name and
 /// amounts in MID, its routes unlit.
-pub fn draw_grid<D>(d: &mut D, state: &MatrixState, sel_amount: i8, inert: u16)
+pub fn draw_grid<D>(d: &mut D, state: &MatrixState, sel_amount: i8, inert: u32)
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -530,7 +630,7 @@ where
     let col_x = |ci: usize| GRID_X + ci as i32 * GRID_COL_W + GRID_COL_W / 2;
     for ci in 0..cols {
         let di = ci + state.scroll_x;
-        let Some(Some(dest)) = state.dests.get(di).filter(|_| di < state.num_dests) else {
+        let Some(dest) = state.col_dest(di) else {
             break;
         };
         let name_color = if di == state.sel_col && inert & (1 << di) == 0 {
@@ -548,15 +648,11 @@ where
             theme::MID,
             0,
         );
-        draw::text_center(
-            d,
-            &theme::FONT_LABEL,
-            dest.addr.spec().map_or("?", fit_header),
-            x,
-            GRID_NAME_Y,
-            name_color,
-            0,
-        );
+        let name = match state.col(di) {
+            Col::Fixed(f) => f.tag(),
+            Col::Reg(_) => dest.addr.spec().map_or("?", fit_header),
+        };
+        draw::text_center(d, &theme::FONT_LABEL, name, x, GRID_NAME_Y, name_color, 0);
     }
     if state.scroll_x > 0 {
         draw::text(
@@ -568,7 +664,7 @@ where
             theme::MID,
         );
     }
-    if state.num_dests > state.scroll_x + cols {
+    if state.num_cols() > state.scroll_x + cols {
         // On the tag row, in the right margin: tags are <= 3 chars
         // (`block_tag`), so the last column's never reaches it, unlike a
         // name (issue #15).
@@ -600,14 +696,14 @@ where
         );
         for ci in 0..cols {
             let di = ci + state.scroll_x;
-            if di >= state.num_dests {
+            if di >= state.num_cols() {
                 break;
             }
             let selected = row == state.sel_row && di == state.sel_col;
             let amount = if selected {
                 sel_amount
             } else {
-                state.amounts[si][di]
+                state.amount(si, di)
             };
             draw_cell(
                 d,
@@ -661,16 +757,11 @@ where
 /// `--` with no route; in MID and tagged `INERT` on an `inert` column), its
 /// gesture `hint` (`MatrixState::hint`, or none with HINTS off) and the
 /// route count. `NO DESTINATIONS` without one.
-pub fn draw_readout<D>(d: &mut D, state: &MatrixState, sel_amount: i8, inert: u16, hint: Hint)
+pub fn draw_readout<D>(d: &mut D, state: &MatrixState, sel_amount: i8, inert: u32, hint: Hint)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let dest = state
-        .dests
-        .get(state.sel_col)
-        .copied()
-        .flatten()
-        .filter(|_| state.sel_col < state.num_dests);
+    let dest = state.col_dest(state.sel_col);
     let si = state.sel_source();
     let src = crate::modulation::ModSource::ALL
         .get(si)
@@ -732,7 +823,7 @@ where
     }
     hint::draw(d, hint, theme::MARGIN_X, HINT_Y);
     let routes = (0..state.num_sources)
-        .flat_map(|r| (0..state.num_dests).map(move |c| (r, c)))
+        .flat_map(|r| (0..state.num_cols()).map(move |c| (r, c)))
         .filter(|&(r, c)| state.is_present(r, c))
         .count();
     let mut buf = FmtBuf::new();
@@ -747,11 +838,11 @@ where
     );
 }
 
-/// Bit `di`: destination column `di` is a param `view::dimmed` rules
-/// inapplicable (MORPH while ALG A = ALG B), so its routes do nothing.
-pub fn inert_dests(state: &MatrixState, sound: &crate::preset::Sound) -> u16 {
-    (0..state.num_dests).fold(0, |m, di| match state.dests[di] {
-        Some(d) if crate::ui::view::dimmed(d.addr, sound) => m | 1 << di,
+/// Bit `c`: grid column `c` is a param `view::dimmed` rules inapplicable
+/// (MORPH while ALG A = ALG B), so its routes do nothing.
+pub fn inert_dests(state: &MatrixState, sound: &crate::preset::Sound) -> u32 {
+    (0..state.num_cols()).fold(0, |m, c| match state.col_dest(c) {
+        Some(d) if crate::ui::view::dimmed(d.addr, sound) => m | 1 << c,
         _ => m,
     })
 }
@@ -761,7 +852,6 @@ mod tests {
     use super::*;
     use crate::dsp::modal::{ModalParams, ResonatorMode};
     use crate::mod_path::ModDestRegistry;
-    use crate::modulation::CUTOFF;
     use crate::params::EngineType;
     use crate::part::PartParams;
     use crate::preset::Sound;
@@ -787,13 +877,16 @@ mod tests {
         assert!(!dimmed(space, &s));
 
         let mut reg = ModDestRegistry::new();
-        reg.add(CUTOFF, *b"CUTOFF\0\0").unwrap();
         reg.add(modal(ModalParams::STRUCTURE), *b"MDLSTRUC")
             .unwrap();
         reg.add(modal(ModalParams::DAMP), *b"MDLDAMP\0").unwrap();
         let mut m = MatrixState::new();
         m.rebuild_dests_from_registry(&reg);
-        assert_eq!(inert_dests(&m, &s), 0b10, "STRUCTURE, column 2");
+        assert_eq!(
+            inert_dests(&m, &s),
+            0b1 << FIXED_COLS,
+            "STRUCTURE, the first registry column"
+        );
         s.params.modal.mode = ResonatorMode::String;
         assert_eq!(inert_dests(&m, &s), 0);
     }

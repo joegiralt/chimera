@@ -21,7 +21,7 @@ use crate::hw::{Cost, MAX_VOICES, VOICE_CHAIN_BYTES, VOICE_RAM_BUDGET};
 use crate::in_place::{by_value, uninit_at};
 use crate::meter::Clip;
 use crate::modulation::{
-    MAX_MOD_SOURCES, ModRouting, ModSource, ModState, VCA, amount_scale, note_source,
+    FixedCol, MAX_MOD_SOURCES, ModRouting, ModSource, ModState, amount_scale, note_source,
 };
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, ParamSnapshot, Steal};
 use crate::voice_alloc::VoiceIdx;
@@ -135,12 +135,15 @@ struct VcaRoutes {
 }
 
 impl VcaRoutes {
+    /// The fixed VCA column's routes.
     fn of(m: &ModState) -> Self {
-        let mut r = Self::default();
-        if let Some(d) = m.find(VCA) {
-            r.bits = m.present(d);
+        let mut r = Self {
+            bits: m.fixed_present(FixedCol::Vca),
+            ..Self::default()
+        };
+        if r.bits != 0 {
             for (s, a) in r.amount.iter_mut().enumerate() {
-                *a = amount_scale(m.amount(s, d));
+                *a = amount_scale(m.fixed_amount(s, FixedCol::Vca));
             }
         }
         r
@@ -714,12 +717,19 @@ impl Voice {
             live.routed = mod_state.algo_levels_routed();
             live.morph_routed =
                 mod_state.moves_addr(ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH));
+            // The fixed FREQ, Q and FOLD columns; VCA's is per sample, above.
+            for c in [FixedCol::Freq, FixedCol::Q, FixedCol::Fold] {
+                let off = mod_state.fixed_sum(c, &mod_values);
+                let a = c.addr();
+                if off != 0.0
+                    && let Some(blk) = m.block_mut(a.block)
+                {
+                    apply_offset(blk, a.param, off);
+                }
+            }
             let mut next = [EnvMods::NONE; 3];
             for d in 0..mod_state.num_dests() {
                 let a = mod_state.dest(d);
-                if a == VCA {
-                    continue; // per sample, above
-                }
                 if let BlockRef::Env(s) = a.block {
                     // ENV destinations reach their slot next block.
                     env_mod(&mut next[s.index()], mod_state, d, &mod_values);

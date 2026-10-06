@@ -134,11 +134,9 @@ fn dirty_bills_nothing_over_lp24() {
 }
 
 fn routed(routes: &[ModSource]) -> ModState {
-    let mut reg = chimera_core::mod_path::ModDestRegistry::new();
-    reg.add(VCA, *b"OUT VCA\0").unwrap();
-    let mut ms = ModState::from_registry(&reg, 8);
+    let mut ms = ModState::with_sources(8);
     for s in routes {
-        ms.set_route(s.index(), 0, 127);
+        assert!(ms.set_route_addr(s.index(), VCA, 127));
     }
     ms
 }
@@ -212,8 +210,7 @@ fn mod_routing_bills_each_routed_destination() {
     let fold = ParamAddr::new(BlockRef::Folder, FolderParams::FOLD);
     let level = |s| ParamAddr::new(BlockRef::Env(s), EnvParams::LEVEL);
     let mut ms = chimera_core::preset::Sound::init(EngineType::Algo).mod_state;
-    let f = ms.push(fold).unwrap();
-    ms.set_route(ModSource::Lfo3.index(), f, 0);
+    ms.set_route_addr(ModSource::Lfo3.index(), fold, 0);
     assert_eq!(M::cost(&p, &ms), M::BASE, "amount 0");
     let l = ms.push(level(EnvSlot::Env1)).unwrap();
     ms.set_route(ModSource::Vel.index(), l, 64);
@@ -222,11 +219,11 @@ fn mod_routing_bills_each_routed_destination() {
         M::BASE + M::DEST_FIRST,
         "LEVEL off the VCA"
     );
-    ms.set_route(ModSource::Lfo3.index(), f, 64);
+    ms.set_route_addr(ModSource::Lfo3.index(), fold, 64);
     assert_eq!(M::cost(&p, &ms), M::BASE + M::DEST_FIRST + M::DEST);
-    let cutoff = ms.find(chimera_core::modulation::CUTOFF).unwrap();
-    ms.set_route(ModSource::Env1.index(), cutoff, 32);
-    ms.set_route(ModSource::Note.index(), cutoff, 32);
+    let cutoff = chimera_core::modulation::CUTOFF;
+    ms.set_route_addr(ModSource::Env1.index(), cutoff, 32);
+    ms.set_route_addr(ModSource::Note.index(), cutoff, 32);
     assert_eq!(
         M::cost(&p, &ms),
         M::BASE + M::DEST_FIRST + M::DEST + M::DEST,
@@ -283,12 +280,11 @@ fn voice_bills_fold_and_drive_when_they_can_run() {
     let drive = ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE);
     let empty = chimera_core::mod_path::ModDestRegistry::new();
     let mut ms = ModState::from_registry(&empty, 8);
-    let (f, d) = (ms.push(fold).unwrap(), ms.push(drive).unwrap());
-    ms.set_route(ModSource::Vel.index(), f, 0);
-    ms.set_route(ModSource::Vel.index(), d, 0);
+    ms.set_route_addr(ModSource::Vel.index(), fold, 0);
+    ms.set_route_addr(ModSource::Vel.index(), drive, 0);
     assert_eq!(Voice::cost(&base, &ms), bare);
-    ms.set_route(ModSource::Vel.index(), f, -1);
-    ms.set_route(ModSource::Vel.index(), d, 1);
+    ms.set_route_addr(ModSource::Vel.index(), fold, -1);
+    ms.set_route_addr(ModSource::Vel.index(), drive, 1);
     let routes = ModRouting::DEST_FIRST + ModRouting::DEST;
     let ramps = Voice::FOLD_RAMP_COST + Voice::DRIVE_RAMP_COST;
     assert_eq!(
@@ -594,8 +590,7 @@ fn mods_row() -> (ParamSnapshot, ModState) {
     let empty = chimera_core::mod_path::ModDestRegistry::new();
     let mut ms = ModState::from_registry(&empty, 8);
     for (s, a) in routes {
-        let d = ms.find(a).or_else(|| ms.push(a)).unwrap();
-        ms.set_route(s.index(), d, 64);
+        assert!(ms.set_route_addr(s.index(), a, 64));
     }
     (p, ms)
 }

@@ -6,7 +6,8 @@ use super::crc::Crc32;
 use super::frame::Header;
 
 /// The largest payload a known record may have; the framer buffers one.
-pub const MAX_RECORD_LEN: usize = 512;
+/// ADR 0102: a full matrix's `Routes`, 8 sources × (16 + 4 fixed) columns.
+pub const MAX_RECORD_LEN: usize = 640;
 
 /// Tag bit 15, must-understand: a reader that doesn't know the tag refuses the file.
 pub const CRITICAL: u16 = 0x8000;
@@ -161,6 +162,11 @@ impl RecordBuf {
 
     pub fn as_slice(&self) -> &[u8] {
         &self.buf[..self.len]
+    }
+
+    /// Empty, for the next record.
+    pub fn clear(&mut self) {
+        self.len = 0;
     }
 }
 

@@ -49,7 +49,7 @@ use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
 use crate::in_place::{by_value, uninit_at};
 use crate::mod_path::{LABEL_LEN, RegistryError};
-use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModState};
+use crate::modulation::{CUTOFF, MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::ProjectName;
 use crate::orbit::RingIdx;
 use crate::orbit::chords::ScaleKind;
@@ -167,6 +167,8 @@ impl From<RegistryError> for PrimeStatus {
         match e {
             RegistryError::NotModulatable => PrimeStatus::NotModulatable,
             RegistryError::Full => PrimeStatus::Full,
+            // A permanent column: always there.
+            RegistryError::Fixed => PrimeStatus::AlreadyRouted,
         }
     }
 }
@@ -859,26 +861,14 @@ impl UiState {
         self.matrix_state.clamp_cursor();
     }
 
-    /// A route knob turned: create CUTOFF's column if needed (MATRIX FULL
-    /// when there is no room), then set `source → CUTOFF` to `f(amount)`.
+    /// A route knob turned: set `source → FREQ`, the fixed CUTOFF column,
+    /// to `f(amount)`.
     fn edit_route(&mut self, source: crate::modulation::ModSource, f: impl FnOnce(i8) -> i8) {
-        let at = self.active_part;
-        let sound = self.project.edit_part(at).sound;
-        if !sound.dest_registry.is_primed(CUTOFF) {
-            if let Err(e) = sound.dest_registry.add(CUTOFF, CUTOFF_LABEL) {
-                self.prime_status = Some(e.into());
-                return;
-            }
-            self.matrix_state
-                .rebuild_dests_from_registry(&sound.dest_registry);
-            self.matrix_state.load_amounts(&sound.mod_state);
-        }
-        if let Some(col) = self.matrix_state.col_of(CUTOFF) {
-            let row = source.index();
-            let a = self.matrix_state.amounts[row][col];
-            self.matrix_state.set(row, col, f(a));
-            self.sync_mod_state(at);
-        }
+        let col = crate::modulation::FixedCol::Freq.index();
+        let row = source.index();
+        let a = self.matrix_state.amount(row, col);
+        self.matrix_state.set(row, col, f(a));
+        self.sync_mod_state(self.active_part);
     }
 
     /// Rebuild a part's audio-side `ModState` from the matrix.
@@ -2030,7 +2020,7 @@ impl UiState {
 
         // Apply mod offsets for display — makes bars and vizzes animate with modulation.
         // Skip the LFO tick entirely when no modulation is active.
-        if sound.mod_state.num_dests() > 0 {
+        if !sound.mod_state.is_empty() {
             // The display LFO ticks once per UI frame. `process` steps its
             // phase by rate · BLOCK_SIZE / sample_rate, so a sample rate of
             // BLOCK_SIZE · UI_FPS steps it by rate / UI_FPS: real time.
@@ -2295,7 +2285,7 @@ impl UiState {
             RegionKind::Focus if f.def.layout == PageLayout::Matrix => RegionData::route(
                 self.matrix_state.sel_row as u8,
                 self.matrix_state.sel_col as u8,
-                self.matrix_state.num_dests as u8,
+                self.matrix_state.num_cols() as u8,
                 qvalues[renderer::MATRIX_AMOUNT_SLOT],
             )
             .keyed(self.matrix_state.rev, renderer::inert(f)),
@@ -2327,7 +2317,7 @@ impl UiState {
                     .with_orbit(self.renderer.orbit_viz_key(f))
             }
             RegionKind::Cells => {
-                let looks = (0..6).fold(0u16, |k, i| k | (renderer::look(f, i) as u16) << (2 * i));
+                let looks = (0..6).fold(0u32, |k, i| k | (renderer::look(f, i) as u32) << (2 * i));
                 RegionData::cells(
                     self.page,
                     match f.def.viz {
@@ -2336,7 +2326,7 @@ impl UiState {
                         _ => qvalues,
                     },
                     f.focus as u8,
-                    self.matrix_state.num_dests as u16,
+                    self.matrix_state.num_cols() as u16,
                     core::array::from_fn(|i| renderer::mod_info(f, i).map(f32::to_bits)),
                 )
                 .keyed(self.matrix_state.rev, looks)

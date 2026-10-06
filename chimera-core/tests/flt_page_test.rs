@@ -9,7 +9,7 @@ mod screen;
 
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::algo::waves::WaveId;
-use chimera_core::modulation::ModSource;
+use chimera_core::modulation::{FixedCol, MAX_MOD_DESTS, ModSource};
 use chimera_core::params::EngineType;
 use chimera_core::params::FilterParams;
 use chimera_core::ui::block_registry::FILTER;
@@ -83,22 +83,28 @@ fn every_flt_knob_changes_a_held_note() {
     }
 }
 
-/// Removes CUTOFF from Part 1's matrix and reloads it (re-entering Part 1).
-fn without_cutoff(ui: &mut UiState, fill: bool) {
+/// Fills Part 1's registry (every column but the fixed ones) and reloads it
+/// (re-entering Part 1); `clear` also deletes its FREQ routes.
+fn full_registry(ui: &mut UiState, clear: bool) {
     let sound = ui.project_mut().edit_part(PartId::ALL[0]).sound;
-    sound.dest_registry.remove(CUTOFF);
-    if fill {
-        for b in BlockRef::ALL {
-            for s in b.specs() {
-                let a = ParamAddr::new(b, s.id);
-                if a != CUTOFF && a.modulatable() {
-                    let _ = sound.dest_registry.add(a, *b"FILL\0\0\0\0");
-                }
+    for b in BlockRef::ALL {
+        for s in b.specs() {
+            let a = ParamAddr::new(b, s.id);
+            if a.modulatable() {
+                let _ = sound.dest_registry.add(a, *b"FILL\0\0\0\0");
             }
         }
     }
-    // The audio-side matrix follows the registry (no routes kept).
-    sound.mod_state = chimera_core::modulation::ModState::from_registry(&sound.dest_registry, 8);
+    let mut ms = chimera_core::modulation::ModState::from_registry(&sound.dest_registry, 8);
+    if !clear {
+        for s in ModSource::ALL {
+            let c = FixedCol::Freq;
+            if sound.mod_state.fixed_present(c) & 1 << s.index() != 0 {
+                ms.set_fixed(s.index(), c, sound.mod_state.fixed_amount(s.index(), c));
+            }
+        }
+    }
+    sound.mod_state = ms;
     feed(ui, Input::press(ButtonId::B2));
     feed(ui, Input::press(ButtonId::B1)); // via Part 2: Part 1's home
     for _ in 0..flt_node(EngineType::Algo) {
@@ -106,28 +112,38 @@ fn without_cutoff(ui: &mut UiState, fill: bool) {
     }
 }
 
+/// A route knob writes the fixed FREQ column, creating its route.
 #[test]
-fn a_route_knob_creates_its_column() {
+fn a_route_knob_creates_its_route() {
     let mut ui = on_flt(EngineType::Algo);
-    without_cutoff(&mut ui, false);
-    let col =
-        |ui: &UiState| (0..ui.mod_state().num_dests()).find(|&d| ui.mod_state().dest(d) == CUTOFF);
-    assert_eq!(col(&ui), None);
+    full_registry(&mut ui, true);
+    assert_eq!(ui.mod_state().fixed_present(FixedCol::Freq), 0);
     feed(&mut ui, Input::turn(EncoderId::E, 5)); // ENV
-    let d = col(&ui).expect("the turn created CUTOFF's column");
-    assert_eq!(ui.mod_state().amount(ModSource::Env1.index(), d), 5);
+    assert_eq!(
+        ui.mod_state()
+            .fixed_amount(ModSource::Env1.index(), FixedCol::Freq),
+        5
+    );
     // The knob and the matrix cell show the same amount.
     settle(&mut ui);
     assert_eq!(amount_of(ui.renderer.anim[4].current()), 5);
 }
 
+/// FREQ is a permanent column: a full registry never turns a route knob off.
 #[test]
-fn a_full_matrix_keeps_the_route_knob_off() {
+fn a_full_registry_keeps_the_route_knob_on() {
     let mut ui = on_flt(EngineType::Algo);
-    without_cutoff(&mut ui, true);
+    full_registry(&mut ui, false);
+    assert_eq!(ui.mod_state().num_dests(), MAX_MOD_DESTS);
     feed(&mut ui, Input::turn(EncoderId::F, 5)); // KEY
-    assert_eq!(ui.prime_status(), Some(PrimeStatus::Full));
-    assert!((0..ui.mod_state().num_dests()).all(|d| ui.mod_state().dest(d) != CUTOFF));
+    assert_eq!(ui.prime_status(), None);
+    let note = ui
+        .mod_state()
+        .fixed_amount(ModSource::Note.index(), FixedCol::Freq);
+    assert_eq!(
+        ui.matrix_state.route(ModSource::Note.index(), CUTOFF),
+        Some(note)
+    );
 }
 
 /// Plus five times from Part 1's home: the MOD node, whose home is the
@@ -176,10 +192,12 @@ fn mix_minus_deletes_and_the_knob_recreates() {
     assert_eq!(ui.matrix_state.route(0, CUTOFF), Some(0));
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
     assert_eq!(ui.matrix_state.route(0, CUTOFF), None, "deleted");
-    // Deleting the route, not un-priming the column: LF1 and NTE stay.
-    assert_eq!(ui.mod_state().present(0), 1 << 1 | 1 << 7);
-    assert_eq!(ui.mod_state().find(CUTOFF), Some(0), "the column stays");
-    assert_eq!(ui.matrix_state.col_of(CUTOFF), Some(0));
+    // Deleting the route, not the column: LF1 and NTE stay.
+    assert_eq!(
+        ui.mod_state().fixed_present(FixedCol::Freq),
+        1 << 1 | 1 << 7
+    );
+    assert_eq!(ui.matrix_state.col_of(CUTOFF), Some(0), "the column stays");
     feed(&mut ui, Input::press(ButtonId::B2));
     feed(&mut ui, Input::press(ButtonId::B1)); // via Part 2: Part 1's home
     for _ in 0..flt_node(EngineType::Algo) {
@@ -355,9 +373,9 @@ fn the_cells_key_carries_the_looks() {
     else {
         panic!("FLT has cells");
     };
-    assert_eq!(looks >> 8 & 3, Look::Absent as u16, "ENV");
-    assert_eq!(looks >> 10 & 3, Look::Live as u16, "KEY");
-    assert_eq!(looks & 3, Look::Live as u16, "TYPE");
+    assert_eq!(looks >> 8 & 3, Look::Absent as u32, "ENV");
+    assert_eq!(looks >> 10 & 3, Look::Live as u32, "KEY");
+    assert_eq!(looks & 3, Look::Live as u32, "TYPE");
     assert_eq!(looks >> 2 & 0x3f, 0, "the other slots are live");
     assert_eq!(matrix_rev, ui.matrix_state.rev);
 }
@@ -374,12 +392,12 @@ fn stand_ins_move_the_cutoff_bar() {
     ui.update(UiTick::for_test());
     let base = ui.renderer.anim[1].target();
     let spec = CUTOFF.spec().unwrap();
-    let d = ui.mod_state().find(CUTOFF).unwrap();
     let bar = |ui: &mut UiState, src: ModSource, amount: i8| {
-        ui.mod_state_mut().set_route(src.index(), d, amount);
+        ui.mod_state_mut()
+            .set_fixed(src.index(), FixedCol::Freq, amount);
         ui.update(UiTick::for_test());
         let t = ui.renderer.anim[1].target();
-        ui.mod_state_mut().set_route(src.index(), d, 0);
+        ui.mod_state_mut().set_fixed(src.index(), FixedCol::Freq, 0);
         t
     };
     let vel = spec.offset_normalized(base, amount_scale(100));
