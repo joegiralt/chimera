@@ -422,6 +422,104 @@ the ban on 2026-10-05.
     take 680 f32 (1,360 slots) of the arena's 1,462 spare. ONSET and HIT
     are placement and weights, worked out once a block.
 
+- **GATE and REVERSE, as built (Task 11b, 2026-10-06).** The owner ruled
+  on 2026-10-06:
+  - build GATE's round-2 redesign, with the 17 ms allpass at 16.6 ms to
+    fit the arena;
+  - REVERSE keeps today's engine with the cheap wins;
+  - the dense ramp is parked.
+
+  The firmware is fitted on the Rust render by the harness's float-model
+  fitter (`chimera-utils model-fit fw-gate-wide` and `fw-reverse`), seeded
+  from the model's fits.
+  - **One engine, two loops.** A `Burst` enum (GATE, REVERSE) replaces
+    the old `rising` flag. Each burst's per-sample loop is its own
+    monomorphised variant: GATE runs no REGEN and no hit, and REVERSE
+    runs no TAIL. A `Diffuser` enum names the allpasses each runs, and
+    a `Diffused` enum names DENSITY's dry/diffused split.
+  - **GATE:**
+    - 12 taps over [PRE-DLY, PRE-DLY + LENGTH]. Tap 0 is now a read, at
+      least 2 samples (0.08 ms) back.
+    - Five f32 allpasses after the tap sum: 2.3, 4.3, 7.1, 11.3 and
+      16.6 ms, at DENSITY's g (0.2 → 0.8). Their share against the dry
+      sum is 1.5 × DENSITY, capped at 1.
+    - TONE runs 12 kHz → 1 kHz, SHAPE 0 to −30 dB.
+    - PRE-DLY, 0–80 ms, takes MORE's first cell (slot 9).
+    - DAMP, TAIL's loop one-pole from 12 kHz to 2 kHz, takes MORE's
+      sixth cell (the DAMPING slot).
+  - **REVERSE:**
+    - 16 ramp taps from ONSET to 2.7 ms before LENGTH, at
+      −CURVE·(1 − x)^1.6 dB, with CURVE 0–55 dB.
+    - The hit: an undiffused read at LENGTH, 9 dB over the top tap,
+      added to both sides after the decorrelators.
+    - REGEN feeds the hit back flat, its one-pole removed, up to 0.8 a
+      pass. The send enters at (1 − g), so a held tone keeps its level
+      and the line's clip stays out of reach.
+    - Only the original two allpasses (4.3 and 7.1 ms), fully diffused.
+      DENSITY is their g alone (0 → 0.7) and no longer fades taps.
+    - ONSET, 0–150 ms, takes MORE's first cell (slot 9).
+  - **New panel cells:** none of them has a gesture, so per ADR 0086 none
+    shows a hint.
+    - GATE's MORE page: PRE-DLY · SHAPE · SMEAR · RATE · SYNC · DAMP.
+    - REVERSE's: ONSET · CURVE · SMEAR · RATE · SYNC · —.
+  - **Starting knobs:** GATE's are program 35's (Fast Gate 150, a passing
+    fit); REVERSE's are program 40's (Reverse 400).
+  - **Return gains:** set by the held-input loudness rule. WET_GATE goes
+    6.75 → 9.0 and WET_REVERSE 7.05 → 4.84.
+  - **Old patches load safely.** PRE-DLY, DAMP and ONSET read whatever the
+    slots held: the starting knobs, another TYPE's, or a CC. A test loads
+    them at either end and renders them finite. They need not sound as
+    before.
+  - **REVERSE's verdict (the owner's ruling): "close, not identical".**
+    The tolerances:
+    - the hit within ±1.5 ms and ±2 dB;
+    - the ramp's 20 ms envelope within ±4 dB at 20/40/60/80 % of the hit
+      time;
+    - the −60 and −40 dB onsets within ±25 %;
+    - the fall to −20 dB within ±8 ms;
+    - the ramp's echo density within ±20 % at 50/75/90 %;
+    - the whole burst's centroid within ±5 %;
+    - band RT60 within ±5 % on the regens (#47, #48) only.
+
+    These replace the stricter set proposed above. The dense ramp stays
+    parked.
+  - **Pass counts:**
+
+    | | Model | Firmware |
+    |---|---|---|
+    | GATE | 5/10 (#30, #31, #32, #37, #39) | 5/10 (#31, #32, #34, #35, #36) |
+    | REVERSE, relaxed | 1/8 at 16 taps, 3/8 at 24 | 3/8 (#40, #47, #48) |
+    | REVERSE, strict | 0/8 | 0/8 |
+
+    The click metrics are chaotic in the fine structure. Model and
+    firmware IR envelopes agree within 1 dB, yet a 0.4 ms allpass or one
+    sample of a tap moves NED and band RT60 by 5–15 %. So the passing
+    presets differ between them, as BLOOM found.
+  - **GATE's misses** (firmware):
+    - #30: NED20 −18 %
+    - #33: RT 500 Hz −7 %
+    - #37: NED20 −10 %
+    - #38: RT 500 Hz −10 %, NED100 +11 %
+    - #39: RT 250 Hz +6 %, NED20 −11 %
+  - **REVERSE's misses** (relaxed): the ramp's echo density, 22–40 % short
+    at 50 % on #41–44 and #46; #41's ramp start (−11 dB); #42's hit
+    +3.0 dB; #44's −40 dB onset −28 %.
+  - **Burst metrics:** reported beside the verdict, with GATE's
+    tolerances unchanged from the proposal.
+  - **Cost, a static count of the per-sample loop** (Thumb; the bench
+    reads it in Task 13):
+    - GATE: 281–335 instructions a ring sample, against today's 263–318:
+      +17–18. That is +8.5–10 an output sample with the per-block work:
+      4.0–4.7 cycles at 0.47, 9.0–10.6 at 1.06.
+    - REVERSE, which drops TAIL: 233–297 a ring sample, −21 to −30. That
+      is −9.5 to −15 an output sample: 4.5–7.1 cycles less at 0.47,
+      10.1–15.9 less at 1.06.
+    - Both are well inside the tape build's headroom of 23.
+  - **Arena:** the diffuser's three new lines (2.3, 11.3 and 16.6 ms) take
+    the f32 region to 1,428 floats. That leaves 8 of the 23,220 slots
+    free, checked at compile time.
+  - **Flash:** +4.2 KB.
+
 ## Alternatives considered
 - **Keep ADR 0085's ±30 % window:** it passes reverbs the owner can tell
   apart from the preset at once. The new bar is set where the harness's own
