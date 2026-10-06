@@ -30,6 +30,9 @@ pub enum ValFmt {
     /// A matrix route's amount (`amount_value`, 0.5 = 0), shown as a
     /// percentage of 127 (spec § 6).
     Route,
+    /// The 2040's KEYBD: a route amount that reads OFF, HALF or FULL at
+    /// 0, 64 and 127 (filter-types spec § 3), else as `Route`.
+    Keybd,
     /// A slider shown in its unit (spec § 1's laws).
     Law(crate::dsp::modulator::law::Law),
     /// ORBIT's tempo, whole BPM over `Bpm::MIN..=Bpm::MAX`.
@@ -41,7 +44,7 @@ impl ValFmt {
     pub fn snap_points(self) -> &'static [f32] {
         match self {
             ValFmt::Uni | ValFmt::Law(_) => &[0.0, 100.0 / 127.0, 1.0],
-            ValFmt::Bi | ValFmt::Pan | ValFmt::Route => {
+            ValFmt::Bi | ValFmt::Pan | ValFmt::Route | ValFmt::Keybd => {
                 &[0.0, 20.0 / 127.0, 64.0 / 127.0, 107.0 / 127.0, 1.0]
             }
             // Discrete: shift-encoder jumps to 0 or max
@@ -55,7 +58,7 @@ impl ValFmt {
     pub fn is_bipolar(self) -> bool {
         matches!(
             self,
-            ValFmt::Bi | ValFmt::Pan | ValFmt::Route | ValFmt::Signed(_)
+            ValFmt::Bi | ValFmt::Pan | ValFmt::Route | ValFmt::Keybd | ValFmt::Signed(_)
         )
     }
 
@@ -78,6 +81,7 @@ impl ValFmt {
             | ValFmt::Bi
             | ValFmt::Pan
             | ValFmt::Route
+            | ValFmt::Keybd
             | ValFmt::Law(_)
             | ValFmt::Bpm => 127,
         }
@@ -150,6 +154,9 @@ pub struct ParamSpec {
     pub stored: bool,
     /// The focus band's gauge, hand-assigned; ARC unless set.
     pub glyph: crate::ui::glyph::FocusGlyph,
+    /// Patching, not sound (a filter jack): out of the parameter sweep and
+    /// of MIDI learn.
+    pub patching: bool,
 }
 
 impl ParamSpec {
@@ -179,6 +186,7 @@ impl ParamSpec {
             stored: true,
             ident: "",
             glyph: crate::ui::glyph::FocusGlyph::Arc,
+            patching: false,
         }
     }
 
@@ -207,6 +215,7 @@ impl ParamSpec {
             stored: true,
             ident: "",
             glyph: crate::ui::glyph::FocusGlyph::Arc,
+            patching: false,
         }
     }
 
@@ -227,6 +236,7 @@ impl ParamSpec {
             stored: true,
             ident: "",
             glyph: crate::ui::glyph::FocusGlyph::Arc,
+            patching: false,
         }
     }
 
@@ -250,6 +260,14 @@ impl ParamSpec {
     /// This spec with its frozen identity.
     pub const fn ident(self, ident: &'static str) -> Self {
         Self { ident, ..self }
+    }
+
+    /// This spec as patching, not sound (`patching`).
+    pub const fn patching(self) -> Self {
+        Self {
+            patching: true,
+            ..self
+        }
     }
 
     /// This spec as a live view of stored params: never written to the card.

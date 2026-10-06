@@ -70,8 +70,8 @@ pub enum SlotBinding {
         label: &'static str,
         fmt: ValFmt,
     },
-    /// Knob `k` of the Sound's filter KIND's panel (spec § 6): 0–4 FLT's
-    /// knobs 2–6, 5–6 FLT › MODE's extras.
+    /// Knob `k` of the Sound's filter type's panel (`filter_panel::knob`):
+    /// 0–4 FLT's knobs 2–6, 5–10 FLT › MOD's cells.
     FilterPanel(u8),
     /// Cell k of ENV slot s's page, per its TYPE, MODE and FORM.
     EnvPanel(crate::dsp::modulator::EnvSlot, u8),

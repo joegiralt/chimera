@@ -29,6 +29,14 @@ Sound {
             kind: Svf,
             mode: Lp24,
             voice: Rev2,
+            jacks: JackPair {
+                fm3: Mod(
+                    Lfo1,
+                ),
+                qm: Mod(
+                    Env3,
+                ),
+            },
         },
         drive: DriveParams {
             drive: 0.0,

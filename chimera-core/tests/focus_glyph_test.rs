@@ -46,6 +46,9 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Filter", "KIND", NONE),
     ("Filter", "MODE", NONE),
     ("Filter", "VOICE", NONE),
+    // The jacks: a source's name, no amount (that is FM3's and QM's).
+    ("Filter", "FM3IN", NONE),
+    ("Filter", "QMIN", NONE),
     ("Env", "TYPE", NONE),
     ("Env", "SPEED", NONE),
     ("Env", "HOLD", NONE),

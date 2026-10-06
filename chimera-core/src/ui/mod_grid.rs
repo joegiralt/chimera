@@ -343,11 +343,15 @@ impl MatrixState {
 
     /// MIX+MINUS: delete the route under the cursor.
     pub fn delete_selected(&mut self) {
-        let src = self.sel_source();
+        self.clear(self.sel_source(), self.sel_col);
+    }
+
+    /// Delete cell (`src`, `col`)'s route; out of range does nothing.
+    pub fn clear(&mut self, src: usize, col: usize) {
         if src >= self.num_sources {
             return;
         }
-        match self.col(self.sel_col) {
+        match self.col(col) {
             Col::Fixed(f) => {
                 self.fixed[src][f.index()] = 0;
                 self.fixed_present[f.index()] &= !(1 << src);

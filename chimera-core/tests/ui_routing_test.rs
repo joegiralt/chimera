@@ -134,7 +134,7 @@ fn priming_on_a_part_page_registers_its_address() {
     assert_eq!(ui.mod_state().num_dests(), 1);
 }
 
-/// Review fix round 1: LEVEL lives on FLT › MODE, whose own short is "MDE",
+/// Review fix round 1: LEVEL lives on FLT › MOD, whose own short is "MDE",
 /// not the filter's tag. `mod_label` must key its prefix off the address's
 /// block (`mod_grid::block_tag`), not the active page's short name, so
 /// priming it from the sub-page still tags it "FLT".
@@ -142,7 +142,7 @@ fn priming_on_a_part_page_registers_its_address() {
 fn priming_the_filter_level_from_flt_mode_tags_it_flt() {
     let mut ui = UiState::new();
     to_filter_mode(&mut ui);
-    prime_slot(&mut ui, EncoderId::B); // LEVEL (slot 1: MODE, LEVEL, --, --, --, --)
+    prime_slot(&mut ui, EncoderId::A); // LEVEL (slot 0: LEVEL, FM3, FM3 IN, QM, QM IN, --)
     assert_eq!(
         primed(&ui),
         [ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL)]

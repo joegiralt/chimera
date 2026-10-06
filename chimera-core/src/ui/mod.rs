@@ -49,7 +49,7 @@ use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
 use crate::in_place::{by_value, uninit_at};
 use crate::mod_path::{LABEL_LEN, RegistryError};
-use crate::modulation::{CUTOFF, MAX_MOD_SOURCES, ModSource, ModState};
+use crate::modulation::{MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::ProjectName;
 use crate::orbit::RingIdx;
 use crate::orbit::chords::ScaleKind;
@@ -69,6 +69,7 @@ use block_def::BlockDef;
 use block_def::VizType;
 use block_def::slot_addr;
 use components::Head;
+use filter_panel::{JackSlot, RouteView};
 use fmt::FmtBuf;
 use hold::{HoldGates, Press};
 use midi_settings::MidiSettings;
@@ -825,11 +826,22 @@ impl UiState {
         let def = self.page_def();
         let ctx = self.ctx();
         let mut values = page_values(self.page, def, &self.read(self.active_part), &ctx);
+        let sound = &self.project.part(self.active_part).sound;
         for (i, value) in values.iter_mut().enumerate() {
-            if let View::Route { source, .. } = view::view(def, i, &ctx) {
-                *value = renderer::amount_value(
-                    self.matrix_state.route(source.index(), CUTOFF).unwrap_or(0),
-                );
+            match view::view(def, i, &ctx) {
+                View::Route { route, .. } => {
+                    *value = renderer::amount_value(route.cell(sound).map_or(0, |(src, c)| {
+                        self.matrix_state.amount(src.index(), c.index())
+                    }));
+                }
+                // A jack shows what it acts as (a tap off ALGO: its default).
+                View::Param { addr, .. } if addr.block == BlockRef::Filter => {
+                    if let (Some(j), Some(spec)) = (JackSlot::of(addr.param), addr.spec()) {
+                        let at = j.choices().iter().position(|&c| c == j.effective(sound));
+                        *value = spec.normalize(at.unwrap_or(0) as f32);
+                    }
+                }
+                _ => {}
             }
         }
         let song = self.project.orbit();
@@ -861,14 +873,23 @@ impl UiState {
         self.matrix_state.clamp_cursor();
     }
 
-    /// A route knob turned: set `source → FREQ`, the fixed CUTOFF column,
-    /// to `f(amount)`.
-    fn edit_route(&mut self, source: crate::modulation::ModSource, f: impl FnOnce(i8) -> i8) {
-        let col = crate::modulation::FixedCol::Freq.index();
-        let row = source.index();
-        let a = self.matrix_state.amount(row, col);
-        self.matrix_state.set(row, col, f(a));
+    /// A route knob turned: set the cell it views to `f(amount)`, creating
+    /// its route. A jack on a tap views no matrix cell yet.
+    fn edit_route(&mut self, route: RouteView, f: impl FnOnce(i8) -> i8) {
+        let Some((src, c)) = route.cell(&self.project.part(self.active_part).sound) else {
+            return;
+        };
+        let a = self.matrix_state.amount(src.index(), c.index());
+        self.matrix_state.set(src.index(), c.index(), f(a));
         self.sync_mod_state(self.active_part);
+    }
+
+    /// MIX + MINUS on a route knob: delete the route of the cell it views.
+    fn delete_route(&mut self, route: RouteView) {
+        if let Some((src, c)) = route.cell(&self.project.part(self.active_part).sound) {
+            self.matrix_state.clear(src.index(), c.index());
+            self.sync_mod_state(self.active_part);
+        }
     }
 
     /// Rebuild a part's audio-side `ModState` from the matrix.
@@ -887,7 +908,7 @@ impl UiState {
     /// 8-byte matrix column label for a primed destination: `O<n> ` + spec
     /// label for operator params, else the address's block tag (≤ 3 chars,
     /// `mod_grid::block_tag` — the page can be a sub-page with a different
-    /// short name, e.g. FLT › MODE for the filter's DRIVE) + the slot label.
+    /// short name, e.g. FLT › MOD for the filter's LEVEL) + the slot label.
     fn mod_label(&self, addr: ParamAddr) -> [u8; LABEL_LEN] {
         let def = self.page_def();
         let op_prefix;
@@ -1906,14 +1927,26 @@ impl UiState {
                 if v != View::Empty {
                     self.focus.touch(def.id, i);
                 }
-                if let View::Route { source, .. } = v {
-                    self.edit_route(source, |a| {
-                        if shift {
-                            snap_amount(a, delta)
-                        } else {
-                            (a as i16 + delta as i16).clamp(-127, 127) as i8
-                        }
+                if let View::Route { route, .. } = v {
+                    self.edit_route(route, |a| match route {
+                        // A detent a step: OFF, HALF, FULL.
+                        RouteView::Keybd => (0..delta.unsigned_abs())
+                            .fold(a, |a, _| filter_panel::keybd_step(a, delta.signum())),
+                        _ if shift => snap_amount(a, delta),
+                        _ => (a as i16 + delta as i16).clamp(-127, 127) as i8,
                     });
+                    continue;
+                }
+                // A jack moves its cable, never only its param (spec § 2).
+                if let Some(slot) = v
+                    .addr()
+                    .filter(|a| a.block == BlockRef::Filter)
+                    .and_then(|a| JackSlot::of(a.param))
+                {
+                    let sound = self.project.edit_part(at).sound;
+                    if filter_panel::step_jack(sound, slot, delta) {
+                        self.matrix_state.load_amounts(&sound.mod_state);
+                    }
                     continue;
                 }
                 if view::is_dimmed(&v, &self.project.part(at).sound, &self.ctx()) {
@@ -1983,7 +2016,12 @@ impl UiState {
                         self.sync_mod_state(at);
                     }
                 }
+                let focused = view::view(def, self.focused_slot(), &self.ctx());
                 if controls.button_state(ButtonId::Minus) == ButtonState::Pressed
+                    && let View::Route { route, .. } = focused
+                {
+                    self.delete_route(route);
+                } else if controls.button_state(ButtonId::Minus) == ButtonState::Pressed
                     && let Some(addr) = self.current_param_addr()
                 {
                     let sound = self.project.edit_part(at).sound;

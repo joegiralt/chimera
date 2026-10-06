@@ -16,6 +16,7 @@ use chimera_core::storage::{
     Crc32, DiskValue, RETIRED, RETIRED_BLOCKS, RETIRED_CODES, RETIRED_SOURCES, ValidAddr,
     read_value,
 };
+use chimera_core::taps::{Jack, TapOp};
 use chimera_core::ui::midi_settings::MidiSettings;
 use chimera_core::ui::theme_settings::ThemeSettings;
 use chimera_theory::Degree;
@@ -139,6 +140,10 @@ fn table() -> Vec<String> {
     coded(
         "DEGREE",
         &mut Degree::ALL.iter().map(|d| (d.disk_code(), d.disk_ident())),
+    );
+    coded(
+        "JACK",
+        &mut Jack::ALL.iter().map(|j| (j.disk_code(), j.disk_ident())),
     );
     coded(
         "TARGET_KIND",
@@ -472,6 +477,26 @@ fn mod_source_codes_round_trip() {
     assert_eq!(ModSource::from_disk_code(255), None);
 }
 
+/// `Jack` extends `ModSource`'s codes; `ModSource` itself is unchanged.
+#[test]
+fn jack_codes_round_trip_and_extend_mod_source() {
+    for s in ModSource::ALL {
+        assert_eq!(Jack::Mod(s).disk_code(), s.disk_code());
+        assert_eq!(Jack::Mod(s).disk_ident(), s.disk_ident());
+    }
+    assert_eq!(Jack::Tap(TapOp::Op5).disk_code(), 8);
+    assert_eq!(Jack::Tap(TapOp::Op6).disk_code(), 9);
+    assert_eq!(Jack::Tap(TapOp::Op5).disk_ident(), "OP5");
+    assert_eq!(Jack::Tap(TapOp::Op6).disk_ident(), "OP6");
+    for j in Jack::ALL {
+        assert_eq!(Jack::from_disk_code(j.disk_code()), Some(j));
+    }
+    let codes: Vec<u8> = Jack::ALL.iter().map(|j| j.disk_code()).collect();
+    assert_eq!(codes, (0..10).collect::<Vec<u8>>());
+    assert_eq!(Jack::from_disk_code(10), None);
+    assert_eq!(Jack::from_disk_code(255), None);
+}
+
 #[test]
 fn retired_never_live() {
     assert_eq!(
@@ -531,7 +556,7 @@ fn valid_addr_only_from_specs() {
     let ids: Vec<u8> = ValidAddr::of_block(BlockRef::Filter)
         .map(|a| a.addr().param.0)
         .collect();
-    assert_eq!(ids, [0, 1, 12, 6, 7, 13]);
+    assert_eq!(ids, [0, 1, 12, 6, 7, 13, 8, 11]);
     let kind = ValidAddr::find(BlockRef::Filter, FilterParams::KIND).unwrap();
     assert!(kind.coded());
     assert_eq!(kind.spec().label, "TYPE");

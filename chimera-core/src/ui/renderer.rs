@@ -548,15 +548,21 @@ impl Renderer {
         }
         let v = self.anim[f.focus].current();
         let buf = value_text(f, f.focus, v);
+        let look = look(f, f.focus);
         components::focus_band(
             display,
             view.label(),
             buf.as_str(),
             self.gauge(f),
-            look(f, f.focus),
+            look,
             f.prime_status,
         );
-        hint::focus(display, f.hint(view.hint()));
+        // An absent route has nothing for MIX + MINUS to delete.
+        let h = match look {
+            components::Look::Absent => hint::NONE,
+            _ => view.hint(),
+        };
+        hint::focus(display, f.hint(h));
     }
 
     /// What an ORBIT viz draws, for its region's key; 0 on any other.
@@ -777,12 +783,14 @@ pub fn title_type(def: &BlockDef, envs: &[EnvKind; 3]) -> u8 {
 pub fn look(f: &Frame, i: usize) -> components::Look {
     let sound = &f.parts[f.active_part.index()].sound;
     match view::view(f.def, i, &f.ctx) {
-        View::Route { source, .. }
-            if sound.mod_state.routes_into(crate::modulation::CUTOFF) & (1 << source.index())
-                == 0 =>
-        {
-            components::Look::Absent
-        }
+        // A jack on a tap has no matrix row yet (Task 13).
+        View::Route { route, .. } => match route.cell(sound) {
+            Some((src, c)) if sound.mod_state.fixed_present(c) & 1 << src.index() == 0 => {
+                components::Look::Absent
+            }
+            Some(_) => components::Look::Live,
+            None => components::Look::Dimmed,
+        },
         v if view::is_dimmed(&v, sound, &f.ctx) => components::Look::Dimmed,
         _ => components::Look::Live,
     }

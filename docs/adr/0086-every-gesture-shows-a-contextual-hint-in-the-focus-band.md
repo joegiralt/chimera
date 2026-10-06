@@ -54,6 +54,7 @@ The owner's rulings:
   | RING · RHYTHM | MUTE | `MIX + B1-5 MUTES THAT RING` |
   | MOD MATRIX | cursor on a route | `MIX + MINUS DELETES THE ROUTE` |
   | MOD MATRIX | cursor on no route | `MIX + PLUS ON A PARAM PRIMES IT` |
+  | FLT, FLT › MOD | a route knob on a route (FM1, FM2, FM3, QM, ENV AMT, KEYBD) | `MIX + MINUS DELETES THE ROUTE` |
   | Sound browser | always | `EDIT LOADS` `MIX + EDIT SAVES` |
   | Sound browser | a filled slot | `MIX + MINUS CLEARS` |
 

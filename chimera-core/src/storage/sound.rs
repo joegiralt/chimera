@@ -8,10 +8,11 @@ use crate::block::{DiskCode, ParamId};
 use crate::mod_path::{LABEL_LEN, MAX_REGISTRY_DESTS, ModDestRegistry};
 use crate::modulation::{FixedCol, MAX_MOD_DESTS, MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::SoundName;
-use crate::params::{EngineType, ParamSnapshot};
+use crate::params::{EngineType, FilterParams, ParamSnapshot};
 use crate::preset::Sound;
+use crate::taps::Jack;
 
-use super::block_codec::{ByteSet, decode_block, encode_block};
+use super::block_codec::{ByteSet, ENTRY_LEN, decode_block, encode_block};
 use super::codes::{DiskAddr, MIGRATIONS, TRANSLATIONS, ValidAddr, readdress};
 use super::file::{Check, Decode};
 use super::frame::{Event, FileError, FileKind};
@@ -158,6 +159,9 @@ pub struct SoundCheck {
     /// Applied at the end, once the `ModDests` they index are known.
     routes: [u8; MAX_RECORD_LEN],
     routes_len: usize,
+    /// The Filter block record held FM3 IN and QM IN: else `infer_jacks`.
+    had_fm3: bool,
+    had_qm: bool,
 }
 
 impl SoundCheck {
@@ -174,6 +178,8 @@ impl SoundCheck {
             blocks: ByteSet::new(),
             routes: [0; MAX_RECORD_LEN],
             routes_len: 0,
+            had_fm3: false,
+            had_qm: false,
         }
     }
 }
@@ -260,6 +266,7 @@ impl SoundCheck {
                 self.seen = 0;
                 self.blocks = ByteSet::new();
                 self.routes_len = 0;
+                (self.had_fm3, self.had_qm) = (false, false);
                 return Ok(());
             }
             Event::Record(ReadTag::Known(tag), p) => (tag, p),
@@ -291,12 +298,19 @@ impl SoundCheck {
         }
         match tag {
             RecordTag::Engine => self.engine_record(p, staged),
-            RecordTag::Block => decode_block(
-                p,
-                MIGRATIONS,
-                TRANSLATIONS,
-                staged.map(|s| &mut s.params as &mut dyn Blocks),
-            ),
+            RecordTag::Block => {
+                if p.first() == BlockRef::Filter.disk_code().as_ref() {
+                    let has = |id: ParamId| p[1..].chunks(ENTRY_LEN).any(|e| e[0] == id.0);
+                    self.had_fm3 = has(FilterParams::FM3_IN);
+                    self.had_qm = has(FilterParams::QM_IN);
+                }
+                decode_block(
+                    p,
+                    MIGRATIONS,
+                    TRANSLATIONS,
+                    staged.map(|s| &mut s.params as &mut dyn Blocks),
+                )
+            }
             RecordTag::Registry => registry(p, staged),
             RecordTag::ModDests => mod_dests(p, staged),
             RecordTag::Routes => {
@@ -338,6 +352,7 @@ impl SoundCheck {
                 // takes its registry column, else is dropped.
                 m.set_route_addr(src.index(), addr, amount as i8);
             }
+            infer_jacks(s, self.had_fm3, self.had_qm);
         }
         Ok(())
     }
@@ -355,6 +370,24 @@ impl SoundCheck {
             }
         }
         Ok(())
+    }
+}
+
+/// A patch saved before the jacks (filter-types spec § 2): FM3 IN is the
+/// single fixed-FREQ route that is neither FM1's ENV 1 nor FM2's NOTE, QM
+/// IN the single fixed-Q route; otherwise each keeps its default.
+fn infer_jacks(s: &mut Sound, had_fm3: bool, had_qm: bool) {
+    let single = |bits: u8| (bits.count_ones() == 1).then(|| bits.trailing_zeros() as usize);
+    let m = &s.mod_state;
+    let fm1_fm2 = 1 << ModSource::Env1.index() | 1 << ModSource::Note.index();
+    let fm3 = single(m.fixed_present(FixedCol::Freq) & !fm1_fm2);
+    let qm = single(m.fixed_present(FixedCol::Q));
+    let f = &mut s.params.filter;
+    if !had_fm3 && let Some(i) = fm3 {
+        f.set_fm3_src(Jack::Mod(ModSource::ALL[i]));
+    }
+    if !had_qm && let Some(i) = qm {
+        f.set_qm_src(Jack::Mod(ModSource::ALL[i]));
     }
 }
 

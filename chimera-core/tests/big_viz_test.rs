@@ -38,7 +38,7 @@ fn filter_curve_keeps_its_shape() {
 #[test]
 fn filter_readout_rides_the_focused_value() {
     let mut ui = ui_for("bigviz_filter");
-    feed(&mut ui, Input::turn(EncoderId::C, -1)); // RES
+    feed(&mut ui, Input::turn(EncoderId::C, -1)); // Q
     settle(&mut ui);
     let mut fb = Fb::new();
     ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
@@ -52,7 +52,7 @@ fn filter_readout_rides_the_focused_value() {
         cutoff,
         reso,
         viz::Response::Low,
-        Some(("RES", text.as_str())),
+        Some(("Q", text.as_str())),
     );
     assert!(band(&fb, 28, 186) == band(&want, 28, 186));
 }

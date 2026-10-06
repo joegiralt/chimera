@@ -250,3 +250,163 @@ fn vca_rule_reads_the_fixed_vca_column() {
         .unwrap();
     assert!(alive[idle - 1] && !alive[idle], "ends at block {idle}");
 }
+
+// ── Task 11 review fold-ins and Task 12's jacks on disk ──
+
+/// Every source into 16 registry columns and the four fixed: 160 routes,
+/// the 640 B record's whole room, saved and loaded.
+#[test]
+fn a_full_eight_by_twenty_matrix_round_trips() {
+    use chimera_core::modulation::MAX_MOD_DESTS;
+    let mut s = Sound::init(EngineType::Algo);
+    let regs = others(MAX_MOD_DESTS);
+    assert_eq!(regs.len(), MAX_MOD_DESTS);
+    for &a in &regs {
+        s.dest_registry.add(a, *b"TEST\0\0\0\0").unwrap();
+    }
+    s.mod_state = ModState::from_registry(&s.dest_registry, MAX_MOD_SOURCES);
+    let mut n = 0;
+    for src in ModSource::ALL {
+        for (i, c) in FixedCol::ALL.into_iter().enumerate() {
+            s.mod_state
+                .set_fixed(src.index(), c, -(i as i8) - src.index() as i8);
+            n += 1;
+        }
+        for (i, &a) in regs.iter().enumerate() {
+            assert!(
+                s.mod_state
+                    .set_route_addr(src.index(), a, (i + src.index()) as i8 + 1)
+            );
+            n += 1;
+        }
+    }
+    assert_eq!(n, 160);
+    let back = decode(&encode(&s)).unwrap();
+    assert!(back.bits_eq(&s));
+}
+
+/// One route past the room: the Routes record is `Bounds`.
+#[test]
+fn a_161_route_record_loads_as_bounds() {
+    use chimera_core::block::DiskCode;
+    use chimera_core::storage::{Event, ReadTag, SoundCheck};
+    let route = [
+        ModSource::Env1.disk_code(),
+        code(CUTOFF)[0],
+        code(CUTOFF)[1],
+        1,
+    ];
+    let mut c = SoundCheck::new();
+    c.event(Event::Header(header())).unwrap();
+    let engine = [EngineType::Algo.disk_code()];
+    c.event(Event::Record(ReadTag::Known(RecordTag::Engine), &engine))
+        .unwrap();
+    let p: Vec<u8> = route.repeat(161);
+    assert_eq!(
+        c.event(Event::Record(ReadTag::Known(RecordTag::Routes), &p)),
+        Err(FileError::Bounds)
+    );
+    let mut c = SoundCheck::new();
+    c.event(Event::Header(header())).unwrap();
+    c.event(Event::Record(ReadTag::Known(RecordTag::Engine), &engine))
+        .unwrap();
+    let p: Vec<u8> = route.repeat(160);
+    assert_eq!(
+        c.event(Event::Record(ReadTag::Known(RecordTag::Routes), &p)),
+        Ok(())
+    );
+}
+
+/// FM3 IN and QM IN round-trip through a Sound file at every choice.
+#[test]
+fn the_jacks_round_trip_through_a_sound_file() {
+    use chimera_core::block::Block;
+    use chimera_core::taps::Jack;
+    for (id, choices) in [
+        (FilterParams::FM3_IN, &Jack::FM3_CHOICES[..]),
+        (FilterParams::QM_IN, &Jack::QM_CHOICES[..]),
+    ] {
+        for (v, &j) in choices.iter().enumerate() {
+            let mut s = Sound::init(EngineType::Algo);
+            s.params.filter.set(id, v as f32);
+            let got = if id == FilterParams::FM3_IN {
+                s.params.filter.fm3_src()
+            } else {
+                s.params.filter.qm_src()
+            };
+            assert_eq!(got, j);
+            let back = decode(&encode(&s)).unwrap();
+            assert!(back.bits_eq(&s), "{id:?} {j:?}");
+        }
+    }
+}
+
+/// A Filter block record with only CUTOFF: no jack ids.
+fn no_jacks_block() -> Vec<u8> {
+    let mut p = vec![
+        BlockRef::Filter.disk_code().unwrap(),
+        FilterParams::CUTOFF.0,
+    ];
+    p.extend_from_slice(&800.0f32.to_le_bytes());
+    p
+}
+
+fn with_routes(routes: &[(ModSource, ParamAddr)], block: Vec<u8>) -> Sound {
+    use chimera_core::block::DiskCode;
+    let mut r = Vec::new();
+    for &(s, a) in routes {
+        r.extend_from_slice(&[s.disk_code(), code(a)[0], code(a)[1], 20]);
+    }
+    decode(&file(&[
+        (RecordTag::Engine, vec![EngineType::Algo.disk_code()]),
+        (RecordTag::Block, block),
+        (RecordTag::Routes, r),
+    ]))
+    .unwrap()
+}
+
+#[test]
+fn load_without_jacks_infers_them() {
+    use chimera_core::taps::Jack;
+    let res = FixedCol::Q.addr();
+    let jacks = |s: &Sound| (s.params.filter.fm3_src(), s.params.filter.qm_src());
+    let (lfo1, env3) = (Jack::Mod(ModSource::Lfo1), Jack::Mod(ModSource::Env3));
+    // One → CUTOFF route that is neither ENV 1 nor NOTE: that is FM3's.
+    let s = with_routes(
+        &[
+            (ModSource::Env1, CUTOFF),
+            (ModSource::Lfo2, CUTOFF),
+            (ModSource::Note, CUTOFF),
+        ],
+        no_jacks_block(),
+    );
+    assert_eq!(jacks(&s), (Jack::Mod(ModSource::Lfo2), env3));
+    // Two such: ambiguous, so the default.
+    let s = with_routes(
+        &[(ModSource::Lfo2, CUTOFF), (ModSource::Vel, CUTOFF)],
+        no_jacks_block(),
+    );
+    assert_eq!(jacks(&s), (lfo1, env3));
+    // ENV 1 alone is FM1's, never FM3's.
+    let s = with_routes(&[(ModSource::Env1, CUTOFF)], no_jacks_block());
+    assert_eq!(jacks(&s), (lfo1, env3));
+    // The single → RES route is QM's.
+    let s = with_routes(&[(ModSource::Env2, res)], no_jacks_block());
+    assert_eq!(jacks(&s), (lfo1, Jack::Mod(ModSource::Env2)));
+    let s = with_routes(
+        &[(ModSource::Env2, res), (ModSource::Lfo3, res)],
+        no_jacks_block(),
+    );
+    assert_eq!(jacks(&s), (lfo1, env3));
+    // Stored jacks win over any inference.
+    let mut stored = no_jacks_block();
+    stored.push(FilterParams::FM3_IN.0);
+    stored.extend_from_slice(&5u32.to_le_bytes()); // LFO 3's code
+    stored.push(FilterParams::QM_IN.0);
+    stored.extend_from_slice(&6u32.to_le_bytes()); // VEL's code
+    let s = with_routes(&[(ModSource::Lfo2, CUTOFF), (ModSource::Env2, res)], stored);
+    assert_eq!(
+        jacks(&s),
+        (Jack::Mod(ModSource::Lfo3), Jack::Mod(ModSource::Vel))
+    );
+}

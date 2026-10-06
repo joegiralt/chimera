@@ -293,6 +293,8 @@ pub fn registry(one_instance: bool) -> Vec<Param> {
                     && !matches!(b, BlockRef::Lfo(s) if s.index() > 0)
         })
         .flat_map(|block| block.specs().iter().map(move |spec| Param { block, spec }))
+        // Patching, not sound: the filter's jacks.
+        .filter(|p| !p.spec.patching)
         .collect()
 }
 
@@ -338,6 +340,12 @@ impl Bench {
             .block_mut(p.block)
             .expect("an audio block")
             .set(p.spec.id, v);
+        self.shared.update_from(&self.perf, 0);
+    }
+
+    /// Part 1's Sound edited in place by `f`, then the publish.
+    pub fn edit_sound(&mut self, f: impl FnOnce(&mut Sound)) {
+        f(self.perf.edit(PartId::ALL[0]).sound);
         self.shared.update_from(&self.perf, 0);
     }
 

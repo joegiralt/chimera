@@ -8,7 +8,7 @@ use super::codes::{DiskValue, Migration, RETIRED, Retired, Translation, ValidAdd
 use super::frame::FileError;
 use super::record::RecordBuf;
 
-const ENTRY_LEN: usize = 5;
+pub(crate) const ENTRY_LEN: usize = 5;
 
 /// The longest spec table a decoded block may have (ENV's is 19).
 pub(crate) const MAX_BLOCK_PARAMS: usize = 32;

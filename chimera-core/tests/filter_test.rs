@@ -7,7 +7,7 @@ use chimera_core::dsp::filter::{Clean, FilterKind, FilterMode, FilterMods};
 use chimera_core::dsp::filter::{level_from_drive, routed_cutoff};
 use chimera_core::params::{FilterParams, ParamSnapshot};
 use chimera_core::ui::block_def::slot_addr;
-use chimera_core::ui::block_registry::{FILTER, FILTER_MODE};
+use chimera_core::ui::block_registry::{FILTER, FILTER_MOD};
 use chimera_core::ui::view::SlotCtx;
 use chimera_hal::BLOCK_SIZE;
 
@@ -51,12 +51,19 @@ fn retired_filter_ids_have_no_spec() {
     }
 }
 
+/// Every type shows its MODE on exactly one FLT page (spec § 2, M6): FLT
+/// on CLEAN and DIRTY, FLT › MOD's last cell, fixed, on the 2040.
 #[test]
-fn mode_is_on_the_flt_pages() {
+fn mode_is_on_one_flt_page() {
     let mode = ParamAddr::new(BlockRef::Filter, FilterParams::MODE);
-    let ctx = SlotCtx::read(&ParamSnapshot::default(), chimera_core::addr::Op::A);
-    let on = |def| (0..6).any(|i| slot_addr(def, i, &ctx) == Some(mode));
-    assert!(on(&FILTER) && on(&FILTER_MODE));
+    for k in FilterKind::BUILT {
+        let mut p = ParamSnapshot::default();
+        p.filter.set_kind(k);
+        let ctx = SlotCtx::read(&p, chimera_core::addr::Op::A);
+        let on = |def| (0..6).any(|i| slot_addr(def, i, &ctx) == Some(mode));
+        assert!(on(&FILTER) != on(&FILTER_MOD), "{k:?}");
+        assert_eq!(on(&FILTER_MOD), k == FilterKind::K2040, "{k:?}");
+    }
 }
 
 /// Each mode filters a saw differently, and all stay finite.

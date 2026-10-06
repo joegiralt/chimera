@@ -207,14 +207,14 @@ fn part_pages_display_like_before() {
                     "TYPE",
                     ValFmt::Names(&chimera_core::dsp::filter::KIND_NAMES),
                 ),
-                ("CUTOFF", Uni),
-                ("RES", Uni),
+                ("FREQ", Uni),
+                ("Q", Uni),
                 (
                     "MODE",
                     ValFmt::Names(chimera_core::dsp::filter::FilterKind::Svf.mode_labels()),
                 ),
-                ("ENV", ValFmt::Route),
-                ("KEY", ValFmt::Route),
+                ("FM1", ValFmt::Route),
+                ("FM2", ValFmt::Route),
             ],
         ),
         (

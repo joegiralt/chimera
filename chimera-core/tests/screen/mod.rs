@@ -915,8 +915,8 @@ pub const CASES: &[ScreenCase] = &[
     }),
     ("flt_mode", |ui| {
         plus(ui, 3);
-        feed(ui, Input::press(ButtonId::Edit)); // FLT › MODE
-        feed(ui, Input::turn(EncoderId::A, 3)); // MODE: BP12
+        feed(ui, Input::press(ButtonId::Edit)); // FLT › MOD
+        feed(ui, Input::turn(EncoderId::B, 30)); // FM3: LFO 1 → FREQ
     }),
     ("env_a", |ui| {
         to_mod_sub(ui, 1, &reg::ENVELOPE);

@@ -625,7 +625,9 @@ fn the_sweep_covers_the_registry() {
         if NOT_AUDIO.contains(&b) {
             assert_eq!(n, 0, "{b:?}");
         } else {
-            assert_eq!(n, b.specs().len(), "{b:?}");
+            // Patching specs (the filter's jacks) are not sound.
+            let sound = b.specs().iter().filter(|s| !s.patching).count();
+            assert_eq!(n, sound, "{b:?}");
         }
     }
     let quick: Vec<_> = cases(true).iter().map(|c| c.param.name()).collect();
