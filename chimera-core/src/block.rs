@@ -346,8 +346,15 @@ pub fn identity_code(specs: &'static [ParamSpec], id: ParamId, c: u8) -> Option<
 }
 
 /// Look up a spec by id in a block's table.
-pub fn find_spec(specs: &'static [ParamSpec], id: ParamId) -> Option<&'static ParamSpec> {
-    specs.iter().find(|s| s.id == id)
+pub const fn find_spec(specs: &'static [ParamSpec], id: ParamId) -> Option<&'static ParamSpec> {
+    let mut i = 0;
+    while i < specs.len() {
+        if specs[i].id.0 == id.0 {
+            return Some(&specs[i]);
+        }
+        i += 1;
+    }
+    None
 }
 
 /// Values + description of one block. `get`/`write` convert between the

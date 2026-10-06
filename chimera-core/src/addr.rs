@@ -130,7 +130,7 @@ impl BlockRef {
     ];
 
     /// The block type's spec table (static; no instance needed).
-    pub fn specs(self) -> &'static [ParamSpec] {
+    pub const fn specs(self) -> &'static [ParamSpec] {
         match self {
             BlockRef::Modal => &crate::dsp::modal::MODAL_SPECS,
             BlockRef::Algo => &crate::dsp::algo::params::ALGO_SPECS,
@@ -200,14 +200,18 @@ impl ParamAddr {
         Self { block, param }
     }
 
-    pub fn spec(self) -> Option<&'static ParamSpec> {
+    pub const fn spec(self) -> Option<&'static ParamSpec> {
         find_spec(self.block.specs(), self.param)
     }
 
     /// Modulation may target this address: the spec says the value is read
     /// per block *and* `Voice` reads this block instance (plan D7).
-    pub fn modulatable(self) -> bool {
-        self.block.voice_reads() && self.spec().is_some_and(|s| s.modulatable)
+    pub const fn modulatable(self) -> bool {
+        self.block.voice_reads()
+            && match self.spec() {
+                Some(s) => s.modulatable,
+                None => false,
+            }
     }
 }
 

@@ -154,7 +154,7 @@ mod tests {
     use super::*;
     use crate::block::{ParamKind, ParamSpec};
     use crate::params::{FILTER_SPECS, FilterParams};
-    use crate::storage::{MIGRATIONS, READDRESS, TRANSLATIONS};
+    use crate::storage::{MIGRATIONS, TRANSLATIONS};
 
     /// A Filter that logs the order of its enum writes.
     struct Order {
@@ -225,15 +225,6 @@ mod tests {
         for t in TRANSLATIONS {
             assert!(BlockRef::from_disk_code(t.block).is_some(), "{}", t.block);
             assert!(RETIRED.iter().any(|r| r.0 == t.block), "{}", t.block);
-        }
-    }
-
-    /// A re-address lands on a modulatable param, so the routes it
-    /// carries can play (spec tables are `static`: no const check).
-    #[test]
-    fn readdress_targets_are_modulatable() {
-        for (_, to) in READDRESS {
-            assert!(to.modulatable(), "{to:?}");
         }
     }
 }

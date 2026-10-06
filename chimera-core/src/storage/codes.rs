@@ -258,7 +258,7 @@ pub const READDRESS: &[(DiskAddr, ParamAddr)] = &[(
 )];
 
 // Only a retired address is re-addressed, so a live one always loads as
-// itself.
+// itself; and only onto a modulatable param, so its routes play.
 const _: () = {
     let mut i = 0;
     while i < READDRESS.len() {
@@ -268,6 +268,10 @@ const _: () = {
             j += 1;
         }
         assert!(j < RETIRED.len(), "re-addressed but not retired");
+        assert!(
+            READDRESS[i].1.modulatable(),
+            "re-addressed onto a param routes can't play"
+        );
         i += 1;
     }
 };
