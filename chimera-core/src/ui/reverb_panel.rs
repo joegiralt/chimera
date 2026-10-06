@@ -77,6 +77,8 @@ static DIFFUSE: RevKnob = RevKnob {
     short: Some("DIFF"),
     ..k(P::DIFFUSE, "DIFFUSE")
 };
+/// REVERSE's PRE-DLY slot: where its ramp starts.
+static ONSET: RevKnob = k(P::PREDELAY, "ONSET");
 static PREDELAY: RevKnob = RevKnob {
     short: Some("PRE"),
     ..k(P::PREDELAY, "PRE-DLY")
@@ -146,28 +148,29 @@ static BLOOM: Panel = [
     None,
 ];
 
-/// LENGTH · TAIL · TONE · DENSITY; MORE: — · SHAPE · SMEAR · RATE · SYNC.
+/// LENGTH · TAIL · TONE · DENSITY; MORE: PRE-DLY · SHAPE · SMEAR · RATE ·
+/// SYNC · DAMP (ADR 0095: DAMP is TAIL's one-pole).
 static GATE: Panel = [
     Some(&LENGTH),
     Some(&TAIL),
     Some(&TONE),
     Some(&DENSITY),
-    None,
+    Some(&PREDELAY),
     Some(&SHAPE),
     Some(&SMEAR),
     Some(&RATE),
     Some(&SYNC),
-    None,
+    Some(&DAMP),
 ];
 
-/// LENGTH · REGEN · TONE · DENSITY; MORE: — · CURVE · SMEAR · RATE ·
-/// SYNC.
+/// LENGTH · REGEN · TONE · DENSITY; MORE: ONSET · CURVE · SMEAR · RATE ·
+/// SYNC (ADR 0095).
 static REVERSE: Panel = [
     Some(&LENGTH),
     Some(&REGEN),
     Some(&TONE),
     Some(&DENSITY),
-    None,
+    Some(&ONSET),
     Some(&CURVE),
     Some(&SMEAR),
     Some(&RATE),
@@ -362,8 +365,8 @@ pub fn value_text(id: ParamId, p: &ReverbParams, tempo: Tempo, fold: FoldState) 
         // A cutoff: `6.1k`, `11k`.
         P::DAMPING => khz(k.damp_hz),
         P::TONE => khz(k.tone_hz),
-        // Taps: `10.2`; else the allpass g, `0.60`.
-        P::DIFFUSE if burst => (k.taps, 1, ""),
+        // GATE's taps: `10.2`; else the allpass g, `0.60`.
+        P::DIFFUSE if p.kind == ReverbType::Gate => (k.taps, 1, ""),
         P::DIFFUSE => (k.diffuse_g, 2, ""),
         P::PREDELAY => (k.predelay_ms, 0, "ms"),
         // The curve end to end, whole dB: `-4dB`, `24dB` (tenths outrun

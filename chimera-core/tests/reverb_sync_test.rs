@@ -9,7 +9,9 @@ use chimera_core::dsp::rev::sync::{
     DECAY_BEATS, DivKind, Division, FoldState, GATE_LENGTH, HALL_PRE, REVERSE_LENGTH, ROOM_PRE,
     Tempo, fold, index_of, p_of,
 };
-use chimera_core::dsp::reverb::{KnobMemory, RevSync, ReverbParams, ReverbType, knobs};
+use chimera_core::dsp::reverb::{
+    EngineKnobs, KnobMemory, RevSync, ReverbParams, ReverbType, knobs,
+};
 use chimera_core::hw::SampleBudget;
 use chimera_core::meter::rev_clock;
 use chimera_core::note_queue::RealTime;
@@ -259,8 +261,10 @@ fn bloom_syncs_predelay_and_decay_in_beats() {
 #[test]
 fn sync_toggle_keeps_the_length_within_one_division() {
     let t = tempo(120.0);
-    let g = synced(ReverbType::Gate, RevSync::Off);
-    assert!((g.size - 0.55).abs() < 1e-6);
+    let g = ReverbParams {
+        size: 0.55,
+        ..synced(ReverbType::Gate, RevSync::Off)
+    };
     let ms = |p: &ReverbParams| knobs(p, t, &mut FoldState(0)).length_ms;
     assert!((ms(&g) - 177.4).abs() < 0.1, "{}", ms(&g));
     let on = g.with_sync(RevSync::Time, t);
@@ -508,9 +512,7 @@ fn replay(
         out.extend_from_slice(&w.l);
         let mut f = rv.fold();
         let e_ = rv.burst().unwrap();
-        if e_.crossfades().next().is_some()
-            || e_.taps_at() != tap_targets(knobs(&p, t, &mut f).length_ms)
-        {
+        if e_.crossfades().next().is_some() || e_.taps_at() != tap_targets(&knobs(&p, t, &mut f)) {
             last = b;
         }
     }
@@ -610,8 +612,15 @@ fn clock_dropout_moves_synced_length_once() {
         .collect();
     assert!(!runs.is_empty() && runs.iter().all(|&n| n == 3), "{runs:?}");
     let off = targets.len() - taps.len();
-    assert_eq!(taps[b - 1 - off], tap_targets(from));
-    assert_eq!(*taps.last().unwrap(), tap_targets(500.0));
+    // The taps at a LENGTH, `g`'s other knobs as they play.
+    let at_ms = |ms: f32| {
+        tap_targets(&EngineKnobs {
+            length_ms: ms,
+            ..knobs(&g, Tempo::DEFAULT, &mut FoldState::default())
+        })
+    };
+    assert_eq!(taps[b - 1 - off], at_ms(from));
+    assert_eq!(*taps.last().unwrap(), at_ms(500.0));
 }
 
 /// A switch starts the fold afresh: the fold the cells mark is the running

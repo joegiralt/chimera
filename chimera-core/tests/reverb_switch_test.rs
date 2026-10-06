@@ -89,11 +89,19 @@ fn params(t: ReverbType) -> ReverbParams {
         ..Default::default()
     };
     let mut p = p.with_type(t, &KnobMemory::new());
-    // DAMP darkens QUAD's loop, TONE a BURST's input; a BURST at its
-    // shortest LENGTH is in its TAIL or REGEN loop by the switch.
+    // DAMP darkens QUAD's loop and GATE's TAIL, TONE a BURST's input; a
+    // BURST at its shortest LENGTH is in its TAIL or REGEN loop by the
+    // switch, DENSITY at 0.7 its diffuser whole (GATE's fast-gate start,
+    // 0.28, leaves a tail too rough for the gain-jump control to show), and
+    // PRE-DLY (REVERSE's ONSET) 0, so the window before the switch hears it.
     (p.time, p.damping, p.tone) = (1.0, 0.9, 1.0);
     if matches!(t, ReverbType::Gate | ReverbType::Reverse) {
-        p.size = 0.0;
+        (p.size, p.diffuse, p.predelay) = (0.0, 0.7, 0.0);
+    }
+    // REVERSE's ramp flat: CURVE's rise would put the window before the
+    // switch under the louder end it switches into.
+    if t == ReverbType::Reverse {
+        p.shape = 0.0;
     }
     p
 }

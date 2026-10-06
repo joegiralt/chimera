@@ -136,14 +136,15 @@ const KNOB_SLOTS: [ParamId; 9] = [
 /// in screen order. QUAD writes only TIME, DAMP, SIZE, SMEAR and RATE.
 /// ROOM's are MidiVerb II program 5's (Medium Bright .6), BLOOM's program
 /// 45's (Bloom 1), each fitted on the Rust render (ADR 0095), with SMEAR
-/// 0.3.
+/// 0.3; GATE's program 35's (Fast Gate 150), REVERSE's program 40's
+/// (Reverse 400), SMEAR 0 as the unit's.
 const START: [[f32; 9]; 6] = [
     [0.5, 0.3, 0.5, 0.3, 0.4, 0.0, 0.2, 0.0, 0.5],
     [0.702, 0.346, 0.619, 0.0, 0.0, 0.077, 0.72, 0.3, 0.5],
     [0.45, 0.3, 0.65, 0.3, 0.4, 0.15, 0.2, 0.35, 0.4],
     [0.948, 0.3, 0.705, 0.578, 0.165, 0.132, 0.2, 0.3, 0.4],
-    [0.3, 0.3, 0.55, 0.2, 0.7, 0.0, 0.2, 0.0, 0.5],
-    [0.0, 0.3, 0.5, 0.0, 0.8, 0.0, 0.67, 0.0, 0.5],
+    [0.633, 1.0, 0.585, 0.383, 0.341, 0.116, 0.742, 0.0, 0.5],
+    [0.0, 0.3, 0.692, 0.136, 0.899, 0.593, 0.601, 0.0, 0.5],
 ];
 
 /// Whether `t` writes `KNOB_SLOTS[i]` on a TYPE change.
@@ -221,18 +222,50 @@ pub struct EngineKnobs {
     pub tone_hz: f32,
     /// GATE's TAIL gain scale, `min(1, p/0.05)`: 0 is the fast gate.
     pub tail: f32,
-    /// REVERSE's feedback per pass, 0 → 0.708.
+    /// REVERSE's feedback per pass, 0 → 0.8.
     pub regen: f32,
     /// DENSITY as taps, 6 → 12.
     pub taps: f32,
     /// DIFFUSE's diffuser and stage-allpass g; DENSITY's pre-diffuser g.
     pub diffuse_g: f32,
-    /// PRE-DLY, ms.
+    /// PRE-DLY, ms; REVERSE's ONSET.
     pub predelay_ms: f32,
     /// The burst's curve end to end, dB: GATE falls (≤ 0), REVERSE rises.
     pub shape_db: f32,
-    /// The curve rises to the end (REVERSE).
-    pub rising: bool,
+    /// Which burst a BURST engine plays.
+    pub burst: Burst,
+    /// GATE's diffused share against its dry tap sum, 0..=1 (REVERSE: 1).
+    pub wet: f32,
+}
+
+/// What a BURST engine plays (ADR 0095 § GATE and REVERSE, as built):
+/// GATE's falling curve, PRE-DLY, five-allpass DENSITY mix and damped
+/// TAIL; or REVERSE's rising ramp from ONSET, two allpasses, and the
+/// undiffused end hit its REGEN feeds back. The other TYPEs read `Gate`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Burst {
+    #[default]
+    Gate,
+    Reverse,
+}
+
+/// How DENSITY splits a burst between its dry tap sum and the diffuser.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Diffused {
+    /// All through the diffuser (REVERSE, and the rows with none).
+    Full,
+    /// `k` × DENSITY, capped at 1 (GATE): the low end stays dry, where an
+    /// allpass chain at a small g would only delay it.
+    OfDensity(f32),
+}
+
+impl Diffused {
+    fn share(self, density: f32) -> f32 {
+        match self {
+            Diffused::Full => 1.0,
+            Diffused::OfDensity(k) => clampf(k * unit(density), 0.0, 1.0),
+        }
+    }
 }
 
 /// How TIME maps on a row's TYPE.
@@ -286,7 +319,8 @@ pub struct Ranges {
     /// SHAPE or CURVE, dB, `lin`: negative falls. ROOM's LOOPS, θ in
     /// degrees.
     pub shape_db: (f32, f32),
-    pub rising: bool,
+    pub burst: Burst,
+    pub diffused: Diffused,
     /// SMEAR's depth at 1, ms, `lin`, capped at `smear_cap` of the loop
     /// (§ The SMEAR bound; the decorrelators sit in none: ∞).
     pub smear_ms: f32,
@@ -297,6 +331,16 @@ pub struct Ranges {
     pub rate_hz: Exp,
 }
 
+/// No in-loop damper.
+const NO_DAMP: Exp = Exp {
+    lo: 0.0,
+    hi: 0.0,
+    log2_ratio: 0.0,
+};
+
+/// GATE (ADR 0095 § GATE and REVERSE, as built): PRE-DLY shifts every
+/// tap; DENSITY's g and its diffused share (1.5 × DENSITY) over five
+/// allpasses; DAMP is TAIL's loop one-pole.
 pub const GATE: Ranges = Ranges {
     length_ms: Exp::new(40.0, 600.0),
     length_lin: false,
@@ -304,27 +348,31 @@ pub const GATE: Ranges = Ranges {
         rt60_s: Exp::new(0.15, 0.8),
         fade: 0.05,
     },
-    tone_hz: Exp::new(10_000.0, 2_500.0),
+    tone_hz: Exp::new(12_000.0, 1_000.0),
     taps: (6.0, 12.0),
-    diffuse_g: (0.5, 0.7),
-    predelay_ms: (0.0, 0.0),
-    shape_db: (0.0, -18.0),
-    rising: false,
+    diffuse_g: (0.2, 0.8),
+    predelay_ms: (0.0, 80.0),
+    shape_db: (0.0, -30.0),
+    burst: Burst::Gate,
+    diffused: Diffused::OfDensity(1.5),
     smear_ms: 1.0,
     smear_cap: f32::INFINITY,
-    damp_hz: Exp {
-        lo: 0.0,
-        hi: 0.0,
-        log2_ratio: 0.0,
-    },
+    damp_hz: Exp::new(12_000.0, 2_000.0),
     rate_hz: Exp::new(0.1, 2.0),
 };
 
+/// REVERSE: PRE-DLY's slot is ONSET, where the ramp starts; CURVE rises
+/// 0–55 dB to the hit; DENSITY is the two allpasses' g alone; REGEN
+/// feeds the hit back, flat.
 pub const REVERSE: Ranges = Ranges {
     length_ms: Exp::new(150.0, 800.0),
-    time: TimeLaw::Regen { max: 0.708 },
-    shape_db: (12.0, 30.0),
-    rising: true,
+    time: TimeLaw::Regen { max: 0.8 },
+    diffuse_g: (0.0, 0.7),
+    predelay_ms: (0.0, 150.0),
+    shape_db: (0.0, 55.0),
+    burst: Burst::Reverse,
+    diffused: Diffused::Full,
+    damp_hz: NO_DAMP,
     ..GATE
 };
 
@@ -346,7 +394,8 @@ pub const ROOM: Ranges = Ranges {
     diffuse_g: (0.45, 0.70),
     predelay_ms: (0.0, 50.0),
     shape_db: (0.0, 90.0),
-    rising: false,
+    burst: Burst::Gate,
+    diffused: Diffused::Full,
     smear_ms: 1.0,
     smear_cap: 0.0072,
     damp_hz: Exp::new(10_000.0, 1_500.0),
@@ -371,7 +420,7 @@ pub const BLOOM: Ranges = Ranges {
     shape_db: (0.0, 0.0),
     smear_ms: 2.0,
     smear_cap: 0.0024,
-    damp_hz: GATE.damp_hz,
+    damp_hz: NO_DAMP,
     rate_hz: Exp::new(0.05, 0.5),
     ..ROOM
 };
@@ -629,7 +678,8 @@ fn row_knobs(r: &Ranges, p: &ReverbParams) -> EngineKnobs {
         diffuse_g: lin(r.diffuse_g, p.diffuse),
         predelay_ms: lin(r.predelay_ms, p.predelay),
         shape_db: lin(r.shape_db, p.shape),
-        rising: r.rising,
+        burst: r.burst,
+        wet: r.diffused.share(p.diffuse),
         damp_hz: exp_law(r.damp_hz, p.damping),
     }
 }

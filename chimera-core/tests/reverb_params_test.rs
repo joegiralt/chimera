@@ -10,7 +10,8 @@ use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::rev::Reverb;
 use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::reverb::{
-    KnobMemory, REVERB_SPECS, RevSync, ReverbParams, ReverbType, damp_hz, in_plate_zone, plate_pull,
+    Burst, KnobMemory, REVERB_SPECS, RevSync, ReverbParams, ReverbType, damp_hz, in_plate_zone,
+    plate_pull,
 };
 use chimera_core::storage::decode_block;
 use common::SR;
@@ -176,6 +177,7 @@ fn unknown_type_code_and_nan_slots_load_as_safe_quad() {
                 k.diffuse_g,
                 k.predelay_ms,
                 k.shape_db,
+                k.wet,
             ];
             for v in all {
                 assert!(v.is_finite(), "{t:?}");
@@ -279,14 +281,11 @@ fn knobs_hit_the_spec_endpoints() {
         f(&mut p);
         knobs_120(&p)
     };
+    // ADR 0095 § GATE and REVERSE, as built.
     for t in [ReverbType::Gate, ReverbType::Reverse] {
         let k = |f: &dyn Fn(&mut ReverbParams)| at(t, f);
-        close(k(&|p| p.tone = 0.0).tone_hz, 10_000.0, "tone 0");
-        close(k(&|p| p.tone = 1.0).tone_hz, 2_500.0, "tone 1");
-        close(k(&|p| p.diffuse = 0.0).taps, 6.0, "taps 0");
-        close(k(&|p| p.diffuse = 1.0).taps, 12.0, "taps 1");
-        close(k(&|p| p.diffuse = 0.0).diffuse_g, 0.5, "g 0");
-        close(k(&|p| p.diffuse = 1.0).diffuse_g, 0.7, "g 1");
+        close(k(&|p| p.tone = 0.0).tone_hz, 12_000.0, "tone 0");
+        close(k(&|p| p.tone = 1.0).tone_hz, 1_000.0, "tone 1");
         close(k(&|p| p.smear = 1.0).smear_ms, 1.0, "smear 1");
         assert_eq!(k(&|p| p.smear = 0.0).smear_ms, 0.0);
         close(k(&|p| p.rate = 0.0).rate_hz, 0.1, "rate 0");
@@ -302,38 +301,41 @@ fn knobs_hit_the_spec_endpoints() {
     close(g(&|p| p.time = 0.025).tail, 0.5, "tail fades in");
     close(g(&|p| p.time = 0.05).tail, 1.0, "tail in by 0.05");
     close(g(&|p| p.shape = 0.0).shape_db, 0.0, "shape 0");
-    close(g(&|p| p.shape = 1.0).shape_db, -18.0, "shape 1");
+    close(g(&|p| p.shape = 1.0).shape_db, -30.0, "shape 1");
+    close(g(&|p| p.diffuse = 0.0).taps, 6.0, "taps 0");
+    close(g(&|p| p.diffuse = 1.0).taps, 12.0, "taps 1");
+    close(g(&|p| p.diffuse = 0.0).diffuse_g, 0.2, "g 0");
+    close(g(&|p| p.diffuse = 1.0).diffuse_g, 0.8, "g 1");
+    // The diffused share, 1.5 × DENSITY: dry at 0, whole from ⅔.
+    assert_eq!(g(&|p| p.diffuse = 0.0).wet, 0.0);
+    close(g(&|p| p.diffuse = 0.4).wet, 0.6, "wet 0.4");
+    assert_eq!(g(&|p| p.diffuse = 0.7).wet, 1.0);
+    close(g(&|p| p.predelay = 0.0).predelay_ms, 0.0, "pre 0");
+    close(g(&|p| p.predelay = 1.0).predelay_ms, 80.0, "pre 1");
+    close(g(&|p| p.damping = 0.0).damp_hz, 12_000.0, "gate damp 0");
+    close(g(&|p| p.damping = 1.0).damp_hz, 2_000.0, "gate damp 1");
     assert_eq!(g(&|_| {}).regen, 0.0, "GATE has no REGEN");
-    let d = g(&|_| {});
-    close(d.length_ms, 177.27, "gate length default");
-    close(d.rt60_s, 0.2479, "tail default");
-    close(d.tone_hz, 7_578.6, "gate tone default");
-    close(d.taps, 10.2, "gate taps default");
-    close(d.diffuse_g, 0.64, "gate g default");
-    close(d.shape_db, -3.6, "shape default");
-    assert!(!d.rising);
+    assert_eq!(g(&|_| {}).burst, Burst::Gate);
     let r = |f: &dyn Fn(&mut ReverbParams)| at(ReverbType::Reverse, f);
     close(r(&|p| p.size = 0.0).length_ms, 150.0, "reverse length 0");
     close(r(&|p| p.size = 1.0).length_ms, 800.0, "reverse length 1");
     assert_eq!(r(&|p| p.time = 0.0).regen, 0.0);
-    close(r(&|p| p.time = 1.0).regen, 0.708, "regen 1");
-    // −3 dB a pass: 16 s at 800 ms.
+    close(r(&|p| p.time = 1.0).regen, 0.8, "regen 1");
+    // −1.94 dB a pass: 24.8 s at 800 ms.
     close(
         r(&|p| (p.time, p.size) = (1.0, 1.0)).rt60_s,
-        16.0,
+        24.77,
         "regen rt60",
     );
-    close(r(&|p| p.shape = 0.0).shape_db, 12.0, "curve 0");
-    close(r(&|p| p.shape = 1.0).shape_db, 30.0, "curve 1");
+    close(r(&|p| p.shape = 0.0).shape_db, 0.0, "curve 0");
+    close(r(&|p| p.shape = 1.0).shape_db, 55.0, "curve 1");
+    close(r(&|p| p.diffuse = 0.0).diffuse_g, 0.0, "reverse g 0");
+    close(r(&|p| p.diffuse = 1.0).diffuse_g, 0.7, "reverse g 1");
+    assert_eq!(r(&|p| p.diffuse = 0.0).wet, 1.0, "REVERSE is all diffused");
+    close(r(&|p| p.predelay = 1.0).predelay_ms, 150.0, "onset 1");
     assert_eq!(r(&|_| {}).tail, 0.0, "REVERSE has no TAIL");
-    let d = r(&|_| {});
-    close(d.length_ms, 346.41, "reverse length default");
-    assert_eq!((d.regen, d.rt60_s), (0.0, 0.0));
-    close(d.tone_hz, 10_000.0, "reverse tone default");
-    close(d.taps, 10.8, "reverse taps default");
-    close(d.diffuse_g, 0.66, "reverse g default");
-    close(d.shape_db, 24.06, "curve default");
-    assert!(d.rising);
+    assert_eq!(r(&|_| {}).damp_hz, 0.0, "REVERSE has no DAMP");
+    assert_eq!(r(&|_| {}).burst, Burst::Reverse);
     let m = |f: &dyn Fn(&mut ReverbParams)| at(ReverbType::Room, f);
     // SIZE is loop A's round trip, `lin` in k 0.4 → 1 (ADR 0095): 42.3 ms
     // of allpasses and 94.6 ms of delays × k.
@@ -452,6 +454,61 @@ fn plate_zone_pulls_diffuse_tone_predelay() {
 
 /// SMEAR 1 never passes its TYPE's cap at any SIZE (§ The SMEAR bound):
 /// D ≤ 0.72 % of ROOM's loop, 0.36 % of HALL's, 0.18 % of QUAD's ring.
+/// A GATE or REVERSE saved before PRE-DLY, DAMP and ONSET (ADR 0095 §
+/// GATE and REVERSE, as built) loads whatever those slots held, from
+/// another TYPE or a CC: at either end of each, it loads in range and two
+/// seconds of noise stay finite, peaking at most twice the TYPE's own at
+/// its longest TAIL or REGEN. It need not sound the same.
+#[test]
+fn an_old_gate_or_reverse_loads_safely() {
+    let peak_of = |t: ReverbType, p: &ReverbParams| {
+        let mut rv = Reverb::of_type(t);
+        let mut n = Noise(0xD1CE);
+        let mut peak = 0.0f32;
+        for _ in 0..blocks(2.0) {
+            let send = core::array::from_fn(|_| 0.5 * n.next());
+            let mut out = Stereo::SILENT;
+            rv.process(&send, p, 1.0, Tempo::DEFAULT, SR, &mut out);
+            for s in out.l.iter().chain(&out.r) {
+                assert!(s.is_finite(), "{t:?}");
+                peak = peak.max(s.abs());
+            }
+        }
+        peak
+    };
+    for (t, code) in [(ReverbType::Gate, 3u32), (ReverbType::Reverse, 4)] {
+        let own = ReverbParams {
+            time: 1.0,
+            ..ReverbParams::default().with_type(t, &KnobMemory::new())
+        };
+        let bound = 2.0 * peak_of(t, &own);
+        for (pre, damp, shape) in [(0.0, 0.0, 0.0), (1.0, 1.0, 1.0), (1.0, 0.0, 0.67)] {
+            let entries = [
+                (6u8, code.to_le_bytes()),
+                real(1, 1.0),
+                real(2, damp),
+                real(3, 0.0),
+                real(4, 1.0),
+                real(8, 1.0),
+                real(9, pre),
+                real(10, shape),
+            ];
+            let mut fx = FxParams::default();
+            decode_block(&record(&entries), &[], &[], Some(&mut Fx(&mut fx))).unwrap();
+            let p = fx.reverb;
+            assert_eq!(p.kind, t);
+            let k = knobs_120(&p);
+            let r = chimera_core::dsp::reverb::ranges(t).unwrap();
+            assert!(k.predelay_ms <= r.predelay_ms.1 && k.length_ms >= r.length_ms.lo);
+            let peak = peak_of(t, &p);
+            assert!(
+                peak <= bound,
+                "{t:?} PRE {pre} DAMP {damp}: {peak} over {bound}"
+            );
+        }
+    }
+}
+
 #[test]
 fn smear_caps_hold_at_every_size() {
     for (t, cap) in [

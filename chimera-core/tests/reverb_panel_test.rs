@@ -46,11 +46,14 @@ fn every_type_shows_its_cells() {
     assert_eq!(main(Quad), s(&["SIZE", "TIME", "DAMP", "SMEAR"]));
     assert_eq!(more(Quad), s(&["-", "-", "-", "RATE", "-", "-"]));
     assert_eq!(main(Gate), s(&["LENGTH", "TAIL", "TONE", "DENSITY"]));
-    assert_eq!(more(Gate), s(&["-", "SHAPE", "SMEAR", "RATE", "SYNC", "-"]));
+    assert_eq!(
+        more(Gate),
+        s(&["PRE-DLY", "SHAPE", "SMEAR", "RATE", "SYNC", "DAMP"])
+    );
     assert_eq!(main(Reverse), s(&["LENGTH", "REGEN", "TONE", "DENSITY"]));
     assert_eq!(
         more(Reverse),
-        s(&["-", "CURVE", "SMEAR", "RATE", "SYNC", "-"])
+        s(&["ONSET", "CURVE", "SMEAR", "RATE", "SYNC", "-"])
     );
     assert_eq!(main(Room), s(&["SIZE", "DECAY", "TONE", "DIFFUSE"]));
     assert_eq!(
@@ -325,7 +328,7 @@ fn a_type_nudge_keeps_the_tweaks() {
     assert_eq!(bloom.kind, ReverbType::Bloom);
     let g = turn(&bloom, ReverbParams::TYPE, 1, &mut mem, Tempo::DEFAULT);
     assert_eq!(g.kind, ReverbType::Gate);
-    assert_eq!((g.size, g.time), (0.55, 0.3), "GATE's starting knobs");
+    assert_eq!((g.size, g.time), (0.585, 0.633), "GATE's starting knobs");
     let r = turn(&g, ReverbParams::TYPE, 5, &mut mem, Tempo::DEFAULT);
     assert_eq!(r.kind, ReverbType::Reverse);
     assert_eq!(
@@ -338,33 +341,38 @@ fn a_type_nudge_keeps_the_tweaks() {
 /// (spec § Each TYPE's knobs).
 #[test]
 fn cells_read_their_starting_values() {
-    let shows = |t: ReverbType, want: [(ParamId, &str); 7]| {
+    let shows = |t: ReverbType, want: &[(ParamId, &str)]| {
         let p = ReverbParams::default().with_type(t, &KnobMemory::new());
-        for (id, w) in want {
+        for &(id, w) in want {
             assert_eq!(text(id, &p).as_str(), w, "{t:?} {id:?}");
         }
     };
     use ReverbParams as P;
+    // MidiVerb II program 35's fitted knobs (ADR 0095).
     shows(
         ReverbType::Gate,
-        [
-            (P::SIZE, "177ms"),
-            (P::TIME, "0.25s"),
-            (P::TONE, "7.6k"),
-            (P::DIFFUSE, "10.2"),
-            (P::SHAPE, "-4dB"),
+        &[
+            (P::SIZE, "195ms"),
+            (P::TIME, "0.43s"),
+            (P::TONE, "4.6k"),
+            (P::DIFFUSE, "8.0"),
+            (P::SHAPE, "-22dB"),
+            (P::PREDELAY, "9ms"),
+            (P::DAMPING, "2.0k"),
             (P::SMEAR, "OFF"),
             (P::RATE, "0.45Hz"),
         ],
     );
+    // Program 40's: ONSET on PRE-DLY's slot, DENSITY the allpasses' g.
     shows(
         ReverbType::Reverse,
-        [
-            (P::SIZE, "346ms"),
+        &[
+            (P::SIZE, "478ms"),
             (P::TIME, "OFF"),
-            (P::TONE, "10k"),
-            (P::DIFFUSE, "10.8"),
-            (P::SHAPE, "24dB"),
+            (P::TONE, "8.6k"),
+            (P::DIFFUSE, "0.63"),
+            (P::SHAPE, "33dB"),
+            (P::PREDELAY, "89ms"),
             (P::SMEAR, "OFF"),
             (P::RATE, "0.45Hz"),
         ],
