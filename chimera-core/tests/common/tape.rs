@@ -30,19 +30,30 @@ pub struct OneSource {
 impl OneSource {
     /// `held` (a descriptor, then its samples) as source 0.
     pub fn new(held: &[u8]) -> OneSource {
+        Self::with(held, &[]).0
+    }
+
+    /// `held` as source 0 and, beside it in the same table, `second` as
+    /// source 1 (if not empty): its id.
+    pub fn with(held: &[u8], second: &[u8]) -> (OneSource, SourceId) {
         let table: &'static SourceTable = Box::leak(Box::new(SourceTable::new()));
-        let bytes: &'static mut [u8] = Box::leak(held.to_vec().into_boxed_slice());
+        let bytes: &'static mut [u8] = Box::leak([held, second].concat().into_boxed_slice());
         table.attach_for_test(bytes.as_mut_ptr());
-        let rate = Descriptor::from_bytes(held).map_or(0, |d| d.rate);
-        let id = SourceId::ALL[0];
-        table.publish_for_test(id, 0, held.len() as u32, rate);
-        OneSource {
+        let rate = |b: &[u8]| Descriptor::from_bytes(b).map_or(0, |d| d.rate);
+        let (id, id2) = (SourceId::ALL[0], SourceId::ALL[1]);
+        table.publish_for_test(id, 0, held.len() as u32, rate(held));
+        if !second.is_empty() {
+            table.publish_for_test(id2, held.len() as u32, second.len() as u32, rate(second));
+        }
+        let rate = rate(held);
+        let one = OneSource {
             tok: table.reader().expect("its own table"),
             table,
             held: held.len() as u32,
             rate,
             id,
-        }
+        };
+        (one, id2)
     }
 
     /// A block's view, as the audio begins one.

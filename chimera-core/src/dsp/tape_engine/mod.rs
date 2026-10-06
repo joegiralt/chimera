@@ -49,10 +49,14 @@ use wave::Wave;
 pub use heads::loop_len;
 pub use params::{StretchType, TAPE_ENGINE_SPECS, TapeEngineParams, TapeModel, drag_s};
 
-/// Every TAPE voice's bill until TAPE Task 14 splits it by model:
-/// PING-PONG's 490, the costliest model, + TAPE's 10 + AGE's 30, so a voice
-/// running both is never under-billed (spec § 5).
+/// Every TAPE voice's bill but TRANSWAVE's until TAPE Task 14 splits it by
+/// model: PING-PONG's 490, the costliest of the rest, + TAPE's 10 + AGE's
+/// 30, so a voice running both is never under-billed (spec § 5).
 pub const COST_TAPE: Cost = Cost(530);
+/// TRANSWAVE's, flat until Task 14 bills its level change only where pitch
+/// can move: a level change's 770 + TAPE's 10 + AGE's 30. A whole block
+/// can sit in a change (a glide steal, a deep PITCH route, a re-snap).
+pub const COST_TAPE_WAVE: Cost = Cost(810);
 
 /// `inc`'s clamp: four octaves over a 48 kHz source's own speed.
 pub const INC_MAX: f32 = 16.0;
@@ -420,6 +424,8 @@ impl TapeEngine {
     /// A fresh engine on the voice's own strip of tape, as it last ran.
     pub(crate) fn restore(&mut self, s: Strip) {
         (self.wow, self.rng, self.age) = (s.wow, s.rng, s.age);
+        // `trigger`'s hold does this too, before any note plays; a rebuilt
+        // slot never carries the last note's wear on its own.
         self.age.hold();
     }
 
@@ -474,15 +480,27 @@ impl TapeEngine {
         }
     }
 
-    /// Every TAPE voice's bill (`COST_TAPE`) until TAPE Task 14 bills each
-    /// model and TAPE's and AGE's terms.
-    pub fn cost(_p: &TapeEngineParams, _mods: &ModState) -> Cost {
-        COST_TAPE
+    /// A TAPE voice's bill for `p` until TAPE Task 14 bills each model and
+    /// TAPE's and AGE's terms: its model's `model_cost`.
+    pub fn cost(p: &TapeEngineParams, _mods: &ModState) -> Cost {
+        Self::model_cost(p.model)
+    }
+
+    /// `COST_TAPE_WAVE` for TRANSWAVE, `COST_TAPE` for the rest.
+    pub fn model_cost(m: TapeModel) -> Cost {
+        match m {
+            TapeModel::Transwave => COST_TAPE_WAVE,
+            TapeModel::Loop
+            | TapeModel::Reverse
+            | TapeModel::PingPong
+            | TapeModel::Scrub
+            | TapeModel::Stretch => COST_TAPE,
+        }
     }
 
     /// What the sounding note costs: its note-on's model.
     pub fn playing_cost(&self) -> Option<Cost> {
-        self.active.then_some(COST_TAPE)
+        self.active.then(|| Self::model_cost(self.model))
     }
 
     /// A glide steal's ratio now, 1 at rest: for the tests.

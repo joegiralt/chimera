@@ -486,7 +486,7 @@ Host estimates, in the house manner (instructions × 1.46 × 1.1, + 12 a head fo
 | TAPE stored above 0 or routed, on any model | (the transport and its settle, once a block) | 1.2 (measured) | 1.9 | **+10** (TAPE Task 9, fix round 1) |
 | AGE stored above 0 or routed, on any model | (the loop 13: one-pole 2, hiss 6, gain 2, load, store and count 3; its block 2.8) | 15.9 (measured) | 25.5 | **+30** (TAPE Task 9; was +20) |
 
-`TapeEngine::cost(&TapeEngineParams, &ModState)` returns the model's figure plus TAPE's and AGE's, each when it runs (`tape_runs`, `age_runs`), and `playing_cost` returns the latched model's, as MODAL's does. TRANSWAVE's level-change term is TAPE's `glide_cost`, billed exactly where MODAL's `PITCH` is.
+`TapeEngine::cost(&TapeEngineParams, &ModState)` returns the model's figure plus TAPE's and AGE's, each when it runs (`tape_runs`, `age_runs`), and `playing_cost` returns the latched model's, as MODAL's does. Until Task 14 splits the terms (TAPE Task 12 and its review), `cost` bills every model 530 (`COST_TAPE`: PING-PONG's 490 + TAPE's 10 + AGE's 30) but TRANSWAVE, which bills a flat 810 (`COST_TAPE_WAVE`: a level change's 770 + 40), since a glide steal, a deep pitch route or a re-snap can put a whole block in a level change. TRANSWAVE's level-change term is TAPE's `glide_cost`, billed exactly where MODAL's `PITCH` is.
 
 **The voice, and what it is admitted.** The voice is the engine + 30 (chain) + 47 (`ModRouting::BASE`), at LP24 with no DRIVE or FOLD:
 

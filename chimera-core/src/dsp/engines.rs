@@ -398,8 +398,7 @@ impl EngineSlot {
         match self {
             Self::Algo(_) => Cost::ZERO,
             Self::Modal(_) => ModalEngine::cost(&p.modal),
-            // Every model alike until TAPE Task 14.
-            Self::Tape(_) => crate::dsp::tape_engine::COST_TAPE,
+            Self::Tape(_) => TapeEngine::model_cost(p.tape.model),
         }
     }
 

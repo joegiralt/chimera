@@ -10,13 +10,14 @@ use core::mem::size_of;
 use chimera_core::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
 use chimera_core::dsp::modal::{ModalEngine, SymPool};
 use chimera_core::dsp::tape_engine::{
-    COST_TAPE, StretchType, TapeEngine, TapeEngineParams, TapeModel,
+    COST_TAPE, COST_TAPE_WAVE, StretchType, TapeEngine, TapeEngineParams, TapeModel,
 };
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{MAX_VOICES, VOICE_CHAIN_BYTES, VOICE_RAM_BUDGET};
 use chimera_core::modulation::{ModSource, ModState, VCA};
 use chimera_core::params::{EngineType, ParamSnapshot, Steal};
 use chimera_core::preset::Sound;
+use chimera_core::project::SourceId;
 use chimera_core::voice_alloc::VoiceIdx;
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
@@ -250,8 +251,9 @@ fn with_view(v: &mut Rig, f: impl FnOnce(&mut Voice, &mut EngineCtx<'_>)) {
 
 /// A closed gate moves the source mid-note: the engine reads nothing and
 /// the note waits; the gate opens and it plays on (`GateView::bytes`'s
-/// contract). TAPE Task 13's `sounding` mask keeps a compaction off a
-/// sounding source, so the wait is a note-on's, never a held note's.
+/// contract). TAPE Task 13's `sounding` mask keeps a compaction off every
+/// source a voice reads, so in play neither this wait nor a note-on on a
+/// moving source (which `start` drops) is reached.
 #[test]
 fn a_moving_source_holds_the_note() {
     let s = Sound::init(EngineType::Tape);
@@ -313,21 +315,23 @@ fn no_source_unlatches_the_last() {
     assert!(!v.is_active());
 }
 
-/// Until TAPE Task 14 bills each model, every TAPE voice bills
-/// `COST_TAPE`, 530: PING-PONG's 490, the costliest model, with TAPE's 10
-/// and AGE's 30. A sounding note is billed what it plays.
+/// Until TAPE Task 14 bills each model, a TAPE voice bills `COST_TAPE`,
+/// 530 (PING-PONG's 490 with TAPE's 10 and AGE's 30), and TRANSWAVE
+/// `COST_TAPE_WAVE`, 810 (a level change's 770 with them). A sounding note
+/// is billed what it plays.
 #[test]
-fn tape_bills_530() {
-    assert_eq!(COST_TAPE.0, 530);
+fn tape_bills_by_model_until_task_14() {
+    assert_eq!((COST_TAPE.0, COST_TAPE_WAVE.0), (530, 810));
     for model in TapeModel::ALL {
         let mut s = Sound::init(EngineType::Tape);
         s.params.tape.model = model;
-        assert_eq!(
-            EngineSlot::cost(&s.params, &s.mod_state),
-            COST_TAPE,
-            "{model:?}"
-        );
-        assert_eq!(TapeEngine::cost(&s.params.tape, &s.mod_state), COST_TAPE);
+        let want = if model == TapeModel::Transwave {
+            COST_TAPE_WAVE
+        } else {
+            COST_TAPE
+        };
+        assert_eq!(EngineSlot::cost(&s.params, &s.mod_state), want, "{model:?}");
+        assert_eq!(TapeEngine::cost(&s.params.tape, &s.mod_state), want);
     }
     let s = Sound::init(EngineType::Tape);
     let mut slot = EngineSlot::new(SlotKind::Tape);
@@ -342,6 +346,19 @@ fn tape_bills_530() {
     slot.note_on(c4(), Velocity::DEFAULT, &s.params, SR, Some(id), ctx);
     assert_eq!(slot.playing_cost(), Some(COST_TAPE));
     assert_eq!(slot.model_cost(&s.params), COST_TAPE);
+    // A sounding TRANSWAVE note is billed its 810 under a LOOP edit.
+    let mut wave = Sound::init(EngineType::Tape);
+    wave.params.tape.model = TapeModel::Transwave;
+    let mut src = common::tape::OneSource::new(&common::tape::saw_to_square());
+    let (id, view) = (src.id, src.view());
+    let ctx = &mut EngineCtx {
+        sym: &mut sym,
+        src: &view,
+    };
+    slot.note_on(c4(), Velocity::DEFAULT, &wave.params, SR, Some(id), ctx);
+    assert_eq!(slot.playing_cost(), Some(COST_TAPE_WAVE));
+    assert_eq!(slot.model_cost(&s.params), COST_TAPE);
+    assert_eq!(slot.model_cost(&wave.params), COST_TAPE_WAVE);
 }
 
 /// A retune (ORBIT's re-snap) and a glide steal glide a sounding TAPE
@@ -395,11 +412,37 @@ fn a_voice_strip_runs_on() {
 fn a_note_waiting_a_fade_plays_its_source() {
     let s = Sound::init(EngineType::Tape);
     let (p, m) = (&s.params, &s.mod_state);
-    let mut v = Rig::with_source(SR, &saw());
-    v.note_on(c4(), Velocity::DEFAULT, p);
-    play(&mut v, p, m, 20);
+    // The second source is silence: the queued note sounding would be the
+    // first source's.
+    let hush = held_plain(&[0.0; 4_800], 24_000);
+    let (mut src, second) = common::tape::OneSource::with(&saw(), &hush);
+    let mut sym = SymPool::boxed();
+    let mut v = Voice::new(SR);
+    let mut b = [0.0f32; BLOCK_SIZE];
+    let mut block = |v: &mut Voice, on: Option<_>| {
+        let view = src.view();
+        let ctx = &mut EngineCtx {
+            sym: &mut sym,
+            src: &view,
+        };
+        if let Some(id) = on {
+            v.note_on(c4(), Velocity::DEFAULT, p, Some(id), ctx);
+        }
+        v.render(&mut b, p, m, ctx);
+        peak(&b)
+    };
+    block(&mut v, Some(SourceId::ALL[0]));
+    let first = (0..20).map(|_| block(&mut v, None)).fold(0.0, f32::max);
+    assert!(first > 0.05);
     v.kill();
-    v.note_on(c4(), Velocity::DEFAULT, p);
-    play(&mut v, p, m, Voice::FADE as usize / BLOCK_SIZE);
-    assert!(peak(&play(&mut v, p, m, 20)) > 0.05);
+    block(&mut v, Some(second));
+    for _ in 0..Voice::FADE as usize / BLOCK_SIZE {
+        block(&mut v, None);
+    }
+    let then = (0..20).map(|_| block(&mut v, None)).fold(0.0, f32::max);
+    assert!(v.is_active(), "the queued note plays");
+    assert!(
+        then < 1e-3,
+        "on its own source, not the last note's: {then}"
+    );
 }
