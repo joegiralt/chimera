@@ -554,7 +554,7 @@ Host estimates, in the house manner (instructions × 1.46 × 1.1, + 12 a head fo
 8. **Report:** the name, rate, frames, seconds, root, period or `UNPITCHED`, the cost on the meter, any `smpl` loop as a suggested POSITION and SIZE, and a warning if it won't fit beside NEW.
 9. **Send:** `just put-tape <file>` runs `chimera-usb.py put <file> /CHIMERA/TAPES/`.
 
-A file is capped at 1 MiB, the `put` limit: 29 s at 24 kHz, 87 s at 8 kHz. RAM models use only what fits the arena. A TRON zone set is larger (12 zones × 8 s at 24 kHz is about 3.5 MB), so it needs the resumable `put` below; this core doesn't send one.
+A file is capped at 1 MiB, the `put` limit: 693 500 frames with its records' heads, so 28 s at 24 kHz, 14 s at 48 kHz, 86 s at 8 kHz (29 s at 24 kHz is 1 052 358 B, over). RAM models use only what fits the arena. A TRON zone set is larger (12 zones × 8 s at 24 kHz is about 3.5 MB), so it needs the resumable `put` below; this core doesn't send one.
 
 **What TAPE needs from the USB `put` (ADR 0092), as a dependency.** `put` as merged (#361) takes project files only. Sources come with ADR 0094, ADR 0092's extension, built as TAPE plan Task 18 (`docs/superpowers/plans/2026-10-05-tape-core.md`):
 - **A second path class:** `/CHIMERA/TAPES/XXXXXXXX.SRC`, eight hex digits, any case. `ls` takes `tapes`.
