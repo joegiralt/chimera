@@ -12,7 +12,8 @@ subprocess. It never enters the firmware build.
 | `ab REF DEVICE [k=v …]` | Renders both sides. Prints the null residual, the response error per octave, THD and the centroid. Writes `ref.wav` and `chimera.wav` (RMS-matched) and `report.json`. |
 | `mv-refs [PROG …]` | MidiVerb II references: each program (default 1–49) on the click, 16 noise bursts and the dry stimuli. |
 | `mv-fit TYPE PROG …` | A Latin-hypercube sweep of the TYPE's knobs, then a pattern search per program. Writes `fits/<type>.json`. With `--start FITS` it searches from those fits instead, in finer steps with SMEAR held. `--seeds N` sets the noise seeds per search step: 8 by default, 16 to search on what verify judges. |
-| `mv-verify TYPE` | Re-measures the fitted knobs (16 seeds). Prints residuals and PASS/FAIL per preset. Exits 1 on any FAIL. |
+| `mv-verify TYPE` | Re-measures the fitted knobs (16 seeds). Prints residuals and PASS/FAIL per preset. Exits 1 on any FAIL. With `--robust` it also nudges every fitted knob ±0.001 and names each nudge that fails. |
+| `mv-start [TYPE …]` | Each TYPE's START against its source program (ROOM #5, BLOOM #45), judged as `mv-verify` judges a fit. Exits 1 on any FAIL. |
 | `mv-ab TYPE` | Reference and TYPE at its fitted knobs on idm, snare and strings, RMS-matched. |
 | `mv-structure PROG …` | A program's injections, allpasses and taps, read from the decompiled listing. |
 
@@ -95,6 +96,11 @@ A `metrics.json` from before GRAIN lacks both, and a judged TYPE then
 fails: re-run `mv-refs` for its programs.
 
 A TYPE that doesn't fit SMEAR holds it at 0, and its fits carry it.
+
+**The fit's score** (every TYPE, ADR 0095): the weighted distance, plus 4
+for each judged metric past 0.8 of its bar, taken at the worst of the
+setting and SIZE ±0.001 (SIZE's lengths are whole samples). `--steps
+A,B,…` sets `--start`'s pattern steps.
 
 **Generic** (`generic.rs`):
 - **null residual:** dB, after the best lag (±100 ms) and gain;

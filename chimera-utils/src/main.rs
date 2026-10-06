@@ -15,6 +15,7 @@ mod reference;
 mod sig;
 mod stim;
 
+use chimera_core::dsp::reverb::ReverbType;
 use std::path::PathBuf;
 
 /// The one rate everything runs at: Chimera's.
@@ -27,6 +28,7 @@ usage: chimera-utils [flags] COMMAND …
   mv-refs [PROG …]         MidiVerb II references (default 1–49)
   mv-fit TYPE PROG …       fit TYPE's knobs to programs
   mv-verify TYPE           re-measure the fits: residuals, PASS/FAIL
+  mv-start [TYPE …]        each TYPE's START against its source program
   mv-ab TYPE               RMS-matched A/B WAVs on idm, snare, strings
   mv-structure PROG …      a program's structure from the decompiled listing
 flags:
@@ -40,7 +42,9 @@ flags:
   --fits PATH     mv-verify: fits from elsewhere (results go to OUT/fits/TYPE_verify.json)
   --seeds N       mv-fit: noise seeds per search step (default 8; verify uses 16)
   --start PATH    mv-fit: search from these fits' knobs (finer steps, SMEAR held)
+  --steps A,B,…   mv-fit --start: the pattern steps (default 0.03,0.012)
   --redo          mv-fit: refit presets already fitted, and re-sweep
+  --robust        mv-verify: also nudge every fitted knob ±0.001, each must pass
   --no-sources    mv-refs: skip the stimuli renders";
 
 pub struct Config {
@@ -52,6 +56,8 @@ pub struct Config {
     pub refs: Option<PathBuf>,
     /// Noise seeds per measurement in `mv-fit`'s pattern search.
     pub refine_seeds: usize,
+    /// `mv-fit --start`'s pattern steps, coarse to fine.
+    pub steps: Option<Vec<f64>>,
 }
 
 fn env_path(k: &str) -> Option<PathBuf> {
@@ -119,6 +125,13 @@ fn run() -> Result<bool, String> {
         refs: flag("--refs")?.map(PathBuf::from),
         refine_seeds: flag("--seeds")?
             .map_or(Ok(8), |v| v.parse().map_err(|_| "--seeds: not a number"))?,
+        steps: flag("--steps")?
+            .map(|v| {
+                v.split(',')
+                    .map(|x| x.parse().map_err(|_| "--steps: numbers, comma-separated"))
+                    .collect::<Result<Vec<f64>, _>>()
+            })
+            .transpose()?,
     };
     let fits = flag("--fits")?.map(PathBuf::from);
     let start = flag("--start")?.map(PathBuf::from);
@@ -128,7 +141,7 @@ fn run() -> Result<bool, String> {
             .map(|i| args.remove(i))
             .is_some()
     };
-    let (redo, no_sources) = (switch("--redo"), switch("--no-sources"));
+    let (redo, no_sources, robust) = (switch("--redo"), switch("--no-sources"), switch("--robust"));
     rayon::ThreadPoolBuilder::new()
         .num_threads(jobs.max(1))
         .stack_size(16 << 20)
@@ -166,7 +179,18 @@ fn run() -> Result<bool, String> {
         "mv-fit" if rest.len() >= 2 => {
             mv::fit(&cfg, ty(0)?, &nums(&rest[1..])?, redo, start.as_deref()).map(|_| true)
         }
-        "mv-verify" => mv::verify(&cfg, ty(0)?, fits.as_deref()),
+        "mv-verify" => mv::verify(&cfg, ty(0)?, fits.as_deref())
+            .and_then(|ok| Ok(ok & (!robust || mv::robust_verify(&cfg, ty(0)?, fits.as_deref())?))),
+        "mv-start" => {
+            let types = if rest.is_empty() {
+                ReverbType::ALL.to_vec()
+            } else {
+                rest.iter()
+                    .map(|s| devices::reverb_type(s))
+                    .collect::<Result<_, _>>()?
+            };
+            mv::start(&cfg, &types)
+        }
         "mv-ab" => mv::ab(&cfg, ty(0)?).map(|_| true),
         "mv-structure" => mv::structure(&cfg, &nums(rest)?).map(|_| true),
         _ => Err(USAGE.into()),

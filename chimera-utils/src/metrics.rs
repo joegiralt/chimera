@@ -394,6 +394,19 @@ pub fn residuals(m: &Metrics, r: &Metrics) -> Residuals {
 }
 
 impl Residuals {
+    /// Every residual × `f`: the bars read at 1/`f` of themselves.
+    pub fn scaled(&self, f: f64) -> Self {
+        Self {
+            band_rt60_rel: self.band_rt60_rel.map(|x| x.map(|v| v * f)),
+            predelay_ms: self.predelay_ms * f,
+            c50_db: self.c50_db * f,
+            ned_rel: self.ned_rel.map(|v| v * f),
+            centroid_rel: self.centroid_rel * f,
+            npr_db: self.npr_db.map(|d| d.map(|v| v * f)),
+            hf_db: self.hf_db.map(|d| d.map(|v| v * f)),
+        }
+    }
+
     /// GRAIN's rms and largest |Δ|, dB.
     pub fn npr_err(&self) -> Option<(f64, f64)> {
         self.npr_db.map(|d| {
@@ -463,12 +476,14 @@ pub fn verdict(r: &Residuals, judge_grain: bool) -> Verdict {
 
 /// Weighted distance in tolerance units: band RT60 first, then NED and C50,
 /// then centroid and pre-delay; with `judge_grain`, GRAIN's rms and each HF
-/// share. Each judged metric over its bar adds `OVER`: the search trades a
-/// margin away before a pass.
+/// share. Each judged metric past `MARGIN` × its bar adds `OVER`, for
+/// every TYPE (ADR 0095): the search spends a pass's margin last, and stops
+/// short of the bars rather than on them.
 pub fn distance(r: &Residuals, judge_grain: bool) -> f64 {
     const OVER: f64 = 4.0;
+    const MARGIN: f64 = 0.8;
     let u = |x: f64, t: f64| (x / t) * (x / t);
-    let v = verdict(r, judge_grain);
+    let v = verdict(&r.scaled(1.0 / MARGIN), judge_grain);
     let over = [v.band_rt60, v.predelay, v.c50, v.ned, v.centroid]
         .into_iter()
         .chain(

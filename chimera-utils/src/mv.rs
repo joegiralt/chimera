@@ -305,6 +305,49 @@ fn score(t: ReverbType, m: &Metrics, r: &Metrics) -> f64 {
     distance(&residuals(m, r), judges_grain(t))
 }
 
+/// SIZE's nudge a fit must hold through: a knob step at 3 places, which
+/// moves the whole-sample lengths.
+const NUDGE: f64 = 0.001;
+
+/// `k` with knob `d` moved by `by`, held to 0..1; `None` where it can't move.
+fn nudged(k: &Knobs, d: &str, by: f64) -> Option<Knobs> {
+    let cur = k.get(d).and_then(Value::as_f64).unwrap_or(0.0);
+    let v = (cur + by).clamp(0.0, 1.0);
+    (v != cur).then(|| {
+        let mut k = k.clone();
+        k.insert(d.to_string(), json!(v));
+        k
+    })
+}
+
+/// Each of `knobs` measured, scored by the worst of it and SIZE ±`NUDGE`
+/// (ADR 0095): a fit that holds only on one length is no fit. The metrics
+/// are the setting's own.
+fn robust(
+    cfg: &Config,
+    t: ReverbType,
+    knobs: &[Knobs],
+    r: &Metrics,
+) -> Result<Vec<(Metrics, f64)>, String> {
+    let sets: Vec<Knobs> = knobs
+        .iter()
+        .flat_map(|k| {
+            let at = |by| nudged(k, "size", by).unwrap_or_else(|| k.clone());
+            [k.clone(), at(NUDGE), at(-NUDGE)]
+        })
+        .collect();
+    let mut ms = measure(t, &sets, cfg.refine_seeds)?.into_iter();
+    let mut out = Vec::with_capacity(knobs.len());
+    while let (Some(m), Some(up), Some(down)) = (ms.next(), ms.next(), ms.next()) {
+        let sc = [&m, &up, &down]
+            .map(|x| score(t, x, r))
+            .into_iter()
+            .fold(f64::NEG_INFINITY, f64::max);
+        out.push((m, sc));
+    }
+    Ok(out)
+}
+
 /// A shrinking pattern search from `start` (a knob it lacks starts at the
 /// TYPE's default): each knob ±step, the best move taken until none helps,
 /// then the next step. Knobs in `fixed` stay put.
@@ -324,8 +367,7 @@ fn refine(
             best_k.insert(n.to_string(), json!(defaults[i]));
         }
     }
-    let mut best_m = measure(t, std::slice::from_ref(&best_k), cfg.refine_seeds)?.remove(0);
-    let mut best = score(t, &best_m, r);
+    let (mut best_m, mut best) = robust(cfg, t, std::slice::from_ref(&best_k), r)?.remove(0);
     for &st in steps {
         let mut improved = true;
         while improved {
@@ -342,9 +384,8 @@ fn refine(
                     }
                 }
             }
-            let ms = measure(t, &cands, cfg.refine_seeds)?;
-            for (k, m) in cands.into_iter().zip(ms) {
-                let sc = score(t, &m, r);
+            let ms = robust(cfg, t, &cands, r)?;
+            for (k, (m, sc)) in cands.into_iter().zip(ms) {
                 if sc < best - 1e-9 {
                     (best, best_k, best_m, improved) = (sc, k, m, true);
                 }
@@ -463,7 +504,8 @@ pub fn fit(
                     .and_then(|f| f["knobs"].as_object())
                     .cloned()
                     .ok_or(format!("start: no fit {p}"))?;
-                vec![refine(cfg, t, &k, &r, &[0.03, 0.012], &["smear"])?]
+                let steps = cfg.steps.as_deref().unwrap_or(&[0.03, 0.012]);
+                vec![refine(cfg, t, &k, &r, steps, &["smear"])?]
             }
             None => {
                 let mut ranked: Vec<&(Knobs, Metrics)> = sweep.iter().collect();
@@ -576,6 +618,107 @@ pub fn verify(cfg: &Config, t: ReverbType, fits: Option<&Path>) -> Result<bool, 
         f.insert("distance".into(), json!(distance(&res, judges_grain(t))));
     }
     write_json(&dst, &Value::Object(fits))?;
+    Ok(all)
+}
+
+/// Each fit nudged ±`NUDGE` on every knob it fits (16 seeds): the fit
+/// holds where every nudge passes too. Prints each preset's failing
+/// nudges; true when none fails.
+pub fn robust_verify(cfg: &Config, t: ReverbType, fits: Option<&Path>) -> Result<bool, String> {
+    let src = fits.map_or(fits_path(cfg, t), Path::to_path_buf);
+    let fits = match read_json(&src)? {
+        Value::Object(m) => m,
+        _ => return Err("fits: not an object".into()),
+    };
+    let refs = load_refs(cfg)?;
+    let mut keys: Vec<&String> = fits.keys().collect();
+    keys.sort_by_key(|k| k.parse::<u32>().unwrap_or(0));
+    let mut all = true;
+    for p in keys {
+        let k = fits[p]["knobs"]
+            .as_object()
+            .cloned()
+            .ok_or("fit: no knobs")?;
+        let r = Metrics::from_json(refs.get(p.as_str()).ok_or("no reference")?)?;
+        let moves: Vec<(String, Knobs)> = dims(t)
+            .iter()
+            .flat_map(|d| [NUDGE, -NUDGE].map(|by| (d, by)))
+            .filter_map(|(d, by)| nudged(&k, d, by).map(|n| (format!("{d}{by:+}"), n)))
+            .collect();
+        let sets: Vec<Knobs> = moves.iter().map(|m| m.1.clone()).collect();
+        let ms = measure(t, &sets, NOISE_SEEDS)?;
+        let fails: Vec<&str> = moves
+            .iter()
+            .zip(&ms)
+            .filter(|(_, m)| !verdict(&residuals(m, &r), judges_grain(t)).all())
+            .map(|(mv, _)| mv.0.as_str())
+            .collect();
+        all &= fails.is_empty();
+        println!(
+            "{p:>2} {:24} ±{NUDGE} on {} knobs: {}",
+            fits[p]["preset"].as_str().unwrap_or(""),
+            dims(t).len(),
+            if fails.is_empty() {
+                "every nudge PASS".to_string()
+            } else {
+                format!("FAIL at {}", fails.join(" "))
+            }
+        );
+    }
+    Ok(all)
+}
+
+// ── mv-start ──
+
+/// The program each TYPE's START is (ADR 0095); the rest have none.
+fn start_program(t: ReverbType) -> Option<u32> {
+    match t {
+        ReverbType::Room => Some(5),
+        ReverbType::Bloom => Some(45),
+        _ => None,
+    }
+}
+
+/// Each TYPE's START against its source program, as `mv-verify` judges a
+/// fit. True when every START with a program passes.
+pub fn start(cfg: &Config, types: &[ReverbType]) -> Result<bool, String> {
+    let refs = load_refs(cfg)?;
+    let mut all = true;
+    for &t in types {
+        let Some(p) = start_program(t) else {
+            println!("{:8} START: no source program", t_name(t));
+            continue;
+        };
+        let rv = refs
+            .get(&p.to_string())
+            .ok_or(format!("no reference for program {p}"))?;
+        let m = measure(t, &[Knobs::new()], NOISE_SEEDS)?.remove(0);
+        let res = residuals(&m, &Metrics::from_json(rv)?);
+        let v = verdict(&res, judges_grain(t));
+        all &= v.all();
+        let grain = match (res.npr_err(), res.hf_err()) {
+            (Some((rms, max)), Some(hf)) => format!(
+                " grain {rms:.1}/{max:.1}dB{} hf {hf:.1}dB{}",
+                mark(v.grain),
+                mark(v.hf)
+            ),
+            _ => String::new(),
+        };
+        let bands: Vec<String> = BANDS
+            .iter()
+            .zip(res.band_rt60_rel)
+            .map(|(b, x)| format!("{b}:{}", pct(x.unwrap_or(0.0))))
+            .collect();
+        println!(
+            "{:8} START vs #{p} {}: {} c50 {:+.1}dB cen {}{grain} {}",
+            t_name(t),
+            rv["name"].as_str().unwrap_or(""),
+            bands.join(" "),
+            res.c50_db,
+            pct(res.centroid_rel),
+            if v.all() { "PASS" } else { "FAIL" }
+        );
+    }
     Ok(all)
 }
 
