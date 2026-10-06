@@ -30,7 +30,44 @@ fn cx(engine: EngineType) -> NavCtx {
         engines: [engine; 6],
         dyn_rows: 3,
         orbit: OrbitCx::NONE,
-        rev: chimera_core::dsp::reverb::ReverbType::Quad,
+        // HALL: every FX sub-page shows, REV › MORE 2 (DENSITY) too.
+        rev: chimera_core::dsp::reverb::ReverbType::Hall,
+    }
+}
+
+/// Under a TYPE with no cell on REV › MORE 2, EDIT from REV › MORE goes
+/// round to REV.
+#[test]
+fn edit_skips_an_empty_more_2() {
+    use chimera_core::dsp::reverb::ReverbType;
+    use chimera_core::ui::block_registry::{EFX, EFX_MORE, EFX_MORE2};
+    for (rev, want) in [(ReverbType::Quad, EFX.id), (ReverbType::Hall, EFX_MORE2.id)] {
+        let cx = NavCtx {
+            rev,
+            ..cx(EngineType::Algo)
+        };
+        let mut r = Recall::new();
+        let mut l = Location::mixer(P[1], MixPage::Sends);
+        let def = |l: Location| {
+            MIXER_CHANNEL_CHAIN
+                .def_at(l.page(&cx).unwrap().1)
+                .unwrap()
+                .id
+        };
+        while def(l) != EFX.id {
+            let Step::Go(to) = l.step(NavKey::Plus, &cx, &mut r) else {
+                panic!("no REV")
+            };
+            l = to;
+        }
+        let Step::Go(more) = l.step(NavKey::Edit, &cx, &mut r) else {
+            panic!()
+        };
+        assert_eq!(def(more), EFX_MORE.id);
+        let Step::Go(next) = more.step(NavKey::Edit, &cx, &mut r) else {
+            panic!()
+        };
+        assert_eq!(def(next), want, "{rev:?}");
     }
 }
 
