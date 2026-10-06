@@ -66,15 +66,15 @@ static FILTER_PROBES: &[FilterProbe] = &[
     filter::probe::clean_probe::<7, true>,
 ];
 
-/// The 2040's probes, REV2 and EXP, steady and moving.
+/// The 2040's probes, REV2 (0) and EXP (1), steady and moving.
 type K2040Probe = fn(&mut filter::K2040, &mut [f32; BLOCK_SIZE], &FilterParams);
 
 #[used]
 static K2040_PROBES: &[K2040Probe] = &[
-    filter::probe::k2040_probe::<false, false>,
-    filter::probe::k2040_probe::<false, true>,
-    filter::probe::k2040_probe::<true, false>,
-    filter::probe::k2040_probe::<true, true>,
+    filter::probe::k2040_probe::<0, false>,
+    filter::probe::k2040_probe::<0, true>,
+    filter::probe::k2040_probe::<1, false>,
+    filter::probe::k2040_probe::<1, true>,
 ];
 
 /// DIRTY's probes, one a mode: LP2, BP2, HP2 and NOTCH1 (`DIRTY_MODES`).

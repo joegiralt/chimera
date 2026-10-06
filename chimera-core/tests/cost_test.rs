@@ -95,12 +95,12 @@ fn each_svf_mode_bills_its_delta_over_lp24() {
 }
 
 /// The 2040 bills by its VOICE alone (spec § Cost), as measured over
-/// `OLD_LP24` (95): REV2 125 cycles, EXP 135; CLEAN ignores VOICE.
+/// `OLD_LP24` (95): REV2 110 cycles, EXP 135; CLEAN ignores VOICE.
 #[test]
 fn the_2040_bills_its_voice() {
     let mut f = chimera_core::params::FilterParams::default();
     f.set_kind(FilterKind::K2040);
-    for (v, want) in [(K2040Voice::Rev2, 30), (K2040Voice::Exp, 40)] {
+    for (v, want) in [(K2040Voice::Rev2, 15), (K2040Voice::Exp, 40)] {
         f.voice = v;
         assert_eq!(f.filter_cost(), Cost(want), "{v:?}");
     }
@@ -112,7 +112,7 @@ fn the_2040_bills_its_voice() {
     p.filter.set_kind(FilterKind::K2040);
     assert_eq!(Voice::cost(&p, &mods).0, clean.0 + 40);
     p.filter.voice = K2040Voice::Rev2;
-    assert_eq!(Voice::cost(&p, &mods).0, clean.0 + 30);
+    assert_eq!(Voice::cost(&p, &mods).0, clean.0 + 15);
 }
 
 /// DIRTY bills 0 over `OLD_LP24` in every mode, VOICE inert (spec § Cost:

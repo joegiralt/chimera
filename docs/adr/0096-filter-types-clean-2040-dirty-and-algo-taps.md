@@ -60,15 +60,15 @@ The owner also wants ALGO's OP 5 and OP 6 as audio-rate modulation sources. The 
 - **2040:** four TPT one-poles.
   - Each stage is `t = g·sat((1 − G)(x − s))`, the OTA on the true error, with a divide-free cubic `sat`.
   - Each stage output is clamped to ±R, the chip's ±1 V swing (data sheet design hint 1), on both voices. `R = 2·ALPHA_REV2`, because the Prophet-5 shows 500 mV per pole at maximum saw. It costs 8 instructions, and it makes the output bound exact: `R/α_v · OUT_2040`.
-  - The global loop is solved linearly in one step, then limited by a 3080-style feedback limit `L·sat(·/L)` with `L = ¼`. Without the stage clip it fixed a 330-cent flat self-oscillation; with the clip in, it sets EXP's squelch, the self-oscillation level and the full-scale bass loss.
-  - **Input scale.** α ≈ 0.1 is tuned together with `L`. α = ½ would crush resonance at full scale, with self-oscillation around −24 dBFS against CLEAN's level. So LEVEL is the 2040's drive.
+  - The global loop is solved linearly in one step, then fed back through the voice's own resonance element (`ResElement`, carried by `K2040Voice`; owner's ruling, 2026-10-06). REV2's is the Prophet's SSM 2020, linear: no limit, bounded by the stage clip, and trimmed −13.3 cents at the cutoff as the Prophet is trimmed at full resonance. EXP's is the Kobol's CA3080, the limit `L·sat(·/L)` with `L = ¼`: it sets EXP's squelch, its self-oscillation level and pitch, and its full-scale bass loss.
+  - **Input scale.** α ≈ 0.1 was tuned together with `L`. α = ½ would crush resonance at full scale, with self-oscillation around −24 dBFS against CLEAN's level. So LEVEL is the 2040's drive.
   - `k = 4·RES/0.95`.
   - The bass loss is authentic: DC gain `1/(1 + k)`, −14 dB at onset, uncompensated.
-  - **Two references, one VOICE switch.** It covers the Prophet-5 Rev 1/2 and the RSF Kobol Expander. The switch is FLT › MOD's first cell (Filter id 13, `K2040Voice`), and its values read **REV2** and **EXP**: the panel avoids both names, out of trademark caution. It changes only constants:
+  - **Two references, one VOICE switch.** It covers the Prophet-5 Rev 1/2 and the RSF Kobol Expander. The switch is FLT › MOD's first cell (Filter id 13, `K2040Voice`), and its values read **REV2** and **EXP**: the panel avoids both names, out of trademark caution. It changes the voice's constants and its resonance element:
     - **Drive.** `α_EXP = 2·ALPHA_REV2`, +6.0 dB. The stage-1 gain is 10 K/200 K on the Prophet (Voice schematic SD411, R480/R476) and 10 K/100 K on the Kobol (RSF schematic p. 8, R25/R24).
     - **The output VCA, EXP only.** `sat(β·y₄)/β` with `β = 0.62/R`: the Kobol's CI3, a CA3080 "VCA linéaire" fed through 10 K/220 Ω, about 1–2 % THD at full swing. That is the circuit candidate for its reputed "natural saturation". It costs 6 instructions.
-    - **Resonance.** `k`, `L` and the onset are shared. The Kobol's resonance is a CA3080 (CI5, under T3 a 2N3906), whose compression the limiter models; EXP reaches it 6 dB sooner, so under drive its resonance ducks and blooms back. The Prophet's resonance is an SSM 2020 in linear mode ("RES FDBK VCA", ½ U490), so on REV2 the limiter is a modelling device, kept so both voices pass one 1 V/oct test.
-    - **Level.** LEVEL ½ is unity on both voices, so EXP self-oscillates about 6 dB below REV2. REV2 shares the self-oscillation band with CLEAN and DIRTY; EXP has its own band.
+    - **Resonance.** `k` and the onset are shared; the element is not. The Kobol's resonance is a CA3080 (CI5, under T3 a 2N3906), modelled by the limit `L`: under drive its resonance ducks and blooms back. The Prophet's is an SSM 2020 in linear mode ("RES FDBK VCA", ½ U490): no limit, so it holds its resonance under drive and oscillates at the ±1 V clip. A shared `L` (revision 4) is overturned.
+    - **Level.** LEVEL ½ is unity on both voices. REV2 self-oscillates at the clip, about −5.4 dBFS, in the band with CLEAN and DIRTY; EXP at its 3080's level, about −17 dBFS, in its own band.
     - A VOICE change rescales the states by `α_new/α_old` and crossfades like a MODE change.
   - **Correction.** The data sheet's Fig. 9 feeds resonance through "½ SSM 2020", not a 3080, and the Prophet-5 follows it. Only the Kobol uses a 3080. The RSF schematic (p. 11: CI3 "3080", CI4 "SSM 2040", CI5 "CA 3080") is reference only and is not in the repo.
   - **A cross-check.** René Schmitz's discrete RS2040, which Behringer's 2023 clone follows, is the check for the per-stage nonlinearity.
@@ -95,7 +95,7 @@ The owner also wants ALGO's OP 5 and OP 6 as audio-rate modulation sources. The 
   - Static probe counts (thumbv7em, cortex-m7, opt-level 2) × 1.46 × 1.1, + 12 per `vdiv`.
   - Today's LP24 is counted first. Steady paths are billed `max(0, that − old LP24)`, and each probe asserts 0 `vdiv` in its steady loop.
   - The move, LEVEL and per-tap-destination terms are billed only while they apply; an unused tap costs 0.
-  - Budgets: CLEAN LP4 ≤ 56, NOTCH2 ≤ 34, 2040 REV2 ≤ 78 and EXP ≤ 84 (each including the 8-instruction stage clip), DIRTY ≤ 30 instructions a sample. The 2040's moving path is +12 instructions and +45 cycles over its steady one (2 `vdiv`): it divides `G` and `D` and forms `G⁴`, `k·D` and `g·4/27` every sample; fusing the two divides into one saves about 4 cycles for +5 instructions, not worth it. The 2040 bills its measured steady cost, 30 on REV2 and 40 on EXP, and +45 while moving.
+  - Budgets: CLEAN LP4 ≤ 56, NOTCH2 ≤ 34, 2040 REV2 ≤ 78 (65 measured without the limiter) and EXP ≤ 84 (each including the 8-instruction stage clip), DIRTY ≤ 30 instructions a sample. The 2040's moving path is +12 instructions and +45 cycles over its steady one (2 `vdiv`): it divides `G` and `D` and forms `G⁴`, `k·D` and `g·4/27` every sample; fusing the two divides into one saves about 4 cycles for +5 instructions, not worth it. The 2040 bills its measured steady cost, 15 on REV2 and 40 on EXP, and +45 while moving (REV2 measures +50).
 - **Order.** Implementation starts after `modal-stagger` merges. The filter's in-loop saturate stays divide-free whatever that branch lands.
 
 ## Alternatives considered
@@ -103,7 +103,7 @@ The owner also wants ALGO's OP 5 and OP 6 as audio-rate modulation sources. The 
 - **Newton for the 2040's loop:** about +100 instructions and a `vdiv` per iteration.
 - **Compensating the 2040's bass loss:** the owner chose the authentic loss.
 - **One 2040 voicing between the two references:** the drive, the resonance element and the output stage really differ, and the owner wants both.
-- **A separate resonance law or limiter per voice:** no evidence for a different law, and a shared `L` keeps one pitch test.
+- **A shared limiter `L` on both voices** (revision 4): it kept one pitch test, but made REV2's linear 2020 a 3080 and left the voices alike at high RES. The owner ruled each voice its own element.
 - **A self-oscillating NOTCH2:** the Cascadia's PHZR doesn't.
 - **Raising `MAX_MOD_SOURCES` to 16 for the taps:** about 7 KB of AXI for two rows with four live cells.
 - **Taps to operator pitch or level:** that is double FM, which the owner ruled out.

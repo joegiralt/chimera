@@ -128,19 +128,23 @@ const K2040_FULL_DB: [f32; 2] = [1.0, 1.0];
 /// The ±1 V clip holds a full-scale sine at the peak: −9.11 dB on REV2 and
 /// −14.66 on EXP at RES 0.8, the worst (2026-10-06), plus 0.5.
 const K2040_PEAK_DB: [f32; 2] = [9.6, 15.2];
+/// REV2's bass at RES 1 against `1/(1 + k)`, dB: −1.2 small, −0.6 full.
+const REV2_RES1_DB: f32 = 1.5;
 
 #[test]
 fn k2040_bass_loss_is_authentic_at_small_and_full_scale() {
     for v in VOICES {
         for amp in [0.01f32, 1.0] {
-            let tol = if amp == 1.0 {
-                K2040_FULL_DB[v as usize]
-            } else {
-                1.0
-            };
             let mut last = f32::INFINITY;
             for r in 0..=10 {
                 let res = r as f32 / 10.0;
+                let tol = match (v, r, amp == 1.0) {
+                    // Past onset REV2 rings at the clip (its 2020 is
+                    // linear), which ducks the bass: −1.2 dB measured.
+                    (K2040Voice::Rev2, 10, _) => REV2_RES1_DB,
+                    (_, _, true) => K2040_FULL_DB[v as usize],
+                    _ => 1.0,
+                };
                 let got = gain_db(&params(v, 2000.0, res, 0.5), amp, 100.0);
                 let want = -20.0 * (1.0 + k2040_k(res)).log10();
                 println!("{v:?} amp {amp} RES {res}: {got:.2} dB (want {want:.2})");
@@ -152,6 +156,11 @@ fn k2040_bass_loss_is_authentic_at_small_and_full_scale() {
                 last = got;
             }
             let at = gain_db(&params(v, 2000.0, 0.95, 0.5), amp, 100.0);
+            let tol = if amp == 1.0 {
+                K2040_FULL_DB[v as usize]
+            } else {
+                1.0
+            };
             assert!((at + 14.0).abs() <= tol, "{v:?} amp {amp} RES 0.95: {at}");
         }
         // The resonant peak, at the prototype's peak frequency.
@@ -204,11 +213,14 @@ fn cents(f: f64, want: f64) -> f64 {
     1200.0 * (f / want).log2()
 }
 
-/// REV2's self-oscillation, dBFS RMS (−11.0 to −11.3 measured, ± 1 dB):
-/// the limiter's level. EXP follows through its −6.0 ± 0.5 dB.
-const REV2_OSC_DB: f32 = -11.2;
-/// Absolute pitch, cents: −1.2 to −1.4 measured (the spec's "within about
-/// −3 to −5"). Without the limiter it reads +11 to +14.
+/// REV2's self-oscillation, dBFS RMS (−5.8 to −5.9 measured, −4.9 at 8
+/// kHz; ± 1 dB): the ±1 V clip's level, its 2020 linear.
+const REV2_OSC_DB: f32 = -5.4;
+/// EXP's (−17.0 to −17.3 measured; ± 0.5 dB): its 3080's level. Without
+/// the limiter it rings 11 dB louder.
+const EXP_OSC_DB: f32 = -17.1;
+/// Absolute pitch, cents: REV2 −2.5 to +0.3 measured, trimmed; EXP −1.2
+/// to −1.4. EXP without its limiter reads +11 to +14.
 const PITCH_CENTS: f64 = 5.0;
 
 #[test]
@@ -217,7 +229,6 @@ fn k2040_self_oscillates_in_band_and_on_pitch() {
         .map(|o| 100.0 * (1 << o) as f32)
         .chain([8000.0])
         .collect();
-    let mut levels = [Vec::new(), Vec::new()];
     for v in VOICES {
         let (lo, hi) = match v {
             K2040Voice::Rev2 => OSC_BAND_DB,
@@ -233,14 +244,15 @@ fn k2040_self_oscillates_in_band_and_on_pitch() {
             println!("{v:?} RES 1 {fc} Hz: {level:.2} dBFS ±{wobble:.2}");
             assert!(wobble <= 1.0, "{v:?} {fc} Hz: ±{wobble:.2} dB");
             assert!(level > lo && level < hi, "{v:?} {fc} Hz: {level:.2} dBFS");
-            if v == K2040Voice::Rev2 {
-                // Pinned, so the limiter shows: without it REV2 rings at −6.
-                assert!(
-                    (level - REV2_OSC_DB).abs() <= 1.0,
-                    "REV2 {fc} Hz: {level:.2} dBFS"
-                );
-            }
-            levels[v as usize].push(level);
+            // Pinned, so each voice's element shows.
+            let (want, tol) = match v {
+                K2040Voice::Rev2 => (REV2_OSC_DB, 1.0),
+                K2040Voice::Exp => (EXP_OSC_DB, 0.5),
+            };
+            assert!(
+                (level - want).abs() <= tol,
+                "{v:?} {fc} Hz: {level:.2} dBFS"
+            );
         }
         // FM2 (NOTE → CUTOFF) at +100 %: C2..C6 from FREQ at C4, two bases.
         for base in [261.626f32, 1250.0] {
@@ -285,11 +297,6 @@ fn k2040_self_oscillates_in_band_and_on_pitch() {
             assert!(above > -20.0, "{v:?} {fc} Hz RES 0.96: {above:.1} dB");
         }
     }
-    // EXP's self-oscillation sits its 6 dB of drive under REV2's.
-    for (i, fc) in freqs.iter().enumerate() {
-        let d = levels[1][i] - levels[0][i];
-        assert!((d + 6.0).abs() <= 0.5, "{fc} Hz: EXP − REV2 {d:.2} dB");
-    }
 }
 
 #[test]
@@ -321,7 +328,7 @@ fn jump_error(v: K2040Voice, blocks: &[(f32, f32)]) -> f64 {
         f.process(&mut buf, &p, SR, &FilterMods::NONE);
         y.extend_from_slice(&buf);
         let (from, from_res) = blocks[b.saturating_sub(1)];
-        g.extend(a_track(g_of(from, FS), g_of(fc, FS)));
+        g.extend(a_track(g_of(from * v.trim(), FS), g_of(fc * v.trim(), FS)));
         k.extend(a_track(k2040_k(from_res), k2040_k(res)));
         a.extend(a_track(v.alpha(), v.alpha()));
     }
@@ -499,8 +506,9 @@ fn compression(v: K2040Voice) -> f32 {
     at(1.0) - at(0.01)
 }
 
-/// Each voice's compression, measured 2026-10-06 (± 0.3 dB).
-const COMPRESSION_DB: [f32; 2] = [-1.36, -6.42];
+/// Each voice's compression, measured 2026-10-06 (± 0.3 dB): REV2's linear
+/// 2020 stays under the clip here, EXP's 3080 squelches.
+const COMPRESSION_DB: [f32; 2] = [-0.02, -6.42];
 
 #[test]
 fn k2040_exp_squelches_under_drive() {
@@ -542,7 +550,7 @@ fn k2040_post_is_exp_only() {
                 f.process(&mut buf, &p, SR, &FilterMods::NONE);
                 y.extend(buf.map(f64::from));
                 let (from, from_res) = blocks[b.saturating_sub(1)];
-                g.extend(a_track(g_of(from, FS), g_of(fc, FS)));
+                g.extend(a_track(g_of(from * v.trim(), FS), g_of(fc * v.trim(), FS)));
                 k.extend(a_track(k2040_k(from_res), k2040_k(res)));
                 let ga = level_gain(0.8) * v.alpha();
                 a.extend(a_track(ga, ga));
@@ -579,8 +587,8 @@ fn k2040_voice_flip_keeps_level_and_codes() {
         (K2040Voice::Exp, K2040Voice::Rev2),
     ] {
         let x = |i: usize| 0.1 * (2.0 * ((i as f32 * 110.0 / FS) % 1.0) - 1.0);
-        let run = |flip: bool| {
-            let mut p = params(from, 1000.0, 0.0, 0.5);
+        let run = |flip: bool, start: K2040Voice| {
+            let mut p = params(start, 1000.0, 0.0, 0.5);
             let mut f = Filter::new();
             let mut out = Vec::new();
             for b in 0..40 {
@@ -593,7 +601,7 @@ fn k2040_voice_flip_keeps_level_and_codes() {
             }
             out
         };
-        let (flipped, stayed) = (run(true), run(false));
+        let (flipped, stayed, own) = (run(true, from), run(false, from), run(false, to));
         let at = 20 * BLOCK_SIZE;
         assert!(common::clicks(&flipped).is_empty(), "{from:?} → {to:?}");
         // The next 64 samples' level against the note's own there (a 64-sample
@@ -607,11 +615,12 @@ fn k2040_voice_flip_keeps_level_and_codes() {
             (after - before).abs() <= 0.5,
             "{from:?} → {to:?}: {before} → {after}"
         );
-        // Linear content is exact: the flip lands on the unflipped output.
-        let peak = stayed.iter().fold(0.0f32, |m, y| m.max(y.abs()));
+        // Linear content is exact: the flip lands on the new voice's own
+        // output (REV2's trim moves its corner 13 cents).
+        let peak = own.iter().fold(0.0f32, |m, y| m.max(y.abs()));
         let err = flipped[at..]
             .iter()
-            .zip(&stayed[at..])
+            .zip(&own[at..])
             .fold(0.0f32, |m, (a, b)| m.max((a - b).abs()));
         assert!(err <= 0.01 * peak, "{from:?} → {to:?}: {err} of {peak}");
     }

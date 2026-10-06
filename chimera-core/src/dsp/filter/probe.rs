@@ -29,19 +29,19 @@ pub fn clean_probe<const M: u8, const MOVING: bool>(
 }
 
 /// The 2040's two loops, `process`'s ramps with the loop forced: the steady
-/// one, or the moving one if `MOVING`; REV2's output, or EXP's 3080 if
-/// `EXP` (`p.voice` must agree).
+/// one, or the moving one if `MOVING`; VOICE `V`, its discriminant
+/// (`p.voice` must agree).
 #[inline(never)]
-pub fn k2040_probe<const EXP: bool, const MOVING: bool>(
+pub fn k2040_probe<const V: u8, const MOVING: bool>(
     f: &mut K2040,
     buf: &mut [f32; BLOCK_SIZE],
     p: &FilterParams,
 ) {
     let r = f.ramps(p, SAMPLE_RATE, &FilterMods::NONE);
     let (_, sum) = if MOVING {
-        f.moving::<EXP>(buf, r, |_, _| {})
+        f.moving::<V>(buf, r, |_, _| {})
     } else {
-        f.steady::<EXP>(buf, r, |_, _| {})
+        f.steady::<V>(buf, r, |_, _| {})
     };
     f.settle(sum);
 }
@@ -108,11 +108,11 @@ mod tests {
     /// The 2040's probe is `process` on each kind of block, both voices.
     #[test]
     fn k2040_probe_is_process() {
-        k2040_is_process::<false>(K2040Voice::Rev2);
-        k2040_is_process::<true>(K2040Voice::Exp);
+        k2040_is_process::<{ K2040Voice::Rev2 as u8 }>(K2040Voice::Rev2);
+        k2040_is_process::<{ K2040Voice::Exp as u8 }>(K2040Voice::Exp);
     }
 
-    fn k2040_is_process<const EXP: bool>(v: K2040Voice) {
+    fn k2040_is_process<const V: u8>(v: K2040Voice) {
         let mut p = FilterParams::default();
         p.set_kind(FilterKind::K2040);
         (p.cutoff, p.resonance, p.level, p.voice) = (800.0, 0.7, 0.75, v);
@@ -134,9 +134,9 @@ mod tests {
             let mut got = want;
             a.process(&mut want, &p, SAMPLE_RATE, &FilterMods::NONE);
             if moving {
-                k2040_probe::<EXP, true>(&mut b, &mut got, &p);
+                k2040_probe::<V, true>(&mut b, &mut got, &p);
             } else {
-                k2040_probe::<EXP, false>(&mut b, &mut got, &p);
+                k2040_probe::<V, false>(&mut b, &mut got, &p);
             }
             assert_eq!(got, want, "{v:?} block {block}");
         }

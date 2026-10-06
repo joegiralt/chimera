@@ -1,10 +1,11 @@
 //! 2040: the SSM2040's four OTA stages (spec § 3, ADR 0096). Each stage is
 //! a TPT one-pole whose OTA bends the slew on the stage's true error, its
 //! output clamped to the chip's ±1 V swing. The global loop is solved
-//! linearly in one step, then limited like a 3080. VOICE picks the drive
-//! into the chip and, on EXP, a 3080 output stage: REV2 is the Prophet-5
-//! Rev 1/2, EXP the RSF Kobol Expander. Same parameters; only constants
-//! change. No compensation: the bass loss is the circuits'.
+//! linearly in one step, then fed back through the voice's own resonance
+//! element: REV2 (the Prophet-5 Rev 1/2) a linear SSM 2020, EXP (the RSF
+//! Kobol Expander) a 3080 limiter. VOICE also picks the drive into the chip
+//! and, on EXP, a 3080 output stage. Same parameters. No compensation: the
+//! bass loss is the circuits'.
 
 use super::coef::g_of;
 use super::level::{FilterMods, LevelRamp, clip_amount, level_gain};
@@ -33,13 +34,15 @@ pub const R_2040: f32 = 2.0 * ALPHA_REV2;
 /// that: `sat_2040(BETA_EXP·y₄)` reads 0.62 at the swing.
 pub const BETA_EXP: f32 = 0.62 / R_2040;
 pub const INV_BETA_EXP: f32 = R_2040 / 0.62;
-/// The feedback limit, a 3080 in kind (the Kobol's CI5, spec B3). With the
-/// ±1 V clip in, the clip bounds the stages before the OTAs saturate, so L
-/// no longer sets the pitch (L = ∞ sits at +14 cents). It sets EXP's
-/// squelch (−6.4 dB at RES 0.8, −1.0 without it), the self-oscillation
-/// level (−11 dBFS on REV2, −6 without it) and the full-scale bass loss.
-/// Shared by both voices: constants only.
+/// EXP's feedback limit, its 3080 (the Kobol's CI5, spec B3). It sets
+/// EXP's squelch, its self-oscillation level and pitch (L = ∞ sits at +14
+/// cents) and its full-scale bass loss. REV2 has none: its SSM 2020 is
+/// linear, and the ±1 V clip alone bounds its loop.
 pub const L_2040: f32 = 0.25;
+/// REV2's cutoff trim, −13.3 cents, as the Prophet's is trimmed at full
+/// resonance (R407/R406): with a linear loop the ±1 V clip rings it +13.6
+/// sharp. A ratio on FREQ, once a block.
+pub const TRIM_REV2: f32 = 0.992348;
 /// The output level: LEVEL ½ at RES 0 is 0 dB ± 0.5 on both voices.
 pub const OUT_2040: f32 = 1.0;
 /// The LED's knee, a fraction of the swing: stage 1 asked for more than
@@ -59,9 +62,18 @@ const _: () = {
 };
 
 /// Steady per-sample bills over `OLD_LP24` (spec § Cost), as measured:
-/// REV2 75 instructions, 125 cycles; EXP 81, 135; less 95 (plan § Measured).
-const COST_REV2: u32 = 30;
+/// REV2 65 instructions, 110 cycles (no limiter); EXP 81, 135; less 95.
+const COST_REV2: u32 = 15;
 const COST_EXP: u32 = 40;
+
+/// What feeds the loop back: each voice's own circuit (spec § 3).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ResElement {
+    /// The Prophet's half SSM 2020, run as a linear VCA: no limiter.
+    Ssm2020Linear,
+    /// The Kobol's CA3080: `u = x − L·sat((x − u_l)/L)`.
+    Ca3080 { limit: f32 },
+}
 
 /// The 2040's VOICE (Filter 13): which circuit's constants it runs. The
 /// panel never names either instrument.
@@ -111,6 +123,22 @@ impl K2040Voice {
         match self {
             K2040Voice::Rev2 => OUT_2040 / ALPHA_REV2,
             K2040Voice::Exp => OUT_2040 / ALPHA_EXP * INV_BETA_EXP,
+        }
+    }
+
+    /// The resonance element.
+    pub const fn res(self) -> ResElement {
+        match self {
+            K2040Voice::Rev2 => ResElement::Ssm2020Linear,
+            K2040Voice::Exp => ResElement::Ca3080 { limit: L_2040 },
+        }
+    }
+
+    /// The cutoff trim, a ratio on FREQ.
+    pub const fn trim(self) -> f32 {
+        match self {
+            K2040Voice::Rev2 => TRIM_REV2,
+            K2040Voice::Exp => 1.0,
         }
     }
 
@@ -239,12 +267,7 @@ impl K2040 {
         mods: &FilterMods,
     ) -> Clip {
         let r = self.ramps(p, fs, mods);
-        let (peak, sum) = match (r.voice.post(), r.g.0 == r.g.1 && r.k.0 == r.k.1) {
-            (false, true) => self.steady::<false>(buf, r, |_, _| {}),
-            (false, false) => self.moving::<false>(buf, r, |_, _| {}),
-            (true, true) => self.steady::<true>(buf, r, |_, _| {}),
-            (true, false) => self.moving::<true>(buf, r, |_, _| {}),
-        };
+        let (peak, sum) = self.run(buf, r, |_, _| {});
         self.settle(sum);
         clip_amount(peak * (1.0 / (LED_KNEE * R_2040)))
     }
@@ -260,13 +283,27 @@ impl K2040 {
         trace: impl FnMut(usize, &[f32; 4]),
     ) {
         let r = self.ramps(p, fs, &FilterMods::NONE);
-        let (_, sum) = match (r.voice.post(), r.g.0 == r.g.1 && r.k.0 == r.k.1) {
-            (false, true) => self.steady::<false>(buf, r, trace),
-            (false, false) => self.moving::<false>(buf, r, trace),
-            (true, true) => self.steady::<true>(buf, r, trace),
-            (true, false) => self.moving::<true>(buf, r, trace),
-        };
+        let (_, sum) = self.run(buf, r, trace);
         self.settle(sum);
+    }
+
+    /// The block on its voice's loop (`V` its discriminant: the voice's
+    /// elements are compile-time in each), steady or moving.
+    #[inline(always)]
+    fn run(
+        &mut self,
+        buf: &mut [f32; BLOCK_SIZE],
+        r: Ramps,
+        trace: impl FnMut(usize, &[f32; 4]),
+    ) -> (f32, f32) {
+        const REV2: u8 = K2040Voice::Rev2 as u8;
+        const EXP: u8 = K2040Voice::Exp as u8;
+        match (r.voice, r.g.0 == r.g.1 && r.k.0 == r.k.1) {
+            (K2040Voice::Rev2, true) => self.steady::<REV2>(buf, r, trace),
+            (K2040Voice::Rev2, false) => self.moving::<REV2>(buf, r, trace),
+            (K2040Voice::Exp, true) => self.steady::<EXP>(buf, r, trace),
+            (K2040Voice::Exp, false) => self.moving::<EXP>(buf, r, trace),
+        }
     }
 
     /// A NaN or infinite input: the clamps hold every state finite, but at
@@ -295,7 +332,7 @@ impl K2040 {
         }
         let gain = LevelRamp::new(ramp(&mut self.pre, level_gain(p.level)), mods).gain();
         Ramps {
-            g: ramp(&mut self.g, g_of(p.cutoff, fs as f32)),
+            g: ramp(&mut self.g, g_of(p.cutoff * v.trim(), fs as f32)),
             k: ramp(&mut self.k, k2040_k(p.resonance)),
             a: (gain.0 * v.alpha(), gain.1 * v.alpha()),
             voice: v,
@@ -305,7 +342,7 @@ impl K2040 {
     /// `g` and `k` held: `G` and `D` once a block. Returns stage 1's peak
     /// demand, `max|s₁ + t₁|`, and the inputs' sum (`settle`).
     #[inline(always)]
-    pub(super) fn steady<const POST: bool>(
+    pub(super) fn steady<const V: u8>(
         &mut self,
         buf: &mut [f32; BLOCK_SIZE],
         r: Ramps,
@@ -318,10 +355,10 @@ impl K2040 {
         for (i, s) in buf.iter_mut().enumerate() {
             a += a_step;
             sum += *s;
-            let (y, d1) = self.tick(*s * a, &c);
+            let (y, d1) = self.tick::<V>(*s * a, &c);
             trace(i, &y);
             peak = peak.max(d1.abs());
-            *s = Self::output::<POST>(y[3], out);
+            *s = Self::output::<V>(y[3], out);
         }
         (peak, sum)
     }
@@ -330,7 +367,7 @@ impl K2040 {
     /// (#53) within an ulp or so, by adding as LEVEL's ramp does; `G` and
     /// `D` divide exactly every sample (B1).
     #[inline(always)]
-    pub(super) fn moving<const POST: bool>(
+    pub(super) fn moving<const V: u8>(
         &mut self,
         buf: &mut [f32; BLOCK_SIZE],
         r: Ramps,
@@ -346,10 +383,10 @@ impl K2040 {
             (a, g, k) = (a + a_step, g + g_step, k + k_step);
             sum += *s;
             let c = coef(g, k);
-            let (y, d1) = self.tick(*s * a, &c);
+            let (y, d1) = self.tick::<V>(*s * a, &c);
             trace(i, &y);
             peak = peak.max(d1.abs());
-            *s = Self::output::<POST>(y[3], out);
+            *s = Self::output::<V>(y[3], out);
         }
         (peak, sum)
     }
@@ -357,8 +394,8 @@ impl K2040 {
     /// `y₄` to the output: `y₄·OUT/α` on REV2; on EXP through the 3080,
     /// `sat(β·y₄)/β·OUT/α`, with `1/β` folded into `out`.
     #[inline(always)]
-    fn output<const POST: bool>(y4: f32, out: f32) -> f32 {
-        if POST {
+    fn output<const V: u8>(y4: f32, out: f32) -> f32 {
+        if K2040Voice::ALL[V as usize].post() {
             sat_2040(BETA_EXP * y4) * out
         } else {
             y4 * out
@@ -368,13 +405,16 @@ impl K2040 {
     /// One sample of the drive-scaled input `x_c`: the four stage outputs
     /// and stage 1's demand before its clamp.
     #[inline(always)]
-    fn tick(&mut self, x_c: f32, c: &Coef) -> ([f32; 4], f32) {
+    fn tick<const V: u8>(&mut self, x_c: f32, c: &Coef) -> ([f32; 4], f32) {
         let [s1, s2, s3, s4] = self.s;
         // The stages' states through the linear cascade, then the global
-        // loop solved linearly, then the 3080-style limit on its feedback.
+        // loop solved linearly, then the voice's resonance element.
         let big_s = c.one_g * (s4 + c.big_g * (s3 + c.big_g * (s2 + c.big_g * s1)));
         let u_l = x_c * c.d - c.kd * big_s;
-        let u = x_c - L_2040 * sat_2040((x_c - u_l) * (1.0 / L_2040));
+        let u = match K2040Voice::ALL[V as usize].res() {
+            ResElement::Ssm2020Linear => u_l,
+            ResElement::Ca3080 { limit } => x_c - limit * sat_2040((x_c - u_l) * (1.0 / limit)),
+        };
         let mut y = [0.0f32; 4];
         let mut x = u;
         let mut d1 = 0.0;

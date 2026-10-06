@@ -236,7 +236,8 @@ fn sat_2040_r<T: Real>(v: T) -> T {
 
 /// The 2040 (spec § 3), sample by sample from rest: `x[n]` scaled by
 /// `a[n]` (`α·gain`), with `g[n]` and `k[n]`; `G` and `D` divided every
-/// sample; the 3080 output stage if `post`. In `T`'s arithmetic, the
+/// sample; the voice's resonance element; the 3080 output stage if
+/// `post`. In `T`'s arithmetic, the
 /// model's own order of operations.
 pub fn k2040_ref<T: Real>(
     x: &[f32],
@@ -256,7 +257,12 @@ pub fn k2040_ref<T: Real>(
         T::of(OUT_2040 / alpha)
     };
     let one = T::of(1.0);
-    let (r, l) = (T::of(R_2040), T::of(L_2040));
+    let r = T::of(R_2040);
+    // The oracle: REV2's 2020 is linear, EXP's 3080 limits at L.
+    let limit = match voice {
+        K2040Voice::Rev2 => None,
+        K2040Voice::Exp => Some(T::of(L_2040)),
+    };
     let of64 = |v: f64| T::of(v as f32);
     let mut s = [T::of(0.0); 4];
     let mut y4s = Vec::with_capacity(x.len());
@@ -269,7 +275,10 @@ pub fn k2040_ref<T: Real>(
         let x_c = T::of(x[n]) * of64(a[n]);
         let big_s = one_g * (s[3] + big_g * (s[2] + big_g * (s[1] + big_g * s[0])));
         let u_l = x_c * d - kd * big_s;
-        let mut v = x_c - l * sat_2040_r((x_c - u_l) * T::of(1.0 / L_2040));
+        let mut v = match limit {
+            None => u_l,
+            Some(l) => x_c - l * sat_2040_r((x_c - u_l) * T::of(1.0 / L_2040)),
+        };
         for st in &mut s {
             let e = clamp_r(one_g * (v - *st), T::of(-1.5), T::of(1.5));
             let t = e * (g - ga * e * e);

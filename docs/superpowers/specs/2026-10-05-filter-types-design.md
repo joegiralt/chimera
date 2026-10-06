@@ -8,7 +8,7 @@
   - It folds in the adversarial review (B1–B5, H1–H3, M1–M6) and every owner ruling of 2026-10-05.
   - It adds the owner's ALGO audio-rate taps (§ 6).
 - **Revision 3:** it applies the re-review (H-new-1 to 4, M-new-1 to 4, N4, L-new-1 and 2, and M6's leftover). ADR 0096 now supersedes ADR 0037, which is Accepted, rather than amending it.
-- **Revision 4 (2026-10-06):** the 2040 gains VOICE (REV2 / EXP: the Prophet-5 Rev 1/2 and the RSF Kobol Expander) and the chip's ±1 V stage clip, and Fig. 9's resonance element is corrected to the SSM 2020 (§ 3).
+- **Revision 4 (2026-10-06):** the 2040 gains VOICE (REV2 / EXP: the Prophet-5 Rev 1/2 and the RSF Kobol Expander) and the chip's ±1 V stage clip, and Fig. 9's resonance element is corrected to the SSM 2020 (§ 3). The owner then ruled (2026-10-06) that each voice runs its own resonance circuit: REV2 a linear SSM 2020, EXP the Kobol's CA3080 limiter. The shared `L` is gone.
 
 **Implementation starts after `modal-stagger` merges.** That branch may replace `filter.rs`'s `saturate()` with stmlib's rational soft clipper, which divides. The CLEAN loop's in-loop saturate must stay divide-free on its common path, and the cost probes assert it (§ Cost). If `modal-stagger` lands a dividing clipper, the filter keeps today's C1 `saturate` for its own use.
 
@@ -238,13 +238,14 @@ Both instruments use the same chip, the same 1 nF pole capacitors, LP4 only, and
 
 #### Model
 
-Per block: `g = tan_accurate(fc/fs)`, `G = g/(1 + g)`, `k = 4·RES/0.95` (so 4 at RES 0.95 and 4.21 at RES 1), and `D = 1/(1 + k·G⁴)`. On a moving block, `G` and `D` are divided per sample, exactly, as CLEAN's `d` is (B1). `v` is the block's VOICE.
+Per block: `g = tan_accurate(fc·TRIM_v/fs)`, `G = g/(1 + g)`, `k = 4·RES/0.95` (so 4 at RES 0.95 and 4.21 at RES 1), and `D = 1/(1 + k·G⁴)`. On a moving block, `G` and `D` are divided per sample, exactly, as CLEAN's `d` is (B1). `v` is the block's VOICE.
 
 ```
 x_c = α_v · x · gain                               // α_v per voice (table below); no compensation (c = 0)
 S   = (1 − G)·(s₄ + G·(s₃ + G·(s₂ + G·s₁)))        // the stages' state through the linear cascade
 u_l = (x_c − k·S) · D                              // one-step ZDF: the global loop solved linearly
-u   = x_c − L·sat((x_c − u_l)/L)                   // the feedback limit, L = ¼ (B3)
+u   = u_l                                          // REV2: ½ SSM 2020, a linear VCA
+u   = x_c − L·sat((x_c − u_l)/L)                   // EXP: the CA3080 (CI5), L = ¼
 for i in 1..=4:                                    // x₁ = u, xᵢ₊₁ = yᵢ
     t  = g · sat((1 − G)·(xᵢ − sᵢ))                // the OTA on the true error x − y (H2)
     yᵢ = clamp(sᵢ + t, ±R)                         // the chip's ±1 V output swing
@@ -259,21 +260,23 @@ sat(v) = c − (4/27)·c³,  c = clamp(v, ±1.5)        // C1 cubic, no divide
 
 | Constant | REV2 | EXP | Source |
 |---|---|---|---|
-| `α_v`, the drive into the chip | `ALPHA_REV2` ≈ 0.1, tuned at build with `L` (tests 2 and 7) | **`2 · ALPHA_REV2`** (+6.0 dB) | Stage-1 gain `R2/R1`: Prophet 10 K/200 K (R480/R476) = 0.05; Kobol 10 K/100 K (R25/R24) = 0.10 |
+| `α_v`, the drive into the chip | `ALPHA_REV2` ≈ 0.1, tuned at build (tests 2 and 7) | **`2 · ALPHA_REV2`** (+6.0 dB) | Stage-1 gain `R2/R1`: Prophet 10 K/200 K (R480/R476) = 0.05; Kobol 10 K/100 K (R25/R24) = 0.10 |
 | `R`, the stage clip | **`2 · ALPHA_REV2`**, shared | the same | The data sheet's ±1 V swing, against the Prophet's 500 mV per pole at maximum saw (§ 5-13): 0.5 V ↔ `ALPHA_REV2`, so 1 V ↔ 2·`ALPHA_REV2`. The chip is the same in both. |
-| `L`, the feedback limit | ¼, shared | ¼, shared | Tuned for pitch (B3); see below |
+| The resonance element (`ResElement`) | `Ssm2020Linear`: no limit | `Ca3080 { limit: L }`, `L` = ¼ | Prophet: ½ U490, a 2020 in linear mode; Kobol: CI5, a 3080. Owner's ruling, 2026-10-06 |
+| `TRIM_v`, the cutoff trim | 2^(−13.3/1200): the clip rings the linear loop +13.6 cents sharp | 1 | The Prophet is trimmed at full resonance (§ 4-17) |
 | `β`, the output VCA | — (no POST stage) | **`0.62 / R`** | CI3: R31 10 K into R40 220 Ω turns ±1 V into ±21.5 mV = 0.416 × 2V_T; the cubic `sat` matches `tanh` at `v = 1.5 · V/2V_T`, so 0.416 × 1.5 = 0.62 at `y₄ = R` |
-| `OUT_2040`, `k` law, onset | shared | shared | No evidence of a different resonance law: the 2020 is linear, and T3 is a plain PNP current source |
+| `OUT_2040`, `k` law, onset | shared | shared | No evidence of a different gain law: the 2020 is linear, and T3 is a plain PNP current source |
 
 - **"500 mV" is read as peak.** If the manual meant peak to peak, `R` would be `4 · ALPHA_REV2`. Peak is chosen because it is the grittier reading, and it sits in the constant's doc comment.
 - **Clip onsets for a full-scale sine at RES 0:**
   - **REV2** clips at a gain of ×2, LEVEL 0.75, so it has 6 dB of headroom at unity, as the Prophet does.
   - **EXP** clips at ×1, LEVEL **0.5**: it is already at the chip's swing at unity.
   - At LEVEL 1 (×4), REV2 runs 6 dB over the swing and EXP 12 dB over.
-- **The resonance compression.**
-  - The limiter `L·sat(·/L)` is a 3080 in kind, the Kobol's CI5. EXP reaches it 6 dB sooner, so under drive its resonance ducks and blooms back as the level falls: the squelch.
-  - The Prophet's SSM 2020 is linear, so on REV2 the limiter is a modelling device. Before the ±1 V clip, the model without it oscillated 330 cents flat (B3). With the clip in, the clip bounds the stages before the OTAs saturate: without `L` the pitch holds (+14 cents) and REV2 oscillates near −6 dBFS. So `L` now sets EXP's squelch (−6.4 dB at RES 0.8 with it, −1.0 without), the self-oscillation level and the full-scale bass loss, not the pitch. REV2 without `L` would be the truer Prophet; it keeps `L` because the owner's rule is constants only, `L` shared (Task 8 review F5).
-  - The two voices share every resonance constant, so with no input they oscillate at the same pitch and in the same shape.
+- **The resonance elements: each voice its own (owner's ruling, 2026-10-06).**
+  - **EXP's 3080** is the limiter `L·sat(·/L)`, the Kobol's CI5. Under drive its resonance ducks and blooms back as the level falls: the squelch (−6.4 dB at RES 0.8 in the squelch test).
+  - **REV2's 2020 is linear:** no limit, so the loop is bounded by the ±1 V stage clip alone. It holds its resonance under drive (−0.02 dB in the same test, a 6.4 dB margin over EXP) and self-oscillates at the clip.
+  - The clip rings the linear loop +13.6 cents sharp, so REV2's cutoff is trimmed −13.3 cents (`TRIM_REV2`), as the Prophet is trimmed at full resonance: −2.5 to +0.3 cents across C2–C6.
+  - Revision 4 shared `L` across both voices (Task 8 review F5: constants only). The owner overturned that: the element is the largest real difference between the circuits, and at RES 0.88 it moves the REV2−EXP residual from −8.2 to −4.5 dB.
 - **Deliberately not modelled:**
   - the Prophet's 16 Hz output coupling (−1 dB at 31 Hz) and the Kobol's 3.3 Hz;
   - the Kobol's in-loop 6.9 Hz high-pass (C6): it is sub-audio, so the bass loss is the same in both voices from 40 Hz up.
@@ -281,24 +284,21 @@ sat(v) = c − (4/27)·c³,  c = clamp(v, ±1.5)        // C1 cubic, no divide
 - **ZDF/TPT one-poles.** Each stage is the trapezoidal one-pole, exact at FREQ and stable under modulation (Zavalishin ch. 3 and 5). In the linear case `t = g(1 − G)(x − s) = G(x − s)`, so the explicit-nonlinearity form reduces exactly to the linear TPT stage. The clamp is the identity below ±R.
 - **Solving the nonlinear loop in one step.** The global loop is solved linearly and exactly (Zavalishin's ladder solution). The stage nonlinearities then run explicitly on the true linear error, Zavalishin's "cheap" method (ch. 6). Newton with two fixed iterations was rejected: about +100 instructions and a `vdiv` per iteration.
 - **Self-oscillation pitch (B3).**
-  - Without the feedback limit and without the ±1 V clip, the model oscillates 330 cents flat: the OTAs saturate inside the loop. An RK4 reference agrees, so the error is in the model, not the solver. With the clip in (rev 4), the clip holds the stages near-linear first, and without `L` the pitch reads +11 to +14 cents; the pitch test (±5 cents) and REV2's level (−11.2 ± 1 dB) still catch a missing `L`.
-  - Limiting the feedback (`L = ¼`) keeps the stages near-linear, which brings the pitch to within about −3 to −5 cents.
-  - `L` is tuned at build against the 1 V/oct test.
+  - Without the feedback limit and without the ±1 V clip, the model oscillates 330 cents flat: the OTAs saturate inside the loop. An RK4 reference agrees, so the error is in the model, not the solver. With the clip in (rev 4), the clip holds the stages near-linear first, and a linear loop reads +11 to +14 cents.
+  - EXP's limit (`L = ¼`) keeps the stages near-linear: −1.2 to −1.4 cents. REV2's linear loop is trimmed (above). The pitch test (±5 cents) and EXP's level (−17.1 ± 0.5 dBFS) catch a missing `L`.
 - **The input scale is tuned with `L` (H-new-1).**
   - With α = ½ and L = ¼, a full-scale input saturates the limiter, so resonance collapses at normal levels. At full scale 14.5 dB of resonance is lost, and the bass loss reads −7.7 dB instead of −13.6. Self-oscillation sits near −24 dBFS, against CLEAN's +0.6 to +8.4, so a TYPE switch at RES 1 jumps 25–30 dB.
-  - **`ALPHA_REV2` ≈ 0.1** keeps the pitch within −1 cent, puts REV2's self-oscillation near −8 dBFS (inside the band CLEAN's trims target), and keeps the authentic −13.5 dB bass loss at full scale.
-  - `ALPHA_REV2` and `L` are pinned together at build by tests 2 and 7. `ALPHA_EXP` and `R` follow from `ALPHA_REV2` by the table's ratios and are never tuned on their own.
+  - **`ALPHA_REV2` ≈ 0.1** keeps the pitch within −1 cent and keeps the authentic −13.5 dB bass loss at full scale.
+  - `ALPHA_REV2` and `L` were pinned together at build by tests 2 and 7, before REV2 lost `L`. `ALPHA_EXP` and `R` follow from `ALPHA_REV2` by the table's ratios and are never tuned on their own.
   - At REV2's α, ordinary levels stay near-linear, and the grit comes from LEVEL. On EXP it starts at unity.
 - **The self-oscillation level, per voice.**
-  - With no input, `y₄` oscillates at the same amplitude on both voices. The output divides by `α_v`, so **EXP's self-oscillation sits 6.0 dB below REV2's**: unity at LEVEL ½ costs that.
-  - REV2 shares test 2's band with CLEAN and DIRTY.
-  - EXP has its own band, `OSC_BAND_EXP_DB`, pinned at build and expected about 6 dB lower.
-  - A VOICE flip at RES 1 therefore steps about 6 dB, and the crossfade carries it.
-  - The clip doesn't touch the oscillation: `y₄` is expected near `0.4·α`, against `R = 2α`. Test 2 shows it if the clip does.
+  - REV2 oscillates at the clip: −5.8 to −5.9 dBFS (−4.9 at 8 kHz), inside test 2's band with CLEAN and DIRTY, 2–3 dB over CLEAN's −8.
+  - EXP oscillates at its 3080's level: −17.0 to −17.3 dBFS, in its own band, `OSC_BAND_EXP_DB`.
+  - A VOICE flip at RES 1 therefore steps about 11 dB, and the crossfade carries it.
 - **Bounded.**
-  - `sat` is bounded with slope ≤ 1. Each stage moves its state by at most `2G` per sample toward its input. The clamp holds every `yᵢ` within ±R, so every state is within `R + g`, and `u` is a bounded combination of the input and the states. The feedback limiter bounds the loop further.
+  - `sat` is bounded with slope ≤ 1. Each stage moves its state by at most `2G` per sample toward its input. The clamp holds every `yᵢ` within ±R, so every state is within `R + g`, and `u` is a bounded combination of the input and the states, on both voices. EXP's 3080 bounds the loop further; REV2's linear loop is finite and stable at RES 1 on the clip alone (test 5's grid).
   - **The output is bounded exactly:** `|out| ≤ R/α_v · OUT_2040`, that is `2·OUT_2040` on REV2 and `OUT_2040` on EXP. POST only lowers it.
-- **Bass loss:** DC gain `1/(1 + k)`. That is −14 dB at onset and −14.3 dB at RES 1. Nothing compensates it, on either voice.
+- **Bass loss:** DC gain `1/(1 + k)`. That is −14 dB at onset and −14.3 dB at RES 1. Nothing compensates it, on either voice. At RES 1 REV2 rings at the clip, which ducks the bass a further 0.6–1.2 dB.
 - **Mode:** LP4 only, on both voices. FLT › MOD's sixth cell shows "LP4", fixed and dimmed.
 - **Panel:**
   - FLT: TYPE · CUTOFF · RES · ENV AMT · KEYBD · DRIVE.
@@ -473,9 +473,9 @@ Owner ruling (2026-10-05): every patch, the taps included, is made and seen in t
 | CLEAN LP1 / LP2 / BP2 / NOTCH1, steady | ≤ 30 | 0 | 50 | 0 |
 | CLEAN NOTCH2, steady | ≤ 34 | 0 | 55 | 0 (was 17) |
 | CLEAN, moving (LP4) | +6 | 2 | +35 | `CLEAN_MOVE_COST` 35 |
-| 2040 REV2, steady (70 + 8 for the ±1 V clip) | ≤ 78 | 0 | 130 | 30 (measured 125, Task 8) |
+| 2040 REV2, steady (no limiter: the linear 2020) | ≤ 78 | 0 | 110 | 15 (measured 65 instructions, 110 cycles, Task 8b; 125 with `L`) |
 | 2040 EXP, steady (REV2 + 6 for the output VCA) | ≤ 84 | 0 | 135 | 40 (measured 135, Task 8) |
-| 2040, moving (either voice) | +12 (re-budgeted, Task 8: `G`, `D` and their products a sample) | 2 | +45 | +45 |
+| 2040, moving (either voice) | +12 (re-budgeted, Task 8: `G`, `D` and their products a sample; REV2 measured 79, +14 over its unrolled steady) | 2 | +45 | +45 (REV2 measured 160, +50) |
 | DIRTY, any mode | ≤ 30 | 0 | 50 | 0 |
 | LEVEL clipper + meter + fade | ≤ +12 | 0 | +20 | +20 |
 | Tap capture (per tapped op) | +1 | 0 | +2 | in each tap's cost |
@@ -604,7 +604,7 @@ Each task gets desktop QA (sweeps, per-pair levels) before the owner's ear.
 
 ## Open questions for the owner
 
-None. Every question from revision 1 is answered above. Three constants are tuned at build against their tests and are not taste calls: the 2040's limiter `L`, `ALPHA_REV2` and `OUT_2040`. `ALPHA_EXP` (2 × `ALPHA_REV2`), the stage clip `R` (2 × `ALPHA_REV2`) and EXP's `β` (0.62/R) follow from the circuits and aren't tuned.
+None. Every question from revision 1 is answered above. Three constants are tuned at build against their tests and are not taste calls: EXP's limiter `L`, `ALPHA_REV2` and `OUT_2040`; REV2's `TRIM_REV2` is measured, not tuned. `ALPHA_EXP` (2 × `ALPHA_REV2`), the stage clip `R` (2 × `ALPHA_REV2`) and EXP's `β` (0.62/R) follow from the circuits and aren't tuned.
 
 ## Sources
 

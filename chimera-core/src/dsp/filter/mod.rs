@@ -13,7 +13,7 @@ pub mod probe;
 
 pub use clean::Clean;
 pub use dirty::Dirty;
-pub use k2040::{K2040, K2040Voice};
+pub use k2040::{K2040, K2040Voice, ResElement};
 pub use level::{
     FilterMods, LevelRamp, LevelStage, clip_amount, clipped, level_from_drive, level_gain,
     translate_drive,
