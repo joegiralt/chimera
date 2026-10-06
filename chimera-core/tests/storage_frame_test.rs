@@ -193,6 +193,7 @@ fn codes_are_frozen() {
         (RecordTag::OrbitChord, 0x0012),
         (RecordTag::Orbit, 0x0013),
         (RecordTag::OrbitScale, 0x0014),
+        (RecordTag::TapRoutes, 0x0015),
     ];
     for (t, c) in table {
         assert_eq!(t.code(), c);

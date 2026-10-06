@@ -655,6 +655,11 @@ fn repatch_with_every_target_occupied_changes_nothing() {
             s.mod_state.set_fixed(m.index(), FixedCol::Q, 7);
         }
     }
+    // The taps' cells too (Task 13).
+    for op in chimera_core::taps::TapOp::ALL {
+        s.params.taps.set(op, FixedCol::Freq, 7);
+        s.params.taps.set(op, FixedCol::Q, 7);
+    }
     let before = s.clone();
     for (slot, choices) in [
         (JackSlot::Fm3, &Jack::FM3_CHOICES[..]),

@@ -10,6 +10,8 @@ use embedded_graphics::pixelcolor::Rgb565;
 use crate::addr::{BlockRef, ParamAddr};
 use crate::mod_path::LABEL_LEN;
 use crate::modulation::FixedCol;
+use crate::preset::Sound;
+use crate::taps::{TapOp, TapRoutes};
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
 use crate::ui::hint::{self, Gesture, Hint};
@@ -69,6 +71,34 @@ pub enum Col {
     Reg(usize),
 }
 
+/// What a display row shows: a matrix source (its `ModSource` index), or
+/// on ALGO an operator's tap (spec § 7), whose cells are `TapRoutes`'.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowSource {
+    Mod(usize),
+    Tap(TapOp),
+}
+
+impl RowSource {
+    /// The index the cell API takes: a source's, then the taps' after
+    /// `MAX_SOURCES`.
+    pub const fn index(self) -> usize {
+        match self {
+            RowSource::Mod(s) => s,
+            RowSource::Tap(t) => MAX_SOURCES + t as usize,
+        }
+    }
+}
+
+impl From<crate::taps::Jack> for RowSource {
+    fn from(j: crate::taps::Jack) -> Self {
+        match j {
+            crate::taps::Jack::Mod(s) => RowSource::Mod(s.index()),
+            crate::taps::Jack::Tap(t) => RowSource::Tap(t),
+        }
+    }
+}
+
 /// A destination in the mod matrix — a primed param.
 #[derive(Clone, Copy, Debug)]
 pub struct ModDest {
@@ -103,6 +133,9 @@ pub struct MatrixState {
     /// The permanent columns' amounts and presence, as ModState's.
     pub fixed: [[i8; FIXED_COLS]; MAX_SOURCES],
     pub fixed_present: [u8; FIXED_COLS],
+    /// The taps' cells, as the Sound's `TapRoutes`; rows only on ALGO.
+    pub taps: TapRoutes,
+    pub tap_rows: bool,
     /// Bumped on every amount, presence or column change: part of the
     /// dirty-region keys.
     pub rev: u16,
@@ -124,6 +157,8 @@ impl MatrixState {
             present: [0; MAX_DESTS],
             fixed: [[0; FIXED_COLS]; MAX_SOURCES],
             fixed_present: [0; FIXED_COLS],
+            taps: TapRoutes::default(),
+            tap_rows: false,
             rev: 0,
             dests: [None; MAX_DESTS],
             num_dests: 0,
@@ -189,24 +224,71 @@ impl MatrixState {
         self.bump();
     }
 
+    /// Everything from `s`: its chain's sources, its registry's columns,
+    /// its routes and, on ALGO, its tap rows. The cursor is not clamped.
+    pub fn load_sound(&mut self, s: &Sound) {
+        self.rebuild_sources(crate::ui::nav::chain_def_for(s.engine()).mod_sources);
+        self.rebuild_dests_from_registry(&s.dest_registry);
+        self.load_amounts(&s.mod_state);
+        self.tap_rows = s.engine() == crate::params::EngineType::Algo;
+        self.load_taps(&s.params.taps);
+    }
+
+    pub fn load_taps(&mut self, t: &TapRoutes) {
+        self.taps = *t;
+        self.bump();
+    }
+
+    /// The tap cells into the Sound's `TapRoutes`.
+    pub fn sync_taps(&self, t: &mut TapRoutes) {
+        *t = self.taps;
+    }
+
+    /// Display rows: the sources, then OP5 and OP6 on ALGO.
+    pub fn rows(&self) -> usize {
+        self.num_sources + if self.tap_rows { TapOp::ALL.len() } else { 0 }
+    }
+
+    /// The tap at cell-API index `src`, if this matrix has its row.
+    fn tap_of(&self, src: usize) -> Option<TapOp> {
+        src.checked_sub(MAX_SOURCES)
+            .and_then(|i| TapOp::ALL.get(i).copied())
+            .filter(|_| self.tap_rows)
+    }
+
+    /// An impossible patch: a tap row's cell outside the four fixed
+    /// columns. It takes no amount.
+    pub fn is_x(&self, row: usize, col: usize) -> bool {
+        matches!(self.row_source(row), RowSource::Tap(_)) && matches!(self.col(col), Col::Reg(_))
+    }
+
     fn bump(&mut self) {
         self.rev = self.rev.wrapping_add(1);
     }
 
-    /// The source index at display row `row`: `ROW_ORDER` over the
-    /// sources this matrix has.
-    pub fn row_source(&self, row: usize) -> usize {
-        ROW_ORDER
-            .iter()
-            .copied()
-            .filter(|&s| s < self.num_sources)
-            .nth(row)
-            .unwrap_or(row)
+    /// What display row `row` shows: `ROW_ORDER` over the sources this
+    /// matrix has, then on ALGO OP5 and OP6.
+    pub fn row_source(&self, row: usize) -> RowSource {
+        if let Some(t) = row
+            .checked_sub(self.num_sources)
+            .and_then(|i| TapOp::ALL.get(i))
+            .filter(|_| self.tap_rows)
+        {
+            return RowSource::Tap(*t);
+        }
+        RowSource::Mod(
+            ROW_ORDER
+                .iter()
+                .copied()
+                .filter(|&s| s < self.num_sources)
+                .nth(row)
+                .unwrap_or(row),
+        )
     }
 
-    /// The source under the cursor.
+    /// The cell-API index of the row under the cursor.
     pub fn sel_source(&self) -> usize {
-        self.row_source(self.sel_row)
+        self.row_source(self.sel_row).index()
     }
 
     /// Get the amount at the current cursor position.
@@ -249,6 +331,12 @@ impl MatrixState {
 
     /// The amount in cell (`row`, `c`), 0 when absent or out of range.
     pub fn amount(&self, row: usize, c: usize) -> i8 {
+        if let Some(t) = self.tap_of(row) {
+            return match self.col(c) {
+                Col::Fixed(f) => self.taps.get(t, f).unwrap_or(0),
+                Col::Reg(_) => 0,
+            };
+        }
         if row >= MAX_SOURCES {
             return 0;
         }
@@ -319,11 +407,22 @@ impl MatrixState {
     }
 
     pub fn is_present(&self, row: usize, col: usize) -> bool {
+        if let Some(t) = self.tap_of(row) {
+            return matches!(self.col(col), Col::Fixed(f) if self.taps.get(t, f).is_some());
+        }
         row < MAX_SOURCES && self.present_bits(col) & (1 << row) != 0
     }
 
-    /// Set (and so create) cell (`row`, `col`); out of range does nothing.
+    /// Set (and so create) cell (`row`, `col`); out of range, or an X
+    /// cell, does nothing.
     pub fn set(&mut self, row: usize, col: usize, amount: i8) {
+        if let Some(t) = self.tap_of(row) {
+            if let Col::Fixed(f) = self.col(col) {
+                self.taps.set(t, f, amount);
+                self.bump();
+            }
+            return;
+        }
         if row >= self.num_sources {
             return;
         }
@@ -346,8 +445,16 @@ impl MatrixState {
         self.clear(self.sel_source(), self.sel_col);
     }
 
-    /// Delete cell (`src`, `col`)'s route; out of range does nothing.
+    /// Delete cell (`src`, `col`)'s route; out of range, or an X cell, does
+    /// nothing.
     pub fn clear(&mut self, src: usize, col: usize) {
+        if let Some(t) = self.tap_of(src) {
+            if let Col::Fixed(f) = self.col(col) {
+                self.taps.clear(t, f);
+                self.bump();
+            }
+            return;
+        }
         if src >= self.num_sources {
             return;
         }
@@ -372,7 +479,7 @@ impl MatrixState {
     /// counts may be smaller than the cursor/scroll position left over from
     /// before (issue #11).
     pub fn clamp_cursor(&mut self) {
-        self.sel_row = self.sel_row.min(self.num_sources.saturating_sub(1));
+        self.sel_row = self.sel_row.min(self.rows().saturating_sub(1));
         self.sel_col = self.sel_col.min(self.num_cols() - 1);
         self.scroll_x = self.scroll_x.min(self.max_scroll_x());
         self.follow_col();
@@ -381,7 +488,7 @@ impl MatrixState {
     /// Every source is on screen: rows never scroll.
     pub fn move_row(&mut self, delta: i8) {
         let new = self.sel_row as i32 + delta as i32;
-        self.sel_row = new.clamp(0, self.num_sources.saturating_sub(1) as i32) as usize;
+        self.sel_row = new.clamp(0, self.rows().saturating_sub(1) as i32) as usize;
     }
 
     pub fn move_col(&mut self, delta: i8) {
@@ -428,10 +535,19 @@ impl Default for MatrixState {
 /// on no route, where its columns come from, MIX + PLUS on a param.
 pub const DELETE: Hint = &[Gesture("MIX + MINUS", "DELETES THE ROUTE")];
 pub const PRIME: Hint = &[Gesture("MIX + PLUS", "ON A PARAM PRIMES IT")];
+/// An X cell's: what a tap can reach (spec § 7).
+pub const X_OP5: Hint = &[Gesture("OP5 · AUDIO RATE:", "FREQ Q VCA FOLD ONLY")];
+pub const X_OP6: Hint = &[Gesture("OP6 · AUDIO RATE:", "FREQ Q VCA FOLD ONLY")];
 
 impl MatrixState {
     /// The hint under the cursor's route.
     pub fn hint(&self) -> Hint {
+        if self.is_x(self.sel_row, self.sel_col) {
+            return match self.row_source(self.sel_row) {
+                RowSource::Tap(TapOp::Op6) => X_OP6,
+                _ => X_OP5,
+            };
+        }
         if self.is_present(self.sel_source(), self.sel_col) {
             DELETE
         } else {
@@ -682,7 +798,7 @@ where
         );
     }
     for row in 0..state.num_sources.min(MAX_SOURCES) {
-        let si = state.row_source(row);
+        let si = state.row_source(row).index();
         let (_, y) = cell_origin(0, row);
         let name = state.sources[si].map_or("?", |s| s.name);
         let color = if row == state.sel_row {

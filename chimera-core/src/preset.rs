@@ -52,7 +52,7 @@ impl Sound {
         SoundName::new("INIT").expect("a valid name")
     }
 
-    /// Same name, engine, voice-block params (by bits), routes and
+    /// Same name, engine, voice-block params (by bits), routes, taps and
     /// registry: what a card round trip must keep. Unused slots don't count.
     pub fn bits_eq(&self, o: &Sound) -> bool {
         self.name == o.name
@@ -66,6 +66,7 @@ impl Sound {
                         .all(|s| x.get(s.id).to_bits() == y.get(s.id).to_bits()),
                     (x, y) => x.is_none() && y.is_none(),
                 })
+            && self.params.taps == o.params.taps
             && self.mod_state.bits_eq(&o.mod_state)
             && self.dest_registry.bits_eq(&o.dest_registry)
     }

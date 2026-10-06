@@ -915,6 +915,9 @@ pub struct ParamSnapshot {
     pub lfos: [crate::dsp::lfo::LfoParams; 3],
     pub out: OutParams,
     pub pitch: PitchParams,
+    /// ALGO's OP 5 and OP 6 routes into the filter, VCA and FOLD (spec
+    /// § 6): not a `Block`; stored as its own record.
+    pub taps: crate::taps::TapRoutes,
 }
 
 impl ParamSnapshot {
@@ -1015,6 +1018,7 @@ impl Default for ParamSnapshot {
             lfos: [crate::dsp::lfo::LfoParams::default(); 3],
             out: OutParams::default(),
             pitch: PitchParams::default(),
+            taps: crate::taps::TapRoutes::default(),
         }
     }
 }

@@ -777,14 +777,13 @@ pub fn title_type(def: &BlockDef, envs: &[EnvKind; 3]) -> u8 {
 pub fn look(f: &Frame, i: usize) -> components::Look {
     let sound = &f.parts[f.active_part.index()].sound;
     match view::view(f.def, i, &f.ctx) {
-        // A jack on a tap has no matrix row yet (Task 13).
-        View::Route { route, .. } => match route.cell(sound) {
-            Some((src, c)) if sound.mod_state.fixed_present(c) & 1 << src.index() == 0 => {
-                components::Look::Absent
+        View::Route { route, .. } => {
+            let (row, c) = route.cell(sound);
+            match crate::ui::filter_panel::cell_route(sound, row, c) {
+                Some(_) => components::Look::Live,
+                None => components::Look::Absent,
             }
-            Some(_) => components::Look::Live,
-            None => components::Look::Dimmed,
-        },
+        }
         v if view::is_dimmed(&v, sound, &f.ctx) => components::Look::Dimmed,
         _ => components::Look::Live,
     }

@@ -225,8 +225,10 @@ fn every_source_is_a_row_on_screen() {
         );
     }
     assert!(cell_origin(0, 7).1 + CELL_H <= GRID_BOTTOM);
+    // The cursor stops on the last row: OP6's on ALGO (Task 13).
     feed(&mut ui, Input::turn(EncoderId::A, 7));
-    assert_eq!(ui.matrix_state.sel_row, 7);
+    assert_eq!(ui.matrix_state.rows(), 10);
+    assert_eq!(ui.matrix_state.sel_row, 9);
     let before = ui.matrix_state.clone();
     feed(&mut ui, Input::turn(EncoderId::C, 3));
     let after = &ui.matrix_state;
@@ -708,7 +710,9 @@ fn every_route_readout_fits_its_line() {
                 m.dests[0] = Some(dest);
                 m.num_dests = 1;
                 m.set(src.index(), 0, -127);
-                m.sel_row = (0..8).find(|&r| m.row_source(r) == src.index()).unwrap();
+                m.sel_row = (0..8)
+                    .find(|&r| m.row_source(r).index() == src.index())
+                    .unwrap();
                 let mut fb = Fb::new();
                 draw_readout(&mut fb, &m, -127, 0, m.hint());
                 assert_eq!(fb.oob, 0);
@@ -874,7 +878,7 @@ fn rows_read_envs_then_lfos_then_velo_and_note() {
     let mut ui = ui_for("mod_matrix");
     let m = &ui.matrix_state;
     let rows: Vec<_> = (0..m.num_sources)
-        .map(|r| m.sources[m.row_source(r)].unwrap().name)
+        .map(|r| m.sources[m.row_source(r).index()].unwrap().name)
         .collect();
     assert_eq!(
         rows,

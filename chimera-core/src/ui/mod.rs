@@ -76,7 +76,7 @@ use midi_settings::MidiSettings;
 use mod_grid::MatrixState;
 use nav::{
     Browse, Column, ListAt, Location, NavCtx, NavKey, OrbitAct, OrbitCx, OrbitKey, Recall, Rung,
-    SettingsAt, Step, chain_def_for,
+    SettingsAt, Step,
 };
 use page::{PageKey, PageLayout};
 use perf::PerfStats;
@@ -834,9 +834,9 @@ impl UiState {
         for (i, value) in values.iter_mut().enumerate() {
             match view::view(def, i, &ctx) {
                 View::Route { route, .. } => {
-                    *value = renderer::amount_value(route.cell(sound).map_or(0, |(src, c)| {
-                        self.matrix_state.amount(src.index(), c.index())
-                    }));
+                    let (row, c) = route.cell(sound);
+                    *value =
+                        renderer::amount_value(self.matrix_state.amount(row.index(), c.index()));
                 }
                 // A jack shows what it acts as (a tap off ALGO: its default).
                 View::Param { addr, .. } if addr.block == BlockRef::Filter => {
@@ -866,40 +866,35 @@ impl UiState {
     /// destinations from its registry, amounts from its `ModState`. Call
     /// whenever the edited Part or its Sound changes.
     fn load_matrix(&mut self, part: PartId) {
-        let sound = &self.project.part(part).sound;
-        self.matrix_state
-            .rebuild_sources(chain_def_for(sound.engine()).mod_sources);
-        self.matrix_state
-            .rebuild_dests_from_registry(&sound.dest_registry);
-        self.matrix_state.load_amounts(&sound.mod_state);
+        self.matrix_state.load_sound(&self.project.part(part).sound);
         // The cursor may be left over from a Part with more destinations
         // than this one (issue #11).
         self.matrix_state.clamp_cursor();
     }
 
     /// A route knob turned: set the cell it views to `f(amount)`, creating
-    /// its route. A jack on a tap views no matrix cell yet.
+    /// its route (a tap's cell on a jack holding one).
     fn edit_route(&mut self, route: RouteView, f: impl FnOnce(i8) -> i8) {
-        let Some((src, c)) = route.cell(&self.project.part(self.active_part).sound) else {
-            return;
-        };
-        let a = self.matrix_state.amount(src.index(), c.index());
-        self.matrix_state.set(src.index(), c.index(), f(a));
+        let (row, c) = route.cell(&self.project.part(self.active_part).sound);
+        let a = self.matrix_state.amount(row.index(), c.index());
+        self.matrix_state.set(row.index(), c.index(), f(a));
         self.sync_mod_state(self.active_part);
     }
 
     /// MIX + MINUS on a route knob: delete the route of the cell it views.
     fn delete_route(&mut self, route: RouteView) {
-        if let Some((src, c)) = route.cell(&self.project.part(self.active_part).sound) {
-            self.matrix_state.clear(src.index(), c.index());
-            self.sync_mod_state(self.active_part);
-        }
+        let (row, c) = route.cell(&self.project.part(self.active_part).sound);
+        self.matrix_state.clear(row.index(), c.index());
+        self.sync_mod_state(self.active_part);
     }
 
-    /// Rebuild a part's audio-side `ModState` from the matrix.
+    /// Rebuild a part's audio-side `ModState` and taps from the matrix.
     fn sync_mod_state(&mut self, part: PartId) {
         let sound = self.project.edit_part(part).sound;
         sound.mod_state.sync_from_matrix(&self.matrix_state);
+        if self.matrix_state.tap_rows {
+            self.matrix_state.sync_taps(&mut sound.params.taps);
+        }
     }
 
     /// The address the focused encoder edits, if its slot is bound. Leaf
@@ -1951,6 +1946,7 @@ impl UiState {
                     let step = filter_panel::step_jack(sound, slot, delta);
                     if step.moved {
                         self.matrix_state.load_amounts(&sound.mod_state);
+                        self.matrix_state.load_taps(&sound.params.taps);
                     }
                     if step.skipped_in_use {
                         self.prime_status = Some(PrimeStatus::SourceInUse);

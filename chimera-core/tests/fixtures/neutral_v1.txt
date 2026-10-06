@@ -301,6 +301,7 @@ Sound {
             steal: Cut,
             glide_time: 0.6592158,
         },
+        taps: [],
     },
     mod_state: ModState {
         num_sources: 8,

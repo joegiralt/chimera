@@ -10,7 +10,7 @@ use crate::modulation::{FixedCol, MAX_MOD_DESTS, MAX_MOD_SOURCES, ModSource, Mod
 use crate::name::SoundName;
 use crate::params::{EngineType, FilterParams, ParamSnapshot};
 use crate::preset::Sound;
-use crate::taps::Jack;
+use crate::taps::{Jack, TapRoutes};
 
 use super::block_codec::{ByteSet, ENTRY_LEN, decode_block, encode_block};
 use super::codes::{DiskAddr, MIGRATIONS, TRANSLATIONS, ValidAddr, readdress};
@@ -113,7 +113,19 @@ pub fn encode_sound(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(), StoreErro
             }
         }
     }
-    w.put(RecordTag::Routes, r.as_slice())
+    w.put(RecordTag::Routes, r.as_slice())?;
+
+    let taps = &s.params.taps;
+    if taps.is_empty() {
+        return Ok(());
+    }
+    r.clear();
+    for (op, c, a) in taps.entries() {
+        r.u8(Jack::Tap(op).disk_code());
+        r.bytes(&addr_code(c.addr()));
+        r.u8(a as u8);
+    }
+    w.put(RecordTag::TapRoutes, r.as_slice())
 }
 
 /// The CRC of the Sound's padded name, then `encode_sound`'s bytes: equal
@@ -131,6 +143,7 @@ const fn once_bit(tag: RecordTag) -> u8 {
         RecordTag::ModDests => 1 << 2,
         RecordTag::Routes => 1 << 3,
         RecordTag::LastProject => 1 << 4,
+        RecordTag::TapRoutes => 1 << 5,
         // A project's own records: refused before `once` is asked.
         RecordTag::Slot
         | RecordTag::Part
@@ -322,6 +335,7 @@ impl SoundCheck {
                 Ok(())
             }
             RecordTag::LastProject => Ok(()),
+            RecordTag::TapRoutes => tap_routes(p, staged.map(|s| &mut s.params.taps)),
             RecordTag::Slot
             | RecordTag::Part
             | RecordTag::Fx
@@ -389,6 +403,25 @@ fn infer_jacks(s: &mut Sound, had_fm3: bool, had_qm: bool) {
     if !had_qm && let Some(i) = qm {
         f.set_qm_src(Jack::Mod(ModSource::ALL[i]));
     }
+}
+
+/// `(Jack code, dest block code, dest param id, amount)` entries. An entry
+/// that isn't a tap into a fixed column is dropped; a partial one is
+/// `Bounds`.
+fn tap_routes(p: &[u8], staged: Option<&mut TapRoutes>) -> Result<(), FileError> {
+    let (entries, []) = p.as_chunks::<ROUTE_LEN>() else {
+        return Err(FileError::Bounds);
+    };
+    if let Some(t) = staged {
+        for &[jack, block, id, amount] in entries {
+            if let Some(Jack::Tap(op)) = Jack::from_disk_code(jack)
+                && let Some(c) = addr_of(block, id).and_then(FixedCol::of)
+            {
+                t.set(op, c, amount as i8);
+            }
+        }
+    }
+    Ok(())
 }
 
 fn registry(p: &[u8], staged: Option<&mut Sound>) -> Result<(), FileError> {

@@ -2,7 +2,7 @@
 //! matrix source, or on ALGO an audio-rate tap of OP 5 or OP 6.
 
 use crate::block::DiskCode;
-use crate::modulation::ModSource;
+use crate::modulation::{FixedCol, ModSource};
 use crate::params::EngineType;
 
 /// An ALGO operator that also feeds the filter at audio rate.
@@ -14,6 +14,8 @@ pub enum TapOp {
 }
 
 impl TapOp {
+    pub const ALL: [TapOp; 2] = [TapOp::Op5, TapOp::Op6];
+
     /// The operator's index in the ALGO voice.
     pub const fn op_index(self) -> usize {
         match self {
@@ -176,6 +178,95 @@ impl core::fmt::Debug for JackPair {
         f.debug_struct("JackPair")
             .field("fm3", &self.fm3())
             .field("qm", &self.qm())
+            .finish()
+    }
+}
+
+/// The taps' routes (spec § 6): an amount per (tap, fixed column), or
+/// none. The columns are `FixedCol`, so a tap into an operator's pitch or
+/// level can't be written. An absent route holds `ABSENT`, which no amount
+/// is (±127): 8 B, so the voice chain keeps its 2,112 B (ADR 0101), where a
+/// presence byte would cost 8 more in every voice's snapshot.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct TapRoutes {
+    amount: [[i8; 4]; 2],
+}
+
+const ABSENT: i8 = i8::MIN;
+
+impl Default for TapRoutes {
+    fn default() -> Self {
+        TapRoutes {
+            amount: [[ABSENT; 4]; 2],
+        }
+    }
+}
+
+impl TapRoutes {
+    pub fn get(&self, op: TapOp, c: FixedCol) -> Option<i8> {
+        let a = self.amount[op as usize][c.index()];
+        (a != ABSENT).then_some(a)
+    }
+
+    /// Sets (and so creates) the route; `a` is held to ±127.
+    pub fn set(&mut self, op: TapOp, c: FixedCol, a: i8) {
+        self.amount[op as usize][c.index()] = a.max(-127);
+    }
+
+    pub fn clear(&mut self, op: TapOp, c: FixedCol) {
+        self.amount[op as usize][c.index()] = ABSENT;
+    }
+
+    /// A tap moves `c`: some route into it with a nonzero amount.
+    pub fn moving(&self, c: FixedCol) -> bool {
+        TapOp::ALL
+            .into_iter()
+            .any(|op| self.get(op, c).is_some_and(|a| a != 0))
+    }
+
+    /// The ops some moving route reads: the ones the engine must capture.
+    pub fn wanted(&self) -> [bool; 2] {
+        TapOp::ALL.map(|op| {
+            FixedCol::ALL
+                .into_iter()
+                .any(|c| self.get(op, c).is_some_and(|a| a != 0))
+        })
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries().next().is_none()
+    }
+
+    /// Every present route, op-major.
+    pub fn entries(&self) -> impl Iterator<Item = (TapOp, FixedCol, i8)> + '_ {
+        TapOp::ALL.into_iter().flat_map(move |op| {
+            FixedCol::ALL
+                .into_iter()
+                .filter_map(move |c| self.get(op, c).map(|a| (op, c, a)))
+        })
+    }
+}
+
+/// A CUTOFF route's amount as a FREQ tap's, keeping its depth in octaves
+/// (M-new-2): 100 % is 10 octaves on a route, 4 on a tap.
+pub fn to_tap_amount(a: i8) -> i8 {
+    div_round(a as i16 * 10, 4).clamp(-127, 127) as i8
+}
+
+/// A FREQ tap's amount as a CUTOFF route's.
+pub fn from_tap_amount(a: i8) -> i8 {
+    div_round(a as i16 * 4, 10) as i8
+}
+
+/// `n / d` rounded half away from zero (`d > 0`).
+const fn div_round(n: i16, d: i16) -> i16 {
+    (n + n.signum() * (d / 2)) / d
+}
+
+impl core::fmt::Debug for TapRoutes {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_list()
+            .entries(self.entries().map(|(op, c, a)| (op.tag(), c.tag(), a)))
             .finish()
     }
 }

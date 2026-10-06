@@ -35,6 +35,10 @@ pub enum RecordTag {
     Origin,
     /// ORBIT's BPM, `f32` LE: the tempo slot the projects spec reserves.
     Tempo,
+    /// ALGO's OP 5 and OP 6 routes (filter-types spec § 6): 4-byte
+    /// `(Jack code, block code, param id, amount)` entries. 0x15: 0x0C–0x0F
+    /// are reserved, 0x10–0x14 ORBIT's.
+    TapRoutes,
     /// An ORBIT scene's block: scene `u8`, then a `Block` payload.
     OrbitBlock,
     /// A ring's hits and notes (`orbit::records`).
@@ -61,6 +65,7 @@ impl RecordTag {
             RecordTag::Fx => 0x8009,
             RecordTag::Origin => 0x000A,
             RecordTag::Tempo => 0x000B,
+            RecordTag::TapRoutes => 0x0015,
             RecordTag::OrbitBlock => 0x0010,
             RecordTag::OrbitNotes => 0x0011,
             RecordTag::OrbitChord => 0x0012,
@@ -82,6 +87,7 @@ impl RecordTag {
             0x8009 => RecordTag::Fx,
             0x000A => RecordTag::Origin,
             0x000B => RecordTag::Tempo,
+            0x0015 => RecordTag::TapRoutes,
             0x0010 => RecordTag::OrbitBlock,
             0x0011 => RecordTag::OrbitNotes,
             0x0012 => RecordTag::OrbitChord,

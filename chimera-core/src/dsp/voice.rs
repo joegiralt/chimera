@@ -130,8 +130,9 @@ enum AfterFade {
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct VcaRoutes {
     bits: u8,
-    /// `amount / 127` per source.
-    amount: [f32; MAX_MOD_SOURCES],
+    /// The stored amount per source, scaled where read: 9 B, not 33 as
+    /// `f32`s, which keeps room in the voice chain (ADR 0101).
+    amount: [i8; MAX_MOD_SOURCES],
 }
 
 impl VcaRoutes {
@@ -143,10 +144,15 @@ impl VcaRoutes {
         };
         if r.bits != 0 {
             for (s, a) in r.amount.iter_mut().enumerate() {
-                *a = amount_scale(m.fixed_amount(s, FixedCol::Vca));
+                *a = m.fixed_amount(s, FixedCol::Vca);
             }
         }
         r
+    }
+
+    /// Source `s`'s `amount / 127`.
+    fn scale(&self, s: usize) -> f32 {
+        amount_scale(self.amount[s])
     }
 
     fn has(&self, source: usize) -> bool {
@@ -675,7 +681,7 @@ impl Voice {
             let feed = gain
                 .as_mut()
                 .filter(|_| vca.has(i))
-                .map(|g| (g, vca.amount[i]));
+                .map(|g| (g, vca.scale(i)));
             mod_values[i] = env.run_block(
                 &src.envelopes[s.index()],
                 &self.env_mods[s.index()],
@@ -695,7 +701,7 @@ impl Voice {
             if let Some(gain) = gain.as_mut().filter(|_| vca.has(s))
                 && ModSource::ALL[s].env_slot().is_none()
             {
-                let a = vca.amount[s];
+                let a = vca.scale(s);
                 let (from, step) = (
                     a * self.mod_values[s],
                     a * (cur - self.mod_values[s]) / BLOCK_SIZE as f32,

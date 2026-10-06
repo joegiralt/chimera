@@ -7,7 +7,8 @@ use crate::dsp::filter::FilterKind;
 use crate::modulation::{FixedCol, ModSource};
 use crate::params::{EngineType, FilterParams};
 use crate::preset::Sound;
-use crate::taps::Jack;
+use crate::taps::{Jack, from_tap_amount, to_tap_amount};
+use crate::ui::mod_grid::RowSource;
 
 /// A jack and the knob that is its cell's amount (spec § 2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -117,16 +118,12 @@ pub enum RouteView {
 }
 
 impl RouteView {
-    /// The cell on `s`; `None` while the jack holds a tap, whose cell is
-    /// not a matrix row (Task 13).
-    pub fn cell(self, s: &Sound) -> Option<(ModSource, FixedCol)> {
+    /// The cell on `s`: a matrix source's, or on ALGO a tap's.
+    pub fn cell(self, s: &Sound) -> (RowSource, FixedCol) {
         match self {
-            RouteView::Freq(src) => Some((src, FixedCol::Freq)),
-            RouteView::Keybd => Some((ModSource::Note, FixedCol::Freq)),
-            RouteView::Jack(j) => match j.effective(s) {
-                Jack::Mod(src) => Some((src, j.col())),
-                Jack::Tap(_) => None,
-            },
+            RouteView::Freq(src) => (RowSource::Mod(src.index()), FixedCol::Freq),
+            RouteView::Keybd => (RowSource::Mod(ModSource::Note.index()), FixedCol::Freq),
+            RouteView::Jack(j) => (j.effective(s).into(), j.col()),
         }
     }
 
@@ -138,10 +135,37 @@ impl RouteView {
     }
 }
 
+/// Cell (`row`, `c`)'s amount on `s`; `None` when it holds no route.
+pub fn cell_route(s: &Sound, row: RowSource, c: FixedCol) -> Option<i8> {
+    match row {
+        RowSource::Mod(i) => {
+            (s.mod_state.fixed_present(c) & 1 << i != 0).then(|| s.mod_state.fixed_amount(i, c))
+        }
+        RowSource::Tap(t) => s.params.taps.get(t, c),
+    }
+}
+
+fn set_cell(s: &mut Sound, row: RowSource, c: FixedCol, a: i8) {
+    match row {
+        RowSource::Mod(i) => s.mod_state.set_fixed(i, c, a),
+        RowSource::Tap(t) => s.params.taps.set(t, c, a),
+    }
+}
+
+/// Deletes cell (`row`, `c`)'s route, returning its amount.
+fn take_cell(s: &mut Sound, row: RowSource, c: FixedCol) -> Option<i8> {
+    let a = cell_route(s, row, c)?;
+    match row {
+        RowSource::Mod(i) => s.mod_state.clear_fixed(i, c),
+        RowSource::Tap(t) => s.params.taps.clear(t, c),
+    }
+    Some(a)
+}
+
 /// The amount in the cell `v` views, 0 when absent.
 pub fn route_amount(s: &Sound, v: RouteView) -> i8 {
-    v.cell(s)
-        .map_or(0, |(src, c)| s.mod_state.fixed_amount(src.index(), c))
+    let (row, c) = v.cell(s);
+    cell_route(s, row, c).unwrap_or(0)
 }
 
 /// FM3's or QM's amount: the cell (effective jack, `slot.col()`).
@@ -151,9 +175,8 @@ pub fn jack_amount(s: &Sound, slot: JackSlot) -> i8 {
 
 /// Writes FM3's or QM's cell, creating its route; no second copy.
 pub fn set_jack_amount(s: &mut Sound, slot: JackSlot, a: i8) {
-    if let Some((src, c)) = RouteView::Jack(slot).cell(s) {
-        s.mod_state.set_fixed(src.index(), c, a);
-    }
+    let (row, c) = RouteView::Jack(slot).cell(s);
+    set_cell(s, row, c, a);
 }
 
 /// KEYBD's steps: OFF, HALF, FULL.
@@ -179,28 +202,29 @@ pub fn keybd_step(amount: i8, dir: i8) -> i8 {
 }
 
 /// Moves `slot`'s cable to `new`: the cell's amount and presence go to the
-/// new source's cell in one write, and the jack param follows. Refuses (and
-/// changes nothing) when `new` isn't a choice or its cell is occupied.
+/// new source's cell in one write, and the jack param follows. Between a
+/// route and a tap, FREQ's amount keeps its depth in octaves (spec § 2);
+/// Q's is linear both sides. Refuses (and changes nothing) when `new` isn't
+/// a choice, is a tap off ALGO, or its cell is occupied.
 pub fn repatch(s: &mut Sound, slot: JackSlot, new: Jack) -> bool {
     let old = slot.effective(s);
-    if !slot.choices().contains(&new) {
+    if !slot.choices().contains(&new)
+        || matches!(new, Jack::Tap(_)) && s.engine() != EngineType::Algo
+    {
         return false;
     }
     if old != new {
-        match (old, new) {
-            (Jack::Mod(o), Jack::Mod(n)) => {
-                let (c, m) = (slot.col(), &mut s.mod_state);
-                if m.fixed_present(c) & 1 << n.index() != 0 {
-                    return false;
-                }
-                if m.fixed_present(c) & 1 << o.index() != 0 {
-                    let a = m.fixed_amount(o.index(), c);
-                    m.clear_fixed(o.index(), c);
-                    m.set_fixed(n.index(), c, a);
-                }
-            }
-            // The tap arms come with `TapRoutes` (Task 13).
-            _ => return false,
+        let c = slot.col();
+        if cell_route(s, new.into(), c).is_some() {
+            return false;
+        }
+        if let Some(a) = take_cell(s, old.into(), c) {
+            let a = match (old, new, c) {
+                (Jack::Mod(_), Jack::Tap(_), FixedCol::Freq) => to_tap_amount(a),
+                (Jack::Tap(_), Jack::Mod(_), FixedCol::Freq) => from_tap_amount(a),
+                _ => a,
+            };
+            set_cell(s, new.into(), c, a);
         }
     }
     slot.set(&mut s.params.filter, new)
@@ -232,8 +256,7 @@ pub fn step_jack(s: &mut Sound, slot: JackSlot, delta: i8) -> JackStep {
         if repatch(s, slot, j) {
             return true;
         }
-        skipped |= matches!(j, Jack::Mod(n)
-            if s.mod_state.fixed_present(slot.col()) & 1 << n.index() != 0);
+        skipped |= cell_route(s, j.into(), slot.col()).is_some();
         false
     };
     for _ in 0..delta.unsigned_abs() {

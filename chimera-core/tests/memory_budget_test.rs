@@ -128,7 +128,8 @@ fn axi_residents_fit() {
     // pool, the Performance and the AudioShared triple buffer); the master
     // tape adds its own.
     if !cfg!(feature = "master-tape") {
-        assert!(total <= 444_324, "AXI grew past the fixed columns'");
+        // Then ALGO's `TapRoutes` (spec § 6): 8 B a Sound, 448 B in all.
+        assert!(total <= 444_772, "AXI grew past the taps'");
     }
     assert!(
         hw::AXI_SRAM - total >= 64 * 1024,
