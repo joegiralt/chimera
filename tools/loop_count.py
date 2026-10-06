@@ -8,10 +8,12 @@ function whose name holds the substring, and counts each innermost loop: a
 head's backward branches' span, head to last back-edge, that holds no other.
 A loop with an `if` in it (the filter's `saturate`) also gets its fast and
 slow paths round, the instructions one sample runs with every `if` skipped
-or taken. LLVM unrolls some loops: one that steps a byte offset by `K` and
-compares it with an immediate runs `K/4` samples (`f32`s) a time round, its
-stride, and its counts are also given a sample. Every instruction outside the loops is `block_instr` (per-block
-work, which the bill divides by 64). Literal-pool words are not counted.
+or taken. LLVM unrolls some loops, so each loop's stride (samples a time
+round) is read from its induction register: a byte offset stepped up by `K`
+and compared with an immediate runs `K/4` samples (`f32`s) a time round; one
+counted down by `subs rN, #K` from `#I` runs `64·K/I`. With neither, the
+stride is unknown and the counts are a time round. Every instruction outside
+the loops is `block_instr` (per-block work, which the bill divides by 64). Literal-pool words are not counted.
 Prints each loop's instructions, `vdiv`s, `vsqrt`s and cycles:
 `ceil5(instr × 1.46 × 1.1 + 12 × (vdiv + vsqrt))`. Standard library only.
 """
@@ -117,31 +119,50 @@ def _paths(ins, head):
 
 
 IMM = re.compile(r"^(r\d+|lr|ip),\s*(?:\1,\s*)?#(0x[0-9a-f]+|\d+)$")
+MOV = re.compile(r"^(r\d+|lr|ip),\s*#(0x[0-9a-f]+|\d+)$")
 
 
-def _stride(ins):
-    """Samples a time round: `K/4` for a register the loop both adds an
-    immediate `K` to and compares with an immediate (a byte offset over
-    `f32`s); 1 if none, or if `K` isn't a whole number of `f32`s."""
-    adds, cmps = {}, set()
+def _stride(ins, before):
+    """Samples a time round, or None if unknown. A register the loop adds an
+    immediate `K` to and compares with an immediate is a byte offset over
+    `f32`s: `K/4`. One it counts down with a flag-setting `subs` by `K` and
+    nothing compares, from the last `mov` of an immediate `I` before the
+    loop (`before`), runs `I/K` times round a block: `64·K/I`."""
+    adds, subs, cmps = {}, {}, set()
     for _, op, args in ins:
+        base = op.split(".")[0]
+        if base == "cmp":
+            cmps.add(args.split(",")[0].strip())
         m = IMM.match(args)
         if not m:
             continue
-        base = op.split(".")[0]
         if base in ("adds", "add"):
             adds[m.group(1)] = int(m.group(2), 0)
-        elif base == "cmp":
-            cmps.add(m.group(1))
-    ks = [k for r, k in adds.items() if r in cmps and k >= 4 and k % 4 == 0]
-    return ks[0] // 4 if len(ks) == 1 else 1
+        elif base == "subs":
+            subs[m.group(1)] = int(m.group(2), 0)
+    up = [k for r, k in adds.items() if r in cmps]
+    if len(up) == 1:
+        return up[0] // 4 if up[0] >= 4 and up[0] % 4 == 0 else None
+    down = [(r, k) for r, k in subs.items() if r not in cmps]
+    if len(down) != 1:
+        return None
+    r, k = down[0]
+    for _, op, args in reversed(before):
+        m = MOV.match(args) if op.split(".")[0] in ("mov", "movs", "movw") else None
+        if m and m.group(1) == r:
+            i = int(m.group(2), 0)
+            return 64 * k // i if i and (64 * k) % i == 0 else None
+        if args.split(",")[0].strip() == r:
+            return None  # written some other way: unknown
+    return None
 
 
 def count(disasm, symbol):
     """`loop_instr` (head to last back-edge), `fast` and `slow` (the
     shortest and longest path round), `vdiv`, `vsqrt` and `stride` (samples
-    a time round) of the first innermost loop; `block_instr` outside every loop; and `loops`, each innermost
-    loop's counts in address order. Exits if a loop calls out (`bl`, `blx`):
+    a time round, None if unknown) of the first innermost loop;
+    `block_instr` outside every loop; and `loops`, each innermost loop's
+    counts in address order. Exits if a loop calls out (`bl`, `blx`):
     the callee's cost wouldn't be counted."""
     name, body = _function(disasm, symbol)
     loops = []
@@ -157,7 +178,8 @@ def count(disasm, symbol):
         fast, slow = _paths(ins, head)
         loops.append({
             "head": head, "loop_instr": len(ops), "fast": fast, "slow": slow,
-            "vdiv": d, "vsqrt": r, "stride": _stride(ins),
+            "vdiv": d, "vsqrt": r,
+            "stride": _stride(ins, [x for x in body if x[0] < head]),
         })
     in_loop = sum(l["loop_instr"] for l in loops)
     looped = {a for l in _loops(body) for a, _, _ in body if l[0] <= a <= l[1]}
@@ -211,7 +233,9 @@ def main(argv):
                 f"slow {l['slow']} instr = {cycles(l['slow'], n)}"
             )
         k = l["stride"]
-        if k > 1:
+        if k is None:
+            print("    stride unknown: counts are a time round, not a sample")
+        elif k > 1:
             per = [Fraction(x, k) for x in (l["fast"], l["slow"])]
             paths = (f"{float(per[0]):.2f}" if l["fast"] == l["slow"]
                      else f"fast {float(per[0]):.2f}, slow {float(per[1]):.2f}")
@@ -223,13 +247,14 @@ def main(argv):
         f"(over 64: {float(b):.2f} instr, {float(bd):.3f} div a sample)"
     )
     for l in c["loops"]:
-        k = l["stride"]
+        k = l["stride"] or 1
         n = Fraction(l["vdiv"] + l["vsqrt"], k) + bd
         paths = [l["loop_instr"]] if l["fast"] == l["slow"] else [l["fast"], l["slow"]]
         each = ", ".join(
             f"{float(Fraction(p, k)):.2f} + {float(b):.2f} = {cycles(Fraction(p, k) + b, n)}"
             for p in paths)
-        print(f"  loop @{l['head']:#x} a sample, with the block: {each}")
+        per = "a sample" if l["stride"] else "a time round (stride unknown)"
+        print(f"  loop @{l['head']:#x} {per}, with the block: {each}")
 
 
 if __name__ == "__main__":

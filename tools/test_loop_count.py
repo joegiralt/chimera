@@ -129,10 +129,24 @@ class LoopCount(unittest.TestCase):
         wide = dis.replace("adds\tr2, #0x10", "add.w\tlr, lr, #0x40").replace(
             "cmp.w\tr2", "cmp.w\tlr")
         self.assertEqual(lc.count(wide, "unrolled")["stride"], 16)
-        # A counter stepped by 1 (DIS) is one sample a time round.
-        self.assertEqual(lc.count(DIS, "probe_fn")["stride"], 1)
         # A step that isn't whole `f32`s isn't a stride.
-        self.assertEqual(lc.count(dis.replace("#0x10", "#0x6"), "unrolled")["stride"], 1)
+        self.assertIsNone(lc.count(dis.replace("#0x10", "#0x6"), "unrolled")["stride"])
+
+    def test_a_count_down_loop_has_its_stride(self):
+        # DIS counts samples down from 0x40 by 1: one a time round.
+        self.assertEqual(lc.count(DIS, "probe_fn")["stride"], 1)
+        # Bytes down from 0x100 by 0x10: four a time round.
+        bytes_ = DIS.replace("movs\tr2, #0x40", "mov.w\tr2, #0x100").replace(
+            "subs\tr2, #0x1", "subs\tr2, #0x10")
+        self.assertEqual(lc.count(bytes_, "probe_fn")["stride"], 4)
+
+    def test_an_unknown_stride_says_so(self):
+        # A register-to-register compare: no immediate to read.
+        dis = DIS.replace("subs\tr2, #0x1", "cmp\tr2, r3")
+        self.assertIsNone(lc.count(dis, "probe_fn")["stride"])
+        # A count-down whose start isn't an immediate.
+        dis = DIS.replace("movs\tr2, #0x40", "ldr\tr2, [r0]")
+        self.assertIsNone(lc.count(dis, "probe_fn")["stride"])
 
     def test_cycles_land_on_fives(self):
         self.assertEqual(lc.cycles(0, 0), 0)
