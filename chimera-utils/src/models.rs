@@ -9,10 +9,10 @@
 //! six diffuser lengths × SPREAD, 8 taps a side, one damper a loop.
 
 use crate::Config;
+use crate::SR;
 use crate::metrics::{Metrics, distance, ir_metrics, noise_band_rt60, onset, residuals, verdict};
 use crate::mv::{load_refs, read_json, write_json};
 use crate::sig::resample_poly;
-use crate::SR;
 use crate::stim::{CLICK_AT, Rng, click, noise_stim};
 use rayon::prelude::*;
 use serde_json::{Map, Value, json};
@@ -359,7 +359,7 @@ fn measure(h: &Hall, r: &Metrics, seeds: usize, solve_pre: bool) -> (Metrics, f6
 }
 
 fn score(h: &Hall, r: &Metrics, seeds: usize) -> f64 {
-    distance(&residuals(&measure(h, r, seeds, true).0, r))
+    distance(&residuals(&measure(h, r, seeds, true).0, r), false)
 }
 
 /// A tap table from `model-taps`' JSON: per side 8 [line, fraction].
@@ -413,7 +413,7 @@ fn parse_dens(s: &str) -> Result<Dens, String> {
 
 fn line(p: &str, name: &str, m: &Metrics, r: &Metrics) -> (String, bool) {
     let res = residuals(m, r);
-    let v = verdict(&res);
+    let v = verdict(&res, false);
     let br: Vec<String> = res.band_rt60_rel[1..6]
         .iter()
         .map(|x| format!("{:+4.0}", x.unwrap_or(0.0) * 100.0))
@@ -426,7 +426,7 @@ fn line(p: &str, name: &str, m: &Metrics, r: &Metrics) -> (String, bool) {
     (
         format!(
             "{p:>2} {name:22.22} d={:7.1} RT {} pre {:+5.1} c50 {:+5.1} ned {} cen {:+.0} {}",
-            distance(&res),
+            distance(&res, false),
             br.join(" "),
             res.predelay_ms,
             res.c50_db,
@@ -655,7 +655,7 @@ pub fn taps_search(cfg: &Config, fits: &std::path::Path, opts: &[String]) -> Res
                     ..Hall::from_knobs(k, dens)
                 };
                 let res = residuals(&measure(&h, r, 8, true).0, r);
-                (distance(&res).min(25.0), verdict(&res).all())
+                (distance(&res, false).min(25.0), verdict(&res, false).all())
             })
             .collect();
         (
