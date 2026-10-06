@@ -243,6 +243,71 @@ the ban on 2026-10-05.
     smear offsets.
   - **LOOPS's cos and sin come from an f32 series,** normalised so c² + s²
     is 1 to the rounding: libm's ran in double precision.
+  - **ΔCOST with GRAIN** (Task 9c): GRAIN adds 15.2 instructions an
+    output sample, counted statically (below), 7.1 to 16.1 cycles at 0.47
+    and 1.06 cycles an instruction. That puts the default build at about
+    +12 to +76 against its 76, and the tape build at +20 to +83 against its
+    23. The unit decides at Task 13; the fallback order above stands, and
+    GRAIN is cuttable on its own (it never feeds back).
+
+- **ROOM's GRAIN, as built (Task 9c, 2026-10-06).** The MidiVerb II's
+  sizzle is its arithmetic grain: about 40 truncations a sample in 16-bit
+  words carrying a 13-bit signal leave a noise floor at a fixed level under
+  every tail (the sizzle report, owner-approved 2026-10-06). ROOM adds it on
+  its return, at the ring's 24 kHz, in `room.rs`'s `grain`:
+  - **Noise:** one LCG (Numerical Recipes'), two draws a sample, L then R;
+    each side's draw plus 0.3 × its last (`Tilt`), −3.6 dB at 9 kHz
+    against 3 kHz, as the unit's grain sits under its tails. The seed is
+    fixed (`GRAIN.seed()`): every fresh ROOM draws the same grain, and the
+    goldens reproduce.
+  - **Level:** 2.6 LSB of 13 bits a side at the wet return's full scale
+    (MIX 1), fitted by the GRAIN metric. The unit's own is 3.6–4.3 LSB13 at
+    its input's scale; the harness drives the unit at the A/B's −1 dBFS
+    peak (the notched burst's peak is about −5 dBFS) and Chimera as is, so
+    its grain reads about 4 dB lower at Chimera's scale.
+  - **DECAY law:** the level is full from an RT60 of 0.8 s up, and × (RT60
+    / 0.8 s)^½ under it. Truncation fed round fewer, shorter trips leaves
+    less grain, and the short programs (#1–#3) read it 2–5 dB under the
+    medium ones. A SIZE law alone could not do it: #1 and #9 sit at SIZE's
+    k 0.65 and 0.66 and want opposite gates.
+  - **Gate:** a 20 ms one-pole on |l| + |r| before the grain; the grain is
+    full while that envelope stands a knee × its own level over a 1-LSB
+    floor, fades linearly under it, and is exactly nothing under the floor.
+    The knee is tied to SIZE (the report's ask for #1): geometric in k, 0.8
+    at k 0.4 to 135 at k 1. A small room keeps its grain on as its tail
+    sinks into the unit's dead band; a large one fades it sooner. The gate
+    reads the return before the grain, so it never opens on the grain, and
+    a dead tail's envelope falls under the floor in finite time: the return
+    is exact zeros at idle and after the tail, as before.
+  - **Branch-free:** the gate is a clamp, the noise integer arithmetic; the
+    same work at every level. The scale and the knee are cached with the
+    other targets (DECAY, and the lengths crossfading to).
+  - **Cost, counted statically** as Task 9b's: the kernel built for
+    thumbv7em with cortex-m7 at opt-level 2 runs a 117-instruction body (96
+    VFP) four samples at a time, 8 times a 32-sample ring block, plus 36 of
+    entry and exit: 972 a block, 30.4 a ring sample, **15.2 an output
+    sample**. No data-dependent branch, so the dynamic count is the same.
+  - **`EngineState` grows to 260 B** (264 with the tests' probes): the
+    envelope, the seed and the cached scale and knee.
+  - **GRAIN and HF share join the harness's bar** (`chimera-utils`'s
+    `grain.rs`), judged for ROOM, reported for the others. GRAIN is a
+    noise-power ratio: four notched noise bursts, the notch cores' power
+    density over their flanks' in the burst's last 500 ms and 50–200 and
+    200–400 ms after it; rms Δ ≤ 3.5 dB, none past 6.5 dB. HF share is
+    P(4–11.7 kHz) / P(0.5–2 kHz) at 0–50, 50–200 and 200–600 ms after the
+    burst, each ±1 dB: it catches the 2–3 dB dark top end the centroid's
+    ±5 % let through on #5 and #11.
+  - **TONE's top opens the input filter,** as DAMP's top opens the dampers
+    (the first near-miss step): the unit has no input filter, and the
+    10 kHz one-pole cost #5 and #10 1–1.5 dB of HF share no knob could win
+    back. It opens over the knob's last 5 % (9.33 → 10 kHz), so the fit and
+    a hand find every brightness between, with no cliff; TONE 0 reads OFF.
+    START (program 5's knobs) is refitted, so its TONE reads OFF too.
+  - **The refit:** all nine ROOM presets pass with GRAIN and HF share in,
+    seeded from the Task 9b fits (16 seeds). The fit's distance weighs HF
+    share as C50, and adds 4 for each judged metric over its bar, so the
+    search spends margin before a pass. Several margins are thin: #5's C50
+    +1.0 dB, #8's, #10's and #14's centroid +5 %, #11's NED −10 %.
 
 - **BLOOM, as built (Task 11, 2026-10-05).** The following departures
   are measured, and need the owner's ruling.
