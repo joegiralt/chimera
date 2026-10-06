@@ -63,8 +63,10 @@ pub const BENCH_TEXT_LEN: usize = 6144;
 type Text = Report<BENCH_TEXT_LEN>;
 
 // A `static mut`, not a `singleton!`: that builds its value on the caller's
-// stack before moving it in, 6 KB on `synth`'s frame.
-static mut REPORT: Text = Report::new();
+// stack before moving it in, 6 KB on `synth`'s frame. In D2, out of AXI's
+// margin: nothing times it.
+#[unsafe(link_section = ".ram_d2.voices")]
+static mut REPORT: MaybeUninit<Text> = MaybeUninit::uninit();
 static REPORT_TAKEN: AtomicBool = AtomicBool::new(false);
 
 /// The report, once: `run` writes it, the console reads it from then on.
@@ -73,8 +75,14 @@ pub fn take_report() -> Option<&'static mut Text> {
         return None;
     }
     // SAFETY: the flag lets exactly one caller past, so this is the only
-    // reference to `REPORT` ever made.
-    Some(unsafe { &mut *addr_of_mut!(REPORT) })
+    // reference to `REPORT` ever made. ".ram_d2.voices" is NOLOAD, so it
+    // is zeroed here, in place: a `Report` of all zero bytes is an empty
+    // one (its bytes, a zero length, not cut).
+    unsafe {
+        let r = &mut *addr_of_mut!(REPORT);
+        r.as_mut_ptr().write_bytes(0, 1);
+        Some(r.assume_init_mut())
+    }
 }
 
 /// The bench plays no pool source: its TAPE rows are refused, as before.
