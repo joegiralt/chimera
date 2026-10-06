@@ -3,13 +3,13 @@
 //! `DirStore`, with no window. Desktop QA for what the window would show.
 
 use crate::controls::DesktopControls;
-use crate::store::DirStore;
 use chimera_core::project::LoadLink;
 use chimera_core::storage::{Card, SystemSettings, SystemSync};
 use chimera_core::ui::UiState;
 use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::busy::ToastStep;
 use chimera_core::ui::settings::CardCx;
+use chimera_desktop::store::DirStore;
 use chimera_hal::Ms;
 use minifb::Key;
 use std::path::PathBuf;
@@ -105,9 +105,80 @@ fn toast(ui: &mut UiState) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
-    use crate::store::tests::unique_root;
+    use chimera_hal::store::Store;
+    use std::fs;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// A fresh, empty card root of this process's own.
+    pub(crate) fn unique_root() -> PathBuf {
+        // Tests run on their own threads: one counter for the process.
+        static N: AtomicU32 = AtomicU32::new(0);
+        let n = N.fetch_add(1, Ordering::Relaxed) + 1;
+        let root = std::env::temp_dir().join(format!("chimera-desk-{}-{n}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    /// settings_project_test's `card_changed_then_save_as`, by key script
+    /// on the sim's card: ALPHA loaded through LOAD, the card swapped, then
+    /// MENU held asks CARD CHANGED, and SAVE AS saves on the new card.
+    #[test]
+    fn card_changed_then_save_as() {
+        use chimera_core::name::ProjectName;
+        use chimera_core::project::{
+            Project, ProjectNote, SaveTo, list_projects, new_project_id, save_project,
+        };
+        use chimera_core::storage::Card;
+        use chimera_core::ui::nav::Location;
+        use minifb::Key;
+        let root = unique_root();
+        let a = {
+            let (mut card, mut s) = (Card::new(), DirStore::new(root.clone()));
+            let (mut p, _) = Project::boxed();
+            p.set_name(ProjectName::new("ALPHA").unwrap());
+            let fresh = new_project_id(&mut card, &mut s).out.unwrap();
+            let f = fresh.file();
+            let out = save_project(&mut card, &mut s, &mut p, SaveTo::Fresh(fresh)).out;
+            assert!(matches!(out, ProjectNote::Saved(_)), "{out:?}");
+            f
+        };
+        let mut d = Desk::launch(root.clone());
+        // SETTINGS › PROJECT › LOAD, row 01, EDIT.
+        d.tap(Key::M);
+        d.tap(Key::Down);
+        d.tap(Key::Down);
+        assert_eq!(d.ui.location(), Location::settings_at(&[0, 0], 0));
+        assert!(d.ui.load_row(0).unwrap().label.as_str().starts_with("01"));
+        d.tap(Key::Down);
+        assert_eq!(d.ui.project().meta().file(), Some(a));
+        while d.ui.in_settings() {
+            d.tap(Key::M);
+        }
+
+        let old = d.store.mount().unwrap();
+        d.store
+            .write_volume(old.serial.wrapping_add(1), *b"SWAPPED    ")
+            .unwrap();
+        let _ = fs::remove_dir_all(root.join("CHIMERA"));
+        d.hold(Key::M);
+        let (q, _) = d.ui.prompt_words_for_test().expect("a prompt");
+        assert_eq!(q.as_str(), "CARD CHANGED");
+        d.tap(Key::Up);
+        assert_eq!(d.ui.naming().unwrap().text(), "ACID-001");
+        d.tap(Key::Up);
+        let vol = d.store.mount().unwrap();
+        assert_ne!(vol, old);
+        assert_eq!(d.ui.project().meta().file().unwrap().vol(), vol);
+        let mut n = 0;
+        let _ = list_projects(&mut Card::new(), &mut d.store, &mut |_| n += 1);
+        assert_eq!(n, 1);
+        assert_eq!(d.toast().as_deref(), Some("SAVED"));
+        let _ = fs::remove_dir_all(root);
+    }
+
     use chimera_core::project::ProjectStatus;
     use chimera_core::project::test_support::same;
 

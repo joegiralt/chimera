@@ -6,7 +6,6 @@ mod display;
 mod midi;
 #[cfg(test)]
 mod qa;
-mod store;
 
 use chimera_core::console::Served;
 use chimera_core::orbit::runner::orbit_buffer;
@@ -20,28 +19,13 @@ use chimera_core::ui::animation::Pacer;
 use chimera_core::ui::busy::{ToastStep, draw_busy, draw_toast};
 use chimera_core::ui::perf::PerfTracker;
 use chimera_core::ui::settings::CardCx;
+use chimera_desktop::store::{DirStore, sim_card};
 use chimera_hal::store::Store;
 use chimera_hal::{ChimeraDisplay, MidiChannel, MidiNote, Ms, Velocity};
 use console::DeskUnit;
 use controls::DesktopControls;
 use display::DesktopDisplay;
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
-use store::DirStore;
-
-/// The card: `CHIMERA_CARD`, or `chimera-card` made on first run. A
-/// `CHIMERA_CARD` that doesn't exist is an empty slot.
-fn card_dir() -> PathBuf {
-    std::env::var_os("CHIMERA_CARD").map_or_else(
-        || {
-            let dir = PathBuf::from("chimera-card");
-            // A failure shows as no card.
-            let _ = std::fs::create_dir_all(&dir);
-            dir
-        },
-        PathBuf::from,
-    )
-}
 
 /// SYSTEM and its theme, then step 2: the last project, or NEW and why.
 fn boot<S: Store>(
@@ -75,7 +59,7 @@ fn main() {
     display.set_theme(&ui.theme());
     let _ = chimera_core::ui::splash::draw(&mut display);
     display.flush();
-    let mut store = DirStore::new(card_dir());
+    let mut store = DirStore::new(sim_card());
     let mut card = Card::new();
     let (mut sync, mut settings) = boot(&mut ui, &mut card, &mut store);
     display.set_theme(&ui.theme());

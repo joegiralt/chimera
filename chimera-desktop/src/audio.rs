@@ -447,12 +447,12 @@ mod tests {
     /// own Part plays it.
     #[test]
     fn each_card_boots_a_project_that_plays() {
-        use crate::store::DirStore;
         use chimera_core::project::test_support::{full, same};
         use chimera_core::project::{ProjectStatus, SaveTo, new_project_id, project_status};
         use chimera_core::storage::{Card, SystemSync};
         use chimera_core::ui::UiState;
         use chimera_core::ui::busy::ToastStep;
+        use chimera_desktop::store::DirStore;
 
         let base = std::env::temp_dir().join(format!("chimera-qa-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);

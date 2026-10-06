@@ -276,7 +276,7 @@ mod tests {
 
     #[test]
     fn status_after_a_key_walk_names_the_place() {
-        let mut desk = crate::qa::Desk::launch(crate::store::tests::unique_root());
+        let mut desk = crate::qa::Desk::launch(crate::qa::tests::unique_root());
         desk.tap(minifb::Key::M); // MENU in the sim's key map; opens SETTINGS on release
         let fb: Box<[u16; FB_SIZE]> = vec![0u16; FB_SIZE].try_into().unwrap();
         let mut con = SocketConsole::bind("127.0.0.1:0").unwrap();
