@@ -191,6 +191,24 @@ impl Project {
         self.pool.source_store(r, held)
     }
 
+    /// Stores source `r`, its `len` held bytes written by `fill` straight
+    /// into the arena, with no copy (the bench's synthetic sources). `None`
+    /// when it doesn't fit, or `r` is already held.
+    pub fn source_write(
+        &mut self,
+        r: SourceRef,
+        len: usize,
+        fill: impl FnOnce(&mut [u8]),
+    ) -> Option<SourceId> {
+        self.bump();
+        let s = self.pool.source_absent(r)?;
+        let fill = |b: &mut [u8]| {
+            fill(&mut b[..len]);
+            Some(len)
+        };
+        self.pool.source_fill(s, len, fill).ok()?.then_some(s)
+    }
+
     /// Source `r` as an absent entry, costing nothing.
     pub fn source_absent(&mut self, r: SourceRef) -> Option<SourceId> {
         self.bump();
@@ -208,10 +226,8 @@ impl Project {
         moved
     }
 
-    /// `sources_pass`, waiting for the audio while `within` says so. Tests
-    /// only.
-    #[cfg(any(test, feature = "test-support"))]
-    #[doc(hidden)]
+    /// `sources_pass`, waiting for the audio while `within` says so: tests,
+    /// and the bench, which answers the gate itself.
     pub fn sources_pass_with(&mut self, within: impl FnMut() -> bool) -> bool {
         let moved = self.pool.source_pass(within);
         if moved {

@@ -21,6 +21,8 @@ use chimera_core::dsp::modal::{
     BankModes, CHORD_COUNT, ModalEngine, ModalParams, ResonatorMode, SymPool,
 };
 use chimera_core::dsp::modulator::{EnvForm, EnvSlot, EnvType, Func, Glide, LfoForm, LfoType};
+use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape};
+use chimera_core::dsp::tape_engine::{StretchType, TapeModel, wave};
 use chimera_core::dsp::voice::Voice;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::hw::{
@@ -35,13 +37,13 @@ use chimera_core::note_queue::{NoteEvent, NoteKind};
 #[cfg(feature = "orbit")]
 use chimera_core::orbit::runner::OrbitRunner;
 use chimera_core::params::{
-    EngineType, EnvParams, FilterParams, FolderParams, OutParams, ParamSnapshot,
+    EngineType, EnvParams, FilterParams, FolderParams, OutParams, ParamSnapshot, Steal,
 };
 use chimera_core::part::{DacPair, PartParams};
 use chimera_core::preset::{Performance, Sound};
-use chimera_core::project::{NEW_PARTS, Project, SlotId, project_crc};
+use chimera_core::project::{NEW_PARTS, Project, SlotId, SourceId, SourceRef, project_crc};
 use chimera_core::scope::{ScopeFrame, ScopeWriter, scope_buffer};
-use chimera_core::source_table::GateView;
+use chimera_core::source_table::{AudioToken, GateView};
 use chimera_core::sym_alloc::SymAlloc;
 use chimera_core::triple::TripleBuffer;
 use chimera_core::ui::fmt::FmtBuf;
@@ -586,7 +588,7 @@ struct Rig<'p> {
 pub fn run(
     display: &mut impl ChimeraDisplay,
     clocks: Clocks,
-    project: &mut Project,
+    (project, sources): (&mut Project, &mut AudioToken),
     report: &mut Text,
 ) {
     let proj_crc = time_project_crc(project);
@@ -600,13 +602,45 @@ pub fn run(
         let (w, _unread) = (&mut *addr_of_mut!(SCOPE)).split();
         (i, f, &mut *addr_of_mut!(SHARED), w)
     };
+    let mut scope = ScopeWriter::new(scope_w);
+    tape_page(
+        (&mut *inst_slot, &mut *fx_slot, &mut *shared_slot),
+        (&mut scope, sources),
+        project,
+        rec,
+    );
+    hold(clocks);
+    algo_pages(
+        clocks,
+        (inst_slot, fx_slot, shared_slot, scope),
+        project,
+        rec,
+        proj_crc,
+    );
+}
+
+/// The ALGO, FX, ROUTING and MEMORY pages: out of `run`, so its frame
+/// stays under the stack check's 8 KB with the TAPE page's scope in it.
+#[inline(never)]
+fn algo_pages(
+    clocks: Clocks,
+    (inst_slot, fx_slot, shared_slot, scope): (
+        &'static mut MaybeUninit<Instrument>,
+        &'static mut MaybeUninit<FxBus>,
+        &'static mut MaybeUninit<AudioShared>,
+        ScopeWriter,
+    ),
+    project: &Project,
+    rec: &mut Recorder<'_, impl ChimeraDisplay>,
+    proj_crc: u32,
+) {
     let mut rig = Rig {
         cpu_hz: clocks.cpu_hz,
         inst_slot,
         fx_slot,
         shared_slot,
         perf: project.perf(),
-        scope: ScopeWriter::new(scope_w),
+        scope,
         dac: DacBlocks::new(),
     };
     let mut rows = [Counts::default(); ROWS];
@@ -644,6 +678,351 @@ pub fn run(
         hold(clocks);
     }
     memory_pages(&mut rig, rec, clocks, proj_crc);
+}
+
+/// TAPE's synthetic sources (spec § 5): eight of a kind, xorshift noise
+/// seeded apart, written straight into the pool's arena. A model's cycles
+/// follow a source's frames, rate and shape, not what it holds.
+#[derive(Clone, Copy)]
+enum Tapes {
+    /// 12 000 frames at 24 kHz, 18 KB: the LOOP and STRETCH rows.
+    Long,
+    /// Four transwave frames, top 512, at 48 kHz.
+    Wave,
+    /// 64 frames at 24 kHz, the fewest a source holds: a loop of all of it
+    /// at SIZE 0; ONESHOT's 16 slices of 4 frames.
+    Least,
+    /// 1 024 frames at 8 kHz: room for the shortest legal loop, 256 frames
+    /// at `inc` 16.
+    Short,
+}
+
+/// Whether a block's notes go down again first: held, struck again, or
+/// struck and released (TRON running out and let go in one block).
+#[derive(Clone, Copy, PartialEq)]
+enum Hit {
+    Hold,
+    Again,
+    AgainOff,
+}
+
+/// A TAPE row: its label, sources, the Sound's set-up over LOOP with TAPE
+/// and AGE at 0.5, and what changes before each block. Notes 120–127
+/// (`inc` at the clamp, ROOT 0 on 8 kHz sources).
+type TapeRow = (
+    &'static str,
+    Tapes,
+    fn(&mut ParamSnapshot),
+    fn(&mut ParamSnapshot, u32) -> Hit,
+);
+
+const HOLD: fn(&mut ParamSnapshot, u32) -> Hit = |_, _| Hit::Hold;
+
+/// TINY's cases, each in its own model's bill: SIZE 0 on the fewest
+/// frames, then each in its shortest legal loop at XFADE ½.
+const TAPE_ROWS: [TapeRow; 13] = [
+    ("LOOP", Tapes::Long, |p| p.tape.xfade = 0.5, HOLD),
+    (
+        "STRETCH",
+        Tapes::Long,
+        |p| {
+            (p.tape.model, p.tape.size) = (TapeModel::Stretch, 0.0);
+            (p.tape.kind, p.tape.period) = (StretchType::Mono, 109.0);
+        },
+        HOLD,
+    ),
+    // C7, ±12 st every block: a level change every block, billed as at
+    // STEAL GLIDE.
+    (
+        "WAVE C7",
+        Tapes::Wave,
+        |p| {
+            p.tape.model = TapeModel::Transwave;
+            p.pitch.steal = Steal::Glide;
+        },
+        |p, b| {
+            p.pitch.pitch = if b % 2 == 0 { 12.0 } else { -12.0 };
+            Hit::Hold
+        },
+    ),
+    ("LOOP 64", Tapes::Least, |p| tiny(p, TapeModel::Loop), HOLD),
+    (
+        "REV 64",
+        Tapes::Least,
+        |p| {
+            tiny(p, TapeModel::Loop);
+            (p.tape.start, p.tape.end) = (1.0, 0.0);
+        },
+        HOLD,
+    ),
+    (
+        "PING 64",
+        Tapes::Least,
+        |p| tiny(p, TapeModel::PingPong),
+        HOLD,
+    ),
+    (
+        "SCRUB 64",
+        Tapes::Least,
+        |p| tiny(p, TapeModel::Scrub),
+        HOLD,
+    ),
+    ("LOOP 256", Tapes::Short, |p| tiny(p, TapeModel::Loop), HOLD),
+    (
+        "REV 256",
+        Tapes::Short,
+        |p| {
+            tiny(p, TapeModel::Loop);
+            (p.tape.start, p.tape.end) = (1.0, 0.0);
+        },
+        HOLD,
+    ),
+    (
+        "PING 256",
+        Tapes::Short,
+        |p| tiny(p, TapeModel::PingPong),
+        square,
+    ),
+    (
+        "SCRUB 256",
+        Tapes::Short,
+        |p| tiny(p, TapeModel::Scrub),
+        square,
+    ),
+    (
+        "1SHOT",
+        Tapes::Least,
+        |p| {
+            tiny(p, TapeModel::Oneshot);
+            p.tape.slice = 17;
+        },
+        |_, _| Hit::Again,
+    ),
+    (
+        "TRON",
+        Tapes::Least,
+        |p| tiny(p, TapeModel::Tron),
+        |_, _| Hit::AgainOff,
+    ),
+];
+
+/// SIZE 0, XFADE ½, ROOT 0: `inc` clamped on any source.
+fn tiny(p: &mut ParamSnapshot, model: TapeModel) {
+    (p.tape.model, p.tape.size, p.tape.xfade, p.tape.root) = (model, 0.0, 0.5, 0.0);
+}
+
+/// POSITION a square wave, flipping every block: the bounds jump, and
+/// PING-PONG clamps.
+fn square(p: &mut ParamSnapshot, b: u32) -> Hit {
+    p.tape.position = (b % 2) as f32;
+    Hit::Hold
+}
+
+/// The TAPE page's slots: the engine's, as `Rig`'s, and
+/// the audio's source reader, which answers the pool's gate.
+struct TapeRig<'t> {
+    inst_slot: &'t mut MaybeUninit<Instrument>,
+    fx_slot: &'t mut MaybeUninit<FxBus>,
+    shared_slot: &'t mut MaybeUninit<AudioShared>,
+    scope: &'t mut ScopeWriter,
+    dac: DacBlocks,
+    sources: &'t mut AudioToken,
+}
+
+/// The engine's slots and the bench's `AudioShared`, lent.
+type Slots<'t> = (
+    &'t mut MaybeUninit<Instrument>,
+    &'t mut MaybeUninit<FxBus>,
+    &'t mut MaybeUninit<AudioShared>,
+);
+
+/// Cold runs a row takes, its worst block kept.
+const COLD_RUNS: u32 = 4;
+
+impl TapeRig<'_> {
+    /// The worst block of `COLD_RUNS` runs of `TIMED_BLOCKS`, cycles a
+    /// sample, `voices` notes of `row` down, each on its own source of
+    /// `ids`. With `cold` the D-cache is cleaned and invalidated before
+    /// every timed block, so a block starts with nothing cached, as one
+    /// after the UI's would.
+    #[inline(never)]
+    fn time_cold(
+        &mut self,
+        perf: &Performance,
+        &(_, _, setup, each): &TapeRow,
+        ids: &[SourceId; MAX_VOICES],
+        (voices, cold): (usize, bool),
+    ) -> u32 {
+        // SAFETY: the bench runs alone, before interrupts are unmasked;
+        // `main`'s SCB and CPUID aren't in use until it returns, and these
+        // only clean and invalidate the D-cache.
+        let mut cp = unsafe { cortex_m::Peripherals::steal() };
+        let mut worst = 0u32;
+        for _ in 0..COLD_RUNS {
+            let budget = SampleBudget::for_cpu(u32::MAX);
+            let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
+            let fx = FxBus::init_in_place(self.fx_slot);
+            let shared = AudioShared::init_in_place(self.shared_slot, perf);
+            let p = &mut shared.parts[0];
+            (p.params, p.mod_state) =
+                (ParamSnapshot::for_engine(EngineType::Tape), ModState::new());
+            (p.params.tape.tape, p.params.tape.age) = (0.5, 0.5);
+            setup(&mut p.params);
+            hit(self.sources, inst, shared, (ids, voices), Hit::Again);
+            for b in 0..WARM_BLOCKS + TIMED_BLOCKS {
+                let h = each(&mut shared.parts[0].params, b);
+                hit(self.sources, inst, shared, (ids, voices), h);
+                if cold {
+                    cp.SCB.clean_invalidate_dcache(&mut cp.CPUID);
+                }
+                let start = DWT::cycle_count();
+                let out = (&mut *fx, &mut self.dac, &mut *self.scope);
+                inst.run_block(self.sources, out, shared, |_, _| {});
+                let c = DWT::cycle_count().wrapping_sub(start);
+                if b >= WARM_BLOCKS {
+                    worst = worst.max(c);
+                }
+            }
+        }
+        // The row's notes die with its `Instrument`: nothing reads now.
+        self.sources.store_sounding(0);
+        worst / BLOCK_SIZE as u32
+    }
+}
+
+/// Voice `v` struck at note 120 + `v` on `ids[v]` (`Hit::Again`), and let
+/// go too (`AgainOff`).
+fn hit(
+    sources: &mut AudioToken,
+    inst: &mut Instrument,
+    shared: &mut AudioShared,
+    (ids, voices): (&[SourceId; MAX_VOICES], usize),
+    h: Hit,
+) {
+    if h == Hit::Hold {
+        return;
+    }
+    let view = sources.begin_block();
+    for (v, &id) in ids.iter().enumerate().take(voices) {
+        shared.parts[0].source = Some(id);
+        let note = MidiNote::new(120 + v as u8).unwrap_or(MidiNote::A4);
+        let kinds = [NoteKind::On(Velocity::DEFAULT), NoteKind::Off];
+        for kind in kinds
+            .into_iter()
+            .take(if h == Hit::AgainOff { 2 } else { 1 })
+        {
+            let ev = NoteEvent {
+                channel: MidiChannel::clamped(0),
+                note,
+                kind,
+            };
+            inst.handle_with(ev, shared, &view);
+        }
+    }
+}
+
+/// Eight sources of `t`; `None` if the arena can't take them (a booted
+/// project's own sources and Sounds in it: boot NEW).
+fn tape_sources(project: &mut Project, t: Tapes) -> Option<[SourceId; MAX_VOICES]> {
+    let (shape, count, frames, rate) = match t {
+        Tapes::Long => (Shape::Plain, 1, 12_000, 24_000),
+        Tapes::Wave => (Shape::Transwave, 4, 4 * wave::frame_len(512), 48_000),
+        Tapes::Least => (Shape::Plain, 1, MIN_SOURCE_FRAMES, 24_000),
+        Tapes::Short => (Shape::Plain, 1, 1_024, 8_000),
+    };
+    let len = DESC_LEN + 3 * frames.div_ceil(2) as usize;
+    let desc = Descriptor {
+        shape,
+        count,
+        rate,
+        head_frames: 0,
+    };
+    let mut ids = [None; MAX_VOICES];
+    for (i, id) in ids.iter_mut().enumerate() {
+        let crc = 0xBE7C_0000 | (t as u32) << 8 | i as u32;
+        let r = SourceRef { crc, frames, rate };
+        *id = project.source_write(r, len, |b| {
+            b[..DESC_LEN].copy_from_slice(&desc.to_bytes());
+            let mut x = crc;
+            for y in &mut b[DESC_LEN..] {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                *y = x as u8;
+            }
+        });
+    }
+    ids.iter()
+        .all(Option::is_some)
+        .then(|| ids.map(|id| id.unwrap_or(SourceId::ALL[0])))
+}
+
+/// Every source the bench wrote out of the pool and the arena again:
+/// purged, and passed with the gate answered between looks (a block
+/// begun, nothing sounding), till every hole closes and every slot drains.
+fn free_sources(project: &mut Project, sources: &mut AudioToken) {
+    project.purge_unused_sources(0);
+    let mut answer = || {
+        let _ = sources.begin_block();
+        true
+    };
+    while project.sources_pass_with(&mut answer) {}
+    answer();
+    answer();
+    project.sources_pass_with(&mut answer);
+}
+
+/// The TAPE rows (spec § 5), each on its own sources, freed before the
+/// next: `/VOICE` is the worst cold block with eight voices less with
+/// none, over 8; LOOP's warm reading beside it shows the cold one is
+/// cold; `8 VOICES` is LOOP's whole render, the bus in. Each line ends in
+/// its bill, the chain's 30 in.
+#[inline(never)]
+fn tape_page(
+    (inst_slot, fx_slot, shared_slot): Slots<'_>,
+    (scope, sources): (&mut ScopeWriter, &mut AudioToken),
+    project: &mut Project,
+    rec: &mut Recorder<'_, impl ChimeraDisplay>,
+) {
+    let rig = &mut TapeRig {
+        inst_slot,
+        fx_slot,
+        shared_slot,
+        scope,
+        dac: DacBlocks::new(),
+        sources,
+    };
+    rec.clear();
+    rec.heading("TAPE COLD /VOICE");
+    let mut line = FmtBuf::new();
+    for (i, row) in TAPE_ROWS.iter().enumerate() {
+        line.clear();
+        let mut bill = ParamSnapshot::for_engine(EngineType::Tape);
+        (bill.tape.tape, bill.tape.age) = (0.5, 0.5);
+        (row.2)(&mut bill);
+        let bill = Voice::CHAIN_COST.0 + EngineSlot::cost(&bill, &ModState::new()).0;
+        match tape_sources(project, row.1) {
+            Some(ids) => {
+                let perf = project.perf();
+                let none = rig.time_cold(perf, row, &ids, (0, true));
+                let all = rig.time_cold(perf, row, &ids, (MAX_VOICES, true));
+                let per = all.saturating_sub(none) / MAX_VOICES as u32;
+                let _ = write!(line, "{} {per}/{bill}", row.0);
+                if i == 0 {
+                    let warm = rig.time_cold(perf, row, &ids, (MAX_VOICES, false));
+                    let warm0 = rig.time_cold(perf, row, &ids, (0, false));
+                    let warm = warm.saturating_sub(warm0) / MAX_VOICES as u32;
+                    let _ = write!(line, " WARM {warm} 8V {all}");
+                }
+            }
+            None => {
+                let _ = write!(line, "{} FULL", row.0);
+            }
+        }
+        free_sources(project, rig.sources);
+        rec.line(Face::Value, line.as_str(), (4, 46 + i as i32 * 18));
+    }
+    rec.flush();
 }
 
 /// The MEMORY and ORBIT PHASES screens: out of `run`, so its frame stays

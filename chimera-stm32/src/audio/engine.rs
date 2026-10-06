@@ -14,7 +14,7 @@ use chimera_core::note_queue::{InEvent, NoteDrain, NoteSources};
 use chimera_core::part::DacPair;
 use chimera_core::project::{LOAD_LINK, LoadGate};
 use chimera_core::scope::{ScopeFrame, ScopeWriter};
-use chimera_core::source_table::{AudioToken, SOURCE_TABLE};
+use chimera_core::source_table::AudioToken;
 use chimera_core::triple::{Reader, Writer};
 
 use super::dma;
@@ -76,6 +76,7 @@ pub fn init(
     notes: NoteDrain<'static, NOTE_SOURCES>,
     scope: Writer<ScopeFrame>,
     orbit: crate::orbit::Runner,
+    mut sources: AudioToken,
 ) {
     if ENGINE_TAKEN.swap(true, Ordering::AcqRel) {
         return;
@@ -98,10 +99,9 @@ pub fn init(
             gate: LoadGate::new(),
             orbit,
             sources: {
-                let mut t = SOURCE_TABLE.reader().expect("the source reader, once");
                 // One block a half (ADR 0099's drain wait).
-                t.set_period_us(BLOCK_SIZE as u32 * 1_000_000 / SAMPLE_RATE);
-                t
+                sources.set_period_us(BLOCK_SIZE as u32 * 1_000_000 / SAMPLE_RATE);
+                sources
             },
         });
     }

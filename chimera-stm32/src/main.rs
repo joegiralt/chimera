@@ -377,12 +377,19 @@ fn synth(board: Board) -> ! {
     display.flush();
     marker.stage(BootStage::Card);
     let perf = PerfTracker::new();
+    // The audio's one source reader, taken once the boot's source passes
+    // are done (they move without waiting while none is out); the bench
+    // reads the pool through it before the engine does.
+    #[cfg_attr(not(feature = "bench"), allow(unused_mut))]
+    let mut sources = chimera_core::source_table::SOURCE_TABLE
+        .reader()
+        .expect("the source reader, once");
     // The bench's screens as text, kept for the console's `bench`.
     #[cfg(feature = "bench")]
     #[cfg_attr(not(feature = "usb-console"), allow(unused_variables))]
     let bench_text = {
         let report = bench::take_report().expect("bench report taken once");
-        bench::run(&mut display, clk, ui.project_mut(), report);
+        bench::run(&mut display, clk, (ui.project_mut(), &mut sources), report);
         let report: &'static chimera_core::console::Report<{ bench::BENCH_TEXT_LEN }> = report;
         Some(report.as_str())
     };
@@ -411,6 +418,7 @@ fn synth(board: Board) -> ! {
         notes,
         scope_w,
         orbit_runner,
+        sources,
     );
 
     let pll3 = pll3_for(clocks::HSE_HZ, chimera_hal::SAMPLE_RATE, clk.rev);

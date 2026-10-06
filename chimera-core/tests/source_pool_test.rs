@@ -1243,3 +1243,58 @@ fn sweep_scratch_refuses_a_published_source() {
     store(&mut p, CHOIR);
     p.sweep_scratch();
 }
+
+/// The bench's synthetic sources (TAPE Task 14): written straight into the
+/// arena as `source_store` copies them, refused when held already or when
+/// they don't fit, and gone again, every slot free, once purged and passed
+/// with the gate answered between looks.
+#[test]
+fn written_sources_come_and_go() {
+    let (mut p, _) = Project::boxed();
+    let mut tok = p.pool().table().reader().expect("one reader");
+    let free = p.pool().free();
+    let (a, b) = (sref(1, 12_000), sref(2, 12_000));
+    let len = audio(a).len();
+    let rev = p.rev();
+    let id = p
+        .source_write(a, len, |to| to.copy_from_slice(&audio(a)))
+        .expect("fits");
+    assert_ne!(p.rev(), rev, "a status cache keyed on `rev` redone");
+    assert_eq!(
+        p.pool().source(id).unwrap().cost(),
+        store_cost(&mut Project::boxed().0, a)
+    );
+    assert!(p.source_write(a, len, |_| {}).is_none(), "held already");
+    let huge = sref(3, 2 * ARENA_BYTES as u32);
+    assert!(
+        p.source_write(huge, 3 * ARENA_BYTES, |_| {}).is_none(),
+        "too big"
+    );
+    let id_b = p.source_write(b, len, |to| to.fill(7)).expect("fits");
+    {
+        let view = tok.begin_block();
+        assert!(view.bytes(id) == Some(&audio(a)[..]), "as written");
+        assert!(view.bytes(id_b).unwrap().iter().all(|&x| x == 7));
+    }
+    tok.store_sounding(0);
+    p.purge_unused_sources(0);
+    let mut answer = || {
+        let _ = tok.begin_block();
+        true
+    };
+    while p.sources_pass_with(&mut answer) {}
+    answer();
+    answer();
+    p.sources_pass_with(&mut answer);
+    assert_eq!(p.pool().free(), free);
+    assert_eq!(p.pool().source_count(), 0);
+    assert!(
+        p.source_write(a, len, |_| {}).is_some(),
+        "its slot free again"
+    );
+}
+
+fn store_cost(p: &mut Project, r: SourceRef) -> Cost {
+    let id = store(p, r);
+    p.pool().source(id).unwrap().cost()
+}
