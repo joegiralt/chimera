@@ -206,7 +206,7 @@ impl Voice {
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
         EngineSlot::cost(p, mods)
             + Self::CHAIN_COST
-            + p.filter.kind().cost(p.filter.mode(), p.filter.voice)
+            + p.filter.filter_cost()
             + ModRouting::cost(p, mods)
             + Self::stage_cost(p, mods)
     }

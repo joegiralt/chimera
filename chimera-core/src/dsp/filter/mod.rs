@@ -200,29 +200,26 @@ impl FilterKind {
         }
     }
 
-    /// Cycles per sample over LP24 (spec § CPU), never below 0: the engine
-    /// terms were solved from bench rows that already run the SVF at LP24.
-    /// `recost` re-prices at every note-on, so a mode bills its own delta.
-    /// CLEAN bills by its mode, the 2040 by its VOICE alone.
-    pub const fn cost(self, mode: FilterMode, voice: K2040Voice) -> Cost {
-        match self {
-            FilterKind::K2040 => voice.cost(),
-            FilterKind::Svf => Cost(match mode {
-                FilterMode::Phaser => SVF_PHASER,
-                FilterMode::Bp24 | FilterMode::Hp24 => SVF_PAD,
-                // LP24 is the baseline; LP6, LP12, BP12 and NOTCH run less.
-                FilterMode::Lp24
-                | FilterMode::Lp6
-                | FilterMode::Lp12
-                | FilterMode::Bp12
-                | FilterMode::Notch => 0,
-            }),
-        }
-    }
-
     pub fn from_index(v: f32) -> Self {
         pick(&Self::BUILT, v)
     }
+}
+
+/// CLEAN's bill by mode, cycles a sample over LP24 (spec § CPU), never
+/// below 0: the engine terms were solved from bench rows that already run
+/// the SVF at LP24. `recost` re-prices at every note-on, so a mode bills
+/// its own delta. Each kind's bill is `FilterParams::filter_cost`.
+pub const fn clean_cost(mode: FilterMode) -> Cost {
+    Cost(match mode {
+        FilterMode::Phaser => SVF_PHASER,
+        FilterMode::Bp24 | FilterMode::Hp24 => SVF_PAD,
+        // LP24 is the baseline; LP6, LP12, BP12 and NOTCH run less.
+        FilterMode::Lp24
+        | FilterMode::Lp6
+        | FilterMode::Lp12
+        | FilterMode::Bp12
+        | FilterMode::Notch => 0,
+    })
 }
 
 /// `p` with KIND `new`: MODE stays if `new` has it, else becomes `new`'s
@@ -262,8 +259,9 @@ pub fn g_at(from: f32, step: f32, i: usize) -> f32 {
 pub struct Filter {
     clean: Clean,
     k2040: K2040,
-    /// The last block's TYPE; `None` before the first.
-    last: Option<FilterKind>,
+    /// The last block's TYPE, MODE and VOICE; `None` before the first.
+    /// Task 10's crossfade triggers on a change of any of them.
+    last: Option<(FilterKind, FilterMode, K2040Voice)>,
 }
 
 impl Filter {
@@ -280,7 +278,11 @@ impl Filter {
         mods: &FilterMods,
     ) -> crate::meter::Clip {
         let kind = p.kind();
-        if self.last.replace(kind).is_some_and(|k| k != kind) {
+        if self
+            .last
+            .replace((kind, p.mode(), p.voice))
+            .is_some_and(|(k, ..)| k != kind)
+        {
             match kind {
                 FilterKind::Svf => self.clean.reset(),
                 FilterKind::K2040 => self.k2040.reset(),
@@ -308,22 +310,22 @@ impl Filter {
     /// The running type still rings (the voice-end fade, #374).
     pub fn rings(&self) -> bool {
         match self.last {
-            Some(FilterKind::Svf) => self.clean.rings(),
-            Some(FilterKind::K2040) => self.k2040.rings(),
+            Some((FilterKind::Svf, ..)) => self.clean.rings(),
+            Some((FilterKind::K2040, ..)) => self.k2040.rings(),
             None => false,
         }
     }
 
     /// LEVEL's clipper runs next block: CLEAN's only, the 2040 has none.
     pub fn level_running(&self) -> bool {
-        self.last == Some(FilterKind::Svf) && self.clean.level_running()
+        matches!(self.last, Some((FilterKind::Svf, ..))) && self.clean.level_running()
     }
 
     /// The running type's last `g` (`None`: no ramp next block).
     #[cfg(test)]
     pub(crate) fn last_g(&self) -> Option<f32> {
         match self.last {
-            Some(FilterKind::K2040) => self.k2040.last_g(),
+            Some((FilterKind::K2040, ..)) => self.k2040.last_g(),
             _ => self.clean.last_g(),
         }
     }

@@ -8,7 +8,7 @@ use chimera_core::dsp::algo::engine::AlgoEngine;
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::plan::OPS;
 use chimera_core::dsp::engines::EngineSlot;
-use chimera_core::dsp::filter::{FilterKind, FilterMode, K2040Voice};
+use chimera_core::dsp::filter::{FilterKind, FilterMode, K2040Voice, clean_cost};
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{CPU_HZ_REV_V, CPU_HZ_REV_Y, Cost, MAX_VOICES, SampleBudget};
@@ -59,7 +59,7 @@ fn voice_costs_are_the_billed_literals() {
 }
 
 /// The SVF at LP24, the default: the engine terms already carry it.
-const LP24: Cost = FilterKind::Svf.cost(FilterMode::Lp24, K2040Voice::Rev2);
+const LP24: Cost = clean_cost(FilterMode::Lp24);
 
 /// Each SVF mode bills its delta over LP24, which the engine terms carry:
 /// PHASER its bench reading (SVF 500 − 1 OP 483), BP24 and HP24 a
@@ -77,13 +77,16 @@ fn each_svf_mode_bills_its_delta_over_lp24() {
         (M::Hp24, 2),
         (M::Phaser, 17),
     ] {
-        assert_eq!(
-            FilterKind::Svf.cost(m, K2040Voice::Exp),
-            Cost(want),
-            "{m:?}"
-        );
+        assert_eq!(clean_cost(m), Cost(want), "{m:?}");
+        // VOICE is inert on CLEAN.
+        let mut p = chimera_core::params::FilterParams::default();
+        assert!(p.set_mode(m));
+        for v in K2040Voice::ALL {
+            p.voice = v;
+            assert_eq!(p.filter_cost(), Cost(want), "{m:?} {v:?}");
+        }
     }
-    assert!(FilterKind::Svf.cost(M::Phaser, K2040Voice::Rev2).0 >= 500 - 483);
+    assert!(clean_cost(M::Phaser).0 >= 500 - 483);
     assert_eq!(
         FilterKind::Svf.modes().len(),
         8,
@@ -91,13 +94,15 @@ fn each_svf_mode_bills_its_delta_over_lp24() {
     );
 }
 
-/// The 2040 bills by its VOICE alone (spec § Cost): REV2 25, EXP 30 over
-/// LP24, whatever MODE says; CLEAN ignores VOICE.
+/// The 2040 bills by its VOICE alone (spec § Cost), as measured over
+/// `OLD_LP24` (95): REV2 125 cycles, EXP 135; CLEAN ignores VOICE.
 #[test]
 fn the_2040_bills_its_voice() {
-    for m in FilterMode::ALL {
-        assert_eq!(FilterKind::K2040.cost(m, K2040Voice::Rev2), Cost(25));
-        assert_eq!(FilterKind::K2040.cost(m, K2040Voice::Exp), Cost(30));
+    let mut f = chimera_core::params::FilterParams::default();
+    f.set_kind(FilterKind::K2040);
+    for (v, want) in [(K2040Voice::Rev2, 30), (K2040Voice::Exp, 40)] {
+        f.voice = v;
+        assert_eq!(f.filter_cost(), Cost(want), "{v:?}");
     }
     let mut p = ParamSnapshot::default();
     let mods = ModState::new();
@@ -105,9 +110,9 @@ fn the_2040_bills_its_voice() {
     p.filter.voice = K2040Voice::Exp;
     assert_eq!(Voice::cost(&p, &mods), clean, "VOICE is inert on CLEAN");
     p.filter.set_kind(FilterKind::K2040);
-    assert_eq!(Voice::cost(&p, &mods).0, clean.0 + 30);
+    assert_eq!(Voice::cost(&p, &mods).0, clean.0 + 40);
     p.filter.voice = K2040Voice::Rev2;
-    assert_eq!(Voice::cost(&p, &mods).0, clean.0 + 25);
+    assert_eq!(Voice::cost(&p, &mods).0, clean.0 + 30);
 }
 
 fn routed(routes: &[ModSource]) -> ModState {

@@ -204,6 +204,13 @@ fn cents(f: f64, want: f64) -> f64 {
     1200.0 * (f / want).log2()
 }
 
+/// REV2's self-oscillation, dBFS RMS (−11.0 to −11.3 measured, ± 1 dB):
+/// the limiter's level. EXP follows through its −6.0 ± 0.5 dB.
+const REV2_OSC_DB: f32 = -11.2;
+/// Absolute pitch, cents: −1.2 to −1.4 measured (the spec's "within about
+/// −3 to −5"). Without the limiter it reads +11 to +14.
+const PITCH_CENTS: f64 = 5.0;
+
 #[test]
 fn k2040_self_oscillates_in_band_and_on_pitch() {
     let freqs: Vec<f32> = (0..7)
@@ -226,6 +233,13 @@ fn k2040_self_oscillates_in_band_and_on_pitch() {
             println!("{v:?} RES 1 {fc} Hz: {level:.2} dBFS ±{wobble:.2}");
             assert!(wobble <= 1.0, "{v:?} {fc} Hz: ±{wobble:.2} dB");
             assert!(level > lo && level < hi, "{v:?} {fc} Hz: {level:.2} dBFS");
+            if v == K2040Voice::Rev2 {
+                // Pinned, so the limiter shows: without it REV2 rings at −6.
+                assert!(
+                    (level - REV2_OSC_DB).abs() <= 1.0,
+                    "REV2 {fc} Hz: {level:.2} dBFS"
+                );
+            }
             levels[v as usize].push(level);
         }
         // FM2 (NOTE → CUTOFF) at +100 %: C2..C6 from FREQ at C4, two bases.
@@ -241,7 +255,7 @@ fn k2040_self_oscillates_in_band_and_on_pitch() {
                 let c = cents(f, want);
                 println!("{v:?} base {base} note {note}: {c:.1} cents");
                 assert!(
-                    c.abs() <= 25.0,
+                    c.abs() <= PITCH_CENTS,
                     "{v:?} base {base} note {note}: {c:.1} cents"
                 );
                 if let Some(l) = last {

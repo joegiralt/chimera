@@ -272,7 +272,7 @@ sat(v) = c − (4/27)·c³,  c = clamp(v, ±1.5)        // C1 cubic, no divide
   - At LEVEL 1 (×4), REV2 runs 6 dB over the swing and EXP 12 dB over.
 - **The resonance compression.**
   - The limiter `L·sat(·/L)` is a 3080 in kind, the Kobol's CI5. EXP reaches it 6 dB sooner, so under drive its resonance ducks and blooms back as the level falls: the squelch.
-  - The Prophet's SSM 2020 is linear, so on REV2 the limiter is a modelling device. Without it the model oscillates 330 cents flat (B3); the real instrument hides its own drift by being trimmed at full resonance (§ 4-17). REV2 keeps `L` so that both voices pass the same 1 V/oct test.
+  - The Prophet's SSM 2020 is linear, so on REV2 the limiter is a modelling device. Before the ±1 V clip, the model without it oscillated 330 cents flat (B3). With the clip in, the clip bounds the stages before the OTAs saturate: without `L` the pitch holds (+14 cents) and REV2 oscillates near −6 dBFS. So `L` now sets EXP's squelch (−6.4 dB at RES 0.8 with it, −1.0 without), the self-oscillation level and the full-scale bass loss, not the pitch. REV2 without `L` would be the truer Prophet; it keeps `L` because the owner's rule is constants only, `L` shared (Task 8 review F5).
   - The two voices share every resonance constant, so with no input they oscillate at the same pitch and in the same shape.
 - **Deliberately not modelled:**
   - the Prophet's 16 Hz output coupling (−1 dB at 31 Hz) and the Kobol's 3.3 Hz;
@@ -281,7 +281,7 @@ sat(v) = c − (4/27)·c³,  c = clamp(v, ±1.5)        // C1 cubic, no divide
 - **ZDF/TPT one-poles.** Each stage is the trapezoidal one-pole, exact at FREQ and stable under modulation (Zavalishin ch. 3 and 5). In the linear case `t = g(1 − G)(x − s) = G(x − s)`, so the explicit-nonlinearity form reduces exactly to the linear TPT stage. The clamp is the identity below ±R.
 - **Solving the nonlinear loop in one step.** The global loop is solved linearly and exactly (Zavalishin's ladder solution). The stage nonlinearities then run explicitly on the true linear error, Zavalishin's "cheap" method (ch. 6). Newton with two fixed iterations was rejected: about +100 instructions and a `vdiv` per iteration.
 - **Self-oscillation pitch (B3).**
-  - Without the feedback limit, the model oscillates 330 cents flat: the OTAs saturate inside the loop. An RK4 reference agrees, so the error is in the model, not the solver.
+  - Without the feedback limit and without the ±1 V clip, the model oscillates 330 cents flat: the OTAs saturate inside the loop. An RK4 reference agrees, so the error is in the model, not the solver. With the clip in (rev 4), the clip holds the stages near-linear first, and without `L` the pitch reads +11 to +14 cents; the pitch test (±5 cents) and REV2's level (−11.2 ± 1 dB) still catch a missing `L`.
   - Limiting the feedback (`L = ¼`) keeps the stages near-linear, which brings the pitch to within about −3 to −5 cents.
   - `L` is tuned at build against the 1 V/oct test.
 - **The input scale is tuned with `L` (H-new-1).**
@@ -473,9 +473,9 @@ Owner ruling (2026-10-05): every patch, the taps included, is made and seen in t
 | CLEAN LP1 / LP2 / BP2 / NOTCH1, steady | ≤ 30 | 0 | 50 | 0 |
 | CLEAN NOTCH2, steady | ≤ 34 | 0 | 55 | 0 (was 17) |
 | CLEAN, moving (LP4) | +6 | 2 | +35 | `CLEAN_MOVE_COST` 35 |
-| 2040 REV2, steady (70 + 8 for the ±1 V clip) | ≤ 78 | 0 | 130 | 25 |
-| 2040 EXP, steady (REV2 + 6 for the output VCA) | ≤ 84 | 0 | 135 | 30 |
-| 2040, moving (either voice) | +6 | 2 | +35 | +35 |
+| 2040 REV2, steady (70 + 8 for the ±1 V clip) | ≤ 78 | 0 | 130 | 30 (measured 125, Task 8) |
+| 2040 EXP, steady (REV2 + 6 for the output VCA) | ≤ 84 | 0 | 135 | 40 (measured 135, Task 8) |
+| 2040, moving (either voice) | +12 (re-budgeted, Task 8: `G`, `D` and their products a sample) | 2 | +45 | +45 |
 | DIRTY, any mode | ≤ 30 | 0 | 50 | 0 |
 | LEVEL clipper + meter + fade | ≤ +12 | 0 | +20 | +20 |
 | Tap capture (per tapped op) | +1 | 0 | +2 | in each tap's cost |
@@ -492,7 +492,7 @@ Owner ruling (2026-10-05): every patch, the taps included, is made and seen in t
 
 ### Memory
 
-- **Per voice:** CLEAN 4 floats plus NOTCH2's 5; the 2040 4; DIRTY 2; the ramp endpoints; the block's clip peak and fade; and the tap amounts' previous values. That is about 110 B against 24 B today, ×8 ≈ 0.7 KB, under ADR 0051's assert. Types keep separate, flat state, so the crossfade can run two at once.
+- **Per voice:** CLEAN 4 floats plus NOTCH2's 5; the 2040 4; DIRTY 2; the ramp endpoints; the block's clip peak and fade; and the tap amounts' previous values. That is about 110 B against 24 B today, ×8 ≈ 0.7 KB. With the 2040 the chain is 2,080 B, past ADR 0051's 2,048: ADR 0101 raises `VOICE_CHAIN_BYTES` to 2,112. Types keep separate, flat state, so the crossfade can run two at once.
 - **Stack:** the crossfade's 256 B and the tap rows' 512 B, both in DTCM.
 - **Per Sound:** `FilterParams` grows 7 B (two `Jack`s, LEVEL and the 2040's VOICE) and `TapRoutes` adds up to 33 B (8 entries × 4 B, plus a count). Across the pool, the triple buffer and the Performance that is about 2 KB of AXI.
 - **Elsewhere:** `meter::FILTER_CLIP` is 6 × 4 B.

@@ -33,9 +33,12 @@ pub const R_2040: f32 = 2.0 * ALPHA_REV2;
 /// that: `sat_2040(BETA_EXP·y₄)` reads 0.62 at the swing.
 pub const BETA_EXP: f32 = 0.62 / R_2040;
 pub const INV_BETA_EXP: f32 = R_2040 / 0.62;
-/// The feedback limit, a 3080 in kind (spec B3): without it the OTAs
-/// saturate inside the loop and the self-oscillation runs 330 cents flat.
-/// Shared by both voices, so both pass one 1 V/oct test.
+/// The feedback limit, a 3080 in kind (the Kobol's CI5, spec B3). With the
+/// ±1 V clip in, the clip bounds the stages before the OTAs saturate, so L
+/// no longer sets the pitch (L = ∞ sits at +14 cents). It sets EXP's
+/// squelch (−6.4 dB at RES 0.8, −1.0 without it), the self-oscillation
+/// level (−11 dBFS on REV2, −6 without it) and the full-scale bass loss.
+/// Shared by both voices: constants only.
 pub const L_2040: f32 = 0.25;
 /// The output level: LEVEL ½ at RES 0 is 0 dB ± 0.5 on both voices.
 pub const OUT_2040: f32 = 1.0;
@@ -55,10 +58,10 @@ const _: () = {
     assert!(LED_KNEE > 0.0 && LED_KNEE <= 1.0);
 };
 
-/// Steady per-sample bills over CLEAN's LP24 (spec § Cost), pending Task
-/// 18's recount: REV2's ≤ 78 instructions, EXP's POST on top.
-const COST_REV2: u32 = 25;
-const COST_EXP: u32 = 30;
+/// Steady per-sample bills over `OLD_LP24` (spec § Cost), as measured:
+/// REV2 75 instructions, 125 cycles; EXP 81, 135; less 95 (plan § Measured).
+const COST_REV2: u32 = 30;
+const COST_EXP: u32 = 40;
 
 /// The 2040's VOICE (Filter 13): which circuit's constants it runs. The
 /// panel never names either instrument.

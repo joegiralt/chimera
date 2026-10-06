@@ -611,7 +611,7 @@ git add chimera-core/src/dsp/filter chimera-core/tests/filter_types_test.rs chim
 git commit -m "DIRTY: Chamberlin SVF at 2x, Jury-bounded f, hard clamps"
 ```
 
-### Task 10: TYPE and MODE warm start and crossfade
+### Task 10: TYPE, MODE and VOICE warm start and crossfade
 
 **Files:**
 - Modify: `chimera-core/src/dsp/filter/mod.rs`, `clean.rs`, `k2040.rs` and `dirty.rs` (the warm-start setters)
@@ -619,7 +619,8 @@ git commit -m "DIRTY: Chamberlin SVF at 2x, Jury-bounded f, hard clamps"
 
 **Interfaces:**
 - **Produces:**
-  - `Filter` gains `xfade: u8` (blocks left, 0–2), `from: (FilterKind, FilterMode)` and `pending: Option<(FilterKind, FilterMode)>`.
+  - `Filter` gains `xfade: u8` (blocks left, 0–2), `from: (FilterKind, FilterMode, K2040Voice)` and `pending: Option<(FilterKind, FilterMode, K2040Voice)>`. Task 8 widened `Filter.last` to `(kind, mode, voice)` already (review F3): the crossfade triggers on a change of any of the three.
+  - **VOICE (Task 8 review F3).** A VOICE flip on the 2040 runs the old voice (on a stack copy of `K2040`, its states already rescaled by `α_new/α_old`) and the new one for 2 blocks, crossfaded, as a MODE change does. The rescale alone is exact only for linear content: at LEVEL 1 on a full-scale saw the voices' ceilings differ (`R/α`: 2 against 0.94 after POST), and REV2 → EXP steps 1.056 today.
   - **Warm-start setters:**
     - `Clean::outputs(&self) -> (f32, f32)` (`lp`, `bp` of stage 0);
     - `K2040::seed(&mut self, lp: f32)`, which sets every `sᵢ`;
@@ -655,6 +656,8 @@ git commit -m "DIRTY: Chamberlin SVF at 2x, Jury-bounded f, hard clamps"
 ```
 
   - **Task 3's review (F2):** the first test must include a MODE switch at RES 1, in self-oscillation, not only RES 0.5. Today the switch steps 0.62–1.42 (BP24 → LP12, LP24 → PHASER, HP24 → LP6 at 500 Hz) against a ring step of about 0.04: the trim steps with the mode on top of the topology.
+  - **Task 8 review F3:** add `voice_flip_at_level_1_has_no_click`: REV2 ↔ EXP mid-note at LEVEL 1, RES 0 and RES 0.9, on a full-scale saw, both directions; `common::clicks` finds none. VOICE's FLT › MOD cell lands only after this passes (it stays deferred until Task 10).
+  - **Task 8:** `param_sweep_test::clicks_ok` allows a Filter TYPE jump (the incoming type starts from rest). Remove that allowance here too.
   - **Task 4:** `param_sweep_test::clicks_ok` allows a Filter MODE jump (LP1 → NOTCH2, knob 0 → 7, steps 48× the steady state on TRI PROBE). Remove that allowance here; the crossfade must pass the sweep without it.
 - [ ] **Step 2: Run them and see them fail.** Expect FAIL (today a TYPE change zeroes the state, so the deviation is about 47 %).
 - [ ] **Step 3: Implement.**
@@ -1182,8 +1185,9 @@ git commit -m "Filter screens per type, the LEVEL LED, tap rows and X cells in t
 | CLEAN LP1 / LP2 / BP2 / NOTCH1, steady | ≤ 30 | 0 |
 | CLEAN NOTCH2, steady | ≤ 34 | 0 |
 | CLEAN, moving (LP4) | +6 | 2 |
-| 2040, steady | ≤ 70 | 0 |
-| 2040, moving | +6 | 2 |
+| 2040 REV2, steady | ≤ 78 | 0 |
+| 2040 EXP, steady | ≤ 84 | 0 |
+| 2040, moving | +12 (re-budgeted, ADR 0096; Task 8 measured +12) | 2 |
 | DIRTY, any mode | ≤ 30 | 0 |
 | LEVEL clipper + meter + fade | ≤ +12 | 0 |
 | Tap capture (per tapped op) | +1 | 0 |
@@ -1193,7 +1197,7 @@ git commit -m "Filter screens per type, the LEVEL LED, tap rows and X cells in t
 | Tap → FOLD | +4 + `FOLD_RAMP_COST` | 0 |
 
   Over budget: stop, and report the path and its count to the owner. Do not raise a budget.
-- [ ] **Step 2: Bills.** Recompute each bill by the Global Constraints rule. If one differs from Task 15's, change the constant and its doc comment, and run `cost_test`.
+- [ ] **Step 2: Bills.** The 2040's moving path bills **+45** cycles a sample (Task 8 review F2: 170/180 with the block against steady 125/135); its steady bills are 30 (REV2) and 40 (EXP) since Task 8's fix round. Recompute each bill by the Global Constraints rule. If one differs from Task 15's, change the constant and its doc comment, and run `cost_test`.
 - [ ] **Step 3: Flash.** Run `rust-size` on the default release build. Write one line in § Measured: `text` before (Task 0's base) and after, and the delta (the spec expects about 2.5 KB).
 - [ ] **Step 4: Bench rows (unit).**
   - Add bench rows `SVF` (now CLEAN LP4), `CLEAN MOVE`, `2040`, `DIRTY`, `TAP FREQ` and `TAP VCA` to the bench screen (#177).
@@ -1448,3 +1452,4 @@ The moving, LEVEL and tap terms are deltas, not over `OLD_LP24`, and don't chang
 - **Memory.** `K2040` is 44 B; `Filter` (CLEAN + 2040 + last TYPE) 116 B. A `Voice` less its slot is 2,080 B, past ADR 0051's 2,048: `VOICE_CHAIN_BYTES` is raised to 2,112 (8 voices × 6,328 B = 50,624 B of D2's 286,720).
 - **Re-recorded:** `screen_golden_test` `bigviz_filter` (TYPE live with two kinds, label TYPE). Fixtures: `disk_codes_v1.txt` appends `E 10 6 4 2040`, `B 10 13 VOICE`, `E 10 13 0 REV2`, `E 10 13 1 EXP`; `neutral_v1.txt` gains `voice: Rev2` (the Debug print, every engine).
 - **Sweep allowance:** a TYPE jump clicks (the incoming type starts from rest) until Task 10's crossfade.
+- **Fix round 1 (Task 8 review):** the 2040 bills its measured steady cost, 30 (REV2) and 40 (EXP), through `FilterParams::filter_cost` (CLEAN's by-mode bill is `clean_cost`). The moving path is re-budgeted to +12 instructions / +45 cycles (ADR 0096), billed by Task 18. Test 2 pins the pitch to ±5 cents and REV2's level to −11.2 ± 1 dB, so a missing `L` fails it (L = ∞: +11 to +14 cents, −5.9 dBFS). `Filter.last` is `(kind, mode, voice)` for Task 10. ADR 0101 raises `VOICE_CHAIN_BYTES` to 2,112 B.

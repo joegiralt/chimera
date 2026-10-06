@@ -60,7 +60,7 @@ The owner also wants ALGO's OP 5 and OP 6 as audio-rate modulation sources. The 
 - **2040:** four TPT one-poles.
   - Each stage is `t = g·sat((1 − G)(x − s))`, the OTA on the true error, with a divide-free cubic `sat`.
   - Each stage output is clamped to ±R, the chip's ±1 V swing (data sheet design hint 1), on both voices. `R = 2·ALPHA_REV2`, because the Prophet-5 shows 500 mV per pole at maximum saw. It costs 8 instructions, and it makes the output bound exact: `R/α_v · OUT_2040`.
-  - The global loop is solved linearly in one step, then limited by a 3080-style feedback limit `L·sat(·/L)` with `L = ¼`, which fixes a 330-cent flat self-oscillation.
+  - The global loop is solved linearly in one step, then limited by a 3080-style feedback limit `L·sat(·/L)` with `L = ¼`. Without the stage clip it fixed a 330-cent flat self-oscillation; with the clip in, it sets EXP's squelch, the self-oscillation level and the full-scale bass loss.
   - **Input scale.** α ≈ 0.1 is tuned together with `L`. α = ½ would crush resonance at full scale, with self-oscillation around −24 dBFS against CLEAN's level. So LEVEL is the 2040's drive.
   - `k = 4·RES/0.95`.
   - The bass loss is authentic: DC gain `1/(1 + k)`, −14 dB at onset, uncompensated.
@@ -95,7 +95,7 @@ The owner also wants ALGO's OP 5 and OP 6 as audio-rate modulation sources. The 
   - Static probe counts (thumbv7em, cortex-m7, opt-level 2) × 1.46 × 1.1, + 12 per `vdiv`.
   - Today's LP24 is counted first. Steady paths are billed `max(0, that − old LP24)`, and each probe asserts 0 `vdiv` in its steady loop.
   - The move, LEVEL and per-tap-destination terms are billed only while they apply; an unused tap costs 0.
-  - Budgets: CLEAN LP4 ≤ 56, NOTCH2 ≤ 34, 2040 REV2 ≤ 78 and EXP ≤ 84 (each including the 8-instruction stage clip), DIRTY ≤ 30 instructions a sample. The 2040 bills 25 on REV2 and 30 on EXP.
+  - Budgets: CLEAN LP4 ≤ 56, NOTCH2 ≤ 34, 2040 REV2 ≤ 78 and EXP ≤ 84 (each including the 8-instruction stage clip), DIRTY ≤ 30 instructions a sample. The 2040's moving path is +12 instructions and +45 cycles over its steady one (2 `vdiv`): it divides `G` and `D` and forms `G⁴`, `k·D` and `g·4/27` every sample; fusing the two divides into one saves about 4 cycles for +5 instructions, not worth it. The 2040 bills its measured steady cost, 30 on REV2 and 40 on EXP, and +45 while moving.
 - **Order.** Implementation starts after `modal-stagger` merges. The filter's in-loop saturate stays divide-free whatever that branch lands.
 
 ## Alternatives considered
@@ -112,7 +112,7 @@ The owner also wants ALGO's OP 5 and OP 6 as audio-rate modulation sources. The 
 ## Consequences
 - **Sound changes.** LP1, NOTCH1, NOTCH2 and the top octave change sound, and goldens are re-recorded. Old patches load safely, and DRIVE's translation keeps their level.
 - **Bills.** The steady SVF bills less than it costs, which is headroom until a re-bench. Routed or tapped cutoff pays for its divides.
-- **Memory.** About 110 B per voice and 768 B of stack in the worst block; up to about 39 B per Sound.
+- **Memory.** About 110 B per voice and 768 B of stack in the worst block; up to about 39 B per Sound. The 2040 takes the voice chain to 2,080 B, past ADR 0051's 2,048: ADR 0101 raises it to 2,112.
 - **Codes.** All new codes are append-only: KIND 4 and 6, MODE 9, Filter params 8, 11, 12 and 13 (2 retired), `K2040Voice` 0–1, `Jack` 0–9, and the `TapRoutes` record.
 
 ## Sources
