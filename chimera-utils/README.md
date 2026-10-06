@@ -80,6 +80,22 @@ unit's 16-bit stereo, runs `midiverb N in out`, resamples back, and returns
 Match: band RT60 ±5 % (judged 250 Hz–4 kHz), pre-delay ±1 ms, C50 ±1 dB, NED
 ±10 %, centroid ±5 %.
 
+**GRAIN and HF share** (`grain.rs`, ADR 0095's GRAIN). Judged for ROOM,
+reported for the other TYPEs:
+- **GRAIN:** a noise-power ratio. Four notched noise bursts (2.5–3.5 and
+  8.25–9.75 kHz notches, low-passed at 10.8 kHz) drive both sides, the unit
+  at the A/B's −1 dBFS peak. Each notch core's power density over its
+  flanks', in the burst's last 500 ms and 50–200 and 200–400 ms after it:
+  six values. An LTI reverb leaves the notches empty; arithmetic grain
+  fills them. Match: rms Δ ≤ 3.5 dB, no |Δ| over 6.5 dB.
+- **HF share:** the noise bursts' tail, P(4–11.7 kHz) / P(0.5–2 kHz), at
+  0–50, 50–200 and 200–600 ms after the burst. Match: each ±1 dB.
+
+A `metrics.json` from before GRAIN lacks both, and a judged TYPE then
+fails: re-run `mv-refs` for its programs.
+
+A TYPE that doesn't fit SMEAR holds it at 0, and its fits carry it.
+
 **Generic** (`generic.rs`):
 - **null residual:** dB, after the best lag (±100 ms) and gain;
 - **response error:** the largest |Δ| in dB per octave. For an effect it is |Pxy|/Pxx on noise. For a source it is the output spectrum. Bins 60 dB under the reference's peak are skipped;

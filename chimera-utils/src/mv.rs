@@ -4,6 +4,7 @@
 use crate::Config;
 use crate::SR;
 use crate::devices::{self, REVERB_KNOBS, render_reverb};
+use crate::grain::{self, Grain};
 use crate::metrics::{
     self, BANDS, Metrics, NoiseRt, distance, ir_metrics, noise_band_rt60, residuals, verdict,
 };
@@ -34,8 +35,24 @@ fn dims(t: ReverbType) -> &'static [&'static str] {
 }
 
 const SWEEP_N: usize = 320;
-/// The sweep starts static, as the MidiVerb is; refinement may move it.
+/// The sweep starts static, as the MidiVerb is; refinement may move it. A
+/// TYPE that doesn't fit it holds it there: the fits carry it.
 const FIX: [(&str, f64); 1] = [("smear", 0.0)];
+
+/// Whether GRAIN and HF share count in the TYPE's verdict and distance
+/// (ROOM, ADR 0095's GRAIN); elsewhere they're reported only.
+fn judges_grain(t: ReverbType) -> bool {
+    t == ReverbType::Room
+}
+
+/// `k` with every `FIX` knob the TYPE doesn't fit set to its fixed value.
+fn pin_fixed(t: ReverbType, k: &mut Knobs) {
+    for (d, x) in FIX {
+        if !dims(t).contains(&d) {
+            k.insert(d.into(), json!(x));
+        }
+    }
+}
 
 /// Knob settings by name; the rest stay at the TYPE's start.
 pub type Knobs = Map<String, Value>;
@@ -86,24 +103,34 @@ fn f64s(x: Vec<f32>) -> Vec<f64> {
     x.into_iter().map(f64::from).collect()
 }
 
-/// Metrics of TYPE `t` at each knob setting: the click's IR and the band
-/// RT60s of `seeds` noise bursts.
+/// Metrics of TYPE `t` at each knob setting: the click's IR, the band
+/// RT60s and HF shares of `seeds` noise bursts, and GRAIN.
 pub fn measure(t: ReverbType, knobs: &[Knobs], seeds: usize) -> Result<Vec<Metrics>, String> {
     let st = stimuli(t, seeds);
+    let (nx, ncut) = grain::notched();
+    let nx: Vec<Vec<f32>> = nx
+        .iter()
+        .map(|x| x.iter().map(|&v| v as f32).collect())
+        .collect();
     Ok(knobs
         .par_iter()
         .map(|k| {
             let v = values(t, k);
-            let (h, ys) = rayon::join(
+            let render = |xs: &[Vec<f32>]| {
+                xs.par_iter()
+                    .map(|x| f64s(render_reverb(t, &v, x)))
+                    .collect::<Vec<_>>()
+            };
+            let (h, (ys, ns)) = rayon::join(
                 || f64s(render_reverb(t, &v, &st.click)),
-                || {
-                    st.noise
-                        .par_iter()
-                        .map(|x| f64s(render_reverb(t, &v, x)))
-                        .collect::<Vec<_>>()
-                },
+                || rayon::join(|| render(&st.noise), || render(&nx)),
             );
-            ir_metrics(&h[CLICK_AT..], Some(&noise_band_rt60(&ys, st.cut)))
+            let mut m = ir_metrics(&h[CLICK_AT..], Some(&noise_band_rt60(&ys, st.cut)));
+            m.grain = Some(Grain {
+                npr: grain::npr(&ns, *ncut),
+                hf: grain::hf(&ys, st.cut),
+            });
+            m
         })
         .collect())
 }
@@ -203,14 +230,16 @@ pub fn refs(cfg: &Config, progs: &[u32], sources: bool) -> Result<(), String> {
         _ => Map::new(),
     });
     progs.par_iter().try_for_each(|&p| -> Result<(), String> {
-        let (h, rt) = rayon::join(
+        let (h, (rt, npr)) = rayon::join(
             || mv(cfg, &r, p, &click(20.0), true).map(|y| y[CLICK_AT..].to_vec()),
-            || ref_noise_rt(cfg, &r, p),
+            || rayon::join(|| ref_noise_rt(cfg, &r, p), || ref_npr(cfg, &r, p)),
         );
-        let (h, rt) = (h?, rt?);
-        let hf: Vec<f32> = h.iter().map(|&v| v as f32).collect();
-        write_f32(&dir.join(format!("p{p:02}_ir.wav")), &hf, SR as u32)?;
-        let mut m = ir_metrics(&h, Some(&rt)).to_json();
+        let (h, (rt, hf), npr) = (h?, rt?, npr?);
+        let hf32: Vec<f32> = h.iter().map(|&v| v as f32).collect();
+        write_f32(&dir.join(format!("p{p:02}_ir.wav")), &hf32, SR as u32)?;
+        let mut m = ir_metrics(&h, Some(&rt));
+        m.grain = Some(Grain { npr, hf });
+        let mut m = m.to_json();
         let name = names.get(p as usize).cloned().unwrap_or_default();
         m["name"] = json!(name);
         stims
@@ -229,7 +258,19 @@ pub fn refs(cfg: &Config, progs: &[u32], sources: bool) -> Result<(), String> {
     })
 }
 
-fn ref_noise_rt(cfg: &Config, r: &Reference, p: u32) -> Result<NoiseRt, String> {
+/// The program's GRAIN: the notched bursts, the unit driven as the A/B
+/// drives it (peak −1 dBFS) and Chimera as is (ADR 0095's GRAIN).
+fn ref_npr(cfg: &Config, r: &Reference, p: u32) -> Result<[f64; 6], String> {
+    let (xs, cut) = grain::notched();
+    let ys = xs
+        .par_iter()
+        .map(|x| mv(cfg, r, p, x, true))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(grain::npr(&ys, *cut))
+}
+
+/// The program's band RT60s and HF shares from 16 noise bursts.
+fn ref_noise_rt(cfg: &Config, r: &Reference, p: u32) -> Result<(NoiseRt, [f64; 3]), String> {
     let (charge_s, tail_s) = (2.0, 20.0);
     let stims: Vec<Vec<f64>> = (0..NOISE_SEEDS)
         .map(|s| noise_stim(s as u32, charge_s, tail_s).0)
@@ -239,7 +280,7 @@ fn ref_noise_rt(cfg: &Config, r: &Reference, p: u32) -> Result<NoiseRt, String> 
         .par_iter()
         .map(|x| mv(cfg, r, p, x, false))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(noise_band_rt60(&ys, cut))
+    Ok((noise_band_rt60(&ys, cut), grain::hf(&ys, cut)))
 }
 
 fn ref_line(p: u32, m: &Value) -> String {
@@ -260,8 +301,8 @@ fn ref_line(p: u32, m: &Value) -> String {
 
 // ── mv-fit ──
 
-fn score(m: &Metrics, r: &Metrics) -> f64 {
-    distance(&residuals(m, r))
+fn score(t: ReverbType, m: &Metrics, r: &Metrics) -> f64 {
+    distance(&residuals(m, r), judges_grain(t))
 }
 
 /// A shrinking pattern search from `start` (a knob it lacks starts at the
@@ -276,6 +317,7 @@ fn refine(
     fixed: &[&str],
 ) -> Result<(Knobs, Metrics, f64), String> {
     let mut best_k = start.clone();
+    pin_fixed(t, &mut best_k);
     let defaults = values(t, &Knobs::new());
     for (i, n) in REVERB_KNOBS.iter().enumerate() {
         if dims(t).contains(n) && best_k.get(*n).and_then(Value::as_f64).is_none() {
@@ -283,7 +325,7 @@ fn refine(
         }
     }
     let mut best_m = measure(t, std::slice::from_ref(&best_k), cfg.refine_seeds)?.remove(0);
-    let mut best = score(&best_m, r);
+    let mut best = score(t, &best_m, r);
     for &st in steps {
         let mut improved = true;
         while improved {
@@ -302,7 +344,7 @@ fn refine(
             }
             let ms = measure(t, &cands, cfg.refine_seeds)?;
             for (k, m) in cands.into_iter().zip(ms) {
-                let sc = score(&m, r);
+                let sc = score(t, &m, r);
                 if sc < best - 1e-9 {
                     (best, best_k, best_m, improved) = (sc, k, m, true);
                 }
@@ -337,9 +379,7 @@ fn sweep(cfg: &Config, t: ReverbType, fresh: bool) -> Result<Vec<(Knobs, Metrics
                 k.insert(d.to_string(), json!(x));
             }
             for (d, x) in FIX {
-                if ds.contains(&d) {
-                    k.insert(d.into(), json!(x));
-                }
+                k.insert(d.into(), json!(x));
             }
             k
         })
@@ -427,7 +467,7 @@ pub fn fit(
             }
             None => {
                 let mut ranked: Vec<&(Knobs, Metrics)> = sweep.iter().collect();
-                ranked.sort_by(|a, b| score(&a.1, &r).total_cmp(&score(&b.1, &r)));
+                ranked.sort_by(|a, b| score(t, &a.1, &r).total_cmp(&score(t, &b.1, &r)));
                 ranked[..2]
                     .par_iter()
                     .map(|(k, _)| refine(cfg, t, k, &r, &[0.08, 0.025], &[]))
@@ -439,7 +479,7 @@ pub fn fit(
             .min_by(|a, b| a.2.total_cmp(&b.2))
             .ok_or("no result")?;
         let res = residuals(&m, &r);
-        let v = verdict(&res);
+        let v = verdict(&res, judges_grain(t));
         let name = rv["name"].as_str().unwrap_or("").to_string();
         println!("{}", fit_line(&key, &name, sc, &v, t, &k));
         let mut o = out.lock().map_err(|e| e.to_string())?;
@@ -455,6 +495,11 @@ pub fn fit(
 }
 
 // ── mv-verify ──
+
+/// A reported term's mark: `*` over its bar.
+fn mark(ok: Option<bool>) -> &'static str {
+    if ok == Some(false) { "*" } else { "" }
+}
 
 fn pct(v: f64) -> String {
     format!("{:+.0}%", v * 100.0)
@@ -494,7 +539,7 @@ pub fn verify(cfg: &Config, t: ReverbType, fits: Option<&Path>) -> Result<bool, 
         let rv = refs.get(p).ok_or(format!("no reference for program {p}"))?;
         let r = Metrics::from_json(rv)?;
         let res = residuals(&m, &r);
-        let v = verdict(&res);
+        let v = verdict(&res, judges_grain(t));
         all &= v.all();
         let bands: Vec<String> = BANDS
             .iter()
@@ -502,8 +547,16 @@ pub fn verify(cfg: &Config, t: ReverbType, fits: Option<&Path>) -> Result<bool, 
             .map(|(b, x)| format!("{b}:{}", pct(x.unwrap_or(0.0))))
             .collect();
         let ned: Vec<String> = res.ned_rel.iter().map(|&x| pct(x)).collect();
+        let grain = match (res.npr_err(), res.hf_err()) {
+            (Some((rms, max)), Some(hf)) => format!(
+                " grain {rms:.1}/{max:.1}dB{} hf {hf:.1}dB{}",
+                mark(v.grain),
+                mark(v.hf)
+            ),
+            _ => " grain -".into(),
+        };
         println!(
-            "{p:>2} {:24} {} pre {:+.1}ms c50 {:+.1}dB ned {} cen {} {}",
+            "{p:>2} {:24} {} pre {:+.1}ms c50 {:+.1}dB ned {} cen {}{grain} {}",
             rv["name"].as_str().unwrap_or(""),
             bands.join(" "),
             res.predelay_ms,
@@ -520,7 +573,7 @@ pub fn verify(cfg: &Config, t: ReverbType, fits: Option<&Path>) -> Result<bool, 
         f.insert("ref".into(), rv.clone());
         f.insert("residuals".into(), res.to_json());
         f.insert("pass".into(), v.to_json());
-        f.insert("distance".into(), json!(distance(&res)));
+        f.insert("distance".into(), json!(distance(&res, judges_grain(t))));
     }
     write_json(&dst, &Value::Object(fits))?;
     Ok(all)

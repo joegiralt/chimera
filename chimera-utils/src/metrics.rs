@@ -2,6 +2,7 @@
 //! harness's `mvlib` measurer, ported call for call.
 
 use crate::SR;
+use crate::grain::{self, Grain};
 use crate::sig::{
     ERFC_INV_SQRT2, box_same, butter3_bandpass, hanning, rev_cumsum, slope, sosfilt, tail_mean,
     welch,
@@ -57,6 +58,8 @@ pub struct Metrics {
     pub band_level_db: [f64; 7],
     pub length_s: f64,
     pub gate: Option<Gate>,
+    /// GRAIN and HF share, when measured.
+    pub grain: Option<Grain>,
 }
 
 fn band_sos(fc: u32) -> Vec<crate::sig::Sos> {
@@ -307,6 +310,7 @@ pub fn ir_metrics(h: &[f64], noise_rt: Option<&NoiseRt>) -> Metrics {
         band_level_db: core::array::from_fn(|i| bands_db[i] - top),
         length_s: ht.len() as f64 / SR,
         gate: gate_shape(h),
+        grain: None,
     }
 }
 
@@ -355,6 +359,10 @@ pub struct Residuals {
     pub c50_db: f64,
     pub ned_rel: [f64; 3],
     pub centroid_rel: f64,
+    /// GRAIN's six Δ and the three HF shares' Δ, dB, when both sides have
+    /// them.
+    pub npr_db: Option<[f64; 6]>,
+    pub hf_db: Option<[f64; 3]>,
 }
 
 pub fn residuals(m: &Metrics, r: &Metrics) -> Residuals {
@@ -374,6 +382,30 @@ pub fn residuals(m: &Metrics, r: &Metrics) -> Residuals {
             }
         }),
         centroid_rel: m.centroid_hz / r.centroid_hz - 1.0,
+        npr_db: m
+            .grain
+            .zip(r.grain)
+            .map(|(a, b)| core::array::from_fn(|i| a.npr[i] - b.npr[i])),
+        hf_db: m
+            .grain
+            .zip(r.grain)
+            .map(|(a, b)| core::array::from_fn(|i| a.hf[i] - b.hf[i])),
+    }
+}
+
+impl Residuals {
+    /// GRAIN's rms and largest |Δ|, dB.
+    pub fn npr_err(&self) -> Option<(f64, f64)> {
+        self.npr_db.map(|d| {
+            let rms = (d.iter().map(|x| x * x).sum::<f64>() / 6.0).sqrt();
+            (rms, d.iter().fold(0.0f64, |m, x| m.max(x.abs())))
+        })
+    }
+
+    /// HF share's largest |Δ|, dB.
+    pub fn hf_err(&self) -> Option<f64> {
+        self.hf_db
+            .map(|d| d.iter().fold(0.0f64, |m, x| m.max(x.abs())))
     }
 }
 
@@ -392,18 +424,35 @@ pub struct Verdict {
     pub c50: bool,
     pub ned: bool,
     pub centroid: bool,
+    /// GRAIN and HF share, when measured.
+    pub grain: Option<bool>,
+    pub hf: Option<bool>,
+    /// Whether `all` counts GRAIN and HF share (ROOM), or they're reported
+    /// only.
+    pub judge_grain: bool,
 }
 
 impl Verdict {
     pub fn all(&self) -> bool {
-        self.band_rt60 && self.predelay && self.c50 && self.ned && self.centroid
+        self.band_rt60
+            && self.predelay
+            && self.c50
+            && self.ned
+            && self.centroid
+            && (!self.judge_grain || (self.grain == Some(true) && self.hf == Some(true)))
     }
 }
 
-/// Pass/fail per metric; band RT60 judged over 250 Hz–4 kHz.
-pub fn verdict(r: &Residuals) -> Verdict {
+/// Pass/fail per metric; band RT60 judged over 250 Hz–4 kHz. GRAIN and HF
+/// share count only when `judge_grain`; a judged one unmeasured fails.
+pub fn verdict(r: &Residuals, judge_grain: bool) -> Verdict {
     let br: Vec<f64> = judged(r).flatten().map(f64::abs).collect();
     Verdict {
+        grain: r
+            .npr_err()
+            .map(|(rms, max)| rms <= grain::tol::NPR_RMS_DB && max <= grain::tol::NPR_MAX_DB),
+        hf: r.hf_err().map(|m| m <= grain::tol::HF_DB),
+        judge_grain,
         band_rt60: !br.is_empty() && br.iter().all(|&v| v <= tol::BAND_RT60),
         predelay: r.predelay_ms.abs() <= tol::PREDELAY_MS,
         c50: r.c50_db.abs() <= tol::C50_DB,
@@ -413,15 +462,37 @@ pub fn verdict(r: &Residuals) -> Verdict {
 }
 
 /// Weighted distance in tolerance units: band RT60 first, then NED and C50,
-/// then centroid and pre-delay.
-pub fn distance(r: &Residuals) -> f64 {
+/// then centroid and pre-delay; with `judge_grain`, GRAIN's rms and each HF
+/// share. Each judged metric over its bar adds `OVER`: the search trades a
+/// margin away before a pass.
+pub fn distance(r: &Residuals, judge_grain: bool) -> f64 {
+    const OVER: f64 = 4.0;
     let u = |x: f64, t: f64| (x / t) * (x / t);
-    let mut d = 0.0;
+    let v = verdict(r, judge_grain);
+    let over = [v.band_rt60, v.predelay, v.c50, v.ned, v.centroid]
+        .into_iter()
+        .chain(
+            judge_grain
+                .then_some([v.grain, v.hf].map(|x| x == Some(true)))
+                .into_iter()
+                .flatten(),
+        )
+        .filter(|ok| !ok)
+        .count();
+    let mut d = OVER * over as f64;
     for x in judged(r) {
         d += 3.0 * u(x.unwrap_or(1.0), tol::BAND_RT60) / JUDGED.len() as f64;
     }
     for x in r.ned_rel {
         d += 2.0 * u(x, tol::NED) / 3.0;
+    }
+    if judge_grain {
+        if let Some((rms, _)) = r.npr_err() {
+            d += u(rms, grain::tol::NPR_RMS_DB);
+        }
+        for x in r.hf_db.into_iter().flatten() {
+            d += 2.0 * u(x, grain::tol::HF_DB);
+        }
     }
     d + 2.0 * u(r.c50_db, tol::C50_DB)
         + u(r.centroid_rel, tol::CENTROID)
@@ -459,6 +530,18 @@ fn read_f(v: &Value, k: &str) -> Result<f64, String> {
         .ok_or_else(|| format!("metrics: no number `{k}`"))
 }
 
+fn read_grain(v: &Value) -> Option<Grain> {
+    let arr = |k: &str, n: usize| -> Option<Vec<f64>> {
+        let a: Vec<f64> = v[k].as_array()?.iter().filter_map(Value::as_f64).collect();
+        (a.len() == n).then_some(a)
+    };
+    let (n, h) = (arr("npr", 6)?, arr("hf", 3)?);
+    Some(Grain {
+        npr: core::array::from_fn(|i| n[i]),
+        hf: core::array::from_fn(|i| h[i]),
+    })
+}
+
 impl Metrics {
     pub fn to_json(&self) -> Value {
         json!({
@@ -481,6 +564,7 @@ impl Metrics {
                 "body_slope_db_s": g.body_slope_db_s,
                 "fall_db_s": g.fall_db_s,
             })),
+            "grain": self.grain.map_or(Value::Null, |g| json!({"npr": g.npr, "hf": g.hf})),
         })
     }
 
@@ -516,6 +600,7 @@ impl Metrics {
                 body_slope_db_s: g["body_slope_db_s"].as_f64().unwrap_or(0.0),
                 fall_db_s: g["fall_db_s"].as_f64().unwrap_or(0.0),
             }),
+            grain: read_grain(&v["grain"]),
         })
     }
 }
@@ -528,6 +613,8 @@ impl Residuals {
             "c50_db": self.c50_db,
             "ned_rel": ned_map(&self.ned_rel),
             "centroid_rel": self.centroid_rel,
+            "npr_db": self.npr_db.map_or(Value::Null, |d| json!(d)),
+            "hf_db": self.hf_db.map_or(Value::Null, |d| json!(d)),
         })
     }
 }
@@ -540,6 +627,8 @@ impl Verdict {
             "c50": self.c50,
             "ned": self.ned,
             "centroid": self.centroid,
+            "grain": self.grain,
+            "hf": self.hf,
             "all": self.all(),
         })
     }
