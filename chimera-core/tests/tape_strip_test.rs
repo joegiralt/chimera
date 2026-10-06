@@ -78,6 +78,39 @@ fn overview_is_min_max() {
     assert_eq!(Overview::EMPTY.frames(), 0);
 }
 
+/// A long source's columns are strided: each one's ends lie within its
+/// span's true min and max, read at most `COL_READS` frames a column.
+#[test]
+fn long_overview_is_strided() {
+    let held = noise(200_000);
+    let v = SourceView::new(&held).unwrap();
+    let o = Overview::of(&v, 0.0, 1.0);
+    let want = expect(&v, 0, v.frames());
+    for (c, w) in want.iter().enumerate() {
+        let [mn, mx] = o.col(c);
+        assert!(w[0] <= mn && mx <= w[1] && mn <= mx, "column {c}");
+    }
+    assert_ne!((0..COLS).map(|c| o.col(c)).collect::<Vec<_>>(), want, "strided, not whole");
+}
+
+/// Ten seconds at 48 kHz (480 000 frames, the arena's most) in under
+/// 1 ms on the host: the scan is capped, not the source's length.
+#[cfg(not(debug_assertions))]
+#[test]
+fn long_overview_under_1ms() {
+    let held = noise(480_000);
+    let v = SourceView::new(&held).unwrap();
+    let best = (0..5)
+        .map(|_| {
+            let t = std::time::Instant::now();
+            std::hint::black_box(Overview::of(std::hint::black_box(&v), 0.0, 1.0));
+            t.elapsed()
+        })
+        .min()
+        .unwrap();
+    assert!(best < std::time::Duration::from_millis(1), "{best:?}");
+}
+
 /// A 100 000-frame source in under 1 ms on the host (spec § 3); the UI
 /// computes it when the page opens or SOURCE changes.
 #[cfg(not(debug_assertions))]

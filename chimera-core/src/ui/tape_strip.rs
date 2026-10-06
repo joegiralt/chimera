@@ -34,6 +34,9 @@ pub struct Overview {
     count: u8,
 }
 
+/// The most frames one column reads.
+pub const COL_READS: u32 = 32;
+
 impl Overview {
     /// No source: a flat line.
     pub const EMPTY: Overview = Overview {
@@ -44,7 +47,10 @@ impl Overview {
     };
 
     /// `[START, END]` of `v`, either way round, in `COLS` equal spans (a
-    /// frame at least, repeated under `COLS` frames).
+    /// frame at least, repeated under `COLS` frames). A span is read whole
+    /// up to `COL_READS` frames, then strided to that many: a long source
+    /// costs a UI frame no more than a 0.3 s one, and a peak between
+    /// strides may go undrawn.
     #[inline(never)]
     pub fn of(v: &SourceView<'_>, start: f32, end: f32) -> Overview {
         let n = v.frames();
@@ -67,7 +73,8 @@ impl Overview {
         for (c, col) in o.cols.iter_mut().enumerate() {
             let b = (lo + ((c as u64 + 1) * w / COLS as u64) as u32).max(a + 1);
             let (mut mn, mut mx) = (i32::MAX, i32::MIN);
-            for i in a..b {
+            let stride = ((b - a) / COL_READS).max(1) as usize;
+            for i in (a..b).step_by(stride) {
                 let s = v.sample(i);
                 (mn, mx) = (mn.min(s), mx.max(s));
             }
