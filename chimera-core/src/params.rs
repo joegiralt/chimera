@@ -1,6 +1,7 @@
 use crate::addr::{BlockRead, BlockRef, Blocks};
 use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
-use crate::dsp::filter::{FilterKind, FilterMode, KIND_NAMES};
+use crate::dsp::filter::k2040::VOICE_LABELS;
+use crate::dsp::filter::{FilterKind, FilterMode, K2040Voice, KIND_NAMES};
 use crate::dsp::modulator::{
     EnvForm, EnvSpeed, EnvType, FuncMode, FuncParams, HoldPos, LfoForm, pick,
 };
@@ -16,6 +17,8 @@ pub struct FilterParams {
     kind: FilterKind,
     /// Private: `set_mode` keeps it in the kind's list (spec § 7).
     mode: FilterMode,
+    /// The 2040's VOICE; kept, and inert, on the other types.
+    pub voice: K2040Voice,
 }
 
 impl Default for FilterParams {
@@ -26,6 +29,7 @@ impl Default for FilterParams {
             level: 0.5,
             kind: FilterKind::Svf,
             mode: FilterKind::Svf.default_mode(),
+            voice: K2040Voice::Rev2,
         }
     }
 }
@@ -38,6 +42,7 @@ impl FilterParams {
     pub const KIND: ParamId = ParamId(6);
     pub const MODE: ParamId = ParamId(7);
     pub const LEVEL: ParamId = ParamId(12);
+    pub const VOICE: ParamId = ParamId(13);
 
     pub fn mode(&self) -> FilterMode {
         self.mode
@@ -68,7 +73,7 @@ impl FilterParams {
 }
 
 /// Every one read by `Voice` per block; MODE is an Enum, so not modulatable.
-pub static FILTER_SPECS: [ParamSpec; 5] = [
+pub static FILTER_SPECS: [ParamSpec; 6] = [
     ParamSpec::continuous(
         0,
         "CUTOFF",
@@ -85,10 +90,16 @@ pub static FILTER_SPECS: [ParamSpec; 5] = [
     ParamSpec::continuous(1, "RESO", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true).ident("RESO"),
     ParamSpec::continuous(12, "LEVEL", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, true)
         .ident("LEVEL"),
-    // A choice among the one built kind.
-    ParamSpec::choice(6, "KIND", ValFmt::Names(&KIND_NAMES), 0.0, 0.0)
-        .ident("KIND")
-        .glyph(crate::ui::glyph::FocusGlyph::None),
+    // TYPE on screen; its ident stays KIND.
+    ParamSpec::choice(
+        6,
+        "TYPE",
+        ValFmt::Names(&KIND_NAMES),
+        (KIND_NAMES.len() - 1) as f32,
+        0.0,
+    )
+    .ident("KIND")
+    .glyph(crate::ui::glyph::FocusGlyph::None),
     // CLEAN's labels and LP4's index: the FLT view shows the kind's own
     // (`FilterKind::mode_labels`), and defaults go through `default_mode`.
     ParamSpec::choice(
@@ -100,6 +111,10 @@ pub static FILTER_SPECS: [ParamSpec; 5] = [
     )
     .ident("MODE")
     .glyph(crate::ui::glyph::FocusGlyph::None),
+    // The 2040's VOICE (spec § 3): REV2 or EXP, two peers.
+    ParamSpec::choice(13, "VOICE", ValFmt::Names(&VOICE_LABELS), 1.0, 0.0)
+        .ident("VOICE")
+        .glyph(crate::ui::glyph::FocusGlyph::None),
 ];
 
 impl Block for FilterParams {
@@ -122,6 +137,7 @@ impl Block for FilterParams {
                 .iter()
                 .position(|&m| m == self.mode)
                 .unwrap_or(0) as f32,
+            Self::VOICE => self.voice as u8 as f32,
             _ => 0.0,
         }
     }
@@ -136,6 +152,7 @@ impl Block for FilterParams {
                 let m = self.kind.modes();
                 self.set_mode(m[(v.max(0.0) as usize).min(m.len() - 1)]);
             }
+            Self::VOICE => self.voice = K2040Voice::from_index(v),
             _ => {}
         }
     }
@@ -144,6 +161,7 @@ impl Block for FilterParams {
         match id {
             Self::KIND => Some(self.kind.disk_code()),
             Self::MODE => Some(self.mode.disk_code()),
+            Self::VOICE => Some(self.voice.disk_code()),
             _ => None,
         }
     }
@@ -152,6 +170,7 @@ impl Block for FilterParams {
         match id {
             Self::KIND => Some(self.kind.disk_ident()),
             Self::MODE => Some(self.mode.disk_ident()),
+            Self::VOICE => Some(self.voice.disk_ident()),
             _ => None,
         }
     }
@@ -161,6 +180,7 @@ impl Block for FilterParams {
         match id {
             Self::KIND => apply_code(FilterKind::from_disk_code(code), |k| self.set_kind(k)),
             Self::MODE => FilterMode::from_disk_code(code).is_some_and(|m| self.set_mode(m)),
+            Self::VOICE => apply_code(K2040Voice::from_disk_code(code), |v| self.voice = v),
             _ => false,
         }
     }

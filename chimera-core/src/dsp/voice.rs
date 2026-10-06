@@ -12,7 +12,7 @@ use crate::dsp::drive::Drive;
 use crate::dsp::ease::{Ease, Ramp, at, ease_coeff, step_of};
 use crate::dsp::engines::{EngineSlot, SlotKind};
 use crate::dsp::envelope::{EnvMods, Envelope};
-use crate::dsp::filter::{Clean, FilterMods};
+use crate::dsp::filter::{Filter, FilterMods};
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modal::{ModalEngine, ResonatorMode, SymPool};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
@@ -51,7 +51,7 @@ pub struct Voice {
     /// Slot rebuilds since `init_in_place`, wrapping: `reset` keeps it.
     rebuilds: u16,
     drive: Drive,
-    filter: Clean,
+    filter: Filter,
     /// The last block's LEVEL clip, for the LED: 0 while the clipper is
     /// off or the voice idle.
     filter_clip: Clip,
@@ -206,7 +206,7 @@ impl Voice {
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
         EngineSlot::cost(p, mods)
             + Self::CHAIN_COST
-            + p.filter.kind().cost(p.filter.mode())
+            + p.filter.kind().cost(p.filter.mode(), p.filter.voice)
             + ModRouting::cost(p, mods)
             + Self::stage_cost(p, mods)
     }
@@ -304,7 +304,7 @@ impl Voice {
             let played = ParamSnapshot::default();
             write_chain!(p, {
                 drive: Drive::new(),
-                filter: Clean::new(),
+                filter: Filter::new(),
                 filter_clip: Clip::ZERO,
                 folder: Wavefolder::new(),
                 dc: DcBlocker::new(DC_HZ, (*p).sample_rate),

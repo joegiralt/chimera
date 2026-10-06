@@ -117,6 +117,7 @@ impl Response {
             (K::Svf, M::Notch) => Response::Notch2x,
             (K::Svf, M::Phaser) => Response::DoubleNotch,
             (K::Svf, M::Lp12 | M::Lp24) => Response::Low,
+            (K::K2040, _) => Response::Low,
         }
     }
 }

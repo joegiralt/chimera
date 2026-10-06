@@ -5,11 +5,13 @@ use crate::params::FilterParams;
 
 pub mod clean;
 pub mod coef;
+pub mod k2040;
 pub mod level;
 #[cfg(any(test, feature = "probe"))]
 pub mod probe;
 
 pub use clean::Clean;
+pub use k2040::{K2040, K2040Voice};
 pub use level::{
     FilterMods, LevelRamp, LevelStage, clip_amount, clipped, level_from_drive, level_gain,
     translate_drive,
@@ -110,47 +112,60 @@ const SVF_PHASER: u32 = 17;
 /// loop's own layout, until the bench reads each mode.
 const SVF_PAD: u32 = 2;
 
-/// Which filter model (spec § Data model). A variant lands with its model
-/// (#123–#127); until then only the SVF exists.
+/// The 2040's one mode.
+const K2040_MODES: [FilterMode; 1] = [FilterMode::Lp24];
+const K2040_LABELS: [&str; 1] = ["LP4"];
+
+/// Which filter model, its TYPE (spec § 1). The discriminants are the disk
+/// codes: append-only, gaps kept for the kinds that never landed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum FilterKind {
+    /// CLEAN, the Cascadia-style SVF; its disk ident stays "SVF".
     #[default]
     Svf = 0,
+    /// 2040, the SSM2040 four-pole (spec § 3).
+    K2040 = 4,
 }
 
 impl DiskCode for FilterKind {
     fn disk_code(self) -> u8 {
         match self {
             FilterKind::Svf => 0,
+            FilterKind::K2040 => 4,
         }
     }
 
     fn disk_ident(self) -> &'static str {
         match self {
             FilterKind::Svf => "SVF",
+            FilterKind::K2040 => "2040",
         }
     }
 
     fn from_disk_code(c: u8) -> Option<Self> {
         match c {
             0 => Some(FilterKind::Svf),
+            4 => Some(FilterKind::K2040),
             _ => None,
         }
     }
 }
 
-/// KIND's names, as it steps the built kinds.
-pub static KIND_NAMES: [&str; 1] = ["SVF"];
+/// TYPE's names, as it steps the built kinds.
+pub static KIND_NAMES: [&str; 2] = ["CLEAN", "2040"];
+
+const _: () = assert!(KIND_NAMES.len() == FilterKind::BUILT.len());
 
 impl FilterKind {
-    /// The kinds built, as KIND steps them.
-    pub const BUILT: [FilterKind; 1] = [FilterKind::Svf];
+    /// The kinds built, as TYPE steps them.
+    pub const BUILT: [FilterKind; 2] = [FilterKind::Svf, FilterKind::K2040];
 
     /// Never empty, in knob order (spec § 1).
     pub const fn modes(self) -> &'static [FilterMode] {
         match self {
             FilterKind::Svf => &CLEAN_MODES,
+            FilterKind::K2040 => &K2040_MODES,
         }
     }
 
@@ -158,7 +173,7 @@ impl FilterKind {
     /// land; always in `modes()`.
     pub const fn default_mode(self) -> FilterMode {
         match self {
-            FilterKind::Svf => FilterMode::Lp24,
+            FilterKind::Svf | FilterKind::K2040 => FilterMode::Lp24,
         }
     }
 
@@ -166,6 +181,7 @@ impl FilterKind {
     pub const fn mode_labels(self) -> &'static [&'static str] {
         match self {
             FilterKind::Svf => &CLEAN_LABELS,
+            FilterKind::K2040 => &K2040_LABELS,
         }
     }
 
@@ -180,15 +196,17 @@ impl FilterKind {
     /// NOTE → CUTOFF on a new Sound (spec § 2).
     pub const fn key_default(self) -> i8 {
         match self {
-            FilterKind::Svf => 0,
+            FilterKind::Svf | FilterKind::K2040 => 0,
         }
     }
 
     /// Cycles per sample over LP24 (spec § CPU), never below 0: the engine
     /// terms were solved from bench rows that already run the SVF at LP24.
     /// `recost` re-prices at every note-on, so a mode bills its own delta.
-    pub const fn cost(self, mode: FilterMode) -> Cost {
+    /// CLEAN bills by its mode, the 2040 by its VOICE alone.
+    pub const fn cost(self, mode: FilterMode, voice: K2040Voice) -> Cost {
         match self {
+            FilterKind::K2040 => voice.cost(),
             FilterKind::Svf => Cost(match mode {
                 FilterMode::Phaser => SVF_PHASER,
                 FilterMode::Bp24 | FilterMode::Hp24 => SVF_PAD,
@@ -235,4 +253,78 @@ pub fn routed_cutoff(base: f32, sum: f32) -> f32 {
 #[inline(always)]
 pub fn g_at(from: f32, step: f32, i: usize) -> f32 {
     from + step * (i + 1) as f32
+}
+
+/// A voice's filter: every built TYPE's state, the one its params name run
+/// each block. Until Task 10's crossfade, a TYPE change starts the incoming
+/// type from rest.
+#[derive(Clone, Debug, Default)]
+pub struct Filter {
+    clean: Clean,
+    k2040: K2040,
+    /// The last block's TYPE; `None` before the first.
+    last: Option<FilterKind>,
+}
+
+impl Filter {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// One block through `p`'s TYPE: its clip for the LED.
+    pub fn process(
+        &mut self,
+        buf: &mut [f32; crate::hw::BLOCK_SIZE],
+        p: &FilterParams,
+        fs: u32,
+        mods: &FilterMods,
+    ) -> crate::meter::Clip {
+        let kind = p.kind();
+        if self.last.replace(kind).is_some_and(|k| k != kind) {
+            match kind {
+                FilterKind::Svf => self.clean.reset(),
+                FilterKind::K2040 => self.k2040.reset(),
+            }
+        }
+        match kind {
+            FilterKind::Svf => self.clean.process(buf, p, fs, mods),
+            FilterKind::K2040 => self.k2040.process(buf, p, fs, mods),
+        }
+    }
+
+    /// Forget the ramps: the next block starts unramped.
+    pub fn hold(&mut self) {
+        self.clean.hold();
+        self.k2040.hold();
+    }
+
+    /// A fresh voice's filter: every type at rest and unramped.
+    pub fn reset(&mut self) {
+        self.clean.reset();
+        self.k2040.reset();
+        self.last = None;
+    }
+
+    /// The running type still rings (the voice-end fade, #374).
+    pub fn rings(&self) -> bool {
+        match self.last {
+            Some(FilterKind::Svf) => self.clean.rings(),
+            Some(FilterKind::K2040) => self.k2040.rings(),
+            None => false,
+        }
+    }
+
+    /// LEVEL's clipper runs next block: CLEAN's only, the 2040 has none.
+    pub fn level_running(&self) -> bool {
+        self.last == Some(FilterKind::Svf) && self.clean.level_running()
+    }
+
+    /// The running type's last `g` (`None`: no ramp next block).
+    #[cfg(test)]
+    pub(crate) fn last_g(&self) -> Option<f32> {
+        match self.last {
+            Some(FilterKind::K2040) => self.k2040.last_g(),
+            _ => self.clean.last_g(),
+        }
+    }
 }

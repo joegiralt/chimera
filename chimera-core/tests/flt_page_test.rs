@@ -336,7 +336,7 @@ fn an_absent_route_knob_reads_dashes_in_the_focus_band() {
     );
 }
 
-/// The Cells key carries the real looks: FLT's KIND (slot 0) dimmed, ENV
+/// The Cells key carries the real looks: FLT's TYPE (slot 0) live, ENV
 /// (slot 4) absent, KEY (slot 5) live, and the matrix's revision.
 #[test]
 fn the_cells_key_carries_the_looks() {
@@ -357,7 +357,7 @@ fn the_cells_key_carries_the_looks() {
     };
     assert_eq!(looks >> 8 & 3, Look::Absent as u16, "ENV");
     assert_eq!(looks >> 10 & 3, Look::Live as u16, "KEY");
-    assert_eq!(looks & 3, Look::Dimmed as u16, "KIND");
+    assert_eq!(looks & 3, Look::Live as u16, "TYPE");
     assert_eq!(looks >> 2 & 0x3f, 0, "the other slots are live");
     assert_eq!(matrix_rev, ui.matrix_state.rev);
 }
@@ -471,16 +471,15 @@ fn applies_matches_the_panel() {
     }
 }
 
-/// KIND is dimmed while the SVF is the one built kind: its encoder does
-/// nothing, and a KIND "change" leaves the matrix byte-identical. (KIND is
-/// an enum the registry already refuses to prime, so the dimming is
-/// asserted on its own.)
+/// TYPE is live once a second kind is built: its encoder steps CLEAN to
+/// 2040, whose one MODE then shows fixed, and a TYPE change leaves the
+/// matrix byte-identical. (TYPE is an enum the registry refuses to prime.)
 #[test]
-fn kind_is_fixed_and_never_edits_the_matrix() {
+fn type_steps_the_built_kinds_and_never_edits_the_matrix() {
     use chimera_core::ui::view::{self, SlotCtx};
     let s = chimera_core::preset::Sound::init(EngineType::Algo);
     let ctx = SlotCtx::read(&s.params, chimera_core::addr::Op::A);
-    assert!(view::is_dimmed(
+    assert!(!view::is_dimmed(
         &view::view(&chimera_core::ui::block_registry::FILTER, 0, &ctx),
         &s,
         &ctx
@@ -488,8 +487,12 @@ fn kind_is_fixed_and_never_edits_the_matrix() {
     let mut ui = on_flt(EngineType::Algo);
     let before = format!("{:?}", ui.mod_state());
     feed(&mut ui, Input::turn(EncoderId::A, 3));
-    assert_eq!(ui.params().filter.kind(), FilterKind::Svf);
+    assert_eq!(ui.params().filter.kind(), FilterKind::K2040);
+    assert_eq!(ui.params().filter.mode(), FilterMode::Lp24);
     assert_eq!(format!("{:?}", ui.mod_state()), before);
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
     assert_eq!(ui.prime_status(), Some(PrimeStatus::NotModulatable));
+    feed(&mut ui, Input::turn(EncoderId::A, -3));
+    assert_eq!(ui.params().filter.kind(), FilterKind::Svf);
+    assert_eq!(format!("{:?}", ui.mod_state()), before);
 }

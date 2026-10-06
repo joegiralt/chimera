@@ -66,6 +66,17 @@ static FILTER_PROBES: &[FilterProbe] = &[
     filter::probe::clean_probe::<7, true>,
 ];
 
+/// The 2040's probes, REV2 and EXP, steady and moving.
+type K2040Probe = fn(&mut filter::K2040, &mut [f32; BLOCK_SIZE], &FilterParams);
+
+#[used]
+static K2040_PROBES: &[K2040Probe] = &[
+    filter::probe::k2040_probe::<false, false>,
+    filter::probe::k2040_probe::<false, true>,
+    filter::probe::k2040_probe::<true, false>,
+    filter::probe::k2040_probe::<true, true>,
+];
+
 /// The bench's screens as text: about 4 KB today, `# TRUNCATED` past this.
 pub const BENCH_TEXT_LEN: usize = 8192;
 type Text = Report<BENCH_TEXT_LEN>;

@@ -294,6 +294,13 @@ fn clicks_ok(c: &Case, label: &str) -> Option<&'static str> {
              NOTCH2 (knob 0 → 7) steps until the crossfade lands",
         );
     }
+    if c.is(BlockRef::Filter, FilterParams::KIND) && matches!(c.mv, Move::Jump { .. }) {
+        // Task 10 (the warm start and crossfade, spec § 1 B5) removes this.
+        return Some(
+            "a TYPE jump starts the incoming filter from rest: CLEAN → 2040 steps until the \
+             crossfade lands",
+        );
+    }
     if c.is_op(AlgoOpParams::RR) && label == "chord-off" && c.any(|v| v == 15.0) {
         return Some("RR 15 is the fastest release: a note-off at full level ends within a few ms");
     }

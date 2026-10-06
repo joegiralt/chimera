@@ -57,9 +57,24 @@ pub static SVF_PANEL: KindPanel = KindPanel {
     ],
 };
 
+/// 2040: CUTOFF · RES · ENV · KEYBD · DRIVE (LEVEL under the 2040's
+/// panel word, spec § 3); extra LFO. Its MODE is LP4, fixed. VOICE's cell
+/// lands with FLT › MOD's 2040 layout.
+pub static K2040_PANEL: KindPanel = KindPanel {
+    main: [
+        filter(FilterParams::CUTOFF, "CUTOFF"),
+        filter(FilterParams::RESONANCE, "RES"),
+        route(ModSource::Env1, "ENV"),
+        route(ModSource::Note, "KEYBD"),
+        filter(FilterParams::LEVEL, "DRIVE"),
+    ],
+    extras: [Some(route(ModSource::Lfo1, "LFO")), None],
+};
+
 pub fn panel(kind: FilterKind) -> &'static KindPanel {
     match kind {
         FilterKind::Svf => &SVF_PANEL,
+        FilterKind::K2040 => &K2040_PANEL,
     }
 }
 

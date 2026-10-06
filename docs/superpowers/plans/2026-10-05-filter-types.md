@@ -1419,3 +1419,32 @@ The moving, LEVEL and tap terms are deltas, not over `OLD_LP24`, and don't chang
 - **Flash:** `text` 710,368 → 710,960 (+592 B), default release build.
 - **Fix round 1 flash:** `text` 710,960 → 711,368 (+408 B). Probes unchanged (gain 4.31, held 16.62, fading 20.00, LP4 41 / 82).
 - **Stack** (stack-check on `target/t7`): default 48,240, no default 47,196, bench 57,472, bench,master-tape 57,488, orbit 49,032, bench,orbit 60,704 B, +24 to +32 B each.
+
+### Task 8: 2040, REV2 and EXP (2026-10-06)
+
+- **Tuned constants.** `L_2040` = ¼ and `ALPHA_REV2` = 0.1, as the spec gave them; `OUT_2040` = 1.0. `ALPHA_EXP`, `R_2040` and `BETA_EXP` follow by formula (const-asserted).
+  - **Pitch** (1 V/oct, FM2 +100 %, C2–C6, both bases, both voices): −1.2 to −1.4 cents; octaves within 0.2 cents.
+  - **Self-oscillation, RES 1:** REV2 −11.00 dBFS (100 Hz–1.6 kHz) to −11.29 (8 kHz), inside `OSC_BAND_DB` (−12, −4), unchanged; EXP −17.03 to −17.33, inside `OSC_BAND_EXP_DB` (−18, −10), REV2's band less 6 dB. EXP − REV2 = −6.03 to −6.04 dB at every FREQ. Wobble ±0.00 dB once grown in: the 2040's read starts at 0.25 s or 120 periods, whichever is longer (at RES 1 its pole sits only 1.3 % a radian inside instability, so 100 Hz takes about 0.7 s to grow in).
+  - **α trade, for the owner's ear:** at α = 0.0708 REV2 would oscillate at −8.0 dBFS, the middle of CLEAN's trims, and EXP's squelch margin would fall from 5.1 to 2.8 dB. α = 0.1 is kept: the spec's value and the dirtier EXP.
+  - **Onset:** RES 0.94 decays below −60 dB and RES 0.96 sustains, at 250 Hz / 1 kHz / 4 kHz, both voices, read over 2.5 s (the four-pole's ring near onset decays 1.6 % a period at 250 Hz).
+- **Bass loss (test 7),** gain at 100 Hz, FREQ 2 kHz: small signal within 0.74 dB of `−20·log₁₀(1 + k)` (RES 1: −13.60 against −14.34), falling with RES; full scale within 0.46 dB on REV2 and 0.42 on EXP; RES 0.95 −13.5 to −13.9 dB.
+- **The resonant peak at full scale** (a 1.0 sine at the prototype's peak) is held by the ±1 V clip, not the limiter: REV2 −9.11 dB under small signal at RES 0.8 (−0.42 at 0.5, −1.75 at 0.6, −4.63 at 0.7), EXP −14.66. `K2040_PEAK_DB` pinned at [9.6, 15.2]; `K2040_FULL_DB` [1.0, 1.0]. The ratio scales with α, so it is the same at any α.
+- **Squelch** (RES 0.8, FREQ 1 kHz, a 110 Hz saw, the 9th harmonic's gain at 1.0 less at 0.01): REV2 −1.36 dB, EXP −6.42 dB, **margin 5.07 dB** (≥ 2 required). Pinned ±0.3.
+- **POST:** REV2 is bit-identical to the f32 reference without POST, EXP to it with POST. THD at `y₄` = 0.95·R: REV2 0.000 %, EXP 1.336 % (theory 1.3 %).
+- **Clip onset** (RES 0, FREQ 20 kHz, full-scale 100 Hz sine): REV2 THD 0.00 % at LEVEL 0.70, 5.57 % at 0.80; EXP 1.12 % at 0.45 (POST alone), 6.56 % at 0.55. The grid's stage peak is exactly R on both voices; the output grid max 2.0 (REV2) and 0.943 (EXP) against the exact bounds 2·OUT and OUT.
+- **LED** (full-scale 100 Hz sine, FREQ 20 kHz): REV2 0 at LEVEL ½ and 0.7, 0.127 at 0.8, 0.535 at 1; EXP 0 at 0.4, 0.056 at ½. It is `clip_amount(max|s₁ + t₁|/(0.9·R))`: stage 1's demand before its clamp, lit from 90 % of the swing.
+- **NaN.** The clamps eat a NaN (`vmaxnm`), so the states stay finite but at a rail. The loop sums its inputs (one `vadd`), and a non-finite sum rests the states.
+- **Limiter and pitch.** With the ±1 V clip in, `L = ∞` no longer moves the pitch (the clip holds the stages near-linear first); L still sets the self-oscillation level, the full-scale bass and EXP's squelch.
+- **Probes** (`tools/loop_count.py`, bench ELF in `wt-t8/target`), a sample, stride 1:
+
+  | Loop | Instructions | `vdiv` | Cycles (with block) | Budget |
+  |---|---|---|---|---|
+  | `k2040_probe::<false, false>` REV2 steady | **75** | 0 | 125 | ≤ 78 |
+  | `k2040_probe::<true, false>` EXP steady | **81** | 0 | 135 | ≤ 84 |
+  | `k2040_probe::<false, true>` REV2 moving | 87 (+12) | 2 | 170 (+45) | +6, +35 |
+  | `k2040_probe::<true, true>` EXP moving | 93 (+12) | 2 | 180 (+45) | +6, +35 |
+
+  Block work 150 instructions, 4 `vdiv` (steady). Against `OLD_LP24` 95 the steady paths cost +30 (REV2) and +40 (EXP); billed 25 and 30 as the amendment says, pending Task 18. The moving path is +12 instructions over budget: two ramps, `1 + g`, `1 − G`, `G²`, `G⁴`, `1 + k·G⁴`, `k·D`, `g·4/27` and the two divides, about the least the per-sample `G` and `D` take.
+- **Memory.** `K2040` is 44 B; `Filter` (CLEAN + 2040 + last TYPE) 116 B. A `Voice` less its slot is 2,080 B, past ADR 0051's 2,048: `VOICE_CHAIN_BYTES` is raised to 2,112 (8 voices × 6,328 B = 50,624 B of D2's 286,720).
+- **Re-recorded:** `screen_golden_test` `bigviz_filter` (TYPE live with two kinds, label TYPE). Fixtures: `disk_codes_v1.txt` appends `E 10 6 4 2040`, `B 10 13 VOICE`, `E 10 13 0 REV2`, `E 10 13 1 EXP`; `neutral_v1.txt` gains `voice: Rev2` (the Debug print, every engine).
+- **Sweep allowance:** a TYPE jump clicks (the incoming type starts from rest) until Task 10's crossfade.

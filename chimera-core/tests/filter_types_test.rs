@@ -12,7 +12,7 @@ use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::Rig;
 use common::filter_ref::{
-    OSC_BAND_DB, clean_ref, fft, g_track, mag_db, ramp_track, rms_db, trim_ref,
+    OSC_BAND_DB, clean_ref, fft, g_track, grid_input, mag_db, ramp_track, rms_db, trim_ref,
 };
 
 const SR: u32 = 48_000;
@@ -370,34 +370,6 @@ fn clean_res_1_one_block_jumps_stay_bounded() {
         }
     }
     println!("RES 1 jumps: max |y| {max}");
-}
-
-/// The grid's inputs (spec test 8): silence, a full-scale saw, a square at
-/// fs/4, white noise ±1 and impulses of ±10.
-fn grid_input(which: usize, i: usize) -> f32 {
-    match which {
-        0 => 0.0,
-        1 => (i % 109) as f32 / 54.5 - 1.0,
-        2 => {
-            if i % 4 < 2 {
-                1.0
-            } else {
-                -1.0
-            }
-        }
-        3 => {
-            let h = (i as u32)
-                .wrapping_mul(2_654_435_761)
-                .rotate_left(13)
-                .wrapping_mul(2_246_822_519);
-            h as f32 / u32::MAX as f32 * 2.0 - 1.0
-        }
-        _ => match i % 480 {
-            0 => 10.0,
-            240 => -10.0,
-            _ => 0.0,
-        },
-    }
 }
 
 #[test]

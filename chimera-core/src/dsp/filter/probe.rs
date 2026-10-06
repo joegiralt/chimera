@@ -5,7 +5,7 @@
 //! Today's LP24 before CLEAN, `old_lp24_probe`, counted `OLD_LP24` at
 //! 22ea0dc0 (plan § Measured) and went with `SvfFilter`.
 
-use super::{Clean, FilterMods};
+use super::{Clean, FilterMods, K2040};
 use crate::hw::{BLOCK_SIZE, SAMPLE_RATE};
 use crate::params::FilterParams;
 
@@ -28,10 +28,28 @@ pub fn clean_probe<const M: u8, const MOVING: bool>(
     }
 }
 
+/// The 2040's two loops, `process`'s ramps with the loop forced: the steady
+/// one, or the moving one if `MOVING`; REV2's output, or EXP's 3080 if
+/// `EXP` (`p.voice` must agree).
+#[inline(never)]
+pub fn k2040_probe<const EXP: bool, const MOVING: bool>(
+    f: &mut K2040,
+    buf: &mut [f32; BLOCK_SIZE],
+    p: &FilterParams,
+) {
+    let r = f.ramps(p, SAMPLE_RATE, &FilterMods::NONE);
+    let (_, sum) = if MOVING {
+        f.moving::<EXP>(buf, r, |_, _| {})
+    } else {
+        f.steady::<EXP>(buf, r, |_, _| {})
+    };
+    f.settle(sum);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dsp::filter::FilterMode;
+    use crate::dsp::filter::{FilterKind, FilterMode, K2040Voice};
 
     /// Each probe is `process` on its own kind of block, at LP4 and at
     /// NOTCH2: steady blocks, then a cutoff and RES move, RES alone (a
@@ -40,6 +58,43 @@ mod tests {
     fn clean_probe_is_process() {
         probe_is_process::<2>(FilterMode::Lp24);
         probe_is_process::<7>(FilterMode::Phaser);
+    }
+
+    /// The 2040's probe is `process` on each kind of block, both voices.
+    #[test]
+    fn k2040_probe_is_process() {
+        k2040_is_process::<false>(K2040Voice::Rev2);
+        k2040_is_process::<true>(K2040Voice::Exp);
+    }
+
+    fn k2040_is_process<const EXP: bool>(v: K2040Voice) {
+        let mut p = FilterParams::default();
+        p.set_kind(FilterKind::K2040);
+        (p.cutoff, p.resonance, p.level, p.voice) = (800.0, 0.7, 0.75, v);
+        let (mut a, mut b) = (K2040::new(), K2040::new());
+        let mut x = 0.37f32;
+        for block in 0..6 {
+            let moving = matches!(block, 2..=4);
+            match block {
+                2 => (p.cutoff, p.resonance) = (3000.0, 0.4),
+                3 => p.resonance = 0.5,
+                4 => p.cutoff = SAMPLE_RATE as f32 * 0.6,
+                _ => {}
+            }
+            let mut want = [0.0f32; BLOCK_SIZE];
+            for s in want.iter_mut() {
+                x = crate::dsp::clampf(x * 3.9 * (1.0 - x), 0.01, 0.99);
+                *s = x - 0.5;
+            }
+            let mut got = want;
+            a.process(&mut want, &p, SAMPLE_RATE, &FilterMods::NONE);
+            if moving {
+                k2040_probe::<EXP, true>(&mut b, &mut got, &p);
+            } else {
+                k2040_probe::<EXP, false>(&mut b, &mut got, &p);
+            }
+            assert_eq!(got, want, "{v:?} block {block}");
+        }
     }
 
     fn probe_is_process<const M: u8>(mode: FilterMode) {

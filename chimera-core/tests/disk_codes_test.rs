@@ -99,6 +99,9 @@ fn table() -> Vec<String> {
                     shown(s.fmt, v)
                 ));
             }
+            // Back to its default, so a param read through it (MODE through
+            // TYPE) lists its own codes, not the last kind's.
+            bank.block(b).set(s.id, s.default);
         }
     }
     for s in ModSource::ALL {
@@ -220,6 +223,7 @@ fn idents_are_tokens_and_unique() {
                 assert!(!values.contains(&i), "{b:?} {} repeats {i}", s.ident);
                 values.push(i);
             }
+            bank.block(b).set(s.id, s.default);
         }
     }
 }
@@ -509,10 +513,10 @@ fn valid_addr_only_from_specs() {
     let ids: Vec<u8> = ValidAddr::of_block(BlockRef::Filter)
         .map(|a| a.addr().param.0)
         .collect();
-    assert_eq!(ids, [0, 1, 12, 6, 7]);
+    assert_eq!(ids, [0, 1, 12, 6, 7, 13]);
     let kind = ValidAddr::find(BlockRef::Filter, FilterParams::KIND).unwrap();
     assert!(kind.coded());
-    assert_eq!(kind.spec().label, "KIND");
+    assert_eq!(kind.spec().label, "TYPE");
     assert!(
         !ValidAddr::find(BlockRef::Filter, FilterParams::CUTOFF)
             .unwrap()

@@ -23,7 +23,7 @@ mod screen;
 use std::collections::HashSet;
 
 use chimera_core::addr::{BlockRef, ParamAddr};
-use chimera_core::dsp::filter::KIND_NAMES;
+use chimera_core::dsp::filter::{FilterKind, KIND_NAMES};
 use chimera_core::dsp::modal::{MODEL_NAMES, ModalParams};
 use chimera_core::name::ProjectName;
 use chimera_core::params::{EngineType, FilterParams, ParamSnapshot, PitchParams, STEAL_NAMES};
@@ -76,7 +76,12 @@ const CHOICES: [Choice; 2] = [
     Choice {
         addr: ParamAddr::new(BlockRef::Filter, FilterParams::KIND),
         names: &KIND_NAMES,
-        now: |p| p.filter.kind() as usize,
+        now: |p| {
+            FilterKind::BUILT
+                .iter()
+                .position(|&k| k == p.filter.kind())
+                .unwrap()
+        },
     },
     Choice {
         addr: ParamAddr::new(BlockRef::Pitch, PitchParams::STEAL),

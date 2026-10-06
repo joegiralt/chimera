@@ -28,6 +28,7 @@ Sound {
             level: 0.5,
             kind: Svf,
             mode: Lp24,
+            voice: Rev2,
         },
         drive: DriveParams {
             drive: 0.0,

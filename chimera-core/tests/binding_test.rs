@@ -207,7 +207,7 @@ fn part_pages_display_like_before() {
             &reg::FILTER,
             [
                 (
-                    "KIND",
+                    "TYPE",
                     ValFmt::Names(&chimera_core::dsp::filter::KIND_NAMES),
                 ),
                 ("CUTOFF", Uni),

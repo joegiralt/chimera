@@ -3,10 +3,15 @@
 
 use chimera_core::dsp::clampf;
 use chimera_core::dsp::filter::FilterMode;
+use chimera_core::dsp::filter::K2040Voice;
 use chimera_core::dsp::filter::clean::trim;
 use chimera_core::dsp::filter::coef::g_of;
 use chimera_core::dsp::filter::g_at;
+use chimera_core::dsp::filter::k2040::{
+    ALPHA_EXP, ALPHA_REV2, BETA_EXP, INV_BETA_EXP, L_2040, OUT_2040, R_2040,
+};
 use chimera_hal::BLOCK_SIZE;
+use std::ops::{Add, Div, Mul, Sub};
 
 /// The self-oscillation band every resonant type shares at RES 1, dBFS RMS
 /// (spec test 2, H-new-1): a TYPE switch at RES 1 jumps no more than its
@@ -14,6 +19,11 @@ use chimera_hal::BLOCK_SIZE;
 /// reason in § Measured.
 #[allow(dead_code)] // not every test binary reads it
 pub const OSC_BAND_DB: (f32, f32) = (-12.0, -4.0);
+
+/// The 2040's self-oscillation band on EXP, dBFS RMS: REV2's (`OSC_BAND_DB`)
+/// less EXP's 6 dB of drive, which LEVEL ½'s unity costs (spec § 3).
+#[allow(dead_code)]
+pub const OSC_BAND_EXP_DB: (f32, f32) = (-18.0, -10.0);
 
 /// `sat_c1` in f64.
 fn sat(x: f64) -> f64 {
@@ -177,4 +187,151 @@ pub fn fft(re: &mut [f64], im: &mut [f64]) {
         }
         len <<= 1;
     }
+}
+
+/// The arithmetic the 2040's reference runs in: f64 for the jumps, f32 to
+/// check the model op for op.
+pub trait Real:
+    Copy
+    + PartialOrd
+    + Add<Output = Self>
+    + Sub<Output = Self>
+    + Mul<Output = Self>
+    + Div<Output = Self>
+{
+    fn of(v: f32) -> Self;
+    fn f64(self) -> f64;
+}
+
+impl Real for f32 {
+    fn of(v: f32) -> Self {
+        v
+    }
+    fn f64(self) -> f64 {
+        f64::from(self)
+    }
+}
+
+impl Real for f64 {
+    fn of(v: f32) -> Self {
+        f64::from(v)
+    }
+    fn f64(self) -> f64 {
+        self
+    }
+}
+
+fn clamp_r<T: Real>(x: T, lo: T, hi: T) -> T {
+    let x = if x < lo { lo } else { x };
+    if x > hi { hi } else { x }
+}
+
+/// The 2040's cubic, `c − (4/27)·c³` for `c = clamp(v, ±1.5)`.
+fn sat_2040_r<T: Real>(v: T) -> T {
+    let c = clamp_r(v, T::of(-1.5), T::of(1.5));
+    c - T::of(4.0 / 27.0) * c * c * c
+}
+
+/// The 2040 (spec § 3), sample by sample from rest: `x[n]` scaled by
+/// `a[n]` (`α·gain`), with `g[n]` and `k[n]`; `G` and `D` divided every
+/// sample; the 3080 output stage if `post`. In `T`'s arithmetic, the
+/// model's own order of operations.
+pub fn k2040_ref<T: Real>(
+    x: &[f32],
+    g: &[f64],
+    k: &[f64],
+    a: &[f64],
+    voice: K2040Voice,
+    post: bool,
+) -> Vec<f64> {
+    let alpha = match voice {
+        K2040Voice::Rev2 => ALPHA_REV2,
+        K2040Voice::Exp => ALPHA_EXP,
+    };
+    let out = if post {
+        T::of(OUT_2040 / alpha * INV_BETA_EXP)
+    } else {
+        T::of(OUT_2040 / alpha)
+    };
+    let one = T::of(1.0);
+    let (r, l) = (T::of(R_2040), T::of(L_2040));
+    let of64 = |v: f64| T::of(v as f32);
+    let mut s = [T::of(0.0); 4];
+    let mut y4s = Vec::with_capacity(x.len());
+    for n in 0..x.len() {
+        let (g, k) = (of64(g[n]), of64(k[n]));
+        let big_g = g / (one + g);
+        let g2 = big_g * big_g;
+        let d = one / (one + k * g2 * g2);
+        let (ga, one_g, kd) = (g * T::of(4.0 / 27.0), one - big_g, k * d);
+        let x_c = T::of(x[n]) * of64(a[n]);
+        let big_s = one_g * (s[3] + big_g * (s[2] + big_g * (s[1] + big_g * s[0])));
+        let u_l = x_c * d - kd * big_s;
+        let mut v = x_c - l * sat_2040_r((x_c - u_l) * T::of(1.0 / L_2040));
+        for st in &mut s {
+            let e = clamp_r(one_g * (v - *st), T::of(-1.5), T::of(1.5));
+            let t = e * (g - ga * e * e);
+            let y = clamp_r(*st + t, T::of(0.0) - r, r);
+            *st = y + t;
+            v = y;
+        }
+        let y = if post {
+            sat_2040_r(T::of(BETA_EXP) * v) * out
+        } else {
+            v * out
+        };
+        y4s.push(y.f64());
+    }
+    y4s
+}
+
+/// One block of a coefficient the 2040 ramps (`g`, `k`, the input scale
+/// `α·gain`), sample by sample: by adding its step.
+pub fn a_track(from: f32, to: f32) -> Vec<f64> {
+    let step = (to - from) / BLOCK_SIZE as f32;
+    let mut a = from;
+    (0..BLOCK_SIZE)
+        .map(|_| {
+            a += step;
+            f64::from(a)
+        })
+        .collect()
+}
+
+/// The bound grid's inputs (spec test 8): silence, a full-scale saw, a
+/// square at fs/4, white noise ±1 and impulses of ±10.
+#[allow(dead_code)]
+pub fn grid_input(which: usize, i: usize) -> f32 {
+    match which {
+        0 => 0.0,
+        1 => (i % 109) as f32 / 54.5 - 1.0,
+        2 => {
+            if i % 4 < 2 {
+                1.0
+            } else {
+                -1.0
+            }
+        }
+        3 => {
+            let h = (i as u32)
+                .wrapping_mul(2_654_435_761)
+                .rotate_left(13)
+                .wrapping_mul(2_246_822_519);
+            h as f32 / u32::MAX as f32 * 2.0 - 1.0
+        }
+        _ => match i % 480 {
+            0 => 10.0,
+            240 => -10.0,
+            _ => 0.0,
+        },
+    }
+}
+
+/// Total harmonic distortion of `y`, a tone of `f0` Hz: harmonics 2–10
+/// against the fundamental, as a fraction (one DFT bin each).
+#[allow(dead_code)]
+pub fn thd(y: &[f32], f0: f32, fs: f32) -> f64 {
+    let amp = |f: f32| 10f64.powf(f64::from(mag_db(y, f, fs)) / 20.0);
+    let h: f64 = (2..=10).map(|n| amp(f0 * n as f32).powi(2)).sum();
+    h.sqrt() / amp(f0)
 }
