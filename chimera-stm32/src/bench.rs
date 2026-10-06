@@ -54,8 +54,9 @@ use embedded_graphics_core::pixelcolor::Rgb565;
 use crate::audio::engine;
 use crate::clocks::Clocks;
 
-/// The bench's screens as text: about 4 KB today, `# TRUNCATED` past this.
-pub const BENCH_TEXT_LEN: usize = 8192;
+/// The bench's screens as text: under 4 KB measured (`bench,master-tape`
+/// 3.4 KB, `bench,orbit` 3.9 KB), `# TRUNCATED` past this.
+pub const BENCH_TEXT_LEN: usize = 6144;
 type Text = Report<BENCH_TEXT_LEN>;
 
 // A `static mut`, not a `singleton!`: that builds its value on the caller's
