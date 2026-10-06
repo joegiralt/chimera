@@ -1,6 +1,6 @@
 mod common;
 use chimera_core::dsp::drive::Drive;
-use chimera_core::dsp::filter::{Clean, FilterMode};
+use chimera_core::dsp::filter::{Clean, FilterMode, FilterMods};
 use chimera_core::dsp::wavefolder::Wavefolder;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{DriveParams, FilterParams, FolderParams, ParamSnapshot};
@@ -149,7 +149,7 @@ fn test_filter_lp_removes_highs() {
     let pre_high = goertzel(&buf, 2000.0, SR);
 
     for c in buf.as_chunks_mut::<BLOCK_SIZE>().0 {
-        filter.process(c, &params, SR);
+        filter.process(c, &params, SR, &FilterMods::NONE);
     }
 
     let post_low = goertzel(&buf, 200.0, SR);
@@ -188,7 +188,7 @@ fn test_filter_hp_removes_lows() {
     let pre_high = goertzel(&buf, 4000.0, SR);
 
     for c in buf.as_chunks_mut::<BLOCK_SIZE>().0 {
-        filter.process(c, &params, SR);
+        filter.process(c, &params, SR, &FilterMods::NONE);
     }
 
     let post_low = goertzel(&buf, 200.0, SR);
@@ -226,7 +226,7 @@ fn test_filter_bp_passes_center() {
         .collect();
 
     for c in buf.as_chunks_mut::<BLOCK_SIZE>().0 {
-        filter.process(c, &params, SR);
+        filter.process(c, &params, SR, &FilterMods::NONE);
     }
 
     let low = goertzel(&buf, 200.0, SR);
@@ -266,7 +266,7 @@ fn test_filter_resonance_boosts_cutoff() {
             .collect();
 
         for c in buf.as_chunks_mut::<BLOCK_SIZE>().0 {
-            filter.process(c, &params, SR);
+            filter.process(c, &params, SR, &FilterMods::NONE);
         }
         goertzel(&buf, freq, SR)
     };
@@ -303,7 +303,7 @@ fn test_filter_cutoff_sweep_changes_brightness() {
             .collect();
 
         for c in buf.as_chunks_mut::<BLOCK_SIZE>().0 {
-            filter.process(c, &params, SR);
+            filter.process(c, &params, SR, &FilterMods::NONE);
         }
         harmonic_energy(&buf, 200.0)
     };

@@ -9,7 +9,7 @@
 //! all-passes with the dry, and `G₁` takes the divide.
 
 use super::coef::{g_of, sat_c1};
-use super::level::level_gain;
+use super::level::{FilterMods, LevelRamp, LevelStage, level_gain};
 use super::{FilterMode, g_at};
 use crate::hw::BLOCK_SIZE;
 use crate::params::FilterParams;
@@ -29,34 +29,36 @@ pub fn clean_k2(k: f32) -> f32 {
     (k * 1.2 + 0.3).max(0.1)
 }
 
-/// Each mode's output trim at `k ≤ 0`, by `FilterMode as usize`: the
-/// middle of its untrimmed RES 1 range over 100 Hz – 8 kHz, brought to
-/// −8 dBFS, the middle of the shared band (`OSC_BAND_DB`). Untrimmed, dBFS:
-/// LP1 +0.89 to +2.49, LP12 −2.35 to −0.74, LP24 −1.59 to +1.73, BP12
-/// +3.70 to +5.28, BP24 +5.00 to +7.76, HP24 +0.62 to +2.29, NOTCH1 −4.82
-/// to −3.22. NOTCH2 (PHASER, 7) never oscillates and has none: its trim is
-/// its output scale.
-pub(crate) const TRIM_OSC: [f32; 7] = [0.3277, 0.4756, 0.3949, 0.2374, 0.191, 0.3367, 0.6324];
-
 /// NOTCH2's feedback, `0.7·RES`, at `k = clean_k(RES)`: linear in `k`, so it
 /// ramps with it. 0 at RES 0, 0.7 at RES 1; the Cascadia's PHZR never
-/// oscillates, and neither does this.
+/// oscillates, and neither does this: held to ±0.7 whatever RES a route or
+/// tap reaches.
 #[inline(always)]
 pub fn notch2_fb(k: f32) -> f32 {
-    (0.7 * 0.95) * (1.0 - 0.5 * k)
+    crate::dsp::clampf((0.7 * 0.95) * (1.0 - 0.5 * k), -0.7, 0.7)
 }
 
-/// `mode`'s output trim at `k`: 1 for `k ≥ 0.5`, linear to
-/// `TRIM_OSC[mode]` at `k ≤ 0`. NOTCH2's is `√(1 − fb)·½`, which holds its
+/// `mode`'s output trim at `k`: 1 for `k ≥ 0.5`, linear to its trim at
+/// `k ≤ 0`: the middle of its untrimmed RES 1 range over 100 Hz – 8 kHz,
+/// brought to −8 dBFS, the middle of the shared band (`OSC_BAND_DB`).
+/// NOTCH2 never oscillates: its trim is `√(1 − fb)·½`, which holds its
 /// loudness as Q feeds back. Set at each end of a block and ramped across
 /// it, as `k` is: one multiply-add and one multiply a sample.
 #[inline(always)]
 pub fn trim(mode: FilterMode, k: f32) -> f32 {
-    if mode == FilterMode::Phaser {
-        return 0.5 * libm::sqrtf(1.0 - notch2_fb(k));
-    }
+    // Untrimmed at RES 1, dBFS.
+    let osc = match mode {
+        FilterMode::Lp6 => 0.3277,   // +0.89 to +2.49
+        FilterMode::Lp12 => 0.4756,  // −2.35 to −0.74
+        FilterMode::Lp24 => 0.3949,  // −1.59 to +1.73
+        FilterMode::Bp12 => 0.2374,  // +3.70 to +5.28
+        FilterMode::Bp24 => 0.191,   // +5.00 to +7.76
+        FilterMode::Hp24 => 0.3367,  // +0.62 to +2.29
+        FilterMode::Notch => 0.6324, // −4.82 to −3.22
+        FilterMode::Phaser => return 0.5 * libm::sqrtf(1.0 - notch2_fb(k)),
+    };
     let u = crate::dsp::clampf(1.0 - 2.0 * k, 0.0, 1.0);
-    1.0 + (TRIM_OSC[mode as usize] - 1.0) * u
+    1.0 + (osc - 1.0) * u
 }
 
 #[derive(Clone, Debug, Default)]
@@ -72,6 +74,8 @@ pub struct Clean {
     g: Option<f32>,
     k: Option<f32>,
     pre: Option<f32>,
+    /// LEVEL's gain and clipper, before the loop.
+    level: LevelStage,
 }
 
 /// One block's `(from, to)` for `g`, `k` and the LEVEL gain.
@@ -137,8 +141,16 @@ impl Clean {
         Self::default()
     }
 
-    pub fn process(&mut self, buf: &mut [f32; BLOCK_SIZE], p: &FilterParams, fs: u32) {
-        let r = self.ramps(p, fs);
+    /// One block through LEVEL and the mode: the block's `clip_amount`
+    /// for the LED.
+    pub fn process(
+        &mut self,
+        buf: &mut [f32; BLOCK_SIZE],
+        p: &FilterParams,
+        fs: u32,
+        mods: &FilterMods,
+    ) -> f32 {
+        let r = self.prelude(buf, p, fs, mods);
         // The mode and the loop matched once a block: each is its own loop.
         match p.mode() {
             FilterMode::Lp6 => self.run::<0>(buf, r),
@@ -156,6 +168,27 @@ impl Clean {
         if !(self.s1[0] + self.s1[1] + self.s2[0] + self.s2[1] + ap + self.w).is_finite() {
             self.rest();
         }
+        self.level.clip()
+    }
+
+    /// This block's ramps, and LEVEL's stage run on `buf`: a fresh
+    /// voice's starts where its gate is.
+    #[inline(always)]
+    pub(super) fn prelude(
+        &mut self,
+        buf: &mut [f32; BLOCK_SIZE],
+        p: &FilterParams,
+        fs: u32,
+        mods: &FilterMods,
+    ) -> Ramps {
+        let fresh = self.pre.is_none();
+        let r = self.ramps(p, fs);
+        let lv = LevelRamp::new(r.pre, mods);
+        if fresh {
+            self.level.start(lv.open());
+        }
+        self.level.run(buf, lv);
+        r
     }
 
     /// The raw states, for the bound tests: `[s1, s2]` of each stage, then
@@ -187,31 +220,28 @@ impl Clean {
         }
     }
 
-    /// `g` and `k` held: their divides once a block. LEVEL still ramps (a
-    /// multiply).
+    /// `g` and `k` held: their divides once a block.
     #[inline(always)]
     pub(super) fn steady<const M: u8>(&mut self, buf: &mut [f32; BLOCK_SIZE], r: Ramps) {
         let c = coef::<M>(r.g.1, r.k.1, trim(FilterMode::ALL[M as usize], r.k.1));
-        let pre_step = (r.pre.1 - r.pre.0) / BLOCK_SIZE as f32;
-        for (i, s) in buf.iter_mut().enumerate() {
-            *s = self.tick::<M>(*s * g_at(r.pre.0, pre_step, i), &c);
+        for s in buf.iter_mut() {
+            *s = self.tick::<M>(*s, &c);
         }
     }
 
-    /// `g`, `k` and LEVEL ramp to this block's values, reached on the last
-    /// sample (#53), and every sample divides exactly.
+    /// `g` and `k` ramp to this block's values, reached on the last sample
+    /// (#53), and every sample divides exactly.
     #[inline(always)]
     pub(super) fn moving<const M: u8>(&mut self, buf: &mut [f32; BLOCK_SIZE], r: Ramps) {
         let n = BLOCK_SIZE as f32;
         let (g_step, k_step) = ((r.g.1 - r.g.0) / n, (r.k.1 - r.k.0) / n);
-        let pre_step = (r.pre.1 - r.pre.0) / n;
         let mode = FilterMode::ALL[M as usize];
         let t = (trim(mode, r.k.0), trim(mode, r.k.1));
         let t_step = (t.1 - t.0) / n;
         for (i, s) in buf.iter_mut().enumerate() {
             let (g, k) = (g_at(r.g.0, g_step, i), g_at(r.k.0, k_step, i));
             let c = coef::<M>(g, k, g_at(t.0, t_step, i));
-            *s = self.tick::<M>(*s * g_at(r.pre.0, pre_step, i), &c);
+            *s = self.tick::<M>(*s, &c);
         }
     }
 
@@ -333,7 +363,7 @@ mod tests {
         };
         let mut a = Clean::new();
         for b in 0..3 {
-            a.process(&mut saw(b), &p, SAMPLE_RATE);
+            a.process(&mut saw(b), &p, SAMPLE_RATE, &FilterMods::NONE);
         }
         let mut m = a.clone();
         let (mut s, mut v) = (saw(3), saw(3));

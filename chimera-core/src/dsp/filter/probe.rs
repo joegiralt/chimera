@@ -5,19 +5,22 @@
 //! Today's LP24 before CLEAN, `old_lp24_probe`, counted `OLD_LP24` at
 //! 22ea0dc0 (plan § Measured) and went with `SvfFilter`.
 
-use super::Clean;
+use super::{Clean, FilterMods};
 use crate::hw::{BLOCK_SIZE, SAMPLE_RATE};
 use crate::params::FilterParams;
 
 /// CLEAN in mode `M` (a `FilterMode` discriminant), `process`'s prelude
-/// with the loop forced: the steady one, or the moving one if `MOVING`.
+/// and LEVEL's stage with the loop forced: the steady one, or the moving one
+/// if `MOVING`. LEVEL's three loops count apart from the filter's: the gain
+/// alone (gate shut, LEVEL off ½), the clipper faded in, and the clipper
+/// fading, each with its peak.
 #[inline(never)]
 pub fn clean_probe<const M: u8, const MOVING: bool>(
     f: &mut Clean,
     buf: &mut [f32; BLOCK_SIZE],
     p: &FilterParams,
 ) {
-    let r = f.ramps(p, SAMPLE_RATE);
+    let r = f.prelude(buf, p, SAMPLE_RATE, &FilterMods::NONE);
     if MOVING {
         f.moving::<M>(buf, r);
     } else {
@@ -59,7 +62,7 @@ mod tests {
                 *s = x - 0.5;
             }
             let mut got = want;
-            a.process(&mut want, &p, SAMPLE_RATE);
+            a.process(&mut want, &p, SAMPLE_RATE, &FilterMods::NONE);
             if moving {
                 clean_probe::<M, true>(&mut b, &mut got, &p);
             } else {

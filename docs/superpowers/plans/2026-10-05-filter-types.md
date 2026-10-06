@@ -1393,3 +1393,26 @@ The moving, LEVEL and tap terms are deltas, not over `OLD_LP24`, and don't chang
 - **Re-recorded ("NOTCH2, ADR 0096"):** `filter_test::every_mode_renders_as_recorded` PHASER row. No `golden_test` patch is on PHASER: none moved.
 - **Flash:** `text` 710,096 → 710,304 (+208 B), default release build.
 - **Stack** (stack-check on `target/t5`): bench,orbit 60,672 B of 63,232, unchanged.
+
+### Task 7: LEVEL's clipper, gate fade and LED (2026-10-06)
+
+- **Where it runs.** LEVEL's gain left CLEAN's loops for its own pass before them (`LevelStage::run`), so the 2040 can take the gain into its stages without the clipper (`LevelRamp` carries the gain and its gate; only CLEAN and DIRTY own a `LevelStage`). Three loops: the gain alone (gate shut, LEVEL off ½; skipped at exactly ½), the clipper faded in, and the clipper fading. The clipper is `sat_c1` branch-free (`c + u − ½·u·|u|`, four `vmaxnm`/`vminnm`); the ramps step by adding.
+- **Probes** (`tools/loop_count.py`, which now reads an unrolled loop's stride, bench ELF in `target/t7`), a sample:
+
+  | Loop | Unrolled | Instructions a sample | `vdiv` |
+  |---|---|---|---|
+  | LP4 steady filter (no pre-gain now) | 1 × | 41 fast / 82 slow (was 47 / 88) | 0 |
+  | LP4 moving filter | 1 × | 64 / 105 (was 67 / 108) | 2 |
+  | NOTCH2 steady filter | 4 × | 18.0 (was 24) | 0 |
+  | NOTCH2 moving filter (`clean_probe::<7, true>`, now linked) | 2 × | 36.0 | 1 |
+  | LEVEL gain alone | 16 × | 4.3 | 0 |
+  | LEVEL clipper, faded in (+ peak) | 8 × | 16.6 | 0 |
+  | LEVEL clipper, fading (+ peak, 20 ms) | 4 × | 20.0 | 0 |
+
+  Steady LP4 with the clipper held in: 41 + 16.6 = 57.6, **+10.6** over Task 3's 47 (budget +12), ceil5((57.6 + 3.19) × 1.606 + 12 × 0.047) = 95 cycles against 80: +15, under `FILTER_LEVEL_COST` 20. While the gate's 20 ms fade runs: 61.0, +14.0 (2 over), 105 cycles. At LEVEL ½, gate shut: 41, cheaper than before.
+- **The LED.** `clip_amount(peak) = clamp((peak − 1)/2, 0, 1)` per block. The engine's full-scale saw (0.94) through a voice reads 0.11, 0.31, 0.57, 0.91 and 1 at LEVEL 0.6–1.0. A per-block peak flickers on a note whose period is longer than a block; the UI's 150 ms hold (Task 17) covers it.
+- **The gate in a voice** shuts only when `StageEase` lands LEVEL exactly on ½, about 65 blocks after it is set back; until then the clipper runs (transparent), and the bill (Task 15, stored LEVEL > ½ or routed) does not see it.
+- **NOTCH2 (Task 5's review):** `notch2_fb` is held to ±0.7, so RES 1.5 or −3 decay like RES 1 (−90.4 dB after 0.5 s at worst); `rings()` holds NOTCH2's tail.
+- **Re-recorded ("LEVEL clips past unity, ADR 0096"):** `filter_test::every_mode_renders_as_recorded`, all 8 rows: LEVEL ×3 drives its ±1 saw to ±3 into the clipper. No `golden_test`, `instrument_test` or `codec_compat_test` row moved: every factory and fixture Sound is at LEVEL ½.
+- **Flash:** `text` 710,368 → 710,960 (+592 B), default release build.
+- **Stack** (stack-check on `target/t7`): default 48,240, no default 47,196, bench 57,472, bench,master-tape 57,488, orbit 49,032, bench,orbit 60,704 B, +24 to +32 B each.

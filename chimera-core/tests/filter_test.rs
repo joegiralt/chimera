@@ -3,7 +3,7 @@
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::block::{Block, ParamId};
 use chimera_core::dsp::fast_exp2;
-use chimera_core::dsp::filter::{Clean, FilterKind, FilterMode};
+use chimera_core::dsp::filter::{Clean, FilterKind, FilterMode, FilterMods};
 use chimera_core::dsp::filter::{level_from_drive, routed_cutoff};
 use chimera_core::params::{FilterParams, ParamSnapshot};
 use chimera_core::ui::block_def::slot_addr;
@@ -68,7 +68,7 @@ fn every_mode_renders_finite_and_distinct() {
         for b in 0..20 {
             let mut buf: [f32; BLOCK_SIZE] =
                 core::array::from_fn(|i| ((b * BLOCK_SIZE + i) % 218) as f32 / 109.0 - 1.0);
-            f.process(&mut buf, &p, SR);
+            f.process(&mut buf, &p, SR, &FilterMods::NONE);
             out.extend(buf);
         }
         assert!(out.iter().all(|x| x.is_finite()), "{m:?}");
@@ -160,7 +160,7 @@ fn a_cutoff_sweep_does_not_click() {
                         let n = (b * BLOCK_SIZE + i) as f32;
                         0.5 * (core::f32::consts::TAU * 220.0 * n / SR as f32).sin()
                     });
-                    f.process(&mut buf, &p, SR);
+                    f.process(&mut buf, &p, SR, &FilterMods::NONE);
                     out.extend(buf);
                 }
                 out
@@ -218,14 +218,14 @@ fn a_steady_cutoff_does_not_ramp() {
     };
     let mut a = Clean::new();
     for (blk, p) in [&lo, &hi].into_iter().enumerate() {
-        a.process(&mut saw(blk), p, SR); // block 1 ramps 500 → 2000 Hz
+        a.process(&mut saw(blk), p, SR, &FilterMods::NONE); // block 1 ramps 500 → 2000 Hz
     }
     let mut b = a.clone();
     for blk in 2..10 {
         let (mut x, mut y) = (saw(blk), saw(blk));
-        a.process(&mut x, &hi, SR);
+        a.process(&mut x, &hi, SR, &FilterMods::NONE);
         b.hold();
-        b.process(&mut y, &hi, SR);
+        b.process(&mut y, &hi, SR, &FilterMods::NONE);
         assert_eq!(x, y, "block {blk}");
     }
 }
@@ -240,16 +240,17 @@ fn a_steady_cutoff_does_not_ramp() {
 #[test]
 fn every_mode_renders_as_recorded() {
     const WANT: [u64; 8] = [
-        // Every row, Task 6: DRIVE 0.5's exact ×3 is now LEVEL's `fast_exp2`
-        // ×3 (within 0.1 cent), so every sample moves by an ulp or so.
-        0x26b9_aa63_59f6_d12f, // was 0x6146_912a_7eed_f88b
-        0x8791_4d0d_04ec_eab7, // was 0x34fe_71d6_f19a_8455
-        0xd105_11dd_7eb6_1d7f, // was 0x87b5_53f8_a19c_07bd
-        0x957c_b82b_2a7c_5db8, // was 0x349d_6da0_e37f_8293
-        0x1d76_e888_9b17_7455, // was 0xd7a0_6303_5618_783f
-        0x95b1_3cce_fe80_0f26, // was 0x95bd_99a3_ae4b_6f4d
-        0xd0d9_32a0_f21b_7369, // was 0x9243_ca9d_5805_0f0c
-        0x3af2_e7cd_ebcf_5b97, // was 0x9636_9567_b001_efb2
+        // Every row, Task 7: LEVEL ×3 drives the ±1 saw to ±3, so LEVEL's
+        // clipper (`sat_c1` before the loop, open from the first sample on a
+        // fresh filter) now shapes the input. Task 6 moved them before.
+        0xb664_cf32_8b24_a586, // was 0x26b9_aa63_59f6_d12f
+        0xd387_114f_8091_e78f, // was 0x8791_4d0d_04ec_eab7
+        0x2dd4_42db_4754_c86f, // was 0xd105_11dd_7eb6_1d7f
+        0x2228_9df2_aab8_4d75, // was 0x957c_b82b_2a7c_5db8
+        0xa5f8_ee27_4077_4ffc, // was 0x1d76_e888_9b17_7455
+        0xe65b_8792_e447_bbfe, // was 0x95b1_3cce_fe80_0f26
+        0xdd27_40cb_0de2_3654, // was 0xd0d9_32a0_f21b_7369
+        0x3cd8_2d48_578c_234c, // was 0x3af2_e7cd_ebcf_5b97
     ];
     let got = FilterMode::ALL.map(|m| {
         let mut p = FilterParams::default();
@@ -263,7 +264,7 @@ fn every_mode_renders_as_recorded() {
             p.cutoff = if b < 8 || b % 2 == 0 { 800.0 } else { 3000.0 };
             let mut buf: [f32; BLOCK_SIZE] =
                 core::array::from_fn(|i| ((b * BLOCK_SIZE + i) % 150) as f32 / 75.0 - 1.0);
-            f.process(&mut buf, &p, SR);
+            f.process(&mut buf, &p, SR, &FilterMods::NONE);
             for x in buf {
                 h = (h ^ u64::from(x.to_bits())).wrapping_mul(0x100_0000_01b3);
             }
@@ -317,7 +318,7 @@ fn full_resonance_rings_at_its_level() {
                 let n = b * BLOCK_SIZE + i;
                 (n as f32 * 110.0 / SR as f32).fract() * 2.0 - 1.0
             });
-            f.process(&mut buf, &p, SR);
+            f.process(&mut buf, &p, SR, &FilterMods::NONE);
             out.extend_from_slice(&buf);
         }
         let tail = &out[out.len() / 2..];

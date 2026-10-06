@@ -12,7 +12,7 @@ use crate::dsp::drive::Drive;
 use crate::dsp::ease::{Ease, Ramp, at, ease_coeff, step_of};
 use crate::dsp::engines::{EngineSlot, SlotKind};
 use crate::dsp::envelope::{EnvMods, Envelope};
-use crate::dsp::filter::Clean;
+use crate::dsp::filter::{Clean, FilterMods};
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modal::{ModalEngine, ResonatorMode, SymPool};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
@@ -22,7 +22,7 @@ use crate::in_place::{by_value, uninit_at};
 use crate::modulation::{
     MAX_MOD_SOURCES, ModRouting, ModSource, ModState, VCA, amount_scale, note_source,
 };
-use crate::params::{DriveParams, EnvParams, FolderParams, ParamSnapshot, Steal};
+use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, ParamSnapshot, Steal};
 use crate::voice_alloc::VoiceIdx;
 use crate::{MidiNote, Velocity};
 
@@ -51,6 +51,9 @@ pub struct Voice {
     rebuilds: u16,
     drive: Drive,
     filter: Clean,
+    /// The last block's LEVEL clip, for the LED: 0 while the clipper is
+    /// off or the voice idle.
+    filter_clip: f32,
     folder: Wavefolder,
     /// DC from the stages before it (ADR 0060).
     dc: DcBlocker,
@@ -301,6 +304,7 @@ impl Voice {
             write_chain!(p, {
                 drive: Drive::new(),
                 filter: Clean::new(),
+                filter_clip: 0.0,
                 folder: Wavefolder::new(),
                 dc: DcBlocker::new(DC_HZ, (*p).sample_rate),
                 stages: StageEase::default(),
@@ -581,6 +585,11 @@ impl Voice {
         unsafe { Self::init_chain(self) }
     }
 
+    /// The last block's LEVEL clip, 0..1 (`filter::clip_amount`).
+    pub fn filter_clip(&self) -> f32 {
+        self.filter_clip
+    }
+
     /// Sounding: its engine is active and, with routes into VCA, one of
     /// them holds it (spec § 4).
     pub fn is_active(&self) -> bool {
@@ -620,6 +629,7 @@ impl Voice {
 
         if !self.active {
             output.fill(0.0);
+            self.filter_clip = 0.0;
             return;
         }
 
@@ -731,7 +741,11 @@ impl Voice {
         self.drive.process(output, &m.drive, drive_on);
 
         // 3. Filter
-        self.filter.process(output, &m.filter, sample_rate);
+        let mods = FilterMods {
+            level_routed: mod_state
+                .moves_addr(ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL)),
+        };
+        self.filter_clip = self.filter.process(output, &m.filter, sample_rate, &mods);
 
         // 4. Wavefolder
         self.folder.process(output, &m.folder, fold_on);

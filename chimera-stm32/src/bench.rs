@@ -63,6 +63,7 @@ static FILTER_PROBES: &[FilterProbe] = &[
     filter::probe::clean_probe::<2, false>,
     filter::probe::clean_probe::<2, true>,
     filter::probe::clean_probe::<7, false>,
+    filter::probe::clean_probe::<7, true>,
 ];
 
 /// The bench's screens as text: about 4 KB today, `# TRUNCATED` past this.

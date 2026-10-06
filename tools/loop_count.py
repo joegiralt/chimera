@@ -8,7 +8,9 @@ function whose name holds the substring, and counts each innermost loop: a
 head's backward branches' span, head to last back-edge, that holds no other.
 A loop with an `if` in it (the filter's `saturate`) also gets its fast and
 slow paths round, the instructions one sample runs with every `if` skipped
-or taken. Every instruction outside the loops is `block_instr` (per-block
+or taken. LLVM unrolls some loops: one that steps a byte offset by `K` and
+compares it with an immediate runs `K/4` samples (`f32`s) a time round, its
+stride, and its counts are also given a sample. Every instruction outside the loops is `block_instr` (per-block
 work, which the bill divides by 64). Literal-pool words are not counted.
 Prints each loop's instructions, `vdiv`s, `vsqrt`s and cycles:
 `ceil5(instr × 1.46 × 1.1 + 12 × (vdiv + vsqrt))`. Standard library only.
@@ -114,10 +116,31 @@ def _paths(ins, head):
     return best[0]
 
 
+IMM = re.compile(r"^(r\d+|lr|ip),\s*(?:\1,\s*)?#(0x[0-9a-f]+|\d+)$")
+
+
+def _stride(ins):
+    """Samples a time round: `K/4` for a register the loop both adds an
+    immediate `K` to and compares with an immediate (a byte offset over
+    `f32`s); 1 if none, or if `K` isn't a whole number of `f32`s."""
+    adds, cmps = {}, set()
+    for _, op, args in ins:
+        m = IMM.match(args)
+        if not m:
+            continue
+        base = op.split(".")[0]
+        if base in ("adds", "add"):
+            adds[m.group(1)] = int(m.group(2), 0)
+        elif base == "cmp":
+            cmps.add(m.group(1))
+    ks = [k for r, k in adds.items() if r in cmps and k >= 4 and k % 4 == 0]
+    return ks[0] // 4 if len(ks) == 1 else 1
+
+
 def count(disasm, symbol):
     """`loop_instr` (head to last back-edge), `fast` and `slow` (the
-    shortest and longest path round), `vdiv`, `vsqrt` of the first innermost
-    loop; `block_instr` outside every loop; and `loops`, each innermost
+    shortest and longest path round), `vdiv`, `vsqrt` and `stride` (samples
+    a time round) of the first innermost loop; `block_instr` outside every loop; and `loops`, each innermost
     loop's counts in address order. Exits if a loop calls out (`bl`, `blx`):
     the callee's cost wouldn't be counted."""
     name, body = _function(disasm, symbol)
@@ -134,7 +157,7 @@ def count(disasm, symbol):
         fast, slow = _paths(ins, head)
         loops.append({
             "head": head, "loop_instr": len(ops), "fast": fast, "slow": slow,
-            "vdiv": d, "vsqrt": r,
+            "vdiv": d, "vsqrt": r, "stride": _stride(ins),
         })
     in_loop = sum(l["loop_instr"] for l in loops)
     looped = {a for l in _loops(body) for a, _, _ in body if l[0] <= a <= l[1]}
@@ -142,10 +165,10 @@ def count(disasm, symbol):
         op.startswith(("vdiv", "vsqrt")) for a, op, _ in body if a not in looped
     )
     first = loops[0] if loops else {
-        "loop_instr": 0, "fast": 0, "slow": 0, "vdiv": 0, "vsqrt": 0}
+        "loop_instr": 0, "fast": 0, "slow": 0, "vdiv": 0, "vsqrt": 0, "stride": 1}
     return {
         "name": name,
-        **{k: first[k] for k in ("loop_instr", "fast", "slow", "vdiv", "vsqrt")},
+        **{k: first[k] for k in ("loop_instr", "fast", "slow", "vdiv", "vsqrt", "stride")},
         "block_instr": len(body) - in_loop,
         "block_div": block_div,
         "loops": loops,
@@ -187,16 +210,26 @@ def main(argv):
                 f"    paths: fast {l['fast']} instr = {cycles(l['fast'], n)}, "
                 f"slow {l['slow']} instr = {cycles(l['slow'], n)}"
             )
+        k = l["stride"]
+        if k > 1:
+            per = [Fraction(x, k) for x in (l["fast"], l["slow"])]
+            paths = (f"{float(per[0]):.2f}" if l["fast"] == l["slow"]
+                     else f"fast {float(per[0]):.2f}, slow {float(per[1]):.2f}")
+            print(f"    unrolled {k} ×: a sample {paths} instr, "
+                  f"{float(Fraction(n, k)):.2f} vdiv/vsqrt")
     b, bd = Fraction(c["block_instr"], 64), Fraction(c["block_div"], 64)
     print(
         f"  block: {c['block_instr']} instr, {c['block_div']} vdiv/vsqrt "
         f"(over 64: {float(b):.2f} instr, {float(bd):.3f} div a sample)"
     )
     for l in c["loops"]:
-        n = l["vdiv"] + l["vsqrt"] + bd
+        k = l["stride"]
+        n = Fraction(l["vdiv"] + l["vsqrt"], k) + bd
         paths = [l["loop_instr"]] if l["fast"] == l["slow"] else [l["fast"], l["slow"]]
-        each = ", ".join(f"{p} + {float(b):.2f} = {cycles(p + b, n)}" for p in paths)
-        print(f"  loop @{l['head']:#x} with the block: {each}")
+        each = ", ".join(
+            f"{float(Fraction(p, k)):.2f} + {float(b):.2f} = {cycles(Fraction(p, k) + b, n)}"
+            for p in paths)
+        print(f"  loop @{l['head']:#x} a sample, with the block: {each}")
 
 
 if __name__ == "__main__":

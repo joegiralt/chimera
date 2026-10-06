@@ -5,7 +5,7 @@ mod common;
 use chimera_core::block::{Block, DiskCode};
 use chimera_core::dsp::filter::clean::{clean_k, clean_k2, trim};
 use chimera_core::dsp::filter::coef::{g_of, tan_accurate};
-use chimera_core::dsp::filter::{Clean, FilterKind, FilterMode, routed_cutoff};
+use chimera_core::dsp::filter::{Clean, FilterKind, FilterMode, FilterMods, routed_cutoff};
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, FILTER_SPECS, FilterParams, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
@@ -84,7 +84,7 @@ fn jump_error(mode: FilterMode, blocks: &[(f32, f32)]) -> f64 {
     for (b, &(fc, res)) in blocks.iter().enumerate() {
         (p.cutoff, p.resonance) = (fc, res);
         let mut buf: [f32; BLOCK_SIZE] = x[b * BLOCK_SIZE..][..BLOCK_SIZE].try_into().unwrap();
-        f.process(&mut buf, &p, SR);
+        f.process(&mut buf, &p, SR, &FilterMods::NONE);
         y.extend_from_slice(&buf);
         let (from, from_res) = blocks[b.saturating_sub(1)];
         g.extend(g_track(from.into(), fc.into(), FS.into()));
@@ -205,7 +205,7 @@ fn render(mode: FilterMode, fc: f32, res: f32, n: usize, x: impl Fn(usize) -> f3
     let mut out = Vec::with_capacity(n);
     for b in 0..n.div_ceil(BLOCK_SIZE) {
         let mut buf: [f32; BLOCK_SIZE] = core::array::from_fn(|i| x(b * BLOCK_SIZE + i));
-        f.process(&mut buf, &p, SR);
+        f.process(&mut buf, &p, SR, &FilterMods::NONE);
         out.extend_from_slice(&buf);
     }
     out.truncate(n);
@@ -318,9 +318,10 @@ const CLEAN_BOUND: f32 = 11.43;
 /// `sat_c1`, so the loop never sees more than 1.5. NOTCH2, ADR 0096: was
 /// 4.22, from the old PHASER's 3.84.
 const CLEAN_STATE_BOUND: f32 = 3.85;
-/// NOTCH2's all-pass and feedback states' bound: 5.03 × 1.1. They are
-/// linear (unit-gain all-passes, `fb ≤ 0.7`), so they scale with the ±10
-/// impulses.
+/// NOTCH2's all-pass and feedback states' bound on the static grid (held
+/// FREQ and RES): 5.03 × 1.1. They are linear (unit-gain all-passes,
+/// `fb ≤ 0.7`), so they scale with the ±10 impulses. Not a bound under
+/// per-block FREQ toggles at RES 1, which reach 6.49 (Task 5's review).
 const NOTCH2_STATE_BOUND: f32 = 5.54;
 
 /// The RES 1 jumps' bound on the 0.8 saw: their max, 0.833, × 1.1. It was
@@ -357,7 +358,7 @@ fn clean_res_1_one_block_jumps_stay_bounded() {
                 p.cutoff = fc;
                 let mut buf: [f32; BLOCK_SIZE] =
                     x[b * BLOCK_SIZE..][..BLOCK_SIZE].try_into().unwrap();
-                f.process(&mut buf, &p, SR);
+                f.process(&mut buf, &p, SR, &FilterMods::NONE);
                 for v in buf {
                     assert!(
                         v.is_finite() && v.abs() <= CLEAN_JUMP_BOUND,
@@ -415,7 +416,7 @@ fn clean_is_bounded_on_the_grid() {
                     for b in 0..20 {
                         let mut buf: [f32; BLOCK_SIZE] =
                             core::array::from_fn(|i| grid_input(which, b * BLOCK_SIZE + i));
-                        f.process(&mut buf, &p, SR);
+                        f.process(&mut buf, &p, SR, &FilterMods::NONE);
                         for v in buf {
                             assert!(v.is_finite(), "{mode:?} {fc} RES {ri}: {v}");
                             mode_max = mode_max.max(v.abs());
@@ -445,16 +446,16 @@ fn clean_recovers_from_a_nan_block() {
         assert!(p.set_mode(mode));
         (p.cutoff, p.resonance) = (1000.0, 0.5);
         let mut f = Clean::new();
-        f.process(&mut [f32::NAN; BLOCK_SIZE], &p, SR);
+        f.process(&mut [f32::NAN; BLOCK_SIZE], &p, SR, &FilterMods::NONE);
         // Cleared: silence in, silence out.
         let mut quiet = [0.0f32; BLOCK_SIZE];
-        f.process(&mut quiet, &p, SR);
+        f.process(&mut quiet, &p, SR, &FilterMods::NONE);
         assert!(quiet.iter().all(|&v| v == 0.0), "{mode:?}: {quiet:?}");
         let x = saw(2 * BLOCK_SIZE);
         let mut b = [0.0f32; BLOCK_SIZE];
         for c in x.chunks(BLOCK_SIZE) {
             b.copy_from_slice(c);
-            f.process(&mut b, &p, SR);
+            f.process(&mut b, &p, SR, &FilterMods::NONE);
         }
         assert!(b.iter().all(|v| v.is_finite()), "{mode:?}: {b:?}");
         assert!(b.iter().any(|&v| v != 0.0), "{mode:?}");
@@ -915,24 +916,56 @@ fn notch2_q_raises_the_peaks_but_not_the_loudness() {
 /// NOTCH2 never self-oscillates (owner: as the Cascadia's PHZR): at RES 1
 /// an impulse dies 80 dB within 0.5 s at every FREQ of the bound grid. A
 /// loop that runs away overflows, and the NaN reset would silence it, so
-/// every sample is held finite and the peak to the impulse's own 1.
+/// every sample is held finite and the peak to the impulse's own 1. RES 1.5
+/// and −3, which no knob reaches but a route or tap past the clamp could,
+/// hold `fb` to ±0.7 as well.
 #[test]
 fn notch2_never_self_oscillates() {
     let mut worst = f32::NEG_INFINITY;
     for fi in 0..24 {
-        let fc = 20.0 * 1000f32.powf(fi as f32 / 23.0);
-        let y = render(FilterMode::Phaser, fc, 1.0, (0.6 * FS) as usize, impulse);
-        assert!(y.iter().all(|v| v.is_finite()), "{fc} Hz");
-        let peak = y.iter().fold(0.0f32, |m, v| m.max(v.abs()));
-        assert!(peak <= 1.0, "{fc} Hz: peak {peak}");
-        let late = y[(0.5 * FS) as usize..]
-            .iter()
-            .fold(0.0f32, |m, v| m.max(v.abs()));
-        let db = 20.0 * (late / peak).log10();
-        assert!(db < -80.0, "{fc} Hz: {db:.1} dB after 0.5 s");
-        worst = worst.max(db);
+        for res in [1.0, 1.5, -3.0] {
+            let fc = 20.0 * 1000f32.powf(fi as f32 / 23.0);
+            worst = worst.max(notch2_impulse_decay(fc, res));
+        }
     }
-    println!("NOTCH2 RES 1: the impulse's level after 0.5 s, at worst {worst:.1} dB");
+    println!("NOTCH2 RES 1, 1.5, −3: the impulse's level after 0.5 s, at worst {worst:.1} dB");
+}
+
+/// NOTCH2's impulse at `fc` and `res`: finite, bounded, and
+/// 80 dB down after 0.5 s; that level, dB.
+fn notch2_impulse_decay(fc: f32, res: f32) -> f32 {
+    let y = render(FilterMode::Phaser, fc, res, (0.6 * FS) as usize, impulse);
+    assert!(y.iter().all(|v| v.is_finite()), "{fc} Hz");
+    let peak = y.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+    // `|1 + A| ≤ 2` times the trim `½√(1 − fb)`: 1 at fb ≥ 0, √1.7 at −0.7.
+    let most = if res >= 0.0 { 1.0 } else { 1.7f32.sqrt() };
+    assert!(peak <= most, "{fc} Hz RES {res}: peak {peak}");
+    let late = y[(0.5 * FS) as usize..]
+        .iter()
+        .fold(0.0f32, |m, v| m.max(v.abs()));
+    let db = 20.0 * (late / peak).log10();
+    assert!(db < -80.0, "{fc} Hz RES {res}: {db:.1} dB after 0.5 s");
+    db
+}
+
+/// NOTCH2's tail counts as ringing (`rings`), so a voice ending on it fades
+/// rather than cuts: an impulse at 20 Hz, RES 1, still rings 0.25 s on,
+/// held only in the all-passes and the feedback; `reset` silences it.
+#[test]
+fn notch2_rings_until_reset() {
+    let mut p = FilterParams::default();
+    assert!(p.set_mode(FilterMode::Phaser));
+    (p.cutoff, p.resonance) = (20.0, 1.0);
+    let mut f = Clean::new();
+    for b in 0..(0.25 * FS) as usize / BLOCK_SIZE {
+        let mut buf: [f32; BLOCK_SIZE] = core::array::from_fn(|i| impulse(b * BLOCK_SIZE + i));
+        f.process(&mut buf, &p, SR, &FilterMods::NONE);
+    }
+    let s = f.states();
+    assert!(s[..4].iter().all(|&v| v == 0.0), "{s:?}");
+    assert!(f.rings(), "{s:?}");
+    f.reset();
+    assert!(!f.rings());
 }
 
 /// The one-sample feedback delay slides the peak below FREQ at high FREQ

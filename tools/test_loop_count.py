@@ -110,6 +110,30 @@ class LoopCount(unittest.TestCase):
         with self.assertRaises(SystemExit):
             lc.count(dis, "probe_fn")
 
+    def test_an_unrolled_loop_has_its_stride(self):
+        # Four samples a time round: a byte offset stepped by 16, compared
+        # with 0x100.
+        dis = """08000100 <unrolled>:
+ 8000100:      \tadds\tr3, r1, r2
+ 8000102:      \tvldr\ts0, [r3]
+ 8000106:      \tvmul.f32\ts0, s0, s1
+ 800010a:      \tvstr\ts0, [r3]
+ 800010e:      \tadds\tr2, #0x10
+ 8000110:      \tcmp.w\tr2, #0x100
+ 8000114:      \tbne\t0x8000100 <unrolled>
+ 8000116:      \tbx\tlr
+"""
+        c = lc.count(dis, "unrolled")
+        self.assertEqual((c["loop_instr"], c["stride"]), (7, 4))
+        # `add.w lr, lr, #0x40` against `cmp.w lr, #0x100`: 16 a time.
+        wide = dis.replace("adds\tr2, #0x10", "add.w\tlr, lr, #0x40").replace(
+            "cmp.w\tr2", "cmp.w\tlr")
+        self.assertEqual(lc.count(wide, "unrolled")["stride"], 16)
+        # A counter stepped by 1 (DIS) is one sample a time round.
+        self.assertEqual(lc.count(DIS, "probe_fn")["stride"], 1)
+        # A step that isn't whole `f32`s isn't a stride.
+        self.assertEqual(lc.count(dis.replace("#0x10", "#0x6"), "unrolled")["stride"], 1)
+
     def test_cycles_land_on_fives(self):
         self.assertEqual(lc.cycles(0, 0), 0)
         # Per-block work over 64: 41 + 96/64 = 42.5 → 68.3 + 24 = 92.3.

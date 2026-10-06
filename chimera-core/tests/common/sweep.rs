@@ -406,6 +406,11 @@ impl Bench {
         self.inst.resnap(&self.shared);
     }
 
+    /// Each voice's last LEVEL clip.
+    pub fn filter_clips(&self) -> [f32; chimera_core::hw::MAX_VOICES] {
+        self.inst.filter_clips()
+    }
+
     /// Each voice's glide ratio, 1 at rest.
     pub fn slides(&self) -> [f32; chimera_core::hw::MAX_VOICES] {
         self.inst.slides()

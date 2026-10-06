@@ -10,7 +10,9 @@ pub mod level;
 pub mod probe;
 
 pub use clean::Clean;
-pub use level::{level_from_drive, level_gain, translate_drive};
+pub use level::{
+    FilterMods, LevelRamp, LevelStage, clip_amount, level_from_drive, level_gain, translate_drive,
+};
 
 /// The SVF's modes. The discriminants are the old `mode` byte (#111), so
 /// every Sound keeps its mode (LP24 = 2).

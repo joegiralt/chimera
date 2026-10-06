@@ -32,3 +32,9 @@ impl Default for Meter {
 /// Global: tests run in parallel threads, so at most one test per test
 /// binary may publish a nonzero value or render MST expecting one.
 pub static MASTER_GR: Meter = Meter::new();
+
+/// Each Part's filter LEVEL clip, 0..1: the most any of its voices clipped
+/// last block (`Voice::filter_clip`), 0 with none sounding. The same
+/// caveat as `MASTER_GR`: every Instrument render publishes all six.
+pub static FILTER_CLIP: [Meter; crate::hw::MAX_PARTS] =
+    [const { Meter::new() }; crate::hw::MAX_PARTS];

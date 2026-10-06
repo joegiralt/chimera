@@ -1,6 +1,6 @@
 mod common;
 use chimera_core::dsp::drive::Drive;
-use chimera_core::dsp::filter::Clean;
+use chimera_core::dsp::filter::{Clean, FilterMods};
 use chimera_core::dsp::wavefolder::Wavefolder;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{DriveParams, FilterParams, FolderParams, ParamSnapshot};
@@ -69,7 +69,7 @@ fn test_filter_lowpass_attenuates_high_freq() {
     }
 
     let pre_energy: f32 = buf.iter().map(|s| s * s).sum();
-    filter.process(&mut buf, &params, 48000);
+    filter.process(&mut buf, &params, 48000, &FilterMods::NONE);
     let post_energy: f32 = buf.iter().map(|s| s * s).sum();
 
     assert!(
@@ -93,7 +93,7 @@ fn test_filter_passes_low_freq() {
     }
 
     let pre_energy: f32 = buf.iter().map(|s| s * s).sum();
-    filter.process(&mut buf, &params, 48000);
+    filter.process(&mut buf, &params, 48000, &FilterMods::NONE);
     let post_energy: f32 = buf.iter().map(|s| s * s).sum();
 
     assert!(
@@ -115,7 +115,7 @@ fn test_filter_output_stable() {
     buf[0] = 1.0; // impulse
 
     for _ in 0..10 {
-        filter.process(&mut buf, &params, 48000);
+        filter.process(&mut buf, &params, 48000, &FilterMods::NONE);
         let max = buf.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
         assert!(
             max < 100.0,
