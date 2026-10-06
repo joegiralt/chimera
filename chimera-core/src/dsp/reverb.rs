@@ -124,9 +124,9 @@ impl Default for ReverbParams {
 }
 
 /// DENSITY where a Sound or a TYPE sets none: a Sound saved before
-/// DENSITY loads with this, HALL's starting taps (program 25's, 4.0 a
+/// DENSITY loads with this, HALL's starting taps (program 23's, 4.04 a
 /// side).
-pub const DENSITY_DEFAULT: f32 = 0.205;
+pub const DENSITY_DEFAULT: f32 = 0.207298;
 
 /// The slots a TYPE change writes, in `KnobMemory`'s order.
 const KNOB_SLOTS: [ParamId; 10] = [
@@ -145,14 +145,15 @@ const KNOB_SLOTS: [ParamId; 10] = [
 /// Each TYPE's starting knobs (spec § Each TYPE's knobs), by `KNOB_SLOTS`,
 /// in screen order. QUAD writes only TIME, DAMP, SIZE, SMEAR and RATE.
 /// ROOM's are MidiVerb II program 5's (Medium Bright .6), HALL's program
-/// 25's (Large Warm 2.3), each with SMEAR 0 so START is the preset (ADR
-/// 0095), and BLOOM's program 45's (Bloom 1) with SMEAR 0.3; each fitted
-/// on the Rust render.
+/// 23's (Large Bright 1.45, a fit that holds a step off), each exactly the
+/// program with SMEAR 0 (ADR 0095), and BLOOM's program 45's (Bloom 1),
+/// which keeps SMEAR 0.3 (the owner rules at UAT); each fitted on the Rust
+/// render.
 #[rustfmt::skip]
 const START: [[f32; 10]; 6] = [
     [0.5, 0.3, 0.5, 0.3, 0.4, 0.0, 0.2, 0.0, 0.5, DENSITY_DEFAULT],
     [0.718, 0.426, 0.644, 0.0, 0.0, 0.085, 0.634, 0.0, 0.5, DENSITY_DEFAULT],
-    [0.488, 0.543, 0.525, 0.825, 0.38, 0.102, 0.892, 0.0, 0.4, DENSITY_DEFAULT],
+    [0.300266, 0.626335, 0.921878, 0.012, 0.383327, 0.058513, 0.878866, 0.0, 0.4, DENSITY_DEFAULT],
     [0.948, 0.3, 0.705, 0.578, 0.165, 0.132, 0.2, 0.3, 0.4, DENSITY_DEFAULT],
     [0.3, 0.3, 0.55, 0.2, 0.7, 0.0, 0.2, 0.0, 0.5, DENSITY_DEFAULT],
     [0.0, 0.3, 0.5, 0.0, 0.8, 0.0, 0.67, 0.0, 0.5, DENSITY_DEFAULT],

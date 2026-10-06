@@ -1874,8 +1874,9 @@ fn level_plan_holds_for_hall() {
     // A 0 dBFS tone held on a loop mode at DECAY's top drives the clip far
     // past its knee (G 12.5 against ROOM's 2.7): soft saturation, not 3 %
     // THD. One damper a loop (ADR 0095 § HALL, as built) leaves 5 kHz's
-    // mode G 4.5 against two dampers' 2.4, so a held 5 kHz clips too, and
-    // aliases −21 dB: for the owner.
+    // mode G 4.5 against two dampers' 2.4, so a held 5 kHz clips too and
+    // aliases: −30 dB as built (−21 before the f32 diffuser), held to −20
+    // for the owner's sign-off (ADR 0095 § HALL, as built).
     check_loop_level_plan::<Hall>(p, 0.2, -20.0);
 }
 
@@ -1903,7 +1904,7 @@ fn held_tone_move_ratio(id: ParamId, from: f32, to: f32, sweep_s: f32) -> (f32, 
     let (pre, sweep, post) = (blocks(3.0), blocks(sweep_s).max(1), blocks(8.0));
     let (mut l, mut r) = (Vec::new(), Vec::new());
     let mut b = 0;
-    let mut drive = |b: usize| -> Blk { core::array::from_fn(|i| held(b * BLOCK_SIZE + i)) };
+    let drive = |b: usize| -> Blk { core::array::from_fn(|i| held(b * BLOCK_SIZE + i)) };
     for _ in 0..pre + sweep + post {
         if b >= pre && b < pre + sweep {
             let x = (b - pre + 1) as f32 / sweep as f32;
@@ -2003,8 +2004,9 @@ fn hall_noise_and_loudness() {
     let (qv, qc) = (fresh(&q), RefCell::new(q));
     check_sustained_loudness(&mut bus(&rv, &pc), &mut bus(&qv, &qc));
     // Each floor from a fresh engine: HALL's 2.5 s would still ring with
-    // the pad. The four shortest diffuser allpasses on f32 states leave
-    // it 3.7 and 5.3 dB over QUAD's at START and DIFFUSE 1.
+    // the pad. With the four shortest diffuser allpasses on f32 states it
+    // sits 3.9 and 5.5 dB over QUAD's at START and DIFFUSE 1 (WET_HALL
+    // 14.0): within ADR 0085's 4 and 6 dB again.
     for (diffuse, extra) in [(p.diffuse, 4.0), (1.0, 6.0)] {
         let h = ReverbParams { diffuse, ..p };
         let (rv, pc) = (fresh(&h), RefCell::new(h));

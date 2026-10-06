@@ -318,7 +318,7 @@ fn a_type_nudge_keeps_the_tweaks() {
     let mut r = ReverbParams::default().with_type(ReverbType::Room, &mem);
     (r.size, r.tone, r.mix) = (0.9, 0.8, 0.6);
     let h = retype(&r, ReverbType::Hall, &mut mem);
-    assert_eq!(h.size, 0.525, "Hall's starting SIZE");
+    assert_eq!(h.size, 0.921878, "Hall's starting SIZE");
     let back = retype(&h, ReverbType::Room, &mut mem);
     assert!((back.size - 0.9).abs() <= 1.0 / 65_534.0);
     assert!((back.tone - 0.8).abs() <= 1.0 / 65_534.0);
@@ -436,17 +436,17 @@ fn cells_read_their_starting_values() {
         "9.2k"
     );
     let p = ReverbParams::default().with_type(ReverbType::Hall, &KnobMemory::new());
-    // MidiVerb II program 25's fitted knobs (ADR 0095).
+    // MidiVerb II program 23's fitted knobs (ADR 0095), SMEAR 0.
     for (id, w) in [
-        (P::SIZE, "372ms"),
-        (P::TIME, "3.5s"),
-        (P::TONE, "2.7k"),
+        (P::SIZE, "563ms"),
+        (P::TIME, "2.0s"),
+        (P::TONE, "12k"),
         (P::DIFFUSE, "0.49"),
-        (P::DAMPING, "3.9k"),
-        (P::PREDELAY, "13ms"),
-        (P::SMEAR, "0.6ms"),
+        (P::DAMPING, "3.2k"),
+        (P::PREDELAY, "7ms"),
+        (P::SMEAR, "OFF"),
         (P::RATE, "0.30Hz"),
-        (P::SHAPE, "109ms"),
+        (P::SHAPE, "107ms"),
         (P::DENSITY, "4.0"),
     ] {
         assert_eq!(text(id, &p).as_str(), w, "HALL {id:?}");
@@ -539,10 +539,10 @@ fn room_sync_steps_off_and_time_only() {
         (all.sync, text(ReverbParams::SYNC, &all).as_str()),
         (All, "ALL")
     );
-    // A SYNC turn converts the slot (`with_sync`): HALL's 12.75 ms
-    // PRE-DLY reads its nearest note, 1/128.
-    assert_eq!(text(ReverbParams::PREDELAY, &all).as_str(), "1/128");
-    assert_eq!(text(ReverbParams::TIME, &all).as_str(), "6 BT");
+    // A SYNC turn converts the slot (`with_sync`): HALL's 7.3 ms PRE-DLY
+    // reads its nearest note, none.
+    assert_eq!(text(ReverbParams::PREDELAY, &all).as_str(), "0");
+    assert_eq!(text(ReverbParams::TIME, &all).as_str(), "4 BT");
 }
 
 /// A synced knob walks its notes, one a tick, fine or not; its cell shows

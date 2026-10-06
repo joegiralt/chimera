@@ -231,9 +231,11 @@ fn with_type_loads_starting_knobs_and_keeps_mix_and_sync() {
         (
             h.size, h.time, h.tone, h.diffuse, h.predelay, h.smear, h.rate, h.damping
         ),
-        (0.525, 0.488, 0.825, 0.38, 0.102, 0.3, 0.4, 0.543)
+        (
+            0.921878, 0.300266, 0.012, 0.383327, 0.058513, 0.0, 0.4, 0.626335
+        )
     );
-    assert_eq!((h.shape, h.density), (0.892, DENSITY_DEFAULT));
+    assert_eq!((h.shape, h.density), (0.878866, DENSITY_DEFAULT));
     assert_eq!((h.mix, h.sync), (0.7, RevSync::Time));
     let q = h.with_type(ReverbType::Quad, &KnobMemory::new());
     assert_eq!((q.smear, q.rate), (0.0, 0.5));
@@ -429,16 +431,16 @@ fn knobs_hit_the_spec_endpoints() {
     close(h(&|p| p.rate = 0.0).rate_hz, 0.1, "hall rate 0");
     close(h(&|p| p.rate = 1.0).rate_hz, 1.5, "hall rate 1");
     let d = h(&|_| {});
-    close(d.length_ms, 372.0, "hall size default");
-    close(d.rt60_s, 3.4514, "hall decay default");
-    close(d.tone_hz, 2_736.6, "hall tone default");
-    close(d.diffuse_g, 0.49, "hall diffuse default");
-    close(d.damp_hz, 3_851.7, "hall damp default");
-    close(d.predelay_ms, 12.75, "hall pre default");
-    close(d.smear_ms, 0.6, "hall smear default");
+    close(d.length_ms, 562.50146, "hall size default");
+    close(d.rt60_s, 1.96673, "hall decay default");
+    close(d.tone_hz, 11_744.74, "hall tone default");
+    close(d.diffuse_g, 0.4916635, "hall diffuse default");
+    close(d.damp_hz, 3_159.62, "hall damp default");
+    close(d.predelay_ms, 7.314125, "hall pre default");
+    assert_eq!(d.smear_ms, 0.0, "hall smear default: START is the preset");
     close(d.rate_hz, 0.2954, "hall rate default");
-    close(d.spread.scale(), 0.9866, "hall spread default");
-    close(d.density.get(), 4.025, "hall density default");
+    close(d.spread.scale(), 0.9728093, "hall spread default");
+    close(d.density.get(), 4.03649, "hall density default");
     // HALL's DAMP is its own law now (ADR 0095 § HALL, as built), not
     // QUAD's: one damper a loop, 14 → 1.3 kHz.
     for p in [0.0, 0.3, 0.7, 1.0] {
