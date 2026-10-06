@@ -3,6 +3,7 @@
 
 mod screen;
 
+use chimera_core::dsp::tape_engine::TapeModel;
 use chimera_core::project::PartId;
 use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::draw;
@@ -109,7 +110,7 @@ fn the_readout_names_the_voice_pitch() {
         label: [0; 8],
     };
     let mut buf = FmtBuf::new();
-    fmt_readout_dest(&mut buf, "LFO 1", &dest);
+    fmt_readout_dest(&mut buf, "LFO 1", &dest, TapeModel::Loop);
     assert_eq!(buf.as_str(), "VOICE PITCH");
     assert_eq!(block_tag(BlockRef::Pitch), "PIT");
 }
@@ -662,33 +663,51 @@ fn every_route_readout_fits_its_line() {
     use chimera_core::modulation::ModSource;
     use chimera_core::ui::fmt::FmtBuf;
     use chimera_core::ui::mod_grid::{
-        MatrixState, ModDest, block_tag, draw_readout, fmt_readout_dest, fmt_route_dest,
+        MatrixState, ModDest, block_tag, dest_name, draw_readout, fmt_readout_dest, fmt_route_dest,
     };
     let mut full = FmtBuf::new();
     let cutoff = ModDest {
         addr: ParamAddr::new(BlockRef::Filter, chimera_core::params::FilterParams::CUTOFF),
         label: [0; 8],
     };
-    fmt_readout_dest(&mut full, "ENV 3", &cutoff);
+    fmt_readout_dest(&mut full, "ENV 3", &cutoff, TapeModel::Loop);
     assert_eq!(full.as_str(), "FILTER CUTOFF");
     let mut widest = 0;
     for b in BlockRef::ALL {
-        for spec in b.specs() {
+        // TAPE's columns read each machine's labels.
+        let tapes: &[TapeModel] = if b == BlockRef::TapeEngine {
+            &TapeModel::ALL
+        } else {
+            &[TapeModel::Loop]
+        };
+        for (spec, &t) in b
+            .specs()
+            .iter()
+            .flat_map(|s| tapes.iter().map(move |t| (s, t)))
+        {
+            let label = dest_name(
+                &ModDest {
+                    addr: ParamAddr::new(b, spec.id),
+                    label: [0; 8],
+                },
+                t,
+            );
             let dest = ModDest {
                 addr: ParamAddr::new(b, spec.id),
                 label: [0; 8],
             };
             let mut buf = FmtBuf::new();
-            fmt_route_dest(&mut buf, &dest);
-            assert_eq!(buf.as_str(), format!("{} {}", block_tag(b), spec.label));
+            fmt_route_dest(&mut buf, &dest, t);
+            assert_eq!(buf.as_str(), format!("{} {}", block_tag(b), label));
             if !dest.addr.modulatable() {
                 continue;
             }
             for src in ModSource::ALL.iter() {
                 let mut name = FmtBuf::new();
-                fmt_readout_dest(&mut name, src.name(), &dest);
-                assert!(name.as_str().ends_with(spec.label), "{}", name.as_str());
+                fmt_readout_dest(&mut name, src.name(), &dest, t);
+                assert!(name.as_str().ends_with(label), "{}", name.as_str());
                 let mut m = MatrixState::new();
+                m.set_tape(t);
                 m.rebuild_sources(&chimera_core::ui::block_registry::PART_MOD_SOURCES);
                 m.dests[0] = Some(dest);
                 m.num_dests = 1;

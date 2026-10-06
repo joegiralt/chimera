@@ -81,10 +81,23 @@ pub enum SlotBinding {
     LfoPanel(crate::dsp::modulator::LfoSlot, u8),
     /// Cell k of EXC or MDL2, per MODEL (`modal::page_cells`).
     ModalPanel(crate::dsp::modal::ModalPage, u8),
+    /// A TAPE cell the machine labels (spec § 3, `tape_engine::machine`).
+    Machine(MachineSlot),
+    /// TAPE's SOURCE: the Sound's `SourceRef`, not a param.
+    Source,
     /// A param of the ORBIT ring the location selects.
     SelectedRing(ParamId),
     /// One of ORBIT's own cells.
     Orbit(crate::ui::orbit::OrbitCell),
+}
+
+/// Where a TAPE cell sits: DECK's POSITION and MOTION, or cell `k` of the
+/// model page, each labelled by the Sound's machine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MachineSlot {
+    Position,
+    Motion,
+    Page(u8),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -164,6 +177,20 @@ impl ParamSlot {
         }
     }
 
+    pub const fn machine(at: MachineSlot) -> Self {
+        Self {
+            binding: SlotBinding::Machine(at),
+            label_override: None,
+        }
+    }
+
+    pub const fn source() -> Self {
+        Self {
+            binding: SlotBinding::Source,
+            label_override: None,
+        }
+    }
+
     pub const fn orbit(cell: crate::ui::orbit::OrbitCell) -> Self {
         Self {
             binding: SlotBinding::Orbit(cell),
@@ -194,7 +221,9 @@ impl ParamSlot {
             | SlotBinding::FilterPanel(_)
             | SlotBinding::EnvPanel(..)
             | SlotBinding::LfoPanel(..)
-            | SlotBinding::ModalPanel(..) => None,
+            | SlotBinding::ModalPanel(..)
+            | SlotBinding::Machine(_)
+            | SlotBinding::Source => None,
         }
     }
 
@@ -209,7 +238,9 @@ impl ParamSlot {
             | SlotBinding::FilterPanel(_)
             | SlotBinding::EnvPanel(..)
             | SlotBinding::LfoPanel(..)
-            | SlotBinding::ModalPanel(..) => "--",
+            | SlotBinding::ModalPanel(..)
+            | SlotBinding::Machine(_) => "--",
+            SlotBinding::Source => "SOURCE",
             SlotBinding::SelectOp => "OP",
             SlotBinding::Legacy { label, .. } => label,
             SlotBinding::Param(_) | SlotBinding::SelectedOp(_) | SlotBinding::SelectedRing(_) => {
@@ -225,7 +256,9 @@ impl ParamSlot {
             | SlotBinding::FilterPanel(_)
             | SlotBinding::EnvPanel(..)
             | SlotBinding::LfoPanel(..)
-            | SlotBinding::ModalPanel(..) => ValFmt::Uni,
+            | SlotBinding::ModalPanel(..)
+            | SlotBinding::Machine(_)
+            | SlotBinding::Source => ValFmt::Uni,
             SlotBinding::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
             SlotBinding::Legacy { fmt, .. } => fmt,
             SlotBinding::Param(_) | SlotBinding::SelectedOp(_) | SlotBinding::SelectedRing(_) => {

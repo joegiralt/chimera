@@ -489,7 +489,7 @@ impl Renderer {
                         display,
                         chain,
                         at,
-                        f.ctx.model,
+                        f.ctx.models(),
                         (self.branch_scroll.current() * theme::BRANCH_LINE_HEIGHT as f32) as i32,
                     );
                 }
@@ -674,10 +674,15 @@ impl Renderer {
             let value = anim.current();
             let mut buf = FmtBuf::new();
             match v {
+                // The cell keeps a readout's first words: `POLY`, not
+                // `POLY (UNPITCHED)`; the focus band reads it whole.
                 View::Text { text, .. } => {
+                    let end = text.bytes().position(|b| b == b'(').unwrap_or(text.len());
+                    let text = text[..end].trim_end();
                     let _ = core::fmt::Write::write_str(&mut buf, text);
                 }
                 View::Orbit(cell) => buf = orbit::cell_text(cell, &f.orbit, f.ctx.ring),
+                View::Source(s) => s.cell(&mut buf),
                 _ => fmt::fmt_val(&mut buf, value, v.fmt()),
             }
             let c = components::Cell {
@@ -756,7 +761,7 @@ pub fn page_header(
     parts: &Parts,
 ) -> components::HeaderText {
     let suffix = ["", " / A", " / B"][title_type(def, &ctx.envs) as usize % 3];
-    components::header_text(head, def, ctx.model, suffix, out_of(head, parts))
+    components::header_text(head, def, ctx.models(), suffix, out_of(head, parts))
 }
 
 /// The OUT of the Part whose pages these are; P1 in SETTINGS.
@@ -817,6 +822,7 @@ fn value_text(f: &Frame, i: usize, v: f32) -> FmtBuf {
         View::Text { text, .. } => {
             let _ = core::fmt::Write::write_str(&mut buf, text);
         }
+        View::Source(s) => s.text(&mut buf),
         _ if look(f, i) == components::Look::Absent => {
             let _ = core::fmt::Write::write_str(&mut buf, "--");
         }

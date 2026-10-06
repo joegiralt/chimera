@@ -2,7 +2,10 @@
 //! slot bindings (spec §5): label, format, step and range all come from the
 //! bound param's spec.
 
-use crate::addr::{BlockRead, Blocks, Op};
+use crate::addr::{BlockRead, BlockRef, Blocks, Op, ParamAddr};
+use crate::block::Block;
+use crate::dsp::tape_engine::machine::defaults;
+use crate::dsp::tape_engine::{TapeEngineParams, TapeModel};
 use crate::ui::block_def::{BlockDef, SlotBinding, slot_addr};
 use crate::ui::view::{SlotCtx, View, view};
 
@@ -54,7 +57,20 @@ pub fn apply_under(
     } else if let Some(a) = slot_addr(def, slot, ctx)
         && let Some(b) = params.block_mut(a.block)
     {
+        let before = b.get(a.param);
         b.nudge(a.param, delta);
+        machine_edit(a, before, b);
+    }
+}
+
+/// A MODEL edit on TAPE writes the new machine's defaults (spec § 2
+/// Machines); a load never does. The engine eases them in.
+fn machine_edit(a: ParamAddr, before: f32, b: &mut dyn Block) {
+    let model = TapeEngineParams::MODEL;
+    if a == ParamAddr::new(BlockRef::TapeEngine, model) && b.get(model) != before {
+        for (id, v) in defaults(TapeModel::from_index(b.get(model) as u8)) {
+            b.set(id, v);
+        }
     }
 }
 
@@ -69,6 +85,8 @@ pub fn snap_under(def: &BlockDef, slot: usize, delta: i8, params: &mut impl Bloc
     if let Some(a) = slot_addr(def, slot, ctx)
         && let Some(b) = params.block_mut(a.block)
     {
+        let before = b.get(a.param);
         b.snap(a.param, delta);
+        machine_edit(a, before, b);
     }
 }

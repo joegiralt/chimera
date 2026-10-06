@@ -106,6 +106,21 @@ pub fn machine(m: TapeModel) -> &'static Machine {
     &MACHINES[usize::from(m.index())]
 }
 
+/// `m`'s cell for `id`: on DECK or its model page.
+pub fn cell_of(m: TapeModel, id: ParamId) -> Option<&'static Cell> {
+    let k = machine(m);
+    k.deck.iter().flatten().chain(k.cells).find(|c| c.id == id)
+}
+
+/// The short a machine gives `id` under `label` (`WALK` is `WLK`).
+pub fn short_of(id: ParamId, label: &str) -> Option<&'static str> {
+    MACHINES
+        .iter()
+        .flat_map(|k| k.deck.iter().flatten().chain(k.cells))
+        .find(|c| c.id == id && c.label == label)
+        .map(|c| c.short)
+}
+
 /// What the UI writes when MODEL becomes `m`: its home cells and its model
 /// page's, WOW aside (a flavour the player keeps across machines).
 pub fn defaults(m: TapeModel) -> impl Iterator<Item = (ParamId, f32)> {

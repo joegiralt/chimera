@@ -50,6 +50,7 @@ use crate::block::Block;
 use crate::boot::RomDfu;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
+use crate::dsp::tape_engine::{TapeEngineParams, TapeModel};
 use crate::in_place::uninit_at;
 use crate::mod_path::{LABEL_LEN, RegistryError};
 use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModState};
@@ -69,6 +70,9 @@ use crate::project::{
 };
 use crate::scope::SCOPE_LEN;
 use crate::storage::ProjectId;
+
+/// SCRUB's FINGER: the address DECK's POSITION cell edits.
+const SCRUB_FINGER: ParamAddr = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::POSITION);
 use block_def::BlockDef;
 use block_def::VizType;
 use block_def::slot_addr;
@@ -235,6 +239,8 @@ pub struct UiState {
     led: led::Led,
     /// OS UPGRADE's yes, until the shell takes it.
     dfu: Option<Said<RomDfu>>,
+    /// SCRUB's FINGER: the active Part's reel, turned and let go.
+    jog: jog::Jog,
 }
 
 crate::in_place::field_list!(UiState => UiState {
@@ -267,6 +273,7 @@ crate::in_place::field_list!(UiState => UiState {
     orbit,
     led,
     dfu,
+    jog,
 });
 
 #[cfg(any(test, feature = "test-support"))]
@@ -322,6 +329,7 @@ impl UiState {
             addr_of_mut!((*p).active_part).write(PartId::ALL[0]);
             addr_of_mut!((*p).renderer).write(renderer);
             addr_of_mut!((*p).matrix_state).write(MatrixState::new());
+            addr_of_mut!((*p).jog).write(jog::Jog::new());
             addr_of_mut!((*p).browser_dirty).write(false);
             addr_of_mut!((*p).page).write(page);
             addr_of_mut!((*p).sel_op).write(Op::A);
@@ -836,12 +844,15 @@ impl UiState {
 
     /// What the edited Part's page slots resolve against, on the ORBIT
     /// ring the location selects and under ORBIT's clock.
+    #[inline(never)]
     fn ctx(&self) -> SlotCtx {
-        let ctx = SlotCtx::read(
-            &self.project.part(self.active_part).sound.params,
-            self.sel_op,
-        )
-        .on_clock(self.orbit.status.source);
+        let sound = &self.project.part(self.active_part).sound;
+        let ctx = SlotCtx::read(&sound.params, self.sel_op).on_clock(self.orbit.status.source);
+        let ctx = ctx.on_source(view::SourceState::of(
+            ctx.tape,
+            sound.source_ref(),
+            self.project.pool(),
+        ));
         match self.loc.orbit() {
             Some(o) => ctx.on_ring(o.ring()),
             None => ctx,
@@ -1871,9 +1882,25 @@ impl UiState {
     pub fn handle_input(&mut self, controls: &impl Controls) {
         let rev = self.project.rev();
         self.input(controls);
+        self.jog_pass(controls.now_ms().0);
         // A save or clear moves the browser's hints, costs and meter.
         self.browser_dirty |= self.loc.browse().is_some() && self.project.rev() != rev;
         self.flush_orbit();
+    }
+
+    /// SCRUB's reel this pass: POSITION moves at the jog's speed, gliding
+    /// to a stop through DRAG once the FINGER is let go.
+    fn jog_pass(&mut self, now_ms: u32) {
+        let t = self.project.part(self.active_part).sound.params.tape;
+        if t.model != TapeModel::Scrub {
+            self.jog = jog::Jog::new();
+            return;
+        }
+        let mv = self.jog.pass(now_ms, t.drag);
+        if mv != 0.0 {
+            let p = &mut self.project.edit_part(self.active_part).sound.params.tape;
+            p.position = crate::dsp::clampf(p.position + mv, 0.0, 1.0);
+        }
     }
 
     fn input(&mut self, controls: &impl Controls) {
@@ -2026,6 +2053,11 @@ impl UiState {
                 if view::is_dimmed(&v, &self.project.part(at).sound, &self.ctx()) {
                     continue; // dimmed: the encoder is ignored
                 }
+                // SCRUB's FINGER turns the reel: `jog_pass` moves POSITION.
+                if !shift && v.addr() == Some(SCRUB_FINGER) && self.ctx().tape == TapeModel::Scrub {
+                    self.jog.turn(delta, controls.now_ms().0);
+                    continue;
+                }
                 let params = &mut UiBlocks {
                     project: &mut self.project,
                     part: at,
@@ -2045,7 +2077,15 @@ impl UiState {
             }
             // A KIND, TYPE or operator change re-seeds the page's animators: a lerp
             // between two parameters' values would draw a meaningless sweep.
-            if self.ctx() != before {
+            // A machine's cells on DECK stay the same params: its defaults
+            // glide in.
+            let now = self.ctx();
+            if now
+                != (SlotCtx {
+                    tape: now.tape,
+                    ..before
+                })
+            {
                 let values = self.display_values();
                 self.renderer.snap_to_current(values);
             }
@@ -2125,6 +2165,7 @@ impl UiState {
             a.update();
         }
         let ctx = self.ctx();
+        self.matrix_state.set_tape(ctx.tape);
         let sound = &self.project.part(at).sound;
 
         // Apply mod offsets for display — makes bars and vizzes animate with modulation.
@@ -2450,7 +2491,7 @@ impl UiState {
                 node,
                 sub,
                 region::quantize(self.renderer.branch_scroll.current()),
-                f.ctx.model as u8,
+                f.ctx.model as u8 | f.ctx.tape.index() << 4,
             ),
             RegionKind::Grid => RegionData::grid_with_value(
                 self.matrix_state.sel_row as u8,

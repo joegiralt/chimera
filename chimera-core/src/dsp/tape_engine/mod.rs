@@ -58,7 +58,10 @@ use warble::Warble;
 use wave::Wave;
 
 pub use heads::loop_len;
-pub use params::{StretchType, TAPE_ENGINE_SPECS, TapeEngineParams, TapeModel, Wow, drag_s};
+pub use params::{
+    MACHINE_NAMES, MODEL_NAMES, StretchType, TAPE_ENGINE_SPECS, TapeEngineParams, TapeModel, Wow,
+    drag_s, reads,
+};
 
 // Each model's bill: its measured worst a sample, the M7's static count
 // (instructions × 1.46 × 1.1, + 12 a head for `inc` 16's misses), rounded

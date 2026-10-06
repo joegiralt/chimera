@@ -32,7 +32,9 @@ fn every_part_slot_resolves_to_a_spec() {
                 | SlotBinding::FilterPanel(_)
                 | SlotBinding::EnvPanel(..)
                 | SlotBinding::LfoPanel(..)
-                | SlotBinding::ModalPanel(..) => {}
+                | SlotBinding::ModalPanel(..)
+                | SlotBinding::Machine(_)
+                | SlotBinding::Source => {}
                 SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
                     assert!(slot.spec().is_some(), "{} slot {i}: no spec", def.name)
                 }

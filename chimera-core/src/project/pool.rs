@@ -235,6 +235,19 @@ impl Pool {
             .find(|&s| self.source(s).is_some_and(|e| e.r == r))
     }
 
+    /// Source `r` as the audio reads it; `None` when the pool doesn't hold
+    /// it (absent included) or its descriptor doesn't read.
+    pub fn source_view(
+        &self,
+        r: SourceRef,
+    ) -> Option<crate::dsp::tape_engine::read::SourceView<'_>> {
+        let e = self.source(self.find_source(r)?).filter(|e| !e.absent())?;
+        let held = self
+            .arena
+            .bytes(e.offset + SOURCE_HEAD as u32, e.held as usize);
+        crate::dsp::tape_engine::read::SourceView::new(held)
+    }
+
     /// Source `r` with its `held` bytes; an identical source already held
     /// is shared, and an absent one takes the bytes in its own slot.
     /// Refused, with nothing moved, when the gap can't take it, or when

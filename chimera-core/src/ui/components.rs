@@ -8,7 +8,7 @@ use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
 use crate::dsp::algo::waves::WaveId;
-use crate::dsp::modal::{EXCITER_NAMES, ModalPage, ResonatorMode};
+use crate::dsp::modal::{EXCITER_NAMES, ModalPage};
 use crate::part::DacPair;
 use crate::project::PartId;
 use crate::ui::PrimeStatus;
@@ -57,16 +57,18 @@ pub struct HeaderText {
 
 /// `PART 2 · SOUND` or `PART 2 · MIX` and the page (`FILTER`, `SENDS`),
 /// or `SETTINGS`; `suffix` follows the name (`/ B`). A page of the
-/// exciter's cells is named after `model`'s exciter (PLUCK, STRIKE, BOW).
+/// exciter's cells is named after MODAL's exciter (PLUCK, STRIKE, BOW),
+/// TAPE's model page after its machine (STRETCH).
 /// `OUT P2`/`OUT P3` warns on a Part's pages when `out` isn't P1 (ADR
 /// 0057). A name too long for the line falls back to the page's short one.
 pub fn header_text(
     head: Head,
     def: &BlockDef,
-    model: ResonatorMode,
+    models: impl Into<crate::ui::view::Models>,
     suffix: &str,
     out: DacPair,
 ) -> HeaderText {
+    let models = models.into();
     let mut context = FmtBuf::new();
     let _ = match head {
         Head::Sound(p) => write!(context, "PART {} · SOUND", p.index() + 1),
@@ -82,7 +84,10 @@ pub fn header_text(
     };
     let named = |full: bool| {
         let mut name = match (full, is_exciter(def)) {
-            (true, true) => upper(EXCITER_NAMES[model as usize]),
+            (true, true) => upper(EXCITER_NAMES[models.modal as usize]),
+            _ if def.id == crate::ui::block_registry::TAPE_MODEL.id => {
+                upper(crate::dsp::tape_engine::MACHINE_NAMES[usize::from(models.tape.index())])
+            }
             (true, false) => upper(def.name),
             (false, _) => upper(def.short),
         };
@@ -273,7 +278,25 @@ pub fn focus_band<D>(
     D: DrawTarget<Color = Rgb565>,
 {
     focus_label(d, label, theme::MARGIN_X);
+    // A value too wide for the large numerals (`NOT A TRANSWAVE`) reads at
+    // the status size, the whole row its own.
+    let wide = draw::text_width(&theme::FONT_FOCUS, value_text, 0) > theme::CONTENT_W;
     match status {
+        None if wide => {
+            draw::text_tracked(
+                d,
+                &theme::FONT_VALUE,
+                value_text,
+                theme::MARGIN_X,
+                theme::FOCUS_VALUE_Y,
+                if look == Look::Live {
+                    theme::INK
+                } else {
+                    theme::MID
+                },
+                theme::LABEL_TRACKING,
+            );
+        }
         Some(status) => {
             draw::text_tracked(
                 d,

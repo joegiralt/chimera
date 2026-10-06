@@ -1618,7 +1618,9 @@ fn time_kernel() -> u32 {
 const ALL: u8 = 0b11_1111;
 
 /// `alg` alone, the operators in mask `lit` at LEVEL 99 and the rest at 0,
-/// every operator with `feedback`.
+/// every operator with `feedback`. Out of line: inlined, each row's
+/// closure carried its own copy.
+#[inline(never)]
 fn algo(alg: AlgoId, lit: u8, feedback: u8) -> ParamSnapshot {
     let mut p = ParamSnapshot::for_engine(EngineType::Algo);
     (p.algo.alg_a, p.algo.alg_b, p.algo.morph) = (alg.get(), alg.get(), 0);
@@ -1648,6 +1650,7 @@ fn hold_notes(inst: &mut Instrument, shared: &AudioShared, part: usize) {
 
 /// `a` ∪ `b` at MORPH 64, six audible operators, all with feedback: A14 ∪
 /// A22 is spec § Budget's worst case, A16 ∪ A17 ADR 0026's costliest (842).
+#[inline(never)]
 fn algo_pair(a: AlgoId, b: AlgoId) -> ParamSnapshot {
     let mut p = algo(a, ALL, 7);
     (p.algo.alg_b, p.algo.morph) = (b.get(), 64);

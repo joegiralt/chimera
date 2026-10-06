@@ -10,10 +10,13 @@ use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::reverb::ReverbParams;
 #[cfg(feature = "master-tape")]
 use crate::dsp::tape::TapeParams;
+use crate::dsp::tape_engine::TapeEngineParams;
 use crate::modulation::{MAX_MOD_SOURCES, ModSource};
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams, PitchParams};
 use crate::part::PartParams;
-use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, ParamSlot, VizType};
+use crate::ui::block_def::{
+    BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, MachineSlot, ParamSlot, VizType,
+};
 use crate::ui::midi_settings::MidiSettings;
 use crate::ui::page::{PageLayout, ValFmt};
 use crate::ui::settings::leaves::{
@@ -76,6 +79,62 @@ pub static MODAL_2: BlockDef = BlockDef {
         ParamSlot::modal_panel(ModalPage::Model, 3),
         ParamSlot::modal_panel(ModalPage::Model, 4),
         ParamSlot::modal_panel(ModalPage::Model, 5),
+    ],
+};
+
+// ---------------------------------------------------------------------------
+// TAPE engine pages (spec § 3): SRC · DECK, the model page under DECK
+// ---------------------------------------------------------------------------
+
+/// SRC: the source and the window it plays. Ids 93–95: POOL took 92.
+pub static TAPE_SRC: BlockDef = BlockDef {
+    id: 93,
+    name: "Source",
+    short: "SRC",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::source(),
+        ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::START),
+        ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::END),
+        ParamSlot::param(BlockRef::Out, OutParams::VOLUME).with_label("VOL"),
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+/// DECK, the home: MODAL's RES shape, MODEL, the four macros and SPACE;
+/// POSITION and MOTION as the machine labels them.
+pub static TAPE_DECK: BlockDef = BlockDef {
+    id: 94,
+    name: "Deck",
+    short: "DECK",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::MODEL),
+        ParamSlot::machine(MachineSlot::Position),
+        ParamSlot::machine(MachineSlot::Motion),
+        ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::TAPE),
+        ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::AGE),
+        ParamSlot::param(BlockRef::Part, PartParams::SEND_REVERB).with_label("SPACE"),
+    ],
+};
+
+/// The model page: named and filled by the machine.
+pub static TAPE_MODEL: BlockDef = BlockDef {
+    id: 95,
+    name: "Machine",
+    short: "MCH",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::machine(MachineSlot::Page(0)),
+        ParamSlot::machine(MachineSlot::Page(1)),
+        ParamSlot::machine(MachineSlot::Page(2)),
+        ParamSlot::machine(MachineSlot::Page(3)),
+        ParamSlot::machine(MachineSlot::Page(4)),
+        ParamSlot::machine(MachineSlot::Page(5)),
     ],
 };
 
@@ -526,10 +585,14 @@ static ALGO_BLOCKS: [ChainBlock; 6] = [
 
 pub static ALGO_CHAIN: ChainDef2 = ChainDef2::new("Algo", &ALGO_BLOCKS, &PART_MOD_SOURCES);
 
-/// TAPE's chain until TAPE Task 15 puts SRC and DECK before it: the voice's
-/// own stages, PIT under DRV.
-static TAPE_BLOCKS: [ChainBlock; 4] = [
-    ChainBlock::with_subs(&DRIVE, &[&PITCH]),
+static TAPE_SUB_PAGES: [&BlockDef; 2] = [&TAPE_MODEL, &PITCH];
+
+/// SRC · DECK · DRV · FLT · AMP · MOD: ALGO's shape with MODAL's first
+/// node; the model page and PIT under DECK.
+static TAPE_BLOCKS: [ChainBlock; 6] = [
+    ChainBlock::page(&TAPE_SRC),
+    ChainBlock::with_subs(&TAPE_DECK, &TAPE_SUB_PAGES),
+    ChainBlock::page(&DRIVE),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
     ChainBlock::page(&FOLDER),
     ChainBlock {
@@ -539,7 +602,9 @@ static TAPE_BLOCKS: [ChainBlock; 4] = [
     },
 ];
 
-pub static TAPE_CHAIN: ChainDef2 = ChainDef2::new("Tape", &TAPE_BLOCKS, &PART_MOD_SOURCES);
+/// TAPE's home is DECK (ADR 0066, MODAL's rule).
+pub static TAPE_CHAIN: ChainDef2 =
+    ChainDef2::new("Tape", &TAPE_BLOCKS, &PART_MOD_SOURCES).with_home_def(&TAPE_DECK);
 
 // ---------------------------------------------------------------------------
 // Mixer channel strip

@@ -55,8 +55,9 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: the EXC node (plan Task 13).
     // Re-recorded: PIT shows SNAP on E (TAPE Task 12b).
     ("modal_pitch", 0x7049f28424d35cbf),
-    // PIT on TAPE, SNAP MUSICAL: PITCH +19 in three clicks (TAPE Task 12b).
-    ("tape_pitch_musical", 0xcc795233a40a9247),
+    // PIT on TAPE, SNAP MUSICAL: PITCH +19 in three clicks (TAPE Task 12b);
+    // again for Task 15: PIT hangs under DECK.
+    ("tape_pitch_musical", 0xcd7b59559dcb75d3),
     // Re-recorded: the EXC node (plan Task 13).
     ("modal_exc", 0xdf9684baab508f23),
     // Re-recorded: the EXC node (plan Task 13).
@@ -156,6 +157,22 @@ const GOLDENS: &[(&str, u64)] = &[
     ("orbit_notes_step32", 0x211fc000f7a5be91),
     // SCN: a saved slot, SAVE's, a queued one filling (plan Task 16).
     ("orbit_scn", 0x7c2558bf895b7432),
+    // TAPE's pages (TAPE Task 15): SRC, and DECK and the model page per machine.
+    ("tape_src", 0xfbbf75776cb33d9f),
+    ("tape_deck_oneshot", 0x09ca1c02c671ca6b),
+    ("tape_page_oneshot", 0x6ec0cc6ab200711a),
+    ("tape_deck_loop", 0x8d8bd167058c624a),
+    ("tape_page_loop", 0x5a71496c59e24e28),
+    ("tape_deck_tron", 0x213f3c5e8ef61b43),
+    ("tape_page_tron", 0xd146bec467e2e194),
+    ("tape_deck_stretch", 0xab44978184d79862),
+    ("tape_page_stretch", 0x213f0019718af53c),
+    ("tape_deck_transwave", 0x7313e472f9b49f52),
+    ("tape_page_transwave", 0x902f5e3c0b411f96),
+    ("tape_deck_scrub", 0x655798835eb8c4ba),
+    ("tape_page_scrub", 0xac348e679cc0052a),
+    ("tape_deck_pingpong", 0x2c7024688d596a7f),
+    ("tape_page_pingpong", 0x5105f91c1e3b39ef),
     ("busy", 0x198544cd36863145),
     ("toast_saved", 0xe344dd99a47d0dad),
     ("toast_exfat", 0xfc0cb3b4feb1a1b5),

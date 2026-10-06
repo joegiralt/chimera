@@ -11,14 +11,19 @@ use crate::dsp::modal::{self, ModalParams, ResonatorMode};
 use crate::dsp::modulator::{
     EnvForm, EnvSlot, EnvSpeed, EnvType, Func, FuncMode, LfoForm, LfoSlot, LfoType, pick,
 };
+use crate::dsp::tape_engine::machine::{self, Cell};
+use crate::dsp::tape_engine::{self, TapeEngineParams as T, TapeModel, wave};
 use crate::modulation::{ModSource, VCA};
 use crate::orbit::RingIdx;
 use crate::orbit::clock::ClockSource;
 use crate::orbit::scene::SceneRing;
 use crate::params::{EnvParams, FilterParams, OutParams};
 use crate::preset::Sound;
-use crate::ui::block_def::{BlockDef, SlotBinding};
+use crate::project::Pool;
+use crate::storage::SourceRef;
+use crate::ui::block_def::{BlockDef, MachineSlot, SlotBinding};
 use crate::ui::filter_panel::{self, PanelKnob, PanelTarget};
+use crate::ui::fmt::FmtBuf;
 use crate::ui::glyph::FocusGlyph;
 use crate::ui::hint::{self, Gesture, Hint};
 use crate::ui::mod_panel::{self, PanelSlot};
@@ -58,6 +63,12 @@ pub struct SlotCtx {
     pub lfos: [LfoKind; 3],
     /// MODEL: which cells MDL2 shows.
     pub model: ResonatorMode,
+    /// TAPE's machine: its labels and its model page's cells.
+    pub tape: TapeModel,
+    /// TAPE's PERIOD is 0: an unpitched source plays MONO as POLY.
+    pub unpitched: bool,
+    /// TAPE's SOURCE as SRC reads it.
+    pub src: SourceState,
     /// The ORBIT ring the location selects: what `SelectedRing` edits.
     pub ring: RingIdx,
     /// ORBIT's clock: BPM is inert while MIDI leads.
@@ -86,8 +97,24 @@ impl SlotCtx {
                 }
             }),
             model: ResonatorMode::from_u8(get(BlockRef::Modal, ModalParams::MODE) as u8),
+            tape: TapeModel::from_index(get(BlockRef::TapeEngine, T::MODEL) as u8),
+            unpitched: get(BlockRef::TapeEngine, T::PERIOD) == 0.0,
+            src: SourceState::None,
             ring: RingIdx::ALL[0],
             clock: ClockSource::Internal,
+        }
+    }
+
+    /// This context with SOURCE read as `src`.
+    pub fn on_source(self, src: SourceState) -> Self {
+        Self { src, ..self }
+    }
+
+    /// The models a page's name follows.
+    pub fn models(&self) -> Models {
+        Models {
+            modal: self.model,
+            tape: self.tape,
         }
     }
 
@@ -99,6 +126,96 @@ impl SlotCtx {
     /// This context under ORBIT's `clock`.
     pub fn on_clock(self, clock: ClockSource) -> Self {
         Self { clock, ..self }
+    }
+}
+
+/// The engines' models a page's name follows: MDL2 MODAL's, the model
+/// page TAPE's machine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Models {
+    pub modal: ResonatorMode,
+    pub tape: TapeModel,
+}
+
+impl Default for Models {
+    fn default() -> Self {
+        ResonatorMode::from_u8(0).into()
+    }
+}
+
+impl From<ResonatorMode> for Models {
+    fn from(modal: ResonatorMode) -> Self {
+        Models {
+            modal,
+            tape: TapeModel::Loop,
+        }
+    }
+}
+
+/// TAPE's SOURCE as SRC reads it (spec § 2 refusal, § 3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SourceState {
+    /// None picked.
+    None,
+    /// Picked, but the pool doesn't hold it.
+    Missing,
+    /// TRANSWAVE on a source that isn't one.
+    NotTranswave,
+    /// TRON on a zone set (the streamed TRON's).
+    ZonesOnTron,
+    Held {
+        rate: u16,
+        frames: u32,
+    },
+}
+
+impl SourceState {
+    /// What a note-on on `model` finds for `r` in `pool`.
+    pub fn of(model: TapeModel, r: Option<SourceRef>, pool: &Pool) -> Self {
+        let Some(r) = r else {
+            return SourceState::None;
+        };
+        match pool.source_view(r) {
+            None => SourceState::Missing,
+            Some(v) if wave::playable(model, &v) => SourceState::Held {
+                rate: r.rate,
+                frames: r.frames,
+            },
+            Some(_) if model == TapeModel::Transwave => SourceState::NotTranswave,
+            Some(_) => SourceState::ZonesOnTron,
+        }
+    }
+
+    /// The focus band's: `24K · 1.5 S`, or why it won't play.
+    pub fn text(self, buf: &mut FmtBuf) {
+        use core::fmt::Write;
+        let _ = match self {
+            SourceState::None => buf.write_str("NONE"),
+            SourceState::Missing => buf.write_str("SOURCE MISSING"),
+            SourceState::NotTranswave => buf.write_str("NOT A TRANSWAVE"),
+            SourceState::ZonesOnTron => buf.write_str("ZONES: NOT TRON"),
+            SourceState::Held { rate, .. } => {
+                let _ = write!(buf, "{}K · ", rate / 1000);
+                self.cell(buf);
+                Ok(())
+            }
+        };
+    }
+
+    /// The cell's, short enough for its column: `1.5 S`, `MISSING`.
+    pub fn cell(self, buf: &mut FmtBuf) {
+        use core::fmt::Write;
+        let _ = match self {
+            SourceState::None => buf.write_str("NONE"),
+            SourceState::Missing => buf.write_str("MISSING"),
+            SourceState::NotTranswave => buf.write_str("NO WAVE"),
+            SourceState::ZonesOnTron => buf.write_str("ZONES"),
+            SourceState::Held { rate, frames } => {
+                let rate = u64::from(rate.max(1));
+                let tenths = (u64::from(frames) * 10 + rate / 2) / rate;
+                write!(buf, "{}.{} S", tenths / 10, tenths % 10)
+            }
+        };
     }
 }
 
@@ -129,6 +246,8 @@ pub enum View {
     },
     /// One of ORBIT's own cells: its text is `orbit::draw::cell_text`.
     Orbit(OrbitCell),
+    /// TAPE's SOURCE (`SourceState::text`).
+    Source(SourceState),
 }
 
 impl View {
@@ -137,6 +256,7 @@ impl View {
             View::Empty => "--",
             View::SelectOp => "OP",
             View::Orbit(c) => c.label(),
+            View::Source(_) => "SOURCE",
             View::Legacy { label, .. }
             | View::Param { label, .. }
             | View::Route { label, .. }
@@ -147,10 +267,11 @@ impl View {
     /// The spec's short form, for a param shown under its own label.
     pub fn short(&self) -> Option<&'static str> {
         match *self {
-            View::Param { addr, label, .. } => addr
-                .spec()
-                .filter(|s| s.label == label)
-                .and_then(|s| s.short),
+            View::Param { addr, label, .. } => match addr.spec() {
+                Some(s) if s.label == label => s.short,
+                // A machine's label carries its own short.
+                _ => machine::short_of(addr.param, label),
+            },
             _ => None,
         }
     }
@@ -158,6 +279,8 @@ impl View {
     pub fn fmt(&self) -> ValFmt {
         match *self {
             View::Empty | View::Text { .. } => ValFmt::Uni,
+            // A readout, not a dial: no bar.
+            View::Source(_) => ValFmt::Names(&[]),
             View::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
             View::Legacy { fmt, .. } | View::Param { fmt, .. } => fmt,
             View::Route { .. } => ValFmt::Route,
@@ -165,8 +288,11 @@ impl View {
         }
     }
 
-    /// The focus glyph: the param's spec's, else ARC.
+    /// The focus glyph: the param's spec's, else ARC; SOURCE none.
     pub fn glyph(&self) -> FocusGlyph {
+        if let View::Source(_) = self {
+            return FocusGlyph::None;
+        }
         self.addr()
             .and_then(|a| a.spec())
             .map_or(FocusGlyph::Arc, |s| s.glyph)
@@ -262,7 +388,35 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
                 _ => View::Empty,
             }
         }
+        SlotBinding::Machine(at) => machine_view(at, ctx),
+        SlotBinding::Source => View::Source(ctx.src),
     }
+}
+
+/// A TAPE cell on the Sound's machine: its label, or the param's own,
+/// dimmed by `tape_engine::reads`, where the machine ignores it.
+fn machine_view(at: MachineSlot, ctx: &SlotCtx) -> View {
+    let k = machine::machine(ctx.tape);
+    let (id, cell): (_, Option<&Cell>) = match at {
+        MachineSlot::Position => (T::POSITION, k.deck[0].as_ref()),
+        MachineSlot::Motion => (T::MOTION, k.deck[1].as_ref()),
+        MachineSlot::Page(i) => match k.cells.get(usize::from(i)) {
+            Some(c) => (c.id, Some(c)),
+            None => return View::Empty,
+        },
+    };
+    let addr = ParamAddr::new(BlockRef::TapeEngine, id);
+    let Some(spec) = addr.spec() else {
+        return View::Empty;
+    };
+    let label = cell.map_or(spec.label, |c| c.label);
+    if id == T::TYPE && ctx.unpitched {
+        return View::Text {
+            label,
+            text: "POLY (UNPITCHED)",
+        };
+    }
+    param(addr, label, spec.fmt)
 }
 
 /// Cell `k` of a modulator panel, its params in `block`.
@@ -288,6 +442,8 @@ pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
         (BlockRef::Algo, AlgoParams::MORPH) => sound.params.algo.alg_a == sound.params.algo.alg_b,
         // What MODEL ignores (spec § 1 Dimming).
         (BlockRef::Modal, id) => !modal::reads(sound.params.modal.mode, id),
+        // What the machine ignores (spec § 3).
+        (BlockRef::TapeEngine, id) => !tape_engine::reads(sound.params.tape.model, id),
         _ => false,
     }
 }

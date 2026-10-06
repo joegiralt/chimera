@@ -148,9 +148,20 @@ impl DiskCode for StretchType {
     }
 }
 
-/// MODEL's names, by `TapeModel::index` (Task 15 settles the copy).
-pub const MODEL_NAMES: [&str; 7] = [
-    "ONESHOT", "LOOP", "TRON", "STRETCH", "WAVE", "SCRUB", "PINGPONG",
+/// MODEL's names, by `TapeModel::index`: each machine's page name, as
+/// STRETCH and PING-PONG overrun a cell's bar.
+pub const MODEL_NAMES: [&str; 7] = ["ONE", "LOOP", "TRON", "STRCH", "WAVE", "SCRUB", "PING"];
+
+/// The machines' names in full, by `TapeModel::index`: the model page's
+/// header.
+pub const MACHINE_NAMES: [&str; 7] = [
+    "ONESHOT",
+    "LOOP",
+    "TRON",
+    "STRETCH",
+    "TRANSWAVE",
+    "SCRUB",
+    "PING-PONG",
 ];
 
 /// SLICE's names, by its value.
@@ -228,6 +239,17 @@ impl TapeEngineParams {
     pub const PERIOD: ParamId = ParamId(12);
     pub const SLICE: ParamId = ParamId(13);
     pub const WOW: ParamId = ParamId(14);
+}
+
+/// Whether `model` reads `id`: the one table for cells, dimming and the
+/// audio test, from the machines' (`machine::MACHINES`). START, END, TAPE,
+/// AGE and WOW read on every machine; ROOT and PERIOD have no cell.
+pub fn reads(model: TapeModel, id: ParamId) -> bool {
+    type P = TapeEngineParams;
+    match id {
+        P::MODEL | P::START | P::END | P::TAPE | P::AGE | P::WOW | P::ROOT | P::PERIOD => true,
+        _ => super::machine::cell_of(model, id).is_some(),
+    }
 }
 
 /// DRAG in seconds: 10 to 500 ms, exponential.

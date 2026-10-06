@@ -714,6 +714,15 @@ pub fn load_init(ui: &mut UiState, engine: EngineType) {
     }
 }
 
+/// TAPE's init on Part 1, at DECK, MODEL turned `by` from LOOP.
+pub fn tape_deck(ui: &mut UiState, by: i8) {
+    load_init(ui, EngineType::Tape);
+    plus(ui, 1); // SRC · DECK
+    if by != 0 {
+        feed(ui, Input::turn(EncoderId::A, by));
+    }
+}
+
 /// The OSC node's index on the Algo chain.
 pub fn osc_node() -> usize {
     use chimera_core::ui::block_registry::{ALGO_CHAIN, ALGO_WAVE};
@@ -1012,6 +1021,44 @@ pub const CASES: &[ScreenCase] = &[
         to_pitch(ui, EngineType::Tape);
         feed(ui, Input::turn(EncoderId::E, 1)); // SNAP MUSICAL
         feed(ui, Input::turn(EncoderId::A, 3)); // PITCH +19, focused
+    }),
+    // TAPE's pages (TAPE Task 15): SRC, then DECK and the model page per
+    // machine, MODEL turned from LOOP (index 1).
+    ("tape_src", |ui| load_init(ui, EngineType::Tape)),
+    ("tape_deck_oneshot", |ui| tape_deck(ui, -1)),
+    ("tape_page_oneshot", |ui| {
+        tape_deck(ui, -1);
+        feed(ui, Input::press(ButtonId::Edit));
+    }),
+    ("tape_deck_loop", |ui| tape_deck(ui, 0)),
+    ("tape_page_loop", |ui| {
+        tape_deck(ui, 0);
+        feed(ui, Input::press(ButtonId::Edit));
+    }),
+    ("tape_deck_tron", |ui| tape_deck(ui, 1)),
+    ("tape_page_tron", |ui| {
+        tape_deck(ui, 1);
+        feed(ui, Input::press(ButtonId::Edit));
+    }),
+    ("tape_deck_stretch", |ui| tape_deck(ui, 2)),
+    ("tape_page_stretch", |ui| {
+        tape_deck(ui, 2);
+        feed(ui, Input::press(ButtonId::Edit));
+    }),
+    ("tape_deck_transwave", |ui| tape_deck(ui, 3)),
+    ("tape_page_transwave", |ui| {
+        tape_deck(ui, 3);
+        feed(ui, Input::press(ButtonId::Edit));
+    }),
+    ("tape_deck_scrub", |ui| tape_deck(ui, 4)),
+    ("tape_page_scrub", |ui| {
+        tape_deck(ui, 4);
+        feed(ui, Input::press(ButtonId::Edit));
+    }),
+    ("tape_deck_pingpong", |ui| tape_deck(ui, 5)),
+    ("tape_page_pingpong", |ui| {
+        tape_deck(ui, 5);
+        feed(ui, Input::press(ButtonId::Edit));
     }),
     ("modal_exc", |ui| load_init(ui, EngineType::Modal)), // PLUCK: EXCITE, COLOR
     ("modal_exc_bank", |ui| {
