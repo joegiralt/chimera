@@ -393,7 +393,7 @@ fn knobs_hit_the_spec_endpoints() {
     close(d.shape_db, 57.06, "room loops default");
     close(d.smear_ms, 0.0, "room smear default");
     close(d.rate_hz, 0.3162, "room rate default");
-    // HALL, above its plate zone (SIZE ≥ 0.15).
+    // HALL, above its plate zone (SIZE ≥ 0.05).
     let h = |f: &dyn Fn(&mut ReverbParams)| at(ReverbType::Hall, f);
     close(h(&|p| p.size = 0.0).length_ms, 120.0, "hall size 0");
     close(h(&|p| p.size = 1.0).length_ms, 600.0, "hall size 1");
@@ -447,8 +447,8 @@ fn knobs_hit_the_spec_endpoints() {
     }
 }
 
-/// Below SIZE 0.15, HALL plays DIFFUSE pulled up and TONE and PRE-DLY
-/// down by w = 1 − SIZE/0.15; the stored knobs never change, and no other
+/// Below SIZE 0.05, HALL plays DIFFUSE pulled up and TONE and PRE-DLY
+/// down by w = 1 − SIZE/0.05; the stored knobs never change, and no other
 /// TYPE has the zone.
 #[test]
 fn plate_zone_pulls_diffuse_tone_predelay_spread() {
@@ -472,11 +472,11 @@ fn plate_zone_pulls_diffuse_tone_predelay_spread() {
         );
     };
     near(eff(0.0), [1.0, 0.0, 0.0, 0.0]);
-    near(eff(0.075), [0.7, 0.3, 0.25, 0.4]);
-    for size in [0.15, 0.5, 1.0] {
+    near(eff(0.025), [0.7, 0.3, 0.25, 0.4]);
+    for size in [0.05, 0.5, 1.0] {
         near(eff(size), [0.4, 0.6, 0.5, 0.8]);
     }
-    assert!(in_plate_zone(&p(0.149)) && !in_plate_zone(&p(0.15)));
+    assert!(in_plate_zone(&p(0.049)) && !in_plate_zone(&p(0.05)));
     // The engine plays the pulled knobs; the stored ones stay.
     let k = knobs_120(&p(0.0));
     assert_eq!(

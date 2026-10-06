@@ -24,7 +24,7 @@ use chimera_hal::BLOCK_SIZE;
 use common::SR;
 use common::rev::{
     MS, Noise, blocks, check_knobs_ease, check_level_plan_thd, check_no_slap, check_noise_floor,
-    check_settles_on_pitch, check_sustained_loudness, corr, knobs_120, onset_ms, pink, run,
+    check_settles_on_pitch, check_sustained_loudness, corr, knobs_120, max_d2, onset_ms, pink, run,
     settled_peak_hz, tone,
 };
 use common::sweep::power;
@@ -1472,14 +1472,17 @@ fn hall_layout_matches_adr_0095() {
     let d = e.delays()[0];
     for (side, row) in HALL_TAPS.iter().enumerate() {
         for (q, &(stage, frac)) in row.iter().enumerate() {
-            let want = ((frac * d[stage] as f32 + 0.5) as usize).max(2);
+            // `LATENCY` (17) nearer the write: the bus's half-bands.
+            let want = ((frac * d[stage] as f32 + 0.5) as usize)
+                .saturating_sub(17)
+                .max(2);
             assert_eq!(e.tap_offsets()[side][q], want, "{side} {q}");
         }
     }
 }
 
 /// SPREAD scales the diffuser whole, × 0.05 → 1.10, and the diffuser
-/// lands there by crossfades of one allpass and at most 120 samples each.
+/// lands there by crossfades of one allpass and at most 16 samples each.
 #[test]
 fn spread_scales_the_six_allpass_diffuser() {
     let at = |spread: f32| {
@@ -1497,13 +1500,13 @@ fn spread_scales_the_six_allpass_diffuser() {
     let k = knobs_120(&p);
     let (u, mut l, mut r) = ([0.0f32; HALF], [0.0; HALF], [0.0; HALF]);
     let mut last = e.diffuser();
-    for _ in 0..4_000 {
+    for _ in 0..20_000 {
         e.run(&mut arena, &u, &k, &mut l, &mut r);
         let now = e.diffuser();
         let moved: Vec<usize> = (0..6).filter(|&j| now[j] != last[j]).collect();
         assert!(moved.len() <= 1, "{last:?} → {now:?}");
         for j in moved {
-            assert!(now[j].abs_diff(last[j]) <= 120, "{last:?} → {now:?}");
+            assert!(now[j].abs_diff(last[j]) <= 16, "{last:?} → {now:?}");
         }
         last = now;
         if !e.moving() {
@@ -1553,18 +1556,21 @@ fn density_fades_in_taps_four_to_eight() {
     assert_eq!(knobs_120(&p).density, TapCount::MIN);
     let (e, _) = hall_engine(&p);
     assert_eq!(e.taps(), 3.0);
-    // Every tap plays at its weight: sign by its line, ¾, DENSITY's fade.
+    // Every tap plays at its weight: sign by its line, ¾, DENSITY's
+    // fade, × √(3/Σw²) so the level holds.
     for (density, count) in [(0.0, 3.0), (0.5, 5.5), (1.0, 8.0)] {
         let (e, _) = hall_engine(&ReverbParams { density, ..p });
         let c = TapCount::from_unit(density);
         assert_eq!(c.get(), count);
+        let norm = (3.0 / (0..8).map(|q| c.weight(q).powi(2)).sum::<f32>()).sqrt();
         for (side, row) in HALL_TAPS.iter().enumerate() {
             for (q, &(stage, _)) in row.iter().enumerate() {
                 let sign = if stage % 2 == 0 { 1.0 } else { -1.0 };
-                assert_eq!(
-                    e.tap_weights()[side][q],
-                    sign * 0.75 * c.weight(q),
-                    "DENSITY {density}: {side} {q}"
+                let want = sign * 0.75 * norm * c.weight(q);
+                let got = e.tap_weights()[side][q];
+                assert!(
+                    (got - want).abs() <= 1e-6,
+                    "DENSITY {density}: {side} {q}: {got}"
                 );
             }
         }
@@ -1576,9 +1582,11 @@ fn density_fades_in_taps_four_to_eight() {
         let w = SR as usize / 10..SR as usize / 2;
         energy_of(&l[w.clone()]) + energy_of(&r[w])
     };
+    // The level holds across the knob (F8: the taps are normalised).
     let (sparse, dense) = (early(0.0), early(1.0));
-    println!("DENSITY 0 → 1: {:+.1} dB", 10.0 * (dense / sparse).log10());
-    assert!(dense > 1.5 * sparse, "{sparse} → {dense}");
+    let db = 10.0 * (dense / sparse).log10();
+    println!("DENSITY 0 → 1: {db:+.1} dB");
+    assert!(db.abs() <= 1.0, "{sparse} → {dense}");
     let rt = |density: f32| {
         band_rt60(
             &ReverbParams {
@@ -1662,20 +1670,20 @@ fn plate_corner_onset_is_short() {
     assert!(onset <= 8.0, "onset {onset} ms");
 }
 
-/// PRE-DLY at 0.5 and SIZE 0.15 → 0: the plate zone pulls PRE-DLY's
+/// PRE-DLY at 0.5 and SIZE 0.05 → 0: the plate zone pulls PRE-DLY's
 /// 62.5 ms to 0, and the read only moves at a crossfade's start, by at
 /// most 120 samples (5 ms) a crossfade, in the same crossfades as SIZE.
 #[test]
 fn plate_zone_moves_predelay_by_crossfade() {
     let mut p = hall(1.0);
-    (p.predelay, p.size) = (0.5, 0.15);
+    (p.predelay, p.size) = (0.5, 0.05);
     let (mut e, mut arena) = hall_engine(&p);
     assert_eq!(e.predelay(), 1_500);
     p.size = 0.0;
     let k = knobs_120(&p);
     let (u, mut l, mut r) = ([0.0f32; HALF], [0.0; HALF], [0.0; HALF]);
     let (mut crossfades, mut last) = (0, None);
-    for b in 0..2_000 {
+    for b in 0..20_000 {
         let before = e.predelay();
         e.run(&mut arena, &u, &k, &mut l, &mut r);
         match e.crossfade() {
@@ -1875,10 +1883,111 @@ fn level_plan_holds_for_hall() {
 fn hall_knobs_ease() {
     let p = hall(1.0);
     let (rv, pc) = (fresh(&p), RefCell::new(p));
-    let ids = [1, 2, 3, 7, 8, 9, 11, 12].map(ParamId);
+    let ids = [1, 2, 3, 7, 8, 9, 10, 11, 12, 14].map(ParamId);
     check_knobs_ease(&mut bus(&rv, &pc), &ids, &mut |id, v| {
         pc.borrow_mut().write(id, v)
     });
+}
+
+/// A 300 Hz tone held through HALL at START (SMEAR 0) while `id` moves
+/// `from` → `to`, at once or swept over `sweep_s`: the move's largest
+/// second difference against the larger of the steady tail's before and
+/// the settled tail's after (2 s each, both sides), and the same ratio of
+/// the peaks, the tone's own level as it moves.
+fn held_tone_move_ratio(id: ParamId, from: f32, to: f32, sweep_s: f32) -> (f32, f32) {
+    let mut p = hall(1.0);
+    p.smear = 0.0;
+    p.write(id, from);
+    let (rv, pc) = (fresh(&p), RefCell::new(p));
+    let held = tone(300.0, 0.25);
+    let (pre, sweep, post) = (blocks(3.0), blocks(sweep_s).max(1), blocks(8.0));
+    let (mut l, mut r) = (Vec::new(), Vec::new());
+    let mut b = 0;
+    let mut drive = |b: usize| -> Blk { core::array::from_fn(|i| held(b * BLOCK_SIZE + i)) };
+    for _ in 0..pre + sweep + post {
+        if b >= pre && b < pre + sweep {
+            let x = (b - pre + 1) as f32 / sweep as f32;
+            pc.borrow_mut().write(id, from + (to - from) * x);
+        }
+        let (ol, or) = bus(&rv, &pc)(&drive(b));
+        l.extend(ol);
+        r.extend(or);
+        b += 1;
+    }
+    let at = |blk: usize| blk * BLOCK_SIZE;
+    let d2 = |a: usize, b: usize| max_d2(&l[a..b]).max(max_d2(&r[a..b]));
+    // Judged over as long a stretch as the move's own, so a rare peak
+    // weighs alike: the 2 s before the move, and the last 2 s, after the
+    // diffuser has landed.
+    let span = 2 * SR as usize;
+    let steady = d2(at(pre) - span, at(pre));
+    let settled = d2(l.len() - span, l.len());
+    let moving = d2(at(pre), l.len() - span);
+    let pk = |a: usize, b: usize| {
+        l[a..b]
+            .iter()
+            .chain(&r[a..b])
+            .fold(0.0f32, |m, v| m.max(v.abs()))
+    };
+    let base = pk(at(pre) - span, at(pre)).max(pk(l.len() - span, l.len()));
+    (
+        moving / steady.max(settled),
+        pk(at(pre), l.len() - span) / base,
+    )
+}
+
+/// SPREAD and DENSITY move under a held tone with no click (F2): the
+/// move's d2 within 1.2× the tail's own, once the tone's level is
+/// counted. Either move changes the tone's phase into a 3.5 s loop (SPREAD
+/// through the diffuser, DENSITY through which taps sum it), so the old
+/// and new phases beat and the tail's level swings, up to 1.7× for SPREAD
+/// as for PRE-DLY (1.4×); d2 follows the level. DENSITY's weights ramp each
+/// sample while they move, SPREAD's allpasses move 16 samples a crossfade.
+#[test]
+fn spread_and_density_move_smoothly_under_a_held_tone() {
+    for (id, name) in [(ParamId(14), "DENSITY"), (ParamId(10), "SPREAD")] {
+        for (from, to, sweep) in [
+            (0.0, 1.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.3),
+            (0.45, 0.55, 0.0),
+        ] {
+            let (d2, level) = held_tone_move_ratio(id, from, to, sweep);
+            println!("{name} {from} → {to} over {sweep} s: d2 ratio {d2:.2}, level {level:.2}");
+            assert!(
+                d2 <= 1.2 * level.max(1.0),
+                "{name} {from} → {to} over {sweep} s: {d2} at level {level}"
+            );
+        }
+    }
+}
+
+/// At MIX 1, a held pad's peak through HALL stays within 1 dB of QUAD's at
+/// DENSITY 0 and 1, and DENSITY moves the loudness under 1 dB (F8).
+#[test]
+fn hall_peak_and_level_hold_across_density() {
+    let quad = ReverbParams {
+        mix: 1.0,
+        ..ReverbParams::default()
+    };
+    let (qv, qc) = (fresh(&quad), RefCell::new(quad));
+    let (_, qp) = common::rev::sustained_db(&mut bus(&qv, &qc));
+    let mut level = Vec::new();
+    for density in [0.0, 1.0] {
+        let p = ReverbParams {
+            density,
+            ..hall(1.0)
+        };
+        let (rv, pc) = (fresh(&p), RefCell::new(p));
+        let (a, ap) = common::rev::sustained_db(&mut bus(&rv, &pc));
+        println!("DENSITY {density}: {a:.2} dB, peak {ap:.2} dBFS; QUAD peak {qp:.2}");
+        assert!(
+            ap <= qp + 1.0,
+            "DENSITY {density}: peak {ap} over QUAD's {qp}"
+        );
+        level.push(a);
+    }
+    assert!((level[1] - level[0]).abs() <= 1.0, "{level:?}");
 }
 
 #[test]
@@ -1894,10 +2003,9 @@ fn hall_noise_and_loudness() {
     let (qv, qc) = (fresh(&q), RefCell::new(q));
     check_sustained_loudness(&mut bus(&rv, &pc), &mut bus(&qv, &qc));
     // Each floor from a fresh engine: HALL's 2.5 s would still ring with
-    // the pad. The diffuser's normalised i16 states (the arena holds no
-    // f32 diffuser) put it 6.1 and 9.9 dB over QUAD's at START (program
-    // 25) and DIFFUSE 1 (g 0.8: each error read × 5).
-    for (diffuse, extra) in [(p.diffuse, 6.5), (1.0, 10.5)] {
+    // the pad. The four shortest diffuser allpasses on f32 states leave
+    // it 3.7 and 5.3 dB over QUAD's at START and DIFFUSE 1.
+    for (diffuse, extra) in [(p.diffuse, 4.0), (1.0, 6.0)] {
         let h = ReverbParams { diffuse, ..p };
         let (rv, pc) = (fresh(&h), RefCell::new(h));
         let (qv, qc) = (fresh(&q), RefCell::new(q));

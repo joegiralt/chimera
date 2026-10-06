@@ -469,7 +469,7 @@ fn cells_read_their_starting_values() {
     assert_eq!(text(P::TIME, &g).as_str(), "OFF");
 }
 
-/// HALL's SIZE cell reads `PLATE` in the plate zone (SIZE < 0.15; ADR
+/// HALL's SIZE cell reads `PLATE` in the plate zone (SIZE < 0.05; ADR
 /// 0085: the label, not the value), on the page and under any context;
 /// MIDI MAP keeps the slot's word.
 #[test]
@@ -485,8 +485,8 @@ fn hall_size_cell_reads_plate_in_its_zone() {
     assert!(w("PLATE") <= theme::CELL_BAR_W);
     for (kind, size, want) in [
         (ReverbType::Hall, 0.0, "PLATE"),
-        (ReverbType::Hall, 0.149, "PLATE"),
-        (ReverbType::Hall, 0.15, "SIZE"),
+        (ReverbType::Hall, 0.049, "PLATE"),
+        (ReverbType::Hall, 0.05, "SIZE"),
         (ReverbType::Hall, 0.65, "SIZE"),
         (ReverbType::Room, 0.0, "SIZE"),
     ] {

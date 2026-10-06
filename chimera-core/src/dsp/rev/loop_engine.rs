@@ -57,6 +57,34 @@ pub const DIFF: usize = 6;
 pub const TAPS: usize = 8;
 /// The taps a side DENSITY never fades.
 pub const TAPS_FIXED: usize = 3;
+/// Which diffuser allpasses keep f32 states: the four shortest (13.7,
+/// 18.4, 8.7 and 6.2 ms), whose rounding the loop would hear most; the
+/// two longest store normalised i16 (R2), as the arena has no room for
+/// more f32 (ADR 0095 § HALL, as built).
+pub const DIF_F32: [bool; DIFF] = [true, true, false, false, true, true];
+/// The f32 and the i16 diffuser allpasses, in signal order.
+const NF: usize = 4;
+const NI: usize = DIFF - NF;
+const DIF_F: [usize; NF] = [0, 1, 4, 5];
+const DIF_I: [usize; NI] = [2, 3];
+const _: () = {
+    let mut j = 0;
+    while j < NF {
+        assert!(DIF_F32[DIF_F[j]]);
+        j += 1;
+    }
+    j = 0;
+    while j < NI {
+        assert!(!DIF_F32[DIF_I[j]]);
+        j += 1;
+    }
+};
+/// Taps a crossfade can move: those on the one stage line a loop moves.
+const TC: usize = 4;
+/// The bus's half-bands delay the return 34 samples at 48 kHz, 17 at the
+/// ring: every tap reads that much nearer its write, so the return's
+/// first arrival is where the line puts it (ADR 0095 § HALL, as built).
+pub const LATENCY: usize = 17;
 
 // ADR 0095's table, ms: program 17's diffuser lengths, read from the
 // MidiVerb II (github.com/thement/midiverb_emulator's decompilation,
@@ -185,7 +213,7 @@ const fn tap(stage: usize, at: f32) -> Tap {
 pub struct Lens<const L: usize, const S: usize> {
     /// PRE-DLY's longest.
     pub pre: usize,
-    /// The diffuser's allpasses (normalised i16).
+    /// The diffuser's allpasses (`DIF_F32`'s f32, the rest normalised i16).
     pub diffuser: [usize; DIFF],
     /// Each loop's stage delays, then its stage allpasses.
     pub delay: [[usize; S]; L],
@@ -195,7 +223,8 @@ pub struct Lens<const L: usize, const S: usize> {
 /// Where each line writes, from the shared heads: line j owns its length
 /// and 2 slots more (a pair's second read, and the guard), so a read d
 /// back, 2 ≤ d ≤ len + 1, is what it wrote d samples ago. The i16 lines
-/// (PRE, the diffuser, the delays), then the f32 ones (the allpasses).
+/// (PRE, the i16 diffuser allpasses, the delays), then the f32 ones (the
+/// f32 diffuser allpasses, the stage allpasses).
 #[derive(Clone, Copy, Debug)]
 pub struct Heads<const L: usize, const S: usize> {
     pre: usize,
@@ -212,9 +241,9 @@ const fn place<const L: usize, const S: usize>(n: &Lens<L, S>) -> Heads<L, S> {
     let pre = o - 1;
     let mut diffuser = [0; DIFF];
     let mut j = 0;
-    while j < DIFF {
-        o += n.diffuser[j] + 2;
-        diffuser[j] = o - 1;
+    while j < NI {
+        o += n.diffuser[DIF_I[j]] + 2;
+        diffuser[DIF_I[j]] = o - 1;
         j += 1;
     }
     let (mut delay, mut ap) = ([[0; S]; L], [[0; S]; L]);
@@ -230,6 +259,12 @@ const fn place<const L: usize, const S: usize>(n: &Lens<L, S>) -> Heads<L, S> {
     }
     let slots = o + o % 2;
     let mut f = 0;
+    j = 0;
+    while j < NF {
+        f += n.diffuser[DIF_F[j]] + 2;
+        diffuser[DIF_F[j]] = f - 1;
+        j += 1;
+    }
     l = 0;
     while l < L {
         let mut s = 0;
@@ -303,10 +338,16 @@ pub trait Layout<const L: usize, const S: usize> {
     /// Every i16 access's offset from the head that no length moves: the
     /// writes (`Access`). The reads are filled in each block.
     const OFFSETS: [usize; MAX_ACCESS] = fixed_offsets(&Self::HEADS);
-    /// The f32 accesses (`FAccess`): the stage allpasses' writes and fixed
-    /// reads.
+    /// The f32 accesses (`FAccess`): the f32 diffuser allpasses' writes,
+    /// the stage allpasses' writes and fixed reads; the diffuser's reads
+    /// are filled in each block.
     const F_OFFSETS: [usize; MAX_F_ACCESS] = {
         let mut o = [0; MAX_F_ACCESS];
+        let mut j = 0;
+        while j < NF {
+            o[FAccess::<L, S>::W_DF + j] = Self::HEADS.diffuser[DIF_F[j]];
+            j += 1;
+        }
         let mut l = 0;
         while l < L {
             let mut s = 0;
@@ -321,8 +362,8 @@ pub trait Layout<const L: usize, const S: usize> {
         o
     };
     /// The i16 and f32 accesses, every one in its segment.
-    const ACCESS: usize = 3 + 3 * DIFF + 3 * L * S + 4 * TAPS;
-    const F_ACCESS: usize = 2 * L * S;
+    const ACCESS: usize = 3 + 3 * NI + 3 * L * S + 2 * TAPS + 2 * TC;
+    const F_ACCESS: usize = 3 * NF + 2 * L * S;
     /// The smeared reads, `M − 2D` at the deepest D (twice the cap of the
     /// longest loop), stay 2 or more behind their write: `pair_in`'s
     /// contract.
@@ -341,7 +382,8 @@ pub trait Layout<const L: usize, const S: usize> {
         }
         ok
     };
-    /// Every tap reads a stage line that exists.
+    /// Every tap reads a stage line that exists, and the taps one
+    /// crossfade moves (one stage line a loop, both sides) fit `TC`.
     const TAPS_FIT: bool = {
         let mut ok = true;
         let mut j = 0;
@@ -349,6 +391,17 @@ pub trait Layout<const L: usize, const S: usize> {
             let t = Self::TAPS[j / TAPS][j % TAPS];
             ok &= t.lp < L && t.stage < S;
             j += 1;
+        }
+        let mut line = 0;
+        while line < L * S {
+            let (mut n, mut j) = (0, 0);
+            while j < 2 * TAPS {
+                let t = Self::TAPS[j / TAPS][j % TAPS];
+                n += (t.lp * S + t.stage == line) as usize;
+                j += 1;
+            }
+            ok &= L * n <= TC;
+            line += 1;
         }
         ok
     };
@@ -374,16 +427,16 @@ pub trait Layout<const L: usize, const S: usize> {
 }
 
 /// HALL's i16 and f32 accesses: 4 stages in all.
-const MAX_ACCESS: usize = 65;
-const MAX_F_ACCESS: usize = 8;
+const MAX_ACCESS: usize = 45;
+const MAX_F_ACCESS: usize = 20;
 
 /// `Layout::OFFSETS`: the writes at their heads; the rest 0.
 const fn fixed_offsets<const L: usize, const S: usize>(h: &Heads<L, S>) -> [usize; MAX_ACCESS] {
     let mut o = [0; MAX_ACCESS];
     o[Access::<L, S>::W_PRE] = h.pre;
     let mut j = 0;
-    while j < DIFF {
-        o[Access::<L, S>::W_DIF + j] = h.diffuser[j];
+    while j < NI {
+        o[Access::<L, S>::W_DIF + j] = h.diffuser[DIF_I[j]];
         j += 1;
     }
     let mut l = 0;
@@ -464,16 +517,18 @@ impl Layout<1, 4> for Hall {
 /// The new engines' stage gain cap (§ Shared machinery).
 const MAX_GAIN: f32 = 0.985;
 /// A loop's round-trip gain cap: G = 1/(1 − 0.92) = 12.5 on a held loop
-/// mode, the level plan's (§ Level plan). It binds only under SIZE 0.15,
+/// mode, the level plan's (§ Level plan). It binds only at small SIZE,
 /// in the plate zone, where DECAY's 16 s needs more.
 const TRIP_MAX: f32 = 0.92;
 /// The send's injection, ½ (§ Shared machinery), in LSBs.
 const IN_GAIN: f32 = 0.5 * FULL_SCALE;
 /// Each tap's weight, before DENSITY's fade.
 const TAP_W: f32 = 0.75;
-/// The most one crossfade moves PRE-DLY, a loop's round trip, or a
-/// diffuser allpass.
+/// The most one crossfade moves PRE-DLY or a loop's round trip.
 pub const STEP: u16 = 120;
+/// The most one crossfade moves a diffuser allpass: a quarter of `STEP`,
+/// as a blend's comb dips over an allpass's whole length.
+pub const DIF_STEP: u16 = 16;
 
 /// A LOOP TYPE's state beside the arena. Zero bytes are a fresh engine,
 /// primed by its first block.
@@ -592,29 +647,41 @@ struct Access<const L: usize, const S: usize>;
 impl<const L: usize, const S: usize> Access<L, S> {
     const W_PRE: usize = 0;
     const W_DIF: usize = 1;
-    const W_D: usize = 1 + DIFF;
-    const R_PRE: usize = 1 + DIFF + L * S;
-    const R_DIF_TO: usize = 3 + DIFF + L * S;
-    const R_DIF_FROM: usize = 3 + 2 * DIFF + L * S;
-    const R_D_TO: usize = 3 + 3 * DIFF + L * S;
-    const R_D_FROM: usize = 3 + 3 * DIFF + 2 * L * S;
-    const R_TAP_TO: usize = 3 + 3 * DIFF + 3 * L * S;
-    const R_TAP_FROM: usize = 3 + 3 * DIFF + 3 * L * S + 2 * TAPS;
+    const W_D: usize = 1 + NI;
+    const R_PRE: usize = 1 + NI + L * S;
+    const R_DIF_TO: usize = 3 + NI + L * S;
+    const R_DIF_FROM: usize = 3 + 2 * NI + L * S;
+    const R_D_TO: usize = 3 + 3 * NI + L * S;
+    const R_D_FROM: usize = 3 + 3 * NI + 2 * L * S;
+    const R_TAP: usize = 3 + 3 * NI + 3 * L * S;
+    const R_TC_TO: usize = 3 + 3 * NI + 3 * L * S + 2 * TAPS;
+    const R_TC_FROM: usize = 3 + 3 * NI + 3 * L * S + 2 * TAPS + TC;
 }
 
-/// The f32 accesses, from the f32 head: the stage allpasses' writes and
+/// The f32 accesses, from the f32 head: the f32 diffuser allpasses'
+/// writes and new and old reads, then the stage allpasses' writes and
 /// fixed reads.
 struct FAccess<const L: usize, const S: usize>;
 
 impl<const L: usize, const S: usize> FAccess<L, S> {
-    const W_AP: usize = 0;
-    const R_AP: usize = L * S;
+    const W_DF: usize = 0;
+    const R_DF_TO: usize = NF;
+    const R_DF_FROM: usize = 2 * NF;
+    const W_AP: usize = 3 * NF;
+    const R_AP: usize = 3 * NF + L * S;
 }
 
-/// A tap `at` along a line `len` long, ring samples behind its write.
+/// A tap `at` along a line `len` long, ring samples behind its write,
+/// `LATENCY` nearer.
 fn tap_off(at: Frac, len: u16) -> usize {
-    ((at.get() * len as f32 + 0.5) as usize).max(2)
+    ((at.get() * len as f32 + 0.5) as usize)
+        .saturating_sub(LATENCY)
+        .max(2)
 }
+
+/// The taps on the lines a crossfade moves, as (side, rank); `None` pads
+/// (`LoopEngine::offsets`).
+type Moving = [Option<(usize, usize)>; TC];
 
 impl<const L: usize, const S: usize> LoopEngine<L, S>
 where
@@ -752,9 +819,17 @@ where
 
     /// Each tap's weight this block: its sign, ×¾, × DENSITY's fade.
     pub fn tap_weights(&self) -> [[f32; TAPS]; 2] {
-        let count = TapCount(self.taps);
+        Self::weights_at(TapCount(self.taps))
+    }
+
+    /// The tap weights at `count`, scaled so the return's power holds
+    /// with DENSITY: the taps read near-uncorrelated lines, so √(3/Σw²)
+    /// keeps the 3 fixed taps' level at every count.
+    fn weights_at(count: TapCount) -> [[f32; TAPS]; 2] {
+        let e: f32 = (0..TAPS).map(|q| count.weight(q) * count.weight(q)).sum();
+        let norm = libm::sqrtf(TAPS_FIXED as f32 / e);
         core::array::from_fn(|sd| {
-            core::array::from_fn(|q| Self::TAPS[sd][q].sign.f32() * TAP_W * count.weight(q))
+            core::array::from_fn(|q| Self::TAPS[sd][q].sign.f32() * TAP_W * norm * count.weight(q))
         })
     }
 
@@ -811,7 +886,12 @@ where
         }
         self.dif_to = self.dif_at;
         let f = far(&self.dif_at, &self.dif_goal);
-        self.dif_to[f] = toward(self.dif_at[f], self.dif_goal[f]);
+        let d = self.dif_goal[f].abs_diff(self.dif_at[f]).min(DIF_STEP);
+        self.dif_to[f] = if self.dif_goal[f] > self.dif_at[f] {
+            self.dif_at[f] + d
+        } else {
+            self.dif_at[f] - d
+        };
         self.pre_to = toward(self.pre_at, self.pre_goal);
         if self.to != self.at || self.dif_to != self.dif_at || self.pre_to != self.pre_at {
             (self.left, self.retarget) = (XFADE, true);
@@ -869,18 +949,24 @@ where
         }
     }
 
-    /// Each access's offset from the head this block: `OFFSETS`, and the
-    /// reads the lengths move, new then old.
-    fn offsets(&self) -> [usize; MAX_ACCESS] {
+    /// Each access's offset from the head this block (`OFFSETS`, and the
+    /// reads the lengths move, new then old), the f32 ones, and what moves.
+    fn offsets(&self) -> ([usize; MAX_ACCESS], [usize; MAX_F_ACCESS], Moving) {
         type A<const L: usize, const S: usize> = Access<L, S>;
+        type F<const L: usize, const S: usize> = FAccess<L, S>;
         let h = &Self::HEADS;
-        let mut o = Self::OFFSETS;
+        let (mut o, mut of) = (Self::OFFSETS, Self::F_OFFSETS);
         o[A::<L, S>::R_PRE] = h.pre - self.pre_to as usize;
         o[A::<L, S>::R_PRE + 1] = h.pre - self.pre_at as usize;
-        for j in 0..DIFF {
-            o[A::<L, S>::R_DIF_TO + j] = h.diffuser[j] - self.dif_to[j] as usize;
-            o[A::<L, S>::R_DIF_FROM + j] = h.diffuser[j] - self.dif_at[j] as usize;
+        for (j, &d) in DIF_I.iter().enumerate() {
+            o[A::<L, S>::R_DIF_TO + j] = h.diffuser[d] - self.dif_to[d] as usize;
+            o[A::<L, S>::R_DIF_FROM + j] = h.diffuser[d] - self.dif_at[d] as usize;
         }
+        for (j, &d) in DIF_F.iter().enumerate() {
+            of[F::<L, S>::R_DF_TO + j] = h.diffuser[d] - self.dif_to[d] as usize;
+            of[F::<L, S>::R_DF_FROM + j] = h.diffuser[d] - self.dif_at[d] as usize;
+        }
+        let mut mv: Moving = [None; TC];
         for l in 0..L {
             for s in 0..S {
                 let j = l * S + s;
@@ -888,21 +974,33 @@ where
                 o[A::<L, S>::R_D_FROM + j] = h.delay[l][s] - self.at[l][s] as usize;
             }
         }
+        let mut c = 0;
         for sd in 0..2 {
             for q in 0..TAPS {
                 let t = Self::TAPS[sd][q];
                 let w = h.delay[t.lp][t.stage];
-                let j = TAPS * sd + q;
-                o[A::<L, S>::R_TAP_TO + j] = w - tap_off(t.at, self.to[t.lp][t.stage]);
-                o[A::<L, S>::R_TAP_FROM + j] = w - tap_off(t.at, self.at[t.lp][t.stage]);
+                let (to, at) = (self.to[t.lp][t.stage], self.at[t.lp][t.stage]);
+                o[A::<L, S>::R_TAP + TAPS * sd + q] = w - tap_off(t.at, to);
+                // `TAPS_FIT` holds the moving line's taps to `TC`.
+                if to != at && c < TC {
+                    o[A::<L, S>::R_TC_TO + c] = w - tap_off(t.at, to);
+                    o[A::<L, S>::R_TC_FROM + c] = w - tap_off(t.at, at);
+                    mv[c] = Some((sd, q));
+                    c += 1;
+                }
             }
         }
-        o
+        // The pads read where tap 0 does; their weight is 0.
+        for p in c..TC {
+            o[A::<L, S>::R_TC_TO + p] = o[A::<L, S>::R_TAP];
+            o[A::<L, S>::R_TC_FROM + p] = o[A::<L, S>::R_TAP];
+        }
+        (o, of, mv)
     }
 
-    /// One block: the crossfade's blended reads, or (most blocks) one
-    /// read a line, the same samples (a blend at w 1 of equal reads is
-    /// exact on integer-valued lines).
+    /// One block: a moving block (a crossfade, or DENSITY's taps moving)
+    /// blends only the reads that move and ramps the tap weights; a still
+    /// one (most blocks) reads each line once.
     #[inline(always)]
     fn block<Ln: Lines + ?Sized, const CLIP: bool>(
         &mut self,
@@ -913,39 +1011,73 @@ where
         l: &mut [f32; HALF],
         r: &mut [f32; HALF],
     ) {
-        if self.crossfading(k) {
-            self.block_xf::<Ln, CLIP, true>(lines, f, u, k, l, r);
-        } else {
-            self.block_xf::<Ln, CLIP, false>(lines, f, u, k, l, r);
+        let xf = self.crossfading(k);
+        // The eases: τ 50 ms for the gains, as QUAD's TIME, ramped each
+        // sample; DENSITY's taps 20 ms, ramped each sample while they
+        // move; 20 ms the rest, stepped once a block, as ROOM's.
+        let (g0, taps0) = (self.g, self.taps);
+        const K20: f32 = ease_k(0.02);
+        const K50: f32 = ease_k(0.05);
+        self.ease_to(k, K20, K50);
+        // What moves: the stage delays, the taps on their lines and
+        // PRE-DLY (SIZE, PRE-DLY); the diffuser (SPREAD); DENSITY's taps.
+        let xs = xf && (self.to != self.at || self.pre_to != self.pre_at);
+        let xd = xf && self.dif_to != self.dif_at;
+        let dr = self.taps != taps0;
+        // One path for each single move, and one for any two at once
+        // (rare: it does all three).
+        match (xs, xd, dr) {
+            (false, false, false) => {
+                self.block_xf::<Ln, CLIP, false, false, false>(lines, f, u, l, r, g0, taps0)
+            }
+            (true, false, false) => {
+                self.block_xf::<Ln, CLIP, true, false, false>(lines, f, u, l, r, g0, taps0)
+            }
+            (false, true, false) => {
+                self.block_xf::<Ln, CLIP, false, true, false>(lines, f, u, l, r, g0, taps0)
+            }
+            (false, false, true) => {
+                self.block_xf::<Ln, CLIP, false, false, true>(lines, f, u, l, r, g0, taps0)
+            }
+            _ => self.block_xf::<Ln, CLIP, true, true, true>(lines, f, u, l, r, g0, taps0),
         }
     }
 
-    fn block_xf<Ln: Lines + ?Sized, const CLIP: bool, const XF: bool>(
+    #[allow(clippy::too_many_arguments)]
+    fn block_xf<
+        Ln: Lines + ?Sized,
+        const CLIP: bool,
+        const XS: bool,
+        const XD: bool,
+        const DR: bool,
+    >(
         &mut self,
         lines: &mut Ln,
         f: &mut [f32],
         u: &[f32; HALF],
-        k: &EngineKnobs,
         l: &mut [f32; HALF],
         r: &mut [f32; HALF],
+        g0: [[f32; S]; L],
+        taps0: f32,
     ) {
         let () = Self::FITS;
         let (slots, fslots) = (Self::SLOTS, Self::FSLOTS);
         // Every unchecked access below leans on these two.
         assert!(lines.len() >= slots && f.len() >= fslots);
-        // The eases: τ 50 ms for the gains, as QUAD's TIME, ramped each
-        // sample; 20 ms the rest, stepped once a block, as ROOM's.
-        let g0 = self.g;
-        const K20: f32 = ease_k(0.02);
-        const K50: f32 = ease_k(0.05);
-        self.ease_to(k, K20, K50);
         let n = 1.0 / HALF as f32;
         let (ta, gd, gs, da) = (self.ta, self.gd, self.gs, self.da);
         let inv_gd = 1.0 / (1.0 - gd);
         let mut g = g0;
         let dg: [[f32; S]; L] =
             core::array::from_fn(|l| core::array::from_fn(|s| (self.g[l][s] - g0[l][s]) * n));
-        let wt = self.tap_weights();
+        let wt1 = self.tap_weights();
+        let mut wt = if DR {
+            Self::weights_at(TapCount(taps0))
+        } else {
+            wt1
+        };
+        let dwt: [[f32; TAPS]; 2] =
+            core::array::from_fn(|sd| core::array::from_fn(|q| (wt1[sd][q] - wt[sd][q]) * n));
         // The crossfade's blend: the new read's share.
         let (mut w, dw) = if self.left > 0 {
             ((XFADE - self.left) as f32 * XFADE_INV, XFADE_INV)
@@ -970,8 +1102,15 @@ where
         let dsm = [(off[0].1 - off[0].0) * n, (off[1].1 - off[1].0) * n];
         let nom = Self::SMEARED.map(|(l, s)| Self::LENS.ap[l][s] as f32);
         const { assert!(L <= 2 && S <= 4) };
-        let off_i = self.offsets();
-        let off_f: [usize; MAX_F_ACCESS] = Self::F_OFFSETS;
+        let (off_i, off_f, mv) = self.offsets();
+        // The moving line's taps' weights by side, at the block's start
+        // (a DENSITY ramp under a crossfade leaves them a block stale).
+        let cw: [[f32; TC]; 2] = core::array::from_fn(|side| {
+            core::array::from_fn(|c| match mv[c] {
+                Some((sd, q)) if sd == side => wt[sd][q],
+                _ => 0.0,
+            })
+        });
         let (mut tone, mut lp) = (self.tone, self.lp);
         let (mut h, mut hf) = (self.h as usize % slots, self.hf as usize % fslots);
         let mut i = 0;
@@ -1004,12 +1143,8 @@ where
                 }
                 macro_rules! blend {
                     ($to:expr, $from:expr) => {{
-                        if XF {
-                            let o = rd!($from);
-                            o + w * (rd!($to) - o)
-                        } else {
-                            rd!($to)
-                        }
+                        let o = rd!($from);
+                        o + w * (rd!($to) - o)
                     }};
                 }
                 type A<const L: usize, const S: usize> = Access<L, S>;
@@ -1017,13 +1152,37 @@ where
                 tone += ta * (us[t] * IN_GAIN - tone);
                 // SAFETY: as `rd`'s.
                 unsafe { lines.round(b[A::<L, S>::W_PRE] + t, tone) };
-                let mut d = blend!(A::<L, S>::R_PRE, A::<L, S>::R_PRE + 1);
+                let mut d = if XS {
+                    blend!(A::<L, S>::R_PRE, A::<L, S>::R_PRE + 1)
+                } else {
+                    rd!(A::<L, S>::R_PRE)
+                };
+                // The diffuser in signal order: `DIF_F`'s on f32 states,
+                // `DIF_I`'s normalised i16. While one moves all six blend;
+                // the still ones' old and new reads are one slot.
                 unroll!(J in [0, 1, 2, 3, 4, 5] {
-                    let z = blend!(A::<L, S>::R_DIF_TO + J, A::<L, S>::R_DIF_FROM + J);
-                    let (y, s) = ap_norm(d, z, gd, inv_gd);
-                    // SAFETY: as `rd`'s.
-                    unsafe { lines.settle_ap(b[A::<L, S>::W_DIF + J] + t, s) };
-                    d = y;
+                    if DIF_F32[J] {
+                        const FJ: usize = match J { 0 => 0, 1 => 1, 4 => 2, _ => 3 };
+                        let mut z = fget!(F::<L, S>::R_DF_TO + FJ);
+                        if XD {
+                            let o = fget!(F::<L, S>::R_DF_FROM + FJ);
+                            z = o + w * (z - o);
+                        }
+                        let (y, v) = ap_f32(d, z, gd);
+                        fset!(F::<L, S>::W_DF + FJ, v);
+                        d = y;
+                    } else {
+                        const IJ: usize = J.saturating_sub(2);
+                        let z = if XD {
+                            blend!(A::<L, S>::R_DIF_TO + IJ, A::<L, S>::R_DIF_FROM + IJ)
+                        } else {
+                            rd!(A::<L, S>::R_DIF_TO + IJ)
+                        };
+                        let (y, s) = ap_norm(d, z, gd, inv_gd);
+                        // SAFETY: as `rd`'s.
+                        unsafe { lines.settle_ap(b[A::<L, S>::W_DIF + IJ] + t, s) };
+                        d = y;
+                    }
                 });
                 // Each loop's stages, unrolled: `LO` and `ST` are literals,
                 // past `L` and `S` dead code.
@@ -1035,7 +1194,13 @@ where
                                 let j = LO * S + ST;
                                 // Stage `ST`'s delay, 2 or more behind its
                                 // write: before or after it, the same.
-                                let x = blend!(A::<L, S>::R_D_TO + j, A::<L, S>::R_D_FROM + j);
+                                // While a length moves all four blend; the
+                                // still ones' reads are one slot.
+                                let x = if XS {
+                                    blend!(A::<L, S>::R_D_TO + j, A::<L, S>::R_D_FROM + j)
+                                } else {
+                                    rd!(A::<L, S>::R_D_TO + j)
+                                };
                                 // SAFETY (`pair_in`): the write slot is below
                                 // `fslots` (as `fget`'s); `sm` is clamped to
                                 // [0, 2·cap·trip] above, and `SMEAR_FITS`
@@ -1077,10 +1242,28 @@ where
                 let mut side = [0.0f32; 2];
                 unroll!(SD in [0, 1] {
                     unroll!(Q in [0, 1, 2, 3, 4, 5, 6, 7] {
-                        let j = TAPS * SD + Q;
-                        side[SD] += wt[SD][Q] * blend!(A::<L, S>::R_TAP_TO + j, A::<L, S>::R_TAP_FROM + j);
+                        side[SD] += wt[SD][Q] * rd!(A::<L, S>::R_TAP + TAPS * SD + Q);
                     });
                 });
+                if XS {
+                    // The moving line's taps: each read at its new length
+                    // above, and here (1 − w) of the way back to its old.
+                    let mut back = [0.0f32; 2];
+                    unroll!(C in [0, 1, 2, 3] {
+                        let d = rd!(A::<L, S>::R_TC_FROM + C) - rd!(A::<L, S>::R_TC_TO + C);
+                        back[0] += cw[0][C] * d;
+                        back[1] += cw[1][C] * d;
+                    });
+                    side[0] += (1.0 - w) * back[0];
+                    side[1] += (1.0 - w) * back[1];
+                }
+                if DR {
+                    unroll!(SD in [0, 1] {
+                        unroll!(Q in [0, 1, 2, 3, 4, 5, 6, 7] {
+                            wt[SD][Q] += dwt[SD][Q];
+                        });
+                    });
+                }
                 (ls[t], rs[t]) = (side[0], side[1]);
                 unroll!(LO in [0, 1] {
                     unroll!(ST in [0, 1, 2, 3] {

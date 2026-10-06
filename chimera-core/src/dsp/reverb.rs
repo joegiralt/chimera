@@ -444,15 +444,16 @@ pub const HALL: Ranges = Ranges {
 };
 
 /// HALL's SIZE below this is the plate zone (spec § PLATE is a zone of
-/// HALL).
-pub const PLATE_ZONE: f32 = 0.15;
+/// HALL): 0.05, narrowed from 0.15 so the MidiVerb II halls that fit at
+/// small SIZE play their own knobs (ADR 0095 § HALL, as built).
+pub const PLATE_ZONE: f32 = 0.05;
 
 /// Whether `p` sits in HALL's plate zone: its SIZE cell reads `PLATE`.
 pub fn in_plate_zone(p: &ReverbParams) -> bool {
     p.kind == ReverbType::Hall && unit(p.size) < PLATE_ZONE
 }
 
-/// The knobs HALL plays in its plate zone, w = 1 − SIZE/0.15 (1 at SIZE
+/// The knobs HALL plays in its plate zone, w = 1 − SIZE/0.05 (1 at SIZE
 /// 0): DIFFUSE pulled up by w, TONE, PRE-DLY and SPREAD down by w, toward
 /// the plate's dense, bright, immediate corner. The stored knobs never change;
 /// above the zone, and on every other TYPE, `p` itself.
