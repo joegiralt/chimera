@@ -266,11 +266,11 @@ code 23, ident `"TAPE"`, ADR 0055).
     flashed before any model past LOOP is built, and a row over its bill
     raises it.
   - `cost_test` gains `tape_bills_each_model`.
-  - **Until TAPE Task 14 splits the terms** (amended in place, TAPE Task
-    12 review): every TAPE voice bills 530, PING-PONG's 490 with TAPE's
-    10 and AGE's 30, but TRANSWAVE, which bills a flat 810 (a level
-    change's 770 with them), since a whole block can sit in a level
-    change whenever pitch can move.
+  - **TAPE Task 14 split the terms** (amended in place): each model
+    bills its own figure above, TAPE's 10 and AGE's 30 each when it runs,
+    and TRANSWAVE its level change's 370 more at STEAL GLIDE, when its
+    PITCH and FINE routes can move it past 620 cents, or on a re-snap.
+    Task 12 had billed every voice a flat 530, TRANSWAVE 810.
 - **Import is host only,** in `chimera-import tape` and `just tape`:
   - `hound` reads the WAV;
   - a high-pass, a trim and normalisation to −0.5 dBFS;

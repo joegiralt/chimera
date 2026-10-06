@@ -8,12 +8,13 @@ use core::mem::MaybeUninit;
 use chimera_hal::BLOCK_SIZE;
 
 use crate::addr::{BlockRef, ParamAddr};
+use crate::block::OffsetLaw;
 use crate::dsp::algo::engine::{AlgoEngine, AlgoLive};
 use crate::dsp::modal::{Halo, ModalEngine, ModalParams, Model, ResonatorMode, SymPool};
-use crate::dsp::tape_engine::TapeEngine;
+use crate::dsp::tape_engine::{COST_WAVE_LEVEL, LEVEL_CENTS, TapeEngine, TapeModel};
 use crate::hw::Cost;
 use crate::in_place::{in_place_enum, move_out};
-use crate::modulation::ModState;
+use crate::modulation::{ModState, amount_scale};
 use crate::params::{EngineType, ParamSnapshot, PitchParams, Steal};
 use crate::project::SourceId;
 use crate::source_table::GateView;
@@ -310,11 +311,13 @@ impl EngineSlot {
     /// each block (`ModalEngine::PITCH`, and `HALO_PITCH` on SYMP). Algo
     /// sets its frequency each block anyway.
     pub fn glide_cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
-        let billed = pitch_routed(mods) || p.pitch.steal == Steal::Glide;
-        if p.engine() != EngineType::Modal || billed {
-            return Cost::ZERO;
+        match p.engine() {
+            EngineType::Modal if !(pitch_routed(mods) || p.pitch.steal == Steal::Glide) => {
+                pitch_cost(p)
+            }
+            EngineType::Tape if wave_levels(p) && !level_billed(p, mods) => COST_WAVE_LEVEL,
+            _ => Cost::ZERO,
         }
-        pitch_cost(p)
     }
 
     /// A glide steal's ratio now, 1 at rest: for the tests.
@@ -434,9 +437,43 @@ impl EngineSlot {
                 }
                 c
             }
+            EngineType::Tape if wave_levels(p) && level_billed(p, mods) => {
+                TapeEngine::cost(&p.tape, mods) + COST_WAVE_LEVEL
+            }
             EngineType::Tape => TapeEngine::cost(&p.tape, mods),
         }
     }
+}
+
+/// TRANSWAVE: a pitch that moves far enough changes level, a block of four
+/// heads (`COST_WAVE_LEVEL`).
+fn wave_levels(p: &ParamSnapshot) -> bool {
+    p.tape.model == TapeModel::Transwave
+}
+
+/// Pitch can move past `LEVEL_CENTS` in a note: a glide steal, or PITCH
+/// and FINE routes whose `|amount| × range` sum past it. A vibrato can't.
+fn level_billed(p: &ParamSnapshot, mods: &ModState) -> bool {
+    p.pitch.steal == Steal::Glide || pitch_reach(mods) > LEVEL_CENTS
+}
+
+/// The most cents PITCH's and FINE's routes can move a note, every source
+/// at full swing.
+fn pitch_reach(mods: &ModState) -> f32 {
+    [PitchParams::PITCH, PitchParams::FINE]
+        .into_iter()
+        .map(|q| {
+            let addr = ParamAddr::new(BlockRef::Pitch, q);
+            let cents = match addr.spec().map(|s| s.law) {
+                Some(OffsetLaw::Semitones(n)) => n * 100.0,
+                Some(OffsetLaw::Cents(n)) => n,
+                _ => 0.0,
+            };
+            let d = mods.find(addr);
+            let swing = |s| d.map_or(0.0, |d| amount_scale(mods.amount(s, d)).abs());
+            cents * (0..mods.num_sources()).map(swing).sum::<f32>()
+        })
+        .sum()
 }
 
 /// A route, of any amount, into STRUCTURE: SYMP's chord.

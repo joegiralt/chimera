@@ -36,6 +36,7 @@ use core::mem::MaybeUninit;
 
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 
+use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::algo::math::{clampf, exp2};
 use crate::dsp::delay::{Tap, Transport};
 use crate::dsp::ease::Ramp;
@@ -59,14 +60,34 @@ use wave::Wave;
 pub use heads::loop_len;
 pub use params::{StretchType, TAPE_ENGINE_SPECS, TapeEngineParams, TapeModel, Wow, drag_s};
 
-/// Every TAPE voice's bill but TRANSWAVE's until TAPE Task 14 splits it by
-/// model: PING-PONG's 490, the costliest of the rest, + TAPE's 10 + AGE's
-/// 30, so a voice running both is never under-billed (spec § 5).
-pub const COST_TAPE: Cost = Cost(530);
-/// TRANSWAVE's, flat until Task 14 bills its level change only where pitch
-/// can move: a level change's 770 + TAPE's 10 + AGE's 30. A whole block
-/// can sit in a change (a glide steal, a deep PITCH route, a re-snap).
-pub const COST_TAPE_WAVE: Cost = Cost(810);
+// Each model's bill: its measured worst a sample, the M7's static count
+// (instructions × 1.46 × 1.1, + 12 a head for `inc` 16's misses), rounded
+// up to 10 (spec § 5). The bench's cold rows hold them (TAPE Task 14).
+/// LOOP either way: its shortest loop at `inc` 16, XFADE ½, 262.4 → 445.
+pub const COST_LOOP: Cost = Cost(450);
+/// ONESHOT: a short slice's end ramp, retriggered, 135.4 → 229.5.
+pub const COST_ONESHOT: Cost = Cost(230);
+/// TRON: its run-out ramp, as ONESHOT's end, 135.4 → 229.5.
+pub const COST_TRON: Cost = Cost(230);
+/// PING-PONG clamping in its shortest loop, 289.4 → 489.
+pub const COST_PING: Cost = Cost(490);
+/// SCRUB fading in its shortest loop, an ease in, 283.4 → 479.
+pub const COST_SCRUB: Cost = Cost(480);
+/// TRANSWAVE steady: two heads, 232.9 → 398.
+pub const COST_WAVE: Cost = Cost(400);
+/// TRANSWAVE's level change over `COST_WAVE`: four heads, 432.9 → 743,
+/// billed 770 in all. TAPE's `glide_cost` term.
+pub const COST_WAVE_LEVEL: Cost = Cost(370);
+/// STRETCH either way, a short source's lifted wraps, 442.5.
+pub const COST_STRETCH: Cost = Cost(450);
+/// TAPE when it runs (`tape_runs`): the transport, 1.2 → 1.9.
+pub const COST_TAPE_RUNS: Cost = Cost(10);
+/// AGE when it runs (`age::age_runs`): the wear's loop and block, 15.9 →
+/// 25.5.
+pub const COST_AGE: Cost = Cost(30);
+/// TRANSWAVE's pitch can cross a level (`COST_WAVE_LEVEL`) in a note past
+/// this many cents: the hysteresis' 0.35 to 0.715 step, ±6.2 st.
+pub const LEVEL_CENTS: f32 = 620.0;
 
 /// `inc`'s clamp: four octaves over a 48 kHz source's own speed.
 pub const INC_MAX: f32 = 16.0;
@@ -584,24 +605,31 @@ impl TapeEngine {
         }
     }
 
-    /// A TAPE voice's bill for `p` until TAPE Task 14 bills each model and
-    /// TAPE's and AGE's terms: its model's `model_cost`.
-    pub fn cost(p: &TapeEngineParams, _mods: &ModState) -> Cost {
-        Self::model_cost(p.model)
+    /// A TAPE voice's bill for `p`: its model's, and TAPE's and AGE's each
+    /// when it runs, stored above 0 or routed (spec § 5). TRANSWAVE's level
+    /// change is `EngineSlot`'s, which sees the pitch.
+    pub fn cost(p: &TapeEngineParams, mods: &ModState) -> Cost {
+        let routed = |q| mods.moves_addr(ParamAddr::new(BlockRef::TapeEngine, q));
+        let mut c = Self::model_cost(p.model);
+        if tape_runs(p.tape, routed(TapeEngineParams::TAPE)) {
+            c = c + COST_TAPE_RUNS;
+        }
+        if age::age_runs(p.age, routed(TapeEngineParams::AGE)) {
+            c = c + COST_AGE;
+        }
+        c
     }
 
-    /// `COST_TAPE_WAVE` for TRANSWAVE, `COST_TAPE` for the rest.
-    pub fn model_cost(m: TapeModel) -> Cost {
+    /// Each model's measured worst, either way round (spec § 5).
+    pub const fn model_cost(m: TapeModel) -> Cost {
         match m {
-            TapeModel::Transwave => COST_TAPE_WAVE,
-            // ONESHOT and TRON count 230 (spec § 5), LOOP either way 450,
-            // STRETCH 450: billed at the rest's until Task 14 splits them.
-            TapeModel::Loop
-            | TapeModel::PingPong
-            | TapeModel::Scrub
-            | TapeModel::Stretch
-            | TapeModel::Tron
-            | TapeModel::Oneshot => COST_TAPE,
+            TapeModel::Loop => COST_LOOP,
+            TapeModel::Oneshot => COST_ONESHOT,
+            TapeModel::Tron => COST_TRON,
+            TapeModel::PingPong => COST_PING,
+            TapeModel::Scrub => COST_SCRUB,
+            TapeModel::Transwave => COST_WAVE,
+            TapeModel::Stretch => COST_STRETCH,
         }
     }
 

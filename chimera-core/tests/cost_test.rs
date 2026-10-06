@@ -401,6 +401,42 @@ fn the_model_bills_every_bench_row_high() {
     ] {
         assert!(billed >= measured, "{name}: {billed} < {measured}");
     }
+    // The TAPE rows (spec § 5), TAPE and AGE at 0.5 on each, as the bench
+    // plays them; read cold on the unit. 0 until the owner's session.
+    use chimera_core::dsp::tape_engine::TapeModel::{
+        Loop, Oneshot, PingPong, Scrub, Stretch, Transwave, Tron,
+    };
+    let tape = |model, (start, end): (f32, f32), steal_glide: bool| {
+        let mut p = tape_sound(model);
+        (p.tape.tape, p.tape.age, p.tape.start, p.tape.end) = (0.5, 0.5, start, end);
+        if steal_glide {
+            p.pitch.steal = chimera_core::params::Steal::Glide;
+        }
+        Voice::CHAIN_COST.0 + EngineSlot::cost(&p, &ModState::new()).0
+    };
+    let (fwd, rev) = ((0.0, 1.0), (1.0, 0.0));
+    for (name, billed, measured) in [
+        ("TAPE LOOP", tape(Loop, fwd, false), 0),
+        ("TAPE STRETCH", tape(Stretch, fwd, false), 0),
+        // ±12 st every block: billed as a glide or a deep route is.
+        ("TAPE WAVE C7", tape(Transwave, fwd, true), 0),
+        ("TINY LOOP 8", tape(Loop, fwd, false), 0),
+        ("TINY REV 8", tape(Loop, rev, false), 0),
+        ("TINY PING 8", tape(PingPong, fwd, false), 0),
+        ("TINY SCRUB 8", tape(Scrub, fwd, false), 0),
+        ("TINY LOOP", tape(Loop, fwd, false), 0),
+        ("TINY REV", tape(Loop, rev, false), 0),
+        ("TINY PING", tape(PingPong, fwd, false), 0),
+        ("TINY SCRUB", tape(Scrub, fwd, false), 0),
+        ("TINY 1SHOT", tape(Oneshot, fwd, false), 0),
+        ("TINY TRON", tape(Tron, fwd, false), 0),
+    ] {
+        assert!(billed >= measured, "{name}: {billed} < {measured}");
+    }
+    assert_eq!(tape(Loop, fwd, false), 30 + 450 + 40);
+    assert_eq!(tape(Stretch, fwd, false), 30 + 450 + 40);
+    assert_eq!(tape(Transwave, fwd, true), 30 + 770 + 40);
+    assert_eq!(tape(Oneshot, fwd, false), 30 + 230 + 40);
 }
 
 /// The Task 13 bench (rev V, 480 MHz, 2026-09-28, the bench-t13c run):
@@ -1137,4 +1173,155 @@ fn a_refused_note_on_does_not_recost() {
     assert_eq!(r.inst.costings(), before + 1, "once for the block");
     r.render(1);
     assert_eq!(r.inst.costings(), before + 2, "and once the next");
+}
+
+/// ADR 0091's reserve beside the voices: the bus's 1,180 and a note-on
+/// burst's 836 (1,490 + 836 with the master tape), 171 more while ORBIT
+/// plays. Spec § 5's admission table is counted against it.
+// ponytail: literal until `Instrument::RESERVED` (orbit-budget) merges.
+const RESERVED: u32 = 2_016;
+const RESERVED_TAPE: u32 = 2_326;
+const ORBIT_COST: u32 = 171;
+
+/// A matrix with `routes` (source, destination, amount) and nothing else;
+/// `None` if a destination takes no route.
+fn try_routes(routes: &[(ModSource, chimera_core::addr::ParamAddr, i8)]) -> Option<ModState> {
+    let mut ms = ModState::from_registry(&chimera_core::mod_path::ModDestRegistry::new(), 8);
+    for &(s, addr, amt) in routes {
+        let d = ms.find(addr).or_else(|| ms.push(addr))?;
+        ms.set_route(s.index(), d, amt);
+    }
+    Some(ms)
+}
+
+fn routes(r: &[(ModSource, chimera_core::addr::ParamAddr, i8)]) -> ModState {
+    try_routes(r).expect("every destination modulatable")
+}
+
+fn tape_sound(model: chimera_core::dsp::tape_engine::TapeModel) -> ParamSnapshot {
+    let mut p = ParamSnapshot::for_engine(EngineType::Tape);
+    p.tape.model = model;
+    p
+}
+
+/// Spec § 5: each model bills its measured worst, TAPE +10 and AGE +30
+/// each when it runs (stored above 0, or routed); and the voices each is
+/// admitted beside the reserve on rev V, rev Y, rev V with ORBIT playing
+/// and rev V with the master tape, as tabled, with TAPE and AGE both off
+/// and both at 0.5.
+#[test]
+fn tape_bills_each_model() {
+    use TapeModel::{Loop, Oneshot, PingPong, Scrub, Stretch, Transwave, Tron};
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::tape_engine::{TapeEngineParams, TapeModel};
+    let rooms = {
+        let v = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
+        let y = SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0;
+        [
+            v - RESERVED,
+            y - RESERVED,
+            v - RESERVED - ORBIT_COST,
+            v - RESERVED_TAPE,
+        ]
+    };
+    assert_eq!(rooms, [4_984, 3_817, 4_813, 4_674]);
+    let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
+    let on = |q| ParamAddr::new(BlockRef::TapeEngine, q);
+    // Model, bill, voices with TAPE and AGE off, with both.
+    for (model, bill, off, both) in [
+        (Loop, 450, [8, 7, 8, 8], [8, 6, 8, 8]),
+        (PingPong, 490, [8, 6, 8, 8], [8, 6, 7, 7]),
+        (Scrub, 480, [8, 6, 8, 8], [8, 6, 8, 7]),
+        (Transwave, 400, [8, 8, 8, 8], [8, 7, 8, 8]),
+        (Stretch, 450, [8, 7, 8, 8], [8, 6, 8, 8]),
+        (Oneshot, 230, [8, 8, 8, 8], [8, 8, 8, 8]),
+        (Tron, 230, [8, 8, 8, 8], [8, 8, 8, 8]),
+    ] {
+        for reversed in [false, true] {
+            let mut p = tape_sound(model);
+            if reversed {
+                (p.tape.start, p.tape.end) = (1.0, 0.0);
+            }
+            // TAPE and AGE each stored 0, 0.5, and routed at 0.
+            for (tape, tape_routed, t) in [(0.0, false, 0), (0.5, false, 10), (0.0, true, 10)] {
+                for (age, age_routed, a) in [(0.0, false, 0), (0.5, false, 30), (0.0, true, 30)] {
+                    (p.tape.tape, p.tape.age) = (tape, age);
+                    let mut r = Vec::new();
+                    if tape_routed {
+                        r.push((ModSource::Lfo1, on(TapeEngineParams::TAPE), 64));
+                    }
+                    if age_routed {
+                        r.push((ModSource::Lfo2, on(TapeEngineParams::AGE), 64));
+                    }
+                    // TAPE and AGE take no route until the voice reads
+                    // TAPE_ENG (`BlockRef::voice_reads`): then these run.
+                    let Some(mods) = try_routes(&r) else {
+                        assert!(r.iter().all(|&(_, addr, _)| !addr.modulatable()));
+                        continue;
+                    };
+                    let why = format!(
+                        "{model:?} rev {reversed} TAPE {tape}/{tape_routed} AGE {age}/{age_routed}"
+                    );
+                    assert_eq!(EngineSlot::cost(&p, &mods), Cost(bill + t + a), "{why}");
+                }
+            }
+            for (stored, want, extra) in [(0.0, off, 0), (0.5, both, 40)] {
+                (p.tape.tape, p.tape.age) = (stored, stored);
+                let voice = Voice::cost(&p, &ModState::new()).0;
+                assert_eq!(voice, bill + extra + 77, "{model:?} at {stored}");
+                assert_eq!(at(voice), want, "{model:?} at {stored}");
+            }
+        }
+    }
+}
+
+/// Spec § 5: TRANSWAVE bills a level change's 370 more only where its pitch
+/// can move more than 620 cents in a note: STEAL GLIDE, or PITCH and FINE
+/// routes whose `|amount| × range` sum past it. A vibrato bills none. A
+/// re-snap's glide bills it beside a TRANSWAVE that isn't billed it
+/// already; no other model has levels.
+#[test]
+fn vibrato_costs_no_level_heads() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::tape_engine::TapeModel;
+    use chimera_core::params::{PitchParams, Steal};
+    let pitch = ParamAddr::new(BlockRef::Pitch, PitchParams::PITCH);
+    let fine = ParamAddr::new(BlockRef::Pitch, PitchParams::FINE);
+    let wave = tape_sound(TapeModel::Transwave);
+    let (l1, l2) = (ModSource::Lfo1, ModSource::Lfo2);
+    // 1 st is 5.3 of 127 at PITCH's ±24 st; 620 cents is 32.8.
+    for (r, bill) in [
+        (vec![], 400),
+        (vec![(l1, pitch, 5)], 400),
+        (vec![(l1, pitch, -5)], 400),
+        (vec![(l1, fine, 127)], 400),
+        (vec![(l1, pitch, 32)], 400),
+        (vec![(l1, pitch, 33)], 770),
+        (vec![(l1, pitch, -33)], 770),
+        (vec![(l1, pitch, 64)], 770),
+        (vec![(l1, pitch, 17), (l2, pitch, -17)], 770),
+        (vec![(l1, pitch, 30), (l2, fine, 127)], 770),
+        (vec![(l1, pitch, 30), (l2, fine, 60)], 400),
+    ] {
+        let mods = routes(&r);
+        assert_eq!(EngineSlot::cost(&wave, &mods), Cost(bill), "{r:?}");
+        let glide = Voice::glide_cost(&wave, &mods);
+        assert_eq!(glide, Cost(770 - bill), "a re-snap under {r:?}");
+    }
+    let mut glide = wave;
+    glide.pitch.steal = Steal::Glide;
+    assert_eq!(EngineSlot::cost(&glide, &ModState::new()), Cost(770));
+    assert_eq!(Voice::glide_cost(&glide, &ModState::new()), Cost(0));
+    let deep = routes(&[(l1, pitch, 64)]);
+    for m in TapeModel::ALL
+        .into_iter()
+        .filter(|&m| m != TapeModel::Transwave)
+    {
+        let mut p = tape_sound(m);
+        let base = EngineSlot::cost(&p, &ModState::new());
+        assert_eq!(EngineSlot::cost(&p, &deep), base, "{m:?}");
+        assert_eq!(Voice::glide_cost(&p, &ModState::new()), Cost(0), "{m:?}");
+        p.pitch.steal = Steal::Glide;
+        assert_eq!(EngineSlot::cost(&p, &ModState::new()), base, "{m:?}");
+    }
 }

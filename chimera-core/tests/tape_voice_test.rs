@@ -10,7 +10,7 @@ use core::mem::size_of;
 use chimera_core::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
 use chimera_core::dsp::modal::{ModalEngine, SymPool};
 use chimera_core::dsp::tape_engine::{
-    COST_TAPE, COST_TAPE_WAVE, StretchType, TapeEngine, TapeEngineParams, TapeModel, Wow,
+    COST_LOOP, COST_ONESHOT, StretchType, TapeEngine, TapeEngineParams, TapeModel, Wow,
 };
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{MAX_VOICES, VOICE_CHAIN_BYTES, VOICE_RAM_BUDGET};
@@ -317,24 +317,10 @@ fn no_source_unlatches_the_last() {
     assert!(!v.is_active());
 }
 
-/// Until TAPE Task 14 bills each model, a TAPE voice bills `COST_TAPE`,
-/// 530 (PING-PONG's 490 with TAPE's 10 and AGE's 30), and TRANSWAVE
-/// `COST_TAPE_WAVE`, 810 (a level change's 770 with them). A sounding note
-/// is billed what it plays.
+/// A sounding TAPE note is billed the model it latched, `COST_LOOP` here,
+/// under an edit to a cheaper one (spec § 5; `cost_test` has each bill).
 #[test]
-fn tape_bills_by_model_until_task_14() {
-    assert_eq!((COST_TAPE.0, COST_TAPE_WAVE.0), (530, 810));
-    for model in TapeModel::ALL {
-        let mut s = Sound::init(EngineType::Tape);
-        s.params.tape.model = model;
-        let want = if model == TapeModel::Transwave {
-            COST_TAPE_WAVE
-        } else {
-            COST_TAPE
-        };
-        assert_eq!(EngineSlot::cost(&s.params, &s.mod_state), want, "{model:?}");
-        assert_eq!(TapeEngine::cost(&s.params.tape, &s.mod_state), want);
-    }
+fn a_sounding_note_bills_its_latched_model() {
     let s = Sound::init(EngineType::Tape);
     let mut slot = EngineSlot::new(SlotKind::Tape);
     assert_eq!(slot.playing_cost(), None);
@@ -346,21 +332,16 @@ fn tape_bills_by_model_until_task_14() {
         src: &view,
     };
     slot.note_on(c4(), Velocity::DEFAULT, &s.params, SR, Some(id), ctx);
-    assert_eq!(slot.playing_cost(), Some(COST_TAPE));
-    assert_eq!(slot.model_cost(&s.params), COST_TAPE);
-    // A sounding TRANSWAVE note is billed its 810 under a LOOP edit.
-    let mut wave = Sound::init(EngineType::Tape);
-    wave.params.tape.model = TapeModel::Transwave;
-    let mut src = common::tape::OneSource::new(&common::tape::saw_to_square());
-    let (id, view) = (src.id, src.view());
-    let ctx = &mut EngineCtx {
-        sym: &mut sym,
-        src: &view,
-    };
-    slot.note_on(c4(), Velocity::DEFAULT, &wave.params, SR, Some(id), ctx);
-    assert_eq!(slot.playing_cost(), Some(COST_TAPE_WAVE));
-    assert_eq!(slot.model_cost(&s.params), COST_TAPE);
-    assert_eq!(slot.model_cost(&wave.params), COST_TAPE_WAVE);
+    assert_eq!(slot.playing_cost(), Some(COST_LOOP));
+    let mut edit = s.params.clone();
+    edit.tape.model = TapeModel::Oneshot;
+    assert_eq!(slot.model_cost(&s.params), COST_LOOP);
+    assert_eq!(slot.model_cost(&edit), COST_ONESHOT);
+    assert_eq!(
+        TapeEngine::model_cost(TapeModel::Oneshot),
+        COST_ONESHOT,
+        "the edit's"
+    );
 }
 
 /// A retune (ORBIT's re-snap) and a glide steal glide a sounding TAPE
