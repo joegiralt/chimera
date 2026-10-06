@@ -229,21 +229,22 @@ impl Engine {
         // The block's source view, held over the render: TAPE's voices
         // read through `GateView::bytes` (TAPE Task 13). Until one latches
         // a source the block holds none, and stores 0.
-        let reads = sources.begin_block();
-        if gate.before_block(link, inst, shared) {
-            let now = runner.now();
-            drain.drain(|src, ev| match ev {
-                // Capture sees the raw key, before any snap.
-                InEvent::Note(n) => {
-                    runner.live(n);
-                    inst.handle(n, shared);
-                }
-                InEvent::Rt(rt) => runner.realtime(src.index(), rt, now),
-            });
-            runner.block(inst, shared);
+        {
+            let _reads = sources.begin_block();
+            if gate.before_block(link, inst, shared) {
+                let now = runner.now();
+                drain.drain(|src, ev| match ev {
+                    // Capture sees the raw key, before any snap.
+                    InEvent::Note(n) => {
+                        runner.live(n);
+                        inst.handle(n, shared);
+                    }
+                    InEvent::Rt(rt) => runner.realtime(src.index(), rt, now),
+                });
+                runner.block(inst, shared);
+            }
+            inst.render(fx, dac, shared, scope);
         }
-        inst.render(fx, dac, shared, scope);
-        drop(reads);
         sources.store_sounding(0);
         view.publish(|v| runner.fill_view(v));
     }

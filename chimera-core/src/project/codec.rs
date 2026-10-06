@@ -38,11 +38,13 @@ use crate::storage::{
 };
 
 use super::arena::{ARENA_BYTES, Cost, MAX_SOURCES};
+use super::parts::new_part;
 use super::pool::{Pool, entry_len};
 use super::sources::{SourceId, SourceRef, ref_cost};
 use super::swap::{LoadLink, Swap};
-use super::template::{new_project_part, new_slot};
+use super::template::NEW_PARTS;
 use super::{EncodedSound, Origin, Part, PartId, PartSet, Project, SlotId};
+use crate::factory::factory_entries;
 use crate::preset::MAX_SOUNDS;
 use crate::storage::Side;
 
@@ -142,12 +144,7 @@ fn put_fx(w: &mut RecordWriter<'_>, fx: &FxParams) -> Result<(), StoreError> {
     Ok(())
 }
 
-fn put_slot(w: &mut RecordWriter<'_>, s: SlotId, sound: &Sound) -> Result<(), StoreError> {
-    put_context(w, RecordTag::Slot, s.index(), sound.name)?;
-    encode_sound(sound, w)
-}
-
-/// A pool slot: its bytes are the records `put_slot` would write.
+/// A pool slot: its bytes are the records `encode_sound` writes for it.
 fn put_encoded(
     w: &mut RecordWriter<'_>,
     s: SlotId,
@@ -160,8 +157,17 @@ fn put_encoded(
 fn put_part(w: &mut RecordWriter<'_>, i: usize, part: &Part) -> Result<(), StoreError> {
     put_context(w, RecordTag::Part, i, part.sound.name)?;
     encode_sound(&part.sound, w)?;
-    put_block(w, BlockRef::Part, &part.mix)?;
-    let origin = match part.origin {
+    put_part_end(w, &part.mix, part.origin)
+}
+
+/// A Part's records after its Sound's: the mix, then its `Origin`.
+fn put_part_end(
+    w: &mut RecordWriter<'_>,
+    mix: &PartParams,
+    origin: Origin,
+) -> Result<(), StoreError> {
+    put_block(w, BlockRef::Part, mix)?;
+    let origin = match origin {
         Origin::Slot { slot, .. } => [ORIGIN_SLOT, slot.index() as u8],
         Origin::Init(e) => [ORIGIN_INIT, e.disk_code()],
     };
@@ -204,7 +210,8 @@ pub fn encode_new_project(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
 // NEW's FX, slot Sounds, Parts and ORBIT song each in a frame of its own,
 // never nested in one (each holds its value whole): CLEAR's write is
 // reached through a pointer, so its depth is charged to every pointer call
-// (the stack check).
+// (the stack check). The factory Sounds go as the blob's bytes, which are
+// the records `encode_sound` writes for them: no Sound on the stack.
 #[inline(never)]
 fn put_new_fx(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     put_fx(w, &FxParams::default())
@@ -212,10 +219,8 @@ fn put_new_fx(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
 
 #[inline(never)]
 fn put_new_slots(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
-    for s in SlotId::ALL {
-        if let Some(sound) = new_slot(s) {
-            put_slot(w, s, &sound)?;
-        }
+    for (s, (_, bytes)) in SlotId::ALL.into_iter().zip(factory_entries()) {
+        put_encoded(w, s, EncodedSound::new(bytes))?;
     }
     Ok(())
 }
@@ -223,9 +228,30 @@ fn put_new_slots(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
 #[inline(never)]
 fn put_new_parts(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     for i in 0..MAX_PARTS {
-        put_part(w, i, &new_project_part(i))?;
+        let new = NEW_PARTS
+            .get(i)
+            .and_then(|&s| Some((s, factory_entries().nth(s.index())?.1)));
+        let Some((slot, bytes)) = new else {
+            put_init_part(w, i)?;
+            continue;
+        };
+        let sound = EncodedSound::new(bytes);
+        put_context(w, RecordTag::Part, i, sound.name())?;
+        w.copy(sound.records())?;
+        let origin = Origin::Slot {
+            slot,
+            generation: 0,
+            crc: 0,
+        };
+        put_part_end(w, &PartParams::for_part(i), origin)?;
     }
     Ok(())
+}
+
+/// A NEW Part with no factory Sound: INIT, its Sound in a frame of its own.
+#[inline(never)]
+fn put_init_part(w: &mut RecordWriter<'_>, i: usize) -> Result<(), StoreError> {
+    put_part(w, i, &new_part(i))
 }
 
 #[inline(never)]

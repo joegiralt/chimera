@@ -5,17 +5,13 @@ use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
 use super::arena::ArenaWriter;
-use crate::factory::{factory_entries, new_sound};
+use crate::factory::factory_entries;
 use crate::in_place::uninit_at;
 use crate::orbit::scene::OrbitSong;
 use crate::params::EngineType;
-use crate::preset::Sound;
-use crate::storage::sound_crc;
 
-use super::parts::new_part;
 use super::{
-    Origin, Part, PartFrom, PartId, PartSource, Performance, Pool, Project, ProjectMeta, SlotId,
-    project_crc,
+    PartFrom, PartId, PartSource, Performance, Pool, Project, ProjectMeta, SlotId, project_crc,
 };
 
 /// The CRC of NEW, as `init_in_place` built it (`reset_new` builds the
@@ -122,33 +118,12 @@ pub const NEW_PARTS: [SlotId; 5] = {
     [s[0], s[1], s[6], s[3], s[4]]
 };
 
-/// NEW's Part `i`, as `fill_new` leaves it but for the generation, which
-/// no record keeps.
-pub(super) fn new_project_part(i: usize) -> Part {
-    let mut part = new_part(i);
-    if let Some(&slot) = NEW_PARTS.get(i)
-        && let Some(sound) = new_slot(slot)
-    {
-        part.origin = Origin::Slot {
-            slot,
-            generation: 0,
-            crc: sound_crc(&sound),
-        };
-        part.sound = sound;
-    }
-    part
-}
-
-/// NEW's Sound in slot `s`.
-pub(super) fn new_slot(s: SlotId) -> Option<Sound> {
-    new_sound(s.index())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::name::ProjectName;
     use crate::params::EngineType;
+    use crate::preset::Sound;
     use crate::project::{
         Origin, PartFrom, PartId, PartSource, PartStatus, ProjectStatus, part_status,
         project_status,

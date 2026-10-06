@@ -132,21 +132,22 @@ pub fn render_half(half: Half) {
     // The block's source view, held over the render: TAPE's voices read
     // through `GateView::bytes` (TAPE Task 13). Until one latches a source
     // the block holds none, and stores 0.
-    let reads = e.sources.begin_block();
-    if e.gate.before_block(&LOAD_LINK, e.inst, shared) {
-        let now = e.orbit.now();
-        e.notes.drain(|src, ev| match ev {
-            // Capture sees the raw key, before any snap.
-            InEvent::Note(n) => {
-                e.orbit.live(n);
-                e.inst.handle(n, shared);
-            }
-            InEvent::Rt(rt) => e.orbit.realtime(src.index(), rt, now),
-        });
-        e.orbit.block(e.inst, shared);
+    {
+        let _reads = e.sources.begin_block();
+        if e.gate.before_block(&LOAD_LINK, e.inst, shared) {
+            let now = e.orbit.now();
+            e.notes.drain(|src, ev| match ev {
+                // Capture sees the raw key, before any snap.
+                InEvent::Note(n) => {
+                    e.orbit.live(n);
+                    e.inst.handle(n, shared);
+                }
+                InEvent::Rt(rt) => e.orbit.realtime(src.index(), rt, now),
+            });
+            e.orbit.block(e.inst, shared);
+        }
+        e.inst.render(e.fx, &mut e.dac, shared, &mut e.scope);
     }
-    e.inst.render(e.fx, &mut e.dac, shared, &mut e.scope);
-    drop(reads);
     e.sources.store_sounding(0);
     e.orbit.publish();
     #[cfg(feature = "perf-probe")]
