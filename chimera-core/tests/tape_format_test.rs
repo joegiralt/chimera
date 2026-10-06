@@ -517,7 +517,7 @@ fn zone_tune_round_trips() {
         .collect();
     let mut s = Sound::init(EngineType::Algo);
     s.zone_tune = ZoneTune::new(&tunes);
-    assert_eq!(s.zone_tune.unwrap().zones(), &tunes[..]);
+    assert_eq!(s.zone_tune.unwrap().zones().collect::<Vec<_>>(), tunes);
     let back = decode(&encode(&s)).expect("decodes");
     assert!(back.bits_eq(&s));
     assert_eq!(back.zone_tune, s.zone_tune);
@@ -527,8 +527,11 @@ fn zone_tune_round_trips() {
 
     assert_eq!(ZoneTune::new(&[]), None);
     assert_eq!(ZoneTune::new(&[(0, 0); 25]), None);
-    let rec = s.zone_tune.unwrap().to_record();
-    assert_eq!(rec.as_slice().len(), 72, "6 B a zone");
-    assert_eq!(ZoneTune::from_record(&rec.as_slice()[..71]), None);
+    assert!(ZoneTune::new(&[(0, 0); 24]).is_some());
+    assert_eq!(ZoneTune::from_record(&[0; 6 * 25]), None);
+    let t = s.zone_tune.unwrap();
+    assert_eq!(t.record().len(), 72, "6 B a zone");
+    assert_eq!(ZoneTune::from_record(t.record()), Some(t));
+    assert_eq!(ZoneTune::from_record(&t.record()[..71]), None);
     assert_eq!(ZoneTune::from_record(&[]), None);
 }

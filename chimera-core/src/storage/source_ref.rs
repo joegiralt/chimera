@@ -2,6 +2,8 @@
 //! source, never its audio, and a Sound's tuning of a zone set. A storage
 //! type: `project` names it too.
 
+use core::num::NonZeroU8;
+
 use crate::dsp::tape_engine::read::MAX_ZONES;
 
 /// A source's identity: its card file's CRC, its length and its rate. A
@@ -41,55 +43,60 @@ impl SourceRef {
 /// (MIDI cents) and `period` (Q16.16, 0 unpitched), in zone order, copied
 /// from the file's zone labels when SOURCE picks the set. The voice tunes
 /// from here, never from the file, so a project tunes the same on every
-/// card. 1 to `MAX_ZONES` zones; 6 B a zone on disk. Only `new` makes one.
+/// card. 1 to `MAX_ZONES` zones. Kept as its record's 6 B a zone, so every
+/// Sound in AXI pays 145 B for it, not 200. Only `new` makes one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ZoneTune {
-    /// Past `n`, zero.
-    zones: [(u16, u32); MAX_ZONES as usize],
-    n: u8,
+    /// `root` then `period`, LE; past `n`, zero.
+    zones: [[u8; ZoneTune::ZONE_LEN]; MAX_ZONES as usize],
+    /// 1 to `MAX_ZONES`: `Option<ZoneTune>` takes no more room.
+    n: NonZeroU8,
 }
+
+const _: () = assert!(size_of::<Option<ZoneTune>>() == 145);
 
 impl ZoneTune {
     /// One zone's bytes: `root`, then `period`, LE.
     pub const ZONE_LEN: usize = 6;
 
     pub fn new(zones: &[(u16, u32)]) -> Option<ZoneTune> {
-        let n = u8::try_from(zones.len()).ok()?;
-        if !(1..=MAX_ZONES).contains(&n) {
+        let n = u8::try_from(zones.len()).ok().and_then(NonZeroU8::new)?;
+        if n.get() > MAX_ZONES {
             return None;
         }
-        let mut all = [(0, 0); MAX_ZONES as usize];
-        all[..zones.len()].copy_from_slice(zones);
+        let mut all = [[0; Self::ZONE_LEN]; MAX_ZONES as usize];
+        for (b, (root, period)) in all.iter_mut().zip(zones) {
+            b[..2].copy_from_slice(&root.to_le_bytes());
+            b[2..].copy_from_slice(&period.to_le_bytes());
+        }
         Some(ZoneTune { zones: all, n })
     }
 
-    pub fn zones(&self) -> &[(u16, u32)] {
-        &self.zones[..self.n as usize]
-    }
-
-    /// The record's payload: `ZONE_LEN` bytes a zone.
-    pub fn to_record(&self) -> super::RecordBuf {
-        let mut r = super::RecordBuf::new();
-        for (root, period) in self.zones() {
-            r.bytes(&root.to_le_bytes());
-            r.u32(*period);
-        }
-        r
-    }
-
-    /// `None` unless whole zones that `new` takes.
-    pub fn from_record(p: &[u8]) -> Option<ZoneTune> {
-        let (zones, rest) = p.as_chunks::<{ Self::ZONE_LEN }>();
-        if !rest.is_empty() || zones.len() > MAX_ZONES as usize {
-            return None;
-        }
-        let mut all = [(0, 0); MAX_ZONES as usize];
-        for (t, b) in all.iter_mut().zip(zones) {
-            *t = (
+    /// Each zone's `(root, period)`, in zone order.
+    pub fn zones(&self) -> impl ExactSizeIterator<Item = (u16, u32)> + '_ {
+        self.zones[..self.n.get() as usize].iter().map(|b| {
+            (
                 u16::from_le_bytes([b[0], b[1]]),
                 u32::from_le_bytes([b[2], b[3], b[4], b[5]]),
-            );
+            )
+        })
+    }
+
+    /// The record's payload, `ZONE_LEN` bytes a zone: as it is held, so
+    /// writing it builds nothing on the stack.
+    pub fn record(&self) -> &[u8] {
+        self.zones[..self.n.get() as usize].as_flattened()
+    }
+
+    /// `None` unless 1 to `MAX_ZONES` whole zones.
+    pub fn from_record(p: &[u8]) -> Option<ZoneTune> {
+        let (zones, rest) = p.as_chunks::<{ Self::ZONE_LEN }>();
+        let n = u8::try_from(zones.len()).ok().and_then(NonZeroU8::new)?;
+        if !rest.is_empty() || n.get() > MAX_ZONES {
+            return None;
         }
-        ZoneTune::new(&all[..zones.len()])
+        let mut all = [[0; Self::ZONE_LEN]; MAX_ZONES as usize];
+        all[..zones.len()].copy_from_slice(zones);
+        Some(ZoneTune { zones: all, n })
     }
 }

@@ -121,7 +121,7 @@ pub fn encode_sound(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(), StoreErro
         w.put(RecordTag::SourceRef, &src.to_bytes())?;
     }
     match s.zone_tune {
-        Some(t) => w.put(RecordTag::ZoneTune, t.to_record().as_slice()),
+        Some(t) => w.put(RecordTag::ZoneTune, t.record()),
         None => Ok(()),
     }
 }
