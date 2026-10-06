@@ -23,7 +23,10 @@ use crate::meter::Clip;
 use crate::modulation::{
     FixedCol, MAX_MOD_SOURCES, ModRouting, ModSource, ModState, amount_scale, note_source,
 };
-use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, ParamSnapshot, Steal};
+use crate::params::{
+    DriveParams, EngineType, EnvParams, FilterParams, FolderParams, ParamSnapshot, Steal,
+};
+use crate::taps::{TapLane, TapRows, tap_vca};
 use crate::voice_alloc::VoiceIdx;
 use crate::{MidiNote, Velocity};
 
@@ -40,7 +43,7 @@ const _: () = assert!(
 pub const DC_HZ: f32 = 5.0;
 
 /// Complete voice signal chain:
-/// [Engine] → [Drive] → [Filter] → [Wavefolder] → [DC blocker] → [VCA]
+/// [Engine] → [Drive] → [Filter] → [Wavefolder] → [tap-VCA] → [DC blocker] → [VCA]
 /// Modulators: three envelopes, three LFOs
 pub struct Voice {
     /// The engine it plays, and so the engine it last played.
@@ -72,6 +75,10 @@ pub struct Voice {
     mod_values: [f32; MAX_MOD_SOURCES],
     /// The routes into VCA this voice plays.
     vca: VcaRoutes,
+    /// The taps' amounts the last block played (`TapRoutes::amounts`), so
+    /// every amount ramps from them: 8 B as stored `i8`s, scaled where read,
+    /// not 32 as `f32`s (ADR 0101's 2,112 B voice chain).
+    tap_amt: [[i8; 4]; 2],
     /// A note-on since the last block: its ENV destinations are recomputed
     /// with its own VEL and NOTE before the modulators run.
     retrigger: bool,
@@ -230,12 +237,13 @@ impl Voice {
     }
 
     /// Whether the folder and the drive stage run: once the stored amount
-    /// is 0.001 or more, or a route of nonzero amount may raise it. The bill
-    /// and each stage's gate read the same answer.
+    /// is 0.001 or more, or a route or (on ALGO) a tap of nonzero amount
+    /// may raise it. The bill and each stage's gate read the same answer.
     pub fn stage_runs(p: &ParamSnapshot, mods: &ModState) -> (bool, bool) {
         let routed = |block, param| mods.moves_addr(ParamAddr::new(block, param));
+        let tapped = p.engine() == EngineType::Algo && p.taps.moving(FixedCol::Fold);
         (
-            p.folder.fold >= 0.001 || routed(BlockRef::Folder, FolderParams::FOLD),
+            p.folder.fold >= 0.001 || routed(BlockRef::Folder, FolderParams::FOLD) || tapped,
             p.drive.drive >= 0.001 || routed(BlockRef::Drive, DriveParams::DRIVE),
         )
     }
@@ -324,6 +332,7 @@ impl Voice {
                 env_mods: [EnvMods::NONE; 3],
                 mod_values: [0.0; MAX_MOD_SOURCES],
                 vca: VcaRoutes::default(),
+                tap_amt: [[0; 4]; 2],
                 retrigger: false,
                 active: false,
                 last_note: MidiNote::A4,
@@ -482,6 +491,7 @@ impl Voice {
             // hold keeps the voice active (`vca_holds`).
             self.envs = [Envelope::new(); 3];
             self.mod_values = [0.0; MAX_MOD_SOURCES];
+            self.tap_amt = [[0; 4]; 2];
         }
         self.retrigger = true;
         self.last_note = note;
@@ -757,8 +767,28 @@ impl Voice {
         self.mod_values = mod_values;
         let (m, live) = (&self.played, &self.played_live);
 
-        // 1. Engine → raw oscillator output
-        self.slot.render(output, m, live, sample_rate, pool);
+        // The taps (spec § 6), live on ALGO only: each amount ramps from the
+        // last block's, and the engine captures the ops some ramp reads.
+        let (from, to) = if m.engine() == EngineType::Algo {
+            let to = m.taps.amounts();
+            (core::mem::replace(&mut self.tap_amt, to), to)
+        } else {
+            self.tap_amt = [[0; 4]; 2];
+            ([[0; 4]; 2], [[0; 4]; 2])
+        };
+        let mut rows = TapRows::new([0, 1].map(|o| from[o] != [0; 4] || to[o] != [0; 4]));
+
+        // 1. Engine → raw oscillator output, and the tapped ops' rows.
+        self.slot
+            .render(output, m, live, sample_rate, pool, &mut rows);
+        let lane = |c: FixedCol| {
+            let (a, b) = (from.map(|o| o[c.index()]), to.map(|o| o[c.index()]));
+            (a != [0; 2] || b != [0; 2]).then(|| TapLane {
+                rows: &rows.rows,
+                from: a.map(amount_scale),
+                to: b.map(amount_scale),
+            })
+        };
 
         // 2. Drive, gated as it's billed.
         self.drive.process(output, &m.drive, drive_on);
@@ -767,17 +797,26 @@ impl Voice {
         let mods = FilterMods {
             level_routed: mod_state
                 .moves_addr(ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL)),
+            freq: lane(FixedCol::Freq),
+            q: lane(FixedCol::Q),
         };
         self.filter_clip = self.filter.process(output, &m.filter, sample_rate, &mods);
 
         // 4. Wavefolder
-        self.folder.process(output, &m.folder, fold_on);
+        self.folder
+            .process(output, &m.folder, fold_on, lane(FixedCol::Fold).as_ref());
 
-        // 5. DC from the engine, the drive, the filter and the fold: none
-        // reaches the VCA (ADR 0060).
+        // 5. The tap-VCA, AM to ring, before the blocker: a tap correlated
+        // with the signal leaves a DC, which the blocker takes.
+        if let Some(l) = lane(FixedCol::Vca) {
+            tap_vca(output, &l);
+        }
+
+        // 6. DC from the engine, the drive, the filter, the fold and the
+        // tap-VCA: none reaches the VCA (ADR 0060).
         self.dc.run(output);
 
-        // 6. The VCA, after the blocker, with the engine's output gain,
+        // 7. The VCA, after the blocker, with the engine's output gain,
         // ramped (never snap).
         let v = self.volume.step(m.out.volume * self.slot.out_gain());
         let (volume, dv) = (v.1, step_of(v, BLOCK_SIZE));

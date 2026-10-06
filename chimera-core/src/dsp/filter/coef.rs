@@ -34,6 +34,21 @@ pub fn g_of(fc: f32, fs: f32) -> f32 {
     tan_accurate((fc / fs).min(0.497))
 }
 
+/// `2^x` for a FREQ tap (spec § 6): a cubic on the fraction, through 1 at
+/// 0 and 2 at 1, plus the integer part added to the exponent bits. Within
+/// 1.5e-4 (0.26 cents); divide-free. `x` is held to ±32, far past any tap's
+/// ±8 octaves, so the exponent never wraps.
+#[inline(always)]
+#[allow(clippy::excessive_precision)]
+pub fn exp2_poly(x: f32) -> f32 {
+    let x = crate::dsp::clampf(x, -32.0, 32.0);
+    // Floor by truncating a positive: `x + 64 > 0`.
+    let i = (x + 64.0) as i32 - 64;
+    let f = x - i as f32;
+    let p = 1.0 + f * (0.696_065_64 + f * (0.224_494_34 + f * 0.079_440_24));
+    f32::from_bits(p.to_bits().wrapping_add((i as u32) << 23))
+}
+
 /// Soft saturation of the integrators' state: linear to ±1, as it always
 /// was, then `1 + u − u²/2` for `u = |x| − 1`, flat at ±1.5 from ±2. Its
 /// value and slope are continuous (C1), so a loud signal bends, not steps:

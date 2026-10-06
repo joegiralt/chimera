@@ -4,6 +4,7 @@ use crate::dsp::algo::env::{EnvRun, OpEnv};
 use crate::dsp::algo::plan::{EvalPlan, MAX_EDGES, OPS, blend};
 use crate::dsp::algo::waves::{Table, WAVE_LEN};
 use crate::hw::BLOCK_SIZE;
+use crate::taps::{TapOp, TapRows};
 
 /// Phase swing, in cycles, of a full-scale modulator at weight 1.
 pub const PM_CYCLES: f32 = 4.0;
@@ -88,16 +89,18 @@ impl Kernel {
     }
 
     /// `blk.plan` must come from `EvalPlan::build` unchanged; see `EvalPlan`.
+    /// Each wanted tap's row takes its op's output, clamped to ±1.
     pub fn render(
         &mut self,
         blk: &KernelBlock,
         env: &mut [OpEnv; OPS],
         out: &mut [f32; BLOCK_SIZE],
+        taps: &mut TapRows,
     ) {
         if blk.plan.delayed == 0 {
-            self.render_ops(blk, env, out);
+            self.render_ops(blk, env, out, taps);
         } else {
-            self.render_samples(blk, env, out);
+            self.render_samples(blk, env, out, taps);
         }
     }
 
@@ -110,6 +113,7 @@ impl Kernel {
         blk: &KernelBlock,
         env: &mut [OpEnv; OPS],
         out: &mut [f32; BLOCK_SIZE],
+        taps: &mut TapRows,
     ) {
         let plan = blk.plan;
         let dm = (blk.morph_to - blk.morph_from) * STEP;
@@ -193,6 +197,14 @@ impl Kernel {
             }
             self.keep(a, &x);
         }
+        // A silent op's row was never written: zeros.
+        for (op, (row, want)) in TapOp::ALL.iter().zip(taps.rows.iter_mut().zip(taps.want)) {
+            if want {
+                for (r, &y) in row.iter_mut().zip(&bufs[pos[op.op_index()]]) {
+                    *r = tap_sample(y);
+                }
+            }
+        }
         let mut norm = blk.norm_from;
         let dnorm = (blk.norm_to - blk.norm_from) * STEP;
         for s in out.iter_mut() {
@@ -246,6 +258,7 @@ impl Kernel {
         blk: &KernelBlock,
         env: &mut [OpEnv; OPS],
         out: &mut [f32; BLOCK_SIZE],
+        taps: &mut TapRows,
     ) {
         let plan = blk.plan;
         let dm = (blk.morph_to - blk.morph_from) * STEP;
@@ -303,13 +316,15 @@ impl Kernel {
         }
         first[0] = acc * norm;
         norm += dnorm;
-        for s in rest.iter_mut() {
+        self.tap(taps, 0);
+        for (i, s) in rest.iter_mut().enumerate() {
             let mut acc = 0.0f32;
             for &k in &live[..n] {
                 acc += self.step(&mut lanes[k], &mut w, &dw, &src);
             }
             *s = acc * norm;
             norm += dnorm;
+            self.tap(taps, i + 1);
         }
         for l in &lanes {
             if silent(&blk.ops[l.op]) {
@@ -318,6 +333,16 @@ impl Kernel {
                 self.phase[l.op] = l.phase;
                 self.hist[l.op] = l.hist;
                 env[l.op] = l.env;
+            }
+        }
+    }
+
+    /// Sample `s` of each wanted tap: its op's latest output (0 if silent).
+    #[inline(always)]
+    fn tap(&self, taps: &mut TapRows, s: usize) {
+        for (op, (row, want)) in TapOp::ALL.iter().zip(taps.rows.iter_mut().zip(taps.want)) {
+            if want {
+                row[s] = tap_sample(self.out[op.op_index()]);
             }
         }
     }
@@ -351,6 +376,15 @@ impl Kernel {
 }
 
 const STEP: f32 = 1.0 / BLOCK_SIZE as f32;
+
+/// A tap row's sample: the op's output held to ±1 (a NaN to −1, as
+/// `clampf`), by compare and select: `max`/`min` on a value read back from
+/// memory cost twice the instructions.
+#[inline(always)]
+fn tap_sample(y: f32) -> f32 {
+    let y = if y >= -1.0 { y } else { -1.0 };
+    if y <= 1.0 { y } else { 1.0 }
+}
 
 fn silent(o: &OpBlock) -> bool {
     o.gain_from == 0.0 && o.gain_to == 0.0

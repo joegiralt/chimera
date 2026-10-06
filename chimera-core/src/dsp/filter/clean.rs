@@ -10,7 +10,7 @@
 
 use super::coef::{g_of, sat_c1};
 use super::level::{FilterMods, LevelRamp, LevelStage, level_gain};
-use super::{CLEAN_MODES, FilterMode, g_at};
+use super::{CLEAN_MODES, FilterMode, TapShape, g_at, ramps, tap_g_range};
 use crate::hw::BLOCK_SIZE;
 use crate::meter::Clip;
 use crate::params::FilterParams;
@@ -165,17 +165,18 @@ impl Clean {
         mods: &FilterMods,
     ) -> Clip {
         let r = self.prelude(buf, p, fs, mods);
+        let t = TapShape::new(mods, tap_g_range(fs), clean_k);
         // The mode and the loop matched once a block: each is its own loop.
         match p.mode() {
-            FilterMode::Lp6 => self.run::<0>(buf, r),
-            FilterMode::Lp12 => self.run::<1>(buf, r),
-            FilterMode::Lp24 => self.run::<2>(buf, r),
-            FilterMode::Bp12 => self.run::<3>(buf, r),
-            FilterMode::Bp24 => self.run::<4>(buf, r),
+            FilterMode::Lp6 => self.run::<0>(buf, r, t),
+            FilterMode::Lp12 => self.run::<1>(buf, r, t),
+            FilterMode::Lp24 => self.run::<2>(buf, r, t),
+            FilterMode::Bp12 => self.run::<3>(buf, r, t),
+            FilterMode::Bp24 => self.run::<4>(buf, r, t),
             // DIRTY's HP2 isn't CLEAN's; were it handed one, HP4.
-            FilterMode::Hp24 | FilterMode::Hp12 => self.run::<5>(buf, r),
-            FilterMode::Notch => self.run::<6>(buf, r),
-            FilterMode::Phaser => self.run::<7>(buf, r),
+            FilterMode::Hp24 | FilterMode::Hp12 => self.run::<5>(buf, r, t),
+            FilterMode::Notch => self.run::<6>(buf, r, t),
+            FilterMode::Phaser => self.run::<7>(buf, r, t),
         }
         // A NaN or infinite input poisons the states for good: start the
         // next block from rest.
@@ -232,11 +233,11 @@ impl Clean {
     }
 
     #[inline(always)]
-    fn run<const M: u8>(&mut self, buf: &mut [f32; BLOCK_SIZE], r: Ramps) {
-        if r.g.0 == r.g.1 && r.k.0 == r.k.1 {
+    fn run<const M: u8>(&mut self, buf: &mut [f32; BLOCK_SIZE], r: Ramps, t: Option<TapShape>) {
+        if t.is_none() && r.g.0 == r.g.1 && r.k.0 == r.k.1 {
             self.steady::<M>(buf, r);
         } else {
-            self.moving::<M>(buf, r);
+            self.moving::<M>(buf, r, t.as_ref());
         }
     }
 
@@ -250,17 +251,27 @@ impl Clean {
     }
 
     /// `g` and `k` ramp to this block's values, reached on the last sample
-    /// (#53), and every sample divides exactly.
+    /// (#53), each sample's through the taps if any (`TapShape`), and every
+    /// sample divides exactly. The trim stays on the ramp's `k`.
     #[inline(always)]
-    pub(super) fn moving<const M: u8>(&mut self, buf: &mut [f32; BLOCK_SIZE], r: Ramps) {
+    pub(super) fn moving<const M: u8>(
+        &mut self,
+        buf: &mut [f32; BLOCK_SIZE],
+        r: Ramps,
+        tap: Option<&TapShape>,
+    ) {
         let n = BLOCK_SIZE as f32;
         let (g_step, k_step) = ((r.g.1 - r.g.0) / n, (r.k.1 - r.k.0) / n);
+        let (mut g, mut k) = ([0.0f32; BLOCK_SIZE], [0.0f32; BLOCK_SIZE]);
+        ramps(&mut g, &mut k, (r.g.0, g_step), (r.k.0, k_step), false);
+        if let Some(t) = tap {
+            t.apply(&mut g, &mut k);
+        }
         let mode = CLEAN_MODES[M as usize];
         let t = (trim(mode, r.k.0), trim(mode, r.k.1));
         let t_step = (t.1 - t.0) / n;
         for (i, s) in buf.iter_mut().enumerate() {
-            let (g, k) = (g_at(r.g.0, g_step, i), g_at(r.k.0, k_step, i));
-            let c = coef::<M>(g, k, g_at(t.0, t_step, i));
+            let c = coef::<M>(g[i], k[i], g_at(t.0, t_step, i));
             *s = self.tick::<M>(*s, &c);
         }
     }
@@ -472,7 +483,7 @@ mod tests {
         let r = a.ramps(&p, SAMPLE_RATE);
         a.steady::<2>(&mut s, r);
         let r = m.ramps(&p, SAMPLE_RATE);
-        m.moving::<2>(&mut v, r);
+        m.moving::<2>(&mut v, r, None);
         let peak = s.iter().fold(0.0f32, |m, v| m.max(v.abs()));
         assert!(peak > 0.01);
         for (i, (a, b)) in s.iter().zip(&v).enumerate() {

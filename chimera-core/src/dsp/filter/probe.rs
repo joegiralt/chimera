@@ -5,10 +5,16 @@
 //! Today's LP24 before CLEAN, `old_lp24_probe`, counted `OLD_LP24` at
 //! 22ea0dc0 (plan § Measured) and went with `SvfFilter`.
 
+use core::hint::black_box;
+
+use super::clean::clean_k;
 use super::k2040::VoiceSpec;
-use super::{Clean, Dirty, FilterMods, K2040};
+use super::{Clean, Dirty, FilterMods, K2040, TapShape, tap_g_range};
+use crate::dsp::wavefolder::Wavefolder;
 use crate::hw::{BLOCK_SIZE, SAMPLE_RATE};
 use crate::params::FilterParams;
+use crate::params::FolderParams;
+use crate::taps::TapLane;
 
 /// CLEAN in mode `M` (a `FilterMode` discriminant), `process`'s prelude
 /// and LEVEL's stage with the loop forced: the steady one, or the moving one
@@ -23,7 +29,7 @@ pub fn clean_probe<const M: u8, const MOVING: bool>(
 ) {
     let r = f.prelude(buf, p, SAMPLE_RATE, &FilterMods::NONE);
     if MOVING {
-        f.moving::<M>(buf, r);
+        f.moving::<M>(buf, r, None);
     } else {
         f.steady::<M>(buf, r);
     }
@@ -39,7 +45,7 @@ pub fn k2040_probe<V: VoiceSpec, const MOVING: bool>(
 ) {
     let r = f.ramps(p, SAMPLE_RATE, &FilterMods::NONE);
     let (_, sum) = if MOVING {
-        f.moving::<V>(buf, r, |_, _| {})
+        f.moving::<V>(buf, r, None, |_, _| {})
     } else {
         f.steady::<V>(buf, r, |_, _| {})
     };
@@ -51,8 +57,53 @@ pub fn k2040_probe<V: VoiceSpec, const MOVING: bool>(
 #[inline(never)]
 pub fn dirty_probe<const M: u8>(f: &mut Dirty, buf: &mut [f32; BLOCK_SIZE], p: &FilterParams) {
     let r = f.prelude(buf, p, SAMPLE_RATE, &FilterMods::NONE);
-    let sum = f.run::<M>(buf, r);
+    let sum = f.run::<M>(buf, r, None);
     f.settle(sum);
+}
+
+/// A FREQ and a Q lane on `buf`'s own samples, opaque to the optimiser.
+fn lanes(rows: &[[f32; BLOCK_SIZE]; 2]) -> FilterMods<'_> {
+    let l = black_box(TapLane {
+        rows,
+        from: [0.5, 0.25],
+        to: [0.5, 0.25],
+    });
+    FilterMods {
+        freq: Some(l),
+        q: Some(l),
+        ..FilterMods::NONE
+    }
+}
+
+/// The taps' pass over a moving block's `g` and `k` (`TapShape::apply`),
+/// FREQ and Q both: one loop for every type, ahead of its moving loop.
+#[inline(never)]
+pub fn tap_shape_probe(buf: &mut [f32; BLOCK_SIZE]) {
+    let rows = black_box([*buf; 2]);
+    if let Some(t) = TapShape::new(&lanes(&rows), tap_g_range(SAMPLE_RATE), clean_k) {
+        let (mut g, mut k) = (*buf, *buf);
+        t.apply(&mut g, &mut k);
+        for ((s, g), k) in buf.iter_mut().zip(g).zip(k) {
+            *s = g + k;
+        }
+    }
+}
+
+/// The tap-VCA's loop, both ops present.
+#[inline(never)]
+pub fn tap_vca_probe(buf: &mut [f32; BLOCK_SIZE]) {
+    let rows = black_box([*buf; 2]);
+    if let Some(l) = lanes(&rows).freq {
+        crate::taps::tap_vca(buf, &l);
+    }
+}
+
+/// The folder's tapped loop.
+#[inline(never)]
+pub fn fold_tap_probe(w: &mut Wavefolder, buf: &mut [f32; BLOCK_SIZE], p: &FolderParams) {
+    let rows = black_box([*buf; 2]);
+    let l = lanes(&rows).freq;
+    w.process(buf, p, true, l.as_ref());
 }
 
 #[cfg(test)]

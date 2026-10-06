@@ -145,7 +145,7 @@ fn test_folder_passthrough_at_zero() {
     let params = FolderParams::default(); // fold=0
     let mut buf = [0.5, -0.5, 0.8, -0.8];
     let original = buf;
-    folder.process(&mut buf, &params, params.fold >= 0.001);
+    folder.process(&mut buf, &params, params.fold >= 0.001, None);
     for (a, b) in buf.iter().zip(original.iter()) {
         assert!((a - b).abs() < 0.001, "fold=0 should passthrough");
     }
@@ -161,7 +161,7 @@ fn test_folder_output_bounded() {
     };
 
     let mut buf = [5.0, -5.0, 10.0, -10.0];
-    folder.process(&mut buf, &params, params.fold >= 0.001);
+    folder.process(&mut buf, &params, params.fold >= 0.001, None);
     for &s in &buf {
         assert!(
             s.abs() <= 1.01,
@@ -191,7 +191,7 @@ fn test_folder_adds_harmonics() {
         .filter(|w| (w[0] >= 0.0) != (w[1] >= 0.0))
         .count();
 
-    folder.process(&mut buf, &params, params.fold >= 0.001);
+    folder.process(&mut buf, &params, params.fold >= 0.001, None);
 
     let zc_after: usize = buf
         .windows(2)

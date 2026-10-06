@@ -1479,3 +1479,22 @@ The moving, LEVEL and tap terms are deltas, not over `OLD_LP24`, and don't chang
   One loop serves steady and moving blocks (the ramps add; a steady block's steps are 0). Block work 232 instructions, 3 `vdiv`/`vsqrt` (with LEVEL's three loops, 4.31 / 16.62 / 20.00 a sample, as on CLEAN). Under `OLD_LP24`'s 95 cycles: `DIRTY_COST` 0.
 - **Memory.** `Dirty` is 32 B: two states, one `Option` for the three ramp ends (`f`, `q`, LEVEL's gain), and its `LevelStage` (8 B). Three `Option<f32>`s would be 40 B and the voice 2,120 B, over ADR 0101's 2,112. `Filter` is 148 B; a `Voice` less its slot is **2,112 B, exactly the cap**: Task 10's crossfade state does not fit without another ADR or packing CLEAN's and the 2040's ramp ends the same way (8 B each).
 - **Re-recorded:** none. Fixture `disk_codes_v1.txt` appends `E 10 6 6 DIRTY` and `E 10 7 9 HP12`; `table()` now lists MODE's codes on every built kind.
+
+### Task 14: tap capture and the four destinations (2026-10-07, bench release build)
+
+`python3 tools/loop_count.py target/thumbv7em-none-eabihf/release/chimera-stm32 <probe>`, instructions a sample, against c7864b3a.
+
+| Path | Base | Now | Note |
+|---|---|---|---|
+| CLEAN LP4 moving (`clean_probe::<2, true>`) | 64 | 64 | + `ramps`' fill, 8.5 (`g_at` by a float counter) |
+| CLEAN NOTCH2 moving | 36 | 35 | + 8.5 |
+| 2040 moving, REV2 / EXP | 79 / 93 | 80 / 94 | + `ramps`' fill by adding, 6.25 |
+| DIRTY, any mode (steady and moving) | 29 | 30.25 | + 6.25: DIRTY's one loop now reads the arrays too |
+| FREQ and Q taps (`TapShape::apply`, both lanes) | – | 48 | 0 `vdiv`; one copy for every type and mode |
+| tap-VCA (`tap_vca_probe`, both ops) | – | 15.25 | |
+| FOLD tapped (`Wavefolder::process`, 3rd loop) | 45 moving | 72.5 | silence's fold per sample |
+
+- **Shape.** A moving block's `g` and `k` (DIRTY's `f`, `q`) are filled into two 64-sample arrays by `filter::ramps` (out of line), the taps pass over them in `TapShape::apply` (out of line), and each mode's loop reads the arrays. Per-mode tapped loops cost 21 KB of flash on bench,orbit (16 KB free); this costs 8.5 KB.
+- **Over the plan's budget.** FREQ + Q is 48 instructions, not 12 + 4: `exp2_poly` is 15, each runtime-bounded hold 3 + 3 (compare and select; `clampf` against bounds read from memory was twice that), and the lane amounts ramp per sample. The capture's clamp to ±1 is a compare and select per op per sample (not counted apart: `loop_count` finds no loop in the kernel's render functions, base or now).
+- **Flash** (vector_table + text + rodata + data): default 736,784 → 743,312 (+6,528); bench,orbit 872,016 → 880,552 (+8,536), **36,952 free**.
+- **Voice chain** 2,096 → 2,104 B: `tap_amt` is `[[i8; 4]; 2]`, scaled where read (ADR 0101's cap holds).

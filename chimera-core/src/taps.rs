@@ -2,6 +2,7 @@
 //! matrix source, or on ALGO an audio-rate tap of OP 5 or OP 6.
 
 use crate::block::DiskCode;
+use crate::hw::BLOCK_SIZE;
 use crate::modulation::{FixedCol, ModSource};
 use crate::params::EngineType;
 
@@ -233,6 +234,12 @@ impl TapRoutes {
         })
     }
 
+    /// Every cell's amount, op-major in `FixedCol` order; 0 when absent.
+    pub fn amounts(&self) -> [[i8; 4]; 2] {
+        self.amount
+            .map(|o| o.map(|a| if a == ABSENT { 0 } else { a }))
+    }
+
     pub fn is_empty(&self) -> bool {
         self.entries().next().is_none()
     }
@@ -268,5 +275,69 @@ impl core::fmt::Debug for TapRoutes {
         f.debug_list()
             .entries(self.entries().map(|(op, c, a)| (op.tag(), c.tag(), a)))
             .finish()
+    }
+}
+
+/// Each tapped op's output this block, clamped to ±1 (spec § 6): the
+/// engine fills `rows[i]` only when `want[i]`, and a silent op's row is
+/// zeros. 512 B, on the audio stack.
+pub struct TapRows {
+    pub want: [bool; 2],
+    pub rows: [[f32; BLOCK_SIZE]; 2],
+}
+
+impl TapRows {
+    pub const fn new(want: [bool; 2]) -> Self {
+        Self {
+            want,
+            rows: [[0.0; BLOCK_SIZE]; 2],
+        }
+    }
+}
+
+/// One destination's taps for a block: each op's `amount/127` (0 when
+/// absent), ramped `from → to`, the block's last sample landing on `to`.
+#[derive(Clone, Copy, Debug)]
+pub struct TapLane<'a> {
+    pub rows: &'a [[f32; BLOCK_SIZE]; 2],
+    pub from: [f32; 2],
+    pub to: [f32; 2],
+}
+
+impl TapLane<'_> {
+    /// Each op's amount a sample is stepped by, adding from `from`: the
+    /// block's last sample lands on `to`.
+    #[inline(always)]
+    pub fn step(&self) -> [f32; 2] {
+        [0, 1].map(|i| (self.to[i] - self.from[i]) * (1.0 / BLOCK_SIZE as f32))
+    }
+
+    /// Σ over ops of the ramped amount × the op's row, at sample `n`.
+    #[inline(always)]
+    pub fn at(&self, n: usize) -> f32 {
+        let t = (n + 1) as f32;
+        let d = self.step();
+        let a = |i: usize| self.from[i] + d[i] * t;
+        a(0) * self.rows[0][n] + a(1) * self.rows[1][n]
+    }
+
+    /// The largest `|amount|` either op reaches this block: the most `at`
+    /// can move, rows being ±1.
+    pub fn reach(&self) -> f32 {
+        (0..2).fold(0.0, |m, i| m + self.from[i].abs().max(self.to[i].abs()))
+    }
+}
+
+/// The tap-VCA (spec § 6), AM to ring: `x·Π(1 − |a| + a·row)` over the ops,
+/// an absent op's factor 1. Before the DC blocker, which takes the DC a
+/// self-correlated tap leaves.
+pub fn tap_vca(buf: &mut [f32; BLOCK_SIZE], lane: &TapLane) {
+    let (d, [r0, r1]) = (lane.step(), lane.rows);
+    let mut a = lane.from;
+    for (n, x) in buf.iter_mut().enumerate() {
+        a = [a[0] + d[0], a[1] + d[1]];
+        let f0 = 1.0 - a[0].abs() + a[0] * r0[n];
+        let f1 = 1.0 - a[1].abs() + a[1] * r1[n];
+        *x *= f0 * f1;
     }
 }

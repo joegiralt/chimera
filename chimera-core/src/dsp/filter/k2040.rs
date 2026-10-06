@@ -9,6 +9,7 @@
 
 use super::coef::g_of;
 use super::level::{FilterMods, LevelRamp, clip_amount, level_gain};
+use super::{TapShape, ramps, tap_g_range};
 use crate::block::DiskCode;
 use crate::dsp::clampf;
 use crate::hw::{BLOCK_SIZE, Cost};
@@ -306,7 +307,8 @@ impl K2040 {
         mods: &FilterMods,
     ) -> Clip {
         let r = self.ramps(p, fs, mods);
-        let (peak, sum) = self.run(buf, r, |_, _| {});
+        let t = TapShape::new(mods, tap_g_range(fs), k2040_k);
+        let (peak, sum) = self.run(buf, r, t.as_ref(), |_, _| {});
         self.settle(sum);
         clip_amount(peak * (1.0 / (LED_KNEE * R_2040)))
     }
@@ -322,25 +324,27 @@ impl K2040 {
         trace: impl FnMut(usize, &[f32; 4]),
     ) {
         let r = self.ramps(p, fs, &FilterMods::NONE);
-        let (_, sum) = self.run(buf, r, trace);
+        let (_, sum) = self.run(buf, r, None, trace);
         self.settle(sum);
     }
 
     /// The block on its voice's loop (`V`'s elements are compile-time in
-    /// each), steady or moving.
+    /// each), steady or moving; a FREQ or Q tap moves it.
     #[inline(always)]
     fn run(
         &mut self,
         buf: &mut [f32; BLOCK_SIZE],
         r: Ramps,
+        tap: Option<&TapShape>,
         trace: impl FnMut(usize, &[f32; 4]),
     ) -> (f32, f32) {
         use voice::{Exp, Rev2};
-        match (r.voice, r.g.0 == r.g.1 && r.k.0 == r.k.1) {
+        let steady = tap.is_none() && r.g.0 == r.g.1 && r.k.0 == r.k.1;
+        match (r.voice, steady) {
             (K2040Voice::Rev2, true) => self.steady::<Rev2>(buf, r, trace),
-            (K2040Voice::Rev2, false) => self.moving::<Rev2>(buf, r, trace),
+            (K2040Voice::Rev2, false) => self.moving::<Rev2>(buf, r, tap, trace),
             (K2040Voice::Exp, true) => self.steady::<Exp>(buf, r, trace),
-            (K2040Voice::Exp, false) => self.moving::<Exp>(buf, r, trace),
+            (K2040Voice::Exp, false) => self.moving::<Exp>(buf, r, tap, trace),
         }
     }
 
@@ -433,25 +437,31 @@ impl K2040 {
     }
 
     /// `g` and `k` ramp to this block's values, reached on the last sample
-    /// (#53) within an ulp or so, by adding as LEVEL's ramp does; `G` and
-    /// `D` divide exactly every sample (B1).
+    /// (#53) within an ulp or so, by adding as LEVEL's ramp does, each
+    /// sample's through the taps if any (`TapShape`); `G` and `D` divide
+    /// exactly every sample (B1).
     #[inline(always)]
     pub(super) fn moving<V: VoiceSpec>(
         &mut self,
         buf: &mut [f32; BLOCK_SIZE],
         r: Ramps,
+        tap: Option<&TapShape>,
         mut trace: impl FnMut(usize, &[f32; 4]),
     ) -> (f32, f32) {
         let n = BLOCK_SIZE as f32;
         let (g_step, k_step) = ((r.g.1 - r.g.0) / n, (r.k.1 - r.k.0) / n);
+        let (mut gs, mut ks) = ([0.0f32; BLOCK_SIZE], [0.0f32; BLOCK_SIZE]);
+        ramps(&mut gs, &mut ks, (r.g.0, g_step), (r.k.0, k_step), true);
+        if let Some(t) = tap {
+            t.apply(&mut gs, &mut ks);
+        }
         let out = r.voice.out_scale();
         let (mut a, a_step) = (r.a.0, (r.a.1 - r.a.0) / n);
-        let (mut g, mut k) = (r.g.0, r.k.0);
         let (mut peak, mut sum) = (0.0f32, 0.0f32);
         for (i, s) in buf.iter_mut().enumerate() {
-            (a, g, k) = (a + a_step, g + g_step, k + k_step);
+            a += a_step;
             sum += *s;
-            let c = coef(g, k);
+            let c = coef(gs[i], ks[i]);
             let (y, d1) = self.tick::<V>(*s * a, &c);
             trace(i, &y);
             peak = peak.max(d1.abs());

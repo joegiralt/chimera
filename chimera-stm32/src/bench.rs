@@ -87,6 +87,23 @@ static DIRTY_PROBES: &[DirtyProbe] = &[
     filter::probe::dirty_probe::<3>,
 ];
 
+/// The taps' pass over a moving block's `g` and `k`, shared by every type.
+#[used]
+static TAP_SHAPE_PROBE: fn(&mut [f32; BLOCK_SIZE]) = filter::probe::tap_shape_probe;
+
+/// The tap-VCA's and the folder's tapped loops.
+#[used]
+static TAP_VCA_PROBE: fn(&mut [f32; BLOCK_SIZE]) = filter::probe::tap_vca_probe;
+
+type FoldProbe = fn(
+    &mut chimera_core::dsp::wavefolder::Wavefolder,
+    &mut [f32; BLOCK_SIZE],
+    &chimera_core::params::FolderParams,
+);
+
+#[used]
+static FOLD_TAP_PROBE: FoldProbe = filter::probe::fold_tap_probe;
+
 /// The bench's screens as text: about 4 KB today, `# TRUNCATED` past this.
 pub const BENCH_TEXT_LEN: usize = 8192;
 type Text = Report<BENCH_TEXT_LEN>;
@@ -1230,9 +1247,11 @@ fn time_kernel() -> u32 {
         norm_to: 0.7,
     }));
     let mut out = [0.0f32; BLOCK_SIZE];
+    // No tap wanted: the rows go untouched, as on a tap-free Sound.
+    let mut taps = chimera_core::taps::TapRows::new([false; 2]);
     let mut run = |kernels: &mut [Kernel; MAX_VOICES], envs: &mut [[OpEnv; OPS]; MAX_VOICES]| {
         for ((k, env), blk) in kernels.iter_mut().zip(envs.iter_mut()).zip(&blocks) {
-            k.render(black_box(blk), env, &mut out);
+            k.render(black_box(blk), env, &mut out, &mut taps);
         }
     };
     for _ in 0..WARM_BLOCKS {

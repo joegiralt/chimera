@@ -468,7 +468,10 @@ fn the_fade_takes_20_ms_both_ways() {
     let x = |b: usize| -> [f32; BLOCK_SIZE] {
         core::array::from_fn(|i| 1.4 * ((b * BLOCK_SIZE + i) as f32 * 0.21).sin())
     };
-    let routed = FilterMods { level_routed: true };
+    let routed = FilterMods {
+        level_routed: true,
+        ..FilterMods::NONE
+    };
     let (open, shut) = (
         LevelRamp::new((1.0, 1.0), &routed),
         LevelRamp::new((1.0, 1.0), &FilterMods::NONE),

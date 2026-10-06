@@ -1,7 +1,10 @@
 use crate::block::DiskCode;
 use crate::dsp::modulator::pick;
+use crate::hw::BLOCK_SIZE;
 use crate::hw::Cost;
 use crate::params::FilterParams;
+use crate::taps::TapLane;
+use coef::exp2_poly;
 
 pub mod clean;
 pub mod coef;
@@ -271,6 +274,106 @@ pub fn routed_cutoff(base: f32, sum: f32) -> f32 {
 #[inline(always)]
 pub fn g_at(from: f32, step: f32, i: usize) -> f32 {
     from + step * (i + 1) as f32
+}
+
+/// A moving block's `g` and `k` (DIRTY's `f` and `q`) for each sample,
+/// each `(from, step)` ramped by `g_at` (CLEAN) or by adding (the 2040 and
+/// DIRTY), as each type always ramped. Out of line: one copy for every
+/// mode's loop, which reads the arrays.
+#[inline(never)]
+pub(crate) fn ramps(
+    gs: &mut [f32; BLOCK_SIZE],
+    ks: &mut [f32; BLOCK_SIZE],
+    g: (f32, f32),
+    k: (f32, f32),
+    by_adding: bool,
+) {
+    // `t` counts samples in `f32`, exact to 2^24: `g_at`'s `i + 1` without
+    // a conversion a sample.
+    let (mut a, mut b, mut t) = (g.0, k.0, 0.0f32);
+    for (gi, ki) in gs.iter_mut().zip(ks.iter_mut()) {
+        t += 1.0;
+        (a, b) = if by_adding {
+            (a + g.1, b + k.1)
+        } else {
+            (g.0 + g.1 * t, k.0 + k.1 * t)
+        };
+        (*gi, *ki) = (a, b);
+    }
+}
+
+/// A tapped block's per-sample FREQ and Q (spec § 6): `g·exp2_poly(4·freq)`
+/// held to `g`'s range, and `k + dk·q`, RES moved by the lane (every type's
+/// `k` is linear in RES), held to RES 0..1's. A FREQ or Q tap makes the
+/// block a moving one; an absent lane reads zero amounts. Both lanes read
+/// one block's `TapRows`, as the voice builds them.
+#[derive(Clone, Copy)]
+pub(crate) struct TapShape<'a> {
+    rows: &'a [[f32; BLOCK_SIZE]; 2],
+    /// Each op's amount, `(from, step)`: FREQ's × 4 (octaves), Q's × `dk`.
+    freq: ([f32; 2], [f32; 2]),
+    q: ([f32; 2], [f32; 2]),
+    g: (f32, f32),
+    k: (f32, f32),
+}
+
+impl<'a> TapShape<'a> {
+    /// `None` without a FREQ or Q tap; `k_of` is the type's RES → `k`.
+    #[inline(always)]
+    pub(crate) fn new(mods: &FilterMods<'a>, g: (f32, f32), k_of: fn(f32) -> f32) -> Option<Self> {
+        let rows = mods.freq.or(mods.q)?.rows;
+        debug_assert!(
+            [mods.freq, mods.q]
+                .iter()
+                .flatten()
+                .all(|l| core::ptr::eq(l.rows, rows))
+        );
+        let (k0, k1) = (k_of(0.0), k_of(1.0));
+        let scaled = |l: Option<TapLane>, by: f32| {
+            l.map_or(([0.0; 2], [0.0; 2]), |l| {
+                (l.from.map(|a| a * by), l.step().map(|d| d * by))
+            })
+        };
+        Some(Self {
+            rows,
+            freq: scaled(mods.freq, 4.0),
+            q: scaled(mods.q, k1 - k0),
+            g,
+            k: (k0.min(k1), k0.max(k1)),
+        })
+    }
+
+    /// A moving block's per-sample `g` and `k`, the ramp's, through the
+    /// taps. One copy serves every type and mode: the types' moving loops
+    /// read the arrays, so a tap adds no loop of its own to each.
+    #[inline(never)]
+    pub(crate) fn apply(&self, g: &mut [f32; BLOCK_SIZE], k: &mut [f32; BLOCK_SIZE]) {
+        let ((mut fa, df), (mut qa, dq)) = (self.freq, self.q);
+        let [r0, r1] = self.rows;
+        let (gr, kr) = (self.g, self.k);
+        for (n, (g, k)) in g.iter_mut().zip(k.iter_mut()).enumerate() {
+            fa = [fa[0] + df[0], fa[1] + df[1]];
+            qa = [qa[0] + dq[0], qa[1] + dq[1]];
+            let (x0, x1) = (r0[n], r1[n]);
+            *g = hold(*g * exp2_poly(fa[0] * x0 + fa[1] * x1), gr);
+            *k = hold(*k + qa[0] * x0 + qa[1] * x1, kr);
+        }
+    }
+}
+
+/// `x` held to `r` (a NaN to `r.0`, as `clampf`), by compare and select:
+/// `max`/`min` against bounds read from memory cost twice the instructions.
+#[inline(always)]
+fn hold(x: f32, r: (f32, f32)) -> f32 {
+    let x = if x >= r.0 { x } else { r.0 };
+    if x <= r.1 { x } else { r.1 }
+}
+
+/// A FREQ tap's `g` range: FREQ's floor (20 Hz) to 0.45·fs, short of
+/// `g_of`'s 0.497 so the tap's top octave stays clear of Nyquist.
+#[inline(always)]
+pub(crate) fn tap_g_range(fs: u32) -> (f32, f32) {
+    (coef::g_of(20.0, fs as f32), coef::tan_accurate(0.45))
 }
 
 /// What a block runs: TYPE, MODE and, on the 2040, VOICE. What a type

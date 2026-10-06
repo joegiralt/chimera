@@ -341,7 +341,7 @@ fn test_folder_adds_harmonics() {
         mix: 1.0,
         ..Default::default()
     };
-    Wavefolder::new().process(&mut folded, &params, params.fold >= 0.001);
+    Wavefolder::new().process(&mut folded, &params, params.fold >= 0.001, None);
     let folded_h = harmonic_energy(&folded, freq);
 
     assert!(
@@ -363,7 +363,7 @@ fn test_folder_more_fold_more_harmonics() {
             mix: 1.0,
             ..Default::default()
         };
-        Wavefolder::new().process(&mut buf, &params, params.fold >= 0.001);
+        Wavefolder::new().process(&mut buf, &params, params.fold >= 0.001, None);
         harmonic_energy(&buf, freq)
     };
 

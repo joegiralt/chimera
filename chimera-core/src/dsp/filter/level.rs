@@ -9,6 +9,7 @@ use crate::hw::BLOCK_SIZE;
 use crate::meter::Clip;
 use crate::params::FilterParams;
 use crate::storage::{FILTER_DRIVE, Retired};
+use crate::taps::TapLane;
 
 /// LEVEL's gain, `2^(4·LEVEL − 2)`: ×¼ at 0, exactly 1 at ½, ×4 at 1. One
 /// `fast_exp2` a block; the gain ramps per sample.
@@ -39,17 +40,22 @@ pub fn translate_drive(r: &Retired, b: &mut dyn Block) {
 }
 
 /// What moves the filter besides its stored settings, read once a block.
-/// Task 14 adds the tap lanes.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct FilterMods {
+pub struct FilterMods<'a> {
     /// A route moves LEVEL: its gain may cross unity inside the block.
     pub level_routed: bool,
+    /// The FREQ taps (FM3, spec § 6): ±4 octaves at 100 %, per sample.
+    pub freq: Option<TapLane<'a>>,
+    /// The Q taps (QM): RES moved by the lane, per sample.
+    pub q: Option<TapLane<'a>>,
 }
 
-impl FilterMods {
-    /// Nothing routed.
-    pub const NONE: FilterMods = FilterMods {
+impl FilterMods<'_> {
+    /// Nothing routed or tapped.
+    pub const NONE: FilterMods<'static> = FilterMods {
         level_routed: false,
+        freq: None,
+        q: None,
     };
 }
 

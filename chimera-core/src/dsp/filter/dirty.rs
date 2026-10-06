@@ -10,8 +10,8 @@
 //! it for a sample; the clamps on `lp`, `bp` and the output bound every
 //! state and sample for any input, `f`, `q`, ramp or tap.
 
-use super::FilterMode;
 use super::level::{FilterMods, LevelRamp, LevelStage, level_gain};
+use super::{FilterMode, TapShape, ramps};
 use crate::dsp::{clampf, fast_sin};
 use crate::hw::{BLOCK_SIZE, Cost};
 use crate::meter::Clip;
@@ -133,6 +133,9 @@ struct Ends {
 pub(super) struct Ramps {
     f: (f32, f32),
     q: (f32, f32),
+    /// Jury's bound at the largest `q` the block can reach: a tapped
+    /// sample's `f` is held under it.
+    f_max: f32,
 }
 
 impl Dirty {
@@ -150,13 +153,15 @@ impl Dirty {
         mods: &FilterMods,
     ) -> Clip {
         let r = self.prelude(buf, p, fs, mods);
+        let t = TapShape::new(mods, (dirty_f_raw(20.0, fs as f32), r.f_max), dirty_q);
+        let t = t.as_ref();
         let sum = match p.mode() {
-            FilterMode::Bp12 => self.run::<1>(buf, r),
-            FilterMode::Hp12 => self.run::<2>(buf, r),
-            FilterMode::Notch => self.run::<3>(buf, r),
+            FilterMode::Bp12 => self.run::<1>(buf, r, t),
+            FilterMode::Hp12 => self.run::<2>(buf, r, t),
+            FilterMode::Notch => self.run::<3>(buf, r, t),
             // LP2, and any of CLEAN's modes, which `set_mode` keeps off a
             // DIRTY Sound.
-            _ => self.run::<0>(buf, r),
+            _ => self.run::<0>(buf, r, t),
         };
         self.settle(sum);
         self.level.clip()
@@ -175,13 +180,17 @@ impl Dirty {
     ) -> Ramps {
         let (q, pre) = (dirty_q(p.resonance), level_gain(p.level));
         let from = self.last.map_or((q, pre), |e| (e.q, e.pre));
-        let f = dirty_f(p.cutoff, fs as f32, from.0.max(q));
+        // A Q tap moves RES by up to its reach, so `q` by `2/0.95` that.
+        let reach = mods.q.map_or(0.0, |l| l.reach() * (2.0 / 0.95));
+        let q_max = (from.0.max(q) + reach).min(dirty_q(0.0));
+        let f = dirty_f(p.cutoff, fs as f32, q_max);
         let f0 = self.last.map_or(f, |e| e.f);
         self.last = Some(Ends { f, q, pre });
         self.level.run(buf, LevelRamp::new((from.1, pre), mods));
         Ramps {
             f: (f0, f),
             q: (from.0, q),
+            f_max: dirty_f_bound(q_max),
         }
     }
 
@@ -195,21 +204,33 @@ impl Dirty {
     }
 
     /// Mode `M` (`DIRTY_MODES`' index) over the block, `f` and `q` ramped
-    /// by adding: a steady block's steps are 0, so one loop serves both.
+    /// by adding: a steady block's steps are 0, so one loop serves both. A
+    /// FREQ or Q tap moves each sample's (`TapShape`), `f` held under
+    /// Jury's bound at the reachable `q`; the trim stays on the ramp's.
     /// Returns the inputs' sum (`settle`).
     #[inline(always)]
-    pub(super) fn run<const M: u8>(&mut self, buf: &mut [f32; BLOCK_SIZE], r: Ramps) -> f32 {
+    pub(super) fn run<const M: u8>(
+        &mut self,
+        buf: &mut [f32; BLOCK_SIZE],
+        r: Ramps,
+        tap: Option<&TapShape>,
+    ) -> f32 {
         let n = BLOCK_SIZE as f32;
-        let (mut f, f_step) = (r.f.0, (r.f.1 - r.f.0) / n);
-        let (mut q, q_step) = (r.q.0, (r.q.1 - r.q.0) / n);
+        let (f_step, q_step) = ((r.f.1 - r.f.0) / n, (r.q.1 - r.q.0) / n);
+        let (mut fs, mut qs) = ([0.0f32; BLOCK_SIZE], [0.0f32; BLOCK_SIZE]);
+        ramps(&mut fs, &mut qs, (r.f.0, f_step), (r.q.0, q_step), true);
+        if let Some(t) = tap {
+            t.apply(&mut fs, &mut qs);
+        }
         // The output gain, ½ of the mean × the mode's trim, ramped with `q`.
         let mode = DIRTY_MODES[M as usize];
         let gain = |q| 0.5 * DIRTY_OUT * dirty_trim(mode, q);
         let (mut g, g1) = (gain(r.q.0), gain(r.q.1));
         let g_step = (g1 - g) / n;
         let mut sum = 0.0f32;
-        for s in buf.iter_mut() {
-            (f, q, g) = (f + f_step, q + q_step, g + g_step);
+        for (i, s) in buf.iter_mut().enumerate() {
+            g += g_step;
+            let (f, q) = (fs[i], qs[i]);
             let x = *s;
             sum += x;
             let m = self.sub::<M>(x, f, q) + self.sub::<M>(x, f, q);
