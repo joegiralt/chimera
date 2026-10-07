@@ -1,6 +1,6 @@
 # 0107. CUTOFF ticks 1/24 octave; a Part's filter knobs glide 30 ms before the routes
 
-- **Status:** Proposed
+- **Status:** Accepted (owner, 2026-10-07)
 - **Deciders:** owner (UAT 2026-10-07: "the filter should be smooth and never ever steppy"), firmware
 
 ## Context
