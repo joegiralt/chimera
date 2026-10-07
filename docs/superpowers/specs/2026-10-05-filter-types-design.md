@@ -266,7 +266,8 @@ sat(v) = c − (4/27)·c³,  c = clamp(v, ±1.5)        // C1 cubic, no divide
 | `α_v`, the drive into the chip | `ALPHA_REV2` ≈ 0.1, tuned at build (tests 2 and 7) | **`2 · ALPHA_REV2`** (+6.0 dB) | Stage-1 gain `R2/R1`: Prophet 10 K/200 K (R480/R476) = 0.05; Kobol 10 K/100 K (R25/R24) = 0.10 |
 | `R`, the stage clip | **`2 · ALPHA_REV2`**, shared | the same | The data sheet's ±1 V swing, against the Prophet's 500 mV per pole at maximum saw (§ 5-13): 0.5 V ↔ `ALPHA_REV2`, so 1 V ↔ 2·`ALPHA_REV2`. The chip is the same in both. |
 | The resonance element (`ResElement`) | `Ssm2020Linear`: no limit | `Ca3080 { limit: L }`, `L` = ¼ | Prophet: ½ U490, a 2020 in linear mode; Kobol: CI5, a 3080. Owner's ruling, 2026-10-06 |
-| `TRIM_v`, the cutoff trim | 2^(−13.3/1200): the clip rings the linear loop +13.6 cents sharp | 1 | The Prophet is trimmed at full resonance (§ 4-17) |
+| `TRIM_v`, the cutoff trim | 2^(−13.3/1200): the clip rings the linear loop +13.6 cents sharp | `TRIM_EXP`, +11.5 cents (ADR 0105) | The Prophet is trimmed at full resonance (§ 4-17) |
+| `S_v`, the stage bend (`g·sat(S·v)/S`) | 1 | **`STAGE_SCALE_EXP`** = 3.04 (ADR 0105) | Node 10 K/10 K/220 Ω: 1 V of stage error = 21.07 mV = 0.405 × 2V_T, 1.5 × that = 0.608 in `sat` units against 0.2 per volt |
 | `β`, the output VCA | — (no POST stage) | **`0.62 / R`** | CI3: R31 10 K into R40 220 Ω turns ±1 V into ±21.5 mV = 0.416 × 2V_T; the cubic `sat` matches `tanh` at `v = 1.5 · V/2V_T`, so 0.416 × 1.5 = 0.62 at `y₄ = R` |
 | `OUT_2040`, `k` law, onset | shared | shared | No evidence of a different gain law: the 2020 is linear, and T3 is a plain PNP current source |
 
