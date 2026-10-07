@@ -105,3 +105,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0103](0103-stretch-poly-wraps-hold-the-output.md) | STRETCH POLY's wraps hold the output, moving on at its slope, and crossfade from it, an eighth past the peak at most (amends [0093](0093-tape-plays-12-bit-card-sources-through-six-ram-models.md)) | Accepted |
 | [0104](0104-ladder-a-zavalishin-tpt-moog-ladder.md) | LADDER, a fourth filter TYPE: the Moog transistor ladder as Zavalishin's TPT ladder at 1×, five divide-free tanh saturators, Xpander mixes; shares the 2040's state slot | Accepted |
 | [0105](0105-exp-stages-bend-at-the-kobols-circuit-scale.md) | EXP's stages bend at the Kobol's circuit scale (supersedes in part 0096) | Accepted |
+| [0108](0108-the-audio-path-builds-fast-the-rest-builds-small.md) | The audio path builds at opt-level 2, everything else at "z", split by crate: `chimera-engine` and the binary fast, `chimera-core` (UI) and `chimera-board` small | Proposed |
