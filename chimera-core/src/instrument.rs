@@ -166,7 +166,9 @@ impl AudioShared {
     /// Overwrite with `perf` (the UI's per-frame publish), tagged with
     /// the load `epoch`, one Part at a time in place: the stack holds one
     /// `PartAudio`, not the whole struct. The destructuring lists every
-    /// field, so a new one fails to compile here.
+    /// field, so a new one fails to compile here. Every Part's source is
+    /// `None`, which mutes TAPE: the tests' publish, never a shell's.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn update_from(&mut self, perf: &Performance, epoch: u32) {
         self.fill(perf, |_| None, epoch);
     }
