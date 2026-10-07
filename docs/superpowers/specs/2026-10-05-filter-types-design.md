@@ -367,7 +367,7 @@ out = Σ cₘ·yₘ · gainₘ(k) · OUT_LADDER/α
 tanhₚ(x) = c·(1 + c²·(a₃ + c²·(a₅ + …a₁₁))), c = clamp(x, ±3)   // `tanh_poly`: 0.005 off tanh, flat at ±1 from ±3, no divide
 ```
 
-- **The saturator.** The owner's design put a Padé 3/2 tanh on the input pair and stage 1 and the 2040's cubic on stages 2–4. Against SPICE that misses the large-signal cutoff shift by 38 cents RMS and the drive sweep by 1 % of H1 (ADR 0104). **The owner ruled (2026-10-07): `tanh_poly` on all five** (10 cents, 0.16 %, no divide), at 7 / 5 / 4 voices (ALGO default / one tap / all four, rev V) against the mix's 7 / 6 / 5.
+- **The saturator.** The owner's design put a Padé 3/2 tanh on the input pair and stage 1 and the 2040's cubic on stages 2–4. Against SPICE that misses the large-signal cutoff shift by 38 cents RMS and the drive sweep by 1 % of H1 (ADR 0104). **The owner ruled (2026-10-07): `tanh_poly` on all five** (10 cents, 0.16 %, no divide), at 7 / 5 / 4 voices (ALGO default / one tap / all four, rev V) against the mix's 7 / 6 / 5; 7 / 5 / 5 after the TAPE merge's re-count.
 
 - **Resonance.** `k = 4·RES/0.95` (`k2040_k`): the onset at RES 0.95, 4.21 at RES 1. The ring's amplitude is the input pair's; its pitch is trimmed +20.8 cents (`TRIM_LADDER`), the stages' saturators slowing it, which holds it within 0.6 cents over C2–C6.
 - **Bass loss.** DC gain `1/(1 + k)`, uncompensated (the owner's ruling for the 2040, held here).
@@ -376,7 +376,7 @@ tanhₚ(x) = c·(1 + c²·(a₃ + c²·(a₅ + …a₁₁))), c = clamp(x, ±3) 
 - **Levels.** LEVEL ½, RES 0: LP4 unity. RES 1: −15.5 to −16.2 dBFS in every mode, LADDER's own band, as EXP has its own.
 - **State.** Four floats and the ramp ends, in the one slot the 2040 also uses, a typed `enum Poles` (36 B with its tag): the voice chain measures 1,952 B on main with TAPE (ADR 0101's bound is 2,112). A 2040 ↔ LADDER change hands the slot over with a warm start and runs the old type on a stack copy, its stages carried in the fade, as a VOICE flip does.
 - **Bounded.** Each stage within its swing; every state within it plus `2g`; `|out| ≤ ladder_bound(mode, x)`, exact for LP4 (`Y/α`).
-- **Cost.** Steady 205–215 cycles a sample (LP4 123 instructions, 0 `vdiv`), billed 120 over `OLD_LP24`; moving +100 (`LADDER_MOVE_COST`, one out-of-line loop for every mode). No clipper term. The drive-scaled input is held to ±64 (`X_MAX`), so a NaN or infinite block stays finite on every mode.
+- **Cost.** Steady 210 cycles a sample, one loop for every mode (126 instructions, 0 `vdiv`), billed 115 over `OLD_LP24`; moving +80 (`LADDER_MOVE_COST`, one loop for every mode). No clipper term. A NaN or infinite input block plays silence.
 
 ### 5. UX: TYPE versus MODE, without a blank canvas
 
