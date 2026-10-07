@@ -149,6 +149,58 @@ const MV2_BLOOM: &[(u8, &str, [f32; 5])] = &[
     (49, "rev_bloom_mv49", [0.705, 0.948, 0.578, 0.165, 0.815]), // Bloom 2 7 Sec
 ];
 
+/// GATE at each MidiVerb II program's knobs, fitted on the Rust render
+/// (ADR 0095 § GATE and REVERSE, as built): (program, its golden's name,
+/// LENGTH, TAIL, TONE, DENSITY, SHAPE, PRE-DLY, DAMP), SMEAR 0. Only the
+/// programs whose fit passes.
+const MV2_GATE: &[(u8, &str, [f32; 7])] = &[
+    (
+        31,
+        "rev_gate_mv31",
+        [0.335, 0.992, 0.0, 0.85, 0.142, 0.212, 0.187],
+    ), // Slow Gate 200
+    (
+        32,
+        "rev_gate_mv32",
+        [0.539, 0.944, 0.332, 0.777, 0.113, 0.214, 0.097],
+    ), // Slow Gate 250
+    (
+        34,
+        "rev_gate_mv34",
+        [0.895, 0.668, 0.0, 0.812, 0.0, 0.21, 0.165],
+    ), // Slow Gate 450
+    (
+        35,
+        "rev_gate_mv35",
+        [0.585, 0.633, 0.383, 0.341, 0.742, 0.116, 1.0],
+    ), // Fast Gate 150
+    (
+        36,
+        "rev_gate_mv36",
+        [0.452, 0.05, 0.658, 0.624, 0.679, 0.88, 0.525],
+    ), // Fast Gate 75
+];
+
+/// REVERSE likewise, judged close at the owner's relaxed tolerances:
+/// (program, name, LENGTH, REGEN, TONE, DENSITY, CURVE, ONSET).
+const MV2_REVERSE: &[(u8, &str, [f32; 6])] = &[
+    (
+        40,
+        "rev_reverse_mv40",
+        [0.692, 0.0, 0.136, 0.899, 0.601, 0.593],
+    ), // Reverse 400
+    (
+        47,
+        "rev_reverse_mv47",
+        [0.691, 0.335, 0.141, 0.737, 0.743, 0.364],
+    ), // Regen. 2 Sec
+    (
+        48,
+        "rev_reverse_mv48",
+        [0.693, 0.938, 0.149, 1.0, 0.677, 0.432],
+    ), // Regen. 8 Sec
+];
+
 fn cases() -> Vec<(&'static str, Fx)> {
     let reverb = |smear: f32, size: f32| ReverbParams {
         time: 0.7,
@@ -274,6 +326,28 @@ fn cases() -> Vec<(&'static str, Fx)> {
             (k[0], k[1], k[2], k[3], k[4], 0.0);
         v.push((name, Fx::Reverb(p)));
     }
+    // MIX 0.25: Slow Gate 200's long TAIL peaks over 1.0 at 0.3.
+    let mv = |t: ReverbType| {
+        ReverbParams {
+            mix: 0.25,
+            ..Default::default()
+        }
+        .with_type(t, &KnobMemory::new())
+    };
+    for &(_, name, k) in MV2_GATE {
+        let mut p = mv(ReverbType::Gate);
+        (
+            p.size, p.time, p.tone, p.diffuse, p.shape, p.predelay, p.damping, p.smear,
+        ) = (k[0], k[1], k[2], k[3], k[4], k[5], k[6], 0.0);
+        v.push((name, Fx::Reverb(p)));
+    }
+    for &(_, name, k) in MV2_REVERSE {
+        let mut p = mv(ReverbType::Reverse);
+        (
+            p.size, p.time, p.tone, p.diffuse, p.shape, p.predelay, p.smear,
+        ) = (k[0], k[1], k[2], k[3], k[4], k[5], 0.0);
+        v.push((name, Fx::Reverb(p)));
+    }
     v
 }
 
@@ -324,10 +398,10 @@ fn render(fx: Fx) -> Vec<f32> {
 }
 
 const GOLDENS: &[(&str, u64)] = &[
-    ("chorus_both", 0x666b43969f8ed31a),           // u32 LFO phase
-    ("delay_375ms", 0x27ad936759de7c60),           // i16 line (ADR 0090)
-    ("delay_500ms", 0xc8d373624e4ed6d5),           // i16 line (ADR 0090)
-    ("delay_feedback_100ms", 0xf4e3becb40f763a3),  // i16 line, two-multiply read (ADR 0090)
+    ("chorus_both", 0x666b43969f8ed31a),          // u32 LFO phase
+    ("delay_375ms", 0x27ad936759de7c60),          // i16 line (ADR 0090)
+    ("delay_500ms", 0xc8d373624e4ed6d5),          // i16 line (ADR 0090)
+    ("delay_feedback_100ms", 0xf4e3becb40f763a3), // i16 line, two-multiply read (ADR 0090)
     // GRIT out (reverb TYPEs T5): SMEAR 0 is the T4 reference's GRIT 0.
     ("reverb_ring", 0xd17b7769e13816bf),
     ("reverb_ring_max_size", 0x83591bf24cab49f6),
@@ -358,17 +432,25 @@ const GOLDENS: &[(&str, u64)] = &[
     ("rev_hall_mv23", 0x9dd9185914bf8172),
     ("rev_hall_mv27", 0x172c5a3d446f4785),
     // GATE and REVERSE on the BURST engine (reverb TYPEs T8).
-    ("rev_gate", 0xf58be0a4e64aeddf),
-    ("rev_gate_flat_tail0", 0x951817e3e86edf28),
+    ("rev_gate", 0x4471dcf4adf46540),
+    ("rev_gate_flat_tail0", 0x61946dda851d6e05),
     // LENGTH synced (reverb TYPEs T12).
-    ("rev_gate_sync_8th_120", 0xfdf822a972a4be23),
-    ("rev_reverse", 0x6556c8e280534d44),
-    ("rev_reverse_regen", 0x510ced0081cb2515),
+    ("rev_gate_sync_8th_120", 0x9b8b49e84f5b4998),
+    ("rev_reverse", 0x9596310c7471b899),
+    ("rev_reverse_regen", 0xcb796d301bfebefc),
     // BLOOM (ADR 0095, reverb TYPEs T11) on program 45's knobs, and at
     // each MidiVerb II Bloom's fitted knobs (`MV2_BLOOM`).
     ("rev_bloom", 0xd80822fb3d18e458),
     ("rev_bloom_mv45", 0xd80822fb3d18e458),
     ("rev_bloom_mv49", 0x2014f5741eb7a296),
+    ("rev_gate_mv31", 0xb7f4ee446da62f10),
+    ("rev_gate_mv32", 0x4db30fbecde963b3),
+    ("rev_gate_mv34", 0x8795ffab6f585cf9),
+    ("rev_gate_mv35", 0x01f5aae2950aa942),
+    ("rev_gate_mv36", 0x48ac57018ffad7dc),
+    ("rev_reverse_mv40", 0xa0ff83c82ad18c73),
+    ("rev_reverse_mv47", 0xc04448c90261c1cb),
+    ("rev_reverse_mv48", 0x95ae2c3751ec3b51),
 ];
 
 #[test]

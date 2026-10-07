@@ -53,10 +53,10 @@ use crate::block::Block;
 use crate::boot::RomDfu;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
+use crate::dsp::reverb::KnobMemory;
 use crate::dsp::tape_engine::{Heads, TapeEngineParams, TapeModel};
 use crate::in_place::uninit_at;
 use crate::instrument::PartHeads;
-use crate::dsp::reverb::KnobMemory;
 use crate::mod_path::{LABEL_LEN, RegistryError};
 use crate::modulation::{MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::ProjectName;
@@ -269,7 +269,6 @@ pub struct UiState {
     /// loses nothing. RAM only; a project load clears it.
     rev_knobs: KnobMemory,
 }
-
 
 /// How long the LEVEL LED takes to fall from a peak to dark.
 pub const CLIP_FALL_MS: u16 = 150;

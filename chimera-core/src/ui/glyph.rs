@@ -8,7 +8,9 @@ use crate::dsp::clampf;
 use crate::dsp::rev::sync::{FoldState, Tempo};
 use crate::dsp::reverb::{EngineKnobs, RevSync, ReverbParams, ReverbType, knobs};
 
-pub use chimera_engine::glyph::{BRAID_PARAMS, CUBE_PARAMS, CompositeId, REVERB_PARAMS, FocusGlyph, RINGS_PARAMS};
+pub use chimera_engine::glyph::{
+    BRAID_PARAMS, CUBE_PARAMS, CompositeId, FocusGlyph, REVERB_PARAMS, RINGS_PARAMS,
+};
 
 /// What the focus band draws, with its inputs.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -244,9 +246,10 @@ fn tri(x: f32) -> f32 {
 /// The TYPE's energy envelope, from set values only (spec § Glyph): each
 /// of `TAIL_COLS` columns over `tail_span_ms`, its level in 1/255ths of
 /// 48 dB, 255 the peak.
-/// - GATE: a plateau sloped by SHAPE, a cliff at LENGTH, then the TAIL.
-/// - REVERSE: a ramp rising by CURVE that cuts dead at LENGTH, its echoes
-///   under REGEN.
+/// - GATE: a PRE-DLY gap, a plateau sloped by SHAPE, a cliff at LENGTH,
+///   then the TAIL, dimmed by DAMP.
+/// - REVERSE: silence to ONSET, a ramp rising by CURVE to the hit at
+///   LENGTH that cuts dead, its echoes under REGEN.
 /// - The others: an exponential fall at their RT60.
 ///
 /// TONE dims it (6 dB at its darkest), DENSITY notches it between taps,
@@ -257,7 +260,13 @@ pub fn tail_shape(t: ReverbType, k: &EngineKnobs) -> [u8; TAIL_COLS] {
     let len = k.length_ms.max(1.0);
     let fall = -60.0e-3 / k.rt60_s.max(0.01);
     let curve = libm::fabsf(k.shape_db);
-    let notch = (12.0 - k.taps).max(0.0) * 0.75;
+    // DENSITY: GATE's missing taps; REVERSE's sparse allpasses.
+    let notch = match t {
+        ReverbType::Reverse => (0.7 - k.diffuse_g).max(0.0) * 12.0,
+        _ => (12.0 - k.taps).max(0.0) * 0.75,
+    };
+    // GATE's DAMP: its TAIL darker, up to 6 dB at 2 kHz.
+    let damped = 6.0 * clampf((12_000.0 - k.damp_hz) / 10_000.0, 0.0, 1.0);
     let db = |x: f32| 6.02 * crate::dsp::rev::parts::lg2(x);
     let echo = if k.regen > 0.0 { db(k.regen) } else { -TAIL_DB };
     let tail = if k.tail > 0.0 {
@@ -269,14 +278,27 @@ pub fn tail_shape(t: ReverbType, k: &EngineKnobs) -> [u8; TAIL_COLS] {
     let mut out = [0u8; TAIL_COLS];
     for (c, o) in out.iter_mut().enumerate() {
         let ms = (c as f32 + 0.5) * span / TAIL_COLS as f32;
-        let x = ms / len;
+        // GATE's PRE-DLY shifts the burst; REVERSE's ONSET opens a gap
+        // inside it.
+        let shift = if t == ReverbType::Gate {
+            k.predelay_ms
+        } else {
+            0.0
+        };
+        let x = (ms - shift).max(0.0) / len;
         let pass = x as u32;
         let at = x - pass as f32;
         let tap = notch * tri(11.0 * at);
         let level = match t {
+            ReverbType::Gate if ms < shift => -2.0 * TAIL_DB,
             ReverbType::Gate if pass == 0 => -curve * at - tap,
-            ReverbType::Gate => tail + fall * (ms - len),
-            ReverbType::Reverse => pass as f32 * echo - curve * (1.0 - at) - tap,
+            ReverbType::Gate => tail - damped + fall * (ms - shift - len),
+            ReverbType::Reverse if at * len < k.predelay_ms => -2.0 * TAIL_DB,
+            // The hit: the column under LENGTH.
+            ReverbType::Reverse if at > 1.0 - 0.6 * span / TAIL_COLS as f32 / len => {
+                pass as f32 * echo
+            }
+            ReverbType::Reverse => pass as f32 * echo - 9.0 - curve * (1.0 - at) - tap,
             // ROOM and HALL: a pre-delay gap, then the fall.
             ReverbType::Room | ReverbType::Hall if ms < k.predelay_ms => -2.0 * TAIL_DB,
             ReverbType::Room | ReverbType::Hall => fall * (ms - k.predelay_ms),

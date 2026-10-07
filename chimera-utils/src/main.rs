@@ -10,6 +10,7 @@ mod generic;
 mod grain;
 mod metrics;
 mod models;
+mod models_burst;
 mod mv;
 mod reference;
 mod sig;
@@ -38,6 +39,7 @@ usage: chimera-utils [flags] COMMAND …
                            fit the proposed HALL model (ADR 0095) to programs
   model-taps hall FITS [dens=…] [taps=FILE]
                            search HALL's tap fractions, the fits' knobs held
+  model-fit VARIANT PROG … fit a `models` sketch (BURST v2) to programs
 flags:
   --jobs N        worker threads (default 8)
   --out DIR       outputs (env MV_OUT, default target/mv)
@@ -211,6 +213,12 @@ fn run() -> Result<bool, String> {
             let (opts, progs): (Vec<String>, Vec<String>) =
                 rest[2..].iter().cloned().partition(|a| a.contains('='));
             models::fit(&cfg, &rest[1], &opts, &nums(&progs)?).map(|_| true)
+        }
+        "model-compare" if rest.len() >= 3 => {
+            models_burst::compare(&cfg, &rest[0], &rest[1], &nums(&rest[2..])?).map(|_| true)
+        }
+        "model-fit" if rest.len() >= 2 => {
+            models_burst::fit(&cfg, &rest[0], &nums(&rest[1..])?).map(|_| true)
         }
         _ => Err(USAGE.into()),
     };

@@ -22,7 +22,12 @@ fn dims(t: ReverbType) -> &'static [&'static str] {
         ReverbType::Room => &[
             "size", "time", "tone", "diffuse", "predelay", "smear", "damping", "shape",
         ],
-        ReverbType::Gate | ReverbType::Reverse => &["size", "time", "tone", "diffuse", "shape"],
+        // ADR 0095 § GATE and REVERSE, as built: PRE-DLY and DAMP; ONSET
+        // on REVERSE's PRE-DLY slot.
+        ReverbType::Gate => &[
+            "size", "time", "tone", "diffuse", "shape", "predelay", "damping",
+        ],
+        ReverbType::Reverse => &["size", "time", "tone", "diffuse", "shape", "predelay"],
         ReverbType::Quad => &["size", "time", "damping"],
         ReverbType::Hall => &[
             "size", "time", "tone", "diffuse", "predelay", "damping", "smear", "shape", "density",

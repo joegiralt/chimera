@@ -122,11 +122,11 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_reverb_hall_more2", 0x17b7da341482dcdf),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_gate", 0xb71bd94ca22fa03e),
+    ("mixer_fx_reverb_gate", 0x20ce834959d730b0),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_gate_more", 0x8fe65d2739531add),
+    ("mixer_fx_reverb_gate_more", 0x551e1d4a215dc619),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_gate_sync", 0x898ec2391d251e5f),
+    ("mixer_fx_reverb_gate_sync", 0x8a41594bb680ee68),
     // BLOOM, each page (T11).
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_reverb_bloom", 0x508fea4a2cbf10ed),
@@ -156,11 +156,11 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb_hall_more2", 0x3d9df42450435111),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_gate", 0x34cd1d2185258f34),
+    ("mixer_fx_reverb_gate", 0x8cd118ceade4cc66),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_gate_more", 0x0137069461bbf27f),
+    ("mixer_fx_reverb_gate_more", 0x3043f30da4c2a55b),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_gate_sync", 0x39283e215b39ac31),
+    ("mixer_fx_reverb_gate_sync", 0x39bd1bfb0ffae9de),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb_bloom", 0xdb1afb4918a4d907),
     #[cfg(feature = "master-tape")]

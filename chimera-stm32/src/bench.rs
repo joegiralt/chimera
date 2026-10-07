@@ -35,11 +35,11 @@ use chimera_engine::dsp::algo::waves::WaveId;
 use chimera_engine::dsp::engines::{EngineSlot, SlotKind};
 use chimera_engine::dsp::filter::{FilterKind, FilterMode, K2040Voice};
 use chimera_engine::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
-use chimera_engine::dsp::reverb::ReverbType;
 use chimera_engine::dsp::modal::{
     BankModes, CHORD_COUNT, ModalEngine, ModalParams, ResonatorMode, SymPool,
 };
 use chimera_engine::dsp::modulator::{EnvForm, EnvSlot, EnvType, Func, Glide, LfoForm, LfoType};
+use chimera_engine::dsp::reverb::ReverbType;
 use chimera_engine::dsp::tape_engine::read::{DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape};
 use chimera_engine::dsp::tape_engine::{StretchType, TapeModel, wave};
 use chimera_engine::dsp::voice::Voice;
@@ -1234,7 +1234,10 @@ fn memory_page(
 #[inline(never)]
 fn stress_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>, clocks: Clocks) {
     chimera_engine::probe::set_clock(DWT::cycle_count);
-    let ((s1, sp1), (s2, sp2)) = (rig.stress(true, worst_reverb), rig.stress(false, worst_reverb));
+    let ((s1, sp1), (s2, sp2)) = (
+        rig.stress(true, worst_reverb),
+        rig.stress(false, worst_reverb),
+    );
     let budget = BlockBudget::for_cpu(clocks.cpu_hz).budget_cycles();
     show_stress(rec, ([s1, s2], budget));
     hold(clocks);
