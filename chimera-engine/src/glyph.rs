@@ -26,7 +26,7 @@ pub enum FocusGlyph {
     /// A small scope tracing one period of the chosen wave's table.
     Wave,
     /// One animated glyph for all of an effect's params (`CompositeId::
-    /// params`: the braid's 4, the rings' 7, the cube's 5), drawn from
+    /// params`: the braid's 4, the rings' 7, the cube's 6), drawn from
     /// their set values, never the modulated ones.
     Composite(CompositeId),
 }
@@ -34,8 +34,8 @@ pub enum FocusGlyph {
 /// The composites, each shared by its effect's params.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompositeId {
-    /// SIZE, TIME, AMOUNT.
-    ReverbCube,
+    /// The reverb's knobs: the cube under QUAD (ADR 0067, 0085).
+    Reverb,
     /// TIME, FEEDBACK, TONE.
     DelayRings,
     /// RATE, DEPTH, MIX; MODE is the strand count.
@@ -49,7 +49,7 @@ impl CompositeId {
         match self {
             CompositeId::ChorusBraid => &BRAID_PARAMS,
             CompositeId::DelayRings => &RINGS_PARAMS,
-            CompositeId::ReverbCube => &CUBE_PARAMS,
+            CompositeId::Reverb => &REVERB_PARAMS,
         }
     }
 }
@@ -63,7 +63,7 @@ impl FocusGlyph {
         FocusGlyph::Crossfader,
         FocusGlyph::Staff,
         FocusGlyph::Wave,
-        FocusGlyph::Composite(CompositeId::ReverbCube),
+        FocusGlyph::Composite(CompositeId::Reverb),
         FocusGlyph::Composite(CompositeId::DelayRings),
         FocusGlyph::Composite(CompositeId::ChorusBraid),
     ];
@@ -79,7 +79,7 @@ impl FocusGlyph {
             FocusGlyph::Crossfader => 4,
             FocusGlyph::Staff => 5,
             FocusGlyph::Wave => 6,
-            FocusGlyph::Composite(CompositeId::ReverbCube) => 7,
+            FocusGlyph::Composite(CompositeId::Reverb) => 7,
             FocusGlyph::Composite(CompositeId::DelayRings) => 8,
             FocusGlyph::Composite(CompositeId::ChorusBraid) => 9,
         }
@@ -95,12 +95,28 @@ const _: () = {
 };
 
 /// The reverb params the cube reads, in `Cube::from_set`'s order.
-pub const CUBE_PARAMS: [ParamAddr; 5] = [
+pub const CUBE_PARAMS: [ParamAddr; 6] = [
     ParamAddr::new(BlockRef::Reverb, ReverbParams::SIZE),
     ParamAddr::new(BlockRef::Reverb, ReverbParams::TIME),
     ParamAddr::new(BlockRef::Reverb, ReverbParams::DAMPING),
     ParamAddr::new(BlockRef::Reverb, ReverbParams::MIX),
-    ParamAddr::new(BlockRef::Reverb, ReverbParams::GRIT),
+    ParamAddr::new(BlockRef::Reverb, ReverbParams::SMEAR),
+    ParamAddr::new(BlockRef::Reverb, ReverbParams::RATE),
+];
+
+/// Every reverb param that shows the composite: the cube's six, then the
+/// slots only the other TYPEs read (their glyph lands with them).
+pub const REVERB_PARAMS: [ParamAddr; 10] = [
+    CUBE_PARAMS[0],
+    CUBE_PARAMS[1],
+    CUBE_PARAMS[2],
+    CUBE_PARAMS[3],
+    CUBE_PARAMS[4],
+    CUBE_PARAMS[5],
+    ParamAddr::new(BlockRef::Reverb, ReverbParams::TONE),
+    ParamAddr::new(BlockRef::Reverb, ReverbParams::DIFFUSE),
+    ParamAddr::new(BlockRef::Reverb, ReverbParams::PREDELAY),
+    ParamAddr::new(BlockRef::Reverb, ReverbParams::SHAPE),
 ];
 
 /// The delay params the rings read, in `Rings::from_set`'s order.

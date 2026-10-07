@@ -1,4 +1,5 @@
 use crate::dsp::clampf;
+use crate::dsp::reverb::ReverbType;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::{Point, Size};
 use embedded_graphics::pixelcolor::Rgb565;
@@ -23,8 +24,8 @@ use crate::ui::draw;
 use crate::ui::dungeon_map;
 use crate::ui::fmt::{self, FmtBuf};
 use crate::ui::glyph::{
-    BRAID_PARAMS, Braid, BraidPart, CUBE_PARAMS, CompositeId, Cube, CubePart, FocusGlyph, Gauge,
-    RINGS_PARAMS, Rings, RingsPart,
+    BRAID_PARAMS, Braid, BraidPart, CompositeId, Cube, CubePart, FocusGlyph, Gauge, REVERB_PARAMS,
+    RINGS_PARAMS, Rings, RingsPart, Tail,
 };
 use crate::ui::hint;
 use crate::ui::mod_grid::MatrixState;
@@ -84,6 +85,11 @@ pub struct Frame<'a> {
     pub master_gr_db: f32,
     /// The active Part's LEVEL LED fill (`ClipHold`); 0 is dark.
     pub clip: f32,
+    /// The tempo the reverb follows and its synced time's fold.
+    pub rev_clock: (
+        crate::dsp::rev::sync::Tempo,
+        crate::dsp::rev::sync::FoldState,
+    ),
     /// Animation phase: what an animated glyph draws from.
     pub clock: crate::ui::animation::UiClock,
     /// The FX's stored params (a composite reads the chorus's).
@@ -648,11 +654,20 @@ impl Renderer {
                     focus.map(|i| RingsPart::ALL[i]),
                     frame,
                 )),
-                CompositeId::ReverbCube => Gauge::Cube(Cube::from_set(
-                    self.eased_set(f, CUBE_PARAMS),
-                    focus.map(|i| CubePart::ALL[i]),
-                    frame,
-                )),
+                // The cube is QUAD's picture; the others draw their TAIL.
+                // The cube's params lead `REVERB_PARAMS`.
+                CompositeId::Reverb => {
+                    let set = self.eased_set(f, REVERB_PARAMS);
+                    if f.ctx.rev == ReverbType::Quad {
+                        Gauge::Cube(Cube::from_set(
+                            core::array::from_fn(|i| set[i]),
+                            focus.and_then(|i| CubePart::ALL.get(i).copied()),
+                            frame,
+                        ))
+                    } else {
+                        Gauge::Tail(Tail::from_set(f.ctx.rev, set, focus, frame))
+                    }
+                }
             }
         })
     }
@@ -731,7 +746,7 @@ impl Renderer {
                 }
                 View::Orbit(cell) => buf = orbit::cell_text(cell, &f.orbit, f.ctx.ring),
                 View::Source(s) => s.cell(&mut buf),
-                _ => fmt::fmt_val(&mut buf, value, v.fmt()),
+                _ => buf = param_text(f, i, &v, value),
             }
             let c = components::Cell {
                 label: cell_label(&v),
@@ -892,9 +907,27 @@ fn value_text(f: &Frame, i: usize, v: f32) -> FmtBuf {
         _ if look(f, i) == components::Look::Absent => {
             let _ = core::fmt::Write::write_str(&mut buf, "--");
         }
-        view => fmt::fmt_val(&mut buf, v, view.fmt()),
+        view => buf = param_text(f, i, &view, v),
     }
     buf
+}
+
+/// A param's text at display value `v`: a reverb panel cell's in its
+/// units (`reverb_panel::value_text`), any other by its format.
+fn param_text(f: &Frame, i: usize, view: &View, v: f32) -> FmtBuf {
+    match view.addr().filter(|_| view::is_reverb_panel(f.def, i)) {
+        Some(a) => {
+            let mut p = f.fx.reverb;
+            crate::block::Block::set(&mut p, a.param, v);
+            let (tempo, fold) = f.rev_clock;
+            crate::ui::reverb_panel::value_text(a.param, &p, tempo, fold)
+        }
+        None => {
+            let mut buf = FmtBuf::new();
+            fmt::fmt_val(&mut buf, v, view.fmt());
+            buf
+        }
+    }
 }
 
 /// Fingerprint of the Mixer overview (quantized levels and pans, selection).

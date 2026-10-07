@@ -61,7 +61,8 @@ pub enum RegionData {
         anim: u32,
         /// The slot's set value (quantized): a glyph may draw it, not `value`.
         set: u16,
-        /// What the band shows from outside its slot (ORBIT's readings).
+        /// What the band shows from outside its slot (ORBIT's readings, a
+        /// synced reverb cell's clock).
         text: u32,
         /// HINTS on: the band draws its hint.
         hints: bool,
@@ -101,6 +102,10 @@ pub enum RegionData {
         /// `MatrixState::rev`, and each cell's `Look` in two bits.
         matrix_rev: u16,
         looks: u32,
+        /// What a cell's text reads beyond its own value: the reverb
+        /// panels' plate zone and its effective PRE-DLY, and the clock a
+        /// synced cell reads.
+        text: u64,
     },
     Nav {
         chain_idx: u8,
@@ -250,6 +255,7 @@ impl RegionData {
             mods,
             matrix_rev: 0,
             looks: 0,
+            text: 0,
         }
     }
 
@@ -312,6 +318,7 @@ impl RegionData {
             mods: [Some(u32::MAX); 6],
             matrix_rev: u16::MAX,
             looks: u32::MAX,
+            text: u64::MAX,
         }
     }
 
@@ -366,7 +373,9 @@ impl RegionData {
     /// With the matrix's revision in the key, and `looks`: the cells' looks,
     /// or the matrix's inert columns. A deleted route, a dimmed cell or an
     /// inert column redraws.
-    pub fn keyed(self, matrix_rev: u16, looks: u32) -> Self {
+    /// Cells keyed on `text` too: what their text reads beyond their
+    /// values.
+    pub fn with_text_key(self, key: u64) -> Self {
         match self {
             Self::Cells {
                 page,
@@ -374,6 +383,8 @@ impl RegionData {
                 focus,
                 dest_count,
                 mods,
+                matrix_rev,
+                looks,
                 ..
             } => Self::Cells {
                 page,
@@ -383,6 +394,31 @@ impl RegionData {
                 mods,
                 matrix_rev,
                 looks,
+                text: key,
+            },
+            other => other,
+        }
+    }
+
+    pub fn keyed(self, matrix_rev: u16, looks: u32) -> Self {
+        match self {
+            Self::Cells {
+                page,
+                values,
+                focus,
+                dest_count,
+                mods,
+                text,
+                ..
+            } => Self::Cells {
+                page,
+                values,
+                focus,
+                dest_count,
+                mods,
+                matrix_rev,
+                looks,
+                text,
             },
             Self::Grid {
                 sel_row,

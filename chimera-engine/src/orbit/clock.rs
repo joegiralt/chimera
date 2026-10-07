@@ -289,7 +289,16 @@ pub struct MidiClock {
     playing: bool,
     silent: u64,
     sample_rate: NonZeroU32,
+    /// The full average as the reverb takes it (0: none yet), and the
+    /// ticks in a row the average has been `HOLD` off it.
+    held: u32,
+    off: u8,
 }
+
+/// How far a beat's sum moves before the reverb's tempo follows: tick
+/// times are drained a block at a time, so a steady clock's sum wanders
+/// ±1 block; 1.5 blocks is past that.
+const HOLD: u32 = 3 * crate::hw::BLOCK_SIZE as u32 / 2;
 
 impl MidiClock {
     pub const fn new(sample_rate: NonZeroU32) -> MidiClock {
@@ -306,6 +315,8 @@ impl MidiClock {
             playing: true,
             silent: sample_rate.get() as u64 * SILENT_MS / 1000,
             sample_rate,
+            held: 0,
+            off: 0,
         }
     }
 
@@ -328,6 +339,7 @@ impl MidiClock {
             self.len = 0;
             self.sum = 0;
             self.playing = true;
+            (self.held, self.off) = (0, 0);
         }
         self.heard = now;
         true
@@ -348,12 +360,48 @@ impl MidiClock {
             self.sum += d as u32;
             self.at = (self.at + 1) % AVERAGE as u8;
             self.len = (self.len + 1).min(AVERAGE as u8);
+            self.hold();
         }
         self.last_tick = Some(now);
         if self.playing {
             self.ticks = self.ticks.saturating_add(1);
         }
         true
+    }
+
+    /// The held beat follows the full average once it has been `HOLD`
+    /// off for a whole beat of ticks: a block-drained clock's jitter never
+    /// moves it, a tempo change moves it once.
+    fn hold(&mut self) {
+        if !self.settled() {
+            return;
+        }
+        if self.held == 0 {
+            self.held = self.sum;
+        } else if self.sum.abs_diff(self.held) > HOLD {
+            self.off += 1;
+            if self.off as usize >= AVERAGE {
+                (self.held, self.off) = (self.sum, 0);
+            }
+        } else {
+            self.off = 0;
+        }
+    }
+
+    /// The average spans a whole beat of intervals.
+    pub fn settled(&self) -> bool {
+        self.len as usize == AVERAGE
+    }
+
+    /// A leader heard within `SILENT_MS`, playing or stopped.
+    pub fn heard(&self, now: u64) -> bool {
+        self.leader.is_some() && !self.quiet(now)
+    }
+
+    /// The leader's beat in samples, held (`hold`); `None` until its
+    /// average first fills.
+    pub fn beat(&self) -> Option<u32> {
+        (self.held != 0).then_some(self.held)
     }
 
     /// Start from `src`: back to bar 0, the phase held there until the

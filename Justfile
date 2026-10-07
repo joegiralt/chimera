@@ -81,7 +81,7 @@ build:
 # system-wide. The host tool's tests run first, against a fake unit.
 check:
     python3 -m unittest discover -s tools -p 'test_*.py'
-    cargo test -p chimera-core -p chimera-engine -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit
+    cargo test -p chimera-core -p chimera-engine -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils --features chimera-hal/testkit
     cargo test -p chimera-core -p chimera-engine --features master-tape
     cargo test -p chimera-core -p chimera-engine --no-default-features
     just test-fat-tools
@@ -92,6 +92,7 @@ check:
     # Every other feature set in release: a build check, not a debug flash;
     # their dev builds sit at or past FLASH
     # (private issue #303).
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit
     # The bench, an area a build: all of it no longer fits FLASH.
@@ -153,7 +154,7 @@ loom:
 
 # Run tests
 test:
-    cargo test -p chimera-core -p chimera-engine -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit
+    cargo test -p chimera-core -p chimera-engine -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils --features chimera-hal/testkit
     cargo test -p chimera-desktop --lib --tests
     just test-fat-tools
 
@@ -167,7 +168,7 @@ test-fat-tools:
 
 # Clippy on every target and feature set `check` builds, test targets included
 clippy:
-    cargo clippy -p chimera-core -p chimera-engine -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit --all-targets -- -D warnings
+    cargo clippy -p chimera-core -p chimera-engine -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils --features chimera-hal/testkit --all-targets -- -D warnings
     cargo clippy -p chimera-core -p chimera-engine --features master-tape --all-targets -- -D warnings
     cargo clippy -p chimera-core -p chimera-engine --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-desktop --no-default-features --all-targets -- -D warnings
@@ -295,3 +296,33 @@ fuzz:
     mkdir -p chimera-desktop/fuzz/corpus/read_wav
     cp chimera-desktop/fuzz/seeds/read_wav/*.wav chimera-desktop/fuzz/corpus/read_wav/
     cd chimera-desktop/fuzz && cargo +nightly fuzz run read_wav -- -max_total_time=300
+
+# chimera-utils (ADR 0098): Chimera's DSP against external references, on
+# the host, built in the `utils` profile. Paths from the environment
+# (chimera-utils/README.md); outputs in target/mv. Flags such as --jobs N go
+# after the arguments.
+utils := "cargo run -q --profile utils -p chimera-utils --"
+
+# REF (a program on the contract, or midiverb) vs a Chimera DEVICE
+ab ref device *knobs:
+    {{utils}} ab {{ref}} {{device}} {{knobs}}
+
+# MidiVerb II references (default programs 1-49)
+mv-refs *progs:
+    {{utils}} mv-refs {{progs}}
+
+# Fit a reverb TYPE's knobs to MidiVerb II programs
+mv-fit type +progs:
+    {{utils}} mv-fit {{type}} {{progs}}
+
+# Re-measure a TYPE's fits: residuals and PASS/FAIL per preset
+mv-verify type *flags:
+    {{utils}} mv-verify {{type}} {{flags}}
+
+# RMS-matched A/B WAVs of a TYPE's fits on the listening set
+mv-ab type:
+    {{utils}} mv-ab {{type}}
+
+# A MidiVerb II program's structure from the decompiled listing
+mv-structure +progs:
+    {{utils}} mv-structure {{progs}}

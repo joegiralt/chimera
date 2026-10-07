@@ -34,7 +34,7 @@ const LEVEL: FocusGlyph = FocusGlyph::LevelBar;
 const XF: FocusGlyph = FocusGlyph::Crossfader;
 const BRAID: FocusGlyph = FocusGlyph::Composite(CompositeId::ChorusBraid);
 const RINGS: FocusGlyph = FocusGlyph::Composite(CompositeId::DelayRings);
-const CUBE: FocusGlyph = FocusGlyph::Composite(CompositeId::ReverbCube);
+const CUBE: FocusGlyph = FocusGlyph::Composite(CompositeId::Reverb);
 
 /// Params assigned a glyph other than ARC, by `(block kind, ident)`: every
 /// instance of the block (`AlgoOp`, `Env`, `Lfo`) alike. Assigning a glyph
@@ -95,12 +95,20 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Delay", "TONE", RINGS),
     ("Delay", "MIX", RINGS),
     ("Delay", "REV", RINGS),
-    // The reverb, all five params: the cube.
-    ("Reverb", "GRIT", CUBE),
+    // The reverb: every knob shows its composite (the cube under QUAD);
+    // TYPE and SYNC are words (reverb TYPEs spec § TYPE and the words).
     ("Reverb", "TIME", CUBE),
     ("Reverb", "DAMP", CUBE),
     ("Reverb", "SIZE", CUBE),
     ("Reverb", "MIX", CUBE),
+    ("Reverb", "TONE", CUBE),
+    ("Reverb", "DIFFUSE", CUBE),
+    ("Reverb", "PREDELAY", CUBE),
+    ("Reverb", "SHAPE", CUBE),
+    ("Reverb", "SMEAR", CUBE),
+    ("Reverb", "RATE", CUBE),
+    ("Reverb", "TYPE", NONE),
+    ("Reverb", "SYNC", NONE),
     // Blends between two ends: a crossfader.
     ("Algo", "MORPH", XF),
     ("Drive", "MIX", XF),
@@ -302,8 +310,8 @@ fn every_none_word_fits_the_band() {
 fn glyph_is_hand_assigned_on_the_spec() {
     let s = ParamSpec::continuous(0, "X", ValFmt::Uni, 0.0, 1.0, 0.0, 0.1, false);
     assert_eq!(s.glyph, FocusGlyph::Arc);
-    let s = s.glyph(FocusGlyph::Composite(CompositeId::ReverbCube));
-    assert_eq!(s.glyph, FocusGlyph::Composite(CompositeId::ReverbCube));
+    let s = s.glyph(FocusGlyph::Composite(CompositeId::Reverb));
+    assert_eq!(s.glyph, FocusGlyph::Composite(CompositeId::Reverb));
     assert_eq!(FocusGlyph::default(), FocusGlyph::Arc);
 }
 
@@ -327,7 +335,7 @@ fn each_glyph_maps_to_its_gauge() {
             // A built composite: whatever its inputs make of it.
             FocusGlyph::Composite(CompositeId::ChorusBraid) => Gauge::Switch { on: 9.0 },
             FocusGlyph::Composite(CompositeId::DelayRings) => Gauge::Switch { on: 8.0 },
-            FocusGlyph::Composite(CompositeId::ReverbCube) => Gauge::Switch { on: 7.0 },
+            FocusGlyph::Composite(CompositeId::Reverb) => Gauge::Switch { on: 7.0 },
             _ => Gauge::Arc {
                 value: 0.25,
                 bipolar: true,
@@ -336,7 +344,7 @@ fn each_glyph_maps_to_its_gauge() {
         let composite = |id| match id {
             CompositeId::ChorusBraid => Gauge::Switch { on: 9.0 },
             CompositeId::DelayRings => Gauge::Switch { on: 8.0 },
-            CompositeId::ReverbCube => Gauge::Switch { on: 7.0 },
+            CompositeId::Reverb => Gauge::Switch { on: 7.0 },
         };
         assert_eq!(gauge(g, 0.25, ValFmt::Bi, composite), want, "{g:?}");
     }
@@ -554,6 +562,7 @@ fn a_view_reads_its_spec_glyph() {
         addr,
         label: "PAN",
         fmt: ValFmt::Pan,
+        short: None,
     };
     assert_eq!(v.glyph(), addr.spec().unwrap().glyph);
     let legacy = View::Legacy {
@@ -1100,7 +1109,7 @@ fn composite_values_stay_clear_of_the_box() {
             let box_x = match id {
                 CompositeId::ChorusBraid => theme::BRAID_X,
                 CompositeId::DelayRings => theme::RINGS_X,
-                CompositeId::ReverbCube => theme::CUBE_X,
+                CompositeId::Reverb => theme::CUBE_X,
             };
             for w in value_texts(s) {
                 let right = theme::FOCUS_VALUE_X + draw::text_width(&theme::FONT_FOCUS, &w, 0);
@@ -1309,9 +1318,13 @@ fn composites_draw_inside_their_boxes() {
                 )));
             }
             for focus in CubePart::ALL.map(Some).into_iter().chain([None]) {
-                check(Gauge::Cube(Cube::from_set([v, v, v, 1.0, v], focus, frame)));
                 check(Gauge::Cube(Cube::from_set(
-                    [1.0, 1.0 - v, 1.0, 1.0, 1.0],
+                    [v, v, v, 1.0, v, v],
+                    focus,
+                    frame,
+                )));
+                check(Gauge::Cube(Cube::from_set(
+                    [1.0, 1.0 - v, 1.0, 1.0, 1.0, 1.0],
                     focus,
                     frame,
                 )));
@@ -1326,15 +1339,15 @@ fn composites_draw_inside_their_boxes() {
 #[test]
 fn cube_reads_its_set_values() {
     use chimera_core::ui::glyph::Cube;
-    // SIZE, TIME, DAMP, MIX, GRIT.
-    let c = |size: f32, time: f32| Cube::from_set([size, time, 0.5, 0.5, 0.0], None, 0);
+    // SIZE, TIME, DAMP, MIX, SMEAR, RATE.
+    let c = |size: f32, time: f32| Cube::from_set([size, time, 0.5, 0.5, 0.0, 0.5], None, 0);
     // SIZE grows the room.
     assert!(c(1.0, 0.5).half() > c(0.0, 0.5).half());
     // TIME: how long the afterimage trails; none at 0.
     assert_eq!(c(0.5, 0.0).trails(), 0);
     assert!(c(0.5, 1.0).trails() > c(0.5, 0.4).trails());
     // It turns on the clock.
-    let at = |frame| Cube::from_set([0.5; 5], None, frame).turn();
+    let at = |frame| Cube::from_set([0.5; 6], None, frame).turn();
     assert_ne!(at(0), at(20));
     assert!(Gauge::Cube(c(0.5, 0.5)).animates());
 }
@@ -1344,7 +1357,7 @@ fn cube_box(x: i32, y: i32) -> bool {
         && (theme::CUBE_Y..theme::CUBE_Y + theme::CUBE_H).contains(&y)
 }
 
-/// MIX and GRIT up a little, DAMP up, `slot` focused.
+/// MIX and SMEAR up a little, DAMP up, `slot` focused.
 fn cube_ui(slot: EncoderId) -> UiState {
     let mut ui = UiState::new();
     to_demo(&mut ui, &reg::DEMO_GLYPH_CUBE);
@@ -1359,8 +1372,12 @@ fn cube_ui(slot: EncoderId) -> UiState {
 
 #[test]
 fn glyph_cube_page_moves_only_inside_its_box() {
-    // Every reverb param carries the cube.
+    // Every reverb knob carries the composite; TYPE and SYNC are words.
     for s in BlockRef::Reverb.specs() {
+        if matches!(s.ident, "TYPE" | "SYNC") {
+            assert_eq!(s.glyph, NONE, "{}", s.ident);
+            continue;
+        }
         assert_eq!(s.glyph, CUBE, "{}", s.ident);
         for w in value_texts(s) {
             let right = theme::FOCUS_VALUE_X + draw::text_width(&theme::FONT_FOCUS, &w, 0);
@@ -1551,7 +1568,7 @@ fn composite_params_match_their_specs() {
     let ids = [
         CompositeId::ChorusBraid,
         CompositeId::DelayRings,
-        CompositeId::ReverbCube,
+        CompositeId::Reverb,
     ];
     for b in BlockRef::ALL {
         for s in b.specs() {

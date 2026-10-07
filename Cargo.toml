@@ -11,6 +11,7 @@ members = [
     "chimera-waves",
     "chimera-fat",
     "chimera-theory",
+    "chimera-utils",
 ]
 exclude = ["chimera-core/fuzz", "chimera-desktop/fuzz"]
 default-members = [
@@ -95,3 +96,11 @@ codegen-units = 1
 opt-level = "z"
 [profile.release.package.chimera-core]
 opt-level = "z"
+
+# chimera-utils (ADR 0098), through its just recipes: release speed without
+# the firmware's fat LTO, and panics that unwind so scratch files are removed.
+[profile.utils]
+inherits = "release"
+lto = false
+codegen-units = 16
+panic = "unwind"

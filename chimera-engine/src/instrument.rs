@@ -17,6 +17,7 @@ use crate::dsp::filter::knobs::{Knobs, knob_coeff};
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use crate::dsp::modal::{ResonatorMode, SYM_NOTE_ON_CLEAR_MAX, SymPool};
 use crate::dsp::tape_engine::{Heads, TapeEngine};
+use crate::dsp::rev::sync::Tempo;
 use crate::dsp::voice::Voice;
 use crate::hw::{Cost, DAC_PAIRS, MAX_PARTS, MAX_VOICES, SampleBudget, VOICE_RAM_BUDGET};
 use crate::in_place::{by_value, uninit_at};
@@ -326,6 +327,7 @@ pub fn mix_parts(
     mix: &mut MixState,
     fx: &mut FxBus,
     shared: &AudioShared,
+    tempo: Tempo,
     sample_rate: u32,
     dac: &mut DacBlocks,
 ) -> [f32; BLOCK_SIZE] {
@@ -395,7 +397,7 @@ pub fn mix_parts(
 
     // The FX bus once; its return lands on pair 1, L and R.
     let mut ret = Stereo::SILENT;
-    fx.process(sends, &shared.fx, sample_rate, &mut ret);
+    fx.process(sends, &shared.fx, tempo, sample_rate, &mut ret);
 
     let out = dac.mix();
     for (k, pair) in out.iter_mut().enumerate() {
@@ -464,6 +466,8 @@ pub struct Instrument {
     held_keys: [NoteSet; MAX_VOICES],
     /// ORBIT's key and chord now; `None` while it is stopped (spec § 5.2).
     harmony: Option<Harmony>,
+    /// ORBIT's clock: what the reverb's synced times follow.
+    tempo: Tempo,
     /// A re-snap's note waiting on the clear budget (a SYMP voice's rings
     /// grow for its glide), served at the next block's start.
     resnap_to: [Option<MidiNote>; MAX_VOICES],
@@ -512,7 +516,7 @@ pub enum NoteOrigin {
 /// worst-case slots starts a note a block, a typical one all at once.
 pub const SYM_CLEAR_BUDGET: usize = SYM_NOTE_ON_CLEAR_MAX;
 
-crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, knobs, knob_k });
+crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, knobs, knob_k });
 
 const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
@@ -554,6 +558,7 @@ impl Instrument {
             addr_of_mut!((*p).keys).write([MidiNote::A4; MAX_VOICES]);
             addr_of_mut!((*p).held_keys).write([NoteSet::EMPTY; MAX_VOICES]);
             addr_of_mut!((*p).harmony).write(None);
+            addr_of_mut!((*p).tempo).write(Tempo::DEFAULT);
             addr_of_mut!((*p).resnap_to).write([None; MAX_VOICES]);
             addr_of_mut!((*p).sounding).write([0; MAX_VOICES]);
             addr_of_mut!((*p).waiting).write([None; MAX_VOICES]);
@@ -890,6 +895,17 @@ impl Instrument {
     /// keys snap to it (`None`: ORBIT stopped, nothing snaps).
     pub fn set_harmony(&mut self, h: Option<Harmony>) {
         self.harmony = h;
+    }
+
+    /// ORBIT's tempo this block (`OrbitRunner::tempo`): what the reverb's
+    /// synced times follow.
+    pub fn set_tempo(&mut self, t: Tempo) {
+        self.tempo = t;
+    }
+
+    /// The tempo the reverb follows.
+    pub fn tempo(&self) -> Tempo {
+        self.tempo
     }
 
     /// Any harmony change (spec § 5.2): each held live voice on a HELD
@@ -1251,15 +1267,18 @@ impl Instrument {
             &mut self.mix,
             fx,
             shared,
+            self.tempo,
             self.sample_rate,
             dac,
         );
-        // The MST page's GR meter: one relaxed store, never blocks.
+        // The MST page's GR meter and the synced reverb cells' clock:
+        // relaxed stores, never block.
         crate::meter::MASTER_GR.publish(fx.master_gr_db());
         // Each Part's LEVEL LED: one atomic max, held until the UI takes it.
         for (m, c) in crate::meter::FILTER_CLIP.iter().zip(clip) {
             m.raise(c);
         }
+        crate::meter::publish_rev_clock(self.tempo, fx.reverb().fold());
 
         // Oscilloscope: every part's bus, before pan and level.
         scope.write(&scope_block);

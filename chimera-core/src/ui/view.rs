@@ -15,6 +15,7 @@ use crate::dsp::tape_engine::machine::{self, Cell};
 use crate::dsp::tape_engine::{self, TapeEngineParams as T, TapeModel, wave};
 use crate::modulation::VCA;
 use crate::name::SoundName;
+use crate::dsp::reverb::{ReverbParams, ReverbType, in_plate_zone};
 use crate::orbit::RingIdx;
 use crate::orbit::clock::ClockSource;
 use crate::orbit::scene::SceneRing;
@@ -30,6 +31,7 @@ use crate::ui::glyph::FocusGlyph;
 use crate::ui::hint::{self, Gesture, Hint};
 use crate::ui::mod_panel::{self, PanelSlot};
 use crate::ui::orbit::OrbitCell;
+use crate::ui::reverb_panel;
 
 /// What an ENV slot's page resolves against: type A's panel follows its
 /// SPEED, type B's its MODE and that MODE's FORM.
@@ -71,6 +73,10 @@ pub struct SlotCtx {
     pub unpitched: bool,
     /// TAPE's SOURCE as SRC reads it.
     pub src: SourceState,
+    /// The reverb panel REV and REV › MORE show (`reverb_panel::shown`).
+    pub rev: ReverbType,
+    /// HALL's SIZE sits in its plate zone: the SIZE cell reads `PLATE`.
+    pub plate: bool,
     /// The ORBIT ring the location selects: what `SelectedRing` edits.
     pub ring: RingIdx,
     /// ORBIT's clock: BPM is inert while MIDI leads.
@@ -81,6 +87,11 @@ impl SlotCtx {
     /// Read from any `BlockRead`: a Sound's params or a Part view.
     pub fn read(params: &impl BlockRead, sel_op: Op) -> Self {
         let get = |b: BlockRef, id| params.block(b).map_or(0.0, |blk| blk.get(id));
+        let rev = ReverbParams {
+            kind: ReverbType::at(get(BlockRef::Reverb, ReverbParams::TYPE)),
+            size: get(BlockRef::Reverb, ReverbParams::SIZE),
+            ..ReverbParams::default()
+        };
         Self {
             sel_op,
             kind: FilterKind::from_index(get(BlockRef::Filter, FilterParams::KIND)),
@@ -102,6 +113,8 @@ impl SlotCtx {
             tape: TapeModel::from_index(get(BlockRef::TapeEngine, T::MODEL) as u8),
             unpitched: get(BlockRef::TapeEngine, T::PERIOD) == 0.0,
             src: SourceState::None,
+            rev: reverb_panel::shown(rev.kind),
+            plate: in_plate_zone(&rev),
             ring: RingIdx::ALL[0],
             clock: ClockSource::Internal,
         }
@@ -123,6 +136,16 @@ impl SlotCtx {
     /// This context on ORBIT ring `ring`.
     pub fn on_ring(self, ring: RingIdx) -> Self {
         Self { ring, ..self }
+    }
+
+    /// This context under reverb `rev` (its TYPE's shown panel, and HALL's
+    /// plate zone): a Sound's params hold no FX.
+    pub fn on_rev(self, rev: &ReverbParams) -> Self {
+        Self {
+            rev: reverb_panel::shown(rev.kind),
+            plate: in_plate_zone(rev),
+            ..self
+        }
     }
 
     /// This context under ORBIT's `clock`.
@@ -338,6 +361,8 @@ pub enum View {
         addr: ParamAddr,
         label: &'static str,
         fmt: ValFmt,
+        /// What the cell shows when `label` outruns its bar (ADR 0053).
+        short: Option<&'static str>,
     },
     /// A matrix cell's amount (filter-types spec § 2): FM1, FM2, FM3, QM,
     /// ENV AMT, KEYBD.
@@ -370,13 +395,11 @@ impl View {
         }
     }
 
-    /// The spec's short form, for a param shown under its own label.
+    /// The cell's short form: the spec's, for a param shown under its own
+    /// label; a reverb panel word's own (`DENS`).
     pub fn short(&self) -> Option<&'static str> {
         match *self {
-            View::Param { addr, label, .. } => addr
-                .spec()
-                .filter(|s| s.label == label)
-                .and_then(|s| s.short),
+            View::Param { short, .. } => short,
             _ => None,
         }
     }
@@ -430,7 +453,16 @@ impl View {
 const MUTE_HINT: Hint = &[Gesture("MIX + B1-5", "MUTES THAT RING")];
 
 fn param(addr: ParamAddr, label: &'static str, fmt: ValFmt) -> View {
-    View::Param { addr, label, fmt }
+    let short = addr
+        .spec()
+        .filter(|s| s.label == label)
+        .and_then(|s| s.short);
+    View::Param {
+        addr,
+        label,
+        fmt,
+        short,
+    }
 }
 
 /// `addr`'s format under `ctx`: MODE names its kind's own modes.
@@ -510,6 +542,33 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
         }
         SlotBinding::Machine(at) => machine_view(at, ctx),
         SlotBinding::Source => View::Source(ctx.src),
+        SlotBinding::ReverbPanel(page, k) => match reverb_panel::knob(ctx.rev, page, k) {
+            Some(c) => {
+                let addr = ParamAddr::new(BlockRef::Reverb, c.id);
+                let fmt = addr.spec().map_or(ValFmt::Uni, |s| s.fmt);
+                let label = if ctx.plate && c.id == ReverbParams::SIZE {
+                    reverb_panel::PLATE
+                } else {
+                    c.label
+                };
+                // A panel word's own short (`DENS`) over the spec's.
+                match (param(addr, label, fmt), c.short) {
+                    (
+                        View::Param {
+                            addr, label, fmt, ..
+                        },
+                        Some(s),
+                    ) => View::Param {
+                        addr,
+                        label,
+                        fmt,
+                        short: Some(s),
+                    },
+                    (v, _) => v,
+                }
+            }
+            None => View::Empty,
+        },
     }
 }
 
@@ -537,6 +596,15 @@ fn machine_view(at: MachineSlot, ctx: &SlotCtx) -> View {
         };
     }
     param(addr, label, spec.fmt)
+}
+
+/// Whether slot `i` of `def` is a reverb panel cell: its text and step
+/// are the TYPE's (`reverb_panel`).
+pub fn is_reverb_panel(def: &BlockDef, i: usize) -> bool {
+    matches!(
+        def.params.get(i).map(|s| s.binding),
+        Some(SlotBinding::ReverbPanel(..))
+    )
 }
 
 /// Cell `k` of a modulator panel, its params in `block`.

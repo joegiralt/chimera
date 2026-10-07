@@ -34,10 +34,15 @@ probe = ["chimera-engine/probe"]
 # The filter's static-cost probes (`dsp::filter::probe`) alone, for
 # `tools/loop_count.py`: none of `probe`'s stamps.
 filter-probe = ["chimera-engine/filter-probe"]
+# `ring::smear_probe`: SMEAR's reads, recorded per thread. Tests only.
+smear-probe = ["chimera-engine/smear-probe"]
+# `rev::parts::clamp_counts`: the reverb's clamp hits, counted per thread.
+# Tests only.
+clamp-probe = ["chimera-engine/clamp-probe"]
 
 [dev-dependencies]
 # No default features: `--no-default-features` must reach the library too.
-chimera-core = { path = ".", default-features = false, features = ["test-support", "source-writer"] }
+chimera-core = { path = ".", default-features = false, features = ["test-support", "source-writer", "smear-probe", "clamp-probe"] }
 chimera-hal = { path = "../chimera-hal", features = ["testkit"] }
 
 

@@ -7,6 +7,7 @@ use chimera_core::dsp::comp::CompParams;
 use chimera_core::dsp::delay::DelayParams;
 use chimera_core::dsp::fx_bus::{FxBus, FxParams};
 use chimera_core::dsp::limiter::{CEILING, LOOKAHEAD, Limiter, OUTPUT_TRIM, THRESHOLD};
+use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::reverb::ReverbParams;
 use chimera_core::dsp::tape::TapeParams;
 use chimera_core::dsp::voice::Voice;
@@ -67,7 +68,9 @@ fn max() -> FxParams {
             time: 1.0,
             size: 1.0,
             damping: 0.0,
-            grit: 0.3,
+            smear: 1.0,
+            rate: 1.0,
+            ..Default::default()
         },
         tape: TapeParams {
             mix: 1.0,
@@ -166,7 +169,7 @@ fn no_stage_exceeds_ceiling() {
                 let input = dac.input();
                 let trimmed = input.iter().flatten().map(|x| x.abs() * OUTPUT_TRIM);
                 pre = trimmed.fold(pre, f32::max);
-                let lines = fx.reverb().ring().lines();
+                let lines = fx.reverb().arena().lines();
                 ring = lines.iter().fold(ring, |m, &v| m.max((v as i32).abs()));
                 rails += lines
                     .iter()
@@ -341,10 +344,10 @@ fn everything_before_the_limiter_is_mains_mix() {
         let bus = inst.part_bus(0);
         let mut sends = [bus.map(|b| b * 0.1); 3];
         let mut ret = chimera_core::dsp::Stereo::SILENT;
-        reference.process(&mut sends, &fxp, SAMPLE_RATE, &mut ret);
+        reference.process(&mut sends, &fxp, Tempo::DEFAULT, SAMPLE_RATE, &mut ret);
         assert_eq!(
-            fx.reverb().ring().lines(),
-            reference.reverb().ring().lines()
+            fx.reverb().arena().lines(),
+            reference.reverb().arena().lines()
         );
         let input = dac.input().iter().flatten();
         peak = input.fold(peak, |m, x| m.max(x.abs()));

@@ -107,8 +107,28 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_sends", 0xdf3aab7c23ee0c31),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_delay", 0x57508228791992f2),
+    // TYPE first, the panel's units, and REV › MORE (reverb TYPEs T6).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb", 0xd831539df40c3730),
+    ("mixer_fx_reverb", 0x68870c6de76ce43d),
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_fx_reverb_more", 0x796383a972c785b6),
+    // HALL (its SIZE cell PLATE at SIZE 0) and GATE, each page (T10);
+    // MORE re-recorded: the SYNC cell, and GATE's synced LENGTH (T12).
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_fx_reverb_hall", 0xd89b0868a863011f),
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_fx_reverb_hall_more", 0x486d6a677d1e3e15),
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_fx_reverb_gate", 0xb71bd94ca22fa03e),
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_fx_reverb_gate_more", 0x8fe65d2739531add),
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_fx_reverb_gate_sync", 0x898ec2391d251e5f),
+    // BLOOM, each page (T11).
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_fx_reverb_bloom", 0x508fea4a2cbf10ed),
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_fx_reverb_bloom_more", 0x30910faebb0d507f),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_delay_char", 0xc6fd6e6be7eb22e8),
     #[cfg(not(feature = "master-tape"))]
@@ -123,7 +143,23 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_fx_delay", 0x6bfad50017562c25),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb", 0xc0311d87f95d9df6),
+    ("mixer_fx_reverb", 0xcd93522b3a8424f7),
+    #[cfg(feature = "master-tape")]
+    ("mixer_fx_reverb_more", 0x61c4a651bf259e74),
+    #[cfg(feature = "master-tape")]
+    ("mixer_fx_reverb_hall", 0xb6d4b80a96c7bef1),
+    #[cfg(feature = "master-tape")]
+    ("mixer_fx_reverb_hall_more", 0x41aaf3f01d367eb7),
+    #[cfg(feature = "master-tape")]
+    ("mixer_fx_reverb_gate", 0x34cd1d2185258f34),
+    #[cfg(feature = "master-tape")]
+    ("mixer_fx_reverb_gate_more", 0x0137069461bbf27f),
+    #[cfg(feature = "master-tape")]
+    ("mixer_fx_reverb_gate_sync", 0x39283e215b39ac31),
+    #[cfg(feature = "master-tape")]
+    ("mixer_fx_reverb_bloom", 0xdb1afb4918a4d907),
+    #[cfg(feature = "master-tape")]
+    ("mixer_fx_reverb_bloom_more", 0x60adac1a381f3b39),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_delay_char", 0x8efda1c817189d8f),
     #[cfg(feature = "master-tape")]

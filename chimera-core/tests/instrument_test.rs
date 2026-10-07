@@ -13,6 +13,7 @@ use chimera_core::dsp::chorus::ChorusParams;
 use chimera_core::dsp::ease::{Ease, ease_coeff, step_of};
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::dsp::limiter::OUTPUT_TRIM;
+use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::ring::{first_reflection, size_step};
 use chimera_core::hw::{DAC_PAIRS, MAX_PARTS, MAX_VOICES};
 use chimera_core::instrument::{
@@ -180,6 +181,7 @@ fn mix_parts_alone_is_renders_mix() {
         &mut MixState::default(),
         &mut fx,
         &shared,
+        Tempo::DEFAULT,
         SR,
         &mut out,
     );
@@ -244,7 +246,7 @@ fn mix_parts_reference(
         }
     }
     let mut ret = Stereo::SILENT;
-    fx.process(sends, &shared.fx, SR, &mut ret);
+    fx.process(sends, &shared.fx, Tempo::DEFAULT, SR, &mut ret);
     for (i, (&l, &r)) in ret.l.iter().zip(&ret.r).enumerate() {
         out[0][2 * i] += l;
         out[0][2 * i + 1] += r;
@@ -314,7 +316,15 @@ fn mix_parts_is_bit_identical_to_the_reference() {
             _ => [false; MAX_PARTS],
         };
         let scope = mix_parts(
-            &buses, &written, &mut sends, &mut pans, &mut fx, &shared, SR, &mut out,
+            &buses,
+            &written,
+            &mut sends,
+            &mut pans,
+            &mut fx,
+            &shared,
+            Tempo::DEFAULT,
+            SR,
+            &mut out,
         );
         let scope_ref = mix_parts_reference(
             &buses,
@@ -364,7 +374,7 @@ fn fx_send_puts_no_dry_signal_on_pair_1() {
         let bus = *rig.inst.part_bus(0);
         let mut sends = [[0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE], bus.map(|s| s * 0.5)];
         let mut ret = Stereo::SILENT;
-        fx.process(&mut sends, &shared.fx, SR, &mut ret);
+        fx.process(&mut sends, &shared.fx, Tempo::DEFAULT, SR, &mut ret);
         let (l, r) = lr(&rig.out()[0]);
         assert_eq!(
             (l, r),
@@ -683,7 +693,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // then the free ring on release (ADR 0062).
     ("two_parts_two_pairs", 0x08f37cef25d6536b),
     ("reverb_send_off", 0xfbfed33813188e05), // ADR 0049 INIT, then the ADR 0050 output trim
-    ("reverb_send_on", 0x12acf08859602685),  // ADR 0049 INIT, then the ADR 0050 output trim
+    ("reverb_send_on", 0x29ccb0100493abc7),  // ADR 0049 INIT, then the ADR 0050 output trim
     ("six_voice_chord", 0xc403d6115fa7c0ad), // ADR 0049 INIT, then the ADR 0050 output trim
 ];
 
@@ -700,7 +710,7 @@ const PRE_LIMITER: &[(&str, u64)] = &[
     // then the free ring on release (ADR 0062).
     ("two_parts_two_pairs", 0x39011cff1c61c20f),
     ("reverb_send_off", 0xfa51f05d4383455d),
-    ("reverb_send_on", 0x6f59ef333f7b5956),
+    ("reverb_send_on", 0x8e4fef581954c725),
     ("six_voice_chord", 0x5132735055c0c78d),
 ];
 
@@ -1338,7 +1348,15 @@ fn the_tape_is_on_pair_1_only() {
         let mut blocks = Vec::new();
         for _ in 0..32 {
             mix_parts(
-                &buses, &written, &mut sends, &mut pans, &mut fx, &shared, SR, &mut out,
+                &buses,
+                &written,
+                &mut sends,
+                &mut pans,
+                &mut fx,
+                &shared,
+                Tempo::DEFAULT,
+                SR,
+                &mut out,
             );
             blocks.push(*out.out());
         }
@@ -1378,7 +1396,15 @@ fn the_master_comp_ducks_pair_2_with_pair_1() {
         let mut energy = 0.0f32;
         for b in 0..128 {
             mix_parts(
-                &buses, &written, &mut sends, &mut pans, &mut fx, &shared, SR, &mut out,
+                &buses,
+                &written,
+                &mut sends,
+                &mut pans,
+                &mut fx,
+                &shared,
+                Tempo::DEFAULT,
+                SR,
+                &mut out,
             );
             if b >= 64 {
                 energy += out.out()[1].iter().map(|s| s * s).sum::<f32>();
