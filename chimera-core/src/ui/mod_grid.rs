@@ -8,6 +8,7 @@ use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
 use crate::addr::{BlockRef, ParamAddr};
+use crate::dsp::tape_engine::{TapeModel, machine};
 use crate::mod_path::LABEL_LEN;
 use crate::modulation::FixedCol;
 use crate::preset::Sound;
@@ -168,6 +169,8 @@ pub struct MatrixState {
     /// Source list — built from mod matrix sub-pages.
     pub sources: [Option<SourceRow>; MAX_SOURCES],
     pub num_sources: usize,
+    /// The edited Part's TAPE machine: its labels name TAPE's columns.
+    pub tape: TapeModel,
 }
 
 impl MatrixState {
@@ -187,10 +190,19 @@ impl MatrixState {
             num_dests: 0,
             sources: [None; MAX_SOURCES],
             num_sources: 0,
+            tape: TapeModel::Loop,
         };
         // Matrix starts empty — no destinations enabled, no amounts set.
         // Users enable params with MIX+Plus on block pages, set amounts in grid.
         state
+    }
+
+    /// The edited Part's machine; a change redraws the headers.
+    pub fn set_tape(&mut self, m: TapeModel) {
+        if self.tape != m {
+            self.tape = m;
+            self.bump();
+        }
     }
 
     /// Rebuild the source rows from the chain's `mod_sources`.
@@ -588,6 +600,7 @@ impl MatrixState {
 pub fn block_tag(b: BlockRef) -> &'static str {
     match b {
         BlockRef::Modal => "MDL",
+        BlockRef::TapeEngine => "TPE",
         BlockRef::AlgoOp(op) => ["OP1", "OP2", "OP3", "OP4", "OP5", "OP6"][op.index()],
         BlockRef::Algo => "ALG",
         BlockRef::Drive => "DRV",
@@ -600,7 +613,7 @@ pub fn block_tag(b: BlockRef) -> &'static str {
         BlockRef::Chorus => "CHR",
         BlockRef::Delay => "DLY",
         BlockRef::Reverb => "REV",
-        BlockRef::Tape => "TPE",
+        BlockRef::Tape => "REL",
         BlockRef::Comp => "CMP",
         BlockRef::Part | BlockRef::PartMix(_) => "PRT",
         BlockRef::Theme => "THM",
@@ -611,9 +624,27 @@ pub fn block_tag(b: BlockRef) -> &'static str {
     }
 }
 
-/// A destination's parameter name (its spec label).
-pub fn dest_name(d: &ModDest) -> &'static str {
-    d.addr.spec().map_or("?", |s| s.label)
+/// A TAPE destination's cell on `tape`'s machine (`WALK`, `WLK`).
+fn machine_cell(a: ParamAddr, tape: TapeModel) -> Option<&'static machine::Cell> {
+    (a.block == BlockRef::TapeEngine)
+        .then(|| machine::cell_of(tape, a.param))
+        .flatten()
+}
+
+/// A destination's parameter name: its spec label, or the machine's.
+pub fn dest_name(d: &ModDest, tape: TapeModel) -> &'static str {
+    machine_cell(d.addr, tape)
+        .map(|c| c.label)
+        .or_else(|| d.addr.spec().map(|s| s.label))
+        .unwrap_or("?")
+}
+
+/// A column's header: the machine's short on TAPE, else `fit_header`.
+fn header(d: &ModDest, tape: TapeModel) -> &'static str {
+    match machine_cell(d.addr, tape) {
+        Some(c) => c.short,
+        None => d.addr.spec().map_or("?", fit_header),
+    }
 }
 
 /// Widest column header: the column pitch minus a 3px gap, so neighbouring
@@ -635,14 +666,15 @@ pub fn fit_header(spec: &crate::block::ParamSpec) -> &'static str {
 
 /// A destination as the focus band names it: the column header's two lines
 /// on one, `TAG NAME` (`OP1 LEVEL`), so operators read apart.
-pub fn fmt_route_dest(buf: &mut FmtBuf, d: &ModDest) {
-    let _ = write!(buf, "{} {}", block_tag(d.addr.block), dest_name(d));
+pub fn fmt_route_dest(buf: &mut FmtBuf, d: &ModDest, tape: TapeModel) {
+    let _ = write!(buf, "{} {}", block_tag(d.addr.block), dest_name(d, tape));
 }
 
 /// A block's full name, for the readout (`FILTER`; `block_tag` is `FLT`).
 pub fn block_name(b: BlockRef) -> &'static str {
     match b {
         BlockRef::Modal => "MODAL",
+        BlockRef::TapeEngine => "TAPE",
         BlockRef::AlgoOp(op) => [
             "OPERATOR 1",
             "OPERATOR 2",
@@ -663,7 +695,7 @@ pub fn block_name(b: BlockRef) -> &'static str {
         BlockRef::Chorus => "CHORUS",
         BlockRef::Delay => "DELAY",
         BlockRef::Reverb => "REVERB",
-        BlockRef::Tape => "TAPE",
+        BlockRef::Tape => "REEL",
         BlockRef::Comp => "COMP",
         BlockRef::Part | BlockRef::PartMix(_) => "PART",
         BlockRef::Theme => "THEME",
@@ -686,11 +718,11 @@ const ARROW_GAP: i32 = 5;
 /// The readout's destination: `FILTER CUTOFF`, or `FLT CUTOFF` when the
 /// full block name would push the line past `theme::CONTENT_W`. The param
 /// name is never cut.
-pub fn fmt_readout_dest(buf: &mut FmtBuf, source: &str, d: &ModDest) {
-    let _ = write!(buf, "{} {}", block_name(d.addr.block), dest_name(d));
+pub fn fmt_readout_dest(buf: &mut FmtBuf, source: &str, d: &ModDest, tape: TapeModel) {
+    let _ = write!(buf, "{} {}", block_name(d.addr.block), dest_name(d, tape));
     if names_width(source, buf.as_str()) > theme::CONTENT_W {
         *buf = FmtBuf::new();
-        fmt_route_dest(buf, d);
+        fmt_route_dest(buf, d, tape);
     }
 }
 
@@ -799,7 +831,7 @@ where
         );
         let name = match state.col(di) {
             Col::Fixed(f) => f.tag(),
-            Col::Reg(_) => dest.addr.spec().map_or("?", fit_header),
+            Col::Reg(_) => header(&dest, state.tape),
         };
         draw::text_center(d, &theme::FONT_LABEL, name, x, GRID_NAME_Y, name_color, 0);
     }
@@ -978,7 +1010,7 @@ where
             let x = label(d, src, theme::MARGIN_X, theme::ACCENT) + ARROW_GAP;
             let x = x + draw::arrow(d, x, READOUT_Y, theme::ACCENT) + ARROW_GAP;
             let mut name = FmtBuf::new();
-            fmt_readout_dest(&mut name, src, &dest);
+            fmt_readout_dest(&mut name, src, &dest, state.tape);
             label(d, name.as_str(), x, theme::ACCENT);
             let mut effect = FmtBuf::new();
             let dead = inert & (1 << state.sel_col) != 0;

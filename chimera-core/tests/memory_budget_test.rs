@@ -8,6 +8,7 @@ use chimera_core::dsp::algo::engine::AlgoEngine;
 use chimera_core::dsp::engines::EngineSlot;
 use chimera_core::dsp::modal::{MAX_STRING_DELAY, ModalEngine};
 use chimera_core::dsp::note_to_freq;
+use chimera_core::dsp::tape_engine::TapeEngine;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw;
 
@@ -31,15 +32,17 @@ fn voice_pool_fits_d2() {
 #[test]
 fn voice_is_its_chain_plus_one_slot() {
     use core::mem::align_of;
-    let (algo, modal, slot) = (
+    let (algo, modal, tape, slot) = (
         size_of::<AlgoEngine>(),
         size_of::<ModalEngine>(),
+        size_of::<TapeEngine>(),
         size_of::<EngineSlot>(),
     );
     let chain = size_of::<Voice>() - slot;
     for (name, size) in [
         ("AlgoEngine", algo),
         ("ModalEngine", modal),
+        ("TapeEngine", tape),
         ("EngineSlot", slot),
         ("chain", chain),
         ("Voice", size_of::<Voice>()),
@@ -60,7 +63,7 @@ fn voice_is_its_chain_plus_one_slot() {
     // slot's align, plus one align for the tag.
     let align = align_of::<EngineSlot>();
     assert!(
-        slot <= algo.max(modal).next_multiple_of(align) + align,
+        slot <= algo.max(modal).max(tape).next_multiple_of(align) + align,
         "EngineSlot = {slot} B"
     );
 }
@@ -178,8 +181,16 @@ fn ui_state_rest_under_4k() {
     let rest = size_of::<chimera_core::ui::UiState>() - size_of::<Project>();
     eprintln!("UiState without its Project = {rest} B");
     // A growth tripwire, no physical limit: `UiState` is an AXI static
-    // built in place, never moved or cloned.
-    assert!(rest <= 4096, "UiState grew to {rest} B besides its Project");
+    // built in place, never moved or cloned. 512 B of it is TAPE's strip
+    // (the overview's 432 B cache and its key, spec § RAM); 2.75 KB its
+    // SOURCE cell (a load's `SourceCheck` 1 KB, the 16 heads, the
+    // per-source memory's 512 B, the card's 64 rows; TAPE Task 17); 128 B
+    // the filter types' (the LEVEL LEDs' holds and the matrix's taps: 88 B
+    // on their own, 128 beside TAPE's, padded).
+    assert!(
+        rest <= 4096 + 512 + 2816 + 128,
+        "UiState grew to {rest} B besides its Project"
+    );
 }
 
 /// Exclusive-state spec § Memory: Sympathetic's seven lines live in a pool

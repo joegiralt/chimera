@@ -41,6 +41,10 @@ const CUBE: FocusGlyph = FocusGlyph::Composite(CompositeId::ReverbCube);
 const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     // Word choices: the word is the value, there is no amount to gauge.
     ("Modal", "MODE", NONE),
+    ("TapeEngine", "MODEL", NONE),
+    ("TapeEngine", "TYPE", NONE),
+    ("TapeEngine", "SLICE", NONE),
+    ("TapeEngine", "WOW", NONE),
     ("Algo", "ALG_A", NONE),
     ("Algo", "ALG_B", NONE),
     ("Filter", "KIND", NONE),
@@ -100,6 +104,7 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Algo", "MORPH", XF),
     ("Drive", "MIX", XF),
     ("Pitch", "STEAL", NONE),
+    ("Pitch", "SNAP", NONE),
     ("Part", "MODE", NONE),
     ("Part", "OUT", NONE),
     ("Part", "SNAP", NONE),
@@ -143,6 +148,10 @@ const TWO_PEERS: &[(&str, &str)] = &[
     ("Part", "MODE"),
     // CUT and GLIDE: two ways to steal; GLIDE could read as "glide on".
     ("Pitch", "STEAL"),
+    // CHROMA and MUSICAL: two ladders for PITCH's steps.
+    ("Pitch", "SNAP"),
+    // CAPSTAN and WARBLE: two flutters.
+    ("TapeEngine", "WOW"),
     // SCALE and CHORD: two sets to snap to.
     ("OrbitRing", "SNAP"),
     // STEP and POOL: two ways to pick a note.
@@ -151,6 +160,8 @@ const TWO_PEERS: &[(&str, &str)] = &[
     ("Part", "HELD"),
     // INT and EXT: two clocks to follow, neither is off.
     ("Midi", "SYNC"),
+    // MONO and POLY: two ways to splice a grain.
+    ("TapeEngine", "TYPE"),
 ];
 
 /// Every LEVEL BAR param is a unipolar level, 0 to max.

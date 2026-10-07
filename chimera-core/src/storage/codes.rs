@@ -49,6 +49,9 @@ impl BlockRef {
             BlockRef::OrbitChords => 27,
             BlockRef::OrbitRing(r) => 28 + r.get(),
             BlockRef::Midi => 33,
+            // A block code: the registry's retired page id 34 is another
+            // namespace.
+            BlockRef::TapeEngine => 34,
             BlockRef::PartMix(_) | BlockRef::Tempo => return None,
         })
     }
@@ -88,6 +91,7 @@ impl BlockRef {
                 ["RING1", "RING2", "RING3", "RING4", "RING5"][r.get() as usize]
             }
             BlockRef::Midi => "MIDI",
+            BlockRef::TapeEngine => "TAPE_ENG",
             BlockRef::PartMix(_) | BlockRef::Tempo => return None,
         })
     }
@@ -153,7 +157,9 @@ pub const RETIRED: &[(u8, u8)] = &[
 pub const RETIRED_BLOCKS: &[u8] = &[];
 
 /// `(block code, param id, value code)`: one enum value that is gone for good.
-pub const RETIRED_CODES: &[(u8, u8, u8)] = &[];
+/// TAPE's MODEL REVERSE (#369): LOOP with END before START plays it, so a
+/// file's code 1 goes to `Retired` and `tape_engine::translate_v1`.
+pub const RETIRED_CODES: &[(u8, u8, u8)] = &[(34, 0, 1)];
 
 /// `ModSource` codes that are gone for good.
 pub const RETIRED_SOURCES: &[u8] = &[];
@@ -169,31 +175,45 @@ pub struct Migration {
 
 pub const MIGRATIONS: &[Migration] = &[];
 
-/// A block's retired values from one file, by old `ParamId`, and the ids
-/// the file held.
+/// A block's retired values from one file, by old `ParamId`, its retired
+/// enum codes (`RETIRED_CODES`), by the live param that held them, and the
+/// ids the file held.
 pub struct Retired {
-    old: [Option<f32>; MAX_BLOCK_PARAMS],
+    vals: [Option<f32>; MAX_BLOCK_PARAMS],
+    codes: [Option<u8>; MAX_BLOCK_PARAMS],
     held: ByteSet,
 }
 
 impl Retired {
     pub(super) const fn new(held: ByteSet) -> Self {
         Retired {
-            old: [None; MAX_BLOCK_PARAMS],
+            vals: [None; MAX_BLOCK_PARAMS],
+            codes: [None; MAX_BLOCK_PARAMS],
             held,
         }
     }
 
     pub(super) fn put(&mut self, id: ParamId, v: f32) {
-        self.old[usize::from(id.0)] = Some(v);
+        self.vals[usize::from(id.0)] = Some(v);
+    }
+
+    pub(super) fn put_code(&mut self, id: ParamId, c: u8) {
+        if let Some(x) = self.codes.get_mut(usize::from(id.0)) {
+            *x = Some(c);
+        }
     }
 
     pub fn get(&self, id: ParamId) -> Option<f32> {
-        self.old.get(usize::from(id.0)).copied().flatten()
+        self.vals.get(usize::from(id.0)).copied().flatten()
+    }
+
+    /// The retired code `id` held in the file.
+    pub fn code(&self, id: ParamId) -> Option<u8> {
+        self.codes.get(usize::from(id.0)).copied().flatten()
     }
 
     pub fn any(&self) -> bool {
-        self.old.iter().any(Option::is_some)
+        self.vals.iter().any(Option::is_some) || self.codes.iter().any(Option::is_some)
     }
 
     /// The file named `id`, live or retired, whatever its value: a stored
@@ -227,6 +247,10 @@ pub const TRANSLATIONS: &[Translation] = &[
     Translation {
         block: 10,
         apply: crate::dsp::filter::translate_drive,
+    },
+    Translation {
+        block: 34,
+        apply: crate::dsp::tape_engine::params::translate_v1,
     },
 ];
 

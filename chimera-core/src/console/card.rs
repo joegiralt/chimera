@@ -104,11 +104,27 @@ pub struct Latency {
     pub max_us: u32,
 }
 
+/// Ciura's gaps, then insertion: a few dozen bytes, where `sort_unstable`
+/// links 3.6 KB of quicksort for 1 024 timings.
+fn shell_sort(v: &mut [u32]) {
+    for gap in [701, 301, 132, 57, 23, 10, 4, 1] {
+        for i in gap..v.len() {
+            let x = v[i];
+            let mut j = i;
+            while j >= gap && v[j - gap] > x {
+                v[j] = v[j - gap];
+                j -= gap;
+            }
+            v[j] = x;
+        }
+    }
+}
+
 impl Latency {
     /// Of `us`, which it sorts; `None` if empty. The median is the upper
     /// one of an even count, the percentiles nearest rank.
     pub fn of(us: &mut [u32]) -> Option<Latency> {
-        us.sort_unstable();
+        shell_sort(us);
         let n = us.len();
         let rank = |pct: usize| (n * pct).div_ceil(100).max(1) - 1;
         Some(Latency {

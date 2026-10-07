@@ -454,7 +454,7 @@ fn block_codes_unique_and_round_trip() {
     }
     assert_eq!(seen.len(), BlockRef::ALL.len());
     assert_eq!(BlockRef::from_disk_code(0), None);
-    assert_eq!(BlockRef::from_disk_code(34), None);
+    assert_eq!(BlockRef::from_disk_code(35), None);
     assert_eq!(BlockRef::from_disk_code(255), None);
 }
 
@@ -514,7 +514,9 @@ fn retired_never_live() {
             (10, 2)
         ]
     );
-    assert!(RETIRED_CODES.is_empty() && RETIRED_SOURCES.is_empty() && RETIRED_BLOCKS.is_empty());
+    // TAPE's MODEL REVERSE (#369): LOOP with END before START.
+    assert_eq!(RETIRED_CODES, &[(34, 0, 1)]);
+    assert!(RETIRED_SOURCES.is_empty() && RETIRED_BLOCKS.is_empty());
     for &(block, id) in RETIRED {
         for b in BlockRef::ALL
             .into_iter()

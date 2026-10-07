@@ -1,0 +1,12 @@
+# The recordings `just tape-listen` plays, each credited. No audio here: the
+# originals live in $CHIMERA_TAPES_SRC (~/chimera-tapes-src). CC0 or public
+# domain only, checked on the file's own page (#282's dataset rule).
+
+[[source]]
+file = "Female-vibrato-1.wav"
+slug = "vibrato"
+title = "Female vibrato (chest voice)"
+author = "Beetricks"
+url = "https://commons.wikimedia.org/wiki/File:Female-vibrato-1.wav"
+licence = "CC0 1.0"
+# Own work, 22 August 2020; 9.5 s, 44.1 kHz 16-bit stereo, 1 674 808 B.

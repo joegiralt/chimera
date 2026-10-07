@@ -63,6 +63,11 @@ impl Ramp {
     pub fn hold(&mut self) {
         self.0 = None;
     }
+
+    /// The last block's value: `None` before a fresh note's first.
+    pub fn value(&self) -> Option<f32> {
+        self.0
+    }
 }
 
 /// Blocks a stage's on/off gate takes: 20 ms at 48 kHz, as `EASE_S`.

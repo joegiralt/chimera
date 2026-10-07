@@ -75,11 +75,14 @@ const GOLDENS: &[(&str, u64)] = &[
     ("lfo_func", 0x60ec706c0ecfc450),
     ("amp_vel_dimmed", 0x496ba84d34eb9c06),
     ("amp_vel_live", 0x07fe7ee2b28245d6),
-    // Re-recorded: PIT shows STEAL and TIME (#254).
-    ("algo_pitch", 0x245c47fc88561cef),
+    // Re-recorded: PIT shows SNAP on E (TAPE Task 12b).
+    ("algo_pitch", 0x7820d2af4b909f1f),
     // Re-recorded: the EXC node (plan Task 13).
-    // Re-recorded: PIT shows STEAL and TIME (#254).
-    ("modal_pitch", 0x68e6cf758f76373f),
+    // Re-recorded: PIT shows SNAP on E (TAPE Task 12b).
+    ("modal_pitch", 0x7049f28424d35cbf),
+    // PIT on TAPE, SNAP MUSICAL: PITCH +19 in three clicks (TAPE Task 12b);
+    // again for Task 15: PIT hangs under DECK.
+    ("tape_pitch_musical", 0xcd7b59559dcb75d3),
     // Re-recorded: the EXC node (plan Task 13).
     ("modal_exc", 0xdf9684baab508f23),
     // Re-recorded: the EXC node (plan Task 13).
@@ -111,25 +114,26 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(not(feature = "master-tape"))]
     ("mixer_master_level", 0x46ef06da0f464e86),
     #[cfg(feature = "master-tape")]
-    ("mixer_part", 0xd362801facb9dc65),
+    ("mixer_part", 0x91b06a3780c2bbb5),
     #[cfg(feature = "master-tape")]
-    ("mixer_sends", 0x27bc9363dd407e2b),
+    ("mixer_sends", 0xcf97b892a7d5a933),
+    // DLY's branch hides REV's label it ran into (TAPE Task 15).
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay", 0x03c136cb5bd76c30),
+    ("mixer_fx_delay", 0x6bfad50017562c25),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb", 0xa0a7d29cf2586a8e),
+    ("mixer_fx_reverb", 0xc0311d87f95d9df6),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay_char", 0x53eccd58242c222e),
+    ("mixer_fx_delay_char", 0x8efda1c817189d8f),
     #[cfg(feature = "master-tape")]
-    ("mixer_tape", 0x8a13a3bdedf41ea2),
+    ("mixer_tape", 0xe4642868fa275a5c),
     #[cfg(feature = "master-tape")]
-    ("mixer_master", 0xc30644c3d5d5ba71),
+    ("mixer_master", 0x3a5be1b8bfc87215),
     #[cfg(feature = "master-tape")]
-    ("mixer_master_level", 0xe01aa2996887644c),
+    ("mixer_master_level", 0x38d97b4c60a9a7a4),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_out_p2", 0xc657c44494c829ac),
     #[cfg(feature = "master-tape")]
-    ("mixer_out_p2", 0xc7a057082a7a6932),
+    ("mixer_out_p2", 0x23ca28848fded48a),
     ("algo_out_p3", 0x3e91d6b588f4ebfa),
     // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7);
     // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17).
@@ -148,7 +152,9 @@ const GOLDENS: &[(&str, u64)] = &[
     ("settings_personal_theme", 0xc35039e65219cdc2),
     ("settings_midi_sync", 0x0e26ce69d0f54980),
     ("settings_system_diag_aud_load", 0x0d5edcdc4826225e),
-    ("settings_project_pool", 0x072ee7909d1baf7c),
+    // Re-recorded: NEW holds TAPE's INIT too (TAPE Task 12), each Sound
+    // sparser with the fixed columns (11 · 2.0K, 158K free).
+    ("settings_project_pool", 0x4b4c1b086f6263c8),
     // ORBIT's row opens its list (plan Task 17).
     ("settings_top", 0x08d6ee26dad9fb97),
     // Part 3's LIVE SNAP leaf (plan Task 15).
@@ -185,6 +191,41 @@ const GOLDENS: &[(&str, u64)] = &[
     ("orbit_notes_step32", 0x211fc000f7a5be91),
     // SCN: a saved slot, SAVE's, a queued one filling (plan Task 16).
     ("orbit_scn", 0x7c2558bf895b7432),
+    // TAPE's pages (TAPE Task 15): SRC, and DECK and the model page per machine.
+    ("tape_src", 0xd81e5d7ee47a12b9),
+    ("tape_src_missing", 0xe32642060f0d88ed),
+    ("tape_deck_oneshot", 0x98fc190d33bdcfcd),
+    ("tape_page_oneshot", 0x6ec0cc6ab200711a),
+    ("tape_deck_loop", 0xb2076c717b43f780),
+    ("tape_page_loop", 0x5a71496c59e24e28),
+    ("tape_deck_tron", 0xa79721be7e3ffc71),
+    ("tape_page_tron", 0xd146bec467e2e194),
+    ("tape_deck_stretch", 0x08d3a30992d8bd08),
+    ("tape_page_stretch", 0x213f0019718af53c),
+    ("tape_page_stretch_type", 0x1f4bf7ad5f8d6284),
+    ("tape_deck_transwave", 0xf71968d1740170f8),
+    ("tape_page_transwave", 0x902f5e3c0b411f96),
+    ("tape_deck_scrub", 0xde7eea5de2291854),
+    ("tape_page_scrub", 0xac348e679cc0052a),
+    ("tape_deck_pingpong", 0x74df3b19b4220911),
+    ("tape_page_pingpong", 0x5105f91c1e3b39ef),
+    ("tape_strip_oneshot", 0xfcef53fb530f5f38),
+    ("tape_strip_loop", 0xcf24335ab3484c39),
+    ("tape_strip_tron", 0xe3360667470348f2),
+    ("tape_strip_stretch", 0x46a075d91ec036a6),
+    ("tape_strip_transwave", 0xe1fe4d62a497c780),
+    ("tape_strip_scrub", 0x4823fccb6fe9f8ee),
+    ("tape_strip_pingpong", 0x661be4759bf62124),
+    ("tape_strip_loop_reversed", 0x2678af02cbcac4de),
+    ("tape_strip_oneshot_slice", 0x5ce229fdcf10287b),
+    ("tape_strip_oneshot_slice_reversed", 0xf05b4cc38c5328fa),
+    ("tape_strip_pingpong_reversed", 0x98e416afd6064494),
+    ("tape_strip_tron_idle", 0x6a3ee49d353e2f11),
+    ("tape_src_pool", 0x5cc2849e855b0b0e),
+    ("tape_src_card", 0xfdc516336deb965f),
+    ("tape_src_wont_fit", 0x33e55fa0fbeb043d),
+    ("tape_src_loaded", 0x6e6533e2a42a05d2),
+    ("tape_src_read_failed", 0x60b02af140ccd019),
     ("busy", 0x198544cd36863145),
     ("toast_saved", 0xe344dd99a47d0dad),
     ("toast_exfat", 0xfc0cb3b4feb1a1b5),

@@ -18,8 +18,8 @@ use chimera_core::project::{
     load_project, project_file,
 };
 use chimera_core::storage::{
-    Card, LoadError, ProjectId, SaveError, Side, SourceHead, Wrote, read_source_into, source_crc,
-    source_file, write_source,
+    Card, ProjectId, SaveError, Side, SourceHead, SourceReadError, WholeShape, Wrote,
+    read_source_into, source_crc, source_file, write_source,
 };
 use chimera_hal::store::{Dir, Store, StoreError, VolumeId};
 use embedded_sdmmc::BlockDevice;
@@ -38,7 +38,7 @@ fn source(seed: u8, frames: u32) -> (SourceHead, Vec<u8>) {
         .collect();
     let head = SourceHead {
         sref: SourceRef {
-            crc: source_crc(Shape::Plain, 1, &data),
+            crc: source_crc(WholeShape::Plain, 1, &data),
             frames,
             rate: 24_000,
         },
@@ -69,7 +69,7 @@ fn write_on<S: Store>(s: &mut S, head: &SourceHead, data: &[u8]) -> Result<Wrote
         .and_then(|o| o.result)
 }
 
-fn read_on<S: Store>(s: &mut S, sref: SourceRef) -> Result<Vec<u8>, LoadError> {
+fn read_on<S: Store>(s: &mut S, sref: SourceRef) -> Result<Vec<u8>, SourceReadError> {
     let mut out = vec![0; DESC_LEN + 3 * sref.frames.div_ceil(2) as usize];
     let n = Card::new()
         .run(s, |s, r| read_source_into(s, r, sref, &mut out))
@@ -100,7 +100,7 @@ fn with_project(head: &SourceHead) -> RamDisk {
     let mut s = chimera_fat::FatStore::new(with_clusters(CLUSTERS, 0x5EC));
     let (mut p, _) = Project::boxed();
     p.source_absent(head.sref).unwrap();
-    p.edit_part(PartId::ALL[0]).sound.source = Some(head.sref);
+    p.edit_part(PartId::ALL[0]).sound.source = Some(head.sref.into());
     let note = save_at(&mut Card::new(), &mut s, &mut p, 1);
     assert!(matches!(note, ProjectNote::Saved(_)), "{note:?}");
     let RamDisk(blocks) = s.device();

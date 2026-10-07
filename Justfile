@@ -1,8 +1,59 @@
 # Justfile for Chimera
 
+# The bench's builds, an area each (all of it no longer fits FLASH), and
+# the filter probes `tools/loop_count.py` counts.
+bench_sets := "bench-algo bench-algo,master-tape bench-routing bench-memory bench-stress bench-stress,orbit bench-orbit bench-tape filter-probes"
+bench_all := "bench-algo,bench-routing,bench-memory,bench-stress,bench-orbit,bench-tape"
+
 # Build desktop simulator
 desktop:
     cargo run -p chimera-desktop
+
+# TAPE's listening rig (spec § 9): each model on each source into
+# target/listen/ (WAVs, report.txt, and index.html once every render passes
+# QA). `just tape-listen loop --src chimera --src <file.wav>`; a bare file
+# name is looked for in $CHIMERA_TAPES_SRC (~/chimera-tapes-src)
+tape-listen *args:
+    cargo run -q -p chimera-desktop --bin tape-listen -- {{args}}
+
+# A WAV to a TAPE source (spec § 6), sealed in the desktop sim's card
+# (CHIMERA_CARD, else chimera-card/), never the unit's:
+# `just tape take.wav [--rate 24k] [--root C3] [--transwave <cycle> [--top 1024] [--frames 32]]
+# [--name CHOIR] [--channel mix|L|R]`. `put` takes sources from TAPE Task 18.
+[positional-arguments]
+tape file *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shift
+    cargo run -q -p chimera-desktop --bin chimera-import -- tape "{{ if file =~ '^/' { file } else { invocation_directory() / file } }}" "$@"
+
+# The TAPE factory set (spec § 7) into target/tapes-v1/: every .SRC, the
+# factory TAPE Sounds (S9000001.A …), manifest.json and cc0-originals.zip
+# (each original with its licence). CC0 originals come from
+# $CHIMERA_TAPES_SRC (~/chimera-tapes-src); nothing here writes a card.
+# `just factory-tapes qa [--wav <dir>]` plays each source through every
+# machine and checks each render.
+factory-tapes *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo run -q --release -p chimera-desktop --bin factory-tapes -- {{args}}
+    if [ -z "{{args}}" ]; then
+        cd target/tapes-v1
+        rm -f cc0-originals.zip
+        zip -qrX cc0-originals.zip cc0-originals
+        rm -r cc0-originals
+    fi
+
+# The factory set's release onto the unit's card: each file through `put`
+# (a re-run answers OK PRESENT). Waits for TAPE Task 18's source `put` and
+# #360; Sound files need the library's path class too (#317).
+put-factory-tapes version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dir="$(mktemp -d)"
+    gh release download "tapes-{{version}}" -R joegiralt/chimera -D "$dir"
+    for f in "$dir"/*.SRC; do python3 tools/chimera-usb.py put "$f" /CHIMERA/TAPES/; done
+    for f in "$dir"/S9*.A; do python3 tools/chimera-usb.py put "$f" /CHIMERA/SOUNDS/; done
 
 # Build STM32 firmware (release)
 firmware:
@@ -19,8 +70,8 @@ build:
 # Everything must pass before a commit (ADR 0013): core + hal tests (and core
 # with the master tape back on, ADR 0055, and the whole suite without ORBIT), desktop
 # tests and its no-MIDI build, the dosfstools cross-checks, the firmware built and linked with default
-# features, with none, with ORBIT, with the bench (with and without the master
-# tape, and with ORBIT) and with the SD probe, clippy on host
+# features, with none, with ORBIT, each bench area (ALGO also with the master
+# tape, STRESS also with ORBIT), the filter probes and the SD probe, clippy on host
 # and firmware (every feature set), rustfmt and the stack check. The desktop needs ALSA's
 # pkg-config file; point PKG_CONFIG_PATH at it if it is not installed
 # system-wide. The host tool's tests run first, against a fake unit.
@@ -32,15 +83,15 @@ check:
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
-    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf
+    # The default build in release too: with TAPE its dev build passes FLASH (#303).
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release
     # Every other feature set in release: a build check, not a debug flash;
     # their dev builds sit at or past FLASH
     # (private issue #303).
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features
-    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bench
-    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bench,master-tape
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit
-    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bench,orbit
+    # The bench, an area a build: all of it no longer fits FLASH.
+    for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features "$f" || exit 1; done
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features sd-probe
     cargo build -p chimera-bootloader --target thumbv7em-none-eabihf
     cargo build -p chimera-theory --target thumbv7em-none-eabihf
@@ -56,8 +107,8 @@ check:
 # render_half and the FX bus under it, MIDI's USART1, SysTick, HardFault),
 # all nested at once, against the stack, each call through a pointer
 # charged the deepest address-taken function, three deep. Checked for the default,
-# no-default, bench, bench with the master tape, orbit, bench with orbit
-# and sd-probe feature sets (sd-probe has no interrupts: frames only).
+# no-default, orbit, every bench set (`bench_sets`) and sd-probe feature
+# sets (sd-probe has no interrupts: frames only).
 # Needs the llvm-tools rustup component; a missing llvm-objdump or an
 # unreadable ELF fails the recipe instead of passing silently.
 stack-check:
@@ -68,7 +119,10 @@ stack-check:
     nm="$bin/llvm-nm"
     test -x "$objdump" && test -x "$nm"
     elf=target/thumbv7em-none-eabihf/release/chimera-stm32
-    for features in "" "--no-default-features" "--features bench" "--features bench,master-tape" "--features orbit" "--features bench,orbit" "--no-default-features --features sd-probe"; do
+    sets=("" "--no-default-features" "--features orbit")
+    for f in {{bench_sets}}; do sets+=("--features $f"); done
+    sets+=("--no-default-features --features sd-probe")
+    for features in "${sets[@]}"; do
         cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf $features
         test -r "$elf"
         dis="$("$objdump" -d --no-show-raw-insn -C "$elf")"
@@ -95,6 +149,7 @@ loom:
 # Run tests
 test:
     cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit
+    cargo test -p chimera-desktop --lib --tests
     just test-fat-tools
 
 # The FAT layer checked by dosfstools (ADR 0048): mkfs.fat images must read
@@ -113,10 +168,11 @@ clippy:
     cargo clippy -p chimera-desktop --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features -- -D warnings
-    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features bench -- -D warnings
-    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features bench,master-tape -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit -- -D warnings
-    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features bench,orbit -- -D warnings
+    for f in {{bench_sets}}; do cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features "$f" -- -D warnings || exit 1; done
+    # Every bench area at once: too big to link, but no area's code is dead.
+    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features {{bench_all}} -- -D warnings
+    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features {{bench_all}},master-tape -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features sd-probe -- -D warnings
     # usb-console alone: `stats` answers from no reader
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features usb-console -- -D warnings
@@ -144,7 +200,7 @@ status:
 # About 10 s, up to 45 the first time while it writes two 4 MiB files in
 # /CHIMERA/BENCH; it plays a chord on channel 1. `just card seed=N` repeats
 # a run's random reads; `just card clean` removes /CHIMERA/BENCH.
-# The card's read speed beside audio and the streams it holds (just flash-bench first)
+# The card's read speed beside audio and the streams it holds (any `just flash-bench <area>` first)
 card *args:
     python3 tools/chimera-usb.py card {{args}}
 # A project file onto the card over USB (ADR 0092), saved as the unit saves:
@@ -171,13 +227,19 @@ flash:
         python3 tools/chimera-usb.py wait-console 10
     elif [ "$rc" -ne 0 ]; then exit "$rc"; fi
 
-# Flash the bench build (--features bench,orbit: STRESS plays ORBIT) to PreenFM3 via DFU
-# The bench holds its screens about 4 min before the UI loop (and so the
-# console) starts, so a 74 after a completed download is accepted unwaited.
-flash-bench:
+# Flash one bench area to PreenFM3 via DFU: `just flash-bench <area> [extra]`,
+# area one of algo, routing, memory, stress, orbit, tape; extra more
+# features (`just flash-bench stress orbit`: STRESS plays ORBIT;
+# `just flash-bench algo master-tape`: the REEL row). All of the bench no
+# longer fits FLASH at once. The bench holds its screens for minutes
+# before the UI loop (and so the console) starts, so a 74 after a
+# completed download is accepted unwaited.
+flash-bench area extra="":
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features bench,orbit
+    features="bench-{{area}}"
+    if [ -n "{{extra}}" ]; then features="$features,{{extra}}"; fi
+    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features "$features"
     rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-bench.bin
     python3 tools/chimera-usb.py to-dfu
     log=$(mktemp) && trap 'rm -f "$log"' EXIT
@@ -211,7 +273,8 @@ flash-sd-probe:
     dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-sd-probe.bin -s 0x8020000:leave
 
 # Coverage-guided fuzz of the Sound and project decoders, seeded with the
-# v1 fixtures and NEW, so ORBIT's records are in the corpus from the start
+# v1 fixtures and NEW, so ORBIT's records are in the corpus from the start,
+# and of the TAPE importer's WAV reader, seeded with small WAVs
 # (needs nightly and cargo-fuzz)
 fuzz:
     mkdir -p chimera-core/fuzz/corpus/decode_sound chimera-core/fuzz/corpus/decode_project
@@ -219,3 +282,6 @@ fuzz:
     cp chimera-core/tests/fixtures/v1/project.prj chimera-core/fuzz/corpus/decode_project/
     cp chimera-core/tests/fixtures/v1/orbit.prj chimera-core/fuzz/seeds/decode_project/*.prj chimera-core/fuzz/corpus/decode_project/
     cd chimera-core/fuzz && for t in decode_sound decode_project; do cargo +nightly fuzz run $t -- -max_total_time=300; done
+    mkdir -p chimera-desktop/fuzz/corpus/read_wav
+    cp chimera-desktop/fuzz/seeds/read_wav/*.wav chimera-desktop/fuzz/corpus/read_wav/
+    cd chimera-desktop/fuzz && cargo +nightly fuzz run read_wav -- -max_total_time=300

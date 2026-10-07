@@ -6,12 +6,14 @@
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
-use crate::dsp::modal::{MODEL_NAMES, ResonatorMode};
+use crate::dsp::modal::MODEL_NAMES;
+use crate::dsp::tape_engine::machine::machine;
 use crate::ui::block_def::{BlockDef, ChainDef2};
-use crate::ui::block_registry::MODAL_2;
+use crate::ui::block_registry::{MODAL_2, TAPE_MODEL};
 use crate::ui::draw;
 use crate::ui::nav::PageAt;
 use crate::ui::theme;
+use crate::ui::view::Models;
 
 /// Centre x of node `i` of `n`, spread evenly over the map line.
 pub fn node_x(i: usize, n: usize) -> i32 {
@@ -22,12 +24,14 @@ pub fn node_x(i: usize, n: usize) -> i32 {
     }
 }
 
-/// A page's name on the map: MDL2 is named after `model`.
-pub fn page_label(def: &BlockDef, model: ResonatorMode) -> &'static str {
-    if def.id == MODAL_2.id {
-        MODEL_NAMES[model as usize]
-    } else {
-        def.short
+/// A page's name on the map: MDL2 is named after MODAL's model, TAPE's
+/// model page after its machine (`STRCH`).
+pub fn page_label(def: &BlockDef, models: impl Into<Models>) -> &'static str {
+    let m = models.into();
+    match def.id {
+        id if id == MODAL_2.id => MODEL_NAMES[m.modal as usize],
+        id if id == TAPE_MODEL.id => machine(m.tape).page,
+        _ => def.short,
     }
 }
 
@@ -37,7 +41,7 @@ pub fn draw<D>(
     d: &mut D,
     chain: &ChainDef2,
     at: PageAt,
-    model: ResonatorMode,
+    models: impl Into<Models>,
     branch_scroll_px: i32,
 ) where
     D: DrawTarget<Color = Rgb565>,
@@ -54,16 +58,49 @@ pub fn draw<D>(
             theme::FAINT,
         );
     }
+    let models = models.into();
+    // The sub-pages' labels own their rows: a node label on the right
+    // they'd run into (DECK's `DECK` into `DRV`) gives way.
+    let reach = branch_reach(chain, at, models, node_x(node, n));
     for (i, block) in chain.blocks.iter().enumerate() {
         let x = node_x(i, n);
-        let label = block.map.unwrap_or(block.def.short);
+        let mut label = block.map.unwrap_or(block.def.short);
+        if i > node && x - draw::text_width(&theme::FONT_LABEL, label, 0) / 2 < reach {
+            label = "";
+        }
         if i == node {
             pill_node(d, x, theme::MAP_LINE_Y, label, theme::ACCENT);
         } else {
             ring_node(d, x, theme::MAP_LINE_Y, label, theme::NODE_LABEL_Y);
         }
     }
-    draw_branches(d, chain, at, model, node_x(node, n), branch_scroll_px);
+    draw_branches(d, chain, at, models, node_x(node, n), branch_scroll_px);
+}
+
+/// The right edge of the labels hanging right of the
+/// current node's trunk; 0 with none, or hanging left.
+fn branch_reach(chain: &ChainDef2, at: PageAt, models: Models, pill_x: i32) -> i32 {
+    let Some(block) = chain.block_at(at.node() as usize) else {
+        return 0;
+    };
+    let count = block.sub_page_count();
+    let widest = (0..count)
+        .map(|i| {
+            let def = if i == 0 {
+                block.def
+            } else {
+                block.sub_pages[i - 1]
+            };
+            draw::text_width(&theme::FONT_LABEL, page_label(def, models), 0)
+        })
+        .max()
+        .unwrap_or(0);
+    let right = pill_x - 8 + 6 + widest;
+    if count == 0 || right > theme::SCREEN_W {
+        0
+    } else {
+        right
+    }
 }
 
 /// A current node: a `fill` pill centred on (x, cy) with a dark bold label.
@@ -105,7 +142,7 @@ fn draw_branches<D>(
     d: &mut D,
     chain: &ChainDef2,
     at: PageAt,
-    model: ResonatorMode,
+    model: Models,
     pill_x: i32,
     branch_scroll_px: i32,
 ) where

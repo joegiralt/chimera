@@ -36,12 +36,14 @@ pub use record::{
 };
 pub use sound::{MAX_SOUND_COST, SoundCheck, SoundDecoder, encode_sound, sound_crc};
 pub use source_file::{
-    SOURCE_DATA_MAX, SOURCE_HEAD_LEN, SourceHead, held_len, read_source_into, source_crc,
-    source_file, source_file_min_len,
+    MAX_TAPES, PutRefusal, SOURCE_DATA_MAX, SOURCE_HEAD_LEN, SourceCheck, SourceHead, SourceLayout,
+    SourceReadError, SourceZones, TapeList, WholeShape, ZONE_LEN, Zone, held_for_file_len,
+    held_len, held_len_zoned, listed_zones, read_source_into, source_crc, source_file,
+    source_file_min_len, write_descriptor, zone_set_crc,
 };
 #[cfg(feature = "source-writer")]
-pub use source_file::{Wrote, write_source};
-pub use source_ref::SourceRef;
+pub use source_file::{Wrote, write_source, write_zone_set};
+pub use source_ref::{SourceRef, TapeSource, ZoneTune};
 pub use system::{
     BootNote, Exit, ExitPlan, SyncError, SystemCheck, SystemDecoder, SystemSettings, SystemSync,
     body_crc, encode_system, exit_plan,

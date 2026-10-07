@@ -1,5 +1,5 @@
 //! The PIT page (#162): PITCH on A, FINE on B, STEAL on C and its GLIDE
-//! TIME on D (#254), E and F free.
+//! TIME on D (#254), SNAP on E (TAPE Task 12b), F free.
 
 mod screen;
 
@@ -11,7 +11,7 @@ use chimera_hal::{ButtonId, EncoderId};
 use screen::*;
 
 #[test]
-fn pitch_fine_steal_and_time_on_a_to_d_and_the_rest_is_free() {
+fn pitch_fine_steal_time_and_snap_on_a_to_e_and_f_free() {
     let at = |i: usize| PITCH.params[i].binding;
     assert_eq!(
         at(0),
@@ -29,8 +29,31 @@ fn pitch_fine_steal_and_time_on_a_to_d_and_the_rest_is_free() {
         at(3),
         SlotBinding::Param(ParamAddr::new(BlockRef::Pitch, PitchParams::GLIDE_TIME))
     );
-    for i in 4..6 {
-        assert_eq!(at(i), SlotBinding::Empty, "slot {i}");
+    assert_eq!(
+        at(4),
+        SlotBinding::Param(ParamAddr::new(BlockRef::Pitch, PitchParams::SNAP))
+    );
+    assert_eq!(at(5), SlotBinding::Empty);
+}
+
+/// SNAP MUSICAL on E: PITCH's encoder steps fifths and fourths, on every
+/// engine.
+#[test]
+fn snap_musical_steps_pitch_on_every_engine() {
+    use chimera_core::params::Snap;
+    for engine in EngineType::ALL {
+        let mut ui = chimera_core::ui::UiState::new();
+        load_init(&mut ui, engine);
+        to_pitch(&mut ui, engine);
+        assert_eq!(ui.params().pitch.snap, Snap::Chromatic);
+        feed(&mut ui, Input::turn(EncoderId::E, 1));
+        assert_eq!(ui.params().pitch.snap, Snap::Musical, "{engine:?}");
+        feed(&mut ui, Input::turn(EncoderId::A, 1));
+        assert_eq!(ui.params().pitch.pitch, 7.0, "{engine:?}");
+        feed(&mut ui, Input::turn(EncoderId::A, 1));
+        assert_eq!(ui.params().pitch.pitch, 12.0, "{engine:?}");
+        feed(&mut ui, Input::turn(EncoderId::A, -3));
+        assert_eq!(ui.params().pitch.pitch, -7.0, "{engine:?}");
     }
 }
 

@@ -57,7 +57,7 @@ fn tape_sound(p: &mut Project, name: &str, r: SourceRef) -> SlotId {
     let s = p.pool().first_free().expect("a free slot");
     let mut x = Sound::init(EngineType::Algo);
     x.name = SoundName::new(name).unwrap();
-    x.source = Some(r);
+    x.source = Some(r.into());
     p.pool_store(s, &x).unwrap();
     s
 }
@@ -720,8 +720,8 @@ fn source_ref_round_trips() {
     let got = p.pool().get(s).unwrap();
     assert_eq!(got.source_ref(), Some(r));
     let mut x = Sound::init(EngineType::Modal);
-    x.source = Some(r);
-    assert!(got.to_sound().source == Some(r));
+    x.source = Some(r.into());
+    assert!(got.to_sound().source_ref() == Some(r));
     let back = common::codec_util::decode(&common::codec_util::encode(&x)).unwrap();
     assert!(back.bits_eq(&x));
     assert!(
@@ -750,7 +750,7 @@ fn choir_orphan() {
     let slot = tape_sound(&mut p, "CHOIR", CHOIR);
     let p2 = PartId::ALL[1];
     load(&mut p, t, p2, slot);
-    assert_eq!(p.part(p2).sound.source, Some(CHOIR));
+    assert_eq!(p.part(p2).sound.source_ref(), Some(CHOIR));
     load(&mut p, t, p2, SlotId::ALL[0]);
 
     // Before the clear, the slot uses it: PURGE frees nothing.
@@ -830,7 +830,7 @@ fn purge_recounts() {
                     if p.users(s).is_empty() {
                         let r = (rnd(4) > 0).then(|| refs[rnd(6) as usize]);
                         let mut x = Sound::init(EngineType::Algo);
-                        x.source = r;
+                        x.source = r.map(Into::into);
                         p.pool_store(s, &x).unwrap();
                         in_slot.insert(s, r);
                     }
@@ -1230,7 +1230,10 @@ fn sweep_scratch_is_the_gap() {
     // entry's.
     let s = tape_sound(&mut p, "AFTER", CHOIR);
     let got = p.pool().get(s).unwrap().to_sound();
-    assert_eq!((got.name.as_str(), got.source), ("AFTER", Some(CHOIR)));
+    assert_eq!(
+        (got.name.as_str(), got.source_ref()),
+        ("AFTER", Some(CHOIR))
+    );
 }
 
 #[test]
@@ -1239,4 +1242,59 @@ fn sweep_scratch_refuses_a_published_source() {
     let (mut p, _) = Project::boxed();
     store(&mut p, CHOIR);
     p.sweep_scratch();
+}
+
+/// The bench's synthetic sources (TAPE Task 14): written straight into the
+/// arena as `source_store` copies them, refused when held already or when
+/// they don't fit, and gone again, every slot free, once purged and passed
+/// with the gate answered between looks.
+#[test]
+fn written_sources_come_and_go() {
+    let (mut p, _) = Project::boxed();
+    let mut tok = p.pool().table().reader().expect("one reader");
+    let free = p.pool().free();
+    let (a, b) = (sref(1, 12_000), sref(2, 12_000));
+    let len = audio(a).len();
+    let rev = p.rev();
+    let id = p
+        .source_write(a, len, |to| to.copy_from_slice(&audio(a)))
+        .expect("fits");
+    assert_ne!(p.rev(), rev, "a status cache keyed on `rev` redone");
+    assert_eq!(
+        p.pool().source(id).unwrap().cost(),
+        store_cost(&mut Project::boxed().0, a)
+    );
+    assert!(p.source_write(a, len, |_| {}).is_none(), "held already");
+    let huge = sref(3, 2 * ARENA_BYTES as u32);
+    assert!(
+        p.source_write(huge, 3 * ARENA_BYTES, |_| {}).is_none(),
+        "too big"
+    );
+    let id_b = p.source_write(b, len, |to| to.fill(7)).expect("fits");
+    {
+        let view = tok.begin_block();
+        assert!(view.bytes(id) == Some(&audio(a)[..]), "as written");
+        assert!(view.bytes(id_b).unwrap().iter().all(|&x| x == 7));
+    }
+    tok.store_sounding(0);
+    p.purge_unused_sources(0);
+    let mut answer = || {
+        let _ = tok.begin_block();
+        true
+    };
+    while p.sources_pass_with(&mut answer) {}
+    answer();
+    answer();
+    p.sources_pass_with(&mut answer);
+    assert_eq!(p.pool().free(), free);
+    assert_eq!(p.pool().source_count(), 0);
+    assert!(
+        p.source_write(a, len, |_| {}).is_some(),
+        "its slot free again"
+    );
+}
+
+fn store_cost(p: &mut Project, r: SourceRef) -> Cost {
+    let id = store(p, r);
+    p.pool().source(id).unwrap().cost()
 }
