@@ -9,8 +9,8 @@ fn filter_block_params() {
         &chimera_core::params::ParamSnapshot::default(),
         chimera_core::addr::Op::A,
     );
-    assert_eq!(view(def, 1, &ctx).label(), "CUTOFF");
-    assert_eq!(view(def, 2, &ctx).label(), "RES");
+    assert_eq!(view(def, 1, &ctx).label(), "FREQ");
+    assert_eq!(view(def, 2, &ctx).label(), "Q");
     assert_eq!(def.layout, PageLayout::BigViz);
 }
 

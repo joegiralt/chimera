@@ -15,7 +15,7 @@ use chimera_core::dsp::algo::plan::{EvalPlan, OPS};
 use chimera_core::dsp::algo::tx::FEEDBACK_CYCLES;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::engines::{EngineSlot, SlotKind};
-use chimera_core::dsp::filter::FilterMode;
+use chimera_core::dsp::filter::{FilterKind, FilterMode, K2040Voice};
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::dsp::modal::{
     BankModes, CHORD_COUNT, ModalEngine, ModalParams, ResonatorMode, SymPool,
@@ -29,8 +29,7 @@ use chimera_core::hw::{
 use chimera_core::instrument::{
     AudioShared, DacBlocks, Instrument, MixState, PartAudio, mix_parts,
 };
-use chimera_core::mod_path::ModDestRegistry;
-use chimera_core::modulation::{CUTOFF, MAX_MOD_SOURCES, ModSource, ModState, VCA};
+use chimera_core::modulation::{CUTOFF, FixedCol, MAX_MOD_SOURCES, ModSource, ModState, VCA};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 #[cfg(feature = "orbit")]
 use chimera_core::orbit::runner::OrbitRunner;
@@ -42,6 +41,7 @@ use chimera_core::preset::{Performance, Sound};
 use chimera_core::project::{NEW_PARTS, Project, SlotId, project_crc};
 use chimera_core::scope::{ScopeFrame, ScopeWriter, scope_buffer};
 use chimera_core::sym_alloc::SymAlloc;
+use chimera_core::taps::TapOp;
 use chimera_core::triple::TripleBuffer;
 use chimera_core::ui::fmt::FmtBuf;
 use chimera_core::ui::{draw, theme};
@@ -53,6 +53,76 @@ use embedded_graphics_core::pixelcolor::Rgb565;
 
 use crate::audio::engine;
 use crate::clocks::Clocks;
+
+/// The filter probes, kept in the `bench` ELF though nothing calls them:
+/// `tools/loop_count.py` counts them there. About 25 KB: left out of
+/// `bench,orbit`, whose flash is short (the unit reads its rows, not
+/// these).
+#[cfg(not(feature = "orbit"))]
+mod probes {
+    use chimera_core::dsp::filter::{self, Clean};
+    use chimera_core::dsp::wavefolder::Wavefolder;
+    use chimera_core::hw::BLOCK_SIZE;
+    use chimera_core::params::{FilterParams, FolderParams};
+
+    /// One block of one filter path, for `tools/loop_count.py`'s static count.
+    type FilterProbe = fn(&mut Clean, &mut [f32; BLOCK_SIZE], &FilterParams);
+
+    /// Every filter probe, kept in the bench ELF though nothing calls them.
+    #[used]
+    static FILTER_PROBES: &[FilterProbe] = &[
+        filter::probe::clean_probe::<2, false>,
+        filter::probe::clean_probe::<2, true>,
+        filter::probe::clean_probe::<7, false>,
+        filter::probe::clean_probe::<7, true>,
+    ];
+
+    /// CLEAN's other steady modes (LP1, LP2, BP2, BP4, HP4, NOTCH1).
+    #[used]
+    static CLEAN_MODE_PROBES: &[FilterProbe] = &[
+        filter::probe::clean_probe::<0, false>,
+        filter::probe::clean_probe::<1, false>,
+        filter::probe::clean_probe::<3, false>,
+        filter::probe::clean_probe::<4, false>,
+        filter::probe::clean_probe::<5, false>,
+        filter::probe::clean_probe::<6, false>,
+    ];
+
+    /// The 2040's probes, REV2 (0) and EXP (1), steady and moving.
+    type K2040Probe = fn(&mut filter::K2040, &mut [f32; BLOCK_SIZE], &FilterParams);
+
+    #[used]
+    static K2040_PROBES: &[K2040Probe] = &[
+        filter::probe::k2040_probe::<filter::k2040::voice::Rev2, false>,
+        filter::probe::k2040_probe::<filter::k2040::voice::Rev2, true>,
+        filter::probe::k2040_probe::<filter::k2040::voice::Exp, false>,
+        filter::probe::k2040_probe::<filter::k2040::voice::Exp, true>,
+    ];
+
+    /// DIRTY's probes, one a mode: LP2, BP2, HP2 and NOTCH1 (`DIRTY_MODES`).
+    type DirtyProbe = fn(&mut filter::Dirty, &mut [f32; BLOCK_SIZE], &FilterParams);
+
+    #[used]
+    static DIRTY_PROBES: &[DirtyProbe] = &[
+        filter::probe::dirty_probe::<0>,
+        filter::probe::dirty_probe::<1>,
+        filter::probe::dirty_probe::<2>,
+        filter::probe::dirty_probe::<3>,
+    ];
+
+    /// The taps' pass over a moving block's `g` and `k`, shared by every type.
+    #[used]
+    static TAP_SHAPE_PROBE: fn(&mut [f32; BLOCK_SIZE]) = filter::probe::tap_shape_probe;
+
+    /// The tap-VCA's and the folder's tapped loops.
+    #[used]
+    static TAP_VCA_PROBE: fn(&mut [f32; BLOCK_SIZE]) = filter::probe::tap_vca_probe;
+
+    type FoldProbe = fn(&mut Wavefolder, &mut [f32; BLOCK_SIZE], &FolderParams);
+
+    #[used]
+    static FOLD_TAP_PROBE: FoldProbe = filter::probe::fold_tap_probe;
+}
 
 /// The bench's screens as text: about 4 KB today, `# TRUNCATED` past this.
 pub const BENCH_TEXT_LEN: usize = 8192;
@@ -178,7 +248,7 @@ fn worst_comp(s: &mut AudioShared) {
     (c.thresh, c.ratio, c.attack, c.release, c.makeup, c.mix) = (0.0, 7, 0.0, 0.0, 0.5, 1.0);
 }
 
-const ROUTING_ROWS: usize = 37;
+const ROUTING_ROWS: usize = 43;
 /// Rows per ROUTING screen: ten from y 46 at `ROW_H` 25 end at 283.
 const ROUTING_PAGE: usize = 10;
 
@@ -192,15 +262,31 @@ const STILL: Each = |_, _| {};
 const ROUTING: [RoutingRow; ROUTING_ROWS] = [
     ("1 OP", |p| p.params = algo(AlgoId::A1, 0b1, 0), STILL),
     ("MODS", mods, STILL),
+    // Each filter type steady, and CLEAN's moving path: SVF − 1 OP is
+    // CLEAN LP4's term (billed 0), NOTCH2 − 1 OP NOTCH2's, 2040 − 1 OP and
+    // DIRTY − 1 OP their steady bills, CLEAN MOVE − SVF `CLEAN_MOVE_COST`.
+    ("SVF", |p| filter_mode(p, FilterMode::Lp24), STILL),
+    ("NOTCH2", |p| filter_mode(p, FilterMode::Phaser), STILL),
+    ("CLEAN MOVE", |p| filter_mode(p, FilterMode::Lp24), sweep),
     (
-        "SVF",
+        "2040",
         |p| {
-            p.params = algo(AlgoId::A1, 0b1, 0);
-            // The SVF's costliest mode.
-            let _ = p.params.filter.set_mode(FilterMode::Phaser);
+            // EXP: the 2040's costlier VOICE.
+            let f = &mut one_op(p).filter;
+            f.set_kind(FilterKind::K2040);
+            f.voice = K2040Voice::Exp;
         },
         STILL,
     ),
+    (
+        "DIRTY",
+        |p| one_op(p).filter.set_kind(FilterKind::Dirty),
+        STILL,
+    ),
+    // OP5 tapped: TAP FREQ − 1 OP is a capture, `TapShape::apply` and
+    // CLEAN's moving path; TAP VCA − 1 OP a capture and the tap-VCA.
+    ("TAP FREQ", |p| tap(p, FixedCol::Freq), STILL),
+    ("TAP VCA", |p| tap(p, FixedCol::Vca), STILL),
     ("A VCA", |p| on_vca(p, &[ModSource::Env2], None), STILL),
     ("B VCA", |p| b_on_vca(p, Func::Env(EnvForm::Ad), 0.5), STILL),
     // ENV with SHAPE off centre: a curve divide per sample.
@@ -424,15 +510,33 @@ fn modal(p: &mut PartAudio, mode: ResonatorMode) {
     p.params.modal.mode = mode;
 }
 
-/// 1 OP through the SVF in `mode` at DRIVE 1, RES 1 and CUTOFF 1000 Hz
+/// 1 OP through CLEAN in `mode`.
+fn filter_mode(p: &mut PartAudio, mode: FilterMode) {
+    let _ = one_op(p).filter.set_mode(mode);
+}
+
+/// FREQ stepped 100 Hz a block, 500 Hz to 3.7 kHz and round: every block
+/// a new cutoff, so every block takes the moving path.
+fn sweep(p: &mut PartAudio, block: u32) {
+    p.params.filter.cutoff = 500.0 + 100.0 * (block % 32) as f32;
+}
+
+/// 1 OP with OP5 tapped into `col` at 64.
+fn tap(p: &mut PartAudio, col: FixedCol) {
+    one_op(p).taps.set(TapOp::Op5, col, 64);
+}
+
+/// 1 OP through the SVF in `mode` at LEVEL 1 (×4), RES 1 and CUTOFF 1000 Hz
 /// (not the Sound's 20 kHz: the host sweep's worst for `saturate`).
 fn hot(p: &mut PartAudio, mode: FilterMode) {
     let f = &mut one_op(p).filter;
     let _ = f.set_mode(mode);
-    (f.drive, f.cutoff, f.resonance) = (1.0, 1000.0, 1.0);
+    (f.level, f.cutoff, f.resonance) = (1.0, 1000.0, 1.0);
 }
 
-/// 1 OP, no routes.
+/// 1 OP, no routes. Out of line: inlined, every row that builds on it
+/// carried its own copy of the snapshot (about 700 B each).
+#[inline(never)]
 fn one_op(p: &mut PartAudio) -> &mut ParamSnapshot {
     p.params = algo(AlgoId::A1, 0b1, 0);
     &mut p.params
@@ -454,17 +558,11 @@ fn a_level(p: &mut PartAudio) {
     p.mod_state = matrix(&[(ModSource::Env2, VCA, 127), (ModSource::Lfo1, level, 127)]);
 }
 
-/// `routes` as the Part's matrix, each destination primed.
+/// `routes` as the Part's matrix: fixed columns, else registry columns.
 fn matrix(routes: &[(ModSource, ParamAddr, i8)]) -> ModState {
-    let mut reg = ModDestRegistry::new();
-    for &(_, a, _) in routes {
-        let _ = reg.add(a, *b"BENCH\0\0\0");
-    }
-    let mut ms = ModState::from_registry(&reg, MAX_MOD_SOURCES);
+    let mut ms = ModState::with_sources(MAX_MOD_SOURCES);
     for &(s, a, amount) in routes {
-        if let Some(d) = ms.find(a) {
-            ms.set_route(s.index(), d, amount);
-        }
+        ms.set_route_addr(s.index(), a, amount);
     }
     ms
 }
@@ -530,7 +628,7 @@ fn mods(p: &mut PartAudio) {
         l.lfo_type = LfoType::Func;
     }
     let res = ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE);
-    let drive = ParamAddr::new(BlockRef::Filter, FilterParams::DRIVE);
+    let flt_level = ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL);
     let fold = ParamAddr::new(BlockRef::Folder, FolderParams::FOLD);
     let morph = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
     let level = ParamAddr::new(BlockRef::Out, OutParams::VOLUME);
@@ -539,7 +637,7 @@ fn mods(p: &mut PartAudio) {
         (ModSource::Env2, VCA, 64),
         (ModSource::Env3, res, 64),
         (ModSource::Lfo1, morph, 64),
-        (ModSource::Lfo2, drive, 64),
+        (ModSource::Lfo2, flt_level, 64),
         (ModSource::Lfo3, fold, 64),
         (ModSource::Vel, level, 64),
         (ModSource::Note, CUTOFF, 64),
@@ -1205,9 +1303,11 @@ fn time_kernel() -> u32 {
         norm_to: 0.7,
     }));
     let mut out = [0.0f32; BLOCK_SIZE];
+    // No tap wanted: the rows go untouched, as on a tap-free Sound.
+    let mut taps = chimera_core::taps::TapRows::new([false; 2]);
     let mut run = |kernels: &mut [Kernel; MAX_VOICES], envs: &mut [[OpEnv; OPS]; MAX_VOICES]| {
         for ((k, env), blk) in kernels.iter_mut().zip(envs.iter_mut()).zip(&blocks) {
-            k.render(black_box(blk), env, &mut out);
+            k.render(black_box(blk), env, &mut out, &mut taps);
         }
     };
     for _ in 0..WARM_BLOCKS {

@@ -4,6 +4,7 @@
 //! infallible framebuffers).
 
 use crate::dsp::clampf;
+use crate::ui::theme;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::{AngleUnit, Point, Size};
 use embedded_graphics::pixelcolor::Rgb565;
@@ -214,6 +215,32 @@ where
     }
     let _ = Circle::with_center(Point::new(cx, cy), (2 * r + 1) as u32)
         .draw_styled(&PrimitiveStyle::with_stroke(color, width), d);
+}
+
+/// An impossible patch (a tap row's X cell): a 5 × 5 X of two 1 px
+/// diagonals in MID, centred on (cx, cy). Not a dash, not a dimmed cell.
+pub fn x_mark<D>(d: &mut D, cx: i32, cy: i32)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    line(d, cx - 2, cy - 2, cx + 2, cy + 2, theme::MID, 1);
+    line(d, cx - 2, cy + 2, cx + 2, cy - 2, theme::MID, 1);
+}
+
+/// The filter LEVEL's clip LED: a 3 px ALERT ring, filled to a radius of
+/// `fill` (0..=1) of it; at 1 it is solid.
+pub fn clip_led<D>(d: &mut D, cx: i32, cy: i32, fill: f32)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    ring(d, cx, cy, 3, theme::ALERT, 1);
+    dot(
+        d,
+        cx,
+        cy,
+        libm::roundf(clampf(fill, 0.0, 1.0) * 3.0) as i32 - 1,
+        theme::ALERT,
+    );
 }
 
 /// Filled rounded rectangle with fully round ends (radius h/2). A

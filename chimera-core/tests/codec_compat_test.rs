@@ -431,20 +431,25 @@ fn v1_fixture_bytes_are_frozen() {
 const FIXTURE_RENDERS: &[(&str, u64)] = &[
     // Re-recorded, every row, as `golden_test`'s: ADR 0060's DC blocker;
     // SQR BASS and ALGO INIT for the filter's C1 `saturate` (ADR 0063); every
-    // row for the harness's 1.6 s release (`OFF_BLOCKS`, ADR 0063).
-    ("factory_0.snd", 0xe98faae37ce6244f),
-    ("factory_1.snd", 0xab3ee51d703f17d9),
-    ("factory_2.snd", 0x07d23e6d0289e847),
-    ("factory_3.snd", 0x6136e6c43abf648a),
-    ("factory_4.snd", 0x9f9f17695f406811),
-    ("factory_5.snd", 0x1c921c39e8ff9a60),
-    ("factory_6.snd", 0xaa780f9a0cee1652),
-    ("factory_7.snd", 0x2f4ec4667083a813),
-    ("init_algo.snd", 0x68e843041c24a5bb),
+    // row for the harness's 1.6 s release (`OFF_BLOCKS`, ADR 0063); every
+    // row for CLEAN's ACCURATE tan and exact divides (#57); every row for
+    // CLEAN's k law and trims (ADR 0096).
+    ("factory_0.snd", 0x2b0219df38902ede),
+    ("factory_1.snd", 0x0e3d85b43ff9ccf9),
+    ("factory_2.snd", 0xfe00848f39d1981e),
+    ("factory_3.snd", 0x901698e789a3ccf9),
+    ("factory_4.snd", 0x68328532bf9779a7),
+    // Then the voice-end fade (ADR 0096): SQR BASS's −65 dB filter tail.
+    ("factory_5.snd", 0xdb1cd08add369508),
+    ("factory_6.snd", 0x144e8d10ce6ac51e),
+    ("factory_7.snd", 0xcabe755163058e15),
+    ("init_algo.snd", 0x889c731ceb1c7089),
     // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain,
     // then Task 18's DAMP make-up and relative silence (ADR 0056),
-    // then the free ring on release (ADR 0062).
-    ("init_modal.snd", 0xda59622102625d57),
+    // then the free ring on release (ADR 0062), then CLEAN's ACCURATE tan
+    // and exact divides (#57), and STRING's out_gain 5.7 for it, then
+    // CLEAN's k law and trims (ADR 0096).
+    ("init_modal.snd", 0x12099b1d30a46e52),
 ];
 
 #[test]

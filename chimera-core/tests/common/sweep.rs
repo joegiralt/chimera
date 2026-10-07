@@ -139,12 +139,6 @@ pub fn model_name(m: ResonatorMode) -> &'static str {
 fn route_all(s: &mut Sound, engine_dest: ParamAddr) {
     let ms = &mut s.mod_state;
     let cutoff = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
-    let mut at = |addr: ParamAddr| {
-        (0..ms.num_dests())
-            .find(|&d| ms.dest(d) == addr)
-            .or_else(|| ms.push(addr))
-            .expect("room for the route")
-    };
     let routes = [
         (ModSource::Env1, cutoff, 40),
         (ModSource::Lfo1, cutoff, 20),
@@ -171,9 +165,11 @@ fn route_all(s: &mut Sound, engine_dest: ParamAddr) {
             20,
         ),
     ];
-    let dests: Vec<usize> = routes.iter().map(|r| at(r.1)).collect();
-    for ((src, _, amt), d) in routes.into_iter().zip(dests) {
-        ms.set_amount(src.index(), d, amt);
+    for (src, addr, amt) in routes {
+        assert!(
+            ms.set_route_addr(src.index(), addr, amt),
+            "room for the route"
+        );
     }
     s.params.lfos[1].rate = 3.0;
     s.params.lfos[2].rate = 7.0;
@@ -297,6 +293,8 @@ pub fn registry(one_instance: bool) -> Vec<Param> {
                     && !matches!(b, BlockRef::Lfo(s) if s.index() > 0)
         })
         .flat_map(|block| block.specs().iter().map(move |spec| Param { block, spec }))
+        // Patching, not sound: the filter's jacks.
+        .filter(|p| !p.spec.patching)
         .collect()
 }
 
@@ -342,6 +340,12 @@ impl Bench {
             .block_mut(p.block)
             .expect("an audio block")
             .set(p.spec.id, v);
+        self.shared.update_from(&self.perf, 0);
+    }
+
+    /// Part 1's Sound edited in place by `f`, then the publish.
+    pub fn edit_sound(&mut self, f: impl FnOnce(&mut Sound)) {
+        f(self.perf.edit(PartId::ALL[0]).sound);
         self.shared.update_from(&self.perf, 0);
     }
 
@@ -404,6 +408,11 @@ impl Bench {
     /// A segment change: held RE-SNAP notes glide to the harmony's.
     pub fn resnap(&mut self) {
         self.inst.resnap(&self.shared);
+    }
+
+    /// Each voice's last LEVEL clip.
+    pub fn filter_clips(&self) -> [chimera_core::meter::Clip; chimera_core::hw::MAX_VOICES] {
+        self.inst.filter_clips()
     }
 
     /// Each voice's glide ratio, 1 at rest.

@@ -3,6 +3,7 @@
 //! is the engine; dispatch is one exhaustive `match` per method. Adding an
 //! engine = one variant here; the compiler lists the arms.
 
+use crate::taps::TapRows;
 use core::mem::MaybeUninit;
 
 use chimera_hal::BLOCK_SIZE;
@@ -268,7 +269,8 @@ impl EngineSlot {
     }
 
     /// Render one block of raw engine output from (possibly modulated)
-    /// params, which must play this slot's engine.
+    /// params, which must play this slot's engine. ALGO fills the wanted
+    /// tap rows; MODAL leaves them untouched.
     pub fn render(
         &mut self,
         out: &mut [f32; BLOCK_SIZE],
@@ -276,11 +278,12 @@ impl EngineSlot {
         live: &AlgoLive,
         sample_rate: u32,
         pool: &mut SymPool,
+        taps: &mut TapRows,
     ) {
         debug_assert_eq!(p.engine(), self.kind().engine());
         self.set_pitch(p);
         match self {
-            Self::Algo(a) => a.render(out, &p.algo, live, sample_rate),
+            Self::Algo(a) => a.render(out, &p.algo, live, sample_rate, taps),
             Self::Modal(m) => m.render(out, &p.modal, sample_rate, pool),
         }
     }

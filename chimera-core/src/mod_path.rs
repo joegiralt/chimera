@@ -29,6 +29,8 @@ pub enum RegistryError {
     NotModulatable,
     /// The registry already holds `MAX_REGISTRY_DESTS` destinations.
     Full,
+    /// The address is a permanent column's (`FixedCol`), never registered.
+    Fixed,
 }
 
 #[derive(Clone, Debug)]
@@ -58,6 +60,9 @@ impl ModDestRegistry {
     pub fn add(&mut self, addr: ParamAddr, label: [u8; LABEL_LEN]) -> Result<(), RegistryError> {
         if !addr.modulatable() {
             return Err(RegistryError::NotModulatable);
+        }
+        if crate::modulation::FixedCol::of(addr).is_some() {
+            return Err(RegistryError::Fixed);
         }
         if self.is_primed(addr) {
             return Ok(());
@@ -134,6 +139,9 @@ mod tests {
                 if !addr.modulatable() {
                     continue;
                 }
+                if crate::modulation::FixedCol::of(addr).is_some() {
+                    continue;
+                }
                 let before = reg.len();
                 if let Err(e) = reg.add(addr, [0; LABEL_LEN]) {
                     refused.get_or_insert((before, e));
@@ -146,7 +154,7 @@ mod tests {
 
     #[test]
     fn bits_eq_ignores_dead_slots() {
-        let a0 = ParamAddr::new(BlockRef::Filter, crate::params::FilterParams::CUTOFF);
+        let a0 = ParamAddr::new(BlockRef::Filter, crate::params::FilterParams::LEVEL);
         let a1 = ParamAddr::new(BlockRef::Filter, crate::params::FilterParams::RESONANCE);
         let mut a = ModDestRegistry::new();
         a.add(a0, [1; LABEL_LEN]).unwrap();

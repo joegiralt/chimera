@@ -4,6 +4,7 @@ use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::modal::ModalParams;
 use chimera_core::dsp::modulator::EnvSlot;
 use chimera_core::mod_path::{ModDestRegistry, RegistryError};
+use chimera_core::modulation::FixedCol;
 use chimera_core::params::{DriveParams, EnvParams};
 
 fn op_level(op: Op) -> ParamAddr {
@@ -91,11 +92,18 @@ fn registry_accepts_exactly_the_modulatable_addresses() {
             // A fresh registry each time: there are more modulatable
             // addresses than the matrix capacity (`MAX_REGISTRY_DESTS`).
             let mut reg = ModDestRegistry::new();
+            let fixed = FixedCol::of(addr).is_some();
             assert_eq!(
                 reg.add(addr, *b"X\0\0\0\0\0\0\0").is_ok(),
-                addr.modulatable(),
+                addr.modulatable() && !fixed,
                 "{addr:?}"
             );
+            if fixed {
+                assert!(
+                    addr.modulatable(),
+                    "{addr:?}: a fixed column is modulatable"
+                );
+            }
             accepted += addr.modulatable() as usize;
         }
     }

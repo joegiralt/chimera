@@ -123,7 +123,7 @@ impl UiClock {
 
 /// UI frames a second: what `update`'s easing and clock are tuned for.
 pub const UI_FPS: u32 = 20;
-const FRAME_MS: u32 = 1000 / UI_FPS;
+pub const FRAME_MS: u32 = 1000 / UI_FPS;
 /// Frames still owed after a stall: the rest are dropped.
 const MAX_OWED: u32 = 2;
 

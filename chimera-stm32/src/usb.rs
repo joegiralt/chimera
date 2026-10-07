@@ -303,7 +303,9 @@ impl Usb {
     /// answered one is not counted), polls, reads into the line, and
     /// answers at most one request: `Some` for a `dfu` the host was told
     /// `OK` to. A `card` runs `card` first, so its seconds come before the
-    /// answer's clock starts. `ls` and `put` work on `store`.
+    /// answer's clock starts. `ls` and `put` work on `store`. Out of line:
+    /// inlined, its buffers took `synth`'s frame past the 8 KB check.
+    #[inline(never)]
     pub fn service(
         &mut self,
         ui: &UiState,

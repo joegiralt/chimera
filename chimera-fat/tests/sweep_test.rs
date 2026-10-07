@@ -83,7 +83,8 @@ fn each_cut(base: Start, mut f: impl FnMut(&str, &Rc<CutDisk>)) {
         assert!(matches!(save_gen(base, &mut s, 3), ProjectNote::Saved(_)));
         log(&s).writes.borrow().len()
     };
-    assert!(writes > 60, "{writes} writes");
+    // 59 since the fixed matrix columns made the Sounds smaller.
+    assert!(writes > 50, "{writes} writes");
     for k in 0..writes {
         let what = format!("cut at write {k} of {writes}");
         let cut = slot(copy(&before));

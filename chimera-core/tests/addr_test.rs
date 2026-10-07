@@ -99,7 +99,7 @@ fn modulatable_addresses_are_exactly_the_spec_list() {
         ParamAddr::new(BlockRef::Drive, DriveParams::MIX),
         ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF),
         ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE),
-        ParamAddr::new(BlockRef::Filter, FilterParams::DRIVE),
+        ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL),
         ParamAddr::new(BlockRef::Folder, FolderParams::FOLD),
         ParamAddr::new(BlockRef::Folder, FolderParams::SYMMETRY),
         ParamAddr::new(BlockRef::Folder, FolderParams::MIX),

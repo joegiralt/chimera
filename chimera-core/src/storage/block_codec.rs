@@ -8,7 +8,7 @@ use super::codes::{DiskValue, Migration, RETIRED, Retired, Translation, ValidAdd
 use super::frame::FileError;
 use super::record::RecordBuf;
 
-const ENTRY_LEN: usize = 5;
+pub(crate) const ENTRY_LEN: usize = 5;
 
 /// The longest spec table a decoded block may have (ENV's is 19).
 pub(crate) const MAX_BLOCK_PARAMS: usize = 32;
@@ -94,7 +94,7 @@ pub fn decode_block(
     let slot = |id: ParamId| specs.iter().position(|s| s.id == id);
 
     let mut vals = [None; MAX_BLOCK_PARAMS];
-    let mut retired = Retired::new();
+    let mut retired = Retired::new(seen);
     for (id, raw) in entries {
         let (a, v) = match ValidAddr::find(b, id) {
             Some(a) => (a, value(a, raw)),
@@ -140,6 +140,7 @@ pub fn decode_block(
 }
 
 /// A set of `u8`s: ids or codes a record may name once.
+#[derive(Clone, Copy)]
 pub(super) struct ByteSet([u32; 8]);
 
 impl ByteSet {

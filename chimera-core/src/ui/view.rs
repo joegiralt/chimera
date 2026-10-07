@@ -11,14 +11,14 @@ use crate::dsp::modal::{self, ModalParams, ResonatorMode};
 use crate::dsp::modulator::{
     EnvForm, EnvSlot, EnvSpeed, EnvType, Func, FuncMode, LfoForm, LfoSlot, LfoType, pick,
 };
-use crate::modulation::{ModSource, VCA};
+use crate::modulation::VCA;
 use crate::orbit::RingIdx;
 use crate::orbit::clock::ClockSource;
 use crate::orbit::scene::SceneRing;
 use crate::params::{EnvParams, FilterParams, OutParams};
 use crate::preset::Sound;
 use crate::ui::block_def::{BlockDef, SlotBinding};
-use crate::ui::filter_panel::{self, PanelKnob, PanelTarget};
+use crate::ui::filter_panel::{self, PanelKnob, PanelTarget, RouteView};
 use crate::ui::glyph::FocusGlyph;
 use crate::ui::hint::{self, Gesture, Hint};
 use crate::ui::mod_panel::{self, PanelSlot};
@@ -117,9 +117,10 @@ pub enum View {
         label: &'static str,
         fmt: ValFmt,
     },
-    /// The route `source → CUTOFF` (spec § 6).
+    /// A matrix cell's amount (filter-types spec § 2): FM1, FM2, FM3, QM,
+    /// ENV AMT, KEYBD.
     Route {
-        source: ModSource,
+        route: RouteView,
         label: &'static str,
     },
     /// A fixed readout, dimmed and inert.
@@ -160,7 +161,7 @@ impl View {
             View::Empty | View::Text { .. } => ValFmt::Uni,
             View::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
             View::Legacy { fmt, .. } | View::Param { fmt, .. } => fmt,
-            View::Route { .. } => ValFmt::Route,
+            View::Route { route, .. } => route.fmt(),
             View::Orbit(c) => c.fmt(),
         }
     }
@@ -181,8 +182,12 @@ impl View {
 
     /// The gesture hint a param's focus band shows (ADR 0086): MUTE's
     /// MIX + B*n*, which mutes any ring from anywhere in ORBIT. ORBIT's
-    /// own cells give theirs through their focus.
+    /// own cells give theirs through their focus. A route view's: MIX +
+    /// MINUS deletes its route.
     pub fn hint(&self) -> Hint {
+        if let View::Route { .. } = self {
+            return crate::ui::mod_grid::DELETE;
+        }
         match self.addr() {
             Some(a) if matches!(a.block, BlockRef::OrbitRing(_)) && a.param == SceneRing::MUTE => {
                 MUTE_HINT
@@ -196,6 +201,14 @@ const MUTE_HINT: Hint = &[Gesture("MIX + B1-5", "MUTES THAT RING")];
 
 fn param(addr: ParamAddr, label: &'static str, fmt: ValFmt) -> View {
     View::Param { addr, label, fmt }
+}
+
+/// `addr`'s format under `ctx`: MODE names its kind's own modes.
+fn fmt_of(addr: ParamAddr, fmt: ValFmt, ctx: &SlotCtx) -> ValFmt {
+    match (addr.block, addr.param) {
+        (BlockRef::Filter, FilterParams::MODE) => ValFmt::Names(ctx.kind.mode_labels()),
+        _ => fmt,
+    }
 }
 
 /// Slot `i` of `def` as it reads under `ctx`.
@@ -217,7 +230,7 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
             label: slot.label(),
             text: "TYPE B",
         },
-        SlotBinding::Param(addr) => param(addr, slot.label(), slot.format()),
+        SlotBinding::Param(addr) => param(addr, slot.label(), fmt_of(addr, slot.format(), ctx)),
         SlotBinding::SelectedOp(id) => param(
             ParamAddr::new(BlockRef::AlgoOp(ctx.sel_op), id),
             slot.label(),
@@ -230,17 +243,20 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
         ),
         SlotBinding::FilterPanel(k) => match filter_panel::knob(ctx.kind, k) {
             None => View::Empty,
-            Some(&PanelKnob {
-                target: PanelTarget::Filter(id),
-                label,
-            }) => {
-                let addr = ParamAddr::new(BlockRef::Filter, id);
-                param(addr, label, addr.spec().map_or(ValFmt::Uni, |s| s.fmt))
-            }
-            Some(&PanelKnob {
-                target: PanelTarget::Route(source),
-                label,
-            }) => View::Route { source, label },
+            Some(&PanelKnob { target, label }) => match target {
+                // A fixed one reads dimmed through `dimmed` (one MODE).
+                PanelTarget::Filter(id) | PanelTarget::Fixed(id) => {
+                    let addr = ParamAddr::new(BlockRef::Filter, id);
+                    let fmt = addr.spec().map_or(ValFmt::Uni, |s| s.fmt);
+                    param(addr, label, fmt_of(addr, fmt, ctx))
+                }
+                PanelTarget::Route(_) | PanelTarget::Keybd | PanelTarget::JackAmount(_) => {
+                    match target.route() {
+                        Some(route) => View::Route { route, label },
+                        None => View::Empty,
+                    }
+                }
+            },
         },
         SlotBinding::EnvPanel(s, k) => panel_view(
             mod_panel::env_panel(ctx.envs[s.index()]),

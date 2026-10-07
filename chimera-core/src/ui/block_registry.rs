@@ -160,27 +160,27 @@ pub static FILTER: BlockDef = BlockDef {
     ],
 };
 
-/// FLT › MODE: MODE and the kind's extras (spec § UI). `short` is "MDE", not
-/// "MODE": on the Algo map the full word overlaps the next node's label
-/// (`MOD` is already the MOD node's); this abbreviation is only
-/// the map's branch label, not the MODE param's own spec name.
-pub static FILTER_MODE: BlockDef = BlockDef {
+/// FLT › MOD: the type's six cells (filter-types spec § 2, § 3): LEVEL
+/// or VOICE, FM3, FM3 IN, QM, QM IN, and the 2040's fixed MODE. `short` is
+/// "FMD" (filter mod), not "MOD": on the Algo map "MOD" would read as the
+/// MOD node's own, and "FMOD" runs into the next node.
+pub static FILTER_MOD: BlockDef = BlockDef {
     id: 59,
-    name: "Filter Mode",
-    short: "MDE",
+    name: "Filter Mod",
+    short: "FMD",
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::param(BlockRef::Filter, FilterParams::MODE),
         ParamSlot::filter_panel(5),
         ParamSlot::filter_panel(6),
-        EMPTY,
-        EMPTY,
-        EMPTY,
+        ParamSlot::filter_panel(7),
+        ParamSlot::filter_panel(8),
+        ParamSlot::filter_panel(9),
+        ParamSlot::filter_panel(10),
     ],
 };
 
-static FILTER_SUB_PAGES: [&BlockDef; 1] = [&FILTER_MODE];
+static FILTER_SUB_PAGES: [&BlockDef; 1] = [&FILTER_MOD];
 
 // ---------------------------------------------------------------------------
 // Modulators — envelopes, LFOs, etc.

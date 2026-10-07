@@ -1,6 +1,7 @@
 //! `AlgoEngine`: the imperative shell around the pure core.
 
 use super::math::clampf;
+use crate::taps::TapRows;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
@@ -298,6 +299,7 @@ impl AlgoEngine {
         p: &AlgoParams,
         live: &AlgoLive,
         sample_rate: u32,
+        taps: &mut TapRows,
     ) {
         if !self.active {
             out.fill(0.0);
@@ -342,7 +344,7 @@ impl AlgoEngine {
             norm_from: self.norm,
             norm_to: norm,
         };
-        self.kernel.render(&blk, &mut self.env, out);
+        self.kernel.render(&blk, &mut self.env, out, taps);
         for (i, o) in ops.iter().enumerate() {
             self.gain[i] = o.gain_to;
             self.mip[i] = mips[i].0 as f32 + mips[i].2;

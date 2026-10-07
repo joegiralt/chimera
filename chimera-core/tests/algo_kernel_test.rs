@@ -7,6 +7,7 @@ use chimera_core::dsp::algo::kernel::{Kernel, KernelBlock, OpBlock, PM_CYCLES, S
 use chimera_core::dsp::algo::plan::{EvalPlan, OPS, blend};
 use chimera_core::dsp::algo::tx::FEEDBACK_CYCLES;
 use chimera_core::dsp::algo::waves::{MIP0_TOP_HZ, WaveId, mip_position};
+use chimera_core::taps::TapRows;
 use chimera_hal::BLOCK_SIZE;
 
 const SR: f32 = 48_000.0;
@@ -58,7 +59,7 @@ fn render(plan: &EvalPlan, ops: [OpBlock; OPS], blocks: usize) -> Vec<f32> {
     let mut out = Vec::new();
     let mut b = [0.0; BLOCK_SIZE];
     for _ in 0..blocks {
-        k.render(&blk, &mut env, &mut b);
+        k.render(&blk, &mut env, &mut b, &mut TapRows::new([false; 2]));
         out.extend_from_slice(&b);
     }
     out
@@ -453,7 +454,7 @@ fn kernel_matches_model(seed: u32, acyclic: bool, one_sample_fb: bool) -> bool {
                 y.note_off();
             }
         }
-        k.render(&blk, &mut env_k, &mut a);
+        k.render(&blk, &mut env_k, &mut a, &mut TapRows::new([false; 2]));
         m.render(&blk, &mut env_m, &mut b);
         if !same_bits(&a, &b) {
             return false;
@@ -532,7 +533,7 @@ fn a_delayed_link_reads_its_source_one_sample_late() {
             norm_from: 1.0,
             norm_to: 1.0,
         };
-        k.render(&blk, &mut env, &mut b);
+        k.render(&blk, &mut env, &mut b, &mut TapRows::new([false; 2]));
         b
     };
     let mut plain = ops;
@@ -547,7 +548,7 @@ fn a_delayed_link_reads_its_source_one_sample_late() {
             norm_from: 1.0,
             norm_to: 1.0,
         };
-        k.render(&blk, &mut env, &mut b);
+        k.render(&blk, &mut env, &mut b, &mut TapRows::new([false; 2]));
         b
     };
     let (late, now) = (at_b(&delayed), at_b(&forward));
@@ -575,7 +576,7 @@ fn morph_ramps_the_link_weights_and_carriers() {
             norm_from: 1.0,
             norm_to: 1.0,
         };
-        k.render(&blk, &mut env, &mut out);
+        k.render(&blk, &mut env, &mut out, &mut TapRows::new([false; 2]));
         out
     };
     let only_a = at(&a_only, 0.0, 0.0);
@@ -601,7 +602,7 @@ fn norm_ramps_across_the_block() {
         norm_from: 0.0,
         norm_to: 1.0,
     };
-    k.render(&blk, &mut env, &mut out);
+    k.render(&blk, &mut env, &mut out, &mut TapRows::new([false; 2]));
     let full = render(&plan, ops, 1);
     for s in 0..BLOCK_SIZE {
         assert_eq!(
@@ -677,7 +678,7 @@ fn a_delayed_plan_skips_silent_operators_bit_for_bit() {
             norm_from: 1.0,
             norm_to: 1.0,
         };
-        k.render(&blk, &mut env_k, &mut x);
+        k.render(&blk, &mut env_k, &mut x, &mut TapRows::new([false; 2]));
         m.render(&blk, &mut env_m, &mut y);
         assert!(same_bits(&x, &y), "block {i}");
     }

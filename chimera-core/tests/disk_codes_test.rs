@@ -6,6 +6,7 @@ use chimera_core::addr::{BlockRef, Blocks, Op};
 use chimera_core::block::{Block, DiskCode, ParamId, ValFmt};
 use chimera_core::dsp::algo::algorithms::{ALGO_IDENTS, ALGO_NAMES};
 use chimera_core::dsp::algo::waves::{WAVE_IDENTS, WAVE_NAMES};
+use chimera_core::dsp::filter::FilterKind;
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::modulator::{EnvForm, EnvSlot, FuncMode, LfoForm};
 use chimera_core::modulation::ModSource;
@@ -17,6 +18,7 @@ use chimera_core::storage::{
     Crc32, DiskValue, RETIRED, RETIRED_BLOCKS, RETIRED_CODES, RETIRED_SOURCES, ValidAddr,
     read_value,
 };
+use chimera_core::taps::{Jack, TapOp};
 use chimera_core::ui::midi_settings::MidiSettings;
 use chimera_core::ui::theme_settings::ThemeSettings;
 use chimera_theory::Degree;
@@ -101,6 +103,26 @@ fn table() -> Vec<String> {
                     shown(s.fmt, v)
                 ));
             }
+            // MODE through TYPE: every built kind's modes, not only CLEAN's.
+            if (b, s.id) == (BlockRef::Filter, FilterParams::MODE) {
+                for k in FilterKind::BUILT {
+                    let blk = bank.block(b);
+                    assert!(blk.set_enum_code(FilterParams::KIND, k.disk_code()));
+                    for (v, label) in k.mode_labels().iter().enumerate() {
+                        blk.set(s.id, v as f32);
+                        let c = blk.enum_code(s.id).expect("an Enum has a code");
+                        let ident = blk.enum_ident(s.id).expect("an Enum has an ident");
+                        let line = format!("E {code} {} {c} {ident} # {label}", s.id.0);
+                        if !out.iter().any(|l| key(l) == key(&line)) {
+                            out.push(line);
+                        }
+                    }
+                }
+                bank.block(b).set(FilterParams::KIND, 0.0);
+            }
+            // Back to its default, so a param read through it (MODE through
+            // TYPE) lists its own codes, not the last kind's.
+            bank.block(b).set(s.id, s.default);
         }
     }
     for s in ModSource::ALL {
@@ -120,6 +142,10 @@ fn table() -> Vec<String> {
     coded(
         "DEGREE",
         &mut Degree::ALL.iter().map(|d| (d.disk_code(), d.disk_ident())),
+    );
+    coded(
+        "JACK",
+        &mut Jack::ALL.iter().map(|j| (j.disk_code(), j.disk_ident())),
     );
     coded(
         "TARGET_KIND",
@@ -222,6 +248,7 @@ fn idents_are_tokens_and_unique() {
                 assert!(!values.contains(&i), "{b:?} {} repeats {i}", s.ident);
                 values.push(i);
             }
+            bank.block(b).set(s.id, s.default);
         }
     }
 }
@@ -452,11 +479,40 @@ fn mod_source_codes_round_trip() {
     assert_eq!(ModSource::from_disk_code(255), None);
 }
 
+/// `Jack` extends `ModSource`'s codes; `ModSource` itself is unchanged.
+#[test]
+fn jack_codes_round_trip_and_extend_mod_source() {
+    for s in ModSource::ALL {
+        assert_eq!(Jack::Mod(s).disk_code(), s.disk_code());
+        assert_eq!(Jack::Mod(s).disk_ident(), s.disk_ident());
+    }
+    assert_eq!(Jack::Tap(TapOp::Op5).disk_code(), 8);
+    assert_eq!(Jack::Tap(TapOp::Op6).disk_code(), 9);
+    assert_eq!(Jack::Tap(TapOp::Op5).disk_ident(), "OP5");
+    assert_eq!(Jack::Tap(TapOp::Op6).disk_ident(), "OP6");
+    for j in Jack::ALL {
+        assert_eq!(Jack::from_disk_code(j.disk_code()), Some(j));
+    }
+    let codes: Vec<u8> = Jack::ALL.iter().map(|j| j.disk_code()).collect();
+    assert_eq!(codes, (0..10).collect::<Vec<u8>>());
+    assert_eq!(Jack::from_disk_code(10), None);
+    assert_eq!(Jack::from_disk_code(255), None);
+}
+
 #[test]
 fn retired_never_live() {
     assert_eq!(
         RETIRED,
-        &[(10, 3), (10, 4), (10, 5), (1, 2), (1, 5), (1, 7), (1, 8)]
+        &[
+            (10, 3),
+            (10, 4),
+            (10, 5),
+            (1, 2),
+            (1, 5),
+            (1, 7),
+            (1, 8),
+            (10, 2)
+        ]
     );
     assert!(RETIRED_CODES.is_empty() && RETIRED_SOURCES.is_empty() && RETIRED_BLOCKS.is_empty());
     for &(block, id) in RETIRED {
@@ -502,10 +558,10 @@ fn valid_addr_only_from_specs() {
     let ids: Vec<u8> = ValidAddr::of_block(BlockRef::Filter)
         .map(|a| a.addr().param.0)
         .collect();
-    assert_eq!(ids, [0, 1, 2, 6, 7]);
+    assert_eq!(ids, [0, 1, 12, 6, 7, 13, 8, 11]);
     let kind = ValidAddr::find(BlockRef::Filter, FilterParams::KIND).unwrap();
     assert!(kind.coded());
-    assert_eq!(kind.spec().label, "KIND");
+    assert_eq!(kind.spec().label, "TYPE");
     assert!(
         !ValidAddr::find(BlockRef::Filter, FilterParams::CUTOFF)
             .unwrap()

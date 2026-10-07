@@ -45,6 +45,10 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Algo", "ALG_B", NONE),
     ("Filter", "KIND", NONE),
     ("Filter", "MODE", NONE),
+    ("Filter", "VOICE", NONE),
+    // The jacks: a source's name, no amount (that is FM3's and QM's).
+    ("Filter", "FM3IN", NONE),
+    ("Filter", "QMIN", NONE),
     ("Env", "TYPE", NONE),
     ("Env", "SPEED", NONE),
     ("Env", "HOLD", NONE),
@@ -127,6 +131,10 @@ const NAMED_ARC: &[(&str, &str)] = &[
 /// Two-value choices that are two peers, not on and off: a toggle would
 /// read one of them as "off". They show the word (NONE).
 const TWO_PEERS: &[(&str, &str)] = &[
+    // CLEAN and 2040: two filters (until DIRTY makes three).
+    ("Filter", "KIND"),
+    // REV2 and EXP: two circuits, neither off.
+    ("Filter", "VOICE"),
     // A and B are two envelope designs.
     ("Env", "TYPE"),
     // CLASSIC and FUNC are two LFO designs.

@@ -58,12 +58,9 @@ fn part_chains_offer_the_eight_sources() {
             "{engine:?}"
         );
         let sound = chimera_core::preset::Sound::init(engine);
-        assert_eq!(
-            sound.dest_registry.len(),
-            1,
-            "{engine:?}: the default CUTOFF column"
-        );
-        assert_eq!(sound.mod_state.num_dests(), 1, "{engine:?}");
+        // The default routes live in the fixed FREQ column.
+        assert_eq!(sound.dest_registry.len(), 0, "{engine:?}");
+        assert_eq!(sound.mod_state.num_dests(), 0, "{engine:?}");
     }
 }
 
@@ -207,17 +204,17 @@ fn part_pages_display_like_before() {
             &reg::FILTER,
             [
                 (
-                    "KIND",
+                    "TYPE",
                     ValFmt::Names(&chimera_core::dsp::filter::KIND_NAMES),
                 ),
-                ("CUTOFF", Uni),
-                ("RES", Uni),
+                ("FREQ", Uni),
+                ("Q", Uni),
                 (
                     "MODE",
-                    ValFmt::Names(&chimera_core::dsp::filter::SVF_MODE_NAMES),
+                    ValFmt::Names(chimera_core::dsp::filter::FilterKind::Svf.mode_labels()),
                 ),
-                ("ENV", ValFmt::Route),
-                ("KEY", ValFmt::Route),
+                ("FM1", ValFmt::Route),
+                ("FM2", ValFmt::Route),
             ],
         ),
         (

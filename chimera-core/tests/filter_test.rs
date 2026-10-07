@@ -3,11 +3,11 @@
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::block::{Block, ParamId};
 use chimera_core::dsp::fast_exp2;
-use chimera_core::dsp::filter::routed_cutoff;
-use chimera_core::dsp::filter::{FilterMode, SVF_MODES, SvfFilter};
+use chimera_core::dsp::filter::{Clean, FilterKind, FilterMode, FilterMods};
+use chimera_core::dsp::filter::{level_from_drive, routed_cutoff};
 use chimera_core::params::{FilterParams, ParamSnapshot};
 use chimera_core::ui::block_def::slot_addr;
-use chimera_core::ui::block_registry::{FILTER, FILTER_MODE};
+use chimera_core::ui::block_registry::{FILTER, FILTER_MOD};
 use chimera_core::ui::view::SlotCtx;
 use chimera_hal::BLOCK_SIZE;
 
@@ -17,14 +17,16 @@ const SR: u32 = 48_000;
 fn mode_is_typed_and_stays_in_the_svf_list() {
     let mut f = FilterParams::default();
     assert_eq!(f.mode(), FilterMode::Lp24, "every Sound is on LP24 today");
-    for m in FilterMode::ALL {
+    for &m in FilterKind::Svf.modes() {
         assert!(f.set_mode(m));
         assert_eq!(f.mode(), m);
     }
-    // The block value is the index in the SVF's list, so an encoder steps it.
+    // The block value is the index in CLEAN's list, so an encoder steps it.
     f.set(FilterParams::MODE, 0.0);
-    assert_eq!(f.mode(), SVF_MODES[0]);
-    assert_eq!(SVF_MODES[0], FilterMode::Lp24, "the default comes first");
+    assert_eq!(f.mode(), FilterKind::Svf.modes()[0]);
+    assert_eq!(f.mode(), FilterMode::Lp6, "knob order: LP1 first");
+    f.set(FilterParams::MODE, 2.0);
+    assert_eq!(f.mode(), FilterKind::Svf.default_mode());
     f.set(FilterParams::MODE, 99.0);
     assert_eq!(f.mode(), FilterMode::Phaser);
     assert_eq!(f.get(FilterParams::MODE), 7.0);
@@ -32,8 +34,12 @@ fn mode_is_typed_and_stays_in_the_svf_list() {
 
 #[test]
 fn the_discriminants_are_the_old_mode_byte() {
-    for (i, m) in FilterMode::ALL.iter().enumerate() {
+    // CLEAN's list is the old byte's order; every mode's code is its own.
+    for (i, m) in FilterKind::Svf.modes().iter().enumerate() {
         assert_eq!(*m as u8, i as u8);
+    }
+    for m in FilterMode::ALL {
+        assert_eq!(m as u8, chimera_core::block::DiskCode::disk_code(m));
     }
 }
 
@@ -45,29 +51,35 @@ fn retired_filter_ids_have_no_spec() {
     }
 }
 
+/// Every type shows its MODE on exactly one FLT page (spec § 2, M6): FLT
+/// on CLEAN and DIRTY, FLT › MOD's last cell, fixed, on the 2040.
 #[test]
-fn mode_is_on_the_flt_pages() {
+fn mode_is_on_one_flt_page() {
     let mode = ParamAddr::new(BlockRef::Filter, FilterParams::MODE);
-    let ctx = SlotCtx::read(&ParamSnapshot::default(), chimera_core::addr::Op::A);
-    let on = |def| (0..6).any(|i| slot_addr(def, i, &ctx) == Some(mode));
-    assert!(on(&FILTER) && on(&FILTER_MODE));
+    for k in FilterKind::BUILT {
+        let mut p = ParamSnapshot::default();
+        p.filter.set_kind(k);
+        let ctx = SlotCtx::read(&p, chimera_core::addr::Op::A);
+        let on = |def| (0..6).any(|i| slot_addr(def, i, &ctx) == Some(mode));
+        assert!(on(&FILTER) != on(&FILTER_MOD), "{k:?}");
+        assert_eq!(on(&FILTER_MOD), k == FilterKind::K2040, "{k:?}");
+    }
 }
 
 /// Each mode filters a saw differently, and all stay finite.
 #[test]
 fn every_mode_renders_finite_and_distinct() {
     let mut seen = Vec::new();
-    for m in FilterMode::ALL {
+    for &m in FilterKind::Svf.modes() {
         let mut p = FilterParams::default();
         p.set_mode(m);
         p.resonance = 0.4;
-        let mut f = SvfFilter::new();
+        let mut f = Clean::new();
         let mut out = Vec::new();
         for b in 0..20 {
-            let mut buf: Vec<f32> = (0..BLOCK_SIZE)
-                .map(|i| ((b * BLOCK_SIZE + i) % 218) as f32 / 109.0 - 1.0)
-                .collect();
-            f.process(&mut buf, &p, SR);
+            let mut buf: [f32; BLOCK_SIZE] =
+                core::array::from_fn(|i| ((b * BLOCK_SIZE + i) % 218) as f32 / 109.0 - 1.0);
+            f.process(&mut buf, &p, SR, &FilterMods::NONE);
             out.extend(buf);
         }
         assert!(out.iter().all(|x| x.is_finite()), "{m:?}");
@@ -142,7 +154,7 @@ fn a_cutoff_sweep_does_not_click() {
             let env = |b: usize| ((b * BLOCK_SIZE) as f32 / (attack * SR as f32)).min(1.0);
             let fc = |b: usize| routed_cutoff(1000.0, amount * env(b));
             let render = |how: How| {
-                let mut f = SvfFilter::new();
+                let mut f = Clean::new();
                 let mut p = FilterParams::default();
                 p.resonance = 0.5;
                 let mut out = Vec::new();
@@ -155,13 +167,11 @@ fn a_cutoff_sweep_does_not_click() {
                     if how != How::Ramped {
                         f.hold();
                     }
-                    let mut buf: Vec<f32> = (0..BLOCK_SIZE)
-                        .map(|i| {
-                            let n = (b * BLOCK_SIZE + i) as f32;
-                            0.5 * (core::f32::consts::TAU * 220.0 * n / SR as f32).sin()
-                        })
-                        .collect();
-                    f.process(&mut buf, &p, SR);
+                    let mut buf: [f32; BLOCK_SIZE] = core::array::from_fn(|i| {
+                        let n = (b * BLOCK_SIZE + i) as f32;
+                        0.5 * (core::f32::consts::TAU * 220.0 * n / SR as f32).sin()
+                    });
+                    f.process(&mut buf, &p, SR, &FilterMods::NONE);
                     out.extend(buf);
                 }
                 out
@@ -214,53 +224,59 @@ fn a_steady_cutoff_does_not_ramp() {
     // MODE is private: no struct-update syntax from a test.
     let (mut lo, mut hi) = (FilterParams::default(), FilterParams::default());
     (lo.cutoff, hi.cutoff) = (500.0, 2000.0);
-    let saw = |b: usize| -> Vec<f32> {
-        (0..BLOCK_SIZE)
-            .map(|i| ((b * BLOCK_SIZE + i) % 97) as f32 / 48.5 - 1.0)
-            .collect()
+    let saw = |b: usize| -> [f32; BLOCK_SIZE] {
+        core::array::from_fn(|i| ((b * BLOCK_SIZE + i) % 97) as f32 / 48.5 - 1.0)
     };
-    let mut a = SvfFilter::new();
+    let mut a = Clean::new();
     for (blk, p) in [&lo, &hi].into_iter().enumerate() {
-        a.process(&mut saw(blk), p, SR); // block 1 ramps 500 → 2000 Hz
+        a.process(&mut saw(blk), p, SR, &FilterMods::NONE); // block 1 ramps 500 → 2000 Hz
     }
     let mut b = a.clone();
     for blk in 2..10 {
         let (mut x, mut y) = (saw(blk), saw(blk));
-        a.process(&mut x, &hi, SR);
+        a.process(&mut x, &hi, SR, &FilterMods::NONE);
         b.hold();
-        b.process(&mut y, &hi, SR);
+        b.process(&mut y, &hi, SR, &FilterMods::NONE);
         assert_eq!(x, y, "block {blk}");
     }
 }
 
 /// Every mode's output, steady and ramped, hot enough to saturate, bit for
 /// bit as recorded before `tick` was inlined into per-mode loops;
-/// re-recorded for the C1 `saturate` (ADR 0063), the first mode unmoved.
+/// re-recorded for the C1 `saturate` (ADR 0063), the first mode unmoved;
+/// then every mode for CLEAN's ACCURATE tan and exact divides (#57);
+/// then every mode but LP6 (no `k`, trim 1) for CLEAN's k law and trims
+/// (ADR 0096); then LP6 and NOTCH for LP1 and NOTCH1 (ADR 0096); then
+/// PHASER for NOTCH2 (ADR 0096); then every mode for LEVEL's gain law.
 #[test]
 fn every_mode_renders_as_recorded() {
     const WANT: [u64; 8] = [
-        0x31ba_0de6_59aa_bd16,
-        0xff48_85db_b8fb_a588,
-        0x8de8_dcb7_bcad_af5c,
-        0x4137_d7eb_af1e_4c5b,
-        0x3760_1f4e_5339_ba69,
-        0x5c6d_d584_642b_f8ce,
-        0xfbac_439c_098e_01c8,
-        0xad2c_fb78_5be4_b719,
+        // Every row, Task 7: LEVEL ×3 drives the ±1 saw to ±3, so LEVEL's
+        // clipper (`sat_c1` before the loop, open from the first sample on a
+        // fresh filter) now shapes the input. Task 6 moved them before.
+        0xb664_cf32_8b24_a586, // was 0x26b9_aa63_59f6_d12f
+        0xd387_114f_8091_e78f, // was 0x8791_4d0d_04ec_eab7
+        0x2dd4_42db_4754_c86f, // was 0xd105_11dd_7eb6_1d7f
+        0x2228_9df2_aab8_4d75, // was 0x957c_b82b_2a7c_5db8
+        0xa5f8_ee27_4077_4ffc, // was 0x1d76_e888_9b17_7455
+        0xe65b_8792_e447_bbfe, // was 0x95b1_3cce_fe80_0f26
+        0xdd27_40cb_0de2_3654, // was 0xd0d9_32a0_f21b_7369
+        0x3cd8_2d48_578c_234c, // was 0x3af2_e7cd_ebcf_5b97
     ];
-    let got = FilterMode::ALL.map(|m| {
+    let got: [u64; 8] = core::array::from_fn(|i| {
+        let m = FilterKind::Svf.modes()[i];
         let mut p = FilterParams::default();
         p.set_mode(m);
-        (p.resonance, p.drive) = (0.9, 0.5);
-        let mut f = SvfFilter::new();
+        // DRIVE 0.5's old ×3, as LEVEL (Task 6).
+        (p.resonance, p.level) = (0.9, level_from_drive(0.5));
+        let mut f = Clean::new();
         let mut h = 0xcbf2_9ce4_8422_2325u64;
         for b in 0..24 {
             // Steady blocks, then a cutoff change every other block (ramps).
             p.cutoff = if b < 8 || b % 2 == 0 { 800.0 } else { 3000.0 };
-            let mut buf: Vec<f32> = (0..BLOCK_SIZE)
-                .map(|i| ((b * BLOCK_SIZE + i) % 150) as f32 / 75.0 - 1.0)
-                .collect();
-            f.process(&mut buf, &p, SR);
+            let mut buf: [f32; BLOCK_SIZE] =
+                core::array::from_fn(|i| ((b * BLOCK_SIZE + i) % 150) as f32 / 75.0 - 1.0);
+            f.process(&mut buf, &p, SR, &FilterMods::NONE);
             for x in buf {
                 h = (h ^ u64::from(x.to_bits())).wrapping_mul(0x100_0000_01b3);
             }
@@ -270,20 +286,25 @@ fn every_mode_renders_as_recorded() {
     assert_eq!(got, WANT, "{got:#x?}");
 }
 
-/// At full resonance (k = 0.01) under a full-scale 110 Hz saw, LP12 and
-/// LP24 ring at the cutoff, held by `saturate` at a steady level: the last
+/// At full resonance (k = −0.105, self-oscillating, trimmed: ADR 0096)
+/// under a full-scale 110 Hz saw, LP12 and LP24 ring at the cutoff, held
+/// by `sat_c1` at a steady level: the last
 /// half second's RMS and the ring's own level (990 Hz, the harmonic at the cutoff), dBFS, at
-/// DRIVE 0 and 1, each within 1 dB of what they were, the level's two
+/// LEVEL ½ and 1 (once DRIVE 0 and 1), each within 1 dB of what they were, the level's two
 /// quarters within 0.5 dB of each other. ADR 0097 kept the curve: stmlib's
 /// rational clip in its place, scaled to the same slope and ceiling, put
 /// the ring 14 to 24 dB under these.
 #[test]
 fn full_resonance_rings_at_its_level() {
     const WANT: [(FilterMode, f32, f32, f32); 4] = [
-        (FilterMode::Lp12, 0.0, -4.04, -14.55),
-        (FilterMode::Lp12, 1.0, 2.69, -29.15),
-        (FilterMode::Lp24, 0.0, -2.34, -7.04),
-        (FilterMode::Lp24, 1.0, 1.87, -25.35),
+        // Re-pinned for CLEAN's k law and trims (ADR 0096); at k = 0.01
+        // they were −4.04/−14.55, 2.69/−29.15, −2.34/−7.04, 1.87/−25.35.
+        (FilterMode::Lp12, 0.5, -8.31, -13.28),
+        // LEVEL 1 is ×4 where DRIVE 1 was ×5 (Task 6, ADR 0096): was −3.64/−40.87.
+        (FilterMode::Lp12, 1.0, -3.99, -24.33),
+        (FilterMode::Lp24, 0.5, -8.40, -11.70),
+        // LEVEL 1 is ×4 where DRIVE 1 was ×5 (Task 6, ADR 0096): was −5.77/−29.68.
+        (FilterMode::Lp24, 1.0, -6.04, -22.60),
     ];
     let db = |x: &[f32]| 10.0 * (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).log10();
     // The level at `hz`, a sine's RMS: the DFT bin over a whole number of
@@ -298,35 +319,35 @@ fn full_resonance_rings_at_its_level() {
             });
         20.0 * (re.hypot(im) * 2.0 / x.len() as f32 / 2f32.sqrt()).log10()
     };
-    for (mode, drive, want, want_ring) in WANT {
+    for (mode, lv, want, want_ring) in WANT {
         let mut p = FilterParams::default();
         p.set_mode(mode);
-        (p.cutoff, p.resonance, p.drive) = (1000.0, 1.0, drive);
-        let mut f = SvfFilter::new();
+        (p.cutoff, p.resonance, p.level) = (1000.0, 1.0, lv);
+        let mut f = Clean::new();
         let mut out = Vec::new();
         for b in 0..750 {
             let mut buf: [f32; BLOCK_SIZE] = core::array::from_fn(|i| {
                 let n = b * BLOCK_SIZE + i;
                 (n as f32 * 110.0 / SR as f32).fract() * 2.0 - 1.0
             });
-            f.process(&mut buf, &p, SR);
+            f.process(&mut buf, &p, SR, &FilterMods::NONE);
             out.extend_from_slice(&buf);
         }
         let tail = &out[out.len() / 2..];
         let (a, b) = tail.split_at(tail.len() / 2);
         let (level, ring) = (db(tail), at(&tail[..24_000], 990.0));
-        println!("{mode:?} DRIVE {drive}: {level:.2} dBFS, the ring {ring:.2}");
+        println!("{mode:?} LEVEL {lv}: {level:.2} dBFS, the ring {ring:.2}");
         assert!(
             (level - want).abs() <= 1.0,
-            "{mode:?} DRIVE {drive}: {level:.2}, want {want:.2}"
+            "{mode:?} LEVEL {lv}: {level:.2}, want {want:.2}"
         );
         assert!(
             (ring - want_ring).abs() <= 1.0,
-            "{mode:?} DRIVE {drive}: ring {ring:.2}, want {want_ring:.2}"
+            "{mode:?} LEVEL {lv}: ring {ring:.2}, want {want_ring:.2}"
         );
         assert!(
             (db(a) - db(b)).abs() <= 0.5,
-            "{mode:?} DRIVE {drive}: unsteady"
+            "{mode:?} LEVEL {lv}: unsteady"
         );
     }
 }

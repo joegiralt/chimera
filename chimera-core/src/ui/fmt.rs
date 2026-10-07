@@ -64,7 +64,14 @@ pub fn fmt_val(buf: &mut FmtBuf, val: f32, fmt: ValFmt) {
                 v => write!(buf, "R{}", v),
             };
         }
-        ValFmt::Route => {
+        ValFmt::Keybd if matches!(crate::ui::renderer::amount_of(val), 0 | 64 | 127) => {
+            let _ = buf.write_str(match crate::ui::renderer::amount_of(val) {
+                0 => "OFF",
+                64 => "HALF",
+                _ => "FULL",
+            });
+        }
+        ValFmt::Route | ValFmt::Keybd => {
             let a = crate::ui::renderer::amount_of(val) as i32;
             let pct = (a * 100 + a.signum() * 63) / 127;
             let _ = if pct > 0 {

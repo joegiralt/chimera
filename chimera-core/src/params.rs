@@ -1,20 +1,28 @@
 use crate::addr::{BlockRead, BlockRef, Blocks};
 use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
-use crate::dsp::filter::{FilterKind, FilterMode, KIND_NAMES, SVF_MODE_NAMES};
+use crate::dsp::filter::k2040::VOICE_LABELS;
+use crate::dsp::filter::{FilterKind, FilterMode, K2040Voice, KIND_NAMES};
 use crate::dsp::modulator::{
     EnvForm, EnvSpeed, EnvType, FuncMode, FuncParams, HoldPos, LfoForm, pick,
 };
+use crate::taps::{FM3_IN_NAMES, Jack, JackPair, QM_IN_NAMES};
 
 /// Parameters for one voice's filter.
 #[derive(Clone, Copy, Debug)]
 pub struct FilterParams {
     pub cutoff: f32,
     pub resonance: f32,
-    pub drive: f32,
+    /// The input level: `level_gain` (Cascadia-style, unity at ½).
+    pub level: f32,
     /// Private: kept consistent with mode through set_kind and set_mode.
     kind: FilterKind,
     /// Private: `set_mode` keeps it in the kind's list (spec § 7).
     mode: FilterMode,
+    /// The 2040's VOICE; kept, and inert, on the other types.
+    pub voice: K2040Voice,
+    /// FM3 IN and QM IN: the rows FM3's FREQ cell and QM's Q cell are
+    /// (spec § 2). `filter_panel::repatch` moves them with their routes.
+    jacks: JackPair,
 }
 
 impl Default for FilterParams {
@@ -22,9 +30,11 @@ impl Default for FilterParams {
         Self {
             cutoff: 1000.0,
             resonance: 0.0,
-            drive: 0.0,
+            level: 0.5,
             kind: FilterKind::Svf,
-            mode: FilterMode::Lp24,
+            mode: FilterKind::Svf.default_mode(),
+            voice: K2040Voice::Rev2,
+            jacks: JackPair::DEFAULT,
         }
     }
 }
@@ -32,10 +42,15 @@ impl Default for FilterParams {
 impl FilterParams {
     pub const CUTOFF: ParamId = ParamId(0);
     pub const RESONANCE: ParamId = ParamId(1);
-    pub const DRIVE: ParamId = ParamId(2);
-    // 3 (FM), 4 (ENV) and 5 (KEY) are retired, never reused (ADR 0009).
+    // 2 (DRIVE), 3 (FM), 4 (ENV) and 5 (KEY) are retired, never reused
+    // (ADR 0009); DRIVE translates to LEVEL on load (ADR 0096).
     pub const KIND: ParamId = ParamId(6);
     pub const MODE: ParamId = ParamId(7);
+    pub const FM3_IN: ParamId = ParamId(8);
+    // 9 and 10 stay unused: the routing spec left them for never-built params.
+    pub const QM_IN: ParamId = ParamId(11);
+    pub const LEVEL: ParamId = ParamId(12);
+    pub const VOICE: ParamId = ParamId(13);
 
     pub fn mode(&self) -> FilterMode {
         self.mode
@@ -50,9 +65,35 @@ impl FilterParams {
         *self = crate::dsp::filter::kind_change(*self, k);
     }
 
-    /// Only `kind_change` calls this; MODE is fixed up there.
+    /// `kind_change` and the filter's crossfade call this; each sets MODE.
     pub(crate) fn set_kind_raw(&mut self, k: FilterKind) {
         self.kind = k;
+    }
+
+    /// The filter's steady bill over LP24 (`FilterKind::cost`).
+    pub const fn filter_cost(&self) -> crate::hw::Cost {
+        self.kind.cost(self.voice)
+    }
+
+    /// FM3 IN, as stored (`Jack::effective` says what it acts as).
+    pub fn fm3_src(&self) -> Jack {
+        self.jacks.fm3()
+    }
+
+    /// QM IN, as stored.
+    pub fn qm_src(&self) -> Jack {
+        self.jacks.qm()
+    }
+
+    /// Sets FM3 IN if `j` is one of its choices; returns whether it did.
+    /// Only the jack: `filter_panel::repatch` also moves the route.
+    pub fn set_fm3_src(&mut self, j: Jack) -> bool {
+        self.jacks.with_fm3(j).map(|p| self.jacks = p).is_some()
+    }
+
+    /// Sets QM IN if `j` is one of its choices; returns whether it did.
+    pub fn set_qm_src(&mut self, j: Jack) -> bool {
+        self.jacks.with_qm(j).map(|p| self.jacks = p).is_some()
     }
 
     /// Sets `m` if the kind has it; returns whether it did.
@@ -66,7 +107,7 @@ impl FilterParams {
 }
 
 /// Every one read by `Voice` per block; MODE is an Enum, so not modulatable.
-pub static FILTER_SPECS: [ParamSpec; 5] = [
+pub static FILTER_SPECS: [ParamSpec; 8] = [
     ParamSpec::continuous(
         0,
         "CUTOFF",
@@ -81,14 +122,68 @@ pub static FILTER_SPECS: [ParamSpec; 5] = [
     .octaves(crate::dsp::filter::CUTOFF_OCTAVES)
     .short("CUT"),
     ParamSpec::continuous(1, "RESO", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true).ident("RESO"),
-    ParamSpec::continuous(2, "DRIVE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true).ident("DRIVE"),
-    // A choice among the one built kind.
-    ParamSpec::choice(6, "KIND", ValFmt::Names(&KIND_NAMES), 0.0, 0.0)
-        .ident("KIND")
+    ParamSpec::continuous(12, "LEVEL", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, true)
+        .ident("LEVEL"),
+    // TYPE on screen; its ident stays KIND.
+    ParamSpec::choice(
+        6,
+        "TYPE",
+        ValFmt::Names(&KIND_NAMES),
+        (KIND_NAMES.len() - 1) as f32,
+        0.0,
+    )
+    .ident("KIND")
+    .glyph(crate::ui::glyph::FocusGlyph::None),
+    // CLEAN's labels and LP4's index: the FLT view shows the kind's own
+    // (`FilterKind::mode_labels`), and defaults go through `default_mode`.
+    ParamSpec::choice(
+        7,
+        "MODE",
+        ValFmt::Names(FilterKind::Svf.mode_labels()),
+        7.0,
+        2.0,
+    )
+    .ident("MODE")
+    .glyph(crate::ui::glyph::FocusGlyph::None),
+    // The 2040's VOICE (spec § 3): REV2 or EXP, two peers.
+    ParamSpec::choice(13, "VOICE", ValFmt::Names(&VOICE_LABELS), 1.0, 0.0)
+        .ident("VOICE")
         .glyph(crate::ui::glyph::FocusGlyph::None),
-    ParamSpec::choice(7, "MODE", ValFmt::Names(&SVF_MODE_NAMES), 7.0, 0.0)
-        .ident("MODE")
+    // The jacks (spec § 2): patching, not sound. Indexes into their choices.
+    ParamSpec::choice(8, "FM3 IN", ValFmt::Names(&FM3_IN_NAMES), 7.0, 0.0)
+        .ident("FM3IN")
+        .patching()
         .glyph(crate::ui::glyph::FocusGlyph::None),
+    ParamSpec::choice(11, "QM IN", ValFmt::Names(&QM_IN_NAMES), 9.0, 3.0)
+        .ident("QMIN")
+        .patching()
+        .glyph(crate::ui::glyph::FocusGlyph::None),
+];
+
+/// MODE as `kind` has it: its own names, its last index and its default,
+/// so a DIRTY index 3 reads NOTCH1, not CLEAN's fourth of eight.
+const fn mode_spec(kind: FilterKind) -> ParamSpec {
+    let (modes, default) = (kind.modes(), kind.default_mode() as u8);
+    let mut d = 0;
+    while modes[d] as u8 != default {
+        d += 1;
+    }
+    ParamSpec::choice(
+        7,
+        "MODE",
+        ValFmt::Names(kind.mode_labels()),
+        (modes.len() - 1) as f32,
+        d as f32,
+    )
+    .ident("MODE")
+    .glyph(crate::ui::glyph::FocusGlyph::None)
+}
+
+/// `mode_spec` for each of `FilterKind::BUILT`.
+static MODE_SPECS: [ParamSpec; FilterKind::BUILT.len()] = [
+    mode_spec(FilterKind::BUILT[0]),
+    mode_spec(FilterKind::BUILT[1]),
+    mode_spec(FilterKind::BUILT[2]),
 ];
 
 impl Block for FilterParams {
@@ -96,11 +191,20 @@ impl Block for FilterParams {
         &FILTER_SPECS
     }
 
+    /// MODE's range and names are the kind's (`mode_spec`).
+    fn spec(&self, id: ParamId) -> Option<&'static ParamSpec> {
+        if id == Self::MODE {
+            let k = FilterKind::BUILT.iter().position(|&k| k == self.kind)?;
+            return Some(&MODE_SPECS[k]);
+        }
+        crate::block::find_spec(self.specs(), id)
+    }
+
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::CUTOFF => self.cutoff,
             Self::RESONANCE => self.resonance,
-            Self::DRIVE => self.drive,
+            Self::LEVEL => self.level,
             Self::KIND => FilterKind::BUILT
                 .iter()
                 .position(|&k| k == self.kind)
@@ -111,6 +215,9 @@ impl Block for FilterParams {
                 .iter()
                 .position(|&m| m == self.mode)
                 .unwrap_or(0) as f32,
+            Self::VOICE => self.voice as u8 as f32,
+            Self::FM3_IN => self.jacks.fm3_index() as f32,
+            Self::QM_IN => self.jacks.qm_index() as f32,
             _ => 0.0,
         }
     }
@@ -119,11 +226,18 @@ impl Block for FilterParams {
         match id {
             Self::CUTOFF => self.cutoff = v,
             Self::RESONANCE => self.resonance = v,
-            Self::DRIVE => self.drive = v,
+            Self::LEVEL => self.level = v,
             Self::KIND => self.set_kind(FilterKind::from_index(v)),
             Self::MODE => {
                 let m = self.kind.modes();
                 self.set_mode(m[(v.max(0.0) as usize).min(m.len() - 1)]);
+            }
+            Self::VOICE => self.voice = K2040Voice::from_index(v),
+            Self::FM3_IN => {
+                self.set_fm3_src(pick(&Jack::FM3_CHOICES, v));
+            }
+            Self::QM_IN => {
+                self.set_qm_src(pick(&Jack::QM_CHOICES, v));
             }
             _ => {}
         }
@@ -133,6 +247,9 @@ impl Block for FilterParams {
         match id {
             Self::KIND => Some(self.kind.disk_code()),
             Self::MODE => Some(self.mode.disk_code()),
+            Self::VOICE => Some(self.voice.disk_code()),
+            Self::FM3_IN => Some(self.fm3_src().disk_code()),
+            Self::QM_IN => Some(self.qm_src().disk_code()),
             _ => None,
         }
     }
@@ -141,6 +258,9 @@ impl Block for FilterParams {
         match id {
             Self::KIND => Some(self.kind.disk_ident()),
             Self::MODE => Some(self.mode.disk_ident()),
+            Self::VOICE => Some(self.voice.disk_ident()),
+            Self::FM3_IN => Some(self.fm3_src().disk_ident()),
+            Self::QM_IN => Some(self.qm_src().disk_ident()),
             _ => None,
         }
     }
@@ -150,6 +270,10 @@ impl Block for FilterParams {
         match id {
             Self::KIND => apply_code(FilterKind::from_disk_code(code), |k| self.set_kind(k)),
             Self::MODE => FilterMode::from_disk_code(code).is_some_and(|m| self.set_mode(m)),
+            Self::VOICE => apply_code(K2040Voice::from_disk_code(code), |v| self.voice = v),
+            // Refused unless one of the jack's choices (FM3 IN never ENV 1).
+            Self::FM3_IN => Jack::from_disk_code(code).is_some_and(|j| self.set_fm3_src(j)),
+            Self::QM_IN => Jack::from_disk_code(code).is_some_and(|j| self.set_qm_src(j)),
             _ => false,
         }
     }
@@ -816,15 +940,22 @@ pub struct ParamSnapshot {
     pub lfos: [crate::dsp::lfo::LfoParams; 3],
     pub out: OutParams,
     pub pitch: PitchParams,
+    /// ALGO's OP 5 and OP 6 routes into the filter, VCA and FOLD (spec
+    /// § 6): not a `Block`; stored as its own record.
+    pub taps: crate::taps::TapRoutes,
 }
 
 impl ParamSnapshot {
     /// Default params for `engine`.
     pub fn for_engine(engine: EngineType) -> Self {
-        Self {
+        let mut p = Self {
             engine,
             ..Self::default()
-        }
+        };
+        let k = FilterKind::default_for(engine);
+        p.filter.set_kind_raw(k);
+        p.filter.set_mode(k.default_mode());
+        p
     }
 
     pub fn engine(&self) -> EngineType {
@@ -916,6 +1047,7 @@ impl Default for ParamSnapshot {
             lfos: [crate::dsp::lfo::LfoParams::default(); 3],
             out: OutParams::default(),
             pitch: PitchParams::default(),
+            taps: crate::taps::TapRoutes::default(),
         }
     }
 }

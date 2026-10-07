@@ -13,7 +13,7 @@ use crate::orbit::scene::TargetKind;
 use crate::orbit::walk::Walk;
 use chimera_theory::{Degree, PitchClass};
 
-use super::block_codec::MAX_BLOCK_PARAMS;
+use super::block_codec::{ByteSet, MAX_BLOCK_PARAMS};
 
 impl BlockRef {
     /// The block's code. `Option`, so a block that is never stored can be
@@ -133,12 +133,21 @@ impl ModSource {
 }
 
 /// `(block code, param id)` pairs that once existed and never come back
-/// (ADR 0009: the filter's FM, ENV and KEY). A reader skips them, unless a
+/// (ADR 0009: the filter's DRIVE, FM, ENV and KEY). A reader skips them, unless a
 /// `Translation` of the block reads them.
 /// A retired code goes on one of these lists, and never gets another meaning:
 /// the fixture check fails a gone line that isn't listed, and a listed one
 /// that is produced again. A retired block lists each of its params.
-pub const RETIRED: &[(u8, u8)] = &[(10, 3), (10, 4), (10, 5), (1, 2), (1, 5), (1, 7), (1, 8)];
+pub const RETIRED: &[(u8, u8)] = &[
+    (10, 3),
+    (10, 4),
+    (10, 5),
+    (1, 2),
+    (1, 5),
+    (1, 7),
+    (1, 8),
+    (10, 2),
+];
 
 /// Block codes that are gone for good (each of its params is in `RETIRED`).
 pub const RETIRED_BLOCKS: &[u8] = &[];
@@ -160,24 +169,37 @@ pub struct Migration {
 
 pub const MIGRATIONS: &[Migration] = &[];
 
-/// A block's retired values from one file, by old `ParamId`.
-pub struct Retired([Option<f32>; MAX_BLOCK_PARAMS]);
+/// A block's retired values from one file, by old `ParamId`, and the ids
+/// the file held.
+pub struct Retired {
+    old: [Option<f32>; MAX_BLOCK_PARAMS],
+    held: ByteSet,
+}
 
 impl Retired {
-    pub(super) const fn new() -> Self {
-        Retired([None; MAX_BLOCK_PARAMS])
+    pub(super) const fn new(held: ByteSet) -> Self {
+        Retired {
+            old: [None; MAX_BLOCK_PARAMS],
+            held,
+        }
     }
 
     pub(super) fn put(&mut self, id: ParamId, v: f32) {
-        self.0[usize::from(id.0)] = Some(v);
+        self.old[usize::from(id.0)] = Some(v);
     }
 
     pub fn get(&self, id: ParamId) -> Option<f32> {
-        self.0.get(usize::from(id.0)).copied().flatten()
+        self.old.get(usize::from(id.0)).copied().flatten()
     }
 
     pub fn any(&self) -> bool {
-        self.0.iter().any(Option::is_some)
+        self.old.iter().any(Option::is_some)
+    }
+
+    /// The file named `id`, live or retired, whatever its value: a stored
+    /// param beats one translated into it.
+    pub fn held(&self, id: ParamId) -> bool {
+        self.held.contains(id.0)
     }
 }
 
@@ -197,10 +219,70 @@ pub struct Translation {
     pub apply: fn(&Retired, &mut dyn Block),
 }
 
-pub const TRANSLATIONS: &[Translation] = &[Translation {
-    block: 1,
-    apply: crate::dsp::modal::translate_v1,
-}];
+pub const TRANSLATIONS: &[Translation] = &[
+    Translation {
+        block: 1,
+        apply: crate::dsp::modal::translate_v1,
+    },
+    Translation {
+        block: 10,
+        apply: crate::dsp::filter::translate_drive,
+    },
+];
+
+/// A param as a file names it, which this firmware may no longer have.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DiskAddr {
+    pub block: u8,
+    pub id: ParamId,
+}
+
+impl DiskAddr {
+    /// `id` of the stored block `b`: a block without a code fails the build.
+    pub const fn of(b: BlockRef, id: ParamId) -> DiskAddr {
+        match b.disk_code() {
+            Some(block) => DiskAddr { block, id },
+            None => panic!("a block that is never stored"),
+        }
+    }
+}
+
+/// The filter's DRIVE (id 2), retired for LEVEL (ADR 0096).
+pub const FILTER_DRIVE: DiskAddr = DiskAddr::of(BlockRef::Filter, ParamId(2));
+
+/// A retired address whose routes, ModDests and registry entries a file
+/// loads at a live param, amount and label kept. DRIVE's land on LEVEL.
+pub const READDRESS: &[(DiskAddr, ParamAddr)] = &[(
+    FILTER_DRIVE,
+    ParamAddr::new(BlockRef::Filter, crate::params::FilterParams::LEVEL),
+)];
+
+// Only a retired address is re-addressed, so a live one always loads as
+// itself; and only onto a modulatable param, so its routes play.
+const _: () = {
+    let mut i = 0;
+    while i < READDRESS.len() {
+        let from = READDRESS[i].0;
+        let mut j = 0;
+        while j < RETIRED.len() && (RETIRED[j].0 != from.block || RETIRED[j].1 != from.id.0) {
+            j += 1;
+        }
+        assert!(j < RETIRED.len(), "re-addressed but not retired");
+        assert!(
+            READDRESS[i].1.modulatable(),
+            "re-addressed onto a param routes can't play"
+        );
+        i += 1;
+    }
+};
+
+/// The live param a retired address's routes load at, if any.
+pub fn readdress(a: DiskAddr) -> Option<ParamAddr> {
+    READDRESS
+        .iter()
+        .find(|(from, _)| *from == a)
+        .map(|&(_, to)| to)
+}
 
 /// A param that exists in a live spec table. Only built from one, so a saver
 /// can't write, and a loader can't apply, an address the firmware lacks.

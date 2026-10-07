@@ -51,7 +51,7 @@ use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
 use crate::in_place::uninit_at;
 use crate::mod_path::{LABEL_LEN, RegistryError};
-use crate::modulation::{CUTOFF, CUTOFF_LABEL, MAX_MOD_SOURCES, ModSource, ModState};
+use crate::modulation::{MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::ProjectName;
 use crate::orbit::RingIdx;
 use crate::orbit::chords::ScaleKind;
@@ -72,13 +72,14 @@ use block_def::BlockDef;
 use block_def::VizType;
 use block_def::slot_addr;
 use components::Head;
+use filter_panel::{JackSlot, RouteView};
 use fmt::FmtBuf;
 use hold::{HoldGates, Press};
 use midi_settings::MidiSettings;
 use mod_grid::MatrixState;
 use nav::{
     Browse, Column, ListAt, Location, NavCtx, NavKey, OrbitAct, OrbitCx, OrbitKey, Recall, Rung,
-    SettingsAt, Step, chain_def_for,
+    SettingsAt, Step,
 };
 use page::{PageKey, PageLayout};
 use perf::PerfStats;
@@ -136,7 +137,8 @@ pub static NO_PAGE: BlockDef = BlockDef {
 /// No page has it: `focus` keeps no slot for it.
 pub const NO_PAGE_ID: u16 = u16::MAX;
 
-/// The outcome of the last MIX+PLUS attempt on a parameter page, shown in
+/// The outcome of the last MIX+PLUS attempt on a parameter page (or a
+/// jack's turn that skipped a source in use), shown in
 /// the focus band in place of the value readout (on BigViz pages, which
 /// have no focus band, as a line at the top of the viz) until the next encoder,
 /// button or page change — no timer, matching the focus band's own rule
@@ -151,6 +153,8 @@ pub enum PrimeStatus {
     NotModulatable,
     /// The registry is at `MAX_REGISTRY_DESTS`, the matrix capacity.
     Full,
+    /// FM3 IN or QM IN passed a source whose cell another route holds.
+    SourceInUse,
 }
 
 impl PrimeStatus {
@@ -161,6 +165,7 @@ impl PrimeStatus {
             PrimeStatus::AlreadyRouted => "ALREADY ROUTED",
             PrimeStatus::NotModulatable => "NOT MODULATABLE",
             PrimeStatus::Full => "MATRIX FULL",
+            PrimeStatus::SourceInUse => "SOURCE IN USE",
         }
     }
 }
@@ -170,6 +175,8 @@ impl From<RegistryError> for PrimeStatus {
         match e {
             RegistryError::NotModulatable => PrimeStatus::NotModulatable,
             RegistryError::Full => PrimeStatus::Full,
+            // A permanent column: always there.
+            RegistryError::Fixed => PrimeStatus::AlreadyRouted,
         }
     }
 }
@@ -234,6 +241,47 @@ pub struct UiState {
     led: led::Led,
     /// OS UPGRADE's yes, until the shell takes it.
     dfu: Option<Said<RomDfu>>,
+    /// Each Part's filter LEVEL LED: its meter, held and falling.
+    clip: [ClipHold; crate::hw::MAX_PARTS],
+}
+
+/// How long the LEVEL LED takes to fall from a peak to dark.
+pub const CLIP_FALL_MS: u16 = 150;
+
+/// The LEVEL LED's fill (filter-types spec § 2, H1): a peak is held, then
+/// falls linearly to 0 over `CLIP_FALL_MS`; a reading under the falling
+/// fill doesn't cut it short.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ClipHold {
+    /// The last peak, 0..=1.
+    v: f32,
+    /// Ms since it.
+    held: u16,
+}
+
+impl ClipHold {
+    /// `dt_ms` on, then the meter's reading (`ClipMeter::take`): the fill.
+    pub fn step(&mut self, meter: f32, dt_ms: u16) -> f32 {
+        self.held = self.held.saturating_add(dt_ms);
+        if meter > 0.0 && meter >= self.fill() {
+            *self = ClipHold {
+                v: meter.min(1.0),
+                held: 0,
+            };
+        }
+        self.fill()
+    }
+
+    /// 0..=1: the peak less its fall so far.
+    pub fn fill(&self) -> f32 {
+        let left = CLIP_FALL_MS.saturating_sub(self.held);
+        self.v * f32::from(left) / f32::from(CLIP_FALL_MS)
+    }
+
+    /// Drawn: a peak whose fall hasn't ended.
+    pub fn lit(&self) -> bool {
+        self.fill() > 0.0
+    }
 }
 
 crate::in_place::field_list!(UiState => UiState {
@@ -266,6 +314,7 @@ crate::in_place::field_list!(UiState => UiState {
     orbit,
     led,
     dfu,
+    clip,
 });
 
 #[cfg(any(test, feature = "test-support"))]
@@ -338,6 +387,7 @@ impl UiState {
             addr_of_mut!((*p).listing).write(Listing::new());
             addr_of_mut!((*p).job).write(None);
             addr_of_mut!((*p).card).write(Card::new());
+            addr_of_mut!((*p).clip).write([ClipHold::default(); crate::hw::MAX_PARTS]);
             addr_of_mut!((*p).orbit).write(orbit::OrbitUi::new());
             addr_of_mut!((*p).led).write(led::Led::OFF);
             addr_of_mut!((*p).dfu).write(None);
@@ -771,6 +821,14 @@ impl UiState {
         self.status.hashes_for_test()
     }
 
+    /// The active Part's LEVEL LED reads `clip` with no time passed, as
+    /// `update` does with the meter (the LED goldens).
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn show_clip(&mut self, clip: f32) {
+        self.clip[self.active_part.index()].step(clip, 0);
+    }
+
     /// The status SETTINGS' footer draws; `None` outside SETTINGS.
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
@@ -861,11 +919,22 @@ impl UiState {
         let def = self.page_def();
         let ctx = self.ctx();
         let mut values = page_values(self.page, def, &self.read(self.active_part), &ctx);
+        let sound = &self.project.part(self.active_part).sound;
         for (i, value) in values.iter_mut().enumerate() {
-            if let View::Route { source, .. } = view::view(def, i, &ctx) {
-                *value = renderer::amount_value(
-                    self.matrix_state.route(source.index(), CUTOFF).unwrap_or(0),
-                );
+            match view::view(def, i, &ctx) {
+                View::Route { route, .. } => {
+                    let (row, c) = route.cell(sound);
+                    *value =
+                        renderer::amount_value(self.matrix_state.amount(row.index(), c.index()));
+                }
+                // A jack shows what it acts as (a tap off ALGO: its default).
+                View::Param { addr, .. } if addr.block == BlockRef::Filter => {
+                    if let (Some(j), Some(spec)) = (JackSlot::of(addr.param), addr.spec()) {
+                        let at = j.choices().iter().position(|&c| c == j.effective(sound));
+                        *value = spec.normalize(at.unwrap_or(0) as f32);
+                    }
+                }
+                _ => {}
             }
         }
         let song = self.project.orbit();
@@ -886,43 +955,35 @@ impl UiState {
     /// destinations from its registry, amounts from its `ModState`. Call
     /// whenever the edited Part or its Sound changes.
     fn load_matrix(&mut self, part: PartId) {
-        let sound = &self.project.part(part).sound;
-        self.matrix_state
-            .rebuild_sources(chain_def_for(sound.engine()).mod_sources);
-        self.matrix_state
-            .rebuild_dests_from_registry(&sound.dest_registry);
-        self.matrix_state.load_amounts(&sound.mod_state);
+        self.matrix_state.load_sound(&self.project.part(part).sound);
         // The cursor may be left over from a Part with more destinations
         // than this one (issue #11).
         self.matrix_state.clamp_cursor();
     }
 
-    /// A route knob turned: create CUTOFF's column if needed (MATRIX FULL
-    /// when there is no room), then set `source → CUTOFF` to `f(amount)`.
-    fn edit_route(&mut self, source: crate::modulation::ModSource, f: impl FnOnce(i8) -> i8) {
-        let at = self.active_part;
-        let sound = self.project.edit_part(at).sound;
-        if !sound.dest_registry.is_primed(CUTOFF) {
-            if let Err(e) = sound.dest_registry.add(CUTOFF, CUTOFF_LABEL) {
-                self.prime_status = Some(e.into());
-                return;
-            }
-            self.matrix_state
-                .rebuild_dests_from_registry(&sound.dest_registry);
-            self.matrix_state.load_amounts(&sound.mod_state);
-        }
-        if let Some(col) = self.matrix_state.col_of(CUTOFF) {
-            let row = source.index();
-            let a = self.matrix_state.amounts[row][col];
-            self.matrix_state.set(row, col, f(a));
-            self.sync_mod_state(at);
-        }
+    /// A route knob turned: set the cell it views to `f(amount)`, creating
+    /// its route (a tap's cell on a jack holding one).
+    fn edit_route(&mut self, route: RouteView, f: impl FnOnce(i8) -> i8) {
+        let (row, c) = route.cell(&self.project.part(self.active_part).sound);
+        let a = self.matrix_state.amount(row.index(), c.index());
+        self.matrix_state.set(row.index(), c.index(), f(a));
+        self.sync_mod_state(self.active_part);
     }
 
-    /// Rebuild a part's audio-side `ModState` from the matrix.
+    /// MIX + MINUS on a route knob: delete the route of the cell it views.
+    fn delete_route(&mut self, route: RouteView) {
+        let (row, c) = route.cell(&self.project.part(self.active_part).sound);
+        self.matrix_state.clear(row.index(), c.index());
+        self.sync_mod_state(self.active_part);
+    }
+
+    /// Rebuild a part's audio-side `ModState` and taps from the matrix.
     fn sync_mod_state(&mut self, part: PartId) {
         let sound = self.project.edit_part(part).sound;
         sound.mod_state.sync_from_matrix(&self.matrix_state);
+        if self.matrix_state.tap_rows {
+            self.matrix_state.sync_taps(&mut sound.params.taps);
+        }
     }
 
     /// The address the focused encoder edits, if its slot is bound. Leaf
@@ -935,7 +996,7 @@ impl UiState {
     /// 8-byte matrix column label for a primed destination: `O<n> ` + spec
     /// label for operator params, else the address's block tag (≤ 3 chars,
     /// `mod_grid::block_tag` — the page can be a sub-page with a different
-    /// short name, e.g. FLT › MODE for the filter's DRIVE) + the slot label.
+    /// short name, e.g. FLT › MOD for the filter's LEVEL) + the slot label.
     fn mod_label(&self, addr: ParamAddr) -> [u8; LABEL_LEN] {
         let def = self.page_def();
         let op_prefix;
@@ -2012,14 +2073,31 @@ impl UiState {
                 if v != View::Empty {
                     self.focus.touch(def.id, i);
                 }
-                if let View::Route { source, .. } = v {
-                    self.edit_route(source, |a| {
-                        if shift {
-                            snap_amount(a, delta)
-                        } else {
-                            (a as i16 + delta as i16).clamp(-127, 127) as i8
-                        }
+                if let View::Route { route, .. } = v {
+                    self.edit_route(route, |a| match route {
+                        // A detent a step: OFF, HALF, FULL.
+                        RouteView::Keybd => (0..delta.unsigned_abs())
+                            .fold(a, |a, _| filter_panel::keybd_step(a, delta.signum())),
+                        _ if shift => snap_amount(a, delta),
+                        _ => (a as i16 + delta as i16).clamp(-127, 127) as i8,
                     });
+                    continue;
+                }
+                // A jack moves its cable, never only its param (spec § 2).
+                if let Some(slot) = v
+                    .addr()
+                    .filter(|a| a.block == BlockRef::Filter)
+                    .and_then(|a| JackSlot::of(a.param))
+                {
+                    let sound = self.project.edit_part(at).sound;
+                    let step = filter_panel::step_jack(sound, slot, delta);
+                    if step.moved {
+                        self.matrix_state.load_amounts(&sound.mod_state);
+                        self.matrix_state.load_taps(&sound.params.taps);
+                    }
+                    if step.skipped_in_use {
+                        self.prime_status = Some(PrimeStatus::SourceInUse);
+                    }
                     continue;
                 }
                 if view::is_dimmed(&v, &self.project.part(at).sound, &self.ctx()) {
@@ -2089,7 +2167,12 @@ impl UiState {
                         self.sync_mod_state(at);
                     }
                 }
+                let focused = view::view(def, self.focused_slot(), &self.ctx());
                 if controls.button_state(ButtonId::Minus) == ButtonState::Pressed
+                    && let View::Route { route, .. } = focused
+                {
+                    self.delete_route(route);
+                } else if controls.button_state(ButtonId::Minus) == ButtonState::Pressed
                     && let Some(addr) = self.current_param_addr()
                 {
                     let sound = self.project.edit_part(at).sound;
@@ -2113,6 +2196,10 @@ impl UiState {
         self.project.sources_pass();
         self.refresh_status();
         self.clock.tick();
+        // Every Part's, so a Part not shown never keeps a stale clip.
+        for (h, m) in self.clip.iter_mut().zip(&crate::meter::FILTER_CLIP) {
+            h.step(m.take().get(), animation::FRAME_MS as u16);
+        }
         let at = self.active_part;
 
         // Read base param values
@@ -2128,7 +2215,7 @@ impl UiState {
 
         // Apply mod offsets for display — makes bars and vizzes animate with modulation.
         // Skip the LFO tick entirely when no modulation is active.
-        if sound.mod_state.num_dests() > 0 {
+        if !sound.mod_state.is_empty() {
             // The display LFO ticks once per UI frame. `process` steps its
             // phase by rate · BLOCK_SIZE / sample_rate, so a sample rate of
             // BLOCK_SIZE · UI_FPS steps it by rate / UI_FPS: real time.
@@ -2329,6 +2416,7 @@ impl UiState {
             audio,
             card: self.card,
             master_gr_db: crate::meter::MASTER_GR.read(),
+            clip: self.clip[self.active_part.index()].fill(),
             clock: self.clock,
             fx: &self.project.perf().fx,
             orbit,
@@ -2395,7 +2483,7 @@ impl UiState {
             RegionKind::Focus if f.def.layout == PageLayout::Matrix => RegionData::route(
                 self.matrix_state.sel_row as u8,
                 self.matrix_state.sel_col as u8,
-                self.matrix_state.num_dests as u8,
+                self.matrix_state.num_cols() as u8,
                 qvalues[renderer::MATRIX_AMOUNT_SLOT],
             )
             .keyed(self.matrix_state.rev, renderer::inert(f)),
@@ -2429,7 +2517,7 @@ impl UiState {
                     .with_orbit(self.renderer.orbit_viz_key(f))
             }
             RegionKind::Cells => {
-                let looks = (0..6).fold(0u16, |k, i| k | (renderer::look(f, i) as u16) << (2 * i));
+                let looks = (0..6).fold(0u32, |k, i| k | (renderer::look(f, i) as u32) << (2 * i));
                 RegionData::cells(
                     self.page,
                     match f.def.viz {
@@ -2439,10 +2527,10 @@ impl UiState {
                         _ => qvalues,
                     },
                     f.focus as u8,
-                    self.matrix_state.num_dests as u16,
+                    self.matrix_state.num_cols() as u16,
                     core::array::from_fn(|i| renderer::mod_info(f, i).map(f32::to_bits)),
                 )
-                .keyed(self.matrix_state.rev, looks)
+                .keyed(self.matrix_state.rev, looks | renderer::led_key(f) << 12)
             }
             RegionKind::Nav => RegionData::nav(
                 chain,

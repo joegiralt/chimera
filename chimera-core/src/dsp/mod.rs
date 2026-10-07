@@ -110,17 +110,6 @@ pub fn fast_tanh(x: f32) -> f32 {
     }
 }
 
-/// `tan(x)` for filter coefficients: a 5th-order Taylor series. Accurate
-/// below about 10 kHz at 48 kHz; above that it reads low (a 20 kHz cutoff
-/// comes out near 18.3 kHz, #57). ~5 cycles vs ~400 for `libm::tanf`.
-#[inline(always)]
-pub fn fast_tan(x: f32) -> f32 {
-    // For small x (typical for filter cutoff: 0..π*0.49):
-    // tan(x) ≈ x + x³/3 + 2x⁵/15
-    let x2 = x * x;
-    x * (1.0 + x2 * (1.0 / 3.0 + x2 * (2.0 / 15.0)))
-}
-
 /// `2^x`, exact at integers, relative error below 1e-6 (spec § Signal flow).
 pub use self::algo::math::exp2 as fast_exp2;
 /// `log2(x)` for `x > 0`, absolute error below 3e-5.

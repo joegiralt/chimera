@@ -7,6 +7,7 @@
 #![allow(dead_code)]
 
 use chimera_core::clock_plan::SiliconRev;
+use chimera_core::dsp::filter::{FilterKind, FilterMode};
 use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::{AudioShared, Instrument};
 use chimera_core::name::ProjectName;
@@ -825,26 +826,50 @@ fn to_e3(ui: &mut UiState) {
 }
 
 /// ENV1→CUTOFF +20, ENV1→FOLD −30, LFO1→CUTOFF +42 (selected).
+/// FREQ (CUTOFF) and FOLD are permanent columns, 0 and 3: no priming.
 fn mod_matrix(ui: &mut UiState) {
-    plus(ui, 3);
-    feed(ui, Input::turn(EncoderId::B, 1)); // focus CUTOFF
-    prime(ui);
-    plus(ui, 1);
-    feed(ui, Input::turn(EncoderId::A, 1)); // focus FOLD
-    prime(ui);
-    plus(ui, 1);
+    plus(ui, 5);
     to_matrix(ui);
-    feed(ui, Input::turn(EncoderId::E, 20)); // ENV → CUTOFF
-    feed(ui, Input::turn(EncoderId::B, 1));
+    feed(ui, Input::turn(EncoderId::E, 20)); // ENV → FREQ
+    feed(ui, Input::turn(EncoderId::B, 3));
     feed(ui, Input::turn(EncoderId::E, -30)); // ENV → FOLD
     feed(ui, Input::turn(EncoderId::A, 3)); // LFO1
-    feed(ui, Input::turn(EncoderId::B, -1));
-    feed(ui, Input::turn(EncoderId::E, 42)); // LFO → CUTOFF, selected
+    feed(ui, Input::turn(EncoderId::B, -3));
+    feed(ui, Input::turn(EncoderId::E, 42)); // LFO → FREQ, selected
 }
 
 /// Prime the focused slot for modulation (MIX + PLUS).
 fn prime(ui: &mut UiState) {
     feed(ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
+}
+
+/// Part 1 on INIT Algo as filter `kind`, on FLT (or FLT › MOD with `sub`).
+fn on_flt(ui: &mut UiState, kind: chimera_core::dsp::filter::FilterKind, sub: bool) {
+    init_part(ui, PartId::ALL[0]);
+    ui.params_mut().filter.set_kind(kind);
+    plus(ui, 3);
+    if sub {
+        feed(ui, Input::press(ButtonId::Edit)); // FLT › MOD
+    }
+}
+
+/// The LED cases: the clip each shows, taken after the lerps settle
+/// (`UiState::show_clip`, the meter's read with no time passed).
+pub const LEDS: &[(&str, f32)] = &[
+    ("flt_led_0", 0.0),
+    ("flt_led_half", 0.5),
+    ("flt_led_full", 1.0),
+];
+
+/// From Part 1's home to the MOD node on `engine`'s chain (its matrix).
+fn to_matrix_on(ui: &mut UiState, engine: EngineType) {
+    let node = chimera_core::ui::nav::chain_def_for(engine)
+        .blocks
+        .iter()
+        .position(|b| b.def.id == reg::MOD_MATRIX.id)
+        .expect("MOD on every Part chain");
+    plus(ui, node);
+    to_matrix(ui);
 }
 
 /// A named screen-golden case: a case name paired with the input sequence
@@ -921,8 +946,67 @@ pub const CASES: &[ScreenCase] = &[
     }),
     ("flt_mode", |ui| {
         plus(ui, 3);
-        feed(ui, Input::press(ButtonId::Edit)); // FLT › MODE
-        feed(ui, Input::turn(EncoderId::A, 3)); // MODE: BP12
+        feed(ui, Input::press(ButtonId::Edit)); // FLT › MOD
+        feed(ui, Input::turn(EncoderId::B, 30)); // FM3: LFO 1 → FREQ
+    }),
+    // Each type's FLT and FLT › MOD (filter-types spec § 5).
+    ("flt_clean", |ui| {
+        on_flt(ui, FilterKind::Svf, false);
+        ui.params_mut().filter.set_mode(FilterMode::Notch); // NOTCH1: 2 × FREQ
+        feed(ui, Input::turn(EncoderId::B, -80)); // FREQ
+        feed(ui, Input::turn(EncoderId::C, 40)); // Q
+    }),
+    ("flt_mod_clean", |ui| {
+        on_flt(ui, FilterKind::Svf, true);
+        feed(ui, Input::turn(EncoderId::D, 40)); // QM: ENV 3 → Q
+    }),
+    ("flt_2040", |ui| {
+        on_flt(ui, FilterKind::K2040, false);
+        feed(ui, Input::turn(EncoderId::B, -70)); // CUTOFF
+        feed(ui, Input::turn(EncoderId::C, 90)); // RES: the pass band falls
+        feed(ui, Input::turn(EncoderId::E, 1)); // KEYBD, stepped
+    }),
+    ("flt_mod_2040", |ui| {
+        on_flt(ui, FilterKind::K2040, true);
+        feed(ui, Input::turn(EncoderId::F, 1)); // MODE: fixed, dimmed
+    }),
+    ("flt_mod_2040_exp", |ui| {
+        on_flt(ui, FilterKind::K2040, true);
+        feed(ui, Input::turn(EncoderId::A, 1)); // VOICE EXP
+    }),
+    ("flt_dirty", |ui| {
+        on_flt(ui, FilterKind::Dirty, false);
+        ui.params_mut().filter.set_mode(FilterMode::Notch); // NOTCH1: at FREQ
+        feed(ui, Input::turn(EncoderId::B, -70)); // FREQ
+        feed(ui, Input::turn(EncoderId::C, 60)); // RES
+    }),
+    ("flt_mod_dirty", |ui| {
+        // CLEAN's cells and words (spec § 4); flt_mode's FM3 turn would
+        // draw the same screen.
+        on_flt(ui, FilterKind::Dirty, true);
+        feed(ui, Input::turn(EncoderId::A, 20)); // LEVEL
+    }),
+    // The LEVEL LED (`LEDS`): beside LEVEL on CLEAN's FLT › MOD, and
+    // beside the 2040's DRIVE and in FLT's viz corner.
+    ("flt_led_0", |ui| {
+        on_flt(ui, FilterKind::Svf, true);
+        feed(ui, Input::turn(EncoderId::A, 30)); // LEVEL past unity
+    }),
+    ("flt_led_half", |ui| {
+        on_flt(ui, FilterKind::Svf, true);
+        feed(ui, Input::turn(EncoderId::A, 30));
+    }),
+    ("flt_led_full", |ui| {
+        on_flt(ui, FilterKind::K2040, false);
+        feed(ui, Input::turn(EncoderId::B, -60)); // CUTOFF
+        feed(ui, Input::turn(EncoderId::F, 40)); // DRIVE
+    }),
+    ("flt_mod_repatched", |ui| {
+        on_flt(ui, FilterKind::Svf, true);
+        feed(ui, Input::turn(EncoderId::B, 30)); // FM3 on LFO 1
+        feed(ui, Input::turn(EncoderId::C, 1)); // FM3 IN = LFO 2
+        feed(ui, Input::turn(EncoderId::D, 40)); // QM on ENV 3
+        feed(ui, Input::turn(EncoderId::E, 20)); // QM IN = OP 6, the list's end
     }),
     ("env_a", |ui| {
         to_mod_sub(ui, 1, &reg::ENVELOPE);
@@ -988,11 +1072,11 @@ pub const CASES: &[ScreenCase] = &[
     ("amp_vel_live", |ui| {
         plus(ui, 4);
         feed(ui, Input::turn(EncoderId::D, 1));
-        prime(ui); // VEL primes the VCA
+        prime(ui); // VEL primes the VCA: a permanent column, ALREADY ROUTED
         plus(ui, 1);
-        to_matrix(ui); // ENV1 → FLT CUTOFF
+        to_matrix(ui); // ENV1 → FREQ
         feed(ui, Input::turn(EncoderId::A, 1)); // ENV2
-        feed(ui, Input::turn(EncoderId::B, 1)); // OUT VCA
+        feed(ui, Input::turn(EncoderId::B, 2)); // VCA, the third fixed column
         feed(ui, Input::turn(EncoderId::E, 100)); // E2 → VCA
         feed(ui, Input::press(ButtonId::Minus)); // back to AMP: VEL live
     }),
@@ -1110,6 +1194,25 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::A, 3)); // LFO1 → VELO
         feed(ui, Input::turn(EncoderId::E, -127));
     }),
+    // ALGO's ten rows: OP5 → FREQ routed, the cursor on OP5's X cell
+    // under DRV's primed column, its hint (filter-types spec § 7).
+    ("mod_matrix_algo_taps", |ui| {
+        init_part(ui, PartId::ALL[0]);
+        plus(ui, 2); // DRV
+        feed(ui, Input::turn(EncoderId::A, 1));
+        prime(ui);
+        plus(ui, 3);
+        to_matrix(ui);
+        feed(ui, Input::turn(EncoderId::A, 8)); // OP5
+        feed(ui, Input::turn(EncoderId::E, 40)); // OP5 → FREQ
+        feed(ui, Input::turn(EncoderId::B, 4)); // DRV's column: an X cell
+    }),
+    // MODAL's eight rows and the four fixed columns.
+    ("mod_matrix_modal", |ui| {
+        load_init(ui, EngineType::Modal);
+        to_matrix_on(ui, EngineType::Modal);
+        feed(ui, Input::turn(EncoderId::E, 30)); // ENV 1 → FREQ
+    }),
     ("algo_alg_morph_dimmed", |ui| {
         init_part(ui, PartId::ALL[0]);
         feed(ui, Input::turn(EncoderId::B, -8)); // ALG B = T1 = ALG A
@@ -1122,7 +1225,7 @@ pub const CASES: &[ScreenCase] = &[
         prime(ui);
         plus(ui, 5);
         to_matrix(ui);
-        feed(ui, Input::turn(EncoderId::B, 1)); // past FLT CUTOFF to MORPH
+        feed(ui, Input::turn(EncoderId::B, 4)); // past the fixed four to MORPH
         feed(ui, Input::turn(EncoderId::E, 60));
         for _ in 0..5 {
             feed(ui, Input::press(ButtonId::Minus));
@@ -1348,6 +1451,9 @@ pub fn ui_for(name: &str) -> UiState {
     let mut ui = UiState::new();
     setup(&mut ui);
     settle(&mut ui);
+    if let Some(&(_, clip)) = LEDS.iter().find(|l| l.0 == name) {
+        ui.show_clip(clip);
+    }
     ui
 }
 

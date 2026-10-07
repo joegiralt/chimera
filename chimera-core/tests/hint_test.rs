@@ -214,19 +214,67 @@ fn the_matrix_draws_the_hint_of_its_cursor() {
 
 #[test]
 fn the_matrix_hint_follows_the_cursors_route() {
-    use chimera_core::mod_path::ModDestRegistry;
-    use chimera_core::modulation::CUTOFF;
     let mut m = MatrixState::new();
     m.rebuild_sources(&["SRC"; 8]);
-    assert_eq!(m.hint(), mod_grid::PRIME, "no destinations");
-    let mut reg = ModDestRegistry::new();
-    reg.add(CUTOFF, *b"CUTOFF\0\0").unwrap();
-    m.rebuild_dests_from_registry(&reg);
-    assert_eq!(m.hint(), mod_grid::PRIME, "no route here");
+    assert_eq!(m.hint(), mod_grid::PRIME, "no route on the fixed FREQ");
     m.set(m.sel_source(), 0, 20);
     assert_eq!(m.hint(), mod_grid::DELETE);
     m.delete_selected();
     assert_eq!(m.hint(), mod_grid::PRIME);
+}
+
+/// MIX + MINUS on every route knob of every type: the band names the
+/// delete (ADR 0086; FM1, FM2, FM3, QM on CLEAN; ENV AMT, KEYBD on 2040).
+#[test]
+fn route_knobs_name_the_delete() {
+    use chimera_core::dsp::filter::FilterKind;
+    use chimera_core::ui::block_registry::{FILTER, FILTER_MOD};
+    let mut ui = ui_for("flt_mod_clean");
+    // A knob: its page, its slot and its label.
+    type Knob = (&'static BlockDef, usize, &'static str);
+    let knobs: [(FilterKind, &[Knob]); 2] = [
+        (
+            FilterKind::Svf,
+            &[
+                (&FILTER, 4, "FM1"),
+                (&FILTER, 5, "FM2"),
+                (&FILTER_MOD, 1, "FM3"),
+                (&FILTER_MOD, 3, "QM"),
+            ],
+        ),
+        (
+            FilterKind::K2040,
+            &[
+                (&FILTER, 3, "ENV AMT"),
+                (&FILTER, 4, "KEYBD"),
+                (&FILTER_MOD, 1, "FM3"),
+                (&FILTER_MOD, 3, "QM"),
+            ],
+        ),
+    ];
+    for (kind, cells) in knobs {
+        ui.params_mut().filter.set_kind(kind);
+        let ctx = SlotCtx::read(ui.params(), Op::A);
+        for &(def, slot, label) in cells {
+            let v = view(def, slot, &ctx);
+            assert_eq!((v.label(), v.hint()), (label, mod_grid::DELETE), "{kind:?}");
+        }
+    }
+}
+
+/// The cursor on OP5's X cell (row 8, a registry column): the hint says
+/// what a tap can reach, and it fits.
+#[test]
+fn x_cell_names_what_a_tap_reaches() {
+    let ui = ui_for("mod_matrix_algo_taps");
+    assert!(matrix_hint_is(&ui, mod_grid::X_OP5));
+    for h in [mod_grid::X_OP5, mod_grid::X_OP6] {
+        assert!(
+            hint::width(h) <= theme::CONTENT_W,
+            "{h:?}: {}",
+            hint::width(h)
+        );
+    }
 }
 
 /// The browser's CLEAR hint on a filled slot alone.
@@ -275,7 +323,13 @@ fn every_hint_fits() {
     let all = cells
         .iter()
         .flat_map(|c| [c.hint(true), c.hint(false)])
-        .chain([mute, mod_grid::DELETE, mod_grid::PRIME]);
+        .chain([
+            mute,
+            mod_grid::DELETE,
+            mod_grid::PRIME,
+            mod_grid::X_OP5,
+            mod_grid::X_OP6,
+        ]);
     for h in all {
         println!("{:3} {h:?}", hint::width(h));
         assert!(

@@ -25,9 +25,18 @@ Sound {
         filter: FilterParams {
             cutoff: 20000.0,
             resonance: 0.0,
-            drive: 0.0,
+            level: 0.5,
             kind: Svf,
             mode: Lp24,
+            voice: Rev2,
+            jacks: JackPair {
+                fm3: Mod(
+                    Lfo1,
+                ),
+                qm: Mod(
+                    Env3,
+                ),
+            },
         },
         drive: DriveParams {
             drive: 0.0,
@@ -292,6 +301,7 @@ Sound {
             steal: Cut,
             glide_time: 0.6592158,
         },
+        taps: [],
     },
     mod_state: ModState {
         num_sources: 8,
@@ -553,6 +563,62 @@ Sound {
             0,
             0,
             0,
+            0,
+            0,
+            0,
+            0,
+        ],
+        fixed: [
+            [
+                0,
+                0,
+                0,
+                0,
+            ],
+            [
+                0,
+                0,
+                0,
+                0,
+            ],
+            [
+                0,
+                0,
+                0,
+                0,
+            ],
+            [
+                0,
+                0,
+                0,
+                0,
+            ],
+            [
+                0,
+                0,
+                0,
+                0,
+            ],
+            [
+                0,
+                0,
+                0,
+                0,
+            ],
+            [
+                0,
+                0,
+                0,
+                0,
+            ],
+            [
+                0,
+                0,
+                0,
+                0,
+            ],
+        ],
+        fixed_present: [
             0,
             0,
             0,

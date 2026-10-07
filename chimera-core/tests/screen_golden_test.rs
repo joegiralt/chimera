@@ -24,7 +24,9 @@ const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0x29fa1ef579c4a0e7),
     ("algo_alg", 0xb73321ba103c1886),
     ("algo_alg_morph_dimmed", 0xd8e8a78a528ad3b4),
-    ("mod_matrix_morph_inert", 0xe5dc545f78f89d13),
+    // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7);
+    // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17).
+    ("mod_matrix_morph_inert", 0xc540d682384b1445),
     // Re-recorded: WAVE shows its scope (#310).
     ("algo_wave", 0xe156f3e83d0aab72),
     ("algo_level", 0x408f6bef763157fe),
@@ -33,8 +35,31 @@ const GOLDENS: &[(&str, u64)] = &[
     ("algo_ar", 0x661a8ad43d30be01),
     ("algo_d1l", 0x7ca2aaf1d50c3055),
     ("algo_d2r", 0x60965afdf2d22552),
-    ("bigviz_filter", 0x64de3de945e82cf3),
-    ("flt_mode", 0x9dd12a044e75cc68),
+    // Re-recorded: MODE reads LP4, CLEAN's label for LP24 (ADR 0096); then
+    // TYPE live with two kinds (Task 8); then CLEAN's Cascadia words FREQ,
+    // Q, FM1, FM2 (Task 12): was 0x032b329ca06df69b.
+    ("bigviz_filter", 0x025e39b2435f9746),
+    // Re-recorded: MODE reads HP4, CLEAN's label for HP24 (ADR 0096); then
+    // LEVEL 64 in DRIVE's cell (Task 6); then FLT › MOD's six cells, FM3
+    // turned, its delete hint showing (Task 12): was 0xf6e7d94448ca7888.
+    ("flt_mode", 0xc9a4e03001119a94),
+    // Each type's FLT and FLT › MOD (filter-types § 5, Task 17): CLEAN's
+    // NOTCH1, the 2040's lowered pass band and KEYBD HALF, its fixed MODE
+    // dimmed and VOICE EXP, DIRTY's NOTCH1 at FREQ (its own MODE names).
+    ("flt_clean", 0x05050afedb3c9ed4),
+    ("flt_mod_clean", 0xe4409e57eb8c885c),
+    ("flt_2040", 0x66bf5fa4fb3c23cd),
+    ("flt_mod_2040", 0x168df3b9ea844b69),
+    ("flt_mod_2040_exp", 0x5fef62806549d50e),
+    ("flt_dirty", 0x8842fd7055ded3c0),
+    ("flt_mod_dirty", 0x8069a71da376c64a),
+    // The LEVEL LED at 0 (dark), ½ and 1: beside LEVEL, beside the 2040's
+    // DRIVE and in FLT's viz corner (Task 17).
+    ("flt_led_0", 0x0536d5a167d2ceaa),
+    ("flt_led_half", 0xe2cfe2de7f8c1e37),
+    ("flt_led_full", 0x281fb3e2edf2706f),
+    // FM3 IN on LFO 2, QM IN on OP 6 (Task 17).
+    ("flt_mod_repatched", 0xd0193d60eed2fa02),
     ("env_a", 0x6f15c442d71edf83),
     ("env_b_env_ad", 0x849b12e99ea94bfd),
     ("env_b_env_ahr", 0x25bd96be29456024),
@@ -106,17 +131,24 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_out_p2", 0xc7a057082a7a6932),
     ("algo_out_p3", 0x3e91d6b588f4ebfa),
-    ("mod_matrix", 0x908cc3655fdaf8ee),
-    ("mod_matrix_wide", 0xc34ca17250bc0e55),
+    // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7);
+    // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17).
+    ("mod_matrix", 0x7fac5633d604d50c),
+    ("mod_matrix_wide", 0xeeb753551d0d9d1c),
+    // OP5 → FREQ, the cursor on OP5's X cell and its hint; MODAL's eight
+    // rows of 17 (Task 17).
+    ("mod_matrix_algo_taps", 0x5a2a634ad30444b4),
+    ("mod_matrix_modal", 0xff6ac1e21a0ccc52),
     // Re-recorded: the pool meter, row costs, the hints' bytes (sound-pool
-    // plan Task 6); and its refusal.
-    ("sound_browser", 0xff8f72f449506956),
-    ("sound_browser_pool_full", 0x60971131ef0b2f89),
+    // plan Task 6); and its refusal. Then the merge with filter-types: a
+    // Sound is smaller (fixed columns, no registry entry).
+    ("sound_browser", 0x1ed65ccfb138def3),
+    ("sound_browser_pool_full", 0x668867219454d099),
     // Re-recorded: a fresh project's footer drops NEW (#286).
     ("settings_personal_theme", 0xc35039e65219cdc2),
     ("settings_midi_sync", 0x0e26ce69d0f54980),
     ("settings_system_diag_aud_load", 0x0d5edcdc4826225e),
-    ("settings_project_pool", 0x6a4a4d046c4ef394),
+    ("settings_project_pool", 0x072ee7909d1baf7c),
     // ORBIT's row opens its list (plan Task 17).
     ("settings_top", 0x08d6ee26dad9fb97),
     // Part 3's LIVE SNAP leaf (plan Task 15).
@@ -164,6 +196,29 @@ fn screen_goldens_match() {
         .map(|name| (name, render(name).hash()))
         .collect();
     common::golden::check(GOLDENS, &got);
+}
+
+/// The LED's fill holds the peak, then falls to 0 over 150 ms, never
+/// rising without a new peak (filter-types spec § 2, H1).
+#[test]
+fn clip_hold_holds_then_falls_in_150_ms() {
+    use chimera_core::ui::ClipHold;
+    let mut h = ClipHold::default();
+    assert!(!h.lit());
+    assert_eq!(h.step(1.0, 0), 1.0);
+    let mut last = 1.0;
+    for ms in [50, 100, 150] {
+        let v = h.step(0.0, 50);
+        assert!(v < last, "{ms} ms: {v} after {last}");
+        if ms == 50 {
+            assert_eq!(h.step(0.2, 0), v, "a smaller clip doesn't cut the fall");
+        }
+        last = v;
+    }
+    assert_eq!(last, 0.0);
+    assert!(!h.lit(), "dark once the hold has ended");
+    assert_eq!(h.step(0.5, 16), 0.5, "a new peak lights it again");
+    assert!(h.lit());
 }
 
 #[test]

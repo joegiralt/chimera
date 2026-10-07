@@ -11,6 +11,7 @@ use chimera_core::dsp::algo::engine::AlgoLive;
 use chimera_core::dsp::engines::{EngineSlot, SlotKind};
 use chimera_core::dsp::modal::{ResonatorMode, SymPool};
 use chimera_core::params::{EngineType, ParamSnapshot};
+use chimera_core::taps::TapRows;
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::{SR, expects_sound};
@@ -23,7 +24,14 @@ fn render(e: &mut EngineSlot, p: &ParamSnapshot, pool: &mut SymPool, blocks: usi
     let mut out = [0.0f32; BLOCK_SIZE];
     let mut peak = 0.0f32;
     for _ in 0..blocks {
-        e.render(&mut out, p, &AlgoLive::from_params(&p.algo), SR, pool);
+        e.render(
+            &mut out,
+            p,
+            &AlgoLive::from_params(&p.algo),
+            SR,
+            pool,
+            &mut TapRows::new([false; 2]),
+        );
         peak = out.iter().fold(peak, |m, x| m.max(x.abs()));
     }
     peak

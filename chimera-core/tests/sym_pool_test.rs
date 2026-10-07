@@ -12,7 +12,6 @@ use chimera_core::dsp::modal::{ResonatorMode, take_cleared_bytes};
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{CPU_HZ_REV_V, MAX_VOICES, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument, SYM_CLEAR_BUDGET};
-use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{MAX_MOD_SOURCES, ModSource, ModState, VCA};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -585,11 +584,8 @@ fn a_mono_part_keeps_one_voice() {
 /// goes idle within a block, however low (a low loop filters too seldom
 /// to fall silent soon on its own).
 fn short_sym(s: &mut Stage, parts: usize) {
-    let mut reg = ModDestRegistry::new();
-    let _ = reg.add(VCA, *b"TEST\0\0\0\0");
-    let mut ms = ModState::from_registry(&reg, MAX_MOD_SOURCES);
-    let d = ms.find(VCA).unwrap();
-    ms.set_route(ModSource::Env1.index(), d, 127);
+    let mut ms = ModState::with_sources(MAX_MOD_SOURCES);
+    assert!(ms.set_route_addr(ModSource::Env1.index(), VCA, 127));
     for part in &mut s.shared.parts[..parts] {
         part.params.envelopes[0].release = 0.0;
         part.mod_state = ms.clone();
