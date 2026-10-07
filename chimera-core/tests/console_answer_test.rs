@@ -7,7 +7,7 @@ use chimera_core::console::{
 use chimera_core::perf::load::AudioStats;
 use chimera_core::reset::ResetCause;
 use chimera_core::ui::UiState;
-use chimera_core::ui::theme_settings::ThemeSettings;
+use chimera_core::ui::theme_settings::{ThemeSettings, palette};
 use chimera_hal::FB_SIZE;
 use chimera_hal::store::{Doubt, StoreError, Sweep, SweepSeen, SweepStats, Swept};
 
@@ -71,7 +71,7 @@ impl Unit for Fake {
     fn frame(&self) -> Frame<'_> {
         Frame {
             fb: &self.fb,
-            palette: ThemeSettings::DEFAULT.palette(),
+            palette: palette(&ThemeSettings::DEFAULT),
         }
     }
     fn dfu(&mut self) -> Option<()> {

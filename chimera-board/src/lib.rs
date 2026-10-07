@@ -33,7 +33,7 @@ pub mod watchdog;
 use chimera_core::project::{LOAD_ACK_TIMEOUT_MS, LOAD_LINK};
 #[cfg(not(feature = "sd-probe"))]
 use chimera_core::reset::ResetCause;
-use chimera_core::ui::theme_settings::ThemeSettings;
+use chimera_core::ui::theme_settings::{ThemeSettings, duty, palette, tables};
 use display::Stm32Display;
 use stm32h7xx_hal::gpio::{Output, PD8, PD9, PD10, PushPull, Speed};
 use stm32h7xx_hal::rcc::CoreClocks;
@@ -148,7 +148,7 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
         &ccdr.clocks,
     );
     let theme = ThemeSettings::DEFAULT;
-    backlight.set_duty(theme.bright.duty(backlight.get_max_duty()));
+    backlight.set_duty(duty(theme.bright, backlight.get_max_duty()));
     backlight.enable();
 
     let mut sai_mclk = gpioe.pe2.into_alternate::<6>();
@@ -189,8 +189,8 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
     // The boot theme is no longer the panel's own reset state (PUNCH, not
     // PANEL; ground −2, not 0), so push it explicitly instead of waiting for
     // the first change the main loop notices.
-    display.set_gamma(theme.gamma.tables());
-    display.set_palette(theme.palette());
+    display.set_gamma(tables(theme.gamma));
+    display.set_palette(palette(&theme));
     Board {
         cp,
         clk,
@@ -611,12 +611,12 @@ fn apply_theme(
     if new == *theme {
         return false;
     }
-    let recolour = new.palette() != theme.palette();
-    backlight.set_duty(new.bright.duty(backlight.get_max_duty()));
+    let recolour = palette(&new) != palette(theme);
+    backlight.set_duty(duty(new.bright, backlight.get_max_duty()));
     if new.gamma != theme.gamma {
-        display.set_gamma(new.gamma.tables());
+        display.set_gamma(tables(new.gamma));
     }
-    display.set_palette(new.palette());
+    display.set_palette(palette(&new));
     *theme = new;
     recolour
 }

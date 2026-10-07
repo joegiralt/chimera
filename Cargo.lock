@@ -281,8 +281,6 @@ dependencies = [
  "chimera-hal",
  "chimera-theory",
  "chimera-waves",
- "embedded-graphics",
- "embedded-graphics-core",
  "libm",
  "loom",
 ]
@@ -310,6 +308,7 @@ version = "0.1.0"
 dependencies = [
  "chimera-board",
  "chimera-core",
+ "chimera-engine",
  "chimera-hal",
  "cortex-m",
  "cortex-m-rt",

@@ -1,5 +1,5 @@
 use chimera_core::console::Frame;
-use chimera_core::ui::theme_settings::{Palette, ThemeSettings};
+use chimera_core::ui::theme_settings::{Palette, ThemeSettings, palette};
 use chimera_hal::{ChimeraDisplay, FB_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH};
 use embedded_graphics_core::Pixel;
 use embedded_graphics_core::draw_target::DrawTarget;
@@ -42,7 +42,7 @@ impl DesktopDisplay {
 
     /// Show the framebuffer with `theme`'s colours and brightness.
     pub fn set_theme(&mut self, theme: &ThemeSettings) {
-        self.palette = theme.palette();
+        self.palette = palette(theme);
         self.bright_pct = theme.bright.percent() as u32;
     }
 

@@ -34,7 +34,7 @@ pub mod source_cell;
 pub mod splash;
 pub mod tape_strip;
 pub mod theme;
-pub use chimera_engine::theme_settings;
+pub mod theme_settings;
 pub mod view;
 pub mod viz;
 

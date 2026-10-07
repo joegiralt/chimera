@@ -176,7 +176,7 @@ impl Out for StreamOut<'_> {
 mod tests {
     use super::*;
     use chimera_core::ui::theme;
-    use chimera_core::ui::theme_settings::{Accent, Palette, ThemeSettings};
+    use chimera_core::ui::theme_settings::{Accent, Palette, ThemeSettings, palette};
     use chimera_hal::FB_SIZE;
     use embedded_graphics_core::pixelcolor::raw::{RawData, RawU16};
     use std::io::{Read, Write};
@@ -192,11 +192,10 @@ mod tests {
     /// A fresh UI, a framebuffer of known pixels that the theme recolours,
     /// and a palette that isn't the identity.
     fn fb_unit() -> (Box<UiState>, Box<[u16; FB_SIZE]>, Palette) {
-        let pal = ThemeSettings {
+        let pal = palette(&ThemeSettings {
             accent: Accent::Amber,
             ..ThemeSettings::DEFAULT
-        }
-        .palette();
+        });
         assert_ne!(pal, Palette::IDENTITY);
         let mut fb: Box<[u16; FB_SIZE]> = vec![0u16; FB_SIZE].try_into().unwrap();
         for (i, px) in fb.iter_mut().enumerate() {

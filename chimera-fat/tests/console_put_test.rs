@@ -23,7 +23,7 @@ use chimera_core::storage::{
     peek_header, write_file,
 };
 use chimera_core::ui::UiState;
-use chimera_core::ui::theme_settings::ThemeSettings;
+use chimera_core::ui::theme_settings::{ThemeSettings, palette};
 use chimera_fat::FatStore;
 use chimera_hal::store::{ByteSink, Dir, FileName, Files, Store, StoreError, VolumeId};
 use chimera_hal::{FB_SIZE, Ms};
@@ -54,7 +54,7 @@ impl<S: Files> Unit for Fake<'_, S> {
     fn frame(&self) -> Frame<'_> {
         Frame {
             fb: &self.fb,
-            palette: ThemeSettings::DEFAULT.palette(),
+            palette: palette(&ThemeSettings::DEFAULT),
         }
     }
     fn dfu(&mut self) -> Option<()> {
