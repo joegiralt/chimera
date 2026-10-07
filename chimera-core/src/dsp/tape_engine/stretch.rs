@@ -20,13 +20,16 @@
 //! fewest whole periods that are a wrap's travel (`WRAP_SAMPLES` at the
 //! block's fastest `inc`, and at least `INC_MAX` frames), re-reading its
 //! last cycles, the nearest in kind, until the next splice (at most one
-//! grain's life); POLY's by the window, under the lift, not a splice's
-//! fade. What the grain read the sample before, against the same place
-//! wrapped, at its share, joins the lift: a one-pole falling over `LIFT_S`
-//! (or an eighth of the wrap's interval, if shorter: lifts again and again
-//! add at most an eighth of a jump as DC),
-//! as PING-PONG's retargeted clamp carries its ghost's share, so the output
-//! never steps there. A grain whose wrap comes more than once in
+//! grain's life), under the lift: what the grain read the sample before,
+//! against the same place wrapped, at its share, rides on the output, a
+//! one-pole falling over `LIFT_S` (or an eighth of the wrap's interval, if
+//! shorter: lifts again and again add at most an eighth of a jump as DC),
+//! as PING-PONG's retargeted clamp carries its ghost's share. POLY's wrap
+//! is by the window, not whole periods, so its jump can be twice the peak
+//! and a lift would add the new grain's swing to it (+6 dBFS, #384): it
+//! holds the output it left instead and crossfades from it to the new
+//! grain under the same one-pole, never past the peak (ADR 0103). Either
+//! way the output never steps there. A grain whose wrap comes more than once in
 //! `MIN_PASS_SAMPLES` samples is a waveform loop, as an oscillator's cycle
 //! is: it wraps bare.
 //!
@@ -136,6 +139,8 @@ struct Block {
     /// Set in `render`, from the grains' latched spans at the block's speed.
     lift_k: f32,
     locked: bool,
+    /// A wrap's carry holds (1, POLY: unlocked) or lifts (0, MONO).
+    hold: f32,
     /// The fade's length and its reciprocal.
     half: u32,
     inv_half: f32,
@@ -209,8 +214,17 @@ pub struct Stretch {
     inv_p: f32,
     /// The first splice is to come: the fade follows each block's D-TIME.
     runup: bool,
-    /// What wraps moved, riding on the output.
-    lift: f32,
+    /// What wraps carry, riding on the output `x` as `w · (carry − hold ·
+    /// x)`, `w` (`carry_w`) from 1 at a wrap falling by `lift_k` a sample.
+    /// MONO's wrap is whole periods, its jump near 0: it lifts (`hold` 0),
+    /// its carry the jump, so no corner. POLY's window isn't whole periods,
+    /// so its jump is up to twice the peak and a lift would add the new
+    /// grain's swing to it (#384): it holds (`hold` 1) the output it left
+    /// and crossfades from it to the new grain, never past the peak; its
+    /// corner is the one the lift had.
+    carry: f32,
+    carry_w: f32,
+    hold: f32,
     /// Splices and wraps: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub(super) events: u32,
@@ -241,7 +255,9 @@ impl Stretch {
         pf: 0.0,
         inv_p: 0.0,
         runup: false,
-        lift: 0.0,
+        carry: 0.0,
+        carry_w: 0.0,
+        hold: 0.0,
         #[cfg(any(test, feature = "test-support"))]
         events: 0,
         #[cfg(any(test, feature = "test-support"))]
@@ -377,6 +393,7 @@ impl Stretch {
             tiny,
             lift_k: 0.0,
             locked,
+            hold: if locked { 0.0 } else { 1.0 },
             half,
             inv_half: 1.0 / half as f32,
             off,
@@ -412,7 +429,7 @@ impl Stretch {
             // Re-aimed, so the share lands on 1 as the fade ends.
             self.dg = (1.0 - self.g) / self.clock.left() as f32;
             if (0..2).any(|x| self.u(x).whole() >= self.hi[x]) {
-                self.wrap(v);
+                self.wrap(v, k.hold);
             }
         }
         // Each grain is a waveform loop, or not, at this block's speed: a
@@ -452,6 +469,10 @@ impl Stretch {
         let mut i = 0;
         let lk = k.lift_k;
         let top = self.last.whole() + 1;
+        if self.hold != k.hold {
+            self.recarry(v, k.hold);
+        }
+        let m = k.hold;
         while i < BLOCK_SIZE {
             // Each grain's way as a mask: 0 forward, all ones reversed. A
             // reversed grain's head moves down by the same step (its step
@@ -470,15 +491,16 @@ impl Stretch {
             let (w0, w1) = (Pos(neg(self.span[0], d0)), Pos(neg(self.span[1], d1)));
             let [t0, t1] = self.tiny;
             let (mut g, dg) = (self.g, self.dg);
-            let mut l = self.lift;
+            let (mut c, mut w) = (self.carry, self.carry_w);
             let s = i;
             let stop = BLOCK_SIZE.min(i + self.clock.left() as usize);
             for y in out.iter_mut().take(stop).skip(s) {
                 let a = v.read(h0);
                 let b = v.read(h1);
                 g += dg;
-                *y = a + smooth(g) * (b - a) + l;
-                l *= lk;
+                let x = a + smooth(g) * (b - a);
+                *y = x + w * (c - m * x);
+                w *= lk;
                 c0 = c0.wrapping_add(s0);
                 c1 = c1.wrapping_add(s1);
                 h0 = h0 + Pos(c0);
@@ -488,7 +510,13 @@ impl Stretch {
                 if (h0.whole() as i32).wrapping_sub(e0) ^ m0 >= 0 {
                     h0 = h0 - w0;
                     if !t0 {
-                        l += (1.0 - smooth(g + dg)) * (a - v.read(h0 - Pos(c0)));
+                        // POLY holds the output: no jump to read.
+                        c = if m != 0.0 {
+                            *y
+                        } else {
+                            w * c + (1.0 - smooth(g + dg)) * (a - v.read(h0 - Pos(c0)))
+                        };
+                        w = 1.0;
                     }
                     #[cfg(any(test, feature = "test-support"))]
                     {
@@ -499,7 +527,12 @@ impl Stretch {
                 if (h1.whole() as i32).wrapping_sub(e1) ^ m1 >= 0 {
                     h1 = h1 - w1;
                     if !t1 {
-                        l += smooth(g + dg) * (b - v.read(h1 - Pos(c1)));
+                        c = if m != 0.0 {
+                            *y
+                        } else {
+                            w * c + smooth(g + dg) * (b - v.read(h1 - Pos(c1)))
+                        };
+                        w = 1.0;
                     }
                     #[cfg(any(test, feature = "test-support"))]
                     {
@@ -511,7 +544,7 @@ impl Stretch {
             cur = neg(c0, d0);
             self.heads = [h0, h1];
             self.g = g;
-            self.lift = l;
+            (self.carry, self.carry_w) = (c, w);
             self.clock.pos += (i - s) as u32;
             if self.clock.left() == 0 {
                 let t = self.time(k.off as i64 + tau + i as i64 * k.tstep, *k);
@@ -522,11 +555,17 @@ impl Stretch {
 
     /// A grain past its window's end before a block (the window moved under
     /// the run-up) wraps back by its span, or to the span's start if further
-    /// out; what it reads there against where it was joins the lift.
+    /// out; what it reads there against where it was joins the carry, of
+    /// the block's kind (`hold`, `carry`).
     #[cold]
     #[inline(never)]
-    fn wrap(&mut self, v: &SourceView<'_>) {
+    fn wrap(&mut self, v: &SourceView<'_>, hold: f32) {
         let g = smooth(self.g + self.dg);
+        let [a, b] = self.heads.map(|h| v.read(h));
+        let mix = a + g * (b - a);
+        let d = self.carry_w * (self.carry - self.hold * mix);
+        let mut jump = 0.0;
+        let mut moved = false;
         for x in 0..2 {
             let (u, hi, span) = (self.u(x), self.hi[x], self.span[x]);
             if u.whole() < hi {
@@ -539,8 +578,25 @@ impl Stretch {
             let share = if x == 1 { g } else { 1.0 - g };
             let was = self.heads[x];
             self.set_u(x, w);
-            self.lift += share * (v.read(was) - v.read(self.heads[x]));
+            jump += share * (v.read(was) - v.read(self.heads[x]));
+            moved = true;
         }
+        if moved {
+            self.carry = if hold != 0.0 { mix + d } else { d + jump };
+            (self.carry_w, self.hold) = (1.0, hold);
+        }
+    }
+
+    /// The block's carry is of the other kind (MONO's lock came or went):
+    /// the one in play is carried over as it, its share of the output the
+    /// same at the grains' next read.
+    #[cold]
+    #[inline(never)]
+    fn recarry(&mut self, v: &SourceView<'_>, hold: f32) {
+        let [a, b] = self.heads.map(|h| v.read(h));
+        let mix = a + smooth(self.g + self.dg) * (b - a);
+        self.carry += (hold - self.hold) * mix;
+        self.hold = hold;
     }
 
     /// The fade has ended: the new grain plays on as the old, and a grain
@@ -568,8 +624,8 @@ impl Stretch {
         self.tiny[1] = k.tiny;
         self.clock.len = k.half;
         self.clock.pos = 0;
-        if libm::fabsf(self.lift) < 1e-9 {
-            self.lift = 0.0;
+        if self.carry_w < 1e-9 {
+            self.carry_w = 0.0;
         }
         self.g = 0.0;
         self.dg = k.inv_half;
@@ -626,6 +682,7 @@ mod tests {
             span: 0,
             lift_k: 1.0,
             locked: true,
+            hold: 0.0,
             half: 240,
             inv_half: 1.0 / 240.0,
             off: 0,
@@ -678,10 +735,10 @@ mod tests {
         let mut s = Stretch::IDLE;
         (s.heads, s.hi, s.span) = ([at(1), at(40)], [40; 2], [32 << 32; 2]);
         (s.g, s.dg) = (0.25, 0.25);
-        s.wrap(&v);
+        s.wrap(&v, 0.0);
         assert_eq!(s.heads[1], at(8));
         let want = smooth(0.5) * (v.read(at(40)) - v.read(at(8)));
-        assert!((s.lift - want).abs() < 1e-6, "{} against {want}", s.lift);
+        assert!((s.carry - want).abs() < 1e-6, "{} against {want}", s.carry);
 
         let k = Block {
             ws: 1,
@@ -691,6 +748,7 @@ mod tests {
             tiny: false,
             lift_k: 1.0,
             locked: false,
+            hold: 0.0,
             half: 1_000,
             inv_half: 0.001,
             off: 0,
@@ -715,7 +773,8 @@ mod tests {
             } else {
                 smooth(0.75) * (v.read(h1) - v.read(Pos::from_f32(9.9)))
             };
-            assert!((s.lift - want).abs() < 1e-5, "{} against {want}", s.lift);
+            let got = s.carry * s.carry_w;
+            assert!((got - want).abs() < 1e-5, "{got} against {want}");
         }
     }
 

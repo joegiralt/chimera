@@ -586,9 +586,9 @@ fn grain_wraps_are_click_free() {
             // voice's DC blocker takes it.
             let mean = out.iter().sum::<f32>() / out.len() as f32;
             assert!(mean.abs() < 0.1, "{kind:?}, MOTION {motion}: mean {mean}");
-            // The lift's overshoot (spec § 2): under 2× the sine's peak.
+            // No overshoot (#384): POLY's carry holds, MONO's jump is ~0.
             let peak = out.iter().fold(0f32, |m, y| m.max(y.abs()));
-            assert!(peak <= 2.0, "{kind:?}, MOTION {motion}: peak {peak}");
+            assert!(peak <= 1.01, "{kind:?}, MOTION {motion}: peak {peak}");
         }
     }
 }
@@ -651,7 +651,7 @@ fn one_shots_wrap_click_free() {
             };
             let out = note(&|_| p, &|_| cents, &v, 300);
             let peak = out.iter().fold(0f32, |m, y| m.max(y.abs()));
-            assert!(peak <= 2.0, "{frames} frames, {cents} cents: peak {peak}");
+            assert!(peak <= 1.01, "{frames} frames, {cents} cents: peak {peak}");
             let step = max_step(&out[B..]);
             eprintln!("{frames} frames, {cents} cents: {step:.3} against {own:.3}");
             if step > 4.0 * own {
@@ -1085,4 +1085,48 @@ fn stretch_costs_within_its_bill() {
     );
     let slack = if cfg!(debug_assertions) { 1.5 } else { 1.0 };
     assert!(events <= slack * 1.10, "events cost {events:.3} × the run");
+}
+
+/// POLY's wraps never lift the output past the source's peak (#384): the
+/// wrap's carry is a crossfade from the output it held, so the new grain's
+/// swing never adds to it. A C4 sine at −0.5 dBFS, wrapped often (short
+/// windows) and at length, over D-TIME, MOTION and an octave of pitch.
+#[test]
+fn poly_wraps_stay_under_the_source_peak() {
+    let amp = 0.944f32;
+    let src: Vec<f32> = sine(48_000, 48_000.0 / 261.63, 48_000)
+        .iter()
+        .map(|y| amp * y)
+        .collect();
+    let held = held_plain(&src, 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    let own = v.frames();
+    let src_peak = (0..own)
+        .map(|i| v.read(Pos((i as u64) << 32)).abs())
+        .fold(0f32, f32::max);
+    let mut worst = 0f32;
+    for end in [0.05, 0.2, 1.0] {
+        for size in [0.0, 0.5, 1.0] {
+            for motion in [0.1, 0.25, 0.5, 1.0] {
+                for note_ in [60u8, 72] {
+                    let p = TapeEngineParams {
+                        end,
+                        size,
+                        motion,
+                        ..stretch(StretchType::Poly, 0.0)
+                    };
+                    let mut e = fresh();
+                    e.note_on(note_, &p, &v, SR);
+                    let (out, _, _) = run(&mut e, &|_| p, &v, 1_000);
+                    let peak = out.iter().fold(0f32, |m, y| m.max(y.abs()));
+                    worst = worst.max(peak / src_peak);
+                    assert!(
+                        peak <= 1.01 * src_peak,
+                        "END {end} D-TIME {size} MOTION {motion} note {note_}: {peak} against {src_peak}"
+                    );
+                }
+            }
+        }
+    }
+    eprintln!("POLY peak: {worst:.3} × the source's");
 }
