@@ -100,6 +100,8 @@ fn init_in_place_matches_from_performance() {
                 params: p.sound.params.clone(),
                 mod_state: p.sound.mod_state.clone(),
                 mix: p.mix,
+                // The first publish sets it (`PartAudio::of`).
+                loads: chimera_core::project::Loads::NONE,
                 source: None,
             }
         }),

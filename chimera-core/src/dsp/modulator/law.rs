@@ -88,6 +88,11 @@ pub const GLIDE_TIME: Range = Range {
     min: 1e-3,
     oct: 10.965_784,
 };
+/// CUTOFF, 20 Hz – 20 kHz (ADR 0107): its display is linear in octaves.
+pub const CUTOFF_HZ: Range = Range {
+    min: 20.0,
+    oct: 9.965_784,
+};
 /// A B slot evaluated per block stops its rates here: the block rate ÷ 8
 /// (spec § Rates), 93.75 Hz at 48 kHz and 86.1 Hz at 44.1 kHz.
 pub fn block_rate_max(sample_rate: u32) -> f32 {
@@ -138,6 +143,8 @@ pub enum Law {
     BurstRate,
     BurstLen,
     GlideTime,
+    /// CUTOFF's Hz (ADR 0107).
+    Cutoff,
     Phase,
     Pct,
     Curve,
@@ -155,6 +162,7 @@ impl Law {
             Law::BurstRate => BURST_RATE,
             Law::BurstLen => BURST_LEN,
             Law::GlideTime => GLIDE_TIME,
+            Law::Cutoff => CUTOFF_HZ,
             Law::Phase | Law::Pct | Law::Curve | Law::Tilt => return None,
         })
     }

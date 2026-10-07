@@ -415,6 +415,17 @@ impl Bench {
         self.inst.filter_clips()
     }
 
+    /// The first busy voice's filter settings last block, routes applied.
+    pub fn played_filter(&self) -> FilterParams {
+        let v = self
+            .inst
+            .allocator()
+            .slots()
+            .iter()
+            .position(|s| !s.is_free());
+        self.inst.played_filters()[v.expect("a voice playing")]
+    }
+
     /// Each voice's glide ratio, 1 at rest.
     pub fn slides(&self) -> [f32; chimera_core::hw::MAX_VOICES] {
         self.inst.slides()

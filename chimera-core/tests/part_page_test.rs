@@ -142,7 +142,13 @@ fn drive_filter_folder_pages() {
     // MODE reads LP4's place in CLEAN's knob order, 2 of 7.
     assert_eq!(read(&reg::FILTER, &p), [0.0, 1.0, 0.0, 2.0 / 7.0, 0.0, 0.0]);
     turn(&reg::FILTER, 1, -1, &mut p);
-    assert_eq!(p.filter.cutoff, 20000.0 - (20000.0 - 20.0) / 128.0);
+    // 1/24 octave a tick (ADR 0107).
+    let want = 20000.0 * (-1.0f32 / 24.0).exp2();
+    assert!(
+        (p.filter.cutoff / want - 1.0).abs() < 1e-5,
+        "{}",
+        p.filter.cutoff
+    );
     turn(&reg::FILTER, 3, 1, &mut p);
     assert_eq!(
         p.filter.mode(),

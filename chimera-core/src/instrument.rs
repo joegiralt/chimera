@@ -13,6 +13,7 @@ use chimera_hal::BLOCK_SIZE;
 use crate::dsp::Stereo;
 use crate::dsp::ease::{Ease, ease_coeff, step_of};
 use crate::dsp::engines::{EngineCtx, SlotKind};
+use crate::dsp::filter::knobs::{Knobs, knob_coeff};
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use crate::dsp::modal::{ResonatorMode, SYM_NOTE_ON_CLEAR_MAX, SymPool};
 use crate::dsp::tape_engine::{Heads, TapeEngine};
@@ -27,7 +28,7 @@ use crate::orbit::runner::{OrbitRunner, OrbitShared};
 use crate::params::{EngineType, ParamSnapshot};
 use crate::part::{Held, LiveSnap, PartParams};
 use crate::preset::{Part, Performance};
-use crate::project::{Project, SourceId};
+use crate::project::{Loads, Project, SourceId};
 use crate::scope::ScopeWriter;
 use crate::source_table::{AudioToken, GateView};
 use crate::voice_alloc::{Allocator, VoiceIdx};
@@ -74,6 +75,8 @@ pub struct PartAudio {
     pub params: ParamSnapshot,
     pub mod_state: ModState,
     pub mix: PartParams,
+    /// The Part's Sound loads: a change lands its filter knobs.
+    pub loads: Loads,
     /// The pool's id for its Sound's source (spec § 4): what a TAPE
     /// note-on latches. `None` with no source, or none in the pool.
     pub source: Option<SourceId>,
@@ -96,11 +99,15 @@ impl Default for AudioShared {
 }
 
 impl PartAudio {
+    /// `p` as the audio reads it but `loads`, which `fill` sets (in here,
+    /// or in `init_in_place`, it costs ~0.8 KB of flash). Left at `NONE`,
+    /// the first publish moves it: one landing, before any note.
     fn of(p: &Part) -> Self {
         Self {
             params: p.sound.params.clone(),
             mod_state: p.sound.mod_state.clone(),
             mix: p.mix,
+            loads: Loads::NONE,
             source: None,
         }
     }
@@ -196,9 +203,25 @@ impl AudioShared {
         for (d, p) in parts.iter_mut().zip(perf.parts()) {
             *d = PartAudio::of(p);
             d.source = source(p);
+            d.loads = p.loads();
         }
         *fx = perf.fx;
         *e = epoch;
+    }
+}
+
+/// A playing Part's knobs one block toward its Sound's, `k` from
+/// `knob_coeff`; a silent Part's, or a new Sound's (its `loads` moved),
+/// land when next eased. A silent Part costs nothing more. Out of line:
+/// once a Part, six copies otherwise.
+#[inline(never)]
+fn ease_part((knobs, seen): &mut (Knobs, Loads), part: &PartAudio, k: Option<f32>) {
+    if *seen != part.loads || k.is_none() {
+        *seen = part.loads;
+        knobs.land();
+    }
+    if let Some(k) = k {
+        knobs.ease(&part.params.filter, &part.mod_state, k);
     }
 }
 
@@ -469,6 +492,11 @@ pub struct Instrument {
     costed: usize,
     /// `costs` worked out since start: for the tests.
     costings: u32,
+    /// Each Part's filter knobs, eased (ADR 0107), and the Part's loads
+    /// they last saw.
+    knobs: [(Knobs, Loads); MAX_PARTS],
+    /// `knob_coeff` at `sample_rate`.
+    knob_k: f32,
 }
 
 /// Who plays a note: the keys and MIDI, or one of ORBIT's rings.
@@ -484,7 +512,7 @@ pub enum NoteOrigin {
 /// worst-case slots starts a note a block, a typical one all at once.
 pub const SYM_CLEAR_BUDGET: usize = SYM_NOTE_ON_CLEAR_MAX;
 
-crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings });
+crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, knobs, knob_k });
 
 const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
@@ -540,6 +568,8 @@ impl Instrument {
             addr_of_mut!((*p).costs).write([Cost::ZERO; MAX_PARTS]);
             addr_of_mut!((*p).costed).write(0);
             addr_of_mut!((*p).costings).write(0);
+            addr_of_mut!((*p).knobs).write([(Knobs::UNPRIMED, Loads::NONE); MAX_PARTS]);
+            addr_of_mut!((*p).knob_k).write(knob_coeff(sample_rate));
             slot.assume_init_mut()
         }
     }
@@ -610,6 +640,12 @@ impl Instrument {
     #[cfg(any(test, feature = "test-support"))]
     pub fn filter_clips(&self) -> [crate::meter::Clip; MAX_VOICES] {
         core::array::from_fn(|v| self.voices[v].filter_clip())
+    }
+
+    /// Each voice's filter settings last block, routes applied: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn played_filters(&self) -> [crate::params::FilterParams; MAX_VOICES] {
+        core::array::from_fn(|v| self.voices[v].played_filter())
     }
 
     /// Each voice's glide steal ratio, 1 at rest: for the tests.
@@ -1087,6 +1123,21 @@ impl Instrument {
         }
     }
 
+    /// Each Part's filter knobs this block (ADR 0107): eased while a voice
+    /// plays the Part, landed while none does and on a new Sound.
+    fn ease_knobs(&mut self, shared: &AudioShared) {
+        let mut playing = [false; MAX_PARTS];
+        for v in 0..MAX_VOICES {
+            if !self.alloc.slots()[v].is_free() {
+                playing[self.sounding[v] as usize % MAX_PARTS] = true;
+            }
+        }
+        let k = self.knob_k;
+        for ((knobs, part), playing) in self.knobs.iter_mut().zip(&shared.parts).zip(playing) {
+            ease_part(knobs, part, playing.then_some(k));
+        }
+    }
+
     /// One block as the shells run it (spec § 4): `notes` (the load gate,
     /// the drain, ORBIT) and the render read the pool through the block's
     /// view, then the sources the voices hold are stored, holding
@@ -1144,6 +1195,7 @@ impl Instrument {
         self.clear_backlog = false;
         self.start_waiting(shared, src);
         self.serve_resnaps();
+        self.ease_knobs(shared);
         for v in 0..MAX_VOICES {
             if self.alloc.slots()[v].is_free() {
                 continue;
@@ -1154,7 +1206,13 @@ impl Instrument {
                 sym: &mut self.sym,
                 src,
             };
-            self.voices[v].render(&mut block, &part.params, &part.mod_state, ctx);
+            self.voices[v].render_knobs(
+                &mut block,
+                &part.params,
+                &part.mod_state,
+                &self.knobs[p].0,
+                ctx,
+            );
             clip[p] = clip[p].max(self.voices[v].filter_clip());
             if written[p] {
                 for (b, &s) in self.buses[p].iter_mut().zip(&block) {
