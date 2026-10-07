@@ -7,12 +7,6 @@ use crate::orbit::RINGS;
 
 pub const HOLD_MS: u32 = 500;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Press {
-    Tap,
-    Hold,
-}
-
 #[derive(Clone, Copy, Debug)]
 pub struct HoldGate {
     down_at: Option<Ms>,
@@ -78,13 +72,7 @@ impl HoldGate {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Presses {
-    pub menu: Option<Press>,
-    pub seq: Option<Press>,
-    /// B1–B5, indexed by `RingIdx`: ORBIT's ring keys. B6 never holds.
-    pub ring: [Option<Press>; RINGS],
-}
+pub use chimera_engine::confirm::{Press, Presses};
 
 #[derive(Clone, Copy, Debug)]
 pub struct HoldGates {

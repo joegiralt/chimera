@@ -247,9 +247,9 @@ name = "chimera-core"
 version = "0.1.0"
 dependencies = [
  "chimera-core",
+ "chimera-engine",
  "chimera-hal",
  "chimera-theory",
- "chimera-waves",
  "embedded-graphics",
  "embedded-graphics-core",
  "libm",
@@ -271,6 +271,20 @@ dependencies = [
  "minifb",
  "rubato",
  "rustfft",
+]
+
+[[package]]
+name = "chimera-engine"
+version = "0.1.0"
+dependencies = [
+ "chimera-engine",
+ "chimera-hal",
+ "chimera-theory",
+ "chimera-waves",
+ "embedded-graphics",
+ "embedded-graphics-core",
+ "libm",
+ "loom",
 ]
 
 [[package]]

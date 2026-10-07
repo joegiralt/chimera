@@ -634,7 +634,7 @@ impl Renderer {
             _ => self.anim[f.focus].current(),
         };
         let frame = f.clock.frame();
-        glyph.gauge(value, fmt, |id| {
+        super::glyph::gauge(glyph, value, fmt, |id| {
             // Which of the composite's params has focus.
             let focus = id.params().iter().position(|&a| Some(a) == focused);
             match id {

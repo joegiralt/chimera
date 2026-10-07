@@ -1,0 +1,49 @@
+[package]
+name = "chimera-engine"
+version.workspace = true
+edition.workspace = true
+
+# The synth's model and everything the audio runs (ADR 0108), in the fast
+# profile: the DSP, the Instrument, ORBIT, the project and its storage.
+# `chimera-core` re-exports it under the same paths and adds the UI and the
+# console, built for size.
+[dependencies]
+chimera-hal = { path = "../chimera-hal" }
+chimera-theory = { path = "../chimera-theory" }
+libm = "0.2"
+embedded-graphics = "0.8"
+embedded-graphics-core = "0.4"
+
+[features]
+# The console's `ls` and `put` (ADR 0092): project files onto the card.
+card-put = []
+# The master tape stage on DAC pair 1 (ADR 0055: off the chain by default;
+# its parameters and disk codes stay either way).
+master-tape = []
+# The by-value engine constructors (`AlgoEngine::new`, `ModalEngine::new`,
+# `EngineSlot::new`), for tests only: firmware builds every engine in place.
+test-support = []
+# `write_source`: sources written, verified and sealed on the card. Host
+# only (the importer, the desktop, tests); no firmware build enables it
+# until the lost-cluster sweep frees on the unit (#360).
+source-writer = []
+# Bench-only phase stamps inside ORBIT's block and the note handling.
+probe = []
+# The filter's static-cost probes (`dsp::filter::probe`) alone, for
+# `tools/loop_count.py`: none of `probe`'s stamps.
+filter-probe = []
+
+# The `SourceTable` model (`chimera-core/tests/loom_source_table.rs`): only
+# under `RUSTFLAGS="--cfg loom"`, never in a firmware or desktop build. MIT.
+[target.'cfg(loom)'.dependencies]
+loom = "0.7"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }
+
+[build-dependencies]
+chimera-waves = { path = "../chimera-waves" }
+
+[dev-dependencies]
+chimera-engine = { path = ".", features = ["test-support", "source-writer"] }
+chimera-hal = { path = "../chimera-hal", features = ["testkit"] }

@@ -6,8 +6,7 @@ use u8g2_fonts::{FontRenderer, fonts};
 
 // --- Palette (mockup hex → RGB565) ---
 
-/// Ground `#0a0b0d`.
-pub const BG: Rgb565 = Rgb565::new(1, 2, 1);
+pub use super::theme_settings::canonical::{ACCENT, ACCENT_SOFT, BG};
 /// Primary text `#ecebe7`: names, the focus value.
 pub const INK: Rgb565 = Rgb565::new(29, 58, 28);
 /// Secondary text `#c9c7c1`: cell values, list names.
@@ -18,10 +17,6 @@ pub const MID: Rgb565 = Rgb565::new(17, 34, 16);
 pub const BAR_REST: Rgb565 = Rgb565::new(13, 26, 12);
 /// Tracks, rules, empty slots `#2a2b2e`.
 pub const FAINT: Rgb565 = Rgb565::new(5, 10, 5);
-/// The one accent `#7fd4c8`: the active element only.
-pub const ACCENT: Rgb565 = Rgb565::new(15, 53, 25);
-/// Accent at 12 % over the ground: fill under a viz line.
-pub const ACCENT_SOFT: Rgb565 = Rgb565::new(3, 8, 4);
 /// A machine's part of the source under the TAPE strip's waveform.
 pub const ACCENT_DIM: Rgb565 = ACCENT_SOFT;
 /// A prompt's panel `#0d1514`.

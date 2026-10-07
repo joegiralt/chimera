@@ -47,7 +47,10 @@ fn scan_for_unsuffixed_literals(src: &str, path: &Path) {
 /// (PascalCase) are skipped: their impls live where they're defined, in
 /// `dsp/algo`, and are scanned directly.
 fn external_helpers(src: &str) -> Vec<PathBuf> {
-    let root = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src"));
+    let root = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../chimera-engine/src"
+    ));
     let mut out = Vec::new();
     for line in src.lines() {
         let Some(rest) = line.trim().strip_prefix("use crate::") else {
@@ -83,7 +86,10 @@ fn external_helpers(src: &str) -> Vec<PathBuf> {
 
 #[test]
 fn the_algo_module_uses_no_f64_and_no_libm() {
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/dsp/algo");
+    let dir = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../chimera-engine/src/dsp/algo"
+    );
     let mut files = 0;
     for entry in std::fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();

@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "chimera-core",
+    "chimera-engine",
     "chimera-hal",
     "chimera-stm32",
     "chimera-board",
@@ -14,6 +15,7 @@ members = [
 exclude = ["chimera-core/fuzz", "chimera-desktop/fuzz"]
 default-members = [
     "chimera-core",
+    "chimera-engine",
     "chimera-hal",
     "chimera-desktop",
     "chimera-waves",
@@ -72,6 +74,8 @@ opt-level = 2
 # fast-math), so every golden still matches bit for bit.
 [profile.dev.package.chimera-core]
 opt-level = 1
+[profile.dev.package.chimera-engine]
+opt-level = 1
 
 # Release profile for firmware: fat LTO in one codegen unit (ADR 0089).
 # Its opt-level is the binary's, and so the LTO pipeline's: it stays 2, the
@@ -82,8 +86,12 @@ opt-level = 2
 lto = "fat"
 codegen-units = 1
 
-# The small profile (ADR 0108): crates off the audio path build for size.
-# A function's level is its crate's (a generic's, the crate instantiating
-# it), so nothing the audio interrupt runs may live in one of these.
+# The small profile (ADR 0108): crates off the audio path build for size,
+# the UI loop and drivers (chimera-board) and the UI and console
+# (chimera-core). A function's level is its crate's (a generic's, the crate
+# instantiating it), so nothing the audio interrupt runs may live in one of
+# these; the stack check fails if it reaches one.
 [profile.release.package.chimera-board]
+opt-level = "z"
+[profile.release.package.chimera-core]
 opt-level = "z"

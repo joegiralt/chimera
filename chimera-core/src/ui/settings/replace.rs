@@ -17,74 +17,21 @@
 //! }
 //! ```
 
-pub mod said;
+/// The prompt's yes (`chimera_engine::confirm`).
+pub mod said {
+    pub use chimera_engine::confirm::Said;
+}
 
 use chimera_hal::Controls;
 
-use crate::boot::RomDfu;
 use crate::project::{
-    Confirmed, DeleteTarget, NeedsConfirm, OverwriteTarget, PartSource, Pending, Project,
-    ProjectSource, SceneSlot, Target, TemplateCrc, Witnessed,
+    Confirmed, NeedsConfirm, PartSource, Pending, Project, ProjectSource, Target, TemplateCrc,
 };
 use crate::ui::hold::Presses;
 
-use super::prompt::{
-    Answer, Answers, Choice, ClearAnswer, ClearSceneAnswer, DeleteAnswer, DfuAnswer, LoadAnswer,
-    NameExistsAnswer, ReloadAnswer, ReloadSceneAnswer, ReplaceAnswer, SaveOverAnswer,
-    SaveSceneOverAnswer,
-};
-use said::Said;
+use super::prompt::{Choice, LoadAnswer, ReloadAnswer, ReplaceAnswer};
 
-/// A prompt with a pill that commits what it asked about, a `Confirms`.
-pub trait Commits: Answers {
-    type Confirms: Witnessed;
-    const CONFIRM: Self;
-}
-
-/// A prompt that guards a replace: its confirming pill, and which saves first.
-pub trait Guarded: Commits {
-    const SAVE_FIRST: Self;
-}
-
-macro_rules! commits {
-    ($($a:ident => $v:ident, $t:ty);+ $(;)?) => {
-        $(impl Commits for $a {
-            type Confirms = $t;
-            const CONFIRM: Self = $a::$v;
-        })+
-    };
-}
-
-commits!(
-    ReplaceAnswer => Replace, PartSource;
-    ReloadAnswer => Reload, PartSource;
-    LoadAnswer => LoadAnyway, ProjectSource;
-    DeleteAnswer => Delete, DeleteTarget;
-    ClearAnswer => Clear, OverwriteTarget;
-    SaveOverAnswer => SaveOver, OverwriteTarget;
-    NameExistsAnswer => Overwrite, OverwriteTarget;
-    SaveSceneOverAnswer => SaveOver, SceneSlot;
-    ClearSceneAnswer => Clear, SceneSlot;
-    ReloadSceneAnswer => Reload, SceneSlot;
-    DfuAnswer => EnterDfu, RomDfu;
-);
-
-impl Guarded for ReplaceAnswer {
-    const SAVE_FIRST: Self = ReplaceAnswer::SavePartFirst;
-}
-
-impl Guarded for ReloadAnswer {
-    const SAVE_FIRST: Self = ReloadAnswer::SavePartFirst;
-}
-
-impl Guarded for LoadAnswer {
-    const SAVE_FIRST: Self = LoadAnswer::SaveThenLoad;
-}
-
-/// The yes in `a`, if SEQ took the confirming pill.
-pub fn said<A: Commits>(a: Answer<A>) -> Option<Said<A::Confirms>> {
-    (a.picked() == Some(A::CONFIRM)).then(Said::new)
-}
+pub use chimera_engine::confirm::{Commits, Guarded, said};
 
 /// A replace the guard asked about, and its prompt's pick.
 #[derive(Debug)]

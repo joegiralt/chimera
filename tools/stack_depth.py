@@ -36,7 +36,7 @@ EXC_FRAME = 104
 MARGIN = 2048
 # The small-profile crates (ADR 0108): built for size, so off the audio path.
 AUDIO = "DMA1_STR0"
-SMALL = ("chimera_board",)
+SMALL = ("chimera_board", "chimera_core")
 ROOTS = ("Reset", "__stext", "main", "DefaultHandler", "DefaultHandler_") + ISRS
 # Pointer calls nest at most this deep: a dyn body (a `Store` write's)
 # calling a dyn sink calling `core::fmt`'s writer. An assumption, not a

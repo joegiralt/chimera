@@ -1,60 +1,12 @@
 //! Focus glyphs: the gauge at the right of the focus band, hand-assigned
 //! per parameter on its spec (`ParamSpec::glyph`), ARC by default.
 
-use crate::addr::{BlockRef, ParamAddr};
 use crate::block::ValFmt;
 use crate::dsp::algo::waves::{WAVE_LEN, WaveId};
-use crate::dsp::chorus::{ChorusMode, ChorusParams};
+use crate::dsp::chorus::ChorusMode;
 use crate::dsp::clampf;
-use crate::dsp::delay::DelayParams;
-use crate::dsp::reverb::ReverbParams;
 
-/// The gauge a parameter's focus band shows.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum FocusGlyph {
-    /// 270° arc, from 12:00 when bipolar.
-    #[default]
-    Arc,
-    /// No gauge: the value text gets the whole band (word choices).
-    None,
-    /// Two-state on/off.
-    Switch,
-    /// Vertical slider with tick dots.
-    LevelBar,
-    /// Horizontal crossfader.
-    Crossfader,
-    /// A note on a three-line staff, by semitones (`StaffNote`).
-    Staff,
-    /// A small scope tracing one period of the chosen wave's table.
-    Wave,
-    /// One animated glyph for all of an effect's params (`CompositeId::
-    /// params`: the braid's 4, the rings' 7, the cube's 5), drawn from
-    /// their set values, never the modulated ones.
-    Composite(CompositeId),
-}
-
-/// The composites, each shared by its effect's params.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CompositeId {
-    /// SIZE, TIME, AMOUNT.
-    ReverbCube,
-    /// TIME, FEEDBACK, TONE.
-    DelayRings,
-    /// RATE, DEPTH, MIX; MODE is the strand count.
-    ChorusBraid,
-}
-
-impl CompositeId {
-    /// The params a composite reads, in its inputs' order: every spec that
-    /// carries it, and only those (`tests/focus_glyph_test.rs` pins both).
-    pub const fn params(self) -> &'static [ParamAddr] {
-        match self {
-            CompositeId::ChorusBraid => &BRAID_PARAMS,
-            CompositeId::DelayRings => &RINGS_PARAMS,
-            CompositeId::ReverbCube => &CUBE_PARAMS,
-        }
-    }
-}
+pub use chimera_engine::glyph::{BRAID_PARAMS, CUBE_PARAMS, CompositeId, FocusGlyph, RINGS_PARAMS};
 
 /// What the focus band draws, with its inputs.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -156,15 +108,6 @@ pub fn wave_trace<const N: usize>(wave: WaveId, half: i32) -> [i32; N] {
     })
 }
 
-/// The reverb params the cube reads, in `Cube::from_set`'s order.
-pub const CUBE_PARAMS: [ParamAddr; 5] = [
-    ParamAddr::new(BlockRef::Reverb, ReverbParams::SIZE),
-    ParamAddr::new(BlockRef::Reverb, ReverbParams::TIME),
-    ParamAddr::new(BlockRef::Reverb, ReverbParams::DAMPING),
-    ParamAddr::new(BlockRef::Reverb, ReverbParams::MIX),
-    ParamAddr::new(BlockRef::Reverb, ReverbParams::GRIT),
-];
-
 /// The cube's param in focus, emphasised.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CubePart {
@@ -241,17 +184,6 @@ impl Cube {
         ((self.frame % 320) as f64 * TAU / 320.0) as f32
     }
 }
-
-/// The delay params the rings read, in `Rings::from_set`'s order.
-pub const RINGS_PARAMS: [ParamAddr; 7] = [
-    ParamAddr::new(BlockRef::Delay, DelayParams::TIME_MS),
-    ParamAddr::new(BlockRef::Delay, DelayParams::FEEDBACK),
-    ParamAddr::new(BlockRef::Delay, DelayParams::TONE),
-    ParamAddr::new(BlockRef::Delay, DelayParams::MIX),
-    ParamAddr::new(BlockRef::Delay, DelayParams::WOW_FLUTTER),
-    ParamAddr::new(BlockRef::Delay, DelayParams::SATURATION),
-    ParamAddr::new(BlockRef::Delay, DelayParams::REV_SEND),
-];
 
 /// The rings' param in focus, emphasised.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -360,14 +292,6 @@ impl Rings {
     }
 }
 
-/// The chorus params the braid reads, in `Braid::from_set`'s order.
-pub const BRAID_PARAMS: [ParamAddr; 4] = [
-    ParamAddr::new(BlockRef::Chorus, ChorusParams::MODE),
-    ParamAddr::new(BlockRef::Chorus, ChorusParams::RATE),
-    ParamAddr::new(BlockRef::Chorus, ChorusParams::DEPTH),
-    ParamAddr::new(BlockRef::Chorus, ChorusParams::MIX),
-];
-
 /// The braid's param in focus, emphasised.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BraidPart {
@@ -452,77 +376,37 @@ impl Braid {
     }
 }
 
-impl FocusGlyph {
-    pub const ALL: [FocusGlyph; 10] = [
-        FocusGlyph::Arc,
-        FocusGlyph::None,
-        FocusGlyph::Switch,
-        FocusGlyph::LevelBar,
-        FocusGlyph::Crossfader,
-        FocusGlyph::Staff,
-        FocusGlyph::Wave,
-        FocusGlyph::Composite(CompositeId::ReverbCube),
-        FocusGlyph::Composite(CompositeId::DelayRings),
-        FocusGlyph::Composite(CompositeId::ChorusBraid),
-    ];
-
-    /// Index in `ALL`. Exhaustive: a new variant fails to compile here
-    /// until it is listed.
-    const fn position(self) -> usize {
-        match self {
-            FocusGlyph::Arc => 0,
-            FocusGlyph::None => 1,
-            FocusGlyph::Switch => 2,
-            FocusGlyph::LevelBar => 3,
-            FocusGlyph::Crossfader => 4,
-            FocusGlyph::Staff => 5,
-            FocusGlyph::Wave => 6,
-            FocusGlyph::Composite(CompositeId::ReverbCube) => 7,
-            FocusGlyph::Composite(CompositeId::DelayRings) => 8,
-            FocusGlyph::Composite(CompositeId::ChorusBraid) => 9,
+/// The gauge the focus band draws for `glyph` at the focused slot's
+/// `value` in format `fmt`. A composite's comes from `composite`,
+/// which reads its params' set values (`Renderer::eased_set`).
+pub fn gauge(
+    glyph: FocusGlyph,
+    value: f32,
+    fmt: ValFmt,
+    composite: impl FnOnce(CompositeId) -> Gauge,
+) -> Gauge {
+    let bipolar = fmt.is_bipolar();
+    match glyph {
+        FocusGlyph::None => Gauge::None,
+        FocusGlyph::Switch => Gauge::Switch { on: value },
+        FocusGlyph::LevelBar => Gauge::LevelBar {
+            value,
+            ticks: level_ticks(fmt),
+        },
+        FocusGlyph::Crossfader => Gauge::Crossfader { value },
+        FocusGlyph::Staff => {
+            let n = fmt.max_int() as f32 / 2.0;
+            staff(value * 2.0 * n - n)
         }
-    }
-
-    /// The gauge the focus band draws for this glyph at the focused slot's
-    /// `value` in format `fmt`. A composite's comes from `composite`,
-    /// which reads its params' set values (`Renderer::eased_set`).
-    pub fn gauge(
-        self,
-        value: f32,
-        fmt: ValFmt,
-        composite: impl FnOnce(CompositeId) -> Gauge,
-    ) -> Gauge {
-        let bipolar = fmt.is_bipolar();
-        match self {
-            FocusGlyph::None => Gauge::None,
-            FocusGlyph::Switch => Gauge::Switch { on: value },
-            FocusGlyph::LevelBar => Gauge::LevelBar {
-                value,
-                ticks: level_ticks(fmt),
-            },
-            FocusGlyph::Crossfader => Gauge::Crossfader { value },
-            FocusGlyph::Staff => {
-                let n = fmt.max_int() as f32 / 2.0;
-                staff(value * 2.0 * n - n)
-            }
-            FocusGlyph::Wave => Gauge::Wave(WaveId::clamped(libm::roundf(
-                clampf(value, 0.0, 1.0) * fmt.max_int() as f32,
-            ) as u8)),
-            FocusGlyph::Composite(CompositeId::ChorusBraid) => composite(CompositeId::ChorusBraid),
-            FocusGlyph::Composite(CompositeId::DelayRings) => composite(CompositeId::DelayRings),
-            FocusGlyph::Composite(CompositeId::ReverbCube) => composite(CompositeId::ReverbCube),
-            FocusGlyph::Arc => Gauge::Arc { value, bipolar },
-        }
+        FocusGlyph::Wave => Gauge::Wave(WaveId::clamped(libm::roundf(
+            clampf(value, 0.0, 1.0) * fmt.max_int() as f32,
+        ) as u8)),
+        FocusGlyph::Composite(CompositeId::ChorusBraid) => composite(CompositeId::ChorusBraid),
+        FocusGlyph::Composite(CompositeId::DelayRings) => composite(CompositeId::DelayRings),
+        FocusGlyph::Composite(CompositeId::ReverbCube) => composite(CompositeId::ReverbCube),
+        FocusGlyph::Arc => Gauge::Arc { value, bipolar },
     }
 }
-
-const _: () = {
-    let mut i = 0;
-    while i < FocusGlyph::ALL.len() {
-        assert!(FocusGlyph::ALL[i].position() == i);
-        i += 1;
-    }
-};
 
 impl Gauge {
     /// Moves on its own: its band redraws every frame while shown.

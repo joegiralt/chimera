@@ -65,7 +65,7 @@ firmware-orbit:
 
 # Build all (desktop targets only)
 build:
-    cargo build -p chimera-core -p chimera-hal -p chimera-desktop
+    cargo build -p chimera-core -p chimera-engine -p chimera-hal -p chimera-desktop
 
 # Everything must pass before a commit (ADR 0013): core + hal tests (and core
 # with the master tape back on, ADR 0055, and the whole suite without ORBIT), desktop
@@ -77,9 +77,9 @@ build:
 # system-wide. The host tool's tests run first, against a fake unit.
 check:
     python3 -m unittest discover -s tools -p 'test_*.py'
-    cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit
-    cargo test -p chimera-core --features master-tape
-    cargo test -p chimera-core --no-default-features
+    cargo test -p chimera-core -p chimera-engine -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit
+    cargo test -p chimera-core -p chimera-engine --features master-tape
+    cargo test -p chimera-core -p chimera-engine --no-default-features
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
@@ -149,7 +149,7 @@ loom:
 
 # Run tests
 test:
-    cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit
+    cargo test -p chimera-core -p chimera-engine -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit
     cargo test -p chimera-desktop --lib --tests
     just test-fat-tools
 
@@ -163,9 +163,9 @@ test-fat-tools:
 
 # Clippy on every target and feature set `check` builds, test targets included
 clippy:
-    cargo clippy -p chimera-core -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit --all-targets -- -D warnings
-    cargo clippy -p chimera-core --features master-tape --all-targets -- -D warnings
-    cargo clippy -p chimera-core --no-default-features --all-targets -- -D warnings
+    cargo clippy -p chimera-core -p chimera-engine -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit --all-targets -- -D warnings
+    cargo clippy -p chimera-core -p chimera-engine --features master-tape --all-targets -- -D warnings
+    cargo clippy -p chimera-core -p chimera-engine --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-desktop --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf -- -D warnings
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features -- -D warnings

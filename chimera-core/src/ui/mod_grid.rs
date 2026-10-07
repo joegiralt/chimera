@@ -10,7 +10,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::tape_engine::{TapeModel, machine};
 use crate::mod_path::LABEL_LEN;
-use crate::modulation::FixedCol;
+use crate::modulation::{FixedCol, ModState};
 use crate::preset::Sound;
 use crate::taps::{TapOp, TapRoutes};
 use crate::ui::draw;
@@ -580,6 +580,15 @@ pub const X_OP5: Hint = &[Gesture("OP5:", "FREQ Q VCA FOLD ONLY")];
 pub const X_OP6: Hint = &[Gesture("OP6:", "FREQ Q VCA FOLD ONLY")];
 
 impl MatrixState {
+    /// `mods` routed as this matrix is (`ModState::sync_from_matrix`).
+    pub fn sync_into(&self, mods: &mut ModState) {
+        let columns = self.dests[..self.num_dests].iter().zip(0..).map(|(d, di)| {
+            let amounts = core::array::from_fn(|si| self.amounts[si][di]);
+            (d.map(|d| d.addr), amounts, self.present[di])
+        });
+        mods.sync_from_matrix(self.num_sources, (self.fixed, self.fixed_present), columns);
+    }
+
     /// The hint under the cursor's route.
     pub fn hint(&self) -> Hint {
         if self.is_x(self.sel_row, self.sel_col) {
