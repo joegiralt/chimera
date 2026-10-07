@@ -1,6 +1,6 @@
 # 0108. The audio path builds at opt-level 2, everything else at "z", split by crate
 
-- **Status:** Proposed
+- **Status:** Accepted (owner, 2026-10-08)
 - **Deciders:** owner (flash diet, #336); firmware
 
 ## Context
