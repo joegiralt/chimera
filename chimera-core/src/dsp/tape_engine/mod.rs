@@ -1541,22 +1541,27 @@ impl TapeEngine {
         };
         self.set_mirror(!self.mirror());
         self.pending = None;
-        match self.fade.take() {
+        // The second head's share now, and what's left of the fade. At a
+        // share of 0 the output is all `h0`'s: nothing to run back, so it
+        // turns as with no fade.
+        let fade = self.fade.take().and_then(|f| {
+            let left = f.end - h0;
+            let left = left.whole() as f32 + left.frac();
+            let g = clampf(1.0 - left * f.inv, 0.0, 1.0);
+            (g > 0.0).then_some((f, left, g))
+        });
+        match fade {
             None => {
                 self.heads[0].pos = n - h0;
                 self.bounds = self.bounds.mirror(self.n);
                 self.event = self.bounds.fade_at();
             }
-            Some(f) => {
+            Some((f, left, g)) => {
                 // The fade runs back to where it began: the head it faded
                 // from (`h0`) takes over there. Its end is rounded up to a
                 // whole frame, as a wrap's is, and its slope set so the
-                // gain carries on from this sample's.
-                let left = f.end - h0;
-                let left = left.whole() as f32 + left.frac();
-                let g = clampf(1.0 - left * f.inv, 0.0, 1.0);
-                // A fade with no slope (one reversed at a share of 0) has no
-                // way back to run: it ends at the next whole frame.
+                // gain carries on from this sample's. A fade with no slope
+                // has no way back to run: it ends at the next whole frame.
                 let back = if f.inv > 0.0 {
                     Pos::from_f32((1.0 / f.inv - left).max(0.0))
                 } else {
