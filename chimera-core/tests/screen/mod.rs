@@ -986,6 +986,16 @@ pub const CASES: &[ScreenCase] = &[
         on_flt(ui, FilterKind::Dirty, true);
         feed(ui, Input::turn(EncoderId::A, 20)); // LEVEL
     }),
+    // LADDER (ADR 0104): CLEAN's cells, its LP4's bass loss in the viz.
+    ("flt_ladder", |ui| {
+        on_flt(ui, FilterKind::Ladder, false);
+        feed(ui, Input::turn(EncoderId::B, -70)); // FREQ
+        feed(ui, Input::turn(EncoderId::C, 90)); // Q: the pass band falls
+    }),
+    ("flt_mod_ladder", |ui| {
+        on_flt(ui, FilterKind::Ladder, true);
+        feed(ui, Input::turn(EncoderId::A, 20)); // LEVEL
+    }),
     // The LEVEL LED (`LEDS`): beside LEVEL on CLEAN's FLT › MOD, and
     // beside the 2040's DRIVE and in FLT's viz corner.
     ("flt_led_0", |ui| {

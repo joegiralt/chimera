@@ -110,7 +110,8 @@ pub enum Response {
     /// NOTCH2: notches at 0.414 × and 2.414 × FREQ, Q raising the peak
     /// between them.
     DoubleNotch,
-    /// The 2040's LP4: its pass band lowered by `1/(1 + k)` as RES rises.
+    /// The 2040's LP4 and LADDER's low-passes: the pass band lowered by
+    /// `1/(1 + k)` as RES rises.
     K2040,
 }
 
@@ -130,6 +131,10 @@ impl Response {
             (K::Dirty, M::Bp12 | M::Bp24) => Response::Band,
             (K::Dirty, M::Hp12 | M::Hp24) => Response::High,
             (K::Dirty, _) => Response::Low,
+            // LADDER's low-passes keep the loop's bass loss (ADR 0104).
+            (K::Ladder, M::Bp12 | M::Bp24) => Response::Band,
+            (K::Ladder, M::Hp24 | M::Hp12) => Response::High,
+            (K::Ladder, _) => Response::K2040,
         }
     }
 }

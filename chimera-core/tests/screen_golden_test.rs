@@ -53,6 +53,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("flt_mod_2040_exp", 0x5fef62806549d50e),
     ("flt_dirty", 0x8842fd7055ded3c0),
     ("flt_mod_dirty", 0x8069a71da376c64a),
+    ("flt_ladder", 0x49bf5f05c104a1f6),
+    ("flt_mod_ladder", 0xf09e62080b1742f2),
     // The LEVEL LED at 0 (dark), ½ and 1: beside LEVEL, beside the 2040's
     // DRIVE and in FLT's viz corner (Task 17).
     ("flt_led_0", 0x0536d5a167d2ceaa),
@@ -143,7 +145,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // plan Task 6); and its refusal. Then the merge with filter-types: a
     // Sound is smaller (fixed columns, no registry entry).
     ("sound_browser", 0x1ed65ccfb138def3),
-    ("sound_browser_pool_full", 0x668867219454d099),
+    ("sound_browser_pool_full", 0x4851bbf569937248),
     // Re-recorded: a fresh project's footer drops NEW (#286).
     ("settings_personal_theme", 0xc35039e65219cdc2),
     ("settings_midi_sync", 0x0e26ce69d0f54980),

@@ -249,12 +249,13 @@ pub struct K2040 {
     last: Option<Ends>,
 }
 
-/// A block's end values of `g`, `k` and LEVEL's gain.
+/// A block's end values of `g`, `k` and LEVEL's gain; LADDER's too, so a
+/// fade between the two hands them across.
 #[derive(Clone, Copy, Debug)]
-struct Ends {
-    g: f32,
-    k: f32,
-    pre: f32,
+pub(super) struct Ends {
+    pub(super) g: f32,
+    pub(super) k: f32,
+    pub(super) pre: f32,
 }
 
 /// One sample's coefficients at `g` and `k`: `G = g/(1 + g)`, `D = 1/(1 +
@@ -385,14 +386,14 @@ impl K2040 {
         self.s[3] * (OUT_2040 / v.alpha()) * (1.0 + k2040_k(res))
     }
 
-    /// The stages' states, which a VOICE crossfade carries for the old
-    /// voice.
-    pub(super) fn stages(&self) -> [f32; 4] {
-        self.s
+    /// The stages and the ramp ends, which a fade to or from LADDER hands
+    /// across (`Filter`'s one four-pole slot, ADR 0101).
+    pub(super) fn parts(&self) -> ([f32; 4], Option<Ends>) {
+        (self.s, self.last)
     }
 
-    pub(super) fn set_stages(&mut self, s: [f32; 4]) {
-        self.s = s;
+    pub(super) fn from_parts(s: [f32; 4], last: Option<Ends>) -> Self {
+        Self { s, last }
     }
 
     /// This block's ramps, stored as the next block's start.
@@ -537,11 +538,5 @@ impl K2040 {
     #[cfg(feature = "test-support")]
     pub fn states(&self) -> [f32; 4] {
         self.s
-    }
-
-    /// The last block's `g` (`None`: no ramp next block).
-    #[cfg(test)]
-    pub(crate) fn last_g(&self) -> Option<f32> {
-        self.last.map(|e| e.g)
     }
 }

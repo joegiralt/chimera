@@ -8,6 +8,7 @@ use chimera_core::dsp::algo::engine::AlgoEngine;
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::plan::OPS;
 use chimera_core::dsp::engines::EngineSlot;
+use chimera_core::dsp::filter::ladder::{LADDER_COST, LADDER_MOVE_COST};
 use chimera_core::dsp::filter::{FilterKind, FilterMode, K2040Voice};
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::voice::Voice;
@@ -76,6 +77,7 @@ fn filter_bills_each_type_and_mode() {
                     (K::Svf | K::Dirty, _) => 0,
                     (K::K2040, K2040Voice::Rev2) => 15,
                     (K::K2040, K2040Voice::Exp) => 40,
+                    (K::Ladder, _) => LADDER_COST.0,
                 };
                 assert_eq!(k.cost(v), Cost(want), "{k:?} {m:?} {v:?}");
                 let mut p = chimera_core::params::FilterParams::default();
@@ -87,7 +89,7 @@ fn filter_bills_each_type_and_mode() {
             }
         }
     }
-    assert_eq!(seen, (8 + 1 + 4) * 2, "every built pair, each VOICE");
+    assert_eq!(seen, (8 + 1 + 4 + 5) * 2, "every built pair, each VOICE");
     // Over OLD_LP24 (95): the 2040's steady counts with the block.
     assert!(K::K2040.cost(K2040Voice::Rev2) >= Cost(110 - 95));
     assert!(K::K2040.cost(K2040Voice::Exp) >= Cost(135 - 95));
@@ -124,6 +126,7 @@ fn the_moving_path_bills_once() {
         (FilterKind::Svf, CLEAN_MOVE_COST),
         (FilterKind::K2040, K2040_MOVE_COST),
         (FilterKind::Dirty, Cost::ZERO),
+        (FilterKind::Ladder, LADDER_MOVE_COST),
     ] {
         assert_eq!(k.move_cost(), mv, "{k:?}");
         let mut p = on(k);
@@ -250,6 +253,7 @@ fn level_bills_while_it_can_clip() {
         (FilterKind::Svf, FILTER_LEVEL_COST),
         (FilterKind::Dirty, FILTER_LEVEL_COST),
         (FilterKind::K2040, Cost::ZERO),
+        (FilterKind::Ladder, Cost::ZERO),
     ] {
         assert_eq!(k.level_cost(), lvl, "{k:?}");
         let mut p = on(k);

@@ -60,7 +60,8 @@ pub struct HeaderText {
 /// `PART 2 · SOUND` or `PART 2 · MIX` and the page (`FILTER`, `SENDS`),
 /// or `SETTINGS`; `suffix` follows the name (`/ B`). A page of the
 /// exciter's cells is named after `model`'s exciter (PLUCK, STRIKE, BOW);
-/// FLT › MOD on DIRTY, which speaks CLEAN's cells, names DIRTY (`kind`).
+/// FLT › MOD on DIRTY or LADDER, which speak CLEAN's cells, names its type
+/// (`kind`).
 /// `OUT P2`/`OUT P3` warns on a Part's pages when `out` isn't P1 (ADR
 /// 0057). A name too long for the line falls back to the page's short one.
 pub fn header_text(
@@ -89,6 +90,9 @@ pub fn header_text(
             (true, true) => upper(EXCITER_NAMES[model as usize]),
             (true, false) if def.id == FILTER_MOD.id && kind == FilterKind::Dirty => {
                 upper("Dirty Mod")
+            }
+            (true, false) if def.id == FILTER_MOD.id && kind == FilterKind::Ladder => {
+                upper("Ladder Mod")
             }
             (true, false) => upper(def.name),
             (false, _) => upper(def.short),
