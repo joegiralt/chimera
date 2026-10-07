@@ -274,6 +274,21 @@ impl Fade {
         }
     }
 
+    /// A fade run back (SCRUB turning round mid-fade) from a second head's
+    /// share `share` over the `span` frames to `end`: its slope is
+    /// `share / span`. `span` is floored at the least `Pos::frac` reads,
+    /// 2⁻²⁴ of a frame, so a way back shorter than that (a reversal at a
+    /// share of 0 just under a whole frame) is a sliver, never 0/0.
+    pub fn back(end: Pos, span: Pos, share: f32, next: Bounds) -> Fade {
+        const LEAST: f32 = 1.0 / 16_777_216.0;
+        let r = span.whole() as f32 + span.frac();
+        Fade {
+            end,
+            inv: share / r.max(LEAST),
+            next,
+        }
+    }
+
     /// The second head's share with the first at `h`.
     #[inline(always)]
     pub fn gain(&self, h: Pos) -> f32 {
@@ -295,6 +310,21 @@ mod tests {
         let g = f.gain(end - Pos(100));
         assert!((0.0..=1.0).contains(&g), "{g}");
         assert_eq!(f.gain(end), 1.0);
+    }
+
+    /// A fade run back over 2⁻³² of a frame, which `frac` reads as 0, at
+    /// a share of 0 or of a half: finite, its gain in [0, 1].
+    #[test]
+    fn a_fade_run_back_over_a_sliver_stays_finite() {
+        let end = at(1_000);
+        for share in [0.0, 0.5] {
+            let f = Fade::back(end, Pos(1), share, Bounds::default());
+            assert!(f.inv.is_finite(), "{share}");
+            for h in [end - Pos(1), end] {
+                let g = f.gain(h);
+                assert!((0.0..=1.0).contains(&g), "{share}: {g}");
+            }
+        }
     }
 
     #[test]

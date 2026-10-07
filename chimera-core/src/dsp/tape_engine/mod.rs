@@ -1563,11 +1563,7 @@ impl TapeEngine {
                         mirror: m,
                     },
                 ];
-                self.fade = Some(Fade {
-                    end,
-                    inv: g / (span.whole() as f32 + span.frac()),
-                    next: self.bounds.mirror(self.n),
-                });
+                self.fade = Some(Fade::back(end, span, g, self.bounds.mirror(self.n)));
                 self.bounds = f.next.mirror(self.n);
                 self.gain = 1.0 - g;
                 self.event = end.whole();

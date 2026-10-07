@@ -14,6 +14,7 @@ use chimera_core::dsp::tape_engine::{
 use chimera_core::storage::twelve::pack12;
 use chimera_hal::BLOCK_SIZE;
 use common::XorShift;
+use common::tape::held_plain;
 
 /// The models these runs play (TRANSWAVE on a `Plain` is silent).
 /// Every machine; START and END are drawn in either order.
@@ -139,6 +140,53 @@ fn transwave_reads_stay_in_row() {
                 pr.other.is_some_and(|o| o < count as u32),
                 "run {run}: {pr:?}"
             );
+        }
+    }
+}
+
+/// SCRUB at a crawl (an 8 kHz source, a low note under a high ROOT: `inc`
+/// near 10⁻⁴) with MOTION flipping sign around ±10⁻⁷: a reversal lands
+/// just after a wrap's fade began, at a share of 0, with the fade's way
+/// back under 2⁻²⁴ of a frame. Its slope was 0/0, and the note NaN.
+#[test]
+fn scrub_reversing_at_a_crawl_stays_finite() {
+    let mut rng = XorShift(3);
+    for run in 0..40 {
+        let frames = 64 + rng.below(2_000);
+        let s: Vec<f32> = (0..frames)
+            .map(|i| 0.7 * libm::sinf(i as f32 * 0.3))
+            .collect();
+        let held = held_plain(&s, [4_000, 8_000][rng.below(2)]);
+        let v = SourceView::strict(&held).unwrap();
+        let mut p = TapeEngineParams {
+            model: TapeModel::Scrub,
+            size: unit(&mut rng),
+            xfade: 0.5 * unit(&mut rng),
+            position: unit(&mut rng),
+            drag: unit(&mut rng),
+            root: 12_700.0,
+            motion: 1e-6,
+            ..TapeEngineParams::default()
+        };
+        let mut slot = MaybeUninit::uninit();
+        let e = TapeEngine::init_in_place(&mut slot);
+        e.without_transport();
+        e.set_pitch(-4_800.0 * unit(&mut rng));
+        e.note_on(rng.below(12) as u8, &p, &v, 48_000);
+        let mut b = [0.0; BLOCK_SIZE];
+        for k in 0..400 {
+            match rng.below(6) {
+                0 => p.motion = -p.motion,
+                1 => p.motion = [1e-6, -1e-6, 1e-7, -1e-7, 0.5, -0.5][rng.below(6)],
+                2 => p.position = unit(&mut rng),
+                3 => {
+                    p.size = unit(&mut rng);
+                    p.xfade = 0.5 * unit(&mut rng);
+                }
+                _ => {}
+            }
+            e.render(&mut b, &p, &v, 48_000);
+            assert!(b.iter().all(|y| y.is_finite()), "run {run}, block {k}");
         }
     }
 }
