@@ -108,16 +108,18 @@ impl FilterParams {
 
 /// Every one read by `Voice` per block; MODE is an Enum, so not modulatable.
 pub static FILTER_SPECS: [ParamSpec; 8] = [
+    // 1/24 octave a tick, shown in Hz (ADR 0107).
     ParamSpec::continuous(
         0,
         "CUTOFF",
-        ValFmt::Uni,
-        20.0,
+        ValFmt::Law(crate::dsp::modulator::law::Law::Cutoff),
+        crate::dsp::modulator::law::CUTOFF_HZ.min,
         20000.0,
         1000.0,
-        (20000.0 - 20.0) / 128.0,
+        0.0,
         true,
     )
+    .ticks_per_octave(24.0)
     .ident("CUTOFF")
     .octaves(crate::dsp::filter::CUTOFF_OCTAVES)
     .short("CUT"),
@@ -1000,7 +1002,7 @@ impl Block for PitchParams {
             }
             self.set(id, st);
         } else if let Some(s) = self.spec(id) {
-            self.set(id, self.get(id) + delta as f32 * s.step);
+            self.write(id, s.nudged(self.get(id), delta));
         }
     }
 

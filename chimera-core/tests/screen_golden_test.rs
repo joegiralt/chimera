@@ -38,7 +38,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: MODE reads LP4, CLEAN's label for LP24 (ADR 0096); then
     // TYPE live with two kinds (Task 8); then CLEAN's Cascadia words FREQ,
     // Q, FM1, FM2 (Task 12): was 0x032b329ca06df69b.
-    ("bigviz_filter", 0x025e39b2435f9746),
+    ("bigviz_filter", 0x5a832bd651e51efe),
     // Re-recorded: MODE reads HP4, CLEAN's label for HP24 (ADR 0096); then
     // LEVEL 64 in DRIVE's cell (Task 6); then FLT › MOD's six cells, FM3
     // turned, its delete hint showing (Task 12): was 0xf6e7d94448ca7888.
@@ -46,18 +46,18 @@ const GOLDENS: &[(&str, u64)] = &[
     // Each type's FLT and FLT › MOD (filter-types § 5, Task 17): CLEAN's
     // NOTCH1, the 2040's lowered pass band and KEYBD HALF, its fixed MODE
     // dimmed and VOICE EXP, DIRTY's NOTCH1 at FREQ (its own MODE names).
-    ("flt_clean", 0x05050afedb3c9ed4),
+    ("flt_clean", 0x48ad43f82d53c3b8),
     ("flt_mod_clean", 0xe4409e57eb8c885c),
-    ("flt_2040", 0x66bf5fa4fb3c23cd),
+    ("flt_2040", 0x45bf4079e38e3316),
     ("flt_mod_2040", 0x168df3b9ea844b69),
     ("flt_mod_2040_exp", 0x5fef62806549d50e),
-    ("flt_dirty", 0x8842fd7055ded3c0),
+    ("flt_dirty", 0x2fd9a7df881017c9),
     ("flt_mod_dirty", 0x8069a71da376c64a),
     // The LEVEL LED at 0 (dark), ½ and 1: beside LEVEL, beside the 2040's
     // DRIVE and in FLT's viz corner (Task 17).
     ("flt_led_0", 0x0536d5a167d2ceaa),
     ("flt_led_half", 0xe2cfe2de7f8c1e37),
-    ("flt_led_full", 0x281fb3e2edf2706f),
+    ("flt_led_full", 0x458fb02687f0911b),
     // FM3 IN on LFO 2, QM IN on OP 6 (Task 17).
     ("flt_mod_repatched", 0xd0193d60eed2fa02),
     ("env_a", 0x6f15c442d71edf83),

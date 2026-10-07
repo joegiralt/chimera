@@ -118,7 +118,7 @@ pub(crate) fn fixed(buf: &mut FmtBuf, x: f32, places: u32, unit: &str) {
 }
 
 fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
-    use crate::dsp::modulator::law::Law;
+    use crate::dsp::modulator::law::{CUTOFF_HZ, Law};
     use core::fmt::Write;
     let round = |x: f32| libm::roundf(x) as i32;
     let bend = |buf: &mut FmtBuf, lo: &str, mid: &str, hi: &str| {
@@ -148,6 +148,17 @@ fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
                 fixed(buf, hz, 1, "Hz");
             } else {
                 let _ = write!(buf, "{} Hz", round(hz));
+            }
+        }
+        // Whole Hz under 1 kHz, then kHz to 3 figures.
+        Law::Cutoff => {
+            let hz = round(CUTOFF_HZ.at(v));
+            if hz < 1000 {
+                let _ = write!(buf, "{hz} Hz");
+            } else if hz < 9995 {
+                fixed(buf, hz as f32 / 1000.0, 2, "kHz");
+            } else {
+                fixed(buf, hz as f32 / 1000.0, 1, "kHz");
             }
         }
         _ => {

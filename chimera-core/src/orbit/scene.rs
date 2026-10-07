@@ -1079,7 +1079,7 @@ impl Block for SceneRing {
             let to = (f.rotate() as i16 + delta as i16).rem_euclid(f.steps().get() as i16);
             self.write(id, to as f32);
         } else {
-            self.set(id, self.get(id) + delta as f32 * s.step);
+            self.write(id, s.nudged(self.get(id), delta));
         }
     }
 
