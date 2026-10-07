@@ -134,17 +134,17 @@ fn tap_gain(m: usize, k: f32) -> f32 {
 }
 
 /// LADDER's steady bill over `OLD_LP24` (95), counted on the bench ELF
-/// (`ladder_probe`, `tools/loop_count.py`, 2026-10-07): LP4 121
-/// instructions a sample, 0 `vdiv` (five `tanh_poly`s), with the block's
-/// 1.88, ceil5(122.88 × 1.606 + 12 × 0.047) = 200; LP2 122, BP2 123, BP4
-/// 125, HP4 126: 200 to 210. Billed the costliest, 210 − 95.
-pub const LADDER_COST: Cost = Cost(115);
+/// (`ladder_probe`, `tools/loop_count.py`, 2026-10-07, with the input
+/// hold): LP4 123 instructions a sample, 0 `vdiv` (five `tanh_poly`s), with
+/// the block's 1.91, ceil5(124.91 × 1.606) = 205; LP2 126 and BP2 127,
+/// 210; BP4 129 and HP4 130, 215. Billed the costliest, 215 − 95.
+pub const LADDER_COST: Cost = Cost(120);
 /// The moving path over the steady one: one out-of-line loop for every
 /// mode (`moving`), `G` and `D` divided every sample (2 `vdiv`), the mix's
-/// five multiply-adds, `ramps`' fill (6.25) and the probe's block (1.6):
-/// 152 + 6.25 + 1.62 + 1.6 instructions, 2.016 `vdiv`, 285; less LP4's
-/// steady 200 (HP4's 210). Billed the larger, 85.
-pub const LADDER_MOVE_COST: Cost = Cost(85);
+/// five multiply-adds, the mode gain at each sample's `k`, `ramps`' fill
+/// (6.25) and the probe's block (1.59): 163 + 1.41 + 6.25 + 1.59
+/// instructions, 2.016 `vdiv`, 305; less LP4's steady 205. Billed 100.
+pub const LADDER_MOVE_COST: Cost = Cost(100);
 
 /// tanh to within 0.005 on ±3, flat at ±1 from ±3 where it is held: the
 /// odd degree-11 polynomial with `p(3) = 1`, `p′(3) = 0` that fits tanh
