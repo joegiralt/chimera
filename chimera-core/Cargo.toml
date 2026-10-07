@@ -30,6 +30,9 @@ test-support = []
 source-writer = []
 # Bench-only phase stamps inside ORBIT's block and the note handling.
 probe = []
+# The filter's static-cost probes (`dsp::filter::probe`) alone, for
+# `tools/loop_count.py`: none of `probe`'s stamps.
+filter-probe = []
 
 [dev-dependencies]
 # No default features: `--no-default-features` must reach the library too.

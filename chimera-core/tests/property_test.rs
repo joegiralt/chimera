@@ -245,6 +245,9 @@ fn prop_param_change_changes_output() {
             _ => match params_a.engine() {
                 EngineType::Algo => params_b.algo.ops[0].level = 99 - params_a.algo.ops[0].level,
                 EngineType::Modal => params_b.out.volume = params_a.out.volume * 0.2,
+                // ROOT an octave up: the note reads the rig's saw an octave
+                // down (START barely moves a loop of a periodic saw).
+                EngineType::Tape => params_b.tape.root = params_a.tape.root + 1_200.0,
             },
         }
 

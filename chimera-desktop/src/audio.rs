@@ -11,8 +11,7 @@ use chimera_core::note_queue::{
     InEvent, NoteDrain, NoteEvent, NoteKind, NoteProducer, NoteSources, SourceId,
 };
 use chimera_core::orbit::runner::{OrbitRunner, OrbitShared, OrbitView};
-use chimera_core::preset::Performance;
-use chimera_core::project::{LOAD_LINK, LoadGate, LoadLink};
+use chimera_core::project::{LOAD_LINK, LoadGate, LoadLink, Project};
 use chimera_core::scope::{ScopeFrame, ScopeWriter};
 use chimera_core::source_table::{AudioToken, SOURCE_TABLE};
 use chimera_core::triple::{TripleBuffer, Writer};
@@ -136,9 +135,9 @@ impl DesktopAudio {
     /// settings (`orbit` writes every field) to the audio thread through the
     /// triple buffer, and report any mixdown frames clamped since the last
     /// call.
-    pub fn update(&mut self, perf: &Performance, epoch: u32, orbit: impl FnOnce(&mut OrbitShared)) {
+    pub fn update(&mut self, project: &Project, epoch: u32, orbit: impl FnOnce(&mut OrbitShared)) {
         self.shared_audio.publish(|b| {
-            b.update_from(perf, epoch);
+            b.update_from_project(project, epoch);
             orbit(&mut b.orbit);
         });
         let clamped = self.shared.clamped.swap(0, Ordering::Relaxed);
@@ -226,21 +225,21 @@ impl Engine {
             view,
             sources,
         } = self;
-        // No TAPE voice yet: the block answers the source gate, holds none.
-        sources.idle_block();
-        if gate.before_block(link, inst, shared) {
-            let now = runner.now();
-            drain.drain(|src, ev| match ev {
-                // Capture sees the raw key, before any snap.
-                InEvent::Note(n) => {
-                    runner.live(n);
-                    inst.handle(n, shared);
-                }
-                InEvent::Rt(rt) => runner.realtime(src.index(), rt, now),
-            });
-            runner.block(inst, shared);
-        }
-        inst.render(fx, dac, shared, scope);
+        // TAPE's voices read the pool through the block's view.
+        inst.run_block(sources, (fx, dac, scope), shared, |inst, reads| {
+            if gate.before_block(link, inst, shared) {
+                let now = runner.now();
+                drain.drain(|src, ev| match ev {
+                    // Capture sees the raw key, before any snap.
+                    InEvent::Note(n) => {
+                        runner.live(n);
+                        inst.handle_with(n, shared, reads);
+                    }
+                    InEvent::Rt(rt) => runner.realtime(src.index(), rt, now),
+                });
+                runner.block_with(inst, shared, reads);
+            }
+        });
         view.publish(|v| runner.fill_view(v));
     }
 }
@@ -348,6 +347,7 @@ mod tests {
     }
 
     use super::*;
+    use chimera_core::preset::Performance;
 
     fn dac() -> DacOut {
         let mut d = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
@@ -442,12 +442,12 @@ mod tests {
     /// own Part plays it.
     #[test]
     fn each_card_boots_a_project_that_plays() {
-        use crate::store::DirStore;
         use chimera_core::project::test_support::{full, same};
         use chimera_core::project::{ProjectStatus, SaveTo, new_project_id, project_status};
         use chimera_core::storage::{Card, SystemSync};
         use chimera_core::ui::UiState;
         use chimera_core::ui::busy::ToastStep;
+        use chimera_desktop::store::DirStore;
 
         let base = std::env::temp_dir().join(format!("chimera-qa-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);

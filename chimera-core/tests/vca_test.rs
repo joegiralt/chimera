@@ -67,7 +67,9 @@ fn env2_on_the_vca_follows_its_contour() {
         let mut env = Envelope::new();
         env.note_on();
         let v = 100.0 / 127.0;
-        for blk in 0..80 {
+        // Unrouted, TAPE's key ends it (a loop has no end): compare while held.
+        let blocks = if e == EngineType::Tape { 50 } else { 80 };
+        for blk in 0..blocks {
             let mut g = [0.0f32; BLOCK_SIZE];
             env.run_block(
                 &p.envelopes[1],

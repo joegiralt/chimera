@@ -5,6 +5,7 @@
 
 use chimera_core::instrument::{AudioShared, Instrument};
 use chimera_core::note_queue::{NoteEvent, RealTime};
+use chimera_core::source_table::GateView;
 use chimera_core::ui::UiState;
 use stm32h7xx_hal::gpio::{Output, PB1, PushPull};
 
@@ -61,8 +62,8 @@ mod on {
             self.runner.realtime(src, rt, now);
         }
 
-        pub fn block(&mut self, inst: &mut Instrument, shared: &AudioShared) {
-            self.runner.block(inst, shared);
+        pub fn block(&mut self, inst: &mut Instrument, shared: &AudioShared, src: &GateView<'_>) {
+            self.runner.block_with(inst, shared, src);
         }
 
         /// The runner's view, for the UI.
@@ -118,7 +119,7 @@ mod off {
         /// Without ORBIT nothing follows a clock.
         pub fn realtime(&mut self, _: usize, _: RealTime, _: u64) {}
 
-        pub fn block(&mut self, _: &mut Instrument, _: &AudioShared) {}
+        pub fn block(&mut self, _: &mut Instrument, _: &AudioShared, _: &GateView<'_>) {}
 
         pub fn publish(&mut self) {}
     }

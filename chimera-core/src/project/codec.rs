@@ -34,15 +34,17 @@ use crate::preset::Sound;
 use crate::storage::{
     Check, DecodeInPlace, Event, FileError, FileKind, LoadError, MIGRATIONS, ReadTag, Ready,
     RecordBuf, RecordTag, RecordWriter, SoundCheck, TRANSLATIONS, decode_block, encode_block,
-    encode_sound, records_crc, source_file, source_file_min_len,
+    encode_sound, listed_zones, records_crc, source_file,
 };
 
 use super::arena::{ARENA_BYTES, Cost, MAX_SOURCES};
+use super::parts::new_part;
 use super::pool::{Pool, entry_len};
 use super::sources::{SourceId, SourceRef, ref_cost};
 use super::swap::{LoadLink, Swap};
-use super::template::{new_project_part, new_slot};
+use super::template::NEW_PARTS;
 use super::{EncodedSound, Origin, Part, PartId, PartSet, Project, SlotId};
+use crate::factory::factory_entries;
 use crate::preset::MAX_SOUNDS;
 use crate::storage::Side;
 
@@ -142,12 +144,7 @@ fn put_fx(w: &mut RecordWriter<'_>, fx: &FxParams) -> Result<(), StoreError> {
     Ok(())
 }
 
-fn put_slot(w: &mut RecordWriter<'_>, s: SlotId, sound: &Sound) -> Result<(), StoreError> {
-    put_context(w, RecordTag::Slot, s.index(), sound.name)?;
-    encode_sound(sound, w)
-}
-
-/// A pool slot: its bytes are the records `put_slot` would write.
+/// A pool slot: its bytes are the records `encode_sound` writes for it.
 fn put_encoded(
     w: &mut RecordWriter<'_>,
     s: SlotId,
@@ -160,8 +157,17 @@ fn put_encoded(
 fn put_part(w: &mut RecordWriter<'_>, i: usize, part: &Part) -> Result<(), StoreError> {
     put_context(w, RecordTag::Part, i, part.sound.name)?;
     encode_sound(&part.sound, w)?;
-    put_block(w, BlockRef::Part, &part.mix)?;
-    let origin = match part.origin {
+    put_part_end(w, &part.mix, part.origin)
+}
+
+/// A Part's records after its Sound's: the mix, then its `Origin`.
+fn put_part_end(
+    w: &mut RecordWriter<'_>,
+    mix: &PartParams,
+    origin: Origin,
+) -> Result<(), StoreError> {
+    put_block(w, BlockRef::Part, mix)?;
+    let origin = match origin {
         Origin::Slot { slot, .. } => [ORIGIN_SLOT, slot.index() as u8],
         Origin::Init(e) => [ORIGIN_INIT, e.disk_code()],
     };
@@ -204,7 +210,8 @@ pub fn encode_new_project(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
 // NEW's FX, slot Sounds, Parts and ORBIT song each in a frame of its own,
 // never nested in one (each holds its value whole): CLEAR's write is
 // reached through a pointer, so its depth is charged to every pointer call
-// (the stack check).
+// (the stack check). The factory Sounds go as the blob's bytes, which are
+// the records `encode_sound` writes for them: no Sound on the stack.
 #[inline(never)]
 fn put_new_fx(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     put_fx(w, &FxParams::default())
@@ -212,10 +219,8 @@ fn put_new_fx(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
 
 #[inline(never)]
 fn put_new_slots(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
-    for s in SlotId::ALL {
-        if let Some(sound) = new_slot(s) {
-            put_slot(w, s, &sound)?;
-        }
+    for (s, (_, bytes)) in SlotId::ALL.into_iter().zip(factory_entries()) {
+        put_encoded(w, s, EncodedSound::new(bytes))?;
     }
     Ok(())
 }
@@ -223,9 +228,30 @@ fn put_new_slots(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
 #[inline(never)]
 fn put_new_parts(w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     for i in 0..MAX_PARTS {
-        put_part(w, i, &new_project_part(i))?;
+        let new = NEW_PARTS
+            .get(i)
+            .and_then(|&s| Some((s, factory_entries().nth(s.index())?.1)));
+        let Some((slot, bytes)) = new else {
+            put_init_part(w, i)?;
+            continue;
+        };
+        let sound = EncodedSound::new(bytes);
+        put_context(w, RecordTag::Part, i, sound.name())?;
+        w.copy(sound.records())?;
+        let origin = Origin::Slot {
+            slot,
+            generation: 0,
+            crc: 0,
+        };
+        put_part_end(w, &PartParams::for_part(i), origin)?;
     }
     Ok(())
+}
+
+/// A NEW Part with no factory Sound: INIT, its Sound in a frame of its own.
+#[inline(never)]
+fn put_init_part(w: &mut RecordWriter<'_>, i: usize) -> Result<(), StoreError> {
+    put_part(w, i, &new_part(i))
 }
 
 #[inline(never)]
@@ -527,6 +553,9 @@ impl ProjectCheck {
         let planned = self.plan.sources & bit != 0;
         match t.pool.source_absent(r) {
             Some(id) if planned => self.to_read |= id.bit(),
+            Some(id) if self.plan.missing & bit != 0 => {
+                t.pool.mark_absent(id, super::Absence::NotOnCard)
+            }
             Some(_) => {}
             // No slot free: the ref is lost, and a save would drop it. A
             // ref the plan left out for room is counted already.
@@ -673,9 +702,10 @@ impl ProjectCheck {
 
     /// The plan of this side's pass 1, against the whole arena: the
     /// sources a Part plays, the slots by index, then the other sources,
-    /// each taken while it fits. A source not `present` on the card is
-    /// neither taken nor counted.
-    fn plan_load(&self, present: u32) -> Plan {
+    /// each taken while it fits, at its listed size (`zones`, a ref's
+    /// layout). A source not `present` on the card is neither taken nor
+    /// counted.
+    fn plan_load(&self, present: u32, zones: &[u8; MAX_SOURCES]) -> Plan {
         let c = self.costs();
         let mut left = ARENA_BYTES as u32;
         let refs = ((1u64 << c.n_refs) - 1) as u32;
@@ -691,7 +721,7 @@ impl ProjectCheck {
                 if (c.part_used & 1 << k != 0) != part || p.missing & 1 << k != 0 {
                     continue;
                 }
-                if take(left, ref_cost(r)) {
+                if take(left, ref_cost(r, zones[k])) {
                     p.sources |= 1 << k;
                 } else {
                     p.dropped_sources += 1;
@@ -867,12 +897,16 @@ impl DecodeInPlace for ProjectDecoder<'_> {
     /// waits for every voice to let go of its source. `Busy` when one
     /// doesn't: nothing is touched, and the caller still publishes.
     fn begin<S: Store>(&mut self, s: &mut S, r: &Ready) -> Result<(), LoadError> {
-        let mut present = 0u32;
+        let (mut present, mut zones) = (0u32, [0u8; MAX_SOURCES]);
         let refs = self.check.costs().refs();
         let listed = s.list(r.volume(), Dir::Tapes, &mut |name, size| {
             for (k, &x) in refs.iter().enumerate() {
-                if name == source_file(x) && source_file_min_len(x).is_some_and(|n| size >= n) {
+                if name != source_file(x) {
+                    continue;
+                }
+                if let Some(n) = listed_zones(x, size) {
                     present |= 1 << k;
+                    zones[k] = n;
                 }
             }
         });
@@ -880,7 +914,7 @@ impl DecodeInPlace for ProjectDecoder<'_> {
             Ok(()) | Err(StoreError::NotFound) => {}
             Err(e) => return Err(LoadError::Store(e)),
         }
-        self.check.plan = self.check.plan_load(present);
+        self.check.plan = self.check.plan_load(present, &zones);
         self.swap = self.link.map(LoadLink::bump);
         let acked = |s: &Swap| self.link.is_some_and(|l| l.acked(s.epoch()));
         if !self

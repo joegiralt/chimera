@@ -388,15 +388,7 @@ impl<D: Medium> FatStore<D> {
         vol: VolumeId,
         op: impl FnOnce(&mut Fs<'_, Part<'_, D>>, u32) -> FsResult<T, D>,
     ) -> Result<T, StoreError> {
-        self.dev.start_op();
-        self.read(0).map_err(|e| self.fault(&e))?;
-        let (lba, layout, now) = self.identify()?;
-        if now != vol {
-            return Err(StoreError::VolumeChanged(now));
-        }
-        let mut hint = self.hint.for_volume(now);
-        self.fat.keep_stale(self.stale.for_volume(now));
-        self.fat.keep_orphan(self.orphan.for_volume(now));
+        let (lba, layout, now, mut hint) = self.open_op(vol)?;
         let mut part = Part {
             dev: &self.dev,
             lba,
@@ -406,6 +398,31 @@ impl<D: Medium> FatStore<D> {
             &mut Fs::new(&mut part, layout, &mut self.fat, &mut self.buf, &mut hint),
             lba,
         );
+        self.close_op(now, hint);
+        r.map_err(|e| self.op_error(e))
+    }
+
+    /// `run`'s start, out of line: one copy for every op, not one each.
+    #[inline(never)]
+    fn open_op(
+        &mut self,
+        vol: VolumeId,
+    ) -> Result<(u32, Layout, VolumeId, Option<u32>), StoreError> {
+        self.dev.start_op();
+        self.read(0).map_err(|e| self.fault(&e))?;
+        let (lba, layout, now) = self.identify()?;
+        if now != vol {
+            return Err(StoreError::VolumeChanged(now));
+        }
+        let hint = self.hint.for_volume(now);
+        self.fat.keep_stale(self.stale.for_volume(now));
+        self.fat.keep_orphan(self.orphan.for_volume(now));
+        Ok((lba, layout, now, hint))
+    }
+
+    /// `run`'s end: what the op learned of the volume, kept for it.
+    #[inline(never)]
+    fn close_op(&mut self, now: VolumeId, hint: Option<u32>) {
         if let Some(c) = hint {
             self.hint.set(now, c);
         }
@@ -415,13 +432,17 @@ impl<D: Medium> FatStore<D> {
         if let Some(s) = self.fat.take_stale() {
             self.stale.set(now, s);
         }
-        r.map_err(|e| match e {
+    }
+
+    #[inline(never)]
+    fn op_error(&mut self, e: FsError<PartError<<D as BlockDevice>::Error>>) -> StoreError {
+        match e {
             FsError::Dev(PartError::Dev(e)) => self.fault(&e),
             FsError::Dev(PartError::Outside) | FsError::Corrupt => StoreError::Corrupt,
             FsError::NotFound => StoreError::NotFound,
             FsError::Full => StoreError::Full,
             FsError::Body(e) => e,
-        })
+        }
     }
 }
 
@@ -457,6 +478,16 @@ impl<D: Medium> Store for FatStore<D> {
         sink: &mut dyn ReadSink,
     ) -> Result<(), StoreError> {
         self.run(vol, |fs, _| fs.read(file, sink))
+    }
+
+    fn read_at(
+        &mut self,
+        vol: VolumeId,
+        file: FileName,
+        offset: u32,
+        sink: &mut dyn ReadSink,
+    ) -> Result<(), StoreError> {
+        self.run(vol, |fs, _| fs.read_at(file, offset, sink))
     }
 
     fn write(

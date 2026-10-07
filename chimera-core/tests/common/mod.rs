@@ -14,6 +14,7 @@ pub mod orbit;
 pub mod project;
 pub mod rig;
 pub mod sweep;
+pub mod tape;
 
 #[allow(unused_imports)] // each test binary uses some of these
 pub use inst_rig::InstRig;
@@ -26,6 +27,7 @@ use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::modal::{Halo, ModalEngine, ModalParams, Model, ResonatorMode, SymPool};
 use chimera_core::instrument::{AudioShared, Instrument};
+use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{MAX_MOD_SOURCES, ModSource, ModState};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, FilterParams, ParamSnapshot};
@@ -141,6 +143,7 @@ pub fn init_params(engine: EngineType) -> ParamSnapshot {
     match engine {
         EngineType::Algo => Sound::init(EngineType::Algo).params,
         EngineType::Modal => Sound::init(EngineType::Modal).params,
+        EngineType::Tape => Sound::init(EngineType::Tape).params,
     }
 }
 
@@ -198,6 +201,20 @@ pub fn routes(addr: ParamAddr, lfo: i8) -> ModState {
     }
     if let BlockRef::Env(s) = addr.block {
         ms.set_route_addr(ModSource::of_env(s).index(), CUTOFF, 127);
+    }
+    ms
+}
+
+/// Each `(source, addr, amount)` routed, its column primed.
+pub fn mods(routes: &[(ModSource, ParamAddr, i8)]) -> ModState {
+    let mut reg = ModDestRegistry::new();
+    for &(_, a, _) in routes {
+        let _ = reg.add(a, *b"TEST\0\0\0\0");
+    }
+    let mut ms = ModState::from_registry(&reg, MAX_MOD_SOURCES);
+    for &(s, a, amt) in routes {
+        let d = ms.find(a).unwrap();
+        ms.set_route(s.index(), d, amt);
     }
     ms
 }
@@ -341,7 +358,8 @@ pub fn spots(samples: &[f32]) -> [u32; 8] {
 /// expectation is written (spec § Testing "Engines").
 pub fn expects_sound(e: EngineType) -> bool {
     match e {
-        EngineType::Algo | EngineType::Modal => true,
+        // TAPE on a source; with none it plays nothing.
+        EngineType::Algo | EngineType::Modal | EngineType::Tape => true,
     }
 }
 

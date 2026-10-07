@@ -1,11 +1,13 @@
 mod common;
 use chimera_core::taps::TapRows;
+use common::tape::{OneSource, held_plain, saw_with_burst};
 use common::{SR, tri};
 
 use std::mem::MaybeUninit;
 
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::algo::algorithms::AlgoId;
+use chimera_core::dsp::engines::EngineCtx;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::dsp::modal::{ResonatorMode, SymPool};
 use chimera_core::dsp::voice::Voice;
@@ -14,6 +16,7 @@ use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 use chimera_core::modulation::ModState;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot};
+use chimera_core::source_table::GateView;
 use chimera_core::voice_alloc::VoiceIdx;
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 
@@ -121,6 +124,10 @@ fn fx_bus_built_in_place_processes_like_new() {
     }
 }
 
+fn ctx<'a>(sym: &'a mut SymPool, src: &'a GateView<'a>) -> EngineCtx<'a> {
+    EngineCtx { sym, src }
+}
+
 #[test]
 fn voice_built_in_place_renders_like_new_for_every_engine() {
     let modes = [
@@ -129,6 +136,7 @@ fn voice_built_in_place_renders_like_new_for_every_engine() {
         ResonatorMode::Bowed,
         ResonatorMode::Sympathetic,
     ];
+    let mut src = OneSource::new(&held_plain(&saw_with_burst(24_000, 1.0), 24_000));
     for engine in EngineType::ALL {
         for mode in modes {
             let mut params = ParamSnapshot::for_engine(engine);
@@ -138,12 +146,25 @@ fn voice_built_in_place_renders_like_new_for_every_engine() {
             let mut slot = poisoned::<Voice>();
             let b = Voice::init_in_place(&mut slot, SR, VoiceIdx::ALL[0]);
             let note = MidiNote::new(52).unwrap();
-            a.note_on(note, Velocity::DEFAULT, &params, &mut pa);
-            b.note_on(note, Velocity::DEFAULT, &params, &mut pb);
+            let (id, view) = (Some(src.id), src.view());
+            a.note_on(
+                note,
+                Velocity::DEFAULT,
+                &params,
+                id,
+                &mut ctx(&mut pa, &view),
+            );
+            b.note_on(
+                note,
+                Velocity::DEFAULT,
+                &params,
+                id,
+                &mut ctx(&mut pb, &view),
+            );
             let (mut xa, mut xb) = ([0.0f32; BLOCK_SIZE], [0.0f32; BLOCK_SIZE]);
             for block in 0..60 {
-                a.render(&mut xa, &params, &ModState::new(), &mut pa);
-                b.render(&mut xb, &params, &ModState::new(), &mut pb);
+                a.render(&mut xa, &params, &ModState::new(), &mut ctx(&mut pa, &view));
+                b.render(&mut xb, &params, &ModState::new(), &mut ctx(&mut pb, &view));
                 assert_eq!(
                     xa.map(f32::to_bits),
                     xb.map(f32::to_bits),

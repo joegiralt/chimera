@@ -22,7 +22,7 @@ Oyama (DAFx-26, paper 29, CC-BY 4.0) benchmarks Moog models against an ngspice B
 - **Resonance.** `k = 4·RES/0.95` (`k2040_k`), onset at RES 0.95. `TRIM_LADDER` = +20.8 cents on FREQ: the stages' saturators slow the ring at RES 1 by 20.2–21.4 cents over C2–C6 untrimmed (SPICE's ladder rings 19 cents flat at k = 4.3); trimmed it reads within ±0.6 cents, and so tracks 1 V/oct. The trim costs small-signal accuracy (below); dropping it is the circuit-faithful choice.
 - **No make-up gain.** DC gain `1/(1 + k)`, −14 dB at the onset, as the circuit has it (the owner's 2040 ruling).
 - **Modes.** From the stage outputs `y₀ = u … y₄` by Zavalishin's `s → s − 1` rule (§ 5.5), the Xpander approach; BP4 is his eq. 5.16, the rest derived by the rule: LP2 `y₂`, LP4 `y₄`, BP2 `y₁ − y₂`, BP4 `y₂ − 2y₃ + y₄`, HP4 `y₀ − 4y₁ + 6y₂ − 4y₃ + y₄`; LP4 the default, CLEAN's knob order. `modes_respond_as_derived` holds each to the analytic transfer function within 0.3 dB at RES 0 and ½ and checks slopes and peaks. Each mode's gain lerps in `k` from 0 dB at RES 0 (BP2 ×2, BP4 ×4) to its ring at LP4's level (LP2 and BP2 ×½) at the onset. A mode LADDER lacks plays LP4 (`ladder_index`, explicit).
-- **State.** LADDER and the 2040 share one slot, `enum Poles { K2040, Ladder }`: each type's states are read only by that type, and `hand_to` (a warm start) is the one way across. The voice chain stays **2,104 B**, under ADR 0101's 2,112. A change between them runs the old type on a stack copy, its stages carried in `Fade.carry`, as a VOICE flip does.
+- **State.** LADDER and the 2040 share one slot, `enum Poles { K2040, Ladder }`: each type's states are read only by that type, and `hand_to` (a warm start) is the one way across. `Poles` is 36 B with its tag; the voice chain measures **1,952 B** (`size_of`, on main with TAPE), under ADR 0101's 2,112. A slot each would add 32 B more. A change between them runs the old type on a stack copy, its stages carried in `Fade.carry`, as a VOICE flip does.
 - **Bills** (counted on the bench ELF, `ladder_probe`, `tools/loop_count.py`): steady LP4 123 instructions, 0 `vdiv`, 205 cycles; BP4 and HP4 129–130, 215. `LADDER_COST` 120 over `OLD_LP24`; `LADDER_MOVE_COST` 100 (2 `vdiv`, one out-of-line loop for every mode, the mode gain read at each sample's `k`). The research estimated 140–165 for the owner's Padé/cubic mix, which counted 165–170.
 - **Mode gain under modulation.** Each mode's gain follows each sample's `k`, so a Q tap rings every mode at LP4's level (review I1). The drive-scaled input is held to ±64 model units (`X_MAX`), so a NaN or infinite block can't reach HP4's `y₀` term.
 
@@ -36,7 +36,7 @@ Oyama (DAFx-26, paper 29, CC-BY 4.0) benchmarks Moog models against an ngspice B
 - **Lower-degree polynomials:** degree 7 or 9 flat at ±2.5 are monotone and divide-free but miss the drive sweep (0.95, 0.74 %); degree 9 flat at ±3 is not monotone.
 - **Cubic everywhere:** cheapest (~110–125), but Oyama's soft-clip row shows a wrong-shaped saturator in a distributed ladder is worse than boundary saturation.
 - **One divide-free Newton step per stage** (σ′ from the saturator, `1/(1 + g·σ′)` by its series): no better on the cutoff shift (40 against 38 cents); the shape, not the solve, was the error.
-- **A slot of its own for LADDER's state:** 32 B more, 2,136 B, past ADR 0101's bound.
+- **A slot of its own for LADDER's state:** 32 B more; past ADR 0101's bound when the chain measured 2,104 B (before TAPE's merge shrank it).
 - **Make-up gain at high RES:** overruled for the 2040; held here.
 
 ## Consequences

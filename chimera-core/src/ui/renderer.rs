@@ -10,6 +10,7 @@ use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::env::EnvRates;
 use crate::dsp::algo::params::AlgoOpParams;
 use crate::dsp::modulator::{EnvType, HoldPos};
+use crate::dsp::tape_engine::params::{TapeEngineParams, TapeModel};
 use crate::part::DacPair;
 use crate::perf::load::AudioStats;
 use crate::project::PartId;
@@ -94,6 +95,9 @@ pub struct Frame<'a> {
     pub orbit_focus: Option<orbit::Focus>,
     /// THEME's HINTS: gesture hints drawn (ADR 0086).
     pub hints: bool,
+    /// TAPE's strip: the active Part's source, and its newest note's heads.
+    pub strip: &'a crate::ui::tape_strip::Overview,
+    pub heads: crate::dsp::tape_engine::Heads,
 }
 
 impl Frame<'_> {
@@ -313,6 +317,18 @@ impl Renderer {
                     self.anim[slot].current(),
                 );
             }
+            VizType::Strip => {
+                let (model, p) = self.strip_params(f);
+                crate::ui::tape_strip::draw_strip(
+                    display,
+                    f.strip,
+                    model,
+                    &p,
+                    f.heads,
+                    theme::VIZ_LEFT,
+                    crate::ui::tape_strip::Y,
+                );
+            }
             VizType::OpEnv => {
                 if let Some((rates, lit)) = self.op_env(f) {
                     let (widths, heights) = viz::op_env(rates);
@@ -322,6 +338,24 @@ impl Renderer {
             }
             _ => viz::live_output(display, f.scope),
         }
+    }
+
+    /// The active Part's machine and its TAPE params, this page's as its
+    /// slots glide: the strip never snaps.
+    fn strip_params(&self, f: &Frame) -> (TapeModel, TapeEngineParams) {
+        let t = f.parts[f.active_part.index()].sound.params.tape;
+        let mut p = t;
+        for (i, anim) in self.anim.iter().enumerate().take(f.def.params.len()) {
+            let Some(a) = slot_addr(f.def, i, &f.ctx).filter(|a| a.block == BlockRef::TapeEngine)
+            else {
+                continue;
+            };
+            if let Some(s) = find_spec(a.block.specs(), a.param) {
+                let v = s.min + anim.current() * (s.max - s.min);
+                crate::block::Block::set(&mut p, a.param, v);
+            }
+        }
+        (t.model, p)
     }
 
     /// The focused operator's envelope rates, this page's from its animated
@@ -437,6 +471,11 @@ impl Renderer {
                 | VizType::OrbitNotes
                 | VizType::OrbitChords
                 | VizType::OrbitScenes => ([0; 6], 0),
+                VizType::Strip => {
+                    let (model, p) = self.strip_params(f);
+                    let key = crate::ui::tape_strip::key(f.strip, model, &p, f.heads);
+                    (region::quantize_values(&self.anim), key)
+                }
                 VizType::OpEnv => {
                     // AR D1R D2R 5 bits, D1L RR 4, the lit stage 3.
                     let key = self.op_env(f).map_or(0, |(r, lit)| {
@@ -495,7 +534,7 @@ impl Renderer {
                         display,
                         chain,
                         at,
-                        f.ctx.model,
+                        f.ctx.models(),
                         (self.branch_scroll.current() * theme::BRANCH_LINE_HEIGHT as f32) as i32,
                     );
                 }
@@ -570,6 +609,9 @@ impl Renderer {
             f.prime_status,
         );
         hint::focus(display, f.hint(view.hint()));
+        if let View::Source(view::SourceState::Card { cost, free, .. }) = view {
+            crate::ui::source_cell::draw_card_row(display, f.pool, cost, free, f.hints);
+        }
     }
 
     /// What an ORBIT viz draws, for its region's key; 0 on any other.
@@ -680,10 +722,15 @@ impl Renderer {
             let value = anim.current();
             let mut buf = FmtBuf::new();
             match v {
+                // The cell keeps a readout's first words: `POLY`, not
+                // `POLY (UNPITCHED)`; the focus band reads it whole.
                 View::Text { text, .. } => {
+                    let end = text.bytes().position(|b| b == b'(').unwrap_or(text.len());
+                    let text = text[..end].trim_end();
                     let _ = core::fmt::Write::write_str(&mut buf, text);
                 }
                 View::Orbit(cell) => buf = orbit::cell_text(cell, &f.orbit, f.ctx.ring),
+                View::Source(s) => s.cell(&mut buf),
                 _ => fmt::fmt_val(&mut buf, value, v.fmt()),
             }
             let c = components::Cell {
@@ -771,7 +818,14 @@ pub fn page_header(
     parts: &Parts,
 ) -> components::HeaderText {
     let suffix = ["", " / A", " / B"][title_type(def, &ctx.envs) as usize % 3];
-    components::header_text(head, def, ctx.model, ctx.kind, suffix, out_of(head, parts))
+    components::header_text(
+        head,
+        def,
+        ctx.models(),
+        ctx.kind,
+        suffix,
+        out_of(head, parts),
+    )
 }
 
 /// The OUT of the Part whose pages these are; P1 in SETTINGS.
@@ -810,6 +864,7 @@ pub fn look(f: &Frame, i: usize) -> components::Look {
                 None => components::Look::Absent,
             }
         }
+        View::Source(view::SourceState::Card { .. }) => components::Look::Dimmed,
         v if view::is_dimmed(&v, sound, &f.ctx) => components::Look::Dimmed,
         _ => components::Look::Live,
     }
@@ -833,6 +888,7 @@ fn value_text(f: &Frame, i: usize, v: f32) -> FmtBuf {
         View::Text { text, .. } => {
             let _ = core::fmt::Write::write_str(&mut buf, text);
         }
+        View::Source(s) => s.text(&mut buf),
         _ if look(f, i) == components::Look::Absent => {
             let _ = core::fmt::Write::write_str(&mut buf, "--");
         }

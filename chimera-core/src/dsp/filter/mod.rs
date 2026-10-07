@@ -12,7 +12,7 @@ pub mod dirty;
 pub mod k2040;
 pub mod ladder;
 pub mod level;
-#[cfg(any(test, feature = "probe"))]
+#[cfg(any(test, feature = "probe", feature = "filter-probe"))]
 pub mod probe;
 
 pub use clean::Clean;
@@ -220,11 +220,11 @@ impl FilterKind {
         }
     }
 
-    /// The TYPE a new Sound on `e` starts with. TAPE (CLEAN) and VA (2040)
-    /// add their arms when those engines land.
+    /// The TYPE a new Sound on `e` starts with. VA (2040) adds its arm when
+    /// that engine lands.
     pub const fn default_for(e: EngineType) -> FilterKind {
         match e {
-            EngineType::Algo | EngineType::Modal => FilterKind::Svf,
+            EngineType::Algo | EngineType::Modal | EngineType::Tape => FilterKind::Svf,
         }
     }
 
@@ -521,8 +521,9 @@ enum Half {
 pub const FADE_SAMPLES: usize = 2 * crate::hw::BLOCK_SIZE;
 
 /// The 2040's and LADDER's one slot: whichever of the two the filter last
-/// ran, its states in its own units. ADR 0101's chain holds one slot, not
-/// two (the tag makes it 2,108 B of 2,112). The only way between them is
+/// ran, its states in its own units. One slot, not two: 36 B with its
+/// tag, the voice chain 1,952 B of ADR 0101's 2,112. The only way between
+/// them is
 /// `hand_to`, which warm-starts the other type; a fade between them runs the
 /// old type on a stack copy, its stages carried, as a VOICE flip does.
 #[derive(Clone, Debug)]

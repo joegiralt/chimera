@@ -67,8 +67,15 @@ fn new_project_contents() {
             .to_sound()
             .bits_eq(&Sound::init(EngineType::Modal))
     );
-    assert_eq!(p.pool().sound_count(), 10);
-    assert_eq!(p.pool().first_free(), SlotId::new(10));
+    assert!(
+        p.pool()
+            .get(SlotId::ALL[10])
+            .unwrap()
+            .to_sound()
+            .bits_eq(&Sound::init(EngineType::Tape))
+    );
+    assert_eq!(p.pool().sound_count(), 11);
+    assert_eq!(p.pool().first_free(), SlotId::new(11));
     // Parts 1–5 on the init scene's factory Sounds, from their slots;
     // Part 6 on INIT Algo.
     for (id, slot) in PartId::ALL.into_iter().zip(NEW_PARTS) {
@@ -287,12 +294,12 @@ fn records_len(s: &Sound) -> usize {
     c.0 - HEADER_LEN - TRAILER_LEN
 }
 
-/// NEW's 8 factory Sounds and 2 INITs, each its 16 B name and its sparse
+/// NEW's 8 factory Sounds and 3 INITs, each its 16 B name and its sparse
 /// records, granule-rounded.
 #[test]
 fn new_pool_reads_its_cost() {
     let p = Project::boxed().0;
-    assert_eq!(p.pool().sound_count(), 10);
+    assert_eq!(p.pool().sound_count(), 11);
     let want: u32 = SlotId::ALL
         .into_iter()
         .filter_map(|s| p.pool().get(s))
@@ -415,11 +422,18 @@ fn overwrite_with_growth_refused_when_full() {
     let target = SlotId::ALL[10];
     let small = factory_sound(1).unwrap();
     p.pool_store(target, &small).unwrap();
-    // Fill the rest with worst-case Sounds until one is refused.
-    for s in SlotId::ALL.into_iter().skip(11) {
+    // Fill the rest with worst-case Sounds until one is refused, then the
+    // gap left with INITs, so what's free is under any one Sound's growth.
+    let mut rest = SlotId::ALL.into_iter().skip(11);
+    for s in rest.by_ref() {
         let mut x = Sound::init(EngineType::Algo);
         dense(&mut x, s.index() as u64);
         if p.pool_store(s, &x).is_err() {
+            break;
+        }
+    }
+    for s in rest {
+        if p.pool_store(s, &Sound::init(EngineType::Algo)).is_err() {
             break;
         }
     }

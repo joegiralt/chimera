@@ -3,6 +3,7 @@
 //! character.
 
 use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::dsp::algo::math::inv_sqrt;
 use crate::dsp::clampf;
 use crate::dsp::ease::{Ease, at, ease_coeff, step_of};
 use crate::dsp::{sin_turns, xorshift_noise};
@@ -205,7 +206,44 @@ impl Tap {
     pub fn base(&self) -> f32 {
         self.base
     }
+
+    /// TAPE's transport (spec 2026-10-04 § 2): run once a block, its
+    /// offsets' sum is the head's speed deviation in cents, not a delay to
+    /// differentiate, so the wow and the flutter move pitch directly, as a
+    /// capstan's do. Wow ±`TAPE_WOW_CENTS`·`tape`, flutter
+    /// ±`TAPE_FLUTTER_CENTS`·`tape`, every rate at `block_rate`; base 0,
+    /// built directly (`new` clamps a base to ≥ 1).
+    pub fn speed_cents(tape: f32, block_rate: f32) -> Tap {
+        let per = 1.0 / block_rate;
+        let jitter_coeff = core::f32::consts::TAU * JITTER_HZ * per;
+        Self {
+            base: 0.0,
+            wow: tape * TAPE_WOW_CENTS,
+            wow_rate: WOW_HZ * per,
+            flutter: tape * TAPE_FLUTTER_CENTS,
+            capstan_rate: CAPSTAN_HZ * per,
+            jitter_coeff,
+            jitter_gain: JITTER_RMS * inv_sqrt(jitter_coeff * (1.0 / 12.0)),
+        }
+    }
 }
+
+impl Tap {
+    /// The wow's rate, turns a tick.
+    pub fn wow_rate(&self) -> f32 {
+        self.wow_rate
+    }
+
+    /// A voice's wow at its own rate, turns a tick: its phase runs on, so
+    /// the pitch stays continuous.
+    pub fn set_wow_rate(&mut self, rate: f32) {
+        self.wow_rate = rate;
+    }
+}
+
+/// TAPE's depths at 1, cents (spec 2026-10-04 § 2).
+pub const TAPE_WOW_CENTS: f32 = 25.0;
+pub const TAPE_FLUTTER_CENTS: f32 = 8.0;
 
 /// The tape transport under MECHANICS: a slow wow plus an irregular
 /// flutter. Pure state; `TapeDelay` reads the line where it points.
@@ -231,6 +269,22 @@ impl Transport {
             capstan_phase: 0.0,
             jitter: [0.0; 2],
             rng: 0x2545_f491,
+        }
+    }
+
+    /// Its own strip of tape: phases and noise from `s`, spread by the
+    /// golden ratio, so voices seeded 0, 1, 2, … sit far apart on the wow.
+    pub fn seeded(s: u32) -> Self {
+        const PHI: f32 = 0.618_034;
+        let turn = |k: f32| {
+            let x = s as f32 * k;
+            x - libm::floorf(x)
+        };
+        Self {
+            wow_phase: turn(PHI),
+            capstan_phase: turn(PHI * PHI),
+            jitter: [0.0; 2],
+            rng: (s.wrapping_mul(0x9E37_79B9) ^ 0x2545_f491) | 1,
         }
     }
 

@@ -10,14 +10,14 @@ use chimera_hal::store::{Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use crate::name::ProjectName;
 use crate::storage::{
     AbFile, Card, CardEvent, CardFault, FileError, FileKind, Generation, HEADER_LEN, Header,
-    InPlaceError, LoadError, Outcome, ProjectId, Ready, RecordWriter, SaveError, Side, delete_ab,
-    held_len, load_ab_in_place, peek_header, read_source_into, save_ab,
+    InPlaceError, LoadError, Outcome, ProjectId, Ready, RecordWriter, SaveError, Side,
+    SourceReadError, delete_ab, held_len, load_ab_in_place, peek_header, read_source_into, save_ab,
 };
 
 use super::codec::encode_new_project;
 use super::note::{Differ, ProjectNote, Subject};
 use super::{
-    Confirmed, DeleteTarget, LoadLink, NEW_PROJECT_NAME, Origin, OverwriteTarget, PartId,
+    Absence, Confirmed, DeleteTarget, LoadLink, NEW_PROJECT_NAME, Origin, OverwriteTarget, PartId,
     PartStatus, Project, ProjectCheck, ProjectDecoder, ProjectFile, ProjectSource, Seen, SourceId,
     Swap, encode_project, part_status, project_crc,
 };
@@ -434,17 +434,20 @@ fn read_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: u32) -> (u
     for id in SourceId::ALL.into_iter().filter(|i| ids & i.bit() != 0) {
         let Some(e) = p.pool.source(id) else { continue };
         if fault {
+            p.pool.mark_absent(id, Absence::ReadFailed);
             unread = unread.saturating_add(1);
             continue;
         }
+        let mut room = false;
         let got = match held_len(e.r) {
             Some(len) => {
                 p.pool
                     .source_fill(id, len, |out| match read_source_into(s, r, e.r, out) {
-                        Ok(_) => true,
+                        Ok(held) => Some(held),
                         Err(err) => {
                             fault = err.store_error().is_some();
-                            false
+                            room = err == SourceReadError::NoRoom;
+                            None
                         }
                     })
             }
@@ -452,7 +455,14 @@ fn read_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: u32) -> (u
         };
         match got {
             Ok(true) => {}
-            Ok(false) => unread = unread.saturating_add(1),
+            // Whole on the card, more than the gap: it didn't fit.
+            Ok(false) if room => missed = missed.saturating_add(1),
+            Ok(false) => {
+                if fault {
+                    p.pool.mark_absent(id, Absence::ReadFailed);
+                }
+                unread = unread.saturating_add(1)
+            }
             Err(_) => missed = missed.saturating_add(1),
         }
     }

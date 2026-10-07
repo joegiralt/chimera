@@ -1,6 +1,6 @@
 //! Static-cost probes (spec § Cost): each runs one block of one path,
 //! `#[inline(never)]`, so `tools/loop_count.py` finds its loops by name in the
-//! bench ELF. The bench's `FILTER_PROBES` keeps them linked.
+//! `filter-probes` ELF, whose `FILTER_PROBES` keeps them linked.
 //!
 //! Today's LP24 before CLEAN, `old_lp24_probe`, counted `OLD_LP24` at
 //! 22ea0dc0 (plan § Measured) and went with `SvfFilter`.

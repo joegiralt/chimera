@@ -121,10 +121,10 @@ fn init_rows_end_the_list_and_load() {
         theme::ACCENT,
         "last visible row selected"
     );
-    feed(&mut ui, Input::press(ButtonId::Edit)); // the last of the two INIT rows
+    feed(&mut ui, Input::press(ButtonId::Edit)); // the last of the INIT rows
     assert_eq!(
         ui.project().part(PartId::ALL[1]).sound.engine(),
-        EngineType::Modal
+        EngineType::Tape
     );
 }
 

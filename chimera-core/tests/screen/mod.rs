@@ -8,8 +8,11 @@
 
 use chimera_core::clock_plan::SiliconRev;
 use chimera_core::dsp::filter::{FilterKind, FilterMode};
+use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
+use chimera_core::dsp::tape_engine::wave::frame_len;
+use chimera_core::dsp::tape_engine::{Heads, SliceCode};
 use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
-use chimera_core::instrument::{AudioShared, Instrument};
+use chimera_core::instrument::{AudioShared, Instrument, PartHeads};
 use chimera_core::name::ProjectName;
 use chimera_core::orbit::engine::OrbitEvent;
 use chimera_core::orbit::runner::{OrbitRunner, OrbitView, orbit_buffer};
@@ -23,7 +26,9 @@ use chimera_core::project::{
 };
 use chimera_core::reset::ResetCause;
 use chimera_core::scope::SCOPE_LEN;
+use chimera_core::storage::twelve::pack12;
 use chimera_core::storage::{Card, SystemSettings, SystemSync};
+use chimera_core::storage::{SourceRef, TapeSource};
 use chimera_core::triple::{Reader, TripleBuffer, Writer};
 use chimera_core::ui::UiState;
 use chimera_core::ui::animation::UiTick;
@@ -715,6 +720,164 @@ pub fn load_init(ui: &mut UiState, engine: EngineType) {
     }
 }
 
+/// TAPE's init on Part 1, at DECK, MODEL turned `by` from LOOP.
+pub fn tape_deck(ui: &mut UiState, by: i8) {
+    load_init(ui, EngineType::Tape);
+    plus(ui, 1); // SRC · DECK
+    if by != 0 {
+        feed(ui, Input::turn(EncoderId::A, by));
+    }
+}
+
+/// Samples as the arena holds them: a descriptor, then 12 bits each.
+fn held(shape: Shape, count: u8, rate: u16, x: &[f32]) -> Vec<u8> {
+    let d = Descriptor {
+        shape,
+        count,
+        rate,
+        head_frames: 0,
+    };
+    let s: Vec<i16> = x
+        .iter()
+        .map(|&v| (chimera_core::dsp::clampf(v, -1.0, 1.0) * 2047.0).round() as i16)
+        .collect();
+    let mut h = d.to_bytes().to_vec();
+    h.resize(DESC_LEN + 3 * s.len().div_ceil(2), 0);
+    pack12(&s, &mut h[DESC_LEN..]);
+    h
+}
+
+/// The strip's source, held in the pool and on Part 1's Sound: two
+/// plucks, 1.5 s at 24 kHz; or (`wave`) a transwave of 8 frames, each
+/// louder than the last.
+pub fn strip_source(ui: &mut UiState, wave: bool) {
+    let (shape, count, rate, x): (_, _, u16, Vec<f32>) = if wave {
+        let len = frame_len(512) as usize;
+        let x = (0..8 * len)
+            .map(|i| {
+                (0.3 + 0.1 * (i / len) as f32) * (i as f32 * core::f32::consts::FRAC_PI_4).sin()
+            })
+            .collect();
+        (Shape::Transwave, 8, 48_000, x)
+    } else {
+        let x = (0..36_000)
+            .map(|i| {
+                let t = i as f32 / 24_000.0;
+                let env = (-5.0 * t).exp()
+                    + if t < 0.75 {
+                        0.0
+                    } else {
+                        0.8 * (-5.0 * (t - 0.75)).exp()
+                    };
+                0.95 * env * (core::f32::consts::TAU * 180.0 * t).sin()
+            })
+            .collect();
+        (Shape::Plain, 1, 24_000, x)
+    };
+    let r = SourceRef {
+        crc: 0x5791_0001 + u32::from(wave),
+        frames: x.len() as u32,
+        rate,
+    };
+    let held = held(shape, count, rate, &x);
+    ui.project_mut().source_store(r, &held).unwrap();
+    ui.project_mut().edit_part(PartId::ALL[0]).sound.source = Some(TapeSource { r, tune: None });
+}
+
+/// What SOURCE's card goldens do once SOURCE is on the CHOIR's row.
+#[derive(Clone, Copy, PartialEq)]
+pub enum CardRow {
+    /// Shown: its name, the hint, the meter's preview.
+    On,
+    /// The pool filled first: WON'T FIT in ALERT.
+    Full,
+    /// MIX + PLUS, every pass: the Part plays it, named.
+    Loaded,
+    /// MIX + PLUS, then the card gone: CARD READ FAILED.
+    Failed,
+}
+
+/// TAPE's init on Part 1 at SRC, the CHOIR (1.2 s at 24 kHz, 41K) on the
+/// card, and SOURCE turned onto its row; then `then`.
+pub fn src_card(ui: &mut UiState, then: CardRow) {
+    use chimera_core::name::SoundName;
+    use chimera_core::storage::{SourceHead, WholeShape, source_crc, write_source};
+    load_init(ui, EngineType::Tape);
+    let x: Vec<f32> = (0..27_648)
+        .map(|i| {
+            let t = i as f32 / 24_000.0;
+            let swell = (core::f32::consts::PI * t / 1.152).sin();
+            0.8 * swell * (core::f32::consts::TAU * 220.0 * t).sin()
+        })
+        .collect();
+    let h = held(Shape::Plain, 1, 24_000, &x);
+    let data = &h[DESC_LEN..];
+    let head = SourceHead {
+        sref: SourceRef {
+            crc: source_crc(WholeShape::Plain, 1, data),
+            frames: x.len() as u32,
+            rate: 24_000,
+        },
+        shape: Shape::Plain,
+        count: 1,
+        root: 5_700,
+        period_q16: 109 << 16,
+        name: SoundName::new("CHOIR").unwrap(),
+    };
+    let mut s = MemStore::new(1);
+    let w = Card::new().run(&mut s, |s, r| write_source(s, r, &head, data));
+    w.unwrap().result.unwrap();
+    if then == CardRow::Full {
+        strip_source(ui, false);
+        strip_source(ui, true);
+        let mut crc = 0x0F11_0000;
+        while ui.project().pool().free().bytes() > 40_000 {
+            let r = SourceRef {
+                crc,
+                frames: 20_000,
+                rate: 24_000,
+            };
+            let x = vec![0.0; 20_000];
+            ui.project_mut()
+                .source_store(r, &held(Shape::Plain, 1, 24_000, &x))
+                .unwrap();
+            crc += 1;
+        }
+    }
+    let mut r = Rig::new(ui, s);
+    r.feed(Input::turn(EncoderId::A, 100)); // the card's row, the last
+    r.work(); // its head
+    match then {
+        CardRow::On | CardRow::Full => {}
+        CardRow::Loaded => {
+            feed(r.ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
+            while r.ui.card_pending() {
+                r.work();
+            }
+        }
+        CardRow::Failed => {
+            feed(r.ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
+            r.work();
+            r.s.eject();
+            r.work();
+        }
+    }
+}
+
+/// TAPE's init on Part 1 with the strip's source, at DECK, MODEL turned
+/// `by` from LOOP, the audio's heads `heads`.
+pub fn tape_strip(ui: &mut UiState, by: i8, heads: Heads) {
+    load_init(ui, EngineType::Tape);
+    strip_source(ui, by == 3);
+    plus(ui, 1); // SRC · DECK
+    if by != 0 {
+        feed(ui, Input::turn(EncoderId::A, by));
+    }
+    let from: &'static PartHeads = Box::leak(Box::new(PartHeads::new()));
+    from.publish(0, heads);
+    ui.hear_heads(from);
+}
+
 /// The OSC node's index on the Algo chain.
 pub fn osc_node() -> usize {
     use chimera_core::ui::block_registry::{ALGO_CHAIN, ALGO_WAVE};
@@ -759,10 +922,11 @@ pub fn to_osc_sub(ui: &mut UiState, def: &chimera_core::ui::block_def::BlockDef)
 /// From Part 1's first node, on to the engine's node and EDIT down its
 /// sub-list to PIT.
 pub fn to_pitch(ui: &mut UiState, engine: EngineType) {
-    use chimera_core::ui::block_registry::{ALGO_CHAIN, MODAL_PLUCK_CHAIN, PITCH};
+    use chimera_core::ui::block_registry::{ALGO_CHAIN, MODAL_PLUCK_CHAIN, PITCH, TAPE_CHAIN};
     let chain = match engine {
         EngineType::Algo => &ALGO_CHAIN,
         EngineType::Modal => &MODAL_PLUCK_CHAIN,
+        EngineType::Tape => &TAPE_CHAIN,
     };
     let node = chain.engine_node();
     plus(ui, node);
@@ -1100,6 +1264,156 @@ pub const CASES: &[ScreenCase] = &[
         to_pitch(ui, EngineType::Modal);
         feed(ui, Input::turn(EncoderId::A, -12)); // PITCH -12, focused
     }),
+    ("tape_pitch_musical", |ui| {
+        load_init(ui, EngineType::Tape);
+        to_pitch(ui, EngineType::Tape);
+        feed(ui, Input::turn(EncoderId::E, 1)); // SNAP MUSICAL
+        feed(ui, Input::turn(EncoderId::A, 3)); // PITCH +19, focused
+    }),
+    // TAPE's pages (TAPE Task 15): SRC, then DECK and the model page per
+    // machine, MODEL turned from LOOP (index 1).
+    ("tape_src", |ui| load_init(ui, EngineType::Tape)),
+    // A source the pool doesn't hold: SOURCE MISSING, focused.
+    ("tape_src_missing", |ui| {
+        load_init(ui, EngineType::Tape);
+        let r = chimera_core::storage::SourceRef {
+            crc: 0x5EED,
+            frames: 36_000,
+            rate: 24_000,
+        };
+        ui.project_mut()
+            .edit_part(chimera_core::project::PartId::ALL[0])
+            .sound
+            .source = Some(chimera_core::storage::TapeSource { r, tune: None });
+        feed(ui, Input::turn(EncoderId::A, 1));
+    }),
+    ("tape_deck_oneshot", |ui| tape_deck(ui, -1)),
+    ("tape_page_oneshot", |ui| {
+        tape_deck(ui, -1);
+        feed(ui, Input::press(ButtonId::Edit));
+    }),
+    ("tape_deck_loop", |ui| tape_deck(ui, 0)),
+    ("tape_page_loop", |ui| {
+        tape_deck(ui, 0);
+        feed(ui, Input::press(ButtonId::Edit));
+    }),
+    ("tape_deck_tron", |ui| tape_deck(ui, 1)),
+    ("tape_page_tron", |ui| {
+        tape_deck(ui, 1);
+        feed(ui, Input::press(ButtonId::Edit));
+    }),
+    ("tape_deck_stretch", |ui| tape_deck(ui, 2)),
+    ("tape_page_stretch", |ui| {
+        tape_deck(ui, 2);
+        feed(ui, Input::press(ButtonId::Edit));
+    }),
+    // An unpitched source's TYPE in focus: too wide for the numerals.
+    ("tape_page_stretch_type", |ui| {
+        tape_deck(ui, 2);
+        feed(ui, Input::press(ButtonId::Edit));
+        feed(ui, Input::turn(EncoderId::B, 1));
+    }),
+    ("tape_deck_transwave", |ui| tape_deck(ui, 3)),
+    ("tape_page_transwave", |ui| {
+        tape_deck(ui, 3);
+        feed(ui, Input::press(ButtonId::Edit));
+    }),
+    ("tape_deck_scrub", |ui| tape_deck(ui, 4)),
+    ("tape_page_scrub", |ui| {
+        tape_deck(ui, 4);
+        feed(ui, Input::press(ButtonId::Edit));
+    }),
+    ("tape_deck_pingpong", |ui| tape_deck(ui, 5)),
+    ("tape_page_pingpong", |ui| {
+        tape_deck(ui, 5);
+        feed(ui, Input::press(ButtonId::Edit));
+    }),
+    // The strip (TAPE Task 16): each machine over the plucks (a transwave
+    // for TRANSWAVE), with the heads the audio would store.
+    ("tape_strip_oneshot", |ui| {
+        tape_strip(ui, -1, Heads::new(9_000, None))
+    }),
+    // A loop's fade: the second head plays on.
+    ("tape_strip_loop", |ui| {
+        tape_strip(ui, 0, Heads::new(20_000, Some(2_000)))
+    }),
+    ("tape_strip_tron", |ui| {
+        tape_strip(ui, 1, Heads::new(6_000, Some(30_000)))
+    }),
+    ("tape_strip_stretch", |ui| {
+        tape_strip(ui, 2, Heads::new(12_000, Some(13_200)))
+    }),
+    ("tape_strip_transwave", |ui| {
+        tape_strip(ui, 3, Heads::new(2, Some(3)))
+    }),
+    ("tape_strip_scrub", |ui| {
+        tape_strip(ui, 4, Heads::new(16_000, None));
+        let p = chimera_core::project::PartId::ALL[0];
+        ui.project_mut().edit_part(p).sound.params.tape.position = 0.4; // FINGER
+    }),
+    ("tape_strip_pingpong", |ui| {
+        tape_strip(ui, 5, Heads::new(25_000, None))
+    }),
+    // END before START on SRC: LOOP plays reversed.
+    ("tape_strip_loop_reversed", |ui| {
+        tape_strip(ui, 0, Heads::new(20_000, None));
+        feed(ui, Input::press(ButtonId::Minus)); // SRC
+        feed(ui, Input::turn(EncoderId::B, 100)); // START
+        feed(ui, Input::turn(EncoderId::C, -80)); // END
+    }),
+    // SLICE 5 on the model page, back on DECK.
+    ("tape_strip_oneshot_slice", |ui| {
+        tape_strip(ui, -1, Heads::new(10_000, None)); // in slice 5
+        feed(ui, Input::press(ButtonId::Edit));
+        feed(ui, Input::turn(EncoderId::A, 6));
+        tap(ui, ButtonId::Seq);
+    }),
+    // END before START: ONESHOT's slice 5 counts from START, PING-PONG
+    // plays its sorted window.
+    ("tape_strip_oneshot_slice_reversed", |ui| {
+        tape_strip(ui, -1, Heads::NONE);
+        let p = &mut ui
+            .project_mut()
+            .edit_part(chimera_core::project::PartId::ALL[0])
+            .sound
+            .params
+            .tape;
+        (p.start, p.end, p.slice) = (0.9, 0.1, SliceCode::new(6));
+    }),
+    ("tape_strip_pingpong_reversed", |ui| {
+        tape_strip(ui, 5, Heads::new(20_000, None));
+        let p = &mut ui
+            .project_mut()
+            .edit_part(chimera_core::project::PartId::ALL[0])
+            .sound
+            .params
+            .tape;
+        (p.start, p.end, p.size) = (0.9, 0.1, 0.8);
+    }),
+    // No note: TRON's LENGTH 0 (0.25 s) at ROOT.
+    ("tape_strip_tron_idle", |ui| {
+        tape_strip(ui, 1, Heads::NONE);
+        let p = &mut ui
+            .project_mut()
+            .edit_part(chimera_core::project::PartId::ALL[0])
+            .sound
+            .params
+            .tape;
+        p.size = 0.0;
+    }),
+    // SRC on a pool row, SOURCE focused.
+    ("tape_src_pool", |ui| {
+        load_init(ui, EngineType::Tape);
+        strip_source(ui, false);
+        feed(ui, Input::turn(EncoderId::A, 0));
+    }),
+    // SOURCE on a card row (TAPE Task 17): CHOIR's name and cost, MIX +
+    // PLUS's hint and the meter's preview; full, WON'T FIT; loaded, the
+    // Part plays it; the card gone mid-load, CARD READ FAILED.
+    ("tape_src_card", |ui| src_card(ui, CardRow::On)),
+    ("tape_src_wont_fit", |ui| src_card(ui, CardRow::Full)),
+    ("tape_src_loaded", |ui| src_card(ui, CardRow::Loaded)),
+    ("tape_src_read_failed", |ui| src_card(ui, CardRow::Failed)),
     ("modal_exc", |ui| load_init(ui, EngineType::Modal)), // PLUCK: EXCITE, COLOR
     ("modal_exc_bank", |ui| {
         load_init(ui, EngineType::Modal);

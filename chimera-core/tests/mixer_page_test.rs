@@ -75,7 +75,7 @@ fn mixer_chain_is_part_sends_and_fx() {
     // TAPE before MASTER only with `master-tape` (ADR 0055).
     let want: &[&str] = if cfg!(feature = "master-tape") {
         &[
-            "Part", "Sends", "Chorus", "Delay", "Reverb", "Tape", "Master",
+            "Part", "Sends", "Chorus", "Delay", "Reverb", "Reel", "Master",
         ]
     } else {
         &["Part", "Sends", "Chorus", "Delay", "Reverb", "Master"]

@@ -233,6 +233,11 @@ impl ArenaWriter {
         self.snd_start = ARENA_BYTES as u32;
     }
 
+    /// Where the next source's row starts: the gap's bottom.
+    pub fn src_end(&self) -> u32 {
+        self.src_end
+    }
+
     /// Where the next source goes: `len` bytes at the bottom of the gap to
     /// stage and verify before `source_alloc` publishes them.
     pub fn source_stage(&mut self, len: usize) -> Result<&mut [u8], Refused> {

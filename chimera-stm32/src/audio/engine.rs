@@ -14,7 +14,7 @@ use chimera_core::note_queue::{InEvent, NoteDrain, NoteSources};
 use chimera_core::part::DacPair;
 use chimera_core::project::{LOAD_LINK, LoadGate};
 use chimera_core::scope::{ScopeFrame, ScopeWriter};
-use chimera_core::source_table::{AudioToken, SOURCE_TABLE};
+use chimera_core::source_table::AudioToken;
 use chimera_core::triple::{Reader, Writer};
 
 use super::dma;
@@ -76,6 +76,7 @@ pub fn init(
     notes: NoteDrain<'static, NOTE_SOURCES>,
     scope: Writer<ScopeFrame>,
     orbit: crate::orbit::Runner,
+    mut sources: AudioToken,
 ) {
     if ENGINE_TAKEN.swap(true, Ordering::AcqRel) {
         return;
@@ -98,10 +99,9 @@ pub fn init(
             gate: LoadGate::new(),
             orbit,
             sources: {
-                let mut t = SOURCE_TABLE.reader().expect("the source reader, once");
                 // One block a half (ADR 0099's drain wait).
-                t.set_period_us(BLOCK_SIZE as u32 * 1_000_000 / SAMPLE_RATE);
-                t
+                sources.set_period_us(BLOCK_SIZE as u32 * 1_000_000 / SAMPLE_RATE);
+                sources
             },
         });
     }
@@ -129,21 +129,24 @@ pub fn render_half(half: Half) {
     // this is the only live reference to `ENGINE`.
     let e = unsafe { (*addr_of_mut!(ENGINE)).assume_init_mut() };
     let shared = e.shared.read();
-    // No TAPE voice yet: the block acks the source gate, and holds none.
-    e.sources.idle_block();
-    if e.gate.before_block(&LOAD_LINK, e.inst, shared) {
-        let now = e.orbit.now();
-        e.notes.drain(|src, ev| match ev {
-            // Capture sees the raw key, before any snap.
-            InEvent::Note(n) => {
-                e.orbit.live(n);
-                e.inst.handle(n, shared);
+    // TAPE's voices read the pool through the block's view.
+    let (gate, notes, orbit) = (&mut e.gate, &mut e.notes, &mut e.orbit);
+    let out = (&mut *e.fx, &mut e.dac, &mut e.scope);
+    e.inst
+        .run_block(&mut e.sources, out, shared, |inst, reads| {
+            if gate.before_block(&LOAD_LINK, inst, shared) {
+                let now = orbit.now();
+                notes.drain(|src, ev| match ev {
+                    // Capture sees the raw key, before any snap.
+                    InEvent::Note(n) => {
+                        orbit.live(n);
+                        inst.handle_with(n, shared, reads);
+                    }
+                    InEvent::Rt(rt) => orbit.realtime(src.index(), rt, now),
+                });
+                orbit.block(inst, shared, reads);
             }
-            InEvent::Rt(rt) => e.orbit.realtime(src.index(), rt, now),
         });
-        e.orbit.block(e.inst, shared);
-    }
-    e.inst.render(e.fx, &mut e.dac, shared, &mut e.scope);
     e.orbit.publish();
     #[cfg(feature = "perf-probe")]
     {

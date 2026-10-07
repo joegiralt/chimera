@@ -166,6 +166,18 @@ pub trait Store {
         file: FileName,
         sink: &mut dyn ReadSink,
     ) -> Result<(), StoreError>;
+    /// `read` from byte `offset` (a card-row load's 4 KiB a pass): `begin`
+    /// gets the bytes from there on. A store that can't seek says `Io`, so
+    /// a load fails loudly and never plays the wrong audio.
+    fn read_at(
+        &mut self,
+        _vol: VolumeId,
+        _file: FileName,
+        _offset: u32,
+        _sink: &mut dyn ReadSink,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Io)
+    }
     /// Replaces the file; returns the bytes written. What `body` put before an
     /// `Err` stays: not atomic, so callers needing atomicity write the side
     /// nobody reads. A `file.dir()` that was never made is `NotFound`.

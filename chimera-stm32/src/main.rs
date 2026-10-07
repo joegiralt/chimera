@@ -3,6 +3,18 @@
 
 #[cfg(all(feature = "bench", feature = "sd-probe"))]
 compile_error!("bench and sd-probe both take over after boot: pick one");
+#[cfg(all(
+    feature = "bench",
+    not(any(
+        feature = "bench-algo",
+        feature = "bench-routing",
+        feature = "bench-memory",
+        feature = "bench-stress",
+        feature = "bench-orbit",
+        feature = "bench-tape"
+    ))
+))]
+compile_error!("the bench needs an area: bench-algo, -routing, -memory, -stress, -orbit or -tape");
 // The lost-cluster sweep frees only on the owner's go (#360, ADR 0094):
 // until then the boot runs it dry. Only the commit that enables freeing
 // removes this line.
@@ -26,6 +38,8 @@ mod clocks;
 mod controls;
 mod dfu;
 mod display;
+#[cfg(feature = "filter-probes")]
+mod filter_probes;
 #[cfg(all(feature = "midi-din", not(feature = "sd-probe")))]
 mod midi_din;
 #[cfg(not(feature = "sd-probe"))]
@@ -377,12 +391,19 @@ fn synth(board: Board) -> ! {
     display.flush();
     marker.stage(BootStage::Card);
     let perf = PerfTracker::new();
+    // The audio's one source reader, taken once the boot's source passes
+    // are done (they move without waiting while none is out); the bench
+    // reads the pool through it before the engine does.
+    #[cfg_attr(not(feature = "bench"), allow(unused_mut))]
+    let mut sources = chimera_core::source_table::SOURCE_TABLE
+        .reader()
+        .expect("the source reader, once");
     // The bench's screens as text, kept for the console's `bench`.
     #[cfg(feature = "bench")]
     #[cfg_attr(not(feature = "usb-console"), allow(unused_variables))]
     let bench_text = {
         let report = bench::take_report().expect("bench report taken once");
-        bench::run(&mut display, clk, ui.project_mut(), report);
+        bench::run(&mut display, clk, (ui.project_mut(), &mut sources), report);
         let report: &'static chimera_core::console::Report<{ bench::BENCH_TEXT_LEN }> = report;
         Some(report.as_str())
     };
@@ -411,6 +432,7 @@ fn synth(board: Board) -> ! {
         notes,
         scope_w,
         orbit_runner,
+        sources,
     );
 
     let pll3 = pll3_for(clocks::HSE_HZ, chimera_hal::SAMPLE_RATE, clk.rev);
@@ -596,7 +618,7 @@ fn tend_usb(
 #[cfg(not(feature = "sd-probe"))]
 #[inline(never)]
 fn publish(b: &mut chimera_core::instrument::AudioShared, ui: &chimera_core::ui::UiState) {
-    b.update_from(ui.project().perf(), LOAD_LINK.epoch());
+    b.update_from_project(ui.project(), LOAD_LINK.epoch());
     orbit::publish(ui, b);
 }
 
