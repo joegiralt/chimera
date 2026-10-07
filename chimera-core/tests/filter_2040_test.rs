@@ -451,7 +451,6 @@ fn kind_codes_round_trip() {
     assert_eq!(FilterKind::K2040.modes(), [FilterMode::Lp24]);
     assert_eq!(FilterKind::K2040.default_mode(), FilterMode::Lp24);
     assert_eq!(FilterKind::K2040.mode_labels(), ["LP4"]);
-    assert_eq!(FilterKind::K2040.key_default(), 0);
     for v in VOICES {
         let mut s = Sound::init(EngineType::Algo);
         s.params.filter.set_kind(FilterKind::K2040);

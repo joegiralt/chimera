@@ -60,7 +60,7 @@ fn voice_costs_are_the_billed_literals() {
 }
 
 /// The SVF at LP24, the default: the engine terms already carry it.
-const LP24: Cost = FilterKind::Svf.cost(FilterMode::Lp24, K2040Voice::Rev2);
+const LP24: Cost = FilterKind::Svf.cost(K2040Voice::Rev2);
 
 /// Every built (TYPE, MODE, VOICE) bills `max(0, cycles − OLD_LP24)`, as
 /// counted on the bench ELF (plan § Measured, Task 15): CLEAN 35–80 and
@@ -77,7 +77,7 @@ fn filter_bills_each_type_and_mode() {
                     (K::K2040, K2040Voice::Rev2) => 15,
                     (K::K2040, K2040Voice::Exp) => 40,
                 };
-                assert_eq!(k.cost(m, v), Cost(want), "{k:?} {m:?} {v:?}");
+                assert_eq!(k.cost(v), Cost(want), "{k:?} {m:?} {v:?}");
                 let mut p = chimera_core::params::FilterParams::default();
                 p.set_kind(k);
                 assert!(p.set_mode(m));
@@ -89,8 +89,8 @@ fn filter_bills_each_type_and_mode() {
     }
     assert_eq!(seen, (8 + 1 + 4) * 2, "every built pair, each VOICE");
     // Over OLD_LP24 (95): the 2040's steady counts with the block.
-    assert!(K::K2040.cost(FilterMode::Lp24, K2040Voice::Rev2) >= Cost(110 - 95));
-    assert!(K::K2040.cost(FilterMode::Lp24, K2040Voice::Exp) >= Cost(135 - 95));
+    assert!(K::K2040.cost(K2040Voice::Rev2) >= Cost(110 - 95));
+    assert!(K::K2040.cost(K2040Voice::Exp) >= Cost(135 - 95));
 }
 
 /// A snapshot on `kind` (its default mode), ALGO.

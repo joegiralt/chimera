@@ -27,16 +27,12 @@ impl Sound {
     #[inline(never)]
     pub fn init(engine: EngineType) -> Self {
         // The default routes (spec § 2): ENV 1, LFO 1 and NOTE → FREQ, the
-        // fixed CUTOFF column, at 0, NOTE at the kind's key default, on
-        // every engine. The registry stays empty.
+        // fixed CUTOFF column, at 0, on every engine (a kind that wants
+        // keytracking on a new Sound sets NOTE's here). The registry stays
+        // empty.
         let mut mod_state = ModState::with_sources(MAX_MOD_SOURCES);
-        let key = crate::dsp::filter::FilterKind::default_for(engine).key_default();
-        for (s, a) in [
-            (ModSource::Env1, 0),
-            (ModSource::Lfo1, 0),
-            (ModSource::Note, key),
-        ] {
-            mod_state.set_fixed(s.index(), FixedCol::Freq, a);
+        for s in [ModSource::Env1, ModSource::Lfo1, ModSource::Note] {
+            mod_state.set_fixed(s.index(), FixedCol::Freq, 0);
         }
         Self {
             name: Self::init_name(),

@@ -72,7 +72,7 @@ impl FilterParams {
 
     /// The filter's steady bill over LP24 (`FilterKind::cost`).
     pub const fn filter_cost(&self) -> crate::hw::Cost {
-        self.kind.cost(self.mode, self.voice)
+        self.kind.cost(self.voice)
     }
 
     /// FM3 IN, as stored (`Jack::effective` says what it acts as).
@@ -104,11 +104,6 @@ impl FilterParams {
         }
         ok
     }
-}
-
-/// `choices[v]`, clamped: a jack param's value is its choice's index.
-fn pick_jack(choices: &[Jack], v: f32) -> Jack {
-    choices[(v.max(0.0) as usize).min(choices.len() - 1)]
 }
 
 /// Every one read by `Voice` per block; MODE is an Enum, so not modulatable.
@@ -239,10 +234,10 @@ impl Block for FilterParams {
             }
             Self::VOICE => self.voice = K2040Voice::from_index(v),
             Self::FM3_IN => {
-                self.set_fm3_src(pick_jack(&Jack::FM3_CHOICES, v));
+                self.set_fm3_src(pick(&Jack::FM3_CHOICES, v));
             }
             Self::QM_IN => {
-                self.set_qm_src(pick_jack(&Jack::QM_CHOICES, v));
+                self.set_qm_src(pick(&Jack::QM_CHOICES, v));
             }
             _ => {}
         }

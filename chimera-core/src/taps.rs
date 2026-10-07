@@ -152,9 +152,30 @@ pub struct JackPair(u8);
 
 const _: () = assert!(Jack::FM3_CHOICES.len() <= 16 && Jack::QM_CHOICES.len() <= 16);
 
+/// `j`'s index in `choices`, at compile time: a default that isn't a
+/// choice fails the build.
+const fn choice(choices: &[Jack], j: Jack) -> u8 {
+    let mut i = 0;
+    while i < choices.len() {
+        let same = match (choices[i], j) {
+            (Jack::Mod(a), Jack::Mod(b)) => a as u8 == b as u8,
+            (Jack::Tap(a), Jack::Tap(b)) => a as u8 == b as u8,
+            _ => false,
+        };
+        if same {
+            return i as u8;
+        }
+        i += 1;
+    }
+    panic!("not a choice")
+}
+
 impl JackPair {
     /// FM3 IN on LFO 1, QM IN on ENV 3 (owner answer 6).
-    pub const DEFAULT: JackPair = JackPair(3);
+    pub const DEFAULT: JackPair = JackPair(
+        choice(&Jack::FM3_CHOICES, Jack::Mod(ModSource::Lfo1)) << 4
+            | choice(&Jack::QM_CHOICES, Jack::Mod(ModSource::Env3)),
+    );
 
     pub const fn fm3(self) -> Jack {
         Jack::FM3_CHOICES[(self.0 >> 4) as usize]

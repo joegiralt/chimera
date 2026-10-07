@@ -234,13 +234,6 @@ impl FilterKind {
             .map_or(m.disk_ident(), |i| self.mode_labels()[i])
     }
 
-    /// NOTE → CUTOFF on a new Sound (spec § 2).
-    pub const fn key_default(self) -> i8 {
-        match self {
-            FilterKind::Svf | FilterKind::K2040 | FilterKind::Dirty => 0,
-        }
-    }
-
     pub fn from_index(v: f32) -> Self {
         pick(&Self::BUILT, v)
     }
@@ -251,9 +244,8 @@ impl FilterKind {
     /// instructions, 75 (80 with LEVEL's gain); NOTCH2 18 + 3.06, 35; the
     /// one-stage modes less: 0. The 2040 by VOICE (`K2040Voice::cost`):
     /// REV2 110, EXP 135. DIRTY 30.25 + `ramps`' 6.25 + 4.08, 70, every
-    /// block and mode: 0.
-    pub const fn cost(self, mode: FilterMode, voice: K2040Voice) -> Cost {
-        let _ = mode;
+    /// block and mode: 0. No mode bills over LP24, so the mode isn't asked.
+    pub const fn cost(self, voice: K2040Voice) -> Cost {
         match self {
             FilterKind::Svf => Cost::ZERO,
             FilterKind::K2040 => voice.cost(),
