@@ -103,3 +103,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0101](0101-voice-chain-may-hold-2112-bytes.md) | The voice chain may hold 2,112 B (supersedes in part 0051) | Accepted |
 | [0102](0102-a-record-may-hold-640-bytes.md) | A record may hold 640 B: the four fixed matrix columns' routes (supersedes in part 0045) | Accepted |
 | [0103](0103-stretch-poly-wraps-hold-the-output.md) | STRETCH POLY's wraps hold the output, moving on at its slope, and crossfade from it, an eighth past the peak at most (amends [0093](0093-tape-plays-12-bit-card-sources-through-six-ram-models.md)) | Accepted |
+| [0106](0106-put-sources-in-checked-chunks.md) | Put TAPE sources onto the card in 256 KiB chunks, each CRC-checked and acked under its own 30 s, checked as they stream, written once, read back and sealed; `OK PRESENT` makes a re-run the retry; `resume` reserved for TRON (amends [0092](0092-put-files-over-the-usb-console.md)) | Proposed |

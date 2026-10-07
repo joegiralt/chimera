@@ -128,8 +128,8 @@ macro_rules! table {
 
 #[cfg(feature = "card-put")]
 table! {
-    Ls     (NoArg)   => "ls",     "the project files on the card and their sizes",
-    Put    (PutArg)  => "put",    "a project file onto the card: <path> <size> <crc32>",
+    Ls     (LsArg)   => "ls",     "project files on the card, sizes; ls tapes: the sources",
+    Put    (PutArg)  => "put",    "a project or source onto the card: <path> <size> <crc32>",
 }
 #[cfg(not(feature = "card-put"))]
 table! {}

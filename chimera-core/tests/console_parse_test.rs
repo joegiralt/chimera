@@ -214,9 +214,10 @@ fn put_takes_a_project_path_a_size_and_a_crc() {
     use chimera_core::storage::ProjectId;
     let one = |s: &str| feed(&mut Console::new(), s.as_bytes()).remove(0);
     let want = Ok(Request::Put(PutArg {
-        to: ProjectId::new(14).unwrap(),
+        to: PutTo::Project(ProjectId::new(14).unwrap()),
         size: 131_072,
         crc: 0xDEAD_BEEF,
+        resume: false,
     }));
     assert_eq!(
         one("put /CHIMERA/PROJECTS/P0000014.A 131072 deadbeef\n"),
@@ -253,16 +254,62 @@ fn put_takes_a_project_path_a_size_and_a_crc() {
         );
     }
     // The longest request fits the line.
-    let longest = "put /CHIMERA/PROJECTS/P0000001.A 1048576 ffffffff";
+    let longest = "put /CHIMERA/PROJECTS/P0000001.A 1048576 ffffffff resume";
     assert!(longest.len() <= MAX_LINE);
+}
+
+/// A source by its stem, any case; `resume` parses, to be refused.
+#[cfg(feature = "card-put")]
+#[test]
+fn put_takes_a_tapes_path() {
+    let one = |s: &str| feed(&mut Console::new(), s.as_bytes()).remove(0);
+    let want = |resume| {
+        Ok(Request::Put(PutArg {
+            to: PutTo::Source(0x0BAD_F00D),
+            size: 600_000,
+            crc: 0x1234_5678,
+            resume,
+        }))
+    };
+    assert_eq!(
+        one("put /CHIMERA/TAPES/0BADF00D.SRC 600000 12345678\n"),
+        want(false)
+    );
+    assert_eq!(
+        one("put /chimera/tapes/0badf00d.src 600000 12345678\n"),
+        want(false)
+    );
+    assert_eq!(
+        one("put /CHIMERA/TAPES/0BADF00D.SRC 600000 12345678 RESUME\n"),
+        want(true)
+    );
+    for bad in [
+        "put /CHIMERA/TAPES/BADF00D.SRC 1 0",
+        "put /CHIMERA/TAPES/0BADF00DD.SRC 1 0",
+        "put /CHIMERA/TAPES/0BADF00G.SRC 1 0",
+        "put /CHIMERA/TAPES/0BADF00D.SR 1 0",
+        "put /CHIMERA/TAPES/0BADF00D 1 0",
+        "put /CHIMERA/TAPES//0BADF00D.SRC 1 0",
+        "put /CHIMERA/TAPES/../0BADF00D.SRC 1 0",
+        "put /CHIMERA/PROJECTS/0BADF00D.SRC 1 0",
+        "put /CHIMERA/TAPES/0BADF00D.SRC 1 0 again",
+    ] {
+        assert_eq!(
+            one(&format!("{bad}\n")),
+            Err(Refusal::Arguments(Command::Put)),
+            "{bad}"
+        );
+    }
 }
 
 #[cfg(feature = "card-put")]
 #[test]
-fn ls_takes_nothing() {
+fn ls_takes_tapes_or_nothing() {
     let one = |s: &str| feed(&mut Console::new(), s.as_bytes()).remove(0);
-    assert_eq!(one("ls\n"), Ok(Request::Ls(NoArg)));
+    assert_eq!(one("ls\n"), Ok(Request::Ls(LsArg::Projects)));
+    assert_eq!(one("ls TAPES\n"), Ok(Request::Ls(LsArg::Tapes)));
     assert_eq!(one("ls /CHIMERA\n"), Err(Refusal::Arguments(Command::Ls)));
+    assert_eq!(one("ls tapes x\n"), Err(Refusal::Arguments(Command::Ls)));
 }
 
 #[cfg(not(feature = "card-put"))]
