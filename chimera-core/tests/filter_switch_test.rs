@@ -4,6 +4,7 @@
 mod common;
 
 use chimera_core::block::Block;
+use chimera_core::dsp::filter::ladder::ladder_bound;
 use chimera_core::dsp::filter::{Filter, FilterKind, FilterMode, FilterMods, K2040Voice};
 use chimera_core::modulation::ModSource;
 use chimera_core::params::{EngineType, FilterParams};
@@ -222,6 +223,11 @@ fn random_changes_stay_bounded() {
         FilterKind::Svf => 11.43,
         FilterKind::K2040 => 2.0 + 1e-6,
         FilterKind::Dirty => 1.0,
+        FilterKind::Ladder => FilterKind::Ladder
+            .modes()
+            .iter()
+            .map(|&m| ladder_bound(m, 1.0))
+            .fold(0.0, f32::max),
     };
     let mut rng = 0x2545_f491_4f6c_dd1du64;
     let mut next = move || {
@@ -235,7 +241,8 @@ fn random_changes_stay_bounded() {
     let mut kinds = [FilterKind::Svf; 5];
     let mut i = 0usize;
     for b in 0..(10 * SR as usize / BLOCK_SIZE) {
-        let k = FilterKind::BUILT[(next() * 3.0) as usize % 3];
+        let n = FilterKind::BUILT.len();
+        let k = FilterKind::BUILT[(next() * n as f32) as usize % n];
         p.set_kind(k);
         let modes = k.modes();
         assert!(p.set_mode(modes[(next() * modes.len() as f32) as usize % modes.len()]));
