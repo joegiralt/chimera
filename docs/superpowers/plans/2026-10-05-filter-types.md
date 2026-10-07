@@ -1524,3 +1524,98 @@ The moving, LEVEL and tap terms are deltas, not over `OLD_LP24`, and don't chang
 - **Flash:** `text` 707,984 (4adacaea) → 742,936 (+34,952 B, against the spec's ≈ 2.5 KB: the taps' per-sample arrays, the panels, the UI), default release build; 171,476 B free. bench,orbit 39,672 free (Task 17: 33,204): the new rows cost 3.8 KB, and `one_op` out of line saved 10.3 KB (each row's closure held its own copy of the snapshot).
 - **Bench rows (unit, #177):** `SVF` (CLEAN LP4), `NOTCH2` (the old SVF row's mode), `CLEAN MOVE` (FREQ stepped 100 Hz a block), `2040` (EXP), `DIRTY`, `TAP FREQ` and `TAP VCA` (OP5 at 64) on the ROUTING screens, now 43 rows over 5 pages. **Held, ship time** (no flash in this task).
 - **Re-recorded goldens:** `flt_mod_dirty` (header DIRTY MOD) and `mod_matrix_algo_taps` (the X cell reads `OP 5 → FREQ Q VCA FOLD` / `NOT A TAP DESTINATION`).
+
+### Task 19: QA levels and the PR notes (2026-10-07, at a044ef08, release host build)
+
+- **Sweeps.** `param_sweep_test` (fast) passes: 14 tests. `sweep_thorough` (`--release -- --ignored`): 245 parameters, 7,757 cases (every filter TYPE, MODE, VOICE, LEVEL and RES, on every Sound they apply to), 0 unexpected findings. Its 3 findings are #374 (RES 1 on MODAL BANK and STRING INIT holds the voice: no VCA after the filter), now named as a known defect (`Defect::FilterRingHolds`) and pinned by the ignored `defect_self_oscillation_holds_a_modal_voice`, so the sweep reads clean until #374 is decided. Before this task #374 failed `sweep_thorough` outright. CPU: 0 cases billed over budget unshed.
+- **Taps on ALGO** (`filter_qa_test::taps_on_algo`, ignored): OP5 and OP6 into FREQ, Q, VCA and FOLD, on all four types (2040 both VOICEs), MORPH PAD at RES 0.6. That is 96 runs at +100 %, −100 % and a 0 → +100 % jump mid-note: all finite, under the ceiling and freed; the jump never clicks (the sweep's click rule). Each route moves the output: FREQ −6.6 to −19.5 dB of difference, Q −18.7 to −27.2, VCA 0.0, FOLD −41 to −48 (MORPH PAD at FOLD 0 barely reaches the fold).
+- **Per-pair levels** (`filter_qa_test::per_pair_levels`, ignored). A held saw, C3, FREQ 1 kHz, LEVEL ½, 0.3–1.5 s on Part 1's bus, then 4.5 s of release. RMS is the bus's; peak is DAC pair 1 after the limiter. ⚑ marks a pair more than 6 dB from CLEAN LP4 at RES 0. Every pair is finite and under the ceiling, and every voice is freed 1.43 s after note-off (RR 5).
+
+| pair | RMS dB | Δ CLEAN LP4 | peak dBFS | ok | freed s |
+|---|---|---|---|---|---|
+| CLEAN LP1 RES 0 | -15.8 | +1.1 | -25.1 | ok | 1.43 |
+| CLEAN LP1 RES 0.5 | -14.7 | +2.2 | -20.3 | ok | 1.43 |
+| CLEAN LP1 RES 1 | -17.8 | -0.9 | -24.8 | ok | 1.43 |
+| CLEAN LP2 RES 0 | -16.1 | +0.8 | -25.5 | ok | 1.43 |
+| CLEAN LP2 RES 0.5 | -15.2 | +1.7 | -22.2 | ok | 1.43 |
+| CLEAN LP2 RES 1 | -17.4 | -0.5 | -26.2 | ok | 1.43 |
+| CLEAN LP4 RES 0 | -16.9 | +0.0 | -26.4 | ok | 1.43 |
+| CLEAN LP4 RES 0.5 | -15.4 | +1.5 | -22.7 | ok | 1.43 |
+| CLEAN LP4 RES 1 | -17.3 | -0.4 | -27.6 | ok | 1.43 |
+| CLEAN BP2 RES 0 | -21.7 | -4.8 | -21.6 | ok | 1.43 |
+| CLEAN BP2 RES 0.5 | -18.2 | -1.3 | -17.8 | ok | 1.43 |
+| CLEAN BP2 RES 1 | -19.2 | -2.3 | -26.4 | ok | 1.43 |
+| CLEAN BP4 RES 0 | -32.3 | -15.4 ⚑ | -32.0 | ok | 1.43 |
+| CLEAN BP4 RES 0.5 | -23.4 | -6.5 ⚑ | -24.9 | ok | 1.43 |
+| CLEAN BP4 RES 1 | -18.0 | -1.1 | -27.8 | ok | 1.43 |
+| CLEAN HP4 RES 0 | -32.0 | -15.0 ⚑ | -26.1 | ok | 1.43 |
+| CLEAN HP4 RES 0.5 | -26.3 | -9.4 ⚑ | -22.5 | ok | 1.43 |
+| CLEAN HP4 RES 1 | -18.7 | -1.8 | -25.0 | ok | 1.43 |
+| CLEAN NOTCH1 RES 0 | -16.2 | +0.7 | -25.5 | ok | 1.43 |
+| CLEAN NOTCH1 RES 0.5 | -15.5 | +1.5 | -22.8 | ok | 1.43 |
+| CLEAN NOTCH1 RES 1 | -16.2 | +0.7 | -24.6 | ok | 1.43 |
+| CLEAN NOTCH2 RES 0 | -17.6 | -0.7 | -26.0 | ok | 1.43 |
+| CLEAN NOTCH2 RES 0.5 | -18.5 | -1.6 | -26.1 | ok | 1.43 |
+| CLEAN NOTCH2 RES 1 | -21.3 | -4.4 | -27.4 | ok | 1.43 |
+| 2040 REV2 LP4 RES 0 | -16.5 | +0.4 | -26.1 | ok | 1.43 |
+| 2040 REV2 LP4 RES 0.5 | -24.0 | -7.1 ⚑ | -28.6 | ok | 1.43 |
+| 2040 REV2 LP4 RES 1 | -15.2 | +1.7 | -24.2 | ok | 1.43 |
+| 2040 EXP LP4 RES 0 | -16.7 | +0.3 | -26.4 | ok | 1.43 |
+| 2040 EXP LP4 RES 0.5 | -24.0 | -7.1 ⚑ | -28.6 | ok | 1.43 |
+| 2040 EXP LP4 RES 1 | -25.7 | -8.8 ⚑ | -29.8 | ok | 1.43 |
+| DIRTY LP2 RES 0 | -22.1 | -5.2 | -31.5 | ok | 1.43 |
+| DIRTY LP2 RES 0.5 | -21.2 | -4.3 | -28.2 | ok | 1.43 |
+| DIRTY LP2 RES 1 | -18.3 | -1.4 | -28.0 | ok | 1.43 |
+| DIRTY BP2 RES 0 | -33.7 | -16.8 ⚑ | -33.6 | ok | 1.43 |
+| DIRTY BP2 RES 0.5 | -30.3 | -13.3 ⚑ | -29.7 | ok | 1.43 |
+| DIRTY BP2 RES 1 | -19.0 | -2.0 | -28.1 | ok | 1.43 |
+| DIRTY HP2 RES 0 | -33.9 | -17.0 ⚑ | -27.1 | ok | 1.43 |
+| DIRTY HP2 RES 0.5 | -30.4 | -13.4 ⚑ | -25.7 | ok | 1.43 |
+| DIRTY HP2 RES 1 | -19.1 | -2.2 | -27.3 | ok | 1.43 |
+| DIRTY NOTCH1 RES 0 | -22.4 | -5.5 | -31.2 | ok | 1.43 |
+| DIRTY NOTCH1 RES 0.5 | -21.8 | -4.9 | -29.8 | ok | 1.43 |
+| DIRTY NOTCH1 RES 1 | -21.0 | -4.1 | -28.2 | ok | 1.43 |
+
+  The flags are all expected, none a bug:
+  - BP and HP lose the saw's fundamental at 1 kHz: physics, as CLEAN's own BP4 and HP4 show.
+  - The 2040 at RES ½ is −7.1 dB: the four-pole's bass loss `−20·log₁₀(1 + k)` (Task 8, test 7). At RES 1 REV2 is back to +1.7 because it self-oscillates at −11 dBFS. EXP self-oscillates 6 dB under REV2 by design (`OSC_BAND_EXP_DB`), so it reads −8.8.
+  - DIRTY sits about 5 dB under CLEAN at RES 0: its ½ output (spec § 4). This is within the 6 dB line, so not flagged.
+  - Owner's call: whether the 2040's passband loss at mid RES wants make-up gain. It is authentic to the chip.
+- **`just check`** (`CARGO_INCREMENTAL=0`, step by step): steps 1–16 and 18–19 exit 0. Clippy (17) first failed on this task's new test (a collapsible `if`, `f32::clamp`), was fixed, and then exited 0, with fmt and stack-check 0 again.
+- **NaNs and clicks:** none outside the sweep's named allowances. The only filter allowance is #53's CUTOFF ten-octave jump at 20 Hz, 1 case.
+- **Demo for the owner's ear:** (private notes) holds 20 takes, the short-sound set (bass hit, chord stab, short and long sine, hats) through CLEAN LP4, 2040 REV2, 2040 EXP and DIRTY LP2, at RES ½. They are 48 kHz 16-bit, encoded with `flac -8 --ogg`, and listed in `manifest.json`. Render them with `FILTER_QA_WAV=dir cargo test --release -p chimera-core --test filter_qa_test demo_render`. No slow-opening-filter harness exists, so that take is skipped.
+
+#### PR notes (draft, not pushed)
+
+**Filter types: CLEAN, 2040, DIRTY, LEVEL and ALGO's taps (ADR 0096).**
+
+- **ADRs for the owner to accept:** 0096 (filter types), 0101 (voice chain 2,112 B), 0102 (a record may hold 640 B), all Proposed. 0086 (Proposed) gains the X-cell and route-knob hint rows.
+- **Old patches** (no compat promise: they load safely):
+  - LP1, NOTCH1 and NOTCH2 sound different (LP6 → resonant LP1; NOTCH → NOTCH1; PHASER → NOTCH2).
+  - The top octave moves: ACCURATE `tan`, clamped at 0.497 (#57).
+  - DRIVE above 0.75 is up to 1.94 dB quieter, and translated DRIVE gets the clipper's grit (DRIVE → LEVEL on load).
+- **Re-recorded audio goldens:**
+  - "ACCURATE tan, exact divides (#57)": all 24 `golden_test` rows, `filter_test::every_mode_renders_as_recorded` (all 8) and `codec_compat_test::FIXTURE_RENDERS` (all 10). `factory_level_test::KNOWN` takes 0.0003–0.09 dB. STRING's `out_gain` goes 5.95 → 5.7, which re-records `modal_init`, `modal_lfo_cutoff`, `algo_to_modal_switch` and `instrument_test` `two_parts_two_pairs`.
+  - "CLEAN's k law and trims": all 24 `golden_test`, 7 of 8 `every_mode`, `full_resonance_rings_at_its_level`, `instrument_test` `GOLDENS` and `PRE_LIMITER`, and all 10 `FIXTURE_RENDERS`.
+  - "The voice-end fade": `factory_5` and `factory_5.snd`.
+  - "LP1 and NOTCH1": `every_mode` LP6 and NOTCH. "NOTCH2": `every_mode` PHASER.
+  - "LEVEL clips past unity": `every_mode`, all 8.
+- **Re-recorded screen goldens:**
+  - `bigviz_filter` and `flt_mode`: the MODE labels, TYPE, the jacks and the delete hint.
+  - `mod_matrix`, `mod_matrix_wide` and `mod_matrix_morph_inert`: the four fixed columns.
+  - New in Task 17: `flt_clean`, `flt_2040`, `flt_dirty`, `flt_led_0`, `flt_led_half` and `flt_led_full`; `flt_mod_clean`, `flt_mod_2040`, `flt_mod_2040_exp`, `flt_mod_dirty` and `flt_mod_repatched`; `mod_matrix_modal` and `mod_matrix_algo_taps`.
+  - Task 18: `flt_mod_dirty` and `mod_matrix_algo_taps` again (the DIRTY MOD header; the X cells' readout).
+  - Fixtures: `disk_codes_v1.txt`, `neutral_v1.txt` and `neutral_filter_v1.txt`.
+- **Flash:** `text` 707,984 → 742,936 (+34,952 B), default release build, 171,476 B free; bench,orbit 39,672 B free.
+- **Bills** (cycles a sample over `OLD_LP24` 95):
+  - CLEAN steady 0; `CLEAN_MOVE_COST` 75.
+  - 2040 REV2 15, EXP 40; `K2040_MOVE_COST` 60.
+  - DIRTY 0.
+  - `FILTER_LEVEL_COST` 35.
+  - Taps: `TAP_SHAPE_COST` 80, `TAP_VCA_COST` 30, `TAP_FOLD_COST` 45 and `FOLD_RAMP_COST` 35.
+  - ALGO INIT plays 8 voices, 6 with one FREQ tap, 5 with all four.
+- **Unit (held for the owner):** Task 18 Step 4, the plan's only (unit) step: the bench rows (`just flash-bench`, `just usb bench`: SVF, NOTCH2, CLEAN MOVE, 2040, DIRTY, TAP FREQ, TAP VCA; #177). Then UAT by ear on the demo set, and a look at the FLT screens and the LEVEL LED on the panel.
+- **Merge notes:**
+  - TAPE (tape-spec branch) must add its arm to `FilterKind::default_for` → CLEAN; VA → 2040 when it lands.
+  - Both branches spend bench,orbit flash: re-check their combined free space after the merge (this branch 39.7 KB free; escalate under ~40 KB).
+- **Known, not fixed here:** #374 (a self-oscillating filter holds its MODAL voice); #57 stays open for the Modal resonators' `fast_tan`.
