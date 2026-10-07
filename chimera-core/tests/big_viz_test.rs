@@ -300,3 +300,45 @@ fn hold_is_a_segment_of_env_a() {
     assert_eq!(stage_labels_at_hold_0(HoldPos::Off), 4, "A D S R");
     assert_eq!(stage_labels_at_hold_0(HoldPos::GateExt), 4, "A D S R");
 }
+
+/// The 2040's pass band falls by `1/(1 + k)` as RES rises: at RES 0 it is
+/// the low-pass, at RES 1 about 14 dB down (spec § 5).
+#[test]
+fn the_2040_pass_band_falls_with_res() {
+    use chimera_core::dsp::filter::{FilterKind, FilterMode};
+    let r = viz::Response::of(FilterKind::K2040, FilterMode::Lp24);
+    assert_eq!(r, viz::Response::K2040);
+    let (t, c) = (0.1, 0.5);
+    assert_eq!(
+        viz::response_y(t, c, 0.0, r),
+        viz::response_y(t, c, 0.0, viz::Response::Low)
+    );
+    let drop = viz::response_y(t, c, 1.0, r) - FILTER_PASS_Y;
+    assert!((25..=31).contains(&drop), "{drop} px");
+}
+
+/// The LEVEL LED falls through the dirty regions: each frame of its fall
+/// redraws the DRIVE cell and FLT's viz corner, and dark it leaves nothing.
+#[test]
+fn the_led_falls_through_the_dirty_regions() {
+    use chimera_core::ui::animation::UiTick;
+    use chimera_core::ui::perf::PerfStats;
+    let mut ui = ui_for("flt_led_full");
+    let mut fb = Fb::new();
+    let frame = |ui: &mut chimera_core::ui::UiState, fb: &mut Fb| {
+        ui.render_dirty_with_audio(
+            fb,
+            &PerfStats::zero(),
+            Some(&audio_fixture()),
+            &scope_fixture(),
+        )
+    };
+    frame(&mut ui, &mut fb);
+    let lit = fb.px.clone();
+    for i in 0..12 {
+        ui.update(UiTick::for_test());
+        frame(&mut ui, &mut fb);
+        assert!(fb.px == render_ui(&ui).px, "frame {i}");
+    }
+    assert!(fb.px != lit, "it went dark");
+}

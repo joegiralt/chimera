@@ -33,6 +33,14 @@ impl TapOp {
             TapOp::Op6 => "OP6",
         }
     }
+
+    /// The full name the matrix readout uses, as `ModSource::name`.
+    pub const fn name(self) -> &'static str {
+        match self {
+            TapOp::Op5 => "OP 5",
+            TapOp::Op6 => "OP 6",
+        }
+    }
 }
 
 /// What a jack is patched to. `ModSource` stays the 8-row matrix type.

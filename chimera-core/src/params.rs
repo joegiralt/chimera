@@ -165,9 +165,44 @@ pub static FILTER_SPECS: [ParamSpec; 8] = [
         .glyph(crate::ui::glyph::FocusGlyph::None),
 ];
 
+/// MODE as `kind` has it: its own names, its last index and its default,
+/// so a DIRTY index 3 reads NOTCH1, not CLEAN's fourth of eight.
+const fn mode_spec(kind: FilterKind) -> ParamSpec {
+    let (modes, default) = (kind.modes(), kind.default_mode() as u8);
+    let mut d = 0;
+    while modes[d] as u8 != default {
+        d += 1;
+    }
+    ParamSpec::choice(
+        7,
+        "MODE",
+        ValFmt::Names(kind.mode_labels()),
+        (modes.len() - 1) as f32,
+        d as f32,
+    )
+    .ident("MODE")
+    .glyph(crate::ui::glyph::FocusGlyph::None)
+}
+
+/// `mode_spec` for each of `FilterKind::BUILT`.
+static MODE_SPECS: [ParamSpec; FilterKind::BUILT.len()] = [
+    mode_spec(FilterKind::BUILT[0]),
+    mode_spec(FilterKind::BUILT[1]),
+    mode_spec(FilterKind::BUILT[2]),
+];
+
 impl Block for FilterParams {
     fn specs(&self) -> &'static [ParamSpec] {
         &FILTER_SPECS
+    }
+
+    /// MODE's range and names are the kind's (`mode_spec`).
+    fn spec(&self, id: ParamId) -> Option<&'static ParamSpec> {
+        if id == Self::MODE {
+            let k = FilterKind::BUILT.iter().position(|&k| k == self.kind)?;
+            return Some(&MODE_SPECS[k]);
+        }
+        crate::block::find_spec(self.specs(), id)
     }
 
     fn get(&self, id: ParamId) -> f32 {

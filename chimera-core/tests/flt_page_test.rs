@@ -984,3 +984,25 @@ fn the_jacks_are_not_swept() {
             .any(|p| p.block == BlockRef::Filter && p.spec.id == FilterParams::VOICE)
     );
 }
+
+/// MODE reads each type's own names over its own range: DIRTY's NOTCH1 is
+/// its index 3 of 3, not CLEAN's fourth of eight (BP2). Its default is the
+/// type's.
+#[test]
+fn mode_reads_the_types_own_names() {
+    use chimera_core::ui::fmt::{FmtBuf, fmt_val};
+    for k in FilterKind::BUILT {
+        let mut p = FilterParams::default();
+        p.set_kind(k);
+        for (i, &m) in k.modes().iter().enumerate() {
+            assert!(p.set_mode(m));
+            let spec = p.spec(FilterParams::MODE).unwrap();
+            let mut buf = FmtBuf::new();
+            fmt_val(&mut buf, p.normalized(FilterParams::MODE), spec.fmt);
+            assert_eq!(buf.as_str(), k.mode_labels()[i], "{k:?}");
+        }
+        let spec = p.spec(FilterParams::MODE).unwrap();
+        p.set(FilterParams::MODE, spec.default);
+        assert_eq!(p.mode(), k.default_mode(), "{k:?}");
+    }
+}

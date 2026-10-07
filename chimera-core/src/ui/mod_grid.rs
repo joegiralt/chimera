@@ -26,11 +26,34 @@ pub const GRID_COL_W: i32 = 36;
 pub const GRID_TAG_Y: i32 = 38;
 pub const GRID_NAME_Y: i32 = 47;
 /// Top of the first row; a cell is inset `CELL_INSET` in its column and
-/// spans `row + 1 .. row + GRID_ROW_H - 2`.
+/// centred in its row (`row_h`, `cell_h`).
 pub const GRID_ROW0_Y: i32 = 50;
+/// Eight rows' pitch.
 pub const GRID_ROW_H: i32 = 17;
 const CELL_INSET: i32 = 4;
 pub const GRID_BOTTOM: i32 = 190;
+
+/// Row pitch for `rows` display rows: they always fill `GRID_ROW0_Y` to
+/// `GRID_BOTTOM` with no scroll, 17 for 8 and 14 for ALGO's 10.
+pub const fn row_h(rows: usize) -> i32 {
+    (GRID_BOTTOM - GRID_ROW0_Y) / if rows == 0 { 1 } else { rows as i32 }
+}
+
+/// A cell's height: 14 at 8 rows; at 14 px rows `CELL_INSET` leaves 10
+/// (filter-types spec § 7).
+pub const fn cell_h(rows: usize) -> i32 {
+    let h = row_h(rows);
+    if h < GRID_ROW_H {
+        h - CELL_INSET
+    } else {
+        h - 3
+    }
+}
+
+/// A cell's or row label's text baseline, from the cell's top.
+pub const fn text_dy(rows: usize) -> i32 {
+    cell_h(rows) / 2 + 3
+}
 /// The readout band below the grid (`GRID_BOTTOM`..cells bottom).
 /// Readout: the route's names, then its amount and what it means.
 pub const READOUT_Y: i32 = 206;
@@ -535,9 +558,10 @@ impl Default for MatrixState {
 /// on no route, where its columns come from, MIX + PLUS on a param.
 pub const DELETE: Hint = &[Gesture("MIX + MINUS", "DELETES THE ROUTE")];
 pub const PRIME: Hint = &[Gesture("MIX + PLUS", "ON A PARAM PRIMES IT")];
-/// An X cell's: what a tap can reach (spec § 7).
-pub const X_OP5: Hint = &[Gesture("OP5 · AUDIO RATE:", "FREQ Q VCA FOLD ONLY")];
-pub const X_OP6: Hint = &[Gesture("OP6 · AUDIO RATE:", "FREQ Q VCA FOLD ONLY")];
+/// An X cell's: what a tap can reach (spec § 7). The spec's long form,
+/// `OP5 · AUDIO RATE: …`, is 264 px, past the 216 a hint may take.
+pub const X_OP5: Hint = &[Gesture("OP5:", "FREQ Q VCA FOLD ONLY")];
+pub const X_OP6: Hint = &[Gesture("OP6:", "FREQ Q VCA FOLD ONLY")];
 
 impl MatrixState {
     /// The hint under the cursor's route.
@@ -718,25 +742,26 @@ pub fn fmt_stats(buf: &mut FmtBuf, routes: usize, num_dests: usize) {
     );
 }
 
-/// Top-left of the cell box at (visible column `ci`, visible row `vi`).
-pub fn cell_origin(ci: usize, vi: usize) -> (i32, i32) {
+/// Top-left of the cell box at (visible column `ci`, visible row `vi`) in
+/// a grid of `rows`.
+pub fn cell_origin(ci: usize, vi: usize, rows: usize) -> (i32, i32) {
     (
         GRID_X + ci as i32 * GRID_COL_W + CELL_INSET,
-        GRID_ROW0_Y + vi as i32 * GRID_ROW_H + 1,
+        GRID_ROW0_Y + vi as i32 * row_h(rows) + (row_h(rows) - cell_h(rows)) / 2,
     )
 }
 
-/// Cell box width and height.
+/// Cell box width.
 pub const CELL_W: i32 = GRID_COL_W - 2 * CELL_INSET;
-pub const CELL_H: i32 = GRID_ROW_H - 3;
 
 /// Centre of the cell at (visible column `ci`, visible row `vi`).
-pub fn cell_center(ci: usize, vi: usize) -> (i32, i32) {
-    let (x, y) = cell_origin(ci, vi);
-    (x + CELL_W / 2, y + CELL_H / 2)
+pub fn cell_center(ci: usize, vi: usize, rows: usize) -> (i32, i32) {
+    let (x, y) = cell_origin(ci, vi, rows);
+    (x + CELL_W / 2, y + cell_h(rows) / 2)
 }
 
-/// The amount grid: sources down, primed destinations across. A route's
+/// The amount grid: sources down (on ALGO, then OP5 and OP6, whose cells
+/// outside the fixed four are X cells), primed destinations across. A route's
 /// cell is lit and prints its amount (`+60`, `-30`, `0` in the rest grey);
 /// an absent route is an empty outline. The cursor's cell is outlined in
 /// the accent and prints `sel_amount`, the lerped amount. A column in
@@ -797,10 +822,15 @@ where
             theme::MID,
         );
     }
-    for row in 0..state.num_sources.min(MAX_SOURCES) {
-        let si = state.row_source(row).index();
-        let (_, y) = cell_origin(0, row);
-        let name = state.sources[si].map_or("?", |s| s.name);
+    let rows = state.rows();
+    for row in 0..rows {
+        let src = state.row_source(row);
+        let si = src.index();
+        let (_, y) = cell_origin(0, row, rows);
+        let name = match src {
+            RowSource::Mod(_) => state.sources[si].map_or("?", |s| s.name),
+            RowSource::Tap(t) => t.tag(),
+        };
         let color = if row == state.sel_row {
             theme::INK
         } else {
@@ -811,7 +841,7 @@ where
             &theme::FONT_LABEL_BOLD,
             name,
             theme::MARGIN_X,
-            y + 10,
+            y + text_dy(rows),
             color,
         );
         for ci in 0..cols {
@@ -820,6 +850,10 @@ where
                 break;
             }
             let selected = row == state.sel_row && di == state.sel_col;
+            if state.is_x(row, di) {
+                draw_x_cell(d, ci, row, rows, selected);
+                continue;
+            }
             let amount = if selected {
                 sel_amount
             } else {
@@ -827,8 +861,7 @@ where
             };
             draw_cell(
                 d,
-                ci,
-                row,
+                (ci, row, rows),
                 state.is_present(si, di).then_some(amount),
                 selected,
                 inert & (1 << di) != 0,
@@ -837,26 +870,46 @@ where
     }
 }
 
-/// One cell: an outline (the accent under the cursor); a route fills it
-/// and prints its amount, unlit in MID when `inert`.
-fn draw_cell<D>(d: &mut D, ci: usize, vi: usize, route: Option<i8>, selected: bool, inert: bool)
+/// An X cell: its mark alone, outlined in the accent under the cursor.
+fn draw_x_cell<D>(d: &mut D, ci: usize, vi: usize, rows: usize, selected: bool)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let (x, y) = cell_origin(ci, vi);
+    let (x, y) = cell_origin(ci, vi, rows);
+    if selected {
+        draw::round_outline(d, x, y, CELL_W, cell_h(rows), 0, theme::ACCENT);
+    }
+    let (cx, cy) = cell_center(ci, vi, rows);
+    draw::x_mark(d, cx, cy);
+}
+
+/// One cell at (visible column, visible row, rows): an outline (the
+/// accent under the cursor); a route fills it and prints its amount,
+/// unlit in MID when `inert`.
+fn draw_cell<D>(
+    d: &mut D,
+    (ci, vi, rows): (usize, usize, usize),
+    route: Option<i8>,
+    selected: bool,
+    inert: bool,
+) where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let (x, y) = cell_origin(ci, vi, rows);
+    let cell_h = cell_h(rows);
     let edge = if selected {
         theme::ACCENT
     } else {
         theme::FAINT
     };
-    draw::round_outline(d, x, y, CELL_W, CELL_H, 0, edge);
+    draw::round_outline(d, x, y, CELL_W, cell_h, 0, edge);
     let Some(amount) = route else { return };
     let text = if inert {
         theme::MID
     } else if amount == 0 {
         theme::BAR_REST
     } else {
-        draw::fill_rect(d, x + 1, y + 1, CELL_W - 2, CELL_H - 2, theme::ACCENT_SOFT);
+        draw::fill_rect(d, x + 1, y + 1, CELL_W - 2, cell_h - 2, theme::ACCENT_SOFT);
         theme::ACCENT
     };
     let mut buf = FmtBuf::new();
@@ -866,7 +919,7 @@ where
         &theme::FONT_LABEL_BOLD,
         buf.as_str(),
         x + CELL_W / 2,
-        y + 10,
+        y + text_dy(rows),
         text,
         0,
     );
@@ -883,9 +936,13 @@ where
 {
     let dest = state.col_dest(state.sel_col);
     let si = state.sel_source();
-    let src = crate::modulation::ModSource::ALL
-        .get(si)
-        .filter(|_| si < state.num_sources);
+    let src = match state.row_source(state.sel_row) {
+        RowSource::Mod(i) => crate::modulation::ModSource::ALL
+            .get(i)
+            .filter(|_| i < state.num_sources)
+            .map(|s| s.name()),
+        RowSource::Tap(t) => Some(t.name()),
+    };
     let label = |d: &mut D, s: &str, x: i32, color| {
         x + draw::text_tracked(
             d,
@@ -899,10 +956,10 @@ where
     };
     match (src, dest) {
         (Some(src), Some(dest)) => {
-            let x = label(d, src.name(), theme::MARGIN_X, theme::ACCENT) + ARROW_GAP;
+            let x = label(d, src, theme::MARGIN_X, theme::ACCENT) + ARROW_GAP;
             let x = x + draw::arrow(d, x, READOUT_Y, theme::ACCENT) + ARROW_GAP;
             let mut name = FmtBuf::new();
-            fmt_readout_dest(&mut name, src.name(), &dest);
+            fmt_readout_dest(&mut name, src, &dest);
             label(d, name.as_str(), x, theme::ACCENT);
             let mut effect = FmtBuf::new();
             let dead = inert & (1 << state.sel_col) != 0;
@@ -942,7 +999,8 @@ where
         }
     }
     hint::draw(d, hint, theme::MARGIN_X, HINT_Y);
-    let routes = (0..state.num_sources)
+    let routes = (0..state.rows())
+        .map(|r| state.row_source(r).index())
         .flat_map(|r| (0..state.num_cols()).map(move |c| (r, c)))
         .filter(|&(r, c)| state.is_present(r, c))
         .count();

@@ -235,6 +235,47 @@ pub struct UiState {
     led: led::Led,
     /// OS UPGRADE's yes, until the shell takes it.
     dfu: Option<Said<RomDfu>>,
+    /// Each Part's filter LEVEL LED: its meter, held and falling.
+    clip: [ClipHold; crate::hw::MAX_PARTS],
+}
+
+/// How long the LEVEL LED takes to fall from a peak to dark.
+pub const CLIP_FALL_MS: u16 = 150;
+
+/// The LEVEL LED's fill (filter-types spec § 2, H1): a peak is held, then
+/// falls linearly to 0 over `CLIP_FALL_MS`; a reading under the falling
+/// fill doesn't cut it short.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ClipHold {
+    /// The last peak, 0..=1.
+    v: f32,
+    /// Ms since it.
+    held: u16,
+}
+
+impl ClipHold {
+    /// `dt_ms` on, then the meter's reading (`ClipMeter::take`): the fill.
+    pub fn step(&mut self, meter: f32, dt_ms: u16) -> f32 {
+        self.held = self.held.saturating_add(dt_ms);
+        if meter > 0.0 && meter >= self.fill() {
+            *self = ClipHold {
+                v: meter.min(1.0),
+                held: 0,
+            };
+        }
+        self.fill()
+    }
+
+    /// 0..=1: the peak less its fall so far.
+    pub fn fill(&self) -> f32 {
+        let left = CLIP_FALL_MS.saturating_sub(self.held);
+        self.v * f32::from(left) / f32::from(CLIP_FALL_MS)
+    }
+
+    /// Drawn: a peak whose fall hasn't ended.
+    pub fn lit(&self) -> bool {
+        self.fill() > 0.0
+    }
 }
 
 crate::in_place::field_list!(UiState => UiState {
@@ -266,6 +307,7 @@ crate::in_place::field_list!(UiState => UiState {
     orbit,
     led,
     dfu,
+    clip,
 });
 
 impl Default for UiState {
@@ -328,6 +370,7 @@ impl UiState {
             addr_of_mut!((*p).listing).write(Listing::new());
             addr_of_mut!((*p).job).write(None);
             addr_of_mut!((*p).card).write(Card::new());
+            addr_of_mut!((*p).clip).write([ClipHold::default(); crate::hw::MAX_PARTS]);
             addr_of_mut!((*p).orbit).write(orbit::OrbitUi::new());
             addr_of_mut!((*p).led).write(led::Led::OFF);
             addr_of_mut!((*p).dfu).write(None);
@@ -738,6 +781,14 @@ impl UiState {
     #[doc(hidden)]
     pub fn status_hashes_for_test(&self) -> u32 {
         self.status.hashes_for_test()
+    }
+
+    /// The active Part's LEVEL LED reads `clip` with no time passed, as
+    /// `update` does with the meter (the LED goldens).
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn show_clip(&mut self, clip: f32) {
+        self.clip[self.active_part.index()].step(clip, 0);
     }
 
     /// The status SETTINGS' footer draws; `None` outside SETTINGS.
@@ -2047,6 +2098,10 @@ impl UiState {
     pub fn update(&mut self, _: animation::UiTick) {
         self.refresh_status();
         self.clock.tick();
+        // Every Part's, so a Part not shown never keeps a stale clip.
+        for (h, m) in self.clip.iter_mut().zip(&crate::meter::FILTER_CLIP) {
+            h.step(m.take().get(), animation::FRAME_MS as u16);
+        }
         let at = self.active_part;
 
         // Read base param values
@@ -2261,6 +2316,7 @@ impl UiState {
             audio,
             card: self.card,
             master_gr_db: crate::meter::MASTER_GR.read(),
+            clip: self.clip[self.active_part.index()].fill(),
             clock: self.clock,
             fx: &self.project.perf().fx,
             orbit,
@@ -2371,7 +2427,7 @@ impl UiState {
                     self.matrix_state.num_cols() as u16,
                     core::array::from_fn(|i| renderer::mod_info(f, i).map(f32::to_bits)),
                 )
-                .keyed(self.matrix_state.rev, looks)
+                .keyed(self.matrix_state.rev, looks | renderer::led_key(f) << 12)
             }
             RegionKind::Nav => RegionData::nav(
                 chain,

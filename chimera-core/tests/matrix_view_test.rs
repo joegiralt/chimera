@@ -6,7 +6,12 @@ mod screen;
 use chimera_core::project::PartId;
 use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::draw;
-use chimera_core::ui::mod_grid::{AMOUNT_Y, CELL_H, CELL_W, GRID_BOTTOM, READOUT_Y, cell_origin};
+use chimera_core::ui::mod_grid::{
+    AMOUNT_Y, CELL_W, GRID_BOTTOM, READOUT_Y, cell_h, cell_origin, text_dy,
+};
+
+/// ALGO's rows: the eight sources, OP5 and OP6 (the goldens' matrix).
+const R: usize = 10;
 use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::renderer::{MATRIX_AMOUNT_SLOT, amount_of, amount_value};
 use chimera_core::ui::theme;
@@ -151,26 +156,33 @@ fn cell_as(
     route: Option<&str>,
 ) -> Fb {
     drawn(bg, |d| {
-        let (x, y) = cell_origin(ci, vi);
-        draw::round_outline(d, x, y, CELL_W, CELL_H, 0, edge);
+        let (x, y) = cell_origin(ci, vi, R);
+        draw::round_outline(d, x, y, CELL_W, cell_h(R), 0, edge);
         match route {
             Some("0") => draw::text_center(
                 d,
                 &theme::FONT_LABEL_BOLD,
                 "0",
                 x + CELL_W / 2,
-                y + 10,
+                y + text_dy(R),
                 theme::BAR_REST,
                 0,
             ),
             Some(t) => {
-                draw::fill_rect(d, x + 1, y + 1, CELL_W - 2, CELL_H - 2, theme::ACCENT_SOFT);
+                draw::fill_rect(
+                    d,
+                    x + 1,
+                    y + 1,
+                    CELL_W - 2,
+                    cell_h(R) - 2,
+                    theme::ACCENT_SOFT,
+                );
                 draw::text_center(
                     d,
                     &theme::FONT_LABEL_BOLD,
                     t,
                     x + CELL_W / 2,
-                    y + 10,
+                    y + text_dy(R),
                     theme::ACCENT,
                     0,
                 );
@@ -181,8 +193,8 @@ fn cell_as(
 }
 
 fn same_cell(a: &Fb, b: &Fb, ci: usize, vi: usize) -> bool {
-    let (x, y) = cell_origin(ci, vi);
-    (y..y + CELL_H).all(|y| (x..x + CELL_W).all(|x| a.at(x, y) == b.at(x, y)))
+    let (x, y) = cell_origin(ci, vi, R);
+    (y..y + cell_h(R)).all(|y| (x..x + CELL_W).all(|x| a.at(x, y) == b.at(x, y)))
 }
 
 /// Every route prints its amount in a lit cell (0 unlit, in the rest
@@ -214,17 +226,17 @@ fn every_source_is_a_row_on_screen() {
     assert_eq!(m.num_sources, 8);
     let fb = render("mod_matrix");
     for vi in 0..8 {
-        let (_, y) = cell_origin(0, vi);
+        let (_, y) = cell_origin(0, vi, R);
         let label =
-            (y..y + CELL_H).any(|y| (theme::MARGIN_X..40).any(|x| fb.at(x, y) != theme::BG));
+            (y..y + cell_h(R)).any(|y| (theme::MARGIN_X..40).any(|x| fb.at(x, y) != theme::BG));
         assert!(label, "row {vi} labelled");
         assert_ne!(
-            fb.at(cell_origin(1, vi).0, y),
+            fb.at(cell_origin(1, vi, R).0, y),
             theme::BG,
             "row {vi} has cells"
         );
     }
-    assert!(cell_origin(0, 7).1 + CELL_H <= GRID_BOTTOM);
+    assert!(cell_origin(0, R - 1, R).1 + cell_h(R) <= GRID_BOTTOM);
     // The cursor stops on the last row: OP6's on ALGO (Task 13).
     feed(&mut ui, Input::turn(EncoderId::A, 7));
     assert_eq!(ui.matrix_state.rows(), 10);
@@ -292,7 +304,7 @@ fn an_empty_registry_shows_the_fixed_columns() {
         );
     });
     assert!(rows(&fb, GRID_BOTTOM, READOUT_Y + 3) != rows(&want, GRID_BOTTOM, READOUT_Y + 3));
-    let (x, y) = cell_origin(3, 0);
+    let (x, y) = cell_origin(3, 0, R);
     assert_ne!(fb.at(x, y), theme::BG, "FOLD's cells");
     let name = |c: usize| {
         let x = GRID_X + c as i32 * GRID_COL_W;
@@ -332,7 +344,7 @@ fn a_wide_matrix_scrolls_with_the_cursor() {
     let mut fb = Fb::new();
     draw_grid(&mut fb, &m, m.current_amount(), 0);
     assert_eq!(fb.oob, 0);
-    let (x, y) = cell_origin(m.visible_cols() - 1, 0);
+    let (x, y) = cell_origin(m.visible_cols() - 1, 0, m.rows());
     assert_eq!(
         fb.at(x, y),
         theme::ACCENT,
@@ -666,7 +678,11 @@ fn matrix_edits_redraw_through_the_region_keys() {
     feed(&mut ui, Input::turn(EncoderId::B, 8));
     assert!(ui.matrix_state.scroll_x > 0);
     let fb = check(&mut ui, &mut dirty, "scrolled");
-    let (x, y) = cell_origin(ui.matrix_state.visible_cols() - 1, ui.matrix_state.sel_row);
+    let (x, y) = cell_origin(
+        ui.matrix_state.visible_cols() - 1,
+        ui.matrix_state.sel_row,
+        ui.matrix_state.rows(),
+    );
     assert_eq!(fb.at(x, y), theme::ACCENT, "cursor on screen");
 }
 
@@ -840,7 +856,7 @@ fn adjacent_column_headers_never_touch() {
     };
 
     // Extents at every visible column's x, computed once per label.
-    let xs: Vec<i32> = (0..5).map(|ci| cell_center(ci, 0).0).collect();
+    let xs: Vec<i32> = (0..5).map(|ci| cell_center(ci, 0, R).0).collect();
     let extents: Vec<Vec<(i32, i32)>> = labels
         .iter()
         .map(|&label| xs.iter().map(|&cx| extent(label, cx)).collect())
@@ -908,6 +924,6 @@ fn row_labels_fit_left_of_the_grid() {
     use chimera_core::ui::block_registry::PART_MOD_SOURCES;
     for s in PART_MOD_SOURCES {
         let right = theme::MARGIN_X + draw::text_width(&theme::FONT_LABEL_BOLD, s, 0);
-        assert!(right + 3 <= cell_origin(0, 0).0, "{s} ends at {right}");
+        assert!(right + 3 <= cell_origin(0, 0, R).0, "{s} ends at {right}");
     }
 }

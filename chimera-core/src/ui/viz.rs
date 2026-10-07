@@ -70,6 +70,11 @@ pub const PLOT_TOP: i32 = 40;
 pub const PLOT_BASE: i32 = 170;
 /// Filter pass band (the mockup's 0 dB line); resonance peaks above it.
 pub const FILTER_PASS_Y: i32 = 72;
+/// The response's dB scale: the pass line to the base is 48 dB.
+const PX_PER_DB: f32 = (PLOT_BASE - FILTER_PASS_Y) as f32 / 48.0;
+/// The LEVEL LED in the FLT viz's top-right corner.
+pub const LED_X: i32 = theme::VIZ_RIGHT - 4;
+pub const LED_Y: i32 = PLOT_TOP + 4;
 
 /// Filter response y at column `t` (0..1 across the plot): flat pass band,
 /// a resonance bump at `cutoff`, then roll-off to the base (the pre-refresh
@@ -105,6 +110,8 @@ pub enum Response {
     /// NOTCH2: notches at 0.414 × and 2.414 × FREQ, Q raising the peak
     /// between them.
     DoubleNotch,
+    /// The 2040's LP4: its pass band lowered by `1/(1 + k)` as RES rises.
+    K2040,
 }
 
 impl Response {
@@ -117,7 +124,7 @@ impl Response {
             (K::Svf, M::Notch) => Response::Notch2x,
             (K::Svf, M::Phaser) => Response::DoubleNotch,
             (K::Svf, M::Lp12 | M::Lp24) => Response::Low,
-            (K::K2040, _) => Response::Low,
+            (K::K2040, _) => Response::K2040,
             // DIRTY's NOTCH1 notches at FREQ (spec § 5).
             (K::Dirty, M::Notch) => Response::Notch,
             (K::Dirty, M::Bp12 | M::Bp24) => Response::Band,
@@ -164,6 +171,11 @@ pub fn response_y(t: f32, cutoff: f32, reso: f32, r: Response) -> i32 {
             let at_freq = 0.2 * span * (1.0 - reso) - peak_h * reso;
             let notch = dip(t, 2.0 * cutoff);
             FILTER_PASS_Y as f32 + treble + bump(at_freq) + (span - treble) * notch
+        }
+        // The bass loss in dB, on the low-pass's shape; the peak still rises.
+        Response::K2040 => {
+            let k = crate::dsp::filter::k2040::k2040_k(reso);
+            low as f32 + 20.0 * libm::log10f(1.0 + k) * PX_PER_DB
         }
         Response::DoubleNotch => {
             let n = dip(t, 0.414 * cutoff).max(dip(t, 2.414 * cutoff));
