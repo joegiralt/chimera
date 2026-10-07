@@ -16,6 +16,7 @@ pub mod glyph;
 pub mod hint;
 pub mod hold;
 pub mod led;
+pub mod meter;
 pub mod midi_settings;
 pub mod mod_grid;
 pub mod mod_panel;
@@ -24,6 +25,7 @@ pub mod orbit;
 pub mod page;
 pub mod part_page;
 pub mod perf;
+pub mod pool_page;
 pub mod region;
 pub mod renderer;
 pub mod settings;
@@ -47,7 +49,7 @@ use crate::block::Block;
 use crate::boot::RomDfu;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
-use crate::in_place::{by_value, uninit_at};
+use crate::in_place::uninit_at;
 use crate::mod_path::{LABEL_LEN, RegistryError};
 use crate::modulation::{MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::ProjectName;
@@ -57,7 +59,8 @@ use crate::orbit::runner::{OrbitShared, OrbitView};
 use crate::orbit::scene::{OrbitSong, Refused, SceneIdx, SceneSave};
 use crate::params::{EngineType, ParamSnapshot};
 use crate::perf::load::AudioStats;
-use crate::preset::POOL_SIZE;
+use crate::preset::MAX_SOUNDS;
+use crate::project::arena::ArenaWriter;
 use crate::project::{
     self, CardOut, Confirmed, DeleteTarget, Line, LoadLink, PartEdit, PartFrom, PartId, PartSource,
     Project, ProjectFile, ProjectNote, ProjectSource, ProjectStatus, ReplaceGuard, SaveTo,
@@ -210,6 +213,9 @@ pub struct UiState {
     display_lfos: [Lfo; 3],
     /// The last MIX+PLUS outcome; `None` once retired (issue #21).
     prime_status: Option<PrimeStatus>,
+    /// A save the pool had no room for, in the browser's band until the
+    /// next input (ADR 0017's convention).
+    refusal: Option<Line>,
     /// SETTINGS › THEME; boot sets it from SYSTEM (`set_theme`).
     theme: ThemeSettings,
     /// SETTINGS › MIDI CONFIG's SYNC; boot sets it from SYSTEM (`set_midi`).
@@ -295,6 +301,7 @@ crate::in_place::field_list!(UiState => UiState {
     focus,
     display_lfos,
     prime_status,
+    refusal,
     theme,
     midi,
     toast,
@@ -310,6 +317,7 @@ crate::in_place::field_list!(UiState => UiState {
     clip,
 });
 
+#[cfg(any(test, feature = "test-support"))]
 impl Default for UiState {
     fn default() -> Self {
         Self::new()
@@ -317,20 +325,28 @@ impl Default for UiState {
 }
 
 impl UiState {
+    /// On an arena of its own, leaked (host tests).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn new() -> Self {
-        // SAFETY: `init_in_place` writes every field of the slot.
-        unsafe { by_value(Self::init_in_place) }
+        Self::with_arena(ArenaWriter::leaked())
     }
 
-    // In place so the ~34 KB state (the 28 KB pool) never passes through
-    // the firmware's stack.
-    pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
+    /// By value, its pool's Sounds in `arena`: the desktop's. Host only:
+    /// the chip builds its state in place (`init_in_place`).
+    #[cfg(not(target_os = "none"))]
+    pub fn with_arena(arena: ArenaWriter) -> Self {
+        // SAFETY: `init_in_place` writes every field of the slot.
+        unsafe { crate::in_place::by_value(|s| Self::init_in_place(s, arena)) }
+    }
+
+    // In place so the state never passes through the firmware's stack.
+    pub fn init_in_place(slot: &mut MaybeUninit<Self>, arena: ArenaWriter) -> &mut Self {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; the project is built in
         // place before it is borrowed, and every other field is written
         // once, all before `assume_init_mut`.
         unsafe {
-            let template = Project::init_in_place(uninit_at(addr_of_mut!((*p).project)));
+            let template = Project::init_in_place(uninit_at(addr_of_mut!((*p).project)), arena);
             let project = &mut *addr_of_mut!((*p).project);
             let cx = nav_cx(project);
             let loc = Location::home(&cx);
@@ -361,6 +377,7 @@ impl UiState {
             addr_of_mut!((*p).focus).write(focus::FocusMemory::new());
             addr_of_mut!((*p).display_lfos).write([Lfo::new(); 3]);
             addr_of_mut!((*p).prime_status).write(None);
+            addr_of_mut!((*p).refusal).write(None);
             addr_of_mut!((*p).theme).write(theme);
             addr_of_mut!((*p).midi).write(midi);
             addr_of_mut!((*p).toast).write(busy::ToastTimer::new());
@@ -415,6 +432,12 @@ impl UiState {
     /// encoder, button or page change (issue #21).
     pub fn prime_status(&self) -> Option<PrimeStatus> {
         self.prime_status
+    }
+
+    /// The browser's refusal, the line under `POOL FULL`: `NEEDS 1.2K,
+    /// 0.4K FREE`, or empty with every slot taken.
+    pub fn refusal(&self) -> Option<&str> {
+        self.refusal.as_ref().map(Line::as_str)
     }
 
     /// Where the UI is.
@@ -491,6 +514,18 @@ impl UiState {
         self.toast.show(busy::Toast { text: n.line(), ms });
     }
 
+    /// A load's note. A NEW that came up partial says so instead
+    /// (`NEW: 2 SOUNDS SKIPPED`, as info) unless the note is an error,
+    /// which wins: one toast at a time.
+    fn show_note_or_skipped(&mut self, note: Option<ProjectNote>) {
+        let skipped = self.project.take_new_skipped();
+        match (note, skipped) {
+            (None | Some(ProjectNote::NewProject), Some(k)) => self.notice(prompt::new_skipped(k)),
+            (Some(n), _) => self.show_note(n),
+            (None, None) => {}
+        }
+    }
+
     /// The active Part's engine, before a replace (`project_replaced`).
     fn active_engine(&self) -> EngineType {
         self.project.part(self.active_part).sound.engine()
@@ -526,9 +561,8 @@ impl UiState {
         last: Option<ProjectId>,
     ) {
         let was = self.active_engine();
-        if let Some(n) = project::boot_project(card, store, last, &mut self.project) {
-            self.show_note(n);
-        }
+        let note = project::boot_project(card, store, last, &mut self.project);
+        self.show_note_or_skipped(note);
         self.orbit.booted(self.project.orbit_mut());
         self.project_replaced(was);
     }
@@ -616,15 +650,19 @@ impl UiState {
     ) -> (Option<R>, Option<CardEvent>) {
         let was = self.active_engine();
         let out = project::load_project(cx.card, cx.store, &mut self.project, go, link);
-        if let Some(n) = out.note {
-            self.show_note(n);
-        }
+        // Refused after the bump (ADR 0099): the project is as it was, so
+        // nothing past the publish runs.
+        let busy = matches!(out.note, Some(ProjectNote::Busy(_)));
+        self.show_note_or_skipped(out.note);
         let Some(swap) = out.swap else {
             return (None, out.event);
         };
         // Before the publish: it carries the load to the runner.
         self.orbit.loaded(link.epoch(), self.project.orbit_mut());
         let published = publish(swap, self);
+        if busy {
+            return (Some(published), out.event);
+        }
         self.project_replaced(was);
         // Only a file load sets it: NEW, loaded or fallen back to, has none.
         if let Some(f) = self.project.meta().file() {
@@ -995,7 +1033,7 @@ impl UiState {
         // Init entries follow the pool slots.
         let from = browser::slot_at(cursor).map(PartFrom::Slot).or_else(|| {
             cursor
-                .checked_sub(POOL_SIZE)
+                .checked_sub(MAX_SOUNDS)
                 .and_then(|j| browser::INIT_TYPES.get(j))
                 .map(|&e| PartFrom::Init(e))
         });
@@ -1048,7 +1086,7 @@ impl UiState {
         again: impl Fn(Asked<PartSource, A>) -> Ask,
     ) {
         let Some(a) = save(&Offer::of(&self.project, ask.source().part)) else {
-            self.error(Line::new(prompt::POOL_FULL));
+            self.error(prompt::pool_full(self.pool_full(ask.source().part)));
             return self.ask(again(ask));
         };
         let stale = self.save_sound(a);
@@ -1066,7 +1104,14 @@ impl UiState {
     /// A save of a Part, said; what it leaves Stale, to ask about.
     fn save_sound(&mut self, a: project::PartAction) -> Option<Ask> {
         let slot = slot_of(a.kind());
-        let stale = self.project.apply_part_action(a).ok()?;
+        let stale = match self.project.apply_part_action(a) {
+            Ok(stale) => stale,
+            Err(project::ActionRefused::Full(f)) => {
+                self.refuse(Some(f));
+                return None;
+            }
+            Err(project::ActionRefused::Gone) => return None,
+        };
         self.toast.show(busy::Toast {
             text: prompt::saved_to(slot),
             ms: busy::Toast::SAVED_MS,
@@ -1109,8 +1154,26 @@ impl UiState {
                     self.ask(x);
                 }
             }
-            None => self.error(Line::new(prompt::POOL_FULL)),
+            None => self.refuse(self.pool_full(p)),
         }
+    }
+
+    /// Why `part`'s save isn't offered: what it needs against the gap;
+    /// `None`, every slot taken.
+    fn pool_full(&self, part: PartId) -> Option<project::PoolFull> {
+        let needs = Offer::of(&self.project, part).save_needs();
+        let free = self.project.pool().free();
+        (needs > free).then_some(project::PoolFull { needs, free })
+    }
+
+    /// POOL FULL in the browser's band until the next input; elsewhere
+    /// (SAVE TO PROJ), a toast.
+    fn refuse(&mut self, f: Option<project::PoolFull>) {
+        if self.loc.browse().is_none() {
+            return self.error(prompt::pool_full(f));
+        }
+        self.refusal = Some(f.map_or(Line::new(""), prompt::pool_needs));
+        self.browser_dirty = true;
     }
 
     /// EDIT on an action row; `at` is its list.
@@ -1135,6 +1198,10 @@ impl UiState {
                 self.ask_scene(true, |a| Ask::ReloadScene(a, prompt::Choice::new()))
             }
             Act::EnterDfu => self.ask(Ask::EnterDfu(prompt::Choice::new())),
+            Act::PurgeUnusedSources => match self.project.unused_sources() {
+                u if u.count == 0 => self.error(Line::new(prompt::NO_UNUSED)),
+                u => self.ask(Ask::PurgeSources(u, prompt::Choice::new())),
+            },
         }
     }
 
@@ -1174,6 +1241,14 @@ impl UiState {
             u if u.is_empty() => self.ask(Ask::ClearSlot(s, prompt::Choice::new())),
             u => self.error(prompt::in_use(u)),
         }
+    }
+
+    /// What a change did, as a toast that isn't an error.
+    fn notice(&mut self, text: Line) {
+        self.toast.show(busy::Toast {
+            text,
+            ms: busy::Toast::INFO_MS,
+        });
     }
 
     fn error(&mut self, text: Line) {
@@ -1489,10 +1564,21 @@ impl UiState {
                 }
             }
             Answered::ClearSlot(s, a) => {
-                if a.picked() == Some(C::Clear)
-                    && let Err(project::InUse(u)) = self.project.pool_clear(s)
-                {
-                    self.error(prompt::in_use(u));
+                if a.picked() != Some(C::Clear) {
+                    return;
+                }
+                let orphan = self
+                    .project
+                    .orphaned_by_clear(s)
+                    .zip(self.project.pool().get(s));
+                let orphan = orphan.map(|(c, e)| prompt::unused_after_clear(e.name(), c));
+                match self.project.pool_clear(s) {
+                    Err(project::InUse(u)) => self.error(prompt::in_use(u)),
+                    Ok(()) => {
+                        if let Some(l) = orphan {
+                            self.notice(l);
+                        }
+                    }
                 }
             }
             Answered::LoadProject { reply, to, clear } => match reply {
@@ -1578,6 +1664,12 @@ impl UiState {
                 }
             }
             Answered::EnterDfu(a) => self.dfu = said(a),
+            Answered::PurgeSources(a) => {
+                if a.picked() == Some(prompt::PurgeAnswer::Purge) {
+                    let sounding = self.project.pool().table().sounding();
+                    self.project.purge_unused_sources(sounding);
+                }
+            }
         }
     }
 
@@ -1837,7 +1929,10 @@ impl UiState {
     /// Process one frame of input: navigation + encoder deltas, then
     /// ORBIT's commands flushed for the frame's publish.
     pub fn handle_input(&mut self, controls: &impl Controls) {
+        let rev = self.project.rev();
         self.input(controls);
+        // A save or clear moves the browser's hints, costs and meter.
+        self.browser_dirty |= self.loc.browse().is_some() && self.project.rev() != rev;
         self.flush_orbit();
     }
 
@@ -1848,6 +1943,7 @@ impl UiState {
         if any_input(controls) {
             self.prime_status = None;
             self.toast.dismiss();
+            self.browser_dirty |= self.refusal.take().is_some();
         }
         self.refresh_status();
 
@@ -2096,6 +2192,8 @@ impl UiState {
 
     /// Advance animations one frame: a `Pacer`'s, at `UI_FPS`.
     pub fn update(&mut self, _: animation::UiTick) {
+        // A pending source hole closes when nothing above it sounds.
+        self.project.sources_pass();
         self.refresh_status();
         self.clock.tick();
         // Every Part's, so a Part not shown never keeps a stale clip.
@@ -2220,11 +2318,12 @@ impl UiState {
             let (cursor, scroll) = (b.cursor(), b.scroll());
             browser::draw(
                 display,
-                self.project.pool(),
+                &self.project,
                 part,
                 cursor,
                 scroll,
                 self.theme.hints,
+                self.refusal(),
             );
             self.draw_prompt(display);
             return;
@@ -2313,6 +2412,7 @@ impl UiState {
             parts: self.project.perf().parts(),
             active_part: self.active_part,
             prime_status: self.prime_status,
+            pool: self.project.pool(),
             audio,
             card: self.card,
             master_gr_db: crate::meter::MASTER_GR.read(),
@@ -2392,6 +2492,8 @@ impl UiState {
                 f.focus as u8,
                 if audio_page {
                     audio_page::focus_key(f.audio)
+                } else if f.def.viz == VizType::Pool {
+                    pool_page::focus_key(f.pool)
                 } else {
                     qvalues[f.focus]
                 },
@@ -2420,6 +2522,7 @@ impl UiState {
                     self.page,
                     match f.def.viz {
                         VizType::AudioStats => audio_page::cells_key(f.audio),
+                        VizType::Pool => pool_page::cells_key(f.pool),
                         VizType::About => about_page::cells_key(f.audio, f.card),
                         _ => qvalues,
                     },
@@ -2524,11 +2627,12 @@ impl UiState {
                 let (cursor, scroll) = (b.cursor(), b.scroll());
                 browser::draw(
                     display,
-                    self.project.pool(),
+                    &self.project,
                     part,
                     cursor,
                     scroll,
                     self.theme.hints,
+                    self.refusal(),
                 );
                 self.draw_prompt(display);
                 // Invalidate region set so normal layout forces full rebuild on exit

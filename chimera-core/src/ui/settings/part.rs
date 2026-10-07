@@ -3,8 +3,9 @@
 
 use core::fmt::Write;
 
+use crate::project::arena::Cost;
 use crate::project::{
-    Line, Origin, PartAction, PartActionKind, PartId, Project, SlotId, part_actions,
+    Line, Origin, PartAction, PartActionKind, PartId, PartStatus, Project, SlotId, part_actions,
 };
 
 use super::prompt::Slot;
@@ -52,7 +53,8 @@ impl Act {
             | Act::PartClear
             | Act::SceneClear
             | Act::SceneReload
-            | Act::EnterDfu => None,
+            | Act::EnterDfu
+            | Act::PurgeUnusedSources => None,
         }
     }
 }
@@ -64,19 +66,32 @@ pub struct Offer {
     actions: [Option<PartAction>; 3],
     /// The Part's slot, named on a row that doesn't apply.
     home: Option<SlotId>,
+    /// An Edited Part's save over its slot won't fit.
+    over_full: bool,
+    /// What the Part's save takes, offered or not (`PartActions::save_needs`).
+    save_needs: Cost,
 }
 
 impl Offer {
     pub fn of(p: &Project, part: PartId) -> Self {
+        let offered = part_actions(p, part);
         let mut actions = [None; 3];
-        for a in part_actions(p, part).iter() {
+        for a in offered.iter() {
             actions[PartCmd::of(a.kind()).idx()] = Some(a);
         }
         let home = match p.part(part).origin() {
             Origin::Slot { slot, .. } => Some(slot),
             Origin::Init(_) => None,
         };
-        Offer { actions, home }
+        let over_full = actions[PartCmd::OverSlot.idx()].is_none()
+            && offered.status() == PartStatus::Edited
+            && home.is_some();
+        Offer {
+            actions,
+            home,
+            over_full,
+            save_needs: offered.save_needs(),
+        }
     }
 
     pub fn get(&self, c: PartCmd) -> Option<PartAction> {
@@ -86,6 +101,16 @@ impl Offer {
     /// SAVE PART FIRST's save: over the slot, else to a new one.
     pub fn first_save(&self) -> Option<PartAction> {
         SAVE_ROWS.iter().find_map(|&c| self.get(c))
+    }
+
+    /// What MIX + EDIT's save takes, if one is offered: `first_save`'s.
+    pub fn save_cost(&self) -> Option<Cost> {
+        self.first_save().map(|_| self.save_needs)
+    }
+
+    /// What the Part's save would take, offered or not: a refusal's NEEDS.
+    pub fn save_needs(&self) -> Cost {
+        self.save_needs
     }
 
     pub fn look(&self, c: PartCmd) -> RowLook {
@@ -104,8 +129,22 @@ impl Offer {
         }
     }
 
-    /// A SAVE TO PROJ row: `OVER SLOT 03`, `TO NEW SLOT 09`; `--` for none.
+    /// A save the pool has no room for: no new slot is ever withheld for
+    /// another reason.
+    fn full(&self, c: PartCmd) -> bool {
+        match c {
+            PartCmd::OverSlot => self.over_full,
+            PartCmd::NewSlot => self.get(c).is_none(),
+            PartCmd::Reload => false,
+        }
+    }
+
+    /// A SAVE TO PROJ row: `OVER SLOT 03`, `TO NEW SLOT 09`; `POOL FULL`
+    /// in place of a save that won't fit (ADR 0043).
     pub fn label(&self, c: PartCmd) -> Line {
+        if self.full(c) {
+            return Line::new(super::prompt::POOL_FULL);
+        }
         let mut l = Line::new(match c {
             PartCmd::OverSlot => "OVER ",
             PartCmd::NewSlot => "TO NEW ",
@@ -115,11 +154,18 @@ impl Offer {
         l
     }
 
-    /// Bits for a region key: which rows are live, and their slots.
-    pub fn key(&self) -> [u8; 3] {
-        [PartCmd::OverSlot, PartCmd::NewSlot, PartCmd::Reload].map(|c| {
-            self.slot(c).map_or(0, |s| s.index() as u8 + 1) | (self.get(c).is_some() as u8) << 7
-        })
+    /// Bytes for a region key: each row's slot, then whether it is live
+    /// and whether the pool is full for it.
+    pub fn key(&self) -> [u8; 6] {
+        let mut k = [0; 6];
+        for (i, c) in [PartCmd::OverSlot, PartCmd::NewSlot, PartCmd::Reload]
+            .into_iter()
+            .enumerate()
+        {
+            k[2 * i] = self.slot(c).map_or(0, |s| s.index() as u8 + 1);
+            k[2 * i + 1] = self.get(c).is_some() as u8 | (self.full(c) as u8) << 1;
+        }
+        k
     }
 }
 

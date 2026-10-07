@@ -27,6 +27,18 @@ pub const CAPSTAN_HZ: f32 = 9.0;
 pub const JITTER_HZ: f32 = 10.0;
 pub const JITTER_RMS: f32 = 0.4;
 
+/// The line's full scale, ±2.0 in `i16` (ADR 0090): 1 LSB is 2⁻¹⁴, the
+/// reverb's scale (ADR 0028).
+pub const LINE_SCALE: f32 = 16384.0;
+
+/// A sample into the line: the cast truncates toward zero, so a tail
+/// decays to exact zero with no limit cycle, and saturates at ±2.0, so a
+/// hot write clips, never wraps (ADR 0090).
+#[inline(always)]
+fn to_line(x: f32) -> i16 {
+    (x * LINE_SCALE) as i16
+}
+
 /// The read never leaves the line: 500 ms plus both excursions, with the
 /// interpolator's second tap.
 const _: () = assert!(24_000 + (WOW_SAMPLES + FLUTTER_SAMPLES) as usize + 2 <= MAX_DELAY_SAMPLES);
@@ -271,7 +283,8 @@ const _: () = assert!((TIME_FADE as usize).is_multiple_of(BLOCK_SIZE));
 /// TIME later; MECHANICS moves the read head); a TIME change crossfades
 /// two read heads, never gliding one.
 pub struct TapeDelay {
-    buffer: [f32; MAX_DELAY_SAMPLES],
+    /// At `LINE_SCALE` (ADR 0090).
+    buffer: [i16; MAX_DELAY_SAMPLES],
     write_pos: usize,
     /// LP filter state for tone control in feedback
     lp_state: f32,
@@ -325,7 +338,7 @@ impl Default for TapeDelay {
 impl TapeDelay {
     pub fn new() -> Self {
         Self {
-            buffer: [0.0; MAX_DELAY_SAMPLES],
+            buffer: [0; MAX_DELAY_SAMPLES],
             write_pos: 0,
             lp_state: 0.0,
             transport: Transport::new(),
@@ -339,6 +352,12 @@ impl TapeDelay {
             tone: Ease::default(),
             mechanics: Ease::default(),
         }
+    }
+
+    /// The line holds exact zeros: its tail has ended (ADR 0090).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn is_silent(&self) -> bool {
+        self.buffer.iter().all(|&s| s == 0)
     }
 
     pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
@@ -463,11 +482,12 @@ impl TapeDelay {
             // Tape saturation in the feedback path, always on (ADR 0038): at
             // SAT 0 the loop is otherwise linear with unity DC gain, so FDBK
             // 1 grows without bound. Bounded by 1 / gain, the write stays
-            // within |dry| + FDBK.
+            // within |dry| + FDBK: ±2.0, the line's full scale, at a unity
+            // send.
             let saturated = libm::tanhf(filtered * now(sat_gain, i)) * now(sat_inv, i);
 
             // Write: input + feedback
-            self.buffer[write_pos] = dry + saturated * now(f, i);
+            self.buffer[write_pos] = to_line(dry + saturated * now(f, i));
             write_pos += 1;
             if write_pos == MAX_DELAY_SAMPLES {
                 write_pos = 0;
@@ -488,9 +508,10 @@ impl TapeDelay {
     }
 }
 
-/// The line read `delay` samples behind `write_pos`, linearly interpolated.
+/// The line read `delay` samples behind `write_pos`, linearly interpolated,
+/// back to ±2.0.
 #[inline(always)]
-fn read(buffer: &[f32; MAX_DELAY_SAMPLES], write_pos: usize, delay: f32) -> f32 {
+fn read(buffer: &[i16; MAX_DELAY_SAMPLES], write_pos: usize, delay: f32) -> f32 {
     let d_int = delay as usize;
     let d_frac = delay - d_int as f32;
     let pos_a = if write_pos >= d_int {
@@ -503,5 +524,21 @@ fn read(buffer: &[f32; MAX_DELAY_SAMPLES], write_pos: usize, delay: f32) -> f32 
     } else {
         pos_a - 1
     };
-    buffer[pos_a] * (1.0 - d_frac) + buffer[pos_b] * d_frac
+    let (a, b) = (f32::from(buffer[pos_a]), f32::from(buffer[pos_b]));
+    // Two multiplies, as the f32 line's.
+    (a + (b - a) * d_frac) * (1.0 / LINE_SCALE)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_truncates_toward_zero_and_saturates() {
+        assert_eq!(to_line(0.9 / 16384.0), 0);
+        assert_eq!(to_line(-0.9 / 16384.0), 0);
+        assert_eq!(to_line(3.0), i16::MAX);
+        assert_eq!(to_line(-3.0), i16::MIN);
+        assert_eq!(to_line(1.0), 16384);
+    }
 }

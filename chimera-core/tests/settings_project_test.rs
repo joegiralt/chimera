@@ -728,3 +728,31 @@ fn a_card_error_after_naming_drops_the_save_and_its_load() {
     assert_eq!(r.ui.project().meta().name(), name("SKETCH"));
     assert_eq!(listed(&mut r.s).len(), 1);
 }
+
+/// SETTINGS › PROJECT › POOL: the bar, then `SOUNDS n · xK`, `SOURCES`,
+/// `FREE yK`; PENDING only while a hole waits. Read-only.
+#[test]
+fn pool_leaf_lists_breakdown() {
+    use chimera_core::ui::block_registry::SYS_POOL;
+    use chimera_core::ui::pool_page::{self, METER_Y};
+    use chimera_core::ui::theme;
+    let mut ui = Box::new(UiState::new());
+    screen::to_leaf(&mut ui, &["PROJECT", "POOL"]);
+    assert_eq!(ui.page_def().id, SYS_POOL.id);
+    let pool = ui.project().pool();
+    let texts = pool_page::cell_texts(pool);
+    let text = |i: usize| texts[i].as_ref().map(|t| t.as_str().to_string());
+    let labels = SYS_POOL.params.map(|p| p.label());
+    assert_eq!(labels[..4], ["SOUNDS", "SOURCES", "FREE", "PENDING"]);
+    assert_eq!(text(0).as_deref(), Some("10 · 1.9K"));
+    assert_eq!(text(1).as_deref(), Some("0 · 0.0K"));
+    assert_eq!(
+        text(2).as_deref(),
+        Some("158K"),
+        "floored: 1.9K + 158K ≤ 160K"
+    );
+    assert_eq!(text(3), None, "no PENDING with none pending");
+    let fb = screen::render_ui(&ui);
+    assert_eq!(fb.at(theme::MARGIN_X, METER_Y), theme::INK, "the bar");
+    assert_eq!(fb.at(theme::MARGIN_X + 215, METER_Y), theme::BAR_REST);
+}

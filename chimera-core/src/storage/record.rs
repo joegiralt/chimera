@@ -35,10 +35,6 @@ pub enum RecordTag {
     Origin,
     /// ORBIT's BPM, `f32` LE: the tempo slot the projects spec reserves.
     Tempo,
-    /// ALGO's OP 5 and OP 6 routes (filter-types spec § 6): 4-byte
-    /// `(Jack code, block code, param id, amount)` entries. 0x15: 0x0C–0x0F
-    /// are reserved, 0x10–0x14 ORBIT's.
-    TapRoutes,
     /// An ORBIT scene's block: scene `u8`, then a `Block` payload.
     OrbitBlock,
     /// A ring's hits and notes (`orbit::records`).
@@ -49,6 +45,20 @@ pub enum RecordTag {
     Orbit,
     /// A scene's CUSTOM set (`orbit::scene::encode_scale`).
     OrbitScale,
+    /// A project's pool source, at the top level before `Fx`: its
+    /// `SourceRef`, 10 B. Never audio (ADR 0087).
+    PoolSource,
+    /// A Sound's source: its `SourceRef`, 10 B (ADR 0087).
+    SourceRef,
+    /// A source file's head: `SourceHead`, 34 B, first (ADR 0093).
+    SourceHead,
+    /// A source file's packed 12-bit samples, up to 504 B a record, in
+    /// order after the head.
+    SourceData,
+    /// ALGO's OP 5 and OP 6 routes (filter-types spec § 6): 4-byte
+    /// `(Jack code, block code, param id, amount)` entries. 0x1B: 0x19 and
+    /// 0x1A are TAPE's zone records.
+    TapRoutes,
 }
 
 impl RecordTag {
@@ -65,12 +75,16 @@ impl RecordTag {
             RecordTag::Fx => 0x8009,
             RecordTag::Origin => 0x000A,
             RecordTag::Tempo => 0x000B,
-            RecordTag::TapRoutes => 0x0015,
             RecordTag::OrbitBlock => 0x0010,
             RecordTag::OrbitNotes => 0x0011,
             RecordTag::OrbitChord => 0x0012,
             RecordTag::Orbit => 0x0013,
             RecordTag::OrbitScale => 0x0014,
+            RecordTag::PoolSource => 0x8015,
+            RecordTag::SourceRef => 0x0016,
+            RecordTag::SourceHead => 0x8017,
+            RecordTag::SourceData => 0x0018,
+            RecordTag::TapRoutes => 0x001B,
         }
     }
 
@@ -87,12 +101,16 @@ impl RecordTag {
             0x8009 => RecordTag::Fx,
             0x000A => RecordTag::Origin,
             0x000B => RecordTag::Tempo,
-            0x0015 => RecordTag::TapRoutes,
             0x0010 => RecordTag::OrbitBlock,
             0x0011 => RecordTag::OrbitNotes,
             0x0012 => RecordTag::OrbitChord,
             0x0013 => RecordTag::Orbit,
             0x0014 => RecordTag::OrbitScale,
+            0x8015 => RecordTag::PoolSource,
+            0x0016 => RecordTag::SourceRef,
+            0x8017 => RecordTag::SourceHead,
+            0x0018 => RecordTag::SourceData,
+            0x001B => RecordTag::TapRoutes,
             _ => return None,
         })
     }
@@ -197,15 +215,19 @@ impl<'s> RecordWriter<'s> {
         }
     }
 
+    /// A writer of records alone, no header: a pool entry's.
+    pub(crate) fn over(sink: &'s mut dyn ByteSink) -> Self {
+        Self::new(sink)
+    }
+
     fn raw(&mut self, b: &[u8]) -> Result<(), StoreError> {
         self.crc.update(b);
         self.sink.put(b)
     }
 
-    /// Records copied as they are from a whole file the console was sent,
-    /// hashed into this file's CRC like any other. The kind's check judges
-    /// them once they are on the card.
-    #[cfg(feature = "card-put")]
+    /// Records copied as they are, hashed into this file's CRC like any
+    /// other: a pool entry's, or a whole file the console was sent. The
+    /// kind's check judges them once they are on the card.
     pub(crate) fn copy(&mut self, records: &[u8]) -> Result<(), StoreError> {
         self.raw(records)
     }

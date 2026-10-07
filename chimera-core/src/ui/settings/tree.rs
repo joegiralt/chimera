@@ -3,8 +3,8 @@
 //! kind and navigation stays as it is.
 
 use super::leaves::{
-    ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, LIVE_SNAP_LEAF, OUTPUTS_LEAF, OnePage, THEME_LEAF,
-    TUNING_LEAF,
+    ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, LIVE_SNAP_LEAF, OUTPUTS_LEAF, OnePage, POOL_LEAF,
+    THEME_LEAF, TUNING_LEAF,
 };
 use core::num::NonZeroU16;
 
@@ -68,6 +68,8 @@ pub enum Act {
     SceneReload,
     /// OS UPGRADE: asks, then the shell restarts into the ROM loader.
     EnterDfu,
+    /// PROJECT's PURGE UNUSED SOURCES: asks with the count and the bytes.
+    PurgeUnusedSources,
 }
 
 const fn row(label: &'static str, kind: Kind) -> Row {
@@ -84,13 +86,19 @@ const fn crumb(label: &'static str, crumb: &'static str, kind: Kind) -> Row {
 
 use Kind::{Later, Leaf, List};
 
-static PROJECT: [Row; 3] = [
+static PROJECT: [Row; 5] = [
     crumb("LOAD PROJECT", "LOAD", Kind::Screen(Screen::LoadProject)),
     crumb("SAVE PROJECT AS", "SAVE AS", Kind::Act(Act::SaveProjectAs)),
     crumb(
         "MANAGE PROJECTS",
         "MANAGE",
         Kind::Screen(Screen::ManageProjects),
+    ),
+    row("POOL", Leaf(&POOL_LEAF)),
+    crumb(
+        "PURGE UNUSED SRC",
+        "PURGE",
+        Kind::Act(Act::PurgeUnusedSources),
     ),
 ];
 

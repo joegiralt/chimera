@@ -4,7 +4,8 @@
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
-use crate::factory::{FACTORY_LEN, factory_sound};
+use super::arena::ArenaWriter;
+use crate::factory::{factory_entries, new_sound};
 use crate::in_place::uninit_at;
 use crate::orbit::scene::OrbitSong;
 use crate::params::EngineType;
@@ -35,16 +36,17 @@ impl TemplateCrc {
 }
 
 impl Project {
-    /// NEW, built in place; `slot` is initialised on return. Its CRC is the
-    /// template: a project equal to it is `Pristine`.
-    pub fn init_in_place(slot: &mut MaybeUninit<Project>) -> TemplateCrc {
+    /// NEW, built in place, its pool's Sounds in `arena`; `slot` is
+    /// initialised on return. Its CRC is the template: a project equal to
+    /// it is `Pristine`.
+    pub fn init_in_place(slot: &mut MaybeUninit<Project>, arena: ArenaWriter) -> TemplateCrc {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; `meta`, `pool`, `perf` and
-        // `orbit` (each in place) and `rev` are each written once before
-        // `assume_init_mut`.
+        // `orbit` (the last three in place) and `rev` are each written once
+        // before `assume_init_mut`.
         let project = unsafe {
             addr_of_mut!((*p).meta).write(ProjectMeta::new_project());
-            Pool::init_in_place(uninit_at(addr_of_mut!((*p).pool)));
+            Pool::init_in_place(uninit_at(addr_of_mut!((*p).pool)), arena);
             Performance::init_in_place(uninit_at(addr_of_mut!((*p).perf)));
             OrbitSong::init_in_place(uninit_at(addr_of_mut!((*p).orbit)));
             addr_of_mut!((*p).rev).write(0);
@@ -54,10 +56,11 @@ impl Project {
         TemplateCrc(project_crc(project))
     }
 
+    /// NEW on the heap, on an arena of its own, leaked (host tests).
     #[cfg(any(test, feature = "test-support"))]
     pub fn boxed() -> (alloc::boxed::Box<Project>, TemplateCrc) {
         let mut raw = alloc::boxed::Box::<Project>::new_uninit();
-        let t = Self::init_in_place(&mut raw);
+        let t = Self::init_in_place(&mut raw, ArenaWriter::leaked());
         // SAFETY: `init_in_place` built a valid project in the box.
         (unsafe { raw.assume_init() }, t)
     }
@@ -73,21 +76,41 @@ impl Project {
         self.fill_new();
     }
 
-    /// The pool: the factory Sounds, then an INIT Sound per engine, then
-    /// empty slots, a slot at a time, and every generation moves. Then
-    /// Parts 1–5 load theirs from it, clean (`NEW_PARTS`).
+    /// The pool: every source out (retired if it sounds, compacted
+    /// through the gate if not), emptied, every generation moved and the
+    /// arena's Sounds dropped; then the factory Sounds, then an INIT Sound
+    /// per engine. Then Parts 1–5 load theirs from it, clean (`NEW_PARTS`).
+    /// Never panics: a factory Sound a sounding source still leaves no
+    /// room for is skipped (`take_new_skipped` counts them), and a Part
+    /// whose slot is missing or won't load loads INIT.
     fn fill_new(&mut self) {
-        for s in SlotId::ALL {
-            match new_slot(s) {
-                Some(sound) => self.pool.store(s, sound),
-                None => self.pool.clear(s),
+        self.pool.sources_clear();
+        self.pool.clear_all();
+        let mut skipped = 0;
+        for (s, (_, bytes)) in SlotId::ALL.into_iter().zip(factory_entries()) {
+            if self.pool.store_bytes(s, bytes).is_err() {
+                skipped += 1;
             }
         }
+        self.pool.new_skipped = skipped;
         for (part, slot) in PartId::ALL.into_iter().zip(NEW_PARTS) {
-            let from = PartFrom::Slot(slot);
-            self.load_part(PartSource { part, from })
-                .expect("NEW_PARTS names filled slots");
+            let init = PartFrom::Init(EngineType::Algo);
+            let from = match self.pool.get(slot) {
+                Some(_) => PartFrom::Slot(slot),
+                None => init,
+            };
+            if self.load_part(PartSource { part, from }).is_err() {
+                // INIT never fails.
+                let _ = self.load_part(PartSource { part, from: init });
+            }
         }
+    }
+
+    /// Factory Sounds the last NEW had no room for, once: a sounding
+    /// source held their bytes. `None` when NEW came up whole.
+    pub fn take_new_skipped(&mut self) -> Option<u8> {
+        let n = core::mem::take(&mut self.pool.new_skipped);
+        (n > 0).then_some(n)
     }
 }
 
@@ -118,17 +141,14 @@ pub(super) fn new_project_part(i: usize) -> Part {
 
 /// NEW's Sound in slot `s`.
 pub(super) fn new_slot(s: SlotId) -> Option<Sound> {
-    let i = s.index();
-    match i.checked_sub(FACTORY_LEN) {
-        None => factory_sound(i),
-        Some(j) => EngineType::ALL.get(j).map(|&e| Sound::init(e)),
-    }
+    new_sound(s.index())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::name::ProjectName;
+    use crate::params::EngineType;
     use crate::project::{
         Origin, PartFrom, PartId, PartSource, PartStatus, ProjectStatus, part_status,
         project_status,
@@ -164,7 +184,8 @@ mod tests {
         })
         .unwrap();
         p.edit_fx().delay.mix = 0.5;
-        p.pool_store(SlotId::ALL[25], Sound::init(EngineType::Modal));
+        p.pool_store(SlotId::ALL[25], &Sound::init(EngineType::Modal))
+            .unwrap();
         let before = SlotId::ALL.map(|s| p.pool().generation(s));
         p.reset_new();
         assert_eq!(project_crc(&p), t.get());
@@ -172,9 +193,7 @@ mod tests {
         assert_eq!(p.pool().used(), fresh.pool().used());
         for s in SlotId::ALL {
             assert_eq!(p.pool().get(s).is_some(), fresh.pool().get(s).is_some());
-            if let (Some(a), Some(b)) = (p.pool().get(s), fresh.pool().get(s)) {
-                assert!(a.bits_eq(b));
-            }
+            assert_eq!(p.pool().get(s), fresh.pool().get(s));
             assert_ne!(p.pool().generation(s), before[s.index()]);
         }
         // By slot and CRC, never generation (ADR 0043).

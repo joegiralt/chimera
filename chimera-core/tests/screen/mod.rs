@@ -15,7 +15,7 @@ use chimera_core::orbit::engine::OrbitEvent;
 use chimera_core::orbit::runner::{OrbitRunner, OrbitView, orbit_buffer};
 use chimera_core::params::EngineType;
 use chimera_core::perf::load::AudioStats;
-use chimera_core::preset::{POOL_SIZE, Sound};
+use chimera_core::preset::{MAX_SOUNDS, Sound};
 use chimera_core::project::SlotId;
 use chimera_core::project::{
     LoadLink, PartFrom, PartId, PartSource, Project, ProjectFile, ProjectNote, ProjectSource,
@@ -699,9 +699,10 @@ const PART_KEYS: [ButtonId; 5] = [
 /// scroll to the init row, EDIT), then MINUS from the engine's home to its
 /// first node.
 pub fn load_init(ui: &mut UiState, engine: EngineType) {
-    let row = POOL_SIZE + EngineType::ALL.iter().position(|&c| c == engine).unwrap();
+    let row = MAX_SOUNDS + EngineType::ALL.iter().position(|&c| c == engine).unwrap();
     feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
-    feed(ui, Input::turn(EncoderId::A, row as i8));
+    feed(ui, Input::turn(EncoderId::A, 100));
+    feed(ui, Input::turn(EncoderId::A, (row - 100) as i8));
     feed(ui, Input::press(ButtonId::Edit));
     let home = chimera_core::ui::nav::chain_def_for(engine).home();
     assert_eq!(
@@ -1235,12 +1236,33 @@ pub const CASES: &[ScreenCase] = &[
     ("sound_browser", |ui| {
         let mut s = Sound::init(EngineType::Algo);
         s.name = chimera_core::name::Name::new("WARM BASS").unwrap();
-        ui.project_mut().pool_store(SlotId::ALL[0], s);
+        ui.project_mut().pool_store(SlotId::ALL[0], &s).unwrap();
         let mut s = Sound::init(EngineType::Modal);
         s.name = chimera_core::name::Name::new("GLASS PLUCK").unwrap();
-        ui.project_mut().pool_store(SlotId::ALL[1], s);
+        ui.project_mut().pool_store(SlotId::ALL[1], &s).unwrap();
         feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
         feed(ui, Input::turn(EncoderId::A, 1));
+    }),
+    // Part 1 edited past the pool's free bytes: MIX + EDIT is refused,
+    // and the band says by how much (sound-pool plan Task 6).
+    ("sound_browser_pool_full", |ui| {
+        use chimera_core::project::test_support::dense;
+        feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
+        dense(ui.project_mut().edit_part(PartId::ALL[0]).sound, 7);
+        for s in SlotId::ALL {
+            if ui.project().pool().get(s).is_some() {
+                continue;
+            }
+            let mut x = Sound::init(EngineType::Algo);
+            dense(&mut x, s.index() as u64);
+            let p = ui.project_mut();
+            if p.pool_store(s, &x).is_err()
+                && p.pool_store(s, &Sound::init(EngineType::Algo)).is_err()
+            {
+                break;
+            }
+        }
+        feed(ui, Input::chord(ButtonId::Mix, ButtonId::Edit));
     }),
     ("settings_personal_theme", |ui| {
         to_leaf(ui, &["PERSONALIZE", "THEME"]);
@@ -1253,6 +1275,10 @@ pub const CASES: &[ScreenCase] = &[
     }),
     ("settings_system_diag_aud_load", |ui| {
         to_leaf(ui, &["SYSTEM", "DIAGNOSTICS", "AUDIO LOAD"])
+    }),
+    // PROJECT › POOL on NEW: the bar, SOUNDS, SOURCES, FREE.
+    ("settings_project_pool", |ui| {
+        to_leaf(ui, &["PROJECT", "POOL"])
     }),
     ("settings_top", |ui| tap(ui, ButtonId::Menu)),
     // Part 3's LIVE SNAP (plan Task 15): SNAP CHORD, HELD RE-SNAP focused.

@@ -89,16 +89,17 @@ fn fx_bus_fits_its_axi_share() {
     assert!(size <= hw::FX_BUS_BUDGET, "FxBus = {size} B");
 }
 
-/// Spec § Hardware parity: the Project (Performance and pool), the
-/// framebuffer, the UI reserve, the AudioShared, scope, AudioStats and
+/// The AXI residents, reported (the linker enforces the margin, ADR 0087):
+/// the Project (Performance and pool), the framebuffer, the UI,
+/// the AudioShared, scope, AudioStats and
 /// ORBIT view triple buffers, the scope's writer, ORBIT's runner, the FX bus
-/// and the card's store (ADR 0014, ADR 0021) fit AXI, with 64 KB to spare.
+/// and the card's store (ADR 0014, ADR 0021).
 /// ORBIT's settings ride inside `AudioShared` and its song inside `Project`,
 /// so neither is counted again.
 #[test]
-fn axi_residents_fit() {
+fn axi_report() {
     use chimera_core::dsp::fx_bus::FxBus;
-    use chimera_core::instrument::{AXI_RESIDENT, AudioShared};
+    use chimera_core::instrument::AudioShared;
     use chimera_core::orbit::runner::{OrbitRunner, OrbitView};
     use chimera_core::perf::load::AudioStats;
     use chimera_core::project::Project;
@@ -106,8 +107,16 @@ fn axi_residents_fit() {
     use chimera_core::triple::TripleBuffer;
     let parts = [
         ("framebuffer", hw::FB_BYTES),
-        ("UI reserve", hw::UI_RESERVE),
+        (
+            "UI besides Project",
+            size_of::<chimera_core::ui::UiState>() - size_of::<Project>(),
+        ),
         ("Project", size_of::<Project>()),
+        ("pool arena", chimera_core::project::arena::ARENA_BYTES),
+        (
+            "source table",
+            size_of::<chimera_core::source_table::SourceTable>(),
+        ),
         ("AudioShared x3", size_of::<TripleBuffer<AudioShared>>()),
         ("scope x3", size_of::<TripleBuffer<ScopeFrame>>()),
         ("scope writer", size_of::<ScopeWriter>()),
@@ -122,20 +131,6 @@ fn axi_residents_fit() {
     }
     let total: usize = parts.iter().map(|p| p.1).sum();
     eprintln!("{:>15} {total:>7} B of {} B", "AXI", hw::AXI_SRAM);
-    assert_eq!(total, AXI_RESIDENT);
-    // The default build's, at 2dc9eefd, plus the four fixed matrix columns
-    // (filter-types spec § 7: 40 B a `ModState` with its padding, in the
-    // pool, the Performance and the AudioShared triple buffer); the master
-    // tape adds its own.
-    if !cfg!(feature = "master-tape") {
-        // Then ALGO's `TapRoutes` (spec § 6): 8 B a Sound, 448 B in all.
-        assert!(total <= 444_772, "AXI grew past the taps'");
-    }
-    assert!(
-        hw::AXI_SRAM - total >= 64 * 1024,
-        "{} B of AXI left",
-        hw::AXI_SRAM - total
-    );
 }
 
 /// The whole pool with its bookkeeping (allocator, part buses, sends) fits D2.
@@ -146,21 +141,27 @@ fn instrument_fits_d2() {
     assert!(size <= hw::VOICE_RAM_BUDGET, "Instrument = {size} B");
 }
 
-/// The Project is the Performance and the pool's slots, plus no more than
-/// its meta and the slots' generations.
+/// The Project is the Performance and ORBIT's song, plus no more than its
+/// meta and the pool's index: the Sounds live in the arena (ADR 0087).
 #[test]
 fn axi_counts_the_project() {
     use chimera_core::orbit::scene::OrbitSong;
-    use chimera_core::preset::{POOL_SIZE, Performance, Sound};
-    use chimera_core::project::Project;
-    let (project, perf, slots, orbit) = (
+    use chimera_core::preset::Performance;
+    use chimera_core::project::{Pool, Project};
+    let (project, perf, pool, orbit) = (
         size_of::<Project>(),
         size_of::<Performance>(),
-        POOL_SIZE * size_of::<Option<Sound>>(),
+        size_of::<Pool>(),
         size_of::<OrbitSong>(),
     );
-    eprintln!("Project = {project} B: Performance {perf} B, slots {slots} B, ORBIT {orbit} B");
-    let parts = perf + slots + orbit;
+    eprintln!(
+        "Project = {project} B: Performance {perf} B, pool index and scratch {pool} B, ORBIT {orbit} B"
+    );
+    // The index (128 Sound entries, 32 source entries, their
+    // generations), the arena's writer and a load's scratch Sound.
+    let scratch = size_of::<chimera_core::preset::Sound>();
+    assert!(pool - scratch <= 3072, "the pool's index is {pool} B");
+    let parts = perf + pool + orbit;
     assert!(
         project - parts <= 128,
         "Project = {project} B, {} B over its parts",
@@ -169,24 +170,16 @@ fn axi_counts_the_project() {
 }
 
 /// UiState is one AXI static (`chimera-stm32/src/shared.rs`). Its Project
-/// is counted on its own in `axi_residents_fit`; the rest (navigation,
-/// renderer, regions, focus) comes out of the UI reserve.
+/// is counted on its own in `axi_report`; the rest (navigation, renderer,
+/// regions, focus) is held to a growth tripwire.
 #[test]
-fn ui_state_fits_the_ui_reserve() {
+fn ui_state_rest_under_4k() {
     use chimera_core::project::Project;
     let rest = size_of::<chimera_core::ui::UiState>() - size_of::<Project>();
-    eprintln!(
-        "UiState without its Project = {rest} B, reserve {} B",
-        hw::UI_RESERVE
-    );
+    eprintln!("UiState without its Project = {rest} B");
     // A growth tripwire, no physical limit: `UiState` is an AXI static
-    // built in place, charged a fixed `UI_RESERVE`, never moved or cloned.
-    // 2 KB, then 4 KB for SETTINGS' project listing (`MAX_LISTED`), then
-    // 5 KB (owner, 2026-10-03; ORBIT command channel spec § 5.0).
-    assert!(
-        rest <= 5 * 1024,
-        "UiState grew to {rest} B besides its Project"
-    );
+    // built in place, never moved or cloned.
+    assert!(rest <= 4096, "UiState grew to {rest} B besides its Project");
 }
 
 /// Exclusive-state spec § Memory: Sympathetic's seven lines live in a pool
@@ -249,5 +242,34 @@ fn orbit_runner_size() {
     assert!(
         size_of::<OrbitShared>() <= 880,
         "OrbitShared past 2dc9eefd's 876 + 4"
+    );
+}
+
+/// `TapeDelay` as measured at cf50ee74, with the f32 line; the orbit
+/// firmware's real AXI use there (`rust-size`: .data + .bss).
+const TAPE_DELAY_F32: usize = 96_344;
+const ORBIT_AXI_USED: usize = 384_264;
+
+/// ADR 0090: the i16 delay line frees half its bytes, on every build.
+#[test]
+fn delay_line_frees_48128() {
+    use chimera_core::dsp::delay::TapeDelay;
+    assert_eq!(TAPE_DELAY_F32 - size_of::<TapeDelay>(), 48_128);
+}
+
+/// ADR 0087: the 160 KiB arena fits the 32 KiB margin only with the i16
+/// line.
+#[test]
+fn arena_needs_the_delay() {
+    use chimera_core::dsp::delay::TapeDelay;
+    let freed = TAPE_DELAY_F32 - size_of::<TapeDelay>();
+    let after = |freed: usize| ORBIT_AXI_USED - freed - 28_672 + 2_568 + 160 * 1024;
+    assert!(
+        after(freed) <= hw::AXI_SRAM - 32 * 1024,
+        "160 KiB fits the 32 KiB margin with the i16 line"
+    );
+    assert!(
+        after(0) > hw::AXI_SRAM - 32 * 1024,
+        "and would not with the f32 line (ADR 0087)"
     );
 }

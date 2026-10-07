@@ -19,7 +19,7 @@ use chimera_core::mod_path::MAX_REGISTRY_DESTS;
 use chimera_core::params::EngineType;
 use chimera_core::part::PartParams;
 use chimera_core::preset::Sound;
-use chimera_core::project::test_support::{confirm_overwrite, full, same, save_at};
+use chimera_core::project::test_support::{confirm_overwrite, full_dense, same, save_at};
 use chimera_core::project::{
     PartId, Project, ProjectDecoder, ProjectNote, clear_project, list_projects, project_crc,
     project_file,
@@ -31,7 +31,7 @@ use chimera_core::storage::{
 };
 use chimera_hal::store::{ByteSink, Dir, FileName, Store, StoreError};
 use image::{Cut, CutDisk, FatEntry, RamDisk, Tear, fat_check, with_clusters};
-use probe::{Probed, XorShift, free, log, probed};
+use probe::{Probed, XorShift, free, log, probed, swept_clean};
 use std::collections::HashSet;
 
 /// A FAT16 card of 512 B clusters: every file of the pair and `/CHIMERA`
@@ -79,7 +79,8 @@ fn assert_safe(what: &str, disk: &RamDisk, kept: &FatEntry, cuts: &[u32]) {
 }
 
 /// The next save after a cut lands and loads, and rewrites FAT sector 0,
-/// which the pair shares, so both FATs agree again.
+/// which the pair shares, so both FATs agree again; the next boot's sweep
+/// frees what the cut left lost.
 fn assert_recovers(what: &str, slot: &Slot, n: u32) {
     assert!(save(slot, n).0.is_ok(), "{what}: the next save");
     let got = load(slot).unwrap_or_else(|e| panic!("{what}: after the next save, {e:?}"));
@@ -89,6 +90,7 @@ fn assert_recovers(what: &str, slot: &Slot, n: u32) {
         r.cross_linked.is_empty() && r.short.is_empty() && r.fats_differ.is_empty(),
         "{what}: after the next save, {r:?}"
     );
+    swept_clean(what, slot, &slot.inner);
 }
 
 /// Blocks a save of `n` on `disk` writes, in order.
@@ -104,6 +106,9 @@ fn writes_of(disk: &RamDisk, n: u32) -> Vec<u32> {
 #[test]
 fn cut_at_every_block_write_keeps_a_generation() {
     let base = slot(first_card());
+    // A `dense` Sound spans clusters: a cut lands mid-chain.
+    let a = kept(&base);
+    assert!(a.chain.len() >= 3, "{} clusters", a.chain.len());
     // Save 2 creates B, 3 truncates A, 4 truncates B.
     for n in 2..=4 {
         let before = copy(&base.inner);
@@ -290,6 +295,8 @@ fn cut_then_reinsert_loads_previous_generation() {
     assert!(t.bits_eq(&sound(1)));
     assert_eq!(card, Card::Ready(v));
     assert_kept("reinserted", &disk, Side::A, Generation::FIRST, &sound(1));
+    swept_clean("reinserted", &disk, &disk.inner);
+    assert_kept("swept", &disk, Side::A, Generation::FIRST, &sound(1));
 }
 
 struct Bytes(Vec<u8>);
@@ -430,13 +437,27 @@ fn full_card_keeps_previous_generation() {
     assert!(load(&disk).unwrap().bits_eq(&sound(2)));
 }
 
-/// `full()` with Part 1's LEVEL at save `n`'s value: each save differs.
+/// `full_dense()` with Part 1's LEVEL at save `n`'s value: each save
+/// differs.
 fn project_gen(n: u32) -> Box<Project> {
-    let (mut p, _) = full();
+    let (mut p, _) = full_dense();
     p.edit_part(PartId::ALL[0])
         .mix
         .set(PartParams::LEVEL, 0.1 * n as f32);
     p
+}
+
+/// The cluster count of each side of the project pair on `disk`, A then B
+/// (0: absent).
+fn project_chains(disk: &RamDisk) -> [usize; 2] {
+    let r = fat_check(disk);
+    let stem = project_id().stem();
+    b"AB".map(|ext| {
+        r.entries
+            .iter()
+            .find(|e| e.name[..8] == stem[..] && e.name[8] == ext)
+            .map_or(0, |e| e.chain.len())
+    })
 }
 
 fn project_id() -> ProjectId {
@@ -471,7 +492,7 @@ fn load_project_in_place(slot: &Slot) -> Result<Box<Project>, InPlaceError> {
     Ok(q)
 }
 
-/// A project (about 44 KB, 90-odd blocks a side) cut at every block
+/// A project (`project_gen`'s, 119 clusters a side) cut at every block
 /// write of its third save: the in-place load always gets save 2 or 3
 /// whole, never an error, and the next save lands.
 #[test]
@@ -482,6 +503,9 @@ fn project_cut_keeps_a_generation() {
         assert!(matches!(note, ProjectNote::Saved(_)), "save {n}: {note:?}");
     }
     let before = copy(&base.inner);
+    // Both sides span many clusters: a cut lands mid-chain.
+    let chains = project_chains(&before);
+    assert!(chains.iter().all(|&n| n >= 100), "chains {chains:?}");
     let blocks = {
         let dry = slot(copy(&before));
         let mut s = probed(&dry);
@@ -489,7 +513,6 @@ fn project_cut_keeps_a_generation() {
         let blocks: Vec<u32> = log(&s).writes.borrow().iter().map(|&(b, _)| b).collect();
         blocks
     };
-    assert!(blocks.len() > 80, "{} writes", blocks.len());
     let (two, three) = (project_gen(2), project_gen(3));
     let (crc2, crc3) = (project_crc(&two), project_crc(&three));
     assert_ne!(crc2, crc3);
@@ -520,6 +543,8 @@ fn project_cut_keeps_a_generation() {
             "{what}: next save {note:?}"
         );
         same(&project_gen(4), &load_project_in_place(&cut).unwrap());
+        swept_clean(&what, &cut, &cut.inner);
+        same(&project_gen(4), &load_project_in_place(&cut).unwrap());
     }
     println!(
         "project cuts: {} writes; save 2 loads at {}, save 3 at {}",
@@ -543,10 +568,12 @@ fn project_clear_cut_keeps_a_generation() {
         let dry = slot(copy(&before));
         let mut s = probed(&dry);
         assert_eq!(clear_project_on(&mut s), Ok(()));
+        // NEW, as CLEAR writes it, spans several clusters.
+        let chains = project_chains(&dry.inner);
+        assert!(chains.iter().any(|&n| n >= 8), "chains {chains:?}");
         let blocks: Vec<u32> = log(&s).writes.borrow().iter().map(|&(b, _)| b).collect();
         blocks
     };
-    assert!(blocks.len() > 20, "{} writes", blocks.len());
     let (new, t) = Project::boxed();
     let two = project_gen(2);
     let mut loaded = [0; 2];
@@ -572,6 +599,9 @@ fn project_clear_cut_keeps_a_generation() {
         assert_eq!(clear_project_on(&mut probed(&cut)), Ok(()), "{what}: again");
         let got = load_project_in_place(&cut).unwrap();
         assert_eq!(project_crc(&got), t.get(), "{what}: Pristine");
+        swept_clean(&what, &cut, &cut.inner);
+        let got = load_project_in_place(&cut).unwrap();
+        assert_eq!(project_crc(&got), t.get(), "{what}: swept");
     }
     println!(
         "clear cuts: {} writes; save 2 loads at {}, NEW at {}",

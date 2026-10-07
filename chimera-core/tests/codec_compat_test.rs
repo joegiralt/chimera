@@ -215,9 +215,9 @@ fn fixture_part_edits(s: &mut Sound) {
 /// then edited; Part 2 from slot 9; delay MIX 0.3; `FIXTURE`.
 fn fixture_project() -> Box<Project> {
     let (mut p, t) = Project::boxed();
-    let mut s = p.pool().get(SlotId::ALL[0]).unwrap().clone();
+    let mut s = p.pool().get(SlotId::ALL[0]).unwrap().to_sound();
     fixture_edits(&mut s);
-    p.pool_store(SlotId::ALL[11], s);
+    p.pool_store(SlotId::ALL[11], &s).unwrap();
     for (part, slot) in [(1, 11), (2, 9)] {
         load(
             &mut p,
@@ -354,7 +354,7 @@ fn project_fixture_loads() {
     decode_project(&f, &mut p).unwrap();
     assert_eq!(p.meta().name().as_str(), "FIXTURE");
 
-    let slot = |i: usize| p.pool().get(SlotId::ALL[i]);
+    let slot = |i: usize| p.pool().get(SlotId::ALL[i]).map(|e| e.to_sound());
     for i in 0..FACTORY_LEN {
         let want = decode(&fixture(&format!("factory_{i}.snd"))).unwrap();
         assert!(slot(i).unwrap().bits_eq(&want), "slot {i}");
@@ -364,7 +364,7 @@ fn project_fixture_loads() {
     let mut edited = decode(&fixture("factory_0.snd")).unwrap();
     fixture_edits(&mut edited);
     assert!(slot(11).unwrap().bits_eq(&edited));
-    assert_eq!(p.pool().used(), 11);
+    assert_eq!(p.pool().sound_count(), 11);
     assert!(slot(10).is_none());
 
     let mut part1 = edited.clone();
@@ -372,7 +372,7 @@ fn project_fixture_loads() {
     let origin = |i: usize| Origin::Slot {
         slot: SlotId::ALL[i],
         generation: p.pool().generation(SlotId::ALL[i]),
-        crc: sound_crc(slot(i).unwrap()),
+        crc: sound_crc(&slot(i).unwrap()),
     };
     for id in PartId::ALL {
         let part = p.part(id);

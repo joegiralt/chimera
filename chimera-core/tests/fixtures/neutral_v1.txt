@@ -646,4 +646,5 @@ Sound {
         ],
         count: 0,
     },
+    source: None,
 }

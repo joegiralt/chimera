@@ -1,4 +1,6 @@
 //! Frozen disk codes (ADR 0045): every stored enum's code is permanent.
+//! So are `Sound::neutral`'s values: a sparse Sound omits each param at
+//! neutral (ADR 0087), and `neutral_is_a_contract` pins them.
 
 use chimera_core::addr::{BlockRef, Blocks, Op};
 use chimera_core::block::{Block, DiskCode, ParamId, ValFmt};

@@ -2,7 +2,7 @@
 //! id, so every one is in range.
 
 use crate::hw::MAX_PARTS;
-use crate::preset::POOL_SIZE;
+use crate::preset::MAX_SOUNDS;
 
 /// A `u8` index below `$len`, only `new` (or `ALL`) making one: the
 /// struct, `ALL` in order, and `new`. The type adds its own reader.
@@ -49,7 +49,7 @@ impl PartId {
 bounded_index!(
     /// One of the pool's slots.
     #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-    SlotId < POOL_SIZE
+    SlotId < MAX_SOUNDS
 );
 
 impl SlotId {
@@ -59,7 +59,7 @@ impl SlotId {
 }
 
 /// A set of Parts, a bit each.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PartSet(u8);
 
 const _: () = assert!(MAX_PARTS <= u8::BITS as usize);

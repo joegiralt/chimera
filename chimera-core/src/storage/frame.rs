@@ -11,7 +11,7 @@ pub const FORMAT_VERSION: u16 = 1;
 pub const HEADER_LEN: usize = 28;
 /// CRC32, little-endian, over the header and the records.
 pub const TRAILER_LEN: usize = 4;
-const RECORD_HEAD_LEN: usize = 4;
+pub(crate) const RECORD_HEAD_LEN: usize = 4;
 
 /// What a file holds. 4 Tags and 5 Index are reserved (ADR 0045).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -20,6 +20,8 @@ pub enum FileKind {
     Sound = 1,
     Project = 2,
     System = 3,
+    /// TAPE's audio, `/CHIMERA/TAPES/<CRC>.SRC` (ADR 0087).
+    Source = 6,
 }
 
 impl FileKind {
@@ -28,6 +30,7 @@ impl FileKind {
             1 => Some(FileKind::Sound),
             2 => Some(FileKind::Project),
             3 => Some(FileKind::System),
+            6 => Some(FileKind::Source),
             _ => None,
         }
     }

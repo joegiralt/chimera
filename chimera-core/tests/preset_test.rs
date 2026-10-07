@@ -1,6 +1,6 @@
 use chimera_core::addr::Op;
 use chimera_core::params::EngineType;
-use chimera_core::preset::{POOL_SIZE, Performance, Sound};
+use chimera_core::preset::{MAX_SOUNDS, Performance, Sound};
 use chimera_core::project::{
     Origin, PartFrom, PartId, PartSource, Project, ReplaceError, ReplaceGuard, SlotId, TemplateCrc,
 };
@@ -81,7 +81,7 @@ fn patch_init_has_musically_useful_defaults() {
 fn part_edit_does_not_modify_pool() {
     let (mut p, t) = Project::boxed();
     let (part, slot) = (PartId::ALL[0], SlotId::ALL[0]);
-    p.pool_store(slot, Sound::init(EngineType::Algo));
+    p.pool_store(slot, &Sound::init(EngineType::Algo)).unwrap();
     load(
         &mut p,
         t,
@@ -93,7 +93,7 @@ fn part_edit_does_not_modify_pool() {
     .unwrap();
     p.edit_part(part).sound.params.out.volume = 0.0; // mute
     assert_eq!(p.part(part).sound.params.out.volume, 0.0);
-    assert!(p.pool().get(slot).unwrap().params.out.volume > 0.0);
+    assert!(p.pool().get(slot).unwrap().to_sound().params.out.volume > 0.0);
 }
 
 /// Spec § Vocabulary: a Performance holds MAX_PARTS Parts, each playing a Sound.
@@ -227,7 +227,7 @@ fn browser_load_copies_patch_to_part() {
     // Store a named sound in pool slot 2
     let mut sound = Sound::init(EngineType::Algo);
     sound.name = chimera_core::name::Name::new("Test Sound").unwrap();
-    ui.project_mut().pool_store(SlotId::ALL[2], sound);
+    ui.project_mut().pool_store(SlotId::ALL[2], &sound).unwrap();
 
     // Open browser for B1 (part 0)
     open_browser(&mut ui, ButtonId::B1);
@@ -261,7 +261,8 @@ fn browser_cancel_does_not_load() {
 
     // Store sound and open browser
     ui.project_mut()
-        .pool_store(SlotId::ALL[0], Sound::init(EngineType::Modal));
+        .pool_store(SlotId::ALL[0], &Sound::init(EngineType::Modal))
+        .unwrap();
     open_browser(&mut ui, ButtonId::B1);
     assert!(ui.location().browse().is_some());
 
@@ -276,9 +277,9 @@ fn browser_cancel_does_not_load() {
 fn browser_init_entries_set_the_engine() {
     let mut ui = UiState::new();
 
-    // Open browser, scroll to "INIT Modal" (POOL_SIZE + 1)
+    // Open browser, scroll to "INIT Modal" (MAX_SOUNDS + 1)
     open_browser(&mut ui, ButtonId::B1);
-    ui.handle_input(&MockControls::new().encoder(EncoderId::A, (POOL_SIZE + 1) as i8));
+    scroll(&mut ui, MAX_SOUNDS + 1);
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
 
     assert!(ui.location().browse().is_none());
@@ -288,9 +289,9 @@ fn browser_init_entries_set_the_engine() {
     );
     assert!(ui.project().part(PartId::ALL[0]).sound.name.as_str() == "INIT");
 
-    // Open browser again, scroll to "INIT Algo" (POOL_SIZE)
+    // Open browser again, scroll to "INIT Algo" (MAX_SOUNDS)
     open_browser(&mut ui, ButtonId::B1);
-    ui.handle_input(&MockControls::new().encoder(EncoderId::A, POOL_SIZE as i8));
+    scroll(&mut ui, MAX_SOUNDS);
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
 
     assert!(ui.location().browse().is_none());
@@ -309,7 +310,7 @@ fn browser_load_keeps_part_mix() {
         chimera_core::MidiChannel::new(9).unwrap();
     ui.project_mut().edit_part(PartId::ALL[2]).mix.level = 0.3;
     open_browser(&mut ui, ButtonId::B3);
-    ui.handle_input(&MockControls::new().encoder(EncoderId::A, (POOL_SIZE + 1) as i8));
+    scroll(&mut ui, MAX_SOUNDS + 1);
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
     assert_eq!(
         ui.project().part(PartId::ALL[2]).sound.engine(),
@@ -413,5 +414,15 @@ fn performance_default_is_new() {
     let p = chimera_core::preset::Performance::default();
     for (i, part) in p.parts().iter().enumerate() {
         assert_eq!(part.mix, PartParams::for_part(i));
+    }
+}
+
+/// Encoder A turned `rows` down the browser, in turns an `i8` holds.
+fn scroll(ui: &mut UiState, rows: usize) {
+    let mut left = rows;
+    while left > 0 {
+        let step = left.min(100);
+        ui.handle_input(&MockControls::new().encoder(EncoderId::A, step as i8));
+        left -= step;
     }
 }

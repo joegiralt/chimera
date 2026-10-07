@@ -45,6 +45,7 @@ check:
     cargo build -p chimera-bootloader --target thumbv7em-none-eabihf
     cargo build -p chimera-theory --target thumbv7em-none-eabihf
     just clippy
+    just loom
     cargo fmt --all -- --check
     just stack-check
 
@@ -84,6 +85,12 @@ stack-check:
             python3 tools/stack_depth.py "$(( $(addr _stack_start) - $(addr _stack_end) ))" <<<"$dis"$'\n'"$data"
         fi
     done
+
+# The source table's gate under loom (ADR 0087): every interleaving of
+# one audio block loop and one UI close, wait, move and open. Its own
+# target dir: `--cfg loom` would rebuild everything else.
+loom:
+    RUSTFLAGS="--cfg loom" CARGO_TARGET_DIR=target/loom cargo test -p chimera-core --features test-support --test loom_source_table --release
 
 # Run tests
 test:

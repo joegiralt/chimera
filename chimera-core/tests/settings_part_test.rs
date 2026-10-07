@@ -59,7 +59,7 @@ fn load(ui: &mut UiState, p: PartId, s: SlotId) {
         ui.project()
             .part(p)
             .sound
-            .bits_eq(ui.project().pool().get(s).unwrap())
+            .bits_eq(&ui.project().pool().get(s).unwrap().to_sound())
     );
 }
 
@@ -219,7 +219,7 @@ fn save_over_then_update_stale() {
 fn stale_part_offers_no_over_slot() {
     let mut ui = saved_over();
     answer(&mut ui, 1); // LEAVE
-    let pool = sound_crc(ui.project().pool().get(S3).unwrap());
+    let pool = ui.project().pool().get(S3).unwrap().crc();
     let was = crc(&ui, P[3]);
     save_row(&mut ui, P[3], PartCmd::OverSlot);
     let o = Offer::of(ui.project(), P[3]);
@@ -230,7 +230,7 @@ fn stale_part_offers_no_over_slot() {
     assert!(!ui.prompt_open());
     assert_eq!(status(&ui, P[3]), PartStatus::Stale(S3));
     assert_eq!(crc(&ui, P[3]), was);
-    assert_eq!(sound_crc(ui.project().pool().get(S3).unwrap()), pool);
+    assert_eq!(ui.project().pool().get(S3).unwrap().crc(), pool);
 }
 
 #[test]
@@ -256,7 +256,7 @@ fn reload_is_dimmed_until_there_is_something_to_revert() {
 fn reload_over_edits_asks_and_save_first_goes_to_a_new_slot() {
     let mut ui = UiState::new();
     load(&mut ui, P[1], S3);
-    let slot = sound_crc(ui.project().pool().get(S3).unwrap());
+    let slot = ui.project().pool().get(S3).unwrap().crc();
     edit(&mut ui, P[1]);
     let edited = crc(&ui, P[1]);
     part_row(&mut ui, P[1], 3); // RELOAD FROM PROJ
@@ -268,8 +268,8 @@ fn reload_over_edits_asks_and_save_first_goes_to_a_new_slot() {
     let free = ui.project().pool().first_free().unwrap();
     tap(&mut ui, ButtonId::Edit);
     answer(&mut ui, 0); // SAVE PART FIRST
-    assert_eq!(sound_crc(ui.project().pool().get(free).unwrap()), edited);
-    assert_eq!(sound_crc(ui.project().pool().get(S3).unwrap()), slot);
+    assert_eq!(ui.project().pool().get(free).unwrap().crc(), edited);
+    assert_eq!(ui.project().pool().get(S3).unwrap().crc(), slot);
     assert_eq!(crc(&ui, P[1]), slot, "reloaded");
     assert_eq!(status(&ui, P[1]), PartStatus::Clean);
 }
@@ -337,7 +337,7 @@ fn clear_edited_part_asks_and_each_answer() {
     let free = ui.project().pool().first_free().unwrap();
     let edited = clear_asks(&mut ui);
     answer(&mut ui, 0); // SAVE PART FIRST
-    assert_eq!(sound_crc(ui.project().pool().get(free).unwrap()), edited);
+    assert_eq!(ui.project().pool().get(free).unwrap().crc(), edited);
     assert_eq!(crc(&ui, P[0]), init);
     assert_eq!(status(&ui, P[0]), PartStatus::Clean);
 }
@@ -384,7 +384,7 @@ fn sound_rung_load_asks_when_edited() {
         ui.project()
             .part(P[0])
             .sound
-            .bits_eq(ui.project().pool().get(S3).unwrap())
+            .bits_eq(&ui.project().pool().get(S3).unwrap().to_sound())
     );
     assert_eq!(
         ui.location(),
@@ -473,6 +473,6 @@ fn sound_rung_load_never_replaces_without_an_answer() {
         ui.project()
             .part(P[0])
             .sound
-            .bits_eq(ui.project().pool().get(S3).unwrap())
+            .bits_eq(&ui.project().pool().get(S3).unwrap().to_sound())
     );
 }

@@ -19,7 +19,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0011](0011-goldens-are-a-refactor-lock.md) | Golden recordings are a refactor lock, not a quality claim | Accepted |
 | [0012](0012-type-driven-development.md) | Type-driven development where it pays | Accepted |
 | [0013](0013-hardware-parity-budgets.md) | The simulator enforces the chip's limits | Accepted; budget clause superseded by 0020 |
-| [0014](0014-audio-memory-map.md) | Voices in D2, FX bus in AXI; buffers sized to the range they serve | Accepted; 16-bit-line rejection and FX totals superseded in part by 0028; string sizing by [0040](0040-eight-voices-modal-strings-to-g1.md) |
+| [0014](0014-audio-memory-map.md) | Voices in D2, FX bus in AXI; buffers sized to the range they serve | Accepted; 16-bit-line rejection and FX totals superseded in part by 0028; string sizing by [0040](0040-eight-voices-modal-strings-to-g1.md); AXI accounting by [0087](0087-sound-pool-by-memory-budget.md); delay line format by [0090](0090-delay-line-stored-as-i16.md) |
 | [0015](0015-voice-steal-and-fx-returns.md) | Steal released voices first; FX sends return wet only | Accepted; mono-return clause superseded in part by 0029 |
 | [0016](0016-visual-direction-refined-elektron.md) | Visual direction: refined Elektron | Accepted; outline-box rule superseded in part by [0041](0041-mod-matrix-amount-grid.md) |
 | [0017](0017-prime-status-feedback.md) | MIX+PLUS reports its outcome in place, until the next input | Accepted; hint text superseded by [0086](0086-every-gesture-shows-a-contextual-hint-in-the-focus-band.md) |
@@ -48,11 +48,11 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0040](0040-eight-voices-modal-strings-to-g1.md) | Eight voices in D2; Modal strings sized to G1 (supersedes in part 0014 and 0031) | Accepted; line length superseded in part by [0056](0056-modal-resonators-share-four-macros.md); admission and voice counts while ORBIT plays superseded in part by [0091](0091-orbit-billed-while-it-plays.md) |
 | [0041](0041-mod-matrix-amount-grid.md) | The mod matrix is an amount grid of outlined cells (supersedes in part 0016) | Accepted |
 | [0042](0042-voice-pitch-is-a-matrix-destination.md) | Voice pitch is a matrix destination on each engine's PITCH page | Accepted; `ModalEngine::PITCH` superseded in part by [0056](0056-modal-resonators-share-four-macros.md) |
-| [0043](0043-projects-own-their-sounds.md) | Projects own their sounds; marks are derived; one typed replace guard | Proposed; template amended by [0073](0073-new-plays-the-sparse-groove-on-factory-sounds.md) |
+| [0043](0043-projects-own-their-sounds.md) | Projects own their sounds; marks are derived; one typed replace guard | Proposed; template amended by [0073](0073-new-plays-the-sparse-groove-on-factory-sounds.md); fixed 32-slot `Pool` superseded in part by [0087](0087-sound-pool-by-memory-budget.md) |
 | [0044](0044-one-ladder-one-button-map.md) | One ladder and one button map for Parts, the mixer and ORBIT (absorbs 0057; amended by 0066 for SETTINGS) | Proposed |
 | [0045](0045-card-format.md) | Store cards in 8.3 A/B files of versioned TLV records | Accepted; load staging superseded in part by [0046](0046-project-load-protocol.md); record bound by [0102](0102-a-record-may-hold-640-bytes.md) (Proposed) |
-| [0046](0046-project-load-protocol.md) | Swap projects by epoch: fade the voices, then publish (supersedes in part [0045](0045-card-format.md)) | Proposed |
-| [0048](0048-own-fat-layer.md) | Own the FAT layer; keep embedded-sdmmc only as the SD block driver | Accepted |
+| [0046](0046-project-load-protocol.md) | Swap projects by epoch: fade the voices, then publish (supersedes in part [0045](0045-card-format.md)) | Proposed; step 6 and the MIDI-during-load bound superseded for project file loads by [0099](0099-a-project-file-load-fades-before-pass-2.md) |
+| [0048](0048-own-fat-layer.md) | Own the FAT layer; keep embedded-sdmmc only as the SD block driver | Accepted; amended by [0094](0094-a-boot-sweep-frees-lost-clusters.md) |
 | [0049](0049-algo-init-routed-morph-dims.md) | Algo INIT is audibly routed; MORPH dims when A = B (supersedes in part 0024) | Proposed; INIT's RR and OUT LEVEL noted by [0063](0063-levels-at-the-factory-median.md) |
 | [0050](0050-gain-staging-trim-and-final-limiter.md) | Gain staging: a 1/√8 output trim and one peak limiter at −1 dBFS, last | Proposed |
 | [0051](0051-a-voice-holds-one-engine-rebuilt-in-place.md) | A voice holds one engine, rebuilt in place (supersedes 0008) | Accepted; superseded in part by [0101](0101-voice-chain-may-hold-2112-bytes.md) (Proposed) |
@@ -90,10 +90,14 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0083](0083-a-scene-keeps-its-edits-across-switches.md) | A scene keeps its edits across switches; drift restarts (amends 0077) | Proposed |
 | [0084](0084-edit-on-orb-always-opens-custom-rings-show-their-part.md) | EDIT on ORB always opens CUSTOM, a named scale made CUSTOM by the first toggle; each ring shows its Part on ORB (amends 0079) | Proposed |
 | [0086](0086-every-gesture-shows-a-contextual-hint-in-the-focus-band.md) | Every gesture shows a contextual hint in the focus band, one shared component, HINTS ON/OFF in THEME (amends 0074, 0081; supersedes 0017's hint text) | Proposed |
+| [0087](0087-sound-pool-by-memory-budget.md) | Budget the sound pool by memory: one arena for sparse Sounds and card-backed 12-bit sources, one meter (supersedes in part 0043 and 0014) | Proposed |
 | [0089](0089-ship-with-fat-lto.md) | Ship the firmware with fat LTO in one codegen unit | Proposed |
+| [0090](0090-delay-line-stored-as-i16.md) | Store the master delay line as i16, full scale ±2.0 (supersedes in part 0014) | Proposed |
 | [0091](0091-orbit-billed-while-it-plays.md) | While ORBIT plays, reserve its own block and a note-on burst; cost the Parts once a block; bill a stolen voice until its fade ends (supersedes in part 0040; amends 0027) | Proposed |
 | [0092](0092-put-files-over-the-usb-console.md) | Put project files onto the card over the USB console: `ls`, and `put` through the unit's own A/B save, checked as it streams, a refused side deleted (amends 0068) | Proposed |
+| [0094](0094-a-boot-sweep-frees-lost-clusters.md) | Sweep lost clusters once at boot, from a bitmap in the arena's gap, dry until the owner's go; `drop_chain` frees the cluster a sector-crossing alloc stranded (amends 0048) | Proposed |
 | [0096](0096-filter-types-clean-2040-dirty-and-algo-taps.md) | Three filter TYPEs, CLEAN (Cascadia-style), 2040 (SSM2040) and DIRTY (Chamberlin), with per-type modes, labels and bills; ALGO OP 5/6 audio-rate taps to FREQ, Q, VCA and FOLD (supersedes 0037) | Proposed |
 | [0097](0097-bank-and-symp-clip-with-stmlibs-curve.md) | BANK and SYMP clip with stmlib's curve; the Elements stagger tried and dropped (amends 0063) | Proposed |
+| [0099](0099-a-project-file-load-fades-before-pass-2.md) | A project file load fades before pass 2 and reads its sources inside the fade (supersedes in part [0046](0046-project-load-protocol.md)) | Proposed |
 | [0101](0101-voice-chain-may-hold-2112-bytes.md) | The voice chain may hold 2,112 B (supersedes in part 0051) | Proposed |
 | [0102](0102-a-record-may-hold-640-bytes.md) | A record may hold 640 B: the four fixed matrix columns' routes (supersedes in part 0045) | Proposed |

@@ -139,11 +139,16 @@ const GOLDENS: &[(&str, u64)] = &[
     // rows of 17 (Task 17).
     ("mod_matrix_algo_taps", 0x5a2a634ad30444b4),
     ("mod_matrix_modal", 0xff6ac1e21a0ccc52),
-    ("sound_browser", 0xc5fad13cf6ddc71f),
+    // Re-recorded: the pool meter, row costs, the hints' bytes (sound-pool
+    // plan Task 6); and its refusal. Then the merge with filter-types: a
+    // Sound is smaller (fixed columns, no registry entry).
+    ("sound_browser", 0x1ed65ccfb138def3),
+    ("sound_browser_pool_full", 0x668867219454d099),
     // Re-recorded: a fresh project's footer drops NEW (#286).
     ("settings_personal_theme", 0xc35039e65219cdc2),
     ("settings_midi_sync", 0x0e26ce69d0f54980),
     ("settings_system_diag_aud_load", 0x0d5edcdc4826225e),
+    ("settings_project_pool", 0x072ee7909d1baf7c),
     // ORBIT's row opens its list (plan Task 17).
     ("settings_top", 0x08d6ee26dad9fb97),
     // Part 3's LIVE SNAP leaf (plan Task 15).

@@ -138,5 +138,6 @@ pub mod modulator;
 pub mod reverb;
 pub mod ring;
 pub mod tape;
+pub mod tape_engine;
 pub mod voice;
 pub mod wavefolder;

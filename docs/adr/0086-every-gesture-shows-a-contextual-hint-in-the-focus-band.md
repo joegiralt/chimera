@@ -56,8 +56,9 @@ The owner's rulings:
   | MOD MATRIX | cursor on no route | `MIX + PLUS ON A PARAM PRIMES IT` |
   | MOD MATRIX | an X cell | `OP5: FREQ Q VCA FOLD ONLY` (`OP6:` on OP6's row) |
   | FLT and FLT › MOD | any route knob (FM1, FM2, FM3, QM, ENV AMT, KEYBD) | `MIX + MINUS DELETES THE ROUTE` |
-  | Sound browser | always | `EDIT LOADS` `MIX + EDIT SAVES` |
-  | Sound browser | a filled slot | `MIX + MINUS CLEARS` |
+  | Sound browser | always | `EDIT LOADS` |
+  | Sound browser | always | `MIX + EDIT SAVES · +0.3K`, or `WON'T FIT` in ALERT |
+  | Sound browser | a filled slot | `MIX + MINUS CLEARS · FREES 0.3K` |
 
   CLEAR's focus label is `CLEAR` again; its value stays `C4 / RND`. This
   amends ADR 0074.
@@ -69,8 +70,12 @@ The owner's rulings:
   cursor's route. The hint line stays at `HINT_Y`. This supersedes ADR
   0017's hint text.
   
-  The browser's hints take three lines: the two keys, then CLEAR, then the
-  slot count. This amends ADR 0081's two-line layout.
+  The browser's hints take three lines, LOAD, then SAVE, then CLEAR, over
+  the pool's percentage and its meter (ADR 0087). The SAVE and CLEAR lines
+  carry the bytes they move, so no two of them fit 216 px on one line. A
+  refusal (`POOL FULL`, then `NEEDS 1.5K, 0.1K FREE`) takes the LOAD and
+  SAVE lines in ALERT until the next input. This amends ADR 0081's
+  two-line layout.
 - **Left without a hint, deliberately.** Each of these belongs to no cell,
   or to every cell. A hint for it would be an always-on line.
   - MIX + turn snaps any param, a route knob to −127 / 0 / +127.

@@ -7,7 +7,9 @@ use chimera_core::instrument::AudioShared;
 #[cfg(feature = "orbit")]
 use chimera_core::orbit::runner::OrbitView;
 use chimera_core::preset::Performance;
+use chimera_core::project::arena::{ARENA_BYTES, ArenaWriter};
 use chimera_core::scope::{ScopeFrame, scope_buffer};
+use chimera_core::source_table::SOURCE_TABLE;
 use chimera_core::triple::{Reader, TripleBuffer, Writer};
 use chimera_core::ui::UiState;
 
@@ -43,6 +45,10 @@ pub fn copy_waves() {
 static mut UI: MaybeUninit<UiState> = MaybeUninit::uninit();
 static UI_TAKEN: AtomicBool = AtomicBool::new(false);
 
+// The pool's Sounds (ADR 0087): 160 KiB of AXI `.bss`, lent to the UI's
+// project once, with `UI`.
+static mut POOL_ARENA: [u8; ARENA_BYTES] = [0; ARENA_BYTES];
+
 /// Out of line for flash, not the stack: built in place, its frame is
 /// 1 KB, but inlined into `synth` fat LTO reshuffles the UI loop's
 /// inlining for 6.3 KB more `.text` (ADR 0089).
@@ -51,9 +57,14 @@ pub fn take_ui() -> Option<&'static mut UiState> {
     if UI_TAKEN.swap(true, Ordering::AcqRel) {
         return None;
     }
-    // SAFETY: the flag lets exactly one caller past, so this is the only
-    // reference to `UI` ever made.
-    Some(UiState::init_in_place(unsafe { &mut *addr_of_mut!(UI) }))
+    // SAFETY: the flag lets exactly one caller past, so these are the only
+    // references to `POOL_ARENA` and `UI` ever made.
+    let arena = ArenaWriter::new(unsafe { &mut *addr_of_mut!(POOL_ARENA) }, &SOURCE_TABLE);
+    // SAFETY: as above.
+    Some(UiState::init_in_place(
+        unsafe { &mut *addr_of_mut!(UI) },
+        arena,
+    ))
 }
 
 static mut AUDIO: MaybeUninit<TripleBuffer<AudioShared>> = MaybeUninit::uninit();

@@ -10,8 +10,10 @@ mod store;
 
 use chimera_core::console::Served;
 use chimera_core::orbit::runner::orbit_buffer;
+use chimera_core::project::arena::{ARENA_BYTES, ArenaWriter};
 use chimera_core::project::{LOAD_ACK_TIMEOUT_MS, LOAD_LINK};
 use chimera_core::scope::scope_buffer;
+use chimera_core::source_table::{SOURCE_TABLE, SourceTable};
 use chimera_core::storage::{Card, SystemSettings, SystemSync};
 use chimera_core::ui::UiState;
 use chimera_core::ui::animation::Pacer;
@@ -64,7 +66,8 @@ fn main() {
     let (orbit_w, mut orbit_r) = Box::leak(Box::new(orbit_buffer())).split();
     let mut audio = audio::DesktopAudio::new(scope_w, orbit_w);
 
-    let mut ui = UiState::new();
+    let mut ui = UiState::with_arena(leaked_arena(&SOURCE_TABLE));
+    ui.project_mut().set_gate_clock(gate_ms);
 
     // Boot: SYSTEM and the last project behind the splash, held 1 s from
     // first light as on the chip; then the splash again in the card's theme.
@@ -219,4 +222,16 @@ fn piano_note(keys: &[minifb::Key]) -> Option<u8> {
         }
     }
     None
+}
+
+/// The source gate's clock (ADR 0087): ms since the first call.
+fn gate_ms() -> u32 {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_millis() as u32
+}
+
+/// The pool arena: the chip's AXI static, here a leaked box, read by
+/// `table`: `SOURCE_TABLE` where the audio runs.
+fn leaked_arena(table: &'static SourceTable) -> ArenaWriter {
+    ArenaWriter::new(Box::leak(vec![0; ARENA_BYTES].into_boxed_slice()), table)
 }

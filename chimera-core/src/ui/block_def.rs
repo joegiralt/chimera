@@ -15,6 +15,8 @@ pub enum VizType {
     MixerLevels,
     CompressorCurve,
     AudioStats,
+    /// PROJECT › POOL: the pool meter; its cells are `pool_page`'s.
+    Pool,
     /// ALG A's diagram moving to ALG B's with MORPH.
     AlgoDiagram,
     /// SPD: each slot's SPEED and HOLD POSITION.

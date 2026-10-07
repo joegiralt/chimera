@@ -296,12 +296,13 @@ fn every_first_landing_is_the_chains_home() {
     // INIT from the Sound rung.
     let mut ui = UiState::new();
     feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B3));
-    let init = chimera_core::preset::POOL_SIZE
+    let init = chimera_core::preset::MAX_SOUNDS
         + EngineType::ALL
             .iter()
             .position(|&e| e == EngineType::Modal)
             .unwrap();
-    feed(&mut ui, Input::turn(EncoderId::A, init as i8));
+    feed(&mut ui, Input::turn(EncoderId::A, 100));
+    feed(&mut ui, Input::turn(EncoderId::A, (init - 100) as i8));
     feed(&mut ui, Input::press(ButtonId::Edit));
     assert_eq!(ui.location(), res(P[2]), "INIT");
 

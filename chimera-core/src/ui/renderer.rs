@@ -73,6 +73,8 @@ pub struct Frame<'a> {
     /// The last MIX+PLUS outcome, shown in the focus band in place of the
     /// value readout (issue #21).
     pub prime_status: Option<PrimeStatus>,
+    /// The project's pool, for PROJECT › POOL.
+    pub pool: &'a crate::project::Pool,
     /// The measured stats AUDIO LOAD and ABOUT show; `None` where not had.
     pub audio: Option<&'a AudioStats>,
     /// The card as last seen, for ABOUT.
@@ -275,6 +277,7 @@ impl Renderer {
     {
         match f.def.viz {
             VizType::AudioStats => audio_page::draw_viz(display, f.audio),
+            VizType::Pool => crate::ui::pool_page::draw_viz(display, f.pool),
             VizType::MixerLevels => {
                 viz::parts_overview(display, &self.strips(f), f.active_part.index())
             }
@@ -414,6 +417,7 @@ impl Renderer {
         match f.def.layout {
             PageLayout::CellGrid => match f.def.viz {
                 VizType::AudioStats => ([0; 6], audio_page::viz_key(f.audio)),
+                VizType::Pool => ([0; 6], crate::ui::pool_page::viz_key(f.pool)),
                 VizType::MixerLevels => (
                     region::quantize_values(&self.anim),
                     strips_key(&self.strips(f), f.active_part.index()),
@@ -536,6 +540,9 @@ impl Renderer {
         if f.def.viz == VizType::AudioStats {
             return audio_page::draw_focus(display, f.def, f.audio);
         }
+        if f.def.viz == VizType::Pool {
+            return crate::ui::pool_page::draw_focus(display, f.pool);
+        }
         let view = view::view(f.def, f.focus, &f.ctx);
         if view == View::Empty {
             return;
@@ -624,7 +631,8 @@ impl Renderer {
     /// The gauge the focus band shows now: none while a prime status holds
     /// the band, or for a dimmed, absent or empty slot.
     pub fn shown_gauge(&self, f: &Frame) -> Option<Gauge> {
-        let plain = f.def.layout != PageLayout::Matrix && f.def.viz != VizType::AudioStats;
+        let plain = f.def.layout != PageLayout::Matrix
+            && !matches!(f.def.viz, VizType::AudioStats | VizType::Pool);
         (plain
             && f.prime_status.is_none()
             && view::view(f.def, f.focus, &f.ctx) != View::Empty
@@ -655,6 +663,9 @@ impl Renderer {
     {
         match f.def.viz {
             VizType::AudioStats => return audio_page::draw_cells(display, f.def, f.audio, top),
+            VizType::Pool => {
+                return crate::ui::pool_page::draw_cells(display, f.def, f.pool, top);
+            }
             VizType::About => {
                 return crate::ui::about_page::draw_cells(display, f.def, f.audio, f.card, top);
             }

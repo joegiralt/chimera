@@ -3,10 +3,12 @@ use crate::mod_path::ModDestRegistry;
 use crate::modulation::{FixedCol, MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::SoundName;
 use crate::params::{EngineType, ParamSnapshot};
+use crate::project::SourceRef;
 
 pub use crate::project::{Part, PartEdit, Performance, part_block, part_block_mut};
 
-pub const POOL_SIZE: usize = 32;
+/// The project pool's slots (ADR 0087): its bytes, not this, are the budget.
+pub const MAX_SOUNDS: usize = 128;
 
 #[derive(Clone, Debug)]
 #[repr(C)]
@@ -16,6 +18,8 @@ pub struct Sound {
     pub params: ParamSnapshot,
     pub mod_state: ModState,
     pub dest_registry: ModDestRegistry,
+    /// A TAPE Sound's source: a reference, never audio (ADR 0087).
+    pub source: Option<SourceRef>,
 }
 
 impl Sound {
@@ -39,6 +43,7 @@ impl Sound {
             params: ParamSnapshot::for_engine(engine),
             mod_state,
             dest_registry: ModDestRegistry::new(),
+            source: None,
         }
     }
 
@@ -69,5 +74,6 @@ impl Sound {
             && self.params.taps == o.params.taps
             && self.mod_state.bits_eq(&o.mod_state)
             && self.dest_registry.bits_eq(&o.dest_registry)
+            && self.source == o.source
     }
 }

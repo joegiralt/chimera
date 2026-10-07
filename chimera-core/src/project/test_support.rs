@@ -13,8 +13,11 @@ use crate::storage::{
     Card, CardEvent, FileError, FileKind, Generation, Header, ProjectId, Side, write_file,
 };
 
-use crate::block::Block;
+use crate::addr::{BlockRef, Blocks, ParamAddr};
+use crate::block::{Block, ParamKind};
 use crate::factory::{FACTORY_LEN, factory_sound};
+use crate::mod_path::LABEL_LEN;
+use crate::modulation::{MAX_MOD_SOURCES, ModState};
 use crate::name::{ProjectName, SoundName};
 use crate::params::{EngineType, FilterParams, OutParams};
 use crate::part::PartParams;
@@ -30,7 +33,7 @@ use super::{
 
 /// `Project::save_part_to`, which only a Part action reaches outside tests.
 pub fn save_part_to(p: &mut Project, part: PartId, s: SlotId) -> PartSet {
-    p.save_part_to(part, s)
+    p.save_part_to(part, s).expect("the pool has room")
 }
 
 /// Where a test saves `p` as `f`: SAVE when it is `p`'s own file, else a
@@ -59,7 +62,7 @@ pub fn confirm_delete(e: &ProjectEntry) -> Confirmed<DeleteTarget> {
     Confirmed::<DeleteTarget>::unasked(e)
 }
 
-/// NEW with every slot filled: the factory Sounds and INIT, then edited
+/// NEW with all 128 slots filled: the factory Sounds and INIT, then edited
 /// and renamed copies of them. Parts from slots 0, 3 and 9 and from INIT;
 /// two Parts edited after loading, one of them renamed; non-default FX and
 /// mix; the name `FULL`.
@@ -80,7 +83,7 @@ pub fn full() -> (Box<Project>, TemplateCrc) {
             .filter
             .set(FilterParams::CUTOFF, 200.0 + 100.0 * i as f32);
         sound.params.out.set(OutParams::VOLUME, i as f32 / 40.0);
-        p.pool_store(s, sound);
+        p.pool_store(s, &sound).expect("128 sparse Sounds fit");
     }
     let loads = [
         (0, PartFrom::Slot(SlotId::ALL[0])),
@@ -117,7 +120,77 @@ pub fn full() -> (Box<Project>, TemplateCrc) {
     (p, t)
 }
 
-/// Panics with the first difference: the names, each slot (`bits_eq`),
+/// Every stored param of `s` drawn by `seed` (a real from its range, an
+/// enum from codes 0..8), a full registry and every route: larger than a
+/// Sound was before sparse encoding (ADR 0087), so a card test still writes
+/// a chain of many clusters.
+pub fn dense(s: &mut Sound, seed: u64) {
+    let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+    for b in BlockRef::ALL {
+        let Some(blk) = s.params.block_mut(b) else {
+            continue;
+        };
+        for sp in blk.specs().iter().filter(|sp| sp.stored) {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            if sp.kind == ParamKind::Enum {
+                // A code this param takes now; a refused one writes nothing.
+                let _ = blk.set_enum_code(sp.id, (x >> 56) as u8 % 8);
+            } else {
+                let u = (x >> 40) as f32 / (1 << 24) as f32;
+                blk.set(sp.id, sp.min + u * (sp.max - sp.min));
+            }
+        }
+    }
+    // A full registry and every route.
+    let addrs = BlockRef::ALL
+        .into_iter()
+        .flat_map(|b| b.specs().iter().map(move |sp| ParamAddr::new(b, sp.id)))
+        .filter(|a| a.modulatable());
+    for (i, a) in addrs.enumerate() {
+        // Full, or already in: skipped.
+        let _ = s.dest_registry.add(a, [b'A' + (i % 26) as u8; LABEL_LEN]);
+    }
+    s.mod_state = ModState::from_registry(&s.dest_registry, MAX_MOD_SOURCES);
+    for src in 0..s.mod_state.num_sources() {
+        for d in 0..s.mod_state.num_dests() {
+            s.mod_state
+                .set_route(src, d, (seed as usize + src + d) as i8);
+        }
+    }
+}
+
+/// `full()` with every Part and each of the first 32 slots no Part came
+/// from `dense` (a Part's Origin keeps its slot's CRC): about 60 KB on the
+/// card, as the 32-slot pool's was.
+pub fn full_dense() -> (Box<Project>, TemplateCrc) {
+    full_dense_slots(32)
+}
+
+/// `full_dense` over the first `n` slots, as far as the arena has room;
+/// past it a slot stays sparse. All 128: about 175 KB on the card.
+pub fn full_dense_slots(n: usize) -> (Box<Project>, TemplateCrc) {
+    let (mut p, t) = full();
+    for s in SlotId::ALL.into_iter().take(n) {
+        if let Some(mut x) = p
+            .pool()
+            .get(s)
+            .filter(|_| p.users(s).is_empty())
+            .map(|e| e.to_sound())
+        {
+            dense(&mut x, s.index() as u64);
+            // Past the arena's room the slot stays sparse.
+            let _ = p.pool_store(s, &x);
+        }
+    }
+    for (i, id) in PartId::ALL.into_iter().enumerate() {
+        dense(p.edit_part(id).sound, 100 + i as u64);
+    }
+    (p, t)
+}
+
+/// Panics with the first difference: the names, each slot (its bytes),
 /// each Part's Sound (`bits_eq`), mix, Origin (slot and CRC, or engine;
 /// never the generation) and `part_status`, the FX, ORBIT, then
 /// `project_crc`.
@@ -127,11 +200,11 @@ pub fn same(a: &Project, b: &Project) {
         match (a.pool().get(s), b.pool().get(s)) {
             (None, None) => {}
             (Some(x), Some(y)) => assert!(
-                x.bits_eq(y),
+                x == y,
                 "slot {}: {} vs {}",
                 s.index(),
-                x.name.as_str(),
-                y.name.as_str()
+                x.name().as_str(),
+                y.name().as_str()
             ),
             (x, y) => panic!(
                 "slot {}: filled {} vs {}",
@@ -247,6 +320,10 @@ impl<S: Store> Store for FullOnWrite<S> {
     fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError> {
         self.0.make_dir(vol, dir)
     }
+
+    fn seal(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
+        self.0.seal(vol, file)
+    }
 }
 
 /// A store that flips one byte, mid-file, of `file` from its second read
@@ -349,6 +426,10 @@ impl<S: Store> Store for FlipOnSecondRead<S> {
     fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError> {
         self.inner.make_dir(vol, dir)
     }
+
+    fn seal(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
+        self.inner.seal(vol, file)
+    }
 }
 
 /// A store whose second read of `file` on fails with `err` before any
@@ -421,6 +502,10 @@ impl<S: Store> Store for FailOnSecondRead<S> {
 
     fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError> {
         self.inner.make_dir(vol, dir)
+    }
+
+    fn seal(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
+        self.inner.seal(vol, file)
     }
 }
 

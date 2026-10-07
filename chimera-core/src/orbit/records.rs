@@ -37,7 +37,7 @@ const PLAYED: u8 = 1;
 fn block_payload(at: u8, b: BlockRef, blk: &dyn Block) -> RecordBuf {
     let mut r = RecordBuf::new();
     r.u8(at);
-    encode_block(b, blk, &mut r);
+    encode_block(b, blk, None, &mut r);
     r
 }
 

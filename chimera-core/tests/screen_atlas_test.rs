@@ -514,6 +514,20 @@ fn prompt(k: AskKind, ui: &mut UiState) {
             to_leaf(ui, &["SYSTEM"]);
             tap(ui, ButtonId::Edit);
         }
+        // Two sources no Sound or Part uses.
+        AskKind::PurgeSources => {
+            for crc in [1, 2] {
+                let r = chimera_core::project::SourceRef {
+                    crc,
+                    frames: 28_000,
+                    rate: 24_000,
+                };
+                ui.project_mut().source_store(r, &vec![0; 42_000]).unwrap();
+            }
+            to_leaf(ui, &["PROJECT"]);
+            plus(ui, 4);
+            tap(ui, ButtonId::Edit);
+        }
     }
     assert_eq!(ui.prompt_kind_for_test(), Some(k));
 }

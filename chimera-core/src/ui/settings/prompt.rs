@@ -13,7 +13,7 @@ use u8g2_fonts::FontRenderer;
 
 use crate::name::ProjectName;
 use crate::orbit::scene::{Refused, SceneIdx};
-use crate::project::{Line, PartId, PartSet, ReplaceError, SlotId, Subject};
+use crate::project::{Line, PartId, PartSet, PoolFull, ReplaceError, SlotId, Subject, Unused};
 use crate::storage::ProjectId;
 use crate::ui::components::upper;
 use crate::ui::draw;
@@ -86,6 +86,7 @@ answers!(ClearSceneAnswer { Clear => "CLEAR", Cancel => "CANCEL" } Two);
 answers!(ReloadSceneAnswer { Reload => "RELOAD", Cancel => "CANCEL" } Two);
 answers!(CardChangedAnswer { SaveAs => "SAVE AS", Cancel => "CANCEL" } Two);
 answers!(DfuAnswer { EnterDfu => "ENTER DFU", Cancel => "CANCEL" } Two);
+answers!(PurgeAnswer { Purge => "PURGE", Cancel => "CANCEL" } Two);
 
 /// A pick, or MENU (`None`). Only `Choice::input` makes one, so an answer
 /// is always a key's:
@@ -496,8 +497,83 @@ impl Prompt for EnterDfu {
     }
 }
 
-/// SAVE PART FIRST with no slot free.
+/// PURGE UNUSED SOURCES, counted as it opened; the purge recounts.
+pub struct PurgeSources {
+    pub unused: Unused,
+}
+
+/// `PURGE 3 SOURCES? FREES 61K`.
+pub fn purge_question(u: Unused) -> Line {
+    let mut l = Line::new("");
+    let noun = if u.count == 1 { "SOURCE" } else { "SOURCES" };
+    let _ = write!(
+        l,
+        "PURGE {} {noun}? FREES {}",
+        u.count,
+        u.cost.kib_label().as_str()
+    );
+    l
+}
+
+impl Prompt for PurgeSources {
+    type Answer = PurgeAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        *q = purge_question(self.unused);
+        let _ = r.write_str("THE CARD KEEPS THEM");
+    }
+}
+
+/// After a clear that left its source unused: `CHOIR 41K UNUSED · PURGE
+/// FREES IT`.
+/// The name is cut to fit the toast.
+pub fn unused_after_clear(name: crate::name::SoundName, cost: crate::project::arena::Cost) -> Line {
+    let name = upper(name.as_str());
+    let mut n = name.as_str();
+    loop {
+        let mut l = Line::new(n);
+        let _ = write!(l, " {} UNUSED · PURGE FREES IT", cost.kib_label().as_str());
+        match n.char_indices().last() {
+            Some((cut, _)) if !crate::ui::busy::toast_fits(l.as_str()) => n = &n[..cut],
+            _ => return l,
+        }
+    }
+}
+
+/// NEW without room for every factory Sound: `NEW: 2 SOUNDS SKIPPED`.
+pub fn new_skipped(n: u8) -> Line {
+    let mut l = Line::new("");
+    let _ = write!(l, "NEW: {n} SOUNDS SKIPPED");
+    l
+}
+
+/// PURGE with every source in use.
+pub const NO_UNUSED: &str = "NO UNUSED SOURCES";
+
+/// A save with every slot taken.
 pub const POOL_FULL: &str = "POOL FULL";
+
+/// What a save the arena has no room for needs: `NEEDS 1.2K, 0.4K FREE`,
+/// the line under `POOL_FULL`.
+pub fn pool_needs(f: PoolFull) -> Line {
+    let mut l = Line::new("");
+    let _ = write!(
+        l,
+        "NEEDS {}, {} FREE",
+        f.needs.kib_label().as_str(),
+        f.free.kib_floor_label().as_str()
+    );
+    l
+}
+
+/// The refusal as one line, for a toast: `POOL FULL · NEEDS …`, or
+/// `POOL FULL` with every slot taken.
+pub fn pool_full(f: Option<PoolFull>) -> Line {
+    let mut l = Line::new(POOL_FULL);
+    if let Some(f) = f {
+        let _ = write!(l, " · {}", pool_needs(f).as_str());
+    }
+    l
+}
 
 /// A Part saved to `s` from SAVE TO PROJ.
 pub fn saved_to(s: SlotId) -> Line {
@@ -511,6 +587,7 @@ pub fn refused(e: &ReplaceError) -> &'static str {
     match e {
         ReplaceError::SlotEmpty => "SLOT IS EMPTY",
         ReplaceError::Changed => "PART CHANGED",
+        ReplaceError::Unreadable => "SOUND UNREADABLE",
     }
 }
 

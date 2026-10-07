@@ -341,6 +341,34 @@ fn the_jacks_round_trip_through_a_sound_file() {
     }
 }
 
+/// A jack at its default is left out of a sparse Sound, so a lone route
+/// another jack would be inferred from must not move it: QM IN on ENV 3
+/// with one LFO 1 → Q route, and FM3 IN on LFO 1 with one ENV 2 → FREQ,
+/// reload unchanged from a file and from the pool.
+#[test]
+fn default_jacks_survive_a_sparse_round_trip() {
+    use chimera_core::factory::encode_entry;
+    use chimera_core::project::EncodedSound;
+    use chimera_core::taps::Jack;
+    let mut s = Sound::init(EngineType::Algo);
+    s.mod_state
+        .set_fixed(ModSource::Lfo1.index(), FixedCol::Q, 40);
+    s.mod_state
+        .clear_fixed(ModSource::Lfo1.index(), FixedCol::Freq);
+    s.mod_state
+        .set_fixed(ModSource::Env2.index(), FixedCol::Freq, 30);
+    let f = &s.params.filter;
+    assert_eq!(f.qm_src(), Jack::Mod(ModSource::Env3));
+    assert_eq!(f.fm3_src(), Jack::Mod(ModSource::Lfo1));
+    let back = decode(&encode(&s)).unwrap();
+    assert!(back.bits_eq(&s), "file");
+    let pooled = EncodedSound::new(&encode_entry(&s)).to_sound();
+    assert!(pooled.bits_eq(&s), "pool");
+    // A jack the inference would reach anyway still reloads as itself.
+    s.params.filter.set_qm_src(Jack::Mod(ModSource::Lfo1));
+    assert!(decode(&encode(&s)).unwrap().bits_eq(&s), "inferred");
+}
+
 /// A Filter block record with only CUTOFF: no jack ids.
 fn no_jacks_block() -> Vec<u8> {
     let mut p = vec![
