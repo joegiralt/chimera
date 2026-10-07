@@ -1,6 +1,6 @@
 # 0103. STRETCH POLY's wraps hold the output and crossfade from it (amends 0093)
 
-- **Status:** Proposed
+- **Status:** Accepted (owner, 2026-10-07)
 - **Deciders:** firmware (from the TAPE Task 19 desktop QA, #384)
 
 ## Context

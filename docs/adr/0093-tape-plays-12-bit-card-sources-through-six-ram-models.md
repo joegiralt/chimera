@@ -1,6 +1,6 @@
 # 0093. TAPE plays 12-bit card sources from the pool through seven RAM machines; STRETCH is the S950's stretch in real time (amends 0087)
 
-- **Status:** Proposed
+- **Status:** Accepted (owner, 2026-10-07)
 - **Deciders:** owner (#279 rulings, 2026-10-01 to 2026-10-04), firmware;
   revised after two adversarial reviews (2026-10-04); amended in place
   while Proposed (owner, 2026-10-05, #369): the models become seven

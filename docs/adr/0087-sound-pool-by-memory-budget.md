@@ -1,6 +1,6 @@
 # 0087. Budget the sound pool by memory: one arena for sparse Sounds and card-backed 12-bit sources, one meter (supersedes in part 0043 and 0014)
 
-- **Status:** Proposed
+- **Status:** Accepted (owner, 2026-10-07)
 - **Deciders:** owner (2026-10-03, private issue #337), firmware
 
 ## Context
