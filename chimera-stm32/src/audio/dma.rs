@@ -1,14 +1,15 @@
 use core::mem::MaybeUninit;
 use core::ptr::{addr_of, addr_of_mut};
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::Ordering;
 
-use chimera_core::audio_out::{DacSample, Half, desynced, plan_halves};
-use chimera_core::hw::{BLOCK_SIZE, DAC_PAIRS};
-use chimera_core::part::DacPair;
+use chimera_engine::audio_out::{DacSample, Half, desynced, plan_halves};
+use chimera_engine::hw::{BLOCK_SIZE, DAC_PAIRS};
+use chimera_engine::part::DacPair;
 use cortex_m::peripheral::NVIC;
 use stm32h7xx_hal::pac::{self, interrupt};
 
-use crate::priority::{self, Priority};
+use chimera_board::priority::{self, Priority};
+use chimera_board::shared::{BLOCKS, DESYNCS, OVERRUNS, bump};
 
 pub const RING_WORDS: usize = 2 * BLOCK_SIZE * 2;
 // DMAMUX1 requests for SAI1_A, SAI1_B, SAI2_A (RM0433; stock PreenFM3 uses the same).
@@ -24,18 +25,8 @@ const _: () = assert!(core::mem::size_of::<Rings>() == DAC_PAIRS * RING_WORDS * 
 #[unsafe(link_section = ".ram_d2.dma")]
 static mut RINGS: MaybeUninit<Rings> = MaybeUninit::uninit();
 
-pub static OVERRUNS: AtomicU32 = AtomicU32::new(0);
-pub static DESYNCS: AtomicU32 = AtomicU32::new(0);
-/// Halves rendered, wrapping: the watchdog's audio heartbeat.
-pub static BLOCKS: AtomicU32 = AtomicU32::new(0);
 // Streams 1 and 2 may trail stream 0 by the SAI FIFO (8 words) plus the DMA's.
 const DESYNC_TOLERANCE: u16 = 16;
-
-pub fn bump(counter: &AtomicU32, n: u32) {
-    let _ = counter.try_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-        Some(v.saturating_add(n))
-    });
-}
 
 pub fn clear() {
     // SAFETY: before any DMA runs; D2 is NOLOAD, and zero bytes are valid
@@ -196,7 +187,8 @@ fn DMA1_STR0() {
     }
     let plan = plan_halves(half_done, full_done);
     for half in plan.halves.into_iter().flatten() {
-        crate::probe::measure(|| super::render_half(half));
+        // SAFETY: this is the audio interrupt, `measure`'s one caller.
+        unsafe { chimera_board::probe::measure(|| super::render_half(half)) };
         BLOCKS.fetch_add(1, Ordering::Relaxed);
     }
     let after = dma1.lisr.read();

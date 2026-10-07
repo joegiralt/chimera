@@ -8,7 +8,8 @@ use chimera_core::project::PartId;
 use chimera_core::ui::block_registry::SYS_THEME;
 use chimera_core::ui::theme;
 use chimera_core::ui::theme_settings::{
-    Accent, Black, Bright, Gamma, Palette, ThemeSettings, midpoint,
+    Accent, Black, Bright, Gamma, Palette, ThemeSettings, accent_color, accent_soft, duty, ground,
+    midpoint, palette, tables,
 };
 use chimera_hal::{ButtonId, EncoderId};
 use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
@@ -33,9 +34,9 @@ fn bright_clamps_and_steps_by_five() {
 
 #[test]
 fn bright_duty_does_not_overflow() {
-    assert_eq!(Bright::DEFAULT.duty(12_000), 8_400);
-    assert_eq!(Bright::new(100).duty(u16::MAX), u16::MAX);
-    assert_eq!(Bright::new(10).duty(12_000), 1_200);
+    assert_eq!(duty(Bright::DEFAULT, 12_000), 8_400);
+    assert_eq!(duty(Bright::new(100), u16::MAX), u16::MAX);
+    assert_eq!(duty(Bright::new(10), 12_000), 1_200);
 }
 
 #[test]
@@ -81,14 +82,14 @@ fn boot_defaults() {
 fn gamma_tables_are_the_right_bytes() {
     // ILI9341 datasheet V1.11 E0h/E1h reset defaults.
     assert_eq!(
-        Gamma::Panel.tables().positive,
+        tables(Gamma::Panel).positive,
         [
             0x08, 0x0E, 0x12, 0x05, 0x03, 0x09, 0x47, 0x86, 0x2B, 0x0B, 0x04, 0x00, 0x00, 0x00,
             0x00
         ]
     );
     assert_eq!(
-        Gamma::Panel.tables().negative,
+        tables(Gamma::Panel).negative,
         [
             0x08, 0x1A, 0x20, 0x07, 0x0E, 0x05, 0x3A, 0x8A, 0x40, 0x04, 0x18, 0x0F, 0x3F, 0x3F,
             0x0F
@@ -96,28 +97,28 @@ fn gamma_tables_are_the_right_bytes() {
     );
     // Adafruit's, as commit 7293a02 sent them.
     assert_eq!(
-        Gamma::Punch.tables().positive,
+        tables(Gamma::Punch).positive,
         [
             0x0F, 0x31, 0x2B, 0x0C, 0x0E, 0x08, 0x4E, 0xF1, 0x37, 0x07, 0x10, 0x03, 0x0E, 0x09,
             0x00
         ]
     );
     assert_eq!(
-        Gamma::Punch.tables().negative,
+        tables(Gamma::Punch).negative,
         [
             0x00, 0x0E, 0x14, 0x03, 0x11, 0x07, 0x31, 0xC1, 0x48, 0x08, 0x0F, 0x0C, 0x31, 0x36,
             0x0F
         ]
     );
     assert_eq!(
-        Gamma::Soft.tables().positive,
+        tables(Gamma::Soft).positive,
         [
             0x0B, 0x1F, 0x1E, 0x08, 0x08, 0x08, 0x4A, 0xB3, 0x31, 0x09, 0x0A, 0x01, 0x07, 0x04,
             0x00
         ]
     );
     assert_eq!(
-        Gamma::Soft.tables().negative,
+        tables(Gamma::Soft).negative,
         [
             0x04, 0x14, 0x1A, 0x05, 0x0F, 0x06, 0x35, 0xA5, 0x44, 0x06, 0x13, 0x0D, 0x38, 0x3A,
             0x0F
@@ -141,10 +142,10 @@ fn soft_averages_fields_not_bytes() {
 
 #[test]
 fn teal_and_black_zero_are_the_canonical_palette() {
-    assert_eq!(Accent::Teal.color(), theme::ACCENT);
-    assert_eq!(Accent::Teal.soft(), theme::ACCENT_SOFT);
-    assert_eq!(Black::ZERO.ground(), theme::BG);
-    assert_eq!(ThemeSettings::NEUTRAL.palette(), Palette::IDENTITY);
+    assert_eq!(accent_color(Accent::Teal), theme::ACCENT);
+    assert_eq!(accent_soft(Accent::Teal), theme::ACCENT_SOFT);
+    assert_eq!(ground(Black::ZERO), theme::BG);
+    assert_eq!(palette(&ThemeSettings::NEUTRAL), Palette::IDENTITY);
 }
 
 #[test]
@@ -161,22 +162,22 @@ fn accents_are_distinct_from_each_other_and_the_greys() {
     ];
     for (i, a) in Accent::ALL.iter().enumerate() {
         for b in &Accent::ALL[..i] {
-            assert_ne!(a.color(), b.color(), "{a:?} {b:?}");
+            assert_ne!(accent_color(*a), accent_color(*b), "{a:?} {b:?}");
         }
-        assert!(!others.contains(&a.color()), "{a:?}");
+        assert!(!others.contains(&accent_color(*a)), "{a:?}");
     }
 }
 
 #[test]
 fn black_steps_are_distinct_and_below_faint() {
     let grounds: Vec<Rgb565> = (Black::MIN..=Black::MAX)
-        .map(|k| Black::new(k).ground())
+        .map(|k| ground(Black::new(k)))
         .collect();
     for (i, g) in grounds.iter().enumerate() {
         assert!(!grounds[..i].contains(g), "{g:?}");
         assert!(g.g() < theme::FAINT.g(), "{g:?}");
     }
-    assert_eq!(Black::new(-2).ground(), Rgb565::new(0, 0, 0));
+    assert_eq!(ground(Black::new(-2)), Rgb565::new(0, 0, 0));
 }
 
 fn mapped(fb: &Fb, p: &Palette) -> Vec<u16> {
@@ -188,7 +189,7 @@ fn mapped(fb: &Fb, p: &Palette) -> Vec<u16> {
 #[cfg(feature = "orbit")]
 #[test]
 fn default_theme_leaves_every_golden_bit_identical() {
-    let p = ThemeSettings::NEUTRAL.palette();
+    let p = palette(&ThemeSettings::NEUTRAL);
     for (name, _) in CASES {
         let fb = render(name);
         assert_eq!(mapped(&fb, &p), fb.px, "{name}");
@@ -210,12 +211,12 @@ fn each_accent_recolours_only_accent_pixels() {
             accent: *accent,
             ..ThemeSettings::NEUTRAL
         };
-        let out = mapped(&fb, &t.palette());
+        let out = mapped(&fb, &palette(&t));
         for (&before, &after) in fb.px.iter().zip(&out) {
             if before == a {
-                assert_eq!(after, raw(accent.color()), "{accent:?}");
+                assert_eq!(after, raw(accent_color(*accent)), "{accent:?}");
             } else if before == s {
-                assert_eq!(after, raw(accent.soft()), "{accent:?}");
+                assert_eq!(after, raw(accent_soft(*accent)), "{accent:?}");
                 assert_ne!(after, s, "{accent:?}");
             } else {
                 assert_eq!(after, before, "{accent:?}");
@@ -234,10 +235,10 @@ fn each_black_step_moves_only_the_ground() {
             black: Black::new(k),
             ..ThemeSettings::DEFAULT
         };
-        let out = mapped(&fb, &t.palette());
+        let out = mapped(&fb, &palette(&t));
         for (&before, &after) in fb.px.iter().zip(&out) {
             if before == bg {
-                assert_eq!(after, raw(Black::new(k).ground()), "{k}");
+                assert_eq!(after, raw(ground(Black::new(k))), "{k}");
                 assert_ne!(after, bg, "{k}");
             } else if before != s {
                 assert_eq!(after, before, "{k}");

@@ -545,7 +545,7 @@ fn matrix_set(s: &mut Sound, src: ModSource, c: FixedCol, a: i8) {
     m.rebuild_dests_from_registry(&s.dest_registry);
     m.load_amounts(&s.mod_state);
     m.set(src.index(), c.index(), a);
-    s.mod_state.sync_from_matrix(&m);
+    m.sync_into(&mut s.mod_state);
 }
 
 /// Spec § 2: one stored value, two places to edit it.

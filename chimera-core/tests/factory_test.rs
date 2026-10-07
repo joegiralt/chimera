@@ -185,7 +185,10 @@ fn blob_matches_authored() {
             blob.extend((bytes.len() as u16).to_le_bytes());
             blob.extend(bytes);
         }
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/factory.bin");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../chimera-engine/src/factory.bin"
+        );
         std::fs::write(path, blob).unwrap();
         return;
     }

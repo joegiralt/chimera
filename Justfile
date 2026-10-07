@@ -69,7 +69,7 @@ firmware-orbit:
 
 # Build all (desktop targets only)
 build:
-    cargo build -p chimera-core -p chimera-hal -p chimera-desktop
+    cargo build -p chimera-core -p chimera-engine -p chimera-hal -p chimera-desktop
 
 # Everything must pass before a commit (ADR 0013): core + hal tests (and core
 # with the master tape back on, ADR 0055, and the whole suite without ORBIT), desktop
@@ -81,9 +81,9 @@ build:
 # system-wide. The host tool's tests run first, against a fake unit.
 check:
     python3 -m unittest discover -s tools -p 'test_*.py'
-    cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit
-    cargo test -p chimera-core --features master-tape
-    cargo test -p chimera-core --no-default-features
+    cargo test -p chimera-core -p chimera-engine -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit
+    cargo test -p chimera-core -p chimera-engine --features master-tape
+    cargo test -p chimera-core -p chimera-engine --no-default-features
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
@@ -110,7 +110,8 @@ check:
 # frames from `main` and from each interrupt entry (the audio's DMA1_STR0,
 # render_half and the FX bus under it, MIDI's USART1, SysTick, HardFault),
 # all nested at once, against the stack, each call through a pointer
-# charged the deepest address-taken function, three deep. Checked for the default,
+# charged the deepest address-taken function, three deep; and that the audio
+# interrupt reaches no small-profile code (ADR 0108). Checked for the default,
 # no-default, orbit, every bench set (`bench_sets`) and sd-probe feature
 # sets (sd-probe has no interrupts: frames only).
 # Needs the llvm-tools rustup component; a missing llvm-objdump or an
@@ -129,7 +130,7 @@ stack-check:
     for features in "${sets[@]}"; do
         cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf $features
         test -r "$elf"
-        dis="$("$objdump" -d --no-show-raw-insn -C "$elf")"
+        dis="$("$objdump" -d --mcpu=cortex-m7 --no-show-raw-insn -C "$elf")"
         data="$("$objdump" -s -j .rodata -j .data "$elf")"
         if grep -E -e '^[0-9a-f]{8} <' -e 'sub(\.w)?[[:space:]]+sp, (sp, )?(#0x([2-9a-f][0-9a-f]{3}|[0-9a-f]{5,})$|r[0-9])' <<<"$dis" \
             | grep -B1 -E '^[[:space:]]' \
@@ -152,7 +153,7 @@ loom:
 
 # Run tests
 test:
-    cargo test -p chimera-core -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit
+    cargo test -p chimera-core -p chimera-engine -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit
     cargo test -p chimera-desktop --lib --tests
     just test-fat-tools
 
@@ -166,20 +167,20 @@ test-fat-tools:
 
 # Clippy on every target and feature set `check` builds, test targets included
 clippy:
-    cargo clippy -p chimera-core -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit --all-targets -- -D warnings
-    cargo clippy -p chimera-core --features master-tape --all-targets -- -D warnings
-    cargo clippy -p chimera-core --no-default-features --all-targets -- -D warnings
+    cargo clippy -p chimera-core -p chimera-engine -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit --all-targets -- -D warnings
+    cargo clippy -p chimera-core -p chimera-engine --features master-tape --all-targets -- -D warnings
+    cargo clippy -p chimera-core -p chimera-engine --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-desktop --no-default-features --all-targets -- -D warnings
-    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf -- -D warnings
-    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features -- -D warnings
-    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit -- -D warnings
-    for f in {{bench_sets}}; do cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features "$f" -- -D warnings || exit 1; done
+    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf -- -D warnings
+    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features -- -D warnings
+    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --features orbit -- -D warnings
+    for f in {{bench_sets}}; do cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features "$f" -- -D warnings || exit 1; done
     # Every bench area at once: too big to link, but no area's code is dead.
-    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features {{bench_all}} -- -D warnings
-    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features {{bench_all}},master-tape -- -D warnings
-    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features sd-probe -- -D warnings
+    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features {{bench_all}} -- -D warnings
+    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features {{bench_all}},master-tape -- -D warnings
+    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features sd-probe -- -D warnings
     # usb-console alone: `stats` answers from no reader
-    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features usb-console -- -D warnings
+    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features usb-console -- -D warnings
     cargo clippy -p chimera-bootloader --target thumbv7em-none-eabihf -- -D warnings
 
 # Render every screen (the golden cases and the atlas) with the real renderer

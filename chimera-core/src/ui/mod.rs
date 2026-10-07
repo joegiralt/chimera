@@ -18,7 +18,7 @@ pub mod hold;
 pub mod jog;
 pub mod led;
 pub mod meter;
-pub mod midi_settings;
+pub use chimera_engine::midi_settings;
 pub mod mod_grid;
 pub mod mod_panel;
 pub mod nav;
@@ -1014,7 +1014,7 @@ impl UiState {
     /// Rebuild a part's audio-side `ModState` and taps from the matrix.
     fn sync_mod_state(&mut self, part: PartId) {
         let sound = self.project.edit_part(part).sound;
-        sound.mod_state.sync_from_matrix(&self.matrix_state);
+        self.matrix_state.sync_into(&mut sound.mod_state);
         if self.matrix_state.tap_rows {
             self.matrix_state.sync_taps(&mut sound.params.taps);
         }

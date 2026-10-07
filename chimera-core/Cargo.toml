@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+chimera-engine = { path = "../chimera-engine" }
 chimera-hal = { path = "../chimera-hal" }
 chimera-theory = { path = "../chimera-theory" }
 libm = "0.2"
@@ -17,35 +18,34 @@ default = ["orbit", "card-put"]
 # ORBIT, the ring sequencer: SEQ hold opens it. Off, SEQ hold does nothing.
 orbit = []
 # The console's `ls` and `put` (ADR 0092): project files onto the card.
-card-put = []
+card-put = ["chimera-engine/card-put"]
 # The master tape stage on DAC pair 1 (ADR 0055: off the chain by default;
 # its parameters and disk codes stay either way).
-master-tape = []
+master-tape = ["chimera-engine/master-tape"]
 # The by-value engine constructors (`AlgoEngine::new`, `ModalEngine::new`,
 # `EngineSlot::new`), for tests only: firmware builds every engine in place.
-test-support = []
+test-support = ["chimera-engine/test-support"]
 # `write_source`: sources written, verified and sealed on the card (the
 # importer, the desktop, tests); with `card-put`, `put` takes them too
 # (ADR 0106), as the firmware's `card-put` does.
-source-writer = []
+source-writer = ["chimera-engine/source-writer"]
 # Bench-only phase stamps inside ORBIT's block and the note handling.
-probe = []
+probe = ["chimera-engine/probe"]
 # The filter's static-cost probes (`dsp::filter::probe`) alone, for
 # `tools/loop_count.py`: none of `probe`'s stamps.
-filter-probe = []
+filter-probe = ["chimera-engine/filter-probe"]
 
 [dev-dependencies]
 # No default features: `--no-default-features` must reach the library too.
 chimera-core = { path = ".", default-features = false, features = ["test-support", "source-writer"] }
 chimera-hal = { path = "../chimera-hal", features = ["testkit"] }
 
+
+
 # The `SourceTable` model (`tests/loom_source_table.rs`): only under
 # `RUSTFLAGS="--cfg loom"`, never in a firmware or desktop build. MIT.
-[target.'cfg(loom)'.dependencies]
+[target.'cfg(loom)'.dev-dependencies]
 loom = "0.7"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }
-
-[build-dependencies]
-chimera-waves = { path = "../chimera-waves" }

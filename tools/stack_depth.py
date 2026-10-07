@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Worst-case stack depth from a firmware disassembly (ADR 0025).
 
-    { llvm-objdump -d -C <elf>; llvm-objdump -s -j .rodata -j .data <elf>; } \
+    { llvm-objdump -d --mcpu=cortex-m7 -C <elf>; llvm-objdump -s -j .rodata -j .data <elf>; } \
         | python3 tools/stack_depth.py <stack bytes>
 
 Each function's frame is every `push`/`vpush` and `sub sp, #imm` in it (an
@@ -17,7 +17,10 @@ recursive direct call to run once (the sorts' and `core::str`'s).
 
 The thread (`main`) and each interrupt entry (`ISRS`) are summed, each
 interrupt with its FPU exception frame, as if all nest at once. Exit 1 if
-that passes `stack bytes` less `MARGIN`, or a root (but `OPTIONAL`) is missing.
+that passes `stack bytes` less `MARGIN`, or a root (but `OPTIONAL`) is missing,
+or if the audio interrupt reaches, by direct or tail calls, code of a
+small-profile crate (`SMALL`, ADR 0108): a name holding one, its own
+function or a generic instantiated with its types.
 Standard library only.
 """
 
@@ -31,6 +34,14 @@ THREAD = "main"  # what `Reset` calls; its own frame is a few words
 # An exception's stacked frame with the FPU's lazy state: 26 words, aligned.
 EXC_FRAME = 104
 MARGIN = 2048
+# The small-profile crates (ADR 0108): built for size, so off the audio and
+# MIDI interrupts' paths. Calls through a pointer are not followed: a target
+# can't be told from the disassembly (the audio tree has two, a `dyn Block`
+# and `TapShape`'s, both into `chimera_engine` today), so the check holds
+# for direct and tail calls only. A small crate's generic compiled in the
+# binary still carries its own path: it passes only while it is inlined.
+FAST_ROOTS = ("DMA1_STR0", "USART1")
+SMALL = ("chimera_board", "chimera_core")
 ROOTS = ("Reset", "__stext", "main", "DefaultHandler", "DefaultHandler_") + ISRS
 # Pointer calls nest at most this deep: a dyn body (a `Store` write's)
 # calling a dyn sink calling `core::fmt`'s writer. An assumption, not a
@@ -55,6 +66,10 @@ def regs(operands: str) -> int:
         n += int(m.group(3)) - int(m.group(2)) + 1 if m else 1
     return n
 
+
+# A conditional branch, `bne.w` and kin: one to another function's start is a
+# conditional tail call.
+COND_B = re.compile(r"^b(?:eq|ne|cs|hs|cc|lo|mi|pl|vs|vc|hi|ls|ge|lt|gt|le)(?:\.w)?$")
 
 DATA_ROW = re.compile(r"^ ([0-9a-f]+) ((?:[0-9a-f]{8} ?){1,4})")
 
@@ -115,7 +130,7 @@ def parse(lines) -> Image:
             t = TARGET.search(args)
             if t and not OFFSET.search(t.group(1)):
                 f[1].add(t.group(1))
-        elif op in ("b", "b.w"):
+        elif op in ("b", "b.w") or COND_B.match(op):
             t = TARGET.search(args)
             if t and not OFFSET.search(t.group(1)) and t.group(1) != cur:
                 f[2].add(t.group(1))
@@ -178,6 +193,19 @@ def pointer_charge(img, out):
     return charge
 
 
+def small_reached(funcs, roots=FAST_ROOTS):
+    """The functions `roots` reach by direct and tail calls whose names
+    hold a small-profile crate's, sorted."""
+    seen, todo = set(), list(roots)
+    while todo:
+        f = todo.pop()
+        if f in seen or f not in funcs:
+            continue
+        seen.add(f)
+        todo.extend(funcs[f][1] | funcs[f][2])
+    return sorted(f for f in seen if any(c in f for c in SMALL))
+
+
 def short(name, n=90):
     return name if len(name) <= n else name[: n - 1] + "…"
 
@@ -200,6 +228,9 @@ def check(img, stack_bytes, out):
             print("           recursion cut at: %s" % ", ".join(sorted(short(c, 60) for c in cut)), file=out)
         if ind:
             print("           %d functions call through a pointer, each charged above" % len(ind), file=out)
+    for f in small_reached(img.funcs):
+        print("stack-depth: an audio or MIDI interrupt reaches %s, built for size" % short(f), file=out)
+        ok = False
     limit = stack_bytes - MARGIN
     print("nested     %6d B of %d (%d less a %d B margin)" % (total, stack_bytes, limit, MARGIN), file=out)
     if total > limit:

@@ -20,58 +20,60 @@ use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use chimera_core::addr::{BlockRef, ParamAddr};
-use chimera_core::audio_out::{DacSample, interleave};
 use chimera_core::console::Report;
-use chimera_core::dsp::algo::algorithms::AlgoId;
-use chimera_core::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
-use chimera_core::dsp::algo::kernel::{Kernel, KernelBlock, OpBlock, SAMPLE_SCALE};
-use chimera_core::dsp::algo::params::AlgoParams;
-use chimera_core::dsp::algo::plan::{EvalPlan, OPS};
-use chimera_core::dsp::algo::tx::FEEDBACK_CYCLES;
-use chimera_core::dsp::algo::waves::WaveId;
-use chimera_core::dsp::engines::{EngineSlot, SlotKind};
-use chimera_core::dsp::filter::{FilterKind, FilterMode, K2040Voice};
-use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
-use chimera_core::dsp::modal::{
-    BankModes, CHORD_COUNT, ModalEngine, ModalParams, ResonatorMode, SymPool,
-};
-use chimera_core::dsp::modulator::{EnvForm, EnvSlot, EnvType, Func, Glide, LfoForm, LfoType};
-use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape};
-use chimera_core::dsp::tape_engine::{StretchType, TapeModel, wave};
-use chimera_core::dsp::voice::Voice;
-use chimera_core::factory::{FACTORY_LEN, factory_sound};
-use chimera_core::hw::{
-    BLOCK_SIZE, BlockBudget, MAX_PARTS, MAX_VOICES, SAMPLE_RATE, SampleBudget, VOICE_RAM_BUDGET,
-};
-use chimera_core::instrument::{
-    AudioShared, DacBlocks, Instrument, MixState, PartAudio, mix_parts,
-};
-use chimera_core::modulation::{CUTOFF, FixedCol, MAX_MOD_SOURCES, ModSource, ModState, VCA};
-use chimera_core::note_queue::{NoteEvent, NoteKind};
-#[cfg(feature = "orbit")]
-use chimera_core::orbit::runner::OrbitRunner;
-use chimera_core::params::{
-    EngineType, EnvParams, FilterParams, FolderParams, OutParams, ParamSnapshot, Steal,
-};
-use chimera_core::part::{DacPair, PartParams};
-use chimera_core::preset::{Performance, Sound};
-use chimera_core::project::{NEW_PARTS, Project, SlotId, SourceId, SourceRef, project_crc};
-use chimera_core::scope::{ScopeFrame, ScopeWriter, scope_buffer};
-use chimera_core::source_table::{AudioToken, GateView};
-use chimera_core::sym_alloc::SymAlloc;
-use chimera_core::taps::TapOp;
-use chimera_core::triple::TripleBuffer;
 use chimera_core::ui::fmt::FmtBuf;
 use chimera_core::ui::{draw, theme};
-use chimera_core::voice_alloc::VoiceIdx;
-use chimera_core::{MidiChannel, MidiNote, Velocity};
+use chimera_engine::addr::{BlockRef, ParamAddr};
+use chimera_engine::audio_out::{DacSample, interleave};
+use chimera_engine::dsp::algo::algorithms::AlgoId;
+use chimera_engine::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
+use chimera_engine::dsp::algo::kernel::{Kernel, KernelBlock, OpBlock, SAMPLE_SCALE};
+use chimera_engine::dsp::algo::params::AlgoParams;
+use chimera_engine::dsp::algo::plan::{EvalPlan, OPS};
+use chimera_engine::dsp::algo::tx::FEEDBACK_CYCLES;
+use chimera_engine::dsp::algo::waves::WaveId;
+use chimera_engine::dsp::engines::{EngineSlot, SlotKind};
+use chimera_engine::dsp::filter::{FilterKind, FilterMode, K2040Voice};
+use chimera_engine::dsp::fx_bus::{FX_SENDS, FxBus};
+use chimera_engine::dsp::modal::{
+    BankModes, CHORD_COUNT, ModalEngine, ModalParams, ResonatorMode, SymPool,
+};
+use chimera_engine::dsp::modulator::{EnvForm, EnvSlot, EnvType, Func, Glide, LfoForm, LfoType};
+use chimera_engine::dsp::tape_engine::read::{DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape};
+use chimera_engine::dsp::tape_engine::{StretchType, TapeModel, wave};
+use chimera_engine::dsp::voice::Voice;
+use chimera_engine::factory::{FACTORY_LEN, factory_sound};
+use chimera_engine::hw::{
+    BLOCK_SIZE, BlockBudget, MAX_PARTS, MAX_VOICES, SAMPLE_RATE, SampleBudget, VOICE_RAM_BUDGET,
+};
+use chimera_engine::instrument::{
+    AudioShared, DacBlocks, Instrument, MixState, PartAudio, mix_parts,
+};
+use chimera_engine::modulation::{CUTOFF, FixedCol, MAX_MOD_SOURCES, ModSource, ModState, VCA};
+use chimera_engine::note_queue::{NoteEvent, NoteKind};
+#[cfg(feature = "orbit")]
+use chimera_engine::orbit::runner::OrbitRunner;
+use chimera_engine::params::{
+    EngineType, EnvParams, FilterParams, FolderParams, OutParams, ParamSnapshot, Steal,
+};
+use chimera_engine::part::{DacPair, PartParams};
+use chimera_engine::preset::{Performance, Sound};
+use chimera_engine::project::{NEW_PARTS, Project, SlotId, SourceId, SourceRef, project_crc};
+use chimera_engine::scope::{ScopeFrame, ScopeWriter, scope_buffer};
+use chimera_engine::source_table::{AudioToken, GateView};
+use chimera_engine::sym_alloc::SymAlloc;
+use chimera_engine::taps::TapOp;
+use chimera_engine::triple::TripleBuffer;
+use chimera_engine::voice_alloc::VoiceIdx;
+use chimera_engine::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::ChimeraDisplay;
 use cortex_m::peripheral::DWT;
 use embedded_graphics_core::pixelcolor::Rgb565;
 
 use crate::audio::engine;
-use crate::clocks::Clocks;
+use chimera_board::clocks::{self, Clocks};
+#[cfg(feature = "orbit")]
+use chimera_board::orbit::SAMPLE_RATE_NZ;
 
 /// The bench's screens as text: under 4 KB measured with every page in
 /// one build (3.9 KB), an area's less; `# TRUNCATED` past this.
@@ -916,7 +918,7 @@ const TAPE_ROWS: [TapeRow; 13] = [
         Tapes::Least,
         |p| {
             tiny(p, TapeModel::Oneshot);
-            p.tape.slice = chimera_core::dsp::tape_engine::SliceCode::new(17);
+            p.tape.slice = chimera_engine::dsp::tape_engine::SliceCode::new(17);
         },
         |_, _| Hit::Again,
     ),
@@ -1178,7 +1180,7 @@ fn memory_page(
 #[cfg(feature = "bench-stress")]
 #[inline(never)]
 fn stress_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>, clocks: Clocks) {
-    chimera_core::probe::set_clock(DWT::cycle_count);
+    chimera_engine::probe::set_clock(DWT::cycle_count);
     let ((s1, sp1), (s2, sp2)) = (rig.stress(true), rig.stress(false));
     let budget = BlockBudget::for_cpu(clocks.cpu_hz).budget_cycles();
     show_stress(rec, ([s1, s2], budget));
@@ -1192,7 +1194,7 @@ fn stress_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>, 
 #[cfg(feature = "bench-orbit")]
 #[inline(never)]
 fn orbit_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>, clocks: Clocks) {
-    chimera_core::probe::set_clock(DWT::cycle_count);
+    chimera_engine::probe::set_clock(DWT::cycle_count);
     let ((mean, worst), [ow, ow1, omean]) = rig.time_orbit();
     rec.clear();
     rec.heading("ORBIT");
@@ -1307,7 +1309,7 @@ impl Counts {
 
 fn hold(clocks: Clocks) {
     for _ in 0..HOLD_SECONDS {
-        crate::clocks::delay_us(clocks.cpu_hz, 1_000_000);
+        clocks::delay_us(clocks.cpu_hz, 1_000_000);
     }
 }
 
@@ -1413,9 +1415,9 @@ impl Rig<'_> {
     #[cfg(feature = "orbit")]
     #[inline(never)]
     fn time_orbit(&mut self) -> ((u32, u32), [Phases; 3]) {
-        use chimera_core::block::Block;
-        use chimera_core::orbit::clock::Bpm;
-        use chimera_core::orbit::scene::SceneRing;
+        use chimera_engine::block::Block;
+        use chimera_engine::orbit::clock::Bpm;
+        use chimera_engine::orbit::scene::SceneRing;
         const ORBIT_LOOPS: u32 = 2;
         let budget = SampleBudget::for_cpu(u32::MAX);
         let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
@@ -1429,8 +1431,8 @@ impl Rig<'_> {
             r.set(SceneRing::MUTE, 0.0);
         }
         o.bpm = Bpm::clamped(Bpm::MAX);
-        o.push(chimera_core::orbit::channel::Cmd::TogglePlay);
-        let mut runner = OrbitRunner::new(engine::SAMPLE_RATE_NZ);
+        o.push(chimera_engine::orbit::channel::Cmd::TogglePlay);
+        let mut runner = OrbitRunner::new(SAMPLE_RATE_NZ);
         let mut view = runner.view();
         let (mut total, mut worst, mut blocks) = (0u32, 0u32, 0u32);
         let (mut w, mut w1, mut sum) = (Phases::default(), Phases::default(), Phases::default());
@@ -1438,7 +1440,7 @@ impl Rig<'_> {
             let start = DWT::cycle_count();
             let ev = black_box(runner.block_with(inst, shared, &NO_POOL));
             runner.fill_view(black_box(&mut view));
-            chimera_core::probe::stamp(10);
+            chimera_engine::probe::stamp(10);
             let c = DWT::cycle_count().wrapping_sub(start);
             let p = Phases::read(blocks, c, ev.boundary());
             sum.add(&p);
@@ -1527,7 +1529,7 @@ impl Rig<'_> {
         }
         #[cfg(feature = "orbit")]
         let (mut runner, mut view) = {
-            let runner = OrbitRunner::new(engine::SAMPLE_RATE_NZ);
+            let runner = OrbitRunner::new(SAMPLE_RATE_NZ);
             let view = runner.view();
             (runner, view)
         };
@@ -1539,7 +1541,7 @@ impl Rig<'_> {
             if b == WARM_BLOCKS {
                 shared
                     .orbit
-                    .push(chimera_core::orbit::channel::Cmd::TogglePlay);
+                    .push(chimera_engine::orbit::channel::Cmd::TogglePlay);
             }
             if b == WARM_BLOCKS + 1 && !keys_first {
                 hold_notes(inst, shared, MAX_PARTS - 1);
@@ -1550,7 +1552,7 @@ impl Rig<'_> {
             let boundary = {
                 let ev = black_box(runner.block_with(inst, shared, &NO_POOL));
                 runner.fill_view(black_box(&mut view));
-                chimera_core::probe::stamp(10);
+                chimera_engine::probe::stamp(10);
                 ev.boundary()
             };
             #[cfg(not(feature = "orbit"))]
@@ -1578,7 +1580,7 @@ impl Rig<'_> {
     }
 }
 
-/// One ORBIT block's phases from `chimera_core::probe`'s stamps: 1 intake,
+/// One ORBIT block's phases from `chimera_engine::probe`'s stamps: 1 intake,
 /// 2 transport and adopt, 3 clock, 4 offs due, 5 loop boundary (MUTATE),
 /// 6 the rings' steps, 7 harmony, 8 the notes' `handle`, 9 resnap, 10 view.
 /// `acc`: 0 recost, 1 pick, 2 note-on, 3 ons, 5 offs, 6 costliest event.
@@ -1588,12 +1590,12 @@ struct Phases {
     total: u32,
     boundary: u32,
     d: [u32; 11],
-    acc: [u32; chimera_core::probe::ACCS],
+    acc: [u32; chimera_engine::probe::ACCS],
 }
 
 impl Phases {
     fn read(block: u32, total: u32, boundary: bool) -> Self {
-        use chimera_core::probe::{ACC, AT, SEEN};
+        use chimera_engine::probe::{ACC, AT, SEEN};
         use core::sync::atomic::Ordering::Relaxed;
         let seen = SEEN.load(Relaxed);
         let mut p = Phases {
@@ -1725,7 +1727,7 @@ fn time_kernel() -> u32 {
     }));
     let mut out = [0.0f32; BLOCK_SIZE];
     // No tap wanted: the rows go untouched, as on a tap-free Sound.
-    let mut taps = chimera_core::taps::TapRows::new([false; 2]);
+    let mut taps = chimera_engine::taps::TapRows::new([false; 2]);
     let mut run = |kernels: &mut [Kernel; MAX_VOICES], envs: &mut [[OpEnv; OPS]; MAX_VOICES]| {
         for ((k, env), blk) in kernels.iter_mut().zip(envs.iter_mut()).zip(&blocks) {
             k.render(black_box(blk), env, &mut out, &mut taps);

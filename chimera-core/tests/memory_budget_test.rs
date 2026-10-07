@@ -172,7 +172,7 @@ fn axi_counts_the_project() {
     );
 }
 
-/// UiState is one AXI static (`chimera-stm32/src/shared.rs`). Its Project
+/// UiState is one AXI static (`chimera-board/src/shared.rs`). Its Project
 /// is counted on its own in `axi_report`; the rest (navigation, renderer,
 /// regions, focus) is held to a growth tripwire.
 #[test]

@@ -20,7 +20,7 @@ pub use tree::{
     rows, screen_path,
 };
 
-use chimera_hal::Controls;
+use chimera_hal::{Controls, EncoderId};
 
 use crate::name::{Name, ProjectName};
 use crate::project::{
@@ -327,6 +327,8 @@ impl Ask {
 
     fn input(self, c: &impl Controls, p: &Presses, project: &Project) -> AskStep {
         use AskStep::{Answered as Got, Open};
+        // A picks.
+        let delta = c.encoder_delta(EncoderId::A) as i32;
         match self {
             Ask::ReplacePart(ask, to) => match ask.input(c, p, project) {
                 Ok(r) => Got(Answered::ReplacePart(r, to)),
@@ -342,7 +344,7 @@ impl Ask {
                 slot,
                 reverts,
                 mut choice,
-            } => match choice.input(c, p) {
+            } => match choice.input(delta, p) {
                 Some(a) => Got(Answered::UpdateStale(reverts, a)),
                 None => Open(Ask::UpdateStale {
                     first,
@@ -352,7 +354,7 @@ impl Ask {
                     choice,
                 }),
             },
-            Ask::ClearSlot(slot, mut choice) => match choice.input(c, p) {
+            Ask::ClearSlot(slot, mut choice) => match choice.input(delta, p) {
                 Some(a) => Got(Answered::ClearSlot(slot, a)),
                 None => Open(Ask::ClearSlot(slot, choice)),
             },
@@ -374,7 +376,7 @@ impl Ask {
                 save,
                 entry,
                 mut choice,
-            } => match choice.input(c, p) {
+            } => match choice.input(delta, p) {
                 Some(a) => Got(Answered::NameExists(save, entry, a)),
                 None => Open(Ask::NameExists {
                     save,
@@ -382,39 +384,39 @@ impl Ask {
                     choice,
                 }),
             },
-            Ask::CardChanged(then, mut choice) => match choice.input(c, p) {
+            Ask::CardChanged(then, mut choice) => match choice.input(delta, p) {
                 Some(a) => Got(Answered::CardChanged(then, a)),
                 None => Open(Ask::CardChanged(then, choice)),
             },
-            Ask::Delete(e, mut choice) => match choice.input(c, p) {
+            Ask::Delete(e, mut choice) => match choice.input(delta, p) {
                 Some(a) => Got(Answered::Delete(e, a)),
                 None => Open(Ask::Delete(e, choice)),
             },
-            Ask::Clear(e, mut choice) => match choice.input(c, p) {
+            Ask::Clear(e, mut choice) => match choice.input(delta, p) {
                 Some(a) => Got(Answered::Clear(e, a)),
                 None => Open(Ask::Clear(e, choice)),
             },
-            Ask::SaveOver(e, mut choice) => match choice.input(c, p) {
+            Ask::SaveOver(e, mut choice) => match choice.input(delta, p) {
                 Some(a) => Got(Answered::SaveOver(e, a)),
                 None => Open(Ask::SaveOver(e, choice)),
             },
-            Ask::SaveSceneOver(a, mut choice) => match choice.input(c, p) {
+            Ask::SaveSceneOver(a, mut choice) => match choice.input(delta, p) {
                 Some(x) => Got(Answered::SaveSceneOver(a, x)),
                 None => Open(Ask::SaveSceneOver(a, choice)),
             },
-            Ask::ClearScene(a, mut choice) => match choice.input(c, p) {
+            Ask::ClearScene(a, mut choice) => match choice.input(delta, p) {
                 Some(x) => Got(Answered::ClearScene(a, x)),
                 None => Open(Ask::ClearScene(a, choice)),
             },
-            Ask::ReloadScene(a, mut choice) => match choice.input(c, p) {
+            Ask::ReloadScene(a, mut choice) => match choice.input(delta, p) {
                 Some(x) => Got(Answered::ReloadScene(a, x)),
                 None => Open(Ask::ReloadScene(a, choice)),
             },
-            Ask::EnterDfu(mut choice) => match choice.input(c, p) {
+            Ask::EnterDfu(mut choice) => match choice.input(delta, p) {
                 Some(a) => Got(Answered::EnterDfu(a)),
                 None => Open(Ask::EnterDfu(choice)),
             },
-            Ask::PurgeSources(unused, mut choice) => match choice.input(c, p) {
+            Ask::PurgeSources(unused, mut choice) => match choice.input(delta, p) {
                 Some(a) => Got(Answered::PurgeSources(a)),
                 None => Open(Ask::PurgeSources(unused, choice)),
             },

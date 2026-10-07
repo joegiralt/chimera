@@ -121,7 +121,7 @@ fn mod_state_sync_from_matrix() {
     matrix.set(1, FixedCol::Freq.index(), -99);
 
     let mut ms = ModState::new();
-    ms.sync_from_matrix(&matrix);
+    matrix.sync_into(&mut ms);
 
     assert_eq!(ms.num_sources(), 2);
     assert_eq!(ms.num_dests(), 1);
@@ -151,7 +151,7 @@ fn mod_state_truncates_without_misaligning() {
     matrix.num_sources = 2;
     matrix.amounts[1][15] = 77;
     let mut ms = ModState::new();
-    ms.sync_from_matrix(&matrix);
+    matrix.sync_into(&mut ms);
     assert_eq!(ms.num_dests(), MAX_MOD_DESTS);
     assert_eq!(ms.amount(1, 15), 77);
     assert_eq!(Some(ms.dest(15)), matrix.dests[15].map(|d| d.addr));
@@ -169,7 +169,7 @@ fn mod_state_clamps_sources() {
     matrix.num_sources = 16;
     matrix.set(7, FIXED_COLS, 50);
     let mut ms = ModState::new();
-    ms.sync_from_matrix(&matrix); // nothing panicked
+    matrix.sync_into(&mut ms); // nothing panicked
     assert_eq!(ms.num_sources(), MAX_MOD_SOURCES);
     assert_eq!(ms.amount(7, 0), 50);
 }

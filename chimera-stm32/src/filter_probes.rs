@@ -2,10 +2,10 @@
 //! `tools/loop_count.py` counts their loops in this ELF. Apart from the
 //! bench, whose areas have no room for their ~37 KB.
 
-use chimera_core::dsp::filter::{self, Clean};
-use chimera_core::dsp::wavefolder::Wavefolder;
-use chimera_core::hw::BLOCK_SIZE;
-use chimera_core::params::{FilterParams, FolderParams};
+use chimera_engine::dsp::filter::{self, Clean};
+use chimera_engine::dsp::wavefolder::Wavefolder;
+use chimera_engine::hw::BLOCK_SIZE;
+use chimera_engine::params::{FilterParams, FolderParams};
 
 /// One block of one filter path, for `tools/loop_count.py`'s static count.
 type FilterProbe = fn(&mut Clean, &mut [f32; BLOCK_SIZE], &FilterParams);

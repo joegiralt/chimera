@@ -1,44 +1,20 @@
+//! The UI and the console, built for size (ADR 0108), over
+//! `chimera-engine`, whose modules are re-exported here under their own
+//! names: `chimera_core::dsp` is `chimera_engine::dsp`.
 #![no_std]
 
 #[cfg(all(feature = "test-support", target_os = "none"))]
 compile_error!("test-support is for host tests: it forges confirmations and fresh files");
 
-// `SymPool::boxed`, for tests.
-#[cfg(any(test, feature = "test-support"))]
-extern crate alloc;
+pub use chimera_engine::{MidiChannel, MidiNote, Velocity};
 
-pub use chimera_hal::{MidiChannel, MidiNote, Velocity};
-
-pub mod addr;
-pub mod audio_out;
-pub mod block;
-pub mod boot;
-pub mod clock_plan;
-pub mod console;
-pub mod dsp;
-pub mod factory;
-pub mod hw;
-mod in_place;
-pub mod instrument;
-pub mod meter;
-pub mod mod_path;
-pub mod modulation;
-pub mod name;
-pub mod note_queue;
-pub mod orbit;
-pub mod params;
-pub mod part;
-pub mod perf;
-pub mod preset;
 #[cfg(feature = "probe")]
-pub mod probe;
-pub mod project;
-pub mod reset;
-pub mod scope;
-pub mod source_table;
-pub mod storage;
-pub mod sym_alloc;
-pub mod taps;
-pub mod triple;
+pub use chimera_engine::probe;
+pub use chimera_engine::{
+    addr, audio_out, block, boot, clock_plan, dsp, factory, hw, in_place, instrument, meter,
+    mod_path, modulation, name, note_queue, orbit, params, part, perf, preset, project, reset,
+    scope, source_table, storage, sym_alloc, taps, triple, voice_alloc,
+};
+
+pub mod console;
 pub mod ui;
-pub mod voice_alloc;

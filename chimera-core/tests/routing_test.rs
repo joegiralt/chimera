@@ -154,7 +154,7 @@ fn presence_survives_sync_from_matrix() {
     m.load_amounts(&sound.mod_state);
     assert_eq!(m.fixed_present[FixedCol::Freq.index()], DEFAULT_BITS);
     let mut ms = ModState::new();
-    ms.sync_from_matrix(&m);
+    m.sync_into(&mut ms);
     assert_eq!(ms.fixed_present(FixedCol::Freq), DEFAULT_BITS);
 }
 

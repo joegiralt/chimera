@@ -1,6 +1,6 @@
 use chimera_core::console::{Colours, Frame, Out, SHOT_HEADER, Stalled, write_shot};
 use chimera_core::ui::theme;
-use chimera_core::ui::theme_settings::{Accent, Palette, ThemeSettings};
+use chimera_core::ui::theme_settings::{Accent, Palette, ThemeSettings, palette};
 use chimera_hal::FB_SIZE;
 use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
 
@@ -55,11 +55,10 @@ fn fb() -> Box<[u16; FB_SIZE]> {
     fb
 }
 fn amber() -> Palette {
-    ThemeSettings {
+    palette(&ThemeSettings {
         accent: Accent::Amber,
         ..ThemeSettings::DEFAULT
-    }
-    .palette()
+    })
 }
 
 #[test]

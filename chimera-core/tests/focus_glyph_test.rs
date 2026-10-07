@@ -18,7 +18,8 @@ use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_def::{BlockDef, slot_addr};
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::glyph::{
-    Accidental, Braid, CompositeId, FocusGlyph, Gauge, Rings, StaffNote, anim_key, wave_trace,
+    Accidental, Braid, CompositeId, FocusGlyph, Gauge, Rings, StaffNote, anim_key, gauge,
+    wave_trace,
 };
 use chimera_core::ui::page::{PageId, PageKey, PageLayout};
 use chimera_core::ui::region::{RegionData, RegionKind};
@@ -337,7 +338,7 @@ fn each_glyph_maps_to_its_gauge() {
             CompositeId::DelayRings => Gauge::Switch { on: 8.0 },
             CompositeId::ReverbCube => Gauge::Switch { on: 7.0 },
         };
-        assert_eq!(g.gauge(0.25, ValFmt::Bi, composite), want, "{g:?}");
+        assert_eq!(gauge(g, 0.25, ValFmt::Bi, composite), want, "{g:?}");
     }
 }
 
@@ -417,7 +418,11 @@ fn staff_note_spells_semitones_in_c_major() {
 #[test]
 fn staff_eases_between_semitones() {
     let fmt = ValFmt::Signed(24);
-    let at = |semis: f32| FocusGlyph::Staff.gauge((semis + 24.0) / 48.0, fmt, |_| Gauge::None);
+    let at = |semis: f32| {
+        gauge(FocusGlyph::Staff, (semis + 24.0) / 48.0, fmt, |_| {
+            Gauge::None
+        })
+    };
     let staff = |step, accidental| Gauge::Staff { step, accidental };
     assert_eq!(at(0.0), staff(0.0, Accidental::Natural));
     assert_eq!(at(6.0), staff(3.0, Accidental::Sharp));
@@ -524,7 +529,7 @@ fn glyph_wave_page_traces_each_wave() {
 /// A level bar's ticks: one per step for a few steps, else 8.
 #[test]
 fn level_bar_ticks_follow_the_steps() {
-    let ticks = |fmt| match FocusGlyph::LevelBar.gauge(0.5, fmt, |_| Gauge::None) {
+    let ticks = |fmt| match gauge(FocusGlyph::LevelBar, 0.5, fmt, |_| Gauge::None) {
         Gauge::LevelBar { ticks, .. } => ticks,
         g => panic!("{g:?}"),
     };

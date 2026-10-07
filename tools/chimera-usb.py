@@ -56,7 +56,7 @@ class UsbId(NamedTuple):
     pid: int
 
 
-CONSOLE_ID = UsbId(0x0483, 0x5740)  # chimera-stm32/src/usb.rs VID_PID
+CONSOLE_ID = UsbId(0x0483, 0x5740)  # chimera-board/src/usb.rs VID_PID
 ROM_DFU_ID = UsbId(0x0483, 0xDF11)  # ST's system memory loader
 
 

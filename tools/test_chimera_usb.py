@@ -300,7 +300,7 @@ class Tool(unittest.TestCase):
 
     def test_udev_rule_matches_the_firmware_identity(self):
         rule = (ROOT / "tools/70-chimera.rules").read_text()
-        usb = (ROOT / "chimera-stm32/src/usb.rs").read_text()
+        usb = (ROOT / "chimera-board/src/usb.rs").read_text()
         self.assertIn("VID_PID: (u16, u16) = (0x0483, 0x5740)", usb)
         for want in (
             'ATTRS{idVendor}=="0483"',
