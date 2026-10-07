@@ -1,16 +1,15 @@
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
-#[cfg(feature = "perf-probe")]
-use core::sync::atomic::AtomicU8;
 use core::sync::atomic::{AtomicBool, Ordering};
 
+use chimera_board::shared::NOTE_SOURCES;
+#[cfg(feature = "perf-probe")]
+use chimera_board::shared::{COST_PCT, VOICES};
 use chimera_core::audio_out::{Half, interleave};
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::hw::{BLOCK_SIZE, SAMPLE_RATE, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
-#[cfg(any(feature = "midi-din", feature = "bench"))]
-use chimera_core::note_queue::SourceId;
-use chimera_core::note_queue::{InEvent, NoteDrain, NoteSources};
+use chimera_core::note_queue::{InEvent, NoteDrain};
 use chimera_core::part::DacPair;
 use chimera_core::project::{LOAD_LINK, LoadGate};
 use chimera_core::scope::{ScopeFrame, ScopeWriter};
@@ -18,14 +17,6 @@ use chimera_core::source_table::AudioToken;
 use chimera_core::triple::{Reader, Writer};
 
 use super::dma;
-
-/// MIDI DIN, and in a bench build the console's `card`, which plays a chord.
-pub const NOTE_SOURCES: usize = if cfg!(feature = "bench") { 2 } else { 1 };
-#[cfg(feature = "midi-din")]
-pub const DIN: SourceId<NOTE_SOURCES> = SourceId::new(0);
-#[cfg(feature = "bench")]
-pub const CARD: SourceId<NOTE_SOURCES> = SourceId::new(1);
-pub static NOTES: NoteSources<NOTE_SOURCES> = NoteSources::new();
 
 // SAFETY: ".ram_d2.voices" is real RAM_D2 SRAM (linker-defined) and NOLOAD,
 // so this static holds garbage at boot; sound because the type is
@@ -44,7 +35,7 @@ struct Engine {
     dac: DacBlocks,
     /// Holds the note queues through a project load (ADR 0046).
     gate: LoadGate,
-    orbit: crate::orbit::Runner,
+    orbit: chimera_board::orbit::Runner,
     /// The source table's one reader (ADR 0087).
     sources: AudioToken,
 }
@@ -52,13 +43,6 @@ struct Engine {
 static mut ENGINE: MaybeUninit<Engine> = MaybeUninit::uninit();
 static ENGINE_TAKEN: AtomicBool = AtomicBool::new(false);
 static ENGINE_READY: AtomicBool = AtomicBool::new(false);
-
-/// After each block: voices sounding, and the voice budget booked in
-/// percent. Plain stores; the probe reads them in the same interrupt.
-#[cfg(feature = "perf-probe")]
-pub static VOICES: AtomicU8 = AtomicU8::new(0);
-#[cfg(feature = "perf-probe")]
-pub static COST_PCT: AtomicU8 = AtomicU8::new(0);
 
 /// # Safety
 /// Only before `init`, and from one context at a time.
@@ -75,7 +59,7 @@ pub fn init(
     shared: Reader<AudioShared>,
     notes: NoteDrain<'static, NOTE_SOURCES>,
     scope: Writer<ScopeFrame>,
-    orbit: crate::orbit::Runner,
+    orbit: chimera_board::orbit::Runner,
     mut sources: AudioToken,
 ) {
     if ENGINE_TAKEN.swap(true, Ordering::AcqRel) {
@@ -107,13 +91,6 @@ pub fn init(
     }
     ENGINE_READY.store(true, Ordering::Release);
 }
-
-#[cfg(feature = "orbit")]
-pub(crate) const SAMPLE_RATE_NZ: core::num::NonZeroU32 =
-    match core::num::NonZeroU32::new(SAMPLE_RATE) {
-        Some(r) => r,
-        None => panic!("a sample rate of 0"),
-    };
 
 /// One half, as the desktop's `Engine::block` renders a block: the gate,
 /// then only when it opens the drain (live notes to ORBIT's capture and

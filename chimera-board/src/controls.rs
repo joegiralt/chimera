@@ -215,7 +215,7 @@ pub struct Stm32Controls {
 }
 
 impl Stm32Controls {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             edges: [Edges::default(); NUM_BUTTONS],
             now_ms: Ms(0),

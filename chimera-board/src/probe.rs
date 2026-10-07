@@ -16,8 +16,8 @@ mod imp {
     use chimera_core::triple::{Reader, TripleBuffer, Writer};
     use cortex_m::peripheral::{DCB, DWT};
 
-    use crate::audio::{dma, engine};
     use crate::clocks::Clocks;
+    use crate::shared;
 
     const BLANK: AudioStats = AudioStats::new(SiliconRev::Unknown(0), 0, ResetCause::Unknown);
     const PAINT_MARGIN: usize = 256;
@@ -113,19 +113,19 @@ mod imp {
             )
         };
         stats.record(cycles, budget);
-        stats.overruns = dma::OVERRUNS.load(Ordering::Relaxed);
-        stats.desyncs = dma::DESYNCS.load(Ordering::Relaxed);
-        let drops = engine::NOTES.drops();
+        stats.overruns = shared::OVERRUNS.load(Ordering::Relaxed);
+        stats.desyncs = shared::DESYNCS.load(Ordering::Relaxed);
+        let drops = shared::NOTES.drops();
         stats.drops[..drops.len()].copy_from_slice(&drops);
         #[cfg(feature = "midi-din")]
         {
-            let din = &mut stats.drops[engine::DIN.index()];
-            *din = din.saturating_add(crate::midi_din::ERRORS.load(Ordering::Relaxed));
+            let din = &mut stats.drops[shared::DIN.index()];
+            *din = din.saturating_add(shared::MIDI_ERRORS.load(Ordering::Relaxed));
         }
         stats.sources = drops.len() as u8;
         stats.record_voices(
-            engine::VOICES.load(Ordering::Relaxed),
-            engine::COST_PCT.load(Ordering::Relaxed),
+            shared::VOICES.load(Ordering::Relaxed),
+            shared::COST_PCT.load(Ordering::Relaxed),
             VOICE_PEAK_READ.swap(false, Ordering::Relaxed),
         );
         if let Some(w) = writer {

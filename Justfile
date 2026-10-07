@@ -166,16 +166,16 @@ clippy:
     cargo clippy -p chimera-core --features master-tape --all-targets -- -D warnings
     cargo clippy -p chimera-core --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-desktop --no-default-features --all-targets -- -D warnings
-    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf -- -D warnings
-    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features -- -D warnings
-    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit -- -D warnings
-    for f in {{bench_sets}}; do cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features "$f" -- -D warnings || exit 1; done
+    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf -- -D warnings
+    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features -- -D warnings
+    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --features orbit -- -D warnings
+    for f in {{bench_sets}}; do cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --features "$f" -- -D warnings || exit 1; done
     # Every bench area at once: too big to link, but no area's code is dead.
-    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features {{bench_all}} -- -D warnings
-    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features {{bench_all}},master-tape -- -D warnings
-    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features sd-probe -- -D warnings
+    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --features {{bench_all}} -- -D warnings
+    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --features {{bench_all}},master-tape -- -D warnings
+    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features sd-probe -- -D warnings
     # usb-console alone: `stats` answers from no reader
-    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features usb-console -- -D warnings
+    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features usb-console -- -D warnings
     cargo clippy -p chimera-bootloader --target thumbv7em-none-eabihf -- -D warnings
 
 # Render every screen (the golden cases and the atlas) with the real renderer

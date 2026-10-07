@@ -216,6 +216,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
+name = "chimera-board"
+version = "0.1.0"
+dependencies = [
+ "chimera-core",
+ "chimera-fat",
+ "chimera-hal",
+ "cortex-m",
+ "embedded-graphics",
+ "embedded-graphics-core",
+ "embedded-hal 1.0.0",
+ "embedded-sdmmc",
+ "stm32h7xx-hal",
+ "synopsys-usb-otg",
+ "usb-device",
+ "usbd-serial",
+]
+
+[[package]]
 name = "chimera-bootloader"
 version = "0.1.0"
 dependencies = [
@@ -276,20 +294,15 @@ dependencies = [
 name = "chimera-stm32"
 version = "0.1.0"
 dependencies = [
+ "chimera-board",
  "chimera-core",
- "chimera-fat",
  "chimera-hal",
  "cortex-m",
  "cortex-m-rt",
  "embedded-graphics",
  "embedded-graphics-core",
- "embedded-hal 1.0.0",
- "embedded-sdmmc",
  "libm",
  "stm32h7xx-hal",
- "synopsys-usb-otg",
- "usb-device",
- "usbd-serial",
 ]
 
 [[package]]

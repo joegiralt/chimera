@@ -24,7 +24,14 @@ mod on {
     use chimera_core::orbit::runner::{OrbitRunner, OrbitView};
     use chimera_core::triple::{Reader, Writer};
 
-    use crate::audio::engine::SAMPLE_RATE_NZ;
+    use chimera_core::hw::SAMPLE_RATE;
+
+    /// The rate ORBIT's runner counts in.
+    pub const SAMPLE_RATE_NZ: core::num::NonZeroU32 = match core::num::NonZeroU32::new(SAMPLE_RATE)
+    {
+        Some(r) => r,
+        None => panic!("a sample rate of 0"),
+    };
 
     /// The runner and its view's writer.
     pub struct Runner {
@@ -48,25 +55,32 @@ mod on {
         (runner, Shell { view: r, led })
     }
 
+    // The audio interrupt's calls: inline, so they compile in the binary,
+    // in the fast profile (ADR 0108).
     impl Runner {
+        #[inline]
         pub fn now(&self) -> u64 {
             self.runner.now()
         }
 
         /// A live key, raw, before any snap: capture sees it.
+        #[inline]
         pub fn live(&mut self, n: NoteEvent) {
             self.runner.live(n);
         }
 
+        #[inline]
         pub fn realtime(&mut self, src: usize, rt: RealTime, now: u64) {
             self.runner.realtime(src, rt, now);
         }
 
+        #[inline]
         pub fn block(&mut self, inst: &mut Instrument, shared: &AudioShared, src: &GateView<'_>) {
             self.runner.block_with(inst, shared, src);
         }
 
         /// The runner's view, for the UI.
+        #[inline]
         pub fn publish(&mut self) {
             let r = &self.runner;
             self.view.publish(|v| r.fill_view(v));

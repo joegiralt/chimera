@@ -25,9 +25,9 @@ use cortex_m::peripheral::DWT;
 use embedded_sdmmc::embedded_sdmmc_types::sdcard::CardType;
 use embedded_sdmmc::{Block, BlockDevice, BlockIdx};
 
-use crate::audio::dma::{BLOCKS, OVERRUNS};
 use crate::controls::now_ms;
 use crate::sd::{SD_OP_CAP_MS, SdStore};
+use crate::shared::{BLOCKS, OVERRUNS};
 
 /// The largest transfer, 16 KB.
 const BUF_BLOCKS: usize = 32;

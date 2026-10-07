@@ -5,11 +5,11 @@ edition.workspace = true
 
 [features]
 default = ["midi-din", "perf-probe", "usb-console", "card-put"]
-midi-din = []
-perf-probe = []
+midi-din = ["chimera-board/midi-din"]
+perf-probe = ["chimera-board/perf-probe"]
 # The bench on the unit, one area a build: all of it no longer fits FLASH
 # beside the synth. `bench` is the shared rig, built with an area.
-bench = ["perf-probe", "chimera-core/probe"]
+bench = ["perf-probe", "chimera-core/probe", "chimera-board/bench"]
 # ALGO's patches, the FX bus and the kernel.
 bench-algo = ["bench"]
 # ROUTING: the matrix, filter types, taps and MODAL's rows.
@@ -27,29 +27,24 @@ bench-tape = ["bench"]
 # `tools/loop_count.py`'s static counts: the shipping build plus them.
 filter-probes = ["chimera-core/filter-probe"]
 # On-unit SD bring-up: prints the card probe and halts; no audio.
-sd-probe = []
+sd-probe = ["chimera-board/sd-probe"]
 # The master tape stage back on the chain, with its bench row (ADR 0055).
 master-tape = ["chimera-core/master-tape"]
 # ORBIT, the ring sequencer: SEQ hold opens it, the audio block runs it.
-orbit = ["chimera-core/orbit"]
+orbit = ["chimera-core/orbit", "chimera-board/orbit"]
 # The USB console (ADR 0068): CDC-ACM on the OTG FS port, polled from the UI
 # loop, its interrupt never unmasked.
-usb-console = [
-    "stm32h7xx-hal/usb_hs",
-    "dep:usb-device",
-    "dep:usbd-serial",
-    "dep:synopsys-usb-otg",
-]
+usb-console = ["chimera-board/usb-console"]
 # The console's `ls` and `put` (ADR 0092): files onto the card over USB.
-card-put = ["usb-console", "chimera-core/card-put"]
+card-put = ["usb-console", "chimera-board/card-put"]
 # The boot's lost-cluster sweep frees what it finds (#360, ADR 0094). Off,
 # it runs dry; on, it fails to build until the owner's go.
-sweep-free = []
+sweep-free = ["chimera-board/sweep-free"]
 
 [dependencies]
+chimera-board = { path = "../chimera-board" }
 chimera-core = { path = "../chimera-core", default-features = false }
 chimera-hal = { path = "../chimera-hal" }
-chimera-fat = { path = "../chimera-fat" }
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
 # set-vtor: Reset points VTOR at the linked __vector_table (FLASH ORIGIN in
 # memory.x), whatever the bootloader left there.
@@ -60,14 +55,6 @@ stm32h7xx-hal = { version = "0.16", features = ["stm32h750v", "rt"] }
 embedded-graphics = "0.8"
 embedded-graphics-core = "0.4"
 libm = "0.2"
-embedded-sdmmc = { version = "0.10", default-features = false }
-embedded-hal = "1.0"
-usb-device = { version = "0.3.2", optional = true }
-usbd-serial = { version = "0.2.2", optional = true }
-# The HAL's own OTG driver, for `usb::Otg2`, whose enable adds nothing to
-# what `usb::preflight` checked (the HAL's `USB2` resets the block and sets
-# USB33DEN inside the masked section).
-synopsys-usb-otg = { version = "0.4.0", features = ["hs"], optional = true }
 
 # no_std bin, own #[panic_handler]: the test harness pulls in std's, which
 # clashes (E0152). Nothing here to unit test; chimera-core holds the logic.

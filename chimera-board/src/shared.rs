@@ -1,9 +1,14 @@
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
-use core::sync::atomic::{AtomicBool, Ordering};
+#[cfg(feature = "perf-probe")]
+use core::sync::atomic::AtomicU8;
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use chimera_core::dsp::algo::waves::{self, Waves};
 use chimera_core::instrument::AudioShared;
+use chimera_core::note_queue::NoteSources;
+#[cfg(any(feature = "midi-din", feature = "bench"))]
+use chimera_core::note_queue::SourceId;
 #[cfg(feature = "orbit")]
 use chimera_core::orbit::runner::OrbitView;
 use chimera_core::preset::Performance;
@@ -105,3 +110,36 @@ pub fn take_orbit() -> Option<(Writer<OrbitView>, Reader<OrbitView>)> {
     let slot = unsafe { &mut *addr_of_mut!(ORBIT) };
     Some(TripleBuffer::init_in_place(slot, OrbitView::default).split())
 }
+
+// What the audio interrupt (`chimera-stm32`) and this side both touch:
+// the note sources, the DMA's and MIDI DIN's counters, the probe's voices.
+
+/// MIDI DIN, and in a bench build the console's `card`, which plays a chord.
+pub const NOTE_SOURCES: usize = if cfg!(feature = "bench") { 2 } else { 1 };
+#[cfg(feature = "midi-din")]
+pub const DIN: SourceId<NOTE_SOURCES> = SourceId::new(0);
+#[cfg(feature = "bench")]
+pub const CARD: SourceId<NOTE_SOURCES> = SourceId::new(1);
+pub static NOTES: NoteSources<NOTE_SOURCES> = NoteSources::new();
+
+pub static OVERRUNS: AtomicU32 = AtomicU32::new(0);
+pub static DESYNCS: AtomicU32 = AtomicU32::new(0);
+/// Halves rendered, wrapping: the watchdog's audio heartbeat.
+pub static BLOCKS: AtomicU32 = AtomicU32::new(0);
+/// MIDI DIN's line errors: overrun, framing, noise.
+pub static MIDI_ERRORS: AtomicU32 = AtomicU32::new(0);
+
+/// A saturating count, as the audio and MIDI interrupts keep them.
+#[inline]
+pub fn bump(counter: &AtomicU32, n: u32) {
+    let _ = counter.try_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+        Some(v.saturating_add(n))
+    });
+}
+
+/// After each block: voices sounding, and the voice budget booked in
+/// percent. Plain stores; the probe reads them in the same interrupt.
+#[cfg(feature = "perf-probe")]
+pub static VOICES: AtomicU8 = AtomicU8::new(0);
+#[cfg(feature = "perf-probe")]
+pub static COST_PCT: AtomicU8 = AtomicU8::new(0);

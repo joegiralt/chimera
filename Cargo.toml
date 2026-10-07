@@ -4,6 +4,7 @@ members = [
     "chimera-core",
     "chimera-hal",
     "chimera-stm32",
+    "chimera-board",
     "chimera-desktop",
     "chimera-bootloader",
     "chimera-waves",
@@ -27,6 +28,8 @@ license = "MIT"
 
 # Optimize all firmware dependencies in dev builds
 [profile.dev.package.chimera-stm32]
+opt-level = 2
+[profile.dev.package.chimera-board]
 opt-level = 2
 [profile.dev.package.stm32h7xx-hal]
 opt-level = 2
@@ -71,8 +74,16 @@ opt-level = 2
 opt-level = 1
 
 # Release profile for firmware: fat LTO in one codegen unit (ADR 0089).
+# Its opt-level is the binary's, and so the LTO pipeline's: it stays 2, the
+# audio's (ADR 0108).
 [profile.release]
 panic = "abort"
 opt-level = 2
 lto = "fat"
 codegen-units = 1
+
+# The small profile (ADR 0108): crates off the audio path build for size.
+# A function's level is its crate's (a generic's, the crate instantiating
+# it), so nothing the audio interrupt runs may live in one of these.
+[profile.release.package.chimera-board]
+opt-level = "z"

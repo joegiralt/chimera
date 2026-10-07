@@ -61,9 +61,9 @@ pub const VOICE_RAM_BUDGET: usize = D2_SRAM - D2_DMA_RESERVE; // 286_720
 /// (ADR 0051, 2,048 B; ADR 0101 raises it to 2,112 for the 2040's state).
 pub const VOICE_CHAIN_BYTES: usize = 2112;
 
-/// Framebuffer: 240 × 320 RGB565, one static in AXI (`chimera-stm32/src/display.rs`).
+/// Framebuffer: 240 × 320 RGB565, one static in AXI (`chimera-board/src/display.rs`).
 pub const FB_BYTES: usize = chimera_hal::FB_SIZE * 2; // 153_600
-/// AXI for the card's `SdStore` (`chimera-stm32/src/sd.rs`, which asserts
+/// AXI for the card's `SdStore` (`chimera-board/src/sd.rs`, which asserts
 /// it fits): a 512 B block buffer, the 512 B FAT sector cache and its tag,
 /// the allocator hint and the SD driver's state. No heap, no handle table.
 pub const STORE_RESERVE: usize = 2 * 1024;

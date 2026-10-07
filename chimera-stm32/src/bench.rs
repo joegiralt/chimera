@@ -71,7 +71,9 @@ use cortex_m::peripheral::DWT;
 use embedded_graphics_core::pixelcolor::Rgb565;
 
 use crate::audio::engine;
-use crate::clocks::Clocks;
+use chimera_board::clocks::{self, Clocks};
+#[cfg(feature = "orbit")]
+use chimera_board::orbit::SAMPLE_RATE_NZ;
 
 /// The bench's screens as text: under 4 KB measured with every page in
 /// one build (3.9 KB), an area's less; `# TRUNCATED` past this.
@@ -1307,7 +1309,7 @@ impl Counts {
 
 fn hold(clocks: Clocks) {
     for _ in 0..HOLD_SECONDS {
-        crate::clocks::delay_us(clocks.cpu_hz, 1_000_000);
+        clocks::delay_us(clocks.cpu_hz, 1_000_000);
     }
 }
 
@@ -1430,7 +1432,7 @@ impl Rig<'_> {
         }
         o.bpm = Bpm::clamped(Bpm::MAX);
         o.push(chimera_core::orbit::channel::Cmd::TogglePlay);
-        let mut runner = OrbitRunner::new(engine::SAMPLE_RATE_NZ);
+        let mut runner = OrbitRunner::new(SAMPLE_RATE_NZ);
         let mut view = runner.view();
         let (mut total, mut worst, mut blocks) = (0u32, 0u32, 0u32);
         let (mut w, mut w1, mut sum) = (Phases::default(), Phases::default(), Phases::default());
@@ -1527,7 +1529,7 @@ impl Rig<'_> {
         }
         #[cfg(feature = "orbit")]
         let (mut runner, mut view) = {
-            let runner = OrbitRunner::new(engine::SAMPLE_RATE_NZ);
+            let runner = OrbitRunner::new(SAMPLE_RATE_NZ);
             let view = runner.view();
             (runner, view)
         };

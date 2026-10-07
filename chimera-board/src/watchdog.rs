@@ -14,8 +14,8 @@ use cortex_m::peripheral::{DWT, SCB};
 use stm32h7xx_hal::independent_watchdog::IndependentWatchdog;
 use stm32h7xx_hal::{pac, prelude::*};
 
-use crate::audio::dma::BLOCKS;
 use crate::controls::CONTROLS_HZ;
+use crate::shared::BLOCKS;
 
 // The timeout, shortest at the LSI's fastest, outlasts the longest healthy
 // gap between kicks at this tick rate and block size.
