@@ -19,8 +19,27 @@ pub const BUILD: &str = if cfg!(debug_assertions) {
     "RELEASE"
 };
 
+const HASH: &str = env!("CHIMERA_HASH");
+const DIRTY: bool = env!("CHIMERA_DIRTY").len() == 1 && env!("CHIMERA_DIRTY").as_bytes()[0] == b'1';
+
+/// The build's identity as testers quote it: `0.1.0 a1b2c3d4`, `+` after
+/// the hash when the tree had uncommitted changes.
+pub fn write_rev(w: &mut impl Write, version: &str, hash: &str, dirty: bool) -> core::fmt::Result {
+    write!(w, "{version} {hash}")?;
+    if dirty {
+        w.write_char('+')?;
+    }
+    Ok(())
+}
+
+/// This build's `write_rev`.
+pub fn write_build_rev(w: &mut impl Write) -> core::fmt::Result {
+    write_rev(w, VERSION, HASH, DIRTY)
+}
+
 const NAME_Y: i32 = 110;
 const LINE_Y: i32 = 136;
+const REV_Y: i32 = 156;
 /// Clearance kept from the next cell's text.
 const GAP: i32 = 4;
 
@@ -98,10 +117,57 @@ where
         theme::MID,
         theme::LABEL_TRACKING,
     );
+    let mut rev = FmtBuf::new();
+    let _ = write_build_rev(&mut rev);
+    draw::text_center(
+        d,
+        &theme::FONT_LABEL,
+        rev.as_str(),
+        cx,
+        REV_Y,
+        theme::MID,
+        theme::LABEL_TRACKING,
+    );
 }
 
 /// What the cells show, for dirty tracking.
 pub fn cells_key(s: Option<&AudioStats>, card: Card) -> [u16; 6] {
     let h = cell_texts(s, card).map(|b| crate::ui::region::settings_key(&[b.as_str().as_bytes()]));
     h.map(|h| (h ^ (h >> 16)) as u16)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rev(version: &str, hash: &str, dirty: bool) -> FmtBuf {
+        let mut b = FmtBuf::new();
+        write_rev(&mut b, version, hash, dirty).unwrap();
+        b
+    }
+
+    #[test]
+    fn a_clean_build_is_version_and_hash() {
+        assert_eq!(rev("0.1.0", "a1b2c3d4", false).as_str(), "0.1.0 a1b2c3d4");
+    }
+
+    #[test]
+    fn a_dirty_build_has_a_plus() {
+        assert_eq!(rev("0.1.0", "a1b2c3d4", true).as_str(), "0.1.0 a1b2c3d4+");
+    }
+
+    #[test]
+    fn outside_git_it_says_unknown() {
+        assert_eq!(rev("0.1.0", "unknown", false).as_str(), "0.1.0 unknown");
+    }
+
+    #[test]
+    fn the_status_line_fits_the_screen() {
+        let w = draw::text_width(
+            &theme::FONT_LABEL,
+            rev("0.1.0", "a1b2c3d4", true).as_str(),
+            theme::LABEL_TRACKING,
+        );
+        assert!(w < theme::SCREEN_W);
+    }
 }
