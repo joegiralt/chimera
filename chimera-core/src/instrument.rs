@@ -48,13 +48,13 @@ impl PartHeads {
 
     pub fn publish(&self, part: usize, h: Heads) {
         let w = &self.0[part];
-        w[0].store(!(h.0 as u32), Relaxed);
-        w[1].store(!((h.0 >> 32) as u32), Relaxed);
+        w[0].store(!(h.raw() as u32), Relaxed);
+        w[1].store(!((h.raw() >> 32) as u32), Relaxed);
     }
 
     pub fn read(&self, part: usize) -> Heads {
         let w = &self.0[part];
-        Heads(!(u64::from(w[0].load(Relaxed)) | u64::from(w[1].load(Relaxed)) << 32))
+        Heads::from_raw(!(u64::from(w[0].load(Relaxed)) | u64::from(w[1].load(Relaxed)) << 32))
     }
 }
 

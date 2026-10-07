@@ -141,7 +141,11 @@ fn heads_pack() {
     assert_eq!((h.head(), h.second()), (Some(7), None));
     let h = Heads::new(0, Some(400_000));
     assert_eq!((h.head(), h.second()), (Some(0), Some(400_000)));
-    assert_eq!(h.0, 400_000 << 32);
+    let store = chimera_core::instrument::PartHeads::new();
+    for h in [h, Heads::NONE, Heads::new(9, None)] {
+        store.publish(1, h);
+        assert_eq!(store.read(1), h);
+    }
 }
 
 /// The only test in this binary that plays TAPE through an `Instrument`:

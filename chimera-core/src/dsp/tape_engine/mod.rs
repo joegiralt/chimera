@@ -260,12 +260,22 @@ pub struct Probe {
 /// head's frame in the low word, the second's in the high, `u32::MAX` for
 /// none. TRANSWAVE's are frames of its table, and TRON's second is where
 /// its tape runs out. The audio stores it once a block (`instrument::HEADS`).
+/// The word is private: built by `new`, read by `head` and `second`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Heads(pub u64);
+pub struct Heads(u64);
 
 impl Heads {
     /// No note: nothing drawn.
     pub const NONE: Heads = Heads(u64::MAX);
+
+    /// The word, for `PartHeads` to store and load.
+    pub(crate) const fn from_raw(w: u64) -> Heads {
+        Heads(w)
+    }
+
+    pub(crate) const fn raw(self) -> u64 {
+        self.0
+    }
 
     pub fn new(head: u32, second: Option<u32>) -> Heads {
         Heads(u64::from(head) | u64::from(second.unwrap_or(u32::MAX)) << 32)
