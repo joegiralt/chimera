@@ -229,9 +229,9 @@ fn drawn(rng: &mut XorShift, model: TapeModel, period: f32) -> TapeEngineParams 
 const PEAK: f32 = 0.9;
 
 /// The peak a sine at `PEAK` may reach through any machine: an eighth past
-/// it (a STRETCH hold's most, ADR 0103) and the Hermite's own overshoot on
-/// a short period read at `INC_MAX`.
-const BOUND: f32 = 1.1;
+/// it (a STRETCH hold's most, ADR 0103) times the Hermite's own ~1.07×
+/// overshoot on a short period read at `INC_MAX`, 1.125 × 1.07 ≈ 1.2.
+const BOUND: f32 = 1.22 * PEAK;
 
 /// Every machine on a sine (a transwave of sines for TRANSWAVE), with its
 /// params, pitch and gate changed block by block mid-note: a fresh draw,
