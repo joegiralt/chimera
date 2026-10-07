@@ -72,7 +72,7 @@ pub fn ladder_probe<const M: usize, const MOVING: bool>(
 ) {
     let r = f.ramps(p, SAMPLE_RATE, &FilterMods::NONE);
     let (_, sum) = if MOVING {
-        f.moving::<M>(buf, r, None)
+        f.moving(buf, r, None, M)
     } else {
         f.steady::<M>(buf, r)
     };

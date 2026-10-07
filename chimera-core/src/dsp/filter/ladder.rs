@@ -130,11 +130,12 @@ fn tap_gain(m: usize, k: f32) -> f32 {
 /// 1.88, ceil5(122.88 × 1.606 + 12 × 0.047) = 200; LP2 122, BP2 123, BP4
 /// 125, HP4 126: 200 to 210. Billed the costliest, 210 − 95.
 pub const LADDER_COST: Cost = Cost(115);
-/// The moving path over the steady one: `G` and `D` divided every sample
-/// (2 `vdiv`) and `ramps`' fill (6.25). LP4 134 + 6.25 + 2.23
-/// instructions, 2.016 `vdiv`: 255 − 200; HP4 138 + 6.25 + 2.27: 260 −
-/// 210. Billed the larger, 55.
-pub const LADDER_MOVE_COST: Cost = Cost(55);
+/// The moving path over the steady one: one out-of-line loop for every
+/// mode (`moving`), `G` and `D` divided every sample (2 `vdiv`), the mix's
+/// five multiply-adds, `ramps`' fill (6.25) and the probe's block (1.6):
+/// 152 + 6.25 + 1.62 + 1.6 instructions, 2.016 `vdiv`, 285; less LP4's
+/// steady 200 (HP4's 210). Billed the larger, 85.
+pub const LADDER_MOVE_COST: Cost = Cost(85);
 
 /// tanh to within 0.005 on ±3, flat at ±1 from ±3 where it is held: the
 /// odd degree-11 polynomial with `p(3) = 1`, `p′(3) = 0` that fits tanh
@@ -248,7 +249,7 @@ impl Ladder {
         if tap.is_none() && r.g.0 == r.g.1 && r.k.0 == r.k.1 {
             self.steady::<M>(buf, r)
         } else {
-            self.moving::<M>(buf, r, tap)
+            self.moving(buf, r, tap, M)
         }
     }
 
@@ -314,7 +315,7 @@ impl Ladder {
         let n = BLOCK_SIZE as f32;
         let (mut a, a_step) = (r.a.0, (r.a.1 - r.a.0) / n);
         let out = OUT_LADDER / ALPHA_LADDER;
-        let (mut o, o_step) = Self::gains::<M>(r, out);
+        let (mut o, o_step) = Self::gains(M, r, out);
         let (mut peak, mut sum) = (0.0f32, 0.0f32);
         for s in buf.iter_mut() {
             a += a_step;
@@ -329,13 +330,17 @@ impl Ladder {
 
     /// `g` and `k` ramp to this block's values by adding, each sample's
     /// through the taps if any (`TapShape`); `G` and `D` divide exactly
-    /// every sample (B1). The mode's gain follows the ramp's `k`.
-    #[inline(always)]
-    pub(super) fn moving<const M: usize>(
+    /// every sample (B1). The mode's gain follows the ramp's `k`. One loop
+    /// for every mode, `m` (`LADDER_MODES`' index) read at run time: the
+    /// divides dwarf the mix's three spare multiply-adds, and four fewer
+    /// copies keep the bench builds in FLASH.
+    #[inline(never)]
+    pub(super) fn moving(
         &mut self,
         buf: &mut [f32; BLOCK_SIZE],
         r: Ramps,
         tap: Option<&TapShape>,
+        m: usize,
     ) -> (f32, f32) {
         let n = BLOCK_SIZE as f32;
         let (g_step, k_step) = ((r.g.1 - r.g.0) / n, (r.k.1 - r.k.0) / n);
@@ -346,7 +351,9 @@ impl Ladder {
         }
         let (mut a, a_step) = (r.a.0, (r.a.1 - r.a.0) / n);
         let out = OUT_LADDER / ALPHA_LADDER;
-        let (mut o, o_step) = Self::gains::<M>(r, out);
+        let m = m.min(LADDER_TAPS.len() - 1);
+        let (mut o, o_step) = Self::gains(m, r, out);
+        let c5 = LADDER_TAPS[m].c;
         let (mut peak, mut sum) = (0.0f32, 0.0f32);
         for (i, s) in buf.iter_mut().enumerate() {
             a += a_step;
@@ -355,16 +362,17 @@ impl Ladder {
             let c = coef(gs[i], ks[i]);
             let y = self.tick(*s * a, &c);
             peak = peak.max(y[0].abs());
-            *s = Self::mix::<M>(&y) * o;
+            let mix = c5[0] * y[0] + c5[1] * y[1] + c5[2] * y[2] + c5[3] * y[3] + c5[4] * y[4];
+            *s = mix * o;
         }
         (peak, sum)
     }
 
-    /// The output gain's start and step: the mode's gain at each end's `k`
+    /// The output gain's start and step: mode `m`'s gain at each end's `k`
     /// times `out`, ramped across the block.
     #[inline(always)]
-    fn gains<const M: usize>(r: Ramps, out: f32) -> (f32, f32) {
-        let (g0, g1) = (tap_gain(M, r.k.0) * out, tap_gain(M, r.k.1) * out);
+    fn gains(m: usize, r: Ramps, out: f32) -> (f32, f32) {
+        let (g0, g1) = (tap_gain(m, r.k.0) * out, tap_gain(m, r.k.1) * out);
         (g0, (g1 - g0) / BLOCK_SIZE as f32)
     }
 

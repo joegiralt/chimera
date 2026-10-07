@@ -376,7 +376,7 @@ tanhₚ(x) = c·(1 + c²·(a₃ + c²·(a₅ + …a₁₁))), c = clamp(x, ±3) 
 - **Levels.** LEVEL ½, RES 0: LP4 unity. RES 1: −15.5 to −16.2 dBFS in every mode, LADDER's own band, as EXP has its own.
 - **State.** Four floats and the ramp ends, in the one slot the 2040 also uses (`Poles`): the voice chain stays 2,104 B (ADR 0101). A 2040 ↔ LADDER change warm-starts the new type in the slot and runs the old one on a stack copy, its stages carried in the fade, as a VOICE flip does.
 - **Bounded.** Each stage within its swing; every state within it plus `2g`; `|out| ≤ ladder_bound(mode, x)`, exact for LP4 (`Y/α`).
-- **Cost.** Steady 200–210 cycles a sample (LP4 121 instructions, 0 `vdiv`), billed 115 over `OLD_LP24`; moving +55 (`LADDER_MOVE_COST`). No clipper term.
+- **Cost.** Steady 200–210 cycles a sample (LP4 121 instructions, 0 `vdiv`), billed 115 over `OLD_LP24`; moving +85 (`LADDER_MOVE_COST`, one out-of-line loop for every mode). No clipper term.
 
 ### 5. UX: TYPE versus MODE, without a blank canvas
 

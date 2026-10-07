@@ -111,9 +111,12 @@ mod probes {
     ];
 
     /// LADDER's probes: LP4 (1) and HP4 (4), steady and moving, and the
-    /// other modes steady (`LADDER_MODES`).
+    /// other modes steady (`LADDER_MODES`). Not with the master tape, whose
+    /// bench build has no room for them; `loop_count.py` reads `bench`.
+    #[cfg(not(feature = "master-tape"))]
     type LadderProbe = fn(&mut filter::Ladder, &mut [f32; BLOCK_SIZE], &FilterParams);
 
+    #[cfg(not(feature = "master-tape"))]
     #[used]
     static LADDER_PROBES: &[LadderProbe] = &[
         filter::probe::ladder_probe::<1, false>,

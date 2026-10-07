@@ -23,7 +23,7 @@ Oyama (DAFx-26, paper 29, CC-BY 4.0) benchmarks Moog models against an ngspice B
 - **No make-up gain.** DC gain `1/(1 + k)`, −14 dB at the onset, as the circuit has it (the owner's 2040 ruling).
 - **Modes (derived, not from a source).** From the stage outputs `y₀ = u … y₄` by Zavalishin's `s → s − 1` rule (§ 5.5), the Xpander approach: LP2 `y₂`, LP4 `y₄`, BP2 `y₁ − y₂`, BP4 `y₂ − 2y₃ + y₄`, HP4 `y₀ − 4y₁ + 6y₂ − 4y₃ + y₄`; LP4 the default, CLEAN's knob order. `modes_respond_as_derived` holds each to the analytic transfer function within 0.3 dB at RES 0 and ½ and checks slopes and peaks. Each mode's gain lerps in `k` from 0 dB at RES 0 (BP2 ×2, BP4 ×4) to its ring at LP4's level (LP2 and BP2 ×½) at the onset. A mode LADDER lacks plays LP4 (`ladder_index`, explicit).
 - **State.** LADDER and the 2040 share one slot (`Poles`: four stages and the ramp ends), so the voice chain stays **2,104 B**, under ADR 0101's 2,112. A change between them warm-starts the new type in the slot and runs the old one on a stack copy, its stages carried in `Fade.carry`, as a VOICE flip does.
-- **Bills** (counted on the bench ELF, `ladder_probe`, `tools/loop_count.py`): steady LP4 121 instructions, 0 `vdiv`, 200 cycles; HP4 126, 210. `LADDER_COST` 115 over `OLD_LP24`; `LADDER_MOVE_COST` 55 (2 `vdiv`). The research estimated 140–165 for the owner's Padé/cubic mix, which counted 165–170.
+- **Bills** (counted on the bench ELF, `ladder_probe`, `tools/loop_count.py`): steady LP4 121 instructions, 0 `vdiv`, 200 cycles; HP4 126, 210. `LADDER_COST` 115 over `OLD_LP24`; `LADDER_MOVE_COST` 85 (2 `vdiv`, one out-of-line loop for every mode). The research estimated 140–165 for the owner's Padé/cubic mix, which counted 165–170.
 
 ## Alternatives considered
 - **Huovilainen 2004:** the best SPICE match in Oyama's benchmark, but only at 2× with the half-sample delay; the whole loop must be oversampled (Zavalishin § 6.13), about 2× our budget, and its tuning table is unpublished.
@@ -41,7 +41,7 @@ Oyama (DAFx-26, paper 29, CC-BY 4.0) benchmarks Moog models against an ngspice B
 ## Consequences
 - A fourth TYPE on every engine. Old patches keep their TYPE; KIND 1 now loads as LADDER (no file wrote it before).
 - LADDER is the costliest steady type: 115 over LP24, against EXP's 40.
-- Flash: +8.3 KB (default 134,508 → 126,200 B free; orbit 112,388 → 104,160 B), almost all `Ladder::process`'s ten monomorphised loops.
+- Flash: −5,444 B default (134,508 → 129,064 B free), −5,356 B orbit (112,388 → 107,032 B), most of it `Ladder::process`'s five steady loops; the moving loop is shared by every mode. The `bench,master-tape` build had 7,688 B free on main; LADDER's probes stay out of it.
 - The A/B harness and the SPICE reference stay out of the repo (below).
 
 ## A/B against SPICE

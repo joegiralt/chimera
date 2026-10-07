@@ -123,7 +123,7 @@ fn the_moving_path_bills_once() {
     use chimera_core::taps::TAP_SHAPE_COST;
     assert!(CLEAN_MOVE_COST >= Cost(150 - 75));
     assert!(K2040_MOVE_COST >= Cost(170 - 110) && K2040_MOVE_COST >= Cost(190 - 135));
-    assert!(LADDER_MOVE_COST >= Cost(255 - 200) && LADDER_MOVE_COST >= Cost(260 - 210));
+    assert!(LADDER_MOVE_COST >= Cost(285 - 200));
     assert!(TAP_SHAPE_COST >= Cost(80));
     let none = ModState::new();
     for (k, mv) in [
