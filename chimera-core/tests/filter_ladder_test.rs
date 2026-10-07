@@ -7,7 +7,7 @@ mod common;
 use chimera_core::block::DiskCode;
 use chimera_core::dsp::filter::coef::g_of;
 use chimera_core::dsp::filter::k2040::k2040_k;
-use chimera_core::dsp::filter::ladder::{TRIM_LADDER, Y1_MAX, ladder_bound, pade_tanh};
+use chimera_core::dsp::filter::ladder::{TRIM_LADDER, Y_MAX, ladder_bound, tanh_poly};
 use chimera_core::dsp::filter::{
     Filter, FilterKind, FilterMode, FilterMods, Ladder, routed_cutoff,
 };
@@ -404,7 +404,7 @@ fn ladder_stays_bounded_under_audio_rate_modulation() {
                 );
             }
             let s = f.states();
-            let top = Y1_MAX + 4.0 * g_of(FS, FS);
+            let top = Y_MAX + 4.0 * g_of(FS, FS);
             assert!(s.iter().all(|v| v.abs() <= top), "{m:?} block {b}: {s:?}");
         }
     }
@@ -584,20 +584,21 @@ fn ladder_codes_round_trip() {
     }
 }
 
-/// The Padé 3/2 tanh: within 0.024 of tanh, odd, monotone, flat at ±1
-/// from ±3, so `Y1_MAX` is its inverse of ±1.
+/// `tanh_poly`: within 0.005 of tanh on ±3, odd, monotone to ±3 (within
+/// f32's rounding on its flat top), held at its ±1 past it, so `Y_MAX` is
+/// its inverse of ±1.
 #[test]
-fn pade_tanh_is_close_and_bounded() {
+fn tanh_poly_is_close_and_bounded() {
     let mut x = -5.0f32;
     let mut last = -2.0f32;
     while x < 5.0 {
-        let y = pade_tanh(x);
-        assert!((y - x.tanh()).abs() <= 0.024, "{x}: {y}");
-        assert_eq!(pade_tanh(-x), -y);
-        assert!(y >= last && y.abs() <= 1.0, "{x}");
+        let y = tanh_poly(x);
+        assert!((y - x.tanh()).abs() <= 0.0051, "{x}: {y}");
+        assert_eq!(tanh_poly(-x), -y);
+        assert!(y >= last - 2e-6 && y.abs() <= 1.000001, "{x}: {y}");
         last = y;
-        x += 0.0173;
+        x += 0.00173;
     }
-    assert_eq!(pade_tanh(Y1_MAX), 1.0);
-    assert_eq!(pade_tanh(7.0), 1.0);
+    assert!((tanh_poly(Y_MAX) - 1.0).abs() <= 1e-6);
+    assert_eq!(tanh_poly(7.0), tanh_poly(Y_MAX));
 }

@@ -4,14 +4,16 @@
 //! `y₄` through the input pair's saturator. The global loop is solved
 //! linearly in one step, as on the 2040 (Zavalishin eq. 5.8); each stage
 //! then reads its saturator at the linear estimate of its output, one
-//! Newton step from zero (§ 6.6). The input pair and stage 1 saturate on a
-//! Padé tanh, stages 2–4 on the 2040's divide-free cubic. 1× rate. No
-//! compensation: the bass loss is the circuit's.
+//! Newton step from zero (§ 6.6). All five saturate on one tanh, a
+//! divide-free odd polynomial (`tanh_poly`): measured against SPICE it
+//! beats the Padé 3/2 tanh the design began with, and the 2040's cubic on
+//! stages 2–4 put the large-signal cutoff 47 cents off (ADR 0104). 1× rate.
+//! No compensation: the bass loss is the circuit's.
 //!
 //! MODEs mix the stage outputs `y₀ = u … y₄`, Xpander-style (§ 5.5).
 
 use super::coef::g_of;
-use super::k2040::{Ends, k2040_k, sat_2040};
+use super::k2040::{Ends, k2040_k};
 use super::level::{FilterMods, LevelRamp, clip_amount, level_gain};
 use super::{FilterMode, TapShape, ramps, tap_g_range};
 use crate::dsp::clampf;
@@ -27,23 +29,23 @@ use crate::params::FilterParams;
 pub const ALPHA_LADDER: f32 = 0.5;
 /// The output level: LEVEL ½ at RES 0 is 0 dB.
 pub const OUT_LADDER: f32 = 1.0;
-/// Stage 1's swing: where the Padé tanh flattens. Its equilibrium is the
-/// tanh's inverse of the input pair's, so it never asks for more.
-pub const Y1_MAX: f32 = 3.0;
-/// Stages 2–4's swing: where `sat_2040` flattens, its inverse of ±1.
-pub const Y_MAX: f32 = 1.5;
+/// Every stage's swing: where `tanh_poly` flattens. A stage's
+/// equilibrium is the tanh's inverse of its input's, so it never asks for
+/// more.
+pub const Y_MAX: f32 = 3.0;
 /// The LED's knee on the input pair, `|u|` in model units: 1 lights it
-/// (tanh at 0.76), full at 3, where the Padé tanh clips.
+/// (tanh at 0.76), full at 3, where `tanh_poly` flattens.
 pub const LED_KNEE: f32 = 1.0;
-/// The cutoff trim, a ratio on FREQ, +15.8 cents: the stages' saturators
-/// slow the ring at RES 1, which read 15.4 to 16.5 cents flat over C2–C6
-/// untrimmed, as a Moog is trimmed at full resonance.
-pub const TRIM_LADDER: f32 = 1.009169;
+/// The cutoff trim, a ratio on FREQ, +20.8 cents: the stages' saturators
+/// slow the ring at RES 1, which reads 20.2 to 21.4 cents flat over C2–C6
+/// untrimmed (SPICE's BJT ladder rings 19 flat at k = 4.3), and a Moog is
+/// trimmed at full resonance.
+pub const TRIM_LADDER: f32 = 1.012088;
 
 const _: () = {
     assert!(ALPHA_LADDER > 0.0 && ALPHA_LADDER < 1.0);
     assert!(OUT_LADDER > 0.0 && LED_KNEE > 0.0);
-    assert!(Y1_MAX == 3.0 && Y_MAX == 1.5);
+    assert!(Y_MAX == 3.0);
 };
 
 /// LADDER's modes, in knob order (CLEAN's order): LP4 the default.
@@ -123,24 +125,31 @@ fn tap_gain(m: usize, k: f32) -> f32 {
 }
 
 /// LADDER's steady bill over `OLD_LP24` (95), counted on the bench ELF
-/// (`ladder_probe`, `tools/loop_count.py`, 2026-10-07): LP4 83
-/// instructions a sample and 2 `vdiv` (the Padé tanhs), with the block's
-/// 1.88 and 0.047 `vdiv`, ceil5(84.88 × 1.606 + 12 × 2.047) = 165; LP2 84,
-/// BP2 85, BP4 and HP4 87: 165 to 170. Billed the costliest, 170 − 95.
-pub const LADDER_COST: Cost = Cost(75);
+/// (`ladder_probe`, `tools/loop_count.py`, 2026-10-07): LP4 121
+/// instructions a sample, 0 `vdiv` (five `tanh_poly`s), with the block's
+/// 1.88, ceil5(122.88 × 1.606 + 12 × 0.047) = 200; LP2 122, BP2 123, BP4
+/// 125, HP4 126: 200 to 210. Billed the costliest, 210 − 95.
+pub const LADDER_COST: Cost = Cost(115);
 /// The moving path over the steady one: `G` and `D` divided every sample
-/// (4 `vdiv` in all) and `ramps`' fill (6.25). LP4 96 + 6.25 + 2.23
-/// instructions, 4.016 `vdiv`: 220 − 165; HP4 100 + 6.25 + 2.27: 225 −
-/// 170. Both 55.
+/// (2 `vdiv`) and `ramps`' fill (6.25). LP4 134 + 6.25 + 2.23
+/// instructions, 2.016 `vdiv`: 255 − 200; HP4 138 + 6.25 + 2.27: 260 −
+/// 210. Billed the larger, 55.
 pub const LADDER_MOVE_COST: Cost = Cost(55);
 
-/// The Padé 3/2 tanh, `x(27 + x²)/(27 + 9x²)`, held at ±1 from ±3 where it
-/// peaks: within 0.024 of tanh, one divide.
+/// tanh to within 0.005 on ±3, flat at ±1 from ±3 where it is held: the
+/// odd degree-11 polynomial with `p(3) = 1`, `p′(3) = 0` that fits tanh
+/// best on [0, 3] (least worst error, kept monotone; fitted for ADR 0104,
+/// not from a source). No divide: five multiply-adds. Against tanh its
+/// third harmonic is tanh's, unlike `sat_2040`'s 4/27 cubic.
 #[inline(always)]
-pub fn pade_tanh(x: f32) -> f32 {
+#[allow(clippy::excessive_precision)] // the fit's digits
+pub fn tanh_poly(x: f32) -> f32 {
     let c = clampf(x, -3.0, 3.0);
     let c2 = c * c;
-    c * (27.0 + c2) / (27.0 + 9.0 * c2)
+    c * (1.0
+        + c2 * (-0.30530142
+            + c2 * (0.0812583861
+                + c2 * (-0.0130879632 + c2 * (0.00109139566 + c2 * -3.5909244e-05)))))
 }
 
 /// The output's bound on mode `mode` for inputs within `±x` at LEVEL 1
@@ -151,9 +160,9 @@ pub fn pade_tanh(x: f32) -> f32 {
 #[cfg(feature = "test-support")]
 pub fn ladder_bound(mode: FilterMode, x: f32) -> f32 {
     let g = super::coef::g_of(f32::MAX, 1.0);
-    let s = Y1_MAX + 2.0 * 2.0 * g;
+    let s = Y_MAX + 2.0 * 2.0 * g;
     let u = 4.0 * ALPHA_LADDER * x + k2040_k(1.0) * s;
-    let y = [u, Y1_MAX, Y_MAX, Y_MAX, Y_MAX];
+    let y = [u, Y_MAX, Y_MAX, Y_MAX, Y_MAX];
     let t = LADDER_TAPS[ladder_index(mode)];
     let m: f32 = t.c.iter().zip(y).map(|(c, y)| c.abs() * y).sum();
     m * t.gain[0].max(t.gain[1]) * (OUT_LADDER / ALPHA_LADDER) * 1.0001
@@ -257,8 +266,7 @@ impl Ladder {
     /// in model units, within each stage's swing.
     pub fn seed(&mut self, lp: f32, res: f32) {
         let s = lp * (ALPHA_LADDER / OUT_LADDER) / (1.0 + k2040_k(res));
-        let c = clampf(s, -Y_MAX, Y_MAX);
-        self.s = [clampf(s, -Y1_MAX, Y1_MAX), c, c, c];
+        self.s = [clampf(s, -Y_MAX, Y_MAX); 4];
     }
 
     /// `y₄` as another type's `lp` (spec § 1): at the output's scale and the
@@ -383,17 +391,12 @@ impl Ladder {
         let u = x_c * c.d - c.kd * big_s;
         // The input pair, then each stage on `sat(in) − sat(y)`, `sat(y)` read
         // at the stage's linear estimate and handed on as the next input.
-        let mut w = pade_tanh(u);
+        let mut w = tanh_poly(u);
         let mut y = [u, 0.0, 0.0, 0.0, 0.0];
         for (i, s) in self.s.iter_mut().enumerate() {
-            let est = c.big_g * w + c.one_g * *s;
-            let (sat, max) = if i == 0 {
-                (pade_tanh(est), Y1_MAX)
-            } else {
-                (sat_2040(est), Y_MAX)
-            };
+            let sat = tanh_poly(c.big_g * w + c.one_g * *s);
             let t = c.g * (w - sat);
-            let yi = clampf(*s + t, -max, max);
+            let yi = clampf(*s + t, -Y_MAX, Y_MAX);
             *s = yi + t;
             y[i + 1] = yi;
             w = sat;
