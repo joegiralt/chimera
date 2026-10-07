@@ -356,24 +356,27 @@ Owner-approved 2026-10-07; the model, its provenance and its A/B against SPICE a
 x_c = α · x · gain                                  // α = ALPHA_LADDER = 0.5, LEVEL's gain
 S   = (1 − G)·(s₄ + G·(s₃ + G·(s₂ + G·s₁)))
 u   = x_c·D − k·D·S                                 // y₀
-w   = tanh₃₂(u)                                     // the input pair: Padé 3/2, clipped at ±1 from ±3
+w   = tanhₚ(u)                                      // the input pair
 for i in 1..=4:
     e  = G·w + (1 − G)·sᵢ                           // the stage's linear estimate
-    σ  = tanh₃₂(e) (i = 1), sat_2040(e) (i ≥ 2)     // Padé on stage 1, the 2040's cubic on 2–4
+    σ  = tanhₚ(e)
     t  = g·(w − σ)
-    yᵢ = clamp(sᵢ + t, ±Y)                          // Y = 3 (stage 1), 1.5: each saturator's flat point
+    yᵢ = clamp(sᵢ + t, ±3)                          // tanhₚ's flat point
     sᵢ = yᵢ + t;  w = σ
 out = Σ cₘ·yₘ · gainₘ(k) · OUT_LADDER/α
+tanhₚ(x) = c·(1 + c²·(a₃ + c²·(a₅ + …a₁₁))), c = clamp(x, ±3)   // `tanh_poly`: 0.005 off tanh, flat at ±1 from ±3, no divide
 ```
 
-- **Resonance.** `k = 4·RES/0.95` (`k2040_k`): the onset at RES 0.95, 4.21 at RES 1. The ring's amplitude is the input pair's; its pitch is trimmed +15.8 cents (`TRIM_LADDER`), the stages' saturators slowing it, which holds it within 0.7 cents over C2–C6.
+- **The saturator.** The owner's design put a Padé 3/2 tanh on the input pair and stage 1 and the 2040's cubic on stages 2–4. Against SPICE that misses the large-signal cutoff shift by 38 cents RMS and the drive sweep by 1 % of H1 (ADR 0104), so all five run `tanh_poly`: 10 cents, 0.16 %, no divide, 30–40 cycles over the owner's estimate. Awaiting the owner's ruling.
+
+- **Resonance.** `k = 4·RES/0.95` (`k2040_k`): the onset at RES 0.95, 4.21 at RES 1. The ring's amplitude is the input pair's; its pitch is trimmed +20.8 cents (`TRIM_LADDER`), the stages' saturators slowing it, which holds it within 0.6 cents over C2–C6.
 - **Bass loss.** DC gain `1/(1 + k)`, uncompensated (the owner's ruling for the 2040, held here).
 - **LEVEL** is the drive: `α·gain` into the loop. The LED reads the input pair, `clip_amount(|u|/1)`: lit from LEVEL 0.75 on a full-scale input, as REV2's. No clipper runs.
 - **Modes** (Zavalishin § 5.5, Xpander-style, derived): LP2 `y₂`, LP4 `y₄`, BP2 `y₁ − y₂`, BP4 `y₂ − 2y₃ + y₄`, HP4 `y₀ − 4y₁ + 6y₂ − 4y₃ + y₄`. Each mode's gain lerps in `k` from its RES-0 normalisation (BP2 ×2, BP4 ×4: 0 dB peaks) to its ring's (LP2 and BP2 ×½), so every mode rings within 0.5 dB of LP4. A MODE change is click-free by construction (one state, five mixes) and still crossfades on a stack copy, as DIRTY's does. A mode LADDER lacks plays LP4 (`ladder_index`).
-- **Levels.** LEVEL ½, RES 0: LP4 unity. RES 1: −15.6 dBFS in every mode, LADDER's own band, as EXP has its own.
+- **Levels.** LEVEL ½, RES 0: LP4 unity. RES 1: −15.5 to −16.2 dBFS in every mode, LADDER's own band, as EXP has its own.
 - **State.** Four floats and the ramp ends, in the one slot the 2040 also uses (`Poles`): the voice chain stays 2,104 B (ADR 0101). A 2040 ↔ LADDER change warm-starts the new type in the slot and runs the old one on a stack copy, its stages carried in the fade, as a VOICE flip does.
 - **Bounded.** Each stage within its swing; every state within it plus `2g`; `|out| ≤ ladder_bound(mode, x)`, exact for LP4 (`Y/α`).
-- **Cost.** Steady 165–170 cycles a sample (LP4 83 instructions, 2 `vdiv`, the Padé tanhs), billed 75 over `OLD_LP24`; moving +55 (`LADDER_MOVE_COST`). No clipper term.
+- **Cost.** Steady 200–210 cycles a sample (LP4 121 instructions, 0 `vdiv`), billed 115 over `OLD_LP24`; moving +55 (`LADDER_MOVE_COST`). No clipper term.
 
 ### 5. UX: TYPE versus MODE, without a blank canvas
 

@@ -101,4 +101,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0099](0099-a-project-file-load-fades-before-pass-2.md) | A project file load fades before pass 2 and reads its sources inside the fade (supersedes in part [0046](0046-project-load-protocol.md)) | Proposed |
 | [0101](0101-voice-chain-may-hold-2112-bytes.md) | The voice chain may hold 2,112 B (supersedes in part 0051) | Accepted |
 | [0102](0102-a-record-may-hold-640-bytes.md) | A record may hold 640 B: the four fixed matrix columns' routes (supersedes in part 0045) | Accepted |
-| [0104](0104-ladder-a-zavalishin-tpt-moog-ladder.md) | LADDER, a fourth filter TYPE: the Moog transistor ladder as Zavalishin's TPT ladder at 1×, a Padé tanh on the input pair and stage 1, Xpander mixes; shares the 2040's state slot | Proposed |
+| [0104](0104-ladder-a-zavalishin-tpt-moog-ladder.md) | LADDER, a fourth filter TYPE: the Moog transistor ladder as Zavalishin's TPT ladder at 1×, five divide-free tanh saturators, Xpander mixes; shares the 2040's state slot | Proposed |
