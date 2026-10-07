@@ -33,8 +33,8 @@ use convert::{
 use transwave::{MAX_FRAMES, cut_cycles, round12, transwave};
 
 /// The report's last line: where the source is, and how it reaches the
-/// unit. TAPE Task 18's `put-tape` changes it.
-pub const SEND_LINE: &str = "ON THE SIM CARD · put FOR SOURCES IS TASK 18";
+/// unit (ADR 0106).
+pub const SEND_LINE: &str = "ON THE SIM CARD · just put-tape <FILE> SENDS IT TO THE UNIT";
 
 /// The largest WAV the importer reads: about 25 minutes of 48 kHz 24-bit
 /// stereo, far past `put`'s 1 MiB, and held four times over as it converts.

@@ -349,7 +349,10 @@ fn transwave_import_layout() {
 /// unit; Task 18 changes this line and this test.
 #[test]
 fn report_says_how_to_send() {
-    assert_eq!(SEND_LINE, "ON THE SIM CARD · put FOR SOURCES IS TASK 18");
+    assert_eq!(
+        SEND_LINE,
+        "ON THE SIM CARD · just put-tape <FILE> SENDS IT TO THE UNIT"
+    );
     let w = wav_file(&saw(109.0, 24_000), 48_000, None);
     let rep = run(&plain(&w, Rate::K24, None), &fresh("card")).unwrap();
     let text = rep.to_string();

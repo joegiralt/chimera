@@ -43,8 +43,11 @@ usb-console = [
     "dep:usbd-serial",
     "dep:synopsys-usb-otg",
 ]
-# The console's `ls` and `put` (ADR 0092): files onto the card over USB.
-card-put = ["usb-console", "chimera-core/card-put"]
+# The console's `ls` and `put` (ADR 0092): files onto the card over USB;
+# TAPE sources too, in checked chunks, sealed (ADR 0106). The owner took
+# #360's risk for sources (2026-10-07): a cut mid-put can lose clusters.
+# Bench builds answer `ls` and `put` "not in this build": FLASH is full.
+card-put = ["usb-console", "chimera-core/card-put", "chimera-core/source-writer"]
 # The boot's lost-cluster sweep frees what it finds (#360, ADR 0094). Off,
 # it runs dry; on, it fails to build until the owner's go.
 sweep-free = []

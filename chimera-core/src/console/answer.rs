@@ -126,9 +126,9 @@ pub fn answer(
         Ok(Request::Shot(c)) => return write_shot(unit.frame(), c, t.0),
         Ok(r @ Request::Dfu(NoArg)) => unit.dfu().map(Ok).ok_or(Why::Absent(r.command())),
         #[cfg(feature = "card-put")]
-        Ok(r @ Request::Ls(NoArg)) => match unit.files() {
+        Ok(r @ Request::Ls(arg)) => match unit.files() {
             None => Err(Why::Absent(r.command())),
-            Some(f) => return super::ls(f, t.0),
+            Some(f) => return super::ls(arg, f, t.0),
         },
         #[cfg(feature = "card-put")]
         Ok(r @ Request::Put(arg)) => {

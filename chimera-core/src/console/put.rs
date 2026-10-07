@@ -1,10 +1,14 @@
-//! `ls` and `put`: project files onto a card that can't leave the unit.
+//! `ls` and `put`: files onto a card that can't leave the unit.
 //! `put` takes a whole project file and saves it the way the unit saves
 //! (ADR 0045): to the side a load doesn't keep, with the next generation
 //! and its own CRC, so the old side stays loadable until the new one is
 //! whole. A side a failed `put` wrote is deleted, so the list shows the
 //! pair as it was. Every card operation runs under what is left of
 //! `PUT_DEADLINE_MS`.
+//!
+//! With `source-writer`, `put` also takes a TAPE source (ADR 0106): in
+//! 256 KiB chunks, each checked and under its own deadline, written once,
+//! read back and sealed. A file already sealed answers `OK PRESENT`.
 
 use core::fmt::{self, Write};
 
@@ -17,6 +21,8 @@ use crate::storage::{
     Card, CardFault, Check, Crc32, Event, FileError, Framer, Generation, HEADER_LEN, Header,
     ProjectId, Ready, SaveError, peek_header, save_target, write_file,
 };
+#[cfg(feature = "source-writer")]
+use crate::storage::{PutRefusal, SourceCheck, Wrote, source_name, source_target, verify_and_seal};
 
 /// The largest file `put` takes: a project is about 130 KB.
 pub const PUT_MAX_BYTES: u32 = 1 << 20;
@@ -30,6 +36,12 @@ pub const PUT_LINE: usize = 64;
 pub const ABORT: &[u8] = b"abort";
 /// What the unit says once it will take the data.
 pub const READY: &str = "READY\n";
+/// A source's data comes in chunks of this many bytes (the last may be
+/// shorter), each ended by `end <crc32>` and answered `ACK <bytes so far>`.
+#[cfg(feature = "source-writer")]
+pub const PUT_CHUNK_BYTES: u32 = 256 * 1024;
+/// The word that asks to resume a source: reserved for TRON, refused.
+pub const RESUME: &[u8] = b"resume";
 /// Kept back from the write for judging the pair, or deleting the side,
 /// after it.
 const VERIFY_MS: u32 = 3_000;
@@ -44,11 +56,17 @@ const DRAIN_MS: u32 = 5_000;
 const MIN_FILE: u32 = 32;
 const DECODED: usize = PUT_LINE / 4 * 3;
 const PROJECTS: &[u8] = b"/CHIMERA/PROJECTS/";
+#[cfg(feature = "source-writer")]
+const TAPES: &[u8] = b"/CHIMERA/TAPES/";
+#[cfg(feature = "source-writer")]
+const _: () = assert!(PUT_CHUNK_BYTES.is_multiple_of(CHUNK as u32));
 
 const _: () = assert!(PUT_LINE.is_multiple_of(4));
 const _: () = assert!(PUT_LINE <= super::MAX_LINE);
 
-/// Digits only, at most `max` of them, in `radix`.
+/// Digits only, at most `max` of them, in `radix`. Out of line: inlined
+/// at each of its four calls it doubled `PutArg::parse`.
+#[inline(never)]
 fn number(w: &[u8], radix: u32, max: usize) -> Option<u32> {
     if w.is_empty() || w.len() > max {
         return None;
@@ -73,22 +91,84 @@ fn project(p: &[u8]) -> Option<ProjectId> {
     ProjectId::new(number(digits, 10, 7)?)
 }
 
-/// `put`'s argument: the project, how many bytes and their
-/// CRC-32/ISO-HDLC.
+/// `/CHIMERA/TAPES/0BADF00D.SRC`, any case: the stem is the source's CRC.
+#[cfg(feature = "source-writer")]
+fn source(p: &[u8]) -> Option<u32> {
+    let (dir, name) = p.split_at_checked(TAPES.len())?;
+    let (stem, ext) = name.split_at_checked(8)?;
+    if !dir.eq_ignore_ascii_case(TAPES) || !ext.eq_ignore_ascii_case(b".SRC") {
+        return None;
+    }
+    number(stem, 16, 8)
+}
+
+/// Where a `put` goes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PutTo {
+    /// A project's pair, saved the unit's way.
+    Project(ProjectId),
+    /// A TAPE source, by its stem: written once and sealed.
+    #[cfg(feature = "source-writer")]
+    Source(u32),
+}
+
+fn put_to(p: &[u8]) -> Option<PutTo> {
+    let to = project(p).map(PutTo::Project);
+    #[cfg(feature = "source-writer")]
+    let to = to.or_else(|| source(p).map(PutTo::Source));
+    to
+}
+
+/// `put`'s argument: where, how many bytes and their CRC-32/ISO-HDLC, and
+/// whether it asked to resume.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PutArg {
-    pub to: ProjectId,
+    pub to: PutTo,
     pub size: u32,
     pub crc: u32,
+    pub resume: bool,
 }
 
 impl Arg for PutArg {
+    #[cfg(not(feature = "source-writer"))]
     const USAGE: &'static str = "/CHIMERA/PROJECTS/P#######.A, its size and CRC-32 in hex";
+    #[cfg(feature = "source-writer")]
+    const USAGE: &'static str =
+        "/CHIMERA/PROJECTS/P#######.A or /CHIMERA/TAPES/<CRC>.SRC, its size and CRC-32 in hex";
     fn parse(mut words: Words<'_>) -> Option<Self> {
-        let to = project(words.next()?)?;
+        let to = put_to(words.next()?)?;
         let size = number(words.next()?, 10, 10)?;
         let crc = number(words.next()?, 16, 8)?;
-        words.next().is_none().then_some(PutArg { to, size, crc })
+        let resume = match words.next() {
+            None => false,
+            Some(w) if w.eq_ignore_ascii_case(RESUME) => true,
+            Some(_) => return None,
+        };
+        words.next().is_none().then_some(PutArg {
+            to,
+            size,
+            crc,
+            resume,
+        })
+    }
+}
+
+/// `ls`'s argument: PROJECTS, or `tapes`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LsArg {
+    Projects,
+    Tapes,
+}
+
+impl Arg for LsArg {
+    const USAGE: &'static str = "tapes or nothing";
+    fn parse(mut words: Words<'_>) -> Option<Self> {
+        let got = match words.next() {
+            None => LsArg::Projects,
+            Some(w) if w.eq_ignore_ascii_case(b"tapes") => LsArg::Tapes,
+            Some(_) => return None,
+        };
+        words.next().is_none().then_some(got)
     }
 }
 
@@ -110,6 +190,17 @@ pub enum PutFail {
     /// the write, when the old side still loads.
     File(FileError),
     Store(StoreError),
+    /// `resume`: TRON's, not yet.
+    NoResume,
+    /// A sealed source that fails its check: never rewritten.
+    #[cfg(feature = "source-writer")]
+    Damaged,
+    /// A chunk's `end` CRC isn't its bytes', or a line runs past it.
+    #[cfg(feature = "source-writer")]
+    Chunk,
+    /// The source's own check, at the bytes that show it.
+    #[cfg(feature = "source-writer")]
+    Source(PutRefusal),
 }
 
 impl PutFail {
@@ -125,6 +216,26 @@ impl PutFail {
             PutFail::BadCrc => "CRC mismatch",
             PutFail::File(e) => e.message(),
             PutFail::Store(e) => e.message(),
+            PutFail::NoResume => "no resume",
+            #[cfg(feature = "source-writer")]
+            PutFail::Damaged => "damaged",
+            #[cfg(feature = "source-writer")]
+            PutFail::Chunk => "chunk",
+            #[cfg(feature = "source-writer")]
+            PutFail::Source(r) => r.message(),
+        }
+    }
+}
+
+impl From<SaveError> for PutFail {
+    fn from(e: SaveError) -> Self {
+        match e {
+            SaveError::Store(e) => PutFail::Store(e),
+            SaveError::File(e) => PutFail::File(e),
+            #[cfg(feature = "source-writer")]
+            SaveError::Damaged => PutFail::Damaged,
+            #[cfg(not(feature = "source-writer"))]
+            SaveError::Damaged => PutFail::File(FileError::Corrupt),
         }
     }
 }
@@ -166,7 +277,17 @@ impl Due {
     }
 }
 
-/// `put`'s whole answer: `READY` once its directory is made, then `OK`, or `ERR put: <why>` with the pair loading as before.
+/// How a `put` ended well.
+enum Done {
+    Saved,
+    /// The source was on the card, sealed and whole: no data taken.
+    #[cfg(feature = "source-writer")]
+    Present,
+}
+
+/// `put`'s whole answer: `READY` once its directory is made, then `OK`, or
+/// `ERR put: <why>` with the pair loading as before; for a source already
+/// on the card, `OK PRESENT` in place of `READY`.
 /// `open`: the project the UI holds, which `put` never writes under it.
 /// Out of line, like `save`: 460 B smaller under fat LTO, measured.
 #[inline(never)]
@@ -182,7 +303,9 @@ pub fn put<F: Files, P: Out>(
     port.fresh();
     let mut t = super::Text(port);
     match r {
-        Ok(()) => t.write_str("OK\n"),
+        Ok(Done::Saved) => t.write_str("OK\n"),
+        #[cfg(feature = "source-writer")]
+        Ok(Done::Present) => t.write_str("OK PRESENT\n"),
         Err(e) => writeln!(t, "ERR put: {}", e.message()),
     }
     .map_err(|fmt::Error| Stalled)
@@ -194,21 +317,45 @@ fn transfer<F: Files, P: Out>(
     files: &mut F,
     port: &mut P,
     due: Due,
-) -> Result<(), PutFail> {
-    let id = arg.to;
+) -> Result<Done, PutFail> {
+    if arg.resume {
+        return Err(PutFail::NoResume);
+    }
     if arg.size > PUT_MAX_BYTES {
         return Err(PutFail::TooBig);
     }
     if arg.size < MIN_FILE {
         return Err(PutFail::File(FileError::Truncated));
     }
-    if open == Some(id) {
-        return Err(PutFail::ProjectOpen);
+    match arg.to {
+        PutTo::Project(id) => {
+            if open == Some(id) {
+                return Err(PutFail::ProjectOpen);
+            }
+            due.arm(files, port, 0)?;
+            Card::new()
+                .run(files, |s, r| session(s, r, id, arg, port, due))
+                .and_then(|o| o.result)
+                .map(|()| Done::Saved)
+        }
+        #[cfg(feature = "source-writer")]
+        PutTo::Source(stem) => {
+            let check = SourceCheck::new(stem, arg.size).map_err(PutFail::Source)?;
+            due.arm(files, port, 0)?;
+            Card::new()
+                .run(files, |s, r| {
+                    source_session(s, r, stem, check, arg, port, due)
+                })
+                .and_then(|o| o.result)
+        }
     }
-    due.arm(files, port, 0)?;
-    Card::new()
-        .run(files, |s, r| session(s, r, id, arg, port, due))
-        .and_then(|o| o.result)
+}
+
+/// After a failure past `READY`: the rest of the host's data read and
+/// dropped, so the `ERR` reaches a host that has stopped sending.
+fn drain(port: &mut impl Out) {
+    let start = port.now();
+    while port.now().since(start) < DRAIN_MS && port.recv(QUIET_MS).is_some() {}
 }
 
 /// On the mounted card: the directory, `READY`, then the data. After
@@ -231,10 +378,120 @@ fn session<F: Files, P: Out>(
     let mut src = Incoming::new(arg, port, due);
     let saved = save(s, r, id, &mut src);
     if saved.is_err() {
-        let start = port.now();
-        while port.now().since(start) < DRAIN_MS && port.recv(QUIET_MS).is_some() {}
+        drain(port);
     }
     saved
+}
+
+/// A source on the mounted card: `TAPES`, then the file there judged
+/// (`OK PRESENT` for one sealed and whole, `damaged` for one sealed and
+/// not, a torn one deleted), `READY`, the chunks written as they come,
+/// then read back and sealed. Any failure past `READY` deletes the
+/// unsealed file and drains the host before the `ERR`.
+#[cfg(feature = "source-writer")]
+#[inline(never)]
+fn source_session<F: Files, P: Out>(
+    s: &mut F,
+    r: &Ready,
+    stem: u32,
+    mut check: SourceCheck,
+    arg: PutArg,
+    port: &mut P,
+    due: Due,
+) -> Result<Done, PutFail> {
+    for d in [Dir::Chimera, Dir::Tapes] {
+        due.arm(s, port, 0)?;
+        s.make_dir(r.volume(), d)?;
+    }
+    due.arm(s, port, 0)?;
+    if source_target(s, r, stem)? == Wrote::Present {
+        return Ok(Done::Present);
+    }
+    port.fresh();
+    port.put(READY.as_bytes())
+        .map_err(|Stalled| PutFail::Stalled)?;
+    let file = source_name(stem);
+    let mut src = Incoming::new(arg, port, Due(port.now()));
+    src.chunk = Some(Chunk::after(0, arg.size));
+    src.reserve_ms = 0;
+    // Each chunk ends within its deadline of the last one's end, so the
+    // data is in by the chunks' deadlines from now.
+    s.cap(Some(
+        arg.size.div_ceil(PUT_CHUNK_BYTES) * PUT_DEADLINE_MS + SD_MARGIN_MS,
+    ));
+    let mut why = None;
+    let wrote = s.write(r.volume(), file, &mut |sink| {
+        source_body(&mut src, &mut check, &mut |b| sink.put(b)).map_err(|e| match e {
+            PutFail::Store(e) => e,
+            e => {
+                why = Some(e);
+                StoreError::Io
+            }
+        })
+    });
+    let port = src.port;
+    let done = match wrote {
+        Err(e) => Err(why.unwrap_or(PutFail::Store(e))),
+        // The read back and the seal: a deadline of their own.
+        Ok(_) => Due(port.now())
+            .arm(s, port, 0)
+            .and_then(|()| Ok(verify_and_seal(s, r, stem)?)),
+    };
+    if let Err(e) = done {
+        // Unsealed: a torn or unchecked file never stays.
+        s.cap(Some(VERIFY_MS));
+        let _ = s.delete(r.volume(), file);
+        drain(port);
+        return Err(e);
+    }
+    Ok(Done::Saved)
+}
+
+/// A source's bytes, as they come, through `check` and then to `put` a
+/// block at a time. The last block, the file's trailer in it, goes only
+/// once every chunk, the host's CRC and the check passed: a put that
+/// fails leaves a file no read takes, even before it is deleted.
+#[cfg(feature = "source-writer")]
+fn source_body<P: Out>(
+    src: &mut Incoming<'_, P>,
+    check: &mut SourceCheck,
+    put: &mut dyn FnMut(&[u8]) -> Result<(), StoreError>,
+) -> Result<(), PutFail> {
+    let mut block = [0u8; CHUNK];
+    loop {
+        let mut fill = 0;
+        while fill < CHUNK && src.got < src.size {
+            block[fill] = src.next()?;
+            fill += 1;
+        }
+        check.feed(&block[..fill]).map_err(PutFail::Source)?;
+        if src.got == src.size {
+            if src.all.finish() != src.crc {
+                return Err(PutFail::BadCrc);
+            }
+            return Ok(put(&block[..fill])?);
+        }
+        put(&block[..fill])?;
+        src.last_block = src.port.now();
+    }
+}
+
+/// The chunk being read: its bytes' CRC so far, and where it ends.
+#[cfg(feature = "source-writer")]
+struct Chunk {
+    crc: Crc32,
+    end: u32,
+}
+
+#[cfg(feature = "source-writer")]
+impl Chunk {
+    /// The chunk from byte `start` of a `size`-byte file.
+    fn after(start: u32, size: u32) -> Chunk {
+        Chunk {
+            crc: Crc32::new(),
+            end: start.saturating_add(PUT_CHUNK_BYTES).min(size),
+        }
+    }
 }
 
 /// The header read, then the file saved as the unit saves it while the
@@ -311,7 +568,13 @@ fn judge<F: Files>(s: &mut F, r: &Ready, id: ProjectId, g: Generation) -> Result
 /// measured from the last whole block handed on.
 struct Incoming<'p, P: Out> {
     port: &'p mut P,
+    /// The whole put's, or with chunks the chunk's.
     due: Due,
+    /// Kept back from `due` for the card work after the data.
+    reserve_ms: u32,
+    /// A source's chunk; `None` for a project, which has none.
+    #[cfg(feature = "source-writer")]
+    chunk: Option<Chunk>,
     size: u32,
     crc: u32,
     line: [u8; PUT_LINE],
@@ -330,6 +593,9 @@ impl<'p, P: Out> Incoming<'p, P> {
         Incoming {
             port,
             due,
+            reserve_ms: VERIFY_MS + SD_MARGIN_MS,
+            #[cfg(feature = "source-writer")]
+            chunk: None,
             size: arg.size,
             crc: arg.crc,
             line: [0; PUT_LINE],
@@ -384,11 +650,12 @@ impl<'p, P: Out> Incoming<'p, P> {
         framer.finish().map_err(PutFail::File)
     }
 
-    /// The next data line, decoded.
-    fn fill(&mut self) -> Result<(), PutFail> {
+    /// The next line, its length in `line`: within the deadline, the
+    /// stall counted from the last block.
+    fn read_line(&mut self) -> Result<usize, PutFail> {
         let mut n = 0;
         loop {
-            if self.due.left_ms(self.port) <= VERIFY_MS + SD_MARGIN_MS {
+            if self.due.left_ms(self.port) <= self.reserve_ms {
                 return Err(PutFail::Timeout);
             }
             let waited = self.port.now().since(self.last_block);
@@ -407,10 +674,16 @@ impl<'p, P: Out> Incoming<'p, P> {
                 }
             }
         }
-        let text = self.line.get(..n).unwrap_or(&[]);
-        if text == ABORT {
+        if self.line.get(..n) == Some(ABORT) {
             return Err(PutFail::Aborted);
         }
+        Ok(n)
+    }
+
+    /// The next data line, decoded.
+    fn fill(&mut self) -> Result<(), PutFail> {
+        let n = self.read_line()?;
+        let text = self.line.get(..n).unwrap_or(&[]);
         let (quads, rest) = text.as_chunks::<4>();
         if !rest.is_empty() {
             return Err(PutFail::BadData);
@@ -426,11 +699,49 @@ impl<'p, P: Out> Incoming<'p, P> {
         if end > self.size {
             return Err(PutFail::TooLong);
         }
-        if len % 3 != 0 && end != self.size {
-            // Padding ends the file, not a line.
+        #[cfg(feature = "source-writer")]
+        let boundary = match &self.chunk {
+            Some(c) if end > c.end => return Err(PutFail::Chunk),
+            Some(c) => c.end,
+            None => self.size,
+        };
+        #[cfg(not(feature = "source-writer"))]
+        let boundary = self.size;
+        if len % 3 != 0 && end != boundary {
+            // Padding ends the file, or a chunk, not a line.
             return Err(PutFail::BadData);
         }
         (self.at, self.len) = (0, len);
+        #[cfg(feature = "source-writer")]
+        if let Some(c) = &mut self.chunk {
+            c.crc.update(&self.out[..len]);
+            if end == c.end {
+                self.close_chunk(end)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The chunk's `end <crc32>` line, checked, then `ACK <bytes so far>`;
+    /// the next chunk's deadline starts.
+    #[cfg(feature = "source-writer")]
+    fn close_chunk(&mut self, end: u32) -> Result<(), PutFail> {
+        let n = self.read_line()?;
+        let said = self
+            .line
+            .get(..n)
+            .and_then(|l| l.strip_prefix(b"end "))
+            .and_then(|h| number(h, 16, 8))
+            .ok_or(PutFail::BadData)?;
+        let c = self.chunk.as_mut().ok_or(PutFail::Chunk)?;
+        if c.crc.finish() != said {
+            return Err(PutFail::Chunk);
+        }
+        *c = Chunk::after(end, self.size);
+        self.port.fresh();
+        writeln!(super::Text(&mut *self.port), "ACK {end}")
+            .map_err(|fmt::Error| PutFail::Stalled)?;
+        self.due = Due(self.port.now());
         Ok(())
     }
 }
@@ -483,16 +794,20 @@ impl fmt::Display for Shown {
     }
 }
 
-/// `ls`'s whole answer: one `NAME size` line a file in PROJECTS, then
-/// `OK`, or `ERR ls: <why>`. A write that stalls ends the listing's text,
-/// not the card operation.
+/// `ls`'s whole answer: one `NAME size` line a file in PROJECTS (or
+/// TAPES), then `OK`, or `ERR ls: <why>`. A write that stalls ends the
+/// listing's text, not the card operation.
 #[inline(never)]
-pub fn ls<F: Files>(f: &mut F, out: &mut impl Out) -> Result<(), Stalled> {
+pub fn ls<F: Files>(arg: LsArg, f: &mut F, out: &mut impl Out) -> Result<(), Stalled> {
+    let dir = match arg {
+        LsArg::Projects => Dir::Projects,
+        LsArg::Tapes => Dir::Tapes,
+    };
     let mut t = super::Text(out);
     let mut wrote = Ok(());
     let listed = f.mount().and_then(|vol| {
         t.0.fresh();
-        f.list(vol, Dir::Projects, &mut |name, len| {
+        f.list(vol, dir, &mut |name, len| {
             if wrote.is_ok() {
                 wrote = writeln!(t, "{} {len}", Shown(name));
             }

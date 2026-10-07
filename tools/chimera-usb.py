@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Read the unit over its USB console (or the desktop sim's socket).
 
-    python3 tools/chimera-usb.py <cmd> [<arg>]     help, status, stats, bench, card [clean|seed=N], shot [raw], dfu, ls
-    python3 tools/chimera-usb.py put <local> <remote>  a project file onto the card as /CHIMERA/PROJECTS/P#######.A
+    python3 tools/chimera-usb.py <cmd> [<arg>]     help, status, stats, bench, card [clean|seed=N], shot [raw], dfu, ls [tapes]
+    python3 tools/chimera-usb.py put <local> <remote>  a project file onto the card as /CHIMERA/PROJECTS/P#######.A,
+                                                       or a TAPE source as /CHIMERA/TAPES/<CRC>.SRC, in checked chunks
                                                        (<remote> ending in / takes the local name)
     python3 tools/chimera-usb.py to-dfu            the unit into ROM DFU, for just flash
     python3 tools/chimera-usb.py wait-console [s]  wait (default 10 s) for the console on the bus
@@ -10,7 +11,8 @@
 Exit 0 on OK, 1 on ERR (to stderr) or 2 s of silence (60 s before `card`'s
 first line: it measures before it answers; 15 s before `ls`'s, 35 s
 before `put`'s). Bodies go to stdout; `shot` writes a PNG and prints its
-path; `put` shows its progress on stderr and never retries. Standard
+path; `put` shows its progress on stderr and never retries (a source
+already on the card answers `OK PRESENT`, so a re-run is the retry). Standard
 library only.
 
 Environment: CHIMERA_USB picks the target (unset: /dev/chimera if present,
@@ -42,6 +44,8 @@ LS_WAIT_S = 15.0  # a cold card acquire, then one listing under the card's 10 s 
 PUT_WAIT_S = 35.0  # the unit's whole put is 30 s (PUT_DEADLINE_MS), card work included
 PUT_MAX = 1 << 20  # chimera-core/src/console/put.rs PUT_MAX_BYTES
 PUT_LINE = 48  # bytes a data line carries: 64 base64 characters
+PUT_CHUNK = 256 * 1024  # chimera-core/src/console/put.rs PUT_CHUNK_BYTES: a source's chunk
+TAPES = "/CHIMERA/TAPES/"
 DRAIN_S = 0.05
 MAX_SHOT = 1 << 20  # well over 240 x 320 x 2; a garbled header can't ask for gigabytes
 UDEV_HINT = "sudo cp tools/70-chimera.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger"
@@ -237,10 +241,25 @@ def put_lines(data: bytes):
         yield base64.b64encode(data[i : i + PUT_LINE]) + b"\n"
 
 
+def send_lines(conn: Conn, data: bytes, base: int, total: int, progress):
+    """`data`'s lines, `progress(sent, total)` after each batch, counting
+    from `base`."""
+    lines = list(put_lines(data))
+    batch = 256
+    for i in range(0, len(lines), batch):
+        conn.write(b"".join(lines[i : i + batch]))
+        progress(base + min(len(data), (i + batch) * PUT_LINE), total)
+    if not lines:
+        progress(base, total)
+
+
 def put(conn: Conn, data: bytes, remote: str, progress=lambda sent, total: None) -> tuple:
     """`put <remote> <size> <crc32>`, the data once the unit says READY,
-    then its OK or ERR as `answer` gives it. `progress(sent, total)` after
-    each batch of lines. Raises NoAnswer, Vanished or PutRefused."""
+    then its OK or ERR as `answer` gives it; (OK, b"PRESENT") for a source
+    already on the card. A source goes in `PUT_CHUNK` chunks, each ended by
+    `end <crc32>` and waited on for its `ACK <bytes so far>`.
+    `progress(sent, total)` after each batch of lines. Raises NoAnswer,
+    Vanished or PutRefused."""
     if len(data) > PUT_MAX:
         raise PutRefused("%d bytes: put takes at most %d" % (len(data), PUT_MAX))
     send(conn, "put %s %d %08x" % (remote, len(data), zlib.crc32(data)))
@@ -248,16 +267,21 @@ def put(conn: Conn, data: bytes, remote: str, progress=lambda sent, total: None)
     first = rd.line()
     if first == b"ERR" or first.startswith(b"ERR "):
         return Status.ERR, ErrLine(first)
+    if first == b"OK PRESENT":
+        return Status.OK, b"PRESENT"
     if first != b"READY":
         raise PutRefused("put: expected READY, got %r" % first)
-    lines = list(put_lines(data))
-    batch, sent = 256, 0
-    for i in range(0, len(lines), batch):
-        conn.write(b"".join(lines[i : i + batch]))
-        sent = min(len(data), (i + batch) * PUT_LINE)
-        progress(sent, len(data))
-    if not lines:
-        progress(0, 0)
+    if remote.upper().startswith(TAPES):
+        for at in range(0, len(data), PUT_CHUNK):
+            chunk = data[at : at + PUT_CHUNK]
+            send_lines(conn, chunk, at, len(data), progress)
+            conn.write(b"end %08x\n" % zlib.crc32(chunk))
+            rd.wait = PUT_WAIT_S
+            ln = rd.line()
+            if ln != b"ACK %d" % (at + len(chunk)):
+                return Status.ERR, ErrLine(ln)
+    else:
+        send_lines(conn, data, 0, len(data), progress)
     rd.wait = PUT_WAIT_S
     ln = rd.line()
     if ln == b"OK":
@@ -291,7 +315,7 @@ def put_file(t: Target, local: str, remote: str) -> int:
     print(file=sys.stderr)
     if status is Status.ERR:
         return fail(body.decode(errors="replace"))
-    print("%s %d" % (remote, len(data)))
+    print("%s %d%s" % (remote, len(data), " PRESENT" if body == b"PRESENT" else ""))
     return 0
 
 

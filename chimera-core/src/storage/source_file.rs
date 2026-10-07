@@ -2,8 +2,9 @@
 //! a framed file of kind `Source` holding a `SourceHead`, a `ZoneSet`'s
 //! `SourceZones`, then the packed 12-bit samples in `SourceData` records.
 //! The host writes one (`write_source`, `write_zone_set`, feature
-//! `source-writer`), reads it back, and seals it read-only; the unit only
-//! reads them, and `SourceCheck` judges one as `put` streams it.
+//! `source-writer`), reads it back, and seals it read-only. The unit takes
+//! one only through `put` (ADR 0106): `SourceCheck` judges it as it
+//! streams, `source_target` and `verify_and_seal` around the write.
 
 use chimera_hal::store::{Dir, FileName, Store, StoreError};
 
@@ -380,8 +381,13 @@ pub fn held_len_zoned(r: SourceRef, zones: u8) -> Option<usize> {
 
 /// `/CHIMERA/TAPES/<CRC>.SRC`, the CRC in upper-case hex.
 pub fn source_file(r: SourceRef) -> FileName {
+    source_name(r.crc)
+}
+
+/// `source_file` by the stem's CRC alone, as `put` names it.
+pub fn source_name(crc: u32) -> FileName {
     let hex = |n: u32| b"0123456789ABCDEF"[n as usize & 0xF];
-    let stem: [u8; 8] = core::array::from_fn(|i| hex(r.crc >> (28 - 4 * i)));
+    let stem: [u8; 8] = core::array::from_fn(|i| hex(crc >> (28 - 4 * i)));
     FileName::new(Dir::Tapes, &stem, b"SRC").expect("8 hex digits is a stem")
 }
 
@@ -431,6 +437,15 @@ impl TapeList {
 enum Expect {
     Ref(SourceRef),
     Stem(u32),
+}
+
+impl Expect {
+    fn file(self) -> FileName {
+        match self {
+            Expect::Ref(r) => source_file(r),
+            Expect::Stem(crc) => source_name(crc),
+        }
+    }
 }
 
 /// Why a source file's records are refused.
@@ -595,17 +610,18 @@ impl Records {
     }
 }
 
-/// One read of `sref`'s file: the head must name `sref`, and with any
-/// zones be a layout TAPE can play; the samples must be exactly its frames
-/// and hash to its CRC. With `out`, `held` lands in it as it streams; the
-/// caller trusts `out` only on `Ok`. Returns the layout as stored.
+/// One read of the file `expect` names: its head must name it, and with
+/// any zones be a layout TAPE can play; the samples must be exactly its
+/// frames and hash to its CRC. With `out`, `held` lands in it as it
+/// streams; the caller trusts `out` only on `Ok`. Returns the layout as
+/// stored.
 fn read_source<S: Store>(
     s: &mut S,
     r: &Ready,
-    sref: SourceRef,
+    expect: Expect,
     mut out: Option<&mut [u8]>,
 ) -> Result<SourceLayout, SourceReadError> {
-    let mut rec = Records::new(Expect::Ref(sref));
+    let mut rec = Records::new(expect);
     let mut room = false;
     let mut on = |e: Event<'_>| match e {
         Event::Header(_) | Event::Record(ReadTag::Unknown(_), _) => Ok(()),
@@ -615,7 +631,7 @@ fn read_source<S: Store>(
         }),
     };
     let load = |e| Err(SourceReadError::Load(e));
-    match scan(s, r, source_file(sref), Some(FileKind::Source), &mut on) {
+    match scan(s, r, expect.file(), Some(FileKind::Source), &mut on) {
         // Out of room only if the file is whole: a torn one is torn.
         Ok(Scan::Failed { err, .. }) if room && !err.is_torn() => {
             return Err(SourceReadError::NoRoom);
@@ -633,8 +649,8 @@ fn read_source<S: Store>(
 
 /// A read back with no `out`, which has no room to run out of.
 #[cfg(feature = "source-writer")]
-fn read_back<S: Store>(s: &mut S, r: &Ready, sref: SourceRef) -> Result<SourceLayout, LoadError> {
-    read_source(s, r, sref, None).map_err(|e| match e {
+fn read_back<S: Store>(s: &mut S, r: &Ready, e: Expect) -> Result<SourceLayout, LoadError> {
+    read_source(s, r, e, None).map_err(|e| match e {
         SourceReadError::Load(e) => e,
         SourceReadError::NoRoom => LoadError::File(FileError::Bounds),
     })
@@ -686,7 +702,7 @@ pub fn read_source_into<S: Store>(
     sref: SourceRef,
     out: &mut [u8],
 ) -> Result<usize, SourceReadError> {
-    read_source(s, r, sref, Some(out)).map(|l| l.held_len())
+    read_source(s, r, Expect::Ref(sref), Some(out)).map(|l| l.held_len())
 }
 
 /// Why `put` refuses a source file (TAPE Task 18), at the record that
@@ -704,6 +720,18 @@ pub enum PutRefusal {
     /// Bad framing, records out of order, or a head or zones TAPE can't
     /// play.
     File(FileError),
+}
+
+impl PutRefusal {
+    /// `ERR put: <message>`.
+    pub fn message(self) -> &'static str {
+        match self {
+            PutRefusal::Kind => FileError::WrongKind.message(),
+            PutRefusal::Frames => "frames aren't its head's",
+            PutRefusal::Crc => "CRC isn't its name",
+            PutRefusal::File(e) => e.message(),
+        }
+    }
 }
 
 /// Judges a source file as `put` streams it, before anything is kept: it
@@ -802,7 +830,8 @@ impl SourceCheck {
     }
 }
 
-/// What `write_source` found and did.
+/// What a source write found and did: `source_target` before it,
+/// `write_source` after.
 #[cfg(feature = "source-writer")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Wrote {
@@ -817,8 +846,8 @@ pub enum Wrote {
 }
 
 /// Writes source `head` with its packed samples `data`, reads it back,
-/// checks the head and the CRC, then seals it (ADR 0087). Host only: the
-/// firmware never enables `source-writer`.
+/// checks the head and the CRC, then seals it (ADR 0087). Host and `put`
+/// only: `source-writer`.
 ///
 /// `File(Bounds)` with nothing written for a head and data that disagree
 /// or that TAPE couldn't play, a `ZoneSet` included (its zones go through
@@ -850,6 +879,71 @@ pub fn write_zone_set<S: Store>(
     write_layout(s, r, &l, data)
 }
 
+/// Before a source is written as `<stem_crc>.SRC`, the file already
+/// there: `Present` if it verifies (sealed now if it wasn't: nothing to
+/// write); `Replaced` for an unsealed one that fails, the torn remains of
+/// a cut write, deleted; `New` for none. `Damaged` for a sealed file that
+/// fails: never rewritten. `TAPES` must exist.
+#[cfg(feature = "source-writer")]
+pub fn source_target<S: Store>(
+    s: &mut S,
+    r: &Ready,
+    stem_crc: u32,
+) -> Result<Wrote, super::SaveError> {
+    target(s, r, Expect::Stem(stem_crc))
+}
+
+/// `source_target` for the file `e` names; `write_source` asks for its
+/// whole ref, so another rate under the same stem is no match.
+#[cfg(feature = "source-writer")]
+fn target<S: Store>(s: &mut S, r: &Ready, e: Expect) -> Result<Wrote, super::SaveError> {
+    use super::SaveError;
+    let (vol, file) = (r.volume(), e.file());
+    match read_back(s, r, e) {
+        Ok(_) => {
+            s.seal(vol, file)?;
+            Ok(Wrote::Present)
+        }
+        Err(LoadError::Missing) => Ok(Wrote::New),
+        Err(LoadError::Store(e)) => Err(e.into()),
+        // A load's refusal: `read_source` never says it.
+        Err(LoadError::Busy) => Err(StoreError::Io.into()),
+        // Only a sealed file refuses the delete: that one is never
+        // rewritten.
+        Err(LoadError::File(_)) => match s.delete(vol, file) {
+            Ok(()) => Ok(Wrote::Replaced),
+            Err(StoreError::ReadOnly) => Err(SaveError::Damaged),
+            Err(e) => Err(e.into()),
+        },
+    }
+}
+
+/// After a write of `<stem_crc>.SRC`: read back whole, its head naming
+/// the stem, its samples hashing to it, then sealed. Unsealed on any
+/// `Err`, so the next write replaces it.
+#[cfg(feature = "source-writer")]
+pub fn verify_and_seal<S: Store>(
+    s: &mut S,
+    r: &Ready,
+    stem_crc: u32,
+) -> Result<(), super::SaveError> {
+    verify(s, r, Expect::Stem(stem_crc))?;
+    s.seal(r.volume(), source_name(stem_crc))?;
+    Ok(())
+}
+
+#[cfg(feature = "source-writer")]
+fn verify<S: Store>(s: &mut S, r: &Ready, e: Expect) -> Result<SourceLayout, super::SaveError> {
+    use super::SaveError;
+    read_back(s, r, e).map_err(|e| match e {
+        LoadError::Store(e) => e.into(),
+        LoadError::File(e) => SaveError::File(e),
+        LoadError::Missing => StoreError::NotFound.into(),
+        // A load's refusal: `read_source` never says it.
+        LoadError::Busy => StoreError::Io.into(),
+    })
+}
+
 #[cfg(feature = "source-writer")]
 fn write_layout<S: Store>(
     s: &mut S,
@@ -868,23 +962,10 @@ fn write_layout<S: Store>(
     let (vol, file) = (r.volume(), source_file(sref));
     s.make_dir(vol, Dir::Chimera)?;
     s.make_dir(vol, Dir::Tapes)?;
-    let wrote = match read_back(s, r, sref) {
-        Ok(_) => {
-            s.seal(vol, file)?;
-            return Ok(Wrote::Present);
-        }
-        Err(LoadError::Missing) => Wrote::New,
-        Err(LoadError::Store(e)) => return Err(e.into()),
-        // A load's refusal: `read_source` never says it.
-        Err(LoadError::Busy) => return Err(StoreError::Io.into()),
-        // Only a sealed file refuses the delete: that one is never
-        // rewritten.
-        Err(LoadError::File(_)) => match s.delete(vol, file) {
-            Ok(()) => Wrote::Replaced,
-            Err(StoreError::ReadOnly) => return Err(SaveError::Damaged),
-            Err(e) => return Err(e.into()),
-        },
-    };
+    let wrote = target(s, r, Expect::Ref(sref))?;
+    if wrote == Wrote::Present {
+        return Ok(wrote);
+    }
     let h = Header {
         kind: FileKind::Source,
         generation: Generation::FIRST,
@@ -900,16 +981,10 @@ fn write_layout<S: Store>(
                 .try_for_each(|c| w.put(RecordTag::SourceData, c))
         })
     })?;
-    // Unsealed until it reads back whole: a failure here is replaced by
-    // the next write.
-    match read_back(s, r, sref) {
-        Ok(back) if back == *l => {}
-        Ok(_) => return Err(SaveError::File(FileError::Corrupt)),
-        Err(LoadError::Store(e)) => return Err(e.into()),
-        Err(LoadError::File(e)) => return Err(SaveError::File(e)),
-        Err(LoadError::Missing) => return Err(StoreError::NotFound.into()),
-        // A load's refusal: `read_source` never says it.
-        Err(LoadError::Busy) => return Err(StoreError::Io.into()),
+    // Unsealed until it reads back whole and as written: a failure here is
+    // replaced by the next write.
+    if verify(s, r, Expect::Ref(sref))? != *l {
+        return Err(SaveError::File(FileError::Corrupt));
     }
     s.seal(vol, file)?;
     Ok(wrote)
