@@ -130,7 +130,19 @@ class LoopCount(unittest.TestCase):
             "cmp.w\tr2", "cmp.w\tlr")
         self.assertEqual(lc.count(wide, "unrolled")["stride"], 16)
         # A step that isn't whole `f32`s isn't a stride.
-        self.assertIsNone(lc.count(dis.replace("#0x10", "#0x6"), "unrolled")["stride"])
+        odd = dis.replace("adds\tr2, #0x10", "adds\tr2, #0x6")
+        self.assertIsNone(lc.count(odd, "unrolled")["stride"])
+        # A sample index stepped by 4 to 0x40: the compare's immediate says
+        # it counts samples, not bytes (4, not 4/4).
+        index = dis.replace("adds\tr2, #0x10", "adds\tr2, #0x4").replace(
+            "#0x100", "#0x40")
+        self.assertEqual(lc.count(index, "unrolled")["stride"], 4)
+        # Bytes by 0x10 to 0xf0, the last round peeled: still 4 a time.
+        peeled = dis.replace("#0x100", "#0xf0")
+        self.assertEqual(lc.count(peeled, "unrolled")["stride"], 4)
+        # Compared with a register (an end pointer): unknown.
+        self.assertIsNone(
+            lc.count(dis.replace("cmp.w\tr2, #0x100", "cmp\tr2, r4"), "unrolled")["stride"])
 
     def test_a_count_down_loop_has_its_stride(self):
         # DIS counts samples down from 0x40 by 1: one a time round.
@@ -139,6 +151,13 @@ class LoopCount(unittest.TestCase):
         bytes_ = DIS.replace("movs\tr2, #0x40", "mov.w\tr2, #0x100").replace(
             "subs\tr2, #0x1", "subs\tr2, #0x10")
         self.assertEqual(lc.count(bytes_, "probe_fn")["stride"], 4)
+
+    def test_the_counter_is_the_last_subs(self):
+        # `TapShape::apply`'s shape: a `subs` on a float's bits mid-loop, the
+        # counter's `subs.w` by 2 from 0x40 last, before the back-edge.
+        dis = DIS.replace("movs\tr2, #0x40", "mov.w\tr12, #0x40").replace(
+            "subs\tr2, #0x1", "subs\tr0, #0x40\n 8000115:      \tsubs.w\tr12, r12, #0x2")
+        self.assertEqual(lc.count(dis, "probe_fn")["stride"], 2)
 
     def test_an_unknown_stride_says_so(self):
         # A register-to-register compare: no immediate to read.

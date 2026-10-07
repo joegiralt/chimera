@@ -10,8 +10,9 @@ A loop with an `if` in it (the filter's `saturate`) also gets its fast and
 slow paths round, the instructions one sample runs with every `if` skipped
 or taken. LLVM unrolls some loops, so each loop's stride (samples a time
 round) is read from its induction register: a byte offset stepped up by `K`
-and compared with an immediate runs `K/4` samples (`f32`s) a time round; one
-counted down by `subs rN, #K` from `#I` runs `64·K/I`. With neither, the
+and compared with an immediate `#I` runs `K` samples a time round if `I` ≤ 64
+(a sample index), else `K/4` (a byte offset over `f32`s); one counted down by
+`subs rN, #K` from `#I` runs `64·K/I`. With neither, the
 stride is unknown and the counts are a time round. Every instruction outside
 the loops is `block_instr` (per-block work, which the bill divides by 64). Literal-pool words are not counted.
 Prints each loop's instructions, `vdiv`s, `vsqrt`s and cycles:
@@ -124,15 +125,20 @@ MOV = re.compile(r"^(r\d+|lr|ip),\s*#(0x[0-9a-f]+|\d+)$")
 
 def _stride(ins, before):
     """Samples a time round, or None if unknown. A register the loop adds an
-    immediate `K` to and compares with an immediate is a byte offset over
-    `f32`s: `K/4`. One it counts down with a flag-setting `subs` by `K` and
+    immediate `K` to and compares with an immediate `I` counts up to the
+    block's end: a sample index if `I` ≤ 64 (`K` a time round), else a byte
+    offset over `f32`s (`K/4`). `I` may stop a step or two short of the end
+    (LLVM peels the last rounds), so the stride is never `I`'s quotient. A
+    register compared with a register (an end pointer) is unknown. One it
+    counts down with the last flag-setting `subs` round by `K` and
     nothing compares, from the last `mov` of an immediate `I` before the
     loop (`before`), runs `I/K` times round a block: `64·K/I`."""
-    adds, subs, cmps = {}, {}, set()
+    adds, subs, cmps = {}, {}, {}
     for _, op, args in ins:
         base = op.split(".")[0]
         if base == "cmp":
-            cmps.add(args.split(",")[0].strip())
+            c = IMM.match(args)
+            cmps[args.split(",")[0].strip()] = int(c.group(2), 0) if c else None
         m = IMM.match(args)
         if not m:
             continue
@@ -140,13 +146,20 @@ def _stride(ins, before):
             adds[m.group(1)] = int(m.group(2), 0)
         elif base == "subs":
             subs[m.group(1)] = int(m.group(2), 0)
-    up = [k for r, k in adds.items() if r in cmps]
+    up = [(k, cmps[r]) for r, k in adds.items() if r in cmps]
     if len(up) == 1:
-        return up[0] // 4 if up[0] >= 4 and up[0] % 4 == 0 else None
+        k, i = up[0]
+        if i is None:
+            return None
+        if i <= 64:
+            return k
+        return k // 4 if k % 4 == 0 else None
+    # The counter is the last `subs` round: its flags take the back-edge
+    # (an earlier one may be a float's bits, e.g. `exp2_poly`'s exponent).
     down = [(r, k) for r, k in subs.items() if r not in cmps]
-    if len(down) != 1:
+    if not down:
         return None
-    r, k = down[0]
+    r, k = down[-1]
     for _, op, args in reversed(before):
         m = MOV.match(args) if op.split(".")[0] in ("mov", "movs", "movw") else None
         if m and m.group(1) == r:

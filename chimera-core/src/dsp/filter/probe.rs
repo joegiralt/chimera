@@ -147,12 +147,18 @@ mod tests {
         }
     }
 
-    /// Each probe is `process` on its own kind of block, at LP4 and at
-    /// NOTCH2: steady blocks, then a cutoff and RES move, RES alone (a
-    /// moving block too), and past 0.497·fs.
+    /// Each probe is `process` on its own kind of block, in every mode:
+    /// steady blocks, then a cutoff and RES move, RES alone (a moving block
+    /// too), and past 0.497·fs.
     #[test]
     fn clean_probe_is_process() {
+        probe_is_process::<0>(FilterMode::Lp6);
+        probe_is_process::<1>(FilterMode::Lp12);
         probe_is_process::<2>(FilterMode::Lp24);
+        probe_is_process::<3>(FilterMode::Bp12);
+        probe_is_process::<4>(FilterMode::Bp24);
+        probe_is_process::<5>(FilterMode::Hp24);
+        probe_is_process::<6>(FilterMode::Notch);
         probe_is_process::<7>(FilterMode::Phaser);
     }
 

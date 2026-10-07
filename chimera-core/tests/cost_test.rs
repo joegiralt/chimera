@@ -660,7 +660,8 @@ fn the_model_bills_every_bench_row_high() {
 
 /// The Task 13 bench (rev V, 480 MHz, 2026-09-28, the bench-t13c run):
 /// each ROUTING row billed at or above its reading. Every row is 1 OP (A1)
-/// but A16+17. SVF HOT and LP24 HOT are bench-only until read. The rows mirror
+/// but A16+17. SVF HOT, LP24 HOT and Task 18's filter rows (SVF, CLEAN MOVE,
+/// 2040, DIRTY, TAP FREQ, TAP VCA) are bench-only until read. The rows mirror
 /// `ROUTING`'s builders in chimera-stm32/src/bench.rs (`on_vca`,
 /// `b_on_vca`, `slide`, `mods`, `one_op`, `one_dest`, `a_level`): change
 /// one, change the other.
@@ -729,8 +730,8 @@ fn the_model_bills_every_routing_row_high() {
         ("MODS", mods_row().0, mods_row().1, 668),
         // The old SVF's PHASER read 500 and went with it; NOTCH2 counts
         // 35 cycles to LP24's 95 (Task 15), so the row is 1 OP's until
-        // the bench reads it again.
-        ("SVF", svf, ModState::new(), 483),
+        // the bench's NOTCH2 row is read.
+        ("NOTCH2", svf, ModState::new(), 483),
         ("A VCA", one(), vca(), 535),
         ("B VCA", b(Func::Env(EnvForm::Ad), 0.5), vca(), 597),
         ("B CURVE", env_b(Func::Env(EnvForm::Ad)), vca(), 598),

@@ -2,6 +2,7 @@
 
 mod screen;
 
+use chimera_core::dsp::filter::FilterKind;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::part::DacPair;
 use chimera_core::project::{PartFrom, PartId, PartSource, ReplaceGuard};
@@ -233,6 +234,7 @@ fn header(ui: &UiState) -> (String, String, Option<&'static str>) {
         head(ui.location()),
         ui.page_def(),
         ResonatorMode::String,
+        FilterKind::Svf,
         "",
         out,
     );

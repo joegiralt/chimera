@@ -760,7 +760,7 @@ pub fn page_header(
     parts: &Parts,
 ) -> components::HeaderText {
     let suffix = ["", " / A", " / B"][title_type(def, &ctx.envs) as usize % 3];
-    components::header_text(head, def, ctx.model, suffix, out_of(head, parts))
+    components::header_text(head, def, ctx.model, ctx.kind, suffix, out_of(head, parts))
 }
 
 /// The OUT of the Part whose pages these are; P1 in SETTINGS.

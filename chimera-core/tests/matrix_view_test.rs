@@ -147,6 +147,24 @@ fn an_absent_route_reads_dashes() {
     assert!(rows(&fb, GRID_BOTTOM, AMOUNT_Y + 3) == rows(&want, GRID_BOTTOM, AMOUNT_Y + 3));
 }
 
+/// An X cell (OP5 on a registry column) names what the tap reaches and
+/// says it is no tap destination, not the column's param and `--`.
+#[test]
+fn an_x_cell_says_what_it_is() {
+    use chimera_core::ui::mod_grid::{X_NOT, X_REACH};
+    let fb = render("mod_matrix_algo_taps");
+    let want = drawn(fb.px[0], |d| {
+        let t = |d: &mut Fb, s: &str, x: i32, y: i32, c| {
+            x + draw::text_tracked(d, &theme::FONT_LABEL, s, x, y, c, 1)
+        };
+        let x = t(d, "OP 5", theme::MARGIN_X, READOUT_Y, theme::ACCENT) + 5;
+        let x = x + draw::arrow(d, x, READOUT_Y, theme::ACCENT) + 5;
+        t(d, X_REACH, x, READOUT_Y, theme::ACCENT);
+        t(d, X_NOT, theme::MARGIN_X, AMOUNT_Y, theme::MID);
+    });
+    assert!(rows(&fb, GRID_BOTTOM, AMOUNT_Y + 3) == rows(&want, GRID_BOTTOM, AMOUNT_Y + 3));
+}
+
 /// Cell (`ci`, `vi`) as drawn: `edge` outline, and a route's fill and amount.
 fn cell_as(
     bg: u16,

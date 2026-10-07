@@ -1498,3 +1498,29 @@ The moving, LEVEL and tap terms are deltas, not over `OLD_LP24`, and don't chang
 - **Over the plan's budget.** FREQ + Q is 48 instructions, not 12 + 4: `exp2_poly` is 15, each runtime-bounded hold 3 + 3 (compare and select; `clampf` against bounds read from memory was twice that), and the lane amounts ramp per sample. The capture's clamp to ±1 is a compare and select per op per sample (not counted apart: `loop_count` finds no loop in the kernel's render functions, base or now).
 - **Flash** (vector_table + text + rodata + data): default 736,784 → 743,312 (+6,528); bench,orbit 872,016 → 880,552 (+8,536), **36,952 free**.
 - **Voice chain** 2,096 → 2,104 B: `tap_amt` is `[[i8; 4]; 2]`, scaled where read (ADR 0101's cap holds).
+
+### Task 18: the cost bench (2026-10-07, `--features bench` release build)
+
+`python3 tools/loop_count.py target/thumbv7em-none-eabihf/release/chimera-stm32 <probe>`, instructions a sample on the fast path, with the block's share; cycles `ceil5`. CLEAN's six other steady modes are probed on `bench` only (`CLEAN_MODE_PROBES`, about 2 KB each: not on `bench,orbit`).
+
+| Path | Count | Budget | `vdiv` in loop | Cycles (with block) |
+|---|---|---|---|---|
+| CLEAN LP4 / BP4 / HP4, steady | 41 / 42 / 41 | ≤ 56 | 0 | 75 / 75 / 75 |
+| CLEAN LP1 / LP2 / BP2 / NOTCH1, steady | 25 / 24 / 25 / 25 | ≤ 30 | 0 | 50 / 45 / 50 / 50 |
+| CLEAN NOTCH2, steady | 18 | ≤ 34 | 0 | 35 |
+| CLEAN moving, LP4 / NOTCH2 (+ `ramps` 8.5) | 64 (+23) / 35 (+17) | +6 | 2 / 1 | 150 / 90 |
+| 2040 REV2 / EXP, steady | 65 / 81 | ≤ 78 / ≤ 84 | 0 | 110 / 135 |
+| 2040 moving, REV2 / EXP (+ `ramps` 6.25) | 80 (+15) / 94 (+13) | +12 | 2 | 170 / 190 |
+| DIRTY LP2 / BP2 / HP2 / NOTCH1 (+ `ramps` 6.25) | 30.25 / 30.25 / 29.25 / 30.25 | ≤ 30 | 0 | 70 |
+| LEVEL gain / held clipper / fading | 4.31 / 16.62 / 20.00 | ≤ +12 | 0 | 15 / 35 / 40 |
+| Tap capture, per op (`render_ops`, 70 and 69 for 8) | 8.75 | +1 | 0 | 15 |
+| Taps → FREQ and Q (`TapShape::apply`, once) | 48 | +12 / +4 | 0 | 80 |
+| Tap → VCA (both ops, once) | 15.25 | +4 | 0 | 30 |
+| Tap → FOLD (`Wavefolder::process`) | 72.5 against the moving 45 | +4 + ramp | 0 | 125 against 80 |
+
+- **Every steady loop has 0 `vdiv`.** No path is newly over budget. The ones over the brief's instruction budget were each escalated and ruled before: the CLEAN move (Tasks 2 and 3), LEVEL (Task 7), DIRTY's array read (Task 14) and the taps (Task 14). The 2040's moving REV2 reads +15 against +12 because its steady loop fell 75 → 65 with Task 8b; the loop itself fell 87 → 80, and its bill is unchanged.
+- **Bills** (Global Constraints rule, against `OLD_LP24` 95), all as Task 15 set them, so no constant moves: CLEAN steady 0 (every mode under 95); `CLEAN_MOVE_COST` 75 (LP4 150 − 75; NOTCH2 90 − 35 = 55); 2040 steady REV2 15, EXP 40; `K2040_MOVE_COST` 60 (REV2 170 − 110; EXP 190 − 135 = 55); DIRTY 0 (70); `FILTER_LEVEL_COST` 35 (fading 20.00 + 3.25 → 40 with the block, 35 alone as Task 15 counted it); `TAP_SHAPE_COST` 80; `TAP_VCA_COST` 30; `TAP_FOLD_COST` 45; `FOLD_RAMP_COST` 35 (80 − 45); `TAP_CAPTURE_COST` 15. The brief's 2040 figures (moving +45, steady 30/40) predate Task 8b and Task 15; the measured ones stand.
+- **`loop_count.py`** (Task 7 review): a count-up register's stride now comes from its compare's immediate, a sample index (`K`) at `#I` ≤ 64, else a byte offset (`K/4`), so an index stepped by 4 reads 4, not 1; a compare against a register is unknown. A count-down's counter is the last `subs` round, so `TapShape::apply` (a `subs` on `exp2_poly`'s exponent bits mid-loop) reads 2 × unrolled, 48 a sample, instead of unknown.
+- **Flash:** `text` 707,984 (4adacaea) → 742,936 (+34,952 B, against the spec's ≈ 2.5 KB: the taps' per-sample arrays, the panels, the UI), default release build; 171,476 B free. bench,orbit 39,672 free (Task 17: 33,204): the new rows cost 3.8 KB, and `one_op` out of line saved 10.3 KB (each row's closure held its own copy of the snapshot).
+- **Bench rows (unit, #177):** `SVF` (CLEAN LP4), `NOTCH2` (the old SVF row's mode), `CLEAN MOVE` (FREQ stepped 100 Hz a block), `2040` (EXP), `DIRTY`, `TAP FREQ` and `TAP VCA` (OP5 at 64) on the ROUTING screens, now 43 rows over 5 pages. **Held, ship time** (no flash in this task).
+- **Re-recorded goldens:** `flt_mod_dirty` (header DIRTY MOD) and `mod_matrix_algo_taps` (the X cell reads `OP 5 → FREQ Q VCA FOLD` / `NOT A TAP DESTINATION`).

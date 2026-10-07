@@ -560,6 +560,10 @@ pub const DELETE: Hint = &[Gesture("MIX + MINUS", "DELETES THE ROUTE")];
 pub const PRIME: Hint = &[Gesture("MIX + PLUS", "ON A PARAM PRIMES IT")];
 /// An X cell's: what a tap can reach (spec § 7). The spec's long form,
 /// `OP5 · AUDIO RATE: …`, is 264 px, past the 216 a hint may take.
+/// An X cell's readout: what its tap reaches, then why the cell takes no
+/// amount.
+pub const X_REACH: &str = "FREQ Q VCA FOLD";
+pub const X_NOT: &str = "NOT A TAP DESTINATION";
 pub const X_OP5: Hint = &[Gesture("OP5:", "FREQ Q VCA FOLD ONLY")];
 pub const X_OP6: Hint = &[Gesture("OP6:", "FREQ Q VCA FOLD ONLY")];
 
@@ -955,6 +959,21 @@ where
         )
     };
     match (src, dest) {
+        // An X cell names what its tap reaches, not the column it sits in.
+        (Some(src), Some(_)) if state.is_x(state.sel_row, state.sel_col) => {
+            let x = label(d, src, theme::MARGIN_X, theme::ACCENT) + ARROW_GAP;
+            let x = x + draw::arrow(d, x, READOUT_Y, theme::ACCENT) + ARROW_GAP;
+            label(d, X_REACH, x, theme::ACCENT);
+            draw::text_tracked(
+                d,
+                &theme::FONT_LABEL,
+                X_NOT,
+                theme::MARGIN_X,
+                AMOUNT_Y,
+                theme::MID,
+                theme::LABEL_TRACKING,
+            );
+        }
         (Some(src), Some(dest)) => {
             let x = label(d, src, theme::MARGIN_X, theme::ACCENT) + ARROW_GAP;
             let x = x + draw::arrow(d, x, READOUT_Y, theme::ACCENT) + ARROW_GAP;

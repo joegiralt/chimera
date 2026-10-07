@@ -52,7 +52,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("flt_mod_2040", 0x168df3b9ea844b69),
     ("flt_mod_2040_exp", 0x5fef62806549d50e),
     ("flt_dirty", 0x8842fd7055ded3c0),
-    ("flt_mod_dirty", 0x83abc6d646f2db4a),
+    ("flt_mod_dirty", 0x8069a71da376c64a),
     // The LEVEL LED at 0 (dark), ½ and 1: beside LEVEL, beside the 2040's
     // DRIVE and in FLT's viz corner (Task 17).
     ("flt_led_0", 0x0536d5a167d2ceaa),
@@ -137,7 +137,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mod_matrix_wide", 0xeeb753551d0d9d1c),
     // OP5 → FREQ, the cursor on OP5's X cell and its hint; MODAL's eight
     // rows of 17 (Task 17).
-    ("mod_matrix_algo_taps", 0xb38f33fa300f5722),
+    ("mod_matrix_algo_taps", 0x5a2a634ad30444b4),
     ("mod_matrix_modal", 0xff6ac1e21a0ccc52),
     ("sound_browser", 0xc5fad13cf6ddc71f),
     // Re-recorded: a fresh project's footer drops NEW (#286).
