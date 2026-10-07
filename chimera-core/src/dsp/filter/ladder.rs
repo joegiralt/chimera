@@ -72,8 +72,9 @@ pub(crate) struct Tap {
 
 /// `LADDER_MODES`' mixes, by Zavalishin's `s → s − 1` rule on `H_n(s) =
 /// (1 + s)^(4−n)/((1 + s)⁴ + k)` (§ 5.5): LP2 `(1+s)²`, LP4 `1`, BP2
-/// `s(1+s)²`, BP4 `s²`, HP4 `s⁴` over the shared denominator (derived, not
-/// from a source: `modes_respond_as_derived` checks each). The gains bring
+/// `s(1+s)²`, BP4 `s²`, HP4 `s⁴` over the shared denominator (BP4 is his
+/// eq. 5.16, the rest derived by the rule; `modes_respond_as_derived`
+/// checks each). The gains bring
 /// each to 0 dB at RES 0 (BP2 peaks at ½, BP4 at ¼) and each ring to LP4's
 /// level (at the cutoff LP2's and BP2's numerators are 2, the rest 1).
 pub(crate) const LADDER_TAPS: [Tap; 5] = [

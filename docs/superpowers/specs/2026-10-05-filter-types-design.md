@@ -367,16 +367,16 @@ out = Σ cₘ·yₘ · gainₘ(k) · OUT_LADDER/α
 tanhₚ(x) = c·(1 + c²·(a₃ + c²·(a₅ + …a₁₁))), c = clamp(x, ±3)   // `tanh_poly`: 0.005 off tanh, flat at ±1 from ±3, no divide
 ```
 
-- **The saturator.** The owner's design put a Padé 3/2 tanh on the input pair and stage 1 and the 2040's cubic on stages 2–4. Against SPICE that misses the large-signal cutoff shift by 38 cents RMS and the drive sweep by 1 % of H1 (ADR 0104), so all five run `tanh_poly`: 10 cents, 0.16 %, no divide, 30–40 cycles over the owner's estimate. Awaiting the owner's ruling.
+- **The saturator.** The owner's design put a Padé 3/2 tanh on the input pair and stage 1 and the 2040's cubic on stages 2–4. Against SPICE that misses the large-signal cutoff shift by 38 cents RMS and the drive sweep by 1 % of H1 (ADR 0104). **The owner ruled (2026-10-07): `tanh_poly` on all five** (10 cents, 0.16 %, no divide), at 7 / 5 / 4 voices (ALGO default / one tap / all four, rev V) against the mix's 7 / 6 / 5.
 
 - **Resonance.** `k = 4·RES/0.95` (`k2040_k`): the onset at RES 0.95, 4.21 at RES 1. The ring's amplitude is the input pair's; its pitch is trimmed +20.8 cents (`TRIM_LADDER`), the stages' saturators slowing it, which holds it within 0.6 cents over C2–C6.
 - **Bass loss.** DC gain `1/(1 + k)`, uncompensated (the owner's ruling for the 2040, held here).
 - **LEVEL** is the drive: `α·gain` into the loop. The LED reads the input pair, `clip_amount(|u|/1)`: lit from LEVEL 0.75 on a full-scale input, as REV2's. No clipper runs.
-- **Modes** (Zavalishin § 5.5, Xpander-style, derived): LP2 `y₂`, LP4 `y₄`, BP2 `y₁ − y₂`, BP4 `y₂ − 2y₃ + y₄`, HP4 `y₀ − 4y₁ + 6y₂ − 4y₃ + y₄`. Each mode's gain lerps in `k` from its RES-0 normalisation (BP2 ×2, BP4 ×4: 0 dB peaks) to its ring's (LP2 and BP2 ×½), so every mode rings within 0.5 dB of LP4. A MODE change is click-free by construction (one state, five mixes) and still crossfades on a stack copy, as DIRTY's does. A mode LADDER lacks plays LP4 (`ladder_index`).
+- **Modes** (Zavalishin § 5.5, Xpander-style; BP4 is his eq. 5.16, the rest derived by his rule): LP2 `y₂`, LP4 `y₄`, BP2 `y₁ − y₂`, BP4 `y₂ − 2y₃ + y₄`, HP4 `y₀ − 4y₁ + 6y₂ − 4y₃ + y₄`. Each mode's gain lerps in `k` from its RES-0 normalisation (BP2 ×2, BP4 ×4: 0 dB peaks) to its ring's (LP2 and BP2 ×½), so every mode rings within 0.5 dB of LP4. A MODE change is click-free by construction (one state, five mixes) and still crossfades on a stack copy, as DIRTY's does. The gain follows each sample's `k`, so a Q tap rings every mode at LP4's level. A mode LADDER lacks plays LP4 (`ladder_index`). The viz folds LP2's gain into its curve and eases the band-passes from 0 dB down to LP4's ring.
 - **Levels.** LEVEL ½, RES 0: LP4 unity. RES 1: −15.5 to −16.2 dBFS in every mode, LADDER's own band, as EXP has its own.
-- **State.** Four floats and the ramp ends, in the one slot the 2040 also uses (`Poles`): the voice chain stays 2,104 B (ADR 0101). A 2040 ↔ LADDER change warm-starts the new type in the slot and runs the old one on a stack copy, its stages carried in the fade, as a VOICE flip does.
+- **State.** Four floats and the ramp ends, in the one slot the 2040 also uses, a typed `enum Poles`: the voice chain stays 2,104 B (ADR 0101). A 2040 ↔ LADDER change hands the slot over with a warm start and runs the old type on a stack copy, its stages carried in the fade, as a VOICE flip does.
 - **Bounded.** Each stage within its swing; every state within it plus `2g`; `|out| ≤ ladder_bound(mode, x)`, exact for LP4 (`Y/α`).
-- **Cost.** Steady 200–210 cycles a sample (LP4 121 instructions, 0 `vdiv`), billed 115 over `OLD_LP24`; moving +85 (`LADDER_MOVE_COST`, one out-of-line loop for every mode). No clipper term.
+- **Cost.** Steady 205–215 cycles a sample (LP4 123 instructions, 0 `vdiv`), billed 120 over `OLD_LP24`; moving +100 (`LADDER_MOVE_COST`, one out-of-line loop for every mode). No clipper term. The drive-scaled input is held to ±64 (`X_MAX`), so a NaN or infinite block stays finite on every mode.
 
 ### 5. UX: TYPE versus MODE, without a blank canvas
 
