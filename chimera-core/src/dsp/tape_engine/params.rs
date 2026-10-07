@@ -1,7 +1,7 @@
 //! TAPE's parameters (spec § 3), block `BlockRef::TapeEngine`: ids frozen
 //! once written.
 
-use super::oneshot::SLICE_CHOICES;
+use super::oneshot::SliceCode;
 use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code, identity_code};
 use crate::dsp::algo::math::exp2;
 
@@ -193,9 +193,8 @@ pub struct TapeEngineParams {
     pub root: f32,
     /// The source's period, frames, copied at pick; 0 unpitched.
     pub period: f32,
-    /// ONESHOT's SLICE, its value (`oneshot::Slice::of`): 0 OFF, 1 NOTE,
-    /// 2–17 slices 1–16. One byte, as the snapshot has no room for more.
-    pub slice: u8,
+    /// ONESHOT's SLICE.
+    pub slice: SliceCode,
     pub wow: Wow,
 }
 
@@ -217,7 +216,7 @@ impl Default for TapeEngineParams {
             kind: StretchType::Mono,
             root: 6_000.0,
             period: 0.0,
-            slice: 0,
+            slice: SliceCode::OFF,
             wow: Wow::Capstan,
         }
     }
@@ -331,7 +330,7 @@ impl Block for TapeEngineParams {
             Self::TYPE => self.kind as u8 as f32,
             Self::ROOT => self.root,
             Self::PERIOD => self.period,
-            Self::SLICE => self.slice as f32,
+            Self::SLICE => self.slice.code() as f32,
             Self::WOW => self.wow as u8 as f32,
             _ => 0.0,
         }
@@ -358,7 +357,7 @@ impl Block for TapeEngineParams {
             }
             Self::ROOT => self.root = v,
             Self::PERIOD => self.period = v,
-            Self::SLICE => self.slice = (v as u8).min(SLICE_CHOICES - 1),
+            Self::SLICE => self.slice = SliceCode::new(v as u8),
             Self::WOW => {
                 self.wow = if v as u8 == 0 {
                     Wow::Capstan
@@ -374,7 +373,7 @@ impl Block for TapeEngineParams {
         match id {
             Self::MODEL => Some(self.model.disk_code()),
             Self::TYPE => Some(self.kind.disk_code()),
-            Self::SLICE => Some(self.slice),
+            Self::SLICE => Some(self.slice.code()),
             Self::WOW => Some(self.wow.disk_code()),
             _ => None,
         }
@@ -384,7 +383,7 @@ impl Block for TapeEngineParams {
         match id {
             Self::MODEL => Some(self.model.disk_ident()),
             Self::TYPE => Some(self.kind.disk_ident()),
-            Self::SLICE => Some(SLICE_IDENTS[usize::from(self.slice)]),
+            Self::SLICE => Some(SLICE_IDENTS[usize::from(self.slice.code())]),
             Self::WOW => Some(self.wow.disk_ident()),
             _ => None,
         }
@@ -395,7 +394,7 @@ impl Block for TapeEngineParams {
             Self::MODEL => apply_code(TapeModel::from_disk_code(code), |m| self.model = m),
             Self::TYPE => apply_code(StretchType::from_disk_code(code), |k| self.kind = k),
             Self::SLICE => apply_code(identity_code(&TAPE_ENGINE_SPECS, id, code), |c| {
-                self.slice = c
+                self.slice = SliceCode::new(c)
             }),
             Self::WOW => apply_code(Wow::from_disk_code(code), |w| self.wow = w),
             _ => false,

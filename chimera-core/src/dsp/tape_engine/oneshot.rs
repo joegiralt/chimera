@@ -10,6 +10,45 @@ pub const SLICE_NOTE_BASE: u8 = 60;
 /// SLICE's choices: OFF, NOTE, then the 16 slices.
 pub const SLICE_CHOICES: u8 = 18;
 
+/// SLICE's value, its code: 0 OFF, 1 NOTE, 2–17 slices 1–16. One byte,
+/// as the snapshot has no room for more; a code past 17 can't be built.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub struct SliceCode(u8);
+
+/// Shown as its code, as the raw byte was: the neutral Sound's text is a
+/// format contract (`neutral_is_a_contract`).
+impl core::fmt::Debug for SliceCode {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl SliceCode {
+    pub const OFF: SliceCode = SliceCode(0);
+    pub const NOTE: SliceCode = SliceCode(1);
+
+    /// Code `c`; past the last, the last.
+    pub const fn new(c: u8) -> SliceCode {
+        SliceCode(if c < SLICE_CHOICES {
+            c
+        } else {
+            SLICE_CHOICES - 1
+        })
+    }
+
+    pub const fn code(self) -> u8 {
+        self.0
+    }
+
+    pub const fn slice(self) -> Slice {
+        match self.0 {
+            0 => Slice::Off,
+            1 => Slice::Note,
+            k => Slice::At(k - 2),
+        }
+    }
+}
+
 /// Which of the window a ONESHOT note plays.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Slice {
@@ -25,11 +64,7 @@ impl Slice {
     /// SLICE's value (its code): 0 OFF, 1 NOTE, 2–17 slices 1–16. Past
     /// the last, the last.
     pub fn of(v: f32) -> Slice {
-        match v as u8 {
-            0 => Slice::Off,
-            1 => Slice::Note,
-            k => Slice::At(k.min(SLICE_CHOICES - 1) - 2),
-        }
+        SliceCode::new(v as u8).slice()
     }
 
     /// The key picks it, and plays at ROOT.

@@ -225,7 +225,7 @@ fn test_no_clicks_tape_machines() {
     }
     cases.push(P {
         model: TapeModel::Oneshot,
-        slice: 6,
+        slice: chimera_core::dsp::tape_engine::SliceCode::new(6),
         ..P::default()
     });
     cases.push(P {

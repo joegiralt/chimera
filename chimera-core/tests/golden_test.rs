@@ -628,7 +628,7 @@ fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
         (
             "tape_oneshot_slice7",
             TapeEngineParams {
-                slice: 8,
+                slice: chimera_core::dsp::tape_engine::SliceCode::new(8),
                 ..model(M::Oneshot)
             },
         ),

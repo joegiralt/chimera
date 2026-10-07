@@ -90,7 +90,7 @@ fn neutral_tape_loops_whole() {
             kind: StretchType::Mono,
             root: 6_000.0,
             period: 0.0,
-            slice: 0,
+            slice: chimera_core::dsp::tape_engine::SliceCode::OFF,
             wow: Wow::Capstan,
         }
     );

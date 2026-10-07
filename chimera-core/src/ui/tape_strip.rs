@@ -114,7 +114,7 @@ pub fn key(o: &Overview, model: TapeModel, p: &TapeEngineParams, heads: Heads) -
         o.frames,
         u32::from(o.rate),
         model as u32,
-        u32::from(p.slice),
+        u32::from(p.slice.code()),
         p.size.to_bits(),
         p.xfade.to_bits(),
         p.position.to_bits(),
@@ -192,7 +192,7 @@ pub fn draw_strip<D>(
     let (mut ramp, mut edges, mut ticks) = (None, None, 0u32);
     let lit = match model {
         TapeModel::Oneshot => {
-            let s = Slice::of(f32::from(p.slice));
+            let s = p.slice.slice();
             ticks = if s == Slice::Off { 0 } else { 16 };
             // Slice k from START (`slice_bounds`), or under NOTE the one
             // the newest note plays.

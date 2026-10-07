@@ -461,7 +461,7 @@ fn tiny_sources_play_finite() {
                     for size in [0.0, 1.0] {
                         let p = TapeEngineParams {
                             model,
-                            slice,
+                            slice: chimera_core::dsp::tape_engine::SliceCode::new(slice),
                             start,
                             end,
                             size,
@@ -542,7 +542,7 @@ fn midi_extremes_stay_finite() {
                 for (start, end) in [(0.2, 0.8), (0.8, 0.2)] {
                     let p = TapeEngineParams {
                         model,
-                        slice,
+                        slice: chimera_core::dsp::tape_engine::SliceCode::new(slice),
                         start,
                         end,
                         tape: 1.0,

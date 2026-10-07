@@ -51,13 +51,14 @@ use heads::{
     Bounds, Dir, Fade, Ghost, Head, Plan, Turn, Window, at, min_frames, plan, shortest,
     window_end_min, window_start,
 };
-use oneshot::{Slice, slice_bounds};
+use oneshot::slice_bounds;
 use read::{Pos, SourceView};
 use stretch::Stretch;
 use warble::Warble;
 use wave::Wave;
 
 pub use heads::loop_len;
+pub use oneshot::SliceCode;
 pub use params::{
     MACHINE_NAMES, MODEL_NAMES, StretchType, TAPE_ENGINE_SPECS, TapeEngineParams, TapeModel, Wow,
     drag_s, reads,
@@ -849,7 +850,7 @@ impl TapeEngine {
         let mut w = Window::of(p.start, p.end, frames, min_frames(rate));
         self.at_root = false;
         if self.model == TapeModel::Oneshot {
-            let s = Slice::of(f32::from(p.slice));
+            let s = p.slice.slice();
             self.at_root = s.by_note();
             w = slice_bounds(w, s, note);
             self.left = u32::MAX;

@@ -907,7 +907,7 @@ const TAPE_ROWS: [TapeRow; 13] = [
         Tapes::Least,
         |p| {
             tiny(p, TapeModel::Oneshot);
-            p.tape.slice = 17;
+            p.tape.slice = chimera_core::dsp::tape_engine::SliceCode::new(17);
         },
         |_, _| Hit::Again,
     ),

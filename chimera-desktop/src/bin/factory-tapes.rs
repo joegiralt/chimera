@@ -247,7 +247,7 @@ fn demo(dir: &str) -> Result<bool, String> {
             notes,
         );
         let p = pitch(&b.head);
-        let note = if base.slice == 1 {
+        let note = if base.slice == chimera_core::dsp::tape_engine::SliceCode::NOTE {
             60
         } else {
             root_note(p).max(36)

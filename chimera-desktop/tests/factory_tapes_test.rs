@@ -193,13 +193,13 @@ fn factory_sounds_sit_at_the_median() {
         let tok = p.pool().table().reader().unwrap();
         let mut rig = Rig::new(&snd, Some(tok), Some(id));
         let t = snd.params.tape;
-        let note = if t.slice == 1 {
+        let note = if t.slice == chimera_core::dsp::tape_engine::SliceCode::NOTE {
             60
         } else {
             ((b.head.root + 50) / 100) as u8
         };
         let secs = b.head.sref.frames as f32 / f32::from(b.head.sref.rate);
-        let blocks = match (s.model, t.slice) {
+        let blocks = match (s.model, t.slice.code()) {
             (TapeModel::Oneshot, 1) => (secs / 16.0 * BPS as f32) as usize,
             (TapeModel::Oneshot, _) => ((secs * BPS as f32) as usize).min(BPS),
             _ => BPS,

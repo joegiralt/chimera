@@ -10,7 +10,7 @@ use core::mem::MaybeUninit;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape, SourceView};
 use chimera_core::dsp::tape_engine::wave;
 use chimera_core::dsp::tape_engine::{
-    INC_MAX, StretchType, TapeEngine, TapeEngineParams, TapeModel, Wow,
+    INC_MAX, SliceCode, StretchType, TapeEngine, TapeEngineParams, TapeModel, Wow,
 };
 use chimera_core::storage::twelve::pack12;
 use chimera_hal::BLOCK_SIZE;
@@ -66,7 +66,7 @@ fn reads_stay_in_row() {
             kind: [StretchType::Mono, StretchType::Poly][rng.below(2)],
             root: 12_700.0 * unit(&mut rng),
             period: [0.0, 1.0 + 60.0 * unit(&mut rng), 1_000.0 * unit(&mut rng)][rng.below(3)],
-            slice: rng.below(18) as u8,
+            slice: SliceCode::new(rng.below(18) as u8),
             wow: [Wow::Capstan, Wow::Warble][rng.below(2)],
         };
         let mut slot = MaybeUninit::uninit();
@@ -220,7 +220,7 @@ fn drawn(rng: &mut XorShift, model: TapeModel, period: f32) -> TapeEngineParams 
         kind: [StretchType::Mono, StretchType::Poly][rng.below(2)],
         root: [0.0, 6_000.0, 12_700.0, 12_700.0 * unit(rng)][rng.below(4)],
         period: [0.0, period][rng.below(2)],
-        slice: rng.below(18) as u8,
+        slice: SliceCode::new(rng.below(18) as u8),
         wow: [Wow::Capstan, Wow::Warble][rng.below(2)],
     }
 }

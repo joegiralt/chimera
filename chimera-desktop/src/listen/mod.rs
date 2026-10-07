@@ -520,7 +520,10 @@ impl Way {
                 wow: Wow::Warble,
                 ..p
             },
-            Way::SliceNote => P { slice: 1, ..p },
+            Way::SliceNote => P {
+                slice: chimera_core::dsp::tape_engine::SliceCode::NOTE,
+                ..p
+            },
         }
     }
 

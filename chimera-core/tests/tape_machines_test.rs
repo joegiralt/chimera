@@ -736,7 +736,7 @@ fn slice_note_picks_without_transposing() {
     let inc_of = |slice: u8, note: u8, pitch: f32| {
         let p = P {
             model: TapeModel::Oneshot,
-            slice,
+            slice: chimera_core::dsp::tape_engine::SliceCode::new(slice),
             ..P::default()
         };
         let mut e = fresh();

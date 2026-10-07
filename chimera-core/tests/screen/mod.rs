@@ -8,9 +8,9 @@
 
 use chimera_core::clock_plan::SiliconRev;
 use chimera_core::dsp::filter::{FilterKind, FilterMode};
-use chimera_core::dsp::tape_engine::Heads;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
 use chimera_core::dsp::tape_engine::wave::frame_len;
+use chimera_core::dsp::tape_engine::{Heads, SliceCode};
 use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::{AudioShared, Instrument, PartHeads};
 use chimera_core::name::ProjectName;
@@ -1368,7 +1368,7 @@ pub const CASES: &[ScreenCase] = &[
             .sound
             .params
             .tape;
-        (p.start, p.end, p.slice) = (0.9, 0.1, 6);
+        (p.start, p.end, p.slice) = (0.9, 0.1, SliceCode::new(6));
     }),
     ("tape_strip_pingpong_reversed", |ui| {
         tape_strip(ui, 5, Heads::new(20_000, None));

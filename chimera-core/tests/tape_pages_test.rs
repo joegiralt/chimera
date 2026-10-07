@@ -242,10 +242,10 @@ fn model_change_applies_machine_defaults() {
 
     // MODEL turned past its end changes nothing, so writes nothing.
     feed(&mut ui, Input::turn(EncoderId::A, -3)); // ONESHOT
-    ui.params_mut().tape.slice = 5;
+    ui.params_mut().tape.slice = chimera_core::dsp::tape_engine::SliceCode::new(5);
     feed(&mut ui, Input::turn(EncoderId::A, -1));
     assert_eq!(ui.params().tape.model, TapeModel::Oneshot);
-    assert_eq!(ui.params().tape.slice, 5);
+    assert_eq!(ui.params().tape.slice.code(), 5);
 
     // A Sound loaded on a machine keeps what it stored.
     {
@@ -342,7 +342,7 @@ fn reads_matches_the_audio() {
             xfade: 0.2,
             drag: 0.4,
             period: 109.1,
-            slice: 0,
+            slice: chimera_core::dsp::tape_engine::SliceCode::OFF,
             ..P::default()
         };
         let render = |p: P| {
