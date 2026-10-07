@@ -106,7 +106,7 @@ pub const CUBE_PARAMS: [ParamAddr; 6] = [
 
 /// Every reverb param that shows the composite: the cube's six, then the
 /// slots only the other TYPEs read (their glyph lands with them).
-pub const REVERB_PARAMS: [ParamAddr; 10] = [
+pub const REVERB_PARAMS: [ParamAddr; 11] = [
     CUBE_PARAMS[0],
     CUBE_PARAMS[1],
     CUBE_PARAMS[2],
@@ -117,6 +117,7 @@ pub const REVERB_PARAMS: [ParamAddr; 10] = [
     ParamAddr::new(BlockRef::Reverb, ReverbParams::DIFFUSE),
     ParamAddr::new(BlockRef::Reverb, ReverbParams::PREDELAY),
     ParamAddr::new(BlockRef::Reverb, ReverbParams::SHAPE),
+    ParamAddr::new(BlockRef::Reverb, ReverbParams::DENSITY),
 ];
 
 /// The delay params the rings read, in `Rings::from_set`'s order.

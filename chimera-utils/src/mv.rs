@@ -25,7 +25,7 @@ fn dims(t: ReverbType) -> &'static [&'static str] {
         ReverbType::Gate | ReverbType::Reverse => &["size", "time", "tone", "diffuse", "shape"],
         ReverbType::Quad => &["size", "time", "damping"],
         ReverbType::Hall => &[
-            "size", "time", "tone", "diffuse", "predelay", "damping", "smear",
+            "size", "time", "tone", "diffuse", "predelay", "damping", "smear", "shape", "density",
         ],
         ReverbType::Bloom => &["size", "time", "tone", "diffuse", "predelay"],
     }
@@ -83,8 +83,9 @@ struct Stimuli {
     cut: usize,
 }
 
-fn stimuli(t: ReverbType, seeds: usize) -> Stimuli {
+fn stimuli(t: ReverbType, seeds: usize, tail: Option<f64>) -> Stimuli {
     let (click_s, charge_s, tail_s) = lengths(t);
+    let tail_s = tail.unwrap_or(tail_s);
     let f32s = |x: Vec<f64>| x.into_iter().map(|v| v as f32).collect::<Vec<f32>>();
     let noise = (0..seeds)
         .map(|s| f32s(noise_stim(s as u32, charge_s, tail_s).0))
@@ -103,7 +104,23 @@ fn f64s(x: Vec<f32>) -> Vec<f64> {
 /// Metrics of TYPE `t` at each knob setting: the click's IR, the band
 /// RT60s and HF shares of `seeds` noise bursts, and GRAIN.
 pub fn measure(t: ReverbType, knobs: &[Knobs], seeds: usize) -> Result<Vec<Metrics>, String> {
-    let st = stimuli(t, seeds);
+    measure_tail(t, knobs, seeds, None)
+}
+
+/// HALL's tail for reference `r`: long enough for its RT60's T20 (the
+/// Xlarge halls ring 15 s); the TYPE's own otherwise.
+fn tail_for(t: ReverbType, r: &Metrics) -> Option<f64> {
+    (t == ReverbType::Hall).then(|| (1.4 * r.band_rt60_s[1].unwrap_or(1.0)).max(3.0))
+}
+
+/// `measure`, the noise bursts' tails `tail` s long when given.
+fn measure_tail(
+    t: ReverbType,
+    knobs: &[Knobs],
+    seeds: usize,
+    tail: Option<f64>,
+) -> Result<Vec<Metrics>, String> {
+    let st = stimuli(t, seeds, tail);
     let (nx, ncut) = grain::notched();
     let nx: Vec<Vec<f32>> = nx
         .iter()
@@ -132,12 +149,12 @@ pub fn measure(t: ReverbType, knobs: &[Knobs], seeds: usize) -> Result<Vec<Metri
         .collect())
 }
 
-fn read_json(p: &Path) -> Result<Value, String> {
+pub(crate) fn read_json(p: &Path) -> Result<Value, String> {
     let s = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
     serde_json::from_str(&s).map_err(|e| format!("{}: {e}", p.display()))
 }
 
-fn write_json(p: &Path, v: &Value) -> Result<(), String> {
+pub(crate) fn write_json(p: &Path, v: &Value) -> Result<(), String> {
     if let Some(d) = p.parent() {
         std::fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
     }
@@ -160,7 +177,7 @@ fn t_name(t: ReverbType) -> &'static str {
     ReverbType::NAMES[t.index()]
 }
 
-fn load_refs(cfg: &Config) -> Result<Map<String, Value>, String> {
+pub(crate) fn load_refs(cfg: &Config) -> Result<Map<String, Value>, String> {
     match read_json(&refs_path(cfg))? {
         Value::Object(m) => Ok(m),
         _ => Err("refs: not an object".into()),
@@ -310,9 +327,10 @@ fn robust(
     t: ReverbType,
     knobs: &[Knobs],
     r: &Metrics,
+    tail: Option<f64>,
 ) -> Result<Vec<(Metrics, f64)>, String> {
     if !cfg.size_worst {
-        return Ok(measure(t, knobs, cfg.refine_seeds)?
+        return Ok(measure_tail(t, knobs, cfg.refine_seeds, tail)?
             .into_iter()
             .map(|m| {
                 let sc = score(t, &m, r);
@@ -327,7 +345,7 @@ fn robust(
             [k.clone(), at(NUDGE), at(-NUDGE)]
         })
         .collect();
-    let mut ms = measure(t, &sets, cfg.refine_seeds)?.into_iter();
+    let mut ms = measure_tail(t, &sets, cfg.refine_seeds, tail)?.into_iter();
     let mut out = Vec::with_capacity(knobs.len());
     while let (Some(m), Some(up), Some(down)) = (ms.next(), ms.next(), ms.next()) {
         let sc = [&m, &up, &down]
@@ -358,7 +376,8 @@ fn refine(
             best_k.insert(n.to_string(), json!(defaults[i]));
         }
     }
-    let (mut best_m, mut best) = robust(cfg, t, std::slice::from_ref(&best_k), r)?.remove(0);
+    let tail = tail_for(t, r);
+    let (mut best_m, mut best) = robust(cfg, t, std::slice::from_ref(&best_k), r, tail)?.remove(0);
     for &st in steps {
         let mut improved = true;
         while improved {
@@ -375,7 +394,7 @@ fn refine(
                     }
                 }
             }
-            let ms = robust(cfg, t, &cands, r)?;
+            let ms = robust(cfg, t, &cands, r, tail)?;
             for (k, (m, sc)) in cands.into_iter().zip(ms) {
                 if sc < best - 1e-9 {
                     (best, best_k, best_m, improved) = (sc, k, m, true);
@@ -566,7 +585,14 @@ pub fn verify(cfg: &Config, t: ReverbType, fits: Option<&Path>) -> Result<bool, 
                 .ok_or(format!("fit {k}: no knobs"))
         })
         .collect::<Result<_, _>>()?;
-    let ms = measure(t, &knobs, NOISE_SEEDS)?;
+    let ms = keys
+        .par_iter()
+        .zip(&knobs)
+        .map(|(p, k)| {
+            let r = Metrics::from_json(refs.get(p).ok_or(format!("no reference {p}"))?)?;
+            Ok(measure_tail(t, std::slice::from_ref(k), NOISE_SEEDS, tail_for(t, &r))?.remove(0))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     let mut all = true;
     for (p, m) in keys.iter().zip(ms) {
         let rv = refs.get(p).ok_or(format!("no reference for program {p}"))?;
@@ -637,7 +663,7 @@ pub fn robust_verify(cfg: &Config, t: ReverbType, fits: Option<&Path>) -> Result
             .filter_map(|(d, by)| nudged(&k, d, by).map(|n| (format!("{d}{by:+}"), n)))
             .collect();
         let sets: Vec<Knobs> = moves.iter().map(|m| m.1.clone()).collect();
-        let ms = measure(t, &sets, NOISE_SEEDS)?;
+        let ms = measure_tail(t, &sets, NOISE_SEEDS, tail_for(t, &r))?;
         let fails: Vec<&str> = moves
             .iter()
             .zip(&ms)

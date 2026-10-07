@@ -585,6 +585,9 @@ impl Recall {
 
 pub struct NavCtx {
     pub engines: [EngineType; MAX_PARTS],
+    /// The reverb's TYPE: REV › MORE 2 shows only under a TYPE with cells
+    /// there (HALL's DENSITY).
+    pub rev: crate::dsp::reverb::ReverbType,
     /// A Screen's row count.
     pub dyn_rows: u8,
     pub orbit: OrbitCx,
@@ -763,9 +766,9 @@ impl Location {
             (Part(..), NavKey::SeqTap) => Step::Stay,
             (Sound(p, _), NavKey::SeqTap) => go(r.mix_entry(p)),
             (Fx(p, at), NavKey::Minus) if at.node() == FX_FIRST => go(Part(p, MixPage::Sends)),
-            (Fx(p, at), k) => {
-                page_step(&MIXER_CHANNEL_CHAIN, at, k).map_or(Step::Stay, |at| go(Fx(p, at)))
-            }
+            (Fx(p, at), k) => page_step(&MIXER_CHANNEL_CHAIN, at, k)
+                .map(|to| skip_empty_rev(at, to, k, cx.rev))
+                .map_or(Step::Stay, |at| go(Fx(p, at))),
             (Sound(p, b), NavKey::Plus) => go(Sound(wrap(p, 1), b)),
             (Sound(p, b), NavKey::Minus) => go(Sound(wrap(p, -1), b)),
             _ => Step::Stay,
@@ -867,6 +870,27 @@ fn page_step(c: &ChainDef2, at: PageAt, k: NavKey) -> Option<PageAt> {
     match c.step(at, m) {
         None if m == Move::Down => c.page(at.node() as usize, 0),
         to => to,
+    }
+}
+
+/// EDIT onto REV › MORE 2 under a TYPE with no cells there goes on round
+/// to REV; SEQ never reaches it (it is the last).
+fn skip_empty_rev(
+    from: PageAt,
+    to: PageAt,
+    k: NavKey,
+    rev: crate::dsp::reverb::ReverbType,
+) -> PageAt {
+    use crate::ui::reverb_panel::{RevPage, shows};
+    let more2 = MIXER_CHANNEL_CHAIN
+        .def_at(to)
+        .is_some_and(|d| d.id == block_registry::EFX_MORE2.id);
+    if more2 && k == NavKey::Edit && !shows(rev, RevPage::More2) {
+        MIXER_CHANNEL_CHAIN
+            .page(from.node() as usize, 0)
+            .unwrap_or(to)
+    } else {
+        to
     }
 }
 

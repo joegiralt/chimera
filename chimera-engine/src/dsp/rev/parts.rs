@@ -361,6 +361,11 @@ pub(crate) trait Lines {
     /// # Safety
     /// `i` < `len()`.
     unsafe fn settle(&mut self, i: usize, x: f32);
+    /// A feed-forward allpass state: rounding, but truncated under 3 LSB
+    /// (`store_settle_ap`).
+    /// # Safety
+    /// `i` < `len()`.
+    unsafe fn settle_ap(&mut self, i: usize, x: f32);
 }
 
 impl Lines for [i16] {
@@ -404,6 +409,12 @@ impl Lines for [i16] {
         // SAFETY: the caller keeps `i` < `len()`.
         unsafe { *self.get_unchecked_mut(i) = store_settle(x) }
     }
+
+    #[inline(always)]
+    unsafe fn settle_ap(&mut self, i: usize, x: f32) {
+        // SAFETY: the caller keeps `i` < `len()`.
+        unsafe { *self.get_unchecked_mut(i) = store_settle_ap(x) }
+    }
 }
 
 /// Unquantised lines: the LOOP engine's f32 stage allpasses, and (tests)
@@ -441,6 +452,10 @@ impl Lines for [f32] {
     }
 
     unsafe fn settle(&mut self, i: usize, x: f32) {
+        self[i] = x;
+    }
+
+    unsafe fn settle_ap(&mut self, i: usize, x: f32) {
         self[i] = x;
     }
 }
@@ -483,6 +498,21 @@ pub fn store_settle(x: f32) -> i16 {
     // integer compare where `abs() < 1.0` read the FPU's flags.
     let r = store_round(x);
     if x as i32 == 0 { 0 } else { r }
+}
+
+/// A feed-forward allpass's normalised state (HALL's diffuser): rounded,
+/// as a delay is, but truncated under 3 LSB. A rounding allpass at g 0.8
+/// holds w = ±2 for good (0.8·2 rounds back to 2); its deadband is 0.5/(1 −
+/// g) = 2.5 LSB, so truncating there kills it, and the signal keeps
+/// rounding's error, a quarter of truncation's power.
+#[inline(always)]
+pub fn store_settle_ap(x: f32) -> i16 {
+    let i = x as i32;
+    if i.unsigned_abs() < 3 {
+        saturate(i)
+    } else {
+        store_round(x)
+    }
 }
 
 /// An allpass state or REGEN write: `x` (LSBs) truncated toward zero, and

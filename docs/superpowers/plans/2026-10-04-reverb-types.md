@@ -1636,6 +1636,96 @@ BUS+V's frame is QUAD_BUS_V + ΔCOST, so ΔCOST = that row − QUAD_BUS_V.
 - **Goldens:** `rev_bloom`, `rev_bloom_mv45`, `rev_bloom_mv49`,
   `mixer_fx_reverb_bloom` and `_more` added; every other golden unchanged.
 
+### Task 10b: HALL against the MidiVerb II halls (2026-10-05, host; held at Step 3)
+
+- **Baseline, HALL as built** (reference harness, Rust render at
+  `d78331d9`): no preset passes. Best of the 320-point sweep, then four
+  refined fits (8 seeds):
+
+| # | RT60 250–4k (%) | Pre (ms) | C50 (dB) | NED 20/50/100 (%) | Centroid (%) |
+|---|---|---|---|---|---|
+| 4 (refined) | +2, +2, −1, −2, +3 | −1.5 | +2.2 | +12, −18, −16 | +3 |
+| 6 (refined) | −1, +1, −3, −1, +1 | −0.1 | +2.4 | +60, −36, −32 | +4 |
+| 7 (refined) | +0, +4, −1, −0, +1 | −0.5 | +3.3 | +17, −22, −47 | +5 |
+| 12 (refined) | −2, −1, −1, +6, −4 | −1.1 | −1.3 | −11, −24, −26 | −4 |
+| 13 | +0, −1, +2, +7, −13 | +2.1 | −4.6 | −5, −24, −27 | +5 |
+| 15 | −11, +4, −5, −7, −18 | +1.4 | −2.6 | −2, −1, −73 | −9 |
+| 16 | −2, +2, −1, −7, −26 | +0.8 | −4.0 | −31, −19, −70 | −12 |
+| 17 | −15, −11, −11, −3, +9 | +4.1 | +6.8 | +161, +57, −42 | −21 |
+| 18 | −24, −18, −21, −15, −5 | −4.0 | +11.1 | +102, −3, −18 | +19 |
+| 19 | +113, +108, +72, +11, −27 | +7.4 | −4.8 | +1620, +0, −3 | −20 |
+| 20 | −31, −28, −26, −24, −19 | +4.9 | −1.8 | −3, −10, −68 | −13 |
+| 21 | +6, +5, +8, +12, +2 | +0.9 | −5.0 | −20, −2, −68 | −17 |
+| 22 | −16, +11, +6, +5, −8 | +0.1 | −3.7 | −12, −1, −61 | −8 |
+| 23 | −6, −4, −4, +1, +10 | +7.9 | +10.3 | +122, +43, −53 | −21 |
+| 24 | −15, −17, −18, −22, −29 | +1.5 | +10.1 | +76, −4, +8 | +29 |
+| 25 | +11, +12, +9, +9, +1 | +6.8 | +12.2 | +137, −6, −43 | +24 |
+| 26 | +5, +9, +7, +14, +23 | −1.4 | +8.9 | +162, +38, +18 | −12 |
+| 27 | +0, +5, +3, +4, −7 | +0.5 | −3.1 | −10, −0, −70 | −10 |
+| 28 | −29, −31, −27, −17, +8 | +2.5 | +9.2 | +22, −11, −57 | −30 |
+| 29 | −64, −65, −62, −54, −27 | +2.5 | +9.7 | +22, −5, −54 | −29 |
+
+  The other 16 were not refined: the gaps are structural, and a sweep
+  measures #28 and #29 only to 3 s with DECAY topping at 10 s.
+- **Proposal:** ADR 0095 § HALL, as fitted (proposed). The float model
+  passed 12 of 20 and was held for the owner. Ported to `chimera-utils`'
+  models, it passed 14 of 20 (DENSITY its own knob; 12 tied to DIFFUSE,
+  10 to TONE). The owner approved the build, with DENSITY on its own cell.
+- **As built (2026-10-06, host; unit folded into Task 13):** ADR 0095 §
+  HALL, as built.
+  - **Rust render, `mv-verify HALL` (16 seeds):** 9 of 20 pass: #4, 7,
+    12, 13, 15, 22, 23, 25 and 27. #19 is a signed miss; the near misses
+    are listed in the ADR for the owner's ear. Fits are from the model's
+    knobs, refined with `mv-fit --start`. A second refine and a
+    sweep-based fit of the misses added none. Rounding the knobs to 3
+    places tips #4 and #22, so `MV2_HALL` keeps 6.
+  - **Static count** (Thumb, release): the per-sample loop is 394
+    instructions a ring sample, 570 in a crossfade, against 280.
+    `Hall::run` is 7,484 B.
+    - ΔCOST at 0.47 cycles an instruction: −28 to +13 (default), −20 to
+      +21 (tape).
+    - At 1.06: +5 to +99 and +13 to +107.
+    - Gates 76 and 23.
+  - **Flash:** plain release `text` 777,204 B, +7,220 over `be5e8b9c`.
+  - **Arena:** 18,876 i16 + 1,448 f32 = 21,772 of 23,220 slots.
+  - **Host readings** (`reverb_loop_test`):
+    - noise floor 18.1 dB at START and 21.9 at DIFFUSE 1 (QUAD 12.0);
+    - a held 500 Hz mode at DECAY's top: THD 8.3 %; a held 5 kHz:
+      aliases −21 dB;
+    - SIZE 1 DECAY 1: 1 kHz RT60 14.0 s.
+  - **Mutants:** each of the five is caught:
+    - a stage delay +1 sample;
+    - a tap dropped;
+    - the damper ignoring DAMP;
+    - DECAY's top at 10 s;
+    - the plate pull off.
+  - **Goldens:** `rev_hall` and `rev_hall_plate` re-recorded;
+    `rev_hall_mv04`–`mv27` added; the HALL screens and
+    `mixer_fx_reverb_hall_more2`.
+- **Fix round 1 (2026-10-06, host; unit folded into Task 13):** ADR 0095
+  § HALL, as built, rewritten.
+  - **Rust render, `mv-verify HALL` (16 seeds):** 8 of 20 pass at the
+    fitted knobs (#7, 12, 13, 15, 16, 22, 23, 27); **7 of 20 hold every
+    fitted knob ±0.001** (all but #7). Fits by `mv-fit --start` scored at
+    0.8× the bar, worst of SIZE and SPREAD ±0.001, from the round-0 knobs
+    with PRE-DLY lifted 0.71 ms. #19 signed off; 11 near misses in the ADR.
+  - **Static count** (Thumb, release), per ring sample: 361 still, 458 in a
+    SIZE or PRE-DLY crossfade, 398 in a SPREAD crossfade or DENSITY move
+    (round 0: 394 and 570). ΔCOST at 0.47: −35 to −12 default, −27 to −4
+    tape; at 1.06: −10 to +41 and −2 to +49. `Hall::run` 18,544 B.
+  - **Flash:** plain release `text` 790,340 B, +19,196 over `reverb-types`
+    (8740cfb9).
+  - **Arena:** 17,628 i16 + 2,696 f32 = 23,020 of 23,220 slots.
+  - **Host readings:** noise floor 15.9 dB at START and 17.5 at DIFFUSE 1
+    (QUAD 12.0; bounds 4 and 6 dB again); a held 500 Hz mode at DECAY's
+    top THD 2.6 %, a held 5 kHz aliases −30 dB (bound −20, owner's
+    sign-off); DENSITY 0 → 1 +0.2 dB on a burst, a held pad's peak within
+    1 dB of QUAD's at MIX 1; held-300 Hz moves: DENSITY d2 ≤ 1.20, SPREAD
+    d2 ≤ 1.2 × its level swing (up to 1.9×).
+  - **WET_HALL 14.0;** START is program 23 exactly, SMEAR 0.
+  - **Goldens:** `rev_hall`, `rev_hall_plate` and `rev_hall_mv07`–`mv27`
+    (8) re-recorded; the HALL screens.
+
 ---
 
 ## Self-review

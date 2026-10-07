@@ -3004,6 +3004,7 @@ fn nav_cx(project: &Project) -> NavCtx {
     let live = project.orbit().live();
     NavCtx {
         engines: PartId::ALL.map(|p| project.part(p).sound.engine()),
+        rev: project.perf().fx.reverb.kind,
         dyn_rows: 0,
         orbit: OrbitCx {
             targets: live.rings.map(|r| r.target.part()),

@@ -52,7 +52,9 @@ pub enum EngineState {
 /// loudest 400 ms), their peaks within 1 dB of QUAD's: a TYPE switch under
 /// a held note neither jumps nor clips (`check_sustained_loudness`).
 /// ROOM's four loops at +1 and sixteen taps take 5.5 dB under QUAD's 4.54
-/// (ADR 0095); HALL, through one loop of sparse taps, 6.6 dB over.
+/// (ADR 0095); HALL, through one loop of taps normalised to 3's level,
+/// 9.7 dB over (1.2 dB under QUAD's, its peak within 1 dB of QUAD's, so
+/// every preset golden stays under full scale).
 pub fn wet_gain(t: ReverbType) -> f32 {
     match t {
         ReverbType::Room => WET_ROOM,
@@ -65,7 +67,7 @@ pub fn wet_gain(t: ReverbType) -> f32 {
 }
 
 pub(crate) const WET_ROOM: f32 = 2.42;
-const WET_HALL: f32 = 9.7;
+const WET_HALL: f32 = 14.0;
 const WET_GATE: f32 = 6.75;
 const WET_REVERSE: f32 = 7.05;
 const WET_BLOOM: f32 = 5.72;

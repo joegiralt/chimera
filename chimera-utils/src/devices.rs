@@ -45,8 +45,8 @@ pub enum Device {
 }
 
 /// A reverb's knobs, in the order its values take.
-pub const REVERB_KNOBS: [&str; 9] = [
-    "size", "time", "tone", "diffuse", "predelay", "smear", "rate", "shape", "damping",
+pub const REVERB_KNOBS: [&str; 10] = [
+    "size", "time", "tone", "diffuse", "predelay", "smear", "rate", "shape", "damping", "density",
 ];
 
 /// MODE names, then 2-pole/4-pole aliases a reference may use.
@@ -168,9 +168,10 @@ fn start_params(t: ReverbType) -> ReverbParams {
     FxParams::default().reverb.with_type(t, &KnobMemory::new())
 }
 
-fn reverb_values(r: &ReverbParams) -> [f32; 9] {
+fn reverb_values(r: &ReverbParams) -> [f32; 10] {
     [
         r.size, r.time, r.tone, r.diffuse, r.predelay, r.smear, r.rate, r.shape, r.damping,
+        r.density,
     ]
 }
 
@@ -185,6 +186,7 @@ pub fn render_reverb(t: ReverbType, v: &[f32], x: &[f32]) -> Vec<f32> {
     let r = &mut fx.reverb;
     (r.size, r.time, r.tone, r.diffuse, r.predelay) = (v[0], v[1], v[2], v[3], v[4]);
     (r.smear, r.rate, r.shape, r.damping) = (v[5], v[6], v[7], v[8]);
+    r.density = v.get(9).copied().unwrap_or(r.density);
     let mut slot = Box::new(MaybeUninit::<FxBus>::uninit());
     let bus = FxBus::init_in_place(&mut slot);
     let lead = (SAMPLE_RATE as usize / 2) / BLOCK_SIZE * BLOCK_SIZE;

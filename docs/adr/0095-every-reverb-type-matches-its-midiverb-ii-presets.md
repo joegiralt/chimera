@@ -418,6 +418,136 @@ the ban on 2026-10-05.
     the lead, and 350 gives it 1.85×, the widest margin over 200–900
     blocks bar an isolated 540.
 
+- **HALL, as built (Task 10b and its fix round 1, 2026-10-06).** The
+  owner approved the redesign below and #19 as a signed miss. The near
+  misses get signed off after listening.
+  - **Why it changed.** HALL as it stood passed no HALL preset: C50 2–12
+    dB high and NED at 100 ms 16–70 % low on most presets, and #29 rang
+    past DECAY's 10 s top. The unit's halls are four structures:
+    - 1 loop × 3 stages, 3 taps a side: #4, 17, 18, 23–26, 28, 29;
+    - 2 × 2 with 4 taps: #6, 7, 19, 20;
+    - 1 × 8 with 8 taps: #12, 13;
+    - 2 × 4 with 7 taps: #15, 16, 21, 22, 27.
+
+    Each one's C50 and NED follow its diffuser and taps, not its tank.
+  - **The tank stays** `LoopEngine<1, 4>`: its lengths, SMEAR, and the
+    crossfades. SIZE is now `lin`, 120 → 600 ms.
+  - **The diffuser:** six allpasses at program 17's 13.718, 18.419,
+    28.547, 34.530, 8.718 and 6.154 ms (`DIFFUSER_MS`), with g from
+    DIFFUSE.
+    - **SPREAD** scales them whole, × 0.05–1.10. It is the `Spread`
+      newtype, on SHAPE's slot (10), in MORE's sixth cell. The cell reads
+      the diffuser's length in ms.
+    - SPREAD moves them by crossfade: one allpass and at most 16 samples
+      a crossfade (`DIF_STEP`), in the same crossfades as SIZE and PRE-DLY.
+    - The plate zone pulls SPREAD to 0 with TONE and PRE-DLY.
+  - **The four shortest diffuser allpasses store f32** (13.7, 18.4, 8.7
+    and 6.2 ms, `DIF_F32`); the two longest store normalised i16 (R2), by
+    `store_settle_ap`: rounded, but truncated under 3 LSB.
+    - The arena holds no more f32: 23,020 slots of 23,220 as built (17,628
+      i16 and 2,696 f32), and
+      about 24.7 k with all six f32.
+    - A rounding allpass at g 0.8 holds ±2 LSB for good, and the loop rang
+      on it. Under 3 LSB it truncates, which breaks that hold.
+  - **Taps: 8 a side**, one per stage line in turn, at our own fractions
+    of each line, scaled with SIZE and read from the lines' crossfades.
+    - Each tap is signed by its line's stage-allpass parity.
+    - Each reads `LATENCY` (17 ring samples) nearer its write: the bus's
+      half-bands delay the return 0.71 ms, which the float model did not
+      have, and every fit read +0.7 ms of pre-delay PRE-DLY could not
+      take back.
+    - **DENSITY** fades taps 4–8 in, a fifth of the knob each (the
+      `TapCount` newtype, 3–8 a side), the weights × √(3/Σw²) so the
+      level holds (within 1 dB from 3 to 8 taps; the peak at MIX 1 stays
+      within 1 dB of QUAD's).
+    - DENSITY has its own id, ParamId 14, disk ident `DENSITY`.
+      `KnobMemory` grows to 120 B and AXI by 16 B.
+    - Its cell is on a new page, REV › MORE 2. EDIT skips that page under
+      every TYPE with no cell there.
+    - A Sound saved before DENSITY loads at `DENSITY_DEFAULT`, HALL's
+      starting 0.207298 (4.04 taps).
+    - Tying DENSITY to DIFFUSE cost 2 presets in the model, to TONE 4.
+  - **One damper a loop**, after stage 4. DAMP is `exp` 14 → 1.3 kHz,
+    HALL's own law, no longer QUAD's.
+  - **TONE 0 is OFF**, an open one-pole (`Ranges::tone_off`,
+    `ToneOff::AtZero`); above it, 12 → 2 kHz.
+  - **DIFFUSE is g 0.3–0.8.**
+  - **DECAY's top is 16 s.** A round trip's gain is also held to 0.92 (G
+    12.5, the level plan's), which binds only at small SIZE.
+  - **The plate zone is SIZE < 0.05** (was 0.15): at 0.15 the pull played
+    #16's and #21's fitted knobs as plate.
+  - **The stage delays write by `store_settle_ap`**, as the diffuser does.
+    Rounding writes at DAMP's 14 kHz held 3 LSB in the plate corner for
+    good.
+  - **Five read paths, by what moves this block.** A still block (most)
+    reads each line once. A SIZE or PRE-DLY crossfade blends the stage
+    delays and PRE-DLY, reads every tap at its new length and adds (1 − w)
+    of the way back for the ≤ 4 taps on the moving line. A SPREAD
+    crossfade blends the diffuser. A DENSITY move ramps the tap weights
+    each sample. Two at once run all three. A still read's old and new
+    slots are one, so a blend at w 1 is exact.
+  - **The Rust render, `mv-verify HALL` (16 seeds):** 8 of 20 pass at the
+    fitted knobs: #7, 12, 13, 15, 16, 22, 23 and 27. **7 of 20 hold a
+    step off,** passing with every fitted knob ±0.001 (`mv-verify
+    --robust`'s nudges): #12, 13, 15, 16, 22, 23 and 27; #7 fails at SIZE
+    ±0.001 and SPREAD +0.001. The fits scored the worst of each point and
+    SIZE and SPREAD ±0.001 at 0.8× the bar.
+    - SIZE and SPREAD move lengths a sample at a step, and the click
+      metrics are chaotic in the lengths (as BLOOM's SWELL is): before
+      this round, 9 passed at the fitted knobs and 3 a step off.
+    - **The gap to the float model's 14:** the model had no bus latency
+      (fixed, `LATENCY`), the plate pull caught 2 fits (narrowed), and the
+      rest is the firmware's storage and the robustness the fits now ask:
+      the float model's points were not checked a step off.
+    - Near misses, for the owner's ear: #4 (NED +11 % at 50 ms), #6 (1
+      kHz −8 %, 4 kHz +9 %, C50 −1.0 dB), #17 (NED −18 % at 20 ms), #18
+      (NED +14 % at 100 ms), #20 (pre-delay +2.0 ms, NED +33 % at 20 ms),
+      #21 (NED +10 % at 100 ms), #24 (NED +19 % at 20 ms), #25 (NED +11
+      and +13 % at 20 and 50 ms), #26 (NED −14 % at 50 ms), #28 (pre-delay
+      +1.5 ms), #29 (pre-delay +1.9 ms, NED +21 % at 100 ms).
+
+    #19 is signed off as a miss.
+  - **START is program 23 exactly** (Large Bright 1.45, a fit that holds a
+    step off), with SMEAR 0: `rev_hall` and `rev_hall_mv23` are one
+    render. SMEAR's interpolated reads low-pass the loop each trip, so
+    START at SMEAR 0.3 was not the preset.
+  - **WET_HALL is 14.0,** by the loudness rule: −7.9 dB against QUAD's
+    −6.7, its peak 0.3 dB under QUAD's, so the brightest preset goldens
+    stay under full scale.
+  - **Departures for the owner:**
+    - **The noise floor** is 3.9 dB over QUAD's at START and 5.5 dB at
+      DIFFUSE 1, inside ADR 0085's 4 and 6 dB again with the f32
+      allpasses (5.3 and 7.6 dB under the all-i16 diffuser's at that WET).
+    - **A 0 dBFS 5 kHz tone held at DECAY's top in the plate corner
+      aliases −30 dB through R1's clip** (−21 before this round). The test
+      holds −20 for the owner's sign-off (bound −40 elsewhere). With one
+      damper, 5 kHz's mode has G 4.5, against two dampers' 2.4.
+    - **SPREAD moves under a held tone beat its level,** up to 1.9×: the
+      diffuser changes the tone's phase into a 3.5 s loop, so the old and
+      new phases beat, as PRE-DLY's does (1.4×). The move's d2 follows the
+      level within 1.2×: no click rides on it. DENSITY's moves read 1.2×
+      at most.
+    - **A held tone's tail sits 0.8 Hz over 1 kHz,** steady and not
+      walking. That is where the SIZE-1 loop's modes (1.67 Hz apart)
+      weight the band. The test holds 1 Hz and 0.25 Hz of walk.
+    - **REV › MORE 2** is a new page.
+  - **Cost** (static count, `Hall::run`, Thumb release): the per-sample
+    loop is 361 instructions a ring sample still, 458 in a SIZE or
+    PRE-DLY crossfade, 398 in a SPREAD crossfade or a DENSITY move,
+    against 280 for HALL before Task 10b.
+    - Against the MIX row (276.5 an output sample) that is about +42 still
+      and +91 moving.
+    - At 0.47 cycles an instruction: REV HALL about 20–43 cycles, ΔCOST
+      about −35 to −12 default (gate 76), −27 to −4 tape (gate 23).
+    - At 1.06: about 45–96 cycles, ΔCOST −10 to +41 default, −2 to +49
+      tape: over the tape gate while SIZE moves.
+    - The bench's REV HALL moves SIZE every block, so it reads the moving
+      end. The unit decides at Task 13.
+    - `Hall::run` is 18,544 B of text, five monomorphs.
+  - **Flash:** plain release `text` 790,340 B, +19,196 over `reverb-types` (8740cfb9): the five read paths.
+  - **Provenance:** only `DIFFUSER_MS` carries emulator numbers. The tank,
+    the taps, the laws and every knob value are our own.
+
 ## Alternatives considered
 - **Keep ADR 0085's ±30 % window:** it passes reverbs the owner can tell
   apart from the preset at once. The new bar is set where the harness's own

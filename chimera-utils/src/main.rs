@@ -33,6 +33,11 @@ usage: chimera-utils [flags] COMMAND …
   mv-ab TYPE               RMS-matched A/B WAVs on the listening set:
                            snare bass stab sine_short sine_long texture hats
   mv-structure PROG …      a program's structure from the decompiled listing
+  model-check hall FITS    the Python model's HALL fits through the Rust model
+  model-fit hall TAG [dens=own|fixed:X|KNOB[-][:lo:hi]] [warm=FITS] PROG …
+                           fit the proposed HALL model (ADR 0095) to programs
+  model-taps hall FITS [dens=…] [taps=FILE]
+                           search HALL's tap fractions, the fits' knobs held
 flags:
   --jobs N        worker threads (default 8)
   --out DIR       outputs (env MV_OUT, default target/mv)
@@ -196,6 +201,17 @@ fn run() -> Result<bool, String> {
         }
         "mv-ab" => mv::ab(&cfg, ty(0)?).map(|_| true),
         "mv-structure" => mv::structure(&cfg, &nums(rest)?).map(|_| true),
+        "model-check" if rest.len() == 2 && rest[0] == "hall" => {
+            models::check(&cfg, std::path::Path::new(&rest[1])).map(|_| true)
+        }
+        "model-taps" if rest.len() >= 2 && rest[0] == "hall" => {
+            models::taps_search(&cfg, std::path::Path::new(&rest[1]), &rest[2..]).map(|_| true)
+        }
+        "model-fit" if rest.len() >= 3 && rest[0] == "hall" => {
+            let (opts, progs): (Vec<String>, Vec<String>) =
+                rest[2..].iter().cloned().partition(|a| a.contains('='));
+            models::fit(&cfg, &rest[1], &opts, &nums(&progs)?).map(|_| true)
+        }
         _ => Err(USAGE.into()),
     };
     let _ = std::fs::remove_dir(cfg.tmp());

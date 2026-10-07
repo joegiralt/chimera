@@ -77,6 +77,69 @@ const MV2_ROOM: &[(u8, &str, [f32; 7])] = &[
     ), // Medium Dark 1.0
 ];
 
+/// HALL at each MidiVerb II program's knobs, fitted on the Rust render by
+/// the reference harness (ADR 0095 § HALL, as built): (program, its
+/// golden's name, SIZE, DECAY, TONE, DIFFUSE, PRE-DLY, DAMP, SPREAD,
+/// DENSITY), SMEAR 0. Only the programs whose fit passes.
+const MV2_HALL: &[(u8, &str, [f32; 8])] = &[
+    (
+        7,
+        "rev_hall_mv07",
+        [
+            0.170210, 0.224012, 0.972377, 0.308901, 0.174513, 0.637420, 0.425948, 0.340929,
+        ],
+    ),
+    (
+        12,
+        "rev_hall_mv12",
+        [
+            0.523392, 0.189015, 0.834296, 0.652109, 0.081013, 0.862286, 0.046252, 0.107316,
+        ],
+    ),
+    (
+        13,
+        "rev_hall_mv13",
+        [
+            0.636440, 0.213503, 0.796419, 0.947771, 0.060180, 0.959060, 0.007908, 1.000000,
+        ],
+    ),
+    (
+        15,
+        "rev_hall_mv15",
+        [
+            0.206956, 0.173205, 0.006000, 0.833305, 0.000000, 0.563724, 0.000000, 0.119115,
+        ],
+    ),
+    (
+        16,
+        "rev_hall_mv16",
+        [
+            0.054513, 0.206937, 0.116147, 0.442535, 0.014680, 0.012000, 0.012150, 0.496340,
+        ],
+    ),
+    (
+        22,
+        "rev_hall_mv22",
+        [
+            0.042824, 0.388192, 0.000000, 0.251913, 0.013013, 0.316364, 0.004384, 0.296924,
+        ],
+    ),
+    (
+        23,
+        "rev_hall_mv23",
+        [
+            0.921878, 0.300266, 0.012000, 0.383327, 0.058513, 0.626335, 0.878866, 0.207298,
+        ],
+    ),
+    (
+        27,
+        "rev_hall_mv27",
+        [
+            0.107666, 0.455419, 0.269498, 0.533509, 0.015013, 0.246368, 0.008505, 0.223087,
+        ],
+    ),
+];
+
 /// BLOOM at each MidiVerb II program's knobs, fitted on the Rust render by
 /// the reference harness (ADR 0095): (program, its golden's name, SWELL,
 /// DECAY, TONE, DIFFUSE, PRE-DLY), SMEAR 0. One point for both, as the
@@ -190,6 +253,17 @@ fn cases() -> Vec<(&'static str, Fx)> {
         ) = (k[0], k[1], k[2], k[3], k[4], k[5], k[6], 0.0);
         v.push((name, Fx::Reverb(p)));
     }
+    for &(_, name, k) in MV2_HALL {
+        let mut p = ReverbParams {
+            mix: 0.3,
+            ..Default::default()
+        }
+        .with_type(ReverbType::Hall, &KnobMemory::new());
+        (
+            p.size, p.time, p.tone, p.diffuse, p.predelay, p.damping, p.shape, p.density, p.smear,
+        ) = (k[0], k[1], k[2], k[3], k[4], k[5], k[6], k[7], 0.0);
+        v.push((name, Fx::Reverb(p)));
+    }
     for &(_, name, k) in MV2_BLOOM {
         let mut p = ReverbParams {
             mix: 0.3,
@@ -271,8 +345,18 @@ const GOLDENS: &[(&str, u64)] = &[
     ("rev_room_mv10", 0x85a254c66db5f2c7),
     ("rev_room_mv11", 0x193920776227df0d),
     ("rev_room_mv14", 0x7f3146738ce901c8),
-    ("rev_hall", 0x6d09691da61c04c5),
-    ("rev_hall_plate", 0xcc09501b70f66688),
+    ("rev_hall", 0x9dd9185914bf8172),
+    ("rev_hall_plate", 0xd134183733a58b32),
+    // HALL at each MidiVerb II program's fitted knobs (`MV2_HALL`, T10b);
+    // START is program 23's, so `rev_hall` and `rev_hall_mv23` agree.
+    ("rev_hall_mv07", 0x16c24851e5d19cf8),
+    ("rev_hall_mv12", 0x27a5882246fca093),
+    ("rev_hall_mv13", 0x8b816e73c53bf038),
+    ("rev_hall_mv15", 0x7a3b9ed7857f23a5),
+    ("rev_hall_mv16", 0x4936926af3370c11),
+    ("rev_hall_mv22", 0x96989d0dcc591d55),
+    ("rev_hall_mv23", 0x9dd9185914bf8172),
+    ("rev_hall_mv27", 0x172c5a3d446f4785),
     // GATE and REVERSE on the BURST engine (reverb TYPEs T8).
     ("rev_gate", 0xf58be0a4e64aeddf),
     ("rev_gate_flat_tail0", 0x951817e3e86edf28),

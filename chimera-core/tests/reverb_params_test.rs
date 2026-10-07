@@ -10,7 +10,8 @@ use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::rev::Reverb;
 use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::reverb::{
-    KnobMemory, REVERB_SPECS, RevSync, ReverbParams, ReverbType, damp_hz, in_plate_zone, plate_pull,
+    DENSITY_DEFAULT, KnobMemory, REVERB_SPECS, RevSync, ReverbParams, ReverbType, in_plate_zone,
+    plate_pull,
 };
 use chimera_core::storage::decode_block;
 use common::SR;
@@ -63,13 +64,14 @@ fn new_ids_and_idents_are_frozen() {
         (11, "SMEAR"),
         (12, "RATE"),
         (13, "SYNC"),
+        (14, "DENSITY"),
     ];
     for (id, ident) in want {
         assert_eq!(find_spec(&REVERB_SPECS, ParamId(id)).unwrap().ident, ident);
     }
     assert!(find_spec(&REVERB_SPECS, ParamId(0)).is_none());
     assert!(find_spec(&REVERB_SPECS, ParamId(5)).is_none());
-    assert_eq!(REVERB_SPECS.len(), 12);
+    assert_eq!(REVERB_SPECS.len(), 13);
 }
 
 #[test]
@@ -114,6 +116,22 @@ fn an_old_project_loads_as_quad() {
         (r.tone, r.diffuse, r.predelay, r.shape, r.rate, r.sync),
         (d.tone, d.diffuse, d.predelay, d.shape, d.rate, d.sync)
     );
+}
+
+/// A HALL Sound saved before DENSITY (no id 14) loads with HALL's
+/// starting taps, `DENSITY_DEFAULT`; one that has it keeps it.
+#[test]
+fn a_hall_sound_without_density_loads_its_default() {
+    let old = record(&[real(1, 0.7), real(3, 0.5), real(4, 0.5)]);
+    let mut fx = FxParams::default();
+    fx.reverb.density = 0.9;
+    fx.reverb.kind = ReverbType::Hall;
+    let mut fresh = FxParams::default();
+    decode_block(&old, &[], &[], Some(&mut Fx(&mut fresh))).unwrap();
+    assert_eq!(fresh.reverb.density, DENSITY_DEFAULT);
+    let new = record(&[real(1, 0.7), real(14, 0.25)]);
+    decode_block(&new, &[], &[], Some(&mut Fx(&mut fx))).unwrap();
+    assert_eq!(fx.reverb.density, 0.25);
 }
 
 /// Review Focus 2: an unknown TYPE code and NaN in every new slot keep
@@ -177,8 +195,12 @@ fn unknown_type_code_and_nan_slots_load_as_safe_quad() {
                 k.predelay_ms,
                 k.shape_db,
             ];
+            // HALL's TONE at 0 (NaN reads 0) is OFF: an open corner, +∞.
             for v in all {
-                assert!(v.is_finite(), "{t:?}");
+                assert!(
+                    v.is_finite() || v == f32::INFINITY && v == k.tone_hz,
+                    "{t:?}"
+                );
             }
             p
         })
@@ -209,8 +231,11 @@ fn with_type_loads_starting_knobs_and_keeps_mix_and_sync() {
         (
             h.size, h.time, h.tone, h.diffuse, h.predelay, h.smear, h.rate, h.damping
         ),
-        (0.65, 0.45, 0.3, 0.4, 0.15, 0.35, 0.4, 0.3)
+        (
+            0.921878, 0.300266, 0.012, 0.383327, 0.058513, 0.0, 0.4, 0.626335
+        )
     );
+    assert_eq!((h.shape, h.density), (0.878866, DENSITY_DEFAULT));
     assert_eq!((h.mix, h.sync), (0.7, RevSync::Time));
     let q = h.with_type(ReverbType::Quad, &KnobMemory::new());
     assert_eq!((q.smear, q.rate), (0.0, 0.5));
@@ -218,8 +243,8 @@ fn with_type_loads_starting_knobs_and_keeps_mix_and_sync() {
 }
 
 #[test]
-fn knob_memory_is_108_bytes_restores_and_clears() {
-    assert_eq!(core::mem::size_of::<KnobMemory>(), 108);
+fn knob_memory_is_120_bytes_restores_and_clears() {
+    assert_eq!(core::mem::size_of::<KnobMemory>(), 120);
     let mut m = KnobMemory::new();
     assert!(m.recall(ReverbType::Room).is_none());
     let mut r = ReverbParams::default().with_type(ReverbType::Room, &m);
@@ -370,18 +395,32 @@ fn knobs_hit_the_spec_endpoints() {
     close(d.shape_db, 57.06, "room loops default");
     close(d.smear_ms, 0.0, "room smear default");
     close(d.rate_hz, 0.3162, "room rate default");
-    // HALL, above its plate zone (SIZE ≥ 0.15).
+    // HALL, above its plate zone (SIZE ≥ 0.05).
     let h = |f: &dyn Fn(&mut ReverbParams)| at(ReverbType::Hall, f);
     close(h(&|p| p.size = 0.0).length_ms, 120.0, "hall size 0");
     close(h(&|p| p.size = 1.0).length_ms, 600.0, "hall size 1");
     close(h(&|p| p.time = 0.0).rt60_s, 0.8, "hall decay 0");
-    close(h(&|p| p.time = 1.0).rt60_s, 10.0, "hall decay 1");
-    close(h(&|p| p.tone = 0.0).tone_hz, 10_000.0, "hall tone 0");
-    close(h(&|p| p.tone = 1.0).tone_hz, 2_500.0, "hall tone 1");
-    close(h(&|p| p.diffuse = 0.0).diffuse_g, 0.5, "hall diffuse 0");
-    close(h(&|p| p.diffuse = 1.0).diffuse_g, 0.75, "hall diffuse 1");
-    close(h(&|p| p.damping = 0.0).damp_hz, 11_000.0, "hall damp 0");
-    close(h(&|p| p.damping = 1.0).damp_hz, 1_500.0, "hall damp 1");
+    close(h(&|p| p.size = 0.5).length_ms, 360.0, "hall size ½: lin");
+    close(h(&|p| p.time = 1.0).rt60_s, 16.0, "hall decay 1");
+    assert_eq!(
+        h(&|p| p.tone = 0.0).tone_hz,
+        f32::INFINITY,
+        "hall tone 0: OFF"
+    );
+    close(
+        h(&|p| p.tone = 1.0 / 128.0).tone_hz,
+        12_000.0 * (1.0f32 / 6.0).powf(1.0 / 128.0),
+        "hall tone 1 tick",
+    );
+    close(h(&|p| p.tone = 1.0).tone_hz, 2_000.0, "hall tone 1");
+    close(h(&|p| p.diffuse = 0.0).diffuse_g, 0.3, "hall diffuse 0");
+    close(h(&|p| p.diffuse = 1.0).diffuse_g, 0.8, "hall diffuse 1");
+    close(h(&|p| p.damping = 0.0).damp_hz, 14_000.0, "hall damp 0");
+    close(h(&|p| p.damping = 1.0).damp_hz, 1_300.0, "hall damp 1");
+    close(h(&|p| p.shape = 0.0).spread.scale(), 0.05, "hall spread 0");
+    close(h(&|p| p.shape = 1.0).spread.scale(), 1.10, "hall spread 1");
+    close(h(&|p| p.density = 0.0).density.get(), 3.0, "hall density 0");
+    close(h(&|p| p.density = 1.0).density.get(), 8.0, "hall density 1");
     close(h(&|p| p.predelay = 1.0).predelay_ms, 125.0, "hall pre 1");
     assert_eq!(h(&|p| p.predelay = 0.0).predelay_ms, 0.0);
     close(
@@ -392,54 +431,59 @@ fn knobs_hit_the_spec_endpoints() {
     close(h(&|p| p.rate = 0.0).rate_hz, 0.1, "hall rate 0");
     close(h(&|p| p.rate = 1.0).rate_hz, 1.5, "hall rate 1");
     let d = h(&|_| {});
-    close(d.length_ms, 341.6, "hall size default");
-    close(d.rt60_s, 2.4929, "hall decay default");
-    close(d.tone_hz, 6_597.5, "hall tone default");
-    close(d.diffuse_g, 0.6, "hall diffuse default");
-    close(d.damp_hz, 6_050.7, "hall damp default");
-    close(d.predelay_ms, 18.75, "hall pre default");
-    close(d.smear_ms, 0.7, "hall smear default");
+    close(d.length_ms, 562.50146, "hall size default");
+    close(d.rt60_s, 1.96673, "hall decay default");
+    close(d.tone_hz, 11_744.74, "hall tone default");
+    close(d.diffuse_g, 0.4916635, "hall diffuse default");
+    close(d.damp_hz, 3_159.62, "hall damp default");
+    close(d.predelay_ms, 7.314125, "hall pre default");
+    assert_eq!(d.smear_ms, 0.0, "hall smear default: START is the preset");
     close(d.rate_hz, 0.2954, "hall rate default");
-    // HALL's DAMP is QUAD's law.
+    close(d.spread.scale(), 0.9728093, "hall spread default");
+    close(d.density.get(), 4.03649, "hall density default");
+    // HALL's DAMP is its own law now (ADR 0095 § HALL, as built), not
+    // QUAD's: one damper a loop, 14 → 1.3 kHz.
     for p in [0.0, 0.3, 0.7, 1.0] {
-        close(h(&|q| q.damping = p).damp_hz, damp_hz(p), "hall damp law");
+        let want = 14_000.0 * (1_300.0f32 / 14_000.0).powf(p);
+        close(h(&|q| q.damping = p).damp_hz, want, "hall damp law");
     }
 }
 
-/// Below SIZE 0.15, HALL plays DIFFUSE pulled up and TONE and PRE-DLY
-/// down by w = 1 − SIZE/0.15; the stored knobs never change, and no other
+/// Below SIZE 0.05, HALL plays DIFFUSE pulled up and TONE and PRE-DLY
+/// down by w = 1 − SIZE/0.05; the stored knobs never change, and no other
 /// TYPE has the zone.
 #[test]
-fn plate_zone_pulls_diffuse_tone_predelay() {
+fn plate_zone_pulls_diffuse_tone_predelay_spread() {
     let p = |size: f32| ReverbParams {
         kind: ReverbType::Hall,
         size,
         diffuse: 0.4,
         tone: 0.6,
         predelay: 0.5,
+        shape: 0.8,
         ..ReverbParams::default()
     };
     let eff = |size: f32| {
         let q = plate_pull(&p(size));
-        (q.diffuse, q.tone, q.predelay)
+        [q.diffuse, q.tone, q.predelay, q.shape]
     };
-    let near = |a: (f32, f32, f32), b: (f32, f32, f32)| {
+    let near = |a: [f32; 4], b: [f32; 4]| {
         assert!(
-            (a.0 - b.0).abs() < 1e-6 && (a.1 - b.1).abs() < 1e-6 && (a.2 - b.2).abs() < 1e-6,
+            a.iter().zip(&b).all(|(x, y)| (x - y).abs() < 1e-6),
             "{a:?} != {b:?}"
         );
     };
-    near(eff(0.0), (1.0, 0.0, 0.0));
-    near(eff(0.075), (0.7, 0.3, 0.25));
-    for size in [0.15, 0.5, 1.0] {
-        near(eff(size), (0.4, 0.6, 0.5));
+    near(eff(0.0), [1.0, 0.0, 0.0, 0.0]);
+    near(eff(0.025), [0.7, 0.3, 0.25, 0.4]);
+    for size in [0.05, 0.5, 1.0] {
+        near(eff(size), [0.4, 0.6, 0.5, 0.8]);
     }
-    assert!(in_plate_zone(&p(0.149)) && !in_plate_zone(&p(0.15)));
+    assert!(in_plate_zone(&p(0.049)) && !in_plate_zone(&p(0.05)));
     // The engine plays the pulled knobs; the stored ones stay.
     let k = knobs_120(&p(0.0));
     assert_eq!(
-        (k.diffuse_g, k.tone_hz, k.predelay_ms),
-        (0.75, 10_000.0, 0.0)
+        (k.diffuse_g, k.tone_hz, k.predelay_ms, k.spread.scale()),
+        (0.8, f32::INFINITY, 0.0, 0.05)
     );
     assert_eq!(p(0.0).diffuse, 0.4);
     let room = ReverbParams {

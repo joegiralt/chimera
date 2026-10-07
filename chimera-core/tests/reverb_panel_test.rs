@@ -60,7 +60,21 @@ fn every_type_shows_its_cells() {
     assert_eq!(main(Hall), s(&["SIZE", "DECAY", "TONE", "DIFFUSE"]));
     assert_eq!(
         more(Hall),
-        s(&["PRE-DLY", "DAMP", "SMEAR", "RATE", "SYNC", "-"])
+        s(&["PRE-DLY", "DAMP", "SMEAR", "RATE", "SYNC", "SPREAD"])
+    );
+    // MORE 2 is HALL's DENSITY alone.
+    let more2 = |t| words(t, RevPage::More2, 6);
+    assert_eq!(more2(Hall), s(&["DENSITY", "-", "-", "-", "-", "-"]));
+    for t in [Quad, Room, Bloom, Gate, Reverse] {
+        assert_eq!(more2(t), s(&["-"; 6]), "{t:?}");
+    }
+    assert_eq!(
+        knob(Hall, RevPage::More, 5).unwrap().id,
+        ReverbParams::SHAPE
+    );
+    assert_eq!(
+        knob(Hall, RevPage::More2, 0).unwrap().id,
+        ReverbParams::DENSITY
     );
     assert_eq!(main(Bloom), s(&["SWELL", "DECAY", "TONE", "DIFFUSE"]));
     assert_eq!(
@@ -304,7 +318,7 @@ fn a_type_nudge_keeps_the_tweaks() {
     let mut r = ReverbParams::default().with_type(ReverbType::Room, &mem);
     (r.size, r.tone, r.mix) = (0.9, 0.8, 0.6);
     let h = retype(&r, ReverbType::Hall, &mut mem);
-    assert_eq!(h.size, 0.65, "Hall's starting SIZE");
+    assert_eq!(h.size, 0.921878, "Hall's starting SIZE");
     let back = retype(&h, ReverbType::Room, &mut mem);
     assert!((back.size - 0.9).abs() <= 1.0 / 65_534.0);
     assert!((back.tone - 0.8).abs() <= 1.0 / 65_534.0);
@@ -422,26 +436,30 @@ fn cells_read_their_starting_values() {
         "9.2k"
     );
     let p = ReverbParams::default().with_type(ReverbType::Hall, &KnobMemory::new());
+    // MidiVerb II program 23's fitted knobs (ADR 0095), SMEAR 0.
     for (id, w) in [
-        (P::SIZE, "342ms"),
-        (P::TIME, "2.5s"),
-        (P::TONE, "6.6k"),
-        (P::DIFFUSE, "0.60"),
-        (P::DAMPING, "6.1k"),
-        (P::PREDELAY, "19ms"),
-        (P::SMEAR, "0.7ms"),
+        (P::SIZE, "563ms"),
+        (P::TIME, "2.0s"),
+        (P::TONE, "12k"),
+        (P::DIFFUSE, "0.49"),
+        (P::DAMPING, "3.2k"),
+        (P::PREDELAY, "7ms"),
+        (P::SMEAR, "OFF"),
         (P::RATE, "0.30Hz"),
+        (P::SHAPE, "107ms"),
+        (P::DENSITY, "4.0"),
     ] {
         assert_eq!(text(id, &p).as_str(), w, "HALL {id:?}");
     }
     // In the plate zone the cells show what plays: the plate's 120 ms,
-    // DIFFUSE 0.75, TONE 10 kHz, no pre-delay.
+    // DIFFUSE 0.80, TONE OFF, no pre-delay, the diffuser at its shortest.
     let plate = ReverbParams { size: 0.0, ..p };
     for (id, w) in [
         (P::SIZE, "120ms"),
-        (P::DIFFUSE, "0.75"),
-        (P::TONE, "10k"),
+        (P::DIFFUSE, "0.80"),
+        (P::TONE, "OFF"),
         (P::PREDELAY, "0ms"),
+        (P::SHAPE, "6ms"),
     ] {
         assert_eq!(text(id, &plate).as_str(), w, "PLATE {id:?}");
     }
@@ -451,7 +469,7 @@ fn cells_read_their_starting_values() {
     assert_eq!(text(P::TIME, &g).as_str(), "OFF");
 }
 
-/// HALL's SIZE cell reads `PLATE` in the plate zone (SIZE < 0.15; ADR
+/// HALL's SIZE cell reads `PLATE` in the plate zone (SIZE < 0.05; ADR
 /// 0085: the label, not the value), on the page and under any context;
 /// MIDI MAP keeps the slot's word.
 #[test]
@@ -467,8 +485,8 @@ fn hall_size_cell_reads_plate_in_its_zone() {
     assert!(w("PLATE") <= theme::CELL_BAR_W);
     for (kind, size, want) in [
         (ReverbType::Hall, 0.0, "PLATE"),
-        (ReverbType::Hall, 0.149, "PLATE"),
-        (ReverbType::Hall, 0.15, "SIZE"),
+        (ReverbType::Hall, 0.049, "PLATE"),
+        (ReverbType::Hall, 0.05, "SIZE"),
         (ReverbType::Hall, 0.65, "SIZE"),
         (ReverbType::Room, 0.0, "SIZE"),
     ] {
@@ -521,9 +539,9 @@ fn room_sync_steps_off_and_time_only() {
         (all.sync, text(ReverbParams::SYNC, &all).as_str()),
         (All, "ALL")
     );
-    // A SYNC turn converts the slot (`with_sync`): HALL's 18.75 ms
-    // PRE-DLY reads its nearest note, 1/64T.
-    assert_eq!(text(ReverbParams::PREDELAY, &all).as_str(), "1/64T");
+    // A SYNC turn converts the slot (`with_sync`): HALL's 7.3 ms PRE-DLY
+    // reads its nearest note, none.
+    assert_eq!(text(ReverbParams::PREDELAY, &all).as_str(), "0");
     assert_eq!(text(ReverbParams::TIME, &all).as_str(), "4 BT");
 }
 
