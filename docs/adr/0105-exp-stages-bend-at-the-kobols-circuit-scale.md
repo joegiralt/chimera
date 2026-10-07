@@ -1,6 +1,6 @@
 # 0105. EXP's stages bend at the Kobol's circuit scale (supersedes in part 0096)
 
-- **Status:** Proposed
+- **Status:** Accepted (owner, 2026-10-07)
 - **Deciders:** owner, with Claude (DSP)
 
 ## Context

@@ -101,4 +101,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0099](0099-a-project-file-load-fades-before-pass-2.md) | A project file load fades before pass 2 and reads its sources inside the fade (supersedes in part [0046](0046-project-load-protocol.md)) | Proposed |
 | [0101](0101-voice-chain-may-hold-2112-bytes.md) | The voice chain may hold 2,112 B (supersedes in part 0051) | Accepted |
 | [0102](0102-a-record-may-hold-640-bytes.md) | A record may hold 640 B: the four fixed matrix columns' routes (supersedes in part 0045) | Accepted |
-| [0105](0105-exp-stages-bend-at-the-kobols-circuit-scale.md) | EXP's stages bend at the Kobol's circuit scale (supersedes in part 0096) | Proposed |
+| [0105](0105-exp-stages-bend-at-the-kobols-circuit-scale.md) | EXP's stages bend at the Kobol's circuit scale (supersedes in part 0096) | Accepted |
