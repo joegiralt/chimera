@@ -1132,3 +1132,65 @@ fn poly_wraps_stay_under_the_source_peak() {
     }
     eprintln!("POLY peak: {worst:.3} × the source's");
 }
+
+/// MONO on a 0.9 sine with its PERIOD, a param square-waving every 7
+/// blocks between two draws, at any pitch: `change` sets it. Returns the
+/// worst peak over `cases` seeded cases.
+fn mono_under(seed: u64, cases: usize, change: impl Fn(&mut TapeEngineParams, f32)) -> f32 {
+    let mut rng = XorShift(seed);
+    let u = |r: &mut XorShift| r.next_u32() as f32 / u32::MAX as f32;
+    let mut worst = 0.0f32;
+    for _ in 0..cases {
+        let period = 8.0 + 300.0 * u(&mut rng);
+        let frames = 200 + rng.below(30_000);
+        let s: Vec<f32> = (0..frames)
+            .map(|i| 0.9 * libm::sinf(core::f32::consts::TAU * i as f32 / period))
+            .collect();
+        let held = held_plain(&s, [8_000, 24_000, 48_000][rng.below(3)]);
+        let v = SourceView::strict(&held).unwrap();
+        let mut p = TapeEngineParams {
+            start: u(&mut rng),
+            end: u(&mut rng),
+            size: u(&mut rng),
+            position: u(&mut rng),
+            motion: 2.0 * u(&mut rng) - 1.0,
+            root: 12_700.0 * u(&mut rng),
+            ..stretch(StretchType::Mono, period)
+        };
+        let mut e = fresh();
+        e.without_transport();
+        e.note_on(rng.below(128) as u8, &p, &v, SR);
+        let (a, b) = (u(&mut rng), u(&mut rng));
+        let mut out = [0.0; B];
+        for k in 0..300 {
+            change(&mut p, if (k / 7) % 2 == 0 { a } else { b });
+            e.render(&mut out, &p, &v, SR);
+            worst = out.iter().fold(worst, |m, y| m.max(y.abs()));
+        }
+    }
+    worst
+}
+
+/// SIZE moved mid-note makes the lock come and go: a grain started
+/// unlocked wraps by the window, not whole periods, in a block that locks.
+/// Its wrap holds the output (ADR 0103), so no peak passes the sine's by
+/// more than a hold's eighth and the Hermite's overshoot (2.17 before).
+#[test]
+fn mono_lock_coming_and_going_stays_under_the_peak() {
+    let worst = mono_under(78, 200, |p, x| p.size = x);
+    assert!(worst <= 1.1, "{worst}");
+}
+
+/// END, or START onto END, moved mid-note moves the window under the
+/// grains: a run-up grain moved to its span's start, or a wrap whose jump
+/// whole periods can't explain, holds rather than lifting the jump (2.37
+/// before).
+#[test]
+fn mono_window_moving_stays_under_the_peak() {
+    let end = mono_under(79, 200, |p, x| p.end = x);
+    let both = mono_under(80, 200, |p, x| (p.start, p.end) = (x, x));
+    assert!(
+        end <= 1.1 && both <= 1.1,
+        "END {end}, START onto END {both}"
+    );
+}

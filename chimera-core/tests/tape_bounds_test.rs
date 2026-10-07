@@ -226,26 +226,18 @@ fn drawn(rng: &mut XorShift, model: TapeModel, period: f32) -> TapeEngineParams 
 }
 
 /// The sources' sine peak.
-const PEAK: f32 = 0.95;
+const PEAK: f32 = 0.9;
 
-/// The peak a sine at `PEAK` may reach through `model`: 1.1. STRETCH
-/// MONO's wrap lift (ADR 0103 keeps it for MONO) passes that when a grain
-/// wraps by the window, not whole periods (SIZE or END moved mid-note, or
-/// a pitch far above ROOT): 2.15 worst on ten seeds, so it is held at 2.4,
-/// which still catches a NaN or a lift that random-walks.
-fn bound(model: TapeModel) -> f32 {
-    if model == TapeModel::Stretch {
-        2.4
-    } else {
-        1.1
-    }
-}
+/// The peak a sine at `PEAK` may reach through any machine: an eighth past
+/// it (a STRETCH hold's most, ADR 0103) and the Hermite's own overshoot on
+/// a short period read at `INC_MAX`.
+const BOUND: f32 = 1.1;
 
 /// Every machine on a sine (a transwave of sines for TRANSWAVE), with its
 /// params, pitch and gate changed block by block mid-note: a fresh draw,
 /// END, START onto END, MOTION negated, a pitch jump (to ±120 st), a
 /// note-off, a glide, a retrigger, SIZE and XFADE, POSITION; edges a third
-/// of the time. Every sample stays finite and within `bound`. The
+/// of the time. Every sample stays finite and within `BOUND`. The
 /// held-still bounds test above missed SCRUB's NaN and PING-PONG's
 /// retargeted lift (+6.6 dB).
 #[test]
@@ -307,7 +299,7 @@ fn mid_note_changes_stay_finite_and_bounded() {
                 e.render(&mut b, &p, &v, 48_000);
                 let worst = b.iter().fold(0.0f32, |m, y| m.max(y.abs()));
                 assert!(
-                    worst.is_finite() && worst <= bound(model),
+                    worst.is_finite() && worst <= BOUND,
                     "{model:?} run {run} block {k} (op {op}): {worst}, {p:?}"
                 );
             }

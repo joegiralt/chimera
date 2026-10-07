@@ -30,12 +30,26 @@ bound before the chain in spec § 9. A C4 sine test measured 2.4×
   (`poly_wraps_stay_under_the_source_peak`: 1.04× worst).
 - **No read.** The POLY wrap reads nothing: the slope comes from the output
   buffer.
-- **MONO keeps the lift,** `y = x + w · carry`. A held value fading over 5 ms
-  would duck a held tone at every MONO wrap. A short one bends it: MONO's tests
-  measured 3.2× the sine's own bend.
-- **Which kind.** A carry's kind is its wrap's: the block's lock (`hold` 1
-  unlocked, 0 locked). A lift's wrap takes on what the carry in play adds,
-  whatever its kind; a hold's starts from the output.
+- **MONO keeps the lift where whole periods hold,** `y = x + w · carry`. A held
+  value fading over 5 ms would duck a held tone at every MONO wrap. A short one
+  bends it: MONO's tests measured 3.2× the sine's own bend. Whole periods hold
+  when all three of these are true:
+  - the grain was latched locked, so its span is whole periods;
+  - no hold is still in play (`m · w` under 0.01);
+  - the jump it reads is within an eighth of the level.
+- **Every other MONO wrap holds, as POLY's does.** That covers:
+  - a grain started unlocked that wraps in a block that locks (SIZE or END
+    moved mid-note);
+  - a run-up grain moved to its span's start as the window moves;
+  - a wrap with a hold still in play;
+  - a jump read past the source's edge.
+
+  Lifted, those jumps rode on the new grain's swing: the tape-spec final review's
+  mid-note fuzz measured up to 2.15× a 0.95 sine.
+- **Which kind.** A carry's kind is its grain's. It is latched with the grain's
+  span at the splice (`hold` 1 unlocked, 0 locked) and checked at each wrap as
+  above. A lift's wrap takes on what the carry in play adds; a hold's starts
+  from the output.
 - **The loop.** The carry's terms (`1 − hold · w`, `w · carry`) are formed
   before the reads, so the output waits on one multiply-add after them.
 
@@ -54,12 +68,18 @@ bound before the chain in spec § 9. A C4 sine test measured 2.4×
 - The desktop QA passes 241 of 268 renders, against 238.
   `stretch-sine-c4-poly`, `stretch-brass-c4-poly` and `stretch-kit-16-poly` now
   pass, and no render newly fails.
+- No STRETCH wrap, MONO or POLY, passes the peak by more than a hold's eighth
+  plus the Hermite's own overshoot. The TAPE mid-note fuzz holds every machine,
+  STRETCH included, to 1.1 on a 0.9 sine. MONO's held-tone tests (no duck, no
+  bend) are unchanged.
 - **On the M7 (static count):**
   - the common path is 226 instructions a sample, against 235 (the loop
     indexes its output);
   - a wrap's carry is out of line, one copy for both grains (`carry_at_wrap`),
     so a MONO lift is about 190 a wrap, against 108;
-  - a POLY hold is about 125.
+  - a POLY hold is about 125;
+  - a MONO wrap's checks (the hold in play, the jump against the level) add a
+    compare or two on that cold path. The common path is unchanged.
 - **The bill's worst case** (MONO lifted under the floor) is −9 on the common
   path and about +10.6 at its wraps (two in 16 samples): +1.6 static, about
   445 against `COST_STRETCH` 450. The bench rows confirm it at ship.

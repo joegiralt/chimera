@@ -30,7 +30,12 @@
 //! holds the output it left instead, the held value moving on at the
 //! output's slope as it slows (`hold_from`), and crossfades from it to the
 //! new grain under the same one-pole, an eighth past the peak at most (ADR
-//! 0103). Either way the output never steps or bends there. A grain whose wrap comes more than once in
+//! 0103). MONO lifts only where whole periods hold: the grain latched
+//! locked, no hold in play, and the jump within an eighth of the level.
+//! Any other MONO wrap (a grain started unlocked wrapping in a block that
+//! locks, a run-up grain moved to its span's start as the window moves, a
+//! jump read past the source's edge) holds, as POLY's does. Either way the
+//! output never steps or bends there. A grain whose wrap comes more than once in
 //! `MIN_PASS_SAMPLES` samples is a waveform loop, as an oscillator's cycle
 //! is: it wraps bare.
 //!
@@ -58,6 +63,9 @@ use crate::dsp::algo::math::{clampf, exp2};
 
 /// A wrap's lift fades over 5 ms, as PING-PONG's clamp does.
 pub const LIFT_S: f32 = 0.005;
+/// A hold's weight under which a locked wrap lifts again: what's left of
+/// it is then at most twice this of the peak.
+const HOLD_LEFT: f32 = 0.01;
 /// A POLY hold travels at most this many samples' move of the output's
 /// slope as it slows, and spills at most this many past the output's and
 /// the grains' level, and at most this share of it (`hold_from`).
@@ -146,7 +154,8 @@ struct Block {
     /// Set in `render`, from the grains' latched spans at the block's speed.
     lift_k: f32,
     locked: bool,
-    /// A wrap's carry holds (1, POLY: unlocked) or lifts (0, MONO).
+    /// A new grain's carry kind: holds (1, POLY: unlocked) or lifts (0,
+    /// MONO, where its jump allows: `carry_at_wrap`).
     hold: f32,
     /// The fade's length and its reciprocal.
     half: u32,
@@ -193,26 +202,34 @@ fn hold_from(o: f32, prev: f32, level: f32) -> (f32, f32, f32) {
     (o + v, v * k, k)
 }
 
-/// A grain's wrap in the loop starts a carry of the block's kind (`hold`):
-/// POLY's holds the output `o` (`hold_from`; no jump to read); MONO's lifts
-/// what the carry in play adds now (`(c, w, m)` at the grains' mix `x`)
-/// plus the jump, the grain's read `r` against the place wrapped (`back`)
-/// at its `share`. Returns the carry, its move and the move's fall. Out of
-/// line: one copy for both grains.
+/// A grain's wrap in the loop starts a carry (ADR 0103). A grain latched
+/// locked (`latched` 0) lifts what the carry in play adds now (`(c, w, m)`
+/// at the grains' mix `x`) plus the jump, the grain's read `r` against the
+/// place wrapped (`back`) at its `share`, but only while the jump is what
+/// whole periods promise, within `HOLD_OVER` of the `level`, and no hold
+/// is still in play (`m · w` under `HOLD_LEFT`: a lift would freeze the
+/// held value's gap to a wave that moves on). Anything else, POLY's window
+/// wraps among them, holds the output `o` (`hold_from`), so no wrap passes
+/// the peak by more than an eighth. Returns the carry, its move, the move's
+/// fall and its kind (0 lift, 1 hold). Out of line: one copy for both
+/// grains.
 #[cold]
 #[inline(never)]
 fn carry_at_wrap(
     v: &SourceView<'_>,
-    hold: f32,
+    latched: f32,
     (c, w, m, x): (f32, f32, f32, f32),
     (o, prev, level): (f32, f32, f32),
     (r, back, share): (f32, Pos, f32),
-) -> (f32, f32, f32) {
-    if hold != 0.0 {
-        hold_from(o, prev, level)
-    } else {
-        (w * (c - m * x) + share * (r - v.read(back)), 0.0, 0.0)
+) -> (f32, f32, f32, f32) {
+    if latched == 0.0 && m * w < HOLD_LEFT {
+        let jump = r - v.read(back);
+        if libm::fabsf(jump) <= HOLD_OVER * level {
+            return (w * (c - m * x) + share * jump, 0.0, 0.0, 0.0);
+        }
     }
+    let (h, vel, vk) = hold_from(o, prev, level);
+    (h, vel, vk, 1.0)
 }
 
 /// `inc` (in `(0, INC_MAX]`) in 32.32, from 32-bit conversions.
@@ -248,6 +265,11 @@ pub struct Stretch {
     hi: [u32; 2],
     span: [u64; 2],
     tiny: [bool; 2],
+    /// Each grain's carry kind, latched with its span: 0 lifts (MONO's
+    /// whole periods), 1 holds (POLY's window). A grain started unlocked
+    /// keeps holding in a block that locks (SIZE or END moved mid-note):
+    /// its wrap is still the window's, its jump up to twice the peak.
+    holds: [f32; 2],
     /// How far through the fade the last sample was (the new grain's share
     /// is `smooth` of it), and its step a sample.
     g: f32,
@@ -273,7 +295,8 @@ pub struct Stretch {
     /// What wraps carry, riding on the output `x` as `w · (carry − hold ·
     /// x)`, `w` (`carry_w`) from 1 at a wrap falling by `lift_k` a sample.
     /// MONO's wrap is whole periods, its jump near 0: it lifts (`hold` 0),
-    /// its carry the jump, so no corner. POLY's window isn't whole periods,
+    /// its carry the jump, so no corner, where that holds (`carry_at_wrap`;
+    /// else it holds). POLY's window isn't whole periods,
     /// so its jump is up to twice the peak and a lift would add the new
     /// grain's swing to it (#384): it holds (`hold` 1) the output it left
     /// and crossfades from it to the new grain, an eighth past the peak at
@@ -307,6 +330,7 @@ impl Stretch {
         hi: [1; 2],
         span: [1 << 32; 2],
         tiny: [true; 2],
+        holds: [0.0; 2],
         g: 0.0,
         dg: 0.0,
         tau: 0,
@@ -492,6 +516,7 @@ impl Stretch {
             // Nothing is in play yet: the first grain takes the block's
             // window, and its fade the block's D-TIME.
             (self.hi, self.span, self.tiny) = ([k.hi; 2], [k.span; 2], [k.tiny; 2]);
+            self.holds = [k.hold; 2];
             self.clock.len = k.half.max(self.clock.pos + 1);
             // Re-aimed, so the share lands on 1 as the fade ends.
             self.dg = (1.0 - self.g) / self.clock.left() as f32;
@@ -561,6 +586,7 @@ impl Stretch {
             let (m0, m1) = (d0 as i32, d1 as i32);
             let (w0, w1) = (Pos(neg(self.span[0], d0)), Pos(neg(self.span[1], d1)));
             let [t0, t1] = self.tiny;
+            let [k0, k1] = self.holds;
             let (mut g, dg) = (self.g, self.dg);
             let (mut c, mut w) = (self.carry, self.carry_w);
             let (mut vel, mut vk) = (self.vel, self.vel_k);
@@ -593,8 +619,8 @@ impl Stretch {
                         let share = 1.0 - smooth(g + dg);
                         let jump = (a, h0 - Pos(c0), share);
                         let now = (o, prev, libm::fabsf(x).max(peak));
-                        (c, vel, vk) = carry_at_wrap(v, k.hold, (c, w, m, x), now, jump);
-                        (w, m) = (1.0, k.hold);
+                        (c, vel, vk, m) = carry_at_wrap(v, k0, (c, w, m, x), now, jump);
+                        w = 1.0;
                     }
                     #[cfg(any(test, feature = "test-support"))]
                     {
@@ -608,8 +634,8 @@ impl Stretch {
                         let prev = if i >= 2 { out[i - 2] } else { last };
                         let jump = (b, h1 - Pos(c1), smooth(g + dg));
                         let now = (o, prev, libm::fabsf(x).max(peak));
-                        (c, vel, vk) = carry_at_wrap(v, k.hold, (c, w, m, x), now, jump);
-                        (w, m) = (1.0, k.hold);
+                        (c, vel, vk, m) = carry_at_wrap(v, k1, (c, w, m, x), now, jump);
+                        w = 1.0;
                     }
                     #[cfg(any(test, feature = "test-support"))]
                     {
@@ -638,7 +664,9 @@ impl Stretch {
     /// A grain past its window's end before a block (the window moved under
     /// the run-up) wraps back by its span, or to the span's start if further
     /// out; what it reads there against where it was joins the carry, of
-    /// the block's kind (`hold`, `carry`).
+    /// the block's kind (`hold`, `carry`). A move to the span's start isn't
+    /// whole periods, so it holds whatever the kind, as does a lock with a
+    /// hold still in play or a jump whole periods don't explain.
     #[cold]
     #[inline(never)]
     fn wrap(&mut self, v: &SourceView<'_>, hold: f32) {
@@ -647,7 +675,7 @@ impl Stretch {
         let o = self.prev;
         let d = self.carry_w * (self.carry - self.hold * o);
         let mut jump = 0.0;
-        let mut moved = false;
+        let (mut moved, mut whole) = (false, true);
         for x in 0..2 {
             let (u, hi, span) = (self.u(x), self.hi[x], self.span[x]);
             if u.whole() < hi {
@@ -656,6 +684,7 @@ impl Stretch {
             let mut w = u - Pos(span);
             if w.whole() >= hi {
                 w = at(hi) - Pos(span);
+                whole = false;
             }
             let share = if x == 1 { g } else { 1.0 - g };
             let was = self.heads[x];
@@ -664,6 +693,13 @@ impl Stretch {
             moved = true;
         }
         if moved {
+            // Lifted only as a lock's wrap is (`carry_at_wrap`).
+            let level = libm::fabsf(o).max(self.peak);
+            let lifts = whole
+                && hold == 0.0
+                && self.hold * self.carry_w < HOLD_LEFT
+                && libm::fabsf(jump) <= HOLD_OVER * level;
+            let hold = if lifts { 0.0 } else { 1.0 };
             self.carry = if hold != 0.0 { o } else { d + jump };
             (self.carry_w, self.hold, self.vel) = (1.0, hold, 0.0);
         }
@@ -679,6 +715,7 @@ impl Stretch {
         self.hi[0] = self.hi[1];
         self.span[0] = self.span[1];
         self.tiny[0] = self.tiny[1];
+        self.holds[0] = self.holds[1];
         self.rev[0] = self.rev[1];
         // A flip lands here: the new grain plays the new way, and locks
         // only to a grain going its way.
@@ -692,6 +729,7 @@ impl Stretch {
         self.hi[1] = k.hi;
         self.span[1] = k.span;
         self.tiny[1] = k.tiny;
+        self.holds[1] = k.hold;
         self.clock.len = k.half;
         self.clock.pos = 0;
         if self.carry_w < 1e-9 {
@@ -776,6 +814,11 @@ mod tests {
     /// `held` of `frames` (≤ 224) frames, sample `i` at `i · 16` (12 bits)
     /// after a `Plain` descriptor at 48 kHz, and its length.
     fn ramp(frames: usize) -> ([u8; 16 + 336], usize) {
+        ramp_of(frames, 0, 16)
+    }
+
+    /// `ramp`, sample `i` at `base + i · step`.
+    fn ramp_of(frames: usize, base: usize, step: usize) -> ([u8; 16 + 336], usize) {
         use super::super::read::{DESC_LEN, Descriptor, Shape};
         let d = Descriptor {
             shape: Shape::Plain,
@@ -785,7 +828,7 @@ mod tests {
         };
         let mut x = [0i16; 224];
         for (i, y) in x.iter_mut().enumerate() {
-            *y = (i * 16 % 2_048) as i16;
+            *y = ((base + i * step) % 2_048) as i16;
         }
         let mut held = [0u8; 16 + 336];
         held[..DESC_LEN].copy_from_slice(&d.to_bytes());
@@ -797,15 +840,17 @@ mod tests {
     /// new grain's `g + dg`, not the last sample's `g`. In the loop, what
     /// it read the sample before against the same place wrapped; before a
     /// block (the run-up), what it reads against where it lands. A waveform
-    /// loop's grain wraps bare.
+    /// loop's grain wraps bare. A slow ramp, so the jump is one whole
+    /// periods could leave (within an eighth of the level): it lifts.
     #[test]
     fn wrap_carries_the_next_share() {
-        let (held, n) = ramp(128);
+        let (held, n) = ramp_of(128, 1_024, 1);
         let v = SourceView::new(&held[..n]).unwrap();
         let mut s = Stretch::IDLE;
         (s.heads, s.hi, s.span) = ([at(1), at(40)], [40; 2], [32 << 32; 2]);
-        (s.g, s.dg) = (0.25, 0.25);
+        (s.g, s.dg, s.peak) = (0.25, 0.25, 0.5);
         s.wrap(&v, 0.0);
+        assert_eq!(s.hold, 0.0, "lifts");
         assert_eq!(s.heads[1], at(8));
         let want = smooth(0.5) * (v.read(at(40)) - v.read(at(8)));
         assert!((s.carry - want).abs() < 1e-6, "{} against {want}", s.carry);
@@ -846,6 +891,29 @@ mod tests {
             let got = s.carry * s.carry_w;
             assert!((got - want).abs() < 1e-5, "{got} against {want}");
         }
+    }
+
+    /// A locked wrap whose jump whole periods can't leave (a steep ramp: a
+    /// quarter of full scale against a level of a half), or one with a hold
+    /// still in play, holds the output rather than lifting the jump.
+    #[test]
+    fn a_jump_periods_cant_explain_holds() {
+        let (held, n) = ramp(128);
+        let v = SourceView::new(&held[..n]).unwrap();
+        let mut s = Stretch::IDLE;
+        (s.heads, s.hi, s.span) = ([at(1), at(40)], [40; 2], [32 << 32; 2]);
+        (s.g, s.dg, s.peak, s.prev) = (0.25, 0.25, 0.5, 0.3);
+        s.wrap(&v, 0.0);
+        assert_eq!((s.hold, s.carry), (1.0, 0.3));
+
+        let (held, n) = ramp_of(128, 1_024, 1);
+        let v = SourceView::new(&held[..n]).unwrap();
+        let mut s = Stretch::IDLE;
+        (s.heads, s.hi, s.span) = ([at(1), at(40)], [40; 2], [32 << 32; 2]);
+        (s.g, s.dg, s.peak, s.prev) = (0.25, 0.25, 0.5, 0.3);
+        (s.hold, s.carry, s.carry_w) = (1.0, 0.6, 0.5);
+        s.wrap(&v, 0.0);
+        assert_eq!((s.hold, s.carry), (1.0, 0.3), "a hold in play");
     }
 
     /// A hold leaves at the output's slope and comes to rest where its
