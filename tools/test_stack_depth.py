@@ -122,6 +122,17 @@ class StackDepth(unittest.TestCase):
         self.assertFalse(sd.check(self.img, 1 << 20, out))
         self.assertIn("no DMA1_STR0", out.getvalue())
 
+    def test_the_audio_interrupt_reaches_no_small_profile_code(self):
+        self.assertEqual(sd.small_reached(self.funcs), [])
+        funcs = dict(self.funcs)
+        funcs["leaf"] = (8, frozenset({"chimera_board::probe::stack_used"}), frozenset(), False)
+        funcs["chimera_board::probe::stack_used"] = (0, frozenset(), frozenset(), False)
+        self.assertEqual(sd.small_reached(funcs), ["chimera_board::probe::stack_used"])
+        self.img.funcs = funcs
+        out = io.StringIO()
+        self.assertFalse(sd.check(self.img, 1 << 20, out))
+        self.assertIn("reaches chimera_board::probe::stack_used", out.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

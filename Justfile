@@ -106,7 +106,8 @@ check:
 # frames from `main` and from each interrupt entry (the audio's DMA1_STR0,
 # render_half and the FX bus under it, MIDI's USART1, SysTick, HardFault),
 # all nested at once, against the stack, each call through a pointer
-# charged the deepest address-taken function, three deep. Checked for the default,
+# charged the deepest address-taken function, three deep; and that the audio
+# interrupt reaches no small-profile code (ADR 0108). Checked for the default,
 # no-default, orbit, every bench set (`bench_sets`) and sd-probe feature
 # sets (sd-probe has no interrupts: frames only).
 # Needs the llvm-tools rustup component; a missing llvm-objdump or an

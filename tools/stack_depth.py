@@ -17,7 +17,10 @@ recursive direct call to run once (the sorts' and `core::str`'s).
 
 The thread (`main`) and each interrupt entry (`ISRS`) are summed, each
 interrupt with its FPU exception frame, as if all nest at once. Exit 1 if
-that passes `stack bytes` less `MARGIN`, or a root (but `OPTIONAL`) is missing.
+that passes `stack bytes` less `MARGIN`, or a root (but `OPTIONAL`) is missing,
+or if the audio interrupt reaches, by direct or tail calls, code of a
+small-profile crate (`SMALL`, ADR 0108): a name holding one, its own
+function or a generic instantiated with its types.
 Standard library only.
 """
 
@@ -31,6 +34,9 @@ THREAD = "main"  # what `Reset` calls; its own frame is a few words
 # An exception's stacked frame with the FPU's lazy state: 26 words, aligned.
 EXC_FRAME = 104
 MARGIN = 2048
+# The small-profile crates (ADR 0108): built for size, so off the audio path.
+AUDIO = "DMA1_STR0"
+SMALL = ("chimera_board",)
 ROOTS = ("Reset", "__stext", "main", "DefaultHandler", "DefaultHandler_") + ISRS
 # Pointer calls nest at most this deep: a dyn body (a `Store` write's)
 # calling a dyn sink calling `core::fmt`'s writer. An assumption, not a
@@ -178,6 +184,19 @@ def pointer_charge(img, out):
     return charge
 
 
+def small_reached(funcs, root=AUDIO):
+    """The functions `root` reaches by direct and tail calls whose names
+    hold a small-profile crate's, sorted."""
+    seen, todo = set(), [root]
+    while todo:
+        f = todo.pop()
+        if f in seen or f not in funcs:
+            continue
+        seen.add(f)
+        todo.extend(funcs[f][1] | funcs[f][2])
+    return sorted(f for f in seen if any(c in f for c in SMALL))
+
+
 def short(name, n=90):
     return name if len(name) <= n else name[: n - 1] + "…"
 
@@ -200,6 +219,9 @@ def check(img, stack_bytes, out):
             print("           recursion cut at: %s" % ", ".join(sorted(short(c, 60) for c in cut)), file=out)
         if ind:
             print("           %d functions call through a pointer, each charged above" % len(ind), file=out)
+    for f in small_reached(img.funcs):
+        print("stack-depth: the audio interrupt reaches %s, built for size" % short(f), file=out)
+        ok = False
     limit = stack_bytes - MARGIN
     print("nested     %6d B of %d (%d less a %d B margin)" % (total, stack_bytes, limit, MARGIN), file=out)
     if total > limit:
