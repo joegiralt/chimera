@@ -1,6 +1,6 @@
 # 0101. The voice chain may hold 2,112 B (supersedes in part 0051)
 
-- **Status:** Proposed
+- **Status:** Accepted (owner, 2026-10-07)
 - **Deciders:** owner (the 2040 and its VOICE, 2026-10-06), firmware (Task 8 review)
 
 ## Context

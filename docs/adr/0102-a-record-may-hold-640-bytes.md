@@ -1,6 +1,6 @@
 # 0102. A record may hold 640 B (supersedes in part 0045)
 
-- **Status:** Proposed
+- **Status:** Accepted (owner, 2026-10-07)
 - **Deciders:** firmware (filter-types Task 11)
 
 ## Context

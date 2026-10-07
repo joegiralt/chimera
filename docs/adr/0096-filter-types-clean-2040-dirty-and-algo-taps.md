@@ -1,6 +1,6 @@
 # 0096. Three filter TYPEs, CLEAN (Cascadia-style), 2040 (SSM2040) and DIRTY (Chamberlin), and ALGO's OP 5/6 audio-rate taps (supersedes 0037)
 
-- **Status:** Proposed
+- **Status:** Accepted (owner, 2026-10-07)
 - **Deciders:** owner (direction and rulings, 2026-10-05; the 2040's VOICE and stage clip, 2026-10-06), firmware (after adversarial review)
 
 ## Context

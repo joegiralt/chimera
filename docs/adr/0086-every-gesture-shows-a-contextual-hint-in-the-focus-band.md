@@ -1,6 +1,6 @@
 # 0086. Every gesture shows a contextual hint in the focus band (amends 0074 and 0081; supersedes 0017's hint text)
 
-- **Status:** Proposed
+- **Status:** Accepted (owner, 2026-10-07)
 - **Deciders:** owner (on-unit QA of RING · NOTES, 2026-10-04), firmware
 
 ## Context
