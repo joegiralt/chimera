@@ -33,6 +33,9 @@ pub const OUT_LADDER: f32 = 1.0;
 /// equilibrium is the tanh's inverse of its input's, so it never asks for
 /// more.
 pub const Y_MAX: f32 = 3.0;
+/// The drive-scaled input's hold, model units: 32 × a full-scale input at
+/// LEVEL 1, so no signal meets it; it keeps a NaN or infinite input finite.
+pub const X_MAX: f32 = 64.0;
 /// The LED's knee on the input pair, `|u|` in model units: 1 lights it
 /// (tanh at 0.76), full at 3, where `tanh_poly` flattens.
 pub const LED_KNEE: f32 = 1.0;
@@ -46,6 +49,7 @@ const _: () = {
     assert!(ALPHA_LADDER > 0.0 && ALPHA_LADDER < 1.0);
     assert!(OUT_LADDER > 0.0 && LED_KNEE > 0.0);
     assert!(Y_MAX == 3.0);
+    assert!(X_MAX >= 32.0 * 4.0 * ALPHA_LADDER);
 };
 
 /// LADDER's modes, in knob order (CLEAN's order): LP4 the default.
@@ -157,12 +161,15 @@ pub fn tanh_poly(x: f32) -> f32 {
 /// (×4): each stage within its swing, every state within it plus `2g` at
 /// the top `g`, `u` within `|x_c| + k·S` (`S` mixes the states with
 /// weights summing under 1), each mix term at its bound, at the mode's
-/// larger gain. Loose for the band and high modes; LP4's is `Y_MAX/α`.
+/// larger gain. Loose for the band and high modes; LP4's is `Y_MAX/α`. A
+/// stability bound, valid at every `k`, so it can't see a mode's level:
+/// BP4's ×4 at RES 0 must be in it. `a_q_tap_rings_every_mode_at_lp4s_level`
+/// pins the levels (review I1).
 #[cfg(feature = "test-support")]
 pub fn ladder_bound(mode: FilterMode, x: f32) -> f32 {
     let g = super::coef::g_of(f32::MAX, 1.0);
     let s = Y_MAX + 2.0 * 2.0 * g;
-    let u = 4.0 * ALPHA_LADDER * x + k2040_k(1.0) * s;
+    let u = (4.0 * ALPHA_LADDER * x).min(X_MAX) + k2040_k(1.0) * s;
     let y = [u, Y_MAX, Y_MAX, Y_MAX, Y_MAX];
     let t = LADDER_TAPS[ladder_index(mode)];
     let m: f32 = t.c.iter().zip(y).map(|(c, y)| c.abs() * y).sum();
@@ -330,10 +337,12 @@ impl Ladder {
 
     /// `g` and `k` ramp to this block's values by adding, each sample's
     /// through the taps if any (`TapShape`); `G` and `D` divide exactly
-    /// every sample (B1). The mode's gain follows the ramp's `k`. One loop
-    /// for every mode, `m` (`LADDER_MODES`' index) read at run time: the
-    /// divides dwarf the mix's three spare multiply-adds, and four fewer
-    /// copies keep the bench builds in FLASH.
+    /// every sample (B1). The mode's gain follows each sample's `k`, so a Q
+    /// tap rings every mode at LP4's level (review I1): one clamp and two
+    /// multiply-adds, no divide. One loop for every mode, `m`
+    /// (`LADDER_MODES`' index) read at run time: the divides dwarf the mix's
+    /// three spare multiply-adds, and four fewer copies keep the bench
+    /// builds in FLASH.
     #[inline(never)]
     pub(super) fn moving(
         &mut self,
@@ -352,12 +361,15 @@ impl Ladder {
         let (mut a, a_step) = (r.a.0, (r.a.1 - r.a.0) / n);
         let out = OUT_LADDER / ALPHA_LADDER;
         let m = m.min(LADDER_TAPS.len() - 1);
-        let (mut o, o_step) = Self::gains(m, r, out);
-        let c5 = LADDER_TAPS[m].c;
+        let Tap {
+            c: c5,
+            gain: [g0, g4],
+        } = LADDER_TAPS[m];
+        let (o0, o4) = (g0 * out, (g4 - g0) * out);
         let (mut peak, mut sum) = (0.0f32, 0.0f32);
         for (i, s) in buf.iter_mut().enumerate() {
             a += a_step;
-            o += o_step;
+            let o = o0 + o4 * clampf(ks[i] * 0.25, 0.0, 1.0);
             sum += *s;
             let c = coef(gs[i], ks[i]);
             let y = self.tick(*s * a, &c);
@@ -393,6 +405,9 @@ impl Ladder {
     #[inline(always)]
     fn tick(&mut self, x_c: f32, c: &Coef) -> [f32; 5] {
         let [s1, s2, s3, s4] = self.s;
+        // A NaN, infinite or absurd input held to `X_MAX` (a NaN to its
+        // floor), so HP4's `y₀ = u` term stays finite (review M3).
+        let x_c = clampf(x_c, -X_MAX, X_MAX);
         // The stages' states through the linear cascade, then the global
         // loop solved linearly (Zavalishin eq. 5.8).
         let big_s = c.one_g * (s4 + c.big_g * (s3 + c.big_g * (s2 + c.big_g * s1)));

@@ -245,6 +245,45 @@ const LADDER_OSC_DB: f32 = -15.6;
 /// Absolute pitch at RES 1, cents, over C2–C6 and FREQ 100 Hz–5 kHz.
 const PITCH_CENTS: f64 = 5.0;
 
+/// A full-depth Q tap from RES 0 (a row held at +1, amount 1, so `k` sits
+/// at RES 1's every sample): each mode's gain follows the sample's `k`, so
+/// every mode rings within 0.5 dB of LP4, as at RES 1 (review I1: it
+/// followed the block's `k`, and BP2 and BP4 rang 12 dB hot, LP2 6).
+#[test]
+fn a_q_tap_rings_every_mode_at_lp4s_level() {
+    let rows = [[1.0f32; BLOCK_SIZE]; 2];
+    let lane = TapLane {
+        rows: &rows,
+        from: [1.0, 0.0],
+        to: [1.0, 0.0],
+    };
+    let mods = FilterMods {
+        q: Some(lane),
+        ..FilterMods::NONE
+    };
+    let ring = |m: FilterMode| {
+        let p = params(m, 800.0, 0.0, 0.5);
+        let mut f = Ladder::new();
+        let mut out = Vec::new();
+        for b in 0..(1.0 * FS) as usize / BLOCK_SIZE {
+            let mut buf: [f32; BLOCK_SIZE] = core::array::from_fn(|i| impulse(b * BLOCK_SIZE + i));
+            f.process(&mut buf, &p, SR, &mods);
+            out.extend_from_slice(&buf);
+        }
+        rms_db(&out[(0.5 * FS) as usize..])
+    };
+    let lp4 = ring(FilterMode::Lp24);
+    assert!((lp4 - LADDER_OSC_DB).abs() <= 1.0, "LP4 {lp4:.2}");
+    for m in MODES {
+        let level = ring(m);
+        println!("{m:?} Q-tapped ring: {level:.2} dBFS (LP4 {lp4:.2})");
+        assert!(
+            (level - lp4).abs() <= 0.5,
+            "{m:?}: {level:.2} against {lp4:.2}"
+        );
+    }
+}
+
 #[test]
 fn ladder_self_oscillates_in_band_and_on_pitch() {
     for m in MODES {
@@ -404,23 +443,30 @@ fn ladder_stays_bounded_under_audio_rate_modulation() {
                 );
             }
             let s = f.states();
-            let top = Y_MAX + 4.0 * g_of(FS, FS);
+            let top = Y_MAX + 2.0 * g_of(FS, FS);
             assert!(s.iter().all(|v| v.abs() <= top), "{m:?} block {b}: {s:?}");
         }
     }
 }
 
-/// A NaN block leaves no trace: the next block starts from rest.
+/// A NaN, infinite or huge block is finite on the way out in every mode,
+/// HP4's `y₀ = u` term included (review M3), and leaves no trace: the next
+/// block starts from rest.
 #[test]
 fn ladder_recovers_from_a_nan_block() {
-    let p = params(FilterMode::Lp24, 1000.0, 0.9, 0.5);
-    let mut f = Ladder::new();
-    let mut b = [f32::NAN; BLOCK_SIZE];
-    f.process(&mut b, &p, SR, &FilterMods::NONE);
-    let mut b: [f32; BLOCK_SIZE] = core::array::from_fn(|i| sine(0.5, 200.0)(i));
-    f.process(&mut b, &p, SR, &FilterMods::NONE);
-    f.process(&mut b, &p, SR, &FilterMods::NONE);
-    assert!(b.iter().all(|y| y.is_finite()) && b.iter().any(|&y| y != 0.0));
+    for m in MODES {
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, f32::MAX, 1e30] {
+            let p = params(m, 1000.0, 0.9, 1.0);
+            let mut f = Ladder::new();
+            let mut b = [bad; BLOCK_SIZE];
+            f.process(&mut b, &p, SR, &FilterMods::NONE);
+            assert!(b.iter().all(|y| y.is_finite()), "{m:?} {bad}: {:?}", b[0]);
+            let mut b: [f32; BLOCK_SIZE] = core::array::from_fn(|i| sine(0.5, 200.0)(i));
+            f.process(&mut b, &p, SR, &FilterMods::NONE);
+            f.process(&mut b, &p, SR, &FilterMods::NONE);
+            assert!(b.iter().all(|y| y.is_finite()) && b.iter().any(|&y| y != 0.0));
+        }
+    }
 }
 
 fn saw(n: usize) -> Vec<f32> {
@@ -450,7 +496,11 @@ fn a_type_change_into_ladder_lands_on_its_own_output() {
         let mut got = Vec::new();
         for (i, c) in x.chunks(BLOCK_SIZE).enumerate() {
             p.set_kind(if i < 6 { from } else { FilterKind::Ladder });
-            assert!(p.mode() == FilterMode::Lp24 || p.set_mode(FilterMode::Lp24) || i < 6);
+            // DIRTY's LP2 carries over to LADDER: LP4, as `always` plays.
+            if i >= 6 {
+                let set = p.set_mode(FilterMode::Lp24);
+                assert!(set);
+            }
             let mut b: [f32; BLOCK_SIZE] = c.try_into().unwrap();
             f.process(&mut b, &p, SR, &FilterMods::NONE);
             got.extend_from_slice(&b);
