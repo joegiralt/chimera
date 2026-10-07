@@ -95,8 +95,8 @@ fn the_morph_showcases_morph() {
         );
     }
     let pad = factory_sound(6).unwrap();
-    assert_eq!(pad.mod_state.num_dests(), 2);
-    assert_ne!(pad.mod_state.amount(1, 1), 0, "LFO 1 moves MORPH");
+    assert_eq!(pad.mod_state.num_dests(), 1, "MORPH; CUTOFF is fixed FREQ");
+    assert_ne!(pad.mod_state.amount(1, 0), 0, "LFO 1 moves MORPH");
 }
 
 /// #33: the LFO's full swing must not push MORPH past its 0..=127 range —

@@ -1,19 +1,19 @@
 //! What the audio thread shows the UI besides the scope: one atomic word
-//! per meter, written once per block with a relaxed store (it never
-//! blocks), read whenever the UI draws.
+//! per meter, written once per block (it never blocks), read whenever the
+//! UI draws. Each meter has its own type, so a dB never lands in a clip's.
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-/// One `f32`, held as its bits.
-pub struct Meter(AtomicU32);
+/// A level in dB, held as its bits: the last block's, a relaxed store.
+pub struct DbMeter(AtomicU32);
 
-impl Meter {
+impl DbMeter {
     pub const fn new() -> Self {
         Self(AtomicU32::new(0))
     }
 
-    pub fn publish(&self, v: f32) {
-        self.0.store(v.to_bits(), Ordering::Relaxed);
+    pub fn publish(&self, db: f32) {
+        self.0.store(db.to_bits(), Ordering::Relaxed);
     }
 
     pub fn read(&self) -> f32 {
@@ -21,7 +21,58 @@ impl Meter {
     }
 }
 
-impl Default for Meter {
+impl Default for DbMeter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// How hard a clipper bit, 0..=1: 0 below its knee, 1 full. Never
+/// negative, −0 or NaN, so its bits order as its values (`ClipMeter`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+pub struct Clip(f32);
+
+impl Clip {
+    pub const ZERO: Clip = Clip(0.0);
+
+    /// `v` held to 0..=1; NaN and −0 are 0.
+    #[inline(always)]
+    pub fn new(v: f32) -> Clip {
+        Clip(if v > 0.0 { v.min(1.0) } else { 0.0 })
+    }
+
+    pub fn get(self) -> f32 {
+        self.0
+    }
+
+    #[inline(always)]
+    pub fn max(self, o: Clip) -> Clip {
+        if o.0 > self.0 { o } else { self }
+    }
+}
+
+/// The most a clipper bit since the UI last looked: audio raises it each
+/// block (`fetch_max`), the UI takes it once a frame (`swap(0)`), so no
+/// one-block clip is missed between frames.
+pub struct ClipMeter(AtomicU32);
+
+impl ClipMeter {
+    pub const fn new() -> Self {
+        Self(AtomicU32::new(0))
+    }
+
+    /// Audio: at least `c` until the next `take`. One atomic op.
+    pub fn raise(&self, c: Clip) {
+        self.0.fetch_max(c.0.to_bits(), Ordering::Relaxed);
+    }
+
+    /// The UI: the most since the last `take`, and back to 0.
+    pub fn take(&self) -> Clip {
+        Clip(f32::from_bits(self.0.swap(0, Ordering::Relaxed)))
+    }
+}
+
+impl Default for ClipMeter {
     fn default() -> Self {
         Self::new()
     }
@@ -31,4 +82,35 @@ impl Default for Meter {
 ///
 /// Global: tests run in parallel threads, so at most one test per test
 /// binary may publish a nonzero value or render MST expecting one.
-pub static MASTER_GR: Meter = Meter::new();
+pub static MASTER_GR: DbMeter = DbMeter::new();
+
+/// Each Part's filter LEVEL clip: the most any of its voices clipped since
+/// the UI last took it (`Voice::filter_clip`). Global, as `MASTER_GR`.
+pub static FILTER_CLIP: [ClipMeter; crate::hw::MAX_PARTS] =
+    [const { ClipMeter::new() }; crate::hw::MAX_PARTS];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Bits order as values over `Clip`'s range, so `fetch_max` keeps the
+    /// most; `take` empties it.
+    #[test]
+    fn a_clip_meter_keeps_the_most_until_taken() {
+        let m = ClipMeter::new();
+        for v in [0.3, 0.7, 0.0, 0.5] {
+            m.raise(Clip::new(v));
+        }
+        assert_eq!(m.take().get(), 0.7);
+        assert_eq!(m.take(), Clip::ZERO);
+        assert_eq!(Clip::new(-0.0).get().to_bits(), 0);
+        assert_eq!(Clip::new(f32::NAN), Clip::ZERO);
+        assert_eq!(Clip::new(3.0).get(), 1.0);
+        let mut last = 0u32;
+        for i in 0..=1000 {
+            let b = Clip::new(i as f32 / 1000.0).get().to_bits();
+            assert!(b >= last);
+            last = b;
+        }
+    }
+}

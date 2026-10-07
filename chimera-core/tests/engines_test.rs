@@ -13,6 +13,7 @@ use chimera_core::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
 use chimera_core::dsp::modal::{ResonatorMode, SymPool};
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::source_table::GateView;
+use chimera_core::taps::TapRows;
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::tape::{OneSource, held_plain, saw_with_burst};
@@ -32,7 +33,14 @@ fn render(e: &mut EngineSlot, p: &ParamSnapshot, pool: &mut SymPool, blocks: usi
     let none = GateView::empty();
     for _ in 0..blocks {
         let live = AlgoLive::from_params(&p.algo);
-        e.render(&mut out, p, &live, SR, &mut ctx(pool, &none));
+        e.render(
+            &mut out,
+            p,
+            &live,
+            SR,
+            &mut ctx(pool, &none),
+            &mut TapRows::new([false; 2]),
+        );
         peak = out.iter().fold(peak, |m, x| m.max(x.abs()));
     }
     peak
@@ -63,7 +71,14 @@ fn every_engine_renders_per_its_expectation() {
             if b == 0 {
                 e.note_on(MidiNote::A4, Velocity::DEFAULT, &p, SR, id, &mut c);
             }
-            e.render(&mut out, &p, &AlgoLive::from_params(&p.algo), SR, &mut c);
+            e.render(
+                &mut out,
+                &p,
+                &AlgoLive::from_params(&p.algo),
+                SR,
+                &mut c,
+                &mut TapRows::new([false; 2]),
+            );
             peak = out.iter().fold(peak, |m, x| m.max(x.abs()));
         }
         assert!(peak.is_finite());

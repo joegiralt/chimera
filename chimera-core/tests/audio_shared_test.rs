@@ -5,7 +5,7 @@ use chimera_core::instrument::{AudioShared, PartAudio};
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::ModState;
 use chimera_core::params::EngineType;
-use chimera_core::params::FilterParams;
+use chimera_core::params::{DriveParams, FilterParams};
 use chimera_core::part::PartMode;
 use chimera_core::preset::{Performance, Sound};
 use chimera_core::project::PartId;
@@ -18,7 +18,7 @@ fn non_default_performance() -> Performance {
     perf.fx.reverb.mix = 0.4;
 
     // A non-default ModState: one modulatable destination with a non-zero amount.
-    let cutoff = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
+    let cutoff = ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL);
     let mut registry = ModDestRegistry::new();
     registry.add(cutoff, *b"CUTOFF\0\0").unwrap();
     let mut mod_state = ModState::from_registry(&registry, 1);
@@ -30,7 +30,7 @@ fn non_default_performance() -> Performance {
 #[test]
 fn snapshot_copies_every_part_and_the_fx() {
     let perf = non_default_performance();
-    let cutoff = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
+    let cutoff = ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL);
     let shared = AudioShared::from_performance(&perf);
     assert_eq!(
         shared.parts[4].params.engine(),
@@ -53,8 +53,8 @@ fn update_from_overwrites_in_place() {
     let mut shared = AudioShared::default();
 
     // Give the back buffer stale routing: two destinations, amount 99.
-    let cutoff = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
-    let resonance = ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE);
+    let cutoff = ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL);
+    let resonance = ParamAddr::new(BlockRef::Drive, DriveParams::TONE);
     let mut stale_registry = ModDestRegistry::new();
     stale_registry.add(cutoff, *b"CUTOFF\0\0").unwrap();
     stale_registry.add(resonance, *b"RESO\0\0\0\0").unwrap();

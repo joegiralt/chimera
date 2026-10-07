@@ -133,7 +133,7 @@ const DEMO_SHAPES: [ParamAddr; 6] = [
     ParamAddr::new(BlockRef::Out, OutParams::VOLUME),
     ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF),
     ParamAddr::new(BlockRef::Out, OutParams::PAN),
-    ParamAddr::new(BlockRef::Filter, FilterParams::DRIVE),
+    ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL),
     ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE),
     ParamAddr::new(BlockRef::Drive, DriveParams::MIX),
 ];

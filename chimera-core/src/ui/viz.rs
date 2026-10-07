@@ -70,6 +70,11 @@ pub const PLOT_TOP: i32 = 40;
 pub const PLOT_BASE: i32 = 170;
 /// Filter pass band (the mockup's 0 dB line); resonance peaks above it.
 pub const FILTER_PASS_Y: i32 = 72;
+/// The response's dB scale: the pass line to the base is 48 dB.
+const PX_PER_DB: f32 = (PLOT_BASE - FILTER_PASS_Y) as f32 / 48.0;
+/// The LEVEL LED in the FLT viz's top-right corner.
+pub const LED_X: i32 = theme::VIZ_RIGHT - 4;
+pub const LED_Y: i32 = PLOT_TOP + 4;
 
 /// Filter response y at column `t` (0..1 across the plot): flat pass band,
 /// a resonance bump at `cutoff`, then roll-off to the base (the pre-refresh
@@ -89,50 +94,95 @@ pub fn filter_y(t: f32, cutoff: f32, reso: f32) -> i32 {
     (y as i32).clamp(PLOT_TOP, PLOT_BASE)
 }
 
-/// Which side of the cutoff passes (the viz reads MODE, spec § UI).
+/// The shape the viz draws for a kind's mode (spec § 5).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Response {
     Low,
+    /// LP1: half the low-pass's roll-off, the same resonant peak.
+    Lp1,
     High,
     Band,
+    /// A notch at FREQ.
     Notch,
-    /// All-pass (PHASER): the magnitude stays flat.
-    Flat,
+    /// CLEAN's NOTCH1: a dip at FREQ that Q turns into a peak, a notch at
+    /// 2 × FREQ and the treble 12 dB down.
+    Notch2x,
+    /// NOTCH2: notches at 0.414 × and 2.414 × FREQ, Q raising the peak
+    /// between them.
+    DoubleNotch,
+    /// The 2040's LP4: its pass band lowered by `1/(1 + k)` as RES rises.
+    K2040,
 }
 
 impl Response {
-    pub fn of(m: crate::dsp::filter::FilterMode) -> Self {
-        use crate::dsp::filter::FilterMode as M;
-        match m {
-            M::Hp24 => Response::High,
-            M::Bp12 | M::Bp24 => Response::Band,
-            M::Notch => Response::Notch,
-            M::Phaser => Response::Flat,
-            M::Lp6 | M::Lp12 | M::Lp24 => Response::Low,
+    pub fn of(kind: crate::dsp::filter::FilterKind, m: crate::dsp::filter::FilterMode) -> Self {
+        use crate::dsp::filter::{FilterKind as K, FilterMode as M};
+        match (kind, m) {
+            (K::Svf, M::Lp6) => Response::Lp1,
+            (K::Svf, M::Hp24 | M::Hp12) => Response::High,
+            (K::Svf, M::Bp12 | M::Bp24) => Response::Band,
+            (K::Svf, M::Notch) => Response::Notch2x,
+            (K::Svf, M::Phaser) => Response::DoubleNotch,
+            (K::Svf, M::Lp12 | M::Lp24) => Response::Low,
+            (K::K2040, _) => Response::K2040,
+            // DIRTY's NOTCH1 notches at FREQ (spec § 5).
+            (K::Dirty, M::Notch) => Response::Notch,
+            (K::Dirty, M::Bp12 | M::Bp24) => Response::Band,
+            (K::Dirty, M::Hp12 | M::Hp24) => Response::High,
+            (K::Dirty, _) => Response::Low,
         }
+    }
+}
+
+/// 0..1: how far into a notch drawn at `at` column `t` is (cos-shaped,
+/// a twelfth of the plot each side).
+fn dip(t: f32, at: f32) -> f32 {
+    let d = ((t - at) * 6.0).abs();
+    if d < 0.5 {
+        0.5 + 0.5 * libm::cosf(d * 2.0 * core::f32::consts::PI)
+    } else {
+        0.0
     }
 }
 
 /// `filter_y` for each response: high-pass mirrors it about the cutoff,
-/// band-pass takes both skirts, notch dips at the cutoff, all-pass is flat.
+/// band-pass takes both skirts, the notches dip where they cut. The plot
+/// is linear in Hz, so k × FREQ sits at k × `cutoff`.
 pub fn response_y(t: f32, cutoff: f32, reso: f32, r: Response) -> i32 {
     let low = filter_y(t, cutoff, reso);
     let high = filter_y(2.0 * cutoff - t, cutoff, reso);
-    match r {
-        Response::Low => low,
-        Response::High => high,
-        Response::Band => low.max(high),
-        Response::Notch => {
-            let d = ((t - cutoff) * 6.0).abs();
-            if d < 0.5 {
-                let dip = 0.5 + 0.5 * libm::cosf(d * 2.0 * core::f32::consts::PI);
-                FILTER_PASS_Y + ((PLOT_BASE - FILTER_PASS_Y) as f32 * dip) as i32
-            } else {
-                FILTER_PASS_Y
-            }
+    let span = (PLOT_BASE - FILTER_PASS_Y) as f32;
+    let peak_h = (FILTER_PASS_Y - PLOT_TOP) as f32;
+    // `h` px down at FREQ (up if negative), in a notch's shape.
+    let bump = |h: f32| h * dip(t, cutoff);
+    let y = match r {
+        Response::Low => return low,
+        Response::High => return high,
+        Response::Band => return low.max(high),
+        // The roll-off below the pass line halved: 6 dB, not 12.
+        Response::Lp1 => {
+            let d = low - FILTER_PASS_Y;
+            return FILTER_PASS_Y + if d > 0 { d / 2 } else { d };
         }
-        Response::Flat => FILTER_PASS_Y,
-    }
+        Response::Notch => FILTER_PASS_Y as f32 + span * dip(t, cutoff),
+        Response::Notch2x => {
+            // Q 0 dips 8.6 dB at FREQ; the treble is drawn a quarter down.
+            let treble = if t > 2.0 * cutoff { 0.25 * span } else { 0.0 };
+            let at_freq = 0.2 * span * (1.0 - reso) - peak_h * reso;
+            let notch = dip(t, 2.0 * cutoff);
+            FILTER_PASS_Y as f32 + treble + bump(at_freq) + (span - treble) * notch
+        }
+        // The bass loss in dB, on the low-pass's shape; the peak still rises.
+        Response::K2040 => {
+            let k = crate::dsp::filter::k2040::k2040_k(reso);
+            low as f32 + 20.0 * libm::log10f(1.0 + k) * PX_PER_DB
+        }
+        Response::DoubleNotch => {
+            let n = dip(t, 0.414 * cutoff).max(dip(t, 2.414 * cutoff));
+            FILTER_PASS_Y as f32 - bump(peak_h * reso) * (1.0 - n) + span * n
+        }
+    };
+    (y as i32).clamp(PLOT_TOP, PLOT_BASE)
 }
 
 /// Columns `x0..=x1`: soft fill from the curve point `y(x)` down to `base`,

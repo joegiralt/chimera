@@ -422,11 +422,18 @@ fn overwrite_with_growth_refused_when_full() {
     let target = SlotId::ALL[10];
     let small = factory_sound(1).unwrap();
     p.pool_store(target, &small).unwrap();
-    // Fill the rest with worst-case Sounds until one is refused.
-    for s in SlotId::ALL.into_iter().skip(11) {
+    // Fill the rest with worst-case Sounds until one is refused, then the
+    // gap left with INITs, so what's free is under any one Sound's growth.
+    let mut rest = SlotId::ALL.into_iter().skip(11);
+    for s in rest.by_ref() {
         let mut x = Sound::init(EngineType::Algo);
         dense(&mut x, s.index() as u64);
         if p.pool_store(s, &x).is_err() {
+            break;
+        }
+    }
+    for s in rest {
+        if p.pool_store(s, &Sound::init(EngineType::Algo)).is_err() {
             break;
         }
     }

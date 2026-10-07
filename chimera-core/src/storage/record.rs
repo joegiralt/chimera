@@ -6,7 +6,8 @@ use super::crc::Crc32;
 use super::frame::Header;
 
 /// The largest payload a known record may have; the framer buffers one.
-pub const MAX_RECORD_LEN: usize = 512;
+/// ADR 0102: a full matrix's `Routes`, 8 sources × (16 + 4 fixed) columns.
+pub const MAX_RECORD_LEN: usize = 640;
 
 /// Tag bit 15, must-understand: a reader that doesn't know the tag refuses the file.
 pub const CRITICAL: u16 = 0x8000;
@@ -60,6 +61,10 @@ pub enum RecordTag {
     /// A Sound's zone set tuning: 6 B a zone, its `root` and `period`
     /// (spec § 8).
     ZoneTune,
+    /// ALGO's OP 5 and OP 6 routes (filter-types spec § 6): 4-byte
+    /// `(Jack code, block code, param id, amount)` entries. 0x1B: 0x19 and
+    /// 0x1A are TAPE's zone records.
+    TapRoutes,
 }
 
 impl RecordTag {
@@ -87,6 +92,7 @@ impl RecordTag {
             RecordTag::SourceData => 0x0018,
             RecordTag::SourceZones => 0x0019,
             RecordTag::ZoneTune => 0x001A,
+            RecordTag::TapRoutes => 0x001B,
         }
     }
 
@@ -114,6 +120,7 @@ impl RecordTag {
             0x0018 => RecordTag::SourceData,
             0x0019 => RecordTag::SourceZones,
             0x001A => RecordTag::ZoneTune,
+            0x001B => RecordTag::TapRoutes,
             _ => return None,
         })
     }
@@ -189,6 +196,11 @@ impl RecordBuf {
 
     pub fn as_slice(&self) -> &[u8] {
         &self.buf[..self.len]
+    }
+
+    /// Empty, for the next record.
+    pub fn clear(&mut self) {
+        self.len = 0;
     }
 }
 

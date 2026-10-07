@@ -303,7 +303,9 @@ fn cut_at_every_write(base: Base) {
     assert_eq!(p2.pool().sound_count(), 128);
     let blocks = save_three_writes(base, &before);
     let chains = fat_check(&before).entries.len();
-    assert!(blocks.len() > 60, "{} writes", blocks.len());
+    // Enough blocks to cut across: 59 for `full` since the fixed matrix
+    // columns made its Sounds smaller.
+    assert!(blocks.len() > 50, "{} writes", blocks.len());
     for k in 0..blocks.len() {
         let what = format!("cut at write {k} of {}", blocks.len());
         let cut = slot(copy(&before));

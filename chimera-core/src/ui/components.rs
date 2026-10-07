@@ -8,11 +8,13 @@ use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
 use crate::dsp::algo::waves::WaveId;
+use crate::dsp::filter::FilterKind;
 use crate::dsp::modal::{EXCITER_NAMES, ModalPage};
 use crate::part::DacPair;
 use crate::project::PartId;
 use crate::ui::PrimeStatus;
 use crate::ui::block_def::{BlockDef, SlotBinding};
+use crate::ui::block_registry::FILTER_MOD;
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
 use crate::ui::glyph::{Accidental, Braid, BraidPart, Cube, CubePart, Gauge, Rings, RingsPart};
@@ -58,13 +60,15 @@ pub struct HeaderText {
 /// `PART 2 · SOUND` or `PART 2 · MIX` and the page (`FILTER`, `SENDS`),
 /// or `SETTINGS`; `suffix` follows the name (`/ B`). A page of the
 /// exciter's cells is named after MODAL's exciter (PLUCK, STRIKE, BOW),
-/// TAPE's model page after its machine (STRETCH).
+/// TAPE's model page after its machine (STRETCH); FLT › MOD on DIRTY,
+/// which speaks CLEAN's cells, names DIRTY (`kind`).
 /// `OUT P2`/`OUT P3` warns on a Part's pages when `out` isn't P1 (ADR
 /// 0057). A name too long for the line falls back to the page's short one.
 pub fn header_text(
     head: Head,
     def: &BlockDef,
     models: impl Into<crate::ui::view::Models>,
+    kind: FilterKind,
     suffix: &str,
     out: DacPair,
 ) -> HeaderText {
@@ -87,6 +91,9 @@ pub fn header_text(
             (true, true) => upper(EXCITER_NAMES[models.modal as usize]),
             _ if def.id == crate::ui::block_registry::TAPE_MODEL.id => {
                 upper(crate::dsp::tape_engine::MACHINE_NAMES[usize::from(models.tape.index())])
+            }
+            (true, false) if def.id == FILTER_MOD.id && kind == FilterKind::Dirty => {
+                upper("Dirty Mod")
             }
             (true, false) => upper(def.name),
             (false, _) => upper(def.short),

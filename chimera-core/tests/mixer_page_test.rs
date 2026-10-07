@@ -207,10 +207,12 @@ fn priming_a_part_param_is_refused() {
             .button(ButtonId::Mix, ButtonState::Held)
             .button(ButtonId::Plus, ButtonState::Pressed),
     );
-    assert_eq!(
-        ui.project().part(PartId::ALL[0]).sound.dest_registry.len(),
-        1,
-        "only the default CUTOFF"
+    assert!(
+        ui.project()
+            .part(PartId::ALL[0])
+            .sound
+            .dest_registry
+            .is_empty()
     );
 }
 

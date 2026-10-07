@@ -7,10 +7,9 @@ use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::algo::algorithms::ALGO_COUNT;
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::mod_path::ModDestRegistry;
-use chimera_core::modulation::CUTOFF;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
-use chimera_core::ui::mod_grid::{MatrixState, inert_dests};
+use chimera_core::ui::mod_grid::{FIXED_COLS, MatrixState, inert_dests};
 use chimera_core::ui::{PrimeStatus, UiState, view};
 use chimera_hal::{ButtonId, EncoderId};
 use screen::*;
@@ -57,11 +56,14 @@ fn priming_morph_is_refused_while_it_is_dimmed() {
 fn a_route_into_morph_is_inert_while_a_equals_b() {
     let mut s = Sound::init(EngineType::Algo);
     let mut reg = ModDestRegistry::new();
-    reg.add(CUTOFF, *b"CUTOFF\0\0").unwrap();
     reg.add(MORPH, *b"ALGMORPH").unwrap();
     let mut m = MatrixState::new();
     m.rebuild_dests_from_registry(&reg);
     assert_eq!(inert_dests(&m, &s), 0);
     s.params.algo.alg_b = s.params.algo.alg_a;
-    assert_eq!(inert_dests(&m, &s), 0b10, "MORPH, column 2");
+    assert_eq!(
+        inert_dests(&m, &s),
+        1 << FIXED_COLS,
+        "MORPH, after the fixed four"
+    );
 }

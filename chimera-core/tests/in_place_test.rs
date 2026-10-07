@@ -1,4 +1,5 @@
 mod common;
+use chimera_core::taps::TapRows;
 use common::tape::{OneSource, held_plain, saw_with_burst};
 use common::{SR, tri};
 
@@ -190,7 +191,7 @@ fn algo_engine_built_in_place_renders_like_new() {
             let mut out = Vec::new();
             let mut blk = [0.0f32; BLOCK_SIZE];
             for _ in 0..20 {
-                e.render(&mut blk, &p, &live, SR);
+                e.render(&mut blk, &p, &live, SR, &mut TapRows::new([false; 2]));
                 out.extend(blk.iter().map(|s| s.to_bits()));
             }
             out

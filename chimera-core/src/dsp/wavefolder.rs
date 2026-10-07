@@ -1,5 +1,8 @@
+use crate::dsp::clampf;
 use crate::dsp::ease::{Gate, Ramp, at, step_of};
+use crate::hw::BLOCK_SIZE;
 use crate::params::FolderParams;
+use crate::taps::TapLane;
 
 /// Post-filter wavefolder.
 /// Folds the signal by reflecting it at ±1 boundaries. SYM's bias shapes
@@ -25,14 +28,25 @@ impl Wavefolder {
     }
 
     /// Process a block of samples in-place; `on` is whether the stage runs
-    /// (`Voice::stage_runs`), which its gate fades.
-    pub fn process(&mut self, buf: &mut [f32], params: &FolderParams, on: bool) {
+    /// (`Voice::stage_runs`), which its gate fades. A FOLD tap moves FOLD
+    /// per sample: `clamp(fold + tap, 0, 1)`, silence's fold with it.
+    pub fn process(
+        &mut self,
+        buf: &mut [f32],
+        params: &FolderParams,
+        on: bool,
+        tap: Option<&TapLane>,
+    ) {
         let f = self.fold.step(params.fold);
         let y = self.sym.step(params.symmetry);
         let m = self.mix.step(params.mix);
         let g = self.gate.step(on);
         if g == (0.0, 0.0) {
             return;
+        }
+        // The voice's blocks are `BLOCK_SIZE`, as the tap's rows are.
+        if let (Some(t), Ok(b)) = (tap, <&mut [f32; BLOCK_SIZE]>::try_from(&mut *buf)) {
+            return Self::tapped(b, (f, y, m, g), t);
         }
         if f.0 == f.1 && y.0 == y.1 && m.0 == m.1 && g == (1.0, 1.0) {
             let (fold, sym, mix) = (f.1, y.1, m.1); // SYM 0.5: no bias
@@ -64,6 +78,28 @@ impl Wavefolder {
     }
 }
 
+impl Wavefolder {
+    /// The per-sample path with FOLD tapped: silence's fold is taken each
+    /// sample, since FOLD moves within it.
+    fn tapped(buf: &mut [f32; BLOCK_SIZE], r: Ends, t: &TapLane) {
+        let (f, y, m, g) = r;
+        let n = buf.len();
+        let (sf, sy, sm, sg) = (step_of(f, n), step_of(y, n), step_of(m, n), step_of(g, n));
+        for (i, sample) in buf.iter_mut().enumerate() {
+            let fold = clampf(at(f.0, sf, i) + t.at(i), 0.0, 1.0);
+            let bias = (at(y.0, sy, i) - 0.5) * 0.5;
+            let mix = at(m.0, sm, i) * at(g.0, sg, i);
+            let gain = 1.0 + fold * fold * 6.0;
+            let dry = *sample;
+            let folded = fold_wave((dry + bias) * gain) - fold_wave(bias * gain);
+            *sample = dry * (1.0 - mix) + folded * mix;
+        }
+    }
+}
+
+/// FOLD's, SYM's, MIX's and the gate's `(from, to)` for a block.
+type Ends = ((f32, f32), (f32, f32), (f32, f32), (f32, f32));
+
 /// Triangle-fold: reflects signal at ±1 boundaries, keeping output in -1..1.
 fn fold_wave(x: f32) -> f32 {
     let x = x + 1.0;
@@ -94,7 +130,7 @@ mod tests {
             };
             let mut f = Wavefolder::new();
             let mut buf = [0.0f32; 64];
-            f.process(&mut buf, &p, true);
+            f.process(&mut buf, &p, true, None);
             assert!(buf.iter().all(|&x| x.abs() < 1e-6), "SYM {symmetry}");
         }
     }

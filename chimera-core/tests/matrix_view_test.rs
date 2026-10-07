@@ -7,7 +7,12 @@ use chimera_core::dsp::tape_engine::TapeModel;
 use chimera_core::project::PartId;
 use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::draw;
-use chimera_core::ui::mod_grid::{AMOUNT_Y, CELL_H, CELL_W, GRID_BOTTOM, READOUT_Y, cell_origin};
+use chimera_core::ui::mod_grid::{
+    AMOUNT_Y, CELL_W, GRID_BOTTOM, READOUT_Y, cell_h, cell_origin, text_dy,
+};
+
+/// ALGO's rows: the eight sources, OP5 and OP6 (the goldens' matrix).
+const R: usize = 10;
 use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::renderer::{MATRIX_AMOUNT_SLOT, amount_of, amount_value};
 use chimera_core::ui::theme;
@@ -119,8 +124,8 @@ fn the_readout_names_the_voice_pitch() {
 #[test]
 fn an_absent_route_reads_dashes() {
     let mut ui = ui_for("mod_matrix");
-    feed(&mut ui, Input::turn(EncoderId::B, 1)); // LFO1 → FOLD: none
-    assert!(!ui.matrix_state.is_present(1, 1));
+    feed(&mut ui, Input::turn(EncoderId::B, 3)); // LFO1 → FOLD: none
+    assert!(!ui.matrix_state.is_present(1, 3));
     settle(&mut ui);
     let mut fb = Fb::new();
     ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
@@ -143,6 +148,24 @@ fn an_absent_route_reads_dashes() {
     assert!(rows(&fb, GRID_BOTTOM, AMOUNT_Y + 3) == rows(&want, GRID_BOTTOM, AMOUNT_Y + 3));
 }
 
+/// An X cell (OP5 on a registry column) names what the tap reaches and
+/// says it is no tap destination, not the column's param and `--`.
+#[test]
+fn an_x_cell_says_what_it_is() {
+    use chimera_core::ui::mod_grid::{X_NOT, X_REACH};
+    let fb = render("mod_matrix_algo_taps");
+    let want = drawn(fb.px[0], |d| {
+        let t = |d: &mut Fb, s: &str, x: i32, y: i32, c| {
+            x + draw::text_tracked(d, &theme::FONT_LABEL, s, x, y, c, 1)
+        };
+        let x = t(d, "OP 5", theme::MARGIN_X, READOUT_Y, theme::ACCENT) + 5;
+        let x = x + draw::arrow(d, x, READOUT_Y, theme::ACCENT) + 5;
+        t(d, X_REACH, x, READOUT_Y, theme::ACCENT);
+        t(d, X_NOT, theme::MARGIN_X, AMOUNT_Y, theme::MID);
+    });
+    assert!(rows(&fb, GRID_BOTTOM, AMOUNT_Y + 3) == rows(&want, GRID_BOTTOM, AMOUNT_Y + 3));
+}
+
 /// Cell (`ci`, `vi`) as drawn: `edge` outline, and a route's fill and amount.
 fn cell_as(
     bg: u16,
@@ -152,26 +175,33 @@ fn cell_as(
     route: Option<&str>,
 ) -> Fb {
     drawn(bg, |d| {
-        let (x, y) = cell_origin(ci, vi);
-        draw::round_outline(d, x, y, CELL_W, CELL_H, 0, edge);
+        let (x, y) = cell_origin(ci, vi, R);
+        draw::round_outline(d, x, y, CELL_W, cell_h(R), 0, edge);
         match route {
             Some("0") => draw::text_center(
                 d,
                 &theme::FONT_LABEL_BOLD,
                 "0",
                 x + CELL_W / 2,
-                y + 10,
+                y + text_dy(R),
                 theme::BAR_REST,
                 0,
             ),
             Some(t) => {
-                draw::fill_rect(d, x + 1, y + 1, CELL_W - 2, CELL_H - 2, theme::ACCENT_SOFT);
+                draw::fill_rect(
+                    d,
+                    x + 1,
+                    y + 1,
+                    CELL_W - 2,
+                    cell_h(R) - 2,
+                    theme::ACCENT_SOFT,
+                );
                 draw::text_center(
                     d,
                     &theme::FONT_LABEL_BOLD,
                     t,
                     x + CELL_W / 2,
-                    y + 10,
+                    y + text_dy(R),
                     theme::ACCENT,
                     0,
                 );
@@ -182,8 +212,8 @@ fn cell_as(
 }
 
 fn same_cell(a: &Fb, b: &Fb, ci: usize, vi: usize) -> bool {
-    let (x, y) = cell_origin(ci, vi);
-    (y..y + CELL_H).all(|y| (x..x + CELL_W).all(|x| a.at(x, y) == b.at(x, y)))
+    let (x, y) = cell_origin(ci, vi, R);
+    (y..y + cell_h(R)).all(|y| (x..x + CELL_W).all(|x| a.at(x, y) == b.at(x, y)))
 }
 
 /// Every route prints its amount in a lit cell (0 unlit, in the rest
@@ -194,10 +224,11 @@ fn cells_print_their_amounts_and_the_cursor_is_outlined() {
     let bg = fb.px[0];
     for (ci, vi, edge, route) in [
         (0, 0, theme::FAINT, Some("+20")),
-        (1, 0, theme::FAINT, Some("-30")),
+        (3, 0, theme::FAINT, Some("-30")),  // ENV1 → FOLD
         (0, 3, theme::ACCENT, Some("+42")), // LFO1, fourth row
-        (1, 3, theme::FAINT, None),
-        (0, 7, theme::FAINT, Some("0")), // NOTE → CUTOFF, the default pitch route
+        (3, 3, theme::FAINT, None),
+        (1, 0, theme::FAINT, None),      // Q: no route
+        (0, 7, theme::FAINT, Some("0")), // NOTE → FREQ, the default pitch route
     ] {
         assert!(
             same_cell(&fb, &cell_as(bg, ci, vi, edge, route), ci, vi),
@@ -214,19 +245,21 @@ fn every_source_is_a_row_on_screen() {
     assert_eq!(m.num_sources, 8);
     let fb = render("mod_matrix");
     for vi in 0..8 {
-        let (_, y) = cell_origin(0, vi);
+        let (_, y) = cell_origin(0, vi, R);
         let label =
-            (y..y + CELL_H).any(|y| (theme::MARGIN_X..40).any(|x| fb.at(x, y) != theme::BG));
+            (y..y + cell_h(R)).any(|y| (theme::MARGIN_X..40).any(|x| fb.at(x, y) != theme::BG));
         assert!(label, "row {vi} labelled");
         assert_ne!(
-            fb.at(cell_origin(1, vi).0, y),
+            fb.at(cell_origin(1, vi, R).0, y),
             theme::BG,
             "row {vi} has cells"
         );
     }
-    assert!(cell_origin(0, 7).1 + CELL_H <= GRID_BOTTOM);
+    assert!(cell_origin(0, R - 1, R).1 + cell_h(R) <= GRID_BOTTOM);
+    // The cursor stops on the last row: OP6's on ALGO (Task 13).
     feed(&mut ui, Input::turn(EncoderId::A, 7));
-    assert_eq!(ui.matrix_state.sel_row, 7);
+    assert_eq!(ui.matrix_state.rows(), 10);
+    assert_eq!(ui.matrix_state.sel_row, 9);
     let before = ui.matrix_state.clone();
     feed(&mut ui, Input::turn(EncoderId::C, 3));
     let after = &ui.matrix_state;
@@ -251,27 +284,29 @@ fn the_amount_lerps() {
     assert_eq!(amount_of(target), 82);
 }
 
+/// An empty registry still shows the four permanent columns, FREQ, Q,
+/// VCA and FOLD, and no `NO DESTINATIONS`.
 #[test]
-fn an_empty_matrix_says_so() {
+fn an_empty_registry_shows_the_fixed_columns() {
+    use chimera_core::modulation::FixedCol;
+    use chimera_core::modulation::ModSource;
+    use chimera_core::ui::mod_grid::{Col, GRID_COL_W, GRID_NAME_Y, GRID_X};
     let mut ui = chimera_core::ui::UiState::new();
     ui.project_mut()
         .edit_part(PartId::ALL[0])
         .sound
-        .dest_registry
-        .remove(chimera_core::modulation::CUTOFF);
+        .mod_state
+        .clear_fixed(ModSource::Env1.index(), FixedCol::Freq);
     feed(&mut ui, Input::press(ButtonId::B2));
     feed(&mut ui, Input::press(ButtonId::B1)); // via Part 2: Part 1's home
     for _ in 0..5 {
         feed(&mut ui, Input::press(ButtonId::Plus)); // → MOD: MTX
     }
-    assert_eq!(
-        ui.page(),
-        chimera_core::ui::page::PageKey::Part {
-            def: chimera_core::ui::block_registry::MOD_MATRIX.id,
-            op: chimera_core::addr::Op::A
-        }
-    );
-    assert_eq!(ui.matrix_state.num_dests, 0);
+    let m = &ui.matrix_state;
+    assert_eq!((m.num_dests, m.num_cols()), (0, 4));
+    for (c, f) in FixedCol::ALL.into_iter().enumerate() {
+        assert_eq!(m.col(c), Col::Fixed(f));
+    }
     settle(&mut ui);
     let mut fb = Fb::new();
     ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
@@ -287,9 +322,16 @@ fn an_empty_matrix_says_so() {
             1,
         );
     });
-    assert!(rows(&fb, GRID_BOTTOM, READOUT_Y + 3) == rows(&want, GRID_BOTTOM, READOUT_Y + 3));
-    let (x, y) = cell_origin(0, 0);
-    assert_eq!(fb.at(x, y), theme::BG, "no cells");
+    assert!(rows(&fb, GRID_BOTTOM, READOUT_Y + 3) != rows(&want, GRID_BOTTOM, READOUT_Y + 3));
+    let (x, y) = cell_origin(3, 0, R);
+    assert_ne!(fb.at(x, y), theme::BG, "FOLD's cells");
+    let name = |c: usize| {
+        let x = GRID_X + c as i32 * GRID_COL_W;
+        (GRID_NAME_Y - 8..GRID_NAME_Y + 2)
+            .any(|y| (x..x + GRID_COL_W).any(|x| fb.at(x, y) != theme::BG))
+    };
+    assert!((0..4).all(name), "four headers");
+    assert!(!name(4), "no fifth");
     let mut dirty = Fb::new();
     ui.render_dirty_with_scope(&mut dirty, &PerfStats::zero(), &scope_fixture());
     assert!(dirty.px == fb.px);
@@ -316,12 +358,12 @@ fn a_wide_matrix_scrolls_with_the_cursor() {
         });
     }
     m.num_dests = MAX_DESTS;
-    m.move_col(MAX_DESTS as i8 - 1);
-    assert_eq!(m.scroll_x, MAX_DESTS - m.visible_cols());
+    m.move_col(m.num_cols() as i8 - 1);
+    assert_eq!(m.scroll_x, m.num_cols() - m.visible_cols());
     let mut fb = Fb::new();
     draw_grid(&mut fb, &m, m.current_amount(), 0);
     assert_eq!(fb.oob, 0);
-    let (x, y) = cell_origin(m.visible_cols() - 1, 0);
+    let (x, y) = cell_origin(m.visible_cols() - 1, 0, m.rows());
     assert_eq!(
         fb.at(x, y),
         theme::ACCENT,
@@ -338,13 +380,13 @@ fn sideways_scroll_starts_past_the_last_visible_column() {
     use chimera_core::ui::mod_grid::{MatrixState, ModDest};
     let mut m = MatrixState::new();
     m.rebuild_sources(&["ENV"]);
-    for (i, dest) in m.dests.iter_mut().enumerate().take(8) {
+    for (i, dest) in m.dests.iter_mut().enumerate().take(4) {
         *dest = Some(ModDest {
             addr: ParamAddr::new(BlockRef::Filter, ParamId(i as u8 % 6)),
             label: [0; 8],
         });
     }
-    m.num_dests = 8;
+    m.num_dests = 4; // eight columns with the fixed four
     let vis = m.visible_cols();
     let mut seen = vec![];
     for _ in 0..8 {
@@ -367,13 +409,13 @@ fn scrolling_sideways_keeps_the_cursor_on_screen() {
     use chimera_core::ui::mod_grid::{MatrixState, ModDest};
     let mut m = MatrixState::new();
     m.rebuild_sources(&["ENV"]);
-    for (i, dest) in m.dests.iter_mut().enumerate().take(8) {
+    for (i, dest) in m.dests.iter_mut().enumerate().take(4) {
         *dest = Some(ModDest {
             addr: ParamAddr::new(BlockRef::Filter, ParamId(i as u8 % 6)),
             label: [0; 8],
         });
     }
-    m.num_dests = 8;
+    m.num_dests = 4; // eight columns with the fixed four
     let vis = m.visible_cols();
     m.move_col(2);
     m.scroll_h(1);
@@ -391,7 +433,11 @@ fn scrolling_sideways_keeps_the_cursor_on_screen() {
     let mut empty = MatrixState::new();
     empty.rebuild_sources(&["ENV"]);
     empty.scroll_h(3);
-    assert_eq!((empty.sel_col, empty.scroll_x), (0, 0), "no destinations");
+    assert_eq!(
+        (empty.sel_col, empty.scroll_x),
+        (0, 0),
+        "the fixed four fit"
+    );
 }
 
 /// Every modulatable destination's column header fits `HEADER_MAX_W`
@@ -425,11 +471,11 @@ fn every_destination_header_fits_and_is_unique_in_its_block() {
 /// can leave the cursor stale here to exercise it through `UiState`.
 #[test]
 fn adjust_amount_is_a_no_op_past_num_dests() {
-    use chimera_core::ui::mod_grid::MatrixState;
+    use chimera_core::ui::mod_grid::{FIXED_COLS, MatrixState};
     let mut m = MatrixState::new();
     m.rebuild_sources(&["ENV", "LFO"]);
     m.num_dests = 0;
-    m.sel_col = 1; // stale: no destination at this column
+    m.sel_col = FIXED_COLS + 1; // stale: no destination at this column
     m.adjust_amount(50);
     assert_eq!(
         m.amounts[0][1], 0,
@@ -448,24 +494,24 @@ fn clamp_cursor_does_not_hide_columns_that_fit_on_screen() {
     use chimera_core::ui::mod_grid::{MatrixState, ModDest};
     let mut m = MatrixState::new();
     m.rebuild_sources(&["ENV", "LFO"]);
-    for (i, dest) in m.dests.iter_mut().enumerate().take(8) {
+    for (i, dest) in m.dests.iter_mut().enumerate().take(4) {
         *dest = Some(ModDest {
             addr: ParamAddr::new(BlockRef::Filter, ParamId(i as u8 % 6)),
             label: [b'X'; 8],
         });
     }
-    m.num_dests = 8;
+    m.num_dests = 4; // eight columns with the fixed four
     m.move_col(7); // scroll right: scroll_x lands at 8 - visible_cols()
     assert_eq!(m.scroll_x, 8 - m.visible_cols());
 
-    // Switch to a Part with only 2 destinations -- both fit on screen.
-    m.num_dests = 2;
+    // Switch to a Part with no registry columns -- the fixed four fit.
+    m.num_dests = 0;
     m.clamp_cursor();
     assert_eq!(
         m.scroll_x, 0,
-        "both destinations fit on screen -- must not stay scrolled"
+        "every column fits on screen -- must not stay scrolled"
     );
-    assert_eq!(m.sel_col, 1);
+    assert_eq!(m.sel_col, 3);
 }
 
 /// The stats line must not overflow the 32-byte `FmtBuf`
@@ -620,8 +666,9 @@ fn matrix_edits_redraw_through_the_region_keys() {
         1,
         3
     ));
-    // MIX+PLUS on DRV's three knobs and FLT's C: six columns, one past
-    // the visible five, so the grid scrolls sideways.
+    // MIX+PLUS on DRV's three knobs and FLT's C (Q, already a fixed
+    // column): seven columns, past the visible five, so the grid scrolls
+    // sideways.
     let prime = |ui: &mut chimera_core::ui::UiState, enc| {
         feed(ui, Input::turn(enc, 1));
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
@@ -638,7 +685,7 @@ fn matrix_edits_redraw_through_the_region_keys() {
     for _ in 0..2 {
         feed(&mut ui, Input::press(ButtonId::Plus)); // → MTX
     }
-    assert_eq!(ui.matrix_state.num_dests, dests + 4, "MIX+PLUS primes");
+    assert_eq!(ui.matrix_state.num_dests, dests + 3, "MIX+PLUS primes");
     check(&mut ui, &mut dirty, "primed");
     let col = ui.matrix_state.sel_col;
     feed(&mut ui, Input::turn(EncoderId::D, 1));
@@ -650,7 +697,11 @@ fn matrix_edits_redraw_through_the_region_keys() {
     feed(&mut ui, Input::turn(EncoderId::B, 8));
     assert!(ui.matrix_state.scroll_x > 0);
     let fb = check(&mut ui, &mut dirty, "scrolled");
-    let (x, y) = cell_origin(ui.matrix_state.visible_cols() - 1, ui.matrix_state.sel_row);
+    let (x, y) = cell_origin(
+        ui.matrix_state.visible_cols() - 1,
+        ui.matrix_state.sel_row,
+        ui.matrix_state.rows(),
+    );
     assert_eq!(fb.at(x, y), theme::ACCENT, "cursor on screen");
 }
 
@@ -712,7 +763,9 @@ fn every_route_readout_fits_its_line() {
                 m.dests[0] = Some(dest);
                 m.num_dests = 1;
                 m.set(src.index(), 0, -127);
-                m.sel_row = (0..8).find(|&r| m.row_source(r) == src.index()).unwrap();
+                m.sel_row = (0..8)
+                    .find(|&r| m.row_source(r).index() == src.index())
+                    .unwrap();
                 let mut fb = Fb::new();
                 draw_readout(&mut fb, &m, -127, 0, m.hint());
                 assert_eq!(fb.oob, 0);
@@ -749,7 +802,6 @@ fn every_route_readout_fits_its_line() {
 #[test]
 fn scroll_hint_does_not_overlap_the_fifth_columns_tag() {
     use chimera_core::addr::{BlockRef, ParamAddr};
-    use chimera_core::block::ParamId;
     use chimera_core::ui::mod_grid::{GRID_TAG_Y, MatrixState, ModDest, block_tag, draw_grid};
 
     // Widest block tag anywhere in the spec table -- the worst case for how
@@ -761,25 +813,19 @@ fn scroll_hint_does_not_overlap_the_fifth_columns_tag() {
         .max_by_key(|&b| chimera_core::ui::draw::text_width(&theme::FONT_LABEL, block_tag(b), 0))
         .unwrap();
     let widest_tag_addr = ParamAddr::new(widest_tag_block, widest_tag_block.specs()[0].id);
-    let short = ParamAddr::new(BlockRef::Part, ParamId(0)); // "LEVEL", block tag "PRT"
 
     let ink_at = |fb: &Fb, x: i32| {
         (GRID_TAG_Y - 9..=GRID_TAG_Y).any(|y| fb.px[y as usize * W + x as usize] != 0)
     };
 
+    // The fifth column is the first registry column, after the fixed four.
     let mut m_tag = MatrixState::new();
     m_tag.rebuild_sources(&["ENV"]);
-    for dest in m_tag.dests.iter_mut().take(4) {
-        *dest = Some(ModDest {
-            addr: short,
-            label: [0; 8],
-        });
-    }
-    m_tag.dests[4] = Some(ModDest {
+    m_tag.dests[0] = Some(ModDest {
         addr: widest_tag_addr,
         label: [0; 8],
     });
-    m_tag.num_dests = 5;
+    m_tag.num_dests = 1;
     let mut tag_fb = Fb::new();
     draw_grid(&mut tag_fb, &m_tag, 0, 0);
     let tag_right = (0..theme::SCREEN_W)
@@ -792,8 +838,13 @@ fn scroll_hint_does_not_overlap_the_fifth_columns_tag() {
     m_hint.num_dests = 6; // more than visible_cols(): the hint shows
     let mut hint_fb = Fb::new();
     draw_grid(&mut hint_fb, &m_hint, 0, 0);
+    // The fixed four's tags draw too: the hint is what they don't.
+    let mut m_base = MatrixState::new();
+    m_base.rebuild_sources(&["ENV"]);
+    let mut base_fb = Fb::new();
+    draw_grid(&mut base_fb, &m_base, 0, 0);
     let hint_left = (0..theme::SCREEN_W)
-        .find(|&x| ink_at(&hint_fb, x))
+        .find(|&x| ink_at(&hint_fb, x) && !ink_at(&base_fb, x))
         .expect("the hint must draw something");
 
     assert!(
@@ -842,7 +893,7 @@ fn adjacent_column_headers_never_touch() {
     };
 
     // Extents at every visible column's x, computed once per label.
-    let xs: Vec<i32> = (0..5).map(|ci| cell_center(ci, 0).0).collect();
+    let xs: Vec<i32> = (0..5).map(|ci| cell_center(ci, 0, R).0).collect();
     let extents: Vec<Vec<(i32, i32)>> = labels
         .iter()
         .map(|&label| xs.iter().map(|&cx| extent(label, cx)).collect())
@@ -880,7 +931,7 @@ fn rows_read_envs_then_lfos_then_velo_and_note() {
     let mut ui = ui_for("mod_matrix");
     let m = &ui.matrix_state;
     let rows: Vec<_> = (0..m.num_sources)
-        .map(|r| m.sources[m.row_source(r)].unwrap().name)
+        .map(|r| m.sources[m.row_source(r).index()].unwrap().name)
         .collect();
     assert_eq!(
         rows,
@@ -894,12 +945,11 @@ fn rows_read_envs_then_lfos_then_velo_and_note() {
     assert_eq!(ui.matrix_state.sel_source(), ModSource::Env2.index());
     feed(&mut ui, Input::turn(EncoderId::E, 10));
     let sound = &ui.project().part(PartId::ALL[0]).sound;
-    let d = sound
-        .mod_state
-        .find(chimera_core::modulation::CUTOFF)
-        .unwrap();
     assert_eq!(
-        sound.mod_state.amount(ModSource::Env2.index(), d),
+        sound.mod_state.fixed_amount(
+            ModSource::Env2.index(),
+            chimera_core::modulation::FixedCol::Freq
+        ),
         10,
         "saved by source"
     );
@@ -911,6 +961,6 @@ fn row_labels_fit_left_of_the_grid() {
     use chimera_core::ui::block_registry::PART_MOD_SOURCES;
     for s in PART_MOD_SOURCES {
         let right = theme::MARGIN_X + draw::text_width(&theme::FONT_LABEL_BOLD, s, 0);
-        assert!(right + 3 <= cell_origin(0, 0).0, "{s} ends at {right}");
+        assert!(right + 3 <= cell_origin(0, 0, R).0, "{s} ends at {right}");
     }
 }

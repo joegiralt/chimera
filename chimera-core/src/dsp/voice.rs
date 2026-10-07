@@ -12,18 +12,24 @@ use crate::dsp::drive::Drive;
 use crate::dsp::ease::{Ease, Ramp, at, ease_coeff, step_of};
 use crate::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
 use crate::dsp::envelope::{EnvMods, Envelope};
-use crate::dsp::filter::SvfFilter;
+use crate::dsp::filter::{FILTER_LEVEL_COST, Filter, FilterMods};
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modal::{ResonatorMode, SymPool};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::wavefolder::Wavefolder;
 use crate::hw::{Cost, MAX_VOICES, VOICE_CHAIN_BYTES, VOICE_RAM_BUDGET};
 use crate::in_place::{by_value, uninit_at};
+use crate::meter::Clip;
 use crate::modulation::{
-    MAX_MOD_SOURCES, ModRouting, ModSource, ModState, VCA, amount_scale, note_source,
+    FixedCol, MAX_MOD_SOURCES, ModRouting, ModSource, ModState, amount_scale, note_source,
 };
-use crate::params::{DriveParams, EnvParams, FolderParams, ParamSnapshot, Steal};
+use crate::params::{
+    DriveParams, EngineType, EnvParams, FilterParams, FolderParams, ParamSnapshot, Steal,
+};
 use crate::project::SourceId;
+use crate::taps::{
+    TAP_CAPTURE_COST, TAP_FOLD_COST, TAP_SHAPE_COST, TAP_VCA_COST, TapLane, TapRows, tap_vca,
+};
 use crate::voice_alloc::VoiceIdx;
 use crate::{MidiNote, Velocity};
 
@@ -40,7 +46,7 @@ const _: () = assert!(
 pub const DC_HZ: f32 = 5.0;
 
 /// Complete voice signal chain:
-/// [Engine] → [Drive] → [Filter] → [Wavefolder] → [DC blocker] → [VCA]
+/// [Engine] → [Drive] → [Filter] → [Wavefolder] → [tap-VCA] → [DC blocker] → [VCA]
 /// Modulators: three envelopes, three LFOs
 pub struct Voice {
     /// The engine it plays, and so the engine it last played.
@@ -51,7 +57,10 @@ pub struct Voice {
     /// Slot rebuilds since `init_in_place`, wrapping: `reset` keeps it.
     rebuilds: u16,
     drive: Drive,
-    filter: SvfFilter,
+    filter: Filter,
+    /// The last block's LEVEL clip, for the LED: 0 while the clipper is
+    /// off or the voice idle.
+    filter_clip: Clip,
     folder: Wavefolder,
     /// DC from the stages before it (ADR 0060).
     dc: DcBlocker,
@@ -69,6 +78,10 @@ pub struct Voice {
     mod_values: [f32; MAX_MOD_SOURCES],
     /// The routes into VCA this voice plays.
     vca: VcaRoutes,
+    /// The taps' amounts the last block played (`TapRoutes::amounts`), so
+    /// every amount ramps from them: 8 B as stored `i8`s, scaled where read,
+    /// not 32 as `f32`s (ADR 0101's 2,112 B voice chain).
+    tap_amt: [[i8; 4]; 2],
     /// A note-on since the last block: its ENV destinations are recomputed
     /// with its own VEL and NOTE before the modulators run.
     retrigger: bool,
@@ -90,7 +103,7 @@ pub struct Voice {
     played_live: AlgoLive,
 }
 
-/// OUT LEVEL, DRIVE's three, filter DRIVE and FOLD's three, eased
+/// OUT LEVEL, DRIVE's three, filter LEVEL and FOLD's three, eased
 /// toward the stored values (never snap). Zero bytes land on the first
 /// block.
 #[derive(Clone, Copy, Debug, Default)]
@@ -105,7 +118,7 @@ impl StageEase {
             (b, &mut m.drive.drive),
             (c, &mut m.drive.tone),
             (d, &mut m.drive.mix),
-            (e, &mut m.filter.drive),
+            (e, &mut m.filter.level),
             (f, &mut m.folder.fold),
             (g, &mut m.folder.symmetry),
             (h, &mut m.folder.mix),
@@ -129,20 +142,29 @@ enum AfterFade {
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct VcaRoutes {
     bits: u8,
-    /// `amount / 127` per source.
-    amount: [f32; MAX_MOD_SOURCES],
+    /// The stored amount per source, scaled where read: 9 B, not 33 as
+    /// `f32`s, which keeps room in the voice chain (ADR 0101).
+    amount: [i8; MAX_MOD_SOURCES],
 }
 
 impl VcaRoutes {
+    /// The fixed VCA column's routes.
     fn of(m: &ModState) -> Self {
-        let mut r = Self::default();
-        if let Some(d) = m.find(VCA) {
-            r.bits = m.present(d);
+        let mut r = Self {
+            bits: m.fixed_present(FixedCol::Vca),
+            ..Self::default()
+        };
+        if r.bits != 0 {
             for (s, a) in r.amount.iter_mut().enumerate() {
-                *a = amount_scale(m.amount(s, d));
+                *a = m.fixed_amount(s, FixedCol::Vca);
             }
         }
         r
+    }
+
+    /// Source `s`'s `amount / 127`.
+    fn scale(&self, s: usize) -> f32 {
+        amount_scale(self.amount[s])
     }
 
     fn has(&self, source: usize) -> bool {
@@ -176,7 +198,7 @@ impl Voice {
     /// bench's `FLOOR` row (an Algo patch with every LEVEL at 0) measured 5 on
     /// 2026-09-27; 10 was kept, erring high. ADR 0060 adds the DC blocker
     /// (6.5 instructions a sample), the stages' ease (1.3) and the ramps of
-    /// OUT LEVEL and filter DRIVE (about 2 each): 11.8 × 1.46 × 1.1 = 19,
+    /// OUT LEVEL and filter LEVEL (about 2 each): 11.8 × 1.46 × 1.1 = 19,
     /// by ADR 0056's host method; 29, rounded up.
     pub const CHAIN_COST: Cost = Cost(30);
 
@@ -188,9 +210,12 @@ impl Voice {
     /// the offset of silence's fold (ADR 0060), 1 instruction a sample, 1.6
     /// by ADR 0056's host method.
     pub const FOLD_COST: Cost = Cost(45);
-    /// FOLD, SYM or MIX routed: the fold ramps every block, 42 instructions
-    /// a sample against the steady 24; 18 × 1.46 × 1.1 = 28.9.
-    pub const FOLD_RAMP_COST: Cost = Cost(29);
+    /// FOLD, SYM or MIX routed, or a FOLD tap: the fold ramps every block.
+    /// Recounted on the bench ELF at 1879169d (2026-10-07): the moving loop
+    /// 45 instructions a sample (silence's fold per sample, ADR 0060) +
+    /// 3.48 of block, 80, against the steady 24 + 3.48, 45: 35 (was 29,
+    /// from 42 against 24).
+    pub const FOLD_RAMP_COST: Cost = Cost(35);
     /// The drive stage, which runs once DRIVE is 0.001 or more. Measured:
     /// bench-t13d's DRIVE LO row (541) less that run's 1 OP (488) = 53;
     /// bench-t13c's DRIVE row (540) less that run's 1 OP (483) = 57.
@@ -205,9 +230,62 @@ impl Voice {
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
         EngineSlot::cost(p, mods)
             + Self::CHAIN_COST
-            + p.filter.kind().cost(p.filter.mode())
+            + Self::filter_cost(p, mods)
             + ModRouting::cost(p, mods)
             + Self::stage_cost(p, mods)
+            + Self::tap_cost(p)
+    }
+
+    /// The filter as `p` and `mods` run it: the steady bill, the moving
+    /// path once if a CUTOFF or RES route or (on ALGO) a FREQ or Q tap
+    /// moves it, `TapShape::apply` once for those taps, and LEVEL's
+    /// clipper while it can open (stored over ½, or routed). A clipper
+    /// still running after LEVEL comes back is `held_level_extra`'s.
+    pub fn filter_cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
+        let f = &p.filter;
+        let kind = f.kind();
+        let algo = p.engine() == EngineType::Algo;
+        let shaped = algo && (p.taps.moving(FixedCol::Freq) || p.taps.moving(FixedCol::Q));
+        let moving = shaped || mods.fixed_moves(FixedCol::Freq) || mods.fixed_moves(FixedCol::Q);
+        let when = |on: bool, c: Cost| if on { c } else { Cost::ZERO };
+        f.filter_cost()
+            + when(moving, kind.move_cost())
+            + when(shaped, TAP_SHAPE_COST)
+            + when(Self::level_may_open(p, mods), kind.level_cost())
+    }
+
+    /// LEVEL's gate can open: stored over ½, or routed.
+    fn level_may_open(p: &ParamSnapshot, mods: &ModState) -> bool {
+        p.filter.level > 0.5
+            || mods.moves_addr(ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL))
+    }
+
+    /// The taps the filter and folder don't bill (on ALGO only): the
+    /// tap-VCA once, and each wanted op's capture.
+    fn tap_cost(p: &ParamSnapshot) -> Cost {
+        if p.engine() != EngineType::Algo {
+            return Cost::ZERO;
+        }
+        let vca = if p.taps.moving(FixedCol::Vca) {
+            TAP_VCA_COST
+        } else {
+            Cost::ZERO
+        };
+        p.taps
+            .wanted()
+            .into_iter()
+            .filter(|&w| w)
+            .fold(vca, |c, _| c + TAP_CAPTURE_COST)
+    }
+
+    /// LEVEL's clipper still running (the ease landing on ½, then the
+    /// fade) where `p` and `mods` no longer bill it: what the voice adds.
+    pub fn held_level_extra(&self, p: &ParamSnapshot, mods: &ModState) -> Cost {
+        if self.filter_level_running() && !Self::level_may_open(p, mods) {
+            FILTER_LEVEL_COST
+        } else {
+            Cost::ZERO
+        }
     }
 
     /// What this voice's sounding note costs over `p`'s stored model
@@ -221,12 +299,13 @@ impl Voice {
     }
 
     /// Whether the folder and the drive stage run: once the stored amount
-    /// is 0.001 or more, or a route of nonzero amount may raise it. The bill
-    /// and each stage's gate read the same answer.
+    /// is 0.001 or more, or a route or (on ALGO) a tap of nonzero amount
+    /// may raise it. The bill and each stage's gate read the same answer.
     pub fn stage_runs(p: &ParamSnapshot, mods: &ModState) -> (bool, bool) {
         let routed = |block, param| mods.moves_addr(ParamAddr::new(block, param));
+        let tapped = p.engine() == EngineType::Algo && p.taps.moving(FixedCol::Fold);
         (
-            p.folder.fold >= 0.001 || routed(BlockRef::Folder, FolderParams::FOLD),
+            p.folder.fold >= 0.001 || routed(BlockRef::Folder, FolderParams::FOLD) || tapped,
             p.drive.drive >= 0.001 || routed(BlockRef::Drive, DriveParams::DRIVE),
         )
     }
@@ -240,6 +319,7 @@ impl Voice {
                 .iter()
                 .any(|&param| mods.moves_addr(ParamAddr::new(block, param)))
         };
+        let tapped = p.engine() == EngineType::Algo && p.taps.moving(FixedCol::Fold);
         let mut c = Cost::ZERO;
         if fold {
             c = c + Self::FOLD_COST;
@@ -248,8 +328,11 @@ impl Voice {
                 FolderParams::SYMMETRY,
                 FolderParams::MIX,
             ];
-            if routed(BlockRef::Folder, fp) {
+            if routed(BlockRef::Folder, fp) || tapped {
                 c = c + Self::FOLD_RAMP_COST;
+            }
+            if tapped {
+                c = c + TAP_FOLD_COST;
             }
         }
         if drive {
@@ -304,7 +387,8 @@ impl Voice {
             let played = ParamSnapshot::default();
             write_chain!(p, {
                 drive: Drive::new(),
-                filter: SvfFilter::new(),
+                filter: Filter::new(),
+                filter_clip: Clip::ZERO,
                 folder: Wavefolder::new(),
                 dc: DcBlocker::new(DC_HZ, (*p).sample_rate),
                 stages: StageEase::default(),
@@ -314,6 +398,7 @@ impl Voice {
                 env_mods: [EnvMods::NONE; 3],
                 mod_values: [0.0; MAX_MOD_SOURCES],
                 vca: VcaRoutes::default(),
+                tap_amt: [[0; 4]; 2],
                 retrigger: false,
                 active: false,
                 last_note: MidiNote::A4,
@@ -464,8 +549,9 @@ impl Voice {
             pool.alloc_mut().cancel(self.id);
         }
         if !self.active {
-            // A fresh note: no ramp from the last note's settings.
-            self.filter.hold();
+            // A fresh note: no ramp from the last note's settings, and no
+            // ring left in the filter.
+            self.filter.reset();
             self.drive.hold();
             self.folder.hold();
             self.dc.reset();
@@ -477,6 +563,7 @@ impl Voice {
             // hold keeps the voice active (`vca_holds`).
             self.envs = [Envelope::new(); 3];
             self.mod_values = [0.0; MAX_MOD_SOURCES];
+            self.tap_amt = [[0; 4]; 2];
         }
         self.retrigger = true;
         self.last_note = note;
@@ -596,6 +683,17 @@ impl Voice {
         unsafe { Self::init_chain(self) }
     }
 
+    /// The last block's LEVEL clip (`filter::clip_amount`).
+    pub fn filter_clip(&self) -> Clip {
+        self.filter_clip
+    }
+
+    /// The filter's LEVEL clipper runs next block (`LevelStage::running`):
+    /// what its bill reads.
+    pub fn filter_level_running(&self) -> bool {
+        self.filter.level_running()
+    }
+
     /// Sounding: its engine is active and, with routes into VCA, one of
     /// them holds it (spec § 4); a TAPE note with none, its key.
     pub fn is_active(&self) -> bool {
@@ -659,6 +757,7 @@ impl Voice {
 
         if !self.active {
             output.fill(0.0);
+            self.filter_clip = Clip::ZERO;
             return;
         }
 
@@ -694,7 +793,7 @@ impl Voice {
             let feed = gain
                 .as_mut()
                 .filter(|_| vca.has(i))
-                .map(|g| (g, vca.amount[i]));
+                .map(|g| (g, vca.scale(i)));
             mod_values[i] = env.run_block(
                 &src.envelopes[s.index()],
                 &self.env_mods[s.index()],
@@ -714,7 +813,7 @@ impl Voice {
             if let Some(gain) = gain.as_mut().filter(|_| vca.has(s))
                 && ModSource::ALL[s].env_slot().is_none()
             {
-                let a = vca.amount[s];
+                let a = vca.scale(s);
                 let (from, step) = (
                     a * self.mod_values[s],
                     a * (cur - self.mod_values[s]) / BLOCK_SIZE as f32,
@@ -736,12 +835,19 @@ impl Voice {
             live.routed = mod_state.algo_levels_routed();
             live.morph_routed =
                 mod_state.moves_addr(ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH));
+            // The fixed FREQ, Q and FOLD columns; VCA's is per sample, above.
+            for c in [FixedCol::Freq, FixedCol::Q, FixedCol::Fold] {
+                let off = mod_state.fixed_sum(c, &mod_values);
+                let a = c.addr();
+                if off != 0.0
+                    && let Some(blk) = m.block_mut(a.block)
+                {
+                    apply_offset(blk, a.param, off);
+                }
+            }
             let mut next = [EnvMods::NONE; 3];
             for d in 0..mod_state.num_dests() {
                 let a = mod_state.dest(d);
-                if a == VCA {
-                    continue; // per sample, above
-                }
                 if let BlockRef::Env(s) = a.block {
                     // ENV destinations reach their slot next block.
                     env_mod(&mut next[s.index()], mod_state, d, &mod_values);
@@ -763,23 +869,57 @@ impl Voice {
         self.mod_values = mod_values;
         let (m, live) = (&self.played, &self.played_live);
 
-        // 1. Engine → raw oscillator output
-        self.slot.render(output, m, live, sample_rate, ctx);
+        // The taps (spec § 6), live on ALGO only: each amount ramps from the
+        // last block's, and the engine captures the ops some ramp reads.
+        let (from, to) = if m.engine() == EngineType::Algo {
+            let to = m.taps.amounts();
+            (core::mem::replace(&mut self.tap_amt, to), to)
+        } else {
+            self.tap_amt = [[0; 4]; 2];
+            ([[0; 4]; 2], [[0; 4]; 2])
+        };
+        let mut rows = TapRows::new([0, 1].map(|o| from[o] != [0; 4] || to[o] != [0; 4]));
+
+        // 1. Engine → raw oscillator output, and the tapped ops' rows.
+        self.slot
+            .render(output, m, live, sample_rate, ctx, &mut rows);
+        let lane = |c: FixedCol| {
+            let (a, b) = (from.map(|o| o[c.index()]), to.map(|o| o[c.index()]));
+            // A nonzero amount wants its op, so the rows are there.
+            Some(TapLane {
+                rows: rows.rows().filter(|_| a != [0; 2] || b != [0; 2])?,
+                from: a.map(amount_scale),
+                to: b.map(amount_scale),
+            })
+        };
 
         // 2. Drive, gated as it's billed.
         self.drive.process(output, &m.drive, drive_on);
 
         // 3. Filter
-        self.filter.process(output, &m.filter, sample_rate);
+        let mods = FilterMods {
+            level_routed: mod_state
+                .moves_addr(ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL)),
+            freq: lane(FixedCol::Freq),
+            q: lane(FixedCol::Q),
+        };
+        self.filter_clip = self.filter.process(output, &m.filter, sample_rate, &mods);
 
         // 4. Wavefolder
-        self.folder.process(output, &m.folder, fold_on);
+        self.folder
+            .process(output, &m.folder, fold_on, lane(FixedCol::Fold).as_ref());
 
-        // 5. DC from the engine, the drive, the filter and the fold: none
-        // reaches the VCA (ADR 0060).
+        // 5. The tap-VCA, AM to ring, before the blocker: a tap correlated
+        // with the signal leaves a DC, which the blocker takes.
+        if let Some(l) = lane(FixedCol::Vca) {
+            tap_vca(output, &l);
+        }
+
+        // 6. DC from the engine, the drive, the filter, the fold and the
+        // tap-VCA: none reaches the VCA (ADR 0060).
         self.dc.run(output);
 
-        // 6. The VCA, after the blocker, with the engine's output gain,
+        // 7. The VCA, after the blocker, with the engine's output gain,
         // ramped (never snap).
         let v = self.volume.step(m.out.volume * self.slot.out_gain());
         let (volume, dv) = (v.1, step_of(v, BLOCK_SIZE));
@@ -827,6 +967,15 @@ impl Voice {
 
         // Check if done
         self.active = self.slot.is_active();
+        if !self.active && self.filter.rings() {
+            // The engine ended, but a self-oscillating filter rings on
+            // (#374): fade it out over this block instead of cutting it,
+            // inside a steal, kill or switch fade too, which ends with the
+            // engine. The next note starts it from rest (`trigger`).
+            for (i, sample) in output.iter_mut().enumerate() {
+                *sample *= (BLOCK_SIZE - 1 - i) as f32 / BLOCK_SIZE as f32;
+            }
+        }
 
         if self.fade > 0 {
             for sample in output.iter_mut() {

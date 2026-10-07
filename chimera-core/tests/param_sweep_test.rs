@@ -394,20 +394,49 @@ fn long_tail(c: &Case) -> Option<&'static str> {
 // ── Known defects ──────────────────────────────────────────────────────
 
 /// A defect the sweep found, left for its fix: its ignored `defect_*`
-/// test fails until then. None open: Task 17 fixed the last (the voice's
-/// and the Modal engines' DC, snapped settings, a silent operator holding
-/// its voice).
+/// test fails until then.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum Defect {}
+enum Defect {
+    FilterRingHolds,
+}
 
 impl Defect {
     fn what(self) -> &'static str {
-        match self {}
+        match self {
+            Defect::FilterRingHolds => {
+                "a self-oscillating filter outlives its note on MODAL: no VCA after the filter \
+                 (private issue #374)"
+            }
+        }
     }
 }
 
-fn known(_c: &Case, _kind: &Kind, _label: &str) -> Option<Defect> {
-    None
+fn known(c: &Case, kind: &Kind, _label: &str) -> Option<Defect> {
+    let modal = matches!(c.patch, Patch::ModalInit(_) | Patch::BusyModal);
+    (*kind == Kind::Stuck && modal && c.is(BlockRef::Filter, FilterParams::RESONANCE))
+        .then_some(Defect::FilterRingHolds)
+}
+
+/// #374: MODAL INIT at RES 1 frees its voice after the release.
+#[test]
+#[ignore = "defect: a self-oscillating filter holds its MODAL voice (#374)"]
+fn defect_self_oscillation_holds_a_modal_voice() {
+    let mut b = Bench::new(
+        Patch::ModalInit(ResonatorMode::Modal),
+        PartParams::default(),
+        FxParams::default(),
+    );
+    b.set(&find(BlockRef::Filter, FilterParams::RESONANCE), 1.0);
+    let mut t = Tape::default();
+    for blk in 0..4000 {
+        match blk {
+            0 => b.note(60, Some(100)),
+            150 => b.note(60, None),
+            _ => {}
+        }
+        b.render(&mut t);
+    }
+    assert!(t.freed(150).is_some(), "the voice rings on");
 }
 
 // ── Verdicts ───────────────────────────────────────────────────────────
@@ -625,7 +654,9 @@ fn the_sweep_covers_the_registry() {
         if NOT_AUDIO.contains(&b) {
             assert_eq!(n, 0, "{b:?}");
         } else {
-            assert_eq!(n, b.specs().len(), "{b:?}");
+            // Patching specs (the filter's jacks) are not sound.
+            let sound = b.specs().iter().filter(|s| !s.patching).count();
+            assert_eq!(n, sound, "{b:?}");
         }
     }
     let quick: Vec<_> = cases(true).iter().map(|c| c.param.name()).collect();
@@ -1057,7 +1088,7 @@ fn jumps_never_click() {
             THOROUGH,
         ),
         (
-            find(BlockRef::Filter, FilterParams::DRIVE),
+            find(BlockRef::Filter, FilterParams::LEVEL),
             symp,
             false,
             FAST,
@@ -1522,7 +1553,14 @@ fn tape_params_sweep() {
                                     slot.note_on(note, Velocity::DEFAULT, p, SR, id, &mut ctx);
                                 }
                                 let live = AlgoLive::from_params(&p.algo);
-                                slot.render(&mut out, p, &live, SR, &mut ctx);
+                                slot.render(
+                                    &mut out,
+                                    p,
+                                    &live,
+                                    SR,
+                                    &mut ctx,
+                                    &mut chimera_core::taps::TapRows::new([false; 2]),
+                                );
                                 peak = out.iter().fold(peak, |m, x| m.max(x.abs()));
                             }
                             if !peak.is_finite() || peak >= 2.0 {

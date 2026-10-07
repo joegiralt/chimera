@@ -727,9 +727,11 @@ mod e2e {
             e.sound.params.filter.set(FilterParams::CUTOFF, 600.0);
             if route {
                 e.sound.params.lfos[0].rate = 8.0;
-                e.sound
-                    .mod_state
-                    .set_amount(ModSource::Lfo1.index(), 0, 127);
+                e.sound.mod_state.set_fixed(
+                    ModSource::Lfo1.index(),
+                    chimera_core::modulation::FixedCol::Freq,
+                    127,
+                );
             }
             (p, t)
         };

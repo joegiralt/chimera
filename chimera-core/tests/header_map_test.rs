@@ -2,6 +2,7 @@
 
 mod screen;
 
+use chimera_core::dsp::filter::FilterKind;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::part::DacPair::{self, P1};
 use chimera_core::project::PartId;
@@ -64,7 +65,14 @@ impl At {
 }
 
 fn texts(at: At) -> (String, String) {
-    let h = header_text(at.head, at.def(), ResonatorMode::String, "", P1);
+    let h = header_text(
+        at.head,
+        at.def(),
+        ResonatorMode::String,
+        FilterKind::Svf,
+        "",
+        P1,
+    );
     (h.context.as_str().to_string(), h.name.as_str().to_string())
 }
 
@@ -171,7 +179,7 @@ fn every_header_fits() {
                         [DacPair::P1, DacPair::P2, DacPair::P3].map(|o| (m, s, o))
                     })
                 }) {
-                    let h = header_text(at.head, def, model, suffix, out);
+                    let h = header_text(at.head, def, model, FilterKind::Svf, suffix, out);
                     let what = format!("{} / {}{:?}", h.context.as_str(), h.name.as_str(), h.warn);
                     assert!(header_fits(&h), "{what}");
                     if h.warn.is_none() {
@@ -196,12 +204,20 @@ fn the_out_warning_keeps_short_names_whole() {
         sends.head,
         sends.def(),
         ResonatorMode::String,
+        FilterKind::Svf,
         "",
         DacPair::P3,
     );
     assert_eq!((h.name.as_str(), h.warn), ("SENDS", Some("OUT P3")));
     let alg = At::sound(1);
-    let h = header_text(alg.head, alg.def(), ResonatorMode::String, "", DacPair::P2);
+    let h = header_text(
+        alg.head,
+        alg.def(),
+        ResonatorMode::String,
+        FilterKind::Svf,
+        "",
+        DacPair::P2,
+    );
     assert_eq!((h.name.as_str(), h.warn), ("ALG", Some("OUT P2")));
 }
 
@@ -450,11 +466,39 @@ fn the_exciter_page_is_named_after_the_exciter() {
     use chimera_core::dsp::modal::{EXCITER_NAMES, ResonatorMode as M};
     use chimera_core::ui::block_registry::{MODAL_EXC, MODAL_PLUCK_CHAIN};
     for m in [M::String, M::Modal, M::Bowed, M::Sympathetic] {
-        let h = header_text(Head::Sound(PartId::ALL[0]), &MODAL_EXC, m, "", P1);
+        let h = header_text(
+            Head::Sound(PartId::ALL[0]),
+            &MODAL_EXC,
+            m,
+            FilterKind::Svf,
+            "",
+            P1,
+        );
         assert_eq!(h.name.as_str(), EXCITER_NAMES[m as usize], "{m:?}");
         assert_eq!(dungeon_map::page_label(&MODAL_EXC, m), "EXC");
     }
     let node = &MODAL_PLUCK_CHAIN.blocks[0];
     assert_eq!(node.def.id, MODAL_EXC.id);
     assert_eq!(node.map.unwrap_or(node.def.short), "EXC");
+}
+
+/// FLT › MOD on DIRTY speaks CLEAN's cells, so its header names DIRTY;
+/// CLEAN's and the 2040's read FILTER MOD.
+#[test]
+fn dirty_filter_mod_names_dirty() {
+    use chimera_core::ui::block_registry::FILTER_MOD;
+    let name = |k| {
+        let h = header_text(
+            Head::Sound(PartId::ALL[0]),
+            &FILTER_MOD,
+            ResonatorMode::String,
+            k,
+            "",
+            P1,
+        );
+        String::from(h.name.as_str())
+    };
+    assert_eq!(name(FilterKind::Dirty), "DIRTY MOD");
+    assert_eq!(name(FilterKind::Svf), "FILTER MOD");
+    assert_eq!(name(FilterKind::K2040), "FILTER MOD");
 }

@@ -604,6 +604,12 @@ impl Instrument {
         core::array::from_fn(|v| self.voices[v].rings())
     }
 
+    /// Each voice's last LEVEL clip (`Voice::filter_clip`): for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn filter_clips(&self) -> [crate::meter::Clip; MAX_VOICES] {
+        core::array::from_fn(|v| self.voices[v].filter_clip())
+    }
+
     /// Each voice's glide steal ratio, 1 at rest: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn slides(&self) -> [f32; MAX_VOICES] {
@@ -1009,7 +1015,9 @@ impl Instrument {
         for v in 0..MAX_VOICES {
             if let Some(p) = self.alloc.slots()[v].part() {
                 let p = p as usize % MAX_PARTS;
-                let held = self.voices[v].held_model_extra(&shared.parts[p].params);
+                let part = &shared.parts[p];
+                let held = self.voices[v].held_model_extra(&part.params)
+                    + self.voices[v].held_level_extra(&part.params, &part.mod_state);
                 self.alloc.recost(v, costs[p] + held);
             }
         }
@@ -1124,6 +1132,7 @@ impl Instrument {
         // 1. Voices into their part's mono bus. The first voice of a part is
         //    copied, not added, so a lone voice reaches the bus bit-for-bit.
         let mut written = [false; MAX_PARTS];
+        let mut clip = [crate::meter::Clip::ZERO; MAX_PARTS];
         for bus in self.buses.iter_mut() {
             bus.fill(0.0);
         }
@@ -1144,6 +1153,7 @@ impl Instrument {
                 src,
             };
             self.voices[v].render(&mut block, &part.params, &part.mod_state, ctx);
+            clip[p] = clip[p].max(self.voices[v].filter_clip());
             if written[p] {
                 for (b, &s) in self.buses[p].iter_mut().zip(&block) {
                     *b += s;
@@ -1186,6 +1196,10 @@ impl Instrument {
         );
         // The MST page's GR meter: one relaxed store, never blocks.
         crate::meter::MASTER_GR.publish(fx.master_gr_db());
+        // Each Part's LEVEL LED: one atomic max, held until the UI takes it.
+        for (m, c) in crate::meter::FILTER_CLIP.iter().zip(clip) {
+            m.raise(c);
+        }
 
         // Oscilloscope: every part's bus, before pan and level.
         scope.write(&scope_block);

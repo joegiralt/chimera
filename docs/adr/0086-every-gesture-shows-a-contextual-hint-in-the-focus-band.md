@@ -1,6 +1,6 @@
 # 0086. Every gesture shows a contextual hint in the focus band (amends 0074 and 0081; supersedes 0017's hint text)
 
-- **Status:** Proposed
+- **Status:** Accepted (owner, 2026-10-07)
 - **Deciders:** owner (on-unit QA of RING · NOTES, 2026-10-04), firmware
 
 ## Context
@@ -54,6 +54,8 @@ The owner's rulings:
   | RING · RHYTHM | MUTE | `MIX + B1-5 MUTES THAT RING` |
   | MOD MATRIX | cursor on a route | `MIX + MINUS DELETES THE ROUTE` |
   | MOD MATRIX | cursor on no route | `MIX + PLUS ON A PARAM PRIMES IT` |
+  | MOD MATRIX | an X cell | `OP5: FREQ Q VCA FOLD ONLY` (`OP6:` on OP6's row) |
+  | FLT and FLT › MOD | any route knob (FM1, FM2, FM3, QM, ENV AMT, KEYBD) | `MIX + MINUS DELETES THE ROUTE` |
   | Sound browser | always | `EDIT LOADS` |
   | Sound browser | always | `MIX + EDIT SAVES · +0.3K`, or `WON'T FIT` in ALERT |
   | Sound browser | a filled slot | `MIX + MINUS CLEARS · FREES 0.3K` |
@@ -61,6 +63,9 @@ The owner's rulings:
   CLEAR's focus label is `CLEAR` again; its value stays `C4 / RND`. This
   amends ADR 0074.
   
+  The X cell's hint is the spec's short form: `OP5 · AUDIO RATE: FREQ Q
+  VCA FOLD ONLY` measures 264 px, past the 216 a hint may take.
+
   The matrix's readout band is its focus band, so its hint follows the
   cursor's route. The hint line stays at `HINT_Y`. This supersedes ADR
   0017's hint text.

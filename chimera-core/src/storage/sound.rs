@@ -7,13 +7,14 @@ use super::{SourceRef, TapeSource, ZoneTune};
 use crate::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use crate::block::{DiskCode, ParamId};
 use crate::mod_path::{LABEL_LEN, MAX_REGISTRY_DESTS, ModDestRegistry};
-use crate::modulation::{MAX_MOD_DESTS, MAX_MOD_SOURCES, ModSource, ModState};
+use crate::modulation::{FixedCol, MAX_MOD_DESTS, MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::SoundName;
-use crate::params::{EngineType, ParamSnapshot};
+use crate::params::{EngineType, FilterParams, ParamSnapshot};
 use crate::preset::Sound;
+use crate::taps::{Jack, TapRoutes};
 
-use super::block_codec::{ByteSet, decode_block, encode_block};
-use super::codes::{MIGRATIONS, TRANSLATIONS, ValidAddr};
+use super::block_codec::{ByteSet, ENTRY_LEN, decode_block, encode_block};
+use super::codes::{DiskAddr, MIGRATIONS, TRANSLATIONS, ValidAddr, readdress};
 use super::file::{Check, Decode};
 use super::frame::{Event, FileError, FileKind};
 use super::record::records_crc;
@@ -21,15 +22,16 @@ use super::record::{MAX_RECORD_LEN, ReadTag, RecordBuf, RecordTag, RecordWriter}
 
 const REGISTRY_ENTRY_LEN: usize = 2 + LABEL_LEN;
 const ROUTE_LEN: usize = 4;
-const MAX_ROUTES: usize = MAX_MOD_SOURCES * MAX_MOD_DESTS;
+/// Every source into every registry column and every fixed one.
+const MAX_ROUTES: usize = MAX_MOD_SOURCES * (MAX_MOD_DESTS + FixedCol::ALL.len());
 const _: () = assert!(MAX_ROUTES * ROUTE_LEN <= MAX_RECORD_LEN);
 const _: () = assert!(MAX_REGISTRY_DESTS * REGISTRY_ENTRY_LEN <= MAX_RECORD_LEN);
 
 /// The most a Sound costs in the pool: its 16 B name and its sparse records
-/// with every param off neutral, a full registry, every route, a
-/// `SourceRef` and a 24-zone `ZoneTune` (2 105 B for 221 params), rounded
+/// with every param off neutral, a full registry, every route and tap, a
+/// `SourceRef` and a 24-zone `ZoneTune` (2 284 B for 224 params), rounded
 /// up to 16 B. `sparse_bound` pins it.
-pub const MAX_SOUND_COST: usize = 2112;
+pub const MAX_SOUND_COST: usize = 2288;
 
 impl Sound {
     /// The frozen base a file decodes onto: every param at its v1 default,
@@ -69,8 +71,15 @@ fn addr_code(a: ParamAddr) -> [u8; 2] {
     [a.block.disk_code().expect("a stored block"), a.param.0]
 }
 
-/// The stored address with these codes, if this firmware has it.
+/// The stored address with these codes, if this firmware has it; a
+/// retired one through `READDRESS` (DRIVE's routes land on LEVEL).
 fn addr_of(block: u8, id: u8) -> Option<ParamAddr> {
+    if let Some(a) = readdress(DiskAddr {
+        block,
+        id: ParamId(id),
+    }) {
+        return Some(a);
+    }
     let b = BlockRef::from_disk_code(block)?;
     ValidAddr::find(b, ParamId(id)).map(ValidAddr::addr)
 }
@@ -80,17 +89,23 @@ fn addr_of(block: u8, id: u8) -> Option<ParamAddr> {
 /// `Routes`, and its `SourceRef` and `ZoneTune` if it has them.
 pub fn encode_sound(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     w.put(RecordTag::Engine, &[s.engine().disk_code()])?;
-    let neutral = neutral_params(s.engine());
+    // One buffer for every record: this frame is charged to each pointer
+    // call (ADR 0025's stack check), so it holds one, not one per record.
+    let mut r = RecordBuf::new();
+    // A jack at the value `infer_jacks` would give it is omitted like a
+    // neutral param, so a sparse round trip reloads it unchanged.
+    let mut neutral = neutral_params(s.engine());
+    infer_jacks(&mut neutral.filter, &s.mod_state, true, true);
     for b in BlockRef::ALL {
         if let Some(blk) = s.params.block(b) {
-            let mut r = RecordBuf::new();
+            r.clear();
             if encode_block(b, blk, neutral.block(b), &mut r) > 0 {
                 w.put(RecordTag::Block, r.as_slice())?;
             }
         }
     }
 
-    let mut r = RecordBuf::new();
+    r.clear();
     for e in (0..s.dest_registry.len()).filter_map(|i| s.dest_registry.get(i)) {
         r.bytes(&addr_code(e.addr));
         r.bytes(&e.label);
@@ -98,14 +113,14 @@ pub fn encode_sound(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(), StoreErro
     w.put(RecordTag::Registry, r.as_slice())?;
 
     let m = &s.mod_state;
-    let mut r = RecordBuf::new();
+    r.clear();
     r.u8(m.num_sources() as u8);
     for d in 0..m.num_dests() {
         r.bytes(&addr_code(m.dest(d)));
     }
     w.put(RecordTag::ModDests, r.as_slice())?;
 
-    let mut r = RecordBuf::new();
+    r.clear();
     for d in 0..m.num_dests() {
         for src in ModSource::ALL.into_iter().take(m.num_sources()) {
             if m.present(d) & 1 << src.index() != 0 {
@@ -115,7 +130,28 @@ pub fn encode_sound(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(), StoreErro
             }
         }
     }
+    // The fixed columns: ordinary route records, by address (no ModDests).
+    for c in FixedCol::ALL {
+        for src in ModSource::ALL.into_iter().take(m.num_sources()) {
+            if m.fixed_present(c) & 1 << src.index() != 0 {
+                r.u8(src.disk_code());
+                r.bytes(&addr_code(c.addr()));
+                r.u8(m.fixed_amount(src.index(), c) as u8);
+            }
+        }
+    }
     w.put(RecordTag::Routes, r.as_slice())?;
+
+    let taps = &s.params.taps;
+    if !taps.is_empty() {
+        r.clear();
+        for (op, c, a) in taps.entries() {
+            r.u8(Jack::Tap(op).disk_code());
+            r.bytes(&addr_code(c.addr()));
+            r.u8(a as u8);
+        }
+        w.put(RecordTag::TapRoutes, r.as_slice())?;
+    }
     let Some(src) = s.source else {
         return Ok(());
     };
@@ -143,6 +179,7 @@ const fn once_bit(tag: RecordTag) -> u8 {
         RecordTag::LastProject => 1 << 4,
         RecordTag::SourceRef => 1 << 5,
         RecordTag::ZoneTune => 1 << 6,
+        RecordTag::TapRoutes => 1 << 7,
         // A project's own records: refused before `once` is asked.
         RecordTag::Slot
         | RecordTag::Part
@@ -175,6 +212,9 @@ pub struct SoundCheck {
     /// Applied at the end, once the `ModDests` they index are known.
     routes: [u8; MAX_RECORD_LEN],
     routes_len: usize,
+    /// The Filter block record held FM3 IN and QM IN: else `infer_jacks`.
+    had_fm3: bool,
+    had_qm: bool,
 }
 
 impl SoundCheck {
@@ -191,6 +231,8 @@ impl SoundCheck {
             blocks: ByteSet::new(),
             routes: [0; MAX_RECORD_LEN],
             routes_len: 0,
+            had_fm3: false,
+            had_qm: false,
         }
     }
 }
@@ -277,6 +319,7 @@ impl SoundCheck {
                 self.seen = 0;
                 self.blocks = ByteSet::new();
                 self.routes_len = 0;
+                (self.had_fm3, self.had_qm) = (false, false);
                 return Ok(());
             }
             Event::Record(ReadTag::Known(tag), p) => (tag, p),
@@ -308,12 +351,19 @@ impl SoundCheck {
         }
         match tag {
             RecordTag::Engine => self.engine_record(p, staged),
-            RecordTag::Block => decode_block(
-                p,
-                MIGRATIONS,
-                TRANSLATIONS,
-                staged.map(|s| &mut s.params as &mut dyn Blocks),
-            ),
+            RecordTag::Block => {
+                if p.first() == BlockRef::Filter.disk_code().as_ref() {
+                    let has = |id: ParamId| p[1..].chunks(ENTRY_LEN).any(|e| e[0] == id.0);
+                    self.had_fm3 = has(FilterParams::FM3_IN);
+                    self.had_qm = has(FilterParams::QM_IN);
+                }
+                decode_block(
+                    p,
+                    MIGRATIONS,
+                    TRANSLATIONS,
+                    staged.map(|s| &mut s.params as &mut dyn Blocks),
+                )
+            }
             RecordTag::Registry => registry(p, staged),
             RecordTag::ModDests => mod_dests(p, staged),
             RecordTag::Routes => {
@@ -325,6 +375,7 @@ impl SoundCheck {
                 Ok(())
             }
             RecordTag::LastProject => Ok(()),
+            RecordTag::TapRoutes => tap_routes(p, staged.map(|s| &mut s.params.taps)),
             RecordTag::SourceRef => {
                 let r = SourceRef::from_bytes(p).ok_or(FileError::Bounds)?;
                 if let Some(s) = staged {
@@ -373,10 +424,11 @@ impl SoundCheck {
                 else {
                     continue;
                 };
-                if let Some(d) = m.find(addr).or_else(|| m.push(addr)) {
-                    m.set_route(src.index(), d, amount as i8);
-                }
+                // A fixed column's route lands there; any other finds or
+                // takes its registry column, else is dropped.
+                m.set_route_addr(src.index(), addr, amount as i8);
             }
+            infer_jacks(&mut s.params.filter, m, !self.had_fm3, !self.had_qm);
         }
         Ok(())
     }
@@ -397,6 +449,40 @@ impl SoundCheck {
     }
 }
 
+/// A patch saved before the jacks (filter-types spec § 2), or a jack the
+/// sparse encoder left out: FM3 IN is the single fixed-FREQ route that is
+/// neither FM1's ENV 1 nor FM2's NOTE, QM IN the single fixed-Q route;
+/// otherwise each keeps its value. Only the jacks `fm3`/`qm` asks for.
+fn infer_jacks(f: &mut FilterParams, m: &ModState, fm3: bool, qm: bool) {
+    let single = |bits: u8| (bits.count_ones() == 1).then(|| bits.trailing_zeros() as usize);
+    let fm1_fm2 = 1 << ModSource::Env1.index() | 1 << ModSource::Note.index();
+    if fm3 && let Some(i) = single(m.fixed_present(FixedCol::Freq) & !fm1_fm2) {
+        f.set_fm3_src(Jack::Mod(ModSource::ALL[i]));
+    }
+    if qm && let Some(i) = single(m.fixed_present(FixedCol::Q)) {
+        f.set_qm_src(Jack::Mod(ModSource::ALL[i]));
+    }
+}
+
+/// `(Jack code, dest block code, dest param id, amount)` entries. An entry
+/// that isn't a tap into a fixed column is dropped; a partial one is
+/// `Bounds`.
+fn tap_routes(p: &[u8], staged: Option<&mut TapRoutes>) -> Result<(), FileError> {
+    let (entries, []) = p.as_chunks::<ROUTE_LEN>() else {
+        return Err(FileError::Bounds);
+    };
+    if let Some(t) = staged {
+        for &[jack, block, id, amount] in entries {
+            if let Some(Jack::Tap(op)) = Jack::from_disk_code(jack)
+                && let Some(c) = addr_of(block, id).and_then(FixedCol::of)
+            {
+                t.set(op, c, amount as i8);
+            }
+        }
+    }
+    Ok(())
+}
+
 fn registry(p: &[u8], staged: Option<&mut Sound>) -> Result<(), FileError> {
     let (entries, []) = p.as_chunks::<REGISTRY_ENTRY_LEN>() else {
         return Err(FileError::Bounds);
@@ -409,7 +495,7 @@ fn registry(p: &[u8], staged: Option<&mut Sound>) -> Result<(), FileError> {
             let Some(addr) = addr_of(block, id) else {
                 continue;
             };
-            // Refused when not modulatable: skipped.
+            // Refused when not modulatable or a fixed column's: skipped.
             let _ = s.dest_registry.add(addr, *label);
         }
     }
@@ -427,8 +513,12 @@ fn mod_dests(p: &[u8], staged: Option<&mut Sound>) -> Result<(), FileError> {
     if let Some(s) = staged {
         let mut m = ModState::with_sources(sources.into());
         for &[block, id] in dests {
-            // `push` refuses one that isn't modulatable: skipped.
-            if let Some(addr) = addr_of(block, id) {
+            // `push` refuses one that isn't modulatable, or is a fixed
+            // column's (its routes load there): skipped. One
+            // already there (DRIVE's beside LEVEL's) is not added twice.
+            if let Some(addr) = addr_of(block, id)
+                && m.find(addr).is_none()
+            {
                 m.push(addr);
             }
         }

@@ -288,7 +288,7 @@ fn animation_settling_produces_dirty_then_clean() {
     );
 }
 
-fn cells_keyed(matrix_rev: u16, looks: u16) -> RegionData {
+fn cells_keyed(matrix_rev: u16, looks: u32) -> RegionData {
     RegionData::cells(
         PageKey::Legacy(PageId::Demo(reg::DEMO_WAVES.id)),
         [500; 6],

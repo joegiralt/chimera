@@ -48,6 +48,21 @@ opt-level = 2
 # unoptimised; libm at opt-level 0 is about 23 KB of it.
 [profile.dev.package.libm]
 opt-level = 2
+# With the sound pool and the filter types, it overflows again by 23 KB;
+# the card, HAL, font and container crates optimised win it back (9 KB
+# left).
+[profile.dev.package.chimera-fat]
+opt-level = 2
+[profile.dev.package.embedded-sdmmc]
+opt-level = 2
+[profile.dev.package.chimera-theory]
+opt-level = 2
+[profile.dev.package.chimera-hal]
+opt-level = 2
+[profile.dev.package.heapless]
+opt-level = 2
+[profile.dev.package.u8g2-fonts]
+opt-level = 2
 
 # The DSP tests render seconds of audio in debug builds; opt-level 1 keeps
 # overflow checks and debug assertions and changes no f32 result (no

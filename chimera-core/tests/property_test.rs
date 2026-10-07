@@ -5,6 +5,7 @@ mod common;
 use common::Rig;
 use common::{SR, tri};
 
+use chimera_core::dsp::filter::level_gain;
 use chimera_core::dsp::modal::{BankModes, ResonatorMode};
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -83,7 +84,7 @@ fn random_params(rng: &mut Rng) -> ParamSnapshot {
     // Filter
     p.filter.cutoff = 20.0 + rng.f32() * 19980.0;
     p.filter.resonance = rng.f32();
-    p.filter.drive = rng.f32();
+    p.filter.level = rng.f32();
     p.filter
         .set_mode(chimera_core::dsp::filter::FilterMode::ALL[rng.u8(7) as usize]);
 
@@ -205,8 +206,10 @@ fn prop_note_on_produces_sound() {
             total_max = total_max.max(max);
         }
 
+        // LEVEL attenuates below ½ (to ×¼), and the floor with it.
+        let floor = 0.0001 * level_gain(params.filter.level).min(1.0);
         assert!(
-            total_max > 0.0001,
+            total_max > floor,
             "trial {}: note_on should produce sound, max={} engine={:?} modal_mode={:?} note={}",
             trial,
             total_max,
@@ -241,8 +244,10 @@ fn prop_param_change_changes_output() {
             // The engine's own parameter, where it has one.
             _ => match params_a.engine() {
                 EngineType::Algo => params_b.algo.ops[0].level = 99 - params_a.algo.ops[0].level,
-                EngineType::Modal => params_b.out.volume = params_a.out.volume * 0.2,
-                EngineType::Tape => params_b.tape.start = 0.5 - params_a.tape.start,
+                // START barely moves a loop of the rig's periodic saw.
+                EngineType::Modal | EngineType::Tape => {
+                    params_b.out.volume = params_a.out.volume * 0.2
+                }
             },
         }
 

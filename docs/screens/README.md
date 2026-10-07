@@ -72,7 +72,7 @@ whatever the last frame left.
 | ![](algo_osc_last.png) | OSC › FBK | Feedback, the last OSC sub-page |
 | ![](algo_drv.png) | DRV | Drive: DRIVE, TONE, MIX |
 | ![](bigviz_filter.png) | FLT | Filter response, resonance up, cutoff focused |
-| ![](flt_mode.png) | FLT › MDE | MODE at BP12, DRIVE and LFO extras |
+| ![](flt_mode.png) | FLT › FMD | MODE at BP12, DRIVE and LFO extras |
 | ![](amp_vel_dimmed.png) | AMP | Fold up; VEL focused, dimmed (no route to the VCA) |
 | ![](amp_vel_live.png) | AMP | VEL live once E2 → VCA is routed |
 

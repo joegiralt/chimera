@@ -13,3 +13,4 @@
   - `rubato` 5.0 (sinc resampler): MIT OR Apache-2.0. https://github.com/HEnquist/rubato. It pulls in `audioadapter`, `audioadapter-buffers`, `audioadapter-sample` (MIT OR Apache-2.0), `windowfunctions` (MIT), `audio-codec-algorithms` (0BSD OR Apache-2.0), `visibility` (Zlib OR MIT OR Apache-2.0) and `num-traits`, `num-integer` (MIT OR Apache-2.0).
   - `rustfft` 6.4 (the transwave mips' FFT truncation): MIT OR Apache-2.0. https://github.com/ejmahler/RustFFT. It pulls in `num-complex`, `primal-check`, `strength_reduce`, `transpose` (MIT OR Apache-2.0), `num-traits`, `num-integer` and, to build, `autocfg` (MIT OR Apache-2.0).
 - `chimera-core/src/dsp/mod.rs` (`fast_tanh`): stmlib's `SoftClip` (`dsp/dsp.h`, MIT, Copyright 2012 Emilie Gillet; ADR 0097).
+- `chimera-core/src/dsp/filter/coef.rs` (`tan_accurate`): stmlib's `FREQUENCY_ACCURATE` polynomial coefficients (`dsp/filter.h`, MIT, Copyright 2014 Emilie Gillet; ADR 0096).

@@ -340,7 +340,8 @@ fn primed(ui: &UiState) -> Vec<chimera_core::addr::ParamAddr> {
     (0..reg.len()).map(|i| reg.get(i).unwrap().addr).collect()
 }
 
-/// Positive control: the filter page primes cutoff.
+/// Positive control: the drive page primes DRIVE. The filter page's
+/// cutoff is the permanent FREQ column: priming it registers nothing.
 #[test]
 fn priming_on_main_page_registers_focused_param() {
     let mut ui = UiState::new();
@@ -349,11 +350,19 @@ fn priming_on_main_page_registers_focused_param() {
     press(&mut ui, ButtonId::Plus); // node 3: Filter
     ui.handle_input(&MockControls::new().encoder(EncoderId::B, 1));
     prime(&mut ui); // slot 1: cutoff
+    assert_eq!(primed(&ui), []);
+    assert_eq!(
+        ui.prime_status(),
+        Some(chimera_core::ui::PrimeStatus::AlreadyRouted)
+    );
+    press(&mut ui, ButtonId::Minus); // node 2: Drive
+    ui.handle_input(&MockControls::new().encoder(EncoderId::A, 1));
+    prime(&mut ui); // slot 0: drive
     assert_eq!(
         primed(&ui),
         [chimera_core::addr::ParamAddr::new(
-            chimera_core::addr::BlockRef::Filter,
-            chimera_core::params::FilterParams::CUTOFF
+            chimera_core::addr::BlockRef::Drive,
+            chimera_core::params::DriveParams::DRIVE
         )]
     );
 }
@@ -377,7 +386,7 @@ fn priming_on_the_lfo_sub_page_registers_nothing() {
         }
     );
     prime(&mut ui);
-    assert_eq!(primed(&ui), [chimera_core::modulation::CUTOFF]);
+    assert_eq!(primed(&ui), []);
 }
 
 /// The WAVE page's slots are Enums, never modulatable, so the registry
@@ -395,7 +404,7 @@ fn priming_a_wave_registers_nothing() {
     );
     ui.handle_input(&MockControls::new().encoder(EncoderId::C, 1)); // focus slot 2
     prime(&mut ui);
-    assert_eq!(primed(&ui), [chimera_core::modulation::CUTOFF]);
+    assert_eq!(primed(&ui), []);
 }
 
 /// `Performance::default()` is `Performance::new()` (clippy new_without_default).

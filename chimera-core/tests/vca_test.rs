@@ -6,7 +6,6 @@ use common::Rig;
 use chimera_core::addr::ParamAddr;
 use chimera_core::dsp::envelope::{EnvMods, Envelope};
 use chimera_core::dsp::modulator::{EnvForm, EnvType, Func, LfoForm};
-use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{CUTOFF, MAX_MOD_SOURCES, ModSource, ModState, VCA};
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
@@ -15,14 +14,9 @@ use chimera_hal::BLOCK_SIZE;
 const SR: u32 = 48_000;
 
 pub fn mods(routes: &[(ModSource, ParamAddr, i8)]) -> ModState {
-    let mut reg = ModDestRegistry::new();
-    for &(_, a, _) in routes {
-        let _ = reg.add(a, *b"TEST\0\0\0\0");
-    }
-    let mut ms = ModState::from_registry(&reg, MAX_MOD_SOURCES);
+    let mut ms = ModState::with_sources(MAX_MOD_SOURCES);
     for &(s, a, amt) in routes {
-        let d = ms.find(a).unwrap();
-        ms.set_route(s.index(), d, amt);
+        assert!(ms.set_route_addr(s.index(), a, amt));
     }
     ms
 }

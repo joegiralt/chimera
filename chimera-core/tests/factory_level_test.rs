@@ -456,8 +456,21 @@ fn block_rms(out: &[f32]) -> Vec<f32> {
 /// 1.12 through ADR 0060's blocker); `morph_pad_over_its_whole_lfo_sweep`
 /// bounds the whole of it.
 /// SQR BASS: the filter's C1 `saturate` (ADR 0063) no longer clips its
-/// resonant state at 1, 0.55 dB at most.
-const KNOWN: [(usize, f32); 2] = [(5, 0.56), (6, 1.15)];
+/// resonant state at 1, 0.55 dB at most. The rest: CLEAN's ACCURATE tan
+/// and exact divides (#57) move the cutoff a little, 0.09 dB at most.
+/// CLEAN's k law (ADR 0096) gives RES a little more `k` swing: 4 (RES 0.3)
+/// 0.065 dB, 5 (SQR BASS, RES 0.4) 0.73; the others' RES 0 moves k from
+/// 2.01 to 2, within their old allowances.
+const KNOWN: [(usize, f32); 8] = [
+    (0, 0.04),
+    (1, 0.03),
+    (2, 0.09),
+    (3, 0.07),
+    (4, 0.07),
+    (5, 0.74),
+    (6, 1.15),
+    (7, 0.09),
+];
 
 #[test]
 fn factory_sounds_render_as_before_the_new_norm() {

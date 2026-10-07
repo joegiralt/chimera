@@ -19,6 +19,7 @@ use crate::ui::animation::AnimatedValue;
 use crate::ui::audio_page;
 use crate::ui::block_def::{BlockDef, ChainDef2, FxFlow, SlotBinding, VizType, slot_addr};
 use crate::ui::components::{self, Head};
+use crate::ui::draw;
 use crate::ui::dungeon_map;
 use crate::ui::fmt::{self, FmtBuf};
 use crate::ui::glyph::{
@@ -81,6 +82,8 @@ pub struct Frame<'a> {
     pub card: crate::storage::Card,
     /// The master compressor's gain reduction, dB (MST's GR meter).
     pub master_gr_db: f32,
+    /// The active Part's LEVEL LED fill (`ClipHold`); 0 is dark.
+    pub clip: f32,
     /// Animation phase: what an animated glyph draws from.
     pub clock: crate::ui::animation::UiClock,
     /// The FX's stored params (a composite reads the chorus's).
@@ -170,7 +173,7 @@ impl Renderer {
                         .map_or(0.0, a)
                 };
                 use crate::params::FilterParams;
-                let mode = f.parts[f.active_part.index()].sound.params.filter.mode();
+                let flt = &f.parts[f.active_part.index()].sound.params.filter;
                 let v = view::view(f.def, f.focus, &f.ctx);
                 let buf = value_text(f, f.focus, a(f.focus));
                 let readout = (v != View::Empty).then(|| (v.label(), buf.as_str()));
@@ -178,9 +181,12 @@ impl Renderer {
                     display,
                     at(FilterParams::CUTOFF),
                     at(FilterParams::RESONANCE),
-                    viz::Response::of(mode),
+                    viz::Response::of(flt.kind(), flt.mode()),
                     readout,
                 );
+                if f.clip > 0.0 {
+                    draw::clip_led(display, viz::LED_X, viz::LED_Y, f.clip);
+                }
             }
             VizType::Adsr => {
                 let Some(SlotBinding::EnvPanel(s, _)) = f.def.params.first().map(|p| p.binding)
@@ -494,7 +500,7 @@ impl Renderer {
                 };
                 (
                     region::quantize_values(&self.anim),
-                    f.focus as u32 | gr << 8,
+                    f.focus as u32 | gr << 8 | led_key(f) << 16,
                 )
             }
             PageLayout::Matrix => ([0; 6], 0),
@@ -737,6 +743,15 @@ impl Renderer {
                 look: look(f, i),
             };
             components::cell(display, i, top, Some(&c));
+            if f.clip > 0.0 && v.addr() == Some(LEVEL) {
+                let w = draw::text_width(&theme::FONT_VALUE, buf.as_str(), 0);
+                draw::clip_led(
+                    display,
+                    theme::MARGIN_X + (i % 3) as i32 * theme::CELL_COL_W + w + LED_DX,
+                    top + (i / 3) as i32 * theme::CELL_ROW_H + theme::CELL_VALUE_DY - LED_RISE,
+                    f.clip,
+                );
+            }
         }
     }
 
@@ -803,7 +818,14 @@ pub fn page_header(
     parts: &Parts,
 ) -> components::HeaderText {
     let suffix = ["", " / A", " / B"][title_type(def, &ctx.envs) as usize % 3];
-    components::header_text(head, def, ctx.models(), suffix, out_of(head, parts))
+    components::header_text(
+        head,
+        def,
+        ctx.models(),
+        ctx.kind,
+        suffix,
+        out_of(head, parts),
+    )
 }
 
 /// The OUT of the Part whose pages these are; P1 in SETTINGS.
@@ -835,11 +857,12 @@ pub fn title_type(def: &BlockDef, envs: &[EnvKind; 3]) -> u8 {
 pub fn look(f: &Frame, i: usize) -> components::Look {
     let sound = &f.parts[f.active_part.index()].sound;
     match view::view(f.def, i, &f.ctx) {
-        View::Route { source, .. }
-            if sound.mod_state.routes_into(crate::modulation::CUTOFF) & (1 << source.index())
-                == 0 =>
-        {
-            components::Look::Absent
+        View::Route { route, .. } => {
+            let (row, c) = route.cell(sound);
+            match crate::ui::filter_panel::cell_route(sound, row, c) {
+                Some(_) => components::Look::Live,
+                None => components::Look::Absent,
+            }
         }
         View::Source(view::SourceState::Card { .. }) => components::Look::Dimmed,
         v if view::is_dimmed(&v, sound, &f.ctx) => components::Look::Dimmed,
@@ -848,7 +871,7 @@ pub fn look(f: &Frame, i: usize) -> components::Look {
 }
 
 /// The matrix's inert columns on the edited Part (`mod_grid::inert_dests`).
-pub fn inert(f: &Frame) -> u16 {
+pub fn inert(f: &Frame) -> u32 {
     crate::ui::mod_grid::inert_dests(f.matrix, &f.parts[f.active_part.index()].sound)
 }
 
@@ -890,6 +913,24 @@ fn strips_key(strips: &[viz::Strip], selected: usize) -> u32 {
 pub const MATRIX_AMOUNT_SLOT: usize = 4;
 
 /// Amount −127..127 as a 0..1 display value (0 at the centre).
+/// The filter LEVEL, whose cell carries the clip LED (the 2040's DRIVE).
+const LEVEL: ParamAddr = ParamAddr::new(BlockRef::Filter, crate::params::FilterParams::LEVEL);
+/// The LED's centre from the end of LEVEL's value, and above its baseline.
+const LED_DX: i32 = 7;
+const LED_RISE: i32 = 7;
+
+/// The LED's redraw key: its fill on a page that draws it (FLT's viz, a
+/// LEVEL cell), else 0.
+pub fn led_key(f: &Frame) -> u32 {
+    let shows = f.def.viz == VizType::FilterResponse
+        || (0..f.def.params.len()).any(|i| view::view(f.def, i, &f.ctx).addr() == Some(LEVEL));
+    if shows {
+        region::quantize(f.clip) as u32
+    } else {
+        0
+    }
+}
+
 pub fn amount_value(amount: i8) -> f32 {
     0.5 + amount as f32 / 254.0
 }

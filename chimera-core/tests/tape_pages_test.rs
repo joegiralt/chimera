@@ -189,6 +189,7 @@ fn model_names_fit_the_cell() {
             chimera_core::ui::components::Head::Sound(chimera_core::project::PartId::ALL[0]),
             &TAPE_MODEL,
             models,
+            chimera_core::dsp::filter::FilterKind::Svf,
             "",
             chimera_core::part::DacPair::P1,
         );

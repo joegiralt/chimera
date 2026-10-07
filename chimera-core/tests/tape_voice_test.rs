@@ -14,7 +14,7 @@ use chimera_core::dsp::tape_engine::{
 };
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{MAX_VOICES, VOICE_CHAIN_BYTES, VOICE_RAM_BUDGET};
-use chimera_core::modulation::{ModSource, ModState, VCA};
+use chimera_core::modulation::{FixedCol, ModSource, ModState};
 use chimera_core::params::{EngineType, ParamSnapshot, Steal};
 use chimera_core::preset::Sound;
 use chimera_core::project::SourceId;
@@ -101,8 +101,11 @@ fn neutral_tape_loops_whole() {
 #[test]
 fn init_routes_env1_to_vca() {
     let s = Sound::init(EngineType::Tape);
-    let d = s.mod_state.find(VCA).expect("a VCA column");
-    assert_eq!(s.mod_state.amount(ModSource::Env1.index(), d), 127);
+    assert_eq!(
+        s.mod_state
+            .fixed_amount(ModSource::Env1.index(), FixedCol::Vca),
+        127
+    );
     let (p, m) = (&s.params, &s.mod_state);
     let mut v = Rig::with_source(SR, &saw());
     v.note_on(c4(), Velocity::DEFAULT, p);

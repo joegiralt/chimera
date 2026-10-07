@@ -3,7 +3,6 @@ mod common;
 use common::Rig;
 
 use chimera_core::addr::{BlockRef, ParamAddr};
-use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{ModSource, ModState, note_source};
 use chimera_core::params::{EngineType, FilterParams, ParamSnapshot};
 use chimera_core::ui::block_registry::PART_MOD_SOURCES;
@@ -42,10 +41,10 @@ fn note_source_is_a_tenth_of_an_octave_law() {
 fn render(source: ModSource, amount: i8, note: u8, vel: u8) -> Vec<f32> {
     let mut p = ParamSnapshot::for_engine(EngineType::Algo);
     p.filter.cutoff = 1000.0;
-    let mut reg = ModDestRegistry::new();
-    reg.add(CUTOFF, *b"FLTCUTOF").unwrap();
-    let mut ms = ModState::from_registry(&reg, 8);
-    ms.set_amount(source.index(), 0, amount);
+    let mut ms = ModState::with_sources(8);
+    if amount != 0 {
+        ms.set_route_addr(source.index(), CUTOFF, amount);
+    }
     let mut v = Rig::new(chimera_hal::SAMPLE_RATE);
     v.note_on(
         MidiNote::new(note).unwrap(),
@@ -117,7 +116,7 @@ fn every_source_moves_cutoff() {
     }
 }
 
-use chimera_core::modulation::{CUTOFF as CUTOFF_ADDR, MAX_MOD_SOURCES, VCA};
+use chimera_core::modulation::{CUTOFF as CUTOFF_ADDR, FixedCol, MAX_MOD_SOURCES};
 use chimera_core::preset::Sound;
 use chimera_core::ui::mod_grid::MatrixState;
 
@@ -125,25 +124,25 @@ const DEFAULT_BITS: u8 = 1 << 0 | 1 << 1 | 1 << 7; // ENV1, LFO1, NOTE
 
 #[test]
 fn presence_is_apart_from_the_amount() {
-    let mut reg = ModDestRegistry::new();
-    reg.add(CUTOFF_ADDR, *b"FLTCUTOF").unwrap();
-    let mut ms = ModState::from_registry(&reg, MAX_MOD_SOURCES);
+    let mut ms = ModState::with_sources(MAX_MOD_SOURCES);
     assert_eq!(ms.routes_into(CUTOFF_ADDR), 0);
-    ms.set_route(ModSource::Note.index(), 0, 0);
+    ms.set_fixed(ModSource::Note.index(), FixedCol::Freq, 0);
     assert_eq!(ms.routes_into(CUTOFF_ADDR), 1 << 7, "a route at 0 exists");
-    ms.set_amount(ModSource::Lfo1.index(), 0, 9);
+    ms.set_route_addr(ModSource::Lfo1.index(), CUTOFF_ADDR, 9);
     assert_eq!(
         ms.routes_into(CUTOFF_ADDR),
         1 << 7 | 1 << 1,
-        "set_amount creates"
+        "set_route_addr creates"
     );
     let values = [1.0f32; MAX_MOD_SOURCES];
-    ms.set_amount(ModSource::Lfo1.index(), 0, 0);
+    ms.set_fixed(ModSource::Lfo1.index(), FixedCol::Freq, 0);
     assert_eq!(
-        ms.sum_for(0, &values),
+        ms.fixed_sum(FixedCol::Freq, &values),
         0.0,
         "a present route at 0 adds nothing"
     );
+    ms.clear_fixed(ModSource::Note.index(), FixedCol::Freq);
+    assert_eq!(ms.routes_into(CUTOFF_ADDR), 1 << 1, "cleared");
 }
 
 #[test]
@@ -153,29 +152,36 @@ fn presence_survives_sync_from_matrix() {
     m.rebuild_sources(&PART_MOD_SOURCES);
     m.rebuild_dests_from_registry(&sound.dest_registry);
     m.load_amounts(&sound.mod_state);
-    assert_eq!(m.present[0], DEFAULT_BITS);
+    assert_eq!(m.fixed_present[FixedCol::Freq.index()], DEFAULT_BITS);
     let mut ms = ModState::new();
     ms.sync_from_matrix(&m);
-    assert_eq!(ms.present(0), DEFAULT_BITS);
+    assert_eq!(ms.fixed_present(FixedCol::Freq), DEFAULT_BITS);
 }
 
-/// Spec § Tests "Defaults": exactly the three CUTOFF routes at 0.
+/// Spec § Tests "Defaults": exactly the three FREQ (CUTOFF) routes at 0,
+/// in the fixed column; the registry is empty.
 #[test]
 fn a_new_sound_has_the_default_routes() {
     for ct in EngineType::ALL {
         let s = Sound::init(ct);
-        // TAPE's loop has no end: its INIT routes ENV 1 into VCA too.
-        let n = 1 + usize::from(ct == EngineType::Tape);
-        assert_eq!(s.dest_registry.len(), n, "{ct:?}");
-        assert_eq!(s.dest_registry.get(0).unwrap().addr, CUTOFF_ADDR);
+        assert_eq!(s.dest_registry.len(), 0, "{ct:?}");
         assert_eq!(s.mod_state.num_sources(), MAX_MOD_SOURCES);
-        assert_eq!(s.mod_state.num_dests(), n);
-        assert_eq!(s.mod_state.present(0), DEFAULT_BITS, "{ct:?}");
-        assert!((0..MAX_MOD_SOURCES).all(|src| s.mod_state.amount(src, 0) == 0));
+        assert_eq!(s.mod_state.num_dests(), 0);
+        assert_eq!(s.mod_state.routes_into(CUTOFF_ADDR), DEFAULT_BITS, "{ct:?}");
+        assert!((0..MAX_MOD_SOURCES).all(|src| s.mod_state.fixed_amount(src, FixedCol::Freq) == 0));
+        // TAPE's loop has no end: its INIT routes ENV 1 into VCA too.
+        let vca = if ct == EngineType::Tape {
+            1 << ModSource::Env1.index()
+        } else {
+            0
+        };
+        assert_eq!(s.mod_state.fixed_present(FixedCol::Vca), vca, "{ct:?}");
         if ct == EngineType::Tape {
-            assert_eq!(s.dest_registry.get(1).unwrap().addr, VCA);
-            assert_eq!(s.mod_state.present(1), 1 << ModSource::Env1.index());
-            assert_eq!(s.mod_state.amount(ModSource::Env1.index(), 1), 127);
+            assert_eq!(
+                s.mod_state
+                    .fixed_amount(ModSource::Env1.index(), FixedCol::Vca),
+                127
+            );
         }
     }
 }
@@ -189,14 +195,9 @@ fn env(s: EnvSlot, id: chimera_core::block::ParamId) -> ParamAddr {
 
 /// `routes` (source, destination, amount) as a matrix.
 fn routed(routes: &[(ModSource, ParamAddr, i8)]) -> ModState {
-    let mut reg = ModDestRegistry::new();
-    for &(_, a, _) in routes {
-        let _ = reg.add(a, *b"TEST\0\0\0\0");
-    }
-    let mut ms = ModState::from_registry(&reg, MAX_MOD_SOURCES);
+    let mut ms = ModState::with_sources(MAX_MOD_SOURCES);
     for &(s, a, amt) in routes {
-        let d = ms.find(a).unwrap();
-        ms.set_route(s.index(), d, amt);
+        assert!(ms.set_route_addr(s.index(), a, amt));
     }
     ms
 }

@@ -57,10 +57,8 @@ fn voice_render_with_mod_offset_changes_filter() {
     let empty_mod = ModState::new();
 
     // Modulated: LFO (source 1) -> filter cutoff
-    let mut registry = chimera_core::mod_path::ModDestRegistry::new();
-    registry.add(CUTOFF, *b"FLTCUT\0\0").unwrap();
-    let mut mod_state = ModState::from_registry(&registry, 2); // env, LFO
-    mod_state.set_amount(1, 0, 100); // LFO -> cutoff at high amount
+    let mut mod_state = ModState::with_sources(2); // env, LFO
+    mod_state.set_route_addr(1, CUTOFF, 100); // LFO -> cutoff at high amount
 
     voice_dry.note_on(
         MidiNote::new(60).unwrap(),
@@ -182,10 +180,8 @@ fn matrix_state_rebuild_dests_from_registry() {
 fn env_source_moves_on_an_algo_sound() {
     let mut params = ParamSnapshot::for_engine(EngineType::Algo);
     params.filter.cutoff = 8000.0;
-    let mut registry = chimera_core::mod_path::ModDestRegistry::new();
-    registry.add(CUTOFF, *b"FLTCUT\0\0").unwrap();
-    let mut routed = ModState::from_registry(&registry, 2);
-    routed.set_amount(0, 0, -100); // ENV → cutoff
+    let mut routed = ModState::with_sources(2);
+    routed.set_route_addr(0, CUTOFF, -100); // ENV → cutoff
     let render = |ms: &ModState| {
         let mut voice = Rig::new(chimera_hal::SAMPLE_RATE);
         voice.note_on(
@@ -211,10 +207,8 @@ fn env_source_moves_on_an_algo_sound() {
 fn env_source_moves_on_a_modal_sound() {
     let mut params = ParamSnapshot::for_engine(EngineType::Modal);
     params.filter.cutoff = 8000.0;
-    let mut registry = chimera_core::mod_path::ModDestRegistry::new();
-    registry.add(CUTOFF, *b"FLTCUT\0\0").unwrap();
-    let mut routed = ModState::from_registry(&registry, 2);
-    routed.set_amount(0, 0, -100); // ENV → cutoff
+    let mut routed = ModState::with_sources(2);
+    routed.set_route_addr(0, CUTOFF, -100); // ENV → cutoff
     let render = |ms: &ModState| {
         let mut voice = Rig::new(chimera_hal::SAMPLE_RATE);
         voice.note_on(
