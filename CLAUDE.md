@@ -9,9 +9,11 @@ Full design spec: `docs/chimera-synth-design.md`
 ## Workspace layout
 
 ```
-chimera-core/     — no_std portable logic (DSP, UI, params)
+chimera-engine/   — no_std model and DSP, everything the audio runs (opt 2)
+chimera-core/     — no_std UI, console and params; re-exports the engine (opt z)
 chimera-hal/      — trait definitions (Controls, Display, MidiIn)
-chimera-stm32/    — hardware target (SAI, SPI, GPIO, DMA)
+chimera-board/    — the unit off the audio path: boot, UI loop, drivers (opt z)
+chimera-stm32/    — hardware target: main, audio ISR, MIDI DIN, bench (opt 2)
 chimera-desktop/  — simulator (minifb window, cpal audio)
 ```
 
