@@ -126,7 +126,7 @@ stack-check:
     for features in "${sets[@]}"; do
         cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf $features
         test -r "$elf"
-        dis="$("$objdump" -d --no-show-raw-insn -C "$elf")"
+        dis="$("$objdump" -d --mcpu=cortex-m7 --no-show-raw-insn -C "$elf")"
         data="$("$objdump" -s -j .rodata -j .data "$elf")"
         if grep -E -e '^[0-9a-f]{8} <' -e 'sub(\.w)?[[:space:]]+sp, (sp, )?(#0x([2-9a-f][0-9a-f]{3}|[0-9a-f]{5,})$|r[0-9])' <<<"$dis" \
             | grep -B1 -E '^[[:space:]]' \

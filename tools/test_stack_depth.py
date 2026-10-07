@@ -133,6 +133,10 @@ class StackDepth(unittest.TestCase):
         self.assertFalse(sd.check(self.img, 1 << 20, out))
         self.assertIn("reaches chimera_board::probe::stack_used", out.getvalue())
 
+    def test_a_conditional_branch_to_a_start_is_a_tail_call(self):
+        img = sd.parse(io.StringIO("08000000 <f>:\n 8000000:      \tbne.w\t0x8000100 <g>        @ imm = #0xfc\n 8000004:      \tbeq\t0x8000002 <f+0x2>\n\n08000100 <g>:\n 8000100:      \tbx\tlr\n"))
+        self.assertEqual(img.funcs["f"][2], {"g"})
+
 
 if __name__ == "__main__":
     unittest.main()
