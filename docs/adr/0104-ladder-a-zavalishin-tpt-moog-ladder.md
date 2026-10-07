@@ -1,6 +1,6 @@
 # 0104. LADDER: a fourth filter TYPE, the Moog transistor ladder as Zavalishin's TPT ladder at 1×, five divide-free tanh saturators
 
-- **Status:** Proposed
+- **Status:** Accepted (owner, 2026-10-07)
 - **Deciders:** owner (the type, its params, "with tanh", no make-up gain, 2026-10-07), firmware (the saturator's form after the SPICE A/B); owner (that saturator ruled, 2026-10-07)
 
 ## Context
