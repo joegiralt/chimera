@@ -9,7 +9,7 @@ use core::hint::black_box;
 
 use super::clean::clean_k;
 use super::k2040::VoiceSpec;
-use super::{Clean, Dirty, FilterMods, K2040, TapShape, tap_g_range};
+use super::{Clean, Dirty, FilterMods, K2040, Ladder, TapShape, tap_g_range};
 use crate::dsp::wavefolder::Wavefolder;
 use crate::hw::{BLOCK_SIZE, SAMPLE_RATE};
 use crate::params::FilterParams;
@@ -58,6 +58,24 @@ pub fn k2040_probe<V: VoiceSpec, const MOVING: bool>(
 pub fn dirty_probe<const M: u8>(f: &mut Dirty, buf: &mut [f32; BLOCK_SIZE], p: &FilterParams) {
     let r = f.prelude(buf, p, SAMPLE_RATE, &FilterMods::NONE);
     let sum = f.run::<M>(buf, r, None);
+    f.settle(sum);
+}
+
+/// LADDER in mode `M` (`LADDER_MODES`' index), `process`'s ramps with the
+/// loop forced: the steady one, or the moving one if `MOVING` (`p.mode()`
+/// must agree).
+#[inline(never)]
+pub fn ladder_probe<const M: usize, const MOVING: bool>(
+    f: &mut Ladder,
+    buf: &mut [f32; BLOCK_SIZE],
+    p: &FilterParams,
+) {
+    let r = f.ramps(p, SAMPLE_RATE, &FilterMods::NONE);
+    let (_, sum) = if MOVING {
+        f.moving::<M>(buf, r, None)
+    } else {
+        f.steady::<M>(buf, r)
+    };
     f.settle(sum);
 }
 
@@ -160,6 +178,48 @@ mod tests {
         probe_is_process::<5>(FilterMode::Hp24);
         probe_is_process::<6>(FilterMode::Notch);
         probe_is_process::<7>(FilterMode::Phaser);
+    }
+
+    /// LADDER's probe is `process` on each kind of block, every mode.
+    #[test]
+    fn ladder_probe_is_process() {
+        ladder_is_process::<0>();
+        ladder_is_process::<1>();
+        ladder_is_process::<2>();
+        ladder_is_process::<3>();
+        ladder_is_process::<4>();
+    }
+
+    fn ladder_is_process<const M: usize>() {
+        let mode = crate::dsp::filter::ladder::LADDER_MODES[M];
+        let mut p = FilterParams::default();
+        p.set_kind(FilterKind::Ladder);
+        assert!(p.set_mode(mode));
+        (p.cutoff, p.resonance, p.level) = (800.0, 0.7, 0.75);
+        let (mut a, mut b) = (Ladder::new(), Ladder::new());
+        let mut x = 0.37f32;
+        for block in 0..6 {
+            let moving = matches!(block, 2..=4);
+            match block {
+                2 => (p.cutoff, p.resonance) = (3000.0, 0.4),
+                3 => p.resonance = 0.5,
+                4 => p.cutoff = SAMPLE_RATE as f32 * 0.6,
+                _ => {}
+            }
+            let mut want = [0.0f32; BLOCK_SIZE];
+            for s in want.iter_mut() {
+                x = crate::dsp::clampf(x * 3.9 * (1.0 - x), 0.01, 0.99);
+                *s = x - 0.5;
+            }
+            let mut got = want;
+            a.process(&mut want, &p, SAMPLE_RATE, &FilterMods::NONE);
+            if moving {
+                ladder_probe::<M, true>(&mut b, &mut got, &p);
+            } else {
+                ladder_probe::<M, false>(&mut b, &mut got, &p);
+            }
+            assert_eq!(got, want, "{mode:?} block {block}");
+        }
     }
 
     /// The 2040's probe is `process` on each kind of block, both voices.

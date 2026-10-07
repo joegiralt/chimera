@@ -122,13 +122,17 @@ fn tap_gain(m: usize, k: f32) -> f32 {
     g0 + (g4 - g0) * clampf(k * 0.25, 0.0, 1.0)
 }
 
-/// LADDER's steady bill over `OLD_LP24` (95): LP4 counted at 81
-/// instructions a sample and 2 `vdiv` (the Padé tanhs), ceil5(81 × 1.606
-/// + 24) = 155, less 95: 60. HP4's mix adds 4: 165, 70. Billed the larger.
-pub const LADDER_COST: Cost = Cost(70);
-/// The moving path: `G` and `D` divided every sample (2 `vdiv`) and the
-/// ramps' fill, over the steady one.
-pub const LADDER_MOVE_COST: Cost = Cost(60);
+/// LADDER's steady bill over `OLD_LP24` (95), counted on the bench ELF
+/// (`ladder_probe`, `tools/loop_count.py`, 2026-10-07): LP4 83
+/// instructions a sample and 2 `vdiv` (the Padé tanhs), with the block's
+/// 1.88 and 0.047 `vdiv`, ceil5(84.88 × 1.606 + 12 × 2.047) = 165; LP2 84,
+/// BP2 85, BP4 and HP4 87: 165 to 170. Billed the costliest, 170 − 95.
+pub const LADDER_COST: Cost = Cost(75);
+/// The moving path over the steady one: `G` and `D` divided every sample
+/// (4 `vdiv` in all) and `ramps`' fill (6.25). LP4 96 + 6.25 + 2.23
+/// instructions, 4.016 `vdiv`: 220 − 165; HP4 100 + 6.25 + 2.27: 225 −
+/// 170. Both 55.
+pub const LADDER_MOVE_COST: Cost = Cost(55);
 
 /// The Padé 3/2 tanh, `x(27 + x²)/(27 + 9x²)`, held at ±1 from ±3 where it
 /// peaks: within 0.024 of tanh, one divide.

@@ -110,6 +110,21 @@ mod probes {
         filter::probe::dirty_probe::<3>,
     ];
 
+    /// LADDER's probes: LP4 (1) and HP4 (4), steady and moving, and the
+    /// other modes steady (`LADDER_MODES`).
+    type LadderProbe = fn(&mut filter::Ladder, &mut [f32; BLOCK_SIZE], &FilterParams);
+
+    #[used]
+    static LADDER_PROBES: &[LadderProbe] = &[
+        filter::probe::ladder_probe::<1, false>,
+        filter::probe::ladder_probe::<1, true>,
+        filter::probe::ladder_probe::<4, false>,
+        filter::probe::ladder_probe::<4, true>,
+        filter::probe::ladder_probe::<0, false>,
+        filter::probe::ladder_probe::<2, false>,
+        filter::probe::ladder_probe::<3, false>,
+    ];
+
     /// The taps' pass over a moving block's `g` and `k`, shared by every type.
     #[used]
     static TAP_SHAPE_PROBE: fn(&mut [f32; BLOCK_SIZE]) = filter::probe::tap_shape_probe;
@@ -248,7 +263,7 @@ fn worst_comp(s: &mut AudioShared) {
     (c.thresh, c.ratio, c.attack, c.release, c.makeup, c.mix) = (0.0, 7, 0.0, 0.0, 0.5, 1.0);
 }
 
-const ROUTING_ROWS: usize = 43;
+const ROUTING_ROWS: usize = 44;
 /// Rows per ROUTING screen: ten from y 46 at `ROW_H` 25 end at 283.
 const ROUTING_PAGE: usize = 10;
 
@@ -281,6 +296,12 @@ const ROUTING: [RoutingRow; ROUTING_ROWS] = [
     (
         "DIRTY",
         |p| one_op(p).filter.set_kind(FilterKind::Dirty),
+        STILL,
+    ),
+    // LADDER − 1 OP: its steady bill (LP4, the default mode).
+    (
+        "LADDER",
+        |p| one_op(p).filter.set_kind(FilterKind::Ladder),
         STILL,
     ),
     // OP5 tapped: TAP FREQ − 1 OP is a capture, `TapShape::apply` and
