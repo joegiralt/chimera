@@ -100,9 +100,10 @@ in_place_enum! {
 }
 
 /// TAPE's `out_gain` (ADR 0063, TAPE Task 19): TAPE INIT on the reference
-/// source, ALGO INIT's C4 peaked at −0.5 dBFS as the importer leaves every
-/// source, sits at the factory median (+5.8 dB).
-pub const TAPE_OUT_GAIN: f32 = 1.954;
+/// source, MORPH KEYS' C4 peaked at −0.5 dBFS as the importer leaves every
+/// source, sits at the factory median (+12.5 dB). A sine, its crest 3 dB,
+/// plays about 7 dB over it; factory TAPE Sounds trim their OUT LEVEL.
+pub const TAPE_OUT_GAIN: f32 = 4.236;
 
 impl EngineSlot {
     /// By value, through the stack: tests only. A voice builds its slot in

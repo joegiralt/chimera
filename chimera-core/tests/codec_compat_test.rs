@@ -451,7 +451,7 @@ const FIXTURE_RENDERS: &[(&str, u64)] = &[
     ("init_modal.snd", 0xda59622102625d57),
     // On the rig's second of saw (`common::rig`); re-recorded for TAPE's
     // `out_gain` (ADR 0063, TAPE Task 19).
-    ("init_tape.snd", 0x488366a33aab2932),
+    ("init_tape.snd", 0xe193a2d9a55096c6),
 ];
 
 #[test]

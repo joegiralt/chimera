@@ -650,15 +650,21 @@ fn morph_pad_over_its_whole_lfo_sweep() {
     );
 }
 
-/// TAPE's reference source (TAPE spec § 9, Task 19): ALGO INIT's own C4
-/// at velocity 100, 1 s of P1 as `(L + R)/2`, its peak at −0.5 dBFS as the
+/// TAPE's reference source (TAPE spec § 9, Task 19): MORPH KEYS' C4 at
+/// velocity 100, 0.75 s of P1 as `(L + R)/2`, its peak at −0.5 dBFS as the
 /// importer leaves every source; held at 48 kHz, root C4. The factory set's
-/// `SINE C4` is this render through the importer.
+/// `KEYS C4` is this render through the importer: a sustained tone near the
+/// set's median crest, where ALGO INIT's sine sits 8 dB over it.
 fn reference_source() -> Vec<u8> {
     let mut r = TapeRig::new(None);
-    r.shared.parts[0].params = Sound::init(EngineType::Algo).params;
+    let keys = (0..8)
+        .filter_map(factory_sound)
+        .find(|s| s.name.as_str() == "MORPH KEYS")
+        .unwrap();
+    r.shared.parts[0].params = keys.params;
+    r.shared.parts[0].mod_state = keys.mod_state;
     let mut x = Vec::new();
-    for b in 0..BPS {
+    for b in 0..BPS * 3 / 4 {
         x.extend(r.block(b == 0).chunks(2).map(|f| 0.5 * (f[0] + f[1])));
     }
     let peak = x.iter().fold(0f32, |m, v| m.max(v.abs()));
