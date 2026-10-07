@@ -11,7 +11,7 @@ pub mod coef;
 pub mod dirty;
 pub mod k2040;
 pub mod level;
-#[cfg(any(test, feature = "probe"))]
+#[cfg(any(test, feature = "probe", feature = "filter-probe"))]
 pub mod probe;
 
 pub use clean::Clean;

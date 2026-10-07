@@ -3,6 +3,18 @@
 
 #[cfg(all(feature = "bench", feature = "sd-probe"))]
 compile_error!("bench and sd-probe both take over after boot: pick one");
+#[cfg(all(
+    feature = "bench",
+    not(any(
+        feature = "bench-algo",
+        feature = "bench-routing",
+        feature = "bench-memory",
+        feature = "bench-stress",
+        feature = "bench-orbit",
+        feature = "bench-tape"
+    ))
+))]
+compile_error!("the bench needs an area: bench-algo, -routing, -memory, -stress, -orbit or -tape");
 // The lost-cluster sweep frees only on the owner's go (#360, ADR 0094):
 // until then the boot runs it dry. Only the commit that enables freeing
 // removes this line.
@@ -26,6 +38,8 @@ mod clocks;
 mod controls;
 mod dfu;
 mod display;
+#[cfg(feature = "filter-probes")]
+mod filter_probes;
 #[cfg(all(feature = "midi-din", not(feature = "sd-probe")))]
 mod midi_din;
 #[cfg(not(feature = "sd-probe"))]

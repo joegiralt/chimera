@@ -386,7 +386,7 @@ class Tool(unittest.TestCase):
         self.assertEqual(tool.CONSOLE_ID, (0x0483, 0x5740))
         self.assertEqual(tool.ROM_DFU_ID, (0x0483, 0xDF11))
         just = (ROOT / "Justfile").read_text()
-        for recipe in ("flash:", "flash-bench:"):
+        for recipe in ("flash:", "flash-bench area"):
             body = just.split("\n" + recipe, 1)[1].split("\n\n", 1)[0]
             self.assertLess(body.index("to-dfu"), body.index("dfu-util"), recipe)
             self.assertIn("-s 0x8020000:leave", body, recipe)
