@@ -53,6 +53,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("flt_mod_2040_exp", 0x5fef62806549d50e),
     ("flt_dirty", 0x2fd9a7df881017c9),
     ("flt_mod_dirty", 0x8069a71da376c64a),
+    ("flt_ladder", 0x533bf12f36283be5),
+    ("flt_mod_ladder", 0xf09e62080b1742f2),
     // The LEVEL LED at 0 (dark), ½ and 1: beside LEVEL, beside the 2040's
     // DRIVE and in FLT's viz corner (Task 17).
     ("flt_led_0", 0x0536d5a167d2ceaa),

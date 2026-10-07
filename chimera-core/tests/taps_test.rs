@@ -264,6 +264,7 @@ use chimera_core::dsp::algo::plan::{EvalPlan, OPS};
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::filter::coef::exp2_poly;
 use chimera_core::dsp::filter::k2040::{OUT_2040, R_2040};
+use chimera_core::dsp::filter::ladder::ladder_bound;
 use chimera_core::dsp::filter::{Filter, FilterKind, FilterMode, FilterMods, K2040Voice};
 use chimera_core::dsp::voice::Voice;
 use chimera_core::dsp::wavefolder::Wavefolder;
@@ -508,6 +509,12 @@ fn every_setting() -> Vec<FilterParams> {
         assert!(p.set_mode(m));
         v.push(p);
     }
+    for &m in FilterKind::Ladder.modes() {
+        let mut p = FilterParams::default();
+        p.set_kind(FilterKind::Ladder);
+        assert!(p.set_mode(m));
+        v.push(p);
+    }
     v
 }
 
@@ -516,6 +523,7 @@ fn bound(p: &FilterParams) -> f32 {
         FilterKind::Svf => CLEAN_BOUND,
         FilterKind::K2040 => R_2040 / p.voice.alpha() * OUT_2040 + 1e-6,
         FilterKind::Dirty => 1.0,
+        FilterKind::Ladder => ladder_bound(p.mode(), 0.5),
     }
 }
 

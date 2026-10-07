@@ -186,6 +186,7 @@ static MODE_SPECS: [ParamSpec; FilterKind::BUILT.len()] = [
     mode_spec(FilterKind::BUILT[0]),
     mode_spec(FilterKind::BUILT[1]),
     mode_spec(FilterKind::BUILT[2]),
+    mode_spec(FilterKind::BUILT[3]),
 ];
 
 impl Block for FilterParams {

@@ -10,6 +10,8 @@
 - **Revision 3:** it applies the re-review (H-new-1 to 4, M-new-1 to 4, N4, L-new-1 and 2, and M6's leftover). ADR 0096 now supersedes ADR 0037, which is Accepted, rather than amending it.
 - **Revision 4 (2026-10-06):** the 2040 gains VOICE (REV2 / EXP: the Prophet-5 Rev 1/2 and the RSF Kobol Expander) and the chip's ±1 V stage clip, and Fig. 9's resonance element is corrected to the SSM 2020 (§ 3). The owner then ruled (2026-10-06) that each voice runs its own resonance circuit: REV2 a linear SSM 2020, EXP the Kobol's CA3080 limiter. The shared `L` is gone.
 
+- **Revision 5 (2026-10-07):** a fourth TYPE, **LADDER**, the Moog transistor ladder (§ 4a, [ADR 0104](../../adr/0104-ladder-a-zavalishin-tpt-moog-ladder.md), Proposed).
+
 **Implemented after `modal-stagger` merged.** That branch might have replaced `filter.rs`'s `saturate()` with stmlib's rational soft clipper, which divides. The CLEAN loop's in-loop saturate must stay divide-free on its common path, and the cost probes assert it (§ Cost). If `modal-stagger` lands a dividing clipper, the filter keeps today's C1 `saturate` for its own use.
 
 ## Goal
@@ -71,6 +73,7 @@
 | CLEAN (0) | LP1, LP2, **LP4**, BP2, BP4, HP4, NOTCH1, NOTCH2 |
 | 2040 (4) | **LP4** only |
 | DIRTY (6) | **LP2**, BP2, HP2, NOTCH1 |
+| LADDER (1) | LP2, **LP4**, BP2, BP4, HP4 (§ 4a) |
 
 - **Mode names say what the mode does.**
   - NOTCH1 is one notch and NOTCH2 is two. NOTCH2 is the Cascadia's PHZR.
@@ -266,7 +269,8 @@ sat(v) = c − (4/27)·c³,  c = clamp(v, ±1.5)        // C1 cubic, no divide
 | `α_v`, the drive into the chip | `ALPHA_REV2` ≈ 0.1, tuned at build (tests 2 and 7) | **`2 · ALPHA_REV2`** (+6.0 dB) | Stage-1 gain `R2/R1`: Prophet 10 K/200 K (R480/R476) = 0.05; Kobol 10 K/100 K (R25/R24) = 0.10 |
 | `R`, the stage clip | **`2 · ALPHA_REV2`**, shared | the same | The data sheet's ±1 V swing, against the Prophet's 500 mV per pole at maximum saw (§ 5-13): 0.5 V ↔ `ALPHA_REV2`, so 1 V ↔ 2·`ALPHA_REV2`. The chip is the same in both. |
 | The resonance element (`ResElement`) | `Ssm2020Linear`: no limit | `Ca3080 { limit: L }`, `L` = ¼ | Prophet: ½ U490, a 2020 in linear mode; Kobol: CI5, a 3080. Owner's ruling, 2026-10-06 |
-| `TRIM_v`, the cutoff trim | 2^(−13.3/1200): the clip rings the linear loop +13.6 cents sharp | 1 | The Prophet is trimmed at full resonance (§ 4-17) |
+| `TRIM_v`, the cutoff trim | 2^(−13.3/1200): the clip rings the linear loop +13.6 cents sharp | `TRIM_EXP`, +11.5 cents (ADR 0105) | The Prophet is trimmed at full resonance (§ 4-17) |
+| `S_v`, the stage bend (`g·sat(S·v)/S`) | 1 | **`STAGE_SCALE_EXP`** = 3.04 (ADR 0105) | Node 10 K/10 K/220 Ω: 1 V of stage error = 21.07 mV = 0.405 × 2V_T, 1.5 × that = 0.608 in `sat` units against 0.2 per volt |
 | `β`, the output VCA | — (no POST stage) | **`0.62 / R`** | CI3: R31 10 K into R40 220 Ω turns ±1 V into ±21.5 mV = 0.416 × 2V_T; the cubic `sat` matches `tanh` at `v = 1.5 · V/2V_T`, so 0.416 × 1.5 = 0.62 at `y₄ = R` |
 | `OUT_2040`, `k` law, onset | shared | shared | No evidence of a different gain law: the 2020 is linear, and T3 is a plain PNP current source |
 
@@ -340,6 +344,40 @@ out = clamp(½ · ½·(m₁ + m₂), ±1)                 // m = the mode's outp
 - **Aliasing.** The two-sub-step average is not anti-aliasing. It only trims the top. Aliasing is part of DIRTY.
 - **Output gain ½.** Without it DIRTY runs about +3 dBFS RMS hot. LEVEL drives it into the clamps, and the LED reads at the input clipper as on CLEAN.
 - **State:** two floats.
+
+### 4a. LADDER: the Moog transistor ladder
+
+Owner-approved 2026-10-07; the model, its provenance and its A/B against SPICE are [ADR 0104](../../adr/0104-ladder-a-zavalishin-tpt-moog-ladder.md). The research behind it is the nonlinear-filter papers ledger (Zavalishin, Huovilainen, D'Angelo–Välimäki, Oyama DAFx-26).
+
+- **TYPE and code.** LADDER, disk code 1 (the slot the routing spec kept for the Moog kind), ident "LADDER", last on TYPE's knob. No VOICE. Same params as CLEAN: FREQ, RES (Q), LEVEL, MODE, and the fixed matrix columns.
+- **Panel.** CLEAN's: FREQ · Q · MODE · FM1 · FM2 on FLT, LEVEL · FM3 · FM3 IN · QM · QM IN on FLT › MOD, whose header reads LADDER MOD (DIRTY's precedent). The viz draws the low-passes with the 2040's bass loss, BP and HP as CLEAN's.
+- **Model.** Zavalishin's TPT four-pole at 1×, solved as the 2040 is: the global loop linearly in one step with shared `G = g/(1 + g)` and `D = 1/(1 + k·G⁴)`, then each stage on the transistor-ladder law `ẏ = ω(tanh x − tanh y)`, its own saturator read at its linear estimate and handed to the next stage (five saturators, Huovilainen's topology).
+
+```
+x_c = α · x · gain                                  // α = ALPHA_LADDER = 0.5, LEVEL's gain
+S   = (1 − G)·(s₄ + G·(s₃ + G·(s₂ + G·s₁)))
+u   = x_c·D − k·D·S                                 // y₀
+w   = tanhₚ(u)                                      // the input pair
+for i in 1..=4:
+    e  = G·w + (1 − G)·sᵢ                           // the stage's linear estimate
+    σ  = tanhₚ(e)
+    t  = g·(w − σ)
+    yᵢ = clamp(sᵢ + t, ±3)                          // tanhₚ's flat point
+    sᵢ = yᵢ + t;  w = σ
+out = Σ cₘ·yₘ · gainₘ(k) · OUT_LADDER/α
+tanhₚ(x) = c·(1 + c²·(a₃ + c²·(a₅ + …a₁₁))), c = clamp(x, ±3)   // `tanh_poly`: 0.005 off tanh, flat at ±1 from ±3, no divide
+```
+
+- **The saturator.** The owner's design put a Padé 3/2 tanh on the input pair and stage 1 and the 2040's cubic on stages 2–4. Against SPICE that misses the large-signal cutoff shift by 38 cents RMS and the drive sweep by 1 % of H1 (ADR 0104). **The owner ruled (2026-10-07): `tanh_poly` on all five** (10 cents, 0.16 %, no divide), at 7 / 5 / 4 voices (ALGO default / one tap / all four, rev V) against the mix's 7 / 6 / 5; 7 / 5 / 5 after the TAPE merge's re-count.
+
+- **Resonance.** `k = 4·RES/0.95` (`k2040_k`): the onset at RES 0.95, 4.21 at RES 1. The ring's amplitude is the input pair's; its pitch is trimmed +20.8 cents (`TRIM_LADDER`), the stages' saturators slowing it, which holds it within 0.6 cents over C2–C6.
+- **Bass loss.** DC gain `1/(1 + k)`, uncompensated (the owner's ruling for the 2040, held here).
+- **LEVEL** is the drive: `α·gain` into the loop. The LED reads the drive into the input pair, `clip_amount(peak|x|·α·gain/1)`: lit from LEVEL 0.75 on a full-scale input, as REV2's. No clipper runs.
+- **Modes** (Zavalishin § 5.5, Xpander-style; BP4 is his eq. 5.16, the rest derived by his rule): LP2 `y₂`, LP4 `y₄`, BP2 `y₁ − y₂`, BP4 `y₂ − 2y₃ + y₄`, HP4 `y₀ − 4y₁ + 6y₂ − 4y₃ + y₄`. Each mode's gain lerps in `k` from its RES-0 normalisation (BP2 ×2, BP4 ×4: 0 dB peaks) to its ring's (LP2 and BP2 ×½), so every mode rings within 0.5 dB of LP4. A MODE change is click-free by construction (one state, five mixes) and still crossfades on a stack copy, as DIRTY's does. The gain follows each sample's `k`, so a Q tap rings every mode at LP4's level. A mode LADDER lacks plays LP4 (`ladder_index`). The viz folds LP2's gain into its curve and eases the band-passes from 0 dB down to LP4's ring.
+- **Levels.** LEVEL ½, RES 0: LP4 unity. RES 1: −15.5 to −16.2 dBFS in every mode, LADDER's own band, as EXP has its own.
+- **State.** Four floats and the ramp ends, in the one slot the 2040 also uses, a typed `enum Poles` (36 B with its tag): the voice chain measures 1,952 B on main with TAPE (ADR 0101's bound is 2,112). A 2040 ↔ LADDER change hands the slot over with a warm start and runs the old type on a stack copy, its stages carried in the fade, as a VOICE flip does.
+- **Bounded.** Each stage within its swing; every state within it plus `2g`; `|out| ≤ ladder_bound(mode, x)`, exact for LP4 (`Y/α`).
+- **Cost.** Steady 210 cycles a sample, one loop for every mode (119 instructions, 0 `vdiv`) and the input scan, billed 115 over `OLD_LP24`; moving +70 (`LADDER_MOVE_COST`, one loop for every mode). No clipper term. A block past ±32 × full scale (or infinite) is held to it before the loop; a block with a NaN plays silence.
 
 ### 5. UX: TYPE versus MODE, without a blank canvas
 

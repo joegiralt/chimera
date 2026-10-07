@@ -4,7 +4,8 @@
 //! ½ and 1 on a held saw: finite, under the ceiling, every voice freed after
 //! the release; prints the RMS/peak table, flagging pairs more than 6 dB from
 //! CLEAN LP4 at RES 0. `demo_render` writes the owner's short-sound takes to
-//! `$FILTER_QA_WAV` when it is set.
+//! `$FILTER_QA_WAV` when it is set; `ladder_demo_render` LADDER's A/B takes
+//! to `$LADDER_DEMO_WAV`.
 
 mod common;
 
@@ -12,7 +13,7 @@ use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::filter::{FilterKind, K2040Voice, KIND_NAMES};
 use chimera_core::dsp::fx_bus::FxParams;
-use chimera_core::modulation::FixedCol;
+use chimera_core::modulation::{FixedCol, ModSource};
 use chimera_core::params::EngineType;
 use chimera_core::part::PartParams;
 use chimera_core::preset::Sound;
@@ -137,6 +138,7 @@ fn taps_on_algo() {
         (FilterKind::K2040, K2040Voice::Rev2),
         (FilterKind::K2040, K2040Voice::Exp),
         (FilterKind::Dirty, K2040Voice::Rev2),
+        (FilterKind::Ladder, K2040Voice::Rev2),
     ] {
         for op in [TapOp::Op5, TapOp::Op6] {
             for col in FixedCol::ALL {
@@ -288,6 +290,123 @@ fn demo_render() {
                 "{name} peak {:.1} dBFS free {}",
                 db(t.peak(0)),
                 b.all_free()
+            );
+        }
+    }
+}
+
+/// LADDER's A/B set (ADR 0104): bass hit, chord stab, an acid line and a
+/// Moog-style bassline, each through CLEAN, the 2040's two voices, DIRTY
+/// and LADDER at the same FREQ, RES and LEVEL ½, the types' default modes.
+/// The two lines sweep FREQ from ENV 1 (A 10 ms, no sustain).
+#[test]
+fn ladder_demo_render() {
+    let Some(dir) = std::env::var_os("LADDER_DEMO_WAV") else {
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    std::fs::create_dir_all(&dir).expect("the WAV dir");
+    let types = [
+        ("clean", FilterKind::Svf, K2040Voice::Rev2),
+        ("2040-rev2", FilterKind::K2040, K2040Voice::Rev2),
+        ("2040-exp", FilterKind::K2040, K2040Voice::Exp),
+        ("dirty", FilterKind::Dirty, K2040Voice::Rev2),
+        ("ladder", FilterKind::Ladder, K2040Voice::Rev2),
+    ];
+    let b = |s: f32| (s * BPS as f32) as usize;
+    // 16ths at 130 BPM: (step, note).
+    let sixteenth = 60.0 / 130.0 / 4.0;
+    let line = |steps: &[(usize, u8)], gate: f32| -> Vec<(u8, usize, usize)> {
+        steps
+            .iter()
+            .map(|&(i, n)| {
+                let t = i as f32 * sixteenth;
+                (n, b(t), b(t + gate * sixteenth))
+            })
+            .collect()
+    };
+    let acid = line(
+        &[
+            (0, 36),
+            (2, 48),
+            (3, 36),
+            (4, 39),
+            (6, 36),
+            (7, 46),
+            (8, 36),
+            (10, 41),
+            (11, 36),
+            (12, 48),
+            (14, 43),
+            (15, 36),
+        ],
+        0.6,
+    );
+    let moog = line(
+        &[
+            (0, 31),
+            (3, 31),
+            (6, 43),
+            (8, 34),
+            (11, 34),
+            (12, 36),
+            (14, 38),
+        ],
+        0.9,
+    );
+    let swept = |mut s: Sound, decay: f32, amount: i8| {
+        let e = &mut s.params.envelopes[0];
+        (e.decay, e.sustain) = (decay, 0.0);
+        s.mod_state
+            .set_fixed(ModSource::Env1.index(), FixedCol::Freq, amount);
+        s
+    };
+    let saw_op = || voice_of(op(WaveId::SAW, 4, [31, 0, 15, 0, 12], 0));
+    type Take = (&'static str, Sound, f32, f32, Vec<(u8, usize, usize)>, f32);
+    let set: Vec<Take> = vec![
+        (
+            "bass-hit",
+            voice_of(op(WaveId::SAW, 4, [31, 14, 0, 0, 10], 0)),
+            600.0,
+            0.5,
+            vec![(36, 0, b(0.4))],
+            2.0,
+        ),
+        (
+            "chord-stab",
+            voice_of(op(WaveId::SAW, 4, [31, 12, 0, 0, 9], 0)),
+            1500.0,
+            0.5,
+            vec![
+                (57, 0, b(0.25)),
+                (60, 0, b(0.25)),
+                (64, 0, b(0.25)),
+                (67, 0, b(0.25)),
+            ],
+            2.0,
+        ),
+        (
+            "acid-line",
+            swept(saw_op(), 0.42, 38),
+            350.0,
+            0.85,
+            acid,
+            2.2,
+        ),
+        ("moog-bass", swept(saw_op(), 0.5, 30), 300.0, 0.4, moog, 2.2),
+    ];
+    for (stim, s, cutoff, res, notes, secs) in set {
+        for (tname, kind, voice) in types {
+            let mut bn = bench(filtered(s.clone(), kind, voice, cutoff, res));
+            let t = play(&mut bn, &notes, (secs * BPS as f32) as usize);
+            assert!(t.finite(), "{stim} {tname}: non-finite");
+            let name = format!("{stim}_{tname}.wav");
+            write_wav(&dir.join(&name), &t.out[0]);
+            println!(
+                "{name} peak {:.1} dBFS rms {:.1} dBFS free {}",
+                db(t.peak(0)),
+                db(common::rms(&t.out[0])),
+                bn.all_free()
             );
         }
     }

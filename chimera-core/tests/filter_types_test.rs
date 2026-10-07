@@ -1346,8 +1346,9 @@ fn unknown_codes_load_as_clean_lp4() {
         (f.kind(), f.mode())
     };
     let code = |c: u32| c.to_le_bytes();
-    // KIND codes no kind has: CLEAN at LP4, whatever MODE says.
-    for kind in [1, 2, 3, 5, 7, 255, 1 << 20] {
+    // KIND codes no kind has (1 is LADDER's): CLEAN at LP4, whatever MODE
+    // says.
+    for kind in [2, 3, 5, 7, 255, 1 << 20] {
         assert_eq!(
             load(&[(6, code(kind))]),
             (FilterKind::Svf, FilterMode::Lp24),

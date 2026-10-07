@@ -106,7 +106,7 @@ const NO_POOL: GateView<'static> = GateView::empty();
 const WARM_BLOCKS: u32 = 8;
 const TIMED_BLOCKS: u32 = 64;
 const HOLD_SECONDS: u32 = 30;
-const ROWS: usize = 9;
+const ROWS: usize = 10;
 /// The TAPE row only with `master-tape` (ADR 0055).
 const FX_ROWS: usize = if cfg!(feature = "master-tape") { 7 } else { 6 };
 
@@ -143,7 +143,16 @@ const PATCHES: [Row; ROWS] = [
     ("CHN FB", || algo(AlgoId::A17, ALL, 7), 36, 12),
     ("WC", || algo_pair(AlgoId::A14, AlgoId::A22), 36, 12),
     ("A16+17", a16_a17, 36, 12),
+    // LADDER − 1 OP: LADDER's steady bill over CLEAN LP4 (ADR 0104).
+    ("LADDER", ladder_op, 36, 12),
 ];
+
+/// 1 OP through LADDER LP4.
+fn ladder_op() -> ParamSnapshot {
+    let mut p = algo(AlgoId::A1, 0b1, 0);
+    p.filter.set_kind(FilterKind::Ladder);
+    p
+}
 
 /// Label and per-block FX setup of each FX row. Every row runs the same
 /// noise through `mix_parts`, six Parts written, no voices. MIX is the mix
@@ -1777,6 +1786,10 @@ fn algo_pair(a: AlgoId, b: AlgoId) -> ParamSnapshot {
 }
 
 const ROW_H: i32 = 25;
+/// The ALGO screen's row pitch: ten rows, the kernel line and three FX
+/// lines end at y 302, under 310 (`ROW_H` would push the FX lines off it).
+const ALGO_ROW_H: i32 = 22;
+const _: () = assert!(46 + ROWS as i32 * ALGO_ROW_H + 16 + 2 * 10 <= 310);
 /// One count per voice across the screen: 29 px holds five digits at eight.
 const CELL_W: i32 = (theme::SCREEN_W - 8) / MAX_VOICES as i32;
 
@@ -1848,7 +1861,7 @@ fn show(
     let mut y = 46;
     for (&(label, ..), counts) in PATCHES.iter().zip(rows) {
         voice_row(rec, &mut line, y, label, counts);
-        y += ROW_H;
+        y += ALGO_ROW_H;
     }
     line.clear();
     let _ = write!(line, "KERNEL /VOICE {kernel} (350)");

@@ -52,6 +52,21 @@ static DIRTY_PROBES: &[DirtyProbe] = &[
     filter::probe::dirty_probe::<3>,
 ];
 
+/// LADDER's probes: LP4 (1) and HP4 (4), steady and moving, and the
+/// other modes steady (`LADDER_MODES`).
+type LadderProbe = fn(&mut filter::Ladder, &mut [f32; BLOCK_SIZE], &FilterParams);
+
+#[used]
+static LADDER_PROBES: &[LadderProbe] = &[
+    filter::probe::ladder_probe::<1, false>,
+    filter::probe::ladder_probe::<1, true>,
+    filter::probe::ladder_probe::<4, false>,
+    filter::probe::ladder_probe::<4, true>,
+    filter::probe::ladder_probe::<0, false>,
+    filter::probe::ladder_probe::<2, false>,
+    filter::probe::ladder_probe::<3, false>,
+];
+
 /// The taps' pass over a moving block's `g` and `k`, shared by every type.
 #[used]
 static TAP_SHAPE_PROBE: fn(&mut [f32; BLOCK_SIZE]) = filter::probe::tap_shape_probe;

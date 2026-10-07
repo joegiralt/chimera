@@ -103,4 +103,6 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0101](0101-voice-chain-may-hold-2112-bytes.md) | The voice chain may hold 2,112 B (supersedes in part 0051) | Accepted |
 | [0102](0102-a-record-may-hold-640-bytes.md) | A record may hold 640 B: the four fixed matrix columns' routes (supersedes in part 0045) | Accepted |
 | [0103](0103-stretch-poly-wraps-hold-the-output.md) | STRETCH POLY's wraps hold the output, moving on at its slope, and crossfade from it, an eighth past the peak at most (amends [0093](0093-tape-plays-12-bit-card-sources-through-six-ram-models.md)) | Accepted |
+| [0104](0104-ladder-a-zavalishin-tpt-moog-ladder.md) | LADDER, a fourth filter TYPE: the Moog transistor ladder as Zavalishin's TPT ladder at 1×, five divide-free tanh saturators, Xpander mixes; shares the 2040's state slot | Accepted |
+| [0105](0105-exp-stages-bend-at-the-kobols-circuit-scale.md) | EXP's stages bend at the Kobol's circuit scale (supersedes in part 0096) | Accepted |
 | [0107](0107-cutoff-ticks-in-octaves-and-the-filter-knobs-glide.md) | CUTOFF ticks 1/24 octave and reads in Hz; a Part's CUTOFF, RES and FREQ/Q route amounts glide 30 ms before the routes, a silent Part's landing | Proposed |
