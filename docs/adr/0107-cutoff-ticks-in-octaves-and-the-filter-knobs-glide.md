@@ -14,7 +14,7 @@ The root-cause report (private notes) found the stepping in the parameters, not 
 1. **CUTOFF ticks 1/24 octave (50 c)**, a ratio, anywhere in 20 Hz–20 kHz. `ParamSpec` gains a byte-sized `scale`: `Scale::Linear` (every other param, as before) or `Scale::Octaves`, in which `step` is octaves a tick (a ratio). An `Octaves` param also displays, snaps and denormalizes linearly in octaves (`normalize`/`denormalize`), so the bar, the filter graph and the mod bars sit on a log axis. With the acceleration a slow detent is 50 c, a fast one 500 c, and a fast turn crosses the whole range in **27 detents** (was 13).
 2. **CUTOFF reads in Hz**: `ValFmt::Law(Law::Cutoff)` over `CUTOFF_HZ` (20 Hz × 2^(9.966·p)): `440 Hz`, `2.65 kHz`, `20.0 kHz`. Its shift-snap points are the `Law` ones: 20 Hz, ~4.6 kHz, 20 kHz.
 3. **A Part's filter knobs glide**, once a block, in `Instrument` (`Knobs`, one per Part): CUTOFF in octaves (its 0..1 place on `CUTOFF_HZ`), RES and the FREQ and Q columns' eight amounts each linearly, all a one-pole of **τ = 30 ms** (`KNOB_EASE_S`). The voices read the eased knobs in place of the stored ones (`Voice::render_knobs`), *then* add their routes' offsets (ENV, LFO, NOTE, taps), so an envelope or a tap keeps its snap, block for block, exactly as before.
-4. **A silent Part lands**: with no voice on it, its knobs step with k = 0, so a turn made while nothing sounds is where the next note starts, and a Sound loaded on a silent Part never sweeps in. A settled glide hands the voice the stored CUTOFF itself, bit for bit.
+4. **A silent Part and a new Sound land**: with no voice on a Part, its knobs aren't eased at all and the next note's first block lands on the stored values, so a turn made while nothing sounds is where the next note starts. A Sound loaded into a Part (`Part::loads`, bumped by each load, published in `PartAudio`) lands too, even under a voice still ringing: no sweep from the old Sound's knobs. A NaN target (a raw write) lands, so it never sticks. A settled glide hands the voice the stored CUTOFF itself, bit for bit.
 5. The glide is before the filter, so **every TYPE** (CLEAN, 2040, DIRTY, and LADDER or any later one) gets it with no code of its own.
 6. **Patches are untouched**: CUTOFF is still stored in Hz, so an old patch loads and sounds as it did. Nothing to translate. Only the turn (tick size) and the readout change.
 
@@ -29,9 +29,9 @@ The root-cause report (private notes) found the stepping in the parameters, not 
 - **Store CUTOFF as a 0..1 position:** changes patch meaning and the DSP's reads for nothing the tick law and the display don't already give.
 
 ## Consequences
-- CPU (estimated, not benched on the unit): per Part with a voice, a block: one `log2`, one `exp2` while gliding, 16 amount divides and 18 one-pole steps, ~400–500 cycles: 6–8 cycles a sample per Part. Every Part runs every block (a silent one lands), so ≤ ~50 cycles a sample, ~0.5 % of the 10,000 a sample at 480 MHz. The voices' FREQ/Q sums read eight `f32`s in place of eight `i8`s.
-- RAM: `[Knobs; 6]` in `Instrument`, 480 B of D2's 121 KB left. No voice-chain bytes.
-- Flash: +1.75 KB on the default build (49.9 KB left). The bench's `bench-stress,orbit` set, 1.7 KB from full before (#303), keeps under 0.1 KB.
+- CPU (estimated, not benched on the unit): per Part with a voice, a block: one `log2`, one `exp2` while gliding, 16 amount divides and 18 one-pole steps, ~400–500 cycles: 6–8 cycles a sample per sounding Part, ≤ ~50 with all six sounding, ~0.5 % of the 10,000 a sample at 480 MHz. A silent Part costs a flag. The voices' FREQ/Q sums read eight `f32`s in place of eight `i8`s.
+- RAM: `[(Knobs, Loads); 6]` and the coefficient in `Instrument`, ~0.5 KB of D2's 121 KB left. No voice-chain bytes.
+- Flash: +1.8 KB on the default build (49.9 KB left). The bench's `bench-stress,orbit` set, 1.7 KB from full before (#303), is left with tens of bytes: the next feature there needs #303.
 - A turn of CUTOFF, RES, ENV AMT, KEYBD or a jack amount now lands 30 ms late (63 % in 30 ms, 95 % in 90 ms).
 - A p-lock or MIDI CC on CUTOFF (when wired) glides too; it should denormalize through `ParamSpec::denormalize`, so a 7-bit CC steps 1/12.7 octave, eased.
 - Not eased: the taps' amounts (OP 5/6 → FREQ, Q) keep their one-block ramp; ENV AMT's own law stays 10/127 oct a unit (94 c), coarse but now glided.
