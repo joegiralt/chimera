@@ -39,10 +39,10 @@ pub use source_file::{
     MAX_TAPES, PutRefusal, SOURCE_DATA_MAX, SOURCE_HEAD_LEN, SourceCheck, SourceHead, SourceLayout,
     SourceReadError, SourceZones, TapeList, WholeShape, ZONE_LEN, Zone, held_for_file_len,
     held_len, held_len_zoned, listed_zones, read_source_into, source_crc, source_file,
-    source_file_min_len, write_descriptor, zone_set_crc,
+    source_file_min_len, source_name, write_descriptor, zone_set_crc,
 };
 #[cfg(feature = "source-writer")]
-pub use source_file::{Wrote, write_source, write_zone_set};
+pub use source_file::{Wrote, source_target, verify_and_seal, write_source, write_zone_set};
 pub use source_ref::{SourceRef, TapeSource, ZoneTune};
 pub use system::{
     BootNote, Exit, ExitPlan, SyncError, SystemCheck, SystemDecoder, SystemSettings, SystemSync,

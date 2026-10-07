@@ -12,6 +12,7 @@ use crate::dsp::drive::Drive;
 use crate::dsp::ease::{Ease, Ramp, at, ease_coeff, step_of};
 use crate::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
 use crate::dsp::envelope::{EnvMods, Envelope};
+use crate::dsp::filter::knobs::Knobs;
 use crate::dsp::filter::{FILTER_LEVEL_COST, Filter, FilterMods};
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modal::{ResonatorMode, SymPool};
@@ -436,6 +437,13 @@ impl Voice {
         self.slot.rings()
     }
 
+    /// The filter settings the last block played, routes applied: for the
+    /// tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn played_filter(&self) -> crate::params::FilterParams {
+        self.played.filter
+    }
+
     /// A glide steal's ratio now, 1 at rest: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn slide(&self) -> f32 {
@@ -737,11 +745,26 @@ impl Voice {
             })
     }
 
+    /// `render_knobs` on the stored knobs, uneased: a voice on its own.
     pub fn render(
         &mut self,
         output: &mut [f32; BLOCK_SIZE],
         params: &ParamSnapshot,
         mod_state: &ModState,
+        ctx: &mut EngineCtx<'_>,
+    ) {
+        let knobs = Knobs::stored(&params.filter, mod_state);
+        self.render_knobs(output, params, mod_state, &knobs, ctx);
+    }
+
+    /// One block of `params` with its Part's eased filter `knobs` in place
+    /// of the stored CUTOFF, RES and FREQ/Q amounts.
+    pub fn render_knobs(
+        &mut self,
+        output: &mut [f32; BLOCK_SIZE],
+        params: &ParamSnapshot,
+        mod_state: &ModState,
+        knobs: &Knobs,
         ctx: &mut EngineCtx<'_>,
     ) {
         let sample_rate = self.sample_rate();
@@ -831,13 +854,14 @@ impl Voice {
             let (m, live) = (&mut self.played, &mut self.played_live);
             m.clone_from(params);
             self.stages.ease(m, ease_coeff(sample_rate));
+            knobs.apply(&mut m.filter);
             *live = AlgoLive::from_params(&params.algo);
             live.routed = mod_state.algo_levels_routed();
             live.morph_routed =
                 mod_state.moves_addr(ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH));
             // The fixed FREQ, Q and FOLD columns; VCA's is per sample, above.
             for c in [FixedCol::Freq, FixedCol::Q, FixedCol::Fold] {
-                let off = mod_state.fixed_sum(c, &mod_values);
+                let off = knobs.fixed_sum(mod_state, c, &mod_values);
                 let a = c.addr();
                 if off != 0.0
                     && let Some(blk) = m.block_mut(a.block)

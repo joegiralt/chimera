@@ -30,22 +30,43 @@ pub enum Origin {
 /// use chimera_engine::params::EngineType;
 /// use chimera_engine::part::PartParams;
 /// use chimera_engine::preset::Sound;
-/// use chimera_engine::project::{Origin, Part};
+/// use chimera_engine::project::{Loads, Origin, Part};
 /// let _ = Part {
 ///     sound: Sound::init(EngineType::Algo),
 ///     origin: Origin::Init(EngineType::Algo),
 ///     mix: PartParams::default(),
+///     loads: Loads::NONE,
 /// };
 /// ```
 pub struct Part {
     pub sound: Sound,
     pub(in crate::project) origin: Origin,
     pub mix: PartParams,
+    pub(in crate::project) loads: Loads,
 }
 
 impl Part {
     pub fn origin(&self) -> Origin {
         self.origin
+    }
+
+    /// Bumped by each Sound load into this Part.
+    pub fn loads(&self) -> Loads {
+        self.loads
+    }
+}
+
+/// A Part's Sound loads, counted (wrapping): a change is a new Sound, which
+/// the audio lands on rather than glides to (ADR 0107).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Loads(u8);
+
+impl Loads {
+    /// No load yet.
+    pub const NONE: Self = Self(0);
+
+    pub(in crate::project) fn bump(&mut self) {
+        self.0 = self.0.wrapping_add(1);
     }
 }
 
@@ -54,6 +75,7 @@ pub(super) fn new_part(i: usize) -> Part {
         sound: Sound::init(EngineType::Algo),
         origin: Origin::Init(EngineType::Algo),
         mix: PartParams::for_part(i),
+        loads: Loads::default(),
     }
 }
 

@@ -433,11 +433,15 @@ class PutUnit:
     """A console that speaks `put` as the unit does: `READY` (or `refuse`
     first), base64 lines until the size is in, then `OK` if the CRC
     matches, else `ERR put: CRC mismatch`; `after` replaces that answer.
-    `silent` says nothing after READY. Also answers `ls` with `listing`."""
+    `silent` says nothing after READY. Also answers `ls` with `listing`.
+    A TAPES path takes its data in chunks, each ended by `end <crc32>` and
+    answered `ACK <bytes so far>`, or `ERR put: chunk` at the chunk
+    `bad_chunk` names; `present` answers `OK PRESENT` before any data."""
 
-    def __init__(self, refuse=None, after=None, silent=False, listing=b"OK\n"):
+    def __init__(self, refuse=None, after=None, silent=False, listing=b"OK\n", present=False, bad_chunk=None):
         self.refuse, self.after, self.silent, self.listing = refuse, after, silent, listing
-        self.requests, self.data = [], b""
+        self.present, self.bad_chunk = present, bad_chunk
+        self.requests, self.data, self.ends = [], b"", []
         self.server = socket.create_server(("127.0.0.1", 0))
         self.server.settimeout(0.1)
         self.target = "tcp:127.0.0.1:%d" % self.server.getsockname()[1]
@@ -478,12 +482,29 @@ class PutUnit:
                         conn.sendall(self.refuse)
                         continue
                     size, crc = int(words[2]), int(words[3], 16)
+                    if self.present:
+                        conn.sendall(b"OK PRESENT\n")
+                        continue
                     conn.sendall(b"READY\n")
-                    while len(self.data) < size:
+                    chunk = tool.PUT_CHUNK if words[1].upper().startswith(b"/CHIMERA/TAPES/") else size
+                    bad = False
+                    while len(self.data) < size and not bad:
+                        start = len(self.data)
+                        end = min(start + chunk, size)
+                        while len(self.data) < end:
+                            ln = next(lines)
+                            assert len(ln) <= 64 and len(ln) % 4 == 0, ln
+                            self.data += base64.b64decode(ln, validate=True)
+                        if chunk == size:
+                            break
                         ln = next(lines)
-                        assert len(ln) <= 64 and len(ln) % 4 == 0, ln
-                        self.data += base64.b64decode(ln, validate=True)
-                    if self.silent:
+                        self.ends.append(ln)
+                        if len(self.ends) == self.bad_chunk or ln != b"end %08x" % zlib.crc32(self.data[start:end]):
+                            conn.sendall(b"ERR put: chunk\n")
+                            bad = True
+                        else:
+                            conn.sendall(b"ACK %d\n" % end)
+                    if self.silent or bad:
                         continue
                     ok = zlib.crc32(self.data) == crc and len(self.data) == size
                     conn.sendall(self.after or (b"OK\n" if ok else b"ERR put: CRC mismatch\n"))
@@ -581,6 +602,47 @@ class Put(unittest.TestCase):
         lines = list(tool.put_lines(data))
         self.assertTrue(all(len(x) <= 65 and x.endswith(b"\n") for x in lines))
         self.assertEqual(b"".join(base64.b64decode(x) for x in lines), data)
+
+    def test_a_source_goes_in_chunks_each_ended_and_acked(self):
+        data = bytes((i * 13) % 251 for i in range(600_000))
+        f = self.local("0BADF00D.SRC", data)
+        with PutUnit() as u:
+            r = run_tool(["put", f, "/CHIMERA/TAPES/"], u.target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(u.data, data)
+        self.assertEqual(u.requests[0], b"put /CHIMERA/TAPES/0BADF00D.SRC 600000 %08x" % zlib.crc32(data))
+        c = tool.PUT_CHUNK
+        self.assertEqual(u.ends, [b"end %08x" % zlib.crc32(data[i : i + c]) for i in range(0, len(data), c)])
+        self.assertEqual(len(u.ends), 3)
+        self.assertEqual(r.stdout, b"/CHIMERA/TAPES/0BADF00D.SRC 600000\n")
+        self.assertIn(b"100% 600000 of 600000 bytes", r.stderr)
+
+    def test_a_project_never_takes_the_source_protocol(self):
+        data = bytes(300_000)
+        f = self.local("P.A", data)
+        with PutUnit() as u:
+            r = run_tool(["put", f, "/CHIMERA/PROJECTS/P0000001.A"], u.target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(u.ends, [])
+        self.assertFalse(any(x.startswith(b"end ") for x in u.requests))
+
+    def test_a_source_on_the_card_answers_present_and_sends_nothing(self):
+        f = self.local("0BADF00D.SRC", b"s" * 5000)
+        with PutUnit(present=True) as u:
+            r = run_tool(["put", f, "/CHIMERA/TAPES/"], u.target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, b"/CHIMERA/TAPES/0BADF00D.SRC 5000 PRESENT\n")
+        self.assertEqual(len(u.requests), 1, "no data")
+
+    def test_a_refused_chunk_stops_the_put_without_retry(self):
+        data = bytes(600_000)
+        f = self.local("0BADF00D.SRC", data)
+        with PutUnit(bad_chunk=2) as u:
+            r = run_tool(["put", f, "/CHIMERA/TAPES/"], u.target)
+        self.assertEqual(r.returncode, 1)
+        self.assertTrue(r.stderr.endswith(b"ERR put: chunk\n"), r.stderr)
+        self.assertEqual(len(u.ends), 2, "no third chunk")
+        self.assertEqual(sum(1 for x in u.requests if x.startswith(b"put ")), 1)
 
     def test_ls_prints_the_listing_and_waits_for_the_card(self):
         self.assertEqual(tool.first_wait("ls"), tool.LS_WAIT_S)

@@ -145,7 +145,7 @@ fn all_chains_holds_every_reachable_chain() {
 fn part_pages_display_like_before() {
     use ValFmt::{Bi, Law, Names, Uni};
     use chimera_core::dsp::modulator::EnvSpeed::Med;
-    use chimera_core::dsp::modulator::law::Law::{Attack, DecRel, Hold, Pct};
+    use chimera_core::dsp::modulator::law::Law::{Attack, Cutoff, DecRel, Hold, Pct};
     let want: [(&BlockDef, [(&str, ValFmt); 6]); 8] = [
         (
             &reg::MODAL_1,
@@ -209,7 +209,7 @@ fn part_pages_display_like_before() {
                     "TYPE",
                     ValFmt::Names(&chimera_core::dsp::filter::KIND_NAMES),
                 ),
-                ("FREQ", Uni),
+                ("FREQ", Law(Cutoff)),
                 ("Q", Uni),
                 (
                     "MODE",

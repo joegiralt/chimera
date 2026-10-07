@@ -1,7 +1,9 @@
 # Justfile for Chimera
 
 # The bench's builds, an area each (all of it no longer fits FLASH), and
-# the filter probes `tools/loop_count.py` counts.
+# the filter probes `tools/loop_count.py` counts. Each is built with
+# `--no-default-features` (the `bench` feature brings back all of the
+# shipping set but the console's `put`; `filter-probes`, `default`).
 bench_sets := "bench-algo bench-algo,master-tape bench-routing bench-memory bench-stress bench-stress,orbit bench-orbit bench-tape filter-probes"
 bench_all := "bench-algo,bench-routing,bench-memory,bench-stress,bench-orbit,bench-tape"
 
@@ -19,7 +21,7 @@ tape-listen *args:
 # A WAV to a TAPE source (spec § 6), sealed in the desktop sim's card
 # (CHIMERA_CARD, else chimera-card/), never the unit's:
 # `just tape take.wav [--rate 24k] [--root C3] [--transwave <cycle> [--top 1024] [--frames 32]]
-# [--name CHOIR] [--channel mix|L|R]`. `put` takes sources from TAPE Task 18.
+# [--name CHOIR] [--channel mix|L|R]`. `just put-tape <file>` sends it to the unit.
 [positional-arguments]
 tape file *args:
     #!/usr/bin/env bash
@@ -44,16 +46,18 @@ factory-tapes *args:
         rm -r cc0-originals
     fi
 
-# The factory set's release onto the unit's card: each file through `put`
-# (a re-run answers OK PRESENT). Waits for TAPE Task 18's source `put` and
-# #360; Sound files need the library's path class too (#317).
-put-factory-tapes version:
+# The factory set onto the unit's card: each source through `put` (ADR
+# 0106; a re-run answers OK PRESENT for each). `dir` is `just
+# factory-tapes`' output, or a downloaded `tapes-vN` release. The factory
+# TAPE Sounds (S9xxxxxx.A) stay off the card: no firmware reads
+# /CHIMERA/SOUNDS until the card library (#317).
+put-factory-tapes dir="target/tapes-v1":
     #!/usr/bin/env bash
     set -euo pipefail
-    dir="$(mktemp -d)"
-    gh release download "tapes-{{version}}" -R joegiralt/chimera -D "$dir"
-    for f in "$dir"/*.SRC; do python3 tools/chimera-usb.py put "$f" /CHIMERA/TAPES/; done
-    for f in "$dir"/S9*.A; do python3 tools/chimera-usb.py put "$f" /CHIMERA/SOUNDS/; done
+    shopt -s nullglob
+    srcs=("{{dir}}"/*.SRC)
+    [ ${#srcs[@]} -gt 0 ] || { echo "no .SRC in {{dir}}: just factory-tapes" >&2; exit 1; }
+    for f in "${srcs[@]}"; do python3 tools/chimera-usb.py put "$f" /CHIMERA/TAPES/; done
 
 # Build STM32 firmware (release)
 firmware:
@@ -91,7 +95,7 @@ check:
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit
     # The bench, an area a build: all of it no longer fits FLASH.
-    for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features "$f" || exit 1; done
+    for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; done
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features sd-probe
     cargo build -p chimera-bootloader --target thumbv7em-none-eabihf
     cargo build -p chimera-theory --target thumbv7em-none-eabihf
@@ -121,7 +125,7 @@ stack-check:
     test -x "$objdump" && test -x "$nm"
     elf=target/thumbv7em-none-eabihf/release/chimera-stm32
     sets=("" "--no-default-features" "--features orbit")
-    for f in {{bench_sets}}; do sets+=("--features $f"); done
+    for f in {{bench_sets}}; do sets+=("--no-default-features --features $f"); done
     sets+=("--no-default-features --features sd-probe")
     for features in "${sets[@]}"; do
         cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf $features
@@ -170,10 +174,10 @@ clippy:
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf -- -D warnings
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features -- -D warnings
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --features orbit -- -D warnings
-    for f in {{bench_sets}}; do cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --features "$f" -- -D warnings || exit 1; done
+    for f in {{bench_sets}}; do cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features "$f" -- -D warnings || exit 1; done
     # Every bench area at once: too big to link, but no area's code is dead.
-    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --features {{bench_all}} -- -D warnings
-    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --features {{bench_all}},master-tape -- -D warnings
+    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features {{bench_all}} -- -D warnings
+    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features {{bench_all}},master-tape -- -D warnings
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features sd-probe -- -D warnings
     # usb-console alone: `stats` answers from no reader
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features usb-console -- -D warnings
@@ -208,9 +212,13 @@ card *args:
 # `just put avril14.prj /CHIMERA/PROJECTS/P0000014.A`. 1 MiB at most; never the open project.
 put local remote:
     python3 tools/chimera-usb.py put "{{local}}" "{{remote}}"
-# The project files on the card and their sizes
-ls:
-    python3 tools/chimera-usb.py ls
+# A TAPE source onto the card (ADR 0106), in checked chunks, sealed:
+# `just put-tape chimera-card/CHIMERA/TAPES/0BADF00D.SRC`. A re-run answers OK PRESENT.
+put-tape file:
+    python3 tools/chimera-usb.py put "{{ if file =~ '^/' { file } else { invocation_directory() / file } }}" /CHIMERA/TAPES/
+# The project files on the card and their sizes; `just ls tapes`: the sources
+ls *args:
+    python3 tools/chimera-usb.py ls {{args}}
 
 # Flash firmware to PreenFM3 via DFU. With the console up, `to-dfu` sends
 # `dfu` and waits for the ROM loader; without it, bridge BOOT0 and re-plug.
@@ -232,7 +240,8 @@ flash:
 # area one of algo, routing, memory, stress, orbit, tape; extra more
 # features (`just flash-bench stress orbit`: STRESS plays ORBIT;
 # `just flash-bench algo master-tape`: the REEL row). All of the bench no
-# longer fits FLASH at once. The bench holds its screens for minutes
+# longer fits FLASH at once; a bench build has no console `put` (re-flash
+# the shipping build to move files). The bench holds its screens for minutes
 # before the UI loop (and so the console) starts, so a 74 after a
 # completed download is accepted unwaited.
 flash-bench area extra="":
@@ -240,7 +249,7 @@ flash-bench area extra="":
     set -euo pipefail
     features="bench-{{area}}"
     if [ -n "{{extra}}" ]; then features="$features,{{extra}}"; fi
-    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features "$features"
+    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features "$features"
     rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-bench.bin
     python3 tools/chimera-usb.py to-dfu
     log=$(mktemp) && trap 'rm -f "$log"' EXIT

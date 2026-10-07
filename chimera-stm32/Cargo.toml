@@ -8,8 +8,10 @@ default = ["midi-din", "perf-probe", "usb-console", "card-put"]
 midi-din = ["chimera-board/midi-din"]
 perf-probe = ["chimera-board/perf-probe"]
 # The bench on the unit, one area a build: all of it no longer fits FLASH
-# beside the synth. `bench` is the shared rig, built with an area.
-bench = ["perf-probe", "chimera-core/probe", "chimera-board/bench"]
+# beside the synth. `bench` is the shared rig, built with an area and
+# `--no-default-features`: the shipping set less the console's `put`
+# (`card-put`, ~7 KB), which no bench run needs, so ORBIT's areas fit.
+bench = ["perf-probe", "chimera-core/probe", "chimera-board/bench", "midi-din", "usb-console"]
 # ALGO's patches, the FX bus and the kernel.
 bench-algo = ["bench"]
 # ROUTING: the matrix, filter types, taps and MODAL's rows.
@@ -24,8 +26,9 @@ bench-orbit = ["bench", "orbit"]
 # TAPE COLD: each machine's cold-cache voice.
 bench-tape = ["bench"]
 # The filter probes, linked though nothing calls them, for
-# `tools/loop_count.py`'s static counts: the shipping build plus them.
-filter-probes = ["chimera-core/filter-probe"]
+# `tools/loop_count.py`'s static counts: the shipping build plus them,
+# `default` included, as the bench sets are built without it.
+filter-probes = ["default", "chimera-core/filter-probe"]
 # On-unit SD bring-up: prints the card probe and halts; no audio.
 sd-probe = ["chimera-board/sd-probe"]
 # The master tape stage back on the chain, with its bench row (ADR 0055).
@@ -35,8 +38,11 @@ orbit = ["chimera-core/orbit", "chimera-board/orbit"]
 # The USB console (ADR 0068): CDC-ACM on the OTG FS port, polled from the UI
 # loop, its interrupt never unmasked.
 usb-console = ["chimera-board/usb-console"]
-# The console's `ls` and `put` (ADR 0092): files onto the card over USB.
-card-put = ["usb-console", "chimera-board/card-put"]
+# The console's `ls` and `put` (ADR 0092): files onto the card over USB;
+# TAPE sources too, in checked chunks, sealed (ADR 0106). The owner took
+# #360's risk for sources (2026-10-07): a cut mid-put can lose clusters.
+# Bench builds answer `ls` and `put` "not in this build": FLASH is full.
+card-put = ["usb-console", "chimera-board/card-put", "chimera-core/source-writer"]
 # The boot's lost-cluster sweep frees what it finds (#360, ADR 0094). Off,
 # it runs dry; on, it fails to build until the owner's go.
 sweep-free = ["chimera-board/sweep-free"]

@@ -10,6 +10,7 @@ pub mod clean;
 pub mod coef;
 pub mod dirty;
 pub mod k2040;
+pub mod knobs;
 pub mod ladder;
 pub mod level;
 #[cfg(any(test, feature = "probe", feature = "filter-probe"))]

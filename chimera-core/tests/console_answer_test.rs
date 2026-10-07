@@ -134,8 +134,8 @@ fn help_is_the_specs_text() {
          card    SD speed and streams, a chord playing; clean (bench builds)\n\
          shot    the screen in THEME's colours; shot raw: canonical\n\
          dfu     restart into the ROM loader for just flash\n\
-         ls      the project files on the card and their sizes\n\
-         put     a project file onto the card: <path> <size> <crc32>\n\
+         ls      project files on the card, sizes; ls tapes: the sources\n\
+         put     a project or source onto the card: <path> <size> <crc32>\n\
          OK\n"
     );
 }

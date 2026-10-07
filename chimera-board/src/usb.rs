@@ -400,8 +400,12 @@ struct ChipUnit<'a> {
     dfu: bool,
     boot: BootSeen,
     sweep: Option<(Sweep, SweepSeen)>,
-    /// `ls` and `put`'s card: unread without `card-put`.
-    #[cfg_attr(not(feature = "card-put"), allow(dead_code))]
+    /// `ls` and `put`'s card: unread without `card-put`, and in bench
+    /// builds, which measure and take no files (their FLASH is full).
+    #[cfg_attr(
+        not(all(feature = "card-put", not(feature = "bench"))),
+        allow(dead_code)
+    )]
     files: &'a mut SdStore,
 }
 
@@ -451,18 +455,19 @@ impl Unit for ChipUnit<'_> {
         Some(regs())
     }
 
-    #[cfg(feature = "card-put")]
+    #[cfg(all(feature = "card-put", not(feature = "bench")))]
     type Files = SdStore;
-    #[cfg(not(feature = "card-put"))]
+    #[cfg(not(all(feature = "card-put", not(feature = "bench"))))]
     type Files = chimera_core::console::NoCard;
 
-    #[cfg(feature = "card-put")]
+    #[cfg(all(feature = "card-put", not(feature = "bench")))]
     fn files(&mut self) -> Option<&mut SdStore> {
         Some(&mut *self.files)
     }
 
-    /// `ls` and `put` are not in this build.
-    #[cfg(not(feature = "card-put"))]
+    /// `ls` and `put` are not in this build: no `card-put`, or a bench
+    /// build.
+    #[cfg(not(all(feature = "card-put", not(feature = "bench"))))]
     fn files(&mut self) -> Option<&mut Self::Files> {
         None
     }

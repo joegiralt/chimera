@@ -10,17 +10,20 @@ mod probe;
 mod tools;
 
 use chimera_core::console::{
-    CardAnswer, Console, Frame, Out, PUT_DEADLINE_MS, PUT_MAX_BYTES, PutArg, Stalled, Stats, Unit,
-    answer, put,
+    CardAnswer, Console, Frame, Out, PUT_CHUNK_BYTES, PUT_DEADLINE_MS, PUT_MAX_BYTES, PutArg,
+    PutTo, Stalled, Stats, Unit, answer, put,
 };
+use chimera_core::dsp::tape_engine::read::{DESC_LEN, Shape};
 use chimera_core::name::Name;
+use chimera_core::name::SoundName;
 use chimera_core::project::test_support::full_dense;
 use chimera_core::project::{
     Project, ProjectDecoder, encode_new_project, encode_project, list_projects, project_file,
 };
 use chimera_core::storage::{
-    Card, Crc32, FileKind, Generation, Header, ProjectId, RecordWriter, Side, load_ab_in_place,
-    peek_header, write_file,
+    Card, Crc32, FileKind, Generation, Header, ProjectId, RecordTag, RecordWriter, SOURCE_DATA_MAX,
+    Side, SourceHead, SourceRef, WholeShape, load_ab_in_place, peek_header, read_source_into,
+    source_crc, source_name, write_file,
 };
 use chimera_core::ui::UiState;
 use chimera_core::ui::theme_settings::{ThemeSettings, palette};
@@ -458,7 +461,7 @@ fn refusals_before_ready_write_nothing() {
     ] {
         assert!(ask(&mut s, &line, b"").starts_with("ERR put: "), "{line}");
     }
-    let usage = "ERR put takes /CHIMERA/PROJECTS/P#######.A, its size and CRC-32 in hex\n";
+    let usage = "ERR put takes /CHIMERA/PROJECTS/P#######.A or /CHIMERA/TAPES/<CRC>.SRC, its size and CRC-32 in hex\n";
     for path in [
         "/CHIMERA/PROJECTS/AVRIL14.A",
         "/CHIMERA/PROJECTS/../SYSTEM.A",
@@ -504,9 +507,10 @@ fn the_open_project_is_refused() {
     old_pair(&mut s);
     let body = project_bytes("AVRIL 14", 1);
     let arg = PutArg {
-        to: ProjectId::new(ID).unwrap(),
+        to: PutTo::Project(ProjectId::new(ID).unwrap()),
         size: body.len() as u32,
         crc: crc(&body),
+        resume: false,
     };
     let mut host = Host::new(&lines(&body), 0);
     put(arg, ProjectId::new(ID), &mut s, &mut host).unwrap();
@@ -844,4 +848,266 @@ fn a_write_that_lands_then_errs_leaves_no_shared_cluster() {
         );
         assert!(r.short.is_empty(), "block {block}: {:?}", r.short);
     }
+}
+
+// Sources (ADR 0106): chunked, written once, sealed, under the same faults.
+
+/// A plain source of `frames`: its head and whole file.
+fn source_file_bytes(seed: u8, frames: u32) -> (SourceHead, Vec<u8>) {
+    let data: Vec<u8> = (0..3 * frames.div_ceil(2) as usize)
+        .map(|i| (i as u32).wrapping_mul(31).wrapping_add(u32::from(seed)) as u8)
+        .collect();
+    let head = SourceHead {
+        sref: SourceRef {
+            crc: source_crc(WholeShape::Plain, 1, &data),
+            frames,
+            rate: 24_000,
+        },
+        shape: Shape::Plain,
+        count: 1,
+        root: 6_000,
+        period_q16: 0,
+        name: SoundName::new("FAT").unwrap(),
+    };
+    let h = Header {
+        kind: FileKind::Source,
+        generation: Generation::FIRST,
+        name: None,
+    };
+    let mut out = Bytes(Vec::new());
+    write_file(&mut out, &h, &mut |w| {
+        w.put(RecordTag::SourceHead, &head.to_bytes())?;
+        data.chunks(SOURCE_DATA_MAX)
+            .try_for_each(|c| w.put(RecordTag::SourceData, c))
+    })
+    .unwrap();
+    (head, out.0)
+}
+
+/// Two chunks: about 270 KB.
+fn two_chunks() -> (SourceHead, Vec<u8>) {
+    let (h, f) = source_file_bytes(5, 180_000);
+    assert!(f.len() > PUT_CHUNK_BYTES as usize && f.len() < 2 * PUT_CHUNK_BYTES as usize);
+    (h, f)
+}
+
+fn src_line(h: &SourceHead, file: &[u8]) -> String {
+    format!(
+        "put /CHIMERA/TAPES/{:08X}.SRC {} {:08x}\n",
+        h.sref.crc,
+        file.len(),
+        crc(file)
+    )
+}
+
+/// The file as the host tool sends it: each chunk's lines, then its end.
+fn chunked(file: &[u8]) -> Vec<u8> {
+    file.chunks(PUT_CHUNK_BYTES as usize)
+        .flat_map(|c| [lines(c), format!("end {:08x}\n", crc(c)).into_bytes()].concat())
+        .collect()
+}
+
+const SRC_OK: &str = "READY\nACK 262144\nACK 272214\nOK\n";
+
+/// Whether the source reads whole, as a Part's SOURCE reads it.
+fn source_loads<S: Store>(s: &mut S, h: &SourceHead) -> bool {
+    let mut out = vec![0; DESC_LEN + 3 * h.sref.frames.div_ceil(2) as usize];
+    Card::new()
+        .run(s, |s, r| read_source_into(s, r, h.sref, &mut out))
+        .and_then(|o| o.result)
+        .is_ok()
+}
+
+/// The blocks a source put writes on `base`, in order, and the blocks of
+/// the entries it writes: TAPES's in CHIMERA, and the file's.
+fn source_put_writes(base: &RamDisk, h: &SourceHead, file: &[u8]) -> (Vec<u32>, [u32; 2]) {
+    let disk = Rc::new(copy(base));
+    let mut s: Probed<RamDisk> = probed(&disk);
+    assert_eq!(ask(&mut s, &src_line(h, file), &chunked(file)), SRC_OK);
+    let r = fat_check(&disk);
+    let stem = format!("{:08X}SRC", h.sref.crc);
+    let entries = [&b"TAPES      "[..], stem.as_bytes()]
+        .map(|n| r.entry(n.try_into().unwrap()).unwrap().block);
+    let writes = log(&s).writes.borrow().iter().map(|&(b, _)| b).collect();
+    (writes, entries)
+}
+
+#[test]
+fn a_source_put_lands_sealed_and_lists() {
+    let mut s = FatStore::new(cut_base());
+    let (h, file) = two_chunks();
+    assert_eq!(file.len(), 272_214);
+    assert_eq!(ask(&mut s, &src_line(&h, &file), &chunked(&file)), SRC_OK);
+    assert!(source_loads(&mut s, &h));
+    let vol = s.mount().unwrap();
+    assert_eq!(
+        s.delete(vol, source_name(h.sref.crc)),
+        Err(StoreError::ReadOnly)
+    );
+    assert_eq!(
+        ask(&mut s, "ls tapes\n", b""),
+        format!("{:08X}.SRC {}\nOK\n", h.sref.crc, file.len())
+    );
+    assert_eq!(
+        ask(&mut s, &src_line(&h, &file), &chunked(&file)),
+        "OK PRESENT\n"
+    );
+    assert_eq!(loads(&mut s), Some(("OLD".into(), Generation::new(6))));
+    clean(s.device());
+}
+
+/// A device error at each block a source put writes: the put fails, no
+/// file is left, nothing is cross-linked or short, and nothing is lost but
+/// for the entry's own write (#360); the old pair still loads.
+#[test]
+fn a_device_error_at_any_source_write_loses_nothing() {
+    let base = cut_base();
+    let (h, file) = two_chunks();
+    let (blocks, entries) = source_put_writes(&base, &h, &file);
+    assert!(blocks.len() > 500, "{}", blocks.len());
+    for (k, &block) in blocks.iter().enumerate() {
+        let what = format!("write {k} of {} (block {block})", blocks.len());
+        let disk = Rc::new(copy(&base));
+        let mut s: Probed<RamDisk> = probed(&disk);
+        log(&s).fail_write.set(Some(block));
+        let (said, unread) = ask_on(&mut s, &src_line(&h, &file), &chunked(&file), 0);
+        log(&s).fail_write.set(None);
+        assert!(said.contains("ERR put: "), "{what}: {said}");
+        // Before READY (making TAPES) the host has sent nothing to drain.
+        if said.starts_with("READY") {
+            assert_eq!(unread, 0, "{what}: drained");
+        }
+        let vol = s.mount().unwrap();
+        let next = FileName::new(Dir::Chimera, b"NEXT", b"BIN").unwrap();
+        s.write(vol, next, &mut |w| w.put(b"x")).unwrap();
+        let r = fat_check(&disk);
+        assert!(
+            r.cross_linked.is_empty() && r.short.is_empty() && r.fats_differ.is_empty(),
+            "{what}: {r:?}"
+        );
+        // An entry write that fails keeps the chain it names (#360): the
+        // TAPES directory's cluster, or the file's.
+        if entries.contains(&block) {
+            assert!(r.lost.len() <= file.len().div_ceil(512), "{what}: {r:?}");
+        } else {
+            assert!(r.lost.is_empty(), "{what}: lost {:?}", r.lost);
+        }
+        assert!(
+            !source_loads(&mut s, &h),
+            "{what}: a failed put left a source"
+        );
+        assert_eq!(
+            loads(&mut s),
+            Some(("OLD".into(), Generation::new(6))),
+            "{what}"
+        );
+    }
+}
+
+/// A card that takes a block then errs, at each block a source put
+/// writes: no two files share a cluster, and after a power cycle the
+/// re-run lands the source (or finds it there) beside the next writes.
+#[test]
+fn a_source_write_that_lands_then_errs_never_cross_links() {
+    let base = cut_base();
+    let (h, file) = two_chunks();
+    let (blocks, _) = source_put_writes(&base, &h, &file);
+    for k in 0..blocks.len() {
+        let what = format!("write {k} of {}", blocks.len());
+        let disk = Rc::new(copy(&base));
+        let mut s: Probed<RamDisk> = probed(&disk);
+        log(&s).land_then_fail.set(Some(k));
+        let _ = ask_on(&mut s, &src_line(&h, &file), &chunked(&file), 0);
+        let r = fat_check(&disk);
+        assert!(
+            r.cross_linked.is_empty() && r.short.is_empty(),
+            "{what}: {r:?}"
+        );
+        let mut s: Probed<RamDisk> = probed(&disk);
+        let vol = s.mount().unwrap();
+        let next = FileName::new(Dir::Chimera, b"NEXT", b"BIN").unwrap();
+        s.write(vol, next, &mut |w| w.put(&[7; 30_000])).unwrap();
+        let again = ask(&mut s, &src_line(&h, &file), &chunked(&file));
+        assert!(
+            again == SRC_OK || again == "OK PRESENT\n",
+            "{what}: {again}"
+        );
+        let r = fat_check(&disk);
+        assert!(
+            r.cross_linked.is_empty() && r.short.is_empty(),
+            "{what}: {r:?}"
+        );
+        assert_eq!(read(&mut s, vol, next).unwrap(), [7; 30_000], "{what}");
+        assert!(source_loads(&mut s, &h), "{what}");
+    }
+}
+
+/// Power cut after each block a source put writes: nothing cross-linked
+/// or short; the source reads whole or not at all, never shorter; the
+/// sweep frees what the cut lost; the re-run lands it once.
+#[test]
+fn a_power_cut_at_any_source_write_reads_whole_or_missing() {
+    let base = cut_base();
+    let (h, file) = two_chunks();
+    let (blocks, _) = source_put_writes(&base, &h, &file);
+    let mut most_lost = 0;
+    for k in 0..blocks.len() {
+        let what = format!("cut after write {k} of {}", blocks.len());
+        let slot = Rc::new(CutDisk::new(copy(&base), Cut::After(k as u32)));
+        let mut s: Probed<CutDisk> = probed(&slot);
+        let _ = ask_on(&mut s, &src_line(&h, &file), &chunked(&file), 0);
+        slot.cut.set(Cut::Never);
+        let r = fat_check(&slot.inner);
+        assert!(
+            r.cross_linked.is_empty() && r.short.is_empty(),
+            "{what}: {r:?}"
+        );
+        most_lost = most_lost.max(r.lost.len());
+        swept_clean(&what, &slot, &slot.inner);
+        let mut s: Probed<CutDisk> = probed(&slot);
+        let again = ask(&mut s, &src_line(&h, &file), &chunked(&file));
+        assert!(
+            again == SRC_OK || again == "OK PRESENT\n",
+            "{what}: {again}"
+        );
+        assert!(source_loads(&mut s, &h), "{what}");
+        assert_eq!(
+            loads(&mut s),
+            Some(("OLD".into(), Generation::new(6))),
+            "{what}"
+        );
+    }
+    let new_clusters = file.len().div_ceil(512);
+    assert!(most_lost <= new_clusters, "{most_lost} lost");
+    println!("source power cut: at most {most_lost} clusters lost of {new_clusters}");
+}
+
+/// dosfstools' `fsck.fat -n` after a source put, and after a device error
+/// at every 13th block one writes, each followed by the next change.
+#[test]
+#[ignore = "needs dosfstools: just test-fat-tools"]
+fn fsck_passes_after_source_puts_and_device_errors() {
+    use chimera_fat::volume::FsKind;
+    let mut s = FatStore::new(tools::mkfs(FsKind::Fat16, 30_000, 1, 0x1600_0106));
+    old_pair(&mut s);
+    let base = copy(s.device());
+    let (h, file) = two_chunks();
+    let (blocks, _) = source_put_writes(&base, &h, &file);
+    for (k, &block) in blocks.iter().enumerate().step_by(13) {
+        let disk = Rc::new(copy(&base));
+        let mut s: Probed<RamDisk> = probed(&disk);
+        log(&s).fail_write.set(Some(block));
+        let _ = ask_on(&mut s, &src_line(&h, &file), &chunked(&file), 0);
+        log(&s).fail_write.set(None);
+        let vol = s.mount().unwrap();
+        let next = FileName::new(Dir::Chimera, b"NEXT", b"BIN").unwrap();
+        s.write(vol, next, &mut |w| w.put(b"x")).unwrap();
+        let f = tools::fsck(&disk);
+        assert_eq!(f.code, 0, "write {k} (block {block}): {}", f.out);
+    }
+    let disk = Rc::new(copy(&base));
+    let mut s: Probed<RamDisk> = probed(&disk);
+    assert_eq!(ask(&mut s, &src_line(&h, &file), &chunked(&file)), SRC_OK);
+    let f = tools::fsck(&disk);
+    assert_eq!(f.code, 0, "after a good source put: {}", f.out);
 }

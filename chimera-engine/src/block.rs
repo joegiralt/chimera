@@ -4,6 +4,7 @@
 //! Each values struct keeps real field types and implements `Block`; its
 //! `ParamSpec` table is a `static` in the block's own module.
 
+use crate::dsp::algo::math::{exp2, log2};
 use crate::dsp::clampf;
 
 /// A switch's two names, as `ValFmt::Names` shows it.
@@ -112,6 +113,17 @@ pub enum ParamKind {
     Enum,
 }
 
+/// The unit of a param's encoder tick (`ParamSpec::step`), and so how the
+/// 0..1 display spans its range. A byte, so `ParamSpec` stays its size.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scale {
+    /// The value's own unit; the display linear in the value.
+    Linear,
+    /// Octaves (a tick multiplies by `2^step`); the display linear in
+    /// octaves: a frequency (CUTOFF, ADR 0107). The range's `min` is above 0.
+    Octaves,
+}
+
 /// How a matrix offset moves a value (spec § 3; ADR 0010 for `Linear`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum OffsetLaw {
@@ -139,8 +151,9 @@ pub struct ParamSpec {
     /// UI reset value only. Initial values come from the values struct's
     /// `Default` and from `Sound::init`.
     pub default: f32,
-    /// Value change per encoder tick (today's per-page step).
+    /// Change per encoder tick, in `scale`'s unit (today's per-page step).
     pub step: f32,
+    pub scale: Scale,
     pub kind: ParamKind,
     /// True only if `Voice` reads the param per block (see `ParamAddr::modulatable`).
     pub modulatable: bool,
@@ -180,6 +193,7 @@ impl ParamSpec {
             max,
             default,
             step,
+            scale: Scale::Linear,
             kind: ParamKind::Continuous,
             modulatable,
             law: OffsetLaw::Linear,
@@ -209,6 +223,7 @@ impl ParamSpec {
             max,
             default,
             step: 1.0,
+            scale: Scale::Linear,
             kind: ParamKind::Stepped,
             modulatable,
             law: OffsetLaw::Linear,
@@ -230,6 +245,7 @@ impl ParamSpec {
             max,
             default,
             step: 1.0,
+            scale: Scale::Linear,
             kind: ParamKind::Enum,
             modulatable: false,
             law: OffsetLaw::Linear,
@@ -249,12 +265,44 @@ impl ParamSpec {
         }
     }
 
-    /// `v` mapped to 0..1 over the range.
+    /// `v` mapped to 0..1 over the range, by the tick's law.
+    #[inline(never)]
     pub fn normalize(&self, v: f32) -> f32 {
         if self.max == self.min {
             return 0.0;
         }
-        (v - self.min) / (self.max - self.min)
+        match self.scale {
+            Scale::Linear => (v - self.min) / (self.max - self.min),
+            Scale::Octaves => log2(v / self.min) / log2(self.max / self.min),
+        }
+    }
+
+    /// `normalize`'s inverse: the value at 0..1 `n`.
+    #[inline(never)]
+    pub fn denormalize(&self, n: f32) -> f32 {
+        match self.scale {
+            Scale::Linear => self.min + n * (self.max - self.min),
+            Scale::Octaves => self.min * exp2(n * log2(self.max / self.min)),
+        }
+    }
+
+    /// `v` moved `delta` ticks, clamped (and rounded as `quantize` does).
+    #[inline(never)]
+    pub fn nudged(&self, v: f32, delta: i8) -> f32 {
+        let d = f32::from(delta);
+        self.quantize(match self.scale {
+            Scale::Linear => v + d * self.step,
+            Scale::Octaves => v * exp2(d * self.step),
+        })
+    }
+
+    /// This spec ticking `1/n` octave a tick (`Scale::Octaves`).
+    pub const fn ticks_per_octave(self, n: f32) -> Self {
+        Self {
+            step: 1.0 / n,
+            scale: Scale::Octaves,
+            ..self
+        }
     }
 
     /// This spec with its frozen identity.
@@ -331,7 +379,7 @@ impl ParamSpec {
         match self.law {
             OffsetLaw::Linear => clampf(n + off, 0.0, 1.0),
             OffsetLaw::Octaves(_) | OffsetLaw::Semitones(_) | OffsetLaw::Cents(_) => {
-                self.normalize(self.offset(self.min + n * (self.max - self.min), off))
+                self.normalize(self.offset(self.denormalize(n), off))
             }
         }
     }
@@ -422,7 +470,7 @@ pub trait Block {
     /// One encoder turn: `delta` ticks of the spec's step.
     fn nudge(&mut self, id: ParamId, delta: i8) {
         if let Some(s) = self.spec(id) {
-            self.set(id, self.get(id) + delta as f32 * s.step);
+            self.write(id, s.nudged(self.get(id), delta));
         }
     }
 
@@ -445,7 +493,7 @@ pub trait Block {
                 .find(|&sp| sp < n - 0.005)
                 .unwrap_or(0.0)
         };
-        self.set(id, s.min + target * (s.max - s.min));
+        self.set(id, s.denormalize(target));
     }
 }
 

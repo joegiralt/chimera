@@ -29,7 +29,7 @@ pub use marks::{
     part_actions, part_status, project_status,
 };
 pub use note::{Differ, LINE_LEN, Line, ProjectNote, Subject};
-pub use parts::{Origin, Part, PartEdit, PartRead, Performance, part_block, part_block_mut};
+pub use parts::{Loads, Origin, Part, PartEdit, PartRead, Performance, part_block, part_block_mut};
 pub use pool::{EncodedSound, Pool, PoolFull};
 pub use sources::{
     Absence, Purged, SOURCE_HEAD, SourceEntry, SourceId, SourceRef, Unused, Users, source_users,
@@ -263,6 +263,7 @@ impl Project {
     fn load_part(&mut self, src: PartSource) -> Result<(), ReplaceError> {
         self.bump();
         let part = &mut self.perf.parts[src.part.index()];
+        part.loads.bump();
         match src.from {
             PartFrom::Slot(s) => {
                 let sound = self.pool.get(s).ok_or(ReplaceError::SlotEmpty)?;
