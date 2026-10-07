@@ -51,6 +51,14 @@ fn max_step(x: &[f32]) -> f32 {
     x.windows(2).fold(0.0f32, |s, w| s.max((w[1] - w[0]).abs()))
 }
 
+/// The largest |sample|.
+fn peak(x: &[f32]) -> f32 {
+    x.iter().fold(0.0f32, |m, y| m.max(y.abs()))
+}
+
+/// A full-scale sine's peak through PING-PONG's clamps: 1.05× it.
+const PEAK_BOUND: f32 = 1.05;
+
 /// The largest second difference: a corner, where a step is a click.
 fn max_bend(x: &[f32]) -> f32 {
     x.windows(3)
@@ -774,16 +782,18 @@ fn pitch_drops_latch_the_floor_at_a_wrap() {
 /// for the slow head is carried far past the edge by the fast one, and the
 /// head that reflects there reads where it never played, so the output
 /// fades to it as a clamp's does. Every block is held against the loop's
-/// own runs at the two pitches, walked by MOTION and still.
+/// own runs at the two pitches, walked by MOTION and still, at two
+/// POSITIONs, and no block passes the sine's peak: a fade retargeted again
+/// and again carries the output it left, never more.
 #[test]
 fn ping_pong_pitch_jumps_are_click_free() {
     let held = held_plain(&sine(48_000, 2_000.0, 48_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
-    for motion in [0.0, 0.5] {
+    for (motion, position) in [(0.0, 0.3), (0.5, 0.3), (0.0, 0.0)] {
         let p = TapeEngineParams {
             model: TapeModel::PingPong,
             size: 0.0,
-            position: 0.3,
+            position,
             motion,
             ..TapeEngineParams::default()
         };
@@ -798,14 +808,18 @@ fn ping_pong_pitch_jumps_are_click_free() {
                 e.render(&mut b, &p, &v, SR);
                 out.extend_from_slice(&b);
             }
-            max_step(&out[4 * B..])
+            (max_step(&out[4 * B..]), peak(&out))
         };
-        let fixed = run(&|_| 0.0).max(run(&|_| 4_800.0));
+        let fixed = run(&|_| 0.0).0.max(run(&|_| 4_800.0).0);
         for half in [7, 13, 29] {
-            let jumps = run(&|n| if (n / half) % 2 == 0 { 4_800.0 } else { 0.0 });
+            let (jumps, top) = run(&|n| if (n / half) % 2 == 0 { 4_800.0 } else { 0.0 });
             assert!(
                 jumps <= 1.25 * fixed,
-                "MOTION {motion}, every {half} blocks: {jumps} against {fixed}"
+                "MOTION {motion}, POSITION {position}, every {half} blocks: {jumps} against {fixed}"
+            );
+            assert!(
+                top <= PEAK_BOUND,
+                "MOTION {motion}, POSITION {position}, every {half} blocks: peak {top}"
             );
         }
     }
@@ -840,14 +854,14 @@ fn ping_pong_jumps_under_a_running_clamp_are_click_free() {
                     e.render(&mut b, &p(n), &v, SR);
                     out.extend_from_slice(&b);
                 }
-                max_step(&out[4 * B..])
+                (max_step(&out[4 * B..]), peak(&out))
             };
-            let fixed = run(&|_| 0.0).max(run(&|_| 4_800.0));
+            let fixed = run(&|_| 0.0).0.max(run(&|_| 4_800.0).0);
             for half in [2, 3, 7] {
-                let jumps = run(&|n| if (n / half) % 2 == 0 { 4_800.0 } else { 0.0 });
-                if jumps > 1.25 * fixed {
+                let (jumps, top) = run(&|n| if (n / half) % 2 == 0 { 4_800.0 } else { 0.0 });
+                if jumps > 1.25 * fixed || top > PEAK_BOUND {
                     loud.push(format!(
-                        "SIZE {size}, MOTION {motion}, every {half} blocks: {jumps} against {fixed}"
+                        "SIZE {size}, MOTION {motion}, every {half} blocks: {jumps} against {fixed}, peak {top}"
                     ));
                 }
             }

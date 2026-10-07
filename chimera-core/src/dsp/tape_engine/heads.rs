@@ -191,9 +191,10 @@ impl Bounds {
 pub struct Ghost {
     /// Where it reads, in source frames.
     pub pos: Pos,
-    /// Added to what it reads: the share of a fade it retargeted, so the
-    /// output carries on from where it was and fades with it.
-    pub lift: f32,
+    /// The output a fade it retargeted had reached: the ghost's share
+    /// fades from it rather than from what the ghost reads (R1), so the
+    /// output carries on from there and stays a mix of it and the reads.
+    pub hold: Option<f32>,
     /// It moves toward frame 0.
     pub back: bool,
     /// Samples of the fade played, and its length.

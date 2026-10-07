@@ -158,16 +158,19 @@ const _: () = assert!(read::MIN_SOURCE_FRAMES == MIN_LOOP_FRAMES);
 /// the next sample, its head held in reach by the splice's modulo.
 const MAX_EVENTS: usize = 4;
 
-/// A retargeted clamp's `lift` (R1) on its samples `out`, fading with the
-/// ghost's share: `lift · (1 − gain)`, where the last sample's gain is `g`
-/// and it rises `dg` a sample. It runs after the clamp's loop, not in it,
-/// and only while a lift is set: the plain clamp pays nothing for it.
+/// A retargeted clamp's `hold` (R1) on its samples `out`: each moves to
+/// `held` by the ghost's share, `y + (1 − gain)·(held − y)`, where the last
+/// sample's gain is `g` and it rises `dg` a sample. A convex mix, so the
+/// output never passes `held` or the reads, however often the fade is
+/// retargeted (a constant lift on a moving read random-walked to +6.6 dB).
+/// It runs after the clamp's loop, not in it, and only while a hold is set:
+/// the plain clamp pays nothing for it.
 #[inline(always)]
-fn lift(out: &mut [f32], lift: f32, g: f32, dg: f32) {
-    let mut c = lift * (1.0 - g);
+fn hold(out: &mut [f32], held: f32, g: f32, dg: f32) {
+    let mut w = 1.0 - g;
     for y in out.iter_mut().rev() {
-        *y += c;
-        c += lift * dg;
+        *y += w * (held - *y);
+        w += dg;
     }
 }
 
@@ -1772,7 +1775,7 @@ impl TapeEngine {
         let dg = self.clamp_dg;
         let mut gh = self.ghost.unwrap_or(Ghost {
             pos: Pos(0),
-            lift: 0.0,
+            hold: None,
             back: false,
             done: 0,
             len: 1,
@@ -1842,8 +1845,8 @@ impl TapeEngine {
                     break;
                 }
             }
-            if GHOST && gh.lift != 0.0 {
-                lift(&mut out[start..i], gh.lift, g, dg);
+            if let (true, Some(held)) = (GHOST, gh.hold) {
+                hold(&mut out[start..i], held, g, dg);
             }
             let n = (i - start) as u32;
             let h = if mirror { off - r } else { r };
@@ -2146,17 +2149,18 @@ impl TapeEngine {
 
     /// The head jumps from `pos` (source frames, going `back` or up): the
     /// output fades from there over `CLAMP_FADE_S`. A fade already running
-    /// is retargeted (R1): its ghost restarts at `pos`, and what it still
-    /// added to the output, `(1 − gain)·(ghost − head)`, rides on the new
-    /// ghost as its `lift`, so the output carries on and fades from there.
+    /// is retargeted (R1): its ghost restarts at `pos`, and the output it
+    /// had reached, `a + g·(head − a)` (moved to its own hold, if any), is
+    /// the new fade's `hold`, so the output carries on and fades from there.
     fn fade_from(&mut self, pos: Pos, back: bool, k: &AtWrap<'_>) {
-        let lift = match self.ghost {
-            Some(g) => (1.0 - self.gain) * (k.v.read(g.pos) + g.lift - k.v.read(pos)),
-            None => 0.0,
-        };
+        let hold = self.ghost.map(|gh| {
+            let (g, a) = (self.gain, k.v.read(gh.pos));
+            let y = a + g * (k.v.read(pos) - a);
+            gh.hold.map_or(y, |h| y + (1.0 - g) * (h - y))
+        });
         self.ghost = Some(Ghost {
             pos,
-            lift,
+            hold,
             back,
             done: 0,
             len: self.clamp_len,
