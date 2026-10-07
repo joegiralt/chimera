@@ -457,7 +457,10 @@ fn src_reads_states() {
     let pool = ui.project().pool();
     let state = |m, r| SourceState::of(m, r, pool);
     assert_eq!(text(state(TapeModel::Loop, None)), "NONE / NONE");
-    assert_eq!(text(state(TapeModel::Loop, Some(r))), "24K · 1.5 S / 1.5 S");
+    assert_eq!(
+        text(state(TapeModel::Loop, Some(r))),
+        "24K · 1.5 S · 53K / 1.5 S"
+    );
     assert_eq!(
         text(state(TapeModel::Transwave, Some(r))),
         "NOT A TRANSWAVE / NO WAVE"

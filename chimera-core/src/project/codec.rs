@@ -553,6 +553,9 @@ impl ProjectCheck {
         let planned = self.plan.sources & bit != 0;
         match t.pool.source_absent(r) {
             Some(id) if planned => self.to_read |= id.bit(),
+            Some(id) if self.plan.missing & bit != 0 => {
+                t.pool.mark_absent(id, super::Absence::NotOnCard)
+            }
             Some(_) => {}
             // No slot free: the ref is lost, and a save would drop it. A
             // ref the plan left out for room is counted already.

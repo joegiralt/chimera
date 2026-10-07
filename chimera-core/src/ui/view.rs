@@ -14,12 +14,14 @@ use crate::dsp::modulator::{
 use crate::dsp::tape_engine::machine::{self, Cell};
 use crate::dsp::tape_engine::{self, TapeEngineParams as T, TapeModel, wave};
 use crate::modulation::{ModSource, VCA};
+use crate::name::SoundName;
 use crate::orbit::RingIdx;
 use crate::orbit::clock::ClockSource;
 use crate::orbit::scene::SceneRing;
 use crate::params::{EnvParams, FilterParams, OutParams};
 use crate::preset::Sound;
-use crate::project::Pool;
+use crate::project::arena::Cost;
+use crate::project::{Absence, Pool};
 use crate::storage::SourceRef;
 use crate::ui::block_def::{BlockDef, MachineSlot, SlotBinding};
 use crate::ui::filter_panel::{self, PanelKnob, PanelTarget};
@@ -157,8 +159,9 @@ impl From<ResonatorMode> for Models {
 pub enum SourceState {
     /// None picked.
     None,
-    /// Picked, but the pool doesn't hold it.
-    Missing,
+    /// Picked, and the pool keeps its ref without its bytes, for this
+    /// reason (#372).
+    Absent(Absence),
     /// TRANSWAVE on a source that isn't one.
     NotTranswave,
     /// TRON on a zone set (the streamed TRON's).
@@ -166,7 +169,19 @@ pub enum SourceState {
     Held {
         rate: u16,
         frames: u32,
+        cost: Cost,
+        name: Option<SoundName>,
     },
+    /// The cell on a card row, not loaded: its head once read (`None`, its
+    /// stem stands in), its cost, and the pool's free bytes.
+    Card {
+        stem: u32,
+        head: Option<(SoundName, u16, u32)>,
+        cost: Cost,
+        free: Cost,
+    },
+    /// A card read failed: until the next input.
+    Failed(&'static str),
 }
 
 impl SourceState {
@@ -175,48 +190,138 @@ impl SourceState {
         let Some(r) = r else {
             return SourceState::None;
         };
+        let Some(id) = pool.find_source(r) else {
+            return SourceState::Absent(Absence::Missing);
+        };
+        if let Some(why) = pool.absence(id) {
+            return SourceState::Absent(why);
+        }
         match pool.source_view(r) {
-            None => SourceState::Missing,
             Some(v) if wave::playable(model, &v) => SourceState::Held {
                 rate: r.rate,
                 frames: r.frames,
+                cost: pool.source(id).map_or(Cost::default(), |e| e.cost()),
+                name: None,
             },
             Some(_) if model == TapeModel::Transwave => SourceState::NotTranswave,
-            Some(_) => SourceState::ZonesOnTron,
+            _ => SourceState::ZonesOnTron,
         }
     }
 
-    /// The focus band's: `24K · 1.5 S`, or why it won't play.
-    pub fn text(self, buf: &mut FmtBuf) {
-        use core::fmt::Write;
-        let _ = match self {
-            SourceState::None => buf.write_str("NONE"),
-            SourceState::Missing => buf.write_str("SOURCE MISSING"),
-            SourceState::NotTranswave => buf.write_str("NOT A TRANSWAVE"),
-            SourceState::ZonesOnTron => buf.write_str("ZONES: NOT TRON"),
-            SourceState::Held { rate, .. } => {
-                let _ = write!(buf, "{}K · ", rate / 1000);
-                self.cell(buf);
-                Ok(())
-            }
-        };
+    /// A held source's name, once its head is known.
+    pub fn named(self, n: Option<SoundName>) -> Self {
+        match self {
+            SourceState::Held {
+                rate, frames, cost, ..
+            } => SourceState::Held {
+                rate,
+                frames,
+                cost,
+                name: n,
+            },
+            s => s,
+        }
     }
 
-    /// The cell's, short enough for its column: `1.5 S`, `MISSING`.
+    /// The focus band's: `CHOIR · 24K · 1.5 S · 41K`, or why it won't play.
+    pub fn text(self, buf: &mut FmtBuf) {
+        use core::fmt::Write;
+        let tail =
+            |buf: &mut FmtBuf, name: Option<SoundName>, rf: Option<(u16, u32)>, cost: Cost| {
+                if let Some(n) = name {
+                    let _ = write!(buf, "{} · ", n.as_str());
+                }
+                if let Some((rate, frames)) = rf {
+                    let _ = write!(buf, "{}K · ", rate / 1000);
+                    seconds(buf, rate, frames);
+                    let _ = buf.write_str(" · ");
+                }
+                let _ = buf.write_str(cost.kib_label().as_str());
+            };
+        match self {
+            SourceState::Held {
+                rate,
+                frames,
+                cost,
+                name,
+            } => tail(buf, name, Some((rate, frames)), cost),
+            SourceState::Card {
+                stem,
+                head: None,
+                cost,
+                ..
+            } => {
+                let _ = write!(buf, "{stem:08X} · ");
+                tail(buf, None, None, cost)
+            }
+            SourceState::Card {
+                head: Some((n, rate, frames)),
+                cost,
+                ..
+            } => tail(buf, Some(n), Some((rate, frames)), cost),
+            s => {
+                let _ = buf.write_str(s.why());
+            }
+        }
+    }
+
+    /// Why it won't play, the band's words.
+    fn why(self) -> &'static str {
+        use crate::ui::source_cell::{NOT_ON_CARD, READ_FAILED, SOURCE_MISSING};
+        match self {
+            SourceState::Absent(Absence::Missing) => SOURCE_MISSING,
+            SourceState::Absent(Absence::NotOnCard) => NOT_ON_CARD,
+            SourceState::Absent(Absence::ReadFailed) => READ_FAILED,
+            SourceState::NotTranswave => "NOT A TRANSWAVE",
+            SourceState::ZonesOnTron => "ZONES: NOT TRON",
+            SourceState::Failed(w) => w,
+            _ => "NONE",
+        }
+    }
+
+    /// The cell's, short enough for its column: `1.5 S`, `MISSING`, a card
+    /// row's cost.
     pub fn cell(self, buf: &mut FmtBuf) {
         use core::fmt::Write;
         let _ = match self {
             SourceState::None => buf.write_str("NONE"),
-            SourceState::Missing => buf.write_str("MISSING"),
+            SourceState::Absent(Absence::Missing) => buf.write_str("MISSING"),
+            SourceState::Absent(Absence::NotOnCard) => buf.write_str("NO FILE"),
+            SourceState::Absent(Absence::ReadFailed) | SourceState::Failed(_) => {
+                buf.write_str("ERROR")
+            }
             SourceState::NotTranswave => buf.write_str("NO WAVE"),
             SourceState::ZonesOnTron => buf.write_str("ZONES"),
-            SourceState::Held { rate, frames } => {
-                let rate = u64::from(rate.max(1));
-                let tenths = (u64::from(frames) * 10 + rate / 2) / rate;
-                write!(buf, "{}.{} S", tenths / 10, tenths % 10)
+            SourceState::Held { rate, frames, .. } => {
+                seconds(buf, rate, frames);
+                Ok(())
             }
+            SourceState::Card { cost, .. } => buf.write_str(cost.kib_label().as_str()),
         };
     }
+
+    /// What the focus band and the cell are keyed on: their text, and
+    /// whether a card row fits.
+    pub fn key(self) -> u32 {
+        let (mut b, mut c) = (FmtBuf::new(), FmtBuf::new());
+        self.text(&mut b);
+        self.cell(&mut c);
+        let fits = matches!(self, SourceState::Card { cost, free, .. } if cost <= free);
+        b.as_str()
+            .bytes()
+            .chain(c.as_str().bytes())
+            .fold(0x811C_9DC5_u32 ^ fits as u32, |h, x| {
+                (h ^ u32::from(x)).wrapping_mul(0x0100_0193)
+            })
+    }
+}
+
+/// `frames` at `rate` in seconds, to a tenth: `1.5 S`.
+fn seconds(buf: &mut FmtBuf, rate: u16, frames: u32) {
+    use core::fmt::Write;
+    let rate = u64::from(rate.max(1));
+    let tenths = (u64::from(frames) * 10 + rate / 2) / rate;
+    let _ = write!(buf, "{}.{} S", tenths / 10, tenths % 10);
 }
 
 /// A slot, resolved.

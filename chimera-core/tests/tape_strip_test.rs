@@ -90,7 +90,11 @@ fn long_overview_is_strided() {
         let [mn, mx] = o.col(c);
         assert!(w[0] <= mn && mx <= w[1] && mn <= mx, "column {c}");
     }
-    assert_ne!((0..COLS).map(|c| o.col(c)).collect::<Vec<_>>(), want, "strided, not whole");
+    assert_ne!(
+        (0..COLS).map(|c| o.col(c)).collect::<Vec<_>>(),
+        want,
+        "strided, not whole"
+    );
 }
 
 /// Ten seconds at 48 kHz (480 000 frames, the arena's most) in under

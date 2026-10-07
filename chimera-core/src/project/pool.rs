@@ -18,7 +18,7 @@ use crate::storage::{
 
 use super::arena::{ArenaWriter, Cost, GateAcked, MAX_SOURCES, Shift};
 use super::ids::SlotId;
-use super::sources::{SOURCE_HEAD, SourceEntry, SourceId, SourceRef, source_cost};
+use super::sources::{Absence, SOURCE_HEAD, SourceEntry, SourceId, SourceRef, source_cost};
 use crate::source_table::{Answer, GATE_ACK_TIMEOUT_MS, SourceTable};
 
 /// How long a load waits, at least, for the voices its kill fades to let
@@ -90,7 +90,11 @@ pub struct Pool {
 #[derive(Clone, Copy, Debug)]
 enum SrcSlot {
     Empty,
+    /// Held: its bytes in the arena, its row published.
     Live(SourceEntry),
+    /// Kept by ref with no bytes (its card file missing, damaged, too big,
+    /// or unread), costing nothing; why, for its SOURCE cell (#372).
+    Absent(SourceRef, Absence),
     /// Out of the index, its row still live until its hole compacts: a
     /// voice may hold it (ADR 0087's retirement).
     Retired {
@@ -220,6 +224,11 @@ impl Pool {
     pub fn source(&self, s: SourceId) -> Option<SourceEntry> {
         match self.sources.slots[s.index()] {
             SrcSlot::Live(e) => Some(e),
+            SrcSlot::Absent(r, _) => Some(SourceEntry {
+                r,
+                held: 0,
+                offset: 0,
+            }),
             SrcSlot::Empty | SrcSlot::Retired { .. } | SrcSlot::Draining { .. } => None,
         }
     }
@@ -348,13 +357,52 @@ impl Pool {
             return Some(s);
         }
         let s = self.free_source()?;
-        self.sources.slots[s.index()] = SrcSlot::Live(SourceEntry {
-            r,
-            held: 0,
-            offset: 0,
-        });
+        self.sources.slots[s.index()] = SrcSlot::Absent(r, Absence::Missing);
         self.sources.gens[s.index()] = self.sources.gens[s.index()].wrapping_add(1);
         Some(s)
+    }
+
+    /// Why absent source `s` holds no bytes; `None` unless it is absent.
+    pub fn absence(&self, s: SourceId) -> Option<Absence> {
+        match self.sources.slots[s.index()] {
+            SrcSlot::Absent(_, why) => Some(why),
+            _ => None,
+        }
+    }
+
+    pub(in crate::project) fn mark_absent(&mut self, s: SourceId, why: Absence) {
+        if let SrcSlot::Absent(_, w) = &mut self.sources.slots[s.index()] {
+            *w = why;
+        }
+    }
+
+    /// Where a card-row load stages `len` held bytes, pass by pass (TAPE
+    /// Task 17): past a row's head at the gap's bottom, as `source_put`
+    /// lays them, with the arena offset there, so a load sees the gap
+    /// move under it. `None` when they don't fit or every row is taken.
+    pub(in crate::project) fn source_staging(&mut self, len: usize) -> Option<(u32, &mut [u8])> {
+        let at = self.arena.src_end();
+        let to = self.arena.source_stage(SOURCE_HEAD + len).ok()?;
+        Some((at, &mut to[SOURCE_HEAD..]))
+    }
+
+    /// The `len` bytes `source_staging` holds, published as source `r`:
+    /// into its absent slot, or a free one. An `r` already held is shared.
+    pub(in crate::project) fn source_commit(
+        &mut self,
+        r: SourceRef,
+        len: usize,
+    ) -> Result<SourceId, PoolFull> {
+        let found = self.find_source(r);
+        if let Some(s) = found.filter(|&s| self.source(s).is_some_and(|e| !e.absent())) {
+            return Ok(s);
+        }
+        let s = found.or_else(|| self.free_source()).ok_or(PoolFull {
+            needs: source_cost(len),
+            free: Cost::default(),
+        })?;
+        self.source_put(s, r, len, |_| Some(len))?;
+        Ok(s)
     }
 
     fn free_source(&self) -> Option<SourceId> {
@@ -367,16 +415,18 @@ impl Pool {
     /// and its row stays live until `source_pass` compacts it: a voice
     /// may still hold it, and is never cut.
     pub(in crate::project) fn source_free(&mut self, s: SourceId) {
-        let SrcSlot::Live(e) = self.sources.slots[s.index()] else {
-            return;
+        let e = match self.sources.slots[s.index()] {
+            SrcSlot::Live(e) => Some(e),
+            SrcSlot::Absent(..) => None,
+            _ => return,
         };
         self.sources.gens[s.index()] = self.sources.gens[s.index()].wrapping_add(1);
-        self.sources.slots[s.index()] = if e.absent() {
-            SrcSlot::Empty
-        } else {
+        self.sources.slots[s.index()] = if let Some(e) = e {
             self.arena
                 .source_free_pending(e.offset, SOURCE_HEAD + e.held as usize);
             SrcSlot::Retired { offset: e.offset }
+        } else {
+            SrcSlot::Empty
         };
     }
 
@@ -386,9 +436,9 @@ impl Pool {
         SourceId::ALL
             .into_iter()
             .filter(|s| match self.sources.slots[s.index()] {
-                SrcSlot::Live(e) => !e.absent() && e.offset >= offset,
+                SrcSlot::Live(e) => e.offset >= offset,
                 SrcSlot::Retired { offset: o } => o >= offset,
-                SrcSlot::Empty | SrcSlot::Draining { .. } => false,
+                SrcSlot::Empty | SrcSlot::Absent(..) | SrcSlot::Draining { .. } => false,
             })
             .fold(0, |m, s| m | s.bit())
     }
@@ -535,7 +585,7 @@ impl Pool {
                     table.clear(s);
                     continue;
                 }
-                SrcSlot::Live(e) if !e.absent() && e.offset > from => {
+                SrcSlot::Live(e) if e.offset > from => {
                     e.offset -= by;
                     e.offset
                 }
@@ -551,7 +601,7 @@ impl Pool {
 
     fn source_offset(&self, s: SourceId) -> Option<u32> {
         match self.sources.slots[s.index()] {
-            SrcSlot::Live(e) if !e.absent() => Some(e.offset),
+            SrcSlot::Live(e) => Some(e.offset),
             SrcSlot::Retired { offset } => Some(offset),
             _ => None,
         }

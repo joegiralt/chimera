@@ -385,6 +385,46 @@ pub fn source_file(r: SourceRef) -> FileName {
     FileName::new(Dir::Tapes, &stem, b"SRC").expect("8 hex digits is a stem")
 }
 
+/// Card rows listed; past this many files the rest don't show.
+pub const MAX_TAPES: usize = 64;
+
+/// `/CHIMERA/TAPES` as listed: each `.SRC` stem and size.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TapeList {
+    files: [(u32, u32); MAX_TAPES],
+    n: u8,
+}
+
+impl TapeList {
+    pub const EMPTY: TapeList = TapeList {
+        files: [(0, 0); MAX_TAPES],
+        n: 0,
+    };
+
+    pub fn files(&self) -> &[(u32, u32)] {
+        &self.files[..self.n as usize]
+    }
+
+    /// One directory read; no file is opened. No `TAPES` is an empty list.
+    pub fn list<S: Store>(s: &mut S, r: &Ready) -> Result<TapeList, StoreError> {
+        let mut l = TapeList::EMPTY;
+        let listed = s.list(r.volume(), Dir::Tapes, &mut |f, size| {
+            let stem = core::str::from_utf8(f.stem()).ok();
+            let stem = stem.filter(|t| t.len() == 8 && f.ext() == b"SRC");
+            if let Some(crc) = stem.and_then(|t| u32::from_str_radix(t, 16).ok())
+                && (l.n as usize) < MAX_TAPES
+            {
+                l.files[l.n as usize] = (crc, size);
+                l.n += 1;
+            }
+        });
+        match listed {
+            Ok(()) | Err(StoreError::NotFound) => Ok(l),
+            Err(e) => Err(e),
+        }
+    }
+}
+
 /// What a source file's head must name: the ref a load asked for, or the
 /// stem `put` gives it.
 #[derive(Clone, Copy)]
@@ -443,28 +483,36 @@ enum Step {
 }
 
 /// A source file's records as they stream: each checked as it comes, the
-/// samples hashed and, with `out`, written where `held` keeps them.
-struct Records<'o> {
+/// samples hashed and, with `out` (`held`, lent each call), written where
+/// `held` keeps them.
+struct Records {
     expect: Expect,
     step: Step,
     crc: Crc32,
     /// Sample bytes so far.
     len: usize,
-    out: Option<&'o mut [u8]>,
 }
 
-impl<'o> Records<'o> {
-    fn new(expect: Expect, out: Option<&'o mut [u8]>) -> Self {
+impl Records {
+    fn new(expect: Expect) -> Self {
         Records {
             expect,
             step: Step::Head,
             crc: Crc32::new(),
             len: 0,
-            out,
         }
     }
 
-    fn record(&mut self, tag: RecordTag, p: &[u8]) -> Result<(), Bad> {
+    /// The head, once its record came.
+    fn head(&self) -> Option<SourceHead> {
+        match &self.step {
+            Step::Head => None,
+            Step::Zones(h) => Some(*h),
+            Step::Data(l) => Some(l.head),
+        }
+    }
+
+    fn record(&mut self, tag: RecordTag, p: &[u8], out: Option<&mut [u8]>) -> Result<(), Bad> {
         match (tag, &self.step) {
             (RecordTag::SourceHead, Step::Head) => {
                 let h = SourceHead::from_bytes(p).ok_or(Bad::Head)?;
@@ -479,30 +527,37 @@ impl<'o> Records<'o> {
                     self.step = Step::Zones(h);
                     return Ok(());
                 }
-                self.begin(SourceLayout::whole(h).ok_or(Bad::Head)?)
+                self.begin(SourceLayout::whole(h).ok_or(Bad::Head)?, out)
             }
             (RecordTag::SourceZones, Step::Zones(h)) => {
                 let h = *h;
                 let z = SourceZones::from_record(p).ok_or(Bad::Head)?;
-                self.begin(SourceLayout::zoned(h, z).ok_or(Bad::Head)?)
+                self.begin(SourceLayout::zoned(h, z).ok_or(Bad::Head)?, out)
             }
             (RecordTag::SourceData, Step::Data(l)) => {
                 let (start, total, crc) = (l.data_start(), l.data_len(), l.head.sref.crc);
-                self.data(p, start, total, crc)
+                self.data(p, start, total, crc, out)
             }
             _ => Err(Bad::Order),
         }
     }
 
     /// Samples `p`, at `start` in `held`, of `total` bytes hashing to `crc`.
-    fn data(&mut self, p: &[u8], start: usize, total: usize, crc: u32) -> Result<(), Bad> {
+    fn data(
+        &mut self,
+        p: &[u8],
+        start: usize,
+        total: usize,
+        crc: u32,
+        out: Option<&mut [u8]>,
+    ) -> Result<(), Bad> {
         if p.is_empty() || p.len() > SOURCE_DATA_MAX {
             return Err(Bad::Record);
         }
         if self.len + p.len() > total {
             return Err(Bad::Long);
         }
-        if let Some(o) = self.out.as_deref_mut() {
+        if let Some(o) = out {
             o[start + self.len..][..p.len()].copy_from_slice(p);
         }
         self.crc.update(p);
@@ -514,8 +569,8 @@ impl<'o> Records<'o> {
         Ok(())
     }
 
-    fn begin(&mut self, l: SourceLayout) -> Result<(), Bad> {
-        if self.out.as_ref().is_some_and(|o| o.len() < l.held_len()) {
+    fn begin(&mut self, l: SourceLayout, out: Option<&mut [u8]>) -> Result<(), Bad> {
+        if out.is_some_and(|o| o.len() < l.held_len()) {
             return Err(Bad::Room);
         }
         self.crc = l.crc_prefix();
@@ -525,7 +580,7 @@ impl<'o> Records<'o> {
 
     /// After the last record: the layout, its samples whole. With `out`,
     /// writes the descriptor before them.
-    fn end(&mut self) -> Result<SourceLayout, Bad> {
+    fn end(&mut self, out: Option<&mut [u8]>) -> Result<SourceLayout, Bad> {
         let Step::Data(l) = &self.step else {
             return Err(Bad::Order);
         };
@@ -533,7 +588,7 @@ impl<'o> Records<'o> {
         if self.len != l.data_len() {
             return Err(Bad::Short);
         }
-        if let Some(o) = self.out.as_deref_mut() {
+        if let Some(o) = out {
             write_descriptor(&l, o);
         }
         Ok(l)
@@ -548,13 +603,13 @@ fn read_source<S: Store>(
     s: &mut S,
     r: &Ready,
     sref: SourceRef,
-    out: Option<&mut [u8]>,
+    mut out: Option<&mut [u8]>,
 ) -> Result<SourceLayout, SourceReadError> {
-    let mut rec = Records::new(Expect::Ref(sref), out);
+    let mut rec = Records::new(Expect::Ref(sref));
     let mut room = false;
     let mut on = |e: Event<'_>| match e {
         Event::Header(_) | Event::Record(ReadTag::Unknown(_), _) => Ok(()),
-        Event::Record(ReadTag::Known(t), p) => rec.record(t, p).map_err(|b| {
+        Event::Record(ReadTag::Known(t), p) => rec.record(t, p, out.as_deref_mut()).map_err(|b| {
             room |= b == Bad::Room;
             b.file()
         }),
@@ -572,7 +627,7 @@ fn read_source<S: Store>(
         Err(StoreError::Corrupt) => return load(LoadError::File(FileError::Truncated)),
         Err(e) => return load(LoadError::Store(e)),
     }
-    rec.end()
+    rec.end(out)
         .map_err(|b| SourceReadError::Load(LoadError::File(b.file())))
 }
 
@@ -657,7 +712,7 @@ pub enum PutRefusal {
 /// `feed` whose bytes show it, and sticks.
 pub struct SourceCheck {
     framer: Framer,
-    rec: Records<'static>,
+    rec: Records,
     /// Bytes fed, of `len`.
     fed: u64,
     len: u32,
@@ -670,7 +725,7 @@ impl SourceCheck {
     pub fn new(stem_crc: u32, len: u32) -> Result<SourceCheck, PutRefusal> {
         Ok(SourceCheck {
             framer: Framer::new(len).map_err(PutRefusal::File)?,
-            rec: Records::new(Expect::Stem(stem_crc), None),
+            rec: Records::new(Expect::Stem(stem_crc)),
             fed: 0,
             len,
             refused: None,
@@ -678,6 +733,18 @@ impl SourceCheck {
     }
 
     pub fn feed(&mut self, bytes: &[u8]) -> Result<(), PutRefusal> {
+        self.feed_into(bytes, None)
+    }
+
+    /// `feed`, the samples written into `held` as `read_source_into` lays
+    /// them out; the descriptor too, with the last byte. `held` must be the
+    /// same each call, as long as the layout's `held_len`. `held` is
+    /// trusted only once every byte came and passed.
+    pub fn feed_into(
+        &mut self,
+        bytes: &[u8],
+        mut held: Option<&mut [u8]>,
+    ) -> Result<(), PutRefusal> {
         if let Some(r) = self.refused {
             return Err(r);
         }
@@ -687,7 +754,9 @@ impl SourceCheck {
             let r = match e {
                 Event::Header(h) if h.kind != FileKind::Source => Err(PutRefusal::Kind),
                 Event::Header(_) | Event::Record(ReadTag::Unknown(_), _) => Ok(()),
-                Event::Record(ReadTag::Known(t), p) => rec.record(t, p).map_err(Bad::put),
+                Event::Record(ReadTag::Known(t), p) => {
+                    rec.record(t, p, held.as_deref_mut()).map_err(Bad::put)
+                }
             };
             // The framer stops the events at an error; `said` keeps ours.
             r.map_err(|e| *said.insert(e))
@@ -697,7 +766,7 @@ impl SourceCheck {
         let r = match (said, pushed) {
             (Some(r), _) => Err(r),
             (None, Err(e)) => Err(PutRefusal::File(e)),
-            (None, Ok(())) if self.fed == self.len as u64 => self.verdict().map(|_| ()),
+            (None, Ok(())) if self.fed == self.len as u64 => self.verdict(held).map(|_| ()),
             (None, Ok(())) => Ok(()),
         };
         self.refused = r.err();
@@ -709,12 +778,27 @@ impl SourceCheck {
         if let Some(r) = self.refused {
             return Err(r);
         }
-        self.verdict()
+        self.verdict(None)
     }
 
-    fn verdict(&mut self) -> Result<SourceHead, PutRefusal> {
+    /// The head, once its record came: a card row's name, read from the
+    /// file's first 4 KB.
+    pub fn head(&self) -> Option<SourceHead> {
+        self.rec.head()
+    }
+
+    /// The bytes `held` takes, once the head (and a `ZoneSet`'s zones)
+    /// came.
+    pub fn held_len(&self) -> Option<usize> {
+        match &self.rec.step {
+            Step::Data(l) => Some(l.held_len()),
+            _ => None,
+        }
+    }
+
+    fn verdict(&mut self, held: Option<&mut [u8]>) -> Result<SourceHead, PutRefusal> {
         self.framer.finish().map_err(PutRefusal::File)?;
-        self.rec.end().map(|l| l.head).map_err(Bad::put)
+        self.rec.end(held).map(|l| l.head).map_err(Bad::put)
     }
 }
 

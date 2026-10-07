@@ -182,9 +182,11 @@ fn ui_state_rest_under_4k() {
     eprintln!("UiState without its Project = {rest} B");
     // A growth tripwire, no physical limit: `UiState` is an AXI static
     // built in place, never moved or cloned. 512 B of it is TAPE's strip
-    // (the overview's 432 B cache and its key, spec § RAM).
+    // (the overview's 432 B cache and its key, spec § RAM); 2.75 KB its
+    // SOURCE cell (a load's `SourceCheck` 1 KB, the 16 heads, the
+    // per-source memory's 512 B, the card's 64 rows; TAPE Task 17).
     assert!(
-        rest <= 4096 + 512,
+        rest <= 4096 + 512 + 2816,
         "UiState grew to {rest} B besides its Project"
     );
 }

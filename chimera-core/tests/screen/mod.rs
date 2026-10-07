@@ -783,6 +783,86 @@ pub fn strip_source(ui: &mut UiState, wave: bool) {
     ui.project_mut().edit_part(PartId::ALL[0]).sound.source = Some(TapeSource { r, tune: None });
 }
 
+/// What SOURCE's card goldens do once SOURCE is on the CHOIR's row.
+#[derive(Clone, Copy, PartialEq)]
+pub enum CardRow {
+    /// Shown: its name, the hint, the meter's preview.
+    On,
+    /// The pool filled first: WON'T FIT in ALERT.
+    Full,
+    /// MIX + PLUS, every pass: the Part plays it, named.
+    Loaded,
+    /// MIX + PLUS, then the card gone: CARD READ FAILED.
+    Failed,
+}
+
+/// TAPE's init on Part 1 at SRC, the CHOIR (1.2 s at 24 kHz, 41K) on the
+/// card, and SOURCE turned onto its row; then `then`.
+pub fn src_card(ui: &mut UiState, then: CardRow) {
+    use chimera_core::name::SoundName;
+    use chimera_core::storage::{SourceHead, WholeShape, source_crc, write_source};
+    load_init(ui, EngineType::Tape);
+    let x: Vec<f32> = (0..27_648)
+        .map(|i| {
+            let t = i as f32 / 24_000.0;
+            let swell = (core::f32::consts::PI * t / 1.152).sin();
+            0.8 * swell * (core::f32::consts::TAU * 220.0 * t).sin()
+        })
+        .collect();
+    let h = held(Shape::Plain, 1, 24_000, &x);
+    let data = &h[DESC_LEN..];
+    let head = SourceHead {
+        sref: SourceRef {
+            crc: source_crc(WholeShape::Plain, 1, data),
+            frames: x.len() as u32,
+            rate: 24_000,
+        },
+        shape: Shape::Plain,
+        count: 1,
+        root: 5_700,
+        period_q16: 109 << 16,
+        name: SoundName::new("CHOIR").unwrap(),
+    };
+    let mut s = MemStore::new(1);
+    let w = Card::new().run(&mut s, |s, r| write_source(s, r, &head, data));
+    w.unwrap().result.unwrap();
+    if then == CardRow::Full {
+        strip_source(ui, false);
+        strip_source(ui, true);
+        let mut crc = 0x0F11_0000;
+        while ui.project().pool().free().bytes() > 40_000 {
+            let r = SourceRef {
+                crc,
+                frames: 20_000,
+                rate: 24_000,
+            };
+            let x = vec![0.0; 20_000];
+            ui.project_mut()
+                .source_store(r, &held(Shape::Plain, 1, 24_000, &x))
+                .unwrap();
+            crc += 1;
+        }
+    }
+    let mut r = Rig::new(ui, s);
+    r.feed(Input::turn(EncoderId::A, 100)); // the card's row, the last
+    r.work(); // its head
+    match then {
+        CardRow::On | CardRow::Full => {}
+        CardRow::Loaded => {
+            feed(r.ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
+            while r.ui.card_pending() {
+                r.work();
+            }
+        }
+        CardRow::Failed => {
+            feed(r.ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
+            r.work();
+            r.s.eject();
+            r.work();
+        }
+    }
+}
+
 /// TAPE's init on Part 1 with the strip's source, at DECK, MODEL turned
 /// `by` from LOOP, the audio's heads `heads`.
 pub fn tape_strip(ui: &mut UiState, by: i8, heads: Heads) {
@@ -1233,6 +1313,13 @@ pub const CASES: &[ScreenCase] = &[
         strip_source(ui, false);
         feed(ui, Input::turn(EncoderId::A, 0));
     }),
+    // SOURCE on a card row (TAPE Task 17): CHOIR's name and cost, MIX +
+    // PLUS's hint and the meter's preview; full, WON'T FIT; loaded, the
+    // Part plays it; the card gone mid-load, CARD READ FAILED.
+    ("tape_src_card", |ui| src_card(ui, CardRow::On)),
+    ("tape_src_wont_fit", |ui| src_card(ui, CardRow::Full)),
+    ("tape_src_loaded", |ui| src_card(ui, CardRow::Loaded)),
+    ("tape_src_read_failed", |ui| src_card(ui, CardRow::Failed)),
     ("modal_exc", |ui| load_init(ui, EngineType::Modal)), // PLUCK: EXCITE, COLOR
     ("modal_exc_bank", |ui| {
         load_init(ui, EngineType::Modal);

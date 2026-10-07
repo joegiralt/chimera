@@ -171,7 +171,11 @@ impl Store for DirStore {
     ) -> Result<(), StoreError> {
         self.open(vol)?;
         let mut fh = File::open(self.file_path(file)).map_err(io_err)?;
-        let len = fh.metadata().map_err(io_err)?.len().saturating_sub(offset.into());
+        let len = fh
+            .metadata()
+            .map_err(io_err)?
+            .len()
+            .saturating_sub(offset.into());
         fh.seek(SeekFrom::Start(offset.into())).map_err(io_err)?;
         if sink.begin(len as u32).is_break() {
             return Ok(());

@@ -30,6 +30,7 @@ pub mod pool_page;
 pub mod region;
 pub mod renderer;
 pub mod settings;
+pub mod source_cell;
 pub mod splash;
 pub mod tape_strip;
 pub mod theme;
@@ -250,6 +251,9 @@ pub struct UiState {
     overview: tape_strip::Overview,
     heads: Heads,
     heads_from: &'static PartHeads,
+    /// TAPE's SOURCE cell: the card's rows, the heads, a load, the
+    /// per-source memory.
+    src: source_cell::SourceCell,
 }
 
 crate::in_place::field_list!(UiState => UiState {
@@ -287,6 +291,7 @@ crate::in_place::field_list!(UiState => UiState {
     overview,
     heads,
     heads_from,
+    src,
 });
 
 #[cfg(any(test, feature = "test-support"))]
@@ -347,6 +352,7 @@ impl UiState {
             addr_of_mut!((*p).overview).write(tape_strip::Overview::EMPTY);
             addr_of_mut!((*p).heads).write(Heads::NONE);
             addr_of_mut!((*p).heads_from).write(&crate::instrument::HEADS);
+            addr_of_mut!((*p).src).write(source_cell::SourceCell::NEW);
             addr_of_mut!((*p).browser_dirty).write(false);
             addr_of_mut!((*p).page).write(page);
             addr_of_mut!((*p).sel_op).write(Op::A);
@@ -512,6 +518,7 @@ impl UiState {
     /// (projects spec § Loading while playing: the voice fade covers it).
     /// Its pages go home when its engine is no longer `was` (ADR 0066).
     fn project_replaced(&mut self, was: EngineType) {
+        self.src.forget();
         let part = self.active_part;
         let cx = self.cx();
         if let (Some((c, at)), Some(p)) = (self.loc.page(&cx), self.loc.part())
@@ -865,11 +872,8 @@ impl UiState {
     fn ctx(&self) -> SlotCtx {
         let sound = &self.project.part(self.active_part).sound;
         let ctx = SlotCtx::read(&sound.params, self.sel_op).on_clock(self.orbit.status.source);
-        let ctx = ctx.on_source(view::SourceState::of(
-            ctx.tape,
-            sound.source_ref(),
-            self.project.pool(),
-        ));
+        let base = view::SourceState::of(ctx.tape, sound.source_ref(), self.project.pool());
+        let ctx = ctx.on_source(self.src.state(self.active_part, base, &self.project));
         match self.loc.orbit() {
             Some(o) => ctx.on_ring(o.ring()),
             None => ctx,
@@ -878,6 +882,7 @@ impl UiState {
 
     /// Recompute the page identity and jump the display to its values.
     fn enter_page(&mut self) {
+        self.src.leave();
         self.page = PageKey::from_location(self.loc, self.page_def(), self.sel_op);
         let values = self.display_values();
         self.renderer.snap_to_current(values);
@@ -1915,12 +1920,24 @@ impl UiState {
         let r = self.project.part(self.active_part).sound.source_ref();
         let v = r.and_then(|r| self.project.pool().source_view(r));
         let held = r.filter(|_| v.is_some());
+        // Keyed on the ref: a source file is write-once and sealed, and its
+        // ref's CRC is over its bytes, so other bytes are another ref.
         if held != self.strip_of {
             self.strip_of = held;
             self.overview = v.map_or(tape_strip::Overview::EMPTY, |v| {
                 tape_strip::Overview::of(&v, 0.0, 1.0)
             });
         }
+    }
+
+    /// A card row loading: BUSY, and MENU cancels.
+    pub fn source_loading(&self) -> bool {
+        self.src.loading()
+    }
+
+    /// TAPE's SOURCE as the active Part's SRC reads it.
+    pub fn source_state(&self) -> view::SourceState {
+        self.ctx().src
     }
 
     /// The strip reads its heads from `from` (the goldens' own), not the
@@ -1952,10 +1969,18 @@ impl UiState {
             self.prime_status = None;
             self.toast.dismiss();
             self.browser_dirty |= self.refusal.take().is_some();
+            self.src.input();
         }
         self.refresh_status();
 
         let presses = self.gates.step(controls);
+        // A card row loading takes every key: MENU cancels it.
+        if self.src.loading() {
+            if presses.menu.is_some() {
+                self.src.cancel();
+            }
+            return;
+        }
         if let Some(m) = self.modal.take() {
             if !part_key(controls) {
                 self.modal_input(m, controls, &presses);
@@ -2091,6 +2116,10 @@ impl UiState {
                     });
                     continue;
                 }
+                if let View::Source(_) = v {
+                    self.src.turn(&mut self.project, at, delta);
+                    continue;
+                }
                 if view::is_dimmed(&v, &self.project.part(at).sound, &self.ctx()) {
                     continue; // dimmed: the encoder is ignored
                 }
@@ -2136,7 +2165,15 @@ impl UiState {
             // MIX + Plus/Minus: prime/un-prime parameter for modulation
             if shift {
                 let at = self.active_part;
-                if controls.button_state(ButtonId::Plus) == ButtonState::Pressed {
+                let plus = controls.button_state(ButtonId::Plus) == ButtonState::Pressed;
+                let on_source = matches!(
+                    view::view(def, self.focused_slot(), &self.ctx()),
+                    View::Source(_)
+                );
+                // MIX + PLUS on a card row loads it (spec § 3).
+                if plus && on_source {
+                    self.src.load(&mut self.project, at);
+                } else if plus {
                     // Unbound slots prime nothing; non-modulatable params are
                     // refused. Report the outcome in the focus band (#21):
                     // an already-primed address is a silent `Ok` from
@@ -2191,8 +2228,11 @@ impl UiState {
 
     /// Advance animations one frame: a `Pacer`'s, at `UI_FPS`.
     pub fn update(&mut self, _: animation::UiTick) {
-        // A pending source hole closes when nothing above it sounds.
-        self.project.sources_pass();
+        // A pending source hole closes when nothing above it sounds; never
+        // under a load staging in the gap.
+        if !self.src.loading() {
+            self.project.sources_pass();
+        }
         self.refresh_status();
         self.clock.tick();
         let at = self.active_part;
@@ -2463,7 +2503,13 @@ impl UiState {
         shown: Option<glyph::Gauge>,
     ) -> region::RegionData {
         use region::{RegionData, RegionKind};
-        let qvalues = region::quantize_values(&self.renderer.anim);
+        let mut qvalues = region::quantize_values(&self.renderer.anim);
+        // SOURCE's text isn't an animated value: its cell and band key on it.
+        for (i, q) in qvalues.iter_mut().enumerate() {
+            if let View::Source(s) = view::view(f.def, i, &f.ctx) {
+                *q = s.key() as u16;
+            }
+        }
         let audio_page = f.def.viz == VizType::AudioStats;
         let (chain, node, sub) = self.loc_tag();
         match kind {

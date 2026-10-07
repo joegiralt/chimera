@@ -30,6 +30,18 @@ pub use crate::storage::SourceRef;
 /// A source's head in the arena, before its held bytes.
 pub const SOURCE_HEAD: usize = 16;
 
+/// Why a source the pool keeps by ref holds no bytes (#372): what its
+/// SOURCE cell says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Absence {
+    /// On the card, but it didn't fit, or its file is damaged.
+    Missing,
+    /// No file for it in `/CHIMERA/TAPES`.
+    NotOnCard,
+    /// The card faulted reading it, or before its turn came.
+    ReadFailed,
+}
+
 /// A pool source: its ref and how many of its bytes the arena holds. An
 /// absent one (its card file missing) holds none and costs nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -207,6 +219,18 @@ impl Project {
             Some(len)
         };
         self.pool.source_fill(s, len, fill).ok()?.then_some(s)
+    }
+
+    /// A card-row load's staging (`Pool::source_staging`): nothing moves,
+    /// nothing is published, so the meter and the gap stay as they were.
+    pub fn source_staging(&mut self, len: usize) -> Option<(u32, &mut [u8])> {
+        self.pool.source_staging(len)
+    }
+
+    /// The staged bytes published as source `r` (`Pool::source_commit`).
+    pub fn source_commit(&mut self, r: SourceRef, len: usize) -> Result<SourceId, super::PoolFull> {
+        self.bump();
+        self.pool.source_commit(r, len)
     }
 
     /// Source `r` as an absent entry, costing nothing.

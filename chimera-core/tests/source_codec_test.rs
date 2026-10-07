@@ -4,8 +4,10 @@
 
 mod common;
 
+use chimera_core::dsp::tape_engine::TapeModel;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
 use chimera_core::name::SoundName;
+use chimera_core::project::Absence;
 use chimera_core::project::arena::{ARENA_BYTES, Cost};
 use chimera_core::project::test_support::{full_dense_slots, save_at};
 use chimera_core::project::{
@@ -18,6 +20,7 @@ use chimera_core::storage::{
     ProjectId, ReadTag, RecordTag, RecordWriter, SaveError, Side, SourceHead, WholeShape, Wrote,
     read_source_into, source_crc, source_file, source_file_min_len, write_file, write_source,
 };
+use chimera_core::ui::view::SourceState;
 use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use chimera_hal::testkit::MemStore;
 use common::codec_util::{VecSink, decode_project, encode_project};
@@ -651,10 +654,12 @@ fn write_source_verifies_before_sealing() {
 fn a_card_fault_ends_the_source_reads() {
     let mut s = odd();
     let (mut p, _) = Project::boxed();
+    let mut refs = Vec::new();
     for seed in 0..3 {
         let (h, d) = source(20 + seed, 600, "SRC");
         put_source(&mut s.inner, &h, &d);
         p.source_absent(h.sref).unwrap();
+        refs.push(h.sref);
     }
     assert!(matches!(
         save_at(&mut Card::new(), &mut s, &mut p, 1),
@@ -669,6 +674,51 @@ fn a_card_fault_ends_the_source_reads() {
     assert!(out.swap.is_some(), "{:?}", out.note);
     assert_eq!(s.tape_reads, 1, "one fault, no more reads");
     assert_eq!(q.pool().source_used(), Cost::default());
+    // Reported as the card's fault, not as missing (#372).
+    for r in refs {
+        let id = q.pool().find_source(r).unwrap();
+        assert_eq!(q.pool().absence(id), Some(Absence::ReadFailed));
+        let state = SourceState::of(TapeModel::Loop, Some(r), q.pool());
+        assert_eq!(state, SourceState::Absent(Absence::ReadFailed));
+    }
+}
+
+/// An absent source says why (#279, #372): no file on the card is
+/// SOURCE NOT ON CARD; a damaged one, SOURCE MISSING.
+#[test]
+fn absent_sources_say_why() {
+    let mut s = odd();
+    let (mut p, _) = Project::boxed();
+    let (on, d) = source(30, 600, "ON");
+    let (off, _) = source(31, 600, "OFF");
+    put_source(&mut s.inner, &on, &d);
+    s.garble = true;
+    let (bad, bd) = source(32, 600, "BAD");
+    let _ = Card::new().run(&mut s, |s, r| write_source(s, r, &bad, &bd));
+    s.garble = false;
+    for r in [on.sref, off.sref, bad.sref] {
+        p.source_absent(r).unwrap();
+    }
+    assert!(matches!(
+        save_at(&mut Card::new(), &mut s, &mut p, 1),
+        ProjectNote::Saved(_)
+    ));
+    let (mut q, t) = Project::boxed();
+    let vol = s.mount().unwrap();
+    let id = ProjectId::new(1).unwrap();
+    let go = ReplaceGuard::check(&q, t, ProjectSource::File { id, vol }).expect("no prompt");
+    let _ = load_project(&mut Card::new(), &mut s, &mut q, go, &LoadLink::new());
+    let why = |r| q.pool().absence(q.pool().find_source(r).unwrap());
+    assert_eq!(why(on.sref), None, "held");
+    assert_eq!(why(off.sref), Some(Absence::NotOnCard));
+    assert_eq!(why(bad.sref), Some(Absence::Missing));
+    let text = |r| {
+        let mut b = chimera_core::ui::fmt::FmtBuf::new();
+        SourceState::of(TapeModel::Loop, Some(r), q.pool()).text(&mut b);
+        b.as_str().to_string()
+    };
+    assert_eq!(text(off.sref), "SOURCE NOT ON CARD");
+    assert_eq!(text(bad.sref), "SOURCE MISSING");
 }
 
 /// `PoolSource` rules: only between `Fx`'s blocks and the first `Slot`; a

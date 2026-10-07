@@ -17,7 +17,7 @@ use crate::storage::{
 use super::codec::encode_new_project;
 use super::note::{Differ, ProjectNote, Subject};
 use super::{
-    Confirmed, DeleteTarget, LoadLink, NEW_PROJECT_NAME, Origin, OverwriteTarget, PartId,
+    Absence, Confirmed, DeleteTarget, LoadLink, NEW_PROJECT_NAME, Origin, OverwriteTarget, PartId,
     PartStatus, Project, ProjectCheck, ProjectDecoder, ProjectFile, ProjectSource, Seen, SourceId,
     Swap, encode_project, part_status, project_crc,
 };
@@ -434,6 +434,7 @@ fn read_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: u32) -> (u
     for id in SourceId::ALL.into_iter().filter(|i| ids & i.bit() != 0) {
         let Some(e) = p.pool.source(id) else { continue };
         if fault {
+            p.pool.mark_absent(id, Absence::ReadFailed);
             unread = unread.saturating_add(1);
             continue;
         }
@@ -456,7 +457,12 @@ fn read_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: u32) -> (u
             Ok(true) => {}
             // Whole on the card, more than the gap: it didn't fit.
             Ok(false) if room => missed = missed.saturating_add(1),
-            Ok(false) => unread = unread.saturating_add(1),
+            Ok(false) => {
+                if fault {
+                    p.pool.mark_absent(id, Absence::ReadFailed);
+                }
+                unread = unread.saturating_add(1)
+            }
             Err(_) => missed = missed.saturating_add(1),
         }
     }

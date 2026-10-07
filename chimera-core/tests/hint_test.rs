@@ -489,3 +489,28 @@ fn a_hints_change_redraws_every_page() {
         }
     }
 }
+
+/// TAPE Task 17: SOURCE's hints at their longest (999K) fit 216 px:
+/// `MIX + PLUS LOADS · 999K`, and `WON'T FIT · NEEDS 999K, 999K FREE`.
+#[test]
+fn source_hints_fit() {
+    use chimera_core::project::arena::Cost;
+    use chimera_core::ui::source_cell::{LOAD_KEYS, loads_words, wont_fit_words};
+    let k999 = Cost::of(999 * 1024);
+    let (loads, wont) = (loads_words(k999), wont_fit_words(k999, k999));
+    assert_eq!(loads.as_str(), "LOADS · 999K");
+    assert_eq!(wont.as_str(), "WON'T FIT · NEEDS 999K, 999K FREE");
+    let w = theme::CONTENT_W;
+    let g = [Gesture(LOAD_KEYS, loads.as_str())];
+    assert!(hint::width(&g) <= w, "{}", hint::width(&g));
+    // Past the measure, the line closes its tracking (a 4-digit need).
+    for (n, f) in [(999, 999), (1024, 150)] {
+        let wont = wont_fit_words(Cost::of(n * 1024), Cost::of(f * 1024));
+        let t = chimera_core::ui::draw::text_width(
+            &theme::FONT_LABEL,
+            wont.as_str(),
+            chimera_core::ui::source_cell::tracking(wont.as_str()),
+        );
+        assert!(t <= w, "{}: {t}", wont.as_str());
+    }
+}

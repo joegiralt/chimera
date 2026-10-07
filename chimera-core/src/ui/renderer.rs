@@ -603,6 +603,9 @@ impl Renderer {
             f.prime_status,
         );
         hint::focus(display, f.hint(view.hint()));
+        if let View::Source(view::SourceState::Card { cost, free, .. }) = view {
+            crate::ui::source_cell::draw_card_row(display, f.pool, cost, free, f.hints);
+        }
     }
 
     /// What an ORBIT viz draws, for its region's key; 0 on any other.
@@ -838,6 +841,7 @@ pub fn look(f: &Frame, i: usize) -> components::Look {
         {
             components::Look::Absent
         }
+        View::Source(view::SourceState::Card { .. }) => components::Look::Dimmed,
         v if view::is_dimmed(&v, sound, &f.ctx) => components::Look::Dimmed,
         _ => components::Look::Live,
     }
