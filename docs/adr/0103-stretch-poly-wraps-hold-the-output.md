@@ -10,44 +10,59 @@ an eighth of the wrap interval). MONO wraps by whole periods, so its jump is
 near 0. POLY wraps by the window, which isn't whole periods, so its jump can
 be up to twice the peak. While the lift falls the new grain swings to its own
 peak, and the two add. The factory QA measured +6.06 dBFS at the engine's
-output on a −0.5 dBFS sine (`stretch-sine-c4-poly`), with METAL at +2.95 and
-HARP at +2.37. That is at the +6 dBFS bound before the chain in spec § 9
+output on a −0.5 dBFS sine (`stretch-sine-c4-poly`), against the +6 dBFS
+bound before the chain in spec § 9. A C4 sine test measured 2.4×
 (private issue #384).
 
 ## Decision
-- A POLY wrap holds the output it left, `held`, and crossfades from it to the
-  new grain under the same one-pole: `y = x + w · (held − x)`, with `w` going
-  from 1 at the wrap and falling by `lift_k` a sample.
-- The result is a convex mix of the grains' mix and a past output, so it never
-  passes the source's peak (`poly_wraps_stay_under_the_source_peak`: 1.000×).
-- The POLY wrap reads nothing.
-- MONO keeps the lift, `y = x + w · carry`. A held value would leave a corner
-  on a held tone, which MONO's tests forbid.
-- The kind follows the block's lock (`hold` 1 unlocked, 0 locked). A block
-  whose lock came or went carries the live carry over as the new kind
-  (`recarry`).
+- **The hold.** A POLY wrap holds the output it left and crossfades from it to
+  the new grain under the same one-pole: `y = x + w · (held − x)`, with `w`
+  going from 1 at the wrap and falling by `lift_k` a sample. The result is a
+  convex mix of the grains' mix and the held value.
+- **The held value moves.** It leaves at the output's slope (`o − prev`) and
+  slows to rest at most 12 samples' move on. Its rest point is at most 4
+  moves, and at most an eighth, past the larger of the output's level and the
+  grains'. A held value that stood still left a corner: the QA flagged
+  6.6–7.2× on METAL and EPIANO STAB.
+- **The bound.** POLY passes the source's peak by an eighth at most
+  (`poly_wraps_stay_under_the_source_peak`: 1.04× worst).
+- **No read.** The POLY wrap reads nothing: the slope comes from the output
+  buffer.
+- **MONO keeps the lift,** `y = x + w · carry`. A held value fading over 5 ms
+  would duck a held tone at every MONO wrap. A short one bends it: MONO's tests
+  measured 3.2× the sine's own bend.
+- **Which kind.** The kind follows the block's lock (`hold` 1 unlocked, 0
+  locked). A block whose lock came or went carries the live carry over as the
+  new kind (`recarry`).
+- **The loop.** The carry's terms (`1 − hold · w`, `w · carry`) are formed
+  before the reads, so the output waits on one multiply-add after them.
 
 ## Alternatives considered
-- **A third head reading past the window's end.** This is a true crossfade
-  with no corner, but spec § 2 keeps every grain inside its window.
-- **A shorter lift.** The overshoot shrinks only as the lift's fall becomes a
-  step, which the click rule forbids.
-- **A gain normalised by the lift (`(x + l)/(1 + |l|)`).** This needs a
-  division a sample, and the gain jumps at each wrap unless it is compensated.
-- **Hold for MONO too.** It is one fewer multiply, but it bends a held tone at
-  every MONO wrap.
+- **A held value that stands still.** It stays exactly under the peak, but the
+  wave stalls for a sample, and the QA flags that as a click on slow
+  material.
+- **A third head reading past the window's end.** This is a true crossfade,
+  but spec § 2 keeps every grain inside its window.
+- **A shorter lift.** It gave 1.5–1.9×, and steps past the click rule.
+- **A clip at full scale.** It flattens the overshoot instead of avoiding it.
+- **One hold for both kinds.** It ducks or bends MONO, as above.
 
 ## Consequences
-- STRETCH POLY's peak before the chain is the source's.
-- POLY's corner at a wrap is a short hold rather than the lift's DC.
-- The common path costs 2 more static instructions a sample on the M7. A MONO
-  lifted wrap costs about 6 more. A POLY wrap costs about 14 in place of 108.
-- The bill's worst case (MONO lifted under the floor) is about 447 against
-  `COST_STRETCH` 450, to be confirmed by the bench rows at ship.
+- STRETCH POLY's peak before the chain is within an eighth of the source's.
+- The desktop QA passes 241 of 268 renders, against 238.
+  `stretch-sine-c4-poly`, `stretch-brass-c4-poly` and `stretch-kit-16-poly` now
+  pass, and no render newly fails.
+- **On the M7 (static count):**
+  - the common path is 231 instructions a sample, against 235;
+  - a MONO lift costs about 7–12 more a wrap;
+  - a POLY hold costs about 80 in place of the lift's 108.
+- **Host timing:** 1.08× LOOP's fade path, against 1.10×. The bill's worst
+  case (MONO lifted under the floor) falls by about 3 static, under
+  `COST_STRETCH` 450. The bench rows confirm it at ship.
 
 ## Sources
 - ADR 0093.
 - Spec `docs/superpowers/specs/2026-10-04-tape-core-design.md` § 2 STRETCH and
   § 5.
 - private issue #384.
-- `chimera-core/src/dsp/tape_engine/stretch.rs`.
+- `chimera-core/src/dsp/tape_engine/stretch.rs` (`hold_from`, `play`).

@@ -27,9 +27,10 @@
 //! as PING-PONG's retargeted clamp carries its ghost's share. POLY's wrap
 //! is by the window, not whole periods, so its jump can be twice the peak
 //! and a lift would add the new grain's swing to it (+6 dBFS, #384): it
-//! holds the output it left instead and crossfades from it to the new
-//! grain under the same one-pole, never past the peak (ADR 0103). Either
-//! way the output never steps there. A grain whose wrap comes more than once in
+//! holds the output it left instead, the held value moving on at the
+//! output's slope as it slows (`hold_from`), and crossfades from it to the
+//! new grain under the same one-pole, an eighth past the peak at most (ADR
+//! 0103). Either way the output never steps or bends there. A grain whose wrap comes more than once in
 //! `MIN_PASS_SAMPLES` samples is a waveform loop, as an oscillator's cycle
 //! is: it wraps bare.
 //!
@@ -57,6 +58,12 @@ use crate::dsp::algo::math::{clampf, exp2};
 
 /// A wrap's lift fades over 5 ms, as PING-PONG's clamp does.
 pub const LIFT_S: f32 = 0.005;
+/// A POLY hold travels at most this many samples' move of the output's
+/// slope as it slows, and spills at most this many past the output's and
+/// the grains' level, and at most this share of it (`hold_from`).
+const HOLD_MOVES: f32 = 12.0;
+const HOLD_SPILL: f32 = 4.0;
+const HOLD_OVER: f32 = 0.125;
 /// A grain wraps at most once in this many samples (two blocks): the
 /// window is at least twice this many samples of travel at the block's
 /// fastest `inc` (POLY wraps by it), and MONO's wrap is the fewest whole
@@ -159,6 +166,33 @@ pub fn smooth(x: f32) -> f32 {
     x * x * (3.0 - 2.0 * x)
 }
 
+/// A POLY wrap's hold, from the output `o` it leaves (`prev` the sample
+/// before) with the grains' mix `x`: the held value moves on at the
+/// output's slope, so it leaves the wave with no corner, slowing a sample
+/// by the returned factor to rest at most `HOLD_MOVES` samples' move on,
+/// and within `HOLD_SPILL` samples' move (`HOLD_OVER` of it at most) of the
+/// larger of `|o|` and `|x|`, so the hold passes the peak by an eighth at
+/// most. Returns the next sample's held value,
+/// its move and the move's fall.
+#[cold]
+#[inline(never)]
+fn hold_from(o: f32, prev: f32, x: f32) -> (f32, f32, f32) {
+    let v = o - prev;
+    if v == 0.0 {
+        return (o, 0.0, 0.0);
+    }
+    let level = libm::fabsf(o).max(libm::fabsf(x));
+    let most = level + (HOLD_SPILL * libm::fabsf(v)).min(HOLD_OVER * level);
+    let rest = clampf(o + HOLD_MOVES * v, -most, most);
+    let moves = (rest - o) / v;
+    if moves <= 1.0 {
+        // No room for a full move: one step to rest.
+        return (rest, 0.0, 0.0);
+    }
+    let k = 1.0 - 1.0 / moves;
+    (o + v, v * k, k)
+}
+
 /// `inc` (in `(0, INC_MAX]`) in 32.32, from 32-bit conversions.
 fn q(x: f32) -> u64 {
     let whole = x as u32;
@@ -220,11 +254,16 @@ pub struct Stretch {
     /// its carry the jump, so no corner. POLY's window isn't whole periods,
     /// so its jump is up to twice the peak and a lift would add the new
     /// grain's swing to it (#384): it holds (`hold` 1) the output it left
-    /// and crossfades from it to the new grain, never past the peak; its
-    /// corner is the one the lift had.
+    /// and crossfades from it to the new grain, an eighth past the peak at
+    /// most; the held value moves on at the output's slope (`vel`, falling
+    /// by `vel_k` a sample, `hold_from`), so there is no corner.
     carry: f32,
     carry_w: f32,
     hold: f32,
+    vel: f32,
+    vel_k: f32,
+    /// The last block's last sample out: a hold's slope at a block's first.
+    prev: f32,
     /// Splices and wraps: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub(super) events: u32,
@@ -258,6 +297,9 @@ impl Stretch {
         carry: 0.0,
         carry_w: 0.0,
         hold: 0.0,
+        vel: 0.0,
+        vel_k: 0.0,
+        prev: 0.0,
         #[cfg(any(test, feature = "test-support"))]
         events: 0,
         #[cfg(any(test, feature = "test-support"))]
@@ -468,6 +510,8 @@ impl Stretch {
     ) {
         let mut i = 0;
         let lk = k.lift_k;
+        // The last block's last sample: a hold's slope at the block's first.
+        let last = self.prev;
         let top = self.last.whole() + 1;
         if self.hold != k.hold {
             self.recarry(v, k.hold);
@@ -492,15 +536,22 @@ impl Stretch {
             let [t0, t1] = self.tiny;
             let (mut g, dg) = (self.g, self.dg);
             let (mut c, mut w) = (self.carry, self.carry_w);
+            let (mut vel, mut vk) = (self.vel, self.vel_k);
             let s = i;
             let stop = BLOCK_SIZE.min(i + self.clock.left() as usize);
-            for y in out.iter_mut().take(stop).skip(s) {
+            while i < stop {
+                // The carry's terms are ready before the reads: the output
+                // waits on one multiply-add after them.
+                let (keep, add) = (1.0 - m * w, w * c);
                 let a = v.read(h0);
                 let b = v.read(h1);
                 g += dg;
                 let x = a + smooth(g) * (b - a);
-                *y = x + w * (c - m * x);
+                let o = add + keep * x;
+                out[i] = o;
                 w *= lk;
+                c += vel;
+                vel *= vk;
                 c0 = c0.wrapping_add(s0);
                 c1 = c1.wrapping_add(s1);
                 h0 = h0 + Pos(c0);
@@ -511,11 +562,12 @@ impl Stretch {
                     h0 = h0 - w0;
                     if !t0 {
                         // POLY holds the output: no jump to read.
-                        c = if m != 0.0 {
-                            *y
+                        if m != 0.0 {
+                            let prev = if i >= 2 { out[i - 2] } else { last };
+                            (c, vel, vk) = hold_from(o, prev, x);
                         } else {
-                            w * c + (1.0 - smooth(g + dg)) * (a - v.read(h0 - Pos(c0)))
-                        };
+                            c = w * c + (1.0 - smooth(g + dg)) * (a - v.read(h0 - Pos(c0)));
+                        }
                         w = 1.0;
                     }
                     #[cfg(any(test, feature = "test-support"))]
@@ -527,11 +579,12 @@ impl Stretch {
                 if (h1.whole() as i32).wrapping_sub(e1) ^ m1 >= 0 {
                     h1 = h1 - w1;
                     if !t1 {
-                        c = if m != 0.0 {
-                            *y
+                        if m != 0.0 {
+                            let prev = if i >= 2 { out[i - 2] } else { last };
+                            (c, vel, vk) = hold_from(o, prev, x);
                         } else {
-                            w * c + smooth(g + dg) * (b - v.read(h1 - Pos(c1)))
-                        };
+                            c = w * c + smooth(g + dg) * (b - v.read(h1 - Pos(c1)));
+                        }
                         w = 1.0;
                     }
                     #[cfg(any(test, feature = "test-support"))]
@@ -545,12 +598,14 @@ impl Stretch {
             self.heads = [h0, h1];
             self.g = g;
             (self.carry, self.carry_w) = (c, w);
+            (self.vel, self.vel_k) = (vel, vk);
             self.clock.pos += (i - s) as u32;
             if self.clock.left() == 0 {
                 let t = self.time(k.off as i64 + tau + i as i64 * k.tstep, *k);
                 self.splice(t, *k);
             }
         }
+        self.prev = out[BLOCK_SIZE - 1];
     }
 
     /// A grain past its window's end before a block (the window moved under
@@ -583,7 +638,7 @@ impl Stretch {
         }
         if moved {
             self.carry = if hold != 0.0 { mix + d } else { d + jump };
-            (self.carry_w, self.hold) = (1.0, hold);
+            (self.carry_w, self.hold, self.vel) = (1.0, hold, 0.0);
         }
     }
 
@@ -775,6 +830,30 @@ mod tests {
             };
             let got = s.carry * s.carry_w;
             assert!((got - want).abs() < 1e-5, "{got} against {want}");
+        }
+    }
+
+    /// A hold leaves at the output's slope and comes to rest where its
+    /// moves add up to, within an eighth past the level; with no room for a
+    /// move it steps to rest at once.
+    #[test]
+    fn hold_leaves_at_the_slope_and_rests_in_bounds() {
+        for (o, prev, x) in [(0.1f32, 0.09, 0.2), (-0.3, -0.28, 0.1), (0.5, 0.4, 0.0)] {
+            let (mut c, mut vel, k) = hold_from(o, prev, x);
+            let level = o.abs().max(x.abs());
+            if k > 0.0 {
+                assert!((c - (2.0 * o - prev)).abs() < 1e-6, "{o}: leaves at {c}");
+            }
+            for _ in 0..1_000 {
+                assert!(c.abs() <= 1.125 * level + 1e-6, "{o}: {c} past {level}");
+                c += vel;
+                vel *= k;
+            }
+            let want = clampf(o + 12.0 * (o - prev), -1.125 * level, 1.125 * level);
+            assert!(
+                (c - want).abs() < 2e-3 || k == 0.0,
+                "{o}: rests at {c}, want {want}"
+            );
         }
     }
 
