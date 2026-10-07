@@ -489,8 +489,8 @@ fn applies_matches_the_panel() {
 }
 
 /// TYPE is live once a second kind is built: a detent a kind, CLEAN to
-/// 2040 (whose one MODE shows fixed) to DIRTY, each at its default MODE and
-/// held at the last; a TYPE change leaves the matrix byte-identical. (TYPE
+/// 2040 (whose one MODE shows fixed) to DIRTY to LADDER (keeping LP2), each
+/// at its default MODE or the one it keeps, and held at the last; a TYPE change leaves the matrix byte-identical. (TYPE
 /// is an enum the registry refuses to prime.)
 #[test]
 fn type_steps_the_built_kinds_and_never_edits_the_matrix() {
@@ -507,7 +507,9 @@ fn type_steps_the_built_kinds_and_never_edits_the_matrix() {
     for (kind, mode) in [
         (FilterKind::K2040, FilterMode::Lp24),
         (FilterKind::Dirty, FilterMode::Lp12),
-        (FilterKind::Dirty, FilterMode::Lp12),
+        // DIRTY's LP2 is LADDER's too: MODE stays (spec § 7).
+        (FilterKind::Ladder, FilterMode::Lp12),
+        (FilterKind::Ladder, FilterMode::Lp12),
     ] {
         feed(&mut ui, Input::turn(EncoderId::A, 1));
         assert_eq!(ui.params().filter.kind(), kind);
@@ -516,7 +518,7 @@ fn type_steps_the_built_kinds_and_never_edits_the_matrix() {
     }
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
     assert_eq!(ui.prime_status(), Some(PrimeStatus::NotModulatable));
-    feed(&mut ui, Input::turn(EncoderId::A, -3));
+    feed(&mut ui, Input::turn(EncoderId::A, -4));
     assert_eq!(ui.params().filter.kind(), FilterKind::Svf);
     assert_eq!(format!("{:?}", ui.mod_state()), before);
 }
@@ -781,6 +783,7 @@ fn panels_follow_the_type() {
     };
     assert_eq!(labels(FilterKind::Svf), ["FREQ", "Q", "MODE", "FM1", "FM2"]);
     assert_eq!(labels(FilterKind::Dirty), labels(FilterKind::Svf));
+    assert_eq!(labels(FilterKind::Ladder), labels(FilterKind::Svf));
     assert_eq!(
         labels(FilterKind::K2040),
         ["CUTOFF", "RES", "ENV AMT", "KEYBD", "DRIVE"]
@@ -800,7 +803,7 @@ fn panels_follow_the_type() {
     assert_eq!(t(FilterKind::Svf, 3), Some(T::Route(ModSource::Env1)));
     assert_eq!(t(FilterKind::Svf, 4), Some(T::Route(ModSource::Note)));
     assert_eq!(t(FilterKind::Svf, 10), None);
-    for k in [FilterKind::Svf, FilterKind::Dirty, FilterKind::K2040] {
+    for k in FilterKind::BUILT {
         assert!(t(k, 5).is_some(), "{k:?}");
         assert_eq!(t(k, 6), Some(T::JackAmount(JackSlot::Fm3)));
         assert_eq!(t(k, 7), Some(T::Filter(FilterParams::FM3_IN)));

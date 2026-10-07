@@ -348,8 +348,9 @@ pub static K2040_PANEL: KindPanel = KindPanel {
 
 pub fn panel(kind: FilterKind) -> &'static KindPanel {
     match kind {
-        // DIRTY speaks CLEAN's panel and words (spec § 4).
-        FilterKind::Svf | FilterKind::Dirty => &CLEAN_PANEL,
+        // DIRTY and LADDER speak CLEAN's panel and words (spec § 4, ADR
+        // 0104): FREQ, Q, MODE; LEVEL leads FLT › MOD.
+        FilterKind::Svf | FilterKind::Dirty | FilterKind::Ladder => &CLEAN_PANEL,
         FilterKind::K2040 => &K2040_PANEL,
     }
 }

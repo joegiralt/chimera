@@ -6,7 +6,7 @@ mod common;
 use chimera_core::block::{Block, DiskCode};
 use chimera_core::dsp::filter::coef::g_of;
 use chimera_core::dsp::filter::k2040::{
-    ALPHA_EXP, ALPHA_REV2, OUT_2040, R_2040, k2040_k, sat_2040,
+    ALPHA_EXP, ALPHA_REV2, OUT_2040, R_2040, STAGE_SCALE_EXP, k2040_k, sat_2040,
 };
 use chimera_core::dsp::filter::{
     Filter, FilterKind, FilterMode, FilterMods, K2040, K2040Voice, KIND_NAMES, level_gain,
@@ -445,7 +445,7 @@ fn k2040_recovers_from_a_nan_block() {
 #[test]
 fn kind_codes_round_trip() {
     assert_eq!(KIND_NAMES.len(), FilterKind::BUILT.len());
-    assert_eq!(KIND_NAMES, ["CLEAN", "2040", "DIRTY"]);
+    assert_eq!(KIND_NAMES, ["CLEAN", "2040", "DIRTY", "LADDER"]);
     assert_eq!(FilterKind::K2040.disk_code(), 4);
     assert_eq!(FilterKind::K2040.disk_ident(), "2040");
     assert_eq!(FilterKind::K2040.modes(), [FilterMode::Lp24]);
@@ -623,13 +623,13 @@ fn k2040_voice_flip_keeps_level_and_codes() {
             "{from:?} → {to:?}: {before} → {after}"
         );
         // Linear content is exact: the flip lands on the new voice's own
-        // output (REV2's trim moves its corner 13 cents).
+        // output (the trims move the corners: REV2's 13 cents, EXP's 11).
         let peak = own.iter().fold(0.0f32, |m, y| m.max(y.abs()));
         let err = flipped[at..]
             .iter()
             .zip(&own[at..])
             .fold(0.0f32, |m, (a, b)| m.max((a - b).abs()));
-        assert!(err <= 0.01 * peak, "{from:?} → {to:?}: {err} of {peak}");
+        assert!(err <= 0.02 * peak, "{from:?} → {to:?}: {err} of {peak}");
     }
 }
 
@@ -821,4 +821,17 @@ fn sat_2040_is_the_c1_cubic() {
     assert!((sat_2040(1e-3) - 1e-3).abs() < 1e-9);
     assert!((sat_2040(1.5) - sat_2040(1.499)).abs() < 1e-5);
     assert_eq!(ALPHA_EXP, 2.0 * ALPHA_REV2);
+}
+
+/// EXP's stages bend at the Kobol's circuit scale (ADR 0105): 3.04× REV2's
+/// per volt of stage error, derived from the node's resistors. `k2040_ref`
+/// runs the same scale per voice, so `k2040_post_is_exp_only` and the jump
+/// tests hold the loop to it bit for bit. The bend is quiet (the probe
+/// measured at most 0.2 dB on any metric); the retune it forces is the
+/// pitch test's (`TRIM_EXP`).
+#[test]
+fn k2040_exp_stage_bend_is_at_the_circuit_scale() {
+    assert!((STAGE_SCALE_EXP - 3.04).abs() < 0.01);
+    assert_eq!(K2040Voice::Rev2.stage_scale(), 1.0);
+    assert_eq!(K2040Voice::Exp.stage_scale(), STAGE_SCALE_EXP);
 }
