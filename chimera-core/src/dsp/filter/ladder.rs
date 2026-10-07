@@ -20,9 +20,11 @@ use crate::meter::Clip;
 use crate::params::FilterParams;
 
 /// The drive into the ladder at unity LEVEL, in model units (1 is the
-/// input pair's knee, 2V_T): a full-scale saw at LEVEL ½ bends the input
-/// pair by 3 %, at LEVEL 1 (×4) by 30 % on its peaks.
-pub const ALPHA_LADDER: f32 = 0.3;
+/// input pair's knee, 2V_T): a full-scale input peaks at half the knee at
+/// LEVEL ½, reaches it at LEVEL 0.75 (×2), where the LED lights, and runs
+/// twice past it at LEVEL 1. It also sets the ring's level, the input
+/// pair's, under the pass band: −15.6 dBFS (ADR 0104).
+pub const ALPHA_LADDER: f32 = 0.5;
 /// The output level: LEVEL ½ at RES 0 is 0 dB.
 pub const OUT_LADDER: f32 = 1.0;
 /// Stage 1's swing: where the Padé tanh flattens. Its equilibrium is the
@@ -33,9 +35,10 @@ pub const Y_MAX: f32 = 1.5;
 /// The LED's knee on the input pair, `|u|` in model units: 1 lights it
 /// (tanh at 0.76), full at 3, where the Padé tanh clips.
 pub const LED_KNEE: f32 = 1.0;
-/// The cutoff trim, a ratio on FREQ: the stages' saturators slow the ring
-/// at RES 1, measured flat by 3.3 cents (`self_oscillation_tracks`).
-pub const TRIM_LADDER: f32 = 1.0;
+/// The cutoff trim, a ratio on FREQ, +15.8 cents: the stages' saturators
+/// slow the ring at RES 1, which read 15.4 to 16.5 cents flat over C2–C6
+/// untrimmed, as a Moog is trimmed at full resonance.
+pub const TRIM_LADDER: f32 = 1.009169;
 
 const _: () = {
     assert!(ALPHA_LADDER > 0.0 && ALPHA_LADDER < 1.0);
