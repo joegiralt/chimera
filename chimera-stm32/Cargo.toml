@@ -8,8 +8,10 @@ default = ["midi-din", "perf-probe", "usb-console", "card-put"]
 midi-din = []
 perf-probe = []
 # The bench on the unit, one area a build: all of it no longer fits FLASH
-# beside the synth. `bench` is the shared rig, built with an area.
-bench = ["perf-probe", "chimera-core/probe"]
+# beside the synth. `bench` is the shared rig, built with an area and
+# `--no-default-features`: the shipping set less the console's `put`
+# (`card-put`, ~7 KB), which no bench run needs, so ORBIT's areas fit.
+bench = ["perf-probe", "chimera-core/probe", "midi-din", "usb-console"]
 # ALGO's patches, the FX bus and the kernel.
 bench-algo = ["bench"]
 # ROUTING: the matrix, filter types, taps and MODAL's rows.
@@ -24,8 +26,9 @@ bench-orbit = ["bench", "orbit"]
 # TAPE COLD: each machine's cold-cache voice.
 bench-tape = ["bench"]
 # The filter probes, linked though nothing calls them, for
-# `tools/loop_count.py`'s static counts: the shipping build plus them.
-filter-probes = ["chimera-core/filter-probe"]
+# `tools/loop_count.py`'s static counts: the shipping build plus them,
+# `default` included, as the bench sets are built without it.
+filter-probes = ["default", "chimera-core/filter-probe"]
 # On-unit SD bring-up: prints the card probe and halts; no audio.
 sd-probe = []
 # The master tape stage back on the chain, with its bench row (ADR 0055).

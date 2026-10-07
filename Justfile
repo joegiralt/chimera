@@ -1,7 +1,9 @@
 # Justfile for Chimera
 
 # The bench's builds, an area each (all of it no longer fits FLASH), and
-# the filter probes `tools/loop_count.py` counts.
+# the filter probes `tools/loop_count.py` counts. Each is built with
+# `--no-default-features` (the `bench` feature brings back all of the
+# shipping set but the console's `put`; `filter-probes`, `default`).
 bench_sets := "bench-algo bench-algo,master-tape bench-routing bench-memory bench-stress bench-stress,orbit bench-orbit bench-tape filter-probes"
 bench_all := "bench-algo,bench-routing,bench-memory,bench-stress,bench-orbit,bench-tape"
 
@@ -93,7 +95,7 @@ check:
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit
     # The bench, an area a build: all of it no longer fits FLASH.
-    for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features "$f" || exit 1; done
+    for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; done
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features sd-probe
     cargo build -p chimera-bootloader --target thumbv7em-none-eabihf
     cargo build -p chimera-theory --target thumbv7em-none-eabihf
@@ -122,7 +124,7 @@ stack-check:
     test -x "$objdump" && test -x "$nm"
     elf=target/thumbv7em-none-eabihf/release/chimera-stm32
     sets=("" "--no-default-features" "--features orbit")
-    for f in {{bench_sets}}; do sets+=("--features $f"); done
+    for f in {{bench_sets}}; do sets+=("--no-default-features --features $f"); done
     sets+=("--no-default-features --features sd-probe")
     for features in "${sets[@]}"; do
         cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf $features
@@ -171,10 +173,10 @@ clippy:
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit -- -D warnings
-    for f in {{bench_sets}}; do cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features "$f" -- -D warnings || exit 1; done
+    for f in {{bench_sets}}; do cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features "$f" -- -D warnings || exit 1; done
     # Every bench area at once: too big to link, but no area's code is dead.
-    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features {{bench_all}} -- -D warnings
-    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --features {{bench_all}},master-tape -- -D warnings
+    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features {{bench_all}} -- -D warnings
+    cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features {{bench_all}},master-tape -- -D warnings
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features sd-probe -- -D warnings
     # usb-console alone: `stats` answers from no reader
     cargo clippy -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features usb-console -- -D warnings
@@ -237,7 +239,8 @@ flash:
 # area one of algo, routing, memory, stress, orbit, tape; extra more
 # features (`just flash-bench stress orbit`: STRESS plays ORBIT;
 # `just flash-bench algo master-tape`: the REEL row). All of the bench no
-# longer fits FLASH at once. The bench holds its screens for minutes
+# longer fits FLASH at once; a bench build has no console `put` (re-flash
+# the shipping build to move files). The bench holds its screens for minutes
 # before the UI loop (and so the console) starts, so a 74 after a
 # completed download is accepted unwaited.
 flash-bench area extra="":
@@ -245,7 +248,7 @@ flash-bench area extra="":
     set -euo pipefail
     features="bench-{{area}}"
     if [ -n "{{extra}}" ]; then features="$features,{{extra}}"; fi
-    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features "$features"
+    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features "$features"
     rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-bench.bin
     python3 tools/chimera-usb.py to-dfu
     log=$(mktemp) && trap 'rm -f "$log"' EXIT

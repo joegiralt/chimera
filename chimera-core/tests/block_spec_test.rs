@@ -1,7 +1,7 @@
 //! Every spec table is well-formed (spec § Testing "Specs").
 
 use chimera_core::addr::BlockRef;
-use chimera_core::block::{ParamKind, ParamSpec, ValFmt};
+use chimera_core::block::{ParamKind, ParamSpec, Scale, ValFmt};
 
 /// Every block's spec table, via the one exhaustive `BlockRef` list.
 fn all_specs() -> Vec<(String, &'static [ParamSpec])> {
@@ -33,6 +33,12 @@ fn check(name: &str, specs: &[ParamSpec]) {
             s.default
         );
         assert!(s.step > 0.0, "{what}: step {} <= 0", s.step);
+        // A ratio needs a range above 0.
+        assert!(
+            s.scale == Scale::Linear || s.min > 0.0,
+            "{what}: octaves from {}",
+            s.min
+        );
         if s.kind == ParamKind::Enum {
             assert!(!s.modulatable, "{what}: Enum params are never modulatable");
             assert_eq!(s.min, 0.0, "{what}: Enum min must be 0");
