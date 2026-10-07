@@ -180,6 +180,50 @@ fn loops_are_click_free() {
     }
 }
 
+/// The largest bend standing alone: a sample's second difference over the
+/// larger of its neighbours' (and `floor`), a corner where a wave bends in
+/// one sample, not over several.
+fn lone_bend(x: &[f32], floor: f32) -> f32 {
+    let d2: Vec<f32> = x
+        .windows(3)
+        .map(|w| (w[2] - 2.0 * w[1] + w[0]).abs())
+        .collect();
+    d2.windows(3)
+        .map(|w| w[1] / w[0].max(w[2]).max(floor))
+        .fold(0.0, f32::max)
+}
+
+/// Tiny loops (SIZE sweeping 0.1–0.4, XFADE 0.1: fades of 10–60 samples)
+/// on a sine at C4's period: each wrap's fade lands without a corner
+/// (#385). A linear fade bends at its ends by the heads' difference over
+/// its length, in one sample (the QA's EPIANO at 8.58 s: 0.005 → −0.010).
+#[test]
+fn tiny_loop_fades_have_no_corner() {
+    let held = held_plain(&sine(48_000, 183.4, 48_000), 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    let own = (TAU / 183.4).powi(2);
+    for m in [Mach::fwd(TapeModel::Loop), Mach::rev(TapeModel::Loop)] {
+        let mut p = as_model(
+            m,
+            TapeEngineParams {
+                size: 0.1,
+                ..TapeEngineParams::default()
+            },
+        );
+        let mut e = fresh();
+        e.note_on(60, &p, &v, SR);
+        let mut out = Vec::new();
+        let mut b = [0.0; BLOCK_SIZE];
+        for n in 0..1_500 {
+            p.size = 0.1 + 0.3 * (n as f32 / 1_500.0);
+            e.render(&mut b, &p, &v, SR);
+            out.extend_from_slice(&b);
+        }
+        let lone = lone_bend(&out[BLOCK_SIZE..], 2.0 * own);
+        assert!(lone <= 3.0, "{m:?}: a bend {lone}× its neighbours'");
+    }
+}
+
 #[test]
 fn xfade_zero_hard_splices() {
     let held = held_plain(&sine(48_000, 100.7, 4_801), 48_000);
@@ -255,10 +299,42 @@ fn note_on_ramps_from_zero() {
     let (out, _) = play(&mut e, &p, &v, 1);
     let n = NOTE_ON_RAMP as usize;
     for (k, &y) in out[..n].iter().enumerate() {
-        assert!(y.abs() <= (k + 1) as f32 / n as f32, "{k}: {y}");
+        let x = (k + 1) as f32 / n as f32;
+        assert!(y.abs() <= x * x * (3.0 - 2.0 * x), "{k}: {y}");
     }
     // The head starts on START's frame, the peak.
     assert!(out[0] == 0.0 && (out[n] - (n as f32 * TAU / 400.0).cos()).abs() < 2e-3);
+}
+
+/// The note-on ramp lands without a corner on every machine that loops
+/// (#385): a smoothstep, as ONESHOT's. A fast attack (a slow sine at its
+/// peak, START a quarter period in) is near full scale when the ramp ends; a linear ramp
+/// bends there by `1/NOTE_ON_RAMP` of it (0.02), a smoothstep by at most
+/// `6/NOTE_ON_RAMP²` (0.003).
+#[test]
+fn note_on_ramp_has_no_corner() {
+    let held = held_plain(&sine(48_000, 4_000.0, 8_000), 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    let n = NOTE_ON_RAMP as f32;
+    for model in [TapeModel::Loop, TapeModel::PingPong, TapeModel::Stretch] {
+        let p = TapeEngineParams {
+            model,
+            start: 0.125,
+            motion: if model == TapeModel::Stretch {
+                0.5
+            } else {
+                0.0
+            },
+            ..TapeEngineParams::default()
+        };
+        let mut e = fresh();
+        e.note_on(60, &p, &v, SR);
+        let (out, _) = play(&mut e, &p, &v, 1);
+        let bend = out
+            .windows(3)
+            .fold(0f32, |m, w| m.max((w[2] - 2.0 * w[1] + w[0]).abs()));
+        assert!(bend <= 7.0 / (n * n), "{model:?}: bend {bend}");
+    }
 }
 
 #[test]

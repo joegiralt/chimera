@@ -450,8 +450,9 @@ const FIXTURE_RENDERS: &[(&str, u64)] = &[
     // then the free ring on release (ADR 0062).
     ("init_modal.snd", 0xda59622102625d57),
     // On the rig's second of saw (`common::rig`); re-recorded for TAPE's
-    // `out_gain` (ADR 0063, TAPE Task 19).
-    ("init_tape.snd", 0xe193a2d9a55096c6),
+    // `out_gain` (ADR 0063, TAPE Task 19), then its smoothstep note-on ramp
+    // (#385).
+    ("init_tape.snd", 0x92875b22bac6b6c2),
 ];
 
 #[test]

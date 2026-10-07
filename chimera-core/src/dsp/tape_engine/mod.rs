@@ -171,17 +171,16 @@ fn lift(out: &mut [f32], lift: f32, g: f32, dg: f32) {
     }
 }
 
-/// A note's first `NOTE_ON_RAMP` samples ramp from `last`, so a START
-/// inside a waveform never steps; a one-shot's (`smooth`) by a smoothstep,
-/// as it starts mid-wave on a slice, so the ramp has no corner where it
-/// lands. Once a note, out of line.
+/// A note's first `NOTE_ON_RAMP` samples ramp from `last` by a smoothstep,
+/// so a START inside a waveform never steps and the ramp has no corner
+/// where it lands: a fast attack is near full scale there (a linear ramp
+/// bent TX BASS 7× its own, #385). Once a note, out of line.
 #[cold]
 #[inline(never)]
-fn note_on_ramp(out: &mut [f32; BLOCK_SIZE], last: f32, smooth: bool) {
+fn note_on_ramp(out: &mut [f32; BLOCK_SIZE], last: f32) {
     for (i, y) in out[..NOTE_ON_RAMP as usize].iter_mut().enumerate() {
         let x = i as f32 / NOTE_ON_RAMP as f32;
-        let w = if smooth { x * x * (3.0 - 2.0 * x) } else { x };
-        *y = last + (*y - last) * w;
+        *y = last + (*y - last) * (x * x * (3.0 - 2.0 * x));
     }
 }
 
@@ -1148,8 +1147,7 @@ impl TapeEngine {
         }
 
         if core::mem::take(&mut self.ramp) {
-            let smooth = matches!(self.model, TapeModel::Oneshot | TapeModel::Tron);
-            note_on_ramp(out, self.last, smooth);
+            note_on_ramp(out, self.last);
         }
         self.age.process(out, self.mac.age);
         self.last = out[BLOCK_SIZE - 1];
@@ -1624,7 +1622,7 @@ impl TapeEngine {
                             let a = v.read(r0);
                             let rem = r0 - rend;
                             g = 1.0 - (rem.whole() as f32 + rem.frac()) * f.inv;
-                            out[i] = a + g * (v.read(r0 - e) - a);
+                            out[i] = a + g * g * (3.0 - 2.0 * g) * (v.read(r0 - e) - a);
                             cur = cur.wrapping_add(step);
                             r0 = r0 - Pos(cur);
                             i += 1;
@@ -1710,7 +1708,9 @@ impl TapeEngine {
                         while i < BLOCK_SIZE {
                             let a = v.read(h0);
                             g = f.gain(h0);
-                            out[i] = a + g * (v.read(h1) - a);
+                            // A smoothstep, as SCRUB's: a tiny loop's linear
+                            // fade bent in one sample at its ends (#385).
+                            out[i] = a + g * g * (3.0 - 2.0 * g) * (v.read(h1) - a);
                             cur = cur.wrapping_add(step);
                             h0 = h0 + Pos(cur);
                             h1 = h1 + Pos(cur);
