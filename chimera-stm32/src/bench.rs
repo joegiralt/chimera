@@ -15,7 +15,7 @@ use chimera_core::dsp::algo::plan::{EvalPlan, OPS};
 use chimera_core::dsp::algo::tx::FEEDBACK_CYCLES;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::engines::{EngineSlot, SlotKind};
-use chimera_core::dsp::filter::{self, Clean, FilterKind, FilterMode, K2040Voice};
+use chimera_core::dsp::filter::{FilterKind, FilterMode, K2040Voice};
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::dsp::modal::{
     BankModes, CHORD_COUNT, ModalEngine, ModalParams, ResonatorMode, SymPool,
@@ -54,71 +54,75 @@ use embedded_graphics_core::pixelcolor::Rgb565;
 use crate::audio::engine;
 use crate::clocks::Clocks;
 
-/// One block of one filter path, for `tools/loop_count.py`'s static count.
-type FilterProbe = fn(&mut Clean, &mut [f32; BLOCK_SIZE], &FilterParams);
-
-/// Every filter probe, kept in the bench ELF though nothing calls them.
-#[used]
-static FILTER_PROBES: &[FilterProbe] = &[
-    filter::probe::clean_probe::<2, false>,
-    filter::probe::clean_probe::<2, true>,
-    filter::probe::clean_probe::<7, false>,
-    filter::probe::clean_probe::<7, true>,
-];
-
-/// CLEAN's other steady modes (LP1, LP2, BP2, BP4, HP4, NOTCH1), counted
-/// on the `bench` build (`tools/loop_count.py`). About 2 KB each: left out
-/// of `bench,orbit`, whose flash is short (the unit reads its rows, not
+/// The filter probes, kept in the `bench` ELF though nothing calls them:
+/// `tools/loop_count.py` counts them there. About 25 KB: left out of
+/// `bench,orbit`, whose flash is short (the unit reads its rows, not
 /// these).
 #[cfg(not(feature = "orbit"))]
-#[used]
-static CLEAN_MODE_PROBES: &[FilterProbe] = &[
-    filter::probe::clean_probe::<0, false>,
-    filter::probe::clean_probe::<1, false>,
-    filter::probe::clean_probe::<3, false>,
-    filter::probe::clean_probe::<4, false>,
-    filter::probe::clean_probe::<5, false>,
-    filter::probe::clean_probe::<6, false>,
-];
+mod probes {
+    use chimera_core::dsp::filter::{self, Clean};
+    use chimera_core::dsp::wavefolder::Wavefolder;
+    use chimera_core::hw::BLOCK_SIZE;
+    use chimera_core::params::{FilterParams, FolderParams};
 
-/// The 2040's probes, REV2 (0) and EXP (1), steady and moving.
-type K2040Probe = fn(&mut filter::K2040, &mut [f32; BLOCK_SIZE], &FilterParams);
+    /// One block of one filter path, for `tools/loop_count.py`'s static count.
+    type FilterProbe = fn(&mut Clean, &mut [f32; BLOCK_SIZE], &FilterParams);
 
-#[used]
-static K2040_PROBES: &[K2040Probe] = &[
-    filter::probe::k2040_probe::<filter::k2040::voice::Rev2, false>,
-    filter::probe::k2040_probe::<filter::k2040::voice::Rev2, true>,
-    filter::probe::k2040_probe::<filter::k2040::voice::Exp, false>,
-    filter::probe::k2040_probe::<filter::k2040::voice::Exp, true>,
-];
+    /// Every filter probe, kept in the bench ELF though nothing calls them.
+    #[used]
+    static FILTER_PROBES: &[FilterProbe] = &[
+        filter::probe::clean_probe::<2, false>,
+        filter::probe::clean_probe::<2, true>,
+        filter::probe::clean_probe::<7, false>,
+        filter::probe::clean_probe::<7, true>,
+    ];
 
-/// DIRTY's probes, one a mode: LP2, BP2, HP2 and NOTCH1 (`DIRTY_MODES`).
-type DirtyProbe = fn(&mut filter::Dirty, &mut [f32; BLOCK_SIZE], &FilterParams);
+    /// CLEAN's other steady modes (LP1, LP2, BP2, BP4, HP4, NOTCH1).
+    #[used]
+    static CLEAN_MODE_PROBES: &[FilterProbe] = &[
+        filter::probe::clean_probe::<0, false>,
+        filter::probe::clean_probe::<1, false>,
+        filter::probe::clean_probe::<3, false>,
+        filter::probe::clean_probe::<4, false>,
+        filter::probe::clean_probe::<5, false>,
+        filter::probe::clean_probe::<6, false>,
+    ];
 
-#[used]
-static DIRTY_PROBES: &[DirtyProbe] = &[
-    filter::probe::dirty_probe::<0>,
-    filter::probe::dirty_probe::<1>,
-    filter::probe::dirty_probe::<2>,
-    filter::probe::dirty_probe::<3>,
-];
+    /// The 2040's probes, REV2 (0) and EXP (1), steady and moving.
+    type K2040Probe = fn(&mut filter::K2040, &mut [f32; BLOCK_SIZE], &FilterParams);
 
-/// The taps' pass over a moving block's `g` and `k`, shared by every type.
-#[used]
-static TAP_SHAPE_PROBE: fn(&mut [f32; BLOCK_SIZE]) = filter::probe::tap_shape_probe;
+    #[used]
+    static K2040_PROBES: &[K2040Probe] = &[
+        filter::probe::k2040_probe::<filter::k2040::voice::Rev2, false>,
+        filter::probe::k2040_probe::<filter::k2040::voice::Rev2, true>,
+        filter::probe::k2040_probe::<filter::k2040::voice::Exp, false>,
+        filter::probe::k2040_probe::<filter::k2040::voice::Exp, true>,
+    ];
 
-/// The tap-VCA's and the folder's tapped loops.
-#[used]
-static TAP_VCA_PROBE: fn(&mut [f32; BLOCK_SIZE]) = filter::probe::tap_vca_probe;
+    /// DIRTY's probes, one a mode: LP2, BP2, HP2 and NOTCH1 (`DIRTY_MODES`).
+    type DirtyProbe = fn(&mut filter::Dirty, &mut [f32; BLOCK_SIZE], &FilterParams);
 
-type FoldProbe = fn(
-    &mut chimera_core::dsp::wavefolder::Wavefolder,
-    &mut [f32; BLOCK_SIZE],
-    &chimera_core::params::FolderParams,
-);
+    #[used]
+    static DIRTY_PROBES: &[DirtyProbe] = &[
+        filter::probe::dirty_probe::<0>,
+        filter::probe::dirty_probe::<1>,
+        filter::probe::dirty_probe::<2>,
+        filter::probe::dirty_probe::<3>,
+    ];
 
-#[used]
-static FOLD_TAP_PROBE: FoldProbe = filter::probe::fold_tap_probe;
+    /// The taps' pass over a moving block's `g` and `k`, shared by every type.
+    #[used]
+    static TAP_SHAPE_PROBE: fn(&mut [f32; BLOCK_SIZE]) = filter::probe::tap_shape_probe;
+
+    /// The tap-VCA's and the folder's tapped loops.
+    #[used]
+    static TAP_VCA_PROBE: fn(&mut [f32; BLOCK_SIZE]) = filter::probe::tap_vca_probe;
+
+    type FoldProbe = fn(&mut Wavefolder, &mut [f32; BLOCK_SIZE], &FolderParams);
+
+    #[used]
+    static FOLD_TAP_PROBE: FoldProbe = filter::probe::fold_tap_probe;
+}
 
 /// The bench's screens as text: about 4 KB today, `# TRUNCATED` past this.
 pub const BENCH_TEXT_LEN: usize = 8192;
