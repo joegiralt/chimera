@@ -264,6 +264,8 @@ pub fn k2040_ref<T: Real>(
         K2040Voice::Exp => Some(T::of(L_2040)),
     };
     let of64 = |v: f64| T::of(v as f32);
+    let sc = voice.stage_scale();
+    let (em, s2) = (T::of(1.5 / sc), T::of(sc * sc));
     let mut s = [T::of(0.0); 4];
     let mut y4s = Vec::with_capacity(x.len());
     for n in 0..x.len() {
@@ -271,7 +273,7 @@ pub fn k2040_ref<T: Real>(
         let big_g = g / (one + g);
         let g2 = big_g * big_g;
         let d = one / (one + k * g2 * g2);
-        let (ga, one_g, kd) = (g * T::of(4.0 / 27.0), one - big_g, k * d);
+        let (ga, one_g, kd) = (g * T::of(4.0 / 27.0) * s2, one - big_g, k * d);
         let x_c = T::of(x[n]) * of64(a[n]);
         let big_s = one_g * (s[3] + big_g * (s[2] + big_g * (s[1] + big_g * s[0])));
         let u_l = x_c * d - kd * big_s;
@@ -280,7 +282,8 @@ pub fn k2040_ref<T: Real>(
             Some(l) => x_c - l * sat_2040_r((x_c - u_l) * T::of(1.0 / L_2040)),
         };
         for st in &mut s {
-            let e = clamp_r(one_g * (v - *st), T::of(-1.5), T::of(1.5));
+            // The OTA on the stage's node: `g·sat(S·e)/S`.
+            let e = clamp_r(one_g * (v - *st), T::of(0.0) - em, em);
             let t = e * (g - ga * e * e);
             let y = clamp_r(*st + t, T::of(0.0) - r, r);
             *st = y + t;

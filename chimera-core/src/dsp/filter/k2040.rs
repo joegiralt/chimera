@@ -35,6 +35,20 @@ pub const R_2040: f32 = 2.0 * ALPHA_REV2;
 /// that: `sat_2040(BETA_EXP·y₄)` reads 0.62 at the swing.
 pub const BETA_EXP: f32 = 0.62 / R_2040;
 pub const INV_BETA_EXP: f32 = R_2040 / 0.62;
+/// EXP's stage bend, as a multiple of REV2's (which keeps 1). Each stage's
+/// OTA input is a node of R_i 10 K (from the last output), R_f 10 K (its own
+/// feedback) and R_a to ground, Kobol 220 Ω (kobol-research.md [SCHEM]; the
+/// SSM 2040 data sheet figs. 4/5/9 draw 200 Ω, which would give 2.79). 1 V
+/// of stage error lands as `(1/R_f)/(1/R_i + 1/R_f + 1/R_a)` = 21.07 mV =
+/// 0.405 × 2V_T (the OTA's knee, data sheet p. 2). In `sat_2040` units
+/// (1.5 × that, and 1 V = `R_2040` = 0.2) the argument is 0.608 per volt
+/// against REV2's 0.2: 3.04×. The stage is `g·sat(S·v)/S`. The Prophet's
+/// stage node is not in the probe notes, so REV2 stays at 1.
+pub const STAGE_SCALE_EXP: f32 = {
+    let (ri, rf, ra) = (10_000.0f32, 10_000.0f32, 220.0f32);
+    let node = 1.0 / (1.0 / ri + 1.0 / rf + 1.0 / ra);
+    1.5 * (node / rf) / 0.052 / R_2040
+};
 /// EXP's feedback limit, its 3080 (the Kobol's CI5, spec B3). It sets
 /// EXP's squelch, its self-oscillation level and pitch (L = ∞ sits at +14
 /// cents) and its full-scale bass loss. REV2 has none: its SSM 2020 is
@@ -44,6 +58,9 @@ pub const L_2040: f32 = 0.25;
 /// resonance (R407/R406): with a linear loop the ±1 V clip rings it +13.6
 /// sharp. A ratio on FREQ, once a block.
 pub const TRIM_REV2: f32 = 0.992348;
+/// EXP's cutoff trim, +11.5 cents: the circuit-scale stage bend (ADR 0105)
+/// rings the self-oscillating loop 11 cents flat, measured. A ratio on FREQ.
+pub const TRIM_EXP: f32 = 1.006_664_8;
 /// The output level: LEVEL ½ at RES 0 is 0 dB ± 0.5 on both voices.
 pub const OUT_2040: f32 = 1.0;
 /// The LED's knee, a fraction of the swing: stage 1 asked for more than
@@ -58,6 +75,7 @@ const _: () = {
     assert!(ALPHA_EXP == 2.0 * ALPHA_REV2 && R_2040 == ALPHA_EXP);
     assert!(BETA_EXP * R_2040 > 0.6199 && BETA_EXP * R_2040 < 0.6201);
     assert!(BETA_EXP * INV_BETA_EXP > 0.9999 && BETA_EXP * INV_BETA_EXP < 1.0001);
+    assert!(STAGE_SCALE_EXP > 3.03 && STAGE_SCALE_EXP < 3.05);
     assert!(L_2040 > 0.0 && OUT_2040 > 0.0);
     assert!(LED_KNEE > 0.0 && LED_KNEE <= 1.0);
 };
@@ -89,6 +107,8 @@ pub trait VoiceSpec: voice::Sealed {
     const POST: bool = Self::VOICE.post();
     /// The cutoff trim, a ratio on FREQ.
     const TRIM: f32 = Self::VOICE.trim();
+    /// The stages' bend, a multiple of REV2's.
+    const STAGE_SCALE: f32 = Self::VOICE.stage_scale();
 }
 
 /// The voices' zero-sized types (`VoiceSpec`).
@@ -175,7 +195,15 @@ impl K2040Voice {
     pub const fn trim(self) -> f32 {
         match self {
             K2040Voice::Rev2 => TRIM_REV2,
-            K2040Voice::Exp => 1.0,
+            K2040Voice::Exp => TRIM_EXP,
+        }
+    }
+
+    /// The stages' OTA bend, a multiple of REV2's.
+    pub const fn stage_scale(self) -> f32 {
+        match self {
+            K2040Voice::Rev2 => 1.0,
+            K2040Voice::Exp => STAGE_SCALE_EXP,
         }
     }
 
@@ -499,10 +527,15 @@ impl K2040 {
         let mut y = [0.0f32; 4];
         let mut x = u;
         let mut d1 = 0.0;
+        // `g·sat(S·v)/S = v·(g − ga·S²·v²)`, `v` clamped at ±1.5/S.
+        let (vm, ga) = (
+            1.5 / V::STAGE_SCALE,
+            c.ga * (V::STAGE_SCALE * V::STAGE_SCALE),
+        );
         for (i, s) in self.s.iter_mut().enumerate() {
-            // The OTA on the true error, `g·sat(v) = v·(g − ga·v²)`.
-            let v = clampf(c.one_g * (x - *s), -1.5, 1.5);
-            let t = v * (c.g - c.ga * v * v);
+            // The OTA on the true error, scaled by the stage's node.
+            let v = clampf(c.one_g * (x - *s), -vm, vm);
+            let t = v * (c.g - ga * v * v);
             let d = *s + t;
             if i == 0 {
                 d1 = d;
