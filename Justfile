@@ -67,6 +67,34 @@ firmware:
 firmware-orbit:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit
 
+# Release binaries: the shipping firmware and its ORBIT variant with every build
+# path remapped (#413), so no home directory, user name or registry path
+# survives in the .bin. `--config` arrays append to .cargo/config.toml's
+# target rustflags (RUSTFLAGS would replace them).
+# Panic locations keep their relative in-crate paths (removing them needs
+# nightly's -Zlocation-detail). Output: target/release-bin/chimera{,-orbit}.bin
+release-bin:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    T=thumbv7em-none-eabihf
+    cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+    flags="['--remap-path-prefix=$HOME=/build/hm','--remap-path-prefix=$cargo_home=/build/cargo','--remap-path-prefix=$PWD=/build/chimera']"
+    mkdir -p target/release-bin
+    for v in "" orbit; do
+        if [ -n "$v" ]; then f="--features $v"; out=chimera-orbit; else f=""; out=chimera; fi
+        cargo build --release -p chimera-stm32 --target $T $f --config "target.$T.rustflags=$flags"
+        rust-objcopy -O binary target/$T/release/chimera-stm32 target/release-bin/$out.bin
+        just check-bin-paths target/release-bin/$out.bin
+    done
+
+# Fail if a binary carries a home directory, the cargo registry or the user name (#413).
+check-bin-paths bin:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if strings -a {{bin}} | grep -E -e '/home/' -e '\.cargo/registry' -e "$(id -un)"; then
+        echo "{{bin}} leaks a build path" >&2; exit 1
+    fi
+
 # Build all (desktop targets only)
 build:
     cargo build -p chimera-core -p chimera-engine -p chimera-hal -p chimera-desktop
@@ -102,6 +130,7 @@ check:
     just clippy
     just loom
     cargo fmt --all -- --check
+    just release-bin
     just stack-check
 
 # The stack is the 63.75 KB of DTCM below the wave tables (ADR 0025): fail if any release function moves
