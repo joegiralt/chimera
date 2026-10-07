@@ -175,8 +175,6 @@ pub fn smooth(x: f32) -> f32 {
 /// so the hold passes the peak by an eighth at most. The block's RMS keeps
 /// a loud wave crossing 0 there from resting at once. Returns the next
 /// sample's held value, its move and the move's fall.
-#[cold]
-#[inline(never)]
 fn hold_from(o: f32, prev: f32, level: f32) -> (f32, f32, f32) {
     let v = o - prev;
     if v == 0.0 {
@@ -193,6 +191,28 @@ fn hold_from(o: f32, prev: f32, level: f32) -> (f32, f32, f32) {
     }
     let k = 1.0 - 1.0 / moves;
     (o + v, v * k, k)
+}
+
+/// A grain's wrap in the loop starts a carry of the block's kind (`hold`):
+/// POLY's holds the output `o` (`hold_from`; no jump to read); MONO's lifts
+/// what the carry in play adds now (`(c, w, m)` at the grains' mix `x`)
+/// plus the jump, the grain's read `r` against the place wrapped (`back`)
+/// at its `share`. Returns the carry, its move and the move's fall. Out of
+/// line: one copy for both grains.
+#[cold]
+#[inline(never)]
+fn carry_at_wrap(
+    v: &SourceView<'_>,
+    hold: f32,
+    (c, w, m, x): (f32, f32, f32, f32),
+    (o, prev, level): (f32, f32, f32),
+    (r, back, share): (f32, Pos, f32),
+) -> (f32, f32, f32) {
+    if hold != 0.0 {
+        hold_from(o, prev, level)
+    } else {
+        (w * (c - m * x) + share * (r - v.read(back)), 0.0, 0.0)
+    }
 }
 
 /// `inc` (in `(0, INC_MAX]`) in 32.32, from 32-bit conversions.
@@ -521,10 +541,9 @@ impl Stretch {
         // spill can't build on the last's): a multiply-add a sample.
         let mut xe = 0f32;
         let top = self.last.whole() + 1;
-        if self.hold != k.hold {
-            self.recarry(v, k.hold);
-        }
-        let m = k.hold;
+        // The carry's kind is its wrap's: a block whose lock came or went
+        // plays the one in play out as it was.
+        let mut m = self.hold;
         while i < BLOCK_SIZE {
             // Each grain's way as a mask: 0 forward, all ones reversed. A
             // reversed grain's head moves down by the same step (its step
@@ -570,14 +589,12 @@ impl Stretch {
                 if (h0.whole() as i32).wrapping_sub(e0) ^ m0 >= 0 {
                     h0 = h0 - w0;
                     if !t0 {
-                        // POLY holds the output: no jump to read.
-                        if m != 0.0 {
-                            let prev = if i >= 2 { out[i - 2] } else { last };
-                            (c, vel, vk) = hold_from(o, prev, libm::fabsf(x).max(peak));
-                        } else {
-                            c = w * c + (1.0 - smooth(g + dg)) * (a - v.read(h0 - Pos(c0)));
-                        }
-                        w = 1.0;
+                        let prev = if i >= 2 { out[i - 2] } else { last };
+                        let share = 1.0 - smooth(g + dg);
+                        let jump = (a, h0 - Pos(c0), share);
+                        let now = (o, prev, libm::fabsf(x).max(peak));
+                        (c, vel, vk) = carry_at_wrap(v, k.hold, (c, w, m, x), now, jump);
+                        (w, m) = (1.0, k.hold);
                     }
                     #[cfg(any(test, feature = "test-support"))]
                     {
@@ -588,13 +605,11 @@ impl Stretch {
                 if (h1.whole() as i32).wrapping_sub(e1) ^ m1 >= 0 {
                     h1 = h1 - w1;
                     if !t1 {
-                        if m != 0.0 {
-                            let prev = if i >= 2 { out[i - 2] } else { last };
-                            (c, vel, vk) = hold_from(o, prev, libm::fabsf(x).max(peak));
-                        } else {
-                            c = w * c + smooth(g + dg) * (b - v.read(h1 - Pos(c1)));
-                        }
-                        w = 1.0;
+                        let prev = if i >= 2 { out[i - 2] } else { last };
+                        let jump = (b, h1 - Pos(c1), smooth(g + dg));
+                        let now = (o, prev, libm::fabsf(x).max(peak));
+                        (c, vel, vk) = carry_at_wrap(v, k.hold, (c, w, m, x), now, jump);
+                        (w, m) = (1.0, k.hold);
                     }
                     #[cfg(any(test, feature = "test-support"))]
                     {
@@ -606,7 +621,7 @@ impl Stretch {
             cur = neg(c0, d0);
             self.heads = [h0, h1];
             self.g = g;
-            (self.carry, self.carry_w) = (c, w);
+            (self.carry, self.carry_w, self.hold) = (c, w, m);
             (self.vel, self.vel_k) = (vel, vk);
             self.clock.pos += (i - s) as u32;
             if self.clock.left() == 0 {
@@ -628,9 +643,9 @@ impl Stretch {
     #[inline(never)]
     fn wrap(&mut self, v: &SourceView<'_>, hold: f32) {
         let g = smooth(self.g + self.dg);
-        let [a, b] = self.heads.map(|h| v.read(h));
-        let mix = a + g * (b - a);
-        let d = self.carry_w * (self.carry - self.hold * mix);
+        // The output now, near enough: the last sample out.
+        let o = self.prev;
+        let d = self.carry_w * (self.carry - self.hold * o);
         let mut jump = 0.0;
         let mut moved = false;
         for x in 0..2 {
@@ -649,21 +664,9 @@ impl Stretch {
             moved = true;
         }
         if moved {
-            self.carry = if hold != 0.0 { mix + d } else { d + jump };
+            self.carry = if hold != 0.0 { o } else { d + jump };
             (self.carry_w, self.hold, self.vel) = (1.0, hold, 0.0);
         }
-    }
-
-    /// The block's carry is of the other kind (MONO's lock came or went):
-    /// the one in play is carried over as it, its share of the output the
-    /// same at the grains' next read.
-    #[cold]
-    #[inline(never)]
-    fn recarry(&mut self, v: &SourceView<'_>, hold: f32) {
-        let [a, b] = self.heads.map(|h| v.read(h));
-        let mix = a + smooth(self.g + self.dg) * (b - a);
-        self.carry += (hold - self.hold) * mix;
-        self.hold = hold;
     }
 
     /// The fade has ended: the new grain plays on as the old, and a grain

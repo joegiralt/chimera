@@ -33,9 +33,9 @@ bound before the chain in spec § 9. A C4 sine test measured 2.4×
 - **MONO keeps the lift,** `y = x + w · carry`. A held value fading over 5 ms
   would duck a held tone at every MONO wrap. A short one bends it: MONO's tests
   measured 3.2× the sine's own bend.
-- **Which kind.** The kind follows the block's lock (`hold` 1 unlocked, 0
-  locked). A block whose lock came or went carries the live carry over as the
-  new kind (`recarry`).
+- **Which kind.** A carry's kind is its wrap's: the block's lock (`hold` 1
+  unlocked, 0 locked). A lift's wrap takes on what the carry in play adds,
+  whatever its kind; a hold's starts from the output.
 - **The loop.** The carry's terms (`1 − hold · w`, `w · carry`) are formed
   before the reads, so the output waits on one multiply-add after them.
 
@@ -55,12 +55,15 @@ bound before the chain in spec § 9. A C4 sine test measured 2.4×
   `stretch-sine-c4-poly`, `stretch-brass-c4-poly` and `stretch-kit-16-poly` now
   pass, and no render newly fails.
 - **On the M7 (static count):**
-  - the common path is 234 instructions a sample, against 235;
-  - a MONO lift costs about 7–12 more a wrap;
-  - a POLY hold costs about 80 in place of the lift's 108.
-- **The bill's worst case** (MONO lifted under the floor) is about level:
-  −1 on the common path and +15 over 16 samples at the wraps, so it stays
-  under `COST_STRETCH` 450. The bench rows confirm it at ship.
+  - the common path is 226 instructions a sample, against 235 (the loop
+    indexes its output);
+  - a wrap's carry is out of line, one copy for both grains (`carry_at_wrap`),
+    so a MONO lift is about 190 a wrap, against 108;
+  - a POLY hold is about 125.
+- **The bill's worst case** (MONO lifted under the floor) is −9 on the common
+  path and about +10.6 at its wraps (two in 16 samples): +1.6 static, about
+  445 against `COST_STRETCH` 450. The bench rows confirm it at ship.
+- **Flash:** about +1 KB, with bench,orbit at 2,108 B free.
 
 ## Sources
 - ADR 0093.
