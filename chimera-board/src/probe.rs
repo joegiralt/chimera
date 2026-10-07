@@ -96,15 +96,20 @@ mod imp {
         }
     }
 
-    pub fn measure(render: impl FnOnce()) {
+    /// `render`, timed into the stats.
+    ///
+    /// # Safety
+    /// Only from the audio interrupt (`DMA1_STR0`), which does not re-enter:
+    /// it is the stats' one writer.
+    pub unsafe fn measure(render: impl FnOnce()) {
         if !READY.load(Ordering::Acquire) {
             return render();
         }
         let start = DWT::cycle_count();
         render();
         let cycles = DWT::cycle_count().wrapping_sub(start);
-        // SAFETY: after `init`, only the audio interrupt calls `measure`, and
-        // it does not re-enter.
+        // SAFETY: the caller is the audio interrupt (this fn's contract),
+        // which does not re-enter; `init` has run (READY).
         let (stats, budget, writer) = unsafe {
             (
                 &mut *addr_of_mut!(STATS),
@@ -154,7 +159,9 @@ mod stub {
         None
     }
 
-    pub fn measure(render: impl FnOnce()) {
+    /// # Safety
+    /// As the probe's: only from the audio interrupt.
+    pub unsafe fn measure(render: impl FnOnce()) {
         render()
     }
 

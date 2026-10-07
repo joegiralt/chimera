@@ -1,4 +1,4 @@
-use chimera_core::part::DacPair;
+use chimera_engine::part::DacPair;
 use stm32h7xx_hal::pac;
 
 // CR1 bit 27, rev B and later only (absent from the rev-Y-based PAC).

@@ -4,9 +4,9 @@ pub mod sai;
 
 use chimera_board::AudioStart;
 use chimera_board::clocks;
-use chimera_core::audio_out::Half;
-use chimera_core::clock_plan::pll3_for;
-use chimera_core::hw::SampleBudget;
+use chimera_engine::audio_out::Half;
+use chimera_engine::clock_plan::pll3_for;
+use chimera_engine::hw::SampleBudget;
 
 pub fn render_half(half: Half) {
     engine::render_half(half);

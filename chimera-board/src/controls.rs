@@ -108,7 +108,12 @@ fn tick_ms(tick: u32) -> u32 {
 }
 
 /// SysTick ISR handler. Reads HC165 and decodes inputs.
-pub fn isr_tick() {
+///
+/// # Safety
+/// Only from the SysTick exception, which does not re-enter: it is the one
+/// driver of PF0/PF1 and the one user of the debounce state, and `snapshot`
+/// masks it.
+pub unsafe fn isr_tick() {
     if !READY.load(Ordering::Acquire) {
         return;
     }
@@ -118,8 +123,9 @@ pub fn isr_tick() {
 
     let d = HC165_DELAY.load(Ordering::Relaxed);
     // Shift the HC165 chain in: LOAD on PF1, CLK on PF0, DATA on PF2.
-    // SAFETY: GPIOF_IDR/BSRR are PF's fixed memory-mapped registers; only
-    // this ISR (single, non-reentrant) drives PF0/PF1 and reads PF2.
+    // SAFETY: GPIOF_IDR/BSRR are PF's fixed memory-mapped registers; the
+    // caller is SysTick (this fn's contract), the only one driving PF0/PF1
+    // and reading PF2.
     let bits = unsafe {
         // Latch: LOAD low then high
         core::ptr::write_volatile(GPIOF_BSRR, 1u32 << 17); // PF1 reset (LOAD low)
@@ -142,8 +148,8 @@ pub fn isr_tick() {
     };
 
     // Buttons: active low, debounced to stable level, edges latched.
-    // SAFETY: BTN_DEBOUNCE/BTN_STATE are only touched by this ISR, which is
-    // not reentrant. LATCHES is shared with `snapshot`, which only touches it
+    // SAFETY: BTN_DEBOUNCE/BTN_STATE are only touched here, from SysTick
+    // (this fn's contract), which is not reentrant. LATCHES is shared with `snapshot`, which only touches it
     // inside `interrupt::free`: on this single core that masks SysTick, so the
     // ISR never runs during it, and the main loop cannot run during the ISR.
     // Access is exclusive either way; no ordering beyond that is needed.

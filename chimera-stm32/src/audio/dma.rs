@@ -2,9 +2,9 @@ use core::mem::MaybeUninit;
 use core::ptr::{addr_of, addr_of_mut};
 use core::sync::atomic::Ordering;
 
-use chimera_core::audio_out::{DacSample, Half, desynced, plan_halves};
-use chimera_core::hw::{BLOCK_SIZE, DAC_PAIRS};
-use chimera_core::part::DacPair;
+use chimera_engine::audio_out::{DacSample, Half, desynced, plan_halves};
+use chimera_engine::hw::{BLOCK_SIZE, DAC_PAIRS};
+use chimera_engine::part::DacPair;
 use cortex_m::peripheral::NVIC;
 use stm32h7xx_hal::pac::{self, interrupt};
 
@@ -187,7 +187,8 @@ fn DMA1_STR0() {
     }
     let plan = plan_halves(half_done, full_done);
     for half in plan.halves.into_iter().flatten() {
-        chimera_board::probe::measure(|| super::render_half(half));
+        // SAFETY: this is the audio interrupt, `measure`'s one caller.
+        unsafe { chimera_board::probe::measure(|| super::render_half(half)) };
         BLOCKS.fetch_add(1, Ordering::Relaxed);
     }
     let after = dma1.lisr.read();

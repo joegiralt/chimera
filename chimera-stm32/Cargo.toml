@@ -44,6 +44,7 @@ sweep-free = ["chimera-board/sweep-free"]
 [dependencies]
 chimera-board = { path = "../chimera-board" }
 chimera-core = { path = "../chimera-core", default-features = false }
+chimera-engine = { path = "../chimera-engine" }
 chimera-hal = { path = "../chimera-hal" }
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
 # set-vtor: Reset points VTOR at the linked __vector_table (FLASH ORIGIN in

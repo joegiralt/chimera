@@ -1,7 +1,7 @@
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{Ordering, compiler_fence};
 
-use chimera_core::note_queue::{InEvent, NoteProducer};
+use chimera_engine::note_queue::{InEvent, NoteProducer};
 use chimera_hal::midi::MidiParser;
 use cortex_m::peripheral::NVIC;
 use stm32h7xx_hal::pac::{self, interrupt};

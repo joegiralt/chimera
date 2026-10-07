@@ -5,16 +5,16 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use chimera_board::shared::NOTE_SOURCES;
 #[cfg(feature = "perf-probe")]
 use chimera_board::shared::{COST_PCT, VOICES};
-use chimera_core::audio_out::{Half, interleave};
-use chimera_core::dsp::fx_bus::FxBus;
-use chimera_core::hw::{BLOCK_SIZE, SAMPLE_RATE, SampleBudget};
-use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
-use chimera_core::note_queue::{InEvent, NoteDrain};
-use chimera_core::part::DacPair;
-use chimera_core::project::{LOAD_LINK, LoadGate};
-use chimera_core::scope::{ScopeFrame, ScopeWriter};
-use chimera_core::source_table::AudioToken;
-use chimera_core::triple::{Reader, Writer};
+use chimera_engine::audio_out::{Half, interleave};
+use chimera_engine::dsp::fx_bus::FxBus;
+use chimera_engine::hw::{BLOCK_SIZE, SAMPLE_RATE, SampleBudget};
+use chimera_engine::instrument::{AudioShared, DacBlocks, Instrument};
+use chimera_engine::note_queue::{InEvent, NoteDrain};
+use chimera_engine::part::DacPair;
+use chimera_engine::project::{LOAD_LINK, LoadGate};
+use chimera_engine::scope::{ScopeFrame, ScopeWriter};
+use chimera_engine::source_table::AudioToken;
+use chimera_engine::triple::{Reader, Writer};
 
 use super::dma;
 

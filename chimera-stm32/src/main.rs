@@ -43,9 +43,10 @@ use stm32h7xx_hal::pac;
 #[cfg(not(feature = "sd-probe"))]
 #[cortex_m_rt::exception]
 fn SysTick() {
-    static mut HEARTBEAT: chimera_core::audio_out::Heartbeat =
-        chimera_core::audio_out::Heartbeat::new();
-    chimera_board::controls::isr_tick();
+    static mut HEARTBEAT: chimera_engine::audio_out::Heartbeat =
+        chimera_engine::audio_out::Heartbeat::new();
+    // SAFETY: this is SysTick, `isr_tick`'s one caller.
+    unsafe { chimera_board::controls::isr_tick() };
     chimera_board::watchdog::kick_if_audio_alive(HEARTBEAT);
 }
 
@@ -76,8 +77,8 @@ fn main() -> ! {
 fn bench(
     display: &mut chimera_board::Display,
     clk: chimera_board::clocks::Clocks,
-    project: &mut chimera_core::project::Project,
-    sources: &mut chimera_core::source_table::AudioToken,
+    project: &mut chimera_engine::project::Project,
+    sources: &mut chimera_engine::source_table::AudioToken,
 ) -> &'static str {
     let report = bench::take_report().expect("bench report taken once");
     bench::run(display, clk, (project, sources), report);
