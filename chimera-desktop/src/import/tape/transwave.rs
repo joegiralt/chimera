@@ -22,11 +22,11 @@ pub const MAX_FRAMES: usize = 32;
 const EDGE: usize = 128;
 
 /// Whole cycles of `cycle` samples (fractional) from across `x`, at most
-/// `MAX_FRAMES`: consecutive when `x` holds fewer, else spread evenly over
+/// `max` (itself at most `MAX_FRAMES`): consecutive when `x` holds fewer, else spread evenly over
 /// it. `x` is stretched by `rubato`'s sinc so a cycle is `⌈cycle⌉` samples;
 /// each starts at a rising zero crossing. Too short an `x`, or no cycle
 /// length, gives none.
-pub fn cut_cycles(x: &[f32], cycle: f32) -> Vec<Vec<f32>> {
+pub fn cut_cycles(x: &[f32], cycle: f32, max: usize) -> Vec<Vec<f32>> {
     if !(cycle.is_finite() && cycle >= 2.0) {
         return Vec::new();
     }
@@ -38,7 +38,7 @@ pub fn cut_cycles(x: &[f32], cycle: f32) -> Vec<Vec<f32>> {
     let Some(span) = y.len().checked_sub(2 * EDGE + 2 * len) else {
         return Vec::new();
     };
-    let count = (span / len + 1).min(MAX_FRAMES);
+    let count = (span / len + 1).min(max.clamp(1, MAX_FRAMES));
     let gap = if count > 1 { span / (count - 1) } else { 0 };
     (0..count)
         .map(|k| {

@@ -112,7 +112,7 @@ fn cut_cycles_takes_whole_cycles() {
     let x: Vec<f32> = (0..48_000)
         .map(|i| (std::f64::consts::TAU * (i as f64 + 17.0) / period).sin() as f32)
         .collect();
-    let cycles = cut_cycles(&x, period as f32);
+    let cycles = cut_cycles(&x, period as f32, MAX_FRAMES);
     assert_eq!(MAX_FRAMES, 32);
     assert_eq!(cycles.len(), 32);
     for c in &cycles {
@@ -129,9 +129,9 @@ fn cut_cycles_takes_whole_cycles() {
         );
     }
     // Fewer cycles in the input, fewer frames.
-    assert_eq!(cut_cycles(&x[..1_000], period as f32).len(), 5);
-    assert!(cut_cycles(&x[..400], period as f32).is_empty());
-    assert!(cut_cycles(&x, 0.0).is_empty());
+    assert_eq!(cut_cycles(&x[..1_000], period as f32, MAX_FRAMES).len(), 5);
+    assert!(cut_cycles(&x[..400], period as f32, MAX_FRAMES).is_empty());
+    assert!(cut_cycles(&x, 0.0, MAX_FRAMES).is_empty());
 }
 
 /// A frame whose fundamental is 50 dB under its 2nd harmonic can't say its

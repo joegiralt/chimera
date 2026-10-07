@@ -327,6 +327,7 @@ fn transwave_import_layout() {
             form: Form::Transwave {
                 cycle: Cycle::new(512.0).unwrap(),
                 top,
+                frames: 32,
             },
             name: Some(SoundName::new("WAVES").unwrap()),
             channel: Channel::Mix,
@@ -434,6 +435,7 @@ fn what_it_refuses() {
         form: Form::Transwave {
             cycle: Cycle::new(4_000.0).unwrap(),
             top: Top::T512,
+            frames: 32,
         },
         ..plain(&wav_file(&saw(109.0, 1_000), 48_000, None), Rate::K24, None)
     };
@@ -478,9 +480,14 @@ fn args_parse() {
         o.form,
         Form::Transwave {
             cycle: Cycle::new(109.5).unwrap(),
-            top: Top::T1024
+            top: Top::T1024,
+            frames: 32,
         }
     );
+    let o = TapeOpts::from_args(&args("a.wav --transwave 109.5 --frames 16")).unwrap();
+    assert!(matches!(o.form, Form::Transwave { frames: 16, .. }));
+    assert!(TapeOpts::from_args(&args("a.wav --transwave 109.5 --frames 33")).is_err());
+    assert!(TapeOpts::from_args(&args("a.wav --frames 16")).is_err());
     for bad in [
         "",
         "a.wav --rate 44k",

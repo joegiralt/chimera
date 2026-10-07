@@ -11,13 +11,12 @@
 //! name is looked for in `$CHIMERA_TAPES_SRC` (`~/chimera-tapes-src`).
 
 use chimera_core::block::DiskCode;
-use chimera_core::dsp::clampf;
 use chimera_core::dsp::tape_engine::{StretchType, TapeModel};
 use chimera_core::factory::FACTORY_LEN;
 use chimera_desktop::import::tape::convert::{Channel, Mono, Pitch, read_wav};
 use chimera_desktop::listen::{
     Src, Way, chimera_morph_sweep, chimera_source, credits, dry, file_name, held_from,
-    held_transwave, model_slug, page, qa, render, root_note, script,
+    held_transwave, model_slug, page, qa, render, root_note, script, write_wav,
 };
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -30,8 +29,6 @@ const NOTE: u8 = 48;
 const HOLD_S: f32 = 2.0;
 /// A transwave's frames, cut from each source.
 const WAVE_FRAMES: usize = 16;
-/// The WAVs' ends fade over 10 ms, so a player stopping there never clicks.
-const FADE: usize = 480;
 
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
 
@@ -244,22 +241,4 @@ fn wav(arg: &str, credits: &[(String, Src)]) -> Result<(Src, Mono), String> {
     let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mono = read_wav(&bytes, Channel::Mix).map_err(|e| format!("{name}: {e:?}"))?;
     Ok((src, mono))
-}
-
-fn write_wav(path: &Path, x: &[f32]) -> Result<(), String> {
-    let spec = hound::WavSpec {
-        channels: 1,
-        sample_rate: chimera_hal::SAMPLE_RATE,
-        bits_per_sample: 16,
-        sample_format: hound::SampleFormat::Int,
-    };
-    let err = |e: hound::Error| format!("{}: {e}", path.display());
-    let mut w = hound::WavWriter::create(path, spec).map_err(err)?;
-    let n = x.len();
-    for (i, &s) in x.iter().enumerate() {
-        let fade = ((n - i) as f32 / FADE as f32).min(1.0);
-        let v = clampf(s * fade, -1.0, 1.0) * 32_767.0;
-        w.write_sample(v.round() as i16).map_err(err)?;
-    }
-    w.finalize().map_err(err)
 }

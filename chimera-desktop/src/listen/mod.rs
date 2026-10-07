@@ -7,7 +7,7 @@ use std::fmt::Write as _;
 use std::mem::MaybeUninit;
 
 use crate::import::tape::convert::{Mono, Pitch, clean, quantise_tpdf, resample, yin};
-use crate::import::tape::transwave::{DEFAULT_TOP, cut_cycles, round12, transwave};
+use crate::import::tape::transwave::{DEFAULT_TOP, MAX_FRAMES, cut_cycles, round12, transwave};
 use chimera_core::block::{Block, DiskCode, ParamId};
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::tape_engine::read::{
@@ -64,30 +64,48 @@ fn chimera_render(
             Some(Sound::init(*e))
         })
         .expect("a factory or INIT slot");
+    render_sound(&sound, &[note], secs, TAIL_S, each)
+}
+
+/// `sound`'s `notes` held for `secs`, then `tail` of their release,
+/// rendered offline through `Instrument` at 48 kHz: DAC pair 1,
+/// `(L + R)/2`; `each(t, params)` before every block, `t` the hold's share
+/// gone.
+pub fn render_sound(
+    sound: &Sound,
+    notes: &[u8],
+    secs: f32,
+    tail: f32,
+    each: &dyn Fn(f32, &mut chimera_core::params::ParamSnapshot),
+) -> Mono {
     let mut shared = Box::<AudioShared>::default();
-    shared.parts[0].params = sound.params;
-    shared.parts[0].mod_state = sound.mod_state;
+    shared.parts[0].params = sound.params.clone();
+    shared.parts[0].mod_state = sound.mod_state.clone();
     let mut inst = Box::new(Instrument::new(
         SAMPLE_RATE,
         SampleBudget::for_cpu(CPU_HZ_REV_V),
     ));
     let (mut fx, mut dac) = (Box::new(FxBus::new()), Box::new(DacBlocks::new()));
     let mut scope = ScopeWriter::new(Box::leak(Box::new(scope_buffer())).split().0);
-    let ev = |kind| NoteEvent {
+    let ev = |note, kind| NoteEvent {
         channel: MidiChannel::clamped(0),
         note: MidiNote::new(note).expect("a MIDI note"),
         kind,
     };
     let blocks = |s: f32| (s * SAMPLE_RATE as f32) as usize / BLOCK_SIZE;
-    inst.handle_with(
-        ev(NoteKind::On(Velocity::DEFAULT)),
-        &shared,
-        &GateView::empty(),
-    );
+    for &n in notes {
+        inst.handle_with(
+            ev(n, NoteKind::On(Velocity::DEFAULT)),
+            &shared,
+            &GateView::empty(),
+        );
+    }
     let mut samples = Vec::new();
-    for b in 0..blocks(secs + TAIL_S) {
+    for b in 0..blocks(secs + tail) {
         if b == blocks(secs) {
-            inst.handle_with(ev(NoteKind::Off), &shared, &GateView::empty());
+            for &n in notes {
+                inst.handle_with(ev(n, NoteKind::Off), &shared, &GateView::empty());
+            }
         }
         each(b as f32 / blocks(secs) as f32, &mut shared.parts[0].params);
         inst.render_with(&mut fx, &mut dac, &shared, &mut scope, &GateView::empty());
@@ -146,7 +164,7 @@ pub fn held_transwave(m: &Mono, frames: usize) -> Result<(Vec<u8>, f32), String>
     let Pitch::Pitched { period, .. } = yin(&c.samples, c.rate) else {
         return Err("unpitched: no cycle to cut".into());
     };
-    let cycles = cut_cycles(&c.samples, period);
+    let cycles = cut_cycles(&c.samples, period, MAX_FRAMES);
     if cycles.is_empty() {
         return Err("too short for a cycle".into());
     }
@@ -691,22 +709,29 @@ pub struct Src {
     pub url: Option<String>,
 }
 
-/// `listen.toml`: `[[source]]` tables of `key = "value"` lines, `#`
-/// comments and blank lines; anything else is an error, so a malformed
-/// file fails loudly. Each table needs `file`; `slug` defaults to the
-/// file's stem.
-pub fn credits(toml: &str) -> Result<Vec<(String, Src)>, String> {
-    let mut tables: Vec<Vec<(String, String)>> = Vec::new();
+/// A table's `key = "value"` lines, in order.
+pub type Table = Vec<(String, String)>;
+
+/// `file`'s `[[kind]]` tables of `key = "value"` lines, `#` comments and
+/// blank lines, each with its kind; anything else is an error, so a
+/// malformed file fails loudly.
+pub fn tables(toml: &str, file: &str) -> Result<Vec<(String, Table)>, String> {
+    let mut tables: Vec<(String, Table)> = Vec::new();
     for (n, line) in toml.lines().enumerate() {
         let l = line.trim();
         if l.is_empty() || l.starts_with('#') {
             continue;
         }
-        if l == "[[source]]" {
-            tables.push(Vec::new());
+        let bad = || format!("{file}:{}: not key = \"value\": {l}", n + 1);
+        let key =
+            |k: &str| !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if let Some(kind) = l.strip_prefix("[[").and_then(|l| l.strip_suffix("]]")) {
+            if !key(kind) {
+                return Err(bad());
+            }
+            tables.push((kind.into(), Vec::new()));
             continue;
         }
-        let bad = || format!("listen.toml:{}: not key = \"value\": {l}", n + 1);
         let (k, v) = l.split_once('=').ok_or_else(bad)?;
         let v = v.trim();
         let v = v
@@ -715,17 +740,28 @@ pub fn credits(toml: &str) -> Result<Vec<(String, Src)>, String> {
             .filter(|v| !v.contains('"'))
             .ok_or_else(bad)?;
         let k = k.trim();
-        if k.is_empty() || !k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        if !key(k) {
             return Err(bad());
         }
         tables
             .last_mut()
             .ok_or_else(bad)?
+            .1
             .push((k.into(), v.into()));
+    }
+    Ok(tables)
+}
+
+/// `listen.toml`: `[[source]]` tables (`tables`). Each needs `file`;
+/// `slug` defaults to the file's stem.
+pub fn credits(toml: &str) -> Result<Vec<(String, Src)>, String> {
+    let tables = tables(toml, "listen.toml")?;
+    if let Some((k, _)) = tables.iter().find(|t| t.0 != "source") {
+        return Err(format!("listen.toml: [[{k}]], not [[source]]"));
     }
     tables
         .into_iter()
-        .map(|t| {
+        .map(|(_, t)| {
             let get = |k: &str| t.iter().find(|e| e.0 == k).map(|e| e.1.clone());
             let file = get("file").ok_or("listen.toml: a [[source]] without file")?;
             let stem = file.trim_end_matches(".wav").to_lowercase();
@@ -820,6 +856,65 @@ pub fn page(rows: &[(TapeModel, &Src)]) -> String {
         out.push_str("</section>\n");
     }
     PAGE.replace("<!--SECTIONS-->", &out)
+}
+
+/// The WAVs' ends fade over 10 ms, so a player stopping there never clicks.
+const FADE: usize = 480;
+
+/// `x` as a 48 kHz, 16-bit mono WAV, its end faded over `FADE`.
+pub fn write_wav(path: &std::path::Path, x: &[f32]) -> Result<(), String> {
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: SAMPLE_RATE,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let err = |e: hound::Error| format!("{}: {e}", path.display());
+    let mut w = hound::WavWriter::create(path, spec).map_err(err)?;
+    let n = x.len();
+    for (i, &s) in x.iter().enumerate() {
+        let fade = ((n - i) as f32 / FADE as f32).min(1.0);
+        let v = chimera_core::dsp::clampf(s * fade, -1.0, 1.0) * 32_767.0;
+        w.write_sample(v.round() as i16).map_err(err)?;
+    }
+    w.finalize().map_err(err)
+}
+
+/// Ungated BS.1770 loudness of an interleaved stereo run at 48 kHz, as
+/// `chimera-core`'s level tests take it (ADR 0063): the K-weighting's
+/// shelf and high-pass, then −0.691 + 10·log10 of the sides' mean squares
+/// summed.
+pub fn lufs(x: &[f32]) -> f32 {
+    let biquad = |b: [f64; 3], a: [f64; 2], s: &[f64]| -> Vec<f64> {
+        let (mut x1, mut x2, mut y1, mut y2) = (0.0, 0.0, 0.0, 0.0);
+        s.iter()
+            .map(|&x0| {
+                let y = b[0] * x0 + b[1] * x1 + b[2] * x2 - a[0] * y1 - a[1] * y2;
+                (x2, x1, y2, y1) = (x1, x0, y1, y);
+                y
+            })
+            .collect()
+    };
+    let k = |s: Vec<f64>| {
+        let s = biquad(
+            [
+                1.535_124_859_586_97,
+                -2.691_696_189_406_38,
+                1.198_392_810_852_85,
+            ],
+            [-1.690_659_293_182_41, 0.732_480_774_215_85],
+            &s,
+        );
+        biquad(
+            [1.0, -2.0, 1.0],
+            [-1.990_047_454_833_98, 0.990_072_250_366_21],
+            &s,
+        )
+    };
+    let ms = |s: Vec<f64>| s.iter().map(|v| v * v).sum::<f64>() / s.len().max(1) as f64;
+    let l = k(x.iter().step_by(2).map(|&v| v as f64).collect());
+    let r = k(x.iter().skip(1).step_by(2).map(|&v| v as f64).collect());
+    (-0.691 + 10.0 * (ms(l) + ms(r)).max(1e-20).log10()) as f32
 }
 
 #[cfg(test)]

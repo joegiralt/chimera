@@ -9,7 +9,7 @@ use chimera_desktop::store::{DirStore, sim_card};
 use std::process::ExitCode;
 
 const USAGE: &str = "usage: chimera-import tape <file.wav> [--rate 24k] [--root C3] \
-                     [--transwave <cycle> [--top 1024]] [--name CHOIR] [--channel mix|L|R]";
+                     [--transwave <cycle> [--top 1024] [--frames 32]] [--name CHOIR] [--channel mix|L|R]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();

@@ -30,7 +30,7 @@ use chimera_hal::store::{Dir, ReadSink, Store, StoreError};
 use convert::{
     Channel, Mono, Pitch, Smpl, WavError, clean, quantise_tpdf, read_wav, resample, yin,
 };
-use transwave::{cut_cycles, round12, transwave};
+use transwave::{MAX_FRAMES, cut_cycles, round12, transwave};
 
 /// The report's last line: where the source is, and how it reaches the
 /// unit. TAPE Task 18's `put-tape` changes it.
@@ -204,8 +204,16 @@ impl Top {
 /// cycle at the note's frequency, so it takes no rate and no root.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Form {
-    Plain { rate: Rate, root: Option<Root> },
-    Transwave { cycle: Cycle, top: Top },
+    Plain {
+        rate: Rate,
+        root: Option<Root>,
+    },
+    /// At most `frames` cycles (1–32) cut from across the take.
+    Transwave {
+        cycle: Cycle,
+        top: Top,
+        frames: u8,
+    },
 }
 
 /// `just tape`'s arguments.
@@ -238,10 +246,18 @@ impl TapeOpts {
             }
         }
         let get = |f: &str| flags.iter().find(|&&(g, _)| g == f).map(|&(_, v)| v);
-        if let Some(&(f, _)) = flags
-            .iter()
-            .find(|(f, _)| !["rate", "root", "transwave", "top", "name", "channel"].contains(f))
-        {
+        if let Some(&(f, _)) = flags.iter().find(|(f, _)| {
+            ![
+                "rate",
+                "root",
+                "transwave",
+                "top",
+                "frames",
+                "name",
+                "channel",
+            ]
+            .contains(f)
+        }) {
             return Err(format!("--{f}: no such option"));
         }
         let form = match get("transwave") {
@@ -259,9 +275,16 @@ impl TapeOpts {
                     Some("1024") => Top::T1024,
                     Some(t) => return Err(format!("--top {t}: 512 or 1024")),
                 };
-                Form::Transwave { cycle, top }
+                let frames = match get("frames").map(str::parse::<u8>) {
+                    None => MAX_FRAMES as u8,
+                    Some(Ok(n)) if (1..=MAX_FRAMES as u8).contains(&n) => n,
+                    Some(_) => return Err("--frames: 1 to 32".into()),
+                };
+                Form::Transwave { cycle, top, frames }
             }
-            None if get("top").is_some() => return Err("--top is a --transwave's".into()),
+            None if get("top").is_some() || get("frames").is_some() => {
+                return Err("--top and --frames are a --transwave's".into());
+            }
             None => Form::Plain {
                 rate: get("rate").map_or(Ok(Rate::K24), str::parse)?,
                 root: get("root").map(str::parse).transpose()?,
@@ -540,8 +563,8 @@ pub fn build(mut m: Mono, form: Form, name: SoundName) -> Result<Built, ImportEr
     }
     match form {
         Form::Plain { rate, root } => plain(&m, kept, rate, root, name),
-        Form::Transwave { cycle, top } => {
-            let cycles = cut_cycles(&m.samples, cycle.samples());
+        Form::Transwave { cycle, top, frames } => {
+            let cycles = cut_cycles(&m.samples, cycle.samples(), frames.into());
             if cycles.is_empty() {
                 return Err(ImportError::NoCycles);
             }
