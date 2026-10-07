@@ -235,13 +235,14 @@ fn smear_reverb(s: &mut AudioShared, _block: u32) {
 }
 
 /// GATE or REVERSE at its worst (reverb TYPEs spec § Bench rows): LENGTH
-/// between its ends every block, so four taps always crossfade; DENSITY,
+/// and PRE-DLY (ONSET) between their ends every block, so every read
+/// always crossfades (a PRE-DLY change is one window of all); DENSITY,
 /// TAIL or REGEN, and SMEAR at 1. Both TYPEs run both paths.
 fn worst_burst(s: &mut AudioShared, block: u32, kind: ReverbType) {
     let r = &mut s.fx.reverb;
     let size = [0.0, 1.0][block as usize % 2];
-    (r.kind, r.size, r.time, r.diffuse, r.smear, r.rate, r.mix) =
-        (kind, size, 1.0, 1.0, 1.0, 1.0, 0.5);
+    (r.kind, r.size, r.predelay, r.time, r.diffuse, r.smear, r.rate, r.mix) =
+        (kind, size, size, 1.0, 1.0, 1.0, 1.0, 0.5);
 }
 
 /// ROOM, HALL or BLOOM at its worst (reverb TYPEs spec § Bench rows): SIZE
