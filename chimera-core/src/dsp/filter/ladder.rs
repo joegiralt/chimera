@@ -120,6 +120,11 @@ pub(crate) fn ladder_index(mode: FilterMode) -> usize {
     }
 }
 
+/// `mode`'s output gain at `k` (the viz draws it).
+pub fn mode_gain(mode: FilterMode, k: f32) -> f32 {
+    tap_gain(ladder_index(mode), k)
+}
+
 /// Mode `M`'s gain at `k`: its RES-0 gain, lerped to its ring's at the
 /// onset.
 #[inline(always)]

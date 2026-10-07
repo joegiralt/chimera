@@ -110,9 +110,14 @@ pub enum Response {
     /// NOTCH2: notches at 0.414 × and 2.414 × FREQ, Q raising the peak
     /// between them.
     DoubleNotch,
-    /// The 2040's LP4 and LADDER's low-passes: the pass band lowered by
+    /// The 2040's LP4 and LADDER's LP4: the pass band lowered by
     /// `1/(1 + k)` as RES rises.
     K2040,
+    /// LADDER's LP2: LP4's bass loss and its mode gain, ½ at the onset.
+    LadderLp2,
+    /// LADDER's BP2 and BP4: 0 dB peaks at RES 0, eased down to LP4's ring
+    /// as their mode gains are (ADR 0104).
+    LadderBand,
 }
 
 impl Response {
@@ -131,9 +136,10 @@ impl Response {
             (K::Dirty, M::Bp12 | M::Bp24) => Response::Band,
             (K::Dirty, M::Hp12 | M::Hp24) => Response::High,
             (K::Dirty, _) => Response::Low,
-            // LADDER's low-passes keep the loop's bass loss (ADR 0104).
-            (K::Ladder, M::Bp12 | M::Bp24) => Response::Band,
+            // LADDER keeps the loop's bass loss and its mode gains (ADR 0104).
+            (K::Ladder, M::Bp12 | M::Bp24) => Response::LadderBand,
             (K::Ladder, M::Hp24 | M::Hp12) => Response::High,
+            (K::Ladder, M::Lp12) => Response::LadderLp2,
             (K::Ladder, _) => Response::K2040,
         }
     }
@@ -181,6 +187,16 @@ pub fn response_y(t: f32, cutoff: f32, reso: f32, r: Response) -> i32 {
         Response::K2040 => {
             let k = crate::dsp::filter::k2040::k2040_k(reso);
             low as f32 + 20.0 * libm::log10f(1.0 + k) * PX_PER_DB
+        }
+        Response::LadderLp2 => {
+            let k = crate::dsp::filter::k2040::k2040_k(reso);
+            let g = crate::dsp::filter::ladder::mode_gain(crate::dsp::filter::FilterMode::Lp12, k);
+            low as f32 + 20.0 * libm::log10f((1.0 + k) / g) * PX_PER_DB
+        }
+        Response::LadderBand => {
+            let k = crate::dsp::filter::k2040::k2040_k(reso);
+            let ease = crate::dsp::clampf(k * 0.25, 0.0, 1.0);
+            low.max(high) as f32 + ease * 20.0 * libm::log10f(1.0 + k) * PX_PER_DB
         }
         Response::DoubleNotch => {
             let n = dip(t, 0.414 * cutoff).max(dip(t, 2.414 * cutoff));
