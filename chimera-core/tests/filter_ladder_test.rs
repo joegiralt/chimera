@@ -7,9 +7,7 @@ mod common;
 use chimera_core::block::DiskCode;
 use chimera_core::dsp::filter::coef::g_of;
 use chimera_core::dsp::filter::k2040::k2040_k;
-use chimera_core::dsp::filter::ladder::{
-    ALPHA_LADDER, OUT_LADDER, TRIM_LADDER, Y_MAX, Y1_MAX, ladder_bound, pade_tanh,
-};
+use chimera_core::dsp::filter::ladder::{TRIM_LADDER, Y1_MAX, ladder_bound, pade_tanh};
 use chimera_core::dsp::filter::{
     Filter, FilterKind, FilterMode, FilterMods, Ladder, routed_cutoff,
 };
@@ -378,9 +376,8 @@ fn ladder_stays_bounded_under_audio_rate_modulation() {
         let mut p = params(m, 1000.0, 0.5, 0.5);
         for b in 0..1500 {
             (p.cutoff, p.resonance, p.level) = (20.0 * 1000f32.powf(next()), next(), next());
-            let rows: [[f32; BLOCK_SIZE]; 2] = core::array::from_fn(|r| {
-                core::array::from_fn(|_| 2.0 * next() - 1.0 + r as f32 * 0.0)
-            });
+            let rows: [[f32; BLOCK_SIZE]; 2] =
+                core::array::from_fn(|_| core::array::from_fn(|_| 2.0 * next() - 1.0));
             let amt = [2.0 * next() - 1.0, 2.0 * next() - 1.0];
             let lane = TapLane {
                 rows: &rows,
@@ -393,7 +390,7 @@ fn ladder_stays_bounded_under_audio_rate_modulation() {
                 level_routed: false,
             };
             let mut buf: [f32; BLOCK_SIZE] = core::array::from_fn(|i| {
-                if (b * BLOCK_SIZE + i) % 4001 == 0 {
+                if (b * BLOCK_SIZE + i).is_multiple_of(4001) {
                     if next() < 0.5 { 10.0 } else { -10.0 }
                 } else {
                     2.0 * next() - 1.0
@@ -411,7 +408,6 @@ fn ladder_stays_bounded_under_audio_rate_modulation() {
             assert!(s.iter().all(|v| v.abs() <= top), "{m:?} block {b}: {s:?}");
         }
     }
-    let _ = Y_MAX;
 }
 
 /// A NaN block leaves no trace: the next block starts from rest.
@@ -604,5 +600,4 @@ fn pade_tanh_is_close_and_bounded() {
     }
     assert_eq!(pade_tanh(Y1_MAX), 1.0);
     assert_eq!(pade_tanh(7.0), 1.0);
-    assert!(ALPHA_LADDER > 0.0 && OUT_LADDER > 0.0);
 }
