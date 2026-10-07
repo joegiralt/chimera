@@ -1126,3 +1126,53 @@ fn scrub_motion_drop_with_a_jump_stays_bounded() {
         assert!(m <= most + 1 && m >= -(ll + 1), "block {k}: moved {m}");
     }
 }
+
+/// A fresh note at MOTION about 0, MOTION then running backward (#383):
+/// the head turns at its loop's start, so the turn's block has an event at
+/// once, in the new frame (it once wrapped as LOOP's flip, dropping the
+/// finger, and read past the source's end). At SCRUB's defaults (LENGTH 1,
+/// XFADE 0.1, DRAG 0.3, FINGER 0) and at a placed loop, on a C4 sine: no
+/// step past the sine's own at the fastest speed it reaches.
+#[test]
+fn scrub_fresh_note_turns_without_a_step() {
+    let period = 48_000.0 / 261.63;
+    let held = held_plain(&sine(48_000, period, 48_000), 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    for (size, position, at) in [
+        (1.0, 0.0, 1e-4f32),
+        (0.3, 0.4, 1e-4),
+        (1.0, 0.0, 0.0),
+        (1.0, 0.0, 0.02),
+        (0.3, 0.4, 0.02),
+    ] {
+        let mut p = TapeEngineParams {
+            model: TapeModel::Scrub,
+            size,
+            xfade: 0.1,
+            drag: 0.3,
+            position,
+            motion: at,
+            ..TapeEngineParams::default()
+        };
+        let mut e = fresh();
+        e.hold();
+        e.note_on(60, &p, &v, SR);
+        let mut out = Vec::new();
+        let mut b = [0.0; BLOCK_SIZE];
+        // MOTION falls 0.4 a second, as the QA's ramp (1.2 over 3 s), to −0.6.
+        for n in 0..1_200 {
+            p.motion = (at - n as f32 * 0.4 * B as f32 / SR as f32).max(-0.6);
+            e.render(&mut b, &p, &v, SR);
+            out.extend_from_slice(&b);
+        }
+        assert!(out.iter().all(|y| y.is_finite()));
+        // At 1.2× the sine's own speed its step is 1.2×; 2× leaves room
+        // for the fades' sum.
+        let steady = 1.2 * max_step(&sine(48_000, period, 4_800));
+        let worst = max_step(&out);
+        assert!(
+            worst <= 2.0 * steady,
+            "SIZE {size} FINGER {position} MOTION {at}: {worst} against {steady}"
+        );
+    }
+}

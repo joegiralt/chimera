@@ -259,3 +259,49 @@ fn sound_files_load_as_built() {
     }
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+/// SCRUB at its machine defaults on note 60, MOTION 0.6 → −0.6 over 3 s
+/// with a fresh take at 1.5 s, where MOTION is about 0 (#383): the take
+/// starts forward and turns, and adds no click the source played straight
+/// hasn't got (the QA's rule).
+#[test]
+fn scrub_take_that_turns_is_click_free() {
+    use chimera_core::block::Block as _;
+    use chimera_core::dsp::tape_engine::machine::defaults;
+    use chimera_core::dsp::tape_engine::{StretchType, TapeEngineParams as P};
+    use chimera_desktop::factory_tapes::pitch;
+    use chimera_desktop::listen::{CLICK_RATIO, Script, Way, qa, render, root_note, script};
+    static RAMP: [(f32, chimera_core::block::ParamId, f32); 2] =
+        [(0.0, P::MOTION, 0.6), (3.0, P::MOTION, -0.6)];
+    let (r, built) = set();
+    for name in ["SINE C4", "RAIN", "PAD CHORD"] {
+        let b = r
+            .sources
+            .iter()
+            .zip(built)
+            .find(|(s, _)| s.name.as_str() == name)
+            .and_then(|(_, b)| b.as_ref())
+            .unwrap();
+        let (h, p) = (held(b), pitch(&b.head));
+        let straight = render(
+            Way::Plain.base(TapeModel::Oneshot, StretchType::Mono),
+            &h,
+            p,
+            root_note(p),
+            &script(TapeModel::Oneshot),
+        );
+        let own = qa(&straight[..straight.len().min(48_000 * 5 / 2)]).click_ratio;
+        let mut base = Way::Plain.base(TapeModel::Scrub, StretchType::Mono);
+        for (id, v) in defaults(TapeModel::Scrub) {
+            base.write(id, v);
+        }
+        let y = render(base, &h, p, 60, &Script(&RAMP, &[1.5], &[]));
+        let q = qa(&y);
+        assert!(
+            q.click_ratio <= CLICK_RATIO.max(own * 1.05),
+            "{name}: click {:.1}x at {:.3} s (straight {own:.2}x)",
+            q.click_ratio,
+            q.click_at as f32 / 48_000.0
+        );
+    }
+}

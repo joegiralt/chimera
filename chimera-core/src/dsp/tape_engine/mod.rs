@@ -1361,7 +1361,13 @@ impl TapeEngine {
         }
         // Every event this block latches these: worked out once.
         self.next = self.next_bounds(&k);
-        if self.runup && rev == self.mirror() {
+        if scrub {
+            // A turn mirrored the frame: the next pass is in the new one.
+            // A flip is LOOP's; latched before the turn, the turn's block
+            // wrapped as one and dropped the finger (#383).
+            self.next_rev = self.mirror();
+        }
+        if self.runup && self.next_rev == self.mirror() {
             self.follow_next();
         }
         if scrub {
