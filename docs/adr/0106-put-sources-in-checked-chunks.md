@@ -1,6 +1,6 @@
 # 0106. Put TAPE sources onto the card in checked chunks, written once and sealed
 
-- **Status:** Proposed
+- **Status:** Accepted (owner, 2026-10-07)
 - **Deciders:** project owner (2026-10-05: chunked from the start, a re-run
   is the retry; 2026-10-07: sources may go onto their card before #360's
   sweep frees, accepting its risk); firmware (TAPE plan Task 18)
