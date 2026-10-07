@@ -99,6 +99,11 @@ in_place_enum! {
     }
 }
 
+/// TAPE's `out_gain` (ADR 0063, TAPE Task 19): TAPE INIT on the reference
+/// source, ALGO INIT's C4 peaked at −0.5 dBFS as the importer leaves every
+/// source, sits at the factory median (+5.8 dB).
+pub const TAPE_OUT_GAIN: f32 = 1.954;
+
 impl EngineSlot {
     /// By value, through the stack: tests only. A voice builds its slot in
     /// place (`init_in_place`).
@@ -140,10 +145,11 @@ impl EngineSlot {
     }
 
     /// The engine's output gain at the VCA (ADR 0058): Algo is the
-    /// reference. TAPE's is 1 until TAPE Task 19 levels it.
+    /// reference.
     pub fn out_gain(&self) -> f32 {
         match self {
-            Self::Algo(_) | Self::Tape(_) => 1.0,
+            Self::Algo(_) => 1.0,
+            Self::Tape(_) => TAPE_OUT_GAIN,
             Self::Modal(m) => m.out_gain(),
         }
     }

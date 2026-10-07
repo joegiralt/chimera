@@ -7,11 +7,21 @@
 //! 937b89f's within 1e-5. MORPH PAD's row is 937b89f's (#192).
 
 mod common;
+use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::factory::factory_sound;
+use chimera_core::hw::SampleBudget;
+use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
+use chimera_core::note_queue::{NoteEvent, NoteKind};
+use chimera_core::params::EngineType;
+use chimera_core::preset::Sound;
+use chimera_core::scope::ScopeWriter;
+use chimera_core::source_table::GateView;
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 use common::Rig;
-use common::{Case, render_case};
+use common::sweep::{BPS, lufs};
+use common::tape::{OneSource, held_plain};
+use common::{Case, render_case, scope_writer};
 
 const OLD_RMS: [[f32; 50]; 8] = [
     [
@@ -638,4 +648,103 @@ fn morph_pad_over_its_whole_lfo_sweep() {
         lo < PAD_DB.0 + 0.1 && hi > PAD_DB.1 - 0.1,
         "{lo:.3}..{hi:.3} dB"
     );
+}
+
+/// TAPE's reference source (TAPE spec § 9, Task 19): ALGO INIT's own C4
+/// at velocity 100, 1 s of P1 as `(L + R)/2`, its peak at −0.5 dBFS as the
+/// importer leaves every source; held at 48 kHz, root C4. The factory set's
+/// `SINE C4` is this render through the importer.
+fn reference_source() -> Vec<u8> {
+    let mut r = TapeRig::new(None);
+    r.shared.parts[0].params = Sound::init(EngineType::Algo).params;
+    let mut x = Vec::new();
+    for b in 0..BPS {
+        x.extend(r.block(b == 0).chunks(2).map(|f| 0.5 * (f[0] + f[1])));
+    }
+    let peak = x.iter().fold(0f32, |m, v| m.max(v.abs()));
+    let g = 10f32.powf(-0.5 / 20.0) / peak;
+    x.iter_mut().for_each(|v| *v *= g);
+    held_plain(&x, 48_000)
+}
+
+/// P1 over `BPS` blocks from a note at C4, velocity 100: ADR 0063's
+/// measure, `level`'s window.
+struct TapeRig {
+    inst: Box<Instrument>,
+    fx: Box<FxBus>,
+    dac: Box<DacBlocks>,
+    scope: ScopeWriter,
+    shared: Box<AudioShared>,
+    src: Option<OneSource>,
+}
+
+impl TapeRig {
+    fn new(src: Option<OneSource>) -> TapeRig {
+        TapeRig {
+            inst: Box::new(Instrument::new(
+                SAMPLE_RATE,
+                SampleBudget::for_cpu(u32::MAX),
+            )),
+            fx: Box::new(FxBus::new()),
+            dac: Box::new(DacBlocks::new()),
+            scope: scope_writer(),
+            shared: Box::default(),
+            src,
+        }
+    }
+
+    /// One block, with the note's onset if `on`: P1's interleaved pair.
+    fn block(&mut self, on: bool) -> Vec<f32> {
+        let ev = NoteEvent {
+            channel: self.shared.parts[0].mix.channel,
+            note: MidiNote::new(60).unwrap(),
+            kind: NoteKind::On(Velocity::new(100).unwrap()),
+        };
+        let empty = GateView::empty();
+        let view = self.src.as_mut().map(|s| s.view());
+        let v = view.as_ref().unwrap_or(&empty);
+        if on {
+            self.inst.handle_with(ev, &self.shared, v);
+        }
+        self.inst.render_with(
+            &mut self.fx,
+            &mut self.dac,
+            &self.shared,
+            &mut self.scope,
+            v,
+        );
+        self.dac.out()[0].to_vec()
+    }
+
+    fn lufs(&mut self) -> f32 {
+        let mut p1 = Vec::new();
+        for b in 0..=BPS {
+            let x = self.block(b == 0);
+            if b > 0 {
+                p1.extend(x);
+            }
+        }
+        lufs(&p1)
+    }
+}
+
+/// ADR 0063 for TAPE (Task 19): TAPE INIT on the reference source sits at
+/// the factory median, ALGO INIT's C4, within ±0.25 dB, by TAPE's
+/// `out_gain`.
+#[test]
+fn tape_init_on_the_reference_sits_at_the_median() {
+    let mut algo = TapeRig::new(None);
+    algo.shared.parts[0].params = Sound::init(EngineType::Algo).params;
+    let median = algo.lufs();
+    let one = OneSource::new(&reference_source());
+    let id = one.id;
+    let mut tape = TapeRig::new(Some(one));
+    let s = Sound::init(EngineType::Tape);
+    tape.shared.parts[0].params = s.params;
+    tape.shared.parts[0].params.tape.period = 48_000.0 / 261.625_58;
+    tape.shared.parts[0].mod_state = s.mod_state;
+    tape.shared.parts[0].source = Some(id);
+    let d = tape.lufs() - median;
+    println!("ALGO INIT {median:.2} LUFS; TAPE INIT on the reference {d:+.2} dB");
+    assert!(d.abs() <= 0.25, "TAPE INIT {d:+.2} dB off the median");
 }

@@ -23,7 +23,7 @@ use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::rig::Src;
 use common::tape::{held_plain, saw_with_burst};
-use common::{Rig, SR, clicks};
+use common::{Rig, SR, step};
 
 /// 1 s of the saw with its burst at 24 kHz.
 fn saw() -> Vec<u8> {
@@ -201,15 +201,19 @@ fn unrouted_tape_ends_at_key_up() {
     let m = ModState::new();
     let mut v = Rig::with_source(SR, &saw());
     v.note_on(c4(), Velocity::DEFAULT, &p);
-    let mut out = play(&mut v, &p, &m, 40);
+    let out = play(&mut v, &p, &m, 40);
     assert!(
         peak(&out[out.len() - BLOCK_SIZE..]) > 0.05,
         "held, it sounds"
     );
+    // The saw's own edge is the held note's largest step (at TAPE's
+    // `out_gain` it passes `clicks`' fixed bar): the fade steps no more.
+    let held = step(&out);
     v.note_off();
-    out.extend(play(&mut v, &p, &m, Voice::FADE as usize / BLOCK_SIZE + 1));
+    let mut fade = vec![out[out.len() - 1]];
+    fade.extend(play(&mut v, &p, &m, Voice::FADE as usize / BLOCK_SIZE + 1));
     assert!(!v.is_active(), "key up ends it");
-    assert!(clicks(&out).is_empty());
+    assert!(step(&fade) <= held, "{} over {held}", step(&fade));
 }
 
 /// Each voice its own strip of tape (spec § 2 TAPE): the engine is seeded
