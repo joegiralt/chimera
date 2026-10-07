@@ -21,8 +21,10 @@ bound before the chain in spec § 9. A C4 sine test measured 2.4×
   convex mix of the grains' mix and the held value.
 - **The held value moves.** It leaves at the output's slope (`o − prev`) and
   slows to rest at most 12 samples' move on. Its rest point is at most 4
-  moves, and at most an eighth, past the larger of the output's level and the
-  grains'. A held value that stood still left a corner: the QA flagged
+  moves, and at most an eighth, past the grains' level, or `|o|` if that is
+  further out. The level is the grains' mix, or their last block's RMS if
+  that is higher (a multiply-add a sample): a loud wave crossing 0 at a wrap
+  then moves on rather than resting at once. A held value that stood still left a corner: the QA flagged
   6.6–7.2× on METAL and EPIANO STAB.
 - **The bound.** POLY passes the source's peak by an eighth at most
   (`poly_wraps_stay_under_the_source_peak`: 1.04× worst).
@@ -53,12 +55,12 @@ bound before the chain in spec § 9. A C4 sine test measured 2.4×
   `stretch-sine-c4-poly`, `stretch-brass-c4-poly` and `stretch-kit-16-poly` now
   pass, and no render newly fails.
 - **On the M7 (static count):**
-  - the common path is 231 instructions a sample, against 235;
+  - the common path is 234 instructions a sample, against 235;
   - a MONO lift costs about 7–12 more a wrap;
   - a POLY hold costs about 80 in place of the lift's 108.
-- **Host timing:** 1.08× LOOP's fade path, against 1.10×. The bill's worst
-  case (MONO lifted under the floor) falls by about 3 static, under
-  `COST_STRETCH` 450. The bench rows confirm it at ship.
+- **The bill's worst case** (MONO lifted under the floor) is about level:
+  −1 on the common path and +15 over 16 samples at the wraps, so it stays
+  under `COST_STRETCH` 450. The bench rows confirm it at ship.
 
 ## Sources
 - ADR 0093.

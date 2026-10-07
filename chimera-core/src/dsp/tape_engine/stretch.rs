@@ -167,22 +167,24 @@ pub fn smooth(x: f32) -> f32 {
 }
 
 /// A POLY wrap's hold, from the output `o` it leaves (`prev` the sample
-/// before) with the grains' mix `x`: the held value moves on at the
-/// output's slope, so it leaves the wave with no corner, slowing a sample
-/// by the returned factor to rest at most `HOLD_MOVES` samples' move on,
-/// and within `HOLD_SPILL` samples' move (`HOLD_OVER` of it at most) of the
-/// larger of `|o|` and `|x|`, so the hold passes the peak by an eighth at
-/// most. Returns the next sample's held value,
-/// its move and the move's fall.
+/// before) at `level` (the grains' mix, and their last block's RMS): the
+/// held value moves on at the output's slope, so it leaves the wave with no
+/// corner, slowing a sample by the returned factor to rest at most
+/// `HOLD_MOVES` samples' move on, and within `HOLD_SPILL` samples' move
+/// (`HOLD_OVER` of the level at most) past the level, or `|o|` if further,
+/// so the hold passes the peak by an eighth at most. The block's RMS keeps
+/// a loud wave crossing 0 there from resting at once. Returns the next
+/// sample's held value, its move and the move's fall.
 #[cold]
 #[inline(never)]
-fn hold_from(o: f32, prev: f32, x: f32) -> (f32, f32, f32) {
+fn hold_from(o: f32, prev: f32, level: f32) -> (f32, f32, f32) {
     let v = o - prev;
     if v == 0.0 {
         return (o, 0.0, 0.0);
     }
-    let level = libm::fabsf(o).max(libm::fabsf(x));
-    let most = level + (HOLD_SPILL * libm::fabsf(v)).min(HOLD_OVER * level);
+    // Past the level by `HOLD_SPILL` moves or `HOLD_OVER` of it, whichever is
+    // less; never further out than `o` already is, so holds can't build.
+    let most = libm::fabsf(o).max(level + (HOLD_SPILL * libm::fabsf(v)).min(HOLD_OVER * level));
     let rest = clampf(o + HOLD_MOVES * v, -most, most);
     let moves = (rest - o) / v;
     if moves <= 1.0 {
@@ -262,8 +264,10 @@ pub struct Stretch {
     hold: f32,
     vel: f32,
     vel_k: f32,
-    /// The last block's last sample out: a hold's slope at a block's first.
+    /// The last block's last sample out (a hold's slope at a block's first)
+    /// and the grains' RMS in it (a hold's level).
     prev: f32,
+    peak: f32,
     /// Splices and wraps: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub(super) events: u32,
@@ -300,6 +304,7 @@ impl Stretch {
         vel: 0.0,
         vel_k: 0.0,
         prev: 0.0,
+        peak: 0.0,
         #[cfg(any(test, feature = "test-support"))]
         events: 0,
         #[cfg(any(test, feature = "test-support"))]
@@ -511,7 +516,10 @@ impl Stretch {
         let mut i = 0;
         let lk = k.lift_k;
         // The last block's last sample: a hold's slope at the block's first.
-        let last = self.prev;
+        let (last, peak) = (self.prev, self.peak);
+        // The grains' energy this block (never the carry's, so a hold's
+        // spill can't build on the last's): a multiply-add a sample.
+        let mut xe = 0f32;
         let top = self.last.whole() + 1;
         if self.hold != k.hold {
             self.recarry(v, k.hold);
@@ -548,6 +556,7 @@ impl Stretch {
                 g += dg;
                 let x = a + smooth(g) * (b - a);
                 let o = add + keep * x;
+                xe += x * x;
                 out[i] = o;
                 w *= lk;
                 c += vel;
@@ -564,7 +573,7 @@ impl Stretch {
                         // POLY holds the output: no jump to read.
                         if m != 0.0 {
                             let prev = if i >= 2 { out[i - 2] } else { last };
-                            (c, vel, vk) = hold_from(o, prev, x);
+                            (c, vel, vk) = hold_from(o, prev, libm::fabsf(x).max(peak));
                         } else {
                             c = w * c + (1.0 - smooth(g + dg)) * (a - v.read(h0 - Pos(c0)));
                         }
@@ -581,7 +590,7 @@ impl Stretch {
                     if !t1 {
                         if m != 0.0 {
                             let prev = if i >= 2 { out[i - 2] } else { last };
-                            (c, vel, vk) = hold_from(o, prev, x);
+                            (c, vel, vk) = hold_from(o, prev, libm::fabsf(x).max(peak));
                         } else {
                             c = w * c + smooth(g + dg) * (b - v.read(h1 - Pos(c1)));
                         }
@@ -606,6 +615,9 @@ impl Stretch {
             }
         }
         self.prev = out[BLOCK_SIZE - 1];
+        // Its RMS: never over its peak, so a hold rests within an eighth of
+        // the grains' own.
+        self.peak = libm::sqrtf(xe / BLOCK_SIZE as f32);
     }
 
     /// A grain past its window's end before a block (the window moved under
@@ -838,8 +850,12 @@ mod tests {
     /// move it steps to rest at once.
     #[test]
     fn hold_leaves_at_the_slope_and_rests_in_bounds() {
-        for (o, prev, x) in [(0.1f32, 0.09, 0.2), (-0.3, -0.28, 0.1), (0.5, 0.4, 0.0)] {
-            let (mut c, mut vel, k) = hold_from(o, prev, x);
+        for (o, prev, x) in [
+            (0.1f32, 0.09f32, 0.2f32),
+            (-0.3, -0.28, 0.1),
+            (0.5, 0.4, 0.0),
+        ] {
+            let (mut c, mut vel, k) = hold_from(o, prev, x.abs());
             let level = o.abs().max(x.abs());
             if k > 0.0 {
                 assert!((c - (2.0 * o - prev)).abs() < 1e-6, "{o}: leaves at {c}");
@@ -855,6 +871,15 @@ mod tests {
                 "{o}: rests at {c}, want {want}"
             );
         }
+    }
+    /// A loud wave crossing 0 at a wrap (`|o|` small, the grains' block at
+    /// 0.8) moves on at its slope: with `|o|` alone for its level the hold
+    /// rested at once, a stall the QA flagged at 8.4× on TX BASS.
+    #[test]
+    fn a_loud_wave_crossing_0_moves_on() {
+        let (c, vel, k) = hold_from(-0.099, -0.085, 0.8);
+        assert!(k > 0.5 && vel < 0.0, "rests at once: {c}, {vel}, {k}");
+        assert!((c - (-0.113)).abs() < 1e-6, "{c}");
     }
 
     /// MONO's wrap is whole periods inside the window, even where the
