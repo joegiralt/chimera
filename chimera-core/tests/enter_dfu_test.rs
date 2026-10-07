@@ -5,7 +5,7 @@ use chimera_core::boot::RomDfu;
 use chimera_core::project::Line;
 use chimera_core::storage::{Card, SystemSettings, SystemSync};
 use chimera_core::ui::UiState;
-use chimera_core::ui::settings::prompt::{Answers, DfuAnswer, EnterDfu, Prompt};
+use chimera_core::ui::settings::prompt::{Answers, DfuAnswer, EnterDfu, Pill, Prompt};
 use chimera_core::ui::settings::replace::said::Said;
 use chimera_core::ui::settings::{Act, AskKind, Kind};
 use chimera_core::ui::theme_settings::{Accent, Black, Bright, Gamma, ThemeSettings};

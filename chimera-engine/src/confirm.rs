@@ -7,8 +7,6 @@
 use core::fmt::Debug;
 use core::marker::PhantomData;
 
-use chimera_hal::{Controls, EncoderId};
-
 use crate::boot::RomDfu;
 use crate::orbit::RINGS;
 use crate::project::{
@@ -54,15 +52,15 @@ impl<T: Copy> Opts<T> {
     }
 }
 
-/// A prompt's options, as an enum.
+/// A prompt's options, as an enum. Their pills' words are the UI's
+/// (`chimera_core::ui::settings::prompt::Pill`).
 pub trait Answers: Copy + Eq + Debug + 'static {
     /// In the pills' order.
     const ALL: Opts<Self>;
-    fn label(self) -> &'static str;
 }
 
 macro_rules! answers {
-    ($(#[$m:meta])* $name:ident { $($v:ident => $l:literal),+ $(,)? } $opts:ident) => {
+    ($(#[$m:meta])* $name:ident { $($v:ident),+ $(,)? } $opts:ident) => {
         $(#[$m])*
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub enum $name {
@@ -71,32 +69,27 @@ macro_rules! answers {
 
         impl Answers for $name {
             const ALL: Opts<Self> = Opts::$opts([$($name::$v),+]);
-            fn label(self) -> &'static str {
-                match self {
-                    $($name::$v => $l),+
-                }
-            }
         }
     };
 }
 
-answers!(LoadAnswer { SaveThenLoad => "SAVE THEN LOAD", LoadAnyway => "LOAD ANYWAY", Cancel => "CANCEL" } Three);
-answers!(ReplaceAnswer { SavePartFirst => "SAVE PART FIRST", Replace => "REPLACE", Cancel => "CANCEL" } Three);
-answers!(ReloadAnswer { SavePartFirst => "SAVE PART FIRST", Reload => "RELOAD", Cancel => "CANCEL" } Three);
+answers!(LoadAnswer { SaveThenLoad, LoadAnyway, Cancel } Three);
+answers!(ReplaceAnswer { SavePartFirst, Replace, Cancel } Three);
+answers!(ReloadAnswer { SavePartFirst, Reload, Cancel } Three);
 answers!(
     /// `Update`'s pill names the Parts: `UPDATE P4`, `UPDATE ALL`.
-    AlsoUsesAnswer { Update => "UPDATE", Leave => "LEAVE" } Two
+    AlsoUsesAnswer { Update, Leave } Two
 );
-answers!(NameExistsAnswer { KeepBoth => "KEEP BOTH", Overwrite => "OVERWRITE THAT ONE" } Two);
-answers!(DeleteAnswer { Delete => "DELETE", Cancel => "CANCEL" } Two);
-answers!(ClearAnswer { Clear => "CLEAR", Cancel => "CANCEL" } Two);
-answers!(SaveOverAnswer { SaveOver => "SAVE OVER", Cancel => "CANCEL" } Two);
-answers!(SaveSceneOverAnswer { SaveOver => "SAVE OVER", Cancel => "CANCEL" } Two);
-answers!(ClearSceneAnswer { Clear => "CLEAR", Cancel => "CANCEL" } Two);
-answers!(ReloadSceneAnswer { Reload => "RELOAD", Cancel => "CANCEL" } Two);
-answers!(CardChangedAnswer { SaveAs => "SAVE AS", Cancel => "CANCEL" } Two);
-answers!(DfuAnswer { EnterDfu => "ENTER DFU", Cancel => "CANCEL" } Two);
-answers!(PurgeAnswer { Purge => "PURGE", Cancel => "CANCEL" } Two);
+answers!(NameExistsAnswer { KeepBoth, Overwrite } Two);
+answers!(DeleteAnswer { Delete, Cancel } Two);
+answers!(ClearAnswer { Clear, Cancel } Two);
+answers!(SaveOverAnswer { SaveOver, Cancel } Two);
+answers!(SaveSceneOverAnswer { SaveOver, Cancel } Two);
+answers!(ClearSceneAnswer { Clear, Cancel } Two);
+answers!(ReloadSceneAnswer { Reload, Cancel } Two);
+answers!(CardChangedAnswer { SaveAs, Cancel } Two);
+answers!(DfuAnswer { EnterDfu, Cancel } Two);
+answers!(PurgeAnswer { Purge, Cancel } Two);
 
 /// A pick, or MENU (`None`). Only `Choice::input` makes one, so an answer
 /// is always a key's:
@@ -147,8 +140,8 @@ impl<A: Answers> Choice<A> {
     }
 
     /// MENU cancels; SEQ answers with the option shown before this frame's
-    /// turn; A moves, clamped.
-    pub fn input(&mut self, c: &impl Controls, p: &Presses) -> Option<Answer<A>> {
+    /// turn; `delta` (the picking encoder's turn) moves, clamped.
+    pub fn input(&mut self, delta: i32, p: &Presses) -> Option<Answer<A>> {
         if p.menu == Some(Press::Tap) {
             return Some(Answer(None));
         }
@@ -156,7 +149,7 @@ impl<A: Answers> Choice<A> {
             return Some(Answer(Some(self.picked())));
         }
         let last = A::ALL.as_slice().len() as i32 - 1;
-        let to = self.at as i32 + c.encoder_delta(EncoderId::A) as i32;
+        let to = self.at as i32 + delta;
         self.at = to.clamp(0, last) as u8;
         None
     }

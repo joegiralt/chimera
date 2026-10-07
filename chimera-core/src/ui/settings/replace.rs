@@ -22,7 +22,7 @@ pub mod said {
     pub use chimera_engine::confirm::Said;
 }
 
-use chimera_hal::Controls;
+use chimera_hal::{Controls, EncoderId};
 
 use crate::project::{
     Confirmed, NeedsConfirm, PartSource, Pending, Project, ProjectSource, Target, TemplateCrc,
@@ -80,7 +80,7 @@ impl<R: Target, A: Guarded<Confirms = R>> Asked<R, A> {
         p: &Presses,
         project: &Project,
     ) -> Result<Reply<R, A>, Self> {
-        let Some(a) = self.choice.input(c, p) else {
+        let Some(a) = self.choice.input(c.encoder_delta(EncoderId::A) as i32, p) else {
             return Err(self);
         };
         if let Some(yes) = said(a) {

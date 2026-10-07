@@ -22,7 +22,7 @@ use chimera_core::ui::settings::prompt::{
 };
 use chimera_core::ui::settings::view::{Crumb, Crumbs};
 use chimera_core::ui::{UiState, theme};
-use chimera_hal::{ButtonId, EncoderId};
+use chimera_hal::{ButtonId, Controls, EncoderId};
 use screen::*;
 
 const NO_PRESS: Presses = Presses {
@@ -39,12 +39,12 @@ fn turn(e: EncoderId, d: i8) -> Input {
 fn prompt_picks_with_a_and_clamps() {
     let mut c = Choice::<R>::new();
     assert_eq!(c.picked(), R::SavePartFirst);
-    assert_eq!(c.input(&turn(EncoderId::A, 5), &NO_PRESS), None);
+    assert_eq!(c.input(5, &NO_PRESS), None);
     assert_eq!(c.picked(), R::Cancel);
-    c.input(&turn(EncoderId::A, -9), &NO_PRESS);
+    c.input(-9, &NO_PRESS);
     assert_eq!(c.picked(), R::SavePartFirst);
     let mut two = Choice::<AlsoUsesAnswer>::new();
-    two.input(&turn(EncoderId::A, 5), &NO_PRESS);
+    two.input(5, &NO_PRESS);
     assert_eq!(two.picked(), AlsoUsesAnswer::Leave);
 }
 
@@ -52,10 +52,10 @@ fn prompt_picks_with_a_and_clamps() {
 fn seq_confirms_and_menu_cancels_on_release() {
     let mut gates = HoldGates::new();
     let mut c = Choice::<R>::new();
-    c.input(&turn(EncoderId::A, 1), &NO_PRESS);
+    c.input(1, &NO_PRESS);
     let mut frame = |c: &mut Choice<R>, i: Input| {
         let p = gates.step(&i);
-        c.input(&i, &p)
+        c.input(i.encoder_delta(EncoderId::A) as i32, &p)
     };
     assert_eq!(frame(&mut c, Input::press(ButtonId::Seq).at(0)), None);
     assert_eq!(
@@ -78,7 +78,7 @@ fn seq_with_a_turn_confirms_the_pick_shown() {
         ..NO_PRESS
     };
     assert_eq!(
-        c.input(&turn(EncoderId::A, 1), &seq).map(Answer::picked),
+        c.input(1, &seq).map(Answer::picked),
         Some(Some(R::SavePartFirst))
     );
 }

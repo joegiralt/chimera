@@ -24,10 +24,44 @@ pub use chimera_engine::confirm::{
     ReloadSceneAnswer, ReplaceAnswer, SaveOverAnswer, SaveSceneOverAnswer,
 };
 
+/// A prompt answer's words on its pill.
+pub trait Pill: Answers {
+    fn label(self) -> &'static str;
+}
+
+macro_rules! pills {
+    ($($name:ident { $($v:ident => $l:literal),+ $(,)? };)+) => {
+        $(impl Pill for $name {
+            fn label(self) -> &'static str {
+                match self {
+                    $($name::$v => $l),+
+                }
+            }
+        })+
+    };
+}
+
+pills!(
+    LoadAnswer { SaveThenLoad => "SAVE THEN LOAD", LoadAnyway => "LOAD ANYWAY", Cancel => "CANCEL" };
+    ReplaceAnswer { SavePartFirst => "SAVE PART FIRST", Replace => "REPLACE", Cancel => "CANCEL" };
+    ReloadAnswer { SavePartFirst => "SAVE PART FIRST", Reload => "RELOAD", Cancel => "CANCEL" };
+    AlsoUsesAnswer { Update => "UPDATE", Leave => "LEAVE" };
+    NameExistsAnswer { KeepBoth => "KEEP BOTH", Overwrite => "OVERWRITE THAT ONE" };
+    DeleteAnswer { Delete => "DELETE", Cancel => "CANCEL" };
+    ClearAnswer { Clear => "CLEAR", Cancel => "CANCEL" };
+    SaveOverAnswer { SaveOver => "SAVE OVER", Cancel => "CANCEL" };
+    SaveSceneOverAnswer { SaveOver => "SAVE OVER", Cancel => "CANCEL" };
+    ClearSceneAnswer { Clear => "CLEAR", Cancel => "CANCEL" };
+    ReloadSceneAnswer { Reload => "RELOAD", Cancel => "CANCEL" };
+    CardChangedAnswer { SaveAs => "SAVE AS", Cancel => "CANCEL" };
+    DfuAnswer { EnterDfu => "ENTER DFU", Cancel => "CANCEL" };
+    PurgeAnswer { Purge => "PURGE", Cancel => "CANCEL" };
+);
+
 /// A prompt's words (plan Pre-flight 13). Names are `Name<16>`, so
 /// `every_prompt_fits` covers the longest.
 pub trait Prompt {
-    type Answer: Answers;
+    type Answer: Pill;
     fn words(&self, question: &mut Line, reason: &mut Line);
     fn label(&self, a: Self::Answer, out: &mut Line) {
         let _ = out.write_str(a.label());
