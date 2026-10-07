@@ -13,6 +13,7 @@ use chimera_hal::BLOCK_SIZE;
 use crate::dsp::Stereo;
 use crate::dsp::ease::{Ease, ease_coeff, step_of};
 use crate::dsp::engines::{EngineCtx, SlotKind};
+use crate::dsp::filter::knobs::{Knobs, knob_coeff};
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use crate::dsp::modal::{ResonatorMode, SYM_NOTE_ON_CLEAR_MAX, SymPool};
 use crate::dsp::tape_engine::{Heads, TapeEngine};
@@ -469,6 +470,8 @@ pub struct Instrument {
     costed: usize,
     /// `costs` worked out since start: for the tests.
     costings: u32,
+    /// Each Part's filter knobs, eased (ADR 0107).
+    knobs: [Knobs; MAX_PARTS],
 }
 
 /// Who plays a note: the keys and MIDI, or one of ORBIT's rings.
@@ -484,7 +487,7 @@ pub enum NoteOrigin {
 /// worst-case slots starts a note a block, a typical one all at once.
 pub const SYM_CLEAR_BUDGET: usize = SYM_NOTE_ON_CLEAR_MAX;
 
-crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings });
+crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, knobs });
 
 const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
@@ -512,8 +515,10 @@ impl Instrument {
     ) -> &mut Self {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; the voices and the pool are
-        // built in place and the rest (the largest, `buses`, is 1.5 KB)
-        // written once by value before `assume_init_mut`.
+        // built in place, `knobs` zeroed (its `f32`s and `bool`,
+        // all-zero valid: `Knobs::default()`), and the rest (the
+        // largest, `buses`, is 1.5 KB) written once by value before
+        // `assume_init_mut`.
         unsafe {
             let voices = addr_of_mut!((*p).voices).cast::<Voice>();
             for (v, id) in VoiceIdx::ALL.into_iter().enumerate() {
@@ -540,6 +545,7 @@ impl Instrument {
             addr_of_mut!((*p).costs).write([Cost::ZERO; MAX_PARTS]);
             addr_of_mut!((*p).costed).write(0);
             addr_of_mut!((*p).costings).write(0);
+            addr_of_mut!((*p).knobs).write_bytes(0, 1);
             slot.assume_init_mut()
         }
     }
@@ -610,6 +616,12 @@ impl Instrument {
     #[cfg(any(test, feature = "test-support"))]
     pub fn filter_clips(&self) -> [crate::meter::Clip; MAX_VOICES] {
         core::array::from_fn(|v| self.voices[v].filter_clip())
+    }
+
+    /// Each voice's filter settings last block, routes applied: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn played_filters(&self) -> [crate::params::FilterParams; MAX_VOICES] {
+        core::array::from_fn(|v| self.voices[v].played_filter())
     }
 
     /// Each voice's glide steal ratio, 1 at rest: for the tests.
@@ -1087,6 +1099,25 @@ impl Instrument {
         }
     }
 
+    /// Each Part's filter knobs this block (ADR 0107): eased while a voice
+    /// plays the Part, landed while none does.
+    fn ease_knobs(&mut self, shared: &AudioShared) {
+        let mut playing = [false; MAX_PARTS];
+        for v in 0..MAX_VOICES {
+            if !self.alloc.slots()[v].is_free() {
+                playing[self.sounding[v] as usize % MAX_PARTS] = true;
+            }
+        }
+        let k = knob_coeff(self.sample_rate);
+        for ((knobs, part), playing) in self.knobs.iter_mut().zip(&shared.parts).zip(playing) {
+            knobs.ease(
+                &part.params.filter,
+                &part.mod_state,
+                if playing { k } else { 0.0 },
+            );
+        }
+    }
+
     /// One block as the shells run it (spec § 4): `notes` (the load gate,
     /// the drain, ORBIT) and the render read the pool through the block's
     /// view, then the sources the voices hold are stored, holding
@@ -1144,6 +1175,7 @@ impl Instrument {
         self.clear_backlog = false;
         self.start_waiting(shared, src);
         self.serve_resnaps();
+        self.ease_knobs(shared);
         for v in 0..MAX_VOICES {
             if self.alloc.slots()[v].is_free() {
                 continue;
@@ -1154,7 +1186,13 @@ impl Instrument {
                 sym: &mut self.sym,
                 src,
             };
-            self.voices[v].render(&mut block, &part.params, &part.mod_state, ctx);
+            self.voices[v].render_knobs(
+                &mut block,
+                &part.params,
+                &part.mod_state,
+                &self.knobs[p],
+                ctx,
+            );
             clip[p] = clip[p].max(self.voices[v].filter_clip());
             if written[p] {
                 for (b, &s) in self.buses[p].iter_mut().zip(&block) {
