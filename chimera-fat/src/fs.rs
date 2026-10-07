@@ -168,7 +168,6 @@ impl<'a, B: Blocks> Fs<'a, B> {
                     return Ok(());
                 }
             }
-            skip = 0;
             c = self.next(c)?;
         }
     }

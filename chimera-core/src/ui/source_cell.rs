@@ -551,8 +551,8 @@ impl SourceCell {
             },
             SourceJob::Load(part, mut l) => match l.step(s, r, p) {
                 LoadStep::More => self.job = Some(SourceJob::Load(part, l)),
+                // Its head was read when the cell came onto its row.
                 LoadStep::Done(_, h) => {
-                    self.heads.put(h);
                     self.at = None;
                     self.pick(p, part, h.sref);
                 }

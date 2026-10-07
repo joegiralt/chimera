@@ -74,6 +74,8 @@ struct Log {
     inner: MemStore,
     reads: Vec<(u32, u32)>,
     fail_reads: bool,
+    /// Source reads from here on give no bytes: a file shorter than listed.
+    ends_at: u32,
 }
 
 struct Counted<'a>(&'a mut dyn ReadSink, u32);
@@ -114,6 +116,11 @@ impl Store for Log {
             return Err(StoreError::Io);
         }
         let mut c = Counted(s, 0);
+        if f.dir() == Dir::Tapes && at >= self.ends_at {
+            let _ = c.begin(0);
+            self.reads.push((at, 0));
+            return Ok(());
+        }
         let r = self.inner.read_at(v, f, at, &mut c);
         if f.dir() == Dir::Tapes {
             self.reads.push((at, c.1));
@@ -155,6 +162,7 @@ impl Rig {
             inner: MemStore::new(1),
             reads: Vec::new(),
             fail_reads: false,
+            ends_at: u32::MAX,
         };
         let mut card = Card::new();
         for (h, d) in on_card {
@@ -330,6 +338,11 @@ fn focus_band_reads_the_source() {
     rig.turn(1);
     assert!(matches!(rig.ui.source_state(), SourceState::Card { .. }));
     assert_eq!(rig.band(), "CHOIR · 24K · 1.2 S · 41K");
+    // Another page and back: off the card row, the Part's source again.
+    feed(&mut rig.ui, Input::press(ButtonId::Plus));
+    feed(&mut rig.ui, Input::press(ButtonId::Minus));
+    assert_eq!(rig.ui.source_state(), SourceState::None);
+    rig.turn(1);
     rig.load();
     assert!(matches!(rig.ui.source_state(), SourceState::Held { .. }));
     assert_eq!(rig.band(), "CHOIR · 24K · 1.2 S · 41K");
@@ -411,7 +424,7 @@ fn wont_fit_alerts() {
 fn unfinished_load_leaves_the_arena() {
     let (h, _) = choir();
     let old = source(40, 3_000, "OLD");
-    for how in ["menu", "fail", "absent"] {
+    for how in ["menu", "fail", "absent", "short"] {
         for pass in 0..11 {
             let mut rig = Rig::new(&[choir()]);
             rig.pool(&[&old]);
@@ -428,6 +441,7 @@ fn unfinished_load_leaves_the_arena() {
             match how {
                 "menu" => tap(&mut rig.ui, ButtonId::Menu),
                 "fail" => rig.s.fail_reads = true,
+                "short" => rig.s.ends_at = 0,
                 _ => rig.s.inner.eject(),
             }
             rig.work();
@@ -540,4 +554,68 @@ fn source_memory_is_ram_only() {
     kept.pool(&[&a, &b]);
     kept.turn(1);
     assert_eq!(kept.sound().params.tape.start, 0.0, "the memo starts empty");
+}
+
+/// A card row that takes the gap exactly fits: MIX + PLUS loads it.
+#[test]
+fn exactly_free_fits() {
+    let mut rig = Rig::new(&[choir()]);
+    let cost = card_cost(file_len(&choir().0)).unwrap();
+    let free = rig.ui.project().pool().free();
+    let fill = (free.bytes() - cost.bytes()) as usize - 16;
+    let r = SourceRef {
+        crc: 0xF111,
+        frames: 64,
+        rate: 24_000,
+    };
+    rig.ui
+        .project_mut()
+        .source_store(r, &vec![0; fill])
+        .unwrap();
+    assert_eq!(rig.ui.project().pool().free(), cost);
+    rig.turn(100);
+    assert!(matches!(rig.ui.source_state(), SourceState::Card { .. }));
+    let fb = screen::render_ui(&rig.ui);
+    let y = chimera_core::ui::hint::FOCUS_Y;
+    let alert = chimera_core::ui::theme::ALERT;
+    assert!(
+        !(y - 8..=y).any(|y| (12..200).any(|x| fb.at(x, y) == alert)),
+        "no WON'T FIT"
+    );
+    rig.load();
+    assert_eq!(rig.sound().source_ref(), Some(choir().0.sref));
+}
+
+/// The gap a load stages in never moves under it: a pending hole stays
+/// open while it loads (no compaction), and a source stored mid-load
+/// fails it, publishing nothing.
+#[test]
+fn a_moved_gap_fails_the_load() {
+    use chimera_core::ui::animation::UiTick;
+    let (h, _) = choir();
+    let (a, b) = (source(1, 6_000, "A"), source(2, 7_000, "B"));
+    let mut rig = Rig::new(&[choir()]);
+    rig.pool(&[&a, &b]);
+    let purged = rig.ui.project_mut().purge_unused_sources(0);
+    assert!(purged.freed.bytes() > 0, "A and B pending holes");
+    rig.turn(100);
+    rig.mix_plus();
+    while rig.ui.card_pending() {
+        rig.ui.update(UiTick::for_test());
+        rig.work();
+    }
+    assert!(
+        rig.ui.project().pool().find_source(h.sref).is_some(),
+        "loaded beside the holes"
+    );
+
+    let mut rig = Rig::new(&[choir()]);
+    rig.turn(1);
+    rig.mix_plus();
+    rig.work();
+    rig.pool(&[&a]);
+    rig.work();
+    assert!(!rig.ui.card_pending());
+    assert_eq!(rig.ui.project().pool().find_source(h.sref), None);
+    assert_eq!(rig.band(), READ_FAILED);
 }
