@@ -95,7 +95,8 @@ The owner also wants ALGO's OP 5 and OP 6 as audio-rate modulation sources. The 
   - Static probe counts (thumbv7em, cortex-m7, opt-level 2) × 1.46 × 1.1, + 12 per `vdiv`.
   - Today's LP24 is counted first. Steady paths are billed `max(0, that − old LP24)`, and each probe asserts 0 `vdiv` in its steady loop.
   - The move, LEVEL and per-tap-destination terms are billed only while they apply; an unused tap costs 0.
-  - Budgets: CLEAN LP4 ≤ 56, NOTCH2 ≤ 34, 2040 REV2 ≤ 78 (65 measured without the limiter) and EXP ≤ 84 (each including the 8-instruction stage clip), DIRTY ≤ 30 instructions a sample. The 2040's moving path is +12 instructions and +45 cycles over its steady one (2 `vdiv`): it divides `G` and `D` and forms `G⁴`, `k·D` and `g·4/27` every sample; fusing the two divides into one saves about 4 cycles for +5 instructions, not worth it. The 2040 bills its measured steady cost, 15 on REV2 and 40 on EXP, and +45 while moving (REV2 measures +50).
+  - Budgets: CLEAN LP4 ≤ 56, NOTCH2 ≤ 34, 2040 REV2 ≤ 78 (65 measured without the limiter) and EXP ≤ 84 (each including the 8-instruction stage clip), DIRTY ≤ 30 instructions a sample. The 2040's moving path is +12 instructions and +45 cycles over its steady one (2 `vdiv`): it divides `G` and `D` and forms `G⁴`, `k·D` and `g·4/27` every sample; fusing the two divides into one saves about 4 cycles for +5 instructions, not worth it. The 2040 bills its measured steady cost, 15 on REV2 and 40 on EXP, and `K2040_MOVE_COST` 60 while moving.
+  - Measured bills (plan § Measured, Task 15, counted at 1879169d): CLEAN moving `CLEAN_MOVE_COST` 75; the 2040 moving 60; LEVEL's clipper `FILTER_LEVEL_COST` 35; a FREQ or Q tap's shaping `TAP_SHAPE_COST` 80, once; a VCA tap 30; a FOLD tap 45 (+ `FOLD_RAMP_COST` 35, + `FOLD_COST` when FOLD is off); capture 15 a tapped op. The spec's Est. bill column is the plan's estimate, not these.
 - **Order.** Implementation starts after `modal-stagger` merges. The filter's in-loop saturate stays divide-free whatever that branch lands.
 
 ## Alternatives considered
@@ -112,8 +113,9 @@ The owner also wants ALGO's OP 5 and OP 6 as audio-rate modulation sources. The 
 ## Consequences
 - **Sound changes.** LP1, NOTCH1, NOTCH2 and the top octave change sound, and goldens are re-recorded. Old patches load safely, and DRIVE's translation keeps their level.
 - **Bills.** The steady SVF bills less than it costs, which is headroom until a re-bench. Routed or tapped cutoff pays for its divides.
-- **Memory.** About 110 B per voice and 768 B of stack in the worst block; up to about 39 B per Sound. The 2040 takes the voice chain to 2,080 B, past ADR 0051's 2,048: ADR 0101 raises it to 2,112.
-- **Codes.** All new codes are append-only: KIND 4 and 6, MODE 9, Filter params 8, 11, 12 and 13 (2 retired), `K2040Voice` 0–1, `Jack` 0–9, and the `TapRoutes` record.
+- **Memory.** About 110 B per voice and 768 B of stack in the worst block; up to about 39 B per Sound. The voice chain measures 2,104 B with all three types and the taps, past ADR 0051's 2,048: ADR 0101 raises the bound to 2,112.
+- **Sparse jacks.** On the pool's sparse encoding (ADR 0087), FM3 IN and QM IN are left out only where the load's inference for pre-jack patches gives them back, so a pool round trip keeps them.
+- **Codes.** All new codes are append-only: KIND 4 and 6, MODE 9, Filter params 8, 11, 12 and 13 (2 retired), `K2040Voice` 0–1, `Jack` 0–9, and the `TapRoutes` record, 0x001B (0x15 is main's `PoolSource`, 0x19 and 0x1A TAPE's zone records).
 
 ## Sources
 - `docs/superpowers/specs/2026-10-05-filter-types-design.md` (revision 2) and its sources.

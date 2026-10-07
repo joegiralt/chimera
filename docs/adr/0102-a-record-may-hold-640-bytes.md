@@ -17,7 +17,7 @@ ADR 0045 bounds a known record's payload at `MAX_RECORD_LEN` = 512 B, the framer
 
 ## Consequences
 - The framer's buffer, `SoundCheck`'s staged routes and the writer's `RecordBuf` each grow 128 B; none is an AXI resident.
-- The stack check (ADR 0025) charges `encode_sound`'s frame to every pointer call, three deep, so its three `RecordBuf`s became one, reused: `bench,orbit` nests 58,064 B (60,720 before the fixed columns); three 640 B buffers had reached 65,816 B, past the limit.
+- The stack check (ADR 0025) charges `encode_sound`'s frame to every pointer call, three deep, so its three `RecordBuf`s became one, reused: `bench,orbit` nested 58,064 B then (60,720 before the fixed columns); three 640 B buffers had reached 65,816 B, past the limit. Measured since: 59,560 B on the finished branch, 62,532 B of 65,280 merged with the sound pool (main alone 62,416); default 51,260 B.
 - A file written with more than 128 routes is `Bounds` on firmware from before this ADR. There are no users yet (old patches must load safely, not the reverse).
 
 ## Sources

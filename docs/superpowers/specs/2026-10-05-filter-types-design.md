@@ -1,6 +1,6 @@
 # Filter Types: CLEAN (Cascadia), 2040 and DIRTY, and ALGO's Audio-Rate Taps: Design
 
-- **Status:** Proposed. Docs only; no code is written until the owner approves.
+- **Status:** Proposed; built on `filter-types` (Tasks 0–19, final review fixed), awaiting the owner's acceptance of ADRs 0096, 0101 and 0102.
 - **ADR:** [0096](../../adr/0096-filter-types-clean-2040-dirty-and-algo-taps.md) (Proposed).
 - **Builds on:** the filter-routing spec ([2026-09-27-filter-routing-design.md](2026-09-27-filter-routing-design.md)) and ADR 0037.
 - **Issues:** it answers private issue #128 for these three types. It redirects private issue #126 from the Rev 3 CEM3320 to the Rev 1/2 SSM2040, and addresses private issue #57 for the filter.
@@ -10,7 +10,7 @@
 - **Revision 3:** it applies the re-review (H-new-1 to 4, M-new-1 to 4, N4, L-new-1 and 2, and M6's leftover). ADR 0096 now supersedes ADR 0037, which is Accepted, rather than amending it.
 - **Revision 4 (2026-10-06):** the 2040 gains VOICE (REV2 / EXP: the Prophet-5 Rev 1/2 and the RSF Kobol Expander) and the chip's ±1 V stage clip, and Fig. 9's resonance element is corrected to the SSM 2020 (§ 3). The owner then ruled (2026-10-06) that each voice runs its own resonance circuit: REV2 a linear SSM 2020, EXP the Kobol's CA3080 limiter. The shared `L` is gone.
 
-**Implementation starts after `modal-stagger` merges.** That branch may replace `filter.rs`'s `saturate()` with stmlib's rational soft clipper, which divides. The CLEAN loop's in-loop saturate must stay divide-free on its common path, and the cost probes assert it (§ Cost). If `modal-stagger` lands a dividing clipper, the filter keeps today's C1 `saturate` for its own use.
+**Implemented after `modal-stagger` merged.** That branch might have replaced `filter.rs`'s `saturate()` with stmlib's rational soft clipper, which divides. The CLEAN loop's in-loop saturate must stay divide-free on its common path, and the cost probes assert it (§ Cost). If `modal-stagger` lands a dividing clipper, the filter keeps today's C1 `saturate` for its own use.
 
 ## Goal
 
@@ -475,10 +475,10 @@ Owner ruling (2026-10-05): every patch, the taps included, is made and seen in t
 | CLEAN LP4 / BP4 / HP4, steady | ≤ 56 | 0 | 90 | 0 (old LP24 ≈ 50 + 2 `vdiv` ≈ 105; counted in task 1) |
 | CLEAN LP1 / LP2 / BP2 / NOTCH1, steady | ≤ 30 | 0 | 50 | 0 |
 | CLEAN NOTCH2, steady | ≤ 34 | 0 | 55 | 0 (was 17) |
-| CLEAN, moving (LP4) | +6 | 2 | +35 | `CLEAN_MOVE_COST` 35 |
+| CLEAN, moving (LP4) | +6 | 2 | +35 | `CLEAN_MOVE_COST` 35 (billed 75: measured with the ramps, Task 15) |
 | 2040 REV2, steady (no limiter: the linear 2020) | ≤ 78 | 0 | 110 | 15 (measured 65 instructions, 110 cycles, Task 8b; 125 with `L`) |
 | 2040 EXP, steady (REV2 + 6 for the output VCA) | ≤ 84 | 0 | 135 | 40 (measured 135, Task 8) |
-| 2040, moving (either voice) | +12 (re-budgeted, Task 8: `G`, `D` and their products a sample; REV2 measured 79, +14 over its unrolled steady) | 2 | +45 | +45 (REV2 measured 160, +50) |
+| 2040, moving (either voice) | +12 (re-budgeted, Task 8: `G`, `D` and their products a sample; REV2 measured 79, +14 over its unrolled steady) | 2 | +45 | +45 (REV2 measured 160, +50; billed `K2040_MOVE_COST` 60, Task 15) |
 | DIRTY, any mode | ≤ 30 | 0 | 50 | 0 |
 | LEVEL clipper + meter + fade | ≤ +12 | 0 | +20 | +20 |
 | Tap capture (per tapped op) | +1 | 0 | +2 | in each tap's cost |
@@ -487,6 +487,7 @@ Owner ruling (2026-10-05): every patch, the taps included, is made and seen in t
 | Tap → VCA | +4 (the tap-VCA multiply) | 0 | +7 | 10 |
 | Tap → FOLD | +4, plus `FOLD_RAMP_COST` | 0 | +7 | 10 + 29, + `FOLD_COST` 45 when FOLD would otherwise be off |
 
+- **Measured bills** (Task 15, at 1879169d) replace the Est. bill column where they differ: CLEAN moving 75, the 2040 moving 60, LEVEL 35, a FREQ or Q tap's shaping 80 once, a VCA tap 30, a FOLD tap 45 (+ `FOLD_RAMP_COST` 35), capture 15 a tapped op. ADR 0096 lists them.
 - **Not double-billed.** FREQ and Q taps on the same voice share the moving path's divides, so the moving cost is billed once.
 - **Per block:** `tan_accurate` is about 14 instructions; up to 3 `vdiv`s, 1 `vsqrt`, 1 `fast_exp2` and the ramps add under 1.5 cycles a sample. That is included above.
 - **The crossfade blocks** are not billed (§ 1).
@@ -495,7 +496,7 @@ Owner ruling (2026-10-05): every patch, the taps included, is made and seen in t
 
 ### Memory
 
-- **Per voice:** CLEAN 4 floats plus NOTCH2's 5; the 2040 4; DIRTY 2; the ramp endpoints; the block's clip peak and fade; and the tap amounts' previous values. That is about 110 B against 24 B today, ×8 ≈ 0.7 KB. With the 2040 the chain is 2,080 B, past ADR 0051's 2,048: ADR 0101 raises `VOICE_CHAIN_BYTES` to 2,112. Types keep separate, flat state, so the crossfade can run two at once.
+- **Per voice:** CLEAN 4 floats plus NOTCH2's 5; the 2040 4; DIRTY 2; the ramp endpoints; the block's clip peak and fade; and the tap amounts' previous values. That is about 110 B against 24 B today, ×8 ≈ 0.7 KB. With the 2040 the chain was 2,080 B, past ADR 0051's 2,048: ADR 0101 raises `VOICE_CHAIN_BYTES` to 2,112. With DIRTY and the taps it measures 2,104 B. Types keep separate, flat state, so the crossfade can run two at once.
 - **Stack:** the crossfade's 256 B and the tap rows' 512 B, both in DTCM.
 - **Per Sound:** `FilterParams` grows 7 B (two `Jack`s, LEVEL and the 2040's VOICE) and `TapRoutes` adds up to 33 B (8 entries × 4 B, plus a count). Across the pool, the triple buffer and the Performance that is about 2 KB of AXI.
 - **Elsewhere:** `meter::FILTER_CLIP` is 6 × 4 B.
