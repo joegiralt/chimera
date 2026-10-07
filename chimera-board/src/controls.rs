@@ -149,9 +149,9 @@ pub unsafe fn isr_tick() {
 
     // Buttons: active low, debounced to stable level, edges latched.
     // SAFETY: BTN_DEBOUNCE/BTN_STATE are only touched here, from SysTick
-    // (this fn's contract), which is not reentrant. LATCHES is shared with `snapshot`, which only touches it
-    // inside `interrupt::free`: on this single core that masks SysTick, so the
-    // ISR never runs during it, and the main loop cannot run during the ISR.
+    // (this fn's contract), which is not reentrant. LATCHES is shared with
+    // `snapshot`, which only touches it inside `interrupt::free`: on this
+    // single core that masks SysTick, so the ISR never runs during it, and the main loop cannot run during the ISR.
     // Access is exclusive either way; no ordering beyond that is needed.
     unsafe {
         let latches = &mut *addr_of_mut!(LATCHES);
