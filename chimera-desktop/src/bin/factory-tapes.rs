@@ -15,7 +15,8 @@ use chimera_desktop::factory_tapes::{
 };
 use chimera_desktop::import::tape::free_beside_new;
 use chimera_desktop::listen::{
-    CLICK_RATIO, SILENT_DBFS, Script, Way, model_slug, qa, render, root_note, script, write_wav,
+    CLICK_RATIO, SILENT_DBFS, Script, Way, model_slug, qa, qa_takes, render, root_note, script,
+    take_starts, write_wav,
 };
 use std::fmt::Write as _;
 use std::path::PathBuf;
@@ -111,8 +112,9 @@ fn run_qa(wav: Option<&String>) -> Result<bool, String> {
             0.0
         } else {
             let base = Way::Plain.base(TapeModel::Oneshot, StretchType::Mono);
-            let y = render(base, &held, p, root_note(p), &script(TapeModel::Oneshot));
-            qa(&y[..y.len().min(48_000 * 5 / 2)]).click_ratio
+            let s = script(TapeModel::Oneshot);
+            let y = render(base, &held, p, root_note(p), &s);
+            qa_takes(&y[..y.len().min(48_000 * 5 / 2)], &take_starts(&s)).click_ratio
         };
         let _ = writeln!(report, "{slug}: played straight, click {own:.2}x");
         for m in TapeModel::ALL
@@ -130,7 +132,7 @@ fn run_qa(wav: Option<&String>) -> Result<bool, String> {
                     let note = if wave { 48 } else { way.note(root_note(p)) };
                     let s = if wave { script(m) } else { way.script(m) };
                     let y = render(way.base(m, k), &held, p, note, &s);
-                    let q = qa(&y);
+                    let q = qa_takes(&y, &take_starts(&s));
                     let ok = q.non_finite == 0
                         && q.peak_dbfs > SILENT_DBFS
                         && q.peak_dbfs <= PEAK_DBFS

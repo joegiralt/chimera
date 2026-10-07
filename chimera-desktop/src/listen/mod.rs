@@ -582,6 +582,20 @@ pub fn render(base: P, held: &[u8], pitch: Pitch, note: u8, s: &Script) -> Vec<f
 /// A take's release: 10 ms.
 const RELEASE: usize = 480;
 
+/// The samples `render` starts a fresh note at under `s`: 0, and each
+/// take's block.
+pub fn take_starts(s: &Script) -> Vec<usize> {
+    let at = |b: usize| (b * BLOCK_SIZE) as f32 / SAMPLE_RATE as f32;
+    let blocks = (s.secs() * SAMPLE_RATE as f32) as usize / BLOCK_SIZE;
+    let mut v = vec![0];
+    v.extend(
+        (1..blocks)
+            .filter(|&b| s.1.iter().any(|&t| at(b - 1) < t && t <= at(b)))
+            .map(|b| b * BLOCK_SIZE),
+    );
+    v
+}
+
 /// Claude's QA of a render (QA before UAT).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Qa {
@@ -616,7 +630,7 @@ const BLOCK: usize = 64;
 /// its peers within ±`REACH`, the sample's own ±`OWN` left out. A periodic
 /// edge has peers as large one period away; a click has none. With the
 /// sample it is at.
-fn isolation(r: &[f32]) -> (f32, usize) {
+fn isolation(r: &[f32], skip: &[bool]) -> (f32, usize) {
     let a: Vec<f32> = r.iter().map(|v| v.abs()).collect();
     let blocks: Vec<f32> = a
         .chunks(BLOCK)
@@ -639,7 +653,7 @@ fn isolation(r: &[f32]) -> (f32, usize) {
     };
     let n = a.len();
     (0..n)
-        .filter(|&i| a[i] > FLOOR)
+        .filter(|&i| a[i] > FLOOR && !skip[i])
         .map(|i| {
             let left = max(i.saturating_sub(REACH), i.saturating_sub(OWN));
             let right = max((i + OWN + 1).min(n), (i + REACH + 1).min(n));
@@ -655,6 +669,27 @@ fn isolation(r: &[f32]) -> (f32, usize) {
 /// A median of the second difference over a window (the first idea) failed
 /// a clean saw at 60–270×: one edge in a window looks like a click.
 pub fn qa(x: &[f32]) -> Qa {
+    qa_takes(x, &[])
+}
+
+/// How long an onset is judged by its step, not its bend: 2 ms, the
+/// engine's 1 ms note-on ramp and the attack's first cycle of a high note.
+const ONSET: usize = 96;
+
+/// An onset's steepest step may be this many times the material's own
+/// after it (`REACH`), or this share of its level (twice the engine's 1 ms
+/// smoothstep ramp's steepest, 1.5/48), before it is a click.
+const ONSET_STEP: f32 = 3.0;
+const ONSET_RAMP: f32 = 1.0 / 16.0;
+
+/// `qa`, told where `takes` start (fresh notes, the render's first
+/// included): a take's onset from silence has no peers before it, and its
+/// attack (the engine's declicked ramp, then the source's own) bends more
+/// than anything after it, so curvature alone flags it (#385). The first
+/// `ONSET` samples of each take are judged instead by their steepest step,
+/// against the material's own over the `REACH` after or the declick ramp's
+/// at the onset's level: a step at an onset still fails.
+pub fn qa_takes(x: &[f32], takes: &[usize]) -> Qa {
     let finite = |s: &&f32| s.is_finite();
     let peak = x.iter().filter(finite).fold(0f32, |a, s| a.max(s.abs()));
     let y: Vec<f32> = x
@@ -678,8 +713,30 @@ pub fn qa(x: &[f32]) -> Qa {
             y[i] - w[2]
         })
         .collect();
-    let (a, b) = (isolation(&d2), isolation(&med));
-    let (click_ratio, click_at) = if b.0 > a.0 { b } else { a };
+    let mut skip = vec![false; n];
+    let mut onset = (0f32, 0usize);
+    for &t in takes.iter().filter(|&&t| t < n) {
+        let end = (t + ONSET).min(n);
+        skip[t..end].fill(true);
+        let step = |lo: usize, hi: usize| {
+            (lo.max(1)..hi.min(n))
+                .map(|i| (y[i] - y[i - 1]).abs())
+                .fold(0f32, f32::max)
+        };
+        let level = y[t..end].iter().fold(0f32, |m, v| m.max(v.abs()));
+        let bar = (ONSET_STEP * step(end, end + REACH))
+            .max(ONSET_RAMP * level)
+            .max(FLOOR);
+        // On `CLICK_RATIO`'s scale: the bar passes at it.
+        let r = step(t, end) / bar * CLICK_RATIO;
+        if r > onset.0 {
+            onset = (r, t);
+        }
+    }
+    let (a, b) = (isolation(&d2, &skip), isolation(&med, &skip));
+    let (click_ratio, click_at) = [a, b, onset]
+        .into_iter()
+        .fold((0f32, 0), |m, r| if r.0 > m.0 { r } else { m });
     Qa {
         peak_dbfs: 20.0 * peak.log10(),
         click_ratio,
@@ -1120,6 +1177,38 @@ mod tests {
     fn silence_fails() {
         assert!(!qa(&vec![0.0; 48_000]).passes());
         assert!(!qa(&sine(1e-5)).passes(), "−100 dBFS");
+    }
+
+    /// 0.1 s of silence, then a bass at 0.8 starting at its peak (a fresh
+    /// take at START), under the engine's 1 ms smoothstep note-on ramp
+    /// (`ramp`) or none.
+    fn take(ramp: bool) -> Vec<f32> {
+        let mut x = vec![0.0f32; 4_800];
+        x.extend((0..43_200).map(|i| {
+            let r = (i as f32 / 48.0).min(1.0);
+            let g = if ramp { r * r * (3.0 - 2.0 * r) } else { 1.0 };
+            g * 0.8 * (std::f32::consts::TAU * 65.4 * i as f32 / 48_000.0).cos()
+        }));
+        x
+    }
+
+    /// A take's onset from silence has no peers before it, so curvature
+    /// alone flags a declicked attack (#385); told where takes start, the QA
+    /// judges an onset by its step against the material's own slope after
+    /// it.
+    #[test]
+    fn a_declicked_onset_passes_where_takes_start() {
+        let x = take(true);
+        assert!(!qa(&x).passes(), "{:?}", qa(&x));
+        let q = qa_takes(&x, &[4_800]);
+        assert!(q.passes(), "{q:?}");
+    }
+
+    #[test]
+    fn a_step_at_an_onset_fails() {
+        let x = take(false);
+        let q = qa_takes(&x, &[4_800]);
+        assert!(!q.passes(), "{q:?}");
     }
 
     #[test]
