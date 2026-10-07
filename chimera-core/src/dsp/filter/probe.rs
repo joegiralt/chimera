@@ -71,12 +71,13 @@ pub fn ladder_probe<const M: usize, const MOVING: bool>(
     p: &FilterParams,
 ) {
     let r = f.ramps(p, SAMPLE_RATE, &FilterMods::NONE);
-    let (_, sum) = if MOVING {
-        f.moving(buf, r, None, M)
+    if super::ladder::hold_huge(buf).is_none() {
+        f.silence(buf);
+    } else if MOVING {
+        f.moving(buf, r, None, M);
     } else {
-        f.steady(buf, r, M)
-    };
-    f.settle(sum);
+        f.steady(buf, r, M);
+    }
 }
 
 /// A FREQ and a Q lane on `buf`'s own samples, opaque to the optimiser.

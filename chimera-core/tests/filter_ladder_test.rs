@@ -7,7 +7,7 @@ mod common;
 use chimera_core::block::DiskCode;
 use chimera_core::dsp::filter::coef::g_of;
 use chimera_core::dsp::filter::k2040::k2040_k;
-use chimera_core::dsp::filter::ladder::{TRIM_LADDER, Y_MAX, ladder_bound, tanh_poly};
+use chimera_core::dsp::filter::ladder::{TRIM_LADDER, X_MAX, Y_MAX, ladder_bound, tanh_poly};
 use chimera_core::dsp::filter::{
     Filter, FilterKind, FilterMode, FilterMods, Ladder, routed_cutoff,
 };
@@ -376,7 +376,7 @@ fn level_changes_the_harmonics() {
     assert!(rel > 0.003, "{rel}");
 }
 
-/// The LED reads the input pair: off at LEVEL ½ on a full-scale sine (u
+/// The LED reads the drive into the input pair: off at LEVEL ½ on a full-scale sine (
 /// peaks at α), lit at LEVEL 1 (×4 past the knee of 1), rising.
 #[test]
 fn ladder_led_reads_the_input_pair() {
@@ -463,6 +463,47 @@ fn ladder_recovers_from_a_nan_block() {
             assert!(b.iter().all(|y| y.is_finite()), "{m:?} {bad}: {:?}", b[0]);
             let mut b: [f32; BLOCK_SIZE] = core::array::from_fn(|i| sine(0.5, 200.0)(i));
             f.process(&mut b, &p, SR, &FilterMods::NONE);
+            f.process(&mut b, &p, SR, &FilterMods::NONE);
+            assert!(b.iter().all(|y| y.is_finite()) && b.iter().any(|&y| y != 0.0));
+        }
+    }
+}
+
+/// Huge or non-finite samples in an otherwise ordinary block (review of
+/// the flash fit): a lone `f32::MAX`, two same-sign `f32::MAX` (their sum
+/// overflows), a 1e30 block and a NaN among finite samples. Every mode's
+/// output stays finite and within `ladder_bound` at `X_MAX`; a block with
+/// no NaN in it is never silenced; the next block is ordinary.
+#[test]
+fn huge_samples_are_held_and_finite_blocks_play() {
+    let base: [f32; BLOCK_SIZE] = core::array::from_fn(|i| sine(0.5, 200.0)(i));
+    let mut cases: Vec<(&str, [f32; BLOCK_SIZE], bool)> = Vec::new();
+    let mut one = base;
+    one[10] = f32::MAX;
+    cases.push(("lone MAX", one, true));
+    let mut two = base;
+    (two[10], two[11]) = (f32::MAX, f32::MAX);
+    cases.push(("two MAX", two, true));
+    cases.push(("1e30 block", [1e30; BLOCK_SIZE], true));
+    let mut nan = base;
+    nan[20] = f32::NAN;
+    cases.push(("one NaN", nan, false));
+    for m in MODES {
+        let lim = ladder_bound(m, X_MAX);
+        for (name, x, finite) in &cases {
+            let p = params(m, 1000.0, 0.9, 1.0);
+            let mut f = Ladder::new();
+            let mut b = *x;
+            f.process(&mut b, &p, SR, &FilterMods::NONE);
+            assert!(
+                b.iter().all(|y| y.is_finite() && y.abs() <= lim),
+                "{m:?} {name}: {:?}",
+                b.iter().fold(0.0f32, |a, y| a.max(y.abs()))
+            );
+            if *finite {
+                assert!(b.iter().any(|&y| y != 0.0), "{m:?} {name}: silenced");
+            }
+            let mut b = base;
             f.process(&mut b, &p, SR, &FilterMods::NONE);
             assert!(b.iter().all(|y| y.is_finite()) && b.iter().any(|&y| y != 0.0));
         }

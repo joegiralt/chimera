@@ -371,12 +371,12 @@ tanhₚ(x) = c·(1 + c²·(a₃ + c²·(a₅ + …a₁₁))), c = clamp(x, ±3) 
 
 - **Resonance.** `k = 4·RES/0.95` (`k2040_k`): the onset at RES 0.95, 4.21 at RES 1. The ring's amplitude is the input pair's; its pitch is trimmed +20.8 cents (`TRIM_LADDER`), the stages' saturators slowing it, which holds it within 0.6 cents over C2–C6.
 - **Bass loss.** DC gain `1/(1 + k)`, uncompensated (the owner's ruling for the 2040, held here).
-- **LEVEL** is the drive: `α·gain` into the loop. The LED reads the input pair, `clip_amount(|u|/1)`: lit from LEVEL 0.75 on a full-scale input, as REV2's. No clipper runs.
+- **LEVEL** is the drive: `α·gain` into the loop. The LED reads the drive into the input pair, `clip_amount(peak|x|·α·gain/1)`: lit from LEVEL 0.75 on a full-scale input, as REV2's. No clipper runs.
 - **Modes** (Zavalishin § 5.5, Xpander-style; BP4 is his eq. 5.16, the rest derived by his rule): LP2 `y₂`, LP4 `y₄`, BP2 `y₁ − y₂`, BP4 `y₂ − 2y₃ + y₄`, HP4 `y₀ − 4y₁ + 6y₂ − 4y₃ + y₄`. Each mode's gain lerps in `k` from its RES-0 normalisation (BP2 ×2, BP4 ×4: 0 dB peaks) to its ring's (LP2 and BP2 ×½), so every mode rings within 0.5 dB of LP4. A MODE change is click-free by construction (one state, five mixes) and still crossfades on a stack copy, as DIRTY's does. The gain follows each sample's `k`, so a Q tap rings every mode at LP4's level. A mode LADDER lacks plays LP4 (`ladder_index`). The viz folds LP2's gain into its curve and eases the band-passes from 0 dB down to LP4's ring.
 - **Levels.** LEVEL ½, RES 0: LP4 unity. RES 1: −15.5 to −16.2 dBFS in every mode, LADDER's own band, as EXP has its own.
 - **State.** Four floats and the ramp ends, in the one slot the 2040 also uses, a typed `enum Poles` (36 B with its tag): the voice chain measures 1,952 B on main with TAPE (ADR 0101's bound is 2,112). A 2040 ↔ LADDER change hands the slot over with a warm start and runs the old type on a stack copy, its stages carried in the fade, as a VOICE flip does.
 - **Bounded.** Each stage within its swing; every state within it plus `2g`; `|out| ≤ ladder_bound(mode, x)`, exact for LP4 (`Y/α`).
-- **Cost.** Steady 210 cycles a sample, one loop for every mode (126 instructions, 0 `vdiv`), billed 115 over `OLD_LP24`; moving +80 (`LADDER_MOVE_COST`, one loop for every mode). No clipper term. A NaN or infinite input block plays silence.
+- **Cost.** Steady 210 cycles a sample, one loop for every mode (119 instructions, 0 `vdiv`) and the input scan, billed 115 over `OLD_LP24`; moving +70 (`LADDER_MOVE_COST`, one loop for every mode). No clipper term. A block past ±32 × full scale (or infinite) is held to it before the loop; a block with a NaN plays silence.
 
 ### 5. UX: TYPE versus MODE, without a blank canvas
 

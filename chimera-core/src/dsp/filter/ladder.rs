@@ -32,8 +32,13 @@ pub const OUT_LADDER: f32 = 1.0;
 /// equilibrium is the tanh's inverse of its input's, so it never asks for
 /// more.
 pub const Y_MAX: f32 = 3.0;
-/// The LED's knee on the input pair, `|u|` in model units: 1 lights it
-/// (tanh at 0.76), full at 3, where `tanh_poly` flattens.
+/// The input's hold, in input units: 32 × full scale. A block with a
+/// sample past it is held to it before the loop (`process`); none reaches
+/// it from the engines.
+pub const X_MAX: f32 = 32.0;
+/// The LED's knee on the drive into the input pair, `|x|·α·gain` in model
+/// units: 1 lights it (tanh at 0.76), full at 3, where `tanh_poly`
+/// flattens.
 pub const LED_KNEE: f32 = 1.0;
 /// The cutoff trim, a ratio on FREQ, +20.8 cents: the stages' saturators
 /// slow the ring at RES 1, which reads 20.2 to 21.4 cents flat over C2–C6
@@ -130,19 +135,20 @@ fn tap_gain(m: usize, k: f32) -> f32 {
 }
 
 /// LADDER's steady bill over `OLD_LP24` (95), counted on the
-/// `filter-probes` ELF after the TAPE merge (`tools/loop_count.py`): one
-/// loop for every mode, its mix read at run time (`Ladder::steady`), 126
-/// instructions a sample, 0 `vdiv`, with its block (1.11, 2 `vdiv`), the
-/// probe's (0.58) and `four_pole_ends` (1.33, 1 `vdiv`):
-/// ceil5(129.02 × 1.606 + 12 × 0.047) = 210, less 95. Per-mode loops cost
-/// 2.8 KB the `bench-stress,orbit` build doesn't have.
+/// `filter-probes` ELF (`tools/loop_count.py`): one loop for every mode,
+/// its mix read at run time (`Ladder::steady`), 119 instructions a sample,
+/// 0 `vdiv`; its block (1.00, 2 `vdiv`), the probe's (0.66),
+/// `four_pole_ends` (1.33, 1 `vdiv`) and `hold_huge`'s scan (29 a
+/// four-sample round, 7.25, and its block 0.3): ceil5(129.54 × 1.606 + 12
+/// × 0.047) = 210, less 95. Per-mode loops cost 2.8 KB the
+/// `bench-stress,orbit` build doesn't have.
 pub const LADDER_COST: Cost = Cost(115);
 /// The moving path over the steady one: one out-of-line loop for every
-/// mode (`moving`), `G` and `D` divided every sample (2 `vdiv`), the mode
-/// gain at each sample's `k`, `ramps`' fill (6.25), its block (1.44), the
-/// probe's (0.64) and `four_pole_ends` (1.33): 163.66 instructions, 2.016
-/// `vdiv`, 290; less the steady 210.
-pub const LADDER_MOVE_COST: Cost = Cost(80);
+/// mode (`moving`, 140 instructions), `G` and `D` divided every sample (2
+/// `vdiv`), the mode gain at each sample's `k`, its block (1.34), the
+/// probe's (0.69), `four_pole_ends`, the scan and `ramps`' fill (6.25):
+/// 157.16 instructions, 2.016 `vdiv`, 280; less the steady 210.
+pub const LADDER_MOVE_COST: Cost = Cost(70);
 
 /// tanh to within 0.005 on ±3, flat at ±1 from ±3 where it is held: the
 /// odd degree-11 polynomial with `p(3) = 1`, `p′(3) = 0` that fits tanh
@@ -181,11 +187,53 @@ pub fn tanh_poly(x: f32) -> f32 {
 pub fn ladder_bound(mode: FilterMode, x: f32) -> f32 {
     let g = super::coef::g_of(f32::MAX, 1.0);
     let s = Y_MAX + 2.0 * 2.0 * g;
-    let u = 4.0 * ALPHA_LADDER * x + k2040_k(1.0) * s;
+    let u = 4.0 * ALPHA_LADDER * x.min(X_MAX) + k2040_k(1.0) * s;
     let y = [u, Y_MAX, Y_MAX, Y_MAX, Y_MAX];
     let t = LADDER_TAPS[ladder_index(mode)];
     let m: f32 = t.c.iter().zip(y).map(|(c, y)| c.abs() * y).sum();
     m * t.gain[0].max(t.gain[1]) * (OUT_LADDER / ALPHA_LADDER) * 1.0001
+}
+
+/// A block held to ±`X_MAX` before the loop, so no mode's output can
+/// overflow: an infinite or huge sample is held, and the loop then runs on
+/// finite input: the block's peak `|x|`, held. `None` for a block with a
+/// NaN in it, which `process` plays as silence. The scan reads `|x|`'s bits, an `and` and an unsigned
+/// max a sample (a NaN's bits sort past infinity's); the hold and the NaN
+/// search run only for a block past `X_MAX`.
+#[inline(never)]
+pub(super) fn hold_huge(buf: &mut [f32; BLOCK_SIZE]) -> Option<f32> {
+    // Four samples a round, the rounds kept rolled (an opaque index): a
+    // sixteen-fold unroll cost 200 B the ORBIT bench build hasn't got.
+    let mut m = 0u32;
+    let mut i = 0;
+    while i < BLOCK_SIZE {
+        let j = core::hint::black_box(i);
+        if let Some(q) = buf.get(j..j + 4) {
+            for x in q {
+                m = m.max(x.to_bits() & 0x7fff_ffff);
+            }
+        }
+        i += 4;
+    }
+    (m <= X_MAX.to_bits() || hold_slow(buf)).then(|| f32::from_bits(m).min(X_MAX))
+}
+
+/// `hold_huge`'s rare half: each sample held to ±`X_MAX`, `false` at a NaN.
+/// One loop, kept rolled (an opaque index), so it costs little flash.
+#[cold]
+#[inline(never)]
+fn hold_slow(buf: &mut [f32; BLOCK_SIZE]) -> bool {
+    let mut i = 0;
+    while i < BLOCK_SIZE {
+        if let Some(x) = buf.get_mut(core::hint::black_box(i)) {
+            if x.is_nan() {
+                return false;
+            }
+            *x = clampf(*x, -X_MAX, X_MAX);
+        }
+        i += 1;
+    }
+    true
 }
 
 /// The model's state: four stage integrators and the last block's ramp
@@ -246,28 +294,27 @@ impl Ladder {
         let r = self.ramps(p, fs, mods);
         let t = TapShape::new(mods, tap_g_range(fs), k2040_k);
         let t = t.as_ref();
-        let m = ladder_index(p.mode());
-        let (peak, sum) = if t.is_none() && r.g.0 == r.g.1 && r.k.0 == r.k.1 {
-            self.steady(buf, r, m)
-        } else {
-            self.moving(buf, r, t, m)
+        let Some(x_peak) = hold_huge(buf) else {
+            self.silence(buf);
+            return clip_amount(0.0);
         };
-        self.settle(sum);
-        if !sum.is_finite() {
-            // A NaN or infinite input reaches HP4's `y₀ = u` term: the block
-            // is silence instead (review M3), and `settle` rests the states.
-            buf.fill(0.0);
+        // The LED: the drive into the input pair, the block's peak at its
+        // larger LEVEL end, from the scan; no compare in the loops.
+        let drive = x_peak * r.a.0.max(r.a.1);
+        let m = ladder_index(p.mode());
+        if t.is_none() && r.g.0 == r.g.1 && r.k.0 == r.k.1 {
+            self.steady(buf, r, m);
+        } else {
+            self.moving(buf, r, t, m);
         }
-        clip_amount(peak * (1.0 / LED_KNEE))
+        clip_amount(drive * (1.0 / LED_KNEE))
     }
 
-    /// A NaN or infinite input: the clamps hold every state finite, but at
-    /// a rail, so start the next block from rest. `sum` is the block's
-    /// inputs summed.
-    pub(super) fn settle(&mut self, sum: f32) {
-        if !sum.is_finite() {
-            self.s = [0.0; 4];
-        }
+    /// A block with a NaN in it (`hold_huge`): silence, since HP4's `y₀ = u`
+    /// would pass it on, and the next block from rest.
+    pub(super) fn silence(&mut self, buf: &mut [f32; BLOCK_SIZE]) {
+        buf.fill(0.0);
+        self.s = [0.0; 4];
     }
 
     /// A warm start from another type's `lp` (spec § 1): every stage at its
@@ -305,12 +352,11 @@ impl Ladder {
         }
     }
 
-    /// `g` and `k` held: `G` and `D` once a block. Returns the input pair's
-    /// peak `|u|` and the inputs' sum (`settle`). One loop for every mode,
+    /// `g` and `k` held: `G` and `D` once a block. One loop for every mode,
     /// `m` read at run time, as `moving`'s: five copies didn't fit the
     /// ORBIT bench builds.
     #[inline(never)]
-    pub(super) fn steady(&mut self, buf: &mut [f32; BLOCK_SIZE], r: Ramps, m: usize) -> (f32, f32) {
+    pub(super) fn steady(&mut self, buf: &mut [f32; BLOCK_SIZE], r: Ramps, m: usize) {
         let c = coef(r.g.1, r.k.1);
         let n = BLOCK_SIZE as f32;
         let (mut a, a_step) = (r.a.0, (r.a.1 - r.a.0) / n);
@@ -319,17 +365,11 @@ impl Ladder {
         let m = m.min(LADDER_TAPS.len() - 1);
         let o = tap_gain(m, r.k.1) * out;
         let c5 = LADDER_TAPS[m].c.map(|c| c * o);
-        let (mut peak, mut sum) = (0.0f32, 0.0f32);
         for s in buf.iter_mut() {
             a += a_step;
-            sum += *s;
             let y = self.tick(*s * a, &c);
-            // A compare and a select: `max` adds NaN handling `u` never needs.
-            let au = y[0].abs();
-            peak = if au > peak { au } else { peak };
             *s = Self::mix(&c5, &y);
         }
-        (peak, sum)
     }
 
     /// `g` and `k` ramp to this block's values by adding, each sample's
@@ -347,7 +387,7 @@ impl Ladder {
         r: Ramps,
         tap: Option<&TapShape>,
         m: usize,
-    ) -> (f32, f32) {
+    ) {
         let n = BLOCK_SIZE as f32;
         let (g_step, k_step) = ((r.g.1 - r.g.0) / n, (r.k.1 - r.k.0) / n);
         let (mut gs, mut ks) = ([0.0f32; BLOCK_SIZE], [0.0f32; BLOCK_SIZE]);
@@ -363,17 +403,13 @@ impl Ladder {
             gain: [g0, g4],
         } = LADDER_TAPS[m];
         let (o0, o4) = (g0 * out, (g4 - g0) * out);
-        let (mut peak, mut sum) = (0.0f32, 0.0f32);
         for (i, s) in buf.iter_mut().enumerate() {
             a += a_step;
             let o = o0 + o4 * clampf(ks[i] * 0.25, 0.0, 1.0);
-            sum += *s;
             let c = coef(gs[i], ks[i]);
             let y = self.tick(*s * a, &c);
-            peak = peak.max(y[0].abs());
             *s = Self::mix(&c5, &y) * o;
         }
-        (peak, sum)
     }
 
     /// A mode's mix `c` of `y₀ … y₄`, five multiply-adds.

@@ -92,7 +92,7 @@ fn filter_bills_each_type_and_mode() {
     }
     assert_eq!(seen, (8 + 1 + 4 + 5) * 2, "every built pair, each VOICE");
     // Over OLD_LP24 (95): the 2040's and LADDER's steady counts with the
-    // block (LADDER's one loop for every mode, 210).
+    // block (LADDER's one loop for every mode and its input scan, 210).
     assert!(K::Ladder.cost(K2040Voice::Rev2) >= Cost(210 - 95));
     assert!(K::K2040.cost(K2040Voice::Rev2) >= Cost(110 - 95));
     assert!(K::K2040.cost(K2040Voice::Exp) >= Cost(135 - 95));
@@ -123,7 +123,7 @@ fn the_moving_path_bills_once() {
     use chimera_core::taps::TAP_SHAPE_COST;
     assert!(CLEAN_MOVE_COST >= Cost(150 - 75));
     assert!(K2040_MOVE_COST >= Cost(170 - 110) && K2040_MOVE_COST >= Cost(190 - 135));
-    assert!(LADDER_MOVE_COST >= Cost(290 - 210));
+    assert!(LADDER_MOVE_COST >= Cost(280 - 210));
     assert!(TAP_SHAPE_COST >= Cost(80));
     let none = ModState::new();
     for (k, mv) in [
