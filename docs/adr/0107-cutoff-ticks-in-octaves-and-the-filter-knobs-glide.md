@@ -31,7 +31,7 @@ The root-cause report (private notes) found the stepping in the parameters, not 
 ## Consequences
 - CPU (estimated, not benched on the unit): per Part with a voice, a block: one `log2`, one `exp2` while gliding, 16 amount divides and 18 one-pole steps, ~400–500 cycles: 6–8 cycles a sample per sounding Part, ≤ ~50 with all six sounding, ~0.5 % of the 10,000 a sample at 480 MHz. A silent Part costs a flag. The voices' FREQ/Q sums read eight `f32`s in place of eight `i8`s.
 - RAM: `[(Knobs, Loads); 6]` and the coefficient in `Instrument`, ~0.5 KB of D2's 121 KB left. No voice-chain bytes.
-- Flash: +1.8 KB on the default build (49.9 KB left). The bench's `bench-stress,orbit` set, 1.7 KB from full before (#303), is left with tens of bytes: the next feature there needs #303.
+- Flash: +1.8 KB on the default build (49.0 KB left with LADDER and EXP B). The bench's `bench-stress,orbit` set was 28 B from full on main and overflowed with this; the bench builds now leave out the console's `put` (`card-put`, ~7 KB, which no bench run needs), so every bench set keeps ≥ 5 KB (#303).
 - A turn of CUTOFF, RES, ENV AMT, KEYBD or a jack amount now lands 30 ms late (63 % in 30 ms, 95 % in 90 ms).
 - A p-lock or MIDI CC on CUTOFF (when wired) glides too; it should denormalize through `ParamSpec::denormalize`, so a 7-bit CC steps 1/12.7 octave, eased.
 - Not eased: the taps' amounts (OP 5/6 → FREQ, Q) keep their one-block ramp; ENV AMT's own law stays 10/127 oct a unit (94 c), coarse but now glided.
