@@ -17,6 +17,19 @@ pub const SAMPLE_RATE: u32 = 48_000;
 pub const NUM_ENCODERS: usize = 6;
 pub const NUM_BUTTONS: usize = 12; // 6 param + 6 nav
 
+/// The ticks the `n`-th detent of a burst moves: 1, 2, 4, 5, 10, 10…
+pub const fn encoder_accel(n: u8) -> i8 {
+    const CURVE: [i8; 5] = [1, 2, 4, 5, 10];
+    if (n as usize) < CURVE.len() {
+        CURVE[n as usize]
+    } else {
+        10
+    }
+}
+
+/// A burst ends after this long with no detent.
+pub const ENCODER_BURST_GAP_MS: u32 = 150;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum EncoderId {

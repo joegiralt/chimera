@@ -200,13 +200,6 @@ pub fn isr_tick() {
 
 // --- Main-thread interface ---
 
-/// Per-click acceleration: 1, 2, 4, 5, 10, 10, 10...
-const ACCEL_CURVE: [i8; 5] = [1, 2, 4, 5, 10];
-
-fn accel_for(burst_pos: u8) -> i8 {
-    ACCEL_CURVE.get(burst_pos as usize).copied().unwrap_or(10)
-}
-
 pub struct Stm32Controls {
     edges: [Edges; NUM_BUTTONS],
     now_ms: Ms,
@@ -238,9 +231,9 @@ impl Stm32Controls {
         self.now_ms = Ms(tick_ms(now));
         for i in 0..NUM_ENCODERS {
             let raw = ENC_DELTA[i].swap(0, Ordering::Relaxed);
-            // Reset burst if >150ms (75 ticks at 500Hz) since last edge
+            // A burst ends after the gap, in 500 Hz ticks.
             let last = ENC_LAST_EDGE[i].load(Ordering::Relaxed);
-            if now.wrapping_sub(last) > 75 {
+            if now.wrapping_sub(last) > chimera_hal::ENCODER_BURST_GAP_MS / 2 {
                 self.burst[i] = 0;
             }
             if raw != 0 {
@@ -248,7 +241,7 @@ impl Stm32Controls {
                 let edges = raw.unsigned_abs();
                 let mut total: i8 = 0;
                 for _ in 0..edges {
-                    total = total.saturating_add(dir * accel_for(self.burst[i]));
+                    total = total.saturating_add(dir * chimera_hal::encoder_accel(self.burst[i]));
                     self.burst[i] = self.burst[i].saturating_add(1);
                 }
                 self.enc[i] = total;
