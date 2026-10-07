@@ -258,6 +258,27 @@ pub(super) struct Ends {
     pub(super) pre: f32,
 }
 
+/// The 2040's and LADDER's block ends, `g` at FREQ × `trim`, `k` and
+/// LEVEL's gain, stored as the next block's start; and LEVEL's ramp. Out of
+/// line: one copy for both types.
+#[inline(never)]
+pub(super) fn four_pole_ends(
+    last: &mut Option<Ends>,
+    p: &FilterParams,
+    trim: f32,
+    fs: u32,
+    mods: &FilterMods,
+) -> (Ends, Ends, (f32, f32)) {
+    let to = Ends {
+        g: g_of(p.cutoff * trim, fs as f32),
+        k: k2040_k(p.resonance),
+        pre: level_gain(p.level),
+    };
+    let from = last.replace(to).unwrap_or(to);
+    let gain = LevelRamp::new((from.pre, to.pre), mods).gain();
+    (from, to, gain)
+}
+
 /// One sample's coefficients at `g` and `k`: `G = g/(1 + g)`, `D = 1/(1 +
 /// k·G⁴)` and the products the loop reads.
 #[derive(Clone, Copy)]
@@ -400,13 +421,7 @@ impl K2040 {
     #[inline(always)]
     pub(super) fn ramps(&mut self, p: &FilterParams, fs: u32, mods: &FilterMods) -> Ramps {
         let v = p.voice;
-        let to = Ends {
-            g: g_of(p.cutoff * v.trim(), fs as f32),
-            k: k2040_k(p.resonance),
-            pre: level_gain(p.level),
-        };
-        let from = self.last.replace(to).unwrap_or(to);
-        let gain = LevelRamp::new((from.pre, to.pre), mods).gain();
+        let (from, to, gain) = four_pole_ends(&mut self.last, p, v.trim(), fs, mods);
         Ramps {
             g: (from.g, to.g),
             k: (from.k, to.k),

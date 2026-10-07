@@ -369,7 +369,8 @@ pub(crate) struct TapShape<'a> {
 
 impl<'a> TapShape<'a> {
     /// `None` without a FREQ or Q tap; `k_of` is the type's RES → `k`.
-    #[inline(always)]
+    /// Out of line: once a block, one copy for every type.
+    #[inline(never)]
     pub(crate) fn new(mods: &FilterMods<'a>, g: (f32, f32), k_of: fn(f32) -> f32) -> Option<Self> {
         let rows = mods.freq.or(mods.q)?.rows;
         debug_assert!(

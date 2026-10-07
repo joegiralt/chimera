@@ -65,8 +65,8 @@ const LP24: Cost = FilterKind::Svf.cost(K2040Voice::Rev2);
 
 /// Every built (TYPE, MODE, VOICE) bills `max(0, cycles − OLD_LP24)`, as
 /// counted on the bench ELF (plan § Measured, Task 15): CLEAN 35–80 and
-/// DIRTY 70 sit under LP24's 95; the 2040 REV2 110, EXP 135; LADDER 205 to
-/// 215 (ADR 0104), billed its costliest mode.
+/// DIRTY 70 sit under LP24's 95; the 2040 REV2 110, EXP 135; LADDER 210
+/// (ADR 0104), billed its costliest mode.
 #[test]
 fn filter_bills_each_type_and_mode() {
     use FilterKind as K;
@@ -92,8 +92,8 @@ fn filter_bills_each_type_and_mode() {
     }
     assert_eq!(seen, (8 + 1 + 4 + 5) * 2, "every built pair, each VOICE");
     // Over OLD_LP24 (95): the 2040's and LADDER's steady counts with the
-    // block (LADDER BP4 and HP4 215).
-    assert!(K::Ladder.cost(K2040Voice::Rev2) >= Cost(215 - 95));
+    // block (LADDER's one loop for every mode, 210).
+    assert!(K::Ladder.cost(K2040Voice::Rev2) >= Cost(210 - 95));
     assert!(K::K2040.cost(K2040Voice::Rev2) >= Cost(110 - 95));
     assert!(K::K2040.cost(K2040Voice::Exp) >= Cost(135 - 95));
 }
@@ -123,7 +123,7 @@ fn the_moving_path_bills_once() {
     use chimera_core::taps::TAP_SHAPE_COST;
     assert!(CLEAN_MOVE_COST >= Cost(150 - 75));
     assert!(K2040_MOVE_COST >= Cost(170 - 110) && K2040_MOVE_COST >= Cost(190 - 135));
-    assert!(LADDER_MOVE_COST >= Cost(305 - 205));
+    assert!(LADDER_MOVE_COST >= Cost(290 - 210));
     assert!(TAP_SHAPE_COST >= Cost(80));
     let none = ModState::new();
     for (k, mv) in [
