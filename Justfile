@@ -13,7 +13,7 @@ tape-listen *args:
 
 # A WAV to a TAPE source (spec § 6), sealed in the desktop sim's card
 # (CHIMERA_CARD, else chimera-card/), never the unit's:
-# `just tape take.wav [--rate 24k] [--root C3] [--transwave <cycle> [--top 1024]]
+# `just tape take.wav [--rate 24k] [--root C3] [--transwave <cycle> [--top 1024] [--frames 32]]
 # [--name CHOIR] [--channel mix|L|R]`. `put` takes sources from TAPE Task 18.
 [positional-arguments]
 tape file *args:
@@ -21,6 +21,34 @@ tape file *args:
     set -euo pipefail
     shift
     cargo run -q -p chimera-desktop --bin chimera-import -- tape "{{ if file =~ '^/' { file } else { invocation_directory() / file } }}" "$@"
+
+# The TAPE factory set (spec § 7) into target/tapes-v1/: every .SRC, the
+# factory TAPE Sounds (S9000001.A …), manifest.json and cc0-originals.zip
+# (each original with its licence). CC0 originals come from
+# $CHIMERA_TAPES_SRC (~/chimera-tapes-src); nothing here writes a card.
+# `just factory-tapes qa [--wav <dir>]` plays each source through every
+# machine and checks each render.
+factory-tapes *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo run -q --release -p chimera-desktop --bin factory-tapes -- {{args}}
+    if [ -z "{{args}}" ]; then
+        cd target/tapes-v1
+        rm -f cc0-originals.zip
+        zip -qrX cc0-originals.zip cc0-originals
+        rm -r cc0-originals
+    fi
+
+# The factory set's release onto the unit's card: each file through `put`
+# (a re-run answers OK PRESENT). Waits for TAPE Task 18's source `put` and
+# #360; Sound files need the library's path class too (#317).
+put-factory-tapes version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dir="$(mktemp -d)"
+    gh release download "tapes-{{version}}" -R joegiralt/chimera -D "$dir"
+    for f in "$dir"/*.SRC; do python3 tools/chimera-usb.py put "$f" /CHIMERA/TAPES/; done
+    for f in "$dir"/S9*.A; do python3 tools/chimera-usb.py put "$f" /CHIMERA/SOUNDS/; done
 
 # Build STM32 firmware (release)
 firmware:
