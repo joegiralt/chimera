@@ -76,7 +76,7 @@ const WET_BLOOM: f32 = 5.72;
 /// four smear offsets, 84 B past ADR 0085's 160, and GRAIN's envelope,
 /// seed and its scale and knee, cached and eased, 24 more (112 with the
 /// tests' probes).
-pub const ENGINE_STATE_MAX: usize = 272;
+pub const ENGINE_STATE_MAX: usize = 280;
 const _: () = assert!(core::mem::size_of::<EngineState>() <= ENGINE_STATE_MAX);
 
 /// Blocks each fade of the switch takes: 20 ms at 48 kHz.

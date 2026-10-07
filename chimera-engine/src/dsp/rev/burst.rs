@@ -219,10 +219,13 @@ const IN_GAIN: f32 = 0.5 * FULL_SCALE;
 const INV_FS: f32 = 1.0 / FULL_SCALE;
 
 /// Ring samples a tap crossfade takes (4 blocks), the most one moves a
-/// tap (5 ms, QUAD's step), and the most that move at once.
+/// tap (5 ms, QUAD's step), and the most that slide at once. A PRE-DLY (or
+/// ONSET) change is no slide: every read crossfades to its place in the
+/// one window, so `MOVERS`, the slots a window has, is every read.
 pub const XF: u8 = 128;
 pub const STEP: u16 = 120;
-pub const MOVERS: usize = 4;
+pub const SLIDERS: usize = 4;
+pub const MOVERS: usize = READS;
 const _: () = assert!((XF as usize).is_multiple_of(HALF));
 
 /// DENSITY keeps these six of GATE's taps, and fades the other six in
@@ -250,7 +253,12 @@ const _: () = {
 #[inline(never)]
 pub fn tap_targets(k: &EngineKnobs) -> [u16; READS] {
     let len = k.length_ms * PER_MS;
-    let start = k.predelay_ms * PER_MS;
+    // The ramp never starts past its end: ONSET at its top over the
+    // shortest LENGTH would put it on, or after, the hit.
+    let start = match k.burst {
+        Burst::Gate => k.predelay_ms * PER_MS,
+        Burst::Reverse => clampf(k.predelay_ms * PER_MS, 0.0, (len - HIT_GAP).max(0.0)),
+    };
     let at = |x: f32| clampf(x + 0.5, MIN_READ, BURST_MAX as f32) as u16;
     let mut t = [0; READS];
     match k.burst {
@@ -392,6 +400,8 @@ pub struct BurstEngine {
     to: [u16; MOVERS],
     /// Every read's length, ring samples: the taps, then the hit.
     at: [u16; READS],
+    /// The PRE-DLY (ONSET) the reads were last scheduled for, ms.
+    pre: f32,
     tone: f32,
     /// TAIL's damper state.
     damp: f32,
@@ -453,21 +463,31 @@ impl BurstEngine {
     #[inline(never)]
     pub fn prime(&mut self, k: &EngineKnobs) {
         self.at = tap_targets(k);
+        self.pre = k.predelay_ms;
         (self.left, self.moving, self.primed) = (0, 0, true);
-        self.ease_to(k, 0.0, 0.0, true);
+        let _ = self.ease_to(k, 0.0, 0.0, true);
     }
 
     /// One block of each knob's one-pole toward `k` (`k20`, `k50` the
     /// shares kept: 0 lands), and the curve's weights from the eased SHAPE
     /// and DENSITY when they moved (or `always`).
+    /// Returns the weights and the hit's from before it: the block ramps
+    /// from them.
     #[inline(never)]
-    fn ease_to(&mut self, k: &EngineKnobs, k20: f32, k50: f32, always: bool) {
+    fn ease_to(
+        &mut self,
+        k: &EngineKnobs,
+        k20: f32,
+        k50: f32,
+        always: bool,
+    ) -> ([f32; MAX_TAPS], f32) {
         ease(&mut self.ta, one_pole(k.tone_hz, FS), k20);
         ease(&mut self.gp, k.diffuse_g, k20);
         ease(&mut self.gr, k.regen, k50);
         ease(&mut self.gt, k.tail * tail_gain(k.rt60_s), k50);
         ease(&mut self.wet, k.wet, k20);
         ease(&mut self.td, damp_coef(k.damp_hz), k20);
+        let was = (self.w, self.hit);
         let curve = (self.shape, self.taps);
         ease(&mut self.shape, k.shape_db, k20);
         ease(&mut self.taps, k.taps, k20);
@@ -475,6 +495,7 @@ impl BurstEngine {
             (self.w, self.hit) = weights(self.shape, k.burst, self.taps);
             self.inv_sw = inv_abs_sum(&self.w);
         }
+        if always { (self.w, self.hit) } else { was }
     }
 
     /// The SMEAR offsets the next block reads its two smeared
@@ -548,12 +569,20 @@ impl BurstEngine {
         }
     }
 
-    /// Up to `MOVERS` reads, the farthest from their targets, start a
+    /// Up to `SLIDERS` reads, the farthest from their targets, start a
     /// crossfade of at most `STEP` toward them; the hit, REGEN's read,
-    /// sits in slot 0 when it moves.
+    /// sits in slot 0 when it moves. A PRE-DLY (ONSET) change starts one
+    /// crossfade of every read that differs, whole.
     #[inline(never)]
     fn schedule(&mut self, k: &EngineKnobs) {
         let goal = tap_targets(k);
+        let shift = k.predelay_ms != self.pre;
+        self.pre = k.predelay_ms;
+        let (slots, reach) = if shift {
+            (MOVERS, u16::MAX)
+        } else {
+            (SLIDERS, STEP)
+        };
         // A read the burst doesn't play (GATE's past its 12 taps, and its
         // hit) lands at once: nothing hears it.
         let plays = |t: usize| match k.burst {
@@ -567,7 +596,7 @@ impl BurstEngine {
         }
         let mut n = 0;
         let mut taken = 0u32;
-        while n < MOVERS {
+        while n < slots {
             let (mut far, mut tap) = (0, 0);
             for t in 0..READS {
                 let d = goal[t].abs_diff(self.at[t]);
@@ -579,7 +608,7 @@ impl BurstEngine {
                 break;
             }
             taken |= 1 << tap;
-            let step = far.min(STEP);
+            let step = far.min(reach);
             let at = self.at[tap];
             self.to[n] = if goal[tap] > at { at + step } else { at - step };
             self.mv[n] = tap as u8;
@@ -620,7 +649,7 @@ impl BurstEngine {
         let start = ends(self);
         const K20: f32 = ease_k(0.02);
         const K50: f32 = ease_k(0.05);
-        self.ease_to(k, K20, K50, false);
+        let (wp, hp) = self.ease_to(k, K20, K50, false);
         if self.left == 0 {
             self.schedule(k);
         }
@@ -645,15 +674,22 @@ impl BurstEngine {
             8 => (self.smear[0].1 - self.smear[0].0) * n,
             _ => (self.smear[1].1 - self.smear[1].0) * n,
         });
-        let c = self.w;
-        let wh = self.hit;
+        // The weights ramp from last block's to this one's, a sample at a
+        // time. The hit's slot is no tap of the sum: its weight stays 0, so
+        // its blend goes to the hit alone.
+        let mut c = [0.0f32; READS];
+        c[..MAX_TAPS].copy_from_slice(&wp);
+        let dc: [f32; READS] = core::array::from_fn(|j| {
+            if j < MAX_TAPS {
+                (self.w[j] - wp[j]) * n
+            } else {
+                0.0
+            }
+        });
+        let (mut wh, dwh) = (hp, (self.hit - hp) * n);
+        let ramp = self.w != wp || self.hit != hp;
         let movers = self.moving as usize;
         let slot = |m: usize| (self.mv[m] as usize).min(HIT);
-        // The hit's blend goes to the hit alone: it is no tap of the sum.
-        let cm: [f32; MOVERS] = core::array::from_fn(|m| {
-            let s = slot(m);
-            if s == HIT { 0.0 } else { c[s] }
-        });
         // The hit's blend reaches REGEN only when it moves.
         let e0 = (movers > 0 && slot(0) == HIT) as u8 as f32;
         // Each read's offset from the head.
@@ -708,7 +744,7 @@ impl BurstEngine {
                 let mut hit = if gate { 0.0 } else { rd!(b[R_HIT]) };
                 for m in 0..movers {
                     let d = fr * (rd!(b[R_TO + m]) - rd!(b[R_FROM + m]));
-                    sum += cm[m] * d;
+                    sum += c[slot(m)] * d;
                     if m == 0 {
                         hit += e0 * d;
                     }
@@ -764,6 +800,12 @@ impl BurstEngine {
                 (l[i + t], r[i + t]) = (yl + ht, yr + ht);
                 for (x, d) in g.iter_mut().zip(&dg) {
                     *x += d;
+                }
+                if ramp {
+                    for (x, d) in c.iter_mut().zip(&dc).take(V::TAPS) {
+                        *x += d;
+                    }
+                    wh += dwh;
                 }
             }
             i += len;

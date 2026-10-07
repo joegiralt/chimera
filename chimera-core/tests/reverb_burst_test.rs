@@ -569,3 +569,231 @@ fn taps_land_on_their_samples() {
         ((k.length_ms - 2.7) * 24.0 + 0.5) as u16
     );
 }
+
+/// A BURST engine on `k0`, primed and fed the 200 Hz sine `run_blocks`
+/// settles on.
+struct Rig {
+    e: BurstEngine,
+    arena: Box<ReverbArena>,
+    n: usize,
+}
+
+impl Rig {
+    fn new(k0: &chimera_core::dsp::reverb::EngineKnobs) -> Self {
+        let mut e = BurstEngine::default();
+        e.prime(k0);
+        Self {
+            e,
+            arena: Box::new(ReverbArena::new()),
+            n: 0,
+        }
+    }
+
+    /// `blocks` ring blocks on `k` of `x(sample)`: the mono return, LSBs.
+    fn go(
+        &mut self,
+        k: &chimera_core::dsp::reverb::EngineKnobs,
+        blocks: usize,
+        x: &dyn Fn(usize) -> f32,
+    ) -> Vec<f32> {
+        let mut out = Vec::new();
+        for _ in 0..blocks {
+            let u: [f32; HALF] = std::array::from_fn(|i| x(self.n + i));
+            let (mut l, mut r) = ([0.0; HALF], [0.0; HALF]);
+            self.e.run(&mut self.arena, &u, k, &mut l, &mut r);
+            out.extend(l.iter().zip(&r).map(|(a, b)| 0.5 * (a + b)));
+            self.n += HALF;
+        }
+        out
+    }
+}
+
+fn sine(n: usize) -> f32 {
+    0.3 * (std::f32::consts::TAU * 200.0 * n as f32 / 24_000.0).sin()
+}
+
+/// The largest sample-to-sample step of `x`.
+fn max_step(x: &[f32]) -> f32 {
+    x.windows(2)
+        .map(|w| (w[1] - w[0]).abs())
+        .fold(0.0, f32::max)
+}
+
+/// PRE-DLY (GATE) and ONSET (REVERSE) move every tap at once: one
+/// crossfade, not the 4-tap slide a LENGTH move takes.
+#[test]
+fn a_predelay_change_goes_through_one_crossfade() {
+    for t in BURSTS {
+        let mut p = params(t, 1.0);
+        (p.size, p.predelay) = (0.5, 0.0);
+        let mut rig = Rig::new(&knobs_120(&p));
+        p.predelay = 1.0;
+        let k1 = knobs_120(&p);
+        let goal = tap_targets(&k1);
+        let mut windows = 0;
+        for b in 0..40 {
+            rig.go(&k1, 1, &sine);
+            windows += usize::from(b % 4 == 0 && rig.e.crossfades().next().is_some());
+            if b == 3 {
+                assert_eq!(
+                    rig.e.taps_at(),
+                    goal,
+                    "{t:?}: every tap landed in one window"
+                );
+            }
+        }
+        assert_eq!(windows, 1, "{t:?}");
+    }
+}
+
+/// REVERSE's ramp ends the unit's 2.7 ms before the hit at any ONSET and
+/// LENGTH: ONSET at its top over the shortest LENGTH would otherwise put
+/// the ramp on, or after, the hit.
+#[test]
+fn onset_never_passes_the_hit() {
+    use chimera_core::dsp::rev::burst::{HIT, PER_MS};
+    let gap = (2.7 * PER_MS) as u16;
+    for size in [0.0, 0.05, 0.3, 0.5, 1.0] {
+        for onset in [0.0, 0.5, 0.9, 1.0] {
+            let mut p = params(ReverbType::Reverse, 1.0);
+            (p.size, p.predelay) = (size, onset);
+            let t = tap_targets(&knobs_120(&p));
+            for (i, &x) in t.iter().enumerate().take(REVERSE_TAPS) {
+                assert!(
+                    x + gap <= t[HIT],
+                    "SIZE {size} ONSET {onset}: tap {i} at {x}, hit {}",
+                    t[HIT]
+                );
+            }
+        }
+    }
+}
+
+/// A moving hit crossfades into REGEN's feedback too (`e0`): the read does
+/// not jump to its new place when the crossfade lands.
+#[test]
+fn a_moving_hit_does_not_click_in_regen() {
+    let mut p = params(ReverbType::Reverse, 1.0);
+    (p.time, p.size, p.predelay) = (1.0, 0.5, 0.0);
+    let mut rig = Rig::new(&knobs_120(&p));
+    let settled = rig.go(&knobs_120(&p), 400, &sine);
+    let base = max_step(&settled[settled.len() / 2..]);
+    p.size = 0.51;
+    let moved = rig.go(&knobs_120(&p), 24, &sine);
+    let worst = max_step(&moved);
+    println!("settled step {base}, moving {worst}");
+    assert!(worst <= 2.0 * base, "step {worst} against {base}");
+}
+
+/// The weights ramp across a block with the knob: SHAPE jumping 0 → 1 in
+/// one block's time moves the return no faster than a block's ramp.
+#[test]
+fn tap_weights_lerp_within_the_block() {
+    let mut p = params(ReverbType::Gate, 1.0);
+    (p.size, p.shape, p.predelay) = (0.3, 0.0, 0.0);
+    let mut rig = Rig::new(&knobs_120(&p));
+    let dc = |_: usize| 0.4;
+    let before = rig.go(&knobs_120(&p), 300, &dc);
+    p.shape = 1.0;
+    let after = rig.go(&knobs_120(&p), 60, &dc);
+    // The return's largest change from one block's end to the next's, and
+    // the largest step inside: a ramp spreads the first over the block.
+    let ends: Vec<f32> = after.chunks(HALF).map(|b| b[HALF - 1]).collect();
+    let block = ends
+        .windows(2)
+        .map(|w| (w[1] - w[0]).abs())
+        .fold(0.0, f32::max);
+    let step = max_step(&after);
+    println!("block change {block}, step {step}, ratio {}", step / block);
+    assert!(step <= 0.1 * block, "step {step} of a {block} block change");
+}
+
+/// A TYPE's loudest return over the corners of its knobs (SIZE, TIME,
+/// DIFFUSE, SHAPE, TONE, PRE-DLY each at an end) on a held −12 dBFS RMS
+/// pink pad at MIX 1, dBFS.
+fn corner_peak_db(t: ReverbType) -> f32 {
+    let pad = common::rev::pink(0x400d, 2.0, -12.0);
+    (0..64u32)
+        .map(|corner| {
+            let mut p = params(t, 1.0);
+            let bit = |i: u32| (corner >> i & 1) as f32;
+            (p.size, p.time, p.diffuse, p.shape, p.tone, p.predelay) =
+                (bit(0), bit(1), bit(2), bit(3), bit(4), bit(5));
+            let (rv, pc) = (fresh(&p), RefCell::new(p));
+            let (l, r) = run(
+                &mut bus(&rv, &pc),
+                &mut |i| pad.get(i).copied().unwrap_or(0.0),
+                2.0,
+            );
+            20.0 * l
+                .iter()
+                .chain(&r)
+                .fold(0.0f32, |m, x| m.max(x.abs()))
+                .log10()
+        })
+        .fold(f32::MIN, f32::max)
+}
+
+/// The return gains (`wet_gain`) are set at the starting knobs by the held
+/// pad's loudness; no corner of GATE's or REVERSE's knobs may push the
+/// return more than 1 dB past QUAD's own loudest corner, so a TYPE switch
+/// at any setting neither jumps nor clips past what QUAD already can.
+#[test]
+fn burst_return_is_capped_at_every_corner() {
+    let quad = corner_peak_db(ReverbType::Quad);
+    for t in BURSTS {
+        let peak = corner_peak_db(t);
+        println!("{t:?}: loudest corner {peak:.2} dBFS, QUAD {quad:.2}");
+        assert!(
+            peak <= quad + 1.0,
+            "{t:?} {peak:.2} dBFS over QUAD's {quad:.2}"
+        );
+    }
+}
+
+/// What only BURST plays (which burst, the diffused share, TAIL, REGEN)
+/// reads no knob under another TYPE, so moving one TYPE's knob never
+/// changes what the BURST engine would play, nor the other way round.
+#[test]
+fn burst_knobs_are_inert_under_the_other_types() {
+    use chimera_core::dsp::reverb::Burst;
+    for t in ReverbType::ALL {
+        // QUAD has no row: its knobs are the ring's own.
+        if t == ReverbType::Quad || BURSTS.contains(&t) {
+            continue;
+        }
+        for v in [0.0, 0.3, 1.0] {
+            let mut p = params(t, 1.0);
+            for id in [1, 2, 3, 7, 8, 9, 10, 11, 12, 14] {
+                p.write(ParamId(id), v);
+            }
+            let k = knobs_120(&p);
+            assert_eq!(k.burst, Burst::Gate, "{t:?} at {v}");
+            assert_eq!((k.wet, k.tail, k.regen), (1.0, 0.0, 0.0), "{t:?} at {v}");
+        }
+    }
+}
+
+/// GATE's and REVERSE's knobs are each its own after a switch: leaving one
+/// for the other and back restores every knob it had, whatever the other
+/// was moved to.
+#[test]
+fn a_burst_keeps_its_knobs_across_the_other() {
+    let mut mem = KnobMemory::new();
+    let mut p = params(ReverbType::Gate, 1.0);
+    for id in [1, 3, 7, 8, 9, 10, 11, 12] {
+        p.write(ParamId(id), 0.9);
+    }
+    let gate = p;
+    mem.store(&p);
+    p = p.with_type(ReverbType::Reverse, &mem);
+    for id in [1, 3, 7, 8, 9, 10, 11, 12] {
+        p.write(ParamId(id), 0.1);
+    }
+    mem.store(&p);
+    let back = p.with_type(ReverbType::Gate, &mem);
+    for id in [1, 3, 7, 8, 9, 10, 11, 12] {
+        let id = ParamId(id);
+        assert!((back.get(id) - gate.get(id)).abs() < 1e-4, "{id:?}");
+    }
+}
