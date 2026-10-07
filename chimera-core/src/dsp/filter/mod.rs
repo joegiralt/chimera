@@ -467,16 +467,18 @@ impl Setting {
 enum Change {
     /// TYPE: the old type on its own state, zeroed when the fade ends.
     Kind,
-    /// TYPE between the 2040 and LADDER, which share one state (`Poles`):
+    /// TYPE between the 2040 and LADDER, which share one slot (`Poles`):
     /// the old type on a stack copy, its stages carried.
     Poles,
     /// CLEAN's MODE: the old mode on a stack copy of `Clean`; between two
     /// cascades the copy's stage 2 is carried, since each runs it on its
     /// own input.
     CleanMode { stage2: bool },
-    /// DIRTY's or LADDER's MODE: their states run alike in every mode, so
-    /// a stack copy is exact.
-    SameStates,
+    /// DIRTY's MODE: its states run alike in every mode, so a stack copy
+    /// is exact.
+    DirtyMode,
+    /// LADDER's MODE: one state, five mixes; a stack copy, as DIRTY's.
+    LadderMode,
     /// The 2040's VOICE: the old voice on a stack copy, its states carried.
     Voice,
 }
@@ -491,7 +493,8 @@ impl Change {
             FilterKind::Svf => Change::CleanMode {
                 stage2: clean::cascade(from.mode) && clean::cascade(to.mode),
             },
-            FilterKind::Dirty | FilterKind::Ladder => Change::SameStates,
+            FilterKind::Dirty => Change::DirtyMode,
+            FilterKind::Ladder => Change::LadderMode,
             FilterKind::K2040 => Change::Voice,
         }
     }
@@ -517,54 +520,102 @@ enum Half {
 /// The crossfade's length, in samples: two blocks (spec § 1).
 pub const FADE_SAMPLES: usize = 2 * crate::hw::BLOCK_SIZE;
 
-/// The 2040's and LADDER's one state: four stages and the ramp ends, read
-/// as whichever of the two the filter last ran. ADR 0101's chain holds one
-/// slot, not two; a fade between them runs the old type on a stack copy, its
-/// stages carried, as a VOICE flip does.
-#[derive(Clone, Copy, Debug, Default)]
-struct Poles {
-    s: [f32; 4],
-    last: Option<k2040::Ends>,
+/// The 2040's and LADDER's one slot: whichever of the two the filter last
+/// ran, its states in its own units. ADR 0101's chain holds one slot, not
+/// two (the tag makes it 2,108 B of 2,112). The only way between them is
+/// `hand_to`, which warm-starts the other type; a fade between them runs the
+/// old type on a stack copy, its stages carried, as a VOICE flip does.
+#[derive(Clone, Debug)]
+enum Poles {
+    K2040(K2040),
+    Ladder(Ladder),
+}
+
+impl Default for Poles {
+    fn default() -> Self {
+        Poles::K2040(K2040::new())
+    }
 }
 
 impl Poles {
-    /// `f` on the slot as the 2040.
-    fn k2040<R>(&mut self, f: impl FnOnce(&mut K2040) -> R) -> R {
-        let mut k = K2040::from_parts(self.s, self.last);
-        let r = f(&mut k);
-        (self.s, self.last) = k.parts();
-        r
-    }
-
-    /// `f` on the slot as LADDER.
-    fn ladder<R>(&mut self, f: impl FnOnce(&mut Ladder) -> R) -> R {
-        let mut l = Ladder::from_parts(self.s, self.last);
-        let r = f(&mut l);
-        (self.s, self.last) = l.parts();
-        r
-    }
-
-    fn as_k2040(&self) -> K2040 {
-        K2040::from_parts(self.s, self.last)
-    }
-
-    fn as_ladder(&self) -> Ladder {
-        Ladder::from_parts(self.s, self.last)
-    }
-
-    /// `kind`'s `lp` for a warm start (spec § 1).
-    fn y4(&self, s: Setting, res: f32) -> f32 {
-        match s.kind {
-            FilterKind::Ladder => self.as_ladder().y4(res),
-            _ => self.as_k2040().y4(s.voice, res),
+    /// One block of the type that holds the slot.
+    fn process(
+        &mut self,
+        buf: &mut [f32; crate::hw::BLOCK_SIZE],
+        q: &FilterParams,
+        fs: u32,
+        mods: &FilterMods,
+    ) -> crate::meter::Clip {
+        match self {
+            Poles::K2040(k) => k.process(buf, q, fs, mods),
+            Poles::Ladder(l) => l.process(buf, q, fs, mods),
         }
     }
 
-    /// Warm-started as `s`'s type from `lp`; the ramp ends stay.
-    fn seed(&mut self, s: Setting, lp: f32, res: f32) {
-        match s.kind {
-            FilterKind::Ladder => self.ladder(|l| l.seed(lp, res)),
-            _ => self.k2040(|k| k.seed(lp, s.voice, res)),
+    /// The holder's `lp` for another type's warm start (spec § 1); `voice`
+    /// is the 2040's.
+    fn y4(&self, voice: K2040Voice, res: f32) -> f32 {
+        match self {
+            Poles::K2040(k) => k.y4(voice, res),
+            Poles::Ladder(l) => l.y4(res),
+        }
+    }
+
+    /// The holder's stages and ramp ends.
+    fn parts(&self) -> ([f32; 4], Option<k2040::Ends>) {
+        match self {
+            Poles::K2040(k) => k.parts(),
+            Poles::Ladder(l) => l.parts(),
+        }
+    }
+
+    /// The slot as `to`'s type on `stages`, with this slot's ramp ends: a
+    /// warm start's base, or a fade's old side on its carried stages.
+    fn as_type(&self, to: Setting, stages: [f32; 4]) -> Poles {
+        let last = self.parts().1;
+        match to.kind {
+            FilterKind::Ladder => Poles::Ladder(Ladder::from_parts(stages, last)),
+            _ => Poles::K2040(K2040::from_parts(stages, last)),
+        }
+    }
+
+    /// The slot handed to `to`'s type, warm-started from `lp`; the ramp ends
+    /// stay. Returns the old holder's stages, a fade's carry.
+    fn hand_to(&mut self, to: Setting, lp: f32, res: f32) -> [f32; 4] {
+        let old = self.parts().0;
+        *self = self.as_type(to, [0.0; 4]);
+        match self {
+            Poles::K2040(k) => k.seed(lp, to.voice, res),
+            Poles::Ladder(l) => l.seed(lp, res),
+        }
+        old
+    }
+
+    /// The slot held by `s`'s type: a fresh voice's (the default holds the
+    /// 2040) or a first block's, from rest. A held type is kept; every
+    /// change with a past goes through `hand_to`.
+    fn hold_for(&mut self, s: Setting) {
+        let held = match self {
+            Poles::K2040(_) => FilterKind::K2040,
+            Poles::Ladder(_) => FilterKind::Ladder,
+        };
+        if held != s.kind {
+            *self = self.as_type(s, [0.0; 4]);
+        }
+    }
+
+    /// Still ringing; `voice` is the 2040's.
+    fn rings(&self, voice: K2040Voice) -> bool {
+        match self {
+            Poles::K2040(k) => k.rings(voice),
+            Poles::Ladder(l) => l.rings(),
+        }
+    }
+
+    fn hold(&mut self) {
+        match self {
+            Poles::K2040(k) => k.hold(),
+            Poles::Ladder(l) => l.hold(),
         }
     }
 }
@@ -628,9 +679,11 @@ impl Filter {
     ) -> crate::meter::Clip {
         match s.kind {
             FilterKind::Svf => self.clean.process(buf, q, fs, mods),
-            FilterKind::K2040 => self.poles.k2040(|k| k.process(buf, q, fs, mods)),
+            FilterKind::K2040 | FilterKind::Ladder => {
+                self.poles.hold_for(s);
+                self.poles.process(buf, q, fs, mods)
+            }
             FilterKind::Dirty => self.dirty.process(buf, q, fs, mods),
-            FilterKind::Ladder => self.poles.ladder(|l| l.process(buf, q, fs, mods)),
         }
     }
 
@@ -642,7 +695,7 @@ impl Filter {
             Change::Kind => {
                 let (lp, bp) = match from.kind {
                     FilterKind::Svf => self.clean.outputs(from.mode),
-                    FilterKind::K2040 | FilterKind::Ladder => (self.poles.y4(from, res), 0.0),
+                    FilterKind::K2040 | FilterKind::Ladder => (self.poles.y4(from.voice, res), 0.0),
                     FilterKind::Dirty => self.dirty.outputs(),
                 };
                 match to.kind {
@@ -650,14 +703,15 @@ impl Filter {
                         self.clean.seed(lp, bp);
                         self.clean.enter(to.mode);
                     }
-                    FilterKind::K2040 | FilterKind::Ladder => self.poles.seed(to, lp, res),
+                    FilterKind::K2040 | FilterKind::Ladder => {
+                        self.poles.hand_to(to, lp, res);
+                    }
                     FilterKind::Dirty => self.dirty.seed(lp, bp),
                 }
             }
             Change::Poles => {
-                carry = self.poles.s;
-                let lp = self.poles.y4(from, res);
-                self.poles.seed(to, lp, res);
+                let lp = self.poles.y4(from.voice, res);
+                carry = self.poles.hand_to(to, lp, res);
             }
             Change::CleanMode { stage2 } => {
                 if stage2 {
@@ -666,10 +720,12 @@ impl Filter {
                 }
                 self.clean.shift(from.mode, to.mode);
             }
-            Change::SameStates => {}
+            Change::DirtyMode | Change::LadderMode => {}
             Change::Voice => {
-                carry = self.poles.s;
-                self.poles.k2040(|k| k.rescale(from.voice, to.voice));
+                carry = self.poles.parts().0;
+                if let Poles::K2040(k) = &mut self.poles {
+                    k.rescale(from.voice, to.voice);
+                }
             }
         }
         self.fade = Some(Fade {
@@ -706,22 +762,17 @@ impl Filter {
                 c.process(&mut old, &po, fs, mods);
                 copy = Some(c);
             }
-            Change::SameStates => match to.kind {
-                FilterKind::Ladder => {
-                    self.poles.as_ladder().process(&mut old, &po, fs, mods);
-                }
-                _ => {
-                    self.dirty.clone().process(&mut old, &po, fs, mods);
-                }
-            },
+            Change::DirtyMode => {
+                self.dirty.clone().process(&mut old, &po, fs, mods);
+            }
+            Change::LadderMode => {
+                self.poles.clone().process(&mut old, &po, fs, mods);
+            }
             // The old side's stages carried; its ramp ends are the slot's.
             Change::Voice | Change::Poles => {
-                let mut c = Poles {
-                    s: f.carry,
-                    last: self.poles.last,
-                };
-                c.run_as(f.from, &mut old, &po, fs, mods);
-                f.carry = c.s;
+                let mut c = self.poles.as_type(f.from, f.carry);
+                c.process(&mut old, &po, fs, mods);
+                f.carry = c.parts().0;
             }
         }
         let clip = self.run(to, buf, &q, fs, mods);
@@ -769,7 +820,7 @@ impl Filter {
     /// Forget the ramps: the next block starts unramped.
     pub fn hold(&mut self) {
         self.clean.hold();
-        self.poles.last = None;
+        self.poles.hold();
         self.dirty.hold();
     }
 
@@ -786,9 +837,8 @@ impl Filter {
         match self.last {
             Some(s) => match s.kind {
                 FilterKind::Svf => self.clean.rings(),
-                FilterKind::K2040 => self.poles.as_k2040().rings(s.voice),
+                FilterKind::K2040 | FilterKind::Ladder => self.poles.rings(s.voice),
                 FilterKind::Dirty => self.dirty.rings(),
-                FilterKind::Ladder => self.poles.as_ladder().rings(),
             },
             None => false,
         }
@@ -808,27 +858,10 @@ impl Filter {
     #[cfg(test)]
     pub(crate) fn last_g(&self) -> Option<f32> {
         match self.last.map(|s| s.kind) {
-            Some(FilterKind::K2040 | FilterKind::Ladder) => self.poles.last.map(|e| e.g),
+            Some(FilterKind::K2040 | FilterKind::Ladder) => self.poles.parts().1.map(|e| e.g),
             Some(FilterKind::Dirty) => self.dirty.last_f(),
             _ => self.clean.last_g(),
         }
-    }
-}
-
-impl Poles {
-    /// One block of `s`'s four-pole type on this slot.
-    fn run_as(
-        &mut self,
-        s: Setting,
-        buf: &mut [f32; crate::hw::BLOCK_SIZE],
-        q: &FilterParams,
-        fs: u32,
-        mods: &FilterMods,
-    ) {
-        match s.kind {
-            FilterKind::Ladder => self.ladder(|l| l.process(buf, q, fs, mods)),
-            _ => self.k2040(|k| k.process(buf, q, fs, mods)),
-        };
     }
 }
 
@@ -872,19 +905,23 @@ mod tests {
                             f.fade
                                 .is_some_and(|d| d.carry.iter().any(|s| s.abs() > 1e-5))
                         }
-                        FilterKind::K2040 => f.poles.as_k2040().rings(p.voice),
+                        FilterKind::K2040 | FilterKind::Ladder => f.poles.rings(p.voice),
                         FilterKind::Dirty => f.dirty.rings(),
-                        FilterKind::Ladder => f.poles.as_ladder().rings(),
                     });
                 }
             }
             let (rings, ramped) = match from {
                 FilterKind::Svf => (f.clean.rings(), f.clean.last_g().is_some()),
-                // The slot passed to LADDER, which holds it: nothing to zero.
-                FilterKind::K2040 if to == FilterKind::Ladder => (f.fade.is_some(), false),
-                FilterKind::K2040 => (f.poles.as_k2040().rings(p.voice), f.poles.last.is_some()),
+                // The slot passed to LADDER, which holds it and rings; the
+                // 2040's carry is gone with the fade.
+                FilterKind::K2040 if to == FilterKind::Ladder => {
+                    let held = matches!(f.poles, Poles::Ladder(_)) && f.poles.rings(p.voice);
+                    (f.fade.is_some() || !held, false)
+                }
+                FilterKind::K2040 | FilterKind::Ladder => {
+                    (f.poles.rings(p.voice), f.poles.parts().1.is_some())
+                }
                 FilterKind::Dirty => (f.dirty.rings(), f.dirty.last_f().is_some()),
-                FilterKind::Ladder => (f.poles.as_ladder().rings(), f.poles.last.is_some()),
             };
             assert!(!rings && !ramped, "{from:?} → {to:?}");
             assert!(f.rings(), "{to:?} runs");
