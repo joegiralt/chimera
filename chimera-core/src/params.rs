@@ -644,6 +644,8 @@ pub enum EngineType {
     #[default]
     Algo = 0,
     Modal = 1,
+    /// The sample engine (ADR 0093): `dsp::tape_engine`.
+    Tape = 2,
 }
 
 impl DiskCode for EngineType {
@@ -651,6 +653,7 @@ impl DiskCode for EngineType {
         match self {
             EngineType::Algo => 0,
             EngineType::Modal => 1,
+            EngineType::Tape => 2,
         }
     }
 
@@ -658,6 +661,7 @@ impl DiskCode for EngineType {
         match self {
             EngineType::Algo => "ALGO",
             EngineType::Modal => "MODAL",
+            EngineType::Tape => "TAPE",
         }
     }
 
@@ -665,6 +669,7 @@ impl DiskCode for EngineType {
         match c {
             0 => Some(EngineType::Algo),
             1 => Some(EngineType::Modal),
+            2 => Some(EngineType::Tape),
             _ => None,
         }
     }
@@ -673,13 +678,14 @@ impl DiskCode for EngineType {
 impl EngineType {
     /// Every engine. Tests iterate this; see `engines_test.rs` for the
     /// exhaustive-match guard that makes a new variant a compile error there.
-    pub const ALL: [EngineType; 2] = [EngineType::Algo, EngineType::Modal];
+    pub const ALL: [EngineType; 3] = [EngineType::Algo, EngineType::Modal, EngineType::Tape];
 
     /// Short display label for the engine and its chain.
     pub fn label(self) -> &'static str {
         match self {
             EngineType::Algo => "Algo",
             EngineType::Modal => "Modal",
+            EngineType::Tape => "Tape",
         }
     }
 }
@@ -801,6 +807,63 @@ impl DiskCode for Steal {
     }
 }
 
+/// How PITCH's cell steps (spec § 2 Machines; CHOMPI's varispeed steps,
+/// ideas only, ADR 0093): by semitones, or MUSICAL by fifths and fourths,
+/// two clicks an octave. Every engine; the step only, never the sound.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Snap {
+    #[default]
+    Chromatic,
+    Musical,
+}
+
+/// On screen: CHROMATIC doesn't fit the focus band.
+pub const SNAP_NAMES: [&str; 2] = ["CHROMA", "MUSICAL"];
+
+impl DiskCode for Snap {
+    fn disk_code(self) -> u8 {
+        match self {
+            Snap::Chromatic => 0,
+            Snap::Musical => 1,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            Snap::Chromatic => "CHROMATIC",
+            Snap::Musical => "MUSICAL",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(Snap::Chromatic),
+            1 => Some(Snap::Musical),
+            _ => None,
+        }
+    }
+}
+
+/// MUSICAL's ladder, semitones: a fifth, a fourth, a fifth, a fourth.
+pub const MUSICAL_LADDER: [f32; 9] = [-24.0, -19.0, -12.0, -7.0, 0.0, 7.0, 12.0, 19.0, 24.0];
+
+/// One MUSICAL click from `st` up (`dir` > 0) or down: the next rung past
+/// it, so a value off the ladder steps to its neighbour; at an end, the
+/// end.
+pub fn musical_step(st: f32, dir: i8) -> f32 {
+    if dir > 0 {
+        MUSICAL_LADDER.into_iter().find(|&r| r > st).unwrap_or(24.0)
+    } else if dir < 0 {
+        MUSICAL_LADDER
+            .into_iter()
+            .rev()
+            .find(|&r| r < st)
+            .unwrap_or(-24.0)
+    } else {
+        st
+    }
+}
+
 /// The voice's pitch (ADR 0042): its offset, one block for every engine,
 /// so a route to it survives an engine switch; and how a steal moves it
 /// (#254).
@@ -813,6 +876,7 @@ pub struct PitchParams {
     pub steal: Steal,
     /// GLIDE TIME's slider position, 0..1 on `law::GLIDE_TIME`.
     pub glide_time: f32,
+    pub snap: Snap,
 }
 
 /// GLIDE TIME's position at 150 ms.
@@ -825,6 +889,7 @@ impl Default for PitchParams {
             fine: 0.0,
             steal: Steal::Cut,
             glide_time: INIT_GLIDE_TIME,
+            snap: Snap::Chromatic,
         }
     }
 }
@@ -834,6 +899,7 @@ impl PitchParams {
     pub const FINE: ParamId = ParamId(1);
     pub const STEAL: ParamId = ParamId(2);
     pub const GLIDE_TIME: ParamId = ParamId(3);
+    pub const SNAP: ParamId = ParamId(4);
 
     /// The whole offset in semitones.
     pub fn semitones(&self) -> f32 {
@@ -865,7 +931,7 @@ impl PitchParams {
 
 /// PITCH and FINE read by the engine every block; STEAL and GLIDE TIME at
 /// a steal.
-pub static PITCH_SPECS: [ParamSpec; 4] = [
+pub static PITCH_SPECS: [ParamSpec; 5] = [
     ParamSpec::stepped(0, "PITCH", ValFmt::Signed(24), -24.0, 24.0, 0.0, true)
         .ident("PITCH")
         .semitones(24.0),
@@ -886,6 +952,9 @@ pub static PITCH_SPECS: [ParamSpec; 4] = [
         false,
     )
     .ident("GLIDE_TIME"),
+    ParamSpec::choice(4, "SNAP", ValFmt::Names(&SNAP_NAMES), 1.0, 0.0)
+        .ident("SNAP")
+        .glyph(crate::ui::glyph::FocusGlyph::None),
 ];
 
 impl Block for PitchParams {
@@ -899,6 +968,7 @@ impl Block for PitchParams {
             Self::FINE => self.fine,
             Self::STEAL => self.steal as u8 as f32,
             Self::GLIDE_TIME => self.glide_time,
+            Self::SNAP => self.snap as u8 as f32,
             _ => 0.0,
         }
     }
@@ -909,20 +979,53 @@ impl Block for PitchParams {
             Self::FINE => self.fine = v,
             Self::STEAL => self.steal = if v >= 0.5 { Steal::Glide } else { Steal::Cut },
             Self::GLIDE_TIME => self.glide_time = v,
+            Self::SNAP => {
+                self.snap = if v >= 0.5 {
+                    Snap::Musical
+                } else {
+                    Snap::Chromatic
+                }
+            }
             _ => {}
         }
     }
 
+    /// PITCH under MUSICAL steps the ladder (`musical_step`), a rung a
+    /// tick; everything else steps by its spec.
+    fn nudge(&mut self, id: ParamId, delta: i8) {
+        if id == Self::PITCH && self.snap == Snap::Musical {
+            let mut st = self.pitch;
+            for _ in 0..delta.unsigned_abs() {
+                st = musical_step(st, delta.signum());
+            }
+            self.set(id, st);
+        } else if let Some(s) = self.spec(id) {
+            self.set(id, self.get(id) + delta as f32 * s.step);
+        }
+    }
+
     fn enum_code(&self, id: ParamId) -> Option<u8> {
-        (id == Self::STEAL).then(|| self.steal.disk_code())
+        match id {
+            Self::STEAL => Some(self.steal.disk_code()),
+            Self::SNAP => Some(self.snap.disk_code()),
+            _ => None,
+        }
     }
 
     fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
-        (id == Self::STEAL).then(|| self.steal.disk_ident())
+        match id {
+            Self::STEAL => Some(self.steal.disk_ident()),
+            Self::SNAP => Some(self.snap.disk_ident()),
+            _ => None,
+        }
     }
 
     fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
-        id == Self::STEAL && apply_code(Steal::from_disk_code(code), |s| self.steal = s)
+        match id {
+            Self::STEAL => apply_code(Steal::from_disk_code(code), |s| self.steal = s),
+            Self::SNAP => apply_code(Snap::from_disk_code(code), |s| self.snap = s),
+            _ => false,
+        }
     }
 }
 
@@ -937,6 +1040,7 @@ pub struct ParamSnapshot {
     pub envelopes: [EnvParams; 3],
     pub algo: crate::dsp::algo::params::AlgoParams,
     pub modal: crate::dsp::modal::ModalParams,
+    pub tape: crate::dsp::tape_engine::TapeEngineParams,
     pub lfos: [crate::dsp::lfo::LfoParams; 3],
     pub out: OutParams,
     pub pitch: PitchParams,
@@ -970,6 +1074,7 @@ impl BlockRead for ParamSnapshot {
     fn block(&self, b: BlockRef) -> Option<&dyn Block> {
         Some(match b {
             BlockRef::Modal => &self.modal,
+            BlockRef::TapeEngine => &self.tape,
             BlockRef::Algo => &self.algo,
             BlockRef::AlgoOp(op) => &self.algo.ops[op.index()],
             BlockRef::Drive => &self.drive,
@@ -999,6 +1104,7 @@ impl Blocks for ParamSnapshot {
     fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
         Some(match b {
             BlockRef::Modal => &mut self.modal,
+            BlockRef::TapeEngine => &mut self.tape,
             BlockRef::Algo => &mut self.algo,
             BlockRef::AlgoOp(op) => &mut self.algo.ops[op.index()],
             BlockRef::Drive => &mut self.drive,
@@ -1044,6 +1150,7 @@ impl Default for ParamSnapshot {
             ],
             algo: crate::dsp::algo::params::AlgoParams::default(),
             modal: crate::dsp::modal::ModalParams::default(),
+            tape: crate::dsp::tape_engine::TapeEngineParams::default(),
             lfos: [crate::dsp::lfo::LfoParams::default(); 3],
             out: OutParams::default(),
             pitch: PitchParams::default(),

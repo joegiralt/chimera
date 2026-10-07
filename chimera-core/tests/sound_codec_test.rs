@@ -561,8 +561,10 @@ fn sparse_sizes() {
     // three fixed-FREQ routes), and 70 B for the values INIT moved off
     // neutral (ADR 0063): RR on six operators and OUT LEVEL, a one-param
     // block each.
+    // TAPE's INIT routes ENV 1 into VCA: one fixed-column route more, 4 B.
     for e in EngineType::ALL {
-        assert_eq!(cost(&encode(&Sound::init(e))), 46 + 7 * 10, "{e:?}");
+        let vca = if e == EngineType::Tape { 4 } else { 0 };
+        assert_eq!(cost(&encode(&Sound::init(e))), 46 + 7 * 10 + vca, "{e:?}");
     }
 }
 
@@ -619,18 +621,24 @@ fn worst(e: EngineType) -> (Sound, usize) {
             s.params.taps.set(op, c, 1);
         }
     }
-    s.source = Some(chimera_core::project::SourceRef {
-        crc: 0xC401_0001,
-        frames: 27_900,
-        rate: 24_000,
+    let tune = chimera_core::storage::ZoneTune::new(&[(6_000, 1 << 16); 24]);
+    assert!(tune.is_some());
+    s.source = Some(chimera_core::storage::TapeSource {
+        r: chimera_core::project::SourceRef {
+            crc: 0xC401_0001,
+            frames: 27_900,
+            rate: 24_000,
+        },
+        tune,
     });
     (s, stuck)
 }
 
-/// 16 + 5 (`Engine`) + 19 × 5 (block heads) + 208 × 5 (params) + 164
+/// 16 + 5 (`Engine`) + 20 × 5 (block heads) + 224 × 5 (params) + 164
 /// (`Registry`) + 37 (`ModDests`) + 644 (`Routes`, the fixed columns'
-/// among them) + 36 (`TapRoutes`) + 14 (`SourceRef`) = 2 051 B, less 5 B
-/// for each param that has nowhere to move. A new param moves it: raise
+/// among them) + 36 (`TapRoutes`) + 14 (`SourceRef`) + 148 (`ZoneTune`,
+/// 24 zones) = 2 284 B, less 5 B for each param that has nowhere to move.
+/// A new param moves it: raise
 /// `MAX_SOUND_COST` with it.
 #[test]
 fn sparse_bound() {
@@ -642,6 +650,6 @@ fn sparse_bound() {
         assert!(c <= MAX_SOUND_COST, "{e:?} {c}");
         most = most.max(c + 5 * stuck);
     }
-    assert_eq!(most, 2051);
+    assert_eq!(most, 2284);
     assert_eq!(MAX_SOUND_COST, most.next_multiple_of(16));
 }

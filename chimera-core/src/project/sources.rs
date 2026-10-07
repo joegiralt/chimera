@@ -30,6 +30,18 @@ pub use crate::storage::SourceRef;
 /// A source's head in the arena, before its held bytes.
 pub const SOURCE_HEAD: usize = 16;
 
+/// Why a source the pool keeps by ref holds no bytes (#372): what its
+/// SOURCE cell says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Absence {
+    /// On the card, but it didn't fit, or its file is damaged.
+    Missing,
+    /// No file for it in `/CHIMERA/TAPES`.
+    NotOnCard,
+    /// The card faulted reading it, or before its turn came.
+    ReadFailed,
+}
+
 /// A pool source: its ref and how many of its bytes the arena holds. An
 /// absent one (its card file missing) holds none and costs nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,9 +62,10 @@ impl SourceEntry {
     }
 }
 
-/// What source `r` takes held whole; `None` when it could never fit.
-pub(super) fn ref_cost(r: SourceRef) -> Option<Cost> {
-    crate::storage::held_len(r)
+/// What source `r` with `zones` zones (`listed_zones`, 0 for a whole
+/// source) takes held whole; `None` when it could never fit.
+pub(super) fn ref_cost(r: SourceRef, zones: u8) -> Option<Cost> {
+    crate::storage::held_len_zoned(r, zones)
         .filter(|&n| n <= super::arena::ARENA_BYTES)
         .map(source_cost)
 }
@@ -101,7 +114,7 @@ pub fn source_users(p: &Project, s: SourceId) -> Users {
     };
     let mut u = Users::default();
     for part in PartId::ALL {
-        if p.part(part).sound.source == Some(e.r) {
+        if p.part(part).sound.source_ref() == Some(e.r) {
             u.parts = u.parts.with(part);
         }
     }
@@ -190,6 +203,36 @@ impl Project {
         self.pool.source_store(r, held)
     }
 
+    /// Stores source `r`, its `len` held bytes written by `fill` straight
+    /// into the arena, with no copy (the bench's synthetic sources). `None`
+    /// when it doesn't fit, or `r` is already held.
+    pub fn source_write(
+        &mut self,
+        r: SourceRef,
+        len: usize,
+        fill: impl FnOnce(&mut [u8]),
+    ) -> Option<SourceId> {
+        self.bump();
+        let s = self.pool.source_absent(r)?;
+        let fill = |b: &mut [u8]| {
+            fill(&mut b[..len]);
+            Some(len)
+        };
+        self.pool.source_fill(s, len, fill).ok()?.then_some(s)
+    }
+
+    /// A card-row load's staging (`Pool::source_staging`): nothing moves,
+    /// nothing is published, so the meter and the gap stay as they were.
+    pub fn source_staging(&mut self, len: usize) -> Option<(u32, &mut [u8])> {
+        self.pool.source_staging(len)
+    }
+
+    /// The staged bytes published as source `r` (`Pool::source_commit`).
+    pub fn source_commit(&mut self, r: SourceRef, len: usize) -> Result<SourceId, super::PoolFull> {
+        self.bump();
+        self.pool.source_commit(r, len)
+    }
+
     /// Source `r` as an absent entry, costing nothing.
     pub fn source_absent(&mut self, r: SourceRef) -> Option<SourceId> {
         self.bump();
@@ -207,10 +250,8 @@ impl Project {
         moved
     }
 
-    /// `sources_pass`, waiting for the audio while `within` says so. Tests
-    /// only.
-    #[cfg(any(test, feature = "test-support"))]
-    #[doc(hidden)]
+    /// `sources_pass`, waiting for the audio while `within` says so: tests,
+    /// and the bench, which answers the gate itself.
     pub fn sources_pass_with(&mut self, within: impl FnMut() -> bool) -> bool {
         let moved = self.pool.source_pass(within);
         if moved {

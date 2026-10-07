@@ -11,14 +11,21 @@ use crate::dsp::modal::{self, ModalParams, ResonatorMode};
 use crate::dsp::modulator::{
     EnvForm, EnvSlot, EnvSpeed, EnvType, Func, FuncMode, LfoForm, LfoSlot, LfoType, pick,
 };
+use crate::dsp::tape_engine::machine::{self, Cell};
+use crate::dsp::tape_engine::{self, TapeEngineParams as T, TapeModel, wave};
 use crate::modulation::VCA;
+use crate::name::SoundName;
 use crate::orbit::RingIdx;
 use crate::orbit::clock::ClockSource;
 use crate::orbit::scene::SceneRing;
 use crate::params::{EnvParams, FilterParams, OutParams};
 use crate::preset::Sound;
-use crate::ui::block_def::{BlockDef, SlotBinding};
+use crate::project::arena::Cost;
+use crate::project::{Absence, Pool};
+use crate::storage::SourceRef;
+use crate::ui::block_def::{BlockDef, MachineSlot, SlotBinding};
 use crate::ui::filter_panel::{self, PanelKnob, PanelTarget, RouteView};
+use crate::ui::fmt::FmtBuf;
 use crate::ui::glyph::FocusGlyph;
 use crate::ui::hint::{self, Gesture, Hint};
 use crate::ui::mod_panel::{self, PanelSlot};
@@ -58,6 +65,12 @@ pub struct SlotCtx {
     pub lfos: [LfoKind; 3],
     /// MODEL: which cells MDL2 shows.
     pub model: ResonatorMode,
+    /// TAPE's machine: its labels and its model page's cells.
+    pub tape: TapeModel,
+    /// TAPE's PERIOD is 0: an unpitched source plays MONO as POLY.
+    pub unpitched: bool,
+    /// TAPE's SOURCE as SRC reads it.
+    pub src: SourceState,
     /// The ORBIT ring the location selects: what `SelectedRing` edits.
     pub ring: RingIdx,
     /// ORBIT's clock: BPM is inert while MIDI leads.
@@ -86,8 +99,24 @@ impl SlotCtx {
                 }
             }),
             model: ResonatorMode::from_u8(get(BlockRef::Modal, ModalParams::MODE) as u8),
+            tape: TapeModel::from_index(get(BlockRef::TapeEngine, T::MODEL) as u8),
+            unpitched: get(BlockRef::TapeEngine, T::PERIOD) == 0.0,
+            src: SourceState::None,
             ring: RingIdx::ALL[0],
             clock: ClockSource::Internal,
+        }
+    }
+
+    /// This context with SOURCE read as `src`.
+    pub fn on_source(self, src: SourceState) -> Self {
+        Self { src, ..self }
+    }
+
+    /// The models a page's name follows.
+    pub fn models(&self) -> Models {
+        Models {
+            modal: self.model,
+            tape: self.tape,
         }
     }
 
@@ -100,6 +129,199 @@ impl SlotCtx {
     pub fn on_clock(self, clock: ClockSource) -> Self {
         Self { clock, ..self }
     }
+}
+
+/// The engines' models a page's name follows: MDL2 MODAL's, the model
+/// page TAPE's machine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Models {
+    pub modal: ResonatorMode,
+    pub tape: TapeModel,
+}
+
+impl Default for Models {
+    fn default() -> Self {
+        ResonatorMode::from_u8(0).into()
+    }
+}
+
+impl From<ResonatorMode> for Models {
+    fn from(modal: ResonatorMode) -> Self {
+        Models {
+            modal,
+            tape: TapeModel::Loop,
+        }
+    }
+}
+
+/// TAPE's SOURCE as SRC reads it (spec § 2 refusal, § 3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SourceState {
+    /// None picked.
+    None,
+    /// Picked, and the pool keeps its ref without its bytes, for this
+    /// reason (#372).
+    Absent(Absence),
+    /// TRANSWAVE on a source that isn't one.
+    NotTranswave,
+    /// TRON on a zone set (the streamed TRON's).
+    ZonesOnTron,
+    Held {
+        rate: u16,
+        frames: u32,
+        cost: Cost,
+        name: Option<SoundName>,
+    },
+    /// The cell on a card row, not loaded: its head once read (`None`, its
+    /// stem stands in), its cost, and the pool's free bytes.
+    Card {
+        stem: u32,
+        head: Option<(SoundName, u16, u32)>,
+        cost: Cost,
+        free: Cost,
+    },
+    /// A card read failed: until the next input.
+    Failed(&'static str),
+}
+
+impl SourceState {
+    /// What a note-on on `model` finds for `r` in `pool`.
+    pub fn of(model: TapeModel, r: Option<SourceRef>, pool: &Pool) -> Self {
+        let Some(r) = r else {
+            return SourceState::None;
+        };
+        let Some(id) = pool.find_source(r) else {
+            return SourceState::Absent(Absence::Missing);
+        };
+        if let Some(why) = pool.absence(id) {
+            return SourceState::Absent(why);
+        }
+        match pool.source_view(r) {
+            Some(v) if wave::playable(model, &v) => SourceState::Held {
+                rate: r.rate,
+                frames: r.frames,
+                cost: pool.source(id).map_or(Cost::default(), |e| e.cost()),
+                name: None,
+            },
+            Some(_) if model == TapeModel::Transwave => SourceState::NotTranswave,
+            _ => SourceState::ZonesOnTron,
+        }
+    }
+
+    /// A held source's name, once its head is known.
+    pub fn named(self, n: Option<SoundName>) -> Self {
+        match self {
+            SourceState::Held {
+                rate, frames, cost, ..
+            } => SourceState::Held {
+                rate,
+                frames,
+                cost,
+                name: n,
+            },
+            s => s,
+        }
+    }
+
+    /// The focus band's: `CHOIR · 24K · 1.5 S · 41K`, or why it won't play.
+    pub fn text(self, buf: &mut FmtBuf) {
+        use core::fmt::Write;
+        let tail =
+            |buf: &mut FmtBuf, name: Option<SoundName>, rf: Option<(u16, u32)>, cost: Cost| {
+                if let Some(n) = name {
+                    let _ = write!(buf, "{} · ", n.as_str());
+                }
+                if let Some((rate, frames)) = rf {
+                    let _ = write!(buf, "{}K · ", rate / 1000);
+                    seconds(buf, rate, frames);
+                    let _ = buf.write_str(" · ");
+                }
+                let _ = buf.write_str(cost.kib_label().as_str());
+            };
+        match self {
+            SourceState::Held {
+                rate,
+                frames,
+                cost,
+                name,
+            } => tail(buf, name, Some((rate, frames)), cost),
+            SourceState::Card {
+                stem,
+                head: None,
+                cost,
+                ..
+            } => {
+                let _ = write!(buf, "{stem:08X} · ");
+                tail(buf, None, None, cost)
+            }
+            SourceState::Card {
+                head: Some((n, rate, frames)),
+                cost,
+                ..
+            } => tail(buf, Some(n), Some((rate, frames)), cost),
+            s => {
+                let _ = buf.write_str(s.why());
+            }
+        }
+    }
+
+    /// Why it won't play, the band's words.
+    fn why(self) -> &'static str {
+        use crate::ui::source_cell::{NOT_ON_CARD, READ_FAILED, SOURCE_MISSING};
+        match self {
+            SourceState::Absent(Absence::Missing) => SOURCE_MISSING,
+            SourceState::Absent(Absence::NotOnCard) => NOT_ON_CARD,
+            SourceState::Absent(Absence::ReadFailed) => READ_FAILED,
+            SourceState::NotTranswave => "NOT A TRANSWAVE",
+            SourceState::ZonesOnTron => "ZONES: NOT TRON",
+            SourceState::Failed(w) => w,
+            _ => "NONE",
+        }
+    }
+
+    /// The cell's, short enough for its column: `1.5 S`, `MISSING`, a card
+    /// row's cost.
+    pub fn cell(self, buf: &mut FmtBuf) {
+        use core::fmt::Write;
+        let _ = match self {
+            SourceState::None => buf.write_str("NONE"),
+            SourceState::Absent(Absence::Missing) => buf.write_str("MISSING"),
+            SourceState::Absent(Absence::NotOnCard) => buf.write_str("NO FILE"),
+            SourceState::Absent(Absence::ReadFailed) | SourceState::Failed(_) => {
+                buf.write_str("ERROR")
+            }
+            SourceState::NotTranswave => buf.write_str("NO WAVE"),
+            SourceState::ZonesOnTron => buf.write_str("ZONES"),
+            SourceState::Held { rate, frames, .. } => {
+                seconds(buf, rate, frames);
+                Ok(())
+            }
+            SourceState::Card { cost, .. } => buf.write_str(cost.kib_label().as_str()),
+        };
+    }
+
+    /// What the focus band and the cell are keyed on: their text, and
+    /// whether a card row fits.
+    pub fn key(self) -> u32 {
+        let (mut b, mut c) = (FmtBuf::new(), FmtBuf::new());
+        self.text(&mut b);
+        self.cell(&mut c);
+        let fits = matches!(self, SourceState::Card { cost, free, .. } if cost <= free);
+        b.as_str()
+            .bytes()
+            .chain(c.as_str().bytes())
+            .fold(0x811C_9DC5_u32 ^ fits as u32, |h, x| {
+                (h ^ u32::from(x)).wrapping_mul(0x0100_0193)
+            })
+    }
+}
+
+/// `frames` at `rate` in seconds, to a tenth: `1.5 S`.
+fn seconds(buf: &mut FmtBuf, rate: u16, frames: u32) {
+    use core::fmt::Write;
+    let rate = u64::from(rate.max(1));
+    let tenths = (u64::from(frames) * 10 + rate / 2) / rate;
+    let _ = write!(buf, "{}.{} S", tenths / 10, tenths % 10);
 }
 
 /// A slot, resolved.
@@ -130,6 +352,8 @@ pub enum View {
     },
     /// One of ORBIT's own cells: its text is `orbit::draw::cell_text`.
     Orbit(OrbitCell),
+    /// TAPE's SOURCE (`SourceState::text`).
+    Source(SourceState),
 }
 
 impl View {
@@ -138,6 +362,7 @@ impl View {
             View::Empty => "--",
             View::SelectOp => "OP",
             View::Orbit(c) => c.label(),
+            View::Source(_) => "SOURCE",
             View::Legacy { label, .. }
             | View::Param { label, .. }
             | View::Route { label, .. }
@@ -159,6 +384,8 @@ impl View {
     pub fn fmt(&self) -> ValFmt {
         match *self {
             View::Empty | View::Text { .. } => ValFmt::Uni,
+            // A readout, not a dial: no bar.
+            View::Source(_) => ValFmt::Names(&[]),
             View::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
             View::Legacy { fmt, .. } | View::Param { fmt, .. } => fmt,
             View::Route { route, .. } => route.fmt(),
@@ -166,8 +393,11 @@ impl View {
         }
     }
 
-    /// The focus glyph: the param's spec's, else ARC.
+    /// The focus glyph: the param's spec's, else ARC; SOURCE none.
     pub fn glyph(&self) -> FocusGlyph {
+        if let View::Source(_) = self {
+            return FocusGlyph::None;
+        }
         self.addr()
             .and_then(|a| a.spec())
             .map_or(FocusGlyph::Arc, |s| s.glyph)
@@ -278,7 +508,35 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
                 _ => View::Empty,
             }
         }
+        SlotBinding::Machine(at) => machine_view(at, ctx),
+        SlotBinding::Source => View::Source(ctx.src),
     }
+}
+
+/// A TAPE cell on the Sound's machine: its label, or the param's own,
+/// dimmed by `tape_engine::reads`, where the machine ignores it.
+fn machine_view(at: MachineSlot, ctx: &SlotCtx) -> View {
+    let k = machine::machine(ctx.tape);
+    let (id, cell): (_, Option<&Cell>) = match at {
+        MachineSlot::Position => (T::POSITION, k.deck[0].as_ref()),
+        MachineSlot::Motion => (T::MOTION, k.deck[1].as_ref()),
+        MachineSlot::Page(i) => match k.cells.get(usize::from(i)) {
+            Some(c) => (c.id, Some(c)),
+            None => return View::Empty,
+        },
+    };
+    let addr = ParamAddr::new(BlockRef::TapeEngine, id);
+    let Some(spec) = addr.spec() else {
+        return View::Empty;
+    };
+    let label = cell.map_or(spec.label, |c| c.label);
+    if id == T::TYPE && ctx.unpitched {
+        return View::Text {
+            label,
+            text: "POLY (UNPITCHED)",
+        };
+    }
+    param(addr, label, spec.fmt)
 }
 
 /// Cell `k` of a modulator panel, its params in `block`.
@@ -304,6 +562,8 @@ pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
         (BlockRef::Algo, AlgoParams::MORPH) => sound.params.algo.alg_a == sound.params.algo.alg_b,
         // What MODEL ignores (spec § 1 Dimming).
         (BlockRef::Modal, id) => !modal::reads(sound.params.modal.mode, id),
+        // What the machine ignores (spec § 3).
+        (BlockRef::TapeEngine, id) => !tape_engine::reads(sound.params.tape.model, id),
         _ => false,
     }
 }

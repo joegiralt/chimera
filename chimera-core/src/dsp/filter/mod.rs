@@ -11,7 +11,7 @@ pub mod coef;
 pub mod dirty;
 pub mod k2040;
 pub mod level;
-#[cfg(any(test, feature = "probe"))]
+#[cfg(any(test, feature = "probe", feature = "filter-probe"))]
 pub mod probe;
 
 pub use clean::Clean;
@@ -200,11 +200,11 @@ impl FilterKind {
         }
     }
 
-    /// The TYPE a new Sound on `e` starts with. TAPE (CLEAN) and VA (2040)
-    /// add their arms when those engines land.
+    /// The TYPE a new Sound on `e` starts with. VA (2040) adds its arm when
+    /// that engine lands.
     pub const fn default_for(e: EngineType) -> FilterKind {
         match e {
-            EngineType::Algo | EngineType::Modal => FilterKind::Svf,
+            EngineType::Algo | EngineType::Modal | EngineType::Tape => FilterKind::Svf,
         }
     }
 

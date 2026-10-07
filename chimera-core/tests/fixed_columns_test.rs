@@ -184,9 +184,16 @@ fn init_routes_live_in_fixed_freq() {
             .iter()
             .fold(0u8, |b, s| b | 1 << s.index());
         assert_eq!(m.fixed_present(FixedCol::Freq), want, "{e:?}");
-        for c in [FixedCol::Q, FixedCol::Vca, FixedCol::Fold] {
+        for c in [FixedCol::Q, FixedCol::Fold] {
             assert_eq!(m.fixed_present(c), 0);
         }
+        // TAPE's loop has no end: ENV 1 into VCA ends its note.
+        let vca = if e == EngineType::Tape {
+            1 << ModSource::Env1.index()
+        } else {
+            0
+        };
+        assert_eq!(m.fixed_present(FixedCol::Vca), vca, "{e:?}");
         assert_eq!(s.dest_registry.len(), 0);
         assert_eq!(m.num_dests(), 0);
     }

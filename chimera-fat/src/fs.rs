@@ -129,31 +129,55 @@ impl<'a, B: Blocks> Fs<'a, B> {
         file: FileName,
         sink: &mut dyn ReadSink,
     ) -> Result<(), FsError<B::Error>> {
+        self.read_at(file, 0, sink)
+    }
+
+    /// `read` from byte `offset`: the chain is followed to the cluster that
+    /// holds it, so only those blocks are read. `begin` gets the bytes from
+    /// `offset` on (0 past the end).
+    pub fn read_at(
+        &mut self,
+        file: FileName,
+        offset: u32,
+        sink: &mut dyn ReadSink,
+    ) -> Result<(), FsError<B::Error>> {
         let e = self.find(file)?;
         let layout = *self.table.layout();
-        if sink.begin(e.len).is_break() {
+        let mut left = e.len.saturating_sub(offset) as usize;
+        if sink.begin(left as u32).is_break() || left == 0 {
             return Ok(());
         }
-        let (mut c, mut left) = (e.start, e.len as usize);
-        while left > 0 {
+        let mut c = e.start;
+        for _ in 0..offset / layout.cluster_bytes() {
+            c = self.next(c)?;
+        }
+        let mut skip = (offset % layout.cluster_bytes()) as usize;
+        loop {
             let first = layout.cluster_block(c).ok_or(FsError::Corrupt)?;
-            for b in first..first + layout.blocks_per_cluster() {
+            let from = (skip / BLOCK) as u32;
+            for b in first + from..first + layout.blocks_per_cluster() {
                 self.table
                     .blocks()
                     .read(b, self.buf)
                     .map_err(FsError::Dev)?;
-                let n = left.min(BLOCK);
+                let at = skip % BLOCK;
+                skip = 0;
+                let n = left.min(BLOCK - at);
                 left -= n;
-                if sink.chunk(&self.buf[..n]).is_break() || left == 0 {
+                if sink.chunk(&self.buf[at..at + n]).is_break() || left == 0 {
                     return Ok(());
                 }
             }
-            c = match self.table.link(c)? {
-                Link::Next(next) => next,
-                Link::End | Link::Broken => return Err(FsError::Corrupt),
-            };
+            c = self.next(c)?;
         }
-        Ok(())
+    }
+
+    /// The cluster after `c`; a chain that ends early is `Corrupt`.
+    fn next(&mut self, c: u32) -> Result<u32, FsError<B::Error>> {
+        match self.table.link(c)? {
+            Link::Next(next) => Ok(next),
+            Link::End | Link::Broken => Err(FsError::Corrupt),
+        }
     }
 
     /// Calls `f` with each run of contiguous blocks that holds `file`'s

@@ -2,7 +2,7 @@
 
 use chimera_hal::store::{ByteSink, CHUNK, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -17,6 +17,20 @@ fn io_err(e: io::Error) -> StoreError {
         io::ErrorKind::StorageFull => StoreError::Full,
         _ => StoreError::Io,
     }
+}
+
+/// The sim's card: `CHIMERA_CARD`, or `chimera-card` made on first run. A
+/// `CHIMERA_CARD` that doesn't exist is an empty slot.
+pub fn sim_card() -> PathBuf {
+    std::env::var_os("CHIMERA_CARD").map_or_else(
+        || {
+            let dir = PathBuf::from("chimera-card");
+            // A failure shows as no card.
+            let _ = fs::create_dir_all(&dir);
+            dir
+        },
+        PathBuf::from,
+    )
 }
 
 impl DirStore {
@@ -43,7 +57,8 @@ impl DirStore {
         self.dir_path(f.dir()).join(n)
     }
 
-    fn write_volume(&self, serial: u32, label: [u8; 11]) -> Result<(), StoreError> {
+    /// Writes the card's id: a new one is another card, as a swap is.
+    pub fn write_volume(&self, serial: u32, label: [u8; 11]) -> Result<(), StoreError> {
         let mut v = format!("{serial:08X} ").into_bytes();
         v.extend_from_slice(&label);
         fs::write(self.root.join("VOLUME"), v).map_err(io_err)
@@ -144,9 +159,24 @@ impl Store for DirStore {
         file: FileName,
         sink: &mut dyn ReadSink,
     ) -> Result<(), StoreError> {
+        self.read_at(vol, file, 0, sink)
+    }
+
+    fn read_at(
+        &mut self,
+        vol: VolumeId,
+        file: FileName,
+        offset: u32,
+        sink: &mut dyn ReadSink,
+    ) -> Result<(), StoreError> {
         self.open(vol)?;
         let mut fh = File::open(self.file_path(file)).map_err(io_err)?;
-        let len = fh.metadata().map_err(io_err)?.len();
+        let len = fh
+            .metadata()
+            .map_err(io_err)?
+            .len()
+            .saturating_sub(offset.into());
+        fh.seek(SeekFrom::Start(offset.into())).map_err(io_err)?;
         if sink.begin(len as u32).is_break() {
             return Ok(());
         }
@@ -213,12 +243,12 @@ impl Store for DirStore {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
     use chimera_hal::testkit::store_suite;
     use std::sync::atomic::{AtomicU32, Ordering};
 
-    pub(crate) fn unique_root() -> PathBuf {
+    fn unique_root() -> PathBuf {
         // Tests run on their own threads: one counter for the process.
         static N: AtomicU32 = AtomicU32::new(0);
         let n = N.fetch_add(1, Ordering::Relaxed) + 1;
@@ -286,64 +316,6 @@ pub(crate) mod tests {
         for r in roots {
             let _ = fs::remove_dir_all(r);
         }
-    }
-
-    /// settings_project_test's `card_changed_then_save_as`, by key script
-    /// on the sim's card: ALPHA loaded through LOAD, the card swapped, then
-    /// MENU held asks CARD CHANGED, and SAVE AS saves on the new card.
-    #[test]
-    fn card_changed_then_save_as() {
-        use crate::qa::Desk;
-        use chimera_core::name::ProjectName;
-        use chimera_core::project::{
-            Project, ProjectNote, SaveTo, list_projects, new_project_id, save_project,
-        };
-        use chimera_core::storage::Card;
-        use chimera_core::ui::nav::Location;
-        use minifb::Key;
-        let root = unique_root();
-        let a = {
-            let (mut card, mut s) = (Card::new(), DirStore::new(root.clone()));
-            let (mut p, _) = Project::boxed();
-            p.set_name(ProjectName::new("ALPHA").unwrap());
-            let fresh = new_project_id(&mut card, &mut s).out.unwrap();
-            let f = fresh.file();
-            let out = save_project(&mut card, &mut s, &mut p, SaveTo::Fresh(fresh)).out;
-            assert!(matches!(out, ProjectNote::Saved(_)), "{out:?}");
-            f
-        };
-        let mut d = Desk::launch(root.clone());
-        // SETTINGS › PROJECT › LOAD, row 01, EDIT.
-        d.tap(Key::M);
-        d.tap(Key::Down);
-        d.tap(Key::Down);
-        assert_eq!(d.ui.location(), Location::settings_at(&[0, 0], 0));
-        assert!(d.ui.load_row(0).unwrap().label.as_str().starts_with("01"));
-        d.tap(Key::Down);
-        assert_eq!(d.ui.project().meta().file(), Some(a));
-        while d.ui.in_settings() {
-            d.tap(Key::M);
-        }
-
-        let old = d.store.mount().unwrap();
-        d.store
-            .write_volume(old.serial.wrapping_add(1), *b"SWAPPED    ")
-            .unwrap();
-        let _ = fs::remove_dir_all(root.join("CHIMERA"));
-        d.hold(Key::M);
-        let (q, _) = d.ui.prompt_words_for_test().expect("a prompt");
-        assert_eq!(q.as_str(), "CARD CHANGED");
-        d.tap(Key::Up);
-        assert_eq!(d.ui.naming().unwrap().text(), "ACID-001");
-        d.tap(Key::Up);
-        let vol = d.store.mount().unwrap();
-        assert_ne!(vol, old);
-        assert_eq!(d.ui.project().meta().file().unwrap().vol(), vol);
-        let mut n = 0;
-        let _ = list_projects(&mut Card::new(), &mut d.store, &mut |_| n += 1);
-        assert_eq!(n, 1);
-        assert_eq!(d.toast().as_deref(), Some("SAVED"));
-        let _ = fs::remove_dir_all(root);
     }
 
     /// The sim's boot: a project saved, then the next launch loads it from

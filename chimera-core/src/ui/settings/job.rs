@@ -78,7 +78,7 @@ pub struct CardCx<'a, S: Store> {
 impl UiState {
     /// Card work is queued: the shell shows BUSY before `card_work`.
     pub fn card_pending(&self) -> bool {
-        self.job.is_some() || self.wants_list()
+        self.job.is_some() || self.wants_list() || self.src.busy()
     }
 
     /// LOAD or MANAGE on screen over a listing something moved.
@@ -99,6 +99,7 @@ impl UiState {
         link: &LoadLink,
         publish: impl FnOnce(Swap, &UiState) -> R,
     ) -> Option<R> {
+        self.src.work(cx.card, cx.store, &mut self.project);
         let mut publish = Some(publish);
         let mut out = None;
         let mut next = self.job.take();

@@ -3,7 +3,7 @@
 
 use chimera_hal::store::StoreError;
 
-use super::SourceRef;
+use super::{SourceRef, TapeSource, ZoneTune};
 use crate::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use crate::block::{DiskCode, ParamId};
 use crate::mod_path::{LABEL_LEN, MAX_REGISTRY_DESTS, ModDestRegistry};
@@ -28,10 +28,10 @@ const _: () = assert!(MAX_ROUTES * ROUTE_LEN <= MAX_RECORD_LEN);
 const _: () = assert!(MAX_REGISTRY_DESTS * REGISTRY_ENTRY_LEN <= MAX_RECORD_LEN);
 
 /// The most a Sound costs in the pool: its 16 B name and its sparse records
-/// with every param off neutral, a full registry, every route and tap and
-/// a `SourceRef` (2 051 B for 208 params), rounded up to 16 B. `sparse_bound`
-/// pins it.
-pub const MAX_SOUND_COST: usize = 2064;
+/// with every param off neutral, a full registry, every route and tap, a
+/// `SourceRef` and a 24-zone `ZoneTune` (2 284 B for 224 params), rounded
+/// up to 16 B. `sparse_bound` pins it.
+pub const MAX_SOUND_COST: usize = 2288;
 
 impl Sound {
     /// The frozen base a file decodes onto: every param at its v1 default,
@@ -86,7 +86,7 @@ fn addr_of(block: u8, id: u8) -> Option<ParamAddr> {
 
 /// `Engine`, a `Block` per voice block holding only the params off
 /// `Sound::neutral` (none: no record), then `Registry`, `ModDests`,
-/// `Routes`, and its `SourceRef` if it has one.
+/// `Routes`, and its `SourceRef` and `ZoneTune` if it has them.
 pub fn encode_sound(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     w.put(RecordTag::Engine, &[s.engine().disk_code()])?;
     // One buffer for every record: this frame is charged to each pointer
@@ -152,8 +152,12 @@ pub fn encode_sound(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(), StoreErro
         }
         w.put(RecordTag::TapRoutes, r.as_slice())?;
     }
-    match s.source {
-        Some(src) => w.put(RecordTag::SourceRef, &src.to_bytes()),
+    let Some(src) = s.source else {
+        return Ok(());
+    };
+    w.put(RecordTag::SourceRef, &src.r.to_bytes())?;
+    match src.tune {
+        Some(t) => w.put(RecordTag::ZoneTune, t.record()),
         None => Ok(()),
     }
 }
@@ -174,7 +178,8 @@ const fn once_bit(tag: RecordTag) -> u8 {
         RecordTag::Routes => 1 << 3,
         RecordTag::LastProject => 1 << 4,
         RecordTag::SourceRef => 1 << 5,
-        RecordTag::TapRoutes => 1 << 6,
+        RecordTag::ZoneTune => 1 << 6,
+        RecordTag::TapRoutes => 1 << 7,
         // A project's own records: refused before `once` is asked.
         RecordTag::Slot
         | RecordTag::Part
@@ -188,7 +193,8 @@ const fn once_bit(tag: RecordTag) -> u8 {
         | RecordTag::OrbitScale
         | RecordTag::PoolSource
         | RecordTag::SourceHead
-        | RecordTag::SourceData => 0,
+        | RecordTag::SourceData
+        | RecordTag::SourceZones => 0,
     }
 }
 
@@ -373,7 +379,18 @@ impl SoundCheck {
             RecordTag::SourceRef => {
                 let r = SourceRef::from_bytes(p).ok_or(FileError::Bounds)?;
                 if let Some(s) = staged {
-                    s.source = Some(r);
+                    s.source = Some(TapeSource::from(r));
+                }
+                Ok(())
+            }
+            // Only after the `SourceRef` it tunes.
+            RecordTag::ZoneTune if self.seen & once_bit(RecordTag::SourceRef) == 0 => {
+                Err(FileError::Corrupt)
+            }
+            RecordTag::ZoneTune => {
+                let t = ZoneTune::from_record(p).ok_or(FileError::Bounds)?;
+                if let Some(src) = staged.and_then(|s| s.source.as_mut()) {
+                    src.tune = Some(t);
                 }
                 Ok(())
             }
@@ -389,7 +406,8 @@ impl SoundCheck {
             | RecordTag::OrbitScale
             | RecordTag::PoolSource
             | RecordTag::SourceHead
-            | RecordTag::SourceData => Err(FileError::Corrupt),
+            | RecordTag::SourceData
+            | RecordTag::SourceZones => Err(FileError::Corrupt),
         }
     }
 

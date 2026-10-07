@@ -1,6 +1,6 @@
 # 0087. Budget the sound pool by memory: one arena for sparse Sounds and card-backed 12-bit sources, one meter (supersedes in part 0043 and 0014)
 
-- **Status:** Proposed
+- **Status:** Accepted (owner, 2026-10-07)
 - **Deciders:** owner (2026-10-03, private issue #337), firmware
 
 ## Context
@@ -20,7 +20,11 @@ Measured on `orbit` (43d59110), which merges first:
 - **`encode_sound` writes all 19 voice blocks of both engines,** 1 143 B a
   Sound, more than the struct. Writing only params that differ from
   `Sound::neutral` gives 153–273 B for the factory Sounds and 128 B for
-  INIT. The worst case is 1 872 B, its `SourceRef` included.
+  INIT. The worst case was 1 858 B. It is now 2 105 B, with
+  `MAX_SOUND_COST` 2 112 (rounded up to 16 B): TAPE's `TAPE_ENG` block
+  (ADR 0093) adds a block head and 15 params, 80 B, when every param is
+  off neutral, PIT's SNAP 5 B (TAPE Task 12b), the `SourceRef` record
+  14 B, and a 24-zone `ZoneTune` record (TAPE's zone sets) 148 B.
 - **AXI really free** (`rust-size`, `main` at cf50ee74) is 140 024 B on
   the largest shipping build (`orbit`), and 104 188 B on the largest build
   of all (`bench,master-tape`, whose diagnostics hold 31 KB). The paper model, `AXI_RESIDENT` with its 64 KiB `UI_RESERVE`

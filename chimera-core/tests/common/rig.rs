@@ -1,34 +1,100 @@
-//! A lone `Voice` with the sympathetic pool it borrows from, behind the
-//! voice's pre-pool signatures: the suites that drive one voice directly.
-//! It places a Sympathetic note as the `Instrument` does: at its note-on,
-//! and when a switch brings the voice onto Sympathetic.
+//! A lone `Voice` with the sympathetic pool it borrows from and, for TAPE,
+//! the one source its notes latch (by default the thread's second of saw,
+//! `tape::saw_with_burst` at 24 kHz): the suites that drive one voice
+//! directly. It places a Sympathetic note as the `Instrument` does: at its
+//! note-on, and when a switch brings the voice onto Sympathetic.
 
+use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
 
-use chimera_core::dsp::engines::SlotKind;
+use chimera_core::dsp::engines::{EngineCtx, SlotKind};
 use chimera_core::dsp::modal::{ResonatorMode, SymPool};
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::ParamSnapshot;
+use chimera_core::source_table::GateView;
 use chimera_core::voice_alloc::VoiceIdx;
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
+
+use super::tape::{OneSource, held_plain, saw_with_burst};
+
+thread_local! {
+    /// A second of the saw with its burst at 24 kHz: what a `Rig::new`'s
+    /// TAPE notes play. One a thread, as its table is leaked.
+    static SAW: RefCell<OneSource> =
+        RefCell::new(OneSource::new(&held_plain(&saw_with_burst(24_000, 1.0), 24_000)));
+}
+
+/// What a rig's TAPE notes play.
+pub enum Src {
+    /// The thread's saw.
+    Saw,
+    Own(OneSource),
+    /// None: a TAPE note plays nothing.
+    None,
+}
 
 const SYM: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
 pub struct Rig {
     pub voice: Box<Voice>,
     pub pool: Box<SymPool>,
+    /// What a TAPE note latches.
+    pub src: Src,
+}
+
+/// `$body` on the rig's voice with a context: its source's view this
+/// block, or none.
+macro_rules! with_ctx {
+    ($rig:expr, |$v:ident, $ctx:ident, $id:ident| $body:expr) => {{
+        let Rig { voice, pool, src } = $rig;
+        let $v = voice;
+        let mut run = |$id: Option<chimera_core::project::SourceId>, view: &GateView<'_>| {
+            let $ctx = &mut EngineCtx {
+                sym: &mut **pool,
+                src: view,
+            };
+            $body
+        };
+        match src {
+            Src::Saw => SAW.with(|s| {
+                let mut s = s.borrow_mut();
+                let id = s.id;
+                run(Some(id), &s.view())
+            }),
+            Src::Own(s) => {
+                let id = s.id;
+                run(Some(id), &s.view())
+            }
+            Src::None => run(None, &GateView::empty()),
+        }
+    }};
 }
 
 impl Rig {
     pub fn new(sample_rate: u32) -> Self {
+        Self::at(sample_rate, VoiceIdx::ALL[0], Src::Saw)
+    }
+
+    /// A voice whose TAPE notes play `held`.
+    pub fn with_source(sample_rate: u32, held: &[u8]) -> Self {
+        Self::at(
+            sample_rate,
+            VoiceIdx::ALL[0],
+            Src::Own(OneSource::new(held)),
+        )
+    }
+
+    /// Voice `id` of the pool, playing `src`.
+    pub fn at(sample_rate: u32, id: VoiceIdx, src: Src) -> Self {
         let mut raw = Box::<Voice>::new_uninit();
-        Voice::init_in_place(&mut raw, sample_rate, VoiceIdx::ALL[0]);
+        Voice::init_in_place(&mut raw, sample_rate, id);
         Self {
             // SAFETY: `init_in_place` built a valid voice in the box.
             voice: unsafe { raw.assume_init() },
             pool: SymPool::boxed(),
+            src,
         }
     }
 
@@ -36,18 +102,19 @@ impl Rig {
         if SlotKind::of(params) == SYM {
             self.pool.place(VoiceIdx::ALL[0]);
         }
-        self.voice.note_on(note, velocity, params, &mut self.pool)
+        with_ctx!(self, |v, ctx, id| v
+            .note_on(note, velocity, params, id, ctx))
     }
 
     pub fn note_off(&mut self) {
-        self.voice.note_off(&mut self.pool);
+        with_ctx!(self, |v, ctx, _id| v.note_off(ctx))
     }
 
     pub fn render(&mut self, out: &mut [f32; BLOCK_SIZE], params: &ParamSnapshot, mods: &ModState) {
         if SlotKind::of(params) == SYM && self.voice.kind() != SYM {
             self.pool.place(VoiceIdx::ALL[0]);
         }
-        self.voice.render(out, params, mods, &mut self.pool);
+        with_ctx!(self, |v, ctx, _id| v.render(out, params, mods, ctx))
     }
 }
 

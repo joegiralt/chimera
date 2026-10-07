@@ -4,7 +4,9 @@
 use crate::addr::{BlockRef, Blocks};
 use crate::block::{Block, ParamId};
 
-use super::codes::{DiskValue, Migration, RETIRED, Retired, Translation, ValidAddr, read_value};
+use super::codes::{
+    DiskValue, Migration, RETIRED, RETIRED_CODES, Retired, Translation, ValidAddr, read_value,
+};
 use super::frame::FileError;
 use super::record::RecordBuf;
 
@@ -124,10 +126,14 @@ pub fn decode_block(
     for (s, v) in specs.iter().zip(vals) {
         match v {
             Some(DiskValue::Real(x)) => blk.set(s.id, x),
-            Some(DiskValue::Code(c)) => {
-                // false: an unknown code, or one this KIND lacks; keep the base.
-                let _ = blk.set_enum_code(s.id, c);
+            // false: an unknown code, or one this KIND lacks; keep the base.
+            // A retired code goes to the translation.
+            Some(DiskValue::Code(c))
+                if !blk.set_enum_code(s.id, c) && RETIRED_CODES.contains(&(code, s.id.0, c)) =>
+            {
+                retired.put_code(s.id, c)
             }
+            Some(DiskValue::Code(_)) => {}
             None => {}
         }
     }
@@ -247,7 +253,12 @@ mod tests {
     fn translations_target_live_blocks() {
         for t in TRANSLATIONS {
             assert!(BlockRef::from_disk_code(t.block).is_some(), "{}", t.block);
-            assert!(RETIRED.iter().any(|r| r.0 == t.block), "{}", t.block);
+            assert!(
+                RETIRED.iter().any(|r| r.0 == t.block)
+                    || RETIRED_CODES.iter().any(|r| r.0 == t.block),
+                "{}",
+                t.block
+            );
         }
     }
 }

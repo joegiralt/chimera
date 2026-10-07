@@ -86,6 +86,13 @@ struct BKey {
     per_sample: bool,
 }
 
+/// The running TYPE's coefficients and the inputs they came from.
+#[derive(Clone, Copy, Debug)]
+enum Cache {
+    A(AKey, ACoefs),
+    B(BKey, BCoefs),
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Envelope {
     a: EnvA,
@@ -96,9 +103,8 @@ pub struct Envelope {
     /// block's coefficients.
     note_on: bool,
     /// The running TYPE's coefficients and their inputs, reused while
-    /// the inputs hold.
-    ac: Option<(AKey, ACoefs)>,
-    bc: Option<(BKey, BCoefs)>,
+    /// the inputs hold: one TYPE runs a block, so one cache.
+    cache: Option<Cache>,
     /// This block's peak (LEVEL; 1 under B) and the last block's.
     peak: f32,
     prev_peak: f32,
@@ -122,8 +128,7 @@ impl Envelope {
             b: FuncGen::new(),
             kind: None,
             note_on: false,
-            ac: None,
-            bc: None,
+            cache: None,
             peak: 1.0,
             prev_peak: 1.0,
             glide: Glide::NONE,
@@ -134,11 +139,11 @@ impl Envelope {
     /// This block's A coefficients, rebuilt only when an input changed.
     fn a_coefs(&mut self, p: &EnvParams, time: f32, sample_rate: u32) -> ACoefs {
         let key = AKey::of(p, time, sample_rate);
-        match self.ac {
-            Some((k, c)) if k == key => c,
+        match self.cache {
+            Some(Cache::A(k, c)) if k == key => c,
             _ => {
                 let c = ACoefs::new(p, time, sample_rate);
-                self.ac = Some((key, c));
+                self.cache = Some(Cache::A(key, c));
                 c
             }
         }
@@ -158,11 +163,11 @@ impl Envelope {
             sample_rate,
             per_sample,
         };
-        match self.bc {
-            Some((k, c)) if k == key => c,
+        match self.cache {
+            Some(Cache::B(k, c)) if k == key => c,
             _ => {
                 let c = BCoefs::new(&p.func, slides, sample_rate, per_sample);
-                self.bc = Some((key, c));
+                self.cache = Some(Cache::B(key, c));
                 c
             }
         }

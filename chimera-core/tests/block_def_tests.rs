@@ -104,3 +104,14 @@ fn no_page_id_is_reserved() {
             .all(|p| p.binding == SlotBinding::Empty)
     );
 }
+
+#[cfg(feature = "master-tape")]
+#[test]
+fn master_stage_reads_reel() {
+    use chimera_core::addr::BlockRef;
+    use chimera_core::ui::mod_grid::{block_name, block_tag};
+    assert_eq!(block_registry::TAPE.short, "REEL");
+    assert_eq!(block_registry::TAPE.name, "Reel");
+    assert_eq!(block_tag(BlockRef::Tape), "REL");
+    assert_eq!(block_name(BlockRef::Tape), "REEL");
+}
