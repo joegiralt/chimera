@@ -120,6 +120,8 @@ mod imp {
         stats.record(cycles, budget);
         stats.overruns = shared::OVERRUNS.load(Ordering::Relaxed);
         stats.desyncs = shared::DESYNCS.load(Ordering::Relaxed);
+        stats.dma_errors = shared::DMA_ERRORS.load(Ordering::Relaxed);
+        stats.fifo_errors = shared::FIFO_ERRORS.load(Ordering::Relaxed);
         let drops = shared::NOTES.drops();
         stats.drops[..drops.len()].copy_from_slice(&drops);
         #[cfg(feature = "midi-din")]

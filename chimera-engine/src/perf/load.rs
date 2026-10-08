@@ -16,6 +16,9 @@ pub struct AudioStats {
     pub load_peak: u16,
     pub overruns: u32,
     pub desyncs: u32,
+    /// DMA transfer errors on the trailing streams, each re-armed.
+    pub dma_errors: u32,
+    pub fifo_errors: u32,
     pub drops: [u32; MAX_NOTE_SOURCES],
     pub sources: u8,
     pub stack_used: u32,
@@ -42,6 +45,8 @@ impl AudioStats {
             load_peak: 0,
             overruns: 0,
             desyncs: 0,
+            dma_errors: 0,
+            fifo_errors: 0,
             drops: [0; MAX_NOTE_SOURCES],
             sources: 0,
             stack_used: 0,

@@ -36,6 +36,9 @@ probe = ["chimera-engine/probe"]
 # The filter's static-cost probes (`dsp::filter::probe`) alone, for
 # `tools/loop_count.py`: none of `probe`'s stamps.
 filter-probe = ["chimera-engine/filter-probe"]
+# The console's `fault`: provokes a DMA transfer error to test the re-arm.
+# Test builds only, never shipping.
+fault-inject = []
 
 [dev-dependencies]
 # No default features: `--no-default-features` must reach the library too.

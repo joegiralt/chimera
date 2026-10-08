@@ -122,6 +122,8 @@ peak_pct 41
 overruns 0
 drops 0
 desyncs 0
+dma_errors 0
+fifo_errors 0
 stack_bytes 12288
 voices 3 5 of 8
 cost_pct 47
@@ -132,6 +134,7 @@ OK
 
 - The first eight lines are `AudioStats` as the AUDIO LOAD page reads them.
 - `drops` holds one count per note source (`sources` of them), separated by spaces; `-` when `sources` is 0.
+- `desyncs` counts trailing DMA streams drifting from stream 0; `dma_errors` and `fifo_errors` count transfer and FIFO errors on streams 1 and 2 (each transfer error re-arms the stream).
 - `stack_bytes` is `stack_used` (the page rounds it to K; this does not).
 - `voices <now> <peak> of 8`: the voices sounding after the last audio block (`Instrument::sounding`), the most since the last `stats`, and `MAX_VOICES`. Reading starts the peak over, as it does `loop_peak_us`. The audio side keeps both in `AudioStats` with plain stores; the console's read asks for the restart through one atomic flag the next block takes.
 - `cost_pct` is the voice budget booked after the last block, the FX bus included (`Allocator::cost_pct`): the share the allocator steals and sheds against (ADR 0027). Over 100 means voices are fading to fit; it saturates at 255.
@@ -201,6 +204,14 @@ OK
 ```
 
 Then the unit restarts into ST's ROM DFU loader and leaves the bus as `0483:5740`. Within about 2 s it comes back as `0483:DF11`. The `OK` is flushed, then the port keeps polling for 20 ms so the host collects it, before the restart. A host that still misses it sees the port vanish and DF11 appear, which `to-dfu` also counts as success. The desktop answers `ERR dfu is not in this build`. § Enter DFU from the firmware has the details.
+
+**`fault dma <1|2>`** (builds with `fault-inject` only; never shipping, orbit or bench)
+
+```
+OK
+```
+
+Test aid for the DMA re-arm (private issue #25): it clears EN on DMA1 stream 1 or 2 (DAC pair 2 or 3), waits a bounded spin for EN=0, points M0AR at 0x00000000 (ITCM, which DMA1 cannot read) and sets EN. The stream's next read bus-errors and the audio interrupt re-arms it in phase with stream 0 within about 1.3 ms. Afterwards `stats` shows `dma_errors` up by 1 and `desyncs` unchanged. `fault ndtr` samples DMA1's streams 0 to 2 for about 40 ms and prints `stream<i> cr=<hex> ndtr=<n> m0ar=<hex> ndtr_min=<n> ndtr_max=<n>` for each, then `OK`: a healthy circular stream shows `ndtr_max` near 256 (the sampler can miss the instant of the wrap, so 230 and up), a stream looping a partial ring far less. `ERR fault takes dma 1, dma 2 or ndtr` on other arguments; `ERR fault is not in this build` elsewhere (the desktop included), and if the stream would not stop. It is not in the `help` list above, which is the shipping build's.
 
 ## The functional core: `chimera_core::console`
 
