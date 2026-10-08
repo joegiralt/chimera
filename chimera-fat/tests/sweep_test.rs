@@ -852,6 +852,59 @@ fn a_dir_tail_only_fat2_links_keeps_its_files() {
     }
 }
 
+/// A FAT 1 sector torn by a cut mid-write (its tail zeros, ones or noise,
+/// FAT 2 the good copy) under a live chain: `FatsDiffer`, nothing written,
+/// boot after boot. Copying it over FAT 2 would lose the only good copy.
+#[test]
+fn a_torn_fat1_sector_frees_nothing() {
+    for kind in [FsKind::Fat16, FsKind::Fat32] {
+        for tear in ["zeros", "ones", "noise"] {
+            let fresh = || {
+                let disk = match kind {
+                    FsKind::Fat16 => with_clusters(CLUSTERS, 0x7EA2),
+                    FsKind::Fat32 => fat32(0x7EA2),
+                };
+                let l = layout_of(&disk);
+                let mut t = Tree::new(&disk);
+                let mut root = t.root();
+                // A chain over the whole of FAT 1's first sector.
+                let per = match kind {
+                    FsKind::Fat16 => 256,
+                    FsKind::Fat32 => 128,
+                };
+                let f = t.file(&mut root, *b"LONG    WAV", None, (per * 512, 0), 5, None);
+                assert!(f.chain.iter().any(|&c| l.fat_block(c) == l.fat1().start));
+                t.lose(3, None);
+                let mut rng = XorShift(0x7EA2);
+                let mut d = disk.0.borrow_mut();
+                let blk = &mut d[(PART_LBA + l.fat1().start) as usize];
+                for b in &mut blk[256..] {
+                    *b = match tear {
+                        "zeros" => 0,
+                        "ones" => 0xFF,
+                        _ => rng.next() as u8,
+                    };
+                }
+                drop(d);
+                disk
+            };
+            let what = format!("{kind:?} {tear}");
+            refused(&what, fresh(), Doubt::FatsDiffer);
+            let disk = Rc::new(fresh());
+            let before = blocks(&disk);
+            for boot in 0..3 {
+                let got = sweep_on(&disk, Sweep::Free).map_err(|(d, _)| d);
+                assert_eq!(
+                    got.map(|_| ()),
+                    Err(Doubt::FatsDiffer),
+                    "{what} boot {boot}"
+                );
+            }
+            assert_eq!(blocks(&disk), before, "{what}: the image");
+        }
+    }
+}
+
 /// A block device whose reads fail from the `after`th on.
 struct FailAfter {
     inner: RamDisk,
