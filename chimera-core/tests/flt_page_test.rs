@@ -270,7 +270,7 @@ fn an_absent_route_knob_shows_a_dash() {
         active: true,
         mod_amount: None,
         look: Look::Absent,
-        continuous: false,
+        motion: None,
     };
     components::cell(&mut want, 4, theme::CELL_LABEL_Y, Some(&c));
     assert!(

@@ -94,7 +94,7 @@ where
             active: false,
             mod_amount: None,
             look: components::Look::Live,
-            continuous: false,
+            motion: None,
         };
         components::cell(d, i, top, Some(&cell));
     }

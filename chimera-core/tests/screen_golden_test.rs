@@ -180,7 +180,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // Every ORBIT page again for Task 16: the map gains SCN.
     // ORBIT's RHYTHM, CHRD and CUSTOM (plan Task 9); Task 10's header,
     // `SCENE n`, and the beat dot on the playing ones.
-    ("orbit_rhythm", 0x535a82923b7caa35),
+    // Re-recorded: a stepped param shows no bar (ADR 0112).
+    ("orbit_rhythm", 0x6a2750f9c7181a45),
     // PLAY's cell (plan Task 14); KEY, SCALE and BARS gone to ORB; SEGS,
     // DEGREE and PLAY on A to C, D to F reserved (ADR 0079, 2026-10-03).
     ("orbit_chrd", 0x9e90b371b6b38670),
@@ -189,12 +190,14 @@ const GOLDENS: &[(&str, u64)] = &[
     // ORB (plan Task 10); B to E gain KEY, SCALE, BARS, SCENE (ADR 0079),
     // and CUSTOM hangs under it; each ring's Part by its top and in RING,
     // and CUSTOM by EDIT on a named scale (ADR 0084).
-    ("orbit_orb", 0xddf44d94d5f622ca),
+    // Re-recorded: a stepped param shows no bar (ADR 0112).
+    ("orbit_orb", 0xdd08d634fc91934e),
     ("orbit_orb_midi", 0x35a2ff6ecca97ad1),
     ("orbit_custom", 0x7c5bdf51a79d88a1),
     ("orbit_custom_named", 0x6f9acf1a43362d0e),
     // RING's VOICE and NOTES, a STEP ring's NOTES (plan Task 13).
-    ("orbit_voice", 0xdaefdb55fbe49e98),
+    // Re-recorded: a stepped param shows no bar (ADR 0112).
+    ("orbit_voice", 0x97d0371ef20d5b8c),
     ("orbit_notes", 0x2865bfd4ee762860),
     ("orbit_notes_step", 0xc1c3dab7eeb50a2f),
     // 32 steps, step 32 picked: the row scrolled to its last eight.

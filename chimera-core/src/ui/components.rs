@@ -1,6 +1,7 @@
 //! Direction A shared components (UI refresh spec § Shared components):
 //! header, focus band, cells. The map lives in `dungeon_map`.
 
+use crate::block::Motion;
 use crate::dsp::clampf;
 use core::fmt::Write;
 
@@ -992,9 +993,11 @@ pub struct Cell<'a> {
     /// Summed mod amount (−1..1) when the param is a mod destination.
     pub mod_amount: Option<f32>,
     pub look: Look,
-    /// A param that moves smoothly (`Motion::Continuous`, ADR 0112): it
-    /// shows a bar even with a discrete readout (FDBK, FINE).
-    pub continuous: bool,
+    /// How the param moves (ADR 0112), when it is one: a continuous one
+    /// shows a bar even with a discrete readout (FDBK, FINE), a stepped one
+    /// only its value (PITCH, CRSE, ORBIT's CHANCE). Without one (a page's
+    /// own cells), by its readout.
+    pub motion: Option<Motion>,
 }
 
 /// Draw cell `i` (knob order a–f, 3×2) with its label baseline `top + row·36`.
@@ -1043,7 +1046,8 @@ where
         value_color,
         0,
     );
-    if (c.continuous || !c.fmt.is_discrete()) && !dim {
+    let bar = c.motion.map_or(!c.fmt.is_discrete(), |m| m.is_continuous());
+    if bar && !dim {
         let fill = if c.active {
             theme::ACCENT
         } else {
