@@ -33,13 +33,15 @@ pub static COARSE_NAMES: [&str; 64] = [
 /// FINE takes 16 even steps toward `FINE_TOP`, 8 below coarse index 4
 /// (where FINE 8-15 hold the top).
 pub fn ratio(coarse: u8, fine: u8) -> f32 {
+    ratio_at(coarse, f32::from(fine))
+}
+
+/// `ratio` at a FINE between its steps, as the Part's knobs glide it:
+/// linear in the ratio, `ratio` itself at a whole step.
+pub fn ratio_at(coarse: u8, fine: f32) -> f32 {
     let c = (coarse as usize).min(63);
-    let (steps, f) = if c < 4 {
-        (7.0, fine.min(7))
-    } else {
-        (15.0, fine.min(15))
-    };
-    COARSE[c] + (FINE_TOP[c] - COARSE[c]) * f as f32 / steps
+    let steps = if c < 4 { 7.0 } else { 15.0 };
+    COARSE[c] + (FINE_TOP[c] - COARSE[c]) * clampf(fine, 0.0, steps) / steps
 }
 
 const LEVEL_STEP_OCT: f32 = 0.75 / 6.020_6;
@@ -76,5 +78,38 @@ pub static FEEDBACK_CYCLES: [f32; 8] =
 pub const DETUNE_CENTS: f32 = 1.5;
 
 pub fn detune_factor(detune: i8) -> f32 {
-    exp2(detune.clamp(-3, 3) as f32 * DETUNE_CENTS / 1200.0)
+    detune_at(f32::from(detune))
+}
+
+/// `detune_factor` between its steps, as the Part's knobs glide it.
+pub fn detune_at(detune: f32) -> f32 {
+    exp2(clampf(detune, -3.0, 3.0) * DETUNE_CENTS / 1200.0)
+}
+
+/// FEEDBACK's swing at a value between its steps, as the Part's knobs
+/// glide it: linear between neighbours, `FEEDBACK_CYCLES` itself at a step.
+pub fn feedback_cycles(feedback: f32) -> f32 {
+    let f = clampf(feedback, 0.0, 7.0);
+    let i = (f as usize).min(6);
+    let (a, b) = (FEEDBACK_CYCLES[i], FEEDBACK_CYCLES[i + 1]);
+    let t = f - i as f32;
+    if t == 0.0 {
+        a
+    } else if t == 1.0 {
+        b
+    } else {
+        a + (b - a) * t
+    }
+}
+
+/// A LEVEL's gain, exactly `LEVEL_GAIN` at a whole step (the output
+/// scale's: a settled patch scales as it did), `level_gain` between.
+pub fn patch_gain(level: f32) -> f32 {
+    let l = clampf(level, 0.0, 99.0);
+    let i = l as usize;
+    if i as f32 == l {
+        LEVEL_GAIN[i]
+    } else {
+        level_gain(l)
+    }
 }

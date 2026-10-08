@@ -1,6 +1,6 @@
 //! The Algo Sound's parameters, stored as bytes (spec § Voice model).
 
-use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::block::{Block, Change, Motion, ParamId, ParamSpec, Smoothing, ValFmt};
 use crate::dsp::algo::algorithms::{ALGO_COUNT, ALGO_IDENTS, ALGO_NAMES, AlgoId};
 use crate::dsp::algo::env::EnvRates;
 use crate::dsp::algo::plan::OPS;
@@ -76,9 +76,16 @@ impl AlgoOpParams {
 /// it is the one operator destination (ADR 0010). FINE and FEEDBACK are
 /// not: FINE's 104-cent steps would zipper.
 pub static ALGO_OP_SPECS: [ParamSpec; 13] = [
-    ParamSpec::choice(0, "WAVE", ValFmt::Names(WAVE_NAMES), 15.0, 0.0)
-        .ident("WAVE")
-        .glyph(crate::glyph::FocusGlyph::Wave),
+    ParamSpec::choice(
+        0,
+        "WAVE",
+        ValFmt::Names(WAVE_NAMES),
+        15.0,
+        0.0,
+        Change::Crossfade,
+    )
+    .ident("WAVE")
+    .glyph(crate::glyph::FocusGlyph::Wave),
     ParamSpec::stepped(
         1,
         "CRSE",
@@ -87,23 +94,132 @@ pub static ALGO_OP_SPECS: [ParamSpec; 13] = [
         63.0,
         4.0,
         false,
+        Motion::Stepped(Change::Snap),
     )
     .ident("CRSE"),
-    ParamSpec::stepped(2, "FINE", ValFmt::Int(15), 0.0, 15.0, 0.0, false).ident("FINE"),
-    ParamSpec::stepped(3, "DETUN", ValFmt::Signed(3), -3.0, 3.0, 0.0, false).ident("DETUN"),
-    ParamSpec::stepped(4, "LEVEL", ValFmt::Int(99), 0.0, 99.0, 0.0, true)
-        .ident("LEVEL")
-        .glyph(crate::glyph::FocusGlyph::LevelBar),
-    ParamSpec::stepped(5, "AR", ValFmt::Int(31), 0.0, 31.0, 31.0, false).ident("AR"),
-    ParamSpec::stepped(6, "D1R", ValFmt::Int(31), 0.0, 31.0, 0.0, false).ident("D1R"),
-    ParamSpec::stepped(7, "D1L", ValFmt::Int(15), 0.0, 15.0, 15.0, false).ident("D1L"),
-    ParamSpec::stepped(8, "D2R", ValFmt::Int(31), 0.0, 31.0, 0.0, false).ident("D2R"),
-    ParamSpec::stepped(9, "RR", ValFmt::OneBased(14), 1.0, 15.0, 5.0, false).ident("RR"),
-    ParamSpec::stepped(10, "RS", ValFmt::Int(3), 0.0, 3.0, 0.0, false).ident("RS"),
-    ParamSpec::stepped(11, "FDBK", ValFmt::Int(7), 0.0, 7.0, 0.0, false)
-        .ident("FDBK")
-        .glyph(crate::glyph::FocusGlyph::LevelBar),
-    ParamSpec::stepped(12, "VEL", ValFmt::Int(7), 0.0, 7.0, 0.0, false).ident("VEL"),
+    ParamSpec::stepped(
+        2,
+        "FINE",
+        ValFmt::Int(15),
+        0.0,
+        15.0,
+        0.0,
+        false,
+        Motion::Continuous(Smoothing::KNOB),
+    )
+    .ident("FINE"),
+    ParamSpec::stepped(
+        3,
+        "DETUN",
+        ValFmt::Signed(3),
+        -3.0,
+        3.0,
+        0.0,
+        false,
+        Motion::Continuous(Smoothing::KNOB),
+    )
+    .ident("DETUN"),
+    ParamSpec::stepped(
+        4,
+        "LEVEL",
+        ValFmt::Int(99),
+        0.0,
+        99.0,
+        0.0,
+        true,
+        Motion::Continuous(Smoothing::KNOB),
+    )
+    .ident("LEVEL")
+    .glyph(crate::glyph::FocusGlyph::LevelBar),
+    ParamSpec::stepped(
+        5,
+        "AR",
+        ValFmt::Int(31),
+        0.0,
+        31.0,
+        31.0,
+        false,
+        Motion::Continuous(Smoothing::Own),
+    )
+    .ident("AR"),
+    ParamSpec::stepped(
+        6,
+        "D1R",
+        ValFmt::Int(31),
+        0.0,
+        31.0,
+        0.0,
+        false,
+        Motion::Continuous(Smoothing::Own),
+    )
+    .ident("D1R"),
+    ParamSpec::stepped(
+        7,
+        "D1L",
+        ValFmt::Int(15),
+        0.0,
+        15.0,
+        15.0,
+        false,
+        Motion::Continuous(Smoothing::Own),
+    )
+    .ident("D1L"),
+    ParamSpec::stepped(
+        8,
+        "D2R",
+        ValFmt::Int(31),
+        0.0,
+        31.0,
+        0.0,
+        false,
+        Motion::Continuous(Smoothing::Own),
+    )
+    .ident("D2R"),
+    ParamSpec::stepped(
+        9,
+        "RR",
+        ValFmt::OneBased(14),
+        1.0,
+        15.0,
+        5.0,
+        false,
+        Motion::Continuous(Smoothing::Own),
+    )
+    .ident("RR"),
+    ParamSpec::stepped(
+        10,
+        "RS",
+        ValFmt::Int(3),
+        0.0,
+        3.0,
+        0.0,
+        false,
+        Motion::Continuous(Smoothing::Own),
+    )
+    .ident("RS"),
+    ParamSpec::stepped(
+        11,
+        "FDBK",
+        ValFmt::Int(7),
+        0.0,
+        7.0,
+        0.0,
+        false,
+        Motion::Continuous(Smoothing::KNOB),
+    )
+    .ident("FDBK")
+    .glyph(crate::glyph::FocusGlyph::LevelBar),
+    ParamSpec::stepped(
+        12,
+        "VEL",
+        ValFmt::Int(7),
+        0.0,
+        7.0,
+        0.0,
+        false,
+        Motion::Continuous(Smoothing::KNOB),
+    )
+    .ident("VEL"),
 ];
 
 // An Enum's `max` is its last code: a longer table needs the spec to grow too.
@@ -232,6 +348,7 @@ pub static ALGO_SPECS: [ParamSpec; 4] = [
         ValFmt::Names(ALGO_NAMES),
         31.0,
         INIT_A.get() as f32,
+        Change::Crossfade,
     )
     .ident("ALG_A")
     .glyph(crate::glyph::FocusGlyph::None),
@@ -241,16 +358,35 @@ pub static ALGO_SPECS: [ParamSpec; 4] = [
         ValFmt::Names(ALGO_NAMES),
         31.0,
         INIT_B.get() as f32,
+        Change::Crossfade,
     )
     .ident("ALG_B")
     .glyph(crate::glyph::FocusGlyph::None),
-    ParamSpec::stepped(2, "MORPH", ValFmt::Uni, 0.0, 127.0, 0.0, true)
-        .ident("MORPH")
-        .glyph(crate::glyph::FocusGlyph::Crossfader)
-        .short("MRPH"),
-    ParamSpec::stepped(3, "TRNSP", ValFmt::Signed(24), -24.0, 24.0, 0.0, false)
-        .ident("TRNSP")
-        .glyph(crate::glyph::FocusGlyph::Staff),
+    ParamSpec::stepped(
+        2,
+        "MORPH",
+        ValFmt::Uni,
+        0.0,
+        127.0,
+        0.0,
+        true,
+        Motion::Continuous(Smoothing::KNOB),
+    )
+    .ident("MORPH")
+    .glyph(crate::glyph::FocusGlyph::Crossfader)
+    .short("MRPH"),
+    ParamSpec::stepped(
+        3,
+        "TRNSP",
+        ValFmt::Signed(24),
+        -24.0,
+        24.0,
+        0.0,
+        false,
+        Motion::Stepped(Change::Snap),
+    )
+    .ident("TRNSP")
+    .glyph(crate::glyph::FocusGlyph::Staff),
 ];
 
 const _: () = assert!(ALGO_SPECS[0].max as usize == ALGO_COUNT - 1);

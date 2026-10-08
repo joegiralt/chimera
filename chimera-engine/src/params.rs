@@ -1,5 +1,7 @@
-use crate::addr::{BlockRead, BlockRef, Blocks};
-use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
+use crate::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
+use crate::block::{
+    Block, Change, DiskCode, Motion, ParamId, ParamSpec, Smoothing, ValFmt, apply_code,
+};
 use crate::dsp::filter::k2040::VOICE_LABELS;
 use crate::dsp::filter::{FilterKind, FilterMode, K2040Voice, KIND_NAMES};
 use crate::dsp::modulator::{
@@ -118,14 +120,36 @@ pub static FILTER_SPECS: [ParamSpec; 8] = [
         1000.0,
         0.0,
         true,
+        Smoothing::KNOB,
     )
     .ticks_per_octave(24.0)
     .ident("CUTOFF")
     .octaves(crate::dsp::filter::CUTOFF_OCTAVES)
     .short("CUT"),
-    ParamSpec::continuous(1, "RESO", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true).ident("RESO"),
-    ParamSpec::continuous(12, "LEVEL", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, true)
-        .ident("LEVEL"),
+    ParamSpec::continuous(
+        1,
+        "RESO",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        true,
+        Smoothing::KNOB,
+    )
+    .ident("RESO"),
+    ParamSpec::continuous(
+        12,
+        "LEVEL",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.5,
+        1.0 / 128.0,
+        true,
+        Smoothing::STAGE,
+    )
+    .ident("LEVEL"),
     // TYPE on screen; its ident stays KIND.
     ParamSpec::choice(
         6,
@@ -133,6 +157,7 @@ pub static FILTER_SPECS: [ParamSpec; 8] = [
         ValFmt::Names(&KIND_NAMES),
         (KIND_NAMES.len() - 1) as f32,
         0.0,
+        Change::Crossfade,
     )
     .ident("KIND")
     .glyph(crate::glyph::FocusGlyph::None),
@@ -144,22 +169,44 @@ pub static FILTER_SPECS: [ParamSpec; 8] = [
         ValFmt::Names(FilterKind::Svf.mode_labels()),
         7.0,
         2.0,
+        Change::Crossfade,
     )
     .ident("MODE")
     .glyph(crate::glyph::FocusGlyph::None),
     // The 2040's VOICE (spec § 3): REV2 or EXP, two peers.
-    ParamSpec::choice(13, "VOICE", ValFmt::Names(&VOICE_LABELS), 1.0, 0.0)
-        .ident("VOICE")
-        .glyph(crate::glyph::FocusGlyph::None),
+    ParamSpec::choice(
+        13,
+        "VOICE",
+        ValFmt::Names(&VOICE_LABELS),
+        1.0,
+        0.0,
+        Change::Crossfade,
+    )
+    .ident("VOICE")
+    .glyph(crate::glyph::FocusGlyph::None),
     // The jacks (spec § 2): patching, not sound. Indexes into their choices.
-    ParamSpec::choice(8, "FM3 IN", ValFmt::Names(&FM3_IN_NAMES), 7.0, 0.0)
-        .ident("FM3IN")
-        .patching()
-        .glyph(crate::glyph::FocusGlyph::None),
-    ParamSpec::choice(11, "QM IN", ValFmt::Names(&QM_IN_NAMES), 9.0, 3.0)
-        .ident("QMIN")
-        .patching()
-        .glyph(crate::glyph::FocusGlyph::None),
+    ParamSpec::choice(
+        8,
+        "FM3 IN",
+        ValFmt::Names(&FM3_IN_NAMES),
+        7.0,
+        0.0,
+        Change::Snap,
+    )
+    .ident("FM3IN")
+    .patching()
+    .glyph(crate::glyph::FocusGlyph::None),
+    ParamSpec::choice(
+        11,
+        "QM IN",
+        ValFmt::Names(&QM_IN_NAMES),
+        9.0,
+        3.0,
+        Change::Snap,
+    )
+    .ident("QMIN")
+    .patching()
+    .glyph(crate::glyph::FocusGlyph::None),
 ];
 
 /// MODE as `kind` has it: its own names, its last index and its default,
@@ -176,6 +223,7 @@ const fn mode_spec(kind: FilterKind) -> ParamSpec {
         ValFmt::Names(kind.mode_labels()),
         (modes.len() - 1) as f32,
         d as f32,
+        Change::Crossfade,
     )
     .ident("MODE")
     .glyph(crate::glyph::FocusGlyph::None)
@@ -353,22 +401,107 @@ impl EnvParams {
 /// Positions and levels, per block. LEVEL and TIME (hidden, primed from the
 /// stage cells), RISE, FALL and SHAPE are modulatable.
 pub static ENV_SPECS: [ParamSpec; 19] = [
-    ParamSpec::continuous(0, "ATK", ValFmt::Uni, 0.0, 1.0, 0.189, 1.0 / 128.0, false).ident("ATK"),
-    ParamSpec::continuous(1, "DEC", ValFmt::Uni, 0.0, 1.0, 0.559, 1.0 / 128.0, false).ident("DEC"),
-    ParamSpec::continuous(2, "SUS", ValFmt::Uni, 0.0, 1.0, 0.7, 1.0 / 128.0, false).ident("SUS"),
-    ParamSpec::continuous(3, "REL", ValFmt::Uni, 0.0, 1.0, 0.559, 1.0 / 128.0, false).ident("REL"),
-    ParamSpec::continuous(4, "LEVEL", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, true).ident("LEVEL"),
-    ParamSpec::continuous(5, "VEL", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false).ident("VEL"),
-    ParamSpec::continuous(6, "H", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("H"),
-    ParamSpec::choice(7, "TYPE", ValFmt::Names(&["A", "B"]), 1.0, 0.0)
-        .ident("TYPE")
-        .glyph(crate::glyph::FocusGlyph::None),
+    ParamSpec::continuous(
+        0,
+        "ATK",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.189,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("ATK"),
+    ParamSpec::continuous(
+        1,
+        "DEC",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.559,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("DEC"),
+    ParamSpec::continuous(
+        2,
+        "SUS",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.7,
+        1.0 / 128.0,
+        false,
+        Smoothing::KNOB,
+    )
+    .ident("SUS"),
+    ParamSpec::continuous(
+        3,
+        "REL",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.559,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("REL"),
+    ParamSpec::continuous(
+        4,
+        "LEVEL",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        1.0,
+        1.0 / 128.0,
+        true,
+        Smoothing::Unheard,
+    )
+    .ident("LEVEL"),
+    ParamSpec::continuous(
+        5,
+        "VEL",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.5,
+        1.0 / 128.0,
+        false,
+        Smoothing::Unheard,
+    )
+    .ident("VEL"),
+    ParamSpec::continuous(
+        6,
+        "H",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("H"),
+    ParamSpec::choice(
+        7,
+        "TYPE",
+        ValFmt::Names(&["A", "B"]),
+        1.0,
+        0.0,
+        Change::Crossfade,
+    )
+    .ident("TYPE")
+    .glyph(crate::glyph::FocusGlyph::None),
     ParamSpec::choice(
         8,
         "SPEED",
         ValFmt::Names(&["FAST", "MED", "SLOW"]),
         2.0,
         1.0,
+        Change::Snap,
     )
     .ident("SPEED")
     .glyph(crate::glyph::FocusGlyph::None),
@@ -378,37 +511,88 @@ pub static ENV_SPECS: [ParamSpec; 19] = [
         ValFmt::Names(&["OFF", "AHDSR", "GATE EXT"]),
         2.0,
         1.0,
+        Change::Snap,
     )
     .ident("HOLD")
     .glyph(crate::glyph::FocusGlyph::None),
-    ParamSpec::continuous(10, "TIME", ValFmt::Bi, -1.0, 1.0, 0.0, 2.0 / 128.0, true).ident("TIME"),
+    ParamSpec::continuous(
+        10,
+        "TIME",
+        ValFmt::Bi,
+        -1.0,
+        1.0,
+        0.0,
+        2.0 / 128.0,
+        true,
+        Smoothing::Unheard,
+    )
+    .ident("TIME"),
     ParamSpec::choice(
         11,
         "MODE",
         ValFmt::Names(&["ENV", "LFO", "BURST"]),
         2.0,
         0.0,
+        Change::Crossfade,
     )
     .ident("MODE")
     .glyph(crate::glyph::FocusGlyph::None),
     // Live: the current MODE's FORM slot (16..=18), which is what is stored.
-    ParamSpec::choice(12, "FORM", ValFmt::Names(&["AD", "AHR", "CYCLE"]), 2.0, 0.0)
-        .ident("FORM")
-        .glyph(crate::glyph::FocusGlyph::None)
-        .live(),
-    ParamSpec::continuous(13, "RISE", ValFmt::Uni, 0.0, 1.0, 0.206, 1.0 / 128.0, true)
-        .ident("RISE"),
-    ParamSpec::continuous(14, "FALL", ValFmt::Uni, 0.0, 1.0, 0.640, 1.0 / 128.0, true)
-        .ident("FALL"),
-    ParamSpec::continuous(15, "SHAPE", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, true)
-        .ident("SHAPE")
-        .short("SHAP"),
+    ParamSpec::choice(
+        12,
+        "FORM",
+        ValFmt::Names(&["AD", "AHR", "CYCLE"]),
+        2.0,
+        0.0,
+        Change::Crossfade,
+    )
+    .ident("FORM")
+    .glyph(crate::glyph::FocusGlyph::None)
+    .live(),
+    ParamSpec::continuous(
+        13,
+        "RISE",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.206,
+        1.0 / 128.0,
+        true,
+        Smoothing::Own,
+    )
+    .ident("RISE"),
+    ParamSpec::continuous(
+        14,
+        "FALL",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.640,
+        1.0 / 128.0,
+        true,
+        Smoothing::Own,
+    )
+    .ident("FALL"),
+    ParamSpec::continuous(
+        15,
+        "SHAPE",
+        ValFmt::Bi,
+        0.0,
+        1.0,
+        0.5,
+        1.0 / 128.0,
+        true,
+        Smoothing::KNOB,
+    )
+    .ident("SHAPE")
+    .short("SHAP"),
     ParamSpec::choice(
         16,
         "ENV FORM",
         ValFmt::Names(&["AD", "AHR", "CYCLE"]),
         2.0,
         0.0,
+        Change::Crossfade,
     )
     .ident("ENV_FORM")
     .glyph(crate::glyph::FocusGlyph::None),
@@ -418,6 +602,7 @@ pub static ENV_SPECS: [ParamSpec; 19] = [
         ValFmt::Names(&["FREE", "SYNC", "LFV"]),
         2.0,
         0.0,
+        Change::Crossfade,
     )
     .ident("LFO_FORM")
     .glyph(crate::glyph::FocusGlyph::None),
@@ -427,6 +612,7 @@ pub static ENV_SPECS: [ParamSpec; 19] = [
         ValFmt::Names(&["AD", "AHR", "CYCLE"]),
         2.0,
         0.0,
+        Change::Crossfade,
     )
     .ident("BRST_FORM")
     .glyph(crate::glyph::FocusGlyph::None),
@@ -555,11 +741,43 @@ impl DriveParams {
 
 /// All three are read by `Voice` every block from the modulated copy.
 pub static DRIVE_SPECS: [ParamSpec; 3] = [
-    ParamSpec::continuous(0, "DRIVE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true).ident("DRIVE"),
-    ParamSpec::continuous(1, "TONE", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, true).ident("TONE"),
-    ParamSpec::continuous(2, "MIX", ValFmt::Bi, 0.0, 1.0, 1.0, 1.0 / 128.0, true)
-        .ident("MIX")
-        .glyph(crate::glyph::FocusGlyph::Crossfader),
+    ParamSpec::continuous(
+        0,
+        "DRIVE",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        true,
+        Smoothing::STAGE,
+    )
+    .ident("DRIVE"),
+    ParamSpec::continuous(
+        1,
+        "TONE",
+        ValFmt::Bi,
+        0.0,
+        1.0,
+        0.5,
+        1.0 / 128.0,
+        true,
+        Smoothing::STAGE,
+    )
+    .ident("TONE"),
+    ParamSpec::continuous(
+        2,
+        "MIX",
+        ValFmt::Bi,
+        0.0,
+        1.0,
+        1.0,
+        1.0 / 128.0,
+        true,
+        Smoothing::STAGE,
+    )
+    .ident("MIX")
+    .glyph(crate::glyph::FocusGlyph::Crossfader),
 ];
 
 impl Block for DriveParams {
@@ -612,9 +830,42 @@ impl FolderParams {
 
 /// All three are read by `Voice` every block from the modulated copy.
 pub static FOLDER_SPECS: [ParamSpec; 3] = [
-    ParamSpec::continuous(0, "FOLD", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true).ident("FOLD"),
-    ParamSpec::continuous(1, "SYM", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, true).ident("SYM"),
-    ParamSpec::continuous(2, "MIX", ValFmt::Bi, 0.0, 1.0, 0.5, 1.0 / 128.0, true).ident("MIX"),
+    ParamSpec::continuous(
+        0,
+        "FOLD",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        true,
+        Smoothing::STAGE,
+    )
+    .ident("FOLD"),
+    ParamSpec::continuous(
+        1,
+        "SYM",
+        ValFmt::Bi,
+        0.0,
+        1.0,
+        0.5,
+        1.0 / 128.0,
+        true,
+        Smoothing::STAGE,
+    )
+    .ident("SYM"),
+    ParamSpec::continuous(
+        2,
+        "MIX",
+        ValFmt::Bi,
+        0.0,
+        1.0,
+        0.5,
+        1.0 / 128.0,
+        true,
+        Smoothing::STAGE,
+    )
+    .ident("MIX"),
 ];
 
 impl Block for FolderParams {
@@ -738,12 +989,46 @@ pub static OUT_SPECS: [ParamSpec; 4] = [
         INIT_VOLUME,
         1.0 / 128.0,
         true,
+        Smoothing::STAGE,
     )
     .ident("LEVEL")
     .glyph(crate::glyph::FocusGlyph::LevelBar),
-    ParamSpec::continuous(1, "PAN", ValFmt::Pan, -1.0, 1.0, 0.0, 2.0 / 128.0, false).ident("PAN"),
-    ParamSpec::continuous(2, "VCA", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, true).ident("VCA"),
-    ParamSpec::continuous(3, "VEL", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false).ident("VEL"),
+    ParamSpec::continuous(
+        1,
+        "PAN",
+        ValFmt::Pan,
+        -1.0,
+        1.0,
+        0.0,
+        2.0 / 128.0,
+        false,
+        Smoothing::Unheard,
+    )
+    .ident("PAN"),
+    ParamSpec::continuous(
+        2,
+        "VCA",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        true,
+        Smoothing::Unheard,
+    )
+    .ident("VCA"),
+    ParamSpec::continuous(
+        3,
+        "VEL",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        1.0,
+        1.0 / 128.0,
+        false,
+        Smoothing::KNOB,
+    )
+    .ident("VEL"),
 ];
 
 impl Block for OutParams {
@@ -935,15 +1220,40 @@ impl PitchParams {
 /// PITCH and FINE read by the engine every block; STEAL and GLIDE TIME at
 /// a steal.
 pub static PITCH_SPECS: [ParamSpec; 5] = [
-    ParamSpec::stepped(0, "PITCH", ValFmt::Signed(24), -24.0, 24.0, 0.0, true)
-        .ident("PITCH")
-        .semitones(24.0),
-    ParamSpec::stepped(1, "FINE", ValFmt::Signed(100), -100.0, 100.0, 0.0, true)
-        .ident("FINE")
-        .cents(100.0),
-    ParamSpec::choice(2, "STEAL", ValFmt::Names(&STEAL_NAMES), 1.0, 0.0)
-        .ident("STEAL")
-        .glyph(crate::glyph::FocusGlyph::None),
+    ParamSpec::stepped(
+        0,
+        "PITCH",
+        ValFmt::Signed(24),
+        -24.0,
+        24.0,
+        0.0,
+        true,
+        Motion::Stepped(Change::Snap),
+    )
+    .ident("PITCH")
+    .semitones(24.0),
+    ParamSpec::stepped(
+        1,
+        "FINE",
+        ValFmt::Signed(100),
+        -100.0,
+        100.0,
+        0.0,
+        true,
+        Motion::Continuous(Smoothing::KNOB),
+    )
+    .ident("FINE")
+    .cents(100.0),
+    ParamSpec::choice(
+        2,
+        "STEAL",
+        ValFmt::Names(&STEAL_NAMES),
+        1.0,
+        0.0,
+        Change::NoteOn,
+    )
+    .ident("STEAL")
+    .glyph(crate::glyph::FocusGlyph::None),
     ParamSpec::continuous(
         3,
         "TIME",
@@ -953,11 +1263,19 @@ pub static PITCH_SPECS: [ParamSpec; 5] = [
         INIT_GLIDE_TIME,
         1.0 / 128.0,
         false,
+        Smoothing::NoteOn,
     )
     .ident("GLIDE_TIME"),
-    ParamSpec::choice(4, "SNAP", ValFmt::Names(&SNAP_NAMES), 1.0, 0.0)
-        .ident("SNAP")
-        .glyph(crate::glyph::FocusGlyph::None),
+    ParamSpec::choice(
+        4,
+        "SNAP",
+        ValFmt::Names(&SNAP_NAMES),
+        1.0,
+        0.0,
+        Change::NoteOn,
+    )
+    .ident("SNAP")
+    .glyph(crate::glyph::FocusGlyph::None),
 ];
 
 impl Block for PitchParams {
@@ -1053,6 +1371,12 @@ pub struct ParamSnapshot {
 }
 
 impl ParamSnapshot {
+    /// Whether this Sound moves `a` by its own motion, so the Part's knobs
+    /// hand it on at once (ADR 0112): SCRUB's jog.
+    pub fn moves_itself(&self, a: ParamAddr) -> bool {
+        a.block == BlockRef::TapeEngine && crate::dsp::tape_engine::jogs(self.tape.model, a.param)
+    }
+
     /// Default params for `engine`.
     pub fn for_engine(engine: EngineType) -> Self {
         let mut p = Self {

@@ -7,6 +7,7 @@ use chimera_core::dsp::chorus::ChorusParams;
 use chimera_core::dsp::comp::CompParams;
 use chimera_core::dsp::delay::DelayParams;
 use chimera_core::dsp::fx_bus::{FxBus, FxParams};
+use chimera_core::dsp::knobs::Knobs;
 use chimera_core::dsp::limiter::{CEILING, KNEE, LOOKAHEAD, Limiter, OUTPUT_GAIN, THRESHOLD};
 use chimera_core::dsp::reverb::ReverbParams;
 use chimera_core::dsp::tape::TapeParams;
@@ -105,10 +106,10 @@ fn chord(
     let mut shared = Box::new(AudioShared::default());
     if let Voices::Saw = voices {
         let saw = factory_sound(4).unwrap();
-        shared.parts[0].params = saw.params;
+        *shared.parts[0].params = saw.params;
         shared.parts[0].params.filter.cutoff = 20_000.0;
         shared.parts[0].params.filter.resonance = 0.0;
-        shared.parts[0].mod_state = saw.mod_state;
+        *shared.parts[0].mod_state = saw.mod_state;
     } else {
         shared.parts[0].params.out.volume = 0.8;
     }
@@ -118,7 +119,8 @@ fn chord(
     // Rev V, or with the master tape (where ALGO INIT plays seven since
     // ADR 0060) a budget for all eight.
     let voice = Voice::cost(&shared.parts[0].params, &shared.parts[0].mod_state).0;
-    let eight = ((FxBus::COST.0 + 8 * voice) as u64 * 480_000).div_ceil(7) as u32;
+    // And the Part's knobs (ADR 0112).
+    let eight = ((FxBus::COST.0 + 8 * voice + Knobs::COST.0) as u64 * 480_000).div_ceil(7) as u32;
     let mut inst = Box::new(Instrument::new(
         SAMPLE_RATE,
         SampleBudget::for_cpu(eight.max(CPU_HZ_REV_V)),

@@ -37,6 +37,7 @@ fn budget(cost: u32) -> SampleBudget {
     SampleBudget::for_cpu(((FxBus::COST.0 + cost) as u64 * 480_000).div_ceil(7) as u32)
 }
 
+use chimera_core::dsp::knobs::Knobs;
 use common::InstRig as Rig;
 
 impl Rig {
@@ -45,11 +46,12 @@ impl Rig {
         Self::voices(shared, 1)
     }
 
-    /// Room for `n` voices of Part 1's Sound.
+    /// Room for `n` voices of Part 1's Sound, and two Parts' knobs (ADR
+    /// 0112): never room for one more voice.
     fn voices(shared: &AudioShared, n: u32) -> Self {
         let p = &shared.parts[0];
         let cost = Voice::cost(&p.params, &p.mod_state).0;
-        Self::with_budget(budget(n * cost))
+        Self::with_budget(budget(n * cost + 2 * Knobs::COST.0))
     }
 
     /// `blocks` blocks of Part `part`'s bus, and each block's glide ratio of
@@ -78,7 +80,7 @@ fn part(engine: EngineType, mode: Option<ResonatorMode>, steal: Steal) -> AudioS
         p.modal.mode = m;
     }
     p.pitch.steal = steal;
-    shared.parts[0].params = p;
+    *shared.parts[0].params = p;
     shared
 }
 
@@ -240,7 +242,7 @@ fn a_cut_steal_does_not_glide() {
 #[test]
 fn another_parts_steal_cuts() {
     let mut shared = part(EngineType::Modal, Some(ResonatorMode::String), Steal::Glide);
-    shared.parts[1].params = shared.parts[0].params.clone();
+    *shared.parts[1].params = (*shared.parts[0].params).clone();
     shared.parts[1].mix.channel = MidiChannel::new(1).unwrap();
     let mut rig = Rig::one_voice(&shared);
     let (mut out, mut ratios) = (Vec::new(), Vec::new());
