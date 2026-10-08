@@ -213,6 +213,12 @@ pub trait Store {
     }
 }
 
+/// The longest file any Chimera write makes: the bench's 4 MiB card test
+/// file (a `put` is at most 1 MiB, a project about 175 KB). A cut strands
+/// at most one file's chain and one directory cluster, so it bounds what
+/// one sweep may free (ADR 0094).
+pub const MAX_CHAIN_BYTES: u32 = 4 << 20;
+
 /// What a sweep does with the clusters it finds lost.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sweep {
@@ -275,6 +281,9 @@ pub enum Doubt {
     TooDeep,
     /// More clusters than the bitmap's bits.
     NoRoom,
+    /// `Free` found more lost clusters, carried, than two cuts of the
+    /// longest chain can strand: a mark bug, never a cut.
+    TooMany(u32),
     /// The card timed out, left, or was swapped.
     Card(StoreError),
 }
@@ -290,6 +299,7 @@ impl Doubt {
             Doubt::CrossLinked => "cross-linked",
             Doubt::TooDeep => "too-deep",
             Doubt::NoRoom => "no-room",
+            Doubt::TooMany(_) => "too-many",
             Doubt::Card(StoreError::NoCard) => "no-card",
             Doubt::Card(StoreError::Timeout) => "timeout",
             Doubt::Card(StoreError::VolumeChanged(_)) => "card-changed",

@@ -20,7 +20,7 @@ use crate::dir::ENTRY;
 use crate::fat::{FREE, FatCache, Table};
 use crate::fsinfo;
 use crate::volume::{FsKind, Layout, Link, Root};
-use chimera_hal::store::{Doubt, SweepStats};
+use chimera_hal::store::{Doubt, MAX_CHAIN_BYTES, SweepStats};
 
 /// Deeper than this aborts: the root is depth 0.
 pub const MAX_DEPTH: usize = 8;
@@ -114,6 +114,14 @@ impl Marks<'_> {
         self.0[i / 8] |= 1 << (i % 8);
         !was
     }
+}
+
+/// The most one `Sweep::Free` frees on `l`: two cuts' worth, each the
+/// longest chain Chimera writes and a directory cluster. Every unclean
+/// change is followed by a boot that sweeps, so one cut is the rule; the
+/// second covers a cut during that sweep's own boot. More is a doubt.
+pub fn max_lost(l: &Layout) -> u32 {
+    2 * (MAX_CHAIN_BYTES.div_ceil(l.cluster_bytes()) + 1)
 }
 
 /// Whether `marks` has a bit for every cluster of `l`.

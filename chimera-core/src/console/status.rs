@@ -7,7 +7,7 @@ use crate::project::ProjectStatus;
 use crate::ui::UiState;
 use crate::ui::about_page::{BUILD, VERSION, write_build_rev};
 use crate::ui::nav::{MixPage, Rung};
-use chimera_hal::store::{Sweep, SweepSeen, SweepStats};
+use chimera_hal::store::{Doubt, Sweep, SweepSeen, SweepStats};
 
 /// The footer's word for `s`.
 pub fn state_word(s: ProjectStatus) -> &'static str {
@@ -84,6 +84,9 @@ pub fn write_sweep(mode: Sweep, seen: &SweepSeen, w: &mut impl Write) -> fmt::Re
         }
         Err((d, stats)) => {
             write!(w, "sweep {mode} doubt {}", d.word())?;
+            if let Doubt::TooMany(lost) = d {
+                write!(w, " lost {lost}")?;
+            }
             stats
         }
     };

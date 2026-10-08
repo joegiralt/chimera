@@ -317,6 +317,9 @@ impl<D: Medium> FatStore<D> {
         if mode == Sweep::DryRun || (found.lost == 0 && found.differs.is_none()) {
             return Ok(swept);
         }
+        if found.lost > sweep::max_lost(&layout) {
+            return Err((Doubt::TooMany(found.lost), stats));
+        }
         swept.healed = swept.stale;
         let ReadOnly(mut part) = ro;
         let freed = sweep::free(

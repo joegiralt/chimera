@@ -20,10 +20,10 @@ use chimera_core::project::test_support::{full, full_dense_slots, save_at};
 use chimera_core::project::{PartId, Project, ProjectNote};
 use chimera_core::storage::Card;
 use chimera_fat::FatStore;
-use chimera_fat::sweep::{MAX_DEPTH, MAX_DIRS};
+use chimera_fat::sweep::{MAX_DEPTH, MAX_DIRS, max_lost};
 use chimera_fat::volume::{FsKind, Layout, Root};
 use chimera_hal::store::{
-    Dir, Doubt, FileName, Store, StoreError, Sweep, SweepSeen, Swept, VolumeId,
+    Dir, Doubt, FileName, MAX_CHAIN_BYTES, Store, StoreError, Sweep, SweepSeen, Swept, VolumeId,
 };
 use core::cell::Cell;
 use embedded_sdmmc::{Block, BlockCount, BlockDevice, BlockIdx};
@@ -908,6 +908,38 @@ fn a_torn_fat1_sector_frees_nothing() {
             }
             assert_eq!(blocks(&disk), before, "{what}: the image");
         }
+    }
+}
+
+/// One run frees at most `max_lost`, two of the largest chains a cut can
+/// strand: above it the free is refused, nothing written, while a dry run
+/// still counts them all.
+#[test]
+fn a_sweep_frees_at_most_its_cap() {
+    for (kind, clusters) in [(FsKind::Fat16, 20_000), (FsKind::Fat32, 66_000)] {
+        let fresh = |extra: u32| {
+            let disk = with_clusters(clusters, 0xCA9);
+            let l = layout_of(&disk);
+            let cap = max_lost(&l);
+            assert_eq!(cap, 2 * ((MAX_CHAIN_BYTES).div_ceil(l.cluster_bytes()) + 1));
+            let mut t = Tree::new(&disk);
+            let mut root = t.root();
+            t.file(&mut root, *b"KEPT    BIN", None, (2_000, 0), 1, None);
+            t.lose(cap - 1 + extra, None);
+            t.lose(1, None);
+            (disk, cap)
+        };
+        let (disk, cap) = fresh(0);
+        let disk = Rc::new(disk);
+        assert_eq!(swept(&disk).freed, cap, "{kind:?}: the cap itself");
+        let (disk, cap) = fresh(1);
+        let dry = sweep_on(&Rc::new(copy(&disk)), Sweep::DryRun).unwrap();
+        assert_eq!((dry.lost, dry.settled()), (cap + 1, false), "{kind:?}");
+        refused(
+            &format!("{kind:?}: one past"),
+            disk,
+            Doubt::TooMany(cap + 1),
+        );
     }
 }
 
