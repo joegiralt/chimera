@@ -14,6 +14,7 @@ use crate::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
 use crate::dsp::envelope::{EnvMods, Envelope};
 use crate::dsp::filter::knobs::Knobs;
 use crate::dsp::filter::{FILTER_LEVEL_COST, Filter, FilterMods};
+use crate::dsp::gate::AmpGate;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modal::{ResonatorMode, SymPool};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
@@ -63,6 +64,8 @@ pub struct Voice {
     /// off or the voice idle.
     filter_clip: Clip,
     folder: Wavefolder,
+    /// The amp gate after the filter (ADR 0110).
+    gate: AmpGate,
     /// DC from the stages before it (ADR 0060).
     dc: DcBlocker,
     /// The stages' stored settings, eased as a bus setting is: a jump
@@ -200,7 +203,11 @@ impl Voice {
     /// 2026-09-27; 10 was kept, erring high. ADR 0060 adds the DC blocker
     /// (6.5 instructions a sample), the stages' ease (1.3) and the ramps of
     /// OUT LEVEL and filter LEVEL (about 2 each): 11.8 × 1.46 × 1.1 = 19,
-    /// by ADR 0056's host method; 29, rounded up.
+    /// by ADR 0056's host method; 29, rounded up. ADR 0110's amp gate costs
+    /// nothing while the key is down; from note-off it scans the engine's
+    /// block and the voice's (3 instructions a sample each) and ramps (4), a
+    /// host count of 10 × 1.46 × 1.1 = 16 a sample in a release, left to
+    /// the 11 this rounding and the budget's headroom hold (ADR 0061).
     pub const CHAIN_COST: Cost = Cost(30);
 
     /// A `kill` ramps to silence over this many samples (ADR 0027).
@@ -391,6 +398,7 @@ impl Voice {
                 filter: Filter::new(),
                 filter_clip: Clip::ZERO,
                 folder: Wavefolder::new(),
+                gate: AmpGate::OPEN,
                 dc: DcBlocker::new(DC_HZ, (*p).sample_rate),
                 stages: StageEase::default(),
                 volume: Ramp::default(),
@@ -563,6 +571,7 @@ impl Voice {
             self.drive.hold();
             self.folder.hold();
             self.dc.reset();
+            self.gate = AmpGate::OPEN;
             self.volume.hold();
             self.slot.hold();
             self.stages = StageEase::default();
@@ -574,6 +583,7 @@ impl Voice {
             self.tap_amt = [[0; 4]; 2];
         }
         self.retrigger = true;
+        self.gate.restart();
         self.last_note = note;
         self.last_velocity = velocity;
         self.last_source = source;
@@ -907,6 +917,15 @@ impl Voice {
         // 1. Engine → raw oscillator output, and the tapped ops' rows.
         self.slot
             .render(output, m, live, sample_rate, ctx, &mut rows);
+        // The amp gate (ADR 0110): ALGO and MODAL end by their own tail, so
+        // a released note's filter may ring no louder than it; VCA routes
+        // and TAPE's key gate the voice themselves.
+        let gated = gain.is_none()
+            && matches!(self.slot, EngineSlot::Algo(_) | EngineSlot::Modal(_))
+            && !self.gate.idle(self.held);
+        if gated && !self.held {
+            self.gate.feed(output);
+        }
         let lane = |c: FixedCol| {
             let (a, b) = (from.map(|o| o[c.index()]), to.map(|o| o[c.index()]));
             // A nonzero amount wants its op, so the rows are there.
@@ -942,6 +961,10 @@ impl Voice {
         // 6. DC from the engine, the drive, the filter, the fold and the
         // tap-VCA: none reaches the VCA (ADR 0060).
         self.dc.run(output);
+
+        if gated {
+            self.gate.apply(output, self.held);
+        }
 
         // 7. The VCA, after the blocker, with the engine's output gain,
         // ramped (never snap).

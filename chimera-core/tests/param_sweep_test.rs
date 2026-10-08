@@ -359,6 +359,14 @@ fn stuck_ok(c: &Case, (first, last): (f32, f32), t: Timing) -> Option<&'static s
              (measured on the engine)",
         );
     }
+    if c.patch == Patch::ModalInit(ResonatorMode::Sympathetic)
+        && c.is(BlockRef::Filter, FilterParams::RESONANCE)
+        && matches!(c.mv, Move::Jump { .. })
+    {
+        return Some(
+            "RES jumped to 1 after the chord's release lets the filter ring up from nothing in              a SYMP tail (28 s): the amp gate (ADR 0110) lets it build to 4× the halo it              follows, which is louder than the 0.2 s at its start",
+        );
+    }
     if last < first
         && c.patch == Patch::ModalInit(ResonatorMode::Sympathetic)
         && (c.modal(ModalParams::HALO) || c.modal(ModalParams::COUPLE))
@@ -394,49 +402,65 @@ fn long_tail(c: &Case) -> Option<&'static str> {
 // ── Known defects ──────────────────────────────────────────────────────
 
 /// A defect the sweep found, left for its fix: its ignored `defect_*`
-/// test fails until then.
+/// test fails until then. None open.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum Defect {
-    FilterRingHolds,
-}
+enum Defect {}
 
 impl Defect {
     fn what(self) -> &'static str {
-        match self {
-            Defect::FilterRingHolds => {
-                "a self-oscillating filter outlives its note on MODAL: no VCA after the filter \
-                 (private issue #374)"
-            }
-        }
+        match self {}
     }
 }
 
-fn known(c: &Case, kind: &Kind, _label: &str) -> Option<Defect> {
-    let modal = matches!(c.patch, Patch::ModalInit(_) | Patch::BusyModal);
-    (*kind == Kind::Stuck && modal && c.is(BlockRef::Filter, FilterParams::RESONANCE))
-        .then_some(Defect::FilterRingHolds)
+fn known(_c: &Case, _kind: &Kind, _label: &str) -> Option<Defect> {
+    None
 }
 
-/// #374: MODAL INIT at RES 1 frees its voice after the release.
+/// #374, ADR 0110: with RES 1 the filter self-oscillates, yet after
+/// note-off the voice follows its engine's tail down and frees, with no step
+/// at its end.
 #[test]
-#[ignore = "defect: a self-oscillating filter holds its MODAL voice (#374)"]
-fn defect_self_oscillation_holds_a_modal_voice() {
-    let mut b = Bench::new(
+fn a_self_oscillating_filter_dies_with_its_note() {
+    for patch in [
+        Patch::AlgoInit,
+        Patch::ModalInit(ResonatorMode::String),
         Patch::ModalInit(ResonatorMode::Modal),
-        PartParams::default(),
-        FxParams::default(),
-    );
-    b.set(&find(BlockRef::Filter, FilterParams::RESONANCE), 1.0);
-    let mut t = Tape::default();
-    for blk in 0..4000 {
-        match blk {
-            0 => b.note(60, Some(100)),
-            150 => b.note(60, None),
-            _ => {}
+        Patch::ModalInit(ResonatorMode::Bowed),
+        Patch::ModalInit(ResonatorMode::Sympathetic),
+    ] {
+        let mut b = Bench::new(patch, PartParams::default(), FxParams::default());
+        b.set(&find(BlockRef::Filter, FilterParams::RESONANCE), 1.0);
+        let mut t = Tape::default();
+        for blk in 0..30_000 {
+            match blk {
+                0 => b.note(60, Some(100)),
+                150 => b.note(60, None),
+                _ => {}
+            }
+            b.render(&mut t);
         }
-        b.render(&mut t);
+        let name = patch.name();
+        let end = 150
+            + t.freed(150)
+                .unwrap_or_else(|| panic!("{name}: the voice rings on"));
+        let rms = |from: usize, to: usize| {
+            let x = &t.bus[from * 64..to * 64];
+            (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).sqrt()
+        };
+        let (at_off, near_end) = (rms(140, 150), rms(end - 40, end));
+        assert!(
+            near_end < 0.01 * at_off,
+            "{name}: {at_off:.3} at note-off, {near_end:.3} before it frees"
+        );
+        let step = |a: usize, b: usize| {
+            t.bus[a * 64..b * 64]
+                .windows(2)
+                .map(|w| (w[1] - w[0]).abs())
+                .fold(0.0, f32::max)
+        };
+        let (before, at_end) = (step(end - 4, end - 1), step(end - 1, end + 1));
+        assert!(at_end <= 1.5 * before, "{name}: a step at the voice's end");
     }
-    assert!(t.freed(150).is_some(), "the voice rings on");
 }
 
 // ── Verdicts ───────────────────────────────────────────────────────────
