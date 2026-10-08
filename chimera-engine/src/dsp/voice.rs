@@ -206,9 +206,9 @@ impl Voice {
     /// by ADR 0056's host method; 29, rounded up. ADR 0110's amp gate costs
     /// nothing while the key is down; from note-off it scans the engine's
     /// block and the voice's (3 instructions a sample each) and ramps (4), a
-    /// host count of 10 × 1.46 × 1.1 = 16 a sample in a release, left to
-    /// the 11 this rounding and the budget's headroom hold (ADR 0061).
-    pub const CHAIN_COST: Cost = Cost(30);
+    /// host count of 10 × 1.46 × 1.1 = 16 a sample in a release; billed
+    /// always, 6 over the 30 (ADR 0110).
+    pub const CHAIN_COST: Cost = Cost(36);
 
     /// A `kill` ramps to silence over this many samples (ADR 0027).
     pub const FADE: u16 = 2 * BLOCK_SIZE as u16;

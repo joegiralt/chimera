@@ -368,7 +368,7 @@ out = Σ cₘ·yₘ · gainₘ(k) · OUT_LADDER/α
 tanhₚ(x) = c·(1 + c²·(a₃ + c²·(a₅ + …a₁₁))), c = clamp(x, ±3)   // `tanh_poly`: 0.005 off tanh, flat at ±1 from ±3, no divide
 ```
 
-- **The saturator.** The owner's design put a Padé 3/2 tanh on the input pair and stage 1 and the 2040's cubic on stages 2–4. Against SPICE that misses the large-signal cutoff shift by 38 cents RMS and the drive sweep by 1 % of H1 (ADR 0104). **The owner ruled (2026-10-07): `tanh_poly` on all five** (10 cents, 0.16 %, no divide), at 7 / 5 / 4 voices (ALGO default / one tap / all four, rev V) against the mix's 7 / 6 / 5; 7 / 5 / 5 after the TAPE merge's re-count.
+- **The saturator.** The owner's design put a Padé 3/2 tanh on the input pair and stage 1 and the 2040's cubic on stages 2–4. Against SPICE that misses the large-signal cutoff shift by 38 cents RMS and the drive sweep by 1 % of H1 (ADR 0104). **The owner ruled (2026-10-07): `tanh_poly` on all five** (10 cents, 0.16 %, no divide), at 7 / 5 / 4 voices (ALGO default / one tap / all four, rev V) against the mix's 7 / 6 / 5; 7 / 5 / 5 after the TAPE merge's re-count. ADR 0110's amp gate (CHAIN_COST 30 to 36) leaves LADDER at 6 / 5 / 5 (ALGO default / one tap / all four, rev V).
 
 - **Resonance.** `k = 4·RES/0.95` (`k2040_k`): the onset at RES 0.95, 4.21 at RES 1. The ring's amplitude is the input pair's; its pitch is trimmed +20.8 cents (`TRIM_LADDER`), the stages' saturators slowing it, which holds it within 0.6 cents over C2–C6.
 - **Bass loss.** DC gain `1/(1 + k)`, uncompensated (the owner's ruling for the 2040, held here).
