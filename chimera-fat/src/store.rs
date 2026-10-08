@@ -310,12 +310,14 @@ impl<D: Medium> FatStore<D> {
         let mut swept = Swept {
             lost: found.lost,
             freed: 0,
-            healed: found.differs.is_some(),
+            stale: found.differs.is_some(),
+            healed: false,
             stats,
         };
         if mode == Sweep::DryRun || (found.lost == 0 && found.differs.is_none()) {
             return Ok(swept);
         }
+        swept.healed = swept.stale;
         let ReadOnly(mut part) = ro;
         let freed = sweep::free(
             &mut part,

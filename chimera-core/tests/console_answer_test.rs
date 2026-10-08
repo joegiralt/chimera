@@ -607,7 +607,8 @@ fn status_has_the_sweep_after_boot() {
         Ok(Swept {
             lost: 93,
             freed: 0,
-            healed: true,
+            stale: true,
+            healed: false,
             stats,
         }),
     ));
@@ -619,7 +620,7 @@ fn status_has_the_sweep_after_boot() {
     assert_eq!(
         rest.lines().next(),
         Some(
-            "sweep dry-run lost 93 freed 0 healed yes spc 64 clusters 488281 fat 1953792 \
+            "sweep dry-run lost 93 freed 0 stale yes healed no spc 64 clusters 488281 fat 1953792 \
              compare 210ms mark 35ms count 104ms"
         )
     );

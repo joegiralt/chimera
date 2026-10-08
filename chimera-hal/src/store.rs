@@ -241,10 +241,20 @@ pub struct Swept {
     pub lost: u32,
     /// 0 in `DryRun`.
     pub freed: u32,
-    /// FAT 2's one differing sector was (in `DryRun`: would be) copied
-    /// from FAT 1.
+    /// FAT 2 had one sector behind FAT 1.
+    pub stale: bool,
+    /// That sector was copied from FAT 1: never in `DryRun`.
     pub healed: bool,
     pub stats: SweepStats,
+}
+
+impl Swept {
+    /// Nothing left for a later sweep: no sector behind (what only FAT 1
+    /// held there waits for the boot after its copy), and every lost
+    /// cluster freed, so none in `DryRun`.
+    pub fn settled(&self) -> bool {
+        !self.stale && self.freed == self.lost
+    }
 }
 
 /// Why a sweep stopped before writing anything.

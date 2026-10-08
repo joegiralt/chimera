@@ -781,11 +781,16 @@ fn one_stale_sector_is_fat1_first_or_doubt() {
         let fat2 = l.fat_copies(d).nth(1).unwrap();
         let disk = Rc::new(disk);
         let dry = sweep_on(&disk, Sweep::DryRun).unwrap();
-        assert_eq!((dry.lost, dry.healed), (2, true), "{kind:?}: both and far");
+        assert_eq!(
+            (dry.lost, dry.stale, dry.healed, dry.settled()),
+            (2, true, false, false),
+            "{kind:?}: both and far; nothing healed dry"
+        );
         let mut s = probed(&disk);
         let vol = s.mount().unwrap();
         let got = s.sweep(vol, Sweep::Free, &mut marks_for(&*disk)).unwrap();
         assert_eq!((got.lost, got.freed, got.healed), (2, 2, true), "{kind:?}");
+        assert!(!got.settled(), "{kind:?}: only1 waits");
         let writes: Vec<u32> = log(&s).writes.borrow().iter().map(|&(b, _)| b).collect();
         assert_eq!(writes[0], PART_LBA + fat2, "{kind:?}: D's FAT 2 copy first");
         if let Some(info) = l.fs_info() {
@@ -800,6 +805,7 @@ fn one_stale_sector_is_fat1_first_or_doubt() {
         // FAT 1 won the copy; what only it holds goes at the next boot.
         let next = swept(&disk);
         assert_eq!((next.freed, next.healed), (1, false), "{kind:?}: only1");
+        assert!(next.settled(), "{kind:?}");
         assert_eq!(fat_value(&disk, &l, 0, only1), 0);
         assert_eq!(fat_value(&disk, &l, 1, only1), 0);
         assert!(holds(&l, fat_value(&disk, &l, 0, a1)), "{kind:?}: A's tail");

@@ -71,11 +71,14 @@ pub fn write_sweep(mode: Sweep, seen: &SweepSeen, w: &mut impl Write) -> fmt::Re
     };
     let stats: &SweepStats = match seen {
         Ok(s) => {
-            let healed = if s.healed { "yes" } else { "no" };
+            let yes = |b| if b { "yes" } else { "no" };
             write!(
                 w,
-                "sweep {mode} lost {} freed {} healed {healed}",
-                s.lost, s.freed
+                "sweep {mode} lost {} freed {} stale {} healed {}",
+                s.lost,
+                s.freed,
+                yes(s.stale),
+                yes(s.healed)
             )?;
             &s.stats
         }
