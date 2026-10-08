@@ -39,6 +39,7 @@ use chimera_engine::dsp::modal::{
     BankModes, CHORD_COUNT, ModalEngine, ModalParams, ResonatorMode, SymPool,
 };
 use chimera_engine::dsp::modulator::{EnvForm, EnvSlot, EnvType, Func, Glide, LfoForm, LfoType};
+use chimera_engine::dsp::rev::sync::Tempo;
 use chimera_engine::dsp::reverb::ReverbType;
 use chimera_engine::dsp::tape_engine::read::{DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape};
 use chimera_engine::dsp::tape_engine::{StretchType, TapeModel, wave};
@@ -241,8 +242,9 @@ fn smear_reverb(s: &mut AudioShared, _block: u32) {
 fn worst_burst(s: &mut AudioShared, block: u32, kind: ReverbType) {
     let r = &mut s.fx.reverb;
     let size = [0.0, 1.0][block as usize % 2];
-    (r.kind, r.size, r.predelay, r.time, r.diffuse, r.smear, r.rate, r.mix) =
-        (kind, size, size, 1.0, 1.0, 1.0, 1.0, 0.5);
+    (
+        r.kind, r.size, r.predelay, r.time, r.diffuse, r.smear, r.rate, r.mix,
+    ) = (kind, size, size, 1.0, 1.0, 1.0, 1.0, 0.5);
 }
 
 /// ROOM, HALL or BLOOM at its worst (reverb TYPEs spec § Bench rows): SIZE
@@ -1590,7 +1592,7 @@ impl Rig<'_> {
         // Its cycles: the voices' render before it is not counted.
         let mut block = |shared: &mut AudioShared, fx: &mut FxBus, dac: &mut DacBlocks, b: u32| {
             if let Some(inst) = inst.as_deref_mut() {
-                inst.render(fx, dac, shared, scope);
+                inst.render_with(fx, dac, shared, scope, &GateView::empty());
             }
             let start = DWT::cycle_count();
             each(shared, b);
@@ -1739,7 +1741,13 @@ impl Rig<'_> {
                 ReverbType::Bloom,
             ][(b / SWITCH_EVERY) as usize % 5];
             let start = DWT::cycle_count();
-            inst.render(fx, &mut self.dac, shared, &mut self.scope);
+            inst.render_with(
+                fx,
+                &mut self.dac,
+                shared,
+                &mut self.scope,
+                &GateView::empty(),
+            );
             for (pair, o) in DacPair::ALL.into_iter().zip(out.iter_mut()) {
                 interleave(self.dac.out(), pair, o);
             }
