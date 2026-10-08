@@ -5,7 +5,7 @@ use core::fmt::{self, Write};
 use super::PROTOCOL;
 use crate::project::ProjectStatus;
 use crate::ui::UiState;
-use crate::ui::about_page::{BUILD, VERSION};
+use crate::ui::about_page::{BUILD, VERSION, write_build_rev};
 use crate::ui::nav::{MixPage, Rung};
 use chimera_hal::store::{Sweep, SweepSeen, SweepStats};
 
@@ -24,6 +24,8 @@ pub fn write_status(ui: &UiState, w: &mut impl Write) -> fmt::Result {
     for c in BUILD.chars() {
         w.write_char(c.to_ascii_lowercase())?;
     }
+    w.write_str("\nbuild ")?;
+    write_build_rev(w)?;
     writeln!(w, "\nprotocol {PROTOCOL}")?;
     writeln!(w, "project {}", ui.project().meta().name().as_str())?;
     writeln!(w, "state {}", state_word(ui.project_status()))?;
