@@ -16,6 +16,16 @@ fn fault_takes_dma_1_or_2_only() {
         parse("fault DMA 2"),
         Some(Ok(Request::Fault(FaultArg::Dma(2))))
     );
+    assert_eq!(
+        parse("fault ndtr"),
+        Some(Ok(Request::Fault(FaultArg::Ndtr)))
+    );
+    for bad in ["fault ndtr 1"] {
+        assert!(
+            matches!(parse(bad), Some(Err(Refusal::Arguments(_)))),
+            "{bad}"
+        );
+    }
     for bad in [
         "fault",
         "fault dma",

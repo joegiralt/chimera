@@ -1,6 +1,7 @@
 //! `fault dma <1|2>`: provoke a transfer error on a trailing audio DMA stream
 //! as a debugger would. Test builds only (`fault-inject`).
 
+use chimera_core::console::StreamSnap;
 use stm32h7xx_hal::pac;
 
 /// ITCM: DMA1 cannot reach it, so the stream's next read bus-errors.
@@ -29,4 +30,37 @@ pub fn dma_transfer_error(n: u8) -> Option<()> {
     unsafe { st.m0ar.write(|w| w.m0a().bits(UNREACHABLE)) };
     st.cr.modify(|_, w| w.en().enabled());
     Some(())
+}
+
+/// Reads per stream: well over a ring period (2.7 ms) at a register read's cost.
+const SAMPLES: u32 = 200_000;
+
+/// The three streams' CR, NDTR and M0AR, with the NDTR range seen over
+/// `SAMPLES` rounds of reads. Read-only; the audio interrupt runs through it.
+pub fn dump() -> [StreamSnap; 3] {
+    // SAFETY: only reads DMA1's stream registers, which have no read side
+    // effects.
+    let dma1 = unsafe { &*pac::DMA1::ptr() };
+    let mut out = [StreamSnap {
+        cr: 0,
+        ndtr: 0,
+        m0ar: 0,
+        ndtr_min: u16::MAX,
+        ndtr_max: 0,
+    }; 3];
+    for _ in 0..SAMPLES {
+        for (s, st) in out.iter_mut().zip(&dma1.st) {
+            let n = st.ndtr.read().ndt().bits();
+            s.ndtr_min = s.ndtr_min.min(n);
+            s.ndtr_max = s.ndtr_max.max(n);
+        }
+    }
+    for (s, st) in out.iter_mut().zip(&dma1.st) {
+        (s.cr, s.ndtr, s.m0ar) = (
+            st.cr.read().bits(),
+            st.ndtr.read().ndt().bits(),
+            st.m0ar.read().bits(),
+        );
+    }
+    out
 }

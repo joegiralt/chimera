@@ -444,9 +444,16 @@ impl Unit for ChipUnit<'_> {
     }
 
     #[cfg(feature = "fault-inject")]
+    fn fault_dump(&mut self) -> Option<[chimera_core::console::StreamSnap; 3]> {
+        Some(crate::fault::dump())
+    }
+
+    #[cfg(feature = "fault-inject")]
     fn fault(&mut self, arg: chimera_core::console::FaultArg) -> Option<()> {
-        let chimera_core::console::FaultArg::Dma(n) = arg;
-        crate::fault::dma_transfer_error(n)
+        match arg {
+            chimera_core::console::FaultArg::Dma(n) => crate::fault::dma_transfer_error(n),
+            chimera_core::console::FaultArg::Ndtr => None,
+        }
     }
 
     fn boot(&self) -> Option<BootSeen> {

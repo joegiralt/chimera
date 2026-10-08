@@ -130,7 +130,7 @@ macro_rules! table {
 table! {
     Ls     (LsArg)   => "ls",     "project files on the card, sizes; ls tapes: the sources",
     Put    (PutArg)  => "put",    "a project or source onto the card: <path> <size> <crc32>",
-    Fault  (FaultArg) => "fault",  "provoke a DMA transfer error: fault dma <1|2> (fault-inject builds)",
+    Fault  (FaultArg) => "fault",  "DMA fault test: fault dma <1|2>, fault ndtr (fault-inject builds)",
 }
 #[cfg(all(feature = "card-put", not(feature = "fault-inject")))]
 table! {

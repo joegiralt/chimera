@@ -47,6 +47,11 @@ pub trait Unit {
     fn fault(&mut self, _: super::FaultArg) -> Option<()> {
         None
     }
+    /// The three DMA streams' registers and NDTR range. `None`: not in this build.
+    #[cfg(feature = "fault-inject")]
+    fn fault_dump(&mut self) -> Option<[super::StreamSnap; 3]> {
+        None
+    }
     /// The card behind `ls` and `put`; `NoCard` where there is none.
     type Files: Files;
     /// The card, for `ls` and `put`. `None`: not in this build.
@@ -130,6 +135,11 @@ pub fn answer(
         },
         Ok(Request::Shot(c)) => return write_shot(unit.frame(), c, t.0),
         Ok(r @ Request::Dfu(NoArg)) => unit.dfu().map(Ok).ok_or(Why::Absent(r.command())),
+        #[cfg(feature = "fault-inject")]
+        Ok(r @ Request::Fault(super::FaultArg::Ndtr)) => unit
+            .fault_dump()
+            .map(|d| super::write_snaps(&d, &mut t))
+            .ok_or(Why::Absent(r.command())),
         #[cfg(feature = "fault-inject")]
         Ok(r @ Request::Fault(arg)) => unit.fault(arg).map(Ok).ok_or(Why::Absent(r.command())),
         #[cfg(feature = "card-put")]
