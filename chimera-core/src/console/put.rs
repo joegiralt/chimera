@@ -60,6 +60,8 @@ const PROJECTS: &[u8] = b"/CHIMERA/PROJECTS/";
 const TAPES: &[u8] = b"/CHIMERA/TAPES/";
 #[cfg(feature = "source-writer")]
 const _: () = assert!(PUT_CHUNK_BYTES.is_multiple_of(CHUNK as u32));
+// The sweep's cap counts on it (ADR 0094).
+const _: () = assert!(PUT_MAX_BYTES <= chimera_hal::store::MAX_CHAIN_BYTES);
 
 const _: () = assert!(PUT_LINE.is_multiple_of(4));
 const _: () = assert!(PUT_LINE <= super::MAX_LINE);

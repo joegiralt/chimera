@@ -242,16 +242,6 @@ const SWEEP: chimera_hal::store::Sweep = chimera_hal::store::Sweep::DryRun;
 #[cfg(feature = "sweep-free")]
 const SWEEP: chimera_hal::store::Sweep = chimera_hal::store::Sweep::Free;
 
-/// The card swept once, as it mounts now; no card is the card's doubt.
-#[cfg(not(feature = "sd-probe"))]
-fn sweep_card(store: &mut sd::SdStore, marks: &mut [u8]) -> chimera_hal::store::SweepSeen {
-    use chimera_hal::store::{Doubt, Store, SweepStats};
-    let vol = store
-        .mount()
-        .map_err(|e| (Doubt::Card(e), SweepStats::default()))?;
-    store.sweep(vol, SWEEP, marks)
-}
-
 /// The load ack's timeout in control ticks.
 #[cfg(not(feature = "sd-probe"))]
 const LOAD_ACK_TICKS: u32 = LOAD_ACK_TIMEOUT_MS * controls::CONTROLS_HZ / 1000;
@@ -354,18 +344,21 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     ui.set_midi(settings.midi);
     apply_theme(settings.theme, &mut theme, &mut backlight, &mut display);
     // Still behind the splash: the lost-cluster sweep (#360, ADR 0094),
-    // one card operation, its bitmap in the arena's gap before the project
-    // fills it. A doubt is reported and the boot goes on.
-    let swept = sweep_card(store, ui.project_mut().sweep_scratch());
+    // only when the card's mark owes one (an unclean change), its bitmap
+    // in the arena's gap before the project fills it. A clean mark costs
+    // a few block reads. A doubt is reported and the boot goes on.
+    let swept = chimera_core::storage::boot_sweep(store, SWEEP, ui.project_mut().sweep_scratch());
     #[cfg(feature = "usb-console")]
     let usb_parts = usb::UsbParts {
-        sweep: Some((SWEEP, swept)),
+        sweep: Some(swept),
         ..usb_parts
     };
     #[cfg(not(feature = "usb-console"))]
     let _ = swept;
-    // Then the last project (about 130 KB read), or NEW and why.
+    // Then the last project (about 130 KB read), or NEW and why; then a
+    // sweep that stopped for doubts says so.
     ui.boot_project(&mut card, store, settings.last_project);
+    ui.note_sweep(&swept);
     // The splash again in the card's theme; it stays up until PART 1.
     let _ = chimera_core::ui::splash::draw(&mut display);
     display.flush();
@@ -462,13 +455,17 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         #[cfg(all(feature = "usb-console", not(feature = "bench")))]
         let card_run: usb::CardRun = &mut |_, _, _| None;
         #[cfg(feature = "usb-console")]
-        if let Some(asked) = usb.up().and_then(|u| {
+        if let Some(restart) = usb.up().and_then(|u| {
             let frame = display.frame();
             u.service(ui, stats_r.as_mut(), bench_text, frame, card_run, store)
         }) {
             // As the menu's path: a THEME change in this visit is kept.
             ui.sync_system_now(&mut sync, &mut card, store, &mut settings);
-            dfu::enter(&marker, dfu::DfuFrom::Console(asked));
+            match restart {
+                usb::Restart::Dfu(asked) => dfu::enter(&marker, dfu::DfuFrom::Console(asked)),
+                // The boot it restarts into sweeps, the arena's gap free.
+                usb::Restart::Sweep(_) => cortex_m::peripheral::SCB::sys_reset(),
+            }
         }
         controls.snapshot();
         // ORBIT's latest view: the pages draw it, the drift is absorbed.

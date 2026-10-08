@@ -77,6 +77,7 @@ bench   the bench's numbers (bench builds)
 card    SD speed and streams, a chord playing; clean (bench builds)
 shot    the screen in THEME's colours; shot raw: canonical
 dfu     restart into the ROM loader for just flash
+sweep   the lost-cluster sweep at the next boot: restarts into it
 ls      project files on the card, sizes; ls tapes: the sources
 put     a project or source onto the card: <path> <size> <crc32>
 OK
@@ -204,6 +205,28 @@ OK
 ```
 
 Then the unit restarts into ST's ROM DFU loader and leaves the bus as `0483:5740`. Within about 2 s it comes back as `0483:DF11`. The `OK` is flushed, then the port keeps polling for 20 ms so the host collects it, before the restart. A host that still misses it sees the port vanish and DF11 appear, which `to-dfu` also counts as success. The desktop answers `ERR dfu is not in this build`. § Enter DFU from the firmware has the details.
+
+**`sweep`**
+
+```
+sweep asked: the next boot sweeps, restarting
+OK
+```
+
+Asks for the lost-cluster sweep (ADR 0094): the card's mark is set to `Asked`, then, once `OK` is out, SYSTEM is synced and the unit restarts. The boot it restarts into sweeps in the firmware's mode (`dry-run` until `sweep-free`), halted for doubts or not, with the arena's gap free for the bitmap; nothing sweeps in the running synth, where a loaded project leaves too little gap. Read the result with `status`. Its `sweep` line names the mode, why the sweep ran, what it found and what became of the mark:
+
+- `why`: `asked` here. At other boots it is the mark that owed the sweep (`dirty`, `missing`, `doubted N`) or `unread`.
+- A boot the mark let skip prints `sweep skipped mark clean`, `unused` (a card with no `/CHIMERA`) or `doubted 3`.
+- A doubt replaces `lost … healed …` with `doubt <word>`; `too-many` adds `lost N`.
+- `then`: `cleared` after a settled sweep, `kept`, `failed`, or `doubted N`, the doubting boots in a row.
+- After the third doubting boot in a row the boot stops sweeping. `status` then adds `warn sweep stopped: 3 doubting boots in a row; check the card on a computer, then run sweep`, and the boot toasts `CARD NEEDS A CHECK: SWEEP OFF`.
+
+Refusals, with nothing written:
+
+- `ERR sweep: unsaved changes, save first`: the restart would lose them.
+- `ERR sweep: the card has no /CHIMERA, nothing to sweep`.
+- `ERR sweep: <card error>`.
+- `ERR sweep is not in this build` on the desktop.
 
 **`fault dma <1|2>`** (builds with `fault-inject` only; never shipping, orbit or bench)
 
