@@ -14,7 +14,7 @@ use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::ParamSnapshot;
 use chimera_core::source_table::GateView;
-use chimera_core::tracked::{Stamp, Tracked};
+use chimera_core::tracked::Tracked;
 use chimera_core::voice_alloc::VoiceIdx;
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
@@ -44,10 +44,8 @@ pub struct Rig {
     pub pool: Box<SymPool>,
     /// What a TAPE note latches.
     pub src: Src,
-    /// The knobs of the one-voice Part `render_glided` plays, and its
-    /// renders: each a fresh stamp.
+    /// The knobs of the one-voice Part `render_glided` plays.
     knobs: Knobs,
-    renders: u32,
 }
 
 /// `$body` on the rig's voice with a context: its source's view this
@@ -104,7 +102,6 @@ impl Rig {
             pool: SymPool::boxed(),
             src,
             knobs: Knobs::UNPRIMED,
-            renders: 0,
         }
     }
 
@@ -134,12 +131,7 @@ impl Rig {
         params: &ParamSnapshot,
         mods: &ModState,
     ) {
-        self.renders += 1;
-        let stamp = Stamp::new(0, self.renders);
-        let (p, m) = (
-            Tracked::new(params.clone(), stamp),
-            Tracked::new(mods.clone(), stamp),
-        );
+        let (p, m) = (Tracked::fresh(params.clone()), Tracked::fresh(mods.clone()));
         self.knobs
             .ease(&p, &m, Pace::Glide(self.voice.sample_rate()));
         let knobs = self.knobs;

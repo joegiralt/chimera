@@ -41,7 +41,7 @@ const fn count() -> usize {
         let specs = r.specs();
         let mut i = 0;
         while r.in_sound() && i < specs.len() {
-            if specs[i].motion.knob().is_some() {
+            if specs[i].motion().knob().is_some() {
                 n += 1;
             }
             i += 1;
@@ -64,7 +64,7 @@ const fn knobs() -> [Knob; KNOB_COUNT] {
         let specs = r.specs();
         let mut i = 0;
         while r.in_sound() && i < specs.len() {
-            if let Some(tau) = specs[i].motion.knob() {
+            if let Some(tau) = specs[i].motion().knob() {
                 t[n] = Knob {
                     addr: ParamAddr::new(r, specs[i].id),
                     spec: &specs[i],

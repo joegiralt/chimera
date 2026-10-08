@@ -9,7 +9,7 @@ use chimera_core::params::{DriveParams, FilterParams};
 use chimera_core::part::PartMode;
 use chimera_core::preset::{Performance, Sound};
 use chimera_core::project::PartId;
-use chimera_core::tracked::{Stamp, Tracked};
+use chimera_core::tracked::Tracked;
 
 fn non_default_performance() -> Performance {
     let mut perf = Performance::new();
@@ -98,8 +98,8 @@ fn init_in_place_matches_from_performance() {
         parts: core::array::from_fn(|i| {
             let p = &perf.parts()[i];
             PartAudio {
-                params: Tracked::new(p.sound.params.clone(), Stamp::default()),
-                mod_state: Tracked::new(p.sound.mod_state.clone(), Stamp::default()),
+                params: Tracked::fresh(p.sound.params.clone()),
+                mod_state: Tracked::fresh(p.sound.mod_state.clone()),
                 mix: p.mix,
                 // The first publish sets it (`PartAudio::of`).
                 loads: chimera_core::project::Loads::NONE,

@@ -113,7 +113,7 @@ fn every_knob_is_declared() {
     for b in BlockRef::ALL.into_iter().filter(|b| b.in_sound()) {
         for s in b.specs() {
             let here = KNOBS.iter().any(|k| k.addr == ParamAddr::new(b, s.id));
-            assert_eq!(here, s.motion.knob().is_some(), "{b:?} {}", s.label);
+            assert_eq!(here, s.motion().knob().is_some(), "{b:?} {}", s.label);
         }
     }
 }
@@ -205,8 +205,9 @@ fn the_419_knobs_are_declared() {
     use chimera_core::block::{Change, Motion};
     use chimera_core::dsp::algo::params::{ALGO_OP_SPECS, ALGO_SPECS};
     use chimera_core::dsp::modal::MODAL_SPECS;
-    let by =
-        |specs: &'static [ParamSpec], l: &str| specs.iter().find(|s| s.label == l).unwrap().motion;
+    let by = |specs: &'static [ParamSpec], l: &str| {
+        specs.iter().find(|s| s.label == l).unwrap().motion()
+    };
     for l in ["LEVEL", "FDBK", "FINE", "DETUN"] {
         assert_eq!(
             by(&ALGO_OP_SPECS, l),

@@ -182,8 +182,7 @@ impl AudioShared {
     /// `None`, which mutes TAPE: the tests' publish, never a shell's.
     #[cfg(any(test, feature = "test-support"))]
     pub fn update_from(&mut self, perf: &Performance, epoch: u32) {
-        let stamp = self.parts[0].params.stamp().next(epoch);
-        self.fill(perf, |_| None, epoch, stamp);
+        self.fill(perf, |_| None, epoch, Stamp::unique());
     }
 
     /// The shells' publish: `project`'s Performance as `update_from`, each

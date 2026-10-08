@@ -252,11 +252,23 @@ pub struct ParamSpec {
     /// Patching, not sound (a filter jack): out of the parameter sweep and
     /// of MIDI learn.
     pub patching: bool,
-    /// How a change reaches the sound (ADR 0112).
-    pub motion: Motion,
+    /// How a change reaches the sound (ADR 0112). Private: set only by the
+    /// constructors, so a choice can never be made to glide (`motion()`):
+    ///
+    /// ```compile_fail
+    /// use chimera_engine::block::{Change, Motion, ParamSpec, Smoothing};
+    /// let mut s = ParamSpec::choice(0, "X", chimera_engine::block::ValFmt::Uni, 1.0, 0.0, Change::Snap);
+    /// s.motion = Motion::Continuous(Smoothing::KNOB);
+    /// ```
+    motion: Motion,
 }
 
 impl ParamSpec {
+    /// How a change reaches the sound (ADR 0112).
+    pub const fn motion(&self) -> Motion {
+        self.motion
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub const fn continuous(
         id: u8,

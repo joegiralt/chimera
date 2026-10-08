@@ -230,7 +230,7 @@ const _: () = {
     const fn knobs_in(specs: &[ParamSpec]) -> bool {
         let mut i = 0;
         while i < specs.len() {
-            if specs[i].motion.knob().is_some() {
+            if specs[i].motion().knob().is_some() {
                 return true;
             }
             i += 1;

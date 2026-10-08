@@ -23,7 +23,7 @@ fn declared(s: Smoothing) -> Vec<(ParamAddr, &'static ParamSpec)> {
         .into_iter()
         .filter(|b| b.in_sound())
         .flat_map(|b| b.specs().iter().map(move |p| (ParamAddr::new(b, p.id), p)))
-        .filter(|(_, p)| p.motion == Motion::Continuous(s))
+        .filter(|(_, p)| p.motion() == Motion::Continuous(s))
         .collect()
 }
 
@@ -223,7 +223,7 @@ fn the_params_their_dsp_smooths_are_the_reviewed_list() {
         .flat_map(|b| {
             b.specs()
                 .iter()
-                .filter(|p| p.motion == Motion::Continuous(Smoothing::Own))
+                .filter(|p| p.motion() == Motion::Continuous(Smoothing::Own))
                 .map(move |p| format!("{b:?} {}", p.label))
         })
         .collect();
