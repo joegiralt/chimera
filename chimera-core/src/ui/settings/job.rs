@@ -81,6 +81,12 @@ impl UiState {
         self.job.is_some() || self.wants_list() || self.src.busy()
     }
 
+    /// The arena's gap for the console's sweep (ADR 0094): `None` while
+    /// card work is queued, a source load staging in the gap among it.
+    pub fn sweep_scratch(&mut self) -> Option<&mut [u8]> {
+        (!self.card_pending()).then(|| self.project.gap_scratch())
+    }
+
     /// LOAD or MANAGE on screen over a listing something moved.
     fn wants_list(&self) -> bool {
         self.listing.validity() == Validity::Stale

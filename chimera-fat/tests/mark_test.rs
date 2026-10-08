@@ -15,7 +15,7 @@ mod tree;
 use ab::{copy, slot};
 use chimera_core::storage::{asked_sweep, boot_sweep};
 use chimera_hal::store::{
-    Dir, FileName, Mark, Store, StoreError, Sweep, SweepRun, Trigger, VolumeId,
+    Dir, FileName, Mark, Store, StoreError, Sweep, SweepRun, Then, Trigger, VolumeId,
 };
 use image::{Cut, CutDisk, DiskError, RamDisk, Tear, fat_check, with_clusters};
 use probe::{log, marks_for, probed};
@@ -57,7 +57,7 @@ fn clean_card() -> RamDisk {
         matches!(
             run,
             SweepRun::Ran {
-                cleared: Ok(true),
+                then: Then::Cleared,
                 ..
             }
         ),
@@ -130,7 +130,7 @@ fn only_a_settled_sweep_clears_the_mark() {
             SweepRun::Ran {
                 why: Trigger::Owed(Mark::Missing),
                 seen: Ok(sw),
-                cleared: Ok(false),
+                then: Then::Kept,
                 ..
             } if sw.lost == 5
         ),
@@ -141,7 +141,7 @@ fn only_a_settled_sweep_clears_the_mark() {
     // Freeing them settles it, and the next boot skips.
     let run = boot(&disk);
     assert!(
-        matches!(run, SweepRun::Ran { seen: Ok(sw), cleared: Ok(true), .. } if sw.freed == 5),
+        matches!(run, SweepRun::Ran { seen: Ok(sw), then: Then::Cleared, .. } if sw.freed == 5),
         "{run:?}"
     );
     assert_eq!(mark_of(&disk), Mark::Clean);
@@ -270,7 +270,7 @@ fn a_dirty_mark_outlives_finished_changes() {
         boot(&disk),
         SweepRun::Ran {
             why: Trigger::Owed(Mark::Dirty),
-            cleared: Ok(true),
+            then: Then::Cleared,
             ..
         }
     ));
@@ -307,7 +307,7 @@ fn an_odd_mark_is_dirty_until_a_sweep_rewrites_it() {
     assert!(matches!(
         boot(&disk),
         SweepRun::Ran {
-            cleared: Ok(true),
+            then: Then::Cleared,
             ..
         }
     ));
@@ -338,7 +338,7 @@ fn an_asked_sweep_runs_on_a_clean_card() {
             SweepRun::Ran {
                 why: Trigger::Asked,
                 seen: Ok(sw),
-                cleared: Ok(true),
+                then: Then::Cleared,
                 ..
             } if sw.lost == 0
         ),

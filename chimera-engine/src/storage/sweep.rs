@@ -2,7 +2,7 @@
 //! the card's mark owes it, the console's `sweep` whenever asked, and a
 //! sweep that settles clears the mark.
 
-use chimera_hal::store::{Doubt, Store, Sweep, SweepRun, SweepStats, Trigger, VolumeId};
+use chimera_hal::store::{Doubt, Store, Sweep, SweepRun, SweepStats, Then, Trigger, VolumeId};
 
 /// The boot's sweep: the mark read, then the sweep if it owes one or
 /// didn't read. A clean boot costs the mount and the mark's few blocks.
@@ -28,15 +28,16 @@ pub fn asked_sweep(s: &mut impl Store, mode: Sweep, marks: &mut [u8]) -> SweepRu
 
 fn run(s: &mut impl Store, vol: VolumeId, mode: Sweep, why: Trigger, marks: &mut [u8]) -> SweepRun {
     let seen = s.sweep(vol, mode, marks);
-    let cleared = match &seen {
-        Ok(swept) => s.settle(vol, swept),
-        Err(_) => Ok(false),
+    let then = match seen.as_ref().map(|swept| s.settle(vol, swept)) {
+        Ok(Ok(true)) => Then::Cleared,
+        Ok(Err(_)) => Then::Failed,
+        Ok(Ok(false)) | Err(_) => Then::Kept,
     };
     SweepRun::Ran {
         mode,
         why,
         seen,
-        cleared,
+        then,
     }
 }
 
@@ -45,6 +46,6 @@ fn no_card(mode: Sweep, why: Trigger, e: chimera_hal::store::StoreError) -> Swee
         mode,
         why,
         seen: Err((Doubt::Card(e), SweepStats::default())),
-        cleared: Ok(false),
+        then: Then::Kept,
     }
 }

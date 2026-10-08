@@ -121,6 +121,7 @@ macro_rules! table {
             Card   (CardArg) => "card",   "SD speed and streams, a chord playing; clean (bench builds)",
             Shot   (Colours) => "shot",   "the screen in THEME's colours; shot raw: canonical",
             Dfu    (NoArg)   => "dfu",    "restart into the ROM loader for just flash",
+            Sweep  (NoArg)   => "sweep",  "the lost-cluster sweep now: lost, freed, or its doubt",
             $($card)*
         }
     };

@@ -5,13 +5,13 @@
 use chimera_core::boot::{BootSeen, UsbOff, UsbRegs, UsbRetry, UsbState, UsbStep, wait_until};
 use chimera_core::console::{
     AnswerClock, CardAnswer, CardArg, Console, Frame, LoopTimer, Out, Request, Served, Stalled,
-    Stats, Unit, answer, serial_hex,
+    Stats, SweepAsk, Unit, answer, serial_hex,
 };
 use chimera_core::perf::load::AudioStats;
 use chimera_core::triple::Reader;
 use chimera_core::ui::UiState;
 use chimera_hal::Ms;
-use chimera_hal::store::{Sweep, SweepSeen};
+use chimera_hal::store::SweepRun;
 use cortex_m::peripheral::DWT;
 use stm32h7xx_hal::gpio::{Alternate, PA11, PA12};
 use stm32h7xx_hal::pac;
@@ -115,8 +115,8 @@ pub struct UsbParts {
     pub crs_rec: rec::Crs,
     /// What the top of `main` saw: `status`'s `boot` line.
     pub boot: BootSeen,
-    /// The boot's card sweep: `status`'s `sweep` line.
-    pub sweep: Option<(Sweep, SweepSeen)>,
+    /// The boot's card sweep, run or skipped: `status`'s `sweep` line.
+    pub sweep: Option<SweepRun>,
 }
 
 /// `dfu` answered and its `OK` flushed: only `Usb::service` makes one, and
@@ -140,7 +140,7 @@ pub struct Usb {
     last: Served,
     cycles_per_us: u32,
     boot: BootSeen,
-    sweep: Option<(Sweep, SweepSeen)>,
+    sweep: Option<SweepRun>,
 }
 
 /// The port set up but not on the bus: no pull-up, so the host sees
@@ -151,7 +151,7 @@ pub struct Unconnected {
     uid: &'static str,
     cpu_hz: u32,
     boot: BootSeen,
-    sweep: Option<(Sweep, SweepSeen)>,
+    sweep: Option<SweepRun>,
 }
 
 /// The port's preconditions held, each checked with a bounded wait: only
@@ -303,12 +303,13 @@ impl Usb {
     /// answered one is not counted), polls, reads into the line, and
     /// answers at most one request: `Some` for a `dfu` the host was told
     /// `OK` to. A `card` runs `card` first, so its seconds come before the
-    /// answer's clock starts. `ls` and `put` work on `store`. Out of line:
+    /// answer's clock starts; so does a `sweep`, on `ui`'s arena gap.
+    /// `ls` and `put` work on `store`. Out of line:
     /// inlined, its buffers took `synth`'s frame past the 8 KB check.
     #[inline(never)]
     pub fn service(
         &mut self,
-        ui: &UiState,
+        ui: &mut UiState,
         mut stats: Option<&mut Reader<AudioStats>>,
         bench: Option<&str>,
         frame: Frame<'_>,
@@ -353,8 +354,12 @@ impl Usb {
                 }
                 _ => None,
             };
+            let sweep_now = match req {
+                Ok(Request::Sweep(_)) => Some(crate::sweep_now(ui, store)),
+                _ => None,
+            };
             let unit = &mut ChipUnit {
-                ui,
+                ui: &*ui,
                 stats,
                 card,
                 timer,
@@ -363,6 +368,7 @@ impl Usb {
                 dfu: false,
                 boot: *boot,
                 sweep: *sweep,
+                sweep_now,
                 files: store,
             };
             let out = &mut UsbOut {
@@ -399,7 +405,9 @@ struct ChipUnit<'a> {
     /// `dfu` asked: the restart waits for the `OK` to be out.
     dfu: bool,
     boot: BootSeen,
-    sweep: Option<(Sweep, SweepSeen)>,
+    sweep: Option<SweepRun>,
+    /// `sweep`'s run, before the answer.
+    sweep_now: Option<SweepAsk>,
     /// `ls` and `put`'s card: unread without `card-put`, and in bench
     /// builds, which measure and take no files (their FLASH is full).
     #[cfg_attr(
@@ -460,8 +468,12 @@ impl Unit for ChipUnit<'_> {
         Some(self.boot)
     }
 
-    fn sweep(&self) -> Option<(Sweep, SweepSeen)> {
+    fn sweep(&self) -> Option<SweepRun> {
         self.sweep
+    }
+
+    fn sweep_now(&mut self) -> Option<SweepAsk> {
+        self.sweep_now
     }
 
     fn usb_regs(&self) -> Option<UsbRegs> {

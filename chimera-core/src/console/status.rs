@@ -7,7 +7,7 @@ use crate::project::ProjectStatus;
 use crate::ui::UiState;
 use crate::ui::about_page::{BUILD, VERSION, write_build_rev};
 use crate::ui::nav::{MixPage, Rung};
-use chimera_hal::store::{Doubt, Sweep, SweepSeen, SweepStats};
+use chimera_hal::store::{Doubt, Mark, Sweep, SweepRun, SweepStats, Then, Trigger};
 
 /// The footer's word for `s`.
 pub fn state_word(s: ProjectStatus) -> &'static str {
@@ -61,20 +61,36 @@ fn write_at(ui: &UiState, w: &mut impl Write) -> fmt::Result {
     }
 }
 
-/// `status`'s `sweep` line: the boot's lost-cluster sweep (ADR 0094), its
-/// mode, what it found or the doubt that stopped it, the volume, and each
-/// phase's time.
-pub fn write_sweep(mode: Sweep, seen: &SweepSeen, w: &mut impl Write) -> fmt::Result {
+/// The `sweep` line, `status`'s and `sweep`'s (ADR 0094): skipped and
+/// the mark that let it; or the mode, why it ran, what it found or the
+/// doubt that stopped it, the volume, each phase's time, and whether the
+/// mark was cleared.
+pub fn write_sweep(run: &SweepRun, w: &mut impl Write) -> fmt::Result {
+    let (mode, why, seen, then) = match run {
+        SweepRun::Skipped(m) => return writeln!(w, "sweep skipped mark {}", mark_word(*m)),
+        SweepRun::Ran {
+            mode,
+            why,
+            seen,
+            then,
+        } => (mode, why, seen, then),
+    };
     let mode = match mode {
         Sweep::DryRun => "dry-run",
         Sweep::Free => "free",
     };
+    let why = match why {
+        Trigger::Owed(m) => mark_word(*m),
+        Trigger::Unread => "unread",
+        Trigger::Asked => "asked",
+    };
+    write!(w, "sweep {mode} why {why} ")?;
     let stats: &SweepStats = match seen {
         Ok(s) => {
             let yes = |b| if b { "yes" } else { "no" };
             write!(
                 w,
-                "sweep {mode} lost {} freed {} stale {} healed {}",
+                "lost {} freed {} stale {} healed {}",
                 s.lost,
                 s.freed,
                 yes(s.stale),
@@ -83,16 +99,30 @@ pub fn write_sweep(mode: Sweep, seen: &SweepSeen, w: &mut impl Write) -> fmt::Re
             &s.stats
         }
         Err((d, stats)) => {
-            write!(w, "sweep {mode} doubt {}", d.word())?;
+            write!(w, "doubt {}", d.word())?;
             if let Doubt::TooMany(lost) = d {
                 write!(w, " lost {lost}")?;
             }
             stats
         }
     };
+    let then = match then {
+        Then::Cleared => "cleared",
+        Then::Kept => "kept",
+        Then::Failed => "failed",
+    };
     writeln!(
         w,
-        " spc {} clusters {} fat {} compare {}ms mark {}ms count {}ms",
+        " spc {} clusters {} fat {} compare {}ms mark {}ms count {}ms then {then}",
         stats.spc, stats.clusters, stats.fat_bytes, stats.compare_ms, stats.mark_ms, stats.count_ms
     )
+}
+
+fn mark_word(m: Mark) -> &'static str {
+    match m {
+        Mark::Clean => "clean",
+        Mark::Dirty => "dirty",
+        Mark::Missing => "missing",
+        Mark::Unused => "unused",
+    }
 }

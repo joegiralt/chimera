@@ -215,6 +215,14 @@ impl Pool {
         self.arena.gap_mut()
     }
 
+    /// The arena's gap lent as scratch with sources published: the
+    /// console's card sweep (ADR 0094). The audio never reads the gap; a
+    /// source load stages at its bottom, so the caller lends it only with
+    /// no load under way (`UiState::sweep_scratch`).
+    pub fn gap_scratch(&mut self) -> &mut [u8] {
+        self.arena.gap_mut()
+    }
+
     /// The audio's view of the arena.
     pub fn table(&self) -> &'static SourceTable {
         self.arena.table()

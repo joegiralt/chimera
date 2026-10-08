@@ -163,6 +163,11 @@ impl Project {
         self.pool.sweep_scratch()
     }
 
+    /// `Pool::gap_scratch`: the console's card sweep.
+    pub fn gap_scratch(&mut self) -> &mut [u8] {
+        self.pool.gap_scratch()
+    }
+
     pub fn part(&self, p: PartId) -> &Part {
         self.perf.part(p)
     }

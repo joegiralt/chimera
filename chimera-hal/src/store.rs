@@ -370,9 +370,19 @@ pub enum SweepRun {
         mode: Sweep,
         why: Trigger,
         seen: SweepSeen,
-        /// `Store::settle`'s answer: the mark made clean, or kept.
-        cleared: Result<bool, StoreError>,
+        then: Then,
     },
+}
+
+/// What became of the mark after a sweep that ran.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Then {
+    /// The sweep settled; the mark is clean.
+    Cleared,
+    /// Unsettled, a doubt, or no `/CHIMERA`: as it was.
+    Kept,
+    /// Settled, but the mark's write failed: still owing.
+    Failed,
 }
 
 /// A `Store` whose operations' time can be capped: the console's `put`

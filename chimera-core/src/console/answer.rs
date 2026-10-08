@@ -10,13 +10,21 @@ use crate::boot::{BootSeen, UsbRegs};
 use crate::hw::MAX_VOICES;
 use crate::perf::load::AudioStats;
 use crate::ui::UiState;
-use chimera_hal::store::{Files, Sweep, SweepSeen};
+use chimera_hal::store::{Files, SweepRun};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Stats {
     pub audio: AudioStats,
     pub loop_avg_us: u32,
     pub loop_peak_us: u32,
+}
+
+/// `sweep`'s outcome, reached before its answer starts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SweepAsk {
+    Ran(SweepRun),
+    /// A load or listing is using the card, or the arena's gap: not now.
+    Busy,
 }
 
 /// What a shell can tell. `None`: not in this build.
@@ -34,9 +42,14 @@ pub trait Unit {
     /// What the chip saw at boot: `status`'s `boot` and `last_usb_regs`
     /// lines, after `at`. `None`: neither.
     fn boot(&self) -> Option<BootSeen>;
-    /// The boot's card sweep and its mode: `status`'s `sweep` line, after
-    /// `boot`. `None`: none ran.
-    fn sweep(&self) -> Option<(Sweep, SweepSeen)> {
+    /// The boot's card sweep, run or skipped: `status`'s `sweep` line,
+    /// after `boot`. `None`: no line.
+    fn sweep(&self) -> Option<SweepRun> {
+        None
+    }
+    /// `sweep`'s outcome, reached before the answer starts. `None`: not in
+    /// this build.
+    fn sweep_now(&mut self) -> Option<SweepAsk> {
         None
     }
     /// The OTG and PWR registers now: `status`'s `usb_regs` line, last
@@ -97,10 +110,7 @@ pub fn answer(
         Ok(Request::Help(NoArg)) => Ok(help(&mut t)),
         Ok(Request::Status(NoArg)) => Ok(write_status(unit.ui(), &mut t)
             .and_then(|()| unit.boot().map_or(Ok(()), |b| writeln!(t, "{b}")))
-            .and_then(|()| {
-                unit.sweep()
-                    .map_or(Ok(()), |(m, s)| write_sweep(m, &s, &mut t))
-            })
+            .and_then(|()| unit.sweep().map_or(Ok(()), |r| write_sweep(&r, &mut t)))
             .and_then(|()| {
                 unit.usb_regs()
                     .map_or(Ok(()), |r| writeln!(t, "usb_regs {r}"))
@@ -135,6 +145,15 @@ pub fn answer(
         },
         Ok(Request::Shot(c)) => return write_shot(unit.frame(), c, t.0),
         Ok(r @ Request::Dfu(NoArg)) => unit.dfu().map(Ok).ok_or(Why::Absent(r.command())),
+        Ok(r @ Request::Sweep(NoArg)) => match unit.sweep_now() {
+            None => Err(Why::Absent(r.command())),
+            Some(SweepAsk::Ran(run)) => Ok(write_sweep(&run, &mut t)),
+            Some(SweepAsk::Busy) => {
+                return t
+                    .write_str("ERR sweep: the card is busy, try again\n")
+                    .map_err(|fmt::Error| Stalled);
+            }
+        },
         #[cfg(feature = "fault-inject")]
         Ok(r @ Request::Fault(super::FaultArg::Ndtr)) => unit
             .fault_dump()

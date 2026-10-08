@@ -249,14 +249,18 @@ const SWEEP: chimera_hal::store::Sweep = chimera_hal::store::Sweep::DryRun;
 #[cfg(feature = "sweep-free")]
 const SWEEP: chimera_hal::store::Sweep = chimera_hal::store::Sweep::Free;
 
-/// The card swept once, as it mounts now; no card is the card's doubt.
-#[cfg(not(feature = "sd-probe"))]
-fn sweep_card(store: &mut sd::SdStore, marks: &mut [u8]) -> chimera_hal::store::SweepSeen {
-    use chimera_hal::store::{Doubt, Store, SweepStats};
-    let vol = store
-        .mount()
-        .map_err(|e| (Doubt::Card(e), SweepStats::default()))?;
-    store.sweep(vol, SWEEP, marks)
+/// The console's `sweep` (ADR 0094): now, on the arena's gap, unless card
+/// work holds the card or the gap.
+#[cfg(all(not(feature = "sd-probe"), feature = "usb-console"))]
+pub(crate) fn sweep_now(
+    ui: &mut chimera_core::ui::UiState,
+    store: &mut sd::SdStore,
+) -> chimera_core::console::SweepAsk {
+    use chimera_core::console::SweepAsk;
+    match ui.sweep_scratch() {
+        Some(marks) => SweepAsk::Ran(chimera_core::storage::asked_sweep(store, SWEEP, marks)),
+        None => SweepAsk::Busy,
+    }
 }
 
 /// The load ack's timeout in control ticks.
@@ -361,12 +365,13 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     ui.set_midi(settings.midi);
     apply_theme(settings.theme, &mut theme, &mut backlight, &mut display);
     // Still behind the splash: the lost-cluster sweep (#360, ADR 0094),
-    // one card operation, its bitmap in the arena's gap before the project
-    // fills it. A doubt is reported and the boot goes on.
-    let swept = sweep_card(store, ui.project_mut().sweep_scratch());
+    // only when the card's mark owes one (an unclean change), its bitmap
+    // in the arena's gap before the project fills it. A clean mark costs
+    // a few block reads. A doubt is reported and the boot goes on.
+    let swept = chimera_core::storage::boot_sweep(store, SWEEP, ui.project_mut().sweep_scratch());
     #[cfg(feature = "usb-console")]
     let usb_parts = usb::UsbParts {
-        sweep: Some((SWEEP, swept)),
+        sweep: Some(swept),
         ..usb_parts
     };
     #[cfg(not(feature = "usb-console"))]

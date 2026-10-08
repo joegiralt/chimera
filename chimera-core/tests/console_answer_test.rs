@@ -2,14 +2,16 @@ use chimera_core::boot::{BootAction, BootSeen, UsbRegs};
 use chimera_core::clock_plan::SiliconRev;
 use chimera_core::console::{
     CardAnswer, CardFail, CardSpeed, Colours, Command, Console, Frame, NoArg, Out, Request,
-    SHOT_HEADER, Stalled, Stats, Unit, answer,
+    SHOT_HEADER, Stalled, Stats, SweepAsk, Unit, answer,
 };
 use chimera_core::perf::load::AudioStats;
 use chimera_core::reset::ResetCause;
 use chimera_core::ui::UiState;
 use chimera_core::ui::theme_settings::{ThemeSettings, palette};
 use chimera_hal::FB_SIZE;
-use chimera_hal::store::{Doubt, StoreError, Sweep, SweepSeen, SweepStats, Swept};
+use chimera_hal::store::{
+    Doubt, Mark, StoreError, Sweep, SweepRun, SweepStats, Swept, Then, Trigger,
+};
 
 struct Sink(Vec<u8>);
 impl Out for Sink {
@@ -32,7 +34,9 @@ struct Fake {
     dfu: Option<()>,
     dfu_calls: usize,
     boot: Option<BootSeen>,
-    sweep: Option<(Sweep, SweepSeen)>,
+    sweep: Option<SweepRun>,
+    sweep_now: Option<SweepAsk>,
+    sweeps: usize,
     usb_regs: Option<UsbRegs>,
 }
 
@@ -49,6 +53,8 @@ impl Fake {
             dfu_calls: 0,
             boot: None,
             sweep: None,
+            sweep_now: None,
+            sweeps: 0,
             usb_regs: None,
         }
     }
@@ -81,8 +87,12 @@ impl Unit for Fake {
     fn boot(&self) -> Option<BootSeen> {
         self.boot
     }
-    fn sweep(&self) -> Option<(Sweep, SweepSeen)> {
+    fn sweep(&self) -> Option<SweepRun> {
         self.sweep
+    }
+    fn sweep_now(&mut self) -> Option<SweepAsk> {
+        self.sweeps += 1;
+        self.sweep_now
     }
     fn usb_regs(&self) -> Option<UsbRegs> {
         self.usb_regs
@@ -134,6 +144,7 @@ fn help_is_the_specs_text() {
          card    SD speed and streams, a chord playing; clean (bench builds)\n\
          shot    the screen in THEME's colours; shot raw: canonical\n\
          dfu     restart into the ROM loader for just flash\n\
+         sweep   the lost-cluster sweep now: lost, freed, or its doubt\n\
          ls      project files on the card, sizes; ls tapes: the sources\n\
          put     a project or source onto the card: <path> <size> <crc32>\n\
          OK\n"
@@ -589,52 +600,124 @@ fn the_specs_card_has_every_line_card_writes() {
     assert_eq!(got, spec);
 }
 
-/// The boot's sweep after `boot`, before `usb_regs`: what it found, or
-/// why it stopped, with the volume and each phase's time.
+/// The volume and phase times the sweep lines carry.
+const STATS: SweepStats = SweepStats {
+    spc: 64,
+    clusters: 488_281,
+    fat_bytes: 1_953_792,
+    compare_ms: 210,
+    mark_ms: 35,
+    count_ms: 104,
+};
+const TAIL: &str = "spc 64 clusters 488281 fat 1953792 compare 210ms mark 35ms count 104ms";
+
+/// The boot's sweep after `boot`, before `usb_regs`: skipped on a clean
+/// mark, or why it ran, what it found or why it stopped, the volume, each
+/// phase's time, and whether the mark was cleared.
 #[test]
 fn status_has_the_sweep_after_boot() {
     let mut u = Fake::new();
-    let stats = SweepStats {
-        spc: 64,
-        clusters: 488_281,
-        fat_bytes: 1_953_792,
-        compare_ms: 210,
-        mark_ms: 35,
-        count_ms: 104,
-    };
-    u.sweep = Some((
-        Sweep::DryRun,
-        Ok(Swept {
+    u.sweep = Some(SweepRun::Ran {
+        mode: Sweep::DryRun,
+        why: Trigger::Owed(Mark::Missing),
+        seen: Ok(Swept {
             lost: 93,
             freed: 0,
             stale: true,
             healed: false,
-            stats,
+            stats: STATS,
         }),
-    ));
+        then: Then::Kept,
+    });
     u.usb_regs = Some(UsbRegs::from_words([0; 6]));
     let mut want = String::new();
     chimera_core::console::write_status(&u.ui, &mut want).unwrap();
     let got = ask(&mut u, "status\n");
     let rest = got.strip_prefix(&want).unwrap();
     assert_eq!(
-        rest.lines().next(),
-        Some(
-            "sweep dry-run lost 93 freed 0 stale yes healed no spc 64 clusters 488281 fat 1953792 \
-             compare 210ms mark 35ms count 104ms"
-        )
+        rest.lines().next().unwrap(),
+        format!("sweep dry-run why missing lost 93 freed 0 stale yes healed no {TAIL} then kept")
     );
     assert!(rest.lines().nth(1).unwrap().starts_with("usb_regs "));
-    u.sweep = Some((
-        Sweep::DryRun,
-        Err((Doubt::Card(StoreError::Timeout), stats)),
-    ));
-    let got = ask(&mut u, "status\n");
-    assert!(
-        got.contains(
-            "\nsweep dry-run doubt timeout spc 64 clusters 488281 fat 1953792 \
-             compare 210ms mark 35ms count 104ms\n"
+    for (run, line) in [
+        (
+            SweepRun::Ran {
+                mode: Sweep::DryRun,
+                why: Trigger::Unread,
+                seen: Err((Doubt::Card(StoreError::Timeout), STATS)),
+                then: Then::Kept,
+            },
+            format!("sweep dry-run why unread doubt timeout {TAIL} then kept"),
         ),
-        "{got}"
+        (
+            SweepRun::Ran {
+                mode: Sweep::Free,
+                why: Trigger::Owed(Mark::Dirty),
+                seen: Err((Doubt::TooMany(9_000), STATS)),
+                then: Then::Kept,
+            },
+            format!("sweep free why dirty doubt too-many lost 9000 {TAIL} then kept"),
+        ),
+        (
+            SweepRun::Ran {
+                mode: Sweep::Free,
+                why: Trigger::Owed(Mark::Dirty),
+                seen: Ok(Swept {
+                    lost: 6,
+                    freed: 6,
+                    stale: false,
+                    healed: false,
+                    stats: STATS,
+                }),
+                then: Then::Failed,
+            },
+            format!("sweep free why dirty lost 6 freed 6 stale no healed no {TAIL} then failed"),
+        ),
+        (
+            SweepRun::Skipped(Mark::Clean),
+            "sweep skipped mark clean".to_string(),
+        ),
+        (
+            SweepRun::Skipped(Mark::Unused),
+            "sweep skipped mark unused".to_string(),
+        ),
+    ] {
+        u.sweep = Some(run);
+        let got = ask(&mut u, "status\n");
+        assert!(got.contains(&format!("\n{line}\n")), "{got}");
+    }
+}
+
+/// `sweep` runs before its answer: its line, then `OK`; a card busy
+/// loading is an `ERR`; a build without it says so.
+#[test]
+fn sweep_answers_with_its_line() {
+    let mut u = Fake::new();
+    assert_eq!(ask(&mut u, "sweep\n"), "ERR sweep is not in this build\n");
+    u.sweep_now = Some(SweepAsk::Ran(SweepRun::Ran {
+        mode: Sweep::Free,
+        why: Trigger::Asked,
+        seen: Ok(Swept {
+            lost: 0,
+            freed: 0,
+            stale: false,
+            healed: false,
+            stats: STATS,
+        }),
+        then: Then::Cleared,
+    }));
+    assert_eq!(
+        ask(&mut u, "sweep\n"),
+        format!("sweep free why asked lost 0 freed 0 stale no healed no {TAIL} then cleared\nOK\n")
     );
+    u.sweep_now = Some(SweepAsk::Busy);
+    assert_eq!(
+        ask(&mut u, "sweep\n"),
+        "ERR sweep: the card is busy, try again\n"
+    );
+    assert_eq!(ask(&mut u, "sweep now\n"), "ERR sweep takes no arguments\n");
+    assert_eq!(u.sweeps, 3, "a refused line never sweeps");
+    // `status` never sweeps.
+    ask(&mut u, "status\n");
+    assert_eq!(u.sweeps, 3);
 }
