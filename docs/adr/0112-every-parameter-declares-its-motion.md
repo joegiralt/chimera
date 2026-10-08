@@ -1,6 +1,6 @@
 # 0112. Every parameter declares its Motion; the Part's knobs glide every one that says so
 
-- **Status:** Proposed
+- **Status:** Accepted (owner, 2026-10-08)
 - **Deciders:** owner (design approved 2026-10-08: "smoothness becomes a property every parameter declares, not a per-knob fix"), firmware
 - **Supersedes in part:** [0107](0107-cutoff-ticks-in-octaves-and-the-filter-knobs-glide.md) (point 3: which knobs glide and how they are wired) and [0111](0111-algo-morph-glides-with-the-part-s-knobs.md) (point 1). Their tick laws, τ, landing rules and measurements stand.
 
