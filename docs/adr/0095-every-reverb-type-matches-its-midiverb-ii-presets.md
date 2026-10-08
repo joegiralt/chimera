@@ -776,6 +776,18 @@ the ban on 2026-10-05.
     free, checked at compile time.
   - **Flash:** +4.2 KB.
 
+- **Integration onto the diet (2026-10-08, no emulator).** The three
+  branches merged onto ADR 0108's crates: the reverb's DSP in
+  `chimera-engine`, its panels and glyph drawing in `chimera-core`. The
+  sound is as on the branches; no fit was rerun.
+  - **BURST, three fixes.** A PRE-DLY (ONSET) change crossfades every read
+    in one window, not the 4-tap slide a LENGTH move takes; the tap weights
+    ramp across the block with their knobs; ONSET stops 2.7 ms short of the
+    hit at any LENGTH. The state grows 8 B (`ENGINE_STATE_MAX` 280).
+  - **Ids.** REV › MORE is page id 96 and REV › MORE 2 id 97 (main took 92
+    and 93); the new reverb ParamIds and disk codes (22/6–14) collide with
+    nothing on main.
+
 ## Alternatives considered
 - **Keep ADR 0085's ±30 % window:** it passes reverbs the owner can tell
   apart from the preset at once. The new bar is set where the harness's own
