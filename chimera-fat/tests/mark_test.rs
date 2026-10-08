@@ -323,6 +323,7 @@ fn a_clean_boot_reads_a_few_blocks_and_writes_none() {
     let run = boot_sweep(&mut s, Sweep::Free, &mut marks_for(&*disk));
     assert!(matches!(run, SweepRun::Skipped(Mark::Clean)), "{run:?}");
     let reads = log(&s).reads.get();
+    println!("a clean boot: {reads} reads");
     assert!(reads <= 10, "{reads} reads");
     assert!(log(&s).writes.borrow().is_empty());
 }
