@@ -7,7 +7,9 @@ use crate::dsp::clampf;
 use chimera_hal::BLOCK_SIZE;
 use core::mem::MaybeUninit;
 
-use crate::block::{Block, ParamId, ParamSpec, ValFmt, apply_code, identity_code};
+use crate::block::{
+    Block, Change, ParamId, ParamSpec, Smoothing, ValFmt, apply_code, identity_code,
+};
 use crate::dsp::algo::math::exp2;
 
 /// Samples per gain computation.
@@ -133,17 +135,77 @@ const _: () = assert!(RATIO_TABLE.len() == COMP_SPECS[1].max as usize + 1);
 
 /// The compressor runs outside `Voice`: nothing is modulatable.
 pub static COMP_SPECS: [ParamSpec; 6] = [
-    ParamSpec::continuous(0, "THRESH", ValFmt::Uni, 0.0, 1.0, 0.7, 1.0 / 128.0, false)
-        .ident("THRESH"),
-    ParamSpec::choice(1, "RATIO", ValFmt::Names(&RATIO_NAMES), 7.0, 0.0).ident("RATIO"),
-    ParamSpec::continuous(2, "ATK", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false).ident("ATK"),
-    ParamSpec::continuous(3, "REL", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false).ident("REL"),
-    ParamSpec::continuous(4, "MAKEUP", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
-        .ident("MAKEUP")
-        .glyph(crate::glyph::FocusGlyph::LevelBar),
-    ParamSpec::continuous(5, "MIX", ValFmt::Uni, 0.0, 1.0, 1.0, 1.0 / 128.0, false)
-        .ident("MIX")
-        .glyph(crate::glyph::FocusGlyph::LevelBar),
+    ParamSpec::continuous(
+        0,
+        "THRESH",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.7,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("THRESH"),
+    ParamSpec::choice(
+        1,
+        "RATIO",
+        ValFmt::Names(&RATIO_NAMES),
+        7.0,
+        0.0,
+        Change::Snap,
+    )
+    .ident("RATIO"),
+    ParamSpec::continuous(
+        2,
+        "ATK",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.5,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("ATK"),
+    ParamSpec::continuous(
+        3,
+        "REL",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.5,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("REL"),
+    ParamSpec::continuous(
+        4,
+        "MAKEUP",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("MAKEUP")
+    .glyph(crate::glyph::FocusGlyph::LevelBar),
+    ParamSpec::continuous(
+        5,
+        "MIX",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        1.0,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("MIX")
+    .glyph(crate::glyph::FocusGlyph::LevelBar),
 ];
 
 impl Block for CompParams {

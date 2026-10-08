@@ -160,6 +160,36 @@ impl BlockRef {
         }
     }
 
+    /// A Sound holds it (`ParamSnapshot`'s blocks): what a Part's knobs
+    /// glide (ADR 0112). `ParamSnapshot`'s dispatch agrees (a test).
+    pub const fn in_sound(self) -> bool {
+        match self {
+            BlockRef::Modal
+            | BlockRef::TapeEngine
+            | BlockRef::Algo
+            | BlockRef::AlgoOp(_)
+            | BlockRef::Drive
+            | BlockRef::Filter
+            | BlockRef::Folder
+            | BlockRef::Env(_)
+            | BlockRef::Lfo(_)
+            | BlockRef::Out
+            | BlockRef::Pitch => true,
+            BlockRef::Chorus
+            | BlockRef::Delay
+            | BlockRef::Reverb
+            | BlockRef::Tape
+            | BlockRef::Comp
+            | BlockRef::Part
+            | BlockRef::PartMix(_)
+            | BlockRef::Theme
+            | BlockRef::Midi
+            | BlockRef::OrbitChords
+            | BlockRef::OrbitRing(_)
+            | BlockRef::Tempo => false,
+        }
+    }
+
     /// Whether `Voice::render` reads this block from its modulated copy and
     /// hears it without a route of its own. ENV slots read their LEVEL, TIME,
     /// RISE, FALL and SHAPE sums per block; the LFO is read unmodulated; FX run
@@ -193,6 +223,28 @@ impl BlockRef {
         }
     }
 }
+
+/// The Part's knobs are a Sound's (ADR 0112): no other block declares one,
+/// so none is left unglided by a knob that never sees it.
+const _: () = {
+    const fn knobs_in(specs: &[ParamSpec]) -> bool {
+        let mut i = 0;
+        while i < specs.len() {
+            if specs[i].motion.knob().is_some() {
+                return true;
+            }
+            i += 1;
+        }
+        false
+    }
+    let mut b = 0;
+    while b < BlockRef::ALL.len() {
+        let r = BlockRef::ALL[b];
+        assert!(r.in_sound() || !knobs_in(r.specs()));
+        b += 1;
+    }
+    assert!(!knobs_in(BlockRef::Tempo.specs()));
+};
 
 /// A parameter of a block instance.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

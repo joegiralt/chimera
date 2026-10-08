@@ -2,7 +2,7 @@
 //! high-frequency rolloff. Inspired by Roland Space Echo / analog tape delay
 //! character.
 
-use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::block::{Block, ParamId, ParamSpec, Smoothing, ValFmt};
 use crate::dsp::algo::math::inv_sqrt;
 use crate::dsp::clampf;
 use crate::dsp::ease::{Ease, at, ease_coeff, step_of};
@@ -102,12 +102,32 @@ const RINGS: crate::glyph::FocusGlyph =
     crate::glyph::FocusGlyph::Composite(crate::glyph::CompositeId::DelayRings);
 
 pub static DELAY_SPECS: [ParamSpec; 7] = [
-    ParamSpec::continuous(0, "TIME", ValFmt::Uni, 10.0, 500.0, 375.0, 8.0, false)
-        .ident("TIME")
-        .glyph(RINGS),
-    ParamSpec::continuous(1, "FDBK", ValFmt::Uni, 0.0, 1.0, 0.4, 1.0 / 128.0, false)
-        .ident("FDBK")
-        .glyph(RINGS),
+    ParamSpec::continuous(
+        0,
+        "TIME",
+        ValFmt::Uni,
+        10.0,
+        500.0,
+        375.0,
+        8.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("TIME")
+    .glyph(RINGS),
+    ParamSpec::continuous(
+        1,
+        "FDBK",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.4,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("FDBK")
+    .glyph(RINGS),
     ParamSpec::continuous(
         2,
         "MECHANICS",
@@ -117,22 +137,63 @@ pub static DELAY_SPECS: [ParamSpec; 7] = [
         0.15,
         1.0 / 128.0,
         false,
+        Smoothing::Own,
     )
     .ident("WOW")
     .glyph(RINGS)
     .short("MECH"),
-    ParamSpec::continuous(3, "SAT", ValFmt::Uni, 0.0, 1.0, 0.2, 1.0 / 128.0, false)
-        .ident("SAT")
-        .glyph(RINGS),
-    ParamSpec::continuous(4, "TONE", ValFmt::Uni, 0.0, 1.0, 0.6, 1.0 / 128.0, false)
-        .ident("TONE")
-        .glyph(RINGS),
-    ParamSpec::continuous(5, "MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
-        .ident("MIX")
-        .glyph(RINGS),
-    ParamSpec::continuous(6, "REV", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
-        .ident("REV")
-        .glyph(RINGS),
+    ParamSpec::continuous(
+        3,
+        "SAT",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.2,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("SAT")
+    .glyph(RINGS),
+    ParamSpec::continuous(
+        4,
+        "TONE",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.6,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("TONE")
+    .glyph(RINGS),
+    ParamSpec::continuous(
+        5,
+        "MIX",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("MIX")
+    .glyph(RINGS),
+    ParamSpec::continuous(
+        6,
+        "REV",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("REV")
+    .glyph(RINGS),
 ];
 
 impl Block for DelayParams {

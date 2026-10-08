@@ -1,7 +1,7 @@
 //! The reverb's settings (FX diet spec § Controls); the ring is
 //! `dsp::ring`.
 
-use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::block::{Block, ParamId, ParamSpec, Smoothing, ValFmt};
 use crate::dsp::ring::RingControls;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -57,21 +57,71 @@ const CUBE: crate::glyph::FocusGlyph =
     crate::glyph::FocusGlyph::Composite(crate::glyph::CompositeId::ReverbCube);
 
 pub static REVERB_SPECS: [ParamSpec; 5] = [
-    ParamSpec::continuous(5, "GRIT", ValFmt::Uni, 0.0, 1.0, 0.3, 1.0 / 128.0, false)
-        .ident("GRIT")
-        .glyph(CUBE),
-    ParamSpec::continuous(1, "TIME", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false)
-        .ident("TIME")
-        .glyph(CUBE),
-    ParamSpec::continuous(2, "DAMP", ValFmt::Uni, 0.0, 1.0, 0.3, 1.0 / 128.0, false)
-        .ident("DAMP")
-        .glyph(CUBE),
-    ParamSpec::continuous(3, "SIZE", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 31.0, false)
-        .ident("SIZE")
-        .glyph(CUBE),
-    ParamSpec::continuous(4, "MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
-        .ident("MIX")
-        .glyph(CUBE),
+    ParamSpec::continuous(
+        5,
+        "GRIT",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.3,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("GRIT")
+    .glyph(CUBE),
+    ParamSpec::continuous(
+        1,
+        "TIME",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.5,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("TIME")
+    .glyph(CUBE),
+    ParamSpec::continuous(
+        2,
+        "DAMP",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.3,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("DAMP")
+    .glyph(CUBE),
+    ParamSpec::continuous(
+        3,
+        "SIZE",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.5,
+        1.0 / 31.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("SIZE")
+    .glyph(CUBE),
+    ParamSpec::continuous(
+        4,
+        "MIX",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("MIX")
+    .glyph(CUBE),
 ];
 
 impl Block for ReverbParams {

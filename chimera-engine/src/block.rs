@@ -124,6 +124,88 @@ pub enum Scale {
     Octaves,
 }
 
+/// How a change of a parameter reaches the sound (ADR 0112). Every spec
+/// declares one through its constructor, so no knob steps by omission.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Motion {
+    /// No steps in the sound: `Smoothing` says what carries a change.
+    Continuous(Smoothing),
+    /// Whole steps, heard as they come: `Change` says how.
+    Stepped(Change),
+}
+
+impl Motion {
+    /// The Part's knobs glide it (`Smoothing::Knobs`), by this τ.
+    pub const fn knob(self) -> Option<GlideMs> {
+        match self {
+            Motion::Continuous(Smoothing::Knobs(t)) => Some(t),
+            _ => None,
+        }
+    }
+
+    /// Continuous in the sound, whatever eases it: a knob that turns
+    /// smoothly, not one that clicks between values.
+    pub const fn is_continuous(self) -> bool {
+        matches!(self, Motion::Continuous(_))
+    }
+}
+
+/// What carries a continuous value from one setting to the next.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Smoothing {
+    /// The Part's knobs (`dsp::knobs`): once a block, a one-pole of this τ,
+    /// linear in the spec's `Scale` (CUTOFF in octaves), before the routes'
+    /// offsets. Only a Sound's params: the knobs are a Part's.
+    Knobs(GlideMs),
+    /// Its own DSP: an effect's or the mixer's ease, a crossfade of two
+    /// read heads, or an envelope or oscillator travelling to it (a time or
+    /// a rate bends a path, it never jumps a value).
+    Own,
+    /// Read when a note starts (or a ring steps, or a loop wraps): heard
+    /// on the next one, never under a held one.
+    NoteOn,
+    /// Not heard: a setting, a route's hidden base, a value nothing reads.
+    Unheard,
+}
+
+impl Smoothing {
+    /// A knob's glide (ADR 0107): 30 ms.
+    pub const KNOB: Self = Smoothing::Knobs(GlideMs::KNOB);
+    /// A stage's: drive, fold, the filter's LEVEL and OUT LEVEL, 20 ms as
+    /// a bus setting (`ease::EASE_S`).
+    pub const STAGE: Self = Smoothing::Knobs(GlideMs::STAGE);
+}
+
+/// How a step is heard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Change {
+    /// At once: a semitone, a ratio, a channel. The phase runs on, so
+    /// nothing clicks; a glide would be a portamento on every turn.
+    Snap,
+    /// Through a crossfade the DSP runs (a filter TYPE, an ALG, a WAVE).
+    Crossfade,
+    /// On the next note.
+    NoteOn,
+}
+
+/// A glide's time constant, ms: 63 % of the way in this long, 95 % in three.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GlideMs(u8);
+
+impl GlideMs {
+    pub const KNOB: Self = Self(30);
+    pub const STAGE: Self = Self(20);
+
+    pub const fn ms(self) -> u8 {
+        self.0
+    }
+
+    /// In seconds.
+    pub fn secs(self) -> f32 {
+        f32::from(self.0) / 1000.0
+    }
+}
+
 /// How a matrix offset moves a value (spec § 3; ADR 0010 for `Linear`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum OffsetLaw {
@@ -170,6 +252,8 @@ pub struct ParamSpec {
     /// Patching, not sound (a filter jack): out of the parameter sweep and
     /// of MIDI learn.
     pub patching: bool,
+    /// How a change reaches the sound (ADR 0112).
+    pub motion: Motion,
 }
 
 impl ParamSpec {
@@ -183,6 +267,7 @@ impl ParamSpec {
         default: f32,
         step: f32,
         modulatable: bool,
+        smoothing: Smoothing,
     ) -> Self {
         Self {
             id: ParamId(id),
@@ -201,10 +286,13 @@ impl ParamSpec {
             ident: "",
             glyph: crate::glyph::FocusGlyph::Arc,
             patching: false,
+            motion: Motion::Continuous(smoothing),
         }
     }
 
-    /// Integer-valued, one unit per encoder tick.
+    /// Integer-valued, one unit per encoder tick. Its `motion` may still be
+    /// continuous: a LEVEL stored in whole steps glides between them.
+    #[allow(clippy::too_many_arguments)]
     pub const fn stepped(
         id: u8,
         label: &'static str,
@@ -213,6 +301,7 @@ impl ParamSpec {
         max: f32,
         default: f32,
         modulatable: bool,
+        motion: Motion,
     ) -> Self {
         Self {
             id: ParamId(id),
@@ -231,11 +320,20 @@ impl ParamSpec {
             ident: "",
             glyph: crate::glyph::FocusGlyph::Arc,
             patching: false,
+            motion,
         }
     }
 
-    /// Discrete choice `0..=max`, one choice per tick. Never modulatable.
-    pub const fn choice(id: u8, label: &'static str, fmt: ValFmt, max: f32, default: f32) -> Self {
+    /// Discrete choice `0..=max`, one choice per tick. Never modulatable,
+    /// never glides: a choice steps, as `change` says.
+    pub const fn choice(
+        id: u8,
+        label: &'static str,
+        fmt: ValFmt,
+        max: f32,
+        default: f32,
+        change: Change,
+    ) -> Self {
         Self {
             id: ParamId(id),
             label,
@@ -253,6 +351,7 @@ impl ParamSpec {
             ident: "",
             glyph: crate::glyph::FocusGlyph::Arc,
             patching: false,
+            motion: Motion::Stepped(change),
         }
     }
 

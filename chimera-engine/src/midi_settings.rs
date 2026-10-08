@@ -3,7 +3,7 @@
 //! stored in SYSTEM, since it says how the unit sits in the studio, not
 //! what a project plays.
 
-use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
+use crate::block::{Block, Change, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
 use crate::orbit::clock::SyncMode;
 
 /// Everything MIDI CONFIG sets that SYSTEM keeps.
@@ -31,12 +31,16 @@ const SYNC_NAMES: [&str; 2] = ["INT", "EXT"];
 /// SYNC by index, `SyncMode::ALL`'s order; `SYNC_NAMES` too
 /// (`midi_sync_page_test::sync_value_names_and_order_agree`). INT and EXT are two peers,
 /// neither off, so the focus shows the word.
-pub static MIDI_SPECS: [ParamSpec; 1] =
-    [
-        ParamSpec::choice(0, "SYNC", ValFmt::Names(&SYNC_NAMES), 1.0, 1.0)
-            .ident("SYNC")
-            .glyph(crate::glyph::FocusGlyph::None),
-    ];
+pub static MIDI_SPECS: [ParamSpec; 1] = [ParamSpec::choice(
+    0,
+    "SYNC",
+    ValFmt::Names(&SYNC_NAMES),
+    1.0,
+    1.0,
+    Change::Snap,
+)
+.ident("SYNC")
+.glyph(crate::glyph::FocusGlyph::None)];
 
 const _: () = assert!(SyncMode::ALL.len() == SYNC_NAMES.len());
 // `get` reads the discriminant as the index: `ALL` keeps declaration order.
