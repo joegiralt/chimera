@@ -5,6 +5,13 @@
 //! there.
 #![no_std]
 
+// The lost-cluster sweep frees only on the owner's go (#360, ADR 0094):
+// until then the boot runs it dry. Here, so the lock holds whichever crate
+// turns `sweep-free` on; `chimera-stm32` keeps its own. Only the commit
+// that enables freeing removes both.
+#[cfg(feature = "sweep-free")]
+compile_error!("owner's go required");
+
 pub mod cache;
 #[cfg(all(feature = "bench", feature = "usb-console"))]
 pub mod card_speed;
