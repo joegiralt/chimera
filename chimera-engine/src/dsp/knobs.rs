@@ -65,6 +65,8 @@ const fn knobs() -> [Knob; KNOB_COUNT] {
         let mut i = 0;
         while r.in_sound() && i < specs.len() {
             if let Some(tau) = specs[i].motion().knob() {
+                // `Knobs` keeps a coefficient for each of these two.
+                assert!(tau.ms() == GlideMs::KNOB.ms() || tau.ms() == GlideMs::STAGE.ms());
                 t[n] = Knob {
                     addr: ParamAddr::new(r, specs[i].id),
                     spec: &specs[i],
@@ -117,6 +119,11 @@ pub enum Pace {
     Land,
 }
 
+/// `tau`'s place in `Knobs::k`.
+fn tau_ix(tau: GlideMs) -> usize {
+    usize::from(tau == GlideMs::STAGE)
+}
+
 /// The one-pole's coefficient once a block at `tau`.
 pub fn coeff(tau: GlideMs, sample_rate: u32) -> f32 {
     exp2(-LOG2_E * BLOCK_SIZE as f32 / (tau.secs() * sample_rate as f32))
@@ -144,6 +151,9 @@ pub struct Knobs {
     /// The Sound's and its routes' stamps when last read.
     seen: (Stamp, Stamp),
     primed: bool,
+    /// The sample rate and the KNOB and STAGE coefficients at it: worked
+    /// out once, not an `exp2` a knob a block.
+    k: (u32, [f32; 2]),
 }
 
 impl Knobs {
@@ -154,6 +164,7 @@ impl Knobs {
         routes_moving: false,
         seen: (Stamp::new(0, 0), Stamp::new(0, 0)),
         primed: false,
+        k: (0, [0.0; 2]),
     };
 
     /// The next `ease` lands: a silent Part, or a Sound loaded under a
@@ -165,23 +176,25 @@ impl Knobs {
     /// One block toward `p`'s and `m`'s stored values. Reads the Sound
     /// only when its stamp moved, and glides only what is moving.
     pub fn ease(&mut self, p: &Tracked<ParamSnapshot>, m: &Tracked<ModState>, pace: Pace) {
-        let sr = match pace {
-            Pace::Glide(sr) if self.primed => Some(sr),
-            _ => None,
-        };
-        if sr.is_none() || p.stamp() != self.seen.0 {
+        if let Pace::Glide(sr) = pace
+            && self.k.0 != sr
+        {
+            self.k = (sr, [coeff(GlideMs::KNOB, sr), coeff(GlideMs::STAGE, sr)]);
+        }
+        let k = (self.primed && matches!(pace, Pace::Glide(_))).then_some(self.k.1);
+        if k.is_none() || p.stamp() != self.seen.0 {
             self.seen.0 = p.stamp();
             for i in 0..KNOB_COUNT {
-                self.step(i, p, sr, true);
+                self.step(i, p, k, true);
             }
         } else {
             for i in self.moving.iter() {
-                self.step(i, p, sr, false);
+                self.step(i, p, k, false);
             }
         }
-        if sr.is_none() || m.stamp() != self.seen.1 || self.routes_moving {
+        if k.is_none() || m.stamp() != self.seen.1 || self.routes_moving {
             self.seen.1 = m.stamp();
-            let k = sr.map_or(0.0, |sr| coeff(GlideMs::KNOB, sr));
+            let k = k.map_or(0.0, |k| k[0]);
             self.routes_moving = false;
             for (v, col) in self.routes.iter_mut().zip(COLS) {
                 self.routes_moving |= glide_column(v, m, col, k);
@@ -190,22 +203,23 @@ impl Knobs {
         self.primed = true;
     }
 
-    /// Knob `i` one block toward `p`'s; landed at once with no `sr`. A
-    /// `fresh` read starts it if it differs.
+    /// Knob `i` one block toward `p`'s at the coefficients `k`; landed at
+    /// once with none. A `fresh` read starts it if it differs.
     #[inline(never)]
-    fn step(&mut self, i: usize, p: &ParamSnapshot, sr: Option<u32>, fresh: bool) {
-        let k = &KNOBS[i];
-        let t = k
-            .spec
-            .normalize(p.block(k.addr.block).map_or(0.0, |b| b.get(k.addr.param)));
+    fn step(&mut self, i: usize, p: &ParamSnapshot, k: Option<[f32; 2]>, fresh: bool) {
+        let knob = &KNOBS[i];
+        let t = knob.spec.normalize(
+            p.block(knob.addr.block)
+                .map_or(0.0, |b| b.get(knob.addr.param)),
+        );
         let v = &mut self.v[i];
-        let on = match sr {
+        let on = match k {
             None => {
                 *v = t;
                 false
             }
             Some(_) if fresh && !self.moving.has(i) && v.to_bits() == t.to_bits() => false,
-            Some(sr) => !glide(v, t, coeff(k.tau, sr), LAND),
+            Some(k) => !glide(v, t, k[tau_ix(knob.tau)], LAND),
         };
         self.moving.put(i, on);
     }
