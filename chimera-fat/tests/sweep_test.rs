@@ -708,59 +708,77 @@ fn sweep_aborts_on_doubt() {
     }
 }
 
+/// Sector D, FAT 2's copy behind FAT 1's: a file `A` whose last link only
+/// FAT 1 holds (FAT 2 ends it early, its tail free), one loose cluster
+/// each copy alone holds, and one both hold; `far`, lost in both outside
+/// D. With `shape`, a reached cluster FAT 2 links past FAT 1 as well.
+fn stale_d(kind: FsKind, shape: Option<&str>) -> (RamDisk, Layout, [u32; 6], u32) {
+    let disk = match kind {
+        FsKind::Fat16 => with_clusters(CLUSTERS, 0x0D0D),
+        FsKind::Fat32 => fat32(0x0D0D),
+    };
+    let l = layout_of(&disk);
+    let mut t = Tree::new(&disk);
+    let mut root = t.root();
+    if let Some(info) = l.fs_info() {
+        // A count FSInfo trusts, for the free phase to mark unknown.
+        disk.0.borrow_mut()[(PART_LBA + info) as usize][488..492].fill(0);
+    }
+    let a = t
+        .file(&mut root, *b"A       BIN", None, (512, 1), 1, None)
+        .chain;
+    let b = t
+        .file(&mut root, *b"B       BIN", None, (512, 1), 2, None)
+        .chain;
+    let only1 = t.lose(1, None)[0];
+    let only2 = t.lose(1, None)[0];
+    let both = t.lose(1, None)[0];
+    let far = 2 + l.clusters() - 3;
+    set_fat(&disk, &l, far, l.end_mark());
+    let d = l.fat_block(a[0]);
+    assert!(
+        [a[1], b[0], b[1], only1, only2, both]
+            .iter()
+            .all(|&x| l.fat_block(x) == d)
+    );
+    assert_ne!(l.fat_block(far), d);
+    let fat2 = l.fat_copies(d).nth(1).unwrap();
+    {
+        let mut blks = disk.0.borrow_mut();
+        let f2 = &mut blks[(PART_LBA + fat2) as usize];
+        l.put_entry(f2, a[0], l.end_mark());
+        l.put_entry(f2, a[1], 0);
+        l.put_entry(f2, only2, l.end_mark());
+        l.put_entry(f2, only1, 0);
+        let f1 = &mut blks[(PART_LBA + d) as usize];
+        l.put_entry(f1, only2, 0);
+        match shape {
+            // B's last link only FAT 2 holds, its tail free in FAT 1.
+            Some("tail") => {
+                l.put_entry(f1, b[0], l.end_mark());
+                l.put_entry(f1, b[1], 0);
+            }
+            // B's link only FAT 2 holds, its tail still held in FAT 1.
+            Some("link") => l.put_entry(f1, b[0], l.end_mark()),
+            // B's first cluster free in FAT 1: what a torn sector leaves.
+            Some("free") => l.put_entry(f1, b[0], 0),
+            _ => {}
+        }
+    }
+    (disk, l, [a[0], a[1], b[0], b[1], only1, both], far)
+}
+
+/// A stale FAT 2 sector D: a reached cluster may differ only as a FAT
+/// 1-first cut leaves it, FAT 1 newer, and then FAT 1 is followed, D
+/// copied, and what both copies hold as lost freed; what only FAT 1 holds
+/// goes at the next boot. FAT 2 linking past FAT 1 is `FatsDiffer`, with
+/// nothing written.
 #[test]
-fn one_stale_sector_is_a_union() {
+fn one_stale_sector_is_fat1_first_or_doubt() {
     for kind in [FsKind::Fat16, FsKind::Fat32] {
-        let disk = match kind {
-            FsKind::Fat16 => with_clusters(CLUSTERS, 0x0D0D),
-            FsKind::Fat32 => fat32(0x0D0D),
-        };
-        let l = layout_of(&disk);
-        let mut t = Tree::new(&disk);
-        let mut root = t.root();
-        // A file whose last link FAT 1 has and FAT 2 lacks, and one the
-        // other way round; both in sector D with three loose clusters.
-        if let Some(info) = l.fs_info() {
-            // A count FSInfo trusts, for the free phase to mark unknown.
-            disk.0.borrow_mut()[(PART_LBA + info) as usize][488..492].fill(0);
-        }
-        let a = t
-            .file(&mut root, *b"A       BIN", None, (512, 1), 1, None)
-            .chain;
-        let b = t
-            .file(&mut root, *b"B       BIN", None, (512, 1), 2, None)
-            .chain;
-        // C's second cluster only FAT 2 links: the union keeps it.
-        let c = t
-            .file(&mut root, *b"C       BIN", None, (512, 1), 3, None)
-            .chain;
-        let only1 = t.lose(1, None)[0];
-        let only2 = t.lose(1, None)[0];
-        let both = t.lose(1, None)[0];
-        // A cluster lost in both copies, outside D.
-        let far = 2 + l.clusters() - 3;
-        set_fat(&disk, &l, far, l.end_mark());
-        let d = l.fat_block(a[0]);
-        assert!(
-            [a[1], b[1], c[1], only1, only2, both]
-                .iter()
-                .all(|&x| l.fat_block(x) == d)
-        );
-        assert_ne!(l.fat_block(far), d);
+        let (disk, l, [a0, a1, b0, b1, only1, both], far) = stale_d(kind, None);
+        let d = l.fat_block(a0);
         let fat2 = l.fat_copies(d).nth(1).unwrap();
-        {
-            let mut blks = disk.0.borrow_mut();
-            let f2 = &mut blks[(PART_LBA + fat2) as usize];
-            l.put_entry(f2, a[0], l.end_mark());
-            l.put_entry(f2, a[1], 0);
-            l.put_entry(f2, only2, l.end_mark());
-            l.put_entry(f2, only1, 0);
-            let f1 = &mut blks[(PART_LBA + d) as usize];
-            l.put_entry(f1, b[0], l.end_mark());
-            l.put_entry(f1, b[1], 0);
-            l.put_entry(f1, c[0], l.end_mark());
-            l.put_entry(f1, only2, 0);
-        }
         let disk = Rc::new(disk);
         let dry = sweep_on(&disk, Sweep::DryRun).unwrap();
         assert_eq!((dry.lost, dry.healed), (2, true), "{kind:?}: both and far");
@@ -773,21 +791,64 @@ fn one_stale_sector_is_a_union() {
         if let Some(info) = l.fs_info() {
             assert_eq!(writes[1], PART_LBA + info, "{kind:?}: then FSInfo");
         }
-        for x in [a[0], a[1], b[0], c[0], c[1], only1] {
+        for x in [a0, a1, b0, b1, only1] {
             assert!(holds(&l, fat_value(&disk, &l, 0, x)), "{kind:?}: {x} kept");
         }
         for x in [both, far] {
             assert_eq!(fat_value(&disk, &l, 0, x), 0, "{kind:?}: {x} freed");
         }
-        // FAT 1 wins the copy; what only it holds goes at the next boot,
-        // and so does C's second cluster, which FAT 1 never linked.
+        // FAT 1 won the copy; what only it holds goes at the next boot.
         let next = swept(&disk);
-        assert_eq!(
-            (next.freed, next.healed),
-            (2, false),
-            "{kind:?}: only1, C's tail"
-        );
+        assert_eq!((next.freed, next.healed), (1, false), "{kind:?}: only1");
+        assert_eq!(fat_value(&disk, &l, 0, only1), 0);
         assert_eq!(fat_value(&disk, &l, 1, only1), 0);
+        assert!(holds(&l, fat_value(&disk, &l, 0, a1)), "{kind:?}: A's tail");
+
+        for shape in ["tail", "link", "free"] {
+            let (disk, ..) = stale_d(kind, Some(shape));
+            refused(&format!("{kind:?}: B {shape}"), disk, Doubt::FatsDiffer);
+        }
+    }
+}
+
+/// A directory tail only FAT 2 links keeps every file in it, at this boot
+/// and every later one.
+#[test]
+fn a_dir_tail_only_fat2_links_keeps_its_files() {
+    let disk = fat32(0xD12E);
+    let l = layout_of(&disk);
+    let mut t = Tree::new(&disk);
+    let mut root = t.root();
+    let mut d = t.mkdir(&mut root, *b"HOSTDIR    ", None);
+    for i in 0..14 {
+        t.put(&mut d, raw(short_name(0, i), 0x20, 0, 0));
+    }
+    let f = t.file(
+        &mut d,
+        *b"TAIL    WAV",
+        None,
+        (3 * l.cluster_bytes(), 0),
+        7,
+        None,
+    );
+    assert_eq!(d.chain.len(), 2, "TAIL's entry sits in the second cluster");
+    let s = l.fat_block(d.chain[0]);
+    assert_eq!(s, l.fat_block(d.chain[1]));
+    let mut blk = disk.block(PART_LBA + s);
+    l.put_entry(&mut blk, d.chain[0], l.end_mark());
+    l.put_entry(&mut blk, d.chain[1], 0);
+    disk.0.borrow_mut()[(PART_LBA + s) as usize] = blk;
+    let disk = Rc::new(disk);
+    for boot in 0..3 {
+        let got = sweep_on(&disk, Sweep::Free).map_err(|(d, _)| d);
+        assert_eq!(got.map(|_| ()), Err(Doubt::FatsDiffer), "boot {boot}");
+        for &c in &f.chain {
+            assert_ne!(
+                fat_value(&disk, &l, 0, c),
+                0,
+                "boot {boot}: TAIL's cluster {c} freed"
+            );
+        }
     }
 }
 
