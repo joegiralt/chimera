@@ -77,8 +77,10 @@ static mut AUDIO: MaybeUninit<TripleBuffer<AudioShared>> = MaybeUninit::uninit()
 static AUDIO_TAKEN: AtomicBool = AtomicBool::new(false);
 
 // The UI side of the knobs, beside the writer it publishes through (ADR
-// 0115): all zeros, `.bss`.
-static mut KNOBS: KnobPublisher = KnobPublisher::new();
+// 0115): 2.2 KB of the UI's, in D2, not AXI, which the bench builds hold
+// within 8 KiB of full (ADR 0087). NOLOAD: written at `take_audio`.
+#[unsafe(link_section = ".ram_d2")]
+static mut KNOBS: MaybeUninit<KnobPublisher> = MaybeUninit::uninit();
 
 /// The triple buffer's ends and the knobs' publisher, which every publish
 /// of a Project takes. Seeded from the UI's `Performance`, not
@@ -95,8 +97,8 @@ pub fn take_audio(
         return None;
     }
     // SAFETY: the flag lets exactly one caller past, so this is the only
-    // reference to `KNOBS` ever made.
-    let knobs = unsafe { &mut *addr_of_mut!(KNOBS) };
+    // reference to `KNOBS` ever made; `write` initialises it whole.
+    let knobs = unsafe { &mut *addr_of_mut!(KNOBS) }.write(KnobPublisher::new());
     // SAFETY: the flag lets exactly one caller past, so this is the only
     // reference to `AUDIO` ever made.
     let slot = unsafe { &mut *addr_of_mut!(AUDIO) };

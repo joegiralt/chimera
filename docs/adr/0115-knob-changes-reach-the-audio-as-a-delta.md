@@ -48,9 +48,9 @@
   - A publish: one stamp compare a Part.
   - An edited Part: 66 value compares and 16 route compares, ~6k cycles on the M7 (~13 µs at 480 MHz), once per publish that carries an edit. On the UI's time, under 0.1 % of a 16 ms frame.
 - **RAM:**
-  - `KnobPublisher` ~2.2 KB `.bss` (UI side).
-  - `KnobDelta` ~72 B a Part in each of the three `AudioShared` slots (~1.3 KB).
-  - `Knobs` +24 B a Part.
+  - `KnobPublisher` 2.2 KB, UI side. On the board it sits in D2, not AXI: the bench builds hold AXI within 8 KiB of full (ADR 0087), and `bench-algo,master-tape` keeps 8,668 B.
+  - `KnobDelta` ~72 B a Part in each of the three `AudioShared` slots.
+  - Shipping vs main: AXI −1,056 B (41,212 B free), D2 +2,208 B, flash +3,072 B.
 - A test or bench writing `AudioShared` in place still works: a new stamp means read whole.
 - `knob_reads_test` counts knob reads per block:
   - six Parts playing: a turn reads 1 (two knobs, 2), and FX, mix and ORBIT edits read 0;
