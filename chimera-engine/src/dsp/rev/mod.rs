@@ -23,6 +23,7 @@ use crate::dsp::ease::{Ease, Gate, at, ease_coeff, step_of};
 use crate::dsp::halfband::{Decimator, HALF, Interpolator};
 use crate::dsp::reverb::{ReverbParams, ReverbType, knobs, ranges};
 use crate::dsp::ring::{FULL_SCALE, STAGES, WET_GAIN, smear_depth, smear_hz};
+use crate::hw::Cost;
 use arena::ReverbArena;
 use bloom::Bloom;
 use burst::BurstEngine;
@@ -71,6 +72,79 @@ const WET_HALL: f32 = 14.0;
 const WET_GATE: f32 = 9.0;
 const WET_REVERSE: f32 = 4.84;
 const WET_BLOOM: f32 = 5.72;
+
+/// Each TYPE's REV row, cycles a sample, as the bench reads it (rev V at
+/// 480 MHz, 2026-10-08, bench-stress REVERB screen).
+pub const fn bench_cost(t: ReverbType) -> Cost {
+    Cost(match t {
+        ReverbType::Quad => 73,
+        ReverbType::Gate => 154,
+        ReverbType::Reverse => 170,
+        ReverbType::Room => 241,
+        ReverbType::Hall => 261,
+        ReverbType::Bloom => 267,
+    })
+}
+
+/// What a TYPE costs over QUAD, whose row `FxBus::COST` already holds: the
+/// voice budget reserves it.
+pub const fn extra_cost(t: ReverbType) -> Cost {
+    Cost(bench_cost(t).0 - bench_cost(ReverbType::Quad).0)
+}
+
+/// What a TYPE switch's worst block costs over both TYPEs' extras: the
+/// bench's REV SWITCH MAX (461,742 cycles) less STRESS's QUAD block
+/// (433,347), a sample's share, less HALL's and BLOOM's extras (188 + 194).
+pub const SWITCH_COST: Cost = Cost(62);
+
+/// Blocks a switch bills both TYPEs: its three phases and two to spare.
+pub const SWITCH_BILLED: u8 = FADE_BLOCKS + CLEAR_BLOCKS + FADE_BLOCKS + 2;
+
+/// The reverb's reserve from the voice budget, one `step` a block: the set
+/// TYPE's extra over QUAD, and while a switch runs (the old TYPE fading out
+/// beside the new, the clear) both extras and the switch's own, so the
+/// allocator sheds a voice rather than run the block past its budget.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RevBill {
+    from: ReverbType,
+    to: ReverbType,
+    left: u8,
+}
+
+impl RevBill {
+    pub const fn new() -> Self {
+        Self {
+            from: ReverbType::Quad,
+            to: ReverbType::Quad,
+            left: 0,
+        }
+    }
+
+    /// This block's reserve for the set TYPE `set`.
+    pub fn step(&mut self, set: ReverbType) -> Cost {
+        if set != self.to {
+            // A switch on a switch: the costlier of the two still running.
+            if self.left > 0 && extra_cost(self.to) > extra_cost(self.from) {
+                self.from = self.to;
+            } else if self.left == 0 {
+                self.from = self.to;
+            }
+            self.to = set;
+            self.left = SWITCH_BILLED;
+        }
+        if self.left == 0 {
+            return extra_cost(self.to);
+        }
+        self.left -= 1;
+        extra_cost(self.from) + extra_cost(self.to) + SWITCH_COST
+    }
+}
+
+impl Default for RevBill {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// ROOM's four loops (ADR 0095) set it: their gains, targets, dampers and
 /// four smear offsets, 84 B past ADR 0085's 160, and GRAIN's envelope,

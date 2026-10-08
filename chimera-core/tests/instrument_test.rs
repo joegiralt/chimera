@@ -1552,3 +1552,30 @@ fn a_restrike_reuses_its_string_and_nothing_clicks() {
         assert!(c.is_empty(), "{what}: {:?}", &c[..c.len().min(20)]);
     }
 }
+
+/// The voice budget reserves the set reverb TYPE's cost over QUAD's (which
+/// `FxBus::COST` holds): a pool that just fits under QUAD sheds a voice
+/// when the TYPE becomes ROOM, and keeps all of them if it stays QUAD.
+#[test]
+fn the_voice_budget_reserves_the_reverb_types_cost() {
+    use chimera_core::dsp::reverb::ReverbType;
+    let init = AudioShared::default();
+    let p = &init.parts[0];
+    let voice = chimera_core::dsp::voice::Voice::cost(&p.params, &p.mod_state).0;
+    let sheds = |kind: ReverbType| {
+        let mut rig = Rig::with_budget(budget_for(6 * voice + 10));
+        for n in 0..6 {
+            rig.note_on(0, 48 + n);
+        }
+        rig.render(2);
+        assert_eq!(rig.inst.sounding(), 6, "six fit under QUAD");
+        rig.shared.fx.reverb.kind = kind;
+        rig.render(60);
+        6 - rig.inst.sounding()
+    };
+    assert_eq!(sheds(ReverbType::Quad), 0);
+    assert!(
+        sheds(ReverbType::Room) >= 1,
+        "ROOM's 168 a sample sheds one"
+    );
+}

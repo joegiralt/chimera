@@ -894,3 +894,38 @@ fn rounding_is_ties_away_from_zero_everywhere() {
         .map(f32::from_bits)
         .for_each(rounding_matches);
 }
+
+/// The voice budget's reserve for the reverb (`RevBill`): a TYPE's extra
+/// over QUAD at rest, both TYPEs' and the switch's while one runs.
+#[test]
+fn the_reverb_bill_covers_a_switch_at_both_types() {
+    use chimera_core::dsp::rev::{RevBill, SWITCH_BILLED, SWITCH_COST, extra_cost};
+    use chimera_core::dsp::reverb::ReverbType as T;
+    assert_eq!(extra_cost(T::Quad).0, 0);
+    for t in [T::Gate, T::Reverse, T::Room, T::Hall, T::Bloom] {
+        assert!(extra_cost(t) > extra_cost(T::Quad));
+    }
+    // The bench's measured REV rows less QUAD's 73.
+    assert_eq!(
+        [T::Gate, T::Reverse, T::Room, T::Hall, T::Bloom].map(|t| extra_cost(t).0),
+        [81, 97, 168, 188, 194]
+    );
+    let mut b = RevBill::new();
+    assert_eq!(b.step(T::Quad), extra_cost(T::Quad));
+    assert_eq!(
+        b.step(T::Room),
+        extra_cost(T::Quad) + extra_cost(T::Room) + SWITCH_COST
+    );
+    for _ in 1..SWITCH_BILLED {
+        assert_eq!(b.step(T::Room).0, 168 + SWITCH_COST.0);
+    }
+    assert_eq!(b.step(T::Room), extra_cost(T::Room), "settled on ROOM");
+    // HALL to BLOOM, the dearest pair, is the bench's worst switch block.
+    b.step(T::Hall);
+    for _ in 0..SWITCH_BILLED {
+        b.step(T::Hall);
+    }
+    assert_eq!(b.step(T::Bloom).0, 188 + 194 + SWITCH_COST.0);
+    // A switch on a switch keeps the costlier engine still fading.
+    assert_eq!(b.step(T::Gate).0, 194 + 81 + SWITCH_COST.0);
+}

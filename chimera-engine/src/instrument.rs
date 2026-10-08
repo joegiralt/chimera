@@ -16,6 +16,7 @@ use crate::dsp::engines::{EngineCtx, SlotKind};
 use crate::dsp::filter::knobs::{Knobs, knob_coeff};
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use crate::dsp::modal::{ResonatorMode, SYM_NOTE_ON_CLEAR_MAX, SymPool};
+use crate::dsp::rev::RevBill;
 use crate::dsp::rev::sync::Tempo;
 use crate::dsp::tape_engine::{Heads, TapeEngine};
 use crate::dsp::voice::Voice;
@@ -501,6 +502,9 @@ pub struct Instrument {
     knobs: [(Knobs, Loads); MAX_PARTS],
     /// `knob_coeff` at `sample_rate`.
     knob_k: f32,
+    /// The reverb's reserve from the budget this block, and its tracker.
+    rev_extra: Cost,
+    rev_bill: RevBill,
 }
 
 /// Who plays a note: the keys and MIDI, or one of ORBIT's rings.
@@ -516,7 +520,7 @@ pub enum NoteOrigin {
 /// worst-case slots starts a note a block, a typical one all at once.
 pub const SYM_CLEAR_BUDGET: usize = SYM_NOTE_ON_CLEAR_MAX;
 
-crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, knobs, knob_k });
+crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, knobs, knob_k, rev_extra, rev_bill });
 
 const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
@@ -575,6 +579,8 @@ impl Instrument {
             addr_of_mut!((*p).costings).write(0);
             addr_of_mut!((*p).knobs).write([(Knobs::UNPRIMED, Loads::NONE); MAX_PARTS]);
             addr_of_mut!((*p).knob_k).write(knob_coeff(sample_rate));
+            addr_of_mut!((*p).rev_extra).write(Cost::ZERO);
+            addr_of_mut!((*p).rev_bill).write(RevBill::new());
             slot.assume_init_mut()
         }
     }
@@ -614,7 +620,7 @@ impl Instrument {
             Some(_) => OrbitRunner::COST + Self::BURST,
             None => Cost::ZERO,
         };
-        FxBus::COST + orbit
+        FxBus::COST + self.rev_extra + orbit
     }
 
     /// Voices that ring a pool set, at most `SYM_SLOTS`: for the bench,
@@ -1077,7 +1083,7 @@ impl Instrument {
         }
         // Only the bus: ORBIT's reserve refuses new voices, it never fades
         // out sounding ones (ADR 0091).
-        while let Some(v) = self.alloc.shed(FxBus::COST) {
+        while let Some(v) = self.alloc.shed(FxBus::COST + self.rev_extra) {
             self.shed(v);
         }
     }
@@ -1195,6 +1201,7 @@ impl Instrument {
         scope: &mut ScopeWriter,
         src: &GateView<'_>,
     ) {
+        self.rev_extra = self.rev_bill.step(shared.fx.reverb.kind);
         self.recost(shared);
         self.restart_switched(shared);
 
