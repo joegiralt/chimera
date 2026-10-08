@@ -129,6 +129,7 @@ pub mod engines;
 pub mod envelope;
 pub mod filter;
 pub mod fx_bus;
+pub mod gate;
 pub mod glide;
 pub mod halfband;
 pub mod knobs;

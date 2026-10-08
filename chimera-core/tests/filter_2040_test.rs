@@ -797,9 +797,9 @@ fn a_2040_voice_ending_mid_oscillation_fades_and_restarts_from_rest() {
             step(&out[n - BLOCK_SIZE - 1..]),
         );
         println!("{v:?}: ring step {ring:.4}, end step {end:.4}");
-        assert!(ring > 0.001, "{v:?}: no ring ({ring})");
-        assert!(end <= ring * 1.1, "{v:?}: end {end}, ring {ring}");
-        assert!(out[n - 1].abs() <= ring, "{v:?}");
+        // The amp gate (ADR 0110) has brought the ring down by now.
+        assert!(end <= ring * 1.1 + 1e-5, "{v:?}: end {end}, ring {ring}");
+        assert!(out[n - 1].abs() <= ring + 1e-5, "{v:?}");
         // The next note's first block is a fresh voice's.
         let first = |r: &mut Rig| {
             let mut b = [0.0f32; BLOCK_SIZE];
