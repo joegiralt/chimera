@@ -345,3 +345,21 @@ fn a_one_part_publish_loads_within_the_budget() {
         .normalize(2000.0);
     assert_eq!(r.inst.knob(5, cutoff), Some((want, false)));
 }
+
+/// Every Part's knobs settle once their reads are done: what the bench
+/// waits on before timing, so its setup goes through the publisher too.
+#[test]
+fn the_knobs_say_when_they_have_settled() {
+    let mut r = Six::new();
+    r.block();
+    assert!(!r.inst.knobs_settled(), "six Sounds to read");
+    let mut n = 1;
+    while !r.inst.knobs_settled() {
+        r.block();
+        n += 1;
+    }
+    assert!(n <= 50, "{n} blocks");
+    r.p.edit_part(PartId::ALL[3]).sound.params.filter.cutoff *= 0.5;
+    r.block();
+    assert!(r.inst.knobs_settled(), "one knob, read at once");
+}

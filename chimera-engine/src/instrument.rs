@@ -697,8 +697,12 @@ impl Instrument {
         core::array::from_fn(|v| self.voices[v].played_value(addr))
     }
 
-    /// Part `part`'s full reads of its Sound so far, wrapping: for the
-    /// tests.
+    /// No Part's knobs wait on the read budget: the bench times from here.
+    pub fn knobs_settled(&self) -> bool {
+        self.knobs.iter().all(|k| k.0.settled())
+    }
+
+    /// Part `part`'s knobs read so far, wrapping: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn knob_reads(&self, part: usize) -> u32 {
         self.knobs[part].0.reads()
@@ -1305,7 +1309,12 @@ impl Instrument {
         self.clear_backlog = false;
         self.start_waiting(shared, src);
         self.serve_resnaps();
+        #[cfg(feature = "probe")]
+        let t0 = crate::probe::now();
         self.ease_knobs(shared);
+        // 9: the knobs' ease, reads and glides (ADR 0115).
+        #[cfg(feature = "probe")]
+        crate::probe::acc(9, crate::probe::now().wrapping_sub(t0));
         for v in 0..MAX_VOICES {
             if self.alloc.slots()[v].is_free() {
                 continue;

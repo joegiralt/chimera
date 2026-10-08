@@ -390,6 +390,11 @@ impl Knobs {
         !self.pending.is_empty() && self.pending.minus(self.lands).is_empty()
     }
 
+    /// No change waits to be read (a glide may still run).
+    pub fn settled(&self) -> bool {
+        self.pending.is_empty()
+    }
+
     /// Knobs read so far, wrapping: for the tests.
     pub fn reads(&self) -> u32 {
         self.reads
