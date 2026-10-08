@@ -17,6 +17,7 @@ use crate::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use crate::block::{GlideMs, ParamSpec};
 use crate::dsp::algo::engine::AlgoLive;
 use crate::dsp::algo::math::exp2;
+use crate::hw::Cost;
 use crate::modulation::{FixedCol, MAX_MOD_SOURCES, ModState};
 use crate::params::ParamSnapshot;
 use crate::tracked::{Stamp, Tracked};
@@ -157,6 +158,14 @@ pub struct Knobs {
 }
 
 impl Knobs {
+    /// What a sounding Part's knobs cost, cycles a sample, billed once a
+    /// Part on one of its voices (ADR 0112). Estimated from the thumb
+    /// build's instructions, not benched: settled ~70 cycles a block, one
+    /// knob moving ~150, and a re-read of all of them after an edit
+    /// (~6,000, every Part, as any edit moves the Project's revision)
+    /// spread over a UI frame of 12 blocks or more: 720 / 64 = 11.3.
+    pub const COST: Cost = Cost(12);
+
     pub const UNPRIMED: Self = Self {
         v: [0.0; KNOB_COUNT],
         moving: Moving(0),
@@ -208,6 +217,7 @@ impl Knobs {
     #[inline(never)]
     fn step(&mut self, i: usize, p: &ParamSnapshot, k: Option<[f32; 2]>, fresh: bool) {
         let knob = &KNOBS[i];
+        let k = k.filter(|_| !p.moves_itself(knob.addr));
         let t = knob.spec.normalize(
             p.block(knob.addr.block)
                 .map_or(0.0, |b| b.get(knob.addr.param)),

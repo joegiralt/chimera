@@ -6,6 +6,7 @@ mod common;
 
 use chimera_core::dsp::engines::SlotKind;
 use chimera_core::dsp::fx_bus::FxBus;
+use chimera_core::dsp::knobs::Knobs;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{CPU_HZ_REV_V, MAX_PARTS, MAX_VOICES, SampleBudget};
@@ -221,7 +222,8 @@ fn kill_all_quiets_a_free_ringing_string_and_a_glide_part() {
 fn one_voice(params: &ParamSnapshot) -> InstRig {
     let r = rev_v();
     let cost = Voice::cost(params, &r.shared.parts[0].mod_state).0;
-    let hz = ((FxBus::COST.0 + cost) as u64 * 480_000).div_ceil(7) as u32;
+    // And its Part's knobs (ADR 0112).
+    let hz = ((FxBus::COST.0 + cost + Knobs::COST.0) as u64 * 480_000).div_ceil(7) as u32;
     InstRig::with_budget(SampleBudget::for_cpu(hz))
 }
 

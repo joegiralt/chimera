@@ -254,6 +254,13 @@ pub fn reads(model: TapeModel, id: ParamId) -> bool {
     }
 }
 
+/// Whether `model` moves `id` by a motion of its own the knobs would only
+/// blur: SCRUB's POSITION is its jog, which the UI steps with DRAG's
+/// momentum (ADR 0112). The Part's knobs hand it on at once.
+pub fn jogs(model: TapeModel, id: ParamId) -> bool {
+    model == TapeModel::Scrub && id == TapeEngineParams::POSITION
+}
+
 /// DRAG in seconds: 10 to 500 ms, exponential.
 pub fn drag_s(drag: f32) -> f32 {
     // log2(50)

@@ -61,7 +61,7 @@ pub use heads::loop_len;
 pub use oneshot::SliceCode;
 pub use params::{
     MACHINE_NAMES, MODEL_NAMES, StretchType, TAPE_ENGINE_SPECS, TapeEngineParams, TapeModel, Wow,
-    drag_s, reads,
+    drag_s, jogs, reads,
 };
 
 // Each model's bill: its measured worst a sample, the M7's static count

@@ -1,4 +1,4 @@
-use crate::addr::{BlockRead, BlockRef, Blocks};
+use crate::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use crate::block::{
     Block, Change, DiskCode, Motion, ParamId, ParamSpec, Smoothing, ValFmt, apply_code,
 };
@@ -1371,6 +1371,12 @@ pub struct ParamSnapshot {
 }
 
 impl ParamSnapshot {
+    /// Whether this Sound moves `a` by its own motion, so the Part's knobs
+    /// hand it on at once (ADR 0112): SCRUB's jog.
+    pub fn moves_itself(&self, a: ParamAddr) -> bool {
+        a.block == BlockRef::TapeEngine && crate::dsp::tape_engine::jogs(self.tape.model, a.param)
+    }
+
     /// Default params for `engine`.
     pub fn for_engine(engine: EngineType) -> Self {
         let mut p = Self {

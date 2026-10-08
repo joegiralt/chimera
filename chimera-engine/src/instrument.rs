@@ -804,7 +804,9 @@ impl Instrument {
                     };
                     #[cfg(feature = "probe")]
                     let t1 = crate::probe::now();
-                    let cost = self.costs[p];
+                    // A Part's first voice brings its knobs (ADR 0112).
+                    let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
+                    let cost = self.costs[p] + if first { Knobs::COST } else { Cost::ZERO };
                     let reserved = self.reserved();
                     let origins = &self.note_origin;
                     let Some(v) = self
@@ -1083,6 +1085,8 @@ impl Instrument {
         #[cfg(feature = "probe")]
         crate::probe::acc(8, crate::probe::now().wrapping_sub(t0));
         let costs = self.costs;
+        // A sounding Part's knobs, once: on its first voice (ADR 0112).
+        let mut knobs = [false; MAX_PARTS];
         for v in 0..MAX_VOICES {
             if let Some(p) = self.alloc.slots()[v].part() {
                 let p = p as usize % MAX_PARTS;
@@ -1090,7 +1094,9 @@ impl Instrument {
                 let held = self.voices[v].held_model_extra(&part.params)
                     + self.voices[v].held_level_extra(&part.params, &part.mod_state)
                     + self.voices[v].held_ops_extra(&part.params, &part.mod_state);
-                self.alloc.recost(v, costs[p] + held);
+                let first = !core::mem::replace(&mut knobs[p], true);
+                let k = if first { Knobs::COST } else { Cost::ZERO };
+                self.alloc.recost(v, costs[p] + held + k);
             }
         }
         // Only the bus: ORBIT's reserve refuses new voices, it never fades

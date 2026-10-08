@@ -9,7 +9,10 @@
 //! engine boundary, so a note's decay can't mask it (the output of a
 //! plucked MODAL falls whatever the knob does), and whatever the engine
 //! does with it after (MODAL's and TAPE's 0.3-a-block ease, a filter's
-//! coefficient ramp) only smooths further.
+//! coefficient ramp) only smooths further. It is the voice's copy, which
+//! the engines read today; a reader of the stored values would pass
+//! unseen. The stage gates and the bill do read those: a gate fades over
+//! its own 20 ms, and an op still running is billed (`held_ops_extra`).
 
 mod common;
 
@@ -273,4 +276,52 @@ fn a_level_gliding_to_zero_is_billed_until_it_lands() {
             "{op:?} still billed"
         );
     }
+}
+
+/// SCRUB's POSITION is its jog, moved by the UI with DRAG's momentum: the
+/// knobs hand each step on at once (ADR 0112). On every other machine it
+/// glides.
+#[test]
+fn scrub_position_follows_the_jog_directly() {
+    use chimera_core::dsp::tape_engine::{TapeEngineParams, TapeModel};
+    let a = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::POSITION);
+    for (model, direct) in [(TapeModel::Scrub, true), (TapeModel::Loop, false)] {
+        let mut s = Sound::init(EngineType::Algo);
+        s.params.envelopes[0].sustain = 1.0;
+        s.params.tape.model = model;
+        let mut r = Rig::new([s, Sound::init(EngineType::Algo)]);
+        r.note(0, true);
+        for _ in 0..50 {
+            r.render();
+        }
+        for x in [0.6, 0.62, 0.9, 0.1] {
+            r.sound(0).params.tape.position = x;
+            r.render();
+            assert_eq!(played(&r, a) == x, direct, "{model:?} at {x}");
+        }
+    }
+}
+
+/// A sounding Part's knobs are billed once, on one of its voices, however
+/// many it plays (ADR 0112): the allocator's bill is the voices' own plus
+/// `Knobs::COST` a Part.
+#[test]
+fn a_sounding_part_is_billed_its_knobs_once() {
+    use chimera_core::dsp::knobs::Knobs;
+    let mut s = Sound::init(EngineType::Algo);
+    s.params.envelopes[0].sustain = 1.0;
+    let mut r = Rig::new([s, Sound::init(EngineType::Algo)]);
+    r.key(0, 57, true);
+    r.render();
+    let one = r.inst.allocator().sounding_cost().0;
+    r.key(0, 60, true);
+    r.key(0, 64, true);
+    r.render();
+    let three = r.inst.allocator().sounding_cost().0;
+    let voice = one - Knobs::COST.0;
+    assert_eq!(three, 3 * voice + Knobs::COST.0);
+    r.key(1, 57, true);
+    r.render();
+    let two_parts = r.inst.allocator().sounding_cost().0;
+    assert_eq!(two_parts, three + voice + Knobs::COST.0);
 }
