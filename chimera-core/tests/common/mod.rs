@@ -13,6 +13,7 @@ pub mod inst_rig;
 pub mod orbit;
 pub mod project;
 pub mod rig;
+pub mod scene;
 pub mod sweep;
 pub mod tape;
 

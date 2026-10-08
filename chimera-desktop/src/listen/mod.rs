@@ -28,6 +28,8 @@ use chimera_core::storage::twelve::pack12;
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 
+/// The 1/√8 output trim of ADR 0050, which a Chimera source keeps (ADR 0109).
+const SOURCE_TRIM: f32 = 0.353_553_38;
 /// After the note-off, how long a Chimera source rings on.
 const TAIL_S: f32 = 1.0;
 /// The dither's seed: a source rebuilds bit for bit.
@@ -101,6 +103,9 @@ pub fn render_sound(
         );
     }
     let mut samples = Vec::new();
+    // A source is the voice's own sound at ADR 0050's trim, a block late:
+    // the master gain and knee (ADR 0109) are not part of it.
+    let mut prev = [0.0f32; 2 * BLOCK_SIZE];
     for b in 0..blocks(secs + tail) {
         if b == blocks(secs) {
             for &n in notes {
@@ -109,8 +114,11 @@ pub fn render_sound(
         }
         each(b as f32 / blocks(secs) as f32, &mut shared.parts[0].params);
         inst.render_with(&mut fx, &mut dac, &shared, &mut scope, &GateView::empty());
-        let lr = &dac.out()[0];
-        samples.extend(lr.chunks(2).map(|f| 0.5 * (f[0] + f[1])));
+        samples.extend(
+            prev.chunks(2)
+                .map(|f| 0.5 * (f[0] * SOURCE_TRIM + f[1] * SOURCE_TRIM)),
+        );
+        prev = dac.input()[0];
     }
     Mono {
         rate: SAMPLE_RATE,
