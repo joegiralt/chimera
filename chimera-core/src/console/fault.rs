@@ -34,7 +34,7 @@ impl Arg for FaultArg {
 
 /// One DMA stream, read at one instant, and the NDTR range seen while the
 /// shell sampled for a few ring periods. A healthy circular stream reaches
-/// its ring length (256) as `ndtr_max`; one that restarted mid-ring and
+/// near its ring length (256) as `ndtr_max`; one that restarted mid-ring and
 /// reloads a partial count tops out below it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StreamSnap {

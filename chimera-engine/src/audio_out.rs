@@ -92,43 +92,41 @@ pub const fn desynced(a: u16, b: u16, ring: u16, tolerance: u16) -> bool {
     d > tolerance as u32
 }
 
-/// What one trailing stream's flags mean this half: which counter moves and
-/// whether to re-arm. A transfer error clears the stream's EN, freezing its
-/// NDTR, so drift is only judged on a stream that did not fault.
+/// What one trailing stream's flags mean this half: which counter moves.
+/// A transfer error clears the stream's EN and freezes its NDTR, so drift is
+/// not judged on a stream that faulted or still waits to be re-armed. FIFO
+/// errors in the first `WARMUP_BLOCKS` are the start-up's own (the streams
+/// are enabled before the SAI clocks), not counted.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TrailVerdict {
-    pub rearm: bool,
     pub transfer_error: bool,
     pub fifo_error: bool,
     pub drift: bool,
 }
 
-pub const fn trail_verdict(te: bool, fe: bool, apart: bool) -> TrailVerdict {
+pub const WARMUP_BLOCKS: u32 = 64;
+
+pub const fn trail_verdict(
+    te: bool,
+    fe: bool,
+    apart: bool,
+    pending: bool,
+    warm: bool,
+) -> TrailVerdict {
     TrailVerdict {
-        rearm: te,
         transfer_error: te,
-        fifo_error: fe,
-        drift: apart && !te,
+        fifo_error: fe && warm,
+        drift: apart && !te && !pending,
     }
 }
 
-/// Where a halted trailing stream restarts to sit in phase with the lead
-/// stream, whose NDTR is `lead`: NDTR the same, M0AR advanced by the words
-/// the lead has already sent. Rounded down to a whole L/R frame so the
-/// channels keep their slots.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Rearm {
-    pub ndtr: u16,
-    pub offset_words: u16,
-}
-
-pub const fn rearm_at(lead: u16, ring: u16) -> Rearm {
-    let lead = if lead == 0 || lead > ring { ring } else { lead };
-    let sent = (ring - lead) & !1;
-    Rearm {
-        ndtr: ring - sent,
-        offset_words: sent,
-    }
+/// Whether a halted trailing stream restarts now. Only at stream 0's wrap
+/// (its TC): a circular stream reloads NDTR and M0AR from what was
+/// programmed at enable, so it must be programmed with the whole ring from
+/// its base, which is where stream 0 is at that instant. A mid-ring restart
+/// would loop a partial ring forever.
+pub const fn rearm_due(pending: bool, full_done: bool) -> bool {
+    pending && full_done
 }
 
 /// The audio interrupt's liveness as the watchdog kicker sees it: alive

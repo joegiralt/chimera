@@ -1,8 +1,10 @@
 use core::mem::MaybeUninit;
 use core::ptr::{addr_of, addr_of_mut};
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicU8, Ordering};
 
-use chimera_engine::audio_out::{DacSample, Half, desynced, plan_halves, rearm_at, trail_verdict};
+use chimera_engine::audio_out::{
+    DacSample, Half, WARMUP_BLOCKS, desynced, plan_halves, rearm_due, trail_verdict,
+};
 use chimera_engine::hw::{BLOCK_SIZE, DAC_PAIRS};
 use chimera_engine::part::DacPair;
 use cortex_m::peripheral::NVIC;
@@ -162,23 +164,23 @@ fn clear_trailing_errors(dma1: &pac::dma1::RegisterBlock, pair: DacPair) {
     });
 }
 
-/// Restart a stream the hardware halted on a transfer error, at stream 0's
-/// position. Never waits: a stream still enabled is left for the next half.
-fn rearm(dma1: &pac::dma1::RegisterBlock, pair: DacPair, lead: u16) {
+/// Trailing streams halted by a transfer error, one bit per pair, waiting
+/// for stream 0's next wrap.
+static PENDING: AtomicU8 = AtomicU8::new(0);
+
+/// Restart a stream the hardware halted on a transfer error, at its ring's
+/// base: the call is made as stream 0 wraps, so the two are in phase to
+/// within the interrupt's latency. Never waits.
+fn rearm(dma1: &pac::dma1::RegisterBlock, pair: DacPair) {
     let st = &dma1.st[pair.index()];
     if st.cr.read().en().is_enabled() {
         return;
     }
-    let at = rearm_at(lead, RING_WORDS as u16);
-    // SAFETY: EN is clear, so M0AR and NDTR are writable; the address stays
-    // inside this pair's ring (offset < RING_WORDS words, word-aligned).
-    unsafe {
-        st.m0ar
-            .write(|w| w.m0a().bits(ring_addr(pair) + at.offset_words as u32 * 4));
-    }
-    st.ndtr.write(|w| w.ndt().bits(at.ndtr));
+    // SAFETY: EN is clear, so M0AR and NDTR are writable; the address is this
+    // pair's ring base.
+    unsafe { st.m0ar.write(|w| w.m0a().bits(ring_addr(pair))) };
+    st.ndtr.write(|w| w.ndt().bits(RING_WORDS as u16));
     clear_trailing_errors(dma1, pair);
-    // The stream's other flags are stale after a halt: clear before EN.
     st.cr.modify(|_, w| w.en().enabled());
 }
 
@@ -207,6 +209,7 @@ fn DMA1_STR0() {
     });
     let ndtr = |p: DacPair| dma1.st[p.index()].ndtr.read().ndt().bits();
     let lead = ndtr(DacPair::P1);
+    let warm = BLOCKS.load(Ordering::Relaxed) >= WARMUP_BLOCKS;
     for (pair, te, fe) in [
         (
             DacPair::P2,
@@ -219,16 +222,21 @@ fn DMA1_STR0() {
             lisr.feif2().is_error(),
         ),
     ] {
+        let bit = 1 << pair.index();
+        let pending = PENDING.load(Ordering::Relaxed) & bit != 0;
         let apart = desynced(lead, ndtr(pair), RING_WORDS as u16, DESYNC_TOLERANCE);
-        let v = trail_verdict(te, fe, apart);
+        let v = trail_verdict(te, fe, apart, pending, warm);
         bump(&DESYNCS, v.drift as u32);
         bump(&DMA_ERRORS, v.transfer_error as u32);
         bump(&FIFO_ERRORS, v.fifo_error as u32);
-        if v.transfer_error || v.fifo_error {
+        if te || fe {
             clear_trailing_errors(dma1, pair);
         }
-        if v.rearm {
-            rearm(dma1, pair, lead);
+        if rearm_due(pending || te, full_done) {
+            rearm(dma1, pair);
+            PENDING.fetch_and(!bit, Ordering::Relaxed);
+        } else if te {
+            PENDING.fetch_or(bit, Ordering::Relaxed);
         }
     }
     let plan = plan_halves(half_done, full_done);
