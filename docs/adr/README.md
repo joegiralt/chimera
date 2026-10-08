@@ -110,3 +110,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0108](0108-the-audio-path-builds-fast-the-rest-builds-small.md) | The audio path builds at opt-level 2, everything else at "z", split by crate: `chimera-engine` and the binary fast, `chimera-core` (UI) and `chimera-board` small | Accepted |
 | [0109](0109-master-gain-up-and-a-soft-knee-limiter.md) | The master gain goes up 11 dB (1/√8 trim to 1.25) and the limiter gets a soft knee at −6 dBFS (supersedes 0058, in part 0063 and 0050) | Accepted |
 | [0111](0111-algo-morph-glides-with-the-part-s-knobs.md) | ALGO's MORPH glides 30 ms with the Part's knobs (one more one-pole in `Knobs`, now `dsp/knobs.rs`); tick stays 1/127 | Proposed |
+| [0114](0114-a-curated-dsp-library-under-the-products.md) | Keep the DSP techniques in a curated library, `chimera-dsp`, under the products | Proposed |
