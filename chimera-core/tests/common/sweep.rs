@@ -426,6 +426,17 @@ impl Bench {
         self.inst.played_filters()[v.expect("a voice playing")]
     }
 
+    /// The first busy voice's MORPH last block, routes applied.
+    pub fn played_morph(&self) -> f32 {
+        let v = self
+            .inst
+            .allocator()
+            .slots()
+            .iter()
+            .position(|s| !s.is_free());
+        self.inst.played_morphs()[v.expect("a voice playing")]
+    }
+
     /// Each voice's glide ratio, 1 at rest.
     pub fn slides(&self) -> [f32; chimera_core::hw::MAX_VOICES] {
         self.inst.slides()

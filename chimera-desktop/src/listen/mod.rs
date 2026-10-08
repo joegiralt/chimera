@@ -87,6 +87,8 @@ pub fn render_sound(
         SAMPLE_RATE,
         SampleBudget::for_cpu(CPU_HZ_REV_V),
     ));
+    // The sweep is the tape's, not a hand's: its pinned CRCs play it exactly.
+    inst.land_knobs();
     let (mut fx, mut dac) = (Box::new(FxBus::new()), Box::new(DacBlocks::new()));
     let mut scope = ScopeWriter::new(Box::leak(Box::new(scope_buffer())).split().0);
     let ev = |note, kind| NoteEvent {

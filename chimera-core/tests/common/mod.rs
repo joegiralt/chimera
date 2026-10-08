@@ -11,11 +11,13 @@ pub mod filter_ref;
 pub mod golden;
 pub mod inst_rig;
 pub mod orbit;
+pub mod part_rig;
 pub mod project;
 pub mod rig;
 pub mod scene;
 pub mod sweep;
 pub mod tape;
+pub mod turn;
 
 #[allow(unused_imports)] // each test binary uses some of these
 pub use inst_rig::InstRig;
