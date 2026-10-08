@@ -131,6 +131,7 @@ pub mod filter;
 pub mod fx_bus;
 pub mod glide;
 pub mod halfband;
+pub mod knobs;
 pub mod lfo;
 pub mod limiter;
 pub mod modal;
