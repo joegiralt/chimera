@@ -798,6 +798,14 @@ the ban on 2026-10-05.
   - **Ids.** REV › MORE is page id 96 and REV › MORE 2 id 97 (main took 92
     and 93); the new reverb ParamIds and disk codes (22/6–14) collide with
     nothing on main.
+  - **The voice budget bills the TYPE** (`rev::RevBill`): each TYPE's REV
+    row over QUAD's 73 (GATE 81, REVERSE 97, ROOM 168, HALL 188, BLOOM 194
+    a sample), and during a switch both TYPEs' and 62 for the clear. The
+    unit run before it read STRESS ROOM 451,631, BLOOM 453,056 and REV
+    SWITCH MAX 461,742 against 448,000. **Expected on the unit after it:**
+    every `STRESS` and `REV SWITCH MAX` figure on the REVERB screen at or
+    under 448,000, the allocator shedding a voice (about 909 a sample) for
+    ROOM, HALL and BLOOM.
 
 ## Alternatives considered
 - **Keep ADR 0085's ±30 % window:** it passes reverbs the owner can tell
