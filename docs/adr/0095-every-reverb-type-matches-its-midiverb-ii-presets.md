@@ -81,6 +81,17 @@ the ban on 2026-10-05.
     question before V1, with the other licensing matters held until then.
     Until it is resolved, every table that carries these numbers is named in
     one place (this ADR's tables), so it can be replaced as a unit.
+  - **Open question for the owner and a lawyer (flagged 2026-10-08, not a
+    conclusion).** The ROOM, BLOOM and HALL tables were derived using the
+    GPL-3.0 midiverb_emulator decompilation: ROOM's and BLOOM's structure
+    numbers, and HALL's diffuser lengths (`DIFFUSER_MS`, program 17's), in
+    `rev/room.rs`, `rev/bloom.rs` and `rev/loop_engine.rs`. If those numbers
+    are protectable expression, or a derivative of the emulator, then
+    distributing firmware binaries under terms other than the GPL-3.0 (a
+    closed or MIT-only binary) may not be permitted. If they are bare facts
+    about a device, it is not. Nothing here decides which. The tables are
+    the one place to replace if the answer is no; GATE's and REVERSE's
+    structure is fitted, not read from the decompilation.
   - **Knob values are fitted, never copied.** The float model rings 11–30 %
     longer than the unit's 16-bit tank. So each preset's knob setting comes
     from fitting the Rust render to the reference, never from the unit's

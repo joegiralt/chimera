@@ -194,6 +194,8 @@ impl Wander {
     /// `set_rate`'s (period, smoothing) for `hz` at `fs`: worked out once
     /// for every line that shares a rate.
     pub fn rate(hz: f32, fs: f32) -> (u32, f32) {
+        // 0 Hz (or NaN) would be an endless period.
+        let hz = hz.max(1e-3);
         (
             ((fs / (2.0 * hz)) as u32).max(HALF as u32),
             one_pole(hz, fs / HALF as f32),
@@ -310,21 +312,26 @@ pub(crate) fn wrap(i: usize, m: usize) -> usize {
 }
 
 /// Each access's slot at head `h` (mod `m`) into `base`, and how many
-/// samples from `len` run before any of them wraps. Out of line: one copy
-/// serves both regions.
+/// samples from `len` run before any of them wraps. Out of line, and one
+/// copy for every length of `off`: it runs once a segment.
 #[inline(never)]
+fn segment_into(h: usize, m: usize, off: &[usize], base: &mut [usize], len: usize) -> usize {
+    let mut len = len;
+    for (b, &o) in base.iter_mut().zip(off) {
+        *b = wrap(h + o, m);
+        len = len.min(m - *b);
+    }
+    len
+}
+
 pub(crate) fn segment<const N: usize>(
     h: usize,
     m: usize,
     off: &[usize; N],
     len: usize,
 ) -> ([usize; N], usize) {
-    let mut len = len;
-    let base = core::array::from_fn(|j| {
-        let b = wrap(h + off[j], m);
-        len = len.min(m - b);
-        b
-    });
+    let mut base = [0; N];
+    let len = segment_into(h, m, off, &mut base, len);
     (base, len)
 }
 
