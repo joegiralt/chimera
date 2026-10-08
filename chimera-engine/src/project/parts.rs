@@ -7,6 +7,7 @@ use crate::hw::MAX_PARTS;
 use crate::params::EngineType;
 use crate::part::PartParams;
 use crate::preset::Sound;
+use crate::tracked::Tracked;
 
 use super::ids::{PartId, SlotId};
 
@@ -31,15 +32,19 @@ pub enum Origin {
 /// use chimera_engine::part::PartParams;
 /// use chimera_engine::preset::Sound;
 /// use chimera_engine::project::{Loads, Origin, Part};
+/// use chimera_engine::tracked::Tracked;
 /// let _ = Part {
-///     sound: Sound::init(EngineType::Algo),
+///     sound: Tracked::fresh(Sound::init(EngineType::Algo)),
 ///     origin: Origin::Init(EngineType::Algo),
 ///     mix: PartParams::default(),
 ///     loads: Loads::NONE,
 /// };
 /// ```
 pub struct Part {
-    pub sound: Sound,
+    /// Written only through its `Tracked`: every write, by any path (an
+    /// edit, a load, the codec), gives it a stamp no Sound had, which the
+    /// publish carries, so the audio re-reads this Part alone (ADR 0112).
+    pub sound: Tracked<Sound>,
     pub(in crate::project) origin: Origin,
     pub mix: PartParams,
     pub(in crate::project) loads: Loads,
@@ -72,7 +77,7 @@ impl Loads {
 
 pub(super) fn new_part(i: usize) -> Part {
     Part {
-        sound: Sound::init(EngineType::Algo),
+        sound: Tracked::fresh(Sound::init(EngineType::Algo)),
         origin: Origin::Init(EngineType::Algo),
         mix: PartParams::for_part(i),
         loads: Loads::default(),
@@ -168,7 +173,9 @@ impl Performance {
 /// );
 /// ```
 pub struct PartEdit<'a> {
-    pub sound: &'a mut Sound,
+    /// Its stamp moves only if the Sound is written: a mix or FX edit
+    /// leaves the Part's knobs unread.
+    pub sound: &'a mut Tracked<Sound>,
     pub mix: &'a mut PartParams,
     pub fx: &'a mut FxParams,
 }
@@ -243,7 +250,7 @@ pub fn part_block<'a>(
 
 /// `part_block`, mutable.
 pub fn part_block_mut<'a>(
-    sound: &'a mut Sound,
+    sound: &'a mut Tracked<Sound>,
     mix: &'a mut PartParams,
     fx: &'a mut FxParams,
     b: BlockRef,

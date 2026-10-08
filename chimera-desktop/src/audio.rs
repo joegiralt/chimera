@@ -5,6 +5,7 @@
 
 use chimera_core::audio_out::to_dac;
 use chimera_core::dsp::fx_bus::FxBus;
+use chimera_core::dsp::knobs::KnobPublisher;
 use chimera_core::hw::{BLOCK_SIZE, CPU_HZ_REV_V, DAC_PAIRS, SAMPLE_RATE, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, DacOut, Instrument};
 use chimera_core::note_queue::{
@@ -44,6 +45,8 @@ pub struct DesktopAudio {
     /// The computer keyboard's note source.
     keys: NoteProducer<'static>,
     shared_audio: Writer<AudioShared>,
+    /// The UI side of the knobs: every publish's delta (ADR 0115).
+    knobs: Box<KnobPublisher>,
     clamp_log: ClampLog,
     #[cfg(feature = "midi")]
     _midi: Option<midir::MidiInputConnection<()>>,
@@ -127,6 +130,7 @@ impl DesktopAudio {
             shared,
             keys,
             shared_audio,
+            knobs: Box::new(KnobPublisher::new()),
             clamp_log: ClampLog::default(),
         }
     }
@@ -136,8 +140,9 @@ impl DesktopAudio {
     /// triple buffer, and report any mixdown frames clamped since the last
     /// call.
     pub fn update(&mut self, project: &Project, epoch: u32, orbit: impl FnOnce(&mut OrbitShared)) {
+        let knobs = &mut self.knobs;
         self.shared_audio.publish(|b| {
-            b.update_from_project(project, epoch);
+            b.update_from_project(project, epoch, knobs);
             orbit(&mut b.orbit);
         });
         let clamped = self.shared.clamped.swap(0, Ordering::Relaxed);

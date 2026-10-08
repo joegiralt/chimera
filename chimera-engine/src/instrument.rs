@@ -14,7 +14,7 @@ use crate::dsp::Stereo;
 use crate::dsp::ease::{Ease, ease_coeff, step_of};
 use crate::dsp::engines::{EngineCtx, SlotKind};
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
-use crate::dsp::knobs::{Knobs, Pace};
+use crate::dsp::knobs::{KNOB_COUNT, KnobDelta, KnobPublisher, Knobs, Pace};
 use crate::dsp::modal::{ResonatorMode, SYM_NOTE_ON_CLEAR_MAX, SymPool};
 use crate::dsp::tape_engine::{Heads, TapeEngine};
 use crate::dsp::voice::Voice;
@@ -31,7 +31,7 @@ use crate::preset::{Part, Performance};
 use crate::project::{Loads, Project, SourceId};
 use crate::scope::ScopeWriter;
 use crate::source_table::{AudioToken, GateView};
-use crate::tracked::{Stamp, Tracked};
+use crate::tracked::Tracked;
 use crate::voice_alloc::{Allocator, VoiceIdx};
 use crate::{MidiChannel, MidiNote, Velocity};
 use chimera_theory::{Note, snap};
@@ -73,10 +73,12 @@ pub static HEADS: PartHeads = PartHeads::new();
 /// One Part as the audio thread sees it.
 #[derive(Clone, Debug)]
 pub struct PartAudio {
-    /// The Sound, stamped: the Part's knobs read it again only when the
-    /// stamp moves (ADR 0112).
+    /// The Sound, stamped as published: a write past the publisher (a
+    /// test's, the bench's) moves the stamp, and the knobs read it whole.
     pub params: Tracked<ParamSnapshot>,
     pub mod_state: Tracked<ModState>,
+    /// What changed in its knobs (ADR 0115): all the audio reads of them.
+    pub knobs: KnobDelta,
     pub mix: PartParams,
     /// The Part's Sound loads: a change lands its knobs.
     pub loads: Loads,
@@ -105,10 +107,13 @@ impl PartAudio {
     /// `p` as the audio reads it but `loads`, which `fill` sets (in here,
     /// or in `init_in_place`, it costs ~0.8 KB of flash). Left at `NONE`,
     /// the first publish moves it: one landing, before any note.
-    fn of(p: &Part, stamp: Stamp) -> Self {
+    /// `p` as published, with `knobs`, its delta: stamped as its Sound.
+    fn of(p: &Part, knobs: KnobDelta) -> Self {
+        let stamp = p.sound.stamp();
         Self {
             params: Tracked::new(p.sound.params.clone(), stamp),
             mod_state: Tracked::new(p.sound.mod_state.clone(), stamp),
+            knobs,
             mix: p.mix,
             loads: Loads::NONE,
             source: None,
@@ -166,7 +171,7 @@ impl AudioShared {
             for i in 0..MAX_PARTS {
                 parts
                     .add(i)
-                    .write(PartAudio::of(&perf.parts()[i], Stamp::default()));
+                    .write(PartAudio::of(&perf.parts()[i], KnobDelta::default()));
             }
             addr_of_mut!((*p).fx).write(perf.fx);
             addr_of_mut!((*p).epoch).write(0);
@@ -179,32 +184,40 @@ impl AudioShared {
     /// the load `epoch`, one Part at a time in place: the stack holds one
     /// `PartAudio`, not the whole struct. The destructuring lists every
     /// field, so a new one fails to compile here. Every Part's source is
-    /// `None`, which mutes TAPE: the tests' publish, never a shell's.
+    /// `None`, which mutes TAPE: the tests' publish, never a shell's. No
+    /// knob deltas: the knobs read a Sound whole when its stamp moves.
     #[cfg(any(test, feature = "test-support"))]
     pub fn update_from(&mut self, perf: &Performance, epoch: u32) {
-        self.fill(perf, |_| None, epoch, Stamp::unique());
+        self.fill(perf, |_| None, epoch, |_, _| KnobDelta::default());
     }
 
     /// The shells' publish: `project`'s Performance as `update_from`, each
     /// Part's source the id its pool holds for its Sound's ref (pass 2's,
-    /// `source_store`'s or `source_absent`'s). A lookup, never a load.
-    pub fn update_from_project(&mut self, project: &Project, epoch: u32) {
+    /// `source_store`'s or `source_absent`'s), a lookup, never a load; and
+    /// each Part's knob delta from `knobs`, the UI's side (ADR 0115).
+    pub fn update_from_project(
+        &mut self,
+        project: &Project,
+        epoch: u32,
+        knobs: &mut KnobPublisher,
+    ) {
         let pool = project.pool();
         self.fill(
             project.perf(),
             |p| pool.find_source(p.sound.source?.r),
             epoch,
-            Stamp::new(epoch, project.rev()),
+            |i, p| knobs.publish(i, &p.sound, p.loads()),
         );
     }
 
-    /// Every Part's values stamped `stamp`: equal stamps, equal values.
+    /// Every Part's values, each stamped as its Sound (equal stamps, equal
+    /// values), with its knob delta.
     fn fill(
         &mut self,
         perf: &Performance,
         source: impl Fn(&Part) -> Option<SourceId>,
         epoch: u32,
-        stamp: Stamp,
+        mut knobs: impl FnMut(usize, &Part) -> KnobDelta,
     ) {
         let Self {
             parts,
@@ -213,8 +226,8 @@ impl AudioShared {
             // `UiState::publish_orbit` writes it, in the same publish.
             orbit: _,
         } = self;
-        for (d, p) in parts.iter_mut().zip(perf.parts()) {
-            *d = PartAudio::of(p, stamp);
+        for (i, (d, p)) in parts.iter_mut().zip(perf.parts()).enumerate() {
+            *d = PartAudio::of(p, knobs(i, p));
             d.source = source(p);
             d.loads = p.loads();
         }
@@ -223,19 +236,22 @@ impl AudioShared {
     }
 }
 
-/// A playing Part's knobs one block toward its Sound's (`None`: silent);
-/// a silent Part's, or a new Sound's (its `loads` moved), land when next
-/// eased. A silent Part costs nothing more. Out of line: once a Part, six
-/// copies otherwise.
+/// A Part's knobs one block (ADR 0115): those its delta names read, and
+/// glided while it plays (`pace`), landed while silent, within `budget`;
+/// a new Sound's (its `loads` moved) all read and landed. Out of line:
+/// once a Part, six copies otherwise.
 #[inline(never)]
-fn ease_part((knobs, seen): &mut (Knobs, Loads), part: &PartAudio, pace: Option<Pace>) {
-    if *seen != part.loads || pace.is_none() {
+fn ease_part(
+    (knobs, seen): &mut (Knobs, Loads),
+    part: &PartAudio,
+    pace: Option<Pace>,
+    budget: &mut u32,
+) {
+    if *seen != part.loads {
         *seen = part.loads;
         knobs.land();
     }
-    if let Some(pace) = pace {
-        knobs.ease(&part.params, &part.mod_state, pace);
-    }
+    knobs.ease((&part.params, &part.mod_state), &part.knobs, pace, budget);
 }
 
 /// One block for each DAC pair, interleaved L, R.
@@ -666,6 +682,13 @@ impl Instrument {
     #[cfg(any(test, feature = "test-support"))]
     pub fn played(&self, addr: crate::addr::ParamAddr) -> [f32; MAX_VOICES] {
         core::array::from_fn(|v| self.voices[v].played_value(addr))
+    }
+
+    /// Part `part`'s full reads of its Sound so far, wrapping: for the
+    /// tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn knob_reads(&self, part: usize) -> u32 {
+        self.knobs[part].0.reads()
     }
 
     /// Part `part`'s knob `addr` this block, its 0..1 place and whether
@@ -1170,8 +1193,9 @@ impl Instrument {
         self.knob_pace = Pace::Land;
     }
 
-    /// Each Part's knobs this block (ADR 0112): eased while a voice
-    /// plays the Part, landed while none does and on a new Sound.
+    /// Each Part's knobs this block (ADR 0112, 0115): what changed eased
+    /// while a voice plays the Part, landed while none does and on a new
+    /// Sound.
     fn ease_knobs(&mut self, shared: &AudioShared) {
         let mut playing = [false; MAX_PARTS];
         for v in 0..MAX_VOICES {
@@ -1179,9 +1203,12 @@ impl Instrument {
                 playing[self.sounding[v] as usize % MAX_PARTS] = true;
             }
         }
+        // A silent Part reads within one Sound's worth a block, shared:
+        // a project load's six Sounds are spread, not read in a block.
         let pace = self.knob_pace;
+        let mut budget = KNOB_COUNT as u32;
         for ((knobs, part), playing) in self.knobs.iter_mut().zip(&shared.parts).zip(playing) {
-            ease_part(knobs, part, playing.then_some(pace));
+            ease_part(knobs, part, playing.then_some(pace), &mut budget);
         }
     }
 

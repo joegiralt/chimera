@@ -5,6 +5,7 @@ use core::sync::atomic::AtomicU8;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use chimera_core::dsp::algo::waves::{self, Waves};
+use chimera_core::dsp::knobs::KnobPublisher;
 use chimera_core::instrument::AudioShared;
 use chimera_core::note_queue::NoteSources;
 #[cfg(any(feature = "midi-din", feature = "bench"))]
@@ -75,12 +76,27 @@ pub fn take_ui() -> Option<&'static mut UiState> {
 static mut AUDIO: MaybeUninit<TripleBuffer<AudioShared>> = MaybeUninit::uninit();
 static AUDIO_TAKEN: AtomicBool = AtomicBool::new(false);
 
-// Seeded from the UI's `Performance`, not `AudioShared::default`, whose
-// temporary `Performance` puts an 8 KB frame on the stack.
-pub fn take_audio(perf: &Performance) -> Option<(Writer<AudioShared>, Reader<AudioShared>)> {
+// The UI side of the knobs, beside the writer it publishes through (ADR
+// 0115): all zeros, `.bss`.
+static mut KNOBS: KnobPublisher = KnobPublisher::new();
+
+/// The triple buffer's ends and the knobs' publisher, which every publish
+/// of a Project takes. Seeded from the UI's `Performance`, not
+/// `AudioShared::default`, whose temporary `Performance` puts an 8 KB
+/// frame on the stack.
+pub fn take_audio(
+    perf: &Performance,
+) -> Option<(
+    Writer<AudioShared>,
+    Reader<AudioShared>,
+    &'static mut KnobPublisher,
+)> {
     if AUDIO_TAKEN.swap(true, Ordering::AcqRel) {
         return None;
     }
+    // SAFETY: the flag lets exactly one caller past, so this is the only
+    // reference to `KNOBS` ever made.
+    let knobs = unsafe { &mut *addr_of_mut!(KNOBS) };
     // SAFETY: the flag lets exactly one caller past, so this is the only
     // reference to `AUDIO` ever made.
     let slot = unsafe { &mut *addr_of_mut!(AUDIO) };
@@ -91,7 +107,8 @@ pub fn take_audio(perf: &Performance) -> Option<(Writer<AudioShared>, Reader<Aud
             AudioShared::init_in_place(s, perf);
         })
     };
-    Some(buf.split())
+    let (w, r) = buf.split();
+    Some((w, r, knobs))
 }
 
 // ORBIT's view, from the runner to the UI: AXI, beside `AUDIO`.

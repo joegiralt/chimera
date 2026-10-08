@@ -285,7 +285,7 @@ fn old_project() -> Performance {
 fn new_project() -> Performance {
     let mut p = Performance::new();
     let e = p.edit(PartId::ALL[0]);
-    *e.sound = Sound::init(EngineType::Modal);
+    **e.sound = Sound::init(EngineType::Modal);
     e.mix.level = 0.2;
     e.mix.output = DacPair::P2;
     p

@@ -388,7 +388,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     controls::enable();
 
     let (scope_w, mut scope_r) = shared::take_scope().expect("scope buffer taken once");
-    let (mut shared_w, shared_r) =
+    let (mut shared_w, shared_r, knobs) =
         shared::take_audio(ui.project().perf()).expect("audio buffer taken once");
     // Without MIDI DIN or `card` nothing takes a producer.
     #[cfg_attr(
@@ -494,7 +494,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             let _ = swap.settle(&LOAD_LINK, || {
                 controls::ticks().wrapping_sub(t0) < LOAD_ACK_TICKS
             });
-            shared_w.publish(|b| publish(b, u));
+            shared_w.publish(|b| publish(b, u, knobs));
         });
         // Leaving SETTINGS syncs SYSTEM, with no overlay first: a save is
         // quicker than BUSY can be read. A toast says how it went.
@@ -507,7 +507,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             // ORBIT's beat on the front-panel LED; off when it is stopped.
             orbit.beat(ui);
         }
-        shared_w.publish(|b| publish(b, ui));
+        shared_w.publish(|b| publish(b, ui, knobs));
         let stats = audio_stats(stats_r.as_mut());
         // Read after the card work; the toast's first step ignores it.
         let now = controls::ticks();
@@ -580,8 +580,12 @@ fn tend_usb(
 /// load's, one copy in flash.
 #[cfg(not(feature = "sd-probe"))]
 #[inline(never)]
-fn publish(b: &mut chimera_core::instrument::AudioShared, ui: &chimera_core::ui::UiState) {
-    b.update_from_project(ui.project(), LOAD_LINK.epoch());
+fn publish(
+    b: &mut chimera_core::instrument::AudioShared,
+    ui: &chimera_core::ui::UiState,
+    knobs: &mut chimera_core::dsp::knobs::KnobPublisher,
+) {
+    b.update_from_project(ui.project(), LOAD_LINK.epoch(), knobs);
     orbit::publish(ui, b);
 }
 

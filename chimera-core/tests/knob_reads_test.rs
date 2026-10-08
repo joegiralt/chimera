@@ -1,0 +1,201 @@
+//! The audio reads only the knobs a publish's delta names (ADR 0115): a
+//! whole Sound is ~6k cycles on the unit, one knob ~90. A knob turn reads
+//! that knob of that Part; an FX, mix or ORBIT edit, none; a Part that
+//! starts playing, none (its knobs are current); silent Parts, a Sound's
+//! worth a block at most. Six Parts, published from a Project each block
+//! as the shells do, counted in knobs read.
+
+mod common;
+
+use chimera_core::addr::{BlockRead, BlockRef, ParamAddr};
+use chimera_core::dsp::fx_bus::FxBus;
+use chimera_core::dsp::knobs::{KNOB_COUNT, KNOBS, KnobPublisher};
+use chimera_core::hw::{MAX_PARTS, SampleBudget};
+use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
+use chimera_core::note_queue::{NoteEvent, NoteKind};
+use chimera_core::params::{EngineType, FilterParams};
+use chimera_core::preset::Sound;
+use chimera_core::project::{PartId, Project, TemplateCrc};
+use chimera_core::scope::ScopeWriter;
+use chimera_core::{MidiNote, Velocity};
+use chimera_hal::SAMPLE_RATE;
+
+struct Six {
+    p: Box<Project>,
+    _t: TemplateCrc,
+    shared: Box<AudioShared>,
+    inst: Box<Instrument>,
+    fx: Box<FxBus>,
+    dac: Box<DacBlocks>,
+    scope: ScopeWriter,
+    knobs: Box<KnobPublisher>,
+}
+
+impl Six {
+    /// Six Parts on ALGO INIT, sustained; room for every voice.
+    fn new() -> Self {
+        let (mut p, t) = Project::boxed();
+        for part in PartId::ALL {
+            let mut s = Sound::init(EngineType::Algo);
+            s.params.envelopes[0].sustain = 1.0;
+            **p.edit_part(part).sound = s;
+        }
+        let mut r = Self {
+            p,
+            _t: t,
+            shared: Box::new(AudioShared::default()),
+            inst: Box::new(Instrument::new(
+                SAMPLE_RATE,
+                SampleBudget::for_cpu(u32::MAX),
+            )),
+            fx: Box::new(FxBus::new()),
+            dac: Box::new(DacBlocks::new()),
+            scope: common::scope_writer(),
+            knobs: Box::new(KnobPublisher::new()),
+        };
+        r.shared.update_from_project(&r.p, 0, &mut r.knobs);
+        r
+    }
+
+    fn key(&mut self, part: usize, on: bool) {
+        let ev = NoteEvent {
+            channel: self.shared.parts[part].mix.channel,
+            note: MidiNote::new(57).unwrap(),
+            kind: if on {
+                NoteKind::On(Velocity::DEFAULT)
+            } else {
+                NoteKind::Off
+            },
+        };
+        self.inst.handle(ev, &self.shared);
+    }
+
+    /// One block, published first: each Part's knobs read in it.
+    fn block(&mut self) -> [u32; MAX_PARTS] {
+        self.shared.update_from_project(&self.p, 0, &mut self.knobs);
+        let before: [u32; MAX_PARTS] = core::array::from_fn(|p| self.inst.knob_reads(p));
+        self.inst
+            .render(&mut self.fx, &mut self.dac, &self.shared, &mut self.scope);
+        core::array::from_fn(|p| self.inst.knob_reads(p).wrapping_sub(before[p]))
+    }
+
+    /// `n` blocks: the most knobs read in any one of them.
+    fn blocks(&mut self, n: usize) -> u32 {
+        (0..n).map(|_| self.block().iter().sum()).max().unwrap_or(0)
+    }
+
+    fn playing(&self) -> usize {
+        self.inst
+            .allocator()
+            .slots()
+            .iter()
+            .filter(|s| !s.is_free())
+            .count()
+    }
+}
+
+/// With six Parts playing, a knob turn reads that one knob of that Part;
+/// an FX, mix or ORBIT edit, none.
+#[test]
+fn an_edit_re_reads_only_the_edited_part() {
+    let mut r = Six::new();
+    for p in 0..MAX_PARTS {
+        r.key(p, true);
+    }
+    r.blocks(50);
+    assert_eq!(r.playing(), MAX_PARTS);
+    assert_eq!(r.blocks(20), 0, "settled, nothing reads");
+
+    r.p.edit_part(PartId::ALL[2]).sound.params.filter.cutoff *= 2.0;
+    assert_eq!(r.block(), [0, 0, 1, 0, 0, 0]);
+    assert_eq!(r.blocks(400), 0, "the glide reads nothing more");
+    {
+        let s = r.p.edit_part(PartId::ALL[4]).sound;
+        s.params.filter.cutoff *= 0.5;
+        s.params.filter.resonance = 0.3;
+    }
+    assert_eq!(r.block(), [0, 0, 0, 0, 2, 0], "two knobs, two reads");
+
+    r.p.edit_fx().reverb.mix = 0.5;
+    assert_eq!(r.block(), [0; MAX_PARTS], "an FX edit");
+    r.p.edit_part(PartId::ALL[3]).mix.level = 0.5;
+    assert_eq!(r.block(), [0; MAX_PARTS], "a mix edit");
+    let _ = r.p.orbit_mut();
+    assert_eq!(r.block(), [0; MAX_PARTS], "an ORBIT edit");
+}
+
+/// ORBIT starting three silent Parts in one block reads nothing: each
+/// read its changes while silent, a Sound's worth a block at most.
+#[test]
+fn parts_starting_together_read_nothing() {
+    let mut r = Six::new();
+    assert!(r.blocks(20) <= KNOB_COUNT as u32, "a Sound's worth a block");
+    for p in [1, 3, 4] {
+        r.p.edit_part(PartId::ALL[p]).sound.params.filter.cutoff *= 0.5;
+    }
+    assert_eq!(r.block(), [0, 1, 0, 1, 1, 0], "an edit, a knob");
+    for p in [1, 3, 4] {
+        r.key(p, true);
+    }
+    assert_eq!(r.block(), [0; MAX_PARTS], "the start block reads nothing");
+    assert_eq!(r.playing(), 3);
+}
+
+/// A Part that falls silent mid-glide and plays again on an unchanged
+/// Sound lands on the stored values, bit for bit, reading nothing.
+#[test]
+fn a_part_back_from_silence_plays_the_stored_values() {
+    let mut r = Six::new();
+    let cutoff = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
+    // A short release: silent before the glide lands.
+    {
+        let s = r.p.edit_part(PartId::ALL[0]).sound;
+        s.params.envelopes[0].release = 0.0;
+        for o in &mut s.params.algo.ops {
+            o.rr = 15;
+        }
+    }
+    r.blocks(5);
+    r.key(0, true);
+    r.blocks(50);
+    // Two octaves down, in range.
+    r.p.edit_part(PartId::ALL[0]).sound.params.filter.cutoff *= 0.25;
+    r.block();
+    r.block();
+    assert_eq!(r.inst.knob(0, cutoff).map(|k| k.1), Some(true), "mid-glide");
+    r.key(0, false);
+    let mut n = 0;
+    while r.playing() > 0 {
+        r.block();
+        n += 1;
+        assert!(n < 5000, "the note never ends");
+    }
+    assert_eq!(
+        r.inst.knob(0, cutoff).map(|k| k.1),
+        Some(true),
+        "silent mid-glide"
+    );
+    r.blocks(5);
+    r.key(0, true);
+    // Its first block may wait on the voice's clear: two.
+    assert_eq!(r.blocks(2), 0, "nothing read");
+    let v = r
+        .inst
+        .allocator()
+        .slots()
+        .iter()
+        .position(|s| !s.is_free())
+        .unwrap();
+    let stored = &r.p.part(PartId::ALL[0]).sound.params;
+    for k in &KNOBS {
+        let s = stored.block(k.addr.block).unwrap().get(k.addr.param);
+        let played = r.inst.played(k.addr)[v];
+        assert_eq!(
+            played.to_bits(),
+            s.to_bits(),
+            "{:?} {}",
+            k.addr.block,
+            k.spec.label
+        );
+    }
+}

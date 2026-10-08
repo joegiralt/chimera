@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
 
 use chimera_core::dsp::engines::{EngineCtx, SlotKind};
-use chimera_core::dsp::knobs::{Knobs, Pace};
+use chimera_core::dsp::knobs::{KnobDelta, Knobs, Pace};
 use chimera_core::dsp::modal::{ResonatorMode, SymPool};
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
@@ -131,9 +131,11 @@ impl Rig {
         params: &ParamSnapshot,
         mods: &ModState,
     ) {
+        // Fresh each block, no publisher: read whole.
         let (p, m) = (Tracked::fresh(params.clone()), Tracked::fresh(mods.clone()));
+        let pace = Some(Pace::Glide(self.voice.sample_rate()));
         self.knobs
-            .ease(&p, &m, Pace::Glide(self.voice.sample_rate()));
+            .ease((&p, &m), &KnobDelta::default(), pace, &mut 0);
         let knobs = self.knobs;
         with_ctx!(self, |v, ctx, _id| v
             .render_knobs(out, params, mods, &knobs, ctx))
