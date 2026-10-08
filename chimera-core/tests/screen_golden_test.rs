@@ -146,25 +146,25 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_fx_delay", 0x6bfad50017562c25),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb", 0xcd93522b3a8424f7),
+    ("mixer_fx_reverb", 0x592c02c4d9f55462),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_more", 0x61c4a651bf259e74),
+    ("mixer_fx_reverb_more", 0x79d89aefcc1a879d),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_hall", 0xeee7916c872157b4),
+    ("mixer_fx_reverb_hall", 0xa14653a47fb15291),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_hall_more", 0xe6ece491e27147f9),
+    ("mixer_fx_reverb_hall_more", 0x97e059b2fefd1b00),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_hall_more2", 0x3d9df42450435111),
+    ("mixer_fx_reverb_hall_more2", 0xd28a6bad16b350c0),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_gate", 0x8cd118ceade4cc66),
+    ("mixer_fx_reverb_gate", 0x588ed520be572fdb),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_gate_more", 0x3043f30da4c2a55b),
+    ("mixer_fx_reverb_gate_more", 0x2b186cce8755f572),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_gate_sync", 0x39bd1bfb0ffae9de),
+    ("mixer_fx_reverb_gate_sync", 0x189823bdfed79d53),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_bloom", 0xdb1afb4918a4d907),
+    ("mixer_fx_reverb_bloom", 0x9aa85a2e46eeed12),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_bloom_more", 0x60adac1a381f3b39),
+    ("mixer_fx_reverb_bloom_more", 0x4e456c4371ab3440),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_delay_char", 0x8efda1c817189d8f),
     #[cfg(feature = "master-tape")]
