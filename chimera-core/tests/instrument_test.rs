@@ -98,7 +98,8 @@ impl Rig {
             let init = AudioShared::default();
             let p = &init.parts[0];
             let voice = chimera_core::dsp::voice::Voice::cost(&p.params, &p.mod_state).0;
-            *rig.inst = Instrument::new(SR, budget_for(8 * voice));
+            // And two Parts' knobs (ADR 0112): never a ninth voice.
+            *rig.inst = Instrument::new(SR, budget_for(8 * voice + 2 * Knobs::COST.0));
         }
         rig
     }
