@@ -233,7 +233,7 @@ type RoutingRow = (&'static str, fn(&mut PartAudio), Each);
 type Each = fn(&mut PartAudio, u32);
 const STILL: Each = |_, _| {};
 const ROUTING: [RoutingRow; ROUTING_ROWS] = [
-    ("1 OP", |p| p.params = algo(AlgoId::A1, 0b1, 0), STILL),
+    ("1 OP", |p| *p.params = algo(AlgoId::A1, 0b1, 0), STILL),
     ("MODS", mods, STILL),
     // Each filter type steady, and CLEAN's moving path: SVF − 1 OP is
     // CLEAN LP4's term (billed 0), NOTCH2 − 1 OP NOTCH2's, 2040 − 1 OP and
@@ -315,7 +315,7 @@ const ROUTING: [RoutingRow; ROUTING_ROWS] = [
         "1 CUTOFF",
         |p| {
             one_op(p);
-            p.mod_state = matrix(&[(ModSource::Lfo1, CUTOFF, 127)]);
+            *p.mod_state = matrix(&[(ModSource::Lfo1, CUTOFF, 127)]);
         },
         STILL,
     ),
@@ -384,7 +384,7 @@ fn silent(inst: &Instrument) -> bool {
 fn short_sym(p: &mut PartAudio) {
     modal(p, ResonatorMode::Sympathetic);
     p.params.envelopes[0].release = 0.0;
-    p.mod_state = matrix(&[(ModSource::Env1, VCA, 127)]);
+    *p.mod_state = matrix(&[(ModSource::Env1, VCA, 127)]);
 }
 
 /// Sympathetic with LFO 1 (10 Hz sine) on STRUCTURE at 127: it crosses
@@ -393,7 +393,7 @@ fn sym_lfo(p: &mut PartAudio) {
     modal(p, ResonatorMode::Sympathetic);
     p.params.lfos[0].rate = 10.0;
     let structure = ParamAddr::new(BlockRef::Modal, ModalParams::STRUCTURE);
-    p.mod_state = matrix(&[(ModSource::Lfo1, structure, 127)]);
+    *p.mod_state = matrix(&[(ModSource::Lfo1, structure, 127)]);
 }
 
 /// STRING ended as `short_sym` is, at COLOR 0: the pluck's seven
@@ -407,7 +407,7 @@ fn dark_pluck(p: &mut PartAudio) {
 fn short_string(p: &mut PartAudio) {
     modal(p, ResonatorMode::String);
     p.params.envelopes[0].release = 0.0;
-    p.mod_state = matrix(&[(ModSource::Env1, VCA, 127)]);
+    *p.mod_state = matrix(&[(ModSource::Env1, VCA, 127)]);
 }
 
 /// `mode` at BODY 0: the model alone.
@@ -437,7 +437,7 @@ fn str_full(p: &mut PartAudio) {
     modal_full(p, ResonatorMode::String);
     p.params.lfos[0].rate = 10.0;
     let at = |q| (ModSource::Lfo1, ParamAddr::new(BlockRef::Modal, q), 64);
-    p.mod_state = matrix(&[
+    *p.mod_state = matrix(&[
         at(ModalParams::STRUCTURE),
         at(ModalParams::BRIGHT),
         at(ModalParams::DAMP),
@@ -455,7 +455,7 @@ fn bow_full(p: &mut PartAudio) {
     (m.force, m.speed, m.pos, m.bright) = (1.0, 1.0, 0.5, 0.0);
     p.params.lfos[0].rate = 10.0;
     let at = |q| (ModSource::Lfo1, ParamAddr::new(BlockRef::Modal, q), 64);
-    p.mod_state = matrix(&[
+    *p.mod_state = matrix(&[
         at(ModalParams::BRIGHT),
         at(ModalParams::DAMP),
         at(ModalParams::POS),
@@ -481,7 +481,7 @@ fn switch_storm(p: &mut PartAudio, block: u32) {
 // Setup, never timed: one copy, not one a row.
 #[inline(never)]
 fn modal(p: &mut PartAudio, mode: ResonatorMode) {
-    p.params = snapshot(EngineType::Modal);
+    *p.params = snapshot(EngineType::Modal);
     p.params.modal.mode = mode;
 }
 
@@ -513,7 +513,7 @@ fn hot(p: &mut PartAudio, mode: FilterMode) {
 /// carried its own copy of the snapshot (about 700 B each).
 #[inline(never)]
 fn one_op(p: &mut PartAudio) -> &mut ParamSnapshot {
-    p.params = algo(AlgoId::A1, 0b1, 0);
+    *p.params = algo(AlgoId::A1, 0b1, 0);
     &mut p.params
 }
 
@@ -522,7 +522,7 @@ fn one_op(p: &mut PartAudio) -> &mut ParamSnapshot {
 fn one_dest(p: &mut PartAudio, t: LfoType) {
     one_op(p).lfos[0].lfo_type = t;
     let morph = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
-    p.mod_state = matrix(&[(ModSource::Lfo1, morph, 127)]);
+    *p.mod_state = matrix(&[(ModSource::Lfo1, morph, 127)]);
 }
 
 /// A VCA with LFO 1 (1 Hz sine, so moving) into ENV 2's LEVEL: the peak
@@ -530,7 +530,7 @@ fn one_dest(p: &mut PartAudio, t: LfoType) {
 fn a_level(p: &mut PartAudio) {
     one_op(p);
     let level = ParamAddr::new(BlockRef::Env(EnvSlot::Env2), EnvParams::LEVEL);
-    p.mod_state = matrix(&[(ModSource::Env2, VCA, 127), (ModSource::Lfo1, level, 127)]);
+    *p.mod_state = matrix(&[(ModSource::Env2, VCA, 127), (ModSource::Lfo1, level, 127)]);
 }
 
 /// `routes` as the Part's matrix: fixed columns, else registry columns.
@@ -547,7 +547,7 @@ fn matrix(routes: &[(ModSource, ParamAddr, i8)]) -> ModState {
 // Setup, never timed: one copy, not one a row.
 #[inline(never)]
 fn on_vca(p: &mut PartAudio, sources: &[ModSource], b: Option<(Func, f32)>) {
-    p.params = algo(AlgoId::A1, 0b1, 0);
+    *p.params = algo(AlgoId::A1, 0b1, 0);
     if let Some((f, shape)) = b {
         let e2 = &mut p.params.envelopes[1];
         e2.env_type = EnvType::B;
@@ -558,7 +558,7 @@ fn on_vca(p: &mut PartAudio, sources: &[ModSource], b: Option<(Func, f32)>) {
     for (r, &s) in routes.iter_mut().zip(sources) {
         r.0 = s;
     }
-    p.mod_state = matrix(&routes[..sources.len()]);
+    *p.mod_state = matrix(&routes[..sources.len()]);
 }
 
 /// ENV 2, type B running `f` at `shape`, alone on the VCA.
@@ -586,7 +586,7 @@ fn glide(p: &mut PartAudio, block: u32) {
 fn slide(p: &mut PartAudio, b: Option<(Func, f32)>) {
     on_vca(p, &[ModSource::Env2], b);
     let env2 = |q| ParamAddr::new(BlockRef::Env(EnvSlot::Env2), q);
-    p.mod_state = matrix(&[
+    *p.mod_state = matrix(&[
         (ModSource::Env2, VCA, 127),
         (ModSource::Lfo1, env2(EnvParams::TIME), 32),
         (ModSource::Lfo1, env2(EnvParams::RISE), 32),
@@ -609,7 +609,7 @@ fn mods(p: &mut PartAudio) {
     let fold = ParamAddr::new(BlockRef::Folder, FolderParams::FOLD);
     let morph = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
     let level = ParamAddr::new(BlockRef::Out, OutParams::VOLUME);
-    p.mod_state = matrix(&[
+    *p.mod_state = matrix(&[
         (ModSource::Env1, CUTOFF, 64),
         (ModSource::Env2, VCA, 64),
         (ModSource::Env3, res, 64),
@@ -767,7 +767,7 @@ fn algo_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>, clo
     let mut rows = [Counts::default(); ROWS];
     for (row, &(_, patch, low, step)) in rows.iter_mut().zip(&PATCHES) {
         for n in 1..=MAX_VOICES {
-            let setup = |s: &mut AudioShared| s.parts[0].params = black_box(patch());
+            let setup = |s: &mut AudioShared| *s.parts[0].params = black_box(patch());
             row.add(n, rig.time(&setup, &|_, _| {}, n, low, step));
         }
     }
@@ -988,7 +988,7 @@ impl TapeRig<'_> {
             let fx = FxBus::init_in_place(self.fx_slot);
             let shared = AudioShared::init_in_place(self.shared_slot, perf);
             let p = &mut shared.parts[0];
-            (p.params, p.mod_state) = (snapshot(EngineType::Tape), ModState::new());
+            (*p.params, *p.mod_state) = (snapshot(EngineType::Tape), ModState::new());
             (p.params.tape.tape, p.params.tape.age) = (0.5, 0.5);
             setup(&mut p.params);
             hit(self.sources, inst, shared, (ids, voices), Hit::Again);
@@ -1521,9 +1521,9 @@ impl Rig<'_> {
             part.mix.sends = [0.5; FX_SENDS];
             let new = NEW_PARTS.get(i).and_then(|s| factory_sound(s.index()));
             let sound = new.unwrap_or_else(|| Sound::init(EngineType::Algo));
-            (part.params, part.mod_state) = (sound.params, sound.mod_state);
+            (*part.params, *part.mod_state) = (sound.params, sound.mod_state);
         }
-        shared.parts[MAX_PARTS - 1].params = a16_a17();
+        *shared.parts[MAX_PARTS - 1].params = a16_a17();
         if keys_first {
             hold_notes(inst, shared, MAX_PARTS - 1);
         }

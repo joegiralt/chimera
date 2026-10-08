@@ -6,6 +6,7 @@ mod common;
 
 use chimera_core::dsp::engines::SlotKind;
 use chimera_core::dsp::fx_bus::FxBus;
+use chimera_core::dsp::knobs::Knobs;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{CPU_HZ_REV_V, MAX_PARTS, MAX_VOICES, SampleBudget};
@@ -189,8 +190,8 @@ fn kill_all_quiets_a_free_ringing_string_and_a_glide_part() {
     assert_eq!(string.modal.mode, ResonatorMode::String);
     let mut glide = string.clone();
     glide.pitch.steal = Steal::Glide;
-    r.shared.parts[0].params = string;
-    r.shared.parts[1].params = glide;
+    *r.shared.parts[0].params = string;
+    *r.shared.parts[1].params = glide;
     r.note_on(0, 48);
     r.note_on(1, 55);
     r.render(10);
@@ -221,7 +222,8 @@ fn kill_all_quiets_a_free_ringing_string_and_a_glide_part() {
 fn one_voice(params: &ParamSnapshot) -> InstRig {
     let r = rev_v();
     let cost = Voice::cost(params, &r.shared.parts[0].mod_state).0;
-    let hz = ((FxBus::COST.0 + cost) as u64 * 480_000).div_ceil(7) as u32;
+    // And its Part's knobs (ADR 0112).
+    let hz = ((FxBus::COST.0 + cost + Knobs::COST.0) as u64 * 480_000).div_ceil(7) as u32;
     InstRig::with_budget(SampleBudget::for_cpu(hz))
 }
 
@@ -233,7 +235,7 @@ fn a_note_mid_fade_on_a_glide_part_starts_fresh() {
     let mut glide = ParamSnapshot::for_engine(EngineType::Modal);
     glide.pitch.steal = Steal::Glide;
     let mut r = one_voice(&glide);
-    r.shared.parts[0].params = glide;
+    *r.shared.parts[0].params = glide;
     r.note_on(0, 48);
     r.render(10);
     r.inst.kill_all();

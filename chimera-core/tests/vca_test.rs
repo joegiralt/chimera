@@ -436,8 +436,8 @@ fn a_release_the_vca_holds_is_not_idle() {
         kind,
     };
     let mut shared = AudioShared::default();
-    shared.parts[0].params = long();
-    shared.parts[0].mod_state = mods(&[(ModSource::Env2, VCA, 127)]);
+    *shared.parts[0].params = long();
+    *shared.parts[0].mod_state = mods(&[(ModSource::Env2, VCA, 127)]);
     // Note 60 released at block 20; another note at `other`. Per block:
     // (part 0 sounds, voice 0 still holds note 60).
     let run = |other: Option<usize>| {

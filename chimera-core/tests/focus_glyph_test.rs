@@ -4,7 +4,7 @@
 mod screen;
 
 use chimera_core::addr::{BlockRead, BlockRef, Op, ParamAddr};
-use chimera_core::block::{ParamSpec, ValFmt};
+use chimera_core::block::{ParamSpec, Smoothing, ValFmt};
 use chimera_core::dsp::algo::params::AlgoOpParams;
 use chimera_core::dsp::algo::waves::{WAVE_COUNT, WAVE_LEN, WaveId};
 use chimera_core::dsp::lfo::LfoParams;
@@ -300,7 +300,17 @@ fn every_none_word_fits_the_band() {
 
 #[test]
 fn glyph_is_hand_assigned_on_the_spec() {
-    let s = ParamSpec::continuous(0, "X", ValFmt::Uni, 0.0, 1.0, 0.0, 0.1, false);
+    let s = ParamSpec::continuous(
+        0,
+        "X",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        0.1,
+        false,
+        Smoothing::KNOB,
+    );
     assert_eq!(s.glyph, FocusGlyph::Arc);
     let s = s.glyph(FocusGlyph::Composite(CompositeId::ReverbCube));
     assert_eq!(s.glyph, FocusGlyph::Composite(CompositeId::ReverbCube));

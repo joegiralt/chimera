@@ -224,7 +224,7 @@ fn sine_voice(blocks: usize, mods: &ModState, at: impl Fn(usize, &mut ParamSnaps
     let mut buf = [0.0f32; BLOCK_SIZE];
     for b in 0..blocks {
         at(b, &mut p);
-        rig.render(&mut buf, &p, mods);
+        rig.render_glided(&mut buf, &p, mods);
         out.extend_from_slice(&buf);
     }
     out
@@ -271,7 +271,7 @@ fn modulated_level_ramps_across_each_block() {
     assert!(d2 <= 0.05 * peak, "step {} of the ×4 peak", d2 / peak);
 }
 
-/// A stored LEVEL jump eases over 20 ms (`StageEase`), not one block: a
+/// A stored LEVEL jump eases over 20 ms (the Part's knobs, ADR 0112), not one block: a
 /// block after ×¼ → ×4 the gain is still near ×¼, and 100 blocks on it has
 /// landed.
 #[test]
@@ -388,13 +388,13 @@ fn a_voice_reports_its_clipper_running() {
     rig.note_on(MidiNote::new(45).unwrap(), Velocity::new(127).unwrap(), &p);
     let mut buf = [0.0f32; BLOCK_SIZE];
     for _ in 0..20 {
-        rig.render(&mut buf, &p, &ModState::new());
+        rig.render_glided(&mut buf, &p, &ModState::new());
         assert!(rig.voice.filter_level_running());
     }
     p.filter.level = 0.5;
     let mut on = 0;
     for _ in 0..400 {
-        rig.render(&mut buf, &p, &ModState::new());
+        rig.render_glided(&mut buf, &p, &ModState::new());
         if rig.voice.filter_level_running() {
             on += 1;
         }

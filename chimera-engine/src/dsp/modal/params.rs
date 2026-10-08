@@ -1,6 +1,6 @@
 //! Modal's parameters and their specs.
 
-use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
+use crate::block::{Block, Change, DiskCode, ParamId, ParamSpec, Smoothing, ValFmt, apply_code};
 use crate::dsp::clampf;
 
 // ── Modal Params ────────────────────────────────────────────────────
@@ -326,7 +326,7 @@ pub fn translate_v1(old: &crate::storage::Retired, blk: &mut dyn Block) {
 /// `damp_from_v1_decay(0.3)`, for the const spec table: a test pins it.
 const INIT_DAMP: f32 = 0.943_377_4;
 
-const fn unit(id: u8, label: &'static str, default: f32) -> ParamSpec {
+const fn unit(id: u8, label: &'static str, default: f32, smoothing: Smoothing) -> ParamSpec {
     ParamSpec::continuous(
         id,
         label,
@@ -336,14 +336,21 @@ const fn unit(id: u8, label: &'static str, default: f32) -> ParamSpec {
         default,
         1.0 / 128.0,
         false,
+        smoothing,
     )
 }
 
-/// A home macro: read every block from the modulated params.
+/// A home macro: read every block from the modulated params, glided by
+/// the Part's knobs (ADR 0112), then eased by `EASE` with its routes.
 const fn macro_(id: u8, label: &'static str, default: f32) -> ParamSpec {
-    let mut s = unit(id, label, default);
+    let mut s = unit(id, label, default, Smoothing::KNOB);
     s.modulatable = true;
     s
+}
+
+/// Read when a note starts: a turn is heard on the next one (#419).
+const fn note_on(id: u8, label: &'static str, default: f32) -> ParamSpec {
+    unit(id, label, default, Smoothing::NoteOn)
 }
 
 /// The four macros are modulatable (`Macros`). FORCE and SPEED are read
@@ -351,32 +358,40 @@ const fn macro_(id: u8, label: &'static str, default: f32) -> ParamSpec {
 /// exciter pages is read at note-on. Retired ids 2, 5, 7 and 8 are never
 /// reused.
 pub static MODAL_SPECS: [ParamSpec; 17] = [
-    ParamSpec::choice(0, "MODEL", ValFmt::Names(&MODEL_NAMES), 3.0, 0.0)
-        .ident("MODE")
-        .glyph(crate::glyph::FocusGlyph::None),
+    ParamSpec::choice(
+        0,
+        "MODEL",
+        ValFmt::Names(&MODEL_NAMES),
+        3.0,
+        0.0,
+        Change::Crossfade,
+    )
+    .ident("MODE")
+    .glyph(crate::glyph::FocusGlyph::None),
     macro_(13, "STRUCT", 0.0).short("STR").ident("STRUCTURE"),
     macro_(3, "BRIGHT", 1.0 - 0.7).short("BRT").ident("BRIGHT"),
     macro_(12, "DAMP", INIT_DAMP).short("DMP").ident("DAMP"),
     macro_(4, "POS", 0.0).short("POS").ident("POS"),
-    unit(1, "EXCITE", 0.8).ident("EXCITE"),
-    unit(6, "BODY", 0.3).ident("BODY"),
-    unit(9, "ENS.D", 0.0).ident("E.DPT"),
-    unit(10, "ENS.R", 0.3).ident("E.RAT"),
-    unit(11, "ENS.M", 0.0).ident("E.MIX"),
-    unit(14, "COUPLE", 0.25).ident("COUPLE"),
-    unit(15, "HALO", 0.25).ident("HALO"),
+    note_on(1, "EXCITE", 0.8).ident("EXCITE"),
+    note_on(6, "BODY", 0.3).ident("BODY"),
+    note_on(9, "ENS.D", 0.0).ident("E.DPT"),
+    note_on(10, "ENS.R", 0.3).ident("E.RAT"),
+    note_on(11, "ENS.M", 0.0).ident("E.MIX"),
+    note_on(14, "COUPLE", 0.25).ident("COUPLE"),
+    note_on(15, "HALO", 0.25).ident("HALO"),
     ParamSpec::choice(
         16,
         "MODES",
         ValFmt::Names(&["16", "24", "32", "48"]),
         3.0,
         2.0,
+        Change::NoteOn,
     )
     .ident("MODES"),
-    unit(19, "COLOR", 0.8).ident("COLOR"),
-    unit(20, "BURST", 0.8).ident("BURST"),
-    unit(17, "FORCE", 0.5).ident("FORCE"),
-    unit(18, "SPEED", 0.5).ident("SPEED"),
+    note_on(19, "COLOR", 0.8).ident("COLOR"),
+    note_on(20, "BURST", 0.8).ident("BURST"),
+    unit(17, "FORCE", 0.5, Smoothing::KNOB).ident("FORCE"),
+    unit(18, "SPEED", 0.5, Smoothing::KNOB).ident("SPEED"),
 ];
 
 /// Whether `mode` reads `id`, at note-on or every block: the one table

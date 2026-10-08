@@ -112,8 +112,8 @@ impl Rig {
         id: Option<chimera_core::project::SourceId>,
     ) -> Rig {
         let mut shared = Box::<AudioShared>::default();
-        shared.parts[0].params = sound.params.clone();
-        shared.parts[0].mod_state = sound.mod_state.clone();
+        *shared.parts[0].params = sound.params.clone();
+        *shared.parts[0].mod_state = sound.mod_state.clone();
         shared.parts[0].source = id;
         Rig {
             inst: Box::new(Instrument::new(

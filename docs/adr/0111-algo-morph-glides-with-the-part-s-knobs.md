@@ -1,6 +1,6 @@
 # 0111. ALGO's MORPH glides 30 ms with the Part's knobs
 
-- **Status:** Proposed
+- **Status:** Proposed; superseded in part by [0112](0112-every-parameter-declares-its-motion.md) (point 1: MORPH is one of the knobs every parameter declares; the generic `Knobs` glides it)
 - **Deciders:** owner (UAT 2026-10-08: "the morph knob on the algorithm engine is very steppy", #417), firmware
 
 ## Context

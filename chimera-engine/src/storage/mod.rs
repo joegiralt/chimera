@@ -10,6 +10,7 @@ mod record;
 mod sound;
 mod source_file;
 mod source_ref;
+mod sweep;
 mod system;
 pub mod twelve;
 
@@ -44,6 +45,7 @@ pub use source_file::{
 #[cfg(feature = "source-writer")]
 pub use source_file::{Wrote, source_target, verify_and_seal, write_source, write_zone_set};
 pub use source_ref::{SourceRef, TapeSource, ZoneTune};
+pub use sweep::boot_sweep;
 pub use system::{
     BootNote, Exit, ExitPlan, SyncError, SystemCheck, SystemDecoder, SystemSettings, SystemSync,
     body_crc, encode_system, exit_plan,

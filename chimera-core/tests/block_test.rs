@@ -1,6 +1,8 @@
 //! `Block` trait semantics (spec §1) and per-block conformance.
 
-use chimera_core::block::{Block, ParamId, ParamKind, ParamSpec, ValFmt, apply_offset};
+use chimera_core::block::{
+    Block, Change, Motion, ParamId, ParamKind, ParamSpec, Smoothing, ValFmt, apply_offset,
+};
 
 /// A block with one param of each kind.
 #[derive(Default)]
@@ -15,9 +17,28 @@ const S: ParamId = ParamId(1);
 const E: ParamId = ParamId(2);
 
 static PROBE_SPECS: [ParamSpec; 3] = [
-    ParamSpec::continuous(0, "C", ValFmt::Bi, -1.0, 1.0, 0.0, 0.25, true),
-    ParamSpec::stepped(1, "S", ValFmt::Int(10), 0.0, 10.0, 5.0, true),
-    ParamSpec::choice(2, "E", ValFmt::Int(3), 3.0, 0.0),
+    ParamSpec::continuous(
+        0,
+        "C",
+        ValFmt::Bi,
+        -1.0,
+        1.0,
+        0.0,
+        0.25,
+        true,
+        Smoothing::KNOB,
+    ),
+    ParamSpec::stepped(
+        1,
+        "S",
+        ValFmt::Int(10),
+        0.0,
+        10.0,
+        5.0,
+        true,
+        Motion::Stepped(Change::Snap),
+    ),
+    ParamSpec::choice(2, "E", ValFmt::Int(3), 3.0, 0.0, Change::Snap),
 ];
 
 impl Block for Probe {

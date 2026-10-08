@@ -64,7 +64,7 @@ fn the_tables_match_the_formula_bit_for_bit() {
 /// rendered and released: no note-on works its coefficients out.
 fn a_voice_start_reads_the_tables() {
     let mut r = common::InstRig::with_budget(SampleBudget::for_cpu(CPU_HZ_REV_V));
-    r.shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Algo);
+    *r.shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Algo);
     let before = COMPUTED.load(Relaxed);
     for round in 0..3 {
         for n in [36, 48, 60, 64, 67, 72, 84, 96] {

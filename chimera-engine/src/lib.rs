@@ -47,5 +47,6 @@ pub mod storage;
 pub mod sym_alloc;
 pub mod taps;
 pub mod theme_settings;
+pub mod tracked;
 pub mod triple;
 pub mod voice_alloc;

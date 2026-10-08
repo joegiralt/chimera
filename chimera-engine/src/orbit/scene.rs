@@ -13,7 +13,9 @@ use super::walk::{Pool, Walk};
 use super::{MAX_POOL, MAX_SEGS, RINGS, RingIdx};
 use crate::Velocity;
 use crate::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
-use crate::block::{Block, DiskCode, OFF_ON, ParamId, ParamSpec, ValFmt, apply_code};
+use crate::block::{
+    Block, Change, DiskCode, Motion, OFF_ON, ParamId, ParamSpec, ValFmt, apply_code,
+};
 use crate::dsp::modulator::law::Law;
 use crate::dsp::modulator::pick;
 use crate::glyph::FocusGlyph;
@@ -756,29 +758,167 @@ const PCT: ValFmt = ValFmt::Law(Law::Pct);
 /// ORBIT's params are the project's, never a voice's: none modulatable.
 /// STEPS, BARS and SEGS hold their count less one, shown one-based.
 pub static RING_SPECS: [ParamSpec; 15] = [
-    ParamSpec::stepped(0, "STEPS", ValFmt::OneBased(31), 0.0, 31.0, 15.0, false).ident("STEPS"),
-    ParamSpec::stepped(1, "HITS", ValFmt::Int(32), 0.0, 32.0, 4.0, false).ident("HITS"),
-    ParamSpec::stepped(2, "ROTATE", ValFmt::Int(31), 0.0, 31.0, 0.0, false).ident("ROTATE"),
-    ParamSpec::stepped(3, "CHANCE", PCT, 0.0, 100.0, 100.0, false).ident("CHANCE"),
-    ParamSpec::stepped(4, "MUTATE", PCT, 0.0, 100.0, 0.0, false).ident("MUTATE"),
-    ParamSpec::stepped(5, "MUTE", ValFmt::Names(&OFF_ON), 0.0, 1.0, 0.0, false)
-        .ident("MUTE")
-        .glyph(FocusGlyph::Switch),
-    ParamSpec::stepped(6, "GATE", PCT, 0.0, 100.0, 50.0, false).ident("GATE"),
-    ParamSpec::stepped(7, "VEL", ValFmt::OneBased(126), 1.0, 127.0, 100.0, false).ident("VEL"),
-    ParamSpec::stepped(8, "ACCENT", ValFmt::Int(32), 0.0, 32.0, 0.0, false).ident("ACCENT"),
-    ParamSpec::stepped(9, "OCTAVE", ValFmt::Int(8), 0.0, 8.0, 4.0, false).ident("OCTAVE"),
-    ParamSpec::choice(10, "RANGE", ValFmt::Names(&RANGE_NAMES), 3.0, 0.0).ident("RANGE"),
-    ParamSpec::choice(11, "SNAP", ValFmt::Names(&SNAP_NAMES), 1.0, 0.0)
-        .ident("SNAP")
-        .glyph(FocusGlyph::None),
-    ParamSpec::choice(12, "MODE", ValFmt::Names(&MODE_NAMES), 1.0, 1.0)
-        .ident("MODE")
-        .glyph(FocusGlyph::None),
-    ParamSpec::choice(13, "WALK", ValFmt::Names(&WALK_NAMES), 3.0, 0.0)
-        .ident("WALK")
-        .glyph(FocusGlyph::None),
-    ParamSpec::stepped(14, "TARGET", ValFmt::OneBased(5), 0.0, 5.0, 0.0, false).ident("TARGET"),
+    ParamSpec::stepped(
+        0,
+        "STEPS",
+        ValFmt::OneBased(31),
+        0.0,
+        31.0,
+        15.0,
+        false,
+        Motion::Stepped(Change::NoteOn),
+    )
+    .ident("STEPS"),
+    ParamSpec::stepped(
+        1,
+        "HITS",
+        ValFmt::Int(32),
+        0.0,
+        32.0,
+        4.0,
+        false,
+        Motion::Stepped(Change::NoteOn),
+    )
+    .ident("HITS"),
+    ParamSpec::stepped(
+        2,
+        "ROTATE",
+        ValFmt::Int(31),
+        0.0,
+        31.0,
+        0.0,
+        false,
+        Motion::Stepped(Change::NoteOn),
+    )
+    .ident("ROTATE"),
+    ParamSpec::stepped(
+        3,
+        "CHANCE",
+        PCT,
+        0.0,
+        100.0,
+        100.0,
+        false,
+        Motion::Stepped(Change::NoteOn),
+    )
+    .ident("CHANCE"),
+    ParamSpec::stepped(
+        4,
+        "MUTATE",
+        PCT,
+        0.0,
+        100.0,
+        0.0,
+        false,
+        Motion::Stepped(Change::NoteOn),
+    )
+    .ident("MUTATE"),
+    ParamSpec::stepped(
+        5,
+        "MUTE",
+        ValFmt::Names(&OFF_ON),
+        0.0,
+        1.0,
+        0.0,
+        false,
+        Motion::Stepped(Change::NoteOn),
+    )
+    .ident("MUTE")
+    .glyph(FocusGlyph::Switch),
+    ParamSpec::stepped(
+        6,
+        "GATE",
+        PCT,
+        0.0,
+        100.0,
+        50.0,
+        false,
+        Motion::Stepped(Change::NoteOn),
+    )
+    .ident("GATE"),
+    ParamSpec::stepped(
+        7,
+        "VEL",
+        ValFmt::OneBased(126),
+        1.0,
+        127.0,
+        100.0,
+        false,
+        Motion::Stepped(Change::NoteOn),
+    )
+    .ident("VEL"),
+    ParamSpec::stepped(
+        8,
+        "ACCENT",
+        ValFmt::Int(32),
+        0.0,
+        32.0,
+        0.0,
+        false,
+        Motion::Stepped(Change::NoteOn),
+    )
+    .ident("ACCENT"),
+    ParamSpec::stepped(
+        9,
+        "OCTAVE",
+        ValFmt::Int(8),
+        0.0,
+        8.0,
+        4.0,
+        false,
+        Motion::Stepped(Change::NoteOn),
+    )
+    .ident("OCTAVE"),
+    ParamSpec::choice(
+        10,
+        "RANGE",
+        ValFmt::Names(&RANGE_NAMES),
+        3.0,
+        0.0,
+        Change::NoteOn,
+    )
+    .ident("RANGE"),
+    ParamSpec::choice(
+        11,
+        "SNAP",
+        ValFmt::Names(&SNAP_NAMES),
+        1.0,
+        0.0,
+        Change::NoteOn,
+    )
+    .ident("SNAP")
+    .glyph(FocusGlyph::None),
+    ParamSpec::choice(
+        12,
+        "MODE",
+        ValFmt::Names(&MODE_NAMES),
+        1.0,
+        1.0,
+        Change::NoteOn,
+    )
+    .ident("MODE")
+    .glyph(FocusGlyph::None),
+    ParamSpec::choice(
+        13,
+        "WALK",
+        ValFmt::Names(&WALK_NAMES),
+        3.0,
+        0.0,
+        Change::NoteOn,
+    )
+    .ident("WALK")
+    .glyph(FocusGlyph::None),
+    ParamSpec::stepped(
+        14,
+        "TARGET",
+        ValFmt::OneBased(5),
+        0.0,
+        5.0,
+        0.0,
+        false,
+        Motion::Stepped(Change::NoteOn),
+    )
+    .ident("TARGET"),
 ];
 
 pub static CHORD_SPECS: [ParamSpec; 4] = [
@@ -788,12 +928,20 @@ pub static CHORD_SPECS: [ParamSpec; 4] = [
         ValFmt::Names(&chimera_theory::PITCH_NAMES),
         11.0,
         0.0,
+        Change::NoteOn,
     )
     .ident("KEY")
     .glyph(FocusGlyph::None),
-    ParamSpec::choice(1, "SCALE", ValFmt::Names(&SCALE_NAMES), 10.0, 0.0)
-        .ident("SCALE")
-        .glyph(FocusGlyph::None),
+    ParamSpec::choice(
+        1,
+        "SCALE",
+        ValFmt::Names(&SCALE_NAMES),
+        10.0,
+        0.0,
+        Change::NoteOn,
+    )
+    .ident("SCALE")
+    .glyph(FocusGlyph::None),
     ParamSpec::stepped(
         2,
         "BARS",
@@ -802,9 +950,20 @@ pub static CHORD_SPECS: [ParamSpec; 4] = [
         (Bars::MAX - 1) as f32,
         0.0,
         false,
+        Motion::Stepped(Change::NoteOn),
     )
     .ident("BARS"),
-    ParamSpec::stepped(3, "SEGS", ValFmt::OneBased(7), 0.0, 7.0, 0.0, false).ident("SEGS"),
+    ParamSpec::stepped(
+        3,
+        "SEGS",
+        ValFmt::OneBased(7),
+        0.0,
+        7.0,
+        0.0,
+        false,
+        Motion::Stepped(Change::NoteOn),
+    )
+    .ident("SEGS"),
 ];
 
 pub static TEMPO_SPECS: [ParamSpec; 1] = [ParamSpec::stepped(
@@ -815,6 +974,7 @@ pub static TEMPO_SPECS: [ParamSpec; 1] = [ParamSpec::stepped(
     Bpm::MAX as f32,
     Bpm::DEFAULT.get() as f32,
     false,
+    Motion::Stepped(Change::Snap),
 )
 .ident("BPM")];
 

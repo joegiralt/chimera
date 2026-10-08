@@ -10,13 +10,41 @@ use crate::boot::{BootSeen, UsbRegs};
 use crate::hw::MAX_VOICES;
 use crate::perf::load::AudioStats;
 use crate::ui::UiState;
-use chimera_hal::store::{Files, Sweep, SweepSeen};
+use chimera_hal::store::{Files, Mark, Store, StoreError, SweepRun};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Stats {
     pub audio: AudioStats,
     pub loop_avg_us: u32,
     pub loop_peak_us: u32,
+}
+
+/// `sweep`'s outcome, reached before its answer starts. Nothing sweeps in
+/// the running synth: the bitmap needs the arena's gap as it is before a
+/// project loads, so the mark asks the next boot (ADR 0094).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SweepAsk {
+    /// The mark asks the next boot; the unit restarts once `OK` is out.
+    Requested,
+    /// The project has unsaved changes a restart would lose: nothing
+    /// written.
+    Unsaved,
+    /// No `/CHIMERA`: nothing Chimera wrote, nothing to sweep.
+    Unused,
+    Failed(StoreError),
+}
+
+/// `sweep`'s request: refused over unsaved changes, else the card's mark
+/// set to `Asked`. A mark it can't rewrite owes a sweep already.
+pub fn ask_sweep(unsaved: bool, s: &mut impl Store) -> SweepAsk {
+    if unsaved {
+        return SweepAsk::Unsaved;
+    }
+    match s.mount().and_then(|vol| s.request_sweep(vol)) {
+        Ok(Mark::Unused) => SweepAsk::Unused,
+        Ok(_) => SweepAsk::Requested,
+        Err(e) => SweepAsk::Failed(e),
+    }
 }
 
 /// What a shell can tell. `None`: not in this build.
@@ -34,9 +62,15 @@ pub trait Unit {
     /// What the chip saw at boot: `status`'s `boot` and `last_usb_regs`
     /// lines, after `at`. `None`: neither.
     fn boot(&self) -> Option<BootSeen>;
-    /// The boot's card sweep and its mode: `status`'s `sweep` line, after
-    /// `boot`. `None`: none ran.
-    fn sweep(&self) -> Option<(Sweep, SweepSeen)> {
+    /// The boot's card sweep, run or skipped: `status`'s `sweep` line,
+    /// after `boot`. `None`: no line.
+    fn sweep(&self) -> Option<SweepRun> {
+        None
+    }
+    /// `sweep`'s request (`ask_sweep`), reached before the answer starts;
+    /// on `Requested` the shell restarts once `OK` is out. `None`: not in
+    /// this build.
+    fn request_sweep(&mut self) -> Option<SweepAsk> {
         None
     }
     /// The OTG and PWR registers now: `status`'s `usb_regs` line, last
@@ -97,10 +131,7 @@ pub fn answer(
         Ok(Request::Help(NoArg)) => Ok(help(&mut t)),
         Ok(Request::Status(NoArg)) => Ok(write_status(unit.ui(), &mut t)
             .and_then(|()| unit.boot().map_or(Ok(()), |b| writeln!(t, "{b}")))
-            .and_then(|()| {
-                unit.sweep()
-                    .map_or(Ok(()), |(m, s)| write_sweep(m, &s, &mut t))
-            })
+            .and_then(|()| unit.sweep().map_or(Ok(()), |r| write_sweep(&r, &mut t)))
             .and_then(|()| {
                 unit.usb_regs()
                     .map_or(Ok(()), |r| writeln!(t, "usb_regs {r}"))
@@ -135,6 +166,21 @@ pub fn answer(
         },
         Ok(Request::Shot(c)) => return write_shot(unit.frame(), c, t.0),
         Ok(r @ Request::Dfu(NoArg)) => unit.dfu().map(Ok).ok_or(Why::Absent(r.command())),
+        Ok(r @ Request::Sweep(NoArg)) => match unit.request_sweep() {
+            None => Err(Why::Absent(r.command())),
+            Some(SweepAsk::Requested) => {
+                Ok(t.write_str("sweep asked: the next boot sweeps, restarting\n"))
+            }
+            Some(no) => {
+                let why = match no {
+                    SweepAsk::Unsaved => "unsaved changes, save first",
+                    SweepAsk::Unused => "the card has no /CHIMERA, nothing to sweep",
+                    SweepAsk::Failed(e) => e.message(),
+                    SweepAsk::Requested => unreachable!(),
+                };
+                return writeln!(t, "ERR sweep: {why}").map_err(|fmt::Error| Stalled);
+            }
+        },
         #[cfg(feature = "fault-inject")]
         Ok(r @ Request::Fault(super::FaultArg::Ndtr)) => unit
             .fault_dump()

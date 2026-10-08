@@ -15,11 +15,6 @@ compile_error!("bench and sd-probe both take over after boot: pick one");
     ))
 ))]
 compile_error!("the bench needs an area: bench-algo, -routing, -memory, -stress, -orbit or -tape");
-// The lost-cluster sweep frees only on the owner's go (#360, ADR 0094):
-// until then the boot runs it dry. Only the commit that enables freeing
-// removes this line.
-#[cfg(feature = "sweep-free")]
-compile_error!("owner's go required");
 #[cfg(all(feature = "usb-console", feature = "sd-probe"))]
 compile_error!(
     "the SD probe halts after boot, so nothing would poll USB: build it with --no-default-features"

@@ -3,6 +3,7 @@
 //! sends into the FX bus, FX return into DAC pair 1.
 
 mod common;
+use chimera_core::dsp::knobs::Knobs;
 use chimera_core::project::PartId;
 use common::{SR, peak};
 
@@ -56,7 +57,10 @@ fn factory_voice_cost(i: usize) -> u32 {
 /// margin, so a future change to the cost model can't silently flip which
 /// slot the note lands on.
 fn morph_pad_plus_sqr_bass_budget() -> SampleBudget {
-    budget_for((MAX_VOICES as u32 - 2) * factory_voice_cost(6) + factory_voice_cost(5))
+    // And the two Parts' knobs (ADR 0112).
+    budget_for(
+        (MAX_VOICES as u32 - 2) * factory_voice_cost(6) + factory_voice_cost(5) + 2 * Knobs::COST.0,
+    )
 }
 
 fn on(ch: u8, note: u8) -> NoteEvent {
@@ -94,7 +98,8 @@ impl Rig {
             let init = AudioShared::default();
             let p = &init.parts[0];
             let voice = chimera_core::dsp::voice::Voice::cost(&p.params, &p.mod_state).0;
-            *rig.inst = Instrument::new(SR, budget_for(8 * voice));
+            // And two Parts' knobs (ADR 0112): never a ninth voice.
+            *rig.inst = Instrument::new(SR, budget_for(8 * voice + 2 * Knobs::COST.0));
         }
         rig
     }
@@ -825,27 +830,24 @@ fn sound_change_mid_chord_stays_in_budget() {
             .count(),
         held
     );
-    shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
+    *shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
     rig.block(&shared);
     let a = rig.inst.allocator();
     assert!(a.sounding_cost() + FxBus::COST <= budget.as_cost());
-    let expected = ((budget.as_cost().0 - FxBus::COST.0)
-        / Voice::cost(
-            &ParamSnapshot::for_engine(EngineType::Modal),
-            &ModState::new(),
-        )
-        .0)
-        .min(held as u32);
-    assert_eq!(
-        a.slots().iter().filter(|s| !s.is_free()).count(),
-        expected as usize
+    let modal = Voice::cost(
+        &ParamSnapshot::for_engine(EngineType::Modal),
+        &ModState::new(),
     );
-    assert!(a.slots().iter().all(|s| s.is_free()
-        || s.cost()
-            == Voice::cost(
-                &ParamSnapshot::for_engine(EngineType::Modal),
-                &ModState::new()
-            )));
+    let expected =
+        ((budget.as_cost().0 - FxBus::COST.0 - Knobs::COST.0) / modal.0).min(held as u32);
+    let busy: Vec<_> = a.slots().iter().filter(|s| !s.is_free()).collect();
+    assert_eq!(busy.len(), expected as usize);
+    // Each a MODAL voice; one carries the Part's knobs (ADR 0112).
+    assert!(
+        busy.iter()
+            .all(|s| s.cost() == modal || s.cost() == modal + Knobs::COST)
+    );
+    assert_eq!(busy.iter().filter(|s| s.cost() != modal).count(), 1);
 }
 
 /// ADR 0040, 0049: eight held INIT notes all sound at rev V's budget;
@@ -905,7 +907,7 @@ fn stealing_a_releasing_voice_does_not_free_the_new_note() {
     let n = blocks_until_free();
     assert!(n > 2);
     let mut shared = AudioShared::default();
-    shared.parts[1].params = ParamSnapshot::for_engine(EngineType::Modal);
+    *shared.parts[1].params = ParamSnapshot::for_engine(EngineType::Modal);
     for (after_off, held) in [n - 2, n - 1, n, n + 1]
         .into_iter()
         .flat_map(|a| [(a, 0), (a, 20)])
@@ -959,7 +961,7 @@ fn retriggering_a_releasing_mono_voice_does_not_free_the_new_note() {
     let mut init = AudioShared::default();
     init.parts[0].mix.mode = PartMode::Mono;
     let mut modal = init.clone();
-    modal.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
+    *modal.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
     for (after_off, held) in [n - 2, n - 1, n, n + 1]
         .into_iter()
         .flat_map(|a| [(a, 0), (a, 20)])
@@ -1412,7 +1414,7 @@ fn a_mode_switch_bills_sounding_tails_at_their_own_model() {
         voice(ResonatorMode::String),
     );
     let mut shared = AudioShared::default();
-    shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
+    *shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
     shared.parts[0].params.modal.mode = ResonatorMode::Sympathetic;
     let mut rig = Rig::rev_v();
     let tails = [48, 52, 55];
@@ -1473,7 +1475,7 @@ fn string_blocks(rig: &mut Rig, shared: &AudioShared, blocks: usize, out: &mut V
 
 fn string_part() -> AudioShared {
     let mut shared = AudioShared::default();
-    shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
+    *shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
     shared.parts[0].params.modal.mode = chimera_core::dsp::modal::ResonatorMode::String;
     shared
 }

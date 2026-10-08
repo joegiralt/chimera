@@ -7,7 +7,7 @@
 //! (ADR 0055): the parameters, specs, idents and disk codes stay, so a
 //! Performance keeps its TAPE settings either way.
 
-use crate::block::{Block, ParamId, ParamSpec, ValFmt};
+use crate::block::{Block, ParamId, ParamSpec, Smoothing, ValFmt};
 use crate::dsp::clampf;
 
 #[cfg(feature = "master-tape")]
@@ -62,13 +62,55 @@ impl TapeParams {
 
 /// The tape runs outside `Voice`: nothing is modulatable.
 pub static TAPE_SPECS: [ParamSpec; 4] = [
-    ParamSpec::continuous(0, "DRIVE", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
-        .ident("DRIVE"),
-    ParamSpec::continuous(1, "TONE", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false).ident("TONE"),
-    ParamSpec::continuous(2, "WOW", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false).ident("WOW"),
-    ParamSpec::continuous(3, "MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
-        .ident("MIX")
-        .glyph(crate::glyph::FocusGlyph::LevelBar),
+    ParamSpec::continuous(
+        0,
+        "DRIVE",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("DRIVE"),
+    ParamSpec::continuous(
+        1,
+        "TONE",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.5,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("TONE"),
+    ParamSpec::continuous(
+        2,
+        "WOW",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("WOW"),
+    ParamSpec::continuous(
+        3,
+        "MIX",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("MIX")
+    .glyph(crate::glyph::FocusGlyph::LevelBar),
 ];
 
 impl Block for TapeParams {

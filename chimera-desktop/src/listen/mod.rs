@@ -81,8 +81,8 @@ pub fn render_sound(
     each: &dyn Fn(f32, &mut chimera_core::params::ParamSnapshot),
 ) -> Mono {
     let mut shared = Box::<AudioShared>::default();
-    shared.parts[0].params = sound.params.clone();
-    shared.parts[0].mod_state = sound.mod_state.clone();
+    *shared.parts[0].params = sound.params.clone();
+    *shared.parts[0].mod_state = sound.mod_state.clone();
     let mut inst = Box::new(Instrument::new(
         SAMPLE_RATE,
         SampleBudget::for_cpu(CPU_HZ_REV_V),

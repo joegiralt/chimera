@@ -9,6 +9,7 @@ use chimera_core::params::{DriveParams, FilterParams};
 use chimera_core::part::PartMode;
 use chimera_core::preset::{Performance, Sound};
 use chimera_core::project::PartId;
+use chimera_core::tracked::Tracked;
 
 fn non_default_performance() -> Performance {
     let mut perf = Performance::new();
@@ -61,7 +62,7 @@ fn update_from_overwrites_in_place() {
     let mut stale_mod_state = ModState::from_registry(&stale_registry, 1);
     stale_mod_state.set_amount(0, 0, 99);
     stale_mod_state.set_amount(0, 1, 99);
-    shared.parts[0].mod_state = stale_mod_state;
+    *shared.parts[0].mod_state = stale_mod_state;
 
     let mut perf = Performance::new();
     perf.edit(PartId::ALL[0]).sound.params.filter.cutoff = 440.0;
@@ -97,8 +98,8 @@ fn init_in_place_matches_from_performance() {
         parts: core::array::from_fn(|i| {
             let p = &perf.parts()[i];
             PartAudio {
-                params: p.sound.params.clone(),
-                mod_state: p.sound.mod_state.clone(),
+                params: Tracked::fresh(p.sound.params.clone()),
+                mod_state: Tracked::fresh(p.sound.mod_state.clone()),
                 mix: p.mix,
                 // The first publish sets it (`PartAudio::of`).
                 loads: chimera_core::project::Loads::NONE,

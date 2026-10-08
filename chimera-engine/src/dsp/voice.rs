@@ -5,11 +5,12 @@ use chimera_hal::BLOCK_SIZE;
 
 use crate::addr::{BlockRef, Blocks, ParamAddr};
 use crate::block::{ParamId, apply_offset};
-use crate::dsp::algo::engine::AlgoLive;
+use crate::dsp::algo::engine::{AlgoEngine, AlgoLive};
 use crate::dsp::algo::params::AlgoParams;
+use crate::dsp::algo::plan::OPS;
 use crate::dsp::dc_blocker::DcBlocker;
 use crate::dsp::drive::Drive;
-use crate::dsp::ease::{Ease, Ramp, at, ease_coeff, step_of};
+use crate::dsp::ease::{Ramp, at, step_of};
 use crate::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
 use crate::dsp::envelope::{EnvMods, Envelope};
 use crate::dsp::filter::{FILTER_LEVEL_COST, Filter, FilterMods};
@@ -65,9 +66,6 @@ pub struct Voice {
     folder: Wavefolder,
     /// DC from the stages before it (ADR 0060).
     dc: DcBlocker,
-    /// The stages' stored settings, eased as a bus setting is: a jump
-    /// glides, and routes add to the glide.
-    stages: StageEase,
     /// OUT LEVEL × the engine's gain, ramped across each block.
     volume: Ramp,
     envs: [Envelope; 3],
@@ -102,31 +100,6 @@ pub struct Voice {
     /// them, so a new Sound never reaches the sound it fades out.
     played: ParamSnapshot,
     played_live: AlgoLive,
-}
-
-/// OUT LEVEL, DRIVE's three, filter LEVEL and FOLD's three, eased
-/// toward the stored values (never snap). Zero bytes land on the first
-/// block.
-#[derive(Clone, Copy, Debug, Default)]
-struct StageEase([Ease; 8]);
-
-impl StageEase {
-    /// `m`'s stored settings replaced by this block's eased ones.
-    fn ease(&mut self, m: &mut ParamSnapshot, k: f32) {
-        let [a, b, c, d, e, f, g, h] = &mut self.0;
-        for (ease, v) in [
-            (a, &mut m.out.volume),
-            (b, &mut m.drive.drive),
-            (c, &mut m.drive.tone),
-            (d, &mut m.drive.mix),
-            (e, &mut m.filter.level),
-            (f, &mut m.folder.fold),
-            (g, &mut m.folder.symmetry),
-            (h, &mut m.folder.mix),
-        ] {
-            *v = ease.step(*v, k).1;
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -200,7 +173,8 @@ impl Voice {
     /// 2026-09-27; 10 was kept, erring high. ADR 0060 adds the DC blocker
     /// (6.5 instructions a sample), the stages' ease (1.3) and the ramps of
     /// OUT LEVEL and filter LEVEL (about 2 each): 11.8 × 1.46 × 1.1 = 19,
-    /// by ADR 0056's host method; 29, rounded up.
+    /// by ADR 0056's host method; 29, rounded up. The stages' ease is the
+    /// Part's knobs' now (ADR 0112), a Part's not a voice's: kept, erring high.
     pub const CHAIN_COST: Cost = Cost(30);
 
     /// A `kill` ramps to silence over this many samples (ADR 0027).
@@ -287,6 +261,26 @@ impl Voice {
         } else {
             Cost::ZERO
         }
+    }
+
+    /// ALGO ops still running where the stored LEVELs no longer bill them
+    /// (a LEVEL gliding to 0, ADR 0112): what the voice adds, until the
+    /// glide lands.
+    pub fn held_ops_extra(&self, p: &ParamSnapshot, mods: &ModState) -> Cost {
+        let Some(run) = self.slot.algo_running() else {
+            return Cost::ZERO;
+        };
+        let routed = mods.algo_levels_routed();
+        let billed: [bool; OPS] = core::array::from_fn(|i| routed[i] || p.algo.ops[i].level > 0);
+        if (0..OPS).all(|i| !run[i] || billed[i]) {
+            return Cost::ZERO;
+        }
+        let live = core::array::from_fn(|i| routed[i] || run[i]);
+        Cost(
+            AlgoEngine::cost(&p.algo, &live)
+                .0
+                .saturating_sub(AlgoEngine::cost(&p.algo, &routed).0),
+        )
     }
 
     /// What this voice's sounding note costs over `p`'s stored model
@@ -392,7 +386,6 @@ impl Voice {
                 filter_clip: Clip::ZERO,
                 folder: Wavefolder::new(),
                 dc: DcBlocker::new(DC_HZ, (*p).sample_rate),
-                stages: StageEase::default(),
                 volume: Ramp::default(),
                 envs: [Envelope::new(); 3],
                 lfos: [Lfo::new(); 3],
@@ -442,6 +435,16 @@ impl Voice {
     #[cfg(any(test, feature = "test-support"))]
     pub fn played_filter(&self) -> crate::params::FilterParams {
         self.played.filter
+    }
+
+    /// `addr`'s value the last block handed the engine, knobs and routes
+    /// applied (stored units): for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn played_value(&self, addr: ParamAddr) -> f32 {
+        self.played_live.get(addr).unwrap_or_else(|| {
+            crate::addr::BlockRead::block(&self.played, addr.block)
+                .map_or(f32::NAN, |b| b.get(addr.param))
+        })
     }
 
     /// The MORPH the last block played, routes applied (stored units): for
@@ -572,7 +575,6 @@ impl Voice {
             self.dc.reset();
             self.volume.hold();
             self.slot.hold();
-            self.stages = StageEase::default();
             // An idle voice's ENV slots and last source values start as a
             // fresh voice's. Idle is silent: a release its VCA routes still
             // hold keeps the voice active (`vca_holds`).
@@ -760,12 +762,11 @@ impl Voice {
         mod_state: &ModState,
         ctx: &mut EngineCtx<'_>,
     ) {
-        let knobs = Knobs::stored(&params.filter, &params.algo, mod_state);
-        self.render_knobs(output, params, mod_state, &knobs, ctx);
+        self.render_knobs(output, params, mod_state, &Knobs::UNPRIMED, ctx);
     }
 
-    /// One block of `params` with its Part's eased filter `knobs` in place
-    /// of the stored CUTOFF, RES, FREQ/Q amounts and MORPH.
+    /// One block of `params` with its Part's `knobs` in place of the stored
+    /// values they glide (ADR 0112), and of the FREQ/Q amounts.
     pub fn render_knobs(
         &mut self,
         output: &mut [f32; BLOCK_SIZE],
@@ -791,11 +792,24 @@ impl Voice {
             return;
         }
 
+        // The stages run, and fade their gates, as the allocator bills them:
+        // by the stored settings.
+        let (fold_on, drive_on) = Self::stage_runs(
+            if self.fade == 0 { params } else { &self.played },
+            mod_state,
+        );
+        // A fading voice keeps the settings it last played; else the stored
+        // ones, with the Part's knobs on their way in their place. The
+        // routes' offsets go on after the modulators.
+        if self.fade == 0 {
+            let (m, live) = (&mut self.played, &mut self.played_live);
+            m.clone_from(params);
+            *live = AlgoLive::from_params(&params.algo);
+            knobs.apply(m, live);
+        }
         // The modulators run every block, fading or not, from the settings
         // the voice plays (spec § Signal flow 1).
-        let src = if self.fade == 0 { params } else { &self.played };
-        // The stages run, and fade their gates, as the allocator bills them.
-        let (fold_on, drive_on) = Self::stage_runs(src, mod_state);
+        let src = &self.played;
         let key = self.held;
         if self.fade == 0 {
             self.vca = VcaRoutes::of(mod_state);
@@ -859,11 +873,6 @@ impl Voice {
             // Every routed destination gets its offset through its block's
             // spec (spec §4).
             let (m, live) = (&mut self.played, &mut self.played_live);
-            m.clone_from(params);
-            self.stages.ease(m, ease_coeff(sample_rate));
-            knobs.apply(&mut m.filter);
-            *live = AlgoLive::from_params(&params.algo);
-            live.morph = knobs.morph();
             live.routed = mod_state.algo_levels_routed();
             live.morph_routed =
                 mod_state.moves_addr(ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH));

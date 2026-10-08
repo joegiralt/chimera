@@ -9,6 +9,7 @@ pub mod dir;
 pub mod fat;
 pub mod fs;
 pub mod fsinfo;
+pub mod mark;
 pub mod sd;
 mod store;
 pub mod sweep;

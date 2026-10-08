@@ -13,7 +13,7 @@ pub use chimera_engine::probe;
 pub use chimera_engine::{
     addr, audio_out, block, boot, clock_plan, dsp, factory, hw, in_place, instrument, meter,
     mod_path, modulation, name, note_queue, orbit, params, part, perf, preset, project, reset,
-    scope, source_table, storage, sym_alloc, taps, triple, voice_alloc,
+    scope, source_table, storage, sym_alloc, taps, tracked, triple, voice_alloc,
 };
 
 pub mod console;

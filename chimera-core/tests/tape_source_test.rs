@@ -87,9 +87,9 @@ impl Rig {
     /// key holds a note), on `source`.
     fn tape(&mut self, part: usize, model: TapeModel, source: Option<SourceId>) {
         let a = &mut self.shared.parts[part];
-        a.params = Sound::init(EngineType::Tape).params;
+        *a.params = Sound::init(EngineType::Tape).params;
         a.params.tape.model = model;
-        a.mod_state = ModState::new();
+        *a.mod_state = ModState::new();
         a.source = source;
     }
 
@@ -168,7 +168,7 @@ fn missing_source_refused_before_allocation() {
         assert!(!r.any_active() && !loud(&out), "{what}: no voice");
     }
     // Another engine never is; a playable source isn't.
-    r.shared.parts[0].params = Sound::init(EngineType::Algo).params;
+    *r.shared.parts[0].params = Sound::init(EngineType::Algo).params;
     r.shared.parts[0].source = None;
     assert!(!r.refuses(0), "ALGO");
     r.tape(0, TapeModel::Loop, Some(a));

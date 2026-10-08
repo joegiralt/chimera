@@ -63,6 +63,7 @@ where
             active: false,
             mod_amount: None,
             look: components::Look::Live,
+            motion: None,
         };
         components::cell(d, i, top, Some(&cell));
     }

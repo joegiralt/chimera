@@ -249,6 +249,9 @@ put-tape file:
 # The project files on the card and their sizes; `just ls tapes`: the sources
 ls *args:
     python3 tools/chimera-usb.py ls {{args}}
+# The lost-cluster sweep at the next boot (ADR 0094): the unit restarts into it; `just status` reads it
+sweep:
+    python3 tools/chimera-usb.py sweep
 
 # Flash firmware to PreenFM3 via DFU. With the console up, `to-dfu` sends
 # `dfu` and waits for the ROM loader; without it, bridge BOOT0 and re-plug.

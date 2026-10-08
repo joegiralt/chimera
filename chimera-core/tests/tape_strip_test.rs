@@ -164,9 +164,9 @@ fn heads_published_once_a_block() {
     let mut shared = Box::<AudioShared>::default();
     for (p, model) in [(0, TapeModel::Loop), (1, TapeModel::Tron)] {
         let a = &mut shared.parts[p];
-        a.params = Sound::init(EngineType::Tape).params;
+        *a.params = Sound::init(EngineType::Tape).params;
         a.params.tape.model = model;
-        a.mod_state = ModState::new();
+        *a.mod_state = ModState::new();
         a.source = Some(src.id);
     }
     let on = |shared: &AudioShared, p: usize, note: u8| NoteEvent {
