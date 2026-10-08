@@ -9,8 +9,11 @@ use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::{PartFrom, PartId, PartSource, Project, TemplateCrc};
 use chimera_core::scope::ScopeWriter;
+use chimera_core::source_table::GateView;
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::SAMPLE_RATE;
+
+use super::tape::OneSource;
 
 pub struct Rig {
     pub p: Box<Project>,
@@ -20,9 +23,19 @@ pub struct Rig {
     fx: Box<FxBus>,
     dac: Box<DacBlocks>,
     scope: ScopeWriter,
+    /// Part 1's TAPE source, if it has one (`with_source`).
+    src: Option<OneSource>,
 }
 
 impl Rig {
+    /// `new`, Part 1 reading `held` as its TAPE source.
+    pub fn with_source(sounds: [Sound; 2], held: &[u8]) -> Self {
+        let mut r = Self::new(sounds);
+        r.src = Some(OneSource::new(held));
+        r.publish();
+        r
+    }
+
     /// Parts 1 and 2 playing `sounds`.
     pub fn new(sounds: [Sound; 2]) -> Self {
         let (mut p, t) = Project::boxed();
@@ -40,6 +53,7 @@ impl Rig {
             fx: Box::new(FxBus::new()),
             dac: Box::new(DacBlocks::new()),
             scope: super::scope_writer(),
+            src: None,
         };
         r.publish();
         r
@@ -47,6 +61,9 @@ impl Rig {
 
     fn publish(&mut self) {
         self.shared.update_from_project(&self.p, 0);
+        if let Some(s) = &self.src {
+            self.shared.parts[0].source = Some(s.id);
+        }
     }
 
     /// Note 57 on (or off) on `part`'s channel.
@@ -66,14 +83,35 @@ impl Rig {
             note: MidiNote::new(key).unwrap(),
             kind,
         };
-        self.inst.handle(ev, &self.shared);
+        let empty = GateView::empty();
+        let view = self.src.as_mut().map(|s| s.view());
+        self.inst
+            .handle_with(ev, &self.shared, view.as_ref().unwrap_or(&empty));
     }
 
     /// One block, published first.
     pub fn render(&mut self) {
         self.publish();
-        self.inst
-            .render(&mut self.fx, &mut self.dac, &self.shared, &mut self.scope);
+        let empty = GateView::empty();
+        let view = self.src.as_mut().map(|s| s.view());
+        self.inst.render_with(
+            &mut self.fx,
+            &mut self.dac,
+            &self.shared,
+            &mut self.scope,
+            view.as_ref().unwrap_or(&empty),
+        );
+    }
+
+    /// One block: the mix into the limiter, as bits (for bit-identity).
+    pub fn mix_bits(&mut self) -> Vec<u32> {
+        self.render();
+        self.dac
+            .input()
+            .iter()
+            .flatten()
+            .map(|x| x.to_bits())
+            .collect()
     }
 
     /// `f` of each busy voice's slot, voice order.
