@@ -138,7 +138,7 @@ impl KnobSet {
             if bits == 0 {
                 break;
             }
-            out |= bits & bits.wrapping_neg();
+            out |= bits.isolate_lowest_one();
             bits &= bits - 1;
         }
         if bits != 0 {
@@ -253,15 +253,15 @@ impl KnobPublisher {
             }
         }
         let m = &sound.mod_state;
-        for (c, col) in COLS.into_iter().enumerate() {
-            for src in 0..MAX_MOD_SOURCES {
+        for (was, col) in s.routes.iter_mut().zip(COLS) {
+            for (src, was) in was.iter_mut().enumerate() {
                 let a = if src < m.num_sources() {
                     m.fixed_amount(src, col)
                 } else {
                     0
                 };
-                if a != s.routes[c][src] {
-                    (s.routes[c][src], d) = (a, d.union(KnobSet(ROUTES)));
+                if a != *was {
+                    (*was, d) = (a, d.union(KnobSet(ROUTES)));
                 }
             }
         }
