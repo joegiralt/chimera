@@ -647,7 +647,7 @@ class Put(unittest.TestCase):
     def test_ls_prints_the_listing_and_waits_for_the_card(self):
         self.assertEqual(tool.first_wait("ls"), tool.LS_WAIT_S)
         self.assertEqual(tool.first_wait("sweep"), tool.SWEEP_WAIT_S)
-        self.assertGreaterEqual(tool.SWEEP_WAIT_S, 1.5 + 2 * 10)
+        self.assertGreaterEqual(tool.SWEEP_WAIT_S, 1.5 + 10)
         self.assertEqual(tool.first_wait("status"), tool.SILENCE_S)
         with PutUnit(listing=b"P0000014.A 130000\nOK\n") as u:
             r = run_tool(["ls"], u.target)

@@ -249,20 +249,6 @@ const SWEEP: chimera_hal::store::Sweep = chimera_hal::store::Sweep::DryRun;
 #[cfg(feature = "sweep-free")]
 const SWEEP: chimera_hal::store::Sweep = chimera_hal::store::Sweep::Free;
 
-/// The console's `sweep` (ADR 0094): now, on the arena's gap, unless card
-/// work holds the card or the gap.
-#[cfg(all(not(feature = "sd-probe"), feature = "usb-console"))]
-pub(crate) fn sweep_now(
-    ui: &mut chimera_core::ui::UiState,
-    store: &mut sd::SdStore,
-) -> chimera_core::console::SweepAsk {
-    use chimera_core::console::SweepAsk;
-    match ui.sweep_scratch() {
-        Some(marks) => SweepAsk::Ran(chimera_core::storage::asked_sweep(store, SWEEP, marks)),
-        None => SweepAsk::Busy,
-    }
-}
-
 /// The load ack's timeout in control ticks.
 #[cfg(not(feature = "sd-probe"))]
 const LOAD_ACK_TICKS: u32 = LOAD_ACK_TIMEOUT_MS * controls::CONTROLS_HZ / 1000;
@@ -376,8 +362,10 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     };
     #[cfg(not(feature = "usb-console"))]
     let _ = swept;
-    // Then the last project (about 130 KB read), or NEW and why.
+    // Then the last project (about 130 KB read), or NEW and why; then a
+    // sweep that stopped for doubts says so.
     ui.boot_project(&mut card, store, settings.last_project);
+    ui.note_sweep(&swept);
     // The splash again in the card's theme; it stays up until PART 1.
     let _ = chimera_core::ui::splash::draw(&mut display);
     display.flush();
@@ -474,13 +462,17 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         #[cfg(all(feature = "usb-console", not(feature = "bench")))]
         let card_run: usb::CardRun = &mut |_, _, _| None;
         #[cfg(feature = "usb-console")]
-        if let Some(asked) = usb.up().and_then(|u| {
+        if let Some(restart) = usb.up().and_then(|u| {
             let frame = display.frame();
             u.service(ui, stats_r.as_mut(), bench_text, frame, card_run, store)
         }) {
             // As the menu's path: a THEME change in this visit is kept.
             ui.sync_system_now(&mut sync, &mut card, store, &mut settings);
-            dfu::enter(&marker, dfu::DfuFrom::Console(asked));
+            match restart {
+                usb::Restart::Dfu(asked) => dfu::enter(&marker, dfu::DfuFrom::Console(asked)),
+                // The boot it restarts into sweeps, the arena's gap free.
+                usb::Restart::Sweep(_) => cortex_m::peripheral::SCB::sys_reset(),
+            }
         }
         controls.snapshot();
         // ORBIT's latest view: the pages draw it, the drift is absorbed.

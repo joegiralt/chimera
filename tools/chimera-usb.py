@@ -9,8 +9,8 @@
     python3 tools/chimera-usb.py wait-console [s]  wait (default 10 s) for the console on the bus
 
 Exit 0 on OK, 1 on ERR (to stderr) or 2 s of silence (60 s before `card`'s
-first line: it measures before it answers; 15 s before `ls`'s, 30 s
-before `sweep`'s, 35 s before `put`'s). Bodies go to stdout; `shot` writes a PNG and prints its
+first line: it measures before it answers; 15 s before `ls`'s and
+`sweep`'s, 35 s before `put`'s). Bodies go to stdout; `shot` writes a PNG and prints its
 path; `put` shows its progress on stderr and never retries (a source
 already on the card answers `OK PRESENT`, so a re-run is the retry). Standard
 library only.
@@ -41,7 +41,7 @@ SIM = ("127.0.0.1", 7341)  # chimera-desktop/src/console.rs ADDR
 SILENCE_S = 2.0
 CARD_WAIT_S = 60.0  # `card` measures before it answers: ~5 s, ~15 s writing its test file
 LS_WAIT_S = 15.0  # a cold card acquire, then one listing under the card's 10 s cap
-SWEEP_WAIT_S = 30.0  # a cold acquire, the sweep under the card's 10 s cap, then its mark
+SWEEP_WAIT_S = 15.0  # a cold acquire, then the mark's one write; the unit restarts after OK
 PUT_WAIT_S = 35.0  # the unit's whole put is 30 s (PUT_DEADLINE_MS), card work included
 PUT_MAX = 1 << 20  # chimera-core/src/console/put.rs PUT_MAX_BYTES
 PUT_LINE = 48  # bytes a data line carries: 64 base64 characters

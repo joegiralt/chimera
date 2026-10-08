@@ -13,9 +13,10 @@ mod probe;
 mod tree;
 
 use ab::{copy, slot};
-use chimera_core::storage::{asked_sweep, boot_sweep};
+use chimera_core::console::{SweepAsk, ask_sweep};
+use chimera_core::storage::boot_sweep;
 use chimera_hal::store::{
-    Dir, FileName, Mark, Store, StoreError, Sweep, SweepRun, Then, Trigger, VolumeId,
+    DOUBT_HALT, Dir, FileName, Mark, Store, StoreError, Sweep, SweepRun, Then, Trigger, VolumeId,
 };
 use image::{Cut, CutDisk, DiskError, RamDisk, Tear, fat_check, with_clusters};
 use probe::{log, marks_for, probed};
@@ -208,14 +209,25 @@ fn every_cut_of_a_change_owes_a_sweep() {
                 if !mark_of(&disk).owes_sweep() {
                     break;
                 }
-                let image = disk.inner.0.borrow().clone();
+                let mut image = disk.inner.0.borrow().clone();
                 match boot(&disk) {
                     SweepRun::Ran { seen: Ok(_), .. } => {}
                     // Noise in a directory block: a doubt, nothing
                     // written, the mark still owing.
                     SweepRun::Ran { seen: Err(_), .. } => {
                         assert!(matches!(cut, Cut::TornAfter(_, Tear::Garbage)), "{what}");
-                        assert!(*disk.inner.0.borrow() == image, "{what}: a doubt wrote");
+                        // Nothing but the mark's count, in place.
+                        let now = disk.inner.0.borrow().clone();
+                        let changed: Vec<_> =
+                            (0..now.len()).filter(|&i| now[i] != image[i]).collect();
+                        assert!(changed.len() <= 1, "{what}: a doubt wrote {changed:?}");
+                        if let [i] = changed[..] {
+                            image[i] = now[i];
+                            assert!(
+                                matches!(mark_of(&disk), Mark::Doubted(_)),
+                                "{what}: block {i}"
+                            );
+                        }
                         assert!(mark_of(&disk).owes_sweep(), "{what}");
                         doubts += 1;
                         break;
@@ -328,11 +340,19 @@ fn a_clean_boot_reads_a_few_blocks_and_writes_none() {
     assert!(log(&s).writes.borrow().is_empty());
 }
 
-/// `sweep` on the console runs whatever the mark says.
+/// `ask_sweep` (the console's `sweep`): `Requested`, the mark `Asked`;
+/// refused over unsaved changes or on a card with no `/CHIMERA`, nothing
+/// written. The boot it restarts into sweeps a clean card and clears it.
 #[test]
-fn an_asked_sweep_runs_on_a_clean_card() {
+fn an_asked_sweep_runs_at_the_next_boot() {
     let disk = Rc::new(clean_card());
-    let run = asked_sweep(&mut probed(&disk), Sweep::Free, &mut marks_for(&*disk));
+    let mut s = probed(&disk);
+    assert_eq!(ask_sweep(true, &mut s), SweepAsk::Unsaved);
+    assert!(log(&s).writes.borrow().is_empty());
+    assert_eq!(ask_sweep(false, &mut s), SweepAsk::Requested);
+    assert_eq!(log(&s).writes.borrow().len(), 1, "the mark, in place");
+    assert_eq!(mark_of(&disk), Mark::Asked(0));
+    let run = boot(&disk);
     assert!(
         matches!(
             run,
@@ -345,6 +365,44 @@ fn an_asked_sweep_runs_on_a_clean_card() {
         ),
         "{run:?}"
     );
+    assert!(matches!(boot(&disk), SweepRun::Skipped(Mark::Clean)));
+    // A card with no mark gets one; a card Chimera never wrote, none.
+    let disk = Rc::new(with_clusters(CLUSTERS, 0xA5C));
+    assert_eq!(ask_sweep(false, &mut probed(&disk)), SweepAsk::Unused);
+    assert_eq!(mark_of(&disk), Mark::Unused);
+    {
+        let mut s = probed(&disk);
+        let vol = s.mount().unwrap();
+        s.make_dir(vol, Dir::Chimera).unwrap();
+    }
+    assert_eq!(ask_sweep(false, &mut probed(&disk)), SweepAsk::Requested);
+    assert_eq!(mark_of(&disk), Mark::Asked(0));
+    // A card that won't mount fails.
+    let mut s = probed(&disk);
+    log(&s).absent.set(true);
+    assert!(matches!(ask_sweep(false, &mut s), SweepAsk::Failed(_)));
+}
+
+/// The request's write, cut or torn: the old mark, `Asked`, or plain
+/// dirty, never clean.
+#[test]
+fn a_cut_request_never_reads_clean() {
+    for cut in [
+        Cut::After(0),
+        Cut::TornAfter(0, Tear::HalfOld),
+        Cut::TornAfter(0, Tear::Garbage),
+    ] {
+        let disk = Rc::new(CutDisk::new(clean_card(), cut));
+        let _ = ask_sweep(false, &mut probed(&disk));
+        disk.cut.set(Cut::Never);
+        let m = mark_of(&disk);
+        assert!(
+            matches!(m, Mark::Clean | Mark::Asked(0) | Mark::Dirty),
+            "{cut:?}: {m:?}"
+        );
+        // Only a write that never landed leaves it clean: nothing asked.
+        assert_eq!(m == Mark::Clean, cut == Cut::After(0), "{cut:?}");
+    }
 }
 
 /// The mark's own making, cut or torn at each write: the card still owes
@@ -395,5 +453,227 @@ fn a_cut_making_the_mark_owes_a_sweep() {
                 "{cut:?}: {m:?} after the boots"
             );
         }
+    }
+}
+
+// Doubting boots (owner ruling 2026-10-08): the third in a row stops the
+// automatic sweep until a settled one.
+
+/// `clean_card`, its mark dirty, and a cross-link in the root (`TWIN`
+/// sharing `KEEP`'s first cluster): every sweep doubts.
+fn doubting_card() -> Rc<RamDisk> {
+    let disk = clean_card();
+    {
+        let mut t = Tree::new(&disk);
+        let mut root = t.root();
+        let f = t.file(&mut root, *b"KEEP    BIN", None, (1_000, 0), 3, None);
+        t.put(&mut root, tree::raw(*b"TWIN    BIN", 0x20, f.chain[0], 1));
+    }
+    let disk = Rc::new(disk);
+    set_mark(&disk, &chimera_fat::mark::DIRTY);
+    disk
+}
+
+/// The mark's block, absolute.
+fn mark_block(disk: &Rc<RamDisk>) -> usize {
+    let mut s = probed(disk);
+    let vol = s.mount().unwrap();
+    let mut at = None;
+    s.runs(vol, mark_file(), &mut |b, _| at = Some(b)).unwrap();
+    at.unwrap() as usize
+}
+
+fn set_mark(disk: &Rc<RamDisk>, b: &[u8; 512]) {
+    let at = mark_block(disk);
+    disk.0.borrow_mut()[at] = *b;
+}
+
+/// `TWIN` deleted, as a computer's disk check would: the doubt gone.
+fn fix(disk: &RamDisk) {
+    let l = image::layout_of(disk);
+    let first = match l.root() {
+        chimera_fat::volume::Root::Fixed { first, .. } => first,
+        chimera_fat::volume::Root::Cluster(c) => l.cluster_block(c).unwrap(),
+    };
+    let mut d = disk.0.borrow_mut();
+    let blk = &mut d[(image::PART_LBA + first) as usize];
+    let at = (0..16)
+        .find(|i| &blk[i * 32..i * 32 + 11] == b"TWIN    BIN")
+        .unwrap();
+    blk[at * 32] = 0xE5;
+}
+
+#[test]
+fn every_doubt_pattern_differs_from_clean_in_every_byte() {
+    use chimera_fat::mark::{CLEAN, DIRTY, doubted};
+    for n in 1..=DOUBT_HALT {
+        let b = doubted(n);
+        assert!(b.iter().zip(&CLEAN).all(|(x, y)| x != y), "doubted {n}");
+        assert_ne!(b, DIRTY);
+    }
+}
+
+#[test]
+fn three_doubting_boots_stop_the_automatic_sweep() {
+    let disk = doubting_card();
+    for n in 1..=DOUBT_HALT {
+        let run = boot(&disk);
+        assert!(
+            matches!(
+                run,
+                SweepRun::Ran { seen: Err(_), then: Then::Doubted(k), .. } if k == n
+            ),
+            "boot {n}: {run:?}"
+        );
+        assert_eq!(run.halted(), n == DOUBT_HALT, "boot {n}");
+        assert_eq!(mark_of(&disk), Mark::Doubted(n));
+    }
+    // The fourth boot skips, writing nothing, and says why.
+    let mut s = probed(&disk);
+    let run = boot_sweep(&mut s, Sweep::Free, &mut marks_for(&*disk));
+    assert_eq!(run, SweepRun::Skipped(Mark::Doubted(DOUBT_HALT)));
+    assert!(run.halted());
+    assert!(log(&s).writes.borrow().is_empty());
+    // A changed card stays halted: changes leave a debt as it is.
+    let mut s = probed(&disk);
+    let vol = s.mount().unwrap();
+    s.write(vol, name(b"NEW"), &mut |w| w.put(&[4; 2_000]))
+        .unwrap();
+    assert_eq!(mark_of(&disk), Mark::Doubted(DOUBT_HALT));
+    // An asked sweep runs at the next boot, halted or not; its doubt
+    // counts no boot, and the count comes back.
+    assert_eq!(ask_sweep(false, &mut probed(&disk)), SweepAsk::Requested);
+    assert_eq!(mark_of(&disk), Mark::Asked(DOUBT_HALT));
+    let run = boot(&disk);
+    assert!(
+        matches!(
+            run,
+            SweepRun::Ran {
+                why: Trigger::Asked,
+                seen: Err(_),
+                then: Then::Doubted(DOUBT_HALT),
+                ..
+            }
+        ),
+        "{run:?}"
+    );
+    assert!(run.halted());
+    assert_eq!(mark_of(&disk), Mark::Doubted(DOUBT_HALT));
+    // Fixed, an asked sweep settles and clears it.
+    fix(&disk);
+    assert_eq!(ask_sweep(false, &mut probed(&disk)), SweepAsk::Requested);
+    let run = boot(&disk);
+    assert!(
+        matches!(
+            run,
+            SweepRun::Ran {
+                then: Then::Cleared,
+                ..
+            }
+        ),
+        "{run:?}"
+    );
+    assert!(matches!(boot(&disk), SweepRun::Skipped(Mark::Clean)));
+}
+
+/// A boot that runs without a doubt ends the streak, settled or not.
+#[test]
+fn a_boot_without_a_doubt_resets_the_count() {
+    let disk = doubting_card();
+    boot(&disk);
+    boot(&disk);
+    assert_eq!(mark_of(&disk), Mark::Doubted(2));
+    fix(&disk);
+    Tree::new(&disk).lose(4, None);
+    // A dry run finds the lost chain: no doubt, not settled.
+    let run = boot_sweep(&mut probed(&disk), Sweep::DryRun, &mut marks_for(&*disk));
+    assert!(
+        matches!(run, SweepRun::Ran { seen: Ok(sw), then: Then::Kept, .. } if sw.lost == 4),
+        "{run:?}"
+    );
+    assert_eq!(mark_of(&disk), Mark::Dirty);
+}
+
+/// A card with no mark that doubts gets none: nothing allocates on a
+/// card in doubt, so it keeps no count and goes on sweeping.
+#[test]
+fn a_doubt_on_a_card_with_no_mark_writes_nothing() {
+    let disk = Rc::new(with_clusters(CLUSTERS, 0xD0B1));
+    {
+        let mut s = probed(&disk);
+        let vol = s.mount().unwrap();
+        s.make_dir(vol, Dir::Chimera).unwrap();
+    }
+    {
+        let mut t = Tree::new(&disk);
+        let mut root = t.root();
+        let f = t.file(&mut root, *b"KEEP    BIN", None, (1_000, 0), 3, None);
+        t.put(&mut root, tree::raw(*b"TWIN    BIN", 0x20, f.chain[0], 1));
+    }
+    let mut s = probed(&disk);
+    let run = boot_sweep(&mut s, Sweep::Free, &mut marks_for(&*disk));
+    assert!(
+        matches!(
+            run,
+            SweepRun::Ran {
+                seen: Err(_),
+                then: Then::Kept,
+                ..
+            }
+        ),
+        "{run:?}"
+    );
+    assert!(log(&s).writes.borrow().is_empty());
+    assert_eq!(mark_of(&disk), Mark::Missing);
+}
+
+/// The count's write, cut or torn: the mark reads the old count, the new
+/// one, or plain dirty (a shorter streak: one more sweep), never clean.
+#[test]
+fn a_cut_count_write_never_reads_clean() {
+    for n in 0..DOUBT_HALT {
+        for cut in [
+            Cut::After(0),
+            Cut::TornAfter(0, Tear::HalfOld),
+            Cut::TornAfter(0, Tear::Garbage),
+        ] {
+            let base = doubting_card();
+            for _ in 0..n {
+                boot(&base);
+            }
+            let was = mark_of(&base);
+            let disk = Rc::new(CutDisk::new(copy(&base), cut));
+            boot(&disk);
+            disk.cut.set(Cut::Never);
+            let m = mark_of(&disk);
+            assert!(
+                m == was || m == Mark::Doubted(n + 1) || m == Mark::Dirty,
+                "{n} {cut:?}: {was:?} became {m:?}"
+            );
+            assert!(
+                m.owes_sweep() || m == Mark::Doubted(DOUBT_HALT),
+                "{n} {cut:?}: {m:?}"
+            );
+        }
+    }
+    // The streak's reset, cut or torn: the old count or plain dirty.
+    for cut in [
+        Cut::After(0),
+        Cut::TornAfter(0, Tear::HalfOld),
+        Cut::TornAfter(0, Tear::Garbage),
+    ] {
+        let base = doubting_card();
+        boot(&base);
+        boot(&base);
+        fix(&base);
+        Tree::new(&base).lose(4, None);
+        let disk = Rc::new(CutDisk::new(copy(&base), cut));
+        boot_sweep(&mut probed(&disk), Sweep::DryRun, &mut marks_for(&*disk));
+        disk.cut.set(Cut::Never);
+        let m = mark_of(&disk);
+        assert!(
+            matches!(m, Mark::Doubted(2) | Mark::Dirty),
+            "reset {cut:?}: {m:?}"
+        );
     }
 }

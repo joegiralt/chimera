@@ -205,9 +205,24 @@ pub trait Store {
         Ok(Mark::Unused)
     }
     /// After a sweep that `settled`, the mark to `Clean`, made if it is
-    /// `Missing`; `true` once it is. Any other sweep leaves it: `false`.
+    /// `Missing`; `true` once it is. Any other sweep keeps the debt, a
+    /// doubt count reset to plain `Dirty`: `false`.
     fn settle(&mut self, _vol: VolumeId, _swept: &Swept) -> Result<bool, StoreError> {
         Ok(false)
+    }
+    /// After a boot's sweep that doubted. With `count`, one more doubting
+    /// boot on the mark, in place (a card in doubt allocates nothing);
+    /// without (an asked sweep), the count the mark carried put back. Returns the count now,
+    /// 0 where there is no mark to keep it.
+    fn note_doubt(&mut self, _vol: VolumeId, _count: bool) -> Result<u8, StoreError> {
+        Ok(0)
+    }
+    /// Asks the next boot to sweep: the mark to `Asked`, made if it is
+    /// `Missing`. Returns the mark now: `Unused` (no `/CHIMERA`, nothing
+    /// to sweep) or `Dirty` (a mark it can't rewrite, owing already) are
+    /// left as they are.
+    fn request_sweep(&mut self, _vol: VolumeId) -> Result<Mark, StoreError> {
+        Ok(Mark::Unused)
     }
     /// The lost-cluster sweep (#360), one operation at boot: clusters the
     /// FAT holds that no directory on the volume reaches. `marks` lends
@@ -246,12 +261,33 @@ pub enum Mark {
     Missing,
     /// No `/CHIMERA`: Chimera never wrote the card.
     Unused,
+    /// Dirty, and the last this many boots' sweeps, in a row, doubted
+    /// (1..=`DOUBT_HALT`).
+    Doubted(u8),
+    /// A sweep asked for (the console's `sweep`, STORAGE › CLEAN UP): the
+    /// next boot sweeps, halted or not, then puts back the doubt count it
+    /// carries (0..=`DOUBT_HALT`) if it doubts too.
+    Asked(u8),
 }
+
+/// Doubting boots in a row after which the boot stops sweeping and warns
+/// (owner ruling 2026-10-08). A settled sweep, the console's included,
+/// clears the mark; a boot that runs without a doubt ends the streak.
+pub const DOUBT_HALT: u8 = 3;
 
 impl Mark {
     /// The boot sweeps.
     pub fn owes_sweep(self) -> bool {
-        matches!(self, Mark::Dirty | Mark::Missing)
+        match self {
+            Mark::Dirty | Mark::Missing | Mark::Asked(_) => true,
+            Mark::Doubted(n) => n < DOUBT_HALT,
+            Mark::Clean | Mark::Unused => false,
+        }
+    }
+
+    /// The boot no longer sweeps: the card needs a check.
+    pub fn halted(self) -> bool {
+        matches!(self, Mark::Doubted(n) if n >= DOUBT_HALT)
     }
 }
 
@@ -357,7 +393,7 @@ pub enum Trigger {
     Owed(Mark),
     /// At boot, the mark (or the card) not read: owed, to be safe.
     Unread,
-    /// The console's `sweep`, whatever the mark says.
+    /// The mark `Asked`: a sweep requested before this boot.
     Asked,
 }
 
@@ -381,8 +417,25 @@ pub enum Then {
     Cleared,
     /// Unsettled, a doubt, or no `/CHIMERA`: as it was.
     Kept,
-    /// Settled, but the mark's write failed: still owing.
+    /// Settled or doubted, but the mark's write failed: still owing.
     Failed,
+    /// A boot's doubt, counted: this many in a row.
+    Doubted(u8),
+}
+
+impl SweepRun {
+    /// The boot's sweep stopped for doubts (`Mark::halted`): `status`
+    /// and the boot warn.
+    pub fn halted(&self) -> bool {
+        match *self {
+            SweepRun::Skipped(m) => m.halted(),
+            SweepRun::Ran {
+                then: Then::Doubted(n),
+                ..
+            } => Mark::Doubted(n).halted(),
+            SweepRun::Ran { .. } => false,
+        }
+    }
 }
 
 /// A `Store` whose operations' time can be capped: the console's `put`

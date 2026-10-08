@@ -593,9 +593,17 @@ impl<D: Medium> Store for FatStore<D> {
 
     fn settle(&mut self, vol: VolumeId, swept: &Swept) -> Result<bool, StoreError> {
         if !swept.settled() {
-            return Ok(false);
+            return self.run(vol, |fs, _| mark::unsettled(fs)).map(|()| false);
         }
         self.run(vol, |fs, _| mark::clear(fs))
+    }
+
+    fn note_doubt(&mut self, vol: VolumeId, count: bool) -> Result<u8, StoreError> {
+        self.run(vol, |fs, _| mark::doubt(fs, count))
+    }
+
+    fn request_sweep(&mut self, vol: VolumeId) -> Result<Mark, StoreError> {
+        self.run(vol, |fs, _| mark::request(fs))
     }
 
     fn sweep(&mut self, vol: VolumeId, mode: Sweep, marks: &mut [u8]) -> SweepSeen {

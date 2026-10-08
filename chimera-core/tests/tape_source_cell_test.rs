@@ -367,24 +367,6 @@ fn load_steps_4k_a_pass() {
     }
 }
 
-/// The console's sweep never borrows the gap a load is staging in: no
-/// scratch from the load's first pass to its last.
-#[test]
-fn no_sweep_scratch_while_a_load_stages() {
-    let mut rig = Rig::new(&[choir()]);
-    rig.turn(1);
-    assert!(rig.ui.sweep_scratch().is_some_and(|g| !g.is_empty()));
-    rig.mix_plus();
-    let mut passes = 0;
-    while rig.ui.card_pending() {
-        assert!(rig.ui.sweep_scratch().is_none(), "pass {passes}");
-        rig.work();
-        passes += 1;
-    }
-    assert!(passes > 1);
-    assert!(rig.ui.sweep_scratch().is_some());
-}
-
 #[test]
 fn loaded_row_moves_above_divider() {
     let (h, _) = choir();

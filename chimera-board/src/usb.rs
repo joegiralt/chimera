@@ -124,6 +124,17 @@ pub struct UsbParts {
 #[must_use]
 pub struct DfuAsked(());
 
+/// `sweep` answered, its mark set to `Asked` and its `OK` flushed: the
+/// boot it restarts into sweeps (ADR 0094). Only `Usb::service` makes one.
+#[must_use]
+pub struct SweepAsked(());
+
+/// A console answer that ends in a restart.
+pub enum Restart {
+    Dfu(DfuAsked),
+    Sweep(SweepAsked),
+}
+
 /// `card`'s measurement, run before its answer starts: `None` without one
 /// in this build.
 pub type CardRun<'a> =
@@ -303,8 +314,8 @@ impl Usb {
     /// answered one is not counted), polls, reads into the line, and
     /// answers at most one request: `Some` for a `dfu` the host was told
     /// `OK` to. A `card` runs `card` first, so its seconds come before the
-    /// answer's clock starts; so does a `sweep`, on `ui`'s arena gap.
-    /// `ls` and `put` work on `store`. Out of line:
+    /// answer's clock starts; so does `sweep`'s request, whose `OK` is
+    /// a restart into the sweep. `ls` and `put` work on `store`. Out of line:
     /// inlined, its buffers took `synth`'s frame past the 8 KB check.
     #[inline(never)]
     pub fn service(
@@ -315,7 +326,7 @@ impl Usb {
         frame: Frame<'_>,
         card: CardRun<'_>,
         store: &mut SdStore,
-    ) -> Option<DfuAsked> {
+    ) -> Option<Restart> {
         let now = DWT::cycle_count();
         let us = now.wrapping_sub(self.top) / self.cycles_per_us;
         self.top = now;
@@ -354,8 +365,11 @@ impl Usb {
                 }
                 _ => None,
             };
-            let sweep_now = match req {
-                Ok(Request::Sweep(_)) => Some(crate::sweep_now(ui, store)),
+            let sweep_ask = match req {
+                Ok(Request::Sweep(_)) => Some(chimera_core::console::ask_sweep(
+                    ui.project_status() == chimera_core::project::ProjectStatus::Modified,
+                    store,
+                )),
                 _ => None,
             };
             let unit = &mut ChipUnit {
@@ -368,7 +382,7 @@ impl Usb {
                 dfu: false,
                 boot: *boot,
                 sweep: *sweep,
-                sweep_now,
+                sweep_ask,
                 files: store,
             };
             let out = &mut UsbOut {
@@ -379,7 +393,12 @@ impl Usb {
             // A stalled answer just stops: the host tool resyncs on its next request.
             let sent = answer(req, unit, out).and_then(|()| out.flush());
             self.last = Served::Answered;
-            if !(unit.dfu && sent.is_ok()) {
+            let restart = match (unit.dfu, sweep_ask) {
+                (true, _) => Restart::Dfu(DfuAsked(())),
+                (false, Some(SweepAsk::Requested)) => Restart::Sweep(SweepAsked(())),
+                _ => return None,
+            };
+            if sent.is_err() {
                 return None;
             }
             // `flush` empties the class's buffer, not the endpoint: polls
@@ -388,7 +407,7 @@ impl Usb {
             while crate::controls::now_ms().since(start) < DRAIN_MS {
                 dev.poll(&mut [&mut *serial]);
             }
-            return Some(DfuAsked(()));
+            return Some(restart);
         }
         None
     }
@@ -406,8 +425,8 @@ struct ChipUnit<'a> {
     dfu: bool,
     boot: BootSeen,
     sweep: Option<SweepRun>,
-    /// `sweep`'s run, before the answer.
-    sweep_now: Option<SweepAsk>,
+    /// `sweep`'s request, before the answer.
+    sweep_ask: Option<SweepAsk>,
     /// `ls` and `put`'s card: unread without `card-put`, and in bench
     /// builds, which measure and take no files (their FLASH is full).
     #[cfg_attr(
@@ -472,8 +491,8 @@ impl Unit for ChipUnit<'_> {
         self.sweep
     }
 
-    fn sweep_now(&mut self) -> Option<SweepAsk> {
-        self.sweep_now
+    fn request_sweep(&mut self) -> Option<SweepAsk> {
+        self.sweep_ask
     }
 
     fn usb_regs(&self) -> Option<UsbRegs> {

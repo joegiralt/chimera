@@ -249,7 +249,7 @@ put-tape file:
 # The project files on the card and their sizes; `just ls tapes`: the sources
 ls *args:
     python3 tools/chimera-usb.py ls {{args}}
-# The lost-cluster sweep now (ADR 0094), in the firmware's mode: its line
+# The lost-cluster sweep at the next boot (ADR 0094): the unit restarts into it; `just status` reads it
 sweep:
     python3 tools/chimera-usb.py sweep
 
