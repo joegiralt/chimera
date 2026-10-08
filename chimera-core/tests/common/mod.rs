@@ -14,6 +14,7 @@ pub mod orbit;
 pub mod part_rig;
 pub mod project;
 pub mod rig;
+pub mod scene;
 pub mod sweep;
 pub mod tape;
 pub mod turn;
