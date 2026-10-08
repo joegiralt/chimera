@@ -1,24 +1,27 @@
 //! The audio reads only the knobs a publish's delta names (ADR 0115): a
 //! whole Sound is ~6k cycles on the unit, one knob ~90. A knob turn reads
 //! that knob of that Part; an FX, mix or ORBIT edit, none; a Part that
-//! starts playing, none (its knobs are current); silent Parts, a Sound's
-//! worth a block at most. Six Parts, published from a Project each block
+//! starts playing, none (its knobs are current); every Part together,
+//! `Knobs::READ_BUDGET` a block at most. Six Parts, published from a Project each block
 //! as the shells do, counted in knobs read.
 
 mod common;
 
-use chimera_core::addr::{BlockRead, BlockRef, ParamAddr};
+use chimera_core::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use chimera_core::dsp::fx_bus::FxBus;
-use chimera_core::dsp::knobs::{KNOB_COUNT, KNOBS, KnobPublisher};
+use chimera_core::dsp::knobs::{KNOBS, KnobPublisher};
 use chimera_core::hw::{MAX_PARTS, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, FilterParams};
 use chimera_core::preset::Sound;
-use chimera_core::project::{PartId, Project, TemplateCrc};
+use chimera_core::project::{PartFrom, PartId, PartSource, Project, ReplaceGuard, TemplateCrc};
 use chimera_core::scope::ScopeWriter;
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::SAMPLE_RATE;
+
+/// Knobs read in a block, every Part together.
+const BUDGET: u32 = chimera_core::dsp::knobs::Knobs::READ_BUDGET;
 
 struct Six {
     p: Box<Project>,
@@ -79,6 +82,33 @@ impl Six {
         core::array::from_fn(|p| self.inst.knob_reads(p).wrapping_sub(before[p]))
     }
 
+    /// A publish with no render: the audio skips it.
+    fn publish(&mut self) {
+        self.shared.update_from_project(&self.p, 0, &mut self.knobs);
+    }
+
+    /// Part `part` loads a new Sound (INIT), as the browser does.
+    fn load(&mut self, part: usize) {
+        let src = PartSource {
+            part: PartId::ALL[part],
+            from: PartFrom::Init(EngineType::Algo),
+        };
+        let c = ReplaceGuard::check(&self.p, self._t, src)
+            .unwrap_or_else(|n| n.into_pending().anyway(&self.p));
+        self.p.replace_part(c).unwrap();
+    }
+
+    /// Whether every knob of Part `part` sits on its stored value, landed.
+    fn landed(&self, part: usize) -> bool {
+        let stored = &self.p.part(PartId::ALL[part]).sound.params;
+        KNOBS.iter().all(|k| {
+            let s = k
+                .spec
+                .normalize(stored.block(k.addr.block).unwrap().get(k.addr.param));
+            self.inst.knob(part, k.addr) == Some((s, false))
+        })
+    }
+
     /// `n` blocks: the most knobs read in any one of them.
     fn blocks(&mut self, n: usize) -> u32 {
         (0..n).map(|_| self.block().iter().sum()).max().unwrap_or(0)
@@ -129,7 +159,8 @@ fn an_edit_re_reads_only_the_edited_part() {
 #[test]
 fn parts_starting_together_read_nothing() {
     let mut r = Six::new();
-    assert!(r.blocks(20) <= KNOB_COUNT as u32, "a Sound's worth a block");
+    assert!(r.blocks(20) <= BUDGET, "the block's budget");
+    r.blocks(40);
     for p in [1, 3, 4] {
         r.p.edit_part(PartId::ALL[p]).sound.params.filter.cutoff *= 0.5;
     }
@@ -197,5 +228,87 @@ fn a_part_back_from_silence_plays_the_stored_values() {
             k.addr.block,
             k.spec.label
         );
+    }
+}
+
+/// A Sound loaded into a playing Part lands within the block budget: in
+/// nine blocks, five in 42; a knob turn on another playing Part in the
+/// same block is served first (ADR 0115).
+#[test]
+fn loads_into_playing_parts_land_within_the_budget() {
+    let mut r = Six::new();
+    for p in 0..MAX_PARTS {
+        r.key(p, true);
+    }
+    r.blocks(50);
+    r.load(1);
+    let mut n = 0;
+    while !r.landed(1) {
+        let b = r.block();
+        assert!(b.iter().sum::<u32>() <= BUDGET, "{b:?}");
+        n += 1;
+        assert!(n <= 9, "a load lands in {n} blocks");
+    }
+
+    for p in 1..MAX_PARTS {
+        r.load(p);
+    }
+    r.p.edit_part(PartId::ALL[0]).sound.params.filter.cutoff *= 0.5;
+    let first = r.block();
+    assert_eq!(first[0], 1, "the turn first: {first:?}");
+    assert!(first.iter().sum::<u32>() <= BUDGET, "{first:?}");
+    let mut n = 1;
+    while !(1..MAX_PARTS).all(|p| r.landed(p)) {
+        let b = r.block();
+        assert!(b.iter().sum::<u32>() <= BUDGET, "{b:?}");
+        n += 1;
+        assert!(n <= 42, "five loads land in {n} blocks");
+    }
+}
+
+/// Publishes the audio never sees (1 to 9 between two renders, past the
+/// ring) lose nothing: settled, every knob of a playing Part is the
+/// stored value, bit for bit.
+#[test]
+fn skipped_publishes_lose_nothing() {
+    let mut r = Six::new();
+    r.key(0, true);
+    r.blocks(50);
+    for skip in 1..=9usize {
+        for round in 0..6 {
+            for e in 0..skip {
+                let k = &KNOBS[(skip * 7 + round * 3 + e * 5) % KNOBS.len()];
+                {
+                    let s = r.p.edit_part(PartId::ALL[0]).sound;
+                    let b = s.params.block_mut(k.addr.block).unwrap();
+                    let v = k.spec.denormalize(0.2 + 0.1 * ((e + round) % 6) as f32);
+                    b.set(k.addr.param, k.spec.quantize(v));
+                }
+                r.publish();
+            }
+            r.block();
+        }
+        r.blocks(600);
+        assert!(r.landed(0), "skipping {skip}");
+    }
+}
+
+/// The block's read budget is reserved once, beside the bus: a budget of
+/// the bus, the reads and one voice with its Part's knobs admits it; a
+/// cycle a sample less refuses it.
+#[test]
+fn the_read_budget_is_reserved_once() {
+    use chimera_core::dsp::knobs::Knobs;
+    use chimera_core::dsp::voice::Voice;
+    let mut r = Six::new();
+    r.publish();
+    let part = &r.shared.parts[0];
+    let voice = Voice::cost(&part.params, &part.mod_state).0;
+    let need = FxBus::COST.0 + Knobs::READS.0 + voice + Knobs::COST.0;
+    for (cost, admitted) in [(need, 1), (need - 1, 0)] {
+        let hz = (cost as u64 * 480_000).div_ceil(7) as u32;
+        *r.inst = Instrument::new(SAMPLE_RATE, SampleBudget::for_cpu(hz));
+        r.key(0, true);
+        assert_eq!(r.playing(), admitted, "budget {cost}");
     }
 }

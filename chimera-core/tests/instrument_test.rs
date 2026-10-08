@@ -34,7 +34,9 @@ use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 /// bus's own cost folded in: the smallest `cpu_hz` whose `SampleBudget`
 /// rounds up to at least `FxBus::COST + voice_share` (`for_cpu` truncates).
 const fn budget_for(voice_share: u32) -> SampleBudget {
-    SampleBudget::for_cpu(((FxBus::COST.0 + voice_share) as u64 * 480_000).div_ceil(7) as u32)
+    // The bus and the knobs' read budget, reserved (ADR 0115).
+    let reserved = FxBus::COST.0 + Knobs::READS.0;
+    SampleBudget::for_cpu(((reserved + voice_share) as u64 * 480_000).div_ceil(7) as u32)
 }
 
 /// The voices' share before the FX diet (7,000 − 3,310). After the diet
@@ -631,7 +633,10 @@ fn a_six_note_tx_epiano_chord_stays_in_budget() {
 
 #[test]
 fn the_test_budget_keeps_the_pre_diet_voice_share() {
-    assert_eq!(BUDGET.as_cost().0, FxBus::COST.0 + VOICE_SHARE);
+    assert_eq!(
+        BUDGET.as_cost().0,
+        FxBus::COST.0 + Knobs::READS.0 + VOICE_SHARE
+    );
 }
 
 /// ADR 0040: on rev V a light patch (SAW LEAD, 555) plays every voice of the

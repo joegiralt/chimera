@@ -14,7 +14,7 @@ use crate::dsp::Stereo;
 use crate::dsp::ease::{Ease, ease_coeff, step_of};
 use crate::dsp::engines::{EngineCtx, SlotKind};
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
-use crate::dsp::knobs::{KNOB_COUNT, KnobDelta, KnobPublisher, Knobs, Pace};
+use crate::dsp::knobs::{KnobDelta, KnobPublisher, Knobs, Pace};
 use crate::dsp::modal::{ResonatorMode, SYM_NOTE_ON_CLEAR_MAX, SymPool};
 use crate::dsp::tape_engine::{Heads, TapeEngine};
 use crate::dsp::voice::Voice;
@@ -236,22 +236,14 @@ impl AudioShared {
     }
 }
 
-/// A Part's knobs one block (ADR 0115): those its delta names read, and
-/// glided while it plays (`pace`), landed while silent, within `budget`;
-/// a new Sound's (its `loads` moved) all read and landed. Out of line:
-/// once a Part, six copies otherwise.
+/// A new Sound in `part` (its `loads` moved): its knobs read whole and
+/// land. Out of line: once a Part, six copies otherwise.
 #[inline(never)]
-fn ease_part(
-    (knobs, seen): &mut (Knobs, Loads),
-    part: &PartAudio,
-    pace: Option<Pace>,
-    budget: &mut u32,
-) {
+fn new_sound((knobs, seen): &mut (Knobs, Loads), part: &PartAudio) {
     if *seen != part.loads {
         *seen = part.loads;
         knobs.land();
     }
-    knobs.ease((&part.params, &part.mod_state), &part.knobs, pace, budget);
 }
 
 /// One block for each DAC pair, interleaved L, R.
@@ -526,6 +518,9 @@ pub struct Instrument {
     knobs: [(Knobs, Loads); MAX_PARTS],
     /// How they move: glide, or land (`land_knobs`).
     knob_pace: Pace,
+    /// The Part the knobs' read budget starts with this block: turned a
+    /// Part a block, so none always waits on the others.
+    knob_turn: u8,
 }
 
 /// Who plays a note: the keys and MIDI, or one of ORBIT's rings.
@@ -541,7 +536,7 @@ pub enum NoteOrigin {
 /// worst-case slots starts a note a block, a typical one all at once.
 pub const SYM_CLEAR_BUDGET: usize = SYM_NOTE_ON_CLEAR_MAX;
 
-crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, knobs, knob_pace });
+crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, knobs, knob_pace, knob_turn });
 
 const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
@@ -599,6 +594,7 @@ impl Instrument {
             addr_of_mut!((*p).costings).write(0);
             addr_of_mut!((*p).knobs).write([(Knobs::UNPRIMED, Loads::NONE); MAX_PARTS]);
             addr_of_mut!((*p).knob_pace).write(Pace::Glide(sample_rate));
+            addr_of_mut!((*p).knob_turn).write(0);
             slot.assume_init_mut()
         }
     }
@@ -638,7 +634,7 @@ impl Instrument {
             Some(_) => OrbitRunner::COST + Self::BURST,
             None => Cost::ZERO,
         };
-        FxBus::COST + orbit
+        FxBus::COST + Knobs::READS + orbit
     }
 
     /// Voices that ring a pool set, at most `SYM_SLOTS`: for the bench,
@@ -1122,9 +1118,9 @@ impl Instrument {
                 self.alloc.recost(v, costs[p] + held + k);
             }
         }
-        // Only the bus: ORBIT's reserve refuses new voices, it never fades
-        // out sounding ones (ADR 0091).
-        while let Some(v) = self.alloc.shed(FxBus::COST) {
+        // Only the bus and the knobs' reads: ORBIT's reserve refuses new
+        // voices, it never fades out sounding ones (ADR 0091).
+        while let Some(v) = self.alloc.shed(FxBus::COST + Knobs::READS) {
             self.shed(v);
         }
     }
@@ -1203,12 +1199,35 @@ impl Instrument {
                 playing[self.sounding[v] as usize % MAX_PARTS] = true;
             }
         }
-        // A silent Part reads within one Sound's worth a block, shared:
-        // a project load's six Sounds are spread, not read in a block.
+        // Every Part reads within `Knobs::READ_BUDGET` a block, shared
+        // (`Knobs::READS`): a playing Part's edits first, so a knob turn
+        // never waits, then a playing Part's new Sound, then the silent
+        // Parts'. A load lands over nine blocks.
         let pace = self.knob_pace;
-        let mut budget = KNOB_COUNT as u32;
-        for ((knobs, part), playing) in self.knobs.iter_mut().zip(&shared.parts).zip(playing) {
-            ease_part(knobs, part, playing.then_some(pace), &mut budget);
+        let mut budget = Knobs::READ_BUDGET;
+        let turn = usize::from(self.knob_turn) % MAX_PARTS;
+        self.knob_turn = ((turn + 1) % MAX_PARTS) as u8;
+        for (knobs, part) in self.knobs.iter_mut().zip(&shared.parts) {
+            new_sound(knobs, part);
+        }
+        for pass in 0..3 {
+            for p in (0..MAX_PARTS).map(|j| (turn + j) % MAX_PARTS) {
+                let (knobs, part) = (&mut self.knobs[p], &shared.parts[p]);
+                let class = match (playing[p], knobs.0.landing()) {
+                    (true, false) => 0,
+                    (true, true) => 1,
+                    (false, _) => 2,
+                };
+                if class == pass {
+                    let pace = playing[p].then_some(pace);
+                    knobs.0.ease(
+                        (&part.params, &part.mod_state),
+                        &part.knobs,
+                        pace,
+                        &mut budget,
+                    );
+                }
+            }
         }
     }
 

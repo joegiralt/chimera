@@ -21,10 +21,16 @@ impl Stamp {
     /// No value's: serials start at 1.
     pub(crate) const NONE: Self = Self { serial: 0 };
 
-    /// One no other value has had.
+    /// One no other value has had: never `NONE`'s 0, which a wrap would
+    /// otherwise hand out. A wrap takes 2³² draws, a write each: past it,
+    /// a Sound unwritten for all of them could meet its own serial again
+    /// and a change go unseen; at a write a frame, over two years.
     fn unique() -> Self {
-        Self {
-            serial: SERIAL.fetch_add(1, Ordering::Relaxed),
+        loop {
+            let serial = SERIAL.fetch_add(1, Ordering::Relaxed);
+            if serial != 0 {
+                return Self { serial };
+            }
         }
     }
 }

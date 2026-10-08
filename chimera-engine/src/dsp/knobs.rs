@@ -130,21 +130,26 @@ impl KnobSet {
         self.0 == 0
     }
 
-    /// Its first `n` knobs, and the routes once its knobs all fit.
-    fn first(self, n: u32) -> Self {
+    /// Its routes, always (sixteen amounts, cheap, and a column read
+    /// late would play its stored amounts at once), and `n` of its knobs
+    /// from `from` on, round: so a Sound read in parts reads every knob,
+    /// none twice before the rest. The set, and where to go on from.
+    fn take(self, n: u32, from: u32) -> (Self, u32) {
         let mut out = self.0 & ROUTES;
-        let mut bits = self.0 & !ROUTES;
+        let knobs = self.0 & !ROUTES;
+        let mask = (1u128 << from.min(127)) - 1;
+        let (mut bits, mut next) = (knobs & !mask, from);
         for _ in 0..n {
+            if bits == 0 {
+                bits = knobs & mask & !out;
+            }
             if bits == 0 {
                 break;
             }
-            out |= bits.isolate_lowest_one();
-            bits &= bits - 1;
+            let b = bits.isolate_lowest_one();
+            (out, bits, next) = (out | b, bits & !b, b.trailing_zeros() + 1);
         }
-        if bits != 0 {
-            out &= !ROUTES;
-        }
-        Self(out)
+        (Self(out), next % KNOB_COUNT as u32)
     }
 
     fn iter(self) -> impl Iterator<Item = usize> {
@@ -206,6 +211,9 @@ struct Published {
     of: Stamp,
     loads: Loads,
     v: [u32; KNOB_COUNT],
+    /// The knobs its Sound moves itself (SCRUB's POSITION): the one input
+    /// to a knob's motion that isn't a knob, so a change names them.
+    own: KnobSet,
     routes: [[i8; MAX_MOD_SOURCES]; 2],
     delta: KnobDelta,
 }
@@ -223,6 +231,7 @@ impl KnobPublisher {
                 of: Stamp::NONE,
                 loads: Loads::NONE,
                 v: [0; KNOB_COUNT],
+                own: KnobSet::EMPTY,
                 routes: [[0; MAX_MOD_SOURCES]; 2],
                 delta: KnobDelta {
                     seq: 0,
@@ -243,6 +252,7 @@ impl KnobPublisher {
         }
         let new = s.of == Stamp::NONE || s.loads != loads;
         let mut d = if new { KnobSet::ALL } else { KnobSet::EMPTY };
+        let mut own = KnobSet::EMPTY;
         for (j, k) in KNOBS.iter().enumerate() {
             let p = &sound.params;
             let b = p
@@ -251,7 +261,10 @@ impl KnobPublisher {
             if b != s.v[j] {
                 (s.v[j], d) = (b, d.union(KnobSet(1 << j)));
             }
+            own.put(j, p.moves_itself(k.addr));
         }
+        d = d.union(KnobSet(own.0 ^ s.own.0));
+        s.own = own;
         let m = &sound.mod_state;
         for (was, col) in s.routes.iter_mut().zip(COLS) {
             for (src, was) in was.iter_mut().enumerate() {
@@ -312,8 +325,9 @@ pub struct Knobs {
     moving: KnobSet,
     /// Changed, not yet read: a silent Part's, past its block's budget.
     pending: KnobSet,
-    /// Land, not glide, what is pending: a new Sound's.
-    landing: bool,
+    /// Of `pending`, those that land, not glide, when read: a new
+    /// Sound's, and what a silent Part left waiting.
+    lands: KnobSet,
     /// The FREQ and Q columns' amounts by source, as `amount / 127`.
     routes: [[f32; MAX_MOD_SOURCES]; 2],
     routes_moving: bool,
@@ -324,37 +338,56 @@ pub struct Knobs {
     seen: (Stamp, Stamp),
     /// Knobs read, wrapping: for the tests.
     reads: u32,
+    /// Where the next read of a part-read Sound goes on from.
+    cursor: u32,
     /// The sample rate and the KNOB and STAGE coefficients at it: worked
     /// out once, not an `exp2` a knob a block.
     k: (u32, [f32; 2]),
 }
 
 impl Knobs {
-    /// What a sounding Part's knobs cost, cycles a sample, billed once a
-    /// Part on one of its voices (ADR 0112, 0115). Estimated from the
-    /// thumb build's instructions, not benched. Each block: the delta's
-    /// check (~40 cycles), two knobs gliding (~300) and a Sound's 66 read
-    /// at a load spread over a UI frame of 12 blocks or more (~6,000 / 12
-    /// = 500): 840 / 64 = 13.1. A knob turn reads one knob; an FX, mix or
-    /// ORBIT edit, none.
-    pub const COST: Cost = Cost(14);
+    /// What a sounding Part's knobs cost each block, cycles a sample,
+    /// billed once a Part on one of its voices (ADR 0112, 0115). Estimated
+    /// from the thumb build's instructions, not benched: the delta's check
+    /// (~40 cycles) and two knobs gliding (~300): 340 / 64 = 5.3. Reading
+    /// what changed is `READS`'s.
+    pub const COST: Cost = Cost(6);
+
+    /// Knobs read in a block, every Part's together (ADR 0115): a knob
+    /// turn reads one, before any landing; a new Sound's 66 land over nine
+    /// blocks (~12 ms), playing their stored values meanwhile. Eight, so
+    /// the reserve keeps ADR 0040's voices on rev V in every build: the
+    /// costliest patch's six beside the master tape leave 20 cycles a
+    /// sample, which `COST` and `READS` share (18).
+    pub const READ_BUDGET: u32 = 8;
+
+    /// `READ_BUDGET`'s reads, reserved once beside the bus: ~91 cycles a
+    /// knob, a whole Sound's read on the unit (~6,000, the STRESS overrun
+    /// analysis) / 66, × 8 = 728 / 64 = 11.4.
+    pub const READS: Cost = Cost(12);
 
     pub const UNPRIMED: Self = Self {
         v: [0.0; KNOB_COUNT],
         moving: KnobSet::EMPTY,
         pending: KnobSet::ALL,
-        landing: true,
+        lands: KnobSet::ALL,
         routes: [[0.0; MAX_MOD_SOURCES]; 2],
         routes_moving: false,
         seq: 0,
         seen: (Stamp::NONE, Stamp::NONE),
         reads: 0,
+        cursor: 0,
         k: (0, [0.0; 2]),
     };
 
     /// A new Sound (its Part's `loads` moved): every knob read and landed.
     pub fn land(&mut self) {
-        (self.pending, self.landing) = (KnobSet::ALL, true);
+        (self.pending, self.lands) = (KnobSet::ALL, KnobSet::ALL);
+    }
+
+    /// Only landing: a new Sound read in parts, no edit waiting.
+    pub fn landing(&self) -> bool {
+        !self.pending.is_empty() && self.pending.minus(self.lands).is_empty()
     }
 
     /// Knobs read so far, wrapping: for the tests.
@@ -362,10 +395,13 @@ impl Knobs {
         self.reads
     }
 
-    /// One block: the knobs `d` says changed read, the rest left where
-    /// they are, and those on their way glided toward `p`'s and `m`'s
-    /// stored values. A silent Part (`pace` `None`) lands them instead,
-    /// reading at most `budget` knobs, which it takes from; the rest wait.
+    /// One block: the knobs `d` says changed read, at most `budget` of
+    /// them (taken from it; the rest wait), the rest left where they are,
+    /// and those on their way glided toward `p`'s and `m`'s stored values.
+    /// A silent Part (`pace` `None`), or one landing a new Sound, lands
+    /// them instead. A knob that waits plays where it was (`apply`), so
+    /// an edit glides a block late, never snaps; a new Sound's plays its
+    /// stored value, as a load lands anyway.
     pub fn ease(
         &mut self,
         (p, m): (&Tracked<ParamSnapshot>, &Tracked<ModState>),
@@ -379,38 +415,50 @@ impl Knobs {
             self.k = (sr, [coeff(GlideMs::KNOB, sr), coeff(GlideMs::STAGE, sr)]);
         }
         let stamps = (p.stamp(), m.stamp());
+        // A value written past the publisher (a test's, the bench's; never
+        // the shells') is read whole at once, past the budget: it names no
+        // knob, and spread out it would play stale ones.
+        let past = stamps != (d.of, d.of) && stamps != self.seen;
         let new = if stamps == (d.of, d.of) {
             d.since(self.seq)
-        } else if stamps != self.seen {
+        } else if past {
             KnobSet::ALL
         } else {
             KnobSet::EMPTY
         };
+        let mut whole = u32::MAX;
+        let budget = if past { &mut whole } else { budget };
         (self.seq, self.seen) = (d.seq, stamps);
         let todo = self.pending.union(new);
-        let now = match pace {
-            Some(_) => todo,
-            None => todo.first(*budget),
-        };
-        *budget = budget.saturating_sub(now.len());
-        self.pending = todo.minus(now);
-        let glide = !self.landing && matches!(pace, Some(Pace::Glide(_)));
-        let k = glide.then_some(self.k.1);
+        // Edits first, so a turn never waits on a landing; then what lands.
+        let (edits, from) = todo.minus(self.lands).take(*budget, self.cursor);
+        *budget = budget.saturating_sub(edits.len());
+        let (lands, from) = todo.minus(edits).take(*budget, from);
+        *budget = budget.saturating_sub(lands.len());
+        let now = edits.union(lands);
+        (self.pending, self.cursor) = (todo.minus(now), from);
+        let k = matches!(pace, Some(Pace::Glide(_))).then_some(self.k.1);
         for i in now.iter() {
+            let k = k.filter(|_| !self.lands.has(i));
             self.step(i, p, k, true);
         }
         for i in self.moving.minus(now).iter() {
             self.step(i, p, k, false);
         }
         if now.routes() || self.routes_moving {
-            let k = k.map_or(0.0, |k| k[0]);
+            let k = k.filter(|_| !self.lands.routes()).map_or(0.0, |k| k[0]);
             self.routes_moving = false;
             for (v, col) in self.routes.iter_mut().zip(COLS) {
                 self.routes_moving |= glide_column(v, m, col, k);
             }
         }
         self.reads = self.reads.wrapping_add(now.len());
-        self.landing &= !self.pending.is_empty();
+        // What a silent Part leaves waiting lands when read, as it would
+        // have, even once a voice plays it.
+        self.lands = self.lands.minus(now);
+        if pace.is_none() {
+            self.lands = self.lands.union(self.pending);
+        }
     }
 
     /// Knob `i` one block toward `p`'s at the coefficients `k`; landed at
@@ -435,11 +483,13 @@ impl Knobs {
         self.moving.put(i, on);
     }
 
-    /// The knobs still on their way written over `p`'s stored values, or
-    /// `live`'s for ALGO's (its bytes can't hold a value between steps).
-    /// The rest are where they landed: stored, bit for bit.
+    /// The knobs still on their way, and edits waiting on the read budget,
+    /// written over `p`'s stored values, or `live`'s for ALGO's (its bytes
+    /// can't hold a value between steps). The rest are where they landed:
+    /// stored, bit for bit.
     pub fn apply(&self, p: &mut ParamSnapshot, live: &mut AlgoLive) {
-        for i in self.moving.iter() {
+        let waiting = self.pending.minus(self.lands);
+        for i in self.moving.union(waiting).iter() {
             let (a, v) = (KNOBS[i].addr, KNOBS[i].spec.denormalize(self.v[i]));
             if !live.set(a, v)
                 && let Some(b) = p.block_mut(a.block)
@@ -516,12 +566,17 @@ mod tests {
         ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF)
     }
 
+    /// No read budget to speak of.
+    fn plenty() -> u32 {
+        u32::MAX
+    }
+
     const GLIDE: Option<Pace> = Some(Pace::Glide(48_000));
 
     /// One playing block of `p` and `m` written in place (no publisher):
     /// read whole when their stamps move.
     fn ease(e: &mut Knobs, p: &Tracked<ParamSnapshot>, m: &Tracked<ModState>) {
-        e.ease((p, m), &KnobDelta::default(), GLIDE, &mut 0);
+        e.ease((p, m), &KnobDelta::default(), GLIDE, &mut plenty());
     }
 
     fn rig() -> (Tracked<ParamSnapshot>, Tracked<ModState>, Knobs) {
@@ -644,31 +699,145 @@ mod tests {
             (p, m, d)
         };
         let (p, m, d) = publish(&mut pb, &s);
-        e.ease((&p, &m), &d, GLIDE, &mut 0);
+        e.ease((&p, &m), &d, GLIDE, &mut plenty());
         let base = e.reads();
         assert_eq!(base, KNOB_COUNT as u32);
-        e.ease((&p, &m), &d, GLIDE, &mut 0);
+        e.ease((&p, &m), &d, GLIDE, &mut plenty());
         assert_eq!(e.reads(), base, "settled");
         s.params.filter.cutoff = 500.0;
         let (p, m, d) = publish(&mut pb, &s);
-        e.ease((&p, &m), &d, GLIDE, &mut 0);
+        e.ease((&p, &m), &d, GLIDE, &mut plenty());
         assert_eq!(e.reads(), base + 1, "one knob");
         assert_eq!(e.place(cutoff()).map(|x| x.1), Some(true));
     }
 
-    /// A silent Part reads what changed within its budget, and lands it.
+    /// A silent Part reads within its budget, and lands it; a write past
+    /// the publisher is read whole at once.
     #[test]
     fn a_silent_part_reads_within_its_budget() {
-        let p = Tracked::fresh(ParamSnapshot::default());
-        let m = Tracked::fresh(ModState::new());
+        let mut pb = KnobPublisher::new();
+        let s = Tracked::fresh(Sound::init(EngineType::Algo));
+        let d = pb.publish(0, &s, Loads::NONE);
+        let p = Tracked::new(s.params.clone(), d.of);
+        let m = Tracked::new(s.mod_state.clone(), d.of);
         let mut e = Knobs::UNPRIMED;
         let mut budget = 10;
-        e.ease((&p, &m), &KnobDelta::default(), None, &mut budget);
+        e.ease((&p, &m), &d, None, &mut budget);
         assert_eq!((e.reads(), budget), (10, 0));
         for _ in 0..KNOB_COUNT {
-            e.ease((&p, &m), &KnobDelta::default(), None, &mut 10);
+            e.ease((&p, &m), &d, None, &mut 10);
         }
         assert_eq!(e.reads(), KNOB_COUNT as u32);
-        assert!(e.pending.is_empty() && !e.landing);
+        assert!(e.pending.is_empty() && e.lands.is_empty());
+        let q = Tracked::fresh(ParamSnapshot::default());
+        e.ease((&q, &m), &d, None, &mut 0);
+        assert_eq!(
+            e.reads(),
+            2 * KNOB_COUNT as u32,
+            "past the publisher, whole"
+        );
+    }
+
+    /// The window is exact at its edge: four publishes back, the union of
+    /// the four; five, every knob.
+    #[test]
+    fn the_window_holds_four_publishes() {
+        let mut d = KnobDelta::default();
+        for i in 0..DELTA_DEPTH {
+            d.push(KnobSet(1 << i));
+        }
+        assert_eq!(d.since(d.seq.wrapping_sub(4)), KnobSet(0b1111));
+        assert_eq!(d.since(d.seq.wrapping_sub(1)), KnobSet(1 << 3));
+        assert_eq!(d.since(d.seq.wrapping_sub(5)), KnobSet::ALL);
+        assert_eq!(d.since(d.seq), KnobSet::EMPTY);
+    }
+
+    /// An edit past the block's read budget plays where it was, then
+    /// glides when read: never a snap to the new value.
+    #[test]
+    fn a_waiting_edit_holds_then_glides() {
+        let mut pb = KnobPublisher::new();
+        let mut s = Tracked::fresh(Sound::init(EngineType::Algo));
+        s.params.filter.cutoff = 250.0;
+        let mut e = Knobs::UNPRIMED;
+        let publish = |pb: &mut KnobPublisher, s: &Tracked<Sound>| {
+            let d = pb.publish(0, s, Loads::NONE);
+            let p = Tracked::new(s.params.clone(), d.of);
+            (p, Tracked::new(s.mod_state.clone(), d.of), d)
+        };
+        let (p, m, d) = publish(&mut pb, &s);
+        e.ease((&p, &m), &d, GLIDE, &mut plenty());
+        s.params.filter.cutoff = 1000.0;
+        let (p, m, d) = publish(&mut pb, &s);
+        e.ease((&p, &m), &d, GLIDE, &mut 0);
+        // Its place, back in Hz: 250 within a float's step.
+        assert!(
+            (played(&e, &p) / 250.0 - 1.0).abs() < 1e-6,
+            "waits where it was"
+        );
+        e.ease((&p, &m), &d, GLIDE, &mut plenty());
+        let c = played(&e, &p);
+        assert!(c > 250.0 && c < 1000.0, "glides: {c}");
+    }
+
+    /// A TAPE model turned to SCRUB or away changes how POSITION moves
+    /// with no knob changing: the delta names it.
+    #[test]
+    fn a_model_that_moves_a_knob_itself_names_it() {
+        use crate::dsp::tape_engine::{TapeEngineParams, TapeModel};
+        let mut pb = KnobPublisher::new();
+        let mut s = Tracked::fresh(Sound::init(EngineType::Tape));
+        let d = pb.publish(0, &s, Loads::NONE);
+        s.params.tape.model = TapeModel::Scrub;
+        let e = pb.publish(0, &s, Loads::NONE);
+        let pos = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::POSITION);
+        let i = KNOBS.iter().position(|k| k.addr == pos).unwrap();
+        assert_eq!(e.since(d.seq), KnobSet(1 << i));
+    }
+
+    /// A Sound read in parts reads every knob once, round from where the
+    /// last part stopped, and the routes at once.
+    #[test]
+    fn a_sound_read_in_parts_reads_each_knob_once() {
+        let (mut seen, mut from) = (KnobSet::EMPTY, 0);
+        for i in 0..3 {
+            let now;
+            (now, from) = KnobSet::ALL.minus(seen).take(30, from);
+            assert_eq!(now.routes(), i == 0);
+            assert_eq!(now.minus(seen).len(), now.len(), "none twice");
+            seen = seen.union(now);
+        }
+        assert_eq!(seen, KnobSet::ALL);
+        // From the middle, round.
+        let (a, next) = KnobSet::ALL.take(4, 64);
+        assert_eq!(a, KnobSet(ROUTES | 0b11 << 64 | 0b11));
+        assert_eq!(next, 2);
+    }
+
+    /// Landing a new Sound in parts, an edit to a knob it already read
+    /// goes first, and glides.
+    #[test]
+    fn an_edit_goes_before_a_landing() {
+        let mut pb = KnobPublisher::new();
+        let mut s = Tracked::fresh(Sound::init(EngineType::Modal));
+        let publish = |pb: &mut KnobPublisher, s: &Tracked<Sound>, l| {
+            let d = pb.publish(0, s, l);
+            let p = Tracked::new(s.params.clone(), d.of);
+            (p, Tracked::new(s.mod_state.clone(), d.of), d)
+        };
+        let (p, m, d) = publish(&mut pb, &s, Loads::NONE);
+        let mut e = Knobs::UNPRIMED;
+        e.ease((&p, &m), &d, GLIDE, &mut plenty());
+        e.land();
+        e.ease((&p, &m), &d, GLIDE, &mut 8);
+        assert_eq!(KNOBS[0].spec.label, "STRUCT");
+        s.params.modal.structure = 0.9;
+        let (p, m, d) = publish(&mut pb, &s, Loads::NONE);
+        e.ease((&p, &m), &d, GLIDE, &mut 1);
+        assert_eq!(
+            e.place(KNOBS[0].addr).map(|x| x.1),
+            Some(true),
+            "read, gliding"
+        );
     }
 }

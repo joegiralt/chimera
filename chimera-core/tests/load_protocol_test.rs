@@ -223,7 +223,8 @@ fn one_voice(params: &ParamSnapshot) -> InstRig {
     let r = rev_v();
     let cost = Voice::cost(params, &r.shared.parts[0].mod_state).0;
     // And its Part's knobs (ADR 0112).
-    let hz = ((FxBus::COST.0 + cost + Knobs::COST.0) as u64 * 480_000).div_ceil(7) as u32;
+    let hz = ((FxBus::COST.0 + Knobs::READS.0 + cost + Knobs::COST.0) as u64 * 480_000).div_ceil(7)
+        as u32;
     InstRig::with_budget(SampleBudget::for_cpu(hz))
 }
 

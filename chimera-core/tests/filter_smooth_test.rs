@@ -329,7 +329,11 @@ fn a_turn_on_a_silent_part_lands_on_the_next_note() {
 fn a_note_mid_glide_joins_the_glide() {
     let mut r = rig(FilterKind::K2040, [300.0, 1000.0]);
     r.note(0, true);
-    r.block();
+    // The Sound read in (nine blocks at the read budget, ADR 0115): a knob
+    // not yet read has no old value to glide from, and lands.
+    for _ in 0..9 {
+        r.block();
+    }
     r.sound(0).params.filter.cutoff = 3000.0;
     let first = r.block()[0];
     let was = r.block()[0];
