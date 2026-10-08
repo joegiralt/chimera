@@ -124,9 +124,7 @@ impl RevBill {
     pub fn step(&mut self, set: ReverbType) -> Cost {
         if set != self.to {
             // A switch on a switch: the costlier of the two still running.
-            if self.left > 0 && extra_cost(self.to) > extra_cost(self.from) {
-                self.from = self.to;
-            } else if self.left == 0 {
+            if self.left == 0 || extra_cost(self.to) > extra_cost(self.from) {
                 self.from = self.to;
             }
             self.to = set;
