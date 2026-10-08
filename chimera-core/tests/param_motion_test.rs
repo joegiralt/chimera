@@ -13,12 +13,13 @@
 
 mod common;
 
-use chimera_core::addr::{BlockRef, Blocks, ParamAddr};
+use chimera_core::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use chimera_core::block::{ParamSpec, Smoothing};
 use chimera_core::dsp::knobs::{KNOBS, Knob, coeff};
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
+use chimera_core::project::PartId;
 use chimera_hal::SAMPLE_RATE;
 use common::part_rig::Rig;
 use common::turn::{fast_turn, slow_turn};
@@ -46,26 +47,36 @@ fn sound(k: &Knob) -> Sound {
 }
 
 /// One knob turned by `ticks`, a block each: per block, the place the
-/// voice played and the place stored.
+/// voice played and the place stored. The Project is edited only on a
+/// tick, so between them the Part glides on an unmoved stamp, as on the
+/// unit (the shell publishes every pass; the stamp moves on an edit).
 fn turn(k: &Knob, ticks: &[i8]) -> Vec<(f32, f32)> {
     let mut r = Rig::new([sound(k), Sound::init(EngineType::Algo)]);
     r.note(0, true);
     for _ in 0..200 {
         r.render();
     }
-    let s = k.spec;
     ticks
         .iter()
         .map(|&d| {
-            let b = r.sound(0).params.block_mut(k.addr.block).unwrap();
             if d != 0 {
-                b.nudge(k.addr.param, d);
+                r.sound(0)
+                    .params
+                    .block_mut(k.addr.block)
+                    .unwrap()
+                    .nudge(k.addr.param, d);
             }
-            let stored = s.normalize(b.get(k.addr.param));
             r.render();
-            (s.normalize(played(&r, k.addr)), stored)
+            (k.spec.normalize(played(&r, k.addr)), stored(&r, k.addr))
         })
         .collect()
+}
+
+/// `a`'s stored place, read without an edit.
+fn stored(r: &Rig, a: ParamAddr) -> f32 {
+    let p = &r.p.part(PartId::ALL[0]).sound.params;
+    let s = a.spec().unwrap();
+    s.normalize(p.block(a.block).unwrap().get(a.param))
 }
 
 /// Part 1's voice's value of `addr` last block.
