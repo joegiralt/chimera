@@ -42,6 +42,16 @@ pub trait Unit {
     /// The OTG and PWR registers now: `status`'s `usb_regs` line, last
     /// before `OK`. `None`: no line.
     fn usb_regs(&self) -> Option<UsbRegs>;
+    /// Provokes the fault, once `OK` is not yet out. `None`: not in this build.
+    #[cfg(feature = "fault-inject")]
+    fn fault(&mut self, _: super::FaultArg) -> Option<()> {
+        None
+    }
+    /// The three DMA streams' registers and NDTR range. `None`: not in this build.
+    #[cfg(feature = "fault-inject")]
+    fn fault_dump(&mut self) -> Option<[super::StreamSnap; 3]> {
+        None
+    }
     /// The card behind `ls` and `put`; `NoCard` where there is none.
     type Files: Files;
     /// The card, for `ls` and `put`. `None`: not in this build.
@@ -125,6 +135,13 @@ pub fn answer(
         },
         Ok(Request::Shot(c)) => return write_shot(unit.frame(), c, t.0),
         Ok(r @ Request::Dfu(NoArg)) => unit.dfu().map(Ok).ok_or(Why::Absent(r.command())),
+        #[cfg(feature = "fault-inject")]
+        Ok(r @ Request::Fault(super::FaultArg::Ndtr)) => unit
+            .fault_dump()
+            .map(|d| super::write_snaps(&d, &mut t))
+            .ok_or(Why::Absent(r.command())),
+        #[cfg(feature = "fault-inject")]
+        Ok(r @ Request::Fault(arg)) => unit.fault(arg).map(Ok).ok_or(Why::Absent(r.command())),
         #[cfg(feature = "card-put")]
         Ok(r @ Request::Ls(arg)) => match unit.files() {
             None => Err(Why::Absent(r.command())),
@@ -164,6 +181,8 @@ fn stats(s: &Stats, t: &mut impl Write) -> fmt::Result {
         d => d.iter().try_for_each(|n| write!(t, " {n}"))?,
     }
     writeln!(t, "\ndesyncs {}", a.desyncs)?;
+    writeln!(t, "dma_errors {}", a.dma_errors)?;
+    writeln!(t, "fifo_errors {}", a.fifo_errors)?;
     writeln!(t, "stack_bytes {}", a.stack_used)?;
     writeln!(t, "voices {} {} of {MAX_VOICES}", a.voices, a.voices_peak)?;
     writeln!(t, "cost_pct {}", a.cost_pct)?;

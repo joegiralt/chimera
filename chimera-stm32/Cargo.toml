@@ -46,6 +46,9 @@ card-put = ["usb-console", "chimera-board/card-put", "chimera-core/source-writer
 # The boot's lost-cluster sweep frees what it finds (#360, ADR 0094). Off,
 # it runs dry; on, it fails to build until the owner's go.
 sweep-free = ["chimera-board/sweep-free"]
+# The console's `fault dma <1|2>`: provokes a transfer error on a trailing
+# DMA stream, to test its re-arm on the unit (#25). Never in a shipping build.
+fault-inject = ["usb-console", "perf-probe", "midi-din", "chimera-board/fault-inject", "chimera-core/fault-inject"]
 
 [dependencies]
 chimera-board = { path = "../chimera-board" }
