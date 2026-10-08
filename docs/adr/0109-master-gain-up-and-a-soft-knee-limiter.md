@@ -1,6 +1,6 @@
 # 0109. The master gain goes up 11 dB and the limiter gets a soft knee
 
-- **Status:** Proposed
+- **Status:** Accepted (owner, 2026-10-08)
 - **Deciders:** owner (#411); firmware
 - **Supersedes:** [0058](0058-a-loudness-reference-modal-matches-algo-init.md)
   (its reference, already moved by [0063](0063-levels-at-the-factory-median.md))
@@ -107,8 +107,8 @@ After, the same table:
 - Chords and dense scenes now live in the knee: the six-Part scene takes 17
   dB at its loudest moment. That is the price of using the range; the
   limiter's release (50 ms) was heard as distortion on STRING v127 chords
-  at 15 dB of reduction (ADR 0063), and these chords take 14 dB now. Owner
-  UAT by ear, with the sends up.
+  at 15 dB of reduction (ADR 0063); four-note chords now take 3 to 9 dB.
+  The owner played it on the unit and approved it by ear (2026-10-08).
 - BANK INIT's single note, the peakiest, loses 2.9 dB of loudness to the
   knee, so its post-limiter loudness reads that much under the reference;
   its unlimited loudness is still within ±1 dB (`modal_models_match_the_loudness_reference`
