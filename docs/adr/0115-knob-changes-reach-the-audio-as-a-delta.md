@@ -1,7 +1,7 @@
 # 0115. Knob changes reach the audio as a delta the UI diffs
 
-- **Status:** Proposed
-- **Deciders:** owner (direction 2026-10-08: "a Redux/Elm-style state diff instead of stamps and full reads"), firmware
+- **Status:** Accepted (owner, 2026-10-08)
+- **Deciders:** owner (direction 2026-10-08: "a Redux/Elm-style state diff instead of stamps and full reads"; ruling 2026-10-08: the 8-knob read budget), firmware
 - **Supersedes in part:** [0112](0112-every-parameter-declares-its-motion.md) (point 3: how the Part's knobs learn what changed). Its `Motion`, its glide, its landing rules and its bit-identity at rest stand.
 
 ## Context
@@ -38,7 +38,7 @@
 6. **What is billed:**
    - `Knobs::COST`, 6 cycles/sample a sounding Part, on its first voice: the delta's check (~40 cycles a block) and two knobs gliding (~300), 340 / 64.
    - `Knobs::READS`, 12, reserved once beside the bus (`Instrument::reserved` and `recost`'s shed): the budget's 8 reads at ~91 cycles each (a whole Sound's ~6,000 on the unit, from the STRESS analysis, / 66), 728 / 64.
-   - Why 8 knobs a block, not a whole Sound (94):
+   - The owner's ruling (2026-10-08): 8 knobs a block. Why not a whole Sound (94):
      - ADR 0040's voices on rev V leave 84 cycles/sample beside eight INIT voices and the bus, and 20 beside the costliest patch's six and the master tape.
      - 6 + 12 fits both; 6 + 94 would cost a voice in either.
 7. **The one input to a knob's motion that isn't a knob:** whether its Sound moves it itself (`ParamSnapshot::moves_itself`: SCRUB's POSITION, by `tape.model`). The publisher tracks it per Part and names the knob when it flips.
