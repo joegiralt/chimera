@@ -41,12 +41,40 @@ what it keeps.
      hardware recording, or the original algorithm) through chimera-utils;
      real-time safe (no allocation, bounded state, NaN-safe); every control
      declares its `Motion` (ADR 0112); tested; its cost measured on the unit.
-3. **Extract gradually and bit-identically.** First move the blocks already
+3. **Two tiers, and every block is labelled with its tier** (owner, 2026-10-08):
+   - **Commodity:** standard, well-documented techniques everyone uses (BLEP
+     oscillators, FM, formant, TPT filters, envelopes, LFOs, delay lines,
+     halfband, DC blockers). Implemented from the textbook or paper, or from
+     permissive code with its notice kept. Plumbing: correct, fast, clean,
+     not distinctive.
+   - **Signature:** modelled from something the owner has played and
+     measured: real hardware on the bench (a 3340-style VCO, the Kobol, the
+     SE-02), driven and recorded through the capture rig and iterated by ear
+     until it matches, or a sound the owner has tuned by parameters and
+     voltages. Its provenance is the owner's own measurement session (rig
+     settings, recordings kept outside the repo, fit results), recorded in the
+     file. Never another company's model, emulation or decompiled firmware.
+   - **The label is a type, not a comment** (CLAUDE.md: type-driven first):
+     every block declares its tier and provenance in code, e.g. a required
+     `const TIER: Tier` (`Commodity { source }` / `Signature { session }`) on
+     the block trait, and a test lists every block so an unlabelled one fails
+     to build or test. Product names follow the tier: commodity blocks are
+     described by technique ("BLEP saw"); signature blocks get our own names,
+     never a third party's trademark ("3340-style", not "CEM").
+4. **The capture rig** (chimera-utils) is the tool that makes signature blocks:
+   drive (DC-coupled CV for pitch/PWM/sync/FM, MIDI, gates), capture at 96 or
+   192 kHz with fixed gain, analyse (waveform per output, harmonics vs level,
+   pitch tracking across CV, drift and warm-up, sync, PWM linearity, FM
+   response), fit, and render A/B pages for the owner's ear.
+5. **Extract gradually and bit-identically.** First move the blocks already
    shared or clearly generic (TPT one-pole/SVF stages, saturators, halfband,
    DC blocker, limiter, envelopes, LFOs, the `Motion` glide, the waveguide
    delay line). After that, new technique code lands in `chimera-dsp`, and
    product code moves out when it is next touched. Every move keeps the audio
-   goldens bit-identical and the audio-ISR guard green.
+   goldens bit-identical and the audio-ISR guard green. Today's blocks are
+   labelled as they move: e.g. the 2040 (REV2/EXP from the SSM2040/Kobol
+   schematics) and LADDER (checked against SPICE) are signature-class
+   circuit models; the TPT stages, saturators and envelopes are commodity.
 
 ## Alternatives considered
 - **Leave the DSP organised by product.** Simplest today, but the techniques
