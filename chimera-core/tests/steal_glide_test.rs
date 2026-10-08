@@ -34,8 +34,8 @@ fn off(ch: u8, note: u8) -> NoteEvent {
 
 /// A budget with room for `voices` voices of `cost` beside the whole FX bus.
 fn budget(cost: u32) -> SampleBudget {
-    // And the knobs' read budget, reserved beside the bus (ADR 0115).
-    let reserved = FxBus::COST.0 + Knobs::READS.0;
+    // And the knobs, reserved beside the bus (ADR 0116).
+    let reserved = FxBus::COST.0 + Knobs::RESERVE.0;
     SampleBudget::for_cpu(((reserved + cost) as u64 * 480_000).div_ceil(7) as u32)
 }
 

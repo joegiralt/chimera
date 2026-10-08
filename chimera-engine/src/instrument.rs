@@ -535,9 +535,6 @@ pub struct Instrument {
     knobs: [(Knobs, Loads); MAX_PARTS],
     /// How they move: glide, or land (`land_knobs`).
     knob_pace: Pace,
-    /// The Part the knobs' read budget starts with this block: turned a
-    /// Part a block, so none always waits on the others.
-    knob_turn: u8,
 }
 
 /// Who plays a note: the keys and MIDI, or one of ORBIT's rings.
@@ -553,7 +550,7 @@ pub enum NoteOrigin {
 /// worst-case slots starts a note a block, a typical one all at once.
 pub const SYM_CLEAR_BUDGET: usize = SYM_NOTE_ON_CLEAR_MAX;
 
-crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, knobs, knob_pace, knob_turn });
+crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, knobs, knob_pace });
 
 const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
@@ -611,7 +608,6 @@ impl Instrument {
             addr_of_mut!((*p).costings).write(0);
             addr_of_mut!((*p).knobs).write([(Knobs::UNPRIMED, Loads::NONE); MAX_PARTS]);
             addr_of_mut!((*p).knob_pace).write(Pace::Glide(sample_rate));
-            addr_of_mut!((*p).knob_turn).write(0);
             slot.assume_init_mut()
         }
     }
@@ -651,7 +647,7 @@ impl Instrument {
             Some(_) => OrbitRunner::COST + Self::BURST,
             None => Cost::ZERO,
         };
-        FxBus::COST + Knobs::READS + orbit
+        FxBus::COST + Knobs::RESERVE + orbit
     }
 
     /// Voices that ring a pool set, at most `SYM_SLOTS`: for the bench,
@@ -697,7 +693,7 @@ impl Instrument {
         core::array::from_fn(|v| self.voices[v].played_value(addr))
     }
 
-    /// No Part's knobs wait on the read budget: the bench times from here.
+    /// No Part's knobs move: the bench times from here.
     pub fn knobs_settled(&self) -> bool {
         self.knobs.iter().all(|k| k.0.settled())
     }
@@ -1141,7 +1137,7 @@ impl Instrument {
         }
         // Only the bus and the knobs' reads: ORBIT's reserve refuses new
         // voices, it never fades out sounding ones (ADR 0091).
-        while let Some(v) = self.alloc.shed(FxBus::COST + Knobs::READS) {
+        while let Some(v) = self.alloc.shed(FxBus::COST + Knobs::RESERVE) {
             self.shed(v);
         }
     }
@@ -1210,7 +1206,7 @@ impl Instrument {
         self.knob_pace = Pace::Land;
     }
 
-    /// Each Part's knobs this block (ADR 0112, 0115): what changed eased
+    /// Each Part's knobs this block (ADR 0112, 0116): what changed eased
     /// while a voice plays the Part, landed while none does and on a new
     /// Sound.
     fn ease_knobs(&mut self, shared: &AudioShared) {
@@ -1220,38 +1216,14 @@ impl Instrument {
                 playing[self.sounding[v] as usize % MAX_PARTS] = true;
             }
         }
-        // Every Part reads within `Knobs::READ_BUDGET` a block, shared
-        // (`Knobs::READS`): a playing Part's edits first, so a knob turn
-        // never waits, then a playing Part's new Sound, then the silent
-        // Parts'. A load lands over nine blocks.
+        // Each Part takes its delta's moves (ADR 0116): a quiet one, none.
         let pace = self.knob_pace;
-        let mut budget = Knobs::READ_BUDGET;
-        let turn = usize::from(self.knob_turn) % MAX_PARTS;
-        self.knob_turn = ((turn + 1) % MAX_PARTS) as u8;
-        // Each Part's pass, once: a quiet one (settled, nothing new) none.
-        let mut class = [u8::MAX; MAX_PARTS];
-        for (p, (knobs, part)) in self.knobs.iter_mut().zip(&shared.parts).enumerate() {
+        for ((knobs, part), playing) in self.knobs.iter_mut().zip(&shared.parts).zip(playing) {
             new_sound(knobs, part);
-            if !knobs.0.quiet((&part.params, &part.mod_state), &part.knobs) {
-                class[p] = match (playing[p], knobs.0.landing()) {
-                    (true, false) => 0,
-                    (true, true) => 1,
-                    (false, _) => 2,
-                };
-            }
-        }
-        for pass in 0..3 {
-            for p in (0..MAX_PARTS).map(|j| (turn + j) % MAX_PARTS) {
-                let (knobs, part) = (&mut self.knobs[p], &shared.parts[p]);
-                if class[p] == pass {
-                    let pace = playing[p].then_some(pace);
-                    knobs.0.ease(
-                        (&part.params, &part.mod_state),
-                        &part.knobs,
-                        pace,
-                        &mut budget,
-                    );
-                }
+            let k = &mut knobs.0;
+            let sound = (&part.params, &part.mod_state);
+            if !k.quiet(sound, &part.knobs) {
+                k.ease(sound, &part.knobs, playing.then_some(pace));
             }
         }
     }

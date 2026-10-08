@@ -134,8 +134,7 @@ impl Rig {
         // Fresh each block, no publisher: read whole.
         let (p, m) = (Tracked::fresh(params.clone()), Tracked::fresh(mods.clone()));
         let pace = Some(Pace::Glide(self.voice.sample_rate()));
-        self.knobs
-            .ease((&p, &m), &KnobDelta::default(), pace, &mut { u32::MAX });
+        self.knobs.ease((&p, &m), &KnobDelta::default(), pace);
         let knobs = self.knobs;
         with_ctx!(self, |v, ctx, _id| v
             .render_knobs(out, params, mods, &knobs, ctx))

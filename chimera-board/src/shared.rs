@@ -85,7 +85,9 @@ static mut KNOBS: MaybeUninit<KnobPublisher> = MaybeUninit::uninit();
 /// The triple buffer's ends and the knobs' publisher, which every publish
 /// of a Project takes. Seeded from the UI's `Performance`, not
 /// `AudioShared::default`, whose temporary `Performance` puts an 8 KB
-/// frame on the stack.
+/// frame on the stack. Out of line: the publisher is built here, not on
+/// `synth`'s frame (the stack check's 8 KB a step).
+#[inline(never)]
 pub fn take_audio(
     perf: &Performance,
 ) -> Option<(

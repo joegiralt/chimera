@@ -1,9 +1,8 @@
-//! The audio reads only the knobs a publish's delta names (ADR 0115): a
-//! whole Sound is ~6k cycles on the unit, one knob ~90. A knob turn reads
-//! that knob of that Part; an FX, mix or ORBIT edit, none; a Part that
-//! starts playing, none (its knobs are current); every Part together,
-//! `Knobs::READ_BUDGET` a block at most. Six Parts, published from a Project each block
-//! as the shells do, counted in knobs read.
+//! The audio takes only the moves a publish's delta carries (ADR 0115,
+//! 0116), and reads no knob: a knob turn is one move of that Part; an FX,
+//! mix or ORBIT edit, none; a Part that starts playing, none; a new Sound,
+//! none (it lands). Six Parts, published from a Project each block as the
+//! shells do, counted in moves taken.
 
 mod common;
 
@@ -20,8 +19,8 @@ use chimera_core::scope::ScopeWriter;
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::SAMPLE_RATE;
 
-/// Knobs read in a block, every Part together.
-const BUDGET: u32 = chimera_core::dsp::knobs::Knobs::READ_BUDGET;
+/// The most moves a Part takes in a block: past it, it lands.
+const MOVES: u32 = chimera_core::dsp::knobs::MOVES as u32;
 
 struct Six {
     p: Box<Project>,
@@ -98,12 +97,12 @@ impl Six {
         self.p.replace_part(c).unwrap();
     }
 
-    /// Whether every knob of Part `part` sits on its stored value, landed.
+    /// Whether every knob of Part `part` has landed: none moves, so its
+    /// voices play the stored values.
     fn landed(&self, part: usize) -> bool {
-        let stored = &self.p.part(PartId::ALL[part]).sound.params;
         KNOBS
             .iter()
-            .all(|k| self.inst.knob(part, k.addr) == Some((k.read(stored), false)))
+            .all(|k| self.inst.knob(part, k.addr).map(|k| k.1) == Some(false))
     }
 
     /// `n` blocks: the most knobs read in any one of them.
@@ -156,8 +155,7 @@ fn an_edit_re_reads_only_the_edited_part() {
 #[test]
 fn parts_starting_together_read_nothing() {
     let mut r = Six::new();
-    assert!(r.blocks(20) <= BUDGET, "the block's budget");
-    r.blocks(40);
+    assert_eq!(r.blocks(20), 0, "silent, settled: nothing");
     for p in [1, 3, 4] {
         r.p.edit_part(PartId::ALL[p]).sound.params.filter.cutoff *= 0.5;
     }
@@ -228,39 +226,28 @@ fn a_part_back_from_silence_plays_the_stored_values() {
     }
 }
 
-/// A Sound loaded into a playing Part lands within the block budget: in
-/// nine blocks, five in 42; a knob turn on another playing Part in the
-/// same block is served first (ADR 0115).
+/// A Sound loaded into a playing Part lands at once, taking no move; five
+/// at once too, and a knob turn on another playing Part in the same block
+/// is its one move (ADR 0116).
 #[test]
-fn loads_into_playing_parts_land_within_the_budget() {
+fn loads_into_playing_parts_land_at_once() {
     let mut r = Six::new();
     for p in 0..MAX_PARTS {
         r.key(p, true);
     }
     r.blocks(50);
+    r.p.edit_part(PartId::ALL[1]).sound.params.filter.cutoff *= 0.5;
+    r.block();
+    assert!(!r.landed(1), "mid-glide");
     r.load(1);
-    let mut n = 0;
-    while !r.landed(1) {
-        let b = r.block();
-        assert!(b.iter().sum::<u32>() <= BUDGET, "{b:?}");
-        n += 1;
-        assert!(n <= 9, "a load lands in {n} blocks");
-    }
-
+    assert_eq!(r.block(), [0; MAX_PARTS]);
+    assert!(r.landed(1));
     for p in 1..MAX_PARTS {
         r.load(p);
     }
     r.p.edit_part(PartId::ALL[0]).sound.params.filter.cutoff *= 0.5;
-    let first = r.block();
-    assert_eq!(first[0], 1, "the turn first: {first:?}");
-    assert!(first.iter().sum::<u32>() <= BUDGET, "{first:?}");
-    let mut n = 1;
-    while !(1..MAX_PARTS).all(|p| r.landed(p)) {
-        let b = r.block();
-        assert!(b.iter().sum::<u32>() <= BUDGET, "{b:?}");
-        n += 1;
-        assert!(n <= 42, "five loads land in {n} blocks");
-    }
+    assert_eq!(r.block(), [1, 0, 0, 0, 0, 0]);
+    assert!((1..MAX_PARTS).all(|p| r.landed(p)));
 }
 
 /// Publishes the audio never sees (1 to 9 between two renders, past the
@@ -290,18 +277,18 @@ fn skipped_publishes_lose_nothing() {
     }
 }
 
-/// The block's read budget is reserved once, beside the bus: a budget of
-/// the bus, the reads and one voice with its Part's knobs admits it; a
-/// cycle a sample less refuses it.
+/// The knobs are reserved once, beside the bus: a budget of the bus, the
+/// knobs' reserve and one voice with its Part's knobs admits it; a cycle a
+/// sample less refuses it.
 #[test]
-fn the_read_budget_is_reserved_once() {
+fn the_knobs_are_reserved_once() {
     use chimera_core::dsp::knobs::Knobs;
     use chimera_core::dsp::voice::Voice;
     let mut r = Six::new();
     r.publish();
     let part = &r.shared.parts[0];
     let voice = Voice::cost(&part.params, &part.mod_state).0;
-    let need = FxBus::COST.0 + Knobs::READS.0 + voice + Knobs::COST.0;
+    let need = FxBus::COST.0 + Knobs::RESERVE.0 + voice + Knobs::COST.0;
     for (cost, admitted) in [(need, 1), (need - 1, 0)] {
         let hz = (cost as u64 * 480_000).div_ceil(7) as u32;
         *r.inst = Instrument::new(SAMPLE_RATE, SampleBudget::for_cpu(hz));
@@ -311,10 +298,10 @@ fn the_read_budget_is_reserved_once() {
 }
 
 /// The bench's one-Part publish (`publish_sound`) is the publisher's path:
-/// a Sound loaded into a playing Part again and again reads within the
-/// budget each block and lands.
+/// a Sound loaded into a playing Part again and again takes no move and
+/// lands; a knob turned through it, one.
 #[test]
-fn a_one_part_publish_loads_within_the_budget() {
+fn a_one_part_publish_loads_and_turns() {
     use chimera_core::project::Loads;
     use chimera_core::tracked::Tracked;
     let mut r = Six::new();
@@ -331,32 +318,59 @@ fn a_one_part_publish_loads_within_the_budget() {
         let before = r.inst.knob_reads(5);
         r.inst
             .render(&mut r.fx, &mut r.dac, &r.shared, &mut r.scope);
-        assert!(r.inst.knob_reads(5).wrapping_sub(before) <= BUDGET);
+        assert_eq!(r.inst.knob_reads(5), before, "a load: no move");
     }
     let cutoff = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
-    let want = KNOBS
-        .iter()
-        .find(|k| k.addr == cutoff)
-        .unwrap()
-        .spec
-        .normalize(2000.0);
-    assert_eq!(r.inst.knob(5, cutoff), Some((want, false)));
+    assert_eq!(r.inst.knob(5, cutoff).map(|k| k.1), Some(false));
+    s.params.filter.cutoff = 600.0;
+    r.shared.publish_sound(5, &s, loads, &mut r.knobs);
+    let before = r.inst.knob_reads(5);
+    r.inst
+        .render(&mut r.fx, &mut r.dac, &r.shared, &mut r.scope);
+    assert_eq!(
+        r.inst.knob_reads(5).wrapping_sub(before),
+        1,
+        "a turn: one move"
+    );
+    assert_eq!(r.inst.knob(5, cutoff).map(|k| k.1), Some(true));
 }
 
-/// Every Part's knobs settle once their reads are done: what the bench
-/// waits on before timing, so its setup goes through the publisher too.
+/// The knobs say when nothing moves: what the bench waits on before
+/// timing. A turn moves until its glide lands.
 #[test]
 fn the_knobs_say_when_they_have_settled() {
     let mut r = Six::new();
+    r.key(3, true);
+    r.blocks(5);
+    assert!(r.inst.knobs_settled());
+    r.p.edit_part(PartId::ALL[3]).sound.params.filter.cutoff *= 0.5;
     r.block();
-    assert!(!r.inst.knobs_settled(), "six Sounds to read");
+    assert!(!r.inst.knobs_settled(), "a glide");
     let mut n = 1;
     while !r.inst.knobs_settled() {
         r.block();
         n += 1;
+        assert!(n < 1000, "never lands");
     }
-    assert!(n <= 50, "{n} blocks");
-    r.p.edit_part(PartId::ALL[3]).sound.params.filter.cutoff *= 0.5;
-    r.block();
-    assert!(r.inst.knobs_settled(), "one knob, read at once");
+}
+
+/// A Part takes at most `MOVES` moves a block; past them, it lands.
+#[test]
+fn a_block_takes_at_most_a_window_of_moves() {
+    let mut r = Six::new();
+    r.key(0, true);
+    r.blocks(20);
+    let mods = KNOBS
+        .iter()
+        .filter(|k| matches!(k.addr.block, BlockRef::Modal | BlockRef::Filter));
+    for (i, k) in mods.enumerate() {
+        let s = r.p.edit_part(PartId::ALL[0]).sound;
+        let b = s.params.block_mut(k.addr.block).unwrap();
+        let v = k.spec.quantize(k.spec.denormalize(0.13 + 0.07 * i as f32));
+        b.set(k.addr.param, v);
+        r.publish();
+    }
+    let b = r.block();
+    assert!(b[0] <= MOVES, "{b:?}");
+    assert!(r.landed(0), "past the window: landed");
 }
