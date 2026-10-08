@@ -5,8 +5,9 @@ use chimera_hal::BLOCK_SIZE;
 
 use crate::addr::{BlockRef, Blocks, ParamAddr};
 use crate::block::{ParamId, apply_offset};
-use crate::dsp::algo::engine::AlgoLive;
+use crate::dsp::algo::engine::{AlgoEngine, AlgoLive};
 use crate::dsp::algo::params::AlgoParams;
+use crate::dsp::algo::plan::OPS;
 use crate::dsp::dc_blocker::DcBlocker;
 use crate::dsp::drive::Drive;
 use crate::dsp::ease::{Ramp, at, step_of};
@@ -260,6 +261,26 @@ impl Voice {
         } else {
             Cost::ZERO
         }
+    }
+
+    /// ALGO ops still running where the stored LEVELs no longer bill them
+    /// (a LEVEL gliding to 0, ADR 0112): what the voice adds, until the
+    /// glide lands.
+    pub fn held_ops_extra(&self, p: &ParamSnapshot, mods: &ModState) -> Cost {
+        let Some(run) = self.slot.algo_running() else {
+            return Cost::ZERO;
+        };
+        let routed = mods.algo_levels_routed();
+        let billed: [bool; OPS] = core::array::from_fn(|i| routed[i] || p.algo.ops[i].level > 0);
+        if (0..OPS).all(|i| !run[i] || billed[i]) {
+            return Cost::ZERO;
+        }
+        let live = core::array::from_fn(|i| routed[i] || run[i]);
+        Cost(
+            AlgoEngine::cost(&p.algo, &live)
+                .0
+                .saturating_sub(AlgoEngine::cost(&p.algo, &routed).0),
+        )
     }
 
     /// What this voice's sounding note costs over `p`'s stored model

@@ -1089,7 +1089,8 @@ impl Instrument {
                 let p = p as usize % MAX_PARTS;
                 let part = &shared.parts[p];
                 let held = self.voices[v].held_model_extra(&part.params)
-                    + self.voices[v].held_level_extra(&part.params, &part.mod_state);
+                    + self.voices[v].held_level_extra(&part.params, &part.mod_state)
+                    + self.voices[v].held_ops_extra(&part.params, &part.mod_state);
                 self.alloc.recost(v, costs[p] + held);
             }
         }

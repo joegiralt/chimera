@@ -204,6 +204,12 @@ impl AlgoEngine {
         )
     }
 
+    /// The ops the kernel runs next block: gain off zero where the last
+    /// block ended (a LEVEL gliding to 0 runs until it lands, ADR 0112).
+    pub fn running(&self) -> [bool; OPS] {
+        core::array::from_fn(|i| self.gain[i] != 0.0)
+    }
+
     /// By value, through the stack: tests only.
     #[cfg(any(test, feature = "test-support"))]
     pub fn new() -> Self {

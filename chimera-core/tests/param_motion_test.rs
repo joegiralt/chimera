@@ -220,3 +220,45 @@ fn the_419_knobs_are_declared() {
     assert_eq!(by(&ALGO_OP_SPECS, "CRSE"), Motion::Stepped(Change::Snap));
     assert_eq!(by(&ALGO_SPECS, "TRNSP"), Motion::Stepped(Change::Snap));
 }
+
+/// An op LEVEL turned to 0 under a held note keeps sounding while it glides
+/// (ADR 0112): the allocator bills it until the kernel stops running it,
+/// then drops it (#424).
+#[test]
+fn a_level_gliding_to_zero_is_billed_until_it_lands() {
+    use chimera_core::addr::Op;
+    use chimera_core::dsp::algo::params::AlgoOpParams;
+    for op in Op::ALL {
+        let mut s = Sound::init(EngineType::Algo);
+        s.params.envelopes[0].sustain = 1.0;
+        for o in &mut s.params.algo.ops {
+            o.level = 99;
+        }
+        let mut r = Rig::new([s, Sound::init(EngineType::Algo)]);
+        r.note(0, true);
+        for _ in 0..50 {
+            r.render();
+        }
+        let full = r.inst.allocator().sounding_cost();
+        r.sound(0).params.algo.ops[op.index()].level = 0;
+        let a = ParamAddr::new(BlockRef::AlgoOp(op), AlgoOpParams::LEVEL);
+        let mut blocks = 0;
+        while r.inst.knob(0, a).is_none_or(|k| k.1) || blocks == 0 {
+            r.render();
+            assert_eq!(
+                r.inst.allocator().sounding_cost(),
+                full,
+                "{op:?} block {blocks}"
+            );
+            blocks += 1;
+            assert!(blocks < 1000, "{op:?} never lands");
+        }
+        assert!(blocks > 100, "{op:?} landed in {blocks} blocks");
+        r.render();
+        r.render();
+        assert!(
+            r.inst.allocator().sounding_cost() < full,
+            "{op:?} still billed"
+        );
+    }
+}
