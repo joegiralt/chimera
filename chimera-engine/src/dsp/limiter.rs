@@ -1,22 +1,22 @@
 //! The output stage (ADR 0050): after the master section, the last stage
-//! before the DACs. It trims the mix by `OUTPUT_TRIM` and holds each sample
-//! at or under `CEILING`, with one gain linked across every pair and side,
+//! before the DACs. It gains the mix by `OUTPUT_GAIN` and holds each sample
+//! at or under `CEILING` along a soft knee (`KNEE`, ADR 0109), with one gain linked across every pair and side,
 //! so `to_dac`'s clamp is never reached. Everything before it is left at
 //! main's levels, so the level-dependent stages (the reverb's i16 ring,
 //! the delay's saturation, the tape, the compressor) keep their character.
-//! Below `THRESHOLD` it is exact: the output is the input × the trim, one
+//! Below `THRESHOLD` it is exact: the output is the input × the gain, one
 //! block late.
 //!
 //! The gain moves once per `STEP`-sample chunk and is ramped between, as
 //! the compressor's is (`ramp_gains`). Each chunk in asks to keep a share
-//! of the trim, `AIM / (peak · trim)` (1 at or under the threshold). The
+//! of the gain, `knee(o) / o` for `o = peak · gain` (1 at or under the threshold). The
 //! share at a chunk end out is the least any of the next `CHUNKS` chunks
 //! asks for (a van Herk minimum over this block and the last), released at
 //! 50 ms, then averaged over the last `CHUNKS` chunk ends. Every term of
 //! that average covers the chunks the ramp crosses, so the attack is done
 //! within the lookahead and no sample passes the ceiling. The average is
 //! summed in fixed point: it never drifts, and at rest the gain is exactly
-//! the trim.
+//! the gain.
 //!
 //! The lookahead is the DAC's own two blocks (`DacBlocks`): the mix lands
 //! in one while the other still holds the block before it, which the
@@ -32,15 +32,23 @@ use crate::hw::DAC_PAIRS;
 
 /// −1 dBFS.
 pub const CEILING: f32 = 0.891_250_9;
-/// The output trim (ADR 0050): 1/√8, −9.03 dB, so eight voices summed at
-/// random phase land where one voice did. The limiter's rest gain.
-pub const OUTPUT_TRIM: f32 = 0.353_553_38;
-/// The input level the trim brings to the ceiling: above it, the limiter
-/// takes more than the trim.
-pub const THRESHOLD: f32 = CEILING / OUTPUT_TRIM;
+/// The master gain (ADR 0109, was ADR 0050's 1/√8 trim): +1.94 dB, so a
+/// lone ALGO INIT note peaks near −12 dBFS and the soft knee takes what
+/// chords and dense scenes add. The limiter's rest gain.
+pub const OUTPUT_GAIN: f32 = 1.25;
+/// Where the knee starts at the output, −6 dBFS: under it the limiter is
+/// exact, over it the peak bends toward `AIM` along `knee`.
+pub const KNEE: f32 = 0.5;
+/// The input level where the knee starts: above it the limiter takes more
+/// than the gain.
+pub const THRESHOLD: f32 = KNEE / OUTPUT_GAIN;
 /// What an over chunk is scaled to: 2^-20 under the ceiling, room for the
 /// few roundings between the detector and the output.
 const AIM: f32 = CEILING * (1.0 - 1.0 / (1 << 20) as f32);
+/// The knee's span, output units, from `KNEE` to `AIM`.
+const SPAN: f32 = AIM - KNEE;
+/// `KNEE · SPAN`, for `knee`.
+const KS: f32 = KNEE * SPAN;
 /// The delay, samples: one block, 1.33 ms at 48 kHz.
 pub const LOOKAHEAD: usize = BLOCK_SIZE;
 /// Release time constant, s.
@@ -144,7 +152,7 @@ impl Limiter {
             rel: 1.0,
             held: [ONE; CHUNKS],
             sum: FULL,
-            gain: OUTPUT_TRIM,
+            gain: OUTPUT_GAIN,
             k: 0.0,
             rate: 0,
         }
@@ -167,9 +175,9 @@ impl Limiter {
         for (c, mc) in m.iter_mut().enumerate() {
             let i0 = c * STEP;
             let peak = chunk_peak(fresh, i0);
-            // The share of the trim this chunk keeps: `AIM / (peak · trim)`.
+            // The share of the gain this chunk keeps: `knee(o) / o`.
             let r = if peak > THRESHOLD {
-                (AIM / OUTPUT_TRIM) / peak
+                knee(peak * OUTPUT_GAIN - KNEE)
             } else {
                 1.0
             };
@@ -190,8 +198,8 @@ impl Limiter {
             let q = (self.rel * ONE as f32) as u32; // floors: never above
             self.sum = self.sum - self.held[slot] + q;
             self.held[slot] = q;
-            // The trim times the average: exactly the trim at rest.
-            let e1 = self.sum as f32 * (OUTPUT_TRIM / FULL as f32);
+            // The gain times the average: exactly the gain at rest.
+            let e1 = self.sum as f32 * (OUTPUT_GAIN / FULL as f32);
             // The chunk in stays where it is; the one in a block ago is
             // scaled in place and goes out.
             for (j, g) in ramp_gains(e0, e1).into_iter().enumerate() {
@@ -214,6 +222,15 @@ impl Limiter {
     }
 }
 
+/// The share kept at `d` over the knee's start, `o = KNEE + d`: the
+/// output bends as `KNEE + SPAN · d / (SPAN + d)` (slope 1 at the start,
+/// `AIM` as its asymptote, never past it) and the share is that over `o`.
+/// One divide.
+#[inline(always)]
+fn knee(d: f32) -> f32 {
+    (KS + AIM * d) / ((SPAN + d) * (KNEE + d))
+}
+
 /// The smaller of two gains, never NaN here: a plain compare, without
 /// `f32::min`'s NaN handling.
 #[inline(always)]
@@ -226,7 +243,7 @@ fn least(a: f32, b: f32) -> f32 {
 /// the bits: a float's magnitude orders as its bits do, and integer
 /// compares skip the FPU's flag round trip.
 ///
-/// A non-finite sample reads as the level the trim brings to full scale.
+/// A non-finite sample reads as the level the gain brings to full scale.
 /// It has no level to measure,
 /// and the DAC plays it at full scale at most (`to_dac`: ±inf clamps, NaN
 /// is silence), so it asks for the ceiling's 1 dB and no more: a fault
@@ -242,8 +259,8 @@ fn chunk_peak(x: &Pairs, i0: usize) -> f32 {
 }
 
 const INF: u32 = 0x7f80_0000;
-/// The input the trim brings to the DAC's full scale.
-const FULL_SCALE: u32 = (1.0 / OUTPUT_TRIM).to_bits();
+/// The input the gain brings to the DAC's full scale.
+const FULL_SCALE: u32 = (1.0 / OUTPUT_GAIN).to_bits();
 
 /// The largest `read(|s| bits)` over the chunk.
 #[inline(always)]
