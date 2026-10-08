@@ -312,3 +312,36 @@ fn the_read_budget_is_reserved_once() {
         assert_eq!(r.playing(), admitted, "budget {cost}");
     }
 }
+
+/// The bench's one-Part publish (`publish_sound`) is the publisher's path:
+/// a Sound loaded into a playing Part again and again reads within the
+/// budget each block and lands.
+#[test]
+fn a_one_part_publish_loads_within_the_budget() {
+    use chimera_core::project::Loads;
+    use chimera_core::tracked::Tracked;
+    let mut r = Six::new();
+    r.key(5, true);
+    r.blocks(50);
+    let mut s = Tracked::fresh(Sound::init(EngineType::Algo));
+    let mut loads = Loads::NONE;
+    for b in 0..120 {
+        if b % 12 == 0 {
+            s.params.filter.cutoff = if b % 24 == 0 { 500.0 } else { 2000.0 };
+            loads = loads.next();
+        }
+        r.shared.publish_sound(5, &s, loads, &mut r.knobs);
+        let before = r.inst.knob_reads(5);
+        r.inst
+            .render(&mut r.fx, &mut r.dac, &r.shared, &mut r.scope);
+        assert!(r.inst.knob_reads(5).wrapping_sub(before) <= BUDGET);
+    }
+    let cutoff = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
+    let want = KNOBS
+        .iter()
+        .find(|k| k.addr == cutoff)
+        .unwrap()
+        .spec
+        .normalize(2000.0);
+    assert_eq!(r.inst.knob(5, cutoff), Some((want, false)));
+}

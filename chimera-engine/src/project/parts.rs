@@ -71,7 +71,13 @@ impl Loads {
     pub const NONE: Self = Self(0);
 
     pub(in crate::project) fn bump(&mut self) {
-        self.0 = self.0.wrapping_add(1);
+        *self = self.next();
+    }
+
+    /// The count after one more load: what a Sound loaded outside a
+    /// Project (the bench's) is published with.
+    pub const fn next(self) -> Self {
+        Self(self.0.wrapping_add(1))
     }
 }
 

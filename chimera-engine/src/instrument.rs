@@ -27,7 +27,7 @@ use crate::orbit::ring::Harmony;
 use crate::orbit::runner::{OrbitRunner, OrbitShared};
 use crate::params::{EngineType, ParamSnapshot};
 use crate::part::{Held, LiveSnap, PartParams};
-use crate::preset::{Part, Performance};
+use crate::preset::{Part, Performance, Sound};
 use crate::project::{Loads, Project, SourceId};
 use crate::scope::ScopeWriter;
 use crate::source_table::{AudioToken, GateView};
@@ -208,6 +208,23 @@ impl AudioShared {
             epoch,
             |i, p| knobs.publish(i, &p.sound, p.loads()),
         );
+    }
+
+    /// Part `i` given `sound`, `loads` its Sound loads, as a publish gives
+    /// it (ADR 0115): its values stamped as `sound`, its knob delta from
+    /// `knobs`. The bench's one-Part publish, which `fill` makes for each.
+    pub fn publish_sound(
+        &mut self,
+        i: usize,
+        sound: &Tracked<Sound>,
+        loads: Loads,
+        knobs: &mut KnobPublisher,
+    ) {
+        let d = &mut self.parts[i];
+        let stamp = sound.stamp();
+        d.params = Tracked::new(sound.params.clone(), stamp);
+        d.mod_state = Tracked::new(sound.mod_state.clone(), stamp);
+        (d.knobs, d.loads) = (knobs.publish(i, sound, loads), loads);
     }
 
     /// Every Part's values, each stamped as its Sound (equal stamps, equal

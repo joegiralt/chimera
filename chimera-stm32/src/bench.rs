@@ -66,6 +66,7 @@ use chimera_engine::taps::TapOp;
 use chimera_engine::triple::TripleBuffer;
 use chimera_engine::voice_alloc::VoiceIdx;
 use chimera_engine::{MidiChannel, MidiNote, Velocity};
+use chimera_engine::{dsp::knobs::KnobPublisher, project::Loads, tracked::Tracked};
 use chimera_hal::ChimeraDisplay;
 use cortex_m::peripheral::DWT;
 use embedded_graphics_core::pixelcolor::Rgb565;
@@ -629,6 +630,14 @@ static mut SHARED: MaybeUninit<AudioShared> = MaybeUninit::uninit();
 // any read. In D2 with the `Instrument`, as a voice's slot is.
 #[unsafe(link_section = ".ram_d2.voices")]
 static mut SLOT: MaybeUninit<EngineSlot> = MaybeUninit::uninit();
+// The STRESS LOAD rows' Sound and the UI's side of the knobs, as a load
+// publishes them (ADR 0115). In D2, out of AXI's margin; NOLOAD, built in
+// place by `stress` before any read.
+#[unsafe(link_section = ".ram_d2.voices")]
+static mut LOADING: MaybeUninit<(Tracked<Sound>, KnobPublisher)> = MaybeUninit::uninit();
+
+/// The STRESS LOAD rows: a Sound loaded every UI frame, preset browsing.
+const LOAD_EVERY: u32 = 12;
 static mut SYM: SymAlloc = SymAlloc::new();
 
 /// Rebuilds and note-ons timed, each averaged.
@@ -1181,9 +1190,13 @@ fn memory_page(
 #[inline(never)]
 fn stress_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>, clocks: Clocks) {
     chimera_engine::probe::set_clock(DWT::cycle_count);
-    let ((s1, sp1), (s2, sp2)) = (rig.stress(true), rig.stress(false));
+    let ((s1, sp1), (s2, sp2)) = (rig.stress(true, &[]), rig.stress(false, &[]));
+    // Loads published as the UI does, every frame: into Part 6, which
+    // plays its six keys, then into Parts 1-5 at once (ORBIT's).
+    let ((l1, ..), _) = rig.stress(true, &[MAX_PARTS - 1]);
+    let ((l5, ..), _) = rig.stress(true, &[0, 1, 2, 3, 4]);
     let budget = BlockBudget::for_cpu(clocks.cpu_hz).budget_cycles();
-    show_stress(rec, ([s1, s2], budget));
+    show_stress(rec, ([s1, s2], budget), [l1, l5]);
     hold(clocks);
     show_phases(rec, &[("ST1", sp1), ("ST2", sp2)]);
     hold(clocks);
@@ -1509,9 +1522,11 @@ impl Rig<'_> {
     /// starts. The allocator keeps the unit's real budget, so it refuses
     /// what the unit would. Timed as `render_half` runs: ORBIT's block and
     /// view, the render and the three pairs' interleave; the note queues
-    /// are empty.
+    /// are empty. Every `LOAD_EVERY` timed blocks, each of `loads` takes
+    /// its Sound again as a load, through the knobs' publisher (ADR 0115),
+    /// before the block's timing starts, as the UI publishes.
     #[inline(never)]
-    fn stress(&mut self, keys_first: bool) -> ((u32, usize, u32, u32), Phases) {
+    fn stress(&mut self, keys_first: bool, loads: &[usize]) -> ((u32, usize, u32, u32), Phases) {
         let budget = SampleBudget::for_cpu(self.cpu_hz);
         let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
         let fx = FxBus::init_in_place(self.fx_slot);
@@ -1527,6 +1542,13 @@ impl Rig<'_> {
         if keys_first {
             hold_notes(inst, shared, MAX_PARTS - 1);
         }
+        // SAFETY: the bench is the only user of `LOADING` (see `run`), and
+        // `write` builds it whole before any read.
+        let (sound, knobs) = unsafe { &mut *addr_of_mut!(LOADING) }.write((
+            Tracked::fresh(Sound::init(EngineType::Algo)),
+            KnobPublisher::new(),
+        ));
+        let mut count = [Loads::NONE; MAX_PARTS];
         #[cfg(feature = "orbit")]
         let (mut runner, mut view) = {
             let runner = OrbitRunner::new(SAMPLE_RATE_NZ);
@@ -1545,6 +1567,15 @@ impl Rig<'_> {
             }
             if b == WARM_BLOCKS + 1 && !keys_first {
                 hold_notes(inst, shared, MAX_PARTS - 1);
+            }
+            if b >= WARM_BLOCKS && (b - WARM_BLOCKS).is_multiple_of(LOAD_EVERY) {
+                for &p in loads {
+                    let part = &shared.parts[p];
+                    (sound.params, sound.mod_state) =
+                        ((*part.params).clone(), (*part.mod_state).clone());
+                    count[p] = count[p].next();
+                    shared.publish_sound(p, sound, count[p], knobs);
+                }
             }
             worst_bus(shared, b);
             let start = DWT::cycle_count();
@@ -1942,9 +1973,12 @@ fn show_memory(
 /// then after) against the block budget, and the most voices it sounded;
 /// with ORBIT, each run's costliest ORBIT block and the block ORBIT
 /// starts in, whole.
+/// Last, the LOAD rows' costliest blocks: a Sound loaded into Part 6
+/// every UI frame, then into Parts 1-5 at once, keys first.
 fn show_stress(
     rec: &mut Recorder<'_, impl ChimeraDisplay>,
     ([(first, v1, o1, t1), (after, v2, o2, t2)], budget): ([(u32, usize, u32, u32); 2], u32),
+    [l1, l5]: [u32; 2],
 ) {
     rec.clear();
     rec.heading("STRESS");
@@ -1954,7 +1988,8 @@ fn show_stress(
         format_args!("STRESS T0 {t1}/{t2}"),
     ];
     let shown = if cfg!(feature = "orbit") { 3 } else { 1 };
-    show_lines(rec, lines.into_iter().take(shown));
+    let load = [format_args!("STRESS LOAD {l1}/{l5}/{budget}")];
+    show_lines(rec, lines.into_iter().take(shown).chain(load));
 }
 
 /// `lines` down the screen, 22 px apart, and flushed.
