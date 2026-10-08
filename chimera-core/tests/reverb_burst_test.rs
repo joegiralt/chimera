@@ -693,7 +693,7 @@ fn tap_weights_lerp_within_the_block() {
     (p.size, p.shape, p.predelay) = (0.3, 0.0, 0.0);
     let mut rig = Rig::new(&knobs_120(&p));
     let dc = |_: usize| 0.4;
-    let before = rig.go(&knobs_120(&p), 300, &dc);
+    rig.go(&knobs_120(&p), 300, &dc);
     p.shape = 1.0;
     let after = rig.go(&knobs_120(&p), 60, &dc);
     // The return's largest change from one block's end to the next's, and

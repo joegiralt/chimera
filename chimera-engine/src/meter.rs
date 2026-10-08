@@ -91,32 +91,6 @@ pub static MASTER_GR: DbMeter = DbMeter::new();
 pub static FILTER_CLIP: [ClipMeter; crate::hw::MAX_PARTS] =
     [const { ClipMeter::new() }; crate::hw::MAX_PARTS];
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Bits order as values over `Clip`'s range, so `fetch_max` keeps the
-    /// most; `take` empties it.
-    #[test]
-    fn a_clip_meter_keeps_the_most_until_taken() {
-        let m = ClipMeter::new();
-        for v in [0.3, 0.7, 0.0, 0.5] {
-            m.raise(Clip::new(v));
-        }
-        assert_eq!(m.take().get(), 0.7);
-        assert_eq!(m.take(), Clip::ZERO);
-        assert_eq!(Clip::new(-0.0).get().to_bits(), 0);
-        assert_eq!(Clip::new(f32::NAN), Clip::ZERO);
-        assert_eq!(Clip::new(3.0).get(), 1.0);
-        let mut last = 0u32;
-        for i in 0..=1000 {
-            let b = Clip::new(i as f32 / 1000.0).get().to_bits();
-            assert!(b >= last);
-            last = b;
-        }
-    }
-}
-
 /// The tempo the reverb follows and its synced time's fold, in one word:
 /// tempo × 4 (its 0.25 BPM grid) in the low 16 bits, the fold above. What
 /// a synced cell shows. Global as `MASTER_GR`: only a test binary whose
@@ -143,4 +117,30 @@ pub fn rev_clock() -> (Tempo, FoldState) {
         Tempo(q as f32 / 4.0)
     };
     (t, FoldState((w >> 16) as u8 as i8))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Bits order as values over `Clip`'s range, so `fetch_max` keeps the
+    /// most; `take` empties it.
+    #[test]
+    fn a_clip_meter_keeps_the_most_until_taken() {
+        let m = ClipMeter::new();
+        for v in [0.3, 0.7, 0.0, 0.5] {
+            m.raise(Clip::new(v));
+        }
+        assert_eq!(m.take().get(), 0.7);
+        assert_eq!(m.take(), Clip::ZERO);
+        assert_eq!(Clip::new(-0.0).get().to_bits(), 0);
+        assert_eq!(Clip::new(f32::NAN), Clip::ZERO);
+        assert_eq!(Clip::new(3.0).get(), 1.0);
+        let mut last = 0u32;
+        for i in 0..=1000 {
+            let b = Clip::new(i as f32 / 1000.0).get().to_bits();
+            assert!(b >= last);
+            last = b;
+        }
+    }
 }

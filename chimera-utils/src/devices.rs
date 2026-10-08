@@ -228,10 +228,8 @@ fn render_filter(v: &[f32], x: &[f32]) -> Vec<f32> {
     let mut f = Filter::new();
     let mut y = x.to_vec();
     y.resize(x.len().next_multiple_of(BLOCK_SIZE), 0.0);
-    for blk in y.chunks_exact_mut(BLOCK_SIZE) {
-        if let Ok(blk) = <&mut [f32; BLOCK_SIZE]>::try_from(blk) {
-            f.process(blk, &p, SAMPLE_RATE, &FilterMods::NONE);
-        }
+    for blk in y.as_chunks_mut::<BLOCK_SIZE>().0 {
+        f.process(blk, &p, SAMPLE_RATE, &FilterMods::NONE);
     }
     y.truncate(x.len());
     y
