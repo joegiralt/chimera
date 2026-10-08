@@ -1,6 +1,7 @@
 use chimera_core::audio_out::{
     DacSample, Half, HalfPlan, Heartbeat, LSI_MAX_HZ, LSI_NOMINAL_HZ, WATCHDOG_TIMEOUT_MS,
-    desynced, interleave, iwdg_reload_at_div4, kick_gap_us, plan_halves, to_dac,
+    desynced, interleave, iwdg_reload_at_div4, kick_gap_us, plan_halves, rearm_at, to_dac,
+    trail_verdict,
 };
 use chimera_core::hw::{BLOCK_SIZE, DAC_PAIRS};
 use chimera_core::instrument::DacOut;
@@ -177,4 +178,33 @@ fn kicks_are_live_once_audio_and_the_tick_both_move() {
     assert!(c.live(12, 502));
     let wrap = LiveCheck::start(u32::MAX, u32::MAX - 1);
     assert!(wrap.live(1, 0), "counters wrap");
+}
+
+#[test]
+fn rearm_lands_in_phase_on_a_whole_frame() {
+    let r = rearm_at(256, 256);
+    assert_eq!((r.ndtr, r.offset_words), (256, 0));
+    let r = rearm_at(100, 256);
+    assert_eq!((r.ndtr, r.offset_words), (100, 156));
+    let r = rearm_at(101, 256);
+    assert_eq!((r.ndtr, r.offset_words), (102, 154));
+    assert_eq!(rearm_at(0, 256).ndtr, 256);
+    assert_eq!(rearm_at(999, 256).offset_words, 0);
+    for lead in 1..=256u16 {
+        let r = rearm_at(lead, 256);
+        assert_eq!(r.offset_words % 2, 0);
+        assert_eq!(r.ndtr + r.offset_words, 256);
+        assert!(!desynced(lead, r.ndtr, 256, 1));
+    }
+}
+
+#[test]
+fn trail_verdict_counts_each_cause_apart() {
+    let v = trail_verdict(true, false, true);
+    assert!(v.rearm && v.transfer_error && !v.drift && !v.fifo_error);
+    let v = trail_verdict(false, true, false);
+    assert!(!v.rearm && v.fifo_error && !v.transfer_error);
+    let v = trail_verdict(false, false, true);
+    assert!(v.drift && !v.rearm);
+    assert_eq!(trail_verdict(false, false, false), Default::default());
 }

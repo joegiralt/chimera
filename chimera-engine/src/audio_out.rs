@@ -92,6 +92,45 @@ pub const fn desynced(a: u16, b: u16, ring: u16, tolerance: u16) -> bool {
     d > tolerance as u32
 }
 
+/// What one trailing stream's flags mean this half: which counter moves and
+/// whether to re-arm. A transfer error clears the stream's EN, freezing its
+/// NDTR, so drift is only judged on a stream that did not fault.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TrailVerdict {
+    pub rearm: bool,
+    pub transfer_error: bool,
+    pub fifo_error: bool,
+    pub drift: bool,
+}
+
+pub const fn trail_verdict(te: bool, fe: bool, apart: bool) -> TrailVerdict {
+    TrailVerdict {
+        rearm: te,
+        transfer_error: te,
+        fifo_error: fe,
+        drift: apart && !te,
+    }
+}
+
+/// Where a halted trailing stream restarts to sit in phase with the lead
+/// stream, whose NDTR is `lead`: NDTR the same, M0AR advanced by the words
+/// the lead has already sent. Rounded down to a whole L/R frame so the
+/// channels keep their slots.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Rearm {
+    pub ndtr: u16,
+    pub offset_words: u16,
+}
+
+pub const fn rearm_at(lead: u16, ring: u16) -> Rearm {
+    let lead = if lead == 0 || lead > ring { ring } else { lead };
+    let sent = (ring - lead) & !1;
+    Rearm {
+        ndtr: ring - sent,
+        offset_words: sent,
+    }
+}
+
 /// The audio interrupt's liveness as the watchdog kicker sees it: alive
 /// when its block count has moved since the last look.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

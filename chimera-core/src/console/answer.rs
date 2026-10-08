@@ -164,6 +164,8 @@ fn stats(s: &Stats, t: &mut impl Write) -> fmt::Result {
         d => d.iter().try_for_each(|n| write!(t, " {n}"))?,
     }
     writeln!(t, "\ndesyncs {}", a.desyncs)?;
+    writeln!(t, "dma_errors {}", a.dma_errors)?;
+    writeln!(t, "fifo_errors {}", a.fifo_errors)?;
     writeln!(t, "stack_bytes {}", a.stack_used)?;
     writeln!(t, "voices {} {} of {MAX_VOICES}", a.voices, a.voices_peak)?;
     writeln!(t, "cost_pct {}", a.cost_pct)?;

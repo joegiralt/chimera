@@ -122,6 +122,8 @@ peak_pct 41
 overruns 0
 drops 0
 desyncs 0
+dma_errors 0
+fifo_errors 0
 stack_bytes 12288
 voices 3 5 of 8
 cost_pct 47
@@ -132,6 +134,7 @@ OK
 
 - The first eight lines are `AudioStats` as the AUDIO LOAD page reads them.
 - `drops` holds one count per note source (`sources` of them), separated by spaces; `-` when `sources` is 0.
+- `desyncs` counts trailing DMA streams drifting from stream 0; `dma_errors` and `fifo_errors` count transfer and FIFO errors on streams 1 and 2 (each transfer error re-arms the stream).
 - `stack_bytes` is `stack_used` (the page rounds it to K; this does not).
 - `voices <now> <peak> of 8`: the voices sounding after the last audio block (`Instrument::sounding`), the most since the last `stats`, and `MAX_VOICES`. Reading starts the peak over, as it does `loop_peak_us`. The audio side keeps both in `AudioStats` with plain stores; the console's read asks for the restart through one atomic flag the next block takes.
 - `cost_pct` is the voice budget booked after the last block, the FX bus included (`Allocator::cost_pct`): the share the allocator steals and sheds against (ADR 0027). Over 100 means voices are fading to fit; it saturates at 255.

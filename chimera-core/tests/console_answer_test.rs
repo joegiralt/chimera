@@ -260,6 +260,7 @@ fn stats_reads_audio_load_and_the_loop() {
         a.sources,
         a.stack_used,
     ) = (23, 41, 0, 2, 2, 12_288);
+    (a.dma_errors, a.fifo_errors) = (3, 4);
     a.drops = [5, 7];
     a.record_voices(5, 60, false);
     a.record_voices(3, 47, false);
@@ -270,7 +271,7 @@ fn stats_reads_audio_load_and_the_loop() {
     });
     assert_eq!(
         ask(&mut u, "stats\n"),
-        "load_pct 23\npeak_pct 41\noverruns 0\ndrops 5 7\ndesyncs 2\nstack_bytes 12288\nvoices 3 5 of 8\ncost_pct 47\nloop_avg_us 812\nloop_peak_us 4210\nOK\n"
+        "load_pct 23\npeak_pct 41\noverruns 0\ndrops 5 7\ndesyncs 2\ndma_errors 3\nfifo_errors 4\nstack_bytes 12288\nvoices 3 5 of 8\ncost_pct 47\nloop_avg_us 812\nloop_peak_us 4210\nOK\n"
     );
     for (sources, want) in [
         (1, "\ndrops 5\n"),
