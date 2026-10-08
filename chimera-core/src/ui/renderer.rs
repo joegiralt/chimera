@@ -741,6 +741,10 @@ impl Renderer {
                 active: i == f.focus,
                 mod_amount: mod_info(f, i),
                 look: look(f, i),
+                continuous: v
+                    .addr()
+                    .and_then(|a| a.spec())
+                    .is_some_and(|s| s.motion.is_continuous()),
             };
             components::cell(display, i, top, Some(&c));
             if f.clip > 0.0 && v.addr() == Some(LEVEL) {

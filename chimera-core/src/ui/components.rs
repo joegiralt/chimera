@@ -992,6 +992,9 @@ pub struct Cell<'a> {
     /// Summed mod amount (−1..1) when the param is a mod destination.
     pub mod_amount: Option<f32>,
     pub look: Look,
+    /// A param that moves smoothly (`Motion::Continuous`, ADR 0112): it
+    /// shows a bar even with a discrete readout (FDBK, FINE).
+    pub continuous: bool,
 }
 
 /// Draw cell `i` (knob order a–f, 3×2) with its label baseline `top + row·36`.
@@ -1040,7 +1043,7 @@ where
         value_color,
         0,
     );
-    if !c.fmt.is_discrete() && !dim {
+    if (c.continuous || !c.fmt.is_discrete()) && !dim {
         let fill = if c.active {
             theme::ACCENT
         } else {

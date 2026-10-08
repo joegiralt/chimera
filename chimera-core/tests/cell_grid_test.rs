@@ -153,6 +153,7 @@ fn empty_slots_are_a_dim_dash_and_choices_have_no_bar() {
         active: false,
         mod_amount: None,
         look: components::Look::Live,
+        continuous: false,
     };
     let mut fb = Fb::new();
     components::cell(&mut fb, 1, 200, Some(&c));
