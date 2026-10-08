@@ -81,6 +81,11 @@ impl FatCache {
     pub fn keep_orphan(&mut self, orphan: Option<Orphan>) {
         self.orphan = orphan;
     }
+
+    /// A stale sector or an orphan waits for the next change to heal.
+    pub fn pending(&self) -> bool {
+        self.stale.is_some() || self.orphan.is_some()
+    }
 }
 
 impl Default for FatCache {

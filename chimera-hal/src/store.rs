@@ -198,6 +198,17 @@ pub trait Store {
     fn seal(&mut self, _vol: VolumeId, _file: FileName) -> Result<(), StoreError> {
         Err(StoreError::Io)
     }
+    /// The sweep mark (ADR 0094): whether a change since the last settled
+    /// sweep may have stranded clusters. A store with no FAT has none to
+    /// strand: `Unused`.
+    fn mark(&mut self, _vol: VolumeId) -> Result<Mark, StoreError> {
+        Ok(Mark::Unused)
+    }
+    /// After a sweep that `settled`, the mark to `Clean`, made if it is
+    /// `Missing`; `true` once it is. Any other sweep leaves it: `false`.
+    fn settle(&mut self, _vol: VolumeId, _swept: &Swept) -> Result<bool, StoreError> {
+        Ok(false)
+    }
     /// The lost-cluster sweep (#360), one operation at boot: clusters the
     /// FAT holds that no directory on the volume reaches. `marks` lends
     /// the reachability bitmap, one bit a cluster; the sweep zeroes it.
@@ -218,6 +229,31 @@ pub trait Store {
 /// at most one file's chain and one directory cluster, so it bounds what
 /// one sweep may free (ADR 0094).
 pub const MAX_CHAIN_BYTES: u32 = 4 << 20;
+
+/// The card's sweep mark, `/CHIMERA/SWEEP.MRK` (ADR 0094). Every change
+/// that writes turns a clean one dirty before its first write and back
+/// after its last; a cut in between leaves it dirty, and the next boot
+/// sweeps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mark {
+    /// Every change since the last settled sweep finished.
+    Clean,
+    /// A change began and never finished, or a sweep left work or a
+    /// doubt; or a block that isn't exactly the clean one.
+    Dirty,
+    /// `/CHIMERA` with no mark: written before marks, or the mark's own
+    /// making was cut.
+    Missing,
+    /// No `/CHIMERA`: Chimera never wrote the card.
+    Unused,
+}
+
+impl Mark {
+    /// The boot sweeps.
+    pub fn owes_sweep(self) -> bool {
+        matches!(self, Mark::Dirty | Mark::Missing)
+    }
+}
 
 /// What a sweep does with the clusters it finds lost.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -313,6 +349,31 @@ impl Doubt {
 
 /// What a boot's sweep ended with.
 pub type SweepSeen = Result<Swept, (Doubt, SweepStats)>;
+
+/// Why a sweep ran.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Trigger {
+    /// At boot, the mark owing one.
+    Owed(Mark),
+    /// At boot, the mark (or the card) not read: owed, to be safe.
+    Unread,
+    /// The console's `sweep`, whatever the mark says.
+    Asked,
+}
+
+/// A sweep, run or skipped, as `status` and `sweep` report it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SweepRun {
+    /// The boot's: the mark owed none.
+    Skipped(Mark),
+    Ran {
+        mode: Sweep,
+        why: Trigger,
+        seen: SweepSeen,
+        /// `Store::settle`'s answer: the mark made clean, or kept.
+        cleared: Result<bool, StoreError>,
+    },
+}
 
 /// A `Store` whose operations' time can be capped: the console's `put`
 /// holds each to what is left of its own deadline.

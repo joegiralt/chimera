@@ -5,10 +5,11 @@
 use crate::blocks::{BLOCK, Blocks, FsError};
 use crate::fat::{FatCache, Orphan, Stale, Table};
 use crate::fs::Fs;
+use crate::mark::{self, CLEAN, DIRTY};
 use crate::sweep::{self, Fail};
 use crate::volume::{Layout, first_partition, layout};
 use chimera_hal::store::{
-    ByteSink, Dir, Doubt, FileName, Files, ReadSink, Store, StoreError, Sweep, SweepSeen,
+    ByteSink, Dir, Doubt, FileName, Files, Mark, ReadSink, Store, StoreError, Sweep, SweepSeen,
     SweepStats, Swept, VolumeId,
 };
 use embedded_hal::delay::DelayNs;
@@ -122,6 +123,9 @@ struct Part<'a, D> {
     dev: &'a D,
     lba: u32,
     blocks: u32,
+    /// The clean mark's block: `mark::DIRTY` lands there before the first
+    /// write, then this is `None`.
+    dirty: Option<u32>,
 }
 
 impl<D: BlockDevice> Part<'_, D> {
@@ -148,6 +152,13 @@ impl<D: BlockDevice> Blocks for Part<'_, D> {
     }
 
     fn write(&mut self, lba: u32, buf: &[u8; BLOCK]) -> Result<(), Self::Error> {
+        if let Some(mark) = self.dirty {
+            let at = self.at(mark)?;
+            self.dev
+                .write(&[Block { contents: DIRTY }], at)
+                .map_err(PartError::Dev)?;
+            self.dirty = None;
+        }
         let at = self.at(lba)?;
         self.dev
             .write(&[Block { contents: *buf }], at)
@@ -230,7 +241,7 @@ impl<D: Medium> FatStore<D> {
 
     /// `Fs::remove_dir` on the card, if it is still `vol`.
     pub fn remove_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<bool, StoreError> {
-        self.run(vol, |fs, _| fs.remove_dir(dir))
+        self.change(vol, |fs| fs.remove_dir(dir))
     }
 
     /// `Fs::free_bytes` on the card, if it is still `vol`.
@@ -282,6 +293,7 @@ impl<D: Medium> FatStore<D> {
             dev: &self.dev,
             lba,
             blocks: layout.blocks(),
+            dirty: None,
         });
         // FAT 2's copy of the one sector it differs in.
         let mut d = [0; BLOCK];
@@ -398,11 +410,64 @@ impl<D: Medium> FatStore<D> {
             dev: &self.dev,
             lba,
             blocks: layout.blocks(),
+            dirty: None,
         };
         let r = op(
             &mut Fs::new(&mut part, layout, &mut self.fat, &mut self.buf, &mut hint),
             lba,
         );
+        self.close_op(now, hint);
+        r.map_err(|e| self.op_error(e))
+    }
+
+    /// `run` for a change that may write (ADR 0094). A clean mark goes
+    /// `DIRTY` before the change's first write, and back to `CLEAN` only
+    /// once the change returned `Ok` with every write landed and nothing
+    /// left for the next change to heal. A mark not clean at the start
+    /// stays as it is: a debt is never cleared here, only by a settled
+    /// sweep. A change that writes nothing writes no mark.
+    fn change<T>(
+        &mut self,
+        vol: VolumeId,
+        op: impl FnOnce(&mut Fs<'_, Part<'_, D>>) -> FsResult<T, D>,
+    ) -> Result<T, StoreError> {
+        let (lba, layout, now, mut hint) = self.open_op(vol)?;
+        let mut part = Part {
+            dev: &self.dev,
+            lba,
+            blocks: layout.blocks(),
+            dirty: None,
+        };
+        let seen = mark::read(&mut Fs::new(
+            &mut part,
+            layout,
+            &mut self.fat,
+            &mut self.buf,
+            &mut hint,
+        ));
+        let r = match seen {
+            Ok((m, at)) => {
+                let clean = at.filter(|_| m == Mark::Clean);
+                part.dirty = clean;
+                let r = op(&mut Fs::new(
+                    &mut part,
+                    layout,
+                    &mut self.fat,
+                    &mut self.buf,
+                    &mut hint,
+                ));
+                let fired = clean.is_some() && part.dirty.is_none();
+                // A failed `CLEAN` leaves the mark dirty: a sweep at the
+                // next boot, the change itself done.
+                if let (Some(at), true, Ok(_)) = (clean, fired && !self.fat.pending(), &r)
+                    && let Err(PartError::Dev(e)) = part.write(at, &CLEAN)
+                {
+                    self.fault(&e);
+                }
+                r
+            }
+            Err(e) => Err(e),
+        };
         self.close_op(now, hint);
         r.map_err(|e| self.op_error(e))
     }
@@ -501,19 +566,36 @@ impl<D: Medium> Store for FatStore<D> {
         file: FileName,
         body: &mut dyn FnMut(&mut dyn ByteSink) -> Result<(), StoreError>,
     ) -> Result<u32, StoreError> {
-        self.run(vol, |fs, _| fs.write(file, body))
+        if file == mark::name() {
+            return Err(StoreError::ReadOnly);
+        }
+        self.change(vol, |fs| fs.write(file, body))
     }
 
     fn delete(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
-        self.run(vol, |fs, _| fs.delete(file))
+        if file == mark::name() {
+            return Err(StoreError::ReadOnly);
+        }
+        self.change(vol, |fs| fs.delete(file))
     }
 
     fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError> {
-        self.run(vol, |fs, _| fs.make_dir(dir))
+        self.change(vol, |fs| fs.make_dir(dir))
     }
 
     fn seal(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
-        self.run(vol, |fs, _| fs.seal(file))
+        self.change(vol, |fs| fs.seal(file))
+    }
+
+    fn mark(&mut self, vol: VolumeId) -> Result<Mark, StoreError> {
+        self.run(vol, |fs, _| mark::read(fs).map(|(m, _)| m))
+    }
+
+    fn settle(&mut self, vol: VolumeId, swept: &Swept) -> Result<bool, StoreError> {
+        if !swept.settled() {
+            return Ok(false);
+        }
+        self.run(vol, |fs, _| mark::clear(fs))
     }
 
     fn sweep(&mut self, vol: VolumeId, mode: Sweep, marks: &mut [u8]) -> SweepSeen {
