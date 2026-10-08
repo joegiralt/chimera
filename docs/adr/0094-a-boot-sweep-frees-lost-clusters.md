@@ -1,6 +1,6 @@
 # 0094. Sweep lost clusters at the boot after an unclean change, or on demand, from a bitmap in the arena's gap, dry until the owner's go
 
-- **Status:** Proposed
+- **Status:** Accepted (owner, 2026-10-08)
 - **Deciders:** project owner (the card is sealed in the unit and is their
   only one: no write on it that could free a reachable cluster; trigger
   ruling 2026-10-08, #375); firmware; two adversarial reviews of the
