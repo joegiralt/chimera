@@ -10,7 +10,7 @@ use chimera_core::dsp::chorus::ChorusParams;
 use chimera_core::dsp::comp::CompParams;
 use chimera_core::dsp::delay::DelayParams;
 use chimera_core::dsp::fx_bus::{FxBus, FxParams};
-use chimera_core::dsp::limiter::{CEILING, OUTPUT_TRIM};
+use chimera_core::dsp::limiter::{CEILING, OUTPUT_GAIN};
 use chimera_core::dsp::modal::{ModalParams, ResonatorMode, reads};
 use chimera_core::dsp::reverb::ReverbParams;
 use chimera_core::dsp::voice::Voice;
@@ -424,6 +424,17 @@ impl Bench {
             .iter()
             .position(|s| !s.is_free());
         self.inst.played_filters()[v.expect("a voice playing")]
+    }
+
+    /// The first busy voice's MORPH last block, routes applied.
+    pub fn played_morph(&self) -> f32 {
+        let v = self
+            .inst
+            .allocator()
+            .slots()
+            .iter()
+            .position(|s| !s.is_free());
+        self.inst.played_morphs()[v.expect("a voice playing")]
     }
 
     /// Each voice's glide ratio, 1 at rest.
@@ -872,9 +883,9 @@ pub fn level(patch: Patch, notes: &[u8], vel: u8, blocks: usize) -> Level {
         lufs: lufs(tape.pair(0, 1, blocks + 1)),
         bus_rms: super::rms(bus),
         bus_peak: bus.iter().fold(0.0f32, |m, x| m.max(x.abs())),
-        gr_db: db(tape.pre_peak.iter().fold(0.0f32, |m, &x| m.max(x)) * OUTPUT_TRIM / CEILING)
+        gr_db: db(tape.pre_peak.iter().fold(0.0f32, |m, &x| m.max(x)) * OUTPUT_GAIN / CEILING)
             .max(0.0),
-        limited_db: lufs(&tape.pre[..2 * BLOCK_SIZE * blocks]) + db(OUTPUT_TRIM)
+        limited_db: lufs(&tape.pre[..2 * BLOCK_SIZE * blocks]) + db(OUTPUT_GAIN)
             - lufs(tape.pair(0, 1, blocks + 1)),
     }
 }

@@ -6,7 +6,7 @@
 //! Mode II: triangle LFO at 0.863 Hz, depth ~2.3ms
 //! Mode I+II: both lines; each side averages its two taps
 
-use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
+use crate::block::{Block, Change, DiskCode, ParamId, ParamSpec, Smoothing, ValFmt, apply_code};
 use crate::dsp::Stereo;
 use crate::dsp::ease::{Ease, at, ease_coeff, step_of};
 use chimera_hal::BLOCK_SIZE;
@@ -111,18 +111,55 @@ const BRAID: crate::glyph::FocusGlyph =
     crate::glyph::FocusGlyph::Composite(crate::glyph::CompositeId::ChorusBraid);
 
 pub static CHORUS_SPECS: [ParamSpec; 4] = [
-    ParamSpec::choice(0, "MODE", ValFmt::Names(&MODE_NAMES), 3.0, 0.0)
-        .ident("MODE")
-        .glyph(BRAID),
-    ParamSpec::continuous(1, "RATE", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false)
-        .ident("RATE")
-        .glyph(BRAID),
-    ParamSpec::continuous(2, "DEPTH", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false)
-        .ident("DEPTH")
-        .glyph(BRAID),
-    ParamSpec::continuous(3, "MIX", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
-        .ident("MIX")
-        .glyph(BRAID),
+    ParamSpec::choice(
+        0,
+        "MODE",
+        ValFmt::Names(&MODE_NAMES),
+        3.0,
+        0.0,
+        Change::Crossfade,
+    )
+    .ident("MODE")
+    .glyph(BRAID),
+    ParamSpec::continuous(
+        1,
+        "RATE",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.5,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("RATE")
+    .glyph(BRAID),
+    ParamSpec::continuous(
+        2,
+        "DEPTH",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.5,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("DEPTH")
+    .glyph(BRAID),
+    ParamSpec::continuous(
+        3,
+        "MIX",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("MIX")
+    .glyph(BRAID),
 ];
 
 impl Block for ChorusParams {

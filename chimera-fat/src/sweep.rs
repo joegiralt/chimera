@@ -5,7 +5,7 @@
 //! Four phases. **Compare** reads FAT 1 and FAT 2 side by side: a cut can
 //! leave one sector `D` differing, and its FAT 2 copy is kept. **Mark**
 //! walks every directory from the root and each live entry's chain into a
-//! bitmap, following the union of both copies through `D`. **Count**
+//! bitmap; through `D`, FAT 2 may differ only as a FAT 1-first cut leaves it. **Count**
 //! passes over FAT 1 once. **Free** writes `D`'s FAT 2 copy from FAT 1,
 //! then FSInfo, then frees each lost cluster.
 //!
@@ -20,7 +20,7 @@ use crate::dir::ENTRY;
 use crate::fat::{FREE, FatCache, Table};
 use crate::fsinfo;
 use crate::volume::{FsKind, Layout, Link, Root};
-use chimera_hal::store::{Doubt, SweepStats};
+use chimera_hal::store::{Doubt, MAX_CHAIN_BYTES, SweepStats};
 
 /// Deeper than this aborts: the root is depth 0.
 pub const MAX_DEPTH: usize = 8;
@@ -72,15 +72,18 @@ pub(crate) struct Found {
     pub differs: Option<u32>,
 }
 
-/// One value per copy, read as the union of their links: two different
-/// next clusters is `FatsDiffer`; otherwise a next in either is followed,
-/// then an end mark in either ends.
-fn union(a: Link, b: Link) -> Result<Link, Doubt> {
-    match (a, b) {
-        (Link::Next(x), Link::Next(y)) if x != y => Err(Doubt::FatsDiffer),
-        (Link::Next(x), _) | (_, Link::Next(x)) => Ok(Link::Next(x)),
-        (Link::End, _) | (_, Link::End) => Ok(Link::End),
-        _ => Ok(Link::Broken),
+/// A reached cluster's link when its sector differs: FAT 1's `one`, if
+/// FAT 2's (`two`, its raw value `raw2`) is what FAT 1's was before a FAT
+/// 1-first write: an end mark a link replaced, or a free cluster an
+/// allocation took. Any other difference, FAT 2 linking past FAT 1 above
+/// all, is `FatsDiffer`: the free phase copies FAT 1 over FAT 2, which
+/// would strand whatever only FAT 2 reaches.
+fn fat1_first(one: Link, two: Link, raw2: u32) -> Result<Link, Doubt> {
+    match (one, two) {
+        (a, b) if a == b => Ok(a),
+        (Link::Next(_), Link::End) => Ok(one),
+        (Link::Next(_) | Link::End, _) if raw2 == FREE => Ok(one),
+        _ => Err(Doubt::FatsDiffer),
     }
 }
 
@@ -111,6 +114,14 @@ impl Marks<'_> {
         self.0[i / 8] |= 1 << (i % 8);
         !was
     }
+}
+
+/// The most one `Sweep::Free` frees on `l`: two cuts' worth, each the
+/// longest chain Chimera writes and a directory cluster. Every unclean
+/// change is followed by a boot that sweeps, so one cut is the rule; the
+/// second covers a cut during that sweep's own boot. More is a doubt.
+pub fn max_lost(l: &Layout) -> u32 {
+    2 * (MAX_CHAIN_BYTES.div_ceil(l.cluster_bytes()) + 1)
 }
 
 /// Whether `marks` has a bit for every cluster of `l`.
@@ -308,12 +319,14 @@ struct Walk<'w, 'm, 'b, B: Blocks> {
 }
 
 impl<B: Blocks> Walk<'_, '_, '_, B> {
-    /// `c`'s link: FAT 1's, and in the differing sector the union with
-    /// FAT 2's.
+    /// `c`'s link: FAT 1's, which in the differing sector FAT 2's must
+    /// agree with as a FAT 1-first cut leaves it (`fat1_first`).
     fn link(&mut self, c: u32) -> Result<Link, Fail<B::Error>> {
         let one = self.t.link(c)?;
         Ok(match self.d {
-            Some((s, copy)) if s == self.l.fat_block(c) => union(one, self.l.link(copy, c))?,
+            Some((s, copy)) if s == self.l.fat_block(c) => {
+                fat1_first(one, self.l.link(copy, c), self.l.entry(copy, c))?
+            }
             _ => one,
         })
     }
@@ -397,7 +410,12 @@ impl<B: Blocks> Walk<'_, '_, '_, B> {
             let block = match f.at {
                 Cursor::Fixed { left: 0, .. } => None,
                 Cursor::Fixed { block, .. } => Some(block),
-                Cursor::Chain { c, i } => self.l.cluster_block(c).map(|b| b + i),
+                // `mark_chain` checked `holds(c)`, so this is never `None`;
+                // if it is, the directory is broken, never skipped.
+                Cursor::Chain { c, i } => match self.l.cluster_block(c) {
+                    Some(b) => Some(b + i),
+                    None => return Err(Doubt::DirBroken.into()),
+                },
             };
             if let Some(block) = block {
                 self.t.blocks().read(block, self.buf).map_err(Fail::Dev)?;

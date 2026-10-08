@@ -217,6 +217,27 @@ impl<'a, B: Blocks> Fs<'a, B> {
         Ok(e.len)
     }
 
+    /// Whether `dir` exists.
+    pub fn has_dir(&mut self, dir: Dir) -> Result<bool, FsError<B::Error>> {
+        match self.open(dir) {
+            Ok(_) => Ok(true),
+            Err(FsError::NotFound) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// The block that holds `file`, if it is exactly one block long.
+    pub fn one_block(&mut self, file: FileName) -> Result<Option<u32>, FsError<B::Error>> {
+        let mut first = None;
+        let len = self.runs(file, &mut |at, _| _ = first.get_or_insert(at))?;
+        Ok(first.filter(|_| len == BLOCK as u32))
+    }
+
+    /// The blocks underneath, for a block outside every FAT and entry.
+    pub(crate) fn blocks(&mut self) -> &mut B {
+        self.table.blocks()
+    }
+
     /// Bytes in free clusters, counted from the FAT (FSInfo's count is
     /// only a hint): one read of the whole FAT.
     pub fn free_bytes(&mut self) -> Result<u64, FsError<B::Error>> {

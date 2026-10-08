@@ -674,8 +674,8 @@ fn reference_source() -> Vec<u8> {
         .filter_map(factory_sound)
         .find(|s| s.name.as_str() == "MORPH KEYS")
         .unwrap();
-    r.shared.parts[0].params = keys.params;
-    r.shared.parts[0].mod_state = keys.mod_state;
+    *r.shared.parts[0].params = keys.params;
+    *r.shared.parts[0].mod_state = keys.mod_state;
     let mut x = Vec::new();
     for b in 0..BPS * 3 / 4 {
         x.extend(r.block(b == 0).chunks(2).map(|f| 0.5 * (f[0] + f[1])));
@@ -753,15 +753,15 @@ impl TapeRig {
 #[test]
 fn tape_init_on_the_reference_sits_at_the_median() {
     let mut algo = TapeRig::new(None);
-    algo.shared.parts[0].params = Sound::init(EngineType::Algo).params;
+    *algo.shared.parts[0].params = Sound::init(EngineType::Algo).params;
     let median = algo.lufs();
     let one = OneSource::new(&reference_source());
     let id = one.id;
     let mut tape = TapeRig::new(Some(one));
     let s = Sound::init(EngineType::Tape);
-    tape.shared.parts[0].params = s.params;
+    *tape.shared.parts[0].params = s.params;
     tape.shared.parts[0].params.tape.period = 48_000.0 / 261.625_58;
-    tape.shared.parts[0].mod_state = s.mod_state;
+    *tape.shared.parts[0].mod_state = s.mod_state;
     tape.shared.parts[0].source = Some(id);
     let d = tape.lufs() - median;
     println!("ALGO INIT {median:.2} LUFS; TAPE INIT on the reference {d:+.2} dB");

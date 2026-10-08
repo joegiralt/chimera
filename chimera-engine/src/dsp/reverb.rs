@@ -4,7 +4,7 @@
 
 use core::f32::consts::LOG2_10;
 
-use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
+use crate::block::{Block, Change, DiskCode, ParamId, ParamSpec, Smoothing, ValFmt, apply_code};
 use crate::dsp::algo::math::log2;
 use crate::dsp::clampf;
 use crate::dsp::modulator::law::Law;
@@ -831,19 +831,56 @@ const REV: FocusGlyph = FocusGlyph::Composite(CompositeId::Reverb);
 /// The reverb runs outside `Voice`: nothing is modulatable. Labels are the
 /// static ones; each TYPE's panel names its slots (`ui::reverb_panel`).
 pub static REVERB_SPECS: [ParamSpec; 13] = [
-    ParamSpec::choice(6, "TYPE", ValFmt::Names(&ReverbType::NAMES), 5.0, 0.0)
-        .ident("TYPE")
-        .glyph(FocusGlyph::None),
-    ParamSpec::continuous(1, "TIME", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false)
-        .ident("TIME")
-        .glyph(REV),
-    ParamSpec::continuous(2, "DAMP", ValFmt::Uni, 0.0, 1.0, 0.3, 1.0 / 128.0, false)
-        .ident("DAMP")
-        .glyph(REV),
+    ParamSpec::choice(
+        6,
+        "TYPE",
+        ValFmt::Names(&ReverbType::NAMES),
+        5.0,
+        0.0,
+        Change::Crossfade,
+    )
+    .ident("TYPE")
+    .glyph(FocusGlyph::None),
+    ParamSpec::continuous(
+        1,
+        "TIME",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.5,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("TIME")
+    .glyph(REV),
+    ParamSpec::continuous(
+        2,
+        "DAMP",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.3,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("DAMP")
+    .glyph(REV),
     // GATE's LENGTH moves 2 % a tick; QUAD's panel ticks a table step.
-    ParamSpec::continuous(3, "SIZE", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false)
-        .ident("SIZE")
-        .glyph(REV),
+    ParamSpec::continuous(
+        3,
+        "SIZE",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.5,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("SIZE")
+    .glyph(REV),
     ParamSpec::continuous(
         4,
         "MIX",
@@ -853,32 +890,100 @@ pub static REVERB_SPECS: [ParamSpec; 13] = [
         0.0,
         1.0 / 128.0,
         false,
+        Smoothing::Own,
     )
     .ident("MIX")
     .glyph(REV),
-    ParamSpec::continuous(7, "TONE", ValFmt::Uni, 0.0, 1.0, 0.3, 1.0 / 128.0, false)
-        .ident("TONE")
-        .glyph(REV),
-    ParamSpec::continuous(8, "DIFFUSE", ValFmt::Uni, 0.0, 1.0, 0.4, 1.0 / 128.0, false)
-        .ident("DIFFUSE")
-        .short("DIFF")
-        .glyph(REV),
-    ParamSpec::continuous(9, "PRE-DLY", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
-        .ident("PREDELAY")
-        .short("PRE")
-        .glyph(REV),
-    ParamSpec::continuous(10, "SHAPE", ValFmt::Uni, 0.0, 1.0, 0.2, 1.0 / 128.0, false)
-        .ident("SHAPE")
-        .glyph(REV),
-    ParamSpec::continuous(11, "SMEAR", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
-        .ident("SMEAR")
-        .glyph(REV),
-    ParamSpec::continuous(12, "RATE", ValFmt::Uni, 0.0, 1.0, 0.5, 1.0 / 128.0, false)
-        .ident("RATE")
-        .glyph(REV),
-    ParamSpec::choice(13, "SYNC", ValFmt::Names(&RevSync::NAMES), 2.0, 0.0)
-        .ident("SYNC")
-        .glyph(FocusGlyph::None),
+    ParamSpec::continuous(
+        7,
+        "TONE",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.3,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("TONE")
+    .glyph(REV),
+    ParamSpec::continuous(
+        8,
+        "DIFFUSE",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.4,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("DIFFUSE")
+    .short("DIFF")
+    .glyph(REV),
+    ParamSpec::continuous(
+        9,
+        "PRE-DLY",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("PREDELAY")
+    .short("PRE")
+    .glyph(REV),
+    ParamSpec::continuous(
+        10,
+        "SHAPE",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.2,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("SHAPE")
+    .glyph(REV),
+    ParamSpec::continuous(
+        11,
+        "SMEAR",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("SMEAR")
+    .glyph(REV),
+    ParamSpec::continuous(
+        12,
+        "RATE",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.5,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("RATE")
+    .glyph(REV),
+    ParamSpec::choice(
+        13,
+        "SYNC",
+        ValFmt::Names(&RevSync::NAMES),
+        2.0,
+        0.0,
+        Change::Snap,
+    )
+    .ident("SYNC")
+    .glyph(FocusGlyph::None),
     ParamSpec::continuous(
         14,
         "DENSITY",
@@ -888,6 +993,7 @@ pub static REVERB_SPECS: [ParamSpec; 13] = [
         DENSITY_DEFAULT,
         1.0 / 128.0,
         false,
+        Smoothing::Own,
     )
     .ident("DENSITY")
     .short("DENS")

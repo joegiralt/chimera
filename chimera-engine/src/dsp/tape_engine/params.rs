@@ -2,7 +2,9 @@
 //! once written.
 
 use super::oneshot::SliceCode;
-use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code, identity_code};
+use crate::block::{
+    Block, Change, DiskCode, ParamId, ParamSpec, Smoothing, ValFmt, apply_code, identity_code,
+};
 use crate::dsp::algo::math::exp2;
 
 /// How a note plays its source: the machines (spec § 2 Machines). Each
@@ -252,13 +254,26 @@ pub fn reads(model: TapeModel, id: ParamId) -> bool {
     }
 }
 
+/// Whether `model` moves `id` by a motion of its own the knobs would only
+/// blur: SCRUB's POSITION is its jog, which the UI steps with DRAG's
+/// momentum (ADR 0112). The Part's knobs hand it on at once.
+pub fn jogs(model: TapeModel, id: ParamId) -> bool {
+    model == TapeModel::Scrub && id == TapeEngineParams::POSITION
+}
+
 /// DRAG in seconds: 10 to 500 ms, exponential.
 pub fn drag_s(drag: f32) -> f32 {
     // log2(50)
     0.01 * exp2(5.643_856 * drag)
 }
 
-const fn unit(id: u8, label: &'static str, default: f32, modulatable: bool) -> ParamSpec {
+const fn unit(
+    id: u8,
+    label: &'static str,
+    default: f32,
+    modulatable: bool,
+    smoothing: Smoothing,
+) -> ParamSpec {
     ParamSpec::continuous(
         id,
         label,
@@ -268,6 +283,7 @@ const fn unit(id: u8, label: &'static str, default: f32, modulatable: bool) -> P
         default,
         1.0 / 128.0,
         modulatable,
+        smoothing,
     )
 }
 
@@ -276,38 +292,106 @@ const fn unit(id: u8, label: &'static str, default: f32, modulatable: bool) -> P
 /// copies them from the source.
 pub static TAPE_ENGINE_SPECS: [ParamSpec; 15] = [
     // The neutral is LOOP: index 1.
-    ParamSpec::choice(0, "MODEL", ValFmt::Names(&MODEL_NAMES), 6.0, 1.0)
-        .ident("MODEL")
-        .glyph(crate::glyph::FocusGlyph::None),
-    unit(1, "START", 0.0, false).ident("START"),
-    unit(2, "END", 1.0, false).ident("END"),
-    unit(3, "POSITION", 0.0, true)
+    ParamSpec::choice(
+        0,
+        "MODEL",
+        ValFmt::Names(&MODEL_NAMES),
+        6.0,
+        1.0,
+        Change::Crossfade,
+    )
+    .ident("MODEL")
+    .glyph(crate::glyph::FocusGlyph::None),
+    unit(1, "START", 0.0, false, Smoothing::NoteOn).ident("START"),
+    unit(2, "END", 1.0, false, Smoothing::NoteOn).ident("END"),
+    unit(3, "POSITION", 0.0, true, Smoothing::KNOB)
         .short("POS")
         .ident("POSITION"),
-    ParamSpec::continuous(4, "MOTION", ValFmt::Bi, -1.0, 1.0, 0.0, 1.0 / 64.0, true)
-        .short("MOT")
-        .ident("MOTION"),
-    unit(5, "TAPE", 0.0, true).ident("TAPE"),
-    unit(6, "AGE", 0.0, true).ident("AGE"),
-    unit(7, "SIZE", 1.0, true).ident("SIZE"),
-    ParamSpec::continuous(8, "XFADE", ValFmt::Uni, 0.0, 0.5, 0.1, 1.0 / 256.0, false)
-        .short("XFD")
-        .ident("XFADE"),
-    unit(9, "DRAG", 0.3, false).ident("DRAG"),
-    ParamSpec::choice(10, "TYPE", ValFmt::Names(&["MONO", "POLY"]), 1.0, 0.0)
-        .ident("TYPE")
-        .glyph(crate::glyph::FocusGlyph::None),
-    ParamSpec::continuous(11, "ROOT", ValFmt::Uni, 0.0, 12_700.0, 6_000.0, 1.0, false)
-        .ident("ROOT"),
-    ParamSpec::continuous(12, "PERIOD", ValFmt::Uni, 0.0, 65_536.0, 0.0, 1.0, false)
-        .ident("PERIOD"),
-    ParamSpec::choice(13, "SLICE", ValFmt::Names(&SLICE_NAMES), 17.0, 0.0)
-        .short("SLC")
-        .ident("SLICE")
-        .glyph(crate::glyph::FocusGlyph::None),
-    ParamSpec::choice(14, "WOW", ValFmt::Names(&["CAPSTAN", "WARBLE"]), 1.0, 0.0)
-        .ident("WOW")
-        .glyph(crate::glyph::FocusGlyph::None),
+    ParamSpec::continuous(
+        4,
+        "MOTION",
+        ValFmt::Bi,
+        -1.0,
+        1.0,
+        0.0,
+        1.0 / 64.0,
+        true,
+        Smoothing::KNOB,
+    )
+    .short("MOT")
+    .ident("MOTION"),
+    unit(5, "TAPE", 0.0, true, Smoothing::KNOB).ident("TAPE"),
+    unit(6, "AGE", 0.0, true, Smoothing::KNOB).ident("AGE"),
+    unit(7, "SIZE", 1.0, true, Smoothing::KNOB).ident("SIZE"),
+    ParamSpec::continuous(
+        8,
+        "XFADE",
+        ValFmt::Uni,
+        0.0,
+        0.5,
+        0.1,
+        1.0 / 256.0,
+        false,
+        Smoothing::NoteOn,
+    )
+    .short("XFD")
+    .ident("XFADE"),
+    unit(9, "DRAG", 0.3, false, Smoothing::NoteOn).ident("DRAG"),
+    ParamSpec::choice(
+        10,
+        "TYPE",
+        ValFmt::Names(&["MONO", "POLY"]),
+        1.0,
+        0.0,
+        Change::NoteOn,
+    )
+    .ident("TYPE")
+    .glyph(crate::glyph::FocusGlyph::None),
+    ParamSpec::continuous(
+        11,
+        "ROOT",
+        ValFmt::Uni,
+        0.0,
+        12_700.0,
+        6_000.0,
+        1.0,
+        false,
+        Smoothing::NoteOn,
+    )
+    .ident("ROOT"),
+    ParamSpec::continuous(
+        12,
+        "PERIOD",
+        ValFmt::Uni,
+        0.0,
+        65_536.0,
+        0.0,
+        1.0,
+        false,
+        Smoothing::NoteOn,
+    )
+    .ident("PERIOD"),
+    ParamSpec::choice(
+        13,
+        "SLICE",
+        ValFmt::Names(&SLICE_NAMES),
+        17.0,
+        0.0,
+        Change::NoteOn,
+    )
+    .short("SLC")
+    .ident("SLICE")
+    .glyph(crate::glyph::FocusGlyph::None),
+    ParamSpec::choice(
+        14,
+        "WOW",
+        ValFmt::Names(&["CAPSTAN", "WARBLE"]),
+        1.0,
+        0.0,
+        Change::NoteOn,
+    )
+    .ident("WOW")
+    .glyph(crate::glyph::FocusGlyph::None),
 ];
 
 impl Block for TapeEngineParams {

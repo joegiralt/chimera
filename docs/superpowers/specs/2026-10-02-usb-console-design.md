@@ -77,6 +77,7 @@ bench   the bench's numbers (bench builds)
 card    SD speed and streams, a chord playing; clean (bench builds)
 shot    the screen in THEME's colours; shot raw: canonical
 dfu     restart into the ROM loader for just flash
+sweep   the lost-cluster sweep at the next boot: restarts into it
 ls      project files on the card, sizes; ls tapes: the sources
 put     a project or source onto the card: <path> <size> <crc32>
 OK
@@ -122,6 +123,8 @@ peak_pct 41
 overruns 0
 drops 0
 desyncs 0
+dma_errors 0
+fifo_errors 0
 stack_bytes 12288
 voices 3 5 of 8
 cost_pct 47
@@ -132,6 +135,7 @@ OK
 
 - The first eight lines are `AudioStats` as the AUDIO LOAD page reads them.
 - `drops` holds one count per note source (`sources` of them), separated by spaces; `-` when `sources` is 0.
+- `desyncs` counts trailing DMA streams drifting from stream 0; `dma_errors` and `fifo_errors` count transfer and FIFO errors on streams 1 and 2 (each transfer error re-arms the stream).
 - `stack_bytes` is `stack_used` (the page rounds it to K; this does not).
 - `voices <now> <peak> of 8`: the voices sounding after the last audio block (`Instrument::sounding`), the most since the last `stats`, and `MAX_VOICES`. Reading starts the peak over, as it does `loop_peak_us`. The audio side keeps both in `AudioStats` with plain stores; the console's read asks for the restart through one atomic flag the next block takes.
 - `cost_pct` is the voice budget booked after the last block, the FX bus included (`Allocator::cost_pct`): the share the allocator steals and sheds against (ADR 0027). Over 100 means voices are fading to fit; it saturates at 255.
@@ -201,6 +205,36 @@ OK
 ```
 
 Then the unit restarts into ST's ROM DFU loader and leaves the bus as `0483:5740`. Within about 2 s it comes back as `0483:DF11`. The `OK` is flushed, then the port keeps polling for 20 ms so the host collects it, before the restart. A host that still misses it sees the port vanish and DF11 appear, which `to-dfu` also counts as success. The desktop answers `ERR dfu is not in this build`. § Enter DFU from the firmware has the details.
+
+**`sweep`**
+
+```
+sweep asked: the next boot sweeps, restarting
+OK
+```
+
+Asks for the lost-cluster sweep (ADR 0094): the card's mark is set to `Asked`, then, once `OK` is out, SYSTEM is synced and the unit restarts. The boot it restarts into sweeps in the firmware's mode (`dry-run` until `sweep-free`), halted for doubts or not, with the arena's gap free for the bitmap; nothing sweeps in the running synth, where a loaded project leaves too little gap. Read the result with `status`. Its `sweep` line names the mode, why the sweep ran, what it found and what became of the mark:
+
+- `why`: `asked` here. At other boots it is the mark that owed the sweep (`dirty`, `missing`, `doubted N`) or `unread`.
+- A boot the mark let skip prints `sweep skipped mark clean`, `unused` (a card with no `/CHIMERA`) or `doubted 3`.
+- A doubt replaces `lost … healed …` with `doubt <word>`; `too-many` adds `lost N`.
+- `then`: `cleared` after a settled sweep, `kept`, `failed`, or `doubted N`, the doubting boots in a row.
+- After the third doubting boot in a row the boot stops sweeping. `status` then adds `warn sweep stopped: 3 doubting boots in a row; check the card on a computer, then run sweep`, and the boot toasts `CARD NEEDS A CHECK: SWEEP OFF`.
+
+Refusals, with nothing written:
+
+- `ERR sweep: unsaved changes, save first`: the restart would lose them.
+- `ERR sweep: the card has no /CHIMERA, nothing to sweep`.
+- `ERR sweep: <card error>`.
+- `ERR sweep is not in this build` on the desktop.
+
+**`fault dma <1|2>`** (builds with `fault-inject` only; never shipping, orbit or bench)
+
+```
+OK
+```
+
+Test aid for the DMA re-arm (private issue #25): it clears EN on DMA1 stream 1 or 2 (DAC pair 2 or 3), waits a bounded spin for EN=0, points M0AR at 0x00000000 (ITCM, which DMA1 cannot read) and sets EN. The stream's next read bus-errors and the audio interrupt re-arms it in phase with stream 0 within about 1.3 ms. Afterwards `stats` shows `dma_errors` up by 1 and `desyncs` unchanged. `fault ndtr` samples DMA1's streams 0 to 2 for about 40 ms and prints `stream<i> cr=<hex> ndtr=<n> m0ar=<hex> ndtr_min=<n> ndtr_max=<n>` for each, then `OK`: a healthy circular stream shows `ndtr_max` near 256 (the sampler can miss the instant of the wrap, so 230 and up), a stream looping a partial ring far less. `ERR fault takes dma 1, dma 2 or ndtr` on other arguments; `ERR fault is not in this build` elsewhere (the desktop included), and if the stream would not stop. It is not in the `help` list above, which is the shipping build's.
 
 ## The functional core: `chimera_core::console`
 

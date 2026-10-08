@@ -11,11 +11,14 @@ pub mod filter_ref;
 pub mod golden;
 pub mod inst_rig;
 pub mod orbit;
+pub mod part_rig;
 pub mod project;
 pub mod rev;
 pub mod rig;
+pub mod scene;
 pub mod sweep;
 pub mod tape;
+pub mod turn;
 
 #[allow(unused_imports)] // each test binary uses some of these
 pub use inst_rig::InstRig;
@@ -300,10 +303,10 @@ fn render_with(
 pub fn render_case_through_instrument(case: Case) -> Vec<f32> {
     let (params, mod_state) = setup(case);
     let mut shared = AudioShared::default();
-    shared.parts[0].params = params;
-    shared.parts[0].mod_state = mod_state;
+    *shared.parts[0].params = params;
+    *shared.parts[0].mod_state = mod_state;
     let mut switched = shared.clone();
-    switched.parts[0].params = init_params(EngineType::Modal);
+    *switched.parts[0].params = init_params(EngineType::Modal);
     let mut inst = Box::new(Instrument::new(
         chimera_hal::SAMPLE_RATE,
         chimera_core::hw::SampleBudget::for_cpu(chimera_core::hw::CPU_HZ_REV_V),

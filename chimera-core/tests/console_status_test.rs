@@ -34,12 +34,15 @@ fn status_has_its_lines_in_order() {
     let keys: Vec<_> = s.lines().map(|l| l.split(' ').next().unwrap()).collect();
     assert_eq!(
         keys,
-        ["firmware", "protocol", "project", "state", "part", "at"]
+        [
+            "firmware", "build", "protocol", "project", "state", "part", "at"
+        ]
     );
     assert_eq!(
         line(&s, "firmware"),
         format!("{VERSION} {}", BUILD.to_ascii_lowercase())
     );
+    assert_eq!(line(&s, "build"), format!("{VERSION} dev"));
     assert_eq!(line(&s, "protocol"), "1");
     assert_eq!(line(&s, "project"), ui.project().meta().name().as_str());
     assert_eq!(line(&s, "part"), "1");

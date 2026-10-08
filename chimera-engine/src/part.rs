@@ -4,7 +4,7 @@
 //! One `Block`, so it gets pages and snap like any other.
 
 use crate::MidiChannel;
-use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
+use crate::block::{Block, Change, DiskCode, ParamId, ParamSpec, Smoothing, ValFmt, apply_code};
 use crate::dsp::fx_bus::FX_SENDS;
 use crate::orbit::ring::SnapTo;
 
@@ -232,38 +232,111 @@ impl Default for PartParams {
 
 /// Nothing here is modulatable: the mixer applies these, not the voice (ADR 0010).
 pub static PART_SPECS: [ParamSpec; 10] = [
-    ParamSpec::choice(0, "CH", ValFmt::OneBased(15), 15.0, 0.0).ident("CH"),
-    ParamSpec::choice(1, "MODE", ValFmt::Names(&["MONO", "POLY"]), 1.0, 1.0)
-        .ident("MODE")
-        .glyph(crate::glyph::FocusGlyph::None),
-    ParamSpec::choice(2, "OUT", ValFmt::Names(&["P1", "P2", "P3"]), 2.0, 0.0)
-        .ident("OUT")
-        .glyph(crate::glyph::FocusGlyph::None),
-    ParamSpec::continuous(3, "LEVEL", ValFmt::Uni, 0.0, 1.0, 0.8, 1.0 / 128.0, false)
-        .ident("LEVEL")
-        .glyph(crate::glyph::FocusGlyph::LevelBar),
-    ParamSpec::continuous(4, "PAN", ValFmt::Pan, -1.0, 1.0, 0.0, 2.0 / 128.0, false).ident("PAN"),
-    ParamSpec::continuous(5, "CHR", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
-        .ident("CHR")
-        .glyph(crate::glyph::FocusGlyph::LevelBar),
-    ParamSpec::continuous(6, "DLY", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
-        .ident("DLY")
-        .glyph(crate::glyph::FocusGlyph::LevelBar),
-    ParamSpec::continuous(7, "REV", ValFmt::Uni, 0.0, 1.0, 0.0, 1.0 / 128.0, false)
-        .ident("REV")
-        .glyph(crate::glyph::FocusGlyph::LevelBar),
+    ParamSpec::choice(0, "CH", ValFmt::OneBased(15), 15.0, 0.0, Change::Snap).ident("CH"),
+    ParamSpec::choice(
+        1,
+        "MODE",
+        ValFmt::Names(&["MONO", "POLY"]),
+        1.0,
+        1.0,
+        Change::NoteOn,
+    )
+    .ident("MODE")
+    .glyph(crate::glyph::FocusGlyph::None),
+    ParamSpec::choice(
+        2,
+        "OUT",
+        ValFmt::Names(&["P1", "P2", "P3"]),
+        2.0,
+        0.0,
+        Change::Snap,
+    )
+    .ident("OUT")
+    .glyph(crate::glyph::FocusGlyph::None),
+    ParamSpec::continuous(
+        3,
+        "LEVEL",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.8,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("LEVEL")
+    .glyph(crate::glyph::FocusGlyph::LevelBar),
+    ParamSpec::continuous(
+        4,
+        "PAN",
+        ValFmt::Pan,
+        -1.0,
+        1.0,
+        0.0,
+        2.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("PAN"),
+    ParamSpec::continuous(
+        5,
+        "CHR",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("CHR")
+    .glyph(crate::glyph::FocusGlyph::LevelBar),
+    ParamSpec::continuous(
+        6,
+        "DLY",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("DLY")
+    .glyph(crate::glyph::FocusGlyph::LevelBar),
+    ParamSpec::continuous(
+        7,
+        "REV",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("REV")
+    .glyph(crate::glyph::FocusGlyph::LevelBar),
     ParamSpec::choice(
         8,
         "SNAP",
         ValFmt::Names(&["OFF", "SCALE", "CHORD"]),
         2.0,
         0.0,
+        Change::NoteOn,
     )
     .ident("SNAP")
     .glyph(crate::glyph::FocusGlyph::None),
-    ParamSpec::choice(9, "HELD", ValFmt::Names(&["STAY", "RE-SNAP"]), 1.0, 0.0)
-        .ident("HELD")
-        .glyph(crate::glyph::FocusGlyph::None),
+    ParamSpec::choice(
+        9,
+        "HELD",
+        ValFmt::Names(&["STAY", "RE-SNAP"]),
+        1.0,
+        0.0,
+        Change::NoteOn,
+    )
+    .ident("HELD")
+    .glyph(crate::glyph::FocusGlyph::None),
 ];
 
 /// 0 to 15 as text: CH's values by channel number (the byte is the

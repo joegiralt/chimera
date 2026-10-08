@@ -92,6 +92,43 @@ pub const fn desynced(a: u16, b: u16, ring: u16, tolerance: u16) -> bool {
     d > tolerance as u32
 }
 
+/// What one trailing stream's flags mean this half: which counter moves.
+/// A transfer error clears the stream's EN and freezes its NDTR, so drift is
+/// not judged on a stream that faulted or still waits to be re-armed. FIFO
+/// errors in the first `WARMUP_BLOCKS` are the start-up's own (the streams
+/// are enabled before the SAI clocks), not counted.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TrailVerdict {
+    pub transfer_error: bool,
+    pub fifo_error: bool,
+    pub drift: bool,
+}
+
+pub const WARMUP_BLOCKS: u32 = 64;
+
+pub const fn trail_verdict(
+    te: bool,
+    fe: bool,
+    apart: bool,
+    pending: bool,
+    warm: bool,
+) -> TrailVerdict {
+    TrailVerdict {
+        transfer_error: te,
+        fifo_error: fe && warm,
+        drift: apart && !te && !pending,
+    }
+}
+
+/// Whether a halted trailing stream restarts now. Only at stream 0's wrap
+/// (its TC): a circular stream reloads NDTR and M0AR from what was
+/// programmed at enable, so it must be programmed with the whole ring from
+/// its base, which is where stream 0 is at that instant. A mid-ring restart
+/// would loop a partial ring forever.
+pub const fn rearm_due(pending: bool, full_done: bool) -> bool {
+    pending && full_done
+}
+
 /// The audio interrupt's liveness as the watchdog kicker sees it: alive
 /// when its block count has moved since the last look.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

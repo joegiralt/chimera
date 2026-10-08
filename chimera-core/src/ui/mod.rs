@@ -191,6 +191,9 @@ impl From<RegistryError> for PrimeStatus {
     }
 }
 
+/// The boot's toast once the sweep stopped for doubts.
+pub const SWEEP_STOPPED: &str = "CARD NEEDS A CHECK: SWEEP OFF";
+
 /// Top-level UI state. Owns navigation, parameters, and display animation.
 /// Portable across desktop and hardware — only depends on HAL traits.
 pub struct UiState {
@@ -542,6 +545,14 @@ impl UiState {
             text: Line::new(text),
             ms: busy::Toast::BOOT_MS,
         });
+    }
+
+    /// The boot's sweep, as a toast once it stopped for doubting boots in
+    /// a row (ADR 0094): the card needs a computer's check, then `sweep`.
+    pub fn note_sweep(&mut self, run: &chimera_hal::store::SweepRun) {
+        if run.halted() {
+            self.show_boot_fault(SWEEP_STOPPED);
+        }
     }
 
     /// A project note as a toast: a save's time for SAVED, else an error's.

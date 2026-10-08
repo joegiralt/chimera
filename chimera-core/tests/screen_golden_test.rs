@@ -29,12 +29,17 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mod_matrix_morph_inert", 0xc540d682384b1445),
     // Re-recorded: WAVE shows its scope (#310).
     ("algo_wave", 0xe156f3e83d0aab72),
-    ("algo_level", 0x408f6bef763157fe),
-    ("algo_osc_last", 0x7ac731494a9568e2),
+    // Re-recorded: a knob that glides shows a bar (ADR 0112).
+    ("algo_level", 0x9ac776e29fea212e),
+    // Re-recorded: a knob that glides shows a bar (ADR 0112).
+    ("algo_osc_last", 0x7ea039d2daabda4a),
     // The ENV stages' band draws the focused operator's envelope (#311).
-    ("algo_ar", 0x661a8ad43d30be01),
-    ("algo_d1l", 0x7ca2aaf1d50c3055),
-    ("algo_d2r", 0x60965afdf2d22552),
+    // Re-recorded: a knob that glides shows a bar (ADR 0112).
+    ("algo_ar", 0x1c0c610d213d6bb9),
+    // Re-recorded: a knob that glides shows a bar (ADR 0112).
+    ("algo_d1l", 0x54e66c604bf0cf69),
+    // Re-recorded: a knob that glides shows a bar (ADR 0112).
+    ("algo_d2r", 0xfecabc26ac35f902),
     // Re-recorded: MODE reads LP4, CLEAN's label for LP24 (ADR 0096); then
     // TYPE live with two kinds (Task 8); then CLEAN's Cascadia words FREQ,
     // Q, FM1, FM2 (Task 12): was 0x032b329ca06df69b.
@@ -78,13 +83,16 @@ const GOLDENS: &[(&str, u64)] = &[
     ("amp_vel_dimmed", 0x496ba84d34eb9c06),
     ("amp_vel_live", 0x07fe7ee2b28245d6),
     // Re-recorded: PIT shows SNAP on E (TAPE Task 12b).
-    ("algo_pitch", 0x7820d2af4b909f1f),
+    // Re-recorded: a knob that glides shows a bar (ADR 0112).
+    ("algo_pitch", 0x58e8a368827c4a5f),
     // Re-recorded: the EXC node (plan Task 13).
     // Re-recorded: PIT shows SNAP on E (TAPE Task 12b).
-    ("modal_pitch", 0x7049f28424d35cbf),
+    // Re-recorded: a knob that glides shows a bar (ADR 0112).
+    ("modal_pitch", 0xd982f36a8dd7adff),
     // PIT on TAPE, SNAP MUSICAL: PITCH +19 in three clicks (TAPE Task 12b);
     // again for Task 15: PIT hangs under DECK.
-    ("tape_pitch_musical", 0xcd7b59559dcb75d3),
+    // Re-recorded: a knob that glides shows a bar (ADR 0112).
+    ("tape_pitch_musical", 0x9d824579d7e1a553),
     // Re-recorded: the EXC node (plan Task 13).
     ("modal_exc", 0xdf9684baab508f23),
     // Re-recorded: the EXC node (plan Task 13).
@@ -213,7 +221,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // Every ORBIT page again for Task 16: the map gains SCN.
     // ORBIT's RHYTHM, CHRD and CUSTOM (plan Task 9); Task 10's header,
     // `SCENE n`, and the beat dot on the playing ones.
-    ("orbit_rhythm", 0x535a82923b7caa35),
+    // Re-recorded: a stepped param shows no bar (ADR 0112).
+    ("orbit_rhythm", 0x6a2750f9c7181a45),
     // PLAY's cell (plan Task 14); KEY, SCALE and BARS gone to ORB; SEGS,
     // DEGREE and PLAY on A to C, D to F reserved (ADR 0079, 2026-10-03).
     ("orbit_chrd", 0x9e90b371b6b38670),
@@ -222,12 +231,14 @@ const GOLDENS: &[(&str, u64)] = &[
     // ORB (plan Task 10); B to E gain KEY, SCALE, BARS, SCENE (ADR 0079),
     // and CUSTOM hangs under it; each ring's Part by its top and in RING,
     // and CUSTOM by EDIT on a named scale (ADR 0084).
-    ("orbit_orb", 0xddf44d94d5f622ca),
+    // Re-recorded: a stepped param shows no bar (ADR 0112).
+    ("orbit_orb", 0xdd08d634fc91934e),
     ("orbit_orb_midi", 0x35a2ff6ecca97ad1),
     ("orbit_custom", 0x7c5bdf51a79d88a1),
     ("orbit_custom_named", 0x6f9acf1a43362d0e),
     // RING's VOICE and NOTES, a STEP ring's NOTES (plan Task 13).
-    ("orbit_voice", 0xdaefdb55fbe49e98),
+    // Re-recorded: a stepped param shows no bar (ADR 0112).
+    ("orbit_voice", 0x97d0371ef20d5b8c),
     ("orbit_notes", 0x2865bfd4ee762860),
     ("orbit_notes_step", 0xc1c3dab7eeb50a2f),
     // 32 steps, step 32 picked: the row scrolled to its last eight.

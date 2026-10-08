@@ -123,7 +123,12 @@ pub const CARD: SourceId<NOTE_SOURCES> = SourceId::new(1);
 pub static NOTES: NoteSources<NOTE_SOURCES> = NoteSources::new();
 
 pub static OVERRUNS: AtomicU32 = AtomicU32::new(0);
+/// Trailing DMA streams drifting from stream 0.
 pub static DESYNCS: AtomicU32 = AtomicU32::new(0);
+/// Transfer errors on streams 1 and 2, each re-armed in phase.
+pub static DMA_ERRORS: AtomicU32 = AtomicU32::new(0);
+/// FIFO errors on streams 1 and 2.
+pub static FIFO_ERRORS: AtomicU32 = AtomicU32::new(0);
 /// Halves rendered, wrapping: the watchdog's audio heartbeat.
 pub static BLOCKS: AtomicU32 = AtomicU32::new(0);
 /// MIDI DIN's line errors: overrun, framing, noise.

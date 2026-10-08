@@ -1,15 +1,17 @@
 use core::mem::MaybeUninit;
 use core::ptr::{addr_of, addr_of_mut};
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicU8, Ordering};
 
-use chimera_engine::audio_out::{DacSample, Half, desynced, plan_halves};
+use chimera_engine::audio_out::{
+    DacSample, Half, WARMUP_BLOCKS, desynced, plan_halves, rearm_due, trail_verdict,
+};
 use chimera_engine::hw::{BLOCK_SIZE, DAC_PAIRS};
 use chimera_engine::part::DacPair;
 use cortex_m::peripheral::NVIC;
 use stm32h7xx_hal::pac::{self, interrupt};
 
 use chimera_board::priority::{self, Priority};
-use chimera_board::shared::{BLOCKS, DESYNCS, OVERRUNS, bump};
+use chimera_board::shared::{BLOCKS, DESYNCS, DMA_ERRORS, FIFO_ERRORS, OVERRUNS, bump};
 
 pub const RING_WORDS: usize = 2 * BLOCK_SIZE * 2;
 // DMAMUX1 requests for SAI1_A, SAI1_B, SAI2_A (RM0433; stock PreenFM3 uses the same).
@@ -26,6 +28,8 @@ const _: () = assert!(core::mem::size_of::<Rings>() == DAC_PAIRS * RING_WORDS * 
 static mut RINGS: MaybeUninit<Rings> = MaybeUninit::uninit();
 
 // Streams 1 and 2 may trail stream 0 by the SAI FIFO (8 words) plus the DMA's.
+// Not measurable from the code or RM: it depends on arbitration at start, so
+// 16 stays; `stats` desyncs on a healthy unit shows if it is too tight.
 const DESYNC_TOLERANCE: u16 = 16;
 
 pub fn clear() {
@@ -153,11 +157,38 @@ fn clear_flags(dma1: &pac::dma1::RegisterBlock) {
     });
 }
 
+fn clear_trailing_errors(dma1: &pac::dma1::RegisterBlock, pair: DacPair) {
+    dma1.lifcr.write(|w| match pair {
+        DacPair::P2 => w.cteif1().clear().cfeif1().clear().cdmeif1().clear(),
+        _ => w.cteif2().clear().cfeif2().clear().cdmeif2().clear(),
+    });
+}
+
+/// Trailing streams halted by a transfer error, one bit per pair, waiting
+/// for stream 0's next wrap.
+static PENDING: AtomicU8 = AtomicU8::new(0);
+
+/// Restart a stream the hardware halted on a transfer error, at its ring's
+/// base: the call is made as stream 0 wraps, so the two are in phase to
+/// within the interrupt's latency. Never waits.
+fn rearm(dma1: &pac::dma1::RegisterBlock, pair: DacPair) {
+    let st = &dma1.st[pair.index()];
+    if st.cr.read().en().is_enabled() {
+        return;
+    }
+    // SAFETY: EN is clear, so M0AR and NDTR are writable; the address is this
+    // pair's ring base.
+    unsafe { st.m0ar.write(|w| w.m0a().bits(ring_addr(pair))) };
+    st.ndtr.write(|w| w.ndt().bits(RING_WORDS as u16));
+    clear_trailing_errors(dma1, pair);
+    st.cr.modify(|_, w| w.en().enabled());
+}
+
 #[interrupt]
 fn DMA1_STR0() {
     // SAFETY: once `init` has run, this handler is the only user of DMA1's
-    // LISR and LIFCR (it clears stream 0's HT/TC and streams 1–2's TE) and
-    // only reads the streams' NDTR.
+    // LISR and LIFCR (it clears stream 0's HT/TC and streams 1–2's error flags), reads
+    // their NDTR and re-arms a halted stream 1 or 2.
     let dma1 = unsafe { &*pac::DMA1::ptr() };
     let lisr = dma1.lisr.read();
     // A transfer error clears stream 0's EN (RM0433, DMA error management):
@@ -178,12 +209,35 @@ fn DMA1_STR0() {
     });
     let ndtr = |p: DacPair| dma1.st[p.index()].ndtr.read().ndt().bits();
     let lead = ndtr(DacPair::P1);
-    let trailing_apart = [DacPair::P2, DacPair::P3]
-        .into_iter()
-        .any(|p| desynced(lead, ndtr(p), RING_WORDS as u16, DESYNC_TOLERANCE));
-    if trailing_apart || lisr.teif1().is_error() || lisr.teif2().is_error() {
-        bump(&DESYNCS, 1);
-        dma1.lifcr.write(|w| w.cteif1().clear().cteif2().clear());
+    let warm = BLOCKS.load(Ordering::Relaxed) >= WARMUP_BLOCKS;
+    for (pair, te, fe) in [
+        (
+            DacPair::P2,
+            lisr.teif1().is_error(),
+            lisr.feif1().is_error(),
+        ),
+        (
+            DacPair::P3,
+            lisr.teif2().is_error(),
+            lisr.feif2().is_error(),
+        ),
+    ] {
+        let bit = 1 << pair.index();
+        let pending = PENDING.load(Ordering::Relaxed) & bit != 0;
+        let apart = desynced(lead, ndtr(pair), RING_WORDS as u16, DESYNC_TOLERANCE);
+        let v = trail_verdict(te, fe, apart, pending, warm);
+        bump(&DESYNCS, v.drift as u32);
+        bump(&DMA_ERRORS, v.transfer_error as u32);
+        bump(&FIFO_ERRORS, v.fifo_error as u32);
+        if te || fe {
+            clear_trailing_errors(dma1, pair);
+        }
+        if rearm_due(pending || te, full_done) {
+            rearm(dma1, pair);
+            PENDING.fetch_and(!bit, Ordering::Relaxed);
+        } else if te {
+            PENDING.fetch_or(bit, Ordering::Relaxed);
+        }
     }
     let plan = plan_halves(half_done, full_done);
     for half in plan.halves.into_iter().flatten() {

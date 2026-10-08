@@ -43,16 +43,16 @@ fn event(ch: u8, note: u8, kind: NoteKind) -> NoteEvent {
 
 fn every_engine_and_every_effect() -> AudioShared {
     let mut s = AudioShared::default();
-    s.parts[0].params = tri();
-    s.parts[1].params = ParamSnapshot::for_engine(EngineType::Algo);
+    *s.parts[0].params = tri();
+    *s.parts[1].params = ParamSnapshot::for_engine(EngineType::Algo);
     let a = &mut s.parts[1].params.algo;
     (a.alg_a, a.alg_b, a.morph) = (AlgoId::A14.get(), AlgoId::A22.get(), 64);
     for (i, op) in a.ops.iter_mut().enumerate() {
         (op.wave, op.coarse, op.level, op.feedback) = (i as u8, [4, 8, 10, 13, 16, 19][i], 99, 7);
     }
-    s.parts[2].params = ParamSnapshot::for_engine(EngineType::Modal);
+    *s.parts[2].params = ParamSnapshot::for_engine(EngineType::Modal);
     s.parts[2].params.modal.mode = ResonatorMode::String;
-    s.parts[3].params = ParamSnapshot::for_engine(EngineType::Modal);
+    *s.parts[3].params = ParamSnapshot::for_engine(EngineType::Modal);
     s.parts[3].params.modal.mode = ResonatorMode::Sympathetic;
     for part in &mut s.parts[..4] {
         part.mix.sends = [0.3; FX_SENDS];

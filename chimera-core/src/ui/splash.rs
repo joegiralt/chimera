@@ -39,7 +39,21 @@ pub fn draw<D: DrawTarget<Color = Rgb565>>(d: &mut D) -> Result<(), D::Error> {
     d.draw_iter(inked().map(|n| {
         let (x, y) = (n % SIZE, n / SIZE);
         Pixel(origin + Point::new(x as i32, y as i32), theme::BG)
-    }))
+    }))?;
+    // The build's version and hash under the sign (#406).
+    let mut rev = super::fmt::FmtBuf::new();
+    let _ = super::about_page::write_build_rev(&mut rev);
+    let cx = d.bounding_box().center().x;
+    super::draw::text_center(
+        d,
+        &theme::FONT_LABEL,
+        rev.as_str(),
+        cx,
+        origin.y + SIZE as i32 + 24,
+        theme::BG,
+        theme::LABEL_TRACKING,
+    );
+    Ok(())
 }
 
 #[cfg(test)]

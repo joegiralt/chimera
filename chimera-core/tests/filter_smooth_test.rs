@@ -20,10 +20,9 @@ use chimera_core::params::{EngineType, FilterParams};
 use chimera_core::part::PartParams;
 use chimera_core::preset::Sound;
 use chimera_core::ui::filter_panel::keybd_step;
-use chimera_hal::{BLOCK_SIZE, ENCODER_BURST_GAP_MS, SAMPLE_RATE, encoder_accel};
+use chimera_hal::encoder_accel;
 use common::sweep::{Bench, Patch, Tape};
-
-const MS_PER_BLOCK: f32 = BLOCK_SIZE as f32 * 1000.0 / SAMPLE_RATE as f32;
+use common::turn::{FAST_DETENT_MS, MS_PER_BLOCK, fast_turn, slow_turn, ticks};
 
 /// Every TYPE TYPE steps: a new one (LADDER) is covered as it is built.
 const TYPES: [FilterKind; FilterKind::BUILT.len()] = FilterKind::BUILT;
@@ -39,42 +38,6 @@ const SLOW_C_PER_MS: f32 = 3.0;
 /// most 2× the hand's own rate. A step is a whole detent in one block, ~23×
 /// it: e940fd8c moved 998 c in one block (750 c/ms) here.
 const FAST_C_PER_MS: f32 = 2.0 * 500.0 / FAST_DETENT_MS;
-
-/// The fast turn's detent period, ms.
-const FAST_DETENT_MS: f32 = 30.0;
-
-/// Ticks landing in each of `n` blocks from detents at `(ms, dir)`,
-/// accelerated as the panel does.
-fn ticks(detents: &[(f32, i8)], n: usize) -> Vec<i8> {
-    let mut out = vec![0i8; n];
-    let (mut burst, mut last) = (0u8, f32::NEG_INFINITY);
-    for &(t, dir) in detents {
-        if t - last > ENCODER_BURST_GAP_MS as f32 {
-            burst = 0;
-        }
-        last = t;
-        let b = (t / MS_PER_BLOCK) as usize;
-        out[b] = out[b].saturating_add(dir * encoder_accel(burst));
-        burst = burst.saturating_add(1);
-    }
-    out
-}
-
-/// The report's fast turn: 12 detents up, one every 30 ms; then 12 down,
-/// one every 200 ms (no acceleration). 3.4 s.
-fn fast_turn() -> Vec<i8> {
-    let mut d: Vec<(f32, i8)> = (0..12)
-        .map(|i| (100.0 + FAST_DETENT_MS * i as f32, 1))
-        .collect();
-    d.extend((0..12).map(|i| (800.0 + 200.0 * i as f32, -1)));
-    ticks(&d, (3400.0 / MS_PER_BLOCK) as usize)
-}
-
-/// The report's slow turn: 8 detents up, one every 200 ms. 2 s.
-fn slow_turn() -> Vec<i8> {
-    let d: Vec<(f32, i8)> = (0..8).map(|i| (100.0 + 200.0 * i as f32, 1)).collect();
-    ticks(&d, (2000.0 / MS_PER_BLOCK) as usize)
-}
 
 /// A held saw through `kind` at `cutoff` Hz and RES `res`, ENV 1 at full
 /// sustain.
@@ -317,99 +280,11 @@ fn cutoff_ticks_a_24th_of_an_octave_and_a_fast_turn_crosses_the_range() {
 
 // ── Loads, notes and Parts (ADR 0107 § 3–4) ────────────────────────────
 
-use chimera_core::dsp::fx_bus::FxBus;
-use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
-use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
-use chimera_core::note_queue::{NoteEvent, NoteKind};
-use chimera_core::project::{PartFrom, PartId, PartSource, Project, TemplateCrc};
-use chimera_core::scope::ScopeWriter;
-use chimera_core::{MidiChannel, MidiNote, Velocity};
+use common::part_rig::Rig;
 
-/// A Project played as the shells play it: published each block.
-struct Rig {
-    p: Box<Project>,
-    t: TemplateCrc,
-    shared: Box<AudioShared>,
-    inst: Box<Instrument>,
-    fx: Box<FxBus>,
-    dac: Box<DacBlocks>,
-    scope: ScopeWriter,
-}
-
-impl Rig {
-    /// Parts 1 and 2 a held-saw Sound on `kind` at `hz`, RES 51.
-    fn new(kind: FilterKind, hz: [f32; 2]) -> Self {
-        let (mut p, t) = Project::boxed();
-        for (part, hz) in PartId::ALL.into_iter().zip(hz) {
-            *p.edit_part(part).sound = saw(kind, hz, 51.0 / 127.0);
-        }
-        let shared = Box::new(AudioShared::default());
-        let mut r = Self {
-            p,
-            t,
-            shared,
-            inst: Box::new(Instrument::new(
-                SAMPLE_RATE,
-                SampleBudget::for_cpu(CPU_HZ_REV_V),
-            )),
-            fx: Box::new(FxBus::new()),
-            dac: Box::new(DacBlocks::new()),
-            scope: common::scope_writer(),
-        };
-        r.publish();
-        r
-    }
-
-    fn publish(&mut self) {
-        self.shared.update_from_project(&self.p, 0);
-    }
-
-    /// Note 57 on (or off) on `part`'s channel.
-    fn note(&mut self, part: usize, on: bool) {
-        let kind = if on {
-            NoteKind::On(Velocity::DEFAULT)
-        } else {
-            NoteKind::Off
-        };
-        let ev = NoteEvent {
-            channel: MidiChannel::clamped(part as u8),
-            note: MidiNote::new(57).unwrap(),
-            kind,
-        };
-        self.inst.handle(ev, &self.shared);
-    }
-
-    /// One block: the cutoffs the busy voices played, voice order.
-    fn block(&mut self) -> Vec<f32> {
-        self.publish();
-        self.inst
-            .render(&mut self.fx, &mut self.dac, &self.shared, &mut self.scope);
-        let busy = self.inst.allocator().slots().map(|s| !s.is_free());
-        let played = self.inst.played_filters();
-        (0..busy.len())
-            .filter(|&v| busy[v])
-            .map(|v| played[v].cutoff)
-            .collect()
-    }
-
-    fn cutoff(&mut self, part: usize) -> &mut f32 {
-        &mut self
-            .p
-            .edit_part(PartId::ALL[part])
-            .sound
-            .params
-            .filter
-            .cutoff
-    }
-
-    /// A Sound load into `part` (INIT on ALGO), REPLACE answered.
-    fn load(&mut self, part: usize) {
-        let src = PartSource {
-            part: PartId::ALL[part],
-            from: PartFrom::Init(EngineType::Algo),
-        };
-        common::project::load_anyway(&mut self.p, self.t, src).unwrap();
-    }
+/// Parts 1 and 2 a held-saw Sound on `kind` at `hz`, RES 51.
+fn rig(kind: FilterKind, hz: [f32; 2]) -> Rig {
+    Rig::new(hz.map(|hz| saw(kind, hz, 51.0 / 127.0)))
 }
 
 /// A Sound loaded over a sounding voice lands on its knobs, the next
@@ -417,14 +292,19 @@ impl Rig {
 #[test]
 fn a_load_under_a_sounding_voice_lands() {
     for kind in TYPES {
-        let mut r = Rig::new(kind, [8000.0, 1000.0]);
+        let mut r = rig(kind, [8000.0, 1000.0]);
         r.note(0, true);
         for _ in 0..20 {
             r.block();
         }
         r.note(0, false);
         r.load(0);
-        let want = r.p.part(PartId::ALL[0]).sound.params.filter.cutoff;
+        let want =
+            r.p.part(chimera_core::project::PartId::ALL[0])
+                .sound
+                .params
+                .filter
+                .cutoff;
         assert_ne!(want, 8000.0);
         let got = r.block();
         assert_eq!(got.len(), 1, "{kind:?}: the released voice still rings");
@@ -435,9 +315,9 @@ fn a_load_under_a_sounding_voice_lands() {
 /// A turn made while a Part is silent is where its next note starts.
 #[test]
 fn a_turn_on_a_silent_part_lands_on_the_next_note() {
-    let mut r = Rig::new(FilterKind::K2040, [8000.0, 1000.0]);
+    let mut r = rig(FilterKind::K2040, [8000.0, 1000.0]);
     r.block();
-    *r.cutoff(0) = 300.0;
+    r.sound(0).params.filter.cutoff = 300.0;
     r.block();
     r.note(0, true);
     assert_eq!(r.block(), [300.0]);
@@ -447,20 +327,15 @@ fn a_turn_on_a_silent_part_lands_on_the_next_note() {
 /// it: the two voices play one cutoff, still moving.
 #[test]
 fn a_note_mid_glide_joins_the_glide() {
-    let mut r = Rig::new(FilterKind::K2040, [300.0, 1000.0]);
+    let mut r = rig(FilterKind::K2040, [300.0, 1000.0]);
     r.note(0, true);
     r.block();
-    *r.cutoff(0) = 3000.0;
+    r.sound(0).params.filter.cutoff = 3000.0;
     let first = r.block()[0];
     let was = r.block()[0];
     r.note(0, false);
     // A second key on the same Part: a new voice.
-    let ev = NoteEvent {
-        channel: MidiChannel::clamped(0),
-        note: MidiNote::new(64).unwrap(),
-        kind: NoteKind::On(Velocity::DEFAULT),
-    };
-    r.inst.handle(ev, &r.shared);
+    r.key(0, 64, true);
     let both = r.block();
     assert_eq!(both.len(), 2);
     assert_eq!(both[0], both[1], "one Part, one cutoff");
@@ -478,11 +353,11 @@ fn a_note_mid_glide_joins_the_glide() {
 /// Two Parts glide apart: turning Part 1 never moves Part 2.
 #[test]
 fn two_parts_glide_independently() {
-    let mut r = Rig::new(FilterKind::Svf, [300.0, 1000.0]);
+    let mut r = rig(FilterKind::Svf, [300.0, 1000.0]);
     r.note(0, true);
     r.note(1, true);
     r.block();
-    *r.cutoff(0) = 3000.0;
+    r.sound(0).params.filter.cutoff = 3000.0;
     for _ in 0..10 {
         let c = r.block();
         assert_eq!(c.len(), 2);

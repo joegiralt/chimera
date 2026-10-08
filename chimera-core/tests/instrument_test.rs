@@ -3,6 +3,7 @@
 //! sends into the FX bus, FX return into DAC pair 1.
 
 mod common;
+use chimera_core::dsp::knobs::Knobs;
 use chimera_core::project::PartId;
 use common::{SR, peak};
 
@@ -12,7 +13,7 @@ use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::chorus::ChorusParams;
 use chimera_core::dsp::ease::{Ease, ease_coeff, step_of};
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
-use chimera_core::dsp::limiter::OUTPUT_TRIM;
+use chimera_core::dsp::limiter::OUTPUT_GAIN;
 use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::ring::{first_reflection, size_step};
 use chimera_core::hw::{DAC_PAIRS, MAX_PARTS, MAX_VOICES};
@@ -57,7 +58,10 @@ fn factory_voice_cost(i: usize) -> u32 {
 /// margin, so a future change to the cost model can't silently flip which
 /// slot the note lands on.
 fn morph_pad_plus_sqr_bass_budget() -> SampleBudget {
-    budget_for((MAX_VOICES as u32 - 2) * factory_voice_cost(6) + factory_voice_cost(5))
+    // And the two Parts' knobs (ADR 0112).
+    budget_for(
+        (MAX_VOICES as u32 - 2) * factory_voice_cost(6) + factory_voice_cost(5) + 2 * Knobs::COST.0,
+    )
 }
 
 fn on(ch: u8, note: u8) -> NoteEvent {
@@ -95,7 +99,8 @@ impl Rig {
             let init = AudioShared::default();
             let p = &init.parts[0];
             let voice = chimera_core::dsp::voice::Voice::cost(&p.params, &p.mod_state).0;
-            *rig.inst = Instrument::new(SR, budget_for(8 * voice));
+            // And two Parts' knobs (ADR 0112): never a ninth voice.
+            *rig.inst = Instrument::new(SR, budget_for(8 * voice + 2 * Knobs::COST.0));
         }
         rig
     }
@@ -144,7 +149,7 @@ fn part_bus_is_panned_and_levelled_into_its_pair() {
     let (l, r) = lr(&rig.out()[0]);
     assert!(peak(&bus) > 0.01);
     for i in 0..BLOCK_SIZE {
-        assert_eq!(l[i], bus[i] * 0.5 * OUTPUT_TRIM, "sample {i}");
+        assert_eq!(l[i], bus[i] * 0.5 * OUTPUT_GAIN, "sample {i}");
         assert_eq!(r[i], 0.0);
     }
     assert_eq!(
@@ -359,20 +364,22 @@ fn mix_parts_is_bit_identical_to_the_reference() {
 /// reflection.
 #[test]
 fn fx_send_puts_no_dry_signal_on_pair_1() {
+    // Low enough that the return stays under the limiter's knee (ADR 0109).
+    const SEND: f32 = 0.1;
     let mut rig = Rig::new();
     let mut shared = AudioShared::default();
     shared.fx.reverb.mix = 0.5;
     shared.fx.reverb.time = 0.7;
     shared.parts[0].mix.output = DacPair::P3;
     shared.parts[0].mix.pan = -1.0;
-    shared.parts[0].mix.sends[2] = 0.5;
+    shared.parts[0].mix.sends[2] = SEND;
     let mut fx = Box::new(FxBus::new());
     rig.inst.handle(on(0, 60), &shared);
     let mut last = Stereo::SILENT;
     for b in 0..120 {
         rig.block(&shared);
         let bus = *rig.inst.part_bus(0);
-        let mut sends = [[0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE], bus.map(|s| s * 0.5)];
+        let mut sends = [[0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE], bus.map(|s| s * SEND)];
         let mut ret = Stereo::SILENT;
         fx.process(&mut sends, &shared.fx, Tempo::DEFAULT, SR, &mut ret);
         let (l, r) = lr(&rig.out()[0]);
@@ -382,8 +389,8 @@ fn fx_send_puts_no_dry_signal_on_pair_1() {
             "block {b}: pair 1 is the return only"
         );
         last = Stereo {
-            l: ret.l.map(|x| x * OUTPUT_TRIM),
-            r: ret.r.map(|x| x * OUTPUT_TRIM),
+            l: ret.l.map(|x| x * OUTPUT_GAIN),
+            r: ret.r.map(|x| x * OUTPUT_GAIN),
         };
         let (l3, r3) = lr(&rig.out()[2]);
         assert_eq!(peak(&r3), 0.0, "block {b}: hard left");
@@ -688,13 +695,14 @@ fn the_costliest_patch_plays_six_voices_on_rev_v() {
 /// `two_parts_two_pairs` (P2 is Modal INIT, STRING) for STRING's out_gain 5.7;
 /// then every row for CLEAN's k law and trims (ADR 0096).
 const GOLDENS: &[(&str, u64)] = &[
-    ("poly_chord", 0xcb717ce9be83227d), // ADR 0049 INIT, then the ADR 0050 output trim
+    ("poly_chord", 0xd21752607e9286a1), // ADR 0049 INIT, then the ADR 0050 output trim
     // Re-recorded: Modal 2 step A, then ADR 0058's gain, then Task 18's DAMP make-up,
     // then the free ring on release (ADR 0062).
-    ("two_parts_two_pairs", 0x08f37cef25d6536b),
-    ("reverb_send_off", 0xfbfed33813188e05), // ADR 0049 INIT, then the ADR 0050 output trim
-    ("reverb_send_on", 0x29ccb0100493abc7),  // ADR 0049 INIT, then the ADR 0050 output trim
-    ("six_voice_chord", 0xc403d6115fa7c0ad), // ADR 0049 INIT, then the ADR 0050 output trim
+    ("two_parts_two_pairs", 0x99176e24a041d1ea),
+    ("reverb_send_off", 0xfd4ac36e6db74819), // ADR 0049 INIT, then the ADR 0050 output trim
+    ("reverb_send_on", 0xcab2cda9e63f4822),  // ADR 0049 INIT, then the ADR 0050 output trim
+    ("six_voice_chord", 0x38adad839982e05d), // ADR 0049 INIT, then the ADR 0050 output trim
+                                             // Every row re-recorded for ADR 0109's master gain and soft knee.
 ];
 
 /// ADR 0050: everything before the limiter is the mix unchanged by it,
@@ -832,27 +840,24 @@ fn sound_change_mid_chord_stays_in_budget() {
             .count(),
         held
     );
-    shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
+    *shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
     rig.block(&shared);
     let a = rig.inst.allocator();
     assert!(a.sounding_cost() + FxBus::COST <= budget.as_cost());
-    let expected = ((budget.as_cost().0 - FxBus::COST.0)
-        / Voice::cost(
-            &ParamSnapshot::for_engine(EngineType::Modal),
-            &ModState::new(),
-        )
-        .0)
-        .min(held as u32);
-    assert_eq!(
-        a.slots().iter().filter(|s| !s.is_free()).count(),
-        expected as usize
+    let modal = Voice::cost(
+        &ParamSnapshot::for_engine(EngineType::Modal),
+        &ModState::new(),
     );
-    assert!(a.slots().iter().all(|s| s.is_free()
-        || s.cost()
-            == Voice::cost(
-                &ParamSnapshot::for_engine(EngineType::Modal),
-                &ModState::new()
-            )));
+    let expected =
+        ((budget.as_cost().0 - FxBus::COST.0 - Knobs::COST.0) / modal.0).min(held as u32);
+    let busy: Vec<_> = a.slots().iter().filter(|s| !s.is_free()).collect();
+    assert_eq!(busy.len(), expected as usize);
+    // Each a MODAL voice; one carries the Part's knobs (ADR 0112).
+    assert!(
+        busy.iter()
+            .all(|s| s.cost() == modal || s.cost() == modal + Knobs::COST)
+    );
+    assert_eq!(busy.iter().filter(|s| s.cost() != modal).count(), 1);
 }
 
 /// ADR 0040, 0049: eight held INIT notes all sound at rev V's budget;
@@ -912,7 +917,7 @@ fn stealing_a_releasing_voice_does_not_free_the_new_note() {
     let n = blocks_until_free();
     assert!(n > 2);
     let mut shared = AudioShared::default();
-    shared.parts[1].params = ParamSnapshot::for_engine(EngineType::Modal);
+    *shared.parts[1].params = ParamSnapshot::for_engine(EngineType::Modal);
     for (after_off, held) in [n - 2, n - 1, n, n + 1]
         .into_iter()
         .flat_map(|a| [(a, 0), (a, 20)])
@@ -966,7 +971,7 @@ fn retriggering_a_releasing_mono_voice_does_not_free_the_new_note() {
     let mut init = AudioShared::default();
     init.parts[0].mix.mode = PartMode::Mono;
     let mut modal = init.clone();
-    modal.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
+    *modal.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
     for (after_off, held) in [n - 2, n - 1, n, n + 1]
         .into_iter()
         .flat_map(|a| [(a, 0), (a, 20)])
@@ -1435,7 +1440,7 @@ fn a_mode_switch_bills_sounding_tails_at_their_own_model() {
         voice(ResonatorMode::String),
     );
     let mut shared = AudioShared::default();
-    shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
+    *shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
     shared.parts[0].params.modal.mode = ResonatorMode::Sympathetic;
     let mut rig = Rig::rev_v();
     let tails = [48, 52, 55];
@@ -1496,7 +1501,7 @@ fn string_blocks(rig: &mut Rig, shared: &AudioShared, blocks: usize, out: &mut V
 
 fn string_part() -> AudioShared {
     let mut shared = AudioShared::default();
-    shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
+    *shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
     shared.parts[0].params.modal.mode = chimera_core::dsp::modal::ResonatorMode::String;
     shared
 }
@@ -1554,7 +1559,7 @@ fn a_restrike_reuses_its_string_and_nothing_clicks() {
 }
 
 /// The voice budget reserves the set reverb TYPE's cost over QUAD's (which
-/// `FxBus::COST` holds): a pool that just fits under QUAD sheds a voice
+/// `FxBus::COST` holds): a pool (with the Part's knobs) that just fits under QUAD sheds a voice
 /// when the TYPE becomes ROOM, and keeps all of them if it stays QUAD.
 #[test]
 fn the_voice_budget_reserves_the_reverb_types_cost() {
@@ -1563,7 +1568,9 @@ fn the_voice_budget_reserves_the_reverb_types_cost() {
     let p = &init.parts[0];
     let voice = chimera_core::dsp::voice::Voice::cost(&p.params, &p.mod_state).0;
     let sheds = |kind: ReverbType| {
-        let mut rig = Rig::with_budget(budget_for(6 * voice + 10));
+        let mut rig = Rig::with_budget(budget_for(
+            6 * voice + chimera_core::dsp::knobs::Knobs::COST.0 + 10,
+        ));
         for n in 0..6 {
             rig.note_on(0, 48 + n);
         }
