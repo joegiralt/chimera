@@ -189,8 +189,8 @@ fn kill_all_quiets_a_free_ringing_string_and_a_glide_part() {
     assert_eq!(string.modal.mode, ResonatorMode::String);
     let mut glide = string.clone();
     glide.pitch.steal = Steal::Glide;
-    r.shared.parts[0].params = string;
-    r.shared.parts[1].params = glide;
+    *r.shared.parts[0].params = string;
+    *r.shared.parts[1].params = glide;
     r.note_on(0, 48);
     r.note_on(1, 55);
     r.render(10);
@@ -233,7 +233,7 @@ fn a_note_mid_fade_on_a_glide_part_starts_fresh() {
     let mut glide = ParamSnapshot::for_engine(EngineType::Modal);
     glide.pitch.steal = Steal::Glide;
     let mut r = one_voice(&glide);
-    r.shared.parts[0].params = glide;
+    *r.shared.parts[0].params = glide;
     r.note_on(0, 48);
     r.render(10);
     r.inst.kill_all();

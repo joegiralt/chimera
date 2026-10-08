@@ -78,7 +78,7 @@ fn part(engine: EngineType, mode: Option<ResonatorMode>, steal: Steal) -> AudioS
         p.modal.mode = m;
     }
     p.pitch.steal = steal;
-    shared.parts[0].params = p;
+    *shared.parts[0].params = p;
     shared
 }
 
@@ -240,7 +240,7 @@ fn a_cut_steal_does_not_glide() {
 #[test]
 fn another_parts_steal_cuts() {
     let mut shared = part(EngineType::Modal, Some(ResonatorMode::String), Steal::Glide);
-    shared.parts[1].params = shared.parts[0].params.clone();
+    *shared.parts[1].params = (*shared.parts[0].params).clone();
     shared.parts[1].mix.channel = MidiChannel::new(1).unwrap();
     let mut rig = Rig::one_voice(&shared);
     let (mut out, mut ratios) = (Vec::new(), Vec::new());

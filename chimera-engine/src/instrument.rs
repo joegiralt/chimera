@@ -14,7 +14,7 @@ use crate::dsp::Stereo;
 use crate::dsp::ease::{Ease, ease_coeff, step_of};
 use crate::dsp::engines::{EngineCtx, SlotKind};
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
-use crate::dsp::knobs::{Knobs, knob_coeff};
+use crate::dsp::knobs::{Knobs, Pace};
 use crate::dsp::modal::{ResonatorMode, SYM_NOTE_ON_CLEAR_MAX, SymPool};
 use crate::dsp::tape_engine::{Heads, TapeEngine};
 use crate::dsp::voice::Voice;
@@ -31,6 +31,7 @@ use crate::preset::{Part, Performance};
 use crate::project::{Loads, Project, SourceId};
 use crate::scope::ScopeWriter;
 use crate::source_table::{AudioToken, GateView};
+use crate::tracked::{Stamp, Tracked};
 use crate::voice_alloc::{Allocator, VoiceIdx};
 use crate::{MidiChannel, MidiNote, Velocity};
 use chimera_theory::{Note, snap};
@@ -72,10 +73,12 @@ pub static HEADS: PartHeads = PartHeads::new();
 /// One Part as the audio thread sees it.
 #[derive(Clone, Debug)]
 pub struct PartAudio {
-    pub params: ParamSnapshot,
-    pub mod_state: ModState,
+    /// The Sound, stamped: the Part's knobs read it again only when the
+    /// stamp moves (ADR 0112).
+    pub params: Tracked<ParamSnapshot>,
+    pub mod_state: Tracked<ModState>,
     pub mix: PartParams,
-    /// The Part's Sound loads: a change lands its filter knobs.
+    /// The Part's Sound loads: a change lands its knobs.
     pub loads: Loads,
     /// The pool's id for its Sound's source (spec § 4): what a TAPE
     /// note-on latches. `None` with no source, or none in the pool.
@@ -102,10 +105,10 @@ impl PartAudio {
     /// `p` as the audio reads it but `loads`, which `fill` sets (in here,
     /// or in `init_in_place`, it costs ~0.8 KB of flash). Left at `NONE`,
     /// the first publish moves it: one landing, before any note.
-    fn of(p: &Part) -> Self {
+    fn of(p: &Part, stamp: Stamp) -> Self {
         Self {
-            params: p.sound.params.clone(),
-            mod_state: p.sound.mod_state.clone(),
+            params: Tracked::new(p.sound.params.clone(), stamp),
+            mod_state: Tracked::new(p.sound.mod_state.clone(), stamp),
             mix: p.mix,
             loads: Loads::NONE,
             source: None,
@@ -161,7 +164,9 @@ impl AudioShared {
             // The destination's length bounds the writes, not the source's.
             #[allow(clippy::needless_range_loop)]
             for i in 0..MAX_PARTS {
-                parts.add(i).write(PartAudio::of(&perf.parts()[i]));
+                parts
+                    .add(i)
+                    .write(PartAudio::of(&perf.parts()[i], Stamp::default()));
             }
             addr_of_mut!((*p).fx).write(perf.fx);
             addr_of_mut!((*p).epoch).write(0);
@@ -177,7 +182,8 @@ impl AudioShared {
     /// `None`, which mutes TAPE: the tests' publish, never a shell's.
     #[cfg(any(test, feature = "test-support"))]
     pub fn update_from(&mut self, perf: &Performance, epoch: u32) {
-        self.fill(perf, |_| None, epoch);
+        let stamp = self.parts[0].params.stamp().next(epoch);
+        self.fill(perf, |_| None, epoch, stamp);
     }
 
     /// The shells' publish: `project`'s Performance as `update_from`, each
@@ -189,10 +195,18 @@ impl AudioShared {
             project.perf(),
             |p| pool.find_source(p.sound.source?.r),
             epoch,
+            Stamp::new(epoch, project.rev()),
         );
     }
 
-    fn fill(&mut self, perf: &Performance, source: impl Fn(&Part) -> Option<SourceId>, epoch: u32) {
+    /// Every Part's values stamped `stamp`: equal stamps, equal values.
+    fn fill(
+        &mut self,
+        perf: &Performance,
+        source: impl Fn(&Part) -> Option<SourceId>,
+        epoch: u32,
+        stamp: Stamp,
+    ) {
         let Self {
             parts,
             fx,
@@ -201,7 +215,7 @@ impl AudioShared {
             orbit: _,
         } = self;
         for (d, p) in parts.iter_mut().zip(perf.parts()) {
-            *d = PartAudio::of(p);
+            *d = PartAudio::of(p, stamp);
             d.source = source(p);
             d.loads = p.loads();
         }
@@ -210,18 +224,18 @@ impl AudioShared {
     }
 }
 
-/// A playing Part's knobs one block toward its Sound's, `k` from
-/// `knob_coeff`; a silent Part's, or a new Sound's (its `loads` moved),
-/// land when next eased. A silent Part costs nothing more. Out of line:
-/// once a Part, six copies otherwise.
+/// A playing Part's knobs one block toward its Sound's (`None`: silent);
+/// a silent Part's, or a new Sound's (its `loads` moved), land when next
+/// eased. A silent Part costs nothing more. Out of line: once a Part, six
+/// copies otherwise.
 #[inline(never)]
-fn ease_part((knobs, seen): &mut (Knobs, Loads), part: &PartAudio, k: Option<f32>) {
-    if *seen != part.loads || k.is_none() {
+fn ease_part((knobs, seen): &mut (Knobs, Loads), part: &PartAudio, pace: Option<Pace>) {
+    if *seen != part.loads || pace.is_none() {
         *seen = part.loads;
         knobs.land();
     }
-    if let Some(k) = k {
-        knobs.ease(&part.params.filter, &part.params.algo, &part.mod_state, k);
+    if let Some(pace) = pace {
+        knobs.ease(&part.params, &part.mod_state, pace);
     }
 }
 
@@ -492,11 +506,11 @@ pub struct Instrument {
     costed: usize,
     /// `costs` worked out since start: for the tests.
     costings: u32,
-    /// Each Part's filter knobs, eased (ADR 0107), and the Part's loads
-    /// they last saw.
+    /// Each Part's knobs, eased (ADR 0112), and the Part's loads they
+    /// last saw.
     knobs: [(Knobs, Loads); MAX_PARTS],
-    /// `knob_coeff` at `sample_rate`.
-    knob_k: f32,
+    /// How they move: glide, or land (`land_knobs`).
+    knob_pace: Pace,
 }
 
 /// Who plays a note: the keys and MIDI, or one of ORBIT's rings.
@@ -512,7 +526,7 @@ pub enum NoteOrigin {
 /// worst-case slots starts a note a block, a typical one all at once.
 pub const SYM_CLEAR_BUDGET: usize = SYM_NOTE_ON_CLEAR_MAX;
 
-crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, knobs, knob_k });
+crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, knobs, knob_pace });
 
 const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
@@ -569,7 +583,7 @@ impl Instrument {
             addr_of_mut!((*p).costed).write(0);
             addr_of_mut!((*p).costings).write(0);
             addr_of_mut!((*p).knobs).write([(Knobs::UNPRIMED, Loads::NONE); MAX_PARTS]);
-            addr_of_mut!((*p).knob_k).write(knob_coeff(sample_rate));
+            addr_of_mut!((*p).knob_pace).write(Pace::Glide(sample_rate));
             slot.assume_init_mut()
         }
     }
@@ -646,6 +660,20 @@ impl Instrument {
     #[cfg(any(test, feature = "test-support"))]
     pub fn played_filters(&self) -> [crate::params::FilterParams; MAX_VOICES] {
         core::array::from_fn(|v| self.voices[v].played_filter())
+    }
+
+    /// Each voice's value of `addr` handed its engine last block, knobs and
+    /// routes applied: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn played(&self, addr: crate::addr::ParamAddr) -> [f32; MAX_VOICES] {
+        core::array::from_fn(|v| self.voices[v].played_value(addr))
+    }
+
+    /// Part `part`'s knob `addr` this block, its 0..1 place and whether
+    /// it moves: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn knob(&self, part: usize, addr: crate::addr::ParamAddr) -> Option<(f32, bool)> {
+        self.knobs[part].0.place(addr)
     }
 
     /// Each voice's MORPH last block, routes applied: for the tests.
@@ -1133,10 +1161,10 @@ impl Instrument {
     /// drives a knob block by block (the factory tapes' MORPH sweep) plays
     /// it exactly.
     pub fn land_knobs(&mut self) {
-        self.knob_k = 0.0;
+        self.knob_pace = Pace::Land;
     }
 
-    /// Each Part's filter knobs this block (ADR 0107): eased while a voice
+    /// Each Part's knobs this block (ADR 0112): eased while a voice
     /// plays the Part, landed while none does and on a new Sound.
     fn ease_knobs(&mut self, shared: &AudioShared) {
         let mut playing = [false; MAX_PARTS];
@@ -1145,9 +1173,9 @@ impl Instrument {
                 playing[self.sounding[v] as usize % MAX_PARTS] = true;
             }
         }
-        let k = self.knob_k;
+        let pace = self.knob_pace;
         for ((knobs, part), playing) in self.knobs.iter_mut().zip(&shared.parts).zip(playing) {
-            ease_part(knobs, part, playing.then_some(k));
+            ease_part(knobs, part, playing.then_some(pace));
         }
     }
 

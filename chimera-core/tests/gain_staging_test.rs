@@ -104,10 +104,10 @@ fn chord(
     let mut shared = Box::new(AudioShared::default());
     if let Voices::Saw = voices {
         let saw = factory_sound(4).unwrap();
-        shared.parts[0].params = saw.params;
+        *shared.parts[0].params = saw.params;
         shared.parts[0].params.filter.cutoff = 20_000.0;
         shared.parts[0].params.filter.resonance = 0.0;
-        shared.parts[0].mod_state = saw.mod_state;
+        *shared.parts[0].mod_state = saw.mod_state;
     } else {
         shared.parts[0].params.out.volume = 0.8;
     }

@@ -246,7 +246,9 @@ fn own(v: &Rig) -> &common::tape::OneSource {
 
 /// `f` on `v`'s voice with its own source's view.
 fn with_view(v: &mut Rig, f: impl FnOnce(&mut Voice, &mut EngineCtx<'_>)) {
-    let Rig { voice, pool, src } = v;
+    let Rig {
+        voice, pool, src, ..
+    } = v;
     let Src::Own(src) = src else { unreachable!() };
     let view = src.view();
     f(

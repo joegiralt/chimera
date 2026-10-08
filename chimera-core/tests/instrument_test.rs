@@ -822,7 +822,7 @@ fn sound_change_mid_chord_stays_in_budget() {
             .count(),
         held
     );
-    shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
+    *shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
     rig.block(&shared);
     let a = rig.inst.allocator();
     assert!(a.sounding_cost() + FxBus::COST <= budget.as_cost());
@@ -902,7 +902,7 @@ fn stealing_a_releasing_voice_does_not_free_the_new_note() {
     let n = blocks_until_free();
     assert!(n > 2);
     let mut shared = AudioShared::default();
-    shared.parts[1].params = ParamSnapshot::for_engine(EngineType::Modal);
+    *shared.parts[1].params = ParamSnapshot::for_engine(EngineType::Modal);
     for (after_off, held) in [n - 2, n - 1, n, n + 1]
         .into_iter()
         .flat_map(|a| [(a, 0), (a, 20)])
@@ -956,7 +956,7 @@ fn retriggering_a_releasing_mono_voice_does_not_free_the_new_note() {
     let mut init = AudioShared::default();
     init.parts[0].mix.mode = PartMode::Mono;
     let mut modal = init.clone();
-    modal.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
+    *modal.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
     for (after_off, held) in [n - 2, n - 1, n, n + 1]
         .into_iter()
         .flat_map(|a| [(a, 0), (a, 20)])
@@ -1409,7 +1409,7 @@ fn a_mode_switch_bills_sounding_tails_at_their_own_model() {
         voice(ResonatorMode::String),
     );
     let mut shared = AudioShared::default();
-    shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
+    *shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
     shared.parts[0].params.modal.mode = ResonatorMode::Sympathetic;
     let mut rig = Rig::rev_v();
     let tails = [48, 52, 55];
@@ -1470,7 +1470,7 @@ fn string_blocks(rig: &mut Rig, shared: &AudioShared, blocks: usize, out: &mut V
 
 fn string_part() -> AudioShared {
     let mut shared = AudioShared::default();
-    shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
+    *shared.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
     shared.parts[0].params.modal.mode = chimera_core::dsp::modal::ResonatorMode::String;
     shared
 }

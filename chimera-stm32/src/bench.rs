@@ -767,7 +767,7 @@ fn algo_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>, clo
     let mut rows = [Counts::default(); ROWS];
     for (row, &(_, patch, low, step)) in rows.iter_mut().zip(&PATCHES) {
         for n in 1..=MAX_VOICES {
-            let setup = |s: &mut AudioShared| s.parts[0].params = black_box(patch());
+            let setup = |s: &mut AudioShared| *s.parts[0].params = black_box(patch());
             row.add(n, rig.time(&setup, &|_, _| {}, n, low, step));
         }
     }
@@ -1523,7 +1523,7 @@ impl Rig<'_> {
             let sound = new.unwrap_or_else(|| Sound::init(EngineType::Algo));
             (part.params, part.mod_state) = (sound.params, sound.mod_state);
         }
-        shared.parts[MAX_PARTS - 1].params = a16_a17();
+        *shared.parts[MAX_PARTS - 1].params = a16_a17();
         if keys_first {
             hold_notes(inst, shared, MAX_PARTS - 1);
         }

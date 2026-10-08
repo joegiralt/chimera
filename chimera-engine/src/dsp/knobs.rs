@@ -1,120 +1,234 @@
-//! A Part's knobs, eased once a block before its voices read them (CLAUDE.md:
-//! never snap; ADR 0107, 0111). CUTOFF glides in octaves; RES, the FREQ and
-//! Q columns' amounts (ENV AMT, KEYBD, FM1–3, QM) and ALGO's MORPH linearly;
-//! each a one-pole of `KNOB_EASE_S`. A voice adds its routes' offsets after,
-//! so an envelope, an LFO or a tap keeps its snap, and every TYPE gets the
-//! glide: it is before the filter, not in it.
+//! A Part's knobs (ADR 0112, after 0107 and 0111): every Sound parameter
+//! whose spec declares `Smoothing::Knobs` glides here, once a block, toward
+//! its stored value before the Part's voices read it: a one-pole of the
+//! param's τ on its 0..1 place (`ParamSpec::normalize`), so linear in its
+//! `Scale` (CUTOFF in octaves). The FREQ and Q
+//! columns' route amounts glide here too (ENV AMT, KEYBD, FM1–3, QM). A
+//! voice adds its routes' offsets after, so an envelope, an LFO or a tap
+//! keeps its snap.
+//!
+//! A settled Part costs two stamp compares a block: the knobs read the
+//! Sound again only when its `Stamp` moves, and glide only what moves.
 
 use chimera_hal::BLOCK_SIZE;
 use core::f32::consts::LOG2_E;
 
-use crate::dsp::algo::math::{exp2, log2};
-use crate::dsp::algo::morph::Morph;
-use crate::dsp::algo::params::AlgoParams;
-use crate::dsp::modulator::law::CUTOFF_HZ;
+use crate::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
+use crate::block::{GlideMs, ParamSpec};
+use crate::dsp::algo::engine::AlgoLive;
+use crate::dsp::algo::math::exp2;
 use crate::modulation::{FixedCol, MAX_MOD_SOURCES, ModState};
-use crate::params::FilterParams;
+use crate::params::ParamSnapshot;
+use crate::tracked::{Stamp, Tracked};
 
-/// The knobs' time constant, seconds: a lone detent spreads over ~90 ms
-/// (3τ), and a turn trails the hand by 30 ms.
-pub const KNOB_EASE_S: f32 = 0.03;
-
-/// The one-pole's coefficient once a block at `KNOB_EASE_S`.
-pub fn knob_coeff(sample_rate: u32) -> f32 {
-    exp2(-LOG2_E * BLOCK_SIZE as f32 / (KNOB_EASE_S * sample_rate as f32))
+/// A param the knobs glide: where it is, its spec and its τ.
+#[derive(Clone, Copy, Debug)]
+pub struct Knob {
+    pub addr: ParamAddr,
+    pub spec: &'static ParamSpec,
+    pub tau: GlideMs,
 }
 
-/// The columns `Knobs` eases: FREQ and Q.
+/// Every param a Sound declares `Smoothing::Knobs`, in `BlockRef::ALL`'s
+/// order: the registry is the list, nothing is wired by hand.
+pub static KNOBS: [Knob; KNOB_COUNT] = knobs();
+pub const KNOB_COUNT: usize = count();
+
+const fn count() -> usize {
+    let (mut n, mut b) = (0, 0);
+    while b < BlockRef::ALL.len() {
+        let r = BlockRef::ALL[b];
+        let specs = r.specs();
+        let mut i = 0;
+        while r.in_sound() && i < specs.len() {
+            if specs[i].motion.knob().is_some() {
+                n += 1;
+            }
+            i += 1;
+        }
+        b += 1;
+    }
+    n
+}
+
+const fn knobs() -> [Knob; KNOB_COUNT] {
+    let first = &crate::params::FILTER_SPECS[0];
+    let mut t = [Knob {
+        addr: ParamAddr::new(BlockRef::Filter, first.id),
+        spec: first,
+        tau: GlideMs::KNOB,
+    }; KNOB_COUNT];
+    let (mut n, mut b) = (0, 0);
+    while b < BlockRef::ALL.len() {
+        let r = BlockRef::ALL[b];
+        let specs = r.specs();
+        let mut i = 0;
+        while r.in_sound() && i < specs.len() {
+            if let Some(tau) = specs[i].motion.knob() {
+                t[n] = Knob {
+                    addr: ParamAddr::new(r, specs[i].id),
+                    spec: &specs[i],
+                    tau,
+                };
+                n += 1;
+            }
+            i += 1;
+        }
+        b += 1;
+    }
+    t
+}
+
+/// The knobs on their way, one bit each.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Moving(u128);
+
+const _: () = assert!(KNOB_COUNT <= u128::BITS as usize);
+
+impl Moving {
+    fn put(&mut self, i: usize, on: bool) {
+        let b = 1u128 << i;
+        self.0 = if on { self.0 | b } else { self.0 & !b };
+    }
+
+    fn has(self, i: usize) -> bool {
+        self.0 & (1 << i) != 0
+    }
+
+    fn iter(self) -> impl Iterator<Item = usize> {
+        let mut bits = self.0;
+        core::iter::from_fn(move || {
+            (bits != 0).then(|| {
+                let i = bits.trailing_zeros() as usize;
+                bits &= bits - 1;
+                i
+            })
+        })
+    }
+}
+
+/// How the knobs move this block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pace {
+    /// Glide, at this sample rate.
+    Glide(u32),
+    /// Land on the stored values: an offline render that drives a knob
+    /// block by block (the factory tapes' MORPH sweep) plays it exactly.
+    Land,
+}
+
+/// The one-pole's coefficient once a block at `tau`.
+pub fn coeff(tau: GlideMs, sample_rate: u32) -> f32 {
+    exp2(-LOG2_E * BLOCK_SIZE as f32 / (tau.secs() * sample_rate as f32))
+}
+
+/// The columns whose route amounts glide: FREQ and Q.
 const COLS: [FixedCol; 2] = [FixedCol::Freq, FixedCol::Q];
 
-/// Closer than this to its target, a knob lands on it: 1e-4 octave of
-/// CUTOFF (0.12 c), 1e-5 of RES or an amount.
+/// Closer than this to its target place, a knob lands on it: 1e-5 of a
+/// span, 1e-4 octave of CUTOFF (0.12 c).
 const LAND: f32 = 1e-5;
 
 /// A Part's knobs on their way to the stored values, as its voices play
-/// them this block. `UNPRIMED`, the first block lands.
+/// them this block. `UNPRIMED`, the next `ease` lands, and a voice rendered
+/// on its own plays the stored values.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Knobs {
-    /// CUTOFF as its place on `CUTOFF_HZ` in octaves, 0..1 (near 1, not ~10
-    /// as `log2` Hz, so an f32 step never stalls short of `LAND`), and RES.
-    knobs: [f32; 2],
-    /// ALGO's MORPH as `Morph::get`, 0..1, and in the stored units the
-    /// voice plays.
-    morph_place: f32,
-    morph: f32,
+    /// Each of `KNOBS` as its 0..1 place (`ParamSpec::normalize`): near 1,
+    /// not ~10 as `log2` Hz, so an f32 step never stalls short of `LAND`.
+    v: [f32; KNOB_COUNT],
+    moving: Moving,
     /// The FREQ and Q columns' amounts by source, as `amount / 127`.
     routes: [[f32; MAX_MOD_SOURCES]; 2],
-    /// CUTOFF in Hz, from `knobs[0]`.
-    cutoff: f32,
+    routes_moving: bool,
+    /// The Sound's and its routes' stamps when last read.
+    seen: (Stamp, Stamp),
     primed: bool,
 }
 
 impl Knobs {
-    /// Unprimed: the first block lands. `default()`, as a const.
     pub const UNPRIMED: Self = Self {
-        knobs: [0.0; 2],
-        morph_place: 0.0,
-        morph: 0.0,
+        v: [0.0; KNOB_COUNT],
+        moving: Moving(0),
         routes: [[0.0; MAX_MOD_SOURCES]; 2],
-        cutoff: 0.0,
+        routes_moving: false,
+        seen: (Stamp::new(0, 0), Stamp::new(0, 0)),
         primed: false,
     };
 
-    /// The stored knobs, uneased: a voice rendered on its own.
-    pub fn stored(p: &FilterParams, a: &AlgoParams, m: &ModState) -> Self {
-        let mut k = Self::UNPRIMED;
-        k.ease(p, a, m, 0.0);
-        k
-    }
-
-    /// The next `ease` lands: a Sound loaded under a sounding voice.
+    /// The next `ease` lands: a silent Part, or a Sound loaded under a
+    /// sounding voice.
     pub fn land(&mut self) {
         self.primed = false;
     }
 
-    /// One block toward `p`, `a` and `m`'s knobs, `k` from `knob_coeff`; 0
-    /// lands them (nothing hears a silent Part move).
-    pub fn ease(&mut self, p: &FilterParams, a: &AlgoParams, m: &ModState, k: f32) {
-        let k = if self.primed { k } else { 0.0 };
-        self.primed = true;
-        let c = log2(p.cutoff / CUTOFF_HZ.min) / CUTOFF_HZ.oct;
-        glide(&mut self.knobs[0], c, k);
-        glide(&mut self.knobs[1], p.resonance, k);
-        let t = Morph::from_param(f32::from(a.morph)).get();
-        glide(&mut self.morph_place, t, k);
-        // Landed, the stored value itself.
-        self.morph = if self.morph_place == t {
-            f32::from(a.morph)
-        } else {
-            self.morph_place * Morph::STORED_MAX
+    /// One block toward `p`'s and `m`'s stored values. Reads the Sound
+    /// only when its stamp moved, and glides only what is moving.
+    pub fn ease(&mut self, p: &Tracked<ParamSnapshot>, m: &Tracked<ModState>, pace: Pace) {
+        let sr = match pace {
+            Pace::Glide(sr) if self.primed => Some(sr),
+            _ => None,
         };
-        for (v, col) in self.routes.iter_mut().zip(COLS) {
-            glide_column(v, m, col, k);
+        if sr.is_none() || p.stamp() != self.seen.0 {
+            self.seen.0 = p.stamp();
+            for i in 0..KNOB_COUNT {
+                self.step(i, p, sr, true);
+            }
+        } else {
+            for i in self.moving.iter() {
+                self.step(i, p, sr, false);
+            }
         }
-        // Landed, the stored value itself.
-        self.cutoff = if self.knobs[0] == c {
-            p.cutoff
-        } else {
-            CUTOFF_HZ.min * exp2(self.knobs[0] * CUTOFF_HZ.oct)
+        if sr.is_none() || m.stamp() != self.seen.1 || self.routes_moving {
+            self.seen.1 = m.stamp();
+            let k = sr.map_or(0.0, |sr| coeff(GlideMs::KNOB, sr));
+            self.routes_moving = false;
+            for (v, col) in self.routes.iter_mut().zip(COLS) {
+                self.routes_moving |= glide_column(v, m, col, k);
+            }
+        }
+        self.primed = true;
+    }
+
+    /// Knob `i` one block toward `p`'s; landed at once with no `sr`. A
+    /// `fresh` read starts it if it differs.
+    #[inline(never)]
+    fn step(&mut self, i: usize, p: &ParamSnapshot, sr: Option<u32>, fresh: bool) {
+        let k = &KNOBS[i];
+        let t = k
+            .spec
+            .normalize(p.block(k.addr.block).map_or(0.0, |b| b.get(k.addr.param)));
+        let v = &mut self.v[i];
+        let on = match sr {
+            None => {
+                *v = t;
+                false
+            }
+            Some(_) if fresh && !self.moving.has(i) && v.to_bits() == t.to_bits() => false,
+            Some(sr) => !glide(v, t, coeff(k.tau, sr), LAND),
         };
+        self.moving.put(i, on);
     }
 
-    /// CUTOFF and RES set to the eased ones.
-    pub fn apply(&self, p: &mut FilterParams) {
-        (p.cutoff, p.resonance) = (self.cutoff, self.knobs[1]);
-    }
-
-    /// ALGO's MORPH as the voice plays it, in the stored units, before its
-    /// routes' offsets.
-    pub fn morph(&self) -> f32 {
-        self.morph
+    /// The knobs still on their way written over `p`'s stored values, or
+    /// `live`'s for ALGO's (its bytes can't hold a value between steps).
+    /// The rest are where they landed: stored, bit for bit.
+    pub fn apply(&self, p: &mut ParamSnapshot, live: &mut AlgoLive) {
+        for i in self.moving.iter() {
+            let (a, v) = (KNOBS[i].addr, KNOBS[i].spec.denormalize(self.v[i]));
+            if !live.set(a, v)
+                && let Some(b) = p.block_mut(a.block)
+            {
+                b.write(a.param, v);
+            }
+        }
     }
 
     /// Fixed column `c`'s offset from the sources `v`: FREQ and Q by the
-    /// eased amounts, VCA and FOLD by `m`'s.
+    /// eased amounts, VCA and FOLD (and all, unprimed) by `m`'s.
     #[inline(never)]
     pub fn fixed_sum(&self, m: &ModState, c: FixedCol, v: &[f32; MAX_MOD_SOURCES]) -> f32 {
-        match COLS.iter().position(|&x| x == c) {
+        match COLS.iter().position(|&x| x == c).filter(|_| self.primed) {
             Some(i) => self.routes[i]
                 .iter()
                 .zip(v)
@@ -124,87 +238,127 @@ impl Knobs {
             None => m.fixed_sum(c, v),
         }
     }
+
+    /// Knob `addr`'s 0..1 place this block, and whether it is still on its
+    /// way: for the tests.
+    pub fn place(&self, addr: ParamAddr) -> Option<(f32, bool)> {
+        let i = KNOBS.iter().position(|k| k.addr == addr)?;
+        Some((self.v[i], self.moving.has(i)))
+    }
 }
 
-/// Column `col`'s amounts one block toward `m`'s. Out of line, called
-/// once a column.
+/// Column `col`'s amounts one block toward `m`'s; whether any still moves.
+/// Out of line, called once a column.
 #[inline(never)]
-fn glide_column(v: &mut [f32; MAX_MOD_SOURCES], m: &ModState, col: FixedCol, k: f32) {
+fn glide_column(v: &mut [f32; MAX_MOD_SOURCES], m: &ModState, col: FixedCol, k: f32) -> bool {
     // `m`'s sources only: one loop, not eight copies; a source it lacks
     // routes nothing.
     let (live, absent) = v.split_at_mut(m.num_sources().min(MAX_MOD_SOURCES));
+    let mut moving = false;
     for (s, v) in live.iter_mut().enumerate() {
         // `amount_scale`'s value: the same IEEE divide.
-        glide(v, f32::from(m.fixed_amount(s, col).max(-127)) / 127.0, k);
+        let t = f32::from(m.fixed_amount(s, col).max(-127)) / 127.0;
+        moving |= !glide(v, t, k, LAND);
     }
     absent.fill(0.0);
+    moving
 }
 
-/// `v` one block of the one-pole toward `t`, landing within `LAND`. A NaN
-/// lands too, so a bad target never sticks once it is fixed. Out of line:
-/// called 18 times.
-#[inline(never)]
-fn glide(v: &mut f32, t: f32, k: f32) {
+/// `v` one block of the one-pole toward `t`, landing within `land`;
+/// whether it landed. A NaN lands too, so a bad target never sticks once
+/// it is fixed.
+fn glide(v: &mut f32, t: f32, k: f32, land: f32) -> bool {
     let d = k * (*v - t);
-    *v = if d.abs() < LAND || d.is_nan() {
+    *v = if d.abs() < land || d.is_nan() {
         t
     } else {
         t + d
     };
+    v.to_bits() == t.to_bits()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::block::Block;
+    use crate::params::FilterParams;
+
+    fn cutoff() -> ParamAddr {
+        ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF)
+    }
+
+    fn rig() -> (Tracked<ParamSnapshot>, Tracked<ModState>, Knobs) {
+        let p = Tracked::new(ParamSnapshot::default(), Stamp::new(0, 0));
+        let m = Tracked::new(ModState::new(), Stamp::new(0, 0));
+        let mut k = Knobs::UNPRIMED;
+        k.ease(&p, &m, Pace::Glide(48_000));
+        (p, m, k)
+    }
+
+    /// The cutoff a voice is handed.
+    fn played(e: &Knobs, p: &ParamSnapshot) -> f32 {
+        let mut q = p.clone();
+        let mut live = AlgoLive::from_params(&q.algo);
+        e.apply(&mut q, &mut live);
+        q.filter.get(FilterParams::CUTOFF)
+    }
+
+    #[test]
+    fn the_registry_is_the_list() {
+        for k in &KNOBS {
+            assert!(k.addr.block.in_sound());
+            assert_eq!(k.addr.spec().map(|s| s.ident), Some(k.spec.ident));
+        }
+        assert!(KNOBS.iter().any(|k| k.addr == cutoff()));
+    }
 
     #[test]
     fn a_cutoff_jump_glides_in_octaves_and_lands_exactly() {
-        let k = knob_coeff(48_000);
-        let m = ModState::new();
-        let (mut p, a) = (FilterParams::default(), AlgoParams::default());
-        p.cutoff = 250.0;
-        let mut e = Knobs::UNPRIMED;
-        e.ease(&p, &a, &m, k);
-        assert_eq!(e.cutoff, 250.0);
-        p.cutoff = 1000.0;
-        e.ease(&p, &a, &m, k);
-        let first = e.cutoff;
+        let (mut p, m, mut e) = rig();
+        p.filter.cutoff = 250.0;
+        e.land();
+        e.ease(&p, &m, Pace::Glide(48_000));
+        assert_eq!(played(&e, &p), 250.0);
+        p.filter.cutoff = 1000.0;
+        e.ease(&p, &m, Pace::Glide(48_000));
+        let first = played(&e, &p);
         // Two octaves × (1 − k) of the way, in octaves.
-        let want = 250.0 * exp2(2.0 * (1.0 - k));
+        let want = 250.0 * exp2(2.0 * (1.0 - coeff(GlideMs::KNOB, 48_000)));
         assert!((first / want - 1.0).abs() < 1e-3, "{first} vs {want}");
-        let mut last = first;
         for _ in 0..400 {
-            e.ease(&p, &a, &m, k);
-            last = e.cutoff;
+            e.ease(&p, &m, Pace::Glide(48_000));
         }
-        assert_eq!(last, 1000.0);
+        assert_eq!(played(&e, &p), 1000.0);
+        assert_eq!(e.moving, Moving(0));
     }
 
     #[test]
     fn a_nan_target_never_sticks() {
-        let (k, m) = (knob_coeff(48_000), ModState::new());
-        let (mut p, a) = (FilterParams::default(), AlgoParams::default());
-        p.resonance = 0.4;
-        let mut e = Knobs::UNPRIMED;
-        e.ease(&p, &a, &m, k);
-        p.resonance = f32::NAN;
-        e.ease(&p, &a, &m, k);
-        p.resonance = 0.5;
-        e.ease(&p, &a, &m, k);
-        assert_eq!(e.knobs[1], 0.5);
+        let (mut p, m, mut e) = rig();
+        let res = ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE);
+        p.filter.resonance = f32::NAN;
+        e.ease(&p, &m, Pace::Glide(48_000));
+        p.filter.resonance = 0.5;
+        e.ease(&p, &m, Pace::Glide(48_000));
+        assert_eq!(e.place(res), Some((0.5, false)));
     }
 
     #[test]
-    fn k_zero_lands_and_stored_is_the_stored() {
+    fn settled_reads_nothing_and_applies_nothing() {
+        let (p, m, mut e) = rig();
+        let before = e;
+        e.ease(&p, &m, Pace::Glide(48_000));
+        assert_eq!(e, before);
+        assert_eq!(played(&e, &p), p.filter.cutoff);
+    }
+
+    #[test]
+    fn unprimed_sums_the_stored_routes() {
         let mut m = ModState::with_sources(MAX_MOD_SOURCES);
         m.set_fixed(0, FixedCol::Freq, 127);
-        let (mut p, a) = (FilterParams::default(), AlgoParams::default());
-        p.resonance = 0.4;
-        let s = Knobs::stored(&p, &a, &m);
-        assert_eq!((s.cutoff, s.knobs[1]), (p.cutoff, 0.4));
         let v = [0.5; MAX_MOD_SOURCES];
         assert_eq!(
-            s.fixed_sum(&m, FixedCol::Freq, &v),
+            Knobs::UNPRIMED.fixed_sum(&m, FixedCol::Freq, &v),
             m.fixed_sum(FixedCol::Freq, &v)
         );
     }

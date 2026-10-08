@@ -13,7 +13,7 @@ use crate::dsp::algo::math::exp2;
 use crate::dsp::algo::morph::{Morph, carrier_norm, incoming};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::{EvalPlan, MAX_EDGES, OPS, blend};
-use crate::dsp::algo::tx::{FEEDBACK_CYCLES, LEVEL_GAIN, detune_factor, level_gain, ratio};
+use crate::dsp::algo::tx::{detune_at, feedback_cycles, level_gain, patch_gain, ratio_at};
 use crate::dsp::algo::waves::{WaveId, mip_position, mip_step};
 use crate::dsp::glide::Glide;
 use crate::hw::{BLOCK_SIZE, Cost};
@@ -22,12 +22,21 @@ use crate::{MidiNote, Velocity};
 /// LEVEL steps (3 dB) one VELOCITY step takes off at velocity 0.
 const VELOCITY_STEPS: f32 = 4.0;
 
-/// The block's MORPH and LEVELs after modulation, unrounded, in the stored
-/// ranges (ADR 0010's offset formula).
+/// What the engine plays this block in place of the stored bytes, in the
+/// stored ranges, unrounded: MORPH and the LEVELs after the Part's knobs
+/// and modulation (ADR 0010's offset formula), and the operators' other
+/// glided settings (ADR 0112). From `from_params`, the stored values.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AlgoLive {
     pub morph: f32,
     pub level: [f32; OPS],
+    /// The LEVELs as the patch plays them: glided, before routes. The
+    /// output scale's and what keeps a released voice (ADR 0049).
+    pub patch: [f32; OPS],
+    pub fine: [f32; OPS],
+    pub detune: [f32; OPS],
+    pub feedback: [f32; OPS],
+    pub velocity: [f32; OPS],
     /// LEVELs with a mod route (`ModState::algo_levels_routed`): live even
     /// at a stored 0, as `cost` bills them.
     pub routed: [bool; OPS],
@@ -37,12 +46,53 @@ pub struct AlgoLive {
 
 impl AlgoLive {
     pub fn from_params(p: &AlgoParams) -> Self {
+        let op = |f: fn(&AlgoOpParams) -> f32| core::array::from_fn(|i| f(&p.ops[i]));
+        let level = op(|o| f32::from(o.level));
         Self {
-            morph: p.morph as f32,
-            level: core::array::from_fn(|i| p.ops[i].level as f32),
+            morph: f32::from(p.morph),
+            level,
+            patch: level,
+            fine: op(|o| f32::from(o.fine)),
+            detune: op(|o| f32::from(o.detune)),
+            feedback: op(|o| f32::from(o.feedback)),
+            velocity: op(|o| f32::from(o.velocity)),
             routed: [false; OPS],
             morph_routed: false,
         }
+    }
+
+    /// The slot that plays `addr`, if it is one of these.
+    fn slot(&mut self, addr: ParamAddr) -> Option<&mut f32> {
+        Some(match (addr.block, addr.param) {
+            (BlockRef::Algo, AlgoParams::MORPH) => &mut self.morph,
+            (BlockRef::AlgoOp(op), id) => {
+                let i = op.index();
+                match id {
+                    AlgoOpParams::LEVEL => &mut self.level[i],
+                    AlgoOpParams::FINE => &mut self.fine[i],
+                    AlgoOpParams::DETUNE => &mut self.detune[i],
+                    AlgoOpParams::FEEDBACK => &mut self.feedback[i],
+                    AlgoOpParams::VELOCITY => &mut self.velocity[i],
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        })
+    }
+
+    /// Plays `v` for `addr`, a knob on its way (`false` for any other
+    /// address, which the voice writes to its blocks).
+    pub fn set(&mut self, addr: ParamAddr, v: f32) -> bool {
+        if let (BlockRef::AlgoOp(op), AlgoOpParams::LEVEL) = (addr.block, addr.param) {
+            self.patch[op.index()] = v;
+        }
+        self.slot(addr).map(|s| *s = v).is_some()
+    }
+
+    /// What it plays for `addr`, if it is one of these.
+    pub fn get(&self, addr: ParamAddr) -> Option<f32> {
+        let mut c = *self;
+        c.slot(addr).map(|s| *s)
     }
 
     /// Takes a mod offset aimed at MORPH or a LEVEL (`false` for any other
@@ -218,7 +268,7 @@ impl AlgoEngine {
             self.swap = Swap::Idle;
             self.env = [OpEnv::IDLE; OPS];
             self.morph = m.get();
-            self.norm = carrier_norm(&self.plan, m, &stored_gains(p));
+            self.norm = carrier_norm(&self.plan, m, &patch_gains(&live));
         }
         let cycles = self.cycles(p, sr);
         for i in 0..OPS {
@@ -226,8 +276,8 @@ impl AlgoEngine {
             if self.env[i].is_idle() {
                 self.kernel.reset(i);
                 self.waves[i] = WaveId::clamped(p.ops[i].wave);
-                self.gain[i] = self.target_gain(p, &live, i);
-                self.mip[i] = self.mip_target(p, cycles, sr, m, &level, i);
+                self.gain[i] = self.target_gain(&live, i);
+                self.mip[i] = self.mip_target(p, &live, cycles, sr, m, &level, i);
             }
             self.env[i].note_on(EnvCoefs::new(self.rates[i], note, sr));
         }
@@ -319,23 +369,25 @@ impl AlgoEngine {
         let level = level_gains(live);
         let cycles = self.cycles(p, sr);
         let mips: [(usize, f32, f32); OPS] = core::array::from_fn(|i| {
-            mip_step(self.mip[i], self.mip_target(p, cycles, sr, m, &level, i))
+            mip_step(
+                self.mip[i],
+                self.mip_target(p, live, cycles, sr, m, &level, i),
+            )
         });
         let ops: [OpBlock; OPS] = core::array::from_fn(|i| {
-            let o = &p.ops[i];
             let (lo, xfade_from, xfade_to) = mips[i];
             OpBlock {
-                inc: (op_cycles(cycles, p, i) * 4_294_967_296.0) as u32,
+                inc: (op_cycles(cycles, p, live, i) * 4_294_967_296.0) as u32,
                 gain_from: self.gain[i],
-                gain_to: self.target_gain(p, live, i) * self.op_duck(i),
-                feedback: FEEDBACK_CYCLES[o.feedback.min(7) as usize],
+                gain_to: self.target_gain(live, i) * self.op_duck(i),
+                feedback: feedback_cycles(live.feedback[i]),
                 lo: self.waves[i].table(lo),
                 hi: self.waves[i].table(lo + 1),
                 xfade_from,
                 xfade_to,
             }
         });
-        let norm = carrier_norm(&self.plan, m, &stored_gains(p)) * self.alg_duck();
+        let norm = carrier_norm(&self.plan, m, &patch_gains(live)) * self.alg_duck();
         let blk = KernelBlock {
             plan: &self.plan,
             ops,
@@ -364,7 +416,7 @@ impl AlgoEngine {
             }
         };
         self.active = (0..OPS)
-            .any(|i| heard(i) && (p.ops[i].level > 0 || live.routed[i]) && !self.env[i].is_idle());
+            .any(|i| heard(i) && (live.patch[i] > 0.0 || live.routed[i]) && !self.env[i].is_idle());
     }
 
     /// Cycles per sample of a ratio-1 operator.
@@ -376,21 +428,24 @@ impl AlgoEngine {
         440.0 * exp2(st / 12.0) / sr * self.slide.value()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn mip_target(
         &self,
         p: &AlgoParams,
+        live: &AlgoLive,
         cycles: f32,
         sr: f32,
         m: Morph,
         level: &[f32; OPS],
         i: usize,
     ) -> f32 {
-        let bandwidth = op_cycles(cycles, p, i) * sr * (1.0 + incoming(&self.plan, m, i, level));
+        let bandwidth =
+            op_cycles(cycles, p, live, i) * sr * (1.0 + incoming(&self.plan, m, i, level));
         mip_position(bandwidth)
     }
 
-    fn target_gain(&self, p: &AlgoParams, live: &AlgoLive, i: usize) -> f32 {
-        let vel = p.ops[i].velocity.min(7) as f32 * (1.0 - self.velocity) * VELOCITY_STEPS;
+    fn target_gain(&self, live: &AlgoLive, i: usize) -> f32 {
+        let vel = clampf(live.velocity[i], 0.0, 7.0) * (1.0 - self.velocity) * VELOCITY_STEPS;
         level_gain(live.level[i] - vel) * SAMPLE_SCALE
     }
 
@@ -451,18 +506,19 @@ impl AlgoEngine {
     }
 }
 
-/// The stored LEVELs' gains, for the output scale: a property of the patch,
-/// so no route, VELOCITY or note on one carrier moves another (ADR 0049).
-fn stored_gains(p: &AlgoParams) -> [f32; OPS] {
-    core::array::from_fn(|i| LEVEL_GAIN[p.ops[i].level.min(99) as usize])
+/// The patch's LEVELs' gains, for the output scale: a property of the
+/// patch (glided, ADR 0112), so no route, VELOCITY or note on one carrier
+/// moves another (ADR 0049).
+fn patch_gains(live: &AlgoLive) -> [f32; OPS] {
+    core::array::from_fn(|i| patch_gain(live.patch[i]))
 }
 
 fn level_gains(live: &AlgoLive) -> [f32; OPS] {
     core::array::from_fn(|i| level_gain(live.level[i]))
 }
 
-/// Cycles per sample of operator `i`, kept under Nyquist.
-fn op_cycles(cycles: f32, p: &AlgoParams, i: usize) -> f32 {
-    let o = &p.ops[i];
-    (cycles * ratio(o.coarse, o.fine) * detune_factor(o.detune)).min(0.5)
+/// Cycles per sample of operator `i`, kept under Nyquist: CRSE stored,
+/// FINE and DETUNE as `live` plays them.
+fn op_cycles(cycles: f32, p: &AlgoParams, live: &AlgoLive, i: usize) -> f32 {
+    (cycles * ratio_at(p.ops[i].coarse, live.fine[i]) * detune_at(live.detune[i])).min(0.5)
 }
