@@ -1,14 +1,16 @@
-//! A Part's filter knobs, eased once a block before its voices read them
-//! (CLAUDE.md: never snap; ADR 0107). CUTOFF glides in octaves, RES and the
-//! FREQ and Q columns' amounts (ENV AMT, KEYBD, FM1–3, QM) linearly, each a
-//! one-pole of `KNOB_EASE_S`. A voice adds its routes' offsets after, so an
-//! envelope, an LFO or a tap keeps its snap, and every TYPE gets the glide:
-//! it is before the filter, not in it.
+//! A Part's knobs, eased once a block before its voices read them (CLAUDE.md:
+//! never snap; ADR 0107, 0111). CUTOFF glides in octaves; RES, the FREQ and
+//! Q columns' amounts (ENV AMT, KEYBD, FM1–3, QM) and ALGO's MORPH linearly;
+//! each a one-pole of `KNOB_EASE_S`. A voice adds its routes' offsets after,
+//! so an envelope, an LFO or a tap keeps its snap, and every TYPE gets the
+//! glide: it is before the filter, not in it.
 
 use chimera_hal::BLOCK_SIZE;
 use core::f32::consts::LOG2_E;
 
 use crate::dsp::algo::math::{exp2, log2};
+use crate::dsp::algo::morph::Morph;
+use crate::dsp::algo::params::AlgoParams;
 use crate::dsp::modulator::law::CUTOFF_HZ;
 use crate::modulation::{FixedCol, MAX_MOD_SOURCES, ModState};
 use crate::params::FilterParams;
@@ -36,6 +38,10 @@ pub struct Knobs {
     /// CUTOFF as its place on `CUTOFF_HZ` in octaves, 0..1 (near 1, not ~10
     /// as `log2` Hz, so an f32 step never stalls short of `LAND`), and RES.
     knobs: [f32; 2],
+    /// ALGO's MORPH as `Morph::get`, 0..1, and in the stored units the
+    /// voice plays.
+    morph_place: f32,
+    morph: f32,
     /// The FREQ and Q columns' amounts by source, as `amount / 127`.
     routes: [[f32; MAX_MOD_SOURCES]; 2],
     /// CUTOFF in Hz, from `knobs[0]`.
@@ -47,15 +53,17 @@ impl Knobs {
     /// Unprimed: the first block lands. `default()`, as a const.
     pub const UNPRIMED: Self = Self {
         knobs: [0.0; 2],
+        morph_place: 0.0,
+        morph: 0.0,
         routes: [[0.0; MAX_MOD_SOURCES]; 2],
         cutoff: 0.0,
         primed: false,
     };
 
     /// The stored knobs, uneased: a voice rendered on its own.
-    pub fn stored(p: &FilterParams, m: &ModState) -> Self {
+    pub fn stored(p: &FilterParams, a: &AlgoParams, m: &ModState) -> Self {
         let mut k = Self::UNPRIMED;
-        k.ease(p, m, 0.0);
+        k.ease(p, a, m, 0.0);
         k
     }
 
@@ -64,14 +72,22 @@ impl Knobs {
         self.primed = false;
     }
 
-    /// One block toward `p` and `m`'s knobs, `k` from `knob_coeff`; 0
+    /// One block toward `p`, `a` and `m`'s knobs, `k` from `knob_coeff`; 0
     /// lands them (nothing hears a silent Part move).
-    pub fn ease(&mut self, p: &FilterParams, m: &ModState, k: f32) {
+    pub fn ease(&mut self, p: &FilterParams, a: &AlgoParams, m: &ModState, k: f32) {
         let k = if self.primed { k } else { 0.0 };
         self.primed = true;
         let c = log2(p.cutoff / CUTOFF_HZ.min) / CUTOFF_HZ.oct;
         glide(&mut self.knobs[0], c, k);
         glide(&mut self.knobs[1], p.resonance, k);
+        let t = Morph::from_param(f32::from(a.morph)).get();
+        glide(&mut self.morph_place, t, k);
+        // Landed, the stored value itself.
+        self.morph = if self.morph_place == t {
+            f32::from(a.morph)
+        } else {
+            self.morph_place * Morph::STORED_MAX
+        };
         for (v, col) in self.routes.iter_mut().zip(COLS) {
             glide_column(v, m, col, k);
         }
@@ -86,6 +102,12 @@ impl Knobs {
     /// CUTOFF and RES set to the eased ones.
     pub fn apply(&self, p: &mut FilterParams) {
         (p.cutoff, p.resonance) = (self.cutoff, self.knobs[1]);
+    }
+
+    /// ALGO's MORPH as the voice plays it, in the stored units, before its
+    /// routes' offsets.
+    pub fn morph(&self) -> f32 {
+        self.morph
     }
 
     /// Fixed column `c`'s offset from the sources `v`: FREQ and Q by the
@@ -139,20 +161,20 @@ mod tests {
     fn a_cutoff_jump_glides_in_octaves_and_lands_exactly() {
         let k = knob_coeff(48_000);
         let m = ModState::new();
-        let mut p = FilterParams::default();
+        let (mut p, a) = (FilterParams::default(), AlgoParams::default());
         p.cutoff = 250.0;
         let mut e = Knobs::UNPRIMED;
-        e.ease(&p, &m, k);
+        e.ease(&p, &a, &m, k);
         assert_eq!(e.cutoff, 250.0);
         p.cutoff = 1000.0;
-        e.ease(&p, &m, k);
+        e.ease(&p, &a, &m, k);
         let first = e.cutoff;
         // Two octaves × (1 − k) of the way, in octaves.
         let want = 250.0 * exp2(2.0 * (1.0 - k));
         assert!((first / want - 1.0).abs() < 1e-3, "{first} vs {want}");
         let mut last = first;
         for _ in 0..400 {
-            e.ease(&p, &m, k);
+            e.ease(&p, &a, &m, k);
             last = e.cutoff;
         }
         assert_eq!(last, 1000.0);
@@ -161,14 +183,14 @@ mod tests {
     #[test]
     fn a_nan_target_never_sticks() {
         let (k, m) = (knob_coeff(48_000), ModState::new());
-        let mut p = FilterParams::default();
+        let (mut p, a) = (FilterParams::default(), AlgoParams::default());
         p.resonance = 0.4;
         let mut e = Knobs::UNPRIMED;
-        e.ease(&p, &m, k);
+        e.ease(&p, &a, &m, k);
         p.resonance = f32::NAN;
-        e.ease(&p, &m, k);
+        e.ease(&p, &a, &m, k);
         p.resonance = 0.5;
-        e.ease(&p, &m, k);
+        e.ease(&p, &a, &m, k);
         assert_eq!(e.knobs[1], 0.5);
     }
 
@@ -176,9 +198,9 @@ mod tests {
     fn k_zero_lands_and_stored_is_the_stored() {
         let mut m = ModState::with_sources(MAX_MOD_SOURCES);
         m.set_fixed(0, FixedCol::Freq, 127);
-        let mut p = FilterParams::default();
+        let (mut p, a) = (FilterParams::default(), AlgoParams::default());
         p.resonance = 0.4;
-        let s = Knobs::stored(&p, &m);
+        let s = Knobs::stored(&p, &a, &m);
         assert_eq!((s.cutoff, s.knobs[1]), (p.cutoff, 0.4));
         let v = [0.5; MAX_MOD_SOURCES];
         assert_eq!(

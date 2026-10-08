@@ -13,8 +13,8 @@ use chimera_hal::BLOCK_SIZE;
 use crate::dsp::Stereo;
 use crate::dsp::ease::{Ease, ease_coeff, step_of};
 use crate::dsp::engines::{EngineCtx, SlotKind};
-use crate::dsp::filter::knobs::{Knobs, knob_coeff};
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
+use crate::dsp::knobs::{Knobs, knob_coeff};
 use crate::dsp::modal::{ResonatorMode, SYM_NOTE_ON_CLEAR_MAX, SymPool};
 use crate::dsp::tape_engine::{Heads, TapeEngine};
 use crate::dsp::voice::Voice;
@@ -221,7 +221,7 @@ fn ease_part((knobs, seen): &mut (Knobs, Loads), part: &PartAudio, k: Option<f32
         knobs.land();
     }
     if let Some(k) = k {
-        knobs.ease(&part.params.filter, &part.mod_state, k);
+        knobs.ease(&part.params.filter, &part.params.algo, &part.mod_state, k);
     }
 }
 
@@ -646,6 +646,12 @@ impl Instrument {
     #[cfg(any(test, feature = "test-support"))]
     pub fn played_filters(&self) -> [crate::params::FilterParams; MAX_VOICES] {
         core::array::from_fn(|v| self.voices[v].played_filter())
+    }
+
+    /// Each voice's MORPH last block, routes applied: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn played_morphs(&self) -> [f32; MAX_VOICES] {
+        core::array::from_fn(|v| self.voices[v].played_morph())
     }
 
     /// Each voice's glide steal ratio, 1 at rest: for the tests.
@@ -1121,6 +1127,13 @@ impl Instrument {
                 let _ = self.voices[v].kill();
             }
         }
+    }
+
+    /// The Part knobs land instead of gliding: an offline render that
+    /// drives a knob block by block (the factory tapes' MORPH sweep) plays
+    /// it exactly.
+    pub fn land_knobs(&mut self) {
+        self.knob_k = 0.0;
     }
 
     /// Each Part's filter knobs this block (ADR 0107): eased while a voice

@@ -12,8 +12,8 @@ use crate::dsp::drive::Drive;
 use crate::dsp::ease::{Ease, Ramp, at, ease_coeff, step_of};
 use crate::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
 use crate::dsp::envelope::{EnvMods, Envelope};
-use crate::dsp::filter::knobs::Knobs;
 use crate::dsp::filter::{FILTER_LEVEL_COST, Filter, FilterMods};
+use crate::dsp::knobs::Knobs;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modal::{ResonatorMode, SymPool};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
@@ -444,6 +444,13 @@ impl Voice {
         self.played.filter
     }
 
+    /// The MORPH the last block played, routes applied (stored units): for
+    /// the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn played_morph(&self) -> f32 {
+        self.played_live.morph
+    }
+
     /// A glide steal's ratio now, 1 at rest: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn slide(&self) -> f32 {
@@ -753,12 +760,12 @@ impl Voice {
         mod_state: &ModState,
         ctx: &mut EngineCtx<'_>,
     ) {
-        let knobs = Knobs::stored(&params.filter, mod_state);
+        let knobs = Knobs::stored(&params.filter, &params.algo, mod_state);
         self.render_knobs(output, params, mod_state, &knobs, ctx);
     }
 
     /// One block of `params` with its Part's eased filter `knobs` in place
-    /// of the stored CUTOFF, RES and FREQ/Q amounts.
+    /// of the stored CUTOFF, RES, FREQ/Q amounts and MORPH.
     pub fn render_knobs(
         &mut self,
         output: &mut [f32; BLOCK_SIZE],
@@ -856,6 +863,7 @@ impl Voice {
             self.stages.ease(m, ease_coeff(sample_rate));
             knobs.apply(&mut m.filter);
             *live = AlgoLive::from_params(&params.algo);
+            live.morph = knobs.morph();
             live.routed = mod_state.algo_levels_routed();
             live.morph_routed =
                 mod_state.moves_addr(ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH));
