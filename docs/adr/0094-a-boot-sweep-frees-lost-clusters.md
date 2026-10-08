@@ -57,9 +57,15 @@ whose 8.3 names `dir::parse` gives as `Slot::Other`. The store's RAM is
   - `Dirty`: a change began and didn't, or a sweep left work or a doubt;
   - `Missing`: `/CHIMERA` with no mark (older firmware, or the mark's own
     making was cut);
-  - `Unused`: no `/CHIMERA`.
+  - `Unused`: no `/CHIMERA`;
+  - `Doubted(n)`: dirty, and the last `n` boots' sweeps doubted in a row;
+  - `Asked(n)`: a sweep asked for, carrying the doubt count `n`.
 
-  `Dirty` and `Missing` owe a sweep.
+  `Dirty`, `Missing`, `Asked` and `Doubted` below `DOUBT_HALT` (3) owe a
+  sweep. The variants are `DIRTY` with its first byte moved:
+  `doubted(n)` by `n`, `asked(n)` by `0x10 | n`. Each still differs from
+  `CLEAN` in every byte, so a torn write of one reads plain `Dirty`. That
+  is a shorter streak and one more sweep, never a clean read.
 - **Every change marks itself, in `FatStore`.** `write`, `delete`,
   `make_dir`, `seal` and `remove_dir` all go through `FatStore::change`.
   It reads the mark first (a few block reads). If the mark is clean, the
@@ -102,20 +108,45 @@ whose 8.3 names `dir::parse` gives as `Slot::Other`. The store's RAM is
   landed, the mark owes a sweep. The boots after leave no lost cluster
   and a clean mark, or, where noise tore a directory or FAT block, a
   doubt with nothing written.
-- **The trigger.** `storage::boot_sweep` mounts the card and reads the
-  mark, and sweeps only when the mark owes one or can't be read. The
-  console's `sweep` (`storage::asked_sweep`) runs whatever the mark
-  says. It uses the arena's gap through `UiState::sweep_scratch`, which
-  is `None` while card work is queued or a source load stages in the
-  gap. A busy card is `ERR sweep: the card is busy`, and a gap too small
-  for the volume is `NoRoom`. A swept card's mark is cleared only when
-  `Swept::settled` holds: no stale sector, and every lost cluster freed,
-  so none in `DryRun`.
+- **The trigger.** `storage::boot_sweep` mounts the card, reads the mark,
+  and sweeps only when the mark owes one or can't be read. A swept
+  card's mark is cleared only when `Swept::settled` holds: no stale
+  sector, and every lost cluster freed, so none in `DryRun`. A run that
+  leaves work without a doubt puts a doubt count back to plain `Dirty`.
   - In the dry build, a card with lost clusters keeps owing, sweeps dry
     at every boot as before, and never writes its mark.
   - A dry run that finds nothing clears it.
-  - SETTINGS › SYSTEM › STORAGE › CLEAN UP is the UI's on-demand path,
-    once STORAGE exists (#267).
+- **Three doubting boots in a row stop the automatic sweep** (owner
+  ruling 2026-10-08).
+  - A boot whose sweep doubts on a volume it read counts one more, in
+    place: `Dirty` → `Doubted(1)` → … → `Doubted(3)`. No card, a swap or
+    an unmountable card counts nothing.
+  - A card in doubt allocates nothing, so a missing mark, or one that
+    isn't one block, keeps no count. That card goes on sweeping at every
+    boot.
+  - At `Doubted(3)` the boot skips the sweep, writes nothing, and warns.
+    `status` adds `warn sweep stopped: …`, and the boot toasts `CARD
+    NEEDS A CHECK: SWEEP OFF`.
+  - A boot that runs without a doubt ends the streak. A settled run
+    clears the mark.
+  - A count write cut or torn reads the old count, the new one, or plain
+    `Dirty`, never `Clean` (`a_cut_count_write_never_reads_clean`).
+- **On demand is a request, swept at the next boot.** The bitmap is
+  60 KB on the owner's card. With a project loaded the arena's gap is
+  smaller, and the console's first in-place sweep answered `doubt
+  no-room` on the unit (Phase A, 2026-10-08). So nothing sweeps in the
+  running synth.
+  - The console's `sweep` (`console::ask_sweep`) refuses over unsaved
+    changes, which a restart would lose. Otherwise it sets the mark
+    `Asked(n)`, keeping the doubt count, and answers `OK`. The shell
+    then syncs SYSTEM and restarts.
+  - The boot sweeps an `Asked` card even when halted, with the gap free.
+    If that sweep doubts too, the carried count is put back, so a
+    requested sweep's doubt counts no boot.
+  - The request writes in place, or makes the mark if it is `Missing`.
+    No `/CHIMERA` is `ERR … nothing to sweep`.
+  - SETTINGS › SYSTEM › STORAGE › CLEAN UP is the same request plus a
+    restart, once STORAGE exists (#267).
 - **The bitmap is the arena's gap.** Before the project loads, the gap is
   unused: `Pool::sweep_scratch` lends it (`ArenaWriter::gap_mut`) and
   asserts no source is published; the sweep zeroes the bits it uses. On
@@ -272,14 +303,14 @@ whose 8.3 names `dir::parse` gives as `Slot::Other`. The store's RAM is
   held. The mark stays dirty until the second boot, because a stale
   sector isn't settled.
 - A clean boot no longer sweeps. A card whose sweep ends in a doubt keeps
-  its mark dirty and sweeps at every boot until its doubt is fixed: a
-  computer's disk check, or a reformat.
+  its mark dirty and sweeps at three boots, then stops and warns until
+  its doubt is fixed (a computer's disk check, or a reformat) and a
+  requested sweep settles.
 - A FAT 1 sector torn by a cut, or FAT 2 ahead of FAT 1 under a live
   chain, is now a doubt, not a union. Such a card isn't swept, and the
   next change that writes the sector copies FAT 1, garbled or not, to
   FAT 2, as before this ADR.
-- The console's `sweep` holds the UI loop for up to the card's cap. The
-  audio plays on.
+- On-demand sweeping costs a restart; unsaved changes refuse it.
 - Every change that writes costs two more block writes, `DIRTY` and
   `CLEAN`, plus the mark's few reads.
 - A sweeping boot grows by the run. It reads both FATs, every directory
