@@ -120,7 +120,7 @@ fn help_lists_the_table_in_order() {
     assert_eq!(ask(&mut u, "help\n"), want);
 }
 
-#[cfg(feature = "card-put")]
+#[cfg(all(feature = "card-put", not(feature = "fault-inject")))]
 #[test]
 fn help_is_the_specs_text() {
     let mut u = Fake::new();
@@ -571,7 +571,7 @@ fn the_specs_stats_has_every_line_stats_writes() {
     assert_eq!(words[3..], ["of", "8"], "voices <now> <peak> of MAX_VOICES");
 }
 
-#[cfg(feature = "card-put")]
+#[cfg(all(feature = "card-put", not(feature = "fault-inject")))]
 #[test]
 fn the_specs_help_is_what_help_writes() {
     let mut u = Fake::new();

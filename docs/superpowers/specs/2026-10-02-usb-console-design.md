@@ -205,6 +205,14 @@ OK
 
 Then the unit restarts into ST's ROM DFU loader and leaves the bus as `0483:5740`. Within about 2 s it comes back as `0483:DF11`. The `OK` is flushed, then the port keeps polling for 20 ms so the host collects it, before the restart. A host that still misses it sees the port vanish and DF11 appear, which `to-dfu` also counts as success. The desktop answers `ERR dfu is not in this build`. § Enter DFU from the firmware has the details.
 
+**`fault dma <1|2>`** (builds with `fault-inject` only; never shipping, orbit or bench)
+
+```
+OK
+```
+
+Test aid for the DMA re-arm (private issue #25): it clears EN on DMA1 stream 1 or 2 (DAC pair 2 or 3), waits a bounded spin for EN=0, points M0AR at 0x00000000 (ITCM, which DMA1 cannot read) and sets EN. The stream's next read bus-errors and the audio interrupt re-arms it in phase with stream 0 within about 1.3 ms. Afterwards `stats` shows `dma_errors` up by 1 and `desyncs` unchanged. `ERR fault takes dma 1 or dma 2` on other arguments; `ERR fault is not in this build` elsewhere (the desktop included), and if the stream would not stop. It is not in the `help` list above, which is the shipping build's.
+
 ## The functional core: `chimera_core::console`
 
 No I/O, no allocation, no `unsafe`; the module is unit-tested on the host.

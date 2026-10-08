@@ -13,6 +13,8 @@ pub mod clocks;
 pub mod controls;
 pub mod dfu;
 pub mod display;
+#[cfg(feature = "fault-inject")]
+pub mod fault;
 #[cfg(not(feature = "sd-probe"))]
 pub mod orbit;
 #[cfg(not(feature = "sd-probe"))]

@@ -4,7 +4,7 @@
 # the filter probes `tools/loop_count.py` counts. Each is built with
 # `--no-default-features` (the `bench` feature brings back all of the
 # shipping set but the console's `put`; `filter-probes`, `default`).
-bench_sets := "bench-algo bench-algo,master-tape bench-routing bench-memory bench-stress bench-stress,orbit bench-orbit bench-tape filter-probes"
+bench_sets := "fault-inject bench-algo bench-algo,master-tape bench-routing bench-memory bench-stress bench-stress,orbit bench-orbit bench-tape filter-probes"
 bench_all := "bench-algo,bench-routing,bench-memory,bench-stress,bench-orbit,bench-tape"
 
 # Build desktop simulator
@@ -112,6 +112,7 @@ check:
     cargo test -p chimera-core -p chimera-engine -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit
     cargo test -p chimera-core -p chimera-engine --features master-tape
     cargo test -p chimera-core -p chimera-engine --no-default-features
+    cargo test -p chimera-core --features fault-inject --test console_fault_test --test console_answer_test
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features

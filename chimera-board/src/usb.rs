@@ -443,6 +443,12 @@ impl Unit for ChipUnit<'_> {
         Some(())
     }
 
+    #[cfg(feature = "fault-inject")]
+    fn fault(&mut self, arg: chimera_core::console::FaultArg) -> Option<()> {
+        let chimera_core::console::FaultArg::Dma(n) = arg;
+        crate::fault::dma_transfer_error(n)
+    }
+
     fn boot(&self) -> Option<BootSeen> {
         Some(self.boot)
     }
