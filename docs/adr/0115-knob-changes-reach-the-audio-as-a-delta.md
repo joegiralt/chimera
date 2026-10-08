@@ -23,14 +23,26 @@
 3. **A Part's Sound is a `Tracked<Sound>`** (`project::Part`, `PartEdit`). Every write to it, by any path (an edit, a load, the codec), draws a fresh stamp, and a mix or FX edit leaves it alone.
    - The publisher skips an unwritten Sound at the cost of one compare.
    - The published params carry the Sound's stamp. A value written past the publisher (the tests', the bench's) has another stamp, so the audio reads it whole once. On the unit only the publisher writes.
-4. **A silent Part keeps current.** It takes its deltas while silent, lands them, and reads at most one Sound's worth of knobs a block, shared by every silent Part (`pending` holds the rest). A project load's six Sounds are spread over six blocks.
-   - A Part that starts playing on an unchanged Sound reads nothing.
-5. **What is billed** (`Knobs::COST`, 14 cycles/sample a sounding Part, on its first voice):
-   - the delta's check (~40 cycles a block);
-   - two knobs gliding (~300);
-   - a Sound load's 66 reads spread over a 12-block UI frame (~500).
-
-   An edit reads one knob; FX, mix and ORBIT edits read none.
+4. **Every Part's reads share one block budget** (`Knobs::READ_BUDGET`, 8 knobs a block for the whole Instrument).
+   - Order each block: a playing Part's edits, then a playing Part's new Sound, then the silent Parts'. Within a Part, edits go before what lands. The Part served first turns each block.
+   - What doesn't fit waits (`pending`):
+     - a waiting edit plays where it was, then glides when read, so it never snaps;
+     - a new Sound's waiting knobs play their stored values (a load lands anyway).
+   - Bounds:
+     - a knob turn is read the block it arrives;
+     - a Sound loaded into a playing Part lands within 9 blocks (~12 ms), five at once within 42;
+     - a project load's six Sounds within 50, while silent.
+   - A knob not yet read since its Sound arrived has no old value to glide from, so an edit to it in that window lands. The window is ≤ 9 blocks after a load into a playing Part; no hand turns a knob that soon after a load.
+   - A value written past the publisher is read whole at once, past the budget: it names no knob. Never on the unit.
+5. **A silent Part keeps current.** It takes its deltas while silent and lands them within the budget. What it leaves waiting still lands when read, even once a voice plays it. A Part that starts playing on an unchanged Sound reads nothing.
+6. **What is billed:**
+   - `Knobs::COST`, 6 cycles/sample a sounding Part, on its first voice: the delta's check (~40 cycles a block) and two knobs gliding (~300), 340 / 64.
+   - `Knobs::READS`, 12, reserved once beside the bus (`Instrument::reserved` and `recost`'s shed): the budget's 8 reads at ~91 cycles each (a whole Sound's ~6,000 on the unit, from the STRESS analysis, / 66), 728 / 64.
+   - Why 8 knobs a block, not a whole Sound (94):
+     - ADR 0040's voices on rev V leave 84 cycles/sample beside eight INIT voices and the bus, and 20 beside the costliest patch's six and the master tape.
+     - 6 + 12 fits both; 6 + 94 would cost a voice in either.
+7. **The one input to a knob's motion that isn't a knob:** whether its Sound moves it itself (`ParamSnapshot::moves_itself`: SCRUB's POSITION, by `tape.model`). The publisher tracks it per Part and names the knob when it flips.
+8. **Stamps are serials** from one `AtomicU32` and never 0 (`NONE`). A wrap takes 2³² writes. Past it, a Sound left unwritten through all of them could meet its own serial again and a change go unseen; at a write a frame, that is over two years. A u64 would cost ~200 B of AXI in the buffer slots, against the bench's 476 B, and needs 64-bit atomics the M7 lacks.
 
 ## Alternatives considered
 - **Stamp per Part, full read on change (the first cut of this branch):** an edit cost one full read, not six. But a knob turn still read 66 knobs, and the audio still found the change itself.
@@ -40,22 +52,33 @@
 - **Billing the spike instead (raising BURST):** it refuses voices sooner for work that need not be done.
 
 ## Consequences
-- **Audio, worst block:** a Sound loaded into a sounding Part (66 reads, ~6k cycles) plus silent Parts' pending reads (≤ 66 knobs, ~6k), ~12k. Before: ~30–36k on any edit with six Parts playing.
-  - A knob turn: one knob read (~90 cycles) and its glide.
-  - ORBIT start: none.
-  - Estimated from instruction counts, not benched.
+- **Audio, worst block:**
+  - Knob reads are bounded by construction: 8 a block (~730 cycles), billed as `READS`.
+  - Plus each sounding Part's check and glides, billed as `COST`.
+  - Before: ~30–36k on any edit with six Parts playing, ~16k at ORBIT's start, and ~6k a playing Part's load (six at once ~36k), none of it billed.
+  - A knob turn: one read (~90 cycles) and its glide. ORBIT start: none.
+  - Estimated from instruction counts; re-bench STRESS with a Sound load in its timed loop.
 - **UI:**
   - A publish: one stamp compare a Part.
   - An edited Part: 66 value compares and 16 route compares, ~6k cycles on the M7 (~13 µs at 480 MHz), once per publish that carries an edit. On the UI's time, under 0.1 % of a 16 ms frame.
 - **RAM:**
-  - `KnobPublisher` 2.2 KB, UI side. On the board it sits in D2, not AXI: the bench builds hold AXI within 8 KiB of full (ADR 0087), and `bench-algo,master-tape` keeps 8,668 B.
-  - `KnobDelta` ~72 B a Part in each of the three `AudioShared` slots.
-  - Shipping vs main: AXI −1,056 B (41,212 B free), D2 +2,208 B, flash +3,072 B.
+  - `KnobPublisher` 2,304 B, UI side. On the board it sits in D2 (`hw::D2_KNOBS`, taken from `VOICE_RAM_BUDGET`, so `memory_budget_test` and `sd_probe` count it).
+  - D2 as linked (shipping): 4,096 DMA + 169,552 voices and publisher, 121,264 B free; `memory_budget_test` counts 116,336 with the full 8 KB DMA reserve.
+  - `KnobDelta` ~72 B a Part in each of the three `AudioShared` slots (~1.3 KB of AXI).
+  - Shipping vs main: AXI −1,056 B (41,212 B free), D2 +2,448 B, flash +5,472 B.
+- **Bench AXI headroom:**
+  - The tightest bench build, `bench-algo,master-tape`, keeps 8,668 B against its 8,192 B floor (ADR 0087), 476 B over; `bench-orbit` and `bench-stress,orbit` keep 9,388.
+  - What gives next: `DELTA_DEPTH` 4 → 2 in the bench builds (−576 B over the three slots), then the deltas out of `AudioShared` into a fourth, writer-owned copy.
 - A test or bench writing `AudioShared` in place still works: a new stamp means read whole.
-- `knob_reads_test` counts knob reads per block:
-  - six Parts playing: a turn reads 1 (two knobs, 2), and FX, mix and ORBIT edits read 0;
-  - ORBIT starting three Parts: 0;
-  - a Part back from silence mid-glide plays the stored values bit for bit, reading 0.
+- **Tests:**
+  - `knob_reads_test` counts knob reads per block:
+    - six Parts playing: a turn reads 1 (two knobs, 2); FX, mix and ORBIT edits read 0;
+    - ORBIT starting three Parts: 0;
+    - a load into a playing Part, and five at once with a turn elsewhere first, stay within the budget and land;
+    - publishes the audio skips (1 to 9, past the ring) lose nothing;
+    - a Part back from silence mid-glide plays the stored values bit for bit;
+    - the read budget is reserved once.
+  - The unit tests pin the window at four, the order (edits before landing), the waiting edit's hold-then-glide, a part-read Sound reading every knob once, and the model flip.
 
 ## Sources
 - (private notes) (on-unit STRESS, 2026-10-08); ADR 0112, 0107, 0021 (the triple buffer).
