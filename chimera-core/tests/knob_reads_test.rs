@@ -101,12 +101,9 @@ impl Six {
     /// Whether every knob of Part `part` sits on its stored value, landed.
     fn landed(&self, part: usize) -> bool {
         let stored = &self.p.part(PartId::ALL[part]).sound.params;
-        KNOBS.iter().all(|k| {
-            let s = k
-                .spec
-                .normalize(stored.block(k.addr.block).unwrap().get(k.addr.param));
-            self.inst.knob(part, k.addr) == Some((s, false))
-        })
+        KNOBS
+            .iter()
+            .all(|k| self.inst.knob(part, k.addr) == Some((k.read(stored), false)))
     }
 
     /// `n` blocks: the most knobs read in any one of them.

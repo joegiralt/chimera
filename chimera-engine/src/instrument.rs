@@ -1228,18 +1228,22 @@ impl Instrument {
         let mut budget = Knobs::READ_BUDGET;
         let turn = usize::from(self.knob_turn) % MAX_PARTS;
         self.knob_turn = ((turn + 1) % MAX_PARTS) as u8;
-        for (knobs, part) in self.knobs.iter_mut().zip(&shared.parts) {
+        // Each Part's pass, once: a quiet one (settled, nothing new) none.
+        let mut class = [u8::MAX; MAX_PARTS];
+        for (p, (knobs, part)) in self.knobs.iter_mut().zip(&shared.parts).enumerate() {
             new_sound(knobs, part);
-        }
-        for pass in 0..3 {
-            for p in (0..MAX_PARTS).map(|j| (turn + j) % MAX_PARTS) {
-                let (knobs, part) = (&mut self.knobs[p], &shared.parts[p]);
-                let class = match (playing[p], knobs.0.landing()) {
+            if !knobs.0.quiet((&part.params, &part.mod_state), &part.knobs) {
+                class[p] = match (playing[p], knobs.0.landing()) {
                     (true, false) => 0,
                     (true, true) => 1,
                     (false, _) => 2,
                 };
-                if class == pass {
+            }
+        }
+        for pass in 0..3 {
+            for p in (0..MAX_PARTS).map(|j| (turn + j) % MAX_PARTS) {
+                let (knobs, part) = (&mut self.knobs[p], &shared.parts[p]);
+                if class[p] == pass {
                     let pace = playing[p].then_some(pace);
                     knobs.0.ease(
                         (&part.params, &part.mod_state),

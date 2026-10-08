@@ -26,12 +26,198 @@ use crate::preset::Sound;
 use crate::project::Loads;
 use crate::tracked::{Stamp, Tracked};
 
-/// A param the knobs glide: where it is, its spec and its τ.
+/// A param the knobs glide: where it is, its spec and its τ, and its read
+/// plan: where its value lies in a `ParamSnapshot`, as what, and how it is
+/// placed on 0..1, worked out at compile time, so a read on the audio
+/// thread is a load and a multiply (no dispatch, no spec walk, no divide).
 #[derive(Clone, Copy, Debug)]
 pub struct Knob {
     pub addr: ParamAddr,
     pub spec: &'static ParamSpec,
     pub tau: GlideMs,
+    /// Its field's offset in `ParamSnapshot`, and its type.
+    at: u16,
+    kind: Kind,
+    /// Its place is `(v − lo) × k` (`k` = 1 / span); in octaves (CUTOFF,
+    /// the one), its spec's `normalize`.
+    lo: f32,
+    k: f32,
+    octaves: bool,
+}
+
+/// How a knob's value is stored.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    F32,
+    U8,
+    I8,
+}
+
+impl Knob {
+    /// Its 0..1 place in `p`: `spec.normalize(get)`, read straight from
+    /// its field.
+    #[inline]
+    pub fn read(&self, p: &ParamSnapshot) -> f32 {
+        let base = core::ptr::from_ref(p).cast::<u8>();
+        // SAFETY: `at` is `offset_of!` a field of `kind`'s type in
+        // `ParamSnapshot` (`plan`), so the read is in bounds, aligned for
+        // that type (the field's own offset) and of an initialised value.
+        let v = unsafe {
+            let f = base.add(self.at as usize);
+            match self.kind {
+                Kind::F32 => f.cast::<f32>().read(),
+                Kind::U8 => f32::from(f.read()),
+                Kind::I8 => f32::from(f.cast::<i8>().read()),
+            }
+        };
+        if self.octaves {
+            self.spec.normalize(v)
+        } else {
+            (v - self.lo) * self.k
+        }
+    }
+}
+
+/// Knob `a`'s field: its offset in `ParamSnapshot` and its type. A knob
+/// param it doesn't know fails to compile (`KNOBS` is built with it), and
+/// `the_read_plan_reads_what_get_does` holds each against its block's
+/// `get`.
+const fn plan(a: ParamAddr) -> (usize, Kind) {
+    use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
+    use crate::dsp::lfo::LfoParams;
+    use crate::dsp::modal::ModalParams;
+    use crate::dsp::tape_engine::TapeEngineParams as T;
+    use crate::params::{
+        DriveParams, EnvParams, FilterParams, FolderParams, OutParams, PitchParams,
+    };
+    use core::mem::{offset_of, size_of};
+    type P = ParamSnapshot;
+    let id = a.param.0;
+    let (at, kind) = match a.block {
+        BlockRef::Modal => {
+            let f = if id == ModalParams::STRUCTURE.0 {
+                offset_of!(ModalParams, structure)
+            } else if id == ModalParams::BRIGHT.0 {
+                offset_of!(ModalParams, bright)
+            } else if id == ModalParams::DAMP.0 {
+                offset_of!(ModalParams, damp)
+            } else if id == ModalParams::POS.0 {
+                offset_of!(ModalParams, pos)
+            } else if id == ModalParams::FORCE.0 {
+                offset_of!(ModalParams, force)
+            } else if id == ModalParams::SPEED.0 {
+                offset_of!(ModalParams, speed)
+            } else {
+                panic!("a MODAL knob without a field")
+            };
+            (offset_of!(P, modal) + f, Kind::F32)
+        }
+        BlockRef::Algo if id == AlgoParams::MORPH.0 => (offset_of!(P, algo.morph), Kind::U8),
+        BlockRef::AlgoOp(op) => {
+            let (f, kind) = if id == AlgoOpParams::FINE.0 {
+                (offset_of!(AlgoOpParams, fine), Kind::U8)
+            } else if id == AlgoOpParams::DETUNE.0 {
+                (offset_of!(AlgoOpParams, detune), Kind::I8)
+            } else if id == AlgoOpParams::LEVEL.0 {
+                (offset_of!(AlgoOpParams, level), Kind::U8)
+            } else if id == AlgoOpParams::FEEDBACK.0 {
+                (offset_of!(AlgoOpParams, feedback), Kind::U8)
+            } else if id == AlgoOpParams::VELOCITY.0 {
+                (offset_of!(AlgoOpParams, velocity), Kind::U8)
+            } else {
+                panic!("an ALGO op knob without a field")
+            };
+            let op = offset_of!(P, algo.ops) + op.index() * size_of::<AlgoOpParams>();
+            (op + f, kind)
+        }
+        BlockRef::Drive => {
+            let f = if id == DriveParams::DRIVE.0 {
+                offset_of!(DriveParams, drive)
+            } else if id == DriveParams::TONE.0 {
+                offset_of!(DriveParams, tone)
+            } else if id == DriveParams::MIX.0 {
+                offset_of!(DriveParams, mix)
+            } else {
+                panic!("a DRIVE knob without a field")
+            };
+            (offset_of!(P, drive) + f, Kind::F32)
+        }
+        BlockRef::Filter => {
+            let f = if id == FilterParams::CUTOFF.0 {
+                offset_of!(FilterParams, cutoff)
+            } else if id == FilterParams::RESONANCE.0 {
+                offset_of!(FilterParams, resonance)
+            } else if id == FilterParams::LEVEL.0 {
+                offset_of!(FilterParams, level)
+            } else {
+                panic!("a filter knob without a field")
+            };
+            (offset_of!(P, filter) + f, Kind::F32)
+        }
+        BlockRef::Folder => {
+            let f = if id == FolderParams::FOLD.0 {
+                offset_of!(FolderParams, fold)
+            } else if id == FolderParams::SYMMETRY.0 {
+                offset_of!(FolderParams, symmetry)
+            } else if id == FolderParams::MIX.0 {
+                offset_of!(FolderParams, mix)
+            } else {
+                panic!("a FOLD knob without a field")
+            };
+            (offset_of!(P, folder) + f, Kind::F32)
+        }
+        BlockRef::Env(s) => {
+            let f = if id == EnvParams::SUSTAIN.0 {
+                offset_of!(EnvParams, sustain)
+            } else if id == EnvParams::SHAPE.0 {
+                offset_of!(EnvParams, func.shape)
+            } else {
+                panic!("an ENV knob without a field")
+            };
+            let e = offset_of!(P, envelopes) + s.index() * size_of::<EnvParams>();
+            (e + f, Kind::F32)
+        }
+        BlockRef::Lfo(s) => {
+            let f = if id == LfoParams::DEPTH.0 {
+                offset_of!(LfoParams, depth)
+            } else if id == LfoParams::SHAPE_B.0 {
+                offset_of!(LfoParams, func.shape)
+            } else {
+                panic!("an LFO knob without a field")
+            };
+            let l = offset_of!(P, lfos) + s.index() * size_of::<LfoParams>();
+            (l + f, Kind::F32)
+        }
+        BlockRef::Out => {
+            let f = if id == OutParams::VOLUME.0 {
+                offset_of!(OutParams, volume)
+            } else if id == OutParams::VCA_VEL.0 {
+                offset_of!(OutParams, vca_vel)
+            } else {
+                panic!("an OUT knob without a field")
+            };
+            (offset_of!(P, out) + f, Kind::F32)
+        }
+        BlockRef::Pitch if id == PitchParams::FINE.0 => (offset_of!(P, pitch.fine), Kind::F32),
+        BlockRef::TapeEngine => {
+            let f = if id == T::POSITION.0 {
+                offset_of!(T, position)
+            } else if id == T::MOTION.0 {
+                offset_of!(T, motion)
+            } else if id == T::TAPE.0 {
+                offset_of!(T, tape)
+            } else if id == T::AGE.0 {
+                offset_of!(T, age)
+            } else if id == T::SIZE.0 {
+                offset_of!(T, size)
+            } else {
+                panic!("a TAPE knob without a field")
+            };
+            (offset_of!(P, tape) + f, Kind::F32)
+        }
+        _ => panic!("a knob on a block without a read plan"),
+    };
+    (at, kind)
 }
 
 /// Every param a Sound declares `Smoothing::Knobs`, in `BlockRef::ALL`'s
@@ -62,6 +248,11 @@ const fn knobs() -> [Knob; KNOB_COUNT] {
         addr: ParamAddr::new(BlockRef::Filter, first.id),
         spec: first,
         tau: GlideMs::KNOB,
+        at: 0,
+        kind: Kind::F32,
+        lo: 0.0,
+        k: 0.0,
+        octaves: false,
     }; KNOB_COUNT];
     let (mut n, mut b) = (0, 0);
     while b < BlockRef::ALL.len() {
@@ -72,10 +263,19 @@ const fn knobs() -> [Knob; KNOB_COUNT] {
             if let Some(tau) = specs[i].motion().knob() {
                 // `Knobs` keeps a coefficient for each of these two.
                 assert!(tau.ms() == GlideMs::KNOB.ms() || tau.ms() == GlideMs::STAGE.ms());
+                let (addr, spec) = (ParamAddr::new(r, specs[i].id), &specs[i]);
+                let (at, kind) = plan(addr);
+                assert!(at <= u16::MAX as usize);
+                let span = spec.max - spec.min;
                 t[n] = Knob {
-                    addr: ParamAddr::new(r, specs[i].id),
-                    spec: &specs[i],
+                    addr,
+                    spec,
                     tau,
+                    at: at as u16,
+                    kind,
+                    lo: spec.min,
+                    k: if span == 0.0 { 0.0 } else { 1.0 / span },
+                    octaves: matches!(spec.scale, crate::block::Scale::Octaves),
                 };
                 n += 1;
             }
@@ -316,9 +516,19 @@ const LAND: f32 = 1e-5;
 
 /// A Part's knobs on their way to the stored values, as its voices play
 /// them this block. `UNPRIMED`, every knob waits to be read and lands, and
-/// a voice rendered on its own plays the stored values.
+/// a voice rendered on its own plays the stored values. The fields a
+/// settled block reads come first, so it touches one cache line.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(C)]
 pub struct Knobs {
+    /// Something waits, moves or lands: a settled Part has none, and a
+    /// block of it is three compares (`ease`).
+    busy: bool,
+    /// The last publish taken, and the stamps of what it described: a
+    /// value written past the publisher (a test's, the bench's) has
+    /// another, and is read whole.
+    seq: u32,
+    seen: (Stamp, Stamp),
     /// Each of `KNOBS` as its 0..1 place (`ParamSpec::normalize`): near 1,
     /// not ~10 as `log2` Hz, so an f32 step never stalls short of `LAND`.
     v: [f32; KNOB_COUNT],
@@ -331,11 +541,6 @@ pub struct Knobs {
     /// The FREQ and Q columns' amounts by source, as `amount / 127`.
     routes: [[f32; MAX_MOD_SOURCES]; 2],
     routes_moving: bool,
-    /// The last publish taken, and the stamps of what it described: a
-    /// value written past the publisher (a test's, the bench's) has
-    /// another, and is read whole.
-    seq: u32,
-    seen: (Stamp, Stamp),
     /// Knobs read, wrapping: for the tests.
     reads: u32,
     /// Where the next read of a part-read Sound goes on from.
@@ -367,6 +572,7 @@ impl Knobs {
     pub const READS: Cost = Cost(12);
 
     pub const UNPRIMED: Self = Self {
+        busy: true,
         v: [0.0; KNOB_COUNT],
         moving: KnobSet::EMPTY,
         pending: KnobSet::ALL,
@@ -382,7 +588,7 @@ impl Knobs {
 
     /// A new Sound (its Part's `loads` moved): every knob read and landed.
     pub fn land(&mut self) {
-        (self.pending, self.lands) = (KnobSet::ALL, KnobSet::ALL);
+        (self.pending, self.lands, self.busy) = (KnobSet::ALL, KnobSet::ALL, true);
     }
 
     /// Only landing: a new Sound read in parts, no edit waiting.
@@ -414,12 +620,16 @@ impl Knobs {
         pace: Option<Pace>,
         budget: &mut u32,
     ) {
+        let stamps = (p.stamp(), m.stamp());
+        // Settled, and nothing new: nothing to do.
+        if !self.busy && d.seq == self.seq && stamps == self.seen {
+            return;
+        }
         if let Some(Pace::Glide(sr)) = pace
             && self.k.0 != sr
         {
             self.k = (sr, [coeff(GlideMs::KNOB, sr), coeff(GlideMs::STAGE, sr)]);
         }
-        let stamps = (p.stamp(), m.stamp());
         // A value written past the publisher (a test's, the bench's; never
         // the shells') is read whole at once, past the budget: it names no
         // knob, and spread out it would play stale ones.
@@ -435,6 +645,15 @@ impl Knobs {
         let budget = if past { &mut whole } else { budget };
         (self.seq, self.seen) = (d.seq, stamps);
         let todo = self.pending.union(new);
+        // No budget left, nothing moving: what changed waits, untouched.
+        if *budget == 0 && self.moving.is_empty() && !self.routes_moving {
+            self.pending = todo;
+            if pace.is_none() {
+                self.lands = self.lands.union(new);
+            }
+            self.busy = !todo.is_empty();
+            return;
+        }
         // Edits first, so a turn never waits on a landing; then what lands.
         let (edits, from) = todo.minus(self.lands).take(*budget, self.cursor);
         *budget = budget.saturating_sub(edits.len());
@@ -464,6 +683,17 @@ impl Knobs {
         if pace.is_none() {
             self.lands = self.lands.union(self.pending);
         }
+        self.busy = !(self.pending.is_empty() && self.moving.is_empty()) || self.routes_moving;
+    }
+
+    /// Settled, with nothing new from `d` or written past it: a block of
+    /// it does nothing.
+    pub fn quiet(
+        &self,
+        (p, m): (&Tracked<ParamSnapshot>, &Tracked<ModState>),
+        d: &KnobDelta,
+    ) -> bool {
+        !self.busy && d.seq == self.seq && (p.stamp(), m.stamp()) == self.seen
     }
 
     /// Knob `i` one block toward `p`'s at the coefficients `k`; landed at
@@ -472,10 +702,7 @@ impl Knobs {
     fn step(&mut self, i: usize, p: &ParamSnapshot, k: Option<[f32; 2]>, fresh: bool) {
         let knob = &KNOBS[i];
         let k = k.filter(|_| !p.moves_itself(knob.addr));
-        let t = knob.spec.normalize(
-            p.block(knob.addr.block)
-                .map_or(0.0, |b| b.get(knob.addr.param)),
-        );
+        let t = knob.read(p);
         let v = &mut self.v[i];
         let on = match k {
             None => {
@@ -844,5 +1071,39 @@ mod tests {
             Some(true),
             "read, gliding"
         );
+    }
+
+    /// Each knob's read plan reads what its block's `get` does, placed as
+    /// its spec's `normalize` places it (within a float's rounding): every
+    /// knob, on every engine's INIT and every factory Sound, and with each
+    /// knob set to its range's ends.
+    #[test]
+    fn the_read_plan_reads_what_get_does() {
+        use crate::factory::{FACTORY_LEN, factory_sound};
+        let mut sounds: alloc::vec::Vec<ParamSnapshot> =
+            [EngineType::Algo, EngineType::Modal, EngineType::Tape]
+                .map(|e| Sound::init(e).params)
+                .into();
+        sounds.extend((0..FACTORY_LEN).filter_map(|i| factory_sound(i).map(|s| s.params)));
+        for mut p in sounds {
+            for end in [None, Some(0.0), Some(1.0)] {
+                for k in &KNOBS {
+                    if let Some(x) = end {
+                        let v = k.spec.quantize(k.spec.denormalize(x));
+                        p.block_mut(k.addr.block).unwrap().set(k.addr.param, v);
+                    }
+                    let want = k
+                        .spec
+                        .normalize(p.block(k.addr.block).unwrap().get(k.addr.param));
+                    let got = k.read(&p);
+                    assert!(
+                        (got - want).abs() <= 1e-6,
+                        "{:?} {}: {got} vs {want}",
+                        k.addr.block,
+                        k.spec.label
+                    );
+                }
+            }
+        }
     }
 }
