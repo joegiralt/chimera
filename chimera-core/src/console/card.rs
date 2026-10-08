@@ -14,6 +14,8 @@ pub const STREAM_BYTES_PER_S: u32 = 24_000 * 3 / 2;
 /// Each test file, in 512 B blocks: 4 MiB.
 pub const FILE_BLOCKS: u32 = 8_192;
 pub const FILE_BYTES: u32 = FILE_BLOCKS * 512;
+// The sweep's cap counts on it (ADR 0094).
+const _: () = assert!(FILE_BYTES <= chimera_hal::store::MAX_CHAIN_BYTES);
 /// The test files, aimed this far (per mille) into the card's clusters so
 /// a read that switches between them crosses half the card.
 pub const FILE_AIMS: [u16; 2] = [250, 750];

@@ -741,6 +741,7 @@ impl Renderer {
                 active: i == f.focus,
                 mod_amount: mod_info(f, i),
                 look: look(f, i),
+                motion: v.addr().and_then(|a| a.spec()).map(|s| s.motion()),
             };
             components::cell(display, i, top, Some(&c));
             if f.clip > 0.0 && v.addr() == Some(LEVEL) {

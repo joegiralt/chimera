@@ -1,12 +1,14 @@
-//! Gain staging (ADR 0050, #190): everything before the limiter is main's
-//! mix, untouched; the limiter trims it by 1/√8 at rest and holds it at
-//! −1 dBFS, the only stage that bends it; `to_dac`'s clamp is never reached.
+//! Gain staging (ADR 0050, #190; ADR 0109): everything before the limiter
+//! is main's mix, untouched; the limiter gains it by `OUTPUT_GAIN` at rest
+//! and bends it along a soft knee to −1 dBFS, the only stage that bends
+//! it; `to_dac`'s clamp is never reached.
 
 use chimera_core::dsp::chorus::ChorusParams;
 use chimera_core::dsp::comp::CompParams;
 use chimera_core::dsp::delay::DelayParams;
 use chimera_core::dsp::fx_bus::{FxBus, FxParams};
-use chimera_core::dsp::limiter::{CEILING, LOOKAHEAD, Limiter, OUTPUT_TRIM, THRESHOLD};
+use chimera_core::dsp::knobs::Knobs;
+use chimera_core::dsp::limiter::{CEILING, KNEE, LOOKAHEAD, Limiter, OUTPUT_GAIN, THRESHOLD};
 use chimera_core::dsp::reverb::ReverbParams;
 use chimera_core::dsp::tape::TapeParams;
 use chimera_core::dsp::voice::Voice;
@@ -104,10 +106,10 @@ fn chord(
     let mut shared = Box::new(AudioShared::default());
     if let Voices::Saw = voices {
         let saw = factory_sound(4).unwrap();
-        shared.parts[0].params = saw.params;
+        *shared.parts[0].params = saw.params;
         shared.parts[0].params.filter.cutoff = 20_000.0;
         shared.parts[0].params.filter.resonance = 0.0;
-        shared.parts[0].mod_state = saw.mod_state;
+        *shared.parts[0].mod_state = saw.mod_state;
     } else {
         shared.parts[0].params.out.volume = 0.8;
     }
@@ -117,7 +119,8 @@ fn chord(
     // Rev V, or with the master tape (where ALGO INIT plays seven since
     // ADR 0060) a budget for all eight.
     let voice = Voice::cost(&shared.parts[0].params, &shared.parts[0].mod_state).0;
-    let eight = ((FxBus::COST.0 + 8 * voice) as u64 * 480_000).div_ceil(7) as u32;
+    // And the Part's knobs (ADR 0112).
+    let eight = ((FxBus::COST.0 + 8 * voice + Knobs::COST.0) as u64 * 480_000).div_ceil(7) as u32;
     let mut inst = Box::new(Instrument::new(
         SAMPLE_RATE,
         SampleBudget::for_cpu(eight.max(CPU_HZ_REV_V)),
@@ -164,7 +167,7 @@ fn no_stage_exceeds_ceiling() {
             let (mut pre, mut ring, mut rails, mut over) = (0.0f32, 0i32, 0usize, 0usize);
             chord(voices, typical(), 1.0, send, |_, fx, dac| {
                 let input = dac.input();
-                let trimmed = input.iter().flatten().map(|x| x.abs() * OUTPUT_TRIM);
+                let trimmed = input.iter().flatten().map(|x| x.abs() * OUTPUT_GAIN);
                 pre = trimmed.fold(pre, f32::max);
                 let lines = fx.reverb().ring().lines();
                 ring = lines.iter().fold(ring, |m, &v| m.max((v as i32).abs()));
@@ -177,17 +180,8 @@ fn no_stage_exceeds_ceiling() {
             eprintln!(
                 "{voices:?} send {send}: trimmed peak {pre}, ring peak {ring}, rail words {rails}"
             );
-            // ADR 0049's routed INIT sums past full scale at eight voices
-            // (#193), so only the limiter keeps it off the clamp; SAW LEAD
-            // still fits under the trim alone, at send 1 only through the
-            // master tape's clip: off the chain (ADR 0055) it reaches 1.50
-            // there and the limiter carries it too.
-            if matches!(voices, Voices::Saw) && (cfg!(feature = "master-tape") || send < 1.0) {
-                assert!(
-                    pre <= 1.0,
-                    "{voices:?} send {send}: pair peak after the trim {pre}"
-                );
-            }
+            // The gained mix passes full scale at eight voices (ADR 0109,
+            // #193): only the limiter keeps it off the clamp.
             assert_eq!(
                 over, 0,
                 "{voices:?} send {send}: samples clamped at the DAC"
@@ -206,7 +200,7 @@ fn no_stage_exceeds_ceiling() {
 #[test]
 fn only_final_limiter_is_nonlinear() {
     let (gl, gr) = pan_gains(0.0);
-    for level in [0.5, 1.0] {
+    for level in [0.05, 1.0] {
         // The same products `mix_parts` hoists.
         let (gl, gr) = (gl * level, gr * level);
         let (mut bus, mut out) = (Vec::new(), Vec::new());
@@ -226,7 +220,7 @@ fn only_final_limiter_is_nonlinear() {
         let linear = over.map_or(bus.len(), |i| i.saturating_sub(LOOKAHEAD));
         for i in LOOKAHEAD..linear {
             let b = bus[i - LOOKAHEAD];
-            let (l, r) = ((b * gl) * OUTPUT_TRIM, (b * gr) * OUTPUT_TRIM);
+            let (l, r) = ((b * gl) * OUTPUT_GAIN, (b * gr) * OUTPUT_GAIN);
             assert_eq!(out[2 * i].to_bits(), l.to_bits(), "L {i} at {level}");
             assert_eq!(out[2 * i + 1].to_bits(), r.to_bits(), "R {i} at {level}");
         }
@@ -258,12 +252,12 @@ fn max_settings_bounded() {
     }
 }
 
-/// A −6 dBFS sine on every pair comes out exactly × the output trim, one
-/// lookahead late.
+/// A −12 dBFS sine on every pair (under the knee once gained) comes out
+/// exactly × the output gain, one lookahead late.
 #[test]
 fn limiter_transparent_below_threshold() {
     let mut lim = Box::new(Limiter::new());
-    let a = 0.501_187_2; // −6 dBFS
+    let a = 0.251_188_64; // −12 dBFS
     let x = |n: usize| a * libm::sinf(n as f32 * 0.057_3);
     let mut dac = Box::new(DacBlocks::new());
     for b in 0..200 {
@@ -280,8 +274,8 @@ fn limiter_transparent_below_threshold() {
                 let n = b * BLOCK_SIZE + i;
                 let (l, r) = match n.checked_sub(LOOKAHEAD) {
                     Some(m) => (
-                        x(m) * (p + 1) as f32 / 3.0 * OUTPUT_TRIM,
-                        -x(m + 7) * OUTPUT_TRIM,
+                        x(m) * (p + 1) as f32 / 3.0 * OUTPUT_GAIN,
+                        -x(m + 7) * OUTPUT_GAIN,
                     ),
                     None => (0.0, 0.0),
                 };
@@ -303,7 +297,7 @@ fn limiter_catches_a_step_and_releases() {
     let (mut peak, mut last) = (0.0f32, 0.0f32);
     for b in 0..1000 {
         let v = if (10..20).contains(&b) {
-            4.0 / OUTPUT_TRIM
+            4.0 / OUTPUT_GAIN
         } else {
             0.25
         };
@@ -312,7 +306,7 @@ fn limiter_catches_a_step_and_releases() {
             pair.fill(v);
         }
         if b == 5 {
-            out[1][37] = -4.0 / OUTPUT_TRIM;
+            out[1][37] = -4.0 / OUTPUT_GAIN;
         }
         lim.process(&mut dac, SAMPLE_RATE);
         let out = dac.out();
@@ -320,7 +314,7 @@ fn limiter_catches_a_step_and_releases() {
         last = out[0][2 * BLOCK_SIZE - 1];
     }
     assert!(peak <= CEILING, "{peak}");
-    assert_eq!(last, 0.25 * OUTPUT_TRIM, "released to the trim");
+    assert_eq!(last, 0.25 * OUTPUT_GAIN, "released to the trim");
 }
 
 /// Every effect and the master section hear main's mix: the reverb's ring
@@ -328,18 +322,20 @@ fn limiter_catches_a_step_and_releases() {
 /// dry plus return, × the output trim, one block late, bit for bit.
 #[test]
 fn everything_before_the_limiter_is_mains_mix() {
+    // Low enough that the mix stays under the knee (ADR 0109).
+    const SEND: f32 = 0.01;
     let mut fxp = typical();
     fxp.tape = TapeParams::default();
     fxp.delay.rev_send = 0.5;
     fxp.reverb.time = 0.7;
     let (gl, gr) = pan_gains(0.0);
-    let (gl, gr) = (gl * 0.3, gr * 0.3);
+    let (gl, gr) = (gl * 0.05, gr * 0.05);
     let mut reference = Box::new(FxBus::new());
     let mut want = [[0.0f32; 2 * BLOCK_SIZE]; 2];
     let (mut blocks, mut peak) = (0, 0.0f32);
-    chord(Voices::Init, fxp, 0.3, 0.1, |inst, fx, dac| {
+    chord(Voices::Init, fxp, 0.05, SEND, |inst, fx, dac| {
         let bus = inst.part_bus(0);
-        let mut sends = [bus.map(|b| b * 0.1); 3];
+        let mut sends = [bus.map(|b| b * SEND); 3];
         let mut ret = chimera_core::dsp::Stereo::SILENT;
         reference.process(&mut sends, &fxp, SAMPLE_RATE, &mut ret);
         assert_eq!(
@@ -360,7 +356,7 @@ fn everything_before_the_limiter_is_mains_mix() {
             } else {
                 (gr, &ret.r)
             };
-            (bus[k / 2] * d + r[k / 2]) * OUTPUT_TRIM
+            (bus[k / 2] * d + r[k / 2]) * OUTPUT_GAIN
         });
         blocks += 1;
     });
@@ -386,7 +382,7 @@ fn a_non_finite_sample_reads_as_full_scale() {
                 out[0][40] = bad;
             }
             if b == 9 {
-                (out[2][41], out[2][42]) = (bad, 3.0 / OUTPUT_TRIM);
+                (out[2][41], out[2][42]) = (bad, 3.0 / OUTPUT_GAIN);
             }
             lim.process(&mut dac, SAMPLE_RATE);
             for &x in dac.out().iter().flatten().filter(|x| x.is_finite()) {
@@ -411,7 +407,10 @@ fn a_non_finite_sample_reads_as_full_scale() {
             .flatten()
             .filter(|x| x.is_finite())
             .fold(1.0f32, |m, x| m.min(x.abs()));
-        let floor = 0.25 * OUTPUT_TRIM * CEILING * 0.999;
+        // The share the knee keeps at full scale, `o = 1`.
+        let (span, d) = (CEILING - KNEE, 1.0 - KNEE);
+        let share = (KNEE * span + CEILING * d) / ((span + d) * 1.0);
+        let floor = 0.25 * OUTPUT_GAIN * share * 0.999;
         assert!(quiet >= floor, "{bad}: dipped to {quiet}");
         assert!(least > 0.0, "{bad}: muted");
     }
@@ -451,7 +450,7 @@ fn random_spikes_never_pass_the_ceiling() {
     }
     assert!(peak <= CEILING, "{peak}");
     assert!(
-        peak > 0.99 * CEILING,
+        peak > 0.95 * CEILING,
         "the spikes were limited, not missed: {peak}"
     );
 }

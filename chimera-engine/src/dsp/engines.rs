@@ -11,6 +11,7 @@ use chimera_hal::BLOCK_SIZE;
 use crate::addr::{BlockRef, ParamAddr};
 use crate::block::OffsetLaw;
 use crate::dsp::algo::engine::{AlgoEngine, AlgoLive};
+use crate::dsp::algo::plan::OPS;
 use crate::dsp::modal::{Halo, ModalEngine, ModalParams, Model, ResonatorMode, SymPool};
 use crate::dsp::tape_engine::{COST_WAVE_LEVEL, LEVEL_CENTS, TapeEngine, TapeModel};
 use crate::hw::Cost;
@@ -427,6 +428,14 @@ impl EngineSlot {
             Self::Algo(_) => None,
             Self::Modal(m) => m.playing_cost(),
             Self::Tape(t) => t.playing_cost(),
+        }
+    }
+
+    /// ALGO's ops the kernel runs next block; `None` on other engines.
+    pub fn algo_running(&self) -> Option<[bool; OPS]> {
+        match self {
+            Self::Algo(a) => Some(a.running()),
+            _ => None,
         }
     }
 

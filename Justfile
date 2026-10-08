@@ -4,7 +4,7 @@
 # the filter probes `tools/loop_count.py` counts. Each is built with
 # `--no-default-features` (the `bench` feature brings back all of the
 # shipping set but the console's `put`; `filter-probes`, `default`).
-bench_sets := "bench-algo bench-algo,master-tape bench-routing bench-memory bench-stress bench-stress,orbit bench-orbit bench-tape filter-probes"
+bench_sets := "fault-inject bench-algo bench-algo,master-tape bench-routing bench-memory bench-stress bench-stress,orbit bench-orbit bench-tape filter-probes"
 bench_all := "bench-algo,bench-routing,bench-memory,bench-stress,bench-orbit,bench-tape"
 
 # Build desktop simulator
@@ -112,6 +112,7 @@ check:
     cargo test -p chimera-core -p chimera-engine -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory --features chimera-hal/testkit
     cargo test -p chimera-core -p chimera-engine --features master-tape
     cargo test -p chimera-core -p chimera-engine --no-default-features
+    cargo test -p chimera-core --features fault-inject --test console_fault_test --test console_answer_test
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
@@ -248,6 +249,9 @@ put-tape file:
 # The project files on the card and their sizes; `just ls tapes`: the sources
 ls *args:
     python3 tools/chimera-usb.py ls {{args}}
+# The lost-cluster sweep at the next boot (ADR 0094): the unit restarts into it; `just status` reads it
+sweep:
+    python3 tools/chimera-usb.py sweep
 
 # Flash firmware to PreenFM3 via DFU. With the console up, `to-dfu` sends
 # `dfu` and waits for the ROM loader; without it, bridge BOOT0 and re-plug.
@@ -285,6 +289,20 @@ flash-bench area extra="":
     rc=0 && dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-bench.bin -s 0x8020000:leave 2>&1 | tee "$log" || rc=$?
     if [ "$rc" -eq 74 ] && grep -q 'File downloaded successfully' "$log"; then
         echo "bench running ~4 min; console appears after"
+    elif [ "$rc" -ne 0 ]; then exit "$rc"; fi
+
+# Flash the fault-injection build (console `fault dma <1|2>`, for #25) via
+# DFU: the shipping set plus `fault-inject`, less `put`. A test build only.
+flash-fault:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features fault-inject
+    rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-fault.bin
+    python3 tools/chimera-usb.py to-dfu
+    log=$(mktemp) && trap 'rm -f "$log"' EXIT
+    rc=0 && dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-fault.bin -s 0x8020000:leave 2>&1 | tee "$log" || rc=$?
+    if [ "$rc" -eq 74 ] && grep -q 'File downloaded successfully' "$log"; then
+        python3 tools/chimera-usb.py wait-console 10
     elif [ "$rc" -ne 0 ]; then exit "$rc"; fi
 
 # Copy the stock bootloader (0x08000000, 128 KB) to ~/chimera-backups with a

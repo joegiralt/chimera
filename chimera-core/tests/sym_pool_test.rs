@@ -71,7 +71,7 @@ impl Stage {
     fn with_budget(parts: &[(ParamSnapshot, PartMode)], budget: SampleBudget) -> Self {
         let mut shared = AudioShared::default();
         for (part, (p, mode)) in shared.parts.iter_mut().zip(parts) {
-            part.params = p.clone();
+            *part.params = p.clone();
             part.mix.mode = *mode;
         }
         Self {
@@ -449,7 +449,7 @@ fn storm(budget: SampleBudget) -> usize {
                 EngineType::Modal | EngineType::Tape => EngineType::Algo,
             };
             let mode = p.modal.mode;
-            *p = ParamSnapshot::for_engine(engine);
+            **p = ParamSnapshot::for_engine(engine);
             p.modal.mode = mode;
         }
         s.block();
@@ -495,7 +495,7 @@ fn switch_gives_the_last_four_played_a_halo() {
         let holders: Vec<usize> = older.iter().map(|&n| s.voice_of(1, n)).collect();
         let before = s.inst.rebuilds();
 
-        s.shared.parts[0].params = sym();
+        *s.shared.parts[0].params = sym();
         for _ in 0..FADE_BLOCKS + 1 {
             s.block();
         }
@@ -588,7 +588,7 @@ fn short_sym(s: &mut Stage, parts: usize) {
     assert!(ms.set_route_addr(ModSource::Env1.index(), VCA, 127));
     for part in &mut s.shared.parts[..parts] {
         part.params.envelopes[0].release = 0.0;
-        part.mod_state = ms.clone();
+        *part.mod_state = ms.clone();
     }
 }
 
@@ -733,7 +733,7 @@ fn a_note_waiting_across_a_switch_to_sympathetic_is_placed() {
         s.inst.active()[v],
         "50 waits for Part 3's fade on its voice"
     );
-    s.shared.parts[1].params = sym();
+    *s.shared.parts[1].params = sym();
     let mut sounded = false;
     for _ in 0..12 {
         s.block();
@@ -786,7 +786,7 @@ fn a_note_waiting_across_a_switch_takes_a_free_slot() {
         s.inst.active()[v],
         "50 waits for Part 3's fade on its voice"
     );
-    s.shared.parts[1].params = sym();
+    *s.shared.parts[1].params = sym();
     for _ in 0..FADE_BLOCKS + 3 {
         s.block();
     }
@@ -841,7 +841,7 @@ fn a_mode_toggle_storm_keeps_the_clear_budget() {
     let _ = take_cleared_bytes();
     let mut cleared = Vec::new();
     for b in 0..40 {
-        s.shared.parts[0].params = match b {
+        *s.shared.parts[0].params = match b {
             0 | 3 | 5 => modal(ResonatorMode::String),
             _ => sym(),
         };

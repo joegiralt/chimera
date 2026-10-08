@@ -198,6 +198,32 @@ pub trait Store {
     fn seal(&mut self, _vol: VolumeId, _file: FileName) -> Result<(), StoreError> {
         Err(StoreError::Io)
     }
+    /// The sweep mark (ADR 0094): whether a change since the last settled
+    /// sweep may have stranded clusters. A store with no FAT has none to
+    /// strand: `Unused`.
+    fn mark(&mut self, _vol: VolumeId) -> Result<Mark, StoreError> {
+        Ok(Mark::Unused)
+    }
+    /// After a sweep that `settled`, the mark to `Clean`, made if it is
+    /// `Missing`; `true` once it is. Any other sweep keeps the debt, a
+    /// doubt count reset to plain `Dirty`: `false`.
+    fn settle(&mut self, _vol: VolumeId, _swept: &Swept) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+    /// After a boot's sweep that doubted. With `count`, one more doubting
+    /// boot on the mark, in place (a card in doubt allocates nothing);
+    /// without (an asked sweep), the count the mark carried put back. Returns the count now,
+    /// 0 where there is no mark to keep it.
+    fn note_doubt(&mut self, _vol: VolumeId, _count: bool) -> Result<u8, StoreError> {
+        Ok(0)
+    }
+    /// Asks the next boot to sweep: the mark to `Asked`, made if it is
+    /// `Missing`. Returns the mark now: `Unused` (no `/CHIMERA`, nothing
+    /// to sweep) or `Dirty` (a mark it can't rewrite, owing already) are
+    /// left as they are.
+    fn request_sweep(&mut self, _vol: VolumeId) -> Result<Mark, StoreError> {
+        Ok(Mark::Unused)
+    }
     /// The lost-cluster sweep (#360), one operation at boot: clusters the
     /// FAT holds that no directory on the volume reaches. `marks` lends
     /// the reachability bitmap, one bit a cluster; the sweep zeroes it.
@@ -210,6 +236,58 @@ pub trait Store {
         _marks: &mut [u8],
     ) -> Result<Swept, (Doubt, SweepStats)> {
         Ok(Swept::default())
+    }
+}
+
+/// The longest file any Chimera write makes: the bench's 4 MiB card test
+/// file (a `put` is at most 1 MiB, a project about 175 KB). A cut strands
+/// at most one file's chain and one directory cluster, so it bounds what
+/// one sweep may free (ADR 0094).
+pub const MAX_CHAIN_BYTES: u32 = 4 << 20;
+
+/// The card's sweep mark, `/CHIMERA/SWEEP.MRK` (ADR 0094). Every change
+/// that writes turns a clean one dirty before its first write and back
+/// after its last; a cut in between leaves it dirty, and the next boot
+/// sweeps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mark {
+    /// Every change since the last settled sweep finished.
+    Clean,
+    /// A change began and never finished, or a sweep left work or a
+    /// doubt; or a block that isn't exactly the clean one.
+    Dirty,
+    /// `/CHIMERA` with no mark: written before marks, or the mark's own
+    /// making was cut.
+    Missing,
+    /// No `/CHIMERA`: Chimera never wrote the card.
+    Unused,
+    /// Dirty, and the last this many boots' sweeps, in a row, doubted
+    /// (1..=`DOUBT_HALT`).
+    Doubted(u8),
+    /// A sweep asked for (the console's `sweep`, STORAGE › CLEAN UP): the
+    /// next boot sweeps, halted or not, then puts back the doubt count it
+    /// carries (0..=`DOUBT_HALT`) if it doubts too.
+    Asked(u8),
+}
+
+/// Doubting boots in a row after which the boot stops sweeping and warns
+/// (owner ruling 2026-10-08). A settled sweep, the console's included,
+/// clears the mark; a boot that runs without a doubt ends the streak.
+pub const DOUBT_HALT: u8 = 3;
+
+impl Mark {
+    /// The boot sweeps.
+    pub fn owes_sweep(self) -> bool {
+        match self {
+            Mark::Dirty | Mark::Missing | Mark::Asked(_) => true,
+            Mark::Doubted(n) => n < DOUBT_HALT,
+            Mark::Clean | Mark::Unused => false,
+        }
+    }
+
+    /// The boot no longer sweeps: the card needs a check.
+    pub fn halted(self) -> bool {
+        matches!(self, Mark::Doubted(n) if n >= DOUBT_HALT)
     }
 }
 
@@ -241,10 +319,20 @@ pub struct Swept {
     pub lost: u32,
     /// 0 in `DryRun`.
     pub freed: u32,
-    /// FAT 2's one differing sector was (in `DryRun`: would be) copied
-    /// from FAT 1.
+    /// FAT 2 had one sector behind FAT 1.
+    pub stale: bool,
+    /// That sector was copied from FAT 1: never in `DryRun`.
     pub healed: bool,
     pub stats: SweepStats,
+}
+
+impl Swept {
+    /// Nothing left for a later sweep: no sector behind (what only FAT 1
+    /// held there waits for the boot after its copy), and every lost
+    /// cluster freed, so none in `DryRun`.
+    pub fn settled(&self) -> bool {
+        !self.stale && self.freed == self.lost
+    }
 }
 
 /// Why a sweep stopped before writing anything.
@@ -265,6 +353,9 @@ pub enum Doubt {
     TooDeep,
     /// More clusters than the bitmap's bits.
     NoRoom,
+    /// `Free` found more lost clusters, carried, than two cuts of the
+    /// longest chain can strand: a mark bug, never a cut.
+    TooMany(u32),
     /// The card timed out, left, or was swapped.
     Card(StoreError),
 }
@@ -280,6 +371,7 @@ impl Doubt {
             Doubt::CrossLinked => "cross-linked",
             Doubt::TooDeep => "too-deep",
             Doubt::NoRoom => "no-room",
+            Doubt::TooMany(_) => "too-many",
             Doubt::Card(StoreError::NoCard) => "no-card",
             Doubt::Card(StoreError::Timeout) => "timeout",
             Doubt::Card(StoreError::VolumeChanged(_)) => "card-changed",
@@ -293,6 +385,58 @@ impl Doubt {
 
 /// What a boot's sweep ended with.
 pub type SweepSeen = Result<Swept, (Doubt, SweepStats)>;
+
+/// Why a sweep ran.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Trigger {
+    /// At boot, the mark owing one.
+    Owed(Mark),
+    /// At boot, the mark (or the card) not read: owed, to be safe.
+    Unread,
+    /// The mark `Asked`: a sweep requested before this boot.
+    Asked,
+}
+
+/// A sweep, run or skipped, as `status` and `sweep` report it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SweepRun {
+    /// The boot's: the mark owed none.
+    Skipped(Mark),
+    Ran {
+        mode: Sweep,
+        why: Trigger,
+        seen: SweepSeen,
+        then: Then,
+    },
+}
+
+/// What became of the mark after a sweep that ran.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Then {
+    /// The sweep settled; the mark is clean.
+    Cleared,
+    /// Unsettled, a doubt, or no `/CHIMERA`: as it was.
+    Kept,
+    /// Settled or doubted, but the mark's write failed: still owing.
+    Failed,
+    /// A boot's doubt, counted: this many in a row.
+    Doubted(u8),
+}
+
+impl SweepRun {
+    /// The boot's sweep stopped for doubts (`Mark::halted`): `status`
+    /// and the boot warn.
+    pub fn halted(&self) -> bool {
+        match *self {
+            SweepRun::Skipped(m) => m.halted(),
+            SweepRun::Ran {
+                then: Then::Doubted(n),
+                ..
+            } => Mark::Doubted(n).halted(),
+            SweepRun::Ran { .. } => false,
+        }
+    }
+}
 
 /// A `Store` whose operations' time can be capped: the console's `put`
 /// holds each to what is left of its own deadline.

@@ -121,17 +121,28 @@ macro_rules! table {
             Card   (CardArg) => "card",   "SD speed and streams, a chord playing; clean (bench builds)",
             Shot   (Colours) => "shot",   "the screen in THEME's colours; shot raw: canonical",
             Dfu    (NoArg)   => "dfu",    "restart into the ROM loader for just flash",
+            Sweep  (NoArg)   => "sweep",  "the lost-cluster sweep at the next boot: restarts into it",
             $($card)*
         }
     };
 }
 
-#[cfg(feature = "card-put")]
+#[cfg(all(feature = "card-put", feature = "fault-inject"))]
+table! {
+    Ls     (LsArg)   => "ls",     "project files on the card, sizes; ls tapes: the sources",
+    Put    (PutArg)  => "put",    "a project or source onto the card: <path> <size> <crc32>",
+    Fault  (FaultArg) => "fault",  "DMA fault test: fault dma <1|2>, fault ndtr (fault-inject builds)",
+}
+#[cfg(all(feature = "card-put", not(feature = "fault-inject")))]
 table! {
     Ls     (LsArg)   => "ls",     "project files on the card, sizes; ls tapes: the sources",
     Put    (PutArg)  => "put",    "a project or source onto the card: <path> <size> <crc32>",
 }
-#[cfg(not(feature = "card-put"))]
+#[cfg(all(not(feature = "card-put"), feature = "fault-inject"))]
+table! {
+    Fault  (FaultArg) => "fault",  "provoke a DMA transfer error: fault dma <1|2> (fault-inject builds)",
+}
+#[cfg(all(not(feature = "card-put"), not(feature = "fault-inject")))]
 table! {}
 
 /// Printable ASCII only (anything else is stored as `?`), at most `WORD_MAX`.
@@ -231,5 +242,9 @@ pub use card::*;
 mod put;
 #[cfg(feature = "card-put")]
 pub use put::*;
+#[cfg(feature = "fault-inject")]
+mod fault;
+#[cfg(feature = "fault-inject")]
+pub use fault::*;
 mod nocard;
 pub use nocard::NoCard;

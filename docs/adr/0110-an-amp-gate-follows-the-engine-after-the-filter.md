@@ -1,7 +1,7 @@
 # 0110. An amp gate after the filter follows the engine's tail
 
-- **Status:** Proposed
-- **Deciders:** owner (ruling 2026-10-08, #374); firmware
+- **Status:** Accepted (2026-10-08)
+- **Deciders:** owner (ruling and approval 2026-10-08, #374); firmware
 
 ## Context
 ALGO and MODAL shape their note inside the engine: ALGO's operator envelopes, MODAL's resonator decay. Nothing after the filter gates the voice unless a source routes into VCA (ADR 0096's fixed VCA column; spec § 4). A filter that self-oscillates (CLEAN from RES 0.95; the 2040, DIRTY and LADDER too) is driven by the engine only to start. It keeps ringing after note-off until the engine ends: MODAL INIT held a 0.45 peak for 10.5 s, and `sweep_thorough` reported `Stuck Filter.RESO`. The owner ruled that the voice's amp gates the whole voice after the filter, as on a classic subtractive synth and the Cascadia, so a ringing filter follows the release. MODAL must still ring like Rings: note-off never damps the resonator.

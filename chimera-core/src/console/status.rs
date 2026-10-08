@@ -7,7 +7,7 @@ use crate::project::ProjectStatus;
 use crate::ui::UiState;
 use crate::ui::about_page::{BUILD, VERSION, write_build_rev};
 use crate::ui::nav::{MixPage, Rung};
-use chimera_hal::store::{Sweep, SweepSeen, SweepStats};
+use chimera_hal::store::{DOUBT_HALT, Doubt, Mark, Sweep, SweepRun, SweepStats, Then, Trigger};
 
 /// The footer's word for `s`.
 pub fn state_word(s: ProjectStatus) -> &'static str {
@@ -61,32 +61,90 @@ fn write_at(ui: &UiState, w: &mut impl Write) -> fmt::Result {
     }
 }
 
-/// `status`'s `sweep` line: the boot's lost-cluster sweep (ADR 0094), its
-/// mode, what it found or the doubt that stopped it, the volume, and each
-/// phase's time.
-pub fn write_sweep(mode: Sweep, seen: &SweepSeen, w: &mut impl Write) -> fmt::Result {
+/// The `sweep` line, `status`'s (ADR 0094): skipped and the mark that let
+/// it; or the mode, why it ran, what it found or the doubt that stopped
+/// it, the volume, each phase's time, and what became of the mark. A boot
+/// that stopped sweeping for doubts adds a `warn` line.
+pub fn write_sweep(run: &SweepRun, w: &mut impl Write) -> fmt::Result {
+    let (mode, why, seen, then) = match run {
+        SweepRun::Skipped(m) => {
+            w.write_str("sweep skipped mark ")?;
+            write_mark(*m, w)?;
+            w.write_char('\n')?;
+            return warn(run, w);
+        }
+        SweepRun::Ran {
+            mode,
+            why,
+            seen,
+            then,
+        } => (mode, why, seen, then),
+    };
     let mode = match mode {
         Sweep::DryRun => "dry-run",
         Sweep::Free => "free",
     };
+    write!(w, "sweep {mode} why ")?;
+    match why {
+        Trigger::Owed(m) => write_mark(*m, w)?,
+        Trigger::Unread => w.write_str("unread")?,
+        Trigger::Asked => w.write_str("asked")?,
+    }
+    w.write_char(' ')?;
     let stats: &SweepStats = match seen {
         Ok(s) => {
-            let healed = if s.healed { "yes" } else { "no" };
+            let yes = |b| if b { "yes" } else { "no" };
             write!(
                 w,
-                "sweep {mode} lost {} freed {} healed {healed}",
-                s.lost, s.freed
+                "lost {} freed {} stale {} healed {}",
+                s.lost,
+                s.freed,
+                yes(s.stale),
+                yes(s.healed)
             )?;
             &s.stats
         }
         Err((d, stats)) => {
-            write!(w, "sweep {mode} doubt {}", d.word())?;
+            write!(w, "doubt {}", d.word())?;
+            if let Doubt::TooMany(lost) = d {
+                write!(w, " lost {lost}")?;
+            }
             stats
         }
     };
+    write!(
+        w,
+        " spc {} clusters {} fat {} compare {}ms mark {}ms count {}ms then ",
+        stats.spc, stats.clusters, stats.fat_bytes, stats.compare_ms, stats.mark_ms, stats.count_ms
+    )?;
+    match then {
+        Then::Cleared => w.write_str("cleared")?,
+        Then::Kept => w.write_str("kept")?,
+        Then::Failed => w.write_str("failed")?,
+        Then::Doubted(n) => write!(w, "doubted {n}")?,
+    }
+    w.write_char('\n')?;
+    warn(run, w)
+}
+
+/// The boot's warning once the sweep stopped for doubts.
+fn warn(run: &SweepRun, w: &mut impl Write) -> fmt::Result {
+    if !run.halted() {
+        return Ok(());
+    }
     writeln!(
         w,
-        " spc {} clusters {} fat {} compare {}ms mark {}ms count {}ms",
-        stats.spc, stats.clusters, stats.fat_bytes, stats.compare_ms, stats.mark_ms, stats.count_ms
+        "warn sweep stopped: {DOUBT_HALT} doubting boots in a row; check the card on a computer, then run sweep"
     )
+}
+
+fn write_mark(m: Mark, w: &mut impl Write) -> fmt::Result {
+    match m {
+        Mark::Clean => w.write_str("clean"),
+        Mark::Dirty => w.write_str("dirty"),
+        Mark::Missing => w.write_str("missing"),
+        Mark::Unused => w.write_str("unused"),
+        Mark::Doubted(n) => write!(w, "doubted {n}"),
+        Mark::Asked(_) => w.write_str("asked"),
+    }
 }

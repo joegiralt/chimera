@@ -290,7 +290,7 @@ fn a_running_clipper_bills_until_it_stops() {
     let mut rig = common::rig::Rig::new(chimera_hal::SAMPLE_RATE);
     rig.note_on(MidiNote::new(45).unwrap(), Velocity::new(127).unwrap(), &p);
     let mut buf = [0.0f32; chimera_hal::BLOCK_SIZE];
-    rig.render(&mut buf, &p, &mods);
+    rig.render_glided(&mut buf, &p, &mods);
     assert!(rig.voice.filter_level_running());
     assert_eq!(
         rig.voice.held_level_extra(&p, &mods),
@@ -300,7 +300,7 @@ fn a_running_clipper_bills_until_it_stops() {
     p.filter.level = 0.5;
     let mut billed = 0;
     for _ in 0..400 {
-        rig.render(&mut buf, &p, &mods);
+        rig.render_glided(&mut buf, &p, &mods);
         let extra = rig.voice.held_level_extra(&p, &mods);
         assert_eq!(
             extra,
@@ -1316,10 +1316,11 @@ fn a16_a17_sound() -> ParamSnapshot {
 fn a_stolen_voice_is_billed_until_its_fade_ends() {
     let mut r = common::InstRig::with_budget(SampleBudget::for_cpu(CPU_HZ_REV_V));
     let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
-    r.shared.parts[5].params = a16_a17_sound();
-    r.shared.parts[0].params = chimera_core::factory::factory_sound(0).unwrap().params;
-    r.shared.parts[1].params = ParamSnapshot::for_engine(EngineType::Modal);
-    for k in 0..6 {
+    *r.shared.parts[5].params = a16_a17_sound();
+    *r.shared.parts[0].params = chimera_core::factory::factory_sound(0).unwrap().params;
+    *r.shared.parts[1].params = ParamSnapshot::for_engine(EngineType::Modal);
+    // Beside the master tape's bus, ADR 0110's 6 a voice leaves room for five.
+    for k in 0..if TAPE { 5 } else { 6 } {
         r.note_on(5, 36 + 12 * k);
     }
     r.render(1);
@@ -1361,9 +1362,9 @@ fn stress(keys_first: bool, blocks: usize) -> (usize, u32, bool) {
         part.mix = PartParams::for_part(i);
         let s = NEW_PARTS.get(i).and_then(|s| factory_sound(s.index()));
         let s = s.unwrap_or_else(|| chimera_core::preset::Sound::init(EngineType::Algo));
-        (part.params, part.mod_state) = (s.params, s.mod_state);
+        (*part.params, *part.mod_state) = (s.params, s.mod_state);
     }
-    r.shared.parts[5].params = a16_a17_sound();
+    *r.shared.parts[5].params = a16_a17_sound();
     let ch = r.shared.parts[5].mix.channel.get();
     let keys = |r: &mut common::InstRig| {
         for k in 0..6 {
