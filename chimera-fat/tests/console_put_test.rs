@@ -2,6 +2,8 @@
 //! the shells drive them: a project file saved the unit's way, every
 //! failure leaving the pair loading as before, with no cluster lost.
 
+#[path = "common/console.rs"]
+mod console;
 #[path = "common/image.rs"]
 mod image;
 #[path = "common/probe.rs"]
@@ -9,178 +11,29 @@ mod probe;
 #[path = "common/tools.rs"]
 mod tools;
 
-use chimera_core::console::{
-    CardAnswer, Console, Frame, Out, PUT_CHUNK_BYTES, PUT_DEADLINE_MS, PUT_MAX_BYTES, PutArg,
-    PutTo, Stalled, Stats, Unit, answer, put,
-};
-use chimera_core::dsp::tape_engine::read::{DESC_LEN, Shape};
+use chimera_core::console::{PUT_CHUNK_BYTES, PUT_DEADLINE_MS, PUT_MAX_BYTES, PutArg, PutTo, put};
+use chimera_core::dsp::tape_engine::read::DESC_LEN;
 use chimera_core::name::Name;
-use chimera_core::name::SoundName;
 use chimera_core::project::test_support::full_dense;
 use chimera_core::project::{
     Project, ProjectDecoder, encode_new_project, encode_project, list_projects, project_file,
 };
 use chimera_core::storage::{
-    Card, Crc32, FileKind, Generation, Header, ProjectId, RecordTag, RecordWriter, SOURCE_DATA_MAX,
-    Side, SourceHead, SourceRef, WholeShape, load_ab_in_place, peek_header, read_source_into,
-    source_crc, source_name, write_file,
+    Card, FileKind, Generation, Header, ProjectId, RecordWriter, Side, SourceHead,
+    load_ab_in_place, peek_header, read_source_into, source_name, write_file,
 };
-use chimera_core::ui::UiState;
-use chimera_core::ui::theme_settings::{ThemeSettings, palette};
 use chimera_fat::FatStore;
-use chimera_hal::store::{ByteSink, Dir, FileName, Files, Store, StoreError, VolumeId};
-use chimera_hal::{FB_SIZE, Ms};
+use chimera_hal::store::{Dir, FileName, Store, StoreError, VolumeId};
+use console::*;
 use image::{Cut, CutDisk, RamDisk, fat_check, fat16, with_clusters};
 use probe::{Probed, Sink, log, probed, swept_clean};
-use std::collections::VecDeque;
 use std::rc::Rc;
-
-struct Fake<'a, S> {
-    ui: Box<UiState>,
-    fb: Box<[u16; FB_SIZE]>,
-    files: &'a mut S,
-}
-
-impl<S: Files> Unit for Fake<'_, S> {
-    fn ui(&self) -> &UiState {
-        &self.ui
-    }
-    fn stats(&mut self) -> Option<Stats> {
-        None
-    }
-    fn bench(&self) -> Option<&str> {
-        None
-    }
-    fn card(&mut self) -> Option<CardAnswer> {
-        None
-    }
-    fn frame(&self) -> Frame<'_> {
-        Frame {
-            fb: &self.fb,
-            palette: palette(&ThemeSettings::DEFAULT),
-        }
-    }
-    fn dfu(&mut self) -> Option<()> {
-        None
-    }
-    fn boot(&self) -> Option<chimera_core::boot::BootSeen> {
-        None
-    }
-    fn usb_regs(&self) -> Option<chimera_core::boot::UsbRegs> {
-        None
-    }
-    type Files = S;
-    fn files(&mut self) -> Option<&mut S> {
-        Some(&mut *self.files)
-    }
-}
-
-/// The host: what it sends after the request line, and a clock in µs that
-/// moves `per_byte_us` a byte and the whole wait when nothing comes.
-struct Host {
-    input: VecDeque<u8>,
-    out: Vec<u8>,
-    us: u64,
-    per_byte_us: u64,
-}
-
-impl Host {
-    fn new(data: &[u8], per_byte_us: u64) -> Host {
-        Host {
-            input: data.iter().copied().collect(),
-            out: Vec::new(),
-            us: 0,
-            per_byte_us,
-        }
-    }
-}
-
-impl Out for Host {
-    fn put(&mut self, b: &[u8]) -> Result<(), Stalled> {
-        self.out.extend_from_slice(b);
-        Ok(())
-    }
-    fn recv(&mut self, wait_ms: u32) -> Option<u8> {
-        let b = self.input.pop_front();
-        self.us += match b {
-            Some(_) => self.per_byte_us,
-            None => u64::from(wait_ms) * 1_000,
-        };
-        b
-    }
-    fn now(&self) -> Ms {
-        Ms((self.us / 1_000) as u32)
-    }
-}
-
-/// `line`, then `data`, through `answer`: what the unit said, and what of
-/// the host's data it left unread.
-fn ask_on<S: Files>(s: &mut S, line: &str, data: &[u8], per_byte_us: u64) -> (String, usize) {
-    let mut unit = Fake {
-        ui: Box::new(UiState::new()),
-        fb: Box::new([0; FB_SIZE]),
-        files: s,
-    };
-    let mut host = Host::new(data, per_byte_us);
-    let mut c = Console::new();
-    for &b in line.as_bytes() {
-        if let Some(r) = c.push(b) {
-            answer(r, &mut unit, &mut host).unwrap();
-        }
-    }
-    (String::from_utf8(host.out).unwrap(), host.input.len())
-}
-
-fn ask<S: Files>(s: &mut S, line: &str, data: &[u8]) -> String {
-    ask_on(s, line, data, 0).0
-}
-
-fn base64(b: &[u8]) -> Vec<u8> {
-    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = Vec::new();
-    for c in b.chunks(3) {
-        let n = c
-            .iter()
-            .enumerate()
-            .fold(0u32, |n, (i, &x)| n | u32::from(x) << (16 - 8 * i));
-        for i in 0..4 {
-            out.push(if i <= c.len() {
-                A[(n >> (18 - 6 * i) & 63) as usize]
-            } else {
-                b'='
-            });
-        }
-    }
-    out
-}
-
-/// The data as the host tool sends it: 48 bytes a line.
-fn lines(b: &[u8]) -> Vec<u8> {
-    b.chunks(48)
-        .flat_map(|c| [base64(c), b"\n".to_vec()].concat())
-        .collect()
-}
-
-fn crc(b: &[u8]) -> u32 {
-    let mut c = Crc32::new();
-    c.update(b);
-    c.finish()
-}
 
 const ID: u32 = 14;
 const PATH: &str = "/CHIMERA/PROJECTS/P0000014.A";
 
 fn put_line(path: &str, body: &[u8]) -> String {
     format!("put {path} {} {:08x}\n", body.len(), crc(body))
-}
-
-struct Bytes(Vec<u8>);
-
-impl ByteSink for Bytes {
-    fn put(&mut self, b: &[u8]) -> Result<(), StoreError> {
-        self.0.extend_from_slice(b);
-        Ok(())
-    }
 }
 
 /// A whole project file, NEW's records, named `name`, at generation `g`.
@@ -852,59 +705,11 @@ fn a_write_that_lands_then_errs_leaves_no_shared_cluster() {
 
 // Sources (ADR 0106): chunked, written once, sealed, under the same faults.
 
-/// A plain source of `frames`: its head and whole file.
-fn source_file_bytes(seed: u8, frames: u32) -> (SourceHead, Vec<u8>) {
-    let data: Vec<u8> = (0..3 * frames.div_ceil(2) as usize)
-        .map(|i| (i as u32).wrapping_mul(31).wrapping_add(u32::from(seed)) as u8)
-        .collect();
-    let head = SourceHead {
-        sref: SourceRef {
-            crc: source_crc(WholeShape::Plain, 1, &data),
-            frames,
-            rate: 24_000,
-        },
-        shape: Shape::Plain,
-        count: 1,
-        root: 6_000,
-        period_q16: 0,
-        name: SoundName::new("FAT").unwrap(),
-    };
-    let h = Header {
-        kind: FileKind::Source,
-        generation: Generation::FIRST,
-        name: None,
-    };
-    let mut out = Bytes(Vec::new());
-    write_file(&mut out, &h, &mut |w| {
-        w.put(RecordTag::SourceHead, &head.to_bytes())?;
-        data.chunks(SOURCE_DATA_MAX)
-            .try_for_each(|c| w.put(RecordTag::SourceData, c))
-    })
-    .unwrap();
-    (head, out.0)
-}
-
 /// Two chunks: about 270 KB.
 fn two_chunks() -> (SourceHead, Vec<u8>) {
     let (h, f) = source_file_bytes(5, 180_000);
     assert!(f.len() > PUT_CHUNK_BYTES as usize && f.len() < 2 * PUT_CHUNK_BYTES as usize);
     (h, f)
-}
-
-fn src_line(h: &SourceHead, file: &[u8]) -> String {
-    format!(
-        "put /CHIMERA/TAPES/{:08X}.SRC {} {:08x}\n",
-        h.sref.crc,
-        file.len(),
-        crc(file)
-    )
-}
-
-/// The file as the host tool sends it: each chunk's lines, then its end.
-fn chunked(file: &[u8]) -> Vec<u8> {
-    file.chunks(PUT_CHUNK_BYTES as usize)
-        .flat_map(|c| [lines(c), format!("end {:08x}\n", crc(c)).into_bytes()].concat())
-        .collect()
 }
 
 const SRC_OK: &str = "READY\nACK 262144\nACK 272214\nOK\n";

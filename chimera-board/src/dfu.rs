@@ -16,6 +16,8 @@ use chimera_core::boot::{DFU_MAGIC, FROM_MENU, RomDfu};
 use chimera_core::boot::{UsbState, UsbStep};
 use chimera_core::reset::ResetCause;
 #[cfg(not(feature = "sd-probe"))]
+use chimera_core::reset::SOFT_INTENT;
+#[cfg(not(feature = "sd-probe"))]
 use chimera_core::ui::settings::replace::said::Said;
 use stm32h7xx_hal::pac;
 
@@ -32,17 +34,24 @@ const USB: usize = 5;
 const USB_STEP: usize = 6;
 /// BKP7R..12R: `UsbRegs::words`.
 const USB_REGS: usize = 7;
+/// BKP13R: `SOFT_INTENT` before a firmware reset, cleared every boot.
+const INTENT: usize = 13;
 
 /// `after_reset` ran: RTCAPBEN is set, the marker is clear (or stuck, and
 /// ignored) and RCC_RSR is read and cleared. Only `after_reset` makes one,
 /// and `boot` takes it.
 #[must_use]
-pub struct Checked(BootSeen);
+pub struct Checked(BootSeen, ResetCause);
 
 impl Checked {
     /// What the top of `main` saw.
     pub fn seen(&self) -> BootSeen {
         self.0
+    }
+
+    /// Why the chip reset: RCC_RSR, or the backup domain's word for it.
+    pub fn cause(&self) -> ResetCause {
+        self.1
     }
 }
 
@@ -54,6 +63,13 @@ pub struct Marker(pac::RTC);
 impl Marker {
     pub fn new(_: Checked, rtc: pac::RTC) -> Marker {
         Marker(rtc)
+    }
+
+    /// `SCB::sys_reset()`, with the intent word set so the next boot reads
+    /// a software reset. Every firmware-asked reset goes through here.
+    pub fn reset(&self) -> ! {
+        self.0.bkpr[INTENT].write(|w| w.bkp().bits(SOFT_INTENT));
+        cortex_m::peripheral::SCB::sys_reset()
     }
 
     /// How far start-up got, for the next boot's `last_stage`.
@@ -128,15 +144,20 @@ pub fn after_reset(
     cortex_m::asm::dsb();
     let marker = rtc.bkpr[MARKER].read().bits();
     let readback = clear(pwr, rtc);
-    let boots = rtc.bkpr[BOOTS].read().bits().wrapping_add(1);
+    let boots_before = rtc.bkpr[BOOTS].read().bits();
+    let boots = boots_before.wrapping_add(1);
     rtc.bkpr[BOOTS].write(|w| w.bkp().bits(boots));
-    let action = boot::after_reset(marker, readback, ResetCause::from_rsr(rsr));
+    let cause = ResetCause::infer(rsr, boots_before, rtc.bkpr[INTENT].read().bits());
+    let action = boot::after_reset(marker, readback, cause);
     if action == BootAction::RomDfu {
         // The boot record stays as the boot before left it: the DFU detour
         // (OS UPGRADE, flash, leave) is how a cold boot's record is read.
         rtc.bkpr[JUMP_RSR].write(|w| w.bkp().bits(rsr));
+        // The intent stays: the loader's leave resets behind the bootloader
+        // and reads as the software reset it follows.
         jump(cp)
     }
+    rtc.bkpr[INTENT].write(|w| w.bkp().bits(0));
     // Only a synth boot gets here.
     let read = |i: usize| rtc.bkpr[i].read().bits();
     let last_stage = read(STAGE);
@@ -151,20 +172,23 @@ pub fn after_reset(
     {
         rtc.bkpr[i].write(|w| w.bkp().bits(0));
     }
-    Checked(BootSeen {
-        marker,
-        readback,
-        action,
-        rsr,
-        dbp,
-        boots,
-        from: rtc.bkpr[FROM].read().bits(),
-        jump_rsr: rtc.bkpr[JUMP_RSR].read().bits(),
-        last_stage,
-        last_usb,
-        last_usb_step,
-        last_usb_regs,
-    })
+    Checked(
+        BootSeen {
+            marker,
+            readback,
+            action,
+            rsr,
+            dbp,
+            boots,
+            from: rtc.bkpr[FROM].read().bits(),
+            jump_rsr: rtc.bkpr[JUMP_RSR].read().bits(),
+            last_stage,
+            last_usb,
+            last_usb_step,
+            last_usb_regs,
+        },
+        cause,
+    )
 }
 
 /// Into the ROM loader, never back. The marker read back clear, so the
@@ -196,8 +220,7 @@ fn jump(cp: &mut cortex_m::Peripherals) -> ! {
     }
 }
 
-/// Writes who asked to BKP2R and `DFU_MAGIC` to BKP0R, then
-/// `SCB::sys_reset()`.
+/// Writes who asked to BKP2R and `DFU_MAGIC` to BKP0R, then resets.
 #[cfg(not(feature = "sd-probe"))]
 pub fn enter(m: &Marker, from: DfuFrom) -> ! {
     let tag = match from {
@@ -207,5 +230,5 @@ pub fn enter(m: &Marker, from: DfuFrom) -> ! {
     };
     m.0.bkpr[FROM].write(|w| w.bkp().bits(tag));
     m.0.bkpr[MARKER].write(|w| w.bkp().bits(DFU_MAGIC));
-    cortex_m::peripheral::SCB::sys_reset()
+    m.reset()
 }

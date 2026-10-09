@@ -27,8 +27,16 @@ pub enum BootAction {
 /// marker that outlived a power-off (a backup domain on VBAT) can't trap a
 /// cold boot in DFU. A read-back that isn't 0 is stuck (DBP never set, or
 /// the write didn't land) and boots the synth too.
+///
+/// An empty RCC_RSR (`Unknown`) counts as software: stock bootloader 1.09
+/// clears the flags before it jumps to us, so every reset reads empty
+/// behind it. A VBAT-kept marker then costs one boot into DFU at most: it
+/// was cleared before the jump, so the next power-on plays.
 pub const fn after_reset(marker: u32, readback: u32, cause: ResetCause) -> BootAction {
-    if marker == DFU_MAGIC && readback == 0 && matches!(cause, ResetCause::Software) {
+    if marker == DFU_MAGIC
+        && readback == 0
+        && matches!(cause, ResetCause::Software | ResetCause::Unknown)
+    {
         BootAction::RomDfu
     } else {
         BootAction::Synth
