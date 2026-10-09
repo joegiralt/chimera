@@ -9,7 +9,7 @@
 
 use super::coef::g_of;
 use super::level::{FilterMods, LevelRamp, clip_amount, level_gain};
-use super::{TapShape, ramps, tap_g_range};
+use super::{SUB, TapShape, ramps, step_to, tap_g_range};
 use crate::block::DiskCode;
 use crate::dsp::clampf;
 use crate::hw::{BLOCK_SIZE, Cost};
@@ -360,7 +360,7 @@ impl K2040 {
     ) -> Clip {
         let r = self.ramps(p, fs, mods);
         let t = TapShape::new(mods, tap_g_range(fs), k2040_k);
-        let (peak, sum) = self.run(buf, r, t.as_ref(), |_, _| {});
+        let (peak, sum) = self.run(buf, r, t.as_ref(), mods.glide, |_, _| {});
         self.settle(sum);
         clip_amount(peak * (1.0 / (LED_KNEE * R_2040)))
     }
@@ -376,7 +376,7 @@ impl K2040 {
         trace: impl FnMut(usize, &[f32; 4]),
     ) {
         let r = self.ramps(p, fs, &FilterMods::NONE);
-        let (_, sum) = self.run(buf, r, None, trace);
+        let (_, sum) = self.run(buf, r, None, false, trace);
         self.settle(sum);
     }
 
@@ -388,15 +388,19 @@ impl K2040 {
         buf: &mut [f32; BLOCK_SIZE],
         r: Ramps,
         tap: Option<&TapShape>,
+        glide: bool,
         trace: impl FnMut(usize, &[f32; 4]),
     ) -> (f32, f32) {
         use voice::{Exp, Rev2};
         let steady = tap.is_none() && r.g.0 == r.g.1 && r.k.0 == r.k.1;
-        match (r.voice, steady) {
-            (K2040Voice::Rev2, true) => self.steady::<Rev2>(buf, r, trace),
-            (K2040Voice::Rev2, false) => self.moving::<Rev2>(buf, r, tap, trace),
-            (K2040Voice::Exp, true) => self.steady::<Exp>(buf, r, trace),
-            (K2040Voice::Exp, false) => self.moving::<Exp>(buf, r, tap, trace),
+        let stepped = tap.is_none() && glide;
+        match (r.voice, steady, stepped) {
+            (K2040Voice::Rev2, true, _) => self.steady::<Rev2>(buf, r, trace),
+            (K2040Voice::Rev2, _, true) => self.stepped::<Rev2>(buf, r, trace),
+            (K2040Voice::Rev2, ..) => self.moving::<Rev2>(buf, r, tap, trace),
+            (K2040Voice::Exp, true, _) => self.steady::<Exp>(buf, r, trace),
+            (K2040Voice::Exp, _, true) => self.stepped::<Exp>(buf, r, trace),
+            (K2040Voice::Exp, ..) => self.moving::<Exp>(buf, r, tap, trace),
         }
     }
 
@@ -478,6 +482,32 @@ impl K2040 {
             trace(i, &y);
             peak = peak.max(d1.abs());
             *s = Self::output::<V>(y[3], out);
+        }
+        (peak, sum)
+    }
+
+    /// A knob glide: `g` and `k` step `STEPS` times to this block's
+    /// values, each sub-block the steady loop (ADR 0117).
+    #[inline(always)]
+    pub(super) fn stepped<V: VoiceSpec>(
+        &mut self,
+        buf: &mut [f32; BLOCK_SIZE],
+        r: Ramps,
+        mut trace: impl FnMut(usize, &[f32; 4]),
+    ) -> (f32, f32) {
+        let out = r.voice.out_scale();
+        let (mut a, a_step) = (r.a.0, (r.a.1 - r.a.0) / BLOCK_SIZE as f32);
+        let (mut peak, mut sum) = (0.0f32, 0.0f32);
+        for (j, sub) in buf.as_chunks_mut::<SUB>().0.iter_mut().enumerate() {
+            let c = coef(step_to(r.g, j), step_to(r.k, j));
+            for (i, s) in sub.iter_mut().enumerate() {
+                a += a_step;
+                sum += *s;
+                let (y, d1) = self.tick::<V>(*s * a, &c);
+                trace(j * SUB + i, &y);
+                peak = peak.max(d1.abs());
+                *s = Self::output::<V>(y[3], out);
+            }
         }
         (peak, sum)
     }

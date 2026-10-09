@@ -14,7 +14,7 @@ use crate::dsp::Stereo;
 use crate::dsp::ease::{Ease, ease_coeff, step_of};
 use crate::dsp::engines::{EngineCtx, SlotKind};
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
-use crate::dsp::knobs::{KnobDelta, KnobPublisher, Knobs, Pace};
+use crate::dsp::knobs::{Gliding, KnobDelta, KnobPublisher, Knobs, Pace};
 use crate::dsp::modal::{ResonatorMode, SYM_NOTE_ON_CLEAR_MAX, SymPool};
 use crate::dsp::tape_engine::{Heads, TapeEngine};
 use crate::dsp::voice::Voice;
@@ -1116,11 +1116,17 @@ impl Instrument {
         }
         #[cfg(feature = "probe")]
         let t0 = crate::probe::now();
-        self.costs = core::array::from_fn(|p| shared.parts[p].voice_cost());
+        let gliding: [Gliding; MAX_PARTS] = core::array::from_fn(|p| self.knobs[p].0.gliding());
+        let glides: [Cost; MAX_PARTS] = core::array::from_fn(|p| {
+            let part = &shared.parts[p];
+            Voice::glide_extra(&part.params, &part.mod_state, gliding[p])
+        });
+        let costs: [Cost; MAX_PARTS] = core::array::from_fn(|p| shared.parts[p].voice_cost());
+        // A new note is judged with its Part's glide on it (ADR 0117).
+        self.costs = core::array::from_fn(|p| costs[p] + glides[p]);
         (self.costed, self.costings) = (at, self.costings.wrapping_add(1));
         #[cfg(feature = "probe")]
         crate::probe::acc(8, crate::probe::now().wrapping_sub(t0));
-        let costs = self.costs;
         // A sounding Part's knobs, once: on its first voice (ADR 0112).
         let mut knobs = [false; MAX_PARTS];
         for v in 0..MAX_VOICES {
@@ -1132,7 +1138,8 @@ impl Instrument {
                     + self.voices[v].held_ops_extra(&part.params, &part.mod_state);
                 let first = !core::mem::replace(&mut knobs[p], true);
                 let k = if first { Knobs::COST } else { Cost::ZERO };
-                self.alloc.recost(v, costs[p] + held + k);
+                self.alloc
+                    .recost_with_glide(v, costs[p] + held + k, glides[p]);
             }
         }
         // Only the bus and the knobs' reads: ORBIT's reserve refuses new

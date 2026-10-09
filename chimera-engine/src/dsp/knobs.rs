@@ -523,6 +523,14 @@ const COLS: [FixedCol; 2] = [FixedCol::Freq, FixedCol::Q];
 /// span, 1e-4 octave of CUTOFF (0.12 c).
 const LAND: f32 = 1e-5;
 
+/// Which moving paths a Part's gliding knobs feed (`Knobs::gliding`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Gliding {
+    pub filter: bool,
+    pub fold: bool,
+    pub drive: bool,
+}
+
 /// A Part's knobs on their way to the stored values, as its voices play
 /// them this block. A knob not moving plays its stored value; one moving
 /// glides from where it was toward its target, both from the publisher's
@@ -602,6 +610,22 @@ impl Knobs {
     /// Nothing moves.
     pub fn settled(&self) -> bool {
         self.moving.is_empty() && !self.routes_moving
+    }
+
+    /// The per-voice paths the gliding knobs put on their moving loops, for
+    /// the bill: a glide runs them every block until it lands, where a
+    /// step ran them once.
+    pub fn gliding(&self) -> Gliding {
+        use crate::params::FilterParams;
+        let mut g = Gliding::default();
+        for i in self.moving.iter() {
+            let (b, p) = (KNOBS[i].addr.block, KNOBS[i].addr.param);
+            g.filter |= b == BlockRef::Filter
+                && (p == FilterParams::CUTOFF || p == FilterParams::RESONANCE);
+            g.fold |= b == BlockRef::Folder;
+            g.drive |= b == BlockRef::Drive;
+        }
+        g
     }
 
     /// Moves taken and knobs read so far, wrapping: for the tests.

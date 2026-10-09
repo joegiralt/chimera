@@ -59,9 +59,15 @@ fn factory_voice_cost(i: usize) -> u32 {
 /// margin, so a future change to the cost model can't silently flip which
 /// slot the note lands on.
 fn morph_pad_plus_sqr_bass_budget() -> SampleBudget {
-    // And the two Parts' knobs (ADR 0112).
+    // And the two Parts' knobs (ADR 0112), and the glide each voice's
+    // filter runs while the swapped Sound's knobs settle: admission counts
+    // it, shedding doesn't (ADR 0117).
+    let glide = chimera_core::dsp::filter::FilterKind::Svf.glide_cost().0;
     budget_for(
-        (MAX_VOICES as u32 - 2) * factory_voice_cost(6) + factory_voice_cost(5) + 2 * Knobs::COST.0,
+        (MAX_VOICES as u32 - 2) * factory_voice_cost(6)
+            + factory_voice_cost(5)
+            + 2 * Knobs::COST.0
+            + (MAX_VOICES as u32 - 1) * glide,
     )
 }
 

@@ -1,5 +1,6 @@
 use crate::dsp::clampf;
 use crate::dsp::ease::{Gate, Ramp, at, step_of};
+use crate::dsp::filter::{SUB, step_to};
 use crate::hw::BLOCK_SIZE;
 use crate::params::FolderParams;
 use crate::taps::TapLane;
@@ -37,6 +38,20 @@ impl Wavefolder {
         on: bool,
         tap: Option<&TapLane>,
     ) {
+        self.process_glide(buf, params, on, tap, false);
+    }
+
+    /// `process`; with `glide` (only a knob moves a setting) an untapped
+    /// moving block steps `STEPS` times, each sub-block the steady loop
+    /// (ADR 0117).
+    pub fn process_glide(
+        &mut self,
+        buf: &mut [f32],
+        params: &FolderParams,
+        on: bool,
+        tap: Option<&TapLane>,
+        glide: bool,
+    ) {
         let f = self.fold.step(params.fold);
         let y = self.sym.step(params.symmetry);
         let m = self.mix.step(params.mix);
@@ -57,6 +72,20 @@ impl Wavefolder {
                 let dry = *sample;
                 let folded = fold_wave((dry + bias) * gain) - rest;
                 *sample = dry * (1.0 - mix) + folded * mix;
+            }
+            return;
+        }
+        if glide && g == (1.0, 1.0) && buf.len() == BLOCK_SIZE {
+            for (j, sub) in buf.as_chunks_mut::<SUB>().0.iter_mut().enumerate() {
+                let (fold, sym, mix) = (step_to(f, j), step_to(y, j), step_to(m, j));
+                let gain = 1.0 + fold * fold * 6.0;
+                let bias = (sym - 0.5) * 0.5;
+                let rest = fold_wave(bias * gain);
+                for sample in sub {
+                    let dry = *sample;
+                    let folded = fold_wave((dry + bias) * gain) - rest;
+                    *sample = dry * (1.0 - mix) + folded * mix;
+                }
             }
             return;
         }

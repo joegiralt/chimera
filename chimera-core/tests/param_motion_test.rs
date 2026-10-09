@@ -325,3 +325,69 @@ fn a_sounding_part_is_billed_its_knobs_once() {
     let two_parts = r.inst.allocator().sounding_cost().0;
     assert_eq!(two_parts, three + voice + Knobs::COST.0);
 }
+
+/// A knob gliding is billed what it costs while it glides: each voice of
+/// the Part its filter's moving path (CUTOFF, RES), its fold and drive
+/// ramps (FOLD, DRIVE), over the steady bill, until it lands; the bill is
+/// the steady one again after.
+#[test]
+fn a_gliding_knob_is_billed_its_moving_path_until_it_lands() {
+    use chimera_core::dsp::filter::FilterKind;
+    use chimera_core::dsp::voice::Voice;
+    let kinds = [
+        FilterKind::Svf,
+        FilterKind::K2040,
+        FilterKind::Dirty,
+        FilterKind::Ladder,
+    ];
+    type Turn = (&'static str, fn(&mut Sound), u32);
+    let turns: [Turn; 4] = [
+        ("CUTOFF", |s| s.params.filter.cutoff = 0.2, 0),
+        ("RES", |s| s.params.filter.resonance = 0.8, 0),
+        (
+            "FOLD",
+            |s| s.params.folder.fold = 0.9,
+            Voice::FOLD_GLIDE_COST.0,
+        ),
+        (
+            "DRIVE",
+            |s| s.params.drive.drive = 0.9,
+            Voice::DRIVE_GLIDE_COST.0,
+        ),
+    ];
+    for kind in kinds {
+        for (name, set, ramp) in turns {
+            let mut s = Sound::init(EngineType::Algo);
+            s.params.envelopes[0].sustain = 1.0;
+            s.params.filter.set_kind(kind);
+            s.params.folder.fold = 0.3;
+            s.params.drive.drive = 0.3;
+            let mut r = Rig::new([s, Sound::init(EngineType::Algo)]);
+            for k in [57, 60, 64] {
+                r.key(0, k, true);
+            }
+            for _ in 0..200 {
+                r.render();
+            }
+            let steady = r.inst.allocator().sounding_cost().0;
+            set(r.sound(0));
+            r.render();
+            r.render();
+            let moving = r.inst.allocator().sounding_cost().0;
+            let extra = if name == "FOLD" || name == "DRIVE" {
+                ramp
+            } else {
+                kind.glide_cost().0
+            };
+            assert_eq!(moving, steady + 3 * extra, "{kind:?} {name} gliding");
+            for _ in 0..400 {
+                r.render();
+            }
+            assert_eq!(
+                r.inst.allocator().sounding_cost().0,
+                steady,
+                "{kind:?} {name} landed"
+            );
+        }
+    }
+}

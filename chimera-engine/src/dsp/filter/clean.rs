@@ -10,7 +10,7 @@
 
 use super::coef::{g_of, sat_c1};
 use super::level::{FilterMods, LevelRamp, LevelStage, level_gain};
-use super::{CLEAN_MODES, FilterMode, TapShape, g_at, ramps, tap_g_range};
+use super::{CLEAN_MODES, FilterMode, SUB, TapShape, g_at, ramps, step_to, tap_g_range};
 use crate::hw::BLOCK_SIZE;
 use crate::meter::Clip;
 use crate::params::FilterParams;
@@ -168,15 +168,15 @@ impl Clean {
         let t = TapShape::new(mods, tap_g_range(fs), clean_k);
         // The mode and the loop matched once a block: each is its own loop.
         match p.mode() {
-            FilterMode::Lp6 => self.run::<0>(buf, r, t),
-            FilterMode::Lp12 => self.run::<1>(buf, r, t),
-            FilterMode::Lp24 => self.run::<2>(buf, r, t),
-            FilterMode::Bp12 => self.run::<3>(buf, r, t),
-            FilterMode::Bp24 => self.run::<4>(buf, r, t),
+            FilterMode::Lp6 => self.run::<0>(buf, r, t, mods.glide),
+            FilterMode::Lp12 => self.run::<1>(buf, r, t, mods.glide),
+            FilterMode::Lp24 => self.run::<2>(buf, r, t, mods.glide),
+            FilterMode::Bp12 => self.run::<3>(buf, r, t, mods.glide),
+            FilterMode::Bp24 => self.run::<4>(buf, r, t, mods.glide),
             // DIRTY's HP2 isn't CLEAN's; were it handed one, HP4.
-            FilterMode::Hp24 | FilterMode::Hp12 => self.run::<5>(buf, r, t),
-            FilterMode::Notch => self.run::<6>(buf, r, t),
-            FilterMode::Phaser => self.run::<7>(buf, r, t),
+            FilterMode::Hp24 | FilterMode::Hp12 => self.run::<5>(buf, r, t, mods.glide),
+            FilterMode::Notch => self.run::<6>(buf, r, t, mods.glide),
+            FilterMode::Phaser => self.run::<7>(buf, r, t, mods.glide),
         }
         // A NaN or infinite input poisons the states for good: start the
         // next block from rest.
@@ -233,9 +233,17 @@ impl Clean {
     }
 
     #[inline(always)]
-    fn run<const M: u8>(&mut self, buf: &mut [f32; BLOCK_SIZE], r: Ramps, t: Option<TapShape>) {
+    fn run<const M: u8>(
+        &mut self,
+        buf: &mut [f32; BLOCK_SIZE],
+        r: Ramps,
+        t: Option<TapShape>,
+        glide: bool,
+    ) {
         if t.is_none() && r.g.0 == r.g.1 && r.k.0 == r.k.1 {
             self.steady::<M>(buf, r);
+        } else if t.is_none() && glide {
+            self.stepped::<M>(buf, r);
         } else {
             self.moving::<M>(buf, r, t.as_ref());
         }
@@ -247,6 +255,20 @@ impl Clean {
         let c = coef::<M>(r.g.1, r.k.1, trim(CLEAN_MODES[M as usize], r.k.1));
         for s in buf.iter_mut() {
             *s = self.tick::<M>(*s, &c);
+        }
+    }
+
+    /// A knob glide: `g`, `k` and the trim step `STEPS` times to this
+    /// block's values, each sub-block the steady loop (ADR 0117).
+    #[inline(always)]
+    pub(super) fn stepped<const M: u8>(&mut self, buf: &mut [f32; BLOCK_SIZE], r: Ramps) {
+        let mode = CLEAN_MODES[M as usize];
+        let t = (trim(mode, r.k.0), trim(mode, r.k.1));
+        for (j, sub) in buf.as_chunks_mut::<SUB>().0.iter_mut().enumerate() {
+            let c = coef::<M>(step_to(r.g, j), step_to(r.k, j), step_to(t, j));
+            for s in sub {
+                *s = self.tick::<M>(*s, &c);
+            }
         }
     }
 

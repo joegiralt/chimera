@@ -125,6 +125,44 @@ pub fn fold_tap_probe(w: &mut Wavefolder, buf: &mut [f32; BLOCK_SIZE], p: &Folde
     w.process(buf, p, true, l.as_ref());
 }
 
+/// CLEAN's glide loop (`Clean::stepped`) in mode `M`: `STEPS` sub-blocks.
+#[inline(never)]
+pub fn clean_stepped_probe<const M: u8>(
+    f: &mut Clean,
+    buf: &mut [f32; BLOCK_SIZE],
+    p: &FilterParams,
+) {
+    let r = f.prelude(buf, p, SAMPLE_RATE, &FilterMods::NONE);
+    f.stepped::<M>(buf, r);
+}
+
+/// The 2040's glide loop (`K2040::stepped`) on voice `V`.
+#[inline(never)]
+pub fn k2040_stepped_probe<V: VoiceSpec>(
+    f: &mut K2040,
+    buf: &mut [f32; BLOCK_SIZE],
+    p: &FilterParams,
+) {
+    let r = f.ramps(p, SAMPLE_RATE, &FilterMods::NONE);
+    let (_, sum) = f.stepped::<V>(buf, r, |_, _| {});
+    f.settle(sum);
+}
+
+/// LADDER's glide loop (`Ladder::stepped`) in mode `M`.
+#[inline(never)]
+pub fn ladder_stepped_probe<const M: usize>(
+    f: &mut Ladder,
+    buf: &mut [f32; BLOCK_SIZE],
+    p: &FilterParams,
+) {
+    let r = f.ramps(p, SAMPLE_RATE, &FilterMods::NONE);
+    if super::ladder::hold_huge(buf).is_none() {
+        f.silence(buf);
+    } else {
+        f.stepped(buf, r, M);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

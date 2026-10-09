@@ -1,4 +1,6 @@
 use crate::dsp::ease::{Gate, Ramp, at, step_of};
+use crate::dsp::filter::{SUB, step_to};
+use crate::hw::BLOCK_SIZE;
 use crate::params::DriveParams;
 
 /// Pre-filter saturation stage.
@@ -26,6 +28,12 @@ impl Drive {
     /// Process a block of samples in-place; `on` is whether the stage runs
     /// (`Voice::stage_runs`), which its gate fades.
     pub fn process(&mut self, buf: &mut [f32], params: &DriveParams, on: bool) {
+        self.process_glide(buf, params, on, false);
+    }
+
+    /// `process`; with `glide` (only a knob moves a setting) a moving block
+    /// steps `STEPS` times, each sub-block the steady loop (ADR 0117).
+    pub fn process_glide(&mut self, buf: &mut [f32], params: &DriveParams, on: bool, glide: bool) {
         let d = self.drive.step(params.drive);
         let t = self.tone.step(params.tone);
         let m = self.mix.step(params.mix);
@@ -42,6 +50,19 @@ impl Drive {
                 let dry = *sample;
                 let clipped = crate::dsp::fast_tanh(dry * gain * pre_bright) * post_dark;
                 *sample = dry * (1.0 - mix) + clipped * mix;
+            }
+            return;
+        }
+        if glide && g == (1.0, 1.0) && buf.len() == BLOCK_SIZE {
+            for (j, sub) in buf.as_chunks_mut::<SUB>().0.iter_mut().enumerate() {
+                let gain = 1.0 + step_to(d, j) * 8.0;
+                let tone = step_to(t, j);
+                let (pre_bright, post_dark, mix) = (0.5 + tone, 1.5 - tone, step_to(m, j));
+                for sample in sub {
+                    let dry = *sample;
+                    let clipped = crate::dsp::fast_tanh(dry * gain * pre_bright) * post_dark;
+                    *sample = dry * (1.0 - mix) + clipped * mix;
+                }
             }
             return;
         }
