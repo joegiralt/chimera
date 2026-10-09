@@ -415,9 +415,13 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     marker.stage(BootStage::Audio);
 
     // The console's `card`: the measurement over the card, its chord on
-    // the `CARD` note source. Not in ORBIT's bench builds: with it they no
-    // longer fit FLASH.
-    #[cfg(all(feature = "bench", feature = "usb-console", not(feature = "orbit")))]
+    // the `CARD` note source. Not in ORBIT's bench builds, nor the master
+    // tape's: with it they no longer fit FLASH, or AXI's margin.
+    #[cfg(all(
+        feature = "bench",
+        feature = "usb-console",
+        not(any(feature = "orbit", feature = "master-tape"))
+    ))]
     let mut card_bench = card_speed::take(
         producers
             .take(shared::CARD)
@@ -451,11 +455,15 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         // The snapshot point: every path through the last iteration flushed.
         #[cfg(feature = "usb-console")]
         tend_usb(&mut usb, ui, &marker, &clocks, clk.cpu_hz, &mut usb_snap);
-        #[cfg(all(feature = "usb-console", feature = "bench", not(feature = "orbit")))]
+        #[cfg(all(
+            feature = "usb-console",
+            feature = "bench",
+            not(any(feature = "orbit", feature = "master-tape"))
+        ))]
         let card_run: usb::CardRun = &mut |arg, s, store| Some(card_bench.answer(arg, store, s));
         #[cfg(all(
             feature = "usb-console",
-            any(not(feature = "bench"), feature = "orbit")
+            any(not(feature = "bench"), feature = "orbit", feature = "master-tape")
         ))]
         let card_run: usb::CardRun = &mut |_, _, _| None;
         #[cfg(feature = "usb-console")]
