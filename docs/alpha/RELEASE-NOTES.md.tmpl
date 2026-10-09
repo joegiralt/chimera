@@ -1,0 +1,31 @@
+# Chimera @VERSION@ (alpha)
+
+Alternative firmware for the PreenFM3: a multi-engine, multitimbral digital synth with chain-based navigation. Alpha software for testers: expect rough edges, and keep your stock firmware handy.
+
+Built from source commit `@COMMIT@`, @DATE@.
+
+## What's in
+
+- `chimera-@VERSION@.bin`: the firmware.
+- `chimera-@redacted`: the same firmware with the ORBIT generative sequencer.
+- `SHA256SUMS`: check the downloads with `sha256sum -c SHA256SUMS`.
+
+## Install, and roll back
+
+Follow the [README](https://github.com/joegiralt/chimera-releases#readme): it has the DFU steps to install, and the steps to go back to the stock firmware. Flash the firmware area only (`0x08020000`); never the bootloader, never the option bytes. Chimera only reads and writes `/CHIMERA/` on the SD card and never touches your stock files.
+
+## Known issues
+
+See [KNOWN-ISSUES.md](https://github.com/joegiralt/chimera-releases/blob/main/KNOWN-ISSUES.md).
+
+## Boards
+
+PCB v1 tested; v2 untested.
+
+## Reporting bugs
+
+[Open a bug report](https://github.com/joegiralt/chimera-releases/issues/new/choose). Give the firmware version (shown at boot), what you did, and what you heard or saw; a short recording or photo helps.
+
+## Licence
+
+These binaries are provided under the [tester licence](https://github.com/joegiralt/chimera-releases/blob/main/LICENSE.md).
