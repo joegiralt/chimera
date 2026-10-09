@@ -12,7 +12,8 @@ use crate::dsp::{clampf, fast_sin_turns};
 
 pub const PROVENANCE: &[Provenance] = &[
     Provenance::Textbook {
-        cite: "phase accumulator",
+        cite: "Tierney, Rader & Gold, \"A Digital Frequency Synthesizer\", \
+               IEEE Trans. Audio Electroacoustics 19(1), 1971 (phase accumulator)",
     },
     Provenance::Original {
         author: "AI-assisted, owner-directed and reviewed",

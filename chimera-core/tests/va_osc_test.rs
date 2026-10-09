@@ -438,6 +438,23 @@ fn a_threshold_crossing_backwards_is_an_edge() {
 }
 
 #[test]
+fn a_corner_crossed_backwards_bends_its_own_way() {
+    // the triangle's trough (−w/2) moves forward past the phase as SHAPE
+    // falls 1 → 0.9; a trough bends up whichever way it is crossed
+    let mut o = osc_at(SR, Correction::On);
+    o.tick(MIN_INC, morph(1.0 / 3.0, 1.0), true, None);
+    o.set_phase(0.53);
+    o.tick(MIN_INC, morph(1.0 / 3.0, 0.9), true, None);
+    let e = o.last_edges();
+    assert_eq!(e.len(), 1, "{e:?}");
+    let (t, step, slope) = e[0];
+    assert!((t - 0.778).abs() <= 1e-3, "{t}");
+    assert_eq!(step, 0.0);
+    // j·|r|: j from 2R√3/(w(1 − w)) at w 0.905 to 0.95, |r| 0.0225
+    assert!(slope > 0.0 && (0.181..=0.329).contains(&slope), "{slope}");
+}
+
+#[test]
 fn fast_shape_at_c1_tracks_the_reference() {
     let shape = |t: f64| {
         let m = t.rem_euclid(480.0);
