@@ -90,6 +90,7 @@ STABILITY is 1 for steady and lower for alive. Its depth follows a curve `d = (1
 
 - **Drift:** each voice has three slow random walks: one shared, one for OSC 1 and one for OSC 2. Each is filtered noise in the 0.05–0.5 Hz range, updated once per block. OSC 1 takes shared + its own; OSC 2 takes shared + its own. So the pair drifts together and their interval beats slowly. Depth up to ±12 cents shared and ±6 cents each at `d = 1`.
 - **Tolerance:** each voice gets a fixed small detune per oscillator, up to ±3 cents at `d = 1`, like a real VCO's trim.
+- **High-frequency tracking (owner, 2026-10-09):** a real VCO goes progressively flat as it plays higher. Its core's reset time adds a fixed time τ to every cycle, so `f_eff = f / (1 + f·τ)`, a detune that grows roughly linearly with frequency. Each oscillator gets its own τ, from `d·τ_max` scaled by a seeded factor of 0.6–1.0, with `τ_max` = 4 µs (about −14 cents at C7 = 2093 Hz and −27 cents at 4 kHz at `d = 1`). The two oscillators then pull apart more the higher they play, and their beating speeds up with pitch, as on analog. Applied in the once-per-block pitch conversion, so it costs nothing per sample. The sub follows OSC 1's tracked pitch.
 - **Jitter:** a per-cycle pitch wobble up to ±0.5 cent at `d = 1`, applied at each wrap.
 - **Phase at note-on:** at STABILITY = 1, both oscillators start at phase 0, for a repeatable attack. Below 1, they free-run from where the voice last left them, like analog oscillators.
 - **The sub follows OSC 1 exactly.** In SYNC, the slave's drift moves the sync ratio, so the timbre shimmers.
@@ -169,6 +170,7 @@ chimera-engine/src/dsp/va/
   - STABILITY = 1 is bit-identical across runs and voices.
   - Below 1, the same Sound on the same Part and slot renders identically after a reload.
   - Drift depth stays inside its bounds.
+  - **HF tracking:** at `d = 1`, a C7 note measures between −14 and −8 cents (the seeded 0.6–1.0 factor). At A2 it is within 1 cent of true. At STABILITY = 1 it is exactly 0. The OSC 1–OSC 2 beat rate at C7 exceeds the one at C4.
 - **Peak-safe:** |y| ≤ 1 for every MODE, AMOUNT and SUB.
 - **Plumbing and sanity:** `engines_test` arms; disk round-trip of all 12 params; the ADR 0011 sanity gate for INIT; loudness of INIT.
 - **Library-ready:** each technique file is tested at 44.1, 48, 96 and 192 kHz (tuning and stability).
