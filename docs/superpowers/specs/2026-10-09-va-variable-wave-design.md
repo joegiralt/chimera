@@ -105,7 +105,7 @@ Let `a` be OSC 1 and `b` be OSC 2, each at RMS R and within its block peak bound
 | SYNC | as MIX, with OSC 2's phase reset at every OSC 1 wrap (corrected, below) | Balance. Sweep OSC 2 COARSE/FINE for the sync sound |
 | RING | `(1−x)·½(a+b) + x·k·a·b`, `k = min(1/R, 0.9/(pk_a·pk_b))` | From an equal mix to pure ring |
 | XOR | `(1−x)·½(a+b) + x·p·xor16(a/p, b/p)`, `p = max(pk_a, pk_b)` | From an equal mix to pure XOR |
-| BITS | `q·crush(½(a+b)/q, x)`, `q = ½(pk_a + pk_b)` | Bit depth 16 → 2 bits as x goes 0 → 1, a log curve |
+| BITS | `q·crush(½(a+b)/q, x)`, `q = ½(pk_a + pk_b)`; the crusher clamps its output to ±1 (between AMOUNT anchors the level count L isn't whole, so round(v·L)/L can pass 1; at the anchors the clamp is a no-op) | Bit depth 16 → 2 bits as x goes 0 → 1, a log curve |
 
 - **Operator scaling:**
   - RING's `1/R` keeps the ring term at the oscillators' level, and its cap keeps the engine within 0.9.

@@ -118,7 +118,8 @@ fn every_operator_is_peak_safe() {
                 for b in span(pk.b, 128) {
                     for mode in VaMode::ALL {
                         let c = combine(mode, a, b, x, k, pk, &crush);
-                        for sub in [0.0, 0.5, 1.0] {
+                        // 0.2222 is the sub mix's worst point (≈ 0.922)
+                        for sub in [0.0, 0.2222, 0.5, 1.0] {
                             for s in [R, -R] {
                                 let y = with_sub(c, s, sub).abs();
                                 assert!(y <= 0.95, "{mode:?} {pk:?} x {x} a {a} b {b}: {y}");
@@ -130,7 +131,7 @@ fn every_operator_is_peak_safe() {
             }
         }
     }
-    println!("peak {worst:.4}");
+    println!("peak {worst:.4} (limit 0.95, margin {:.4})", 0.95 - worst);
 }
 
 #[test]
