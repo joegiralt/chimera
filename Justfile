@@ -189,11 +189,11 @@ test:
 
 # The FAT layer checked by dosfstools (ADR 0048): mkfs.fat images must read
 # back and fsck.fat -n must pass, after the suite and after console puts
-# that a device error stopped. The tests are #[ignore]d so a plain
+# that a device error stopped, and a stock PreenFM3 tree kept bit-identical (#405). The tests are #[ignore]d so a plain
 # `cargo test` stays hermetic; without dosfstools this fails with an install
 # message, it never skips.
 test-fat-tools:
-    cargo test -p chimera-fat --features chimera-hal/testkit --test dosfstools_test --test console_put_test -- --ignored
+    cargo test -p chimera-fat --features chimera-hal/testkit --test dosfstools_test --test console_put_test --test stock_files_test -- --ignored
 
 # Clippy on every target and feature set `check` builds, test targets included
 clippy:
