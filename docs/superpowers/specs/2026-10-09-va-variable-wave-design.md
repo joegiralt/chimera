@@ -1,6 +1,6 @@
 # VA Engine: variable-wave core: Design
 
-- **Status:** Draft, awaiting owner review
+- **Status:** Draft, awaiting owner review (revised 2026-10-09 after the adversarial review, (private notes))
 - **Date:** 2026-10-09
 - **Supersedes:** `2026-09-27-va-engine-design.md` (rev 2, never reviewed; its 11 one-per-voice models become candidates for later macro oscillators, see § Later)
 - **Research:** (private notes) (codebase), (private notes) (what makes oscillators alive), (private notes) (literature check; references in § References)
@@ -46,7 +46,10 @@ The VA chain has three pages. EDIT moves down and wraps; MINUS/PLUS move along a
 
 **↓ OSC 2 page:** the same three controls for OSC 2.
 
-FOLD isn't an operator: the voice already folds after the filter. Each cell gets a focus-band hint (ADR 0086) and a value bar from its `Motion` (ADR 0112 point 8).
+FOLD isn't an operator: the voice already folds after the filter.
+- **Value bars** come from each cell's `Motion` (ADR 0112 point 8).
+- **No hints:** VA adds no MIX or hold gesture, so under ADR 0086 no cell has a focus-band hint (an owner call in this review; descriptive cell help would be a new ADR).
+- **WAVE's focus glyph** is the plain arc. `FocusGlyph::Wave` draws an ALGO wavetable by index, which would show an unrelated wave. A morph scope drawn from the oscillator is § Later.
 
 ## Oscillator
 
@@ -54,139 +57,224 @@ Each oscillator is a band-limited phase oscillator with two controls, WAVE and S
 
 **WAVE** morphs continuously through four anchors at 0, ⅓, ⅔ and 1: sine, triangle, saw, square. Between two anchors the output is a linear crossfade of the two neighbours, so at most two waves are evaluated per sample. It never steps (the owner's never-snap rule).
 
-**Anchor phase.** All four anchors share the phase of their fundamental: sine `sin 2πφ`; triangle peaking at φ = ¼; a **falling** saw `1 − 2φ`; square high for the first half-cycle. A crossfade then never cancels the fundamental. A rising saw (fundamental −(2/π)·sin) would cancel it by 19.4 dB at the tri→saw midpoint, a hole in the knob; the falling saw loses 1.0 dB there. No paper covers this.
-
-**Anchor level.** Each anchor is scaled to the saw's RMS (−4.8 dB): sine ×0.816 (√(2/3)), triangle ×1, saw ×1, square ×0.577 (1/√3). The factors fold into the crossfade weights at block rate: 0 cycles, peak-safe, and the square end no longer jumps +4.8 dB.
-
 **SHAPE** varies whichever waves are sounding. At 0 every wave is its plain self.
 
 | Wave | SHAPE 0 → 1 |
 |---|---|
-| Sine | Folds brighter: `sin(g·sin θ)` with g from 1 to 3 |
-| Triangle | Skews toward a ramp: the peak moves from ½ to 0.95 of the cycle |
-| Saw | Lifts the middle part of the ramp: a second step, whose position and height grow with SHAPE |
-| Square | Pulse width 50% → 5% (PWM under modulation) |
+| Sine | Folds brighter: crossfades to `sin(g·sin θ)`, g from 1 to 3 |
+| Triangle | Skews: its rising part grows from ½ to 0.95 of the cycle |
+| Saw | Splits its reset into two half-height steps that move a quarter cycle apart (at 1, two saws ¼ cycle apart): the second harmonic thins and the fundamental holds (+0.6 dB). Never an octave-up saw |
+| Square | Pulse width 50% → 5% (PWM under modulation), never narrower than one sample |
 
-**Antialiasing:** polyBLEP at every step (saw, square, saw lift, sync reset), and polyBLAMP at every corner (triangle, skew, sync reset). These are 2-point kernels: polyBLEP (Välimäki & Huovilainen 2007 [3]) and polyBLAMP (Esqueda, Välimäki, Bilbao 2015 [4]). Välimäki et al. 2012 [2] measure the 2-point polyBLEP perceptually alias-free to about 2.3 kHz at 48 kHz (about C7), so the C6 gate has margin. The 4-point B-spline [2] and 4-point polyBLAMP [5][6] (about +20 dB) are the upgrade if the gate moves to C7 or higher (about +2–4 cycles per sample per oscillator).
+**Anchor phase.** Every wave's fundamental is `sin 2πφ` at every SHAPE:
+- the sine;
+- a triangle whose rising part is centred on φ = 0 (trough at −w/2, peak at +w/2);
+- a **falling** saw `1 − 2φ`, whose two steps sit about 0 weighted by their heights;
+- a pulse high on a window of width w centred on φ = ¼.
 
-- **Superposition:** every step or corner whose kernel window covers a sample adds its own correction to it. Several per sample are normal: a 5% pulse at C8 (11.5-sample period) puts both edges in one window, and the saw lift's second step can sit beside the wrap. No per-sample if/else. Free.
+A crossfade then never cancels the fundamental. In simulation it holds within 0.01 dB of the lerp of the two anchors' fundamentals, at SHAPE 0, ½ and 1. A rising saw would cancel it by 19.4 dB at the tri→saw midpoint. No paper covers this.
+
+**Level.** Every wave, at every SHAPE, is DC-free and scaled to one RMS, **R = 0.2** (−14 dBFS). The gains are closed forms (the sine fold's is a 17-point table).
+- The narrowest pulse then peaks at 0.87, so an oscillator stays within 0.9.
+- The headroom is free in float, and `VA_OUT_GAIN` restores the level after the engine (TAPE_OUT_GAIN 4.236 is the precedent).
+- Across SHAPE the level holds within 0.01 dB (simulation). Across WAVE, a crossfade of two different waves dips up to 0.6 dB at SHAPE 0 and 1.9 dB at SHAPE 1.
+- The pulse loses its DC, so no DC reaches the drive, the filter, the fold or the operators (ADR 0060's DC blocker comes after them).
+
+**Antialiasing:** polyBLEP at every step (saw, square, sync reset), and polyBLAMP at every corner (triangle, sync reset). These are 2-point kernels: polyBLEP (Välimäki & Huovilainen 2007 [3]) and polyBLAMP (Esqueda, Välimäki, Bilbao 2015 [4]). Välimäki et al. 2012 [2] measure the 2-point polyBLEP perceptually alias-free to about 2.3 kHz at 48 kHz (about C7), so the C6 gate has margin. The 4-point B-spline [2] and 4-point polyBLAMP [5][6] (about +20 dB) are the upgrade if the gate moves to C7 or higher (about +2–4 cycles per sample per oscillator).
+
+- **Superposition:** every step or corner whose kernel window covers a sample adds its own correction to it. Several per sample are normal: two pulse edges one sample apart at C8, the saw's two steps. Finding the events is per-sample conditional work, billed per event (§ Budget).
+- **Moving thresholds:** SHAPE moves the pulse edges, the saw's steps and the triangle's corners. A threshold that crosses the phase is an edge, whichever way it crosses.
+  - Each sample compares the sign of (phase − threshold) with the last sample's.
+  - The crossing time comes from both motions: `t = d₁/(d₁ − d₀)` samples ago. The step takes the crossing's sign.
+  - A corner's slope jump is the difference of its two branches' time derivatives (phase and threshold motion both).
+  - Step and slope are taken at the crossing instant (a lerp from the last sample's).
+  - A 1 ms ENV into SHAPE at C1 then stays within 0.01 of the ideal, against 0.18 with forward-only crossings (simulation).
+- **The pulse is never narrower than one sample** (`w ≥ inc`, a continuous `max`). At C8 a 5% pulse would be 0.6 samples wide and fold at −41.7 dB. With the floor it folds at −53.6 dB.
 - **Sine fold, no ADAA:** the fold's input is the phase ramp, not an arbitrary signal, so ADAA [9–13] buys nothing. By Jacobi–Anger, harmonic n has weight J_n(g). At g = 3 and 48 kHz the worst alias is below −140 dB up to C7, and −42 dB at C8. If C8 matters, cap `g ≤ 3 − 1.5·clamp((f0 − 2.5 kHz)/2 kHz, 0, 1)` (one multiply-add per block).
 
 **Pitch:** the note, plus COARSE and FINE, plus STABILITY's drift. The voice's pitch modulation applies to both oscillators. Exponential conversion runs once per block, with a per-sample linear increment ramp.
 
 ## Combine
 
-Let `a` be OSC 1 and `b` be OSC 2, both in −1…1, and let `x` be AMOUNT.
+Let `a` be OSC 1 and `b` be OSC 2, each at RMS R and within its block peak bound `pk_a`, `pk_b` (closed forms). Let `x` be AMOUNT.
 
 | MODE | Output | AMOUNT |
 |---|---|---|
 | MIX | `(1−x)·a + x·b` | Balance: 0 = OSC 1, 1 = OSC 2, ½ = equal |
 | SYNC | as MIX, with OSC 2's phase reset at every OSC 1 wrap (corrected, below) | Balance. Sweep OSC 2 COARSE/FINE for the sync sound |
-| RING | `(1−x)·½(a+b) + x·(a·b)` | From an equal mix to pure ring |
-| XOR | `(1−x)·½(a+b) + x·xor16(a, b)` | From an equal mix to pure XOR |
-| BITS | `crush(½(a+b), x)` | Bit depth 16 → 2 bits as x goes 0 → 1, a log curve |
+| RING | `(1−x)·½(a+b) + x·k·a·b`, `k = min(1/R, 0.9/(pk_a·pk_b))` | From an equal mix to pure ring |
+| XOR | `(1−x)·½(a+b) + x·p·xor16(a/p, b/p)`, `p = max(pk_a, pk_b)` | From an equal mix to pure XOR |
+| BITS | `q·crush(½(a+b)/q, x)`, `q = ½(pk_a + pk_b)` | Bit depth 16 → 2 bits as x goes 0 → 1, a log curve |
 
+- **Operator scaling:**
+  - RING's `1/R` keeps the ring term at the oscillators' level, and its cap keeps the engine within 0.9.
+  - XOR and BITS see their inputs at unit peak, so their bit patterns use the whole word.
 - `xor16` maps each input to 16-bit signed, XORs the words and maps back.
-- XOR and BITS alias by nature; that is their character, and they are exempt from the alias gate (documented in the tests).
-- **SYNC reset:** at each OSC 1 wrap, at fractional position d, OSC 2 resets to phase 0. The combined slave output (WAVE crossfade and SHAPE included) gets one polyBLEP scaled by `y(0) − y(φ⁻)` and one polyBLAMP scaled by `(y′(0) − y′(φ⁻))·inc`, both evaluated at the exact reset instant. BLEP alone is right only where the slope is equal either side (saw, square); a triangle, a sine (slope jump 2π·inc·(1 − cos φ⁻)), the fold and the skew need the BLAMP. The leftover curvature jump scales as inc² (about 0.02 at C6), under the gate. For a pure-sine slave, La Pastina & D'Angelo's exact residual [1] is the upgrade if the C7 alias gate fails. About 50 cycles an event, inside SYNC's 30-per-sample line at typical masters.
+- **XOR and BITS** alias by nature; that is their character, and they are exempt from the alias gate.
+  - Near-unison XOR is biased positive (the inputs share sign bits). The DC goes through the drive and the filter to the voice's DC blocker, in ADR 0060's order. By design.
+  - BITS sets its depth once a block, so a modulated AMOUNT steps at 750 Hz in BITS. This is exempt from never-snap, like the crush itself.
+- **SYNC reset:** at each OSC 1 wrap, `t` samples ago, OSC 2 restarts at phase 0. A sample that holds a reset is split in three parts, in time order:
+  1. The slave's own events between the last sample and the reset instant (its natural wrap included) are corrected at `t + (φ⁻ − e)/inc`.
+  2. The reset gets one polyBLEP scaled by `y(0) − y(φ⁻)` and one polyBLAMP scaled by `(y′(0) − y′(φ⁻))·inc`. Both are taken on the combined slave output (WAVE crossfade and SHAPE included) at the reset instant. BLEP alone is right only where the slope is equal either side (saw, square); a triangle, a sine (slope jump 2π·inc·(1 − cos φ⁻)), the fold and the skew need the BLAMP.
+  3. Events in `(0, t·inc]` after the reset are corrected at `(t·inc − e)/inc`. Phase 0 itself is not an event: the reset is that edge.
+  - The sample's SHAPE values hold through a reset sample, so threshold motion is ignored there. The error is O(Δw), once per master cycle.
+  - The leftover curvature jump scales as inc² (about 0.02 at C6), under the gate. For a pure-sine slave, La Pastina & D'Angelo's exact residual [1] is the upgrade if the gate fails. About 50 cycles an event.
+- **RING's coincident edges:** RING multiplies two corrected oscillators.
+  - Where their steps coincide (STAB 1, equal or octave tuning, steep waves), the residuals multiply. They fold at −31…−38 dB at C6, and that falls only 3 dB an octave.
+  - Under detune the edges pass through coincidence and back.
+  - A per-interval product correction was simulated. It is exact at coincidence but 5 dB worse elsewhere, so it is § Later. The gate tests RING detuned (§ Testing). The 5% pulse in RING is exempt: −29…−40 dB even detuned.
 - **XOR of identical oscillators is silent** (same wave, pitch and phase: `a XOR a = 0`), and passing through identical states pops [8]. By design. At STABILITY = 1 both start at phase 0, so with equal WAVE and tuning, XOR at AMOUNT 1 is silent. INIT's +6-cent FINE avoids it; detune under 20 cents is the fat, moving texture [8].
 - **MODE changes** use the duck: the output ramps to 0 over one block, the mode swaps, and it ramps back over the next. SYNC's reset state is cleared on entry.
-- **Sub:** a polyBLEP square one octave below OSC 1, toggled at OSC 1's wraps. It is added after the combine: `y = (c + SUB·s) / (1 + SUB)`, which stays peak-safe.
+- **Sub:** a polyBLEP square of ±R (the oscillators' RMS), one octave below OSC 1, toggled at OSC 1's wraps. It is added after the combine: `y = (c + SUB·s)/√(1 + SUB²)`. That is level-stable, and it stays within √(0.9² + R²) = 0.92.
 
 ## Stability
 
 STABILITY is 1 for steady and lower for alive. Its depth follows a curve `d = (1 − STABILITY)²`, so the top of the knob is fine-grained.
 
-- **Drift:** each voice has three slow random walks: one shared, one for OSC 1 and one for OSC 2. Each is filtered noise in the 0.05–0.5 Hz range, updated once per block. OSC 1 takes shared + its own; OSC 2 takes shared + its own. So the pair drifts together and their interval beats slowly. Depth up to ±12 cents shared and ±6 cents each at `d = 1`.
+- **Drift:** each voice has three walks: one shared, one for OSC 1 and one for OSC 2. OSC 1 takes shared + its own, and OSC 2 takes shared + its own, so the pair drifts together and their interval beats slowly.
+  - **A walk** is white noise through two cascaded one-pole low-passes at 0.2 Hz, stepped once a block.
+  - `prepare(rate)` sets its gain from the filter's closed-form variance, so its RMS is 0.30 at every rate. It is clamped to ±1, which engages under 1% of the time.
+  - Rate and level are therefore independent. In simulation, at 689–3,000 Hz update rates, the RMS is 0.28–0.33 and the walk makes 0.18–0.27 zero crossings a second (hysteresis ±0.1).
+  - **Depth:** ×12 cents shared and ×6 cents own at `d = 1` (shared RMS 3.6 cents, ±12 at the clamp). The pair's drift correlates at 0.82.
 - **Tolerance:** each voice gets a fixed small detune per oscillator, up to ±3 cents at `d = 1`, like a real VCO's trim.
-- **High-frequency tracking (owner, 2026-10-09):** a real VCO's core adds a fixed reset or switching delay τ to every cycle (its exponential converter's bulk resistance has the same first-order effect, cents ∝ f) [17][18], so `f_eff = f / (1 + f·τ)`, a detune that grows roughly linearly with frequency. Each oscillator gets a seeded signed `τ = τ_max·d·u`, with u in [−0.25, 1]: mostly flat, sometimes slightly sharp, like an over-compensated VCO. `τ_max` = 4 µs, derived from the CEM3340 datasheet [17] (I/f ≈ 10 nC, r_e 5–20 Ω gives 2–8 µs): an untrimmed-VCO **estimate, not a measurement**. At `d = 1`, C7 (2093 Hz) lands between −14.4 and +3.6 cents. `f_eff` clamps so that 1 + f·τ ≥ 0.5. The two oscillators pull apart more the higher they play, and their beating speeds up with pitch, as on analog. Applied in the once-per-block pitch conversion, so it costs nothing per sample. The sub follows OSC 1's tracked pitch.
-- **Scale error:** each oscillator also gets a seeded V/oct error `ε = ±0.2 %·d` (CEM3340 untrimmed typical [17]), applied as `pitch_oct·(1 + ε)` about C4: octave stretch, ±2.4 cents per octave at `d = 1` (±7.2 cents at C7, ±3 at A2). About 20 cycles a block per oscillator.
+- **High-frequency tracking (owner, 2026-10-09):** a real VCO's core adds a fixed reset or switching delay τ to every cycle [17][18], so `f_eff = f / (1 + f·τ)`. Its exponential converter's bulk resistance has the same first-order effect, cents ∝ f. The result is a detune that grows roughly linearly with frequency.
+  - Each oscillator gets a seeded signed `τ = τ_max·d·u`, with u in [−0.25, 1]: mostly flat, sometimes slightly sharp, like an over-compensated VCO.
+  - `τ_max` = 4 µs, derived from the CEM3340 datasheet [17] (I/f ≈ 10 nC, r_e 5–20 Ω gives 2–8 µs). It is an untrimmed-VCO **estimate, not a measurement**.
+  - At `d = 1`, C7 (2093 Hz) lands between −14.4 and +3.6 cents. `f_eff` clamps so that 1 + f·τ ≥ 0.5.
+  - The two oscillators pull apart more the higher they play, and their beating speeds up with pitch, as on analog.
+  - It is applied in the once-per-block pitch conversion, so it costs nothing per sample. The sub follows OSC 1's tracked pitch.
+- **Scale error:** each oscillator also gets a seeded V/oct error `ε = ±0.2 %·d` (CEM3340 untrimmed typical [17]), applied as `pitch_oct·(1 + ε)` about C4. That is octave stretch: ±2.4 cents per octave at `d = 1` (±7.2 cents at C7, ±3 at A2). About 20 cycles a block per oscillator.
 - **Jitter:** a per-cycle pitch wobble up to ±0.5 cent at `d = 1`, applied at each wrap.
-- **Phase at note-on:** at STABILITY = 1, both oscillators start at phase 0, for a repeatable attack. Below 1, they free-run from where the voice last left them, like analog oscillators.
+- **Phase at note-on:**
+  - At STABILITY = 1, a note-on on an **idle** voice starts both oscillators and the sub at phase 0, for a repeatable attack.
+  - A re-strike or same-Part steal of a **sounding** voice keeps its phase, so it doesn't click.
+  - At STAB 1 the saw and the pulse start at a non-zero value. The VCA's attack covers that; at a 0 ms attack it clicks like a hard-reset VCO. By design.
+  - The switch at exactly STAB = 1 is a threshold on a continuous knob while `d` goes to 0 smoothly. The ADR records it.
+- **Free-run:** below 1, the oscillators run on from note to note.
+  - A voice's VA state survives the idle voice's slot rebuild (`Voice::reset` → `EngineSlot::build`), carried as TAPE carries its strip. That state is both phases, the sub's flip-flop, the walks and the seeded character.
+  - So a note starts where the last one left off, and the walks run on and never replay.
+  - Nothing advances while the voice is idle. The slot has no clock, and the last note's length already decorrelates the start phase.
+  - A slot that played another engine in between starts afresh from its seed, as TAPE's strip does.
 - **The sub follows OSC 1 exactly.** In SYNC, the slave's drift moves the sync ratio, so the timbre shimmers.
-- **Recallable:** all randomness comes from xorshift seeded by (Part, voice slot), so a saved Sound sounds the same on reload, and STABILITY = 1 renders bit-identically every time.
+- **Seeding:** each random draw comes from a splitmix32 hash of (Part, voice slot, purpose salt). A walk's xorshift state starts from that hash, so the first draws are not biased.
+- **What recalls:**
+  - STABILITY = 1 renders bit-identically.
+  - Below 1, each (Part, voice slot)'s character (its trims, τ factors and scale errors) is recalled from its seed.
+  - The drift and the free-running phase differ from take to take, by design.
 
 ## Voice and engine
 
 VA plugs in on TAPE's pattern (ADR 0093; paths in `va-refresh.md` § 1):
 - `EngineType::Va`, disk code 3, ident "VA";
 - `BlockRef::Va`, block code 35, a frozen ident;
-- a `SlotKind::Va` arm in `EngineSlot`, with a const-assert that `VaEngine` fits the slot;
+- a `SlotKind::Va` arm in `EngineSlot`, with a const-assert that `VaEngine` fits the slot, and the carry across `build` (§ Stability);
 - arms in `out_gain`, `cost`, `model_cost` and `playing_cost`, with `engines_test` guarding them;
 - the nav map and `VA_BLOCKS` in `block_registry.rs`.
 
 The voice's filter, drive, fold, envelopes, LFOs and modulation matrix are unchanged; VA is only a source. `Sound::init` for VA routes **ENV 1 → VCA** at 127, as TAPE does. With that route deleted, the note ends through the voice fade.
 
-**INIT:**
+**Neutral** (the frozen disk base, ADR 0087):
 - WAVE1 = WAVE2 = saw (⅔), SHAPE 0;
-- OSC 2 FINE +6 cents;
-- MODE MIX, AMOUNT ½;
+- CRSE 0, FINE 0;
+- MIX, AMOUNT ½;
 - SUB 0;
-- STABILITY 0.7 (`d` = 0.09, about ±1 cent shared drift), so it breathes a little out of the box; 0.85 gives `d` = 0.0225, ±0.27 cents, probably inaudible. Confirm by ear;
-- filter CLEAN LP4.
+- STABILITY 1;
+- filter **2040** LP4 (VOICE REV2), from `FilterKind::default_for(Va)`, as accepted ADR 0096 rules for VA.
+
+**INIT** (`Sound::init`) is neutral plus three values that are written to disk, so the owner can retune them by ear later without a migration:
+- OSC 2 FINE +6 cents;
+- STABILITY 0.7 (`d` = 0.09, about ±1 cent of shared drift), so it breathes a little out of the box. 0.85 gives `d` = 0.0225 (±0.27 cents), which is probably inaudible. Confirm by ear at UAT;
+- ENV 1 → VCA 127.
 
 ## Params and Motion (ADR 0112)
 
 | Param | Type | Motion | Mod destination |
 |---|---|---|---|
 | WAVE1, WAVE2, SHAPE1, SHAPE2, AMOUNT, SUB, STABILITY | `f32` 0–1, step 1/128 | `Continuous(Knobs)` | yes |
-| FINE1, FINE2 | `f32` cents | `Continuous(Knobs)` | yes |
+| FINE1, FINE2 | `f32` cents, stepped by 1 (PITCH FINE's precedent) | `Continuous(Knobs)` | yes |
 | CRSE1, CRSE2 | `i8` semitones | `Stepped(Snap)` | yes (stepped) |
 | MODE | `u8`, `VaMode` | `Stepped(Crossfade)` (the duck) | no |
 
 - `VaMode` is `#[repr(u8)]` with fixed discriminants 0–4; an unknown byte reads as MIX (no legacy compat needed, it only has to load safely).
+- **Matrix headers** fit the column: WV1, WV2, AMNT, SUB, STAB, CR1, FN1, SH1, CR2, FN2, SH2.
 - The Sound record grows by 12 params: check `MAX_SOUND_COST` (ADR 0087) and the ≤ 640 B record limit (ADR 0102).
 
 ## Code layout
 
 ```
 chimera-engine/src/dsp/va/
-  mod.rs        VaEngine: render, MODE duck, dispatch
-  osc.rs        variable-wave oscillator (WAVE morph, SHAPE per wave)
+  mod.rs        VaEngine: render, MODE duck, dispatch, carry
+  osc.rs        variable-wave oscillator (WAVE morph, SHAPE per wave), sync, sub
   blep.rs       polyBLEP / polyBLAMP kernels
   combine.rs    MIX, SYNC, RING, XOR, BITS
   stability.rs  drift walks, tolerance, jitter, seeding
 ```
 
 - The product layer lives in `chimera-engine` (ADR 0108, opt 2).
-- Technique files (`blep.rs`, `osc.rs`, `stability.rs`) are written for the library: rate-independent through a `prepare(sr)` that computes their coefficients, with no product types, and each carrying a `PROVENANCE` const (ADR 0114, all Textbook or Original). When ADR 0114 is accepted they move to `chimera-dsp` unchanged.
-- The `chimera-dsp` crate is not created for alpha.
-- polyBLEP (2007) and polyBLAMP (2015) are under 20 years old, so each carries a "patent: not checked" line for the plugin checklist.
+- The technique files (`blep.rs`, `osc.rs`, `stability.rs`) are written for the library:
+  - each is rate-independent through a `prepare(sr)` that computes its coefficients, and takes no product types;
+  - each declares a `PROVENANCE` in ADR 0114's variants (`Textbook { cite }`, `CircuitModel { circuit, refs, check }` for the CEM3340-derived HF tracking and scale error, and `Original { author }`), plus a `PATENT` line per technique under 20 years old;
+  - the GPL check is noted as a clean room: the Ambika manual only, with Mutable Instruments' firmware not read.
+- When ADR 0114 is accepted, the technique files move to `chimera-dsp` unchanged. The `chimera-dsp` crate is not created for alpha.
 
 ## Budget and billing
 
-- The voice budget is 7,000 cycles per sample on rev V and 5,833 on rev Y; with the bus, that is 970 / 775 per voice at 6 voices (`va-refresh.md` § 4).
-- **Estimate for the worst core voice:**
-  - two oscillators mid-morph: 2 × 2 waves, about 160;
-  - SYNC: about 30;
-  - sub: about 15;
-  - stability: about 10;
-  - shell: about 30;
-  - LP24 carry: 95;
-  - `CHAIN_COST` 36 and routing 47.
-  - Total about 420, which leaves 8 voices on rev V.
-- **Billing:** `VaEngine::cost` = one committed term per MODE, host-counted by the ADR 0056 method, as TAPE did. `playing_cost` covers a MODE change under a held note. Unit bench rows come at ship.
+- **Rooms:** the voices share what ADR 0091's reserve leaves (the bus's 1,180 and a note-on burst's 836; `cost_test`):
+
+| Revision | Room | Per voice at 6 |
+|---|---|---|
+| rev V | 4,984 | 830 |
+| rev Y | 3,817 | 636 |
+| rev V, ORBIT playing | 4,813 | 802 |
+| rev V, master tape on | 4,674 | 779 |
+
+- **Estimate for the worst voice:** SYNC, both oscillators mid-morph with SHAPE moving, at the highest event rate. It comes to about **500–650 cycles**:
+  - two oscillators' fast path, about 120;
+  - the exact per-sample reciprocal and square root while SHAPE moves (2 `vdiv` + 1 `vsqrt` per oscillator), about 85;
+  - events: up to 4 a cycle per oscillator, which is 1.8 a sample at the 0.45 increment ceiling, at about 25 each: about 90;
+  - SYNC resets, about 50;
+  - sub, jitter, block work and shell, about 55;
+  - LP24's carry, 95;
+  - `CHAIN_COST` 36 and routing 47;
+  - INIT's 2040 REV2, +15 over LP24.
+- **What that leaves:** 6 voices on rev V in every row. On rev Y, 6 voices only if the count lands at or under 636. The count decides; if it doesn't fit, the owner chooses (5 VA voices on rev Y, or a cheaper SYNC).
+- **Billing:** `VaEngine::cost` is one committed term per MODE, host-counted by the ADR 0056 method:
+  - bill = the per-sample fast path + Σ (each event's cost × its maximum rate at the 0.45 ceiling) + per-block work ÷ 64 + 95;
+  - each oscillator's `tick` is `#[inline(always)]` into each mode's loop, so the count sees it;
+  - `playing_cost` covers a MODE change under a held note;
+  - the unit's bench rows come at ship.
 - **Loudness:** `VA_OUT_GAIN` is named like `TAPE_OUT_GAIN`, and set so INIT reaches −11.0 LUFS ±1 dB (ADR 0109) at LEVEL 45/128.
 
 ## Testing
 
-- **Alias gate** at C6 for each WAVE anchor and each midpoint, with SHAPE at 0, ½ and 1, in MIX, SYNC and RING (XOR and BITS exempt).
-- **Superposition:** a 5% pulse at C8 and the saw lift (SHAPE 1) at C7 and C8 also pass the alias gate.
-- **Anchor phase:** across the WAVE sweep at SHAPE 0, the fundamental never dips more than 3 dB below its strongest value.
-- **Anchor level:** the four anchors' RMS are equal within 0.1 dB.
+- **Alias gate** (BH4, 2¹⁵ samples, ±4 bins of each series masked, 20 Hz–10 kHz ≤ −45 dB):
+  - MIX and SYNC at C6, over each WAVE anchor and midpoint × SHAPE 0, ½ and 1. In simulation the worst is −53.0 dB for MIX and −46.8 dB for SYNC (pulse slave at 2.37×, a thin margin).
+  - RING at C5, detuned: FINE2 +6 cents at CRSE2 0 and +12, WAVE2 = WAVE1 or triangle, SHAPE 0 and ½, with the intermodulation lattice masked. In simulation the worst is −49.6 dB.
+  - XOR and BITS are exempt. RING's coincident edges and RING's 5% pulse are documented exceptions (§ Combine).
+  - The band stops at 10 kHz. Above it the 2-point kernel is known weak [2]; the 4-point kernel is the named upgrade.
+- **Superposition:** the pulse (at its one-sample floor) and the split saw (SHAPE 1) pass the gate at C7 and C8 (simulation: −52 dB or better).
+- **Anchor phase:** across the WAVE sweep at SHAPE 0, ½ and 1, the fundamental stays within 1 dB of the lerp of its two neighbouring anchors' fundamentals, and in phase.
+- **Level and DC:**
+  - at each anchor, the RMS stays within ±1 dB of R across SHAPE;
+  - across WAVE it stays at least −2.5 dB of R;
+  - |DC| ≤ 10⁻³·R everywhere;
+  - the split saw's fundamental at SHAPE 1 is within ±1 dB of the plain saw's.
 - **Pitch:** each anchor within 1 cent at A4 (same DFT method as the 09-27 draft).
 - **No clicks:**
-  - every continuous knob swept 0 → 1 over 100 ms, plus every MODE change mid-note;
-  - criterion: the largest second difference is at most 1.5× the held renders' (the FX-diet criterion; BITS and XOR exempt).
-- **Every knob audible:** `rms(y₀ − y₁) ≥ 0.1·rms(y₀)` for each continuous knob. RING and XOR AMOUNT are tested with detuned inputs (INIT's +6 cents); XOR of identical oscillators at AMOUNT 1 is silent.
+  - WAVE and SHAPE swept 0 → 1 over 100 ms on the oscillator track an ideal reference within 2·10⁻³. The reference is the continuous wave through the 2-point kernel's own triangle filter (simulation ≤ 6.3·10⁻⁴), and a 1-sample step of 0.005 fails it.
+  - A 1 ms ENV into SHAPE at C1 stays within 0.02.
+  - The other knobs and every MODE change are tested on sine-only renders: the largest second difference is at most 1.5× the held renders' (+10⁻⁶), and a step of 0.002 fails it. SUB is tested at note 0, where the sub has no edge in the first 100 ms.
+  - BITS and XOR are exempt.
+- **Every knob audible:** `rms(y₀ − y₁) ≥ 0.1·rms(y₀)` for each continuous knob, from its minimum to its maximum (FINE −100 vs +100 cents). RING and XOR AMOUNT are tested with detuned inputs (INIT's +6 cents).
 - **Stability:**
-  - STABILITY = 1 is bit-identical across runs and voices.
-  - Below 1, the same Sound on the same Part and slot renders identically after a reload.
-  - Drift depth stays inside its bounds.
-  - **HF tracking:** at `d = 1`, τ alone puts a C7 note between −14.5 and +3.7 cents (the seeded u in [−0.25, 1]). At A2 it is within 1 cent of true. At STABILITY = 1 it is exactly 0. The OSC 1–OSC 2 beat rate at C7 exceeds the one at C4 where their τ differ.
-  - **Scale error:** C4 is exact; at `d = 1` C7 is within ±7.2 cents and A2 within ±3 cents of true; at STABILITY = 1 exactly 0.
-- **Peak-safe:** |y| ≤ 1 for every MODE, AMOUNT and SUB.
-- **Plumbing and sanity:** `engines_test` arms; disk round-trip of all 12 params; the ADR 0011 sanity gate for INIT; loudness of INIT.
+  - STABILITY = 1 is bit-identical across takes, Parts and slots. A re-strike of a sounding voice keeps its phase.
+  - Below 1, a (Part, slot)'s character is equal after a fresh boot. Successive takes on one voice differ, and the second starts off phase 0.
+  - The seeds spread: over 8 Parts, the 8 voices' draws have std ≥ 0.25 and are pairwise apart.
+  - The walk has RMS 0.25–0.35 and makes 0.12–0.40 crossings a second at every rate, its mean within 10% (RMS) and 20% (crossings) of 48 kHz's, and the clamp engages ≤ 1.5% of the time.
+  - **HF tracking:** at `d = 1`, τ alone puts a C7 note between −14.5 and +3.7 cents (the seeded u in [−0.25, 1]). At A2 it is within 1 cent of true. At STABILITY = 1 it is exactly 0. The OSC 1–OSC 2 beat rate at C7 exceeds the one at C4 where their τ differ by more than 0.05.
+  - **Scale error:** C4 is exact. At `d = 1`, C7 is within ±7.2 cents and A2 within ±3 cents of true. At STABILITY = 1 it is exactly 0.
+- **Peak-safe:** |y| ≤ 0.95 for every MODE, AMOUNT and SUB.
+- **Plumbing and sanity:** `engines_test` arms; disk round-trip of all 12 params; the ADR 0011 sanity gate for INIT; the loudness of INIT over whole beats of its +6-cent pair.
 - **Library-ready:** each technique file is tested at 44.1, 48, 96 and 192 kHz (tuning and stability).
 
 ## Later (not alpha)
@@ -196,15 +284,20 @@ chimera-engine/src/dsp/va/
 - MODE stays as the glue between the two.
 - Drift capture of the owner's Kobol, SE-02 and prologue may later tune STABILITY's curves (#425 rig).
 - BITS ADAA (Werner & Azelborn 2023 [9]), about 25 cycles, if UAT finds it harsh.
+- RING product correction for coincident edges (a GitHub issue).
+- A VA morph scope for WAVE's focus glyph, drawn from the oscillator (a GitHub issue).
 - Issues #130–#136 and #219 get re-scoped to that list once this lands.
 
 ## ADRs
 
 One new ADR (next free number, ≥ 0118) records:
 - the architecture: two oscillators, an operator, a sub and STABILITY, as an open nod to the Ambika;
-- the XOR/BITS alias exemption;
-- STABILITY's seeding rule;
+- the XOR/BITS alias exemption, and RING's documented exceptions;
+- one RMS for every wave (R = 0.2) and the operator scaling;
+- STABILITY's seeding and what recalls, the free-run carry, and the STAB = 1 threshold;
 - the code-home rule (written for `chimera-dsp`, kept in `chimera-engine` until ADR 0114 is accepted).
+
+VA's 2040 default follows accepted ADR 0096 and needs no new ADR.
 
 ## References
 
