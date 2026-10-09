@@ -249,6 +249,9 @@ impl Voice {
     /// for a path a route or tap already bills moving. Admission counts it;
     /// shedding doesn't.
     pub fn glide_extra(p: &ParamSnapshot, mods: &ModState, g: Gliding) -> Cost {
+        if g == Gliding::default() {
+            return Cost::ZERO;
+        }
         let algo = p.engine() == EngineType::Algo;
         let taps = |c| algo && p.taps.moving(c);
         let filter_moves = taps(FixedCol::Freq)
@@ -996,23 +999,28 @@ impl Voice {
         };
 
         // A stage glides when no route moves its settings at audio rate:
-        // then only a knob does, in steps (ADR 0117).
+        // then only a knob does, in steps (ADR 0117). Asked only of a
+        // moving stage: the scans cost a steady block nothing.
         let routed = |block, ps: [ParamId; 3]| {
             ps.iter()
                 .any(|&q| mod_state.moves_addr(ParamAddr::new(block, q)))
         };
-        let drive_glide = !routed(
-            BlockRef::Drive,
-            [DriveParams::DRIVE, DriveParams::TONE, DriveParams::MIX],
-        );
-        let fold_glide = !routed(
-            BlockRef::Folder,
-            [
-                FolderParams::FOLD,
-                FolderParams::SYMMETRY,
-                FolderParams::MIX,
-            ],
-        );
+        let drive_glide = || {
+            !routed(
+                BlockRef::Drive,
+                [DriveParams::DRIVE, DriveParams::TONE, DriveParams::MIX],
+            )
+        };
+        let fold_glide = || {
+            !routed(
+                BlockRef::Folder,
+                [
+                    FolderParams::FOLD,
+                    FolderParams::SYMMETRY,
+                    FolderParams::MIX,
+                ],
+            )
+        };
 
         // 2. Drive, gated as it's billed.
         self.drive

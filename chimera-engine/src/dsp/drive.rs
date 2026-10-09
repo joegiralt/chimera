@@ -28,12 +28,19 @@ impl Drive {
     /// Process a block of samples in-place; `on` is whether the stage runs
     /// (`Voice::stage_runs`), which its gate fades.
     pub fn process(&mut self, buf: &mut [f32], params: &DriveParams, on: bool) {
-        self.process_glide(buf, params, on, false);
+        self.process_glide(buf, params, on, || false);
     }
 
     /// `process`; with `glide` (only a knob moves a setting) a moving block
-    /// steps `STEPS` times, each sub-block the steady loop (ADR 0117).
-    pub fn process_glide(&mut self, buf: &mut [f32], params: &DriveParams, on: bool, glide: bool) {
+    /// steps `STEPS` times, each sub-block the steady loop (ADR 0117). It's
+    /// asked only of a moving block: a steady one pays nothing for it.
+    pub fn process_glide(
+        &mut self,
+        buf: &mut [f32],
+        params: &DriveParams,
+        on: bool,
+        glide: impl FnOnce() -> bool,
+    ) {
         let d = self.drive.step(params.drive);
         let t = self.tone.step(params.tone);
         let m = self.mix.step(params.mix);
@@ -53,7 +60,7 @@ impl Drive {
             }
             return;
         }
-        if glide && g == (1.0, 1.0) && buf.len() == BLOCK_SIZE {
+        if g == (1.0, 1.0) && buf.len() == BLOCK_SIZE && glide() {
             for (j, sub) in buf.as_chunks_mut::<SUB>().0.iter_mut().enumerate() {
                 let gain = 1.0 + step_to(d, j) * 8.0;
                 let tone = step_to(t, j);

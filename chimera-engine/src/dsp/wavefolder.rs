@@ -38,19 +38,19 @@ impl Wavefolder {
         on: bool,
         tap: Option<&TapLane>,
     ) {
-        self.process_glide(buf, params, on, tap, false);
+        self.process_glide(buf, params, on, tap, || false);
     }
 
     /// `process`; with `glide` (only a knob moves a setting) an untapped
     /// moving block steps `STEPS` times, each sub-block the steady loop
-    /// (ADR 0117).
+    /// (ADR 0117). It's asked only of a moving block.
     pub fn process_glide(
         &mut self,
         buf: &mut [f32],
         params: &FolderParams,
         on: bool,
         tap: Option<&TapLane>,
-        glide: bool,
+        glide: impl FnOnce() -> bool,
     ) {
         let f = self.fold.step(params.fold);
         let y = self.sym.step(params.symmetry);
@@ -75,7 +75,7 @@ impl Wavefolder {
             }
             return;
         }
-        if glide && g == (1.0, 1.0) && buf.len() == BLOCK_SIZE {
+        if g == (1.0, 1.0) && buf.len() == BLOCK_SIZE && glide() {
             for (j, sub) in buf.as_chunks_mut::<SUB>().0.iter_mut().enumerate() {
                 let (fold, sym, mix) = (step_to(f, j), step_to(y, j), step_to(m, j));
                 let gain = 1.0 + fold * fold * 6.0;
