@@ -25,6 +25,9 @@ const BORRSTF: u32 = 1 << 21;
 const PORRSTF: u32 = 1 << 23;
 const SFTRSTF: u32 = 1 << 24;
 const IWDG1RSTF: u32 = 1 << 26;
+/// The flags `from_rsr` reads. Behind stock 1.09 bit 18 is left set on
+/// every boot (seen on the unit, 2026-10-09), so it alone says nothing.
+const KNOWN: u32 = PINRSTF | BORRSTF | PORRSTF | SFTRSTF | IWDG1RSTF;
 
 impl ResetCause {
     /// The most specific flag wins: every internal reset also drives NRST,
@@ -46,14 +49,14 @@ impl ResetCause {
     }
 
     /// The cause behind a bootloader that clears RCC_RSR (stock 1.09): a
-    /// non-zero `rsr` is read as it is. An empty one is told from the
+    /// `rsr` with a known flag is read as it is. One with none is told from the
     /// backup domain, which has no VBAT: `boots_before` 0 (fresh) is a
     /// power-on; `intent` set by the firmware is software; a kept domain
     /// and no intent is `Watchdog`, which a HardFault reset through the
     /// IWDG reads as too (ADR 0034). A reset the firmware did not ask for
     /// but the bootloader hides (NRST pin) reads `Watchdog` too.
     pub const fn infer(rsr: u32, boots_before: u32, intent: u32) -> Self {
-        if rsr != 0 {
+        if rsr & KNOWN != 0 {
             Self::from_rsr(rsr)
         } else if boots_before == 0 {
             ResetCause::PowerOn

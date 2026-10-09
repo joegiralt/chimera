@@ -31,6 +31,10 @@ fn an_empty_rsr_is_told_from_the_backup_domain() {
     assert_eq!(infer(0, 3, SOFT_INTENT), ResetCause::Software);
     assert_eq!(infer(0, 3, 0), ResetCause::Watchdog);
     assert_eq!(infer(0, 3, 0xdead_beef), ResetCause::Watchdog);
+    // Bit 18 alone, as 1.09 leaves it, is as good as empty.
+    assert_eq!(infer(1 << 18, 0, 0), ResetCause::PowerOn);
+    assert_eq!(infer(1 << 18, 3, SOFT_INTENT), ResetCause::Software);
+    assert_eq!(infer(1 << 18, 3, 0), ResetCause::Watchdog);
     // A flag the bootloader left is read as it is.
     assert_eq!(infer(POR, 3, 0), ResetCause::PowerOn);
     assert_eq!(infer(SFT, 0, 0), ResetCause::Software);
