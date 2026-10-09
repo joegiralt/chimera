@@ -15,8 +15,11 @@
 - **The alias gate** is the 09-27 draft's (spec 2026-09-27 § Host tests): 2¹⁵ samples after a 2¹² settle, Blackman–Harris 4-term, bins within ±4 of every multiple of each oscillator's period frequency (and f0/2 with SUB) masked, the rest from 20 Hz to 10 kHz ≤ **−45 dB** of the total; where the uncorrected render folds more than −60 dB, the corrected one is also ≥ 12 dB below it (a test-only `Correction::Off`). RING and MIX run at FINE2 = 0, so one harmonic series is masked; SYNC at OSC 2 CRSE +7.
 - **The pitch method** is the draft's: a 2¹⁷-point Hann DFT, quadratic interpolation on the log magnitude.
 - **SHAPE 0 is the plain sine.** `sin(g·sin θ)` at g = 1 is not a sine, so the sine's SHAPE crossfades: `y = (1−s)·sin θ + s·sin(g·sin θ)`, g = 1 + 2s. At s = 1 it is the spec's `sin(3·sin θ)`.
-- **A SYNC reset gets BLAMP as well as BLEP** (La Pastina & D'Angelo, DAFx-22, CC-BY 4.0): a sine or triangle slave has a slope jump at the reset; the spec's "polyBLAMP at every corner" covers it.
-- **Waves share a phase:** sine `sin 2πp`; triangle 0 at p = 0 rising, its peak at `w − ¼` (w = ½ + 0.45·SHAPE in the frame where the trough is at 0); saw falling, `1 − 2p`; square +1 for `p < w`, w = ½ − 0.45·SHAPE. All four fundamentals are in phase, so a crossfade never cancels.
+- **A SYNC reset gets one BLEP scaled by the slave's value jump `y(0) − y(φ⁻)` and one BLAMP scaled by its slope jump `(y′(0) − y′(φ⁻))·inc`**, on the combined slave output at the exact reset instant (spec § Combine). The leftover curvature jump is O(inc²), under the gate. La Pastina & D'Angelo's exact sine residual (DAFx-22, CC-BY 4.0) is the named upgrade if the C7 alias gate fails.
+- **Corrections superpose:** every edge or corner whose kernel covers a sample adds its own residual (a 5% pulse at C8, the saw lift beside the wrap). `Corrector::edge` may be called any number of times per sample; no per-sample if/else.
+- **Waves share a phase:** sine `sin 2πp`; triangle 0 at p = 0 rising, its peak at `w − ¼` (w = ½ + 0.45·SHAPE in the frame where the trough is at 0); saw falling, `1 − 2p`; square +1 for `p < w`, w = ½ − 0.45·SHAPE. All four fundamentals are in phase, so a crossfade never cancels (a rising saw would cancel it 19.4 dB at the tri→saw midpoint).
+- **Anchor levels match the saw's RMS:** gains sine √(2/3) ≈ 0.816, triangle 1, saw 1, square 1/√3 ≈ 0.577, folded into the crossfade weights (and so into each edge's step and slope). Peak-safe.
+- **The sine fold has no ADAA:** its input is the phase ramp; Jacobi–Anger bounds its alias (spec § Oscillator).
 - **Saw lift:** a second rising step at `q = ½·s`, height `h = s`, the whole wave less its mean `h·(1−q)`: peak-safe and DC-free at every s. Square PWM keeps its DC (the voice's 5 Hz blocker takes it, as on analog).
 - **BITS' log curve:** `bits(x) = 16 · 8^(−x)` (16, 8, 4, 2 at x = 0, ⅓, ⅔, 1), continuous; `levels = 2^(bits − 1)`, `y = round(v·levels)/levels`.
 - **Increments clamp to 0.45** cycles a sample (the draft's rule), so note 127 + CRSE +24 + PITCH +24 stays finite.
@@ -33,8 +36,8 @@
 - **Type-driven:** `VaMode` (`#[repr(u8)]`, 0 MIX, 1 SYNC, 2 RING, 3 XOR, 4 BITS; an unknown code loads as MIX), `OscId { One, Two }`, `Seed`, `Shape`. No bare `u8` mode or `usize` oscillator index in the product layer.
 - **Every param declares `Motion` (ADR 0112):** WAVE1/2, SHAPE1/2, AMOUNT, SUB, STAB, FINE1/2 `Continuous(Smoothing::KNOB)`; CRSE1/2 `Stepped(Change::Snap)`; MODE `Stepped(Change::Crossfade)` (the duck). Eleven are mod destinations; MODE is not.
 - **Names:** `EngineType::Va` (code 3, ident `"VA"`, label `"VA"`); `BlockRef::Va` (code 35, ident `"VA"`); `SlotKind::Va`; `EngineSlot::Va(VaEngine) => rebuild_va, init_va`; `VA_OUT_GAIN`; `VA_SPECS`; `VaParams`; `dsp/va/`. Param ids, frozen once written: WAVE1 0, WAVE2 1, MODE 2, AMOUNT 3, SUB 4, STAB 5, CRSE1 6, FINE1 7, SHAPE1 8, CRSE2 9, FINE2 10, SHAPE2 11; idents the same tokens (`"STAB"` for STABILITY). MODE's idents `MIX SYNC RING XOR BITS`.
-- **INIT = neutral (a format contract, ADR 0087):** WAVE ⅔ both, SHAPE 0 both, CRSE 0, FINE1 0, FINE2 +6, MIX, AMOUNT ½, SUB 0, STAB 0.85; filter CLEAN LP24 (`FilterKind::Svf`, `FilterMode::Lp24`); `Sound::init(Va)` routes ENV 1 → VCA at 127 as TAPE does.
-- **Spec constants:** `d = (1 − STAB)²`; drift ±12 cents shared, ±6 each; trim ±3; jitter ±0.5 a cycle; walks 0.05–0.5 Hz; HF tracking `f_eff = f/(1 + f·τ)`, `τ = d · 4 µs · k`, k seeded in 0.6–1.0 per oscillator; sub `y = (c + SUB·s)/(1 + SUB)`.
+- **INIT = neutral (a format contract, ADR 0087):** WAVE ⅔ both, SHAPE 0 both, CRSE 0, FINE1 0, FINE2 +6, MIX, AMOUNT ½, SUB 0, STAB 0.7; filter CLEAN LP24 (`FilterKind::Svf`, `FilterMode::Lp24`); `Sound::init(Va)` routes ENV 1 → VCA at 127 as TAPE does.
+- **Spec constants:** `d = (1 − STAB)²`; drift ±12 cents shared, ±6 each; trim ±3; jitter ±0.5 a cycle; walks 0.05–0.5 Hz; HF tracking `f_eff = f/(1 + f·τ)`, `τ = d · 4 µs · u`, u seeded in −0.25…1 per oscillator (4 µs is an estimate from the CEM3340 datasheet, not a measurement); scale error `ε = ±0.2 % · d` per oscillator on pitch about C4; sub `y = (c + SUB·s)/(1 + SUB)`.
 - **Budget:** 7,000 cycles a sample on rev V, 5,833 on rev Y; the worst VA voice leaves 6 voices beside the bus on both (ADR 0040). Bills by the ADR 0056 method (`tools/loop_count.py`), LP24's 95 carried in each engine term.
 - **Memory:** `VaEngine` no larger than `ModalEngine` (the slot must not grow); the voice chain stays within `VOICE_CHAIN_BYTES` 2,112 (ADR 0101; 2,016 today); a Sound record ≤ 640 B (ADR 0102); `MAX_SOUND_COST` re-pinned by `sparse_bound`. If an assert fails, stop and report: never raise a budget in passing.
 - **Commits:** a terse subject, no type prefix. Stage by path, never `git add -A`; never stage `chimera.bin` or `docs/chimera-ui-ux-spec.md`.
@@ -79,7 +82,7 @@ Spec § Pages, § Params and Motion, § Voice and engine (codes).
 #[test] fn init_is_the_spec() {
     let p = VaParams::default();
     assert_eq!((p.wave, p.shape, p.coarse, p.fine), ([2.0 / 3.0; 2], [0.0; 2], [0; 2], [0.0, 6.0]));
-    assert_eq!((p.mode, p.amount, p.sub, p.stability), (VaMode::Mix, 0.5, 0.0, 0.85));
+    assert_eq!((p.mode, p.amount, p.sub, p.stability), (VaMode::Mix, 0.5, 0.0, 0.7));
 }
 #[test] fn every_param_declares_its_motion() // the nine Continuous(KNOB), CRSE1/2 Stepped(Snap), MODE Stepped(Crossfade); modulatable exactly the eleven non-MODE
 #[test] fn all_twelve_round_trip_on_disk()  // Sound::init(Algo) with every VA param off neutral (WAVE 0.1/0.9, SHAPE 0.3/0.7, CRSE −24/+24, FINE −100/+100, BITS, AMOUNT 1, SUB 1, STAB 0): encode, decode, bits_eq
@@ -107,7 +110,7 @@ Spec § Oscillator (Antialiasing), § Code layout. ADR 0114 point 4.
 - Produces (`dsp::va::blep`):
   - `pub const PROVENANCE: &[Provenance]`: Välimäki & Huovilainen 2007 (polyBLEP) and Esqueda, Välimäki & Bilbao, EUSIPCO 2015 (2-point polyBLAMP), each `Textbook`, `Patent::NotChecked`.
   - `pub fn blep(t: f32) -> [f32; 2]`, `pub fn blamp(t: f32) -> [f32; 2]`: the residuals for the sample before and the sample after an event `t` samples (0..1) before the later one.
-  - `pub struct Corrector`, `Corrector::NEW`, `pub const LATENCY: usize = 1`, `pub fn edge(&mut self, t: f32, step: f32, slope: f32)` (`slope` = the jump in output per sample), `pub fn push(&mut self, naive: f32) -> f32` (the corrected sample `LATENCY` samples late), `pub fn clear(&mut self)`.
+  - `pub struct Corrector`, `Corrector::NEW`, `pub const LATENCY: usize = 1`, `pub fn edge(&mut self, t: f32, step: f32, slope: f32)` (`slope` = the jump in output per sample; callable any number of times between two `push`es, the corrections superpose), `pub fn push(&mut self, naive: f32) -> f32` (the corrected sample `LATENCY` samples late), `pub fn clear(&mut self)`.
 - **The slot for a better kernel:** every caller goes through `Corrector::edge`/`push`. A 4-point polyBLAMP (Hohnerlein et al., DAFx-17) or another corrected kernel replaces `blep`/`blamp` and `LATENCY` here and nothing else; the oscillator tests (Tasks 3–4) are the gate.
 
 The algorithm (not fixed by the signatures): with the bandlimited step `B` from the integrated triangular kernel, the residual `B − H` is `½t²` on the sample before the event and `−½(1−t)²` on the sample after; integrated once more (the ramp), `t³/6` and `(1−t)³/6`. So `blep(t) = [½t², −½(1−t)²]`, `blamp(t) = [t³/6, (1−t)³/6]`. `Corrector` keeps the previous naive sample: `edge` adds `step·blep(t)[0] + slope·blamp(t)[0]` to it and the `[1]` terms to an accumulator; `push` returns the held sample and holds `naive + accumulator`.
@@ -120,6 +123,7 @@ The algorithm (not fixed by the signatures): with the bandlimited step `B` from 
 #[test] fn blamp_integrates_blep()     // blamp(t)[0] == ∫₀ᵗ blep(u)[0] du and blamp(t)[1] == −∫ₜ¹ blep(u)[1] du, by a 1 024-step f64 midpoint sum, within 1e-5
 #[test] fn corrector_is_one_sample_late() // push(1.0), push(2.0), push(3.0) with no edges returns 0.0, 1.0, 2.0
 #[test] fn corrector_applies_both_halves() // edge(0.25, 2.0, 0.0) between push(−1.0) and push(1.0): the two outputs are −1 + 2·blep(0.25)[0] and 1 + 2·blep(0.25)[1]
+#[test] fn corrections_superpose()     // two edges between the same pair of pushes sum; edges in adjacent intervals both reach the shared sample: out == naive + s1·blep(t1)[1] + s2·blep(t2)[0] within 1e-6
 #[test] fn provenance_is_declared()    // blep::PROVENANCE non-empty, every Textbook entry Patent::NotChecked
 ```
 
@@ -142,25 +146,27 @@ Spec § Oscillator (WAVE, SHAPE, Antialiasing), § Testing (alias gate, pitch, l
 - Produces (`dsp::va::osc`):
   - `pub const PROVENANCE`: the phase accumulator `Textbook`; the waves and SHAPE laws `Original { author: "AI-assisted, owner-directed and reviewed" }`.
   - `pub struct Shape { pub wave: f32, pub shape: f32 }` (each 0..1, clamped on use)
-  - `pub fn wave_at(phase: f32, s: Shape) -> (f32, f32)`: the naive value and its slope per cycle (the morph's two waves, weighted); the reference for tests and for sync.
+  - `pub fn wave_at(phase: f32, s: Shape) -> (f32, f32)`: the naive value and its slope per cycle (the morph's two waves, weighted, with the RMS-matching anchor gains); the reference for tests and for sync.
   - `pub enum Correction { On, Off }` (`Off`: tests only, the gate's baseline)
   - `pub struct VarOsc`; `VarOsc::NEW`; `pub fn prepare(&mut self, sample_rate: f32)`; `pub fn inc_for(&self, hz: f32) -> f32` (clamped to `[0, MAX_INC]`); `pub const MAX_INC: f32 = 0.45`; `pub fn reset(&mut self)` (phase 0, corrector cleared); `pub fn phase(&self) -> f32`; `pub fn with_correction(self, c: Correction) -> Self`
   - `pub struct Tick { pub out: f32, pub wrap: Option<f32> }` (`wrap`: `t`, samples since the phase wrapped this sample)
   - `pub fn tick(&mut self, inc: f32, s: Shape, sync: Option<f32>) -> Tick`: `sync` is Task 4's; this task passes `None`.
-- **The slot for ADAA:** the sine fold is a private `VarOsc` method, so an antiderivative step with state can replace it inside the struct.
 
-The waves and their edges (the algorithm): WAVE `x` picks segment `k = min(⌊3x⌋, 2)` and `f = 3x − k` between anchors k and k+1 (sine, triangle, saw, square); only the two weighted waves are evaluated. Shapes as in "Decided here". Each wave reports its steps and corners crossed between the last sample and this one at their fractional `t`: triangle corners (slope jump `±(2/w + 2/(1−w))·inc`, BLAMP), saw wrap (step `+(2 − h)`) and lift (step `+h` at `q`, BLEP), square edges (`+2` at the wrap, `−2` at `w`, BLEP). Each edge's step and slope are scaled by its wave's morph weight before `Corrector::edge`. The sine (SHAPE fold included) is not corrected.
+The waves and their edges (the algorithm): WAVE `x` picks segment `k = min(⌊3x⌋, 2)` and `f = 3x − k` between anchors k and k+1 (sine, triangle, saw, square); only the two weighted waves are evaluated. Shapes as in "Decided here". Each wave reports its steps and corners crossed between the last sample and this one at their fractional `t`: triangle corners (slope jump `±(2/w + 2/(1−w))·inc`, BLAMP), saw wrap (step `+(2 − h)`) and lift (step `+h` at `q`, BLEP), square edges (`+2` at the wrap, `−2` at `w`, BLEP). Each edge's step and slope are scaled by its wave's morph weight (anchor gain included) before `Corrector::edge`; every edge crossed is passed in, so several can land in one sample. The sine (SHAPE fold included) is not corrected and has no ADAA.
 
 - [ ] **Step 1: Write the failing tests** (`f0 = 1046.50` is C6):
 
 ```rust
 #[test] fn corrected_saw_beats_naive()       // Task 2's Corrector on a 1 kHz falling saw at 48 kHz (step +2 at each wrap): alias_db ≤ −45 and ≥ 12 dB under the naive saw
-#[test] fn anchors_are_their_plain_selves()   // SHAPE 0, inc 1/4800, Correction::Off, samples ≥ 2 from any edge: WAVE 0 → sin 2πp, ⅓ → triangle (0 rising at p=0, +1 at ¼), ⅔ → 1 − 2p, 1 → square; |err| ≤ 1e-4
-#[test] fn wave_morph_is_a_linear_crossfade() // WAVE 1/6: out == ½ sine + ½ triangle (Correction::Off) within 1e-6; WAVE 0.5: ½ triangle + ½ saw
-#[test] fn shape_does_what_the_table_says()   // SHAPE 1: sine == sin(3 sin θ) within 1e-3; triangle's peak at p = 0.7 (= 0.95 − ¼); square's +1 share 0.05 ± 0.005; saw lift's second step at p = ½, height 1; SHAPE 0 == the plain anchor
+#[test] fn anchors_are_their_plain_selves()   // SHAPE 0, inc 1/4800, Correction::Off, samples ≥ 2 from any edge: WAVE 0 → 0.816·sin 2πp, ⅓ → triangle (0 rising at p=0, +1 at ¼), ⅔ → 1 − 2p, 1 → 0.577·square; |err| ≤ 1e-4
+#[test] fn wave_morph_is_a_linear_crossfade() // WAVE 1/6: out == ½ (0.816·sine) + ½ triangle (Correction::Off) within 1e-6; WAVE 0.5: ½ triangle + ½ saw
+#[test] fn shape_does_what_the_table_says()   // SHAPE 1: sine == 0.816·sin(3 sin θ) within 1e-3; triangle's peak at p = 0.7 (= 0.95 − ¼); square's +1 share 0.05 ± 0.005; saw lift's second step at p = ½, height 1; SHAPE 0 == the plain anchor
 #[test] fn in_tune_at_every_rate()            // each anchor and midpoint at A4, SHAPE 0, at 44_100, 48_000, 96_000, 192_000 Hz: spectrum::peak_hz within 1 cent of 440
 #[test] fn alias_gate_at_c6()                 // 48 kHz, WAVE in {0, 1/6, 1/3, 1/2, 2/3, 5/6, 1} × SHAPE in {0, 0.5, 1}: alias_db ≤ −45; where Correction::Off folds > −60 dB, ≥ 12 dB below it
 #[test] fn edges_never_overshoot()            // same grid at C2, C4, C6, C7: every |out| ≤ 1 + 1e-6
+#[test] fn anchors_have_equal_rms()           // SHAPE 0, one full cycle each: rms of the four anchors within 0.1 dB of 1/√3
+#[test] fn fundamental_never_dips()           // SHAPE 0, WAVE 0 → 1 in 60 steps: the in-phase fundamental (projection on sin 2πp) stays ≥ −3 dB of its largest value over the sweep, and positive
+#[test] fn narrow_pulse_and_lift_pass_at_high_notes() // 5% pulse (WAVE 1, SHAPE 1) at C8, saw lift (WAVE ⅔, SHAPE 1) at C7 and C8: alias_db ≤ −45 and ≥ 12 dB under Correction::Off
 #[test] fn morphing_never_clicks()            // WAVE, then SHAPE, 0 → 1 over 100 ms ramped per sample at A4: max |x[n] − 2x[n−1] + x[n−2]| ≤ 1.5 × the largest in held renders at 0, ¼, ½, ¾, 1
 ```
 
@@ -168,7 +174,7 @@ The waves and their edges (the algorithm): WAVE `x` picks segment `k = min(⌊3x
 
 - [ ] **Step 2: Run them.** `cargo test -p chimera-core --test va_osc_test`. Expected: FAIL to compile.
 - [ ] **Step 3: Implement** the Interfaces.
-- [ ] **Step 4: Run** `just test` and `just clippy`. Expected: PASS. If the gate fails on narrow pulses at SHAPE 1, stop and report (the 4-point kernel is Task 2's swap, an owner call), never loosen −45 dB.
+- [ ] **Step 4: Run** `just test` and `just clippy`. Expected: PASS. If the gate fails on narrow pulses or the lift at SHAPE 1, stop and report (the 4-point kernel is Task 2's swap, an owner call), never loosen −45 dB.
 - [ ] **Step 5: Commit.** `git commit -m "VA oscillator: WAVE morph and SHAPE, band-limited"`. Flash: host only.
 
 ### Task 4: Sync, the sub and the five operators
@@ -183,7 +189,7 @@ Spec § Combine (table, `xor16`, BITS, Sub), § Testing (peak-safe, alias gate i
 **Interfaces:**
 - Consumes: `VarOsc`, `Tick`, `Shape`, `wave_at`, `Corrector` (Tasks 2–3); `VaMode` (Task 1).
 - Produces (`osc`):
-  - `tick(.., sync: Some(t))`: the slave's phase restarts `t` samples ago (`phase = t·inc`), with a BLEP for the value jump and a BLAMP for the slope jump between `wave_at(old)` and `wave_at(new)` at the reset.
+  - `tick(.., sync: Some(t))`: the slave's phase restarts `t` samples ago (`phase = t·inc`), with one BLEP scaled by `y(0) − y(φ⁻)` and one BLAMP scaled by `(y′(0) − y′(φ⁻))·inc` (from `wave_at(old)` and `wave_at(new)`, the combined slave output, at the exact reset instant). If the C7 gate fails, La Pastina & D'Angelo's exact sine residual replaces it for a sine slave.
   - `pub struct Sub`, `Sub::NEW`, `pub fn reset(&mut self)` (+1), `pub fn tick(&mut self, wrap: Option<f32>) -> f32`: ±1, flipped at each master wrap, BLEP-corrected (step ±2), its own `Corrector`, so it lands one sample late like the oscillators.
 - Produces (`combine`):
   - `pub fn xor16(a: f32, b: f32) -> f32`: each `(clamp(v, −1, 1) · 32767.0) as i16`, XORed, `as f32 / 32768.0`
@@ -220,25 +226,26 @@ Spec § Stability (drift, tolerance, HF tracking, jitter, recallable), § Testin
 
 **Interfaces:**
 - Produces (`dsp::va::stability`), no product types; oscillators are `[_; 2]`:
-  - `pub const PROVENANCE`: `Original` (the walks, trim and jitter); `Textbook` for the HF-tracking law (a VCO core's reset time added to each cycle).
-  - `pub const DRIFT_SHARED_CENTS: f32 = 12.0`, `DRIFT_OWN_CENTS = 6.0`, `TRIM_CENTS = 3.0`, `JITTER_CENTS = 0.5`, `TAU_MAX_S = 4.0e-6`, `WALK_LO_HZ = 0.05`, `WALK_HI_HZ = 0.5`
+  - `pub const PROVENANCE`: `Original` (the walks, trim and jitter); `Textbook` for the HF-tracking law (a VCO core's reset time added to each cycle; CEM3340 datasheet numbers).
+  - `pub const DRIFT_SHARED_CENTS: f32 = 12.0`, `DRIFT_OWN_CENTS = 6.0`, `TRIM_CENTS = 3.0`, `JITTER_CENTS = 0.5`, `TAU_MAX_S = 4.0e-6` (an estimate, not a measurement), `TAU_U_LO = -0.25`, `SCALE_ERR = 0.002`, `WALK_LO_HZ = 0.05`, `WALK_HI_HZ = 0.5`
   - `pub fn depth(stability: f32) -> f32`: `(1 − clamp(s, 0, 1))²`
   - `pub struct Seed(u32)`, `pub const fn Seed::new(raw: u32) -> Seed` (forced odd, never 0)
-  - `pub struct Stability`; `Stability::NEW`; `pub fn prepare(&mut self, update_hz: f32)` (the rate `step` is called at: the block rate for VA); `pub fn seed(&mut self, s: Seed)` (the walks' state, the trims in −1..1 and the τ factors in 0.6..1.0, all from one xorshift stream in a fixed order); `pub fn step(&mut self, d: f32) -> [f32; 2]` (cents: drift + trim, per oscillator, once a block); `pub fn tracked(&self, hz: [f32; 2], d: f32) -> [f32; 2]` (`f/(1 + f·τ)`); `pub fn jitter(&mut self, d: f32) -> f32` (cents for the cycle a wrap starts); `pub fn tau_factors(&self) -> [f32; 2]` (tests)
-  - With `d == 0.0`, `step` and `jitter` return exactly 0.0 and `tracked` returns `hz` unchanged (the walks still advance), so STAB 1 is bit-identical.
+  - `pub struct Stability`; `Stability::NEW`; `pub fn prepare(&mut self, update_hz: f32)` (the rate `step` is called at: the block rate for VA); `pub fn seed(&mut self, s: Seed)` (the walks' state, the trims in −1..1, the signed τ factors u in −0.25..1 and the scale errors in −1..1, all from one xorshift stream in a fixed order); `pub fn step(&mut self, d: f32) -> [f32; 2]` (cents: drift + trim, per oscillator, once a block); `pub fn tracked(&self, hz: [f32; 2], d: f32) -> [f32; 2]` (`f/(1 + f·τ)`, τ signed, `1 + f·τ` clamped ≥ 0.5); `pub fn scale_cents(&self, cents: [f32; 2], d: f32) -> [f32; 2]` (the extra cents `(cents − 6000)·ε·d`, ε = `SCALE_ERR` × the seeded error: pitch·(1 + ε) about C4); `pub fn jitter(&mut self, d: f32) -> f32` (cents for the cycle a wrap starts); `pub fn tau_factors(&self) -> [f32; 2]` (the u, tests)
+  - With `d == 0.0`, `step`, `jitter` and `scale_cents` return exactly 0.0 and `tracked` returns `hz` unchanged (the walks still advance), so STAB 1 is bit-identical.
 
 A walk: white xorshift noise each step, a one-pole high-pass at `WALK_LO_HZ` then a one-pole low-pass at `WALK_HI_HZ` (coefficients from `update_hz` in `prepare`), a fixed gain and a `clampf` to ±1. Choose the gain so `walk_is_the_band` passes.
 
 - [ ] **Step 1: Write the failing tests:**
 
 ```rust
-#[test] fn depth_curve()               // depth(1) == 0, depth(0) == 1, depth(0.5) == 0.25, depth(0.85) within 1e-6 of 0.0225
+#[test] fn depth_curve()               // depth(1) == 0, depth(0) == 1, depth(0.5) == 0.25, depth(0.7) within 1e-6 of 0.09
 #[test] fn walk_is_the_band()          // 600 s at 48 kHz / 64: |w| ≤ 1, rms in 0.25..0.6, zero crossings 0.1..1.0 a second
 #[test] fn walks_are_rate_independent() // update rates 44_100/64, 48_000/64, 96_000/64, 192_000/64: crossing rate and rms each within 25 % of 48 kHz's
 #[test] fn drift_stays_in_bounds()     // d in {1, 0.25}, 600 s, 8 seeds: every |step(d)[k]| ≤ d · (12 + 6 + 3)
 #[test] fn the_pair_drifts_together()  // d = 1, 600 s: corr(step[0], step[1]) ≥ 0.5 (the shared walk dominates)
 #[test] fn jitter_in_bounds()          // 10^5 draws at d = 1 and 0.25: |jitter| ≤ 0.5 · d, mean within 0.02 · d of 0
-#[test] fn hf_tracking()               // d = 1, 32 seeds: C7 (2093.0 Hz) between −15 and −8 cents; A2 (110 Hz) within 1 cent of true; d = 0: tracked(hz) == hz bit for bit; where the two τ factors differ, |f1 − f2| at C7 > at C4 (261.63 Hz)
+#[test] fn hf_tracking()               // d = 1, 32 seeds: every τ factor in [−0.25, 1]; τ alone puts C7 (2093.0 Hz) between −14.5 and +3.7 cents (−14.43 at u = 1, +3.63 at u = −0.25); A2 (110 Hz) within 1 cent of true; d = 0: tracked(hz) == hz bit for bit; where the two τ factors differ, |f1 − f2| at C7 > at C4 (261.63 Hz)
+#[test] fn scale_error()               // d = 1, 32 seeds: scale_cents at C4 (6000) == 0; at C7 (9600) |x| ≤ 7.2; at A2 (4500) |x| ≤ 3.0; d = 0: exactly 0.0
 #[test] fn hf_tracking_is_rate_independent() // tracked() at C7 is the same at all four rates (τ is seconds, not samples)
 #[test] fn seeded_is_recallable()      // two Stability with Seed::new(0x0203), same prepare, 10^4 steps: identical bits; Seed::new(0x0103) differs
 #[test] fn depth_zero_is_silent_bits() // d = 0: step returns [0.0; 2] exactly and jitter 0.0, over 10^4 calls
@@ -266,7 +273,7 @@ Spec § Oscillator (Pitch), § Combine (MODE changes, Sub), § Stability (phase 
   - `const _: () = assert!(size_of::<VaEngine>() <= size_of::<ModalEngine>());`
 
 The render (the algorithm the signatures leave open):
-- **Once a block:** clamp every value to its range; `d = depth(stab)`; `cents_k = note·100 + pitch + coarse_k·100 + fine_k + stab.step(d)[k]`; `hz_k = 440 · fast_exp2((cents_k − 6900)/1200) · slide`; `hz = stab.tracked(hz, d)`; `inc_k = osc.inc_for(hz_k)`, ramped linearly across the block from last block's (`ease::Ramp`). WAVE, SHAPE, AMOUNT and SUB ramp per sample the same way; `crusher.set(amount)` in BITS.
+- **Once a block:** clamp every value to its range; `d = depth(stab)`; `cents_k = note·100 + pitch + coarse_k·100 + fine_k + stab.step(d)[k]`, then `cents_k += stab.scale_cents(cents, d)[k]`; `hz_k = 440 · fast_exp2((cents_k − 6900)/1200) · slide`; `hz = stab.tracked(hz, d)`; `inc_k = osc.inc_for(hz_k)`, ramped linearly across the block from last block's (`ease::Ramp`). WAVE, SHAPE, AMOUNT and SUB ramp per sample the same way; `crusher.set(amount)` in BITS.
 - **Per sample:** OSC 1 ticks; at its wrap the sub flips, OSC 1 draws `stab.jitter(d)` for its next cycle (`inc · (1 + jitter·ln2/1200)`), and in SYNC its `t` is OSC 2's `sync`; OSC 2 ticks (its own wrap draws its jitter); `c = combine(mode, a, b, amount, &crusher)`; `y = (c + sub·s)/(1 + sub)`; times the duck's gain.
 - **One dispatch a block:** `render` matches the playing mode once and calls one `#[inline(never)]` inner loop per mode (`render_mix`, `render_sync`, `render_ring`, `render_xor`, `render_bits`), so Task 9 counts each.
 - **The duck:** a MODE that differs from the playing one starts `Down` (gain 1 → 0 across the block); at its end the mode swaps (entering SYNC clears OSC 2's corrector) and `Up` runs 0 → 1 the next block. A change during `Down` retargets it; one during `Up` starts `Down` next block.
@@ -280,7 +287,8 @@ The render (the algorithm the signatures leave open):
 #[test] fn every_knob_sweeps_without_clicks() // WAVE1/2, SHAPE1/2, AMOUNT, SUB, STAB, FINE1/2, each 0 → 1 over 100 ms set per block, others 0.3, in Mix, Sync and Ring: the click rule
 #[test] fn mode_changes_never_click()        // every ordered pair of Mix, Sync, Ring changed mid-note: the click rule
 #[test] fn the_duck_is_one_block_each_way()  // a change at block k: |y| in block k ≤ (1 − (i+1)/64) · steady peak + 1e-6; block k+1 ≤ ((i+1)/64) · peak + 1e-6; mode() is the new one from block k+1
-#[test] fn every_knob_is_audible()           // each of the nine at 0 vs 1, others 0.3, 1 s, same seed: rms(y0 − y1) ≥ 0.1 · rms(y0)
+#[test] fn every_knob_is_audible()           // each of the nine at 0 vs 1, others 0.3, 1 s, same seed: rms(y0 − y1) ≥ 0.1 · rms(y0); AMOUNT also in Ring and Xor with INIT's FINE2 +6 (detuned inputs)
+#[test] fn xor_of_identical_oscillators_is_silent() // STAB 1, equal WAVE/SHAPE/tuning, Xor, AMOUNT 1, SUB 0: rms < 1e-3 (a XOR a = 0, by design)
 #[test] fn peak_safe_everywhere()            // every MODE × AMOUNT {0, ½, 1} × SUB {0, ½, 1} × WAVE anchors × SHAPE {0, 1}, 0.25 s at C2 and C6: |y| ≤ 1 + 1e-6
 #[test] fn stability_one_is_bit_identical()  // STAB 1: two fresh engines on different (part, voice) and three re-strikes on one engine render the same first 0.5 s, bit for bit
 #[test] fn below_one_is_recallable()         // STAB 0.5, Part 2 voice 3, the same notes on two fresh engines: identical bits; Part 1 voice 3: differs
@@ -434,6 +442,7 @@ Spec § Voice and engine (INIT), § Budget and billing (Loudness), § Testing (p
 #[test] fn init_va_fixture_pins_engine_code_3() // decode(init_va.snd).engine() == Va and bits_eq(Sound::init(Va))
 ```
 
+- The anchor RMS gains live in the oscillator (Task 3), so `VA_OUT_GAIN` is measured with them in.
 - [ ] **Step 2: Run them.** `cargo test -p chimera-core --test param_sweep_test va_init --test sanity_test va_`. Expected: the loudness test FAILS at `VA_OUT_GAIN` 1.0 and prints `d`.
 - [ ] **Step 3: Set** `VA_OUT_GAIN = 10^(−d/20)` from the printed `d`, to three decimals; rerun until `|d| ≤ 0.25` (TAPE's margin).
 - [ ] **Step 4: Record** the new rows only: `GOLDEN_RECORD=1 cargo test -p chimera-core --test golden_test -- --nocapture` (paste `va_init`); `FIXTURE_WRITE=1 cargo test -p chimera-core --test codec_compat_test write_v1_fixtures -- --ignored` (writes `init_va.snd`, never an existing file); add its byte and render rows. No existing golden, fixture or row changes.
