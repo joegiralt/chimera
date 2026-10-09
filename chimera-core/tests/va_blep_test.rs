@@ -79,7 +79,11 @@ fn corrections_superpose() {
     c.edge(0.7, -0.5, 0.25);
     assert_eq!(c.last_edges().len(), 2);
     let a = c.push(1.0);
-    close(a, blep(0.2)[0] - 0.5 * blep(0.7)[0] + 0.25 * blamp(0.7)[0], 1e-6);
+    close(
+        a,
+        blep(0.2)[0] - 0.5 * blep(0.7)[0] + 0.25 * blamp(0.7)[0],
+        1e-6,
+    );
     // adjacent intervals: both reach the shared sample
     let (t1, s1, t2, s2) = (0.3, 2.0, 0.6, -1.0);
     let mut c = Corrector::NEW;

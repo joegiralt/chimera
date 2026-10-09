@@ -7,10 +7,16 @@ use crate::dsp::provenance::{Patent, PatentLine, Provenance};
 
 pub const PROVENANCE: &[Provenance] = &[
     Provenance::Textbook {
-        cite: "Valimaki & Huovilainen, IEEE SPM 24(2), 2007 (2-point polyBLEP)",
+        cite: "Valimaki & Huovilainen, \"Antialiasing oscillators in subtractive synthesis\", \
+               IEEE SPM 24(2), 2007 (2-point polyBLEP)",
     },
     Provenance::Textbook {
-        cite: "Esqueda, Valimaki & Bilbao, EUSIPCO 2015 (2-point polyBLAMP)",
+        cite: "Esqueda, Valimaki & Bilbao, \"Aliasing reduction in soft-clipping algorithms\", \
+               EUSIPCO 2015 (2-point polyBLAMP)",
+    },
+    Provenance::Textbook {
+        cite: "Esqueda, Valimaki & Bilbao, \"Rounding Corners with BLAMP\", DAFx-16, 2016 \
+               (polyBLAMP at corners)",
     },
 ];
 
@@ -25,7 +31,7 @@ pub const PATENT: &[PatentLine] = &[
     },
 ];
 
-pub const GPL_CHECK: &str = "clean room: papers [3][4] only; no GPL source read";
+pub const GPL_CHECK: &str = "clean room: papers [3][4][5] only; no GPL source read";
 
 /// Step residuals for the sample before and the sample after an edge `t`
 /// samples (0..1) before the later one.
@@ -42,6 +48,7 @@ pub fn blamp(t: f32) -> [f32; 2] {
     [t * t * t / 6.0, u * u * u / 6.0]
 }
 
+#[cfg(any(test, feature = "test-support"))]
 const EDGE_LOG: usize = 8;
 
 /// Holds the previous naive sample so an edge can correct both sides.
@@ -72,6 +79,7 @@ impl Corrector {
     /// superpose.
     #[inline]
     pub fn edge(&mut self, t: f32, step: f32, slope: f32) {
+        debug_assert!((0.0..=1.0).contains(&t));
         let (e, r) = (blep(t), blamp(t));
         self.held += step * e[0] + slope * r[0];
         self.acc += step * e[1] + slope * r[1];
