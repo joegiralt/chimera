@@ -163,8 +163,10 @@ impl Knobs {
     /// build's instructions, not benched: settled ~70 cycles a block, one
     /// knob moving ~150, and a re-read of all of them after an edit
     /// (~6,000, every Part, as any edit moves the Project's revision)
-    /// spread over a UI frame of 12 blocks or more: 720 / 64 = 11.3.
-    pub const COST: Cost = Cost(12);
+    /// spread over a UI frame of 12 blocks or more: 720 / 64 = 11.3. VA's
+    /// nine knobs make the re-read 6,000 × 75/66 ≈ 6,820 → 6,820/12 + 220
+    /// = 788 → 788/64 = 12.3, rounded up.
+    pub const COST: Cost = Cost(13);
 
     pub const UNPRIMED: Self = Self {
         v: [0.0; KNOB_COUNT],

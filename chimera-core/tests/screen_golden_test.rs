@@ -157,7 +157,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // plan Task 6); and its refusal. Then the merge with filter-types: a
     // Sound is smaller (fixed columns, no registry entry).
     ("sound_browser", 0x1ed65ccfb138def3),
-    ("sound_browser_pool_full", 0x668867219454d099),
+    // pool_full re-recorded: MAX_SOUND_COST 2288 → 2352 (VA params).
+    ("sound_browser_pool_full", 0x9bebdfa46e75c0a0),
     // Re-recorded: a fresh project's footer drops NEW (#286).
     ("settings_personal_theme", 0xc35039e65219cdc2),
     ("settings_midi_sync", 0x0e26ce69d0f54980),
