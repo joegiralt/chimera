@@ -2223,19 +2223,28 @@ fn show_reverb(
         y = 46 + row * 10;
         rec.line(Face::Label(theme::INK2), line.as_str(), (4 + col * 78, y));
     }
+    // Keys before ORBIT starts, then after, as MEMORY's STRESS: a TYPE a
+    // line, as `FmtBuf` holds 32 bytes.
+    let rows = [
+        ("QUAD", first, after),
+        ("GATE", gate1, gate2),
+        ("ROOM", room1, room2),
+        ("HALL", hall1, hall2),
+        ("BLOOM", bloom1, bloom2),
+    ];
+    for (label, a, b) in rows {
+        y += 10;
+        line.clear();
+        let _ = write!(line, "STRESS {label} {a}/{b}");
+        rec.line(Face::Label(theme::INK2), line.as_str(), (4, y));
+    }
+    y += 10;
     line.clear();
-    // Keys before ORBIT starts, then after, as MEMORY's STRESS.
-    let _ = write!(line, "STRESS {first}/{after}/{budget} GATE {gate1}/{gate2}");
-    rec.line(Face::Label(theme::INK2), line.as_str(), (4, y + 10));
-    line.clear();
-    let _ = write!(line, "STRESS ROOM {room1}/{room2} HALL {hall1}/{hall2}");
-    rec.line(Face::Label(theme::INK2), line.as_str(), (4, y + 20));
-    line.clear();
-    let _ = write!(line, "STRESS BLOOM {bloom1}/{bloom2}");
-    rec.line(Face::Label(theme::INK2), line.as_str(), (4, y + 30));
+    let _ = write!(line, "STRESS BUDGET {budget}");
+    rec.line(Face::Label(theme::INK2), line.as_str(), (4, y));
     line.clear();
     let _ = write!(line, "REV SWITCH MAX {switch}/{switch_budget}");
-    rec.line(Face::Label(theme::INK2), line.as_str(), (4, y + 40));
+    rec.line(Face::Label(theme::INK2), line.as_str(), (4, y + 10));
     rec.flush();
 }
 
