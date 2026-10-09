@@ -170,7 +170,7 @@ chimera-engine/src/dsp/va/
   - STABILITY = 1 is bit-identical across runs and voices.
   - Below 1, the same Sound on the same Part and slot renders identically after a reload.
   - Drift depth stays inside its bounds.
-  - **HF tracking:** at `d = 1`, a C7 note measures between −14 and −8 cents (the seeded 0.6–1.0 factor). At A2 it is within 1 cent of true. At STABILITY = 1 it is exactly 0. The OSC 1–OSC 2 beat rate at C7 exceeds the one at C4.
+  - **HF tracking:** at `d = 1`, a C7 note measures between −15 and −8 cents (the seeded 0.6–1.0 factor). At A2 it is within 1 cent of true. At STABILITY = 1 it is exactly 0. The OSC 1–OSC 2 beat rate at C7 exceeds the one at C4.
 - **Peak-safe:** |y| ≤ 1 for every MODE, AMOUNT and SUB.
 - **Plumbing and sanity:** `engines_test` arms; disk round-trip of all 12 params; the ADR 0011 sanity gate for INIT; loudness of INIT.
 - **Library-ready:** each technique file is tested at 44.1, 48, 96 and 192 kHz (tuning and stability).
