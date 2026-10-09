@@ -615,7 +615,16 @@ impl Knobs {
     /// The per-voice paths the gliding knobs put on their moving loops, for
     /// the bill: a glide runs them every block until it lands, where a
     /// step ran them once.
+    #[inline]
     pub fn gliding(&self) -> Gliding {
+        if self.moving.is_empty() {
+            return Gliding::default();
+        }
+        self.gliding_of_moving()
+    }
+
+    #[inline(never)]
+    fn gliding_of_moving(&self) -> Gliding {
         use crate::params::FilterParams;
         let mut g = Gliding::default();
         for i in self.moving.iter() {

@@ -1116,10 +1116,14 @@ impl Instrument {
         }
         #[cfg(feature = "probe")]
         let t0 = crate::probe::now();
-        let gliding: [Gliding; MAX_PARTS] = core::array::from_fn(|p| self.knobs[p].0.gliding());
+        // Only a Part with a gliding knob pays the glide scans (ADR 0117).
         let glides: [Cost; MAX_PARTS] = core::array::from_fn(|p| {
+            let g = self.knobs[p].0.gliding();
+            if g == Gliding::default() {
+                return Cost::ZERO;
+            }
             let part = &shared.parts[p];
-            Voice::glide_extra(&part.params, &part.mod_state, gliding[p])
+            Voice::glide_extra(&part.params, &part.mod_state, g)
         });
         let costs: [Cost; MAX_PARTS] = core::array::from_fn(|p| shared.parts[p].voice_cost());
         // A new note is judged with its Part's glide on it (ADR 0117).

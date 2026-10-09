@@ -1034,7 +1034,7 @@ impl Voice {
             q: lane(FixedCol::Q),
             // A route moves g and k at audio rate; without one, only a
             // knob's glide does.
-            glide: !(mod_state.fixed_moves(FixedCol::Freq) || mod_state.fixed_moves(FixedCol::Q)),
+            glide: !mod_state.filter_routed(),
         };
         self.filter_clip = self.filter.process(output, &m.filter, sample_rate, &mods);
 
