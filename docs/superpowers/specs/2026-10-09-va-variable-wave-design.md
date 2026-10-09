@@ -1,6 +1,6 @@
 # VA Engine: variable-wave core: Design
 
-- **Status:** Draft, awaiting owner review (revised 2026-10-09 after the adversarial review, (private notes))
+- **Status:** Approved by the owner 2026-10-09; round-2 review fixes applied after (private notes)
 - **Date:** 2026-10-09
 - **Supersedes:** `2026-09-27-va-engine-design.md` (rev 2, never reviewed; its 11 one-per-voice models become candidates for later macro oscillators, see § Later)
 - **Research:** (private notes) (codebase), (private notes) (what makes oscillators alive), (private notes) (literature check; references in § References)
@@ -48,7 +48,7 @@ The VA chain has three pages. EDIT moves down and wraps; MINUS/PLUS move along a
 
 FOLD isn't an operator: the voice already folds after the filter.
 - **Value bars** come from each cell's `Motion` (ADR 0112 point 8).
-- **No hints:** VA adds no MIX or hold gesture, so under ADR 0086 no cell has a focus-band hint (an owner call in this review; descriptive cell help would be a new ADR).
+- **No hints:** VA adds no MIX or hold gesture, so under ADR 0086 no cell has a focus-band hint (an owner call, approved with the spec; descriptive cell help would be a new ADR).
 - **WAVE's focus glyph** is the plain arc. `FocusGlyph::Wave` draws an ALGO wavetable by index, which would show an unrelated wave. A morph scope drawn from the oscillator is § Later.
 
 ## Oscillator
@@ -76,7 +76,8 @@ A crossfade then never cancels the fundamental. In simulation it holds within 0.
 
 **Level.** Every wave, at every SHAPE, is DC-free and scaled to one RMS, **R = 0.2** (−14 dBFS). The gains are closed forms (the sine fold's is a 17-point table).
 - The narrowest pulse then peaks at 0.87, so an oscillator stays within 0.9.
-- The headroom is free in float, and `VA_OUT_GAIN` restores the level after the engine (TAPE_OUT_GAIN 4.236 is the precedent).
+- **Into the chain at full scale:** R is the morph's working level, not the chain's. `render`'s last multiply is `VA_CHAIN_GAIN = 1/(R√3)` (≈ 2.887), so the plain saw reaches the drive at ±1, the "maximum saw" the 2040 is tuned on (ADR 0096; TAPE's sources peak at −0.5 dBFS). Every wave keeps the saw's RMS, so a 5% pulse peaks at 2.5 and the chain saturates it, as a hot pulse would.
+- `VA_OUT_GAIN`, at the VCA, sets the loudness (§ Budget).
 - Across SHAPE the level holds within 0.01 dB (simulation). Across WAVE, a crossfade of two different waves dips up to 0.6 dB at SHAPE 0 and 1.9 dB at SHAPE 1.
 - The pulse loses its DC, so no DC reaches the drive, the filter, the fold or the operators (ADR 0060's DC blocker comes after them).
 
@@ -122,9 +123,10 @@ Let `a` be OSC 1 and `b` be OSC 2, each at RMS R and within its block peak bound
 - **RING's coincident edges:** RING multiplies two corrected oscillators.
   - Where their steps coincide (STAB 1, equal or octave tuning, steep waves), the residuals multiply. They fold at −31…−38 dB at C6, and that falls only 3 dB an octave.
   - Under detune the edges pass through coincidence and back.
-  - A per-interval product correction was simulated. It is exact at coincidence but 5 dB worse elsewhere, so it is § Later. The gate tests RING detuned (§ Testing). The 5% pulse in RING is exempt: −29…−40 dB even detuned.
+  - A per-interval product correction was simulated. It is exact at coincidence but 5 dB worse elsewhere, so it is § Later. The gate tests RING detuned (§ Testing). RING above SHAPE ½ is ungated: detuned at C5 the steep waves at SHAPE 1 fold at −37…−43 dB (pulse, and WAVE ⅚).
+- **RING's gain `k` ramps per sample** from the last block's value to this block's, so a SHAPE LFO that moves the cap never steps it. XOR's `p` and BITS' `q` are set once a block, exempt like the crush.
 - **XOR of identical oscillators is silent** (same wave, pitch and phase: `a XOR a = 0`), and passing through identical states pops [8]. By design. At STABILITY = 1 both start at phase 0, so with equal WAVE and tuning, XOR at AMOUNT 1 is silent. INIT's +6-cent FINE avoids it; detune under 20 cents is the fat, moving texture [8].
-- **MODE changes** use the duck: the output ramps to 0 over one block, the mode swaps, and it ramps back over the next. SYNC's reset state is cleared on entry.
+- **MODE changes** use the duck, a raised cosine: the output falls as `g_down(i) = ½(1 + cos(π(i+1)/64))` over one block, the mode swaps, and it rises as `g_up = 1 − g_down` over the next. A linear duck clicks at its turnaround (Δ² 6× the click rule's limit at A4); the cosine passes it (91% of the limit, f32, 8 start phases). SYNC's reset state is cleared on entry.
 - **Sub:** a polyBLEP square of ±R (the oscillators' RMS), one octave below OSC 1, toggled at OSC 1's wraps. It is added after the combine: `y = (c + SUB·s)/√(1 + SUB²)`. That is level-stable, and it stays within √(0.9² + R²) = 0.92.
 
 ## Stability
@@ -243,14 +245,14 @@ chimera-engine/src/dsp/va/
   - each oscillator's `tick` is `#[inline(always)]` into each mode's loop, so the count sees it;
   - `playing_cost` covers a MODE change under a held note;
   - the unit's bench rows come at ship.
-- **Loudness:** `VA_OUT_GAIN` is named like `TAPE_OUT_GAIN`, and set so INIT reaches −11.0 LUFS ±1 dB (ADR 0109) at LEVEL 45/128.
+- **Loudness:** `VA_OUT_GAIN` is named like `TAPE_OUT_GAIN`, measured after `VA_CHAIN_GAIN`, and set so INIT reaches −11.0 LUFS ±1 dB (ADR 0109) at LEVEL 45/128.
 
 ## Testing
 
 - **Alias gate** (BH4, 2¹⁵ samples, ±4 bins of each series masked, 20 Hz–10 kHz ≤ −45 dB):
   - MIX and SYNC at C6, over each WAVE anchor and midpoint × SHAPE 0, ½ and 1. In simulation the worst is −53.0 dB for MIX and −46.8 dB for SYNC (pulse slave at 2.37×, a thin margin).
   - RING at C5, detuned: FINE2 +6 cents at CRSE2 0 and +12, WAVE2 = WAVE1 or triangle, SHAPE 0 and ½, with the intermodulation lattice masked. In simulation the worst is −49.6 dB.
-  - XOR and BITS are exempt. RING's coincident edges and RING's 5% pulse are documented exceptions (§ Combine).
+  - XOR and BITS are exempt. RING's coincident edges and RING above SHAPE ½ are documented exceptions (§ Combine).
   - The band stops at 10 kHz. Above it the 2-point kernel is known weak [2]; the 4-point kernel is the named upgrade.
 - **Superposition:** the pulse (at its one-sample floor) and the split saw (SHAPE 1) pass the gate at C7 and C8 (simulation: −52 dB or better).
 - **Anchor phase:** across the WAVE sweep at SHAPE 0, ½ and 1, the fundamental stays within 1 dB of the lerp of its two neighbouring anchors' fundamentals, and in phase.
@@ -261,11 +263,12 @@ chimera-engine/src/dsp/va/
   - the split saw's fundamental at SHAPE 1 is within ±1 dB of the plain saw's.
 - **Pitch:** each anchor within 1 cent at A4 (same DFT method as the 09-27 draft).
 - **No clicks:**
-  - WAVE and SHAPE swept 0 → 1 over 100 ms on the oscillator track an ideal reference within 2·10⁻³. The reference is the continuous wave through the 2-point kernel's own triangle filter (simulation ≤ 6.3·10⁻⁴), and a 1-sample step of 0.005 fails it.
+  - WAVE and SHAPE swept 0 → 1 over 100 ms on the oscillator track an ideal reference within 2·10⁻³. The reference is the continuous wave through the 2-point kernel's own triangle filter (simulation ≤ 6.3·10⁻⁴), and one edge left uncorrected inside the oscillator fails it.
   - A 1 ms ENV into SHAPE at C1 stays within 0.02.
-  - The other knobs and every MODE change are tested on sine-only renders: the largest second difference is at most 1.5× the held renders' (+10⁻⁶), and a step of 0.002 fails it. SUB is tested at note 0, where the sub has no edge in the first 100 ms.
+  - The other knobs and every MODE change are tested on sine-only renders: the largest second difference, from block 2 on, is at most 1.5× the held renders' (+10⁻⁶), and a step of 0.002 fails it. OSC 2 is detuned +6 cents (CRSE2 +7 in SYNC), so AMOUNT mixes two different signals.
+  - SUB is tested by reference: the sweep equals `with_sub(c, s, SUB[n])` within 10⁻⁶, with c and s rendered apart and SUB[n] the per-sample ramp, the only click source.
   - BITS and XOR are exempt.
-- **Every knob audible:** `rms(y₀ − y₁) ≥ 0.1·rms(y₀)` for each continuous knob, from its minimum to its maximum (FINE −100 vs +100 cents). RING and XOR AMOUNT are tested with detuned inputs (INIT's +6 cents).
+- **Every knob audible:** `rms(y₀ − y₁) ≥ 0.1·rms(y₀)` for each continuous knob, from its minimum to its maximum (FINE −100 vs +100 cents), with WAVE2 0.7 and SYNC at CRSE2 +7, so the two oscillators differ. RING and XOR AMOUNT are also tested at INIT's +6 cents.
 - **Stability:**
   - STABILITY = 1 is bit-identical across takes, Parts and slots. A re-strike of a sounding voice keeps its phase.
   - Below 1, a (Part, slot)'s character is equal after a fresh boot. Successive takes on one voice differ, and the second starts off phase 0.
@@ -273,7 +276,7 @@ chimera-engine/src/dsp/va/
   - The walk has RMS 0.25–0.35 and makes 0.12–0.40 crossings a second at every rate, its mean within 10% (RMS) and 20% (crossings) of 48 kHz's, and the clamp engages ≤ 1.5% of the time.
   - **HF tracking:** at `d = 1`, τ alone puts a C7 note between −14.5 and +3.7 cents (the seeded u in [−0.25, 1]). At A2 it is within 1 cent of true. At STABILITY = 1 it is exactly 0. The OSC 1–OSC 2 beat rate at C7 exceeds the one at C4 where their τ differ by more than 0.05.
   - **Scale error:** C4 is exact. At `d = 1`, C7 is within ±7.2 cents and A2 within ±3 cents of true. At STABILITY = 1 it is exactly 0.
-- **Peak-safe:** |y| ≤ 0.95 for every MODE, AMOUNT and SUB.
+- **Peak-safe:** |y| ≤ 0.95·`VA_CHAIN_GAIN` for every MODE, AMOUNT and SUB.
 - **Plumbing and sanity:** `engines_test` arms; disk round-trip of all 12 params; the ADR 0011 sanity gate for INIT; the loudness of INIT over whole beats of its +6-cent pair.
 - **Library-ready:** each technique file is tested at 44.1, 48, 96 and 192 kHz (tuning and stability).
 
@@ -293,7 +296,8 @@ chimera-engine/src/dsp/va/
 One new ADR (next free number, ≥ 0118) records:
 - the architecture: two oscillators, an operator, a sub and STABILITY, as an open nod to the Ambika;
 - the XOR/BITS alias exemption, and RING's documented exceptions;
-- one RMS for every wave (R = 0.2) and the operator scaling;
+- one RMS for every wave (R = 0.2), the operator scaling, and `VA_CHAIN_GAIN` (the saw at full scale into the chain);
+- the neutral fixture maps `kind:` per engine instead of ADR 0096's appended row (same text, no existing line changes);
 - STABILITY's seeding and what recalls, the free-run carry, and the STAB = 1 threshold;
 - the code-home rule (written for `chimera-dsp`, kept in `chimera-engine` until ADR 0114 is accepted).
 
