@@ -82,7 +82,11 @@ is `docs/superpowers/specs/2026-10-02-usb-console-design.md`.
   cold boot. An empty RCC_RSR counts as software: stock bootloader 1.09
   clears the flags before its jump (seen on the unit, 2026-10-09), so
   behind it every reset reads empty, and a VBAT-kept marker costs at most
-  one boot into DFU, the marker being cleared before the jump. A stuck marker boots the
+  one boot into DFU, the marker being cleared before the jump. With RSR empty, the cause is inferred from the backup domain
+  (`ResetCause::infer`, #435): a fresh domain (BOOTS was 0) is a power-on,
+  the intent word `dfu::Marker::reset` writes to BKP13R before every
+  firmware reset is software, and a kept domain with no intent reads
+  `Watchdog` (a HardFault reset through the IWDG reads the same). A stuck marker boots the
   synth (a transient stuck may enter DFU on a later reset, which is
   accepted). `after_reset` returns `dfu::Checked`,
   which `boot` takes and pairs with the owned RTC into the `dfu::Marker`
