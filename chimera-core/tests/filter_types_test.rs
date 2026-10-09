@@ -466,9 +466,9 @@ fn ring_out(engine: EngineType, res: f32) -> (Vec<f32>, Rig, ParamSnapshot) {
     panic!("{engine:?}: never ended");
 }
 
-/// ALGO and MODAL INIT with no VCA route ring on after note-off, at RES 1,
-/// until the engine ends (#374): the voice then fades the ring over one
-/// block, so its end steps no more than the ring itself does.
+/// ALGO and MODAL INIT at RES 1: the amp gate (ADR 0110) has taken the ring
+/// down when the engine ends (#374), and what is left fades over one block,
+/// so the end steps no more than the ring itself does.
 #[test]
 fn a_voice_ending_mid_oscillation_fades_without_a_click() {
     for engine in [EngineType::Algo, EngineType::Modal] {
@@ -485,9 +485,8 @@ fn a_voice_ending_mid_oscillation_fades_without_a_click() {
             step(&y[n - 2 * BLOCK_SIZE - 1..]),
         );
         println!("{engine:?}: ring step {ring:.4}, end step {end:.4}");
-        assert!(ring > 0.01, "{engine:?}: no ring ({ring})");
         assert!(
-            end <= ring * 1.1,
+            end <= ring * 1.1 + 1e-5,
             "{engine:?}: the end steps {end}, the ring {ring}"
         );
     }
@@ -529,9 +528,8 @@ fn an_engine_ending_inside_a_steal_fade_fades_too() {
             step(&out[n - 2 * BLOCK_SIZE - 1..]),
         );
         println!("{engine:?} stolen: ring step {ring:.4}, end step {end:.4}");
-        assert!(ring > 0.01, "{engine:?}: no ring ({ring})");
         assert!(
-            end <= ring,
+            end <= ring + 1e-5,
             "{engine:?}: the end steps {end}, the ring {ring}"
         );
     }

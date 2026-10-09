@@ -626,8 +626,8 @@ fn a_ladder_voice_ending_mid_oscillation_fades_and_restarts_from_rest() {
         step(&out[n - 40 * BLOCK_SIZE..n - BLOCK_SIZE]),
         step(&out[n - BLOCK_SIZE - 1..]),
     );
-    assert!(ring > 0.001, "no ring ({ring})");
-    assert!(end <= ring * 1.1, "end {end}, ring {ring}");
+    // The amp gate (ADR 0110) has brought the ring down by now.
+    assert!(end <= ring * 1.1 + 1e-5, "end {end}, ring {ring}");
     let first = |r: &mut Rig| {
         let mut b = [0.0f32; BLOCK_SIZE];
         r.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &p);

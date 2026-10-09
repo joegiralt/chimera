@@ -41,13 +41,13 @@ fn worst() -> AlgoParams {
 
 /// The Modal Sound, STRING at BODY 0.3: `COST_STRING` 330 and `BODY` 80,
 /// host estimates until the bench (Modal 2 step A, task 12), plus
-/// `CHAIN_COST` (30 since ADR 0060). Algo is priced from its patch.
+/// `CHAIN_COST` (30 since ADR 0060, 36 with ADR 0110's amp gate). Algo is priced from its patch.
 #[test]
 fn voice_costs_are_the_billed_literals() {
-    assert_eq!(Voice::CHAIN_COST, Cost(30));
+    assert_eq!(Voice::CHAIN_COST, Cost(36));
     assert_eq!(
         voice_cost(EngineType::Modal),
-        Cost(440) + ModRouting::BASE + LP24
+        Cost(446) + ModRouting::BASE + LP24
     );
     let mods = ModState::new();
     for e in EngineType::ALL {
@@ -638,7 +638,7 @@ fn the_worst_case_is_the_sum_of_its_terms() {
         + 8 * AlgoEngine::COST_LINK.0
         + 6 * AlgoEngine::COST_FEEDBACK.0;
     assert_eq!(cost(&worst()), sum);
-    assert_eq!(Voice::CHAIN_COST.0 + sum, 830, "measured 790, + 20");
+    assert_eq!(Voice::CHAIN_COST.0 + sum, 836, "measured 790, + 26");
 }
 
 /// Each bench row's `/VOICE` reading, 2026-09-27, is billed at or above.
@@ -696,10 +696,10 @@ fn the_model_bills_every_bench_row_high() {
     ] {
         assert!(billed >= measured, "{name}: {billed} < {measured}");
     }
-    assert_eq!(tape(Loop, fwd, false), 30 + 450 + 40);
-    assert_eq!(tape(Stretch, fwd, false), 30 + 450 + 40);
-    assert_eq!(tape(Transwave, fwd, true), 30 + 770 + 40);
-    assert_eq!(tape(Oneshot, fwd, false), 30 + 230 + 40);
+    assert_eq!(tape(Loop, fwd, false), 36 + 450 + 40);
+    assert_eq!(tape(Stretch, fwd, false), 36 + 450 + 40);
+    assert_eq!(tape(Transwave, fwd, true), 36 + 770 + 40);
+    assert_eq!(tape(Oneshot, fwd, false), 36 + 230 + 40);
 }
 
 /// The Task 13 bench (rev V, 480 MHz, 2026-09-28, the bench-t13c run):
@@ -936,16 +936,16 @@ const TAPE: bool = cfg!(feature = "master-tape");
 /// FX diet spec § Intent and ADR 0031: with the bus at 1,188 (BUS+V,
 /// 2026-10-04; 1,490 with the master tape) and the modulator pool's floor
 /// (`ModRouting::BASE`, 47) added, the costliest patch gets six voices on
-/// rev V (6 × 909 + 1,188 = 6,642 ≤ 7,000; a seventh would be 7,551), and
-/// five on rev Y ((5,833 − 1,188) / 909 = 5.11; four with the tape),
+/// rev V (6 × 915 + 1,188 = 6,678 ≤ 7,000; a seventh would be 7,593), and
+/// five on rev Y ((5,833 − 1,188) / 915 = 5.08; four with the tape),
 /// without FOLD or DRIVE, at LP24 (its SVF term 0). ADR 0040: the budget,
 /// not the eight-voice pool, is what stops it.
 #[test]
 fn the_costliest_patch_gets_six_voices_on_rev_v() {
     let p = a16_a17();
-    assert_eq!(Voice::CHAIN_COST.0 + cost(&p), 862);
-    assert_eq!(Voice::CHAIN_COST.0 + ModRouting::BASE.0 + cost(&p), 909);
-    let plain = 909 + LP24.0;
+    assert_eq!(Voice::CHAIN_COST.0 + cost(&p), 868);
+    assert_eq!(Voice::CHAIN_COST.0 + ModRouting::BASE.0 + cost(&p), 915);
+    let plain = 915 + LP24.0;
     assert_eq!(cost(&costliest()), cost(&p), "no pair has more links");
     let bus = if TAPE { 1_490 } else { 1_188 };
     assert_eq!(FxBus::COST.0, bus, "{:?}", FxBus::COST);
@@ -954,15 +954,15 @@ fn the_costliest_patch_gets_six_voices_on_rev_v() {
     assert_eq!(voices_at(CPU_HZ_REV_Y, &p), if TAPE { 4 } else { 5 });
     // ADR 0091: while ORBIT plays, its own block (171) and a five-note
     // burst (857) are reserved beside the bus: five on rev V
-    // ((7,000 − 2,208) / 909 = 5.3; four with the tape). Stopped, six.
+    // ((7,000 − 2,208) / 915 = 5.2; four with the tape). Stopped, six.
     use chimera_core::instrument::Instrument;
     use chimera_core::orbit::runner::OrbitRunner;
     let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
     let playing = FxBus::COST.0 + Instrument::BURST.0 + OrbitRunner::COST.0;
-    assert_eq!((budget - playing) / 909, if TAPE { 4 } else { 5 });
-    // With the folder on, unrouted (45, ADR 0060): 954, six on rev V and
+    assert_eq!((budget - playing) / 915, if TAPE { 4 } else { 5 });
+    // With the folder on, unrouted (45, ADR 0060): 960, six on rev V and
     // four on rev Y (five and four with the tape); the drive stage too
-    // (1,011): five on rev V, four on rev Y, with the tape too. No factory
+    // (1,017): five on rev V, four on rev Y, with the tape too. No factory
     // Sound does either with this shape.
     let fits = |hz, voice: u32| (SampleBudget::for_cpu(hz).as_cost().0 - FxBus::COST.0) / voice;
     let fold = plain + Voice::FOLD_COST.0;
@@ -1002,7 +1002,13 @@ fn every_factory_sound_gets_at_least_six_voices_on_rev_v() {
             ((budget - reserved.0) / voice).min(MAX_VOICES as u32)
         };
         assert_eq!(at(CPU_HZ_REV_V, FxBus::COST), FITS[i], "factory {i}");
-        assert!(at(CPU_HZ_REV_Y, FxBus::COST) >= 5, "factory {i} on rev Y");
+        // ADR 0110's amp gate (6 more a voice) takes SQR BASS to four on rev Y
+        // beside the master tape.
+        let floor = if TAPE && i == 7 { 4 } else { 5 };
+        assert!(
+            at(CPU_HZ_REV_Y, FxBus::COST) >= floor,
+            "factory {i} on rev Y"
+        );
         let playing = FxBus::COST + Instrument::BURST + OrbitRunner::COST;
         assert_eq!(at(CPU_HZ_REV_V, playing), ORBIT[i], "factory {i}, ORBIT");
     }
@@ -1313,7 +1319,8 @@ fn a_stolen_voice_is_billed_until_its_fade_ends() {
     *r.shared.parts[5].params = a16_a17_sound();
     *r.shared.parts[0].params = chimera_core::factory::factory_sound(0).unwrap().params;
     *r.shared.parts[1].params = ParamSnapshot::for_engine(EngineType::Modal);
-    for k in 0..6 {
+    // Beside the master tape's bus, ADR 0110's 6 a voice leaves room for five.
+    for k in 0..if TAPE { 5 } else { 6 } {
         r.note_on(5, 36 + 12 * k);
     }
     r.render(1);
@@ -1500,8 +1507,8 @@ fn tape_bills_each_model() {
     for (model, bill, off, both) in [
         (Loop, 450, [8, 7, 8, 8], [8, 6, 8, 8]),
         (PingPong, 490, [8, 6, 8, 8], [8, 6, 7, 7]),
-        (Scrub, 480, [8, 6, 8, 8], [8, 6, 8, 7]),
-        (Transwave, 400, [8, 8, 8, 8], [8, 7, 8, 8]),
+        (Scrub, 480, [8, 6, 8, 8], [8, 6, 7, 7]),
+        (Transwave, 400, [8, 7, 8, 8], [8, 7, 8, 8]),
         (Stretch, 450, [8, 7, 8, 8], [8, 6, 8, 8]),
         (Oneshot, 230, [8, 8, 8, 8], [8, 8, 8, 8]),
         (Tron, 230, [8, 8, 8, 8], [8, 8, 8, 8]),
@@ -1537,7 +1544,7 @@ fn tape_bills_each_model() {
             for (stored, want, extra) in [(0.0, off, 0), (0.5, both, 40)] {
                 (p.tape.tape, p.tape.age) = (stored, stored);
                 let voice = Voice::cost(&p, &ModState::new()).0;
-                assert_eq!(voice, bill + extra + 77, "{model:?} at {stored}");
+                assert_eq!(voice, bill + extra + 83, "{model:?} at {stored}");
                 assert_eq!(at(voice), want, "{model:?} at {stored}");
             }
         }

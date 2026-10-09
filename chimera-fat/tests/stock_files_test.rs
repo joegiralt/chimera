@@ -1,0 +1,276 @@
+//! Chimera never touches stock PreenFM3 files (#405): on a FAT32 card
+//! holding the stock firmware's `/pfm3` tree beside `/CHIMERA`, every
+//! write path the firmware has (project saves on both sides, Sound saves,
+//! a console put of a TAPE source, the sweep mark, the lost-cluster sweep
+//! freeing planted chains), each cut at every block and torn at every
+//! block, leaves every stock entry, FAT link and data byte as it was, and
+//! `fsck.fat` passes once the boot sweeps have run.
+//!
+//! The stock layout is the one in ixox/preenfm3's `Storage.h`:
+//! `/pfm3/{mix.dfl,seq.dfl,Settings.txt,MidiCtl1.bin}`, `/pfm3/waveform/
+//! usr#.{txt,bin}`, `/pfm3/envcurve/usr#.{txt,bin}`, plus the banks,
+//! combos, Scala and DX7 files its browsers read.
+
+#[path = "common/ab.rs"]
+mod ab;
+#[path = "common/console.rs"]
+mod console;
+#[path = "common/image.rs"]
+mod image;
+#[path = "common/probe.rs"]
+mod probe;
+#[path = "common/tools.rs"]
+mod tools;
+#[path = "common/tree.rs"]
+mod tree;
+
+use ab::{Slot, copy, save_on, slot};
+use chimera_core::block::Block as _;
+use chimera_core::part::PartParams;
+use chimera_core::project::test_support::save_at;
+use chimera_core::project::{PartId, Project};
+use chimera_core::storage::{Card, boot_sweep};
+use chimera_fat::volume::FsKind;
+use chimera_hal::store::{Store, Sweep};
+use console::{ask, chunked, source_file_bytes, src_line};
+use image::{Cut, PART_LBA, RamDisk, Tear, layout_of};
+use probe::{marks_for, probed, swept};
+use std::rc::Rc;
+use tools::{fsck, mkfs};
+use tree::{DirAt, Tree};
+
+/// What the stock files hold before Chimera writes: the blocks of their
+/// files and directories, their FAT links in both copies, and every entry
+/// the root held.
+struct Stock {
+    blocks: Vec<(u32, [u8; 512])>,
+    fat: Vec<(u32, [u32; 2])>,
+    root: Vec<(u32, usize, [u8; 32])>,
+}
+
+fn fat_values(disk: &RamDisk, c: u32) -> [u32; 2] {
+    let l = layout_of(disk);
+    let mut v = [0; 2];
+    for (i, b) in l.fat_copies(l.fat_block(c)).enumerate() {
+        v[i] = l.entry(&disk.block(PART_LBA + b), c);
+    }
+    v
+}
+
+/// `name`.`ext` as a short name, `long` its LFN.
+fn n83(name: &str, ext: &str) -> [u8; 11] {
+    let mut n = [b' '; 11];
+    n[..name.len()].copy_from_slice(name.as_bytes());
+    n[8..8 + ext.len()].copy_from_slice(ext.as_bytes());
+    n
+}
+
+fn lfn(stem: &str, ext: &str) -> String {
+    format!("{stem}.{ext}")
+}
+
+/// A FAT32 card with the stock tree, and two planted lost chains.
+fn stock_card() -> (RamDisk, Stock) {
+    let disk = mkfs(FsKind::Fat32, 70_000, 1, 0x5F3_0001);
+    let mut t = Tree::new(&disk);
+    let mut root = t.root();
+    let mut seed = 0u8;
+    let mut put = |t: &mut Tree, d: &mut DirAt, stem: &str, ext: &str, len: u32| {
+        seed += 1;
+        let long = (stem.chars().any(|c| c.is_ascii_lowercase()) || stem.len() > 8)
+            .then(|| lfn(stem, ext));
+        let short = stem
+            .to_ascii_uppercase()
+            .chars()
+            .take(8)
+            .collect::<String>();
+        t.file(
+            d,
+            n83(&short, &ext.to_ascii_uppercase()),
+            long.as_deref(),
+            (len, 0),
+            seed,
+            None,
+        );
+    };
+    put(&mut t, &mut root, "preenfm3", "bin", 24_000);
+    let mut pfm3 = t.mkdir(&mut root, n83("PFM3", ""), Some("pfm3"));
+    put(&mut t, &mut pfm3, "Settings", "txt", 700);
+    put(&mut t, &mut pfm3, "mix", "dfl", 1_300);
+    put(&mut t, &mut pfm3, "seq", "dfl", 4_096);
+    put(&mut t, &mut pfm3, "MidiCtl1", "bin", 600);
+    put(&mut t, &mut pfm3, "Default", "bnk", 40_000);
+    put(&mut t, &mut pfm3, "Default", "cmb", 9_000);
+    for (dir, files) in [
+        ("waveform", ["usr1.txt", "usr1.bin", "usr2.bin"]),
+        ("envcurve", ["usr1.txt", "usr1.bin", "usr2.txt"]),
+        ("scala", ["just_intonation.scl", "19edo.scl", "pelog.scl"]),
+        ("dx7", ["rom1a.syx", "rom1b.syx", "brass.syx"]),
+    ] {
+        let mut d = t.mkdir(&mut pfm3, n83(&dir.to_ascii_uppercase(), ""), Some(dir));
+        for f in files {
+            let (stem, ext) = f.split_once('.').unwrap();
+            put(&mut t, &mut d, stem, ext, 2_048);
+        }
+    }
+    t.lose(3, None);
+    t.lose(7, None);
+    let l = t.l;
+    let mut s = Stock {
+        blocks: Vec::new(),
+        fat: Vec::new(),
+        root: Vec::new(),
+    };
+    let chains = t
+        .files
+        .iter()
+        .map(|f| &f.chain)
+        .chain(t.dirs.iter().map(|d| &d.chain));
+    for c in chains.flatten() {
+        let first = PART_LBA + l.cluster_block(*c).unwrap();
+        for b in first..first + l.blocks_per_cluster() {
+            s.blocks.push((b, disk.block(b)));
+        }
+        s.fat.push((*c, fat_values(&disk, *c)));
+    }
+    for c in &root.chain {
+        let first = PART_LBA + l.cluster_block(*c).unwrap();
+        for b in first..first + l.blocks_per_cluster() {
+            let blk = disk.block(b);
+            for (i, e) in blk.chunks(32).enumerate() {
+                if e[0] != 0 {
+                    s.root.push((b, i * 32, e.try_into().unwrap()));
+                }
+            }
+        }
+    }
+    assert!(s.root.len() > 4 && s.blocks.len() > 100 && s.fat.len() > 100);
+    (disk, s)
+}
+
+/// Every stock entry, link and byte as it was.
+fn assert_stock(what: &str, disk: &RamDisk, s: &Stock) {
+    for (b, want) in &s.blocks {
+        assert!(disk.block(*b) == *want, "{what}: stock data block {b}");
+    }
+    for (c, want) in &s.fat {
+        assert_eq!(fat_values(disk, *c), *want, "{what}: stock FAT link {c}");
+    }
+    for (b, at, want) in &s.root {
+        assert!(
+            disk.block(*b)[*at..*at + 32] == want[..],
+            "{what}: stock root entry at block {b}+{at}"
+        );
+    }
+}
+
+fn project(n: u32) -> Box<Project> {
+    let mut p = Project::boxed().0;
+    p.edit_part(PartId::ALL[0])
+        .mix
+        .set(PartParams::LEVEL, 0.1 * n as f32);
+    p
+}
+
+type Op = (&'static str, fn(&Slot));
+
+/// Each op on a fresh store, as after a power cycle; a failed (cut) op is
+/// fine, only the card's state is judged.
+const OPS: [Op; 9] = [
+    ("project save A", |s| {
+        let _ = save_at(&mut Card::new(), &mut probed(s), &mut project(1), 1);
+    }),
+    ("project save B", |s| {
+        let _ = save_at(&mut Card::new(), &mut probed(s), &mut project(2), 1);
+    }),
+    ("project save A again", |s| {
+        let _ = save_at(&mut Card::new(), &mut probed(s), &mut project(3), 1);
+    }),
+    ("sound save", |s| {
+        let _ = save_on(&mut probed(s), 1, &|_| Ok(()));
+    }),
+    ("sound save, other side", |s| {
+        let _ = save_on(&mut probed(s), 2, &|_| Ok(()));
+    }),
+    ("console put of a TAPE source", |s| {
+        let (h, file) = source_file_bytes(7, 4_000);
+        let _ = ask(&mut probed(s), &src_line(&h, &file), &chunked(&file));
+    }),
+    ("sweep mark request", |s| {
+        let mut st = probed(s);
+        if let Ok(vol) = st.mount() {
+            let _ = st.request_sweep(vol);
+        }
+    }),
+    ("boot sweep, freeing", |s| {
+        let _ = boot_sweep(&mut probed(s), Sweep::Free, &mut marks_for(&**s));
+    }),
+    ("boot sweep again", |s| {
+        let _ = boot_sweep(&mut probed(s), Sweep::Free, &mut marks_for(&**s));
+    }),
+];
+
+/// The boots after a cut: sweeps until one finds nothing, then fsck.
+fn recover(what: &str, cut: &Slot, stock: &Stock, check_fsck: bool) {
+    let disk = Rc::new(copy(&cut.inner));
+    for boot in 0.. {
+        assert!(boot < 4, "{what}: sweeps still finding");
+        let s = swept(&disk);
+        if s.freed == 0 && !s.healed {
+            break;
+        }
+    }
+    assert_stock(&format!("{what}, after the boot sweeps"), &disk, stock);
+    if check_fsck {
+        let f = fsck(&disk);
+        assert_eq!(f.code, 0, "{what}: fsck {}", f.out);
+        assert_eq!(f.reclaimed, 0, "{what}: fsck found lost clusters");
+    }
+}
+
+#[test]
+#[ignore = "needs dosfstools: just test-fat-tools"]
+fn chimera_leaves_stock_files_bit_identical() {
+    let (card, stock) = stock_card();
+    let f = fsck(&card);
+    assert!(f.findings().is_empty(), "stock card before: {}", f.out);
+    let mut main = slot(card);
+    let mut cuts = 0;
+    for (name, op) in OPS {
+        let writes = {
+            let dry = slot(copy(&main.inner));
+            op(&dry);
+            dry.writes.get()
+        };
+        // The second sweep finds the mark clean and writes nothing.
+        assert!(
+            writes > 0 || name == "boot sweep again",
+            "{name}: no writes"
+        );
+        for k in 0..writes {
+            for (kind, cut) in [
+                ("cut", Cut::After(k)),
+                ("torn", Cut::TornAfter(k, Tear::HalfOld)),
+            ] {
+                let what = format!("{name}: {kind} at write {k} of {writes}");
+                let c = slot(copy(&main.inner));
+                c.cut.set(cut);
+                op(&c);
+                c.cut.set(Cut::Never);
+                assert_stock(&what, &c.inner, &stock);
+                recover(&what, &c, &stock, cuts % 9 == 0);
+                cuts += 1;
+            }
+        }
+        op(&main);
+        let what = format!("{name}: whole");
+        assert_stock(&what, &main.inner, &stock);
+        main = slot(copy(&main.inner));
+    }
+    // The ops end with the sweeps: the card is whole and fsck-clean.
+    let f = fsck(&main.inner);
+    assert_eq!(f.code, 0, "after every op: {}", f.out);
+    assert_eq!(f.reclaimed, 0, "the sweep freed the planted chains");
+    assert_stock("after every op", &main.inner, &stock);
+    eprintln!("{cuts} cuts, every stock byte kept");
+}
