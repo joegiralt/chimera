@@ -905,10 +905,10 @@ fn the_reverb_bill_covers_a_switch_at_both_types() {
     for t in [T::Gate, T::Reverse, T::Room, T::Hall, T::Bloom] {
         assert!(extra_cost(t) > extra_cost(T::Quad));
     }
-    // The bench's measured REV rows less QUAD's 73.
+    // The bench's measured REV rows less QUAD's 73 (2026-10-09 bench extras).
     assert_eq!(
         [T::Gate, T::Reverse, T::Room, T::Hall, T::Bloom].map(|t| extra_cost(t).0),
-        [81, 97, 168, 188, 194]
+        [96, 112, 193, 201, 206]
     );
     let mut b = RevBill::new();
     assert_eq!(b.step(T::Quad), extra_cost(T::Quad));
@@ -917,7 +917,7 @@ fn the_reverb_bill_covers_a_switch_at_both_types() {
         extra_cost(T::Quad) + extra_cost(T::Room) + SWITCH_COST
     );
     for _ in 1..SWITCH_BILLED {
-        assert_eq!(b.step(T::Room).0, 168 + SWITCH_COST.0);
+        assert_eq!(b.step(T::Room).0, 193 + SWITCH_COST.0);
     }
     assert_eq!(b.step(T::Room), extra_cost(T::Room), "settled on ROOM");
     // HALL to BLOOM, the dearest pair, is the bench's worst switch block.
@@ -925,7 +925,7 @@ fn the_reverb_bill_covers_a_switch_at_both_types() {
     for _ in 0..SWITCH_BILLED {
         b.step(T::Hall);
     }
-    assert_eq!(b.step(T::Bloom).0, 188 + 194 + SWITCH_COST.0);
+    assert_eq!(b.step(T::Bloom).0, 201 + 206 + SWITCH_COST.0);
     // A switch on a switch keeps the costlier engine still fading.
-    assert_eq!(b.step(T::Gate).0, 194 + 81 + SWITCH_COST.0);
+    assert_eq!(b.step(T::Gate).0, 206 + 96 + SWITCH_COST.0);
 }

@@ -1611,7 +1611,7 @@ fn the_reverb_type_is_paid_for_by_admission() {
     use chimera_core::dsp::rev::{SWITCH_BILLED, extra_cost};
     use chimera_core::dsp::reverb::ReverbType as T;
     // Rev Y's budget leaves QUAD five A16 ∪ A17 voices and 70 to spare:
-    // BLOOM's extra (194) takes one.
+    // BLOOM's extra (206) takes one.
     let rig = || common::InstRig::with_budget(SampleBudget::for_cpu(CPU_HZ_REV_Y));
     let held = |kind: T| {
         let mut r = rig();

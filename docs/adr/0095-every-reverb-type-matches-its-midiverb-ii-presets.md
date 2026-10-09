@@ -799,7 +799,7 @@ the ban on 2026-10-05.
     and 93); the new reverb ParamIds and disk codes (22/6–14) collide with
     nothing on main.
   - **The voice budget bills the TYPE** (`rev::RevBill`): each TYPE's REV
-    row over QUAD's 73 (GATE 81, REVERSE 97, ROOM 168, HALL 188, BLOOM 194
+    row over QUAD's 73 (GATE 96, REVERSE 112, ROOM 193, HALL 201, BLOOM 206
     a sample), and during a switch both TYPEs' and 62 for the clear. The
     unit run before it read STRESS ROOM 451,631, BLOOM 453,056 and REV
     SWITCH MAX 461,742 against 448,000. **Expected on the unit after it:**

@@ -73,16 +73,18 @@ const WET_GATE: f32 = 9.0;
 const WET_REVERSE: f32 = 4.84;
 const WET_BLOOM: f32 = 5.72;
 
-/// Each TYPE's REV row, cycles a sample, as the bench reads it (rev V at
-/// 480 MHz, 2026-10-08, bench-stress REVERB screen).
+/// Each TYPE's REV row, cycles a sample: QUAD's bus row, the others it plus
+/// the bench's extra over QUAD (GATE 96, REVERSE 112, ROOM 193, HALL 201,
+/// BLOOM 206).
+// measured 2026-10-09, bench, rev V at 480 MHz
 pub const fn bench_cost(t: ReverbType) -> Cost {
     Cost(match t {
         ReverbType::Quad => 73,
-        ReverbType::Gate => 154,
-        ReverbType::Reverse => 170,
-        ReverbType::Room => 241,
-        ReverbType::Hall => 261,
-        ReverbType::Bloom => 267,
+        ReverbType::Gate => 169,
+        ReverbType::Reverse => 185,
+        ReverbType::Room => 266,
+        ReverbType::Hall => 274,
+        ReverbType::Bloom => 279,
     })
 }
 
@@ -94,7 +96,8 @@ pub const fn extra_cost(t: ReverbType) -> Cost {
 
 /// What a TYPE switch's worst block costs over both TYPEs' extras: the
 /// bench's REV SWITCH MAX (461,742 cycles) less STRESS's QUAD block
-/// (433,347), a sample's share, less HALL's and BLOOM's extras (188 + 194).
+/// (433,347), a sample's share, less HALL's and BLOOM's extras then (188 + 194;
+/// now 201 + 206, so 62 is a little over).
 pub const SWITCH_COST: Cost = Cost(62);
 
 /// Blocks a switch bills both TYPEs: its three phases and two to spare.
