@@ -114,7 +114,7 @@ release version *flags:
     (cd "$out" && sha256sum chimera-$V.bin chimera-$V-orbit.bin > SHA256SUMS)
     # Nothing private ships: exactly these assets, and none is a private
     # file (the stock bootloader backup, the bootloader, a dev chimera.bin).
-    [ "$(ls "$out" | sort | tr '\n' ' ')" = "SHA256SUMS chimera-$V-orbit.bin chimera-$V.bin " ] || { echo "unexpected assets in $out" >&2; exit 1; }
+    [ "$(ls "$out" | LC_ALL=C sort | tr '\n' ' ')" = "SHA256SUMS chimera-$V-orbit.bin chimera-$V.bin " ] || { echo "unexpected assets in $out" >&2; exit 1; }
     for p in preenfm3-bootloader-backup.bin bootloader.bin chimera.bin; do
         [ -f "$p" ] || continue
         h=$(sha256sum "$p" | cut -d' ' -f1)
