@@ -207,11 +207,13 @@ fn check(parts: &UsbParts, cpu_hz: u32) -> Result<(), UsbOff> {
     }
     rcc.ahb1enr.modify(|_, w| w.usb2otgen().set_bit());
     let global = &parts.global;
+    // The HAL's order: PHYSEL (the FS PHY's 48 MHz), ≥ 10 PHY clocks, then
+    // AHBIDL and CSRST. Back to back, CSRST sticks from cold (#331 test).
+    global.gusbcfg.modify(|_, w| w.physel().set_bit());
+    crate::clocks::delay_us(cpu_hz, 10);
     if !wait(&mut || global.grstctl.read().ahbidl().bit_is_set()) {
         return Err(UsbOff::AhbIdle);
     }
-    // The FS PHY, as `UsbBus::enable` selects it before its reset.
-    global.gusbcfg.modify(|_, w| w.physel().set_bit());
     global.grstctl.modify(|_, w| w.csrst().set_bit());
     if !wait(&mut || global.grstctl.read().csrst().bit_is_clear()) {
         return Err(UsbOff::CoreReset);
