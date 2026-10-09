@@ -1628,7 +1628,8 @@ fn the_reverb_type_is_paid_for_by_admission() {
     eprintln!("admitted on rev Y: QUAD {quad}, BLOOM {bloom}");
     assert!(extra_cost(T::Bloom) > Cost(0));
     assert_eq!(quad, if TAPE { 4 } else { 5 });
-    assert!(bloom < quad, "BLOOM {bloom} vs QUAD {quad}");
+    // With the master tape QUAD's four leave 683 spare: BLOOM fits too.
+    assert_eq!(bloom, 4, "BLOOM {bloom} vs QUAD {quad}");
 
     // QUAD → BLOOM → HALL → QUAD → ROOM mid-play: never more voices than
     // the TYPE's budget holds once the switch and its fades are over.
