@@ -3,6 +3,7 @@
 //! on top of it.
 
 pub mod blep;
+pub mod combine;
 pub mod osc;
 
 use crate::block::{

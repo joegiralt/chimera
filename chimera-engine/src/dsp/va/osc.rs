@@ -319,6 +319,15 @@ fn sin_q(t: f32) -> f32 {
     fast_sin_turns(t)
 }
 
+/// The phase since a still edge at `pos` was passed in `(lo, hi]`, if it
+/// was (`hi − lo < 1`, both unwrapped).
+#[inline(always)]
+fn passed(lo: f32, hi: f32, pos: f32) -> Option<f32> {
+    let (dl, dh) = (lo - pos, hi - pos);
+    let fh = floor(dh);
+    (floor(dl) != fh).then_some(dh - fh as f32)
+}
+
 /// ⌊x⌋ for |x| < 2³¹.
 #[inline(always)]
 fn floor(x: f32) -> i32 {
@@ -404,10 +413,9 @@ impl VarOsc {
     /// a floored pulse's `inc` moves: the constants are then exact every
     /// sample (a still oscillator also refreshes them when its SHAPE,
     /// segment or floored `inc` changed). `sync` is a master's wrap `t`
-    /// samples ago; not applied yet.
+    /// samples ago: the phase restarts at 0 there (spec § Combine).
     #[inline(always)]
     pub fn tick(&mut self, inc: f32, m: Morph, moving: bool, sync: Option<f32>) -> Tick {
-        let _ = sync;
         let (k, f) = m.segment();
         let s = m.shape.get();
         let (ks, kk, ki) = self.key;
@@ -423,6 +431,23 @@ impl VarOsc {
         {
             self.logged = 0;
         }
+        let (p1, wrap) = match sync {
+            None => self.advance(inc, live),
+            Some(t) => self.restart(inc, live, f, clampf(t, 0.0, 1.0)),
+        };
+        self.phase = p1;
+
+        let (ya, _) = self.shaped.eval(live[0].0, p1);
+        let (yb, _) = self.shaped.eval(live[1].0, p1);
+        Tick {
+            out: self.corrector.push(ya + (yb - ya) * f),
+            wrap,
+        }
+    }
+
+    /// The free-running sample: the new phase and the wrap's `t`.
+    #[inline(always)]
+    fn advance(&mut self, inc: f32, live: [(Wave, f32); 2]) -> (f32, Option<f32>) {
         let p0 = self.phase;
         let mut p1 = p0 + inc;
         let wrapped = p1 >= 1.0;
@@ -447,13 +472,61 @@ impl VarOsc {
             }
             self.live = now;
         }
-        self.phase = p1;
+        (p1, wrapped.then(|| p1 / inc))
+    }
 
-        let (ya, _) = self.shaped.eval(live[0].0, p1);
-        let (yb, _) = self.shaped.eval(live[1].0, p1);
-        Tick {
-            out: self.corrector.push(ya + (yb - ya) * f),
-            wrap: wrapped.then(|| p1 / inc),
+    /// A sync sample, the reset `t` samples ago, split in three in time
+    /// order: own edges up to the reset, the reset, own edges after it.
+    /// SHAPE holds through it, so the edges stand still. Each correction is
+    /// a branch difference in time order (after − before). The wrap
+    /// reported is the natural one, before the reset.
+    #[inline(always)]
+    fn restart(&mut self, inc: f32, live: [(Wave, f32); 2], f: f32, t: f32) -> (f32, Option<f32>) {
+        let p0 = self.phase;
+        let pre = p0 + inc * (1.0 - t);
+        let post = t * inc;
+        if self.correction == Correction::On {
+            let mut edges = [[Edge::NONE; 2]; 2];
+            let mut now = 0;
+            for ((wave, g), e) in live.into_iter().zip(&mut edges) {
+                let Some(i) = wave.edge_slot() else { continue };
+                *e = self.shaped.edges(wave).map(|e| e.weighted(g));
+                self.last[i] = *e;
+                now |= 1 << i;
+            }
+            self.live = now;
+            for e in edges.iter().flatten() {
+                if let Some(d) = passed(p0, pre, e.pos) {
+                    self.fixed_edge(t + d / inc, e, inc);
+                }
+            }
+            let at = |p| {
+                let (ya, da) = self.shaped.eval(live[0].0, p);
+                let (yb, db) = self.shaped.eval(live[1].0, p);
+                (ya + (yb - ya) * f, da + (db - da) * f)
+            };
+            let ((y0, d0), (y1, d1)) = (at(0.0), at(if pre >= 1.0 { pre - 1.0 } else { pre }));
+            let (step, slope) = (y0 - y1, (d0 - d1) * inc);
+            if step != 0.0 || slope != 0.0 {
+                self.edge(t, step, slope);
+            }
+            for e in edges.iter().flatten() {
+                if let Some(d) = passed(0.0, post, e.pos) {
+                    self.fixed_edge(d / inc, e, inc);
+                }
+            }
+        }
+        (
+            post,
+            (pre >= 1.0).then(|| clampf(t + (pre - 1.0) / inc, 0.0, 1.0)),
+        )
+    }
+
+    /// A still edge crossed forward at `t`.
+    #[inline(always)]
+    fn fixed_edge(&mut self, t: f32, e: &Edge, inc: f32) {
+        if e.step != 0.0 || e.slope != 0.0 {
+            self.edge(clampf(t, 0.0, 1.0), e.step, e.slope * inc);
         }
     }
 
@@ -511,5 +584,45 @@ impl VarOsc {
     #[cfg(any(test, feature = "test-support"))]
     pub fn skip_edge(&mut self, n: usize) {
         self.skip = Some(n);
+    }
+}
+
+/// The sub: a square of ±R one octave under OSC 1, flipped at each of its
+/// wraps and BLEP-corrected, one sample late like the oscillators.
+#[derive(Clone, Copy, Debug)]
+pub struct Sub {
+    high: bool,
+    corrector: Corrector,
+}
+
+impl Sub {
+    pub const NEW: Self = Self {
+        high: true,
+        corrector: Corrector::NEW,
+    };
+
+    /// +R, the corrector cleared.
+    pub fn reset(&mut self) {
+        *self = Self::NEW;
+    }
+
+    /// One sample; `wrap` is OSC 1's wrap `t` samples ago.
+    #[inline(always)]
+    pub fn tick(&mut self, wrap: Option<f32>) -> f32 {
+        if let Some(t) = wrap {
+            self.high = !self.high;
+            let step = if self.high { 2.0 * R } else { -2.0 * R };
+            self.corrector.edge(clampf(t, 0.0, 1.0), step, 0.0);
+        }
+        self.corrector.push(if self.high { R } else { -R })
+    }
+
+    pub fn high(&self) -> bool {
+        self.high
+    }
+
+    /// Restores the level (the carry); not an edge.
+    pub fn set_high(&mut self, h: bool) {
+        self.high = h;
     }
 }
