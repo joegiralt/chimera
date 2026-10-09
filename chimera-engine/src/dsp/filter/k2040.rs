@@ -488,7 +488,7 @@ impl K2040 {
 
     /// A knob glide: `g` and `k` step `STEPS` times to this block's
     /// values, each sub-block the steady loop (ADR 0117).
-    #[inline(always)]
+    #[inline(never)]
     pub(super) fn stepped<V: VoiceSpec>(
         &mut self,
         buf: &mut [f32; BLOCK_SIZE],

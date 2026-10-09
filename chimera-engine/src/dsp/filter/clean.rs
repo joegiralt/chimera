@@ -260,7 +260,7 @@ impl Clean {
 
     /// A knob glide: `g`, `k` and the trim step `STEPS` times to this
     /// block's values, each sub-block the steady loop (ADR 0117).
-    #[inline(always)]
+    #[inline(never)]
     pub(super) fn stepped<const M: u8>(&mut self, buf: &mut [f32; BLOCK_SIZE], r: Ramps) {
         let mode = CLEAN_MODES[M as usize];
         let t = (trim(mode, r.k.0), trim(mode, r.k.1));
