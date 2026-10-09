@@ -55,8 +55,12 @@ pub const DTCM: usize = 128 * 1024; // tables, audio stack
 /// D2 kept free for the audio DMA rings (3 SAI × 2 halves × 64 frames × 2 ch
 /// × 4 B = 3 KB, `chimera-stm32/src/audio/dma.rs`) and MIDI buffers.
 pub const D2_DMA_RESERVE: usize = 8 * 1024;
-/// `[Voice; MAX_VOICES]` lives in D2 beside the DMA buffers.
-pub const VOICE_RAM_BUDGET: usize = D2_SRAM - D2_DMA_RESERVE; // 286_720
+/// The UI's knob publisher, kept in D2 beside the voices on the board, not
+/// in AXI, which the bench builds hold within 8 KiB of full (ADR 0115).
+pub const D2_KNOBS: usize = core::mem::size_of::<crate::dsp::knobs::KnobPublisher>();
+/// `[Voice; MAX_VOICES]` lives in D2 beside the DMA buffers and the knob
+/// publisher.
+pub const VOICE_RAM_BUDGET: usize = D2_SRAM - D2_DMA_RESERVE - D2_KNOBS;
 /// A `Voice` less its `EngineSlot`: the chain, modulators and bookkeeping
 /// (ADR 0051, 2,048 B; ADR 0101 raises it to 2,112 for the 2040's state).
 pub const VOICE_CHAIN_BYTES: usize = 2112;

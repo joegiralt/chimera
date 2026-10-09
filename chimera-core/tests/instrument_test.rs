@@ -35,7 +35,9 @@ use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 /// bus's own cost folded in: the smallest `cpu_hz` whose `SampleBudget`
 /// rounds up to at least `FxBus::COST + voice_share` (`for_cpu` truncates).
 const fn budget_for(voice_share: u32) -> SampleBudget {
-    SampleBudget::for_cpu(((FxBus::COST.0 + voice_share) as u64 * 480_000).div_ceil(7) as u32)
+    // The bus and the knobs, reserved (ADR 0116).
+    let reserved = FxBus::COST.0 + Knobs::RESERVE.0;
+    SampleBudget::for_cpu(((reserved + voice_share) as u64 * 480_000).div_ceil(7) as u32)
 }
 
 /// The voices' share before the FX diet (7,000 − 3,310). After the diet
@@ -58,9 +60,15 @@ fn factory_voice_cost(i: usize) -> u32 {
 /// margin, so a future change to the cost model can't silently flip which
 /// slot the note lands on.
 fn morph_pad_plus_sqr_bass_budget() -> SampleBudget {
-    // And the two Parts' knobs (ADR 0112).
+    // And the two Parts' knobs (ADR 0112), and the glide each voice's
+    // filter runs while the swapped Sound's knobs settle: admission counts
+    // it, shedding doesn't (ADR 0117).
+    let glide = chimera_core::dsp::filter::FilterKind::Svf.glide_cost().0;
     budget_for(
-        (MAX_VOICES as u32 - 2) * factory_voice_cost(6) + factory_voice_cost(5) + 2 * Knobs::COST.0,
+        (MAX_VOICES as u32 - 2) * factory_voice_cost(6)
+            + factory_voice_cost(5)
+            + 2 * Knobs::COST.0
+            + (MAX_VOICES as u32 - 1) * glide,
     )
 }
 
@@ -487,7 +495,7 @@ fn refused_notes_are_counted_and_silent() {
     let mut rig = Rig::rev_v();
     let mut perf = Performance::new();
     for p in PartId::ALL {
-        *perf.edit(p).sound = chimera_core::factory::factory_sound(7).unwrap();
+        **perf.edit(p).sound = chimera_core::factory::factory_sound(7).unwrap();
     }
     let mut shared = AudioShared::from_performance(&perf);
     for p in 0..MAX_PARTS {
@@ -548,7 +556,7 @@ fn two_parts() -> Vec<f32> {
 
 fn two_parts_perf() -> Performance {
     let mut perf = Performance::new();
-    *perf.edit(PartId::ALL[1]).sound = Sound::init(EngineType::Modal);
+    **perf.edit(PartId::ALL[1]).sound = Sound::init(EngineType::Modal);
     perf.edit(PartId::ALL[1]).mix.output = DacPair::P2;
     perf.edit(PartId::ALL[1]).mix.pan = 0.5;
     perf
@@ -591,7 +599,7 @@ const CHORD_FULL: [u8; MAX_VOICES] = [48, 52, 55, 60, 64, 67, 72, 76];
 
 fn factory(i: usize) -> Performance {
     let mut perf = Performance::new();
-    *perf.edit(PartId::ALL[0]).sound =
+    **perf.edit(PartId::ALL[0]).sound =
         chimera_core::factory::factory_sound(i).expect("factory Sound");
     perf
 }
@@ -641,7 +649,10 @@ fn a_six_note_tx_epiano_chord_stays_in_budget() {
 
 #[test]
 fn the_test_budget_keeps_the_pre_diet_voice_share() {
-    assert_eq!(BUDGET.as_cost().0, FxBus::COST.0 + VOICE_SHARE);
+    assert_eq!(
+        BUDGET.as_cost().0,
+        FxBus::COST.0 + Knobs::RESERVE.0 + VOICE_SHARE
+    );
 }
 
 /// ADR 0040: on rev V a light patch (SAW LEAD, 555) plays every voice of the
@@ -1182,7 +1193,7 @@ fn a_note_on_with_a_patch_edit_is_judged_at_the_new_cost() {
 fn a_note_on_waits_out_a_fade_before_stealing_a_held_note() {
     let perf = |lead: usize| {
         let mut p = factory(lead);
-        *p.edit(PartId::ALL[1]).sound = chimera_core::factory::factory_sound(5).unwrap(); // SQR BASS
+        **p.edit(PartId::ALL[1]).sound = chimera_core::factory::factory_sound(5).unwrap(); // SQR BASS
         AudioShared::from_performance(&p)
     };
     let (light, heavy) = (perf(4), perf(6)); // SAW LEAD fills the pool, MORPH PAD two short
@@ -1226,7 +1237,7 @@ fn a_note_on_waits_out_a_fade_before_stealing_a_held_note() {
 fn a_shed_waiting_note_counts_as_refused() {
     let perf = |lead: usize, other: usize| {
         let mut p = factory(lead);
-        *p.edit(PartId::ALL[1]).sound = chimera_core::factory::factory_sound(other).unwrap();
+        **p.edit(PartId::ALL[1]).sound = chimera_core::factory::factory_sound(other).unwrap();
         AudioShared::from_performance(&p)
     };
     let mut rig = Rig::new();
@@ -1256,7 +1267,7 @@ fn a_shed_waiting_note_counts_as_refused() {
 #[test]
 fn a_steal_from_another_part_fades_on_the_old_bus() {
     let mut p = factory(4); // SAW LEAD on both Parts
-    *p.edit(PartId::ALL[1]).sound = chimera_core::factory::factory_sound(4).unwrap();
+    **p.edit(PartId::ALL[1]).sound = chimera_core::factory::factory_sound(4).unwrap();
     let shared = AudioShared::from_performance(&p);
     let mut rig = Rig::new();
     for n in CHORD6 {
@@ -1283,7 +1294,7 @@ fn a_steal_from_another_part_fades_on_the_old_bus() {
 fn full_pool(mode: PartMode) -> (Rig, AudioShared) {
     let mut p = factory(4);
     for q in [1, 2] {
-        *p.edit(PartId::ALL[q]).sound = chimera_core::factory::factory_sound(4).unwrap();
+        **p.edit(PartId::ALL[q]).sound = chimera_core::factory::factory_sound(4).unwrap();
     }
     p.edit(PartId::ALL[1]).mix.mode = mode;
     let shared = AudioShared::from_performance(&p);

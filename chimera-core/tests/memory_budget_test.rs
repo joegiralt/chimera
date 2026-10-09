@@ -285,3 +285,22 @@ fn arena_needs_the_delay() {
         "and would not with the f32 line (ADR 0087)"
     );
 }
+
+/// D2 holds the voices' Instrument, the DMA rings' reserve and the UI's
+/// knob publisher (ADR 0115), and keeps room: the figure ADR 0115 records.
+#[test]
+fn d2_holds_the_knob_publisher() {
+    use chimera_core::dsp::knobs::KnobPublisher;
+    let (inst, knobs) = (
+        size_of::<chimera_core::instrument::Instrument>(),
+        size_of::<KnobPublisher>(),
+    );
+    assert_eq!(knobs, hw::D2_KNOBS);
+    let used = inst + hw::D2_DMA_RESERVE + knobs;
+    eprintln!(
+        "D2: Instrument {inst} + DMA reserve {} + knobs {knobs} = {used} B, {} B free",
+        hw::D2_DMA_RESERVE,
+        hw::D2_SRAM - used
+    );
+    assert!(used <= hw::D2_SRAM);
+}

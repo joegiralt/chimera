@@ -123,7 +123,8 @@ fn chord(
     // ADR 0060) a budget for all eight.
     let voice = Voice::cost(&shared.parts[0].params, &shared.parts[0].mod_state).0;
     // And the Part's knobs (ADR 0112).
-    let eight = ((FxBus::COST.0 + 8 * voice + Knobs::COST.0) as u64 * 480_000).div_ceil(7) as u32;
+    let reserved = FxBus::COST.0 + Knobs::RESERVE.0;
+    let eight = ((reserved + 8 * voice + Knobs::COST.0) as u64 * 480_000).div_ceil(7) as u32;
     let mut inst = Box::new(Instrument::new(
         SAMPLE_RATE,
         SampleBudget::for_cpu(eight.max(CPU_HZ_REV_V)),

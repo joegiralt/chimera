@@ -363,6 +363,14 @@ impl ModState {
         (0..self.num_sources).any(|s| self.fixed[s][c.index()] != 0)
     }
 
+    /// A route of nonzero amount into FREQ or Q: `fixed_moves` for both, in one scan.
+    #[inline]
+    pub fn filter_routed(&self) -> bool {
+        self.fixed[..self.num_sources]
+            .iter()
+            .any(|a| a[FixedCol::Freq.index()] != 0 || a[FixedCol::Q.index()] != 0)
+    }
+
     /// Create (or set) the route `source → dest` at `amount`, 0 included.
     pub fn set_route(&mut self, source: usize, dest: usize, amount: i8) {
         if source < self.num_sources && dest < self.num_dests {

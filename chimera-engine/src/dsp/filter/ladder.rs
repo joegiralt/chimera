@@ -14,7 +14,7 @@
 
 use super::k2040::{Ends, four_pole_ends, k2040_k};
 use super::level::{FilterMods, clip_amount};
-use super::{FilterMode, TapShape, ramps, tap_g_range};
+use super::{FilterMode, SUB, TapShape, ramps, step_to, tap_g_range};
 use crate::dsp::clampf;
 use crate::hw::{BLOCK_SIZE, Cost};
 use crate::meter::Clip;
@@ -304,6 +304,8 @@ impl Ladder {
         let m = ladder_index(p.mode());
         if t.is_none() && r.g.0 == r.g.1 && r.k.0 == r.k.1 {
             self.steady(buf, r, m);
+        } else if t.is_none() && mods.glide {
+            self.stepped(buf, r, m);
         } else {
             self.moving(buf, r, t, m);
         }
@@ -369,6 +371,26 @@ impl Ladder {
             a += a_step;
             let y = self.tick(*s * a, &c);
             *s = Self::mix(&c5, &y);
+        }
+    }
+
+    /// A knob glide: `g` and `k` step `STEPS` times to this block's values,
+    /// each sub-block the steady loop (ADR 0117).
+    #[inline(never)]
+    pub(super) fn stepped(&mut self, buf: &mut [f32; BLOCK_SIZE], r: Ramps, m: usize) {
+        let (mut a, a_step) = (r.a.0, (r.a.1 - r.a.0) / BLOCK_SIZE as f32);
+        let out = OUT_LADDER / ALPHA_LADDER;
+        let m = m.min(LADDER_TAPS.len() - 1);
+        for (j, sub) in buf.as_chunks_mut::<SUB>().0.iter_mut().enumerate() {
+            let (g, k) = (step_to(r.g, j), step_to(r.k, j));
+            let c = coef(g, k);
+            let o = tap_gain(m, k) * out;
+            let c5 = LADDER_TAPS[m].c.map(|c| c * o);
+            for s in sub {
+                a += a_step;
+                let y = self.tick(*s * a, &c);
+                *s = Self::mix(&c5, &y);
+            }
         }
     }
 

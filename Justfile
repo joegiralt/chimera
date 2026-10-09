@@ -280,7 +280,7 @@ status:
 # About 10 s, up to 45 the first time while it writes two 4 MiB files in
 # /CHIMERA/BENCH; it plays a chord on channel 1. `just card seed=N` repeats
 # a run's random reads; `just card clean` removes /CHIMERA/BENCH.
-# The card's read speed beside audio and the streams it holds (any `just flash-bench <area>` first)
+# The card's read speed beside audio and the streams it holds (any `just flash-bench <area>` without ORBIT first)
 card *args:
     python3 tools/chimera-usb.py card {{args}}
 # A project file onto the card over USB (ADR 0092), saved as the unit saves:
