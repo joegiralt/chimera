@@ -5,6 +5,7 @@
 pub mod blep;
 pub mod combine;
 pub mod osc;
+pub mod stability;
 
 use crate::block::{
     Block, Change, DiskCode, Motion, ParamId, ParamSpec, Smoothing, ValFmt, apply_code,
