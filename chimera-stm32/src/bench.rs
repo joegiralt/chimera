@@ -1710,7 +1710,8 @@ impl Rig<'_> {
 
     /// REV SWITCH MAX (reverb TYPEs spec § Bench rows): the costliest whole
     /// callback block over `SWITCH_BLOCKS`, and the block budget it must
-    /// stay under: six `a16_a17` voices held on Part 1, every effect at its
+    /// stay under: six `a16_a17` voices asked of Part 1 (the unit's real
+    /// budget admits what the TYPE's bill leaves, none forced), every effect at its
     /// worst, the reverb's TYPE stepping QUAD → GATE → ROOM → HALL → BLOOM
     /// every `SWITCH_EVERY` blocks; TAPE too in the master-tape build,
     /// by `worst_bus`. The four CLEAR blocks,
@@ -1718,7 +1719,7 @@ impl Rig<'_> {
     /// mean would hide.
     #[inline(never)]
     fn switch_max(&mut self) -> (u32, u32) {
-        let budget = SampleBudget::for_cpu(u32::MAX);
+        let budget = SampleBudget::for_cpu(self.cpu_hz);
         let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
         let fx = FxBus::init_in_place(self.fx_slot);
         let shared = AudioShared::init_in_place(self.shared_slot, self.perf);

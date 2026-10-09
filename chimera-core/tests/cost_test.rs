@@ -1601,3 +1601,45 @@ fn vibrato_costs_no_level_heads() {
         assert_eq!(EngineSlot::cost(&p, &ModState::new()), base, "{m:?}");
     }
 }
+
+/// Every audio path is billed at its measured cost: the reverb TYPE's extra
+/// over QUAD comes off the voice budget, so the dearest TYPE admits fewer
+/// voices, and a switch mid-play (both engines, the clear) sheds voices
+/// rather than overrun: once the fades end, the booked cost is in budget.
+#[test]
+fn the_reverb_type_is_paid_for_by_admission() {
+    use chimera_core::dsp::rev::{SWITCH_BILLED, extra_cost};
+    use chimera_core::dsp::reverb::ReverbType as T;
+    // Rev Y's budget leaves QUAD five A16 ∪ A17 voices and 70 to spare:
+    // BLOOM's extra (194) takes one.
+    let rig = || common::InstRig::with_budget(SampleBudget::for_cpu(CPU_HZ_REV_Y));
+    let held = |kind: T| {
+        let mut r = rig();
+        r.shared.fx.reverb.kind = kind;
+        *r.shared.parts[5].params = a16_a17_sound();
+        r.render(2);
+        for k in 0..8 {
+            r.note_on(5, 36 + 6 * k);
+        }
+        r.render(4);
+        r.inst.sounding()
+    };
+    let (quad, bloom) = (held(T::Quad), held(T::Bloom));
+    eprintln!("admitted on rev Y: QUAD {quad}, BLOOM {bloom}");
+    assert!(extra_cost(T::Bloom) > Cost(0));
+    assert_eq!(quad, if TAPE { 4 } else { 5 });
+    assert!(bloom < quad, "BLOOM {bloom} vs QUAD {quad}");
+
+    // QUAD → BLOOM → HALL → QUAD → ROOM mid-play: never more voices than
+    // the TYPE's budget holds once the switch and its fades are over.
+    let mut r = rig();
+    *r.shared.parts[5].params = a16_a17_sound();
+    for k in 0..8 {
+        r.note_on(5, 36 + 6 * k);
+    }
+    for kind in [T::Quad, T::Bloom, T::Hall, T::Quad, T::Room] {
+        r.shared.fx.reverb.kind = kind;
+        r.render(SWITCH_BILLED as usize + 40);
+        assert!(r.inst.cost_pct() <= 100, "{kind:?}: {}%", r.inst.cost_pct());
+    }
+}
