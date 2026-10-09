@@ -109,10 +109,10 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
     let _ = checked.seen();
 
     // `dfu::after_reset` read RCC_RSR and cleared it for the next reset.
-    #[cfg(not(feature = "sd-probe"))]
+    #[cfg(all(not(feature = "sd-probe"), feature = "usb-console"))]
     let seen = checked.seen();
     #[cfg(not(feature = "sd-probe"))]
-    let reset_cause = ResetCause::from_rsr(seen.rsr);
+    let reset_cause = checked.cause();
 
     cache::enable_d2_sram();
     let rev = clocks::read_rev(&dp.DBGMCU);
@@ -464,7 +464,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             match restart {
                 usb::Restart::Dfu(asked) => dfu::enter(&marker, dfu::DfuFrom::Console(asked)),
                 // The boot it restarts into sweeps, the arena's gap free.
-                usb::Restart::Sweep(_) => cortex_m::peripheral::SCB::sys_reset(),
+                usb::Restart::Sweep(_) => marker.reset(),
             }
         }
         controls.snapshot();
