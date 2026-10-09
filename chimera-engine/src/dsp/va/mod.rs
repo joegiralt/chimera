@@ -2,6 +2,8 @@
 //! § Params and Motion). This is the params block; the engine is added
 //! on top of it.
 
+pub mod blep;
+
 use crate::block::{
     Block, Change, DiskCode, Motion, ParamId, ParamSpec, Smoothing, ValFmt, apply_code,
 };
