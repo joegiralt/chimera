@@ -79,7 +79,10 @@ is `docs/superpowers/specs/2026-10-02-usb-console-design.md`.
   `boot::after_reset(marker, readback, cause)`: only `DFU_MAGIC` that
   read back 0, after a software reset, jumps. A power-on or brown-out
   never jumps, so a marker kept through a power-off by VBAT can't trap a
-  cold boot, and a stuck marker boots the
+  cold boot. An empty RCC_RSR counts as software: stock bootloader 1.09
+  clears the flags before its jump (seen on the unit, 2026-10-09), so
+  behind it every reset reads empty, and a VBAT-kept marker costs at most
+  one boot into DFU, the marker being cleared before the jump. A stuck marker boots the
   synth (a transient stuck may enter DFU on a later reset, which is
   accepted). `after_reset` returns `dfu::Checked`,
   which `boot` takes and pairs with the owned RTC into the `dfu::Marker`

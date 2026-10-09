@@ -58,7 +58,6 @@ fn only_a_software_reset_honours_the_marker() {
         ResetCause::Brownout,
         ResetCause::Pin,
         ResetCause::Watchdog,
-        ResetCause::Unknown,
     ] {
         assert_eq!(
             after_reset(DFU_MAGIC, 0, cause),
@@ -66,6 +65,20 @@ fn only_a_software_reset_honours_the_marker() {
             "{cause:?}"
         );
     }
+}
+
+/// Stock bootloader 1.09 clears RCC_RSR before it jumps to us: the
+/// menu's OS UPGRADE still has to reach DFU behind it.
+#[test]
+fn an_rsr_cleared_by_the_bootloader_honours_the_marker() {
+    assert_eq!(
+        after_reset(DFU_MAGIC, 0, ResetCause::from_rsr(0)),
+        BootAction::RomDfu
+    );
+    assert_eq!(
+        after_reset(0, 0, ResetCause::from_rsr(0)),
+        BootAction::Synth
+    );
 }
 
 /// RCC_RSR as the shell reads it: a power-on's flags never enter DFU, a
@@ -81,7 +94,7 @@ fn the_reset_flags_decide() {
     assert_eq!(act(POR | BOR | PIN), BootAction::Synth);
     assert_eq!(act(BOR | PIN), BootAction::Synth);
     assert_eq!(act(PIN), BootAction::Synth);
-    assert_eq!(act(0), BootAction::Synth);
+    assert_eq!(act(0), BootAction::RomDfu); // cleared by bootloader 1.09
     assert_eq!(act(IWDG1 | SFT | PIN), BootAction::Synth);
     assert_eq!(act(SFT | PIN), BootAction::RomDfu);
 }
