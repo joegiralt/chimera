@@ -3,6 +3,7 @@
 //! on top of it.
 
 pub mod blep;
+pub mod osc;
 
 use crate::block::{
     Block, Change, DiskCode, Motion, ParamId, ParamSpec, Smoothing, ValFmt, apply_code,
