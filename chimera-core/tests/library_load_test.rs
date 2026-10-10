@@ -22,7 +22,8 @@ use chimera_core::project::{
 };
 use chimera_core::storage::{
     BuildStamp, Card, FileError, FileKind, Generation, HEADER_LEN, Header, LibId, RecordTag,
-    SourceHead, TRAILER_LEN, WholeShape, encode_sound, source_crc, write_file, write_source,
+    SourceHead, TRAILER_LEN, WholeShape, encode_library_sound, encode_sound, source_crc,
+    source_file, write_file, write_source,
 };
 use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store};
 use chimera_hal::testkit::MemStore;
@@ -168,6 +169,11 @@ fn tape_library_without_src() -> (Box<Project>, MemStore, LibFile) {
 /// `tape_library` beside a pool whose 32 source slots are all held.
 fn tape_library_with_32_sources_held() -> (Box<Project>, MemStore, LibFile) {
     let (mut p, st, file) = tape_library();
+    hold_32_sources(&mut p);
+    (p, st, file)
+}
+
+fn hold_32_sources(p: &mut Project) {
     for i in 0..32 {
         let r = SourceRef {
             crc: 0x5EED_0000 + i,
@@ -176,7 +182,11 @@ fn tape_library_with_32_sources_held() -> (Box<Project>, MemStore, LibFile) {
         };
         p.source_write(r, 64, |b| b.fill(0)).unwrap();
     }
-    (p, st, file)
+}
+
+/// The pool's source and Sound counts and its rev.
+fn counts(p: &Project) -> (usize, usize, u32) {
+    (p.pool().source_count(), p.pool().sound_count(), p.rev())
 }
 
 /// The source's bytes staged as the card-row read leaves them: unpublished.
@@ -467,4 +477,86 @@ fn a_translated_file_bigger_than_its_estimate_refuses_cleanly() {
         p.adopt(confirmed(&p, P1, file), None),
         Err(AdoptError::Full(Some(_)))
     ));
+}
+
+#[test]
+fn a_newer_side_failing_its_crc_never_loads_the_older() {
+    let (mut p, mut st, file) = saved(sound(0));
+    // B: another Sound at generation 2, its body damaged after the CRC.
+    let other = sound(1);
+    let h = Header {
+        kind: FileKind::Sound,
+        generation: Generation::FIRST.next(),
+        name: Some(other.name),
+    };
+    let mut sink = VecSink(Vec::new());
+    write_file(&mut sink, &h, &mut |w| encode_library_sound(&other, &ST, w)).unwrap();
+    let mut b = sink.0;
+    let at = b.len() - 8;
+    b[at] ^= 0x01;
+    put(&mut st, file_name(file.id, "B"), &b);
+    let file = listed(&mut st, file.id);
+    assert_eq!(file.seen.name, Some(other.name), "the listing peeks B");
+    let before = (p.part(P1).sound.clone(), counts(&p));
+    assert_eq!(read(&mut st, &mut p, file).unwrap_err(), LibNote::Changed);
+    assert!(p.part(P1).sound.bits_eq(&before.0));
+    assert_eq!(counts(&p), before.1);
+}
+
+#[test]
+fn a_staged_sources_cost_over_budget_changes_nothing() {
+    let (mut p, mut st, file) = tape_library();
+    let need = read(&mut st, &mut p, file).unwrap().source.unwrap();
+    let exact = p
+        .pool()
+        .needs(p.pool().first_free().unwrap(), scratch_of(&p));
+    set_free_to(&mut p, exact);
+    let before = counts(&p);
+    let e = p
+        .adopt(confirmed(&p, P1, file), Some(Staged::Read(need)))
+        .unwrap_err();
+    assert!(matches!(e, AdoptError::Full(Some(f)) if f.needs.bytes() > f.free.bytes()));
+    assert_eq!(counts(&p), before);
+}
+
+#[test]
+fn a_missing_source_with_every_source_slot_taken_changes_nothing() {
+    let (mut p, mut st, file) = tape_library_without_src();
+    hold_32_sources(&mut p);
+    let need = read(&mut st, &mut p, file).unwrap().source.unwrap();
+    let before = counts(&p);
+    assert_eq!(
+        p.adopt(confirmed(&p, P1, file), Some(Staged::Missing(need.r)))
+            .unwrap_err(),
+        AdoptError::Full(None)
+    );
+    assert_eq!(counts(&p), before);
+}
+
+#[test]
+fn a_damaged_src_loads_absent_as_missing() {
+    let (mut p, mut st, file) = tape_library_without_src();
+    let (h, _) = source();
+    let v = st.mount().unwrap();
+    st.make_dir(v, Dir::Tapes).unwrap();
+    st.write(v, source_file(h.sref), &mut |s: &mut dyn ByteSink| {
+        s.put(&[0; 7])
+    })
+    .unwrap();
+    let need = read(&mut st, &mut p, file).unwrap().source.unwrap();
+    assert!(need.on_card && need.held == 0 && !need.readable());
+    p.adopt(confirmed(&p, P1, file), Some(Staged::Read(need)))
+        .unwrap();
+    let id = p.pool().find_source(h.sref).unwrap();
+    assert_eq!(p.pool().absence(id), Some(Absence::Missing));
+}
+
+#[test]
+fn a_read_not_on_the_card_stores_absent_never_empty() {
+    let (mut p, mut st, file) = tape_library_without_src();
+    let need = read(&mut st, &mut p, file).unwrap().source.unwrap();
+    p.adopt(confirmed(&p, P1, file), Some(Staged::Read(need)))
+        .unwrap();
+    let id = p.pool().find_source(need.r).unwrap();
+    assert_eq!(p.pool().absence(id), Some(Absence::NotOnCard));
 }

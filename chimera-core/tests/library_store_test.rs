@@ -358,7 +358,11 @@ fn list_err<S: Store>(st: &mut S) -> LibNote {
 }
 
 fn ids(p: &LibPage) -> Vec<u32> {
-    p.entries().iter().flatten().map(|e| e.file.id.get()).collect()
+    p.entries()
+        .iter()
+        .flatten()
+        .map(|e| e.file.id.get())
+        .collect()
 }
 
 fn entry(p: &LibPage, id: u32) -> chimera_core::project::LibEntry {

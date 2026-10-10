@@ -362,6 +362,27 @@ fn lib_entry(
     }
 }
 
+/// An id's row from the sides of the sizes listed: the one rule the
+/// listing and a load's re-check share. A side that vanished since is
+/// skipped; with neither read, no generation and no error.
+fn peek_pair<S: Store>(
+    s: &mut S,
+    vol: VolumeId,
+    id: LibId,
+    sizes: [Option<u32>; 2],
+) -> Result<LibEntry, StoreError> {
+    let file = library_file(id);
+    let mut sides = [None, None];
+    for (i, side) in [Side::A, Side::B].into_iter().enumerate() {
+        if let Some(size) = sizes[i]
+            && let Some(p) = peek_side(s, vol, file.side(side), size)?
+        {
+            sides[i] = Some((p, size));
+        }
+    }
+    Ok(lib_entry(id, vol, sides))
+}
+
 /// The page of user Sounds at `at`, highest id first, into `out` in place:
 /// one directory pass, then a peek of each seen side of the kept ids.
 pub fn list_library<S: Store>(
@@ -394,16 +415,7 @@ pub fn list_library<S: Store>(
             Err(e) => return Err(e.into()),
         }
         for &(id, sizes) in near.ids[..near.len].iter().rev() {
-            let file = library_file(id);
-            let mut sides = [None, None];
-            for (i, side) in [Side::A, Side::B].into_iter().enumerate() {
-                if let Some(size) = sizes[i]
-                    && let Some(p) = peek_side(s, vol, file.side(side), size)?
-                {
-                    sides[i] = Some((p, size));
-                }
-            }
-            out.entries[usize::from(out.len)] = Some(lib_entry(id, vol, sides));
+            out.entries[usize::from(out.len)] = Some(peek_pair(s, vol, id, sizes)?);
             out.len += 1;
         }
         (out.newer, out.older) = match at {
@@ -428,9 +440,27 @@ pub struct LibraryPart {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SourceNeed {
     pub r: SourceRef,
-    /// From its `.SRC`'s directory size; 0 when not on the card.
+    /// From its `.SRC`'s directory size; 0 when not on the card, or on it
+    /// at a length no whole file has (damaged).
     pub held: usize,
     pub on_card: bool,
+}
+
+impl SourceNeed {
+    /// A `.SRC` to read: on the card with bytes. Anything else is stored
+    /// absent, at no cost.
+    pub fn readable(&self) -> bool {
+        self.on_card && self.held > 0
+    }
+
+    /// Why it is stored absent: damaged on the card, or not there.
+    fn absence(&self) -> Absence {
+        if self.on_card {
+            Absence::Missing
+        } else {
+            Absence::NotOnCard
+        }
+    }
 }
 
 /// A library Sound in the pool's scratch: what it lost, what it needs.
@@ -486,10 +516,10 @@ fn source_need<S: Store>(
         return Ok(None);
     }
     let name = source_file(r);
-    let mut held = None;
-    match s.list(vol, Dir::Tapes, &mut |f, size| {
+    let mut size = None;
+    match s.list(vol, Dir::Tapes, &mut |f, len| {
         if f == name {
-            held = held_for_file_len(size);
+            size = Some(len);
         }
     }) {
         Ok(()) | Err(StoreError::NotFound) => {}
@@ -497,8 +527,8 @@ fn source_need<S: Store>(
     }
     Ok(Some(SourceNeed {
         r,
-        held: held.map_or(0, |h| h as usize),
-        on_card: held.is_some(),
+        held: size.and_then(held_for_file_len).map_or(0, |h| h as usize),
+        on_card: size.is_some(),
     }))
 }
 
@@ -526,23 +556,21 @@ pub fn read_library_sound<S: Store>(
             Ok(()) | Err(StoreError::NotFound) => {}
             Err(e) => return Err(e.into()),
         }
-        let mut sides = [None, None];
-        for (i, side) in [Side::A, Side::B].into_iter().enumerate() {
-            if let Some(size) = sizes[i]
-                && let Some(pk) = peek_side(s, vol, ab.side(side), size)?
-            {
-                sides[i] = Some((pk, size));
-            }
-        }
-        if sides.iter().all(Option::is_none) {
+        let now = peek_pair(s, vol, file.id, sizes)?;
+        if now.file.seen.generation.is_none() && now.err.is_none() {
             return Ok(Err(LibNote::Gone));
         }
-        if lib_entry(file.id, vol, sides).file.seen != file.seen {
+        if now.file.seen != file.seen {
             return Ok(Err(LibNote::Changed));
         }
         let mut d = LibraryDecoder::new(p.pool.scratch());
         match load_ab_in_place(s, r, ab, &mut d) {
-            Ok(_) => {}
+            // The newer side failing its CRC leaves the older: not the row.
+            Ok(h) => {
+                if Some(h.generation) != file.seen.generation || h.name != file.seen.name {
+                    return Ok(Err(LibNote::Changed));
+                }
+            }
             Err(e) => {
                 return match e.err {
                     LoadError::Store(e) => Err(e.into()),
@@ -586,7 +614,7 @@ impl Project {
             let slot = pool.first_free().ok_or(None)?;
             needs = needs + pool.needs(slot, pool.scratch_ref());
         }
-        if let Some(src) = src.filter(|s| s.on_card) {
+        if let Some(src) = src.filter(SourceNeed::readable) {
             match pool.find_source(src.r).and_then(|id| pool.source(id)) {
                 Some(e) if !e.absent() => {}
                 found => {
@@ -636,16 +664,17 @@ impl Project {
             },
         });
         let dedupe = self.library_needs(need).map_err(AdoptError::Full)?;
-        match staged {
-            Some(Staged::Read(n)) => {
+        match need {
+            Some(n) if n.readable() => {
                 self.pool
                     .source_commit(n.r, n.held)
                     .map_err(|f| AdoptError::Full(Some(f)))?;
             }
-            // Its slot, if every one is taken, refuses here: nothing moved.
-            Some(Staged::Missing(r)) => {
-                let id = self.pool.source_absent(r).ok_or(AdoptError::Full(None))?;
-                self.pool.mark_absent(id, Absence::NotOnCard);
+            // Absent; its slot, if every one is taken, refuses here:
+            // nothing moved.
+            Some(n) => {
+                let id = self.pool.source_absent(n.r).ok_or(AdoptError::Full(None))?;
+                self.pool.mark_absent(id, n.absence());
             }
             None => {}
         }
