@@ -32,7 +32,10 @@ pub use frame::{
     Event, FORMAT_VERSION, FileError, FileKind, Framer, Generation, HEADER_LEN, Header, MAGIC,
     ProjectFile, ProjectId, Side, TRAILER_LEN, peek_header,
 };
-pub use library::{BUILD_LEN, BuildStamp, encode_library_sound};
+pub use library::{
+    BUILD_LEN, BuildStamp, ID_WINDOW, LIB_PEEK, LibId, NextId, Peek, encode_library_sound, lib_id,
+    library_file, next_user_id, peek_library,
+};
 pub(crate) use record::records_crc;
 pub use record::{
     CRITICAL, MAX_RECORD_LEN, ReadTag, RecordBuf, RecordTag, RecordWriter, write_file,
