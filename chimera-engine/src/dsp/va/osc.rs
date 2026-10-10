@@ -190,6 +190,16 @@ impl Pair {
         }
     }
 
+    /// The neighbouring pair up or down WAVE, the end pairs their own.
+    #[inline(always)]
+    fn next(self, up: bool) -> Pair {
+        match (self, up) {
+            (Pair::SineTri, true) | (Pair::SawPulse, false) => Pair::TriSaw,
+            (Pair::TriSaw, true) | (Pair::SawPulse, true) => Pair::SawPulse,
+            (Pair::TriSaw, false) | (Pair::SineTri, false) => Pair::SineTri,
+        }
+    }
+
     fn waves(self) -> (Wave, Wave) {
         match self {
             Pair::SineTri => (Wave::Sine, Wave::Tri),
@@ -523,30 +533,22 @@ fn seg(r: &Ramps, i: usize) -> Pair {
     Pair::of(3.0 * Unit::new(val(r.wave, i + 1)).get())
 }
 
-/// The end of the run on `pair` from `i0` in an `n`-sample block whose
-/// last sample is on another pair: the first sample on another pair.
-/// WAVE's ramp is linear and its segments monotone, so the crossing is
-/// solved for, then checked.
+/// WAVE's segment edges, `k/3`.
+const THIRDS: [f32; 4] = [0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0];
+
+/// The end of the run on `pair` from `i0` in an `n`-sample block that
+/// leaves it: the first sample past the segment's edge. WAVE's ramp is
+/// linear, so the crossing is solved for, and the solve is the split: a
+/// sample that rounding leaves on either side plays its pair within a hair
+/// of the edge, where both pairs are the anchor's pure wave. At least one
+/// sample, at most the block.
 #[inline(never)]
 fn run_end(r: &Ramps, pair: Pair, i0: usize, n: usize) -> usize {
     let (from, step) = r.wave;
-    let k = pair as usize as f32;
-    let edge = if step > 0.0 { (k + 1.0) / 3.0 } else { k / 3.0 };
-    // sample i plays j = i + 1: the first j past the edge, then checked
-    // (`as` saturates, NaN to 0)
-    // max/min, not clamp: no assert (and no panic path) in audio
-    let mut i = (((edge - from) / step) as usize).max(i0 + 1).min(n - 1);
-    if seg(r, i - 1) != pair {
-        while i > i0 + 1 && seg(r, i - 1) != pair {
-            i -= 1;
-        }
-    } else {
-        // ends by n − 1, which is on another pair
-        while seg(r, i) == pair {
-            i += 1;
-        }
-    }
-    i
+    let k = pair as usize + usize::from(step > 0.0);
+    // sample i plays j = i + 1: the first j past the edge (`as` saturates,
+    // NaN to 0); max/min, not clamp: no assert (and no panic path) in audio
+    (((THIRDS[k.min(3)] - from) / step) as usize).max(i0 + 1).min(n)
 }
 
 /// The pair `a`, `b`'s constants and places from SHAPE constants `sh`,
@@ -883,14 +885,12 @@ impl VarOsc {
         draw: &mut impl FnMut() -> f32,
     ) {
         let blk = self.block::<SYNC>(r, N, *jit);
+        // WAVE's ramp is linear: the pairs run from the first sample's to
+        // the last's, one segment at a time
+        let (mut pair, last, up) = (seg(r, 0), seg(r, N - 1), r.wave.1 > 0.0);
         let mut i0 = 0;
         while i0 < N {
-            let pair = seg(r, i0);
-            let i1 = if seg(r, N - 1) == pair {
-                N
-            } else {
-                run_end(r, pair, i0, N)
-            };
+            let i1 = if pair == last { N } else { run_end(r, pair, i0, N) };
             let span = (i0, i1);
             match pair {
                 Pair::SineTri => self.run::<Sine, Tri, N, REC, SYNC>(&blk, span, r, out, wr, jit, draw),
@@ -900,6 +900,7 @@ impl VarOsc {
                 }
             }
             i0 = i1;
+            pair = pair.next(up);
         }
     }
 
