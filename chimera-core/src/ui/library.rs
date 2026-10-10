@@ -5,9 +5,6 @@
 
 use core::fmt::Write;
 
-use embedded_graphics::draw_target::DrawTarget;
-use embedded_graphics::pixelcolor::Rgb565;
-
 use chimera_hal::store::{Dir, Store, StoreError, VolumeId};
 
 use crate::name::SoundName;
@@ -16,21 +13,17 @@ use crate::project::{
     PartId, PartSet, ReplaceError, ReplaceGuard, SlotId, SourceNeed, Staged, list_library,
     read_library_sound, save_library_sound,
 };
-use crate::storage::{Card, LibId, held_for_file_len, source_file};
+use crate::storage::{BuildStamp, Card, LibId, held_for_file_len, source_file};
 use crate::ui::UiState;
 use crate::ui::about_page;
-use crate::ui::browser::{Browse, VISIBLE_ROWS, row_y};
+use crate::ui::browser::Browse;
 use crate::ui::busy::Toast;
-use crate::ui::components;
-use crate::ui::draw;
-use crate::ui::fmt::FmtBuf;
 use crate::ui::nav::{ListAt, Location};
 use crate::ui::settings::job::Job;
 use crate::ui::settings::prompt;
 use crate::ui::settings::replace::LibraryAsk;
 use crate::ui::settings::{Ask, NamingFor, PART_ROW, SAVE_TO_LIB_ROW};
 use crate::ui::source_cell::{READ_FAILED, SOURCE_MISSING, SourceLoad, StagedStep};
-use crate::ui::theme;
 
 /// What the Sound rung lists: kept for the session, PROJECT at boot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,26 +40,29 @@ pub(crate) struct PendingLoad {
     pub read: LibRead,
 }
 
-pub(crate) struct LibState {
+pub struct LibState {
     page: LibPage,
     listed: bool,
     /// Why the last listing failed: its row says so until listed again,
     /// on the next tab or rung entry.
     err: Option<LibNote>,
-    pub load: Option<PendingLoad>,
-    pub tab: Tab,
+    pub(crate) load: Option<PendingLoad>,
+    pub(crate) tab: Tab,
+    /// The build line 3 compares stamps with.
+    pub(crate) this: BuildStamp,
     /// SAVE PART FIRST's Stale Parts and slot: asked about once the load
     /// it ran before ends, not under it.
     after: Option<(PartSet, SlotId)>,
 }
 
 impl LibState {
-    pub const NEW: LibState = LibState {
+    pub(crate) const NEW: LibState = LibState {
         page: LibPage::EMPTY,
         listed: false,
         err: None,
         load: None,
         tab: Tab::Project,
+        this: about_page::THIS,
         after: None,
     };
 
@@ -137,41 +133,6 @@ pub fn row(page: Option<&LibPage>, i: usize) -> LibRow<'_> {
 pub fn sound_rows(page: &LibPage) -> (usize, usize) {
     let first = usize::from(page.newer);
     (first, first + page.entries().len().saturating_sub(1))
-}
-
-/// Placeholder rows; the browser's LIBRARY look is drawn later. With no
-/// row, `err`'s words, or `NO SOUNDS YET`.
-pub(crate) fn draw<D>(d: &mut D, lib: &LibState, part: PartId, cursor: usize, scroll: usize)
-where
-    D: DrawTarget<Color = Rgb565>,
-{
-    let mut p = FmtBuf::new();
-    let _ = write!(p, "P{}", part.index() + 1);
-    components::title_to(d, "LIBRARY", p.as_str());
-    let page = lib.page();
-    let total = rows(page);
-    for i in 0..VISIBLE_ROWS {
-        let at = scroll + i;
-        if at >= total {
-            break;
-        }
-        let y = row_y(i);
-        let on = at == cursor;
-        if on {
-            draw::pill(d, 8, y - 16, 224, 22, theme::ACCENT);
-        }
-        let ink = if on { theme::BG } else { theme::INK };
-        let name = match row(page, at) {
-            LibRow::Newer => components::upper("‹ NEWER"),
-            LibRow::Older => components::upper("OLDER ›"),
-            LibRow::Empty => components::upper(lib.err().map_or("NO SOUNDS YET", LibNote::message)),
-            LibRow::Sound(e) => match e.seen.name {
-                Some(n) => components::upper(n.as_str()),
-                None => components::upper("—"),
-            },
-        };
-        draw::text(d, &theme::FONT_VALUE, name.as_str(), 18, y, ink);
-    }
 }
 
 /// MENU while a library load streams its source.
@@ -301,7 +262,9 @@ impl UiState {
                 PageAt::Below(_) => first,
                 PageAt::Above(_) => last,
             };
-            self.loc = Location::sound_at(p, b.lib_at(to, rows(Some(page))));
+            // A new page: its scroll starts at the top, not the last page's.
+            let n = rows(Some(page));
+            self.loc = Location::sound_at(p, b.lib_at(0, n).lib_at(to, n));
             self.browser_dirty = true;
         }
     }
@@ -477,6 +440,14 @@ impl UiState {
             }
             Err(AdoptError::Full(f)) => self.refuse(f),
         }
+    }
+
+    /// Line 3 compares stamps with `this`, not the build's own, which the
+    /// tree's state names.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn set_this_build_for_test(&mut self, this: BuildStamp) {
+        self.lib.this = this;
     }
 
     /// The row under LIBRARY's cursor, as its id.

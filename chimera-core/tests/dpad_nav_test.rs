@@ -307,3 +307,58 @@ fn mix_edit_in_the_browser_saves_the_sound() {
         "still browsing"
     );
 }
+
+/// Encoder B turns the Sound rung between PROJECT and LIBRARY; the Part
+/// stays, and MINUS and PLUS still move between Parts.
+#[test]
+fn b_turns_the_sound_rung_between_its_tabs() {
+    use chimera_core::ui::library::Tab;
+    use chimera_hal::EncoderId;
+    let mut ui = UiState::new();
+    feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B2));
+    assert_eq!(ui.lib_tab(), Tab::Project);
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
+    assert_eq!(ui.lib_tab(), Tab::Library);
+    assert_eq!(ui.location().browse().map(|b| b.0), Some(P[1]));
+    feed(&mut ui, Input::press(ButtonId::Plus));
+    assert_eq!(ui.location().browse().map(|b| b.0), Some(P[2]), "PLUS");
+    assert_eq!(ui.lib_tab(), Tab::Library, "the tab is kept");
+    feed(&mut ui, Input::turn(EncoderId::B, -1));
+    assert_eq!(ui.lib_tab(), Tab::Project);
+}
+
+/// MIX + EDIT in LIBRARY opens NAMING and saves nothing yet.
+#[test]
+fn mix_edit_in_library_opens_naming() {
+    use chimera_hal::EncoderId;
+    let mut ui = UiState::new();
+    feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B1));
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
+    let used = ui.project().pool().used();
+    feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Edit));
+    assert_eq!(ui.naming_title_for_test(), Some("SOUND NAME"));
+    assert_eq!(ui.project().pool().used(), used);
+}
+
+/// MIX + MINUS in LIBRARY has no delete: nothing asked, the pool as it was.
+#[test]
+fn mix_minus_in_library_clears_nothing() {
+    use chimera_core::project::SlotId;
+    use chimera_hal::EncoderId;
+    let mut ui = UiState::new();
+    let slot = SlotId::ALL
+        .into_iter()
+        .find(|&s| {
+            let p = ui.project();
+            p.pool().get(s).is_some() && p.users(s).is_empty()
+        })
+        .expect("a filled slot no Part plays");
+    feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B1));
+    feed(&mut ui, Input::turn(EncoderId::A, slot.index() as i8));
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
+    let used = ui.project().pool().used();
+    feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
+    assert_eq!(ui.prompt_kind_for_test(), None);
+    assert!(ui.project().pool().get(slot).is_some(), "slot kept");
+    assert_eq!(ui.project().pool().used(), used);
+}

@@ -2605,18 +2605,16 @@ impl UiState {
                 Color = embedded_graphics::pixelcolor::Rgb565,
             >,
     {
-        match self.lib.tab {
-            Tab::Project => browser::draw(
-                d,
-                &self.project,
-                part,
-                b.cursor(),
-                b.scroll(),
-                self.theme.hints,
-                self.refusal(),
-            ),
-            Tab::Library => library::draw(d, &self.lib, part, b.lib_cursor(), b.lib_scroll()),
-        }
+        let view = match self.lib.tab {
+            Tab::Project => browser::BrowserView::Project,
+            Tab::Library => browser::BrowserView::Library(&self.lib, &self.lib.this),
+        };
+        let (cursor, scroll) = match self.lib.tab {
+            Tab::Project => (b.cursor(), b.scroll()),
+            Tab::Library => (b.lib_cursor(), b.lib_scroll()),
+        };
+        let (hints, refusal) = (self.theme.hints, self.refusal());
+        browser::draw(d, &self.project, view, part, cursor, scroll, hints, refusal);
     }
 
     /// The open prompt's panel, if any, over the Sound rung.
