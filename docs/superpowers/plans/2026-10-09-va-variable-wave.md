@@ -190,7 +190,7 @@
 
 1. **Pitch at the MIDI extremes** (note 127, CRSE +24, PITCH +24, FINE +100; note 0, CRSE −24): every increment stays within `[1e-6, 0.45]`, the output is finite and |y| ≤ 0.95. *Task 6: `midi_extremes_stay_finite`.*
 2. **Routes that push a param past its range** (an LFO at full into WAVE, SHAPE, AMOUNT, SUB or STAB stored at 1, or at 0, or a NaN): the engine clamps each to 0..1; the output is finite and peak-safe, with no NaN from `sin`, `exp2`, `sqrt` or the crush. *Task 6: `out_of_range_values_clamp`.*
-3. **MODE scrolled every block under a held note** (a fast encoder): no click, and the voice settles on the last MODE within two blocks of the last turn. *Task 6: `mode_scrolled_every_block_settles`.*
+3. **MODE scrolled every block under a held note** (a fast encoder): no click, and the voice settles on the last MODE within four blocks of the last turn (the duck is two blocks each way). *Task 6: `mode_scrolled_every_block_settles`.*
 4. **A voice that moves between Parts and engines** (VA on Part 1, then TAPE, then VA on Part 2): the slot rebuilds in place, the character follows Part 2's seed, and Part 1 played on the same slot after a fresh boot has Part 1's character. *Task 8: `a_voice_moving_parts_takes_the_parts_character`.*
 5. **ENV 1 → VCA deleted:** VA's raw output never decays, so the key ends the note through the voice fade (TAPE's `key_gates`), and no voice sticks. *Task 8: `va_with_no_vca_route_ends_at_key_up`.*
 
@@ -550,7 +550,7 @@ The render (the algorithm the signatures leave open):
 #[test] fn bills_follow_the_mode()           // mode_cost: Mix 450, Sync 500, Ring 450, Xor 460, Bits 460; playing_cost == Some(mode_cost(mode())) while active, None before note_on
 #[test] fn midi_extremes_stay_finite()       // Review Focus 1: note 127 + CRSE +24 + set_pitch(2400) + FINE +100; note 0 + CRSE −24: 1 s each, all finite, |y| ≤ 0.95, the output still moves (rms > 1e-3)
 #[test] fn out_of_range_values_clamp()       // Review Focus 2: wave 1.7/−0.3/NaN, shape −0.4/1.9/NaN, amount 2, sub 3, stability −1, 2 and NaN: finite, |y| ≤ 0.95
-#[test] fn mode_scrolled_every_block_settles() // Review Focus 3: MODE stepped Mix→Sync→Ring→Mix… every block for 40 blocks, then held at Ring: the click rule over the whole run (XOR and BITS left out, exempt), mode() == Ring within 2 blocks of the last change
+#[test] fn mode_scrolled_every_block_settles() // Review Focus 3: MODE stepped Mix→Sync→Ring→Mix… every block for 40 blocks, then held at Ring: the click rule over the whole run (XOR and BITS left out, exempt), mode() == Ring within 4 blocks of the last change
 ```
 
 - [ ] **Step 2: Run them.** `cargo test -p chimera-core --test va_engine_test`. Expected: FAIL to compile (no `VaEngine`).

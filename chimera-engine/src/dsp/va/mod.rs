@@ -1,17 +1,32 @@
-//! VA: two variable-wave oscillators and a combine stage (spec § Pages,
-//! § Params and Motion). This is the params block; the engine is added
-//! on top of it.
+//! VA: two variable-wave oscillators, an operator, a sub and STABILITY
+//! (spec § Pages, § Params and Motion, § Combine, § Stability): the params
+//! block and `VaEngine`.
 
 pub mod blep;
 pub mod combine;
 pub mod osc;
 pub mod stability;
 
+use core::mem::MaybeUninit;
+
+use chimera_hal::BLOCK_SIZE;
+
 use crate::block::{
     Block, Change, DiskCode, Motion, ParamId, ParamSpec, Smoothing, ValFmt, apply_code,
 };
+use crate::dsp::algo::math::exp2;
 use crate::dsp::clampf;
+use crate::dsp::ease::{Ramp, at, step_of};
+use crate::dsp::glide::Glide;
 use crate::glyph::FocusGlyph;
+use crate::hw::Cost;
+use crate::project::PartId;
+use crate::voice_alloc::VoiceIdx;
+use combine::{Crusher, Peaks, combine, ring_gain, with_sub};
+use osc::{Morph, R, Sub, Unit, VarOsc, peak_bound};
+use stability::{Seed, Stability, depth};
+#[cfg(any(test, feature = "test-support"))]
+use {osc::Correction, stability::Character};
 
 /// One of the two oscillators: the index into `VaParams`' pairs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -255,5 +270,532 @@ impl Block for VaParams {
 
     fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
         id == Self::MODE && apply_code(VaMode::from_disk_code(code), |m| self.mode = m)
+    }
+}
+
+/// The morph's working level `R` to the chain's: the plain saw at ±1, the
+/// "maximum saw" the 2040 is tuned on (ADR 0096).
+pub const VA_CHAIN_GAIN: f32 = 1.0 / (R * 1.732_050_8);
+
+/// VA's output gain at the VCA (ADR 0058); Task 10 sets it by INIT's
+/// loudness.
+pub const VA_OUT_GAIN: f32 = 1.0;
+
+/// Cycles a sample per MODE, LP24's 95 included: paper estimates (spec
+/// § Budget) until the ADR 0056 count re-bills them.
+pub const COST_MIX: Cost = Cost(450);
+pub const COST_SYNC: Cost = Cost(500);
+pub const COST_RING: Cost = Cost(450);
+pub const COST_XOR: Cost = Cost(460);
+pub const COST_BITS: Cost = Cost(460);
+
+/// The MODE duck's length each way, two blocks.
+const DUCK: usize = 2 * BLOCK_SIZE;
+
+/// A jitter's cents as a share of the increment, `2^(c/1200) − 1` to first
+/// order.
+const CENT: f32 = core::f32::consts::LN_2 / 1200.0;
+
+/// A MODE change: down over two blocks, the mode swaps, up over two. A
+/// change while it goes down retargets it; one while it comes up waits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Duck {
+    Steady,
+    /// Which of the two blocks down.
+    Down(u8),
+    Up(u8),
+}
+
+/// The duck's gain at sample `j` (0..`DUCK`) of its way down, a raised
+/// cosine landing on 0: a linear duck clicks at its turnaround.
+#[inline]
+fn duck_down(j: usize) -> f32 {
+    0.5 + 0.5 * libm::cosf(core::f32::consts::PI * (j + 1) as f32 / DUCK as f32)
+}
+
+/// What a voice's VA keeps across the idle slot's rebuild (spec
+/// § Stability, free-run): both phases, the sub's level, the walks and the
+/// seeded character, and whose seed it is.
+#[derive(Clone, Copy)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the slot carries it from Task 8")
+)]
+pub(crate) struct VaCarry {
+    phase: [f32; 2],
+    high: bool,
+    stab: Stability,
+    seeded: Option<PartId>,
+}
+
+/// One block's lanes: each a `(from, step)` ramp a sample (`ease::at`).
+#[derive(Clone, Copy)]
+struct Lanes {
+    inc: [(f32, f32); 2],
+    wave: [(f32, f32); 2],
+    shape: [(f32, f32); 2],
+    amount: (f32, f32),
+    sub: (f32, f32),
+    k: (f32, f32),
+    moving: [bool; 2],
+    pk: Peaks,
+    d: f32,
+}
+
+/// Two variable-wave oscillators, combined by MODE, with a sub under OSC 1
+/// and STABILITY's drift (spec § Combine, § Stability).
+pub struct VaEngine {
+    osc: [VarOsc; 2],
+    sub: Sub,
+    stab: Stability,
+    crusher: Crusher,
+    /// Each oscillator's cycle factor from its last wrap's jitter.
+    jit: [f32; 2],
+    inc: [Ramp; 2],
+    wave: [Ramp; 2],
+    shape: [Ramp; 2],
+    amount: Ramp,
+    sub_level: Ramp,
+    ring_k: Ramp,
+    note: u8,
+    pitch: f32,
+    slide: Glide,
+    sample_rate: u32,
+    voice: VoiceIdx,
+    /// The Part whose seed `stab` holds.
+    seeded: Option<PartId>,
+    active: bool,
+    playing: VaMode,
+    duck: Duck,
+    #[cfg(any(test, feature = "test-support"))]
+    last_k: [f32; 2],
+}
+
+#[cfg(not(any(test, feature = "test-support")))]
+const _: () = assert!(size_of::<VaEngine>() <= size_of::<crate::dsp::modal::ModalEngine>());
+
+impl VaEngine {
+    fn idle() -> Self {
+        Self {
+            osc: [VarOsc::NEW; 2],
+            sub: Sub::NEW,
+            stab: Stability::NEW,
+            crusher: Crusher::NEW,
+            jit: [1.0; 2],
+            inc: [Ramp::default(); 2],
+            wave: [Ramp::default(); 2],
+            shape: [Ramp::default(); 2],
+            amount: Ramp::default(),
+            sub_level: Ramp::default(),
+            ring_k: Ramp::default(),
+            note: 60,
+            pitch: 0.0,
+            slide: Glide::new(1.0, 1.0),
+            sample_rate: 0,
+            voice: VoiceIdx::ALL[0],
+            seeded: None,
+            active: false,
+            playing: VaMode::Mix,
+            duck: Duck::Steady,
+            #[cfg(any(test, feature = "test-support"))]
+            last_k: [0.0; 2],
+        }
+    }
+
+    pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
+        slot.write(Self::idle())
+    }
+
+    /// The voice slot whose seed this engine draws.
+    pub fn place(&mut self, voice: VoiceIdx) {
+        self.voice = voice;
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the slot carries it from Task 8")
+    )]
+    pub(crate) fn carry(&self) -> VaCarry {
+        VaCarry {
+            phase: [self.osc[0].phase(), self.osc[1].phase()],
+            high: self.sub.high(),
+            stab: self.stab,
+            seeded: self.seeded,
+        }
+    }
+
+    /// A fresh engine where the voice's last one left off: the phases run
+    /// on from there at the next note-on, below STABILITY 1.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the slot carries it from Task 8")
+    )]
+    pub(crate) fn restore(&mut self, c: VaCarry) {
+        for (o, p) in self.osc.iter_mut().zip(c.phase) {
+            o.set_phase(p);
+        }
+        self.sub.set_high(c.high);
+        (self.stab, self.seeded) = (c.stab, c.seeded);
+    }
+
+    /// The oscillators' and the walks' rates.
+    fn prepare(&mut self, sample_rate: u32) {
+        if sample_rate != self.sample_rate {
+            self.sample_rate = sample_rate;
+            for o in &mut self.osc {
+                o.prepare(sample_rate as f32);
+            }
+            self.stab.prepare(sample_rate as f32 / BLOCK_SIZE as f32);
+        }
+    }
+
+    /// The voice's PITCH and FINE with their routes, in cents.
+    pub fn set_pitch(&mut self, cents: f32) {
+        self.pitch = cents;
+    }
+
+    /// At STABILITY 1 an idle voice starts both oscillators and the sub at
+    /// phase 0; otherwise, and on a sounding voice, the phases run on.
+    pub fn note_on(&mut self, note: u8, p: &VaParams, part: PartId, sample_rate: u32) {
+        self.prepare(sample_rate);
+        if !self.active {
+            if p.stability >= 1.0 {
+                for o in &mut self.osc {
+                    o.reset();
+                }
+                self.sub.reset();
+                self.jit = [1.0; 2];
+            }
+            (self.playing, self.duck) = (p.mode, Duck::Steady);
+        }
+        if self.seeded != Some(part) {
+            debug_assert!(self.voice.index() < 256);
+            self.stab
+                .seed(Seed::of(part.index() as u32, self.voice.index() as u32));
+            self.seeded = Some(part);
+        }
+        self.note = note;
+        self.slide = Glide::new(1.0, 1.0);
+        self.active = true;
+    }
+
+    /// A steal's glide (ADR 0065): sounding, the phases play on and the
+    /// pitch glides to `note`'s; idle, a plain `note_on`.
+    pub fn glide_on(
+        &mut self,
+        note: u8,
+        p: &VaParams,
+        part: PartId,
+        (sample_rate, tau): (u32, f32),
+    ) {
+        if self.active {
+            self.glide_to(note, (sample_rate, tau));
+        } else {
+            self.note_on(note, p, part, sample_rate);
+        }
+    }
+
+    /// The pitch glides to `note`'s from where it sounds, a one-pole of
+    /// `tau` seconds in log pitch. Idle, or on `note`, nothing moves.
+    pub fn glide_to(&mut self, note: u8, (_sample_rate, tau): (u32, f32)) {
+        if !self.active || note == self.note {
+            return;
+        }
+        let from = exp2((self.note as f32 - note as f32) / 12.0) * self.slide.value();
+        self.slide = Glide::new(from, tau);
+        self.slide.toward(1.0);
+        self.note = note;
+    }
+
+    /// Nothing: the VCA ends the note, and the oscillators run on.
+    pub fn note_off(&mut self) {}
+
+    /// A fresh note's ramps start on their values.
+    pub fn hold(&mut self) {
+        for r in self
+            .inc
+            .iter_mut()
+            .chain(&mut self.wave)
+            .chain(&mut self.shape)
+        {
+            r.hold();
+        }
+        self.amount.hold();
+        self.sub_level.hold();
+        self.ring_k.hold();
+    }
+
+    /// From the first note-on on: VA never decays.
+    pub fn is_active(&self) -> bool {
+        self.active
+    }
+
+    /// The MODE playing: a new one takes over halfway through its duck.
+    pub fn mode(&self) -> VaMode {
+        self.playing
+    }
+
+    pub const fn mode_cost(m: VaMode) -> Cost {
+        match m {
+            VaMode::Mix => COST_MIX,
+            VaMode::Sync => COST_SYNC,
+            VaMode::Ring => COST_RING,
+            VaMode::Xor => COST_XOR,
+            VaMode::Bits => COST_BITS,
+        }
+    }
+
+    pub fn cost(p: &VaParams) -> Cost {
+        Self::mode_cost(p.mode)
+    }
+
+    /// The playing MODE's bill, while a note sounds.
+    pub fn playing_cost(&self) -> Option<Cost> {
+        self.active.then(|| Self::mode_cost(self.playing))
+    }
+
+    pub fn render(&mut self, out: &mut [f32; BLOCK_SIZE], p: &VaParams, sample_rate: u32) {
+        if !self.active {
+            out.fill(0.0);
+            return;
+        }
+        self.prepare(sample_rate);
+        let unit = |v: f32| clampf(v, 0.0, 1.0);
+        let d = depth(p.stability);
+        self.slide.tick();
+        let drift = self.stab.step(d);
+        let base = self.note as f32 * 100.0 + self.pitch;
+        let mut cents = [0.0f32; 2];
+        for (k, c) in cents.iter_mut().enumerate() {
+            *c = base
+                + f32::from(p.coarse[k].clamp(-24, 24)) * 100.0
+                + clampf(p.fine[k], -100.0, 100.0)
+                + drift[k];
+        }
+        let scale = self.stab.scale_cents(cents, d);
+        let slide = self.slide.value();
+        let hz = [0, 1].map(|k| 440.0 * exp2((cents[k] + scale[k] - 6900.0) / 1200.0) * slide);
+        let hz = self.stab.tracked(hz, d);
+
+        let lane = |r: &mut Ramp, v: f32| {
+            let ft = r.step(v);
+            (ft, (ft.0, step_of(ft, BLOCK_SIZE)))
+        };
+        let mut l = Lanes {
+            inc: [(0.0, 0.0); 2],
+            wave: [(0.0, 0.0); 2],
+            shape: [(0.0, 0.0); 2],
+            amount: lane(&mut self.amount, unit(p.amount)).1,
+            sub: lane(&mut self.sub_level, unit(p.sub)).1,
+            k: (0.0, 0.0),
+            moving: [false; 2],
+            pk: Peaks { a: 0.0, b: 0.0 },
+            d,
+        };
+        let mut pk = [0.0f32; 2];
+        for k in 0..2 {
+            let (inc, li) = lane(&mut self.inc[k], self.osc[k].inc_for(hz[k]));
+            let (wave, lw) = lane(&mut self.wave[k], unit(p.wave[k]));
+            let (shape, ls) = lane(&mut self.shape[k], unit(p.shape[k]));
+            (l.inc[k], l.wave[k], l.shape[k]) = (li, lw, ls);
+            l.moving[k] = shape.0 != shape.1;
+            let m = |w, s| Morph {
+                wave: Unit::new(w),
+                shape: Unit::new(s),
+            };
+            pk[k] =
+                peak_bound(m(wave.0, shape.0), inc.0).max(peak_bound(m(wave.1, shape.1), inc.1));
+        }
+        l.pk = Peaks { a: pk[0], b: pk[1] };
+        let k = self.ring_k.step(ring_gain(l.pk));
+        l.k = (k.0, step_of(k, BLOCK_SIZE));
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            self.last_k = [k.0, k.1];
+        }
+
+        let duck = match self.duck {
+            Duck::Steady if p.mode != self.playing => Duck::Down(0),
+            d => d,
+        };
+        match self.playing {
+            VaMode::Mix => self.render_mix(out, &l),
+            VaMode::Sync => self.render_sync(out, &l),
+            VaMode::Ring => self.render_ring(out, &l),
+            VaMode::Xor => self.render_xor(out, &l),
+            VaMode::Bits => {
+                self.crusher.set(unit(p.amount));
+                self.render_bits(out, &l)
+            }
+        }
+        self.duck = match duck {
+            Duck::Steady => Duck::Steady,
+            Duck::Down(b) => {
+                for (i, y) in out.iter_mut().enumerate() {
+                    *y *= duck_down(b as usize * BLOCK_SIZE + i);
+                }
+                if b == 0 {
+                    Duck::Down(1)
+                } else {
+                    self.playing = p.mode;
+                    Duck::Up(0)
+                }
+            }
+            Duck::Up(b) => {
+                for (i, y) in out.iter_mut().enumerate() {
+                    *y *= 1.0 - duck_down(b as usize * BLOCK_SIZE + i);
+                }
+                if b == 0 { Duck::Up(1) } else { Duck::Steady }
+            }
+        };
+    }
+
+    #[inline(never)]
+    fn render_mix(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes) {
+        self.run(out, l, VaMode::Mix);
+    }
+
+    #[inline(never)]
+    fn render_sync(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes) {
+        self.run(out, l, VaMode::Sync);
+    }
+
+    #[inline(never)]
+    fn render_ring(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes) {
+        self.run(out, l, VaMode::Ring);
+    }
+
+    #[inline(never)]
+    fn render_xor(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes) {
+        self.run(out, l, VaMode::Xor);
+    }
+
+    #[inline(never)]
+    fn render_bits(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes) {
+        self.run(out, l, VaMode::Bits);
+    }
+
+    /// One block in `mode`, a constant in each caller, so each mode's loop
+    /// is its own (the count sees each).
+    #[inline(always)]
+    fn run(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, mode: VaMode) {
+        let ramp = |(from, step): (f32, f32), i| at(from, step, i);
+        for (i, y) in out.iter_mut().enumerate() {
+            let morph = |k: usize| Morph {
+                wave: Unit::new(ramp(l.wave[k], i)),
+                shape: Unit::new(ramp(l.shape[k], i)),
+            };
+            let a = self.osc[0].tick(ramp(l.inc[0], i) * self.jit[0], morph(0), l.moving[0], None);
+            let s = self.sub.tick(a.wrap);
+            if a.wrap.is_some() {
+                self.jit[0] = 1.0 + self.stab.jitter(l.d) * CENT;
+            }
+            let sync = if mode == VaMode::Sync { a.wrap } else { None };
+            let b = self.osc[1].tick(ramp(l.inc[1], i) * self.jit[1], morph(1), l.moving[1], sync);
+            if b.wrap.is_some() {
+                self.jit[1] = 1.0 + self.stab.jitter(l.d) * CENT;
+            }
+            let c = combine(
+                mode,
+                a.out,
+                b.out,
+                ramp(l.amount, i),
+                ramp(l.k, i),
+                l.pk,
+                &self.crusher,
+            );
+            *y = with_sub(c, s, ramp(l.sub, i)) * VA_CHAIN_GAIN;
+        }
+    }
+
+    /// A glide steal's ratio now, 1 at rest.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn slide(&self) -> f32 {
+        self.slide.value()
+    }
+
+    /// Both oscillators uncorrected: the alias gate's baseline.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn uncorrected(&mut self) {
+        self.osc = self.osc.map(|o| o.with_correction(Correction::Off));
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn osc_phase(&self) -> [f32; 2] {
+        [self.osc[0].phase(), self.osc[1].phase()]
+    }
+
+    /// The seeded character, once a note-on (or a carry) seeded it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn character(&self) -> Option<Character> {
+        self.seeded.map(|_| self.stab.character())
+    }
+
+    /// The last block's RING gain ramp, from and to.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn ring_k(&self) -> [f32; 2] {
+        self.last_k
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+    use super::*;
+    use std::boxed::Box;
+    use std::vec::Vec;
+
+    const SR: u32 = 48_000;
+
+    fn with_engine<R>(f: impl FnOnce(&mut VaEngine) -> R) -> R {
+        let mut slot = Box::new(MaybeUninit::<VaEngine>::uninit());
+        f(VaEngine::init_in_place(&mut slot))
+    }
+
+    fn run(e: &mut VaEngine, p: &VaParams, blocks: usize) -> Vec<u32> {
+        let mut out = [0.0f32; BLOCK_SIZE];
+        (0..blocks)
+            .flat_map(|_| {
+                e.render(&mut out, p, SR);
+                out.map(f32::to_bits)
+            })
+            .collect()
+    }
+
+    /// The carry is `carry_restores_the_state` (spec § Stability, free-run):
+    /// `carry` is the crate's, so its test lives here.
+    #[test]
+    fn carry_restores_the_state() {
+        let p = VaParams {
+            stability: 0.5,
+            fine: [0.0, 6.0],
+            ..VaParams::default()
+        };
+        let part = PartId::new(2).unwrap();
+        let c = with_engine(|e| {
+            e.place(VoiceIdx::ALL[3]);
+            e.note_on(69, &p, part, SR);
+            run(e, &p, 225);
+            let c = e.carry();
+            with_engine(|f| {
+                f.restore(c);
+                assert_eq!(f.osc_phase(), e.osc_phase());
+                assert_eq!(f.character(), e.character());
+                assert!(f.character().is_some());
+                assert!(!f.is_active());
+            });
+            c
+        });
+        let next = || {
+            with_engine(|e| {
+                e.place(VoiceIdx::ALL[3]);
+                e.restore(c);
+                e.hold();
+                e.note_on(64, &p, part, SR);
+                assert_ne!(e.osc_phase(), [0.0; 2], "below STAB 1 the phases run on");
+                run(e, &p, 150)
+            })
+        };
+        assert_eq!(next(), next());
     }
 }
