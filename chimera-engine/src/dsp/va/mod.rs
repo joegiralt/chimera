@@ -798,4 +798,62 @@ mod tests {
         };
         assert_eq!(next(), next());
     }
+
+    /// The carry holds the walks and the streams themselves: two engines
+    /// restoring one carry would agree whatever it held.
+    #[test]
+    fn the_carry_holds_the_walks_and_streams() {
+        let p = VaParams {
+            stability: 0.25,
+            ..VaParams::default()
+        };
+        with_engine(|e| {
+            e.place(VoiceIdx::ALL[1]);
+            e.note_on(69, &p, PartId::new(1).unwrap(), SR);
+            run(e, &p, 300);
+            with_engine(|f| {
+                f.restore(e.carry());
+                let (mut a, mut b) = (e.stab, f.stab);
+                for _ in 0..64 {
+                    assert_eq!(a.step(0.25), b.step(0.25));
+                    assert_eq!(a.jitter(0.25), b.jitter(0.25));
+                }
+            });
+        });
+    }
+
+    /// STAB 1 on an idle engine that ran before starts at phase 0: it
+    /// renders as an engine that never played.
+    #[test]
+    fn stab_one_resets_a_restored_engine() {
+        let part = PartId::new(0).unwrap();
+        let alive = VaParams {
+            stability: 0.5,
+            fine: [0.0, 6.0],
+            ..VaParams::default()
+        };
+        let c = with_engine(|e| {
+            e.note_on(69, &alive, part, SR);
+            run(e, &alive, 77);
+            e.carry()
+        });
+        let steady = VaParams {
+            fine: [0.0, 6.0],
+            ..VaParams::default()
+        };
+        let played = with_engine(|e| {
+            e.restore(c);
+            assert_ne!(e.osc_phase(), [0.0; 2]);
+            e.hold();
+            e.note_on(69, &steady, part, SR);
+            assert_eq!(e.osc_phase(), [0.0; 2]);
+            run(e, &steady, 150)
+        });
+        let fresh = with_engine(|e| {
+            e.hold();
+            e.note_on(69, &steady, part, SR);
+            run(e, &steady, 150)
+        });
+        assert_eq!(played, fresh);
+    }
 }
