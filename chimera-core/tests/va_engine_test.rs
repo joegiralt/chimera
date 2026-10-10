@@ -685,7 +685,7 @@ fn steal_glide_glides() {
 
 #[test]
 fn bills_follow_the_mode() {
-    let bills = [590, 700, 600, 610, 600];
+    let bills = [610, 720, 620, 630, 620];
     assert!(VaEngine::mode_cost(VaMode::Sync) > VaEngine::mode_cost(VaMode::Mix));
     for (mode, bill) in VaMode::ALL.into_iter().zip(bills) {
         assert_eq!(VaEngine::mode_cost(mode), Cost(bill), "{mode:?}");

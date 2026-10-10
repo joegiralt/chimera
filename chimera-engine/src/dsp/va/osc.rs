@@ -534,7 +534,8 @@ fn run_end(r: &Ramps, pair: Pair, i0: usize, n: usize) -> usize {
     let edge = if step > 0.0 { (k + 1.0) / 3.0 } else { k / 3.0 };
     // sample i plays j = i + 1: the first j past the edge, then checked
     // (`as` saturates, NaN to 0)
-    let mut i = (((edge - from) / step) as usize).clamp(i0 + 1, n - 1);
+    // max/min, not clamp: no assert (and no panic path) in audio
+    let mut i = (((edge - from) / step) as usize).max(i0 + 1).min(n - 1);
     if seg(r, i - 1) != pair {
         while i > i0 + 1 && seg(r, i - 1) != pair {
             i -= 1;
@@ -595,15 +596,55 @@ static RECIP: [f32; 65] = {
 /// The waves in WAVE's order.
 const WAVES: [Wave; 4] = [Wave::Sine, Wave::Tri, Wave::Saw, Wave::Pulse];
 
-/// `peak_bound` of WAVE `wave` from constants `sh`.
-fn peak_of(sh: &Shaped, wave: f32) -> f32 {
-    let (pair, f) = Morph {
-        wave: Unit::new(wave),
-        shape: Unit(0.0),
+/// The bound on |output| over a block whose WAVE runs `w0` → `w1` (linear)
+/// while each wave's constants lerp from `sh0`'s to `sh1`'s (a wave's peak
+/// lerps with them): the path is split where it passes a pure wave (an
+/// anchor, which can peak above both ends); on each piece the crossfaded
+/// peak is a quadratic in time, bounded by its ends plus a quarter of its
+/// curvature.
+fn bound(sh0: &Shaped, sh1: &Shaped, w0: f32, w1: f32) -> f32 {
+    // no anchor passed (the steady case): one piece
+    if Pair::of(3.0 * w0) == Pair::of(3.0 * w1) {
+        return piece(sh0, sh1, (w0, w1), (0.0, 1.0));
     }
-    .segment();
+    bound_split(sh0, sh1, w0, w1)
+}
+
+/// `bound` across anchors: up to three pieces.
+#[inline(never)]
+fn bound_split(sh0: &Shaped, sh1: &Shaped, w0: f32, w1: f32) -> f32 {
+    let dw = w1 - w0;
+    // where the path passes 1/3 and 2/3 (not passed: t = 1, a point piece)
+    let at = |a: f32| {
+        if (a - w0) * (a - w1) < 0.0 {
+            (a - w0) / dw
+        } else {
+            1.0
+        }
+    };
+    let (t1, t2) = (at(1.0 / 3.0), at(2.0 / 3.0));
+    let (ta, tb) = (t1.min(t2), t1.max(t2));
+    let p = |a: f32, b: f32| piece(sh0, sh1, (w0, w1), (a, b));
+    p(0.0, ta).max(p(ta, tb)).max(p(tb, 1.0))
+}
+
+/// `bound` on the piece `ta..tb` of the path (one pair).
+#[inline(always)]
+fn piece(sh0: &Shaped, sh1: &Shaped, (w0, w1): (f32, f32), (ta, tb): (f32, f32)) -> f32 {
+    let pk = |w: Wave, t: f32| {
+        let (a, b) = (sh0.peak(w), sh1.peak(w));
+        a + (b - a) * t
+    };
+    let dw = w1 - w0;
+    let (wa, wb) = (w0 + dw * ta, w0 + dw * tb);
+    let pair = Pair::of(1.5 * (wa + wb));
     let (a, b) = pair.waves();
-    (1.0 - f) * sh.peak(a) + f * sh.peak(b)
+    let base = pair as usize as f32;
+    let f = |w: f32| clampf(3.0 * w - base, 0.0, 1.0);
+    let (fa, fb) = (f(wa), f(wb));
+    let g = |t: f32, fw: f32| (1.0 - fw) * pk(a, t) + fw * pk(b, t);
+    let curve = (fb - fa) * ((pk(b, tb) - pk(b, ta)) - (pk(a, tb) - pk(a, ta)));
+    g(ta, fa).max(g(tb, fb)) + 0.25 * curve.abs()
 }
 
 /// One block's SHAPE ends and edge rates (`VarOsc::block`).
@@ -855,7 +896,12 @@ impl VarOsc {
         let sh1 = Shaped::all(Unit::new(val(r.shape, n)).get(), val(r.inc, n));
         let sh0 = if self.sh_ok { self.sh } else { sh1 };
         self.next = Some(sh1);
-        peak_of(&sh0, val(r.wave, 0)).max(peak_of(&sh1, val(r.wave, n)))
+        bound(
+            &sh0,
+            &sh1,
+            Unit::new(val(r.wave, 0)).get(),
+            Unit::new(val(r.wave, n)).get(),
+        )
     }
 
     /// The block's ends (the start is the last block's end), each edged

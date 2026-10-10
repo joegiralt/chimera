@@ -289,21 +289,22 @@ pub const VA_OUT_GAIN: f32 = 1.0;
 /// stretched by the jitter's half cent; the SYNC slave + 0.45 of a reset.
 /// Then the operator loop (sub flips at 0.45), the steady block's work ÷ 64
 /// (the duck's loop at its 4 trips) and two WAVE segment crossings an
-/// oscillator every block (an audio-rate LFO on WAVE), each an extra run,
-/// and LP24's 95. Each line: OSC 1 (TRI/SAW) + OSC 2 + operator + block +
-/// crossings + 95.
+/// oscillator every block (an audio-rate LFO on WAVE), each an extra run
+/// with its share of the render loop, plus the crossing block's split peak
+/// bound, and LP24's 95. Each line: OSC 1 (TRI/SAW) + OSC 2 + operator +
+/// block + crossings + 95.
 ///
-/// MIX: 155.1 + 148.0 (TRI/SAW) + 41.6 + 76.5 + 64.2 + 95.
-pub const COST_MIX: Cost = Cost(590);
+/// MIX: 155.1 + 148.0 (TRI/SAW) + 41.6 + 79.2 + 82.0 + 95.
+pub const COST_MIX: Cost = Cost(610);
 /// SYNC: 155.1 + 255.9 (SINE/TRI slave: a reset's 204.0 × 0.45) + 41.6 +
-/// 80.4 + 65.6 + 95.
-pub const COST_SYNC: Cost = Cost(700);
-/// RING: 155.1 + 148.0 + 51.7 + 76.6 + 64.2 + 95.
-pub const COST_RING: Cost = Cost(600);
-/// XOR: 155.1 + 148.0 + 66.1 + 77.1 + 64.2 + 95.
-pub const COST_XOR: Cost = Cost(610);
-/// BITS: 155.1 + 148.0 + 55.7 + 76.8 + 64.2 + 95.
-pub const COST_BITS: Cost = Cost(600);
+/// 83.1 + 83.5 + 95.
+pub const COST_SYNC: Cost = Cost(720);
+/// RING: 155.1 + 148.0 + 51.7 + 79.3 + 82.0 + 95.
+pub const COST_RING: Cost = Cost(620);
+/// XOR: 155.1 + 148.0 + 66.1 + 79.8 + 82.0 + 95.
+pub const COST_XOR: Cost = Cost(630);
+/// BITS: 155.1 + 148.0 + 55.7 + 79.6 + 82.0 + 95.
+pub const COST_BITS: Cost = Cost(620);
 
 /// The MODE duck's length each way, two blocks.
 const DUCK: usize = 2 * BLOCK_SIZE;
