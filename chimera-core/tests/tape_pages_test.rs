@@ -17,7 +17,6 @@ use chimera_core::dsp::tape_engine::{
     MODEL_NAMES, TAPE_ENGINE_SPECS, TapeEngine, TapeEngineParams, TapeModel, reads,
 };
 use chimera_core::params::EngineType;
-use chimera_core::part::PartParams;
 use chimera_core::preset::Sound;
 use chimera_core::storage::{SourceRef, TapeSource};
 use chimera_core::ui::block_def::BlockDef;
@@ -108,7 +107,7 @@ fn deck_is_modals_res_shape() {
         let ctx = ctx_on(m);
         assert_eq!(
             labels(&TAPE_DECK, &ctx),
-            ["MODEL", pos, mot, "TAPE", "AGE", "SPACE"],
+            ["MODEL", pos, mot, "TAPE", "AGE", "--"],
             "{m:?}"
         );
         let s = sound_on(m);
@@ -120,10 +119,7 @@ fn deck_is_modals_res_shape() {
         for id in [P::MODEL, P::TAPE, P::AGE] {
             assert!(!view::dimmed(tape(id), &s), "{m:?} {id:?}");
         }
-        assert_eq!(
-            view::view(&TAPE_DECK, 5, &ctx).addr(),
-            Some(ParamAddr::new(BlockRef::Part, PartParams::SEND_REVERB))
-        );
+        assert_eq!(view::view(&TAPE_DECK, 5, &ctx).addr(), None);
     }
 }
 
