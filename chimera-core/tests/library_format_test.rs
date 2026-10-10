@@ -4,7 +4,10 @@
 mod common;
 
 use chimera_core::addr::BlockRef;
+use chimera_core::block::DiskCode;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
+use chimera_core::mod_path::LABEL_LEN;
+use chimera_core::modulation::ModSource;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::Project;
@@ -12,6 +15,7 @@ use chimera_core::storage::{
     BUILD_LEN, BuildStamp, Check, FileError, FileKind, Framer, Generation, HEADER_LEN, Header,
     RecordTag, SoundCheck, encode_library_sound, write_file,
 };
+use chimera_core::taps::{Jack, TapOp};
 use common::codec_util::{VecSink, decode, encode, fix_crc, record_offsets};
 use common::project::decode as decode_project;
 
@@ -231,8 +235,13 @@ fn build_at_project_top_level_loads() {
 /// `f` with an entry added to the `Block` record of `code`, making the
 /// record (after `Engine`) if there is none.
 fn with_block_entry(f: &[u8], code: u8, id: u8, value: f32) -> Vec<u8> {
+    with_block_raw(f, code, id, value.to_le_bytes())
+}
+
+/// `with_block_entry` with the value's four bytes as given (an enum's u32).
+fn with_block_raw(f: &[u8], code: u8, id: u8, raw: [u8; 4]) -> Vec<u8> {
     let mut entry = vec![id];
-    entry.extend(value.to_le_bytes());
+    entry.extend(raw);
     let o = record_offsets(f);
     let block = (0..o.len() - 1).find(|&i| {
         u16::from_le_bytes([f[o[i]], f[o[i] + 1]]) == RecordTag::Block.code() && f[o[i] + 4] == code
@@ -278,7 +287,7 @@ fn decode_skips(bytes: &[u8]) -> u16 {
     c.skips()
 }
 
-/// An unknown param, an unknown block, an unknown route source.
+/// An unknown param, an unknown block, an unknown record tag.
 fn three_skip_file() -> Vec<u8> {
     let f = stamped(&Sound::init(EngineType::Algo));
     let f = with_block_entry(&f, BlockRef::Out.disk_code().unwrap(), 250, 1.0);
@@ -338,4 +347,69 @@ fn unknown_records_and_enum_codes_count_and_build_does_not() {
     assert_eq!(decode_skips(&insert_record(&f, at, BUILD, &[1, 2, 3])), 0);
     // An unknown non-critical record after Engine counts one.
     assert_eq!(decode_skips(&insert_record(&f, at, 0x0071, &[9])), 1);
+}
+
+/// `f` with `extra` appended to its first record of `tag`.
+fn append_to_record(f: &[u8], tag: RecordTag, extra: &[u8]) -> Vec<u8> {
+    let o = record_offsets(f);
+    let i = (0..o.len() - 1)
+        .find(|&i| u16::from_le_bytes([f[o[i]], f[o[i] + 1]]) == tag.code())
+        .expect("a record of that tag");
+    let mut p = f[o[i] + 4..o[i + 1]].to_vec();
+    p.extend_from_slice(extra);
+    replace_record(f, i, tag.code(), &p)
+}
+
+fn algo() -> Vec<u8> {
+    stamped(&Sound::init(EngineType::Algo))
+}
+
+#[test]
+fn an_unknown_route_source_or_address_counts() {
+    let env = ModSource::Env1.disk_code();
+    let out = BlockRef::Out.disk_code().unwrap();
+    for route in [[0xFF, out, 0, 1], [env, 0xFF, 0xFF, 1]] {
+        let f = append_to_record(&algo(), RecordTag::Routes, &route);
+        assert_eq!(decode_skips(&f), 1, "{route:?}");
+    }
+}
+
+#[test]
+fn an_unresolvable_registry_or_moddests_entry_counts() {
+    let mut reg = vec![0xFF, 0xFF];
+    reg.extend([0; LABEL_LEN]);
+    assert_eq!(
+        decode_skips(&append_to_record(&algo(), RecordTag::Registry, &reg)),
+        1
+    );
+    assert_eq!(
+        decode_skips(&append_to_record(
+            &algo(),
+            RecordTag::ModDests,
+            &[0xFF, 0xFF]
+        )),
+        1
+    );
+}
+
+#[test]
+fn an_unresolvable_tap_route_counts() {
+    let tap = [Jack::Tap(TapOp::Op5).disk_code(), 0xFF, 0xFF, 1];
+    let f = insert_record(
+        &algo(),
+        record_end(&algo(), RecordTag::Routes),
+        RecordTag::TapRoutes.code(),
+        &tap,
+    );
+    assert_eq!(decode_skips(&f), 1);
+}
+
+#[test]
+fn a_refused_enum_code_counts_and_a_retired_one_does_not() {
+    let tape = stamped(&Sound::init(EngineType::Tape));
+    // TAPE's MODEL (34, 0): code 200 is nothing, code 1 is retired REVERSE.
+    let bogus = with_block_raw(&tape, 34, 0, 200u32.to_le_bytes());
+    assert_eq!(decode_skips(&bogus), 1);
+    let retired = with_block_raw(&tape, 34, 0, 1u32.to_le_bytes());
+    assert_eq!(decode_skips(&retired), 0);
 }

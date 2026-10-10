@@ -410,7 +410,10 @@ impl SoundCheck {
                 Ok(())
             }
             RecordTag::LastProject => Ok(()),
-            RecordTag::TapRoutes => tap_routes(p, staged.map(|s| &mut s.params.taps)),
+            RecordTag::TapRoutes => {
+                self.skip(tap_routes(p, staged.map(|s| &mut s.params.taps))?);
+                Ok(())
+            }
             RecordTag::SourceRef => {
                 let r = SourceRef::from_bytes(p).ok_or(FileError::Bounds)?;
                 if let Some(s) = staged {
@@ -504,14 +507,16 @@ fn infer_jacks(f: &mut FilterParams, m: &ModState, fm3: bool, qm: bool) {
 }
 
 /// `(Jack code, dest block code, dest param id, amount)` entries. An entry
-/// that isn't a tap into a fixed column is dropped; a partial one is
-/// `Bounds`.
-fn tap_routes(p: &[u8], staged: Option<&mut TapRoutes>) -> Result<(), FileError> {
+/// that isn't a tap into a fixed column is dropped, and counted if its
+/// address is unknown; a partial one is `Bounds`.
+fn tap_routes(p: &[u8], staged: Option<&mut TapRoutes>) -> Result<u16, FileError> {
     let (entries, []) = p.as_chunks::<ROUTE_LEN>() else {
         return Err(FileError::Bounds);
     };
+    let mut lost = 0;
     if let Some(t) = staged {
         for &[jack, block, id, amount] in entries {
+            lost += u16::from(addr_of(block, id).is_none());
             if let Some(Jack::Tap(op)) = Jack::from_disk_code(jack)
                 && let Some(c) = addr_of(block, id).and_then(FixedCol::of)
             {
@@ -519,7 +524,7 @@ fn tap_routes(p: &[u8], staged: Option<&mut TapRoutes>) -> Result<(), FileError>
             }
         }
     }
-    Ok(())
+    Ok(lost)
 }
 
 /// The entries dropped for an address this firmware lacks.
