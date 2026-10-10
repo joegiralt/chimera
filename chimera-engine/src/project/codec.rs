@@ -492,6 +492,7 @@ impl ProjectCheck {
                     TRANSLATIONS,
                     mix.as_mut().map(|m| m as &mut dyn Blocks),
                 )
+                .map(drop)
             }
             (ReadTag::Known(RecordTag::Origin), Context::Part(n)) => {
                 if core::mem::replace(&mut self.origin, true) {
@@ -669,6 +670,7 @@ impl ProjectCheck {
             TRANSLATIONS,
             fx.as_mut().map(|f| f as &mut dyn Blocks),
         )
+        .map(drop)
     }
 
     /// Ends a `Slot` or `Part`: its Sound's `finish`, which adds the routes.

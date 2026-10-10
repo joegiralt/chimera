@@ -3,13 +3,14 @@
 
 mod common;
 
+use chimera_core::addr::BlockRef;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::Project;
 use chimera_core::storage::{
-    BUILD_LEN, BuildStamp, FileError, FileKind, Generation, HEADER_LEN, Header, RecordTag,
-    encode_library_sound, write_file,
+    BUILD_LEN, BuildStamp, Check, FileError, FileKind, Framer, Generation, HEADER_LEN, Header,
+    RecordTag, SoundCheck, encode_library_sound, write_file,
 };
 use common::codec_util::{VecSink, decode, encode, fix_crc, record_offsets};
 use common::project::decode as decode_project;
@@ -225,4 +226,116 @@ fn build_at_project_top_level_loads() {
         loads(&insert_record(&o, at, BUILD, &ST.to_bytes())),
         "orbit"
     );
+}
+
+/// `f` with an entry added to the `Block` record of `code`, making the
+/// record (after `Engine`) if there is none.
+fn with_block_entry(f: &[u8], code: u8, id: u8, value: f32) -> Vec<u8> {
+    let mut entry = vec![id];
+    entry.extend(value.to_le_bytes());
+    let o = record_offsets(f);
+    let block = (0..o.len() - 1).find(|&i| {
+        u16::from_le_bytes([f[o[i]], f[o[i] + 1]]) == RecordTag::Block.code() && f[o[i] + 4] == code
+    });
+    match block {
+        Some(i) => {
+            let mut p = f[o[i] + 4..o[i + 1]].to_vec();
+            p.extend(entry);
+            replace_record(f, i, RecordTag::Block.code(), &p)
+        }
+        None => {
+            let mut p = vec![code];
+            p.extend(entry);
+            insert_record(
+                f,
+                record_end(f, RecordTag::Engine),
+                RecordTag::Block.code(),
+                &p,
+            )
+        }
+    }
+}
+
+/// Pass 1 over `bytes` through `c`.
+fn feed_pass_one(c: &mut SoundCheck, bytes: &[u8]) {
+    let mut f = Framer::new(bytes.len() as u32).unwrap();
+    f.push(bytes, &mut |e| c.event(e)).unwrap();
+    f.finish().unwrap();
+    c.end().unwrap();
+}
+
+/// Pass 1, then pass 2 through a `SoundCheck` stepping a staged Sound:
+/// the entries lost.
+fn decode_skips(bytes: &[u8]) -> u16 {
+    let mut c = SoundCheck::new();
+    feed_pass_one(&mut c, bytes);
+    let mut staged = Sound::neutral(EngineType::Algo);
+    let mut f = Framer::new(bytes.len() as u32).unwrap();
+    f.push(bytes, &mut |e| c.step(e, Some(&mut staged)))
+        .unwrap();
+    f.finish().unwrap();
+    c.finish(Some(&mut staged)).unwrap();
+    c.skips()
+}
+
+/// An unknown param, an unknown block, an unknown route source.
+fn three_skip_file() -> Vec<u8> {
+    let f = stamped(&Sound::init(EngineType::Algo));
+    let f = with_block_entry(&f, BlockRef::Out.disk_code().unwrap(), 250, 1.0);
+    let f = with_block_entry(&f, 200, 1, 1.0);
+    insert_record(&f, record_end(&f, RecordTag::Routes), 0x0070, &[0; 4])
+}
+
+fn all_v1_and_factory() -> Vec<(String, Sound)> {
+    let mut v: Vec<_> = sounds()
+        .into_iter()
+        .enumerate()
+        .map(|(i, s)| (format!("sound {i}"), s))
+        .collect();
+    for n in (0..8).map(|i| format!("factory_{i}.snd")).chain(
+        [
+            "init_algo.snd",
+            "init_modal.snd",
+            "init_tape.snd",
+            "library_1.snd",
+        ]
+        .map(String::from),
+    ) {
+        v.push((n.clone(), decode(&fixture(&n)).unwrap()));
+    }
+    v
+}
+
+#[test]
+fn skips_count_what_was_lost() {
+    assert_eq!(decode_skips(&three_skip_file()), 3);
+}
+
+#[test]
+fn every_fixture_and_factory_sound_skips_nothing() {
+    for (name, s) in all_v1_and_factory() {
+        assert_eq!(decode_skips(&stamped(&s)), 0, "{name}");
+    }
+}
+
+#[test]
+fn translated_v1_modal_skips_nothing() {
+    assert_eq!(decode_skips(&fixture("init_modal.snd")), 0);
+}
+
+#[test]
+fn pass_one_alone_counts_nothing() {
+    let mut c = SoundCheck::new();
+    feed_pass_one(&mut c, &three_skip_file());
+    assert_eq!(c.skips(), 0);
+}
+
+#[test]
+fn unknown_records_and_enum_codes_count_and_build_does_not() {
+    let f = stamped(&Sound::init(EngineType::Algo));
+    // Build repeats and odd lengths never count.
+    let at = record_end(&f, RecordTag::Routes);
+    assert_eq!(decode_skips(&insert_record(&f, at, BUILD, &[1, 2, 3])), 0);
+    // An unknown non-critical record after Engine counts one.
+    assert_eq!(decode_skips(&insert_record(&f, at, 0x0071, &[9])), 1);
 }

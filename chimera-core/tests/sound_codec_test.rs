@@ -285,14 +285,14 @@ fn block_payload_shape_is_checked() {
     );
     let dup = [10, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0];
     assert_eq!(decode_block(&dup, &[], &[], None), Err(FileError::Corrupt));
-    // Unknown block codes and param ids are skipped.
+    // Unknown block codes and param ids are skipped, and counted.
     assert_eq!(
         decode_block(&[200, 1, 0, 0, 0, 0], &[], &[], Some(&mut p)),
-        Ok(())
+        Ok(1)
     );
     assert_eq!(
         decode_block(&[10, 99, 0, 0, 0, 0], &[], &[], Some(&mut p)),
-        Ok(())
+        Ok(1)
     );
 }
 
