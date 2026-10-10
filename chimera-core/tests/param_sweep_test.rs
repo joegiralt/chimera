@@ -203,7 +203,8 @@ fn run_all(cases: &[Case], t: Timing) -> Vec<Run> {
                         // sub-Hz beat (VA's RING of a detuned pair) is the
                         // beat, not an offset: judge it over whole beats.
                         if matches!(c.mv, Move::Static(_)) && r.dc.iter().any(|&d| d > DC_MAX) {
-                            r.dc = play(&mut c.bench(), Some(&c.param), c.mv, BEAT_HOLD).dc;
+                            let long = play(&mut c.bench(), Some(&c.param), c.mv, BEAT_HOLD);
+                            r.dc = beat_checked(&r, &long);
                         }
                         results.lock().unwrap()[i] = Some(r);
                     }
@@ -749,6 +750,49 @@ fn sweep_thorough() {
         v.findings.is_empty(),
         "{} findings:\n{msg}",
         v.findings.len()
+    );
+}
+
+/// The BEAT_HOLD re-judge cannot excuse a real offset that follows a
+/// decaying signal (a pluck's rectified tail), yet clears VA INIT's RING beat.
+#[test]
+fn beat_hold_does_not_dilute_a_decaying_offset() {
+    let ring = find(BlockRef::Va, chimera_core::dsp::va::VaParams::MODE);
+    let judged = |patch, p: Param, v, rectify: f32| {
+        let c = Case {
+            param: p,
+            patch,
+            mv: Move::Static(v),
+            wet: false,
+        };
+        let bench = || {
+            let mut b = c.bench();
+            b.rectify = rectify;
+            b
+        };
+        let short = play(&mut bench(), Some(&p), c.mv, THOROUGH);
+        let long = play(&mut bench(), Some(&p), c.mv, BEAT_HOLD);
+        println!(
+            "{}: short {:.4} long {:.4} steady {:.2} -> {:.4}",
+            c.label(),
+            short.dc[0],
+            long.dc[0],
+            long.steady[0],
+            beat_checked(&short, &long)[0]
+        );
+        let dc = beat_checked(&short, &long)[0];
+        (short, long, dc)
+    };
+    let pluck = Patch::ModalInit(ResonatorMode::String);
+    let damp = find(BlockRef::Modal, ModalParams::DAMP);
+    let (short, long, dc) = judged(pluck, damp, 0.8, 0.2);
+    assert!(short.dc[0] > DC_MAX, "the fault reads on the short window");
+    assert!(long.dc[0] < DC_MAX, "the long window alone would excuse it");
+    assert!(dc > DC_MAX, "the guard keeps the short reading: {dc}");
+    let (_, long, dc) = judged(Patch::VaInit, ring, 2.0, 0.0);
+    assert!(
+        long.steady[0] <= STEADY_MAX && dc < DC_MAX,
+        "VA RING beat clears: {dc}"
     );
 }
 

@@ -312,6 +312,9 @@ pub struct Bench {
     fx: Box<FxBus>,
     dac: Box<DacBlocks>,
     scope: ScopeWriter,
+    /// A test's fault injection: `rectify` × |x| added to every output
+    /// sample, an offset that follows the signal's envelope.
+    pub rectify: f32,
 }
 
 pub const CH: MidiChannel = MidiChannel::clamped(0);
@@ -335,6 +338,7 @@ impl Bench {
             fx: Box::new(FxBus::new()),
             dac: Box::new(DacBlocks::new()),
             scope: super::scope_writer(),
+            rectify: 0.0,
         }
     }
 
@@ -380,7 +384,13 @@ impl Bench {
             .render(&mut self.fx, &mut self.dac, &self.shared, &mut self.scope);
         let (out, pre) = (self.dac.out(), self.dac.input());
         for k in 0..DAC_PAIRS {
+            let from = tape.out[k].len();
             tape.out[k].extend_from_slice(&out[k]);
+            if self.rectify != 0.0 {
+                for x in &mut tape.out[k][from..] {
+                    *x += self.rectify * x.abs();
+                }
+            }
             tape.pre_peak[k] = pre[k].iter().fold(tape.pre_peak[k], |m, x| m.max(x.abs()));
         }
         tape.pre.extend_from_slice(&pre[0]);
@@ -639,6 +649,24 @@ pub const BEAT_HOLD: Timing = Timing {
     bound: 150,
 };
 
+/// 3 dB: the most a held rest's level may change, first third to last, for
+/// its long-window DC to stand in for the short one's.
+pub const STEADY_MAX: f32 = 1.41;
+
+/// A case's DC where `short` read over `DC_MAX`: a sub-Hz beat, which a
+/// `BEAT_HOLD` re-run averages out, or an offset. The re-run's DC counts
+/// only where the signal held steady across it (a decaying one dilutes a
+/// real offset with its own tail) and, being a mean, only if it is lower.
+pub fn beat_checked(short: &Run, long: &Run) -> [f32; DAC_PAIRS] {
+    core::array::from_fn(|k| {
+        if long.steady[k] <= STEADY_MAX {
+            long.dc[k].min(short.dc[k])
+        } else {
+            short.dc[k]
+        }
+    })
+}
+
 pub const CHORD: [u8; 4] = [48, 52, 55, 60];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -678,6 +706,9 @@ pub struct Run {
     /// Held RMS, single note then chord, per pair.
     pub held: [[f32; DAC_PAIRS]; 2],
     pub dc: [f32; DAC_PAIRS],
+    /// Per pair, the held rest's level change between its first and last
+    /// third, over both notes: the larger of the two RMS over the smaller.
+    pub steady: [f32; DAC_PAIRS],
     /// `(event label, pair, ratio)`.
     pub clicks: Vec<(&'static str, usize, f32)>,
     /// Blocks after the chord's release until every voice is free.
@@ -793,6 +824,18 @@ pub fn play(bench: &mut Bench, p: Option<&Param>, mv: Move, t: Timing) -> Run {
         dc: pairs(&|k| {
             tape.dc(k, DC_FROM, t.a_off())
                 .max(tape.dc(k, t.b_on() + DC_FROM, t.b_off()))
+        }),
+        steady: pairs(&|k| {
+            let third = |a: usize, b: usize| {
+                let w = (b - a) / 3;
+                let (x, y) = (tape.rms(k, a, a + w), tape.rms(k, b - w, b));
+                if x.min(y) > 0.0 {
+                    x.max(y) / x.min(y)
+                } else {
+                    f32::INFINITY
+                }
+            };
+            third(DC_FROM, t.a_off()).max(third(t.b_on() + DC_FROM, t.b_off()))
         }),
         clicks,
         freed: tape.freed(tail_at),
