@@ -89,6 +89,11 @@ fn addr_of(block: u8, id: u8) -> Option<ParamAddr> {
 /// `Routes`, and its `SourceRef` and `ZoneTune` if it has them.
 pub fn encode_sound(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     w.put(RecordTag::Engine, &[s.engine().disk_code()])?;
+    encode_sound_body(s, w)
+}
+
+/// Everything `encode_sound` writes after `Engine`.
+pub(crate) fn encode_sound_body(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     // One buffer for every record: this frame is charged to each pointer
     // call (ADR 0025's stack check), so it holds one, not one per record.
     let mut r = RecordBuf::new();
@@ -180,6 +185,8 @@ const fn once_bit(tag: RecordTag) -> u8 {
         RecordTag::SourceRef => 1 << 5,
         RecordTag::ZoneTune => 1 << 6,
         RecordTag::TapRoutes => 1 << 7,
+        // Skipped before `once` is asked.
+        RecordTag::Build => 0,
         // A project's own records: refused before `once` is asked.
         RecordTag::Slot
         | RecordTag::Part
@@ -337,6 +344,10 @@ impl SoundCheck {
         if (tag == RecordTag::Engine) == self.engine {
             return Err(FileError::Corrupt);
         }
+        // Informational: any build, any repeat, any length.
+        if tag == RecordTag::Build {
+            return Ok(());
+        }
         let once = match tag {
             RecordTag::Block => p.first().is_none_or(|&b| self.blocks.insert(b)),
             _ => {
@@ -408,6 +419,7 @@ impl SoundCheck {
             | RecordTag::SourceHead
             | RecordTag::SourceData
             | RecordTag::SourceZones => Err(FileError::Corrupt),
+            RecordTag::Build => Ok(()),
         }
     }
 

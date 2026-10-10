@@ -6,6 +6,7 @@ mod codes;
 mod crc;
 mod file;
 mod frame;
+mod library;
 mod record;
 mod sound;
 mod source_file;
@@ -31,6 +32,7 @@ pub use frame::{
     Event, FORMAT_VERSION, FileError, FileKind, Framer, Generation, HEADER_LEN, Header, MAGIC,
     ProjectFile, ProjectId, Side, TRAILER_LEN, peek_header,
 };
+pub use library::{BUILD_LEN, BuildStamp, encode_library_sound};
 pub(crate) use record::records_crc;
 pub use record::{
     CRITICAL, MAX_RECORD_LEN, ReadTag, RecordBuf, RecordTag, RecordWriter, write_file,
