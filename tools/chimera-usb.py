@@ -13,8 +13,8 @@
     python3 tools/chimera-usb.py wait-console [s]  wait (default 10 s) for the console on the bus
 
 Exit 0 on OK, 1 on ERR (to stderr) or 2 s of silence (60 s before `card`'s
-first line: it measures before it answers; 15 s before `ls`'s and
-`sweep`'s, 35 s before `put`'s). Bodies go to stdout; `shot` writes a PNG and prints its
+first line: it measures before it answers; 15 s before `ls`'s, `rm`'s,
+`get`'s and `sweep`'s, 35 s before `put`'s). Bodies go to stdout; `shot` writes a PNG and prints its
 path; `put` shows its progress on stderr and never retries a failure (a source
 already on the card answers `OK PRESENT`, so a re-run is the retry). `ERR busy`
 (the unit's card work pending) is retried: 5 tries, 200 ms apart, doubling.
@@ -239,7 +239,7 @@ def retry_busy(ask, sleep=time.sleep) -> tuple:
 
 def first_wait(line: str) -> float:
     """How long a request's first byte may take."""
-    waits = {"card": CARD_WAIT_S, "ls": LS_WAIT_S, "sweep": SWEEP_WAIT_S}
+    waits = {"card": CARD_WAIT_S, "ls": LS_WAIT_S, "rm": LS_WAIT_S, "get": LS_WAIT_S, "sweep": SWEEP_WAIT_S}
     return waits.get((line.split() or [""])[0], SILENCE_S)
 
 

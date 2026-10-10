@@ -759,3 +759,202 @@ fn a_listing_that_fails_partway_keeps_its_rows_and_says_why() {
         "row 0 drawn on its pill"
     );
 }
+
+// The card changed over USB between the listing and EDIT (review focus
+// 4): the console's `rm` and `put --over` against a listed page.
+#[cfg(feature = "card-put")]
+mod console_edits {
+    use super::*;
+    use chimera_core::console::{CardAnswer, Console, Frame, Out, Stalled, Stats, Unit, answer};
+    use chimera_core::storage::Crc32;
+    use chimera_core::ui::theme_settings::{ThemeSettings, palette};
+    use chimera_hal::FB_SIZE;
+    use chimera_hal::store::Files;
+    use std::collections::VecDeque;
+
+    impl Files for Counted {
+        fn cap(&mut self, _: Option<u32>) {}
+    }
+
+    /// The unit as the console sees it, over the rig's UI and card. `forget`:
+    /// whether a Sound `put` or `rm` drops the page, as the shells do.
+    struct Usb<'a> {
+        ui: &'a mut UiState,
+        st: &'a mut Counted,
+        fb: Box<[u16; FB_SIZE]>,
+        forget: bool,
+    }
+
+    impl Unit for Usb<'_> {
+        fn ui(&self) -> &UiState {
+            self.ui
+        }
+        fn stats(&mut self) -> Option<Stats> {
+            None
+        }
+        fn bench(&self) -> Option<&str> {
+            None
+        }
+        fn card(&mut self) -> Option<CardAnswer> {
+            None
+        }
+        fn frame(&self) -> Frame<'_> {
+            Frame {
+                fb: &self.fb,
+                palette: palette(&ThemeSettings::DEFAULT),
+            }
+        }
+        fn dfu(&mut self) -> Option<()> {
+            None
+        }
+        fn boot(&self) -> Option<chimera_core::boot::BootSeen> {
+            None
+        }
+        fn usb_regs(&self) -> Option<chimera_core::boot::UsbRegs> {
+            None
+        }
+        type Files = Counted;
+        fn files(&mut self) -> Option<&mut Counted> {
+            Some(&mut *self.st)
+        }
+        fn forget_library(&mut self) {
+            if self.forget {
+                self.ui.forget_library();
+            }
+        }
+    }
+
+    /// The host: `input` after the request line, a clock that never stalls it.
+    struct Host<'a>(&'a mut VecDeque<u8>, &'a mut Vec<u8>);
+
+    impl Out for Host<'_> {
+        fn put(&mut self, b: &[u8]) -> Result<(), Stalled> {
+            self.1.extend_from_slice(b);
+            Ok(())
+        }
+        fn recv(&mut self, _: u32) -> Option<u8> {
+            self.0.pop_front()
+        }
+        fn now(&self) -> chimera_hal::Ms {
+            chimera_hal::Ms(0)
+        }
+    }
+
+    impl Rig {
+        /// `line`, then `data`, through the console: what it answered.
+        fn console(&mut self, line: &str, data: &[u8], forget: bool) -> String {
+            let mut u = Usb {
+                ui: &mut self.ui,
+                st: &mut self.st,
+                fb: vec![0u16; FB_SIZE].try_into().unwrap(),
+                forget,
+            };
+            let (mut input, mut out) = (data.iter().copied().collect(), Vec::new());
+            let mut c = Console::new();
+            for &b in line.as_bytes() {
+                if let Some(req) = c.push(b) {
+                    answer(req, &mut u, &mut Host(&mut input, &mut out)).unwrap();
+                }
+            }
+            String::from_utf8(out).unwrap()
+        }
+
+        /// `put --over` of `bytes` onto `id`, as the host tool sends it.
+        fn put_over(&mut self, id: LibId, bytes: &[u8], forget: bool) -> String {
+            let mut crc = Crc32::new();
+            crc.update(bytes);
+            let line = format!(
+                "put /CHIMERA/SOUNDS/{}.A {} {:08x} --over\n",
+                std::str::from_utf8(&id.stem()).unwrap(),
+                bytes.len(),
+                crc.finish()
+            );
+            let data: Vec<u8> = bytes
+                .chunks(48)
+                .flat_map(|c| [base64(c), b"\n".to_vec()].concat())
+                .collect();
+            self.console(&line, &data, forget)
+        }
+    }
+
+    fn base64(b: &[u8]) -> Vec<u8> {
+        const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = Vec::new();
+        for c in b.chunks(3) {
+            let n = c
+                .iter()
+                .enumerate()
+                .fold(0u32, |n, (i, &x)| n | u32::from(x) << (16 - 8 * i));
+            for i in 0..4 {
+                out.push(match i <= c.len() {
+                    true => A[(n >> (18 - 6 * i) & 63) as usize],
+                    false => b'=',
+                });
+            }
+        }
+        out
+    }
+
+    /// P1's Sound is neither `a` nor `b`: nothing loaded.
+    fn loaded_neither(r: &Rig, a: &Sound, b: &Sound) {
+        let s = &r.ui.project().part(P1).sound;
+        assert!(!s.bits_eq(a) && !s.bits_eq(b), "nothing loaded");
+    }
+
+    #[test]
+    fn a_console_rm_after_listing_never_loads() {
+        for forget in [true, false] {
+            let mut r = Rig::new();
+            let s = factory_sound(0);
+            let id = r.library_with(&s);
+            r.open_library();
+            r.work();
+            assert_eq!(r.cursor_id(), Some(id.get()));
+            let path = format!(
+                "rm /CHIMERA/SOUNDS/{}\n",
+                std::str::from_utf8(&id.stem()).unwrap()
+            );
+            assert_eq!(r.console(&path, b"", forget), "OK\n");
+            let counts = r.counts();
+            r.press(ButtonId::Edit);
+            r.work();
+            if forget {
+                // The page went with the rm: re-listed empty before EDIT.
+                assert_eq!(r.cursor_id(), None);
+            } else {
+                assert_eq!(r.toast(), "FILE IS GONE");
+            }
+            assert_eq!(r.counts(), counts);
+            loaded_neither(&r, &s, &s);
+        }
+    }
+
+    #[test]
+    fn a_console_put_over_after_listing_never_loads_the_other_sound() {
+        let mut r = Rig::new();
+        let old = factory_sound(0);
+        let new = factory_sound(1);
+        let id = r.library_with(&old);
+        r.open_library();
+        r.work();
+        // The page kept: EDIT on the row as listed refuses.
+        assert_eq!(r.put_over(id, &stamped(&new), false), "READY\nOK\n");
+        let counts = r.counts();
+        r.press(ButtonId::Edit);
+        r.work();
+        assert_eq!(r.toast(), "FILE CHANGED");
+        assert_eq!(r.counts(), counts);
+        loaded_neither(&r, &old, &new);
+        // As the shells do it: the page goes with the put, so the row EDIT
+        // finds is the new file's, listed afresh.
+        let mut r = Rig::new();
+        let id = r.library_with(&old);
+        r.open_library();
+        r.work();
+        assert_eq!(r.put_over(id, &stamped(&new), true), "READY\nOK\n");
+        assert!(r.ui.card_pending(), "re-lists");
+        r.work();
+        assert_eq!(r.cursor_id(), Some(id.get()));
+        loaded_neither(&r, &old, &new);
+    }
+}

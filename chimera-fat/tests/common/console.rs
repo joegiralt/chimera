@@ -71,6 +71,7 @@ impl<S: Files> Unit for Fake<'_, S> {
     }
     fn forget_library(&mut self) {
         self.forgotten += 1;
+        self.ui.forget_library();
     }
 }
 
