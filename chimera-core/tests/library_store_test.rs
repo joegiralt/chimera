@@ -16,7 +16,7 @@ use chimera_core::storage::{
     SoundDecoder, encode_library_sound, encode_sound, lib_id, library_file, load_ab, next_user_id,
     peek_library, write_file,
 };
-use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError};
+use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use chimera_hal::testkit::MemStore;
 use common::codec_util::VecSink;
 
@@ -274,4 +274,48 @@ fn peek_never_panics_on_cut_input() {
         let _ = peek_library(&f[..n], f.len() as u32);
         let _ = peek_library(&f[..n], n as u32);
     }
+}
+
+/// A store whose write lands the whole file, then reports `Full`: the file
+/// is on the card though the save failed.
+struct LandsThenFails(MemStore);
+
+impl Store for LandsThenFails {
+    fn mount(&mut self) -> Result<VolumeId, StoreError> {
+        self.0.mount()
+    }
+    fn list(
+        &mut self,
+        v: VolumeId,
+        d: Dir,
+        f: &mut dyn FnMut(FileName, u32),
+    ) -> Result<(), StoreError> {
+        self.0.list(v, d, f)
+    }
+    fn read(&mut self, v: VolumeId, f: FileName, s: &mut dyn ReadSink) -> Result<(), StoreError> {
+        self.0.read(v, f, s)
+    }
+    fn write(
+        &mut self,
+        v: VolumeId,
+        f: FileName,
+        body: &mut dyn FnMut(&mut dyn ByteSink) -> Result<(), StoreError>,
+    ) -> Result<u32, StoreError> {
+        self.0.write(v, f, body)?;
+        Err(StoreError::Full)
+    }
+    fn delete(&mut self, v: VolumeId, f: FileName) -> Result<(), StoreError> {
+        self.0.delete(v, f)
+    }
+    fn make_dir(&mut self, v: VolumeId, d: Dir) -> Result<(), StoreError> {
+        self.0.make_dir(v, d)
+    }
+}
+
+#[test]
+fn a_file_that_landed_before_the_error_is_deleted() {
+    let mut st = LandsThenFails(card_with(&["S0000001.A"]));
+    let before = listing(&mut st, Dir::Sounds).unwrap();
+    assert_eq!(save(&mut st).unwrap_err(), LibNote::Store(StoreError::Full));
+    assert_eq!(listing(&mut st, Dir::Sounds).unwrap(), before);
 }
