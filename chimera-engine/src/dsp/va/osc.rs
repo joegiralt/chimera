@@ -126,6 +126,7 @@ impl Wave {
     }
 
     /// The run constants (`Kind::value`'s `c`), weighted by `x`.
+    #[inline(always)]
     fn consts(self, sh: &Shaped, x: f32) -> [f32; 3] {
         match self {
             // y = −x·g·((1 − s)·P + s·psin(g'·P)), P = psin(2π(φ − ½)) = −sin 2πφ
@@ -150,6 +151,7 @@ impl Wave {
     }
 
     /// The edges' places, in 0..=1 (the sine's are unused).
+    #[inline(always)]
     fn pos(self, sh: &Shaped) -> [f32; 2] {
         match self {
             Wave::Sine => [0.0; 2],
@@ -214,17 +216,11 @@ impl Pair {
     }
 }
 
-/// `Pair::consts` off the block's common path (a WAVE segment change).
-#[cold]
-#[inline(never)]
-fn cold_consts(pair: Pair, m: Morph, inc: f32) -> ([f32; 6], [f32; 4]) {
-    pair.consts(m, inc)
-}
-
 /// One wave's per-sample work: the hot loop's eval and crossing, and the
 /// value with its slope for the reference and the sync reset. `c` holds
 /// `Wave::consts`.
 trait Kind {
+    const WAVE: Wave;
     /// Two edges (all but the sine).
     const EDGES: bool;
     /// The edges are corners (BLAMP), not steps (BLEP).
@@ -252,6 +248,7 @@ struct Saw;
 struct Pulse;
 
 impl Kind for Sine {
+    const WAVE: Wave = Wave::Sine;
     const EDGES: bool = false;
     const CORNERS: bool = false;
     const FLIPS: bool = false;
@@ -282,6 +279,7 @@ impl Kind for Sine {
 }
 
 impl Kind for Tri {
+    const WAVE: Wave = Wave::Tri;
     const EDGES: bool = true;
     const CORNERS: bool = true;
     const FLIPS: bool = false;
@@ -321,6 +319,7 @@ impl Kind for Tri {
 }
 
 impl Kind for Saw {
+    const WAVE: Wave = Wave::Saw;
     const EDGES: bool = true;
     const CORNERS: bool = false;
     const FLIPS: bool = false;
@@ -348,6 +347,7 @@ impl Kind for Saw {
 }
 
 impl Kind for Pulse {
+    const WAVE: Wave = Wave::Pulse;
     const EDGES: bool = true;
     const CORNERS: bool = false;
     const FLIPS: bool = true;
@@ -444,6 +444,15 @@ impl Shaped {
         }
     }
 
+    /// Every wave's constants at SHAPE `s`, the pulse floored at `inc`.
+    fn all(s: f32, inc: f32) -> Self {
+        let mut sh = Self::ZERO;
+        for w in WAVES {
+            sh.fill(w, s, inc);
+        }
+        sh
+    }
+
     fn peak(&self, wave: Wave) -> f32 {
         match wave {
             Wave::Sine => self.sine_g,
@@ -508,21 +517,104 @@ fn val((from, step): (f32, f32), j: usize) -> f32 {
     from + step * j as f32
 }
 
-/// The first `i` in `lo..hi` where `on` turns false (`on(lo)` holds, and
-/// `on(hi − 1)` fails): WAVE's ramp is monotone, so its segments are runs.
-#[cold]
+/// The pair sample `i` plays on `r`.
+#[inline(always)]
+fn seg(r: &Ramps, i: usize) -> Pair {
+    Pair::of(3.0 * Unit::new(val(r.wave, i + 1)).get())
+}
+
+/// The end of the run on `pair` from `i0` in an `n`-sample block whose
+/// last sample is on another pair: the first sample on another pair.
+/// WAVE's ramp is linear and its segments monotone, so the crossing is
+/// solved for, then checked.
 #[inline(never)]
-fn split(lo: usize, hi: usize, on: impl Fn(usize) -> bool) -> usize {
-    let (mut lo, mut hi) = (lo, hi - 1);
-    while hi - lo > 1 {
-        let mid = (lo + hi) / 2;
-        if on(mid) {
-            lo = mid;
-        } else {
-            hi = mid;
+fn run_end(r: &Ramps, pair: Pair, i0: usize, n: usize) -> usize {
+    let (from, step) = r.wave;
+    let k = pair as usize as f32;
+    let edge = if step > 0.0 { (k + 1.0) / 3.0 } else { k / 3.0 };
+    // sample i plays j = i + 1: the first j past the edge, then checked
+    // (`as` saturates, NaN to 0)
+    let mut i = (((edge - from) / step) as usize).clamp(i0 + 1, n - 1);
+    if seg(r, i - 1) != pair {
+        while i > i0 + 1 && seg(r, i - 1) != pair {
+            i -= 1;
+        }
+    } else {
+        // ends by n − 1, which is on another pair
+        while seg(r, i) == pair {
+            i += 1;
         }
     }
-    hi
+    i
+}
+
+/// The pair `a`, `b`'s constants and places from SHAPE constants `sh`,
+/// `b` weighted `f`.
+#[inline(always)]
+fn at(a: Wave, b: Wave, sh: &Shaped, f: f32) -> ([f32; 6], [f32; 4]) {
+    let (ca, cb) = (a.consts(sh, 1.0 - f), b.consts(sh, f));
+    let (pa, pb) = (a.pos(sh), b.pos(sh));
+    (
+        [ca[0], ca[1], ca[2], cb[0], cb[1], cb[2]],
+        [pa[0], pa[1], pb[0], pb[1]],
+    )
+}
+
+/// `at` between the block's SHAPE ends, `x` of the way: a run's end or
+/// start at a WAVE segment crossing. The constants themselves are lerped
+/// (each linear in its weight), so a value stays between its ends' and the
+/// block's peak bound holds.
+#[inline(never)]
+fn at_lerp<A: Kind, B: Kind>(blk: &Blk, x: f32, f: f32) -> ([f32; 6], [f32; 4]) {
+    let (c0, p0) = at(A::WAVE, B::WAVE, &blk.sh0, f);
+    let (c1, p1) = at(A::WAVE, B::WAVE, &blk.sh1, f);
+    let l = |a: f32, b: f32| a + (b - a) * x;
+    (
+        core::array::from_fn(|k| l(c0[k], c1[k])),
+        core::array::from_fn(|k| l(p0[k], p1[k])),
+    )
+}
+
+/// Every wave's SHAPE constants at the end of the block on `r`.
+#[inline(never)]
+fn end_shape(r: &Ramps, n: usize) -> Shaped {
+    Shaped::all(Unit::new(val(r.shape, n)).get(), val(r.inc, n))
+}
+
+/// 1/n for n in 0..=64 (0 unused): a run's per-sample steps, undivided.
+static RECIP: [f32; 65] = {
+    let mut t = [0.0f32; 65];
+    let mut n = 1;
+    while n < 65 {
+        t[n] = 1.0 / n as f32;
+        n += 1;
+    }
+    t
+};
+
+/// The waves in WAVE's order.
+const WAVES: [Wave; 4] = [Wave::Sine, Wave::Tri, Wave::Saw, Wave::Pulse];
+
+/// `peak_bound` of WAVE `wave` from constants `sh`.
+fn peak_of(sh: &Shaped, wave: f32) -> f32 {
+    let (pair, f) = Morph {
+        wave: Unit::new(wave),
+        shape: Unit(0.0),
+    }
+    .segment();
+    let (a, b) = pair.waves();
+    (1.0 - f) * sh.peak(a) + f * sh.peak(b)
+}
+
+/// One block's SHAPE ends and edge rates (`VarOsc::block`).
+struct Blk {
+    sh0: Shaped,
+    sh1: Shaped,
+    /// Tri, saw, pulse: each edge's `1/r` and `|r|/6`.
+    rate: [[(f32, f32); 2]; 3],
+    rinc: f32,
+    /// Each wave's value and slope at phase 0, unit weight (SYNC).
+    zero: [(f32, f32); 4],
 }
 
 /// "No wrap" in a wrap buffer (a wrap's `t` is in 0..=1).
@@ -575,6 +667,20 @@ struct Run {
     d0: f32,
 }
 
+impl Run {
+    const ZERO: Self = Self {
+        c: [Lin { v: 0.0, d: 0.0 }; 6],
+        o: [Lin { v: 0.0, d: 0.0 }; 4],
+        rcp: [0.0; 4],
+        ar: [0.0; 4],
+        rinc: 0.0,
+        inc: 0.0,
+        dinc: 0.0,
+        y0: 0.0,
+        d0: 0.0,
+    };
+}
+
 #[cfg(any(test, feature = "test-support"))]
 const EDGE_LOG: usize = 8;
 
@@ -596,6 +702,11 @@ pub struct VarOsc {
     live: u8,
     /// The pulse's level, 0 or 1.
     h: f32,
+    /// Every wave's constants at the last block's end, if current; and the
+    /// next block's end, if `begin` set it.
+    sh: Shaped,
+    sh_ok: bool,
+    next: Option<Shaped>,
     #[cfg(any(test, feature = "test-support"))]
     log: [(f32, f32, f32); EDGE_LOG],
     #[cfg(any(test, feature = "test-support"))]
@@ -617,6 +728,9 @@ impl VarOsc {
         off: [[0.0; 2]; 3],
         live: 0,
         h: 0.0,
+        sh: Shaped::ZERO,
+        sh_ok: false,
+        next: None,
         #[cfg(any(test, feature = "test-support"))]
         log: [(0.0, 0.0, 0.0); EDGE_LOG],
         #[cfg(any(test, feature = "test-support"))]
@@ -642,12 +756,14 @@ impl VarOsc {
         self.held = 0.0;
         self.live = 0;
         self.pair = None;
+        self.sh_ok = false;
     }
 
     /// The next block's constants start on its settings, not where the
     /// last block left them (a fresh note's ramps start on their values).
     pub fn hold(&mut self) {
         self.pair = None;
+        self.sh_ok = false;
     }
 
     pub fn phase(&self) -> f32 {
@@ -694,6 +810,7 @@ impl VarOsc {
     /// wrap `t` (else `NO_WRAP`) into `wr`; `SYNC` restarts the phase at
     /// each `t` it reads there first. `jit` scales the increment; `draw`
     /// gives the next at each wrap (STABILITY's jitter).
+    #[inline(never)]
     pub fn render<const N: usize, const REC: bool, const SYNC: bool>(
         &mut self,
         out: &mut [f32; N],
@@ -702,31 +819,28 @@ impl VarOsc {
         jit: &mut f32,
         draw: &mut impl FnMut() -> f32,
     ) {
-        let seg = |i: usize| {
-            Morph {
-                wave: Unit::new(val(r.wave, i + 1)),
-                shape: Unit(0.0),
-            }
-            .segment()
-            .0
-        };
+        let blk = self.block::<SYNC>(r, N, *jit);
+        let mut run = Run::ZERO;
         let mut i0 = 0;
         while i0 < N {
-            let pair = seg(i0);
-            let i1 = if seg(N - 1) == pair {
+            let pair = seg(r, i0);
+            let i1 = if seg(r, N - 1) == pair {
                 N
             } else {
-                split(i0, N, |i| seg(i) == pair)
+                run_end(r, pair, i0, N)
             };
-            let run = self.setup::<SYNC>(pair, (i0, i1), r, *jit);
+            let span = (i0, i1);
             match pair {
                 Pair::SineTri => {
+                    self.setup::<Sine, Tri, SYNC>(&blk, span, r, N, &mut run);
                     self.run::<Sine, Tri, N, REC, SYNC>(&run, i0, i1, out, wr, jit, draw)
                 }
                 Pair::TriSaw => {
+                    self.setup::<Tri, Saw, SYNC>(&blk, span, r, N, &mut run);
                     self.run::<Tri, Saw, N, REC, SYNC>(&run, i0, i1, out, wr, jit, draw)
                 }
                 Pair::SawPulse => {
+                    self.setup::<Saw, Pulse, SYNC>(&blk, span, r, N, &mut run);
                     self.run::<Saw, Pulse, N, REC, SYNC>(&run, i0, i1, out, wr, jit, draw)
                 }
             }
@@ -734,89 +848,120 @@ impl VarOsc {
         }
     }
 
-    /// The run of samples `i0..i1` on `pair`: its constants lerp from the
-    /// held ones (or, on a new pair, from the sample before) to those at
-    /// its last sample; each edge's offset glides to its place there.
-    fn setup<const SYNC: bool>(
+    /// Every wave's SHAPE constants at the end of the block on `r` (`n`
+    /// samples), kept for `render`, and the block's peak bound: the larger
+    /// of its two ends' (`peak_bound`'s, from the same constants).
+    pub fn begin(&mut self, r: &Ramps, n: usize) -> f32 {
+        let sh1 = Shaped::all(Unit::new(val(r.shape, n)).get(), val(r.inc, n));
+        let sh0 = if self.sh_ok { self.sh } else { sh1 };
+        self.next = Some(sh1);
+        peak_of(&sh0, val(r.wave, 0)).max(peak_of(&sh1, val(r.wave, n)))
+    }
+
+    /// The block's ends (the start is the last block's end), each edged
+    /// wave's `1/r` and `|r|/6` (`r` the phase's speed past an edge at the
+    /// block's middle increment; places move linearly across a block) and,
+    /// for a sync slave, each wave's value and slope at phase 0 (unit weight)
+    /// at the block's end.
+    #[inline(never)]
+    fn block<const SYNC: bool>(&mut self, r: &Ramps, n: usize, jit: f32) -> Blk {
+        // the engine's blocks have `begin`'s; a lone `tick` fills here
+        let sh1 = match self.next.take() {
+            Some(sh) => sh,
+            None => end_shape(r, n),
+        };
+        let sh0 = if self.sh_ok { self.sh } else { sh1 };
+        (self.sh, self.sh_ok) = (sh1, true);
+        let ie = val(r.inc, n.div_ceil(2)) * jit;
+        let il = RECIP[n.min(RECIP.len() - 1)];
+        let mut blk = Blk {
+            sh0,
+            sh1,
+            rate: [[(0.0, 0.0); 2]; 3],
+            rinc: 1.0 / ie,
+            zero: [(0.0, 0.0); 4],
+        };
+        for (e, w) in [Wave::Tri, Wave::Saw, Wave::Pulse].into_iter().enumerate() {
+            let (p0, p1) = (w.pos(&sh0), w.pos(&sh1));
+            for q in 0..2 {
+                let rate = ie - (p1[q] - p0[q]) * il;
+                blk.rate[e][q] = (1.0 / rate, rate.abs() * (1.0 / 6.0));
+            }
+        }
+        if SYNC {
+            for (k, w) in WAVES.into_iter().enumerate() {
+                blk.zero[k] = w.value_slope(w.consts(&sh1, 1.0), 0.0, w.pos(&sh1));
+            }
+        }
+        blk
+    }
+
+    /// The run of samples `i0..i1` on the pair `A`, `B`: its constants lerp
+    /// from the held ones (or, on a new pair, from the sample before) to
+    /// those at its last sample, from the block's SHAPE ends (no fill, no
+    /// divide); each edge's offset glides to its place there.
+    #[inline(never)]
+    fn setup<A: Kind, B: Kind, const SYNC: bool>(
         &mut self,
-        pair: Pair,
+        blk: &Blk,
         (i0, i1): (usize, usize),
         r: &Ramps,
-        jit: f32,
-    ) -> Run {
-        let il = 1.0 / (i1 - i0) as f32;
-        let morph = |j| Morph {
-            wave: Unit::new(val(r.wave, j)),
-            shape: Unit::new(val(r.shape, j)),
+        n: usize,
+        run: &mut Run,
+    ) {
+        let il = RECIP[(i1 - i0).min(RECIP.len() - 1)];
+        let (a, b) = (A::WAVE, B::WAVE);
+        let pair = Pair::of(a as usize as f32);
+        let weight = |j: usize| 3.0 * Unit::new(val(r.wave, j)).get() - pair as usize as f32;
+        // the block's end is its SHAPE end itself; a run ending earlier
+        // (a WAVE segment crossing) lerps the two ends
+        let (c1, p1) = if i1 == n {
+            at(a, b, &blk.sh1, weight(i1))
+        } else {
+            at_lerp::<A, B>(blk, i1 as f32 * RECIP[n.min(RECIP.len() - 1)], weight(i1))
         };
-        let (c1, p1) = pair.consts(morph(i1), val(r.inc, i1));
         // held: lerp on; a new note: start on the values (as its ramps do);
         // a new segment: the pair's lines from the sample before
         let (c0, p0) = match self.pair {
             Some(q) if q == pair => (self.c, self.pos),
             None => (c1, p1),
-            Some(_) => cold_consts(pair, morph(i0), val(r.inc, i0)),
+            Some(_) => at_lerp::<A, B>(blk, i0 as f32 * RECIP[n.min(RECIP.len() - 1)], weight(i0)),
         };
         (self.pair, self.c, self.pos) = (Some(pair), c1, p1);
-        let ie = val(r.inc, (i0 + i1).div_ceil(2)) * jit;
-        let mut run = Run {
-            c: [Lin::default(); 6],
-            o: [Lin::default(); 4],
-            rcp: [0.0; 4],
-            ar: [0.0; 4],
-            rinc: 1.0 / ie,
-            inc: val(r.inc, i0),
-            dinc: r.inc.1,
-            y0: 0.0,
-            d0: 0.0,
-        };
+        (run.rinc, run.inc, run.dinc) = (blk.rinc, val(r.inc, i0), r.inc.1);
         for (k, l) in run.c.iter_mut().enumerate() {
             *l = Lin {
                 v: c0[k],
                 d: (c1[k] - c0[k]) * il,
             };
         }
-        let (a, b) = pair.waves();
         if SYNC {
-            let (ya, da) = a.value_slope([c1[0], c1[1], c1[2]], 0.0, [p1[0], p1[1]]);
-            let (yb, db) = b.value_slope([c1[3], c1[4], c1[5]], 0.0, [p1[2], p1[3]]);
-            (run.y0, run.d0) = (ya + yb, da + db);
+            let f = weight(i1);
+            let (za, zb) = (blk.zero[a as usize], blk.zero[b as usize]);
+            run.y0 = (1.0 - f) * za.0 + f * zb.0;
+            run.d0 = (1.0 - f) * za.1 + f * zb.1;
         }
         let mut live = 0;
-        if let Some((e, o, rcp, ar)) = self.glide(a, [p0[0], p0[1]], [p1[0], p1[1]], il, ie) {
+        if let Some((e, o)) = self.glide(a, [p0[0], p0[1]], [p1[0], p1[1]], il) {
             live |= 1 << e;
-            (
-                [run.o[0], run.o[1]],
-                [run.rcp[0], run.rcp[1]],
-                [run.ar[0], run.ar[1]],
-            ) = (o, rcp, ar);
+            [run.o[0], run.o[1]] = o;
+            let [x, y] = blk.rate[e];
+            ([run.rcp[0], run.rcp[1]], [run.ar[0], run.ar[1]]) = ([x.0, y.0], [x.1, y.1]);
         }
-        if let Some((e, o, rcp, ar)) = self.glide(b, [p0[2], p0[3]], [p1[2], p1[3]], il, ie) {
+        if let Some((e, o)) = self.glide(b, [p0[2], p0[3]], [p1[2], p1[3]], il) {
             live |= 1 << e;
-            (
-                [run.o[2], run.o[3]],
-                [run.rcp[2], run.rcp[3]],
-                [run.ar[2], run.ar[3]],
-            ) = (o, rcp, ar);
+            [run.o[2], run.o[3]] = o;
+            let [x, y] = blk.rate[e];
+            ([run.rcp[2], run.rcp[3]], [run.ar[2], run.ar[3]]) = ([x.0, y.0], [x.1, y.1]);
         }
         self.live = live;
-        run
     }
 
-    /// Wave `w`'s two edges over a run from places `p0` to `p1`: its slot,
-    /// each offset gliding to its place at the run's end, and `1/r`,
-    /// `|r|/6` at the run's middle increment `ie`. A wave entering starts
-    /// on its places, uncrossed.
+    /// Wave `w`'s two edges over a run from places `p0` to `p1`: its slot
+    /// and each offset gliding to its place at the run's end. A wave
+    /// entering starts on its places, uncrossed.
     #[inline(always)]
-    #[allow(clippy::type_complexity)]
-    fn glide(
-        &mut self,
-        w: Wave,
-        p0: [f32; 2],
-        p1: [f32; 2],
-        il: f32,
-        ie: f32,
-    ) -> Option<(usize, [Lin; 2], [f32; 2], [f32; 2])> {
+    fn glide(&mut self, w: Wave, p0: [f32; 2], p1: [f32; 2], il: f32) -> Option<(usize, [Lin; 2])> {
         let e = w.edge_slot()?;
         // slots are 0..=2: the bound lets the indexing go unchecked
         let e = e.min(2);
@@ -827,32 +972,32 @@ impl VarOsc {
         let one = |o: f32, end: f32| {
             // places span under ½ a cycle, so the nearest whole is it
             let whole = floor(o - end + 0.5) as f32;
-            let d = (end + whole - o) * il;
-            let rate = ie - d;
-            (Lin { v: o, d }, 1.0 / rate, rate.abs() * (1.0 / 6.0))
+            Lin {
+                v: o,
+                d: (end + whole - o) * il,
+            }
         };
-        let (a, b) = (one(off[0], p1[0]), one(off[1], p1[1]));
-        Some((e, [a.0, b.0], [a.1, b.1], [a.2, b.2]))
+        Some((e, [one(off[0], p1[0]), one(off[1], p1[1])]))
     }
 
-    /// Offsets for a wave entering at places `pos`: no crossing. Off the
-    /// block's common path (a note's start, a WAVE segment change).
-    #[cold]
+    /// Offsets for a wave entering at places `pos`: no crossing.
     #[inline(never)]
     fn enter(&mut self, w: Wave, pos: [f32; 2]) -> [f32; 2] {
+        // places are in 0..=1 and the phase in 0..1: the offset is the
+        // place or a cycle before it
         let p = self.phase;
-        if w == Wave::Pulse {
-            self.h = high(p, pos);
-        }
-        pos.map(|x| {
-            let mut o = x + floor(p - x) as f32;
+        let o = pos.map(|x| {
+            let mut o = if p < x { x - 1.0 } else { x };
             if p - o >= 1.0 {
                 o += 1.0;
-            } else if p - o < 0.0 {
-                o -= 1.0;
             }
             o
-        })
+        });
+        if w == Wave::Pulse {
+            // high where the phase since the rise is the shorter (`high`)
+            self.h = if p - o[0] < p - o[1] { 1.0 } else { 0.0 };
+        }
+        o
     }
 
     /// The per-sample loop of one run on the pair `A`, `B`.

@@ -685,7 +685,7 @@ fn steal_glide_glides() {
 
 #[test]
 fn bills_follow_the_mode() {
-    let bills = [510, 620, 520, 530, 520];
+    let bills = [590, 700, 600, 610, 600];
     assert!(VaEngine::mode_cost(VaMode::Sync) > VaEngine::mode_cost(VaMode::Mix));
     for (mode, bill) in VaMode::ALL.into_iter().zip(bills) {
         assert_eq!(VaEngine::mode_cost(mode), Cost(bill), "{mode:?}");
@@ -853,5 +853,27 @@ fn wave_sweeps_track_the_oscillator() {
             println!("WAVE{} sweep at SHAPE {s}: {e:.2e}", k + 1);
             assert!(e <= 2e-3, "WAVE{} SHAPE {s}: {e}", k + 1);
         }
+    }
+}
+
+/// WAVE driven past two segment boundaries every block (an audio-rate
+/// LFO on WAVE): each block splits into three runs, and the render stays
+/// finite and peak-safe in every MODE, with SHAPE moving too.
+#[test]
+fn wave_crossing_segments_every_block_stays_safe() {
+    for mode in VaMode::ALL {
+        let base = VaParams {
+            mode,
+            fine: [0.0, 6.0],
+            ..VaParams::default()
+        };
+        let y = take(A4, base, 300, |b, p| {
+            let w = if b % 2 == 0 { 0.0 } else { 1.0 };
+            p.wave = [w, 1.0 - w];
+            p.shape = [(b % 7) as f32 / 6.0; 2];
+        });
+        assert!(y.iter().all(|v| v.is_finite()), "{mode:?}");
+        assert!(peak(&y) <= 0.95, "{mode:?}: {}", peak(&y));
+        assert!(rms(&y) > 1e-3, "{mode:?}");
     }
 }

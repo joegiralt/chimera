@@ -23,7 +23,7 @@ use crate::hw::Cost;
 use crate::project::PartId;
 use crate::voice_alloc::VoiceIdx;
 use combine::{Crusher, Peaks, ring_gain, xor16_scaled};
-use osc::{Morph, NO_WRAP, R, Ramps, Sub, Unit, VarOsc, peak_bound};
+use osc::{NO_WRAP, R, Ramps, Sub, VarOsc};
 use stability::{JITTER_CENTS, Seed, Stability, depth};
 #[cfg(any(test, feature = "test-support"))]
 use {osc::Correction, stability::Character};
@@ -285,23 +285,25 @@ pub const VA_OUT_GAIN: f32 = 1.0;
 /// 1.46 × 1.1, + 12 a `vdiv`/`vsqrt`; Task 9b's scripts). Each oscillator
 /// bills its dearest wave pair, constants lerped and SHAPE and WAVE moving:
 /// its loop's round with no event, + 0.45 of its wrap's side, + each edge's
-/// crossing side at 0.45 + 0.225/64 a sample (backward 0.225/64); the SYNC
-/// slave + 0.45 of a reset. Then the operator loop (sub flips at 0.45), the
-/// block's work ÷ 64 (cold paths apart: a sample-rate change, a WAVE
-/// segment change, a wave's first block) and LP24's 95. Each line: OSC 1
-/// (TRI/SAW) + OSC 2 + operator + block + 95.
+/// crossing side at 0.45 + 0.225/64 a sample (backward 0.225/64), all
+/// stretched by the jitter's half cent; the SYNC slave + 0.45 of a reset.
+/// Then the operator loop (sub flips at 0.45), the steady block's work ÷ 64
+/// (the duck's loop at its 4 trips) and two WAVE segment crossings an
+/// oscillator every block (an audio-rate LFO on WAVE), each an extra run,
+/// and LP24's 95. Each line: OSC 1 (TRI/SAW) + OSC 2 + operator + block +
+/// crossings + 95.
 ///
-/// MIX: 155.1 + 148.0 (TRI/SAW) + 41.6 + 64.7 + 95.
-pub const COST_MIX: Cost = Cost(510);
+/// MIX: 155.1 + 148.0 (TRI/SAW) + 41.6 + 76.5 + 64.2 + 95.
+pub const COST_MIX: Cost = Cost(590);
 /// SYNC: 155.1 + 255.9 (SINE/TRI slave: a reset's 204.0 × 0.45) + 41.6 +
-/// 66.8 + 95.
-pub const COST_SYNC: Cost = Cost(620);
-/// RING: 155.1 + 148.0 + 51.7 + 64.8 + 95.
-pub const COST_RING: Cost = Cost(520);
-/// XOR: 155.1 + 148.0 + 66.1 + 65.3 + 95.
-pub const COST_XOR: Cost = Cost(530);
-/// BITS: 155.1 + 148.0 + 55.7 + 65.0 + 95.
-pub const COST_BITS: Cost = Cost(520);
+/// 80.4 + 65.6 + 95.
+pub const COST_SYNC: Cost = Cost(700);
+/// RING: 155.1 + 148.0 + 51.7 + 76.6 + 64.2 + 95.
+pub const COST_RING: Cost = Cost(600);
+/// XOR: 155.1 + 148.0 + 66.1 + 77.1 + 64.2 + 95.
+pub const COST_XOR: Cost = Cost(610);
+/// BITS: 155.1 + 148.0 + 55.7 + 76.8 + 64.2 + 95.
+pub const COST_BITS: Cost = Cost(600);
 
 /// The MODE duck's length each way, two blocks.
 const DUCK: usize = 2 * BLOCK_SIZE;
@@ -387,9 +389,6 @@ pub struct VaEngine {
     crusher: Crusher,
     /// Each oscillator's cycle factor from its last wrap's jitter.
     jit: [f32; 2],
-    /// Each oscillator's last block-end (WAVE, SHAPE, inc) and its
-    /// `peak_bound`: the next block's start.
-    peak: [([f32; 3], f32); 2],
     /// Scratch, written before it is read every block: OSC 2's block and
     /// OSC 1's wraps (kept here so no block zeroes them).
     osc2: [f32; BLOCK_SIZE],
@@ -425,7 +424,6 @@ impl VaEngine {
             stab: Stability::NEW,
             crusher: Crusher::NEW,
             jit: [1.0; 2],
-            peak: [([f32::NAN; 3], 0.0); 2],
             osc2: [0.0; BLOCK_SIZE],
             wraps: [NO_WRAP; BLOCK_SIZE],
             inc: [Ramp::default(); 2],
@@ -636,28 +634,15 @@ impl VaEngine {
         };
         let mut pk = [0.0f32; 2];
         for k in 0..2 {
-            let (inc, li) = lane(&mut self.inc[k], self.osc[k].inc_for(hz[k]));
-            let (wave, lw) = lane(&mut self.wave[k], unit(p.wave[k]));
-            let (shape, ls) = lane(&mut self.shape[k], unit(p.shape[k]));
+            let (_, li) = lane(&mut self.inc[k], self.osc[k].inc_for(hz[k]));
+            let (_, lw) = lane(&mut self.wave[k], unit(p.wave[k]));
+            let (_, ls) = lane(&mut self.shape[k], unit(p.shape[k]));
             l.osc[k] = Ramps {
                 inc: li,
                 wave: lw,
                 shape: ls,
             };
-            let m = |w, s| Morph {
-                wave: Unit::new(w),
-                shape: Unit::new(s),
-            };
-            // the block's start is the last block's end (bar a fresh note)
-            let (key, end) = ([wave.1, shape.1, inc.1], self.peak[k]);
-            let from = if end.0 == [wave.0, shape.0, inc.0] {
-                end.1
-            } else {
-                peak_bound(m(wave.0, shape.0), inc.0)
-            };
-            let to = peak_bound(m(wave.1, shape.1), inc.1);
-            self.peak[k] = (key, to);
-            pk[k] = from.max(to);
+            pk[k] = self.osc[k].begin(&l.osc[k], BLOCK_SIZE);
         }
         l.pk = Peaks { a: pk[0], b: pk[1] };
         let k = self.ring_k.step(ring_gain(l.pk));
