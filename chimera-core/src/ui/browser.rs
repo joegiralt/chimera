@@ -34,12 +34,15 @@ pub const VISIBLE_ROWS: usize = 8;
 pub const INIT_TYPES: [EngineType; EngineType::ALL.len()] = EngineType::ALL;
 pub const TOTAL_ENTRIES: usize = MAX_SOUNDS + INIT_TYPES.len();
 
-/// The Sound rung's browser: its cursor and the first row shown. Only
-/// `input` moves it; it opens at the top.
+/// The Sound rung's browser: each tab's cursor and first row shown. Only
+/// `input`, `input_library` and a listing's landing move them; it opens
+/// at the top.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct Browse {
     cursor: u8,
     scroll: u8,
+    lib_cursor: u8,
+    lib_scroll: u8,
 }
 
 const _: () = assert!(TOTAL_ENTRIES <= 256);
@@ -53,11 +56,43 @@ impl Browse {
         self.scroll as usize
     }
 
+    pub const fn lib_cursor(self) -> usize {
+        self.lib_cursor as usize
+    }
+
+    pub const fn lib_scroll(self) -> usize {
+        self.lib_scroll as usize
+    }
+
+    /// LIBRARY's cursor on `cursor` of `rows`, the scroll following it.
+    pub(crate) fn lib_at(self, cursor: usize, rows: usize) -> Self {
+        let (cursor, scroll) = follow(cursor, self.lib_scroll(), rows);
+        Browse {
+            lib_cursor: cursor,
+            lib_scroll: scroll,
+            ..self
+        }
+    }
+
     /// Any cursor and scroll, unchecked: tests only.
     #[cfg(any(test, feature = "test-support"))]
     pub const fn of(cursor: u8, scroll: u8) -> Self {
-        Browse { cursor, scroll }
+        Browse {
+            cursor,
+            scroll,
+            lib_cursor: 0,
+            lib_scroll: 0,
+        }
     }
+}
+
+/// `cursor` clamped to `rows`, and a scroll from `scroll` that shows it.
+fn follow(cursor: usize, scroll: usize, rows: usize) -> (u8, u8) {
+    let visible = VISIBLE_ROWS.min(rows);
+    let cursor = cursor.min(rows.saturating_sub(1));
+    let scroll = scroll.min(cursor).max((cursor + 1).saturating_sub(visible));
+    // Both lists are under 256 rows.
+    (cursor as u8, scroll as u8)
 }
 
 /// The pool slot at list entry `entry`; `None` for the INIT rows.
@@ -139,17 +174,24 @@ pub fn orphan_words(name: SoundName, cost: Cost) -> Line {
 /// on screen. EDIT's load, MIX+EDIT's save, MIX+MINUS's clear and every
 /// key's way out are `UiState`'s.
 pub fn input(controls: &impl Controls, b: Browse) -> Browse {
-    let visible = VISIBLE_ROWS.min(TOTAL_ENTRIES);
-    let delta = i32::from(controls.encoder_delta(EncoderId::A));
-    let cursor = (b.cursor as i32 + delta).clamp(0, TOTAL_ENTRIES as i32 - 1) as usize;
-    let scroll = (b.scroll as usize)
-        .min(cursor)
-        .max((cursor + 1).saturating_sub(visible));
-    // TOTAL_ENTRIES <= 256.
+    let cursor = moved(controls, b.cursor());
+    let (cursor, scroll) = follow(cursor, b.scroll(), TOTAL_ENTRIES);
     Browse {
-        cursor: cursor as u8,
-        scroll: scroll as u8,
+        cursor,
+        scroll,
+        ..b
     }
+}
+
+/// `input` on LIBRARY's `rows`.
+pub fn input_library(controls: &impl Controls, b: Browse, rows: usize) -> Browse {
+    b.lib_at(moved(controls, b.lib_cursor()), rows)
+}
+
+/// `cursor` moved by encoder A, not below 0.
+fn moved(controls: &impl Controls, cursor: usize) -> usize {
+    let delta = i32::from(controls.encoder_delta(EncoderId::A));
+    (cursor as i32 + delta).max(0) as usize
 }
 
 /// Baseline of visible row `i`.

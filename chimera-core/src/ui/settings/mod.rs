@@ -16,17 +16,18 @@ pub use manage::MANAGE_COMMANDS;
 #[cfg(feature = "orbit")]
 pub use tree::ORBIT_ROW;
 pub use tree::{
-    Act, Issue, Kind, PART_ROW, ROOT, Row, SAVE_AS_AT, Screen, issue, kind_at, path_of, row_at,
-    rows, screen_path,
+    Act, Issue, Kind, PART_ROW, ROOT, Row, SAVE_AS_AT, SAVE_TO_LIB_ROW, Screen, issue, kind_at,
+    path_of, row_at, rows, screen_path,
 };
 
 use chimera_hal::{Controls, EncoderId};
 
 use crate::name::{Name, ProjectName};
 use crate::project::{
-    FreshFile, PartAction, PartId, PartSet, PartSource, Project, ProjectEntry, ProjectSource,
-    SceneAsk, SlotId, Subject, Unused,
+    FreshFile, LibraryPart, PartAction, PartId, PartSet, PartSource, Project, ProjectEntry,
+    ProjectSource, SceneAsk, SlotId, Subject, Unused,
 };
+use crate::ui::browser::Browse;
 use crate::ui::hold::Presses;
 use crate::ui::region::settings_key;
 use job::{Then, ThenClear};
@@ -34,12 +35,12 @@ use listing::Chosen;
 use naming::{NAME_MAX, Naming, NamingOut};
 use prompt::{
     AlsoUses, AlsoUsesAnswer, Answer, CardChanged, CardChangedAnswer, Choice, Clear, ClearAnswer,
-    ClearScene, ClearSceneAnswer, ClearSlot, Delete, DeleteAnswer, DfuAnswer, EnterDfu, Load,
-    LoadAnswer, NameExists, NameExistsAnswer, PromptView, PurgeAnswer, PurgeSources, Reload,
-    ReloadAnswer, ReloadScene, ReloadSceneAnswer, Replace, ReplaceAnswer, ReplaceTo, SaveOver,
-    SaveOverAnswer, SaveSceneOver, SaveSceneOverAnswer, panel,
+    ClearScene, ClearSceneAnswer, ClearSlot, Delete, DeleteAnswer, DfuAnswer, EnterDfu,
+    LibraryAnswer, Load, LoadAnswer, LoadLibrary, NameExists, NameExistsAnswer, PromptView,
+    PurgeAnswer, PurgeSources, Reload, ReloadAnswer, ReloadScene, ReloadSceneAnswer, Replace,
+    ReplaceAnswer, ReplaceTo, SaveOver, SaveOverAnswer, SaveSceneOver, SaveSceneOverAnswer, panel,
 };
-use replace::{PartAsk, ProjectAsk, ReloadAsk, Reply};
+use replace::{LibraryAsk, PartAsk, ProjectAsk, ReloadAsk, Reply};
 
 /// SAVE PROJECT AS, named: the file it goes to and the load it is inside.
 #[derive(Debug)]
@@ -56,6 +57,8 @@ pub(crate) enum Ask {
     ReplacePart(PartAsk, ReplaceTo),
     /// RELOAD FROM PROJ into an Edited Part, from its slot.
     ReloadPart(ReloadAsk, SlotId),
+    /// A library Sound into an Edited Part.
+    LoadLibrary(LibraryAsk),
     /// A save over a slot `first` and `more` also play; UPDATE applies
     /// `reverts`, as offered when it opened.
     UpdateStale {
@@ -129,6 +132,7 @@ macro_rules! ask_kinds {
 ask_kinds! {
     ReplacePart => "replace_part",
     ReloadPart => "reload_part",
+    LoadLibrary => "load_library",
     UpdateStale => "update_stale",
     ClearSlot => "clear_slot",
     LoadProject => "load",
@@ -155,6 +159,7 @@ fn subject(c: &Chosen) -> Subject {
 pub(crate) enum Answered {
     ReplacePart(Reply<PartSource, ReplaceAnswer>, ReplaceTo),
     ReloadPart(Reply<PartSource, ReloadAnswer>, SlotId),
+    LoadLibrary(Reply<LibraryPart, LibraryAnswer>),
     UpdateStale(Reverts, Answer<AlsoUsesAnswer>),
     ClearSlot(SlotId, Answer<ClearAnswer>),
     LoadProject {
@@ -216,6 +221,10 @@ impl Ask {
             Ask::ReloadPart(a, slot) => {
                 let part = a.source().part;
                 panel(&Reload { part, slot: *slot }, a.choice(), f)
+            }
+            Ask::LoadLibrary(a) => {
+                let part = a.source().part;
+                panel(&LoadLibrary { part }, a.choice(), f)
             }
             Ask::UpdateStale {
                 first,
@@ -290,6 +299,7 @@ impl Ask {
         match self {
             Ask::ReplacePart(..) => AskKind::ReplacePart,
             Ask::ReloadPart(..) => AskKind::ReloadPart,
+            Ask::LoadLibrary(_) => AskKind::LoadLibrary,
             Ask::UpdateStale { .. } => AskKind::UpdateStale,
             Ask::ClearSlot(..) => AskKind::ClearSlot,
             Ask::LoadProject { .. } => AskKind::LoadProject,
@@ -337,6 +347,10 @@ impl Ask {
             Ask::ReloadPart(ask, s) => match ask.input(c, p, project) {
                 Ok(r) => Got(Answered::ReloadPart(r, s)),
                 Err(ask) => Open(Ask::ReloadPart(ask, s)),
+            },
+            Ask::LoadLibrary(ask) => match ask.input(c, p, project) {
+                Ok(r) => Got(Answered::LoadLibrary(r)),
+                Err(ask) => Open(Ask::LoadLibrary(ask)),
             },
             Ask::UpdateStale {
                 first,
@@ -431,6 +445,9 @@ pub(crate) enum NamingFor {
     RenamePart(PartId),
     /// SAVE PROJECT AS to a file no pair had, inside a load or not.
     SaveAs(FreshFile, Then),
+    /// SAVE TO LIBRARY of the Part's Sound; from the Sound rung, `back`
+    /// is its browser, where NAMING closes to.
+    SaveToLibrary(PartId, Option<Browse>),
 }
 
 impl NamingFor {
@@ -438,7 +455,7 @@ impl NamingFor {
     pub(crate) fn title(&self) -> &'static str {
         match self {
             NamingFor::RenameLoaded | NamingFor::SaveAs(..) => "PROJECT NAME",
-            NamingFor::RenamePart(_) => "SOUND NAME",
+            NamingFor::RenamePart(_) | NamingFor::SaveToLibrary(..) => "SOUND NAME",
         }
     }
 
@@ -447,6 +464,7 @@ impl NamingFor {
         match self {
             NamingFor::RenameLoaded | NamingFor::RenamePart(_) => "RENAME",
             NamingFor::SaveAs(..) => "SAVE AS",
+            NamingFor::SaveToLibrary(..) => "SAVE TO LIB",
         }
     }
 }
@@ -468,7 +486,8 @@ pub(crate) enum ModalStep {
 pub(crate) enum Done {
     Answered(Answered),
     Named(NamingFor, Name<NAME_MAX>),
-    Cancelled,
+    /// MENU on NAMING.
+    Cancelled(NamingFor),
 }
 
 impl Modal {
@@ -481,7 +500,7 @@ impl Modal {
             Modal::Naming(f, mut n) => match n.input(c, p) {
                 None => ModalStep::Open(Modal::Naming(f, n)),
                 Some(NamingOut::Empty) => ModalStep::Refused(f, n),
-                Some(NamingOut::Cancel) => ModalStep::Done(Done::Cancelled),
+                Some(NamingOut::Cancel) => ModalStep::Done(Done::Cancelled(f)),
                 Some(NamingOut::Save(name)) => ModalStep::Done(Done::Named(f, name)),
             },
         }

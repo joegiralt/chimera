@@ -186,9 +186,11 @@ fn ui_state_rest_under_4k() {
     // SOURCE cell (a load's `SourceCheck` 1 KB, the 16 heads, the
     // per-source memory's 512 B, the card's 64 rows; TAPE Task 17); 128 B
     // the filter types' (the LEVEL LEDs' holds and the matrix's taps: 88 B
-    // on their own, 128 beside TAPE's, padded).
+    // on their own, 128 beside TAPE's, padded); 3.75 KB the library's
+    // page, 48 rows of 76 B, and a pending load (its source streams in
+    // the SOURCE cell's slot).
     assert!(
-        rest <= 4096 + 512 + 2816 + 128,
+        rest <= 4096 + 512 + 2816 + 128 + 3840,
         "UiState grew to {rest} B besides its Project"
     );
 }

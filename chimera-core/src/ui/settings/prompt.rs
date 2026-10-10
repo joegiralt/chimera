@@ -20,8 +20,8 @@ use crate::ui::theme;
 
 pub use chimera_engine::confirm::{
     AlsoUsesAnswer, Answer, Answers, CardChangedAnswer, Choice, ClearAnswer, ClearSceneAnswer,
-    DeleteAnswer, DfuAnswer, LoadAnswer, NameExistsAnswer, Opts, PurgeAnswer, ReloadAnswer,
-    ReloadSceneAnswer, ReplaceAnswer, SaveOverAnswer, SaveSceneOverAnswer,
+    DeleteAnswer, DfuAnswer, LibraryAnswer, LoadAnswer, NameExistsAnswer, Opts, PurgeAnswer,
+    ReloadAnswer, ReloadSceneAnswer, ReplaceAnswer, SaveOverAnswer, SaveSceneOverAnswer,
 };
 
 /// A prompt answer's words on its pill.
@@ -45,6 +45,7 @@ pills!(
     LoadAnswer { SaveThenLoad => "SAVE THEN LOAD", LoadAnyway => "LOAD ANYWAY", Cancel => "CANCEL" };
     ReplaceAnswer { SavePartFirst => "SAVE PART FIRST", Replace => "REPLACE", Cancel => "CANCEL" };
     ReloadAnswer { SavePartFirst => "SAVE PART FIRST", Reload => "RELOAD", Cancel => "CANCEL" };
+    LibraryAnswer { SavePartFirst => "SAVE PART FIRST", Replace => "REPLACE", Cancel => "CANCEL" };
     AlsoUsesAnswer { Update => "UPDATE", Leave => "LEAVE" };
     NameExistsAnswer { KeepBoth => "KEEP BOTH", Overwrite => "OVERWRITE THAT ONE" };
     DeleteAnswer { Delete => "DELETE", Cancel => "CANCEL" };
@@ -213,6 +214,20 @@ impl Prompt for Replace {
             ReplaceTo::Sound => write!(q, "REPLACE P{p} SOUND?"),
             ReplaceTo::Init => write!(q, "CLEAR P{p} TO INIT?"),
         };
+        let _ = write!(r, "P{p} IS EDITED");
+    }
+}
+
+/// A library Sound into an Edited Part.
+pub struct LoadLibrary {
+    pub part: PartId,
+}
+
+impl Prompt for LoadLibrary {
+    type Answer = LibraryAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        let p = part(self.part);
+        let _ = write!(q, "LOAD INTO P{p}?");
         let _ = write!(r, "P{p} IS EDITED");
     }
 }

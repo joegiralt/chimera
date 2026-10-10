@@ -1,0 +1,627 @@
+//! The Sound library in the UI (library spec § Browser, § Save, § Load):
+//! the PROJECT/LIBRARY tab on B, the card jobs behind BUSY, the guard's
+//! prompt, NAMING and SETTINGS › PART › SAVE TO LIBRARY; a pending load
+//! blocks every other card start, and MENU cancels it.
+
+mod common;
+mod screen;
+
+use chimera_core::dsp::tape_engine::read::{DESC_LEN, Shape};
+use chimera_core::factory;
+use chimera_core::name::SoundName;
+use chimera_core::params::EngineType;
+use chimera_core::preset::Sound;
+use chimera_core::project::test_support::set_free_to;
+use chimera_core::project::{
+    LoadLink, PartId, PartStatus, ProjectStatus, SourceRef, part_status, save_library_sound,
+};
+use chimera_core::storage::{
+    BuildStamp, Card, FileKind, Generation, Header, LibId, RecordTag, SourceHead, SystemSettings,
+    SystemSync, WholeShape, encode_library_sound, source_crc, write_file, write_source,
+};
+use chimera_core::ui::UiState;
+use chimera_core::ui::busy::ToastStep;
+use chimera_core::ui::library::Tab;
+use chimera_core::ui::nav::Location;
+use chimera_core::ui::settings::part::Offer;
+use chimera_core::ui::settings::prompt::LibraryAnswer;
+use chimera_core::ui::settings::{AskKind, CardCx};
+use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
+use chimera_hal::testkit::MemStore;
+use chimera_hal::{ButtonId, EncoderId};
+use common::codec_util::{VecSink, fix_crc, record_offsets};
+use common::tape::{held_plain, sine};
+use screen::{Input, feed, tap};
+
+const P1: PartId = PartId::ALL[0];
+const ST: BuildStamp = BuildStamp::new("0.1.0", "02e440e2", false);
+
+/// MemStore, its reads and listings counted.
+struct Counted {
+    inner: MemStore,
+    reads: usize,
+}
+
+impl Store for Counted {
+    fn mount(&mut self) -> Result<VolumeId, StoreError> {
+        self.inner.mount()
+    }
+    fn list(
+        &mut self,
+        v: VolumeId,
+        d: Dir,
+        f: &mut dyn FnMut(FileName, u32),
+    ) -> Result<(), StoreError> {
+        self.reads += 1;
+        self.inner.list(v, d, f)
+    }
+    fn read(&mut self, v: VolumeId, f: FileName, s: &mut dyn ReadSink) -> Result<(), StoreError> {
+        self.read_at(v, f, 0, s)
+    }
+    fn read_at(
+        &mut self,
+        v: VolumeId,
+        f: FileName,
+        at: u32,
+        s: &mut dyn ReadSink,
+    ) -> Result<(), StoreError> {
+        self.reads += 1;
+        self.inner.read_at(v, f, at, s)
+    }
+    fn write(
+        &mut self,
+        v: VolumeId,
+        f: FileName,
+        b: &mut dyn FnMut(&mut dyn ByteSink) -> Result<(), StoreError>,
+    ) -> Result<u32, StoreError> {
+        self.inner.write(v, f, b)
+    }
+    fn delete(&mut self, v: VolumeId, f: FileName) -> Result<(), StoreError> {
+        self.inner.delete(v, f)
+    }
+    fn make_dir(&mut self, v: VolumeId, d: Dir) -> Result<(), StoreError> {
+        self.inner.make_dir(v, d)
+    }
+    fn seal(&mut self, v: VolumeId, f: FileName) -> Result<(), StoreError> {
+        self.inner.seal(v, f)
+    }
+}
+
+struct Rig {
+    ui: Box<UiState>,
+    st: Counted,
+    card: Card,
+    sync: SystemSync,
+    set: SystemSettings,
+    link: LoadLink,
+}
+
+impl Rig {
+    fn new() -> Rig {
+        let mut st = Counted {
+            inner: MemStore::new(1),
+            reads: 0,
+        };
+        let mut card = Card::new();
+        let (sync, set, _) = SystemSync::boot(&mut card, &mut st);
+        Rig {
+            ui: Box::new(UiState::new()),
+            st,
+            card,
+            sync,
+            set,
+            link: LoadLink::new(),
+        }
+    }
+
+    /// One pass of card work.
+    fn one_pass(&mut self) {
+        let link = &self.link;
+        let cx = CardCx {
+            card: &mut self.card,
+            store: &mut self.st,
+            sync: &mut self.sync,
+            settings: &mut self.set,
+        };
+        let _ = self.ui.card_work(cx, link, |swap, _| {
+            let _ = swap.settle(link, || false);
+        });
+    }
+
+    /// Passes until no card work is pending.
+    fn work(&mut self) {
+        for _ in 0..200 {
+            if !self.ui.card_pending() {
+                return;
+            }
+            self.one_pass();
+        }
+        panic!("card work never ended");
+    }
+
+    fn feed(&mut self, i: Input) {
+        feed(&mut self.ui, i);
+    }
+
+    fn press(&mut self, b: ButtonId) {
+        self.feed(Input::press(b));
+    }
+
+    fn turn(&mut self, e: EncoderId, d: i8) {
+        self.feed(Input::turn(e, d));
+    }
+
+    /// Part 1's Sound rung, the LIBRARY tab.
+    fn open_library(&mut self) {
+        self.feed(Input::chord(ButtonId::Edit, ButtonId::B1));
+        self.turn(EncoderId::B, 1);
+        assert_eq!(self.ui.lib_tab(), Tab::Library);
+    }
+
+    fn toast(&mut self) -> String {
+        match self.ui.step_toast(0) {
+            ToastStep::Show(l) => l.as_str().into(),
+            s => panic!("no toast: {s:?}"),
+        }
+    }
+
+    fn reads(&self) -> usize {
+        self.st.reads
+    }
+
+    fn sounds(&mut self) -> Vec<u32> {
+        let v = self.st.inner.mount().unwrap();
+        let mut ids = Vec::new();
+        let _ = self.st.inner.list(v, Dir::Sounds, &mut |f, _| {
+            if f.ext() == b"A" {
+                let stem = core::str::from_utf8(f.stem()).unwrap();
+                ids.push(stem[1..].parse().unwrap());
+            }
+        });
+        ids.sort_unstable();
+        ids
+    }
+
+    /// `s` saved to the library by the engine, as another build would.
+    fn library_with(&mut self, s: &Sound) -> LibId {
+        save_library_sound(&mut Card::new(), &mut self.st.inner, s, s.name, &ST)
+            .out
+            .unwrap()
+    }
+
+    /// `bytes` as `S<id>.A`.
+    fn put_raw(&mut self, id: u32, bytes: &[u8]) {
+        let v = self.st.inner.mount().unwrap();
+        let _ = self.st.inner.make_dir(v, Dir::Chimera);
+        let _ = self.st.inner.make_dir(v, Dir::Sounds);
+        let id = LibId::new(id).unwrap();
+        let f = FileName::new(Dir::Sounds, &id.stem(), b"A").unwrap();
+        self.st
+            .inner
+            .write(v, f, &mut |s: &mut dyn ByteSink| s.put(bytes))
+            .unwrap();
+    }
+
+    /// The LIBRARY row under the cursor, as its id.
+    fn cursor_id(&self) -> Option<u32> {
+        self.ui.library_cursor_id_for_test().map(LibId::get)
+    }
+
+    /// EDIT on LIBRARY's first row, then the job.
+    fn start_load(&mut self) {
+        self.open_library();
+        self.work();
+        self.press(ButtonId::Edit);
+    }
+
+    fn answer(&mut self, a: LibraryAnswer) {
+        let i = [
+            LibraryAnswer::SavePartFirst,
+            LibraryAnswer::Replace,
+            LibraryAnswer::Cancel,
+        ]
+        .iter()
+        .position(|&x| x == a)
+        .unwrap();
+        self.turn(EncoderId::A, i as i8);
+        tap(&mut self.ui, ButtonId::Seq);
+        assert!(!self.ui.prompt_open());
+    }
+
+    fn edit_part(&mut self) {
+        self.ui
+            .project_mut()
+            .edit_part(P1)
+            .sound
+            .params
+            .filter
+            .cutoff *= 0.5;
+    }
+
+    fn counts(&self) -> (usize, usize) {
+        let pool = self.ui.project().pool();
+        (pool.source_count(), pool.sound_count())
+    }
+}
+
+/// Factory Sound `i` renamed, so NEW's copy of it doesn't dedupe.
+fn factory_sound(i: usize) -> Sound {
+    let mut s = factory::factory_sound(i).unwrap();
+    s.name = SoundName::new(&format!("LIB {i}")).unwrap();
+    s
+}
+
+const FRAMES: u32 = 9_600;
+
+/// A Plain sine source of `period`, its head and samples.
+fn source(period: f32) -> (SourceHead, Vec<u8>) {
+    let data = held_plain(&sine(48_000, period, FRAMES), 48_000)[DESC_LEN..].to_vec();
+    let h = SourceHead {
+        sref: SourceRef {
+            crc: source_crc(WholeShape::Plain, 1, &data),
+            frames: FRAMES,
+            rate: 48_000,
+        },
+        shape: Shape::Plain,
+        count: 1,
+        root: 6_000,
+        period_q16: 0,
+        name: SoundName::new("SINE").unwrap(),
+    };
+    (h, data)
+}
+
+/// A TAPE Sound on source `period` saved, its `.SRC` on the card.
+fn tape_library(r: &mut Rig, period: f32, name: &str) -> SourceRef {
+    let (h, data) = source(period);
+    Card::new()
+        .run(&mut r.st.inner, |s, rd| write_source(s, rd, &h, &data))
+        .unwrap()
+        .result
+        .unwrap();
+    let mut s = Sound::init(EngineType::Tape);
+    s.pick_source(&h, None);
+    s.name = SoundName::new(name).unwrap();
+    r.library_with(&s);
+    h.sref
+}
+
+/// An Algo INIT stamped, with an unknown record after its routes: one
+/// skip on load.
+fn skip_file() -> Vec<u8> {
+    let s = Sound::init(EngineType::Algo);
+    let h = Header {
+        kind: FileKind::Sound,
+        generation: Generation::FIRST,
+        name: Some(SoundName::new("SKIPS").unwrap()),
+    };
+    let mut sink = VecSink(Vec::new());
+    write_file(&mut sink, &h, &mut |w| encode_library_sound(&s, &ST, w)).unwrap();
+    let mut f = sink.0;
+    let o = record_offsets(&f);
+    let i = o[..o.len() - 1]
+        .iter()
+        .position(|&p| u16::from_le_bytes([f[p], f[p + 1]]) == RecordTag::Routes.code())
+        .unwrap();
+    let mut rec = 0x0070u16.to_le_bytes().to_vec();
+    rec.extend(4u16.to_le_bytes());
+    rec.extend([0; 4]);
+    f.splice(o[i + 1]..o[i + 1], rec);
+    fix_crc(&mut f);
+    f
+}
+
+#[test]
+fn b_turns_between_project_and_library_and_lists_once() {
+    let mut r = Rig::new();
+    assert_eq!(r.ui.lib_tab(), Tab::Project);
+    r.open_library();
+    let reads = r.reads();
+    assert!(r.ui.card_pending(), "LIBRARY on screen lists");
+    r.work();
+    assert!(r.reads() > reads);
+    r.turn(EncoderId::B, -1);
+    assert_eq!(r.ui.lib_tab(), Tab::Project);
+    r.turn(EncoderId::B, 1);
+    assert!(!r.ui.card_pending(), "cached");
+    let reads = r.reads();
+    r.work();
+    assert_eq!(r.reads(), reads);
+}
+
+#[test]
+fn mix_edit_in_library_names_then_saves() {
+    let mut r = Rig::new();
+    r.open_library();
+    r.work();
+    r.feed(Input::chord(ButtonId::Mix, ButtonId::Edit));
+    assert_eq!(r.ui.naming_title_for_test(), Some("SOUND NAME"));
+    let status = r.ui.project_status();
+    let part = r.ui.project().part(P1).sound.name;
+    tap(&mut r.ui, ButtonId::Seq);
+    r.work();
+    assert_eq!(r.toast(), "SAVED TO LIBRARY");
+    assert_eq!(r.sounds(), vec![1]);
+    assert_eq!(r.ui.project_status(), status);
+    assert_eq!(r.ui.project().part(P1).sound.name, part);
+    assert!(r.ui.location().browse().is_some(), "back on the browser");
+    assert_eq!(r.cursor_id(), Some(1));
+}
+
+#[test]
+fn menu_cancels_library_naming_back_to_the_browser() {
+    let mut r = Rig::new();
+    r.open_library();
+    r.work();
+    r.feed(Input::chord(ButtonId::Mix, ButtonId::Edit));
+    tap(&mut r.ui, ButtonId::Menu);
+    assert!(r.ui.naming().is_none());
+    assert!(r.ui.location().browse().is_some());
+    assert!(!r.ui.card_pending());
+    assert!(r.sounds().is_empty());
+}
+
+#[test]
+fn save_to_library_row_in_settings_part() {
+    let mut ui = UiState::new();
+    screen::to_leaf(&mut ui, &["PART"]);
+    for _ in 0..5 {
+        feed(&mut ui, Input::press(ButtonId::Plus));
+    }
+    feed(&mut ui, Input::press(ButtonId::Edit));
+    assert_eq!(ui.naming_title_for_test(), Some("SOUND NAME"));
+    let crumbs = ui.crumbs().unwrap().to_string();
+    assert!(crumbs.ends_with("› SAVE TO LIB"), "{crumbs}");
+}
+
+#[test]
+fn edit_loads_into_the_part_and_the_project_reads_modified() {
+    let mut r = Rig::new();
+    r.library_with(&factory_sound(0));
+    r.open_library();
+    r.work();
+    let slot = r.ui.project().pool().first_free().unwrap();
+    r.press(ButtonId::Edit);
+    r.work();
+    assert_eq!(r.toast(), format!("LOADED TO SLOT {}", slot.index() + 1));
+    let engine = r.ui.project().part(P1).sound.engine();
+    assert_eq!(r.ui.location(), Location::part_home(P1, engine));
+    assert!(
+        r.ui.project()
+            .pool()
+            .get(slot)
+            .unwrap()
+            .matches(&factory_sound(0))
+    );
+    let p = r.ui.project();
+    assert_eq!(part_status(p.part(P1), p.pool()), PartStatus::Clean);
+    assert_eq!(r.ui.project_status(), ProjectStatus::Modified);
+}
+
+#[test]
+fn an_edited_part_asks_and_replace_loads() {
+    let mut r = Rig::new();
+    r.library_with(&factory_sound(0));
+    r.edit_part();
+    r.start_load();
+    assert_eq!(r.ui.prompt_kind_for_test(), Some(AskKind::LoadLibrary));
+    let (q, why) = r.ui.prompt_words_for_test().unwrap();
+    assert_eq!(
+        (q.as_str(), why.as_str()),
+        ("LOAD INTO P1?", "P1 IS EDITED")
+    );
+    r.answer(LibraryAnswer::Replace);
+    r.work();
+    assert!(r.toast().starts_with("LOADED TO SLOT "));
+}
+
+#[test]
+fn cancel_loads_nothing() {
+    let mut r = Rig::new();
+    r.library_with(&factory_sound(0));
+    r.edit_part();
+    r.start_load();
+    let counts = r.counts();
+    r.answer(LibraryAnswer::Cancel);
+    assert!(!r.ui.card_pending());
+    assert_eq!(r.counts(), counts);
+}
+
+#[test]
+fn save_part_first_that_takes_the_room_refuses_and_keeps_the_save() {
+    let mut r = Rig::new();
+    r.library_with(&factory_sound(0));
+    r.edit_part();
+    let edited = r.ui.project().part(P1).sound.clone();
+    let needs = Offer::of(r.ui.project(), P1).save_needs();
+    set_free_to(r.ui.project_mut(), needs);
+    r.start_load();
+    r.answer(LibraryAnswer::SavePartFirst);
+    r.work();
+    let p = r.ui.project();
+    assert_eq!(
+        part_status(p.part(P1), p.pool()),
+        PartStatus::Clean,
+        "saved"
+    );
+    assert!(p.part(P1).sound.bits_eq(&edited), "not replaced");
+    let why = r.ui.refusal().expect("POOL FULL in the band");
+    assert!(why.starts_with("NEEDS "), "{why}");
+}
+
+#[test]
+fn a_midi_edit_during_the_source_read_refuses() {
+    let mut r = Rig::new();
+    tape_library(&mut r, 100.0, "TAPE");
+    r.start_load();
+    r.one_pass(); // the read; the stream starts
+    r.one_pass(); // a chunk
+    assert!(r.ui.card_pending(), "still streaming");
+    let counts = r.counts();
+    // A MIDI CC on Part 1.
+    r.ui.project_mut().edit_part(P1).sound.params.out.volume = 0.1;
+    r.work();
+    assert_eq!(r.toast(), "PART CHANGED");
+    assert_eq!(r.counts(), counts, "no source, no slot");
+}
+
+#[test]
+fn a_tape_load_streams_its_source_then_adopts() {
+    let mut r = Rig::new();
+    let sref = tape_library(&mut r, 100.0, "TAPE");
+    r.start_load();
+    let (srcs, snds) = r.counts();
+    r.work();
+    assert!(r.toast().starts_with("LOADED TO SLOT "));
+    assert_eq!(r.counts(), (srcs + 1, snds + 1));
+    let pool = r.ui.project().pool();
+    assert!(pool.find_source(sref).is_some());
+    assert_eq!(r.ui.project().part(P1).sound.source_ref(), Some(sref));
+}
+
+#[test]
+fn a_source_not_on_the_card_loads_absent_and_says_so() {
+    let mut r = Rig::new();
+    let (h, _) = source(100.0);
+    let mut s = Sound::init(EngineType::Tape);
+    s.pick_source(&h, None);
+    r.library_with(&s);
+    r.start_load();
+    r.work();
+    assert_eq!(r.toast(), "SOURCE MISSING");
+    assert_eq!(r.ui.project().part(P1).sound.source_ref(), Some(h.sref));
+}
+
+#[test]
+fn a_pending_load_blocks_every_other_card_start() {
+    let mut r = Rig::new();
+    let first = tape_library(&mut r, 100.0, "ONE");
+    tape_library(&mut r, 50.0, "TWO");
+    r.open_library();
+    r.work();
+    // Newest first: TWO, then ONE.
+    r.turn(EncoderId::A, 1);
+    r.press(ButtonId::Edit);
+    r.one_pass();
+    assert!(r.ui.card_pending(), "streaming");
+    // A second EDIT on the other row, LOAD PROJECT's listing, a SOURCE
+    // card row: none queues.
+    r.turn(EncoderId::A, -1);
+    r.press(ButtonId::Edit);
+    r.ui.queue_load_list_for_test();
+    r.ui.start_source_list_for_test(P1);
+    assert!(!r.ui.job_queued_for_test());
+    r.work();
+    // A SOURCE job would have taken the slot the stream is in, failing it.
+    assert!(r.toast().starts_with("LOADED TO SLOT "));
+    assert_eq!(r.ui.project().part(P1).sound.source_ref(), Some(first));
+}
+
+#[test]
+fn a_source_load_blocks_a_library_load() {
+    let mut r = Rig::new();
+    r.library_with(&factory_sound(0));
+    r.open_library();
+    r.work();
+    r.ui.start_source_list_for_test(P1);
+    assert!(r.ui.src_busy_for_test());
+    r.ui.library_edit_for_test();
+    assert!(!r.ui.job_queued_for_test(), "refused while SOURCE works");
+}
+
+#[test]
+fn menu_during_the_source_read_cancels() {
+    let mut r = Rig::new();
+    tape_library(&mut r, 100.0, "TAPE");
+    r.start_load();
+    r.one_pass();
+    assert!(r.ui.card_pending());
+    let counts = r.counts();
+    tap(&mut r.ui, ButtonId::Menu);
+    assert_eq!(r.toast(), "CANCELLED");
+    assert!(!r.ui.in_settings(), "MENU's tap only cancels");
+    r.work();
+    assert_eq!(r.counts(), counts);
+}
+
+#[test]
+fn skipped_params_say_so() {
+    let mut r = Rig::new();
+    r.put_raw(1, &skip_file());
+    r.start_load();
+    r.work();
+    assert_eq!(r.toast(), "LOADED · SOME PARAMS SKIPPED");
+}
+
+#[test]
+fn a_file_gone_since_listed_refuses_and_relists() {
+    let mut r = Rig::new();
+    let id = r.library_with(&factory_sound(0));
+    r.open_library();
+    r.work();
+    let v = r.st.inner.mount().unwrap();
+    let f = FileName::new(Dir::Sounds, &id.stem(), b"A").unwrap();
+    r.st.inner.delete(v, f).unwrap();
+    let counts = r.counts();
+    r.press(ButtonId::Edit);
+    r.work();
+    assert_eq!(r.toast(), "FILE IS GONE");
+    assert_eq!(r.counts(), counts);
+    assert_eq!(r.cursor_id(), None, "re-listed: empty");
+}
+
+#[test]
+fn mix_minus_acts_in_project_only() {
+    let mut r = Rig::new();
+    let p = r.ui.project();
+    let unused = chimera_core::project::SlotId::ALL
+        .into_iter()
+        .find(|&s| p.pool().get(s).is_some() && p.users(s).is_empty())
+        .unwrap();
+    r.feed(Input::chord(ButtonId::Edit, ButtonId::B1));
+    r.turn(EncoderId::A, unused.index() as i8);
+    r.turn(EncoderId::B, 1);
+    r.work();
+    r.feed(Input::chord(ButtonId::Mix, ButtonId::Minus));
+    assert!(!r.ui.prompt_open(), "LIBRARY: nothing");
+    r.turn(EncoderId::B, -1);
+    r.feed(Input::chord(ButtonId::Mix, ButtonId::Minus));
+    assert_eq!(r.ui.prompt_kind_for_test(), Some(AskKind::ClearSlot));
+}
+
+#[test]
+fn a_forgotten_page_relists_on_the_next_pass() {
+    let mut r = Rig::new();
+    r.open_library();
+    r.work();
+    r.ui.forget_library();
+    let reads = r.reads();
+    r.work();
+    assert!(r.reads() > reads);
+}
+
+#[test]
+fn a_lowest_free_save_lands_on_its_page() {
+    let mut r = Rig::new();
+    let s = factory_sound(1);
+    r.put_raw(1, &stamped(&s));
+    r.put_raw(LibId::USER_MAX, &stamped(&s));
+    r.open_library();
+    r.work();
+    r.feed(Input::chord(ButtonId::Mix, ButtonId::Edit));
+    tap(&mut r.ui, ButtonId::Seq);
+    r.work();
+    assert_eq!(r.toast(), "SAVED TO LIBRARY");
+    assert_eq!(r.cursor_id(), Some(2));
+}
+
+fn stamped(s: &Sound) -> Vec<u8> {
+    let h = Header {
+        kind: FileKind::Sound,
+        generation: Generation::FIRST,
+        name: Some(s.name),
+    };
+    let mut sink = VecSink(Vec::new());
+    write_file(&mut sink, &h, &mut |w| encode_library_sound(s, &ST, w)).unwrap();
+    sink.0
+}
