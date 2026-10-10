@@ -63,6 +63,8 @@ pub const MOD_AMOUNT: i8 = 64;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Case {
     ModalInit,
+    /// VA init: two saws, the 2040 filter.
+    VaInit,
     ModalLfoCutoff,
     /// Modal init on the Sympathetic model.
     ModalSympathetic,
@@ -99,7 +101,7 @@ static FACTORY_NAMES: [&str; 8] = [
 ];
 
 impl Case {
-    pub const ALL: [Case; 24] = [
+    pub const ALL: [Case; 25] = [
         Case::ModalInit,
         Case::ModalLfoCutoff,
         Case::ModalSympathetic,
@@ -124,11 +126,13 @@ impl Case {
         Case::Factory(5),
         Case::Factory(6),
         Case::Factory(7),
+        Case::VaInit,
     ];
 
     pub fn name(self) -> &'static str {
         match self {
             Case::ModalInit => "modal_init",
+            Case::VaInit => "va_init",
             Case::ModalLfoCutoff => "modal_lfo_cutoff",
             Case::ModalSympathetic => "modal_sympathetic",
             Case::AlgoInit => "algo_init",
@@ -233,6 +237,7 @@ pub fn setup(case: Case) -> (ParamSnapshot, ModState) {
     };
     match case {
         Case::ModalInit => (init_params(EngineType::Modal), ModState::new()),
+        Case::VaInit => (init_params(EngineType::Va), ModState::new()),
         Case::ModalLfoCutoff => with_lfo(EngineType::Modal, CUTOFF),
         Case::ModalSympathetic => {
             let mut p = init_params(EngineType::Modal);

@@ -630,6 +630,15 @@ pub const THOROUGH: Timing = Timing {
     bound: 3000,
 };
 
+/// A hold for a DC re-check, 3.2 s: the held rest, 2.9 s, spans a whole
+/// beat of the slowest pair a Sound makes (VA's +6 cents at C3, 2.2 s), so
+/// a sub-Hz beat averages out as it does for the ear. A real offset stays.
+pub const BEAT_HOLD: Timing = Timing {
+    hold: 2400,
+    gap: 120,
+    bound: 150,
+};
+
 pub const CHORD: [u8; 4] = [48, 52, 55, 60];
 
 #[derive(Clone, Copy, Debug, PartialEq)]

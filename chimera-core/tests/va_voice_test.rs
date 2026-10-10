@@ -147,6 +147,42 @@ fn stab_one_replays_on_an_idle_voice() {
     assert!(bits(&y1) == bits(&y2));
 }
 
+/// `blocks` blocks of `v` with its knobs gliding (ADR 0112).
+fn play_glided(v: &mut Rig, s: &Sound, blocks: usize) -> Vec<f32> {
+    let mut b = [0.0; BLOCK_SIZE];
+    let mut out = Vec::with_capacity(blocks * BLOCK_SIZE);
+    for _ in 0..blocks {
+        v.render_glided(&mut b, &s.params, &s.mod_state);
+        out.extend_from_slice(&b);
+    }
+    out
+}
+
+/// STABILITY gliding to 1.0 through the knob ease lands on exactly 1.0:
+/// depth is exactly 0 and the note is bit-identical to a fresh STAB-1
+/// voice's. Mid-glide (one block in) it is not.
+#[test]
+fn stab_glided_to_one_is_a_fresh_stab_one() {
+    let bits = |y: &[f32]| y.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+    let take = |idle_blocks: usize| {
+        let mut s = Sound::init(EngineType::Va);
+        s.params.va.stability = 0.5;
+        let mut v = Rig::new(SR);
+        play_glided(&mut v, &s, 1); // primed at 0.5
+        s.params.va.stability = 1.0;
+        play_glided(&mut v, &s, idle_blocks);
+        v.note_on(c4(), Velocity::DEFAULT, &s.params);
+        play_glided(&mut v, &s, 200)
+    };
+    let mut s = Sound::init(EngineType::Va);
+    s.params.va.stability = 1.0;
+    let mut fresh = Rig::new(SR);
+    fresh.note_on(c4(), Velocity::DEFAULT, &s.params);
+    let want = bits(&play_glided(&mut fresh, &s, 200));
+    assert!(bits(&take(1_000)) == want, "landed knob is exactly 1.0");
+    assert!(bits(&take(1)) != want, "one block in, it is still gliding");
+}
+
 /// A note on `p` for Part `part`, played till the voice is idle.
 fn idle_note(v: &mut Rig, s: &Sound, part: usize) {
     v.part = PartId::ALL[part];

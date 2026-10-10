@@ -277,9 +277,10 @@ impl Block for VaParams {
 /// "maximum saw" the 2040 is tuned on (ADR 0096).
 pub const VA_CHAIN_GAIN: f32 = 1.0 / (R * 1.732_050_8);
 
-/// VA's output gain at the VCA (ADR 0058); Task 10 sets it by INIT's
-/// loudness.
-pub const VA_OUT_GAIN: f32 = 1.0;
+/// VA's output gain at the VCA (ADR 0058), set so INIT (two saws, FINE2 +6,
+/// the 2040 at its defaults; C4 at velocity 100, 4 whole beats) sits at ADR
+/// 0109's reference, −11.0 LUFS, as TAPE_OUT_GAIN does for TAPE.
+pub const VA_OUT_GAIN: f32 = 3.631;
 
 /// Cycles a sample per MODE by ADR 0056's count on the release ELF (instr ×
 /// 1.46 × 1.1, + 12 a `vdiv`/`vsqrt`; Task 9b's scripts). Each oscillator
@@ -824,6 +825,34 @@ mod tests {
                 out.map(f32::to_bits)
             })
             .collect()
+    }
+
+    /// RING of two saws 6 cents apart beats at 0.906 Hz at C4. Its mean over
+    /// whole beats is zero (the saws' correlation averages out across the
+    /// beat), so the sweep's "DC" on VA INIT is the beat seen through a
+    /// window shorter than it, not a DC term in the operator.
+    #[test]
+    fn ring_has_no_dc_over_whole_beats() {
+        for (amount, stability) in [(0.5, 1.0), (1.0, 1.0)] {
+            let p = VaParams {
+                mode: VaMode::Ring,
+                amount,
+                stability,
+                fine: [0.0, 6.0],
+                ..VaParams::default()
+            };
+            let y = with_engine(|e| {
+                e.note_on(60, &p, PartId::new(0).unwrap(), SR);
+                run(e, &p, 225); // past the sweep's DC_FROM
+                // 4 beats, to a whole block
+                let beat = SR as f32 / (261.625_58 * (exp2(6.0 / 1200.0) - 1.0));
+                run(e, &p, (4.0 * beat / BLOCK_SIZE as f32) as usize)
+            });
+            let y: Vec<f32> = y.into_iter().map(f32::from_bits).collect();
+            let mean = |y: &[f32]| y.iter().sum::<f32>() / y.len() as f32;
+            let rms = (y.iter().map(|v| v * v).sum::<f32>() / y.len() as f32).sqrt();
+            assert!(mean(&y).abs() < 0.003 * rms, "{} of {rms}", mean(&y));
+        }
     }
 
     /// The carry is `carry_restores_the_state` (spec § Stability, free-run):
