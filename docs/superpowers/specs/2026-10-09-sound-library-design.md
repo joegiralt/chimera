@@ -1,6 +1,6 @@
 # Sound library (alpha): Design
 
-- **Status:** Draft for the owner, 2026-10-09
+- **Status:** Approved by the owner 2026-10-10 (§ Owner decisions)
 - **Date:** 2026-10-09
 - **Builds on:** `2026-09-28-projects-storage-design.md` § Library (plan 3, never built). This spec takes the alpha slice of it and leaves out tags, `SNDINDEX`, overwrite, rename and delete.
 - **Ships in:** alpha
@@ -157,7 +157,7 @@ EDIT on a library row:
 | `ls sounds` | The library's files and sizes, as `ls tapes` |
 | `put SOUNDS/S0000012.A <size> <crc32>` | A Sound file saved the unit's way (A/B, next generation, the kind's check after the write), as a project `put` |
 | `rm SOUNDS/S0000012` | Deletes the pair, older side first (ADR 0045's delete order). Refused for any other directory |
-| `get SOUNDS/S0000012` | The picked side's bytes, base64, then its CRC (see Q3) |
+| `get SOUNDS/S0000012` | The picked side's bytes, base64, then its CRC |
 
 ## Memory and flash
 
@@ -208,9 +208,10 @@ One new ADR, **0119** (0113 is modal-exciters', 0114 is on main, 0115–0117 are
 
 ADR 0045 already covers the format, names and A/B; ADR 0043 the copy rule and guard; ADR 0087 the budget and the meter's preview. None of them is edited.
 
-## Open questions for the owner
+## Owner decisions (2026-10-10)
 
-1. **Where the library lives in the browser.** (a) A LIBRARY tab on encoder B in the Sound browser (**recommended**: one place to load from, keys unchanged); (b) a separate SETTINGS › PART › LOAD FROM LIBRARY list; (c) library rows after the INIT rows in one long list.
-2. **Order.** (a) Newest first, 48 a page (**recommended**: the patch just saved is on top); (b) A–Z by name (every header read on each open); (c) oldest first, as LOAD PROJECT.
-3. **Console for alpha.** (a) `ls sounds`, `put`, `rm` and `get` (**recommended**: `get` lets a tester send the Sound that broke with their report); (b) `ls`, `put` and `rm` only; (c) `ls` and `put` only, deletes wait.
-4. **Build stamps.** (a) Version + hash, shown, with `THIS BUILD` when equal (**recommended**: no order is claimed that a hash can't give); (b) also stamp the commit count, so the browser can say OLDER or NEWER BUILD.
+All four open questions were answered with the recommendation:
+1. Loading lives in a PROJECT/LIBRARY tab on encoder B in the Sound browser.
+2. Newest first, 48 a page.
+3. The USB console gets `ls sounds`, `put`, `rm` and `get` for library files.
+4. The stamp is version + hash only, with `THIS BUILD` when equal. No commit count, and no OLDER/NEWER claim.
