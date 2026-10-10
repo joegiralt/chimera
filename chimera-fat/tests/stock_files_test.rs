@@ -39,7 +39,7 @@ use chimera_core::storage::{
 use chimera_fat::volume::FsKind;
 use chimera_hal::store::{Store, Sweep};
 use console::{Bytes, ask, chunked, crc, lines, source_file_bytes, src_line};
-use image::{Cut, PART_LBA, RamDisk, Tear, layout_of};
+use image::{Cut, PART_LBA, RamDisk, Tear, fat_check, layout_of};
 use probe::{marks_for, probed, swept};
 use std::rc::Rc;
 use tools::{fsck, mkfs};
@@ -309,59 +309,96 @@ fn sound_file() -> Vec<u8> {
     out.0
 }
 
-/// Every page of the library listed, and the newest row read.
+/// Whether `s` is an uncut run: its results are then judged.
+fn whole(s: &Slot) -> bool {
+    matches!(s.cut.get(), Cut::Never)
+}
+
+/// Both pages of the library listed (the newest 48, then the page below
+/// its last row), a row of each read, and the first adopted.
 fn list_and_read(s: &Slot, adopt: bool) {
     let mut st = probed(s);
-    let mut page = Box::new(LibPage::EMPTY);
-    let _ = list_library(&mut Card::new(), &mut st, PageAt::Newest, &mut page);
-    let Some(e) = page.entries().iter().flatten().next() else {
-        return;
-    };
-    let Some(file) = page.file(e) else { return };
-    let (mut p, template) = Project::boxed();
-    if read_library_sound(&mut Card::new(), &mut st, &mut p, file)
+    let mut card = Card::new();
+    let mut newest = Box::new(LibPage::EMPTY);
+    list_library(&mut card, &mut st, PageAt::Newest, &mut newest)
         .out
-        .is_ok()
-        && adopt
-    {
-        let part = PartId::ALL[0];
-        let c: Confirmed<LibraryPart> =
-            ReplaceGuard::check(&p, template, LibraryPart { part, file }).unwrap();
-        let _ = p.adopt(c, None);
+        .unwrap();
+    let rows: Vec<_> = newest.entries().iter().flatten().collect();
+    assert_eq!(rows.len(), 48, "a full first page");
+    assert!(newest.older, "an older page");
+    let mut older = Box::new(LibPage::EMPTY);
+    let below = PageAt::Below(rows[47].id);
+    list_library(&mut card, &mut st, below, &mut older)
+        .out
+        .unwrap();
+    assert!(older.entries().iter().flatten().count() >= 2, "page 2");
+    assert!(older.newer, "a newer page");
+    for page in [&newest, &older] {
+        let e = page.entries().iter().flatten().next().unwrap();
+        let file = page.file(e).unwrap();
+        let (mut p, template) = Project::boxed();
+        read_library_sound(&mut card, &mut st, &mut p, file)
+            .out
+            .unwrap();
+        if adopt {
+            let part = PartId::ALL[0];
+            let c: Confirmed<LibraryPart> =
+                ReplaceGuard::check(&p, template, LibraryPart { part, file }).unwrap();
+            p.adopt(c, None).unwrap();
+        }
+    }
+}
+
+/// Sounds saved before the cut loop: past one page of 48.
+const SEEDED: u32 = 50;
+
+fn seed_library(card: RamDisk) -> RamDisk {
+    let seed = slot(card);
+    for n in 0..SEEDED {
+        let snd = sound(n);
+        save_library_sound(&mut Card::new(), &mut probed(&seed), &snd, snd.name, &STAMP)
+            .out
+            .unwrap();
+    }
+    copy(&seed.inner)
+}
+
+fn save_op(s: &Slot, n: u32) {
+    let snd = sound(n);
+    let r = save_library_sound(&mut Card::new(), &mut probed(s), &snd, snd.name, &STAMP).out;
+    if whole(s) {
+        r.unwrap();
+    }
+}
+
+fn ask_op(s: &Slot, line: &str, data: &[u8], want: &str) {
+    let said = ask(&mut probed(s), line, data);
+    if whole(s) {
+        assert_eq!(said, want, "{line}");
     }
 }
 
 const LIB_OPS: [Op; 8] = [
-    ("library save", |s| {
-        let snd = sound(1);
-        let _ = save_library_sound(&mut Card::new(), &mut probed(s), &snd, snd.name, &STAMP);
-    }),
-    ("library save again", |s| {
-        let snd = sound(2);
-        let _ = save_library_sound(&mut Card::new(), &mut probed(s), &snd, snd.name, &STAMP);
-    }),
+    ("library save", |s| save_op(s, 1)),
+    ("library save again", |s| save_op(s, 2)),
     ("console put of a Sound", |s| {
         let b = sound_file();
         let line = format!(
-            "put /CHIMERA/SOUNDS/S0000007.A {} {:08x}\n",
+            "put /CHIMERA/SOUNDS/S0000100.A {} {:08x}\n",
             b.len(),
             crc(&b)
         );
-        let _ = ask(&mut probed(s), &line, &lines(&b));
+        ask_op(s, &line, &lines(&b), "READY\nOK\n");
     }),
     ("list every page", |s| {
-        let _ = ask(&mut probed(s), "ls sounds\n", b"");
-        let _ = list_library(
-            &mut Card::new(),
-            &mut probed(s),
-            PageAt::Newest,
-            &mut Box::new(LibPage::EMPTY),
-        );
+        let said = ask(&mut probed(s), "ls sounds\n", b"");
+        assert!(said.ends_with("OK\n"), "{said}");
+        list_and_read(s, false);
     }),
-    ("read the newest row", |s| list_and_read(s, false)),
+    ("read both pages", |s| list_and_read(s, false)),
     ("read and adopt", |s| list_and_read(s, true)),
     ("console rm of a Sound", |s| {
-        let _ = ask(&mut probed(s), "rm /CHIMERA/SOUNDS/S0000007\n", b"");
+        ask_op(s, "rm /CHIMERA/SOUNDS/S0000100\n", b"", "OK\n");
     }),
     ("sweep after the library", |s| {
         let _ = boot_sweep(&mut probed(s), Sweep::Free, &mut marks_for(&**s));
@@ -370,18 +407,47 @@ const LIB_OPS: [Op; 8] = [
 
 /// Library saves, listings, loads and console puts and rms, cut and torn
 /// at every block, write only under `/CHIMERA/SOUNDS`: the stock tree is
-/// as it was and the root gains no entry but `CHIMERA`.
+/// as it was, the root gains only `/CHIMERA`, `/CHIMERA` holds only
+/// `SOUNDS`, and `SOUNDS` only `S#######.A|B` files.
 #[test]
 #[ignore = "needs dosfstools: just test-fat-tools"]
 fn library_paths_never_touch_stock_files() {
     let (card, stock) = stock_card();
     let mut want = root_names(&card, &stock);
     want.push(*b"CHIMERA    ");
-    let end = cut_every_op(card, &stock, &LIB_OPS);
+    let end = cut_every_op(seed_library(card), &stock, &LIB_OPS);
     let (mut got, mut want) = (root_names(&end, &stock), want);
     got.sort();
     want.sort();
     assert_eq!(got, want, "the root gained only /CHIMERA");
+    assert_inside_sounds(&end);
+}
+
+/// `/CHIMERA` holds `SOUNDS` (and the sweep's mark) and nothing else, and
+/// `SOUNDS` only library files, as `fat_check` finds them by its own parse.
+fn assert_inside_sounds(disk: &RamDisk) {
+    let r = fat_check(disk);
+    let sounds = r.entry(b"SOUNDS     ").expect("SOUNDS made");
+    let mut files = 0;
+    for e in &r.entries {
+        if e.name == sounds.name {
+            continue;
+        }
+        let n = e.name;
+        if n == *b"SWEEP   MRK" {
+            continue; // the boot sweep's own mark, by design
+        }
+        assert!(
+            n[0] == b'S'
+                && n[1..8].iter().all(u8::is_ascii_digit)
+                && matches!(n[8], b'A' | b'B')
+                && n[9..] == *b"  ",
+            "written outside /CHIMERA/SOUNDS: {:?}",
+            String::from_utf8_lossy(&n)
+        );
+        files += 1;
+    }
+    assert!(files > 48, "{files} library files");
 }
 
 /// The short names of every live root entry, in the root blocks the stock
