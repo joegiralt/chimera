@@ -47,16 +47,16 @@ ADR 0045 already reserves the name, `FileKind` 1 (Sound) and the format. The lib
 | Bytes | Field |
 |---|---|
 | 12 | version, ASCII, NUL-padded (`CARGO_PKG_VERSION`, `0.1.0`); `const _: () = assert!(VERSION.len() <= 12)` |
-| 8 | hash, ASCII, NUL-padded (`CHIMERA_HASH`: 8 hex digits, `dev` on host builds, `unknown` without git) |
+| 8 | hash, ASCII, NUL-padded (`CHIMERA_HASH`: 8 hex digits, `dev` on host builds, `unknown` without git; `build.rs` keeps the first 8 characters, as `--short=8` can print more) |
 | 1 | flags: bit 0 dirty (`CHIMERA_DIRTY`); other bits 0 when written, ignored when read |
 
 - **Informational: `Build` never refuses a file.** The decoder reads it as it reads an unknown record. The stamp is the record right after `Engine`: a payload there under 21 B, or no `Build` there, shows `NO STAMP`; a `Build` anywhere else, or a repeat, is skipped; bytes past 21 are ignored (a later build may grow it); any byte outside printable ASCII draws as `?`.
 - It is the second record because `SoundCheck` skips an unknown record only after `Engine` (`sound.rs`, since 13cd8349). Every alpha build already reads a stamped file and ignores the stamp; `unknown_non_critical_skipped` pins that and stays.
 - Header 28 + `Engine` 5 + `Build` 25 = 58 B, so a listing peeks the first **64 B** of a side and has name, engine and stamp. Shorter files (an unstamped Sound can be 50 B) are peeked whole.
 - A file without it (the v1 fixtures, today's factory TAPE Sounds) shows `NO STAMP`.
-- `Build` inside a project's `Slot` or `Part` is skipped; projects never write it.
+- `Build` is skipped in every context of every file kind: a project's `Slot` and `Part` (through `SoundCheck`) and its top level, `Fx` and `Orbit` contexts. A later build may stamp projects, and this one must still load them.
 - `SoundCheck::seen` needs no new bit: `Build` is never once-checked.
-- Far under ADR 0102's 640 B. A Sound file is at most `MAX_SOUND_COST` + 37 B (header 28 + `Build` 25 + trailer 4 − the 16 B name the cost counts).
+- Far under ADR 0102's 640 B. A Sound file is at most `MAX_SOUND_COST` + 41 B (header 28 + `Build` 25 + trailer 4 − the 16 B name the cost counts).
 - **Later records:** the per-Part CC map (#247, "saved with the Part, in the project file and in library sounds") becomes a non-critical Sound-level record after `Build`, so alpha files simply lack it. `0x0C`–`0x0F` stay reserved for the project's own records.
 
 **Writes are A/B (ADR 0045).** A first save writes `.A` at generation 1 through `save_ab`. `pick`, `write_target` and the two-pass load are reused. A/B matters for overwrite later and for a console `put --over`.
@@ -80,13 +80,13 @@ The Sound rung's browser gets two tabs: **PROJECT** (today's list: 128 pool slot
 | Empty library | One dimmed row: `NO SOUNDS YET` (line 2 gives the keys) | Nothing |
 | No card or an unreadable one | One dimmed row: the `StoreError` message (`NO CARD`, `CARD IS EXFAT: FORMAT FAT32`…) | Nothing |
 
-**Order and paging.** User Sounds, **newest first** (highest id first), 48 a page (`MAX_LISTED`). Newest first because the tester's question is about the patch they just saved. The paging rows are new behaviour (LOAD PROJECT's `MORE ON CARD` runs nothing); they are list rows run by EDIT, so no new key.
+**Order and paging.** User Sounds, **newest first** (highest id first), 48 a page (`MAX_LISTED`). Newest first because the tester's question is about the patch they just saved. Order is by id: an id from the lowest-free fallback sorts by its number, not its age. The paging rows are new behaviour (LOAD PROJECT's `MORE ON CARD` runs nothing); they are list rows run by EDIT, so no new key.
 
 A page is one card job behind BUSY:
 1. one directory pass keeps the 48 highest user ids below the page's floor, with the sides each has and their sizes;
 2. a peek of each side the pass saw, no other. A missing name would scan the whole directory.
 
-The page is cached for the session, keyed by `VolumeId`. A save, a console `put` or `rm`, or a card change drops it, and so does any `VolumeChanged`. Turning B back to LIBRARY shows the cache without card work.
+The page is cached for the session, keyed by `VolumeId`. A save, a console `put` or `rm`, or a card change drops it, and so does any `VolumeChanged`. LIBRARY on screen with no page queues a listing of page 1 on the next pass. Turning B back to LIBRARY shows the cache without card work.
 
 **MIX + MINUS** acts in PROJECT only (clear a slot). In LIBRARY it does nothing (no delete in alpha), so it has no hint there.
 
@@ -128,7 +128,7 @@ A param a migration or translation consumes, or a readdress (DRIVE onto LEVEL), 
    - one directory pass for the id (§ Files);
    - `save_ab` onto the empty pair: `.A`, generation 1. The header holds the typed name, then `Engine`, `Build`, the records and the trailer, then a flush;
    - pass 1 on what was written, as `put` checks. A failure deletes that side, so the card is as it was.
-3. Toast `SAVED TO LIBRARY`. The page cache drops, and page 1 re-reads with the cursor on the new row.
+3. Toast `SAVED TO LIBRARY`. The page cache drops, and the page holding the new id re-reads (`Below(id + 1)`) with the cursor on it: page 1 for a top + 1 id.
 
 - The Part's own Sound is saved, edited or not, without its mix. The Part, its Origin, its marks and the project don't change: the library is outside the project (ADR 0043).
 - The Part keeps its name; the typed name is the file's only.
@@ -148,8 +148,8 @@ EDIT on a library row:
 
 1. **Guard first, no card.** `ReplaceGuard::check` with a new sealed target **`LibraryPart { part, file: LibFile }`**. It is a third `Target` beside `PartSource` and `ProjectSource`, with `PartSource`'s `at_risk` and `witness`. `load_part` never sees a library source, so nothing can reach it untyped. `LibFile` is the id, the `VolumeId` and the listed `Seen` (generation and name, as `OverwriteTarget` holds), never parsed data (ADR 0043).
 2. **Answers.** A Clean or Stale Part goes straight on. An Edited Part asks **SAVE PART FIRST / REPLACE / CANCEL**:
-   - REPLACE confirms (`Pending::anyway`);
-   - SAVE PART FIRST runs `save_first`'s save, then re-checks through `save_then`;
+   - REPLACE confirms through the prompt's `Said` (`Pending::confirm`, #258), with a `LibraryAnswer` declared in `confirm.rs`;
+   - SAVE PART FIRST runs `save_first`'s save (generic over the target), then re-checks through `save_then`;
    - CANCEL drops it.
 
    Either confirmation queues `Job::LibraryLoad(Confirmed<LibraryPart>)`. It never calls `replace_part`.
@@ -158,12 +158,12 @@ EDIT on a library row:
    - **Dedupe.** A pool slot whose `sound_crc` equals the decoded Sound's is reused, not copied again.
    - **Budget.** Against the pool as it is after any SAVE PART FIRST, so a save that took the room refuses here. The load needs:
      - the Sound's exact cost (sparse encoding + 16 B name, rounded to 16 B) and a free Sound slot, unless deduped;
-     - for a TAPE Sound whose source the pool doesn't hold, the source's cost (from its `SourceRef`) and a free source slot (32).
+     - for a TAPE Sound whose source the pool doesn't hold and whose `.SRC` is on the card, the source's cost from that file's directory size (`held_for_file_len`, read in the same card run) and a free source slot (32). A source not on the card costs 0 and takes no slot: it is stored absent.
 
      Over either: refused before anything moves, `POOL FULL` then `NEEDS 1.2K, 0.4K FREE` in the browser's band (ADR 0087's refusal, unchanged).
-   - **The source.** A TAPE source the pool doesn't hold is read from `/CHIMERA/TAPES/<CRC>.SRC` into the arena's staging (`Project::source_staging`) by SOURCE's card-row reader, 4 KiB a UI pass behind BUSY; MENU cancels. It is **not published**: the staging is unpublished until `adopt`. Not on the card: the Sound loads with the source absent and says `SOURCE MISSING`, as a project load does (ADR 0099). This supersedes the pool spec's `SOURCE NOT ON CARD` refusal for library loads.
-   - **Commit.** `Project::adopt(Confirmed<LibraryPart>, staged: Option<(SourceRef, usize)>) -> Result<Adopted, AdoptError>` re-checks the witness first, then the budget. Only after both does it commit the staged source, store the slot from scratch (first free) and load the Part from it. A refusal changes nothing (`Changed`, `Full`); there is no orphan source and no stored slot.
-   - **While a load is pending** (scratch or staging held), every other card job, project load and console card verb is refused (`card_pending`; the console answers `ERR busy`). MIDI and knobs still edit the Part; a moved witness refuses at `adopt`.
+   - **The source.** A TAPE source the pool doesn't hold is read from `/CHIMERA/TAPES/<CRC>.SRC` into the arena's staging (`Project::source_staging`) by SOURCE's card-row read without its commit (`SourceLoad::step_staged`), 4 KiB a UI pass behind BUSY; MENU cancels. It is **not published**: it enters the pool only inside `adopt`. Not on the card: the Sound loads with the source absent and says `SOURCE MISSING`, as a project load does (ADR 0099). This supersedes the pool spec's `SOURCE NOT ON CARD` refusal for library loads.
+   - **Commit.** `Project::adopt(Confirmed<LibraryPart>, staged: Option<Staged>) -> Result<Adopted, AdoptError>` re-checks the witness first, then the budget. Only after both does it commit the staged source, store the slot from scratch (first free) and load the Part from it through `load_part`, which bumps the Part's load counter. A refusal changes nothing (`Changed`, `Full`); there is no orphan source and no stored slot.
+   - **While a load is pending** (scratch or staging held), every other card job, project load, SOURCE card-row load, second library load and console card verb is refused: `UiState::queue` and `SourceCell` refuse while `lib.busy()`, the key loop lets only MENU through (it cancels), and the console answers `ERR busy`. A library load also refuses to start while a SOURCE load streams. MIDI and knobs still edit the Part; a moved witness refuses at `adopt`.
 4. The browser goes to the Part's pages, as a PROJECT load does. One toast, by precedence: `SOURCE MISSING`, then `LOADED · SOME PARAMS SKIPPED`, then `LOADED TO SLOT 12`.
 
 - The Part's Origin is the new (or deduped) slot, so it reads Clean. The pool changed, so the project reads Modified (ADR 0043).
@@ -177,7 +177,7 @@ EDIT on a library row:
 | `NeedsNewerFirmware`, `BadCrc`, `Truncated`, `Corrupt`, `Bounds`… | `FileError::message` | Unchanged (pass 2 runs after a clean pass 1; scratch only) |
 | File re-written or removed since listed | `FILE CHANGED` / `FILE IS GONE`; re-list | Unchanged |
 | Over budget, no Sound slot, no source slot | `POOL FULL` / `NEEDS …` | Unchanged |
-| Witness moved | `prompt::refused(Changed)` | Unchanged; staging dropped |
+| Witness moved | `PART CHANGED` (`AdoptError::Changed` mapped to `ReplaceError::Changed`) | Unchanged; staging dropped |
 | MENU during the source read | `CANCELLED` | Unchanged; staging dropped |
 
 ## Audio and card rules
@@ -305,4 +305,17 @@ Every finding in (private notes) was accepted.
 | m13 | Stale `LibId` | `LibFile` carries `Seen`; `FILE CHANGED` / `FILE IS GONE` |
 | m14 | Browser details | MIX + MINUS gated; `P n` kept; empty row shortened; paging rows new |
 | m15 | #247, #317, pool spec, #302 | Paragraphs added in § Files and § Load |
-| m16 | Small inaccuracies | Sweep scope, + 37 B, old-build proof, fuzz targets |
+| m16 | Small inaccuracies | Sweep scope, + 41 B (round 2's correction), old-build proof, fuzz targets |
+
+### Round 2
+
+Every round-2 finding was accepted; the plan's § Review resolutions maps each to its task.
+
+| # | Resolution |
+|---|---|
+| A | The TAPE source is read without commit (`step_staged`) and enters the pool only in `adopt` |
+| B | `queue`, the key loop and `SourceCell` refuse while a library load is pending (MENU cancels); a library load refuses while SOURCE streams |
+| C | REPLACE through `Said` / `Pending::confirm` (#258); `LibraryAnswer` in `confirm.rs` |
+| D | `Build` is skipped in every project context, the top level included |
+| E | A source is costed from its `.SRC` directory size; a missing one costs 0 and takes no slot |
+| m1–m15 | See the plan; spec edits: + 41 B, hash cut to 8, `PART CHANGED`, save re-lists `Below(id + 1)`, fallback ids sort by id, empty cache lists |
