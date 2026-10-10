@@ -66,11 +66,12 @@ fn golden_render(size: f32) -> Vec<f32> {
     out
 }
 
-/// Recorded at the T4 golden reference (a2abe82f), at GRIT 0.
+/// Recorded at the T4 golden reference (a2abe82f), at GRIT 0, then the
+/// tail gate (reverb sizzle).
 /// `reverb_dispatch_test` holds its sweeps at SMEAR 0 to theirs.
 const T4_GRIT_0: &[(&str, u64)] = &[
-    ("reverb_ring", 0xd17b7769e13816bf),
-    ("reverb_ring_max_size", 0x83591bf24cab49f6),
+    ("reverb_ring", 0xb1ca9e5e23c61f98),
+    ("reverb_ring_max_size", 0x54e341769cdf62a0),
 ];
 
 #[test]

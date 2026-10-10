@@ -283,15 +283,17 @@ pub struct Reverb {
     mix: Ease,
     /// The synced time's fold, held across blocks (§ Tempo sync).
     fold: FoldState,
+    /// The tail's last LSBs faded out.
+    tail: TailGate,
 }
 
 #[cfg(any(test, feature = "smear-probe"))]
 crate::in_place::field_list!(Reverb => Reverb {
-    arena, kind, state, phase, latched, dec, up_l, up_r, smear, smear_on, wander, wanders_rate, wanders_set, frozen, hard_gate, paths, depth, mix, fold
+    arena, kind, state, phase, latched, dec, up_l, up_r, smear, smear_on, wander, wanders_rate, wanders_set, frozen, hard_gate, paths, depth, mix, fold, tail
 });
 #[cfg(not(any(test, feature = "smear-probe")))]
 crate::in_place::field_list!(Reverb => Reverb {
-    arena, kind, state, phase, latched, dec, up_l, up_r, smear, smear_on, wander, wanders_rate, wanders_set, frozen, paths, depth, mix, fold
+    arena, kind, state, phase, latched, dec, up_l, up_r, smear, smear_on, wander, wanders_rate, wanders_set, frozen, paths, depth, mix, fold, tail
 });
 
 /// QUAD's SMEAR seed: its four lines' wanders hash it.
@@ -333,14 +335,15 @@ impl Reverb {
             depth: 0.0,
             mix: Ease::default(),
             fold: FoldState(0),
+            tail: TailGate::new(),
         }
     }
 
     pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
         // SAFETY: the arena and half-bands are integer and float arrays and
-        // integers; `state` is `EngineState`, whose variant 0 is `Quad` and
-        // every field of every variant an integer, a float or a `bool`
-        // (`false`); `kind` and `phase` are `repr(u8)` enums whose 0 is
+        // integers; `tail` two floats; `state` is `EngineState`, whose
+        // variant 0 is `Quad` and every field of every variant an integer,
+        // a float or a `bool` (`false`); `kind` and `phase` are `repr(u8)` enums whose 0 is
         // `Quad` and `Running`, `latched` floats and two `repr(u8)` enums
         // (0 is `Quad`, `Off`); `smear` and `mix` are `Ease`s of a float
         // and a `bool`, `smear_on` a `Gate` of a `u8` and a `bool`,
@@ -457,6 +460,7 @@ impl Reverb {
         (self.wanders_rate, self.wanders_set) = (0, false);
         (self.paths, self.depth) = ((false, false), 0.0);
         self.fold = FoldState(0);
+        self.tail = TailGate::new();
     }
 
     /// QUAD's state, while QUAD runs.
@@ -675,6 +679,9 @@ impl Reverb {
                 );
             }
         }
+        // MIX's ease × the tail gate's, one ramp.
+        let (g0, g1) = self.tail.step(&lr, tail_knee(self.kind));
+        let (from, to) = (from * g0, to * g1);
         self.up_l.process(&lr[0], &mut out.l);
         self.up_r.process(&lr[1], &mut out.r);
         let wet = wet_gain(self.kind);
@@ -724,6 +731,73 @@ where
     let paths = (e.crossfade().is_some(), d0 != 0.0 || d1 != 0.0);
     e.run(arena, u, kn, l, r);
     (paths, d1)
+}
+
+/// Each TYPE's `TailGate` knee, the return's |l| + |r| block peak in ring
+/// LSBs: about 16 dB over its storage floor, the i16 return against a
+/// float-line one (0.6–0.9 LSB RMS a side; BLOOM's 15 normalised allpasses
+/// each hand theirs back × 1/(1 − g), 2.3). Over it the return is
+/// untouched: at TIME 1, MIX 1, no TYPE's moves while above −45 dBFS.
+pub fn tail_knee(t: ReverbType) -> f32 {
+    match t {
+        ReverbType::Bloom => 72.0,
+        _ => 20.0,
+    }
+}
+
+/// A downward expander on the return, in ring LSBs: the i16 lines'
+/// quantising is a floor of noise, half of it over 4 kHz, where a damped
+/// tail has nothing; a long tail meeting it ends in that noise alone, a
+/// sizzle. Under the knee the return goes as its envelope's fourth power
+/// (5:1), so the noise fades with the tail; over it, untouched. Its ramp
+/// rides MIX's: 3 instructions a sample, the envelope (`FxBus::COST`).
+/// Zero bytes are a fresh gate.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TailGate {
+    /// The block peak of |l| + |r|: instant up, falling by `RELEASE`.
+    env: f32,
+    /// Last block's gain.
+    g: f32,
+}
+
+impl TailGate {
+    /// The envelope's fall a block: τ 50 ms at 48 kHz.
+    const RELEASE: f32 = 0.026;
+
+    pub const fn new() -> Self {
+        Self { env: 0.0, g: 0.0 }
+    }
+
+    /// The gain at envelope `env`: 1 from `knee`, (env / `knee`)⁴ under.
+    pub fn gain(env: f32, knee: f32) -> f32 {
+        let x = (env / knee).min(1.0);
+        let x2 = x * x;
+        x2 * x2
+    }
+
+    /// This block's gain ramp `(from, to)` for the return `lr`: from
+    /// last block's, so it never snaps.
+    pub fn step(&mut self, lr: &[[f32; HALF]; 2], knee: f32) -> (f32, f32) {
+        let [l, r] = lr;
+        let pk = l
+            .iter()
+            .zip(r.iter())
+            .fold(0.0f32, |m, (a, b)| m.max(a.abs() + b.abs()));
+        self.env = if pk > self.env {
+            pk
+        } else {
+            self.env + Self::RELEASE * (pk - self.env)
+        };
+        let g = (self.g, Self::gain(self.env, knee));
+        self.g = g.1;
+        g
+    }
+}
+
+impl Default for TailGate {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Both sides × a ramp from `g0` by `step` a sample: MIX's, and the
